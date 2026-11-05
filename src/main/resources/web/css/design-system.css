@@ -444,7 +444,7 @@
      抓手可见径 18 = 图标档（--ds-turn-btn-icon 同值，视觉体重一致但不共享槽位——
      语义不同：一个是图标、一个是把手本体）。 */
   --ds-resize-hit: 44px;             /* 拖柄热区边长（HIG / WCAG 2.5.5 下限） */
-  --ds-resize-grip: 18px;            /* 可见抓手本体边长 */
+  --ds-resize-grip: 18px;            /* 可见抓手本体边长（= ::before 直角弧的臂长） */
   --ds-resize-ink: var(--ds-text-muted);        /* 静息把手色（低对比，不争焦点） */
   --ds-resize-ink-active: var(--ds-focus-ring); /* hover / 拖拽态把手色 */
   --ds-resize-bg-active: var(--ds-veil-focus);  /* hover / 拖拽态底（极低调洗选） */
@@ -652,7 +652,12 @@
 /* 可见形态 = 左上角直角弧（L 形拐角 + 拐角圆角）：两条边臂沿面板上缘/左缘
    走到 18px 处收头，拐角 7px 圆角（--ds-radius-chip 档）。紧贴面板外缘
    （面板自带 12px 圆角，直角臂正好叠在玻璃边上、视觉与面板一体）。
-   hover/拖拽态只提亮（color 加深一档），不改几何。 */
+   hover/拖拽态只提亮（color 加深一档），不改几何。
+   ── 单小边框批（作者令 2026-11-05 09:32）──
+   本弧是**唯一**的可见描边。旧态在同一角上还叠着一族 `.ds-resize-grip > i`
+   （三枚 L 形、各 translate 2/4/6px、opacity 递减）——那三枚与这条弧共四条
+   线糊成「叠起来的正方形」，本批整族退役（规则与 DOM 节点同时摘除）：
+   「只要一个小边框就行」。 */
 .ds-resize-handle::before {
   content: '';
   position: absolute;
@@ -660,47 +665,16 @@
      手机内挂 ⇒ 0/0）。由宿主面按落位声明，本件不猜。 */
   left: var(--ds-resize-arm-x, 0);
   top: var(--ds-resize-arm-y, 0);
-  width: 18px;
-  height: 18px;
+  width: var(--ds-resize-grip, 18px);
+  height: var(--ds-resize-grip, 18px);
   pointer-events: none;
   border-top: 2px solid currentColor;
   border-left: 2px solid currentColor;
   border-top-left-radius: 7px;
 }
-.ds-resize-grip {
-  position: absolute;
-  left: calc(var(--ds-resize-arm-x, 0px) + 5px);
-  top: calc(var(--ds-resize-arm-y, 0px) + 5px);
-  width: var(--ds-resize-grip);
-  height: var(--ds-resize-grip);
-  display: block;
-  border: none;
-  border-radius: 0;
-  background: transparent;
-  pointer-events: none;
-}
-.ds-resize-grip i {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 100%;
-  height: 100%;
-  background: transparent;
-  border-left: 1.5px solid currentColor;
-  border-top: 1.5px solid currentColor;
-}
-.ds-resize-grip i:nth-child(1) {
-  transform: translate(2px, 2px);
-  opacity: 0.55;
-}
-.ds-resize-grip i:nth-child(2) {
-  transform: translate(4px, 4px);
-  opacity: 0.35;
-}
-.ds-resize-grip i:nth-child(3) {
-  transform: translate(6px, 6px);
-  opacity: 0.2;
-}
+/* `.ds-resize-grip` 族退役（2026-11-05 09:32）。保留本注释只为让「曾经存在
+   第 2/3/4 条线」这件事在源码里可追溯：askDock.js 的把手 DOM 已只渲染
+   `::before` 这一条弧，grip 的 span/i 结构不再创建。 */
 
 
 /* ② 行：静息无边框盒，hairline 分隔，hover 只做底色 wash（平面族）——

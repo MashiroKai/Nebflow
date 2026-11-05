@@ -54,8 +54,12 @@
   --chat-gutter-x: var(--ds-space-4);
 }
 #header {
+  /* 折射线层提成 token（--glass-refraction-line，sapphire.css 出生行）：
+     值与改前逐字相同（同一 gradient + center top / 80% 1px no-repeat），
+     改的是「谁拥有这一层」——面级浮件复用它时不再抄一遍字面量。 */
   background:
-    linear-gradient(90deg, transparent 10%, var(--sapphire-refraction) 50%, transparent 90%) center top / 80% 1px no-repeat,
+    var(--glass-refraction-line,
+      linear-gradient(90deg, transparent 10%, var(--sapphire-refraction) 50%, transparent 90%)) center top / 80% 1px no-repeat,
     var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);

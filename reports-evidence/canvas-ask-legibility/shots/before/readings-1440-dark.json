@@ -1,0 +1,189 @@
+{
+  "phase": "before",
+  "d": {
+    "vp": {
+      "w": 1440,
+      "h": 900
+    },
+    "dock": {
+      "x": 1043,
+      "y": 489.4375,
+      "w": 372,
+      "h": 321.5625,
+      "top": 489.4375,
+      "bottom": 811,
+      "left": 1043,
+      "right": 1415,
+      "r": 0
+    },
+    "col": {
+      "x": 1043,
+      "y": 489.4375,
+      "w": 372,
+      "h": 274.5625,
+      "top": 489.4375,
+      "bottom": 764,
+      "left": 1043,
+      "right": 1415,
+      "r": 0
+    },
+    "wrap": {
+      "x": 1043,
+      "y": 489.4375,
+      "w": 372,
+      "h": 257.5625,
+      "top": 489.4375,
+      "bottom": 747,
+      "left": 1043,
+      "right": 1415,
+      "r": 0
+    },
+    "input": {
+      "x": 1043,
+      "y": 753,
+      "w": 372,
+      "h": 58,
+      "top": 753,
+      "bottom": 811,
+      "left": 1043,
+      "right": 1415,
+      "r": 12
+    },
+    "lastBub": {
+      "x": 1043.96875,
+      "y": 605.03125,
+      "w": 371.03125,
+      "h": 139.96875,
+      "top": 605.03125,
+      "bottom": 745,
+      "left": 1043.96875,
+      "right": 1415,
+      "r": 16
+    },
+    "aiBub": {
+      "x": 1043.96875,
+      "y": 605.03125,
+      "w": 371.03125,
+      "h": 139.96875,
+      "top": 605.03125,
+      "bottom": 745,
+      "left": 1043.96875,
+      "right": 1415,
+      "r": 16
+    },
+    "nBub": 2,
+    "rowGap": "6px",
+    "fadeH": "64px",
+    "tail": "",
+    "colPadTop": "70px",
+    "colPadBottom": "19px",
+    "colMask": "linear-gradient(rgba(0, 0, 0, 0) 0px, rgb(232, 234, 237) 64px, rgb(232, 234, 237) 70px, rgba(0, 0, 0, 0) 96px)",
+    "maskStops": [
+      {
+        "color": "rgba(0, 0, 0, 0)",
+        "v": 0,
+        "unit": "px"
+      },
+      {
+        "color": "rgb(232, 234, 237)",
+        "v": 64,
+        "unit": "px"
+      },
+      {
+        "color": "rgb(232, 234, 237)",
+        "v": 70,
+        "unit": "px"
+      },
+      {
+        "color": "rgba(0, 0, 0, 0)",
+        "v": 96,
+        "unit": "px"
+      }
+    ],
+    "matBubAi": {
+      "bg": "rgba(24, 28, 38, 0.68)",
+      "bgImage": "none",
+      "border": "rgba(255, 255, 255, 0.06)",
+      "blur": "blur(24px) saturate(1.15)",
+      "color": "rgb(232, 234, 237)",
+      "radius": "16px",
+      "shadow": "rgba(255, 255, 255, 0.04) 0px 1px 0px 0px inset, rgba(0, 0, 0, 0.2) 0px 2px 8px 0px, rgba(0, 0, 0, 0.35) 0px 8px 24px 0px"
+    },
+    "matBubUser": {
+      "bg": "color(srgb 0.109804 0.121569 0.152941 / 0.92)",
+      "bgImage": "linear-gradient(rgba(91, 127, 191, 0.18), rgba(91, 127, 191, 0.18)), none",
+      "border": "rgba(91, 127, 191, 0.35)",
+      "blur": "blur(24px) saturate(1.15)",
+      "color": "rgb(232, 234, 237)",
+      "radius": "16px",
+      "shadow": "rgba(255, 255, 255, 0.04) 0px 1px 0px 0px inset, rgba(0, 0, 0, 0.2) 0px 2px 8px 0px, rgba(0, 0, 0, 0.35) 0px 8px 24px 0px"
+    },
+    "matInput": {
+      "bg": "rgba(24, 28, 38, 0.68)",
+      "bgImage": "none",
+      "border": "rgba(91, 127, 191, 0.45)",
+      "blur": "blur(24px) saturate(1.15)",
+      "color": "rgb(232, 234, 237)",
+      "radius": "12px",
+      "shadow": "rgba(255, 255, 255, 0.04) 0px 1px 0px 0px inset, rgba(0, 0, 0, 0.2) 0px 2px 8px 0px, rgba(0, 0, 0, 0.35) 0px 8px 24px 0px"
+    },
+    "header": {
+      "bg": "rgba(24, 28, 38, 0.68)",
+      "bgImage": "linear-gradient(90deg, rgba(0, 0, 0, 0) 10%, rgba(91, 127, 191, 0.06) 50%, rgba(0, 0, 0, 0) 90%), none",
+      "border": "rgba(255, 255, 255, 0.06)",
+      "blur": "blur(24px) saturate(1.15)",
+      "color": "rgb(232, 234, 237)",
+      "radius": "20px",
+      "shadow": "rgba(255, 255, 255, 0.04) 0px 1px 0px 0px inset"
+    },
+    "glassBg": {
+      "r": 24,
+      "g": 28,
+      "b": 38,
+      "a": 0.68
+    },
+    "paper": {
+      "r": 19,
+      "g": 22,
+      "b": 28,
+      "a": 1
+    },
+    "composite": {
+      "r": 22,
+      "g": 26,
+      "b": 35
+    },
+    "opaqueTok": null,
+    "cvOpaque": null,
+    "legacy": {
+      "truncH": "96px",
+      "truncFrom": "70px",
+      "overhang": "17px",
+      "inlineStyle": "--ask-trunc-h: 96px; --ask-trunc-from: 70px; --ask-col-overhang: 17px;"
+    },
+    "handle": {
+      "childCount": 1,
+      "gripSelectorHits": 4,
+      "hit": {
+        "x": 1029,
+        "y": 475.4375,
+        "w": 44,
+        "h": 44,
+        "top": 475.4375,
+        "bottom": 519.4375,
+        "left": 1029,
+        "right": 1073,
+        "r": 0
+      },
+      "arm": {
+        "top": "2px",
+        "left": "2px",
+        "right": "0px",
+        "bottom": "0px",
+        "radius": "7px",
+        "width": "18px",
+        "height": "18px"
+      }
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "phase": "after",
+  "diffs": [
+    {
+      "w": 335,
+      "h": 104,
+      "pixels": 34840,
+      "maxDiff": 0,
+      "over": 0
+    },
+    {
+      "w": 344,
+      "h": 30,
+      "pixels": 10320,
+      "maxDiff": 0,
+      "over": 0
+    }
+  ]
+}

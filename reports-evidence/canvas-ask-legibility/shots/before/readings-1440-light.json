@@ -1,0 +1,223 @@
+{
+  "phase": "before",
+  "ld": {
+    "vp": {
+      "w": 1440,
+      "h": 900
+    },
+    "dock": {
+      "x": 1043,
+      "y": 536.625,
+      "w": 372,
+      "h": 274.375,
+      "top": 536.625,
+      "bottom": 811,
+      "left": 1043,
+      "right": 1415,
+      "r": 0
+    },
+    "col": {
+      "x": 1043,
+      "y": 536.625,
+      "w": 372,
+      "h": 225.375,
+      "top": 536.625,
+      "bottom": 762,
+      "left": 1043,
+      "right": 1415,
+      "r": 0
+    },
+    "wrap": {
+      "x": 1043,
+      "y": 536.625,
+      "w": 372,
+      "h": 210.375,
+      "top": 536.625,
+      "bottom": 747,
+      "left": 1043,
+      "right": 1415,
+      "r": 0
+    },
+    "input": {
+      "x": 1043,
+      "y": 753,
+      "w": 372,
+      "h": 58,
+      "top": 753,
+      "bottom": 811,
+      "left": 1043,
+      "right": 1415,
+      "r": 12
+    },
+    "lastBub": {
+      "x": 1043.96875,
+      "y": 652.21875,
+      "w": 371.03125,
+      "h": 92.78125,
+      "top": 652.21875,
+      "bottom": 745,
+      "left": 1043.96875,
+      "right": 1415,
+      "r": 16
+    },
+    "aiBub": {
+      "x": 1043.96875,
+      "y": 652.21875,
+      "w": 371.03125,
+      "h": 92.78125,
+      "top": 652.21875,
+      "bottom": 745,
+      "left": 1043.96875,
+      "right": 1415,
+      "r": 16
+    },
+    "nBub": 2,
+    "rowGap": "6px",
+    "fadeH": "64px",
+    "tail": "",
+    "colPadTop": "70px",
+    "colPadBottom": "17px",
+    "colMask": "linear-gradient(rgba(0, 0, 0, 0) 0px, rgb(27, 30, 38) 64px, rgb(27, 30, 38) 64px, rgba(0, 0, 0, 0) 82px)",
+    "maskStops": [
+      {
+        "color": "rgba(0, 0, 0, 0)",
+        "v": 0,
+        "unit": "px"
+      },
+      {
+        "color": "rgb(27, 30, 38)",
+        "v": 64,
+        "unit": "px"
+      },
+      {
+        "color": "rgb(27, 30, 38)",
+        "v": 64,
+        "unit": "px"
+      },
+      {
+        "color": "rgba(0, 0, 0, 0)",
+        "v": 82,
+        "unit": "px"
+      }
+    ],
+    "matBubAi": {
+      "bg": "rgba(255, 255, 255, 0.55)",
+      "bgImage": "none",
+      "border": "rgba(255, 255, 255, 0.35)",
+      "blur": "blur(24px) saturate(1.15)",
+      "color": "rgb(27, 30, 38)",
+      "radius": "16px",
+      "shadow": "rgba(255, 255, 255, 0.25) 0px 1px 0px 0px inset, rgba(0, 0, 0, 0.04) 0px 2px 8px 0px, rgba(0, 0, 0, 0.06) 0px 8px 24px 0px"
+    },
+    "matBubUser": {
+      "bg": "color(srgb 1 1 1 / 0.92)",
+      "bgImage": "linear-gradient(rgba(91, 127, 191, 0.18), rgba(91, 127, 191, 0.18)), none",
+      "border": "rgba(91, 127, 191, 0.35)",
+      "blur": "blur(24px) saturate(1.15)",
+      "color": "rgb(27, 30, 38)",
+      "radius": "16px",
+      "shadow": "rgba(255, 255, 255, 0.25) 0px 1px 0px 0px inset, rgba(0, 0, 0, 0.04) 0px 2px 8px 0px, rgba(0, 0, 0, 0.06) 0px 8px 24px 0px"
+    },
+    "matInput": {
+      "bg": "rgba(255, 255, 255, 0.55)",
+      "bgImage": "none",
+      "border": "rgba(91, 127, 191, 0.45)",
+      "blur": "blur(24px) saturate(1.15)",
+      "color": "rgb(27, 30, 38)",
+      "radius": "12px",
+      "shadow": "rgba(255, 255, 255, 0.25) 0px 1px 0px 0px inset, rgba(0, 0, 0, 0.04) 0px 2px 8px 0px, rgba(0, 0, 0, 0.06) 0px 8px 24px 0px"
+    },
+    "header": {
+      "bg": "rgba(255, 255, 255, 0.55)",
+      "bgImage": "linear-gradient(90deg, rgba(0, 0, 0, 0) 10%, rgba(255, 255, 255, 0.45) 50%, rgba(0, 0, 0, 0) 90%), none",
+      "border": "rgba(255, 255, 255, 0.35)",
+      "blur": "blur(24px) saturate(1.15)",
+      "color": "rgb(27, 30, 38)",
+      "radius": "20px",
+      "shadow": "rgba(255, 255, 255, 0.25) 0px 1px 0px 0px inset"
+    },
+    "glassBg": {
+      "r": 255,
+      "g": 255,
+      "b": 255,
+      "a": 0.55
+    },
+    "paper": {
+      "r": 245,
+      "g": 246,
+      "b": 248,
+      "a": 1
+    },
+    "composite": {
+      "r": 251,
+      "g": 251,
+      "b": 252
+    },
+    "opaqueTok": null,
+    "cvOpaque": null,
+    "legacy": {
+      "truncH": "82px",
+      "truncFrom": "64px",
+      "overhang": "15px",
+      "inlineStyle": "--ask-trunc-h: 82px; --ask-trunc-from: 64px; --ask-col-overhang: 15px;"
+    },
+    "handle": {
+      "childCount": 1,
+      "gripSelectorHits": 4,
+      "hit": {
+        "x": 1029,
+        "y": 522.625,
+        "w": 44,
+        "h": 44,
+        "top": 522.625,
+        "bottom": 566.625,
+        "left": 1029,
+        "right": 1073,
+        "r": 0
+      },
+      "arm": {
+        "top": "2px",
+        "left": "2px",
+        "right": "0px",
+        "bottom": "0px",
+        "radius": "7px",
+        "width": "18px",
+        "height": "18px"
+      }
+    }
+  },
+  "lct": {
+    "bub": {
+      "bg": {
+        "r": 255,
+        "g": 255,
+        "b": 255,
+        "a": 0.55
+      },
+      "fg": {
+        "r": 27,
+        "g": 30,
+        "b": 38,
+        "a": 1
+      },
+      "alpha": 0.55,
+      "ratio": 16.66
+    },
+    "input": {
+      "bg": {
+        "r": 255,
+        "g": 255,
+        "b": 255,
+        "a": 0.55
+      },
+      "fg": {
+        "r": 27,
+        "g": 30,
+        "b": 38,
+        "a": 1
+      },
+      "alpha": 0.55,
+      "ratio": 16.66
+    }
+  }
+}

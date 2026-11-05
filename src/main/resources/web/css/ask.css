@@ -58,9 +58,22 @@
   --ask-fab-bottom: 24px;        /* 钮距画布下缘（JS 随通栏底栏实测让位） */
   --ask-dock-w: 372px;           /* 覆盖层宽（= 输入框档宽） */
   --ask-col-maxh: 316px;         /* 气泡列 max-height（小巧不占 canvas） */
-  --ask-fade-h: 64px;            /* 顶缘渐隐衰减区高（内容级 mask：transparent 0 →
-                                  * currentColor 本值；= 列 padding 净空，静态首条
-                                  * 在衰减区之下完整清晰） */
+  /* 顶缘渐隐衰减区高（内容级 mask：transparent 0 → currentColor 本值）。
+   * ── 短渐隐批（作者令 2026-11-05 09:32「顶部的渐隐效果要非常端距离完成」）──
+   * 值 64px（手机 56px）→ **12px**。理由与选值：
+   *   · 64px ≈ 3 行正文（行高 1.6 × 13.5px = 21.6px），衰减区比一行字还高两倍，
+   *     视觉上是「半个面板在淡出」；
+   *   · 作者档口「≤ 一个行高 / 8–16px 级别」→ 取 12px = 4px 栅格第 3 档
+   *     （--ds-space-3 的同一刻度），≈ 0.55 行高：衰减在**半个字行之内**结束，
+   *     滚动穿过时读起来是一条硬边而不是一片雾；
+   *   · 下限不再往 8px 落：mask 是抗锯齿渐变，8px 以下在 2× 屏上会看到阶梯；
+   *   · 只作用于滚出列顶的那一小条：衰减区在滚动容器之内（padding-top 让开
+   *     它），静态首条完整清晰，正文可读区零影响。 */
+  --ask-fade-h: 12px;
+  /* 底缘渐出尾（同一 12px 刻度）：只在**内容滚出列底**时吃掉这一小条 alpha，
+   * 与顶缘同一档短渐隐；静态（会话短）时它落在列的 padding-bottom 里，
+   * 一条字都不碰（见 .ask-col 的 mask 与 padding 注释）。 */
+  --ask-col-tail: 12px;
   --z-ask-dock: 24;              /* < 顶行 30（排他 z 序：永不入顶行） */
   --ask-dot-ring: rgba(255, 255, 255, 0.9);  /* 通知点描边圈（暗档翻 #0b0e14） */
   --ask-link: #1d4ed8;           /* cite 徽标链色（亮档） */
@@ -183,7 +196,14 @@ body.mobile-layer .ask-dock .ds-resize-handle {
 /* 拖拽中：跟手（面板尺寸过渡关掉，不加任何补间），抓手由 [data-resizing] 提亮。 */
 .ask-dock.is-resizing { transition: none; }
 /* 直角弧的臂原点（作者令 2026-11-04 12:52 ④）：桌面把手外挂 14px ⇒ 臂落
-   14/14（正好压在面板左上角的圆角边上，视觉与玻璃面板一体）；手机内挂 ⇒ 0/0。 */
+   14/14（正好压在面板左上角的圆角边上，视觉与玻璃面板一体）；手机内挂 ⇒ 0/0。
+   ── 单小边框批（作者令 2026-11-05 09:32「左上角那个拖动按钮，只要一个小边框
+   就行，不要那个叠起来的正方形」）──
+   可见形态只剩这一条 ::before 直角弧（2px 上/左两条边臂 + 7px 左上圆角），
+   旧态叠在它上面的 `.ds-resize-grip` 三枚 `<i>`（各 1.5px L 形，逐个
+   translate 2/4/6px、opacity .55/.35/.2）整族退役——那三枚就是「叠起来的
+   正方形」，与直角弧叠在同一角上共四条线，视觉上糊成两层方块。
+   形态定义在 design-system.css `.ds-resize-handle`（单源）；热区仍 44×44。 */
 .ask-dock .ds-resize-handle { --ds-resize-arm-x: 14px; --ds-resize-arm-y: 14px; }
 /* 拖拽中面板外缘同步提亮一档（活性蓝既有词汇，与 .ask-input:focus-within 同值）——
    让「正在改尺寸的是这一块」在抓手之外还有一处回显。 */
@@ -212,7 +232,24 @@ body.mobile-layer .ask-dock .ds-resize-handle {
  *     spec B1/B2 同一断言改前改后均绿）；输入条在 dock 布局里位于列外，天然在
  *     衰减层之外不受渐变影响。
  * 本文件零 veil 材质残留（--ds-fade-veil / backdrop-filter 一概不引）；主对话窗
- * #g2-edge-fade 的遮罩条手法照旧（本批只改 Ask，爆炸半径不扩大）。 */
+ * #g2-edge-fade 的遮罩条手法照旧（本批只改 Ask，爆炸半径不扩大）。
+ *
+ * ── 缩放空白批（作者令 2026-11-05 09:32「现在调整窗口大小会导致对话框和内容
+ *    直接有一大段空白」）──
+ * 病根不是缓存，是**几何基准错**：旧 mask 的第三个停点是 JS 写的
+ * `--ask-trunc-h = 面板高 × 50%`，而面板高 = 列 + 缝 + 输入条 —— 这条线被画在
+ * **列**上，于是「列的下半段」恒被 alpha 0 遮掉：默认档面板高 ≈348 ⇒ 截断线
+ * 174，列高 316 ⇒ 列底 142px 永远透明，而最新气泡锚在列底（flex-end）⇒ 内容
+ * 与输入条之间恒有一大段空白（本批改前实测：截断线 108px / 列高 316px / 空白
+ * 208px，且 108 是首帧缓存值，窗口放大后要等下一次 RO 才被改写）。
+ * 本批改法：**把底缘收口从「面板高的一半」改成「列自己的盒」**——
+ *   · 两个停点全部用百分比锚在列的 border box 上（100% = 列底 = 输入条上方
+ *     --ds-space-1h 处），不再有任何 JS 缓存的 px；
+ *   · 尾部渐出长度 = --ask-col-tail（12px，与顶缘同一短档）**且落在列的
+ *     padding-bottom 之内**：静态（会话短）时最新一条的底正好在 padding 上沿，
+ *     一条字都不被吃掉；滚动时内容穿过这 12px 自然淡出；
+ *   · 于是「输入条顶边 − 列底边」恒等于 dock 的 row-gap（--ds-space-1h = 6px），
+ *     与窗口尺寸/内容多少彻底解耦（五档机械断言见 tests/canvas-ask-legibility.spec.mjs）。 */
 .ask-colwrap {
   position: relative; width: 100%;
   max-height: var(--ask-col-maxh);
@@ -224,13 +261,24 @@ body.mobile-layer .ask-dock .ds-resize-handle {
   display: flex; flex-direction: column; gap: var(--ds-space-1h); align-items: flex-end;
   /* 内容级渐隐（本批关键改动）：mask 作用在滚动容器自身绘制结果上（本元素无
    * 背景/边框 ⇒ 输出 = 气泡内容），顶缘 --ask-fade-h 内内容 alpha 渐到 0。
-   * mask 颜色只取 alpha 通道 ⇒ 用 currentColor（无裸色值，GU2-7 同律）。 */
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0, currentColor var(--ask-fade-h));
-  mask-image: linear-gradient(to bottom, transparent 0, currentColor var(--ask-fade-h));
+   * mask 颜色只取 alpha 通道 ⇒ 用 currentColor（无裸色值，GU2-7 同律）。
+   * 四停点：顶缘短渐隐 → 全实 → 底缘前 --ask-col-tail 起坡 → 列底（100%）归零。
+   * 零 px 缓存值：两个端点都是百分比锚在列自己的盒上（缩放免疫）。 */
+  -webkit-mask-image: linear-gradient(to bottom,
+    transparent 0,
+    currentColor var(--ask-fade-h),
+    currentColor calc(100% - var(--ask-col-tail)),
+    transparent 100%);
+  mask-image: linear-gradient(to bottom,
+    transparent 0,
+    currentColor var(--ask-fade-h),
+    currentColor calc(100% - var(--ask-col-tail)),
+    transparent 100%);
   /* 衰减区净空（保留①-批几何）：内容静态在衰减区之下起排 = 首条完整清晰；
    * 滚动时内容穿进衰减区被 mask 洗掉。横 padding 归零（文档会话批②：气泡区
-   * 左右缘与输入条逐像素对齐）；纵向保留 6/2 呼吸留白。 */
-  padding: calc(var(--ask-fade-h) + 6px) 0 var(--ds-space-half);
+   * 左右缘与输入条逐像素对齐）；底 padding = --ask-col-tail（尾部渐出区就落在
+   * 这一条净空里 ⇒ 静态档最新一条不被吃字）。 */
+  padding: calc(var(--ask-fade-h) + var(--ds-space-1h)) 0 var(--ask-col-tail);
   scrollbar-width: none; touch-action: pan-y; /* #988：列内纵滚原生，手势零劫持 */
 }
 .ask-col::-webkit-scrollbar { display: none; }
@@ -352,54 +400,25 @@ body.mobile-layer .ask-dock .ds-resize-handle {
 .ask-dock .ds-turn-btn--stop { color: var(--color-error); }
 .ask-dock .ds-turn-btn:disabled { opacity: 0.35; pointer-events: none; }
 
-/* ═══ 作者令 2026-11-04 12:52 ②：Ask 气泡也吃顶部两钮那套毛玻璃 ═══
-   出处 = 同一组 token（--cv-bg / --cv-blur / --cv-saturate / --cv-border /
-   --cv-shadow），不写字面量；与 glass.css 圆钮档同源 ⇒ 改顶部两钮的材质，
-   气泡一起变。注意这是对「气泡禁独立 backdrop-filter（滚动性能纪律）」的
-   **作者显式改令**：Ask 列最多 ~3 屏内容、非主会话长列表，成本受控。 */
-/* 特异性 = .ask-dock .ask-bub（2 类）而不是 .ask-bub：glass.css（后载）里的
-   `.ask-bub{background:var(--glass-bub-ai-bg)}` 会以同特异度后写胜出，把玻璃底
-   换回半透明实底 —— 作者令要的是**玻璃**，所以这里点名宿主把底也拿回来。 */
-.ask-dock .ask-bub {
-  background: var(--cv-bg, var(--glass-bg));
-  -webkit-backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
-  backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
-  border: var(--ds-border-width) solid var(--cv-border, var(--glass-border));
-  box-shadow: var(--cv-shadow);
-}
-.ask-dock .ask-bub.user { background: var(--glass-bub-active-bg); border-color: rgb(var(--sapphire) / 0.35); }
+/* ═══ Ask 气泡材质（作者令 2026-11-04 12:52 ② → 2026-11-05 09:32 改判）═══
+   材质本体已整段移交 glass.css 单源（`.ask-dock .ask-bub` / `.ask-dock
+   .ask-bub.user`）：那一档由半透 --cv-bg 改判成**不透明毛玻璃档**
+   （--cv-bg-opaque + #header 同款顶缘折射线），成因与做法见 glass.css 与
+   sapphire.css 的令牌注。本文件不再声明任何气泡材质属性（GU2-7 同律：
+   材质单源，几何/年龄渐隐留本面）。 */
 
-/* ═══ 作者令 2026-11-04 12:52 ③：Ask 底部文字**穿过**对话框底缘、在中部截断 ═══
-   旧态：气泡列被 dock 的底缘硬裁（列高封顶 + 上级裁剪），文字到边就断。
-   新态两条：
-   · **穿过** —— 列盒向下越过 dock 底缘（--ask-col-overhang），overflow 可见 ⇒
-    最新气泡的下半截真的画在对话框边界之外，边界上没有任何硬切口；
-   · **中部截断** —— 内容本体 alpha 在中线（= dock 高的 50%，JS 写
-     --ask-trunc-h）渐到 0：沿用作者今日口径（内容本体透明度到 0、整体透明
-     无边框，`e3022ba07` 同律），**不放任何可见过渡条/遮罩色块**。
-   顶缘渐隐（--ask-fade-h）保留在本 mask 的起点段：两段都是同一层 mask 的
-   alpha 曲线，不是两块遮罩。 */
+/* ═══ 底缘收口（作者令 2026-11-04 12:52 ③ → 2026-11-05 09:32 改判）═══
+   12:52 令的形态 = 「列盒下越 + 中线（面板高 50%）截断」，由 JS 写三条 px
+   变量（--ask-trunc-from / --ask-trunc-h / --ask-col-overhang）。09:32 令
+   「调整窗口大小会导致对话框和内容直接有一大段空白」把这条形态判死：截断线
+   画在列上、基准却是面板高（列 + 缝 + 输入条），列的下半段恒被 alpha 0 遮
+   掉，最新气泡锚在列底 ⇒ 内容与输入条之间恒有一大段空白（改前实测 208px）。
+   本批三条全部退役，底缘收口归 mask 自己的百分比停点（见上方 .ask-col 的
+   注释与 mask 四停点）——**零 JS、零缓存 px、缩放免疫**。
+   唯一保留 = colwrap 的 overflow:visible（12:52 令「穿过底缘」的可见性前提；
+   收口改由 mask 承担后它不再产生越界绘制，但保留它可让列内溢出不被上级
+   硬裁——两道保险，且 tests/console-ask-grow C4 的 overflow 判据照旧成立）。 */
 .ask-colwrap { overflow: visible; }
-.ask-col {
-  -webkit-mask-image: linear-gradient(
-    to bottom,
-    transparent 0,
-    currentColor var(--ask-fade-h),
-    currentColor var(--ask-trunc-from, 132px),
-    transparent var(--ask-trunc-h, 158px)
-  );
-  mask-image: linear-gradient(
-    to bottom,
-    transparent 0,
-    currentColor var(--ask-fade-h),
-    currentColor var(--ask-trunc-from, 132px),
-    transparent var(--ask-trunc-h, 158px)
-  );
-  /* 下越量：列盒比可视区多出这么多，最新气泡才能「穿」过底缘（被 mask 洗掉
-     的那截仍在渲染树里，可被断言读到几何）。 */
-  margin-bottom: calc(-1 * var(--ask-col-overhang, 0px));
-  padding-bottom: calc(var(--ask-col-overhang, 0px) + 2px);
-}
 
 /* ═══ 移动档（body.mobile-layer；E-2 移动列 + #988 命中盒纪律）═══
    Canvas 改造批⑨（2026-10-31 作者令「修 bug：标签页对话按钮消失」）：手机层
@@ -432,7 +451,9 @@ body.mobile-layer .ask-dock {
    * 下界 320 保小屏（SE 667 ⇒ 46vh=307 被抬到 320）；上界 420 保「背后文档仍留
    * 可读区」（390×844 时面板顶距视口顶 = 264.8px ≈ 31%）。 */
   --ask-col-maxh: clamp(320px, 46vh, 420px);
-  --ask-fade-h: 56px;
+  /* 短渐隐批 2026-11-05 09:32：56px → 12px（与桌面档同一刻度，同一理由，见
+     :root 里 --ask-fade-h 的令牌注）。手机档不再单独放宽衰减区。 */
+  --ask-fade-h: 12px;
   position: fixed;
   right: var(--ask-fab-gap);
   bottom: calc(var(--dock-h, 54px) + var(--dock-inset-b, 0px) + env(safe-area-inset-bottom, 0px) + 16px + var(--ask-fab-size) + 10px);
