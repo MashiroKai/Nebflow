@@ -45,13 +45,6 @@
 
 import { t } from '../i18n.js';
 import { createIconsIn } from '../utils.js';
-/* 任务圆钮 + 徽标读数（**2026-11-05 09:28 作者令恢复**：见文件头「端区分批」）。
-   沿革：入口收敛批 todo-unify-entry-collapse（2026-11-04）曾撤掉左上「任务」圆钮、
-   把待办入口收敛到顶带胶囊一处；作者 2026-11-05 09:28 反转该口径 ——
-   原话「手机端的待办…跟电脑端的区分开，电脑端是一个胶囊，手机端还是需要是之前
-   那个左上角的一个悬浮的待办按钮」。本批按端区分恢复原实现（同一组件、
-   同一 CSS 块、同一徽标读数），桌面胶囊零改动。 */
-import { taskBadgeCount } from './taskPanel.js';
 import { todoStore } from '../todoStore.js';
 import { pushPage, touchLayer } from './navController.js';
 // 层事件流水（循环门禁修复批 2026-11-04）：事件走叶子 navEvents.js 单点。
@@ -97,18 +90,69 @@ function paintAgentSlotLogo(slot) {
   slot.replaceChildren(pic);
 }
 
-/* 待办徽标读数（恢复：2026-11-05 09:28 作者令）—— 圆钮右上角 = 未完成待办数
-   镜像，>99 折「99+」，0 时隐藏。读数源 = taskPanel.taskBadgeCount()（后端真源
-   todoStore 的派生值），订阅腿在下面 activateChatChrome 里接（真源回执 / 写口
-   乐观更新到达即刷新，不靠「创建这一刻读一次」）。 */
+/* 待办徽标读数（作者令 2026-11-05 17:02 附图：入口右上角 = **未完成数**）——
+   🔴 根因修复（灵动岛批 2026-11-05）：读数原走 `taskPanel.taskBadgeCount()`，而
+   该函数带一道会话门（`sessionShowsNodeEntries(activeSessionId)`，见
+   taskPanel.js:108）——只有「显示节点条目的会话」才非零，普通会话恒 0 ⇒
+   `hidden` 恒真 ⇒ **角标永不出现**（作者附图里那枚「8」在本实现下渲染不出来）。
+   手机端这颗圆钮是**全局待办入口**（面板体 todoFace 读的就是 todoStore 全量
+   scope:all），读数门与会话无关 ⇒ 直接取真源 `todoStore.openCount()`（与面板头
+   `.tfl-cap-faces` 同一个读数源，零第二份计数逻辑）。
+   沿革：入口收敛批 2026-11-04 撤过该圆钮，端区分批 2026-11-05 09:28 恢复时
+   照抄了旧读数口（连带旧门）；本批只换读数源，建层/落位/角标形态零改。
+
+   角标数字变化走**同一套弹簧**（作者「角标数字变化也要走同一套弹簧，不许瞬间
+   跳变」）：参数与桌面岛形变同档（response 0.38 / ζ 0.82 / mass 1，k=ω²≈273.4，
+   c=2ζω≈27.1），四条通道（scale / 位移 / 透明度……本处用 scale + 垂直位移两条）
+   同拍；本地 6 行积分器（不新增模块边，check-circular 友好），定步长子步进
+   保证帧率无关（与 todoFace.springAnimate 同一口径）。 */
+const BADGE_SPRING = { response: 0.38, damping: 0.82 };
+const REDUCED_MOTION = typeof matchMedia === 'function' &&
+  matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/** 徽标读数脉冲：scale 1→1.22→1（弹簧，非关键帧）—— 数字变了才有动作。 */
+function badgePulse(el) {
+  if (!el || REDUCED_MOTION) return;
+  const w0 = (2 * Math.PI) / BADGE_SPRING.response;
+  const k = w0 * w0;
+  const c = 2 * BADGE_SPRING.damping * w0;
+  let x = 0.78; // 起始收缩档（新读数从「小」弹回 1，超调 ~1%）
+  let v = 0;
+  let raf = 0;
+  let last = performance.now();
+  const tick = (now) => {
+    const frame = Math.min((now - last) / 1000, 1 / 30);
+    last = now;
+    const steps = Math.max(1, Math.ceil(frame / (1 / 240)));
+    const dt = frame / steps;
+    for (let i = 0; i < steps; i++) {
+      const a = -k * (x - 1) - c * v;
+      v += a * dt;
+      x += v * dt;
+    }
+    el.style.scale = String(x);
+    if (Math.abs(x - 1) < 0.004 && Math.abs(v) < 0.02) {
+      el.style.scale = '';
+      cancelAnimationFrame(raf);
+      return;
+    }
+    raf = requestAnimationFrame(tick);
+  };
+  cancelAnimationFrame(el.__badgeRaf || 0);
+  el.__badgeRaf = requestAnimationFrame(tick);
+}
+
 function syncTaskBadge() {
   if (!taskBtn) return;
-  const n = taskBadgeCount();
+  const n = todoStore.openCount();
   const b = /** @type {HTMLElement|null} */ (taskBtn.querySelector('.mh-chrome-badge'));
   if (!b) return;
+  const next = n > 99 ? '99+' : String(n);
+  const changed = b.textContent !== next;
   b.hidden = n === 0;
-  b.textContent = n > 99 ? '99+' : String(n);
+  b.textContent = next;
   taskBtn.title = t('taskpanel.title');
+  if (changed && n > 0) badgePulse(b); // 数字变化 = 同一条弹簧（不瞬跳、不跳帧）
 }
 
 export function activateChatChrome() {
