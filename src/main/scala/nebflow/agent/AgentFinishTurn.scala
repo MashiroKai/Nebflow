@@ -201,6 +201,60 @@ private[agent] object AgentFinishTurn:
 
   end finishTurn
 
+  /**
+   * 完成信号目标兜底（**dispatcher 终态批 2026-11-05** · 作者报障「dispatcher 模式
+   * delegate 无法正常结束」）。
+   *
+   * ==改前病灶（现场实证）==
+   * `completionTargets = replyTo.toList ++ state.execution.owedCompletion`（下方
+   * `finishTurnCont`）——**唤醒者没带 replyTo 的回合，收尾时完成目标为空**，
+   * `AgentEvent.Completed` 一个都不发：
+   *   - `DelegateNotify.inject`（base-moved / flow-notify）与 dispatch-notify 走
+   *     `ImmediateInput`，该命令**没有 replyTo 槽**；idle 腿把它转成
+   *     `ctx.self ! UserInput(..., replyTo = None, ...)`（`AgentIdle.scala:1030`）⇒
+   *     该回合的 replyTo = None；
+   *   - 上一回合收尾时 `owedCompletion` 已清（`owedAfter = if subagentsInFlight then
+   *     含 else Nil`）⇒ 债也为空。两者皆空 ⇒ `completionTargets.traverse_` 是零次发信。
+   * ⇒ BackoffSupervisor 收不到 `AgentEvent.Completed`，`DelegateTerminal.onCompleted`
+   * （终态判据本体）从不运行：不判词、不停靠、不提醒、不投父——会话就这么挂在 Idle，
+   * 每次 base-moved 再唤醒一轮，永不收敛（实测 `delegate-nebflow-b657f259` 15:18/15:25/
+   * 15:30 三个回合收尾后 `terminal-verdict` 零行）。
+   *
+   * ==判据（本批）==
+   * 受监督会话（delegate / subtask / 项目节点）**恒有**完成目标 = 它自己的监督者
+   * （`AgentRecord.supervisorRef`，注册面单点：`DelegateTool.scala:1431` /
+   * `SubTaskTool.scala:314` / 节点桥）。唤醒者带没带 replyTo 是**投递面**的细节，
+   * 不该决定「终态判据跑不跑」——这是本批要钉住的分界。
+   * 既有目标非空 ⇒ 原样返回（零行为变化：全部 Mail / merge-turn / standby-care /
+   * ExternalEvent 唤醒腿都带 replyTo）；空 ⇒ 回查注册表补监督者；根会话
+   * （`supervisorRef = None`）⇒ 仍为空（逐字现状）。读面故障 ⇒ fail-soft 返回既有值
+   * （宁可少一发，绝不因读面故障拖垮回合收尾）。
+   */
+  private[agent] def pickSettleTargets(
+    existing: List[ActorRef[AgentEvent]],
+    supervisor: Option[ActorRef[AgentEvent]]
+  ): List[ActorRef[AgentEvent]] =
+    if existing.nonEmpty then existing else supervisor.toList
+
+  /** [[pickSettleTargets]] 的 IO 版（空目标才回查注册表；见上注）。 */
+  private[agent] def resolveSettleTargets(
+    agentRegistry: cats.effect.Ref[IO, Map[String, AgentRecord]],
+    sessionId: Option[String],
+    existing: List[ActorRef[AgentEvent]]
+  ): IO[List[ActorRef[AgentEvent]]] =
+    if existing.nonEmpty then IO.pure(existing)
+    else
+      sessionId.fold(IO.pure(List.empty[ActorRef[AgentEvent]])) { sid =>
+        agentRegistry.get
+          .map(reg => pickSettleTargets(existing, reg.get(sid).flatMap(_.supervisorRef)))
+          .handleErrorWith(e =>
+            NebflowLogger
+              .forName("nebflow.agent")
+              .warn(s"settle-target lookup failed for $sid (failing soft to the existing targets): ${e.getMessage}")
+              .as(existing)
+          )
+      }
+
   private[agent] def finishTurnCont(
     agentDef: AgentDef,
     resources: SharedResources,
@@ -241,6 +295,26 @@ private[agent] object AgentFinishTurn:
       (replyTo.toList ++ state.execution.owedCompletion).distinct
     val subagentsInFlight = state.execution.outstandingSubagentResults > 0
     val owedAfter: List[ActorRef[AgentEvent]] = if subagentsInFlight then completionTargets else Nil
+
+    /**
+     * 唯一的完成信号发信点（四个 turn 边界分支共用；见 [[resolveSettleTargets]]）。
+     * 行为与改前逐字等价，只多一层「目标为空 ⇒ 补本会话监督者」的兜底：受监督会话
+     * 的终态判据不再取决于唤醒者是否带 replyTo。
+     */
+    def emitCompletion(msgs: List[Message]): IO[Unit] =
+      if subagentsInFlight then IO.unit
+      else
+        resolveSettleTargets(resources.agentRegistry, state.sessionId, completionTargets)
+          .flatMap(_.traverse_ { target =>
+            (target ! AgentEvent.Completed(state.sessionId.getOrElse(""), msgs))
+              .handleErrorWith(e =>
+                NebflowLogger
+                  .forName("nebflow.agent")
+                  .warn(
+                    s"completion signal to the supervisor failed (${state.sessionId.getOrElse("-")}): ${e.getMessage}"
+                  )
+              )
+          })
 
     // #407: turn 收尾回 idle（原 else 分支提取）。queue drain 分支的 idle-gate
     // 拦截也复用此收尾——queue 延迟投递但本 turn 正常结束（Done/持久化/debt
@@ -346,8 +420,8 @@ private[agent] object AgentFinishTurn:
           // dead-letter (the root would only ever see the relay text). Park
           // the debt instead; the batch-completion injection turn re-enters
           // finishTurnCont with the barrier at 0 and pays it off there.
-          if subagentsInFlight then IO.unit
-          else completionTargets.traverse_(_ ! AgentEvent.Completed(state.sessionId.getOrElse(""), newMessages))
+          // dispatcher 终态批：发信统一走 [[emitCompletion]]（目标兜底）。
+          emitCompletion(newMessages)
         // Turn fully finished (no pending events / immediate inputs) — back to
         // idle, so clear the team busy mark. The two earlier branches re-enter
         // pipeLlmCall which re-marks busy, so they must NOT clear here.
@@ -498,11 +572,10 @@ private[agent] object AgentFinishTurn:
               pendingMailQueueCount = state.execution.pendingMailQueueCount,
               pendingUserInputs = state.execution.pendingUserInputs,
               // P2 邮箱化：本边界取走的子代理邮箱件各占一个已满足的槽（取走拍会计）。
-              outstandingSubagentResults =
-                math.max(
-                  0,
-                  state.execution.outstandingSubagentResults - MailboxDrain.takenSubagentSlots(mailboxTaken)
-                ),
+              outstandingSubagentResults = math.max(
+                0,
+                state.execution.outstandingSubagentResults - MailboxDrain.takenSubagentSlots(mailboxTaken)
+              ),
               // #25: hold/replay the completion debt across this injection.
               owedCompletion = owedAfter
             )
@@ -562,15 +635,21 @@ private[agent] object AgentFinishTurn:
         _ <-
           // #25: never signal turn-terminal Completed while sub-agents are in
           // flight — park the debt (owedAfter) and keep the requester waiting.
-          if subagentsInFlight then IO.unit
-          else completionTargets.traverse_(_ ! AgentEvent.Completed(state.sessionId.getOrElse(""), messagesWithPending))
+          // dispatcher 终态批：目标兜底见 [[emitCompletion]]。
+          emitCompletion(messagesWithPending)
         result <- pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, None)
       yield result
       end for
     // 回合末腿也走**同一个**注入时机判定单点（midturn-injection-timing 批）：
     // `stage = TurnEnd` 下 immediate 腿照旧开回落注入轮；真人 typeless 帧在该面
     // 返回 Hold（留队 = 由下方 head-forward 作为新回合送达，不丢消息）。
-    else if state.pendingCompaction.isEmpty && InjectionTiming.hasInjectable(state.execution.pendingImmediateInputs, Nil, InjectionTiming.Stage.TurnEnd, compactionPending = false) then
+    else if state.pendingCompaction.isEmpty && InjectionTiming.hasInjectable(
+        state.execution.pendingImmediateInputs,
+        Nil,
+        InjectionTiming.Stage.TurnEnd,
+        compactionPending = false
+      )
+    then
       // 排队消息逐条注入（2026-09-15 ub 缺陷批，禁合并语义）：turn 末只取队首**一件**
       // immediate input 开一个独立 turn；其余留队，由后续 turn 边界逐条消费（到达顺序
       // 不变，每件各自若干 turn ⇒ 每件各自 roundComplete / 一次 save / 一次 pipeLlmCall）。
@@ -662,9 +741,8 @@ private[agent] object AgentFinishTurn:
         )
         _ <-
           // #25: park the completion debt while sub-agents are in flight.
-          if subagentsInFlight then IO.unit
-          else
-            completionTargets.traverse_(_ ! AgentEvent.Completed(state.sessionId.getOrElse(""), messagesWithImmediate))
+          // dispatcher 终态批：目标兜底见 [[emitCompletion]]。
+          emitCompletion(messagesWithImmediate)
         result <- pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, None)
       yield result
       end for
@@ -752,11 +830,8 @@ private[agent] object AgentFinishTurn:
                     )
                     _ <-
                       // #25: park the completion debt while sub-agents are in flight.
-                      if subagentsInFlight then IO.unit
-                      else
-                        completionTargets.traverse_(
-                          _ ! AgentEvent.Completed(state.sessionId.getOrElse(""), messagesWithQueue)
-                        )
+                      // dispatcher 终态批：目标兜底见 [[emitCompletion]]。
+                      emitCompletion(messagesWithQueue)
                     r <- pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, None)
                   yield r
                 // Delivery-layer fingerprint dedup (P0): same sender+recipient+content
