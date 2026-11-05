@@ -104,9 +104,9 @@
 .error-retry-btn,
 .error-abandon-btn {
   pointer-events: auto;
-  font: 500 12px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font: 500 var(--ds-fs-btn) -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   border-radius: var(--ds-radius-input);
-  padding: 3px var(--ds-space-glass-x);
+  padding: var(--ds-space-1) var(--ds-space-inline-x);
   cursor: pointer;
   transition: background 0.15s cubic-bezier(0.4, 0, 0.2, 1),
     border-color 0.15s cubic-bezier(0.4, 0, 0.2, 1),
@@ -194,7 +194,7 @@
   align-items: center;
   gap: var(--ds-space-1);
   flex-shrink: 0;
-  padding: 3px var(--ds-space-2);
+  padding: var(--ds-space-1) var(--ds-space-2);
   font-size: var(--ds-fs-btn);
   font-weight: 500;
   white-space: nowrap;
@@ -305,7 +305,7 @@
   border: 1px solid var(--glass-border);
   color: var(--color-text-muted, #8b8e96);
   font-size: var(--ds-fs-meta);
-  padding: 0 7px;
+  padding: 0 var(--ds-space-2);
   font-variant-numeric: tabular-nums;
   cursor: pointer;
 }
@@ -337,7 +337,7 @@
   gap: var(--ds-space-1h);
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
-  padding: 0 var(--ds-space-glass-x);
+  padding: 0 var(--ds-space-inline-x);
   border-radius: var(--ds-radius-input);
   font-size: var(--ds-fs-hint);
   color: var(--color-text);
@@ -368,7 +368,7 @@
   background: rgb(var(--sapphire) / 0.06);
   border: 1px solid rgb(var(--sapphire) / 0.25);
   border-radius: var(--ds-radius-input);
-  padding: 0 var(--ds-space-glass-x);
+  padding: 0 var(--ds-space-inline-x);
   font-size: var(--ds-fs-hint);
   color: var(--color-text);
   position: relative;
@@ -450,7 +450,7 @@
   max-height: 72px;
   align-items: flex-start;
   overflow-y: auto;
-  padding: 5px var(--ds-space-1h);
+  padding: var(--ds-space-1h) var(--ds-space-1h);
 }
 .att-ref-icon {
   color: rgb(var(--sapphire));
@@ -505,14 +505,14 @@
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
   border-radius: var(--ds-radius-input);
-  padding: 5px var(--ds-space-2);
+  padding: var(--ds-space-1h) var(--ds-space-2);
   align-items: flex-start;
 }
 .att-ref-fm .att-ref-icon { margin-top: var(--ds-space-half); }
 .att-ref-fm-body {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: var(--ds-space-hair);
   min-width: 0;
   flex: 1;
 }
@@ -611,7 +611,7 @@
   border-radius: var(--ds-radius-badge);
 }
 .att-ref .att-ref-icon .nf-qicon.is-thumb { background: rgba(0, 0, 0, 0.06); }
-.att-ref .att-ref-icon .nf-qicon.fc-icon { font-size: 8px; }
+.att-ref .att-ref-icon .nf-qicon.fc-icon { font-size: var(--ds-fs-glyph); }
 @media (prefers-color-scheme: dark) {
   .att-ref .att-ref-icon .nf-qicon.is-thumb { background: rgba(255, 255, 255, 0.09); }
 }
@@ -629,7 +629,7 @@
   background: var(--glass-etched-bg, var(--color-surface));
   border-left: 2px solid var(--status-error-icon, var(--color-error));
   color: var(--status-word, var(--color-text));
-  padding: 3px var(--ds-space-glass-x);
+  padding: var(--ds-space-1) var(--ds-space-inline-x);
   border-radius: var(--ds-radius-chip);
   font-size: var(--ds-fs-hint);
   transition: opacity 0.3s ease;
@@ -666,7 +666,7 @@
   cursor: pointer;
   flex: none;
 }
-.att-remove { position: absolute; top: -4px; right: -4px; font-size: 10px; }
+.att-remove { position: absolute; top: -4px; right: -4px; font-size: var(--ds-fs-meta); }
 /* 命中域外扩到 30×30（composer-overlap 批 2026-10-18）：16px 视觉圆盘的可点域
    过小（作者批注「×删除钮可点域」）。::after 生成外扩 7px 的透明层 —— 生成盒
    隶属本元素，:hover 命中测试同样落在圆盘上，视觉零变化。 */
@@ -1012,10 +1012,10 @@
   -webkit-backdrop-filter: blur(20px) saturate(1.15);
   border: 1px solid rgba(255,255,255,0.12);
   border-radius: var(--ds-radius-card-md);
-  padding: var(--ds-space-glass-x) 14px;
+  padding: var(--ds-space-block-y) 14px;
   display: none;
   align-items: center;
-  gap: var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
   z-index: 200;
   opacity: 0;
   transform: translateY(6px);
@@ -1050,7 +1050,7 @@
 .voice-text {
   flex: 1;
   color: #fff;
-  font-size: 14px;
+  font-size: var(--ds-fs-subtitle);
   line-height: 1.4;
   white-space: nowrap;
   overflow: hidden;
@@ -1159,11 +1159,11 @@ html[data-theme="dark"] #mention-dropdown {
 }
 .slash-badge {
   display: inline-block;
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   letter-spacing: 0.3px;
   text-transform: uppercase;
-  padding: 1px var(--ds-space-1h);
+  padding: var(--ds-space-hair) var(--ds-space-1h);
   border-radius: var(--ds-radius-badge);
   margin: 0 var(--ds-space-1h);
   line-height: 1.4;
@@ -1339,7 +1339,7 @@ html.no-backdrop #mention-dropdown {
 .queue-item-grip {
   cursor: grab;
   color: var(--color-text-muted);
-  font-size: 14px;
+  font-size: var(--ds-fs-subtitle);
   opacity: 0.5;
   padding: 0 var(--ds-space-half);
   flex-shrink: 0;
@@ -1383,7 +1383,7 @@ html.no-backdrop #mention-dropdown {
   flex-shrink: 0;
 }
 .queue-item-att-file {
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted);
   background: var(--glass-etched-bg);
   padding: var(--ds-space-half) var(--ds-space-1h);
@@ -1394,10 +1394,10 @@ html.no-backdrop #mention-dropdown {
   text-overflow: ellipsis;
 }
 .queue-item-att-more {
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted);
   background: var(--glass-etched-bg);
-  padding: var(--ds-space-half) 5px;
+  padding: var(--ds-space-half) var(--ds-space-1h);
   border-radius: var(--ds-radius-badge);
   flex-shrink: 0;
 }
@@ -1409,7 +1409,7 @@ html.no-backdrop #mention-dropdown {
 }
 .queue-item-btn {
   font-size: var(--ds-fs-meta);
-  padding: 3px var(--ds-space-glass-x);
+  padding: var(--ds-space-1) var(--ds-space-inline-x);
   border-radius: var(--ds-radius-input);
   border: 1px solid var(--glass-etched-border);
   background: var(--glass-etched-bg);
@@ -1427,7 +1427,7 @@ html.no-backdrop #mention-dropdown {
   border-color: rgb(var(--sapphire) / 0.4);
 }
 .queue-item-btn.recall {
-  padding: 3px 7px;
+  padding: var(--ds-space-1) var(--ds-space-2);
   font-size: var(--ds-fs-btn);
   color: var(--color-text-muted);
   border-color: transparent;
@@ -1441,7 +1441,7 @@ html.no-backdrop #mention-dropdown {
   background: rgb(var(--sapphire) / 0.12);
 }
 .queue-item-btn.remove {
-  padding: 3px 7px;
+  padding: var(--ds-space-1) var(--ds-space-2);
   font-size: var(--ds-fs-title);
   line-height: 1;
   color: var(--color-text-muted);
@@ -1472,7 +1472,7 @@ html.no-backdrop #mention-dropdown {
   white-space: nowrap;
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: var(--ds-space-half);
 }
 .queue-item-failed-note .st-ic {
   width: 11px;

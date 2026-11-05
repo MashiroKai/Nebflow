@@ -762,7 +762,7 @@ async function renderProjectsInto(scroll) {
     if (!scroll.querySelector('.project-card')) {
       scroll.dataset.projectsState = 'error';
       scroll.innerHTML = `<div class="team-empty">
-      <div style="font:600 14px -apple-system;color:var(--color-text-muted)">${esc(t('project.loadFail'))}</div>
+      <div style="font:600 var(--ds-fs-subtitle) -apple-system;color:var(--color-text-muted)">${esc(t('project.loadFail'))}</div>
       <div class="hint">${esc(e?.message || '')}</div>
     </div>`;
       // 迟到对账通道 ①：服务/网络恢复后自己把列表补上（不等用户动作、不等 WS）。
@@ -960,7 +960,7 @@ function renderEmptyState(scroll) {
   scroll.dataset.projectsState = 'empty';
   scroll.dataset.projectCount = '0';
   scroll.innerHTML = `<div class="team-empty">
-      <div style="font:600 14px -apple-system;color:var(--color-text-muted)">${esc(t('project.empty'))}</div>
+      <div style="font:600 var(--ds-fs-subtitle) -apple-system;color:var(--color-text-muted)">${esc(t('project.empty'))}</div>
       <div class="hint">${esc(t('project.emptyHint', rootNameParams()))}</div>
       <button class="glass-control team-empty-cta" type="button" data-projects-empty-cta="1"><i data-lucide="message-circle"></i>${esc(t('project.emptyCta', rootNameParams()))}</button>
       <div class="hint team-empty-cta-note">${esc(t('project.emptyCtaHint'))}</div>

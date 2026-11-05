@@ -65,7 +65,7 @@
   display: block;
   border: 1px solid var(--sapphire-edge-strong);
   border-radius: var(--ds-radius-input);
-  padding: var(--ds-space-2) var(--ds-space-glass-x);
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
   background: var(--sapphire-edge);
   min-height: 0;
 }
@@ -105,7 +105,7 @@
    按钮是「收起」而不是「查看」。 */
 .nf-fence-src {
   margin: var(--ds-space-2) 0 0;
-  padding: var(--ds-space-2) var(--ds-space-glass-x);
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
   border-radius: var(--ds-radius-chip);
   background: var(--color-frame-hover);
   overflow-x: auto;
