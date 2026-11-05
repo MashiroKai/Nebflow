@@ -3538,23 +3538,93 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
   display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden;
 }
 .nf-term-tip .td { color: var(--color-frame-text-dim, var(--color-text-muted)); font-size: var(--ds-fs-meta); margin-top: var(--ds-space-1h); }
+/* 第三行（来源文档 / 跳转提示）撤掉后不占位（term-system-v2 词条视觉面批
+   2026-11-05：文档名归词条索引块，气泡只剩词条名 + 定义）。 */
+.nf-term-tip .td:empty { display: none; }
 
-/* 词条引用的视觉面（F3）：resolved 词条链接 = 点线底纹（区别于普通文档级
-   wikilink 的纯色亮面）；兜底腿的 unresolved 短形引用同纹（hover 可出泡的
-   信号），颜色随既有 unresolved 态。 */
+/* 词条引用的视觉面（term-system-v2 词条视觉面批 2026-11-05）────────────
+   作者令原话：「词条被使用的时候，应该是一个蓝色的文字，然后不需要显示文档名。
+   在目前基础上把文字变蓝色然后去掉括号里的文档就行。」
+   ① 蓝色：字色 = `--ds-link-term`（design-system.css 语义别名 → stand-tokens.css
+      蓝族 ink 双档）。亮 70 99 156 / 暗 sapphire-glow，正文阅读面实测
+      5.51:1 / 6.17:1（tests/_term-face-harness.mjs 打印），正文文本门槛 4.5:1。
+      **规则里零裸色值** —— 改色改令牌，不改本块。
+   ② 可点击信号保留且仍分两档（原 F3/B5-1 的「信号 vs 提示」层级不丢，只把
+      区分从字色挪到底纹强度，因为字色已由作者统一定为蓝）：手写引用 = 底纹
+      55% 蓝（信号）；正文裸词自动链 = 底纹 30% 蓝（提示，密度高一个量级）。
+      悬停两档都收成实色 = 可点确认。
+   未解析短形引用（兜底腿 .nf-wikilink-unresolved + .nf-wikilink-term）同样取
+   蓝色：hover 能出泡就说明「这是词条」，词条面不该有两种字色。 */
 a.nf-wikilink.nf-wikilink-term {
-  text-decoration: underline dotted currentColor 1px;
+  color: var(--ds-link-term);
+  /* 底纹 = 既有 .nf-wikilink 的 border-bottom 通道（虚线改点线 + 换蓝），
+     不再叠一条 text-decoration —— 两条底纹会在词条上叠成双线。 */
+  border-bottom: 1px dotted rgb(var(--term-link-ink) / 0.55);
+  text-decoration: none;
   text-underline-offset: 3px;
 }
+a.nf-wikilink.nf-wikilink-term:hover { border-bottom-color: currentColor; filter: none; }
 
-/* 正文裸词识别（B5-1）：自动链接的词条取同一套点线底纹，但不改字色 ——
-   作者手写的引用是「信号」，自动生成的是「提示」：密度高一个量级，视觉必须
-   更轻；字色继承正文，只有底纹在标识可点。 */
+/* 正文裸词识别（B5-1）：同一枚字色（同一实体同一 token —— 两种蓝会教出两种
+   含义），底纹压到 30% 保持「提示」轻量。 */
 a.nf-term {
-  color: inherit;
-  text-decoration: underline dotted currentColor 1px;
-  text-underline-offset: 3px;
+  color: var(--ds-link-term);
+  border-bottom: 1px dotted rgb(var(--term-link-ink) / 0.3);
+  text-decoration: none;
   cursor: pointer;
+}
+a.nf-term:hover { border-bottom-color: currentColor; }
+
+/* ── 词条索引（term-system-v2 词条视觉面批 2026-11-05）─────────────────
+   作者令原话：「引用了词条之后，引擎自动在下方建立索引，就是引用的词条所在的
+   文档。也可以点击跳转。」文档名从行内词条（链接文本 / 悬停气泡）撤出后落在这
+   一块：正文尾部由 viewers/markdown.js 的 renderTermIndex 自动生成（用户不手写），
+   `<details>` 默认收起，summary = `词条索引（N）`，0 引用整块不渲染。
+   几何与 .nf-backlinks（上方 3376 行族）同族：同一条上分隔线、同一档内距；
+   条目用 flex + wrap，375 宽逐条折行不溢出。颜色全走既有 token。 */
+.canvas-md-viewer .nf-term-index {
+  margin: var(--ds-space-5) 0 var(--ds-space-half);
+  padding-top: var(--ds-space-block-y);
+  border-top: 1px solid var(--ds-border);
+  font-size: var(--ds-fs-hint);
+  color: var(--ds-text-dim);
+}
+.canvas-md-viewer .nf-term-index summary {
+  cursor: pointer;
+  user-select: none;
+  opacity: 0.85;
+}
+.canvas-md-viewer .nf-term-index summary:hover { opacity: 1; }
+.canvas-md-viewer .nf-term-index ul {
+  margin: var(--ds-space-2) 0 var(--ds-space-half) var(--ds-space-5);
+  padding: 0;
+  list-style: none;
+}
+.canvas-md-viewer .nf-term-index li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--ds-space-1h);
+  margin: var(--ds-space-1) 0;
+  min-width: 0;
+}
+/* 条目 = 词条名（可点，跳它所在的文档并落到定义段）+ 所在文档名（暗一档）。
+   条目名与正文里的词条同色（同一实体同一 token），底纹同手写引用档。 */
+.canvas-md-viewer .nf-term-index .nf-term-index-term {
+  color: var(--ds-link-term);
+  border-bottom: 1px dotted rgb(var(--term-link-ink) / 0.55);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+.canvas-md-viewer .nf-term-index .nf-term-index-term:hover {
+  border-bottom-color: currentColor;
+  filter: none;
+}
+.canvas-md-viewer .nf-term-index .nf-term-index-docname {
+  color: var(--ds-text-dim);
+  font-size: var(--ds-fs-meta);
+  opacity: 0.85;
+  overflow-wrap: anywhere;
 }
 
 /* ── 返回原文档按钮（词条引用批 batch 2, F5；作者令 2026-10-29 11:49

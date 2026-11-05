@@ -51,6 +51,13 @@
   --ds-accent: var(--color-primary);            /* 身份/状态绿（2026-10-30 降级语义） */
   --ds-accent-ink: rgb(var(--brand-green));     /* 开关 ON / 圆钮实心 */
   --ds-focus-ring: var(--btn-focus-ring);
+  /* 词条引用字色（term-system-v2 词条视觉面批 2026-11-05，作者令「词条被使用
+     的时候，应该是一个蓝色的文字」）：语义角色 = 「词条」这一实体的字色。
+     值 = 蓝族 ink 双档（stand-tokens.css 的 --term-link-ink；亮 70 99 156 /
+     暗 sapphire-glow），本层只做一拍别名，零字面量。消费点 =
+     split.css a.nf-wikilink.nf-wikilink-term / a.nf-term。对比度实测见
+     tests/_term-face-harness.mjs（亮 5.51:1 / 暗 6.17:1，均 ≥ 4.5）。 */
+  --ds-link-term: rgb(var(--term-link-ink));
   --ds-danger-icon: var(--status-error-icon);
   --ds-warn-icon: var(--status-warn-icon);
   --ds-success-icon: var(--status-success-icon);
