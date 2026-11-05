@@ -17,6 +17,7 @@ import nebflow.core.delegate.DelegateWorkspace
 import nebflow.core.delegate.ExternalJudgeHook
 import nebflow.core.delegate.MergeAcceptance
 import nebflow.core.delegate.MergeQueue
+import nebflow.core.delegate.MergeDeclaration
 import nebflow.core.delegate.DelegateTerminal
 import nebflow.core.delegate.PostMergeCleanup
 import nebflow.shared.Message
@@ -702,7 +703,13 @@ You will be notified when it completes via a system message. Do NOT duplicate th
                       description = r.title,
                       readyAt = System.currentTimeMillis(),
                       channelKind = "external",
-                      external = Some(channel)
+                      external = Some(channel),
+                      // 宣告闸批 2026-11-04：外部腿的 ready-to-merge 是**判定/判词**
+                      // 产出，不是属主宣告——只有属主自己用 `delegate_report(category="merge")`
+                      // 申报过（宣告账在案）的成员才带宣告入队；否则入账但不授窗。
+                      declaredAt = MergeDeclaration.find(sessionId).map(_.at),
+                      declareSource = MergeDeclaration.find(sessionId).map(_.source),
+                      declaredTip = MergeDeclaration.find(sessionId).flatMap(_.tip)
                     )
                   )
                 case None =>
