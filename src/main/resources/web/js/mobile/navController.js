@@ -122,7 +122,10 @@ export const PAGES = [
   // 'tasks' 页（**恢复**：作者令 2026-11-05 09:28 —— 手机端待办入口回到左上
   // 悬浮圆钮，入口收敛批 2026-11-04 的撤除被本批反转；桌面端仍走胶囊）。
   { id: 'tasks',    tabId: null,       icon: 'list-todo',       zh: '任务',     en: 'Tasks' },
-  { id: 'search',   tabId: null,       icon: 'search',          zh: '搜索',     en: 'Search' },
+  // 搜索页标题（三点入口批 2026-11-05，作者令「把搜索和搜索聊天记录结合，把胶囊的
+  // 内容改为搜索聊天记录」）：页名胶囊 = 唯一标题「搜索聊天记录」；面内部那枚
+  // 重复的 `.search-modal-header` 标题已由 mobileLayer.css 同批隐藏（顶部只剩一个胶囊）。
+  { id: 'search',   tabId: null,       icon: 'search',          zh: '搜索聊天记录', en: 'Search messages' },
   { id: 'reminder', tabId: null,       icon: 'alarm-clock',     zh: '定时任务', en: 'Scheduled' },
   // 改版批（2026-10-31 作者令）：待办事项页——入口 = 消息列表顶部行（桌面 =
   // #todo-page 玻璃 overlay；手机 = 本详情页收编同一 DOM，层级下钻左上返回）。

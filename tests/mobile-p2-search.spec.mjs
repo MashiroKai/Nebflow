@@ -154,12 +154,19 @@ test('T1 page geometry: adopted full-bleed in search page, radius 0 (dock 批换
   expect(errors).toEqual([]);
 });
 
-test('T2 main-session face: head icon, scope retired, kind row = second filter row, foot copy (v3.6②)', async ({ page }) => {
+test('T2 main-session face: one pill title, scope retired, kind row = second filter row, no foot copy', async ({ page }) => {
   const errors = watchErrors(page);
   await openPanel(page);
 
-  // 面板头图标 = 来源键 i-search（§8-2）。
-  await expect(page.locator('.mh-search-head-ic svg')).toHaveCount(1);
+  // 🔴 三点入口批（2026-11-05 作者令「把搜索和搜索聊天记录结合，把胶囊的内容改为
+  // 搜索聊天记录……下面的文字不要，然后底下的说明文字不要」）：旧断言（面板头图标
+  // `.mh-search-head-ic` 在场 + 底部说明脚注文案）**整组换代**——
+  //   · 顶部唯一标题 = 页面名胶囊「搜索聊天记录」（PAGES.search）；
+  //   · 面板头 `.search-modal-header`（重复标题 + 头图标所在层）整块隐藏；
+  //   · 底部说明行 `#mh-search-foot` 连 DOM 一起删除（不是 display:none）。
+  await expect(page.locator('.mobile-page[data-page="search"] .mobile-page-title')).toHaveText('搜索聊天记录');
+  await expect(page.locator('#search-modal .search-modal-header')).toBeHidden();
+  await expect(page.locator('#mh-search-foot')).toHaveCount(0);
 
   // 范围/代理/工具 select + 搜索钮整行退场（裁定②：恒主会话）。
   const filtersDisplay = await page.locator('#search-modal .search-filters').evaluate((el) => getComputedStyle(el).display);
@@ -177,11 +184,13 @@ test('T2 main-session face: head icon, scope retired, kind row = second filter r
   expect(await kindOptions.nth(1).textContent()).toBe('用户');
   expect(await kindOptions.nth(3).textContent()).toBe('AI');
 
-  // 脚注：主会话说明 + 空态两腿（现网同款键）。
-  const foot = await page.locator('#mh-search-foot').textContent();
-  expect(foot).toContain('仅检索当前主会话');
-  expect(foot).toContain('无匹配结果');
-  expect(foot).toContain('试试缩短关键词或清除日期/类型筛选');
+  // 说明行已退役（同批作者令）⇒ 顶部只剩一个胶囊：可见标题节点数 = 0（面板内）。
+  const visibleTitles = await page.evaluate(() => [...document.querySelectorAll('#search-modal-title')]
+    .filter((el) => {
+      const b = el.getBoundingClientRect();
+      return getComputedStyle(el).display !== 'none' && b.width > 0 && b.height > 0;
+    }).length);
+  expect(visibleTitles).toBe(0);
   expect(errors).toEqual([]);
 });
 

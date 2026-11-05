@@ -45,7 +45,7 @@ import { escapeHtml } from './utils.js';
  */
 export function toggleHTML(options = {}) {
   const { on = false, label = '', title = '', id = '', disabled = false, attrs = '' } = options;
-  const cls = `nb-toggle${on ? ' on' : ''}${disabled ? ' disabled' : ''}`;
+  const cls = toggleClass(on, disabled);
   return `<button type="button" class="${cls}"${id ? ` id="${escapeHtml(id)}"` : ''}`
     + ` role="switch" aria-checked="${on ? 'true' : 'false'}"`
     + ` aria-label="${escapeHtml(label)}"`
@@ -59,6 +59,38 @@ export function setToggleState(el, on) {
   if (!el) return;
   el.classList.toggle('on', !!on);
   el.setAttribute('aria-checked', on ? 'true' : 'false');
+}
+
+/**
+ * DOM 形态的同一组件（`toggleHTML` 的孪生，**同一属主仍是本文件**）。
+ *
+ * 为什么需要第二个形态（三点入口批 2026-11-05）：组件契约门禁 R5 禁「裸 innerHTML」
+ * ——调用方若只有字符串形态，就只能把字符串直接赋给 innerHTML（= 新增违规）。
+ * 本函数的产出与 `toggleHTML` **逐属性同形**（同一 `nb-toggle` 类、同一 role/aria
+ * 契约、旋钮仍由 CSS `::after` 画），只是走建 DOM 的路；两形态共用一个
+ * `toggleClass()` 拼装点，禁各写一张属性表（防漂移）。
+ *
+ * @param {{ on?: boolean, label?: string, title?: string, id?: string,
+ *            disabled?: boolean }} [options]
+ * @returns {HTMLButtonElement}
+ */
+export function createToggle(options = {}) {
+  const { on = false, label = '', title = '', id = '', disabled = false } = options;
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = toggleClass(on, disabled);
+  if (id) btn.id = id;
+  btn.setAttribute('role', 'switch');
+  btn.setAttribute('aria-checked', on ? 'true' : 'false');
+  btn.setAttribute('aria-label', label);
+  if (title) btn.title = title;
+  if (disabled) btn.disabled = true;
+  return btn;
+}
+
+/** 两形态共用的类名拼装点（唯一）。 */
+function toggleClass(on, disabled) {
+  return `nb-toggle${on ? ' on' : ''}${disabled ? ' disabled' : ''}`;
 }
 
 /** Bound-switch registry — WeakSet instead of expando properties so the

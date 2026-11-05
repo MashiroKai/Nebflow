@@ -354,11 +354,18 @@ export default {
   'contacts.remarkHint': 'Enter 保存 · Esc 取消 · 留空清除备注',
   // ── 件一（2026-11-02）：好友/群 Profile 双描述面 ─────────────────────────
   'profile.open': '查看资料',
-  'profile.friendTitle': '好友资料',
+  'profile.friendTitle': '好友信息',
   'profile.groupTitle': '群资料',
   'profile.close': '关闭',
   'profile.save': '保存',
   'profile.saved': '已保存',
+  // 三点入口批（2026-11-05，作者令「里面……还要有搜索聊天记录……然后就是消息
+  // 免打扰的 toggle，然后就是顶置的 toggle」）：三条新行的文案。
+  //  · searchMessages = 复用主对话同一张搜索面板的入口行；
+  //  · muteLabel / pinLabel = 两个共享开关（nb-toggle）的行标签。
+  'profile.searchMessages': '搜索聊天记录',
+  'profile.muteLabel': '消息免打扰',
+  'profile.pinLabel': '顶置',
   'profile.friendRemarkLabel': '我的备注',
   'profile.friendRemarkPlaceholder': '我给对方起的备注（留空清除）',
   'profile.friendBioLabel': '自我介绍',
@@ -2465,7 +2472,6 @@ export default {
   'search.scopeCurrent': '当前会话',
   'search.scopeAll': '全部会话',
   'search.scopeMain': '主会话',
-  'search.mobileScopeNote': '仅检索当前主会话 · 类型/日期/角色筛选可叠加 · 空态：{empty}——{hint}',
   // === 消息/联系人页展开式搜索（悬浮钮统一+搜索批 2026-10-31 作者令 16:03）===
   'mhsearch.aria': '搜索',
   'mhsearch.placeholder': '搜索聊天记录',

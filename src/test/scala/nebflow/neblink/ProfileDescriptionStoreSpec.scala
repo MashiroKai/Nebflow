@@ -290,8 +290,7 @@ class ProfileDescriptionStoreSpec extends CatsEffectSuite:
       )
   }
 
-  test("D5 好友 remark 走既有 FriendRemarkStore 同一出口：与 bio 同批合并、互不覆盖") {
-    val fs = new FriendService(
+  test("D5 好友 remark 走既有 FriendRemarkStore 同一出口：与 bio 同批合并、互不覆盖") {    val fs = new FriendService(
       IO.pure(Some(upstreamClient)),
       AgentMessagingConfig(),
       remarkRef = Ref.unsafe[IO, Map[String, String]](Map("u-cache" -> "我给对方的备注")),
@@ -312,6 +311,86 @@ class ProfileDescriptionStoreSpec extends CatsEffectSuite:
       val updated = afterRows.getOrElse(fail("listFriends must succeed"))
       assertEquals(updated("u-cache").bio, Some("自我介绍-改"), "改 bio 后回读一致")
       assertEquals(updated("u-cache").remark, Some("我给对方的备注"), "改 bio 不得覆盖 remark")
+  }
+
+  // ── D6 会话级偏好（三点入口批 2026-11-05：消息免打扰 / 顶置）──────────────
+
+  test("D6 muted/pinned：只存 true、false = 删键、落盘与 Ref 同步（重启后仍在）") {
+    val fs = service()
+    for
+      _ <- fs.setFriendMuted("u1", true)
+      _ <- fs.setFriendPinned("u1", true)
+      on <- fs.descriptions
+      diskOn <- ProfileDescriptionStore.load
+      _ <- fs.setFriendMuted("u1", false)
+      off <- fs.descriptions
+      diskOff <- ProfileDescriptionStore.load
+      // 重启等价路径：磁盘 → 新实例的 Ref
+      rebooted = service(diskOff)
+      seen <- rebooted.descriptions
+    yield
+      assertEquals(on.friendMuted, Map("u1" -> true), "开启免打扰必须落 Ref")
+      assertEquals(on.friendPinned, Map("u1" -> true), "开启顶置必须落 Ref")
+      assertEquals(diskOn, on, "两次写入必须落盘（重启后不能丢）")
+      assertEquals(off.friendMuted, Map.empty[String, Boolean], "关闭免打扰 = 删键（不留 false 值）")
+      assertEquals(off.friendPinned, Map("u1" -> true), "关掉免打扰不得连带清掉顶置（两个独立键）")
+      assertEquals(diskOff, off, "删除也必须落盘")
+      assertEquals(seen.friendPinned, Map("u1" -> true), "重启等价路径：磁盘值必须能被新实例读回")
+      assertEquals(seen.friendMuted, Map.empty[String, Boolean], "被清掉的偏好重启后仍是关")
+  }
+
+  test("D6 出站口合并：muted/pinned 恒取本地，且在好友行内嵌档案同源") {
+    val fs = new FriendService(
+      IO.pure(Some(upstreamClient)),
+      AgentMessagingConfig(),
+      descriptionsRef = Ref.unsafe[IO, ProfileDescriptions](
+        ProfileDescriptions(friendMuted = Map("u-cache" -> true), friendPinned = Map("u-up" -> true))
+      )
+    )
+    for
+      out <- fs.listFriends
+      rows <- IO.delay(out.map(_.friends.map(f => f.userId -> f).toMap))
+      _ <- fs.setFriendMuted("u-up", true)
+      after <- fs.listFriends
+      afterRows <- IO.delay(after.map(_.friends.map(f => f.userId -> f).toMap))
+    yield
+      val m = rows.getOrElse(fail("listFriends must succeed"))
+      assertEquals(m("u-cache").muted, Some(true), "免打扰来自本地映射")
+      assertEquals(m("u-cache").pinned, None, "只开了免打扰 ⇒ 顶置为 None（前端读作关）")
+      assertEquals(m("u-up").pinned, Some(true), "顶置来自本地映射")
+      assertEquals(m("u-none").muted, None, "两侧都没有 ⇒ None")
+      val a = afterRows.getOrElse(fail("listFriends must succeed"))
+      assertEquals(a("u-up").muted, Some(true), "写入后回读一致（同一条出站口）")
+      assertEquals(a("u-up").pinned, Some(true), "写 muted 不得覆盖 pinned")
+      assertEquals(a("u-cache").bio, None, "偏好写面不得污染描述字段（friendBio）")
+  }
+
+  test("D6 未知 id 照存（纯本地态，零上游校验；与 D3 同一条纪律）") {
+    val fs = service()
+    for
+      _ <- fs.setFriendMuted("u-not-in-roster", true)
+      _ <- fs.setFriendPinned("u-not-in-roster", true)
+      snap <- fs.descriptions
+      disk <- ProfileDescriptionStore.load
+    yield
+      assertEquals(snap.friendMuted, Map("u-not-in-roster" -> true))
+      assertEquals(snap.friendPinned, Map("u-not-in-roster" -> true))
+      assertEquals(disk, snap)
+  }
+
+  test("D6 旧文件（无 friendMuted/friendPinned 键）逐键缺省：升级不清空既有描述") {
+    for
+      _ <- IO.blocking(os.write.over(
+        descFile,
+        """{"friendBio":{"u1":"我是老林"},"selfBio":"我在写 Nebflow"}""",
+        createFolders = true
+      ))
+      loaded <- ProfileDescriptionStore.load
+    yield assertEquals(
+      loaded,
+      ProfileDescriptions(friendBio = Map("u1" -> "我是老林"), selfBio = "我在写 Nebflow"),
+      "加性两段缺席 ⇒ 空映射；既有四段必须逐字保留"
+    )
   }
 
 end ProfileDescriptionStoreSpec

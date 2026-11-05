@@ -486,7 +486,29 @@ function groupEventText(ev) {
  * `markDeviceConvRead` / 帧处理里开会话的那三处负责（读后同拍 `updateBadge()`）。
  */
 function totalUnread() {
-  return conversations.reduce((s, c) => s + Math.max(0, Math.floor(Number(c && c.unreadCount) || 0)), 0);
+  // 三点入口批（2026-11-05）：消息免打扰的会话**不计入**未读读数（作者令的
+  // 「消息免打扰」在本产品里唯一可观测语义 = 不打扰：列表行徽标与侧栏角标）。
+  return conversations.reduce((s, c) => {
+    if (convMuted(c)) return s;
+    return s + Math.max(0, Math.floor(Number(c && c.unreadCount) || 0));
+  }, 0);
+}
+
+// ── 会话级本地偏好（三点入口批 2026-11-05；真源 = 好友行的 muted/pinned）──
+/** 顶置（`friend.pinned === true`；后端只存 true，关 = 删键 ⇒ 回读 null）。 */
+function convPinned(conv) {
+  return !!(conv && conv.friend && conv.friend.pinned === true);
+}
+/** 消息免打扰（同上形态）；命中 ⇒ 行徽标与未读总数都不再计入该会话。 */
+function convMuted(conv) {
+  return !!(conv && conv.friend && conv.friend.muted === true);
+}
+/** 会话行排序唯一判据：**顶置优先**，组内仍按最后消息时间倒序（既有口径）。 */
+function compareConversations(a, b) {
+  const pa = convPinned(a) ? 1 : 0;
+  const pb = convPinned(b) ? 1 : 0;
+  if (pa !== pb) return pb - pa;
+  return (toEpochMs(b.lastMessage?.createdAt) || 0) - (toEpochMs(a.lastMessage?.createdAt) || 0);
 }
 
 function updateBadge() {
@@ -567,8 +589,9 @@ async function refreshConversations({ friends = 'reuse' } = {}) {
         const prevGroups = conversations.filter(c => c && c.kind === 'group');
         conversations = directNonDevice.concat(prevGroups).concat(devices);
       }
-      conversations = conversations.sort((a, b) =>
-        (toEpochMs(b.lastMessage?.createdAt) || 0) - (toEpochMs(a.lastMessage?.createdAt) || 0));
+      // 三点入口批（2026-11-05）：排序单一判据 = `compareConversations`
+      // （顶置优先 + 组内按最后消息时间倒序），禁第二处各写一套 sort。
+      conversations = conversations.sort(compareConversations);
       // 契约加性 viewer 字段腿：群行行内 selfUserId（§1.1 #2）+ 邀请信封面
       // （refreshGroups 出口，§1.1 #3）—— 在场则直接学习；缺席 ⇒ 无操作，
       // groupSelfUserId 继续走发送关联自证。
@@ -792,7 +815,9 @@ function convRow(conv) {
   meta.appendChild(top);
   const bottom = el('div', 'fm-conv-bottom');
   bottom.appendChild(el('span', 'fm-conv-summary', summaryOf(conv)));
-  if (conv.unreadCount > 0) {
+  // 消息免打扰的会话不弹数字徽标（与 `totalUnread` 同一判据：不打扰 = 不计数、
+  // 不报数；未读量本身仍在 `unreadCount` 里，进会话照旧清零）。
+  if (conv.unreadCount > 0 && !convMuted(conv)) {
     const b = el('span', 'fm-row-badge', conv.unreadCount > 99 ? '99+' : String(conv.unreadCount));
     b.setAttribute('aria-label', t('messages.ariaUnread', { n: conv.unreadCount }));
     bottom.appendChild(b);
@@ -1458,6 +1483,17 @@ function renderChatModal(conv) {
         // ① 查看资料（好友/群）：面本体 = 件一 `profileFace.js` 的**导出函数**
         //   （不另写 Profile 面；动态 import 与群设置抽屉同一纪律 ——
         //    `profileFace` 静态引 `messages.js`（personLabel）⇒ 静态边成环）。
+        //
+        // 🔴 三点入口批（2026-11-05，作者原话「点击右上角那个三个点的按钮。进去
+        //   应该直接就是好友信息的界面。不需要多点击一次」）：**好友会话**的右上
+        //   三点 = **直接开好友信息面**，中间那层「查看资料」菜单**取消**（原实现
+        //   是先弹单条菜单再点一次，= 多一跳）。判据落在 `conv.friend` 分支最前，
+        //   与群的「资料 + 群设置」两项菜单分开：群有第二个目的地（群设置），
+        //   单目的地（好友）才配直开；设备面同理保留既有菜单（入口 = 描述面板）。
+        if (conv.friend && conv.kind !== 'group') {
+          void import('./profileFace.js').then((m) => m.openFriendProfile(conv.friend)).catch(() => {});
+          return;
+        }
         if (conv.kind === 'group') {
           items.push({
             label: t('profile.open'),
@@ -1467,11 +1503,6 @@ function renderChatModal(conv) {
           items.push({
             label: t('messages.groupSettings'),
             onClick: () => { if (groupSettingsMounted) { modalRoot()?.querySelector('.fm-group-settings')?.remove(); groupSettingsMounted = false; } else mountDrawer?.(); },
-          });
-        } else if (conv.friend) {
-          items.push({
-            label: t('profile.open'),
-            onClick: () => { void import('./profileFace.js').then((m) => m.openFriendProfile(conv.friend)).catch(() => {}); },
           });
         } else if (conv.kind === 'device') {
           // 设备无 Profile 面（有据偏离申报）：入口 = 既有设备描述编辑面板
@@ -4805,8 +4836,7 @@ function armOptimisticText(conv, body, list) {
 }
 
 function resortAndRender() {
-  conversations.sort((a, b) =>
-    (toEpochMs(b.lastMessage?.createdAt) || 0) - (toEpochMs(a.lastMessage?.createdAt) || 0));
+  conversations.sort(compareConversations);
   renderList();
 }
 

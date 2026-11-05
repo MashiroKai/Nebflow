@@ -133,6 +133,14 @@ end PeerInfo
  *  的 `friendBio`，见 `nebflow.neblink.ProfileDescriptions`），UI 必须显式标注
  *  「本地缓存·未同步」。加性纪律与 `remark` 逐字同形：形参置末 + 默认值 ⇒ 既有
  *  构造点零改动；Decoder 上游带了就吃，Encoder 恒出该键（`None` ⇒ `null`）。
+ *
+ *  `muted` / `pinned`（2026-11-05「三点按钮直达好友信息」批）：**会话级偏好**——
+ *  `muted` = 消息免打扰（该会话不计入未读角标），`pinned` = 顶置（消息列表置顶）。
+ *  与 `bio` 不同，二者是**纯本地真源**（上游无该字段、且语义上不该跨设备外发）⇒
+ *  落 `profile-descriptions.json` 的 `friendMuted` / `friendPinned`（键 = userId，
+ *  只存 `true`；关闭 = 删键），出站口恒以本地值为准（`FriendService.applyFriendPrefs`
+ *  ——与群 `remark`「恒取本地」同一档）。加性纪律同 `remark`/`bio`：形参置末 +
+ *  默认值，Decoder 不读、Encoder 恒出该键（`None` ⇒ `null`，前端按 null = 关）。
  */
 case class FriendSummary(
   userId: String,
@@ -142,7 +150,9 @@ case class FriendSummary(
   since: Option[Long] = None,
   blocked: Option[Boolean] = None,
   remark: Option[String] = None,
-  bio: Option[String] = None
+  bio: Option[String] = None,
+  muted: Option[Boolean] = None,
+  pinned: Option[Boolean] = None
 )
 
 /**
