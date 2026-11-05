@@ -8,6 +8,7 @@ import nebflow.shared.*
 
 import java.net.InetSocketAddress
 import java.nio.charset.StandardCharsets
+import java.nio.file.Files
 import java.util.concurrent.atomic.AtomicInteger
 import scala.concurrent.duration.*
 
@@ -31,6 +32,22 @@ import scala.concurrent.duration.*
  * 端口独立（18573/18575 / 18577/18579/18581），收尾自清（guarantee 停 server）。
  */
 class QuotaChainSwitchSpec extends CatsEffectSuite:
+
+  // ── B2 隔离（回归修复 2026-11-05：T2 红 = T1 配额避让窗写穿进真实库后水合回填）──
+  // createLlm 内部构造 ProviderHealthMonitor(registry)（db=None）⇒ 走
+  // `db.orElse(DbHost.peek(PathUtil.dataRoot))` 兜底——测试 JVM 里他套件的生产
+  // 接线已把真实根 memoize 进 DbHost ⇒ peek 命中 ⇒ T1 的 qa/m1 避让窗写穿进真实
+  // guard/provider-avoid.json，T2 新 monitor 水合回填 ⇒ qa 预避让被跳过（:262 红）。
+  // createLlm 无 db 注入缝且本轮零生产改动 ⇒ 套件级换根（agent 域 prevRoot 既有
+  // 惯例）：全程把 PathUtil.dataRoot 钉在临时根，peek 解析到无人开过的临时根 ⇒
+  // None ⇒ 纯内存（= B2 前本套件形态），真实库零触达。
+  private var savedDataRoot: Option[os.Path] = None
+
+  override def beforeAll(): Unit =
+    savedDataRoot = Some(PathUtil.dataRoot)
+    PathUtil.setDataRoot(os.Path(Files.createTempDirectory("quota-chain-spec"), os.pwd))
+
+  override def afterAll(): Unit = savedDataRoot.foreach(PathUtil.setDataRoot)
 
   // 红腿需吃满退避(60s) + 全灭闸预算(120s)；绿腿毫秒级完成（此为上限，非常态耗时）
   override val munitIOTimeout = 300.seconds
