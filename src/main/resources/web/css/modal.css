@@ -229,12 +229,12 @@
 /* ── Confirm button (main modal — 墨族主操作，2026-10-30 按钮体系批：绿实心底
    退役，hover 绿 glow 改中性抬升影，token 单源随面板主题 ink-swap) ───────── */
 #modal-confirm {
-  padding: var(--ds-space-2) 18px;
+  padding: var(--ds-space-2) var(--ds-space-5);
   border: none;
   border-radius: var(--ds-radius-button);
   background: var(--btn-primary-bg);
   color: var(--btn-primary-ink);
-  font-size: 14px;
+  font-size: var(--ds-fs-subtitle);
   cursor: pointer;
   font-family: inherit;
   transition: background 0.15s, box-shadow 0.2s;
@@ -267,15 +267,15 @@
   width: 340px;
 }
 #modal-title {
-  font-size: var(--ds-fs-mobile-callout);
+  font-size: var(--ds-fs-callout);
   font-weight: 600;
   color: var(--color-frame-text-bright);
   margin-bottom: var(--ds-space-4);
 }
 #modal-input {
   border-radius: var(--ds-radius-xl);
-  padding: var(--ds-space-glass-x) 14px;
-  font-size: 14px;
+  padding: var(--ds-space-block-y) 14px;
+  font-size: var(--ds-fs-subtitle);
   font-family: inherit;
 }
 #modal-actions {
@@ -285,9 +285,9 @@
   justify-content: flex-end;
 }
 #modal-cancel {
-  padding: var(--ds-space-2) 18px;
+  padding: var(--ds-space-2) var(--ds-space-5);
   border-radius: var(--ds-radius-button);
-  font-size: 14px;
+  font-size: var(--ds-fs-subtitle);
 }
 
 /* ---------- Delete Session Modal ---------- */
@@ -297,13 +297,13 @@
   display: none;
 }
 #delete-title {
-  font-size: var(--ds-fs-mobile-callout);
+  font-size: var(--ds-fs-callout);
   font-weight: 600;
   color: var(--color-frame-text-bright);
   margin-bottom: var(--ds-space-3);
 }
 #delete-msg {
-  font-size: 14px;
+  font-size: var(--ds-fs-subtitle);
   color: var(--color-frame-text-muted);
   line-height: 1.5;
   margin-bottom: var(--ds-space-4);
@@ -314,14 +314,14 @@
   justify-content: flex-end;
 }
 #delete-cancel {
-  padding: var(--ds-space-2) 18px;
+  padding: var(--ds-space-2) var(--ds-space-5);
   border-radius: var(--ds-radius-button);
-  font-size: 14px;
+  font-size: var(--ds-fs-subtitle);
 }
 #delete-confirm {
-  padding: var(--ds-space-2) 18px;
+  padding: var(--ds-space-2) var(--ds-space-5);
   border-radius: var(--ds-radius-button);
-  font-size: 14px;
+  font-size: var(--ds-fs-subtitle);
 }
 
 /* ---------- Drop Conflict Dialog ---------- */
@@ -331,13 +331,13 @@
   display: none;
 }
 #conflict-title {
-  font-size: var(--ds-fs-mobile-callout);
+  font-size: var(--ds-fs-callout);
   font-weight: 600;
   color: var(--color-frame-text-bright);
   margin-bottom: var(--ds-space-3);
 }
 #conflict-msg {
-  font-size: 14px;
+  font-size: var(--ds-fs-subtitle);
   color: var(--color-frame-text-muted);
   line-height: 1.5;
   margin-bottom: var(--ds-space-4);
@@ -351,9 +351,9 @@
 #conflict-cancel,
 #conflict-keep-both,
 #conflict-replace {
-  padding: var(--ds-space-2) 18px;
+  padding: var(--ds-space-2) var(--ds-space-5);
   border-radius: var(--ds-radius-button);
-  font-size: 14px;
+  font-size: var(--ds-fs-subtitle);
 }
 
 /* ---------- Console Takeover Modal（控制台单实例批 2026-10-27；四修批
@@ -405,7 +405,7 @@
 .merged-tabs {
   display: flex;
   gap: var(--ds-space-half);
-  margin-bottom: var(--ds-space-glass-x);
+  margin-bottom: var(--ds-space-stack-gap);
   border-bottom: 1px solid var(--glass-border);
 }
 .merged-tab {
@@ -462,7 +462,7 @@
 #memory-modal-body {
   display: flex;
   flex-direction: column;
-  gap: var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
 }
 #memory-modal-actions {
   display: flex;
@@ -487,7 +487,7 @@
 #rules-modal-body {
   display: flex;
   flex-direction: column;
-  gap: var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
 }
 #rules-modal-actions {
   display: flex;
@@ -659,7 +659,7 @@
   position: relative;
   background: transparent;
   border: none;
-  padding: 0 var(--ds-space-glass-x);
+  padding: 0 var(--ds-space-inline-x);
   font-family: inherit;
   font-size: var(--ds-fs-hint);
   font-weight: 400;
@@ -678,7 +678,7 @@
   position: absolute;
   left: 8px; right: 8px; bottom: 0;
   height: 2px;
-  border-radius: 1px;
+  border-radius: var(--ds-radius-thin);
   background: rgba(91, 127, 191, 0.8);
   transform: scaleX(0);
   transition: transform 0.15s ease-out;
@@ -804,7 +804,7 @@
   text-align: center;
   background: transparent;
   border: none;
-  padding: var(--ds-space-1) var(--ds-space-glass-x);
+  padding: var(--ds-space-1) var(--ds-space-inline-x);
   font-size: var(--ds-fs-hint);
   font-family: inherit;
   color: var(--color-frame-text);
@@ -820,7 +820,7 @@
 }
 .cal-weekdays span {
   text-align: center;
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   font-weight: 400;
   color: var(--color-frame-text-muted);
   line-height: 22px;
@@ -864,7 +864,7 @@
   display: flex;
   align-items: center;
   gap: var(--ds-space-2);
-  margin-top: var(--ds-space-glass-x);
+  margin-top: var(--ds-space-stack-gap);
 }
 .cal-clear {
   background: transparent;
@@ -901,7 +901,7 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--ds-space-1) var(--ds-space-glass-x) var(--ds-space-3);
+  padding: var(--ds-space-1) var(--ds-space-inline-x) var(--ds-space-3);
   scrollbar-color: var(--color-frame-border) transparent;
 }
 .search-hint {
@@ -911,7 +911,7 @@
   color: var(--color-frame-text-muted);
 }
 .search-result {
-  padding: var(--ds-space-2) var(--ds-space-glass-x);
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
   border-radius: var(--ds-radius-button);
   cursor: pointer;
   transition: background 0.12s;
@@ -921,7 +921,7 @@
   display: flex;
   align-items: center;
   gap: var(--ds-space-2);
-  margin-bottom: 3px;
+  margin-bottom: var(--ds-space-1);
 }
 .search-result-session {
   font-size: var(--ds-fs-hint);
@@ -933,14 +933,14 @@
   max-width: 40%;
 }
 .search-result-type {
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.4px;
   color: rgb(91, 127, 191);
   background: rgba(91, 127, 191, 0.08);
-  border-radius: 5px;
-  padding: 1px var(--ds-space-1h);
+  border-radius: var(--ds-radius-chip);
+  padding: var(--ds-space-hair) var(--ds-space-1h);
   flex-shrink: 0;
 }
 /* 作者令②（2026-10-30）：结果列表用户/AI 异色——token 见 base.css
@@ -967,7 +967,7 @@
    badge hints at the open-in-Canvas affordance. */
 .search-result[data-artifact="1"] .search-result-type::after {
   content: '↗';
-  margin-left: 5px;
+  margin-left: var(--ds-space-1h);
   opacity: 0.65;
   font-size: var(--ds-fs-meta);
 }
@@ -984,8 +984,8 @@
 .search-result-preview mark {
   background: rgba(91, 127, 191, 0.28);
   color: inherit;
-  border-radius: 3px;
-  padding: 0 1px;
+  border-radius: var(--ds-radius-badge);
+  padding: 0 var(--ds-space-hair);
 }
 
 /* Group header — session name + hit count (scope=all only).
@@ -994,7 +994,7 @@
   display: flex;
   align-items: baseline;
   gap: var(--ds-space-1h);
-  padding: var(--ds-space-glass-x) var(--ds-space-glass-x) var(--ds-space-half);
+  padding: var(--ds-space-block-y) var(--ds-space-inline-x) var(--ds-space-half);
   font-size: var(--ds-fs-meta);
   color: var(--color-frame-text-muted);
 }
@@ -1035,7 +1035,7 @@
   border: 1px solid color-mix(in srgb, var(--status-error-icon) 26%, transparent);
   border-left: 2px solid var(--status-error-icon);
 }
-.search-result-card-warn .st-ic { width: 12px; height: 12px; margin: 1px var(--ds-space-1h) 0 0; flex-shrink: 0; }
+.search-result-card-warn .st-ic { width: 12px; height: 12px; margin: var(--ds-space-hair) var(--ds-space-1h) 0 0; flex-shrink: 0; }
 
 /* Inline retry button in the status line (error state). */
 #search-status .cfg-btn { margin-left: var(--ds-space-2); }
@@ -1115,7 +1115,7 @@
    token（暗档随 token 提亮）。 */
 .nebflow-toast-icon {
   margin-right: var(--ds-space-2);
-  font-size: 14px;
+  font-size: var(--ds-fs-subtitle);
   font-weight: 600;
   line-height: 1;
   display: inline-flex;
@@ -1128,8 +1128,8 @@
 .nebflow-toast-success .nebflow-toast-icon { color: var(--status-success-icon); }
 .nebflow-toast-link {
   display: inline-block;
-  margin-left: var(--ds-space-glass-x);
-  padding: 3px var(--ds-space-glass-x);
+  margin-left: var(--ds-space-indent-x);
+  padding: var(--ds-space-1) var(--ds-space-inline-x);
   font-size: var(--ds-fs-hint);
   color: var(--color-text);
   text-decoration: none;
@@ -1163,9 +1163,9 @@
   color: var(--color-text);
 }
 .onboarding-sub {
-  font-size: 14px;
+  font-size: var(--ds-fs-subtitle);
   color: var(--color-text-muted);
-  margin-top: var(--ds-space-glass-x);
+  margin-top: var(--ds-space-stack-gap);
   line-height: 1.6;
 }
 /* ui-status-redesign（盘点 #37，S9 同族·CSS-only 限界）：13px 红字 → 中性正文，
@@ -1176,7 +1176,7 @@
   color: var(--status-word);
   margin-top: var(--ds-space-3);
   word-break: break-word;
-  padding: var(--ds-space-1h) var(--ds-space-glass-x);
+  padding: var(--ds-space-1h) var(--ds-space-inline-x);
   border-radius: var(--ds-radius-input);
   background: color-mix(in srgb, var(--status-error-icon) 8%, transparent);
   border-left: 2px solid var(--status-error-icon);
@@ -1188,7 +1188,7 @@
 }
 .onboarding-actions {
   display: flex;
-  gap: var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
   justify-content: center;
   margin-top: var(--ds-space-6);
 }
@@ -1233,8 +1233,8 @@
   border: none;
   background: transparent;
   color: var(--color-text-muted);
-  font: 500 12px -apple-system, sans-serif;
-  padding: var(--ds-space-1) var(--ds-space-glass-x);
+  font: 500 var(--ds-fs-btn) -apple-system, sans-serif;
+  padding: var(--ds-space-1) var(--ds-space-inline-x);
   border-radius: var(--ds-radius-chip);
   cursor: pointer;
   transition: background 0.15s, color 0.15s, box-shadow 0.15s;
@@ -1254,12 +1254,12 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
   padding: 56px var(--ds-space-6);
   text-align: center;
 }
 .mp-load-error-icon { color: var(--color-text-muted); }
-.mp-load-error-title { font-size: 14px; font-weight: 600; color: var(--color-text); }
+.mp-load-error-title { font-size: var(--ds-fs-subtitle); font-weight: 600; color: var(--color-text); }
 .mp-load-error-hint { font-size: var(--ds-fs-hint); color: var(--color-text-muted); max-width: 360px; }
 .mp-load-error-retry { margin-top: var(--ds-space-1); }
 .mp-close { flex-shrink: 0; }
@@ -1273,14 +1273,14 @@
   border-bottom: 1px solid var(--glass-border);
 }
 .mp-banner-text {
-  font: 400 12px -apple-system, sans-serif;
+  font: 400 var(--ds-fs-hint) -apple-system, sans-serif;
   color: var(--color-text-muted);
 }
 .mp-banner-view { margin-left: auto; }
 .mp-body {
   display: flex;
   flex-direction: column;
-  gap: var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
   padding: var(--ds-space-3) var(--ds-space-4) var(--ds-space-4);
   overflow-y: auto;
 }
@@ -1344,7 +1344,7 @@
 }
 .mp-role-head-toggle:hover { background: var(--color-frame-hover); }
 .mp-role-name {
-  font: 600 13px -apple-system, sans-serif;
+  font: 600 var(--ds-fs-body) -apple-system, sans-serif;
   color: var(--color-text);
 }
 .mp-chev {
@@ -1355,7 +1355,7 @@
 .mp-chev.open { transform: rotate(180deg); }
 .mp-head-preview {
   margin-left: auto;
-  font: 400 11px ui-monospace, SFMono-Regular, monospace;
+  font: 400 var(--ds-fs-meta) ui-monospace, SFMono-Regular, monospace;
   color: var(--color-text-muted);
   white-space: nowrap;
   overflow: hidden;
@@ -1363,11 +1363,11 @@
   max-width: 50%;
 }
 .mp-status {
-  font: 500 10px -apple-system, sans-serif;
+  font: 500 var(--ds-fs-meta) -apple-system, sans-serif;
   color: var(--color-text-muted);
   background: rgba(128, 128, 128, 0.12);
-  border-radius: 3px;
-  padding: 1px 5px;
+  border-radius: var(--ds-radius-badge);
+  padding: var(--ds-space-hair) var(--ds-space-1h);
   flex-shrink: 0;
 }
 .mp-status-main {
@@ -1383,10 +1383,10 @@
   display: flex;
   flex-direction: column;
   gap: var(--ds-space-1h);
-  padding: 0 var(--ds-space-3) var(--ds-space-glass-x);
+  padding: 0 var(--ds-space-3) var(--ds-space-block-y);
 }
 .mp-note {
-  font: 400 11.5px -apple-system, sans-serif;
+  font: 400 var(--ds-fs-hint) -apple-system, sans-serif;
   color: var(--color-text-muted);
 }
 .mp-followers-label { font-weight: 500; }
@@ -1412,20 +1412,20 @@
 }
 /* 时段闸（model-schedule-unavailable 批 2026-10-29）：链行尾的窗口小注。 */
 .mp-window {
-  font: 400 10px ui-monospace, SFMono-Regular, monospace;
+  font: 400 var(--ds-fs-meta) ui-monospace, SFMono-Regular, monospace;
   color: var(--color-text-muted);
   flex-shrink: 0;
 }
 .mp-prov {
-  font: 500 10px -apple-system, sans-serif;
+  font: 500 var(--ds-fs-meta) -apple-system, sans-serif;
   color: var(--color-text-muted);
   background: rgba(128, 128, 128, 0.12);
   border-radius: var(--ds-radius-badge);
-  padding: 1px var(--ds-space-1h);
+  padding: var(--ds-space-hair) var(--ds-space-1h);
   flex-shrink: 0;
 }
 .mp-model {
-  font: 500 12px ui-monospace, SFMono-Regular, monospace;
+  font: 500 var(--ds-fs-hint) ui-monospace, SFMono-Regular, monospace;
   color: var(--color-text);
   flex: 1;
   min-width: 0;
@@ -1434,7 +1434,7 @@
   text-overflow: ellipsis;
 }
 .mp-pos {
-  font: 500 10px -apple-system, sans-serif;
+  font: 500 var(--ds-fs-meta) -apple-system, sans-serif;
   color: var(--color-text-muted);
   flex-shrink: 0;
 }
@@ -1453,7 +1453,7 @@
   border-radius: var(--ds-radius-input);
   background: rgba(0, 0, 0, 0.02);
   color: var(--color-text);
-  font: 500 11px -apple-system, sans-serif;
+  font: 500 var(--ds-fs-meta) -apple-system, sans-serif;
   padding: 0 var(--ds-space-2);
   cursor: pointer;
   outline: none;
@@ -1464,7 +1464,7 @@
    circle-alert 红图标（modelPanel.js 注入）。 */
 .mp-inline-err {
   display: none;
-  font: 400 11.5px -apple-system, sans-serif;
+  font: 400 var(--ds-fs-hint) -apple-system, sans-serif;
   color: var(--status-word);
 }
 .mp-inline-err .st-ic { width: 12px; height: 12px; margin-right: var(--ds-space-1); vertical-align: -2px; }
@@ -1475,4 +1475,78 @@
 @media (prefers-reduced-motion: reduce) {
   .mp-chev { transition: none; }
   .mp-mode-btn { transition: none; }
+}
+
+/* ── Jev / 生图 切换分组（jev-imagegen-align-llm 批 2026-11-02，契约 §E.4）──
+   /model 面板与设置页节共用同一份 DOM 产出（modelPanel.js renderSwitchGroups）；
+   新 class 全在 `.mp-group` 命名空间下（**绝不用** .mp-roleblock —— degraded
+   spec 钉其计数恒为 2）。零新字面量色值：全走既有 token。 */
+.mp-group-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+.mp-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-frame-input-bg);
+}
+.mp-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: 600 var(--ds-fs-hint) -apple-system, sans-serif;
+  color: var(--color-text);
+  list-style: none;
+  cursor: pointer;
+}
+/* <summary> 的原生三角收起（折叠形态仍可点击/键盘展开）。 */
+.mp-group-head::-webkit-details-marker { display: none; }
+div.mp-group > .mp-group-head { cursor: default; }
+.mp-group-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mp-group-cur {
+  font: 500 var(--ds-fs-meta) -apple-system, sans-serif;
+  color: var(--color-text-muted);
+}
+.mp-group-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.mp-group-hint {
+  font: 400 var(--ds-fs-meta) -apple-system, sans-serif;
+  color: var(--color-text-muted);
+}
+.mp-group-empty {
+  font: 400 var(--ds-fs-hint) -apple-system, sans-serif;
+  color: var(--status-word);
+}
+.mp-group-switch {
+  width: 100%;
+  height: 28px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: 500 var(--ds-fs-meta) -apple-system, sans-serif;
+  padding: 0 8px;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.mp-group-switch:focus { border-color: rgb(var(--sapphire) / 0.4); }
+.mp-group-switch:disabled { opacity: 0.55; cursor: default; }
+@media (prefers-reduced-motion: reduce) {
+  .mp-group-switch { transition: none; }
 }

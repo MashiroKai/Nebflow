@@ -151,9 +151,9 @@ function showBanner(source) {
   bar.setAttribute('role', 'alert');
   bar.style.cssText =
     'position:fixed;left:50%;transform:translateX(-50%);bottom:24px;z-index:2147483647;' +
-    'display:flex;align-items:center;gap:var(--ds-space-2);max-width:92vw;padding:var(--ds-space-glass-x) var(--ds-space-4);' +
+    'display:flex;align-items:center;gap:var(--ds-space-2);max-width:92vw;padding:var(--ds-space-block-y) var(--ds-space-4);' +
     'border-radius:var(--ds-radius-xl);background:rgba(28,30,38,0.92);color:#f4f5f7;' +
-    "font:13px/1.5 -apple-system,'Segoe UI',sans-serif;" +
+    "font:var(--ds-fs-body)/1.5 -apple-system,'Segoe UI',sans-serif;" +
     'box-shadow:0 6px 24px rgba(0,0,0,0.28);border:1px solid rgba(255,255,255,0.12);' +
     'backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);';
   const glyph = document.createElement('span');

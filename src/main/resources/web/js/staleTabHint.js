@@ -23,10 +23,10 @@ export function showStaleTabHint() {
   bar.id = 'stale-tab-hint';
   bar.setAttribute('style', [
     'position:fixed', 'top:10px', 'left:50%', 'transform:translateX(-50%)',
-    'z-index:2147483000', 'display:flex', 'align-items:center', 'gap:var(--ds-space-glass-x)',
-    'padding:9px var(--ds-space-3) 9px var(--ds-space-4)', 'border-radius:var(--ds-radius-xl)',
+    'z-index:2147483000', 'display:flex', 'align-items:center', 'gap:var(--ds-space-inline-gap)',
+    'padding:var(--ds-space-2) var(--ds-space-3) var(--ds-space-2) var(--ds-space-4)', 'border-radius:var(--ds-radius-xl)',
     'background:rgba(28,30,38,0.92)', 'color:#f4f5f7',
-    'font:13px/1.4 -apple-system,"Segoe UI",sans-serif',
+    'font:var(--ds-fs-body)/1.4 -apple-system,"Segoe UI",sans-serif',
     'box-shadow:0 6px 24px rgba(0,0,0,0.28)',
     'backdrop-filter:blur(8px)', '-webkit-backdrop-filter:blur(8px)',
     'border:1px solid rgba(255,255,255,0.12)',
@@ -41,7 +41,7 @@ export function showStaleTabHint() {
   btn.textContent = '刷新页面';
   btn.setAttribute('style', [
     'flex:0 0 auto', 'border:none', 'border-radius:var(--ds-radius-input)', 'padding:var(--ds-space-1h) 14px',
-    'background:#4f7cff', 'color:#fff', 'font:600 13px/1 -apple-system,"Segoe UI",sans-serif',
+    'background:#4f7cff', 'color:#fff', 'font:600 var(--ds-fs-body)/1 -apple-system,"Segoe UI",sans-serif',
     'cursor:pointer',
   ].join(';'));
   btn.addEventListener('click', () => location.reload());
@@ -51,7 +51,7 @@ export function showStaleTabHint() {
   close.setAttribute('aria-label', '关闭提示');
   close.setAttribute('style', [
     'flex:0 0 auto', 'border:none', 'background:transparent', 'color:#9aa0ab',
-    'font:16px/1 sans-serif', 'cursor:pointer', 'padding:var(--ds-space-half) var(--ds-space-1)',
+    'font:var(--ds-fs-callout)/1 sans-serif', 'cursor:pointer', 'padding:var(--ds-space-half) var(--ds-space-1)',
   ].join(';'));
   close.addEventListener('click', () => bar.remove());
 

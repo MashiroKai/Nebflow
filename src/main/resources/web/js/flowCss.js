@@ -38,7 +38,7 @@ export const FLOW_CSS = `
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
 }
 .team-card-title {
-  font: 600 13px -apple-system, sans-serif; color: var(--color-text);
+  font: 600 var(--ds-fs-body) -apple-system, sans-serif; color: var(--color-text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   cursor: pointer; transition: color 0.15s;
 }
@@ -47,9 +47,9 @@ export const FLOW_CSS = `
 .team-act-btn {
   position: relative;
   width: 26px; height: 26px; border: 1px solid transparent; background: transparent;
-  border-radius: 7px; color: var(--color-text-muted); cursor: pointer;
+  border-radius: var(--ds-radius-input); color: var(--color-text-muted); cursor: pointer;
   display: flex; align-items: center; justify-content: center;
-  font: 600 13px -apple-system, sans-serif;
+  font: 600 var(--ds-fs-body) -apple-system, sans-serif;
   transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
 .team-act-btn svg { width: 15px; height: 15px; }
@@ -57,7 +57,7 @@ export const FLOW_CSS = `
 .team-mail-badge {
   position: absolute; top: -5px; right: -5px; min-width: 15px; height: 15px;
   padding: 0 var(--ds-space-1); border-radius: var(--ds-radius-input); background: var(--color-primary, #07c160);
-  color: #fff; font: 600 9px/15px -apple-system, sans-serif; text-align: center;
+  color: #fff; font: 600 var(--ds-fs-meta)/var(--ds-fs-title) -apple-system, sans-serif; text-align: center;
   box-shadow: 0 0 0 2px var(--color-surface); pointer-events: none;
 }
 .team-act-btn:hover {
@@ -71,8 +71,8 @@ export const FLOW_CSS = `
   color: var(--color-text);
 }
 .team-card-summary {
-  font: 500 11px -apple-system, sans-serif; color: var(--color-text-muted);
-  flex-shrink: 0; margin-left: auto; display: flex; align-items: center; gap: 5px;
+  font: 500 var(--ds-fs-meta) -apple-system, sans-serif; color: var(--color-text-muted);
+  flex-shrink: 0; margin-left: auto; display: flex; align-items: center; gap: var(--ds-space-1);
 }
 .team-card-summary .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--color-text-muted); opacity: 0.4; }
 .team-card-summary.running .dot { background: var(--color-primary, #07c160); opacity: 1; animation: flow-pulse 1.6s ease-out infinite; }
@@ -81,7 +81,7 @@ export const FLOW_CSS = `
 .team-agents { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: var(--ds-space-2); padding: 14px; }
 .team-tile {
   display: flex; flex-direction: column; align-items: center; gap: var(--ds-space-1h);
-  padding: var(--ds-space-3) var(--ds-space-2); border-radius: 11px; border: 1px solid var(--glass-border);
+  padding: var(--ds-space-3) var(--ds-space-2); border-radius: var(--ds-radius-xl); border: 1px solid var(--glass-border);
   background: var(--color-surface); cursor: pointer; text-align: center;
   transition: border-color 0.15s, box-shadow 0.15s, background 0.15s; min-width: 0;
 }
@@ -92,17 +92,17 @@ export const FLOW_CSS = `
 
 .team-flow-tags { display: flex; flex-wrap: wrap; gap: var(--ds-space-1h); padding: 0 14px 14px; }
 .team-flow-tag {
-  font: 500 11px -apple-system, sans-serif; color: var(--color-primary, #07c160);
-  padding: 3px var(--ds-space-glass-x); border-radius: var(--ds-radius-shell); border: 1px solid var(--color-primary, #07c160);
+  font: 500 var(--ds-fs-meta) -apple-system, sans-serif; color: var(--color-primary, #07c160);
+  padding: var(--ds-space-1) var(--ds-space-inline-x); border-radius: var(--ds-radius-shell); border: 1px solid var(--color-primary, #07c160);
   opacity: 0.7; cursor: pointer; transition: opacity 0.15s, background 0.15s; white-space: nowrap;
 }
 .team-flow-tag:hover { opacity: 1; background: rgba(7,193,96,0.08); }
 .team-tile.mail-flash .team-tile-dot { background: var(--color-primary, #07c160); opacity: 1; transition: none; }
-.team-tile-name { font: 600 12px -apple-system, sans-serif; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
-.team-tile-role { font: 400 10px -apple-system, sans-serif; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.team-tile-name { font: 600 var(--ds-fs-hint) -apple-system, sans-serif; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.team-tile-role { font: 400 var(--ds-fs-meta) -apple-system, sans-serif; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
 
 .team-empty { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; min-height: 240px; flex-direction: column; gap: var(--ds-space-2); }
-.team-empty .hint { font: 400 11px -apple-system, sans-serif; color: var(--color-text-muted); opacity: 0.6; }
+.team-empty .hint { font: 400 var(--ds-fs-meta) -apple-system, sans-serif; color: var(--color-text-muted); opacity: 0.6; }
 /* 空态 CTA（方向 B 一键引导）——**只给布局与排版**：材质（fill/blur/边框/阴影/字色/四态）
    一律继承现行单源 .glass-control（sapphire.css:147 基类 + button.glass-control 四态），
    本文件刻意不声明任何背景/边框/阴影/颜色属性（避免以 class 特异性压过单源 ink）。
@@ -110,12 +110,12 @@ export const FLOW_CSS = `
 .team-empty .team-empty-cta {
   display: inline-flex; align-items: center; gap: var(--ds-space-1h);
   height: 32px; padding: 0 var(--ds-space-4); border-radius: var(--ds-radius-button); margin-top: var(--ds-space-1);
-  font: 500 12.5px -apple-system, sans-serif;
+  font: 500 var(--ds-fs-btn) -apple-system, sans-serif;
 }
 .team-empty .team-empty-cta svg { width: 14px; height: 14px; }
 .team-empty .team-empty-cta-note { max-width: 320px; text-align: center; }
 .dag-empty { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; min-height: 240px; flex-direction: column; gap: var(--ds-space-2); }
-.dag-empty .hint { font: 400 11px -apple-system, sans-serif; color: var(--color-text-muted); opacity: 0.6; }
+.dag-empty .hint { font: 400 var(--ds-fs-meta) -apple-system, sans-serif; color: var(--color-text-muted); opacity: 0.6; }
 
 /* DAG flow card */
 .dag-card {
@@ -126,8 +126,8 @@ export const FLOW_CSS = `
   overflow: hidden; display: flex; flex-direction: column;
 }
 .dag-card-header { display: flex; align-items: center; gap: var(--ds-space-2); padding: var(--ds-space-3) 14px; border-bottom: 1px solid var(--glass-border); background: var(--glass-bg); -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15); backdrop-filter: blur(var(--glass-blur)) saturate(1.15); }
-.dag-card-title { font: 600 13px -apple-system, sans-serif; color: var(--color-text); }
-.dag-card-status { font: 500 11px -apple-system, sans-serif; color: var(--color-text-muted); margin-left: auto; display: flex; align-items: center; gap: 5px; }
+.dag-card-title { font: 600 var(--ds-fs-body) -apple-system, sans-serif; color: var(--color-text); }
+.dag-card-status { font: 500 var(--ds-fs-meta) -apple-system, sans-serif; color: var(--color-text-muted); margin-left: auto; display: flex; align-items: center; gap: var(--ds-space-1); }
 .dag-card-status .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--color-text-muted); opacity: 0.4; }
 .dag-card-status.running .dot { background: var(--color-primary, #07c160); opacity: 1; animation: flow-pulse 1.6s ease-out infinite; }
 .dag-card-status.completed .dot { background: #4caf50; opacity: 1; }
@@ -138,24 +138,24 @@ export const FLOW_CSS = `
    （图案载体）+ hover 时刻整钮转红（交互红保留，铁律三）。 */
 .dag-card-cancel {
   margin: 0 14px 14px; align-self: flex-start;
-  font: 600 11px -apple-system, sans-serif; color: var(--status-word);
+  font: 600 var(--ds-fs-meta) -apple-system, sans-serif; color: var(--status-word);
   background: transparent; border: 1px solid color-mix(in srgb, var(--status-error-icon) 40%, transparent);
-  border-radius: var(--ds-radius-input); padding: 5px 14px; cursor: pointer;
+  border-radius: var(--ds-radius-input); padding: var(--ds-space-1h) 14px; cursor: pointer;
   transition: background 0.15s, opacity 0.15s;
 }
 .dag-card-cancel:hover { background: color-mix(in srgb, var(--status-error-icon) 8%, transparent); color: var(--status-error-icon); }
 .dag-card-cancel:disabled { opacity: 0.5; cursor: default; }
 .dag-card-close {
   margin: 0 14px 14px; align-self: flex-start;
-  font: 600 11px -apple-system, sans-serif; color: var(--color-text);
+  font: 600 var(--ds-fs-meta) -apple-system, sans-serif; color: var(--color-text);
   background: transparent; border: 1px solid var(--glass-border);
-  border-radius: var(--ds-radius-input); padding: 5px 14px; cursor: pointer;
+  border-radius: var(--ds-radius-input); padding: var(--ds-space-1h) 14px; cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
 }
 .dag-card-close:hover { background: var(--glass-control-bg-hover); border-color: var(--color-primary, #07c160); }
-.dag-card-desc { font: 400 11px -apple-system, sans-serif; color: var(--color-text-muted); padding: var(--ds-space-glass-x) 14px 0; }
+.dag-card-desc { font: 400 var(--ds-fs-meta) -apple-system, sans-serif; color: var(--color-text-muted); padding: var(--ds-space-block-y) 14px 0; }
 .dag-nodes { padding: 14px; display: flex; flex-direction: column; align-items: center; gap: 0; }
-.dag-node { display: flex; align-items: center; gap: var(--ds-space-glass-x); padding: var(--ds-space-glass-x) var(--ds-space-4); border-radius: var(--ds-radius-xl); border: 1.5px solid var(--glass-border); background: var(--color-surface); cursor: pointer; transition: border-color 0.15s, box-shadow 0.15s; min-width: 180px; position: relative; }
+.dag-node { display: flex; align-items: center; gap: var(--ds-space-inline-gap); padding: var(--ds-space-block-y) var(--ds-space-4); border-radius: var(--ds-radius-xl); border: 1.5px solid var(--glass-border); background: var(--color-surface); cursor: pointer; transition: border-color 0.15s, box-shadow 0.15s; min-width: 180px; position: relative; }
 .dag-node:hover { border-color: var(--color-primary, #07c160); box-shadow: 0 0 0 3px rgba(7,193,96,0.10); }
 .dag-node.pending { opacity: 0.5; }
 .dag-node.running { border-color: var(--color-primary, #07c160); box-shadow: 0 0 0 3px rgba(7,193,96,0.10); }
@@ -166,55 +166,55 @@ export const FLOW_CSS = `
 .dag-node.completed .dag-node-dot { background: #4caf50; opacity: 1; }
 .dag-node.failed .dag-node-dot { background: var(--status-error-icon); opacity: 1; } /* ui-status-redesign #23 token */
 .dag-node-info { display: flex; flex-direction: column; gap: var(--ds-space-half); min-width: 0; }
-.dag-node-id { font: 600 12px -apple-system, sans-serif; color: var(--color-text); }
-.dag-node-agent { font: 400 10px -apple-system, sans-serif; color: var(--color-text-muted); }
-.dag-node-output { font: 400 10px ui-monospace, SFMono-Regular, monospace; color: var(--color-text-muted); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: var(--ds-space-half); }
+.dag-node-id { font: 600 var(--ds-fs-hint) -apple-system, sans-serif; color: var(--color-text); }
+.dag-node-agent { font: 400 var(--ds-fs-meta) -apple-system, sans-serif; color: var(--color-text-muted); }
+.dag-node-output { font: 400 var(--ds-fs-meta) ui-monospace, SFMono-Regular, monospace; color: var(--color-text-muted); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: var(--ds-space-half); }
 .dag-edge { width: 2px; height: 20px; background: var(--glass-border); margin: 0 auto; position: relative; }
-.dag-edge-label { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); font: 400 9px -apple-system, sans-serif; color: var(--color-text-muted); background: var(--color-surface); padding: 1px 5px; border-radius: var(--ds-radius-badge); white-space: nowrap; }
+.dag-edge-label { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); font: 400 var(--ds-fs-meta) -apple-system, sans-serif; color: var(--color-text-muted); background: var(--color-surface); padding: var(--ds-space-hair) var(--ds-space-1h); border-radius: var(--ds-radius-badge); white-space: nowrap; }
 
 /* Overlay viewer — fixed within pane, centered, ignores scroll */
 .flow-viewer-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 60; pointer-events: auto; animation: flow-viewer-fade 0.18s ease; }
 @keyframes flow-viewer-fade { from { opacity: 0; } to { opacity: 1; } }
 .flow-viewer { position: relative; width: calc(100% - 48px); max-height: calc(100% - 48px); display: flex; flex-direction: column; background: var(--glass-bg); -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15); backdrop-filter: blur(var(--glass-blur)) saturate(1.15); border: 1px solid var(--glass-border); border-radius: var(--ds-radius-2xl); overflow: hidden; box-shadow: 0px 8px 32px rgba(0,0,0,0.16); }
-.flow-viewer-header { display: flex; align-items: center; gap: var(--ds-space-2); padding: 11px var(--ds-space-4); border-bottom: 1px solid var(--glass-border); flex-shrink: 0; }
-.flow-viewer-title { font: 600 13px -apple-system, sans-serif; color: var(--color-text); }
-.flow-viewer-close { margin-left: auto; cursor: pointer; font-size: var(--ds-fs-mobile-callout); line-height: 1; opacity: 0.5; transition: opacity 0.15s; padding: 0 var(--ds-space-1); color: var(--color-text-muted); z-index: 10; display: inline-flex; align-items: center; }
+.flow-viewer-header { display: flex; align-items: center; gap: var(--ds-space-2); padding: var(--ds-space-3) var(--ds-space-4); border-bottom: 1px solid var(--glass-border); flex-shrink: 0; }
+.flow-viewer-title { font: 600 var(--ds-fs-body) -apple-system, sans-serif; color: var(--color-text); }
+.flow-viewer-close { margin-left: auto; cursor: pointer; font-size: var(--ds-fs-callout); line-height: 1; opacity: 0.5; transition: opacity 0.15s; padding: 0 var(--ds-space-1); color: var(--color-text-muted); z-index: 10; display: inline-flex; align-items: center; }
 .flow-viewer-close svg { width: 12px; height: 12px; display: block; }
 .flow-viewer-close:hover { opacity: 1; }
 .flow-viewer .code-copy-btn { right: 40px; }
-.flow-viewer-body { flex: 1; overflow-y: auto; padding: 14px 18px; scrollbar-color: var(--color-frame-border) transparent; }
-.flow-viewer-footer { display: flex; align-items: center; gap: var(--ds-space-2); justify-content: flex-end; padding: var(--ds-space-glass-x) var(--ds-space-4); border-top: 1px solid var(--glass-border); flex-shrink: 0; }
-.flow-viewer-save { font: 600 12px -apple-system, sans-serif; color: var(--btn-primary-ink, #fff); background: var(--btn-primary-bg, #111827); border: none; border-radius: var(--ds-radius-input); padding: var(--ds-space-1h) var(--ds-space-4); cursor: pointer; transition: opacity 0.15s; }
+.flow-viewer-body { flex: 1; overflow-y: auto; padding: 14px var(--ds-space-5); scrollbar-color: var(--color-frame-border) transparent; }
+.flow-viewer-footer { display: flex; align-items: center; gap: var(--ds-space-2); justify-content: flex-end; padding: var(--ds-space-block-y) var(--ds-space-4); border-top: 1px solid var(--glass-border); flex-shrink: 0; }
+.flow-viewer-save { font: 600 var(--ds-fs-hint) -apple-system, sans-serif; color: var(--btn-primary-ink, #fff); background: var(--btn-primary-bg, #111827); border: none; border-radius: var(--ds-radius-input); padding: var(--ds-space-1h) var(--ds-space-4); cursor: pointer; transition: opacity 0.15s; }
 .flow-viewer-save:hover { opacity: 0.88; }
 .flow-viewer-save:disabled { opacity: 0.5; cursor: default; }
-.flow-viewer-status { font: 400 11px -apple-system, sans-serif; color: var(--color-text-muted); margin-right: auto; }
+.flow-viewer-status { font: 400 var(--ds-fs-meta) -apple-system, sans-serif; color: var(--color-text-muted); margin-right: auto; }
 
 /* Mail records */
-.flow-mail-empty { font: 400 12px -apple-system, sans-serif; color: var(--color-text-muted); opacity: 0.6; text-align: center; padding: 40px 0; }
-.flow-mail-row { display: flex; flex-direction: column; gap: 5px; padding: var(--ds-space-3) 14px; border: 1px solid rgba(128,128,128,0.12); border-radius: var(--ds-radius-input); background: rgba(128,128,128,0.06); margin-bottom: var(--ds-space-2); cursor: pointer; transition: background 0.15s, border-color 0.15s; }
+.flow-mail-empty { font: 400 var(--ds-fs-hint) -apple-system, sans-serif; color: var(--color-text-muted); opacity: 0.6; text-align: center; padding: 40px 0; }
+.flow-mail-row { display: flex; flex-direction: column; gap: var(--ds-space-1); padding: var(--ds-space-3) 14px; border: 1px solid rgba(128,128,128,0.12); border-radius: var(--ds-radius-input); background: rgba(128,128,128,0.06); margin-bottom: var(--ds-space-2); cursor: pointer; transition: background 0.15s, border-color 0.15s; }
 .flow-mail-row:hover { background: rgba(128,128,128,0.10); border-color: rgba(128,128,128,0.18); }
 .flow-mail-row.expanded { background: rgba(128,128,128,0.10); border-color: rgba(91,127,191,0.25); }
-.flow-mail-meta { display: flex; align-items: center; gap: var(--ds-space-1h); font: 500 11px -apple-system, sans-serif; flex-wrap: wrap; }
+.flow-mail-meta { display: flex; align-items: center; gap: var(--ds-space-1h); font: 500 var(--ds-fs-meta) -apple-system, sans-serif; flex-wrap: wrap; }
 .flow-mail-from { color: var(--color-primary, #07c160); max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .flow-mail-arrow { color: var(--color-text-muted); opacity: 0.6; flex-shrink: 0; display: inline-flex; align-items: center; }
 .flow-mail-arrow svg { width: 10px; height: 10px; display: block; }
 .flow-mail-to { color: var(--color-text); font-weight: 600; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.flow-mail-time { margin-left: auto; font: 400 10px -apple-system, sans-serif; color: var(--color-text-muted); opacity: 0.7; flex-shrink: 0; }
-.flow-mail-expand { font: 500 10px -apple-system, sans-serif; color: var(--color-primary, #07c160); opacity: 0.85; flex-shrink: 0; cursor: pointer; user-select: none; display: inline-flex; align-items: center; gap: 3px; }
+.flow-mail-time { margin-left: auto; font: 400 var(--ds-fs-meta) -apple-system, sans-serif; color: var(--color-text-muted); opacity: 0.7; flex-shrink: 0; }
+.flow-mail-expand { font: 500 var(--ds-fs-meta) -apple-system, sans-serif; color: var(--color-primary, #07c160); opacity: 0.85; flex-shrink: 0; cursor: pointer; user-select: none; display: inline-flex; align-items: center; gap: var(--ds-space-half); }
 .flow-mail-expand .flow-mail-chev { width: 9px; height: 9px; display: block; transition: transform 0.15s ease; }
 .flow-mail-row.expanded .flow-mail-expand .flow-mail-chev { transform: rotate(180deg); }
-.flow-mail-content { font: 400 12.5px -apple-system, sans-serif; color: var(--color-text); line-height: 1.55; word-break: break-word; overflow-wrap: anywhere; overflow-x: auto; max-width: 100%; position: relative; }
-.flow-mail-no-body { font: 400 italic 12px -apple-system, sans-serif; color: var(--color-text-muted); opacity: 0.7; }
+.flow-mail-content { font: 400 var(--ds-fs-hint) -apple-system, sans-serif; color: var(--color-text); line-height: 1.55; word-break: break-word; overflow-wrap: anywhere; overflow-x: auto; max-width: 100%; position: relative; }
+.flow-mail-no-body { font: 400 italic var(--ds-fs-hint) -apple-system, sans-serif; color: var(--color-text-muted); opacity: 0.7; }
 .flow-mail-row:not(.expanded) .flow-mail-content { max-height: 3.6em; overflow: hidden; }
 .flow-mail-row:not(.expanded) .flow-mail-content::after { content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 1.4em; background: linear-gradient(to bottom, transparent, rgba(128,128,128,0.06)); pointer-events: none; }
 .flow-mail-content p:first-child { margin-top: 0; } .flow-mail-content p:last-child { margin-bottom: 0; } .flow-mail-content p { margin: var(--ds-space-1) 0; }
-.flow-mail-content ul, .flow-mail-content ol { margin: var(--ds-space-1) 0 var(--ds-space-1) 18px; padding: 0; } .flow-mail-content li { margin: var(--ds-space-half) 0; }
-.flow-mail-content code { background: var(--color-frame-input-bg, rgba(0,0,0,0.05)); padding: 1px var(--ds-space-1); border-radius: 3px; font-size: 0.9em; font-family: ui-monospace, SFMono-Regular, monospace; word-break: break-all; }
-.flow-mail-content pre { background: var(--color-frame-input-bg, rgba(0,0,0,0.05)); padding: var(--ds-space-2) var(--ds-space-3) var(--ds-space-glass-x); border-radius: var(--ds-radius-input); overflow-x: auto; font-size: var(--ds-fs-hint); margin: var(--ds-space-1h) 0; line-height: 1.4; }
+.flow-mail-content ul, .flow-mail-content ol { margin: var(--ds-space-1) 0 var(--ds-space-1) var(--ds-space-5); padding: 0; } .flow-mail-content li { margin: var(--ds-space-half) 0; }
+.flow-mail-content code { background: var(--color-frame-input-bg, rgba(0,0,0,0.05)); padding: var(--ds-space-hair) var(--ds-space-1); border-radius: var(--ds-radius-badge); font-size: 0.9em; font-family: ui-monospace, SFMono-Regular, monospace; word-break: break-all; }
+.flow-mail-content pre { background: var(--color-frame-input-bg, rgba(0,0,0,0.05)); padding: var(--ds-space-2) var(--ds-space-3) var(--ds-space-block-y); border-radius: var(--ds-radius-input); overflow-x: auto; font-size: var(--ds-fs-hint); margin: var(--ds-space-1h) 0; line-height: 1.4; }
 .flow-mail-content pre code { background: none; padding: 0; font-size: var(--ds-fs-hint); word-break: normal; }
-.flow-mail-content blockquote { border-left: 3px solid var(--color-border); margin: var(--ds-space-1h) 0; padding-left: var(--ds-space-glass-x); color: var(--color-text-muted); }
+.flow-mail-content blockquote { border-left: 3px solid var(--color-border); margin: var(--ds-space-1h) 0; padding-left: var(--ds-space-inline-x); color: var(--color-text-muted); }
 .flow-mail-content h1, .flow-mail-content h2, .flow-mail-content h3, .flow-mail-content h4 { margin: var(--ds-space-2) 0 var(--ds-space-1) 0; font-weight: 600; }
-.flow-mail-content h1 { font-size: var(--ds-fs-mobile-callout); } .flow-mail-content h2 { font-size: var(--ds-fs-title); } .flow-mail-content h3 { font-size: 14px; }
+.flow-mail-content h1 { font-size: var(--ds-fs-callout); } .flow-mail-content h2 { font-size: var(--ds-fs-title); } .flow-mail-content h3 { font-size: var(--ds-fs-subtitle); }
 .flow-mail-content table { display: block; overflow-x: auto; max-width: 100%; border-collapse: collapse; margin: var(--ds-space-1h) 0; font-size: var(--ds-fs-hint); }
 .flow-mail-content th, .flow-mail-content td { border: 1px solid var(--color-border); padding: var(--ds-space-1) var(--ds-space-2); }
 .flow-mail-content th { background: var(--color-frame-input-bg, #f5f5f5); }
@@ -225,17 +225,17 @@ export const FLOW_CSS = `
 .flow-mail-section { margin-bottom: 14px; }
 .flow-mail-section:last-child { margin-bottom: 0; }
 .flow-mail-section-title {
-  font: 600 11px -apple-system, sans-serif; color: var(--color-text-muted);
-  text-transform: uppercase; letter-spacing: 0.5px; padding: var(--ds-space-1) 0 var(--ds-space-glass-x);
+  font: 600 var(--ds-fs-meta) -apple-system, sans-serif; color: var(--color-text-muted);
+  text-transform: uppercase; letter-spacing: 0.5px; padding: var(--ds-space-1) 0 var(--ds-space-block-y);
   display: flex; align-items: center; gap: var(--ds-space-1h);
 }
 
 /* Pending mail rows — pulsing dot signals "waiting to be processed" */
 .flow-mail-pending-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--color-primary, #07c160); flex-shrink: 0; animation: flow-pulse 1.6s ease-out infinite; }
 .flow-mail-row.pending { cursor: default; }
-.flow-mail-queue-tag { font: 500 10px -apple-system, sans-serif; color: rgb(91, 127, 191); background: rgba(91,127,191,0.08); padding: 1px var(--ds-space-1h); border-radius: 5px; flex-shrink: 0; }
+.flow-mail-queue-tag { font: 500 var(--ds-fs-meta) -apple-system, sans-serif; color: rgb(91, 127, 191); background: rgba(91,127,191,0.08); padding: var(--ds-space-hair) var(--ds-space-1h); border-radius: var(--ds-radius-chip); flex-shrink: 0; }
 .flow-mail-cancel {
-  font: 500 10px -apple-system, sans-serif; color: var(--color-text-muted);
+  font: 500 var(--ds-fs-meta) -apple-system, sans-serif; color: var(--color-text-muted);
   background: transparent; border: 1px solid rgba(128,128,128,0.25); border-radius: var(--ds-radius-chip);
   padding: var(--ds-space-half) var(--ds-space-2); cursor: pointer; flex-shrink: 0;
   transition: color 0.15s, border-color 0.15s;
@@ -245,34 +245,34 @@ export const FLOW_CSS = `
 
 /* Definition editor */
 .flow-def-section { margin-bottom: var(--ds-space-4); }
-.flow-def-section h3 { font: 600 12px -apple-system, sans-serif; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin: 0 0 var(--ds-space-1h); }
-.flow-def-meta { font: 400 12px -apple-system, sans-serif; color: var(--color-text); line-height: 1.5; }
+.flow-def-section h3 { font: 600 var(--ds-fs-hint) -apple-system, sans-serif; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin: 0 0 var(--ds-space-1h); }
+.flow-def-meta { font: 400 var(--ds-fs-hint) -apple-system, sans-serif; color: var(--color-text); line-height: 1.5; }
 .flow-agent-block { border: 1px solid rgba(128,128,128,0.12); border-radius: var(--ds-radius-button); background: rgba(128,128,128,0.06); padding: 14px var(--ds-space-4); margin-bottom: var(--ds-space-4); }
-.flow-agent-block-head { display: flex; align-items: center; gap: var(--ds-space-2); margin-bottom: var(--ds-space-2); background: var(--glass-etched-bg, rgba(0,0,0,0.025)); border-radius: var(--ds-radius-input); padding: var(--ds-space-1h) var(--ds-space-glass-x); }
-.flow-agent-block-name { font: 600 13px -apple-system, sans-serif; color: var(--color-text); border-left: 3px solid rgb(91, 127, 191); padding-left: var(--ds-space-2); }
+.flow-agent-block-head { display: flex; align-items: center; gap: var(--ds-space-2); margin-bottom: var(--ds-space-2); background: var(--glass-etched-bg, rgba(0,0,0,0.025)); border-radius: var(--ds-radius-input); padding: var(--ds-space-1h) var(--ds-space-inline-x); }
+.flow-agent-block-name { font: 600 var(--ds-fs-body) -apple-system, sans-serif; color: var(--color-text); border-left: 3px solid rgb(91, 127, 191); padding-left: var(--ds-space-2); }
 .flow-agent-block.is-manager .flow-agent-block-name { border-left-color: var(--color-primary, #07c160); }
-.flow-agent-block-badge { font: 500 10px -apple-system, sans-serif; color: var(--color-primary, #07c160); border: 1px solid var(--color-primary, #07c160); border-radius: var(--ds-radius-badge); padding: 1px 5px; }
-.flow-agent-block-ext { font: 400 11px -apple-system, sans-serif; color: var(--color-text-muted); }
+.flow-agent-block-badge { font: 500 var(--ds-fs-meta) -apple-system, sans-serif; color: var(--color-primary, #07c160); border: 1px solid var(--color-primary, #07c160); border-radius: var(--ds-radius-badge); padding: var(--ds-space-hair) var(--ds-space-1h); }
+.flow-agent-block-ext { font: 400 var(--ds-fs-meta) -apple-system, sans-serif; color: var(--color-text-muted); }
 .flow-agent-block-field { margin-top: var(--ds-space-2); } .flow-agent-block-field:first-of-type { margin-top: var(--ds-space-1); }
-.flow-agent-block-label { display: block; font: 600 10px -apple-system, sans-serif; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 3px; }
-.flow-agent-block-text { font: 400 12.5px -apple-system, sans-serif; color: var(--color-text); line-height: 1.55; word-break: break-word; }
+.flow-agent-block-label { display: block; font: 600 var(--ds-fs-meta) -apple-system, sans-serif; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: var(--ds-space-1); }
+.flow-agent-block-text { font: 400 var(--ds-fs-hint) -apple-system, sans-serif; color: var(--color-text); line-height: 1.55; word-break: break-word; }
 .flow-agent-block-text p:first-child { margin-top: 0; } .flow-agent-block-text p:last-child { margin-bottom: 0; }
-.flow-agent-block-text code { background: var(--color-frame-input-bg, rgba(0,0,0,0.05)); padding: 1px 5px; border-radius: var(--ds-radius-badge); font-size: 0.9em; }
-.flow-agent-block-text pre { background: var(--color-frame-input-bg, rgba(0,0,0,0.05)); padding: var(--ds-space-2) var(--ds-space-glass-x); border-radius: var(--ds-radius-chip); overflow-x: auto; }
+.flow-agent-block-text code { background: var(--color-frame-input-bg, rgba(0,0,0,0.05)); padding: var(--ds-space-hair) var(--ds-space-1h); border-radius: var(--ds-radius-badge); font-size: 0.9em; }
+.flow-agent-block-text pre { background: var(--color-frame-input-bg, rgba(0,0,0,0.05)); padding: var(--ds-space-2) var(--ds-space-inline-x); border-radius: var(--ds-radius-chip); overflow-x: auto; }
 .flow-agent-block-empty { color: var(--color-text-muted); opacity: 0.6; font-style: italic; }
-.flow-agent-block-duty { font: 400 12px -apple-system, sans-serif; color: var(--color-text); white-space: pre-wrap; line-height: 1.5; margin: var(--ds-space-1) 0; }
-.flow-agent-block-tools { font: 400 11px -apple-system, sans-serif; color: var(--color-text-muted); margin-top: var(--ds-space-1); }
-.flow-agent-block-tools code { background: var(--color-frame-input-bg, rgba(0,0,0,0.05)); padding: 1px 5px; border-radius: var(--ds-radius-badge); margin-right: 3px; }
-.flow-def-edit { width: 100%; background: var(--glass-etched-bg, rgba(0,0,0,0.025)); color: var(--color-frame-input-text, var(--color-text)); border: 1px solid var(--glass-etched-border, var(--glass-border)); border-radius: var(--ds-radius-input); padding: var(--ds-space-2) var(--ds-space-glass-x); font: 400 12px ui-monospace, SFMono-Regular, monospace; resize: vertical; outline: none; min-height: 60px; line-height: 1.5; transition: border-color 0.15s; }
+.flow-agent-block-duty { font: 400 var(--ds-fs-hint) -apple-system, sans-serif; color: var(--color-text); white-space: pre-wrap; line-height: 1.5; margin: var(--ds-space-1) 0; }
+.flow-agent-block-tools { font: 400 var(--ds-fs-meta) -apple-system, sans-serif; color: var(--color-text-muted); margin-top: var(--ds-space-1); }
+.flow-agent-block-tools code { background: var(--color-frame-input-bg, rgba(0,0,0,0.05)); padding: var(--ds-space-hair) var(--ds-space-1h); border-radius: var(--ds-radius-badge); margin-right: var(--ds-space-1); }
+.flow-def-edit { width: 100%; background: var(--glass-etched-bg, rgba(0,0,0,0.025)); color: var(--color-frame-input-text, var(--color-text)); border: 1px solid var(--glass-etched-border, var(--glass-border)); border-radius: var(--ds-radius-input); padding: var(--ds-space-2) var(--ds-space-inline-x); font: 400 var(--ds-fs-hint) ui-monospace, SFMono-Regular, monospace; resize: vertical; outline: none; min-height: 60px; line-height: 1.5; transition: border-color 0.15s; }
 .flow-def-edit:focus { border-color: var(--glass-etched-border-focus, rgba(91,127,191,0.35)); }
 .flow-def-edit.flow-def-edit-sm { min-height: 44px; }
-.flow-def-tools { display: flex; flex-wrap: wrap; gap: 5px; }
-.flow-def-tool { display: inline-flex; align-items: center; gap: var(--ds-space-1); font: 500 11px -apple-system, sans-serif; color: var(--color-frame-text-dim, var(--color-text-muted)); cursor: pointer; user-select: none; background: var(--glass-etched-bg, rgba(0,0,0,0.025)); border: 1px solid var(--glass-etched-border, var(--glass-border)); border-radius: var(--ds-radius-chip); padding: 3px var(--ds-space-2); transition: all 0.15s; }
+.flow-def-tools { display: flex; flex-wrap: wrap; gap: var(--ds-space-1); }
+.flow-def-tool { display: inline-flex; align-items: center; gap: var(--ds-space-1); font: 500 var(--ds-fs-meta) -apple-system, sans-serif; color: var(--color-frame-text-dim, var(--color-text-muted)); cursor: pointer; user-select: none; background: var(--glass-etched-bg, rgba(0,0,0,0.025)); border: 1px solid var(--glass-etched-border, var(--glass-border)); border-radius: var(--ds-radius-chip); padding: var(--ds-space-1) var(--ds-space-2); transition: all 0.15s; }
 .flow-def-tool.checked { border-color: rgba(91, 127, 191, 0.5); color: rgb(91, 127, 191); background: rgba(91, 127, 191, 0.08); }
-.flow-def-source { font: 400 10px -apple-system, sans-serif; color: var(--color-text-muted); opacity: 0.6; margin-bottom: 3px; }
-.flow-agent-block-readonly { font: 400 12px -apple-system, sans-serif; color: var(--color-text); line-height: 1.5; background: var(--glass-etched-bg, rgba(0,0,0,0.025)); border: 1px solid var(--glass-etched-border, var(--glass-border)); border-radius: var(--ds-radius-input); padding: var(--ds-space-2) var(--ds-space-glass-x); }
+.flow-def-source { font: 400 var(--ds-fs-meta) -apple-system, sans-serif; color: var(--color-text-muted); opacity: 0.6; margin-bottom: var(--ds-space-1); }
+.flow-agent-block-readonly { font: 400 var(--ds-fs-hint) -apple-system, sans-serif; color: var(--color-text); line-height: 1.5; background: var(--glass-etched-bg, rgba(0,0,0,0.025)); border: 1px solid var(--glass-etched-border, var(--glass-border)); border-radius: var(--ds-radius-input); padding: var(--ds-space-2) var(--ds-space-inline-x); }
 .flow-def-tabs { display: flex; gap: var(--ds-space-half); position: sticky; top: 0; background: var(--glass-bg); -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15); backdrop-filter: blur(var(--glass-blur)) saturate(1.15); border-bottom: 1px solid var(--glass-border); padding: var(--ds-space-1h) var(--ds-space-half) 0; margin: -14px -18px var(--ds-space-3); z-index: 2; }
-.flow-def-tab { padding: var(--ds-space-1h) var(--ds-space-3); font: 500 12px -apple-system, sans-serif; color: var(--color-text-muted); background: none; border: none; border-bottom: 2px solid transparent; border-radius: 0; cursor: pointer; font-family: inherit; margin-bottom: -1px; transition: color 0.2s, border-color 0.2s; display: inline-flex; align-items: center; gap: var(--ds-space-1); }
+.flow-def-tab { padding: var(--ds-space-1h) var(--ds-space-3); font: 500 var(--ds-fs-hint) -apple-system, sans-serif; color: var(--color-text-muted); background: none; border: none; border-bottom: 2px solid transparent; border-radius: 0; cursor: pointer; font-family: inherit; margin-bottom: -1px; transition: color 0.2s, border-color 0.2s; display: inline-flex; align-items: center; gap: var(--ds-space-1); }
 .flow-def-tab:hover { color: var(--color-text); }
 .flow-def-tab.active { color: rgb(91, 127, 191); border-bottom-color: rgb(91, 127, 191); }
 .flow-def-tab-badge { color: var(--color-primary, #07c160); display: inline-flex; align-items: center; }
@@ -287,9 +287,9 @@ export const FLOW_CSS = `
 }
 .team-flows-section { padding: 0 14px 14px; }
 .team-flows-header {
-  font: 600 10px -apple-system, sans-serif; color: var(--color-text-muted);
+  font: 600 var(--ds-fs-meta) -apple-system, sans-serif; color: var(--color-text-muted);
   text-transform: uppercase; letter-spacing: 0.06em;
-  margin: var(--ds-space-glass-x) 0 var(--ds-space-1h);
+  margin: var(--ds-space-stack-gap) 0 var(--ds-space-1h);
 }
 
 /* Hexagon icon — CSS clip-path, no image needed */
@@ -303,14 +303,14 @@ export const FLOW_CSS = `
 /* Flow row */
 .team-flow-row {
   display: flex; align-items: center; gap: var(--ds-space-2);
-  padding: var(--ds-space-1h) var(--ds-space-2); border-radius: 9px; cursor: pointer;
+  padding: var(--ds-space-1h) var(--ds-space-2); border-radius: var(--ds-radius-button); cursor: pointer;
   transition: background 0.15s;
 }
 .team-flow-row:hover { background: rgba(128, 128, 128, 0.05); }
 .team-flow-row.running .team-flow-hex { background: var(--color-primary, #07c160); opacity: 0.75; }
 .team-flow-row.expanded .team-flow-hex { opacity: 0.6; }
 .team-flow-label {
-  font: 500 12px -apple-system, sans-serif; color: var(--color-text);
+  font: 500 var(--ds-fs-hint) -apple-system, sans-serif; color: var(--color-text);
   flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .team-flow-row.running .team-flow-label { color: var(--color-text); }
@@ -327,7 +327,7 @@ export const FLOW_CSS = `
 
 /* Chevron — rotates on expand */
 .team-flow-chevron {
-  font-size: 9px; color: var(--color-text-muted); opacity: 0.5;
+  font-size: var(--ds-fs-meta); color: var(--color-text-muted); opacity: 0.5;
   flex-shrink: 0; transition: transform 0.2s; user-select: none;
   line-height: 1;
 }
@@ -338,14 +338,14 @@ export const FLOW_CSS = `
 .team-flow-dag {
   padding: var(--ds-space-half) 0 var(--ds-space-1h) 14px; margin-left: var(--ds-space-1h);
   border-left: 2px dashed var(--glass-border);
-  display: flex; flex-direction: column; gap: 3px;
+  display: flex; flex-direction: column; gap: var(--ds-space-half);
   margin-bottom: var(--ds-space-half);
 }
 
 /* DAG inline node — compact pill */
 .dag-inline-node {
-  display: flex; align-items: center; gap: 7px;
-  padding: var(--ds-space-1) var(--ds-space-glass-x); border-radius: 7px;
+  display: flex; align-items: center; gap: var(--ds-space-1h);
+  padding: var(--ds-space-1) var(--ds-space-inline-x); border-radius: var(--ds-radius-input);
   background: rgba(128, 128, 128, 0.03);
   border: 1px solid transparent; cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
@@ -359,20 +359,20 @@ export const FLOW_CSS = `
 .dag-inline-node.completed .dag-inline-dot { background: #4caf50; opacity: 1; }
 .dag-inline-node.failed .dag-inline-dot { background: var(--status-error-icon); opacity: 1; } /* ui-status-redesign #23 token */
 .dag-inline-node.failed { background: rgba(244, 67, 54, 0.04); }
-.dag-inline-id { font: 500 11px -apple-system, sans-serif; color: var(--color-text); }
-.dag-inline-agent { font: 400 10px -apple-system, sans-serif; color: var(--color-text-muted); margin-left: auto; }
+.dag-inline-id { font: 500 var(--ds-fs-meta) -apple-system, sans-serif; color: var(--color-text); }
+.dag-inline-agent { font: 400 var(--ds-fs-meta) -apple-system, sans-serif; color: var(--color-text-muted); margin-left: auto; }
 
 /* ── Per-agent model config in definition viewer ── */
 .flow-agent-model-row { display: flex; align-items: center; gap: var(--ds-space-2); flex-wrap: wrap; }
-.flow-agent-model-current { font: 500 10px -apple-system, sans-serif; color: var(--color-text-muted); }
+.flow-agent-model-current { font: 500 var(--ds-fs-meta) -apple-system, sans-serif; color: var(--color-text-muted); }
 .flow-agent-model-current.fallback { color: rgb(91, 127, 191); background: rgba(91,127,191,0.10); padding: var(--ds-space-half) var(--ds-space-2); border-radius: var(--ds-radius-chip); }
 /* panelscheme 批（2026-09-21）：非可设 agent 的方案来源注记（只读位，替换原下拉）。 */
-.flow-agent-model-note { font: 400 12px -apple-system, sans-serif; color: var(--color-text-muted); padding: var(--ds-space-1) 0; }
+.flow-agent-model-note { font: 400 var(--ds-fs-hint) -apple-system, sans-serif; color: var(--color-text-muted); padding: var(--ds-space-1) 0; }
 .flow-agent-model-fbs { display: flex; flex-wrap: wrap; gap: var(--ds-space-1); margin-top: var(--ds-space-1); }
-.flow-agent-model-fb { font: 400 10px -apple-system, sans-serif; color: var(--color-text-muted); background: var(--glass-etched-bg, rgba(0,0,0,0.025)); border: 1px solid var(--glass-etched-border, var(--glass-border)); padding: var(--ds-space-half) var(--ds-space-2); border-radius: var(--ds-radius-chip); }
+.flow-agent-model-fb { font: 400 var(--ds-fs-meta) -apple-system, sans-serif; color: var(--color-text-muted); background: var(--glass-etched-bg, rgba(0,0,0,0.025)); border: 1px solid var(--glass-etched-border, var(--glass-border)); padding: var(--ds-space-half) var(--ds-space-2); border-radius: var(--ds-radius-chip); }
 
 /* ── Agent popup header model badge ── */
-.flow-agent-model-badge { font: 500 10px -apple-system, sans-serif; color: rgb(91, 127, 191); background: rgba(91,127,191,0.08); padding: var(--ds-space-half) var(--ds-space-2); border-radius: var(--ds-radius-chip); margin-left: var(--ds-space-1); }
+.flow-agent-model-badge { font: 500 var(--ds-fs-meta) -apple-system, sans-serif; color: rgb(91, 127, 191); background: rgba(91,127,191,0.08); padding: var(--ds-space-half) var(--ds-space-2); border-radius: var(--ds-radius-chip); margin-left: var(--ds-space-1); }
 
 /* ══ Solar-system flow visualization (P5) ══ */
 /* 🔴 flowmaptab-retire（#1228 两裁② 停用清单面 4）：per-project 布局面整块摘除——
@@ -393,7 +393,7 @@ export const FLOW_CSS = `
   backdrop-filter: blur(var(--glass-blur, 10px)) saturate(1.15);
   border: 1px solid var(--glass-border, rgba(255,255,255,0.12));
   border-radius: var(--ds-radius-card-md);
-  padding: var(--ds-space-2) var(--ds-space-glass-x);
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
   box-sizing: border-box;
   box-shadow: 0 2px 8px rgba(0,0,0,0.06), 0 4px 16px rgba(0,0,0,0.04);
   text-align: center;
@@ -491,7 +491,7 @@ export const FLOW_CSS = `
 
 /* Status icon (✓ / ✗ / ⚑) — inline in the sub line. ui-status-redesign（盘点 #23
    B 半）：glyph 即图标载体，色值归状态 token（亮档对比 2.2–2.3:1 → 4.4–5.1:1）。 */
-.solar-node-status { font: 700 10px -apple-system, sans-serif; margin-left: var(--ds-space-1); }
+.solar-node-status { font: 700 var(--ds-fs-meta) -apple-system, sans-serif; margin-left: var(--ds-space-1); }
 .solar-node-status.ok { color: var(--status-success-icon); }
 .solar-node-status.err { color: var(--status-error-icon); }
 .solar-node-status.warn { color: rgb(var(--amber, 255 152 0)); }
@@ -500,12 +500,12 @@ export const FLOW_CSS = `
  * name, when different, moves to the sub line. max-width:100% keeps text
  * inside the card (372-3). */
 .solar-node-label {
-  font: 600 12px/1.25 -apple-system, sans-serif; color: var(--color-text);
+  font: 600 var(--ds-fs-hint)/1.25 -apple-system, sans-serif; color: var(--color-text);
   max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  margin-top: 3px;
+  margin-top: var(--ds-space-1);
 }
 .solar-node-sub {
-  font: 400 10px/1.3 -apple-system, sans-serif; color: var(--color-text-muted);
+  font: 400 var(--ds-fs-meta)/1.3 -apple-system, sans-serif; color: var(--color-text-muted);
   max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   opacity: 0.7;
 }
@@ -515,8 +515,8 @@ export const FLOW_CSS = `
   width: 100%; display: flex; align-items: center; justify-content: space-between;
   padding: var(--ds-space-1) var(--ds-space-1) var(--ds-space-half);
 }
-.flow-list-title { font: 600 13px -apple-system, sans-serif; color: var(--color-text); }
-.flow-list-count { font: 400 11px -apple-system, sans-serif; color: var(--color-text-muted); opacity: 0.7; }
+.flow-list-title { font: 600 var(--ds-fs-body) -apple-system, sans-serif; color: var(--color-text); }
+.flow-list-count { font: 400 var(--ds-fs-meta) -apple-system, sans-serif; color: var(--color-text-muted); opacity: 0.7; }
 .flow-def-card {
   flex: 1 1 300px; min-width: 280px; max-width: 480px;
   border-radius: var(--ds-radius-card-md); background: var(--color-surface);
@@ -534,29 +534,29 @@ export const FLOW_CSS = `
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
 }
 .flow-def-card-icon {
-  width: 22px; height: 22px; border-radius: 7px; flex-shrink: 0;
+  width: 22px; height: 22px; border-radius: var(--ds-radius-input); flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
   background: rgba(91,127,191,0.10); color: rgb(91,127,191);
-  font: 600 11px -apple-system, sans-serif;
+  font: 600 var(--ds-fs-meta) -apple-system, sans-serif;
 }
-.flow-def-card-name { font: 600 13px -apple-system, sans-serif; color: var(--color-text); }
-.flow-def-card-meta { font: 500 10px -apple-system, sans-serif; color: var(--color-text-muted); margin-left: auto; display: flex; gap: var(--ds-space-2); flex-shrink: 0; }
+.flow-def-card-name { font: 600 var(--ds-fs-body) -apple-system, sans-serif; color: var(--color-text); }
+.flow-def-card-meta { font: 500 var(--ds-fs-meta) -apple-system, sans-serif; color: var(--color-text-muted); margin-left: auto; display: flex; gap: var(--ds-space-2); flex-shrink: 0; }
 .flow-def-card-desc {
-  font: 400 11.5px -apple-system, sans-serif; color: var(--color-text-muted);
-  line-height: 1.5; padding: var(--ds-space-glass-x) 14px var(--ds-space-1); flex: 1;
+  font: 400 var(--ds-fs-hint) -apple-system, sans-serif; color: var(--color-text-muted);
+  line-height: 1.5; padding: var(--ds-space-block-y) 14px var(--ds-space-1); flex: 1;
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
 }
-.flow-def-card-footer { display: flex; align-items: center; gap: var(--ds-space-2); padding: var(--ds-space-glass-x) 14px var(--ds-space-3); }
+.flow-def-card-footer { display: flex; align-items: center; gap: var(--ds-space-2); padding: var(--ds-space-block-y) 14px var(--ds-space-3); }
 .flow-def-view-btn {
-  font: 600 11px -apple-system, sans-serif; color: rgb(91,127,191);
-  border: 1px solid rgba(91,127,191,0.35); border-radius: 7px;
-  background: transparent; padding: 5px var(--ds-space-3); cursor: pointer;
+  font: 600 var(--ds-fs-meta) -apple-system, sans-serif; color: rgb(91,127,191);
+  border: 1px solid rgba(91,127,191,0.35); border-radius: var(--ds-radius-input);
+  background: transparent; padding: var(--ds-space-1h) var(--ds-space-3); cursor: pointer;
   transition: background 0.15s, opacity 0.15s;
 }
 .flow-def-view-btn:hover { background: rgba(91,127,191,0.08); }
 .flow-def-entry-tag {
-  font: 500 10px -apple-system, sans-serif; color: var(--color-text-muted);
-  border: 1px solid var(--color-border); border-radius: 5px; padding: var(--ds-space-half) 7px; opacity: 0.75;
+  font: 500 var(--ds-fs-meta) -apple-system, sans-serif; color: var(--color-text-muted);
+  border: 1px solid var(--color-border); border-radius: var(--ds-radius-chip); padding: var(--ds-space-half) var(--ds-space-2); opacity: 0.75;
 }
 
 /* ===== Stellar System Visualization (flow-orbit-node, 3-point) ===== */
@@ -575,15 +575,15 @@ export const FLOW_CSS = `
   overflow: hidden; display: flex; flex-direction: column;
 }
 .stellar-header {
-  padding: 14px 18px; display: flex; align-items: center; justify-content: space-between;
+  padding: 14px var(--ds-space-5); display: flex; align-items: center; justify-content: space-between;
   border-bottom: 1px solid var(--color-border);
 }
-.stellar-title { font: 600 15px -apple-system; color: var(--color-text); }
-.stellar-status { font: 500 11px ui-monospace; padding: var(--ds-space-half) var(--ds-space-2); border-radius: var(--ds-radius-chip); text-transform: uppercase; }
+.stellar-title { font: 600 var(--ds-fs-title) -apple-system; color: var(--color-text); }
+.stellar-status { font: 500 var(--ds-fs-meta) ui-monospace; padding: var(--ds-space-half) var(--ds-space-2); border-radius: var(--ds-radius-chip); text-transform: uppercase; }
 .stellar-status.running { color: var(--color-primary); background: rgba(91,127,191,0.1); }
 .stellar-status.completed { color: #34c759; background: rgba(52,199,89,0.1); }
 .stellar-status.failed { color: #ff3b30; background: rgba(255,59,48,0.1); }
-.stellar-desc { padding: var(--ds-space-2) 18px; font: 400 12px -apple-system; color: var(--color-text-muted); }
+.stellar-desc { padding: var(--ds-space-2) var(--ds-space-5); font: 400 var(--ds-fs-hint) -apple-system; color: var(--color-text-muted); }
 .stellar-stage {
   position: relative; width: 100%; min-height: 300px;
   padding: var(--ds-space-5) 0;
@@ -597,9 +597,9 @@ export const FLOW_CSS = `
   cursor: pointer; z-index: 2;
 }
 .flow-orbit-content { position: relative; z-index: 3; text-align: center; pointer-events: none; }
-.flow-orbit-agent { font: 400 9px ui-monospace; color: var(--color-text-muted); margin-top: var(--ds-space-half); }
-.flow-orbit-nodeid { font: 600 11px -apple-system; color: var(--color-text); }
-.flow-orbit-status { font: 600 16px -apple-system; margin-top: var(--ds-space-half); }
+.flow-orbit-agent { font: 400 var(--ds-fs-meta) ui-monospace; color: var(--color-text-muted); margin-top: var(--ds-space-half); }
+.flow-orbit-nodeid { font: 600 var(--ds-fs-meta) -apple-system; color: var(--color-text); }
+.flow-orbit-status { font: 600 var(--ds-fs-callout) -apple-system; margin-top: var(--ds-space-half); }
 
 /* Three orbit rings — scoped to flow-orbit-node (transform-based centering) */
 .flow-orbit-node .flow-ring {
@@ -637,7 +637,7 @@ export const FLOW_CSS = `
 
 /* Flow definition cards (P6) — p5p6-v2 Flows tab */
 .flow-defs-section, .flow-running-section { width: 100%; max-width: 1100px; margin: 0 auto var(--ds-space-4); }
-.flow-defs-header { font: 600 11px -apple-system; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.5px; padding: var(--ds-space-1) 0 var(--ds-space-glass-x); }
+.flow-defs-header { font: 600 var(--ds-fs-meta) -apple-system; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.5px; padding: var(--ds-space-1) 0 var(--ds-space-block-y); }
 .flow-defs-grid { display: flex; flex-wrap: wrap; gap: var(--ds-space-3); justify-content: center; }
 .flow-def-card {
   flex: 1 1 240px; min-width: 220px; max-width: 360px;
@@ -645,14 +645,14 @@ export const FLOW_CSS = `
   border: 1px solid var(--glass-border);
   padding: 14px; display: flex; flex-direction: column; gap: var(--ds-space-1h);
 }
-.flow-def-name { font: 600 13px -apple-system; color: var(--color-text); }
-.flow-def-desc { font: 400 11px -apple-system; color: var(--color-text-muted); line-height: 1.4; }
-.flow-def-meta { font: 400 10px ui-monospace; color: var(--color-text-muted); opacity: 0.7; }
+.flow-def-name { font: 600 var(--ds-fs-body) -apple-system; color: var(--color-text); }
+.flow-def-desc { font: 400 var(--ds-fs-meta) -apple-system; color: var(--color-text-muted); line-height: 1.4; }
+.flow-def-meta { font: 400 var(--ds-fs-meta) ui-monospace; color: var(--color-text-muted); opacity: 0.7; }
 .flow-def-view-btn {
-  align-self: flex-start; font: 500 11px -apple-system;
+  align-self: flex-start; font: 500 var(--ds-fs-meta) -apple-system;
   color: var(--color-primary, #5b7fbf); background: none;
   border: 1px solid rgba(91,127,191,0.3); border-radius: var(--ds-radius-chip);
-  padding: var(--ds-space-1) var(--ds-space-glass-x); cursor: pointer; transition: all 0.15s;
+  padding: var(--ds-space-1) var(--ds-space-inline-x); cursor: pointer; transition: all 0.15s;
 }
 .flow-def-view-btn:hover { background: rgba(91,127,191,0.08); }
 </style>

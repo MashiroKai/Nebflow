@@ -154,7 +154,7 @@ nf-ask-dock { display: contents; }
   bottom: calc(var(--ask-fab-bottom) + var(--ask-fab-size) + 10px);
   z-index: var(--z-ask-dock, 24);
   width: var(--ask-dock-w);
-  display: flex; flex-direction: column; align-items: flex-end; gap: 7px;
+  display: flex; flex-direction: column; align-items: flex-end; gap: var(--ds-space-1h);
   transform-origin: 100% 100%; /* ⑧ 锚定 = 右下角按钮圆心方向，开合同一曲线 */
   transition: transform var(--panel-duration, 0.32s) var(--panel-ease, cubic-bezier(0.32, 0.72, 0, 1)), opacity 0.24s ease;
 }
@@ -221,7 +221,7 @@ body.mobile-layer .ask-dock .ds-resize-handle {
 .ask-col {
   /* 列可视高 = 总档（衰减区净空在滚动容器之内，见上 —— 不再从列高里扣）。 */
   width: 100%; max-height: var(--ask-col-maxh); overflow-y: auto;
-  display: flex; flex-direction: column; gap: 7px; align-items: flex-end;
+  display: flex; flex-direction: column; gap: var(--ds-space-1h); align-items: flex-end;
   /* 内容级渐隐（本批关键改动）：mask 作用在滚动容器自身绘制结果上（本元素无
    * 背景/边框 ⇒ 输出 = 气泡内容），顶缘 --ask-fade-h 内内容 alpha 渐到 0。
    * mask 颜色只取 alpha 通道 ⇒ 用 currentColor（无裸色值，GU2-7 同律）。 */
@@ -248,7 +248,7 @@ body.mobile-layer .ask-dock .ds-resize-handle {
   /* 圆角档：15px 不在 --ds-radius 阶梯（4/6/8/10/12/14/16/18/20/999）⇒ 落最接近的
      聊天浮层卡档 --ds-radius-card-lg 16px（缺档按最近档，见批报告清单）。
      字档 13.5px = --ds-fs-row（会话行主文案既有档，逐值相等，零漂移）。 */
-  padding: 9px 13px; border-radius: var(--ds-radius-card-lg);
+  padding: var(--ds-space-2) var(--ds-space-3); border-radius: var(--ds-radius-card-lg);
   font-size: var(--ds-fs-row); line-height: 1.6; word-break: break-word;
   color: var(--color-text);
   border: var(--ds-border-width) solid var(--glass-bub-ai-border);
@@ -267,7 +267,7 @@ body.mobile-layer .ask-dock .ds-resize-handle {
 .ask-bub .ask-cite {
   display: inline-block; font-size: var(--ds-fs-meta); color: var(--ask-link);
   background: rgb(var(--sapphire) / 0.13); border: var(--ds-border-width) solid rgb(var(--sapphire) / 0.18);
-  border-radius: var(--ds-radius-badge); padding: 0 var(--ds-space-1h); margin: 3px 1px 0; line-height: 1.7;
+  border-radius: var(--ds-radius-badge); padding: 0 var(--ds-space-1h); margin: var(--ds-space-1) var(--ds-space-hair) 0; line-height: 1.7;
 }
 .ask-bub.typing { display: flex; gap: var(--ds-space-1); align-items: center; padding: var(--ds-space-3) 15px; }
 .ask-bub.typing i { width: 5px; height: 5px; border-radius: var(--ds-radius-pill); background: var(--color-text-muted); animation: askTp 1.1s infinite; }
@@ -284,7 +284,7 @@ body.mobile-layer .ask-dock .ds-resize-handle {
  * 统一按钮玻璃批 2026-11-01：材质迁 glass.css 面级浮件档，本文件只留几何。 */
 .ask-input {
   width: 100%; border-radius: var(--cv-radius-bar, 12px); position: relative;
-  display: flex; align-items: center; gap: var(--ds-space-1h); padding: 7px 7px 7px var(--ds-space-1h);
+  display: flex; align-items: center; gap: var(--ds-space-1h); padding: var(--ds-space-2) var(--ds-space-2) var(--ds-space-2) var(--ds-space-1h);
 }
 .ask-input:focus-within { border-color: rgb(var(--sapphire) / 0.45); }
 /* 输入行为包批（2026-11-02 作者令）：input → textarea（rows=1）——Shift+Enter

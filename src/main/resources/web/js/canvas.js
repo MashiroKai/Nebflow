@@ -1039,11 +1039,11 @@ function showExternalConflict(entry) {
   bar.setAttribute('role', 'status');
   bar.dataset.path = entry.absPath || '';
   bar.setAttribute('style', [
-    'display:flex', 'align-items:center', 'gap:var(--ds-space-glass-x)',
-    'margin:var(--ds-space-2) var(--ds-space-glass-x)', 'padding:var(--ds-space-2) var(--ds-space-glass-x) var(--ds-space-2) var(--ds-space-3)',
+    'display:flex', 'align-items:center', 'gap:var(--ds-space-inline-gap)',
+    'margin:var(--ds-space-2) var(--ds-space-indent-x)', 'padding:var(--ds-space-2) var(--ds-space-inline-x) var(--ds-space-2) var(--ds-space-3)',
     'border-radius:var(--ds-radius-button)',
     'background:rgba(28,30,38,0.92)', 'color:#f4f5f7',
-    'font:12.5px/1.4 -apple-system,"Segoe UI",sans-serif',
+    'font:var(--ds-fs-hint)/1.4 -apple-system,"Segoe UI",sans-serif',
     'border:1px solid rgba(255,255,255,0.12)',
     'box-shadow:0 4px 14px rgba(0,0,0,0.22)',
   ].join(';'));
@@ -1054,12 +1054,12 @@ function showExternalConflict(entry) {
   const keep = document.createElement('button');
   keep.className = 'nf-file-conflict-keep';
   keep.textContent = t('canvas.conflictKeep');
-  keep.setAttribute('style', 'flex:0 0 auto;cursor:pointer;padding:3px var(--ds-space-glass-x);border-radius:7px;border:1px solid rgba(255,255,255,0.22);background:transparent;color:inherit;font:inherit;');
+  keep.setAttribute('style', 'flex:0 0 auto;cursor:pointer;padding:var(--ds-space-1) var(--ds-space-inline-x);border-radius:var(--ds-radius-input);border:1px solid rgba(255,255,255,0.22);background:transparent;color:inherit;font:inherit;');
   keep.onclick = () => { entry._externalConflict = null; bar.remove(); };
   const reload = document.createElement('button');
   reload.className = 'nf-file-conflict-reload';
   reload.textContent = t('canvas.conflictReload');
-  reload.setAttribute('style', 'flex:0 0 auto;cursor:pointer;padding:3px var(--ds-space-glass-x);border-radius:7px;border:1px solid rgba(255,255,255,0.22);background:rgba(255,255,255,0.14);color:inherit;font:inherit;');
+  reload.setAttribute('style', 'flex:0 0 auto;cursor:pointer;padding:var(--ds-space-1) var(--ds-space-inline-x);border-radius:var(--ds-radius-input);border:1px solid rgba(255,255,255,0.22);background:rgba(255,255,255,0.14);color:inherit;font:inherit;');
   reload.onclick = () => { entry._externalConflict = null; bar.remove(); refreshFileTab(entry, { force: true }); };
   bar.append(text, keep, reload);
   pane.prepend(bar);
@@ -1414,7 +1414,7 @@ function renderFilePlaceholder(paneEl, errorMsg, absPath) {
     'height:100%',
     'padding:var(--ds-space-6)',
     'color:var(--color-text-muted)',
-    'font-size:14px',
+    'font-size:var(--ds-fs-subtitle)',
   ].join(';');
   const iconRow = document.createElement('div');
   iconRow.textContent = t('canvas.unreadableTitle');
@@ -4808,10 +4808,10 @@ function cardWindowBootFace(fileName) {
   el.setAttribute('data-state', 'loading');
   el.style.cssText =
     'position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:5;' +
-    'display:flex;flex-direction:column;align-items:center;gap:var(--ds-space-glass-x);padding:22px 30px;' +
+    'display:flex;flex-direction:column;align-items:center;gap:var(--ds-space-inline-gap);padding:22px 30px;' +
     'border:1px solid var(--glass-border,#e0e1e4);border-radius:var(--ds-radius-card-md);' +
     'background:var(--glass-bg,#fff);color:var(--color-text,#1b1e26);' +
-    "font:13px/1.6 -apple-system,'Segoe UI',sans-serif;text-align:center;max-width:78vw;";
+    "font:var(--ds-fs-body)/1.6 -apple-system,'Segoe UI',sans-serif;text-align:center;max-width:78vw;";
   const dot = document.createElement('div');
   dot.className = 'nf-cw-dot';
   dot.style.cssText =
@@ -4829,7 +4829,7 @@ function cardWindowBootFace(fileName) {
   retry.className = 'nf-cw-retry';
   retry.textContent = t('canvas.retry');
   retry.style.cssText =
-    'display:none;margin-top:var(--ds-space-half);padding:5px var(--ds-space-4);border-radius:var(--ds-radius-input);cursor:pointer;' +
+    'display:none;margin-top:var(--ds-space-half);padding:var(--ds-space-1h) var(--ds-space-4);border-radius:var(--ds-radius-input);cursor:pointer;' +
     'border:1px solid var(--glass-control-border,#d8d9dd);background:var(--glass-control-bg,transparent);' +
     'color:inherit;font-size:var(--ds-fs-hint);';
   retry.addEventListener('click', () => { try { location.reload(); } catch { /* 无历环境 */ } });

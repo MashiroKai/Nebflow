@@ -281,7 +281,8 @@ object SearchConfig:
  *   "jev": { "enabled": true, "provider": "typesafe-jev",
  *            "endpoint": "https://api.typesafe.ai/v1/systemone",
  *            "model": "jev-latest", "keyRef": "typesafe-api-key",
- *            "choiceHighBasePolicy": "warn" }
+ *            "choiceHighBasePolicy": "warn",
+ *            "providers": { "typesafe-jev": { "type": "typesafe-jev", … } } }
  *
  * ==Every field is optional ON PURPOSE==
  * `SearchConfig` requires `provider` + `apiKey`, so a partially written
@@ -315,13 +316,52 @@ object SearchConfig:
  *   now: it feeds a WARNING in the adaptation layer, and promoting it to a
  *   typed enum would fix a product decision that is still open.
  */
+/**
+ * JeV provider 子节（jev-imagegen-align-llm 批 2026-11-02）——`jev.providers.<name>` 项。
+ *
+ *   "providers": { "typesafe-jev": { "type": "typesafe-jev",
+ *                                    "endpoint": "https://api.typesafe.ai/v1/systemone",
+ *                                    "model": "jev-latest",
+ *                                    "keyRef": "jev-typesafe-jev-key" } }
+ *
+ * ==为什么是「可缺席的新事实源」==
+ * `JevConfig` 的顶层 5 键**一个不删**（旧配置零迁移、旧读点零改坏）；
+ * `providers` 一旦存在即优先——`JevSettings.resolve` 逐字段走
+ * `providers[当前选中项] > 顶层 > 缺省` 三级回落（[[ImageGenProviderConfig]]
+ * 同族形状，生图侧先例）。
+ *
+ * 🔴 凭据纪律（jev/embedding/imagegen 同先例）：`keyRef` 是数据根 `secrets/`
+ * 下的**名字**（指针，不落值）；解析方现读在位性，缺件/空/不可读 ⇒ 该腿自动关。
+ * 🔴 形状纪律（同 [[JevConfig]] 注释）：**除 `type` 外全部 Option 且带 `= None`**
+ * ——`deriveDecoder` 不认 case class 默认值，新增必填位会打回冷启动中间态。
+ *
+ * @param `type`
+ *   适配器标识，枚举 = `nebflow.llm.decision.DecisionProvider.AllIds`；选中项的
+ *   type 优先于顶层 `provider` 指针（两者平时同值）。
+ */
+case class JevProviderConfig(
+  `type`: String,
+  endpoint: Option[String] = None,
+  model: Option[String] = None,
+  keyRef: Option[String] = None
+)
+
+object JevProviderConfig:
+  given Decoder[JevProviderConfig] = deriveDecoder[JevProviderConfig]
+
 case class JevConfig(
   enabled: Option[Boolean] = None,
   provider: Option[String] = None,
   endpoint: Option[String] = None,
   model: Option[String] = None,
   keyRef: Option[String] = None,
-  choiceHighBasePolicy: Option[String] = None
+  choiceHighBasePolicy: Option[String] = None,
+  /**
+   * 多 provider 事实源（jev-imagegen-align-llm 批；可缺席）——键 = provider 名，
+   * 与顶层 `provider`（当前选中项指针）配对。存在即优先，见
+   * [[JevProviderConfig]] 与 `JevSettings.resolve` 的三级回落。
+   */
+  providers: Option[Map[String, JevProviderConfig]] = None
 ):
   /**
    * Toggle semantics: absent means OFF is the SAFE default for a face that

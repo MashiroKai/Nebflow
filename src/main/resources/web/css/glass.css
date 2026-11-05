@@ -410,7 +410,7 @@ body.mobile-layer .g2-fab svg {
 body.mobile-layer .g2-pill {
   height: 44px;
   padding: 0 26px;
-  font-size: 14px;
+  font-size: var(--ds-fs-subtitle);
 }
 /* 弹簧按压 0.88 + spring 曲线（180ms；设计稿 §3.4 手机档）——原 mobileLayer
    逐面弹簧块归一本包；mobileLayer 只留几何落位 */

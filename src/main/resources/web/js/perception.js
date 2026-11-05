@@ -846,7 +846,7 @@ export async function openMailEditor(draftId, opts = {}) {
 
   const tools = document.createElement('div');
   tools.className = 'canvas-tools';
-  tools.style.cssText = 'position:absolute;top:10px;right:14px;z-index:30;display:flex;align-items:center;gap:var(--ds-space-1h);padding:var(--ds-space-1) var(--ds-space-1h) var(--ds-space-1) var(--ds-space-glass-x);border-radius:var(--ds-radius-pill);background:var(--st-control-bg);border:1px solid var(--st-control-border);box-shadow:inset 0 1px 0 var(--st-control-highlight),inset 0 -1px 0 var(--st-control-underedge),0 1px 3px var(--st-control-glow),0 2px 8px var(--st-control-shadow)';
+  tools.style.cssText = 'position:absolute;top:10px;right:14px;z-index:30;display:flex;align-items:center;gap:var(--ds-space-1h);padding:var(--ds-space-1) var(--ds-space-1h) var(--ds-space-1) var(--ds-space-inline-x);border-radius:var(--ds-radius-pill);background:var(--st-control-bg);border:1px solid var(--st-control-border);box-shadow:inset 0 1px 0 var(--st-control-highlight),inset 0 -1px 0 var(--st-control-underedge),0 1px 3px var(--st-control-glow),0 2px 8px var(--st-control-shadow)';
   tools.innerHTML = `
     <button class="pp-btn" data-t="abandon" style="border:none;background:transparent;box-shadow:none;color:var(--st-text-muted)">${esc(t('perception.abandon'))}</button>
     <button class="pp-btn primary" data-t="send" style="border-radius:var(--ds-radius-pill);padding:var(--ds-space-1) 14px">${esc(t('perception.send'))}</button>`;

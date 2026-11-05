@@ -109,7 +109,7 @@ done
 t1=$(now)
 tsv_append "$TSV" "health_ready	$(elapsed_ms "$t0" "$t1")	http=$code after $i polls"
 if [ "$READY" = "1" ]; then ok "发布端口健康探活 200（$(elapsed_ms "$t0" "$t1")ms, ${i}x2s）"; else
-  bad "健康探活失败（http=$code）——容器日志尾部："
+  bad "健康探活失败（http=${code}）——容器日志尾部："
   docker exec "$NB-qa" sh -c 'tail -30 /tmp/qa-gateway.log' 2>/dev/null || true
 fi
 
