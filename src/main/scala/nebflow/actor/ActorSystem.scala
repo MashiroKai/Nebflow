@@ -30,22 +30,74 @@ trait ActorSystem:
   def isAlive(path: ActorPath): IO[Boolean]
   def watch(watcher: ActorPath, target: ActorPath): IO[Unit]
   def unwatch(watcher: ActorPath, target: ActorPath): IO[Unit]
+
+  /**
+   * 死信累计数（刀三·爆炸保护只读面）：邮箱/信号箱满时被拒的消息条数。
+   * 恒 0 = 从未触发（正常态）；> 0 = 曾经极端积压，详见 ERROR 日志。
+   */
+  def deadLetterCount: IO[Long]
+
+  /**
+   * 刀四·监督关系落盘化（裁定3「整刀落盘」）：把盘上的 `(watcherPath,
+   * targetSessionId, registeredAt)` 边读回来，重建 `watch` 订阅表。**boot 时调用
+   * 一次**（装配点见 `GatewayMain`）。未接落盘面（[[WatchStore.disabled]]）时为空操作。
+   */
+  def replayWatches: IO[Unit]
 end ActorSystem
 
 object ActorSystem:
 
-  /** Create a local actor system. */
-  def apply(deviceName: String): ActorSystem =
-    new LocalActorSystem(deviceName)
+  /**
+   * 内核消息箱容量默认值（刀三·爆炸保护）。
+   *
+   * 来源 = 审计件 `actorization-gap-and-pekko-migration-audit__20261104_211833__
+   * delegate-nebflow-18eb158f.md` §3 刀三 + 作者裁定：**只做爆炸保护，不做流量
+   * 控制**——上界极高，只在极端积压时拒绝 + 计数 + 死信可见；绝不 TTL / 丢弃 /
+   * 常态限流。8192 ≈ 正常单 actor 积压（一 turn 一条）的数十倍，越界即异常态。
+   */
+  val DefaultMailboxCapacity = 8192
+
+  /**
+   * 内核信号箱（死信监视 `SystemSignal`）容量默认值（刀三·爆炸保护）。
+   *
+   * 与消息箱分开定值：信号箱只承载 `Terminated`，量级远小于消息流，2 千级足够；
+   * 同批理由见 [[DefaultMailboxCapacity]]（只做爆炸保护，不做流量控制）。
+   */
+  val DefaultSystemQueueCapacity = 2048
+
+  /** `-D nebflow.actor.mailboxCapacity=<n>` 覆写面（≤0 / 非数 → 回落默认）。 */
+  def mailboxCapacity: Int = capOf("nebflow.actor.mailboxCapacity", DefaultMailboxCapacity)
+
+  /** `-D nebflow.actor.systemQueueCapacity=<n>` 覆写面（≤0 / 非数 → 回落默认）。 */
+  def systemQueueCapacity: Int = capOf("nebflow.actor.systemQueueCapacity", DefaultSystemQueueCapacity)
+
+  private def capOf(key: String, default: Int): Int =
+    sys.props.getOrElse(key, default.toString).trim.toIntOption.filter(_ > 0).getOrElse(default)
+
+  /**
+   * Create a local actor system.
+   *
+   * 刀四：`watchStore` 缺省 = [[WatchStore.disabled]]（零落盘，行为与刀四之前逐字
+   * 一致——全套测试大量构造本对象，隐式落盘会写真实数据根）。生产装配点显式传
+   * `WatchStore.file(...)`（`GatewayMain`）。
+   */
+  def apply(deviceName: String, watchStore: WatchStore = WatchStore.disabled): ActorSystem =
+    new LocalActorSystem(deviceName, watchStore)
 
   /** Create an actor system from a given device name, as a Resource. */
-  def resource(deviceName: String): cats.effect.Resource[IO, ActorSystem] =
-    cats.effect.Resource.make(IO(apply(deviceName)))(_.stopAll)
+  def resource(
+    deviceName: String,
+    watchStore: WatchStore = WatchStore.disabled
+  ): cats.effect.Resource[IO, ActorSystem] =
+    cats.effect.Resource.make(IO(apply(deviceName, watchStore)))(_.stopAll)
 
 end ActorSystem
 
 /** Local-only actor system implementation. */
-final class LocalActorSystem(val localDevice: String) extends ActorSystem:
+final class LocalActorSystem(
+  val localDevice: String,
+  watchStore: WatchStore = WatchStore.disabled
+) extends ActorSystem:
   private val log = NebflowLogger.forName("nebflow.actor")
 
   private case class RegistryEntry(
@@ -56,8 +108,23 @@ final class LocalActorSystem(val localDevice: String) extends ActorSystem:
 
   private val registry: Ref[IO, Map[String, RegistryEntry]] = Ref.unsafe(Map.empty)
 
-  /** Death watch: target path → set of watcher paths. */
-  private val watchers: Ref[IO, Map[String, Set[String]]] = Ref.unsafe(Map.empty)
+  /**
+   * Death watch: target path → (watcher path → 注册时刻)。
+   *
+   * 刀四把内层从 `Set[String]` 改成 `Map[String, Long]`：落盘三元组要
+   * `registeredAt`，而内存表必须与盘上**同源**（否则重放会把时刻重置成 0，
+   * 盘上读数与内存读数不再一致）。
+   */
+  private val watchers: Ref[IO, Map[String, Map[String, Long]]] = Ref.unsafe(Map.empty)
+
+  /** 容量在此刻定值（构造期读 -D；装配后不随 sys.props 漂移——行为可预测）。 */
+  private val mailboxCapacity: Int = ActorSystem.mailboxCapacity
+  private val systemQueueCapacity: Int = ActorSystem.systemQueueCapacity
+
+  /** 死信台账（刀三·爆炸保护）：满箱拒绝的计数面，只读可见（[[deadLetterCount]]）。 */
+  private val deadLetters: DeadLetterLedger = DeadLetterLedger.unsafe
+
+  def deadLetterCount: IO[Long] = deadLetters.count
 
   def spawn[Msg](
     behavior: Behavior[Msg],
@@ -67,12 +134,15 @@ final class LocalActorSystem(val localDevice: String) extends ActorSystem:
     val path = ActorPath(localDevice, name)
     val ctxLog = NebflowLogger.forName(s"nebflow.actor.$name")
     for
-      queue <- Queue.unbounded[IO, Msg]
-      sysQueue <- Queue.unbounded[IO, SystemSignal]
+      // 刀三·爆炸保护（审计件 §3 刀三 + 作者裁定）：有界而非无界——满则不挂起
+      // （不传染阻塞给发送方）、不丢弃静默（死信 ERROR + 计数），TTL/限流一概不引入。
+      queue <- Queue.bounded[IO, Msg](mailboxCapacity)
+      sysQueue <- Queue.bounded[IO, SystemSignal](systemQueueCapacity)
       turnFibersRef <- Ref.of[IO, Map[String, Fiber[IO, Throwable, Unit]]](Map.empty)
       childrenRef <- Ref.of[IO, List[ActorRef[?]]](Nil)
       fiberPromise <- cats.effect.Deferred[IO, Fiber[IO, Throwable, Unit]]
-      ref = new LocalActorRef[Msg](path, queue, sysQueue, fiberPromise)
+      ref = new LocalActorRef[Msg](path, queue, sysQueue, fiberPromise, mailboxCapacity, deadLetters)
+
       ctx = new LocalActorContext[Msg](ref, this, ctxLog, turnFibersRef, childrenRef)
       initBehavior <- behavior.onStart(ctx)
       behaviorRef <- Ref.of[IO, Behavior[Msg]](initBehavior)
@@ -118,30 +188,90 @@ final class LocalActorSystem(val localDevice: String) extends ActorSystem:
   // ============================================================
 
   def watch(watcher: ActorPath, target: ActorPath): IO[Unit] =
+    watchStoreEdge(watcher, target)
+
+  /**
+   * 订阅 + 落盘（刀四）：内存表先变，再全量重写盘上快照。
+   *
+   * 落盘失败**不回滚内存表**（真源是内存；盘面是可重放快照）——`save` 自己已经
+   * 把异常吞成 WARN，所以这条链永不因为盘出错而打断 `watch` 的语义。
+   */
+  private def watchStoreEdge(watcher: ActorPath, target: ActorPath): IO[Unit] =
     watchers.update(_.updatedWith(target.toString) {
-      case Some(set) => Some(set + watcher.toString)
-      case None => Some(Set(watcher.toString))
-    })
+      case Some(existing) => Some(existing.updated(watcher.toString, System.currentTimeMillis()))
+      case None => Some(Map(watcher.toString -> System.currentTimeMillis()))
+    }) *> persistWatches
 
   def unwatch(watcher: ActorPath, target: ActorPath): IO[Unit] =
     watchers.update(_.updatedWith(target.toString) {
-      case Some(set) =>
-        val next = set - watcher.toString
+      case Some(existing) =>
+        val next = existing - watcher.toString
         if next.isEmpty then None else Some(next)
       case None => None
-    })
+    }) *> persistWatches
+
+  /** 内存表 → 落盘快照（`(watcherPath, targetSessionId, registeredAt)` 三元组）。 */
+  private def persistWatches: IO[Unit] =
+    watchers.get.flatMap { snapshot =>
+      val edges = snapshot.toList.flatMap { case (targetPath, byWatcher) =>
+        // 目标 path 是本进程的 ActorPath；落盘的靶心是**会话身份**（最后一段）。
+        val targetSessionId = ActorPath.parse(targetPath).toOption.map(_.name).getOrElse(targetPath)
+        byWatcher.toList.map { case (watcherPath, registeredAt) =>
+          WatchEdge(watcherPath, targetSessionId, registeredAt)
+        }
+      }
+      watchStore.save(edges)
+    }
+
+  /**
+   * boot 重放（刀四）：读盘上三元组，只取**本设备**的 watcher 边，按当前
+   * `localDevice` 把 `targetSessionId` 还原成 `ActorPath(localDevice, sid)`。
+   *
+   * 重放后立刻回写一次：异地设备的边在这一步被自然剪掉（否则它们会永远躺在盘上
+   * 等着永远不会属于它们的进程）。
+   */
+  def replayWatches: IO[Unit] =
+    watchStore.load.flatMap { edges =>
+      val localEdges =
+        edges.filter(e => ActorPath.parse(e.watcherPath).exists(_.isLocal(localDevice)))
+      watchers
+        .update { current =>
+          localEdges.foldLeft(current) { (acc, edge) =>
+            val targetPath = ActorPath(localDevice, edge.targetSessionId).toString
+            acc.updatedWith(targetPath) { prev =>
+              Some(prev.getOrElse(Map.empty).updated(edge.watcherPath, edge.registeredAt))
+            }
+          }
+        } *> persistWatches *>
+        (if localEdges.size == edges.size then IO.unit
+         else log.info(s"watch replay: dropped ${edges.size - localEdges.size} non-local edge(s)"))
+          *> log.info(s"watch replay: ${localEdges.size} edge(s) restored on device '$localDevice'")
+    }
 
   /** Deliver Terminated signal to all watchers of the given path. */
   private def notifyWatchers(deadPath: String, deadRef: ActorRef[?]): IO[Unit] =
     watchers.get
       .flatMap { watchersMap =>
-        val watcherPaths = watchersMap.getOrElse(deadPath, Set.empty)
-        // Clean up: remove dead actor from watchers map
-        watchers.update(_ - deadPath) *>
+        val watcherPaths = watchersMap.getOrElse(deadPath, Map.empty).keySet
+        // Clean up: remove dead actor from watchers map (刀四：盘上快照同步剪掉，
+        // 否则重启后会把一条指向死靶心的边重放回来)
+        (watchers.update(_ - deadPath) *> persistWatches) *>
           registry.get.flatMap { entries =>
             watcherPaths.toList.traverse_ { wp =>
               entries.get(wp) match
-                case Some(entry) => entry.systemQueue.offer(SystemSignal.Terminated(deadRef))
+                // 刀三·爆炸保护：信号箱有界 → 满时 `tryOffer` 拒绝并记死信（ERROR
+                // 带 path + 计数），绝不静默；不挂起（不阻塞正在收尸的 loop）。
+                case Some(entry) =>
+                  entry.systemQueue.tryOffer(SystemSignal.Terminated(deadRef)).flatMap {
+                    case true => IO.unit
+                    case false =>
+                      deadLetters.record(
+                        wp,
+                        "system-queue",
+                        systemQueueCapacity,
+                        s"Terminated(${deadPath}) rejected"
+                      )
+                  }
                 case None => IO.unit
             }
           }

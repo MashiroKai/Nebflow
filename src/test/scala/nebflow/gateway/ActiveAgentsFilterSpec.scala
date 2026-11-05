@@ -44,13 +44,12 @@ class ActiveAgentsFilterSpec extends FunSuite:
       .toSet
 
   test("task-lifecycle kinds are presence-based (no busy gating)") {
-    // Delegate/SubTask/Flow/Ephemeral unregister on completion, so registry
-    // presence == in flight.
+    // Delegate/SubTask/Flow unregister on completion, so registry
+    // presence == in flight. (裁定5：Ephemeral 已删，不再作为 task kind 参与。)
     val registry = Map(
       "del-1" -> rec("del-1", AgentKind.Delegate),
       "sub-1" -> rec("sub-1", AgentKind.SubTask),
-      "flow-1" -> rec("flow-1", AgentKind.Flow),
-      "eph-1" -> rec("eph-1", AgentKind.Ephemeral)
+      "flow-1" -> rec("flow-1", AgentKind.Flow)
     )
     val out = run(registry)
     assertEquals(
@@ -58,8 +57,7 @@ class ActiveAgentsFilterSpec extends FunSuite:
       Set(
         ("del-1", AgentKind.Delegate),
         ("sub-1", AgentKind.SubTask),
-        ("flow-1", AgentKind.Flow),
-        ("eph-1", AgentKind.Ephemeral)
+        ("flow-1", AgentKind.Flow)
       )
     )
   }

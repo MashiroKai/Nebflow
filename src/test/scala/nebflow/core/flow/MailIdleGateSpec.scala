@@ -88,8 +88,8 @@ class MailIdleGateSpec extends FunSuite:
     )
     assert(!MailIdleGate.isAgentTreeIdle("t", registry))
 
-  test("Ephemeral / Plan 子记录在飞 → 不空闲"):
-    for kind <- List(AgentKind.Ephemeral, AgentKind.Plan) do
+  test("Delegate / SubTask 子记录在飞 → 不空闲"):
+    for kind <- List(AgentKind.Delegate, AgentKind.SubTask) do
       val registry = Map(
         "t" -> rec("t"),
         s"child-${kind.toString}" -> rec(s"child-${kind.toString}", kind, parentRef = Some(nullRef))

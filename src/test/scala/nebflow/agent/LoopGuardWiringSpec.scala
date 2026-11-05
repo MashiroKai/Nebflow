@@ -151,7 +151,7 @@ class LoopGuardWiringSpec extends CatsEffectSuite:
           ),
           actorName
         )
-        _ <- resources.agentRegistry.update(_ + (sid -> AgentRecord(sid, actor, AgentKind.Ephemeral, sid, None)))
+        _ <- resources.agentRegistry.update(_ + (sid -> AgentRecord(sid, actor, AgentKind.SubTask, sid, None)))
         _ <- actor ! AgentCommand.UserInput("do the thing", None, Some("cmid-1"))
         _ <-
           if expectFirstTurnBusy then
@@ -326,7 +326,7 @@ class LoopGuardWiringSpec extends CatsEffectSuite:
           ),
           actorName
         )
-        _ <- resources.agentRegistry.update(_ + (sid -> AgentRecord(sid, actor, AgentKind.Ephemeral, sid, None)))
+        _ <- resources.agentRegistry.update(_ + (sid -> AgentRecord(sid, actor, AgentKind.SubTask, sid, None)))
         _ <- actor ! AgentCommand.UserInput("turn-1", None, Some("cmid-1"))
         _ <- waitFor(wsEvents, evs => busyFalseCount(evs) >= 1, s"$actorName turn-1 did not finish", 30000)
         _ <- actor ! AgentCommand.UserInput("turn-2", None, Some("cmid-2"))

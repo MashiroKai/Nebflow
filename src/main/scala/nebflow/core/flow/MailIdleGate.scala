@@ -26,7 +26,7 @@ object MailIdleGate:
    * Team kind，gate 检查发送者会误判「有下属在飞」→ 永不投递（方案 R4）。
    */
   private[flow] val taskKinds: Set[AgentKind] =
-    Set(AgentKind.Delegate, AgentKind.SubTask, AgentKind.Flow, AgentKind.Ephemeral, AgentKind.Plan)
+    Set(AgentKind.Delegate, AgentKind.SubTask, AgentKind.Flow)
 
   /**
    * 规则②：目标 agent 自身子树完全空闲（team 内 queue 语义）。
