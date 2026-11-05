@@ -279,6 +279,21 @@ const measure = (page) => page.evaluate(() => {
       visible: rect(n).visible,
     };
   };
+  /** 面级材质读数（glass.css 面级浮件档：底/描边/描边宽/浮影/毛玻璃 + 顶缘折射线）。 */
+  const pickSurface = (n) => {
+    if (!n) return null;
+    const cs = getComputedStyle(n);
+    const be = getComputedStyle(n, '::before');
+    return {
+      bg: cs.backgroundColor, borderColor: cs.borderTopColor, borderWidth: cs.borderTopWidth,
+      shadow: cs.boxShadow, backdrop: cs.backdropFilter || cs.webkitBackdropFilter || '',
+      radius: cs.borderTopLeftRadius,
+      before: {
+        content: be.content, height: be.height, width: be.width,
+        image: be.backgroundImage, radius: be.borderTopLeftRadius,
+      },
+    };
+  };
   const askFab = document.querySelector('.ask-fab');
   const noteFab = document.querySelector('.note-fab');
   const askDock = document.querySelector('.ask-dock');
@@ -304,6 +319,8 @@ const measure = (page) => page.evaluate(() => {
     askDock: rect(askDock),
     noteDock: rect(noteDock),
     noteBody: rect(noteBody),
+    noteSurface: pickSurface(noteBody),
+    askSurface: pickSurface(document.querySelector('.ask-input')),
     noteText: rect(noteText),
     noteHandle: rect(noteHandle),
     noteHandleHit: hit,
@@ -425,6 +442,24 @@ test('canvas note button + panel', async ({ page }) => {
     s1.noteText.w > 0 && s1.noteBody.w - s1.noteText.w >= 0 && parseFloat(s1.noteH) > 0
     && Math.abs(s1.noteDock.h - parseFloat(s1.noteH)) <= 12,
     JSON.stringify({ text: s1.noteText.w, body: s1.noteBody.w, noteH: s1.noteH, dockH: s1.noteDock.h }));
+  /* 面级材质与输入条逐项同档（merge 后 main 把输入条改成不透明毛玻璃档 + 顶缘
+     折射线；记事本以**成员**身份进那块配方，所以这里比对的是「同一份配方的计算结果」，
+     不是「两个独立配方长得像」）。 */
+  const nb = s1.noteSurface || {};
+  const ai = s1.askSurface || {};
+  const sameFive = !!s1.noteSurface && !!s1.askSurface
+    && nb.bg === ai.bg && nb.borderColor === ai.borderColor && nb.borderWidth === ai.borderWidth
+    && nb.shadow === ai.shadow && nb.backdrop === ai.backdrop;
+  const beforeLine = (x) => !!x.before && x.before.content !== 'none' && parseFloat(x.before.height) > 0
+    && x.before.image !== 'none';
+  check('N2f 内容盒材质 = 输入条同档（底/描边/描边宽/浮影/毛玻璃五项逐项相等 + 两面板顶缘折射线都在位）',
+    sameFive && beforeLine(nb) && beforeLine(ai),
+    JSON.stringify({
+      note: { bg: nb.bg, border: nb.borderColor, bw: nb.borderWidth, shadow: (nb.shadow || '').slice(0, 60), backdrop: nb.backdrop, radius: nb.radius },
+      ask: { bg: ai.bg, border: ai.borderColor, bw: ai.borderWidth, shadow: (ai.shadow || '').slice(0, 60), backdrop: ai.backdrop, radius: ai.radius },
+      before: { note: nb.before, ask: ai.before },
+      sameFive,
+    }));
   await page.waitForTimeout(320);
   const focusS = await measure(page);
   check('N2d 打开即聚焦（activeElement = 记事本 textarea）', focusS.focusedIsNoteText === true,
