@@ -235,8 +235,8 @@ class DeviceFaceHardeningRoutesSpec extends FunSuite:
     ("GET /api/flows/list", get("/flows/list")),
     ("GET /api/teams/:teamName", get("/teams/research")),
     // 团队功能删除批 team-feature-deletion-20261104 阶段 2：/teams/mounted 从
-    // 「live siblings」移入退役清单 —— 它的数据源（TeamSessionRegistry
-    // .listMountedTeams）只由 FlowTreeActor 填充，阶段 1 断掉每会话无条件建树后
+    // 「live siblings」移入退役清单 —— 它的数据源（团队会话登记表
+    // .listMountedTeams）只由团队树 actor 填充，阶段 1 断掉每会话无条件建树后
     // 恒空；前端/CLI/BE 零调用点。与 /teams/:teamName 同理，退役后
     // `/teams/mounted` 落到 `/teams/{name}` 家族之外（该家族已退役）⇒ None。
     ("GET /api/teams/mounted", get("/teams/mounted")),

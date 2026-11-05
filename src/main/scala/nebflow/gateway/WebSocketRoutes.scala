@@ -11,7 +11,7 @@ import nebflow.actor.{ActorSystem as RootActorSystem, *}
 import nebflow.agent.*
 import nebflow.core.*
 import nebflow.core.entity.EntityLoader
-import nebflow.core.flow.{FlowTreeRegistry, TeamSessionRegistry}
+import nebflow.core.flow.TeamSessionRegistry
 import nebflow.core.mcp.McpManager
 import nebflow.core.project.{CancelSource as ChainCancelSource, *}
 import nebflow.core.schedule.FreezeSchedule.given
@@ -192,7 +192,7 @@ class WebSocketRoutes(
       // ── ctxthresh 批（2026-09-15 方案 A，作者卡答「按方案A实施」）─────────────
       // 🔴 **本行是全仓唯一的阈值覆盖注入点**（口径③「仅 Nebula 窗口」的**结构性**
       // 保证，不是口号）：depth=0 的 WS 根会话 spawn 是全仓唯一的 root spawn 点，
-      // 非 root spawn（NodeRunner / MailTool / FlowTreeActor）一律不传该实参 ⇒ SessionContext.compactThresholdRatio = None
+      // 非 root spawn（`NodeRunner` / `MailTool`）一律不传该实参 ⇒ SessionContext.compactThresholdRatio = None
       // ⇒ 走 CompactThreshold 现值函数（口径②）。
       //
       // 优先级链：内存 Ref（本进程内已热更的权威值）＞ 盘上 SessionMeta（跨重启
@@ -296,10 +296,10 @@ class WebSocketRoutes(
         // 一次连接就用盘上 meta 值写桶的路径（2026-09-12 前）以及"内存覆盖"路径
         // （2026-09-12–09-13）都已随覆盖层删除。
         // 团队功能删除批（team-feature-deletion-20261104）阶段 1：此处原为
-        // `initFlowTree(...)` —— 每个 root 会话 spawn 就无条件建一棵 FlowTreeActor
-        // （团队树）并注册进 FlowTreeRegistry。该无条件路径已断：团队面整体退役，
-        // 不再有「连接即建树」的生产者。FlowTreeActor 类型本体保留（惰性入口
-        // FlowTreeRegistry.getOrCreate 仍在，阶段 3 才删类型）。
+        // `initFlowTree(...)` —— 每个 root 会话 spawn 就无条件建一棵「团队树」actor
+        // 并注册进树注册表。阶段 1 断掉该无条件路径，阶段 2 摘掉惰性入口
+        // （Load 工具的 team 分支），阶段 3 把类型本体与注册表一并删除 ——
+        // 至此「连接即建树」的生产者、入口、类型三层全无。
         registerRootInteraction(sessionId, recordingWsSend).as(ref)
     }
 
@@ -489,16 +489,15 @@ class WebSocketRoutes(
 
   // 团队功能删除批（team-feature-deletion-20261104）阶段 1：`initFlowTree`
   // （原 :490-517）整段删除 —— 它是「每次 root 会话 spawn 就无条件建一棵团队树」
-  // 的唯一定义面（markRestoreStarted + spawn FlowTreeActor + FlowTreeRegistry.register）。
-  // FlowTreeActor 与 TeamSessionRegistry 类型**本阶段完整保留**（阶段 3 才动）。
+  // 的唯一定义面（markRestoreStarted + spawn 树 actor + 注册进树注册表）。
   // 阶段 2（同一批）：注释里那条「树仍可经惰性入口 getOrCreate（LoadTool 腿）按需
-  // 建立」的腿也已摘掉（Load 工具的 team 分支删除）；`getOrCreate` 本体与下面的
-  // `unregister` 拆除路径原位保留，留待阶段 3 连同类型一并处置。
+  // 建立」的腿也已摘掉（Load 工具的 team 分支删除）。
+  // 阶段 3（同一批）：树 actor / 树注册表 / 树命令三套类型本体与其
+  // `unregister` 清理腿一并删除（上面的 removeRootAgent 只剩 agentRegistry 一条）。
 
   /** Stop and remove the root AgentActor for a session. */
   private def removeRootAgent(sessionId: String): IO[Unit] =
-    FlowTreeRegistry.unregister(sessionId) *>
-      sharedResources.agentRegistry.update(_ - sessionId) *>
+    sharedResources.agentRegistry.update(_ - sessionId) *>
       unregisterRootInteraction(sessionId) *>
       // 2026-09-13（permshield S1）：此处原为"清该会话的内存覆盖条目"。覆盖层删除后
       // 档位是应用级的，删除会话**不得**（也不能）改动它——故本清理点整体移除。
@@ -1360,7 +1359,7 @@ class WebSocketRoutes(
                     activeMeta <- sessionStore.getActiveMeta
                     agentName = activeMeta.flatMap(_.agentName).getOrElse(RootAgentIdentity.Name)
                     // ⑦ (2026-08-24): 原为「WS connect 即恢复已挂团队」——挂在
-                    // initFlowTree → FlowTreeActor.restoreTeams 上。团队功能删除批
+                    // initFlowTree → 树 actor 的 restoreTeams 上。团队功能删除批
                     // 阶段 1 已断掉 initFlowTree（见 :490 注），此处**只保留** root
                     // agent 的确保（ensureRootAgent 幂等，冷启 spawn / 热路径原样返回）；
                     // 团队恢复腿随之不存在。/api/teams/mounted 在阶段 1 的中间态见

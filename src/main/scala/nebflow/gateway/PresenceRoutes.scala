@@ -12,7 +12,6 @@ import nebflow.agent.{AgentCore, SharedResources}
 import nebflow.core.*
 import nebflow.core.daemon.*
 import nebflow.core.entity.{AgentIdentityStore, EntityLoader, NodeRoute}
-import nebflow.core.flow.{FlowTreeRegistry, TreeCommand}
 import nebflow.core.hotrestart.HealthPayload
 import nebflow.core.project.*
 import nebflow.core.schedule.FreezeSchedule.given
@@ -589,15 +588,16 @@ private[gateway] object PresenceRoutes:
       // and the 11-route takedown was authorised by the author.
 
       // (团队功能删除批 team-feature-deletion-20261104 阶段 2) GET /teams/mounted
-      // 在此 RETIRED：它的数据源是 TeamSessionRegistry.listMountedTeams，只有
-      // FlowTreeActor 填充；阶段 1 断掉每会话无条件建树后该表恒空，读面只剩
-      // 一条「awaitRestore 等一个永不到来的信号 → 返回 {"teams":[]}」的空壳。
+      // 在此 RETIRED：它的数据源是团队会话登记表（listMountedTeams），只有团队树
+      // actor 填充；阶段 1 断掉每会话无条件建树后该表恒空，读面只剩一条
+      // 「awaitRestore 等一个永不到来的信号 → 返回 {"teams":[]}」的空壳。
       // 前端零调用点（grep src/main/resources/web/：仅 ws.js:1590 一条历史注释），
       // CLI/BE 亦零调用。判定依据见
       // reports-evidence/team-feature-deletion/stage2/README.md §B。
-      // 随之删除的还有 FlowTreeRegistry 的恢复等待腿（awaitRestore /
-      // markRestoreStarted / signalRestoreComplete / restoreStarted / restoreDone）
-      // —— 该腿的唯一生产者是 FlowTreeActor setup，唯一消费者就是本路由。
+      // 随之删除的还有树注册表的恢复等待腿（awaitRestore / markRestoreStarted /
+      // signalRestoreComplete / restoreStarted / restoreDone）—— 该腿的唯一生产者
+      // 是树 actor setup，唯一消费者就是本路由。阶段 3 把该注册表与团队会话登记表
+      // 的本体一并删除。
 
       // (2026-09-20 device-face hardening batch) 11-route takedown, authorised by
       // the author: GET /running-flows, GET /flow/dag/:name, GET /teams and
@@ -2122,8 +2122,8 @@ private[gateway] object PresenceRoutes:
                 os.move.over(tmp, rulesDir / "rules.md")
               }
               // (团队功能删除批 team-feature-deletion-20261104 阶段 2) 此处原有
-              // 「写后热重载」腿：遍历 FlowTreeRegistry.treesRef，向每棵团队树发
-              // TreeCommand.ReloadDefinition(teamName) 以让 rules.md 改动对下次激活
+              // 「写后热重载」腿：遍历树注册表，向每棵团队树发
+              // ReloadDefinition(teamName) 以让 rules.md 改动对下次激活
               // 立即生效。该腿已删 —— 它是团队挂载树的最后一条只写消费者，阶段 1
               // 之后既无树可发也无帧回传。**端点本身保留**（判定见
               // reports-evidence/team-feature-deletion/stage2/README.md §C）：

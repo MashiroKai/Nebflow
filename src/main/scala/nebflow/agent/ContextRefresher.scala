@@ -457,7 +457,7 @@ object ContextRefresher:
     // edits (e.g. PUT /api/agents/:name/model) take effect on the running
     // actor. agentLibrary.get only scans the GLOBAL agents dir — for team
     // agents it returns None and the code would silently keep using the
-    // actor-startup snapshot (MailTool/FlowTreeActor loadTeamAgent result).
+    // actor-startup snapshot (MailTool's team-agent load result).
     // loadTeamAgent checks teams/<team>/agents/<name>/ first, then global.
     teamNameOpt match
       case Some(teamName) =>

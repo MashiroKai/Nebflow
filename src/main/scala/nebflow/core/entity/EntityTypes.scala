@@ -80,7 +80,7 @@ object AgentEntry:
   /**
    * Single-source AgentEntry → AgentDef conversion (2026-08-15 FlowTrigger
    * outage fix). Every spawn path (WebSocketRoutes root agents, MailTool
-   * activations, FlowTreeActor, FlowDagExecutor nodes, ContextRefresher
+   * activations, FlowDagExecutor nodes, ContextRefresher
    * per-turn refresh, EntityLoader.findAgentByName) must go through this
    * method — hand-copied field maps at spawn sites drifted out of sync with
    * this decoder (six copies, only two carried `flows`/`skills`), which made

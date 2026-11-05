@@ -7,11 +7,11 @@ import nebflow.core.AgentRuntimePort
 import nebflow.shared.NebflowLogger
 
 // 团队功能删除批（team-feature-deletion-20261104）阶段 3 · 第一步「先拆文件」：
-// `object TeamSessionRegistry` 原先与 `FlowTreeActor` 同处 `FlowTreeActor.scala`
-// （原 `:36-278`），两者职责纠缠（会话生命周期 × 团队挂载 → × 团队会话寻址底座）。
-// 作者裁定「先拆文件，再删团队那半」——**本步是纯搬移**：对象字节内容、成员顺序、
-// 方法体、注释一字未改（程序化逐行比对 = 242/242 全等），只换了宿主文件
-// （同包 ⇒ 调用方零改动、无需改任何 import）。第二步「删团队那半」见
+// `object TeamSessionRegistry` 原先与团队树 actor 同处一个文件（`core/flow/` 下
+// 的树文件，原 `:36-278`），两者职责纠缠（会话生命周期 × 团队挂载 → × 团队会话
+// 寻址底座）。作者裁定「先拆文件，再删团队那半」——**本步是纯搬移**：对象字节
+// 内容、成员顺序、方法体、注释一字未改（程序化逐行比对 = 242/242 全等），只换了
+// 宿主文件（同包 ⇒ 调用方零改动、无需改任何 import）。第二步「删团队那半」见
 // reports-evidence/team-feature-deletion/stage3/README.md。
 /**
  * Global registry for team session lookups (replaces FlowMembership).

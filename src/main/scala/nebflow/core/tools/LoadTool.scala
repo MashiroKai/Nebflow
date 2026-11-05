@@ -12,9 +12,10 @@ import nebflow.shared.PathUtil
  * Flow-definition validator.
  *
  * 团队功能删除批（team-feature-deletion-20261104）阶段 2：本工具原有的
- * `type: "team"` 分支（读 teams/<name>/team.json → 校验 → `FlowTreeRegistry
- * .getOrCreate` → `TreeCommand.MountTeam`）已整体摘除 —— 那是「团队挂载」的
- * 最后一条生产腿，随挂载入口一起下线。判定与依据见
+ * `type: "team"` 分支（读 teams/<name>/team.json → 校验 → 惰性建团队树 →
+ * 发挂载命令）已整体摘除 —— 那是「团队挂载」的最后一条生产腿，随挂载入口
+ * 一起下线；阶段 3 把被它调用的树类型与注册表本体也一并删除。
+ * 判定与依据见
  * reports-evidence/team-feature-deletion/stage2/README.md §A（工具本身保留：
  * `type: "flow"` 是**非团队**用途 —— 只校验 DAG 定义，不挂载任何东西）。
  */
