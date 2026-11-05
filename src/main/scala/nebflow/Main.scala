@@ -316,16 +316,39 @@ object Main extends IOApp:
               .flatMap { focusTarget =>
                 // #512 门审计批：聚焦腿开门目标落 stdout（CLI 路径无 logger 面）——
                 // 二实例撞端口时「开的是哪条门」可从终端对账。
-                IO.println(
-                  s"[door] focus 开门: 目标=$focusTarget（解析=PortalUrl env>config>brand；NEBFLOW_OPEN_UI=local ⇒ 本地自铸票）"
-                ) *>
-                  nebflow.cli.SingleInstanceGuard
-                    .focusExisting(
-                      focusTarget,
-                      "same port",
-                      openBrowser = !nebflow.gateway.GatewayConfig.noBrowser
-                    )
-                    .as(ExitCode.Success)
+                //
+                // 工作过程中开新标签页批（2026-11-05 · 作者令）：本腿同样是**自动**
+                // 开门（二实例撞端口就把浏览器拉到控制台），作者可能正在用控制台
+                // ⇒ 与 boot 门共用 ConsoleActivity 判据（读**活实例**写下的控制台
+                // 在用标记件）。在用 ⇒ 只打「已在运行」的人话，不 exec 浏览器；
+                // 事件本身仍可从终端对账（零静默）。
+                nebflow.gateway.ConsoleActivity.verdict.flatMap {
+                  case nebflow.gateway.ConsoleActivity.Verdict(true, why) =>
+                    IO.println(
+                      s"[door] focus 开门: 目标=$focusTarget（解析=PortalUrl env>config>brand；NEBFLOW_OPEN_UI=local ⇒ 本地自铸票；判据=$why）"
+                    ) *>
+                      // 持久审计（同日批）：stdout 只活在本进程终端里，撞端口那一刻的
+                      // 宿主日志「零开门记录」正是取证卡点 ⇒ 同一判词追加落
+                      // `<dataRoot>/logs/door-focus.log`（best-effort，不拦开门）。
+                      nebflow.gateway.ConsoleActivity.audit(
+                        s"[door] focus 开门: 目标=$focusTarget 判据=$why pid=${ProcessHandle.current().pid()}"
+                      ) *>
+                      nebflow.cli.SingleInstanceGuard
+                        .focusExisting(
+                          focusTarget,
+                          "same port",
+                          openBrowser = !nebflow.gateway.GatewayConfig.noBrowser
+                        )
+                        .as(ExitCode.Success)
+                  case nebflow.gateway.ConsoleActivity.Verdict(false, why) =>
+                    IO.println(s"[door] focus 开门 suppressed: $why") *>
+                      nebflow.gateway.ConsoleActivity.audit(
+                        s"[door] focus 开门 suppressed: $why 目标=$focusTarget pid=${ProcessHandle.current().pid()}"
+                      ) *>
+                      nebflow.cli.SingleInstanceGuard
+                        .focusExisting(focusTarget, "same port", openBrowser = false)
+                        .as(ExitCode.Success)
+                }
               }
           case nebflow.cli.SingleInstanceGuard.OtherHomeInstance(home, _, pid) =>
             // 隔离实例误伤批 2026-11-04 §2：同品牌但**另一个 home** 的活实例占着这个口 ——
