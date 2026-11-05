@@ -54,6 +54,8 @@ class ProviderRegistry(
    */
   private[llm] val throttle: AdaptiveThrottle = new AdaptiveThrottle(configRef)
 
+  private val logger = NebflowLogger.forName("nebflow.llm.registry")
+
   private def createAdapter(providerId: String, provider: ProviderConfig): ProviderAdapter[IO] =
     // 思考回传判据（单点 = ThinkingFamily.requiresPassback）：**两面都要拿到**。
     // protocol-compat 批（2026-11-01）前这里只把开关交给 AnthropicAdapter，
@@ -541,6 +543,20 @@ class ProviderRegistry(
       }
       _ <- configRef.set(newConfig)
       _ <- adaptersRef.set(Map.empty)
+      // 候选集可观测（provider-config-vs-runtime-mismatch 批，2026-11-05）：
+      // 每次热生效都把**生效后**的候选链打进日志——删掉/加回某个 provider 后，
+      // 「运行期到底会试哪些」在 stand.log 里可直接 grep，无需重启或翻代码。
+      // 只打 provider/model ref，绝不打 key。
+      _ <- getCandidatesForAgentUnfiltered(None).attempt.flatMap {
+        case Right(cs) =>
+          IO.delay(
+            logger.infoSync(
+              s"Config hot-reloaded: providers=[${newConfig.llm.providers.keys.toList.sorted.mkString(",")}] " +
+                s"candidateChain=${cs.map(c => s"${c.providerId}/${c.model}").mkString(" -> ")}"
+            )
+          ).attempt.void
+        case Left(e) => IO.delay(logger.warnSync(s"Candidate-chain snapshot after reload failed: ${e.getMessage}")).attempt.void
+      }
       staleIds <- overridesRef match
         case Some(ref) =>
           ref.modify { overrides =>
@@ -561,4 +577,158 @@ class ProviderRegistry(
    */
   def filterKnownProviders(candidates: List[ModelCandidate]): IO[List[ModelCandidate]] =
     configRef.get.map(cfg => candidates.filter(c => cfg.llm.providers.contains(c.providerId)))
+
+  /**
+   * [[filterKnownProviders]] 的**带原因**版本（缺陷批 2026-11-05）：被剔的候选不
+   * 再静默消失，返回 `(存活, 被剔[(ref, 原因)])`，原因 = `not-configured`（provider
+   * 不在当前配置里：#33 的过期会话 override / 热重载竞态）。
+   */
+  def filterKnownProvidersDetailed(
+    candidates: List[ModelCandidate]
+  ): IO[(List[ModelCandidate], List[(String, CandidateSkipCause)])] =
+    configRef.get.map { cfg =>
+      val (kept, dropped) = candidates.partition(c => cfg.llm.providers.contains(c.providerId))
+      val skips = dropped.map(c =>
+        s"${c.providerId}/${c.model}" -> CandidateSkipCause.NotConfigured("provider not in current config")
+      )
+      (kept, skips)
+    }
+
+  /**
+   * 配置可见全集（静默排除审计的基准，缺陷批 2026-11-05）：当前配置里**所有**
+   * 未标 `disabled` 的 `provider/model` ref（字典序，可复现）。
+   *
+   * 用途 = 在请求入口拿它与「实际进链 + 已记录跳过原因」对账：
+   * `expected - chain - skipped` 非空 ⇒ 有候选在没有任何阶段原因的情况下被扔掉
+   * （作者报障的核心形态：面板显示 up、配置里有，delegate 却当它不存在）。
+   * 判定与渲染单点 = [[nebflow.shared.CandidateDisposition]]。
+   */
+  def expectedCandidateRefs(): IO[List[String]] =
+    configRef.get.map { config =>
+      config.llm.providers.toList.sortBy(_._1).flatMap { case (providerId, provider) =>
+        if isDisabled(provider) then Nil
+        else provider.models.sortBy(_.id).map(mc => s"$providerId/${mc.id}")
+      }
+    }
+
+  /**
+   * 配置级「本来就不可入选」的 ref 与原因（缺陷批 2026-11-05）：`disabled: true`
+   * 的 provider 下的每个模型 → `not-configured (provider disabled)`。它让「为什么
+   * 它不在链上」变成账本里的一行，而不是一片沉默。
+   */
+  def configLevelExclusions(): IO[List[(String, CandidateSkipCause)]] =
+    configRef.get.map { config =>
+      config.llm.providers.toList.sortBy(_._1).flatMap { case (providerId, provider) =>
+        if !isDisabled(provider) then Nil
+        else
+          provider.models.sortBy(_.id).map(mc =>
+            s"$providerId/${mc.id}" -> CandidateSkipCause.NotConfigured("provider disabled")
+          )
+      }
+    }
+
+  // ============================================================
+  // 候选集可观测面（provider-config-vs-runtime-mismatch 批，2026-11-05 作者令）
+  // ============================================================
+
+  /** 盘上配置的只读投影（每次现读 `nebflow.json`，不碰 configRef）。 */
+  private case class DiskConfigView(
+    refs: Set[String],
+    activeRefs: Set[String],
+    providers: Set[String],
+    disabled: Set[String]
+  )
+
+  private def diskConfigView(): IO[Option[DiskConfigView]] =
+    IO.blocking {
+      try
+        val cfg = Config.loadServiceConfig()
+        val providers = cfg.llm.providers
+        val refs = providers.iterator.flatMap { case (pid, p) => p.models.map(m => s"$pid/${m.id}") }.toSet
+        val disabled = providers.collect { case (pid, p) if p.disabled.getOrElse(false) => pid }.toSet
+        Some(
+          DiskConfigView(
+            refs = refs,
+            activeRefs = refs.filterNot(r => disabled.contains(r.takeWhile(_ != '/'))),
+            providers = providers.keySet,
+            disabled = disabled
+          )
+        )
+      catch case _: Exception => None
+    }
+
+  /**
+   * 「这次调用会试哪些 provider、按什么顺序」的自查面（作者令 2026-11-05：
+   * 「作者要能自查是不是漏了/多了」）。
+   *
+   * 输出 = 与请求路径**同一个**取链函数（[[getCandidatesForAgentUnfiltered]]）
+   * 的有序结果，逐项标注来源：
+   *   - `chain`  —— 显式链（agent.json `model` / Nebula 主链 / seed 兜底）里写的；
+   *   - `reserve` —— 链未引用、但**配置里存在**而被 [[reserveTier]] 追加的。
+   *
+   * 另外三块是判据面（本批核心）：
+   *   - `chainRefsDropped`：链里写了、但配置里没有（或被 `disabled: true` 摘除）
+   *     因而运行期**被跳过**的 ref —— 「面板写了却不生效」的可见化；
+   *   - `configProviders` / `disabledProviders`：运行期实际持有的配置面；
+   *   - `drift`：**同一时刻**盘上 `nebflow.json` 与内存 `configRef` 的差集。
+   *     `drift.known=false` 表示盘上不可读（刚写/损坏）；`inSync=false` 即
+   *     「配置面 ≠ 运行面」，`onlyOnDisk` 里的 provider 就是「删掉了还在被调」
+   *     或「加回来了还没生效」的那批名字。
+   */
+  def candidateReport(
+    agentName: String = nebflow.core.SchemePolicy.NebulaName,
+    agentModel: Option[AgentModelConfig] = None
+  ): IO[io.circe.Json] =
+    for
+      candidates <- getCandidatesForAgentUnfiltered(agentModel)
+      config <- configRef.get
+      disk <- diskConfigView()
+    yield
+      import io.circe.syntax.*
+      val policy = nebflow.core.SchemePolicy
+      val (effective, resolvedFrom) =
+        policy.resolveModel(agentName, agentModel.orElse(policy.ownChainOf(agentName)))
+      val chainRefs = effective.preferred.toList ++ effective.fallbacks
+      val runtimeRefs = candidates.map(c => s"${c.providerId}/${c.model}").toSet
+      val dropped = chainRefs.filter { ref =>
+        try
+          val (pid, mid) = Config.parseModelRef(ref)
+          config.llm.providers.get(pid) match
+            case None => true
+            case Some(p) => isDisabled(p) || !p.models.exists(_.id == mid)
+        catch case _: Exception => true
+      }
+      val drift = disk match
+        case None => io.circe.Json.obj("known" -> false.asJson)
+        case Some(d) =>
+          val active = runtimeRefs.filterNot(r => d.disabled.contains(r.takeWhile(_ != '/')))
+          val runtimeProviders = config.llm.providers.keySet
+          io.circe.Json.obj(
+            "known" -> true.asJson,
+            "inSync" -> ((d.activeRefs == active) && (d.providers == runtimeProviders)).asJson,
+            "onlyInRuntime" -> (runtimeProviders -- d.providers).toList.sorted.asJson,
+            "onlyOnDisk" -> (d.providers -- runtimeProviders).toList.sorted.asJson,
+            "refsOnlyInRuntime" -> (active -- d.activeRefs).toList.sorted.asJson,
+            "refsOnlyOnDisk" -> (d.activeRefs -- active).toList.sorted.asJson
+          )
+      io.circe.Json.obj(
+        "agent" -> agentName.asJson,
+        "resolvedFrom" -> resolvedFrom.asJson,
+        "chainRefs" -> chainRefs.asJson,
+        "chainRefsDropped" -> dropped.asJson,
+        "candidates" -> io.circe.Json.fromValues(
+          candidates.map { c =>
+            val ref = s"${c.providerId}/${c.model}"
+            io.circe.Json.obj(
+              "ref" -> ref.asJson,
+              "origin" -> (if chainRefs.contains(ref) then "chain" else "reserve").asJson
+            )
+          }
+        ),
+        "configProviders" -> config.llm.providers.keys.toList.sorted.asJson,
+        "disabledProviders" ->
+          config.llm.providers.collect { case (pid, p) if isDisabled(p) => pid }.toList.sorted.asJson,
+        "drift" -> drift
+      )
+
 end ProviderRegistry

@@ -86,8 +86,20 @@ class FallbackExhaustedError(
    * ported from main's FallbackExhaustedError, following this class's move
    * into nebflow.shared.)
    */
-  val hadImage: Boolean = false
+  val hadImage: Boolean = false,
+  /**
+   * 候选处置账本（缺陷批 2026-11-05，作者报障「有可用模型却报所有模型不可用」）：
+   * 链上每个候选的处置（tried / skipped+reason）与配置可见全集。有账本时文案
+   * 由 [[CandidateDisposition.headline]] 定型（**只有全试全败才允许说
+   * "All providers failed"**），并追加处置表；缺省 None = 老文案逐字不变
+   * （既有单测零改动）。
+   */
+  val disposition: Option[CandidateDisposition] = None
 ) extends Exception:
+
+  /** 绑定账本（构造点可能分两段：链在 registry 侧算好、终局在 stream 层给出）。 */
+  def withDisposition(d: CandidateDisposition): FallbackExhaustedError =
+    new FallbackExhaustedError(attempts, hadImage, Some(d))
 
   override def getMessage: String =
     // 可诊断（protocol-compat 批，作者令 2026-11-01 17:49 第 3 条）：
@@ -133,5 +145,14 @@ class FallbackExhaustedError(
       else if families.contains("format") then
         "\nformat-class failure: at least one provider rejected the request/response shape (400) — see the [wire] line for provider, model, request block sequence and response types"
       else ""
-    s"All providers failed (${attempts.size} attempt(s); families: ${families.mkString(",")}):\n$summary$verdict"
+    // 缺陷批 2026-11-05：有账本时判词由账本定型（四种形态四种 reason code），
+    // 并把「试过谁 / 跳过谁 / 为什么跳过 / 有没有人静默消失」整表贴在下面。
+    // delegate 冻结通知 = err.getMessage 逐字 ⇒ 这一表就是作者看到的那张表。
+    disposition match
+      case None => s"All providers failed (${attempts.size} attempt(s); families: ${families.mkString(",")}):\n$summary$verdict"
+      case Some(d) =>
+        val failedBy = attempts
+          .map(a => s"${a.providerId}/${a.model}" -> s"${familyOf(a)} ${a.reason.map(_.toString).getOrElse("unknown")}")
+          .toMap
+        s"${d.headline(attempts.size, families.mkString(","))}:\n$summary$verdict\n${d.render(failedBy)}"
 end FallbackExhaustedError

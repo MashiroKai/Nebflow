@@ -1,0 +1,87 @@
+
+Running 26 tests using 1 worker
+
+[1/26] tests/bg-device-origin-chip.spec.mjs:135:1 › T1 device-origin row: chip = device name, bg-origin-device class, 「跑在」title, no local/remote kind chip
+[2/26] tests/bg-device-origin-chip.spec.mjs:154:1 › T2 legacy snapshot fallback: no origin fields → device name extracted from "[KAI] " description prefix
+[3/26] tests/bg-device-origin-chip.spec.mjs:168:1 › T3 control: root-agent-origin row keeps Started-by chip (display name) AND gains the local device-name chip
+  1) tests/bg-device-origin-chip.spec.mjs:168:1 › T3 control: root-agent-origin row keeps Started-by chip (display name) AND gains the local device-name chip 
+
+    Error: expect(locator).toHaveText(expected) failed
+
+    Locator: locator('#bg-dropdown .bg-section-tasks .bg-dropdown-list').first().locator('.bg-task-row[data-task-id="job-local"]').locator('.bg-origin-nebula')
+    Expected: "Spider"
+    Timeout: 5000ms
+    Error: element(s) not found
+
+    Call log:
+      - Expect "toHaveText" with timeout 5000ms
+      - waiting for locator('#bg-dropdown .bg-section-tasks .bg-dropdown-list').first().locator('.bg-task-row[data-task-id="job-local"]').locator('.bg-origin-nebula')
+
+
+      181 |   // （Nebula 退役批：用户起的名 Spider，不是机制名）。
+      182 |   const chip = row.locator('.bg-origin-nebula');
+    > 183 |   await expect(chip).toHaveText('Spider');
+          |                      ^
+      184 |   await expect(chip).not.toHaveClass(/bg-origin-device/);
+      185 |   await expect(chip).toHaveAttribute('title', '由 Spider 开启');
+      186 |   // 退役名零残留（大小写不敏感）。
+        at /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-agentflow-layering/tests/bg-device-origin-chip.spec.mjs:183:22
+
+    Error Context: test-results/bg-device-origin-chip-T3-c-566ae--the-local-device-name-chip/error-context.md
+
+
+[4/26] tests/bg-merged-panel.spec.mjs:157:1 › T1 merge structure: two sections in the carrier, ghost retired (desktop)
+[5/26] tests/bg-merged-panel.spec.mjs:224:1 › T2 desktop split: bg key opens tasks-only view, bgagent key opens agents-only view
+[6/26] tests/bg-merged-panel.spec.mjs:282:1 › T3 split is desktop-only: mobile layer keeps the merged single panel
+[7/26] tests/bg-merged-panel.spec.mjs:324:1 › T4 tree: live child (parentSessionId) indents under its delegate head with guide line
+[8/26] tests/bg-merged-panel.spec.mjs:374:1 › T5 no hollow rows: generic names promoted to task text; orphan keeps a source chip
+[9/26] tests/bg-merged-panel.spec.mjs:427:1 › T6 store child description surfaces (generic def name yields to task text)
+[10/26] tests/bg-merged-panel.spec.mjs:445:1 › T7 mobile narrow viewport: the two sections render as two separated cards
+[11/26] tests/bg-merged-panel.spec.mjs:473:1 › T8 hierarchy: head caret collapses/expands child rows; running head expanded, terminal head collapsed by default
+[12/26] tests/bg-merged-panel.spec.mjs:544:1 › T9 naming: head row shows short name first (title demoted to subline); unnamed rows keep title; popup header carries the row name
+[13/26] tests/bg-merged-panel.spec.mjs:606:1 › T10 no horizontal scroll: panel and lists fit the viewport at desktop and 375
+[14/26] tests/bg-mode-badge.spec.mjs:119:1 › ①② 实时帧：ownerMode ⇒ mode chip（内核/分发器样式类）；缺席 ⇒ 零渲染
+[15/26] tests/bg-mode-badge.spec.mjs:140:1 › ③ 快照帧（activeBgTasks 刷新恢复路径）：ownerMode 同行下发 ⇒ chip 渲染
+[16/26] tests/bgagent-dedupe.spec.mjs:106:1 › snapshot row + live agentStart for same team agent render once (ghost-dup regression)
+[17/26] tests/bgagent-dedupe.spec.mjs:171:1 › agentStart without snapshot twin still works (no regression for live-only flow)
+[18/26] tests/delegate-ui-twolayer.spec.mjs:146:1 › T1 stub schema 加宽（G1 mode/G5 队列键/G6 archivedAt）＋旧行缺键容忍＋子代理读取口
+[19/26] tests/delegate-ui-twolayer.spec.mjs:194:1 › T2 面板两级化（C2/R6）：delegate 组头徽标=row.mode（kernel）；G3 store 子行 ∪ live 子行缩进一格；C1 退役后 dispatcher/node 顶层直显（分发器/节点徽标）
+[20/26] tests/delegate-ui-twolayer.spec.mjs:261:1 › T2b 徽标归位批（2026-10-31 23:02 作者裁定）：顶层组头徽标唯一来源 = row.mode——orchestrationMode/kind 历史残留一律不上顶层；mode 缺席 = 无徽标
+[21/26] tests/delegate-ui-twolayer.spec.mjs:289:1 › T3 agentflow（R2/R6）：组头徽标=row.mode（dispatcher）；chain.nodes flow-step 面板子行 + S1 expanded flow 结构层
+  2) tests/delegate-ui-twolayer.spec.mjs:289:1 › T3 agentflow（R2/R6）：组头徽标=row.mode（dispatcher）；chain.nodes flow-step 面板子行 + S1 expanded flow 结构层 
+
+    Error: expect(locator).toHaveText(expected) failed
+
+    Locator:  locator('#bg-dropdown .bg-section-agents .bg-dropdown-list .bg-task-row.bg-task-row-child[data-flow-delegate-key="72"]').first().locator('.bg-task-kind')
+    Expected: "AgentFlow"
+    Received: "节点"
+    Timeout:  5000ms
+
+    Call log:
+      - Expect "toHaveText" with timeout 5000ms
+      - waiting for locator('#bg-dropdown .bg-section-agents .bg-dropdown-list .bg-task-row.bg-task-row-child[data-flow-delegate-key="72"]').first().locator('.bg-task-kind')
+        14 × locator resolved to <span class="bg-task-kind">节点</span>
+           - unexpected value "节点"
+
+
+      302 |   await expect(flowRows).toHaveCount(2);
+      303 |   await expect(flowRows.nth(0).locator('.bg-task-name')).toHaveText('步骤一');
+    > 304 |   await expect(flowRows.nth(0).locator('.bg-task-kind')).toHaveText('AgentFlow');
+          |                                                          ^
+      305 |   await expect(flowRows.nth(1).locator('.bg-task-state')).toHaveText('待处理');
+      306 |   await expect(flowRows.nth(1).locator('.bg-task-project')).toHaveText('← s1');
+      307 |   // 适配层单 delegate 回退节点（kind=delegate）不入子行层。
+        at /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-agentflow-layering/tests/delegate-ui-twolayer.spec.mjs:304:58
+
+    Error Context: test-results/delegate-ui-twolayer-T3-ag-e3814-p-面板子行-S1-expanded-flow-结构层/error-context.md
+
+
+[22/26] tests/delegate-ui-twolayer.spec.mjs:352:1 › T4 星型子代理链块（链结构行脸）：头行折叠默认 + 展开见逐子代理成员行（名/状态词/类型点）＋ 成员行点击跳 L1 地图
+[23/26] tests/delegate-ui-twolayer.spec.mjs:404:1 › T5 弹窗净化（§A/WF-01）：收起式摘要条（任务 chip+brief+结果词+chevron）＋ 展开态（plugins/brief/结果分区）＋ 移除件全数退役（子代理×N 标题/星型子行族/头部归档图标）
+[24/26] tests/subagent-panel-cancel-realtime.spec.mjs:141:3 › Sub-Agents 面板取消/终止实时刷新 › dispatcher-* 会话：顶层直显（分发器徽标·计数 1）；取消 agentDone 桶内终态清理 + 行离场（无刷新）
+[25/26] tests/subagent-panel-cancel-realtime.spec.mjs:182:3 › Sub-Agents 面板取消/终止实时刷新 › node-* 会话：顶层直显（节点徽标）；取消 agentDone 同契约桶内清理 + 行离场
+[26/26] tests/subagent-panel-cancel-realtime.spec.mjs:201:3 › Sub-Agents 面板取消/终止实时刷新 › 回归：取消不影响既有实时场景——delegate 行实时出行与工具标签 / 终态清理；dispatcher 行同面直显且不受连坐
+  2 failed
+    tests/bg-device-origin-chip.spec.mjs:168:1 › T3 control: root-agent-origin row keeps Started-by chip (display name) AND gains the local device-name chip 
+    tests/delegate-ui-twolayer.spec.mjs:289:1 › T3 agentflow（R2/R6）：组头徽标=row.mode（dispatcher）；chain.nodes flow-step 面板子行 + S1 expanded flow 结构层 
+  24 passed (1.3m)
