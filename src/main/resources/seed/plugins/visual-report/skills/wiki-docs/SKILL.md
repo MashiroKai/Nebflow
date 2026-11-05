@@ -289,9 +289,9 @@ body anchors):
   ```
   ## 词条
 
-  - DCL（DOMContentLoaded 事件） — the browser's first interactive moment. ^term-dcl
+  - DCL（DOMContentLoaded 事件） — the browser's first interactive moment. #proj/stand #topic/term-index ^term-dcl
 
-  - 归因结论 — this incident was caused by config drift, not code. ^term-attribution
+  - 归因结论 — this incident was caused by config drift, not code. #proj/stand #topic/incident ^term-attribution
   ```
 
 Declaration shape (machine-checked, rule `term-format`):
@@ -340,6 +340,67 @@ no html definition blocks.
   same change instead.
 
 ## Frontmatter (scenario metadata)
+### Term tags (词条标签, term-system v2)
+
+Every term declaration carries a tag tail so the index can group terms by
+project and topic without a second source of truth. **One line, fixed order:**
+
+```
+- 词条名（别名1，别名2） — 一句话定义。 #proj/<project> #topic/<topic> [更多 #topic/…] [更多 #<facet>/<value>] ^term-<slug>
+```
+
+- **Exactly one** `#proj/<project-slug>` and **at least one**
+  `#topic/<topic-slug>`. Every other `#<facet>/<value>` is an extra facet and
+  is free-form (`#ctx/browser`, `#level/deep`, …). Facets are `facet/value`
+  pairs — one slash; `#ctx/a/b` only registers `ctx/a`.
+- **Position**: the tags sit AFTER the definition text and BEFORE the
+  `^term-<slug>` block id. The block id must be the last thing on its line.
+  The tag window is exactly "after the ` —`/`：` separator → before the block
+  id", so a tag written before the separator, or after the block id, is not
+  read at all.
+- Tags are **decoration, never identity**: they add no aliases and change no
+  citation resolution. `[[Name]]` still resolves by name/alias only.
+- `` `#x` `` inside an inline-code span is documentation, not a tag (write
+  examples backticked); fenced code never enters a paragraph at all.
+- Buckets are deduplicated and sorted by the engine, so the same declaration
+  always yields the same `{project, topic, extra}` JSON in every consumer.
+
+Valid (both buckets present, tags before the block id):
+
+```
+- DCL（DOMContentLoaded 事件） — 浏览器首次可交互的时间点。 #proj/stand #topic/term-index ^term-dcl
+
+- 归因结论 — 本批缺陷由配置漂移引入，不是代码回归。 #proj/stand #topic/incident #ctx/release ^term-attribution
+```
+
+**Invalid** — each one fails the check with the reason marked:
+
+```
+- GCR — 银河宇宙线通量。 #topic/cosmology ^gcr
+```
+✗ **missing `#proj/<slug>`** — only a topic tag was written; a term with no
+project facet is unfilterable ⇒ `term-tag-missing`.
+
+```
+- 重试风暴 — 短时高频重试打满下游配额。 #proj/stand ^term-retry-storm
+```
+✗ **missing `#topic/<slug>`** — the project tag never satisfies the topic
+requirement (`#topic/` is at least one, `#proj/` exactly one) ⇒ `term-tag-missing`.
+
+```
+- 举证窗口 — 规则允许补证的时长。 ^term-evidence-window #proj/stand #topic/compliance
+```
+✗ **tags after the block id** — `^term-evidence-window` is no longer at line end,
+so Obsidian does not treat it as a block anchor, the paragraph is not a term,
+and the tags are invisible ⇒ `term-tag-missing`.
+
+Violation code `term-tag-missing` (R4): a term declaration whose tag set has
+no `#proj/<slug>` or no `#topic/<slug>` — including the "tags after the block
+id" form, which silently loses both. Fix the declaration line; the only escape
+hatch is an inline exemption `<!-- wiki-term-exempt: 理由 -->` on the same or
+the immediately preceding line with a non-empty reason (counted separately in
+the report, never a whole-file waiver).
+
 
 Every vault document starts with a tiny frontmatter block — the graph reads it
 for its type/status filters:
