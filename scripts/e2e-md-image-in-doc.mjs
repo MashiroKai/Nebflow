@@ -375,6 +375,8 @@ async function shotAt(name, match) {
     if (!el) return { err: 'target-not-found' };
     const det = el.closest('details');
     if (det && !det.open) det.open = true;
+    root.querySelectorAll('[data-nf-shot-target]').forEach((n) => n.removeAttribute('data-nf-shot-target'));
+    el.setAttribute('data-nf-shot-target', '1');
     const r = el.getBoundingClientRect();
     const sr = scroller.getBoundingClientRect();
     scroller.scrollTop = Math.max(0, scroller.scrollTop + (r.top - sr.top) - 140);
@@ -383,6 +385,10 @@ async function shotAt(name, match) {
   await sleep(600);
   const pane = page.locator('.canvas-tab-pane.active').first();
   await pane.screenshot({ path: join(OUT, name) }).catch(() => {});
+  // 元素级特写（同一个目标，裁到元素本身）：报告里读得清「图」和「只有一行字」
+  const zoom = name.replace(/\.png$/, '-zoom.png');
+  await page.locator('.canvas-tab-pane.active [data-nf-shot-target]').first()
+    .screenshot({ path: join(OUT, zoom) }).catch(() => {});
   log(`[shot] ${name} ⇒ ${JSON.stringify(info)}`);
   return info;
 }
@@ -452,6 +458,30 @@ async function shotAt(name, match) {
   if (await failLoc.count()) await failLoc.screenshot({ path: join(OUT, `${MODE === 'before' ? 'BEFORE-' : ''}C-failface-zoom.png`) }).catch(() => {});
   writeFileSync(join(OUT, 'C-net.json'), JSON.stringify(net, null, 2));
   writeFileSync(join(OUT, MODE === 'before' ? 'BEFORE-C-readings.json' : 'C-readings.json'), JSON.stringify(read, null, 2));
+}
+
+/* D. **报告自证**：把本批交付的报告原样拷进隔离 vault（连它内嵌的 assets 目录一起），
+ *    看它自己的七张证据图是不是真的画出来 —— 「报告本身内嵌真图」这条要求的直接读数。 */
+if (MODE !== 'before') {
+  const REPORT = 'canvas-doc-image-render__20261105_161600.md';
+  const REPORT_SRC = join(REAL_DOCS, REPORT);
+  const ASSET_DIR = '20261105_canvas-doc-image-render';
+  if (existsSync(REPORT_SRC)) {
+    copyFileSync(REPORT_SRC, join(VAULT, REPORT));
+    const dstAssets = join(VAULT, 'assets', ASSET_DIR);
+    mkdirSync(dstAssets, { recursive: true });
+    for (const f of readdirSync(join(REAL_DOCS, 'assets', ASSET_DIR))) {
+      copyFileSync(join(REAL_DOCS, 'assets', ASSET_DIR, f), join(dstAssets, f));
+    }
+    const { read } = await openDoc(join(VAULT, REPORT), REPORT);
+    log(`[D] ${REPORT} imgs=${read.imgs.length} fails=${read.fails.length}`);
+    const broken = read.imgs.filter((i) => !i.visible);
+    check('D 报告自身的证据图全部出图（vault 相对路径 → assets/ 腿）',
+      read.imgs.length >= 7 && broken.length === 0,
+      `imgs=${read.imgs.length} 未出图=${JSON.stringify(broken)}`);
+    await page.screenshot({ path: join(OUT, 'D-report-selffacing.png') });
+    writeFileSync(join(OUT, 'D-readings.json'), JSON.stringify(read, null, 2));
+  }
 }
 
 check('全程零 pageerror', pageErrors.length === 0, pageErrors.join(' | '));
