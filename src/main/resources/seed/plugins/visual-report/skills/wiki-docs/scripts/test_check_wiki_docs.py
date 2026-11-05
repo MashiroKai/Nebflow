@@ -23,6 +23,11 @@
     四空格缩进⇒按代码块陷阱报 / 结构性行与短行⇒豁免 / 存量文档⇒只记
     advisory 不影响退出码 / --strict-style⇒进违规面并改退出码 /
     允许清单确实来自 SKILL.md 且不含领域与机构缩写
+  · R10 plain-language / R11 doc-structure + R16 detail-fold / R12 image-caption
+    （写作风格批 v2，作者令 2026-11-05 12:09；detail-fold 于重号修正批让号到 R16）：禁用词命中⇒报且带建议 /
+    行内代码引词表⇒不报 / 词表确实来自 SKILL.md / 缺分点结论⇒报 /
+    有加粗结论⇒通过 / 敞开细节超阈值⇒报 / 有折叠块⇒通过 / 缺图注⇒报 /
+    图注过长⇒只提示不计违规 / 孤儿文档⇒建议不计违规（图谱面收缩）
 """
 
 import base64
@@ -70,7 +75,7 @@ def doc(body, frontmatter="type: evidence-note\nstatus: open"):
     return f"---\n{frontmatter}\n---\n\n# sample\n\n{body}\n"
 
 
-def validate(root, strict=True, allow=None, advisories=None):
+def validate(root, strict=True, allow=None, advisories=None, plainwords=None):
     """按 main() 的 prepare 语义跑一遍 check()，返回全部违规。
 
     style 面默认 strict=True：夹具文档名（sample.md）没有时间块，走时间界会被判
@@ -81,7 +86,11 @@ def validate(root, strict=True, allow=None, advisories=None):
     term_resolver = MOD.make_term_resolver([t for ts in terms.values() for t in ts])
     resolver = MOD.make_resolver(list(docs.keys()) + atts)
     style_opts = {"enabled": True, "strict": strict, "since": MOD.STYLE_CONTRACT_STAMP,
+                  "since_v2": MOD.STYLE_V2_STAMP,
                   "allow": MOD.load_abbrev_allowlist() if allow is None else allow,
+                  "plainwords": (MOD.load_plainword_blocklist()
+                                 if plainwords is None else plainwords),
+                  "fold_threshold": MOD.DETAIL_FOLD_THRESHOLD,
                   "stats": {}}
     return MOD.check(root, docs, resolver, glossary, False,
                      terms_by_rel=terms, resolve_term=term_resolver,
@@ -364,7 +373,7 @@ class TypographyAndAbbrev(Fixture):
         视觉上就是顶格——正是 R8 要报的形态。"""
         body = ("  这一行以两个半角空格起行并且写得足够长，用来钉死段首缩进不足必须被报出来，"
                 "两个半角空格会被渲染器折叠吃掉，看起来与顶格没有区别。\n\n"
-                "See also [[index]].")
+                "See also [[index#fixture index]].")
         hits = rule_violations(self.run_case(body), "doc-indent")
         self.assertEqual(1, len(hits), hits)
         self.assertIn("未缩进", hits[0]["detail"])
@@ -380,7 +389,7 @@ class TypographyAndAbbrev(Fixture):
                 "  这一行是上一段的续行（两空格起行、上一行非空），属于续行不是段首，不许误报。\n\n"
                 "  - 缩进的结构行（列表条目）不套段首缩进规则\n"
                 "  > 缩进的引用行同样豁免\n\n"
-                "See also [[index]].")
+                "See also [[index#fixture index]].")
         self.assertEqual([], rule_violations(self.run_case(body), "doc-indent"))
 
     def test_short_lines_and_structural_lines_are_exempt(self):
@@ -411,6 +420,139 @@ class TypographyAndAbbrev(Fixture):
         code, out = self.run_main()          # 缺省时间界：存量 → advisory，退出码不变
         self.assertEqual(0, code, out)
         self.assertIn("doc-indent", out, "advisory 也要打印，不许静默")
+
+
+class WritingStyleV2(Fixture):
+    """R10 平实语言 / R11 结构三层 / R12 图注 + 图谱面收缩（写作风格批 v2）。
+
+    作者令 2026-11-05 12:09。九条用例：禁用词命中⇒报 / 行内代码引用⇒不报 /
+    词表确实来自 SKILL.md 且不空 / 缺分点结论⇒报 / 有加粗结论⇒通过 /
+    敞开细节超阈值⇒报 / 有折叠块⇒通过 / 缺图注⇒报 / 图注过长⇒只提示不影响退出码 /
+    孤儿文档⇒建议不计违规。"""
+
+    # ── R10 平实语言 ────────────────────────────────────────────────
+    def test_blocked_word_is_flagged_with_a_suggestion(self):
+        body = ("&emsp;&emsp;这次交付的**结论**是先把文档骨架钉死，其余细节按需展开，"
+                "读者不用在长段落里找答案。\n\n下面这句话用了一个要读者二次解码的词："
+                "报告的人面子要先写完。\n\nSee also [[index#fixture index]].")
+        hits = rule_violations(self.run_case(body), "plain-language")
+        self.assertEqual(1, len(hits), hits)
+        self.assertIn("人面子", hits[0]["detail"])
+        self.assertIn("建议", hits[0]["detail"], "报错必须带替换建议，不能只说『用了禁词』")
+
+    def test_blocked_word_inside_inline_code_is_not_flagged(self):
+        body = ("&emsp;&emsp;词表里收了 `印象` 与 `人面子` 这两个词作为反例，"
+                "行内代码是在引词谈词表，不是在用它写作。\n\nSee also [[index#fixture index]].")
+        self.assertEqual([], rule_violations(self.run_case(body), "plain-language"))
+
+    def test_plainword_blocklist_lives_in_the_skill_file(self):
+        block = MOD.load_plainword_blocklist()
+        self.assertTrue(block, "禁用词表必须从 SKILL.md 标记块读出来，不许空表")
+        for word in ("人面子", "印象"):
+            self.assertIn(word, block, f"{word} 是作者点名的禁词，必须在词表里")
+            self.assertTrue(block[word], f"{word} 必须带建议替换")
+
+    # ── R11 结构三层 ────────────────────────────────────────────────
+    def test_section_without_bold_conclusion_is_flagged(self):
+        body = ("## 结论\n\n这一节开头是一整段平铺直叙的正文，读者要读到句号才知道"
+                "作者到底想说什么，因此缺一句加粗的分点结论。\n\nSee also [[index#fixture index]].")
+        hits = rule_violations(self.run_case(body), "doc-structure")
+        self.assertEqual(1, len(hits), hits)
+        self.assertIn("缺分点结论句", hits[0]["detail"])
+
+    def test_section_with_bold_conclusion_passes(self):
+        body = ("## 结论\n\n**这一节先把答案写在第一行。**\n\n"
+                "论证细节放在折叠块里，读者点开才看到：\n\n"
+                "<details><summary>论证细节</summary>\n\n"
+                "第一步、第二步、第三步都在这里。\n\n</details>\n\nSee also [[index#fixture index]].")
+        self.assertEqual([], rule_violations(self.run_case(body), "doc-structure"),
+                         "加粗一句话开头的章节不该报结构违规")
+
+    def test_unfolded_detail_over_threshold_is_flagged(self):
+        para = "这一段的细节没有任何折叠容器包着，" * 40      # >600 可视字符
+        body = f"## 结论\n\n**答案在第一行。**\n\n&emsp;&emsp;{para}\n\nSee also [[index#fixture index]]."
+        hits = rule_violations(self.run_case(body), "detail-fold")
+        self.assertEqual(1, len(hits), hits)
+        self.assertIn("折叠块", hits[0]["detail"])
+
+    def test_folded_detail_over_threshold_passes(self):
+        para = "这一段的细节被折叠容器包着，" * 40
+        body = ("## 结论\n\n**答案在第一行。**\n\n"
+                f"<details><summary>论证细节</summary>\n\n&emsp;&emsp;{para}\n\n</details>\n\n"
+                "See also [[index#fixture index]].")
+        self.assertEqual([], rule_violations(self.run_case(body), "detail-fold"))
+
+    # ── R12 图注 ────────────────────────────────────────────────────
+    def test_image_without_caption_is_flagged(self):
+        violations = self.run_case("![](assets/pic.png)\n\nSee also [[index#fixture index]].",
+                                   extra=[("assets/pic.png", "", True)])
+        hits = rule_violations(violations, "image-caption")
+        self.assertEqual(1, len(hits), hits)
+        self.assertIn("没有图注", hits[0]["detail"])
+
+    def test_image_with_caption_passes_and_long_caption_only_hints(self):
+        long_caption = "图 1 " + "这张图说明了舱内中子能谱的加权贡献分布，" * 8
+        body = ("![](assets/pic.png)\n" + long_caption + "\n\nSee also [[index#fixture index]].")
+        advisories = []
+        violations = self.run_case(body, extra=[("assets/pic.png", "", True)],
+                                   advisories=advisories)
+        self.assertEqual([], rule_violations(violations, "image-caption"),
+                         "有图注就不该报缺图注")
+        self.assertIn("image-caption-long", {a["rule"] for a in advisories},
+                      "图注过长只提示，不进违规清单")
+        self.assertTrue(all(a.get("scope") != "graph" for a in advisories))
+
+    def test_caption_line_is_not_treated_as_an_indented_paragraph(self):
+        """图注行（`图 N …`）紧贴图片，不该被 R8 当成「未缩进的正文段落」报出来。"""
+        body = ("![](assets/pic.png)\n\n图 1 三条曲线累积到 100% 的形状几乎一样，"
+                "危害贡献的主体都落在 1–10 MeV 段。\n\nSee also [[index#fixture index]].")
+        violations = self.run_case(body, extra=[("assets/pic.png", "", True)])
+        self.assertEqual([], rule_violations(violations, "doc-indent"), violations)
+        self.assertEqual([], rule_violations(violations, "image-caption"), "图注在位")
+
+    # ── 图谱面收缩：孤儿文档不再计违规 ──────────────────────────────
+    def test_orphan_document_is_advisory_not_violation(self):
+        write(self.root, "lonely.md", doc("&emsp;&emsp;这一篇既不引用别人也不被引用，"
+                                          "按旧制要被当成孤儿文档报违规。"))
+        advisories = []
+        violations = validate(self.root, strict=True, advisories=advisories)
+        self.assertEqual([], rule_violations(violations, "orphan-doc"),
+                         "图谱面已收缩：孤儿文档不进违规清单")
+        graph = [a for a in advisories if a.get("scope") == "graph"]
+        self.assertEqual(["lonely.md"], [a["file"] for a in graph],
+                         "孤儿文档仍要打印，只是降为建议")
+
+
+class RuleTableHygiene(unittest.TestCase):
+    """RULES 表自身的卫生面（重号修正批 2026-11-05）。
+
+    一次真实事故：`detail-fold` 与 `doc-structure` 同时占 R11 落盘，校验器照常
+    能跑、夹具照常全绿——因为**没有任何断言看着编号表本身**，重号只在计数汇总
+    里表现成两行 `R11 …`。这里把「一个号只准指一条规则」钉成断言：重号 = 红，
+    跳号 = 红（跳号要么是笔误，要么必须写成显式豁免才准过）。
+    """
+
+    def _ids(self):
+        return [rid for rid, _name, _text in MOD.RULES]
+
+    def test_rule_ids_are_unique(self):
+        ids = self._ids()
+        dup = sorted({i for i in ids if ids.count(i) > 1})
+        self.assertEqual([], dup, f"规则号重号（一个号指两条规则）：{dup} —— 重号的那条让号到最大号之后")
+
+    def test_rule_ids_are_ordered_and_contiguous(self):
+        ids = self._ids()
+        nums = [int(i[1:]) for i in ids]
+        self.assertEqual(sorted(nums), nums,
+                         f"RULES 表必须按号升序：实际 {ids}（让号后别把新号插回表中间）")
+        self.assertEqual(list(range(1, len(nums) + 1)), nums,
+                         f"规则号必须 R1..R{len(nums)} 连续无跳号：实际 {ids}"
+                         "（确实要留空号，在此处写明理由并把断言改成显式豁免）")
+
+    def test_rule_names_are_unique(self):
+        names = [n for _rid, n, _text in MOD.RULES]
+        dup = sorted({n for n in names if names.count(n) > 1})
+        self.assertEqual([], dup, f"规则重名：{dup}")
 
 
 if __name__ == "__main__":

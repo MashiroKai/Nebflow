@@ -63,12 +63,14 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import os
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 # ── 常量（口径集中在此，勿散落调用点）────────────────────────────────────
@@ -88,23 +90,75 @@ SPEC_NAMES = {"plugin.json"}
 SCRIPT_SUFFIXES = {".py", ".mjs", ".js", ".ts", ".tsx", ".sh", ".cmd", ".json", ".html"}
 
 # 腿 A 的断言面（钉死「批准后的形态」；改标准时**同步改这里**，这是本哨兵的代价）
-REQUIRED_RULE_IDS = ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9"]
+# 2026-11-05 回灌后口径：写作风格批 v2（R10 平实语言 / R11 结构三层 / R12 图注）
+# + 只许引用词条批（R13–R15）+ 重号修正批（detail-fold 让号到表尾 R16）。
+REQUIRED_RULE_IDS = ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9",
+                     "R10", "R11", "R12", "R13", "R14", "R15", "R16"]
 REQUIRED_RULE_NAMES = [
     "obsidian-format", "citation-graph", "concept-first-use", "term-registry",
     "doc-naming", "image-outside-vault", "doc-color", "doc-indent", "abbrev-expansion",
+    "plain-language", "doc-structure", "image-caption",
+    "doc-reference", "bare-image-path", "dangling-term", "detail-fold",
 ]
 ALLOWLIST_START = "<!-- wiki-abbrev-allowlist:start -->"
 ALLOWLIST_END = "<!-- wiki-abbrev-allowlist:end -->"
+PLAINWORDS_START = "<!-- wiki-plainwords:start -->"
+PLAINWORDS_END = "<!-- wiki-plainwords:end -->"
 SKILL_SENTINELS = [
     "&emsp;&emsp;",           # ⑦ 缩进唯一合规形态
     "#5e6ad2", "#d0342c", "#12874a",   # ⑦ 三语义色
     "wiki-img-exempt",        # ⑥ 行内豁免标记
     "image-outside-vault", "doc-color", "doc-indent", "abbrev-expansion",
+    "doc-structure", "detail-fold", "image-caption",   # ⑩ 写作风格批 v2 的机器面
 ]
-TEST_MIN_CASES = 51          # 2026-11-05 实测 51 例（49 + R8 两空格盲区的正反两条回归）
+TEST_MIN_CASES = 81          # 2026-11-05 实测 81 例（51 + v2 的 27 + 编号卫生 3）
+CLAUSES_MIN = 12             # 「Mandatory clauses」节条款数下限（回灌后 12 条：①–⑫）
 TEST_PATH = Path("skills/wiki-docs/scripts/test_check_wiki_docs.py")
 CHECKER_PATH = Path("skills/wiki-docs/scripts/check_wiki_docs.py")
 WD_SKILL_PATH = Path("skills/wiki-docs/SKILL.md")
+
+# ── 腿 A 的「校验器真能跑」冒烟面（2026-11-05 实例半装事故后补）────────────
+# 事故：实例侧 `check_wiki_docs.py` 处于半装/半写状态——`collect_caption_refs`
+# 被 check() 引用（第 667 行）但定义丢了（第 1013 行那块没落盘），于是**整个
+# 校验器一跑就 NameError**，而两道既有断言全绿：规则表正则照样匹配得到 R1–R15、
+# 回归夹具照样全绿（夹具覆盖不到那条路径就看不见它）。另一半是「文件被写成两个
+# 版本拼接」——表头新、实现旧，只有真跑一遍才露。
+# 所以腿 A 除了「读文本断言形态」，必须**真跑一次校验器**：py_compile（语法/截断）
+# + 在临时 vault 上端到端跑（引用面/实现面缺失才会现形）。
+SMOKE_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8AAAwAB/wH+3wAAAABJRU5ErkJggg=="
+)
+# 冒烟 vault 的覆盖面：frontmatter（R1）· wikilink（R2）· 词条注册（R3/R4）·
+# 图片+图注（R6/R12）· 着色与缩进（R7/R8）· 缩写首现（R9）· 分点结论与折叠块
+# （R11/R16）· 裸路径（R13/R14/R15 的相邻面）。断言只有一条：**不许抛异常**。
+SMOKE_DOC = """---
+type: index
+status: open
+---
+
+# smoke index
+
+&emsp;&emsp;冒烟 vault 的根文档：这一段够长，足以让缩进规则（R8）把它当正文段落而不是短行豁免，也足以让结构规则（R11）看见一个像样的章节。
+
+## 冒烟章节
+
+**这一节的分点结论先行，读者读到这一行就知道答案。**
+
+&emsp;&emsp;论证细节这一段足够长，足以让折叠规则（R16）判定它需要放进 `<details>` 里，因此这里必须有一行加粗结论与一个折叠块，否则冒烟文档自己就会成为违规样本。
+
+<details>
+<summary>展开看细节</summary>
+
+&emsp;&emsp;折叠块里的论证正文。International Atomic Energy Agency（IAEA）在首次出现时必须这样展开，这条同时压到 R9 的解析面。
+
+</details>
+
+![](assets/p.png)
+
+图 1 冒烟图：一像素的占位图，只为压到图注采集面（`collect_caption_refs`）与 R6/R12。
+
+参见 [[smoke-index]]。
+"""
 
 
 # ── 数据根与两侧定位 ────────────────────────────────────────────────────
@@ -205,6 +259,77 @@ def count_mandatory_clauses(text: str) -> int:
     return len(re.findall(r"^\d+\.\s+\*\*", section, re.MULTILINE))
 
 
+def _first_error_line(out: str) -> str:
+    """从 traceback / 语法错误里挑一行「人读得懂的原因」，而不是整段栈。"""
+    lines = [l for l in out.strip().splitlines() if l.strip()]
+    for line in reversed(lines):
+        if re.match(r"^\s*\w*(Error|Exception)\s*:", line.strip()) or "SyntaxError" in line:
+            return line.strip()
+    for line in lines:
+        if line.startswith('  File "') or line.startswith("line ") or "line " in line[:12]:
+            return line.strip()
+    return lines[-1].strip() if lines else "（无输出）"
+
+
+def validator_smoke(base: Path, label: str) -> list[str]:
+    """校验器**真能跑**吗？→ 失败项列表（空 = 跑起来了）。
+
+    两段，分开报，因为病因不同：
+      ① py_compile —— 抓「文件被写成半截」：语法不通、字符串没闭合、被回退成
+         两个版本拼接。报 File/line，能直接定位。
+      ② 端到端跑一次 —— 抓「函数被引用但没定义」（NameError）、「定义在但实现被
+         截断」这类**语法合法、运行才炸**的半装状态。夹具与规则表正则都看不见它。
+    冒烟 vault 建在临时目录里，不写进种子源树（那是被打进 jar 的资源树）。
+    """
+    failures: list[str] = []
+    checker = base / CHECKER_PATH
+    if not checker.is_file():
+        return failures                      # 缺失已由调用方报过，不重复报
+
+    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+
+    # ① 语法面
+    proc = subprocess.run(
+        [sys.executable, "-B", "-c",
+         "import py_compile,sys;py_compile.compile(sys.argv[1],doraise=True)", str(checker)],
+        capture_output=True, text=True, env=env,
+    )
+    if proc.returncode != 0:
+        out = (proc.stderr or "") + (proc.stdout or "")
+        failures.append(f"[{label}] 校验器**编译不过**（{CHECKER_PATH}）：{_first_error_line(out)}"
+                        "（半装/半写？以种子 canonical 副本为基线逐段移植，别手写补函数）")
+
+    # ② 运行面
+    with tempfile.TemporaryDirectory(prefix="seed-parity-smoke-") as tmp:
+        root = Path(tmp) / "docs"
+        (root / "assets").mkdir(parents=True)
+        (root / "index.md").write_text(SMOKE_DOC, encoding="utf-8")
+        (root / "assets" / "p.png").write_bytes(SMOKE_PNG)
+        proc = subprocess.run(
+            [sys.executable, "-B", str(checker), "--root", str(root)],
+            capture_output=True, text=True, env=env,
+        )
+        out = (proc.stderr or "") + (proc.stdout or "")
+        if "Traceback (most recent call last)" in out:
+            reason = _first_error_line(out)
+            hint = ""
+            if "NameError" in out:
+                name = re.search(r"NameError:\s*(?:name\s+)?'?([\w.]+)'?", out)
+                hint = (f" —— 「{name.group(1)}」被引用但没定义" if name else "") + \
+                       "：某函数/常量所在的那一段没落盘（半装状态），整份校验器不可用"
+            failures.append(f"[{label}] 校验器**跑不起来**（端到端冒烟抛异常）：{reason}{hint}")
+        elif "ERROR:" in out and "未发现任何文档" in out:
+            failures.append(f"[{label}] 校验器**跑不起来**：冒烟 vault 没被识别（--root 语义变了？）")
+        elif proc.returncode not in (0, 1):
+            failures.append(f"[{label}] 校验器**跑不起来**（EXIT {proc.returncode}）："
+                            f"{_first_error_line(out)}")
+        else:
+            m = re.search(r"^\s*合计\s+(\d+)", out, re.MULTILINE)
+            seen = f" · 冒烟 vault 违规 {m.group(1)} 条" if m else ""
+            print(f"  [{label}] 校验器冒烟 OK（编译过 · 端到端 EXIT {proc.returncode}{seen}）")
+    return failures
+
+
 def self_check_one(plugin: str, root: Path, label: str) -> list[str]:
     """→ 失败项列表（空 = 通过）。只读断言，不改写。"""
     failures: list[str] = []
@@ -229,6 +354,8 @@ def self_check_one(plugin: str, root: Path, label: str) -> list[str]:
             failures.append(f"[{label}] 校验器规则名期望 {REQUIRED_RULE_NAMES}，实际 {got_names}")
         if ALLOWLIST_START not in text:
             failures.append(f"[{label}] 校验器缺允许清单解析面（{ALLOWLIST_START}）")
+        # 文本断言全过 ≠ 校验器能用：真跑一遍（编译 + 端到端冒烟）
+        failures += validator_smoke(base, label)
 
     skill = base / WD_SKILL_PATH
     if not skill.is_file():
@@ -244,10 +371,15 @@ def self_check_one(plugin: str, root: Path, label: str) -> list[str]:
             if text.count(marker) != 1:
                 failures.append(f"[{label}] {WD_SKILL_PATH} 的允许清单标记 `{marker}` "
                                 f"出现 {text.count(marker)} 次（必须恰 1 次）")
+        for marker in (PLAINWORDS_START, PLAINWORDS_END):
+            # 同一失效模式：R10 的禁词表住在这个标记块里，块没了 ⇒ R10 恒不报
+            if text.count(marker) != 1:
+                failures.append(f"[{label}] {WD_SKILL_PATH} 的禁用词表标记 `{marker}` "
+                                f"出现 {text.count(marker)} 次（必须恰 1 次，否则 R10 恒不报）")
         clauses = count_mandatory_clauses(text)
-        if clauses < 8:
+        if clauses < CLAUSES_MIN:
             failures.append(f"[{label}] {WD_SKILL_PATH} 的「Mandatory clauses」节只数到 {clauses} 条"
-                            "（< 8，六/七/八条款批未落种子）")
+                            f"（< {CLAUSES_MIN}，条款批未落种子）")
 
     test = base / TEST_PATH
     if not test.is_file():
@@ -274,7 +406,27 @@ def self_check_one(plugin: str, root: Path, label: str) -> list[str]:
         failures.append(f"[{label}] 夹具未全绿（EXIT {proc.returncode}）：\n      " + "\n      ".join(tail))
     else:
         print(f"  [{label}] 夹具 {count} 例 OK（EXIT 0）· 规则表 {len(got_ids)} 条 · 条款 {clauses} 条")
+        print(f"  [{label}] 指纹 {core_fingerprint(base)}")
     return failures
+
+
+def core_fingerprint(base: Path) -> str:
+    """三件套的 sha256 指纹（各取前 12 位）——跨批次对账用。
+
+    为什么要有这一行：同一个插件目录可能被**多个批同时写**（2026-11-05 实测：某批
+    把三个实例文件回退到 HEAD，另一批又从自己分支恢复；本批作业期间实例侧的规范
+    文件被别的批改了 143 行）。判断「我读到的是不是我以为的那份」，mtimes 不可信
+    （复制/回滚都会刷新它），字节才可信。两个批各自把自己读到的指纹写进报告，
+    冲突当场现形，不必等到回灌时才发现种子拿到的是别人的半成品。
+    """
+    parts = []
+    for rel in (CHECKER_PATH, TEST_PATH, WD_SKILL_PATH):
+        path = base / rel
+        if path.is_file():
+            parts.append(hashlib.sha256(path.read_bytes()).hexdigest()[:12])
+        else:
+            parts.append("MISSING-----")
+    return " ".join(parts)
 
 
 def self_check(plugins: list[str], seed: Path, inst: Path | None) -> int:
