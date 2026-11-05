@@ -171,7 +171,7 @@ if (( find_rc != 0 )); then
   if [[ -s "$SCAN_RAW" ]]; then
     slog "WARN find 非零退出 rc=${find_rc}（扫描面在遍历中变动，非致命）——按已得 $(( $(wc -l < "$SCAN_RAW" | tr -d ' ') )) 条继续，scope=${scope_tag}"
   else
-    die "find 失败：$SENTINEL_ROOT（rc=${find_rc}，零结果）"
+    die "find 失败：${SENTINEL_ROOT}（rc=${find_rc}，零结果）"
   fi
 fi
 

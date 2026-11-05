@@ -200,6 +200,31 @@ assert_no_marker "$FX/restart-calls.log" "FOREIGN 不动作"
 printf 'INFO  耗时 %ss（rc=%s）\n' "$ELAPSED" "$RC"
 stop_listener "$LPID"
 
+hdr "C7 非健康轮不跑哨兵（② 顺序修复：find 不再排在健康探针之前）"
+run_case down_no_sentinel
+: > "$FX/home/logs/stand.log"                      # 日志新鲜 ⇒ 判据完整（DEAF 走快路径，不含 Stage1 的 sleep 15）
+# 慢哨兵桩：真跑会睡 2s 并留标记；非健康轮必须一次都不跑
+printf '#!/bin/bash\necho "SENTINEL-RAN" >> "%s"\nsleep 2\nexit 0\n' "$FX/sentinel-calls.log" \
+  > "$FX/home/bin/nebflow-log-sentinel.sh"
+chmod +x "$FX/home/bin/nebflow-log-sentinel.sh"
+LPID=$(start_listener "$SBX/nebflow-fixture-listener.py" "$PORT" 500) || bad "监听桩未就绪"
+invoke_wd
+assert_no_marker "$FX/sentinel-calls.log" "非健康轮不调哨兵（不付 find 的账）"
+if (( ELAPSED < 2 )); then ok "非健康轮耗时不含哨兵成本（${ELAPSED}s < 哨兵桩 2s）"; else bad "非健康轮耗时 ${ELAPSED}s ≥ 哨兵桩 2s ⇒ 顺序仍有耦合"; fi
+stop_listener "$LPID"
+
+hdr "C8 健康轮跑哨兵（告警腿仍在）"
+run_case up_with_sentinel
+: > "$FX/home/logs/stand.log"
+printf '#!/bin/bash\necho "SENTINEL-RAN" >> "%s"\nsleep 2\nexit 0\n' "$FX/sentinel-calls.log" \
+  > "$FX/home/bin/nebflow-log-sentinel.sh"
+chmod +x "$FX/home/bin/nebflow-log-sentinel.sh"
+LPID=$(start_listener "$SBX/nebflow-fixture-listener.py" "$PORT" 200) || bad "监听桩未就绪"
+FX_THRESHOLD=3 invoke_wd
+assert_marker "$FX/sentinel-calls.log" "健康轮调哨兵（告警腿未被顺序修复误伤）"
+printf 'INFO  健康轮（含哨兵桩）耗时 %ss（rc=%s）\n' "$ELAPSED" "$RC"
+stop_listener "$LPID"
+
 # ============================================================
 hdr "红线自检：真实 6138 监听 pid 前后一致"
 REAL_PID_AFTER=$(lsof -nP -tiTCP:6138 -sTCP:LISTEN 2>/dev/null | head -1)
