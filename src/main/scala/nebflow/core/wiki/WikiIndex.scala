@@ -223,7 +223,14 @@ object WikiIndex:
     blocks: List[WikiBlockAnchor],
     links: List[(String, Option[String], String, Int)], // (target, anchor, kind, line)
     summary: Option[String],
-    paragraphs: List[WikiParagraph] = Nil
+    paragraphs: List[WikiParagraph] = Nil,
+    // Raw body of every BLOCK paragraph, keyed by its edge anchor ("#^id"):
+    // inline markup INTACT, trailing `^block-id` stripped, NOT capped. The term
+    // tag window (词条标签 v2) reads THIS face — a cleaned paragraph loses its
+    // backticks (an inline-code `#x` would look like a tag) and a capped one
+    // truncates tail tags away. Mirrors check_wiki_docs.py `tag_window`. Never
+    // serialized: the paragraph JSON face stays field-for-field with Python.
+    rawBlocks: Map[String, String] = Map.empty
   )
 
   /** Parse raw markdown text into headings / block anchors / outgoing links /
@@ -268,8 +275,9 @@ object WikiIndex:
           if target.nonEmpty then links += ((target, anchor, "link", lineNo))
         }
       i += 1
+    val (paragraphs, rawBlocks) = paragraphIndex(lines, mask, headings.toList, fmOffset)
     ParsedDoc(title, headings.toList, blocks.toList, links.toList, summaryOf(lines, mask, afterFirstH1),
-      paragraphsOf(lines, mask, headings.toList, fmOffset))
+      paragraphs, rawBlocks)
 
   // ── Graph summary (wiki-graph redesign §5) ──────────────────────
 
@@ -378,8 +386,10 @@ object WikiIndex:
     flush()
     runs.toList
 
-  /** Block paragraphs: content runs whose LAST line carries a `^blockid`. */
-  private def blockParagraphs(runs: List[List[(Int, String)]], fmOffset: Int): List[WikiParagraph] =
+  /** Block paragraphs: content runs whose LAST line carries a `^blockid`, each
+    * paired with its RAW joined body (block id stripped, inline markup intact,
+    * uncapped) — the term tag window face. */
+  private def blockParagraphsRaw(runs: List[List[(Int, String)]], fmOffset: Int): List[(WikiParagraph, String)] =
     runs.flatMap { group =>
       val (lastIdx, lastLine) = group.last
       BlockIdRe.findFirstMatchIn(lastLine).map { m =>
@@ -387,7 +397,7 @@ object WikiIndex:
         val body = group.map { case (idx, t) =>
           if idx == lastIdx then t.replaceAll(raw"(?s)^(.*\S)\s+\^[A-Za-z0-9][A-Za-z0-9-]*\s*$$", "$1") else t
         }.mkString(" ")
-        WikiParagraph(
+        val para = WikiParagraph(
           anchor = "#^" + id,
           kind = "block",
           title = blockTitle(group.head._2, id),
@@ -395,6 +405,7 @@ object WikiIndex:
           endLine = lastIdx + 1 + fmOffset,
           text = truncateAt(cleanSummaryText(body), ParagraphMaxChars)
         )
+        (para, body)
       }
     }
 
@@ -425,12 +436,21 @@ object WikiIndex:
     * sections, line-ordered, capped at [[ParagraphMaxPerDoc]]. */
   def paragraphsOf(lines: Vector[String], mask: Vector[Boolean],
                    headings: List[WikiHeading], fmOffset: Int): List[WikiParagraph] =
-    if lines.isEmpty then Nil
+    paragraphIndex(lines, mask, headings, fmOffset)._1
+
+  /** Paragraph index PLUS the raw block face (edge anchor → raw paragraph body)
+    * that only the term tag parser consumes. */
+  private def paragraphIndex(lines: Vector[String], mask: Vector[Boolean],
+                             headings: List[WikiHeading],
+                             fmOffset: Int): (List[WikiParagraph], Map[String, String]) =
+    if lines.isEmpty then (Nil, Map.empty)
     else
       val runs = contentRuns(lines, mask)
-      (blockParagraphs(runs, fmOffset) ++ headingParagraphs(lines, mask, headings, fmOffset))
+      val blocks = blockParagraphsRaw(runs, fmOffset)
+      val index = (blocks.map(_._1) ++ headingParagraphs(lines, mask, headings, fmOffset))
         .sortBy(_.line)
         .take(ParagraphMaxPerDoc)
+      (index, blocks.iterator.map { case (p, raw) => p.anchor -> raw }.toMap)
 
   /** Raw-anchor (`"^blk"` | `"#Heading"` | `"L42"`) → edge-anchor form. */
   def edgeAnchorForm(anchor: String): String =
@@ -463,8 +483,87 @@ object WikiIndex:
     line: Int,           // 1-based full-file coordinates
     endLine: Int,
     source: String,      // "glossary" | "doc"
-    definition: String   // cleaned block text, ≤ParagraphMaxChars (hover payload)
+    definition: String,  // cleaned block text, ≤ParagraphMaxChars (hover payload)
+    tags: List[WikiTermTag] = Nil // 词条标签 v2 — the three buckets, sorted; NEVER a lookup key
   )
+
+  // ── Term tags (词条标签 v2, term-system batch;口径 = check_wiki_docs.py) ──
+  // Syntax (fixed by the dispatch side, this is the execution face):
+  //   `- 词条名（别名1，别名2） — 一句话定义。 #proj/stand #topic/term-index ^term-<slug>`
+  // • exactly one `#proj/<slug>` and at least one `#topic/<slug>`, everything
+  //   else `#<facet>/<value>` goes to `extra` (stored as "facet/value");
+  // • the tag window is the stretch between the definition text and the
+  //   trailing `^block-id` — a tag written AFTER the block id is not seen
+  //   (Obsidian does not treat a mid-line `^id` as a block anchor at all, so
+  //   that paragraph does not even become a term ⇒ violation `term-tag-missing`);
+  // • `#x` inside an inline-code span is not a tag (and fenced lines never
+  //   enter the paragraph index);
+  // • buckets are deduplicated and sorted, so the JSON face is byte-identical
+  //   across the Scala engine and the Python check script.
+  // Tags are DECORATION: termKeys / selectTerm / the three resolution legs
+  // never read them (existing contract preserved — tags must not change which
+  // document a citation lands on).
+
+  /** One facet of a term's tag set. `facet` ∈ [[TagFacetProject]] |
+    * [[TagFacetTopic]] | [[TagFacetExtra]]; `value` is the slug after the `/`
+    * for project/topic and the whole `"facet/value"` (no `#`) for extra. */
+  final case class WikiTermTag(facet: String, value: String)
+
+  val TagFacetProject = "project"
+  val TagFacetTopic = "topic"
+  val TagFacetExtra = "extra"
+
+  /** Every `#<ns>/<value>` occurrence — two path segments only (`#facet/a/b`
+    * yields `facet/a`, exactly like the Python `TERM_TAG_RE`). Assessment-order
+    * parity matters: both sides scan left to right, non-overlapping. */
+  private val TermTagRe = raw"#([A-Za-z0-9_\u4e00-\u9fa5.-]+)/([A-Za-z0-9_\u4e00-\u9fa5.-]+)".r
+  private val InlineCodeSpanRe = raw"`[^`\n]*`".r
+
+  /** Tag window of one declaration: the RAW block body after its first
+    * ` —`/`–`/`:`/`：` separator, i.e. exactly the stretch between the
+    * definition text and the `^block-id` (the raw body handed in here already
+    * has the block id stripped). No separator ⇒ empty window (that block is
+    * no term anyway — `term-format` reports it). */
+  def tagWindow(rawBlockBody: String): String =
+    TermNameSepRe.findFirstMatchIn(rawBlockBody) match
+      case Some(m) => rawBlockBody.substring(m.end)
+      case None    => ""
+
+  /** Tag window → the three-bucket tag list (project, then topic, then extra;
+    * each bucket deduplicated and sorted). Inline-code spans are blanked out
+    * first, so `#proj/x` written inside backticks is documentation, not a tag. */
+  def termTagsOf(window: String): List[WikiTermTag] =
+    val text = InlineCodeSpanRe.replaceAllIn(if window == null then "" else window, " ")
+    val project = ListBuffer.empty[String]
+    val topic = ListBuffer.empty[String]
+    val extra = ListBuffer.empty[String]
+    TermTagRe.findAllMatchIn(text).foreach { m =>
+      val ns = m.group(1)
+      val value = m.group(2)
+      if ns == "proj" then project += value
+      else if ns == "topic" then topic += value
+      else extra += s"$ns/$value"
+    }
+    def bucket(facet: String, values: ListBuffer[String]): List[WikiTermTag] =
+      values.distinct.sorted.map(v => WikiTermTag(facet, v)).toList
+    bucket(TagFacetProject, project) ++ bucket(TagFacetTopic, topic) ++ bucket(TagFacetExtra, extra)
+
+  /** The fixed three-bucket JSON face — all three keys always present, arrays
+    * sorted, so the cross-language assertion compares field against field. */
+  def termTagsJson(tags: List[WikiTermTag]): Json =
+    Json.obj(
+      TagFacetProject -> tags.filter(_.facet == TagFacetProject).map(_.value).asJson,
+      TagFacetTopic -> tags.filter(_.facet == TagFacetTopic).map(_.value).asJson,
+      TagFacetExtra -> tags.filter(_.facet == TagFacetExtra).map(_.value).asJson
+    )
+
+  /** Inverse of [[termTagsJson]]; a payload without `tags` (older graph cache)
+    * decodes to no tags. */
+  def decodeTermTags(j: Json): List[WikiTermTag] =
+    val c = j.hcursor
+    def bucket(facet: String): List[WikiTermTag] =
+      c.downField(facet).as[List[String]].toOption.getOrElse(Nil).map(v => WikiTermTag(facet, v))
+    bucket(TagFacetProject) ++ bucket(TagFacetTopic) ++ bucket(TagFacetExtra)
 
   private val TermNameSepRe = raw"\s*[—–]\s*|\s*[:：]\s*".r
 
@@ -485,10 +584,16 @@ object WikiIndex:
     parsed.paragraphs.flatMap { p =>
       val declared = p.kind == "block" && p.anchor.startsWith("#^") &&
         (glossary || p.anchor.startsWith("#^term-"))
-      if !declared then None else termFromParagraph(p, rel, if glossary then "glossary" else "doc")
+      if !declared then None
+      else termFromParagraph(p, rel, if glossary then "glossary" else "doc",
+        parsed.rawBlocks.getOrElse(p.anchor, p.text))
     }
 
-  private def termFromParagraph(p: WikiParagraph, rel: String, source: String): Option[WikiTerm] =
+  /** One declaration → a term. `rawBlockBody` is the RAW paragraph body (block
+    * id stripped, uncapped) the tag window is read from; `p.text` (cleaned,
+    * capped) names the term and carries the hover definition. */
+  private def termFromParagraph(p: WikiParagraph, rel: String, source: String,
+                                rawBlockBody: String): Option[WikiTerm] =
     // p.text is the cleaned, whitespace-collapsed block with the ^id already
     // stripped — the name segment is the text before the FIRST separator, with
     // list/heading markers stripped (same `^[#*-]+` rule as blockTitle and the
@@ -496,7 +601,8 @@ object WikiIndex:
     TermNameSepRe.findFirstMatchIn(p.text).flatMap { m =>
       val name = p.text.substring(0, m.start).trim.replaceAll(raw"^[#*-]+\s*", "").trim
       if name.isEmpty then None
-      else Some(WikiTerm(name, termAliasKeys(name), rel, p.anchor, p.line, p.endLine, source, p.text))
+      else Some(WikiTerm(name, termAliasKeys(name), rel, p.anchor, p.line, p.endLine, source, p.text,
+        termTagsOf(tagWindow(rawBlockBody))))
     }
 
   /** Derived lookup keys from a primary name's TRAILING parenthetical group —
@@ -562,11 +668,13 @@ object WikiIndex:
       "anchor" -> t.anchor.asJson,
       "line" -> t.line.asJson,
       "endLine" -> t.endLine.asJson,
-      "definition" -> t.definition.asJson
+      "definition" -> t.definition.asJson,
+      "tags" -> termTagsJson(t.tags)
     )
 
   /** Inverse of [[termJson]] — the service-level term lookup rules over the
-    * TTL-cached graph payload (no second scan path). */
+    * TTL-cached graph payload (no second scan path). A payload predating the
+    * tag face (no `tags` key) decodes to an empty tag set, never to a failure. */
   def decodeTerm(j: Json): Option[WikiTerm] =
     val c = j.hcursor
     for
@@ -578,7 +686,9 @@ object WikiIndex:
       endLine <- c.downField("endLine").as[Int].toOption
       source <- c.downField("source").as[String].toOption
       definition <- c.downField("definition").as[String].toOption
-    yield WikiTerm(name, aliases, rel, anchor, line, endLine, source, definition)
+    yield
+      val tags = c.downField("tags").as[Json].toOption.map(decodeTermTags).getOrElse(Nil)
+      WikiTerm(name, aliases, rel, anchor, line, endLine, source, definition, tags)
 
   // ── Graph assembly ───────────────────────────────────────────────
 

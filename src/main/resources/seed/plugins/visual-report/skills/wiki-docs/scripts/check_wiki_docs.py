@@ -12,8 +12,11 @@ wiki-docs SKILL.md 强制条款的机器面（条款与检查一一对应，见 
                             同一术语在多篇非词表文档各自定义 ⇒ 重复定义清单
   R4 词条注册表面         → 词条声明块结构合法（词表锚段落 / ^term-* 块必须能按
                             「名 — 定义」分隔约定抽出词条名）；同一文档内词条名
-                            不得重复。`[[名]]` 短形引用在文档与词条注册表均未
-                            命中 ⇒ R2 断链（引用词条已注册由 R2 断链检查承担）
+                            不得重复；词条标签（v2）缺失 ⇒ term-tag-missing
+                            （必须恰好一个 #proj/<slug>、至少一个 #topic/<slug>，
+                            其余 #facet/value 入 extra；标签必须写在定义文字之后、
+                            ^块锚之前）。`[[名]]` 短形引用在文档与词条注册表均未
+                            命中 ⇒ R15 悬空词条（带路径/带锚的断链仍归 R2）
   R5 文档命名制           → 阶段件文件名 = `<topic>__<YYYYMMDD>_<HHMMSS>[__<chainId>].md`：
                             主题打头、时间块后置（时间打头 = 旧制 = 违规）；topic 不得
                             是 report/doc/notes 这类空词单独成题。校验面 = `.md` 文档；
@@ -38,6 +41,26 @@ wiki-docs SKILL.md 强制条款的机器面（条款与检查一一对应，见 
                             `[[缩写]]`；允许清单（单位 / 通用技术词）写在
                             `../SKILL.md` 的标记块里，脚本只读不藏
 
+  ── 只许引用词条批（作者令 2026-11-05；规则号 2026-11-05 让号重编到
+     R13–R15——本批原挂 R7/R8/R9，与先落地的排版三禁撞号，按裁定让号）──
+  R13 doc-reference       → 只许引用词条（作者令 2026-11-05）：正文裸 `.md` 路径、
+                            markdown 链接指向文档、无锚短形 `[[X]]` 解析到文档却
+                            解析不到已注册词条 —— 都是「引用文档」，一律违规；
+                            带锚引用（`[[X#^term-slug]]` / `[[X#Heading]]`）、
+                            已注册词条短形 `[[词条名]]`、`![[…]]` 嵌入通过
+  R14 bare-image-path     → 图片文件名/路径以纯文本出现在正文（`attachments/a.png`、
+                            `../x.jpg`、`/abs/y.png`）即违规；图片要么直接嵌入
+                            （`![[a.png]]` / `![](…)` / `<img src=…>`），要么写成
+                            可点击链接（`[说明](attachments/a.png)`）
+  R15 dangling-term       → 无锚短形 `[[Name]]` 既解析不到文档也解析不到已注册词条
+                            ⇒ 悬空（从 R2 broken-link 移出，同一行不双报）；带路径/
+                            带锚的断链仍归 R2
+
+三条门禁共用四条纪律：① 输出 `文件:行 → 原文 → 原因`；② 行内豁免
+`<!-- wiki-term-exempt: 理由 -->`（同行或紧邻上一行、理由非空才生效）单独计数并
+显形（含「标了但该行无违规」的悬空标注），不接受整文件豁免；③ 汇总段出按类计数
+小表；④ 有违规即非零退出。
+
 段落锚（引用语法，与 R2 校验同源）：`[[doc#^块锚]]` 精确到单个段落（名词解释
 场景主形态，词表条目即块锚段落），`[[doc#标题]]` 精确到整节。--graph 导出
 为每篇文档内嵌段落索引 paragraphs（与 WikiIndex.scala 逐字段同构，设计稿
@@ -61,6 +84,10 @@ workspace 内 docs/ 的存量 vault 照旧可校验）。
   python3 check_wiki_docs.py --root docs                 # 显式根覆盖（向后兼容）
   python3 check_wiki_docs.py --json                      # 校验，机器读 JSON
   python3 check_wiki_docs.py --graph out.json --project stand
+  python3 check_wiki_docs.py --root <vault> --dump-terms --json
+                                                         # 词条 + 短形引用的机器出口
+                                                         # （下游 CLI / 索引引擎的
+                                                         # 唯一抽取入口，形状见下）
   python3 check_wiki_docs.py --include-subvaults
                                                          # 子项目图谱批（#744-B）：
                                                          # 发现 <sub>/docs 子 vault 后
@@ -69,6 +96,29 @@ workspace 内 docs/ 的存量 vault 照旧可校验）。
   python3 check_wiki_docs.py --rules                     # 打印规则与检查的对照表
 
 退出码：0 = 无违规；1 = 有违规；2 = 用法/环境错误。仅依赖 Python 3 标准库。
+
+词条标签（v2）声明语法（写死，见 SKILL.md「Term tags」）：
+
+  - 词条名（别名1，别名2） — 一句话定义。 #proj/<slug> #topic/<slug> #facet/<value> ^term-<slug>
+
+  · 恰好一个 `#proj/<slug>`；至少一个 `#topic/<slug>`；其余 `#facet/value` 入 extra。
+  · 标签必须写在定义文字之后、该段落的 `^块锚` 之前（`^块锚` 必须在行末——写在
+    块锚之后的标签不被识别，等价于缺标签）。
+  · 行内代码 / 围栏里的 `#x` 不是标签（围栏行本就不入段落，行内代码 span 先剔除）。
+  · 缺 project 或缺 topic ⇒ 违规 `term-tag-missing`；行内豁免
+    `<!-- wiki-term-exempt: 理由 -->`（同行或紧邻上一行、理由非空）单独计数，
+    不接受整文件豁免。
+
+机器出口 `--dump-terms`（下游 CLI / 索引引擎的唯一抽取入口；纯导出、不跑校验、
+exit 0）：按 rel,line 排序，形状固定
+
+  {"root":…, "generated_at":…,
+   "terms":[{"name","aliases","rel","anchor","line","end_line","definition",
+             "source","tags":{"project":[…],"topic":[…],"extra":[…]}}],
+   "refs": [{"name_key","from_rel","line","raw","resolved"}]}
+
+`refs` = 所有 `[[名]]` 短形引用（无锚、无路径分隔）；`resolved` = 词条注册表唯一
+命中（与 R2 第三优先级回退同一判据），供下游建 term_refs 表。
 
 链接解析语义（与 nebflow.core.wiki.WikiIndex 一致）：先精确 vault 相对路径，再大小写
 不敏感精确匹配，再全库唯一 basename 匹配，最后（词条引用批）词条注册表第三优先级
@@ -84,6 +134,7 @@ import os
 import posixpath
 import re
 import sys
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -106,12 +157,16 @@ RULES = (
     ("R1", "obsidian-format", "所有文档一律 Obsidian 格式产出：front-matter（type/status）+ [[wiki-link]] 引用 + vault 目录约定（vault 根 = 项目注册目录 .stand/docs、attachments/ 附件）"),
     ("R2", "citation-graph", "文档之间建立论文式引用关系：断链（目标/标题锚/块锚不存在，含引用词条未注册）即缺陷；零出链且零入链的孤儿文档即缺陷（index/glossary 豁免）"),
     ("R3", "concept-first-use", "名词概念第一次出现必须就地解释，或 [[引用]] 已解释它的文档；多篇文档不得各自发明同一概念的定义（词表 = 唯一定义源）"),
-    ("R4", "term-registry", "词条注册表面：词表锚段落与 ^term-* 声明块必须按「名 — 定义」分隔约定抽出词条名（词条块结构合法）；同一文档内词条名不得重复；`[[名]]` 短形引用经词条注册表消解（词表命中优先，未注册 = R2 断链）"),
+    ("R4", "term-registry", "词条注册表面：词表锚段落与 ^term-* 声明块必须按「名 — 定义」分隔约定抽出词条名（词条块结构合法）；同一文档内词条名不得重复；词条标签 v2 = 恰好一个 #proj/<slug> + 至少一个 #topic/<slug> + 其余 #facet/value，写在定义文字之后、^块锚之前，缺 project 或 topic 即 term-tag-missing；`[[名]]` 短形引用经词条注册表消解（词表命中优先，未注册 = R2 断链）"),
     ("R5", "doc-naming", "文档命名制：阶段件文件名 = `<topic>__<YYYYMMDD>_<HHMMSS>[__<chainId>].md`（topic 前置、时间块后置，`__` 分主题与时间、时间块内用 `_`）；时间打头（`^YYYYMMDD_...`）即旧制即违规；topic 不得是 report/doc/notes 空词单独成题。校验面 = `.md` 文档，无时间块的活文档合法，非 `.md` 资产不在本制范围"),
     ("R6", "image-outside-vault", "图随文档走：文档引用的图片（`![](…)` / `![[…]]` / `<img src>`）必须是与文档同住 vault 的真实文件，用 vault 相对路径引用；绝对路径 / `file://` / `~` / `../` 越出 vault / http(s) 外链图床 / vault 内不存在 = 违规（禁止 reports-evidence、worktree、`/tmp`、`~/.stand/uploads|evidence` 这类会消失的位置）。行内豁免 `<!-- wiki-img-exempt: 理由 -->` 单条计数并显形，无整文件豁免"),
     ("R7", "doc-color", "彩色克制（作者裁定 2026-11-05 11:09「适当使用彩色字体」）：内联 HTML 着色 `<span style=\"color:…\">` 一篇 ≤4 处（建议 ≤3），只准三个固定语义色——蓝 #5e6ad2 = 结论/判定、红 #d0342c = 风险/警告、绿 #12874a = 已验证/通过；单处着色不得覆盖整段（>120 字符）；一般强调用加粗，不许满篇彩色"),
     ("R8", "doc-indent", "正文缩进（作者裁定 2026-11-05 11:09「以及缩进」）：正文段落首行以 `&emsp;&emsp;` 起行（`&emsp;` 是 HTML 实体，Obsidian 与 marked 两渲染面都稳定生效；两个半角空格会被折叠、四个半角空格变代码块）。标题 / 列表 / 表格 / 引用 / 围栏 / 图片行 / HTML 块豁免；可视长度 <40 字符的短行豁免"),
     ("R9", "abbrev-expansion", "缩写铁律（作者裁定 2026-11-05 11:11「GCR、ICRP 这种缩写、机构缩写也要用词条解释」）：全大写 2-6 字母 token 与带点专有缩写（E.C. / U.S.）在**文档首次出现处**必须给出全称（前后括注或破折线式）或挂词条链接 `[[缩写]]`；单位与通用技术词按 SKILL.md 的允许清单标记块豁免；围栏代码块（含 Mermaid / HTML / SVG 样张）、行内代码、HTML 标签属性、URL、human 围栏内不扫"),
+    # 只许引用词条批：2026-11-05 让号重编到 R13–R15（原 R7/R8/R9 与上方排版三禁撞号）
+    ("R13", "doc-reference", "只许引用词条（作者令 2026-11-05「只有引用词条，不允许引用文档」）：正文裸 `.md` 路径（`见 design/foo.md`）、markdown 链接指向文档（`[x](foo.md)` / `[x](foo.md#sec)`）、无锚短形 `[[X]]` 解析到文档却解析不到已注册词条 —— 三种形态都算「引用文档」= 违规；带锚引用（`[[X#^term-slug]]` / `[[X#Heading]]`）、已注册词条短形 `[[词条名]]`、`![[…]]` 嵌入通过。行内代码/围栏不算"),
+    ("R14", "bare-image-path", "图片路径不得以纯文本出现：`attachments/a.png`、`../x.jpg`、`/abs/y.png` 写成正文即违规。图片只有两种合法形态——直接嵌入（`![[a.png]]` / `![](…)` / `<img src=…>`）或可点击跳转（`[说明](attachments/a.png)`）。行内代码/围栏不算"),
+    ("R15", "dangling-term", "悬空词条引用：无锚短形 `[[Name]]` 既解析不到文档也解析不到已注册词条 ⇒ 违规（该形状从 R2 broken-link 移出，同一行不双报；带路径/带锚的断链仍归 R2 的 broken-anchor / broken-block）"),
 )
 
 # ── R5 文档命名制（作者令 2026-11-04 18:12；条款原文见 wiki-docs SKILL.md
@@ -242,6 +297,100 @@ ALLOWLIST_START = "<!-- wiki-abbrev-allowlist:start -->"
 ALLOWLIST_END = "<!-- wiki-abbrev-allowlist:end -->"
 ALLOWLIST_DEFAULT_DOC = Path(__file__).resolve().parent.parent / "SKILL.md"
 ALLOWLIST_TOKEN_RE = re.compile(r"^[A-Za-z][A-Za-z0-9.]*$")
+
+
+# ── R13/R14/R15 引用门禁（作者令 2026-11-05：只许引用词条）────────────────
+#
+# 作者原话：「以后我们就只允许引用词条，不允许引用文档」「不允许引用文档和图片
+# 路径，文档就用词条，图片要么直接嵌入，要么就可以点击跳转」。三条机器面：
+#
+#   R13 doc-reference   ｜ 正文裸 `.md` 路径 / markdown 链接指向文档 / 无锚短形
+#                          `[[X]]` 解析到文档却解析不到已注册词条
+#   R14 bare-image-path ｜ 图片文件名/路径以纯文本出现（不在嵌入/可点击链接里）
+#   R15 dangling-term   ｜ 无锚短形 `[[Name]]` 文档与词条双双解析不到（脱离 R2）
+#
+# 规则号 2026-11-05 让号重编：本批原挂 R7/R8/R9，与先落地的排版三禁（R7 doc-color /
+# R8 doc-indent / R9 abbrev-expansion）撞号；排版三禁已在 main 生效且已有回归，故由
+# 本批让号到当前最大号之后的 R13–R15，判定语义一字未改。
+#
+# 靶场只在**正文残片**上打：围栏行上游已剔（body_lines），行内代码 span、wikilink
+# （含 ![[嵌入]]）、markdown 链接/图片（`[x](…)` / `![](…)`）、HTML 标签
+# （`<img src>`）、裸 URL 都是合法承载面，先整段剥掉再找裸路径——否则
+# `![[a.png]]` 里的 `a.png` 会被误判成 R8。
+
+IMAGE_EXTS = ("png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico",
+              "avif", "tif", "tiff", "heic", "apng")
+
+# 路径片段：ASCII 词字符 + 中文（文档里 `见 设计文档.md` 这种中文名同样算路径）。
+_PATH_SEG = r"[A-Za-z0-9_\u4e00-\u9fa5.@+~%-]+"
+_PATH_PREFIX = r"(?:\.{0,2}/|/|~/)?(?:" + _PATH_SEG + r"/)*"
+_FILE_STEM = r"[A-Za-z0-9_\u4e00-\u9fa5][A-Za-z0-9_\u4e00-\u9fa5.@+~%-]*"
+# 左边界只挡 ASCII 路径字符：中文紧贴路径（「详见设计/foo.md」）必须仍能命中。
+_BOUND_L = r"(?<![A-Za-z0-9_./~%-])"
+_BOUND_R = r"(?![A-Za-z0-9_])"
+
+BARE_DOC_PATH_RE = re.compile(
+    _BOUND_L + _PATH_PREFIX + _FILE_STEM + r"\.(?:md|markdown)" + _BOUND_R, re.IGNORECASE)
+BARE_IMAGE_PATH_RE = re.compile(
+    _BOUND_L + _PATH_PREFIX + _FILE_STEM + r"\.(?:" + "|".join(IMAGE_EXTS) + r")" + _BOUND_R,
+    re.IGNORECASE)
+
+# 「合法承载面」剥除用：整段构造（连括号一起）抹成空格，剩下的裸文本才是靶场。
+WIKILINK_ANY_RE = re.compile(r"!?\[\[[^\[\]\n]*\]\]")
+MD_LINK_ANY_RE = re.compile(r"!?\[[^\]\n]*\]\([^)\n]*\)")
+HTML_TAG_ANY_RE = re.compile(r"<[^>\n]+>")
+URL_ANY_RE = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://\S+")
+
+# 每条门禁每行只报一次（同一行多症会淹没原文；一处修完再跑能看到下一处）。
+REF_GATE_MAX_LINE_DETAIL = 200
+
+
+def is_short_form_ref(target, anchor):
+    """无锚短形引用：无 #锚、无路径分隔、无文档扩展名 —— 即 `[[名]]` 这一形状。
+
+    带锚（`[[X#…]]`）与带路径/带扩展名（`[[design/foo.md]]`）的断链不在此列，
+    仍归 R2（broken-link / broken-anchor / broken-block）。"""
+    if anchor is not None:
+        return False
+    raw = (target or "").strip()
+    if not raw or "/" in raw.replace("\\", "/"):
+        return False
+    return not re.search(r"\.(?:md|markdown|html)$", raw, re.IGNORECASE)
+
+
+def mask_legal_carriers(line):
+    """正文残片：行内代码 / wikilink（含嵌入）/ markdown 链接与图片 / HTML 标签 /
+    裸 URL 全部抹成空格。只剩「没有被任何合法语法承载的裸文本」。"""
+    text = INLINE_CODE_SPAN_RE.sub(" ", line or "")
+    text = WIKILINK_ANY_RE.sub(" ", text)
+    text = MD_LINK_ANY_RE.sub(" ", text)
+    text = HTML_TAG_ANY_RE.sub(" ", text)
+    text = URL_ANY_RE.sub(" ", text)
+    return text
+
+
+def clip_line(text):
+    """原文摘录：去首尾空白 + 超长截断（违规定位仍靠行号，摘录只做「看得出错在哪」）。"""
+    t = (text or "").strip()
+    return t if len(t) <= REF_GATE_MAX_LINE_DETAIL else t[:REF_GATE_MAX_LINE_DETAIL - 1] + "…"
+
+
+def live_wikilinks(line):
+    """行内代码**之外**的 wikilink 三形集合 {(target, anchor|None, kind)}。
+
+    doc.links 是整行的解析结果（不剔行内代码——R2 的历史口径），但「举例」面
+    （`` `[[词条名]]` `` 这种写进代码的语法示例）不是引用：门禁只认行内代码之外
+    的实链，否则文档里一写语法示例就自伤。"""
+    text = INLINE_CODE_SPAN_RE.sub(lambda m: " " * len(m.group(0)), line or "")
+    out = set()
+    for m in WIKILINK_RE.finditer(text):
+        target = m.group(2).split("|")[0]
+        anchor = None
+        if "#" in target:
+            target, anchor = target.split("#", 1)
+        out.add((target.strip(), (anchor or "").strip() or None,
+                 "embed" if m.group(1) else "link"))
+    return out
 
 
 # ── 落位解析：项目名 → 文档根（作者令 2026-11-03 20:02，单源）────────────
@@ -772,6 +921,33 @@ def _para_text(raw):
     return cleaned
 
 
+def block_groups(doc):
+    """块段落分组：连续非空、非标题行的行组（空行 / 标题 / 围栏缺口断组）。
+
+    与 WikiIndex.contentRuns 同构，且是**唯一**的分组定义——段落索引
+    （build_paragraphs）与词条标签解析（tag_window）都从这一份拿边界，
+    杜绝两处各写一套导致标签窗口与词条段落错位。"""
+    groups = []
+    cur = []
+    prev_no = None
+    for line_no, line in doc.body_lines:
+        content = bool(line.strip()) and not HEADING_RE.match(line)
+        if content and cur and prev_no is not None and line_no == prev_no + 1:
+            cur.append((line_no, line))
+        elif content:
+            if cur:
+                groups.append(cur)
+            cur = [(line_no, line)]
+        else:
+            if cur:
+                groups.append(cur)
+            cur = []
+        prev_no = line_no
+    if cur:
+        groups.append(cur)
+    return groups
+
+
 def build_paragraphs(doc):
     """→ [{anchor, kind, title, line, endLine, text}]（anchor 与 edge 同形，
     带 # 前缀：块锚 '#^id'、标题 '#标题'）。行号 = 全文件坐标（含 front-matter）。
@@ -781,31 +957,7 @@ def build_paragraphs(doc):
         return []
     paras = []
     # 块锚段落：连续非空行组（body_lines 已剔 fence 行——围栏缺口天然断组）。
-    run = []
-    runs = []
-
-    def flush_run():
-        if not run:
-            return
-        runs.append(list(run))
-        run.clear()
-
-    prev_no = None
-    for line_no, line in doc.body_lines:
-        is_boundary = bool(HEADING_RE.match(line)) or (
-            prev_no is not None and line_no != prev_no + 1) or not line.strip()
-        if is_boundary:
-            flush_run()
-        if line.strip() and not HEADING_RE.match(line):
-            if prev_no is not None and line_no == prev_no + 1 and run:
-                run.append((line_no, line))
-            else:
-                run = [(line_no, line)]
-        else:
-            run = []
-        prev_no = line_no
-    flush_run()
-    for group in runs:
+    for group in block_groups(doc):
         bm = BLOCKID_RE.match(group[-1][1])
         if not bm:
             continue
@@ -878,8 +1030,148 @@ def term_alias_keys(name):
     return []
 
 
+# ── 词条标签 v2（term-system v2；与 WikiIndex.termTagsOf 同口径） ───────
+# 语法（派发侧定死，本脚本只是执行面）：
+#   - 词条名（别名1，别名2） — 一句话定义。 #proj/stand #topic/term-index ^term-<slug>
+# · 恰好一个 `#proj/<slug>`、至少一个 `#topic/<slug>`，其余 `#facet/value` 入 extra；
+# · 标签窗口 = 定义文字之后 → 该段落的 `^块锚` 之前（块锚必须在行末：写在块锚
+#   之后的标签不被识别，等价于缺标签 ⇒ term-tag-missing）；
+# · 行内代码 span / 围栏里的 `#x` 不是标签（围栏行本就不进 body_lines）；
+# · 缺 project 或缺 topic ⇒ 违规 term-tag-missing；行内豁免
+#   `<!-- wiki-term-exempt: 理由 -->`（同行或紧邻上一行、理由非空）单独计数。
+
+TERM_TAG_NAMESPACES = {"proj": "project", "topic": "topic"}
+TERM_TAG_RE = re.compile(r"#([A-Za-z0-9_\u4e00-\u9fa5.-]+)/([A-Za-z0-9_\u4e00-\u9fa5.-]+)")
+INLINE_CODE_SPAN_RE = re.compile(r"`[^`\n]*`")
+TERM_EXEMPT_RE = re.compile(r"<!--\s*wiki-term-exempt\s*:\s*(.*?)\s*-->")
+# 块锚之后还有内容的行（块锚不在行末）——Obsidian 不认这种锚，词条标签也不认。
+ANCHOR_MIDLINE_RE = re.compile(r"^(.*\S)\s+\^([A-Za-z0-9][A-Za-z0-9-]*)\s+(\S.*)$")
+
+
+def empty_term_tags():
+    """词条标签的唯一固定形状（三桶；桶内去重 + 排序，跨语言同序）。"""
+    return {"project": [], "topic": [], "extra": []}
+
+
+def parse_term_tags(window):
+    """标签窗口 → {"project": […], "topic": […], "extra": […]}
+
+    · `#proj/<slug>` → project；`#topic/<slug>` → topic；
+      其余 `#<facet>/<value>` → extra（原样 "facet/value"，不带 `#`）。
+    · 行内代码 span 先整段剔除——示例里的 `#proj/x` 不是标签。
+    · 窗口之外的 `#x` 不是标签（调用方负责给窗口：定义文字之后、块锚之前）。"""
+    tags = empty_term_tags()
+    text = INLINE_CODE_SPAN_RE.sub(" ", window or "")
+    for m in TERM_TAG_RE.finditer(text):
+        namespace, value = m.group(1), m.group(2)
+        bucket = TERM_TAG_NAMESPACES.get(namespace)
+        if bucket:
+            tags[bucket].append(value)
+        else:
+            tags["extra"].append(f"{namespace}/{value}")
+    for key in tags:
+        tags[key] = sorted(set(tags[key]))
+    return tags
+
+
+def block_group_index(doc):
+    """{(首行号, 尾行号): 行组} —— 只收尾行带 `^块锚` 的组（词条候选段落）。"""
+    idx = {}
+    for group in block_groups(doc):
+        if BLOCKID_RE.match(group[-1][1]):
+            idx[(group[0][0], group[-1][0])] = group
+    return idx
+
+
+def tag_window(group):
+    """词条标签窗口（原文行，**不**剥行内标记——清洗过的段落文本会丢反引号，
+    行内代码里的 `#x` 就分不出来了，且定义超 280 字符时尾部标签会被截断）。
+
+    窗口 = 组内全部原文（尾行的 `^块锚` 先剥掉）里的第一处「名 —/：」分隔符之后
+    到组尾。块锚之后的内容不进窗口（AnchorMidline 另行报位置错）。"""
+    if not group:
+        return ""
+    parts = []
+    for i, (_line_no, text) in enumerate(group):
+        if i == len(group) - 1:
+            bm = BLOCKID_RE.match(text)
+            if bm:
+                text = bm.group(1)
+        parts.append(text)
+    window = " ".join(parts)
+    m = TERM_NAME_SEP_RE.search(window)
+    return window[m.end():] if m else ""
+
+
+def term_tag_problem(tags):
+    """标签合规判据 → None（合规）或人话原因（说明缺哪个 facet）。"""
+    reasons = []
+    project, topic = tags["project"], tags["topic"]
+    if not project:
+        reasons.append("缺 #proj/<slug>（必须恰好一个项目标签）")
+    elif len(project) > 1:
+        reasons.append("`#proj/` 多于一个（%s）——必须恰好一个"
+                       % "、".join("#proj/" + p for p in project))
+    if not topic:
+        reasons.append("缺 #topic/<slug>（至少一个主题标签）")
+    return "；".join(reasons) if reasons else None
+
+
+def doc_line_text(doc, line_no):
+    """全文件行号 → 原文行（缺返回 None）。doc.body_lines 不含围栏行。"""
+    if not hasattr(doc, "_line_cache"):
+        doc._line_cache = {no: text for no, text in doc.body_lines}
+    return doc._line_cache.get(line_no)
+
+
+def exempt_markers(doc):
+    """全档行内豁免标注 → [(行号, 理由)]（理由为空的标注不算——空理由不接受，
+    整文件豁免也不接受：豁免只挂在具体行上）。围栏内的标注不进 body_lines。"""
+    if not hasattr(doc, "_exempt_cache"):
+        out = []
+        for line_no, text in doc.body_lines:
+            m = TERM_EXEMPT_RE.search(text)
+            if m and m.group(1).strip():
+                out.append((line_no, m.group(1).strip()))
+        doc._exempt_cache = out
+    return doc._exempt_cache
+
+
+def term_exemption(doc, *line_nos):
+    """行内豁免：给定行及其紧邻上一行里的 `<!-- wiki-term-exempt: 理由 -->`。
+    理由为空 = 无效豁免（不接受整文件豁免——豁免只挂在具体声明行）。"""
+    table = dict(exempt_markers(doc))
+    for line_no in line_nos:
+        for probe in (line_no, line_no - 1):
+            if probe in table:
+                return table[probe]
+    return None
+
+
+def misplaced_term_tags(doc, rel, glossary):
+    """块锚写在行中（`^id` 后还有内容，通常是标签）的词条声明行。
+
+    这类行的 `^id` 在 Obsidian 里根本不是块锚 ⇒ 该段落抽不出词条、标签也一律
+    不认（规范：标签必须在 `^块锚` 之前）。返回 [(行号, 块 id, 原文)]。"""
+    out = []
+    for line_no, text in doc.body_lines:
+        m = ANCHOR_MIDLINE_RE.match(text)
+        if not m:
+            continue
+        block_id, rest = m.group(2), m.group(3)
+        if not (glossary or block_id.startswith("term-")):
+            continue
+        if not TERM_TAG_RE.search(INLINE_CODE_SPAN_RE.sub(" ", rest)):
+            continue
+        if not TERM_NAME_SEP_RE.search(m.group(1)):
+            continue  # 无「名 —/：定义」分隔 ⇒ 本就不是词条声明行
+        out.append((line_no, block_id, text.strip()))
+    return out
+
+
 def terms_of(rel, doc):
     glossary = is_glossary_rel(rel)
+    groups = block_group_index(doc)
     out = []
     for p in doc_paragraphs(doc):
         if p["kind"] != "block" or not p["anchor"].startswith("#^"):
@@ -892,6 +1184,7 @@ def terms_of(rel, doc):
         name = p["text"][:m.start()].strip()
         if not name:
             continue
+        group = groups.get((p["line"], p["endLine"]), [])
         out.append({
             "name": name,
             "aliases": term_alias_keys(name),
@@ -900,6 +1193,7 @@ def terms_of(rel, doc):
             "anchor": p["anchor"],
             "line": p["line"], "endLine": p["endLine"],
             "definition": p["text"],
+            "tags": parse_term_tags(tag_window(group)),
         })
     return out
 
@@ -1135,8 +1429,77 @@ def first_occurrence(doc, regex):
     return None
 
 
+def check_reference_gate(docs, resolve, resolve_term, add, suppress):
+    """R13/R14/R15 —— 只许引用词条的门禁（作者令 2026-11-05）。
+
+    三条共用纪律：每行每规则至多一条（同一行多症先修一处，重跑看下一处）、输出
+    `原文 → 原因`、行内豁免经 suppress 记账（生效/悬空都由 check() 汇出显形）。"""
+    for rel, doc in sorted(docs.items()):
+        if rel.lower().endswith(".html"):
+            continue  # 正文面 = markdown（与 R4/R5 同口径；html 样张不是引用面）
+
+        emitted = set()
+
+        def emit(rule, line_no, reason):
+            if (rule, line_no) in emitted:
+                return
+            emitted.add((rule, line_no))
+            raw = clip_line(doc_line_text(doc, line_no) or "")
+            if suppress(rel, line_no):
+                return  # 行内豁免：计数显形由豁免段承担，此处不计违规
+            add(rule, rel, line_no, f"{raw} → {reason}")
+
+        for line_no, line in doc.body_lines:
+            # ② markdown 链接指向文档：`[x](foo.md)` / `[x](foo.md#sec)`。
+            #    `![…](…)` 是嵌入面（R14 豁免的承载形态），不归本条。
+            code_free = INLINE_CODE_SPAN_RE.sub(" ", line)
+            for m in MDLINK_RE.finditer(code_free):
+                if m.start() > 0 and code_free[m.start() - 1] == "!":
+                    continue
+                emit("doc-reference", line_no,
+                     f"markdown 链接指向文档「{m.group(0)}」——只许引用词条，"
+                     "改写为 `[[词条名]]`（或带锚 `[[doc#^term-slug]]`）")
+            # ① 正文裸 .md 路径（`见 design/foo.md`）：合法承载面先剥掉再找。
+            for m in BARE_DOC_PATH_RE.finditer(mask_legal_carriers(line)):
+                emit("doc-reference", line_no,
+                     f"正文裸 .md 引用「{m.group(0)}」——不允许引用文档路径，"
+                     "改写为已注册词条 `[[词条名]]`（或带锚 `[[doc#^term-slug]]`）")
+            # R14 裸图片路径：纯文本形态（嵌入 / 可点击链接已整段剥掉）。
+            for m in BARE_IMAGE_PATH_RE.finditer(mask_legal_carriers(line)):
+                raw = m.group(0)
+                emit("bare-image-path", line_no,
+                     f"图片路径以纯文本出现「{raw}」——图片只有两种合法形态："
+                     f"直接嵌入 `![[{basename(raw)}]]` 或可点击跳转 `[说明]({raw})`")
+
+        # ③ 引用文档：无锚、非嵌入的 wikilink 解析到**文档**却解析不到**词条**。
+        #    R15 悬空词条：同样的形状但文档与词条双双解析不到（这一形状从 R2 移出，
+        #    同一行不双报；带路径 / 带扩展名 / 带锚的断链仍归 R2）。
+        for target, anchor, kind, line_no in doc.links:
+            if kind == "embed" or anchor is not None:
+                continue  # 嵌入面、带锚引用（指名词条块 / 整节引用）不在本门禁
+            line = doc_line_text(doc, line_no) or ""
+            if (target, anchor, kind) not in live_wikilinks(line):
+                continue  # 行内代码里的语法示例，不是引用
+            hit_term = resolve_term(target) if resolve_term else None
+            resolved = resolve(target, from_rel=rel)
+            if resolved and not hit_term:
+                if not re.search(r"\.(?:md|markdown|html)$", resolved, re.IGNORECASE):
+                    continue  # 附件目标（图片 / PDF）= 可点击跳转，不是引用文档
+                emit("doc-reference", line_no,
+                     f"`[[{target}]]` 解析到文档 {resolved} 而非词条——这是引用文档；"
+                     "改写为已注册词条 `[[词条名]]`，或带锚 `[[doc#^term-slug]]`")
+                continue
+            if hit_term or resolved:
+                continue
+            if not is_short_form_ref(target, anchor):
+                continue  # 带路径/带扩展名的断链归 R2
+            emit("dangling-term", line_no,
+                 f"`[[{target}]]` 既解析不到文档也解析不到已注册词条——先声明词条"
+                 "（`^term-<slug>` 段落），再按词条名引用")
+
+
 def check(root, docs, resolve, glossary_rel, exclude_glossary_check, terms_by_rel=None,
-          resolve_term=None, style_opts=None, advisories=None):
+          resolve_term=None, style_opts=None, advisories=None, exempt_sink=None):
     violations = []
 
     def add(rule, file, line, detail):
@@ -1144,6 +1507,28 @@ def check(root, docs, resolve, glossary_rel, exclude_glossary_check, terms_by_re
 
     if terms_by_rel is None:
         terms_by_rel = {}
+    exempts = exempt_sink if exempt_sink is not None else []
+
+    # 行内豁免账本：先把全档标注收齐（含「标了但该行无违规」的悬空标注），
+    # 违规点经 suppress() 认领；末尾一次汇出——生效与悬空都必须显形。
+    markers = {}
+    used_markers = {}
+    for rel, doc in sorted(docs.items()):
+        ms = exempt_markers(doc)
+        if ms:
+            markers[rel] = ms
+            used_markers[rel] = set()
+
+    def suppress(rel, *line_nos):
+        """该行（或紧邻上一行）有非空理由的豁免标注 ⇒ 记账并返回理由；否则 None。
+        一个标注可压同行的多条违规（同一行的标签/形状是一件事）。"""
+        for line_no in line_nos:
+            for probe in (line_no, line_no - 1):
+                for mline, reason in markers.get(rel, ()):
+                    if mline == probe:
+                        used_markers.setdefault(rel, set()).add(mline)
+                        return reason
+        return None
 
     # R1 — front-matter 在位
     for rel, doc in sorted(docs.items()):
@@ -1156,6 +1541,8 @@ def check(root, docs, resolve, glossary_rel, exclude_glossary_check, terms_by_re
 
     # R2 — 断链（目标 / 标题锚 / 块锚；词条引用批：文档腿全未命中的无锚目标
     # 先过词条注册表第三优先级回退，唯一命中 = 非断链）
+    # 引用门禁批：无锚短形 `[[Name]]` 的未命中不再归本条 —— 移出到 R9
+    # dangling-term，同一行不双报；带路径/带扩展名的断链仍留在这里。
     for rel, doc in sorted(docs.items()):
         for target, anchor, kind, line_no in doc.links:
             resolved = resolve(target, from_rel=rel)
@@ -1163,9 +1550,9 @@ def check(root, docs, resolve, glossary_rel, exclude_glossary_check, terms_by_re
                 thit = resolve_term(target) if (anchor is None and resolve_term) else None
                 if thit:
                     continue  # 词条命中：边 = (词条所在文档, 词条锚)，与引擎同构
-                bare = anchor is None and "/" not in target
-                hint = "（既非文档也非已注册词条——补词条声明块或改引文档）" if bare else ""
-                add("broken-link", rel, line_no, f"引用目标不存在：[[{target}]]{hint}")
+                if kind != "embed" and is_short_form_ref(target, anchor):
+                    continue  # 归 R9 悬空词条
+                add("broken-link", rel, line_no, f"引用目标不存在：[[{target}]]")
                 continue
             if anchor:
                 if anchor.startswith("^"):
@@ -1239,6 +1626,29 @@ def check(root, docs, resolve, glossary_rel, exclude_glossary_check, terms_by_re
             if len(where) > 1:
                 add("duplicate-definition", glossary_rel, 1,
                     f"概念「{term}」在多篇文档各自定义（{', '.join(where)}）——定义唯一化：词表定义，其余引用")
+
+    # R4 — 词条标签 v2：恰好一个 #proj/<slug> + 至少一个 #topic/<slug>，缺一个即
+    # term-tag-missing。豁免只认行内 `<!-- wiki-term-exempt: 理由 -->`（同行或紧邻
+    # 上一行、理由非空），单独计入 exempts 显形——不接受整文件豁免。
+    for rel, doc in sorted(docs.items()):
+        if rel.lower().endswith(".html"):
+            continue
+        for t in terms_by_rel.get(rel, []):
+            problem = term_tag_problem(t["tags"])
+            if not problem:
+                continue
+            raw = (doc_line_text(doc, t["line"]) or "").strip()
+            if suppress(rel, t["line"], t["endLine"]):
+                continue  # 豁免：记账由 check() 末尾统一汇出（生效/悬空都显形）
+            add("term-tag-missing", rel, t["line"], f"{raw} → 词条「{t['name']}」{problem}")
+        # 标签写在 ^块锚 之后 ⇒ 标签不被识别（等价缺标签）。单独判据：这类行的
+        # ^id 在 Obsidian 里根本不是块锚，段落抽不出词条，上面那圈看不到它。
+        for line_no, block_id, raw in misplaced_term_tags(doc, rel, is_glossary_rel(rel)):
+            if suppress(rel, line_no):
+                continue
+            add("term-tag-missing", rel, line_no,
+                f"{raw} → 词条标签写在 ^{block_id} 之后，不被识别（等价缺标签）——"
+                f"标签必须在定义文字之后、^块锚 之前，且 ^块锚 独占行末")
 
     # R4 — 词条注册表面：词条块结构合法（合格块必须抽得出词条名）+ 同档词条名唯一
     for rel, doc in sorted(docs.items()):
@@ -1367,6 +1777,19 @@ def check(root, docs, resolve, glossary_rel, exclude_glossary_check, terms_by_re
                      f"缩写「{token}」首现既无全称也无词条链接——写成 `全称（{token}）` / "
                      f"`{token}（全称）` / `[[{token}]]（全称）`；跨文档通用的词请注册成词条，"
                      "通用词（单位/技术词）才进 SKILL.md 允许清单")
+
+    # R13/R14/R15 — 引用门禁：只许引用词条（文档路径、图片裸路径、悬空词条三种形状）
+    check_reference_gate(docs, resolve, resolve_term, add, suppress)
+
+    # 行内豁免一次汇出：生效（压住了违规）与悬空（标了但该行无违规）都显形，
+    # 均不计违规——豁免不是沉默，理由必须看得见。
+    for rel in sorted(markers):
+        for mline, reason in markers[rel]:
+            exempts.append({
+                "file": rel, "line": mline, "reason": reason,
+                "text": (doc_line_text(docs[rel], mline) or "").strip(),
+                "used": mline in used_markers.get(rel, set()),
+            })
     return violations
 
 
@@ -1523,6 +1946,101 @@ def resolve_cross_vault(resolver_by_vault, target):
     return None
 
 
+# ── 词条机器出口（--dump-terms；下游 CLI / 索引引擎的唯一抽取入口） ─────
+
+TERM_DUMP_KEYS = ("name", "aliases", "rel", "anchor", "line", "end_line",
+                  "definition", "source", "tags")
+TERM_REF_DUMP_KEYS = ("name_key", "from_rel", "line", "raw", "resolved")
+
+
+def dump_terms(docs, terms_by_rel, resolve_term=None, root=None):
+    """纯导出：词条注册表 + `[[名]]` 短形引用（不跑校验、不影响退出码）。
+
+    顺序确定：terms 按 (rel, line, name)，refs 按 (from_rel, line, raw)——同一
+    vault 同一份代码两次导出除 generated_at 外逐字节相同。tags 三桶桶内已排序去重。
+    `refs.resolved` = 词条注册表唯一命中（与 R2 第三优先级回退同一判据）。"""
+    terms = []
+    for rel in sorted(terms_by_rel):
+        for t in terms_by_rel[rel]:
+            tags = t.get("tags") or empty_term_tags()
+            terms.append({
+                "name": t["name"],
+                "aliases": list(t.get("aliases") or []),
+                "rel": t["rel"],
+                "anchor": t["anchor"],
+                "line": t["line"],
+                "end_line": t["endLine"],
+                "definition": t["definition"],
+                "source": t["source"],
+                "tags": {"project": list(tags["project"]),
+                         "topic": list(tags["topic"]),
+                         "extra": list(tags["extra"])},
+            })
+    terms.sort(key=lambda t: (t["rel"], t["line"], t["name"]))
+
+    refs = []
+    for rel in sorted(docs):
+        for target, anchor, _kind, line_no in docs[rel].links:
+            if anchor is not None:
+                continue  # 带锚引用不回退词条（与引擎同）
+            raw = target.strip()
+            if not raw or "/" in raw.replace("\\", "/"):
+                continue  # 短形引用：无锚、无路径分隔
+            hit = resolve_term(raw) if resolve_term else None
+            refs.append({
+                "name_key": term_target_key(normalize_target(raw)).strip().lower(),
+                "from_rel": rel,
+                "line": line_no,
+                "raw": raw,
+                "resolved": bool(hit),
+            })
+    refs.sort(key=lambda r: (r["from_rel"], r["line"], r["raw"]))
+
+    return {
+        "root": str(root) if root is not None else "",
+        "generated_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
+        "terms": terms,
+        "refs": refs,
+    }
+
+
+def print_exempts(exempts):
+    """行内豁免单独显形（不计违规）：豁免不是沉默，必须看得见理由。
+
+    两类都显形：生效（压住了同/上一行的违规）与悬空（标了但该行无违规——标注
+    过期或标错行，同样要看见）。不接受整文件豁免。"""
+    if not exempts:
+        return
+    used = [e for e in exempts if e.get("used")]
+    dangling = [e for e in exempts if not e.get("used")]
+    print(f"── 行内豁免（{len(exempts)} 条：生效 {len(used)}、悬空 {len(dangling)}；均不计违规）──")
+    for e in used:
+        where = f"{e['vault']}/{e['file']}" if e.get("vault") else e["file"]
+        print(f"  ✓ {where}:{e['line']}  理由：{e['reason']}")
+    for e in dangling:
+        where = f"{e['vault']}/{e['file']}" if e.get("vault") else e["file"]
+        print(f"  · {where}:{e['line']}  悬空标注（该行无违规，标注可清理）理由：{e['reason']}")
+    print()
+
+
+def print_rule_counts(violations, exempts=None):
+    """按类计数小表（汇总段）：R1-R6 的逐条清单照旧在上，这里只加一张总计面。
+    零条也列出——「这一类今天没犯」和「这一类没检查」必须分得开。"""
+    counts = summarise(violations)
+    print("── 计数汇总（按类）──")
+    known = set()
+    for rid, name, _text in RULES:
+        known.add(name)
+        print(f"  {rid} {name:<20} {counts.get(name, 0)}")
+    for name in sorted(k for k in counts if k not in known):
+        print(f"  -- {name:<20} {counts[name]}")
+    if exempts:
+        used = sum(1 for e in exempts if e.get("used"))
+        print(f"  行内豁免 {len(exempts)}（生效 {used}、悬空 {len(exempts) - used}）——不计违规")
+    print(f"  合计 {len(violations)}")
+    print()
+
+
 def main():
     ap = argparse.ArgumentParser(description="wiki-docs 文档纪律校验器 + 图谱数据导出")
     ap.add_argument("--root", default=None,
@@ -1534,6 +2052,10 @@ def main():
                     help="项目名（--graph 输出的 project 名；缺省 --root 时同时是文档根的解析键）")
     ap.add_argument("--json", action="store_true", help="违规清单以 JSON 输出")
     ap.add_argument("--graph", metavar="OUT", default=None, help="导出图谱数据 JSON 到 OUT")
+    ap.add_argument("--dump-terms", action="store_true",
+                    help="词条机器出口：导出词条注册表 + [[名]] 短形引用（JSON，形状见脚本 "
+                         "docstring）。纯导出——不跑校验、不影响退出码（恒 0）；顺序确定：" 
+                         "terms 按 (rel, line)、refs 按 (from_rel, line, raw)")
     ap.add_argument("--exclude", action="append", default=[],
                     help="排除 glob（vault 相对，可多次；默认排除 assets/**）")
     ap.add_argument("--rules", action="store_true", help="打印规则与检查对照表后退出")
@@ -1588,6 +2110,12 @@ def main():
         print(f"ERROR: {root} 下未发现任何文档", file=sys.stderr)
         return 2
 
+    # 纯导出先于一切校验分流：--dump-terms 不跑 check、恒 0 退出、不掺违规。
+    if args.dump_terms:
+        print(json.dumps(dump_terms(docs, terms_by_rel, resolve_term=resolve_term, root=root),
+                         ensure_ascii=False, indent=1))
+        return 0
+
     if args.graph:
         data = build_graph(docs, resolve, args.project, terms_by_rel, resolve_term)
         Path(args.graph).write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -1603,6 +2131,7 @@ def main():
             vault_results.append((rel, vpath, vdocs, vgloss, vresolve, vatts, vterms, vterm_res))
 
     per_vault = []
+    vault_exempts = {}
     cross_links = []
     image_readouts = {}
     image_docs = {}
@@ -1613,12 +2142,16 @@ def main():
     for rel, vpath, vdocs, vgloss, vresolve, vatts, vterms, vterm_res in vault_results:
         stats = {}
         advisories = []
+        vexempts = []
         violations = check(vpath, vdocs, vresolve, vgloss, exclude_glossary_check=args.skip_concepts,
                            terms_by_rel=vterms, resolve_term=vterm_res,
                            style_opts={"enabled": not args.skip_style, "since": args.style_since,
                                        "strict": args.strict_style, "allow": abbrev_allow,
                                        "stats": stats},
-                           advisories=advisories)
+                           advisories=advisories, exempt_sink=vexempts)
+        for e in vexempts:
+            e["vault"] = "" if rel == "docs" else rel
+        vault_exempts[rel] = vexempts
         per_vault.append({"vault": rel, "docs": len(vdocs), "violations": violations,
                           "counts": summarise(violations), "advisories": advisories,
                           "style": stats})
@@ -1685,6 +2218,10 @@ def main():
         print_image_readout(violations, image_readouts["docs"], docs=image_docs["docs"])
         print_style_readout(style_readouts["docs"], per_vault[0]["advisories"],
                             since=args.style_since, strict=args.strict_style)
+        # 豁免段（生效/悬空都显形）与按类计数小表：都追加在原有逐条清单之后，
+        # R1-R6 与排版三禁的既有输出逐字节不动。
+        print_exempts(vault_exempts.get("docs", []))
+        print_rule_counts(violations, vault_exempts.get("docs", []))
         if not glossary_rel:
             print("提示：未发现词表（glossary）——R3 概念首现检查未启用。建 vault 词表：<vault>/glossary.md")
     else:
@@ -1698,6 +2235,7 @@ def main():
                                 indent="  ", docs=image_docs.get(r["vault"]))
             print_style_readout(style_readouts.get(r["vault"], {}), r["advisories"],
                                 indent="  ", since=args.style_since, strict=args.strict_style)
+            print_exempts(vault_exempts.get(r["vault"], []))
             print()
         if cross_links:
             print(f"── 跨 vault 引用（info，{len(cross_links)} 条，不计违规）──")

@@ -52,7 +52,7 @@ status: open
 
 # fixture index
 
-- [[sample]] — the document under test
+- [[sample#sample]] — the document under test
 """
 
 
@@ -116,28 +116,28 @@ class Fixture(unittest.TestCase):
 
     # ── 基线：合规 vault 零违规（R1–R5 零误伤）───────────────────────
     def test_clean_vault_has_no_violations(self):
-        self.assertEqual([], self.run_case("See also [[index]]."))
+        self.assertEqual([], self.run_case("See also [[index#fixture index]]."))
 
     # ── R6 合规面 ───────────────────────────────────────────────────
     def test_relative_image_inside_vault_passes(self):
-        violations = self.run_case("![ok](assets/pic.png)\n\nSee also [[index]].",
+        violations = self.run_case("![ok](assets/pic.png)\n\nSee also [[index#fixture index]].",
                                    extra=[("assets/pic.png", "", True)])
         self.assertEqual([], image_violations(violations))
 
     def test_wikilink_embed_resolves_by_vault_path(self):
-        violations = self.run_case("![[attachments/pic.png]]\n\nSee also [[index]].",
+        violations = self.run_case("![[attachments/pic.png]]\n\nSee also [[index#fixture index]].",
                                    extra=[("attachments/pic.png", "", True)])
         self.assertEqual([], image_violations(violations))
 
     def test_data_uri_is_self_contained(self):
-        body = '<img src="data:image/png;base64,AAAA">\n\nSee also [[index]].'
+        body = '<img src="data:image/png;base64,AAAA">\n\nSee also [[index#fixture index]].'
         self.assertEqual([], image_violations(self.run_case(body)))
 
     def test_fenced_and_inline_code_samples_are_not_references(self):
         body = (
             "```markdown\n![图](../../reports-evidence/x/y.png)\n```\n\n"
             "语法样张：`![[reports-evidence/x/y.png]]` 与 `![](/abs/pic.png)` 都不是真引用。\n\n"
-            "See also [[index]]."
+            "See also [[index#fixture index]]."
         )
         self.assertEqual([], image_violations(self.run_case(body)))
 
@@ -145,7 +145,7 @@ class Fixture(unittest.TestCase):
         """人面子围栏里的关键图必须被查（条款 ⑤ 的主图就在围栏里）。"""
         body = (
             "```human\n## 印象\n结论一句话。\n\n**关键数字**：1 张图\n"
-            "![[key-chart-missing.png]]\n```\n\nSee also [[index]]."
+            "![[key-chart-missing.png]]\n```\n\nSee also [[index#fixture index]]."
         )
         violations = image_violations(self.run_case(body))
         self.assertEqual(1, len(violations), "human 围栏里的图不能被当成代码样张跳过")
@@ -154,14 +154,14 @@ class Fixture(unittest.TestCase):
     def test_human_fence_inside_outer_fence_stays_a_sample(self):
         """外层 ```markdown 里的 ```human 模板仍是样张（不能反过来误报）。"""
         body = (
-            "~~~~markdown\n```human\n![[key-chart.png]]\n```\n~~~~\n\nSee also [[index]]."
+            "~~~~markdown\n```human\n![[key-chart.png]]\n```\n~~~~\n\nSee also [[index#fixture index]]."
         )
         self.assertEqual([], image_violations(self.run_case(body)))
 
     # ── R6 违规面：四类位置失败 + 死引用 ────────────────────────────
     def test_relative_path_escaping_vault_is_violation(self):
         write(Path(self._tmp.name), "reports-evidence/20261105_demo/overview.png", "", binary=True)
-        body = "![](../reports-evidence/20261105_demo/overview.png)\n\nSee also [[index]]."
+        body = "![](../reports-evidence/20261105_demo/overview.png)\n\nSee also [[index#fixture index]]."
         violations = image_violations(self.run_case(body))
         self.assertEqual(1, len(violations))
         self.assertIn("越出 vault", violations[0]["detail"])
@@ -169,25 +169,25 @@ class Fixture(unittest.TestCase):
 
     def test_absolute_path_is_violation(self):
         abs_path = str(Path(self._tmp.name) / "reports-evidence/pic.png").replace("\\", "/")
-        body = f"![](file://{abs_path})\n\nSee also [[index]]."
+        body = f"![](file://{abs_path})\n\nSee also [[index#fixture index]]."
         violations = image_violations(self.run_case(body))
         self.assertEqual(1, len(violations))
         self.assertIn("绝对路径", violations[0]["detail"])
 
     def test_tilde_path_is_violation(self):
-        body = "![x](~/Pictures/pic.png)\n\nSee also [[index]]."
+        body = "![x](~/Pictures/pic.png)\n\nSee also [[index#fixture index]]."
         violations = image_violations(self.run_case(body))
         self.assertEqual(1, len(violations))
         self.assertIn("家目录", violations[0]["detail"])
 
     def test_external_url_is_violation(self):
-        body = '<img src="https://cdn.example.com/key-chart.png">\n\nSee also [[index]].'
+        body = '<img src="https://cdn.example.com/key-chart.png">\n\nSee also [[index#fixture index]].'
         violations = image_violations(self.run_case(body))
         self.assertEqual(1, len(violations))
         self.assertIn("外链", violations[0]["detail"])
 
     def test_missing_file_inside_vault_is_violation(self):
-        body = "![[attachments/not-there.png]]\n\nSee also [[index]]."
+        body = "![[attachments/not-there.png]]\n\nSee also [[index#fixture index]]."
         violations = image_violations(self.run_case(body))
         self.assertEqual(1, len(violations))
         self.assertIn("不存在", violations[0]["detail"])
@@ -199,7 +199,7 @@ class Fixture(unittest.TestCase):
             "![](../reports-evidence/x/pic.png) <!-- wiki-img-exempt: 等作者批迁移 -->\n\n"
             "<!-- wiki-img-exempt: 上一行标注同样生效 -->\n"
             "![](../reports-evidence/x/pic.png)\n\n"
-            "See also [[index]]."
+            "See also [[index#fixture index]]."
         )
         violations = self.run_case(body)
         self.assertEqual([], image_violations(violations), "行内豁免应放行这两条")
@@ -210,12 +210,12 @@ class Fixture(unittest.TestCase):
 
     def test_empty_exemption_reason_does_not_apply(self):
         write(Path(self._tmp.name), "reports-evidence/x/pic.png", "", binary=True)
-        body = "![](../reports-evidence/x/pic.png) <!-- wiki-img-exempt:   -->\n\nSee also [[index]]."
+        body = "![](../reports-evidence/x/pic.png) <!-- wiki-img-exempt:   -->\n\nSee also [[index#fixture index]]."
         violations = image_violations(self.run_case(body))
         self.assertEqual(1, len(violations), "空理由的豁免不生效")
 
     def test_dangling_exemption_marker_is_reported(self):
-        body = "<!-- wiki-img-exempt: 标错位置了 -->\n\n正文没有图片。\n\nSee also [[index]]."
+        body = "<!-- wiki-img-exempt: 标错位置了 -->\n\n正文没有图片。\n\nSee also [[index#fixture index]]."
         self.run_case(body)
         docs, _atts = MOD.collect_docs(self.root, [])
         _total, exempt, orphans = MOD.image_readout(docs)
@@ -237,13 +237,13 @@ class Fixture(unittest.TestCase):
     def test_exit_codes_red_then_green(self):
         write(Path(self._tmp.name), "reports-evidence/x/pic.png", "", binary=True)
         write(self.root, "sample.md",
-              doc("![](../reports-evidence/x/pic.png)\n\nSee also [[index]]."))
+              doc("![](../reports-evidence/x/pic.png)\n\nSee also [[index#fixture index]]."))
         code, out = self.run_main()
         self.assertEqual(1, code, out)
         self.assertIn("image-outside-vault", out)
         self.assertIn("图片纪律（R6 image-outside-vault）", out)
         (self.root / "sample.md").unlink()
-        write(self.root, "index.md", INDEX_MD.replace("- [[sample]] — the document under test\n", ""))
+        write(self.root, "index.md", INDEX_MD.replace("- [[sample#sample]] — the document under test\n", ""))
         code, out = self.run_main()
         self.assertEqual(0, code, out)
 
@@ -257,7 +257,7 @@ class TypographyAndAbbrev(Fixture):
     # ── R9 缩写 ─────────────────────────────────────────────────────
     def test_abbrev_first_use_without_expansion_is_flagged(self):
         body = ("&emsp;&emsp;先说结论：GCR 通量随太阳活动周期起伏，这条判断来自多年实测的"
-                "同一组口径，值得单独成段记录。\n\nSee also [[index]].")
+                "同一组口径，值得单独成段记录。\n\nSee also [[index#fixture index]].")
         hits = rule_violations(self.run_case(body), "abbrev-expansion")
         self.assertEqual(1, len(hits), hits)
         self.assertIn("GCR", hits[0]["detail"])
@@ -265,17 +265,17 @@ class TypographyAndAbbrev(Fixture):
 
     def test_abbrev_expanded_in_place_passes(self):
         body = ("&emsp;&emsp;银河宇宙线（GCR）是进入大气层之前的高能粒子流，通量随太阳"
-                "活动周期起伏，值得单独成段记录。\n\nSee also [[index]].")
+                "活动周期起伏，值得单独成段记录。\n\nSee also [[index#fixture index]].")
         self.assertEqual([], rule_violations(self.run_case(body), "abbrev-expansion"))
 
     def test_abbrev_via_term_link_passes(self):
         body = ("&emsp;&emsp;[[GCR]]（Galactic Cosmic Rays，银河宇宙线）的通量随太阳活动"
-                "周期起伏，值得单独成段记录。\n\nSee also [[index]].")
+                "周期起伏，值得单独成段记录。\n\nSee also [[index#fixture index]].")
         self.assertEqual([], rule_violations(self.run_case(body), "abbrev-expansion"))
 
     def test_abbrev_allowlisted_unit_passes_and_flags_without_allowlist(self):
         body = ("&emsp;&emsp;接口返回 JSON 结构，字段名与上游口径逐字一致，不经任何改写，"
-                "也不做四舍五入。\n\nSee also [[index]].")
+                "也不做四舍五入。\n\nSee also [[index#fixture index]].")
         self.assertEqual([], rule_violations(self.run_case(body), "abbrev-expansion"),
                          "允许清单里的通用技术词不要求展开")
         strict_hits = rule_violations(self.run_case(body, allow={}), "abbrev-expansion")
@@ -284,19 +284,19 @@ class TypographyAndAbbrev(Fixture):
     def test_abbrev_inside_code_fence_is_not_scanned(self):
         body = ("&emsp;&emsp;下面的围栏是代码样张，里面的全大写 token 属于代码面，"
                 "不是读者需要理解的概念。\n\n```text\nGCR ICRP MC NIEL\n```\n\n"
-                "See also [[index]].")
+                "See also [[index#fixture index]].")
         self.assertEqual([], rule_violations(self.run_case(body), "abbrev-expansion"))
 
     def test_abbrev_dotted_form_is_flagged(self):
         body = ("&emsp;&emsp;这条记录按 E.C. 编号归档，编号规则来自机构口径，"
-                "值得单独说明一句。\n\nSee also [[index]].")
+                "值得单独说明一句。\n\nSee also [[index#fixture index]].")
         hits = rule_violations(self.run_case(body), "abbrev-expansion")
         self.assertEqual(1, len(hits), hits)
         self.assertIn("E.C", hits[0]["detail"])
 
     def test_emphasis_uppercase_word_is_not_an_abbreviation(self):
         body = ("&emsp;&emsp;读数口径：PASS 的条目与 pass 的条目同表，全部通过之后"
-                "才进入下一阶段。\n\nSee also [[index]].")
+                "才进入下一阶段。\n\nSee also [[index#fixture index]].")
         self.assertEqual([], rule_violations(self.run_case(body), "abbrev-expansion"),
                          "同档有小写形态的全大写词是强调，不是缩写")
 
@@ -316,14 +316,14 @@ class TypographyAndAbbrev(Fixture):
                 '<span style="color:#12874a">通过一</span>、'
                 '<span style="color:#5e6ad2">结论二</span>、'
                 '<span style="color:#d0342c">风险二</span>——五处颜色。\n\n'
-                "See also [[index]].")
+                "See also [[index#fixture index]].")
         hits = rule_violations(self.run_case(body), "doc-color")
         self.assertEqual(1, len(hits), hits)
         self.assertIn("超出预算", hits[0]["detail"])
 
     def test_color_off_palette_is_flagged(self):
         body = ('&emsp;&emsp;结论：<span style="color:#ff0000">这个词用错了色</span>。\n\n'
-                "See also [[index]].")
+                "See also [[index#fixture index]].")
         hits = rule_violations(self.run_case(body), "doc-color")
         self.assertEqual(1, len(hits), hits)
         self.assertIn("非语义色", hits[0]["detail"])
@@ -332,38 +332,38 @@ class TypographyAndAbbrev(Fixture):
         body = ("&emsp;&emsp;结论：<span style=\"color:#5e6ad2\">判定在此</span>；"
                 "<span style=\"color:#d0342c\">风险</span>与"
                 "<span style=\"color:#12874a\">已验证</span>各一处。\n\n"
-                "See also [[index]].")
+                "See also [[index#fixture index]].")
         self.assertEqual([], rule_violations(self.run_case(body), "doc-color"))
 
     # ── R8 缩进 ─────────────────────────────────────────────────────
     def test_missing_indent_is_flagged(self):
         body = ("这一段落本身足够长却没有段首缩进实体，渲染出来是顶格的一整段，读起来"
-                "既没有边界感也不好定位，因此要补上两个全角缩进实体。\n\nSee also [[index]].")
+                "既没有边界感也不好定位，因此要补上两个全角缩进实体。\n\nSee also [[index#fixture index]].")
         hits = rule_violations(self.run_case(body), "doc-indent")
         self.assertEqual(1, len(hits), hits)
         self.assertIn("未缩进", hits[0]["detail"])
 
     def test_indented_paragraph_passes(self):
         body = ("&emsp;&emsp;这一段落本身足够长而且有段首缩进实体，渲染出来是缩进两格"
-                "的一整段，读起来有边界感也好定位。\n\nSee also [[index]].")
+                "的一整段，读起来有边界感也好定位。\n\nSee also [[index#fixture index]].")
         self.assertEqual([], rule_violations(self.run_case(body), "doc-indent"))
 
     def test_four_space_indent_is_reported_as_code_block(self):
         body = ("    这一行用四个半角空格起行，渲染器会把它整块当成代码块而不是缩进，"
-                "等宽字体加灰底，位置也会错。\n\nSee also [[index]].")
+                "等宽字体加灰底，位置也会错。\n\nSee also [[index#fixture index]].")
         hits = rule_violations(self.run_case(body), "doc-indent")
         self.assertEqual(1, len(hits), hits)
         self.assertIn("代码块", hits[0]["detail"])
 
     def test_short_lines_and_structural_lines_are_exempt(self):
         body = ("## 小节标题\n\n- 列表条目不需要缩进\n| 列 | 列 |\n|---|---|\n| 值 | 值 |\n\n"
-                "> 引用块自带缩排\n\n短句。\n\nSee also [[index]].")
+                "> 引用块自带缩排\n\n短句。\n\nSee also [[index#fixture index]].")
         self.assertEqual([], rule_violations(self.run_case(body), "doc-indent"))
 
     # ── 存量过渡与退出码 ────────────────────────────────────────────
     def test_legacy_stock_is_advisory_not_violation(self):
         body = ("这一段落本身足够长却没有段首缩进实体，渲染出来是顶格的一整段，读起来"
-                "没有边界感也不好定位。\n\nGCR 通量随太阳活动周期起伏。\n\nSee also [[index]].")
+                "没有边界感也不好定位。\n\nGCR 通量随太阳活动周期起伏。\n\nSee also [[index#fixture index]].")
         advisories = []
         violations = self.run_case(body, strict=False, advisories=advisories)
         style_rules = ("doc-indent", "doc-color", "abbrev-expansion")
@@ -376,7 +376,7 @@ class TypographyAndAbbrev(Fixture):
     def test_strict_style_flag_drives_the_exit_code(self):
         write(self.root, "sample.md", doc(
             "这一段落本身足够长却没有段首缩进实体，渲染出来是顶格的一整段，读起来既没有"
-            "边界感也不好定位。\n\nSee also [[index]]."))
+            "边界感也不好定位。\n\nSee also [[index#fixture index]]."))
         code, out = self.run_main("--strict-style")
         self.assertEqual(1, code, out)
         self.assertIn("doc-indent", out)
