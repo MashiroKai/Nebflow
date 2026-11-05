@@ -206,8 +206,20 @@ object FreezeAlertSweep:
   // ── ③ 聚合告警（只在需要人时）────────────────────────────────────────────
 
   /**
-   * 告警一拍：确定性缺陷立即进候选、provider 故障族只在自动续跑次数用尽后进候选；
-   * 按父会话 + 分类 + id 集去重 ⇒ 同一波**一条**（不是 N 条）。
+   * 告警一拍（provider 冻结告警合并窗批 2026-11-05 19:08）：
+   *
+   *   ① **读全量在冻集**（[[FreezeNotice.fullDigest]]，窗口 0）——旧实现读面板波窗
+   *      （10 分钟），导致「冻过 10 分钟」的条目从候选里消失，而升级判据是「≥30 分钟」
+   *      ⇒ 时限永远触发不了；
+   *   ② 每拍先把「本轮类型台账」累积一次（[[FreezeNotice.trackWave]]：谁在冻、谁已自动
+   *      恢复、首次—末次时间跨度），汇报才能一眼读出「影响几个会话 / 已恢复几个 / 还
+   *      需要人工吗」；
+   *   ③ 计划（[[FreezeNotice.planAlerts]]）按**错误类型**归并：provider 族一类型一条，
+   *      确定性缺陷按父会话一批一条且即时；
+   *   ④ 认领（[[FreezeNotice.claimAlert]]）的冷却 = 该条告警自己的窗口：provider 族 =
+   *      30 分钟合并窗（tumbling 滚动，同类每窗最多一条；窗内新增同类只并入，不另发），
+   *      缺陷族 = 同批去重（新缺陷 id 变了立刻发）。
+   *
    * 静默总闸关（回滚）时本腿旁路。
    */
   def alertTick(resources: AgentRuntimePort): IO[Unit] =
@@ -215,30 +227,40 @@ object FreezeAlertSweep:
     else
       records().flatMap { recs =>
         val now = System.currentTimeMillis()
-        val alerts = FreezeNotice.planAlerts(FreezeNotice.digestOf(recs, now))
-        alerts.traverse_ { alert =>
-          if !FreezeNotice.claimAlert(alert.key, now) then IO.unit
-          else
-            MailboxProducer
-              .deliver(
-                resources,
-                alert.parentSessionId,
-                FreezeNotice.alertEvent(alert),
-                identity = s"freeze-alert-${alert.ids.mkString("-")}",
-                kind = "delegate-freeze-alert",
-                coalesce = false,
-                producer = "freeze-alert-sweep"
-              )
-              .flatMap { r =>
-                logger.info(
-                  s"[freeze-alert-sweep] ONE aggregated alert for ${alert.items.size} frozen delegate(s) " +
-                    s"→ parent ${alert.parentSessionId} (${alert.ids.mkString(", ")}) result=$r"
-                )
-              }
-              .handleErrorWith(e =>
-                logger.warn(s"[freeze-alert-sweep] alert delivery failed for ${alert.parentSessionId}: ${e.getMessage}")
-              )
-        }
+        val digest = FreezeNotice.fullDigest(recs, now)
+        IO(FreezeNotice.trackWave(digest.items, now)) *>
+          // 必须 `IO(planAlerts(...))`：`planAlerts` 是纯函数，直接写在 `*>` 右侧会在**构造**
+          // IO 时就求值（那一刻 trackWave 还没跑），汇报会读到上一拍的窗口读数。
+          IO(FreezeNotice.planAlerts(digest)).flatMap(_.traverse_ { alert =>
+            if !FreezeNotice.claimAlert(alert.key, now, alert.rearmMs) then IO.unit
+            else
+              // provider 族：发出即滚动窗口（tumbling 重锚在「此刻」，下一窗重新计数）。
+              (if alert.deterministic then IO.unit
+               else IO(FreezeNotice.rollWindow(alert.family, now, alert.items))) *>
+                MailboxProducer
+                  .deliver(
+                    resources,
+                    alert.parentSessionId,
+                    FreezeNotice.alertEvent(alert),
+                    identity = alert.identity,
+                    kind = "delegate-freeze-alert",
+                    coalesce = false,
+                    producer = "freeze-alert-sweep"
+                  )
+                  .flatMap { r =>
+                    logger.info(
+                      s"[freeze-alert-sweep] ONE `$alert.family` digest for ${alert.items.size} frozen delegate(s) " +
+                        s"(affected ${alert.window.affected}, still frozen ${alert.window.stillFrozen}, " +
+                        s"auto-recovered ${alert.window.recoveredCount}, span ${alert.window.spanMs / 1000}s) " +
+                        s"→ parent ${alert.parentSessionId} (${alert.ids.mkString(", ")}) result=$r"
+                    )
+                  }
+                  .handleErrorWith(e =>
+                    logger.warn(
+                      s"[freeze-alert-sweep] alert delivery failed for ${alert.parentSessionId}: ${e.getMessage}"
+                    )
+                  )
+          })
       }
 
   /** 一拍三腿（挂 `FreezeScheduler` 的既有 30s 拍）。 */

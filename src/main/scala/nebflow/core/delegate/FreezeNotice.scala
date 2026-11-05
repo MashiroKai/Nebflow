@@ -88,6 +88,44 @@ object FreezeNotice:
   /** 呈现面判定（面板/审计统一读这里，杜绝两套表）。 */
   def displayOf(line: String): FreezeDisplay = FreezeDisplay.ofWire(Option(line).getOrElse(""))
 
+  // ── ①' 合并窗口的归并键 = 错误类型族（provider 冻结告警合并窗批 2026-11-05 19:08）──
+
+  /** 确定性缺陷族的线值（= `ProviderFault.Family.DeterministicDefect`；单一真源）。 */
+  val DeterministicFamily: String =
+    ProviderFault.familyWire(ProviderFault.Family.DeterministicDefect)
+
+  /** 未命中判据表的 provider 冻结的兜底类型（宁可给出「未知形状」桶，也不并进已知族）。 */
+  val UnclassifiedProviderFamily: String = "provider-unclassified"
+
+  /**
+   * 一条冻结的**错误类型**（合并窗口的归并键）。
+   *
+   * 判据**不另写一份分类**：`ProviderFault.Table` 是唯一真源（`familyWire` 线值），
+   * 本方法只做投影：
+   *   - `Tier.Escalate`（真失败）⇒ [[DeterministicFamily]]；
+   *   - 正文命中判据表 ⇒ 该族线值（`quota-balance` / `auth-subscription` /
+   *     `upstream-5xx` / `connect-timeout` / `format-rejected` / `rate-limited`）；
+   *   - 正文全未命中 ⇒ 原因码兜底：`cancelled-by-quota` 归 `quota-balance`（原因码本身
+   *     就是额度族），其余 `llm-failure` 归 [[UnclassifiedProviderFamily]]。
+   *
+   * 安全方向：正文若同时像缺陷（判据表首行优先命中确定性缺陷），即使呈现面判为静默，
+   * 本方法也返回 [[DeterministicFamily]] ⇒ `planAlerts` 把它**放进缺陷腿立即告警**
+   * （宁可多报一条，不许把 bug 静音）。
+   */
+  def familyOfItem(i: Item): String =
+    if i.tier == Tier.Escalate then DeterministicFamily
+    else
+      ProviderFault.familyOf(i.detail) match
+        case Some(f) => ProviderFault.familyWire(f)
+        case None =>
+          if i.reason == DelegateFreeze.wireValue(DelegateFreeze.Reason.CancelledByQuota) then
+            ProviderFault.familyWire(ProviderFault.Family.QuotaBalance)
+          else UnclassifiedProviderFamily
+
+  /** 是否并进合并窗口的 provider 族（确定性缺陷族不进窗口——它必须即时单独通知）。 */
+  def inMergeWindow(i: Item): Boolean =
+    i.tier == Tier.Silent && familyOfItem(i) != DeterministicFamily
+
   /** 该冻结是否属 provider 故障族（基础设施故障，不是任务失败）。 */
   def infraFamily(line: String): Boolean =
     val w = Option(line).getOrElse("")
@@ -183,6 +221,18 @@ object FreezeNotice:
       itemsOf(records, now, Defaults.DelegateFreezeDigestWindowMs)
     )
 
+  /**
+   * **全量**冻结统计（窗口 = 0，含全部在冻项）：告警腿必须读这份。
+   *
+   * 合并窗批（2026-11-05 19:08）修的旧缺陷：告警腿此前读的是
+   * [[digestOf]]（面板波窗 [[Defaults.DelegateFreezeDigestWindowMs]] = 10 分钟），于是
+   * 「冻结超过 10 分钟」的条目直接从 digest 掉出去 —— 而升级判据恰好是「本轮冻结
+   * ≥30 分钟」⇒ 两个窗口错配，30 分钟时限**永远触发不了**，超时冻结反而不告警。
+   * 面板波窗（10 分钟，只影响「本波 N 条」读数）与告警口径（全量在冻集）从此分开。
+   */
+  def fullDigest(records: List[DelegateRegistry.Record], now: Long): Digest =
+    Digest(now, 0L, itemsOf(records, now, 0L))
+
   /** 面板统计行载荷（WS `delegateFreezeDigest` 帧；快照同形态）。 */
   def digestJson(d: Digest): Json =
     Json.obj(
@@ -199,6 +249,7 @@ object FreezeNotice:
           "sessionId" -> i.delegateId.asJson,
           "parentSessionId" -> i.parentSessionId.asJson,
           "reason" -> i.reason.asJson,
+          "family" -> familyOfItem(i).asJson,
           "tier" -> tierWire(i.tier).asJson,
           "tierLabel" -> tierLabelZh(i.tier).asJson,
           "infra" -> i.infra.asJson,
@@ -300,41 +351,285 @@ object FreezeNotice:
   /** 台账复位（测试/复盘）。 */
   def resetAutoResumes(): Unit = autoResumes.clear()
 
-  // ── ④ 聚合告警（需人处理面）──────────────────────────────────────────────
-
-  /** 一条聚合告警：一个父会话的一波冻结项。 */
-  final case class Alert(parentSessionId: String, items: List[Item]):
-    def ids: List[String] = items.map(_.delegateId).sorted
-
-    /** 去重键（父会话 + 冻结 id 集 + 分类）：集合变了才是新一波。 */
-    def key: String =
-      s"alert:${parentSessionId}:${items.map(i => tierWire(i.tier)).distinct.sorted.mkString("+")}:${ids.mkString(",")}"
+  // ── ④ 合并窗口（同类型只汇报一条）────────────────────────────────────────
 
   /**
-   * 告警计划（纯函数）：一波里
-   *   - `tool-failure` / `engine-fault`（Tier.Escalate，确定性缺陷）⇒ **立即**进告警；
-   *   - provider 故障族（Tier.Silent）⇒ **只有**本轮冻结超过升级时限
-   *     （[[escalateDue]]，缺省 30 分钟）才进告警——作者令「长时间仍不可恢复，才升级
-   *     为一条摘要式通知」。此前的判据是「自动续跑次数用尽」（3 次 ≈ 8 分钟），
-   *     等于把一次正常的上游抖动直接变成作者的事，本批按作者令改为时间判据。
-   * 按父会话分组 ⇒ 同一波**一条**。
+   * 一个**错误类型**在合并窗口内的累计台账（面板/汇报读数，零 IO）。
+   *
+   * `seen` = 窗内见过、**当前仍在冻结**的 delegate（值 = 其冻结时刻）；
+   * `recovered` = 窗内见过、**已自动恢复**的 delegate（值 = 观测到恢复的时刻）。
+   * 两者合计 = 本窗受影响的会话数（汇报里「影响的会话数」）。
+   */
+  final case class FamilyWindow(
+    family: String,
+    openedAt: Long,
+    firstFrozenAt: Long,
+    lastFrozenAt: Long,
+    seen: Map[String, Long],
+    recovered: Map[String, Long],
+    seq: Int = 0
+  ):
+    /** 本窗影响的会话数（在冻 + 已恢复，去重）。 */
+    def affected: Int = (seen.keySet ++ recovered.keySet).size
+
+    /** 仍冻结（= 仍需人工）的会话数。 */
+    def stillFrozen: Int = seen.size
+
+    /** 窗内已自动恢复的会话数。 */
+    def recoveredCount: Int = recovered.size
+
+    /** 时间跨度（首次冻结 → 末次冻结）。 */
+    def spanMs: Long = math.max(0L, lastFrozenAt - firstFrozenAt)
+
+    /** 是否仍需人工（还有在冻的）。 */
+    def needsHuman: Boolean = seen.nonEmpty
+
+  end FamilyWindow
+
+  private val windows = new ConcurrentHashMap[String, FamilyWindow]()
+
+  /** 某类型的当前窗口台账（无 = None）。 */
+  def windowOf(family: String): Option[FamilyWindow] = Option(windows.get(family))
+
+  /**
+   * 每拍累积窗口台账（纯内存，零通知）：按类型把当前在冻项记进 `seen`，把「上一拍还在、
+   * 这一拍已不在冻」的记进 `recovered`（= 引擎自动续跑成功 / 人或上游自愈）。
+   *
+   * 归并单位是**类型**而不是单个冻结点：同一类型在窗内出现多少次，都只累计成一行读数。
+   * 某类型当前一条在冻都没有 ⇒ 台账收摊（不涨内存，也不留幽灵读数）。
+   */
+  def trackWave(items: List[Item], now: Long): Unit =
+    val grouped = items.filter(inMergeWindow).groupBy(familyOfItem)
+    grouped.foreach { case (fam, its) =>
+      val active = its.map(_.delegateId).toSet
+      val firsts = its.map(_.frozenSince)
+      windows.compute(
+        fam,
+        (_, prev) =>
+          val p = Option(prev).getOrElse(
+            FamilyWindow(fam, now, firsts.min, firsts.max, Map.empty, Map.empty)
+          )
+          val gone = p.seen.collect { case (id, _) if !active.contains(id) => id -> now }
+          val still = p.seen.filter { case (id, _) => active.contains(id) }
+          p.copy(
+            firstFrozenAt = math.min(p.firstFrozenAt, firsts.min),
+            lastFrozenAt = math.max(p.lastFrozenAt, firsts.max),
+            // 又冻回来的（自动续跑后再次冻结）不再算「已恢复」。
+            recovered = (p.recovered ++ gone) -- active,
+            seen = still ++ its.map(i => i.delegateId -> i.frozenSince)
+          )
+      )
+    }
+    val live = grouped.keySet
+    windows.keySet().removeIf(f => !live.contains(f))
+
+  end trackWave
+
+  /**
+   * 窗口滚动（**tumbling，非滑动**）：一条类型汇报发出后，把该类型的窗口台账重开在
+   * 「此刻」，`seen` 只带当前仍在冻的项（它们跨窗延续，汇报里因此能读出「这一轮已经
+   * 冻了多久」），`recovered` 清零（下一窗重新计恢复数）。
+   *
+   * 为什么是 tumbling 而不是滑动窗：滑动窗（事件进窗就重置起点）在**持续不断**的同类型
+   * 冻结下永远凑不满窗 ⇒ 该类型的汇报永远推迟（读者最需要它的时候它不说话）；事件窗
+   * （每 N 条一报）把节奏绑在流量上 ⇒ 抖动期刷屏。tumbling 给出**确定性下限**：同一类型
+   * 两次汇报间隔恒 ≥ 合并窗（缺省 30 分钟），且到点必报（只要还在冻）。
+   */
+  def rollWindow(family: String, now: Long, items: List[Item]): Unit =
+    val its = items.filter(i => inMergeWindow(i) && familyOfItem(i) == family)
+    if its.isEmpty then windows.remove(family)
+    else
+      val firsts = its.map(_.frozenSince)
+      windows.put(
+        family,
+        FamilyWindow(
+          family = family,
+          openedAt = now,
+          firstFrozenAt = firsts.min,
+          lastFrozenAt = firsts.max,
+          seen = its.map(i => i.delegateId -> i.frozenSince).toMap,
+          recovered = Map.empty,
+          seq = Option(windows.get(family)).map(_.seq + 1).getOrElse(1)
+        )
+      )
+    end if
+  end rollWindow
+
+  // ── ⑤ 聚合告警（需人处理面；同类型一条）────────────────────────────────────
+
+  /**
+   * 一条聚合告警 = **一个错误类型**（[[Alert.family]]）在当前窗口内的一批冻结项。
+   *
+   * 归并单位是类型而不是父会话（provider 冻结告警合并窗批 2026-11-05 19:08 作者令
+   * 「把同类型的错误合并后一起汇报，不要分开汇报」）：同类型错误只有一个处置动作
+   * （充值 / 换链 / 等上游自愈），按父会话拆开就是把一个事件拆成 N 条消息。
+   */
+  final case class Alert(
+    parentSessionId: String,
+    family: String,
+    items: List[Item],
+    window: FamilyWindow
+  ):
+    def ids: List[String] = items.map(_.delegateId).sorted
+
+    /** 确定性缺陷（真失败）：不进合并窗，即时通知。 */
+    def deterministic: Boolean = family == DeterministicFamily
+
+    /**
+     * 去重键／窗口键。
+     *   - provider 族：**只含类型**——窗内新来的同类冻结只并入同一条汇报（键不变 ⇒
+     *     不加发）；这正是旧键（父会话 + id 集）的病根：每多冻一条，键就变，于是一条
+     *     一条地发。
+     *   - 确定性缺陷：含父会话 + id 集——新出现的缺陷立即成为新键 ⇒ **永不被吞报**
+     *     （同一批重复只由冷却窗压住，不是由窗口归并压住）。
+     */
+    def key: String =
+      if deterministic then s"freeze-defect:$parentSessionId:${ids.mkString(",")}"
+      else s"freeze-family:$family"
+
+    /** 该条告警的重发冷却 = 合并窗（provider 族）／同批去重冷却（缺陷族）。 */
+    def rearmMs: Long =
+      if deterministic then Defaults.DelegateFreezeAlertReArmMs
+      else Defaults.DelegateFreezeDigestMergeWindowMs
+
+    /**
+     * 邮箱条目身份（`SessionMailbox.mailOnce` 按它在**在途未读**时去重）：
+     *   - provider 族 = 类型 + **本窗起点**——同一窗内的重复认领只落一条；窗滚过后起点
+     *     变了 ⇒ 新的一窗可以再落一条（否则第一窗那条一直在途，永远挡住后续窗）。
+     *   - 缺陷族 = 类型 + id 集——同批不重发，新缺陷（id 变了）立刻落新条目。
+     */
+    def identity: String =
+      if deterministic then s"freeze-alert-$family-${ids.mkString("-")}"
+      else s"freeze-digest-$family-${window.seq}-${window.openedAt}"
+
+  end Alert
+
+  /**
+   * 告警计划（纯函数）：
+   *   - **缺陷腿**（`tool-failure` / `engine-fault`，或正文判为确定性缺陷的静默条）⇒
+   *     **立即**进告警，按父会话聚合，同批一条；不受 30 分钟时限与合并窗约束。
+   *   - **provider 腿**（可恢复族）⇒ 只有该类型里至少一条**本轮冻结超过升级时限**
+   *     （[[escalateDue]]，缺省 30 分钟）才成计划；一类型 = 一条，窗内同类**全部并入**
+   *     （含尚未到时限的同类型新冻结——它们属于同一个事件，不该另发一条）。
    */
   def planAlerts(d: Digest): List[Alert] =
-    d.items
-      .filter { i =>
-        if i.tier == Tier.Escalate then true
-        else escalateDue(i.delegateId, i.frozenSince, d.now)
-      }
-      .groupBy(_.parentSessionId)
-      .toList
-      .sortBy(_._1)
-      .map { case (parent, items) => Alert(parent, items) }
+    val (defectish, providerish) =
+      d.items.partition(i => i.tier == Tier.Escalate || familyOfItem(i) == DeterministicFamily)
+    val defectAlerts =
+      defectish
+        .groupBy(_.parentSessionId)
+        .toList
+        .sortBy(_._1)
+        .map { case (parent, items) =>
+          Alert(
+            parent,
+            DeterministicFamily,
+            items,
+            windowOf(DeterministicFamily).getOrElse(emptyWindow(DeterministicFamily, d.now))
+          )
+        }
+    val dueFamilies =
+      providerish
+        .filter(i => escalateDue(i.delegateId, i.frozenSince, d.now))
+        .map(familyOfItem)
+        .distinct
+        .sorted
+    val providerAlerts =
+      providerish
+        .filter(i => dueFamilies.contains(familyOfItem(i)))
+        .groupBy(familyOfItem)
+        .toList
+        .sortBy(_._1)
+        .map { case (fam, items) =>
+          val anchor = items.minBy(_.frozenSince) // 最早冻住的那个父会话收这条汇总
+          Alert(anchor.parentSessionId, fam, items, windowOf(fam).getOrElse(deriveWindow(fam, items, d.now)))
+        }
+    defectAlerts ++ providerAlerts
 
-  /** 聚合告警正文（**一条**讲清这一波：几条 / 什么原因 / 谁 / 怎么动）。 */
+  end planAlerts
+
+  /** 台账缺位时的窗口读数（进程刚起/刚清理，按当前项推一份，保证汇报字段不缺）。 */
+  private def deriveWindow(family: String, items: List[Item], now: Long): FamilyWindow =
+    if items.isEmpty then emptyWindow(family, now)
+    else
+      val firsts = items.map(_.frozenSince)
+      FamilyWindow(family, now, firsts.min, firsts.max, items.map(i => i.delegateId -> i.frozenSince).toMap, Map.empty)
+
+  private def emptyWindow(family: String, now: Long): FamilyWindow =
+    FamilyWindow(family, now, now, now, Map.empty, Map.empty)
+
+  /** 告警正文（按腿分流：确定性缺陷 = 即时单条；provider 族 = 该类型一条摘要）。 */
   def alertText(alert: Alert): String =
+    if alert.deterministic then defectText(alert) else familyDigestText(alert)
+
+  private def clockOf(ms: Long): String =
+    java.time.Instant
+      .ofEpochMilli(math.max(0L, ms))
+      .atZone(java.time.ZoneId.systemDefault())
+      .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss"))
+
+  private def spanOf(ms: Long): String =
+    val s = math.max(0L, ms) / 1000L
+    if s < 60L then s"$s 秒" else s"${s / 60L} 分 ${s % 60L} 秒"
+
+  /** 一条**类型摘要**（provider 合并窗的产出物）：类型/会话数/时间跨度/已恢复/仍待人工。 */
+  private def familyDigestText(alert: Alert): String =
+    val w = alert.window
+    val horizonMin = Defaults.DelegateFreezeEscalateAfterMs / 60000L
+    val windowMin = Defaults.DelegateFreezeDigestMergeWindowMs / 60000L
+    val byId = alert.items.map(i => i.delegateId -> i).toMap
+    val frozenIds = w.seen.keys.toList.sorted
+    val recoveredIds = w.recovered.keys.toList.sorted
+    val sample = alert.items.map(_.detail).find(_.nonEmpty).getOrElse("")
+    val wake = alert.items.take(6).map(i => s"`delegate:${i.delegateId}`").mkString(" / ")
+    val more = if alert.items.size > 6 then s"（另有 ${alert.items.size - 6} 条在面板行上）" else ""
+    val recoverLine =
+      if recoveredIds.isEmpty then "- 已自动恢复：0（本窗内无恢复）"
+      else
+        val each = recoveredIds
+          .take(6)
+          .map { id =>
+            w.recovered.get(id).map(t => s"$id@${clockOf(t)}").getOrElse(id)
+          }
+          .mkString(", ")
+        val tail = if recoveredIds.size > 6 then s" 等 ${recoveredIds.size} 条" else ""
+        s"- 已自动恢复：${recoveredIds.size}（$each$tail）——引擎自愈已把它们唤醒续跑，不需要你动手"
+    val stillLine =
+      if frozenIds.isEmpty then "- 仍待人工：0（该类型已全部恢复）"
+      else
+        val each = frozenIds
+          .take(8)
+          .map { id =>
+            val ageMin = byId.get(id).map(i => math.max(0L, (w.lastFrozenAt - i.frozenSince) / 60000L)).getOrElse(0L)
+            s"$id（已冻 ${ageMin} 分钟）"
+          }
+          .mkString(", ")
+        val tail = if frozenIds.size > 8 then s" 等 ${frozenIds.size} 条" else ""
+        s"- 仍待人工：${frozenIds.size}（$each$tail）——供应商仍未服务：充值 / 换模型 / 取消"
+    s"""[freeze-digest] provider 故障类型 `${alert.family}` 合并汇报（本窗唯一一条）
+       |- 类型：`${alert.family}` —— 归并键 = 错误类型族（同类型的全部冻结合并进这一条，不逐条发）
+       |- 影响的会话数：${w.affected}（仍冻 ${w.stillFrozen} / 已恢复 ${w.recoveredCount}）
+       |- 时间跨度：${clockOf(w.firstFrozenAt)} → ${clockOf(w.lastFrozenAt)}（${spanOf(w.spanMs)}）
+       |$recoverLine
+       |$stillLine
+       |- 示例：${
+        if sample.nonEmpty then DelegateFreeze.compactDetail(sample, 200) else "（无附带正文）"
+      }
+       |
+       |Wake one: $wake$more — the 唤醒 button on the background-agents panel, or mail the address (it continues in the SAME session; finished work is not redone, and waking never spends the supervisor restart budget).
+       |Quiet by design: a provider-failure freeze mails you nothing at all while it is younger than the ${horizonMin}-minute horizon (the engine itself probes the provider and resumes the SAME session on exponential backoff with a capped gap). Past that horizon the freezes of **one error family** are merged into this single digest, and this family speaks at most once per ${windowMin}-minute merge window — a new freeze of the same family joins THIS message instead of adding another one.
+       |
+       |【provider 冻结 · 同类型合并汇报】类型 `${alert.family}`：受影响 ${w.affected} 个会话（仍冻 ${w.stillFrozen}、已自动恢复 ${w.recoveredCount}），时间跨度 ${clockOf(
+        w.firstFrozenAt
+      )} → ${clockOf(w.lastFrozenAt)}（${spanOf(
+        w.spanMs
+      )}）。超过 ${horizonMin} 分钟时限才汇报，且同类型每 ${windowMin} 分钟合并窗内只发这一条：窗内新增的同类冻结并入本条，不同类各发一条，确定性缺陷（代码 bug / 越权 / 数据损坏）不受本窗约束、即时单独通知。唤醒：面板「唤醒」按钮或给上列地址发 Mail（原会话上下文继续，已完成的不重做，不消耗重启预算）。""".stripMargin
+
+  end familyDigestText
+
+  /** 一条**确定性缺陷**告警（真失败：即时、不受时限与合并窗约束）。 */
+  private def defectText(alert: Alert): String =
     val n = alert.items.size
-    val defects = alert.items.filter(_.tier == Tier.Escalate)
-    val exhausted = alert.items.filter(_.autoResumesExhausted)
     val horizonMin = Defaults.DelegateFreezeEscalateAfterMs / 60000L
     val causeLine = alert.items
       .groupBy(i => (i.reason, i.tier))
@@ -343,29 +638,21 @@ object FreezeNotice:
       .map { case ((reason, tier), items) =>
         val ids = items.map(_.delegateId).mkString(", ")
         val sample = items.headOption.map(_.detail).getOrElse("")
-        val tries = items.headOption.map(i => i.autoResumes).getOrElse(0)
-        s"- ${tierWire(tier)} `${reason}` ×${items.size} ($ids, 自动续跑 $tries 次)" +
+        s"- ${tierWire(tier)} `${reason}` ×${items.size} ($ids)" +
           s"${if sample.nonEmpty then s": ${DelegateFreeze.compactDetail(sample, 160)}" else ""}"
       }
       .mkString("\n")
-    val head =
-      if defects.nonEmpty && exhausted.nonEmpty then
-        s"$n frozen delegate(s) need you: ${defects.size} on a deterministic defect, ${exhausted.size} whose automatic resume budget is spent"
-      else if defects.nonEmpty then s"$defects.size frozen delegate(s) stopped on a deterministic defect"
-      else
-        s"${exhausted.size} frozen delegate(s) are still frozen after the ${horizonMin}-minute auto-resume horizon " +
-          "— the provider is still not serving, so this needs you (top-up / switch model / cancel)"
     val wake = alert.items.take(6).map(i => s"`delegate:${i.delegateId}`").mkString(" / ")
     val more = if n > 6 then s" (+${n - 6} more on the panel)" else ""
-    s"""[freeze-alert] $head
+    s"""[freeze-alert] $n frozen delegate(s) stopped on a deterministic defect
        |$causeLine
        |
        |Wake one: $wake$more — the 唤醒 button on the background-agents panel, or mail the address (it continues in the SAME session; finished work is not redone, and waking never spends the supervisor restart budget).
-       |Quiet by design: provider-failure freezes mail you nothing while the engine is retrying them by itself (exponential backoff, capped gap, resuming the SAME session). This single aggregated alert is the only message — it appears once a freeze has stayed unrecoverable past the ${Defaults.DelegateFreezeEscalateAfterMs / 60000L}-minute horizon, or immediately for a deterministic defect. Reason codes: `${DelegateFreeze.WirePrefix}:<llm-failure|cancelled-by-quota|tool-failure|engine-fault>`.
+       |This is one aggregated alert for this batch of defects. A deterministic defect (code bug / permission breach / data corruption) is a REAL failure: it is never merged into the provider merge window and never delayed by the ${horizonMin}-minute provider horizon — every new defect notifies immediately.
        |
-       |【冻结聚合告警】$n 条 delegate 冻结：${defects.size} 条是确定性缺陷，${exhausted.size} 条在自动续跑时限（$horizonMin 分钟）后仍未恢复（供应商仍未服务，需要你：充值/换模型/取消）。原因：$causeLine。唤醒：面板「唤醒」按钮或给上列地址发一条 Mail（在原会话上下文上继续，已完成的不重做，且不消耗重启预算）。provider 故障冻结在时限内不逐条通知——只此一条聚合告警 + 面板徽标。""".stripMargin
+       |【确定性缺陷告警】$n 条 delegate 停在确定性缺陷上（真失败：代码 bug / 越权 / 数据损坏）。本批合并成这一条；新出现的缺陷即时另发，不受 provider 合并窗（${Defaults.DelegateFreezeDigestMergeWindowMs / 60000L} 分钟）与 ${horizonMin} 分钟时限约束。原因：$causeLine。唤醒：面板「唤醒」按钮或给上列地址发 Mail（原会话上下文继续，已完成的不重做，不消耗重启预算）。""".stripMargin
 
-  end alertText
+  end defectText
 
   /** 聚合告警事件（入父会话持久邮箱；`eventType=freeze-alert`，不是终态）。 */
   def alertEvent(alert: Alert): AgentCommand.ExternalEvent =
@@ -375,37 +662,50 @@ object FreezeNotice:
       payload = alertText(alert),
       metadata = io.circe.JsonObject(
         "freezeAlert" -> true.asJson,
+        "family" -> alert.family.asJson,
+        "merged" -> (!alert.deterministic).asJson,
         "count" -> alert.items.size.asJson,
+        "affectedSessions" -> alert.window.affected.asJson,
+        "stillFrozen" -> alert.window.stillFrozen.asJson,
+        "autoRecovered" -> alert.window.recoveredCount.asJson,
+        "spanMs" -> alert.window.spanMs.asJson,
+        "firstFrozenAt" -> alert.window.firstFrozenAt.asJson,
+        "lastFrozenAt" -> alert.window.lastFrozenAt.asJson,
+        "needsHuman" -> alert.window.needsHuman.asJson,
         "deterministicDefects" -> alert.items.count(_.tier == Tier.Escalate).asJson,
         "autoResumeExhausted" -> alert.items.count(_.autoResumesExhausted).asJson,
         "delegateIds" -> alert.ids.asJson,
         "reasons" -> alert.items.map(_.reason).distinct.asJson,
         "wakeAddresses" -> alert.ids.map(id => s"delegate:$id").asJson
       ),
-      correlationId = Some(s"freeze-alert-${alert.ids.mkString("-")}")
+      correlationId = Some(s"freeze-alert-${alert.family}-${alert.ids.mkString("-")}")
     )
 
-  // ── ⑤ 聚合告警去重（进程内台账；重启后重发一次 = 无害）──────────────────
+  // ── ⑥ 告警去重（进程内台账；重启后重发一次 = 无害）────────────────────────
 
   private val alertLedger = new ConcurrentHashMap[String, java.lang.Long]()
 
   /**
-   * 认领一次告警发送权（无 IO 副作用）：同键在冷却窗
-   * [[Defaults.DelegateFreezeAlertReArmMs]] 内只放行一次——30s 扫描拍不会把同一波
+   * 认领一次告警发送权（无 IO 副作用）：同键在 `windowMs` 内只放行一次。
+   *
+   * `windowMs` 由 [[Alert.rearmMs]] 给：provider 族 = 合并窗
+   * （[[Defaults.DelegateFreezeDigestMergeWindowMs]]，缺省 30 分钟 ⇒ 同类型每 30 分钟
+   * 最多一条，tumbling 滚动）；缺陷族 = [[Defaults.DelegateFreezeAlertReArmMs]]
+   * （同批不重复，但新缺陷的键含 id 集 ⇒ 立刻放行）。30s 扫描拍因此不会把同一茬
    * 重复推成 N 条。
    */
-  def claimAlert(key: String, now: Long): Boolean =
-    val reArm = Defaults.DelegateFreezeAlertReArmMs
+  def claimAlert(key: String, now: Long, windowMs: Long = Defaults.DelegateFreezeAlertReArmMs): Boolean =
     val prev = alertLedger.get(key)
-    if prev != null && now - prev < reArm then false
+    if prev != null && now - prev < windowMs then false
     else
       alertLedger.put(key, now)
       true
 
-  /** 测试/复盘复位（进程内三份台账）。 */
+  /** 测试/复盘复位（进程内四份台账）。 */
   def resetLedger(): Unit =
     alertLedger.clear()
     autoResumes.clear()
     episodes.clear()
+    windows.clear()
 
 end FreezeNotice
