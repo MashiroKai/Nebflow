@@ -230,6 +230,26 @@ body.mobile-layer .fm-req-time { font-size: var(--ds-fs-hint); }
   padding: var(--ds-space-8) var(--ds-space-3);
 }
 
+/* ── 会话列表取数失败态（empty-state-must-not-lie 批 2026-11-05）─────────
+   形态与 `.fm-login-empty` 同族（居中一列：事实一句 + 动作一枚），**不与
+   `.fm-empty`（空态）共用类名** —— 两者外观相近但语义相反，共用会让「失败
+   伪装成空」重新长出来（本批修的正是这个）。 */
+.fm-list-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--ds-space-3);
+  padding: var(--ds-space-6) var(--ds-space-3);
+}
+
+.fm-list-error-text {
+  font-size: var(--ds-fs-hint);
+  /* 取色走 token，**不**带 hex 兜底：设计 token 门禁只许基线下降（禁新字面量）。 */
+  color: var(--color-text-muted);
+  text-align: center;
+  line-height: 1.6;
+}
+
 .fm-login-text {
   font-size: var(--ds-fs-hint);
   color: var(--color-text-muted, #888);
