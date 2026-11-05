@@ -424,14 +424,21 @@ sh/bash/zsh shebang 的入库脚本（`ops/bin/*`、`tools/*`、`scripts/nebflow
 `ops/com.nebflow.watchdog.plist`（此前 launchd 侧零正源——全部 `com.nebflow.*` 作业 plist 都只存在于
 `~/Library/LaunchAgents/`），装载为 `com.nebflow.watchdog`，`StartInterval=120` 取脚本自身设计节拍，
 环境变量按硬前提带全（缺省会去探 8080 并调用不存在的重启脚本路径）。**首装跑观察态**（阈值键
-`NEBFLOW_WD_FAIL_THRESHOLD=999999`），自动恢复未开启。开启前必须先修脚本的两处生产失配：
-① 失聪鉴别探 `$NF_HOME/logs/nebflow.log`，而实例现在写 `~/.stand/logs/stand.log` ⇒ 该文件 mtime
-冻结在 2026-10-18，`DEAF` 判据恒不命中，「活着但 HTTP 不可达」会被判 `DEAD` 直接进 Stage1；
-② Stage2 会 spawn `claude -p … --dangerously-skip-permissions` 并令其 `--force` 重启。
-另实测：每轮先跑的 `bin/nebflow-log-sentinel.sh` 全量 `find ~/.stand`（未 prune `tmp/history/
-search-index/general/sessions`）在首轮耗时 **>4 分钟**（`DEADLINE_SEC=45` 只约束判据①循环，不约束
-find 阶段），健康探针排在其后 ⇒ 每 30min 一次的长扫描会推迟当轮的宕机发现。详见 vault 报告
-`watchdog-launchd-restored__*.md`。
+`NEBFLOW_WD_FAIL_THRESHOLD=999999`），自动恢复未开启。
+
+**两处生产失配已修（2026-11-05 当日晚间「运维修复批」）**：① 失聪鉴别曾探 `$NF_HOME/logs/nebflow.log`
+（该文件 mtime 冻结在 2026-10-18），而实例实际写 `~/.stand/logs/stand.log` ⇒ `DEAF` 恒不命中、
+「活着但 HTTP 不可达」会被判 `DEAD` 进 Stage1 ⇒ v2 的失聪根治在生产失效。现改为
+`NEBFLOW_WD_LOG_CANDIDATES` 多候选（取最近 mtime、全不可读则判「判据不可用」且**禁判 DEAD**），
+缺省值已钉进 plist；② 每轮先跑的全量 `find ~/.stand`（实测 25–47s、冷缓存 367s）：哨兵改为
+**健康探针之后、只跑健康轮**（宕轮发现延迟与扫描成本彻底解耦）+ 哨兵加尺寸闸（`SENTINEL_SCAN_MIN_MB=1`）
+与剪 `history/`（19,646 目录/151,091 文件的本地历史快照树）⇒ 扫描腿 43.2s → 20.0s、find 腿 25–28s → 4–5s。
+两脚本已 verbatim 入库（`ops/bin/nebflow-watchdog.sh`、`ops/bin/nebflow-log-sentinel.sh`），
+**不再是门禁覆盖不到的孤儿**。三态夹具 `ops/test/watchdog-deaf-probe.test.sh`（27 断言，全沙箱化）。
+**Stage2 腿仍有 3 处生产失配**（PROMPT 让 agent 跑 `~/.nebflow/bin/nebflow-restart.sh --force`，
+该文件不存在；诊断路径同指旧根；且会 `--dangerously-skip-permissions` 自行 `--force` 重启）
+⇒ 开自动恢复前请先裁定：只解锁 Stage1（把 `NEBFLOW_WD_CLAUDE_BIN` 指向不存在路径让 Stage2 走不可用分支）
+或先修 Stage2。详见 vault 报告 `watchdog-probe-fixes__20261105_101428.md`。
 
 ## 版本纪律
 
