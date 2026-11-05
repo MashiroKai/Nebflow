@@ -2174,8 +2174,15 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
 }
 /* Markdown element styling — mirrors .bubble.ai */
 .canvas-md-viewer p { margin: var(--ds-space-1) 0; }
-/* 段落首行缩进（rich-render 批 2026-11-05，作者令 09:13）：同 .bubble.ai 口径 ——
-   只对 md 阅读面的**直接子** p 生效，列表/引用/表格/卡片内的段落不缩进。 */
+/* 文档正文首行缩进（撤回批 2026-11-05 16:43 作者令第二条「文档只缩进首行」）：
+   中文排版习惯 = 正文段落**首行**缩两字、续行齐左；**只有**首行缩进，没有挂起缩进
+   / 整块左移 / 层级缩进。实现口径：
+     · 只对阅读面的**直接子** p 生效（值走 --ds-text-indent = 2em）；列表项内 /
+       引用块内 / 表格单元格 / 代码块内的段落与块本身都不是直接子 p ⇒ 零缩进，
+       天然不错位（不加例外清单，避免漏一条就歪一片）。
+     · 源文件里以 `&emsp;&emsp;` 起行的段落（文档写作纪律，作者 11:09 令：求
+       Obsidian 与渲染器同形）由 viewers/markdown.js 的段首空白归一剥掉，保证
+       「两字」是恒量而不是 2em + 2em 的四字。 */
 .canvas-md-viewer > p { text-indent: var(--ds-text-indent); }
 .canvas-md-viewer p:first-child { margin-top: 0; }
 .canvas-md-viewer p:last-child { margin-bottom: 0; }
