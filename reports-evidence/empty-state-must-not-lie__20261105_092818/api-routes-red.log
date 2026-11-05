@@ -1,0 +1,8 @@
+# 哨兵反向验红：临时改掉 SocialRoutes 的 GET /api/conversations case（改后字节还原，sha256 相同）
+$ node scripts/check-api-routes.mjs
+✗ API route existence — RED
+1 条前端路径在后端没有承接（前端调了但后端没注册）：
+  · /api/conversations   ← src/main/resources/web/js/friendsApi.js
+1 条关键路由在后端不存在：
+  · GET /api/conversations
+RED_EXIT=1

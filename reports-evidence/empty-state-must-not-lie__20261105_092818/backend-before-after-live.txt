@@ -1,0 +1,14 @@
+# 件二 改前/改后 现实现场读数（隔离实例：NEBFLOW_HOME=/tmp/efi-home，端口 6178，不碰 6138）
+# 条件 = 已配置 NebLink（假 server 址）但未登录，实例日志同款 'listConversations failed: Not logged in'
+
+## 改前（FriendService 折叠版 + 路由 refreshConversations）
+HTTP 200
+[]
+
+## 改后（listConversations 直通版 + friendErr 单点判据；本读数 = 合流 main 后重编译的树）
+HTTP 401
+{"error":"Not logged in","code":"neblink_not_logged_in"}
+
+## 现场日志（本实例）
+2026-11-05 09:43:45.222 [io-compute-10] WARN  nebflow.neblink.friends - listConversations failed: Not logged in
+2026-11-05 09:44:05.526 [io-compute-11] WARN  nebflow.neblink.friends - listConversations failed: Not logged in

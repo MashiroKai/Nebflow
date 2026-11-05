@@ -398,6 +398,13 @@ export default {
   'contacts.groupInvites': '群邀请',
   'contacts.groupInviteFrom': '{name} 邀请你加入群聊',
   'messages.empty': '暂无会话',
+  // 会话列表**取数失败态**（empty-state-must-not-lie 批 2026-11-05）。🔴 与上面那条
+  // 空态文案是**两个不同事实**，禁互相顶替：`messages.empty` 只在「服务端明确答复
+  // 确实没有会话」（200 + `[]`）时出现；取数失败（非 2xx / 超时 / 解析失败）走本键
+  // ⇒ 错误态 + 重试键。文案纪律 = 自解释铁律 8：只写状态事实（加载失败），下一步
+  // 动作由重试键本身承载，不写「请检查网络连接」这类排查教学。
+  'messages.listLoadFailed': '会话列表加载失败',
+  'messages.retry': '重试',
   // 🔴 `systemNowFriends` = **好友接受流程**的语境（唯一合法消费点 =
   // messages.js `onFriendEvent` 的 `friend_accepted` 分支）⇒ 下条群语境键是
   // **拆键**产物（2026-09-16 作者令「入群提示还是：你们已成为好友，这不对」：

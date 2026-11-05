@@ -1,0 +1,4 @@
+# 哨兵恢复后（字节还原，sha256 相同）
+$ node scripts/check-api-routes.mjs
+✓ API route existence — GREEN（前端 145 条 /api 路径全部有后端承接；豁免 4 条全在执行中；关键路由 26 条全在；后端注册 271 条）
+GREEN_EXIT=0

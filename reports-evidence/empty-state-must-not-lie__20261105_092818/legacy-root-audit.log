@@ -1,0 +1,18 @@
+# 老账核实读数（只读扫描，未删除/移动任何用户文件）
+## 旧根 vs 新根 uploads 文件数
+/Users/kaiyu/.nebflow/uploads: MISSING(目录不存在)
+/Users/kaiyu/.stand/uploads: 576
+
+## 旧根字面引用残留（~/.stand/sessions 全量 grep，2026-11-05 09:15 读数）
+含 /.nebflow/uploads/ 的会话文件: 975
+含 /.nebflow/attach-uploads/ 的会话文件: 16
+
+## legacyRootResidual 生效的读面（全仓调用点）
+src/main/scala/nebflow/gateway/NfFileRoutes.scala:257:              nfFileVerdictTolerant(rawPath, policy, home)
+src/main/scala/nebflow/gateway/NfFileRoutes.scala:383:                  nfFileVerdictTolerant(p, policy, home).flatMap {
+src/main/scala/nebflow/gateway/NfOfficeRoutes.scala:384:            NfFilePolicy.nfFileVerdictTolerant(rawPath, policy, home).flatMap {
+
+## NfFilePolicy.scala:526 是双读唯一接点
+454:  def legacyRootResidual(
+509:   * 且字面在旧根前缀下 ⇒ [[legacyRootResidual]] 的同尾候选顶上再问；其余路径的
+526:          else legacyRootResidual(lexical, policy.dataRoot, home).getOrElse(lexical)
