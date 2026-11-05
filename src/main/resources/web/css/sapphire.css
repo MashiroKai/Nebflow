@@ -143,8 +143,6 @@
 /* ── Glass Surface ─────────────────────────────────────────────────────── */
 .glass {
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
 }
 
@@ -217,18 +215,12 @@
   }
 }
 
-.glass-control {
-  background-color: var(--glass-control-bg);
-  background-image: linear-gradient(to bottom, var(--glass-control-specular) 0%, transparent 46%);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(var(--glass-control-sat));
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(var(--glass-control-sat));
-  border: 1px solid var(--glass-control-border);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -2px 5px var(--glass-control-underedge),
-    0 1px 3px var(--glass-control-glow),
-    0 8px 24px var(--glass-control-shadow);
-}
+/* 历史类名 `.glass-control`（登录面/面板键的旧挂载点）——glass-unify 批后
+   它**不再拥有自己的配方**：材质由 glass.css 的 `.nf-glass, .glass, .glass-control`
+   同一条声明供给（同一份 token、同一条 backdrop-filter）。本块此前那套
+   「上半镜面渐变 + 顶缘 inset 高光 + 底缘暗边 + 双层浮影」是**第二套等效
+   毛玻璃**（也是先于本批被判死的厚度道具），整段退役，只留一个注记说明它为何
+   是空的 —— 留空块比删干净更危险，故直接删块、改为在 glass.css 登记。 */
 
 /* ── 悬浮控件玻璃 token（2026-10-28 canvas 三件 UI/UX 修 · 件三立族；2026-11-01
    统一按钮玻璃批按设计稿 §2.4 收编升格 = **全站悬浮控件单源**）─────────
@@ -364,8 +356,6 @@
   .agent-detail-prompt-toggle:hover,
   .project-unmount-btn:hover {
     background-color: var(--glass-control-bg-hover);
-    -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(var(--glass-control-sat));
-    backdrop-filter: blur(var(--glass-control-blur)) saturate(var(--glass-control-sat));
     border-color: var(--glass-control-border);
   }
 }

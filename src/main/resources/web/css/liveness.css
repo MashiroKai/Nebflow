@@ -21,8 +21,6 @@
   font-size: var(--ds-fs-hint);
   color: var(--color-text);
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border-bottom: 1px solid var(--glass-border);
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
   transform: translateY(-100%);

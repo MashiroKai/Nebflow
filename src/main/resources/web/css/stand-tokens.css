@@ -372,10 +372,10 @@ html[data-theme="dark"] {
   --nf-glass-border-color: #00000012;      /* 细边（图2 的那道边） */
   --nf-glass-border: 1px solid var(--nf-glass-border-color);
   --nf-glass-refraction: linear-gradient(90deg, transparent 10%, #ffffff73 50%, transparent 90%);
-  --nf-glass-shadow:
-    inset 0 1px 0 0 #ffffff40,
-    0 2px 8px #0000000a,
-    0 8px 24px #0000000f;
+  /* 单行书写是**枚举判据的要求**：check-design-tokens 的「令牌出生行不算消费」
+     只跳过以 `--x:` 起头的行，多行值里的续行会被当成裸色值计数（本批实测：写成
+     三行 → 一次 +3 色值，四处主题档合计 +12）。 */
+  --nf-glass-shadow: inset 0 1px 0 0 #ffffff40, 0 2px 8px #0000000a, 0 8px 24px #0000000f;
   /* 幕布（纯模糊遮罩层，无玻璃面：takeover 背景/灯箱底/语音遮罩）——
      它不是毛玻璃形态，是「把背景压下去」的工具，故单列 token 且不参与
      .nf-glass。值恒为深色低 α，不随亮暗翻面。 */
@@ -388,10 +388,7 @@ html[data-theme="dark"] {
   --nf-glass-bg-hover: #202532F5;
   --nf-glass-border-color: #ffffff17;
   --nf-glass-refraction: linear-gradient(90deg, transparent 10%, #5b7fbf59 50%, transparent 90%);
-  --nf-glass-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
-    0 2px 8px rgba(0, 0, 0, 0.20),
-    0 8px 24px rgba(0, 0, 0, 0.35);
+  --nf-glass-shadow: inset 0 1px 0 0 #ffffff0a, 0 2px 8px #00000033, 0 8px 24px #00000059;
 }
 @media (prefers-color-scheme: dark) {
   html:not([data-theme="light"]):not([data-theme="dark"]) {
@@ -399,10 +396,7 @@ html[data-theme="dark"] {
     --nf-glass-bg-hover: #202532F5;
     --nf-glass-border-color: #ffffff17;
     --nf-glass-refraction: linear-gradient(90deg, transparent 10%, #5b7fbf59 50%, transparent 90%);
-    --nf-glass-shadow:
-      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
-      0 2px 8px rgba(0, 0, 0, 0.20),
-      0 8px 24px rgba(0, 0, 0, 0.35);
+    --nf-glass-shadow: inset 0 1px 0 0 #ffffff0a, 0 2px 8px #00000033, 0 8px 24px #00000059;
   }
 }
 html[data-theme="light"] {
@@ -410,8 +404,8 @@ html[data-theme="light"] {
   --nf-glass-bg-hover: #ffffffFC;
   --nf-glass-border-color: #00000012;
   --nf-glass-refraction: linear-gradient(90deg, transparent 10%, #ffffff73 50%, transparent 90%);
-  --nf-glass-shadow:
-    inset 0 1px 0 0 #ffffff40,
-    0 2px 8px #0000000a,
-    0 8px 24px #0000000f;
+  /* 单行书写是**枚举判据的要求**：check-design-tokens 的「令牌出生行不算消费」
+     只跳过以 `--x:` 起头的行，多行值里的续行会被当成裸色值计数（本批实测：写成
+     三行 → 一次 +3 色值，四处主题档合计 +12）。 */
+  --nf-glass-shadow: inset 0 1px 0 0 #ffffff40, 0 2px 8px #0000000a, 0 8px 24px #0000000f;
 }

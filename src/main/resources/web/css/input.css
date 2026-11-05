@@ -754,8 +754,6 @@
 @media (hover: hover) {
   .icon-btn:hover {
     background: var(--glass-control-bg-hover);
-    -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-    backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
     border-color: var(--glass-control-border);
     color: var(--color-frame-text);
   }
@@ -1044,8 +1042,6 @@
   left: 12px;
   right: 12px;
   background: rgba(0,0,0,0.12);
-  backdrop-filter: blur(20px) saturate(1.15);
-  -webkit-backdrop-filter: blur(20px) saturate(1.15);
   border: 1px solid rgba(255,255,255,0.12);
   border-radius: var(--ds-radius-card-md);
   padding: var(--ds-space-block-y) 14px;

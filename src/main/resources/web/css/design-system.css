@@ -1425,8 +1425,6 @@
   color: var(--ds-text);   /* 只为 mask 取 alpha（见坑③），不参与可见配色 */
   pointer-events: none;
   background: var(--ds-fade-veil);
-  -webkit-backdrop-filter: blur(var(--ds-fade-blur)) saturate(var(--ds-fade-sat));
-  backdrop-filter: blur(var(--ds-fade-blur)) saturate(var(--ds-fade-sat));
   -webkit-mask-image: linear-gradient(to bottom, currentColor 0%, color-mix(in srgb, currentColor 55%, transparent) 50%, transparent 100%);
   mask-image: linear-gradient(to bottom, currentColor 0%, color-mix(in srgb, currentColor 55%, transparent) 50%, transparent 100%);
 }

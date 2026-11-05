@@ -580,9 +580,7 @@ function injectLoginModalStyles() {
 .nebflow-login-modal {
   position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
   width: 320px; z-index: 1000; overflow: hidden;
-  background: var(--glass-bg, rgba(24, 28, 38, 0.68));
-  -webkit-backdrop-filter: blur(var(--glass-blur, 24px)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur, 24px)) saturate(1.15);
+  background: var(--nf-glass-bg);
   border: 1px solid var(--glass-border, rgba(255,255,255,0.1));
   border-radius: var(--ds-radius-card-lg);
   box-shadow:
