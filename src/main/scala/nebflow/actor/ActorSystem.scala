@@ -36,6 +36,13 @@ trait ActorSystem:
    * 恒 0 = 从未触发（正常态）；> 0 = 曾经极端积压，详见 ERROR 日志。
    */
   def deadLetterCount: IO[Long]
+
+  /**
+   * 刀四·监督关系落盘化（裁定3「整刀落盘」）：把盘上的 `(watcherPath,
+   * targetSessionId, registeredAt)` 边读回来，重建 `watch` 订阅表。**boot 时调用
+   * 一次**（装配点见 `GatewayMain`）。未接落盘面（[[WatchStore.disabled]]）时为空操作。
+   */
+  def replayWatches: IO[Unit]
 end ActorSystem
 
 object ActorSystem:
@@ -67,18 +74,30 @@ object ActorSystem:
   private def capOf(key: String, default: Int): Int =
     sys.props.getOrElse(key, default.toString).trim.toIntOption.filter(_ > 0).getOrElse(default)
 
-  /** Create a local actor system. */
-  def apply(deviceName: String): ActorSystem =
-    new LocalActorSystem(deviceName)
+  /**
+   * Create a local actor system.
+   *
+   * 刀四：`watchStore` 缺省 = [[WatchStore.disabled]]（零落盘，行为与刀四之前逐字
+   * 一致——全套测试大量构造本对象，隐式落盘会写真实数据根）。生产装配点显式传
+   * `WatchStore.file(...)`（`GatewayMain`）。
+   */
+  def apply(deviceName: String, watchStore: WatchStore = WatchStore.disabled): ActorSystem =
+    new LocalActorSystem(deviceName, watchStore)
 
   /** Create an actor system from a given device name, as a Resource. */
-  def resource(deviceName: String): cats.effect.Resource[IO, ActorSystem] =
-    cats.effect.Resource.make(IO(apply(deviceName)))(_.stopAll)
+  def resource(
+    deviceName: String,
+    watchStore: WatchStore = WatchStore.disabled
+  ): cats.effect.Resource[IO, ActorSystem] =
+    cats.effect.Resource.make(IO(apply(deviceName, watchStore)))(_.stopAll)
 
 end ActorSystem
 
 /** Local-only actor system implementation. */
-final class LocalActorSystem(val localDevice: String) extends ActorSystem:
+final class LocalActorSystem(
+  val localDevice: String,
+  watchStore: WatchStore = WatchStore.disabled
+) extends ActorSystem:
   private val log = NebflowLogger.forName("nebflow.actor")
 
   private case class RegistryEntry(
@@ -89,8 +108,14 @@ final class LocalActorSystem(val localDevice: String) extends ActorSystem:
 
   private val registry: Ref[IO, Map[String, RegistryEntry]] = Ref.unsafe(Map.empty)
 
-  /** Death watch: target path → set of watcher paths. */
-  private val watchers: Ref[IO, Map[String, Set[String]]] = Ref.unsafe(Map.empty)
+  /**
+   * Death watch: target path → (watcher path → 注册时刻)。
+   *
+   * 刀四把内层从 `Set[String]` 改成 `Map[String, Long]`：落盘三元组要
+   * `registeredAt`，而内存表必须与盘上**同源**（否则重放会把时刻重置成 0，
+   * 盘上读数与内存读数不再一致）。
+   */
+  private val watchers: Ref[IO, Map[String, Map[String, Long]]] = Ref.unsafe(Map.empty)
 
   /** 容量在此刻定值（构造期读 -D；装配后不随 sys.props 漂移——行为可预测）。 */
   private val mailboxCapacity: Int = ActorSystem.mailboxCapacity
@@ -163,26 +188,74 @@ final class LocalActorSystem(val localDevice: String) extends ActorSystem:
   // ============================================================
 
   def watch(watcher: ActorPath, target: ActorPath): IO[Unit] =
+    watchStoreEdge(watcher, target)
+
+  /**
+   * 订阅 + 落盘（刀四）：内存表先变，再全量重写盘上快照。
+   *
+   * 落盘失败**不回滚内存表**（真源是内存；盘面是可重放快照）——`save` 自己已经
+   * 把异常吞成 WARN，所以这条链永不因为盘出错而打断 `watch` 的语义。
+   */
+  private def watchStoreEdge(watcher: ActorPath, target: ActorPath): IO[Unit] =
     watchers.update(_.updatedWith(target.toString) {
-      case Some(set) => Some(set + watcher.toString)
-      case None => Some(Set(watcher.toString))
-    })
+      case Some(existing) => Some(existing.updated(watcher.toString, System.currentTimeMillis()))
+      case None => Some(Map(watcher.toString -> System.currentTimeMillis()))
+    }) *> persistWatches
 
   def unwatch(watcher: ActorPath, target: ActorPath): IO[Unit] =
     watchers.update(_.updatedWith(target.toString) {
-      case Some(set) =>
-        val next = set - watcher.toString
+      case Some(existing) =>
+        val next = existing - watcher.toString
         if next.isEmpty then None else Some(next)
       case None => None
-    })
+    }) *> persistWatches
+
+  /** 内存表 → 落盘快照（`(watcherPath, targetSessionId, registeredAt)` 三元组）。 */
+  private def persistWatches: IO[Unit] =
+    watchers.get.flatMap { snapshot =>
+      val edges = snapshot.toList.flatMap { case (targetPath, byWatcher) =>
+        // 目标 path 是本进程的 ActorPath；落盘的靶心是**会话身份**（最后一段）。
+        val targetSessionId = ActorPath.parse(targetPath).toOption.map(_.name).getOrElse(targetPath)
+        byWatcher.toList.map { case (watcherPath, registeredAt) =>
+          WatchEdge(watcherPath, targetSessionId, registeredAt)
+        }
+      }
+      watchStore.save(edges)
+    }
+
+  /**
+   * boot 重放（刀四）：读盘上三元组，只取**本设备**的 watcher 边，按当前
+   * `localDevice` 把 `targetSessionId` 还原成 `ActorPath(localDevice, sid)`。
+   *
+   * 重放后立刻回写一次：异地设备的边在这一步被自然剪掉（否则它们会永远躺在盘上
+   * 等着永远不会属于它们的进程）。
+   */
+  def replayWatches: IO[Unit] =
+    watchStore.load.flatMap { edges =>
+      val localEdges =
+        edges.filter(e => ActorPath.parse(e.watcherPath).exists(_.isLocal(localDevice)))
+      watchers
+        .update { current =>
+          localEdges.foldLeft(current) { (acc, edge) =>
+            val targetPath = ActorPath(localDevice, edge.targetSessionId).toString
+            acc.updatedWith(targetPath) { prev =>
+              Some(prev.getOrElse(Map.empty).updated(edge.watcherPath, edge.registeredAt))
+            }
+          }
+        } *> persistWatches *>
+        (if localEdges.size == edges.size then IO.unit
+         else log.info(s"watch replay: dropped ${edges.size - localEdges.size} non-local edge(s)"))
+          *> log.info(s"watch replay: ${localEdges.size} edge(s) restored on device '$localDevice'")
+    }
 
   /** Deliver Terminated signal to all watchers of the given path. */
   private def notifyWatchers(deadPath: String, deadRef: ActorRef[?]): IO[Unit] =
     watchers.get
       .flatMap { watchersMap =>
-        val watcherPaths = watchersMap.getOrElse(deadPath, Set.empty)
-        // Clean up: remove dead actor from watchers map
-        watchers.update(_ - deadPath) *>
+        val watcherPaths = watchersMap.getOrElse(deadPath, Map.empty).keySet
+        // Clean up: remove dead actor from watchers map (刀四：盘上快照同步剪掉，
+        // 否则重启后会把一条指向死靶心的边重放回来)
+        (watchers.update(_ - deadPath) *> persistWatches) *>
           registry.get.flatMap { entries =>
             watcherPaths.toList.traverse_ { wp =>
               entries.get(wp) match
