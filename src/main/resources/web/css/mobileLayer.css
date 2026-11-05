@@ -1675,7 +1675,7 @@ body.mobile-layer .mf-strip.fade {
 }
 body.mobile-layer .mf-strip[hidden] { display: none; }
 /* chip = 电脑端胶囊（.canvas-header）同族小档：材质 = --glass-bg 底 +
-   --glass-blur saturate(1.15) + --glass-border（底缘透明化同胶囊）+
+   --glass-blur saturate(1.4) + --glass-border（底缘透明化同胶囊）+
    --sapphire-refraction 顶缘折射线 + --cv-shadow（frosted 标准一份，逐项同源
    零新造）；圆角 999；字 = 中性 muted 档。位姿四值 = 环变量（见条注释）。
    尺寸：基准宽 68px（两侧签），中签另档 max-width 112px —— **只有宽度不同**，

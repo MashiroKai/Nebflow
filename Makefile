@@ -127,12 +127,15 @@ frontend-gates:
 	@# web/.../design-language/references/flat-button-spec.md（不在脚本里）。
 	@# 盘点模式：node scripts/check-flat-buttons.mjs --inventory；机器读：--json。
 	node scripts/check-flat-buttons.mjs
-	@# 毛玻璃唯一性门禁（glass-unify 批 2026-11-05，作者令「我们stand只允许一个毛玻璃
-	@# 效果……把毛玻璃效果作为一个唯一的标准和术语」）：除 css/glass.css 外任何文件出现
-	@# 非 none 的 backdrop-filter ⇒ 红；glass.css 内的值必须是 var(--nf-glass-filter)；
-	@# --nf-glass-bg 的 α 必须 ≥ 0.90（把标准调回半透明 = 图1 复活 ⇒ 红）；
+	@# 毛玻璃唯一性门禁（glass-unify 批 2026-11-05 立判据；glass-recalibrate 批
+	@# 2026-11-05 18:13 重定标 —— 作者原话「我要的是主会话的输入框的这种，不透明，
+	@# 但是能反映背景内容颜色的」）：除 css/glass.css 外任何文件出现非 none 的
+	@# backdrop-filter ⇒ 红；glass.css 内的值必须是 var(--nf-glass-filter)；
+	@# --nf-glass-bg 的 α 必须落在 [0.45, 0.75]（低了内容透底、高了死白，两端都红）；
+	@# --nf-glass-blur ≥ 32px 且 --nf-glass-saturate ≥ 1.3（配方不许被降档）；
 	@# --nf-glass-* 只许在 stand-tokens.css 定义；canvas ask 的气泡/输入条必须挂 .nf-glass。
 	@# 规范正文与例外登记：web/.../design-language/references/glass-spec.md。
+	@# A/B 证据装置：node scripts/capture-glass-ab.mjs --root <web> --tag <before|after>。
 	@# 盘点模式：node scripts/check-glass-unify.mjs --inventory；机器读：--json。
 	node scripts/check-glass-unify.mjs
 	@# 冻结通知策略门禁（冻结通知策略批 2026-11-05）：provider 故障 = 基础设施故障 ⇒

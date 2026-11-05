@@ -744,7 +744,7 @@ body.canvas-open.canvas-overlay #canvas-panel {
   border-radius: var(--ds-radius-pill);
   /* ── Frosted 标准（2026-10-22 作者令：全站一套毛玻璃，禁各画各的）──
      材质 token 对齐 chat header 现实现：--glass-bg 底 + --glass-blur
-     saturate(1.15) + --glass-border + 顶缘折射线（--sapphire-refraction）。
+     saturate(1.4) + --glass-border + 顶缘折射线（--sapphire-refraction）。
      件三统一批（2026-10-28 作者令「以聊天窗口控件现用的毛玻璃效果为唯一风格
      模板」）：阴影对齐 #header 现值 —— var(--cv-shadow) 仅顶缘 inset 高光、
      外投影零（chat.css 底缘零边界批同规；修前 --frost-shadow 外投影两档退役，
@@ -1370,7 +1370,7 @@ body.canvas-deck-narrow .canvas-title { max-width: none; }
    进行操作」——鼠标滚轮 = 纵向，横滑触控板用户才有的输入不再是一等手势）：
    **纵滚 deltaY 主导**（一格滚轮 = 一换），触控板横滑 deltaX 保留为副手势，
    点击即切换页签；邻位胶囊沿曲率 rotateX 透视 + 模糊扭曲（竖向 cover-flow），
-   材质 = 全站统一 frosted token（--glass-bg / --glass-blur saturate(1.15) /
+   材质 = 全站统一 frosted token（--glass-bg / --glass-blur saturate(1.4) /
    --glass-border / --frost-shadow，sapphire.css 单源 —— 禁止各画各的）。
    对称批（作者令 2026-10-23「hover 要在上下显示…上下对称；大小固定；相对
    canvas 居中」）+ 顶部修正批（作者令 2026-10-23 逐字「canvas的hover要保持在
@@ -1584,7 +1584,7 @@ body.canvas-deck-narrow .canvas-title { max-width: none; }
   }
   /* 中心签自持玻璃：竖环档它是「覆在标题胶囊上的透明覆层」（借标题头的玻璃），
      横排档标题头已让位，故把**桌面标题胶囊自己那套 frosted 配方**原样挂回中心签
-     自身（--glass-bg + --glass-blur saturate(1.15) + --ds-border-glass + 顶缘
+     自身（--glass-bg + --glass-blur saturate(1.4) + --ds-border-glass + 顶缘
      --sapphire-refraction 折射线 + --ds-shadow-float，逐项同源零新造）——
      「照抄电脑端样式」在这里就是字面意思：同一份材质令牌。
      邻签共用同一份配方（不另造半档），层次由 .is-edge 的透明度/模糊/缩径承担。 */
@@ -1970,7 +1970,7 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
    六项批（作者令 2026-10-23 六项③④）：底右钮组贴齐面板右缘回归原槽（右锚
    16）——移位批的簇整体 +48（fab 迁底右占首槽）随 fab 回退批已失据，右缘
    64/112 空缝即作者指的「靠右没贴齐」；缩放条同步回 16（本文件下方）。
-   材质 = frosted 标准 token（--glass-bg/--glass-blur saturate(1.15)/
+   材质 = frosted 标准 token（--glass-bg/--glass-blur saturate(1.4)/
    --glass-border，sapphire.css 单源，与 chat 对话面板同源——六项④「毛玻璃
    加强到与聊天对话框一致」）。
    件三统一批（2026-10-28）：尺寸/阴影/hover-active 全部收进 --cv-* token 档
@@ -3832,7 +3832,7 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
 /* ── 词条 hover 气泡（词条引用批 batch 2, F3/F4）──────────────────────
    文档阅读面词条引用（[[词条]] 短形）的悬停摘要卡：词条名 + 定义（≤280 字，
    6 行截断）+ 所在文档 + 跳转提示。材质 = 全站 frosted token（--glass-bg /
-   --glass-blur saturate(1.15) / --glass-border / --frost-shadow，sapphire.css
+   --glass-blur saturate(1.4) / --glass-border / --frost-shadow，sapphire.css
    单源，亮暗双主题随 prefers-color-scheme）——与 wg-tip 同族不同源（wg-tip
    挂图谱 pane 的 --wg-* 作用域，本卡挂 body 级全局 token）。桌面
    pointer-events:none 不挡点击（点击 = 深链跳转）；触屏面加 .touch 翻 auto
@@ -4127,7 +4127,7 @@ body.wg-side-active #panel-sessions #explorer-section { display: none; }
 .wg-search-input::placeholder { color: var(--color-frame-text-muted); }
 .wg-chips { display: flex; gap: var(--ds-space-1h); flex-wrap: wrap; }
 /* chips 与搜索框同属 frosted 家族（2026-10-22 作者令「全站一套毛玻璃」）：
-   --glass-bg / blur(--glass-blur) saturate(1.15) / --glass-border /
+   --glass-bg / blur(--glass-blur) saturate(1.4) / --glass-border /
    --frost-shadow —— 与 chat header 同 token，仅无 sapphire-refraction 顶缘线
    （小控件不挂折射线）。`.on` = 选中态 accent 材质，不在本契约内。 */
 .wg-chip {
