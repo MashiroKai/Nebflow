@@ -1937,6 +1937,7 @@ export default {
 
   // === Background tasks ===
   'bg.cancel': 'Cancel',
+  'bg.cancelTip': 'Cancel this background task (the process is killed; not reversible)',
   'bg.cancelling': 'Cancelling...',
   'bg.running': 'Running',
   'bg.ended': 'Process ended',
@@ -2329,6 +2330,10 @@ export default {
   // === Scheduled Tasks ===
   'task.empty': 'No scheduled tasks',
   'task.emptyHint': 'Click empty area or press + to create',
+  // 新建抽屉（todo-fullbleed 批 2026-11-05：手机页面态新建入口改底部抽屉）
+  'task.sheetTitle': 'New scheduled task',
+  'task.sheetCancel': 'Cancel',
+  'task.sheetDone': 'Create',
   'task.inputPlaceholder': 'Enter task...',
   'task.triggerTime': 'Trigger time',
   'task.triggered': 'Triggered',
@@ -3273,6 +3278,9 @@ export default {
   'todoface.complete': 'Mark complete',
   'todoface.del': 'Delete',
   'todoface.fabAdd': 'New to-do',
+  // 新建抽屉（todo-fullbleed 批 2026-11-05：手机页面态新建入口改底部抽屉）
+  'todoface.sheetTitle': 'New to-do',
+  'todoface.cancel': 'Cancel',
   'todoface.completedToast': 'Completed',
   'todoface.undo': 'Undo',
   'todoface.tagName': 'Tag name',

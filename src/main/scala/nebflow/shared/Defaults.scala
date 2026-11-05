@@ -1141,14 +1141,32 @@ object Defaults:
    * `now - window` 之后的冻结记录算同一波，面板统计行只汇总这一波（更老的冻结
    * 仍逐条在面板行上，只是不进「本波 N 条」读数）。prop
    * `nebflow.delegate.freeze.digestWindowMs`。
+   *
+   * **只管面板读数，不管告警**（provider 冻结告警合并窗批 2026-11-05 19:08）：告警腿
+   * 读 [[nebflow.core.delegate.FreezeNotice.fullDigest]]（全量在冻集）。此前告警腿也读
+   * 本窗，与「本轮冻结 ≥30 分钟才升级」的时限判据错配 —— 冻过 10 分钟的条目先从
+   * digest 掉出去，30 分钟时限因此永远触发不了。
    */
   def DelegateFreezeDigestWindowMs: Long =
     sys.props.getOrElse("nebflow.delegate.freeze.digestWindowMs", (10L * 60 * 1000).toString).toLong
 
   /**
-   * 同一波聚合告警的重投冷却（ms，缺省 30 分钟）：去重键 = 父会话 + 冻结 id 集
-   * （集合变了才是新一波）；同键在冷却窗内只发一次（防 30s 扫描拍重复推送）。
-   * prop `nebflow.delegate.freeze.alertReArmMs`。
+   * **同一错误类型的合并窗口**（ms，缺省 30 分钟，作者令 2026-11-05 19:08「30分钟才提醒，
+   * 而且是有一个合并窗口，把同类型的错误合并后一起汇报，不要分开汇报」）：provider 故障
+   * 族的告警按**错误类型族**（`ProviderFault.familyWire`）归并成一条，同一类型在本窗内
+   * **最多一条**；窗内新来的同类冻结并入同一条（不另发）。窗口按 **tumbling** 滚动
+   * （锚点 = 上次发出时刻），因此同类两次汇报的间隔恒 ≥ 本窗，也不会因持续新增而永远
+   * 推迟。确定性缺陷**不受本窗约束**（即时单独通知）。prop
+   * `nebflow.delegate.freeze.digestMergeWindowMs`。
+   */
+  def DelegateFreezeDigestMergeWindowMs: Long =
+    sys.props.getOrElse("nebflow.delegate.freeze.digestMergeWindowMs", (30L * 60 * 1000).toString).toLong
+
+  /**
+   * 同一批**确定性缺陷**告警的重投冷却（ms，缺省 30 分钟）：去重键 = 父会话 + 冻结 id 集
+   * （同一批缺陷不因 30s 扫描拍重发；**新出现的缺陷 id 变了 = 新键 = 立即发**，所以真失败
+   * 永远不会被合并逻辑吞掉）。provider 故障族不用本参数（它们走
+   * [[DelegateFreezeDigestMergeWindowMs]]）。prop `nebflow.delegate.freeze.alertReArmMs`。
    */
   def DelegateFreezeAlertReArmMs: Long =
     sys.props.getOrElse("nebflow.delegate.freeze.alertReArmMs", (30L * 60 * 1000).toString).toLong
