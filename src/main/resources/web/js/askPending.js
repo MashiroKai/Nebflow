@@ -57,10 +57,41 @@ function summarizeItems(items) {
  *  `|| t('askUser.pendingTitle')` fallback naturally lands on 「待回答问题」 —
  *  the mechanism name is a key, never a display fallback. Named → the name. */
 export function askSourceLabel(source) {
+  const parts = askSourceParts(source);
+  return parts ? parts.full : '';
+}
+
+/** 归属标注**两段化**（归属命名批 2026-11-05 作者令，逐字：「现在的后台agent的
+ *  问题卡片还是只会显示stand，delegate现在不都是有name吗，node也有name，那么可以
+ *  显示 delegate name，node就是 delegate name · node name」）。
+ *
+ *  返回 `{ parent, node, full }` 或 `null`（无名根自问 = 不挂标注，N5 同口径）。
+ *  段① `parent` = **发起实体自身名**（不是项目名），判据顺序：
+ *    · `ownerName`（引擎侧 `DelegateRegistry.ownerNameOf` 单点解析的 delegate 批次
+ *      短名，随 askUser 载荷下发）⇒ delegate 会话提问/委托流程内节点提问都取它；
+ *      **前端不按 sessionId 猜名**（名字只认后端下发的值）。
+ *    · 项目上下文（项目节点 / 项目分发器）无 delegate 归属 ⇒ 回落项目名（现状不变）。
+ *    · 其余 = 问者显示名（Nebula 自问 = 用户名；内核 ask = `subagent · 摘要`）。
+ *  段② `node` = 节点名（项目节点 = 节点名、项目分发器 = "dispatcher"）；delegate
+ *  自问无第二段 ⇒ 只渲染段①。回落纪律：owner 与 project 皆缺且问者无名 ⇒ `null`
+ *  （调用点各自的既有空态文案接管），绝不渲染空白/id/undefined。 */
+export function askSourceParts(source) {
   const asker = (source && source.agentName) || '';
-  if (source && source.project) return `${source.project} · ${source.nodeName || agentDisplayName(asker)}`;
-  if (!asker || asker === ROOT_AGENT_KEY) return isRootNamed() ? rootDisplayName() : '';
-  return agentDisplayName(asker);
+  const owner = String((source && source.ownerName) || '').trim();
+  const node = String((source && source.nodeName) || '').trim();
+  const project = String((source && source.project) || '').trim();
+  // ① delegate 归属：段① = 批次短名；段② = 节点名（delegate 自问无节点 ⇒ 单段）
+  if (owner) return { parent: owner, node, full: node ? `${owner} · ${node}` : owner };
+  // ② 项目上下文（项目节点 / 项目分发器）：段① = 项目名（现口径不变）
+  if (project) {
+    const second = node || agentDisplayName(asker);
+    return second ? { parent: project, node: second, full: `${project} · ${second}` } : null;
+  }
+  // ③ 非项目会话：问者自身显示名（无名根自问 ⇒ null，N5 口径）
+  const selfName = (!asker || asker === ROOT_AGENT_KEY)
+    ? (isRootNamed() ? rootDisplayName() : '')
+    : agentDisplayName(asker);
+  return selfName ? { parent: selfName, node: '', full: selfName } : null;
 }
 
 /** askUser frame → mirror entry. `ts` is the local arrival stamp (the frame
@@ -80,6 +111,9 @@ function toEntry(msg) {
     agentName: msg.agentName || '',
     project: msg.project || '',
     nodeName: msg.nodeName || '',
+    // 归属命名批（2026-11-05）：delegate 批次短名——待办条与卡片共用同一
+    // `askSourceParts` 口径（同族两面必须同名，不许条上一套卡上另一套）。
+    ownerName: msg.ownerName || '',
     summary: summarizeItems(msg.items),
     ts: Date.now(),
     live: !msg.replayed && !msg.replaces
