@@ -251,7 +251,7 @@ private[project] trait NodeDelivery:
       // 在三条路由（injectRunning / appendToTaskRoute / appendUndelivered）前展开为
       // 消息全文（映射缺失 = 显式报错行注入）。单点覆盖运行中注入与待启动补充两腿；
       // 事件日志随消解后文本留痕。机制关 = 原样透传。
-      resources.msgTokens.resolve(trimmed).flatMap { text =>
+      resources.msgTokens.resolveForAgent(trimmed).flatMap { text =>
         store.findNode(nodeId).flatMap {
           case None =>
             IO.pure(
