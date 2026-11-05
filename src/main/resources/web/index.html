@@ -146,6 +146,15 @@
        --btn-press-* / --btn-ring-* / --btn-disabled-*；厚度禁令由
        scripts/check-flat-buttons.mjs 机械把关（例外须写进 flat-button-spec.md）。 -->
   <link rel="stylesheet" href="css/flatButtons.css">
+  <!-- Canvas 提示文字统一制作规范（canvas-hint-text 批 2026-11-05，作者令
+       「canvas 内所有的提示文字，要统一制作规范，不然会跟悬浮在上面的按钮/
+       胶囊重叠」）：三字档角色 + 四边安全区消费类 `.cv-safe-pad` + 零交叠/
+       换行判据的**缺省层**（`[data-cv-hint]` 标记即落档）。放最后 = 缺省值
+       不得压过各面已按规范改好的既有规则（同值时取各面自己的那条，便于逐面
+       溯源）；四边安全区令牌本体仍单源在 sapphire.css（:317 起），本文件
+       只消费不生产数值。判据脚本 = scripts/check-canvas-hint-tokens.mjs（静态）
+       + tests/canvas-hint-safe-area.spec.mjs（真几何）。 -->
+  <link rel="stylesheet" href="css/canvasHint.css">
   <!-- 偶发裸渲染修复批（2026-10-30，作者 20:03 截图实证：冷启动实例「有时候」
        右侧面板整面无样式、工作台列表以原文竖排裸露）。根因面：stylesheet 是
        渲染阻塞资源，但若任一 CSS 请求**失败**（实例重启在途请求被掐断 / 隧道

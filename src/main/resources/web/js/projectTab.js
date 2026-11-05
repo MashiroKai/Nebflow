@@ -270,7 +270,7 @@ function openProjectsCreateDialog(trigger) {
         '<div class="dev-menu" hidden></div>' +
       '</div>' +
       // 语义提示行（self/远端同一行位；文案按存放关系陈述、不点名「本机」——平级设计语言）。
-      '<div class="dev-hintline" hidden></div>' +
+      '<div class="dev-hintline" data-cv-hint="page" hidden></div>' +
       // ── D4 path slot (author 2026-09-24 D4: "use a path picker to choose, rather
       //    than relying on the user typing a path") ──
       // 🔴 A typeable text box is deliberately NOT provided: the path can only be
@@ -1241,7 +1241,7 @@ function projectCardHtml(p) {
       <div class="team-card-header">
         <!-- 入口键（project 域 Flow Map 提示键）已随晨裁②退役照荐落（§3.3 在案）：卡标题
              不再挂「打开 Flow Map」提示（点击改指行为保留——delegate-chain 链视图，#1228 两裁②）。 -->
-        <div class="team-card-title" data-open-flowmap="${esc(name)}"><span class="project-card-name">${esc(contentText('project', name, 'name', name))}</span>${badge}<span class="project-empty-tag" hidden>${esc(t('project.noNodes'))}</span></div>
+        <div class="team-card-title" data-open-flowmap="${esc(name)}"><span class="project-card-name">${esc(contentText('project', name, 'name', name))}</span>${badge}<span class="project-empty-tag" data-cv-hint="empty" hidden>${esc(t('project.noNodes'))}</span></div>
         <div class="team-card-summary is-pending"><span class="dot"></span><span class="project-summary-skeleton" aria-hidden="true"></span></div>
         <button class="project-unmount-btn" data-unmount-project="${esc(name)}" title="${esc(t('project.unmountBtn'))}" aria-label="${esc(t('project.unmountBtn'))} ${esc(name)}" aria-haspopup="dialog">${UNMOUNT_BTN_SVG}</button>
       </div>

@@ -130,7 +130,7 @@ function agentsContentEl() {
     content.id = 'agents-content';
     // 统一安全区（canvas-overlap-fix 批 2026-11-05）：canvas 顶行胶囊是浮层，
     // 面板正文首块让到 --cv-safe-top 之下；类定义在 split.css「统一布局层」块。
-    content.className = 'canvas-safe-top';
+    content.className = 'canvas-safe-top cv-safe-pad';
     pane.appendChild(content);
   }
   return content;
@@ -140,11 +140,11 @@ function agentsContentEl() {
 export function renderAgentManager() {
   const content = agentsContentEl();
   if (!content) return;
-  content.innerHTML = `<div class="agent-mgr-loading">${t('agentManager.loading')}</div>`;
+  content.innerHTML = `<div class="agent-mgr-loading" data-cv-hint="loading">${t('agentManager.loading')}</div>`;
 
   fetchAgents().then(agents => {
     if (agents.length === 0) {
-      content.innerHTML = `<div class="agent-mgr-empty">${t('agentManager.noAgents')}</div>`;
+      content.innerHTML = `<div class="agent-mgr-empty" data-cv-hint="empty">${t('agentManager.noAgents')}</div>`;
       return;
     }
 
@@ -305,7 +305,7 @@ function renderAgentDetail(pane, name, detail, model) {
         <div class="agent-detail-face-tabs" id="agent-detail-face-tabs">${faces.map((f, i) => `
           <button type="button" class="agent-detail-face-tab${i === 0 ? ' active' : ''}" data-face="${esc(f.face || '')}">${esc(t(FACE_LABEL_KEYS[f.face]) || f.face)}</button>`).join('')}
         </div>
-        <div class="agent-detail-face-hint" id="agent-detail-face-hint">${esc(t(FACE_HINT_KEYS[faces[0].face] || ''))}</div>` : '';
+        <div class="agent-detail-face-hint" data-cv-hint="page" id="agent-detail-face-hint">${esc(t(FACE_HINT_KEYS[faces[0].face] || ''))}</div>` : '';
 
   pane.innerHTML = `
     <div class="agent-detail">
@@ -314,8 +314,8 @@ function renderAgentDetail(pane, name, detail, model) {
         <div class="agent-detail-header-info">
           <div class="agent-detail-name">${esc(contentText('agent', contentAgentId, 'name', displayName))}${builtin ? `<span class="agent-detail-builtin-badge" title="${esc(t('plugins.builtinTitle'))}">${esc(t('plugins.builtinBadge'))}</span>` : ''}</div>
           ${description ? `<div class="agent-detail-desc">${esc(contentText('agent', contentAgentId, 'desc', description))}</div>` : ''}
-          ${extends_ ? `<div class="agent-detail-extends">extends: ${esc(extends_)}</div>` : ''}
-          ${builtin ? `<div class="agent-detail-builtin-note">${esc(t('agentManager.builtinNote'))}</div>` : ''}
+          ${extends_ ? `<div class="agent-detail-extends" data-cv-hint="foot">extends: ${esc(extends_)}</div>` : ''}
+          ${builtin ? `<div class="agent-detail-builtin-note" data-cv-hint="foot">${esc(t('agentManager.builtinNote'))}</div>` : ''}
         </div>
       </div>
 

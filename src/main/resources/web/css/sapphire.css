@@ -314,7 +314,44 @@
      chrome 簇几何块里覆写为 `--mchrome-clear`（簇顶 16 + 钮 48 + 呼吸 8 = 72）。
      消费面 = split.css 文件尾「Canvas 正文顶部安全区（统一布局层）」块 +
      侧边栏插件/agent 面板根节点（.canvas-safe-top 类，JS 挂）。 */
-  --cv-safe-top: var(--cv-head-clear);
+  --cv-safe-top: calc(var(--cv-head-top) + max(var(--cv-head-h), var(--cv-size-circle)) + var(--cv-safe-gap));
+  /* ↑ 顶边算式（canvas-hint-text 批 2026-11-05 修正）：
+       10（行顶）+ max(胶囊 36, 圆钮 40) + 8（呼吸缝）= **58**
+     修前 = --cv-head-clear（56）= 「10 + 胶囊 36 + 10 呼吸」—— 算式里只算了胶囊
+     高度，可顶行真正在场的圆钮是 `--cv-size-circle` = **40**（关签钮 / 返回钮 /
+     堆叠钮，实测 y26..66），于是「安全区 56」实际只让出 6px 净空，正是上一批
+     注释里那句「首行贴着胶囊下沿」的 4px 档差来源。本批把顶行**最高件**取大
+     后再加呼吸缝，**净空 = 呼吸缝本身**（几何上可读，不再靠算式巧合）。
+     为什么不动 --cv-head-clear：它是**控件锚点**（查找条 / 缩放条 / 顶行控件都
+     锚在它上面，值 56 是既有 15 个 spec 的判据读数），语义是「行下缘 + 一档缝」，
+     不是「安全区」。安全区与控件锚点本就是两把尺，本批只把安全区那把尺改对。 */
+  /* ── Canvas 安全区 · 四边（canvas-hint-text 批 2026-11-05，作者原话
+     「canvas 内所有的提示文字，要统一制作规范，不然会跟悬浮在上面的按钮/胶囊
+     重叠」）────────────────────────────────────────────────────────────
+     语义（本批把上面那条单边令牌扩成**四边一族**）：
+     **Canvas 面板内任何文字容器与浮层之间的净空，只能由这四个令牌给出**，
+     容器挂 `.cv-safe-pad`（css/canvasHint.css）即四边齐备，禁止各自写
+     padding 数值（禁止的理由是历史：`#plugins-content` / `#agents-content`
+     曾各写裸顶垫 16px ⇒ 首行压进胶囊带 30px）。
+
+     四边的浮层来源（判据统计范围 = 这几类，脚本
+     tests/canvas-hint-safe-area.spec.mjs 逐面实测）：
+       · 顶 = 居中标题胶囊 + 顶行关签钮/返回钮/堆叠钮 ⇒ 值 = --cv-safe-top
+         （= --cv-head-clear 56；手机层 mobileLayer.css 覆写为 --mchrome-clear 72）
+       · 右 = 右下 FAB 列（ask 钮 / 记事本钮）与顶部堆叠钮的右缘净档 ⇒ 16
+       · 下 = 底部浮钮带（源码 <> / 引用 / 查找 / 缩放条 + FAB 行）⇒ **地板 16，
+         真值由 .canvas-tab-pane 上的 max(地板, --canvas-bottom-clearance) 覆写**
+         （实测值由 viewers/shared.js syncBottomClearance 发布，理由见 split.css
+         文件尾「底部浮钮让位」块：钮档随设备/面板宽变，常量必在某个档位失真）
+       · 左 = 面板左内缘净档 ⇒ 16（= --ds-space-4，与项目面板族左右内距同档）
+     为什么右/左不是 0：无浮层时也要有一档稳定内距，否则文字贴面板边（另一种
+     不可读）。16 是既有的面板族左右内距档，不新造值。 */
+  --cv-safe-right: var(--ds-space-4);
+  --cv-safe-bottom: var(--ds-space-4);
+  --cv-safe-left: var(--ds-space-4);
+  /* 提示文字与浮层之间的最小呼吸缝：零交叠判据之外的**余量档**（浮层边缘与
+     文字墨迹之间至少留这一档，防「贴着但不重叠」的观感破绽）。 */
+  --cv-safe-gap: var(--ds-space-2);
   /* ── canvas 顶行浮钮列几何（同批：返回原文档钮 ↔ 关签钮重叠修复）──
      顶行 = 一条按序排布的浮钮列：
        [关签钮 #canvas-head-close] →8 缝→ [返回原文档钮] …(弹性)… [居中标题

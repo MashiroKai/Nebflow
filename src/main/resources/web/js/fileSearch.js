@@ -109,6 +109,7 @@ function openFindBar(pane, mode, scopeSel, iframe) {
 
   const count = document.createElement('span');
   count.className = 'nf-findbar-count';
+  count.setAttribute('data-cv-hint', 'foot');   // canvas-hint-text 批：提示文字机检钩子
 
   const prevBtn = document.createElement('button');
   prevBtn.className = 'nf-findbar-btn';
