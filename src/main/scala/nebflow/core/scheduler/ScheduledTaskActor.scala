@@ -722,8 +722,9 @@ class ScheduledTaskService(
     case other => current // unknown pattern — don't advance (will re-fire immediately)
 
   private def formatTime(epochMs: Long): String =
-    val instant = Instant.ofEpochMilli(epochMs)
-    val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault())
-    formatter.format(instant)
+    // 格式单源（时间感知修复批 2026-11-05）：定时事件注入文本里的「预定 / 实际触发」
+    // 时刻与每回合时间锚同源（[[nebflow.shared.TimeAnchor.compact]] = 本地
+    // `yyyy-MM-dd HH:mm`，与改前逐字节相同，只是不再自带一份 ofPattern）。
+    nebflow.shared.TimeAnchor.compact(epochMs)
 
 end ScheduledTaskService

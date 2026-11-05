@@ -34,6 +34,11 @@ import nebflow.shared.PathUtil
  *              单点文本 = [[nebflow.shared.Defaults.SendMessageScopeRule]]）
  *   377      — 密钥教义（所有 agent 会话，always；同源单点文本 =
  *              [[nebflow.shared.Defaults.SecretsRule]]）
+ *   378      — 引牌教义（所有 agent 会话，always；同源单点文本 =
+ *              [[nebflow.shared.Defaults.MsgQuoteRule]]）
+ *   379      — 时间纪律（所有 agent 会话，always；同源单点文本 =
+ *              [[nebflow.shared.Defaults.TimeDisciplineRule]]）——**纪律**在 stable，
+ *              **锚**（「现在」的值）在请求级 systemDynamic，永不进 stable
  *   400-499  — tool-dependent sections（阶段 2d §D.2：条件工具指南段已全部
  *              下迁进工具 description——AskUserQuestion/Read/Pop/TeamTask 三件，
  *              提示词层不再按「是否有该工具」注入用法段落）
@@ -464,6 +469,21 @@ Before wrapping up call `node_report` — reporting IS the wrap-up action, not a
       378,
       condition = _ => true,
       body = nebflow.shared.Defaults.MsgQuoteRule
+    ),
+
+    // --- 时间纪律（时间感知修复批，作者指令 2026-11-05 18:48「修复你的时间感知
+    // 问题」）：条件 **always** —— 相对时间误判不分角色（root / 分发器 / delegate /
+    // 节点 / team / 子代理都会输出「刚才 / 昨天 / 上次」）。段体逐字引用
+    // [[nebflow.shared.Defaults.TimeDisciplineRule]]（同源单点，勿复制改写）。
+    // 段序 379 = 紧跟 order-378 后；静态体落 systemStable（生命周期节点重建时携带）——
+    // 🔴 **纪律**（静态文本）进 stable 是对的，**锚**（「现在」的值）绝不能进：
+    // 值一旦固化进 systemStable，长会话就停在装配那一刻（本批修的正是这种冻结）。
+    // 锚的两条腿 = 请求级 `LlmRequest.systemDynamic`（每请求现取）+ 起始轮持久化
+    // reminder（`SystemReminders`），同源 [[nebflow.shared.TimeAnchor]]。
+    PromptSection(
+      379,
+      condition = _ => true,
+      body = nebflow.shared.Defaults.TimeDisciplineRule
     ),
 
     // --- 轨道二 #5 identity clauses (before tool guides — who reads your

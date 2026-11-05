@@ -123,8 +123,16 @@ private[agent] object AgentPingpong:
         resources,
         depth,
         state,
-        legacy =
-          handleTriggerCompaction(agentDef, resources, depth, parentRef, state, "full", None, resumeAfterCompact = false),
+        legacy = handleTriggerCompaction(
+          agentDef,
+          resources,
+          depth,
+          parentRef,
+          state,
+          "full",
+          None,
+          resumeAfterCompact = false
+        ),
         onForked = st => IO.pure(idle(agentDef, resources, depth, parentRef, st)),
         gateOpen = open,
         legacyTriggerLog = None, // model-switch-compact 观测行已由调用点落，不重复
@@ -300,6 +308,10 @@ private[agent] object AgentPingpong:
         tools = None, // §B1：影子腿无工具
         thinking = None,
         systemStable = Some(ShadowSystemFrame),
+        // 每请求时间锚（时间感知修复批 2026-11-05）：影子摘要腿产出的 summary 会
+        // 顶替会话历史，摘要里若出现「今天/昨天/几天前」而不带当刻锚，误判会随
+        // 压缩被写进后文。动态段 = cache breakpoint 之后，与会话面同一生成源。
+        systemDynamic = Some(TimeAnchor.block()),
         agentModel = shadowModel
           .map(m => AgentModelConfig(preferred = Some(m), fallbacks = Nil))
           .orElse(agentDef.model), // §B3：缺省与主腿同模型链；点名则钉死摘要模型

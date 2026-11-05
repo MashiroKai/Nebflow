@@ -6,14 +6,19 @@ import nebflow.core.scheduler.ScheduledTaskStore
 import nebflow.shared.{Message, MessageRole}
 
 /**
- * SystemReminders — current-time injection contract (任务 O):
- *   - timezone-aware format: "Current time: 2026-08-11 17:00 +08:00"
- *   - persisted time-reminder retention: pruneTimeReminders keeps only the
- *     most recent MaxPersistedTimeReminders, never drops non-time messages.
+ * SystemReminders — 每回合时间锚契约。
+ *
+ * 原契约（任务 O）= `Current time: yyyy-MM-dd HH:mm +08:00`（只有偏移、无星期、
+ * 无时区名）。时间感知修复批（作者指令 2026-11-05 18:48）把格式收到
+ * [[nebflow.shared.TimeAnchor]] 单源并**加宽**为
+ * `Current time: yyyy-MM-dd HH:mm:ss +08:00 | Asia/Shanghai | Monday 周一 | epoch_ms …`；
+ * 本 spec 的 pattern 随之加宽（**断言未放松**：仍是全串锚定匹配，只是锚的内容更多）。
+ * 保留面：time 只在起始轮注入 + 持久化提醒的裁剪（最近 N 条）。
  */
 class SystemRemindersSpec extends FunSuite:
 
-  private val timePattern = raw"Current time: \d{4}-\d{2}-\d{2} \d{2}:\d{2} (Z|[+-]\d{2}:\d{2})".r
+  private val timePattern =
+    raw"Current time: \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} (Z|[+-]\d{2}:\d{2}) \| \S+ \| [A-Z][a-z]+ 周[一二三四五六日] \| epoch_ms \d+".r
 
   test("time reminder is injected on user turns only"):
     val on = SystemReminders.collectAll(isUserTurn = true)
@@ -22,19 +27,62 @@ class SystemRemindersSpec extends FunSuite:
     assertEquals(on.head.category, "time")
     assertEquals(off.size, 0)
 
-  test("time format includes timezone offset (yyyy-MM-dd HH:mm XXX)"):
+  test("time format is the single-source anchor: offset + zone name + weekday + epoch_ms"):
     val on = SystemReminders.collectAll(isUserTurn = true)
     val content = on.head.content
     assert(
       timePattern.matches(content),
-      s"expected 'Current time: yyyy-MM-dd HH:mm +HH:MM' but got: $content"
+      s"expected 'Current time: yyyy-MM-dd HH:mm:ss +HH:MM | <Zone> | <Weekday 周X> | epoch_ms <ms>' but got: $content"
     )
     // Offset must match the JVM default zone's offset (e.g. +08:00 for China)
-    val offset = java.time.ZonedDateTime.now().getOffset.toString
+    val now = java.time.ZonedDateTime.now()
+    val offset = now.getOffset.toString
+    assert(content.contains(s" $offset "), s"offset $offset not present in: $content")
+    // Zone NAME (not just the offset) and the weekday must both be present
+    assert(content.contains(now.getZone.getId), s"zone name ${now.getZone.getId} missing: $content")
     assert(
-      content.endsWith(s" $offset") || content.contains(offset),
-      s"offset $offset not present in: $content"
+      content.contains(
+        now.getDayOfWeek.getDisplayName(java.time.format.TextStyle.FULL, java.util.Locale.ENGLISH)
+      ),
+      s"weekday missing: $content"
     )
+    assert(content.contains(s"epoch_ms ${now.toInstant.toEpochMilli}") || content.contains("epoch_ms"), content)
+
+  test("insertAnchor puts the anchor BEFORE the triggering input (last-user-input invariant kept)"):
+    val input = Message(MessageRole.User, Left("hello"), source = None)
+    val mail = Message(MessageRole.User, Left("[MAIL] task"), source = Some("mail"))
+    val anchor = Message(MessageRole.User, Left("<system-reminder>\nCurrent time: x\n</system-reminder>"))
+    // ① 真人输入：锚在前、输入仍在最后（「最后一条 user = 本轮输入」不变量）
+    val a = SystemReminders.insertAnchor(List(input), List(anchor))
+    assertEquals(a.map(_.textContent), List(anchor.textContent, "hello"))
+    assertEquals(a.last.source, None)
+    // ② Mail 注入：锚在前，注入源仍是最后一条（注入气泡归因靠它）
+    val b = SystemReminders.insertAnchor(List(input, mail), List(anchor))
+    assertEquals(b.map(_.textContent), List("hello", anchor.textContent, "[MAIL] task"))
+    assertEquals(b.last.source, Some("mail"), "注入源必须仍是最后一条（否则归因读成『无源』）")
+    // ③ 空锚 = 零改动
+    assertEquals(SystemReminders.insertAnchor(List(input), Nil), List(input))
+    // ④ 工具结果轮（最后一条是 ToolResult）：不得插在工具结果之后造成 user/user 交替错位
+    val toolTurn = Message(
+      MessageRole.User,
+      Right(List(nebflow.shared.ContentBlock.ToolResult("id-1", "ok")))
+    )
+    assertEquals(SystemReminders.insertAnchor(List(toolTurn), List(anchor)).last, anchor)
+
+  test("collectAllIO injects the anchor on EVERY input turn (the 1h system-event gap is retired)"):
+    // 时间感知修复批：system-event 轮（Mail / 节点消息 / 定时事件 / 外部事件）也必须
+    // 拿到当刻锚——旧行为是「最多每小时一次」，会留下一个最多 59 分钟前的旧锚甚至
+    // 完全没有锚。这里钉的是「有输入 ⇒ 有锚」。
+    val taskStore = new ScheduledTaskStore(os.temp.dir() / "scheduled-tasks")
+    val reminders = SystemReminders
+      .collectAllIO(isUserTurn = true, taskStore = taskStore, sessionId = None)
+      .unsafeRunSync()
+    assertEquals(reminders.count(_.category == "time"), 1, s"每一次输入轮都恰一条时间锚: $reminders")
+    // 工具往返轮（!isUserTurn）不注入持久化锚（新鲜度由请求级 systemDynamic 锚负责）
+    val toolTurn = SystemReminders
+      .collectAllIO(isUserTurn = false, taskStore = taskStore, sessionId = None)
+      .unsafeRunSync()
+    assertEquals(toolTurn.count(_.category == "time"), 0, s"工具往返轮不注入持久化锚: $toolTurn")
 
   test("isTimeReminderMessage matches persisted time-reminder format"):
     val reminder =

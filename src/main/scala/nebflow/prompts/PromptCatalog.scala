@@ -366,6 +366,8 @@ Read / Glob / Grep / WebSearch / WebFetch. You have NO write tools, no shell: if
 - Bounded effort: cap exploration at what the question needs; report "not found" honestly rather than padding.
 - Final text: the answer first, then the evidence list. No preamble, no meta-commentary about being a sub-agent."""
 
+  end Roles
+
   // ═══════════════════════════════════════════════════════════════════
   // 分区二：跨面共享片段
   // ═══════════════════════════════════════════════════════════════════
@@ -395,6 +397,29 @@ Read / Glob / Grep / WebSearch / WebFetch. You have NO write tools, no shell: if
 
     val KgLandingDiscipline: String =
       """Knowledge-graph landing discipline (KG audit ①, 2026-10-28; location ruling 2026-11-03): knowledge documents (designs, audits, research, conclusions) MUST land in the project's REGISTRATION dir vault `<dataRoot>/projects/<project>/.stand/docs/` — next to `project.json`, NOT in the project workspace repo's `docs/` — Obsidian format: YAML frontmatter (`type:` / `status:`) plus at least one `[[wikilink]]`; `reports/` takes pure process files (batch / terminal reports) only. Validate the vault before closing: `python3 <dataRoot>/plugins/visual-report/skills/wiki-docs/scripts/check_wiki_docs.py --project <project>` (exit 0 = compliant)."""
+
+    /**
+     * 时间纪律（时间感知修复批，作者指令 2026-11-05 18:48「修复你的时间感知问题」）。
+     *
+     * 病根不是「没有时间」而是「有时间也不用 / 不在场」：引擎每回合都发一条时间锚，
+     * 模型仍按印象推算相对时间（实录：把 10 天前的两次提交说成「两年」）。故本段是
+     * **输出纪律**，与锚本身（[[nebflow.shared.TimeAnchor]]）分工：
+     *  - 锚 = 引擎面（取值 + 格式，单源，每请求现取）；
+     *  - 本段 = 模型面（怎么用这条锚：换算，不许计算；没锚不许说绝对日期）。
+     *
+     * 注入面：`PromptSections` order-379 **always** 段（所有 agent 会话——相对时间
+     * 误判不分角色：root / 分发器 / delegate / 节点 / team 成员 / 子代理都会输出
+     * 「刚才/昨天」）。静态体落 systemStable（生命周期节点重建时携带，前缀缓存友好）。
+     */
+    val TimeDisciplineRule: String =
+      """── Time discipline (iron rule) ──
+        |Every request carries an authoritative clock line in the dynamic system segment (it survives outside the cached prefix): `── Clock (authoritative; re-read on every request) ──` followed by `Now: <local time and UTC offset> | <zone name> | <weekday> | epoch_ms <ms>`. Your history also keeps one `Current time:` line at the start of each turn. That clock line is the ONLY source of "now".
+        |- Relative wording (`today/今天`, `yesterday/昨天`, `just now/刚才`, `N minutes ago/N 分钟前`, `last time/上次`, `this week/本周`) and EVERY absolute date, weekday or duration you write MUST be derived from that anchor — or from a timestamp that already exists on the object you are discussing (a commit, a file, a message, a report) — by arithmetic. Never from memory, never from feeling, never from a training prior.
+        |- No anchor and no object timestamp ⇒ you may NOT state an absolute date, a weekday, or an elapsed duration ("two years ago"). The clock line is always present in the dynamic segment: read it first; if it genuinely is not there, say plainly that you do not know the date instead of guessing one.
+        |- A long turn does not freeze time: the `Now:` line is re-read on every request, so a later request legitimately shows a later value. Trust the newest one; never assume the turn's first value still holds.
+        |- Never turn "how it feels" into "how long ago". If you did mis-state a date or a duration, correct it explicitly in the next message — do not silently continue as if it were right.""".stripMargin
+
+  end Shared
 
   // ═══════════════════════════════════════════════════════════════════
   // 分区三：压缩提示（8 份；消费点 core/compact/{CompactService,FullCompact}.scala）
@@ -458,7 +483,7 @@ Read / Glob / Grep / WebSearch / WebFetch. You have NO write tools, no shell: if
 
     val RootCompactReminder =
       CompactPreamble +
-      """You are NEBULA — the global orchestrator. Your session is long-lived and
+        """You are NEBULA — the global orchestrator. Your session is long-lived and
       |spans every project, team and task line. After compaction you resume
       |steering ALL of them from this summary alone (your durable user facts are
       |extracted separately into memory before compaction — do not duplicate
@@ -505,7 +530,7 @@ Read / Glob / Grep / WebSearch / WebFetch. You have NO write tools, no shell: if
 
     val ManagerCompactReminder =
       CompactPreamble +
-      """You are a FLOW MANAGER. Your conversation consists of Mail messages (task dispatch and agent responses), not direct user chat.
+        """You are a FLOW MANAGER. Your conversation consists of Mail messages (task dispatch and agent responses), not direct user chat.
       |Your summary must focus on COORDINATION STATE so you can resume routing seamlessly.
       |
       |IMPORTANT: you have NO persistent memory fallback after compaction — this
@@ -542,7 +567,7 @@ Read / Glob / Grep / WebSearch / WebFetch. You have NO write tools, no shell: if
 
     val WorkerCompactReminder =
       CompactPreamble +
-      """You are a FLOW WORKER. Your conversation is task-focused: Mail from manager → your work → Mail result back.
+        """You are a FLOW WORKER. Your conversation is task-focused: Mail from manager → your work → Mail result back.
       |Your summary must be CONCISE and ACTION-ORIENTED so you can resume the current task.
       |Discard details of completed previous tasks — only keep what's needed for the CURRENT task.
       |
@@ -575,7 +600,7 @@ Read / Glob / Grep / WebSearch / WebFetch. You have NO write tools, no shell: if
 
     val DispatcherCompactReminder =
       CompactPreamble +
-      """You are a PROJECT DISPATCHER — a single-session task dispatcher for one
+        """You are a PROJECT DISPATCHER — a single-session task dispatcher for one
       |project. The Flow Map on disk (flow-map.json: nodes, wiring, statuses,
       |results) is the AUTHORITATIVE state of this project — it survives after
       |this session dies. This summary does NOT replace the Flow Map; it only
@@ -613,7 +638,7 @@ Read / Glob / Grep / WebSearch / WebFetch. You have NO write tools, no shell: if
 
     val NodeCompactReminder =
       CompactPreamble +
-      """You are a NODE WORKER — a one-shot task node inside a project Flow Map.
+        """You are a NODE WORKER — a one-shot task node inside a project Flow Map.
       |Your final output text becomes the node result and is delivered to the
       |downstream node, so anything downstream needs from your work must survive
       |this summary. You have NO persistent memory and NO memory fallback after
@@ -672,6 +697,8 @@ Read / Glob / Grep / WebSearch / WebFetch. You have NO write tools, no shell: if
      */
     val ReminderSignature: String =
       CompactPreamble.linesIterator.take(2).mkString("\n").replace("\r", "")
+
+  end Compact
 
   // ═══════════════════════════════════════════════════════════════════
   // 分区四：分类器前导（1 份；消费点 llm/decision/JevAllocator.scala）
