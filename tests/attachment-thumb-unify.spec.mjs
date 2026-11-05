@@ -546,6 +546,12 @@ async function runViewport(page, vpTag) {
   await page.waitForTimeout(200);
   await page.screenshot({ path: join(OUT, `${vpTag}-card-p2.png`) });
   await page.evaluate(() => {
+    const box = document.querySelector('.option-box[data-ask-case="p5"]');
+    if (box) box.scrollIntoView({ block: 'center' });
+  });
+  await page.waitForTimeout(200);
+  await page.screenshot({ path: join(OUT, `${vpTag}-card-p5.png`) });
+  await page.evaluate(() => {
     const box = document.querySelector('.option-box[data-ask-case="p3"]');
     if (box) box.scrollIntoView({ block: 'center' });
   });
