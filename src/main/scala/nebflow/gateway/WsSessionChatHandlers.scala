@@ -872,87 +872,85 @@ private[gateway] object WsSessionChatHandlers:
       )
     if wid.isEmpty then wReply(ok = false, mode = "none", "error" -> "delegateWake requires sessionId".asJson)
     else
-      IO.blocking(nebflow.core.delegate.DelegateRegistry.find(wid)).flatMap {
-        case None =>
-          wReply(ok = false, mode = "none", "error" -> s"no delegate record for '$wid' (DELEGATE_NOT_FOUND)".asJson)
-        case Some(record) if !nebflow.core.delegate.DelegateFreeze.isFreezeWire(record.frozenReason.getOrElse("")) =>
-          // 冻结态诚实呈现批（2026-11-05，作者报障「显示已冻结但没有恢复按钮」）：
-          // **delegate 错误冻结槽不在盘上 ≠ 不可恢复**。actor 级冻结族（循环检测 L2 /
-          // 错误退避 / 时间表）只写在 registry（AgentRecord.status=Frozen +
-          // frozenReason）——旧版这里一律拒绝，于是「面板给了唤醒按钮、点了必失败」
-          // 或「压根没按钮」两种形态都出现过。本动作按 FreezeDisplay（判定单点）分三路，
-          // 每一路都如实回执，绝不假装成功：
-          //   · needsHuman（循环检测等引擎不会自己好的族）⇒ 从检查点重启（同会话续跑，
-          //     与 AgentControl restart 同一机制）；
-          //   · 自动恢复族 ⇒ 明确回执「不需要唤醒，到期自己续跑」，不动作；
-          //   · 其余（非冻结/未知）⇒ 明确拒绝并给出现状（含可用的动作）。
-          sharedResources.agentRegistry.get.flatMap { reg =>
-            reg.get(wid) match
-              case Some(live)
-                  if live.status == nebflow.actor.AgentStatus.Frozen &&
-                    nebflow.actor.FreezeDisplay.needsHumanWire(live.frozenReason.getOrElse("")) =>
-                (live.ref ! nebflow.actor.AgentCommand.RestartAgent(nebflow.actor.RestartLevel.Soft)) *>
-                  nebflow.core.tools.AgentControlTool.clearRegistryEscalation(sharedResources, wid) *>
-                  wReply(
-                    ok = true,
-                    mode = "restart",
-                    "message" -> (
-                      "Restart sent: the frozen turn is terminated now and the session resumes from the last " +
-                        "persisted checkpoint in the SAME session (finished work is not redone)."
-                    ).asJson
-                  )
-              case Some(live) if live.status == nebflow.actor.AgentStatus.Frozen =>
-                val fd = nebflow.actor.FreezeDisplay.ofWire(live.frozenReason.getOrElse(""))
-                wReply(
-                  ok = false,
-                  mode = "auto-recovering",
-                  "error" -> (
-                    s"'$wid' does not need a wake: ${fd.labelEn} (reason=${fd.reasonWire}) — the engine resumes " +
-                      "it on its own. Cancel the task if you do not want it to continue."
-                  ).asJson
-                )
-              case Some(live) =>
-                wReply(
-                  ok = false,
-                  mode = "none",
-                  "error" -> (
-                    s"'$wid' is not frozen (status=${live.status}, reason=${live.frozenReason.getOrElse("none")}) — " +
-                      "nothing to wake. Use AgentControl restart to resume a stuck turn, or cancel the task."
-                  ).asJson
-                )
-              case None =>
-                wReply(
-                  ok = false,
-                  mode = "none",
-                  "error" -> (
-                    s"'$wid' has no live agent and no delegate-error freeze record " +
-                      s"(frozenReason=${record.frozenReason.getOrElse("none")}) — it cannot be woken; re-delegate the work."
-                  ).asJson
-                )
-          }
-        case Some(record) =>
-          val banner = nebflow.core.delegate.DelegateFreeze.wakeBanner(
-            wid,
-            record.frozenReason.getOrElse(""),
-            record.frozenDetail.getOrElse("")
-          )
-          val body = if instr.trim.isEmpty then banner else s"$banner\n\n$instr"
-          sharedResources.agentRegistry.get.flatMap { reg =>
-            reg.get(wid) match
-              case Some(live) if live.kind == nebflow.actor.AgentKind.Delegate =>
-                (live.ref ! AgentCommand.UserInput(
+      // ═══ 冻结状态两套真相批（2026-11-05 10:42 报障）：准入闸只读 FreezeTruth ═══
+      // 旧实现的闸 = `DelegateRegistry.Record.frozenReason` 单槽（面板那一侧读的是另一个
+      // 写点 = `AgentRecord`），Mail 唤醒腿清槽而不发帧 ⇒ 面板挂着「需唤醒」、闸看到
+      // `frozenReason=none`，同一时刻两个答案。本批：**判定与面板读同一份派生读数**，
+      // 且每一次拒收都带回 `freeze` 块（实际状态 + 为什么 + 面板该显示什么），
+      // 前端据此自纠——不再有「点了才知道自己不该点」。
+      IO.blocking(nebflow.core.delegate.DelegateRegistry.find(wid)).flatMap { recordOpt =>
+        sharedResources.agentRegistry.get.flatMap { reg =>
+          val live = reg.get(wid)
+          val slotReason = recordOpt.flatMap(_.frozenReason)
+          val slotSince = recordOpt.flatMap(_.frozenSince)
+          val truth = nebflow.actor.FreezeTruth.of(live, slotReason, slotSince)
+          val parentSid = recordOpt.map(_.parentSessionId).getOrElse(live.map(_.rootSessionId).getOrElse(""))
+          // 唤醒成功后的状态变更帧（任何腿都必须发；`onWoken` 也发同一款，供 Mail /
+          // 自动恢复腿复用）。`freeze` 块 = 唤醒后的真相（非冻结）。
+          def wokenFrame(status: String, via: String): IO[Unit] =
+            wsSend(
+              Json.obj(
+                "type" -> "delegateWoken".asJson,
+                "sessionId" -> wid.asJson,
+                "rootSessionId" -> parentSid.asJson,
+                "via" -> via.asJson,
+                "status" -> status.asJson,
+                "at" -> System.currentTimeMillis().asJson,
+                "freeze" -> nebflow.actor.FreezeTruth.running(status, System.currentTimeMillis()).json
+              )
+            ).handleErrorWith(e => logger.warn(s"delegateWoken frame failed for $wid: ${e.getMessage}"))
+          // 拒收回执的统一载荷：**实际状态 + 权威冻结块 + 原话**（面板据此自纠）。
+          def detail(status: String, err: String): List[(String, Json)] =
+            List("actualStatus" -> status.asJson, "freeze" -> truth.json, "error" -> err.asJson)
+          if live.isEmpty && recordOpt.isEmpty then
+            wReply(
+              ok = false,
+              mode = "none",
+              "actualStatus" -> "unknown".asJson,
+              "error" -> s"no delegate record and no live agent for '$wid' (DELEGATE_NOT_FOUND)".asJson
+            )
+          else if !truth.frozen then
+            // 面板与后端打架的唯一收口点：把**服务端此刻的真相**原样带回去。
+            wReply(
+              ok = false,
+              mode = "not-frozen",
+              detail(truth.status, s"'$wid' cannot be woken: ${truth.notWakableWhy}")*
+            )
+          else if !truth.wakeable then
+            wReply(
+              ok = false,
+              mode = "auto-recovering",
+              detail(
+                truth.status,
+                s"'$wid' does not need a wake: ${truth.labelEn} (reason=${truth.reasonWire}) — ${truth.notWakableWhy}. " +
+                  "Cancel the task if you do not want it to continue."
+              )*
+            )
+          else if slotReason.exists(nebflow.core.delegate.DelegateFreeze.isFreezeWire) then
+            // ① delegate 错误冻结族（落盘槽在场）：live ⇒ 原 actor 注入；不 live ⇒ 同 id 复活。
+            val banner = nebflow.core.delegate.DelegateFreeze.wakeBanner(
+              wid,
+              truth.reasonWire,
+              recordOpt.flatMap(_.frozenDetail).getOrElse("")
+            )
+            val body = if instr.trim.isEmpty then banner else s"$banner\n\n$instr"
+            live match
+              case Some(l) if l.kind == nebflow.actor.AgentKind.Delegate =>
+                (l.ref ! AgentCommand.UserInput(
                   text = body,
-                  replyTo = live.supervisorRef,
+                  replyTo = l.supervisorRef,
                   source = Some("delegate-wake"),
                   sender = Some("panel"),
                   eventType = Some("info"),
                   fromUser = false
                 )) *> nebflow.core.delegate.DelegateFreeze
-                  .onWoken(sharedResources, wid, "panel-wake")
+                  .onWoken(sharedResources, wid, "panel-wake", Some(wsSend))
                   .handleErrorWith(e => logger.warn(s"delegateWake onWoken failed for $wid: ${e.getMessage}")) *>
                   wReply(
                     ok = true,
                     mode = "live",
+                    "actualStatus" -> "waking".asJson,
+                    "freeze" -> nebflow.actor.FreezeTruth.running("waking", System.currentTimeMillis()).json,
                     "message" -> "Woken in the SAME session — it continues from the freeze point at the next turn boundary (finished work is not redone).".asJson
                   )
               case _ =>
@@ -964,19 +962,50 @@ private[gateway] object WsSessionChatHandlers:
                   )
                   .flatMap {
                     case Right(()) =>
-                      wReply(
-                        ok = true,
-                        mode = "revived",
-                        "message" -> "Frozen session resumed in the SAME session id from the persisted transcript (finished work is not redone).".asJson
-                      )
+                      wokenFrame("running", "panel-revive") *>
+                        wReply(
+                          ok = true,
+                          mode = "revived",
+                          "actualStatus" -> "running".asJson,
+                          "freeze" -> nebflow.actor.FreezeTruth.running("running", System.currentTimeMillis()).json,
+                          "message" -> "Frozen session resumed in the SAME session id from the persisted transcript (finished work is not redone).".asJson
+                        )
                     case Left(reason) =>
                       wReply(
                         ok = false,
                         mode = "revive-failed",
-                        "error" -> s"could not wake the frozen delegate: $reason (record + transcript are kept)".asJson
+                        detail(truth.status, s"could not wake the frozen delegate: $reason (record + transcript are kept)")*
                       )
                   }
-          }
+          else
+            // ② actor 级需人冻结族（循环检测 L2 / 已升级到人 / 原因未知）：无落盘槽，
+            //    恢复手段 = 从检查点重启（与 AgentControl restart 同一机制）。
+            live match
+              case Some(l) =>
+                (l.ref ! nebflow.actor.AgentCommand.RestartAgent(nebflow.actor.RestartLevel.Soft)) *>
+                  nebflow.core.tools.AgentControlTool.clearRegistryEscalation(sharedResources, wid) *>
+                  wokenFrame("restarting", "panel-restart") *>
+                  wReply(
+                    ok = true,
+                    mode = "restart",
+                    "actualStatus" -> "restarting".asJson,
+                    "freeze" -> nebflow.actor.FreezeTruth.running("restarting", System.currentTimeMillis()).json,
+                    "message" -> (
+                      "Restart sent: the frozen turn is terminated now and the session resumes from the last " +
+                        "persisted checkpoint in the SAME session (finished work is not redone)."
+                    ).asJson
+                  )
+              case None =>
+                wReply(
+                  ok = false,
+                  mode = "none",
+                  detail(
+                    "unknown",
+                    s"'$wid' is frozen in the record but has no live agent to continue (status=unknown, " +
+                      s"reason=${truth.reasonWire}) — re-delegate the work or cancel the task."
+                  )*
+                )
+        }
       }
   end handleDelegateWake
 
@@ -1353,7 +1382,13 @@ private[gateway] object WsSessionChatHandlers:
                           standbySince = standbySince,
                           frozenSince = frozenSince,
                           frozenReason = frozenReason,
-                          wakeAddress = frozenSince.map(_ => s"delegate:${rec.sessionId}")
+                          wakeAddress = frozenSince.map(_ => s"delegate:${rec.sessionId}"),
+                          // 冻结状态两套真相批（2026-11-05）：**预算好的单一真相**随快照
+                          // 出帧——内存态（rec.status/frozenReason）与落盘槽（frozenSince/
+                          // frozenReason）在这一处合流，面板与唤醒闸此后读同一份读数。
+                          freezeTruth = Some(
+                            nebflow.actor.FreezeTruth.of(Some(rec), frozenReason, frozenSince)
+                          )
                         )
                       }
                       }
