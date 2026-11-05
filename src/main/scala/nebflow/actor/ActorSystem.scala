@@ -30,9 +30,42 @@ trait ActorSystem:
   def isAlive(path: ActorPath): IO[Boolean]
   def watch(watcher: ActorPath, target: ActorPath): IO[Unit]
   def unwatch(watcher: ActorPath, target: ActorPath): IO[Unit]
+
+  /**
+   * 死信累计数（刀三·爆炸保护只读面）：邮箱/信号箱满时被拒的消息条数。
+   * 恒 0 = 从未触发（正常态）；> 0 = 曾经极端积压，详见 ERROR 日志。
+   */
+  def deadLetterCount: IO[Long]
 end ActorSystem
 
 object ActorSystem:
+
+  /**
+   * 内核消息箱容量默认值（刀三·爆炸保护）。
+   *
+   * 来源 = 审计件 `actorization-gap-and-pekko-migration-audit__20261104_211833__
+   * delegate-nebflow-18eb158f.md` §3 刀三 + 作者裁定：**只做爆炸保护，不做流量
+   * 控制**——上界极高，只在极端积压时拒绝 + 计数 + 死信可见；绝不 TTL / 丢弃 /
+   * 常态限流。8192 ≈ 正常单 actor 积压（一 turn 一条）的数十倍，越界即异常态。
+   */
+  val DefaultMailboxCapacity = 8192
+
+  /**
+   * 内核信号箱（死信监视 `SystemSignal`）容量默认值（刀三·爆炸保护）。
+   *
+   * 与消息箱分开定值：信号箱只承载 `Terminated`，量级远小于消息流，2 千级足够；
+   * 同批理由见 [[DefaultMailboxCapacity]]（只做爆炸保护，不做流量控制）。
+   */
+  val DefaultSystemQueueCapacity = 2048
+
+  /** `-D nebflow.actor.mailboxCapacity=<n>` 覆写面（≤0 / 非数 → 回落默认）。 */
+  def mailboxCapacity: Int = capOf("nebflow.actor.mailboxCapacity", DefaultMailboxCapacity)
+
+  /** `-D nebflow.actor.systemQueueCapacity=<n>` 覆写面（≤0 / 非数 → 回落默认）。 */
+  def systemQueueCapacity: Int = capOf("nebflow.actor.systemQueueCapacity", DefaultSystemQueueCapacity)
+
+  private def capOf(key: String, default: Int): Int =
+    sys.props.getOrElse(key, default.toString).trim.toIntOption.filter(_ > 0).getOrElse(default)
 
   /** Create a local actor system. */
   def apply(deviceName: String): ActorSystem =
@@ -59,6 +92,15 @@ final class LocalActorSystem(val localDevice: String) extends ActorSystem:
   /** Death watch: target path → set of watcher paths. */
   private val watchers: Ref[IO, Map[String, Set[String]]] = Ref.unsafe(Map.empty)
 
+  /** 容量在此刻定值（构造期读 -D；装配后不随 sys.props 漂移——行为可预测）。 */
+  private val mailboxCapacity: Int = ActorSystem.mailboxCapacity
+  private val systemQueueCapacity: Int = ActorSystem.systemQueueCapacity
+
+  /** 死信台账（刀三·爆炸保护）：满箱拒绝的计数面，只读可见（[[deadLetterCount]]）。 */
+  private val deadLetters: DeadLetterLedger = DeadLetterLedger.unsafe
+
+  def deadLetterCount: IO[Long] = deadLetters.count
+
   def spawn[Msg](
     behavior: Behavior[Msg],
     name: String,
@@ -67,12 +109,15 @@ final class LocalActorSystem(val localDevice: String) extends ActorSystem:
     val path = ActorPath(localDevice, name)
     val ctxLog = NebflowLogger.forName(s"nebflow.actor.$name")
     for
-      queue <- Queue.unbounded[IO, Msg]
-      sysQueue <- Queue.unbounded[IO, SystemSignal]
+      // 刀三·爆炸保护（审计件 §3 刀三 + 作者裁定）：有界而非无界——满则不挂起
+      // （不传染阻塞给发送方）、不丢弃静默（死信 ERROR + 计数），TTL/限流一概不引入。
+      queue <- Queue.bounded[IO, Msg](mailboxCapacity)
+      sysQueue <- Queue.bounded[IO, SystemSignal](systemQueueCapacity)
       turnFibersRef <- Ref.of[IO, Map[String, Fiber[IO, Throwable, Unit]]](Map.empty)
       childrenRef <- Ref.of[IO, List[ActorRef[?]]](Nil)
       fiberPromise <- cats.effect.Deferred[IO, Fiber[IO, Throwable, Unit]]
-      ref = new LocalActorRef[Msg](path, queue, sysQueue, fiberPromise)
+      ref = new LocalActorRef[Msg](path, queue, sysQueue, fiberPromise, mailboxCapacity, deadLetters)
+
       ctx = new LocalActorContext[Msg](ref, this, ctxLog, turnFibersRef, childrenRef)
       initBehavior <- behavior.onStart(ctx)
       behaviorRef <- Ref.of[IO, Behavior[Msg]](initBehavior)
@@ -141,7 +186,19 @@ final class LocalActorSystem(val localDevice: String) extends ActorSystem:
           registry.get.flatMap { entries =>
             watcherPaths.toList.traverse_ { wp =>
               entries.get(wp) match
-                case Some(entry) => entry.systemQueue.offer(SystemSignal.Terminated(deadRef))
+                // 刀三·爆炸保护：信号箱有界 → 满时 `tryOffer` 拒绝并记死信（ERROR
+                // 带 path + 计数），绝不静默；不挂起（不阻塞正在收尸的 loop）。
+                case Some(entry) =>
+                  entry.systemQueue.tryOffer(SystemSignal.Terminated(deadRef)).flatMap {
+                    case true => IO.unit
+                    case false =>
+                      deadLetters.record(
+                        wp,
+                        "system-queue",
+                        systemQueueCapacity,
+                        s"Terminated(${deadPath}) rejected"
+                      )
+                  }
                 case None => IO.unit
             }
           }
