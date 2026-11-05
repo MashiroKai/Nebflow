@@ -1,10 +1,24 @@
-wiki-docs 校验：24 条违规（/Users/kaiyu/.stand/projects/stand/.stand/docs）
+wiki-docs 校验：54 条违规（/Users/kaiyu/.stand/projects/stand/.stand/docs）
 
 ── R3 concept-first-use（2）──
   term-v2-inventory__20261105_122137.md:224  概念「概念首现」首现未解释且未引用——就地一句话解释，或 [[glossary#^concept-first-use]]
   term-v2-recon__20261105_110513.md:49  概念「文档库（vault）」首现未解释且未引用——就地一句话解释，或 [[glossary#^vault]]
 
-── R8 doc-indent（13）──
+── R8 doc-indent（27）──
+  mobile-search-flat-morph-and-placeholder-retire__20261105_135700.md:12  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+  mobile-search-flat-morph-and-placeholder-retire__20261105_135700.md:14  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+  mobile-search-flat-morph-and-placeholder-retire__20261105_135700.md:16  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+  mobile-search-flat-morph-and-placeholder-retire__20261105_135700.md:20  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+  mobile-search-flat-morph-and-placeholder-retire__20261105_135700.md:22  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+  mobile-search-flat-morph-and-placeholder-retire__20261105_135700.md:40  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+  mobile-search-flat-morph-and-placeholder-retire__20261105_135700.md:44  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+  mobile-search-flat-morph-and-placeholder-retire__20261105_135700.md:46  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+  mobile-search-flat-morph-and-placeholder-retire__20261105_135700.md:64  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+  mobile-search-flat-morph-and-placeholder-retire__20261105_135700.md:68  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+  mobile-search-flat-morph-and-placeholder-retire__20261105_135700.md:83  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+  mobile-search-flat-morph-and-placeholder-retire__20261105_135700.md:85  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+  mobile-search-flat-morph-and-placeholder-retire__20261105_135700.md:96  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+  mobile-search-flat-morph-and-placeholder-retire__20261105_135700.md:98  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
   term-v2-inventory__20261105_122137.md:8  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
   term-v2-inventory__20261105_122137.md:10  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
   term-v2-inventory__20261105_122137.md:24  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
@@ -23,8 +37,32 @@ wiki-docs 校验：24 条违规（/Users/kaiyu/.stand/projects/stand/.stand/docs
   term-v2-inventory__20261105_122137.md:67  缩写「README」首现既无全称也无词条链接——写成 `全称（README）` / `README（全称）` / `[[README]]（全称）`；跨文档通用的词请注册成词条，通用词（单位/技术词）才进 SKILL.md 允许清单
   term-v2-inventory__20261105_122137.md:163  缩写「TOP」首现既无全称也无词条链接——写成 `全称（TOP）` / `TOP（全称）` / `[[TOP]]（全称）`；跨文档通用的词请注册成词条，通用词（单位/技术词）才进 SKILL.md 允许清单
 
-── broken-link（7）──
+── R10 plain-language（1）──
+  term-system-v2__20261105_134905.md:70  「对齐」是禁用/避用词（读者要二次解码）——建议：改成一致（写清哪两处改成一致）；能用平实动词+名词说清的，不用抽象名词包裹
+
+── R11 doc-structure（8）──
+  mobile-search-flat-morph-and-placeholder-retire__20261105_135700.md:31  章节「二、搜索条形态与 token（扁平长条）」开头缺分点结论句——首行写一句加粗结论（`**一句话结论。**`），论证细节往下放进折叠块
+  mobile-search-flat-morph-and-placeholder-retire__20261105_135700.md:44  章节「三、圆钮复用点（同源证据，零仿制）」开头缺分点结论句——首行写一句加粗结论（`**一句话结论。**`），论证细节往下放进折叠块
+  mobile-search-flat-morph-and-placeholder-retire__20261105_135700.md:64  章节「五、动画实现方式」开头缺分点结论句——首行写一句加粗结论（`**一句话结论。**`），论证细节往下放进折叠块
+  mobile-search-flat-morph-and-placeholder-retire__20261105_135700.md:68  章节「六、验收证据」开头缺分点结论句——首行写一句加粗结论（`**一句话结论。**`），论证细节往下放进折叠块
+  mobile-search-flat-morph-and-placeholder-retire__20261105_135700.md:96  章节「八、改动面」开头缺分点结论句——首行写一句加粗结论（`**一句话结论。**`），论证细节往下放进折叠块
+  term-system-v2__20261105_134905.md:104  章节「2 证据区」开头缺分点结论句——首行写一句加粗结论（`**一句话结论。**`），论证细节往下放进折叠块
+  term-system-v2__20261105_134905.md:229  章节「3 存量数字」开头缺分点结论句——首行写一句加粗结论（`**一句话结论。**`），论证细节往下放进折叠块
+  term-system-v2__20261105_134905.md:311  章节「8 现在还剩什么」首行 108 字符，超出一句话（上限 80）——结论压成一句，其余进折叠块
+
+── R11 detail-fold（1）──
+  term-system-v2__20261105_134905.md:95  章节「2 证据区」敞开正文 958 可视字符（阈值 600）且没有折叠块——把论证细节包进 `<details><summary>论证细节</summary>…</details>`，结论与关键数字留在外面
+
+── R12 image-caption（4）──
+  term-system-v2__20261105_134905.md:74  图 `attachments/term-v2-render-1440-light.png` 没有图注——图片下一行写一行 `图 N …`，一句话说这张图证明了什么（图里少写字，解释放图注与正文）
+  term-system-v2__20261105_134905.md:76  图 `attachments/term-v2-render-375-light.png` 没有图注——图片下一行写一行 `图 N …`，一句话说这张图证明了什么（图里少写字，解释放图注与正文）
+  term-system-v2__20261105_134905.md:78  图 `attachments/term-v2-render-1440-dark.png` 没有图注——图片下一行写一行 `图 N …`，一句话说这张图证明了什么（图里少写字，解释放图注与正文）
+  term-system-v2__20261105_134905.md:80  图 `attachments/term-v2-render-375-dark.png` 没有图注——图片下一行写一行 `图 N …`，一句话说这张图证明了什么（图里少写字，解释放图注与正文）
+
+── broken-link（9）──
   canvas-ask-legibility-and-layout__20261105_103500.md:176  引用目标不存在：[[canvas-ask-legibility-and-layout]]（既非文档也非已注册词条——补词条声明块或改引文档）
+  term-system-v2__20261105_134905.md:54  引用目标不存在：[[X]]（既非文档也非已注册词条——补词条声明块或改引文档）
+  term-system-v2__20261105_134905.md:54  引用目标不存在：[[Name]]（既非文档也非已注册词条——补词条声明块或改引文档）
   term-v2-inventory__20261105_122137.md:43  引用目标不存在：[[名]]（既非文档也非已注册词条——补词条声明块或改引文档）
   term-v2-inventory__20261105_122137.md:91  引用目标不存在：[[名]]（既非文档也非已注册词条——补词条声明块或改引文档）
   term-v2-recon__20261105_110513.md:49  引用目标不存在：[[人面子]]（既非文档也非已注册词条——补词条声明块或改引文档）
@@ -33,8 +71,8 @@ wiki-docs 校验：24 条违规（/Users/kaiyu/.stand/projects/stand/.stand/docs
   term-v2-recon__20261105_110513.md:107  引用目标不存在：[[名]]（既非文档也非已注册词条——补词条声明块或改引文档）
 
 
-图片纪律（R6 image-outside-vault）：图片引用 47 处 · 违规 0 条 · 行内豁免 0 条
-  图外挂提示（info，不计违规）：111 篇文档点名 vault 外证据树路径
+图片纪律（R6 image-outside-vault）：图片引用 51 处 · 违规 0 条 · 行内豁免 0 条
+  图外挂提示（info，不计违规）：113 篇文档点名 vault 外证据树路径
     Jev与生图配置面板对齐LLM__20261105_091500__delegate-nebflow-79bb6698.md:87  .stand/evidence/20261103_jev-imagegen-align-llm/shots/{red,green}/
     actor-as-agent-framework-creation-paths-and-invariants__20261104_214436__delegate-nebflow-f3849ed1.md:552  reports-evidence/
     agent-panel-row-dedup__20261102_223000__delegate-nebflow-4e1fad0a.md:25  .nebflow/worktrees/delegate-nebflow-4e1fad0a/src/main/resources/web/js/main/bgAgents.js
@@ -55,9 +93,9 @@ wiki-docs 校验：24 条违规（/Users/kaiyu/.stand/projects/stand/.stand/docs
     config-single-source__20261105_124500.md:70  reports-evidence/config-single-source-e2e/01-migration-diff.txt
     console-ask-grow__20261104_132000__delegate-nebflow-bb1a8bbb.md:36  .stand/evidence/ui-unification-20261103/console-ask-grow/{before,after}/ 等 2 处
     conversation-heads-always-visible__20261105_084500__delegate-nebflow-fec6393b.md:83  reports-evidence/conversation-heads-always-visible__20261104_213000__delegate-nebflow-fec6393b/
-    …（余 91 篇，见 --json 违规清单外的存量盘点报告）
-排版与缩写（R7-R9）：硬查 22 篇 · 存量 400 篇 · 彩色 3 处 · 正文段落 6399 段 · 缩写 3113 个（允许清单豁免 1318 · 同档小写词形 476）
-结构与图注（R10-R12）：章节 3207 节 · 未折叠细节 182 处 · 图 44 张（缺图注 34 · 图注过长 0）· 禁用词 196 处
+    …（余 93 篇，见 --json 违规清单外的存量盘点报告）
+排版与缩写（R7-R9）：硬查 24 篇 · 存量 400 篇 · 彩色 3 处 · 正文段落 6442 段 · 缩写 3123 个（允许清单豁免 1326 · 同档小写词形 477）
+结构与图注（R10-R12）：章节 3225 节 · 未折叠细节 183 处 · 图 48 张（缺图注 38 · 图注过长 0）· 禁用词 197 处
 图谱连线（advisory，不计违规）：1 篇零出链且零入链——图谱面建议，词条面不靠它
   存量样式/缩写/图注（advisory，不计违规，时间界 20261105_111100）：7121 条 —— abbrev-expansion 1077 · detail-fold 182 · doc-indent 4306 · doc-structure 1326 · image-caption 34 · plain-language 196
     Jev与生图配置面板对齐LLM__20261105_091500__delegate-nebflow-79bb6698.md:12  【doc-indent】正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
