@@ -124,7 +124,7 @@ trait AgentRuntimePort extends AgentRegistryPort:
    * `resources` 形参(agent 侧实现以 `resources = this` 代入——core 内联构造点
    * MailTool 以 resources 为 receiver 调用,receiver == 原 resources 实参,零行为差。
    * 历史构造点 EphemeralAgentRunner（R4 卫生批 2026-10-29 删）与
-   * FlowTreeActor.resumeInterruptedAgent（同批随崩溃恢复假链路删除）已不在)。
+   * 团队树的 resumeInterruptedAgent（同批随崩溃恢复假链路删除）已不在)。
    * 默认值逐字镜像。
    */
   def agentActorBehavior(

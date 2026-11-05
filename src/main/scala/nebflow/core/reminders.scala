@@ -64,7 +64,7 @@ object SystemReminders:
    *  - tasks: team sessions only, real-user turns only (task redesign
    *    — moved from Nebula to team members); the caller supplies
    *    pre-rendered full/delta/unchanged text (change detection lives in
-   *    AgentCore, gated on TeamSessionRegistry.teamOfSession).
+   *    AgentCore, gated on the retired team-session lookup).
    *  - schedule: Nebula (root) only.
    *  - sessions & environment reminder types REMOVED (rationale: sessions
    *    outdated; environment change notifications cut — only stable fields

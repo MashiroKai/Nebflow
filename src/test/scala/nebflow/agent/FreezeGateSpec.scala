@@ -855,50 +855,11 @@ class FreezeGateSpec extends CatsEffectSuite:
     end try
   }
 
-  // ── B12: team busy 时序 ───────────────────────────────────
-
-  test("B12: frozen team agent stays busy in TeamSessionRegistry") {
-    val system = ActorSystem("freeze-b12")
-    val tmp = os.temp.dir()
-    val prevRoot = PathUtil.dataRoot
-    val prevLlmLog = nebflow.core.LlmLogWriter.isEnabled
-    nebflow.core.LlmLogWriter.setEnabled(false)
-    PathUtil.setDataRoot(tmp / "data")
-    try
-      val program = for
-        counter <- IO.ref(0)
-        requests <- IO.ref(List.empty[LlmRequest])
-        events <- IO.ref(List.empty[Json])
-        schedRef <- IO.ref(frozenConfig())
-        resources <- mkResources(system, tmp, CountingLlm(counter, requests), schedRef)
-        sid = "freeze-b12-agent"
-        ref <- system.spawn(
-          AgentActor(
-            agentDef = rootDef("Backend", category = "team"),
-            resources = resources,
-            wsSend = json => events.update(_ :+ json),
-            depth = 1,
-            sessionId = Some(sid),
-            sessionName = Some("b12")
-          ),
-          sid
-        )
-        _ <- resources.agentRegistry.update(_ + (sid -> AgentRecord(sid, ref, AgentKind.Team, sid, None)))
-        _ <- ref ! AgentCommand.UserInput("team task")
-        _ <- waitUntil(System.currentTimeMillis() + 5000)(
-          resources.agentRegistry.get.map(_.get(sid).exists(_.status == AgentStatus.Frozen))
-        )
-        busy <- nebflow.core.flow.TeamSessionRegistry.isBusy(sid)
-        _ = assert(busy, "frozen team agent must read busy (Teams panel correctness)")
-      yield ()
-      program.unsafeRunSync()
-    finally
-      nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)
-      PathUtil.setDataRoot(prevRoot)
-      system.stopAll.attempt.void.unsafeRunSync()
-      os.remove.all(tmp)
-    end try
-  }
+  // 团队功能删除批（team-feature-deletion-20261104）阶段 3：原 B12 用例
+  // 「frozen team agent stays busy in TeamSessionRegistry」整条删除 —— 它断言的
+  // `TeamSessionRegistry.isBusy` 与 `markTeamBusy/markTeamIdle` 双写随团队会话
+  // 登记表一并退役（团队 busy 面板语义无对象）。删因：**团队 busy 能力已退役**，
+  // 不是「跑不过」。其余用例（含 Frozen 状态机本体）逐字未动。
 
   // ── B7: TaskStuckWatcher 豁免（纯 registry 层测试）────────
 
