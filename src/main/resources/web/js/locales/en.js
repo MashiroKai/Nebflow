@@ -1490,10 +1490,6 @@ export default {
   'provider.keyRequired': 'API Key is required for new providers',
   'provider.required': 'Required',
   'provider.protocol': 'Endpoint format',
-  // The helper line under the endpoint-format select (protoface-ui batch
-  // 2026-09-22): shows the POST target the engine will actually hit for the
-  // selected face + the currently typed base URL. {target} = full URL.
-  'provider.protocolHelper': 'This provider will receive: POST {target}',
   'provider.idRequired': 'Provider ID is required',
   'provider.noSpaces': 'Provider ID cannot contain spaces',
   'provider.baseUrlRequired': 'Base URL is required',
@@ -1505,11 +1501,14 @@ export default {
   'provider.ctxExceedsCeiling': 'Model {id}: context window {value} exceeds the supported ceiling {max}',
   'provider.ctxDefaulted': 'Context window left empty for {ids}; saved with the default {def}',
   'provider.ctxClampedToMax': 'Model {id}: the default 1,000,000 exceeds the reported maximum; saved as {max}',
-  // model-schedule-unavailable batch: provider modal edit face.
+  // model-schedule-unavailable batch: provider-level ONLY (config-single-source
+  // batch, author ruling ④ 2026-11-05). Always-on copy = label + empty-state
+  // fact ("No restriction"); the explanation lives in the `?` hover hint (⑤).
   'provider.unavailableWindows': 'Unavailable windows',
-  'provider.unavailableWindowsPlaceholder': 'e.g. 14:00-18:00; comma-separate multiple; cross-midnight as 23:00-07:00; empty = no restriction',
+  'provider.unavailableWindowsHint': 'Applies to every model of this provider; cross-midnight as 23:00-07:00',
+  'provider.unavailableWindowsPlaceholder': 'HH:mm-HH:mm',
   'provider.unavailableWindowsInvalid': 'Invalid unavailable window: "{value}" (expected HH:mm-HH:mm, start ≠ end)',
-  'provider.unavailableWindowsEmpty': 'No restriction (empty = unrestricted)',
+  'provider.unavailableWindowsEmpty': 'No restriction',
   'provider.unavailableWindowsAdd': 'Add unavailable window',
   'provider.unavailableWindowsDaysReadonly': 'By weekday · hand-edited, read-only',
   'provider.unavailableWindowsDays': 'Active weekdays',

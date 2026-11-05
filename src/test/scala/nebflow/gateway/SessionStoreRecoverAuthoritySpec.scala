@@ -49,7 +49,7 @@ class SessionStoreRecoverAuthoritySpec extends CatsEffectSuite:
     os.remove.all(tmp)
 
   private def writeGlobal(mode: String): Unit =
-    os.write.over(tmp / "nebflow.json", s"""{"safety": {"defaultMode": "$mode"}}""", createFolders = true)
+    os.write.over(tmp / nebflow.shared.Branding.configFileName, s"""{"safety": {"defaultMode": "$mode"}}""", createFolders = true)
 
   /**
    * 一个索引在册的会话 + 一个磁盘上的孤儿（`<uuid>.json` 不在索引里 ⇒

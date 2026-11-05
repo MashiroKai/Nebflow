@@ -24,7 +24,7 @@ class GatewayClientPortSpec extends FunSuite:
     val saved = PathUtil.dataRoot
     try
       PathUtil.setDataRoot(tmp)
-      configJson.foreach(j => os.write.over(tmp / "nebflow.json", j, createFolders = true))
+      configJson.foreach(j => os.write.over(tmp / nebflow.shared.Branding.configFileName, j, createFolders = true))
       f
     finally
       PathUtil.setDataRoot(saved)

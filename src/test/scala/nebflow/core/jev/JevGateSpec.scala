@@ -71,13 +71,13 @@ class JevGateSpec extends CatsEffectSuite:
       for
         absent <- JevConfigReader.snapshot
         _ = assertEquals(absent, JevGateSnapshot.Off)
-        _ = os.write.over(tmp / "nebflow.json", "{ not json")
+        _ = os.write.over(tmp / nebflow.shared.Branding.configFileName, "{ not json")
         broken <- JevConfigReader.snapshot
         _ = assertEquals(broken, JevGateSnapshot.Off, "an unparseable config must not throw")
-        _ = os.write.over(tmp / "nebflow.json", """{"jev":"a string, not an object"}""")
+        _ = os.write.over(tmp / nebflow.shared.Branding.configFileName, """{"jev":"a string, not an object"}""")
         wrongType <- JevConfigReader.snapshot
         _ = assertEquals(wrongType, JevGateSnapshot.Off)
-        _ = os.write.over(tmp / "nebflow.json", """{"llm":{"providers":{}}}""")
+        _ = os.write.over(tmp / nebflow.shared.Branding.configFileName, """{"llm":{"providers":{}}}""")
         absentAgain <- JevConfigReader.outcome
         _ = assertEquals(absentAgain, JevGateOutcome.Off(JevGateReason.NotConfigured))
       yield ()
@@ -89,7 +89,7 @@ class JevGateSpec extends CatsEffectSuite:
       for
         _ <- IO(
           os.write.over(
-            tmp / "nebflow.json",
+            tmp / nebflow.shared.Branding.configFileName,
             """{"jev":{"enabled":true,"provider":"laya","choiceHighBasePolicy":"warn"}}"""
           )
         )
@@ -102,7 +102,7 @@ class JevGateSpec extends CatsEffectSuite:
         _ = assert(JevGate.isApplied(snap), s"expected applied, got: $out")
         // 零超时（2026-10-19 作者拍板）：快照不再携带 `timeoutMs`——旧文件里的
         // 残留键被忽略（零迁移），分配链无 wall-clock 预算可言。
-        _ <- IO(os.write.over(tmp / "nebflow.json", """{"jev":{"enabled":true,"provider":"laya","timeoutMs":0}}"""))
+        _ <- IO(os.write.over(tmp / nebflow.shared.Branding.configFileName, """{"jev":{"enabled":true,"provider":"laya","timeoutMs":0}}"""))
         legacy <- JevConfigReader.snapshot
         _ = assert(legacy.enabled, "a legacy config carrying the removed knob still reads")
       yield ()
@@ -112,10 +112,10 @@ class JevGateSpec extends CatsEffectSuite:
   test("the gate hot-reads: flipping the toggle changes the verdict without a restart") {
     withTempDataRoot { tmp =>
       for
-        _ <- IO(os.write.over(tmp / "nebflow.json", """{"jev":{"enabled":false,"provider":"typesafe-jev"}}"""))
+        _ <- IO(os.write.over(tmp / nebflow.shared.Branding.configFileName, """{"jev":{"enabled":false,"provider":"typesafe-jev"}}"""))
         off <- JevConfigReader.outcome
         _ = assertEquals(off, JevGateOutcome.Off(JevGateReason.ToggleOff))
-        _ <- IO(os.write.over(tmp / "nebflow.json", """{"jev":{"enabled":true,"provider":"typesafe-jev"}}"""))
+        _ <- IO(os.write.over(tmp / nebflow.shared.Branding.configFileName, """{"jev":{"enabled":true,"provider":"typesafe-jev"}}"""))
         on <- JevConfigReader.outcome
         _ = assert(on match
           case JevGateOutcome.Applied(_) => true;

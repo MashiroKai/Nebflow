@@ -40,7 +40,7 @@ class SafetyModeRoutesSpec extends CatsEffectSuite:
     os.remove.all(tmp)
 
   // def（非 val）：`tmp` 由 beforeEach 赋值，val 会在类初始化时先于 beforeEach 求值
-  private def configPath: os.Path = tmp / "nebflow.json"
+  private def configPath: os.Path = tmp / nebflow.shared.Branding.configFileName
 
   private def writeConfig(content: String): Unit = os.write.over(configPath, content, createFolders = true)
 

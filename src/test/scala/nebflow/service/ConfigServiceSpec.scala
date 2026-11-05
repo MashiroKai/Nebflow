@@ -76,7 +76,7 @@ class ConfigServiceSpec extends FunSuite:
       s"""{"llm":{"providers":{"Zai":${validProvider("Zai").noSpaces},"glm":${validProvider(
           "glm"
         ).noSpaces}},"model":{"default":"Zai/m1","fallbacks":["glm/m1"]}}}"""
-    os.write.over(PathUtil.dataRoot / "nebflow.json", seed)
+    os.write.over(PathUtil.dataRoot / nebflow.shared.Branding.configFileName, seed)
 
     // Seed agent.json files across all three layers, referencing Zai
     val agentDirs = List(
@@ -110,7 +110,7 @@ class ConfigServiceSpec extends FunSuite:
 
     // ── Config file: provider removed; llm.model 死字段原样保留（#339：scrub
     // 已删，boot 迁移整体剥离）──
-    val saved = parse(os.read(PathUtil.dataRoot / "nebflow.json")).toOption.get
+    val saved = parse(os.read(PathUtil.dataRoot / nebflow.shared.Branding.configFileName)).toOption.get
     val llmHc = saved.hcursor.downField("llm")
     assert(llmHc.downField("providers").downField("Zai").focus.isEmpty, "Zai provider must be deleted")
     assertEquals(llmHc.downField("model").downField("default").as[String], Right("Zai/m1"))
@@ -169,13 +169,13 @@ class ConfigServiceSpec extends FunSuite:
       s"""{"llm":{"providers":{"Zai":${validProvider("Zai").noSpaces},"glm":${validProvider(
           "glm"
         ).noSpaces}},"model":{"default":"Zai/m1","fallbacks":[]}}}"""
-    os.write.over(PathUtil.dataRoot / "nebflow.json", seed)
+    os.write.over(PathUtil.dataRoot / nebflow.shared.Branding.configFileName, seed)
 
     val incoming = """{"llm":{"providers":{"Zai":null}}}"""
     val result = ConfigService.updateConfig(incoming).unsafeRunSync()
     assertEquals(result, Right(()))
 
-    val saved = parse(os.read(PathUtil.dataRoot / "nebflow.json")).toOption.get
+    val saved = parse(os.read(PathUtil.dataRoot / nebflow.shared.Branding.configFileName)).toOption.get
     val modelHc = saved.hcursor.downField("llm").downField("model")
     // 死字段原样保留（不在 updateConfig 的清理职责内）
     assertEquals(modelHc.downField("default").as[String], Right("Zai/m1"))
@@ -195,7 +195,7 @@ class ConfigServiceSpec extends FunSuite:
       s"""{"llm":{"providers":{"Zai":${validProvider("Zai").noSpaces},"glm":${validProvider(
           "glm"
         ).noSpaces}},"model":{"default":"Zai/m1","fallbacks":["Zai/m2","glm/m1"]}}}"""
-    os.write.over(PathUtil.dataRoot / "nebflow.json", seed)
+    os.write.over(PathUtil.dataRoot / nebflow.shared.Branding.configFileName, seed)
 
     val coderDir = tmpRoot / "agents" / "Coder"
     os.makeDir.all(coderDir)
@@ -210,7 +210,7 @@ class ConfigServiceSpec extends FunSuite:
     val result = ConfigService.updateConfig(incoming).unsafeRunSync()
     assertEquals(result, Right(()))
 
-    val saved = parse(os.read(PathUtil.dataRoot / "nebflow.json")).toOption.get
+    val saved = parse(os.read(PathUtil.dataRoot / nebflow.shared.Branding.configFileName)).toOption.get
     val llmHc = saved.hcursor.downField("llm")
     assert(llmHc.downField("providers").downField("Zai").focus.isEmpty, "old name must be gone")
     // masked "***" must not overwrite the stored secret during merge
@@ -234,7 +234,7 @@ class ConfigServiceSpec extends FunSuite:
       s"""{"llm":{"providers":{"Zai":${validProvider("Zai").noSpaces},"glm":${validProvider(
           "glm"
         ).noSpaces}},"model":{"default":"Zai/m1","fallbacks":[]}}}"""
-    os.write.over(PathUtil.dataRoot / "nebflow.json", seed)
+    os.write.over(PathUtil.dataRoot / nebflow.shared.Branding.configFileName, seed)
 
     // #339：llm.model 校验/改写均已删——incoming 带旧名 refs 直接接受（无
     // 校验可触发拒绝），死字段按 merge 原样保留。
@@ -243,7 +243,7 @@ class ConfigServiceSpec extends FunSuite:
     val result = ConfigService.updateConfig(incoming).unsafeRunSync()
     assertEquals(result, Right(()))
 
-    val saved = parse(os.read(PathUtil.dataRoot / "nebflow.json")).toOption.get
+    val saved = parse(os.read(PathUtil.dataRoot / nebflow.shared.Branding.configFileName)).toOption.get
     assertEquals(
       saved.hcursor.downField("llm").downField("model").downField("default").as[String],
       Right("Zai/m1")
@@ -255,7 +255,7 @@ class ConfigServiceSpec extends FunSuite:
       s"""{"llm":{"providers":{"Zai":${validProvider("Zai").noSpaces},"glm":${validProvider(
           "glm"
         ).noSpaces}},"model":{"default":"glm/m1","fallbacks":[]}}}"""
-    os.write.over(PathUtil.dataRoot / "nebflow.json", seed)
+    os.write.over(PathUtil.dataRoot / nebflow.shared.Branding.configFileName, seed)
     val presetsFile = PathUtil.dataRoot / "model-presets.json"
     if os.exists(presetsFile) then os.remove(presetsFile)
 
@@ -271,7 +271,7 @@ class ConfigServiceSpec extends FunSuite:
       s"""{"llm":{"providers":{"Zai":${validProvider("Zai").noSpaces},"glm":${validProvider(
           "glm"
         ).noSpaces}},"model":{"default":"glm/m1","fallbacks":[]}}}"""
-    os.write.over(PathUtil.dataRoot / "nebflow.json", seed)
+    os.write.over(PathUtil.dataRoot / nebflow.shared.Branding.configFileName, seed)
 
     val presets =
       """{"defaultPreset":"general","presets":{
@@ -304,7 +304,7 @@ class ConfigServiceSpec extends FunSuite:
       s"""{"llm":{"providers":{"Zai":${validProvider("Zai").noSpaces},"glm":${validProvider(
           "glm"
         ).noSpaces}},"model":{"default":"glm/m1","fallbacks":[]}}}"""
-    os.write.over(PathUtil.dataRoot / "nebflow.json", seed)
+    os.write.over(PathUtil.dataRoot / nebflow.shared.Branding.configFileName, seed)
 
     val presets =
       """{"defaultPreset":"general","presets":{
@@ -333,7 +333,7 @@ class ConfigServiceSpec extends FunSuite:
    */
   private def seedConfigWithSchedule(enabled: Boolean, segs: String): Unit =
     os.write.over(
-      PathUtil.dataRoot / "nebflow.json",
+      PathUtil.dataRoot / nebflow.shared.Branding.configFileName,
       s"""{"workSchedule":{"enabled":$enabled,"segments":$segs},"llm":{"providers":{"glm":${validProvider(
           "glm"
         ).noSpaces}}}}""",
@@ -341,7 +341,7 @@ class ConfigServiceSpec extends FunSuite:
     )
 
   private def readWorkSchedule(): Option[Json] =
-    parse(os.read(PathUtil.dataRoot / "nebflow.json")).toOption.get.hcursor.downField("workSchedule").as[Json].toOption
+    parse(os.read(PathUtil.dataRoot / nebflow.shared.Branding.configFileName)).toOption.get.hcursor.downField("workSchedule").as[Json].toOption
 
   test(
     "updateConfig: stale incoming workSchedule is overridden by runtime-authoritative value (roll-back regression)"
@@ -367,7 +367,7 @@ class ConfigServiceSpec extends FunSuite:
     )
     // The non-runtime part of the update still landed (deep merge unchanged).
     val providers =
-      parse(os.read(PathUtil.dataRoot / "nebflow.json")).toOption.get.hcursor.downField("llm").downField("providers")
+      parse(os.read(PathUtil.dataRoot / nebflow.shared.Branding.configFileName)).toOption.get.hcursor.downField("llm").downField("providers")
     assertEquals(providers.downField("newp").as[Json].isRight, true)
   }
 
@@ -386,7 +386,7 @@ class ConfigServiceSpec extends FunSuite:
     val real = s"""{"llm":{"providers":{"z2":${validProvider("z2").noSpaces}}}}"""
     val result = ConfigService.updateConfig(real, Map("thinkingConfig" -> thOverride)).unsafeRunSync()
     assertEquals(result, Right(()))
-    val cfg = parse(os.read(PathUtil.dataRoot / "nebflow.json")).toOption.get
+    val cfg = parse(os.read(PathUtil.dataRoot / nebflow.shared.Branding.configFileName)).toOption.get
     val tfFocus = cfg.hcursor.downField("thinkingConfig").focus
     assertEquals(cfg.hcursor.downField("thinkingConfig").downField("budgetTokens").as[Int], Right(1234))
     assertEquals(cfg.hcursor.downField("workSchedule").as[Json].isRight, true)

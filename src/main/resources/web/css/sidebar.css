@@ -1322,6 +1322,26 @@
   color: var(--color-frame-text-muted);
   margin-top: var(--ds-space-1);
 }
+/* config-single-source 批（作者裁定⑤ 2026-11-05「解释性文字尽量减少」）：
+   标签尾的 `?` 悬停提示载体——常显文字最小化，解释只在 hover/focus 时出现
+   （原生 title tooltip + aria-label 双面可达）。尺寸对齐 hint 档字号。 */
+.cfg-hintbadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  margin-left: var(--ds-space-1);
+  border: 1px solid var(--ds-etched-border);
+  border-radius: 50%;
+  font-size: var(--ds-fs-hint);
+  line-height: 1;
+  color: var(--color-frame-text-muted);
+  cursor: help;
+  user-select: none;
+}
+.cfg-hintbadge:hover,
+.cfg-hintbadge:focus-visible { color: var(--color-frame-text-bright); border-color: var(--color-frame-hover); }
 .cfg-select {
   width: 100%;
   /* Etched glass — same material as .cfg-input */

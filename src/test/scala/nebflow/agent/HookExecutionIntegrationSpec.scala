@@ -38,7 +38,7 @@ class HookExecutionIntegrationSpec extends FunSuite:
       val root = os.Path(JFiles.createTempDirectory("nb-hook-int").toString)
       try
         os.write(
-          root / "nebflow.json",
+          root / nebflow.shared.Branding.configFileName,
           """{"hooks": {"PostToolUse": [
             {"matcher": "Read", "hooks": [
               {"type": "command", "command": "echo '{\"additional_context\":\"HOOK-CTX-MARKER\"}'", "timeout": 10}
@@ -66,7 +66,7 @@ class HookExecutionIntegrationSpec extends FunSuite:
       val root = os.Path(JFiles.createTempDirectory("nb-hook-block").toString)
       try
         os.write(
-          root / "nebflow.json",
+          root / nebflow.shared.Branding.configFileName,
           """{"hooks": {"PreToolUse": [
             {"matcher": "Read", "hooks": [
               {"type": "command", "command": "echo '{\"decision\":\"block\",\"reason\":\"forbidden by policy\"}'", "timeout": 10}
@@ -87,7 +87,7 @@ class HookExecutionIntegrationSpec extends FunSuite:
       val root = os.Path(JFiles.createTempDirectory("nb-hook-nomatch").toString)
       try
         os.write(
-          root / "nebflow.json",
+          root / nebflow.shared.Branding.configFileName,
           """{"hooks": {"PostToolUse": [
             {"matcher": "Edit", "hooks": [
               {"type": "command", "command": "echo '{\"additional_context\":\"MUST-NOT-APPEAR\"}'", "timeout": 10}

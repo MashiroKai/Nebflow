@@ -75,7 +75,7 @@ class SandboxSpec extends CatsEffectSuite:
     os.write.over(pinned / "agents" / "Coder" / "memory.md", "coder memory NBX_CODER_MEM_SECRET")
     // 根层凭据负向样本（vps.env/*.env/*credentials*/stt-config/model-presets/nebflow.json/User.md）
     os.write.over(pinned / "vps.env", "VPS_SECRET=1")
-    os.write.over(pinned / "nebflow.json", "{}")
+    os.write.over(pinned / nebflow.shared.Branding.configFileName, "{}")
     os.write.over(pinned / "User.md", "# user private")
     os.write.over(pinned / "model-presets.json", "{}")
     os.write.over(pinned / "stt-config.json", "{}")
@@ -443,7 +443,7 @@ class SandboxSpec extends CatsEffectSuite:
     val credFiles = List(
       "vps.env",
       "auth.json",
-      "nebflow.json",
+      nebflow.shared.Branding.configFileName,
       "model-presets.json",
       "stt-config.json",
       "host-credentials.txt", // *credentials* 通配样本

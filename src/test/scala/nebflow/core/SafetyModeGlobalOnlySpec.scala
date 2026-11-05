@@ -51,7 +51,7 @@ class SafetyModeGlobalOnlySpec extends CatsEffectSuite:
     os.remove.all(tmp)
 
   private def writeGlobal(mode: String): Unit =
-    os.write.over(tmp / "nebflow.json", s"""{"safety": {"defaultMode": "$mode"}}""")
+    os.write.over(tmp / nebflow.shared.Branding.configFileName, s"""{"safety": {"defaultMode": "$mode"}}""")
 
   private def meta(id: String, mode: String): SessionMeta =
     SessionMeta(id = id, name = id, createdAt = 1L, updatedAt = 1L, hasUnread = false, safetyMode = mode)

@@ -62,7 +62,7 @@ class ConfigSecretMaskSpec extends FunSuite:
       "ui" -> Json.obj("theme" -> Json.fromString("dark"))
     ).spaces2
 
-  private def readDisk(): Json = parse(os.read(PathUtil.dataRoot / "nebflow.json")).toOption.get
+  private def readDisk(): Json = parse(os.read(PathUtil.dataRoot / nebflow.shared.Branding.configFileName)).toOption.get
 
   private def apiKeyOf(disk: Json, id: String): Option[String] =
     disk.hcursor.downField("llm").downField("providers").downField(id).downField("apiKey").as[String].toOption
@@ -116,7 +116,7 @@ class ConfigSecretMaskSpec extends FunSuite:
   // ── 2. getConfig 读出即打码 + 盘上真相不变 ─────────────────────────────
 
   test("getConfig returns the masked projection; the on-disk file keeps the real keys") {
-    os.write.over(PathUtil.dataRoot / "nebflow.json", seedConfig())
+    os.write.over(PathUtil.dataRoot / nebflow.shared.Branding.configFileName, seedConfig())
 
     val served = ConfigService.getConfig.unsafeRunSync()
     val servedJson = parse(served).toOption.get
@@ -132,14 +132,14 @@ class ConfigSecretMaskSpec extends FunSuite:
   }
 
   test("getConfig on a missing file still returns {} (unchanged behaviour)") {
-    os.remove.all(PathUtil.dataRoot / "nebflow.json")
+    os.remove.all(PathUtil.dataRoot / nebflow.shared.Branding.configFileName)
     assertEquals(ConfigService.getConfig.unsafeRunSync(), "{}")
   }
 
   // ── 3. 语义闭环：打码文本回写 ⇒ 真值保留（mergeConfig 的 "***" 规则）────
 
   test("masked read round-trips through updateConfig without clobbering the real key") {
-    os.write.over(PathUtil.dataRoot / "nebflow.json", seedConfig())
+    os.write.over(PathUtil.dataRoot / nebflow.shared.Branding.configFileName, seedConfig())
     val masked = ConfigService.getConfig.unsafeRunSync()
 
     // 用户在设置面板改一个非密字段（baseUrl），apiKey 输入框留空 ⇒ 前端按既有
@@ -170,7 +170,7 @@ class ConfigSecretMaskSpec extends FunSuite:
 
   test("save through the masked surface lands nebflow.json owner-only (quickfix ① cross-check)") {
     posixOnly()
-    val saved = PathUtil.dataRoot / "nebflow.json"
+    val saved = PathUtil.dataRoot / nebflow.shared.Branding.configFileName
     os.write.over(saved, seedConfig())
     os.perms.set(saved, "rw-r--r--") // 遗留 0644
     ConfigService.updateConfig(seedConfig()).unsafeRunSync() match

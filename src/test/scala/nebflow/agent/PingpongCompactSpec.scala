@@ -76,19 +76,19 @@ class PingpongCompactSpec extends FunSuite:
       // 缺文件 / 缺键 ⇒ false（默认关——一期灰度主会话）
       assertEquals(PingpongConfig.enabled.unsafeRunSync(), false)
       os.write.over(
-        tmp / "data" / "nebflow.json",
+        tmp / "data" / nebflow.shared.Branding.configFileName,
         Json.obj("other" -> Json.fromBoolean(true)).noSpaces,
         createFolders = true
       )
       assertEquals(PingpongConfig.enabled.unsafeRunSync(), false)
       // 置 true ⇒ 热读生效（无需重启）
       os.write.over(
-        tmp / "data" / "nebflow.json",
+        tmp / "data" / nebflow.shared.Branding.configFileName,
         Json.obj("pingpong" -> Json.obj("enabled" -> Json.fromBoolean(true))).noSpaces
       )
       assertEquals(PingpongConfig.enabled.unsafeRunSync(), true)
       os.write.over(
-        tmp / "data" / "nebflow.json",
+        tmp / "data" / nebflow.shared.Branding.configFileName,
         Json.obj("pingpong" -> Json.obj("enabled" -> Json.fromBoolean(false))).noSpaces
       )
       assertEquals(PingpongConfig.enabled.unsafeRunSync(), false)
@@ -106,14 +106,14 @@ class PingpongCompactSpec extends FunSuite:
       // 缺文件 / 缺键 ⇒ None = 沿用主腿 agentDef.model 链（一期 §B3 行为逐字）
       assertEquals(PingpongConfig.shadowModel.unsafeRunSync(), None)
       os.write.over(
-        tmp / "data" / "nebflow.json",
+        tmp / "data" / nebflow.shared.Branding.configFileName,
         Json.obj("pingpong" -> Json.obj("enabled" -> Json.fromBoolean(true))).noSpaces,
         createFolders = true
       )
       assertEquals(PingpongConfig.shadowModel.unsafeRunSync(), None)
       // 点名 ⇒ 热读生效（影子腿改走钉死单模型链，脱离主腿廉价回落链）
       os.write.over(
-        tmp / "data" / "nebflow.json",
+        tmp / "data" / nebflow.shared.Branding.configFileName,
         Json
           .obj(
             "pingpong" -> Json
@@ -124,7 +124,7 @@ class PingpongCompactSpec extends FunSuite:
       assertEquals(PingpongConfig.shadowModel.unsafeRunSync(), Some("zhipu/glm-5.3"))
       // 空白点名 ⇒ None（防手误：空白串不得生成空 preferred 的钉死链）
       os.write.over(
-        tmp / "data" / "nebflow.json",
+        tmp / "data" / nebflow.shared.Branding.configFileName,
         Json.obj("pingpong" -> Json.obj("shadowModel" -> Json.fromString("   "))).noSpaces
       )
       assertEquals(PingpongConfig.shadowModel.unsafeRunSync(), None)

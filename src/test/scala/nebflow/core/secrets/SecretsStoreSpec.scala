@@ -587,7 +587,7 @@ class SecretsStoreSpec extends FunSuite:
     withStore { (store, root) =>
       os.makeDir.all(root)
       os.write.over(
-        root / "nebflow.json",
+        root / nebflow.shared.Branding.configFileName,
         """{"socialChannels":{"version":1,"channels":{"feishu":{"enabled":true,
           |"fields":{"app_secret_ref":"~/.nebflow/secrets/social-feishu-app-secret"}}}}}""".stripMargin
       )
@@ -603,7 +603,7 @@ class SecretsStoreSpec extends FunSuite:
 
   test("R2 · channel face: definition-layer preset names claim even with an empty config") {
     withStore { (store, root) =>
-      os.write.over(root / "nebflow.json", "{}")
+      os.write.over(root / nebflow.shared.Branding.configFileName, "{}")
       val refs = store.referencedByAll()
       assertEquals(
         refs.get("social-wechat-app-secret"),
@@ -641,9 +641,9 @@ class SecretsStoreSpec extends FunSuite:
             |"~/.nebflow/secrets/social-wechat-app-secret"}}}},"daemons":[{"id":"d1",
             |"name":"d1","command":["true"],"configPanel":{"fields":[{"key":"tok","label":"T",
             |"type":"secret"}]}}]}""".stripMargin
-        os.write.over(rootA / "nebflow.json", cfg)
+        os.write.over(rootA / nebflow.shared.Branding.configFileName, cfg)
         os.write.over(rootA / "daemons.json", cfg)
-        os.write.over(rootB / "nebflow.json", cfg)
+        os.write.over(rootB / nebflow.shared.Branding.configFileName, cfg)
         os.write.over(rootB / "daemons.json", cfg)
         assertEquals(
           storeA.referencedByAll(),
@@ -659,7 +659,7 @@ class SecretsStoreSpec extends FunSuite:
 
   test("R5 · unparseable/missing config files degrade to definition-layer-only claims") {
     withStore { (store, root) =>
-      os.write.over(root / "nebflow.json", "not json at all {{{")
+      os.write.over(root / nebflow.shared.Branding.configFileName, "not json at all {{{")
       val refs = store.referencedByAll()
       assert(refs.contains("social-wechat-app-secret"), "definition-layer claims survive an unparseable stored config")
       assert(!refs.values.exists(_.exists(_.startsWith("daemon:"))), "no daemon claims without a readable daemons.json")

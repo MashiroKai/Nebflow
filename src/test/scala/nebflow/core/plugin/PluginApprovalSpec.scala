@@ -31,7 +31,7 @@ class PluginApprovalSpec extends CatsEffectSuite:
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot / "plugins")
-  os.write.over(tempRoot / "nebflow.json", "{}")
+  os.write.over(tempRoot / nebflow.shared.Branding.configFileName, "{}")
 
   override def afterAll(): Unit =
     PathUtil.setDataRoot(originalRoot)
@@ -156,7 +156,7 @@ class PluginApprovalSpec extends CatsEffectSuite:
     val p0 = manifestOf("legacy")
     // 手工植入 2b 形态（仅 sha256/approvedAt/scope）的 trust 记录
     os.write.over(
-      tempRoot / "nebflow.json",
+      tempRoot / nebflow.shared.Branding.configFileName,
       Json
         .obj(
           "plugins" -> Json.obj(

@@ -41,7 +41,7 @@ class GlobalSafetyWritePathSpec extends CatsEffectSuite:
     PathUtil.setDataRoot(savedRoot)
     os.remove.all(tmp)
 
-  private def configPath: os.Path = tmp / "nebflow.json"
+  private def configPath: os.Path = tmp / nebflow.shared.Branding.configFileName
 
   private def onDiskMode: Option[String] =
     io.circe.parser

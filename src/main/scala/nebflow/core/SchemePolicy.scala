@@ -86,14 +86,42 @@ object SchemePolicy:
   def nebulaChain(): Option[AgentModelConfig] = ownChainOf(NebulaName)
 
   /**
-   * Seed chain: legacy `llm.model` chain first (installs that predate the
-   * field's removal keep their configured chain), otherwise the first
-   * provider's first model in nebflow.json field order (single-element chain —
-   * fallbacks are an explicit user decision, never auto-populated).
+   * Seed chain — resolution order (config-single-source batch, author rulings
+   * ①③ 2026-11-05):
+   *   1. **`llm.fallback` in the config file** (`stand.json`) — the SINGLE
+   *      SOURCE of the global chain once it carries a ref. The chain used to be
+   *      code-assembled, so the settings panel and the runtime disagreed; the
+   *      file is now the truth.
+   *   2. legacy `llm.model` chain (installs that predate the field's removal
+   *      keep their configured chain),
+   *   3. the first provider's first model in config field order
+   *      (single-element chain — fallbacks are an explicit user decision, never
+   *      auto-populated).
    */
   def readSeedChain(): List[String] =
-    val fromLlmModel = readGlobalChainDefault()
-    if fromLlmModel.nonEmpty then fromLlmModel else readFromProviders()
+    val fromFallback = readFallbackSection()
+    if fromFallback.nonEmpty then fromFallback
+    else
+      val fromLlmModel = readGlobalChainDefault()
+      if fromLlmModel.nonEmpty then fromLlmModel else readFromProviders()
+
+  /** `llm.fallback` of the config file (empty when absent / malformed). Hot-read. */
+  private def readFallbackSection(): List[String] =
+    readConfigJson()
+      .flatMap(_.hcursor.downField("llm").downField("fallback").focus)
+      .map { node =>
+        val preferred = node.hcursor.downField("preferred").as[Option[String]].toOption.flatten.getOrElse("")
+        val fallbacks =
+          node.hcursor.downField("fallbacks").as[Option[List[String]]].toOption.flatten.getOrElse(Nil)
+        (preferred :: fallbacks).map(_.trim).filter(_.nonEmpty)
+      }
+      .getOrElse(Nil)
+
+  /** The config file JSON (single path entry = `PathUtil.configJsonReadPath`). */
+  private def readConfigJson(): Option[io.circe.Json] =
+    val configPath = PathUtil.configJsonReadPath(PathUtil.dataRoot)
+    if !os.exists(configPath) then None
+    else io.circe.parser.parse(os.read(configPath)).toOption
 
   /**
    * Resolve the effective model chain for `name` given its own stored chain.
