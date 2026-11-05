@@ -4,8 +4,10 @@ import munit.FunSuite
 
 /** 输出风格约束（output-style 批，作者令 2026-11-05 08:56「很好，把这些对你输出的要求，
   * 写进提示词里。」＋ 09:01 修正令「不是强制要求每个都有过程……也不是必须要都用带颜色的
-  * 字体」＋ 09:13 追加令「对段落内容，要有缩进。」）：根 Nebula 提示词 `## Voice` 节的
-  * 防回退锚。
+  * 字体」；09:13 追加令「对段落内容，要有缩进。」段落缩进条目已由**撤回批**
+  * 2026-11-05 16:43 作者令「你发的消息不加缩进功能……把缩进的优化撤回吧。效果并不好」
+  * 整条删除 —— 本 spec 对应的断言同步翻转为「撤回锚」）：根 Nebula 提示词 `## Voice`
+  * 节的防回退锚。
   *
   * 断言面 = `entry("Nebula")` 公开读路（与 [[NebulaPromptVoiceRoutingSpec]] /
   * [[NebulaPromptOutputGateSpec]] 同一单点）——不是读源文件文本：断言必须证明**加载
@@ -84,17 +86,23 @@ class NebulaPromptOutputStyleSpec extends FunSuite:
         s"no universal mandate may ride the process rule (found '$phrase'): ${processLines.mkString(" | ")}")
     }
 
-  test("缩进：层级看得见 + 最多两层 + 窄屏一层（①②③），且不吃 100 字预算"):
+  test("缩进：层级缩进规则已撤回（撤回批 2026-11-05 16:43 作者令「你发的消息不加缩进功能」）"):
     val v = voiceSection(nebulaPrompt)
-    assert(v.contains("Indentation carries hierarchy"), "the indent rule is stated")
-    assert(v.contains("never flush-left"), "sub-items may not sit flush-left")
-    assert(v.contains("a blank line is never the only sign"), "blank lines alone may not carry hierarchy")
-    assert(v.contains("Indent by nesting"), "indentation rides markdown nesting (4 leading spaces outside a list = code block)")
-    assert(v.contains("Depth cap: two levels"), "indent depth is capped at two")
-    assert(v.contains("a third level means this should have been a second message"), "deeper than two = split the message")
-    assert(v.contains("spends none of the 100-character budget"), "indent does not eat the length cap")
-    assert(v.contains("on a narrow screen keep one level at most"), "narrow screens get one level only")
-    assert(v.contains("①②③"), "deeper structure goes inline as circled numerals")
+    // 撤回的判据 = 原文消失，且没有改写成「不要缩进」这类反向规则（作者令：删掉该条，
+    // 不留解释性残留）。消息正文回到普通段落 / 单层列表形态。
+    val retired = List(
+      "Indentation carries hierarchy",
+      "Indent by nesting",
+      "Depth cap: two levels",
+      "never flush-left",
+      "spends none of the 100-character budget",
+      "a third level means this should have been a second message")
+    retired.foreach(phrase =>
+      assert(!v.contains(phrase), s"the retired indent rule fragment is gone ('$phrase')"))
+    // 反向堆叠也不许：不写「不要缩进」的同义规则
+    val reverseWording = List("never indent", "no indentation", "do not indent", "不要缩进", "禁止缩进")
+    reverseWording.foreach(phrase =>
+      assert(!v.toLowerCase.contains(phrase.toLowerCase), s"no reverse rule may replace it ('$phrase')"))
 
   test("结论优先 + 只讲关键信息与决策（Terse bullet 合并而非并列）"):
     val v = voiceSection(nebulaPrompt)

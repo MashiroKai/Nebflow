@@ -7,7 +7,7 @@ import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.AgentCommand
 import nebflow.core.{NeblinkClientPort, NeblinkServicePort}
-import nebflow.shared.{ContentBlock, NebflowLogger, PeerInfo}
+import nebflow.shared.{AttachContract, ContentBlock, NebflowLogger, PeerInfo}
 import sttp.client4.*
 
 import scala.concurrent.duration.*
@@ -131,6 +131,7 @@ private[nebflow] object P2pPathDecision:
           else if endpoint.nonEmpty then endpoint
           else existing.filter(m => m.method == "p2p" && m.addressKey == key).map(_.endpoint).getOrElse("")
         PathMemory(method, nowMs, key, ep)
+  end record
 
 end P2pPathDecision
 
@@ -264,7 +265,7 @@ class RemoteExecutor(
             bgWaitFibers.get.flatMap { fibers =>
               fibers.get(jobId) match
                 case Some(fib) => fib.cancel.as(true)
-                case None      => IO.pure(false)
+                case None => IO.pure(false)
             }
         val confirm = executeViaBestPath(
           peer,
@@ -275,7 +276,7 @@ class RemoteExecutor(
           kind = "bg-cancel"
         ).map {
           case Right(out) => Right(out)
-          case Left(err)  => Left(err.message)
+          case Left(err) => Left(err.message)
         }
         cancelWait.flatMap { waitCancelled =>
           confirm.map { c =>
@@ -287,7 +288,6 @@ class RemoteExecutor(
           }
         }
     }
-
 
   /**
    * The relay client ACTUALLY in use, resolved per dispatch (F1 sweep of the
@@ -837,6 +837,140 @@ class RemoteExecutor(
     }
   end writeRemoteFileForScaffold
 
+  // ---- 附件跨设备送达批（2026-11-05）：Delegate 设备腿的分块 put 两件 ----
+  //
+  // 注：本批**一度**还有一个「建位」动作（用对端 `Write` 建父目录 + 空目标件），实测在
+  // KAI 上失败（`Relay failed: Error writing file: C:\Users\PC`）⇒ 建位责任下沉到接收腿
+  // 自己（`FileTransferAction.ensureParentDir`，跨设备附件批对接收端的对齐改动），发送
+  // 侧不再依赖对端工具腿、也不猜对端 home。那条已删除，不留死码。
+
+  /**
+   * 对端**续传/收口探针**（`FileTransfer direction=probe`）：接收端从**它盘上的字节**
+   * 回 `bytesReceived` 与**自算**的 `prefixSha256`。P2P 优先 → relay 回落（与 capture 腿
+   * 同族判定）。
+   *
+   * 本探针同时充当**引擎能力探针**：不认 probe 方向的旧接收端会答
+   * `Unknown direction: probe` ⇒ 调用侧据此诊为版本偏斜并在**零字节写入之前**失败。
+   */
+  def transferProbe(peer: PeerInfo, remotePath: String): IO[Either[String, Json]] =
+    val params = JsonObject(
+      "direction" -> "probe".asJson,
+      "path" -> remotePath.asJson
+    )
+    fileTransferBestPath(peer, params, AttachContract.RelayDeadlineFloor).flatMap {
+      case Right(out) => IO.blocking(decode[Json](out).left.map(err => s"decode: ${err.getMessage}"))
+      case Left(err) => IO.pure(Left(err))
+    }
+
+  /**
+   * 对端**分块 put**（`FileTransfer direction=put` 的分块形态）：P2P 优先 → relay 回落。
+   *
+   * 语义**不放松**（I2/I4）：单块有界（块长 = 调用方给的 `chunkSize`，上限
+   * [[AttachContract.MaxChunkSize]]）、接收端**自算**并回传块摘要与（末块）整件摘要；
+   * 回执原样交回调用方比对（本方法**不做**「内容相同所以摘要相等」的自证）。
+   *
+   * 死线按块派生（[[AttachContract.p2pDeadline]] / [[AttachContract.relayDeadline]]，
+   * 与设备腿 chunked 传输同源），relay 腿用**按调用传超时**的
+   * [[NeblinkClientPort.relayTransferPutChunk]]（不放宽全局 10 s 的共用路径）。
+   */
+  def transferPutChunk(
+    peer: PeerInfo,
+    remotePath: String,
+    contentB64: String,
+    chunkIndex: Int,
+    totalBytes: Long,
+    chunkSize: Int,
+    chunkSha256: String,
+    wholeSha256: String,
+    overwrite: Boolean
+  ): IO[Either[String, Json]] =
+    val effectiveChunk = math.max(1, math.min(AttachContract.MaxChunkSize, chunkSize))
+    val chunkBytes = math.min(effectiveChunk.toLong, math.max(0L, totalBytes - chunkIndex.toLong * effectiveChunk))
+    val params = JsonObject(
+      "direction" -> "put".asJson,
+      "path" -> remotePath.asJson,
+      "content" -> contentB64.asJson,
+      "overwrite" -> overwrite.asJson,
+      "chunkIndex" -> chunkIndex.asJson,
+      "totalBytes" -> totalBytes.asJson,
+      "chunkSize" -> effectiveChunk.asJson,
+      "chunkSha256" -> chunkSha256.asJson,
+      "wholeSha256" -> wholeSha256.asJson
+    )
+    p2pExecuteWithRetry(
+      peer,
+      "FileTransfer",
+      params,
+      AttachContract.p2pDeadline(chunkBytes, 0L),
+      "",
+      P2pPathDecision.probeBudget(false),
+      kind = "delegate-attach"
+    ).flatMap {
+      case Right(out) => IO.blocking(decode[Json](out).left.map(err => s"decode: ${err.getMessage}"))
+      case Left(p2pErr) =>
+        currentRelayClient.flatMap {
+          case None => IO.pure(Left(s"p2p: ${p2pErr.message.take(200)} (no relay client)"))
+          case Some(client) =>
+            auditDispatch(
+              peer,
+              "FileTransfer",
+              JsonObject("command" -> s"put chunk $chunkIndex ($chunkBytes B of $totalBytes) → $remotePath".asJson),
+              "",
+              "relay",
+              "delegate-attach"
+            ) *>
+              client
+                .relayTransferPutChunk(
+                  targetDeviceId = peer.deviceId,
+                  path = remotePath,
+                  contentB64 = contentB64,
+                  chunkIndex = chunkIndex,
+                  totalBytes = totalBytes,
+                  chunkSize = effectiveChunk,
+                  chunkSha256 = chunkSha256,
+                  wholeSha256 = wholeSha256,
+                  overwrite = overwrite,
+                  timeout = AttachContract.relayDeadline(chunkBytes, 0L)
+                )
+                .map {
+                  case Right(json) => Right(json)
+                  case Left(relayErr) =>
+                    Left(s"p2p: ${p2pErr.message.take(120)}; relay: ${relayErr.take(300)}")
+                }
+        }
+    }
+
+  end transferPutChunk
+
+  /** `FileTransfer` 双腿派发（P2P 优先 → relay 回落；与 capture 腿**同一**判定形态）。 */
+  private def fileTransferBestPath(
+    peer: PeerInfo,
+    params: JsonObject,
+    p2pTimeout: FiniteDuration
+  ): IO[Either[String, String]] =
+    p2pExecuteWithRetry(
+      peer,
+      "FileTransfer",
+      params,
+      p2pTimeout,
+      "",
+      P2pPathDecision.probeBudget(false),
+      kind = "delegate-attach"
+    )
+      .flatMap {
+        case Right(out) => IO.pure(Right(out))
+        case Left(p2pErr) =>
+          currentRelayClient.flatMap {
+            case Some(client) =>
+              relayExecAudited(client, peer, "FileTransfer", params, "", kind = "delegate-attach").map {
+                case Right(out) => Right(out)
+                case Left(relayErr) => Left(s"p2p: ${p2pErr.message.take(120)}; relay: ${relayErr.take(300)}")
+              }
+            case None => IO.pure(Left(s"p2p: ${p2pErr.message.take(200)} (no relay client)"))
+          }
+      }
+  end fileTransferBestPath
+
   // ---- A1：设备腿读图的视觉块回填（调用侧，2026-09-16 作者裁定） ----
 
   /**
@@ -1100,6 +1234,7 @@ class RemoteExecutor(
       )
       _ <- hbFiber.cancel
     yield result
+    end for
   end executeForegroundSync
 
   /**
@@ -1125,7 +1260,7 @@ class RemoteExecutor(
   private def unwrapOutcome[A](oc: cats.effect.kernel.Outcome[IO, Throwable, A]): IO[A] =
     oc match
       case cats.effect.kernel.Outcome.Succeeded(fa) => fa
-      case cats.effect.kernel.Outcome.Errored(e)    => IO.raiseError[A](e)
+      case cats.effect.kernel.Outcome.Errored(e) => IO.raiseError[A](e)
       case cats.effect.kernel.Outcome.Canceled() =>
         IO.raiseError[A](new InterruptedException("remote wait fiber cancelled"))
 
@@ -1180,6 +1315,7 @@ class RemoteExecutor(
       // 收编的终态腿：join 既有 HTTP fiber（同一句柄，不重发命令）⇒ 终态落账 + 通知。
       _ <- IO(attachRemoteBgFiber(peer, ctx, jobId, description, execFiber, doneRef, outputPath, startedAtMs))
     yield Right(RemoteExecutor.autoBackgroundReceipt(jobId, waitedMs))
+    end for
   end adoptRemoteForeground
 
   /** 收编腿的终态腿挂载：join 既有 fiber ⇒ [[remoteTerminalLeg]] ⇒ doneRef。 */
@@ -1289,8 +1425,7 @@ class RemoteExecutor(
             ) *>
               notifyRemoteBgResult(ctx, jobId, description, Left(err.message), peer.deviceName, outputPath, startedAtMs)
           case Some(_) =>
-            requestPeerCancel(peer.deviceName, jobId, cancelLocalWait = false)
-              .attempt
+            requestPeerCancel(peer.deviceName, jobId, cancelLocalWait = false).attempt
               .map(
                 _.fold(
                   e =>
@@ -1349,7 +1484,6 @@ class RemoteExecutor(
     )
   end runRemoteBgFiber
 
-
   // ---- WS helpers (match BashTool's backgroundTaskUpdate format) ----
 
   /**
@@ -1390,12 +1524,12 @@ class RemoteExecutor(
               )
             ).handleErrorWith(_ => IO.unit)
           } *>
-          // 健康轨进展信号（后台任务生命周期 P1 批 · 设计稿 §3.3「心跳行 → 远端
-          // 任务活性」）：远端任务无本地输出行数面，心跳 tick = 对端通道仍活的
-          // 既有观测——经 P0 写缝 recordActivity 喂行内 lastActivityMs，
-          // BgLifecycleReconciler 把行戳增长视作进展（零新传感器）。
-          BgTaskRegistry.recordActivity(jobId, now).handleErrorWith(_ => IO.unit) *>
-          IO.sleep(baseSec.seconds) *> loop
+            // 健康轨进展信号（后台任务生命周期 P1 批 · 设计稿 §3.3「心跳行 → 远端
+            // 任务活性」）：远端任务无本地输出行数面，心跳 tick = 对端通道仍活的
+            // 既有观测——经 P0 写缝 recordActivity 喂行内 lastActivityMs，
+            // BgLifecycleReconciler 把行戳增长视作进展（零新传感器）。
+            BgTaskRegistry.recordActivity(jobId, now).handleErrorWith(_ => IO.unit) *>
+            IO.sleep(baseSec.seconds) *> loop
       }
     loop.start.void
   end startRemoteHeartbeat
@@ -1652,7 +1786,7 @@ class RemoteExecutor(
         case Some(endpoint) =>
           p2pExecuteAt(peer, endpoint, selfDeviceId, toolName, params, timeout, budget).flatMap {
             case r @ Right(_) => recordPathMemory(peer, "p2p", endpoint).as(r)
-            case l @ Left(_)  => IO.pure(l)
+            case l @ Left(_) => IO.pure(l)
           }
         case None =>
           IO.pure(
@@ -1745,7 +1879,9 @@ class RemoteExecutor(
                     negativeHit = false,
                     probeFailed = true
                   )
+              end match
             }
+    end match
   end resolveP2pEndpoint
 
   /**
@@ -2165,7 +2301,8 @@ object RemoteExecutor:
 
   // ---- T7（作者令 2026-11-04）：设备腿前台对齐本地腿的四块判据（纯函数，spec 直测）----
 
-  /** 自动转后台回执的**唯一构造点**（本地腿 `BashTool.autoBackground` 与设备腿
+  /**
+   * 自动转后台回执的**唯一构造点**（本地腿 `BashTool.autoBackground` 与设备腿
    *  `RemoteExecutor.executeForegroundSync` / `BashTool` 的 remote 支共用）。
    *
    * 禁止第二份字符串：契约 1 要求「与本地 auto-background **逐字同形**」，而

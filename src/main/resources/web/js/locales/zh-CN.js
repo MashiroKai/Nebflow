@@ -2102,6 +2102,16 @@ export default {
   'canvas.videoPip': '画中画',
   'canvas.videoFullscreen': '全屏',
   'canvas.videoExitFullscreen': '退出全屏',
+  // 文档里放图批（作者报障 2026-11-05「文档里只有路径 图片没渲染出来」）：
+  // 取不到图时**明确占位**（原因 + 原路径），不许留白。
+  'canvas.imgFailTitle': '图片加载失败',
+  'canvas.imgFailMissing': '文件不存在（HTTP {status}）',
+  'canvas.imgFailDenied': '无权读取，票据被拒（HTTP {status}）',
+  'canvas.imgFailBusy': '服务繁忙（HTTP {status}）',
+  'canvas.imgFailBadPath': '路径不合法（HTTP {status}）',
+  'canvas.imgFailUnsupported': '这个类型不供图片取字节（HTTP {status}）',
+  'canvas.imgFailUnreachable': '读不到这张图（路径无效或无权限）',
+  'canvas.imgFailUnknown': '读取失败（HTTP {status}）',
   'canvas.closeTab': '关闭标签页',
   'canvas.stackToggle': '叠卡切换（滚轮 / 上下拖动换卡 · 前景轮换 · 点击前景卡换入 · 横向划走关闭）',
   'canvas.noRef': '该标签页暂不支持引用',

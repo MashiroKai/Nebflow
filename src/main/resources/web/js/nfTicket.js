@@ -57,6 +57,36 @@ let breakerUntil = 0;
 let authFails = 0;
 let authBackoffUntil = 0;
 
+// ── 铸票判决记账（文档里放图批 2026-11-05）────────────────────────────────
+//
+// `POST /api/nf-ticket` 的应答里除了 `tickets` 还有 `rejected: [{path, reason}]`
+// ——那是**端点自己的判决**（`not-found` = 文件不存在、`credential-*` = 该位置
+// 不许读、`extension-not-allowed` = 扩展名不服务）。前端此前把这张判决表整个
+// 丢掉，只剩「没有票 ⇒ 发出无票 URL ⇒ 端点回 401」这一条退化路径：
+// 读者看到的失败原因就成了「票据被拒（401）」，而真实原因是**文件不存在**。
+// 一张图有多个候选路径（文档目录 / vault 根 / vault 附件目录）时这张表更值钱：
+// 被拒的候选可以**直接跳过**（零请求），把级联缩成恰一次成功取字节。
+// 记账按 TTL 过期：文件可能在下一轮之前被写出来，判决不能让失败粘住。
+/** @type {Map<string, { reason: string, at: number }>} */
+const rejectCache = new Map();
+const REJECT_TTL_MS = 60_000;
+
+/**
+ * 最近一轮铸票的**被拒路径**读数（path → 服务端 reason）。过期项自动剔除。
+ * 空 Map = 没拒过 / 尚无判决（此时调用方按「未知」处理，走既有退化腿）。
+ * @returns {Map<string, string>}
+ */
+export function ticketRejects() {
+  const now = Date.now();
+  /** @type {Map<string, string>} */
+  const out = new Map();
+  for (const [p, v] of rejectCache) {
+    if (now - v.at > REJECT_TTL_MS) { rejectCache.delete(p); continue; }
+    out.set(p, v.reason);
+  }
+  return out;
+}
+
 /**
  * Remove the credential-bearing parameters (`token` / `ticket`) from a URL.
  *
@@ -252,7 +282,16 @@ async function mintRound(paths) {
         // size 并键（铸票面顺带 stat，2026-10-23 console-fastpath 批·腿③）：
         // 大文件 LAN 直传阈值判定用；缺席/0 = 未知尺寸（不直传，诚实降级）。
         cache.set(p, { t, exp: typeof exp === 'number' ? exp : Date.now() + 1800000, size });
+        rejectCache.delete(p);   // 有票 ⇒ 上一轮的拒绝判决作废
       }
+    }
+    // 判决表（见 rejectCache 头注）：被端点拒绝的路径记下 reason，调用方据此
+    // 跳过该候选并把**真实原因**写进失败占位，而不是退化成一个 401。
+    const rejected = Array.isArray(data.rejected) ? data.rejected : [];
+    for (const r of rejected) {
+      const p = r && typeof r === 'object' ? r.path : null;
+      if (typeof p !== 'string' || !p) continue;
+      rejectCache.set(p, { reason: String((r && r.reason) || ''), at: Date.now() });
     }
     consecutiveFailures = 0;
     breakerUntil = 0;

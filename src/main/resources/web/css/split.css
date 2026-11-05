@@ -2174,8 +2174,15 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
 }
 /* Markdown element styling — mirrors .bubble.ai */
 .canvas-md-viewer p { margin: var(--ds-space-1) 0; }
-/* 段落首行缩进（rich-render 批 2026-11-05，作者令 09:13）：同 .bubble.ai 口径 ——
-   只对 md 阅读面的**直接子** p 生效，列表/引用/表格/卡片内的段落不缩进。 */
+/* 文档正文首行缩进（撤回批 2026-11-05 16:43 作者令第二条「文档只缩进首行」）：
+   中文排版习惯 = 正文段落**首行**缩两字、续行齐左；**只有**首行缩进，没有挂起缩进
+   / 整块左移 / 层级缩进。实现口径：
+     · 只对阅读面的**直接子** p 生效（值走 --ds-text-indent = 2em）；列表项内 /
+       引用块内 / 表格单元格 / 代码块内的段落与块本身都不是直接子 p ⇒ 零缩进，
+       天然不错位（不加例外清单，避免漏一条就歪一片）。
+     · 源文件里以 `&emsp;&emsp;` 起行的段落（文档写作纪律，作者 11:09 令：求
+       Obsidian 与渲染器同形）由 viewers/markdown.js 的段首空白归一剥掉，保证
+       「两字」是恒量而不是 2em + 2em 的四字。 */
 .canvas-md-viewer > p { text-indent: var(--ds-text-indent); }
 .canvas-md-viewer p:first-child { margin-top: 0; }
 .canvas-md-viewer p:last-child { margin-bottom: 0; }
@@ -2243,7 +2250,46 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
 .canvas-md-viewer a { color: var(--color-primary); }
 .canvas-md-viewer hr { border: none; border-top: 1px solid var(--color-border); margin: var(--ds-space-2) 0; }
 .canvas-md-viewer strong { font-weight: 600; }
-.canvas-md-viewer img { max-width: 100%; border-radius: var(--ds-radius-input); }
+/* ── 文档里放图批（作者报障 2026-11-05「文档里只有路径 图片没渲染出来」）──
+   1) 图片尺寸：默认不超过内容列宽（max-width:100%）、保持比例（height:auto 让
+      authored 的 height 属性也按比例缩、object-fit:contain 不裁切）。「点开看
+      原图」= 既有 lightbox 腿（utils.js 给每枚 markdown 图片加 .nf-zoom-img，
+      lightbox.js initLightbox 的文档级委托监听开大图）——不新增第二套。 */
+.canvas-md-viewer img {
+  max-width: 100%;
+  height: auto;
+  object-fit: contain;
+  border-radius: var(--ds-radius-input);
+}
+
+/*   2) 取不到图 ⇒ 明确失败占位（原因文案 + 原路径原文），绝不留白。
+      形态与 nf-fence-error（mermaid.css，围栏失败态）同族：同一个 --sapphire-edge
+      底 + 描边 + 圆角 + 字档，读作「这里本来有张图，它没取到」。 */
+.nf-md-img-fail {
+  display: block;
+  border: 1px solid var(--sapphire-edge-strong);
+  border-radius: var(--ds-radius-input);
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
+  background: var(--sapphire-edge);
+  margin: var(--ds-space-2) 0;
+}
+.nf-md-img-fail-title {
+  font-size: var(--ds-fs-hint);
+  font-weight: 500;
+  color: var(--color-danger);
+}
+.nf-md-img-fail-reason {
+  margin-top: var(--ds-space-half);
+  font-size: var(--ds-fs-hint);
+  color: var(--color-text-muted);
+}
+.nf-md-img-fail-path {
+  display: block;
+  margin-top: var(--ds-space-1);
+  font-size: var(--ds-fs-hint);
+  color: var(--color-text-muted);
+  word-break: break-all;
+}
 
 /* ── EPUB Reader — paginated ──
    P0 止血批（设计稿 20261030 §1.2/§2.1/§6）：三主题档（data-epub-theme）+

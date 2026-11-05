@@ -2179,6 +2179,16 @@ export default {
   'canvas.videoPip': 'Picture in picture',
   'canvas.videoFullscreen': 'Fullscreen',
   'canvas.videoExitFullscreen': 'Exit fullscreen',
+  // image-in-doc batch (author report 2026-11-05 "the document only shows paths"):
+  // a missing image gets an explicit placeholder (reason + original path).
+  'canvas.imgFailTitle': 'Image failed to load',
+  'canvas.imgFailMissing': 'File not found (HTTP {status})',
+  'canvas.imgFailDenied': 'No read access — ticket rejected (HTTP {status})',
+  'canvas.imgFailBusy': 'Service busy (HTTP {status})',
+  'canvas.imgFailBadPath': 'Invalid path (HTTP {status})',
+  'canvas.imgFailUnsupported': 'This type is not served as image bytes (HTTP {status})',
+  'canvas.imgFailUnreachable': 'Cannot read this image (invalid path or no permission)',
+  'canvas.imgFailUnknown': 'Read failed (HTTP {status})',
   'canvas.closeTab': 'Close tab',
   'canvas.stackToggle': 'Stacked cards (wheel / vertical drag to switch · click front card to bring in · swipe away to close)',
   'canvas.noRef': 'This tab cannot be referenced',

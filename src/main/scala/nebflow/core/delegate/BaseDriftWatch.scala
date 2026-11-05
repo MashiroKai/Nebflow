@@ -127,11 +127,13 @@ object BaseDriftWatch:
         "lastNotifyMs" -> lastNotifyMs.asJson
       )
 
+  end Entry
+
   object Entry:
+
     def fromJson(j: Json): Option[Entry] =
       val c = j.hcursor
-      for
-        lastSeen <- c.get[String]("lastSeenTip").toOption
+      for lastSeen <- c.get[String]("lastSeenTip").toOption
       yield Entry(
         baselineTip = c.get[String]("baselineTip").toOption.getOrElse(lastSeen),
         lastSeenTip = lastSeen,
@@ -159,10 +161,30 @@ object BaseDriftWatch:
     /** base 历史被改写 = 旧 tip 不再是新 tip 的祖先（不可确证 = false，宁静默）。 */
     def baseRewritten(workspace: String, oldTip: String, newTip: String): Boolean
 
+    /**
+     * 在飞工作读数（唤醒价值判据 [[worthWaking]] 的第一项）。判据单点 =
+     * [[DelegateInflightGate.read]]（与 `delegate_report(finish)` 的在飞闸同源）；
+     * `None` = 读面不可用（`readable=false`）——调用方按「宁可多发一条」处理。
+     */
+    def inFlightWork(delegateId: String): IO[Option[Boolean]] =
+      DelegateInflightGate
+        .read(delegateId)
+        .map(r => if r.readable then Some(r.inFlight) else None)
+        .handleErrorWith(_ => IO.pure(None))
+
+    /**
+     * 本分支相对基分支的领先提交数（唤醒价值判据第二项；无分支/读失败 = `None`）。
+     * 与判词链的 `commitsAhead` 同源（[[GitWorktrees.commitsAhead]]）。
+     */
+    def unmergedCommits(workspace: String, baseBranch: String, branch: String): Option[Int] =
+      scala.util.Try(os.Path(workspace)).toOption.map(ws => GitWorktrees.commitsAhead(ws, baseBranch, branch))
+
     def notify(sessionId: String, text: String): IO[Boolean]
     def nowMs: IO[Long] = IO.realTime.map(_.toMillis)
     def loadState: IO[Map[String, Entry]] = IO.blocking(BaseDriftWatch.readState())
     def saveState(state: Map[String, Entry]): IO[Unit] = IO.blocking(BaseDriftWatch.writeState(state))
+
+  end Port
 
   /** 生产端口（AgentRuntimePort 装配；git 读数走 GitWorktrees）。 */
   def fromResources(resources: AgentRuntimePort): Port = new Port:
@@ -210,9 +232,10 @@ object BaseDriftWatch:
             if !st.contains(delegateId) then
               writeState(st.updated(delegateId, Entry(baselineTip = tip, lastSeenTip = tip)))
           }
-        }
-          .handleErrorWith(e => logger.warn(s"[base-drift] dispatch baseline failed for $delegateId: ${e.getMessage}"))
+        }.handleErrorWith(e => logger.warn(s"[base-drift] dispatch baseline failed for $delegateId: ${e.getMessage}"))
           .void
+
+  end noteDispatch
 
   /** 通知文案（模型可见；`[base-moved]` 前缀 = 作者令的 grep 锚；**聚合一条**）。 */
   def message(delegateId: String, baseBranch: String, e: Entry): String =
@@ -248,18 +271,24 @@ object BaseDriftWatch:
       now <- port.nowMs
       pairs = trackable(recs).flatMap { r =>
         for
-          branch <- r.baseBranch
+          base <- r.baseBranch
+          // 自己的分支 = 「我会不会真的撞上」的另一半（dispatcher 终态批 2026-11-05：
+          // 改前这里把 **base 分支**当成本 delegate 的分支传给三段合并 ⇒ 两次比较
+          // 同一棵树的 tip 与其自身 base ⇒ C1「真冲突」在结构上永不成立，只有 C2
+          // 历史改写能发通知——「少发通知」是靠漏掉真冲突换来的。散文自查：判据
+          // C1 的对象必须是「我的分支 vs 新 base」）。
+          mine <- r.branch
           ws <- r.projectWorkspace.orElse(Some(r.cwd))
-          tip <- port.headTip(ws, branch)
-        yield (r, ws, branch, tip)
+          tip <- port.headTip(ws, base)
+        yield (r, ws, base, mine, tip)
       }
-      stepped <- pairs.traverse { case (r, ws, branch, tip) =>
+      stepped <- pairs.traverse { case (r, ws, base, mine, tip) =>
         prev.get(r.id) match
           case None =>
             // 首见（派发期快照缺席）= 只记账当基线。绝不因「不知道从哪来」而通知。
             IO.pure(r.id -> ((Entry(baselineTip = tip, lastSeenTip = tip), Option.empty[String])))
           case Some(e) =>
-            step(port, r, ws, branch, tip, e, now, live.contains(r.id)).map(out => r.id -> out)
+            step(port, r, ws, base, mine, tip, e, now, live.contains(r.id)).map(out => r.id -> out)
       }
       notices = stepped.flatMap { case (_, (_, n)) => n }
       // 记账：跟踪项写当前 Entry；**registry 里已消失的 id 顺手清掉**（零残留膨胀）。
@@ -268,23 +297,23 @@ object BaseDriftWatch:
       _ <- if next == prev then IO.unit else port.saveState(next)
     yield notices
 
-  /**
-   * 单条记录的推进（纯逻辑 + 端口读数）。
-   */
+  /** 单条记录的推进（纯逻辑 + 端口读数）。 */
   private def step(
     port: Port,
     r: DelegateRegistry.Record,
     ws: String,
-    branch: String,
+    base: String,
+    mine: String,
     tip: String,
     e: Entry,
     now: Long,
     live: Boolean
   ): IO[(Entry, Option[String])] =
-    if e.lastSeenTip == tip then flushIfDue(port, r, branch, e, now, live)
+    if e.lastSeenTip == tip then flushIfDue(port, r, ws, base, mine, e, now, live)
     else
       val oldTip = e.lastSeenTip
-      val conflicts = port.conflictFiles(ws, branch, tip).distinct
+      // C1 的对象 = **我的分支** vs 新 base tip（见 scan 的 `mine` 注）。
+      val conflicts = port.conflictFiles(ws, mine, tip).distinct
       val rewritten = port.baseRewritten(ws, oldTip, tip)
       val counted = e.copy(
         lastSeenTip = tip,
@@ -298,13 +327,38 @@ object BaseDriftWatch:
       // 行动要求**——每个 delegate 跑在独立 worktree 里，别的 delegate 的合并不会
       // 污染它的工作树；节点跑在 dispatcher 的 seat 内，base 变动由 dispatcher 统一
       // 处理。⇒ 不可行动的移动只记进面板计数器（moves），不产生任何消息。
-      flushIfDue(port, r, branch, counted, now, live)
+      flushIfDue(port, r, ws, base, mine, counted, now, live)
+
+  /**
+   * **唤醒价值判据**（纯函数，spec 判红锚 · dispatcher 终态批 2026-11-05）。
+   *
+   * 作者令：「对**无在飞工作且无相关冲突**的会话不再反复投递；不得因为少发通知而
+   * 漏掉真正需要重跑的 base 移动。」「无相关冲突」已由 [[Entry.actionablePending]]
+   * （C1 真冲突 / C2 历史改写）承担，本函数补前半句：
+   *
+   *   - `inFlight = Some(true)` —— 作用域图里还有非终态节点（判据单点
+   *     [[DelegateInflightGate.read]]）⇒ 它还在干活，冲突通知有行动面 ⇒ 投递；
+   *   - `inFlight = Some(false)` + 分支领先提交 > 0 —— 那批提交还要落地，撞上 base
+   *     就是真麻烦 ⇒ 投递；
+   *   - `inFlight = Some(false)` + 领先 0 —— **无活可干**：没有可重跑的节点，也没有
+   *     待落地的提交 ⇒ 唤醒只能开一个空回合（实测形态：一条 base-moved 把已收口的
+   *     dispatcher 会话拽起来跑一轮，再收尾再被拽起，永不收敛）⇒ 静默；
+   *   - `inFlight = None`（读面不可用）⇒ **投递**（宁可多发一条，绝不漏掉真需要重跑
+   *     的那一次移动）。
+   */
+  def worthWaking(inFlight: Option[Boolean], unmergedCommits: Option[Int]): Boolean =
+    inFlight match
+      case Some(true) => true
+      case None => true
+      case Some(false) => unmergedCommits.exists(_ > 0)
 
   /** 聚合窗到点且挂账可行动 ⇒ 注入一条；否则零动作（挂账留着下次拍再判）。 */
   private def flushIfDue(
     port: Port,
     r: DelegateRegistry.Record,
-    branch: String,
+    ws: String,
+    base: String,
+    mine: String,
     e: Entry,
     now: Long,
     live: Boolean
@@ -324,23 +378,53 @@ object BaseDriftWatch:
       IO.pure((cleared, None))
     else if !windowOpen then IO.pure((e, None))
     else
-      val text = message(r.id, branch, e)
-      port
-        .notify(r.id, text)
-        .map { ok =>
-          if ok then
-            (
-              cleared.copy(lastNotifyMs = now),
-              Some(
-                s"${r.id}: $branch +${e.pendingMoves} move(s) since last notice, " +
-                  s"${e.pendingConflicts} conflicting (${e.pendingFiles.size} file(s) listed)"
-              )
+      // 唤醒价值闸（见 [[worthWaking]]）：无在飞工作且无待落地提交 ⇒ 不唤醒，
+      // 挂账**丢弃**（与 `!live` 同口径：唤醒后绝不补发过期漂移）。
+      port.inFlightWork(r.id).flatMap { inFlight =>
+        val unmerged = port.unmergedCommits(ws, base, mine)
+        if !worthWaking(inFlight, unmerged) then
+          logger
+            .info(
+              s"[base-drift] suppressed for ${r.id} (inFlight=${inFlight.map(_.toString).getOrElse("?")}, " +
+                s"unmerged=${unmerged.map(_.toString).getOrElse("?")}): nothing to redo — aggregate cleared without waking the session " +
+                s"(${e.pendingMoves} move(s), ${e.pendingConflicts} conflicting)"
             )
-          else (cleared, None)
-        }
-        .handleErrorWith { e2 =>
-          logger.warn(s"[base-drift] notify failed for ${r.id}: ${e2.getMessage}").as((cleared, None))
-        }
+            .as((cleared, None))
+        else notifyNow(port, r, base, e, cleared, now)
+      }
+
+    end if
+
+  end flushIfDue
+
+  /** 真注入腿（聚合窗 + 可行动 + 有活可干三条都过）。 */
+  private def notifyNow(
+    port: Port,
+    r: DelegateRegistry.Record,
+    base: String,
+    e: Entry,
+    cleared: Entry,
+    now: Long
+  ): IO[(Entry, Option[String])] =
+    val text = message(r.id, base, e)
+    port
+      .notify(r.id, text)
+      .map { ok =>
+        if ok then
+          (
+            cleared.copy(lastNotifyMs = now),
+            Some(
+              s"${r.id}: $base +${e.pendingMoves} move(s) since last notice, " +
+                s"${e.pendingConflicts} conflicting (${e.pendingFiles.size} file(s) listed)"
+            )
+          )
+        else (cleared, None)
+      }
+      .handleErrorWith { e2 =>
+        logger.warn(s"[base-drift] notify failed for ${r.id}: ${e2.getMessage}").as((cleared, None))
+      }
+
+  end notifyNow
 
   /**
    * 跟踪面闸（**节点结构性排除点**）：只有「在册 ∧ 未归档 ∧ 未取消 ∧ 真有分支与基
@@ -396,9 +480,15 @@ object BaseDriftWatch:
           .flatMap { line =>
             line.split("\\s+", 2) match
               case Array(k, v) if k.nonEmpty && v.nonEmpty => Some(k -> Entry(baselineTip = v, lastSeenTip = v))
-              case _                                       => None
+              case _ => None
           }
           .toMap
+
+      end if
+
+    end if
+
+  end readState
 
   private def writeState(state: Map[String, Entry]): Unit =
     try
@@ -407,7 +497,9 @@ object BaseDriftWatch:
         Json
           .obj(
             "version" -> StateVersion.asJson,
-            "entries" -> Json.fromJsonObject(JsonObject.fromMap(state.toList.sortBy(_._1).map((k, e) => k -> e.toJson).toMap))
+            "entries" -> Json.fromJsonObject(
+              JsonObject.fromMap(state.toList.sortBy(_._1).map((k, e) => k -> e.toJson).toMap)
+            )
           )
           .spaces2
       os.write.over(statePath, body)
