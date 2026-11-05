@@ -52,6 +52,9 @@ import './todoComplete.js';
 import { todoStore } from './todoStore.js';
 import { initServiceWorker } from './swReg.js'; // console-load-perf 批：温访问秒开注册器（load 后注册，降级零影响）
 import { initHotStampWatch } from './hotStamp.js'; // 台账 #919：热更新地基——asset stamp 轮询自愈（端点缺席 = 静默空转）
+// 冻结状态两套真相批（2026-11-05）：冻结面的合并/派生单点在 freezeState.js
+// （`mergeFreeze` 按后端权威块的 asOf 定序，允许「不再冻结」降级）。
+import { mergeFreeze } from './freezeState.js';
 import { connect, onMessage, sendWs, onReconnect } from './ws.js';
 import {
   setBusy, clearBusy, clearStatus,
@@ -2532,6 +2535,16 @@ function applyDelegateFrozen(rootSid, sid, patch) {
 onMessage('delegateFrozen', (msg) => {
   const sid = String(msg.sessionId || msg.agentId || '').replace(/^team-/, '');
   if (!sid) return;
+  // 冻结状态两套真相批（2026-11-05）：帧若带权威块（`freeze`），分类/可唤醒性
+  // 一律由它定（不再从线值二次猜测）；缺块 = 旧后端，走既有扁平字段。
+  if (msg.freeze) {
+    for (const agents of Object.values(state.sessionBgAgents)) {
+      for (const info of Object.values(agents || {})) {
+        if (((info && info.sessionId) || '').replace(/^team-/, '') !== sid) continue;
+        mergeFreeze(info, msg.freeze);
+      }
+    }
+  }
   applyDelegateFrozen(msg.rootSessionId, sid, {
     frozen: true,
     frozenSince: msg.frozenSince || Date.now(),
@@ -2564,6 +2577,33 @@ onMessage('delegateFrozenDormant', (msg) => {
   renderBgAgentDropdown && renderBgAgentDropdown();
 });
 
+// 会话被唤醒的状态变更帧（冻结状态两套真相批 2026-11-05）：**任何腿**（面板唤醒 /
+// Mail 唤醒 / 自动恢复 / 同 id 复活）清掉冻结后都由后端推这一帧——面板据此把
+// 「需唤醒」即时收起。旧版 Mail 唤醒腿不发帧，面板于是永远停在旧值（本轮报障）。
+onMessage('delegateWoken', (msg) => {
+  const sid = String(msg.sessionId || '').replace(/^team-/, '');
+  if (!sid) return;
+  let touched = false;
+  for (const agents of Object.values(state.sessionBgAgents)) {
+    for (const info of Object.values(agents || {})) {
+      if (((info && info.sessionId) || '').replace(/^team-/, '') !== sid) continue;
+      // 权威块（含 frozen=false）优先；旧后端帧缺块 ⇒ 按「已唤醒」直接清扁平字段。
+      if (msg.freeze) {
+        mergeFreeze(info, msg.freeze);
+      } else {
+        Object.assign(info, {
+          frozen: false, frozenSince: null, frozenReason: '', frozenDetail: '', dormantHours: 0,
+          freezeKind: '', needsHuman: false, freezeReasonWire: '', delegateFrozen: false, wakeAddress: '',
+        });
+      }
+      if (msg.status) info.status = msg.status;
+      info.waiting = undefined;
+      touched = true;
+    }
+  }
+  if (touched) renderBgAgentDropdown && renderBgAgentDropdown();
+});
+
 // 面板「唤醒」动作回执（delegateWakeResult）：成功 ⇒ 撤掉冻结标记（同一会话续跑，
 // 行回到普通进行中）；失败 ⇒ 保留冻结标记并抛出可见告警（绝不静默）。
 // 冻结态误报批（2026-11-05）：回执三态分明——`mode=live|revived|restart` 是真的动了
@@ -2573,12 +2613,33 @@ onMessage('delegateWakeResult', (msg) => {
   const sid = String(msg.sessionId || '').replace(/^team-/, '');
   if (!sid) return;
   const ok = !!msg.ok;
-  applyDelegateFrozen(null, sid, ok
-    ? {
-      frozen: false, frozenSince: null, frozenReason: '', frozenDetail: '', dormantHours: 0,
-      freezeKind: '', needsHuman: false, freezeReasonWire: '', freezeReason: null, freezeResumeAt: null,
+  // 冻结状态两套真相批（2026-11-05 10:42 报障的正脸）：回执里带 `freeze` 块时，
+  // **以块为准**——面板若显示「需唤醒」而服务端说「已不是冻结态」，这一帧就把面板
+  // 纠正过来（收起按钮 → 显示运行中），而不是让用户对着一句 `frozenReason=none`
+  // 发愣。旧后端无块 ⇒ 保留既有语义（ok 才撤标记）。
+  if (msg.freeze) {
+    let touched = false;
+    for (const agents of Object.values(state.sessionBgAgents)) {
+      for (const info of Object.values(agents || {})) {
+        if (((info && info.sessionId) || '').replace(/^team-/, '') !== sid) continue;
+        // 唤醒成功 ⇒ 直接用服务端块（非冻结）；失败 ⇒ 也用它（可能是"仍然冻结"，
+        // 那正是要保留的真相）。
+        if (mergeFreeze(info, msg.freeze)) touched = true;
+        if (ok && msg.actualStatus) info.status = msg.actualStatus;
+      }
     }
-    : {});
+    if (!touched) {
+      // 行不在本地面板（另一台设备/已刷新）也要落地：交给扁平通道兜底。
+      applyDelegateFrozen(null, sid, ok ? { frozen: false, frozenSince: null, frozenReason: '' } : {});
+    }
+  } else {
+    applyDelegateFrozen(null, sid, ok
+      ? {
+        frozen: false, frozenSince: null, frozenReason: '', frozenDetail: '', dormantHours: 0,
+        freezeKind: '', needsHuman: false, freezeReasonWire: '', freezeReason: null, freezeResumeAt: null,
+      }
+      : {});
+  }
   if (!ok) {
     console.warn('[delegateWake] failed for', sid, msg.mode || '', msg.error || '');
     window.__showToast?.(msg.error || t('subagents.wakeFailed'), 'error');
@@ -4966,12 +5027,14 @@ onMessage('activeAgents', (msg) => {
     const twin = twinKey ? bucket[twinKey] : null;
     if (twin && !twin.done && !isFailedSnapshotStatus(twin.status)) {
       twin._missSince = null;
+      // 冻结面同样以快照权威块定序（实时行更丰富，但「已不是冻结态」是硬事实）。
+      mergeFreeze(twin, a.freeze || null);
       seen.add(sid + '\u0000' + twinKey);
       activeRootSessions.add(sid);
       continue;
     }
     const prev = bucket[a.agentId] || null;
-    bucket[a.agentId] = {
+    const entry = {
       name: a.agentName || a.agentId,
       task: a.task || '',
       sessionId: a.sessionId || '',
@@ -5011,17 +5074,22 @@ onMessage('activeAgents', (msg) => {
       // （#752 最近动作摘要在刷新恢复路径可用——旧行为刷新后工具行丢失）。
       currentTool: (prev && prev.currentTool) || a.currentTool || null,
       stuck: (prev && prev.stuck) || null,
-      // 冻结态误报批（2026-11-05）：**快照 status=Frozen 也是冻结族**——actor 级
-      // 冻结（循环检测 L2 / 错误退避 / 时间表）只写 registry 状态、盘上没有 delegate
-      // 冻结槽，旧快照合并只看 prev.frozen ⇒ 刷新后冻结行画成「进行中」（面板与
-      // AgentControl 读数打架）。分类三字段随快照出帧（后端 FreezeDisplay 判定），
-      // 旧后端无字段 ⇒ 空串，freezeState.js 按原因线值回落同一张表。
+      // 冻结状态两套真相批（2026-11-05 10:42 报障「显示需要我唤醒，点了又说不在冻结
+      // 态」）：冻结面改为**带时间戳的权威块**驱动。快照每一行都带 `freeze` 块
+      // （后端 FreezeTruth 派生：frozen / kind / needsHuman / **wakeable** / asOf），
+      // 而且**包括 `frozen:false` 的块**——旧合并 `frozen: (prev && prev.frozen) || …`
+      // 只增不减，Mail 唤醒清掉后端冻结槽后快照「不表态」也照旧保留 true，面板于是
+      // 永远挂着「需唤醒」而闸那边早已不是冻结态（两套真相的正脸）。
+      // 下面这段是**旧后端（无 freeze 块）**的兼容回落；有块时一律由 mergeFreeze 覆写
+      // （asOf 定序，允许降级）。
       frozen: (prev && prev.frozen) || a.status === 'Frozen' || false,
       freezeResumeAt: (prev && prev.freezeResumeAt) || null,
       freezeReason: (prev && prev.freezeReason) || null,
       freezeKind: (prev && prev.freezeKind) || a.frozenKind || '',
       needsHuman: a.needsHuman === true || !!(prev && prev.needsHuman),
       freezeReasonWire: (prev && prev.freezeReasonWire) || a.freezeReasonWire || '',
+      // 权威块本体（新后端）；缺席 ⇒ null（mergeFreeze 不动，回落上面扁平字段）。
+      freeze: a.freeze || (prev && prev.freeze) || null,
       // 错误冻结批（2026-11-01）：**delegate 错误冻结**的刷新恢复面——快照
       // frozenSince / frozenReason（DelegateRegistry 冻结槽，线值 `delegate-frozen:<reason>`）
       // 在场 ⇒ 行「已冻结」徽标 + 原因 tooltip + 唤醒按钮随刷新复原（delegateFrozen
@@ -5067,6 +5135,10 @@ onMessage('activeAgents', (msg) => {
       // 本行已被本次快照覆盖 ⇒ 陈旧窗关闭（陈旧判据见下方分类 ③）。
       _missSince: null,
     };
+    // 冻结面收口（冻结状态两套真相批 2026-11-05）：权威块按 asOf 定序落进本行，
+    // 含「不再冻结」的块——唤醒后快照即可把「需唤醒」降级，无需任何手动刷新。
+    mergeFreeze(entry, a.freeze || null);
+    bucket[a.agentId] = entry;
     seen.add(sid + '\u0000' + a.agentId);
     activeRootSessions.add(sid);
   }
