@@ -32,6 +32,7 @@
 //   H 行内代码 `![[x.png]]` 逐字不动
 //   I 正文其余内容不被破坏：标题顺序、卡内文字、框外抽屉仍在且默认收起
 //   J 零 pageerror
+//   K 本批报告自身也按新纪律写（图在卡片体、vault 相对路径），且真的出图
 //
 // 跑法：
 //   node tests/_human-card-img-harness.mjs                  # 当前树（改后，应全绿）
@@ -476,13 +477,44 @@ async function main() {
   // ── J 零 pageerror ────────────────────────────────────────────────
   assert('J 全进程零 pageerror', pageErrors.length === 0, pageErrors.join(' | '));
 
+  // ── K 本批报告自身（纪律对自己生效；报告还没写就跳过）──────────────
+  let reportReading = null;
+  const REPORT_REL = process.env.HUMAN_CARD_REPORT
+    || 'human-card-image-expand__20261106_002813.md';
+  const reportAbs = join(VAULT, REPORT_REL);
+  if (existsSync(reportAbs)) {
+    const k = await renderCase(page, {
+      content: readFileSync(reportAbs, 'utf8'), absPath: reportAbs, fileName: REPORT_REL,
+    });
+    await firstScreenShot('report-first-screen');
+    const kLoaded = k.imgs.filter((i) => i.naturalWidth > 0).length;
+    reportReading = {
+      img: k.imgs.length, loaded: kLoaded, in_card: k.imgs.filter((i) => i.inCard).length,
+      visible: k.visibleImgs, fails: k.fails.length,
+      dangling: k.danglingImgAnchors.length,
+    };
+    console.log(`NOTE  本批报告：img=${k.imgs.length} 出图=${kLoaded}`
+      + ` 卡内=${reportReading.in_card} 不被折走=${k.visibleImgs}`
+      + ` 失败占位=${k.fails.length} 死链锚=${k.danglingImgAnchors.length}`);
+    assert('K 本批报告自身：全部图片出图、零失败占位、零死链锚',
+      k.imgs.length >= 4 && kLoaded === k.imgs.length && k.fails.length === 0
+      && k.danglingImgAnchors.length === 0,
+      `img=${k.imgs.length} 出图=${kLoaded} 失败=${k.fails.length}`
+      + ` 死链锚=${k.danglingImgAnchors.length}`
+      // 规则原文里的 `![[x.png]]` 在 ```text 代码块里，按纪律必须保持字面（代码是代码）
+      + ` 代码块内字面=${k.literal.length}`);
+    assert('K2 本批报告自身：开卡片体里的图不被折走（首屏可见）',
+      reportReading.in_card >= 2 && k.visibleImgs >= reportReading.in_card,
+      `卡内=${reportReading.in_card} 不被折走=${k.visibleImgs}`);
+  }
+
   const evidence = {
     generated_at: new Date().toISOString(),
     out_key: OUT_KEY,
     web_root: WEB,
     vault: VAULT,
     card_doc: { name: DOC_NAME, content: cardDoc },
-    cases: { card: a, dead: d, bare: e1, code: f, unclosed: g, inline: h },
+    cases: { card: a, dead: d, bare: e1, code: f, unclosed: g, inline: h, report: reportReading },
     shots: shots.map((p) => basename(p)),
     page_errors: pageErrors,
     results,
