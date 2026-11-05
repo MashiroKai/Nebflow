@@ -453,7 +453,7 @@ class OpenAiAdapter(
       val request = applyHeaders(
         basicRequest
           .post(uri"$endpoint")
-          .header("content-type", "application/json")
+          .contentType("application/json")
           .body(bodyWithMetadata.noSpaces)
       )
       IO.delay(logSearchInjection(p)) *>
@@ -614,7 +614,7 @@ class OpenAiAdapter(
           val request = applyHeaders(
             basicRequest
               .post(uri"$endpoint")
-              .header("content-type", "application/json")
+              .contentType("application/json")
               .body(bodyWithMetadata.noSpaces)
           ).response(asStreamUnsafe(Fs2Streams[IO])).readTimeout(Defaults.LlmReadTimeoutSec.seconds)
 

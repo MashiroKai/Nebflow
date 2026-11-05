@@ -274,10 +274,13 @@ class FallbackEligibleProvidersSpec extends CatsEffectSuite:
         )
         assert(msg.contains("reason: partially-tried"), msg)
         assert(msg.contains("2 candidate(s) were skipped WITHOUT being tried"), msg)
-        assert(msg.contains("[skipped] m3p/m1 — health-down (simulated 429)"), msg)
-        assert(msg.contains("[skipped] m4p/m1 — health-down (simulated 429)"), msg)
+        assert(msg.contains("[skipped] m3p/m1 — health-down (simulated 429"), msg)
+        assert(msg.contains("[skipped] m4p/m1 — health-down (simulated 429"), msg)
+        // 假 DOWN 批（2026-11-05）：跳过原因现在必须写明「还差多久才被真实试一次」
+        // ——「不许否决」的可读面（标签/原因不变，只是追加了半开试探读数）。
+        assert(msg.contains("half-open trial #1 in 60s"), msg)
         assert(msg.contains("[tried]   m1p/m1"), msg)
-        assertEquals(hits("m3p").get(), 0, "被跳过的候选不该收到请求")
+        assertEquals(hits("m3p").get(), 0, "退避窗内被跳过的候选不该收到请求（不许把不否决做成永远重试）")
       }
     }
   }

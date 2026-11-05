@@ -726,7 +726,17 @@ object LlmInterface extends LlmRuntime:
                   onProviderExhausted = Some((c, cls) =>
                     if cls.reason == FailoverReason.ServerError then
                       healthMonitor.coolDown(c.providerId, c.model, "upstream 5xx (non-stream)")
-                    else healthMonitor.markDown(c.providerId, c.model, "provider exhausted")
+                    else
+                      // 假 DOWN 批（2026-11-05）：原因不再是干巴巴的 "provider exhausted"
+                      // ——带上分类 + 上游响应体摘录（健康表/面板/日志三面同源，可归类）。
+                      healthMonitor.markDown(
+                        c.providerId,
+                        c.model,
+                        nebflow.core.LlmLogWriter.redactSecrets(
+                          s"provider exhausted (${cls.reason})" +
+                            cls.message.map(m => s": ${m.take(300)}").getOrElse("")
+                        )
+                      )
                   )
                 )
                 // 缺陷批 2026-11-05：非流面终局错误同样带账本——否则这条腿又变成
@@ -1275,9 +1285,16 @@ object LlmInterface extends LlmRuntime:
                                                   .orElse(Option(err.getMessage))
                                                   .getOrElse("")
                                               )
-                                            val downReason = classification.message
-                                              .orElse(Option(err.getMessage))
-                                              .getOrElse(classification.reason.toString)
+                                            // 假 DOWN 批（2026-11-05）：健康表里存的原因必须是
+                                            // **可归类的失败链**，不能是 sttp 的包装句
+                                            // `Exception when sending request: POST <url>`（那一句
+                                            // 对 connect 失败/握手被掐/连接重置/读超时全都一模一样，
+                                            // cause 链里才是真因）。裸 message 会把它永久写进表，
+                                            // 于是「为什么它一直 DOWN」在现场无从判断——本批实测正是
+                                            // 如此。redactSecrets：provider 可能把凭据回显在错误体里。
+                                            val downReason = nebflow.core.LlmLogWriter.redactSecrets(
+                                              FailureChain.reasonFor(classification.message, err)
+                                            )
 
                                             // 案① A5（作者令「随案① 落地带上」）：4xx 的 provider
                                             // 响应体**不受 llmLog `enabled` 开关门控**，常驻落盘
