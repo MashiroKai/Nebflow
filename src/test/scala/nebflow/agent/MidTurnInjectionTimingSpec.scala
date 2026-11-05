@@ -159,6 +159,19 @@ class MidTurnInjectionTimingSpec extends CatsEffectSuite:
     val sid = s"midturn-$name"
     val dir = tempRoot / "sessions"
     List(dir / s"$sid.json", dir / s"$sid.ui.json").foreach(f => if os.exists(f) then os.remove(f))
+    // ── 夹具隔离（复现性修复，2026-11-05 · 断言强度逐字不变）───────────────────
+    // 本夹具的 dataRoot = `tempRoot/data`，在同一 target 目录下**跨多次运行共用**；
+    // 而 spawn 即自投 `AgentCommand.RecoverPersistedQueues`（AgentActor.scala:1035）
+    // → `CompactionQueueStore.load(<dataRoot>/sessions/<sid>/injection-queues.json)`
+    // ⇒ 上一轮残留的 F2 队列快照会被当「崩溃未投递件」重放进
+    // `pendingImmediateInputs`：同一正文在队列里两份，第一个边界投一份、第二个
+    // 边界再投残留那份 ⇒ L4「跨连续两个工具边界只注入一次」出现一次**假红**
+    // （2026-11-05 09:18:49 实测 `afterBoundary2=Some(2)`，同拍边界事件行
+    // `remaining=1` 即残留副本的直接读数）。
+    // 清空 `<dataRoot>/sessions` ⇒ 每个用例都从「新进程 + 空队列快照」起步（= 生产
+    // spawn 无残留态的初始条件），L4 的「转录里恰一次」判据一字未放宽。
+    val sessionDataRoot = tempRoot / "data" / "sessions"
+    if os.exists(sessionDataRoot) then os.remove.all(sessionDataRoot)
     val gate1 = ws / "gate1.release"
     val gate2 = ws / "gate2.release"
     val prevLlmLog = nebflow.core.LlmLogWriter.isEnabled
