@@ -216,6 +216,29 @@ object FreezeDisplay:
     "the engine will NOT resume it on its own — wake it to continue, restart it from the checkpoint, or cancel the task"
 
   /**
+   * **基础设施故障冻结**（provider 故障族）的动作说明（2026-11-05 10:36 作者令逐字：
+   * 「不论是节点还是delegate，由于provider 故障，都不需要向上通知，冻结等待恢复就行。
+   * 然后在面板显示，这个是需要用户去处理的，我们引擎要做的就行检测恢复了能接着工作。
+   * 所以不需要向上汇报。因为provider 故障上级也基本死了，汇报给上级没用。」）：
+   * 引擎**自己**探测供应商可用性并在恢复后续跑（同一会话、续在检查点、次数上限 +
+   * 递增间隔），所以这一族**不再**说「引擎不会自动续跑」（那句话只对 `loop` 这类
+   * 确定性死循环成立）；人也随时可以点「唤醒」立即续跑。
+   */
+  val InfraHintZh: String =
+    "供应商恢复后引擎会自动续跑（同一会话、续在检查点，已完成的不重做，有次数上限与递增间隔）；" +
+      "也可以现在就点「唤醒」让它接着做"
+
+  val InfraHintEn: String =
+    "the engine resumes it on its own once a provider is serving again (same session, from the checkpoint, " +
+      "finished work is not redone, capped attempts with growing gaps) — or wake it now"
+
+  /** provider 故障族（基础设施故障，非任务失败）的 delegate 冻结原因码。 */
+  val InfraReasonCodes: Set[String] = Set("llm-failure", "cancelled-by-quota")
+
+  /** 该 delegate 冻结原因码是否属 provider 故障族（基础设施故障，不是任务失败）。 */
+  def isInfraReasonCode(code: String): Boolean = InfraReasonCodes.contains(Option(code).getOrElse("").trim)
+
+  /**
    * `delegate-frozen:<reason>` 线值的中文短名。与
    * `nebflow.core.delegate.DelegateFreeze.reasonLabelZh` 同词（本件在 actor 层，
    * 分层门禁不许 actor 依赖 core.delegate ⇒ 这张 4 词表在此显式镜像；改词先改
@@ -331,16 +354,33 @@ object FreezeDisplay:
     if w.startsWith("delegate-frozen") then
       val code = w.stripPrefix("delegate-frozen").stripPrefix(":")
       val label = DelegateReasonLabels.getOrElse(code, if code.isEmpty then "原因未记录" else code)
-      FreezeDisplay(
-        FreezeKind.NeedsHuman,
-        w,
-        needsHuman = true,
-        autoRecoverable = false,
-        s"已冻结 · $label（需唤醒）",
-        s"Frozen — $label (needs a wake)",
-        ManualHintZh,
-        ManualHintEn
-      )
+      // provider 故障族（2026-11-05 10:36 作者令）：provider 故障 = **基础设施故障**，
+      // 不是任务失败 ⇒ 不向上汇报、面板标「待你处理」、但引擎自己探测恢复后续跑。
+      // 因此这一族 `autoRecoverable=true`（`kind` 保持 NeedsHuman 只为面板措辞与
+      // 「唤醒」入口在场；耗 supervisor 重启预算的 RestartAgent 腿对它一律不提供——
+      // 唤醒走带 clientMessageId 的 UserInput 幂等腿）。
+      if isInfraReasonCode(code) then
+        FreezeDisplay(
+          FreezeKind.NeedsHuman,
+          w,
+          needsHuman = true,
+          autoRecoverable = true,
+          s"已冻结 · $label（待你处理 · 供应商恢复后自动续跑）",
+          s"Frozen — $label (waiting for you · auto-resumes when a provider is back)",
+          InfraHintZh,
+          InfraHintEn
+        )
+      else
+        FreezeDisplay(
+          FreezeKind.NeedsHuman,
+          w,
+          needsHuman = true,
+          autoRecoverable = false,
+          s"已冻结 · $label（需唤醒）",
+          s"Frozen — $label (needs a wake)",
+          ManualHintZh,
+          ManualHintEn
+        )
     else
       w match
         case "schedule" => of(FreezeReason.Schedule, resumeAt, None, now)

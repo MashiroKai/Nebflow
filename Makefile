@@ -102,7 +102,7 @@ quality-gate:
 # = 后端把 `GET /api/conversations` 的 case 误删，前端 404 被吞成「暂无会话」，
 # **没有任何断言发现「前端调了但后端没有」**。本闸静态对照两侧（前端 /api 字面量
 # 集合 × 网关路由注册面），前端调了后端没有 ⇒ 红。
-FRONTEND_GATES := design-tokens msgstyle self-explaining circular fixture-secrets api-routes freeze-state
+FRONTEND_GATES := design-tokens msgstyle self-explaining circular fixture-secrets api-routes freeze-state freeze-silence
 
 frontend-gates:
 	@command -v node >/dev/null 2>&1 || { echo "node not found — 前端门禁需要 node"; exit 2; }
@@ -120,6 +120,10 @@ frontend-gates:
 	@# 冻结态呈现门禁（冻结态误报批 2026-11-05）：可自动恢复的冻结不得写「已冻结」/不得
 	@# 给按钮；需人介入的冻结必须有恢复入口；恢复失败必须可见；迁移日志在场。
 	node scripts/check-freeze-state.mjs
+	@# 冻结通知策略门禁（冻结通知策略批 2026-11-05）：provider 故障 = 基础设施故障 ⇒
+	@# delegate/flow 两条向上通知腿零产出、面板显形（统计 + 待你处理 + 唤醒按钮）、
+	@# 引擎自动续跑走既有唤醒腿（不花重启预算，有上限 + 递增间隔）、同波一条聚合告警。
+	node scripts/check-freeze-silence.mjs
 	@echo "Frontend static gates passed ($(FRONTEND_GATES))."
 
 # ── 路由存在性：运行期腿（empty-state-must-not-lie 批 · 件三②，2026-11-05）──────

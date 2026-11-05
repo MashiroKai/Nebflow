@@ -72,8 +72,24 @@ body { background: var(--color-bg); color: var(--color-text); }
 5. **缩进只认 `&emsp;&emsp;`（排版批，作者裁定 2026-11-05 11:09）**：Markdown 没有布局，Markdown 里"看起来缩进了"的写法在渲染器里两种都会塌——两个半角空格被 HTML 折叠吃掉（`<p>  文</p>`，视觉零缩进），四个半角空格把这一行变成代码块（`<pre><code>`）。本部署 marked v12.0.2 实测，`&emsp;&emsp;`（HTML 实体）是唯一稳定生效的段落缩进；Obsidian 同为实体解码面，一份源两边都成立。正文段落首行缩进、续行不缩进；标题/列表/表格/引用/围栏/图片行与 <40 字符短行不缩进。
 6. **彩色只认三个语义色、一篇 ≤4 处（同批）**：颜色只能来自内联 HTML `<span style="color:…">`——蓝 `#5e6ad2` = 结论/判定、红 `#d0342c` = 风险/警告、绿 `#12874a` = 已验证/通过（三色亮/暗两主题对比度均 ≥3.6:1）。一般强调用加粗，不许满篇彩色；单处着色不超过 120 字符。
 7. **缩写首次出现必须展开（缩写批，作者裁定 2026-11-05 11:11）**：全大写 2-6 字母 token（GCR / ICRP / IAEA / CERN / NIST / MC / NIEL…）与带点专有缩写（`E.C.`）在文档首次出现处给全称（`银河宇宙线（GCR）`）或挂词条（`[[GCR]]（全称）`）。
+8. **平实语言（写作风格批 v2，作者令 2026-11-05 12:09）**：能用平实动词+名词说清
+   的，不用抽象名词包裹。禁用词表（`人面子` / `印象` / `抓手` / `赋能` / `闭环` /
+   `颗粒度` / `叙事` / `心智` / `沉淀` / `对齐` …）住在 `skills/wiki-docs/SKILL.md` 的
+   `<!-- wiki-plainwords:start -->` 标记块，校验器逐条报 `文件:行` + 建议替换。
+9. **结论先行 + 细节折叠（同批）**：文档三层——开头一段总体结论 → 每个 `##` 章节
+   首行一句加粗的分点结论 → 论证细节放进 `<details><summary>…</summary>` 折叠块。
+   `<details>` 是两台渲染器（本部署 marked v12.0.2 实测 + Obsidian 原生 HTML）都认
+   的唯一折叠形态；Obsidian 的 callout 折叠（`> [!note]-`）在 marked 里退化成引用块
+   + 字面标记，不要用。
+10. **卡片分区（同批）**：每部分内容一张卡——```` ```human ```` 围栏就是卡片（产品侧
+    渲染成 `.nf-human-card`，围栏外统一收进 `.nf-human-details` 抽屉），不要另造卡片
+    组件。卡里放结论与关键数字，论证进紧随其后的折叠块。
+11. **图的简约风格与图注（同批）**：图只画形状，不写解释——图内只有轴标签、刻度、
+    短图例（每条≤一行）与最多一个短标注；配色走灰阶 + 虚实线区分，无网格、无图内标题。
+    解释文字放图注（`图 N …`，一句结论，≤120 字符）与正文。基准 = DOSTEL `figures/
+    20261103_cabin_neutron_energy_weight_flux/` 那批（参数单源见 `fig_style.py`）。
 
-> 第 5-7 条的条款原文、允许清单与正反例在 `skills/wiki-docs/SKILL.md`（强制条款 ⑦⑧ ＋「Document typography」「Abbreviations」两节），机器面是 `check_wiki_docs.py` 的 R7/R8/R9；本节只写渲染器事实，不重复规范原文。
+> 第 5-7 条的条款原文、允许清单与正反例在 `skills/wiki-docs/SKILL.md`（强制条款 ⑦⑧ ＋「Document typography」「Abbreviations」两节）；第 8-11 条同文件条款 ⑨⑩⑪ ＋「Plain language」「Document skeleton」「Card face」「Figures」四节。机器面是 `check_wiki_docs.py` 的 R7-R12；本节只写渲染器事实与骨架，不重复规范原文。
 
 ## 5. 缺装降级总则
 
