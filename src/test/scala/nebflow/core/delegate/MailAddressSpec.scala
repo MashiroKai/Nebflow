@@ -77,7 +77,7 @@ class MailAddressSpec extends FunSuite:
   }
 
   test("Mail's gate rejects the forms this object never emits (no silent fuzzy matching)") {
-    List("project:stand", "Nebula", "kernel", "delegate:", "node:", "") .foreach { bad =>
+    List("project:stand", "Nebula", "kernel", "delegate:", "node:", "").foreach { bad =>
       assertEquals(MailTool.layeredAddressFormOf(bad), None, s"'$bad' must not pass")
     }
   }
@@ -101,3 +101,4 @@ class MailAddressSpec extends FunSuite:
     val addr = MailAddress.of(AgentKind.Delegate, sid).get
     assertEquals(MailAddress.parse(addr).map(_.target), Some(sid))
   }
+end MailAddressSpec

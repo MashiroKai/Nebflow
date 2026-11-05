@@ -819,8 +819,10 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
   /** 分层地址形态名（"delegate" / "kernel" / "node"）；非分层面或 target 为空 ⇒ None。 */
   def layeredAddressFormOf(address: String): Option[String] =
     val a = Option(address).getOrElse("").trim
-    if a.startsWith(DelegatePrefix) then Option(a.stripPrefix(DelegatePrefix).trim).filter(_.nonEmpty).map(_ => "delegate")
-    else if a.startsWith(KernelPrefix) then Option(a.stripPrefix(KernelPrefix).trim).filter(_.nonEmpty).map(_ => "kernel")
+    if a.startsWith(DelegatePrefix) then
+      Option(a.stripPrefix(DelegatePrefix).trim).filter(_.nonEmpty).map(_ => "delegate")
+    else if a.startsWith(KernelPrefix) then
+      Option(a.stripPrefix(KernelPrefix).trim).filter(_.nonEmpty).map(_ => "kernel")
     else if a.startsWith(NodePrefix) then Option(a.stripPrefix(NodePrefix).trim).filter(_.nonEmpty).map(_ => "node")
     else None
 

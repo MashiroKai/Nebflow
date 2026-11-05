@@ -788,38 +788,13 @@ When to use:
       // Block 1（§B4）：status 同样受 scope 限制——root 全局，Manager 仅子树
       val callerSid = ctx.sessionId.getOrElse("")
       val rootBucket = callerIsRootBucket(registry, callerSid)
-      if !rootBucket then
-        managerAnchors(callerSid).flatMap {
-          case Some(anchors) if anchors.contains(sessionId) || chainReaches(registry, sessionId, anchors, 8) =>
-            doStatusBody(resources, registry, sessionId, rootBucket)
-          case _ =>
-            IO.pure(
-              Left(
-                ToolError(
-                  s"Permission denied: session '$sessionId' is outside your team subtree " +
-                    "(your own team members and their sub-agents)."
-                )
-              )
-            )
-        }
-      else doStatusBody(resources, registry, sessionId, rootBucket)
-      end if
-    }
-
-  private def doStatusBody(
-    resources: AgentRuntimePort,
-    registry: Map[String, AgentRecord],
-    sessionId: String,
-    callerIsRoot: Boolean = false
-  ): IO[Either[ToolError, String]] =
-    val now = System.currentTimeMillis()
-    registry.get(sessionId) match
-      case Some(rec) =>
-        // name/address 批（2026-11-05）：status 与 list 同一单点返回批次短名与续传
-        // 地址——短名走 DelegateRegistry.Record.name（面板 delegateName 同源，非
-        // task 摘要反猜），地址走 MailAddress（与 Mail 解析面逐字同形）。
-        val shortNameIO: IO[Option[String]] =
-          if rec.kind == AgentKind.Delegate then
+      // name/address 批（2026-11-05）：批次短名在**分派前**取（一趟 blocking 读
+      // DelegateRegistry.Record.name，与面板 delegateName 同源）；取不到 = None，
+      // 详情卡渲染占位 `-`（不编造）。放在这里而非 body 内，是为了让 body 的行序
+      // 与缩进保持不变（本批只加两行输出，不改详情卡的既有结构）。
+      val shortNameIO: IO[Option[String]] =
+        registry.get(sessionId) match
+          case Some(rec) if rec.kind == AgentKind.Delegate =>
             IO
               .blocking(
                 nebflow.core.delegate.DelegateRegistry
@@ -829,8 +804,36 @@ When to use:
                   .filter(_.nonEmpty)
               )
               .handleErrorWith(_ => IO.pure(None))
-          else IO.pure(None)
-        shortNameIO.flatMap { shortName =>
+          case _ => IO.pure(None)
+      def body(shortName: Option[String]): IO[Either[ToolError, String]] =
+        if !rootBucket then
+          managerAnchors(callerSid).flatMap {
+            case Some(anchors) if anchors.contains(sessionId) || chainReaches(registry, sessionId, anchors, 8) =>
+              doStatusBody(resources, registry, sessionId, rootBucket, shortName)
+            case _ =>
+              IO.pure(
+                Left(
+                  ToolError(
+                    s"Permission denied: session '$sessionId' is outside your team subtree " +
+                      "(your own team members and their sub-agents)."
+                  )
+                )
+              )
+          }
+        else doStatusBody(resources, registry, sessionId, rootBucket, shortName)
+      shortNameIO.flatMap(body)
+    }
+
+  private def doStatusBody(
+    resources: AgentRuntimePort,
+    registry: Map[String, AgentRecord],
+    sessionId: String,
+    callerIsRoot: Boolean = false,
+    shortName: Option[String] = None
+  ): IO[Either[ToolError, String]] =
+    val now = System.currentTimeMillis()
+    registry.get(sessionId) match
+      case Some(rec) =>
         resources.subAgentTaskStore.findByTaskId(sessionId).map { taskOpt =>
           // 2026-09-10 换轴：stuck 详情带判据原因（哪条轴触发）；
           // toolPhase = 当前工具名 + 已持续时长（进程占死形态的第一手信息）。
@@ -923,7 +926,6 @@ When to use:
                 "manageable: cancel" +
                   (if RestartableKinds.contains(rec.kind) || teamRestartable then " / restart" else " only")
           Right((lines ++ freezeLines :+ manage).mkString("\n"))
-        }
         }
       case None =>
         // 外部腿（#1225）：外部 delegate 无 registry 行——status 读进度缓冲面

@@ -321,3 +321,4 @@ class AgentControlNameAddressSpec extends CatsEffectSuite:
     val legacy = nebflow.gateway.WebSocketRoutes.activeAgentEntryJson(rec, None)
     assertEquals(legacy.hcursor.downField("mailAddress").as[String].toOption, Some(""))
   }
+end AgentControlNameAddressSpec
