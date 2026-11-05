@@ -30,6 +30,22 @@
 #     （如 sessions/*.json 单行快照）不告警——噪声病灶的签名是「同一行重复」，不是「单行很长」。
 #   * ② 以「同一路径」为锚：窗口内新增的路径下一窗口才计增长；轮转/改名后的新名不计入旧锚。
 #   * 节流早退不更新任何状态；状态只在全量扫描时落盘。
+#
+# v2（2026-11-05 运维修复批「watchdog ②：每轮先跑的全量 find」）——扫描面收窄：
+#   缺陷（已核实）：改前 `find $SENTINEL_ROOT -type f -exec stat …` 扫全根 268,329 个文件 / 29 MB 输出，
+#     实测 25–28s（热缓存；作者首轮冷缓存实测 367s）。而 DEADLINE_SEC 只约束判据①循环、管不到 find，
+#     且哨兵排在健康探针**之前** ⇒ 每 30min 一次的长扫描把「宕机发现」推迟分钟级。
+#   改法（三条，正交，都不牺牲告警面）：
+#     ① **尺寸闸** SENTINEL_SCAN_MIN_MB（缺省 1 MB）：判据① 要 >10 MB、判据② 要窗口内 >5 MB 增量
+#        ⇒ 不足 1 MB 的文件在任何窗口内都触发不了任一判据；文件一旦越过 1 MB 就进锚定表，
+#        参与**下一窗口**的增长比较（不会漏报，只是把「首次可告警时刻」定在越过 1 MB 之后）。
+#     ② **剪掉纯遍历成本目录** SENTINEL_SCAN_PRUNE_EXTRA（缺省 `history`）：实测 history/ = 19,646 个
+#        目录 / 151,091 个文件 / 单文件最大 26 KB（VS Code 式本地历史快照树，与「日志失控」无涉），
+#        剪掉它单项省 ≈6s。其余子树**一律保留**（不按目录猜测告警面）。
+#     ③ **逃生口** SENTINEL_SCAN_FULL=1 ⇒ 逐字回到改前口径（全根、无尺寸闸、不剪 history），
+#        供人工深扫/排查用；SLOG 的 `scope=` 字段记录本轮实际口径，收窄永远是可审计的。
+#   注：本批同改了调用方（`ops/bin/nebflow-watchdog.sh`）的执行顺序——哨兵移到健康探针**之后**、
+#   且只在健康轮跑，宕轮不再先付 find 的账。两处叠加后宕机发现延迟与 find 成本彻底解耦。
 
 set -u
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
@@ -61,6 +77,9 @@ ALERTS_KEEP="${SENTINEL_ALERTS_KEEP:-200}"              # 明细保留条数上�
 MAX_ALERTS_PER_RUN="${SENTINEL_MAX_ALERTS_PER_RUN:-50}" # 单次扫描最多报几条新命中
 DEADLINE_SEC="${SENTINEL_DEADLINE_SEC:-45}"             # 单次全量扫描自我时限
 MAX_FILES="${SENTINEL_MAX_FILES:-500000}"               # 扫描文件数保险阀（超出则降级锚定）
+SCAN_MIN_MB="${SENTINEL_SCAN_MIN_MB:-1}"                # v2 尺寸闸：只锚定 ≥ 该尺寸的文件（见头注释 v2 ①）
+SCAN_PRUNE_EXTRA="${SENTINEL_SCAN_PRUNE_EXTRA:-history}" # v2 纯遍历成本目录，空格分隔（见头注释 v2 ②）
+SCAN_FULL="${SENTINEL_SCAN_FULL:-0}"                    # 1 = 改前口径逃生口（见头注释 v2 ③）
 
 # 目录级排除（相对 SENTINEL_ROOT 的整段路径；find -prune，不下降）
 PRUNE_PATHS="projects .git browser-data voice-models docs mesh logs/router/objects"
@@ -122,12 +141,39 @@ SCAN_RAW="$LOG_DIR/log-sentinel-scan.$$.raw"
 AWK_META="$LOG_DIR/log-sentinel-awkmeta.$$"
 
 find_args=()
-for p in $PRUNE_PATHS; do find_args+=( -path "$SENTINEL_ROOT/$p" -o ); done
+if (( SCAN_FULL == 1 )); then
+  scope_tag="full"
+  prune_list="$PRUNE_PATHS"
+else
+  scope_tag="gated(size>=${SCAN_MIN_MB}MB,prune=${SCAN_PRUNE_EXTRA:-none})"
+  prune_list="$PRUNE_PATHS $SCAN_PRUNE_EXTRA"
+fi
+for p in $prune_list; do find_args+=( -path "$SENTINEL_ROOT/$p" -o ); done
 find_args+=( -path "$SENTINEL_ROOT/__sentinel_never_match__" )
 
-find "$SENTINEL_ROOT" -xdev \
-  \( "${find_args[@]}" \) -prune -o \
-  -type f -exec stat -f '%z|%m|%N' {} + 2>/dev/null > "$SCAN_RAW" || die "find 失败：$SENTINEL_ROOT"
+if (( SCAN_FULL == 1 )); then
+  # 逃生口：改前口径逐字（全根、无尺寸闸）——仅供人工深扫，SLOG 记 scope=full
+  find "$SENTINEL_ROOT" -xdev \
+    \( "${find_args[@]}" \) -prune -o \
+    -type f -exec stat -f '%z|%m|%N' {} + 2>/dev/null > "$SCAN_RAW"
+  find_rc=$?
+else
+  # 缺省口径：同一次遍历 + 尺寸闸（见头注释 v2 ①：<1MB 的文件触发不了任何判据）
+  find "$SENTINEL_ROOT" -xdev \
+    \( "${find_args[@]}" \) -prune -o \
+    -type f -size "+${SCAN_MIN_MB}M" -exec stat -f '%z|%m|%N' {} + 2>/dev/null > "$SCAN_RAW"
+  find_rc=$?
+fi
+# 遍历期失败分级（v2）：活系统上 find 会因为「扫描面在遍历中变动」（文件被轮转/删除）返回非零，
+#   改前一律 die ⇒ 整轮哨兵作废（不告警、不更锚）。改为：**拿去部分结果继续**（告警腿宁可有毛边也别整轮哑火），
+#   只有「零结果 + 非零」才判真失败。真失败仍 die（不写坏状态、不动锚）。
+if (( find_rc != 0 )); then
+  if [[ -s "$SCAN_RAW" ]]; then
+    slog "WARN find 非零退出 rc=${find_rc}（扫描面在遍历中变动，非致命）——按已得 $(( $(wc -l < "$SCAN_RAW" | tr -d ' ') )) 条继续，scope=${scope_tag}"
+  else
+    die "find 失败：$SENTINEL_ROOT（rc=${find_rc}，零结果）"
+  fi
+fi
 
 scanned=$(wc -l < "$SCAN_RAW" 2>/dev/null | tr -d ' '); scanned="${scanned:-0}"
 degrade=0
@@ -277,7 +323,7 @@ end_sec=$(date +%s)
 elapsed_s=$(( end_sec - start_sec ))
 
 # ---- 结构化日志（写入后自截断） ----
-slog "scan root=$SENTINEL_ROOT files=$scanned kept=$kept thr=${INTERVAL_SEC}s window=${WINDOW_SEC}s win_open=$winflag degrade=$degrade cand1=$cands checked1=$c1_checked skipped1=$c1_skipped hits=${total_hits} new=${new_hits} suppressed=${suppressed} reported=${reported} elapsed_s=$elapsed_s start=$start_ts"
+slog "scan root=$SENTINEL_ROOT scope=$scope_tag files=$scanned kept=$kept thr=${INTERVAL_SEC}s window=${WINDOW_SEC}s win_open=$winflag degrade=$degrade cand1=$cands checked1=$c1_checked skipped1=$c1_skipped hits=${total_hits} new=${new_hits} suppressed=${suppressed} reported=${reported} elapsed_s=$elapsed_s start=$start_ts"
 if (( total_hits > 0 )); then
   while IFS='|' read -r crit path size delta extra; do
     [[ -n "${path:-}" ]] || continue

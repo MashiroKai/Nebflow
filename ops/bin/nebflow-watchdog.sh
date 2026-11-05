@@ -38,6 +38,20 @@
 #      NEBFLOW_WD_S1_PER_HOUR；新增可配窗 NEBFLOW_WD_DEAF_LOG_FRESH_SECS（缺省 600s）。
 #      既有夹具挂钩（2026-09-13 先例）NEBFLOW_WD_PORT / NEBFLOW_WD_NF_HOME / NEBFLOW_WD_PAUSE_TTL_SECS
 #      语义不变；本版新增夹具挂钩 NEBFLOW_WD_COMPILE_CMD（缺省 `sbt -batch compile`，仅隔离夹具用）。
+#
+# v3（2026-11-05 运维修复批「watchdog 两处真缺陷」）——失聪探针生产失配根治：
+#   缺陷（已核实）：v2 的判据③ 探单路径 $NF_HOME/logs/nebflow.log，而实例自 2026-10-18 起实际写
+#     $NF_HOME/logs/stand.log（`lsof -p 91266` 实测 fd 114w）。旧路径 mtime 冻结在 2026-10-18
+#     ⇒ age 恒 > DEAF_LOG_FRESH_SECS ⇒ **DEAF 恒不命中** ⇒ 「活着但 HTTP 不可达」被判 DEAD
+#     直接进 Stage1 ⇒ v2 的「失聪误杀」根治在生产等于零。修法（三条，缺一不可）：
+#     ① 日志候选**可配**：NEBFLOW_WD_LOG_CANDIDATES（冒号分隔，缺省 = stand.log:nebflow.log）；
+#        plist 的 EnvironmentVariables 写死同一缺省值，避免下次换日志路径又静默失聪。
+#     ② **多候选取最新**：同时探两个候选，用**最近 mtime 更新者**判新鲜度 ⇒ 陈旧的历史路径
+#        不可能把新鲜的活性盖掉。
+#     ③ **判据不可用 ⇒ 禁止据此判 DEAD**：所有候选都不存在/不可读时输出 NOJUDGE（= 判据不可用），
+#        与 UNKNOWN/FOREIGN 同路「不动作 + WARN 等人工」——宁可不救，绝不误杀。
+#     三态（DEAF / NOJUDGE / DEAD）各自落一行可读判定行，含**实际采用的日志路径与 age**。
+#   注意：无监听者时仍直接判 DEAD（不需要日志判据，无「活着的东西」可误杀；保持 v2 语义）。
 
 set -u
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
@@ -57,9 +71,15 @@ RESTART_SH="$NF_HOME/bin/nebflow-restart.sh"
 #（2026-09-22 R-2 批夹具实测踩中：4 次真实 headless 调用飞出夹具、覆写宿主 watchdog-repair-report.md）。
 # 故与其余夹具挂钩同族加 NEBFLOW_WD_CLAUDE_BIN（缺省 = 原字面量 ⇒ 生产零变化；夹具置 stub 即可全隔离）。
 CLAUDE_BIN="${NEBFLOW_WD_CLAUDE_BIN:-/opt/homebrew/bin/claude}"
-NEBFLOW_DIR="$HOME/Claude code/Nebflow"
+# 编译预检 / Stage2 的工作目录。v3 起加 NEBFLOW_WD_REPO_DIR 夹具挂钩（缺省 = 原字面量 ⇒ 生产零变化）：
+# 隔离夹具必须能在沙箱里跑完 Stage1/Stage2 而不 cd 进真实仓（否则「DEAD ⇒ 进 Stage1」这条断言
+# 只能看日志、看不到 restart 桩是否真被调用）。
+NEBFLOW_DIR="${NEBFLOW_WD_REPO_DIR:-$HOME/Claude code/Nebflow}"
 HEALTH_URL="http://localhost:$PORT/api/sessions"
-NF_LOG="$LOG_DIR/nebflow.log"            # 失聪鉴别用：实例日志活性（mtime）依据
+# 失聪鉴别用：实例日志活性（mtime）依据。v3 起为**多候选、冒号分隔、可配**（见头注释 v3 ①）。
+# 缺省同时含当前真实日志 stand.log 与历史名 nebflow.log，取最近 mtime 更新者判新鲜度；
+# 全部不可读 ⇒ 判据不可用（NOJUDGE）⇒ 不动作（绝不据此判 DEAD）。
+LOG_CANDIDATES="${NEBFLOW_WD_LOG_CANDIDATES:-$LOG_DIR/stand.log:$LOG_DIR/nebflow.log}"
 FAIL_THRESHOLD="${NEBFLOW_WD_FAIL_THRESHOLD:-3}"
 S1_PER_HOUR="${NEBFLOW_WD_S1_PER_HOUR:-2}"
 S2_COOLDOWN=21600
@@ -99,24 +119,46 @@ instance_cmd_matches() {
   [[ "$cmd" == *nebflow* || "$cmd" == *sbt* || "$cmd" == *GatewayMain* || "$cmd" == *Nebflow* ]]
 }
 listener_pid() { lsof -nP -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null | head -1; }
-# 判定结果（stdout 单行）：
+# 最近日志活性（v3）：在 $LOG_CANDIDATES 里取 **mtime 最新** 的可读候选。
+# stdout 成功时单行 `<age_sec>|<path>|<mtime>`；**无任何可读候选 ⇒ 返回 1**（调用方据此判「判据不可用」）。
+# 只读 stat，零信号零写动作。
+latest_log_activity() {
+  local c mt best_mt=0 best_path="" now_s
+  now_s=$(date +%s)
+  local IFS=':'
+  for c in $LOG_CANDIDATES; do
+    [[ -n "$c" ]] || continue
+    [[ -f "$c" && -r "$c" ]] || continue
+    mt=$(stat -f %m "$c" 2>/dev/null) || continue
+    [[ -n "$mt" ]] || continue
+    if (( mt > best_mt )); then best_mt=$mt; best_path="$c"; fi
+  done
+  [[ -n "$best_path" ]] || return 1
+  echo "$(( now_s - best_mt ))|${best_path}|${best_mt}"
+  return 0
+}
+# 判定结果（stdout 单行 `<TOKEN>|<可读理由>`，理由进日志行）：
 #   DEAF     = 监听在 + 本实例 + 日志新鲜        ⇒ 失聪（活着但 HTTP 不可达）
 #   DEAD     = 无监听 / 监听在但日志陈旧          ⇒ 真死/半死 ⇒ 进 Stage1（优雅路径）
 #   FOREIGN  = 端口被非本实例进程占用            ⇒ 不动作（绝不杀外来者）
-#   UNKNOWN  = 无法确证（ps/lsof 读取失败、cmdline 不可读、日志 mtime 缺失）⇒ 不动作
+#   UNKNOWN  = 无法确证（ps/lsof 读取失败、cmdline 不可读）⇒ 不动作
+#   NOJUDGE  = 日志判据不可用（全部候选不存在/不可读）⇒ **禁止据此判 DEAD**，不动作
 classify_instance_state() {
-  local lpid lcmd log_mt log_age ps_rc
+  local lpid lcmd ps_rc lf log_age log_path
   lpid=$(listener_pid)
-  if [[ -z "$lpid" ]]; then echo "DEAD"; return 0; fi          # 无监听 = 真死/半死
+  if [[ -z "$lpid" ]]; then echo "DEAD|端口 :$PORT 无监听者"; return 0; fi  # 无监听 = 真死（无活物可误杀）
   LC_ALL=C ps -p "$lpid" >/dev/null 2>&1; ps_rc=$?
-  if (( ps_rc != 0 )); then echo "UNKNOWN"; return 0; fi        # ps 无法确证存活
+  if (( ps_rc != 0 )); then echo "UNKNOWN|ps 无法确证 pid=$lpid 存活"; return 0; fi
   lcmd=$(LC_ALL=C ps -p "$lpid" -o command= 2>/dev/null)
-  if [[ -z "$lcmd" ]]; then echo "UNKNOWN"; return 0; fi        # cmdline 不可读
-  if ! instance_cmd_matches "$lcmd"; then echo "FOREIGN"; return 0; fi
-  log_mt=$(stat -f %m "$NF_LOG" 2>/dev/null) || { echo "UNKNOWN"; return 0; }   # 日志 mtime 缺失
-  if [[ -z "$log_mt" ]]; then echo "UNKNOWN"; return 0; fi
-  log_age=$(( $(date +%s) - log_mt ))
-  if (( log_age <= DEAF_LOG_FRESH_SECS )); then echo "DEAF"; else echo "DEAD"; fi
+  if [[ -z "$lcmd" ]]; then echo "UNKNOWN|pid=$lpid 的 cmdline 不可读"; return 0; fi
+  if ! instance_cmd_matches "$lcmd"; then echo "FOREIGN|pid=$lpid 的 cmdline 不像本实例"; return 0; fi
+  if ! lf=$(latest_log_activity); then echo "NOJUDGE|日志候选全部不存在或不可读：${LOG_CANDIDATES}"; return 0; fi
+  log_age="${lf%%|*}"; log_path="${lf#*|}"; log_path="${log_path%%|*}"
+  if (( log_age <= DEAF_LOG_FRESH_SECS )); then
+    echo "DEAF|监听 pid=$lpid 在册且像本实例，日志最新写入者 ${log_path} age=${log_age}s ≤ ${DEAF_LOG_FRESH_SECS}s"
+  else
+    echo "DEAD|监听 pid=$lpid 在册但日志陈旧：最新写入者 ${log_path} age=${log_age}s > ${DEAF_LOG_FRESH_SECS}s"
+  fi
   return 0
 }
 
@@ -143,17 +185,22 @@ if [[ -f "$PAUSE_FLAG" ]]; then
   log "暂停旗已过期（age=${pause_age}s > TTL=${PAUSE_TTL_SECS}s）——恢复巡检"
 fi
 
-# ---- 日志失控哨兵（只读告警腿；自身失败永不影响后续判定与退出码） ----
-if [[ -x "$SENTINEL_BIN" ]]; then
-  NF_HOME="$NF_HOME" SENTINEL_ROOT="$NF_HOME" /bin/bash "$SENTINEL_BIN" >/dev/null 2>&1 || true
-fi
-
 # ---- 健康检查（与 restart.sh 同探针口径） ----
+# v3 顺序调整（2026-11-05 运维修复批 ②）：健康探针从「哨兵之后」提到**最前**，哨兵只在**健康轮**跑。
+#   理由（实测）：哨兵的全量 find 改前 25–28s（热缓存）/ 367s（冷缓存首轮），而它排在探针之前 ⇒
+#   每 30min 一次的长扫描把当轮宕机发现推迟分钟级（DEADLINE_SEC=45 只约束判据①循环，管不到 find）。
+#   移序后「宕机发现延迟」只剩 curl 探针本身；宕轮不跑哨兵在语义上也正确：实例已死 ⇒ 没人写日志，
+#   「日志失控」这条告警腿在宕轮没有观测对象（哨兵自身也不依赖本脚本的健康结论）。
+#   哨兵自身失败一律 `|| true` 吞掉，绝不影响本脚本任何判定与退出码。
 code=$(curl -s -o /dev/null -w "%{http_code}" -m 10 "$HEALTH_URL" 2>/dev/null)
 if [[ "$code" =~ ^(200|401|403)$ ]]; then
   fails=$(cat "$FAILS_FILE" 2>/dev/null || echo 0)
   (( fails > 0 )) && log "健康恢复 HTTP=${code}（此前连续失败 ${fails} 次已复位）"
   echo 0 > "$FAILS_FILE"
+  # ---- 日志失控哨兵（只读告警腿；健康轮才跑，见上） ----
+  if [[ -x "$SENTINEL_BIN" ]]; then
+    NF_HOME="$NF_HOME" SENTINEL_ROOT="$NF_HOME" /bin/bash "$SENTINEL_BIN" >/dev/null 2>&1 || true
+  fi
   exit 0
 fi
 
@@ -163,20 +210,27 @@ log "健康检查失败 #$fails HTTP=${code:-timeout}"
 if (( fails < FAIL_THRESHOLD )); then exit 0; fi
 
 # ---- 达阈值：先鉴别「失聪 vs 真死」（本版新增；失聪 ⇒ 绝不杀） ----
-STATE=$(classify_instance_state)
+# classify_instance_state 输出 `<TOKEN>|<可读理由>`：理由直接进日志行（三态各有独立一行，见头注释 v3 ③）
+STATE_RAW=$(classify_instance_state)
+STATE="${STATE_RAW%%|*}"
+if [[ "$STATE_RAW" == "$STATE" ]]; then STATE_DETAIL=""; else STATE_DETAIL="${STATE_RAW#*|}"; fi
+log "鉴别判据：DEAF/NOJUDGE/DEAD（日志候选=${LOG_CANDIDATES}，新鲜窗=${DEAF_LOG_FRESH_SECS}s）⇒ 本轮结论=${STATE}"
 if [[ "$STATE" == "DEAF" ]]; then
+  log "WARN 判「失聪」（HTTP=${code:-timeout} 但实例活着）：${STATE_DETAIL} ⇒ 跳过重启（绝不杀；fail 计数保留 #${fails}、限速照旧）"
+  exit 0
+fi
+if [[ "$STATE" == "NOJUDGE" ]]; then
   _lp=$(listener_pid)
-  _la=$(( $(date +%s) - $(stat -f %m "$NF_LOG" 2>/dev/null || echo 0) ))
-  log "WARN 判「失聪」（HTTP=${code:-timeout} 但实例活着）：监听 pid=${_lp:-?} 在册、cmdline 匹配本实例、日志 age=${_la}s ≤ ${DEAF_LOG_FRESH_SECS}s ⇒ 跳过重启（绝不杀；fail 计数保留 #${fails}、限速照旧）"
+  log "WARN 判据不可用（${STATE_DETAIL}；监听 pid=${_lp:-none} 存活且 cmdline 匹配本实例）⇒ **禁止据此判 DEAD**，本轮不动作、绝不杀（等人工/下一轮）"
   exit 0
 fi
 if [[ "$STATE" == "FOREIGN" || "$STATE" == "UNKNOWN" ]]; then
   _lp=$(listener_pid)
   _lc=$(LC_ALL=C ps -p "${_lp:-0}" -o command= 2>/dev/null | head -c 120)
-  log "WARN 端口 :$PORT 状态不可判（${STATE}，监听 pid=${_lp:-none} cmd=[${_lc}]）⇒ 不动作、绝不杀（等人工/下一轮）"
+  log "WARN 端口 :$PORT 状态不可判（${STATE}：${STATE_DETAIL}，监听 pid=${_lp:-none} cmd=[${_lc}]）⇒ 不动作、绝不杀（等人工/下一轮）"
   exit 0
 fi
-log "鉴别结果=${STATE}（无监听或日志陈旧）⇒ 真死，进入 Stage1（优雅路径）"
+log "鉴别结果=DEAD（真死：${STATE_DETAIL}）⇒ 进入 Stage1（优雅路径）"
 
 # ---- 达阈值：升级 Stage 1（优雅重启） ----
 now=$(date +%s)
