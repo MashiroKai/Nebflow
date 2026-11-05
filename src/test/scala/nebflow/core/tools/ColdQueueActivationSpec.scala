@@ -15,7 +15,7 @@ import nebflow.actor.{
   AgentRecord
 } // W1 shim: main exported these from nebflow.agent (protocol/AgentState); the merge moved them to actor
 import nebflow.core.compact.HistoryArchiver
-import nebflow.core.flow.{MailQueueStore, TeamSessionRegistry}
+import nebflow.core.flow.MailQueueStore
 import nebflow.core.task.FileTaskStore
 import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
@@ -153,7 +153,6 @@ class ColdQueueActivationSpec extends FunSuite:
     val io = for
       sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
       meta <- sessionStore.createSession("cq/member", agentName = Some("member"), flowName = Some("cq"))
-      _ <- TeamSessionRegistry.registerSession("cq", "member", meta.id)
       resources <- mkResources(system, tmp, llm, sessionStore)
       res <- MailTool.queueToSession(
         meta.id,
@@ -189,16 +188,24 @@ class ColdQueueActivationSpec extends FunSuite:
     val io = for
       sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
       meta <- sessionStore.createSession("cq/member", agentName = Some("member"), flowName = Some("cq"))
-      _ <- TeamSessionRegistry.registerSession("cq", "member", meta.id)
       resources <- mkResources(system, tmp, llm, sessionStore)
-      // Stale-ref setup: a victim actor registered in actorMap then stopped
-      // WITHOUT a deathwatch — emulates any cleanup-miss path (missed watch,
-      // registry bookkeeping bug). actorMap keeps the dead ref.
+      // Stale-ref setup: a victim actor registered in the UNIFIED agentRegistry
+      // then stopped WITHOUT cleanup — emulates any cleanup-miss path (missed
+      // watch, registry bookkeeping bug). The registry keeps the dead ref.
+      // （团队功能删除批阶段 3：原夹具写的是已退役的团队会话登记表 actorMap；
+      //  `liveActorOrActivate` 现在只探 agentRegistry 一份权威记录。）
       victim <- system.spawn(
         Behaviors.receiveMessage[AgentCommand](_ => IO.pure(Behaviors.stopped[AgentCommand])),
         s"victim-${meta.id.take(8)}"
       )
-      _ <- TeamSessionRegistry.registerActor(meta.id, victim, resources, rootSessionId = meta.id)
+      _ <- resources.agentRegistry.update(
+        _ + (meta.id -> AgentRecord(
+          sessionId = meta.id,
+          ref = victim,
+          kind = AgentKind.Team,
+          rootSessionId = meta.id
+        ))
+      )
       _ <- system.stop(victim)
       _ <- IO.sleep(200.millis) // let the fiber cancel complete
       // The mail under test
@@ -236,7 +243,6 @@ class ColdQueueActivationSpec extends FunSuite:
     val io = for
       sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
       meta <- sessionStore.createSession("ghost/agent", agentName = Some("ghost"), flowName = Some("ghost"))
-      _ <- TeamSessionRegistry.registerSession("ghost", "ghost", meta.id)
       resources <- mkResources(system, tmp, llm, sessionStore)
       res <- MailTool.queueToSession(
         meta.id,
@@ -272,7 +278,6 @@ class ColdQueueActivationSpec extends FunSuite:
     val io = for
       sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
       meta <- sessionStore.createSession("cq/member", agentName = Some("member"), flowName = Some("cq"))
-      _ <- TeamSessionRegistry.registerSession("cq", "member", meta.id)
       resources <- mkResources(system, tmp, llm, sessionStore)
       refOpt <- MailTool.activateAgent(meta.id, resources, system, ctxFor(resources, system, "sender-s4"))
       item = MailQueueItem(

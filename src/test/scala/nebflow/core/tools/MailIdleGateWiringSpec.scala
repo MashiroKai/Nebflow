@@ -16,7 +16,7 @@ import nebflow.actor.{
   AgentRecord
 } // W1 shim: main exported these from nebflow.agent (protocol/AgentState); the merge moved them to actor
 import nebflow.core.compact.HistoryArchiver
-import nebflow.core.flow.{MailIdleGate, MailQueueStore, RunningFlowRegistry, TeamSessionRegistry}
+import nebflow.core.flow.{MailIdleGate, MailQueueStore, RunningFlowRegistry}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
@@ -108,7 +108,10 @@ class MailIdleGateWiringSpec extends FunSuite:
       }
     go(System.currentTimeMillis() + timeout.toMillis)
 
-  /** fixture team（lead=boss, member=member）on disk under tmp. teamName 每测试唯一——TeamSessionRegistry 是 object 单例，同 (instance,agent) key 会跨测试残留，污染 sessionIdsOf。 */
+  /** fixture team（lead=boss, member=member）on disk under tmp —— 只是磁盘上的团队
+   *  实体（`teams/<name>/team.json` + agents/），供 `EntityLoader.loadTeamAgent` 的
+   *  重载腿读取。团队功能删除批阶段 3：团队会话登记表已删，不再有「object 单例跨
+   *  测试残留」问题；teamName 仍逐测试唯一（保持 fixture 互不干扰）。 */
   private def fixtureTeam(tmp: os.Path, teamName: String): Unit =
     val data = tmp / "data"
     PathUtil.setDataRoot(data)
@@ -174,9 +177,6 @@ class MailIdleGateWiringSpec extends FunSuite:
       sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
       bossMeta <- sessionStore.createSession("cqi6/boss", agentName = Some("boss"), flowName = Some("cqi6"))
       memberMeta <- sessionStore.createSession("cqi6/member", agentName = Some("member"), flowName = Some("cqi6"))
-      _ <- TeamSessionRegistry.registerSession("cqi6", "boss", bossMeta.id)
-      _ <- TeamSessionRegistry.registerSession("cqi6", "member", memberMeta.id)
-      _ <- TeamSessionRegistry.registerManager("cqi6", bossMeta.id)
       resources <- mkResources(system, tmp, llm, sessionStore)
       // root sender record (Nebula)
       _ <- resources.agentRegistry.update(_ + ("root-sid" -> AgentRecord("root-sid", null, AgentKind.Root, "root-sid")))
@@ -222,9 +222,6 @@ class MailIdleGateWiringSpec extends FunSuite:
       sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
       bossMeta <- sessionStore.createSession("cqi7/boss", agentName = Some("boss"), flowName = Some("cqi7"))
       memberMeta <- sessionStore.createSession("cqi7/member", agentName = Some("member"), flowName = Some("cqi7"))
-      _ <- TeamSessionRegistry.registerSession("cqi7", "boss", bossMeta.id)
-      _ <- TeamSessionRegistry.registerSession("cqi7", "member", memberMeta.id)
-      _ <- TeamSessionRegistry.registerManager("cqi7", bossMeta.id)
       resources <- mkResources(system, tmp, llm, sessionStore)
       // 激活 member + boss（registry 记录 + live ref；boss 作 sender 记录）
       _ <- MailTool.activateAgent(memberMeta.id, resources, system, ctxFor(resources, system, bossMeta.id))
@@ -271,9 +268,6 @@ class MailIdleGateWiringSpec extends FunSuite:
       sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
       bossMeta <- sessionStore.createSession("cqi7b/boss", agentName = Some("boss"), flowName = Some("cqi7b"))
       memberMeta <- sessionStore.createSession("cqi7b/member", agentName = Some("member"), flowName = Some("cqi7b"))
-      _ <- TeamSessionRegistry.registerSession("cqi7b", "boss", bossMeta.id)
-      _ <- TeamSessionRegistry.registerSession("cqi7b", "member", memberMeta.id)
-      _ <- TeamSessionRegistry.registerManager("cqi7b", bossMeta.id)
       resources <- mkResources(system, tmp, llm, sessionStore)
       // boss（目标）自身子树空闲；member（兄弟）子树忙——不应阻塞 team 内发往 boss
       memberRef <- resources.agentRegistry.get.map(_.get(memberMeta.id).map(_.ref))
@@ -312,8 +306,6 @@ class MailIdleGateWiringSpec extends FunSuite:
     val io = for
       sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
       bossMeta <- sessionStore.createSession("cqi8/boss", agentName = Some("boss"), flowName = Some("cqi8"))
-      _ <- TeamSessionRegistry.registerSession("cqi8", "boss", bossMeta.id)
-      _ <- TeamSessionRegistry.registerManager("cqi8", bossMeta.id)
       resources <- mkResources(system, tmp, llm, sessionStore)
       _ <- resources.agentRegistry.update(_ + ("root-sid" -> AgentRecord("root-sid", null, AgentKind.Root, "root-sid")))
       // 激活 boss（确保 registry 记录与 live ref）
@@ -372,8 +364,6 @@ class MailIdleGateWiringSpec extends FunSuite:
     val io = for
       sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
       bossMeta <- sessionStore.createSession("cqi10/boss", agentName = Some("boss"), flowName = Some("cqi10"))
-      _ <- TeamSessionRegistry.registerSession("cqi10", "boss", bossMeta.id)
-      _ <- TeamSessionRegistry.registerManager("cqi10", bossMeta.id)
       resources <- mkResources(system, tmp, llm, sessionStore)
       // 队列有货（磁盘）但 agent 冷（无 actor）——activateAgent 恢复 head 触发
       _ <- MailQueueStore.append(bossMeta.id, queueItem("mail-q-a10", "tester", "root-sid", "A10_COLD_MARKER"))
@@ -400,7 +390,6 @@ class MailIdleGateWiringSpec extends FunSuite:
     val io = for
       sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
       memberMeta <- sessionStore.createSession("cqi11a/member", agentName = Some("member"), flowName = Some("cqi11a"))
-      _ <- TeamSessionRegistry.registerSession("cqi11a", "member", memberMeta.id)
       resources <- mkResources(system, tmp, llm, sessionStore)
       // 激活 member（确保 registry 记录与 live ref）
       _ <- MailTool.activateAgent(memberMeta.id, resources, system, ctxFor(resources, system, "boss-sid"))
@@ -434,7 +423,6 @@ class MailIdleGateWiringSpec extends FunSuite:
     val io = for
       sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
       memberMeta <- sessionStore.createSession("cqi11b/member", agentName = Some("member"), flowName = Some("cqi11b"))
-      _ <- TeamSessionRegistry.registerSession("cqi11b", "member", memberMeta.id)
       resources <- mkResources(system, tmp, llm, sessionStore)
       // 先入队两件（磁盘顺序 = 注入顺序）
       _ <- MailQueueStore.append(memberMeta.id, queueItem("mail-q-1st", "boss", "boss-sid", "FIRST_MARKER"))
@@ -482,9 +470,6 @@ class MailIdleGateWiringSpec extends FunSuite:
       sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
       bossMeta <- sessionStore.createSession("cqi12/boss", agentName = Some("boss"), flowName = Some("cqi12"))
       memberMeta <- sessionStore.createSession("cqi12/member", agentName = Some("member"), flowName = Some("cqi12"))
-      _ <- TeamSessionRegistry.registerSession("cqi12", "boss", bossMeta.id)
-      _ <- TeamSessionRegistry.registerSession("cqi12", "member", memberMeta.id)
-      _ <- TeamSessionRegistry.registerManager("cqi12", bossMeta.id)
       resources <- mkResources(system, tmp, llm, sessionStore)
       _ <- MailTool.activateAgent(memberMeta.id, resources, system, ctxFor(resources, system, bossMeta.id))
       // member 子树忙（Delegate 在飞）→ team 内 queue mail 被 idle gate 拦截
@@ -543,9 +528,6 @@ class MailIdleGateWiringSpec extends FunSuite:
       sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
       bossMeta <- sessionStore.createSession("cqi13/boss", agentName = Some("boss"), flowName = Some("cqi13"))
       memberMeta <- sessionStore.createSession("cqi13/member", agentName = Some("member"), flowName = Some("cqi13"))
-      _ <- TeamSessionRegistry.registerSession("cqi13", "boss", bossMeta.id)
-      _ <- TeamSessionRegistry.registerSession("cqi13", "member", memberMeta.id)
-      _ <- TeamSessionRegistry.registerManager("cqi13", bossMeta.id)
       resources <- mkResources(system, tmp, llm, sessionStore)
       _ <- MailTool.activateAgent(memberMeta.id, resources, system, ctxFor(resources, system, bossMeta.id))
       memberRef <- resources.agentRegistry.get.map(_.get(memberMeta.id).map(_.ref))
@@ -612,7 +594,6 @@ class MailIdleGateWiringSpec extends FunSuite:
     val io = for
       sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
       memberMeta <- sessionStore.createSession("cqi14/member", agentName = Some("member"), flowName = Some("cqi14"))
-      _ <- TeamSessionRegistry.registerSession("cqi14", "member", memberMeta.id)
       resources <- mkResources(system, tmp, llm, sessionStore)
       res <- MailTool.call(
         JsonObject(
