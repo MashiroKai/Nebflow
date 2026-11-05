@@ -404,23 +404,31 @@ class AgentControlToolSpec extends CatsEffectSuite:
 
   // ── restart 守卫与路径 ─────────────────────────────────────
 
-  test("restart on Ephemeral kind is rejected with cancel guidance") {
-    val system = ActorSystem("ac-restart-eph")
+  // 裁定5 删除 `AgentKind.Ephemeral` 之后，本用例改挂到裁定4 新增的
+  // `AgentKind.External` 上——判据不变：**没有 supervisor/checkpoint 载体的 kind，
+  // restart 必须被显式拒绝并指引 cancel**（旧用例断言的 Ephemeral 已不存在）。
+  test("restart on External kind is rejected with cancel guidance") {
+    val system = ActorSystem("ac-restart-ext")
     val tmp = os.temp.dir()
     val program = for
       resources <- mkResources(system, tmp)
-      ephRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "eph-child")
       _ <- resources.agentRegistry.set(
         Map(
-          "ephemeral-Mailer-ffff6666" -> AgentRecord("ephemeral-Mailer-ffff6666", ephRef, AgentKind.Ephemeral, "root-7")
+          "external-codex-aaaa1111" -> AgentRecord(
+            "external-codex-aaaa1111",
+            // 外部 CLI 腿进程内无 actor —— 裁定4 唯一允许 null ref 的记录
+            null,
+            AgentKind.External,
+            "root-7"
+          )
         )
       )
-      res <- IO(call(resources, "root-7", "restart", target = "ephemeral-Mailer-ffff6666"))
+      res <- IO(call(resources, "root-7", "restart", target = "external-codex-aaaa1111"))
     yield
       assert(res.isLeft)
       val msg = res.fold(e => e.message, _ => "")
-      assert(msg.contains("restart is not supported"), msg)
-      assert(msg.contains("Cancel"), msg)
+      assert(msg.contains("Restart is not supported"), msg)
+      assert(msg.contains("cancel"), msg)
     program.guarantee(system.stopAll.attempt.void)
   }
 

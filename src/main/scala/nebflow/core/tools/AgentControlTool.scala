@@ -194,6 +194,15 @@ When to use:
         )
       case AgentKind.Root =>
         Some("Root sessions cannot be managed with this tool (self-preservation guard).")
+      case AgentKind.External =>
+        // 裁定4（登记 AgentKind.External）：外部 CLI 腿在统一注册表里有行（ref=null），
+        // 但**没有 actor 可 Stop/Restart**。cancel 由外层前缀腿（`external-*` ⇒
+        // ExternalSessionRunner.cancel 杀进程树）处理，走不到这里；真走到这里说明是
+        // 一条不属于外部取消面的记录 ⇒ fail-closed 明确拒绝，绝不 deref null ref。
+        Some(
+          "External CLI delegates have no in-process actor — cancel the session by its id " +
+            "(the process tree is terminated) and continue it with Mail. Restart is not supported."
+        )
       case k =>
         val allowed = if action == "restart" then RestartableKinds else CancelableKinds
         if allowed.contains(k) then None
@@ -1054,6 +1063,7 @@ When to use:
         val source = rec.kind match
           case AgentKind.SubTask => "subtask"
           case AgentKind.Delegate => "delegate"
+          case AgentKind.External => "external"
           case _ => "background-task"
         val tombstoneWrite = IO
           .blocking(nebflow.core.delegate.DelegateRegistry.markCancelRequested(rec.sessionId, by))
@@ -1079,7 +1089,8 @@ When to use:
           )
         )
         val taskUpdate =
-          if rec.parentSessionId.nonEmpty then
+          // 裁定4：外部腿（ref=null）没有任务行语义，不在此终态化。
+          if rec.kind != AgentKind.External && rec.parentSessionId.nonEmpty then
             resources.subAgentTaskStore
               .updateStatus(
                 rec.parentSessionId,

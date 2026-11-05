@@ -17,9 +17,16 @@ import nebflow.shared.*
  * 白名单），旧语义已被 `SubTask` 覆盖；存量化核（2026-11-05）在数据根
  * `agents/ sessions/ subagent-tasks/ tasks/` 全量扫描 `"kind": "Ephemeral"|"Plan"`
  * **零命中** ⇒ 无存量兼容负担。
+ *
+ * **外部 CLI 腿登记（作者裁定4「登记 AgentKind.External」，2026-11-05 09:38）**：
+ * `External` = 执行器腿（`external-<exec>-<id>`，脑子在**另一个进程**里，没有
+ * `AgentActor` / 没有邮箱）。登记它只为关闭「所有 agent 都能被 list / cancel /
+ * 挂终态」这条不变式，**不参与监督与恢复**（恢复由 `ExternalOutputStore` /
+ * CLI resume 承担）——这是设计件 §1.4 #13 的 (a) 口径，也是本枚举唯一一条
+ * **ref 恒为 null** 的记录（见 [[nebflow.actor.ExternalAgentRecord]]）。
  */
 enum AgentKind:
-  case Root, Team, Flow, Delegate, SubTask
+  case Root, Team, Flow, Delegate, External, SubTask
 
 /**
  * Unified registry entry — one identity per agent (P1 统一注册表).
