@@ -301,7 +301,10 @@ test('T3 agentflow（R2/R6）：组头徽标=row.mode（dispatcher）；chain.no
   const flowRows = page.locator('#bg-dropdown .bg-section-agents .bg-dropdown-list .bg-task-row.bg-task-row-child[data-flow-delegate-key="72"]');
   await expect(flowRows).toHaveCount(2);
   await expect(flowRows.nth(0).locator('.bg-task-name')).toHaveText('步骤一');
-  await expect(flowRows.nth(0).locator('.bg-task-kind')).toHaveText('AgentFlow');
+  // 术语分层批（2026-11-05 作者令「agentflow = 整次编排的代号，节点 = 它的成员」）：
+  // flow 结构行的徽标词从硬编码的整体词退役为**成员词**（flow-step 是这次编排里的
+  // 节点）——断言锚随术语收口 1:1 平移，行/缩进/结构语义逐字不变。
+  await expect(flowRows.nth(0).locator('.bg-task-kind')).toHaveText('节点');
   await expect(flowRows.nth(1).locator('.bg-task-state')).toHaveText('待处理');
   await expect(flowRows.nth(1).locator('.bg-task-project')).toHaveText('← s1');
   // 适配层单 delegate 回退节点（kind=delegate）不入子行层。
