@@ -1,0 +1,38 @@
+### node gates base=3e647e1b3 date=2026-11-05T06:53:22Z
+=== check-api-routes EXIT=0
+✓ API route existence — GREEN（前端 140 条 /api 路径全部有后端承接；豁免 4 条全在执行中；关键路由 26 条全在；后端注册 265 条）
+=== check-component-contract EXIT=0
+  ↑ js/todoFace.js: bareInnerHtml 13 → 12（改善，建议下次 --update-baseline 收紧）
+  ↑ js/mermaidRenderer.js: 全部归零（改善，建议下次 --update-baseline 收紧）
+  ↑ js/mobile/socialSearch.js: 全部归零（改善，建议下次 --update-baseline 收紧）
+PASS: 五条组件契约（light DOM / 跨面 DOM / 事件字面量 / 组件内部类名 / 裸 innerHTML）零新增，均不超基线。
+=== check-js-types EXIT=0
+checkJs: 0 errors (baseline 0, zero-gate files: 3)
+checkJs PASS: no new errors above baseline.
+=== check-design-tokens EXIT=1
+  ↑ js/reference.js: color 6 → 5（改善，建议下次 --update-baseline 收紧）
+
+FAIL 1 项：
+  js/ws.js:0  [baseline-color] 颜色字面量 从基线 10 增到 12（只许减不许增）
+=== check-self-explaining EXIT=0
+self-explaining：2 个语言包 + index.html，27 命中（behavior-teaching×3 path-guidance×17 capability-claim×7）；基线 27 条
+PASS: 页面文案零新增教学句；留存命中全部落在铁律 8 保留清单（状态事实/失败收口/动作标签/空态下一步/tooltip 事实句）。
+=== check-circular EXIT=0
+circular-deps PASS: 252 files, static import graph is acyclic.
+=== check-msgstyle-single-source EXIT=0
+  ok  A1/A2 气泡方向尾角 4px（②A1）  [chat.css×5, sapphire.css×1]
+  ok  A2/A4 元信息 pill 戒指阴影（②A3）  [sapphire.css×1]
+msgstyle-single-source: 7 rules, 41 css files scanned.
+PASS: 消息面同值字面量全部单源（共享层 = css/sapphire.css）。
+=== check-fixture-secrets EXIT=0
+[fixture-secrets] 1190 files scanned under tests/fixtures, reports-evidence — no high-entropy long token literals  [OK]
+=== check-freeze-state EXIT=0
+  ok   ⑥ 唤醒腿（含 Mail）都发状态变更帧 delegateWoken — Mail/面板/复活三腿发帧；前端收帧即降级
+  ok   ⑥ 一致性扫描工具在册（可复现今日 case） — 全量扫描 / 面板对账 / 今日 case 复现三模式
+
+冻结态呈现门禁通过（19 项）。
+=== check-legacy-domain EXIT=0
+[legacy-domain] clean: 0 bare retired-domain literal(s) outside the whitelist (26 whitelisted hit(s) in frozen/tool paths)
+=== check-scala-layers EXIT=2
+scala-layers CONFIG ERROR: 未知顶层包 perception ——
+  新包必须显式加入 scripts/check-scala-layers.mjs 的 LAYER_ORDER(一次有意识的分层裁定)。
