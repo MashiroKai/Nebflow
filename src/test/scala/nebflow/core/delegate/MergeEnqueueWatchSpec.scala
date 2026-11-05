@@ -47,6 +47,7 @@ class MergeEnqueueWatchSpec extends CatsEffectSuite:
 
   override def beforeEach(context: munit.BeforeEach): Unit =
     MergeQueue.reset()
+    MergeDeclaration.reset()
     blockNotices.clear()
     removeRetry(tempRoot / "chains")
     removeRetry(tempRoot / "merge-channel")
@@ -102,7 +103,9 @@ class MergeEnqueueWatchSpec extends CatsEffectSuite:
     hasOpenEntry: Boolean = false,
     idleMs: Long = 600_000L,
     lastActivityMs: Long = 1_000L,
-    taskRow: Option[String] = Some("running")
+    taskRow: Option[String] = Some("running"),
+    // 宣告闸批 2026-11-04 第八维：属主完成宣告（缺省 true = 旧七维矩阵的语境不变）
+    declared: Boolean = true
   ): MergeEnqueueWatch.Candidate =
     MergeEnqueueWatch.Candidate(
       delegateId = "delegate-w1",
@@ -113,7 +116,8 @@ class MergeEnqueueWatchSpec extends CatsEffectSuite:
       hasOpenEntry = hasOpenEntry,
       idleMs = idleMs,
       lastActivityMs = lastActivityMs,
-      taskRow = taskRow
+      taskRow = taskRow,
+      declared = declared
     )
 
   // ══════════════════════════════════════════════════════════════════════
@@ -146,6 +150,16 @@ class MergeEnqueueWatchSpec extends CatsEffectSuite:
   // ══════════════════════════════════════════════════════════════════════
   // D2 —— 阈值边界 999 / 1000
   // ══════════════════════════════════════════════════════════════════════
+
+  test("D1b 宣告维（第八维）：属主未宣告 ⇒ 绝不代办入队；同一候选改发 undeclared-not-queued 告警") {
+    val t = Defaults.MergeEnqueueWatchIdleSec * 1000L
+    val undeclared = cand(idleMs = t, declared = false)
+    assertEquals(MergeEnqueueWatch.shouldProxy(undeclared, t), false, "no owner declaration ⇒ never proxied (a branch with commits is not a finished batch)")
+    assertEquals(MergeEnqueueWatch.shouldAlertUndeclared(undeclared, t), true, "it becomes a VISIBLE alert instead")
+    val declaredCand = cand(idleMs = t, declared = true)
+    assertEquals(MergeEnqueueWatch.shouldProxy(declaredCand, t), true, "declared ⇒ proxied as before")
+    assertEquals(MergeEnqueueWatch.shouldAlertUndeclared(declaredCand, t), false, "a declared member is not an alert case")
+  }
 
   test("D2 阈值边界：idle=999 不代办、idle=1000 代办（>= 而非 >）；缺省阈值 = Defaults.MergeEnqueueWatchIdleSec=600s") {
     val t = 1_000L
@@ -260,7 +274,10 @@ class MergeEnqueueWatchSpec extends CatsEffectSuite:
             parentSessionId = "nebula-root",
             description = "already queued",
             readyAt = 42L,
-            channelKind = "internal"
+            channelKind = "internal",
+            // 宣告闸批 2026-11-04：属主宣告在案——授窗前提
+            declaredAt = Some(1_000L),
+            declareSource = Some(nebflow.core.delegate.MergeDeclaration.Source.ReportMerge)
           )
         )
       }
@@ -292,6 +309,8 @@ class MergeEnqueueWatchSpec extends CatsEffectSuite:
     val id = "delegate-d4b"
     val rec = recOf(id, repo)
     installNotices()
+    // 宣告闸批 2026-11-04：本腿测的是 hasOpenEntry 幂等面 ⇒ 属主宣告必须先满足。
+    MergeDeclaration.write(id, nebflow.core.delegate.MergeDeclaration.Source.ReportMerge)
     val nowMs = 5_000_000L
     val threshold = Defaults.MergeEnqueueWatchIdleSec * 1000L
     val proxied = ListBuffer.empty[String]
