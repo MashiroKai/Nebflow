@@ -647,7 +647,10 @@
   transition: background 0.15s, color 0.15s;
 }
 .task-delegate-btn svg { width: 12px; height: 12px; }
-.task-delegate-btn:hover { background: var(--color-frame-hover); color: var(--color-text, #000); }
+@media (hover: hover) {
+  .task-delegate-btn:hover { background: var(--color-frame-hover); color: var(--color-text, #000); }
+}
+
 .task-delegate-btn:disabled { opacity: 0.4; cursor: default; }
 
 

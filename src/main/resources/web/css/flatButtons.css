@@ -1,0 +1,204 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   flatButtons.css — 全站按钮**扁平六态**共享态层（本文件最后加载）
+
+   ── 为什么有这个文件 ────────────────────────────────────────────────
+   作者令（2026-11-05 13:35 逐字）：
+     「我们的按钮扁平化风格要求要落实到各处 不管是hover还是点击 或者按下。」
+   报障现场 = 接管弹窗「控制台已在其他位置打开」的两个药丸钮（退出 / 重新接管）
+   还带重投影 + inset 浮雕，像"浮起来的实体按钮"。但病根不是那一个弹窗：
+   全站按钮的六态是各文件各写一份，**多数族根本没有按下态 / 焦点态**（本批
+   盘点实测：46 个登记族里 25 族无 `:active`、22 族无 `:focus-visible`），
+   于是"hover 有变化、按下没变化"成为常态。
+
+   ── 单点机制（三件套，本批选定）─────────────────────────────────────
+   ① 令牌单源 `--btn-press-* / --btn-ring-* / --btn-disabled-*`（css/sapphire.css
+      按钮 token 块）——幅度、环宽、禁用档、色阶跳档的**唯一数值出生地**；
+   ② 基类 `.ds-btn`（css/design-system.css）——完整六态的**参考实现**，写清
+      每个态该动哪个属性（这是"怎么写"的唯一范例）；
+   ③ 本文件 = 共享态层——把上面两样的**行为**一次性补给已登记族，各族只留
+      自己的配色/几何，不再各抄一份 hover/active/focus。加一个族进本层 =
+      在下面的登记表里加一行 + 在规范文件 flat-button-spec.md 的族表加一行。
+
+   ── 加载位置与特异性纪律 ────────────────────────────────────────────
+   本文件在 index.html 里**最后加载**（keyboard.css 之后）。登记表一律写成
+   `:is(...)` 形式 ⇒ 特异性 (0,2,0)（类 + 同名伪类），与各族的 `:hover/:active`
+   同档但更晚 ⇒ 只覆盖"族自己没写"的那部分语义；族要有自己的配色，照旧在后面
+   的族文件里写（同档更早、值不同也照旧生效于被本层排除的族）。
+
+   ── 本层不做什么 ────────────────────────────────────────────────────
+   不写任何阴影 / 渐变 / drop-shadow / translateY —— 这不是自我约束，是契约：
+   `scripts/check-flat-buttons.mjs` 对按钮面选择器的这四类声明判红。要给按钮
+   加影，唯一合法路径是规范文件的「例外清单」+ 写明理由。
+
+   ── 六态覆盖口径 ────────────────────────────────────────────────────
+   默认（族自己）· hover（`@media (hover: hover)` 隔离）· 按下 `:active` ·
+   键盘 `:focus-visible` · `:disabled` / `[aria-disabled="true"]` ·
+   深浅主题（全部走 var(--btn-*/--ds-*) 令牌，双主题自动解析，零裸色值）。
+   触屏面 `@media (hover: none)` 另有加深值与更大按下幅度（无 hover 也要有反馈）。
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── ① 按下态：补「有 hover 无按下」的 25 族 ───────────────────────────────
+   只缩放，不位移、不配影（扁平允许项：极轻微缩放）。幅度 = --btn-press-scale
+   2%，与 .ds-btn 基类同值 ⇒ 全站按下手感一致。 */
+:is(
+  .canvas-close-btn, .panel-btn, .memory-btn, .dvp-pill,
+  .fm-fab, .proj-create-fab, .proj-flowmap-fab, .mh-search-fab,
+  .mp-mode-btn, .pp-btn, .cfg-eye-btn, .cfg-btn-save,
+  .explorer-action-btn, .explorer-folder-btn,
+  .session-delete, .folder-delete, .settings-collapse-toggle,
+  .fm-modal-title-btn, .fm-modal-close, .fm-gs-open,
+  .project-link-btn, .project-unmount-btn, .project-desc-edit-btn,
+  .agent-detail-prompt-toggle, .panel-toggle-btn,
+  .task-delegate-btn, .todo-create-btn, .tw-btn
+):active {
+  transform: scale(var(--btn-press-scale));
+}
+
+/* ②b ID 承载的族（表头/输入条/侧栏动作键）：ID 单独成块，避免把 ID 特异性
+   灌进上面的类清单（`:is(#a, .b)` 的整体特异性会被最高的 #a 拉到 ID 档，
+   连带压住同类清单里各族自己的状态规则）。 */
+#search-btn:active,
+#perception-btn:active,
+#reminder-btn:active,
+#send-btn:active,
+#agent-avatar-btn:active {
+  transform: scale(var(--btn-press-scale));
+}
+
+/* ── ② 键盘焦点：补「无焦点态」的 22 族 ─────────────────────────────────────
+   焦点 = 描边环（outline，不占盒、不改几何、不靠阴影）。offset 2px 保证环不
+   贴死在描边上，也不侵入邻钮热区。 */
+:is(
+  .canvas-zoom-btn, .canvas-refback-btn, .canvas-close-btn, .panel-btn,
+  .memory-btn, .mp-mode-btn, .pp-btn, .reminder-create-btn,
+  .cfg-eye-btn, .cfg-btn-save, .session-delete, .folder-delete,
+  .settings-collapse-toggle, .fm-msg-btn, .fm-attach-btn, .fm-device-desc-btn,
+  .fm-modal-close, .fm-gs-open, .neblink-switch-btn, .login-modal-btn,
+  .agent-detail-prompt-toggle, .activity-avatar,
+  /* 手机层搜索浮钮：原只有 hover/focus 共用一条底色规则、没有描边环 ⇒ 进本表 */
+  .mh-search-fab,
+  /* 本批收尾补位（盘点表里此前无焦点态的族） */
+  .task-delegate-btn, .todo-create-btn, .tw-btn
+):focus-visible {
+  outline: var(--btn-ring-w) solid var(--btn-ring);
+  outline-offset: var(--btn-ring-offset);
+}
+
+/* ②c ID 承载族的焦点环（同 ②b 的拆分理由） */
+#perception-btn:focus-visible,
+#reminder-btn:focus-visible,
+#agent-avatar-btn:focus-visible {
+  outline: var(--btn-ring-w) solid var(--btn-ring);
+  outline-offset: var(--btn-ring-offset);
+}
+
+/* ── ③ 禁用态：补「无 disabled 定义」的族 ───────────────────────────────────
+   禁用只表达「不可用」，不表达「不可读」：降不透明到 50% + not-allowed，
+   字色不额外灰（灰字 + 半透明 = 对比度双重衰减，禁用件仍要看得清）。
+   两种禁用通道（原生 `:disabled` / `aria-disabled`）用**同一份族清单**：
+   `:is(A):is(:disabled, [aria-disabled="true"])` —— 写成两份清单就是下一批漂移点。 */
+:is(
+  .ds-turn-btn, .canvas-zoom-btn, .canvas-refback-btn, .canvas-close-btn,
+  .panel-btn, .panel-toggle-btn, .icon-btn, .memory-btn, .dvp-pill,
+  .fm-fab, .proj-create-fab, .proj-flowmap-fab, .mh-search-fab,
+  .mp-mode-btn, .reminder-create-btn, .cfg-eye-btn, .cfg-btn-save,
+  .explorer-action-btn, .explorer-folder-btn, .session-delete, .folder-delete,
+  .settings-collapse-toggle, .settings-avatar-entry, .fm-modal-title-btn,
+  .fm-modal-close, .fm-gs-open, .project-link-btn, .project-unmount-btn,
+  .project-desc-edit-btn, .agent-detail-prompt-toggle, .activity-avatar,
+  .scroll-new-pill,
+  /* 本批收尾补位（盘点表里此前无 disabled 档的族） */
+  .todo-create-btn, .tfl-fab-add, .activity-btn, .tw-btn
+):is(:disabled, [aria-disabled="true"]) {
+  opacity: var(--btn-disabled-opacity);
+  cursor: not-allowed;
+}
+
+/* ③b ID 承载族的禁用档 */
+#search-btn:disabled,
+#perception-btn:disabled,
+#reminder-btn:disabled,
+#agent-avatar-btn:disabled {
+  opacity: var(--btn-disabled-opacity);
+  cursor: not-allowed;
+}
+
+/* ── ④ hover 态：补「完全无 hover」的两族 ──────────────────────────────────
+   hover 一律关在 `@media (hover: hover)` 里 —— 触屏没有 hover，未隔离时
+   手机上一摸就"卡住"高亮（粘滞 hover），触屏用户永远看不到它想要的按下反馈。
+   这两族原本 hover/按下都为空 ⇒ 顺手把两态一起补上（底色阶 + 按下加深）。 */
+@media (hover: hover) {
+  :is(.mp-mode-btn, .settings-collapse-toggle):not(:disabled):hover {
+    background-color: var(--btn-hover-bg);
+  }
+}
+
+/* ── ⑤ 状态过渡（只过渡扁平允许项：底色 / 描边 / 字色 / 缩放 / 透明度）──────
+   过 transition 里**不许出现** box-shadow —— 属性都不存在，自然不会有人
+   再顺手加回来。 */
+:is(
+  .canvas-close-btn, .panel-btn, .memory-btn, .dvp-pill,
+  .fm-fab, .proj-create-fab, .proj-flowmap-fab, .mh-search-fab,
+  .mp-mode-btn, .pp-btn, .cfg-eye-btn, .cfg-btn-save,
+  .explorer-action-btn, .explorer-folder-btn,
+  .session-delete, .folder-delete, .settings-collapse-toggle,
+  .fm-modal-title-btn, .fm-modal-close, .fm-gs-open,
+  .project-link-btn, .project-unmount-btn, .project-desc-edit-btn,
+  .agent-detail-prompt-toggle, .canvas-zoom-btn, .canvas-refback-btn
+) {
+  transition:
+    background-color var(--btn-dur-state) ease,
+    border-color var(--btn-dur-state) ease,
+    color var(--btn-dur-state) ease,
+    opacity var(--btn-dur-state) ease,
+    transform var(--btn-dur-press) ease;
+}
+
+/* ── ⑥ 触屏档（无 hover 面）───────────────────────────────────────────────
+   触屏只有按下：幅度放大到 --btn-press-scale-touch，并叠一档更深的底色 ——
+   「不许让触屏用户永远看不到反馈」。桌面零命中（媒体查询隔离）。 */
+@media (hover: none) {
+  :is(
+    .canvas-close-btn, .panel-btn, .memory-btn, .dvp-pill,
+    .fm-fab, .proj-create-fab, .proj-flowmap-fab, .mh-search-fab,
+    .mp-mode-btn, .pp-btn, .cfg-eye-btn, .cfg-btn-save,
+    .explorer-action-btn, .explorer-folder-btn,
+    .session-delete, .folder-delete, .settings-collapse-toggle,
+    .fm-modal-title-btn, .fm-modal-close, .fm-gs-open,
+    .project-link-btn, .project-unmount-btn, .project-desc-edit-btn,
+    .agent-detail-prompt-toggle
+  ):active {
+    transform: scale(var(--btn-press-scale-touch));
+    background-color: var(--btn-press-bg);
+  }
+}
+
+/* ── ⑦ 减少动效偏好：缩放换成透明度 ───────────────────────────────────────
+   前庭/晕动敏感用户不接管缩放，但「按下有反馈」这条不能丢 ⇒ 换通道不撤销。 */
+@media (prefers-reduced-motion: reduce) {
+  :is(
+    .canvas-close-btn, .panel-btn, .memory-btn, .dvp-pill,
+    .fm-fab, .proj-create-fab, .proj-flowmap-fab, .mh-search-fab,
+    .mp-mode-btn, .pp-btn, .cfg-eye-btn, .cfg-btn-save,
+    .explorer-action-btn, .explorer-folder-btn,
+    .session-delete, .folder-delete, .settings-collapse-toggle,
+    .fm-modal-title-btn, .fm-modal-close, .fm-gs-open,
+    .project-link-btn, .project-unmount-btn, .project-desc-edit-btn,
+    .agent-detail-prompt-toggle
+  ):active {
+    transform: none;
+    opacity: var(--btn-press-fade);
+  }
+  :is(
+    .canvas-close-btn, .panel-btn, .memory-btn, .dvp-pill,
+    .fm-fab, .proj-create-fab, .proj-flowmap-fab, .mh-search-fab,
+    .mp-mode-btn, .pp-btn, .cfg-eye-btn, .cfg-btn-save,
+    .explorer-action-btn, .explorer-folder-btn,
+    .session-delete, .folder-delete, .settings-collapse-toggle,
+    .fm-modal-title-btn, .fm-modal-close, .fm-gs-open,
+    .project-link-btn, .project-unmount-btn, .project-desc-edit-btn,
+    .agent-detail-prompt-toggle, .canvas-zoom-btn, .canvas-refback-btn
+  ) {
+    transition-duration: 0.01s;
+  }
+}

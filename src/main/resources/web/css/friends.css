@@ -317,15 +317,17 @@ button.fm-search-btn {
   color: var(--color-text, #000);
   background: var(--glass-send-bg);
   border: 1px solid var(--glass-send-border);
-  box-shadow: var(--glass-send-stack);
   cursor: pointer;
   transition: background 0.15s ease, border-color 0.15s ease,
-              color 0.15s ease, box-shadow 0.15s ease;
+              color 0.15s ease;
 }
-button.fm-search-btn:hover {
-  background: var(--glass-send-bg-hover);
-  border-color: var(--glass-send-border-hover);
+@media (hover: hover) {
+  button.fm-search-btn:hover {
+    background: var(--glass-send-bg-hover);
+    border-color: var(--glass-send-border-hover);
+  }
 }
+
 button.fm-search-btn:active {
   background: var(--glass-send-bg-active);
   border-color: var(--glass-send-border-active);
@@ -337,7 +339,6 @@ button.fm-search-btn:disabled {
   border-color: var(--glass-send-border-disabled);
   color: color-mix(in srgb, var(--color-text, #000) 50%, transparent);
   cursor: not-allowed;
-  box-shadow: var(--glass-send-stack);
 }
 button.fm-search-btn:focus-visible {
   outline: 2px solid rgb(var(--sapphire) / 0.6);
@@ -345,13 +346,14 @@ button.fm-search-btn:focus-visible {
 }
 
 /* 亮档反馈层（作者 2026-09-11 P4 裁定：亮底衬上白 alpha 填充递进肉眼不可辨，
-   改用边框 + 投影）。暗档 --glass-send-shadow* = none 且无规则消费，故只挂在
-   light 媒体查询里（none 不能参与逗号列表）。 */
-@media (prefers-color-scheme: light) {
-  button.fm-search-btn { box-shadow: var(--glass-send-stack), var(--glass-send-shadow); }
-  button.fm-search-btn:hover { box-shadow: var(--glass-send-stack), var(--glass-send-shadow-hover); }
-  button.fm-search-btn:active { box-shadow: var(--glass-send-stack), var(--glass-send-shadow-active); }
-}
+   改用边框 + 投影）。
+   ── 扁平化批 2026-11-05：亮档三行投影退役 ────────────────────────────
+   投影是厚度道具（作者令「不管是 hover 还是点击 或者按下」都要扁平），不该是
+   亮档可辨性的唯一手段。可辨性改由**描边 + 底阶**承担：rest/hover/active 三块的
+   --glass-send-border → -hover → -active 与 --glass-send-bg → -hover → -active
+   本来就逐级递进；P4 当初加影是为了补「白 alpha 底差看不见」，而描边档是深色描边
+   （亮底上对比更高），已经把可辨性接过来了。暗档本就是这个口径
+   （--glass-send-shadow* = none），两档从此同构。 */
 
 /* 结果区（命中 / 未找到 / 加载 / 失败 共用容器卡）：独立块，整宽 */
 .fm-result-card {
@@ -462,15 +464,17 @@ button.fm-verify-cancel {
   color: var(--color-text, #000);
   background: var(--glass-send-bg);
   border: 1px solid var(--glass-send-border);
-  box-shadow: var(--glass-send-stack);
   transition: background 0.15s ease, border-color 0.15s ease,
-              color 0.15s ease, box-shadow 0.15s ease;
+              color 0.15s ease;
+}
+@media (hover: hover) {
+  
+  button.fm-verify-cancel:hover {
+    background: var(--glass-send-bg-hover);
+    border-color: var(--glass-send-border-hover);
+  }
 }
 
-button.fm-verify-cancel:hover {
-  background: var(--glass-send-bg-hover);
-  border-color: var(--glass-send-border-hover);
-}
 
 button.fm-verify-cancel:active {
   background: var(--glass-send-bg-active);
@@ -482,20 +486,12 @@ button.fm-verify-cancel:disabled {
   border-color: var(--glass-send-border-disabled);
   color: color-mix(in srgb, var(--color-text, #000) 50%, transparent);
   cursor: not-allowed;
-  box-shadow: var(--glass-send-stack);
 }
 
 button.fm-verify-cancel:focus-visible {
   outline: 2px solid rgb(var(--sapphire) / 0.6);
   outline-offset: 2px;
 }
-
-@media (prefers-color-scheme: light) {
-  button.fm-verify-cancel { box-shadow: var(--glass-send-stack), var(--glass-send-shadow); }
-  button.fm-verify-cancel:hover { box-shadow: var(--glass-send-stack), var(--glass-send-shadow-hover); }
-  button.fm-verify-cancel:active { box-shadow: var(--glass-send-stack), var(--glass-send-shadow-active); }
-}
-
 
 /* 「新的朋友」 entry */
 .fm-nf-entry {
@@ -563,18 +559,19 @@ button.fm-req-accept {
   color: var(--color-text, #000);
   background: var(--glass-send-bg-active);
   border: 1px solid var(--glass-send-border);
-  box-shadow: var(--glass-send-stack);
   cursor: pointer;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease, color 0.15s ease;
+  transition: border-color 0.15s ease, color 0.15s ease;
 }
-button.fm-req-accept:hover { border-color: var(--glass-send-border-hover); }
+@media (hover: hover) {
+  button.fm-req-accept:hover { border-color: var(--glass-send-border-hover); }
+}
+
 button.fm-req-accept:active { border-color: var(--glass-send-border-active); }
 button.fm-req-accept:disabled {
   background: var(--glass-send-bg-disabled);
   border-color: var(--glass-send-border-disabled);
   color: color-mix(in srgb, var(--color-text, #000) 50%, transparent);
   cursor: not-allowed;
-  box-shadow: var(--glass-send-stack);
 }
 button.fm-req-accept:focus-visible {
   outline: 2px solid rgb(var(--sapphire) / 0.6);
@@ -591,15 +588,17 @@ button.fm-req-decline {
   color: var(--color-text, #000);
   background: var(--glass-send-bg);
   border: 1px solid var(--glass-send-border);
-  box-shadow: var(--glass-send-stack);
   cursor: pointer;
   transition: background 0.15s ease, border-color 0.15s ease,
-              color 0.15s ease, box-shadow 0.15s ease;
+              color 0.15s ease;
 }
-button.fm-req-decline:hover {
-  background: var(--glass-send-bg-hover);
-  border-color: var(--glass-send-border-hover);
+@media (hover: hover) {
+  button.fm-req-decline:hover {
+    background: var(--glass-send-bg-hover);
+    border-color: var(--glass-send-border-hover);
+  }
 }
+
 button.fm-req-decline:active {
   background: var(--glass-send-bg-active);
   border-color: var(--glass-send-border-active);
@@ -609,20 +608,10 @@ button.fm-req-decline:disabled {
   border-color: var(--glass-send-border-disabled);
   color: color-mix(in srgb, var(--color-text, #000) 50%, transparent);
   cursor: not-allowed;
-  box-shadow: var(--glass-send-stack);
 }
 button.fm-req-decline:focus-visible {
   outline: 2px solid rgb(var(--sapphire) / 0.6);
   outline-offset: 2px;
-}
-
-@media (prefers-color-scheme: light) {
-  button.fm-req-accept { box-shadow: var(--glass-send-stack), var(--glass-send-shadow); }
-  button.fm-req-accept:hover { box-shadow: var(--glass-send-stack), var(--glass-send-shadow-hover); }
-  button.fm-req-accept:active { box-shadow: var(--glass-send-stack), var(--glass-send-shadow-active); }
-  button.fm-req-decline { box-shadow: var(--glass-send-stack), var(--glass-send-shadow); }
-  button.fm-req-decline:hover { box-shadow: var(--glass-send-stack), var(--glass-send-shadow-hover); }
-  button.fm-req-decline:active { box-shadow: var(--glass-send-stack), var(--glass-send-shadow-active); }
 }
 
 /* ── Messages panel: conversation list (§3.2) ───────────── */
@@ -713,9 +702,12 @@ button.fm-req-decline:focus-visible {
        （窗头高度亦仍为 64px 档，该行 26px < 40px 头像行；读数见报告 §P2/§P3）。
      · 非群窗不挂 `fm-modal-title-btn` 类 ⇒ 好友/设备窗零影响（设备窗无本类）。 */
 .fm-modal-title-btn { cursor: pointer; border-radius: var(--ds-radius-chip); padding: var(--ds-space-1) var(--ds-space-2); margin: -4px -8px; }
-/* 类已挂在 `.fm-modal-name` 自身 ⇒ hover 规则必须是**同元素**（原 `.fm-modal-title-btn
-   .fm-modal-name` 后代式选择器随迁后失效，见上）。 */
-.fm-modal-name.fm-modal-title-btn:hover { color: var(--color-primary); }
+@media (hover: hover) {
+  /* 类已挂在 `.fm-modal-name` 自身 ⇒ hover 规则必须是**同元素**（原 `.fm-modal-title-btn
+     .fm-modal-name` 后代式选择器随迁后失效，见上）。 */
+  .fm-modal-name.fm-modal-title-btn:hover { color: var(--color-primary); }
+}
+
 /* 🔴 焦点环一律走 outline（禁 box-shadow）：sapphire.css:872-882 的幽灵族
    `:is(… .fm-modal-title-btn …) { box-shadow: none }`（该行 880）取参数**最高**特异度
    = `.neblink-peer.fm-device-row` (0,2,0)，与本处 `.fm-modal-title-btn:focus-visible`
@@ -2365,7 +2357,10 @@ body > .fm-context-menu { z-index: 10001; }
   background: var(--glass-control-bg);
   color: var(--color-frame-text);
 }
-.fm-device-fleet-bar .fleet-btn:hover { background: var(--glass-control-bg-hover); }
+@media (hover: hover) {
+  .fm-device-fleet-bar .fleet-btn:hover { background: var(--glass-control-bg-hover); }
+}
+
 .fm-device-row { cursor: pointer; }
 /* 设备行在线态：徽章本体（.neblink-presence）样式在 neblink.css（全局已加载）——
    本处只做**槽位**（右贴边、不参与行内文本压缩）。 */
@@ -2451,7 +2446,10 @@ body > .fm-context-menu { z-index: 10001; }
   min-height: 24px;
   justify-content: center;
 }
-.fm-device-desc-btn:hover { color: var(--color-text); }
+@media (hover: hover) {
+  .fm-device-desc-btn:hover { color: var(--color-text); }
+}
+
 .fm-device-desc-btn[aria-expanded='true'] { color: var(--color-text); }
 .fm-device-desc-btn svg { width: 13px; height: 13px; flex-shrink: 0; }
 .fm-device-desc-panel {

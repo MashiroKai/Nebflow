@@ -137,6 +137,21 @@ jobs:
         # Offline and hermetic: pure source-text scan, no network, no credentials.
         # Same logic locally: node scripts/check-api-routes.mjs (or `make frontend-gates`)
         run: node scripts/check-api-routes.mjs
+      - name: Flat buttons (no shadow / emboss / gradient on button surfaces)
+        # flat-button gate (author order 2026-11-05 13:35 verbatim: "我们的按钮扁平化
+        # 风格要求要落实到各处 不管是hover还是点击 或者按下"). Trigger = the
+        # takeover dialog's two pill buttons still carried a drop shadow + inset
+        # emboss, i.e. a "button that looks physically raised". Flat means no
+        # thickness props on any button state: box-shadow / text-shadow / css
+        # gradient / drop-shadow / translateY press displacement.
+        # Button surface = mechanically detected (type `button`, [type=button],
+        # or a class/id token segment btn|button|pill|fab with only modifier
+        # segments after it), so the gate cannot be dodged by renaming a file.
+        # Exceptions live in the SPEC FILE, never in the script:
+        # seed/plugins/design-language/skills/design-language/references/
+        # flat-button-spec.md ("## 例外清单"). A missing spec is itself RED.
+        # Same logic locally: node scripts/check-flat-buttons.mjs (or `make frontend-gates`)
+        run: node scripts/check-flat-buttons.mjs
       - name: Design spec scale sync (spec table <-> token source)
         # design-scale gate (author order 2026-11-04: "把我们对圆角 边距 文字离边缘
         # 的距离 各文字的大小 写进spec和前端开发包"): the four scales (radius /

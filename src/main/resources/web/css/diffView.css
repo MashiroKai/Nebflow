@@ -341,10 +341,13 @@
   border-radius: var(--ds-radius-pill);
   transition: background-color 0.15s ease, border-color 0.15s ease;
 }
-.nf-rcpt-pill:hover {
-  background: rgb(var(--sapphire) / 0.14);
-  border-color: rgb(var(--sapphire) / 0.38);
+@media (hover: hover) {
+  .nf-rcpt-pill:hover {
+    background: rgb(var(--sapphire) / 0.14);
+    border-color: rgb(var(--sapphire) / 0.38);
+  }
 }
+
 /* 批次短名：收缩省略号段（flex 0 1 auto——短名让位判词/统计块，过长时尾段省略）。
    字面 ' · ' 分隔保留为文本节点，textContent 逐字节维持「KIND · EXECUTOR」口径。 */
 .nf-rcpt-name {

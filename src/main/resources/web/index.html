@@ -139,6 +139,13 @@
        指示器 + 命令面板。放最后 = 兜底环压得住前面 26 个文件里的 `outline:none`
        （特异性与颜色单源见该文件头注）。 -->
   <link rel="stylesheet" href="css/keyboard.css">
+  <!-- 按钮扁平化批（2026-11-05，作者令「不管 hover 还是点击 或者按下」）：
+       全站按钮**扁平六态共享态层**。放最后 = 补「族自己没写」的按下/焦点/禁用
+       态时压得住前面各文件的基础声明，且与 keyboard.css 的兜底焦点环同一层级
+       语义（环 = outline，不占盒、不靠阴影）。令牌单源 = sapphire.css 的
+       --btn-press-* / --btn-ring-* / --btn-disabled-*；厚度禁令由
+       scripts/check-flat-buttons.mjs 机械把关（例外须写进 flat-button-spec.md）。 -->
+  <link rel="stylesheet" href="css/flatButtons.css">
   <!-- 偶发裸渲染修复批（2026-10-30，作者 20:03 截图实证：冷启动实例「有时候」
        右侧面板整面无样式、工作台列表以原文竖排裸露）。根因面：stylesheet 是
        渲染阻塞资源，但若任一 CSS 请求**失败**（实例重启在途请求被掐断 / 隧道

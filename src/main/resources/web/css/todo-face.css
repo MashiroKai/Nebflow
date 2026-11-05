@@ -355,10 +355,13 @@
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
 }
-.tfl-icon-btn:hover {
-  background: var(--color-frame-hover, rgba(128, 128, 128, 0.08));
-  color: color-mix(in srgb, var(--color-text, #000) 75%, transparent);
+@media (hover: hover) {
+  .tfl-icon-btn:hover {
+    background: var(--color-frame-hover, rgba(128, 128, 128, 0.08));
+    color: color-mix(in srgb, var(--color-text, #000) 75%, transparent);
+  }
 }
+
 .tfl-icon-btn.active { color: color-mix(in srgb, var(--color-text, #000) 70%, transparent); }
 .tfl-icon-btn svg { width: 11px; height: 11px; }
 
@@ -1012,10 +1015,13 @@
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
 }
-.tfl-add-btn:hover {
-  background: color-mix(in srgb, var(--color-text, #000) 12%, transparent);
-  color: color-mix(in srgb, var(--color-text, #000) 85%, transparent);
+@media (hover: hover) {
+  .tfl-add-btn:hover {
+    background: color-mix(in srgb, var(--color-text, #000) 12%, transparent);
+    color: color-mix(in srgb, var(--color-text, #000) 85%, transparent);
+  }
 }
+
 .tfl-add-ic { display: inline-flex; color: color-mix(in srgb, var(--color-text, #000) 60%, transparent); }
 .tfl-add-ic svg { width: 13px; height: 13px; }
 .tfl-add-ic-done { color: var(--tfl-green); }
@@ -1046,9 +1052,11 @@
   cursor: pointer;
   transition: background 0.15s, color 0.15s, transform 0.15s;
 }
-.tfl-fab-add:hover {
-  background: color-mix(in srgb, var(--color-text) 14%, transparent);
-  color: color-mix(in srgb, var(--color-text) 85%, transparent);
+@media (hover: hover) {
+  .tfl-fab-add:hover {
+    background: color-mix(in srgb, var(--color-text) 14%, transparent);
+    color: color-mix(in srgb, var(--color-text) 85%, transparent);
+  }
 }
 .tfl-fab-add:active { transform: scale(0.94); }
 .tfl-fab-add:focus-visible {
@@ -1110,7 +1118,10 @@
   font: 500 var(--ds-fs-meta)/1 ui-monospace, SFMono-Regular, monospace;
   cursor: pointer;
 }
-.tfl-undo-btn:hover { filter: brightness(1.25); }
+@media (hover: hover) {
+  .tfl-undo-btn:hover { filter: brightness(1.25); }
+}
+
 
 /* ── 手机变体（页面即展开态：无胶囊、高度随页面体）──────────────────────
    重做批：桌面胶囊/浮层两条规则（.tfl-capsule 小件、.tfl-card absolute 浮层）

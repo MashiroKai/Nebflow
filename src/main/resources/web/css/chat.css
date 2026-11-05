@@ -146,18 +146,18 @@
   justify-content: center;
   border-radius: var(--ds-radius-chip);
   flex-shrink: 0;
-  transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
-#header .memory-btn:hover {
-  background: var(--glass-control-bg-hover);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  border-color: var(--glass-control-border);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge);
-  color: var(--color-frame-text);
+@media (hover: hover) {
+  #header .memory-btn:hover {
+    background: var(--glass-control-bg-hover);
+    -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+    backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+    border-color: var(--glass-control-border);
+    color: var(--color-frame-text);
+  }
 }
+
 #header .memory-btn svg {
   width: 16px;
   height: 16px;
@@ -177,18 +177,18 @@
   justify-content: center;
   border-radius: var(--ds-radius-chip);
   flex-shrink: 0;
-  transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
-#header #search-btn:hover {
-  background: var(--glass-control-bg-hover);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  border-color: var(--glass-control-border);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge);
-  color: var(--color-frame-text);
+@media (hover: hover) {
+  #header #search-btn:hover {
+    background: var(--glass-control-bg-hover);
+    -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+    backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+    border-color: var(--glass-control-border);
+    color: var(--color-frame-text);
+  }
 }
+
 #header #search-btn svg {
   width: 16px;
   height: 16px;
@@ -1188,8 +1188,15 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   cursor: pointer;
   transition: opacity 0.15s;
 }
-.bubble.injected .injected-source-label[role="button"]:hover {
-  opacity: 0.8;
+/* 扁平化批（2026-11-05）：`[role="button"]` 也是按钮面 —— hover 同样关进
+   (hover: hover)，触屏不吃 hover（触屏反馈走 :active，见下条）。 */
+@media (hover: hover) {
+  .bubble.injected .injected-source-label[role="button"]:hover {
+    opacity: 0.8;
+  }
+}
+.bubble.injected .injected-source-label[role="button"]:active {
+  opacity: 0.65;
 }
 /* 外部注入气泡「一句话摘要」行（外部注入统一通道批 2026-11-05）。
    作者诉求逐字：「我看得到是什么」——折叠态只显示来源行时，气泡说不出发生了什么，
@@ -1535,14 +1542,20 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   white-space: nowrap;
   z-index: 2;
 }
-.code-block-wrap:hover .code-copy-btn {
-  opacity: 1;
+@media (hover: hover) {
+  .code-block-wrap:hover .code-copy-btn {
+    opacity: 1;
+  }
 }
-.code-copy-btn:hover {
-  background: #fff;
-  color: #333;
-  border-color: rgba(0,0,0,0.2);
+
+@media (hover: hover) {
+  .code-copy-btn:hover {
+    background: #fff;
+    color: #333;
+    border-color: rgba(0,0,0,0.2);
+  }
 }
+
 .code-copy-btn.copied {
   color: #2e7d32;
   border-color: #2e7d32;
@@ -1871,10 +1884,12 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
     border-color: rgba(255,255,255,0.1);
     color: #7b7e88;
   }
-  .code-copy-btn:hover {
-    background: #282b33;
-    color: #b0b3ba;
-    border-color: rgba(255,255,255,0.2);
+  @media (hover: hover) {
+    .code-copy-btn:hover {
+      background: #282b33;
+      color: #b0b3ba;
+      border-color: rgba(255,255,255,0.2);
+    }
   }
   .code-copy-btn.copied {
     color: #66bb6a;
@@ -1973,14 +1988,14 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   transition: background var(--dur-2) ease, color var(--dur-2) ease,
               border-color var(--dur-2) ease, box-shadow var(--dur-2) ease;
 }
-.option-btn:hover {
-  border-color: rgba(145, 170, 210, 0.45);
-  color: rgba(91, 127, 191, 0.85);
-  background: rgba(145, 170, 210, 0.08);
-  box-shadow:
-    0 0 8px rgba(145, 170, 210, 0.06),
-    0 0 20px rgba(145, 170, 210, 0.03);
+@media (hover: hover) {
+  .option-btn:hover {
+    border-color: rgba(145, 170, 210, 0.45);
+    color: rgba(91, 127, 191, 0.85);
+    background: rgba(145, 170, 210, 0.08);
+  }
 }
+
 .option-btn.picked {
   background: var(--color-primary);
   color: #fff;
@@ -1997,10 +2012,13 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   border-color: rgb(var(--sapphire) / 0.45);
   background: rgb(var(--sapphire) / 0.08);
 }
-.option-btn.perm-upgrade-option:hover {
-  border-color: rgb(var(--sapphire) / 0.7);
-  background: rgb(var(--sapphire) / 0.14);
+@media (hover: hover) {
+  .option-btn.perm-upgrade-option:hover {
+    border-color: rgb(var(--sapphire) / 0.7);
+    background: rgb(var(--sapphire) / 0.14);
+  }
 }
+
 /* Multi-select questions (multiple: true): checkboxes stacked vertically,
    full-width rows — stays clean at narrow chat widths (~490px). */
 .option-opts.multi {
@@ -2353,8 +2371,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   margin-bottom: var(--ds-space-1h);
   font-size: var(--ds-fs-btn);
   padding: var(--ds-space-1) var(--ds-space-3);
-  transition: background 0.15s, color 0.15s, border-color 0.15s,
-              box-shadow 0.15s, opacity 0.15s;
+  transition: background 0.15s, color 0.15s, border-color 0.15s, opacity 0.15s;
 }
 @media (prefers-reduced-motion: reduce) {
   .option-box.ob-fade-in,
@@ -2566,8 +2583,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   margin-top: var(--ds-space-stack-gap);
 }
 .ob-actions button {
-  transition: background 0.15s, color 0.15s, border-color 0.15s,
-              box-shadow 0.15s, opacity 0.15s;
+  transition: background 0.15s, color 0.15s, border-color 0.15s, opacity 0.15s;
 }
 /* 三修批 uifix3 ③ (2026-10-06 21:36 作者令): the question card's 「跳过这一题」
    control hides until the CARD is hovered (与卡体 hover 联动) — at rest the foot
@@ -2721,14 +2737,16 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 .option-btn.opt-ghost {
   background: transparent;
-  box-shadow: none;
   color: var(--color-text-dim);
   border-color: rgba(145, 170, 210, 0.2);
 }
-.option-btn.opt-ghost:hover {
-  color: var(--color-text);
-  border-color: rgba(145, 170, 210, 0.5);
+@media (hover: hover) {
+  .option-btn.opt-ghost:hover {
+    color: var(--color-text);
+    border-color: rgba(145, 170, 210, 0.5);
+  }
 }
+
 .free-row {
   display: flex;
   gap: var(--ds-space-2);
@@ -2870,7 +2888,6 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   background: transparent;
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
-  box-shadow: none;
   color: var(--color-text);
   font-size: var(--ds-fs-row);
   text-align: left;
@@ -2880,13 +2897,15 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .ask-card .opt-row .option-btn:first-child {
   border-top: none;
 }
-.option-opts .option-btn:not(.picked):hover,
-.ask-card .opt-row .option-btn:not(.picked):hover {
-  background: transparent;
-  border-color: var(--ask-line);
-  box-shadow: none;
-  color: var(--color-text);
+@media (hover: hover) {
+  .option-opts .option-btn:not(.picked):hover,
+  .ask-card .opt-row .option-btn:not(.picked):hover {
+    background: transparent;
+    border-color: var(--ask-line);
+    color: var(--color-text);
+  }
 }
+
 /* 单选行首 radio 线稿圈（multi 行自带 .option-check 方框，radio 让位） */
 .option-opts .option-btn::before,
 .ask-card .opt-row .option-btn::before {
@@ -2911,7 +2930,10 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .option-opts .option-btn.picked::before,
 .ask-card .opt-row .option-btn.picked::before {
   border-color: var(--ask-green);
-  background: radial-gradient(circle closest-side, var(--ask-green) 82%, transparent 86%);
+  /* 扁平化批 2026-11-05：原 `radial-gradient(circle closest-side, green 82%, transparent 86%)`
+     是「圆形填充 + 一圈羽化边」，羽化边属于渐变造形（F3）⇒ 退役。
+     扁平替代 = 实心圆点（同色 token，零新色值）：形状本身已由 border-radius 承担。 */
+  background: var(--ask-green);
 }
 /* picked 行的 desc 小字跟随行面（旧白字在透明行上不可读） */
 .option-btn.picked .option-text small {
@@ -2955,17 +2977,18 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   background: transparent;
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
-  box-shadow: none;
   color: var(--color-frame-text);
   font-size: var(--ds-fs-body);
 }
 .chip-row .option-btn::before { content: none; }
-.chip-row .option-btn:not(.picked):hover {
-  border-color: var(--ask-line-strong);
-  background: transparent;
-  box-shadow: none;
-  color: var(--color-text);
+@media (hover: hover) {
+  .chip-row .option-btn:not(.picked):hover {
+    border-color: var(--ask-line-strong);
+    background: transparent;
+    color: var(--color-text);
+  }
 }
+
 
 /* 「都不是，我自己说」= 虚线自由入口（同 .opt-other 语言） */
 .ask-card .opt-row .option-btn.opt-ghost {
@@ -2976,12 +2999,14 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   color: var(--color-frame-text);
 }
 .ask-card .opt-row .option-btn.opt-ghost::before { display: none; }
-.ask-card .opt-row .option-btn.opt-ghost:not(.picked):hover {
-  border-color: var(--ask-line-strong);
-  background: transparent;
-  box-shadow: none;
-  color: var(--color-text);
+@media (hover: hover) {
+  .ask-card .opt-row .option-btn.opt-ghost:not(.picked):hover {
+    border-color: var(--ask-line-strong);
+    background: transparent;
+    color: var(--color-text);
+  }
 }
+
 
 /* ===== Top Overlays (task list + notifications) ===== */
 /* uifix-taskbar-flow (2026-10-09): absolute(top:68px) → NORMAL FLOW.
@@ -3848,25 +3873,34 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .error-restart-btn {
   color: rgb(var(--amber));
 }
-.error-restart-btn:hover {
-  background: rgb(var(--amber) / 0.12);
+@media (hover: hover) {
+  .error-restart-btn:hover {
+    background: rgb(var(--amber) / 0.12);
+  }
 }
+
 /* 取消任务 → cancelAgent（次级出口 = 中性字） */
 .error-escalation-actions .error-abandon-btn {
   color: var(--color-text-muted);
 }
-.error-escalation-actions .error-abandon-btn:hover {
-  background: var(--color-frame-hover, rgba(128, 128, 128, 0.12));
-  color: var(--color-text);
+@media (hover: hover) {
+  .error-escalation-actions .error-abandon-btn:hover {
+    background: var(--color-frame-hover, rgba(128, 128, 128, 0.12));
+    color: var(--color-text);
+  }
 }
+
 /* 继续等待 → close card（次级出口 = 中性字） */
 .error-wait-btn {
   color: var(--color-text-muted);
 }
-.error-wait-btn:hover {
-  background: var(--color-frame-hover, rgba(128, 128, 128, 0.12));
-  color: var(--color-text);
+@media (hover: hover) {
+  .error-wait-btn:hover {
+    background: var(--color-frame-hover, rgba(128, 128, 128, 0.12));
+    color: var(--color-text);
+  }
 }
+
 @media (prefers-reduced-motion: reduce) {
   .error-escalation-actions button {
     transition: none;
@@ -4154,11 +4188,14 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   color: var(--color-frame-text-dim);
   transition: all 0.25s ease;
 }
-.wsp-goto-btn:hover {
-  background: rgba(91, 127, 191, 0.08);
-  border-color: var(--sapphire-edge-strong);
-  color: var(--color-frame-text-bright);
+@media (hover: hover) {
+  .wsp-goto-btn:hover {
+    background: rgba(91, 127, 191, 0.08);
+    border-color: var(--sapphire-edge-strong);
+    color: var(--color-frame-text-bright);
+  }
 }
+
 
 /* A: the explicit truncation word (never silent) — same etched strip as the
    breadcrumb, muted ink, so it reads as a status line not an alert. Second
@@ -4262,17 +4299,26 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
   border-radius: var(--ds-radius-pill);
-  box-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
-    0 2px 8px rgba(0, 0, 0, 0.06),
-    0 8px 24px rgba(0, 0, 0, 0.08);
   cursor: pointer;
   white-space: nowrap;
   transition: transform 0.18s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.18s ease;
   animation: nf-pill-in 0.18s ease;
 }
-.scroll-new-pill:hover { transform: translateX(-50%) translateY(-1px); }
-.scroll-new-pill:active { transform: translateX(-50%) translateY(0); }
+/* 扁平六态（flat-button-everywhere 批 2026-11-05）：原 hover/按下是
+   「投影栈 + translateY(-1px)」的物理按键组合，两层退役（F1 + F5）。
+   定位锚 `translateX(-50%)` 必须留在每一态里（否则按钮横跳），故 transform
+   只保留居中位移；反馈改由底色阶承担 —— hover 升一档、按下再深一档 + 2% 缩放。
+   hover 关在 (hover:hover) 里：触屏没有 hover，只走按下。 */
+@media (hover: hover) {
+  .scroll-new-pill:hover {
+    transform: translateX(-50%);
+    background: var(--glass-control-bg-hover);
+  }
+}
+.scroll-new-pill:active {
+  transform: translateX(-50%) scale(var(--btn-press-scale));
+  background: var(--btn-press-bg);
+}
 .scroll-new-pill.hidden { display: none; }
 .scroll-new-pill:focus-visible { outline: 2px solid var(--sapphire-refraction); outline-offset: 2px; }
 
@@ -4823,7 +4869,10 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   transition: background 0.15s, color 0.15s;
   padding: 0;
 }
-.file-card:hover .fwd-btn { background: rgba(7, 193, 96, 0.1); color: var(--color-primary); }
+@media (hover: hover) {
+  .file-card:hover .fwd-btn { background: rgba(7, 193, 96, 0.1); color: var(--color-primary); }
+}
+
 .fwd-btn svg { width: 16px; height: 16px; }
 .fwd-tip {
   position: absolute; bottom: calc(100% + 9px); right: -6px;
@@ -5482,12 +5531,12 @@ body:not(.mobile-layer) #header .header-center {
      头像态零回归：.agent-avatar-img cover 铺满 100% 圆面，底色不可见。 */
   background: var(--agent-avatar-chip-bg);
   border: 1px solid var(--glass-control-border);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    0 2px 8px var(--glass-control-shadow);
   transition: transform 0.15s ease;
 }
-#agent-avatar-btn:hover { transform: scale(1.04); }
+@media (hover: hover) {
+  #agent-avatar-btn:hover { transform: scale(1.04); }
+}
+
 #agent-avatar-btn:active { transform: scale(0.95); }
 #agent-avatar-btn .agent-avatar-img {
   width: 100%;

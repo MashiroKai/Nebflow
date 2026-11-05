@@ -29,18 +29,18 @@
   color: var(--color-frame-text-muted);
   position: relative;
   flex-shrink: 0;
-  transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
-#perception-btn:hover {
-  background: var(--glass-control-bg-hover);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  border-color: var(--glass-control-border);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge);
-  color: var(--color-frame-text);
+@media (hover: hover) {
+  #perception-btn:hover {
+    background: var(--glass-control-bg-hover);
+    -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+    backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+    border-color: var(--glass-control-border);
+    color: var(--color-frame-text);
+  }
 }
+
 #perception-btn svg { width: 16px; height: 16px; stroke-width: 2; opacity: 0.7; }
 /* 激活态（面板开）：不加底色——同排 #daemon-btn.active 档（图标 sapphire 提亮 +
    满不透明），顶栏永远不出现亮底填充。 */
@@ -83,12 +83,15 @@ html[data-theme="dark"] #perception-panel {
   border: 1px solid transparent; background: transparent; color: var(--st-text-muted);
   cursor: pointer; transition: all .15s; opacity: .7;
 }
-.pp-icon-btn:hover {
-  opacity: 1; background: var(--st-control-bg-hover);
-  -webkit-backdrop-filter: blur(var(--st-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--st-control-blur)) saturate(1.2);
-  border-color: var(--st-control-border); color: var(--st-frame-text);
+@media (hover: hover) {
+  .pp-icon-btn:hover {
+    opacity: 1; background: var(--st-control-bg-hover);
+    -webkit-backdrop-filter: blur(var(--st-control-blur)) saturate(1.2);
+    backdrop-filter: blur(var(--st-control-blur)) saturate(1.2);
+    border-color: var(--st-control-border); color: var(--st-frame-text);
+  }
 }
+
 .pp-icon-btn svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .pp-body { padding: var(--ds-space-half) var(--ds-space-3) var(--ds-space-3); }
 
@@ -131,19 +134,26 @@ html[data-theme="dark"] #perception-panel {
   border: 1px solid var(--st-control-border); background: var(--st-control-bg); color: var(--st-frame-text);
   -webkit-backdrop-filter: blur(var(--st-control-blur)) saturate(1.2);
   backdrop-filter: blur(var(--st-control-blur)) saturate(1.2);
-  box-shadow: inset 0 1px 0 var(--st-control-highlight), inset 0 -1px 0 var(--st-control-underedge),
-    0 1px 3px var(--st-control-glow), 0 2px 8px var(--st-control-shadow);
 }
-.pp-btn:hover { background: var(--st-control-bg-hover); }
+@media (hover: hover) {
+  .pp-btn:hover { background: var(--st-control-bg-hover); }
+}
+
 /* 主操作 = 墨族单源（2026-10-30 按钮体系批：connect/send/reconnect 等批准腿从
    --st-primary 绿迁入 --btn-primary-*，随面板主题 ink-swap；--st-primary 绿
    降级身份/状态）。 */
-.pp-btn.primary { background: var(--btn-primary-bg); border-color: var(--btn-primary-bg); color: var(--btn-primary-ink); font-weight: 500; box-shadow: none; }
-.pp-btn.primary:hover { background: var(--btn-primary-bg-hover); border-color: var(--btn-primary-bg-hover); }
+.pp-btn.primary { background: var(--btn-primary-bg); border-color: var(--btn-primary-bg); color: var(--btn-primary-ink); font-weight: 500; }
+@media (hover: hover) {
+  .pp-btn.primary:hover { background: var(--btn-primary-bg-hover); border-color: var(--btn-primary-bg-hover); }
+}
+
 /* 危险描边：红系统一（2026-10-30 §5.3）——字面红/暗档覆写并入 --btn-danger-*
    （单源 --color-danger，亮暗双档经 token 自动解析，暗档覆写块随之作废）。 */
-.pp-btn.danger-line { color: var(--btn-danger-ink); border-color: var(--btn-danger-stroke); box-shadow: none; background: transparent; -webkit-backdrop-filter: none; backdrop-filter: none; }
-.pp-btn.danger-line:hover { background: var(--btn-danger-tint); }
+.pp-btn.danger-line { color: var(--btn-danger-ink); border-color: var(--btn-danger-stroke); background: transparent; -webkit-backdrop-filter: none; backdrop-filter: none; }
+@media (hover: hover) {
+  .pp-btn.danger-line:hover { background: var(--btn-danger-tint); }
+}
+
 .pp-btn:disabled { opacity: .45; cursor: not-allowed; }
 .pp-actions { display: flex; gap: var(--ds-space-2); margin-top: var(--ds-space-stack-gap); }
 .pp-actions .pp-btn { flex: 1; }
@@ -328,7 +338,10 @@ html[data-theme="dark"] #perception-panel {
   border: none; background: transparent; border-radius: var(--ds-radius-chip); cursor: pointer; color: var(--st-text-muted);
   font: inherit; font-size: var(--ds-fs-btn); transition: all .15s;
 }
-.mt-btn:hover { background: var(--st-control-bg-hover); color: var(--st-text); }
+@media (hover: hover) {
+  .mt-btn:hover { background: var(--st-control-bg-hover); color: var(--st-text); }
+}
+
 .mt-btn.on { background: rgb(var(--st-sapphire) / .12); color: rgb(var(--st-sapphire)); }
 .mt-btn svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .mt-btn .bi { font-weight: 700; font-style: italic; }
