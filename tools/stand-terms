@@ -943,10 +943,14 @@ def cmd_doc(con, args, root_project):
             "doc_type": doc["doc_type"], "status": doc["status"],
             "term_count": doc["term_count"], "line_count": len(terms),
             "terms": [summary_json(t) for t in terms],
+            # 渲染用原始汇总行（summary_json 是给机器看的嵌套形状，列渲染要扁平列）
+            "terms_raw": terms,
         })
     if args.json:
         print(json.dumps({"query": args.target, "count": len(payload),
-                          "documents": payload}, ensure_ascii=False, indent=1))
+                          "documents": [{k: v for k, v in item.items()
+                                         if k != "terms_raw"} for item in payload]},
+                         ensure_ascii=False, indent=1))
         return EXIT_OK
     blocks = []
     for item in payload:
@@ -956,9 +960,11 @@ def cmd_doc(con, args, root_project):
         if not item["terms"]:
             blocks.append(head + "\n" + meta + "\n  （该文档没有词条声明块）")
             continue
-        rows = [term_row(t) for t in item["terms"]]
+        rows = [(t["name"], t["aliases"] or "-", t["topic_tags"] or "-", t["source"],
+                 str(t["line"]), str(t["ref_count"])) for t in item["terms_raw"]]
         blocks.append(head + "\n" + meta + "\n"
-                      + render_table(TERM_HEADERS[1:], [r[1:] for r in rows], aligns="llllr"))
+                      + render_table(["词条", "别名", "主题标签", "来源", "行", "引用"], rows,
+                                     aligns="llllrr"))
     print("\n\n".join(blocks))
     if len(payload) > 1:
         print(f"\n— {len(payload)} 个文档同名命中（用完整 rel 可唯一定位）")
