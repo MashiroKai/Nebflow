@@ -70,7 +70,7 @@ PASS  T14e 更长快照采纳（对账追平）+ sys 帧永久过滤（气泡面
 PASS  T14b 重载后开 dock：本地注水即时呈现（回放未到先出账）  — {"users":["τ 为什么取 30 天？","## 结构\n\n- 甲\n- 乙\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\n```js\ncode\n```","主会话回问：需要我帮你做什么？"]}
 PASS  T14b′ 回放到达对账不缩水（记录保持）  — {"users":3,"ais":3}
 PASS  T15a 气泡列与输入条左右缘一致（≤1px）  — {"left":0,"right":0}
-PASS  T15b 宽气泡 span 到列满档（306px 帽退役；窄气泡仍右贴自然宽）  — {"wide":371.996337890625,"input":372,"leftGap":0.0018310546875}
+PASS  T15b 宽气泡 span 到列满档（306px 帽退役；窄气泡仍右贴自然宽）  — {"wide":371.9925537109375,"input":372,"leftGap":0.0037841796875}
 PASS  T16 双主题截图取证（t16-dark-dock-wide / t16-light-dock）  — evidence/canvas-ask-dock/shots/
 PASS  T9a 移动入口钮 48×48（悬浮钮统一批 g2-fab 基准）  — {"w":48,"h":48,"fabBottomToDock":16,"dockH":54,"fabRightToViewport":16,"fabBottomOffset":78,"seatExpect":78,"cCenter":742,"fabCenter":742,"colMaxH":"388.24px","colwrapMaxH":"388.24px"}
 PASS  T9b 座位 = dock-h + --dock-inset-b + 16（单行排布批：与左锚工具簇行同带共中线，异侧零让位；期望按活 token 拼装）  — {"offset":78,"expect":78,"right":16}
