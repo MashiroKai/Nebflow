@@ -1,0 +1,271 @@
+{
+  "files": [],
+  "legs": {
+    "loopback": [
+      {
+        "leg": "loopback",
+        "size": "4 KiB",
+        "bytes": 4096,
+        "responses": 31,
+        "coldMs": 6.138875,
+        "coldStatus": 200,
+        "warm": {
+          "n": 30,
+          "min": 1.033833,
+          "med": 1.3655,
+          "p95": 2.323042,
+          "max": 2.471583,
+          "mean": 1.4910639000000003
+        },
+        "ttfb": {
+          "n": 30,
+          "min": 1.029458,
+          "med": 1.358333,
+          "p95": 2.316584,
+          "max": 2.453875,
+          "mean": 1.4825027999999998
+        },
+        "statuses": [
+          200
+        ],
+        "wireBytesB64": 0,
+        "wireFrames": 0,
+        "wireB64PerResp": 0,
+        "framesPerResp": 0,
+        "inflationPerResp": 0,
+        "httpRequestsOnWire": 0,
+        "throughputMiBs": 2.86067374588063
+      },
+      {
+        "leg": "loopback",
+        "size": "1 MiB",
+        "bytes": 1048576,
+        "responses": 21,
+        "coldMs": 5.923208,
+        "coldStatus": 200,
+        "warm": {
+          "n": 20,
+          "min": 4.28275,
+          "med": 4.8065,
+          "p95": 5.932541,
+          "max": 8.764333,
+          "mean": 5.11928975
+        },
+        "ttfb": {
+          "n": 20,
+          "min": 1.473125,
+          "med": 2.071334,
+          "p95": 2.619667,
+          "max": 2.627834,
+          "mean": 2.08173145
+        },
+        "statuses": [
+          200
+        ],
+        "wireBytesB64": 0,
+        "wireFrames": 0,
+        "wireB64PerResp": 0,
+        "framesPerResp": 0,
+        "inflationPerResp": 0,
+        "httpRequestsOnWire": 0,
+        "throughputMiBs": 208.0515967960054
+      },
+      {
+        "leg": "loopback",
+        "size": "10 MiB",
+        "bytes": 10485760,
+        "responses": 11,
+        "coldMs": 25.290833,
+        "coldStatus": 200,
+        "warm": {
+          "n": 10,
+          "min": 20.194459,
+          "med": 23.407375,
+          "p95": 65.394333,
+          "max": 65.394333,
+          "mean": 30.5585
+        },
+        "ttfb": {
+          "n": 10,
+          "min": 1.967875,
+          "med": 2.547708,
+          "p95": 3.557,
+          "max": 3.557,
+          "mean": 2.6834707
+        },
+        "statuses": [
+          200
+        ],
+        "wireBytesB64": 0,
+        "wireFrames": 0,
+        "wireB64PerResp": 0,
+        "framesPerResp": 0,
+        "inflationPerResp": 0,
+        "httpRequestsOnWire": 0,
+        "throughputMiBs": 427.21578135096314
+      }
+    ],
+    "tunnel": [
+      {
+        "leg": "tunnel",
+        "size": "4 KiB",
+        "bytes": 4096,
+        "responses": 31,
+        "coldMs": 7.451792,
+        "coldStatus": 200,
+        "warm": {
+          "n": 30,
+          "min": 1.169791,
+          "med": 1.691958,
+          "p95": 2.4505,
+          "max": 3.259791,
+          "mean": 1.7501847333333331
+        },
+        "ttfb": {
+          "n": 30,
+          "min": 1.164833,
+          "med": 1.685583,
+          "p95": 2.442166,
+          "max": 3.236,
+          "mean": 1.7425694333333333
+        },
+        "statuses": [
+          200
+        ],
+        "wireBytesB64": 169384,
+        "wireFrames": 31,
+        "wireB64PerResp": 5464,
+        "framesPerResp": 1,
+        "inflationPerResp": 1.333984375,
+        "httpRequestsOnWire": 0,
+        "throughputMiBs": 2.308715700980757
+      },
+      {
+        "leg": "tunnel",
+        "size": "1 MiB",
+        "bytes": 1048576,
+        "responses": 21,
+        "coldMs": 15.129125,
+        "coldStatus": 200,
+        "warm": {
+          "n": 20,
+          "min": 13.778333,
+          "med": 14.701334,
+          "p95": 16.249417,
+          "max": 18.163208,
+          "mean": 15.03101455
+        },
+        "ttfb": {
+          "n": 20,
+          "min": 13.199416,
+          "med": 14.076959,
+          "p95": 15.707833,
+          "max": 17.641125,
+          "mean": 14.458529099999998
+        },
+        "statuses": [
+          200
+        ],
+        "wireBytesB64": 29365896,
+        "wireFrames": 2163,
+        "wireB64PerResp": 1398376,
+        "framesPerResp": 103,
+        "inflationPerResp": 1.3335952758789062,
+        "httpRequestsOnWire": 0,
+        "throughputMiBs": 68.02103809082904
+      },
+      {
+        "leg": "tunnel",
+        "size": "10 MiB",
+        "bytes": 10485760,
+        "responses": 11,
+        "coldMs": 123.595334,
+        "coldStatus": 200,
+        "warm": {
+          "n": 10,
+          "min": 116.044292,
+          "med": 118.820958,
+          "p95": 140.99175,
+          "max": 140.99175,
+          "mean": 123.93610419999997
+        },
+        "ttfb": {
+          "n": 10,
+          "min": 109.183,
+          "med": 110.809583,
+          "p95": 133.267959,
+          "max": 133.267959,
+          "mean": 115.93706259999999
+        },
+        "statuses": [
+          200
+        ],
+        "wireBytesB64": 153821184,
+        "wireFrames": 11264,
+        "wireB64PerResp": 13983744,
+        "framesPerResp": 1024,
+        "inflationPerResp": 1.33359375,
+        "httpRequestsOnWire": 0,
+        "throughputMiBs": 84.1602371191116
+      }
+    ]
+  },
+  "table": [
+    {
+      "size": "4 KiB",
+      "bytes": 4096,
+      "diskMs": 0.063,
+      "loopMed": 1.37,
+      "loopP95": 2.32,
+      "loopCold": 6.14,
+      "tunMed": 1.69,
+      "tunP95": 2.45,
+      "tunCold": 7.45,
+      "speedupMed": 1.24,
+      "tunnelFramesPerResp": 1,
+      "tunnelWireKiBPerResp": 5.3,
+      "wireInflation": 1.33,
+      "sha256": "09a8e8e00d0ee6df5964ade654a312d618e5e497821f99825b14258547aa80a8",
+      "n": 30
+    },
+    {
+      "size": "1 MiB",
+      "bytes": 1048576,
+      "diskMs": 0.136,
+      "loopMed": 4.81,
+      "loopP95": 5.93,
+      "loopCold": 5.92,
+      "tunMed": 14.7,
+      "tunP95": 16.25,
+      "tunCold": 15.13,
+      "speedupMed": 3.06,
+      "tunnelFramesPerResp": 103,
+      "tunnelWireKiBPerResp": 1365.6,
+      "wireInflation": 1.33,
+      "sha256": "4537675d1537794f0626be5c3cf4c1dc1b1fe318cb08f5a39fb313618f3c4e91",
+      "n": 20
+    },
+    {
+      "size": "10 MiB",
+      "bytes": 10485760,
+      "diskMs": 1.766,
+      "loopMed": 23.41,
+      "loopP95": 65.39,
+      "loopCold": 25.29,
+      "tunMed": 118.82,
+      "tunP95": 140.99,
+      "tunCold": 123.6,
+      "speedupMed": 5.08,
+      "tunnelFramesPerResp": 1024,
+      "tunnelWireKiBPerResp": 13656,
+      "wireInflation": 1.33,
+      "sha256": "324cb7a8b3dceb1a53d33f1b9ec69ccc36a2a3af772d5e64a638c9ba5c9ed40e",
+      "n": 10
+    }
+  ],
+  "finishedAt": "2026-11-05T02:24:27.632Z",
+  "engine": {
+    "engineSrc": "/tmp/nearpath-fire/engine-src",
+    "classpath": "/tmp/nearpath-fire/classpath.txt"
+  }
+}
