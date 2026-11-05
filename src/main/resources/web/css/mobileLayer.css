@@ -4766,12 +4766,18 @@ body.mobile-layer .mf-canvas-page:has(.canvas-ref-select) .mf-dots {
   margin-inline: auto;   /* 净带内仍居中（原居中意图保留） */
 }
 /* 底部可滚余量（md / 纯文本 / epub 三面同尺）：末行滚到控件行之上。
-   值 = 16（控件行底缝）+ 48（钮径）+ 12（呼吸）= 76。 */
+   值 = 16（控件行底缝）+ 48（钮径）+ 12（呼吸）= 76。
+   canvas 正文底部遮挡修复批（2026-11-05，桌面档补同一让位）：桌面侧改由 JS 实测
+   发布 --canvas-bottom-clearance（viewers/shared.js syncBottomClearance，split.css
+   文件尾消费）。手机档此处保留 76 作为**地板值**，并用 max() 让实测值在控件行变高
+   时接管（例：面板更窄 ⇒ html 缩放条回落第二行 ⇒ 实测 81 > 76）。两档同源：76 与
+   实测值都由「控件行底缝 + 钮径 + 呼吸」推导，手机档的 16/48 是静态 token（
+   --mf-ctrl-row + --mtap-lg），桌面档取真几何；实测缺省 0px ⇒ max() 结果不变。 */
 body.mobile-layer .canvas-md-scroll,
 body.mobile-layer .canvas-txt-scroll,
 body.mobile-layer .epub-reader-viewport {
-  padding-bottom: calc(var(--mf-ctrl-row, 64px) + 12px);
-  scroll-padding-bottom: calc(var(--mf-ctrl-row, 64px) + 12px);
+  padding-bottom: max(calc(var(--mf-ctrl-row, 64px) + 12px), var(--canvas-bottom-clearance, 0px));
+  scroll-padding-bottom: max(calc(var(--mf-ctrl-row, 64px) + 12px), var(--canvas-bottom-clearance, 0px));
 }
 
 /* ── ④ 手机端阅读面字档（本批硬约束：正文 ≥17px / 辅助字 ≥13px）──────────

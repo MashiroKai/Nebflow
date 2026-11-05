@@ -936,6 +936,171 @@ export function addRefreshButton(pane, opts) {
   return btn;
 }
 
+// ── 底部浮钮让位：滚动面末尾安全留白（canvas 正文底部遮挡修复批）─────────
+// 作者报障 2026-11-05 12:09（逐字）「因为我们现在canvas的文档的底部不是有按钮吗，
+// 按钮会挡住底部的文字，所以要允许文档再进一步上滑，保证最底部的文字能够呈现在
+// 按钮之上。不会被遮挡。」
+//
+// 现场：canvas 文档面的底部浮钮簇（源码 <> / 引用 / 查找 / 缩放条 + 壳层刷新钮）
+// 是 absolute 浮层（split.css），不占流内位置；滚动面（.canvas-md-scroll /
+// .canvas-txt-scroll / .canvas-tab-pane.scrollable）的正文照旧铺到面板底缘 ⇒
+// 滚到底时最后一行落在浮钮带**底下**（改前桌面实测：末行 bottom 比钮顶低 36px，
+// 即末行下半截被钮压住）。手机档 2026-11-02「底部控件浮层带批」已用静态
+// padding-bottom 76px 修过同一现象（mobileLayer.css），桌面档一直没有。
+//
+// 修法（治本，不写死像素）：底部让位 = **实测**浮钮带顶到面板底缘的距离 + 呼吸缝，
+// 以 CSS 变量 --canvas-bottom-clearance 发布到 pane 上（CSS 侧单点消费）。
+// 为什么必须是实测而不是常量：浮钮尺寸随档位变（桌面 --cv-size-circle 40 / 手机
+// --mtap-lg 48）、html 缩放条会因面板变窄回落第二行、刷新钮会按簇满座下移一行
+// ⇒ 常量必然在某个档位失真（手机档 76 只是 16+48+12 这一个档的读数）。
+// 为什么留白不会造成多余空白滚动：留白是**滚动内容盒的末尾垫**，滚到底时内容底缘
+// 恰好停在钮带顶之上，余下那段正好被浮钮本身占住（不是空区）；文档短到内容 +
+// 留白仍装得下（短于一屏）时 scrollHeight ≤ clientHeight ⇒ 零滚动条、零空白。
+// 零按钮场景（无底部 chrome 的面板/页签）实测为 0 ⇒ 不留空白。
+//
+// 观测面：ResizeObserver 观测 pane（宽高变化 ⇒ 浮钮换行/档位变化）+ 每一颗浮钮
+// （显示/隐藏、缩放条读数宽度变化）+ MutationObserver 盯 pane 子树增删（换页签/
+// 换查看器会重建钮）。三路统一 raf 合并到一次重算。写值只落在 pane 的 CSS 变量上
+// （不改任何 DOM 结构、不触发被观测元素的尺寸），故无自激环。
+/** 底部浮钮簇成员（与 split.css 的底部浮钮块同一族；缩放条是非圆钮成员）。 */
+const BOTTOM_CHROME_SEL = '.canvas-source-toggle, .canvas-ref-select, .canvas-find-toggle, .canvas-zoom-bar';
+/** 末行与浮钮带顶之间的呼吸缝（与手机档 76 = 16 + 48 + 12 的 12 同一把尺）。 */
+export const BOTTOM_CLEARANCE_GAP = 12;
+
+/** 该 pane 当下的底部浮钮候选（含壳层 #canvas-content 上的刷新钮单例）。 */
+function _bottomChromeCandidates(pane) {
+  const out = [...pane.querySelectorAll(BOTTOM_CHROME_SEL)];
+  const shell = pane.parentElement;
+  const refresh = shell ? shell.querySelector(':scope > .canvas-refresh-toggle') : null;
+  if (refresh) out.push(refresh);
+  return out;
+}
+
+function _chromeShown(el) {
+  if (!el || !el.isConnected || el.hidden) return false;
+  const cs = getComputedStyle(el);
+  if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+  const r = el.getBoundingClientRect();
+  return r.width > 0.5 && r.height > 0.5;
+}
+
+/**
+ * 实测底部让位高度（px）。返回 null = 本次不可测（pane 未挂载/隐藏页签），
+ * 调用方跳过写值（保留既有值，隐藏态不可见故无影响）。
+ * @param {HTMLElement} pane
+ * @returns {number|null}
+ */
+export function measureBottomClearance(pane) {
+  if (!pane || !pane.isConnected) return null;
+  const pr = pane.getBoundingClientRect();
+  if (pr.width < 1 || pr.height < 1) return null;
+  let top = Infinity;
+  for (const el of _bottomChromeCandidates(pane)) {
+    if (!_chromeShown(el)) continue;
+    const r = el.getBoundingClientRect();
+    // 只认「在面板竖向范围内、与面板横向相交」的浮钮（壳层刷新钮可能在别的
+    // 页签的座位上，或整颗隐藏 —— 两者都由本判据与 _chromeShown 排除）。
+    if (r.top < pr.top - 1 || r.top >= pr.bottom) continue;
+    if (r.right <= pr.left || r.left >= pr.right) continue;
+    if (r.top < top) top = r.top;
+  }
+  if (!Number.isFinite(top)) return 0;   // 无底部浮钮 ⇒ 零留白
+  const v = pr.bottom - top + BOTTOM_CLEARANCE_GAP;
+  return Math.max(0, Math.round(v * 100) / 100);
+}
+
+/** 重算并写 --canvas-bottom-clearance（值不变则不写，避免无谓重排）。 */
+export function syncBottomClearance(pane) {
+  if (!pane) return null;
+  const px = measureBottomClearance(pane);
+  if (px === null) return null;
+  const next = px + 'px';
+  if (pane.style.getPropertyValue('--canvas-bottom-clearance') === next) return px;
+  pane.style.setProperty('--canvas-bottom-clearance', next);
+  return px;
+}
+
+/**
+ * 给一个 canvas tab pane 装「底部让位」观测（幂等：同 pane 重复调用只补一次同步）。
+ * 由 fileViewers.renderFile（唯一挂载点）在查看器渲染完成后调用。
+ * @param {HTMLElement} pane
+ */
+export function observeBottomClearance(pane) {
+  if (!pane) return;
+  const slot = /** @type {any} */ (pane);
+  let st = slot._nfBottomClearance;
+  if (!st) {
+    st = { ro: null, mo: null, moAttr: null, moAnc: null, els: [], raf: 0 };
+    const disconnect = () => {
+      try { st.ro?.disconnect(); } catch { /* 已断开 */ }
+      try { st.mo?.disconnect(); } catch { /* 已断开 */ }
+      try { st.moAttr?.disconnect(); } catch { /* 已断开 */ }
+      try { st.moAnc?.disconnect(); } catch { /* 已断开 */ }
+      st.ro = null; st.mo = null; st.moAttr = null; st.moAnc = null; st.els = [];
+      if (st.raf) { cancelAnimationFrame(st.raf); st.raf = 0; }
+    };
+    const observeChrome = () => {
+      if (!st.ro) return;
+      const next = _bottomChromeCandidates(pane);
+      const same = next.length === st.els.length && next.every((el, i) => el === st.els[i]);
+      if (same) return;
+      st.ro.disconnect();
+      st.ro.observe(pane, { box: 'border-box' });
+      for (const el of next) st.ro.observe(el, { box: 'border-box' });
+      // 浮钮「座位/显隐」属性的变化（seatRefreshButton 写 style、syncFileRefreshButton
+      // 写 hidden、换档写 class）不改变任何被观测盒的尺寸时才需要这条腿 —— 例如窄面板
+      // 下刷新钮从第一行下移到第二行（bottom 16 → 72），浮钮带顶因此抬高。
+      st.moAttr?.disconnect();
+      if (st.moAttr) for (const el of next) st.moAttr.observe(el, { attributes: true, attributeFilter: ['style', 'class', 'hidden'] });
+      st.els = next;
+    };
+    const run = () => {
+      st.raf = 0;
+      if (!pane.isConnected) {          // 页签关闭：观测面自行退场（不靠外部拆除）
+        disconnect();
+        slot._nfBottomClearance = null;
+        return;
+      }
+      syncBottomClearance(pane);
+      observeChrome();
+    };
+    const schedule = () => { if (!st.raf) st.raf = requestAnimationFrame(run); };
+    st.ro = new ResizeObserver(schedule);
+    st.mo = new MutationObserver(schedule);
+    st.moAttr = new MutationObserver(schedule);
+    // 子树增删盯**面板壳**（pane 的父层）：壳层刷新钮是 #canvas-content 的直接子
+    // （定位修复批 2026-10-25），只盯 pane 会漏掉它挂上/摘下的那一次。本函数自己只写
+    // pane 的 style 变量（attribute）⇒ 不触发这条 childList 观测，无自激环。
+    st.mo.observe(pane.parentElement || pane, { childList: true, subtree: true });
+    // 祖先「显隐/态类」腿（手机层实测补）：手机页面栈里非前台页是 **visibility:
+    // hidden 但仍整幅占位** —— 尺寸与边长全程不变，ResizeObserver 一声不响；从
+    // hidden 翻到 visible 只体现为祖先链上某个 .mobile-page 的 class/内联态换档。
+    // 不挂这条腿，手机档首次渲染（页还没推前台）量到的就是「无浮钮 = 0」，且此后
+    // 永无重算机会。观测对象刻意**不含 pane 自身**（本函数只写 pane 的 style，
+    // 排除它 = 结构上无自激环）。
+    st.moAnc = new MutationObserver(schedule);
+    {
+      let anc = pane.parentElement;
+      for (let i = 0; i < 5 && anc; i++, anc = anc.parentElement) {
+        st.moAnc.observe(anc, { attributes: true, attributeFilter: ['class', 'style', 'hidden', 'aria-hidden'] });
+      }
+    }
+    st.ro.observe(pane, { box: 'border-box' });
+    st.els = _bottomChromeCandidates(pane);
+    for (const el of st.els) {
+      st.ro.observe(el, { box: 'border-box' });
+      st.moAttr.observe(el, { attributes: true, attributeFilter: ['style', 'class', 'hidden'] });
+    }
+    slot._nfBottomClearance = st;
+  } else {
+    st.els = _bottomChromeCandidates(pane);
+    for (const el of st.els) {
+      try { st.ro.observe(el, { box: 'border-box' }); } catch { /* 重复观测无害 */ }
+    }
+  }
+  syncBottomClearance(pane);
+}
+
 // ── ZIP utilities (EPUB viewer) ────────────────────────────────────────
 
 // ZIP 解压预算族（单一常量纪律；pptx viewer 同批共用，epub 腿经下方两个函数自动继承）。

@@ -1,0 +1,80 @@
+{
+  "ok": true,
+  "mobile": false,
+  "paneVisible": true,
+  "vw": 1440,
+  "vh": 900,
+  "pane": {
+    "x": 879,
+    "y": 17,
+    "w": 550,
+    "h": 864,
+    "right": 1429,
+    "bottom": 881
+  },
+  "paneClass": "canvas-tab-pane active",
+  "scroller": {
+    "sh": 6138,
+    "ch": 864,
+    "st": 5274,
+    "maxScroll": 5274,
+    "padBottom": 0,
+    "padBottomRaw": "0px",
+    "scrollPadBottom": "auto",
+    "isPane": false,
+    "box": {
+      "x": 879,
+      "y": 17,
+      "w": 550,
+      "h": 864,
+      "right": 1429,
+      "bottom": 881
+    }
+  },
+  "viewer": {
+    "x": 879,
+    "y": -5205,
+    "w": 550,
+    "h": 6085.98,
+    "right": 1429,
+    "bottom": 880.98
+  },
+  "chrome": [
+    {
+      "sel": ".canvas-source-toggle",
+      "visible": true,
+      "top": 825,
+      "bottom": 865,
+      "h": 40
+    },
+    {
+      "sel": ".canvas-find-toggle",
+      "visible": true,
+      "top": 825,
+      "bottom": 865,
+      "h": 40
+    },
+    {
+      "sel": ".canvas-refresh-toggle",
+      "visible": true,
+      "top": 825,
+      "bottom": 865,
+      "h": 40
+    }
+  ],
+  "chromeTop": 825,
+  "clearanceVar": "",
+  "clearanceVarPx": 0,
+  "padBottom": 0,
+  "lastBlock": {
+    "tag": "P",
+    "x": 903,
+    "y": 839.3,
+    "w": 502,
+    "h": 21.69,
+    "right": 1405,
+    "bottom": 860.98,
+    "text": "末行标记：END-OF-DOCUMENT-末行"
+  },
+  "predicted": 68
+}
