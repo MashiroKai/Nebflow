@@ -2173,7 +2173,12 @@ function renderCanvasHeader() {
  *  迁胶囊右座，实证被 deck-layer 环卡吞命中，退出叠卡必须恒可点）——材质随
  *  本批升 v2 液体玻璃（.g2-fab 共享类）。原「独立窗口」chip（#canvas-pop-btn）
  *  随批⑤退役（独立窗出口 = 卡头右键菜单「在独立窗口打开」+ 环卡卡头
- *  .deck-card-pop，零能力损失）。卡窗态（cardWindowMode）✕ 全隐（卡窗自有窗关）。 */
+ *  .deck-card-pop，零能力损失）。卡窗态（cardWindowMode）✕ 全隐（卡窗自有窗关）。
+ *  **件1 回归批（作者令 2026-11-05）**：作者逐字「我们的canvas优化之后，独立窗口
+ *  打开的按钮现在没了。只在手机端隐藏这个按钮。电脑端要放在胶囊的右侧。」——
+ *  独立窗钮以 `.canvas-pop-btn` 类名回到标题胶囊**右座**（见下方 syncHeaderActions
+ *  内件1 块；类名必须沿用，环 hover 覆层右内缝 syncCenterInset 只认这个类名），
+ *  手机层 display:none。批⑤「内容物收口」判据（非内容物 = 禁用态 + 提示）保留。 */
 /* 环卡卡头独立/合并 toggle 图标（批⑤后唯一消费面 = .deck-card-pop；原
    标题头 #canvas-pop-btn 同批退役，SVG 常量随调用面留此单点）。 */
 const CARD_POP_SVG =
@@ -2181,6 +2186,21 @@ const CARD_POP_SVG =
   '<svg class="pop-ic-merge" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><path d="M14 10 21 3"/><path d="M3 21l7-7"/></svg>';
 const HEAD_CLOSE_SVG =
   '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+/* 件1：卡头独立窗钮的图标用 **namespace SVG 构建**（createElementNS，零裸 innerHTML
+   —— component-contract R5；字形与 CARD_POP_SVG 逐形同源：独立 ⧉ / 合并 ⇲ 两形
+   共挂一键，靠 .pop-ic-pop / .pop-ic-merge 类切换显隐，CSS 单源在 split.css）。 */
+const SVG_NS = 'http://www.w3.org/2000/svg';
+/** @param {string} cls @param {Array<[string, Object<string,string>]>} kids */
+function cardPopIcon(cls, kids) {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  for (const [k, v] of Object.entries({ class: cls, width: '13', height: '13', viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': '2', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })) svg.setAttribute(k, v);
+  for (const [tag, attrs] of kids) {
+    const el = document.createElementNS(SVG_NS, tag);
+    for (const k of Object.keys(attrs)) el.setAttribute(k, attrs[k]);
+    svg.appendChild(el);
+  }
+  return svg;
+}
 function syncHeaderActions() {
   const hdr = document.querySelector('#canvas-panel .canvas-header');
   if (!hdr) return;
@@ -2208,6 +2228,61 @@ function syncHeaderActions() {
 
   if (deckFab) deckFab.disabled = tabs.size === 0;
   if (closeBtn) /** @type {HTMLButtonElement} */ (closeBtn).disabled = tabs.size === 0;
+
+  /* ── 件1 回归批（作者令 2026-11-05 逐字「我们的canvas优化之后，独立窗口打开的
+   *  按钮现在没了。只在手机端隐藏这个按钮。电脑端要放在胶囊的右侧。」）：
+   *  批⑤退役的卡头独立窗钮**回位**到标题胶囊右座。实现要点四条：
+   *   ① 类名必须是 `.canvas-pop-btn` —— 环 hover 中心覆层的右内缝 syncCenterInset()
+   *      只认这个类名（--cr-popw = 26 钮 + 6 缝 = 32px），换名即断 #926「hover 不改
+   *      文字布局」契约（中心覆层文字盒与被替换的 .t-name 盒逐像素等宽）。
+   *   ② DOM 座位 = `.canvas-title` 的直接后继（右座单件；布局由 split.css
+   *      §件1 块 + 既有 justify-content:space-between / title flex:1 承担，零手工落位）。
+   *   ③ 行为入口单源 = toggleCardWindow(activeTabId)（与环卡 .deck-card-pop / 右键菜单
+   *      同一条腿）；图标复用 CARD_POP_SVG（.pop-ic-pop ↔ .pop-ic-merge 换形）。
+   *   ④ 内容物收口判据**不推翻**（delegate-nebflow-3a877cec 批）：非内容物页签
+   *      （无 absPath）= disabled + title/aria-label = 既有键 canvas.cardwinContentOnly
+   *      提示（判据单源 cardCanPop / capsuleMenuActions 同款语义），点击零开窗；
+   *      本件只恢复入口与其位置，不动「哪些内容允许独立窗」的判定。 */
+  let popBtn = /** @type {HTMLButtonElement|null} */ (hdr.querySelector('.canvas-pop-btn'));
+  if (!popBtn) {
+    popBtn = document.createElement('button');
+    popBtn.type = 'button';
+    popBtn.className = 'canvas-pop-btn';
+    // id 沿用批⑤前旧 id（既有 spec/验收脚本以 #canvas-pop-btn 命中；类名才是契约面）
+    popBtn.id = 'canvas-pop-btn';
+    popBtn.appendChild(cardPopIcon('pop-ic-pop', [
+      ['path', { d: 'M15 3h6v6' }],
+      ['path', { d: 'M10 14 21 3' }],
+      ['path', { d: 'M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6' }],
+    ]));
+    popBtn.appendChild(cardPopIcon('pop-ic-merge', [
+      ['polyline', { points: '4 14 10 14 10 20' }],
+      ['polyline', { points: '20 10 14 10 14 4' }],
+      ['path', { d: 'M14 10 21 3' }],
+      ['path', { d: 'M3 21l7-7' }],
+    ]));
+    // 手势链：胶囊按住/竖滑换卡/横滑关卡不得被钮吞 —— pointerdown 阻断、click 自带语义
+    popBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
+    popBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (popBtn.disabled || !activeTabId) return;
+      toggleCardWindow(activeTabId);
+    });
+    if (deckTitleEl && deckTitleEl.parentElement === hdr) hdr.insertBefore(popBtn, deckTitleEl.nextSibling);
+    else hdr.appendChild(popBtn);
+  }
+  {
+    const act = activeTabId ? tabs.get(activeTabId) : null;
+    const canPop = !!act && cardCanPop(activeTabId);
+    const indep = !!act && isCardIndependent(activeTabId);
+    const popLabel = indep ? '合并回主窗' : '独立窗口打开';
+    // 无活动页签 ⇒ 离场（此时 --cr-popw 由 syncCenterInset 同步落 0，文字盒两侧同源）
+    popBtn.hidden = !act;
+    popBtn.disabled = !canPop;
+    popBtn.classList.toggle('is-independent', indep);
+    popBtn.title = canPop ? popLabel : t('canvas.cardwinContentOnly');
+    popBtn.setAttribute('aria-label', canPop ? popLabel : t('canvas.cardwinContentOnly'));
+  }
 
   // 批⑤：堆叠态顶部标签数（前景序/总数；常态与单卡态隐藏——数从哪来
   // 标签条/chip 条已有，不重复显示）。

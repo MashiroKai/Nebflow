@@ -7,6 +7,18 @@
 // 手机层 --mtap-lg = 手机层返回钮 = 面板吸附胶囊 --mcap-h），条高随之 36 → 58
 // （48 + 2×4 条内距 + 2×1 描边），底锚 18 → 11（条内钮中线 = 圆钮行中线 40）。
 //
+// ── 件3 改档（2026-11-05 作者令「然后电脑端的canvas的底部的按钮的大小，应该和
+//    canvas顶部的按钮的大小样式都统一。」）────────────────────────────────
+//    两条作者令冲突的裁定：11-02 批「桌面底部 chrome = 48」被新令覆盖 —— 桌面档
+//    收敛回**顶部圆钮档**（--cv-size-circle = 40 / 圆 50% / 内距 0 / 图标 --cv-icon 18），
+//    --cv-size-circle-lg 从此 = --cv-size-circle（同一真值，sapphire.css 单源）。
+//    手机 375 档未获新令 ⇒ 保留 48 档（本 spec 手机腿的判据值不变）。
+//    随之改动的数值钉（逐条理由）：① 钮宽 48→40（桌面腿，= token）；
+//    ② 条高 58→50（40 + 2×4 + 2×1）；③ 簇槽距由 56 派生为 48（钮 + 8 缝）⇒ 槽位
+//    16/64/112/160（缝仍 8px，⑤ 的 GAP=8 判据零改）；④ 窄面板回落阈值 414→366
+//    （160 槽 + 198 条宽 + 8 右让位）。**断言条数与判据强度不降**：⑤ 的「缝 8±1」
+//    在桌面腿照旧成立（40 钮 + 8 缝），手机腿 48 档亦照旧。
+//
 // 断言（都是 boundingBox 实测，不 mock 布局）：
 //   ① 条内每个 icon 钮宽 48±1（图片 pane 四钮含抓手 / HTML pane 三钮）
 //   ② 独立圆钮（壳刷新 .canvas-refresh-toggle）+ 文档工具簇圆钮（源码/引用/查找）宽 48±1
@@ -40,7 +52,9 @@ mkdirSync(SHOTS_DIR, { recursive: true });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ── 尺寸真值（断言口径单源）──
-const SIZE = 48;         // = --cv-size-circle-lg = --mtap-lg = --mcap-h
+const SIZE = 40;         // 桌面：--cv-size-circle-lg = --cv-size-circle = 40（件3 裁定）
+const SIZE_MOBILE = 48;  // 手机 375：--mtap-lg = --mcap-h = 48（11-02 批档位未获新令）
+const SIZE_ALL = Math.max(SIZE, SIZE_MOBILE);
 const TOL = 1;           // 尺寸容差
 const TIER_TOL = 2;      // ④「与档同高」容差
 const GAP = 8;           // 钮间缝（槽距 = 48 + 8）
@@ -208,19 +222,20 @@ const inter = (a, b) => {
  *  @param {string} tag 断言前缀
  *  @param {'desktop'|'mobile'} leg */
 function assertLeg(tag, m, leg) {
+  const WANT = leg === 'mobile' ? SIZE_MOBILE : SIZE;
   const boxes = [...m.btn.map((b) => ({ name: `bar:${b.t || 'btn'}`, r: b.r })),
     ...(m.refresh ? [{ name: 'refresh', r: m.refresh }] : []),
     ...m.cluster.map((c) => ({ name: c.s, r: c.r }))];
 
-  // ① 条内 icon 钮宽 48±1
+  // ① 条内 icon 钮宽 = 档值 ±1（桌面 40 / 手机 48）
   const barWs = m.btn.map((b) => b.r.w);
-  ok(`${tag} ① 条内 icon 钮宽 48±1（实测 ${barWs.map((w) => w.toFixed(0)).join('/')}，${barWs.length} 钮）`,
-    barWs.length >= 3 && barWs.every((w) => Math.abs(w - SIZE) <= TOL), JSON.stringify(barWs));
+  ok(`${tag} ① 条内 icon 钮宽 = ${WANT}±1（实测 ${barWs.map((w) => w.toFixed(0)).join('/')}，${barWs.length} 钮）`,
+    barWs.length >= 3 && barWs.every((w) => Math.abs(w - WANT) <= TOL), JSON.stringify(barWs));
 
-  // ② 独立圆钮 + 簇圆钮宽 48±1
+  // ② 独立圆钮 + 簇圆钮宽 = 档值 ±1
   const circWs = [m.refresh?.w, ...m.cluster.map((c) => c.r.w)].filter((w) => w != null);
-  ok(`${tag} ② 独立圆钮 + 工具簇圆钮宽 48±1（刷新 ${m.refresh ? m.refresh.w.toFixed(0) : '无'} · 簇 ${m.cluster.map((c) => c.r.w.toFixed(0)).join('/') || '无'}）`,
-    circWs.length >= 1 && circWs.every((w) => Math.abs(w - SIZE) <= TOL), JSON.stringify(circWs));
+  ok(`${tag} ② 独立圆钮 + 工具簇圆钮宽 = ${WANT}±1（刷新 ${m.refresh ? m.refresh.w.toFixed(0) : '无'} · 簇 ${m.cluster.map((c) => c.r.w.toFixed(0)).join('/') || '无'}）`,
+    circWs.length >= 1 && circWs.every((w) => Math.abs(w - WANT) <= TOL), JSON.stringify(circWs));
 
   // ③ 高 = 宽（每个钮都不许被压扁）
   const square = boxes.filter((b) => Math.abs(b.r.h - b.r.w) > TOL).map((b) => `${b.name}=${b.r.w}×${b.r.h}`);
@@ -235,7 +250,7 @@ function assertLeg(tag, m, leg) {
     : parseFloat(m.tier.cvCircleLg);
   const heights = boxes.map((b) => b.r.h);
   ok(`${tag} ④ 钮高 = 档高（${leg === 'mobile' ? '吸附胶囊 --mcap-h' : '--cv-size-circle-lg'} = ${tierVal}）|差| ≤2px`,
-    Number.isFinite(tierVal) && Math.abs(tierVal - SIZE) <= TOL && heights.every((h) => Math.abs(h - tierVal) <= TIER_TOL),
+    Number.isFinite(tierVal) && Math.abs(tierVal - WANT) <= TOL && heights.every((h) => Math.abs(h - tierVal) <= TIER_TOL),
     `tier=${tierVal} heights=${heights.map((h) => h.toFixed(0)).join('/')} tokens=${JSON.stringify(m.tier)}`);
 
   // ⑤ 缝相对一致：条内相邻缝两两相等 ±1，且 ≈8（原 4/26 ≈ 15.4% ⇒ 8/48 ≈ 16.7%）
@@ -250,7 +265,7 @@ function assertLeg(tag, m, leg) {
   }
   const gapSpread = barGaps.length > 1 ? Math.max(...barGaps) - Math.min(...barGaps) : 0;
   const pitch = m.cluster.length >= 2
-    ? m.cluster.map((c) => c.r.x).sort((a, b) => a - b).map((x, i, arr) => (i ? round1(x - arr[i - 1] - SIZE) : null)).filter((v) => v != null)
+    ? m.cluster.map((c) => c.r.x).sort((a, b) => a - b).map((x, i, arr) => (i ? round1(x - arr[i - 1] - WANT) : null)).filter((v) => v != null)
     : [];
   ok(`${tag} ⑤ 钮间缝相对一致（条内缝 ${barGaps.join('/') || 'n/a'} 两两差 ≤1；簇槽距缝 ${pitch.join('/') || 'n/a'} ≈8±1）`,
     (barGaps.length === 0 || gapSpread <= 1) && (barGaps.every((g) => g >= GAP - 1) || barGaps.length === 0) && pitch.every((g) => Math.abs(g - GAP) <= TOL),
@@ -299,8 +314,8 @@ function assertLeg(tag, m, leg) {
   const pctD = m.pct && m.pct.r ? Math.abs(m.pct.r.cy - (m.bar ? m.bar.cy : 0)) : 999;
   ok(`${tag} 读数行竖直居中（|cy − 条中线| ≤1）且字号 ≥13（实测 ${m.pct ? m.pct.fontSize : 'n/a'} · ${m.pct ? m.pct.text : 'n/a'}）`,
     !!m.pct && pctD <= 1 && parseFloat(m.pct.fontSize) >= 13, `dy=${pctD.toFixed(1)}`);
-  ok(`${tag} 条本体：圆角语义保留（${m.barRadius}）+ 条内距 4px（${m.barPad}）+ 条高 = 48 + 2×4 + 2×1 = 58`,
-    !!m.bar && Math.abs(m.bar.h - 58) <= 2, m.bar ? `h=${m.bar.h}` : 'no bar');
+  ok(`${tag} 条本体：圆角语义保留（${m.barRadius}）+ 条内距 4px（${m.barPad}）+ 条高 = ${WANT} + 2×4 + 2×1 = ${WANT + 10}`,
+    !!m.bar && Math.abs(m.bar.h - (WANT + 10)) <= 2, m.bar ? `h=${m.bar.h}` : 'no bar');
 
   return { boxes, barGaps, pitch };
 }
@@ -356,7 +371,7 @@ try {
     assertLeg('桌面-窄320', m, 'desktop');
     // 第二行判定：条底锚 72 ⇒ 条底 + 8 = 圆钮行顶（16 + 48）
     const stacked = !!m.bar && m.cluster.length > 0 && m.bar.bottom <= m.cluster[0].r.y + 0.5;
-    ok('桌面-窄320 条升到圆钮行上方第二行（容器查询 ≤414px 命中，条底 ≤ 簇顶）', stacked,
+    ok('桌面-窄320 条升到圆钮行上方第二行（容器查询 ≤366px 命中，条底 ≤ 簇顶）', stacked,
       m.bar && m.cluster.length ? `barBottom=${m.bar.bottom} clusterTop=${m.cluster[0].r.y}` : 'missing');
     ok('桌面-窄320 零 pageerror', errors.length === 0, errors.slice(0, 2).join(' | '));
     await ctx.close();
