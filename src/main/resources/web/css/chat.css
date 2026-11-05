@@ -1144,6 +1144,24 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .bubble.injected .injected-source-label[role="button"]:hover {
   opacity: 0.8;
 }
+/* 外部注入气泡「一句话摘要」行（外部注入统一通道批 2026-11-05）。
+   作者诉求逐字：「我看得到是什么」——折叠态只显示来源行时，气泡说不出发生了什么，
+   作者只看到「我又被触发了」。本行是来源行下的**正文首条有效行**（纯事实，逐字取自
+   注入内容，非改写摘要），单行省略号；点开来源行（toggle）展开完整正文时本行隐藏，
+   首行不重复出现。
+   与 delegate 完工卡 .nf-rcpt-summary 的分工：那张是**展开后**才出的判词摘要
+   （折叠卡面恒单行），本行是**折叠态**的内容摘要——两处口径不同，刻意不复用。 */
+.bubble.injected .nf-inject-summary {
+  margin-top: var(--ds-space-1);
+  font-size: var(--ds-fs-hint);
+  color: var(--color-text);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.bubble.injected .injected-source-label[aria-expanded='true'] + .nf-inject-summary {
+  display: none;
+}
 
 /* Mail delivery mode badge (ask/queue/immediate) in the injected bubble
  * source label. ask = emphasis (sender is synchronously waiting), queue =
