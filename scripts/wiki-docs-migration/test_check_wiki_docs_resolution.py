@@ -35,8 +35,7 @@ status: current
 
 # 测试 vault 索引
 
-- [[doc-a]] — 样例文档。
-- [[glossary]] — 词表。
+- [[GCR|银河宇宙线]] — 词条短形引用（显示名走尾括号别名；R7 只许引用词条，禁引文档）。
 """
 
 GOOD_DOC_A = """---
@@ -46,7 +45,7 @@ status: open
 
 # 文档 A
 
-引用词表概念：[[GCR]]。回链索引：[[index]]。
+引用词条：[[GCR]]。回链词表块：[[glossary#^gcr]]。
 """
 
 GOOD_GLOSSARY = """---
