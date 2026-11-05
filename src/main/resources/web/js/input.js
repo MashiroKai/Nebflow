@@ -44,7 +44,11 @@ import { deviceStamp } from './deviceIdentity.js';
 // an ASCII letter/digit (email-like 'foo@' never triggers) — whitespace, line
 // start, CJK characters and CJK punctuation all open it. Data source =
 // fetchProjects() (nodeData.js).
-import { bindMention, handleMentionKeydown, closeMentionDropdown } from './mentionComplete.js';
+// 输入补全单引擎（待办结构化批 2026-11-05）：`@` 项目 与 `#` 待办 共用
+// tokenComplete.js 一套弹层/分词/键盘/插入；两个 provider 分别在
+// mentionComplete.js（import 链经 main.js）与 todoComplete.js 注册。
+import { bindTokenComplete, handleTokenKeydown, closeTokenDropdown } from './tokenComplete.js';
+import './todoComplete.js';
 
 // input.js 拆分（FE组件化批次四 2026-09-27）：slash 命令族/输入模式族/附件与引用帧族 → js/input/ 可复用模块（行为保持）。
 // 主体消费面 import + 原导出面转发（23 个 export 仍全部可从 input.js 取得，批次一~三同款纪律）。
@@ -209,7 +213,7 @@ export function send(resendId) {
   const input = v.dom.input;
   // @-mention popup: send() clears the input on every path below, which would
   // strand the popup over the next turn — close it up front.
-  closeMentionDropdown();
+  closeTokenDropdown();
   const text = input.value.trim();
   // 同 id 重发：重放 state.inputHistory 末条（resendLastInput 会先把值塞回输入框；
   // 直接从登记表兜底取文本，输入框被并行路径清空也不落空）。
@@ -1773,7 +1777,7 @@ export function initInput(view) {
   function surfaceKeydownCascade(e) {
     // @-mention popup navigation (ArrowUp/Down, Tab/Enter pick, Esc close).
     // Consumes keys only while the popup is open.
-    if (handleMentionKeydown(e, view)) return true;
+    if (handleTokenKeydown(e, view)) return true;
     // Escape cancels ask/skill/compact mode
     if (e.key === 'Escape') {
       if (view.stream.askMode) {
@@ -2206,7 +2210,7 @@ export function initInput(view) {
   // token parsing and popup rendering live in mentionComplete.js. Key
   // handling is hooked in the keydown handler above (behind the imeGuard
   // short-circuit); send() closes the popup up front.
-  bindMention(view);
+  bindTokenComplete(view);
 
   // Ask/skill indicator cancel buttons
   {
