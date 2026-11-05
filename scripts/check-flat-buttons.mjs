@@ -213,10 +213,40 @@ function subjectCompound(part) {
   return part.slice(last).trim();
 }
 
+/**
+ * 去掉 `:not(...)` 里的内容（平衡括号）。
+ * 理由（2026-11-05 并入主干时实测）：`.mh-search-bar:not(.g2-fab)` 的主题是
+ * **搜索条**，`:not()` 只是排除条件；把括号里的名字当按钮名，等于让「排除按钮」
+ * 变成「是按钮」——判据反了。`:is()/:where()` 里的名字反过来**算**主题名
+ * （它们就是主题的一部分），所以只剥 `:not`。
+ */
+function stripNotPseudo(comp) {
+  let out = '';
+  for (let i = 0; i < comp.length; i++) {
+    if (comp.startsWith(':not(', i)) {
+      let depth = 0;
+      let j = i + 4;
+      for (; j < comp.length; j++) {
+        if (comp[j] === '(') depth++;
+        else if (comp[j] === ')') {
+          depth--;
+          if (depth === 0) break;
+        }
+      }
+      i = j; // 跳过整个 :not(...)
+      continue;
+    }
+    out += comp[i];
+  }
+  return out;
+}
+
 /** 选择器里是否含按钮面（含其修饰）。 */
 function isButtonSelector(selector) {
   for (const part of selector.split(',')) {
-    const comp = subjectCompound(part);
+    const raw = subjectCompound(part);
+    if (!raw) continue;
+    const comp = stripNotPseudo(raw);
     if (!comp) continue;
     if (/(^|[\s>+~])button(?![\w-])/.test(comp)) return true;
     if (/\[type\s*=\s*["']?(button|submit|reset)["']?\]/i.test(comp)) return true;
