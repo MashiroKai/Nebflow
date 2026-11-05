@@ -740,6 +740,10 @@ export default {
   // GET /api/projects（与项目面板同源），文案仅浮层无匹配态与 ARIA 标签。
   'mention.title': '项目',
   'mention.noMatch': '无匹配项目',
+  // `#` 待办引用补全（待办结构化批 2026-11-05）：文案只写状态事实，不写操作教学。
+  'todoComplete.title': '待办',
+  'todoComplete.noMatch': '无匹配待办',
+  'todoComplete.detailUnavailable': '这条待办不在当前列表里',
   'slash.title': '斜杠命令',
   'modal.newSession': '新建会话',
   'modal.sessionName': '会话名称',
@@ -3078,6 +3082,9 @@ export default {
   'todoface.done': '完成',
   'todoface.titlePh': '标题',
   'todoface.notesPh': '备注（可选）',
+  // 两段化（待办结构化批 2026-11-05）：detail 折叠钮与编辑面字段名的可读标签。
+  'todoface.detailToggle': '展开详情',
+  'todoface.detailFieldLabel': '详情',
   'todoface.prioNone': '无',
   'todoface.prioLow': '低',
   'todoface.prioMed': '中',
