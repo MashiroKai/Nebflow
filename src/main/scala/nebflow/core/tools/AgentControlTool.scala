@@ -708,10 +708,37 @@ When to use:
           val stuckLine = stuckAssessment(rec, now) match
             case Some((secs, reason)) => s"YES (${fmtDuration(secs * 1000)} — $reason)"
             case None => "no"
+          // 冻结态诚实呈现批（2026-11-05，作者报障「它显示已冻结，但我没有冻结它、
+          // 控制台也没有恢复按钮」）：`status: Frozen` 一个词把「系统在退避/在等」
+          // 与「要人来处理」写成同一句话。此处按 FreezeDisplay（判定单点）补足三件
+          // 事——谁停的（reason）、能不能自己好（autoRecoverable）、要不要人
+          // （needsHuman）与出口。状态词首词仍是枚举名（机器可读面不破坏）。
+          val freezeDisplay =
+            if rec.status == nebflow.actor.AgentStatus.Frozen then
+              Some(nebflow.actor.FreezeDisplay.ofWire(rec.frozenReason.getOrElse(""), None, now))
+            else None
+          val statusSuffix = freezeDisplay
+            .map(fd =>
+              s" (${fd.kind.wire} · " +
+                (if fd.needsHuman then "needs your decision" else "no action needed — it resumes on its own") + ")"
+            )
+            .getOrElse("")
+          val freezeLines = freezeDisplay.toList.flatMap { fd =>
+            List(
+              s"freeze: kind=${fd.kind.wire} needsHuman=${fd.needsHuman} autoRecoverable=${fd.autoRecoverable} " +
+                s"reason=${fd.reasonWire}",
+              s"freeze.label: ${fd.labelEn}",
+              "freeze.recovery: " +
+                (if fd.needsHuman then
+                   "AgentControl restart (resume from the checkpoint in the SAME session) or cancel (terminal); " +
+                     "the console row's Wake button calls delegateWake"
+                 else "none required — the engine retries on its own")
+            )
+          }
           val lines = List(
             s"sessionId: ${rec.sessionId}",
             s"kind: ${rec.kind}",
-            s"status: ${rec.status}",
+            s"status: ${rec.status}$statusSuffix",
             s"stuck: $stuckLine",
             s"toolPhase: ${toolPhaseLabel(rec, now)}" +
               (if rec.turnStartedAt > 0 then s" (turn started ${fmtDuration(now - rec.turnStartedAt)} ago)" else ""),
@@ -757,8 +784,10 @@ When to use:
               case Some(_) => "manageable: no (read-only kind)"
               case None =>
                 "manageable: cancel" +
+                  // 阶段 3：`|| teamRestartable` 随 team scope 删除（Team 目标恒 read-only）；
+                  // main 侧的 freeze 展示腿（freezeLines）保留。
                   (if RestartableKinds.contains(rec.kind) then " / restart" else " only")
-          Right((lines :+ manage).mkString("\n"))
+          Right((lines ++ freezeLines :+ manage).mkString("\n"))
         }
       case None =>
         // 外部腿（#1225）：外部 delegate 无 registry 行——status 读进度缓冲面

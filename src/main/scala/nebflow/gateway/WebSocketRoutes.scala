@@ -3309,6 +3309,18 @@ object WebSocketRoutes:
     frozenReason: Option[String] = None, // 错误冻结批 2026-11-01: 冻结原因线值（`delegate-frozen:<reason>`）——徽标 tooltip / 详情卡原因行
     wakeAddress: Option[String] = None // 错误冻结批 2026-11-01: 唤醒地址（`delegate:<id>`）——详情卡「唤醒」按钮的动作载荷
   ): Json =
+    // 冻结态诚实呈现批（2026-11-05）：快照行的**呈现分类**随快照出帧——与线包
+    // （AgentStreamEvent.Frozen）/ 工具面（AgentControl status）同判定单点
+    // FreezeDisplay。刷新后控制台仍能分辨「自动重试中（无按钮）」与「需人工（给
+    // 恢复按钮）」，不必从 status 字符串猜（猜错的样子就是本轮报障：一行写着
+    // Frozen、没有按钮、作者不知道自己什么时候冻的）。
+    val freezeOf =
+      if rec.status == nebflow.actor.AgentStatus.Frozen then
+        Some(
+          nebflow.actor.FreezeDisplay
+            .ofWire(rec.frozenReason.getOrElse(""), frozenSince, System.currentTimeMillis())
+        )
+      else None
     Json.obj(
       "sessionId" -> rec.sessionId.asJson,
       "agentId" -> rec.sessionId.asJson,
@@ -3358,6 +3370,15 @@ object WebSocketRoutes:
       "frozenSince" -> frozenSince.asJson,
       "frozenReason" -> frozenReason.asJson,
       "wakeAddress" -> wakeAddress.asJson,
+      // 冻结态诚实呈现批（2026-11-05）：呈现分类三字段 + registry 侧冻结原因线值。
+      // `frozenReasonWire` 与上面的 `frozenReason`（DelegateRegistry 冻结槽，仅
+      // delegate 错误冻结族）分工：本字段是 **AgentRecord** 的原因线值（schedule /
+      // loop / llm-transient / delegate-frozen:* 全族），供徽标 tooltip 与「谁停的」
+      // 说明。空串 = 非冻结（falsy 契约同 project/taskId）。
+      "frozenKind" -> freezeOf.map(_.kind.wire).getOrElse("").asJson,
+      "needsHuman" -> freezeOf.exists(_.needsHuman).asJson,
+      "autoRecoverable" -> freezeOf.exists(_.autoRecoverable).asJson,
+      "freezeReasonWire" -> rec.frozenReason.getOrElse("").asJson,
       // #752 空闲细分（快照恢复路径的数据源；live 行由实时帧写 currentTool，快照
       // 字段合并时不降级实时值——前端 merge 规则）。currentTool = 在飞/最后工具名
       // （最近动作摘要）、lastActivityMs = agent 侧最近活动戳（长空闲徽标判据）。

@@ -23,6 +23,42 @@ private[agent] object AgentFrozen:
   import nebflow.agent.AgentActor.*
 
   /**
+   * 冻结态迁移留痕（状态迁移日志单点，冻结态误报批 2026-11-05）：**谁**在**什么条件**
+   * 下把会话置成了**什么**。与「谁冻的」有关的疑问（作者报障「我没有冻结它」）在
+   * 这一行里有答案：`by=loop-guard` / `by=user-wake` / `by=error-backoff` …
+   */
+  private[agent] def logFreezeTransition(
+    agentDef: AgentDef,
+    depth: Int,
+    state: AgentState,
+    from: String,
+    to: String,
+    reason: FreezeReason,
+    by: String,
+    resumeAt: Option[Long],
+    escalation: Option[EscalationInfo]
+  )(using ctx: ActorContext[AgentCommand]): Unit =
+    val now = System.currentTimeMillis()
+    val fd = FreezeDisplay.of(reason, resumeAt, escalation, now)
+    logAgentEvent(
+      agentDef,
+      depth,
+      state.sessionId,
+      state.sessionName,
+      "freeze-state",
+      FreezeDisplay.transitionDetail(from, to, fd, by, resumeAt, now)
+    )
+
+  end logFreezeTransition
+
+  /** 置入冻结的**触发者**注记（迁移日志的 by 列；进入点自报，不做推断）。 */
+  private[agent] def freezeBy(reason: FreezeReason): String = reason match
+    case FreezeReason.Schedule => "schedule-gate"
+    case FreezeReason.Loop => "loop-guard"
+    case FreezeReason.RestartRecovery => "restart-recovery"
+    case _ => "error-backoff"
+
+  /**
    * v2 错误冻结转入辅助（§3.3/§6.1 步骤 3）：transient 类 LLM 失败 → 立即
    * persist（复用 fatal 路径的 save 模式）→ enterErrorFrozen——冻结期间零 LLM
    * 调用（D2），退避到期 CheckFreezeGate 续跑（重新过 gate，天然闭环）。
@@ -108,6 +144,20 @@ private[agent] object AgentFrozen:
         (Some(esc), notifyEscalation(resources, agentDef, depth, state, parentRef, reason, count, esc))
       else (state.escalation, IO.unit)
     escalateNotify *>
+      // 迁移留痕（冻结态误报批）：置入的一瞬记一行 from=running to=frozen + 判定分类。
+      IO {
+        logFreezeTransition(
+          agentDef,
+          depth,
+          state,
+          "running",
+          "frozen",
+          reason,
+          freezeBy(reason),
+          resumeAt,
+          escalation
+        )
+      } *>
       emitStream(
         state.wsSend,
         AgentStreamEvent.Frozen(resumeAt, reason, detail, count, escalation),
@@ -180,6 +230,17 @@ private[agent] object AgentFrozen:
                     "freeze-resume",
                     "reason=outside-freeze-segment"
                   )
+                  logFreezeTransition(
+                    agentDef,
+                    depth,
+                    state,
+                    "frozen",
+                    "running",
+                    reason,
+                    "window-reopen",
+                    None,
+                    escalation
+                  )
                   emitStream(
                     state.wsSend,
                     AgentStreamEvent.Resumed(window.nextChangeAt),
@@ -190,9 +251,11 @@ private[agent] object AgentFrozen:
                     // 解冻首拍必扫箱：冻结窗内落箱的条目（门铃在 frozen 态 no-op）
                     // 在恢复轮**本体**注入——冻结窗不再吞投递（10-31 判红锚的机械化
                     // 终点）。taken 残差重注 + pending 全取，空箱逐字现状。
-                    MailboxDrain.resumeSweep(agentDef, resources, depth, state).flatMap(resumedState =>
-                      pipeLlmCall(agentDef, resources, depth, parentRef, resumedState, replyTo)
-                    )
+                    MailboxDrain
+                      .resumeSweep(agentDef, resources, depth, state)
+                      .flatMap(resumedState =>
+                        pipeLlmCall(agentDef, resources, depth, parentRef, resumedState, replyTo)
+                      )
                 else
                   IO.pure(
                     frozen(
@@ -229,6 +292,17 @@ private[agent] object AgentFrozen:
                 "freeze-resume",
                 s"reason=${reasonStr(reason)} backoff-elapsed"
               )
+              logFreezeTransition(
+                agentDef,
+                depth,
+                state,
+                "frozen",
+                "running",
+                reason,
+                "backoff-elapsed",
+                None,
+                escalation
+              )
               currentNextChange(resources).flatMap { nextChange =>
                 emitStream(
                   state.wsSend,
@@ -239,9 +313,9 @@ private[agent] object AgentFrozen:
                   updateRegistryEscalation(resources, state.sessionId, None) *>
                   // ═══ W4 解冻扫箱（P2 邮箱化批）——错误族恢复同拍（判红锚：
                   // error-freeze 覆盖投递窗 ⇒ 解冻首拍终态必注入）══════════════
-                  MailboxDrain.resumeSweep(agentDef, resources, depth, state.withEscalation(None)).flatMap(
-                    resumedState => pipeLlmCall(agentDef, resources, depth, parentRef, resumedState, replyTo)
-                  )
+                  MailboxDrain
+                    .resumeSweep(agentDef, resources, depth, state.withEscalation(None))
+                    .flatMap(resumedState => pipeLlmCall(agentDef, resources, depth, parentRef, resumedState, replyTo))
               }
             else
               IO.pure(
@@ -301,6 +375,17 @@ private[agent] object AgentFrozen:
               // 被 L1 终止过的 fp 复发仍即刻 Freeze（既有语义，冻结不受影响）。
               .withLoopCounters(stateWithWidth.loopCounters.resetCrossTurn)
             logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "freeze-wake", s"text=${text.take(60)}")
+            logFreezeTransition(
+              agentDef,
+              depth,
+              state,
+              "frozen",
+              "running",
+              reason,
+              "user-wake",
+              None,
+              escalation
+            )
             currentNextChange(resources).flatMap { nextChange =>
               emitStream(
                 state.wsSend,
@@ -311,9 +396,11 @@ private[agent] object AgentFrozen:
                 updateRegistryEscalation(resources, state.sessionId, None) *>
                 // ═══ W4 用户唤醒扫箱（P2 邮箱化批）：用户决策出口同拍扫箱——冻结窗
                 // 内落箱条目随唤醒轮本体注入（先注箱再开工）。══════════════════
-                MailboxDrain.resumeSweep(agentDef, resources, depth, wakeState).flatMap(wokenState =>
-                  pipeLlmCall(agentDef, resources, depth, parentRef, wokenState, replyTo2, DispatchCause.UserWake)
-                )
+                MailboxDrain
+                  .resumeSweep(agentDef, resources, depth, wakeState)
+                  .flatMap(wokenState =>
+                    pipeLlmCall(agentDef, resources, depth, parentRef, wokenState, replyTo2, DispatchCause.UserWake)
+                  )
             }
           end if
         else
@@ -354,6 +441,7 @@ private[agent] object AgentFrozen:
       case AgentCommand.AskQuestion(question, _) =>
         // 用户动作（D2）：唤醒——ask 轮本身也是 gate 豁免路径（askMode.isDefined）。
         logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "freeze-wake", s"ask=${question.take(60)}")
+        logFreezeTransition(agentDef, depth, state, "frozen", "running", reason, "ask", None, escalation)
         val askReminder = AskService.buildAskReminder(question)
         val askState = state
           .withMessages(state.messages :+ askReminder)
@@ -384,6 +472,7 @@ private[agent] object AgentFrozen:
       case AgentCommand.SkillActivate(skillName, input, _, skillContent, _) =>
         // 用户动作（D2）：唤醒（镜像 idle 的 SkillActivate handler）。
         logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "freeze-wake", s"skill=$skillName")
+        logFreezeTransition(agentDef, depth, state, "frozen", "running", reason, "skill", None, escalation)
         val combinedText = s"<skill name=\"$skillName\">\n$skillContent\n</skill>\n\n$input"
         val processingState = state
           .withMessages(
@@ -428,6 +517,7 @@ private[agent] object AgentFrozen:
         // D10 放弃续跑：与 processing 的 Interrupt 同语义（cancelCurrentTurn +
         // Interrupted 事件 + idle，历史含工具结果保留）。
         logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "interrupt", "reason=user-during-frozen")
+        logFreezeTransition(agentDef, depth, state, "frozen", "idle", reason, "user-interrupt", None, escalation)
         for
           _ <- ctx.cancelCurrentTurn()
           // ask-death-exit 批（2026-10-28）：frozen 的 Interrupt 与 processing
@@ -466,6 +556,7 @@ private[agent] object AgentFrozen:
 
       case AgentCommand.Stop(_) =>
         logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "stop", "reason=user-during-frozen")
+        logFreezeTransition(agentDef, depth, state, "frozen", "stopped", reason, "stop", None, escalation)
         for
           _ <- ctx.cancelCurrentTurn()
           // ask-death-exit 批（2026-10-28）：frozen 态的 Stop 同为死亡出口 ——
@@ -481,6 +572,7 @@ private[agent] object AgentFrozen:
           _ <- updateRegistryFrozenReason(resources, state.sessionId, None)
           _ <- fireLifecycleStopHooks(resources, state)
         yield Behaviors.stopped
+        end for
 
       case AgentCommand.RestartAgent(level) =>
         // 镜像 processing 的 RestartAgent；末尾 dispatch 是系统动作（Gated）——
@@ -490,6 +582,7 @@ private[agent] object AgentFrozen:
         // resetForInterrupt→ExecutionContext.idle 重建已天然清零）。否则「重启生效
         // 但事件继续重投」：provider 仍 down 时重启后旧链旧 level 续推。
         logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "restart", s"level=${level.toString}")
+        logFreezeTransition(agentDef, depth, state, "frozen", "running", reason, "restart", None, escalation)
         for
           _ <- ctx.cancelCurrentTurn()
           // ask-death-exit 批（2026-10-28）：同 processing —— 重启前收口待答槽。幂等。

@@ -849,11 +849,60 @@ private[gateway] object WsSessionChatHandlers:
         case None =>
           wReply(ok = false, mode = "none", "error" -> s"no delegate record for '$wid' (DELEGATE_NOT_FOUND)".asJson)
         case Some(record) if !nebflow.core.delegate.DelegateFreeze.isFreezeWire(record.frozenReason.getOrElse("")) =>
-          wReply(
-            ok = false,
-            mode = "none",
-            "error" -> s"'$wid' is not in the delegate-error frozen state (frozenReason=${record.frozenReason.getOrElse("none")}) — the wake action only applies to frozen delegates".asJson
-          )
+          // 冻结态诚实呈现批（2026-11-05，作者报障「显示已冻结但没有恢复按钮」）：
+          // **delegate 错误冻结槽不在盘上 ≠ 不可恢复**。actor 级冻结族（循环检测 L2 /
+          // 错误退避 / 时间表）只写在 registry（AgentRecord.status=Frozen +
+          // frozenReason）——旧版这里一律拒绝，于是「面板给了唤醒按钮、点了必失败」
+          // 或「压根没按钮」两种形态都出现过。本动作按 FreezeDisplay（判定单点）分三路，
+          // 每一路都如实回执，绝不假装成功：
+          //   · needsHuman（循环检测等引擎不会自己好的族）⇒ 从检查点重启（同会话续跑，
+          //     与 AgentControl restart 同一机制）；
+          //   · 自动恢复族 ⇒ 明确回执「不需要唤醒，到期自己续跑」，不动作；
+          //   · 其余（非冻结/未知）⇒ 明确拒绝并给出现状（含可用的动作）。
+          sharedResources.agentRegistry.get.flatMap { reg =>
+            reg.get(wid) match
+              case Some(live)
+                  if live.status == nebflow.actor.AgentStatus.Frozen &&
+                    nebflow.actor.FreezeDisplay.needsHumanWire(live.frozenReason.getOrElse("")) =>
+                (live.ref ! nebflow.actor.AgentCommand.RestartAgent(nebflow.actor.RestartLevel.Soft)) *>
+                  nebflow.core.tools.AgentControlTool.clearRegistryEscalation(sharedResources, wid) *>
+                  wReply(
+                    ok = true,
+                    mode = "restart",
+                    "message" -> (
+                      "Restart sent: the frozen turn is terminated now and the session resumes from the last " +
+                        "persisted checkpoint in the SAME session (finished work is not redone)."
+                    ).asJson
+                  )
+              case Some(live) if live.status == nebflow.actor.AgentStatus.Frozen =>
+                val fd = nebflow.actor.FreezeDisplay.ofWire(live.frozenReason.getOrElse(""))
+                wReply(
+                  ok = false,
+                  mode = "auto-recovering",
+                  "error" -> (
+                    s"'$wid' does not need a wake: ${fd.labelEn} (reason=${fd.reasonWire}) — the engine resumes " +
+                      "it on its own. Cancel the task if you do not want it to continue."
+                  ).asJson
+                )
+              case Some(live) =>
+                wReply(
+                  ok = false,
+                  mode = "none",
+                  "error" -> (
+                    s"'$wid' is not frozen (status=${live.status}, reason=${live.frozenReason.getOrElse("none")}) — " +
+                      "nothing to wake. Use AgentControl restart to resume a stuck turn, or cancel the task."
+                  ).asJson
+                )
+              case None =>
+                wReply(
+                  ok = false,
+                  mode = "none",
+                  "error" -> (
+                    s"'$wid' has no live agent and no delegate-error freeze record " +
+                      s"(frozenReason=${record.frozenReason.getOrElse("none")}) — it cannot be woken; re-delegate the work."
+                  ).asJson
+                )
+          }
         case Some(record) =>
           val banner = nebflow.core.delegate.DelegateFreeze.wakeBanner(
             wid,
