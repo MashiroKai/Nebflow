@@ -17,7 +17,7 @@ import nebflow.actor.{
 } // W1 shim: main exported these from nebflow.agent (protocol/AgentState); the merge moved them to actor
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.FileChangeTracker
-import nebflow.core.flow.{MailDeliveryDedup, MailQueueStore, TeamSessionRegistry}
+import nebflow.core.flow.{MailDeliveryDedup, MailQueueStore}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
@@ -288,7 +288,6 @@ class MailDedupReplayWindowSpec extends FunSuite:
       val io = for
         sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
         meta <- sessionStore.createSession("dq/member", agentName = Some("member"), flowName = Some("dq"))
-        _ <- TeamSessionRegistry.registerSession("dq", "member", meta.id)
         resources <- mkResources(system, tmp, llm, sessionStore)
         refOpt <- MailTool.activateAgent(meta.id, resources, system, ctxFor(resources, system, "sender-dd"))
         // Age the recipient's activation stamp far beyond the replay window —

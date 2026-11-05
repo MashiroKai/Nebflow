@@ -337,36 +337,30 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
   /**
    * B5: whether this depth-1 agent is a team lead — a registered Manager
    * session, or name-based lead of any defined team (covers fork/temporary
-   * sessions, same fallback as MailTool.canMailRoot). Non-lead depth-1
-   * agents (team members, flow agents, delegate sub-agents) compact with
-   * the Worker profile instead of Manager.
+   * sessions, same fallback as the retired MailTool root-access gate).
+   * Non-lead depth-1 agents compact with the Worker profile instead of Manager.
+   *
+   * 团队功能删除批（team-feature-deletion-20261104）阶段 3：两条判据（团队会话
+   * 登记表的 managerMap / `EntityLoader.listTeams` 的 lead 名匹配）随团队面一并
+   * 退役 ⇒ **恒 false**（团队 Manager 概念不存在，depth-1 一律走 Worker 档）。
    */
   protected def isTeamLeadForCompaction(agentDef: AgentDef, sessionId: Option[String]): IO[Boolean] =
-    def nameIsLead: IO[Boolean] =
-      if agentDef.name.isEmpty then IO.pure(false)
-      else nebflow.core.entity.EntityLoader.listTeams().map(_.values.exists(_.lead == agentDef.name))
-    sessionId match
-      case Some(sid) =>
-        nebflow.core.flow.TeamSessionRegistry.isManager(sid).flatMap {
-          case true => IO.pure(true)
-          case false => nameIsLead
-        }
-      case None => nameIsLead
+    IO.pure(false)
 
   /**
    * Team Manager task tool gating (2026-08-25): is this session the lead
-   * (Manager) of its team? Strict registry lookup only — TeamSessionRegistry
-   * .managerMap is populated at mount by FlowTreeActor.createSingleTeamSession
+   * (Manager) of its team? Strict registry lookup only — the team session
+   * registry's managerMap was populated at mount by the tree actor
    * (agentName == teamDef.lead). NO nameIsLead fallback (unlike
    * isTeamLeadForCompaction): a team MEMBER whose agent name happens to match
-   * some other team's lead must not receive the owner toolset (U2). No
-   * separate spawn-time flag needed — the registry is the single source of
-   * truth and survives Mail activation / respawn.
+   * some other team's lead must not receive the owner toolset (U2).
+   *
+   * 团队功能删除批阶段 3：团队 Manager 概念随团队面退役 ⇒ **恒 false**
+   * （owner 工具集不再有团队维度；U2 的「成员不得拿 owner 工具集」由「无人拿到」
+   * 这一更严的结果覆盖）。
    */
   protected def isTeamLeadStatus(agentDef: AgentDef, sessionId: Option[String]): IO[Boolean] =
-    sessionId match
-      case Some(sid) => nebflow.core.flow.TeamSessionRegistry.isManager(sid)
-      case None => IO.pure(false)
+    IO.pure(false)
 
   private[agent] def startDirectCompaction(
     agentDef: AgentDef,
@@ -754,12 +748,10 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
           // 进展列表）。renderForPrompt returns the FULL list; the delta
           // against the previous turn lives here (unchanged → one line;
           // changed → +/-/~ lines; lifecycle → full).
-          taskTeamOpt <-
-            if isRealUserTurn then
-              stateForLlm.sessionId match
-                case Some(sid) => nebflow.core.flow.TeamSessionRegistry.teamOfSession(sid)
-                case None => IO.pure(None)
-            else IO.pure(None)
+          // 团队功能删除批阶段 3：`teamOfSession` 已随团队会话面删除 ⇒ 本段恒 None
+          // （团队 scope 的任务列表注入不存在；`renderTasksForTurn` 本体与
+          // `TaskStore.teamScopeKey` 保留 —— 它们仍服务项目/链 scope 的任务渲染）。
+          taskTeamOpt = Option.empty[String]
           taskListText <-
             (taskTeamOpt, stateForLlm.sessionId) match
               case (Some(team), Some(_)) =>
@@ -1268,9 +1260,11 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
       // the running actor instead of waiting for an actor rebuild. This
       // closes the 2026-08-15 follow-up: mid-session flows edits were still
       // gated by the actor-startup snapshot ("Allowed: <stale list>").
-      teamNameOpt <- state.sessionId match
-        case Some(sid) => nebflow.core.flow.TeamSessionRegistry.teamOfSession(sid)
-        case None => IO.pure(None)
+      // 团队功能删除批阶段 3：原 `teamNameOpt` 取团队会话登记表（团队 agent 的
+      // def 从 teams/<team>/agents/ 重载）；团队退役 ⇒ **恒 None**（全局 agents
+      // 目录重载路径不变）。`loadCurrentDef` 的签名与团队分支保留 —— 那是通用
+      // 「按团队重载 agent 定义」的实体层工具，作者未裁定其去留。
+      teamNameOpt <- IO.pure(Option.empty[String])
       currentDefOpt <- ContextRefresher.loadCurrentDef(teamNameOpt, resources, agentDef)
       effectiveDef = currentDefOpt.getOrElse(agentDef)
       isTeamLead <- isTeamLeadStatus(effectiveDef, state.sessionId)
@@ -1827,23 +1821,23 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     sourceSession: String,
     rootSessionId: String
   )(using ctx: ActorContext[AgentCommand]): IO[Unit] =
-    // Origin attribution for the permission card: team name (authoritative via
-    // TeamSessionRegistry) or flow name (parsed from sessionName "flowName/nodeId"
-    // set by FlowDagExecutor, confirmed via agentRegistry kind == Flow so a
-    // standalone agent whose sessionName happens to contain '/' is not misread).
+    // Origin attribution for the permission card: flow name (parsed from
+    // sessionName "flowName/nodeId" set by FlowDagExecutor, confirmed via
+    // agentRegistry kind == Flow so a standalone agent whose sessionName happens
+    // to contain '/' is not misread).
+    // 团队功能删除批阶段 3：原第一档 `sourceTeam`（团队会话登记表查询）随团队
+    // 会话面删除 ⇒ 标注面只剩 flow 一档（`sourceTeam` 字段本体保留 = 存量历史行
+    // 渲染契约不变，只是不再有产出点）。
     val resourcesOpt = toolCtx.sharedResources
     for
-      teamOpt <- nebflow.core.flow.TeamSessionRegistry.teamOfSession(sourceSession)
       recordOpt <- resourcesOpt
         .fold(IO.pure(Option.empty[AgentRecord]))(_.agentRegistry.get.map(_.get(sourceSession)))
-      flowOpt = (teamOpt, recordOpt, state.sessionName) match
-        case (None, Some(rec), Some(sn)) if rec.kind == AgentKind.Flow && sn.contains("/") =>
-          Some(sn.takeWhile(_ != '/'))
+      flowOpt = recordOpt match
+        case Some(rec) if rec.kind == AgentKind.Flow && state.sessionName.exists(_.contains("/")) =>
+          state.sessionName.map(_.takeWhile(_ != '/'))
         case _ => None
       enrichment =
-        val teamFld = teamOpt.map(t => Json.obj("sourceTeam" -> t.asJson)).getOrElse(Json.obj())
-        val flowFld = flowOpt.map(f => Json.obj("sourceFlow" -> f.asJson)).getOrElse(Json.obj())
-        teamFld.deepMerge(flowFld)
+        flowOpt.map(f => Json.obj("sourceFlow" -> f.asJson)).getOrElse(Json.obj())
       enriched = permJson.deepMerge(enrichment)
       _ <- resourcesOpt.traverse(_.interactionHubRef.get).map(_.flatten).flatMap {
         case Some(hub) =>
@@ -1971,17 +1965,14 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
   )(using ctx: ActorContext[AgentCommand]): IO[Unit] =
     val resourcesOpt = toolCtx.sharedResources
     for
-      teamOpt <- nebflow.core.flow.TeamSessionRegistry.teamOfSession(sourceSession)
       recordOpt <- resourcesOpt
         .fold(IO.pure(Option.empty[AgentRecord]))(_.agentRegistry.get.map(_.get(sourceSession)))
-      flowOpt = (teamOpt, recordOpt, state.sessionName) match
-        case (None, Some(rec), Some(sn)) if rec.kind == AgentKind.Flow && sn.contains("/") =>
-          Some(sn.takeWhile(_ != '/'))
+      flowOpt = recordOpt match
+        case Some(rec) if rec.kind == AgentKind.Flow && state.sessionName.exists(_.contains("/")) =>
+          state.sessionName.map(_.takeWhile(_ != '/'))
         case _ => None
       enrichment =
-        val teamFld = teamOpt.map(t => Json.obj("sourceTeam" -> t.asJson)).getOrElse(Json.obj())
-        val flowFld = flowOpt.map(f => Json.obj("sourceFlow" -> f.asJson)).getOrElse(Json.obj())
-        teamFld.deepMerge(flowFld)
+        flowOpt.map(f => Json.obj("sourceFlow" -> f.asJson)).getOrElse(Json.obj())
       enriched = cardJson.deepMerge(enrichment)
       _ <- resourcesOpt.traverse(_.interactionHubRef.get).map(_.flatten).flatMap {
         case Some(hub) =>
