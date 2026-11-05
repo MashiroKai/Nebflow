@@ -50,6 +50,7 @@
 
 import state from './state.js';
 import { sendWs, onMessage, onReconnect } from './ws.js';
+import { projectTodoText } from './todoText.js';
 
 /** 标签色板（ReminderIsland ReminderConfig.calendarColorPresets 十色逐值）。
  *  真源无 tag 颜色字段 ⇒ 只用于本地展示（按分组名确定性取色）。 */
@@ -106,10 +107,41 @@ const SID_RETRY_MAX = 40;
 /** @type {Array<{id:string,name:string,color:string,local?:boolean}>} 分组表
  *  （真源面 = project 投影；夹具面 = __seed 给定）。 */
 let tags = [];
-/** 行形状单点（读口 + 乐观行 + 真源映射三处同形；改字段先改这里）。 */
-/** @typedef {{id:string,tagId:string|null,title:string,notes:string,due:number|null,
+/** 行形状单点（读口 + 乐观行 + 真源映射三处同形；改字段先改这里）。
+ *
+ *  两段化（待办结构化批 2026-11-05）：行正文 = **name（短标题，列表行/引用/# 的
+ *  键）+ detail（具体内容，折叠区）**。真源两段在后端 `ScheduledTask` 的
+ *  name/detail 键；旧行只有 content 一段 ⇒ 由 todoText.projectTodoText 读时
+ *  投影（零写、可逆、零丢失）。
+ *
+ *  `title` / `notes` 是**兼容别名**（枚举 getter/setter，指向 name/detail）：
+ *  既有渲染层与 shots/spec 逐字可用，新代码只用 name/detail —— 一份数据两个
+ *  名字，不会出现两处不同步。 */
+/** @typedef {{id:string,tagId:string|null,name:string,detail:string,due:number|null,
  *   priority:number,completed:boolean,completedAt:number|null,createdAt:number,
- *   sessionId:string,project:string|null}} TodoRow */
+ *   sessionId:string,project:string|null,title:string,notes:string}} TodoRow */
+
+/**
+ * 造一行（name/detail 为唯一存储面；title/notes 是只读别名视图）。
+ * @param {object} fields 行字段
+ * @returns {any}
+ */
+function makeRow(fields) {
+  const row = { ...fields };
+  Object.defineProperty(row, 'title', {
+    get: () => row.name,
+    set: (v) => { row.name = String(v == null ? '' : v); },
+    enumerable: true,
+    configurable: true,
+  });
+  Object.defineProperty(row, 'notes', {
+    get: () => row.detail,
+    set: (v) => { row.detail = String(v == null ? '' : v); },
+    enumerable: true,
+    configurable: true,
+  });
+  return row;
+}
 /** @type {Array<TodoRow>} */
 let items = [];
 /** 分组 chips 行序（本地展示态；后端无顺序字段）。 @type {string[]} */
@@ -169,13 +201,15 @@ function isTodoRow(row) {
 /** 后端行 → 读口形状（映射单点；渲染层只认这里产出的键）。 */
 function mapRow(row) {
   const project = row.project == null || row.project === '' ? null : String(row.project);
-  return {
+  // 两段投影单点（todoText.projectTodoText）：新行直接用后端的 name/detail，
+  // 旧行（无 detail 键）按「首句作 name、其余留 detail」无损投影。
+  const parts = projectTodoText(row);
+  return makeRow({
     id: String(row.id),
     tagId: project ? groupId(project) : null,
     project,
-    title: String(row.content == null ? '' : row.content),
-    // 后端模型无 notes 字段（本批申报为仅本地）⇒ 真源面恒空。
-    notes: '',
+    name: parts.name,
+    detail: parts.detail,
     // due ↔ triggerAt：引擎算出的下次浮出时刻（只读真源）。
     due: Number.isFinite(row.triggerAt) ? row.triggerAt : null,
     priority: clampPriority(row.priority),
@@ -184,7 +218,7 @@ function mapRow(row) {
     createdAt: Number.isFinite(row.createdAt) ? row.createdAt : Date.now(),
     // 跨会话行级寻址面（写帧必须带**该行**的 sessionId）。
     sessionId: String(row.sessionId || currentSessionId() || ''),
-  };
+  });
 }
 
 /** 分组表 ↔ 真源 project 对账：出现即建组、无行即撤组（夹具模式跳过）。 */
@@ -419,6 +453,17 @@ function orderedTags() {
   return [...tags].sort((a, b) => tagIndexOf(a.id) - tagIndexOf(b.id));
 }
 
+/**
+ * 全部未完成行（**不套**当前分组/重要度筛选）—— `#` 引用补全的候选面。
+ * 引用天然跨分组：用户在某个分组视图里也应能引到别组的待办，所以这里刻意绕开
+ * visibleItems 的筛选，只保留「未完成」这一条与补全相关的门。
+ * @returns {Array<TodoRow>}
+ */
+function openItems() {
+  maybePull();
+  return items.filter((it) => !it.completed);
+}
+
 function openCount() {
   maybePull();
   return items.filter((it) => !it.completed).length;
@@ -440,26 +485,37 @@ function projectNameOf(tagId) {
 }
 
 /**
- * 新建待办：`createScheduledTask {kind:'todo', sessionId, content, priority, project?}`。
+ * 新建待办：`createScheduledTask {kind:'todo', sessionId, content, name?, detail?, priority, project?}`。
  * 注意后端对 kind=todo **不采信客户端 triggerAt**（由 `nextTodoSurfaceAt` 决定），
- * 因此 due 传什么都不会落库（申报为只读真源）。返回本地 id（乐观行）。
+ * 因此 due 传什么都不会落库（申报为只读真源）。
+ *
+ * 两段化入参（待办结构化批 2026-11-05）：`{name, detail}` 是正式面；`{title, notes}`
+ * 作为旧调用面继续可用（title → name、notes → detail），二者同时给时 name/detail
+ * 优先。`content`（后端必填、注入/摘要用）= detail || name，所以**只传旧字段的
+ * 调用方行为逐字不变**。
+ *
+ * @param {{tagId?: string|null, name?: string, detail?: string, title?: string, notes?: string,
+ *   due?: number|null, priority?: number}} [input]
+ * @returns {string | null} 本地乐观行 id
  */
-function createItem({ tagId = null, title = '', notes = '', due = null, priority = 0 } = {}) {
-  const trimmed = String(title || '').trim();
+function createItem({ tagId = null, name = '', detail = '', title = '', notes = '', due = null, priority = 0 } = {}) {
+  const resolvedName = String(name || title || '').trim();
+  const resolvedDetail = String(detail || notes || '').trim();
+  const content = resolvedDetail || resolvedName;
   const resolvedTagId = tagId || (tags[0] ? tags[0].id : null);
-  const optimistic = {
+  const optimistic = makeRow({
     id: uid('tmp'),
     tagId: resolvedTagId,
     project: projectNameOf(resolvedTagId) || null,
-    title: trimmed,
-    notes: String(notes || ''),
+    name: resolvedName || content,
+    detail: resolvedDetail,
     due: Number.isFinite(due) ? due : null,
     priority: clampPriority(priority),
     completed: false,
     completedAt: null,
     createdAt: Date.now(),
     sessionId: currentSessionId(),
-  };
+  });
   items.push(optimistic);
   if (Number.isFinite(due)) warnUnpersisted('due', 'triggerAt is engine-owned (nextTodoSurfaceAt)');
   if (!fixtureMode) {
@@ -471,7 +527,10 @@ function createItem({ tagId = null, title = '', notes = '', due = null, priority
       emit();
       return null;
     }
-    const frame = { type: FRAME.create, kind: 'todo', sessionId: sid, content: trimmed, priority: optimistic.priority };
+    /** @type {Record<string, any>} 帧面（键集随批次增减，样式面走宽松字典） */
+    const frame = { type: FRAME.create, kind: 'todo', sessionId: sid, content, priority: optimistic.priority };
+    if (resolvedName) frame.name = resolvedName;
+    if (resolvedDetail) frame.detail = resolvedDetail;
     if (optimistic.project) frame.project = optimistic.project;
     sendWs(frame);
     scheduleRefresh();
@@ -481,8 +540,11 @@ function createItem({ tagId = null, title = '', notes = '', due = null, priority
 }
 
 function applyLocalPatch(it, patch) {
-  if (typeof patch.title === 'string') it.title = patch.title.trim();
-  if (typeof patch.notes === 'string') it.notes = patch.notes;
+  // 两段化：name/detail 是正式面，title/notes 是旧调用面（同义）。
+  if (typeof patch.name === 'string') it.name = patch.name.trim();
+  if (typeof patch.detail === 'string') it.detail = patch.detail;
+  if (typeof patch.title === 'string') it.name = patch.title.trim();
+  if (typeof patch.notes === 'string') it.detail = patch.notes;
   if (typeof patch.due === 'number') it.due = patch.due;
   if ('hasDue' in patch && !patch.hasDue) it.due = null;
   if (typeof patch.priority === 'number') it.priority = clampPriority(patch.priority);
@@ -495,21 +557,27 @@ function applyLocalPatch(it, patch) {
 
 /**
  * 改字段：一个 `updateScheduledTask` 帧只带变化的 patch 字段
- * （content / priority / project 是后端认的 patch 面；notes / due 只本地）。
+ * （content / name / detail / priority / project 是后端认的 patch 面；due 只本地）。
  */
 function updateItem(id, patch = {}) {
   const it = items.find((x) => x.id === id);
   if (!it) return;
   const before = { ...it };
   applyLocalPatch(it, patch);
-  if (typeof patch.notes === 'string') warnUnpersisted('notes', 'backend ScheduledTask has no notes field');
   if (typeof patch.due === 'number' || ('hasDue' in patch && !patch.hasDue)) {
     warnUnpersisted('due', 'triggerAt is engine-owned (nextTodoSurfaceAt)');
   }
   if (!fixtureMode) {
+    /** @type {Record<string, any>} 帧面（键集随批次增减，样式面走宽松字典） */
     const frame = { type: FRAME.update, id: it.id, sessionId: it.sessionId || currentSessionId() };
     let has = false;
-    if (it.title !== before.title && it.title) { frame.content = it.title; has = true; }
+    // content 是必填的注入面：两段任一变化都重算（detail 优先，缺则 name）。
+    if ((it.name !== before.name || it.detail !== before.detail) && (it.detail || it.name)) {
+      frame.content = it.detail || it.name;
+      frame.name = it.name;
+      frame.detail = it.detail;
+      has = true;
+    }
     if (it.priority !== before.priority) { frame.priority = it.priority; has = true; }
     if (it.project !== before.project) { frame.project = it.project || ''; has = true; }
     if (has) {
@@ -705,11 +773,13 @@ function seed({ tagList, itemList, order } = {}) {
   }
   if (Array.isArray(order) && order.every((id) => tags.some((x) => x.id === id))) tagOrder = [...order];
   if (Array.isArray(itemList)) {
-    items = itemList.map((x) => ({
+    items = itemList.map((x) => makeRow({
       id: String(x.id), tagId: x.tagId == null ? null : String(x.tagId),
       project: null,
-      title: String(x.title || ''),
-      notes: String(x.notes || ''), due: Number.isFinite(x.due) ? x.due : null,
+      // 夹具面接受两段名（name/detail）与旧名（title/notes），二者同义。
+      name: String(x.name || x.title || ''),
+      detail: String(x.detail || x.notes || ''),
+      due: Number.isFinite(x.due) ? x.due : null,
       priority: clampPriority(x.priority),
       completed: !!x.completed,
       completedAt: x.completed ? Date.now() : null,
@@ -737,13 +807,19 @@ export const todoStore = {
   /** 真源面机器可读申报（panel 节点/验收据以判定哪些字段落库）。 */
   get persistence() {
     return {
-      title: 'content', priority: 'priority', completed: 'completedAt', tagId: 'project',
-      due: 'read-only:triggerAt', notes: 'local-only', tagColor: 'local-only', tagOrder: 'local-only',
+      // 两段化（待办结构化批 2026-11-05）：name ↔ 后端 name（短标题，同时是 # 引用与
+      // 同名 upsert 键）；detail ↔ 后端 detail（长内容）。旧行（只有 content）由
+      // todoText.projectTodoText 读时投影，零写零丢失。
+      name: 'name', detail: 'detail', priority: 'priority', completed: 'completedAt',
+      tagId: 'project', due: 'read-only:triggerAt',
+      tagColor: 'local-only', tagOrder: 'local-only',
     };
   },
   get dataSource() { return fixtureMode ? 'fixture' : 'backend'; },
   get serverSeq() { return serverSeq; },
   visibleItems, openCount, overdueCount,
+  /** 全部未完成行（不带分组/重要度筛选；`#` 引用补全的候选面）。 */
+  openItems,
   /** 归档面（已完成行；按完成时刻降序）。需先 refresh({includeCompleted:true}) 才完整。 */
   completedItems: () => items.filter((it) => it.completed)
     .sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0)),

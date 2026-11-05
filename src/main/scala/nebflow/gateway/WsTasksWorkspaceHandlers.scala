@@ -345,6 +345,9 @@ private[gateway] object WsTasksWorkspaceHandlers:
     val crRefPath = hc.downField("referencePath").as[Option[String]].getOrElse(None)
     val crRepeat = hc.downField("repeat").as[Option[String]].getOrElse(None)
     val crName = hc.downField("name").as[Option[String]].getOrElse(None).map(_.trim).filter(_.nonEmpty)
+    // 两段化批（2026-11-05）：detail = 待办第二段（长内容），只对待办面生效。
+    // 缺键/空白串 ⇒ None（前端据"有无 detail"分流：有则直用，无则读时投影）。
+    val crDetail = hc.downField("detail").as[Option[String]].getOrElse(None).map(_.trim).filter(_.nonEmpty)
     // 待办分家批（2026-10-30）：kind="todo" = 待办面创建（侧边栏待办面板）——
     // 无固定触发时间，triggerAt 由引擎侧固定策略算（下一次 09:00 浮出），客户端
     // 时间不采信；repeat 无待办语义。缺省/其它值 = 定时任务面（现状逐字节不变）。
@@ -364,7 +367,7 @@ private[gateway] object WsTasksWorkspaceHandlers:
       val todo = nebflow.core.scheduler.ScheduledTask.create(
         crSessionId, crContent, surfaceAt, None, None, crName,
         Some(nebflow.core.scheduler.ScheduledTask.KindTodo), None, crProject,
-        crPriority
+        crPriority, crDetail
       )
       (for
         removed <- crName match
@@ -392,6 +395,7 @@ private[gateway] object WsTasksWorkspaceHandlers:
               "referencePath" -> io.circe.Json.Null,
               "repeat" -> io.circe.Json.Null,
               "name" -> todo.name.asJson,
+              "detail" -> todo.detail.asJson,
               "kind" -> nebflow.core.scheduler.ScheduledTask.KindTodo.asJson,
               "project" -> todo.project.asJson,
               // 待办体系统一批（2026-11-04）：纯增量三键（老前端零感知）。
@@ -536,6 +540,9 @@ private[gateway] object WsTasksWorkspaceHandlers:
       // 待办分家批（2026-10-30）：稳定 upsert 名随列表下发——前端据
       // ask-<requestId> 前缀识别「待答镜像行」（点击跳回提问卡，不走打卡）。
       "name" -> t.name.asJson,
+      // 两段化批（2026-11-05）：detail = 待办第二段（长内容）。存量行恒 null ⇒
+      // 前端 todoText.projectTodoText 走读时投影（零写、零丢失）。
+      "detail" -> t.detail.asJson,
       // 认知二期产品批③打卡缺卡调整流：缺卡计数随列表下发（UI 据此给
       // 连续未销卡条目的调整建议）。
       "missCount" -> t.missCount.asJson,
@@ -632,6 +639,13 @@ private[gateway] object WsTasksWorkspaceHandlers:
     // priority 提供即生效（钳位 0..3；0 = 清空重要度）；缺席不改。
     val priorityOpt: Option[Int] = json.hcursor.downField("priority").as[Int].toOption
       .map(nebflow.core.scheduler.ScheduledTask.clampPriority)
+    // 两段化批（2026-11-05）：name / detail 进 patch 面（detail 传 "" = 清空）。
+    val nameOpt: Option[Option[String]] =
+      json.hcursor.downField("name").as[Option[String]].toOption
+        .map(raw => Option(raw.map(_.trim).filter(_.nonEmpty)).flatten)
+    val detailOpt: Option[Option[String]] =
+      json.hcursor.downField("detail").as[Option[String]].toOption
+        .map(raw => Option(raw.map(_.trim).filter(_.nonEmpty)).flatten)
     // schedule-created-card 批（2026-11-05 作者令「卡片上能原地改、能取消」）：
     // 定时任务面的**时间维度**进 patch —— triggerAt（触发时间）与 repeat（重复）。
     // 为什么加在这里而不是新开帧：见本方法头「扩 patch 面 = 零新增副作用路径」。
@@ -682,7 +696,8 @@ private[gateway] object WsTasksWorkspaceHandlers:
             case Left(msg) => failUpdate(msg)
             case Right(rp) =>
               applyUpdate(
-                sharedResources, upId, upSessionId, contentOpt, projectOpt, priorityOpt, ta, rp, failUpdate, wsSend
+                sharedResources, upId, upSessionId, contentOpt, projectOpt, priorityOpt,
+                nameOpt, detailOpt, ta, rp, failUpdate, wsSend
               )
     end if
   end handleUpdateScheduledTask
@@ -696,6 +711,8 @@ private[gateway] object WsTasksWorkspaceHandlers:
     contentOpt: Option[String],
     projectOpt: Option[Option[String]],
     priorityOpt: Option[Int],
+    nameOpt: Option[Option[String]],
+    detailOpt: Option[Option[String]],
     triggerAtOpt: Option[Long],
     repeatOpt: Option[Option[String]],
     failUpdate: String => IO[Unit],
@@ -703,10 +720,10 @@ private[gateway] object WsTasksWorkspaceHandlers:
   ): IO[Unit] =
     val now = System.currentTimeMillis()
     val noFields = contentOpt.isEmpty && projectOpt.isEmpty && priorityOpt.isEmpty &&
-      triggerAtOpt.isEmpty && repeatOpt.isEmpty
+      nameOpt.isEmpty && detailOpt.isEmpty && triggerAtOpt.isEmpty && repeatOpt.isEmpty
     if noFields then
       failUpdate(
-        "updateScheduledTask requires at least one field to change: content / project / priority / triggerAt / repeat."
+        "updateScheduledTask requires at least one field to change: content / project / priority / name / detail / triggerAt / repeat."
       )
     else if triggerAtOpt.exists(_ <= now) then
       failUpdate(
@@ -722,7 +739,10 @@ private[gateway] object WsTasksWorkspaceHandlers:
             // 时间维度只对定时任务面生效（待办无固定触发时间：triggerAt 是「下次
             // 浮出」的内部值，repeat 无待办语义）——待办面收到这两键 = 零改动。
             triggerAt = if t.isTodo then t.triggerAt else triggerAtOpt.getOrElse(t.triggerAt),
-            repeat = if t.isTodo then t.repeat else repeatOpt.getOrElse(t.repeat)
+            repeat = if t.isTodo then t.repeat else repeatOpt.getOrElse(t.repeat),
+            // 两段化只对待办面生效：定时任务面 name 是 upsert 键，不算展示面。
+            name = if t.isTodo then nameOpt.getOrElse(t.name) else t.name,
+            detail = if t.isTodo then detailOpt.getOrElse(t.detail) else t.detail
           )
           sharedResources.scheduledTaskStore.updateTask(t.sessionId, upId)(_ => updated).flatMap { changed =>
             if !changed then IO.unit

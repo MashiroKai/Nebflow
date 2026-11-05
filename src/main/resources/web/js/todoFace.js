@@ -139,7 +139,11 @@ function nameInputEl(cls, value = '') {
   input.maxLength = NAME_MAX;
   input.value = value;
   input.addEventListener('input', (e) => {
-    if (e.isComposing) return;
+    // IME 组字期不动值（组字中的候选串会被打断）。判定走唯一判定点
+    // imeGuard.isImeComposing（scripts/check-ime-guard.mjs：文件内不得自读
+    // 原始 composition 标志——件6 的 nameInputEl 曾自读 e.isComposing，本批
+    // 合并时按门禁收归）。
+    if (isImeComposing(e, input)) return;
     const flat = input.value.replace(/[\r\n]+/g, '').slice(0, NAME_MAX);
     if (flat === input.value) return;
     const at = input.selectionStart == null ? flat.length : input.selectionStart;
@@ -167,6 +171,24 @@ function nameInputEl(cls, value = '') {
 }
 
 // ── 小件 ────────────────────────────────────────────────────────────────
+
+/** 行尾 detail 折角钮的下折箭头（两段化批 2026-11-05）：命名空间 API 装配，
+ *  零裸 innerHTML（component-contract R5）；颜色走 currentColor，不新增色值。 */
+function chevronEl() {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 12 12');
+  svg.setAttribute('aria-hidden', 'true');
+  const path = document.createElementNS(NS, 'path');
+  path.setAttribute('d', 'M3 5l3 3 3-3');
+  path.setAttribute('fill', 'none');
+  path.setAttribute('stroke', 'currentColor');
+  path.setAttribute('stroke-width', '1.5');
+  path.setAttribute('stroke-linecap', 'round');
+  path.setAttribute('stroke-linejoin', 'round');
+  svg.appendChild(path);
+  return svg;
+}
 
 function el(tag, cls, text) {
   const n = document.createElement(tag);
@@ -874,10 +896,11 @@ class TodoFace {
     const main = el('div', 'tfl-row-main');
     const titleline = el('div', 'tfl-row-titleline');
     // 行内只读名称面（件6 2026-11-05）：编辑态与常态同一元素 —— 编辑中输入面搬到
-    // 下方编辑面板里（名与内容两个独立输入面，DOM 序名在前），行头保留单行
+    // 下方编辑面板里（名与 detail 两个独立输入面，DOM 序名在前），行头保留单行
     // ellipsis 的静态名，条目身份随手可读、不出现「空行头」。
-    const title = el('span', 'tfl-row-title', item.title);
-    title.title = item.title;
+    // 两段化（待办结构化批 2026-11-05）：行头显 name，detail 收在下方折叠区。
+    const title = el('span', 'tfl-row-title', item.name);
+    title.title = item.name;
     titleline.appendChild(title);
     // 标签徽标（总条目视图；行尾右对齐与标题同行，标题优先截断——复刻）
     if (todoStore.isAllView()) {
@@ -890,10 +913,28 @@ class TodoFace {
       }
     }
     main.appendChild(titleline);
-    if (item.notes && !editing) {
-      const notes = el('span', 'tfl-row-notes', item.notes);
-      notes.title = item.notes;
-      main.appendChild(notes);
+    // detail 折叠（两段化，待办结构化批 2026-11-05）：列表行默认**只显 name**，
+    // detail 收在一行折叠区里；行尾折角钮切换，展开态 = 多行全文（CSS --open）。
+    if (item.detail && !editing) {
+      const foldBtn = el('button', 'tfl-row-fold');
+      foldBtn.type = 'button';
+      foldBtn.setAttribute('aria-expanded', 'false');
+      foldBtn.setAttribute('aria-label', t('todoface.detailToggle'));
+      foldBtn.title = t('todoface.detailToggle');
+      foldBtn.appendChild(chevronEl());
+      const detail = el('div', 'tfl-row-detail', item.detail);
+      detail.hidden = true;
+      foldBtn.addEventListener('click', (e) => {
+        // 行体点击 = 进编辑；折叠钮必须自己吃掉事件，否则一按就跳编辑态。
+        e.preventDefault();
+        e.stopPropagation();
+        const open = detail.hidden;
+        detail.hidden = !open;
+        foldBtn.setAttribute('aria-expanded', String(open));
+        row.classList.toggle('tfl-row-open', open);
+      });
+      titleline.appendChild(foldBtn);
+      main.appendChild(detail);
     }
     if (item.due != null && !editing) {
       const due = el('span', 'tfl-row-due');
@@ -993,7 +1034,8 @@ class TodoFace {
     // ① 事项名（件6 2026-11-05）：**单行**轻量输入面（input，非 textarea）+
     //    长度上限 + 换行剥离，构造点 = nameInputEl（唯一）。占面板第一行，
     //    回车即保存（与备注同口径）；`tfl-row-title-input` 类保留给既有选择器。
-    const name = nameInputEl('tfl-edit-name tfl-row-title-input', item.title);
+    //    两段化（待办结构化批 2026-11-05）：这一格就是 name（行头显示的那一段）。
+    const name = nameInputEl('tfl-edit-name tfl-row-title-input', item.name);
     name.placeholder = t('todoface.titlePh');
     name.setAttribute('aria-label', t('todoface.titlePh'));
     name.addEventListener('keydown', (e) => {
@@ -1001,17 +1043,22 @@ class TodoFace {
     });
     panel.appendChild(name);
     this.titleInput = name;
-    // ② 具体内容（备注，独立输入面；单行，回车保存——复刻「多行 Return=换行永不
-    //    onSubmit」教训）。名与内容是两个不同元素 ⇒ 各自获焦、各自成值。
-    const notes = el('input', 'tfl-edit-notes');
-    notes.type = 'text';
-    notes.value = item.notes || '';
-    notes.placeholder = t('todoface.notesPh');
-    notes.setAttribute('aria-label', t('todoface.notesPh'));
-    notes.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !isImeComposing(e, notes)) { e.preventDefault(); e.stopPropagation(); this.saveEditing(); }
+    // ② detail（两段化的第二段）：文本域（可从既有长文本/多行内容起编，值里的
+    //    换行不会被 input 元素吞掉）。回车沿用「回车即保存」口径（与名输入同一
+    //    手感，shift+回车才换行）；空内容时高度 = 单行，与名输入面视觉同厚度。
+    const detailEl = el('textarea', 'tfl-edit-notes tfl-edit-detail');
+    detailEl.rows = 1;
+    detailEl.value = item.detail || '';
+    detailEl.placeholder = t('todoface.notesPh');
+    detailEl.setAttribute('aria-label', t('todoface.detailFieldLabel'));
+    detailEl.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' || e.shiftKey) return;
+      if (isImeComposing(e, detailEl)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      this.saveEditing();
     });
-    panel.appendChild(notes);
+    panel.appendChild(detailEl);
     // 重要度四选
     const prioRow = el('div', 'tfl-edit-prio');
     this.editPrio = item.priority;
@@ -1050,7 +1097,7 @@ class TodoFace {
     });
     dueRow.append(toggle, dueHolder);
     panel.appendChild(dueRow);
-    this.editDraft = { notesEl: notes, dueInput, get hasDue() { return hasDue; } };
+    this.editDraft = { notesEl: detailEl, dueInput, get hasDue() { return hasDue; } };
     return panel;
   }
 
@@ -1147,16 +1194,16 @@ class TodoFace {
   saveEditing() {
     if (!this.editingId) return;
     const id = this.editingId;
-    const title = this.titleInput ? this.titleInput.value : '';
-    const notes = this.editDraft && this.editDraft.notesEl ? this.editDraft.notesEl.value : '';
+    const name = this.titleInput ? this.titleInput.value : '';
+    const detail = this.editDraft && this.editDraft.notesEl ? this.editDraft.notesEl.value : '';
     const due = this.editDraft && this.editDraft.hasDue && this.editDraft.dueInput.value
       ? new Date(this.editDraft.dueInput.value).getTime() : null;
     const priority = this.editPrio != null ? this.editPrio : 0;
     this.editingId = null;
     this.editDraft = null;
     this.titleInput = null;
-    // 空标题照存（EventKit 允许空标题行——复刻 saveEdits 原语义）
-    todoStore.updateItem(id, { title, notes, due, priority });
+    // 空 name 照存（EventKit 允许空标题行——复刻 saveEdits 原语义）
+    todoStore.updateItem(id, { name, detail, due, priority });
     this.expandedJustRendered = true;
     this.renderRows();
     this.refocusList();
@@ -1180,9 +1227,9 @@ class TodoFace {
 
   saveCreate() {
     if (!this.creating) return;
-    const title = this.createTitle ? this.createTitle.value : '';
+    const name = this.createTitle ? this.createTitle.value : '';
     const notesEl = this.listInner.querySelector('.tfl-create-panel .tfl-edit-notes');
-    const notes = notesEl ? notesEl.value : '';
+    const detail = notesEl instanceof HTMLInputElement || notesEl instanceof HTMLTextAreaElement ? notesEl.value : '';
     const dueEl = this.listInner.querySelector('.tfl-create-panel .tfl-due-input');
     const dueOn = this.listInner.querySelector('.tfl-create-panel .tfl-switch.on') != null;
     const due = dueOn && dueEl && dueEl.value ? new Date(dueEl.value).getTime() : null;
@@ -1190,9 +1237,9 @@ class TodoFace {
     this.createTitle = null;
     this.renderRows();
     this.renderFooter();
-    if (title.trim()) {
+    if (name.trim()) {
       todoStore.createItem({
-        tagId: todoStore.activeTagId, title, notes,
+        tagId: todoStore.activeTagId, name, detail,
         due, priority: this.createPrio || 0,
       });
     }

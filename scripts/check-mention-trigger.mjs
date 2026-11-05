@@ -3,8 +3,10 @@
 // (mention-cn batch, 2026-09-27). Node stdlib only, zero dependencies.
 //
 // What it asserts (against the REAL source files, never a copy):
-//   (a) parseMentionToken's trigger gate in src/main/resources/web/js/
-//       mentionComplete.js:
+//   (a) the `@` trigger gate of the SHARED token parser in
+//       src/main/resources/web/js/tokenComplete.js (待办结构化批 2026-11-05 把
+//       parseMentionToken 上移为触发符无关的 parseToken(input, spec)；本门禁的
+//       断言集一字未减，锚点跟着唯一实现搬到 tokenComplete.js):
 //         - '@' preceded by a CJK character, CJK punctuation, whitespace or
 //           line start OPENS a mention token (the flip: Chinese sentences
 //           without spaces now trigger anywhere);
@@ -12,12 +14,15 @@
 //           still blocked (email defense kept);
 //         - a whitespace inside the token still closes it (regression);
 //         - line-start '@' still opens (regression).
-//   (b) src/main/resources/seed/agents/Nebula/system.md carries the
-//       Mention-hint line VERBATIM (exact full-line match).
+//   (b) the mention-hint line lives VERBATIM in the prompt catalog
+//       (src/main/scala/nebflow/prompts/PromptCatalog.scala). 锚点迁址说明：
+//       内置 agent 改由 BuiltinAgents 代码定义、seed agent 树已退役
+//       （a5b716d55），原 seed system.md 路径已不存在 ⇒ 本腿改钉唯一真源
+//       PromptCatalog（判据同样是**逐字全行包含**，强度不减）。
 //
-// parseMentionToken and WHITESPACE_RE are extracted from the live file by
-// ANCHORED extraction (fixed anchor lines + brace-depth scan). Extraction or
-// shape failure exits 2 loudly — never a silent pass.
+// parseToken and WHITESPACE_RE are extracted from the live file by ANCHORED
+// extraction (fixed anchor lines + brace-depth scan). Extraction or shape
+// failure exits 2 loudly — never a silent pass.
 //
 // Exit codes: 0 = all green | 1 = assertion red | 2 = extraction/shape failure.
 
@@ -26,8 +31,11 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const SRC_PATH = join(root, 'src/main/resources/web/js/mentionComplete.js');
-const SEED_PATH = join(root, 'src/main/resources/seed/agents/Nebula/system.md');
+const SRC_PATH = join(root, 'src/main/resources/web/js/tokenComplete.js');
+const SEED_PATH = join(root, 'src/main/scala/nebflow/prompts/PromptCatalog.scala');
+
+/** `@` provider spec — parseToken 只读 trigger 与三个门禁开关（`@` 全关）。 */
+const PROJECT_SPEC = { trigger: '@' };
 
 const fail2 = (msg) => {
   console.error('EXTRACT-FAIL: ' + msg);
@@ -42,10 +50,10 @@ const lines = src.split('\n');
 const wsLine = lines.find((l) => /^const WHITESPACE_RE = \/.+\/;\s*$/.test(l));
 if (!wsLine) fail2('WHITESPACE_RE declaration line not found in ' + SRC_PATH);
 
-// Anchor 2: the parseMentionToken function block — from its exact signature
-// line, brace-depth scan to the line that closes depth 0.
-const startIdx = lines.findIndex((l) => /^function parseMentionToken\(input\) \{$/.test(l));
-if (startIdx < 0) fail2('parseMentionToken anchor line not found in ' + SRC_PATH);
+// Anchor 2: the parseToken function block — from its exact signature line,
+// brace-depth scan to the line that closes depth 0.
+const startIdx = lines.findIndex((l) => /^function parseToken\(input, spec\) \{$/.test(l));
+if (startIdx < 0) fail2('parseToken anchor line not found in ' + SRC_PATH);
 let depth = 0;
 let endIdx = -1;
 for (let i = startIdx; i < lines.length; i++) {
@@ -55,22 +63,22 @@ for (let i = startIdx; i < lines.length; i++) {
   }
   if (depth === 0) { endIdx = i; break; }
 }
-if (endIdx < 0 || endIdx <= startIdx) fail2('parseMentionToken block never closes (brace scan)');
+if (endIdx < 0 || endIdx <= startIdx) fail2('parseToken block never closes (brace scan)');
 const fnText = lines.slice(startIdx, endIdx + 1).join('\n');
 
 // Shape checks on the extraction itself (exit 2, loud).
 let exported;
 try {
-  exported = new Function(fnText + '\n' + wsLine + '\nreturn { WHITESPACE_RE, parseMentionToken };')();
+  exported = new Function(fnText + '\n' + wsLine + '\nreturn { WHITESPACE_RE, parseToken };')();
 } catch (e) {
   fail2('extracted snippet failed to evaluate: ' + e.message);
 }
-const { WHITESPACE_RE, parseMentionToken } = exported;
+const { WHITESPACE_RE, parseToken } = exported;
 if (!(WHITESPACE_RE instanceof RegExp)) fail2('WHITESPACE_RE is not a RegExp');
 if (!WHITESPACE_RE.test(' ') || WHITESPACE_RE.test('a')) {
   fail2('WHITESPACE_RE shape unexpected (must match whitespace, must not match "a")');
 }
-if (typeof parseMentionToken !== 'function') fail2('parseMentionToken did not evaluate to a function');
+if (typeof parseToken !== 'function') fail2('parseToken did not evaluate to a function');
 
 // ── (2) Behavior cases against the extracted real function ────────────────
 // expect: 'token' => a live token object ({start, query}); 'null' => null.
@@ -92,7 +100,7 @@ const isLiveToken = (tok) =>
 const results = [];
 let red = 0;
 for (const c of CASES) {
-  const tok = parseMentionToken({ selectionStart: c.caret, value: c.value });
+  const tok = parseToken({ selectionStart: c.caret, value: c.value }, PROJECT_SPEC);
   const got = isLiveToken(tok) ? 'token' : (tok === null ? 'null' : 'shape!');
   const pass = got === c.expect;
   if (!pass) red++;
@@ -114,13 +122,13 @@ for (const r of results) {
   r.oldBehavior = oldGateToken(c.value, c.caret) === null ? 'null' : 'token';
 }
 
-// ── (3) Seed text assertion (verbatim full-line containment) ───────────────
+// ── (3) Prompt-catalog text assertion (verbatim line containment) ──────────
 const SEED_HINT_LINE = '- Mention hint: after completing a dispatched task, append a brief footer to your final reply: "Tip: use @<project name> in your message to route the next task to that project." Only include this hint when the user\'s original message did NOT contain an @-mention (they already know).';
 const seedLines = readFileSync(SEED_PATH, 'utf8').split('\n');
-const seedHasLine = seedLines.some((l) => l === SEED_HINT_LINE);
+const seedHasLine = seedLines.some((l) => l.trimEnd() === SEED_HINT_LINE);
 if (!seedHasLine) red++;
 results.push({
-  id: 'seed-mention-hint-line (verbatim containment)',
+  id: 'prompt-catalog-mention-hint-line (verbatim containment)',
   value: SEED_PATH, caret: null, expect: 'exact line present', got: seedHasLine ? 'present' : 'absent',
   pass: seedHasLine, oldBehavior: 'n/a',
 });
