@@ -132,6 +132,9 @@ import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
 // EPUB chapters have no frame guarding them): bound once at boot below.
 import { bindDocMarkupLinkBridge } from './viewers/shared.js';
 import { escapeHtml, isBgAgentId } from './utils.js';
+// 三行结构批（2026-11-05）：后台任务行状态位的唯一发射点（图标 + 色调 + 无障碍词
+// 单表，与智能体行同一份 bgRowStatus）。
+import { bgStatusHtml } from './bgRowStatus.js';
 // 本机设备名登记（设备角标本名批 2026-10-27）：configData.selfDevice.name（引擎
 // 自身身份读数，加法字段）→ deviceRoster 本机显示名缓存——工具卡设备角标本机字面
 // （local/self）的解析第二源（花名册 self 为第一源），两源皆缺不渲染、绝不「local」。
@@ -3591,14 +3594,9 @@ function renderBgDropdown() {
       : rowState === 'cancelling' ? t('bg.cancelling')
       : rowState === 'stuck' ? t('bg.stuck')
       : t('bg.running');
-    const dotClass = {
-      running: 'bg-status-active', idle: 'bg-status-idle',
-      stuck: 'bg-status-stuck', cancelling: 'bg-status-done',
-      failed: 'bg-status-error', done: 'bg-status-done',
-    }[rowState];
-    const stateClass = rowState === 'stuck' ? ' bg-state-stuck'
-      : rowState === 'failed' ? ' bg-state-failed'
-      : rowState === 'cancelling' || rowState === 'done' ? ' bg-state-done' : '';
+    // 三行结构批：状态位走 bgRowStatus 单表（图标 + 色调 + 无障碍词），行内不再写
+    // 中文状态词——词只作 aria-label / title / sr-only 文本存在。
+    const bgState = rowState === 'failed' ? 'error' : rowState;
     const endedClass = (rowState === 'done' || rowState === 'failed') ? ' bg-task-ended' : '';
     const { cat, label } = bgTaskOrigin(task);
     // 设备同级批（作者令 2026-11-01「本地/远程这组徽标整对退役」）：行内一律带设备
@@ -3681,23 +3679,37 @@ function renderBgDropdown() {
     const nameTitle = desc + ' · ' + task.taskId;
     // Terminal rows: no cancel button (nothing to cancel) — the row itself is
     // the click target for output viewing. Running rows keep the cancel button.
+    // 扁平按钮批（2026-11-05 · 作者令「取消按钮需要设计一下，用我们最新的扁平风
+    // 按钮风格」）：本体直接挂 design-system 扁平六态基类 `.ds-btn` + 危险档
+    // `.ds-btn--danger`（ghost：透明底 + danger 字色 + hover 危险洗底 + 按下缩放 +
+    // 焦点描边环；零渐变/零阴影/零位移——flat-button-spec 的契约面）。破坏性语义
+    // 靠三件事保留：① danger 字色（红）恒定可见；② 文案就是「取消」（不做图标化
+    // 弱化）；③ title 明说不可恢复。`.bg-task-cancel` 只留几何（尺寸/间距）。
     const cancelPart = (rowState === 'cancelling' || rowState === 'running' || rowState === 'idle' || rowState === 'stuck')
-      ? '<button class="bg-task-cancel" type="button">' + escapeHtml(rowState === 'cancelling' ? t('bg.cancelling') : t('bg.cancel')) + '</button>'
+      ? '<button class="ds-btn ds-btn--danger bg-task-cancel" type="button"'
+        + (rowState === 'cancelling' ? ' disabled' : '')
+        + ' title="' + escapeHtml(t('bg.cancelTip')) + '"'
+        + ' aria-label="' + escapeHtml(t('bg.cancelTip')) + '">'
+        + escapeHtml(rowState === 'cancelling' ? t('bg.cancelling') : t('bg.cancel')) + '</button>'
       : '';
+    // ── 三行/二行结构（UI 批 2026-11-05 · 作者令「后台任务也是。name·状态·输出·time
+    //    第二行 badge」）────────────────────────────────────────────────────────
+    //   · L1 `.bg-task-name-line`：name · 状态图标（bgRowStatus 单点）· 输出摘要
+    //     （行数 chip / 退出码）· time（margin-left:auto 钉右）；
+    //   · L2 `.bg-task-meta`（badges）：设备 / 来源链 / 执行模式 —— 独立成行、可换行。
+    // 既有锚（.bg-task-name-line / .bg-task-meta / .bg-task-lines / .bg-task-state）
+    // 全部保留：回归套件按类取数，本批只改**归行**，不改读点。
+    const badgeParts = devicePart + originPart + modePart;
     return '<div class="bg-task-row' + (rowState === 'cancelling' ? ' bg-task-cancelling' : '') + endedClass + extraCls + '" role="listitem" tabindex="0" data-task-id="' + escapeHtml(task.taskId) + '">' +
-      '<span class="bg-task-status ' + dotClass + '" aria-hidden="true"></span>' +
       '<div class="bg-task-info">' +
-        // panel-ia 批（2026-11-03 · IA 重排）：行序翻转为「主名在前、meta 退后」——
-        // 身份（这是哪个任务）是第一读数，状态/设备/来源/行数/耗时是第二读数；
-        // 与智能体行（bgAgents.js 同批）和弹窗头（flow-agent 家族）同一层级序。
-        // 每条目仍恰一条 meta 状态行（H1/H2 断言锚）。
-        '<div class="bg-task-line bg-task-name-line">' +
+        '<div class="bg-task-line bg-task-name-line bg-task-row-line1">' +
           '<span class="bg-task-name" title="' + escapeHtml(nameTitle) + '">' + escapeHtml(desc) + '</span>' +
+          bgStatusHtml(rowState === 'cancelling' ? 'cancelling' : rowState, { label: statusLabel }) +
+          healthPart + linesPart + exitPart + uptimePart +
         '</div>' +
-        '<div class="bg-task-line bg-task-meta">' +
-          '<span class="bg-task-state' + stateClass + '">' + escapeHtml(statusLabel) + '</span>' +
-          devicePart + originPart + modePart + healthPart + linesPart + exitPart + uptimePart +
-        '</div>' +
+        (badgeParts
+          ? '<div class="bg-task-line bg-task-meta bg-task-row-line2 bg-task-badges">' + badgeParts + '</div>'
+          : '') +
       '</div>' +
       cancelPart +
     '</div>';
@@ -3709,7 +3721,10 @@ function renderBgDropdown() {
     const states = members.map((m) => bgTaskRowState(m));
     const runningCount = states.filter((s) => s === 'running' || s === 'idle' || s === 'stuck').length;
     const cancellingCount = states.filter((s) => s === 'cancelling').length;
-    const dotClass = bgAggregateDot(states);
+    // 族头聚合态（三行结构批）：聚合点词表 → bgRowStatus 状态键（stuck > failed >
+    // running/idle/cancelling > done 的优先级同 bgAggregateDot，单表出图标/色调）。
+    const aggTone = bgAggregateDot(states).replace('bg-status-', '');
+    const aggState = aggTone === 'error' ? 'error' : aggTone;
     const stateWord = runningCount > 0
       ? t('bg.familyRunning', { count: runningCount })
       : cancellingCount > 0 ? t('bg.cancelling')
@@ -3728,18 +3743,19 @@ function renderBgDropdown() {
     const base = bgFamilyBaseLabel(members);
     // panel-ia 批（2026-11-03）：组头行序同批翻转——族名（身份）在前，
     // 聚合状态/计数/行数/族龄退到第二行。
+    // 族头行（三行结构批 · 同款二行）：L1 族名 · 聚合状态图标 · 族龄；L2 计数/行数徽标。
     return '<div class="bg-task-row bg-task-row-family" role="listitem" tabindex="0" aria-expanded="' + (expanded ? 'true' : 'false') + '" data-family-key="' + escapeHtml(key) + '">' +
-      '<span class="bg-task-status ' + dotClass + '" aria-hidden="true"></span>' +
       '<div class="bg-task-info">' +
-        '<div class="bg-task-line bg-task-name-line">' +
+        '<div class="bg-task-line bg-task-name-line bg-task-row-line1">' +
           '<span class="bg-task-name" title="' + escapeHtml(base || key) + '">' + escapeHtml(base || key) + '</span>' +
+          bgStatusHtml(aggState, { label: stateWord }) +
           '<span class="bg-family-caret" aria-hidden="true">' + (expanded ? '▾' : '▸') + '</span>' +
+          uptimePart +
         '</div>' +
-        '<div class="bg-task-line bg-task-meta">' +
-          '<span class="bg-task-state' + (runningCount > 0 ? '' : ' bg-state-done') + '">' + escapeHtml(stateWord) + '</span>' +
+        '<div class="bg-task-line bg-task-meta bg-task-row-line2 bg-task-badges">' +
           '<span class="bg-task-kind" title="' + escapeHtml(t('bg.familyTitle', { count: members.length })) + '">' +
             escapeHtml(t('bg.familyCount', { count: members.length })) + '</span>' +
-          linesPart + uptimePart +
+          linesPart +
         '</div>' +
       '</div>' +
     '</div>';

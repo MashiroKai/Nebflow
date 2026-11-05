@@ -8,6 +8,8 @@ import state from '../state.js';
 import { sendWs } from '../ws.js';
 import { t } from '../i18n.js';
 import { escapeHtml, isBgAgentId, createIconsIn, statusIcon, bgHealthNorm } from '../utils.js';
+// 三行结构批（2026-11-05）：状态位的唯一发射点（图标 + 色调 + 无障碍文案单表）。
+import { bgStatusHtml } from '../bgRowStatus.js';
 import { findViewBySessionId, activeView, setActiveView, chatViews } from '../chatView.js';
 import { fmtUptime, isFailedSnapshotStatus } from '../managePanel.js';
 import { openStepPopup as openFlowStepPopup } from '../flowAgentPopup.js';
@@ -513,10 +515,6 @@ function bgRemoteRowHtml(info, device) {
   const rowState = bgRemoteRowState(info.status);
   const terminal = rowState === 'done' || rowState === 'error';
   const statusLabel = t('subagents.status.' + (rowState === 'active' ? 'running' : rowState));
-  const dotClass = {
-    active: 'bg-status-active', waiting: 'bg-status-waiting',
-    done: 'bg-status-done', error: 'bg-status-error',
-  }[rowState] || 'bg-status-active';
   const kindWord = bgMemberKindWord({ source: String(info.source || ''), sessionId: String(info.sessionId || '') });
   const kindPart = kindWord ? '<span class="bg-task-kind">' + escapeHtml(kindWord) + '</span>' : '';
   // 设备角标（「跑在哪」轴）+ 离线角标（保留最后态，不消失不假装死亡——在线性
@@ -541,13 +539,14 @@ function bgRemoteRowHtml(info, device) {
     : '';
   // data-remote-session = 行锚（E2E 取数面；无点击行为绑定——展示专用行）。
   return '<div class="bg-task-row bg-task-row-remote bg-task-row-child" role="listitem" tabindex="0" data-remote-session="' + escapeHtml(String(info.sessionId || '')) + '">' +
-    '<span class="bg-task-status ' + dotClass + '" aria-hidden="true"></span>' +
     '<div class="bg-task-info">' +
-      '<div class="bg-task-line bg-task-main">' +
-        '<span class="bg-task-state bg-state-' + rowState + '">' +
-          (rowState === 'error' ? statusIcon('circle-x', 11, 'st-err') : '') +
-          escapeHtml(statusLabel) + '</span>' +
-        kindPart + namePart + devicePart + offlinePart + retriesPart + uptimePart +
+      '<div class="bg-task-line bg-task-main bg-task-row-line1">' +
+        namePart +
+        bgStatusHtml(rowState, { label: statusLabel }) +
+        uptimePart +
+      '</div>' +
+      '<div class="bg-task-line bg-task-row-line2 bg-task-badges">' +
+        kindPart + devicePart + offlinePart + retriesPart +
       '</div>' +
     '</div>' +
   '</div>';
@@ -1375,15 +1374,11 @@ function bgTaskRowHtml(id, info, opts = {}) {
   const chainTip = chainContinued
     ? t('subagents.chainRunningTip', { n: Number(opts.chainCount) || 0 })
     : '';
-  const dotClass = chainContinued
-    ? 'bg-status-active'
-    : {
-      active: 'bg-status-active', idle: 'bg-status-idle', stuck: 'bg-status-stuck',
-      error: 'bg-status-error', frozen: 'bg-status-frozen', done: 'bg-status-done',
-      waiting: 'bg-status-waiting',
-    }[rowState];
-  // 冻结态分色（冻结态误报批）：自动恢复族的点走 waiting 色，需人介入保持 frozen 点。
-  const dotClassFinal = freezeKind && freezeKind !== FREEZE_KIND.manual ? 'bg-status-waiting' : dotClass;
+  // 状态色调（三行结构批 2026-11-05）：**词表已上收**到 bgRowStatus.js 的
+  // BG_STATUS_VISUAL 单表（状态 → 图标/色调/文案键），本行只给「状态键」与可选的
+  // 色调覆写——冻结态误报批的「自动恢复族走 waiting 色」覆写在此保留为唯一一处。
+  const statusState = chainContinued ? 'chain' : rowState;
+  const statusTone = (freezeKind && freezeKind !== FREEZE_KIND.manual) ? 'frozen-auto' : '';
   // 术语分层批（2026-11-05 作者令「整体行 vs 成员行」）：身份词分两个显示位，各由一个
   // 函数定词，没有一个构造器自带词表——
   //   · 整体行（opts.headLevel：一次编排 = 一个 agentflow）⇒ 形态词 .bg-task-kind
@@ -1695,41 +1690,35 @@ function bgTaskRowHtml(id, info, opts = {}) {
   const childCount = Number(opts.childCount) || 0;
   const collapsedNow = !!(childCount > 0 && opts.collapsed);
   const caretPart = childCount > 0 ? bgCaretHtml(sid || id, collapsedNow) : '';
+  // ── 三行结构（UI 批 2026-11-05 · 作者令逐字「分三行显示。第一行 name · 状态
+  //    （用图标显示）· time。第二行 Badge。第三行 当前动作」）──────────────────
+  //   · L1 `.bg-task-main`：name · 状态图标（bgRowStatus 单点发射，中文状态词转
+  //     sr-only/aria-label，不再上屏）· uptime（margin-left:auto 钉右）；
+  //   · L2 `.bg-task-badges`：身份/归属徽标（entity AgentFlow / kind kernel·dispatcher /
+  //     Mail 地址 / 项目 / 孤儿来源 / 任务徽标 / 重试 ×N）——独立成行、允许换行；
+  //   · L3 `.bg-task-subline`：当前动作（↳ 工具 / 空闲 N 分钟 / 等待合并轮 / 冻结原因 /
+  //     卡死原因）＋任务摘要（有则跟随，muted；全文 tooltip）。L3 无内容 ⇒ 零渲染
+  //     （行不因空行膨胀）。
+  // 旧形态的三处叠字（左侧圆点 + 中文状态词 + 词前图标）在此收成**一个状态位**。
+  const actionPart = stuckPart + frozenPart + waitingPart + idlePart + toolPart;
+  const summaryPart = taskSummary
+    ? '<span class="bg-task-sub" title="' + escapeHtml(String(info.task || '')) + '">' + escapeHtml(taskSummary) + '</span>'
+    : '';
+  const line3 = (actionPart || summaryPart)
+    ? '<div class="bg-task-line bg-task-row-line3 bg-task-subline">' + actionPart + summaryPart + '</div>'
+    : '';
   return '<div class="bg-task-row' + (rawState === 'done' && !chainContinued ? ' done' : '') + levelCls + '"' + levelAttr + wildAttr + agentflowAttr + bgDepthAttrs(Number(opts.depth) || 0) + bgCollapseAttrs(childCount, collapsedNow) + ' role="listitem" tabindex="0" ' + clickAttr + '>' +
     caretPart +
-    '<span class="bg-task-status ' + dotClassFinal + '" aria-hidden="true"></span>' +
     '<div class="bg-task-info">' +
-      // Single-line row (2026-09-27 badge-inline batch, author order: task
-      // badge joins the uptime line): state / kind / project / name / badge
-      // / retries / uptime share ONE line — uptime stays pinned right via
-      // .bg-task-uptime margin-left:auto; project / name / badge truncate
-      // (CSS ellipsis + the existing title tooltips, subagents.taskBadge
-      // family included); fixed chips never shrink. Pure layout: data
-      // sources, tooltip keys, dot / kind / state semantics and counting
-      // are untouched. Supersedes the old meta+name two-line split for THIS
-      // panel only (#bgagent-dropdown); the background-tasks panel
-      // (#bg-dropdown) keeps .bg-task-meta / .bg-task-name-line untouched.
-      // panel-ia 批（2026-11-03 · IA 重排）：主名提前——行首第一读数 = 这是谁
-      // （名字），状态词与归组元数据（kind / project / orphan / badge）退后成
-      // 第二读数；与后台任务行（main.js 同批翻转）和弹窗头同一层级序（H3 断言锚）。
-      '<div class="bg-task-line bg-task-main">' +
+      '<div class="bg-task-line bg-task-main bg-task-row-line1">' +
         namePart +
-        '<span class="bg-task-state' + (chainContinued ? ' bg-task-chain' : ' bg-state-' + rowState) + '"' +
-          (chainTip ? ' title="' + escapeHtml(chainTip) + '" role="note"' : '') + '>' +
-          (chainContinued ? statusIcon('workflow', 11, 'st-warn')
-            : rowState === 'stuck' ? statusIcon('timer-off', 11, 'st-err')
-            : rowState === 'error' ? statusIcon('circle-x', 11, 'st-err')
-            : '') +
-          escapeHtml(statusLabel) + '</span>' +
-        entityPart + kindPart + bgAddrPart(info) + projectPart + orphanPart + taskPart + retriesPart + uptimePart +
+        bgStatusHtml(statusState, { label: statusLabel, title: chainTip, tone: statusTone }) +
+        uptimePart +
       '</div>' +
-      // 任务摘要次行（面板行说明批 2026-10-29 ②）：实名行的任务摘要上屏位——
-      // 单行截断 + tooltip 全文；无摘要/已并入主名时零渲染（行高不膨胀）。
-      (taskSummary
-        ? '<div class="bg-task-line bg-task-subline"><span class="bg-task-sub" title="' +
-          escapeHtml(String(info.task || '')) + '">' + escapeHtml(taskSummary) + '</span></div>'
-        : '') +
-      stuckPart + waitingPart + frozenPart + idlePart + toolPart +
+      '<div class="bg-task-line bg-task-row-line2 bg-task-badges">' +
+        entityPart + kindPart + bgAddrPart(info) + projectPart + orphanPart + taskPart + retriesPart +
+      '</div>' +
+      line3 +
     '</div>' +
   '</div>';
 }
@@ -1747,7 +1736,6 @@ function bgStoreChildHtml(child, agentflowKey, opts = {}) {
   const sid = String(c.taskId || '');
   const state = bgStoreChildState(String(c.status || ''));
   const statusLabel = t('subagents.status.' + (state === 'active' ? 'running' : state));
-  const dotClass = { active: 'bg-status-active', done: 'bg-status-done', error: 'bg-status-error' }[state] || 'bg-status-idle';
   const kindWord = bgMemberKindWord({ source: String(c.source || ''), sessionId: sid });
   const rawName = String(c.agentName || '') || sid;
   const desc = String(c.description || c.prompt || '');
@@ -1770,16 +1758,15 @@ function bgStoreChildHtml(child, agentflowKey, opts = {}) {
   const caretPart = childCount > 0 ? bgCaretHtml(sid, collapsedNow) : '';
   return '<div class="bg-task-row bg-task-row-child" data-bg-row-level="child" data-bg-agentflow="' + escapeHtml(String(agentflowKey || '')) + '"' + bgDepthAttrs(opts.depth) + bgCollapseAttrs(childCount, collapsedNow) + ' role="listitem" tabindex="0" data-child-session="' + escapeHtml(sid) + '">' +
     caretPart +
-    '<span class="bg-task-status ' + dotClass + '" aria-hidden="true"></span>' +
     '<div class="bg-task-info">' +
-      // panel-ia 批：主名在前（与 bgTaskRowHtml 同一批层级序）。
-      '<div class="bg-task-line bg-task-main">' +
+      // 三行结构批：members 行同款（L1 名·状态图标·空 time 槽 / L2 kind+重试 / L3 摘要）。
+      '<div class="bg-task-line bg-task-main bg-task-row-line1">' +
         namePart +
-        '<span class="bg-task-state bg-state-' + (state === 'active' ? 'running' : state) + '">' + escapeHtml(statusLabel) + '</span>' +
-        kindPart + retriesPart +
+        bgStatusHtml(state === 'active' ? 'active' : state, { label: statusLabel }) +
       '</div>' +
+      '<div class="bg-task-line bg-task-row-line2 bg-task-badges">' + kindPart + retriesPart + '</div>' +
       (taskSummary
-        ? '<div class="bg-task-line bg-task-subline"><span class="bg-task-sub" title="' + escapeHtml(desc) + '">' + escapeHtml(taskSummary) + '</span></div>'
+        ? '<div class="bg-task-line bg-task-row-line3 bg-task-subline"><span class="bg-task-sub" title="' + escapeHtml(desc) + '">' + escapeHtml(taskSummary) + '</span></div>'
         : '') +
     '</div>' +
   '</div>';
@@ -1799,10 +1786,11 @@ function bgFlowChildHtml(node, delegateKey, agentflowKey, opts = {}) {
   const st = String(n.status || 'pending');
   const wordKey = BG_FLOW_WORD_KEY[st] || '';
   const kindWord = bgMemberKindWord({ info: { kind: String(n.kind || 'flow-step') }, sessionId: String(n.id || '') });
-  const dotClass = {
-    pending: 'bg-status-idle', running: 'bg-status-active', completed: 'bg-status-done',
-    failed: 'bg-status-error', cancelled: 'bg-status-done', blocked: 'bg-status-stuck',
-  }[st] || 'bg-status-idle';
+  // flow 投影态 → bgRowStatus 状态键（单表；脏值回落 pending/idle 保守档）。
+  const flowState = {
+    pending: 'idle', running: 'active', completed: 'done',
+    failed: 'error', cancelled: 'done', blocked: 'stuck',
+  }[st] || 'idle';
   const deps = Array.isArray(n.deps) ? n.deps.map((d) => String(d || '')).filter(Boolean) : [];
   const depPart = deps.length
     ? '<span class="bg-task-project" title="deps: ' + escapeHtml(deps.join(',')) + '">← ' + escapeHtml(deps.join(',')) + '</span>'
@@ -1812,13 +1800,13 @@ function bgFlowChildHtml(node, delegateKey, agentflowKey, opts = {}) {
   const caretPart = childCount > 0 ? bgCaretHtml(String(n.id || ''), collapsedNow) : '';
   return '<div class="bg-task-row bg-task-row-child" data-bg-row-level="child" data-bg-agentflow="' + escapeHtml(String(agentflowKey || '')) + '"' + bgDepthAttrs(opts.depth) + bgCollapseAttrs(childCount, collapsedNow) + ' role="listitem" tabindex="0" data-flow-delegate-key="' + escapeHtml(String(delegateKey || '')) + '" title="' + escapeHtml(label) + '">' +
     caretPart +
-    '<span class="bg-task-status ' + dotClass + '" aria-hidden="true"></span>' +
     '<div class="bg-task-info">' +
-      '<div class="bg-task-line bg-task-main">' +
+      '<div class="bg-task-line bg-task-main bg-task-row-line1">' +
         '<span class="bg-task-name">' + escapeHtml(label) + '</span>' +
-        '<span class="bg-task-state">' + escapeHtml(wordKey ? t(wordKey) : st) + '</span>' +
-        '<span class="bg-task-kind">' + escapeHtml(kindWord) + '</span>' +
-        depPart +
+        bgStatusHtml(flowState, { label: wordKey ? t(wordKey) : st }) +
+      '</div>' +
+      '<div class="bg-task-line bg-task-row-line2 bg-task-badges">' +
+        '<span class="bg-task-kind">' + escapeHtml(kindWord) + '</span>' + depPart +
       '</div>' +
     '</div>' +
   '</div>';

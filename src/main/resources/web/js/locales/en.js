@@ -1937,6 +1937,7 @@ export default {
 
   // === Background tasks ===
   'bg.cancel': 'Cancel',
+  'bg.cancelTip': 'Cancel this background task (the process is killed; not reversible)',
   'bg.cancelling': 'Cancelling...',
   'bg.running': 'Running',
   'bg.ended': 'Process ended',
