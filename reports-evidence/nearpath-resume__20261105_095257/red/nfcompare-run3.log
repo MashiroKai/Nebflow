@@ -1,0 +1,24 @@
+[rig] engine spawned pid= 46387 port= 6410 home= /tmp/nearpath-fire/rig-home
+[rig] relay: device/session exchange
+[rig] relay: engine tunnel connected /api/device/relay-ws?deviceId=36085c44-f4dd-5e72-bd18-2369aa155cb6
+[rig] engine healthy on :6410
+[rig] relay connected = true
+[rig] engine deviceId = 36085c44-f4dd-5e72-bd18-2369aa155cb6
+[rig] ingress https on :7443 (static: engine via tunnel)
+loopback  4 KiB  cold=6.76ms warm.med=1.42ms p95=2.33ms ttfb.med=1.41ms frames/resp=0 wireB64/resp=0.0KiB inflate=0.00x
+tunnel    4 KiB  cold=7.45ms warm.med=1.63ms p95=2.15ms ttfb.med=1.63ms frames/resp=1 wireB64/resp=5.3KiB inflate=1.33x
+loopback  1 MiB  cold=6.52ms warm.med=4.27ms p95=7.22ms ttfb.med=1.76ms frames/resp=0 wireB64/resp=0.0KiB inflate=0.00x
+tunnel    1 MiB  cold=16.65ms warm.med=14.51ms p95=16.89ms ttfb.med=13.94ms frames/resp=103 wireB64/resp=1365.6KiB inflate=1.33x
+loopback  10 MiB cold=34.23ms warm.med=32.11ms p95=139.46ms ttfb.med=3.25ms frames/resp=0 wireB64/resp=0.0KiB inflate=0.00x
+tunnel    10 MiB cold=172.11ms warm.med=133.76ms p95=341.88ms ttfb.med=122.57ms frames/resp=1024 wireB64/resp=13656.0KiB inflate=1.33x
+
+| 文件 | 纯磁盘 | 环回腿 med | 环回 p95 | 环回 cold | 隧道腿 med | 隧道 p95 | 隧道 cold | 隧道/环回 | 隧道帧数/响应 | 线上 base64/响应 | 膨胀 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 4 KiB | 0.078 ms | **1.42 ms** | 2.33 ms | 6.76 ms | 1.63 ms | 2.15 ms | 7.45 ms | 1.15× | 1 | 5.3 KiB | 1.33× |
+| 1 MiB | 0.289 ms | **4.27 ms** | 7.22 ms | 6.52 ms | 14.51 ms | 16.89 ms | 16.65 ms | 3.4× | 103 | 1365.6 KiB | 1.33× |
+| 10 MiB | 2.184 ms | **32.11 ms** | 139.46 ms | 34.23 ms | 133.76 ms | 341.88 ms | 172.11 ms | 4.17× | 1024 | 13656 KiB | 1.33× |
+
+注：隧道腿在本机假中继上跑（无公网 RTT），因此这里的倍率是**隧道编码/分帧税的下界**；
+    生产门户 egress 还要叠加每程 RTT（审计件 §6.3 实测 ping 43.1ms）。
+
+json → /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-local-path-resume/reports-evidence/nearpath-resume__20261105_095257/red/nfcompare-run3.json

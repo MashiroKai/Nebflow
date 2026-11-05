@@ -1,0 +1,65 @@
+PASS  T1 near-path hit: navigated to the loopback redemption face
+PASS  T1 redemption URL carries the relay-minted ticket  — {"finalUrl":"http://127.0.0.1:18765/?ticket=tkt-e2e-1"}
+PASS  T1 the loopback face answered (redeemed page landed)
+PASS  T1 console ticket was minted exactly once  — {"mintCalls":1}
+PASS  T1 hit beacon fired with reason=fetch (the CORS leg won, Chromium path unchanged)  — [{"event":"hit","reason":"fetch","port":18765}]
+PASS  T1 segment timings emitted (g1/g2/probe/mint/total)  — ["[nearpath] timings g1=9ms g2=9ms probe=266ms mint=339ms total=339ms leg=fetch"]
+PASS  T1 no pixel probe on the CORS leg (nothing extra to pay on Chromium)  — []
+PASS  T2 probe refused: page stays on the relay origin  — {"url":"http://127.0.0.1:8195/"}
+PASS  T2 WS established normally while staying
+PASS  T2 no console ticket minted on the stay path  — {"mintCalls":0}
+PASS  T3 deviceId mismatch: page stays on the relay origin  — {"url":"http://127.0.0.1:8195/"}
+PASS  T3 no mint on the mismatch path  — {"mintCalls":0}
+PASS  T3 stay path keeps the WS (no error page: the document is still ours)
+PASS  T3 miss reason preserved for the evidence chain  — {"miss":"{\"at\":1793846328135,\"reason\":\"device_mismatch (127.0.0.1)\"}"}
+PASS  T3 miss beacon carries the clean token  — [{"event":"miss","reason":"device_mismatch"}]
+PASS  T5 pixel-leg hit: navigated to the loopback redemption face despite the blocked fetch  — {"finalUrl":"http://127.0.0.1:18765/?ticket=tkt-e2e-1"}
+PASS  T5 pixel leg got the expect anchor from gate ①  — {"pixelProbes":["dev-e2e-nearpath"]}
+PASS  T5 ticket minted once (only after the identity proof)  — {"mintCalls":1}
+PASS  T5 mint body faces the bound device only  — {"mintBodies":[{"deviceId":"dev-e2e-nearpath"}]}
+PASS  T5 hit beacon fired before navigation with reason=pixel + port  — [{"event":"hit","reason":"pixel","port":18765}]
+PASS  T6 blocked fetch + pixel 404: page stays on the tunnel origin  — {"url":"http://127.0.0.1:8195/"}
+PASS  T6 no ticket minted on the stay path (no-ticket-on-miss)  — {"mintCalls":0}
+PASS  T6 WS still established (stay must not disturb the session)
+PASS  T6 miss reason = probe_unreachable (blocked vs down indistinguishable by design)  — {"miss":"{\"at\":1793846334181,\"reason\":\"probe_unreachable\"}"}
+PASS  T6 miss beacon fired with the stable token  — [{"event":"miss","reason":"probe_unreachable"}]
+PASS  T7 pixel with wrong sentinel dims: page stays (never jumps on an unproven answer)  — {"url":"http://127.0.0.1:8195/"}
+PASS  T7 no mint on the mismatch path  — {"mintCalls":0}
+PASS  T7 miss reason = pixel_mismatch (a new stable token)  — {"miss":"{\"at\":1793846337812,\"reason\":\"pixel_mismatch\"}"}
+PASS  T8 mint 403: page stays on the tunnel origin  — {"url":"http://127.0.0.1:8195/"}
+PASS  T8 miss reason = mint_http_403  — {"miss":"{\"at\":1793846341672,\"reason\":\"mint_http_403\"}"}
+PASS  T8 miss beacon carries mint_http_403  — [{"event":"miss","reason":"mint_http_403"}]
+PASS  T9 beacon 404: the hit decision is unchanged (still navigates)  — {"url":"http://127.0.0.1:18765/?ticket=tkt-e2e-1"}
+PASS  T9 no beacon record (the old engine silently skipped the observation)  — []
+PASS  T4 sanity: heartbeat round-trip alive before withholding  — {"mintCalls":0,"wsConnections":1,"pongs":6,"pings":6,"beacons":[{"event":"miss","reason":"portal_status_http_404"}],"pixelProbes":[],"mintBodies":[]}
+  [page] [ws] heartbeat miss sheltered: file transfer in flight (1/12)
+  [page] [ws] heartbeat miss sheltered: file transfer in flight (1/12)
+  [page] [ws] heartbeat miss sheltered: file transfer in flight (2/12)
+  [page] [ws] heartbeat miss sheltered: file transfer in flight (3/12)
+  [page] [ws] heartbeat miss sheltered: file transfer in flight (4/12)
+  [page] [ws] heartbeat miss sheltered: file transfer in flight (5/12)
+  [page] [ws] heartbeat miss sheltered: file transfer in flight (6/12)
+  [page] [ws] heartbeat miss sheltered: file transfer in flight (7/12)
+  [page] [ws] heartbeat miss sheltered: file transfer in flight (8/12)
+  [page] [ws] heartbeat miss sheltered: file transfer in flight (9/12)
+  [page] [ws] heartbeat miss sheltered: file transfer in flight (10/12)
+  [page] [ws] heartbeat miss sheltered: file transfer in flight (11/12)
+PASS  T4 sheltered: transfer in flight shelters misses beyond the 3-miss eviction budget  — {"maxSheltered":11}
+PASS  T4 sheltered: socket stayed open through the shelter climb  — {"maxSheltered":11}
+  [page] [ws] heartbeat miss sheltered: file transfer in flight (12/12)
+PASS  T4 hard cap: eviction fires once the shelter window budget is exhausted  — {"mintCalls":0,"wsConnections":2,"pongs":7,"pings":22,"beacons":[{"event":"miss","reason":"portal_status_http_404"}],"pixelProbes":[],"mintBodies":[]}
+PASS  T4 recovery: reconnect succeeds after the transfer settles
+  [page] [ws] heartbeat miss sheltered: file transfer in flight (1/12)
+  [page] [ws] heartbeat miss sheltered: file transfer in flight (2/12)
+  [page] [ws] heartbeat miss sheltered: file transfer in flight (3/12)
+  [page] [ws] heartbeat miss sheltered: file transfer in flight (4/12)
+  [page] [ws] heartbeat miss sheltered: file transfer in flight (5/12)
+  [page] [ws] heartbeat miss sheltered: file transfer in flight (6/12)
+  [page] [ws] heartbeat miss sheltered: file transfer in flight (7/12)
+  [page] [ws] heartbeat miss sheltered: file transfer in flight (8/12)
+  [page] [ws] heartbeat miss sheltered: file transfer in flight (9/12)
+  [page] [ws] heartbeat miss sheltered: file transfer in flight (10/12)
+  [page] [ws] heartbeat miss sheltered: file transfer in flight (11/12)
+  [page] [ws] heartbeat miss sheltered: file transfer in flight (12/12)
+FAIL  T4 control: without a transfer, eviction fires on the normal 3-miss budget  — {"mintCalls":0,"wsConnections":2,"pongs":7,"pings":38,"beacons":[{"event":"miss","reason":"portal_status_http_404"}],"pixelProbes":[],"mintBodies":[]}
+SPEC FAILED
