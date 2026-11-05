@@ -117,8 +117,8 @@ class RootSixBaseToolsSpec extends FunSuite:
     )
     assertEquals(
       AgentCore.NebflowFixedTools.size,
-      10,
-      "nebflow 固定集恰十件（bash overhaul T1 2026-11-04：BaseTools 六 → 七 +BgWait；沿用 builtin-merge 批：BaseTools + AskUserQuestion + Subagent；N1 复名批随名 AgentFlow；AskUser 承继、零 Pop 承继）"
+      9,
+      "nebflow 固定集恰九件（tool-face-agentflow-retire 批 2026-11-05：AgentFlow 工具整体退役 ⇒ 十 → 九；BaseTools 七件含 BgWait + AskUserQuestion + Subagent；AskUser 承继、零 Pop 承继）"
     )
     assert(
       AgentCore.NebflowFixedTools.contains("AskUserQuestion"),

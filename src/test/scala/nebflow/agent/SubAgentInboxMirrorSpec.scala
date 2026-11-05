@@ -97,8 +97,9 @@ class SubAgentInboxMirrorSpec extends FunSuite:
    * 注册表候选集（`sessionId -> rootSessionId`）——覆盖全部族前缀 + 两个 root + 非族会话。
    *
    * P1-3 归因修正批（2026-10-03）：`subagent-` / `workflow-` 两族补入候选集——
-   * builtin-merge 批新增的 `SubagentTool` / `AgentFlowTool`（N1 复名批 ex-WorkflowTool）会话即用这两个
-   * 前缀，前端 `utils.js#isBgAgentId` 早已收录，后端本表此前漏收（真产品缺陷，
+   * builtin-merge 批新增的 `SubagentTool` 会话即用 `subagent-` 前缀（ex-Workflow 的
+   * 内联 DAG 工具已随 tool-face-agentflow-retire 批 2026-11-05 整体退役，`workflow-`
+   * 前缀留作存量会话的身份兼容），前端 `utils.js#isBgAgentId` 早已收录，后端本表此前漏收（真产品缺陷，
    * 同批补齐）。夹具不覆盖这两族时，`targets` 的路由表 pin 会漏掉它们。
    */
   private val candidates: List[(String, String)] = List(

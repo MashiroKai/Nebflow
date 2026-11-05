@@ -142,7 +142,9 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
    * G1 编排模式惰性升级挂钩（delegate-ui 批 2026-10-08，**单点**）：星型子代理记账
    * 动作（本 store recordTask）= 模式升级的唯一触发面——任何工具形（Subagent /
    * Subtask / 嵌套 Delegate）一经记账，父 delegate 的 orchestrationMode 升至
-   * `subagent-star`（flow 结构由 AgentFlow 链登记点升 `agentflow`，值域顶、只上
+   * `subagent-star`（flow 结构由 ChainWrite 链登记成功点升 `agentflow`（tool-face-
+   * agentflow-retire 批 2026-11-05 起该写点从已删的 AgentFlow 工具迁入
+   * ChainWriteTool.upgradeOrchestrationModeOnRegister），值域顶、只上
    * 不下——见 [[DelegateRegistry.upgradeOrchestrationMode]] 的秩守卫）。双闸保守：
    * 前缀闸（`delegate-`）+ 记录闸（父确有 DelegateRegistry 记录）⇒ root/节点会话
    * 的同名记账零触碰；升级失败只 WARN，绝不影响记账主路径（fail-soft）。

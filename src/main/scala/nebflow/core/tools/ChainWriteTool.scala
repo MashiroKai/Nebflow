@@ -31,7 +31,7 @@ import nebflow.core.project.*
  *   - `deps` → 规范化为 id 形（R6：批内 id／批内 name 皆收，链外仅收 id）后落
  *     `NodeDef.deps`，并**综合接线**：上游 out 追加指向下游的缺省 pass 边 ＋ 下游
  *     in 镜像——deps 的「等完成」与结果的「沿边投递」由底座同一套边语义承载
- * （AgentFlow/ChainWrite 步进会话吃到上游结果块，数据流不因登记面而分叉）；
+ *     （链节点会话吃到上游结果块，数据流不因登记面而分叉）；
  *   - 末端节点（批内无下游依赖者）自动补显式门集根边 `(pass)Nebula`（:result）＝
  *     完成通知投**创建者 delegate 本人**（自根作用域——刀1 H5 已实证的投递面；
  *     非隐式 bare 形态，v3-⑨ 荐读法）。中段节点不挂根边（零噪音）。
@@ -51,7 +51,7 @@ import nebflow.core.project.*
 object ChainWriteTool extends Tool:
   val name = "ChainWrite"
 
-  /** 规模上限（AgentFlow/ChainWrite 同一上限——防误用对称；v2 §6.A/§6.B 家族口径）。 */
+  /** 规模上限（链登记同一上限——防误用；v2 §6.A/§6.B 家族口径）。 */
   val MaxNodes: Int = 12
 
   /** 错误码族单点（v2 §6.I 承继＋刀2 新增；spec 断言禁字面量）。 */
@@ -296,18 +296,10 @@ object ChainWriteTool extends Tool:
           }
 
   /**
-   * 登记核心（ChainWrite 与 AgentFlow 薄壳共用单点——两个粒度的入口，一个校验器，
-   * 一个落库事务，一个放行点）。全部校验在任何写之前完成（all-or-nothing）。
-   *
-   * 双模式批（2026-10-28 · 设计 §5.2/§5.3）：`dispatcherChain = true`（总闸开 ∧
-   * 宿主属主 mode=dispatcher）时追加分发器链闸与**逐 node 插件分配**（分配上移到
-   * node 生成时——registerChain 落库前、仍处 0 spawn 阶段；分配结果物化进
-   * NodeDef.plugins，node spawn 走声明集权威路径零再分配）。普通链（含闸关时代）
-   * 零变化。
-   */
-  /**
-   * 登记核心（ChainWrite 与 AgentFlow 薄壳共用单点——两个粒度的入口，一个校验器，
-   * 一个落库事务，一个放行点）。全部校验在任何写之前完成（all-or-nothing）。
+   * 登记核心——**全仓唯一的链登记入口**（tool-face-agentflow-retire 批 2026-11-05
+   * 之后：AgentFlow 薄壳已删，本方法不再有第二个调用面；一个校验器、一个落库事务、
+   * 一个放行点、一个 orchestrationMode 升级点）。全部校验在任何写之前完成
+   * （all-or-nothing）。
    *
    * 双模式批（2026-10-28 · 设计 §5.2/§5.3）：`dispatcherChain = true`（总闸开 ∧
    * 宿主属主 mode=dispatcher）时追加分发器链闸与**逐 node 插件分配**（分配上移到
@@ -554,6 +546,9 @@ object ChainWriteTool extends Tool:
                                     .mkString(" ")
                               entries
                                 .traverse_(id => NodeTools.runDetached(rt, s"chain release -> $id")(rt.engine.startNode(id)))
+                                // 编排模式升级（G1）：tool-face-agentflow-retire 批
+                                // （2026-11-05）自 AgentFlow 工具 ACK 分支迁入的唯一写点。
+                                .flatMap(_ => upgradeOrchestrationModeOnRegister(scopeKey))
                                 .as(
                                   Right(
                                     s"Chain '$cid' registered with ${nodes.size} node(s) [${nodes.map(_.id).mkString(", ")}] — " +
@@ -574,6 +569,30 @@ object ChainWriteTool extends Tool:
             }
     end match
   end registerChain
+
+  /**
+   * 编排模式惰性升级（G1 单点，delegate-ui 批 2026-10-08 立；**tool-face-agentflow-
+   * retire 批 2026-11-05 迁址**）：链登记成功 = flow 结构确立 ⇒ 调用 delegate 的
+   * `orchestrationMode` 升 `agentflow`（值域顶、只增不下；升级器自带记录闸与幂等
+   * 秩守卫）。
+   *
+   * 🔴 `DelegateRegistry.ModeAgentflow` 在全仓的**唯一写点就是这里**。迁移前它长在
+   * `AgentFlow 工具.call` 的 ACK 分支（该文件已删）；工具一并退役后若不迁到本件，
+   * 这条升级**永远不会发生**，面板「编排形态」列也就永远升不到 flow —— 这是本批的
+   * 头号判据，由 `BlockingSubagentEndToEndSpec` 的登记→读回实测钉住。
+   *
+   * fail-soft 与旧写点逐字同语义：`upgradeOrchestrationMode` 的 `Left`（查无记录 =
+   * 非 delegate 会话 / 旧盘面）与写盘异常都只吞掉，**绝不阻断链登记回执**——升级是
+   * 「顺手记账」，不是登记的前置条件。
+   */
+  private[tools] def upgradeOrchestrationModeOnRegister(scopeKey: Option[String]): IO[Unit] =
+    scopeKey.filter(_.trim.nonEmpty) match
+      case None => IO.unit
+      case Some(sid) =>
+        IO.blocking(
+          nebflow.core.delegate.DelegateRegistry
+            .upgradeOrchestrationMode(sid, nebflow.core.delegate.DelegateRegistry.ModeAgentflow)
+        ).void.handleErrorWith(_ => IO.unit)
 
   /**
    * 双模式批（§5.3）：分发器链的逐 node 分配（落库前、0 spawn 阶段）。非分发器链 =

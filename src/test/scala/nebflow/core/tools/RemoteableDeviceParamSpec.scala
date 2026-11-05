@@ -128,11 +128,15 @@ class RemoteableDeviceParamSpec extends FunSuite:
       s"AskUserQuestion must not receive device, got: ${props(augmented)}"
     )
 
-  test("边界：内核面 = 十件（文件/壳六件带 device + BgWait 不带 + AskUserQuestion/Subagent/AgentFlow 不带）"):
-    // bash overhaul T1（2026-11-04）：BaseTools 六 → 七（+BgWait）⇒ NebflowFixedTools
-    // 九 → 十。件数变更是**机制面变更的直接结果**（不是为过测放宽）：带 device 者
+  test("边界：内核面 = 九件（文件/壳六件带 device + BgWait/AskUserQuestion/Subagent 不带）"):
+    // tool-face-agentflow-retire 批（2026-11-05）：AgentFlow 工具整体退役 ⇒ NebflowFixedTools
+    // 十 → 九。件数变更是**机制面变更的直接结果**（不是为过测放宽）：带 device 者
     // 仍恰为六件（下一断言即该不变式的正向钉）。
-    assertEquals(AgentCore.NebflowFixedTools.size, 10)
+    assertEquals(AgentCore.NebflowFixedTools.size, 9)
+    assert(
+      !AgentCore.NebflowFixedTools.contains("AgentFlow"),
+      "the retired AgentFlow tool must be gone from the executor fixed face"
+    )
     val withDevice = AgentCore.BaseTools.filter(n => deviceProp(funnelSchema(n)).isDefined)
     assertEquals(
       withDevice,

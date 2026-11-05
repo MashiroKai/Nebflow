@@ -233,12 +233,13 @@ object AgentCore:
     // 选本路线而非 `buildAllowedToolSet` 内 `- "ListFriends"`（SendMessage 先例）：
     // 两者授能结果等价，但后者不覆盖保存侧。
     "ListFriends",
-    // Subagent / AgentFlow（builtin-merge 批 2026-10-03；N1 复名批 Workflow→
-    // AgentFlow，v2 ①/v3 §5）：执行 agent（nebflow）的机制面工具——同享本集
-    // 【防声明逃逸】通道：agent.json 声明（含 "*"）对非授权身份不授能（真实授能
-    // = AgentCore.NebflowFixedTools 单点）。
+    // Subagent（builtin-merge 批 2026-10-03）：执行 agent（nebflow）的机制面工具——
+    // 同享本集【防声明逃逸】通道：agent.json 声明（含 "*"）对非授权身份不授能
+    // （真实授能 = AgentCore.NebflowFixedTools 单点）。
+    // 🔴 "AgentFlow" 条目随 tool-face-agentflow-retire 批（2026-11-05，作者裁定二）
+    // 摘除：该工具已整体退役、名字离开 TOOL_MAP ⇒ 声明该名本就零授能，留条目 =
+    // 表对该名永不可达的死文本（违表零膨胀纪律）。
     "Subagent",
-    "AgentFlow",
     // ChainWrite（N1 刀2，v3 §5 S4）：delegate 会话专属整链登记件——同享本集
     // 【防声明逃逸】通道：插件/agent.json 声明（含 "*"）对非 delegate 会话身份
     // 不授能（真实授能 = buildAllowedToolSet 尾段 delegateSession 腿单点）；
@@ -278,11 +279,13 @@ object AgentCore:
       // 字面量保留：case 模式匹配形态（改经常量会破坏 match）；身份名单点 = RootAgentIdentity.Name
       case "Nebula" => Set.empty[String]
       case "dream" => RootExclusiveTools -- DreamAdmittedTools
-      // builtin-merge 批（2026-10-03）：执行 agent 的机制面豁免——Subagent/AgentFlow
-      // 是 NebflowFixedTools 单点授能（本集在册只为防其他身份声明逃逸）。N1 复名
-      // 批：Workflow→AgentFlow 随名；四件 Node 工具**不**入豁免集（防 Subagent/
-      // AgentFlow 步会话过授能——delegate 面真实授能只在 buildAllowedToolSet 尾段）。
-      case "nebflow" => RootExclusiveTools -- Set("Subagent", "AgentFlow")
+      // builtin-merge 批（2026-10-03）：执行 agent 的机制面豁免——Subagent 是
+      // NebflowFixedTools 单点授能（本集在册只为防其他身份声明逃逸）。四件 Node
+      // 工具**不**入豁免集（防 Subagent 步会话过授能——delegate 面真实授能只在
+      // buildAllowedToolSet 尾段）。tool-face-agentflow-retire 批（2026-11-05）：
+      // AgentFlow 名随工具退役从本集消失 ⇒ 豁免面收窄为 {Subagent}（N1 复名批
+      // Workflow→AgentFlow 的随名面随之终结）。
+      case "nebflow" => RootExclusiveTools -- Set("Subagent")
       case _ => RootExclusiveTools
 
   /**
@@ -601,6 +604,12 @@ object AgentCore:
    * 面生图件（交互修正批 2026-10-30 起为阻塞语义；编译期 seal 门控：seal 关时经
    * [[imageGenSealedStrip]] 在本面唯一消费点剥除，静态集不动，friends seal
    * 同款条件化口径）。本增量同属「按面变更」。
+   *
+   * **tool-face-agentflow-retire 批（2026-11-05，作者裁定二）：`AgentFlow` 工具整体
+   * 退役，本面件数 19 不变**——该名早在 unified-delegate 批（2026-10-03）就已离开
+   * 本集，本批零触碰 root 面；动的是执行 agent 机制面（NebflowFixedTools 十 → 九）、
+   * 注册表（删 `"AgentFlow"` 注册项）、墓碑表（"Workflow" 指路改 ChainWrite
+   * ＋"AgentFlow" 条目复活）与 orchestrationMode 的升级写点（迁入 ChainWriteTool）。
    */
   val RootOrchestrationToolsExpectedSize: Int = 19
 
@@ -634,17 +643,27 @@ object AgentCore:
       """Card is not available — its show face is Pop: media (image/video) renders directly in the chat (one call may batch several paths), and every other file renders as a file card whose forward button opens Canvas. To present HTML/visuals, write the HTML to a file (Write/Bash) and `Pop` that file's path; to open a web page, `Pop` its URL (Canvas iframe).""",
     // Workflow（N1 复名批 v2 §6.F 候选，ChainEdit 引用随 v3 作废改 ChainWrite）：
     // 名字退役产生的新墓碑——Workflow 名已注册删除，打旧名的调用落本指引。
+    // 🔴 tool-face-agentflow-retire 批（2026-11-05，作者裁定二）：中转站 AgentFlow
+    // 也整体退役 ⇒ 本墓碑的指路目标改为**唯一现役入口** ChainWrite（旧文案指
+    // AgentFlow = 指向死名，会把本次调用再送一次空跑）。
     "Workflow" ->
-      """Workflow is not available — the tool was renamed AgentFlow (same parameters: steps = [{id, task, deps}], description). Resubmit as AgentFlow(...); for persistent registered chains use ChainWrite.""",
+      """Workflow is not available — its inline-DAG face has been retired too (the intermediate name AgentFlow is gone with the tool-face retirement). Register the whole chain in ONE call with `ChainWrite(nodes=[{id, name?, task, deps?, description?}], chainName?)`: same gate, same engine, plus per-node editing and id+name addressing. `agentflow` survives only as the orchestration-MODE name of a dispatcher, never as a tool.""",
     // ProjectCreate（N2 project-tool 批 2026-10-06，⑨A 硬替换 + guard 表登记，
     // taskunify/N1 rename 先例同型）：Project 工具更名（create 语义原样保留，
     // 面板手动卸载被工具面替代 = 新增 action="unmount"）。名字退役产生的新墓碑
     // ——打旧名的调用落本指引（注册面已换名，本条对活名 "Project" 永不可达）。
     "ProjectCreate" ->
-      """ProjectCreate is not available — the tool was renamed Project (same create parameters; the panel's manual unmount is replaced by Project's own `action="unmount"` face: it stops the project's in-flight work first — nodes, chains, dispatcher/delegate sessions — then removes it from the mount face, keeping every workspace file). Resubmit as Project(workspace=...) to create/re-mount, or Project(action="unmount", name=...) to unmount."""
+      """ProjectCreate is not available — the tool was renamed Project (same create parameters; the panel's manual unmount is replaced by Project's own `action="unmount"` face: it stops the project's in-flight work first — nodes, chains, dispatcher/delegate sessions — then removes it from the mount face, keeping every workspace file). Resubmit as Project(workspace=...) to create/re-mount, or Project(action="unmount", name=...) to unmount.""",
     // 旧 "AgentFlow" 墓碑条目随 N1 复名批删除（v2 §3.2 处置：AgentFlow 以新工具
     // 注册进 TOOL_MAP——注册即令本表对该名永不可达，留条目＝死文本，违表零膨胀
-    // 纪律；legacy 派发意图改由 AgentFlowTool 内案 A 形态判据承接）。
+    // 纪律）。
+    // 🔴 tool-face-agentflow-retire 批（2026-11-05，作者裁定二）：AgentFlow **工具
+    // 整体退役**（注册面删除、AgentFlow 工具文件删净）⇒ 该名重新不可达，墓碑条目
+    // **按反向先例复活**（N1 复名批把 Workflow 指到 AgentFlow；本批把 AgentFlow 指到
+    // ChainWrite）。旧会话 / 存量提示词打这个名必须拿到「改用 ChainWrite 一次写全链」
+    // 的指引——不许静默消失（B5-c 可诊断退役）。
+    "AgentFlow" ->
+      """The tool is retired. `agentflow` names a MODE, not a tool: a dispatcher's node-orchestration shape (the `orchestrationMode` value written when a chain registration succeeds). To run several steps, register the WHOLE chain in ONE call: `ChainWrite(nodes=[{id, name?, task, deps?, description?}], chainName?)` — one write for the entire chain; the engine wires the deps edges so every step receives its upstream results, and the ack carries the chain id immediately (non-blocking). For one blocking read-only recon leg use `Subagent(prompt=...)`.""",
   )
 
   /**
@@ -743,7 +762,14 @@ object AgentCore:
   // （文件/壳六件 + BgWait + AskUserQuestion + Subagent + AgentFlow）。件数断言同步：
   // RemoteableDeviceParamSpec / RootSixBaseToolsSpec 的 9 → 10（依据 = 本批确实改了
   // 机制面；非为过测放宽——带 device 者仍恰为六件）。
-  val NebflowFixedTools: Set[String] = BaseTools + "AskUserQuestion" + "Subagent" + "AgentFlow"
+  // 🔴 tool-face-agentflow-retire 批（2026-11-05，作者裁定二）：`AgentFlow` 工具整体
+  // 退役（`agentflow` 此后**只是** dispatcher 的编排形态名／`orchestrationMode` 值）
+  // ⇒ 本面 **十 → 九**：文件/壳六件 + BgWait + AskUserQuestion + Subagent。件数断言
+  // 同步回 **9**（RemoteableDeviceParamSpec / RootSixBaseToolsSpec / DelegateToolSpec）；
+  // 带 `device` 者仍恰为六件不变式零触碰。
+  // 裁定一（kernel 腿补 Subagent）**本批未落**——与不变量 R-3a
+  // （`core.delegate.KernelChildSpawnGate`：kernel 身份不得生子 actor）冲突，待作者裁决。
+  val NebflowFixedTools: Set[String] = BaseTools + "AskUserQuestion" + "Subagent"
 
   /**
    * 只读侦察子面（builtin-merge 批 2026-10-03）：SubagentTool 的 spawn 目标
@@ -845,8 +871,8 @@ object AgentCore:
           case "project-dispatcher" => AgentCore.DispatcherFixedTools
           // 合并执行 agent（builtin-merge 批 2026-10-03：kernel+general ⇒ nebflow）：
           // 基础七件（bash overhaul T1 2026-11-04 +BgWait；此前六件）+ AskUserQuestion
-          // + Subagent（只读侦察）+ AgentFlow（步级 DAG，N1 复名批 Workflow→AgentFlow
-          // 随名）。
+          // + Subagent（只读侦察）。tool-face-agentflow-retire 批（2026-11-05）：
+          // AgentFlow 件随工具退役摘除（九件）。
           // 机制固定单点，不经 legacyFixedTools 的 catch-all。
           case "nebflow" => AgentCore.NebflowFixedTools
           // 只读侦察子（SubagentTool 的 spawn 目标）：机制固定只读五件。

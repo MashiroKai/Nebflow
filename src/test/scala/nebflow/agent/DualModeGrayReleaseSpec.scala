@@ -107,19 +107,25 @@ class DualModeGrayReleaseSpec extends FunSuite:
     val (face, subagentCall) =
       fullChain(ModeDecision(DualModeConfig.ModeDispatcher, ModeLeg.Param, "explicit mode parameter"))
     assert(!face.contains("Subagent"), "dispatcher face strips Subagent (mount face)")
-    assert(face.contains("ChainWrite") && face.contains("AgentFlow"), "dispatcher keeps the orchestration face")
+    assert(face.contains("ChainWrite"), "dispatcher keeps the orchestration face (ChainWrite)")
+    assert(
+      !face.contains("AgentFlow"),
+      "dispatcher must not carry AgentFlow — the tool is retired (tool-face-agentflow-retire 批 2026-11-05)"
+    )
     assert(
       subagentCall.left.exists(_.message.contains("DUAL_MODE_FACE_REMOVED")),
       s"the tool-internal second guard rejects the escaped call: $subagentCall"
     )
   }
 
-  test("GR4 全链形态二（kernel）：不填 mode ⇒ kernel ⇒ 编排面整体退场") {
+  test("GR4 全链形态二（kernel）：不填 mode ⇒ kernel ⇒ 编排面整体退场（Subagent 按裁定一保留）") {
     val decision = ModeParam.resolve(None).getOrElse(fail("default must resolve"))
     val (face, _) = fullChain(decision)
-    Set("Subagent", "AgentFlow", "NodeEdit", "NodeList", "NodeCancel", "ChainWrite").foreach { t =>
+    Set("NodeEdit", "NodeList", "NodeCancel", "ChainWrite").foreach { t =>
       assert(!face.contains(t), s"kernel face strips the whole orchestration face: $t")
     }
+    assert(!face.contains("AgentFlow"), "the retired AgentFlow tool never appears on any face")
+    assert(face.contains("Subagent"), "kernel keeps the read-only recon leg (author ruling 2026-11-05)")
     assert(face.contains("Mail") && face.contains("Read"), "kernel keeps the executor continuation face")
   }
 

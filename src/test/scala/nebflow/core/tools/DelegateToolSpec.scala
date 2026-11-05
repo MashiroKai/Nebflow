@@ -393,16 +393,15 @@ class DelegateToolSpec extends CatsEffectSuite:
   // ---------- 5. 内核工具面常量（装配面单点来源） ----------
 
   test(
-    "nebflow tool face = BaseTools + AskUserQuestion + Subagent + AgentFlow (10 items) and excludes orchestration/message tools"
+    "nebflow tool face = BaseTools + AskUserQuestion + Subagent (9 items) and excludes orchestration/message tools"
   ):
     val face = nebflow.agent.AgentCore.NebflowFixedTools
-    assertEquals(face, nebflow.agent.AgentCore.BaseTools + "AskUserQuestion" + "Subagent" + "AgentFlow")
-    // bash overhaul T1（2026-11-04，作者令「组织优化 bash，用业界成熟做法完整实现」）：
-    // `BaseTools` 六件 → **七件**（+`BgWait`，后台任务的唯一等待原语）⇒ 本面九件 → **十件**。
-    // 计数随机制面变更（非为过测放宽）：带 `device` 者仍恰为六件（`RemoteExecutor.remoteableTools`
-    // 未动，`BgWait` 刻意不入远端注入面——等待是本机语义），该不变式由
-    // `RemoteableDeviceParamSpec` 逐件钉死。
-    assertEquals(face.size, 10)
+    assertEquals(face, nebflow.agent.AgentCore.BaseTools + "AskUserQuestion" + "Subagent")
+    // tool-face-agentflow-retire 批（2026-11-05，作者裁定二）：`AgentFlow` 工具整体退役
+    // ⇒ 本面九 → **十件回落为九件**（本批确实改了机制面，非为过测放宽）：带 `device` 者
+    // 仍恰为六件（`RemoteExecutor.remoteableTools` 未动，`BgWait` 刻意不入远端注入面），
+    // 该不变式由 `RemoteableDeviceParamSpec` 逐件钉死。
+    assertEquals(face.size, 9)
     // R2 2026-09-12 承继：执行 agent 面零 Mail（无消息工具）；编排/管控/退役件
     // 一律不在（Delegate 派发、AgentControl 管控归 Nebula；Task/NodeMessage 已删净）。
     Set("Delegate", "SubTask", "Task", "NodeMessage", "TaskBoard", "node_report", "AgentControl", "Mail", "Pop")
@@ -418,7 +417,7 @@ class DelegateToolSpec extends CatsEffectSuite:
   test("subagent tool face is read-only five — no write, no shell, no message"):
     val face = nebflow.agent.AgentCore.SubagentFixedTools
     assertEquals(face, Set("Read", "Glob", "Grep", "WebSearch", "WebFetch"))
-    Set("Write", "Edit", "Bash", "Mail", "Subagent", "AgentFlow", "Delegate").foreach { t =>
+    Set("Write", "Edit", "Bash", "Mail", "Subagent", "Delegate").foreach { t =>
       assert(!face.contains(t), s"subagent must not hold: $t")
     }
     assertEquals(
