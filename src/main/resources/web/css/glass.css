@@ -167,8 +167,13 @@ html[data-theme="light"] {
    与 #header 的唯一差别 = 底的 α（1 vs .55/.68）——因为这一面背后是 canvas
    文档正文，拿不到 #chat 那层内容 mask（成因见 sapphire.css --glass-bg-opaque
    令牌注）。blur 照留：它是本档配方的一半，且本面气泡只有 ~3 屏，成本受控
-   （作者 2026-11-04 12:52 已授予气泡独立 backdrop-filter 的例外）。 */
-.ask-input {
+   （作者 2026-11-04 12:52 已授予气泡独立 backdrop-filter 的例外）。
+   ── 记事本批（2026-11-05）──
+   `.note-body`（canvas 记事本内容盒）以**成员**身份进本档：它与输入条是同一块
+   配方（同底/同 blur/同描边/同阴影/同顶缘折射线），改配方两个面一起变——本文件
+   不复制第二份 .note-* 材质声明。 */
+.ask-input,
+.note-body {
   /* 底 = 不透明档（α=1）；顶缘折射线走伪元素（形态同 #input-bar::before，
      见下方共用块）——不用背景层，是为了让「面板内零渐变背景」这条结构判据
      （tests/ask-sheet-fade-height A0d：不许出现任何过渡条/色块层）保持可读：
@@ -206,8 +211,11 @@ html[data-theme="light"] {
 }
 /* 顶缘折射线（不透明毛玻璃档的第三件）：几何与 #input-bar::before 逐值相同
    （top:0 / 左右各 10% / 高 1px / border-radius inherit），色值 = 同一个
-   --glass-refraction-line token（= #header 背景第一层的那个渐变）。 */
+   --glass-refraction-line token（= #header 背景第一层的那个渐变）。
+   记事本批：`.note-dock .note-body` 同在这一组（成员，非副本）——两条选择器都是
+   2 类特异性，与 .ask-input（1 类 + 本组 1 伪元素）互不覆盖。 */
 .ask-input::before,
+.note-dock .note-body::before,
 .ask-dock .ask-bub::before {
   content: '';
   position: absolute;
@@ -554,6 +562,7 @@ body.mobile-layer #g2-edge-fade {
   .model-panel,
   .wsp-panel,
   .ask-input,
+  .note-body,
   #slash-dropdown,
   #mention-dropdown,
   .dev-menu.explorer-dev-menu,
@@ -591,6 +600,7 @@ html.no-backdrop #onboarding-panel,
 html.no-backdrop .model-panel,
 html.no-backdrop .wsp-panel,
 html.no-backdrop .ask-input,
+html.no-backdrop .note-body,
 html.no-backdrop #slash-dropdown,
 html.no-backdrop #mention-dropdown,
 html.no-backdrop .dev-menu.explorer-dev-menu,
