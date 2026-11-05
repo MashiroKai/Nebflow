@@ -546,7 +546,11 @@ def paragraph_starts(doc):
             prev_open, prev_blank = False, False
             continue
         bare_spaces = bool(INDENT_BARE_SPACES_RE.match(text))
-        if text[:1].isspace() and not bare_spaces:
+        # `not prev_blank` 是 R8 的判定命门（2026-11-05 收尾批修）：上一行是空行 ⇒
+        # 本行是**段首**，哪怕它只用一两个半角空格起行也仍然是段首——两个半角空格
+        # 不是缩进（渲染器折叠），正是 R8 要报的形态。缺这一项时这类行被当成
+        # 「缩进续行」直接吞掉，段首缩进不足在 2 空格起行上假通过（实测零报错）。
+        if text[:1].isspace() and not bare_spaces and not prev_blank:
             prev_open, prev_blank = True, False      # 列表续行 / 缩进续行
             continue
         if contiguous and not bare_spaces:
