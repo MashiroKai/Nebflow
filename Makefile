@@ -103,7 +103,7 @@ quality-gate:
 # = 后端把 `GET /api/conversations` 的 case 误删，前端 404 被吞成「暂无会话」，
 # **没有任何断言发现「前端调了但后端没有」**。本闸静态对照两侧（前端 /api 字面量
 # 集合 × 网关路由注册面），前端调了后端没有 ⇒ 红。
-FRONTEND_GATES := design-tokens msgstyle self-explaining circular fixture-secrets api-routes freeze-state freeze-silence flat-buttons glass
+FRONTEND_GATES := design-tokens msgstyle self-explaining circular fixture-secrets api-routes freeze-state freeze-silence flat-buttons glass canvas-hint
 
 frontend-gates:
 	@command -v node >/dev/null 2>&1 || { echo "node not found — 前端门禁需要 node"; exit 2; }
@@ -142,6 +142,16 @@ frontend-gates:
 	@# delegate/flow 两条向上通知腿零产出、面板显形（统计 + 待你处理 + 唤醒按钮）、
 	@# 引擎自动续跑走既有唤醒腿（不花重启预算，有上限 + 递增间隔）、同波一条聚合告警。
 	node scripts/check-freeze-silence.mjs
+	@# Canvas 提示文字令牌唯一性门禁（canvas-hint-text 批 2026-11-05，作者令「canvas
+	@# 内所有的提示文字，要统一制作规范，不然会跟悬浮在上面的按钮/胶囊重叠」）：
+	@# ① 规范层 css/canvasHint.css 三字档令牌齐备且声明区零裸 px / 零裸色值；
+	@# ② 四边安全区令牌 --cv-safe-{top,right,bottom,left,gap} 全在场且取令牌值；
+	@# ③④⑤ 盘点清单 29 条提示文字规则：零裸值 / 字档取三字档 / 行高取三档令牌；
+	@# ⑥ 安全区容器 .cv-safe-pad 四边只取 --cv-safe-*；⑦ data-cv-hint 形态白名单；
+	@# ⑧ 占位 ::placeholder 色走令牌且透明度显式归 1。
+	@# 真几何腿（零端口、真 Chromium）另跑：node tests/canvas-hint-safe-area.spec.mjs
+	@# 改前/改后对照：--web-root <另一棵 web 树>；验红：--mutate=drop-face-safe-top。
+	node scripts/check-canvas-hint-tokens.mjs
 	@echo "Frontend static gates passed ($(FRONTEND_GATES))."
 
 # ── 按钮扁平化：单闸入口（CI 同名 step 调的就是它，单一真源别在 CI 里另抄一遍）──
@@ -151,6 +161,16 @@ flat-buttons:
 # ── 毛玻璃：单闸入口（与 flat-buttons 同形；CI 同名 step 调的就是它）──────────
 glass:
 	node scripts/check-glass-unify.mjs
+
+# ── Canvas 提示文字：单闸入口（静态腿）+ 真几何腿 ────────────────────────────
+# 静态腿 = 令牌唯一性（零依赖零端口）；几何腿 = 逐面 getBoundingClientRect 零交叠
+# （需 playwright，不在默认 check 里跑 —— 与其它「要浏览器」的腿同一编排口径）。
+canvas-hint:
+	node scripts/check-canvas-hint-tokens.mjs
+	@echo "Canvas hint text token gate passed."
+
+canvas-hint-geometry:
+	node tests/canvas-hint-safe-area.spec.mjs
 
 # ── 路由存在性：运行期腿（empty-state-must-not-lie 批 · 件三②，2026-11-05）──────
 # 静态腿判「源码里注册了没」，运行期腿判「启动后真的答不答」——后者才是事故的

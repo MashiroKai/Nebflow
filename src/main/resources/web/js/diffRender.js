@@ -109,12 +109,12 @@ function fileEntryHtml(f) {
   if (typeof f?.diffText === 'string' && f.diffText.length > 0) {
     body = renderDiffHtml(f.diffText);
   } else if (f?.diffText === '' ) {
-    body = '<div class="nf-fc-empty">Empty file — no content lines.</div>';
+    body = '<div class="nf-fc-empty" data-cv-hint="empty">Empty file — no content lines.</div>';
   } else {
     const reason = f?.degradedReason
       ? `Diff not shown (${esc(String(f.degradedReason))}).`
       : 'Diff not available.';
-    body = `<div class="nf-fc-empty">${reason} File: <code>${esc(path)}</code></div>`;
+    body = `<div class="nf-fc-empty" data-cv-hint="empty">${reason} File: <code>${esc(path)}</code></div>`;
   }
   return `
     <details class="nf-fc">${row}

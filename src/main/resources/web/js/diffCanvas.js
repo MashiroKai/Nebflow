@@ -156,11 +156,13 @@ function renderReader(pane, payload, focus) {
   } else if (f?.diffText === '') {
     const empty = document.createElement('div');
     empty.className = 'nf-fc-empty';
+    empty.setAttribute('data-cv-hint', 'empty');
     empty.textContent = 'Empty file — no content lines.';
     view.appendChild(empty);
   } else {
     const note = document.createElement('div');
     note.className = 'nf-fc-empty';
+    note.setAttribute('data-cv-hint', 'empty');
     note.textContent = f?.degradedReason
       ? `Diff not shown (${String(f.degradedReason)}).`
       : 'Diff not available.';

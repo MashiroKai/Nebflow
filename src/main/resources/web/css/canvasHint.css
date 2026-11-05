@@ -1,0 +1,205 @@
+/* canvasHint.css — Canvas 提示文字统一制作规范（**执行层**，唯一出生地）
+ * canvas-hint-text 批 · 2026-11-05 · 作者原话（逐字）：
+ *   「然后canvas内所有的提示文字，要统一制作规范，不然会跟悬浮在上面的按钮/胶囊
+ *    重叠。」
+ *
+ * ══════════════════════════════════════════════════════════════════════════
+ * 这份文件是规范的**可执行面**：规范正文（形态表 / 每条令牌出处 / 正反例）落
+ * vault 文档 `canvas-hint-text-spec__<ts>.md`；本文件只写「怎么执行」。两者不
+ * 一致时以 vault 正文为准并回改本文件（先改正文，再改执行面）。
+ *
+ * 病根（本批之前，逐条都是同一根）：提示文字（hint / 说明 / 空态 / 脚注 /
+ * 统计 / 占位 / 悬浮提示）**各自**写内距与字号色值，不知道自己头上浮着
+ * 胶囊、脚下浮着 FAB。实测过的三次报障（顶胶囊压首块 / 搜索带切平内容 /
+ * 返回钮与关签钮重叠）是同一形态的三次发作。
+ *
+ * 所以规范只有四件事，本文件逐条给出可机检的实现：
+ *   ① 字档：**三个字档角色**（H / M / S），值全部别名既有令牌（本文件
+ *      :root 块，零裸 px / 零裸色值）。任何提示文字必须落在三档之一。
+ *   ② 安全区：提示文字所在容器挂 `.cv-safe-pad` ⇒ 四边净空全部来自
+ *      `--cv-safe-{top,right,bottom,left}`（sapphire.css:317 起单源出生）。
+ *      **容器自己不写 padding 数值**。
+ *   ③ 零交叠：提示文字的包围盒与任何浮层（顶胶囊/顶行钮/底浮钮带/FAB/
+ *      查找条/浮窗）包围盒**交叠面积 = 0**。判据由
+ *      tests/canvas-hint-safe-area.spec.mjs 逐面实测 getBoundingClientRect。
+ *   ④ 长度与换行：至多 `--cv-hint-lines` 行；超出走 line-clamp 省略号，
+ *      全量文案由 `title` 承载；**禁止**被浮层或容器截断成半个字
+ *      （禁止裸 `nowrap`、禁止 `text-overflow: clip`）。
+ *
+ * 用法（后来者新增一处提示文字的**全部**动作）：
+ *   1. 给元素加 `data-cv-hint="<形态>"`（形态取值见下表，机检按它枚举）；
+ *   2. 若该容器可能与浮层相邻 ⇒ 再挂 `.cv-safe-pad`（不要自己写 padding）；
+ *   3. 文案可能超过一行 ⇒ 元素带 `title`（全量），并接受 3 行上限。
+ * 形态取值（data-cv-hint 的合法值 = 机检白名单 scripts/check-canvas-hint-tokens.mjs）：
+ *   page        面板/页面顶部说明行（标题下的副标题）
+ *   divider     区块之间的分隔说明（小节标签 / 图例）
+ *   empty       空态（列表为空 / 搜索无结果 / 未选中）
+ *   loading     加载中 / 状态字幕
+ *   foot        底部脚注 / 统计行
+ *   tip         悬浮提示（tooltip / 提示条 / hover 注解）
+ *   status      状态强调提示（唯一允许强调色的形态：等待/阻塞/失败注解）
+ * placeholder 输入框占位与输入提示（::placeholder 无元素可标 ⇒ 走令牌）
+ */
+:root {
+  /* ── ① 字档角色（三个，全部别名既有令牌；禁再派生第四档）─────────────
+     出处：css/design-system.css:95  --ds-fs-hint  12px
+           css/design-system.css:96  --ds-fs-meta  11px
+           css/design-system.css:93  --ds-fs-body  13px
+           css/design-system.css:108 --ds-lh-std   1.45
+           css/design-system.css:106 --ds-lh-tight 1
+           css/base.css:61  --color-frame-text-muted #717379 / 暗 #81838a
+           css/base.css:62  --color-frame-text-dim   #aaacb3 / 暗 #7b7e88
+           css/base.css:59  --color-frame-text       #3a3d45 / 暗 #c8cad0
+     三档语义：
+        H（说明行正文）：12px / 400 / 1.45 / muted  —— page、empty 主体、foot 正文档
+        M（微注）：      11px / 400 / 1.00 / dim    —— empty 副句、统计、图例、微注
+        S（强调句首）：  12px / 500 / 1.45 / muted  —— empty 标题、提示条标题
+     颜色只许 muted / dim；frame-text 仅用于 tip 标题（--cv-hint-color-strong）。 */
+  --cv-hint-fs-h: var(--ds-fs-hint);            /* 12 */
+  --cv-hint-fs-m: var(--ds-fs-meta);            /* 11 */
+  --cv-hint-fs-placeholder: var(--ds-fs-body);  /* 13 —— 占位必须与输入本体同档 */
+  --cv-hint-fw: 400;
+  --cv-hint-fw-s: 500;
+  --cv-hint-fw-strong: 600;
+  --cv-hint-lh-h: var(--ds-lh-std);             /* 1.45 */
+  --cv-hint-lh-m: var(--ds-lh-tight);           /* 1 */
+  --cv-hint-color: var(--color-frame-text-muted);
+  --cv-hint-color-dim: var(--color-frame-text-dim);
+  --cv-hint-color-strong: var(--color-frame-text);
+  /* 唯一允许的强调色通道（status 形态专用）：仍是令牌通道，不是色值字面量。 */
+  --cv-hint-color-accent: rgb(var(--sapphire));
+  /* ④ 长度上限：3 行（超长换行 + line-clamp 省略号 + title 承载全量）。 */
+  --cv-hint-lines: 3;
+  /* tip 形态另设上限 6 行：词条定义是悬浮提示里唯一需要「读完」的正文，
+     与其它形态（一句话说明）不同档。判据脚本按形态取上限（H5）。 */
+  --cv-hint-lines-tip: 6;
+}
+
+/* ── ② 安全区消费类（提示文字容器唯一允许的 padding 来源）───────────────
+   四边各自 longhand = 语义可读（写 padding 简写会让「哪一边是安全区」消失），
+   值全部来自 sapphire.css 的 --cv-safe-* 四边令牌（:317 起）。本文件零数值。
+   scroll-padding 同步：容器内跳转/查找命中落到视口边缘时也不许停在浮层底下
+   （与 .canvas-md-scroll 的既有让位块同一纪律）。 */
+.cv-safe-pad {
+  padding-top: var(--cv-safe-top);
+  padding-right: var(--cv-safe-right);
+  padding-bottom: var(--cv-safe-bottom);
+  padding-left: var(--cv-safe-left);
+  scroll-padding-top: var(--cv-safe-top);
+  scroll-padding-bottom: var(--cv-safe-bottom);
+}
+
+/* ── ③ 提示文字基类（data-cv-hint 标记即自动落字档之一）──────────────────
+   为什么用属性选择器而不是新 class：标记本身是**盘点/机检钩子**
+   （脚本 enumerate `[data-cv-hint]`），样式由同一份钩子驱动 ⇒ 后人只加一个
+   属性，样式与判据同时到位，不存在「加了类忘了标记」的半吊子状态。
+   特异性说明：本块是**缺省档**（0,1,0）—— 各面既有规则（如
+   `.plugins-section-hint`）已按规范改好，特异性更高，取它那份（同值）；新
+   代码什么都不写时，本块保证它仍然合规。两边同值由
+   scripts/check-canvas-hint-tokens.mjs 的「同值断言」锁死。 */
+:where([data-cv-hint]) {
+  display: block;
+  font-size: var(--cv-hint-fs-h);
+  font-weight: var(--cv-hint-fw);
+  line-height: var(--cv-hint-lh-h);
+  color: var(--cv-hint-color);
+  /* ④ 换行纪律：中文自然换行 + 长英文/URL 允许断行（不许撑破容器后被动
+     裁剪 —— 那是「半个字」的另一种成因）。 */
+  overflow-wrap: break-word;
+  word-break: normal;
+  min-width: 0;
+  max-width: 100%;
+}
+/* M 档（微注）：分隔说明的小节标签、统计行、图例、微注脚。 */
+:where([data-cv-hint="divider"], [data-cv-hint="foot"], [data-cv-hint="meta"]) {
+  font-size: var(--cv-hint-fs-m);
+  font-weight: var(--cv-hint-fw);
+  line-height: var(--cv-hint-lh-m);
+  color: var(--cv-hint-color-dim);
+}
+/* 说明行正文档（page）：标题下的副标题/说明段，可读性优先（H 档）。 */
+:where([data-cv-hint="page"]) {
+  font-size: var(--cv-hint-fs-h);
+  font-weight: var(--cv-hint-fw);
+  line-height: var(--cv-hint-lh-h);
+  color: var(--cv-hint-color);
+}
+/* 空态：标题句 S 档（12/500/1.45/muted）。副句若需要更淡，用
+   `.cv-hint-sub`（M 档）显式声明，不靠 opacity。 */
+:where([data-cv-hint="empty"]) {
+  font-size: var(--cv-hint-fs-h);
+  font-weight: var(--cv-hint-fw-s);
+  line-height: var(--cv-hint-lh-h);
+  color: var(--cv-hint-color);
+  font-style: normal;
+}
+:where([data-cv-hint="empty"]) .cv-hint-sub {
+  font-size: var(--cv-hint-fs-m);
+  font-weight: var(--cv-hint-fw);
+  line-height: var(--cv-hint-lh-m);
+  color: var(--cv-hint-color-dim);
+}
+/* 加载/状态字幕：与空态同档（同一类「没有内容但有话说」的场合）。 */
+:where([data-cv-hint="loading"]) {
+  font-size: var(--cv-hint-fs-h);
+  font-weight: var(--cv-hint-fw);
+  line-height: var(--cv-hint-lh-h);
+  color: var(--cv-hint-color);
+}
+/* 悬浮提示（tip）：标题 S/strong 色 + 正文 H 档 + 脚注 M 档。
+   三个子件与既有 .nf-term-tip 的 tt/ts/td 同构（那边已按本表改写）。 */
+:where([data-cv-hint="tip"]) {
+  font-size: var(--cv-hint-fs-h);
+  font-weight: var(--cv-hint-fw);
+  line-height: var(--cv-hint-lh-h);
+  color: var(--cv-hint-color);
+}
+.cv-tip-title { font-size: var(--cv-hint-fs-h); font-weight: var(--cv-hint-fw-strong); line-height: var(--cv-hint-lh-h); color: var(--cv-hint-color-strong); }
+.cv-tip-body { font-size: var(--cv-hint-fs-h); font-weight: var(--cv-hint-fw); line-height: var(--cv-hint-lh-h); color: var(--cv-hint-color); }
+.cv-tip-foot { font-size: var(--cv-hint-fs-m); font-weight: var(--cv-hint-fw); line-height: var(--cv-hint-lh-m); color: var(--cv-hint-color-dim); }
+/* 状态强调提示：唯一允许强调色的形态（等待/阻塞注解）。 */
+:where([data-cv-hint="status"]) {
+  font-size: var(--cv-hint-fs-m);
+  font-weight: var(--cv-hint-fw);
+  line-height: var(--cv-hint-lh-m);
+  color: var(--cv-hint-color-accent);
+}
+/* 占位（输入框 ::placeholder）：无元素可标 ⇒ 本块给出唯一写法，各面**引用**
+   这条类或写同值声明（禁另写色值/透明度）。 */
+.cv-hint-placeholder::placeholder {
+  font-size: var(--cv-hint-fs-placeholder);
+  font-weight: var(--cv-hint-fw);
+  line-height: var(--cv-hint-lh-h);
+  color: var(--cv-hint-color-dim);
+  opacity: 1; /* 显式归 1：修前多处用 opacity 变相调色（不是令牌通道） */
+}
+
+/* ── ④ 长度与换行：超长怎么处理 ─────────────────────────────────────────
+   默认形态（.cv-hint-clamp）：换行到 --cv-hint-lines 行封顶，省略号收尾；
+   全量文案由元素的 `title` 承载（机检 H5：被 clamp 且有省略的元素必须有
+   title）。展开形态（data-cv-hint-expand="1"）：不裁剪（用于可展开区块）。
+   单行形态（.cv-hint-oneline）：nowrap + ellipsis —— **省略号是硬要求**，
+   裸 nowrap 会把字切成半个（本批禁止项）。 */
+.cv-hint-clamp {
+  display: -webkit-box;
+  -webkit-line-clamp: var(--cv-hint-lines);
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+[data-cv-hint-expand="1"].cv-hint-clamp {
+  display: block;
+  -webkit-line-clamp: none;
+  overflow: visible;
+}
+.cv-hint-oneline {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* ── 手机档：字档不动（12 / 11 均在手机可读下限之上，面级缩放由
+   mobileLayer.css 统一），安全区随 --cv-safe-* 自动跟随（--cv-safe-top 在
+   mobileLayer.css:378 覆写为 --mchrome-clear 72）—— 本文件**零手机专属规则**
+   是刻意的：有专属规则就会出现「第二个值」。 */

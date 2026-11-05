@@ -1615,10 +1615,14 @@
 @keyframes cfg-toast-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
 /* ── Agent Manager ────────────────────────────────────────────────────── */
+/* 提示文字统一（canvas-hint-text 批）：loading / empty 两态同为
+   `data-cv-hint="empty"`（没有内容但有话说）⇒ H 档 12/400/1.45/muted。 */
 .agent-mgr-loading,
 .agent-mgr-empty {
-  font: 400 var(--ds-fs-meta) -apple-system, sans-serif;
-  color: var(--color-frame-text-muted);
+  font-size: var(--cv-hint-fs-h);
+  font-weight: var(--cv-hint-fw);
+  line-height: var(--cv-hint-lh-h);
+  color: var(--cv-hint-color);
   padding: var(--ds-space-5) var(--ds-space-3);
   text-align: center;
 }
@@ -1717,11 +1721,9 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  /* 顶垫同 #plugins-content：归 .canvas-safe-top 统一安全区（split.css），
-     本处零顶值（只写左右 longhand，不写 padding 简写 —— 简写的 top 槽 = 第二把尺）。
-     canvas-overlap-fix 批 2026-11-05；修前 `padding: var(--ds-space-4) …` = 16。 */
-  padding-right: var(--ds-space-5);
-  padding-left: var(--ds-space-5);
+  /* 内距同 #plugins-content：归 `.cv-safe-pad`（四边安全区令牌），本处零数值。
+     canvas-overlap-fix 批 2026-11-05 修过顶垫；本批把左右也交给安全区，
+     两面从此同一把尺（修前各写 --ds-space-5 = 20）。 */
   scrollbar-color: var(--color-frame-border) transparent;
 }
 #agents-content .agent-mgr-group {
@@ -1771,10 +1773,16 @@
   white-space: nowrap;
 }
 
+/* 内置标记微注（M 档）：修前只有 `font-size: meta` + `opacity: 0.7`，**零字色
+   声明** —— 颜色靠继承碰运气（父是标题就变亮、父是正文就变暗），透明度又不是
+   令牌通道。本批钉成 dim 令牌。 */
 .agent-detail-builtin-note {
   margin-top: var(--ds-space-1);
-  font-size: var(--ds-fs-meta);
-  opacity: 0.7;
+  font-size: var(--cv-hint-fs-m);
+  font-weight: var(--cv-hint-fw);
+  line-height: var(--cv-hint-lh-m);
+  color: var(--cv-hint-color-dim);
+  opacity: 1;
 }
 
 .agent-detail-name {
@@ -1788,10 +1796,15 @@
   color: var(--color-text-muted);
   line-height: 1.4;
 }
+/* 微注（M 档）：继承自父 agent 的说明行。修前 `opacity: 0.7` 变相调淡 ——
+   不是令牌通道（暗档会跌到不可读），本批换成 dim 令牌，透明度归 1。 */
 .agent-detail-extends {
-  font: 400 var(--ds-fs-meta) ui-monospace, SFMono-Regular, monospace;
-  color: var(--color-text-muted);
-  opacity: 0.7;
+  font-size: var(--cv-hint-fs-m);
+  font-weight: var(--cv-hint-fw);
+  line-height: var(--cv-hint-lh-m);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  color: var(--cv-hint-color-dim);
+  opacity: 1;
   margin-top: var(--ds-space-1);
 }
 .agent-detail-section {
@@ -1980,9 +1993,13 @@
   border-color: rgba(91,127,191,0.45);
   color: var(--color-text);
 }
+/* agent 详情面说明行（page 形态，H 档）：修前是 M 档 11px/dim —— 它讲的是
+   「这个面在做什么」，属于页面级说明，按规范走 H 档（12/400/1.45/muted）。 */
 .agent-detail-face-hint {
-  font: 400 var(--ds-fs-meta) -apple-system, sans-serif;
-  color: var(--color-text-muted);
+  font-size: var(--cv-hint-fs-h);
+  font-weight: var(--cv-hint-fw);
+  line-height: var(--cv-hint-lh-h);
+  color: var(--cv-hint-color);
   margin-bottom: var(--ds-space-1h); flex-shrink: 0;
 }
 
@@ -2215,16 +2232,17 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  /* 顶部间隙**不在此处**：canvas 顶行是浮层胶囊（header 悬于面板顶），面板正文
-     必须让到统一安全区之下 —— 故顶垫由 .canvas-safe-top（split.css「统一布局
-     层」块，值 = sapphire.css --cv-safe-top）单点给出。此处**只写左右/底三个
-     longhand，绝不写 padding 简写**：简写里那个 top 槽会把本面板重新变回「自己
-     拥有一份顶垫」的第二把尺，且 id 特异性会压过布局层类（本批第一稿踩过）。
-     canvas-overlap-fix 批 2026-11-05 前此处是 `padding: var(--ds-space-4) …`
-     = 16px 顶垫，面板首块整条压进胶囊带（实测遮挡 30px，作者附图同形）。 */
-  padding-right: var(--ds-space-5);
-  padding-left: var(--ds-space-5);
-  padding-bottom: var(--ds-space-6);
+  /* 内距**一律不在此处**（canvas-hint-text 批 2026-11-05 收口）：
+     面容器挂 `.cv-safe-pad` 后四边净空全部来自 safefour 边安全区令牌
+     （sapphire.css --cv-safe-{top,right,bottom,left}），JS 侧同时保留
+     `.canvas-safe-top` 类（既有 canvas-overlap-head.spec.mjs 的判据选择器，
+     两类的 padding-top 同值同源，不构成第二把尺）。
+     历史三次形态都记在这里，防下次又写回来：
+       · canvas-overlap-fix 前：`padding: var(--ds-space-4) …` = 16 顶垫
+         ⇒ 首块整条压进胶囊带（实测遮挡 30px）；
+       · 该批改成「只写左右/底三个 longhand」；
+       · 本批把这三个也交出去 —— 左右 20 / 底 24 是「面板自己的一把尺」，
+         与同族 agent 面同款数值却由各自硬写，安全区一旦重算就不同步。 */
   scrollbar-color: var(--color-frame-border) transparent;
 }
 #plugins-content > .plugins-section,
@@ -2233,9 +2251,26 @@
   margin-left: auto;
   margin-right: auto;
 }
+/* ── 插件面提示文字（canvas-hint-text 批 2026-11-05：全部收敛到
+   css/canvasHint.css 的三字档角色，本块**零裸 px / 零裸色值**）
+   改前 → 改后（形态 / 角色，vault 规范表逐条对应）：
+     .plugins-loading        loading  H（12/400/1.45/muted）—— 修前 `font: 400
+                             var(--ds-fs-hint)` 简写，行高落浏览器默认（不在档内）
+     .plugins-stats          foot     M（11/500/1/muted）+ tabular
+     .plugins-section-title  divider  M（11/600/1/muted）+ 大写字母距
+     .plugins-section-hint   page     H（12/400/1.45/muted）—— 修前 M 档 + dim，
+                             与「说明行正文」语义不符（小一号又更淡）
+     .plugins-none           empty    H + S 权重（12/500/1.45/muted），修前斜体
+                             M/dim（空态是全屏唯一文案，不该最淡）
+   容器安全区：面根 `#plugins-content` 已挂 `.canvas-safe-top`（顶）；本组提示
+   文字自身不写 padding（内距交给所在区块的族规则）—— 唯一例外是
+   .plugins-loading 的居中留白，它是**块状居中占位**（无相邻浮层），值走
+   --ds-space-* 档，不计入安全区判据。 */
 .plugins-loading {
-  font: 400 var(--ds-fs-hint) -apple-system, sans-serif;
-  color: var(--color-frame-text-muted);
+  font-size: var(--cv-hint-fs-h);
+  font-weight: var(--cv-hint-fw);
+  line-height: var(--cv-hint-lh-h);
+  color: var(--cv-hint-color);
   padding: var(--ds-space-6) var(--ds-space-3);
   text-align: center;
 }
@@ -2256,30 +2291,39 @@
   display: inline-flex;
   align-items: center;
   gap: var(--ds-space-1h);
-  font: 500 var(--ds-fs-meta) ui-monospace, SFMono-Regular, monospace;
+  font-size: var(--cv-hint-fs-m);
+  font-weight: var(--cv-hint-fw-s);
+  line-height: var(--cv-hint-lh-m);
+  font-family: ui-monospace, SFMono-Regular, monospace;
   font-variant-numeric: tabular-nums;
-  color: var(--color-frame-text-muted);
+  color: var(--cv-hint-color);
   white-space: nowrap;
 }
-.plugins-stats-sep { color: var(--color-frame-text-dim); }
+.plugins-stats-sep { color: var(--cv-hint-color-dim); }
 .plugins-section { margin-bottom: var(--ds-space-5); }
 .plugins-section-title {
-  font: 600 var(--ds-fs-meta) -apple-system, sans-serif;
+  font-size: var(--cv-hint-fs-m);
+  font-weight: var(--cv-hint-fw-strong);
+  line-height: var(--cv-hint-lh-m);
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  color: var(--color-frame-text-muted);
+  color: var(--cv-hint-color);
   padding: var(--ds-space-1) var(--ds-space-half) var(--ds-space-1h);
   user-select: none;
 }
 .plugins-section-hint {
-  font: 400 var(--ds-fs-meta) -apple-system, sans-serif;
-  color: var(--color-frame-text-dim);
+  font-size: var(--cv-hint-fs-h);
+  font-weight: var(--cv-hint-fw);
+  line-height: var(--cv-hint-lh-h);
+  color: var(--cv-hint-color);
   padding: 0 var(--ds-space-half) var(--ds-space-2);
 }
 .plugins-none {
-  font: 400 var(--ds-fs-meta) -apple-system, sans-serif;
-  color: var(--color-frame-text-dim);
-  font-style: italic;
+  font-size: var(--cv-hint-fs-h);
+  font-weight: var(--cv-hint-fw-s);
+  line-height: var(--cv-hint-lh-h);
+  color: var(--cv-hint-color);
+  font-style: normal;
 }
 
 /* Plugin cards — glass-control material; .on adds a sapphire whisper edge */

@@ -352,6 +352,8 @@ function ensureSidePanel() {
   // Breadcrumb row (drill-in views only; hidden in merged/root views).
   const crumbs = document.createElement('div');
   crumbs.className = 'wg-crumbs';
+  // canvas-hint-text 批：提示文字机检钩子（形态取值 = css/canvasHint.css 白名单）。
+  crumbs.setAttribute('data-cv-hint', 'foot');
   crumbs.hidden = true;
 
   const detail = document.createElement('div');
@@ -365,10 +367,12 @@ function ensureSidePanel() {
 
   const stats = document.createElement('div');
   stats.className = 'wg-stats';
+  stats.setAttribute('data-cv-hint', 'foot');
 
   // 图例注明（作者令 2026-10-22：滚轮/捏合约定写进图例——左栏为家，canvas 保纯）。
   const hint = document.createElement('div');
   hint.className = 'wg-hint';
+  hint.setAttribute('data-cv-hint', 'divider');
   hint.textContent = t('wiki.inputHint');
 
   side.append(head, crumbs, buildSearchBox(), buildChipsGroup(), detail, broken, stats, hint);
@@ -493,7 +497,9 @@ function buildDetailSkeleton() {
   const frag = document.createElement('div');
   frag.className = 'wg-detail-card';
   const empty = document.createElement('div');
-  empty.className = 'wg-detail-empty';
+  empty.className = 'wg-detail-empty cv-hint-clamp';
+  empty.setAttribute('data-cv-hint', 'empty');
+  empty.title = t('wiki.detailEmpty');
   empty.textContent = t('wiki.detailEmpty');
   const body = document.createElement('div');
   body.className = 'wg-detail-body';
@@ -530,6 +536,7 @@ function buildPaneBar() {
   bar.className = 'wg-panebar';
   const stats = document.createElement('div');
   stats.className = 'wg-stats';
+  stats.setAttribute('data-cv-hint', 'foot');
   bar.append(buildVaultSwitch(), buildSearchBox(), buildChipsGroup(), stats);
   return bar;
 }

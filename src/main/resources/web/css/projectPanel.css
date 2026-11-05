@@ -267,9 +267,13 @@
   color: var(--color-text-muted);
 }
 
+/* 「空」标记（empty 形态 · M 档）：项目/团队卡上「暂无描述」这类行内空态标记。 */
 .project-empty-tag {
-  font: 500 var(--ds-fs-meta)/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  color: var(--color-text-muted);
+  font-size: var(--cv-hint-fs-m);
+  font-weight: var(--cv-hint-fw-s);
+  line-height: var(--cv-hint-lh-m);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--cv-hint-color);
   margin-left: var(--ds-space-1h);
   padding: var(--ds-space-half) var(--ds-space-1h);
   border-radius: var(--ds-radius-badge);
@@ -767,15 +771,18 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .delegate-chain-v
   line-height: 1.45;
   color: var(--color-frame-text-muted);
 }
-/* 远端选中语义提示行（设计稿 A4）：info 图标（--sapphire）+ 一句执行绑定语义。 */
+/* 远端选中语义提示行（设计稿 A4）：info 图标（--sapphire）+ 一句执行绑定语义。
+   canvas-hint-text 批：page 形态 ⇒ H 档 12/400/1.45/muted（修前裸 `line-height:
+   1.5` + `--ds-fs-hint`，行高不在三档内）。 */
 .dev-hintline {
   display: flex;
   align-items: flex-start;
   gap: var(--ds-space-1h);
   margin: -4px 0 14px;
-  font-size: var(--ds-fs-hint);
-  line-height: 1.5;
-  color: var(--color-frame-text-muted);
+  font-size: var(--cv-hint-fs-h);
+  font-weight: var(--cv-hint-fw);
+  line-height: var(--cv-hint-lh-h);
+  color: var(--cv-hint-color);
 }
 .dev-hintline svg { width: 12px; height: 12px; margin-top: var(--ds-space-half); flex: 0 0 auto; color: rgb(var(--sapphire)); }
 /* 远端回显 chip（创建弹层路径行 + 选择器面包屑共用一件）：hard-drive 图形 + 设备名，

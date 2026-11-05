@@ -102,10 +102,14 @@
   max-height: 320px;
   overflow: auto;
 }
+/* 空态（empty 形态 · M 档）：canvas-hint-text 批统一字档；修前色值带裸
+   rgba 兜底（`rgba(128,128,128,0.9)`），本批只留令牌。 */
 .nf-fc-empty {
   padding: var(--ds-space-2);
-  font-size: var(--ds-fs-meta);
-  color: var(--color-text-muted, rgba(128, 128, 128, 0.9));
+  font-size: var(--cv-hint-fs-m);
+  font-weight: var(--cv-hint-fw);
+  line-height: var(--cv-hint-lh-m);
+  color: var(--cv-hint-color);
 }
 
 /* unified diff body */
@@ -500,11 +504,13 @@ span.nf-rcpt-note { cursor: default; }
   flex-direction: column;
   gap: var(--ds-space-1);
 }
+/* 空态（empty 形态 · H 档）：同上一处，行高从裸 1.5 收进 --cv-hint-lh-h。 */
 .nfp-empty {
   padding: var(--ds-space-block-y) var(--ds-space-1h);
-  font-size: var(--ds-fs-hint);
-  line-height: 1.5;
-  color: var(--color-text-muted, rgba(128, 128, 128, 0.9));
+  font-size: var(--cv-hint-fs-h);
+  font-weight: var(--cv-hint-fw);
+  line-height: var(--cv-hint-lh-h);
+  color: var(--cv-hint-color);
 }
 .nfp-list {
   display: flex;

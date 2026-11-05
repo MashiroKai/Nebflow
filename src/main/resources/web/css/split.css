@@ -1789,7 +1789,14 @@ body.mobile-layer #canvas-head-close { display: none !important; }
   min-width: 0;
   max-width: 100%;
 }
-.deck-card .n-sub { flex: none; font-size: var(--ds-fs-meta); color: var(--color-text-muted); }
+/* 叠层卡副标题（foot/meta 形态 · M 档）：卡头第二行的定位信息（项目名/时间）。 */
+.deck-card .n-sub {
+  flex: none;
+  font-size: var(--cv-hint-fs-m);
+  font-weight: var(--cv-hint-fw);
+  line-height: var(--cv-hint-lh-m);
+  color: var(--cv-hint-color);
+}
 .deck-card .card-thumb {
   flex: 1;
   min-height: 0;
@@ -2530,13 +2537,17 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   background: var(--color-text-muted);
   opacity: 0.55;
 }
+/* 阅读进度悬浮提示（tip 形态 · M 档）：修前 `line-height: 1.2` 是裸值（第 N 把
+   行高尺），本批收进 --cv-hint-lh-m（1）。white-space: nowrap 保留但**这条是
+   单行短文本**（数字页码），且父级不给它 overflow:hidden ⇒ 不会切字。 */
 .epub-progress-tip {
   position: absolute;
   bottom: calc(100% + 2px);
   transform: translateX(-50%);
-  font-size: var(--ds-fs-meta);
-  line-height: 1.2;
-  color: var(--color-text-muted);
+  font-size: var(--cv-hint-fs-m);
+  font-weight: var(--cv-hint-fw);
+  line-height: var(--cv-hint-lh-m);
+  color: var(--cv-hint-color);
   white-space: nowrap;
   pointer-events: none;
   font-variant-numeric: tabular-nums;
@@ -2595,10 +2606,13 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   padding: var(--ds-space-half) var(--ds-space-1h) var(--ds-space-2);
   flex: none;
 }
+/* 目录标题（divider 形态 · M 档 / strong 权重）：修前 `--ds-fs-hint`(12) +
+   muted —— 与同面板其它分隔标签（M 档）不同档。 */
 .epub-toc-title {
-  font-weight: 600;
-  font-size: var(--ds-fs-hint);
-  color: var(--color-text-muted);
+  font-size: var(--cv-hint-fs-m);
+  font-weight: var(--cv-hint-fw-strong);
+  line-height: var(--cv-hint-lh-m);
+  color: var(--cv-hint-color);
 }
 .epub-toc-list {
   flex: 1 1 auto;
@@ -3659,10 +3673,22 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="markdown"] .canvas-find-togg
   color: var(--color-text); font-size: var(--ds-fs-body);
   font-family: inherit;
 }
-.nf-findbar-input::placeholder { color: var(--color-text-muted); opacity: .7; }
+/* ── 搜索面提示文字（canvas-hint-text 批 2026-11-05：占位 + 计数字档统一）──
+   形态 placeholder：占位与输入本体同档（--cv-hint-fs-placeholder 13）且色走
+   dim 令牌；修前 `color: var(--color-text-muted); opacity: .7` = 令牌 + 透明度
+   变相调淡（暗档会掉到 3:1 以下）。形态 foot：计数行 M 档 11/tabular。 */
+.nf-findbar-input::placeholder {
+  font-size: var(--cv-hint-fs-placeholder);
+  font-weight: var(--cv-hint-fw);
+  color: var(--cv-hint-color-dim);
+  opacity: 1;
+}
 .nf-findbar-count {
   min-width: var(--cv-findbar-count-w, 44px); text-align: center;
-  font-size: var(--ds-fs-meta); color: var(--color-text-muted);
+  font-size: var(--cv-hint-fs-m);
+  font-weight: var(--cv-hint-fw);
+  line-height: var(--cv-hint-lh-m);
+  color: var(--cv-hint-color);
   font-variant-numeric: tabular-nums;
 }
 .nf-findbar-btn {
@@ -3700,19 +3726,23 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
    Restrained collapsible section at the document foot: incoming graph
    references only. Rendered ONLY when the doc is in a vault AND has ≥1
    backlink — docs outside every vault (repo reports/ 等) stay silent. */
+/* 文末脚注（foot 形态）：canvas-hint-text 批收敛 —— 字档 H（12/400/1.45）+
+   muted 令牌；子件的 opacity 0.85/0.7/0.6 三档全部退役（透明度不是令牌通道，
+   暗档会跌破 4.5:1），层次改用 M 档 + dim 令牌表达。 */
 .canvas-md-viewer .nf-backlinks {
   margin: 22px 0 var(--ds-space-half);
   padding-top: var(--ds-space-block-y);
   border-top: 1px solid var(--color-border, #ddd);
-  font-size: var(--ds-fs-hint);
-  color: var(--color-text-dim, #6b6e76);
+  font-size: var(--cv-hint-fs-h);
+  font-weight: var(--cv-hint-fw);
+  line-height: var(--cv-hint-lh-h);
+  color: var(--cv-hint-color);
 }
 .canvas-md-viewer .nf-backlinks summary {
   cursor: pointer;
   user-select: none;
-  opacity: 0.85;
 }
-.canvas-md-viewer .nf-backlinks summary:hover { opacity: 1; }
+.canvas-md-viewer .nf-backlinks summary:hover { color: var(--cv-hint-color-strong); }
 .canvas-md-viewer .nf-backlinks ul {
   margin: var(--ds-space-2) 0 var(--ds-space-half) var(--ds-space-5);
   padding: 0;
@@ -3720,13 +3750,17 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
 .canvas-md-viewer .nf-backlinks li { margin: var(--ds-space-1) 0; }
 .canvas-md-viewer .nf-backlinks .nf-backlink-anchor {
   margin-left: var(--ds-space-1h);
-  font-size: var(--ds-fs-meta);
-  opacity: 0.7;
+  font-size: var(--cv-hint-fs-m);
+  font-weight: var(--cv-hint-fw);
+  line-height: var(--cv-hint-lh-m);
+  color: var(--cv-hint-color-dim);
 }
 .canvas-md-viewer .nf-backlinks .nf-backlink-project {
   margin-left: var(--ds-space-1h);
-  font-size: var(--ds-fs-meta);
-  opacity: 0.6;
+  font-size: var(--cv-hint-fs-m);
+  font-weight: var(--cv-hint-fw);
+  line-height: var(--cv-hint-lh-m);
+  color: var(--cv-hint-color-dim);
 }
 
 /* Reference-jump flash: the target paragraph glows once (~1.8s) then settles. */
@@ -3853,14 +3887,21 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
   cursor: default;
 }
 .nf-term-tip.touch { pointer-events: auto; cursor: pointer; }
-.nf-term-tip .tt { font-weight: 600; font-size: var(--ds-fs-body); margin-bottom: var(--ds-space-1); word-break: break-word; }
+/* 悬浮提示（tip 形态）三段字档（canvas-hint-text 批 2026-11-05）：
+   标题 = S 档 strong（12/600/1.45）· 正文 = H 档（12/400/1.45/muted，修前
+   `line-height: 1.55` 是裸值 = 第六把行高尺，收进 --cv-hint-lh-h）·
+   脚注 = M 档（11/400/1/dim）。正文行数上限 = --cv-hint-lines-tip（6）：
+   词条定义是**悬浮提示里唯一需要读完的正文**，故 tip 形态另有上限档，
+   判据脚本按形态取上限（H5）。 */
+.nf-term-tip .tt { font-size: var(--cv-hint-fs-h); font-weight: var(--cv-hint-fw-strong); line-height: var(--cv-hint-lh-h); color: var(--cv-hint-color-strong); margin-bottom: var(--ds-space-1); word-break: break-word; }
 .nf-term-tip .ts {
-  color: var(--color-frame-text, var(--color-text-muted));
-  font-size: var(--ds-fs-hint);
-  line-height: 1.55;
-  display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden;
+  color: var(--cv-hint-color);
+  font-size: var(--cv-hint-fs-h);
+  font-weight: var(--cv-hint-fw);
+  line-height: var(--cv-hint-lh-h);
+  display: -webkit-box; -webkit-line-clamp: var(--cv-hint-lines-tip); -webkit-box-orient: vertical; overflow: hidden;
 }
-.nf-term-tip .td { color: var(--color-frame-text-dim, var(--color-text-muted)); font-size: var(--ds-fs-meta); margin-top: var(--ds-space-1h); }
+.nf-term-tip .td { color: var(--cv-hint-color-dim); font-size: var(--cv-hint-fs-m); font-weight: var(--cv-hint-fw); line-height: var(--cv-hint-lh-m); margin-top: var(--ds-space-1h); }
 /* 第三行（来源文档 / 跳转提示）撤掉后不占位（term-system-v2 词条视觉面批
    2026-11-05：文档名归词条索引块，气泡只剩词条名 + 定义）。 */
 .nf-term-tip .td:empty { display: none; }
@@ -4096,7 +4137,7 @@ body.wg-side-active #panel-sessions #explorer-section { display: none; }
 .wg-switch-select option { color: var(--color-frame-text); background: var(--color-surface, #fff); }
 
 /* Breadcrumb row (#744-B drill-in views): X › sub › …, last crumb static. */
-.wg-crumbs { flex: none; font-size: var(--ds-fs-hint); color: var(--color-frame-text-muted); padding: 0 var(--ds-space-half); }
+.wg-crumbs { flex: none; font-size: var(--cv-hint-fs-m); font-weight: var(--cv-hint-fw); line-height: var(--cv-hint-lh-m); color: var(--cv-hint-color); padding: 0 var(--ds-space-half); }
 .wg-crumbs .crumb {
   border: 0; background: transparent; padding: 0; font: inherit; font-size: var(--ds-fs-hint);
   color: var(--color-frame-text-muted); cursor: pointer;
@@ -4124,7 +4165,9 @@ body.wg-side-active #panel-sessions #explorer-section { display: none; }
   border: 0; outline: 0; background: transparent;
   color: var(--color-frame-text); font: inherit; font-size: var(--ds-fs-hint); width: 100%;
 }
-.wg-search-input::placeholder { color: var(--color-frame-text-muted); }
+/* 占位（placeholder 形态）：色走 dim 令牌、透明度归 1（修前只写 muted，暗档
+   与输入本体几乎同色 ⇒ 占位不像占位）。 */
+.wg-search-input::placeholder { font-size: var(--cv-hint-fs-placeholder); font-weight: var(--cv-hint-fw); color: var(--cv-hint-color-dim); opacity: 1; }
 .wg-chips { display: flex; gap: var(--ds-space-1h); flex-wrap: wrap; }
 /* chips 与搜索框同属 frosted 家族（2026-10-22 作者令「全站一套毛玻璃」）：
    --glass-bg / blur(--glass-blur) saturate(1.4) / --glass-border /
@@ -4152,7 +4195,15 @@ body.wg-side-active #panel-sessions #explorer-section { display: none; }
   border-top: 1px solid var(--color-frame-border);
   padding-top: var(--ds-space-block-y);
 }
-.wg-detail-empty { color: var(--color-frame-text-dim); font-size: var(--ds-fs-hint); padding: var(--ds-space-half) 0 var(--ds-space-1h); }
+/* 详情区空态（empty 形态，H 档 12/400/1.45/muted）：修前 dim + `--ds-fs-hint`
+   —— 全屏唯一文案却用最淡档，与规范「空态主体走 H/muted」不符。 */
+.wg-detail-empty {
+  font-size: var(--cv-hint-fs-h);
+  font-weight: var(--cv-hint-fw);
+  line-height: var(--cv-hint-lh-h);
+  color: var(--cv-hint-color);
+  padding: var(--ds-space-half) 0 var(--ds-space-1h);
+}
 .wg-detail-body header {
   display: flex; align-items: flex-start; justify-content: space-between; gap: var(--ds-space-2);
 }
@@ -4222,19 +4273,29 @@ body.wg-side-active #panel-sessions #explorer-section { display: none; }
 .wg-broken .row:hover b { text-decoration: underline; }
 .wg-broken .row.more { cursor: default; }
 
-/* Stats line (统计行): N 篇文档 · N 条引用 · N 条未解析. */
+/* Stats line (统计行): N 篇文档 · N 条引用 · N 条未解析.
+   canvas-hint-text 批：foot 形态 ⇒ M 档（11/500/1/muted），修前写的是
+   `--ds-fs-hint`(12) + muted —— 与同面板的图例行（M 档）字号不一致。 */
 .wg-stats {
   flex: none; padding-top: var(--ds-space-2);
   border-top: 1px solid var(--color-frame-border);
-  color: var(--color-frame-text-muted); font-size: var(--ds-fs-hint);
+  font-size: var(--cv-hint-fs-m);
+  font-weight: var(--cv-hint-fw-s);
+  line-height: var(--cv-hint-lh-m);
+  color: var(--cv-hint-color);
   font-variant-numeric: tabular-nums;
 }
 
 /* Input-convention legend line (图例注明, 作者令 2026-10-22): the wheel/pinch
-   contract lives here — the canvas itself stays pure. */
+   contract lives here — the canvas itself stays pure.
+   canvas-hint-text 批：divider 形态 ⇒ M 档 / dim（原样即 M + dim，改写只为
+   让字档来源单点 = css/canvasHint.css 的三字档令牌）。 */
 .wg-hint {
   flex: none; padding-top: var(--ds-space-1);
-  color: var(--color-frame-text-dim); font-size: var(--ds-fs-meta);
+  font-size: var(--cv-hint-fs-m);
+  font-weight: var(--cv-hint-fw);
+  line-height: var(--cv-hint-lh-m);
+  color: var(--cv-hint-color-dim);
 }
 
 /* Narrow panel (container query — the sidebar column is resizable; the
@@ -4618,6 +4679,20 @@ body.mobile-layer .canvas-viewer-safe-top {
 .canvas-safe-top {
   padding-top: var(--cv-safe-top, calc(var(--cv-head-h, 36px) + 20px));
   scroll-padding-top: var(--cv-safe-top, calc(var(--cv-head-h, 36px) + 20px));
+}
+
+/* ── Canvas 安全区 · 四边落地（canvas-hint-text 批 2026-11-05）─────────────
+   本块是四边安全区令牌的**唯一覆写点**：sapphire.css 出生时 `--cv-safe-bottom`
+   只是地板 16（无人实测时的兜底），真值 = 底部浮钮带实测（JS 以
+   `--canvas-bottom-clearance` 发布到 pane 的 inline style，见 viewers/shared.js
+   syncBottomClearance:1022）。为什么在 .canvas-tab-pane 上重定义而不是在 root：
+   自定义属性的 var() 在**声明所在元素**上替换 —— 写 root 会在 root 处取到
+   「未定义 ⇒ 0」并把 0 一路继承下去；写在 pane 上（实测值也落在 pane）才拿得
+   到真值，且下游所有容器继承的就是解析后的真值。
+   消费面 = css/canvasHint.css 的 `.cv-safe-pad`（提示文字容器的唯一 padding
+   来源）。改这一处 ⇒ 四边安全区对全 Canvas 同时生效，不存在第二个值。 */
+.canvas-tab-pane {
+  --cv-safe-bottom: max(var(--ds-space-4), var(--canvas-bottom-clearance, 0px));
 }
 
 /* ── 底部浮钮让位：滚动面末尾安全留白（canvas 正文底部遮挡修复批 2026-11-05）──

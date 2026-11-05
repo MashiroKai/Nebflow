@@ -377,7 +377,7 @@ export function nodeHtml(n, pos, originX, nameOf, opts = {}) {
       <div class="fm-node-head${queueFlag ? ' fm-head-queued' : ''}">${o.headPrefix || ''}${worktreeBadge}${flags}${queueFlag}${statusIcon}${statusWord}${chainChev}</div>
       <div class="solar-node-label" title="${esc(n.name)}">${esc(n.name)}</div>
       ${subHtml}
-      ${st === 'pending' && (n.in || []).length > 1 ? `<div class="fm-barrier-hint">barrier ×${(n.in || []).length}</div>` : ''}
+      ${st === 'pending' && (n.in || []).length > 1 ? `<div class="fm-barrier-hint" data-cv-hint="status">barrier ×${(n.in || []).length}</div>` : ''}
       ${waitNote}
       ${desc}
     </div>`;

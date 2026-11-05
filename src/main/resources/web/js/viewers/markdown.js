@@ -729,6 +729,7 @@ async function renderBacklinks(mdViewer, absPath) {
   }
   const details = document.createElement('details');
   details.className = 'nf-backlinks';
+  details.setAttribute('data-cv-hint', 'foot');   // canvas-hint-text 批：文末脚注形态
   const summary = document.createElement('summary');
   summary.textContent = `${t('wiki.backlinks')} · ${incoming.length}`;
   details.appendChild(summary);

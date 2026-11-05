@@ -447,8 +447,14 @@ body.mobile-layer .note-dock .ds-resize-handle {
   font: 400 13.5px -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Segoe UI', Roboto, sans-serif;
   line-height: 1.4; color: var(--color-text); caret-color: var(--color-primary);
 }
+/* 占位（placeholder 形态）：canvas-hint-text 批 —— 色走 dim 令牌、透明度显式
+   归 1（修前只写 `--color-text-muted`，与输入本体色太近，占位不像占位；字档
+   跟随 textarea 本体 13.5px，与 --cv-hint-fs-placeholder 13 的「同档」原则一致）。 */
 .ask-input textarea::placeholder,
-.note-body textarea::placeholder { color: var(--color-text-muted); }
+.note-body textarea::placeholder {
+  color: var(--cv-hint-color-dim);
+  opacity: 1;
+}
 /* 发送钮 / 中断钮：**零本地形态**（作者令 ui-unification-20261103-canvas-ask-resize
  * 「发送按钮与终止按钮样式与主会话完全统一（同一组件/同一 design-system 令牌，
  * 不得另做一套）」）。
