@@ -597,17 +597,44 @@ final class FriendService(
   /**
    * 拉会话列表，合并未读 cursor。内嵌 `friend` 档案同样盖本地备注（⑦：
    * conversations 面与 `GET /api/friends` 面出参口径一致）。
+   *
+   * 🔴 后台刷新语义（失败折叠空列表）：`refreshAll` / 重连链吃的是本方法，上游
+   * 故障不该在那里变成异常（那里没有 UI 错误面，折叠 = keep-last-known 的同族
+   * 口径）。REST 直通面**禁**用本方法 —— 走 [[listConversations]]（空态诚实批
+   * 2026-11-05）。
    */
   def refreshConversations(): IO[List[ConversationSummary]] =
+    listConversations.map(_.getOrElse(Nil))
+
+  /**
+   * 会话列表 **REST 直通**（empty-state-must-not-lie 批 · 2026-11-05）：上游 `Left`
+   * **原样上抛**，由网关按既有单点判据（`RestApiCtx.friendErr`）落成可区分状态码
+   * —— 未登录 ⇒ 401 `code=neblink_not_logged_in`；其余上游失败 ⇒ 502
+   * `code=neblink_upstream_failed`。
+   *
+   * 修前形态（`refreshConversations` 单点）：`Left(err) => logger.warn(...).as(Nil)`
+   * ⇒ 网关给前端恒 200 + `[]`，而前端把 `[]` 画成「暂无会话」= **把「拿不到」
+   * 伪装成「确实没有」**。事故现场 = 2026-11-05 08:18:02.798
+   * `listConversations failed: Not logged in`（登录面 150ms 后才就绪）：同一条件
+   * 改前读 200+`[]`，改后读 401+code。
+   *
+   * 与 `listFriends` / `refreshFriends` 是**同一对偶**（F4 分态穿透先例）：后台
+   * 折叠版 + REST 直通版，判据只有一份（备注/bio/未读合并都在这一个出口）。
+   */
+  def listConversations: IO[Either[String, List[ConversationSummary]]] =
     withClient(_.listConversations).flatMap {
-      case Left(err) => logger.warn(s"listConversations failed: $err").as(Nil)
+      case Left(err) =>
+        logger.warn(s"listConversations failed: $err").as(
+          Left(err): Either[String, List[ConversationSummary]]
+        )
       case Right(convs) =>
+        // 件一（2026-11-02）：内嵌 `friend` 档案的第二个描述（bio）同样在此合并
+        // —— 与 `GET /api/friends` 同一出口口径（禁各调用点自行 map）。
         applyRemarksToConvs(convs)
-          // 件一（2026-11-02）：内嵌 `friend` 档案的第二个描述（bio）同样在此合并
-          // —— 与 `GET /api/friends` 同一出口口径（禁各调用点自行 map）。
           .flatMap(applyFriendBiosToConvs)
           .flatMap(_.traverse(c => guard.mergeUnread(c).map(_ => c)))
           .flatTap(cs => logger.debug(s"Refreshed ${cs.size} conversations"))
+          .map(Right(_): Either[String, List[ConversationSummary]])
     }
 
   /**
