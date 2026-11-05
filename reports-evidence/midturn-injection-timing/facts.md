@@ -293,3 +293,15 @@ L4 仍断言「第二个边界的请求里该正文恰出现 1 次」。**为何
 L4 幂等（那条曾出现一次红的断言）在合并后的树上**连跑两次都是 1 次注入**，且夹具已按 §8.2-b
 清空 `<dataRoot>/sessions` ⇒ 可复现地绿。
 
+### 9.3 二次并 main（rich-render 批）与最终 HEAD 证据
+
+- main 在 §9.2 之后又前进了 `48e26998e`（rich-render / mermaid 前端批：`svgInk.js` / `svgFence.js` /
+  `mathRender.js` / `tests/rich-render.spec.mjs` 等）。已再并一次：合并 commit **`ae9afaae5`**（零冲突）。
+- 并后**判据**：`git diff --stat main HEAD -- src/main/scala src/test/scala` = **空**（本批的
+  Scala 主源码与 spec 与 main 树逐字节一致 ⇒ §9.2 的矩阵读数（含合并后反向验红）对本树仍然成立）；
+  两次合并带来的差异全在前端资源文件，与三条注入腿无关。
+- 最终 HEAD（`ae9afaae5`）上的收尾跑：
+  `logs/final-green-ae9afaae5-20261105_094943.log` = `MidTurnInjectionTimingSpec`(8) +
+  邻居三套(21) 单次 `testOnly` 合计 **`Passed: Total 29, Failed 0, Errors 0, Passed 29`**，
+  其中 `L1b inBoundaryRequest=Some(true) landing=1,2`、`L4 afterBoundary1=Some(1) afterBoundary2=Some(1)`。
+
