@@ -4244,3 +4244,38 @@ body.mobile-layer .canvas-viewer-safe-top {
 #canvas-content .canvas-md-scroll.canvas-viewer-safe-top {
   padding-top: calc(var(--capsule-h, 36px) + 16px);
 }
+
+/* ── 底部浮钮让位：滚动面末尾安全留白（canvas 正文底部遮挡修复批 2026-11-05）──
+   作者报障 2026-11-05 12:09（逐字）「因为我们现在canvas的文档的底部不是有按钮吗，
+   按钮会挡住底部的文字，所以要允许文档再进一步上滑，保证最底部的文字能够呈现在
+   按钮之上。不会被遮挡。」
+
+   语义（与上方顶垫块成对）：底部浮钮簇（源码 <> / 引用 / 查找 / 缩放条 + 壳层
+   刷新钮）是 absolute 浮层、不占流内位置，正文照旧铺到面板底缘 ⇒ 滚到底时末行
+   停在钮带底下（改前桌面实测 36px 重叠）。本块给**滚动面末尾**垫出 = 浮钮带实测
+   高度 + 呼吸缝的留白，滚到底时末行刚好停在钮带之上，再上滑也滑不动了（垫高即
+   可滚动余量本身，不会多出一段空）。
+
+   **值只有一个来源：JS 实测**（viewers/shared.js syncBottomClearance —— pane 上的
+   --canvas-bottom-clearance = 浮钮带顶到面板底缘 + 12 呼吸）。本块绝不写死像素：
+   钮档会变（桌面 --cv-size-circle 40 / 手机 --mtap-lg 48）、面板变窄时 html 缩放条
+   会回落第二行、刷新钮满座会下移一行 —— 任何常量都会在某个档位失真（手机档
+   2026-11-02 批的 76px 就是 16+48+12 那一个档的读数，本批把它降级为地板值，
+   见 mobileLayer.css 的 max() 形态）。变量缺省 0 ⇒ 无浮钮 / 未接线时零留白。
+
+   覆盖面 = 三个「正文自持滚动面」：md 面（.canvas-md-scroll）、纯文本面
+   （.canvas-txt-scroll）、pane 自滚族（.canvas-tab-pane.scrollable —— docx /
+   yaml / xlsx / pptx / 错误态）。opaque 说明：pdf 页流（.pdf-pages）、epub 分页面
+   （.epub-reader-viewport）、monaco 编辑面、html iframe 面不在本批（分页/编辑/
+   外来文档各有自持几何，不在本次报障面内，见批报告「未覆盖面」）。
+
+   位置纪律：本块置文件尾 —— padding-bottom 需压过 .canvas-txt-scroll 的 padding
+   简写（split.css:2543）与它 560px 断点的 padding 简写（split.css:2571），
+   同特异性下按源码序取后者。 */
+.canvas-md-scroll,
+.canvas-txt-scroll,
+.canvas-tab-pane.scrollable {
+  padding-bottom: var(--canvas-bottom-clearance, 0px);
+  /* 跳转类落点（引用跳转 / 查找命中 roll-into-view）也不许停在钮带底下。 */
+  scroll-padding-bottom: var(--canvas-bottom-clearance, 0px);
+}

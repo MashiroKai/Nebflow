@@ -1,0 +1,86 @@
+
+===== reseat-target : node tests/reseat-target.test.mjs =====
+EXIT=0  (reseat-target)
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 7.029542
+
+===== canvas-chrome-size-align : node tests/canvas-chrome-size-align.spec.mjs =====
+EXIT=0  (canvas-chrome-size-align)
+PASS  手机-light 读数 = 100%（文本未被改写成按钮）  — 100%
+PASS  手机-light 零 pageerror
+
+═══ canvas-chrome-size-align: 63 PASS / 0 FAIL ═══
+
+===== ui-seven-canvas-chrome : node tests/ui-seven-canvas-chrome.spec.mjs =====
+EXIT=0  (ui-seven-canvas-chrome)
+PASS  手机-375 ⑩f 手机腿渲染盒零相交（条/钮 vs 环带签/小点/左右浮钮/ask）  — clean
+PASS  手机-375 零 pageerror
+
+═══ ui-seven-canvas-chrome: 41 PASS / 0 FAIL ═══
+
+===== canvas-ask-dock : node tests/canvas-ask-dock.spec.mjs =====
+EXIT=0  (canvas-ask-dock)
+PASS  T9c 列可视 max-h 落在加高档 [320,420] 且 = colwrap 档（无带档扣减；旧 194 必红）  — {"col":"388.24px","wrap":"388.24px"}
+PASS  T9d 气泡列表面横滑零切卡（peek 不亮 + dock 不被误关）  — {"peek":false,"dockClosed":false}
+
+=== canvas-ask-dock: 76 pass, 0 fail ===
+
+===== canvas-glass-unify : node tests/canvas-glass-unify.spec.mjs =====
+EXIT=0  (canvas-glass-unify)
+PASS  GU-L1c 亮档：堆叠钮 = 模板逐项相等
+PASS  R0c 亮档腿零 JS 错误
+
+canvas-glass-unify: 30 PASS / 1 FAIL
+
+===== mdscroll-toc-scroll : node tests/mdscroll-toc-scroll.spec.mjs =====
+EXIT=0  (mdscroll-toc-scroll)
+  PASS  R5-h `href="#"` 仍清屏到顶（帧内 scrollTop → 0） — scrollTop=0
+  PASS  🎯 R5-i 残量条件下 `href="#"` 零泄露：宿主滚动链位移 = 0 — 无变动
+
+═══ mdscroll-toc-scroll (chromium): 30 PASS / 0 FAIL ═══
+
+===== canvas-hover-no-pixel-shift : node tests/canvas-hover-no-pixel-shift.spec.mjs =====
+EXIT=0  (canvas-hover-no-pixel-shift)
+PASS  H7b 手机端 hover 标题：不挂 .capsule-ring-open + 图片零位移 + 顶垫不变  — padTop 72→72 Δ=0px cls=
+PASS  H8 手机层腿零 JS 错误
+
+canvas-hover-no-pixel-shift: 17 PASS / 0 FAIL
+
+===== reader-p0 : node tests/reader-p0.spec.mjs =====
+EXIT=0  (reader-p0)
+  ✓ A9 图片查看面 padding-top ≥ 52px
+  [shot] /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-canvas-bottom-clearance/.nebflow/evidence/20261105T04513_reader-p0/a9-mobile-top-pad.png
+
+== 29/29 项通过 ==
+
+===== reader-p1 : node tests/reader-p1.spec.mjs =====
+EXIT=0  (reader-p1)
+  [shot] /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-canvas-bottom-clearance/.nebflow/evidence/20261105T04514_reader-p1/md-plain-batch7.png
+  ✓ md 腿零 pageerror
+
+== 56/56 项通过 ==
+
+===== pw-canvas-file-refresh : npx playwright test tests/canvas-file-refresh.spec.mjs =====
+EXIT=0  (pw-canvas-file-refresh)
+[canvas-file-refresh] preloaded source-open latency: 168ms (budget 1500ms)
+  ✓  9 tests/canvas-file-refresh.spec.mjs:408:3 › view-source latency › A7 preloaded source open mounts within the performance budget (1500ms) (782ms)
+
+  9 passed (10.9s)
+
+===== pw-ask-sheet-fade-height : npx playwright test tests/ask-sheet-fade-height.spec.mjs =====
+EXIT=0  (pw-ask-sheet-fade-height)
+PASS  Z 页面零 pageerror  — []
+  ✓  1 tests/ask-sheet-fade-height.spec.mjs:155:3 › doc ask sheet · top fade + message area height › A fade · B hit-test · C height · D same-source · E table regression (6.8s)
+
+  1 passed (7.8s)
+
+===== pw-canvas-card-window : npx playwright test tests/canvas-card-window.spec.mjs =====
+EXIT=1  (pw-canvas-card-window)
+Error: No tests found.
+Make sure that arguments are regular expressions matching test files.
+You may need to escape symbols like "$" or "*" and quote the arguments.
+
+
+===== done =====
