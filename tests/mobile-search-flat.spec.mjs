@@ -552,7 +552,9 @@ test('mobile-search-flat: messages + contacts（九组判据，双页同源）',
     if (pageId === 'messages') {
       // 既有行为不破坏：输入即搜（结果组出现）+ 清空回列表。
       await expect(page.locator(`${secSel} .mh-sr-group`).first()).toBeVisible({ timeout: 8000 });
-      await page.locator(`${secSel} .mh-search-clear`).click();
+      // 清空钮给显式短超时：locator.click 在不可点时按**测试总超时**阻塞（`.catch`
+      // 拦不住已发出的调用）—— 实测曾把整条判据挂到 4 分钟才被引擎判超时。
+      await page.locator(`${secSel} .mh-search-clear`).click({ timeout: 5000 });
       await expect(page.locator(`${secSel} .mh-sr-row`)).toHaveCount(0);
     } else {
       // 联系人页：查询串写回 contacts.js 单一源（searchQ ⇒ 桌面搜索块输入行）。
