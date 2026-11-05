@@ -2497,9 +2497,21 @@ object GatewayMain extends IOApp:
                                                                   // #512 门审计批：开门目标与载体落日志——
                                                                   // 「重启后开的是哪条门」从终端日志即可对账
                                                                   // （此前 openBrowser 静默 exec，验收只能靠肉眼）。
-                                                                  logger.info(
-                                                                    s"[door] boot 开门: 载体=${browserLauncher.mkString(" ")} 目标=$target（解析=PortalUrl env>config>brand；NEBFLOW_OPEN_UI=local ⇒ 本地自铸票）"
-                                                                  ) *> openBrowser(target)
+                                                                  //
+                                                                  // 工作过程中开新标签页批（2026-11-05 · 作者令）：boot 门是**自动**
+                                                                  // 开门，作者可能正在用控制台（重启后控制台页自己会重连，不需要谁
+                                                                  // 替他开窗）⇒ 开门前先问 ConsoleActivity（控制台在用标记件）。判据
+                                                                  // 机械：窗口内（默认 900s）有过控制台证据 ⇒ 抑制开门，事件只落日志。
+                                                                  ConsoleActivity.verdict.flatMap {
+                                                                    case ConsoleActivity.Verdict(true, why) =>
+                                                                      logger.info(
+                                                                        s"[door] boot 开门: 载体=${browserLauncher.mkString(" ")} 目标=$target（解析=PortalUrl env>config>brand；NEBFLOW_OPEN_UI=local ⇒ 本地自铸票；判据=$why）"
+                                                                      ) *> openBrowser(target)
+                                                                    case ConsoleActivity.Verdict(false, why) =>
+                                                                      logger.info(
+                                                                        s"[door] boot 开门 suppressed: $why —— 控制台在用，不给作者开新标签页（事件只在日志里体现；NEBFLOW_DOOR_INUSE_POLICY=open ⇒ 恢复旧行为）"
+                                                                      )
+                                                                  }
                                                                 }
                                                           // --- Background init: skills dir, MCP servers ---
                                                           _ <- SkillService

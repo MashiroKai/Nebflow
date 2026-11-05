@@ -7,11 +7,12 @@
 //   · 左右悬浮圆钮：任务/搜索迁入自建的 #mobile-fab-layer（48px v2 液体玻璃
 //     正圆 = .g2-fab 共享材质：blur/sat 双档、上半镜面高光、spring 按压回弹、
 //     边缘光折射；liquid-glass.css），top:16px 左右 16px，z 高于顶缘渐隐带；
-//     任务键徽标 = taskBadgeCount 镜像（dock 批机制零变化）；
-//     ⛔ 【入口收敛批 todo-unify-entry-collapse 2026-11-04】左上「任务」键（含
-//     徽标）退役 ⇒ 本层只剩右上「搜索」键；待办唯一入口 = 顶带待办胶囊
-//     （#top-overlays 内，双端同现，点开即展开面板；读数 = 胶囊计数节点
-//     .tfl-cap-faces，展开时同一节点搬进面板头 .tfl-header-count）；
+//    任务键徽标 = taskBadgeCount 镜像（dock 批机制零变化）；
+//    端区分批（作者令 2026-11-05 09:28，逐字）：「手机端的待办…跟电脑端的区分开，
+//    电脑端是一个胶囊，手机端还是需要是之前那个左上角的一个悬浮的待办按钮」
+//    ⇒ 左上「任务」圆钮**恢复**（入口收敛批 2026-11-04 撤过、本批反转），手机端
+//    不再显示顶带待办胶囊（mobileLayer.css 的 #task-list display:none 档恢复）；
+//    桌面端零改动（胶囊是桌面唯一入口，不受 body.mobile-layer 作用域影响）。
 //   · 页标题入流：原 #header .header-center 三节点（#agent-avatar-btn /
 //     #session-name / #memory-btn）整体迁入 #chat 内容流首的 .g2-chat-head，
 //     节点迁移非复制：桌面 JS（agentProfile/sidebar 改名链）照写原节点，
@@ -44,14 +45,14 @@
 
 import { t } from '../i18n.js';
 import { createIconsIn } from '../utils.js';
-// 【入口收敛批 todo-unify-entry-collapse 2026-11-04】手机左上角「任务」圆钮退役
-// （作者口径：待办入口收敛到胶囊一处）。承载信息 = 待办数，已由顶带待办胶囊
-// 承载：胶囊计数节点 `.tfl-cap-faces`（逾期翻面 + 未完成计数），展开时**同一
-// 节点**搬进面板头 `.tfl-header-count`（js/todoFace.js renderCapsule /
-// bindFacesIntoHeader）—— 故徽标腿随圆钮一并退役，读数不丢。
-// 旧代码（圆钮建层 / syncTaskBadge / taskBadgeCount 镜像）按本仓退役惯例以注释
-// 留档于原位，零物理删除；模块 import 随之撤（taskPanel.js 已无任何调用方）。
-// import { taskBadgeCount } from './taskPanel.js';
+/* 任务圆钮 + 徽标读数（**2026-11-05 09:28 作者令恢复**：见文件头「端区分批」）。
+   沿革：入口收敛批 todo-unify-entry-collapse（2026-11-04）曾撤掉左上「任务」圆钮、
+   把待办入口收敛到顶带胶囊一处；作者 2026-11-05 09:28 反转该口径 ——
+   原话「手机端的待办…跟电脑端的区分开，电脑端是一个胶囊，手机端还是需要是之前
+   那个左上角的一个悬浮的待办按钮」。本批按端区分恢复原实现（同一组件、
+   同一 CSS 块、同一徽标读数），桌面胶囊零改动。 */
+import { taskBadgeCount } from './taskPanel.js';
+import { todoStore } from '../todoStore.js';
 import { pushPage, touchLayer } from './navController.js';
 // 层事件流水（循环门禁修复批 2026-11-04）：事件走叶子 navEvents.js 单点。
 import { logEvent } from './navEvents.js';
@@ -96,19 +97,19 @@ function paintAgentSlotLogo(slot) {
   slot.replaceChildren(pic);
 }
 
-/* ⛔ 【退役】todo-unify-entry-collapse 2026-11-04：任务圆钮退役 ⇒ 本徽标腿无宿主
-   （读数去向 = 顶带待办胶囊的 .tfl-cap-faces 计数节点，见文件头）。原文留档
-   （内层 JSDoc 注释标记已改写为行注释，避免嵌套闭合）：
+/* 待办徽标读数（恢复：2026-11-05 09:28 作者令）—— 圆钮右上角 = 未完成待办数
+   镜像，>99 折「99+」，0 时隐藏。读数源 = taskPanel.taskBadgeCount()（后端真源
+   todoStore 的派生值），订阅腿在下面 activateChatChrome 里接（真源回执 / 写口
+   乐观更新到达即刷新，不靠「创建这一刻读一次」）。 */
 function syncTaskBadge() {
   if (!taskBtn) return;
   const n = taskBadgeCount();
-  const b = (taskBtn.querySelector('.mh-chrome-badge')); // 原注：HTMLElement|null
+  const b = /** @type {HTMLElement|null} */ (taskBtn.querySelector('.mh-chrome-badge'));
   if (!b) return;
   b.hidden = n === 0;
   b.textContent = n > 99 ? '99+' : String(n);
   taskBtn.title = t('taskpanel.title');
 }
-*/
 
 export function activateChatChrome() {
   const header = document.getElementById('header');
@@ -196,9 +197,18 @@ export function activateChatChrome() {
   // 收编进同一族（一处定义处处引用）。
   fabLayer.className = 'ds-chrome-band';
 
-  /* ⛔ 【退役】todo-unify-entry-collapse 2026-11-04：手机左上角「任务」圆钮撤除
-     ——待办入口收敛到顶带胶囊一处（胶囊 = 手机上**唯一**待办入口；点开即展开
-     面板，面板头 = 同一计数节点）。旧建层原文留档，零物理删除：
+  /* 左上「任务」圆钮（**恢复**：作者令 2026-11-05 09:28 —— 手机端待办入口回到
+     悬浮圆钮，桌面端继续用胶囊）。
+     落的几何：`.mh-chrome-btn[data-chrome='tasks'] { left: var(--mchrome-top) }`
+     + `top: calc(var(--mchrome-top) + env(safe-area-inset-top))`（mobileLayer.css
+     聊天根悬浮圆钮块）—— 与右上搜索钮同一行同一档 48px g2-fab 材质；刘海安全区
+     由 env(safe-area-inset-top) 直接避让，零额外补偿。
+     层级：本层 z30 高于顶缘渐隐带（25）、低于 push 页（156）与 dock（200），
+     真身是「零底带 + 子件 absolute」的 .ds-chrome-band ⇒ 顶部内容滚动时从圆钮
+     底下穿过（本层无背景、无拦截面，只有圆钮本体 pointer-events:auto）。
+     点击 = pushPage('tasks')：任务页（mobile/taskPanel.js 惰性建
+     #mobile-task-panel，面板体 = todoFace.mountTodoFaceInto）——与恢复前的原
+     实现逐字一致，不另造抽屉。 */
   taskBtn = document.createElement('button');
   taskBtn.type = 'button';
   taskBtn.className = 'mh-chrome-btn g2-fab';
@@ -208,12 +218,12 @@ export function activateChatChrome() {
   taskBtn.innerHTML =
     '<i data-lucide="list-todo"></i><span class="mh-chrome-badge" hidden></span>';
   taskBtn.addEventListener('click', (e) => {
+    // 桌面面 outside-close 监听 document 冒泡 —— 入口键停冒泡防误关（hub 行同款）。
     e.stopPropagation();
     touchLayer();
     logEvent('chrome-click', { face: 'tasks' });
     pushPage('tasks');
   });
-  */
 
   searchBtn = document.createElement('button');
   searchBtn.type = 'button';
@@ -229,19 +239,27 @@ export function activateChatChrome() {
     pushPage('search');
   });
 
-  // 【入口收敛批 2026-11-04】任务圆钮已撤 ⇒ 本层只剩搜索钮（appendChild 单件；
-  // 原 `fabLayer.append(taskBtn, searchBtn)` 的双件形态退役）。
-  fabLayer.appendChild(searchBtn);
+  // 双键同层（恢复：作者令 2026-11-05 09:28 —— 左任务 / 右搜索）。
+  fabLayer.append(taskBtn, searchBtn);
   main.appendChild(fabLayer);
   if (typeof lucide !== 'undefined') createIconsIn(fabLayer);
 
-  // 【入口收敛批 2026-11-04】徽标同步三腿（syncTaskBadge 首刷 / 镜像与会话
-  // 事件镜像 / todoStore 订阅）随任务圆钮一并退役；locale 腿只留搜索钮标题。
+  /* 徽标同步三腿（恢复：2026-11-05 09:28）：
+     ① 首刷；② 委托链镜像 / 会话切换事件；③ todoStore 订阅（真源回执与写口
+     乐观更新到达即跟新 —— 只接一条订阅，零 DOM/CSS/结构改动）。 */
+  syncTaskBadge();
+  const onMirror = () => syncTaskBadge();
+  window.addEventListener('delegate-chain-mirror-updated', onMirror);
+  window.addEventListener('nebflow-session-change', onMirror);
+  unsubs.push(todoStore.subscribe(syncTaskBadge));
   const onLocale = () => {
+    syncTaskBadge();
     if (searchBtn) searchBtn.title = t('search.placeholder') || '搜索聊天记录';
   };
   window.addEventListener('locale-changed', onLocale);
   unsubs.push(() => {
+    window.removeEventListener('delegate-chain-mirror-updated', onMirror);
+    window.removeEventListener('nebflow-session-change', onMirror);
     window.removeEventListener('locale-changed', onLocale);
   });
 
