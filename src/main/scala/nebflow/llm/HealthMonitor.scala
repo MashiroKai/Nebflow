@@ -208,19 +208,42 @@ final class ProviderHealthMonitor(registry: ProviderRegistry) extends ProviderHe
   def filterCandidates(
     candidates: List[ModelCandidate]
   ): IO[(List[ModelCandidate], List[ModelCandidate])] =
+    filterCandidatesDetailed(candidates).map { case (eligible, skipped) =>
+      (eligible, skipped.collect { case (c, CandidateSkipCause.HealthDown(_)) => c })
+    }
+
+  /**
+   * [[filterCandidates]] 的**带原因**版本（缺陷批 2026-11-05，作者报障「有可用模型
+   * 却报所有模型不可用」）：返回 `(可试候选, 被跳候选 + 跳过原因)`。旧的两分返回值
+   * 把 down / soft-avoid 两类跳过**丢掉原因**（down 集合只剩候选对象），于是终局
+   * 错误与日志里都没有「谁被跳了、为什么」——作者面表现为「队列里明明还有模型」。
+   *
+   * 语义与 [[filterCandidates]] 逐条一致（先剔软回避窗内的，再把 Down 分出去），
+   * 唯一差别是「被剔的」带上原因返回，不再静默。
+   */
+  def filterCandidatesDetailed(
+    candidates: List[ModelCandidate]
+  ): IO[(List[ModelCandidate], List[(ModelCandidate, CandidateSkipCause)])] =
     for
       states <- statesRef.get
       avoids <- avoidUntilRef.get
     yield
       val now = System.currentTimeMillis()
-      def avoided(c: ModelCandidate): Boolean =
-        avoids.get(key(c.providerId, c.model)).exists(_ > now)
-      val (eligible, _) = candidates.partition(c => !avoided(c))
-      eligible.partition { c =>
-        states.get(key(c.providerId, c.model)) match
-          case Some(HealthState.Down(_, _)) => false
-          case _ => true
+      val skipped = candidates.flatMap { c =>
+        val k = key(c.providerId, c.model)
+        avoids
+          .get(k)
+          .filter(_ > now)
+          .map(until => (c, CandidateSkipCause.SoftAvoid(until - now, "soft-avoid")))
+          .orElse {
+            states.get(k) match
+              case Some(HealthState.Down(reason, _)) => Some((c, CandidateSkipCause.HealthDown(reason)))
+              case _                                 => None
+          }
       }
+      val skipKeys = skipped.map { case (c, _) => key(c.providerId, c.model) }.toSet
+      val eligible = candidates.filterNot(c => skipKeys.contains(key(c.providerId, c.model)))
+      (eligible, skipped)
 
   /**
    * Block until at least one of the given candidates is Up again.
