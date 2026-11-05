@@ -2580,6 +2580,9 @@ export default {
   // 词条引用批 batch 2（hover 气泡 + 返回原文档钮）
   'wiki.termSource': '来源：',
   'wiki.termJumpHint': '点击跳转',
+  // 词条索引块（term-system-v2 词条视觉面批 2026-11-05）：文档尾自动生成的
+  // 「本文引用的词条 + 它所在的文档」折叠小节；{n} = 词条条数。
+  'wiki.termIndexCount': '词条索引（{n}）',
   'wiki.backToSource': '返回原文档',
   // 左栏控制面（搜索/chips/详情卡/断链清单/统计行）
   'wiki.chipAll': '全部',

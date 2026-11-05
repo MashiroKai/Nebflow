@@ -371,7 +371,7 @@ function resolveTermKey(key, data, currentProject) {
     rel: pick.term.rel || pick.node.rel,
     anchor: pick.term.anchor,
     source: pick.term.source || '',
-    doc: pick.node.title || '',   // 所在文档标题（气泡面；空则回落 rel 基名）
+    doc: pick.node.title || '',   // 所在文档标题（词条索引块；空则回落 term.rel 基名）
   };
   return resolved;
 }
@@ -573,6 +573,89 @@ async function renderWikilinks(mdViewer, baseDir, absPath) {
   // 这里是顺序兜底：绝不把刚生成的 wikilink 文本再链一次）。无词条 ⇒ 零开销、
   // 输出与改造前逐字节相同。
   if (data) renderAutoTerms(mdViewer, data, currentProject, absPath);
+  // 词条索引块（term-system-v2 词条视觉面批 2026-11-05）：渲染管线尾部自动生成，
+  // 必须在两条词条腿（显式引用 + 正文裸词）都挂完面之后才扫得出引用集合。
+  renderTermIndex(mdViewer);
+}
+
+// ── 词条索引（term-system-v2 词条视觉面批 2026-11-05）────────────────────
+// 作者令原话：「引用了词条之后，引擎自动在下方建立索引，就是引用的词条所在的
+// 文档。也可以点击跳转。」
+//
+// 形态：正文尾部一枚 `<details class="nf-term-index">`，默认收起，summary =
+// 「词条索引（N）」，逐条 = 本文引用的词条 + 它所在的文档；条目点击复用既有
+// wikilink 委派（`data-wiki-resolved` 直填消解产物 ⇒ openLocalFileTab / 远端
+// 文档腿全部免费复用），零新导航机制。
+//
+// 与行内词条的分工：行内只显示词条名（作者令「不需要显示文档名」，见
+// split.css 词条族注），文档名整体下沉到本块 —— 于是「这条引用出自哪篇文档」
+// 仍然可读，但不再打断正文行。
+//
+// 数据面纪律：零请求、零新端点 —— 只消费消解 pass 已写进每个词条链接的
+// `dataset.wikiResolved`（图谱载荷 30s TTL 共享缓存）。兜底腿（载荷未收录、
+// 靠 term API 出泡的短形）**不进索引**：索引是背景面，不许为它触发网络。
+// 幂等：重挂前先摘旧块（重复渲染不叠块）；0 条引用整块不渲染（repo reports/
+// 等图外文档零噪音，与 .nf-backlinks 同纪律）。
+//
+// @param {HTMLElement} mdViewer
+// @returns {number} 写进索引的词条条数（0 = 未渲染）
+//
+// 导出面：仅供离线夹具 tests/_term-face-harness.mjs 断言「幂等 / 0 引用不渲染 /
+// N 计数」——那三条是函数自身的语义，复刻一份实现去断言等于没断言。生产调用点
+// 只有 renderWikilinks 尾部一处。
+export function renderTermIndex(mdViewer) {
+  if (!mdViewer) return 0;
+  mdViewer.querySelectorAll('.nf-term-index').forEach((el) => el.remove());
+  /** @type {Map<string, any>} 词条名（小写）→ 一条索引记录（正文序首次出现为准） */
+  const entries = new Map();
+  mdViewer.querySelectorAll('a.nf-wikilink-term').forEach((el) => {
+    const a = /** @type {HTMLAnchorElement} */ (el);
+    const raw = a.dataset.wikiResolved;
+    if (!raw) return;                       // 兜底腿：无载荷 ⇒ 不索引（零请求纪律）
+    let hit = null;
+    try { hit = JSON.parse(raw); } catch (e) { return; }
+    if (!hit || !hit.term || !(hit.absPath || hit.remote)) return;
+    const name = String(hit.term.name || a.textContent || '').trim();
+    if (!name) return;
+    const key = name.toLowerCase();
+    if (entries.has(key)) return;           // 同一词条多处引用只列一行
+    // 所在文档：图谱节点标题优先，空则回落 term.rel 的基名（去扩展名）——
+    // 与引擎 termJson 的字段面一致，前端不造第二套口径。
+    const rel = String(hit.term.rel || '');
+    const docTitle = String(hit.term.doc || '').trim()
+      || rel.split('/').pop().replace(/\.(md|markdown|html?)$/i, '');
+    entries.set(key, { name, docTitle, resolved: hit, anchor: a.dataset.wikiAnchor || '' });
+  });
+  if (!entries.size) return 0;
+
+  const details = document.createElement('details');
+  details.className = 'nf-term-index';
+  const summary = document.createElement('summary');
+  summary.textContent = t('wiki.termIndexCount', { n: entries.size });
+  details.appendChild(summary);
+  const ul = document.createElement('ul');
+  for (const entry of entries.values()) {
+    const li = document.createElement('li');
+    const a = document.createElement('a');
+    a.className = 'nf-wikilink nf-term-index-term';
+    a.href = '#';
+    a.textContent = entry.name;
+    // 非空 target ⇒ 点击腿直接用 dataset 里的消解产物（不落「本文自锚」分支）。
+    a.dataset.wikiTarget = entry.name;
+    a.dataset.wikiResolved = JSON.stringify(entry.resolved);
+    if (entry.anchor) a.dataset.wikiAnchor = entry.anchor;
+    li.appendChild(a);
+    if (entry.docTitle) {
+      const doc = document.createElement('span');
+      doc.className = 'nf-term-index-docname';
+      doc.textContent = entry.docTitle;      // 文档名唯一出现的地方（作者令）
+      li.appendChild(doc);
+    }
+    ul.appendChild(li);
+  }
+  details.appendChild(ul);
+  mdViewer.appendChild(details);
+  return entries.size;
 }
 
 // ── Backlinks (KG audit ②, 2026-10-28) ────────────────────────────────

@@ -4,7 +4,7 @@ package nebflow.gateway
 import cats.effect.IO
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.core.wiki.WikiService
+import nebflow.core.wiki.{TermDb, WikiService}
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*
@@ -42,6 +42,20 @@ import org.http4s.dsl.io.*
  *                                        multiple same-tier hits → `{resolved:false,
  *                                        ambiguous, candidates}`; unregistered → 404.
  *                                        Serves from the graph TTL cache (30s).
+ * `GET /api/wiki/terms`                — 词条索引库检索（term-system v2 · ②）：
+ *                                        `q`（子串，命中主名或别名）/ `project`
+ *                                        （`#proj/<slug>`）/ `topic`
+ *                                        （`#topic/<slug>`）/ `doc`（vault 相对路径
+ *                                        或 basename）/ `limit`（默认 50、上限 500）。
+ *                                        每条结果带**原文档信息**（project/rel/title/
+ *                                        doc_type/status/abs_path）+ 三桶 tags +
+ *                                        ref_count + updated_at。库缺失 / schema 不认识
+ *                                        / 读失败 ⇒ 200 空列表 + `available:false`
+ *                                        （降级，绝不 500；详情见 `TermDb`）。
+ * `GET /api/wiki/terms/lookup`         — 按名点查库（`name` required）：主名优先、
+ *                                        退到别名，返回全部命中 + 每条的引用位置
+ *                                        `refs[]`；库可用但零命中 ⇒ 404。
+ * `GET /api/wiki/terms/stats`          — 库的汇总面（文档/词条/别名/标签/引用计数）。
  * `GET /api/wiki/remote-doc`           — single-file fetch from a peer device
  *                                        (`device` + `path` query params) for opening
  *                                        remote docs read-only.
@@ -105,6 +119,85 @@ private[gateway] object WikiRoutes:
               case Left(err) => NotFound(Json.obj("error" -> err.asJson))
               case Right(json) => Ok(json)
             }
+        }
+
+      // ── 词条索引库读侧（term-system v2 · ②）──────────────────────────
+      // 与上面的 `/wiki/term` 分工：那条走「文档即事实源」的注册表解析链（带
+      // 消解裁定），这条走 CLI 建出来的**派生物**库（按名/标签/文档检索 + 原文档
+      // 信息）。库是背景面：开不了就降级成空列表，不让检索接口变红。
+      case req @ GET -> Root / "wiki" / "terms" / "lookup" =>
+        withAuth(req) {
+          val name = req.params.getOrElse("name", "")
+          if name.isBlank then BadRequest(Json.obj("error" -> "name is required".asJson))
+          else
+            val db = TermDb.current
+            db.termByName(name).flatMap {
+              case Nil =>
+                // 降级与「确实没有」必须分得开：降级时库根本没打开，不能报 404。
+                db.stats.flatMap {
+                  case None =>
+                    Ok(Json.obj(
+                      "available" -> false.asJson,
+                      "db" -> db.dbPath.toString.asJson,
+                      "name" -> name.asJson,
+                      "count" -> 0.asJson,
+                      "results" -> Json.arr()
+                    ))
+                  case Some(_) =>
+                    NotFound(Json.obj(
+                      "available" -> true.asJson,
+                      "db" -> db.dbPath.toString.asJson,
+                      "name" -> name.asJson,
+                      "count" -> 0.asJson,
+                      "results" -> Json.arr(),
+                      "error" -> s"term '$name' not found in term index".asJson
+                    ))
+                }
+              case hits =>
+                Ok(Json.obj(
+                  "available" -> true.asJson,
+                  "db" -> db.dbPath.toString.asJson,
+                  "name" -> name.asJson,
+                  "count" -> hits.size.asJson,
+                  "results" -> hits.map(_.asJson).asJson
+                ))
+            }
+        }
+
+      case req @ GET -> Root / "wiki" / "terms" / "stats" =>
+        withAuth(req) {
+          val db = TermDb.current
+          db.stats.flatMap {
+            case Some(s) => Ok(s.asJson)
+            case None =>
+              Ok(Json.obj(
+                "available" -> false.asJson,
+                "db" -> db.dbPath.toString.asJson,
+                "error" -> "term index unavailable (missing db or unknown schema_version)".asJson
+              ))
+          }
+        }
+
+      case req @ GET -> Root / "wiki" / "terms" =>
+        withAuth(req) {
+          val db = TermDb.current
+          val q = req.params.get("q").map(_.trim).filter(_.nonEmpty)
+          val project = req.params.get("project").map(_.trim).filter(_.nonEmpty)
+          val topic = req.params.get("topic").map(_.trim).filter(_.nonEmpty)
+          val doc = req.params.get("doc").map(_.trim).filter(_.nonEmpty)
+          val limit = req.params.get("limit").flatMap(_.trim.toIntOption).getOrElse(TermDb.DefaultLimit)
+          db.terms(q, project, topic, doc, limit).flatMap { res =>
+            Ok(res.asJson.deepMerge(Json.obj(
+              "db" -> db.dbPath.toString.asJson,
+              "filters" -> Json.obj(
+                "q" -> q.map(_.asJson).getOrElse(Json.Null),
+                "project" -> project.map(_.asJson).getOrElse(Json.Null),
+                "topic" -> topic.map(_.asJson).getOrElse(Json.Null),
+                "doc" -> doc.map(_.asJson).getOrElse(Json.Null),
+                "limit" -> limit.asJson
+              )
+            )))
+          }
         }
 
       case req @ GET -> Root / "wiki" / "remote-doc" =>
