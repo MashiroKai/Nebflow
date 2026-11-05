@@ -396,6 +396,16 @@ bash ops/test/restart-abort-guard.test.sh ~/.stand/bin/stand-restart.sh   # 已�
 # 26 断言全绿；含 T4 回归扫描（同类命中数必须 0）
 ```
 
+**T4 扫描面（2026-11-05 小修批扩展）**：T4 不再只扫「被测脚本」一个文件，口径为**全仓 shell
+脚本** —— `git ls-files '*.sh'`（排除 `reports-evidence/` 纯过程证据树）+ 无后缀但首行是
+sh/bash/zsh shebang 的入库脚本（`ops/bin/*`、`tools/*`、`scripts/nebflow-bin/*`），本机实测
+72 个文件。扩展前口径（单文件）命中 0，扩展后**一次就照出 3 处真缺陷**（`scripts/coldstart.sh`
+2 处、`scripts/sandbox-poc/60-qa-container-e2e.sh` 1 处），已同批修为 `${VAR}`；扩展后读数
+= 0 命中（唯一豁免是本测试脚本里的「改前形态」复现样本，靠行内 `T4-EXEMPT(<理由>)` 标注，
+不接受整文件豁免）。同类缺陷已扫清：三处 + 孤儿 live 脚本 `~/.stand/bin/coldstart-8080.sh`
+（5 处，仅 live 侧修复 —— **该脚本无仓内正源，属孤儿脚本**，仓内任何门禁都覆盖不到它）。
+注意 `bash -n` 对这类缺陷恒为 0（语法合法，只在运行期展开时崩），静态扫描是唯一机械拦口。
+
 **同批查清（未改行为）**：Tier-2 外部看门狗 `~/.stand/bin/nebflow-watchdog.sh` 整晚没动作，
 根因是**没有任何调度器在跑它**——`~/Library/LaunchAgents`、`/Library/LaunchAgents`、
 `/Library/LaunchDaemons` 均无对应 plist，`launchctl list | grep -iE "stand|nebflow|watchdog"`
