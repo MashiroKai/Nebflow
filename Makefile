@@ -103,6 +103,20 @@ frontend-gates:
 	node scripts/check-api-routes.mjs
 	@echo "Frontend static gates passed ($(FRONTEND_GATES))."
 
+# ── 路由存在性：运行期腿（empty-state-must-not-lie 批 · 件三②，2026-11-05）──────
+# 静态腿判「源码里注册了没」，运行期腿判「启动后真的答不答」——后者才是事故的
+# 现场判据：今天 `GET /api/conversations` 被误删时前端拿到 404，面板渲染成
+# 「暂无会话」，**没有任何断言**发现「前端在调、实例上没有」。
+# 判据：沙箱实例起来后，逐条打前端调用面的每条路径（清单由
+# `check-api-routes.mjs --emit-paths` 单一真源给出），**任一路径全 method 404 ⇒ 红**。
+# 隔离：数据根 mktemp -d（--home + STAND_HOME + NEBFLOW_HOME 三重注入）、端口 8097，
+# 拒绝 6138/8080/<1024，端口已占用则拒绝复用；结束只 kill 自己 spawn 的进程组。
+# 为什么不塞进 frontend-gates：它需要「先编译再起实例」（分钟级 + 端口），
+# 混进每次编辑都会跑的静态腿里会被绕开；CI 侧作为独立 step 跑（见 .github/workflows/ci.yml）。
+api-routes-live:
+	@command -v node >/dev/null 2>&1 || { echo "node not found — 运行期哨兵需要 node"; exit 2; }
+	node scripts/check-api-routes-live.mjs
+
 # ── 视觉回归基线门禁（tests/visual/，2026-11-01 采纳批）──────────────────────
 # 按**宿主平台键**取基准图目录 tests/visual/baseline/<platform>/（platform 由脚本
 # 自算：`${process.platform}-${browserLabel}`，如 darwin-chromium-151 /

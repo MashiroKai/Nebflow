@@ -318,36 +318,22 @@ function segmentsOf(p) {
   return p.split('/').filter(Boolean);
 }
 
+/** 一条后端注册路径（含 `**` 前缀族）是否覆盖某前端路径形态（段级、`:` 通配）。 */
+function covers(bePath, fePath) {
+  const fes = segmentsOf(fePath);
+  const bes = segmentsOf(bePath);
+  if (bes[bes.length - 1] === '**') {
+    const head = bes.slice(0, -1);
+    if (head.length > fes.length) return false;
+    return head.every((s, i) => s === ':' || fes[i] === ':' || s === fes[i]);
+  }
+  if (bes.length !== fes.length) return false;
+  return bes.every((s, i) => s === ':' || fes[i] === ':' || s === fes[i]);
+}
+
 /** 前端路径是否被某条后端注册覆盖（返回命中的注册，或 null）。 */
 function coveredBy(fePath) {
-  const fes = segmentsOf(fePath);
-  for (const be of backend) {
-    const bes = segmentsOf(be.path);
-    if (bes[bes.length - 1] === '**') {
-      const head = bes.slice(0, -1);
-      if (head.length > fes.length) continue;
-      let ok = true;
-      for (let i = 0; i < head.length; i++) {
-        if (head[i] === ':' || fes[i] === ':') continue;
-        if (head[i] !== fes[i]) {
-          ok = false;
-          break;
-        }
-      }
-      if (ok) return be;
-      continue;
-    }
-    if (bes.length !== fes.length) continue;
-    let ok = true;
-    for (let i = 0; i < bes.length; i++) {
-      if (bes[i] === ':' || fes[i] === ':') continue;
-      if (bes[i] !== fes[i]) {
-        ok = false;
-        break;
-      }
-    }
-    if (ok) return be;
-  }
+  for (const be of backend) if (covers(be.path, fePath)) return be;
   return null;
 }
 
@@ -365,6 +351,66 @@ function criticalHit([method, path]) {
 }
 
 // ── 判定 ───────────────────────────────────────────────────────────
+
+// `--emit-paths`：把本脚本抽出的前端调用面（唯一真源）交给运行期哨兵
+// `scripts/check-api-routes-live.mjs`——两个哨兵共用**同一份**清单，绝不各抄一套
+// （静态面判「源码里注册了没」，运行期面判「启动后真的答不答」，但「要判哪些路径、
+// 用什么 method」只有这里一处算）。
+//
+// 每条给 `{ path, probes: [{ path, methods }] }`：
+//  - `path` = 前端调用**形态**（`:` 是模板插值位）；
+//  - `probes` = 该形态 × 覆盖它的后端注册，**逐条落成可打的具体路径**。
+//    为什么不直接拿 `probe-id` 填空：前端把一段模板放在后端要求**字面量**的位置上
+//    （实测三类：`/invites/${id}/${action}` 的 accept|decline、`/plugins/${n}/${what}`
+//    的 source|approve|revoke、`/social/channels/${ch}/scan-bind/*` 的 feishu|weixin-ilink），
+//    随便填空必然 404 ⇒ 本体判据当场被自己污染成假红。正确做法是**用后端注册里的
+//    字面量去落位**：某条注册在这段是字面量就照它写，是变量才填空值。
+//  - 一条形态 P 的判据 = 「它的任一 probe 非 404」（前端运行期只会走其中一种字面量）。
+//  - 豁免表（EXTERNAL）里的路径是**外部服务**（neblink/门户），沙箱实例没有它，
+//    打了只会假红 ⇒ 不进运行期清单；静态面照样盯着它们是否过期。
+if (process.argv.includes('--emit-paths')) {
+  const externalPaths = new Set(EXTERNAL.map((e) => e.path));
+
+  /** 用后端注册的字面量落位，生成一条可打的具体路径。 */
+  const concretize = (fePath, bePath) => {
+    const fes = segmentsOf(fePath);
+    let bes = segmentsOf(bePath);
+    if (bes[bes.length - 1] === '**') bes = bes.slice(0, -1);
+    const out = [];
+    for (let i = 0; i < fes.length; i++) {
+      const b = bes[i];
+      if (b !== undefined && b !== ':') out.push(b); // 后端字面量优先（模板在此必须落成它）
+      else if (fes[i] !== ':') out.push(fes[i]);
+      else out.push('probe-id');
+    }
+    return '/' + out.join('/');
+  };
+
+  const emitted = [...frontend.keys()]
+    .filter((p) => !externalPaths.has(p))
+    .sort()
+    .map((path) => {
+      const probes = new Map(); // 具体路径 -> Set<method>
+      for (const be of backend) {
+        if (!covers(be.path, path)) continue;
+        const concretePath = concretize(path, be.path);
+        if (!probes.has(concretePath)) probes.set(concretePath, new Set());
+        probes.get(concretePath).add(be.method === '*' ? 'GET' : be.method);
+      }
+      return {
+        path,
+        probes: [...probes.entries()]
+          .map(([p, ms]) => ({ path: p, methods: [...ms].sort() }))
+          .sort((a, b) => a.path.localeCompare(b.path)),
+      };
+    });
+
+  // 管道写出必须等 flush 再退：`console.log` 到 pipe 是异步写，紧跟
+  // `process.exit(0)` 会把 ~8KB 之后的字节截掉（实测：下游收到 position 8192 处 EOF，
+  // 报 `Unexpected end of JSON input`）。顶层 await 在本文件可用（上面已用顶层 await）。
+  await new Promise((done) => process.stdout.write(JSON.stringify(emitted, null, 2) + '\n', done));
+  process.exit(0);
+}
 
 const failures = [];
 const externalPaths = new Set(EXTERNAL.map((e) => e.path));
