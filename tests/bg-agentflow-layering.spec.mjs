@@ -294,6 +294,45 @@ test('⑤ 反向门：不折叠时三层行全在（不裁行）+ padding-left �
   expect(errors).toEqual([]);
 });
 
+// ── ⑥：N 层不是两级帽（四层链反向门）─────────────────────────────────────
+
+test('⑥ N 层：四层链（整体行 → A → A 的子 → A 的孙）逐层 +1 且全在 DOM', async ({ page }) => {
+  const errors = trackErrors(page);
+  await bootApp(page);
+  const NODE_GRAND = 'node-layer-55556666';
+  await setFixture(page, { rows: [mirrorRow()] });
+  await inject(page, rootStart(FLOW_SID, { name: '层级批' }));
+  await inject(page, chainStart(NODE_A, { name: '节点A', parentSessionId: FLOW_SID }));
+  await inject(page, chainStart(NODE_A_CHILD, { name: 'A的子', parentSessionId: NODE_A }));
+  await inject(page, chainStart(NODE_GRAND, { name: 'A的孙', parentSessionId: NODE_A_CHILD }));
+  await page.evaluate(async ({ a, c, g, flow }) => {
+    const s = (await import('/js/state.js')).default;
+    const b = s.sessionBgAgents[flow] || {};
+    if (b[a]) b[a].startedAt = 1000;
+    if (b[c]) b[c].startedAt = 2000;
+    if (b[g]) b[g].startedAt = 3000;
+  }, { a: NODE_A, c: NODE_A_CHILD, g: NODE_GRAND, flow: FLOW_SID });
+  await openPanel(page);
+
+  const rows = await dumpRows(page);
+  console.log('[⑥ dump] ' + JSON.stringify(rows.map((r) => ({
+    sid: r.sid, depth: r.depth, padLeft: r.padLeft, name: r.name,
+  }))));
+  const deps = [FLOW_SID, NODE_A, NODE_A_CHILD, NODE_GRAND].map((sid) => {
+    const r = rows.find((x) => x.sid === sid);
+    expect(r, 'row missing: ' + sid).toBeTruthy();
+    return r;
+  });
+  // 逐层 +1，四层全在（不是两级帽），缩进逐层严格递增。
+  expect(deps.map((r) => r.depthNum)).toEqual([0, 1, 2, 3]);
+  for (let i = 1; i < deps.length; i++) {
+    expect(deps[i].padLeft).toBeGreaterThan(deps[i - 1].padLeft);
+    expect(deps[i].scrollHeight).toBeGreaterThan(0);
+    expect(deps[i].name.trim().length).toBeGreaterThan(0);
+  }
+  expect(errors).toEqual([]);
+});
+
 // ── ③：折叠隐藏整棵子树 ───────────────────────────────────────────────────
 
 test('③ 折叠 A ⇒ A 子树整行数 = 0，整体行与 A 行仍在', async ({ page }) => {
