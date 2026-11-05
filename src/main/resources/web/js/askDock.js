@@ -183,6 +183,14 @@ let inited = false;
 let notePath = '';
 let noteSid = '';
 let noteTimer = 0;
+// 持久化缺陷批（2026-11-05）：两层持久的状态位。本地镜像可用性 / 未落服务端的
+// 脏编辑 / 最近一次推送内容（回执对账用）/ 服务端最近已知 mtime / 状态行 kind。
+let noteLocalOk = true;
+let noteDirty = false;
+let noteLastPushed = null;
+let noteServerTs = 0;
+let notePushTimer = 0;
+let noteStatus = '';
 
 // ── 每文档会话持久（2026-11-01 作者令批；头注「文档会话持久批」）────────────
 // 键形 = key('ask:sess:<sid>')（branding 命名空间同源）；值 = {ts, msgs:[user/ai]}。
@@ -433,9 +441,14 @@ function buildNoteDock() {
     'aria-label': tt('记事本', 'Notepad'),
     spellcheck: 'false',
   });
+  // 持久化缺陷批（2026-11-05）：存储面状态行（默认隐藏；只有在本地镜像不可用 /
+  // 引擎断连 / 超上限时才出现，文案是**事实句**不教学不打路径）。
+  const status = h('div', { class: 'note-status', 'data-note-status': true, role: 'status', 'aria-live': 'polite' });
+  status.hidden = true;
   return h('div', { class: 'note-dock closed' }, [
     handle,
     h('div', { class: 'note-body' }, [text]),
+    status,
   ]);
 }
 
@@ -451,6 +464,7 @@ function ensureInner() {
   //   note = 本体高受控（--note-h），无底部件。
   /** @type {Surface} */
   const askSurface = {
+    name: 'ask',
     panel: dock,
     handle: dock.querySelector('[data-ask-resize]'),
     track: dock.querySelector('.ask-col'),
@@ -462,6 +476,7 @@ function ensureInner() {
   };
   /** @type {Surface} */
   const noteSurface = {
+    name: 'note',
     panel: noteDock,
     handle: noteDock.querySelector('[data-note-resize]'),
     track: noteDock.querySelector('.note-body'),
@@ -486,6 +501,7 @@ function ensureInner() {
     noteResize: noteSurface.handle,
     noteBody: noteSurface.track,
     noteText: noteDock.querySelector('textarea'),
+    noteStatus: noteDock.querySelector('[data-note-status]'),
     askSurface,
     noteSurface,
   };
@@ -653,6 +669,57 @@ function applySize(surface, w, hgt) {
   return surface.lastSize;
 }
 
+// ── 尺寸偏好持久（持久化缺陷批 2026-11-05）───────────────────────────────
+// 作者批要求「resize 尺寸是否同批持久」：**改前两面板都不持久**（applySize 只写
+// 内存里的 CSS 变量，刷新即回默认档）——ask 没有先例可抄，所以本批给**同一段
+// 实现两个入参**（与 bindResize/applySize 同一条复用律，零第二套）。
+// 键 = `dock:size:<ask|note>`（branding 命名空间）：**尺寸是人的界面偏好，不是
+// 文件的属性**——随文件会让每次切卡窗口尺寸乱跳（同一块屏、同一双手想要的仍是
+// 那一档尺寸），故全局一份，不挂 sid。
+// 写点 = 拖拽结束（pointerup/cancel）与键盘改尺寸；读点 = 首次挂载与每次开窗
+// （收起态带 scale(0.6)，bbox 不能当夹取输入 ⇒ 入场后按实测几何重夹一档）。
+const SIZE_STORE_PREFIX = 'dock:size:';
+
+/** 某尺寸面的持久键（name 缺省 = ask：先例面）。 */
+function sizeKeyOf(surface) {
+  return key(SIZE_STORE_PREFIX + (surface && surface.name ? surface.name : 'ask'));
+}
+
+/** 读尺寸偏好（无/坏/存储不可用 ⇒ null = 走 CSS 默认档）。 */
+function loadSize(surface) {
+  try {
+    const raw = localStorage.getItem(sizeKeyOf(surface));
+    if (!raw) return null;
+    const v = JSON.parse(raw);
+    if (!v || typeof v.w !== 'number' || typeof v.h !== 'number') return null;
+    if (!(v.w > 0) || !(v.h > 0)) return null;
+    return { w: v.w, h: v.h };
+  } catch { return null; }
+}
+
+/** 写尺寸偏好（静默降级：存不下 = 回到默认档，内容另有持久层故不提示）。 */
+function persistSize(surface) {
+  if (!surface || !surface.lastSize) return;
+  try {
+    localStorage.setItem(sizeKeyOf(surface), JSON.stringify({ w: surface.lastSize.w, h: surface.lastSize.h }));
+  } catch { /* 存储不可用：尺寸退回默认档（内容持久面不受影响，不弹提示） */ }
+}
+
+/** 恢复尺寸偏好（开窗/首挂时调；入场动效落定后按实测几何重夹，越界不越视口）。 */
+function restoreSize(surface) {
+  if (!surface || !surface.panel) return;
+  const s = loadSize(surface);
+  if (!s) return;
+  surface.panel.style.setProperty(surface.varW, s.w + 'px');
+  surface.panel.style.setProperty(surface.varH, s.h + 'px');
+  surface.lastSize = { w: s.w, h: s.h };
+  setTimeout(() => {
+    if (!el || surface.panel.classList.contains('closed')) return;
+    applySize(surface, s.w, s.h); // 夹取（换屏/转屏后同一目标不越界）
+    persistSize(surface); // 夹取后的落定值回写（下次开窗直接对）
+  }, 360);
+}
+
 /**
  * 缩放空白批（作者令 2026-11-05 09:32「现在调整窗口大小会导致对话框和内容直接
  * 有一大段空白」）：**截断线状态机整体退役**。
@@ -709,6 +776,7 @@ function bindResize(surface) {
     }
     delete handle.dataset.resizing;
     surface.panel.classList.remove('is-resizing');
+    persistSize(surface); // 持久化缺陷批：拖拽落定即存尺寸偏好（拖拽中不写）
   };
   handle.addEventListener('pointerup', end);
   handle.addEventListener('pointercancel', end);
@@ -727,6 +795,7 @@ function bindResize(surface) {
     else return;
     e.preventDefault();
     applySize(surface, w, hh);
+    persistSize(surface); // 键盘与指针同一份偏好（同一个落定即存口径）
   });
 }
 
@@ -772,6 +841,9 @@ function wireElements() {
     noteTimer = setTimeout(() => { noteTimer = 0; flushNote(); }, 250);
   });
   el.noteText.addEventListener('blur', flushNote);
+  // 持久化缺陷批：同浏览器多标签页直通（另一标签写同一文件 ⇒ 本页未编辑即采纳）。
+  // 浏览器原生 storage 事件只在**其它**标签页写时派发，本页自己写不回流，无回环。
+  window.addEventListener('storage', onNoteStorage);
 }
 
 /** 全局监听（每次连入登记；断开由基座 ctx.on 自动拆——迁移不留双份）。 */
@@ -789,6 +861,9 @@ function wireGlobals(ctx) {
   });
   ctx.on(document, 'canvas-tab-switched', onTabSwitch);
   ctx.on(document, 'canvas-tab-closed', onTabClosed);
+  // 持久化缺陷批：页面关闭/隐藏前把最后一段输入同步落本地镜像（服务端推送会随
+  // 连接一起走，下次打开由「本地 ts 更新 ⇒ 回推」对账补齐，不丢字）。
+  ctx.on(window, 'pagehide', () => { flushNote(); });
   ctx.on(window, 'resize', () => { syncSeat(); reclampSize(); });
   // 批⑨：手机层根页切换（nf:mobile-nav）重落可见性闸——离开 canvas 页即隐。
   ctx.on(document, 'nf:mobile-nav', () => syncGate());
@@ -869,6 +944,9 @@ function wireObserversOnce() {
   onReconnect(() => {
     // WS 重连：会话状态标脏，下次打开时 askOpen 重新回放（服务端为权威）。
     for (const s of sessions.values()) s.stateSent = false;
+    // 持久化缺陷批：断连期间没推上去的记事本编辑在重连后补推（含「本机离线写过
+    // 内容」这一常见形态——不补推就等于那个文件在引擎侧永远是空的）。
+    if (el && noteSid && noteDirty) scheduleNotePush(noteSid, el.noteText.value, 0);
   });
 }
 
@@ -890,7 +968,14 @@ function onMount(host, ctx) {
     wireObserversOnce();
   }
   wireGlobals(ctx);
-  if (!reattached) { syncSeat(); return; } // 首挂：与改前 mount() 尾部逐字同义
+  if (!reattached) {
+    // 持久化缺陷批：首挂即恢复尺寸偏好（两个面板同一段实现；收起态只落变量，
+    // 入场后再按实测几何重夹——见 restoreSize 注）。
+    restoreSize(el.askSurface);
+    restoreSize(el.noteSurface);
+    syncSeat();
+    return; // 首挂：与改前 mount() 尾部逐字同义
+  }
   // 宿主迁移后补一拍（同一批节点、同一份会话状态；全部幂等）
   syncGate();
   syncUnreadDot();
@@ -1081,6 +1166,7 @@ async function open() {
   const s = await ensureActiveSession();
   if (!s) return;
   s.unread = false; // 打开即读：通知点熄灭（ask 三修 2026-10-29 未读语义）
+  restoreSize(el.askSurface); // 持久化缺陷批：尺寸偏好与记事本同一条恢复腿
   el.dock.classList.remove('closed');
   el.fab.classList.add('open');
   el.fab.classList.remove('pulse');
@@ -1108,30 +1194,174 @@ function toggle() {
 //   ① 开合 = 钮再点 / Esc / 画布空白点击（wireElements/wireGlobals 同两条腿）；
 //   ② 视图排他 = 一个座位只坐一个浮窗（open↔openNote 互相先收对方）；
 //   ③ 可见性闸 = 同一 syncGate 同一拍（非文件卡/阅读面板开/非 canvas 页一起摘）。
-// 唯一新增语义 = **每个文件一份纯文本草稿**，localStorage write-through。
+// 语义 = **每个文件一份纯文本草稿**（sid = sha256(absPath) 前 8 hex，与 ask 同式）。
+//
+// ══ 持久化缺陷批（2026-11-05 修，作者报障「Canvas Note 记录的内容会丢」）══
+// 改前实测结论（见批报告复现表）：**内容只落 localStorage，引擎侧零写点**——
+//   写点 = flushNote → localStorage.setItem(`<brand>_note:<sid>`)；读点 = openNote
+//   → localStorage.getItem(同键)。字面上「写盘」了，但介质是「按 origin × 设备」
+//   的易失层：换浏览器/换设备/换 origin（localhost ↔ 127.0.0.1、换端口、手机层
+//   在另一台设备上）一律读不到，清站点数据即彻底丢失 —— 这是「没做到随文件」的
+//   语义缺口，不是偶发 bug。
+// 改后两层（真源 + 镜像）：
+//   ① 本地镜像（localStorage，同步、零延迟、离线可读）= 快显层，不是真源；
+//   ② 引擎侧真源（WS `askNoteGet`/`askNotePut` → `<dataRoot>/ask/notes/<sid>.md`，
+//      单点 core/ask/AskNotes.scala）= 跨设备/跨浏览器/跨引擎重启的权威层。
+// 读序：先画本地镜像（不等网络）→ 发 askNoteGet 对账；写序：镜像立即写 +
+// 服务端防抖 300ms 推送（人手打字频率，不必每击键一趟）。
+// 冲突判据（多标签页/多设备）：本地写时刻（`note:ts:<sid>` 单键）vs 服务端
+// mtime —— 服务端更新且本地无未落盘编辑 ⇒ 采纳服务端；本地更新（离线写入没推
+// 上去）⇒ 回推服务端；**平局取服务端**（与 ask 转录「服务端为权威」同律）。
+// 同浏览器多标签页另有 `storage` 事件直通（本地无脏编辑即采纳对端写入）。
+// 降级可读（禁静默）：本地写失败（隐私模式/quota）或引擎断连时，窗内状态行
+// 直说事实（见 NOTE_STATUS_TEXT），不再「静默当作存好了」。
 
 const NOTE_STORE_PREFIX = 'note:';
+/** 本地写时刻（与正文分键：正文值保持纯字符串 —— 旧键原样可读，迁移零义）。 */
+const NOTE_TS_PREFIX = 'note:ts:';
+/** 服务端推送防抖（人手打字频率；关窗/切卡/失焦都立即 flush+推）。 */
+const NOTE_PUSH_DELAY_MS = 300;
 
-/** 读某文件草稿（无/坏/私密模式 ⇒ ''；与 ask 转录持久同一降级口径）。 */
-function loadNote(sid) {
-  if (!sid) return '';
-  try { return localStorage.getItem(key(NOTE_STORE_PREFIX + sid)) || ''; } catch { return ''; }
-}
+/** 状态行文案（事实句：只描述存储面状态与后果；空串 = 不显示）。 */
+const NOTE_STATUS_TEXT = {
+  'mirror-off': '本地缓存不可用：内容随引擎保存',
+  unsaved: '引擎未连接：内容只在本机',
+  'no-store': '存储不可用：关窗后内容会丢',
+  'too-large': '超出单条上限（256 KB），未保存到引擎',
+};
 
-/** 写某文件草稿（空文本 = 删键，不留空壳记录；quota/私密模式静默降级）。 */
-function persistNote(sid, text) {
-  if (!sid) return;
+/** 读某文件的本地镜像（无/坏/私密模式 ⇒ 空；与 ask 转录持久同一降级口径）。 */
+function loadNoteLocal(sid) {
+  if (!sid) return { text: '', ts: 0 };
   try {
-    if (text) localStorage.setItem(key(NOTE_STORE_PREFIX + sid), text);
-    else localStorage.removeItem(key(NOTE_STORE_PREFIX + sid));
-  } catch { /* 体验加速面，静默降级（服务端无记事本，纯本地草稿） */ }
+    const text = localStorage.getItem(key(NOTE_STORE_PREFIX + sid)) || '';
+    const raw = localStorage.getItem(key(NOTE_TS_PREFIX + sid));
+    const ts = raw ? Number(raw) : 0;
+    return { text, ts: Number.isFinite(ts) ? ts : 0 };
+  } catch { return { text: '', ts: 0 }; }
 }
 
-/** 立即落盘（防抖拍 + 收起/切卡/失焦都走这里，单点）。 */
+/** 读正文（短签名保留：调用方只要文本时不必解构）。 */
+function loadNote(sid) { return loadNoteLocal(sid).text; }
+
+/** 写本地镜像（正文 + 写时刻；空文本 = 删两键，不留空壳）。
+ *  @returns {boolean} 是否写成功（false ⇒ 调用方落可读降级状态，不静默） */
+function persistNoteLocal(sid, text, ts) {
+  if (!sid) return false;
+  try {
+    if (text) {
+      localStorage.setItem(key(NOTE_STORE_PREFIX + sid), text);
+      localStorage.setItem(key(NOTE_TS_PREFIX + sid), String(ts || Date.now()));
+    } else {
+      localStorage.removeItem(key(NOTE_STORE_PREFIX + sid));
+      localStorage.removeItem(key(NOTE_TS_PREFIX + sid));
+    }
+    return true;
+  } catch { return false; }
+}
+
+/** 窗内状态行（可读降级）：kind = '' 隐藏；其余见 NOTE_STATUS_TEXT。 */
+function setNoteStatus(kind) {
+  noteStatus = kind || '';
+  if (!el || !el.noteStatus) return;
+  const text = NOTE_STATUS_TEXT[noteStatus] || '';
+  el.noteStatus.textContent = text;
+  el.noteStatus.hidden = !text;
+}
+
+/** 引擎侧真源：读（对账回包 = consumeFrame 的 askNoteState）。 */
+function requestNote(sid) {
+  if (!sid) return;
+  sendWs({ type: 'askNoteGet', sessionId: sid });
+}
+
+/** 引擎侧真源：写（防抖；sid/文本在**调用拍**捕获，切卡后不会串写到新文件）。 */
+function scheduleNotePush(sid, text, delay) {
+  if (!sid) return;
+  noteLastPushed = { sid, text };
+  if (notePushTimer) clearTimeout(notePushTimer);
+  const wait = typeof delay === 'number' ? delay : NOTE_PUSH_DELAY_MS;
+  notePushTimer = setTimeout(() => {
+    notePushTimer = 0;
+    const sent = sendWs({ type: 'askNotePut', sessionId: sid, text, baseTs: noteServerTs });
+    if (!sent) setNoteStatus(noteLocalOk ? 'unsaved' : 'no-store');
+  }, wait);
+}
+
+/** 立即落盘（防抖拍 + 收起/切卡/失焦都走这里，单点）。
+ *  两层都写：本地镜像同步写（快显/离线）＋ 引擎侧防抖推送（真源）。 */
 function flushNote() {
   if (noteTimer) { clearTimeout(noteTimer); noteTimer = 0; }
   if (!el || !notePath || !noteSid) return;
-  persistNote(noteSid, el.noteText.value);
+  const sid = noteSid;
+  const text = el.noteText.value;
+  noteLocalOk = persistNoteLocal(sid, text);
+  noteDirty = true;
+  scheduleNotePush(sid, text);
+  if (!noteLocalOk) setNoteStatus('mirror-off');
+}
+
+/** 服务端对账（askNoteState 回包）：判据见头注「冲突判据」。 */
+function applyServerNote(msg) {
+  if (!el) return;
+  const sid = msg.sessionId || '';
+  if (!sid || sid !== noteSid) return; // 切卡后到达的旧回包：以当前文件为准
+  const serverText = typeof msg.text === 'string' ? msg.text : '';
+  const serverTs = typeof msg.ts === 'number' ? msg.ts : 0;
+  if (serverTs > noteServerTs) noteServerTs = serverTs;
+  const local = loadNoteLocal(sid);
+  const cur = el.noteText.value;
+  const localText = local.text || cur;
+  const localNewer = local.ts > serverTs && local.text !== serverText;
+  // 「服务端空、本地有」= 本地那份还没同步过（旧键迁移来的存量 / 离线写入 / 隐私
+  // 模式下镜像失败但 textarea 里有字）。此时**绝不能用空值清掉本地内容**——宁可
+  // 把它回推上去：记事本正文清掉就找不回来，保住内容优先于「服务端为权威」。
+  const localUnsynced = !!localText && !serverText;
+  // 「正在敲字」也算脏：防抖窗口内（输入已被本地镜像捕获但 flush 还没跑）收到对账
+  // 回包时，不能把用户正在写的这一行换掉。开窗后自动聚焦不算脏（值 === 镜像值）。
+  const editing = document.activeElement === el.noteText && cur !== local.text;
+  if (noteDirty || editing || localNewer || localUnsynced) {
+    // 本地更新/未同步 ⇒ 不覆盖本地，把本地推上去（正在写的以 textarea 为准）。
+    const pushText = noteDirty || editing ? cur : localText;
+    if (!(noteDirty || editing)) noteLocalOk = persistNoteLocal(sid, pushText, local.ts || Date.now());
+    scheduleNotePush(sid, pushText, 0);
+    return;
+  }
+  // 服务端更新或本地无内容 ⇒ 采纳服务端（含「服务端为空」的清空态）。
+  noteServerTs = serverTs;
+  if (serverText !== el.noteText.value) el.noteText.value = serverText;
+  noteLocalOk = persistNoteLocal(sid, serverText, serverTs || Date.now());
+  noteDirty = false;
+  setNoteStatus(noteLocalOk ? '' : 'mirror-off');
+}
+
+/** 写回执（askNoteAck）：成功即清脏（只清「最后推的正是当前文本」那一拍）。 */
+function applyNoteAck(msg) {
+  if (!el) return;
+  const sid = msg.sessionId || '';
+  if (msg.ok) {
+    if (typeof msg.ts === 'number' && msg.ts > noteServerTs) noteServerTs = msg.ts;
+    if (noteLastPushed && noteLastPushed.sid === sid && el.noteText.value === noteLastPushed.text) {
+      noteDirty = false;
+    }
+    setNoteStatus(noteLocalOk ? '' : 'mirror-off');
+  } else if (msg.error === 'too-large') {
+    setNoteStatus('too-large');
+  } else if (msg.error === 'bad-session-id') {
+    setNoteStatus('no-store');
+  } else {
+    setNoteStatus(noteLocalOk ? 'unsaved' : 'no-store');
+  }
+}
+
+/** 同浏览器多标签页直通（storage 事件）：本地无脏编辑即采纳对端写入。 */
+function onNoteStorage(e) {
+  if (!el || !noteSid) return;
+  if (e.key !== key(NOTE_STORE_PREFIX + noteSid) && e.key !== key(NOTE_TS_PREFIX + noteSid)) return;
+  if (noteDirty) return; // 本页有未落盘编辑：以本页为准（最后写者胜）
+  const local = loadNoteLocal(noteSid);
+  if (local.text !== el.noteText.value) el.noteText.value = local.text;
+  if (local.ts > noteServerTs) noteServerTs = local.ts;
 }
 
 function isNoteOpen() { return !!el && !el.noteDock.classList.contains('closed'); }
@@ -1145,7 +1375,12 @@ async function openNote() {
   if (!sid || currentFile !== path) return; // 派生期间切卡/关卡：让 syncNoteForFile 收口
   notePath = path;
   noteSid = sid;
-  el.noteText.value = loadNote(sid);
+  noteDirty = false;
+  noteServerTs = 0;
+  el.noteText.value = loadNote(sid); // ① 本地镜像先上台（不等网络）
+  setNoteStatus(noteLocalOk ? '' : 'mirror-off');
+  requestNote(sid); // ② 引擎侧真源对账（回包 = consumeFrame 的 askNoteState）
+  restoreSize(el.noteSurface); // ③ 尺寸偏好（与 ask 同一条恢复腿）
   el.noteDock.classList.remove('closed');
   el.noteFab.setAttribute('aria-pressed', 'true');
   syncSeat();
@@ -1182,9 +1417,17 @@ async function syncNoteForFile() {
   const path = currentFile;
   const sid = await ensureSid(path);
   if (!sid || currentFile !== path) return; // 派生期间又切卡：以最新一拍为准
+  // 串写防线（持久化缺陷批实测）：派生是异步的，这段 await 期间用户可能又敲了
+  // 字（内容仍属**旧**文件）。搬 sid 之前再收一次口——否则下一拍 flush 会把旧
+  // 文件的文本写进新文件的键（改前存在的跨文件串写点）。
+  if (notePath && notePath !== path) flushNote();
   notePath = path;
   noteSid = sid;
+  noteDirty = false;
+  noteServerTs = 0;
   el.noteText.value = loadNote(sid);
+  setNoteStatus(noteLocalOk ? '' : 'mirror-off');
+  requestNote(sid); // 引擎侧真源对账（每文件独立生命周期，与问答回放零同步）
 }
 
 // ── 渲染（升腾入场 + 顶带 12px 内容级渐隐由 CSS mask 承担）────────────────
@@ -1336,6 +1579,11 @@ function removeTyping() {
 /** ws.js ask 拦截面：sessionId 前缀 `ask-` 的帧全部进这里（主视图零交集）。 */
 function consumeFrame(msg) {
   const sid = msg.sessionId || '';
+  // 记事本持久批（2026-11-05）：记事本帧**不依赖 ask 会话账**——记事本与问答是
+  // 两个独立入口/独立生命周期（作者令 2026-11-05 11:38），故在 sessions 反查
+  // 之前早退处理（页面刚打开、会话账还没建时也要能收对账回包）。
+  if (msg.type === 'askNoteState') { applyServerNote(msg); return; }
+  if (msg.type === 'askNoteAck') { applyNoteAck(msg); return; }
   // 绑定面：sid 客户端同式派生（sha256 前 8 hex），map 内按 sid 反查即得文件。
   let entry = null;
   let file = '';

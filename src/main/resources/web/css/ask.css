@@ -288,6 +288,24 @@ body.mobile-layer .note-dock .ds-resize-handle {
   overflow: auto;
 }
 
+/* ═══ 记事本存储状态行（持久化缺陷批 2026-11-05）═══════════════════════════
+ * 只在「本地镜像不可用 / 引擎断连 / 超单条上限」时出现（默认 hidden），文案见
+ * askDock.js NOTE_STATUS_TEXT —— 事实句，不教学、不给路径。
+ * 复用而非复制：**字色不在此声明**，`.note-status` 以下方 placeholder 成员块的
+ * 同一 dim 令牌着色（N8 判据：`.note-*` 独占块零材质/零色）；本块只声明几何。
+ * 位置 = 内容盒之下的独立一行（与 .note-dock 的 gap 一档），不压 textarea、
+ * 不改 --note-h 语义（窗高仍由拖拽状态机那条变量单点决定）。 */
+.note-status {
+  align-self: stretch;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0 var(--ds-space-1h);
+  font-size: var(--ds-fs-hint);
+  line-height: 1.4;
+  text-align: right;
+}
+.note-status[hidden] { display: none; }
+
 
 /* 气泡列：从按钮位置长出；顶缘渐隐 = 内容本体 alpha 渐到 0（作者令 2026-11-04
  * 09:22 逐字：「canvas Ask 的这个渐隐，应该是对消息什么的降低透明度到 0 的过程，
@@ -451,7 +469,11 @@ body.mobile-layer .note-dock .ds-resize-handle {
    归 1（修前只写 `--color-text-muted`，与输入本体色太近，占位不像占位；字档
    跟随 textarea 本体 13.5px，与 --cv-hint-fs-placeholder 13 的「同档」原则一致）。 */
 .ask-input textarea::placeholder,
-.note-body textarea::placeholder {
+.note-body textarea::placeholder,
+/* 记事本存储状态行（持久化缺陷批 2026-11-05）：以**成员身份**取同一 dim 令牌与
+   显式 opacity:1——本块是「安静的一行事实」的色来源，`.note-status` 自己的规则
+   里零色声明（N8 判据）。 */
+.note-status {
   color: var(--cv-hint-color-dim);
   opacity: 1;
 }
@@ -544,6 +566,13 @@ body.mobile-layer .note-dock .ds-resize-handle {
    「同带共中线」的 16px 对齐关系原样保留（pane 底 = 页底 = 新顶缘，同批扩面）。 */
 body.mobile-layer .ask-fab {
   --ask-fab-gap: 12px;
+  /* 尺寸归一修正（持久化缺陷批 2026-11-05 实测）：本档把宽度/高度硬写 48px，
+     而 `--ask-fab-size` 仍是桌面 40 档（2026-11-05 件3 批把桌面档落到 40）⇒
+     两条**依赖该 token 的几何**在手机档各偏 8px：记事本钮 margin-right
+     =「一格钮宽 + 8」算成 48（实测两钮水平缝 0，spec m1 变红），dock bottom
+     =「钮高 + 10」算成 50（实测窗底压住钮 8px）。本档把 token 对齐到实际尺寸，
+     两条几何一并归位——不在各自的选择器里各打一次补丁（token 单源）。 */
+  --ask-fab-size: 48px;
   /* canvas 控件尺寸对齐批（2026-11-02）② 全站悬浮圆钮单一真值 48：本档原写死
      44（mobileLayer.css 01 块同值 48 覆盖生效），两处并一 —— 手机层 48 与
      --mtap-lg 同档，桌面档本批也升到 48（--ask-fab-size），全站一个真值。 */
