@@ -37,7 +37,7 @@ import { personLabel } from './messages.js';
 import { avatarNodeFor } from './avatarRender.js';
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
 import { mobileSheetBack } from './mobile/popSheet.js';
-import { createToggle, setToggleState } from './toggle.js';
+import { createToggle, setToggleState, setToggleBusy } from './toggle.js';
 // 🔴 搜索面板（`js/chatSearch.js`）**不静态引**：它是全仓最重的一张面（chat / card
 // registry / 媒体索引…），且本仓静态环闸要求 Profile 面不得新增静态边 ⇒ 点击时
 // 动态 import（与 `mobile/navController.js` 开搜索页、`messages.js` 开本面同一条纪律）。
@@ -218,7 +218,9 @@ function switchRow(spec) {
   btn.addEventListener('click', async () => {
     const next = !btn.classList.contains('on');
     setToggleState(btn, next); // 乐观：组件自有翻转（与 bindToggle 同一套视觉态）
-    btn.disabled = true;
+    // 在途用 aria-busy（不确定态）而不是 disabled —— 禁用一个刚被键盘按下的开关会
+    // 立刻丢焦点，用户「Space 之后再 Enter」就没反应（toggle-unify 批实测）。
+    setToggleBusy(btn, true);
     try {
       await spec.onSave(next);
       // 回读收敛：以服务端真值为准（与 remark/bio 的「不做乐观写」同一条纪律）。
@@ -232,7 +234,7 @@ function switchRow(spec) {
       window.__showToast?.(t('messages.networkError'), 'error');
       console.debug('[profileFace] toggle failed', spec.field, err && err.message);
     } finally {
-      btn.disabled = false;
+      setToggleBusy(btn, false);
     }
   });
   row.appendChild(holder);

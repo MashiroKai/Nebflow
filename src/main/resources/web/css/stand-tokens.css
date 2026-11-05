@@ -433,3 +433,71 @@ html[data-theme="light"] {
      三行 → 一次 +3 色值，四处主题档合计 +12）。 */
   --nf-glass-shadow: inset 0 1px 0 0 #ffffff40, 0 2px 8px #0000000a, 0 8px 24px #0000000f;
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * Toggle（开关）—— 全站唯一开关形态的令牌段
+ *   （toggle-unify 批 2026-11-05；作者裁定 2026-11-05 19:55「A 胶囊滑块」）
+ *
+ * 作者原话（本批立案依据）：「A 胶囊滑块」—— 即方案页里的 A 组：40×22 胶囊
+ *   + 16 圆钮，状态靠圆钮位置表达。方案页与实测规格 =
+ *   `design/toggle-options/`（toggle.css / zoom.html / verify.mjs），
+ *   对照报告 = `<dataRoot>/projects/stand/.stand/docs/toggle-design-options__*.md`。
+ *
+ * ── 三层职责（改开关只改这三处）────────────────────────────────────────────
+ *   ① 令牌 = 本段（几何 / 色 / 动效 / 命中区的**唯一数值出生地**）；
+ *   ② 类   = `css/sidebar.css` 的「nb-toggle — shared switch component」组件节
+ *            （全站唯一开关类 `.nb-toggle`，子部件只有 `::after` 圆钮 + `::before`
+ *             命中盒两个伪元素，不含任何子节点元素）；
+ *   ③ 行为 = `js/toggle.js`（`toggleHTML` / `createToggle` / `bindToggle` /
+ *            `setToggleState` / `setToggleBusy`，唯一事件与态翻转实现）。
+ *   任何面要开关 = 用 ③ 的导出 + 挂 `.nb-toggle`，**不许**自画第二套
+ *   （门禁：`scripts/check-flat-buttons.mjs` 已把 toggle/switch 补进按钮面判据段，
+ *    自画开关会因厚度道具/渐变/按压位移被判红）。
+ *
+ * ── 为什么 ON 档是品牌绿（而不是墨色）────────────────────────────────────
+ *   2026-11-01 作者令「toggle 重新回到绿色」；方案批实测这条取舍的代价是
+ *   「品牌绿 ON 档 vs 浅灰轨道 = 2.02:1」——状态**不能靠颜色单独读**，只能靠
+ *   圆钮位移（40px 轨道里走 18px）读。作者已在 2026-11-05 19:55 选择 A 并接受
+ *   该取舍，本批不擅自改色；对比度实测表见落地报告 §对比度。
+ * ══════════════════════════════════════════════════════════════════════════ */
+:root,
+html[data-theme="light"] {
+  /* 几何（A 组实测值：轨道 40×22、圆钮 16、内衬 2、圆角全圆） */
+  --nf-toggle-w: 40px;
+  --nf-toggle-h: 22px;
+  --nf-toggle-radius: 999px;
+  --nf-toggle-border: 1px;
+  --nf-toggle-knob: 16px;
+  --nf-toggle-inset: 2px;
+  /* 行程恒按公式算（禁手抄数值）：40 − 2×1(border) − 16 − 2×2 = 18px
+     ⇒ OFF 左缝 2px == ON 右缝 2px（border-box 下 absolute 子件相对 padding box 定位）。 */
+  --nf-toggle-travel: calc(var(--nf-toggle-w) - var(--nf-toggle-border) * 2 - var(--nf-toggle-knob) - var(--nf-toggle-inset) * 2);
+  --nf-toggle-hit: 44px;            /* 命中盒边长（WCAG 2.5.5 目标尺寸） */
+  /* 动效（A 组实测：180ms + cubic-bezier(0.2,0,0,1)；两条 y 控制点 0/1，曲线单调
+     不过冲 —— 没有回弹段，所以「不过冲、不弹跳」是曲线性质而不是手感描述） */
+  --nf-toggle-dur: 180ms;
+  --nf-toggle-ease: cubic-bezier(0.2, 0, 0, 1);
+  /* 色（全部是既有令牌的别名，零新色相） */
+  --nf-toggle-track-off: var(--ctl-neutral-bg);
+  --nf-toggle-track-off-hover: var(--ctl-neutral-bg-hover);
+  --nf-toggle-stroke: var(--st-toggle-off-border);
+  --nf-toggle-stroke-hover: var(--btn-secondary-stroke-hover);
+  --nf-toggle-knob-bg: var(--ctl-send-ink);        /* 亮档 #ffffff（与发送键字色同值，零新色） */
+  --nf-toggle-knob-stroke: var(--st-toggle-off-border);
+  --nf-toggle-accent: rgb(var(--brand-green));     /* 品牌绿 #07c160（2026-11-01 作者令回绿） */
+  --nf-toggle-ring: var(--btn-focus-ring);
+  --nf-toggle-ring-w: 2px;
+  --nf-toggle-ring-offset: 2px;
+  --nf-toggle-disabled-opacity: var(--btn-disabled-opacity);
+  --nf-toggle-busy-opacity: 0.55;                  /* 不确定态：圆钮降不透明（纯线语言，不发光） */
+}
+html[data-theme="dark"] {
+  /* 暗档唯一要换的是圆钮：--st-text 暗实值 #e8eaed（纯白在 #2c2c31 上过曝）。
+     轨道/描边/品牌绿全部由被别名令牌自行翻档，不重复声明。 */
+  --nf-toggle-knob-bg: var(--st-text);
+}
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]):not([data-theme="dark"]) {
+    --nf-toggle-knob-bg: var(--st-text);
+  }
+}

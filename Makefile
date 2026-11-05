@@ -1,6 +1,6 @@
 .PHONY: compile run assembly clean install \
   lint fmt fix fmt-check check quality-gate check-visual visual-baseline frontend-gates component-contract \
-  flat-buttons glass \
+  flat-buttons glass toggle \
   plugin-seed-parity
 
 # Auto-detect fastest Maven mirror (Aliyun for China, Maven Central otherwise)
@@ -103,7 +103,7 @@ quality-gate:
 # = 后端把 `GET /api/conversations` 的 case 误删，前端 404 被吞成「暂无会话」，
 # **没有任何断言发现「前端调了但后端没有」**。本闸静态对照两侧（前端 /api 字面量
 # 集合 × 网关路由注册面），前端调了后端没有 ⇒ 红。
-FRONTEND_GATES := design-tokens msgstyle self-explaining circular fixture-secrets api-routes freeze-state freeze-silence flat-buttons glass canvas-hint
+FRONTEND_GATES := design-tokens msgstyle self-explaining circular fixture-secrets api-routes freeze-state freeze-silence flat-buttons glass canvas-hint toggle
 
 frontend-gates:
 	@command -v node >/dev/null 2>&1 || { echo "node not found — 前端门禁需要 node"; exit 2; }
@@ -152,6 +152,14 @@ frontend-gates:
 	@# 真几何腿（零端口、真 Chromium）另跑：node tests/canvas-hint-safe-area.spec.mjs
 	@# 改前/改后对照：--web-root <另一棵 web 树>；验红：--mutate=drop-face-safe-top。
 	node scripts/check-canvas-hint-tokens.mjs
+	@# 开关唯一性门禁（toggle-unify 批 2026-11-05，作者裁定 19:55「A 胶囊滑块」）：
+	@# 行为单点 = js/toggle.js（`role="switch"` 只许在这里出现）、造型单点 =
+	@# css/sidebar.css 的 `.nb-toggle`（其它文件不许再画开关头像：圆钮 ::after +
+	@# border-radius:50% / 滑行 translateX / :checked+translateX 三条签名）、
+	@# 数值单点 = stand-tokens.css 的 `--nf-toggle-*`（40×22 / 16 圆钮 / 999 圆角 /
+	@# 18 行程 / 180ms 曲线，组件节不许写死几何）。
+	@# 盘点：node scripts/check-toggle-unify.mjs --inventory；机器读：--json。
+	node scripts/check-toggle-unify.mjs
 	@echo "Frontend static gates passed ($(FRONTEND_GATES))."
 
 # ── 按钮扁平化：单闸入口（CI 同名 step 调的就是它，单一真源别在 CI 里另抄一遍）──
@@ -171,6 +179,10 @@ canvas-hint:
 
 canvas-hint-geometry:
 	node tests/canvas-hint-safe-area.spec.mjs
+
+# ── 开关唯一性：单闸入口（与 flat-buttons / glass 同形）──────────────────────
+toggle:
+	node scripts/check-toggle-unify.mjs
 
 # ── 路由存在性：运行期腿（empty-state-must-not-lie 批 · 件三②，2026-11-05）──────
 # 静态腿判「源码里注册了没」，运行期腿判「启动后真的答不答」——后者才是事故的

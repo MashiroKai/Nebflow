@@ -48,8 +48,20 @@ const SPEC_PATH = join(
   'skills', 'design-language', 'references', 'flat-button-spec.md',
 );
 
-/** 硬标记段：类/id 名按 [-_] 切分后**任一段**命中即视为按钮面（btn 无歧义）。 */
-const BUTTON_SEGMENTS = new Set(['btn', 'btns', 'button', 'buttons']);
+/** 硬标记段：类/id 名按 [-_] 切分后**任一段**命中即视为按钮面（btn 无歧义）。
+ *
+ *  2026-11-05 toggle-unify 批补盲：`toggle` / `switch` 两支进来。为什么它们属于
+ *  「按钮面」而不是「容器面」—— 开关是**可点击件**（真实 `<button role="switch">`，
+ *  见 js/toggle.js），扁平契约（禁厚度道具）对它一视同仁；补之前 `.nb-toggle`
+ *  整族落在判据之外：`sidebar.css` 组件节那两条 `inset` 内高光（轨道上下一道白/黑
+ *  浮雕边）全站门禁读数是 0 命中 ——「扁平」只是手写约定、没有机器面。
+ *  段切分口径不变：`.nb-toggle` → [nb, toggle]；`.tfl-switch-knob` →
+ *  [tfl, switch, knob] —— 名字里任一段命中即入扫描范围（子部件也是这个控件的
+ *  渲染面，轨道/圆钮的高光同样算厚度）。 */
+const BUTTON_SEGMENTS = new Set([
+  'btn', 'btns', 'button', 'buttons',
+  'toggle', 'toggles', 'switch', 'switches',
+]);
 
 /**
  * 软标记段：命中后还要求「其后所有段都是修饰词」才算按钮面。

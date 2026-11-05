@@ -13,6 +13,7 @@ import { t } from './i18n.js';
 import { brand } from './brand.js';
 import { key } from './branding.js';
 import { createIconsIn } from './utils.js';
+import { toggleHTML, setToggleState, setToggleBusy } from './toggle.js';
 import { openDaemonConfig } from './daemonPanel.js';
 
 // ── Inline CSS ─────────────────────────────────────────────
@@ -182,33 +183,14 @@ const DAEMON_CSS = `
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
-/* ── Auto-start Toggle (small switch) ── */
-.daemon-autostart {
-  display: inline-flex; align-items: center; gap: var(--ds-space-1); flex-shrink: 0;
-  cursor: pointer; user-select: none; opacity: 0.75;
-  transition: opacity 0.15s;
-}
-.daemon-autostart:hover { opacity: 1; }
-.daemon-autostart-track {
-  position: relative; width: 26px; height: 15px; border-radius: var(--ds-radius-input);
-  background: rgba(128, 128, 128, 0.28);
-  transition: background 0.2s; flex-shrink: 0;
-}
-.daemon-autostart-thumb {
-  position: absolute; top: 2px; left: 2px; width: 11px; height: 11px;
-  border-radius: 50%; background: #fff;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.25);
-  transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1);
-}
-.daemon-autostart-input {
-  position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none;
-}
-.daemon-autostart-input:checked + .daemon-autostart-track {
-  background: rgb(91, 127, 191);
-}
-.daemon-autostart-input:checked + .daemon-autostart-track .daemon-autostart-thumb {
-  transform: translateX(11px);
-}
+/* ── 自动启动开关 ──────────────────────────────────────────────────────────
+   toggle-unify 批 2026-11-05：原 .daemon-autostart 一族（label + 隐藏
+   input[checkbox] + .daemon-autostart-track + .daemon-autostart-thumb，
+   26×15 轨道 / 11px 圆钮 / 圆钮带 0 1px 2px 投影 / 蓝 rgb(91,127,191) 自造色）
+   是**全站第二套开关**，整族删除。开关本体改为共享组件（js/toggle.js 的
+   .nb-toggle，css/sidebar.css，40×22 胶囊 + 16 圆钮），行为走 click + setToggleState，
+   几何/配色/动效全部来自 --nf-toggle-* 令牌。本文件零开关样式。
+   注：本段位于 DAEMON_CSS 模板串内 —— 注释里不许出现反引号（会截断模板串）。 */
 
 /* ── Action Buttons ── */
 .daemon-actions { display: flex; align-items: center; gap: var(--ds-space-1); flex-shrink: 0; }
@@ -384,10 +366,12 @@ function buildRow(d, animate = false) {
       </div>
       <div class="daemon-command">${esc(d.command || '')}</div>
     </div>
-    <label class="daemon-autostart" title="Auto-start with ${brand.productName}">
-      <input type="checkbox" class="daemon-autostart-input" data-id="${esc(d.id)}" ${d.autoStart ? 'checked' : ''}>
-      <span class="daemon-autostart-track"><span class="daemon-autostart-thumb"></span></span>
-    </label>
+    ${toggleHTML({
+      on: !!d.autoStart,
+      label: `Auto-start with ${brand.productName}`,
+      title: `Auto-start with ${brand.productName}`,
+      attrs: `data-autostart-id="${esc(d.id)}"`,
+    })}
     <div class="daemon-actions">
       ${status === 'running' || status === 'starting'
         ? `<button class="daemon-btn stop" data-act="stop" data-id="${esc(d.id)}">${t('daemons.stop')}</button>`
@@ -415,20 +399,27 @@ function buildRow(d, animate = false) {
   // Daemon name is a native <a target="_blank"> when the port is open —
   // no JS click handler needed (and none that Safari could block).
 
-  // Auto-start toggle — optimistic flip + PUT, revert on failure.
-  const autoInput = /** @type {HTMLInputElement} */ (row.querySelector('.daemon-autostart-input'));
-  if (autoInput) {
-    autoInput.addEventListener('change', async (e) => {
+  // Auto-start toggle — shared switch component（js/toggle.js）：乐观翻面 + PUT，
+  // 失败回滚。toggle-unify 批 2026-11-05 前这里是 label+input[checkbox] 自画开关，
+  // 自带一套 track/thumb 与蓝 rgb(91,127,191) 自造色；现在行为与本行其余控件同源。
+  const autoSwitch = /** @type {HTMLButtonElement|null} */ (row.querySelector('.nb-toggle[data-autostart-id]'));
+  if (autoSwitch) {
+    autoSwitch.addEventListener('click', async (e) => {
       e.stopPropagation();
-      const id = autoInput.getAttribute('data-id');
-      const next = autoInput.checked;
+      const id = autoSwitch.getAttribute('data-autostart-id');
+      const next = !autoSwitch.classList.contains('on');
+      setToggleState(autoSwitch, next); // 乐观：组件自有翻转（与 bindToggle 同一套视觉态）
       const target = daemons.find(x => x.id === id);
       if (target) target.autoStart = next;
+      // 在途用 aria-busy（不确定态）而不是 disabled：禁用一个刚被键盘操作的按钮会
+      // 立刻丢焦点 —— 用户按 Space 之后紧接着按 Enter 就没反应了（本批实测踩到）。
+      setToggleBusy(autoSwitch, true);
       const resp = await apiCall('PUT', `/api/daemons/${encodeURIComponent(id)}`, { autoStart: next });
+      setToggleBusy(autoSwitch, false);
       if (!resp) {
-        // Revert on failure
+        // Revert on failure — 界面绝不留在假态
         if (target) target.autoStart = !next;
-        autoInput.checked = !next;
+        setToggleState(autoSwitch, !next);
       }
     });
   }

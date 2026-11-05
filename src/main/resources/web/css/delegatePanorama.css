@@ -228,7 +228,10 @@
   z-index: 2;
 }
 .dvp-zone-toggle:hover { background: var(--glass-control-bg-hover); color: var(--color-text); }
-.dvp-zone-toggle:focus-visible { box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.45); outline: none; }
+.dvp-zone-toggle:focus-visible { /* 焦点环是「线」，走 outline（扁平契约 F1 禁 box-shadow 画的环） */
+  outline: 2px solid var(--btn-focus-ring);
+  outline-offset: 2px;
+}
 
 /* ── 节点卡 · 通用（无边玻璃；层次靠明暗差，状态只上点/环/徽标）────────────── */
 .dvp-nd {

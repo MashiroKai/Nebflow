@@ -44,6 +44,10 @@ import { todoStore, TAG_COLOR_PRESETS, PRIORITY_COLORS, PRIORITY_LABEL_KEYS } fr
 // = ./timeWheel.js；隐藏输入 `.tfl-due-input` 保留为值域载体（saveEditing /
 // saveCreate 读面零改）。
 import { pointTriggerHTML, attachTimeTriggers, msToLocalInput } from './timeWheel.js';
+import { createToggle, setToggleState } from './toggle.js';
+
+/** 截止时间开关的无障碍标签 id 序号（同一面板可能同时挂编辑行与创建行两枚开关）。 */
+let dueToggleSeq = 0;
 
 const REDUCED_MOTION = typeof matchMedia === 'function' &&
   matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -1192,23 +1196,26 @@ class TodoFace {
     // 截止时间开关 + 时刻输入
     const dueRow = el('div', 'tfl-edit-due');
     let hasDue = item.due != null;
-    const toggle = el('button', 'tfl-switch' + (hasDue ? ' on' : ''));
-    toggle.type = 'button';
-    toggle.setAttribute('role', 'switch');
-    toggle.setAttribute('aria-checked', String(hasDue));
-    toggle.appendChild(el('span', 'tfl-switch-label', hasDue ? t('todoface.hasDue') : t('todoface.noDue')));
-    toggle.appendChild(el('span', 'tfl-switch-knob-wrap', '')).appendChild(el('span', 'tfl-switch-knob'));
+    // toggle-unify 批 2026-11-05：原 `.tfl-switch`（自画轨道+圆钮+内嵌文字，26×15）
+    // 整族并入全站唯一开关组件 js/toggle.js 的 `.nb-toggle`。文字标签留在控件外
+    // （状态事实仍可见，aria-labelledby 把它接到开关上），控件本体的 role / aria-checked
+    // / 键盘行为 / 几何全部由组件单点提供。
+    const dueLabelId = `tfl-due-toggle-label-${++dueToggleSeq}`;
+    const dueLabel = el('span', 'tfl-due-label', hasDue ? t('todoface.hasDue') : t('todoface.noDue'));
+    dueLabel.id = dueLabelId;
+    const toggle = createToggle({ on: hasDue, label: t('todoface.hasDue') });
+    toggle.setAttribute('aria-labelledby', dueLabelId);
+    toggle.dataset.tflDue = '1';
     // 截止时间开关 + 同款时间滚轮点选面（time-wheel-picker 批 2026-11-03）
     const { holder: dueHolder, hidden: dueInput } = dueFieldEls(item.due != null ? item.due : Date.now() + 3600_000);
     dueHolder.style.display = hasDue ? '' : 'none';
     toggle.addEventListener('click', () => {
       hasDue = !hasDue;
-      toggle.classList.toggle('on', hasDue);
-      toggle.setAttribute('aria-checked', String(hasDue));
-      toggle.querySelector('.tfl-switch-label').textContent = hasDue ? t('todoface.hasDue') : t('todoface.noDue');
+      setToggleState(toggle, hasDue);
+      dueLabel.textContent = hasDue ? t('todoface.hasDue') : t('todoface.noDue');
       dueHolder.style.display = hasDue ? '' : 'none';
     });
-    dueRow.append(toggle, dueHolder);
+    dueRow.append(dueLabel, toggle, dueHolder);
     panel.appendChild(dueRow);
     this.editDraft = { notesEl: detailEl, dueInput, get hasDue() { return hasDue; } };
     return panel;
@@ -1258,22 +1265,22 @@ class TodoFace {
     panel.appendChild(prioRow);
     const dueRow = el('div', 'tfl-edit-due');
     let hasDue = false;
-    const toggle = el('button', 'tfl-switch');
-    toggle.type = 'button';
-    toggle.setAttribute('role', 'switch');
-    toggle.setAttribute('aria-checked', 'false');
-    toggle.appendChild(el('span', 'tfl-switch-label', t('todoface.noDue')));
-    toggle.appendChild(el('span', 'tfl-switch-knob-wrap', '')).appendChild(el('span', 'tfl-switch-knob'));
+    // 同一组件、同一契约（见编辑行处注释）：文字标签留在控件外并做 aria-labelledby。
+    const dueLabelId = `tfl-due-toggle-label-${++dueToggleSeq}`;
+    const dueLabel = el('span', 'tfl-due-label', t('todoface.noDue'));
+    dueLabel.id = dueLabelId;
+    const toggle = createToggle({ on: false, label: t('todoface.noDue') });
+    toggle.setAttribute('aria-labelledby', dueLabelId);
+    toggle.dataset.tflDue = '1';
     const { holder: dueHolder } = dueFieldEls(Date.now() + 3600_000);
     dueHolder.style.display = 'none';
     toggle.addEventListener('click', () => {
       hasDue = !hasDue;
-      toggle.classList.toggle('on', hasDue);
-      toggle.setAttribute('aria-checked', String(hasDue));
-      toggle.querySelector('.tfl-switch-label').textContent = hasDue ? t('todoface.hasDue') : t('todoface.noDue');
+      setToggleState(toggle, hasDue);
+      dueLabel.textContent = hasDue ? t('todoface.hasDue') : t('todoface.noDue');
       dueHolder.style.display = hasDue ? '' : 'none';
     });
-    dueRow.append(toggle, dueHolder);
+    dueRow.append(dueLabel, toggle, dueHolder);
     panel.appendChild(dueRow);
     wrap.appendChild(panel);
     row.appendChild(wrap);
@@ -1283,7 +1290,7 @@ class TodoFace {
     row.addEventListener('click', (e) => {
       if (this.mobile) return;
       if (e.target === this.createTitle || e.target === notes) return;
-      if (e.target.closest('.tfl-edit-prio-btn') || e.target.closest('.tfl-switch') || e.target.closest('.tfl-due-holder')) return;
+      if (e.target.closest('.tfl-edit-prio-btn') || e.target.closest('.nb-toggle') || e.target.closest('.tfl-due-label') || e.target.closest('.tfl-due-holder')) return;
       this.saveCreate();
     });
     // 展开后聚焦标题（ReminderIsland onAppear 聚焦等价：web 无懒实例化竞态，
@@ -1368,7 +1375,7 @@ class TodoFace {
     const notesEl = host.querySelector('.tfl-create-panel .tfl-edit-notes');
     const detail = notesEl instanceof HTMLInputElement || notesEl instanceof HTMLTextAreaElement ? notesEl.value : '';
     const dueEl = host.querySelector('.tfl-create-panel .tfl-due-input');
-    const dueOn = host.querySelector('.tfl-create-panel .tfl-switch.on') != null;
+    const dueOn = host.querySelector('.tfl-create-panel .nb-toggle.on') != null;
     const due = dueOn && dueEl && dueEl.value ? new Date(dueEl.value).getTime() : null;
     this.creating = false;
     this.createTitle = null;

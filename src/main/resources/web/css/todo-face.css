@@ -312,8 +312,10 @@
   --tfl-rt: 24px;
   --tfl-rb: 19px;
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  /* 毛玻璃配方不在这里写（glass-unify 批：全站唯一配方 + 唯一成员登记表）——
+     本态已并入 css/glass.css 成员表（`.tfl-card[data-state="open"]`），配方值 =
+     var(--nf-glass-filter) 单源。原先这两行自写 blur+saturate(1.15) 是别人分支
+     留下的第二套配方（check-glass-unify 的 G1 判据抓到的 2 条残留）。 */
   box-shadow:
     inset 0 0 0 1px var(--glass-border),
     inset 0 1px 0 0 rgba(255, 255, 255, 0.15),
@@ -965,38 +967,15 @@
 }
 .tfl-edit-prio-btn .tfl-chip-dot { width: 7px; height: 7px; }
 .tfl-edit-due { display: flex; align-items: center; gap: var(--ds-space-1); }
-.tfl-switch {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--ds-space-1);
-  padding: 0;
-  border: none;
-  background: transparent;
-  cursor: pointer;
-}
-.tfl-switch-label {
+/* toggle-unify 批 2026-11-05：原 `.tfl-switch` / `.tfl-switch-knob-wrap` /
+   `.tfl-switch-knob` 三条自画开关规则整族删除（26×15 轨道 + 11px 圆钮 + 自有
+   translateX(11px) 过渡 = 全站第二套开关）。开关本体改由共享组件
+   `js/toggle.js` + `.nb-toggle`（css/sidebar.css）提供；本文件只留控件外的
+   状态文字标签样式（`.tfl-due-label`），因为它属于本面的排版而不是开关本体。 */
+.tfl-due-label {
   font: 400 var(--ds-fs-meta)/1.3 ui-monospace, SFMono-Regular, monospace;
   color: color-mix(in srgb, var(--color-text, #000) 55%, transparent);
 }
-.tfl-switch-knob-wrap {
-  width: 26px;
-  height: 15px;
-  border-radius: var(--ds-radius-input);
-  background: color-mix(in srgb, var(--color-text, #000) 20%, transparent);
-  display: flex;
-  align-items: center;
-  padding: var(--ds-space-half);
-  transition: background 0.15s;
-}
-.tfl-switch-knob {
-  width: 11px;
-  height: 11px;
-  border-radius: 50%;
-  background: var(--color-text, #fff);
-  transition: transform 0.15s;
-}
-.tfl-switch.on .tfl-switch-knob-wrap { background: var(--tfl-green-solid); }
-.tfl-switch.on .tfl-switch-knob { transform: translateX(11px); }
 /* 截止时刻面（time-wheel-picker 批 2026-11-03）：原生 datetime-local 退役 ⇒
    值域载体是隐藏输入（.tfl-due-input），可见面 = 同款 `.tw-trigger`
    （样式单源 = timeWheel.css；此处只管行内伸展与密度）。 */
@@ -1223,8 +1202,7 @@
 @media (prefers-reduced-motion: reduce) {
   .tfl-card, .tfl-panel, .tfl-capsule, .tfl-chip, .tfl-chip-dot,
   .tfl-row, .tfl-edit-wrap, .tfl-complete-fill, .tfl-complete-fill svg,
-  .tfl-filterbar, .tfl-tag-popover, .tfl-switch-knob,
-  .tfl-switch-knob-wrap, .tfl-cap-face, .tfl-fab-add, .tfl-del, .tfl-undo {
+  .tfl-filterbar, .tfl-tag-popover, .tfl-cap-face, .tfl-fab-add, .tfl-del, .tfl-undo {
     transition: none !important;
     animation: none !important;
   }
