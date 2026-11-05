@@ -1,0 +1,45 @@
+PASS  CR0 前置：三文件页签开（charlie 活动）  — n=3 active=file:/tmp/cr-fixture/charlie.md
+PASS  CR1-0 平时态：环闭 + 标题可见  — open=false n=0 title=1
+PASS  CR1-1 尺寸调小：t-name 12px + 头 padding 4px 档  — font=12px pad=4px
+PASS  CR2-1 hover 展开：ring-open + 3 胶囊挂载（0 弧外 —— 最多同时可见 3 个）  — open=true n=3 far=0
+PASS  CR2-2 中心 = 激活页签（charlie）+ 零旋转  — center=file:/tmp/cr-fixture/charlie.md rx=0deg
+PASS  CR2-3 缘位上下真对称（作者令 2026-10-23）：一上一下、|y| 严格相等、rotateX 反号等幅（±34°）+ 模糊扭曲  — ys=38.0px/-38.0px rxs=-34deg/34deg filter=blur(1.6px) saturate(1.25)
+PASS  CR2-6 顶部越出克制（固定尺寸批重钉：36px 面 ⇒ 越出 = h−8 ≤ 全高−6）+ 下缘位不越底缘  — out=15.6px (cap 36px) / maxBottom=89.6 vs 890.0
+PASS  CR2-9 真越出（六项②）：环层在面板外（body 层 —— overflow:hidden 裁切盒失效）+ 上缘位 rect 真实高于面板顶缘  — parent=BODY contains=false edgeAbove=true
+PASS  CR2-9b 中心位落穿（六项②配套）：is-center pointer-events none（标题头手势链不受环层遮蔽）  — centerPe=none
+PASS  CR2-7 尺寸恒定（hover 展开）：胶囊宽高 = 常态（±1px）+ transform 零缩放  — rest=180.0x36.0 open=180.0x36.0 scale=1.000
+PASS  CR2-8a canvas 居中（常态·横轴）：胶囊中心 x = 面板中线（±2px）+ 纵轴在顶带  — dx=0.0 cy=45.0 vs slideCy=453.0
+PASS  CR2-8b 环开顶部保持（修正批 D 令）：横轴中线不变（±2px）+ 纵轴零沉降（环开位 = 常态顶带位 ±1.5px，绝不落 canvas 中部）  — dx=0.0 dyOpen=-408.0 dyRest=-408.0
+PASS  CR2-4 中心位接班：常态标题让位（t-inner opacity 0，同位 morph）  — title=0
+FAIL  CR2-5 材质 = 全站统一 frosted（bg/blur/shadow 与 #input-bar 逐项相等 + 底缘透明钉，冷启动批③改锚）  — {"ref":{"bg":"rgba(24, 28, 38, 0.68)","blur":"blur(24px) saturate(1.15)","border":"rgba(255, 255, 255, 0.06)","shadow":"rgba(255, 255, 255, 0.04) 0px 1px 0px 0px inset, rgba(0, 0, 0, 0.2) 0px 2px 8px 0px, rgba(0, 0, 0, 0.35) 0px 8px 24px 0px"},"capsule":{"bg":"rgba(0, 0, 0, 0)","blur":"blur(24px) saturate(1.6)","border":"rgb(232, 234, 237) rgb(232, 234, 237) rgba(0, 0, 0, 0)","shadow":"none"}}
+PASS  CR3-1 纵滚换选（鼠标可操作）：deltaY -200 单事件 → 恰退一格（bravo 居中；单事件不超调），激活不变（滚动≠切换）  — center=file:/tmp/cr-fixture/bravo.md active=file:/tmp/cr-fixture/charlie.md
+PASS  CR3-1b 连拨逐格：冷却后再拨 deltaY -100 → alpha 居中（200ms 冷却窗外，累进不断链）  — center=file:/tmp/cr-fixture/alpha.md
+PASS  CR3-1c 横滑保留（触控板副手势）：deltaX -112 单事件 → 恰退一格（charlie 居中，与纵滚同规不超调）  — center=file:/tmp/cr-fixture/charlie.md
+PASS  CR3-2 反向一格：deltaY +100 → alpha 居中（环绕步进：单事件一格）  — center=file:/tmp/cr-fixture/alpha.md
+PASS  CR2-7b 尺寸恒定（环滚动中）：换选进行中胶囊宽高仍 = 常态 + 零缩放  — scroll=180.0x36.0 scale=1.000
+PASS  CR3-3 环优先消费：环上滚轮后 pane scrollTop 不变（不外溢内容区）  — scroll -1 → -1
+PASS  CR4 点击缘位胶囊 = 切换（激活易主 + 环保持开·指针在区〔2026-10-25 连续性令〕+ 游标跳新激活）  — active=file:/tmp/cr-fixture/charlie.md open=true center=file:/tmp/cr-fixture/charlie.md
+PASS  CR4b 换签后滚轮不断链：环开 + 游标随滚动移开（center ≠ 刚切换页签）  — open=true center=file:/tmp/cr-fixture/alpha.md
+PASS  CR4c 指针离区换签收环腿保留：环不开（hover 语义随指针离区作废）  — open=false
+PASS  CR5 hover 收起：离环后 ring-open 清 + 胶囊清 + 标题回位  — open true → false n=0
+PASS  CR6-1 胶囊右键菜单 = 引用当前页 + 多开 + 关闭 + 在独立窗口打开  — 引用当前页/选区/多开/关闭/在独立窗口打开
+PASS  CR6-2 在独立窗口打开 → popout 链（#717）：页签 is-independent + 卡面 data-independent  — {"tab":true,"pane":"1"}
+PASS  CR6-3 独立中菜单换形：在独立窗口打开 → 合并回主窗  — ["引用当前页/选区","多开","关闭","合并回主窗"]
+PASS  CR6-4 合并回主窗 → is-independent 清  — merged=true
+PASS  CR6-5 多开 = 铺开叠卡环（deck.open）  — open=true
+PASS  CR6-6 deck 开着时菜单换形「收起叠卡」→ 点击收环  — menu=引用当前页/选区/收起叠卡/关闭/关闭其他/在独立窗口打开 open=false
+PASS  CR6-7 菜单「关闭」= 关对应页签（tabCount −1，对项消失；4 页签态〔CR4c 起〕关 1 剩 3）  — n=3 victim=file:/tmp/cr-fixture/alpha.md
+PASS  CR7-1 按住=按钮语义：双击胶囊零文本选中（user-select:none）  — sel=""
+PASS  CR7-2 防默认拖拽：胶囊 dragstart 被 preventDefault  — prevented=true
+PASS  CR8 单胶囊（平时态即全部）：hover 不展开环  — n=1 open=false caps=0
+PASS  R0 主文档零 JS 错误
+PASS  CR9-1 双卡环展开：两胶囊（1 中心 + 1 缘位）、零弧外  — n=2 caps=2 edges=1 far=0
+PASS  CR9-2 双卡上滚：换选生效（alpha 居中）+ 非游标胶囊翻到上方（来向侧，不再恒驻下方）  — center=file:/tmp/cr-fixture/alpha.md edgeY=-38px
+PASS  CR9-3 双卡下滚：换选生效（bravo 居中）+ 非游标胶囊回落下方（方向感知随动）  — center=file:/tmp/cr-fixture/bravo.md edgeY=38px
+PASS  CR9-4 双卡缘位点击 = 切换（<3 卡交互面完备）  — active=file:/tmp/cr-fixture/alpha.md
+PASS  R0c 双卡腿零 JS 错误
+PASS  L1 亮色：环展开上下对称（|y| 相等一上一下）+ 顶部越出克制（固定尺寸批重钉 ≤ 全高−6）+ 环锚顶带零沉降  — ys=38.0px/-38.0px out=15.6px (cap 36px)
+PASS  L2 亮色：收起回单胶囊（环清 + 标题回位 + 回顶带）  — open=false n=0
+PASS  R0b 亮色腿零 JS 错误
+
+canvas-capsule-ring: 42 PASS / 1 FAIL

@@ -33,6 +33,8 @@ import {
   wakeableOf,
   freezeBadgeKey,
   freezeReasonLabelKey,
+  delegateFreezeWire,
+  delegateFreezeIsInfra,
 } from '../freezeState.js';
 
 // --- Multi-agent events ---
@@ -1337,6 +1339,24 @@ function bgOrphanRowHtml(row, bucketSid) {
  * @param {string} id @param {any} info @param {{childLevel?: boolean, headLevel?: boolean, badgeWord?: string, agentflowKey?: string, depth?: number, rowTitle?: string, shortName?: string, childCount?: number, collapsed?: boolean, wild?: boolean, orphanFrom?: string, orphanTitle?: string, bucketSid?: string, chainContinued?: boolean, chainCount?: number}} [opts]
  * @returns {string}
  */
+/** Mail 续传地址 chip（AgentControl name/address 批 2026-11-05 · 作者令「agentcontrol
+ *  工具应该要能返回在跑的 delegate 的 name 和地址，方便投递任务」的面板面）。
+ *
+ *  数据源 = **后端** MailAddress 单点推导出的行字段 `info.mailAddress`（快照
+ *  activeAgentEntryJson 与 live agentStart 帧同键）——面板**零推导**：地址是「原样
+ *  粘进 Mail」的令牌，前端若自己拼一遍就有了第二个形态来源（错一位就投错人）。
+ *  空 = 本 kind 无 Mail 面（Root/Team/Ephemeral/SubTask/旧 dag-*）⇒ 零渲染。
+ *
+ *  版式与可复制性分家：视觉上 ellipsis 截断（行宽有限），**复制目标恒为全文**
+ *  （data-bg-copy 承载完整地址，点击写剪贴板）——截断只是排版，不是数据。 */
+function bgAddrPart(info) {
+  const addr = String((info && info.mailAddress) || '').trim();
+  if (!addr) return '';
+  return '<span class="bg-task-addr" role="button" tabindex="-1" data-bg-copy="'
+    + escapeHtml(addr) + '" title="' + escapeHtml(addr + ' — ' + t('subagents.copyAddress')) + '">'
+    + escapeHtml(addr) + '</span>';
+}
+
 function bgTaskRowHtml(id, info, opts = {}) {
   const rawState = bgRowState(info);
   // 延续态覆写只对终态基座行生效（进行中 delegate 行的链子行走普通两级呈现）。
@@ -1548,6 +1568,41 @@ function bgTaskRowHtml(id, info, opts = {}) {
   //     原因」徽标 + 「唤醒」按钮 + 三个真实出口的 tooltip。
   const frozenPart = (rowState === 'frozen')
     ? (() => {
+      // 冻结通知策略批（2026-11-05 作者令两连）：delegate 错误冻结族**一律**走本支
+      // ——它是「provider 故障 = 基础设施故障，不向上汇报，面板待你处理 + 引擎自愈」
+      // 的呈现面。判据 = freezeState.delegateFreezeWire（线值归一单点：实时帧送裸
+      // 原因码、快照送 `delegate-frozen:*`，两种形态都认）。
+      //   · 徽标 = 「已冻结 · 原因（待你处理）」，**带「唤醒」按钮**（唤醒腿 = 幂等
+      //     UserInput 注入 / 同 id 复活，不花 supervisor 重启预算）；
+      //   · tooltip = 这一族到底在等什么（供应商/额度）+ 原因 + 错误摘要 + 已自动续跑
+      //     次数（耗尽则明说需要你：充值/换模型/取消）+ 长期冻结龄。
+      const dwire = delegateFreezeWire(info);
+      if (dwire) {
+        const infra = delegateFreezeIsInfra(info);
+        const whyKey = freezeReasonLabelKey(dwire);
+        const why = info.frozenReasonLabel || (whyKey ? t(whyKey) : '');
+        const detail = String(info.frozenDetail || '');
+        const hours = Number(info.dormantHours) || 0;
+        const tries = Number(info.autoResumes) || 0;
+        const tip = [];
+        tip.push(t(infra ? 'subagents.frozenInfraTip' : 'subagents.frozenTip'));
+        if (why) tip.push(t('subagents.frozenReason', { reason: why }));
+        if (detail) tip.push(detail);
+        if (tries > 0) tip.push(t('subagents.frozenAutoResumes', { n: String(tries) }));
+        if (info.autoResumesExhausted) tip.push(t('subagents.frozenAutoResumesSpent'));
+        if (hours > 0) tip.push(t('subagents.frozenDormantTip', { hours: String(hours) }));
+        const label = why
+          ? t('subagents.frozenAwaitingYou', { reason: why })
+          : t('subagents.frozenAwaitingYouNoReason');
+        return '<span class="bg-task-frozen" role="status" title="' + escapeHtml(tip.join('\n')) + '">'
+          + statusIcon('snowflake', 11, 'st-warn')
+          + escapeHtml(label)
+          + '</span>'
+          + '<button class="bg-task-wake" type="button" data-bg-wake="'
+          + escapeHtml(String((info && info.sessionId) || '').replace(/^team-/, ''))
+          + '" title="' + escapeHtml(t('subagents.wakeTip')) + '">'
+          + escapeHtml(t('subagents.wake')) + '</button>';
+      }
       const kind = freezeKindOf(info);
       const whyKey = freezeReasonLabelKey(freezeReasonWire(info));
       const why = info.frozenReasonLabel || (whyKey ? t(whyKey) : '');
@@ -1666,7 +1721,7 @@ function bgTaskRowHtml(id, info, opts = {}) {
             : rowState === 'error' ? statusIcon('circle-x', 11, 'st-err')
             : '') +
           escapeHtml(statusLabel) + '</span>' +
-        entityPart + kindPart + projectPart + orphanPart + taskPart + retriesPart + uptimePart +
+        entityPart + kindPart + bgAddrPart(info) + projectPart + orphanPart + taskPart + retriesPart + uptimePart +
       '</div>' +
       // 任务摘要次行（面板行说明批 2026-10-29 ②）：实名行的任务摘要上屏位——
       // 单行截断 + tooltip 全文；无摘要/已并入主名时零渲染（行高不膨胀）。
@@ -1798,7 +1853,25 @@ export function renderBgAgentDropdown() {
   }
   // Panel header carries the live count (aria-live polite, spec §5).
   const headerEl = dropdownEl ? dropdownEl.querySelector('.bg-dropdown-header') : null;
-  if (headerEl) headerEl.textContent = t('subagents.header', { count: model.total });
+  if (headerEl) {
+    // 冻结通知策略批（2026-11-05）：头部计数后缀 = **冻结静默统计**（后端
+    // `delegateFreezeDigest` 帧 / 快照同一形态）——「N 条已冻结（可唤醒）」/「M 条
+    // 冻结待你处理」。这是被压掉的逐条通知的**唯一去处**：作者主动打开面板才看到，
+    // 零弹窗零消息。
+    const digest = state.freezeDigest || null;
+    let digestText = '';
+    if (digest && (Number(digest.recoverable) > 0 || Number(digest.needsHuman) > 0)) {
+      const segs = [];
+      if (Number(digest.recoverable) > 0) {
+        segs.push(t('subagents.freezeDigestRecoverable', { count: Number(digest.recoverable) }));
+      }
+      if (Number(digest.needsHuman) > 0) {
+        segs.push(t('subagents.freezeDigestNeedsHuman', { count: Number(digest.needsHuman) }));
+      }
+      digestText = ' · ' + segs.join(' · ');
+    }
+    headerEl.textContent = t('subagents.header', { count: model.total }) + digestText;
+  }
   if (model.total === 0 && remoteHtml === '') {
     // 空态自动收起（修订批九点⑤ · 2026-10-09）：无内容不渲染空态区块——列表留白，
     // 头部计数（·0）即空态真值（原 spec §6 空态文案行停用，键保留）。
@@ -1945,6 +2018,23 @@ export function renderBgAgentDropdown() {
         // Close the dropdown
         if (dropdown) dropdown.classList.add('hidden');
       }
+    });
+  });
+
+  // name/address 批（2026-11-05）：地址 chip 点击 = 复制**完整**地址（视觉可截断，
+  // 复制绝不截断——data-bg-copy 是全文）。停冒泡：行体点击仍是开详情；复制成功给
+  // 一瞬 is-copied 着色（不弹 toast——复制是最轻的动作，反馈不该打断）。
+  listEl.querySelectorAll('[data-bg-copy]').forEach(chip => {
+    chip.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const full = chip.getAttribute('data-bg-copy') || '';
+      if (!full) return;
+      try {
+        const p = navigator.clipboard && navigator.clipboard.writeText(full);
+        if (p && p.catch) p.catch(() => {});
+      } catch (_) { /* 老引擎/无权限：粘不到剪贴板也不报错，chip 文本仍可手选 */ }
+      chip.classList.add('is-copied');
+      setTimeout(() => chip.classList.remove('is-copied'), 1200);
     });
   });
 

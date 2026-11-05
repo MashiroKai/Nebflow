@@ -123,9 +123,12 @@
 .error-retry-btn {
   color: rgb(var(--amber));
 }
-.error-retry-btn:hover:not(:disabled) {
-  background: rgb(var(--amber) / 0.12);
+@media (hover: hover) {
+  .error-retry-btn:hover:not(:disabled) {
+    background: rgb(var(--amber) / 0.12);
+  }
 }
+
 /* N-1 (2026-09-10): disabled retry = visibly inert (the no-op is gone, so the
    affordance must stop looking actionable). Hover feedback is excluded above —
    a disabled control that still lights up on hover reads as clickable. */
@@ -136,10 +139,13 @@
 .error-abandon-btn {
   color: var(--color-text-muted);
 }
-.error-abandon-btn:hover {
-  background: var(--color-frame-hover, rgba(128, 128, 128, 0.12));
-  color: var(--color-text);
+@media (hover: hover) {
+  .error-abandon-btn:hover {
+    background: var(--color-frame-hover, rgba(128, 128, 128, 0.12));
+    color: var(--color-text);
+  }
 }
+
 @media (prefers-reduced-motion: reduce) {
   .error-retry-btn, .error-abandon-btn {
     transition: none;
@@ -214,9 +220,12 @@
   height: 14px;
   stroke-width: 2;
 }
-.skip-freeze-btn:hover {
-  background: rgb(var(--sapphire) / 0.12);
+@media (hover: hover) {
+  .skip-freeze-btn:hover {
+    background: rgb(var(--sapphire) / 0.12);
+  }
 }
+
 .skip-freeze-btn:active {
   background: rgb(var(--sapphire) / 0.2);
 }
@@ -331,10 +340,24 @@
   box-sizing: border-box;
   display: block;
   position: relative;
+  /* 原图任何尺寸都不许撑破宿主（宽幅 3000px / 超长竖图同判据）：尺寸恒 28px 方盒
+     + cover 取景，max-width 再兜一道 —— 盒宽由父级 flex item 决定，永不超过容器。 */
+  max-width: 100%;
+}
+/* 缩略帧宿主（图片档的根元素，renderAttachmentFace 图片档）：✕ 角标的定位锚
+   （.att-remove 绝对定位的父）、卡区命中域扩张的锚。尺寸 = 内容盒（28px 档），
+   不参与弹性伸缩 —— 附件条多枚换行由条带 flex-wrap 承担。 */
+.att-thumb-wrap {
+  position: relative;
+  display: flex;
+  flex: none;
+  max-width: 100%;
+  min-width: 0;
 }
 .att-file {
   height: 28px;
   box-sizing: border-box;
+  position: relative;          /* ✕ 角标（.att-remove）定位锚 */
   display: inline-flex;
   align-items: center;
   gap: var(--ds-space-1h);
@@ -656,8 +679,13 @@
    白 ✕ 色 = `#fff`（既有字面量，与旧 `color:#fff` 同值，零新色值）。 */
 .att-remove,
 .fm-quote-remove {
-  width: 16px;
-  height: 16px;
+  /* 角标盘径单点：位置偏移由本值算（attachment-thumb-unify 批 2026-11-05）：
+     删除钮**圆心恒压在小盒右上角**（半叠角 = 标准角标位）——修前 top/right 各
+     -4px 使盘心落在盒内 4px，16px 盘有 3/4 面积盖在 28px 缩略图上（作者报障
+     「红色 × 压在图上的错位」）。手机层只改本值（22px），偏移/命中盒自动跟随。 */
+  --att-remove-size: 16px;
+  width: var(--att-remove-size);
+  height: var(--att-remove-size);
   padding: 0;
   border: none;
   background: var(--color-error);
@@ -669,7 +697,12 @@
   cursor: pointer;
   flex: none;
 }
-.att-remove { position: absolute; top: -4px; right: -4px; font-size: var(--ds-fs-meta); }
+.att-remove {
+  position: absolute;
+  top: calc(var(--att-remove-size) / -2);
+  right: calc(var(--att-remove-size) / -2);
+  font-size: var(--ds-fs-meta);
+}
 /* 命中域外扩到 30×30（composer-overlap 批 2026-10-18）：16px 视觉圆盘的可点域
    过小（作者批注「×删除钮可点域」）。::after 生成外扩 7px 的透明层 —— 生成盒
    隶属本元素，:hover 命中测试同样落在圆盘上，视觉零变化。 */
@@ -716,18 +749,18 @@
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
-.icon-btn:hover {
-  background: var(--glass-control-bg-hover);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  border-color: var(--glass-control-border);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge);
-  color: var(--color-frame-text);
+@media (hover: hover) {
+  .icon-btn:hover {
+    background: var(--glass-control-bg-hover);
+    -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+    backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+    border-color: var(--glass-control-border);
+    color: var(--color-frame-text);
+  }
 }
+
 .icon-btn:active { background: var(--color-frame-active); transform: scale(0.96); }
 .icon-btn.recording {
   background: #07c160;
@@ -939,18 +972,17 @@
   .mic-orb-wrap.s-nebula .css-orb.orb { animation: none; }
   .orb-ripple { display: none; }
 }
-#send-btn {
-  /* 形态单源已迁 design-system.css `.ds-turn-btn`（ui-unification-20261103-
-     canvas-ask-resize 批，作者令「发送按钮与终止按钮样式与主会话完全统一（同一
-     组件/同一 design-system 令牌，不得另做一套）」）：
+
+/* 形态单源已迁 design-system.css `.ds-turn-btn`（ui-unification-20261103-
+   canvas-ask-resize 批，作者令「发送按钮与终止按钮样式与主会话完全统一（同一
+   组件/同一 design-system 令牌，不得另做一套）」）：
        · 几何 36×36 / r50% / padding 0 / 图标 18px / stroke 2.5 → --ds-turn-btn-*
        · 两态配色 send = --ds-turn-send-*（= --ctl-send-* 微信绿考古值）
        · 热区 ::after 外扩到 44（HIG）→ --ds-turn-hit
-     本块**只留主会话专属状态**：禁用（空正文闸）/ 掉线（未连接灰档）。
-     历史沿革（10-31 v2 药丸 → 11-03 ③ 收回圆形）见 git 与 design-system.css
-     §⑰ 注释，本文件不再重复形态描述 —— 再写一遍就是第二套。 */
-  /* 掉线档：本键状态色仍以主会话为全站基准（见下 .disconnected 块）。 */
-}
+   ⇒ 本文件对 `#send-btn` **零形态声明**（连 `{}` 空块都不留：空块会被读成
+   "这里还有第二套"）。只留主会话专属状态：禁用（空正文闸）/ 掉线（未连接灰档），
+   见下方 `#send-btn:disabled` 与 `#send-btn.disconnected`。
+   历史沿革（10-31 v2 药丸 → 11-03 ③ 收回圆形）见 git 与 design-system.css §⑰。 */
 /* 圆钮内的状态图标透明度档（禁用/掉线）留在消费面：它们是主会话的**状态**，
    不是按钮形态。 */
 #send-btn:disabled svg { opacity: 0.45; }
@@ -962,7 +994,6 @@
   background: var(--btn-disabled-bg);
   border-color: var(--btn-disabled-stroke);
   color: var(--btn-disabled-ink);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
   cursor: default;
   transform: none;
 }
@@ -982,11 +1013,13 @@
   background: var(--glass-send-bg-active);
   border-color: var(--glass-send-border-active);
   color: var(--color-text-muted);
-  box-shadow: inset 0 1px 0 var(--glass-control-highlight);
   cursor: not-allowed;
 }
 #send-btn.disconnected svg { opacity: 0.45; }
-#send-btn.disconnected:hover { background: var(--glass-send-bg-active); }
+@media (hover: hover) {
+  #send-btn.disconnected:hover { background: var(--glass-send-bg-active); }
+}
+
 /* v3 实现批：hover/active = --ctl-send-* 绿阶（见本块头注）；10-30 墨族注释
    与暗档绿字面量组已随换代移除（git 历史可查）。 */
 
@@ -1425,10 +1458,13 @@ html.no-backdrop #mention-dropdown {
   color: var(--color-primary);
   border-color: rgb(var(--sapphire) / 0.25);
 }
-.queue-item-btn.immediate:hover {
-  background: rgb(var(--sapphire) / 0.12);
-  border-color: rgb(var(--sapphire) / 0.4);
+@media (hover: hover) {
+  .queue-item-btn.immediate:hover {
+    background: rgb(var(--sapphire) / 0.12);
+    border-color: rgb(var(--sapphire) / 0.4);
+  }
 }
+
 .queue-item-btn.recall {
   padding: var(--ds-space-1) var(--ds-space-2);
   font-size: var(--ds-fs-btn);
@@ -1439,10 +1475,13 @@ html.no-backdrop #mention-dropdown {
   align-items: center;
   justify-content: center;
 }
-.queue-item-btn.recall:hover {
-  color: var(--color-primary);
-  background: rgb(var(--sapphire) / 0.12);
+@media (hover: hover) {
+  .queue-item-btn.recall:hover {
+    color: var(--color-primary);
+    background: rgb(var(--sapphire) / 0.12);
+  }
 }
+
 .queue-item-btn.remove {
   padding: var(--ds-space-1) var(--ds-space-2);
   font-size: var(--ds-fs-title);
@@ -1451,10 +1490,13 @@ html.no-backdrop #mention-dropdown {
   border-color: transparent;
   background: transparent;
 }
-.queue-item-btn.remove:hover {
-  color: var(--color-error);
-  background: rgba(244, 67, 54, 0.08);
+@media (hover: hover) {
+  .queue-item-btn.remove:hover {
+    color: var(--color-error);
+    background: rgba(244, 67, 54, 0.08);
+  }
 }
+
 
 /* qattachvault 批：载荷丢失失败项 —— 红左缘 + 失败注记（禁静默：失败面留在
    屏上，撤回/移除入口照旧 = 可重传）。「立即发送」对失败项不渲染（chatQueue.js）。
@@ -1527,8 +1569,10 @@ html.no-backdrop #mention-dropdown {
       0px 2px 8px rgba(0, 0, 0, 0.20),
       0px 8px 24px rgba(0, 0, 0, 0.35);
   }
-  .queue-item-btn.immediate:hover {
-    background: rgb(var(--sapphire) / 0.18);
+  @media (hover: hover) {
+    .queue-item-btn.immediate:hover {
+      background: rgb(var(--sapphire) / 0.18);
+    }
   }
 
   /* 换装批：slash/mention 浮层暗档覆写整体退役 —— 材质已换代 --g2-fab-*/
@@ -1536,5 +1580,4 @@ html.no-backdrop #mention-dropdown {
   /* 此处不再留字面量分支。 */
 
   .att-file { background: #282b33; }
-
 }

@@ -2382,7 +2382,17 @@ object GatewayMain extends IOApp:
                                                               // 错误冻结批（2026-11-01）：长期无人唤醒的冻结
                                                               // delegate 兜底面（dormant 提醒帧 / 保留期归档）
                                                               // 挂在本既有拍上，零新增定时器。
-                                                              wsSend = Some(json => wsHub.broadcast(json))
+                                                              wsSend = Some(json => wsHub.broadcast(json)),
+                                                              // 冻结通知策略批（2026-11-05）：同一拍的尾部三腿
+                                                              // ——面板静默统计 / provider 恢复后的引擎自动续跑 /
+                                                              // 需人时的**一条**聚合告警。core 层只收 IO 钩子
+                                                              // （分层门禁：core 不 import agent）。
+                                                              tailSweep = Some(
+                                                                nebflow.agent.FreezeAlertSweep.run(
+                                                                  sharedResourcesWithDaemon,
+                                                                  Some(json => wsHub.broadcast(json))
+                                                                )
+                                                              )
                                                             )
                                                             .start
                                                           // --- Background: RestartingWatchdog (#692 修批 2026-10-21) ---

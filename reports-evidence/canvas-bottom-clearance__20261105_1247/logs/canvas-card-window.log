@@ -1,0 +1,29 @@
+PASS  CW1-1 独立窗弹出：同源 ?card-window=1&path=（真容路由）  — http://127.0.0.1:8159/?card-window=1&path=%2Ftmp%2Fcw-fixture%2Fbravo.md&title=bravo.md
+PASS  CW1-2 卡窗模式在挂：body.card-window + state.cardWindowMode
+PASS  CW1-3 卡窗真容：readFile 通路渲染文件内容（非骨架）  — bravo
+bravo mock body v1
+
+PASS  CW1-4 主窗占位不消失：tabCount 不变 + independent=[bravo]  — n=3 indep=["file:/tmp/cw-fixture/bravo.md"]
+PASS  CW1-5 独立中轻态：页签 is-independent + 卡面「独立中」浮标（slide 壳层件二批）+ 右键菜单换「合并」形（批⑤ 后 = 独立窗出口）  — {"tabIndep":true,"paneIndep":true,"slideIndep":true,"chip":"\"独立中\"","popForm1":{"label":"合并回主窗","disabled":false}}
+PASS  CW1-6 菜单项同位换形（批⑤ 出口迁移）：独立中=「合并回主窗」，未独立=「独立窗口打开」  — {"label":"在独立窗口打开","disabled":false}
+PASS  R0 主文档零 JS 错误（CW1）
+PASS  CW2 主窗更新 → 卡窗真容跟进（update 广播 + 重读）  — bravo
+bravo mock body v2 UPDATED
+
+PASS  R0 主文档零 JS 错误（CW2）
+PASS  CW3-1 合并：卡窗关闭 + 标记清 + 菜单项回「在独立窗口打开」形  — closed=true indep=[] marks=true pop={"label":"在独立窗口打开","disabled":false}
+PASS  CW3-2 状态回笼 = 弹出前（tabCount/activeId/页签集合全等）  — n=3/3 active=file:/tmp/cw-fixture/bravo.md
+PASS  CW3-3 幂等：重复弹出/合并无窗泄漏（页数回落）+ 状态收敛  — pages=1→1 closed=1
+PASS  R0 主文档零 JS 错误（CW3）
+PASS  CW4-1 关窗等价：外部关闭卡窗 → 主窗 ≤5s 回笼（win.closed 轮询走同一合并路径）  — indep ["file:/tmp/cw-fixture/bravo.md"]→[] pane=true
+PASS  CW4-2 终态 = CW3 快照（等价性全等）
+PASS  R0 主文档零 JS 错误（CW4）
+PASS  CW5-1 RM 独立直切：卡面无 pop 动画类  — canvas-tab-pane active
+PASS  CW5-2 RM 合并直切：≤2.5s 收笼 + 无 merge 动画类  — dt=181ms cls=canvas-tab-pane active
+PASS  CW6-1 手机工具条三件套在位（批②：✕/计数/堆叠视角钮，g2-fab 液体玻璃）+ 独立窗/步进钮退役（批⑤）  — mobile=true {"close":true,"stack":true,"count":"2/2","popGone":true,"g2fab":true}
+PASS  CW6-2 堆叠卡视图（作者令 2026-11-02 §四）：顶部「N 张文档」计数 + 每签一张卡（标题/预览）+ 前景卡高亮  — {"count":"2 张文档","cards":2,"on":1,"thumbs":2}
+PASS  CW6-3 点后卡 = 翻到该卡（卡叠保持展开），工具条计数跟随（换入 alpha = 首卡 ⇒ 1/2）  — {"stackOpen":true,"onId":"file:/tmp/cw-fixture/alpha.md","count":"1/2"}
+PASS  CW6-4 点前景卡 = 收面回标签视图（环带复现）  — {"stackHidden":true,"stripVisible":true}
+PASS  R0 主文档零 JS 错误（CW6）
+
+canvas-card-window: 23 PASS / 0 FAIL

@@ -735,9 +735,6 @@
   background: var(--glass-control-bg);
   -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge);
   display: flex; align-items: center; justify-content: center;
   cursor: pointer; z-index: 45;
   color: var(--color-text); opacity: 0.6;
@@ -745,10 +742,13 @@
   padding: 0;
 }
 .fm-fab svg { width: 18px; height: 18px; display: block; }
-.fm-fab:hover {
-  background: var(--glass-control-bg-hover);
-  opacity: 1; transform: scale(1.05);
+@media (hover: hover) {
+  .fm-fab:hover {
+    background: var(--glass-control-bg-hover);
+    opacity: 1; transform: scale(1.05);
+  }
 }
+
 /* 面板开 = active：sapphire 染色（.canvas-ref-select.active 同式，§4.2） */
 .fm-fab.active {
   opacity: 1; color: var(--color-primary);
@@ -756,7 +756,9 @@
   background: rgb(var(--sapphire) / 0.12);
   transform: none;
 }
-.fm-fab:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.55); }
+.fm-fab:focus-visible {
+  outline: var(--btn-ring-w) solid var(--btn-ring);
+  outline-offset: var(--btn-ring-offset); }
 
 /* 计数徽章（§4.3：team-mail-badge 构型；计数 = 面板链条目数，TTL 清理同步减） */
 .fm-archive-badge {

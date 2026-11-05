@@ -167,8 +167,13 @@ html[data-theme="light"] {
    与 #header 的唯一差别 = 底的 α（1 vs .55/.68）——因为这一面背后是 canvas
    文档正文，拿不到 #chat 那层内容 mask（成因见 sapphire.css --glass-bg-opaque
    令牌注）。blur 照留：它是本档配方的一半，且本面气泡只有 ~3 屏，成本受控
-   （作者 2026-11-04 12:52 已授予气泡独立 backdrop-filter 的例外）。 */
-.ask-input {
+   （作者 2026-11-04 12:52 已授予气泡独立 backdrop-filter 的例外）。
+   ── 记事本批（2026-11-05）──
+   `.note-body`（canvas 记事本内容盒）以**成员**身份进本档：它与输入条是同一块
+   配方（同底/同 blur/同描边/同阴影/同顶缘折射线），改配方两个面一起变——本文件
+   不复制第二份 .note-* 材质声明。 */
+.ask-input,
+.note-body {
   /* 底 = 不透明档（α=1）；顶缘折射线走伪元素（形态同 #input-bar::before，
      见下方共用块）——不用背景层，是为了让「面板内零渐变背景」这条结构判据
      （tests/ask-sheet-fade-height A0d：不许出现任何过渡条/色块层）保持可读：
@@ -206,8 +211,11 @@ html[data-theme="light"] {
 }
 /* 顶缘折射线（不透明毛玻璃档的第三件）：几何与 #input-bar::before 逐值相同
    （top:0 / 左右各 10% / 高 1px / border-radius inherit），色值 = 同一个
-   --glass-refraction-line token（= #header 背景第一层的那个渐变）。 */
+   --glass-refraction-line token（= #header 背景第一层的那个渐变）。
+   记事本批：`.note-dock .note-body` 同在这一组（成员，非副本）——两条选择器都是
+   2 类特异性，与 .ask-input（1 类 + 本组 1 伪元素）互不覆盖。 */
 .ask-input::before,
+.note-dock .note-body::before,
 .ask-dock .ask-bub::before {
   content: '';
   position: absolute;
@@ -254,21 +262,25 @@ html[data-theme="light"] {
   -webkit-backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
   backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
   border: 1px solid var(--cv-border, var(--glass-border));
-  box-shadow: var(--cv-shadow);
+  /* 圆钮族零投影（扁平化批 2026-11-05）：原 `box-shadow: var(--cv-shadow)` 退役。
+     圆钮的"浮"由 backdrop 玻璃采样 + 1px 描边表达，不靠投影造厚度。 */
+}
+@media (hover: hover) {
+  
+  /* hover：抬亮 + 1.05（触屏无 hover；split/ask 原逐面 hover 档随收编归一） */
+  .canvas-source-toggle:hover,
+  .canvas-ref-select:hover,
+  .canvas-find-toggle:hover,
+  .canvas-refresh-toggle:hover,
+  .ask-fab:hover,
+  #deck-fab:hover,
+  #canvas-head-close:hover,
+  .g2-fab:hover {
+    background: var(--cv-hover-bg, var(--glass-control-bg-hover));
+    transform: scale(var(--cv-hover-scale, 1.05));
+  }
 }
 
-/* hover：抬亮 + 1.05（触屏无 hover；split/ask 原逐面 hover 档随收编归一） */
-.canvas-source-toggle:hover,
-.canvas-ref-select:hover,
-.canvas-find-toggle:hover,
-.canvas-refresh-toggle:hover,
-.ask-fab:hover,
-#deck-fab:hover,
-#canvas-head-close:hover,
-.g2-fab:hover {
-  background: var(--cv-hover-bg, var(--glass-control-bg-hover));
-  transform: scale(var(--cv-hover-scale, 1.05));
-}
 
 /* active：桌面按压 0.96（手机弹簧见下方 mobile 块；原 F1 全端 0.88 退役） */
 .canvas-source-toggle:active,
@@ -303,17 +315,20 @@ html[data-theme="light"] {
   cursor: not-allowed;
   opacity: 0.35;
 }
-.canvas-source-toggle:disabled:hover,
-.canvas-ref-select:disabled:hover,
-.canvas-find-toggle:disabled:hover,
-.canvas-refresh-toggle:disabled:hover,
-.ask-fab:disabled:hover,
-#deck-fab:disabled:hover,
-#canvas-head-close:disabled:hover,
-.g2-fab:disabled:hover {
-  transform: none;
-  background: var(--cv-bg, var(--glass-bg));
+@media (hover: hover) {
+  .canvas-source-toggle:disabled:hover,
+  .canvas-ref-select:disabled:hover,
+  .canvas-find-toggle:disabled:hover,
+  .canvas-refresh-toggle:disabled:hover,
+  .ask-fab:disabled:hover,
+  #deck-fab:disabled:hover,
+  #canvas-head-close:disabled:hover,
+  .g2-fab:disabled:hover {
+    transform: none;
+    background: var(--cv-bg, var(--glass-bg));
+  }
 }
+
 
 /* 键盘焦点（设计稿 §3.4 新增建议——基准件 A 原无焦点态，补 a11y 缺口） */
 .canvas-source-toggle:focus-visible,
@@ -342,9 +357,7 @@ html[data-theme="light"] {
   font-family: inherit;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
-  transition:
-    transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1),
-    box-shadow 0.18s ease,
+  transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1),
     background-color 0.18s ease;
 }
 .g2-fab svg {
@@ -353,7 +366,15 @@ html[data-theme="light"] {
 }
 
 /* 玻璃药丸 .g2-pill（消费方 = 接管卡次级【退出】；类名零改动，材质归包）：
-   面级配方收窄为药丸（无折射线）；几何 h36 r999 沿用 */
+   面级配方收窄为药丸（无折射线）；几何 h36 r999 沿用
+
+   ── 扁平六态（flat-button-everywhere 批 2026-11-05，作者报障现场即本族）──
+   作者逐字：「我们的按钮扁平化风格要求要落实到各处 不管是hover还是点击
+   或者按下。」报障截图 = 接管弹窗里这两枚药丸（退出 / 重新接管）带重投影 +
+   内阴影浮雕，像"浮起来的实体按钮"。
+   改法：投影（--cv-shadow）与 inset 高光/暗边全部退役；可点击感改由
+   ①底色阶（玻璃控制档 → hover 升一档 → 按下再深一档）②1px 描边
+   ③按下 2% 缩放 ④键盘 2px outline 环 承担。六态齐、双主题由 var() 自动解析。 */
 .g2-pill {
   position: relative;
   isolation: isolate;
@@ -376,19 +397,32 @@ html[data-theme="light"] {
   -webkit-backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
   backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
   border: 1px solid var(--cv-border, var(--glass-border));
-  box-shadow: var(--cv-shadow);
+  /* 零投影：厚度道具在此族结构上不存在（见文件头契约） */
   transition:
-    transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1),
-    box-shadow 0.18s ease,
-    background-color 0.18s ease;
+    transform var(--btn-dur-press) ease,
+    background-color var(--btn-dur-state) ease,
+    border-color var(--btn-dur-state) ease,
+    opacity var(--btn-dur-state) ease;
 }
-.g2-pill:hover { background: var(--cv-hover-bg, var(--glass-control-bg-hover)); }
-.g2-pill:active { transform: scale(0.95); }
+/* hover 关在 (hover:hover) 里：触屏没有 hover，隔离后触屏只走按下态 */
+@media (hover: hover) {
+  .g2-pill:hover { background: var(--cv-hover-bg, var(--glass-control-bg-hover)); }
+}
+/* 按下：底色再深一档 + 极轻微缩放（不位移、不配影） */
+.g2-pill:active {
+  background: var(--btn-press-bg);
+  transform: scale(var(--btn-press-scale));
+}
 .g2-pill:focus-visible {
-  outline: 2px solid rgb(var(--sapphire) / 0.5);
-  outline-offset: 2px;
+  outline: var(--btn-ring-w) solid var(--btn-ring);
+  outline-offset: var(--btn-ring-offset);
 }
-.g2-pill:disabled { cursor: not-allowed; opacity: 0.5; }
+.g2-pill:disabled,
+.g2-pill[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: var(--btn-disabled-opacity);
+}
+.g2-pill:disabled:active { transform: none; }
 
 /* ── ④ 非悬浮墨玻璃包（设计稿增章 §9；样张 = design-explore 变体⑤）────────
    主操作墨面 = 不透底高反差墨色 + 镜面高光 + 浮影（玻璃感来自高光与影，
@@ -420,37 +454,56 @@ html[data-theme="dark"] {
   }
 }
 
-/* 墨玻璃配方（键 = 既有主操作件；逐面迁移清单见设计稿增章 §9.3） */
+/* 墨玻璃配方（键 = 既有主操作件；逐面迁移清单见设计稿增章 §9.3）
+
+   ── 扁平化（2026-11-05 批）──
+   本块原是全仓最"立体"的一处：镜面渐变（linear-gradient 上半高光）+ 顶缘
+   inset 高光 + 浮影（--ig-shadow）三层叠出实体按键感，正是作者报障截图里
+   「重新接管」那枚的形状。扁平契约下三层全部退役：
+     · 镜面渐变 → 删（上半明暗 = 造厚度）
+     · 顶缘 inset 高光 / 底缘暗边 → 删（浮雕）
+     · 浮影（含按下档 --ig-shadow-press）→ 删
+   主次区分改由**实底 vs 玻璃底**承担（本族恒实底墨面 + 反白字，次级 .g2-pill
+   是玻璃底 + 常规字）—— 主次仍在，只是不再靠厚度表达。
+   按下 = 墨族 active 档底色 + 2% 缩放；焦点 = 2px outline 环；禁用 = 50% opacity。 */
 .g2-pill-primary,
 #memory-modal-save {
   background: var(--btn-primary-bg);
   border-color: var(--btn-primary-bg);
   color: var(--btn-primary-ink);
-  background-image: linear-gradient(to bottom, var(--ig-specular) 0%, transparent 46%);
-  box-shadow:
-    inset 0 1px 0 var(--ig-highlight),
-    var(--ig-shadow);
   /* 不透底墨面零 backdrop（.g2-pill 基材的玻璃采样对墨面无意义，显式摘除） */
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
-.g2-pill-primary:hover,
-#memory-modal-save:hover {
-  background-color: var(--btn-primary-bg-hover);
-  border-color: var(--btn-primary-bg-hover);
+@media (hover: hover) {
+  .g2-pill-primary:hover,
+  #memory-modal-save:hover {
+    background-color: var(--btn-primary-bg-hover);
+    border-color: var(--btn-primary-bg-hover);
+  }
 }
 .g2-pill-primary:active,
 #memory-modal-save:active {
   background-color: var(--btn-primary-bg-active);
   border-color: var(--btn-primary-bg-active);
-  box-shadow:
-    inset 0 1px 0 var(--ig-highlight),
-    var(--ig-shadow-press);
+  transform: scale(var(--btn-press-scale));
 }
+.g2-pill-primary:disabled,
+.g2-pill-primary[aria-disabled="true"],
+#memory-modal-save:disabled,
+#memory-modal-save[aria-disabled="true"] {
+  background-color: var(--btn-disabled-bg);
+  border-color: var(--btn-disabled-stroke);
+  color: var(--btn-disabled-ink);
+  opacity: var(--btn-disabled-opacity);
+  cursor: not-allowed;
+}
+.g2-pill-primary:disabled:active,
+#memory-modal-save:disabled:active { transform: none; }
 .g2-pill-primary:focus-visible,
 #memory-modal-save:focus-visible {
-  outline: 2px solid var(--btn-focus-ring);
-  outline-offset: 2px;
+  outline: var(--btn-ring-w) solid var(--btn-ring);
+  outline-offset: var(--btn-ring-offset);
 }
 
 /* ── 手机尺寸/弹簧档（body.mobile-layer 总开关，桌面零命中）────────────── */
@@ -475,9 +528,7 @@ body.mobile-layer .canvas-find-toggle,
 body.mobile-layer .canvas-refresh-toggle,
 body.mobile-layer .ask-fab,
 body.mobile-layer .g2-fab {
-  transition:
-    transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1),
-    box-shadow 0.18s ease,
+  transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1),
     background-color 0.18s ease;
 }
 body.mobile-layer .canvas-source-toggle:active,
@@ -554,6 +605,7 @@ body.mobile-layer #g2-edge-fade {
   .model-panel,
   .wsp-panel,
   .ask-input,
+  .note-body,
   #slash-dropdown,
   #mention-dropdown,
   .dev-menu.explorer-dev-menu,
@@ -591,6 +643,7 @@ html.no-backdrop #onboarding-panel,
 html.no-backdrop .model-panel,
 html.no-backdrop .wsp-panel,
 html.no-backdrop .ask-input,
+html.no-backdrop .note-body,
 html.no-backdrop #slash-dropdown,
 html.no-backdrop #mention-dropdown,
 html.no-backdrop .dev-menu.explorer-dev-menu,

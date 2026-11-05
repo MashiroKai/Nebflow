@@ -939,6 +939,9 @@ private[gateway] object WsSessionChatHandlers:
                 (l.ref ! AgentCommand.UserInput(
                   text = body,
                   replyTo = l.supervisorRef,
+                  // 幂等键（冻结通知策略批 2026-11-05，与引擎自愈腿 `DelegateWakeLeg`
+                  // 同键）：同一次冻结只认一次唤醒——面板连点 / 自愈与人工撞车 ⇒ 单回合。
+                  clientMessageId = Some(s"frozen-wake:$wid:${recordOpt.flatMap(_.frozenSince).getOrElse(0L)}"),
                   source = Some("delegate-wake"),
                   sender = Some("panel"),
                   eventType = Some("info"),
@@ -1383,6 +1386,11 @@ private[gateway] object WsSessionChatHandlers:
                           frozenSince = frozenSince,
                           frozenReason = frozenReason,
                           wakeAddress = frozenSince.map(_ => s"delegate:${rec.sessionId}"),
+                          // name/address 批（2026-11-05）：Mail 续传地址随快照出帧
+                          // ——推导单点 = MailAddress（与 AgentControl list/status 同源，
+                          // 前端面板只读不算）。纯函数，零额外 IO。
+                          mailAddress = nebflow.core.delegate.MailAddress
+                            .of(rec.kind, rec.sessionId, rec.displayName),
                           // 冻结状态两套真相批（2026-11-05）：**预算好的单一真相**随快照
                           // 出帧——内存态（rec.status/frozenReason）与落盘槽（frozenSince/
                           // frozenReason）在这一处合流，面板与唤醒闸此后读同一份读数。

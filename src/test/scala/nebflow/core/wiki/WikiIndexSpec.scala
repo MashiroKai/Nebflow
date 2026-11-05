@@ -539,4 +539,143 @@ body links [[real]]"""
       case _ => None), List("#^term-dcl"))
   }
 
+  // ───────────────────── term tags v2 (词条标签) ─────────────────────
+
+  test("WI-33 term tags v2: a legal declaration keeps its name/aliases and yields three deduped, sorted buckets") {
+    val doc =
+      """# 词条
+        |
+        |- DCL（DOMContentLoaded 事件） — 浏览器首次可交互的时间点。 #proj/stand #topic/term-index #topic/render #ctx/browser #proj/stand ^term-dcl
+        |""".stripMargin
+    val terms = WikiIndex.termsOf("report.md", WikiIndex.parseDoc("report.md", doc))
+    assertEquals(terms.size, 1)
+    val dcl = terms.head
+    // the declaration face is untouched: name + derived paren aliases
+    assertEquals(dcl.name, "DCL（DOMContentLoaded 事件）")
+    assertEquals(dcl.aliases, List("DCL", "DOMContentLoaded 事件"))
+    assertEquals(dcl.anchor, "#^term-dcl")
+    // exactly three buckets, in project → topic → extra order, deduped + sorted
+    assertEquals(dcl.tags, List(
+      WikiIndex.WikiTermTag(WikiIndex.TagFacetProject, "stand"),
+      WikiIndex.WikiTermTag(WikiIndex.TagFacetTopic, "render"),
+      WikiIndex.WikiTermTag(WikiIndex.TagFacetTopic, "term-index"),
+      WikiIndex.WikiTermTag(WikiIndex.TagFacetExtra, "ctx/browser")
+    ))
+    // tags are decoration only — they never become lookup keys
+    assertEquals(WikiIndex.termKeys(dcl),
+      List("dcl（domcontentloaded 事件）", "dcl", "domcontentloaded 事件"))
+    assertEquals(WikiIndex.selectTerm("银河", List(dcl)), WikiIndex.TermSelection.NotFound)
+    // two-segment parity with the Python TERM_TAG_RE: `#facet/a/b` yields `facet/a`
+    assertEquals(WikiIndex.termTagsOf(" #proj/a #ctx/a/b "),
+      List(WikiIndex.WikiTermTag(WikiIndex.TagFacetProject, "a"),
+        WikiIndex.WikiTermTag(WikiIndex.TagFacetExtra, "ctx/a")))
+  }
+
+  test("WI-34 term tags v2: a missing project or topic leaves that bucket empty (the term-tag-missing shape)") {
+    def tagsOf(decl: String) =
+      WikiIndex.termsOf("r.md", WikiIndex.parseDoc("r.md", s"# R\n\n$decl\n")).head.tags
+
+    // topic only — the project bucket is empty
+    val noProj = tagsOf("- 甲 — 定义。 #topic/a ^term-a")
+    assertEquals(noProj, List(WikiIndex.WikiTermTag(WikiIndex.TagFacetTopic, "a")))
+    assertEquals(WikiIndex.termTagsJson(noProj).hcursor.downField("project")
+      .as[List[String]].toOption, Some(Nil))
+
+    // project only — the topic bucket is empty
+    val noTopic = tagsOf("- 乙 — 定义。 #proj/stand ^term-b")
+    assertEquals(noTopic, List(WikiIndex.WikiTermTag(WikiIndex.TagFacetProject, "stand")))
+    assertEquals(WikiIndex.termTagsJson(noTopic).hcursor.downField("topic")
+      .as[List[String]].toOption, Some(Nil))
+
+    // neither — extra facets never substitute for project/topic
+    val neither = tagsOf("- 丙 — 定义。 #ctx/x #level/deep ^term-c")
+    assertEquals(neither, List(WikiIndex.WikiTermTag(WikiIndex.TagFacetExtra, "ctx/x"),
+      WikiIndex.WikiTermTag(WikiIndex.TagFacetExtra, "level/deep")))
+    assertEquals(tagsOf("- 丁 — 无标签的定义。 ^term-d"), Nil)
+  }
+
+  test("WI-35 term tags v2: a tag AFTER the ^block-id is not seen — the mid-line ^id is not an anchor, so no term") {
+    val parsed = WikiIndex.parseDoc("r.md", "# R\n\n- 丙 — 定义。 ^term-c #proj/stand #topic/a\n")
+    // BlockIdRe is line-anchored (same as the Python BLOCKID_RE): `^id` followed
+    // by more text is NOT a block anchor, so the paragraph never becomes a term
+    // (the script's misplaced-tag branch reports term-tag-missing for it).
+    assert(!parsed.paragraphs.exists(_.anchor == "#^term-c"))
+    assertEquals(WikiIndex.termsOf("r.md", parsed), Nil)
+
+    // window boundary, other side: a tag BEFORE the definition separator is
+    // outside the window too (name segment, not definition tail)
+    val beforeSep = WikiIndex.termsOf("r.md",
+      WikiIndex.parseDoc("r.md", "# R\n\n- 丁 #proj/stand — 定义。 #topic/a ^term-d\n")).head
+    assertEquals(beforeSep.tags, List(WikiIndex.WikiTermTag(WikiIndex.TagFacetTopic, "a")))
+  }
+
+  test("WI-36 term tags v2: inline-code spans are not tags; a >280-char definition still exposes its tail tags") {
+    // backticked examples are documentation, never tags
+    val codeWindow = WikiIndex.tagWindow(
+      "- 词条 — 写法示例 `#proj/fake` 与 `#topic/fake` 都不算。 #proj/stand #topic/real")
+    assertEquals(WikiIndex.termTagsOf(codeWindow), List(
+      WikiIndex.WikiTermTag(WikiIndex.TagFacetProject, "stand"),
+      WikiIndex.WikiTermTag(WikiIndex.TagFacetTopic, "real")))
+
+    // paragraph text is cleaned + capped at ParagraphMaxChars — the tag window
+    // reads the RAW block body, so tail tags survive a long definition
+    val longDef = "长定义文字" * 70 // 350 chars, well past the cap
+    assert(longDef.length > WikiIndex.ParagraphMaxChars)
+    val longParsed = WikiIndex.parseDoc("r.md", s"# R\n\n- 长词条 — $longDef #proj/stand #topic/long ^term-long\n")
+    val para = longParsed.paragraphs.find(_.anchor == "#^term-long").get
+    assert(para.text.length <= WikiIndex.ParagraphMaxChars && para.text.endsWith("…"))
+    assert(!para.text.contains("#proj"))
+    val longTerm = WikiIndex.termsOf("r.md", longParsed).head
+    assertEquals(longTerm.tags, List(WikiIndex.WikiTermTag(WikiIndex.TagFacetProject, "stand"),
+      WikiIndex.WikiTermTag(WikiIndex.TagFacetTopic, "long")))
+
+    // multi-line block: the window spans the whole group (lines joined by a
+    // space), exactly like the Python tag_window
+    val multi = WikiIndex.termsOf("r.md", WikiIndex.parseDoc("r.md",
+      "# R\n\n- 戊 — 定义分两行写\n  续行带标签 #proj/stand #topic/multi ^term-e\n")).head
+    assertEquals(multi.tags, List(WikiIndex.WikiTermTag(WikiIndex.TagFacetProject, "stand"),
+      WikiIndex.WikiTermTag(WikiIndex.TagFacetTopic, "multi")))
+  }
+
+  test("WI-37 term tags v2 JSON face: three buckets always present, decodeTerm round-trips, legacy payloads carry none") {
+    val doc =
+      """# 词条
+        |
+        |- 甲（alias one） — 定义。 #proj/stand #topic/render #ctx/browser ^term-a
+        |
+        |- 乙 — 没有标签的词条。 ^term-b
+        |""".stripMargin
+    val scan = WikiIndex.buildVaultScan("proj", "self", List("report.md" -> doc))
+    val node = scan.nodes.find(_.rel == "report.md").get
+    val jsonTerms = WikiIndex.nodeJson(node).hcursor.downField("terms").as[List[io.circe.Json]].toOption.get
+    assertEquals(jsonTerms.size, 2)
+
+    val tagsA = jsonTerms.head.hcursor.downField("tags").as[io.circe.Json].toOption.get
+    assertEquals(tagsA.hcursor.downField("project").as[List[String]].toOption, Some(List("stand")))
+    assertEquals(tagsA.hcursor.downField("topic").as[List[String]].toOption, Some(List("render")))
+    assertEquals(tagsA.hcursor.downField("extra").as[List[String]].toOption, Some(List("ctx/browser")))
+
+    // an untagged term keeps the same three-key shape (empty arrays, never absent)
+    val tagsB = jsonTerms(1).hcursor.downField("tags").as[io.circe.Json].toOption.get
+    assertEquals(tagsB.hcursor.downField("project").as[List[String]].toOption, Some(Nil))
+    assertEquals(tagsB.hcursor.downField("topic").as[List[String]].toOption, Some(Nil))
+    assertEquals(tagsB.hcursor.downField("extra").as[List[String]].toOption, Some(Nil))
+
+    // JSON → model round-trip (the service lookup path) preserves the buckets
+    val decoded = jsonTerms.flatMap(WikiIndex.decodeTerm)
+    assertEquals(decoded, scan.terms)
+    assertEquals(decoded.head.tags, List(
+      WikiIndex.WikiTermTag(WikiIndex.TagFacetProject, "stand"),
+      WikiIndex.WikiTermTag(WikiIndex.TagFacetTopic, "render"),
+      WikiIndex.WikiTermTag(WikiIndex.TagFacetExtra, "ctx/browser")))
+
+    // a graph payload predating the tag face decodes to no tags, not a failure
+    val legacy = WikiIndex.termJson(scan.terms.head).mapObject(_.remove("tags"))
+    assertEquals(WikiIndex.decodeTerm(legacy).map(_.tags), Some(Nil))
+
+    // resolution is decoration-blind: a tag change cannot move a citation
+    assertEquals(WikiIndex.selectTerm("alias one", scan.terms),
+      WikiIndex.TermSelection.Resolved(scan.terms.head))
+  }
+
 end WikiIndexSpec

@@ -932,11 +932,23 @@ export default {
   'subagents.status.frozen': 'Frozen',
   // 错误冻结批（2026-11-01）：delegate 错误冻结行面文案（徽标/原因 tooltip/唤醒）。
   'subagents.frozenBadgeWithReason': 'Frozen · {reason}',
+  // freeze-notice policy batch (2026-11-05): provider faults are INFRASTRUCTURE faults,
+  // not task failures — no upward report (the parent is starving too); the panel is the
+  // status surface: "needs you" word + reason code + auto-resume count + wake entry.
+  'subagents.frozenAwaitingYou': 'Frozen · {reason} (needs you)',
+  'subagents.frozenAwaitingYouNoReason': 'Frozen · needs you',
+  'subagents.frozenInfraTip': 'Provider fault (NOT a task failure): the engine probes for recovery and resumes the SAME session by itself once a provider is serving again (from the checkpoint, finished work is not redone, capped attempts with growing gaps); press Wake to resume it right now. Nothing is reported upward — this panel is its status surface.',
+  'subagents.frozenAutoResumes': 'auto-resumed {n} time(s)',
+  'subagents.frozenAutoResumesSpent': 'auto-resume budget spent — needs you: top up / switch model / cancel',
+  'subagents.freezeDigestRecoverable': '{count} frozen (wakeable)',
+  'subagents.freezeDigestNeedsHuman': '{count} frozen (needs you)',
   'subagents.frozenTip': 'Frozen: an engine/upstream fault stopped it in place — this is NOT a failure verdict. The session history, workspace with uncommitted changes, task-ledger row and merge-queue slot are all kept; press Wake (or mail its address) to continue in the SAME session (finished work is not redone).',
   'subagents.frozenReason': 'Reason: {reason}',
   'subagents.frozenDormantTip': 'Frozen for {hours}h with no wake (past the retention window the record is archived; transcript and workspace are kept).',
   'subagents.wake': 'Wake',
   'subagents.wakeTip': 'Continue in the same session context (history in place, finished work is not redone)',
+  // name/address 批（2026-11-05）：地址 chip 的 tooltip 后缀（前面拼完整地址本身）。
+  'subagents.copyAddress': 'copy address',
   'subagents.wakeFailed': 'Wake failed — record and transcript are kept; retry later',
   'subagents.frozenReasonLlm': 'LLM-layer failure',
   'subagents.frozenReasonTool': 'tool-layer failure',
@@ -2651,6 +2663,9 @@ export default {
   // Term citation batch 2 (hover bubble + back-to-source button)
   'wiki.termSource': 'Source: ',
   'wiki.termJumpHint': 'Click to jump',
+  // Term index block (term-system-v2 term face batch 2026-11-05): the doc-foot
+  // collapsible listing each cited term and the document it lives in.
+  'wiki.termIndexCount': 'Term index ({n})',
   'wiki.backToSource': 'Back to source doc',
   // Side control face (search/chips/detail card/broken list/stats line)
   'wiki.chipAll': 'All',

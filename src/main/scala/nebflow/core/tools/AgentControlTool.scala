@@ -19,8 +19,11 @@ import scala.concurrent.duration.*
  * 手段，TaskStuckWatcher 只覆盖 Processing 卡死一类。
  *
  * 四操作：
- *  - list    全部后台 agent 表格（kind/status/stuck?/phase/up/idle/retries/task）
- *  - status  单个详情卡片 + 孤儿任务检测（registry 无记录但 task=running）
+ *  - list    全部后台 agent 表格（sessionId/address/name/kind/status/stuck?/phase/
+ *            up/idle/retries/task）——address = 可直接粘进 Mail 的续传地址，
+ *            name = 批次短名（name/address 批 2026-11-05）
+ *  - status  单个详情卡片 + 孤儿任务检测（registry 无记录但 task=running），
+ *            同样返回 name + address 两字段
  *  - cancel  终止任务：supervisor 路径（AgentEvent.Cancelled → notifyParentAndStop
  *            "cancelled"，barrier 正确释放）/ 降级 Stop 路径（无 supervisor 的
  *            bridge watch 兜底 / 旧记录）
@@ -45,8 +48,8 @@ object AgentControlTool extends Tool:
     """Inspect and control background agent sessions — the sub-agents spawned via Delegate/SubTask, ephemeral Mail runners, and other live sessions in this instance.
 
 Actions:
-- **list**: table of all live background agents (kind, status, stuck?, phase, uptime, idle time, retry count, task). Use this FIRST when a sub-agent is silent or you suspect it is stuck — "stuck?" marks Processing agents that either produced no agent-side event (LLM chunk / tool batch) for >10min, or have a single tool call running for >10min inside an unfinished turn (same judgement as the automatic watcher — process CPU is irrelevant to it). "phase" shows the in-flight tool call (name + elapsed), which is what tells you whether the agent is executing a tool or has gone silent.
-- **status**: full detail for one agent (pass sessionId from list): state, timings, in-flight tool phase, task prompt excerpt, retry count, last error. Also detects orphan task files (actor gone but task still marked running).
+- **list**: table of all live background agents (sessionId, address, name, kind, status, stuck?, phase, uptime, idle time, retry count, task). Use this FIRST when a sub-agent is silent or you suspect it is stuck — "stuck?" marks Processing agents that either produced no agent-side event (LLM chunk / tool batch) for >10min, or have a single tool call running for >10min inside an unfinished turn (same judgement as the automatic watcher — process CPU is irrelevant to it). "phase" shows the in-flight tool call (name + elapsed), which is what tells you whether the agent is executing a tool or has gone silent. **"address" is the Mail continuation address of that row** (delegate:<sessionId> / kernel:<id> / node:<nodeName>) — paste it verbatim into Mail(address=…) to hand that agent a supplement; "name" is the batch's short name (the Delegate `name` parameter, same label the console row shows) so you can tell batches apart at a glance.
+- **status**: full detail for one agent (pass sessionId from list): name + address (same two fields as list), state, timings, in-flight tool phase, task prompt excerpt, retry count, last error. Also detects orphan task files (actor gone but task still marked running).
 - **cancel**: terminate an agent's current task. The parent session receives a "cancelled" notification and any wait barrier is released — nobody waits forever. Allowed kinds: Delegate, SubTask, Project node/dispatcher sessions (node-*/dispatcher-*, settles via the session bridge). With scope="bgTask" + jobId: cancel ONE background task inside the target session instead of the session (local shell job or remote device job) — the session and its other tasks keep running.
 - **restart**: kill the stuck turn and resume from the last persisted checkpoint (same mechanism as crash recovery — completed work is kept). Allowed kinds: Delegate (ephemeral) and SubTask (both consume the supervisor's restart budget, 2 per 5min; exceeding it fails the task).
 
@@ -490,6 +493,23 @@ When to use:
         .traverse(rec => nebflow.core.executor.ExternalOutputStore.read(rec.id, 0).map(_.map(o => (rec, o))))
         .map(_.flatten)
       taskMap = runningTasks.map(t => t.taskId -> t).toMap
+      // 批次短名 + 续命血缘（AgentControl name/address 批 2026-11-05）：一趟
+      // blocking 读把 registry 行的两个持久槽取齐——`name`（Delegate 工具 name 参数，
+      // 与面板 delegateName / 归属 chip 同源 = DelegateRegistry.Record.name）与
+      // `resumedFrom`（续命血缘）。**不从 task 摘要反猜**（作者硬约束③）：摘要面
+      // 只有标题，散名不在其中。
+      delegateMeta <- IO.blocking {
+        registry.values.toList
+          .filter(_.kind == AgentKind.Delegate)
+          .flatMap { rec =>
+            try
+              nebflow.core.delegate.DelegateRegistry.find(rec.sessionId).map { r =>
+                rec.sessionId -> (r.name.map(_.trim).filter(_.nonEmpty), r.resumedFrom.filter(_.nonEmpty))
+              }
+            catch case _: Throwable => None
+          }
+          .toMap
+      }
       now = System.currentTimeMillis()
       rows = registry.values.toList
         .filter(rec => inScope(rec.sessionId))
@@ -521,17 +541,23 @@ When to use:
           val taskLabelClean = nebflow.core.delegate.SessionResumption.stripContinuationPrefix(taskLabel)
           // 续命血缘（B 部分）：派生代在 task 列尾标注来源（审计可读）——血缘在
           // DelegateRegistry.Record.resumedFrom（本批新增槽），任务行不动。
+          // name/address 批（2026-11-05）：与批次短名同一趟预读取（delegateMeta），
+          // 行内不再二次落盘 IO。
           val lineage =
-            if rec.kind == AgentKind.Delegate then
-              try
-                nebflow.core.delegate.DelegateRegistry
-                  .find(rec.sessionId)
-                  .flatMap(_.resumedFrom)
-                  .filter(_.nonEmpty)
-                  .map(f => s" ←resumed:$f")
-                  .getOrElse("")
-              catch case _: Throwable => ""
-            else ""
+            delegateMeta
+              .get(rec.sessionId)
+              .flatMap(_._2)
+              .map(f => s" ←resumed:$f")
+              .getOrElse("")
+          // 批次短名（Delegate 工具 name 参数 ≤12 字）——面板 delegateName 同源；
+          // 没有则占位 `-`（**不编造**：不从 agent 名/标题里凑一个像名的东西）。
+          val shortName = delegateMeta.get(rec.sessionId).flatMap(_._1).getOrElse("-")
+          // 续传地址（AgentControl name/address 批）：形态由 MailAddress 单点推导，
+          // 与 Mail 解析面逐字同形、可直接粘进 Mail(address=…)；推不出 = `-`
+          // （本 kind 无 Mail 面）。
+          val address = nebflow.core.delegate.MailAddress
+            .of(rec.kind, rec.sessionId, rec.displayName)
+            .getOrElse("-")
           // issue #31 Fix D: barrier snapshot — phantom visibility. outstanding>0
           // on an idle session with no in-flight work = a batch member hung / died
           // without a terminal event; held>0 = results parked waiting for the batch.
@@ -556,9 +582,14 @@ When to use:
             else "-"
           List(
             rec.sessionId,
-            // unified-delegate 批：地址列——Delegate 行给出 Mail 续聊地址
-            // `delegate:<sessionId>`（与 Delegate 回执同一形态），其余行 "-"。
-            if rec.kind == AgentKind.Delegate then s"delegate:${rec.sessionId}" else "-",
+            // 地址列（name/address 批 2026-11-05 起由 MailAddress 单点推导）：
+            // `delegate:<id>`（Delegate 行）/ `kernel:<id>`（kernel 实例）/
+            // `node:<节点名>`（Project 节点会话）；其余 kind 无 Mail 面 ⇒ "-"。
+            // 形态与派发回执里的续传地址逐字同形（可直接粘进 Mail）。
+            address,
+            // 批次短名列（Delegate 工具 name 参数，≤12 字）——面板行首扫读名的同源
+            // 读数；无记录/无名 = "-"。
+            shortName,
             rec.kind.toString,
             agent,
             if rec.parentSessionId.nonEmpty then rec.parentSessionId.take(16) else "-",
@@ -579,6 +610,7 @@ When to use:
       val header = List(
         "sessionId",
         "address",
+        "name",
         "kind",
         "agent",
         "parent",
@@ -602,6 +634,11 @@ When to use:
         .map { t =>
           List(
             t.taskId,
+            // 地址列/name 列对齐补正（name/address 批 2026-11-05）：orphan 行原先
+            // 少一格（表头加 address 时未同步），此后按 15 列逐位对齐。orphan 无
+            // live actor ⇒ 不可投递（地址与短名都给占位，不编造一个投不通的地址）。
+            "-",
+            "-",
             if t.source == "subtask" then "SubTask" else "Delegate",
             t.agentName,
             if t.parentSessionId.nonEmpty then t.parentSessionId.take(16) else "-",
@@ -626,7 +663,11 @@ When to use:
           else o.status
         List(
           rec.id,
-          s"delegate:${rec.id}",
+          // 外部行同样走 MailAddress 单点（`delegate:<id>`；外部 delegate 在
+          // DelegateRegistry 有记录、Mail 续聊腿可投）。
+          nebflow.core.delegate.MailAddress.of(AgentKind.Delegate, rec.id).getOrElse("-"),
+          // 批次短名（外部 delegate 的派发记录里同样有 name 槽，面板行首同源）。
+          rec.name.map(_.trim).filter(_.nonEmpty).getOrElse("-"),
           "Delegate",
           rec.executor,
           if rec.parentSessionId.nonEmpty then rec.parentSessionId.take(16) else "-",
@@ -647,7 +688,7 @@ When to use:
         (header :: rows ++ orphanRows ++ externalRowList).map(r => "| " + r.mkString(" | ") + " |").mkString("\n")
       val scopeNote =
         if anchorsOpt.isDefined then
-          "\nScope: your team subtree only (own members + their sub-agents) — root sessions and other teams' agents are hidden."
+          "\nScope: non-root callers have no management scope since the team feature was retired (2026-11-04) — this list is empty for them."
         else ""
       val orphanNote =
         if orphanRows.nonEmpty then
@@ -657,25 +698,37 @@ When to use:
         if externalRowList.nonEmpty then
           "\nexternal-* rows = external CLI delegates (address = delegate:<id>, Mail continues them; cancel kills the process tree; status/buffer via GET /api/delegates/<id>/output)."
         else ""
+      val legend =
+        s"""stuck? = Processing and either (a) no agent-side event (LLM chunk / tool batch) for >${Defaults.StuckThresholdMs / 60000}min
+           |         or (b) one tool call running for >${Defaults.ToolPhaseStuckMs / 60000}min inside an unfinished turn — same judgement as the automatic watcher.
+           |address = a Mail continuation address you can paste verbatim into Mail(address=…) for THIS row:
+           |          delegate:<sessionId> (live Delegate batch) / kernel:<id> (kernel instance) /
+           |          node:<nodeName> (Project node session — resolved in the owning project's dispatcher face
+           |          and in any mounted delegate chain scope). "-" = this kind has no Mail face (Root / Team /
+           |          External / SubTask / legacy dag-* workers / orphan rows) — do not invent one.
+           |          Emitted in full, never truncated: a truncated address cannot be pasted (that is its only purpose).
+           |name = the batch's short name (the Delegate tool's ≤12-char name parameter, same source as the console
+           |       row label). "-" = no name on record (never synthesised from the task text).
+           |phase = the in-flight tool call (name + elapsed) for the current turn — "-" when no tool is executing.$orphanNote$externalNote
+           |loop = streak/rounds (loop-guard): streak = consecutive rounds failing the same call (warn@3); rounds = non-progressing
+           |       rounds this turn (escalates at 70% turn budget / 8). Non-zero = loop suspicion — check status, consider restart.
+           |barrier = outstandingSubagents/heldResults (issue #31): outstanding>0 while idle with no in-flight work = phantom slot
+           |          (a batch member hung or died without a terminal event — held results never inject until restart).
+           |          The HeldDeliveryWatchdog (60s) now nudges undelivered held receipts with exponential backoff; after
+           |          ${nebflow.shared.Defaults.HeldDeliveryMaxAttempts} nudges they become unread (+u) and flush ahead of the session's next input.
+           |Cancelable kinds: Delegate / SubTask, and Project node/dispatcher sessions (node-*/dispatcher-*, cancel settles via the session bridge). Restartable: Delegate(ephemeral) / SubTask.
+           |Team targets: not manageable (the team feature was retired on 2026-11-04; team scope is gone). Legacy dag-* Flow workers and Root are read-only.""".stripMargin
+      // name/address 批（2026-11-05 · 表格可读性）：图注与表体**分开**拼装。
+      // 原实现把表体插在同一段 `stripMargin` 文本里，stripMargin 会对结果的每一行
+      // 剥掉行首 margin 字符 `|` —— 表头因继承行 margin 侥幸留下，第 2 行起的行首
+      // `|` 全被吃掉，markdown 表实际只剩首行合法（加列后列数更多，这个畸形更刺眼）。
+      // 表体自带管符，故不进 stripMargin；图注（无管符正文）单独 stripMargin。
       val summary =
         if rows.isEmpty && orphanRows.isEmpty && externalRowList.isEmpty then
           "No live background agents in your scope (registry is empty or outside your subtree)."
         else
-          s"""Background agents (${rows.size + orphanRows.size + externalRowList.size}):
-             |
-             |$table
-             |
-             |stuck? = Processing and either (a) no agent-side event (LLM chunk / tool batch) for >${Defaults.StuckThresholdMs / 60000}min
-             |         or (b) one tool call running for >${Defaults.ToolPhaseStuckMs / 60000}min inside an unfinished turn — same judgement as the automatic watcher.
-             |phase = the in-flight tool call (name + elapsed) for the current turn — "-" when no tool is executing.$orphanNote$externalNote
-             |loop = streak/rounds (loop-guard): streak = consecutive rounds failing the same call (warn@3); rounds = non-progressing
-             |       rounds this turn (escalates at 70% turn budget / 8). Non-zero = loop suspicion — check status, consider restart.
-             |barrier = outstandingSubagents/heldResults (issue #31): outstanding>0 while idle with no in-flight work = phantom slot
-             |          (a batch member hung or died without a terminal event — held results never inject until restart).
-             |          The HeldDeliveryWatchdog (60s) now nudges undelivered held receipts with exponential backoff; after
-             |          ${nebflow.shared.Defaults.HeldDeliveryMaxAttempts} nudges they become unread (+u) and flush ahead of the session's next input.
-             |Cancelable kinds: Delegate / SubTask, and Project node/dispatcher sessions (node-*/dispatcher-*, cancel settles via the session bridge). Restartable: Delegate(ephemeral) / SubTask.
-             |Team targets: not manageable (the team feature was retired on 2026-11-04; team scope is gone). Legacy dag-* Flow workers and Root are read-only.$scopeNote""".stripMargin
+          s"Background agents (${rows.size + orphanRows.size + externalRowList.size}):\n\n" +
+            table + "\n\n" + legend + scopeNote
       Right(summary)
 
   private def doStatus(
@@ -687,26 +740,45 @@ When to use:
       // Block 1（§B4）：status 同样受 scope 限制——root 全局，Manager 仅子树
       val callerSid = ctx.sessionId.getOrElse("")
       val rootBucket = callerIsRootBucket(registry, callerSid)
-      if !rootBucket then
-        // 团队功能删除批阶段 3：team scope（Manager 子树）整体删除 ⇒ 非 root 桶
-        // 调用者无范围，显式拒绝（与 cancel/restart 同一口径）。
-        IO.pure(
-          Left(
-            ToolError(
-              s"Permission denied: '$sessionId' is outside your management scope. The team scope was retired " +
-                "with the team feature on 2026-11-04 — only a root session manages background agents now."
+      // name/address 批（2026-11-05）：批次短名在**分派前**取（一趟 blocking 读
+      // DelegateRegistry.Record.name，与面板 delegateName 同源）；取不到 = None，
+      // 详情卡渲染占位 `-`（不编造）。放在这里而非 body 内，是为了让 body 的行序
+      // 与缩进保持不变（本批只加两行输出，不改详情卡的既有结构）。
+      val shortNameIO: IO[Option[String]] =
+        registry.get(sessionId) match
+          case Some(rec) if rec.kind == AgentKind.Delegate =>
+            IO
+              .blocking(
+                nebflow.core.delegate.DelegateRegistry
+                  .find(rec.sessionId)
+                  .flatMap(_.name)
+                  .map(_.trim)
+                  .filter(_.nonEmpty)
+              )
+              .handleErrorWith(_ => IO.pure(None))
+          case _ => IO.pure(None)
+      def body(shortName: Option[String]): IO[Either[ToolError, String]] =
+        if !rootBucket then
+          // 团队功能删除批阶段 3：team scope（Manager 子树）整体删除 ⇒ 非 root 桶
+          // 调用者无范围，显式拒绝（与 cancel/restart 同一口径）。
+          IO.pure(
+            Left(
+              ToolError(
+                s"Permission denied: '$sessionId' is outside your management scope. The team scope was retired " +
+                  "with the team feature on 2026-11-04 — only a root session manages background agents now."
+              )
             )
           )
-        )
-      else doStatusBody(resources, registry, sessionId, rootBucket)
-      end if
+        else doStatusBody(resources, registry, sessionId, rootBucket, shortName)
+      shortNameIO.flatMap(body)
     }
 
   private def doStatusBody(
     resources: AgentRuntimePort,
     registry: Map[String, AgentRecord],
     sessionId: String,
-    callerIsRoot: Boolean = false
+    callerIsRoot: Boolean = false,
+    shortName: Option[String] = None
   ): IO[Either[ToolError, String]] =
     val now = System.currentTimeMillis()
     registry.get(sessionId) match
@@ -744,8 +816,14 @@ When to use:
                  else "none required — the engine retries on its own")
             )
           }
+          val addressLine =
+            nebflow.core.delegate.MailAddress.of(rec.kind, rec.sessionId, rec.displayName) match
+              case Some(a) => s"""$a  (paste into Mail(address="$a", message=…))"""
+              case None => "- (this kind has no Mail face — nothing to continue by Mail)"
           val lines = List(
             s"sessionId: ${rec.sessionId}",
+            s"name: ${shortName.getOrElse("-")}",
+            s"address: $addressLine",
             s"kind: ${rec.kind}",
             s"status: ${rec.status}$statusSuffix",
             s"stuck: $stuckLine",
@@ -839,7 +917,7 @@ When to use:
                 s"External delegate '$sessionId' (executor=${rec.executor}) has no output buffer on this instance " +
                   "(process finished and its retained buffer was evicted, or it ran before the last restart). " +
                   s"Record: workspace=${rec.cwd}, project=${rec.project.getOrElse("-")}, taskId=${rec.taskId.getOrElse("-")}. " +
-                  "Continue it via Mail(address=\"delegate:<id>\")."
+                  s"""Continue it via Mail(address="${nebflow.core.delegate.MailAddress.of(AgentKind.Delegate, sessionId).getOrElse("-")}", …)."""
               )
             )
           case None =>
@@ -866,7 +944,8 @@ When to use:
               s"project: ${rec.project.getOrElse("-")}",
               s"taskId: ${rec.taskId.getOrElse("-")}",
               s"cliSessionId: ${o.cliSessionId.orElse(rec.cliSessionId).map(_.toString).getOrElse("-")}",
-              "address: delegate:" + rec.id,
+              s"name: ${rec.name.map(_.trim).filter(_.nonEmpty).getOrElse("-")}",
+              "address: " + nebflow.core.delegate.MailAddress.of(AgentKind.Delegate, rec.id).getOrElse("-"),
               "manageable: cancel (kills the CLI process tree); continue via Mail(address)"
             )
             IO.pure(Right(lines.mkString("\n")))
