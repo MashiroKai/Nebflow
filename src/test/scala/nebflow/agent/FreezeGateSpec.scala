@@ -1128,7 +1128,7 @@ class FreezeGateSpec extends CatsEffectSuite:
     end try
   }
 
-  test("ER-3: same-reason consecutive freezes ≥3 → escalate to parent, NOT fatal") {
+  test("ER-3: same-reason consecutive provider-family freezes ≥3 stay QUIET — still Frozen, no escalation, nothing sent to the parent") {
     val system = ActorSystem("freeze-er3")
     val tmp = os.temp.dir()
     val prevRoot = PathUtil.dataRoot
@@ -1182,34 +1182,31 @@ class FreezeGateSpec extends CatsEffectSuite:
         // 注意：waitUntil Frozen 在 CheckFreezeGate 前已满足（本就 Frozen），必须等
         // escalation 落盘（enterFrozen 的 updateRegistryEscalation 在 touch 之后）
         _ <- waitUntil(System.currentTimeMillis() + 15000)(counter.get.map(_ >= 4))
-        _ <- waitUntil(System.currentTimeMillis() + 15000)(
-          resources.agentRegistry.get.map(_.get(sid).exists(_.escalation.isDefined))
-        )
+        // 冻结通知策略批（2026-11-05 10:36 作者令）：provider 故障 = 基础设施故障 ⇒
+        // **不进升级链、不通知上级**（上级多半也在同一波里挨饿）。给它一拍沉降窗口
+        // 再断言「父什么都没收到」。
+        _ <- IO.sleep(1200.millis)
         reg <- resources.agentRegistry.get.map(_.get(sid))
-        _ = assert(reg.exists(_.escalation.isDefined), "3rd consecutive freeze must set escalation info")
         _ = assert(
-          reg.flatMap(_.escalation).exists(_.level == 1),
-          "escalation level must start at 1"
+          reg.exists(_.escalation.isEmpty),
+          s"a provider-family freeze must NOT enter the escalation chain, got ${reg.flatMap(_.escalation)}"
         )
         _ = assert(
           reg.exists(r => r.status == AgentStatus.Frozen),
-          "3rd consecutive freeze must still be Frozen (not fatal)"
+          "consecutive provider-family freezes must still be Frozen (not fatal)"
         )
-        _ <- waitUntil(System.currentTimeMillis() + 5000)(
-          parentEvents.get.map(_.exists {
-            case AgentCommand.ExternalEvent(_, eventType, _, _, _, _) => eventType == "error-escalated"
-            case _ => false
-          })
+        parentEventsNow <- parentEvents.get
+        _ = assertEquals(
+          parentEventsNow.collect {
+            case AgentCommand.ExternalEvent(_, eventType, _, _, _, _) if eventType == "error-escalated" => eventType
+          },
+          Nil,
+          s"no escalation report may reach the parent for a provider failure, got $parentEventsNow"
         )
-        parentGot <- parentEvents.get.map(_.collectFirst {
-          case AgentCommand.ExternalEvent(_, eventType, _, metadata, _, _) if eventType == "error-escalated" =>
-            metadata("reason").flatMap(_.as[String].toOption).getOrElse("")
-        })
-        _ = assertEquals(parentGot, Some("llm-transient"), "escalation event must carry the freeze reason")
         statusAfter <- resources.agentRegistry.get.map(_.get(sid).map(_.status))
         _ = assert(
           statusAfter.contains(AgentStatus.Frozen),
-          s"3rd consecutive freeze must NOT be fatal — still Frozen, got $statusAfter"
+          s"repeated provider freezes must NOT be fatal — still Frozen, got $statusAfter"
         )
       yield ()
       program.unsafeRunSync()
