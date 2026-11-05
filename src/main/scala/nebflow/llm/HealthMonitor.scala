@@ -76,7 +76,7 @@ final class ProviderHealthMonitor(registry: ProviderRegistry) extends ProviderHe
    *
    * 与 [[avoidUntilRef]] 配对使用：[[]] 里 5xx 走 [[coolDown]] 而非
    * [[markDown]]——窗长 = `UpstreamUnavailable.cooldownMs(strikes)`
-   * （15s → 30s → 60s → 120s → 300s 封顶，strikes 封顶
+   * （15s → 30s → 60s → 120s → 240s 封顶，strikes 封顶
    * [[UpstreamUnavailable.CooldownMaxStrikes]]）。**成功即清零**
    * （[[markUp]] 与真实请求成功都过这里）——「冷却后成功 ⇒ 恢复」的判据就是
    * 这一条，不需要额外的探测动作。窗口到期后 candidate 自然回到链上 = 半开
@@ -146,7 +146,7 @@ final class ProviderHealthMonitor(registry: ProviderRegistry) extends ProviderHe
    * 上游暂时不可用（500/502/503/504/550，见 [[UpstreamUnavailable]]）时，
    * 不 markDown（进探测集 ⇒ 空历史探测秒成功 ⇒ 秒回 UP ⇒ 下一发再 5xx ⇒
    * DOWN/UP flap 风暴），而是记一次 strike 并把 candidate 软回避
-   * `UpstreamUnavailable.cooldownMs(strikes)` 毫秒（15s→30s→60s→120s→300s
+   * `UpstreamUnavailable.cooldownMs(strikes)` 毫秒（15s→30s→60s→120s→240s
    * 封顶，strikes 封顶 [[UpstreamUnavailable.CooldownMaxStrikes]]）。窗口到期候选
    * 自然回链 = 半开试探：一次成功 [[markUp]] 清零 strikes，一次失败 strikes+1。
    *

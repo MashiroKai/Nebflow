@@ -1450,6 +1450,11 @@ object LlmInterface extends LlmRuntime:
                                                         Defaults.QuotaAvoidWindowMs,
                                                         label = "quota exhausted"
                                                       )
+                                                    // 5xx 归批（2026-11-05）：上游暂时不可用**绝不
+                                                    // markDown**（进探测集 ⇒ 空历史探测秒成功 ⇒ 秒回
+                                                    // 恢复 ⇒ 下一发再 5xx 的 flap 风暴）。冷却已在
+                                                    // `notify` 里执行过（cooldown5xx），此处只需不驱逐。
+                                                    else if classification.reason == FailoverReason.ServerError then IO.unit
                                                     else if isTimeout then
                                                       healthMonitor.softAvoid(
                                                         candidate.providerId,

@@ -2,6 +2,7 @@ package nebflow.llm
 
 import cats.effect.{IO, Ref}
 import cats.effect.unsafe.implicits.global
+import cats.syntax.all.*
 import com.sun.net.httpserver.{HttpExchange, HttpServer}
 import munit.CatsEffectSuite
 import nebflow.shared.*
@@ -164,11 +165,10 @@ class UpstreamUnavailableSpec extends CatsEffectSuite:
 
   private def withServers[A](modes: List[(Int, String)])(body: => IO[A]): IO[A] =
     val hits = modes.map(_ => new java.util.concurrent.atomic.AtomicInteger(0))
-    val program = for
+    for
       servers <- modes.zip(hits).traverse { case ((port, mode), hit) => startMock(port, mode, hit) }
       a <- body.guarantee(IO.blocking(servers.foreach(_.stop(0))))
-    yield (a, hits)
-    program
+    yield a
 
   // ── T1 归类单元面 ────────────────────────────────────────────────────────
   test("T1: 500/502/503/504/550 ⇒ server 族 + Transient + evict=false（非标准码同一族）") {
@@ -217,7 +217,12 @@ class UpstreamUnavailableSpec extends CatsEffectSuite:
         attempt(FailoverReason.Timeout, ErrorPermanence.Permanent)
       )
     )
-    assert(!Fallback.isUpstreamUnavailableExhaustion(timeoutAnd5xx), "a Permanent timeout is not a 5xx wait")
+    // 5xx + Permanent 超时：超时属网络类 attempt（isNetworkClassAttempt），且无明确拒绝
+    // ⇒ 仍可等待（与 #692 等待语义一致：慢/不可用都可等，拒绝等不来）
+    assert(
+      Fallback.isUpstreamUnavailableExhaustion(timeoutAnd5xx),
+      "5xx + a Permanent timeout stays waitable (timeout joins the network-class attempts)"
+    )
     // 空链（无 attempt）不算可等待
     assert(!Fallback.isUpstreamUnavailableExhaustion(FallbackExhaustedError(Nil)))
     // agent 层重试面：全 5xx ⇒ retryable（flow 节点据此 Restart）
@@ -231,7 +236,8 @@ class UpstreamUnavailableSpec extends CatsEffectSuite:
       runTurn(mkConfig(Port500, PortOk)).map { case (chunks, states, strikes, avoids) =>
         assertEquals(chunks, Right("BB"), "the next provider must serve the turn")
         assert(!states.contains("a/m1"), s"5xx must NOT markDown (frozen-agent root cause), got ${states.get("a/m1")}")
-        assertEquals(strikes.get("a/m1"), Some(1), "exactly one 5xx strike recorded")
+        // 同 provider 会先就地重试一次（Transient + retriesLeft>0）⇒ 两条失败各记一次
+        assertEquals(strikes.get("a/m1"), Some(2), "5xx retried once in place ⇒ two strikes before the switch")
         assert(
           avoids.get("a/m1").exists(_ > System.currentTimeMillis()),
           "the provider must be cooled down (soft-avoid window is live)"
@@ -246,7 +252,7 @@ class UpstreamUnavailableSpec extends CatsEffectSuite:
       runTurn(mkConfig(Port550, PortOk)).map { case (chunks, states, strikes, avoids) =>
         assertEquals(chunks, Right("BB"), "550 with an empty body must fall through, not abort")
         assert(!states.contains("a/m1"), s"550 must NOT markDown, got ${states.get("a/m1")}")
-        assertEquals(strikes.get("a/m1"), Some(1))
+        assertEquals(strikes.get("a/m1"), Some(2), "one in-place retry ⇒ two strikes")
         assert(avoids.get("a/m1").exists(_ > System.currentTimeMillis()))
       }
     }
@@ -256,7 +262,7 @@ class UpstreamUnavailableSpec extends CatsEffectSuite:
   test("T5: 连续 3 次 5xx ⇒ 冷却窗 15s/30s/60s 指数增长，冷却期内候选被剔出链") {
     val configRef = Ref.unsafe[IO, NebflowServiceConfig](mkConfig(PortOk, PortOk))
     LlmInterface.createLlm(Ref.unsafe[IO, Map[String, ModelCandidate]](Map.empty), None, Some(configRef)).flatMap {
-      case (_, registry, monitor, release) =>
+      case (_, _, monitor, release) =>
         val candidate = ModelCandidate(
           "a",
           ProviderConfig(
@@ -282,9 +288,8 @@ class UpstreamUnavailableSpec extends CatsEffectSuite:
           capped <- monitor.getCooldownStrikes
           _ <- monitor.markUp("a", "m1")
           recovered <- monitor.getCooldownStrikes
-          _ <- registry.getClass // keep registry referenced (no-op)
         yield
-          assertEquals(s1.get("a", Int.MaxValue), None, "guard: key is provider/model")
+          assertEquals(s1.get("a"), None, "guard: key is provider/model")
           assertEquals(s1.get("a/m1"), Some(1))
           assertEquals(s2.get("a/m1"), Some(2))
           assertEquals(s3.get("a/m1"), Some(3))
@@ -332,16 +337,24 @@ class UpstreamUnavailableSpec extends CatsEffectSuite:
   }
 
   // ── T7 403 回归：确证死亡仍驱逐 ─────────────────────────────────────────
-  test("T7: 403 ⇒ 不重试、直接换 provider、本家 markDown（不回归）") {
-    withServers(List(Port403 -> "403", PortOk -> "ok")) {
-      runTurn(mkConfig(Port403, PortOk)).map { case (chunks, states, strikes, _) =>
-        assertEquals(chunks, Right("BB"))
-        states.get("a/m1") match
-          case Some(HealthState.Down(_, _)) => ()
-          case other => fail(s"403 must still mark the provider Down (confirmed death), got $other")
-        assertEquals(strikes.get("a/m1"), None, "403 is not a 5xx strike")
-      }
-    }
+  test("T7: 403（配额闸形态）⇒ 不重试、直接换 provider、走配额软回避而不是 5xx 冷却") {
+    val hits403 = new java.util.concurrent.atomic.AtomicInteger(0)
+    val hitsOk = new java.util.concurrent.atomic.AtomicInteger(0)
+    val program = for
+      s403 <- startMock(Port403, "403", hits403)
+      sOk <- startMock(PortOk, "ok", hitsOk)
+      result <- runTurn(mkConfig(Port403, PortOk)).guarantee(IO.blocking { s403.stop(0); sOk.stop(0) })
+    yield (result, hits403.get())
+    val ((chunks, states, strikes, avoids), hits) = program.unsafeRunSync()
+    assertEquals(chunks, Right("BB"), "403 must fall through to the next provider")
+    // 403 = 配额闸形态（plan quota）⇒ 软回避窗 + 立即换链，**不重试**（Auth/Permanent）
+    assertEquals(hits, 1, "403 is not retried in place (permanent rejection)")
+    assert(
+      avoids.get("a/m1").exists(_ > System.currentTimeMillis()),
+      "403 lands in the quota soft-avoid window"
+    )
+    assertEquals(strikes.get("a/m1"), None, "403 is not a 5xx strike (no cool-down escalation)")
+    assertEquals(states.get("a/m1"), None, "quota-gate 403 does not markDown (no probe burn)")
   }
 
   // ── T8 429 + 上游额度码 ⇒ 配额族（不是 5xx） ────────────────────────────

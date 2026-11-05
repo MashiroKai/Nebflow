@@ -38,8 +38,8 @@ package nebflow.llm
  * ## 处置参数（provider 级冷却 + 指数退避）
  *
  * 连续 5xx ⇒ `strikes += 1`，冷却窗 = `CooldownBaseMs * 2^(strikes-1)` 封顶
- * [[CooldownMaxMs]]：15s → 30s → 60s → 120s → 300s（strikes 封顶
- * [[CooldownMaxStrikes]]，此后恒为 300s）。冷却 = `HealthMonitor.softAvoid`
+ * [[CooldownMaxMs]]：15s → 30s → 60s → 120s → 240s（strikes 封顶
+ * [[CooldownMaxStrikes]]，此后恒为 240s）。冷却 = `HealthMonitor.softAvoid`
  * （**不进健康 Down 状态、不进探测集**，消除 flap 风暴）；窗口到期候选自然回到
  * 链上 = **半开试探**——试一发成功即 `markUp`/清零 strikes，失败则 strikes 继续
  * 递增。所有动作都落 WARN 日志（`soft-avoided for <ms>ms (upstream 5xx ...)`），
@@ -78,14 +78,14 @@ object UpstreamUnavailable:
   val CooldownBaseMs: Long = 15_000L
 
   /** 冷却窗上限（连续 5xx 后的最长回避）。 */
-  val CooldownMaxMs: Long = 300_000L
+  val CooldownMaxMs: Long = 240_000L
 
   /** strikes 封顶：超过后不再增长（窗恒为 [[CooldownMaxMs]]）。 */
   val CooldownMaxStrikes: Int = 5
 
   /**
    * 第 `strikes` 次连续 5xx 对应的冷却窗（strikes ≥ 1）。
-   * 15s → 30s → 60s → 120s → 300s(cap) → 300s(…)。
+   * 15s → 30s → 60s → 120s → 240s(cap) → 240s(…)。
    */
   def cooldownMs(strikes: Int): Long =
     val n = math.max(1, math.min(strikes, CooldownMaxStrikes))
