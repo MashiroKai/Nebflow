@@ -1476,3 +1476,77 @@
   .mp-chev { transition: none; }
   .mp-mode-btn { transition: none; }
 }
+
+/* ── Jev / 生图 切换分组（jev-imagegen-align-llm 批 2026-11-02，契约 §E.4）──
+   /model 面板与设置页节共用同一份 DOM 产出（modelPanel.js renderSwitchGroups）；
+   新 class 全在 `.mp-group` 命名空间下（**绝不用** .mp-roleblock —— degraded
+   spec 钉其计数恒为 2）。零新字面量色值：全走既有 token。 */
+.mp-group-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+.mp-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-frame-input-bg);
+}
+.mp-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: 600 12px -apple-system, sans-serif;
+  color: var(--color-text);
+  list-style: none;
+  cursor: pointer;
+}
+/* <summary> 的原生三角收起（折叠形态仍可点击/键盘展开）。 */
+.mp-group-head::-webkit-details-marker { display: none; }
+div.mp-group > .mp-group-head { cursor: default; }
+.mp-group-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mp-group-cur {
+  font: 500 11px -apple-system, sans-serif;
+  color: var(--color-text-muted);
+}
+.mp-group-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.mp-group-hint {
+  font: 400 11px -apple-system, sans-serif;
+  color: var(--color-text-muted);
+}
+.mp-group-empty {
+  font: 400 11.5px -apple-system, sans-serif;
+  color: var(--status-word);
+}
+.mp-group-switch {
+  width: 100%;
+  height: 28px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: 500 11px -apple-system, sans-serif;
+  padding: 0 8px;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.mp-group-switch:focus { border-color: rgb(var(--sapphire) / 0.4); }
+.mp-group-switch:disabled { opacity: 0.55; cursor: default; }
+@media (prefers-reduced-motion: reduce) {
+  .mp-group-switch { transition: none; }
+}
