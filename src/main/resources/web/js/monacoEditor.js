@@ -318,7 +318,7 @@ export async function createEditor(container, opts) {
           'border:1px solid var(--color-border, rgba(128,128,128,0.35))',
           'background:var(--color-surface, rgba(127,127,127,0.12))',
           'color:var(--color-text, #e8eaed)',
-          'font:500 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+          'font:500 var(--ds-fs-hint) -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
           'pointer-events:none',
           'z-index:5',
         ].join(';');

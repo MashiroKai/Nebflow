@@ -60,7 +60,7 @@ const PANEL_CSS = `
   padding: var(--ds-space-3) 14px; border-bottom: 1px solid var(--color-border);
   flex-shrink: 0;
 }
-.daemon-config-title { font-size: 14px; font-weight: 600; color: var(--color-text); }
+.daemon-config-title { font-size: var(--ds-fs-subtitle); font-weight: 600; color: var(--color-text); }
 .daemon-config-close {
   background: none; border: 1px solid transparent; cursor: pointer;
   width: 24px; height: 24px; display: flex; align-items: center;

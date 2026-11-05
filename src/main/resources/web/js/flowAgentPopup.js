@@ -277,7 +277,7 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
    pushes the right-side manage cluster (uptime/retries/buttons) past the
    modal's clipped edge. Hover tooltip shows the FULL label (set in JS). */
 .flow-agent-footer .fa-phase {
-  font: 500 11px -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 500 var(--ds-fs-meta) -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text-muted);
   margin-left: var(--ds-space-half);
   min-width: 0;
@@ -288,7 +288,7 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
 @keyframes fa-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
 .flow-agent-footer .fa-task {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font: 500 11px -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 500 var(--ds-fs-meta) -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text-muted);
 }
 
@@ -317,12 +317,12 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   cursor: not-allowed;
 }
 .flow-agent-footer .fa-retries {
-  font: 500 11px -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 500 var(--ds-fs-meta) -apple-system, BlinkMacSystemFont, sans-serif;
   font-variant-numeric: tabular-nums;
   color: var(--status-warn-icon);
 }
 .flow-agent-footer .fa-uptime {
-  font: 400 11px -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 400 var(--ds-fs-meta) -apple-system, BlinkMacSystemFont, sans-serif;
   font-variant-numeric: tabular-nums;
   color: var(--color-text-muted);
 }

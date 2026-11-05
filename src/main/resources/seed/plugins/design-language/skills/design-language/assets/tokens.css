@@ -69,6 +69,7 @@
   --dl-fs-mobile-sub: 15px;       /* 手机次正文（= --ds-fs-mobile-sub） */
   --dl-fs-mobile-callout: 16px;   /* 手机正文/输入件（= --ds-fs-mobile-callout） */
   --dl-fs-callout: 16px;          /* 桌面语境 16px（= --ds-fs-callout；与 mobile 槽同值异域） */
+  --dl-fs-glyph: 8px;             /* 图标盒字形（= --ds-fs-glyph；禁作正文） */
 
   /* ── ③ 行高/字距（与 --ds-lh-* / --ds-ls-* 同值） ── */
   --dl-lh-body: 1.5;            /* 聊天/选项 1.55 */

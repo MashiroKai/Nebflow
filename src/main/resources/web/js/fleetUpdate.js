@@ -72,7 +72,7 @@ const FLEET_CSS = `
   padding: 14px var(--ds-space-4) var(--ds-space-block-y); border-bottom: 1px solid var(--color-frame-border-light);
   display: flex; align-items: center; gap: var(--ds-space-2);
 }
-.fleet-title { font-size: 14px; font-weight: 600; color: var(--color-frame-text); flex: 1; }
+.fleet-title { font-size: var(--ds-fs-subtitle); font-weight: 600; color: var(--color-frame-text); flex: 1; }
 .fleet-close {
   background: none; border: none; cursor: pointer; padding: var(--ds-space-1); border-radius: var(--ds-radius-chip);
   color: var(--color-frame-text-muted); display: flex; align-items: center;
@@ -102,7 +102,7 @@ const FLEET_CSS = `
 .fleet-bar { height: 3px; border-radius: var(--ds-radius-thin); background: var(--glass-control-bg); margin-top: var(--ds-space-1h); overflow: hidden; }
 .fleet-bar > i { display: block; height: 100%; background: var(--color-frame-text-dim); width: 0; transition: width 0.3s; }
 .fleet-badge {
-  font-size: 10px; padding: 1px var(--ds-space-1h); border-radius: var(--ds-radius-chip); flex-shrink: 0;
+  font-size: var(--ds-fs-meta); padding: 1px var(--ds-space-1h); border-radius: var(--ds-radius-chip); flex-shrink: 0;
   border: 1px solid var(--glass-control-border); color: var(--color-frame-text-muted);
 }
 .fleet-summary { font-size: var(--ds-fs-hint); color: var(--color-frame-text); line-height: 1.6; margin: var(--ds-space-stack-gap) 0 var(--ds-space-1); }

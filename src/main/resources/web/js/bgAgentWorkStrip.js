@@ -31,7 +31,7 @@ const STRIP_CSS = `<style id="${STRIP_CSS_ID}">
   flex-direction: column;
   gap: var(--ds-space-1);
   flex-shrink: 0;
-  font: 400 11px -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 400 var(--ds-fs-meta) -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text-muted);
   max-height: 108px;
   overflow-y: auto;

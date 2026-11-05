@@ -219,7 +219,7 @@ const DAEMON_CSS = `
 /* ── Action Buttons ── */
 .daemon-actions { display: flex; align-items: center; gap: var(--ds-space-1); flex-shrink: 0; }
 .daemon-btn {
-  font: 500 11px -apple-system, sans-serif; padding: var(--ds-space-1) var(--ds-space-inline-x);
+  font: 500 var(--ds-fs-meta) -apple-system, sans-serif; padding: var(--ds-space-1) var(--ds-space-inline-x);
   border-radius: 7px; border: 1px solid transparent;
   background: var(--glass-control-bg);
   -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);

@@ -25,7 +25,7 @@
   flex-wrap: wrap;
 }
 .dvp-stats {
-  font: 400 11.5px/1.4 var(--font-ui, -apple-system, sans-serif);
+  font: 400 var(--ds-fs-hint)/1.4 var(--font-ui, -apple-system, sans-serif);
   color: var(--color-text-muted);
   white-space: nowrap;
 }
@@ -37,7 +37,7 @@
   border: 1px solid transparent;
   background: transparent;
   color: var(--color-text-muted);
-  font: 500 11.5px/1 var(--font-ui, -apple-system, sans-serif);
+  font: 500 var(--ds-fs-hint)/1 var(--font-ui, -apple-system, sans-serif);
   cursor: pointer;
   transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
@@ -53,7 +53,7 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font: 400 10.5px/1 var(--font-ui, -apple-system, sans-serif);
+  font: 400 var(--ds-fs-meta)/1 var(--font-ui, -apple-system, sans-serif);
   color: var(--color-text-muted);
   padding: 5px var(--ds-space-inline-x);
   border-radius: var(--r-pill, 999px);
@@ -62,7 +62,7 @@
   white-space: nowrap;
 }
 .dvp-entry kbd {
-  font: 500 9.5px/1 var(--font-mono, ui-monospace, monospace);
+  font: 500 var(--ds-fs-meta)/1 var(--font-mono, ui-monospace, monospace);
   color: var(--color-text-dim);
   padding: 1px 5px;
   border-radius: var(--ds-radius-badge);
@@ -100,9 +100,9 @@
   box-shadow: 0 0 0 3px rgb(var(--sapphire) / 0.14);
   flex: 0 0 auto;
 }
-.dvp-band-name { font: 600 14px/1.3 var(--font-ui, -apple-system, sans-serif); }
+.dvp-band-name { font: 600 var(--ds-fs-subtitle)/1.3 var(--font-ui, -apple-system, sans-serif); }
 .dvp-band-ws {
-  font: 400 10.5px/1 var(--font-mono, ui-monospace, monospace);
+  font: 400 var(--ds-fs-meta)/1 var(--font-mono, ui-monospace, monospace);
   color: var(--color-text-muted);
   padding: 3px var(--ds-space-2);
   border-radius: var(--r-sm, 6px);
@@ -115,7 +115,7 @@
 }
 .dvp-band-counts { display: flex; gap: 5px; margin-left: var(--ds-space-1h); flex: 0 0 auto; }
 .dvp-cnt {
-  font: 500 10px/1 var(--font-ui, -apple-system, sans-serif);
+  font: 500 var(--ds-fs-meta)/1 var(--font-ui, -apple-system, sans-serif);
   color: var(--color-text-muted);
   padding: 3px var(--ds-space-2);
   border-radius: var(--r-pill, 999px);
@@ -130,7 +130,7 @@
 .dvp-cnt i.end { color: var(--color-text-dim); }
 .dvp-band-spacer { flex: 1 1 auto; }
 .dvp-band-n {
-  font: 400 10.5px/1 var(--font-ui, -apple-system, sans-serif);
+  font: 400 var(--ds-fs-meta)/1 var(--font-ui, -apple-system, sans-serif);
   color: var(--color-text-muted);
   margin-left: var(--ds-space-3);
   white-space: nowrap;
@@ -158,7 +158,7 @@
 }
 .dvp-rb-line { width: 16px; height: 1px; background: var(--color-border); margin: 0 3px; }
 .dvp-rb-word {
-  font: 500 9px/1 var(--font-ui, -apple-system, sans-serif);
+  font: 500 var(--ds-fs-meta)/1 var(--font-ui, -apple-system, sans-serif);
   color: var(--color-text-muted);
   margin-left: var(--ds-space-1);
   letter-spacing: 0.02em;
@@ -177,7 +177,7 @@
 .dvp-lane-label {
   position: absolute;
   top: 10px;
-  font: 600 9.5px/1 var(--font-ui, -apple-system, sans-serif);
+  font: 600 var(--ds-fs-meta)/1 var(--font-ui, -apple-system, sans-serif);
   letter-spacing: 0.08em;
   color: var(--color-text-muted);
   opacity: 0.75;
@@ -201,7 +201,7 @@
 }
 .dvp-zone-tag {
   position: absolute;
-  font: 500 9px/1 var(--font-ui, -apple-system, sans-serif);
+  font: 500 var(--ds-fs-meta)/1 var(--font-ui, -apple-system, sans-serif);
   letter-spacing: 0.06em;
   color: var(--color-text-muted);
   padding: 3px var(--ds-space-2);
@@ -219,7 +219,7 @@
   border: 1px solid var(--glass-control-border);
   background: var(--glass-control-bg);
   color: var(--color-text-muted);
-  font: 500 9.5px/1 var(--font-ui, -apple-system, sans-serif);
+  font: 500 var(--ds-fs-meta)/1 var(--font-ui, -apple-system, sans-serif);
   cursor: pointer;
   z-index: 2;
 }
@@ -284,14 +284,14 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font: 600 8.5px/1 var(--font-mono, ui-monospace, monospace);
+  font: 600 var(--ds-fs-meta)/1 var(--font-mono, ui-monospace, monospace);
   color: var(--color-text);
   background: var(--glass-control-bg);
   border: 1px solid var(--glass-control-border);
 }
-.dvp-exec-sm { width: 14px; height: 14px; font-size: 8px; }
+.dvp-exec-sm { width: 14px; height: 14px; font-size: var(--ds-fs-glyph); }
 .dvp-title {
-  font: 600 12.5px/1.25 var(--font-ui, -apple-system, sans-serif);
+  font: 600 var(--ds-fs-hint)/1.25 var(--font-ui, -apple-system, sans-serif);
   color: var(--color-text);
   white-space: nowrap;
   overflow: hidden;
@@ -305,12 +305,12 @@
 .dvp-st-dot.done { background: var(--status-success-icon); }
 .dvp-st-dot.fail { background: var(--status-error-icon); }
 .dvp-st-word {
-  font: 500 10px/1 var(--font-ui, -apple-system, sans-serif);
+  font: 500 var(--ds-fs-meta)/1 var(--font-ui, -apple-system, sans-serif);
   color: var(--status-word, var(--color-text-muted));
 }
 .dvp-meta { display: flex; flex-wrap: wrap; gap: var(--ds-space-1); min-width: 0; }
 .dvp-chip {
-  font: 500 9px/1.4 var(--font-mono, ui-monospace, monospace);
+  font: 500 var(--ds-fs-meta)/1.4 var(--font-mono, ui-monospace, monospace);
   color: var(--color-text-dim);
   padding: 2.5px var(--ds-space-1h);
   border-radius: 5px;
@@ -327,7 +327,7 @@
   border-color: rgb(var(--sapphire) / 0.16);
 }
 .dvp-report {
-  font: 400 10px/1.45 var(--font-ui, -apple-system, sans-serif);
+  font: 400 var(--ds-fs-meta)/1.45 var(--font-ui, -apple-system, sans-serif);
   color: var(--color-text-muted);
   white-space: nowrap;
   overflow: hidden;
@@ -343,7 +343,7 @@
 /* 任务根幽卡内结构 */
 .dvp-task-top { display: flex; gap: var(--ds-space-1); align-items: center; flex-wrap: wrap; }
 .dvp-task-title {
-  font: 600 12px/1.3 var(--font-ui, -apple-system, sans-serif);
+  font: 600 var(--ds-fs-hint)/1.3 var(--font-ui, -apple-system, sans-serif);
   color: var(--color-text);
   white-space: nowrap;
   overflow: hidden;
@@ -352,17 +352,17 @@
 }
 /* 汇点 */
 .dvp-sink-name {
-  font: 600 12px/1 var(--font-mono, ui-monospace, monospace);
+  font: 600 var(--ds-fs-hint)/1 var(--font-mono, ui-monospace, monospace);
   color: var(--color-text);
 }
 .dvp-sink-sub {
-  font: 400 9px/1.4 var(--font-ui, -apple-system, sans-serif);
+  font: 400 var(--ds-fs-meta)/1.4 var(--font-ui, -apple-system, sans-serif);
   color: var(--color-text-muted);
   margin-top: 5px;
 }
 /* 子过程卡 */
 .dvp-sub-title {
-  font: 600 11px/1.2 var(--font-ui, -apple-system, sans-serif);
+  font: 600 var(--ds-fs-meta)/1.2 var(--font-ui, -apple-system, sans-serif);
   color: var(--color-text);
   white-space: nowrap;
   overflow: hidden;
@@ -378,7 +378,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font: 600 8.5px/1 var(--font-mono, ui-monospace, monospace);
+  font: 600 var(--ds-fs-meta)/1 var(--font-mono, ui-monospace, monospace);
   color: var(--color-text-dim);
   background: var(--glass-control-bg);
   border: 1px solid var(--glass-control-border);
@@ -395,7 +395,7 @@
   height: 18px;
   padding: 0 var(--ds-space-2);
   border-radius: var(--r-pill, 999px);
-  font: 600 9.5px/1 var(--font-ui, -apple-system, sans-serif);
+  font: 600 var(--ds-fs-meta)/1 var(--font-ui, -apple-system, sans-serif);
   letter-spacing: 0.02em;
   z-index: 6;
   white-space: nowrap;
@@ -508,7 +508,7 @@
 .dvp-e-chip {
   position: absolute;
   z-index: 6;
-  font: 600 9px/1.4 var(--font-mono, ui-monospace, monospace);
+  font: 600 var(--ds-fs-meta)/1.4 var(--font-mono, ui-monospace, monospace);
   padding: 2.5px 7px;
   border-radius: var(--r-pill, 999px);
   background: var(--color-bg);
@@ -525,7 +525,7 @@
 .dvp-done-block {
   align-items: center;
   justify-content: center;
-  font: 500 11px/1.4 var(--font-ui, -apple-system, sans-serif);
+  font: 500 var(--ds-fs-meta)/1.4 var(--font-ui, -apple-system, sans-serif);
   color: var(--color-text-muted);
   border-radius: var(--ds-radius-card-md);
 }
@@ -535,7 +535,7 @@
 .dvp-empty {
   padding: var(--ds-space-12) var(--ds-space-5);
   text-align: center;
-  font: 400 12.5px/1.6 var(--font-ui, -apple-system, sans-serif);
+  font: 400 var(--ds-fs-hint)/1.6 var(--font-ui, -apple-system, sans-serif);
   color: var(--color-text-muted);
   border-radius: var(--ds-radius-2xl);
   border: 1px dashed var(--color-border);
@@ -556,7 +556,7 @@
 }
 .dvp-lg-group { display: flex; align-items: center; gap: 9px; }
 .dvp-lg-h {
-  font: 600 9.5px/1 var(--font-ui, -apple-system, sans-serif);
+  font: 600 var(--ds-fs-meta)/1 var(--font-ui, -apple-system, sans-serif);
   letter-spacing: 0.06em;
   color: var(--color-text-muted);
   margin-right: var(--ds-space-half);
@@ -565,7 +565,7 @@
   display: flex;
   align-items: center;
   gap: 5px;
-  font: 400 10.5px/1 var(--font-ui, -apple-system, sans-serif);
+  font: 400 var(--ds-fs-meta)/1 var(--font-ui, -apple-system, sans-serif);
   color: var(--color-text-muted);
   white-space: nowrap;
 }
@@ -574,7 +574,7 @@
 .dvp-lg-dot.lg-rtm { background: rgb(var(--amber)); }
 .dvp-lg-dot.lg-mrg { background: rgb(var(--sapphire)); }
 .dvp-lg-dot.lg-fail { background: var(--status-error-icon); }
-.dvp-lg-glyph { font: 600 11px/1 var(--font-ui, -apple-system, sans-serif); flex: 0 0 auto; }
+.dvp-lg-glyph { font: 600 var(--ds-fs-meta)/1 var(--font-ui, -apple-system, sans-serif); flex: 0 0 auto; }
 .dvp-lg-glyph.lg-done { color: var(--status-success-icon); }
 .dvp-lg-glyph.lg-mut { color: var(--color-text-muted); }
 .dvp-lg-line { width: 24px; height: 0; flex: 0 0 auto; }

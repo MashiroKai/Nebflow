@@ -166,7 +166,7 @@ function addChip(c, file) {
     'font-size:var(--ds-fs-hint);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:150px;';
   const sub = document.createElement('div');
   sub.style.cssText =
-    'font-size:10.5px;color:var(--color-text-muted,#888);margin-top:1px;display:flex;gap:var(--ds-space-1h);align-items:center;';
+    'font-size:var(--ds-fs-meta);color:var(--color-text-muted,#888);margin-top:1px;display:flex;gap:var(--ds-space-1h);align-items:center;';
   sub.textContent = t('askUser.attachUploading', { n: '0' });
   meta.append(nameEl, sub);
   const rm = document.createElement('button');
@@ -341,7 +341,7 @@ export function mountAnswerAttachments(box, opts) {
 
   const head = document.createElement('div');
   head.style.cssText =
-    'display:flex;align-items:center;gap:var(--ds-space-1h);font:600 11px -apple-system,BlinkMacSystemFont,sans-serif;' +
+    'display:flex;align-items:center;gap:var(--ds-space-1h);font:600 var(--ds-fs-meta) -apple-system,BlinkMacSystemFont,sans-serif;' +
     'color:var(--color-text-muted,#888);letter-spacing:.3px;margin-bottom:var(--ds-space-1h);';
   const headClip = document.createElement('span');
   headClip.style.cssText = 'display:inline-flex;color:var(--color-text-muted,#888);';
@@ -397,7 +397,7 @@ export function mountAnswerAttachments(box, opts) {
     'position:absolute;inset:0;z-index:5;border-radius:11px;display:none;align-items:center;justify-content:center;gap:var(--ds-space-inline-gap);' +
     'background:color-mix(in srgb, var(--color-surface,rgba(20,22,28,0.9)) 88%, transparent);' +
     'border:2px dashed var(--color-primary,#07c160);color:var(--color-primary,#07c160);' +
-    'font-weight:600;font-size:14px;pointer-events:none;';
+    'font-weight:600;font-size:var(--ds-fs-subtitle);pointer-events:none;';
   const overlayIco = document.createElement('span');
   overlayIco.style.cssText = 'display:inline-flex;';
   overlayIco.innerHTML = SVG_IMAGE;
@@ -504,7 +504,7 @@ export function mountAnsweredBadge(box, n) {
   badge.className = 'ask-answer-attach-badge';
   badge.textContent = t('askUser.attachCountBadge', { n: String(n) });
   badge.style.cssText =
-    'float:right;margin:0 0 var(--ds-space-1h) var(--ds-space-indent-x);font-size:10.5px;font-weight:600;padding:var(--ds-space-half) 9px;border-radius:var(--ds-radius-pill);' +
+    'float:right;margin:0 0 var(--ds-space-1h) var(--ds-space-indent-x);font-size:var(--ds-fs-meta);font-weight:600;padding:var(--ds-space-half) 9px;border-radius:var(--ds-radius-pill);' +
     'letter-spacing:.3px;background:color-mix(in srgb, var(--color-primary,#07c160) 14%, transparent);' +
     'color:var(--color-primary,#07c160);';
   box.insertBefore(badge, box.firstChild);

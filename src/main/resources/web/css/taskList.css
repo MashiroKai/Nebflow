@@ -238,7 +238,7 @@
 .task-node-meta {
   display: block;
   margin-top: 1px;
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   color: var(--color-text-muted, #888);
   overflow: hidden;
@@ -265,7 +265,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   font-family: ui-monospace, SFMono-Regular, monospace;
   font-variant-numeric: tabular-nums;
@@ -276,7 +276,7 @@
    header design language). Rows nest 10px under the header. */
 .task-node-group { margin-top: var(--ds-space-1); }
 .task-node-group-header {
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   font-weight: 600;
   color: var(--color-text-muted, #888);
   text-transform: uppercase;
@@ -295,7 +295,7 @@
   display: inline-block;
   padding: 0 5px;
   border-radius: var(--ds-radius-chip);
-  font-size: 9px;
+  font-size: var(--ds-fs-meta);
   font-weight: 600;
   line-height: 14px;
   letter-spacing: 0.02em;
@@ -350,7 +350,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted, #888);
 }
 .task-chain-folded.task-node-entering {
@@ -476,7 +476,7 @@
 
 .task-chain-meta {
   flex: 0 0 auto;
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   font-variant-numeric: tabular-nums;
   color: var(--color-text-muted, #888);
   white-space: nowrap;
@@ -503,7 +503,7 @@
 .task-chain-depth {
   flex: 0 0 auto;
   min-width: 24px;
-  font-size: 9px;
+  font-size: var(--ds-fs-meta);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   color: color-mix(in srgb, var(--color-text-muted, #888) 70%, transparent);
@@ -533,7 +533,7 @@
 }
 .task-chain-member-time {
   flex: 0 0 auto;
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   font-family: ui-monospace, SFMono-Regular, monospace;
   font-variant-numeric: tabular-nums;
   color: var(--color-text-muted, #888);
@@ -657,7 +657,7 @@
   padding: 0 5px;
   border-radius: var(--ds-radius-chip);
   background: var(--color-frame-hover, rgba(128, 128, 128, 0.12));
-  font: 600 10px/16px ui-monospace, SFMono-Regular, monospace;
+  font: 600 var(--ds-fs-meta)/var(--ds-fs-callout) ui-monospace, SFMono-Regular, monospace;
   font-variant-numeric: tabular-nums;
   color: var(--color-text-muted, #888);
 }

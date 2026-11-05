@@ -15,7 +15,7 @@
   border-radius: 9999px;
   background: var(--color-primary);
   color: #fff;
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   font-weight: 600;
   line-height: 18px;
   text-align: center;
@@ -49,7 +49,7 @@ body.mobile-layer .fm-row-sub { font-size: var(--ds-fs-body); line-height: 1.4; 
 body.mobile-layer .fm-remark-edit { font-size: var(--ds-fs-mobile-callout); }
 body.mobile-layer .fm-nf-label { font-size: var(--ds-fs-mobile-callout); }
 body.mobile-layer .fm-conv-time { font-size: var(--ds-fs-hint); }
-body.mobile-layer .fm-conv-summary { font-size: 14px; }
+body.mobile-layer .fm-conv-summary { font-size: var(--ds-fs-subtitle); }
 body.mobile-layer .fm-req-time { font-size: var(--ds-fs-hint); }
 
 /* ── Shared row/list primitives ─────────────────────────── */
@@ -89,7 +89,7 @@ body.mobile-layer .fm-req-time { font-size: var(--ds-fs-hint); }
 }
 
 .fm-avatar img { width: 100%; height: 100%; object-fit: cover; }
-.fm-avatar-36 { width: 36px; height: 36px; font-size: 14px; }
+.fm-avatar-36 { width: 36px; height: 36px; font-size: var(--ds-fs-subtitle); }
 .fm-avatar-40 { width: 40px; height: 40px; font-size: var(--ds-fs-title); }
 
 /* ① 设备行头像（作者 2026-09-15：「设备在消息列表里的头像应该要和在联系人面板里
@@ -161,7 +161,7 @@ body.mobile-layer .fm-req-time { font-size: var(--ds-fs-hint); }
   border-radius: 9999px;
   background: var(--color-primary);
   color: #fff;
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   font-weight: 600;
   line-height: 16px;
   text-align: center;
@@ -2023,7 +2023,7 @@ body > .fm-context-menu { z-index: 10001; }
 /* 会话行「群」标识（L2 行内 chip，形态对齐 fm-row-badge 家族的 pill） */
 .fm-group-tag {
   flex-shrink: 0;
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   line-height: 1;
   padding: var(--ds-space-half) 5px;
   border-radius: var(--ds-radius-badge);
@@ -2087,7 +2087,7 @@ body > .fm-context-menu { z-index: 10001; }
 .fm-member-name {
   flex: 1;
   min-width: 0;
-  font-size: 12.5px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text, #000);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2095,7 +2095,7 @@ body > .fm-context-menu { z-index: 10001; }
 }
 .fm-role-tag {
   flex-shrink: 0;
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   padding: 1px 5px;
   border-radius: var(--ds-radius-badge);
   background: rgb(var(--sapphire) / 0.12);

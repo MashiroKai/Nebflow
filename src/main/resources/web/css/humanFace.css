@@ -42,7 +42,7 @@
   content: "▸";
   display: inline-block;
   margin-right: var(--ds-space-1h);
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   transition: transform 0.12s ease;
 }
 

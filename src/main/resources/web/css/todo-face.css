@@ -135,7 +135,7 @@
   border-radius: var(--tfl-cap-radius);
   background: var(--ctl-neutral-bg);
   color: var(--ctl-neutral-ink);
-  font: 500 11px/1 ui-monospace, SFMono-Regular, monospace;
+  font: 500 var(--ds-fs-meta)/1 ui-monospace, SFMono-Regular, monospace;
   font-variant-numeric: tabular-nums;
   cursor: pointer;
   text-align: center;
@@ -309,7 +309,7 @@
 .tfl-header-count {
   display: inline-block;
   min-width: 0;
-  font: 500 11px/1.2 ui-monospace, SFMono-Regular, monospace;
+  font: 500 var(--ds-fs-meta)/1.2 ui-monospace, SFMono-Regular, monospace;
   font-variant-numeric: tabular-nums;
   color: color-mix(in srgb, var(--color-text, #000) 40%, transparent);
 }
@@ -397,7 +397,7 @@
   border-radius: 5px;
   background: color-mix(in srgb, var(--tag-color, var(--color-text, #000)) 8%, transparent);
   color: color-mix(in srgb, var(--color-text, #000) 45%, transparent);
-  font: 500 10px/1.2 -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 500 var(--ds-fs-meta)/1.2 -apple-system, BlinkMacSystemFont, sans-serif;
   white-space: nowrap;
   cursor: pointer;
   flex-shrink: 0;
@@ -586,7 +586,7 @@
   border-radius: 5px;
   background: color-mix(in srgb, var(--color-text, #fff) 10%, transparent);
   color: var(--color-text, #fff);
-  font: 500 12px/1.3 ui-monospace, SFMono-Regular, monospace;
+  font: 500 var(--ds-fs-hint)/1.3 ui-monospace, SFMono-Regular, monospace;
   outline: none;
 }
 .tfl-tag-colors {
@@ -688,7 +688,7 @@
 .tfl-row-title {
   flex: 1 1 auto;
   min-width: 0;
-  font: 500 12px/1.35 ui-monospace, SFMono-Regular, monospace;
+  font: 500 var(--ds-fs-hint)/1.35 ui-monospace, SFMono-Regular, monospace;
   color: var(--color-text, #000);
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -696,7 +696,7 @@
   overflow: hidden;
 }
 .tfl-row-notes {
-  font: 400 10px/1.35 ui-monospace, SFMono-Regular, monospace;
+  font: 400 var(--ds-fs-meta)/1.35 ui-monospace, SFMono-Regular, monospace;
   color: color-mix(in srgb, var(--color-text, #000) 35%, transparent);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -706,7 +706,7 @@
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  font: 400 10px/1.3 ui-monospace, SFMono-Regular, monospace;
+  font: 400 var(--ds-fs-meta)/1.3 ui-monospace, SFMono-Regular, monospace;
   font-variant-numeric: tabular-nums;
   color: color-mix(in srgb, var(--color-text, #000) 40%, transparent);
 }
@@ -718,7 +718,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font: 400 9px/1.4 ui-monospace, SFMono-Regular, monospace;
+  font: 400 var(--ds-fs-meta)/1.4 ui-monospace, SFMono-Regular, monospace;
   color: color-mix(in srgb, var(--color-text, #000) 55%, transparent);
   padding: 1.5px var(--ds-space-1);
   border-radius: 3px;
@@ -807,7 +807,7 @@
   border-radius: var(--ds-radius-badge);
   background: color-mix(in srgb, var(--color-text, #000) 6%, transparent);
   padding: 3px var(--ds-space-1h);
-  font: 400 10px/1.4 ui-monospace, SFMono-Regular, monospace;
+  font: 400 var(--ds-fs-meta)/1.4 ui-monospace, SFMono-Regular, monospace;
   color: color-mix(in srgb, var(--color-text, #000) 70%, transparent);
 }
 .tfl-edit-notes::placeholder { color: color-mix(in srgb, var(--color-text, #000) 35%, transparent); }
@@ -822,7 +822,7 @@
   border-radius: var(--ds-radius-badge);
   background: transparent;
   color: color-mix(in srgb, var(--color-text, #000) 45%, transparent);
-  font: 400 10px/1.2 -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 400 var(--ds-fs-meta)/1.2 -apple-system, BlinkMacSystemFont, sans-serif;
   cursor: pointer;
 }
 .tfl-edit-prio-btn.selected {
@@ -842,7 +842,7 @@
   cursor: pointer;
 }
 .tfl-switch-label {
-  font: 400 10px/1.3 ui-monospace, SFMono-Regular, monospace;
+  font: 400 var(--ds-fs-meta)/1.3 ui-monospace, SFMono-Regular, monospace;
   color: color-mix(in srgb, var(--color-text, #000) 55%, transparent);
 }
 .tfl-switch-knob-wrap {
@@ -884,7 +884,7 @@
   outline: none;
   background: transparent;
   padding: 0;
-  font: 500 12px/1.35 ui-monospace, SFMono-Regular, monospace;
+  font: 500 var(--ds-fs-hint)/1.35 ui-monospace, SFMono-Regular, monospace;
   color: var(--color-text, #000);
 }
 .tfl-row-title-input::placeholder { color: color-mix(in srgb, var(--color-text, #000) 30%, transparent); }
@@ -911,7 +911,7 @@
 .tfl-empty {
   padding: 40px 0 36px;
   text-align: center;
-  font: 400 11px/1.4 ui-monospace, SFMono-Regular, monospace;
+  font: 400 var(--ds-fs-meta)/1.4 ui-monospace, SFMono-Regular, monospace;
   color: color-mix(in srgb, var(--color-text, #000) 25%, transparent);
   cursor: default;
   user-select: none;
@@ -936,7 +936,7 @@
   border-radius: 7px;
   background: color-mix(in srgb, var(--color-text, #000) 8%, transparent);
   color: color-mix(in srgb, var(--color-text, #000) 60%, transparent);
-  font: 500 11px/1 ui-monospace, SFMono-Regular, monospace;
+  font: 500 var(--ds-fs-meta)/1 ui-monospace, SFMono-Regular, monospace;
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
 }
@@ -1026,7 +1026,7 @@
   border: 1px solid var(--tfl-hint-stroke);
   background: var(--tfl-hint-bg);
   color: var(--tfl-hint-text);
-  font: 500 11px/1 ui-monospace, SFMono-Regular, monospace;
+  font: 500 var(--ds-fs-meta)/1 ui-monospace, SFMono-Regular, monospace;
   animation: tfl-fade-in 0.2s ease backwards;
 }
 .tfl-undo[hidden] { display: none; }
@@ -1035,7 +1035,7 @@
   border: none;
   background: transparent;
   color: var(--tfl-cyan);
-  font: 500 11px/1 ui-monospace, SFMono-Regular, monospace;
+  font: 500 var(--ds-fs-meta)/1 ui-monospace, SFMono-Regular, monospace;
   cursor: pointer;
 }
 .tfl-undo-btn:hover { filter: brightness(1.25); }

@@ -57,7 +57,7 @@
   padding: var(--ds-space-block-y) var(--ds-space-4);
   margin: var(--ds-space-4) 0 0 0;
   border-radius: var(--ds-radius-shell);
-  font-size: 14px;
+  font-size: var(--ds-fs-subtitle);
   font-weight: 500;
   display: flex;
   align-items: center;
@@ -850,12 +850,12 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   text-overflow: ellipsis;
 }
 .bg-task-id {
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-frame-text-muted);
   font-family: ui-monospace, SFMono-Regular, monospace;
 }
 .bg-task-duration {
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-primary);
   font-family: ui-monospace, SFMono-Regular, monospace;
   opacity: 0.9;
@@ -1051,7 +1051,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    10px 红字 → circle-x 红图标 + 中性词；🔴 不新增 toast。 */
 .msg-copy.copy-failed { color: var(--status-error-icon); opacity: 1; }
 .copy-failed-live {
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   color: var(--status-word);
   margin-left: var(--ds-space-1);
   white-space: nowrap;
@@ -1155,7 +1155,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   margin-left: var(--ds-space-1h);
   padding: 0 5px;
   border-radius: var(--ds-radius-badge);
-  font-size: 9px;
+  font-size: var(--ds-fs-meta);
   line-height: 14px;
   letter-spacing: 0.4px;
   vertical-align: 1px;
@@ -1483,7 +1483,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 .bubble.ai h1, .bubble.injected h1, .ask-bub.ai h1 { font-size: var(--ds-fs-callout); }
 .bubble.ai h2, .bubble.injected h2, .ask-bub.ai h2 { font-size: var(--ds-fs-title); }
-.bubble.ai h3, .bubble.injected h3, .ask-bub.ai h3 { font-size: 14px; }
+.bubble.ai h3, .bubble.injected h3, .ask-bub.ai h3 { font-size: var(--ds-fs-subtitle); }
 .bubble.ai table, .bubble.injected table, .ask-bub.ai table {
   border-collapse: collapse;
   margin: var(--ds-space-1h) 0;
@@ -1531,7 +1531,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   flex-shrink: 0;
 }
 .duration-badge-time {
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   font-family: ui-monospace, SFMono-Regular, monospace;
   color: var(--color-text);
   opacity: 0.35;
@@ -1596,7 +1596,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 /* Pop tool — rainbow filename inline + clickable card（.tool-card.pop-tool-card
    的 cursor 钩子随族化退役：.ds-tool-card 本体即 cursor:pointer） */
 .pop-rainbow-name {
-  font: 600 12px ui-monospace, SFMono-Regular, monospace;
+  font: 600 var(--ds-fs-hint) ui-monospace, SFMono-Regular, monospace;
   background: linear-gradient(90deg, #e84855, #f68bd0, #9b5de5, #4cc9f0, #06d6a0, #ffd166, #e84855);
   background-size: 300% 100%;
   -webkit-background-clip: text;
@@ -2409,7 +2409,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .ob-flow-skip-wrap .ob-flow-skip {
   pointer-events: auto;
   margin: 0 var(--ds-space-3);
-  font-size: 12.5px;
+  font-size: var(--ds-fs-hint);
   padding: var(--ds-space-1) var(--ds-space-3);
   border-radius: var(--ds-radius-pill);
 }
@@ -2637,7 +2637,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 .option-input.mono {
   font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-  font-size: 12.5px;
+  font-size: var(--ds-fs-hint);
 }
 .option-input::placeholder {
   color: var(--color-text-dim);
@@ -2667,12 +2667,12 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   flex: 0 1 130px;
 }
 .option-hint {
-  font-size: 11.5px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text-dim);
 }
 .write-lines {
   font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-  font-size: 12.5px;
+  font-size: var(--ds-fs-hint);
   line-height: 2;
   margin-top: var(--ds-space-half);
 }
@@ -2960,7 +2960,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   font-weight: 700;
   color: #fff;
 }
@@ -2998,7 +2998,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
+  font-size: var(--ds-fs-subtitle);
   padding: 0;
   border-radius: var(--ds-radius-badge);
   transition: opacity 0.15s;
@@ -3167,7 +3167,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   display: flex;
   align-items: center;
   gap: var(--ds-space-1);
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.4px;
@@ -3369,7 +3369,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .row.tool.neblink-row .tool-card .label::before {
   content: 'NEBLINK';
   display: inline-block;
-  font-size: 9px;
+  font-size: var(--ds-fs-meta);
   font-weight: 700;
   letter-spacing: 0.6px;
   background: var(--color-primary);
@@ -3390,7 +3390,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 
 /* ===== /ask command label ===== */
 .ask-label {
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.4px;
@@ -3409,7 +3409,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   transform: translateY(-50%);
   z-index: 5;
   pointer-events: none;
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.6px;
@@ -3424,7 +3424,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 #ask-indicator-cancel {
   cursor: pointer;
   pointer-events: auto;
-  font-size: 14px;
+  font-size: var(--ds-fs-subtitle);
   line-height: 1;
   opacity: 0.6;
   padding: 0 var(--ds-space-half);
@@ -3444,7 +3444,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   transform: translateY(-50%);
   z-index: 5;
   pointer-events: none;
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.6px;
@@ -3466,7 +3466,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 #skill-indicator-cancel {
   cursor: pointer;
   pointer-events: auto;
-  font-size: 14px;
+  font-size: var(--ds-fs-subtitle);
   line-height: 1;
   opacity: 0.6;
   padding: 0 var(--ds-space-half);
@@ -3486,7 +3486,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   transform: translateY(-50%);
   z-index: 5;
   pointer-events: none;
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.6px;
@@ -3501,7 +3501,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 #compact-indicator-cancel {
   cursor: pointer;
   pointer-events: auto;
-  font-size: 14px;
+  font-size: var(--ds-fs-subtitle);
   line-height: 1;
   opacity: 0.6;
   padding: 0 var(--ds-space-half);
@@ -3717,7 +3717,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 .error-escalation-actions button {
   pointer-events: auto;
-  font: 500 12px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font: 500 var(--ds-fs-btn) -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   border-radius: var(--ds-radius-input);
   padding: var(--ds-space-1) var(--ds-space-inline-x);
   cursor: pointer;
@@ -3786,12 +3786,12 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .ws-pick-target:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: 2px; }
 .ws-pick-target svg { flex: 0 0 auto; color: rgb(var(--sapphire) / 0.9); }
 .ws-pick-texts { display: flex; flex-direction: column; gap: var(--ds-space-half); min-width: 0; }
-.ws-pick-title { font-size: 14px; font-weight: 600; color: var(--color-text); }
+.ws-pick-title { font-size: var(--ds-fs-subtitle); font-weight: 600; color: var(--color-text); }
 .ws-pick-target.picking { pointer-events: none; opacity: 0.75; }
 .ws-pick-target.picking .ws-pick-title { color: rgb(var(--sapphire) / 0.9); }
-.ws-pick-hint { font-size: 11.5px; color: var(--color-text-muted); }
+.ws-pick-hint { font-size: var(--ds-fs-hint); color: var(--color-text-muted); }
 .ws-pick-echo {
-  font-size: 12.5px;
+  font-size: var(--ds-fs-hint);
   color: rgb(var(--sapphire) / 0.95);
   margin: -2px 0 var(--ds-space-2);
   word-break: break-all;
@@ -3947,7 +3947,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .wsp-cur {
   flex: 1;
   min-width: 0;
-  font-size: 11.5px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-frame-text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4139,7 +4139,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   gap: var(--ds-space-1);
   height: 28px;
   padding: 0 var(--ds-space-3);
-  font: 500 12px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font: 500 var(--ds-fs-hint)/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   letter-spacing: 0;
   color: var(--color-text);
   background: var(--glass-bg);
@@ -4375,7 +4375,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .nf-wl-chk::before {
   content: "\2713";
   display: block; width: 16px; line-height: 16px; text-align: center;
-  font-size: 14px; font-weight: 700; color: var(--color-success);
+  font-size: var(--ds-fs-subtitle); font-weight: 700; color: var(--color-success);
 }
 .nf-wl-chk svg { display: none; }
 /* the check lands with a short text fade (UI-C — no bounce / scale) */
@@ -4682,7 +4682,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .fc-icon {
   width: 38px; height: 38px; border-radius: 9px; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
-  color: #fff; font-size: 9.5px; font-weight: 800; letter-spacing: 0.6px;
+  color: #fff; font-size: var(--ds-fs-meta); font-weight: 800; letter-spacing: 0.6px;
 }
 .fc-icon.pdf  { background: linear-gradient(135deg, #ff7b6b, #e64545); }
 .fc-icon.html { background: linear-gradient(135deg, #ffb340, #f57c00); }
@@ -5014,16 +5014,16 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .fm-msg.out .fm-att-list .file-card .fc-icon {
   width: 28px; height: 28px;
   border-radius: var(--ds-radius-input);
-  font-size: 8.5px;
+  font-size: var(--ds-fs-glyph);
 }
 .row.user-media .fc-name,
 .fm-msg.out .fm-att-list .fc-name {
   color: var(--color-text);
-  font-size: 12.5px;
+  font-size: var(--ds-fs-hint);
   max-width: 150px;
 }
 .row.user-media .fc-sub,
-.fm-msg.out .fm-att-list .fc-sub { color: var(--color-text-muted); font-size: 10.5px; margin-top: var(--ds-space-half); }
+.fm-msg.out .fm-att-list .fc-sub { color: var(--color-text-muted); font-size: var(--ds-fs-meta); margin-top: var(--ds-space-half); }
 /* Click affordance survives the de-chrome: the standing shadow is gone, the
    hover shadow stays (matches the artifact family's hover feedback). */
 .row.user-media .file-card:hover,
@@ -5112,7 +5112,7 @@ object.search-media-thumb { object-fit: initial; }
   display: inline-flex; align-items: center; justify-content: center;
   padding: 0 7px; border-radius: var(--ds-radius-chip);
   background: rgba(64, 132, 240, 0.14); color: #7fb0f5;
-  font-size: 10px; font-weight: 700; letter-spacing: 0.02em;
+  font-size: var(--ds-fs-meta); font-weight: 700; letter-spacing: 0.02em;
 }
 .search-media-ext.generic { background: rgba(128, 128, 128, 0.16); color: var(--color-text-muted, #8a8f99); }
 .search-media-ext.link { background: rgba(64, 132, 240, 0.14); color: #7fb0f5; }
@@ -5126,7 +5126,7 @@ object.search-media-thumb { object-fit: initial; }
 .search-media-source {
   position: absolute; top: 6px; left: 6px;
   padding: var(--ds-space-half) 7px; border-radius: var(--ds-radius-pill);
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   background: rgba(0, 0, 0, 0.55); color: #fff;
   pointer-events: none;
 }
@@ -5135,7 +5135,7 @@ object.search-media-thumb { object-fit: initial; }
 .search-media-time {
   position: absolute; top: 6px; right: 6px;
   padding: var(--ds-space-half) var(--ds-space-1h); border-radius: var(--ds-radius-chip);
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   background: rgba(0, 0, 0, 0.55); color: rgba(255, 255, 255, 0.92);
   pointer-events: none;
 }
@@ -5216,7 +5216,7 @@ object.search-media-thumb { object-fit: initial; }
   width: var(--nf-qicon-size, 16px);
   height: var(--nf-qicon-size, 16px);
   border-radius: var(--ds-radius-badge);
-  font-size: 7px;
+  font-size: var(--ds-fs-glyph);
   font-weight: 800;
   letter-spacing: 0;
 }
@@ -5295,7 +5295,7 @@ object.search-media-thumb { object-fit: initial; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 9px;
+  font-size: var(--ds-fs-glyph);
   font-weight: 600;
   letter-spacing: 0.02em;
 }
@@ -5631,7 +5631,7 @@ body:not(.mobile-layer) #agent-avatar-btn .agent-avatar-logo-img {
 .msg-token-pop-toggle:hover { color: var(--color-text); }
 .msg-token-pop-foot {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-frame-text-muted, #98a2b3);
   opacity: 0.75;
   word-break: break-all;

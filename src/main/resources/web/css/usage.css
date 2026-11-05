@@ -100,7 +100,7 @@
   margin-top: var(--ds-space-half);
 }
 .ud-card-sub {
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted);
   font-variant-numeric: tabular-nums;
   line-height: 1.35;
@@ -261,7 +261,7 @@
   grid-auto-flow: column;
   grid-auto-columns: calc(var(--ud-cell, 11px) + 2px);
   gap: 0 var(--ds-space-half);
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted);
   margin-bottom: var(--ds-space-1);
   height: 12px;
@@ -336,7 +336,7 @@
   border-radius: var(--ds-radius-thin);
 }
 .ud-legend-label {
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -349,7 +349,7 @@
   color: var(--color-text-muted);
 }
 .ud-empty[hidden] { display: none; }
-.ud-empty-title { font-size: 14px; font-weight: 600; color: var(--color-text); margin-bottom: var(--ds-space-1); }
+.ud-empty-title { font-size: var(--ds-fs-subtitle); font-weight: 600; color: var(--color-text); margin-bottom: var(--ds-space-1); }
 .ud-empty-hint { font-size: var(--ds-fs-hint); }
 
 /* ── Intraday curve (v1.3, ruling ③) ──────────────────────────────── */
@@ -383,12 +383,12 @@
 .ud-curve-bar:hover { fill: rgb(var(--sapphire) / 0.85); }
 .ud-curve-bar.ud-curve-peak { fill: rgb(var(--sapphire) / 0.85); }
 .ud-curve-axis {
-  font-size: 9px;
+  font-size: var(--ds-fs-meta);
   fill: var(--color-text-muted);
   font-variant-numeric: tabular-nums;
 }
 .ud-curve-peak-label {
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   font-weight: 600;
   fill: var(--color-text);
   font-variant-numeric: tabular-nums;

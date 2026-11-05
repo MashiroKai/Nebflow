@@ -634,7 +634,7 @@
   display: inline-flex;
   align-items: center;
   gap: var(--ds-space-1);
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   padding: var(--ds-space-half) var(--ds-space-2);
   border-radius: var(--ds-radius-badge);
   border: 1px solid transparent;
@@ -709,7 +709,7 @@
 }
 .secrets-entry .entry-sub { font-size: var(--ds-fs-meta); color: var(--color-frame-text-muted); flex: none; }
 .count-pill {
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   padding: 1px 7px;
   border-radius: var(--ds-radius-badge);
   background: color-mix(in srgb, var(--color-frame-text-muted) 12%, transparent);
@@ -1118,7 +1118,7 @@
   border-top: 1px solid var(--color-frame-border-light);
 }
 .cfg-model-name {
-  font: 500 11px ui-monospace, SFMono-Regular, monospace;
+  font: 500 var(--ds-fs-meta) ui-monospace, SFMono-Regular, monospace;
   color: var(--color-frame-text);
   flex-shrink: 0;
   min-width: 80px;
@@ -1130,7 +1130,7 @@
 }
 /* Read-only vision badge (provider card list) */
 .vision-badge {
-  font: 500 9.5px -apple-system, sans-serif;
+  font: 500 var(--ds-fs-meta) -apple-system, sans-serif;
   padding: 1px var(--ds-space-2);
   border-radius: var(--ds-radius-input);
   border: 1px solid rgb(var(--sapphire) / 0.35);
@@ -1154,7 +1154,7 @@
   flex: 1;
 }
 .cfg-card-badge {
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   padding: 1px var(--ds-space-1h);
   border-radius: 3px;
   background: var(--color-frame-border);
@@ -1208,7 +1208,7 @@
   display: inline-flex;
   align-items: center;
   gap: var(--ds-space-1);
-  font: 400 11px ui-monospace, SFMono-Regular, monospace;
+  font: 400 var(--ds-fs-meta) ui-monospace, SFMono-Regular, monospace;
   color: var(--color-text);
   background: var(--ds-etched-bg);
   border: 1px solid var(--ds-etched-border);
@@ -1227,14 +1227,14 @@
 .mchain-chip.restricted { opacity: 0.5; }
 .mchain-chip .mchip-window {
   color: var(--color-text-muted);
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
 }
 .mchain-arrow {
   color: var(--color-text-muted);
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
 }
 .mchain-empty {
-  font: 400 11.5px -apple-system, sans-serif;
+  font: 400 var(--ds-fs-hint) -apple-system, sans-serif;
   color: var(--color-text-muted);
 }
 
@@ -1384,7 +1384,7 @@
   }
 }
 .cfg-modal-title {
-  font-size: 14px;
+  font-size: var(--ds-fs-subtitle);
   font-weight: 600;
   color: var(--color-frame-text);
   padding: 14px var(--ds-space-4) var(--ds-space-block-y);
@@ -1448,7 +1448,7 @@
   border: 1px solid transparent;
   color: var(--color-error);
   cursor: pointer;
-  font-size: 18px;
+  font-size: var(--ds-fs-display);
   line-height: 1;
   padding: var(--ds-space-1) var(--ds-space-1h);
   border-radius: var(--ds-radius-badge);
@@ -1584,7 +1584,7 @@
 /* ── Agent Manager ────────────────────────────────────────────────────── */
 .agent-mgr-loading,
 .agent-mgr-empty {
-  font: 400 11px -apple-system, sans-serif;
+  font: 400 var(--ds-fs-meta) -apple-system, sans-serif;
   color: var(--color-frame-text-muted);
   padding: var(--ds-space-5) var(--ds-space-3);
   text-align: center;
@@ -1593,7 +1593,7 @@
 /* Category groups */
 .agent-mgr-group { margin-bottom: var(--ds-space-3); }
 .agent-mgr-group-header {
-  font: 600 11px -apple-system, sans-serif;
+  font: 600 var(--ds-fs-meta) -apple-system, sans-serif;
   text-transform: uppercase;
   letter-spacing: 0.5px;
   color: var(--color-frame-text-muted, #888);
@@ -1601,7 +1601,7 @@
   user-select: none;
 }
 .agent-mgr-standalone-badge {
-  font: 500 9px -apple-system, sans-serif;
+  font: 500 var(--ds-fs-meta) -apple-system, sans-serif;
   padding: 1px 5px;
   border-radius: 3px;
   background: rgba(100,200,100,0.15);
@@ -1619,7 +1619,7 @@
 }
 .agent-mgr-group-header.orchestrator svg { flex-shrink: 0; }
 .agent-mgr-orchestrator-badge {
-  font: 500 9px -apple-system, sans-serif;
+  font: 500 var(--ds-fs-meta) -apple-system, sans-serif;
   padding: 1px 5px;
   border-radius: 3px;
   background: rgba(91,127,191,0.10);
@@ -1645,7 +1645,7 @@
   border-radius: var(--ds-radius-input);
   background: rgba(91,127,191,0.10);
   color: rgb(91,127,191);
-  font: 600 14px -apple-system, sans-serif;
+  font: 600 var(--ds-fs-subtitle) -apple-system, sans-serif;
   display: flex; align-items: center; justify-content: center;
   flex-shrink: 0;
 }
@@ -1654,13 +1654,13 @@
   display: flex; flex-direction: column; gap: 1px;
 }
 .agent-mgr-card .agent-mgr-name {
-  font: 600 12px -apple-system, sans-serif;
+  font: 600 var(--ds-fs-hint) -apple-system, sans-serif;
   color: var(--color-frame-text);
   letter-spacing: -0.01em;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .agent-mgr-card .agent-mgr-desc {
-  font: 400 10px -apple-system, sans-serif;
+  font: 400 var(--ds-fs-meta) -apple-system, sans-serif;
   color: var(--color-frame-text-muted);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
@@ -1668,7 +1668,7 @@
   flex-shrink: 0;
 }
 .agent-mgr-model-pill {
-  font: 500 9px ui-monospace, SFMono-Regular, monospace;
+  font: 500 var(--ds-fs-meta) ui-monospace, SFMono-Regular, monospace;
   color: var(--color-frame-text-muted);
   background: var(--color-frame-border);
   padding: 1px var(--ds-space-1h);
@@ -1702,7 +1702,7 @@
   scrollbar-color: var(--color-frame-border) transparent;
 }
 .agent-detail-loading {
-  font: 400 13px -apple-system, sans-serif;
+  font: 400 var(--ds-fs-body) -apple-system, sans-serif;
   color: var(--color-text-muted);
   padding: 40px; text-align: center;
 }
@@ -1715,7 +1715,7 @@
   border-radius: var(--ds-radius-xl);
   background: rgba(91,127,191,0.10);
   color: rgb(91,127,191);
-  font: 600 22px -apple-system, sans-serif;
+  font: 600 var(--ds-fs-display) -apple-system, sans-serif;
   display: flex; align-items: center; justify-content: center;
   flex-shrink: 0;
 }
@@ -1741,18 +1741,18 @@
 }
 
 .agent-detail-name {
-  font: 600 20px -apple-system, sans-serif;
+  font: 600 var(--ds-fs-display) -apple-system, sans-serif;
   color: var(--color-text);
   letter-spacing: -0.02em;
   margin-bottom: var(--ds-space-half);
 }
 .agent-detail-desc {
-  font: 400 13px -apple-system, sans-serif;
+  font: 400 var(--ds-fs-body) -apple-system, sans-serif;
   color: var(--color-text-muted);
   line-height: 1.4;
 }
 .agent-detail-extends {
-  font: 400 11px ui-monospace, SFMono-Regular, monospace;
+  font: 400 var(--ds-fs-meta) ui-monospace, SFMono-Regular, monospace;
   color: var(--color-text-muted);
   opacity: 0.7;
   margin-top: var(--ds-space-1);
@@ -1771,7 +1771,7 @@
   min-height: 300px;
 }
 .agent-detail-label {
-  font: 600 11px -apple-system, sans-serif;
+  font: 600 var(--ds-fs-meta) -apple-system, sans-serif;
   color: var(--color-text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -1796,17 +1796,17 @@
 }
 @keyframes agent-pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
 .agent-detail-model-name {
-  font: 500 12px ui-monospace, SFMono-Regular, monospace;
+  font: 500 var(--ds-fs-hint) ui-monospace, SFMono-Regular, monospace;
   color: var(--color-text);
   flex: 1;
 }
 .agent-detail-model-row:active { cursor: grabbing; }
 .agent-detail-grip {
-  opacity: 0.6; font-size: 14px; flex-shrink: 0;
+  opacity: 0.6; font-size: var(--ds-fs-subtitle); flex-shrink: 0;
 }
 .agent-detail-model-row:hover .agent-detail-grip { opacity: 0.85; }
 .agent-detail-model-pos {
-  font: 600 10px -apple-system, sans-serif;
+  font: 600 var(--ds-fs-meta) -apple-system, sans-serif;
   color: var(--color-primary, #07c160);
   flex-shrink: 0;
 }
@@ -1823,7 +1823,7 @@
   border-radius: var(--ds-radius-input);
   background: rgba(0,0,0,0.02);
   color: var(--color-text);
-  font: 500 11px -apple-system, sans-serif;
+  font: 500 var(--ds-fs-meta) -apple-system, sans-serif;
   padding: 0 var(--ds-space-2);
   cursor: pointer; outline: none;
 }
@@ -1832,7 +1832,7 @@
 /* Read-only resolved chain (agent detail) — editing lives in the /model panel */
 .agent-detail-model-chain { margin-bottom: var(--ds-space-1h); }
 .agent-detail-model-current {
-  font: 400 11px -apple-system, sans-serif;
+  font: 400 var(--ds-fs-meta) -apple-system, sans-serif;
   color: var(--color-text-muted);
   display: flex; align-items: center; gap: var(--ds-space-1h);
   min-height: 14px;
@@ -1856,7 +1856,7 @@
 /* Model remove button */
 .agent-detail-model-remove {
   cursor: pointer; opacity: 0.35;
-  font-size: 14px; padding: 0 var(--ds-space-half);
+  font-size: var(--ds-fs-subtitle); padding: 0 var(--ds-space-half);
   flex-shrink: 0;
   transition: opacity 0.15s, color 0.15s;
 }
@@ -1867,7 +1867,7 @@
   flex: 1;
   min-height: 0;
   width: 100%;
-  font: 400 12px ui-monospace, SFMono-Regular, monospace;
+  font: 400 var(--ds-fs-hint) ui-monospace, SFMono-Regular, monospace;
   color: var(--color-text);
   background: rgba(0,0,0,0.02);
   border: 1px solid var(--color-border);
@@ -1883,7 +1883,7 @@
 .agent-detail-save-btn {
   margin-top: var(--ds-space-2);
   flex-shrink: 0;
-  font: 500 12px -apple-system, sans-serif;
+  font: 500 var(--ds-fs-btn) -apple-system, sans-serif;
   padding: 5px var(--ds-space-4);
   border: 1px solid transparent;
   border-radius: var(--ds-radius-input);
@@ -1925,7 +1925,7 @@
   margin-bottom: var(--ds-space-1h); flex-shrink: 0;
 }
 .agent-detail-face-tab {
-  font: 500 11px -apple-system, sans-serif;
+  font: 500 var(--ds-fs-meta) -apple-system, sans-serif;
   padding: 3px var(--ds-space-3);
   border: 1px solid var(--color-border);
   border-radius: var(--ds-radius-pill);
@@ -1941,7 +1941,7 @@
   color: var(--color-text);
 }
 .agent-detail-face-hint {
-  font: 400 11px -apple-system, sans-serif;
+  font: 400 var(--ds-fs-meta) -apple-system, sans-serif;
   color: var(--color-text-muted);
   margin-bottom: var(--ds-space-1h); flex-shrink: 0;
 }
@@ -1959,7 +1959,7 @@
 
 /* Model-chain source note (agent detail — own chain / follows Nebula / seed). */
 .agent-detail-scheme-note {
-  font: 400 12px -apple-system, sans-serif;
+  font: 400 var(--ds-fs-hint) -apple-system, sans-serif;
   color: var(--color-text-muted, #888);
   padding: var(--ds-space-half) 0 var(--ds-space-1h);
 }
@@ -2063,7 +2063,7 @@
    Reuses settings-row / cfg-select / cfg-hint / cfg-btn / toggle baselines;
    only layout helpers + swatches are new. No new color tokens. */
 .orb-state-map-title {
-  font-size: 12.5px;
+  font-size: var(--ds-fs-hint);
   padding: var(--ds-space-2) 0 var(--ds-space-half);
 }
 .orb-state-row {
@@ -2074,7 +2074,7 @@
 }
 .orb-state-row .orb-state-name {
   flex: 1;
-  font-size: 12.5px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-frame-text);
   min-width: 0;
   overflow: hidden;
@@ -2140,7 +2140,7 @@
   border: 0;
   background: transparent;
   color: var(--color-frame-text-muted);
-  font-size: 11.5px;
+  font-size: var(--ds-fs-btn);
   padding: var(--ds-space-1) var(--ds-space-inline-x);
   cursor: pointer;
   font-family: inherit;
@@ -2185,7 +2185,7 @@
   margin-right: auto;
 }
 .plugins-loading {
-  font: 400 12px -apple-system, sans-serif;
+  font: 400 var(--ds-fs-hint) -apple-system, sans-serif;
   color: var(--color-frame-text-muted);
   padding: var(--ds-space-6) var(--ds-space-3);
   text-align: center;
@@ -2197,7 +2197,7 @@
   margin-bottom: var(--ds-space-stack-gap);
 }
 .plugins-title {
-  font: 600 14px -apple-system, sans-serif;
+  font: 600 var(--ds-fs-subtitle) -apple-system, sans-serif;
   color: var(--color-frame-text);
   letter-spacing: -0.01em;
 }
@@ -2207,7 +2207,7 @@
   display: inline-flex;
   align-items: center;
   gap: var(--ds-space-1h);
-  font: 500 10px ui-monospace, SFMono-Regular, monospace;
+  font: 500 var(--ds-fs-meta) ui-monospace, SFMono-Regular, monospace;
   font-variant-numeric: tabular-nums;
   color: var(--color-frame-text-muted);
   white-space: nowrap;
@@ -2215,7 +2215,7 @@
 .plugins-stats-sep { color: var(--color-frame-text-dim); }
 .plugins-section { margin-bottom: 18px; }
 .plugins-section-title {
-  font: 600 11px -apple-system, sans-serif;
+  font: 600 var(--ds-fs-meta) -apple-system, sans-serif;
   text-transform: uppercase;
   letter-spacing: 0.5px;
   color: var(--color-frame-text-muted);
@@ -2223,12 +2223,12 @@
   user-select: none;
 }
 .plugins-section-hint {
-  font: 400 10px -apple-system, sans-serif;
+  font: 400 var(--ds-fs-meta) -apple-system, sans-serif;
   color: var(--color-frame-text-dim);
   padding: 0 var(--ds-space-half) var(--ds-space-2);
 }
 .plugins-none {
-  font: 400 10px -apple-system, sans-serif;
+  font: 400 var(--ds-fs-meta) -apple-system, sans-serif;
   color: var(--color-frame-text-dim);
   font-style: italic;
 }
@@ -2327,13 +2327,13 @@
   color: rgb(var(--sapphire));
 }
 .plugins-card-name {
-  font: 600 12px ui-monospace, SFMono-Regular, monospace;
+  font: 600 var(--ds-fs-hint) ui-monospace, SFMono-Regular, monospace;
   color: var(--color-frame-text);
   /* 名称独立行不截断（补充令②）：禁 nowrap/ellipsis——长名在行 1 内自然换行。 */
   overflow-wrap: anywhere;
 }
 .plugins-card-meta {
-  font: 400 10px -apple-system, sans-serif;
+  font: 400 var(--ds-fs-meta) -apple-system, sans-serif;
   color: var(--color-frame-text-dim);
   white-space: nowrap;
 }
@@ -2353,7 +2353,7 @@
   grid-column: 1 / -1;
   grid-row: 2;
   min-width: 0;
-  font: 400 11px -apple-system, sans-serif;
+  font: 400 var(--ds-fs-meta) -apple-system, sans-serif;
   color: var(--color-frame-text-muted);
   line-height: 1.45;
   display: -webkit-box;
@@ -2396,7 +2396,7 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font: 500 10px ui-monospace, SFMono-Regular, monospace;
+  font: 500 var(--ds-fs-meta) ui-monospace, SFMono-Regular, monospace;
   padding: 3px var(--ds-space-inline-x);
   border-radius: var(--ds-radius-input);
   cursor: pointer;
@@ -2433,7 +2433,7 @@
      左缘、把「开关 → 卸载」右对齐两件推远（三条互不挤：375 宽实测占 224px /
      可用 321px，见 docs/20261102_plugin-panel-layout__*.md）。 */
   margin-right: auto;
-  font: 500 10px ui-monospace, SFMono-Regular, monospace;
+  font: 500 var(--ds-fs-meta) ui-monospace, SFMono-Regular, monospace;
   padding: 3px var(--ds-space-inline-x);
   border-radius: var(--ds-radius-input);
   cursor: pointer;
@@ -2454,7 +2454,7 @@
 /* The enable switch — now the shared nb-toggle component (js/toggle.js);
    styles live in the «nb-toggle» section below. The pill stays panel-local. */
 .plugins-state-pill {
-  font: 500 9px -apple-system, sans-serif;
+  font: 500 var(--ds-fs-meta) -apple-system, sans-serif;
   padding: 1px 7px;
   border-radius: var(--ds-radius-input);
   border: 1px solid transparent;
@@ -2477,7 +2477,7 @@
 }
 .plugins-state-pill.blocked .st-ic { width: 10px; height: 10px; margin-right: 3px; }
 .plugins-card-desc {
-  font: 400 11px -apple-system, sans-serif;
+  font: 400 var(--ds-fs-meta) -apple-system, sans-serif;
   color: var(--color-frame-text-muted);
   line-height: 1.45;
   display: -webkit-box;
@@ -2497,7 +2497,7 @@
   align-items: center;
 }
 .plugins-comp {
-  font: 500 9px ui-monospace, SFMono-Regular, monospace;
+  font: 500 var(--ds-fs-meta) ui-monospace, SFMono-Regular, monospace;
   padding: 1px 7px;
   border-radius: var(--ds-radius-input);
   border: 1px solid var(--glass-control-border);
@@ -2511,7 +2511,7 @@
 /* 卡片级提示条（2026-10-21 作者令④后唯一消费方 = blocked）：布局归 base、
    颜色归 .blocked（error 族）——amber 底色随「变更」提示退役整段删除。 */
 .plugins-card-hint {
-  font: 400 10px -apple-system, sans-serif;
+  font: 400 var(--ds-fs-meta) -apple-system, sans-serif;
   line-height: 1.4;
   border-radius: 7px;
   padding: 5px var(--ds-space-2);
@@ -2543,13 +2543,13 @@
   gap: var(--ds-space-1h);
 }
 .plugins-dispatch-label {
-  font: 500 10px -apple-system, sans-serif;
+  font: 500 var(--ds-fs-meta) -apple-system, sans-serif;
   color: var(--color-frame-text-muted);
   letter-spacing: 0.01em;
   white-space: nowrap;
 }
 .plugins-dispatch-note {
-  font: 400 10px -apple-system, sans-serif;
+  font: 400 var(--ds-fs-meta) -apple-system, sans-serif;
   line-height: 1.4;
   color: var(--color-frame-text-dim);
   padding: 0 var(--ds-space-half);
@@ -2557,7 +2557,7 @@
 .plugins-dispatch-note[hidden] { display: none; }
 .plugins-rejected-pill {
   flex-shrink: 0;
-  font: 500 9px -apple-system, sans-serif;
+  font: 500 var(--ds-fs-meta) -apple-system, sans-serif;
   padding: 1px 7px;
   border-radius: var(--ds-radius-input);
   color: rgb(var(--amber));
@@ -2587,7 +2587,7 @@
   gap: var(--ds-space-1h);
   min-width: 0;
   max-width: 100%;
-  font: 400 10px -apple-system, sans-serif;
+  font: 400 var(--ds-fs-meta) -apple-system, sans-serif;
   color: var(--color-frame-text-muted);
   background: var(--glass-control-bg);
   border: 1px solid var(--glass-control-border);
@@ -2730,7 +2730,7 @@
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  font: 400 10px ui-monospace, SFMono-Regular, monospace;
+  font: 400 var(--ds-fs-meta) ui-monospace, SFMono-Regular, monospace;
   color: var(--color-frame-text-muted);
   max-width: 220px;
   overflow: hidden;
@@ -2759,7 +2759,7 @@
   display: flex;
   align-items: flex-start;
   gap: var(--ds-space-1h);
-  font: 400 11px/1.5 ui-monospace, SFMono-Regular, monospace;
+  font: 400 var(--ds-fs-meta)/1.5 ui-monospace, SFMono-Regular, monospace;
   color: var(--color-frame-text);
   min-width: 0;
 }
@@ -2808,7 +2808,7 @@ body.stt-disabled .fm-mic-btn { display: none !important; }
   display: flex;
   align-items: center;
   gap: var(--ds-space-1h);
-  font-size: 12.5px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-frame-text-muted);
   padding: var(--ds-space-half) 0;
 }

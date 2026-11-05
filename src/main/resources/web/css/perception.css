@@ -151,8 +151,8 @@ html[data-theme="dark"] #perception-panel {
 /* 展开态一：未配置 hero（两步直达） */
 .pp-setup-hero { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 18px var(--ds-space-2) 14px; }
 .pp-setup-hero svg { width: 36px; height: 36px; stroke: rgb(var(--st-sapphire)); fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; opacity: .85; margin-bottom: var(--ds-space-stack-gap); }
-.pp-setup-h { font-size: 14px; font-weight: 600; margin-bottom: 5px; }
-.pp-setup-p { color: var(--st-text-muted); font-size: 12.5px; max-width: 290px; margin-bottom: 14px; }
+.pp-setup-h { font-size: var(--ds-fs-subtitle); font-weight: 600; margin-bottom: 5px; }
+.pp-setup-p { color: var(--st-text-muted); font-size: var(--ds-fs-hint); max-width: 290px; margin-bottom: 14px; }
 
 /* 展开态二：已连接（身份行 + 启停 + 配置，别无他物） — 官网行卡档 */
 .pp-mailrow {
@@ -161,7 +161,7 @@ html[data-theme="dark"] #perception-panel {
 }
 .pp-mailrow .addr { font-size: var(--st-fs-row); font-weight: 500; }
 .pp-mailrow .srv { font-size: var(--st-fs-meta); color: var(--st-text-muted); }
-.pp-quiet-line { font-size: 11.5px; color: var(--st-text-muted); padding: var(--ds-space-half) var(--ds-space-half) 0; display: flex; gap: var(--ds-space-1h); align-items: flex-start; }
+.pp-quiet-line { font-size: var(--ds-fs-hint); color: var(--st-text-muted); padding: var(--ds-space-half) var(--ds-space-half) 0; display: flex; gap: var(--ds-space-1h); align-items: flex-start; }
 .pp-quiet-line svg { width: 13px; height: 13px; stroke: var(--st-mail-success-icon); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; margin-top: 1.5px; }
 .pp-toggle {
   position: relative; width: 38px; height: 22px; border-radius: 11px; background: var(--st-etched-bg);
@@ -212,20 +212,20 @@ html[data-theme="dark"] #perception-panel {
 .pp-field { margin-bottom: var(--ds-space-stack-gap); }
 .pp-field label { display: block; font-size: var(--ds-fs-hint); color: var(--st-text); margin-bottom: var(--ds-space-1); font-weight: 500; }
 .pp-field input {
-  width: 100%; font: inherit; font-size: 12.5px; color: var(--st-text);
+  width: 100%; font: inherit; font-size: var(--ds-fs-hint); color: var(--st-text);
   background: var(--st-etched-bg); border: 1px solid var(--st-etched-border); border-radius: var(--ds-radius-input);
   padding: var(--ds-space-2) var(--ds-space-inline-x); outline: none; transition: border-color .15s;
 }
 .pp-field input:focus { border-color: rgb(var(--st-sapphire) / .35); }
 .pp-field .hint { font-size: var(--ds-fs-meta); color: var(--st-text-dim); margin-top: var(--ds-space-1); line-height: 1.45; }
 .pp-auto-note {
-  display: flex; align-items: flex-start; gap: 7px; font-size: 11.5px; color: var(--st-text-muted);
+  display: flex; align-items: flex-start; gap: 7px; font-size: var(--ds-fs-hint); color: var(--st-text-muted);
   background: var(--st-etched-bg); border: 1px solid var(--st-etched-border); border-radius: var(--ds-radius-button);
   padding: var(--ds-space-2) var(--ds-space-inline-x); margin: var(--ds-space-half) 0 var(--ds-space-stack-gap);
 }
 .pp-auto-note svg { width: 13px; height: 13px; stroke: rgb(var(--st-sapphire)); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; margin-top: 1.5px; }
 .pp-adv { margin: var(--ds-space-half) 0 var(--ds-space-1); border-top: 1px solid var(--st-etched-border); padding-top: var(--ds-space-2); }
-.pp-adv summary { font-size: 11.5px; color: var(--st-text-muted); cursor: pointer; list-style: none; display: flex; align-items: center; gap: 5px; padding: 3px 0; user-select: none; }
+.pp-adv summary { font-size: var(--ds-fs-hint); color: var(--st-text-muted); cursor: pointer; list-style: none; display: flex; align-items: center; gap: 5px; padding: 3px 0; user-select: none; }
 .pp-adv summary::-webkit-details-marker { display: none; }
 .pp-adv summary svg { width: 11px; height: 11px; stroke: currentColor; fill: none; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; transition: transform .15s; }
 .pp-adv[open] summary svg { transform: rotate(90deg); }
@@ -233,7 +233,7 @@ html[data-theme="dark"] #perception-panel {
 .pp-field-grid { display: grid; grid-template-columns: 1fr 84px; gap: var(--ds-space-2); margin-bottom: var(--ds-space-2); }
 .pp-cfg-foot { display: flex; gap: var(--ds-space-2); padding: var(--ds-space-3) var(--ds-space-4) var(--ds-space-4); border-top: 1px solid var(--st-etched-border); margin-top: var(--ds-space-3); }
 .pp-cfg-foot .spacer { flex: 1; }
-.pp-cfg-result { font-size: 11.5px; margin-top: var(--ds-space-2); min-height: 16px; color: var(--st-text-muted); padding: 0 var(--ds-space-4); }
+.pp-cfg-result { font-size: var(--ds-fs-hint); margin-top: var(--ds-space-2); min-height: 16px; color: var(--st-text-muted); padding: 0 var(--ds-space-4); }
 .pp-cfg-result.ok { color: var(--st-mail-success-icon); }
 .pp-cfg-result.err { color: var(--st-mail-danger-icon); }
 
@@ -250,11 +250,11 @@ html[data-theme="dark"] #perception-panel {
 .otp-chip.filling { animation: otpChipOut 200ms cubic-bezier(.16, 1, .3, 1) forwards; }
 @keyframes otpChipOut { to { opacity: 0; transform: scale(.96); } }
 .otp-chip .code {
-  font-size: 22px; font-weight: 600; letter-spacing: .12em; color: var(--st-text);
+  font-size: var(--ds-fs-display); font-weight: 600; letter-spacing: .12em; color: var(--st-text);
   font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .otp-chip .meta { flex: 1; min-width: 0; }
-.otp-chip .from { font-size: 11.5px; color: var(--st-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.otp-chip .from { font-size: var(--ds-fs-hint); color: var(--st-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .otp-chip .fill-hint { font-size: var(--ds-fs-meta); color: rgb(var(--st-sapphire)); margin-top: 1px; }
 
 /* ═══════════════ ③ 快照卡（ask 卡内感知草稿面）═══════════════ */
@@ -265,11 +265,11 @@ html[data-theme="dark"] #perception-panel {
 }
 .pdraft-mrow { display: flex; gap: var(--ds-space-2); padding: 6.5px 0; border-bottom: 1px solid var(--st-etched-border); align-items: baseline; }
 .pdraft-mrow:last-child { border-bottom: none; }
-.pdraft-mlabel { flex-shrink: 0; width: 44px; font-size: 11.5px; color: var(--st-text-muted); }
-.pdraft-mval { flex: 1; min-width: 0; font-size: 12.5px; word-break: break-all; }
+.pdraft-mlabel { flex-shrink: 0; width: 44px; font-size: var(--ds-fs-hint); color: var(--st-text-muted); }
+.pdraft-mval { flex: 1; min-width: 0; font-size: var(--ds-fs-hint); word-break: break-all; }
 .pdraft-subject { font-weight: 500; font-size: var(--ds-fs-body); }
 .pdraft-body {
-  font-size: 12.5px; line-height: 1.7; color: var(--st-text); max-height: 132px; overflow-y: auto;
+  font-size: var(--ds-fs-hint); line-height: 1.7; color: var(--st-text); max-height: 132px; overflow-y: auto;
   padding: var(--ds-space-2) var(--ds-space-inline-x); border-radius: var(--ds-radius-button); background: var(--st-etched-bg); border: 1px solid var(--st-etched-border);
   margin-bottom: var(--ds-space-1h); white-space: pre-wrap; word-break: break-word;
 }
@@ -293,11 +293,11 @@ html[data-theme="dark"] #perception-panel {
 .mailcompose { max-width: 640px; margin: 0 auto; padding: 0 30px 30px; display: flex; flex-direction: column; }
 .mailcompose .crow { display: flex; gap: var(--ds-space-3); align-items: flex-start; padding: 9px var(--ds-space-half); border-bottom: 1px solid var(--st-etched-border); }
 .mailcompose .crow:first-child { padding-top: var(--ds-space-half); }
-.mailcompose .clabel { flex-shrink: 0; width: 48px; font-size: 12.5px; color: var(--st-text-muted); padding-top: var(--ds-space-1h); }
+.mailcompose .clabel { flex-shrink: 0; width: 48px; font-size: var(--ds-fs-hint); color: var(--st-text-muted); padding-top: var(--ds-space-1h); }
 .mailcompose .cval { flex: 1; min-width: 0; }
 .to-line { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
 .to-chip {
-  display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; padding: 3.5px var(--ds-space-1h) 3.5px var(--ds-space-inline-x);
+  display: inline-flex; align-items: center; gap: 5px; font-size: var(--ds-fs-hint); padding: 3.5px var(--ds-space-1h) 3.5px var(--ds-space-inline-x);
   border-radius: var(--ds-radius-input); background: var(--st-etched-bg); border: 1px solid var(--st-etched-border);
 }
 .to-chip.bad { border-color: rgba(214, 69, 69, .45); color: var(--st-mail-danger-icon); }
@@ -307,15 +307,15 @@ html[data-theme="dark"] #perception-panel {
 }
 .to-chip .x:hover { background: var(--st-control-bg-hover); color: var(--st-text); }
 .to-chip .x svg { width: 10px; height: 10px; stroke: currentColor; fill: none; stroke-width: 2.2; stroke-linecap: round; }
-.to-input { flex: 1; min-width: 130px; border: none; background: transparent; outline: none; font: inherit; font-size: 12.5px; color: var(--st-text); padding: var(--ds-space-1) var(--ds-space-half); }
+.to-input { flex: 1; min-width: 130px; border: none; background: transparent; outline: none; font: inherit; font-size: var(--ds-fs-hint); color: var(--st-text); padding: var(--ds-space-1) var(--ds-space-half); }
 .to-input::placeholder { color: var(--st-text-dim); }
-.cc-toggle { border: none; background: transparent; font: inherit; font-size: 11.5px; color: var(--st-text-muted); cursor: pointer; padding: var(--ds-space-1) var(--ds-space-2); border-radius: var(--ds-radius-chip); align-self: center; flex-shrink: 0; }
+.cc-toggle { border: none; background: transparent; font: inherit; font-size: var(--ds-fs-hint); color: var(--st-text-muted); cursor: pointer; padding: var(--ds-space-1) var(--ds-space-2); border-radius: var(--ds-radius-chip); align-self: center; flex-shrink: 0; }
 .cc-toggle:hover { background: var(--st-control-bg-hover); color: var(--st-text); }
 .cc-row { display: none; }
 .cc-row.show { display: flex; }
 .subject-input {
   width: 100%; border: none; background: transparent; outline: none; font: inherit;
-  font-size: 15.5px; font-weight: 500; color: var(--st-text); padding: var(--ds-space-2) var(--ds-space-half); letter-spacing: -0.01em;
+  font-size: var(--ds-fs-title); font-weight: 500; color: var(--st-text); padding: var(--ds-space-2) var(--ds-space-half); letter-spacing: -0.01em;
 }
 .subject-input::placeholder { color: var(--st-text-dim); font-weight: 400; }
 
@@ -352,9 +352,9 @@ html[data-theme="dark"] #perception-panel {
 .mail-quote {
   margin: var(--ds-space-stack-gap) var(--ds-space-half) 0; padding: var(--ds-space-2) var(--ds-space-3); border-radius: var(--ds-radius-button);
   background: var(--st-etched-bg); border: 1px solid var(--st-etched-border);
-  font-size: 12.5px; line-height: 1.65; color: var(--st-text-muted);
+  font-size: var(--ds-fs-hint); line-height: 1.65; color: var(--st-text-muted);
 }
-.mail-quote .pq-head { font-weight: 500; color: var(--st-text); font-size: 11.5px; margin-bottom: 3px; }
+.mail-quote .pq-head { font-weight: 500; color: var(--st-text); font-size: var(--ds-fs-hint); margin-bottom: 3px; }
 .mail-quote .pq-body { max-height: 88px; overflow-y: auto; }
 
 /* 附件行（本批只读展示 + ×移除；添加附件收进残余清单） */
@@ -364,7 +364,7 @@ html[data-theme="dark"] #perception-panel {
   background: var(--st-etched-bg); border: 1px solid var(--st-etched-border); font-size: var(--ds-fs-hint);
 }
 .att-chip svg { width: 13px; height: 13px; stroke: rgb(var(--st-sapphire)); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
-.att-chip .sz { font-size: 10.5px; color: var(--st-text-dim); }
+.att-chip .sz { font-size: var(--ds-fs-meta); color: var(--st-text-dim); }
 /* 路径不存在（r2 §7.3）：chip 标红（载体上色——红只上描边/图标/底纹），发送腿同步禁用 */
 .att-chip.missing { border-color: var(--st-error); background: color-mix(in srgb, var(--st-error) 8%, transparent); }
 .att-chip.missing svg, .att-chip.missing .nm { color: var(--st-error); stroke: var(--st-error); }
@@ -377,7 +377,7 @@ html[data-theme="dark"] #perception-panel {
 
 /* 画布内发送状态（409 stale / 失败人话） */
 .mail-send-note {
-  display: none; align-items: center; gap: var(--ds-space-1h); font-size: 11.5px; margin: var(--ds-space-stack-gap) var(--ds-space-half) 0;
+  display: none; align-items: center; gap: var(--ds-space-1h); font-size: var(--ds-fs-btn); margin: var(--ds-space-stack-gap) var(--ds-space-half) 0;
   border-radius: var(--ds-radius-input); padding: var(--ds-space-1h) var(--ds-space-inline-x);
 }
 .mail-send-note.show { display: flex; }

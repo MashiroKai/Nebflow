@@ -4784,8 +4784,8 @@ body.mobile-layer .canvas-md-viewer {
   font-size: var(--mfs-body, 17px);
   line-height: 1.7;
 }
-body.mobile-layer .canvas-md-viewer h1 { font-size: 22px; line-height: 1.35; }
-body.mobile-layer .canvas-md-viewer h2 { font-size: 19px; line-height: 1.4; }
+body.mobile-layer .canvas-md-viewer h1 { font-size: var(--ds-fs-display); line-height: 1.35; }
+body.mobile-layer .canvas-md-viewer h2 { font-size: var(--ds-fs-display); line-height: 1.4; }
 body.mobile-layer .canvas-md-viewer h3,
 body.mobile-layer .canvas-md-viewer h4,
 body.mobile-layer .canvas-md-viewer h5,

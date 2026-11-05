@@ -25,7 +25,7 @@
      随面板主题 ink-swap） */
   background: var(--btn-primary-bg);
   color: var(--btn-primary-ink);
-  font-size: 14px;
+  font-size: var(--ds-fs-subtitle);
   font-weight: 500;
   cursor: pointer;
   transition: opacity 0.15s;
@@ -33,7 +33,7 @@
 .neblink-login-btn:hover { opacity: 0.9; }
 .neblink-pairing-status {
   text-align: center;
-  font-size: 14px;
+  font-size: var(--ds-fs-subtitle);
   color: var(--color-text-muted);
   padding: var(--ds-space-4) 0;
 }
@@ -67,7 +67,7 @@
   border: 1px solid var(--color-frame-border, var(--color-border));
   background: var(--color-frame-input-bg, var(--color-bg));
   color: var(--color-frame-text, var(--color-text));
-  font-size: 14px;
+  font-size: var(--ds-fs-subtitle);
   letter-spacing: 3px;
   text-align: center;
 }

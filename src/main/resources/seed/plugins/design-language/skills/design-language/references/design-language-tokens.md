@@ -230,6 +230,7 @@
 | 具名槽·手机次说明 | `--ds-fs-mobile-sub` | 15px | 手机档次正文 |
 | 具名槽·手机正文/输入 | `--ds-fs-mobile-callout` | 16px | 手机正文/输入件（iOS 不缩放硬下限） |
 | 具名槽·桌面 callout | `--ds-fs-callout` | 16px | 桌面语境 16px（文档正文/弹窗标题/图标字形；与 mobile-callout 同值异域） |
+| 具名槽·图标盒字形 | `--ds-fs-glyph` | 8px | 固定尺寸图标盒内 2–3 字符（14–18px 盒；禁作正文） |
 | 手机映射 | `--mfs-min/sub/body/callout/title` | 13/15/17/16/28 | 一跳别名指向上面同值槽（禁复制字面量） |
 
 ## 3. 收敛判定（近似档为何归这一档）
@@ -393,6 +394,7 @@ node scripts/check-design-spec-sync.mjs --json   # 机器读
 | `--ds-fs-mobile-sub` | `15px` | 手机次正文（具名槽） |
 | `--ds-fs-mobile-callout` | `16px` | 手机正文/输入件（具名槽） |
 | `--ds-fs-callout` | `16px` | 桌面语境 16px callout（具名槽，与 mobile-callout 同值异域） |
+| `--ds-fs-glyph` | `8px` | 图标盒字形（具名例外槽：14–18px 盒内字符；禁作正文，文本下限仍是 11） |
 | `--ds-fs-lead` | `17px` | 长文/引导正文 |
 | `--ds-fs-display` | `20px` | 页面级大标题、空态主句 |
 | `--ds-fs-card-hero` | `21px` | 过渡卡主标题（具名槽） |

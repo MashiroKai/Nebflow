@@ -1,83 +1,16 @@
 {
   "stats": {
-    "A": {
-      "--ds-space-inline-x": 151,
-      "--ds-space-stack-gap": 49,
-      "--ds-space-inline-gap": 56,
-      "--ds-space-block-y": 95,
-      "--ds-space-indent-x": 9,
-      "--ds-space-inset": 5
-    },
-    "B": 13,
-    "C": 3,
+    "A": {},
+    "B": 0,
+    "C": 0,
     "files": {
-      "css/base.css": {
-        "A": 2,
-        "B": 0,
-        "C": 0
-      },
-      "css/cards.css": {
-        "A": 3,
-        "B": 0,
-        "C": 2
-      },
-      "css/chat.css": {
-        "A": 44,
-        "B": 1,
-        "C": 0
-      },
-      "css/delegatePanorama.css": {
-        "A": 4,
-        "B": 0,
-        "C": 0
-      },
       "css/design-system.css": {
         "A": 0,
         "B": 0,
         "C": 0
       },
-      "css/diffView.css": {
-        "A": 2,
-        "B": 0,
-        "C": 0
-      },
-      "css/dropbox.css": {
-        "A": 3,
-        "B": 0,
-        "C": 0
-      },
-      "css/flowMap.css": {
-        "A": 11,
-        "B": 0,
-        "C": 0
-      },
       "css/friends.css": {
-        "A": 33,
-        "B": 0,
-        "C": 0
-      },
-      "css/humanFace.css": {
-        "A": 2,
-        "B": 0,
-        "C": 0
-      },
-      "css/input.css": {
-        "A": 7,
-        "B": 0,
-        "C": 0
-      },
-      "css/keyboard.css": {
-        "A": 2,
-        "B": 0,
-        "C": 0
-      },
-      "css/lightbox.css": {
-        "A": 1,
-        "B": 0,
-        "C": 0
-      },
-      "css/mermaid.css": {
-        "A": 2,
+        "A": 0,
         "B": 0,
         "C": 0
       },
@@ -87,185 +20,15 @@
         "C": 0
       },
       "css/mobileLayer.css": {
-        "A": 30,
-        "B": 0,
-        "C": 0
-      },
-      "css/modal.css": {
-        "A": 20,
-        "B": 3,
-        "C": 0
-      },
-      "css/nav.css": {
-        "A": 3,
-        "B": 0,
-        "C": 0
-      },
-      "css/neblink.css": {
-        "A": 5,
-        "B": 0,
-        "C": 0
-      },
-      "css/perception.css": {
-        "A": 18,
-        "B": 0,
-        "C": 0
-      },
-      "css/projectPanel.css": {
-        "A": 12,
-        "B": 0,
-        "C": 0
-      },
-      "css/reminder.css": {
-        "A": 6,
-        "B": 0,
-        "C": 0
-      },
-      "css/sapphire.css": {
-        "A": 1,
-        "B": 0,
-        "C": 0
-      },
-      "css/secrets.css": {
-        "A": 5,
-        "B": 0,
-        "C": 0
-      },
-      "css/sidebar.css": {
-        "A": 28,
-        "B": 2,
-        "C": 0
-      },
-      "css/social.css": {
-        "A": 4,
-        "B": 0,
-        "C": 0
-      },
-      "css/split.css": {
-        "A": 35,
-        "B": 4,
-        "C": 1
-      },
-      "css/taskList.css": {
-        "A": 1,
-        "B": 0,
-        "C": 0
-      },
-      "css/timeWheel.css": {
-        "A": 6,
-        "B": 0,
-        "C": 0
-      },
-      "css/todo-face.css": {
-        "A": 4,
-        "B": 0,
-        "C": 0
-      },
-      "css/todo-page.css": {
-        "A": 4,
-        "B": 0,
-        "C": 0
-      },
-      "css/usage.css": {
-        "A": 11,
-        "B": 0,
-        "C": 0
-      },
-      "js/activityBar.js": {
-        "A": 2,
-        "B": 0,
-        "C": 0
-      },
-      "js/askAttachments.js": {
-        "A": 3,
-        "B": 0,
-        "C": 0
-      },
-      "js/bgTaskOutputPopup.js": {
-        "A": 2,
-        "B": 1,
-        "C": 0
-      },
-      "js/canvas.js": {
-        "A": 6,
-        "B": 0,
-        "C": 0
-      },
-      "js/cardRegistry.js": {
-        "A": 1,
-        "B": 0,
-        "C": 0
-      },
-      "js/chat.js": {
-        "A": 1,
-        "B": 0,
-        "C": 0
-      },
-      "js/daemons.js": {
-        "A": 3,
-        "B": 0,
-        "C": 0
-      },
-      "js/delegateChainView.js": {
-        "A": 3,
-        "B": 0,
-        "C": 0
-      },
-      "js/fleetUpdate.js": {
-        "A": 7,
-        "B": 0,
-        "C": 0
-      },
-      "js/flowCss.js": {
-        "A": 19,
-        "B": 2,
-        "C": 0
-      },
-      "js/modal.js": {
-        "A": 1,
-        "B": 0,
-        "C": 0
-      },
-      "js/monacoEditor.js": {
-        "A": 1,
-        "B": 0,
-        "C": 0
-      },
-      "js/perception.js": {
-        "A": 1,
-        "B": 0,
-        "C": 0
-      },
-      "js/sessionGate.js": {
-        "A": 1,
-        "B": 0,
-        "C": 0
-      },
-      "js/sidebar.js": {
-        "A": 1,
-        "B": 0,
-        "C": 0
-      },
-      "js/staleTabHint.js": {
-        "A": 1,
-        "B": 0,
-        "C": 0
-      },
-      "js/viewers/html.js": {
-        "A": 1,
-        "B": 0,
-        "C": 0
-      },
-      "js/viewers/largeText.js": {
-        "A": 2,
+        "A": 0,
         "B": 0,
         "C": 0
       }
     }
   },
-  "totalA": 365,
-  "totalB": 13,
-  "totalC": 3,
+  "totalA": 0,
+  "totalB": 0,
+  "totalC": 0,
   "residual": [],
   "ruling": []
 }

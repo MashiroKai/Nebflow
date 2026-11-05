@@ -874,7 +874,7 @@ button.glass-control.fm-login-btn:disabled {
    且无 opacity ⇒ 与主对话「半透明浅档」不一致）。R6 = 保持现状「浅」档。 */
 .fm-msg-time,
 .dropbox-msg-time {
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   font-family: ui-monospace, SFMono-Regular, monospace;
   font-variant-numeric: tabular-nums;
   color: var(--color-text);

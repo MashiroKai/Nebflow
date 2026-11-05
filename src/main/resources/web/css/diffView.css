@@ -67,7 +67,7 @@
 
 /* change-type badges */
 .nf-fc-badge {
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   padding: 1px var(--ds-space-1h);
   border-radius: var(--ds-radius-badge);
   white-space: nowrap;
@@ -88,7 +88,7 @@
 
 /* diff source tag */
 .nf-fc-src {
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted, rgba(128, 128, 128, 0.9));
   border: 1px solid var(--color-border, rgba(128, 128, 128, 0.3));
   border-radius: var(--ds-radius-badge);
@@ -334,7 +334,7 @@
   min-width: 0;
   /* 字号 10px 落在胶囊本体：名与判词段之间的字面 ' · ' 文本节点继承此处——
      不落则继承泡体正文字号，行带被撑破（单行化 B1 ≤24px 判红实证 30.47px）。 */
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   line-height: 1.3;
   padding: 1px 9px;
   border: 1px solid var(--color-border);
@@ -355,7 +355,7 @@
   text-overflow: ellipsis;
   /* 与 .bubble.injected .injected-source-label 同族（ask-label 基座：10px /
      600 / uppercase / 0.4px 字距），来源名语义逐字保持。 */
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.4px;
@@ -366,7 +366,7 @@
    版式批②「合成一个块」）。 */
 .nf-rcpt-badge {
   flex: 0 0 auto;
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   line-height: 1.3;
   letter-spacing: 0.04em;
@@ -378,7 +378,7 @@
 .nf-rcpt-pipe {
   flex: 0 0 auto;
   color: var(--color-text-muted);
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
 }
 /* 摘要行：收进展开态——默认 display:none（折叠卡面恒单行），.nf-rcpt-top 的
    aria-expanded（bindCollapsibleToggle 维护）驱动显隐。展开后面 = 一句话结果

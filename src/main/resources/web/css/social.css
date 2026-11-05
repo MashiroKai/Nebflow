@@ -191,7 +191,7 @@
   min-width: 0;
   box-sizing: border-box;
   padding: var(--ds-space-1h) var(--ds-space-2);
-  font: 400 12px -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 400 var(--ds-fs-hint) -apple-system, BlinkMacSystemFont, sans-serif;
   border-radius: var(--ds-radius-input);
   border: 1px solid var(--glass-border);
   background: var(--glass-etched-bg);
@@ -202,7 +202,7 @@
   border-color: rgb(var(--sapphire) / 0.4);
   box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.12);
 }
-.social-secret-state { font-size: 10px; color: var(--color-frame-text-dim); }
+.social-secret-state { font-size: var(--ds-fs-meta); color: var(--color-frame-text-dim); }
 
 /* Wrong configuration hint (W9) — ui-status-redesign：11px 通知句转中性字，
    语义红由句首 triangle-alert 图标承载（.social-card-hint .st-ic）。 */
@@ -214,7 +214,7 @@
 }
 .social-card-hint .st-ic { width: 12px; height: 12px; margin-right: var(--ds-space-1); vertical-align: -2px; }
 .social-card-actions { display: flex; align-items: center; gap: var(--ds-space-2); flex-wrap: wrap; }
-.social-save-state { font-size: 10px; color: var(--color-frame-text-muted); }
+.social-save-state { font-size: var(--ds-fs-meta); color: var(--color-frame-text-muted); }
 
 /* ── feishu-panel: two-face scanBind card ───────────────────────────────────
    Live-app block (C1), archive (C5), bindings + default session (C3/C4), and

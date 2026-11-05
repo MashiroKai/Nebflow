@@ -134,7 +134,7 @@
   border: 1px solid var(--nf-chip-border);
   background: var(--nf-chip-bg);
   color: var(--color-text);
-  font-size: 14px;
+  font-size: var(--ds-fs-subtitle);
   font-family: inherit;
   outline: none;
 }
@@ -191,7 +191,7 @@
    line-height 撑满而不是 padding —— padding 会把它挤出所在行（首版的「只剩一条线」）。 */
 #nf-quickinput-host .quick-input-list .quick-input-list-separator {
   padding: 0 var(--ds-space-half);
-  font-size: 9.5px;
+  font-size: var(--ds-fs-meta);
   font-weight: 600;
   letter-spacing: 0.7px;
   text-transform: uppercase;

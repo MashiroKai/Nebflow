@@ -43,7 +43,7 @@
   height: 14px;
   background: var(--color-primary);
   color: #fff;
-  font-size: 8px;
+  font-size: var(--ds-fs-glyph);
   font-weight: 500;
   line-height: 14px;
   text-align: center;
@@ -123,7 +123,7 @@
   gap: var(--ds-space-1h);
 }
 .reminder-panel-count {
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text);
   opacity: 0.3;
   font-weight: 400;
@@ -215,7 +215,7 @@
   display: inline-block;
   padding: 0 5px;
   border-radius: var(--ds-radius-chip);
-  font-size: 9px;
+  font-size: var(--ds-fs-meta);
   font-weight: 600;
   line-height: 14px;
   letter-spacing: 0.02em;
@@ -388,7 +388,7 @@
   opacity: 0.5;
 }
 .reminder-row-last {
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text);
   opacity: 0.25;
   letter-spacing: -0.01em;
@@ -398,7 +398,7 @@
 /* 认知二期产品批③打卡缺卡调整流：行内调整建议（弱化小字，不指责口吻的
    呈现面；克制基调与 .reminder-row-last 同族）。 */
 .reminder-miss-suggest {
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   line-height: 1.4;
   color: var(--color-text);
   opacity: 0.45;
@@ -418,7 +418,7 @@
   background: transparent;
   color: var(--color-text);
   opacity: 0.25;
-  font-size: 14px;
+  font-size: var(--ds-fs-subtitle);
   line-height: 1;
   cursor: pointer;
   padding: 0;
@@ -444,7 +444,7 @@
 .reminder-overdue-tag {
   display: inline-flex;
   align-items: center;
-  font-size: 9px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   color: var(--status-word);
   background: rgba(244, 67, 54, 0.08);
@@ -610,7 +610,7 @@
 }
 .reminder-repeat-badge {
   flex-shrink: 0;
-  font-size: 9px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   color: rgb(var(--sapphire));
   background: rgb(var(--sapphire) / 0.1);
@@ -674,7 +674,7 @@
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
-  font-size: 10.5px;
+  font-size: var(--ds-fs-meta);
   font-weight: 600;
   letter-spacing: -0.01em;
   line-height: 17px;
@@ -697,7 +697,7 @@
 /* 重复小标（循环任务才渲染）：与面板行 .reminder-repeat-badge 同 tokens 同形制 */
 .schedule-card-repeat {
   flex-shrink: 0;
-  font-size: 9px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   color: rgb(var(--sapphire));
   background: rgb(var(--sapphire) / 0.1);

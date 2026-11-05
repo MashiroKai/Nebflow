@@ -1043,7 +1043,7 @@ function showExternalConflict(entry) {
     'margin:var(--ds-space-2) var(--ds-space-indent-x)', 'padding:var(--ds-space-2) var(--ds-space-inline-x) var(--ds-space-2) var(--ds-space-3)',
     'border-radius:var(--ds-radius-button)',
     'background:rgba(28,30,38,0.92)', 'color:#f4f5f7',
-    'font:12.5px/1.4 -apple-system,"Segoe UI",sans-serif',
+    'font:var(--ds-fs-hint)/1.4 -apple-system,"Segoe UI",sans-serif',
     'border:1px solid rgba(255,255,255,0.12)',
     'box-shadow:0 4px 14px rgba(0,0,0,0.22)',
   ].join(';'));
@@ -1414,7 +1414,7 @@ function renderFilePlaceholder(paneEl, errorMsg, absPath) {
     'height:100%',
     'padding:var(--ds-space-6)',
     'color:var(--color-text-muted)',
-    'font-size:14px',
+    'font-size:var(--ds-fs-subtitle)',
   ].join(';');
   const iconRow = document.createElement('div');
   iconRow.textContent = t('canvas.unreadableTitle');
@@ -4811,7 +4811,7 @@ function cardWindowBootFace(fileName) {
     'display:flex;flex-direction:column;align-items:center;gap:var(--ds-space-inline-gap);padding:22px 30px;' +
     'border:1px solid var(--glass-border,#e0e1e4);border-radius:var(--ds-radius-card-md);' +
     'background:var(--glass-bg,#fff);color:var(--color-text,#1b1e26);' +
-    "font:13px/1.6 -apple-system,'Segoe UI',sans-serif;text-align:center;max-width:78vw;";
+    "font:var(--ds-fs-body)/1.6 -apple-system,'Segoe UI',sans-serif;text-align:center;max-width:78vw;";
   const dot = document.createElement('div');
   dot.className = 'nf-cw-dot';
   dot.style.cssText =

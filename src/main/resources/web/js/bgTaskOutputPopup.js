@@ -121,13 +121,13 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
 }
 .bgt-title-wrap { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 1px; }
 .bgt-title {
-  font: 600 13px -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 600 var(--ds-fs-body) -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   max-width: 100%;
 }
 .bgt-subtitle {
-  font: 400 11px -apple-system, sans-serif;
+  font: 400 var(--ds-fs-meta) -apple-system, sans-serif;
   color: var(--color-text-muted);
   font-family: ui-monospace, SFMono-Regular, monospace;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -136,7 +136,7 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
 .bgt-state-chip {
   display: inline-flex; align-items: center; gap: 5px;
   flex-shrink: 0;
-  font: 400 11px -apple-system, sans-serif;
+  font: 400 var(--ds-fs-meta) -apple-system, sans-serif;
   color: var(--color-frame-text-muted);
 }
 /* Unified panel spec §3.1：状态词 400 让位主名；终态分色同行面板
@@ -169,7 +169,7 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
   flex-shrink: 0;
   display: flex; align-items: flex-start; gap: var(--ds-space-1h);
   padding: var(--ds-space-1h) var(--ds-space-4);
-  font: 400 11px -apple-system, sans-serif;
+  font: 400 var(--ds-fs-meta) -apple-system, sans-serif;
   color: var(--status-word);
   border-bottom: 1px solid var(--glass-border);
   border-left: 2px solid var(--status-error-icon);
@@ -204,7 +204,7 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
   background: #f5f5f5;
   border: 1px solid var(--color-frame-border);
   border-radius: var(--ds-radius-input);
-  font: 400 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 400 var(--ds-fs-hint)/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--color-text);
   white-space: pre-wrap;
   word-break: break-word;
@@ -220,7 +220,7 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
   position: absolute; inset: 0;
   display: flex; align-items: center; justify-content: center;
   padding: var(--ds-space-4);
-  font: 400 12px -apple-system, sans-serif;
+  font: 400 var(--ds-fs-hint) -apple-system, sans-serif;
   color: var(--color-text-muted);
   text-align: center;
 }
@@ -250,7 +250,7 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
   z-index: 1;
 }
 .bgt-meta {
-  font: 400 11px ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 400 var(--ds-fs-meta) ui-monospace, SFMono-Regular, Menlo, monospace;
   font-variant-numeric: tabular-nums;
   color: var(--color-text-muted);
   min-width: 0;
@@ -277,7 +277,7 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
 }
 .bgt-prompt { opacity: 0.7; flex-shrink: 0; }
 .bgt-truncated {
-  font: 500 11px -apple-system, sans-serif;
+  font: 500 var(--ds-fs-meta) -apple-system, sans-serif;
   color: var(--status-warn-icon);
   flex-shrink: 0;
 }
