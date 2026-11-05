@@ -844,6 +844,45 @@
   color: color-mix(in srgb, var(--color-text, #000) 70%, transparent);
 }
 .tfl-edit-notes::placeholder { color: color-mix(in srgb, var(--color-text, #000) 35%, transparent); }
+/* detail 文本域（两段化批 2026-11-05）：编辑面第二段是可含换行的长文本，
+   单行 input 会吞掉换行 ⇒ 文本域；空内容时按内容高（单行，与名输入同厚度），
+   有内容时随内容长到上限后自身滚动，纵向可手拉。 */
+.tfl-edit-detail {
+  box-sizing: border-box;
+  field-sizing: content;
+  min-height: 0;
+  max-height: 96px;
+  resize: vertical;
+  line-height: 1.4;
+  font-family: inherit;
+}
+/* 行内 detail 折叠（两段化批）：列表行默认**只显 name**；折角钮展开后整段
+   以次级墨色多行显示（视觉层级低于标题，不动版式高度基准）。 */
+.tfl-row-fold {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: var(--ds-radius-badge);
+  background: transparent;
+  color: color-mix(in srgb, var(--color-text) 40%, transparent);
+  cursor: pointer;
+}
+.tfl-row-fold:hover { color: color-mix(in srgb, var(--color-text) 70%, transparent); }
+.tfl-row-fold svg { width: 9px; height: 9px; transition: transform 0.16s ease; }
+.tfl-row-open .tfl-row-fold svg { transform: rotate(180deg); }
+.tfl-row-detail {
+  font: 400 var(--ds-fs-meta)/var(--ds-lh-std) ui-monospace, SFMono-Regular, monospace;
+  color: color-mix(in srgb, var(--color-text) 58%, transparent);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding-top: var(--ds-space-half);
+}
+.tfl-row-detail[hidden] { display: none; }
 .tfl-edit-prio { display: flex; align-items: center; gap: var(--ds-space-half); flex-wrap: wrap; }
 .tfl-edit-prio-btn {
   display: inline-flex;
