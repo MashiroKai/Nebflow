@@ -219,11 +219,16 @@ test('T2 延续态（live 行终态在场）：delegate done 而链仍活 → �
 
   const head = page.locator(`${LIST} > .bg-task-row.bg-task-row-head`);
   await expect(head).toHaveAttribute('data-node-session-id', DELEGATE_SID);
-  // 延续徽标：琥珀词「链运行中」+ warn 图标档 + active 点；行不挂 .done（不灰化）。
+  // 延续徽标：琥珀词「链运行中」+ warn 图标档 + 链色状态位；行不挂 .done（不灰化）。
   await expect(head.locator('.bg-task-state.bg-task-chain')).toHaveText('链运行中');
   await expect(head.locator('.bg-task-chain .st-ic')).toHaveCount(1);
   await expect(head).not.toHaveClass(/done/);
-  await expect(head.locator('.bg-task-status')).toHaveClass(/bg-status-active/);
+  // 三行结构批（2026-11-05）：状态位从「6px 圆点」升级为「行内图标」，链态自成一档
+  // （bg-status-chain，琥珀）——原断言读的 bg-status-active 是圆点时代链行借用的运行态
+  // 点色，契约随批改锚：图标档 + 色调 + 无障碍词三读点同测。
+  await expect(head.locator('.bg-task-status')).toHaveClass(/bg-status-chain/);
+  await expect(head.locator('.bg-task-status')).toHaveAttribute('data-tone', 'chain');
+  await expect(head.locator('.bg-task-status')).toHaveAttribute('aria-label', /链运行中/);
   // 链子行在列（默认展开——活链可见即本批目的）。
   await expect(page.locator(`${LIST} > .bg-task-row.bg-task-row-child`)).toHaveCount(2);
   expect(errors).toEqual([]);
