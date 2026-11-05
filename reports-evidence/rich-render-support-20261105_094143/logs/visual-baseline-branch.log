@@ -1,0 +1,36 @@
+visual-baseline [check] playwright=playwright browser=chromium-151 (151.0.7922.34) platform=darwin-chromium-151
+  web    : src/main/resources/web  (root = /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-mermaid-render/src/main/resources/web)
+  baseline: tests/visual/baseline/darwin-chromium-151
+  out    : .nebflow/visual-baseline/darwin-chromium-151
+
+  DIFF   app-empty-dark                         diff=28176px (2.174%) bbox={"x0":289,"y0":27,"x1":878,"y1":899}  → .nebflow/visual-baseline/darwin-chromium-151/app-empty-dark-diff.png 
+  DIFF   app-empty-light                        diff=27339px (2.109%) bbox={"x0":292,"y0":27,"x1":875,"y1":899}  → .nebflow/visual-baseline/darwin-chromium-151/app-empty-light-diff.png 
+  DIFF   chat-messages-dark                     diff=148875px (11.487%) bbox={"x0":289,"y0":27,"x1":878,"y1":899}  → .nebflow/visual-baseline/darwin-chromium-151/chat-messages-dark-diff.png 
+  DIFF   chat-messages-light                    diff=149168px (11.510%) bbox={"x0":292,"y0":27,"x1":875,"y1":899}  → .nebflow/visual-baseline/darwin-chromium-151/chat-messages-light-diff.png 
+  DIFF   settings-llm-empty-dark                diff=95166px (7.343%) bbox={"x0":289,"y0":27,"x1":998,"y1":899}  → .nebflow/visual-baseline/darwin-chromium-151/settings-llm-empty-dark-diff.png 
+  DIFF   settings-llm-empty-light               diff=100900px (7.785%) bbox={"x0":292,"y0":27,"x1":998,"y1":899}  → .nebflow/visual-baseline/darwin-chromium-151/settings-llm-empty-light-diff.png 
+  DIFF   bgtask-panel-dark                      diff=-1px (100.000%) bbox=null 尺寸不一致 base=378x146 cur=314x149  
+  DIFF   bgtask-panel-light                     diff=-1px (100.000%) bbox=null 尺寸不一致 base=378x146 cur=314x149  
+  DIFF   canvas-markdown-tab-dark               diff=13754px (2.851%) bbox={"x0":0,"y0":114,"x1":514,"y1":864}  → .nebflow/visual-baseline/darwin-chromium-151/canvas-markdown-tab-dark-diff.png 
+  DIFF   canvas-markdown-tab-light              diff=13705px (2.841%) bbox={"x0":25,"y0":114,"x1":514,"y1":202}  → .nebflow/visual-baseline/darwin-chromium-151/canvas-markdown-tab-light-diff.png 
+  MISS   canvas-markdown-code-tab-dark          无基准图 → 先跑 --update 并人工评审 .nebflow/visual-baseline/darwin-chromium-151/canvas-markdown-code-tab-dark.png
+  MISS   canvas-markdown-code-tab-light         无基准图 → 先跑 --update 并人工评审 .nebflow/visual-baseline/darwin-chromium-151/canvas-markdown-code-tab-light.png
+  DIFF   canvas-code-tab-dark                   diff=40px (0.008%) bbox={"x0":0,"y0":791,"x1":0,"y1":830}  → .nebflow/visual-baseline/darwin-chromium-151/canvas-code-tab-dark-diff.png 
+  SAME   canvas-code-tab-light                  552x874 (3827ms) 
+  MISS   canvas-txt-tab-dark                    无基准图 → 先跑 --update 并人工评审 .nebflow/visual-baseline/darwin-chromium-151/canvas-txt-tab-dark.png
+  MISS   canvas-txt-tab-light                   无基准图 → 先跑 --update 并人工评审 .nebflow/visual-baseline/darwin-chromium-151/canvas-txt-tab-light.png
+  MISS   canvas-html-tab-dark                   无基准图 → 先跑 --update 并人工评审 .nebflow/visual-baseline/darwin-chromium-151/canvas-html-tab-dark.png
+  MISS   canvas-html-tab-light                  无基准图 → 先跑 --update 并人工评审 .nebflow/visual-baseline/darwin-chromium-151/canvas-html-tab-light.png
+  MISS   canvas-image-tab-dark                  无基准图 → 先跑 --update 并人工评审 .nebflow/visual-baseline/darwin-chromium-151/canvas-image-tab-dark.png
+  MISS   canvas-image-tab-light                 无基准图 → 先跑 --update 并人工评审 .nebflow/visual-baseline/darwin-chromium-151/canvas-image-tab-light.png
+  MISS   explorer-tree-dark                     无基准图 → 先跑 --update 并人工评审 .nebflow/visual-baseline/darwin-chromium-151/explorer-tree-dark.png
+  MISS   explorer-tree-light                    无基准图 → 先跑 --update 并人工评审 .nebflow/visual-baseline/darwin-chromium-151/explorer-tree-light.png
+  MISS   deck-cards-dark                        无基准图 → 先跑 --update 并人工评审 .nebflow/visual-baseline/darwin-chromium-151/deck-cards-dark.png
+  MISS   deck-cards-light                       无基准图 → 先跑 --update 并人工评审 .nebflow/visual-baseline/darwin-chromium-151/deck-cards-light.png
+  MISS   modal-confirm-dark                     无基准图 → 先跑 --update 并人工评审 .nebflow/visual-baseline/darwin-chromium-151/modal-confirm-dark.png
+  MISS   modal-confirm-light                    无基准图 → 先跑 --update 并人工评审 .nebflow/visual-baseline/darwin-chromium-151/modal-confirm-light.png
+  MISS   settings-panel-dark                    无基准图 → 先跑 --update 并人工评审 .nebflow/visual-baseline/darwin-chromium-151/settings-panel-dark.png
+  MISS   settings-panel-light                   无基准图 → 先跑 --update 并人工评审 .nebflow/visual-baseline/darwin-chromium-151/settings-panel-light.png
+
+VISUAL BASELINE FAIL: 27 项超阈值/缺失
+  阈值：单通道容差 0，差异像素占比上限 0.00%

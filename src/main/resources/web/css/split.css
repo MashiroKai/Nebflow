@@ -2057,9 +2057,17 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
 }
 /* Markdown element styling — mirrors .bubble.ai */
 .canvas-md-viewer p { margin: var(--ds-space-1) 0; }
+/* 段落首行缩进（rich-render 批 2026-11-05，作者令 09:13）：同 .bubble.ai 口径 ——
+   只对 md 阅读面的**直接子** p 生效，列表/引用/表格/卡片内的段落不缩进。 */
+.canvas-md-viewer > p { text-indent: var(--ds-text-indent); }
 .canvas-md-viewer p:first-child { margin-top: 0; }
 .canvas-md-viewer p:last-child { margin-bottom: 0; }
-.canvas-md-viewer ul, .canvas-md-viewer ol { margin: var(--ds-space-1) 0 var(--ds-space-1) var(--ds-space-5); padding: 0; }
+/* 列表缩进走 token（原 18px / --ds-space-5 裸值退役，取 --ds-list-indent；二三级按级
+   累加），窄屏收一档（--ds-list-indent-narrow）。 */
+.canvas-md-viewer ul, .canvas-md-viewer ol { margin: var(--ds-space-1) 0 var(--ds-space-1) var(--ds-list-indent); padding: 0; }
+@media (max-width: 390px) {
+  .canvas-md-viewer ul, .canvas-md-viewer ol { margin-left: var(--ds-list-indent-narrow); }
+}
 .canvas-md-viewer li { margin: var(--ds-space-half) 0; }
 .canvas-md-viewer h1, .canvas-md-viewer h2, .canvas-md-viewer h3, .canvas-md-viewer h4 {
   margin: var(--ds-space-2) 0 var(--ds-space-1) 0;
