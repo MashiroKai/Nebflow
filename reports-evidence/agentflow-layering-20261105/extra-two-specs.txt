@@ -1,0 +1,20 @@
+
+Running 16 tests using 1 worker
+
+[1/16] tests/bg-merged-panel.spec.mjs:157:1 › T1 merge structure: two sections in the carrier, ghost retired (desktop)
+[2/16] tests/bg-merged-panel.spec.mjs:224:1 › T2 desktop split: bg key opens tasks-only view, bgagent key opens agents-only view
+[3/16] tests/bg-merged-panel.spec.mjs:282:1 › T3 split is desktop-only: mobile layer keeps the merged single panel
+[4/16] tests/bg-merged-panel.spec.mjs:324:1 › T4 tree: live child (parentSessionId) indents under its delegate head with guide line
+[5/16] tests/bg-merged-panel.spec.mjs:374:1 › T5 no hollow rows: generic names promoted to task text; orphan keeps a source chip
+[6/16] tests/bg-merged-panel.spec.mjs:427:1 › T6 store child description surfaces (generic def name yields to task text)
+[7/16] tests/bg-merged-panel.spec.mjs:445:1 › T7 mobile narrow viewport: the two sections render as two separated cards
+[8/16] tests/bg-merged-panel.spec.mjs:473:1 › T8 hierarchy: head caret collapses/expands child rows; running head expanded, terminal head collapsed by default
+[9/16] tests/bg-merged-panel.spec.mjs:544:1 › T9 naming: head row shows short name first (title demoted to subline); unnamed rows keep title; popup header carries the row name
+[10/16] tests/bg-merged-panel.spec.mjs:606:1 › T10 no horizontal scroll: panel and lists fit the viewport at desktop and 375
+[11/16] tests/delegate-ui-twolayer.spec.mjs:146:1 › T1 stub schema 加宽（G1 mode/G5 队列键/G6 archivedAt）＋旧行缺键容忍＋子代理读取口
+[12/16] tests/delegate-ui-twolayer.spec.mjs:194:1 › T2 面板两级化（C2/R6）：delegate 组头徽标=row.mode（kernel）；G3 store 子行 ∪ live 子行缩进一格；C1 退役后 dispatcher/node 顶层直显（分发器/节点徽标）
+[13/16] tests/delegate-ui-twolayer.spec.mjs:261:1 › T2b 徽标归位批（2026-10-31 23:02 作者裁定）：顶层组头徽标唯一来源 = row.mode——orchestrationMode/kind 历史残留一律不上顶层；mode 缺席 = 无徽标
+[14/16] tests/delegate-ui-twolayer.spec.mjs:289:1 › T3 agentflow（R2/R6）：组头徽标=row.mode（dispatcher）；chain.nodes flow-step 面板子行 + S1 expanded flow 结构层
+[15/16] tests/delegate-ui-twolayer.spec.mjs:355:1 › T4 星型子代理链块（链结构行脸）：头行折叠默认 + 展开见逐子代理成员行（名/状态词/类型点）＋ 成员行点击跳 L1 地图
+[16/16] tests/delegate-ui-twolayer.spec.mjs:407:1 › T5 弹窗净化（§A/WF-01）：收起式摘要条（任务 chip+brief+结果词+chevron）＋ 展开态（plugins/brief/结果分区）＋ 移除件全数退役（子代理×N 标题/星型子行族/头部归档图标）
+  16 passed (47.8s)
