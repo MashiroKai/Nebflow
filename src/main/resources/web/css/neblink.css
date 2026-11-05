@@ -18,7 +18,7 @@
 }
 .neblink-login-btn {
   width: 100%;
-  padding: var(--ds-space-glass-x) var(--ds-space-4);
+  padding: var(--ds-space-block-y) var(--ds-space-4);
   border-radius: var(--ds-radius-input);
   border: none;
   /* 主操作 = 墨族单源（2026-10-30 按钮体系批：绿实底 → --btn-primary-*，
@@ -62,7 +62,7 @@
 .neblink-paircode-input {
   flex: 1 1 auto;
   min-width: 0;
-  padding: 9px var(--ds-space-glass-x);
+  padding: 9px var(--ds-space-inline-x);
   border-radius: var(--ds-radius-input);
   border: 1px solid var(--color-frame-border, var(--color-border));
   background: var(--color-frame-input-bg, var(--color-bg));
@@ -115,7 +115,7 @@
 /* Logged-in device list — sits directly under the avatar in the unified
    account block (2026-09-06); the old inner section label is retired. */
 .neblink-logged-in {
-  margin-top: var(--ds-space-glass-x);
+  margin-top: var(--ds-space-stack-gap);
 }
 
 /* Peers list */
@@ -130,8 +130,8 @@
 .neblink-peer {
   display: flex;
   align-items: center;
-  gap: var(--ds-space-glass-x);
-  padding: var(--ds-space-2) var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
   border-radius: var(--ds-radius-button);
   font-size: var(--ds-fs-body);
   background: var(--color-bg);

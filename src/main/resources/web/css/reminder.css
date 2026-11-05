@@ -260,8 +260,8 @@
 .reminder-row {
   display: flex;
   align-items: center;
-  gap: var(--ds-space-glass-x);
-  padding: 9px var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
+  padding: 9px var(--ds-space-inline-x);
   border-radius: var(--ds-radius-button);
   margin: 1px 0;
   transition: background 0.15s, opacity 0.25s, transform 0.25s;
@@ -484,7 +484,7 @@
 
 /* ===== Inline Create Row ===== */
 .reminder-inline-create {
-  padding: var(--ds-space-2) var(--ds-space-glass-x);
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
   border-radius: var(--ds-radius-button);
   background: rgba(91, 127, 191, 0.03);
   border: 1px solid rgba(91, 127, 191, 0.10);
@@ -499,7 +499,7 @@
 .reminder-inline-main {
   display: flex;
   align-items: center;
-  gap: var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
 }
 .reminder-inline-input {
   flex: 1;
@@ -635,7 +635,7 @@
   gap: var(--ds-space-1h);
   width: fit-content;
   max-width: min(440px, 82%);
-  padding: 11px 14px var(--ds-space-glass-x);
+  padding: 11px 14px var(--ds-space-block-y);
   border-radius: var(--ds-radius-card-md);
   /* 气泡族尾角：不就地复写 —— 本卡 = .bubble.injected 族（injectedRows.js
      建类「bubble injected schedule-card」），尾角 4px 由 chat.css
@@ -723,7 +723,7 @@
 .schedule-card-body pre {
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
-  padding: var(--ds-space-2) var(--ds-space-3) var(--ds-space-glass-x);
+  padding: var(--ds-space-2) var(--ds-space-3) var(--ds-space-block-y);
   border-radius: var(--ds-radius-input);
   overflow-x: auto;
   font-size: var(--ds-fs-hint);

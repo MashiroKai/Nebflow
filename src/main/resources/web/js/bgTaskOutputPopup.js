@@ -101,7 +101,7 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
 /* Header：同 .flow-agent-header（顶缘折射线 + 底部 hairline）。 */
 .bgt-header {
   display: flex; align-items: center; gap: var(--ds-space-1h);
-  padding: var(--ds-space-glass-x) var(--ds-space-4);
+  padding: var(--ds-space-block-y) var(--ds-space-4);
   border-bottom: 1px solid var(--glass-border);
   flex-shrink: 0;
   position: relative;
@@ -147,7 +147,7 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
 .bgt-state-label--failed { color: var(--status-word); }
 .bgt-state-chip .st-ic { width: 11px; height: 11px; }
 .bgt-close {
-  cursor: pointer; font-size: var(--ds-fs-mobile-callout); line-height: 1;
+  cursor: pointer; font-size: var(--ds-fs-callout); line-height: 1;
   opacity: 0.7; transition: opacity 0.15s;
   padding: var(--ds-space-half) var(--ds-space-1); color: var(--color-text);
   border-radius: var(--ds-radius-badge);
@@ -184,7 +184,7 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
    复制：.bgt-body 复用代码块 .code-block-wrap 容器 class——.code-copy-btn
    的 hover 浮现（chat.css）与玻璃主题（sapphire.css Pattern B / dark 档）
    零复制生效；padding-top 抬高给右上角浮层按钮留位（28px = 按钮高+余量）。 */
-.bgt-body { flex: 1; min-height: 0; display: flex; position: relative; padding: 0 var(--ds-space-3) var(--ds-space-glass-x); }
+.bgt-body { flex: 1; min-height: 0; display: flex; position: relative; padding: 0 var(--ds-space-3) var(--ds-space-block-y); }
 /* 复制按钮落进输出框内（2026-09-12 作者令：「复制按钮需要在输出框内」）。
    公共定位（chat.css:1043-1046 .code-copy-btn）为 absolute top:4px/right:4px，
    定位祖先是最近的 position:relative 容器 .bgt-body（padding: 0 12px 10px）

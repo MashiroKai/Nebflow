@@ -93,7 +93,7 @@ export const FLOW_CSS = `
 .team-flow-tags { display: flex; flex-wrap: wrap; gap: var(--ds-space-1h); padding: 0 14px 14px; }
 .team-flow-tag {
   font: 500 11px -apple-system, sans-serif; color: var(--color-primary, #07c160);
-  padding: 3px var(--ds-space-glass-x); border-radius: var(--ds-radius-shell); border: 1px solid var(--color-primary, #07c160);
+  padding: 3px var(--ds-space-inline-x); border-radius: var(--ds-radius-shell); border: 1px solid var(--color-primary, #07c160);
   opacity: 0.7; cursor: pointer; transition: opacity 0.15s, background 0.15s; white-space: nowrap;
 }
 .team-flow-tag:hover { opacity: 1; background: rgba(7,193,96,0.08); }
@@ -153,9 +153,9 @@ export const FLOW_CSS = `
   transition: background 0.15s, border-color 0.15s;
 }
 .dag-card-close:hover { background: var(--glass-control-bg-hover); border-color: var(--color-primary, #07c160); }
-.dag-card-desc { font: 400 11px -apple-system, sans-serif; color: var(--color-text-muted); padding: var(--ds-space-glass-x) 14px 0; }
+.dag-card-desc { font: 400 11px -apple-system, sans-serif; color: var(--color-text-muted); padding: var(--ds-space-block-y) 14px 0; }
 .dag-nodes { padding: 14px; display: flex; flex-direction: column; align-items: center; gap: 0; }
-.dag-node { display: flex; align-items: center; gap: var(--ds-space-glass-x); padding: var(--ds-space-glass-x) var(--ds-space-4); border-radius: var(--ds-radius-xl); border: 1.5px solid var(--glass-border); background: var(--color-surface); cursor: pointer; transition: border-color 0.15s, box-shadow 0.15s; min-width: 180px; position: relative; }
+.dag-node { display: flex; align-items: center; gap: var(--ds-space-inline-gap); padding: var(--ds-space-block-y) var(--ds-space-4); border-radius: var(--ds-radius-xl); border: 1.5px solid var(--glass-border); background: var(--color-surface); cursor: pointer; transition: border-color 0.15s, box-shadow 0.15s; min-width: 180px; position: relative; }
 .dag-node:hover { border-color: var(--color-primary, #07c160); box-shadow: 0 0 0 3px rgba(7,193,96,0.10); }
 .dag-node.pending { opacity: 0.5; }
 .dag-node.running { border-color: var(--color-primary, #07c160); box-shadow: 0 0 0 3px rgba(7,193,96,0.10); }
@@ -178,12 +178,12 @@ export const FLOW_CSS = `
 .flow-viewer { position: relative; width: calc(100% - 48px); max-height: calc(100% - 48px); display: flex; flex-direction: column; background: var(--glass-bg); -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15); backdrop-filter: blur(var(--glass-blur)) saturate(1.15); border: 1px solid var(--glass-border); border-radius: var(--ds-radius-2xl); overflow: hidden; box-shadow: 0px 8px 32px rgba(0,0,0,0.16); }
 .flow-viewer-header { display: flex; align-items: center; gap: var(--ds-space-2); padding: 11px var(--ds-space-4); border-bottom: 1px solid var(--glass-border); flex-shrink: 0; }
 .flow-viewer-title { font: 600 13px -apple-system, sans-serif; color: var(--color-text); }
-.flow-viewer-close { margin-left: auto; cursor: pointer; font-size: var(--ds-fs-mobile-callout); line-height: 1; opacity: 0.5; transition: opacity 0.15s; padding: 0 var(--ds-space-1); color: var(--color-text-muted); z-index: 10; display: inline-flex; align-items: center; }
+.flow-viewer-close { margin-left: auto; cursor: pointer; font-size: var(--ds-fs-callout); line-height: 1; opacity: 0.5; transition: opacity 0.15s; padding: 0 var(--ds-space-1); color: var(--color-text-muted); z-index: 10; display: inline-flex; align-items: center; }
 .flow-viewer-close svg { width: 12px; height: 12px; display: block; }
 .flow-viewer-close:hover { opacity: 1; }
 .flow-viewer .code-copy-btn { right: 40px; }
 .flow-viewer-body { flex: 1; overflow-y: auto; padding: 14px 18px; scrollbar-color: var(--color-frame-border) transparent; }
-.flow-viewer-footer { display: flex; align-items: center; gap: var(--ds-space-2); justify-content: flex-end; padding: var(--ds-space-glass-x) var(--ds-space-4); border-top: 1px solid var(--glass-border); flex-shrink: 0; }
+.flow-viewer-footer { display: flex; align-items: center; gap: var(--ds-space-2); justify-content: flex-end; padding: var(--ds-space-block-y) var(--ds-space-4); border-top: 1px solid var(--glass-border); flex-shrink: 0; }
 .flow-viewer-save { font: 600 12px -apple-system, sans-serif; color: var(--btn-primary-ink, #fff); background: var(--btn-primary-bg, #111827); border: none; border-radius: var(--ds-radius-input); padding: var(--ds-space-1h) var(--ds-space-4); cursor: pointer; transition: opacity 0.15s; }
 .flow-viewer-save:hover { opacity: 0.88; }
 .flow-viewer-save:disabled { opacity: 0.5; cursor: default; }
@@ -210,11 +210,11 @@ export const FLOW_CSS = `
 .flow-mail-content p:first-child { margin-top: 0; } .flow-mail-content p:last-child { margin-bottom: 0; } .flow-mail-content p { margin: var(--ds-space-1) 0; }
 .flow-mail-content ul, .flow-mail-content ol { margin: var(--ds-space-1) 0 var(--ds-space-1) 18px; padding: 0; } .flow-mail-content li { margin: var(--ds-space-half) 0; }
 .flow-mail-content code { background: var(--color-frame-input-bg, rgba(0,0,0,0.05)); padding: 1px var(--ds-space-1); border-radius: 3px; font-size: 0.9em; font-family: ui-monospace, SFMono-Regular, monospace; word-break: break-all; }
-.flow-mail-content pre { background: var(--color-frame-input-bg, rgba(0,0,0,0.05)); padding: var(--ds-space-2) var(--ds-space-3) var(--ds-space-glass-x); border-radius: var(--ds-radius-input); overflow-x: auto; font-size: var(--ds-fs-hint); margin: var(--ds-space-1h) 0; line-height: 1.4; }
+.flow-mail-content pre { background: var(--color-frame-input-bg, rgba(0,0,0,0.05)); padding: var(--ds-space-2) var(--ds-space-3) var(--ds-space-block-y); border-radius: var(--ds-radius-input); overflow-x: auto; font-size: var(--ds-fs-hint); margin: var(--ds-space-1h) 0; line-height: 1.4; }
 .flow-mail-content pre code { background: none; padding: 0; font-size: var(--ds-fs-hint); word-break: normal; }
-.flow-mail-content blockquote { border-left: 3px solid var(--color-border); margin: var(--ds-space-1h) 0; padding-left: var(--ds-space-glass-x); color: var(--color-text-muted); }
+.flow-mail-content blockquote { border-left: 3px solid var(--color-border); margin: var(--ds-space-1h) 0; padding-left: var(--ds-space-inline-x); color: var(--color-text-muted); }
 .flow-mail-content h1, .flow-mail-content h2, .flow-mail-content h3, .flow-mail-content h4 { margin: var(--ds-space-2) 0 var(--ds-space-1) 0; font-weight: 600; }
-.flow-mail-content h1 { font-size: var(--ds-fs-mobile-callout); } .flow-mail-content h2 { font-size: var(--ds-fs-title); } .flow-mail-content h3 { font-size: 14px; }
+.flow-mail-content h1 { font-size: var(--ds-fs-callout); } .flow-mail-content h2 { font-size: var(--ds-fs-title); } .flow-mail-content h3 { font-size: 14px; }
 .flow-mail-content table { display: block; overflow-x: auto; max-width: 100%; border-collapse: collapse; margin: var(--ds-space-1h) 0; font-size: var(--ds-fs-hint); }
 .flow-mail-content th, .flow-mail-content td { border: 1px solid var(--color-border); padding: var(--ds-space-1) var(--ds-space-2); }
 .flow-mail-content th { background: var(--color-frame-input-bg, #f5f5f5); }
@@ -226,7 +226,7 @@ export const FLOW_CSS = `
 .flow-mail-section:last-child { margin-bottom: 0; }
 .flow-mail-section-title {
   font: 600 11px -apple-system, sans-serif; color: var(--color-text-muted);
-  text-transform: uppercase; letter-spacing: 0.5px; padding: var(--ds-space-1) 0 var(--ds-space-glass-x);
+  text-transform: uppercase; letter-spacing: 0.5px; padding: var(--ds-space-1) 0 var(--ds-space-block-y);
   display: flex; align-items: center; gap: var(--ds-space-1h);
 }
 
@@ -248,7 +248,7 @@ export const FLOW_CSS = `
 .flow-def-section h3 { font: 600 12px -apple-system, sans-serif; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin: 0 0 var(--ds-space-1h); }
 .flow-def-meta { font: 400 12px -apple-system, sans-serif; color: var(--color-text); line-height: 1.5; }
 .flow-agent-block { border: 1px solid rgba(128,128,128,0.12); border-radius: var(--ds-radius-button); background: rgba(128,128,128,0.06); padding: 14px var(--ds-space-4); margin-bottom: var(--ds-space-4); }
-.flow-agent-block-head { display: flex; align-items: center; gap: var(--ds-space-2); margin-bottom: var(--ds-space-2); background: var(--glass-etched-bg, rgba(0,0,0,0.025)); border-radius: var(--ds-radius-input); padding: var(--ds-space-1h) var(--ds-space-glass-x); }
+.flow-agent-block-head { display: flex; align-items: center; gap: var(--ds-space-2); margin-bottom: var(--ds-space-2); background: var(--glass-etched-bg, rgba(0,0,0,0.025)); border-radius: var(--ds-radius-input); padding: var(--ds-space-1h) var(--ds-space-inline-x); }
 .flow-agent-block-name { font: 600 13px -apple-system, sans-serif; color: var(--color-text); border-left: 3px solid rgb(91, 127, 191); padding-left: var(--ds-space-2); }
 .flow-agent-block.is-manager .flow-agent-block-name { border-left-color: var(--color-primary, #07c160); }
 .flow-agent-block-badge { font: 500 10px -apple-system, sans-serif; color: var(--color-primary, #07c160); border: 1px solid var(--color-primary, #07c160); border-radius: var(--ds-radius-badge); padding: 1px 5px; }
@@ -258,19 +258,19 @@ export const FLOW_CSS = `
 .flow-agent-block-text { font: 400 12.5px -apple-system, sans-serif; color: var(--color-text); line-height: 1.55; word-break: break-word; }
 .flow-agent-block-text p:first-child { margin-top: 0; } .flow-agent-block-text p:last-child { margin-bottom: 0; }
 .flow-agent-block-text code { background: var(--color-frame-input-bg, rgba(0,0,0,0.05)); padding: 1px 5px; border-radius: var(--ds-radius-badge); font-size: 0.9em; }
-.flow-agent-block-text pre { background: var(--color-frame-input-bg, rgba(0,0,0,0.05)); padding: var(--ds-space-2) var(--ds-space-glass-x); border-radius: var(--ds-radius-chip); overflow-x: auto; }
+.flow-agent-block-text pre { background: var(--color-frame-input-bg, rgba(0,0,0,0.05)); padding: var(--ds-space-2) var(--ds-space-inline-x); border-radius: var(--ds-radius-chip); overflow-x: auto; }
 .flow-agent-block-empty { color: var(--color-text-muted); opacity: 0.6; font-style: italic; }
 .flow-agent-block-duty { font: 400 12px -apple-system, sans-serif; color: var(--color-text); white-space: pre-wrap; line-height: 1.5; margin: var(--ds-space-1) 0; }
 .flow-agent-block-tools { font: 400 11px -apple-system, sans-serif; color: var(--color-text-muted); margin-top: var(--ds-space-1); }
 .flow-agent-block-tools code { background: var(--color-frame-input-bg, rgba(0,0,0,0.05)); padding: 1px 5px; border-radius: var(--ds-radius-badge); margin-right: 3px; }
-.flow-def-edit { width: 100%; background: var(--glass-etched-bg, rgba(0,0,0,0.025)); color: var(--color-frame-input-text, var(--color-text)); border: 1px solid var(--glass-etched-border, var(--glass-border)); border-radius: var(--ds-radius-input); padding: var(--ds-space-2) var(--ds-space-glass-x); font: 400 12px ui-monospace, SFMono-Regular, monospace; resize: vertical; outline: none; min-height: 60px; line-height: 1.5; transition: border-color 0.15s; }
+.flow-def-edit { width: 100%; background: var(--glass-etched-bg, rgba(0,0,0,0.025)); color: var(--color-frame-input-text, var(--color-text)); border: 1px solid var(--glass-etched-border, var(--glass-border)); border-radius: var(--ds-radius-input); padding: var(--ds-space-2) var(--ds-space-inline-x); font: 400 12px ui-monospace, SFMono-Regular, monospace; resize: vertical; outline: none; min-height: 60px; line-height: 1.5; transition: border-color 0.15s; }
 .flow-def-edit:focus { border-color: var(--glass-etched-border-focus, rgba(91,127,191,0.35)); }
 .flow-def-edit.flow-def-edit-sm { min-height: 44px; }
 .flow-def-tools { display: flex; flex-wrap: wrap; gap: 5px; }
 .flow-def-tool { display: inline-flex; align-items: center; gap: var(--ds-space-1); font: 500 11px -apple-system, sans-serif; color: var(--color-frame-text-dim, var(--color-text-muted)); cursor: pointer; user-select: none; background: var(--glass-etched-bg, rgba(0,0,0,0.025)); border: 1px solid var(--glass-etched-border, var(--glass-border)); border-radius: var(--ds-radius-chip); padding: 3px var(--ds-space-2); transition: all 0.15s; }
 .flow-def-tool.checked { border-color: rgba(91, 127, 191, 0.5); color: rgb(91, 127, 191); background: rgba(91, 127, 191, 0.08); }
 .flow-def-source { font: 400 10px -apple-system, sans-serif; color: var(--color-text-muted); opacity: 0.6; margin-bottom: 3px; }
-.flow-agent-block-readonly { font: 400 12px -apple-system, sans-serif; color: var(--color-text); line-height: 1.5; background: var(--glass-etched-bg, rgba(0,0,0,0.025)); border: 1px solid var(--glass-etched-border, var(--glass-border)); border-radius: var(--ds-radius-input); padding: var(--ds-space-2) var(--ds-space-glass-x); }
+.flow-agent-block-readonly { font: 400 12px -apple-system, sans-serif; color: var(--color-text); line-height: 1.5; background: var(--glass-etched-bg, rgba(0,0,0,0.025)); border: 1px solid var(--glass-etched-border, var(--glass-border)); border-radius: var(--ds-radius-input); padding: var(--ds-space-2) var(--ds-space-inline-x); }
 .flow-def-tabs { display: flex; gap: var(--ds-space-half); position: sticky; top: 0; background: var(--glass-bg); -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15); backdrop-filter: blur(var(--glass-blur)) saturate(1.15); border-bottom: 1px solid var(--glass-border); padding: var(--ds-space-1h) var(--ds-space-half) 0; margin: -14px -18px var(--ds-space-3); z-index: 2; }
 .flow-def-tab { padding: var(--ds-space-1h) var(--ds-space-3); font: 500 12px -apple-system, sans-serif; color: var(--color-text-muted); background: none; border: none; border-bottom: 2px solid transparent; border-radius: 0; cursor: pointer; font-family: inherit; margin-bottom: -1px; transition: color 0.2s, border-color 0.2s; display: inline-flex; align-items: center; gap: var(--ds-space-1); }
 .flow-def-tab:hover { color: var(--color-text); }
@@ -289,7 +289,7 @@ export const FLOW_CSS = `
 .team-flows-header {
   font: 600 10px -apple-system, sans-serif; color: var(--color-text-muted);
   text-transform: uppercase; letter-spacing: 0.06em;
-  margin: var(--ds-space-glass-x) 0 var(--ds-space-1h);
+  margin: var(--ds-space-stack-gap) 0 var(--ds-space-1h);
 }
 
 /* Hexagon icon — CSS clip-path, no image needed */
@@ -345,7 +345,7 @@ export const FLOW_CSS = `
 /* DAG inline node — compact pill */
 .dag-inline-node {
   display: flex; align-items: center; gap: 7px;
-  padding: var(--ds-space-1) var(--ds-space-glass-x); border-radius: 7px;
+  padding: var(--ds-space-1) var(--ds-space-inline-x); border-radius: 7px;
   background: rgba(128, 128, 128, 0.03);
   border: 1px solid transparent; cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
@@ -393,7 +393,7 @@ export const FLOW_CSS = `
   backdrop-filter: blur(var(--glass-blur, 10px)) saturate(1.15);
   border: 1px solid var(--glass-border, rgba(255,255,255,0.12));
   border-radius: var(--ds-radius-card-md);
-  padding: var(--ds-space-2) var(--ds-space-glass-x);
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
   box-sizing: border-box;
   box-shadow: 0 2px 8px rgba(0,0,0,0.06), 0 4px 16px rgba(0,0,0,0.04);
   text-align: center;
@@ -543,10 +543,10 @@ export const FLOW_CSS = `
 .flow-def-card-meta { font: 500 10px -apple-system, sans-serif; color: var(--color-text-muted); margin-left: auto; display: flex; gap: var(--ds-space-2); flex-shrink: 0; }
 .flow-def-card-desc {
   font: 400 11.5px -apple-system, sans-serif; color: var(--color-text-muted);
-  line-height: 1.5; padding: var(--ds-space-glass-x) 14px var(--ds-space-1); flex: 1;
+  line-height: 1.5; padding: var(--ds-space-block-y) 14px var(--ds-space-1); flex: 1;
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
 }
-.flow-def-card-footer { display: flex; align-items: center; gap: var(--ds-space-2); padding: var(--ds-space-glass-x) 14px var(--ds-space-3); }
+.flow-def-card-footer { display: flex; align-items: center; gap: var(--ds-space-2); padding: var(--ds-space-block-y) 14px var(--ds-space-3); }
 .flow-def-view-btn {
   font: 600 11px -apple-system, sans-serif; color: rgb(91,127,191);
   border: 1px solid rgba(91,127,191,0.35); border-radius: 7px;
@@ -637,7 +637,7 @@ export const FLOW_CSS = `
 
 /* Flow definition cards (P6) — p5p6-v2 Flows tab */
 .flow-defs-section, .flow-running-section { width: 100%; max-width: 1100px; margin: 0 auto var(--ds-space-4); }
-.flow-defs-header { font: 600 11px -apple-system; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.5px; padding: var(--ds-space-1) 0 var(--ds-space-glass-x); }
+.flow-defs-header { font: 600 11px -apple-system; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.5px; padding: var(--ds-space-1) 0 var(--ds-space-block-y); }
 .flow-defs-grid { display: flex; flex-wrap: wrap; gap: var(--ds-space-3); justify-content: center; }
 .flow-def-card {
   flex: 1 1 240px; min-width: 220px; max-width: 360px;
@@ -652,7 +652,7 @@ export const FLOW_CSS = `
   align-self: flex-start; font: 500 11px -apple-system;
   color: var(--color-primary, #5b7fbf); background: none;
   border: 1px solid rgba(91,127,191,0.3); border-radius: var(--ds-radius-chip);
-  padding: var(--ds-space-1) var(--ds-space-glass-x); cursor: pointer; transition: all 0.15s;
+  padding: var(--ds-space-1) var(--ds-space-inline-x); cursor: pointer; transition: all 0.15s;
 }
 .flow-def-view-btn:hover { background: rgba(91,127,191,0.08); }
 </style>

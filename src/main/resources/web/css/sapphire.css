@@ -651,7 +651,7 @@ button.glass-control.fm-login-btn {
   display: block;
   width: 100%;
   box-sizing: border-box;
-  padding: var(--ds-space-glass-x) var(--ds-space-5);
+  padding: var(--ds-space-block-y) var(--ds-space-5);
   border-radius: var(--ds-radius-button);
   font-family: inherit;
   font-size: var(--ds-fs-body);

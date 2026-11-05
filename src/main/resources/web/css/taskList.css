@@ -284,7 +284,7 @@
   margin: var(--ds-space-1h) var(--ds-space-half) var(--ds-space-half);
   cursor: default;
 }
-.task-node-group .task-node { margin-left: var(--ds-space-glass-x); }
+.task-node-group .task-node { margin-left: var(--ds-space-indent-x); }
 
 /* ── 重启对账（2026-10-22）：打断徽标 + 折叠前会话灰腿 ─────────────────────
    徽标 = 行内首槽小胶囊（与 word 槽同 muted 语言，橙警示描边——打断 ≠ 失败红、

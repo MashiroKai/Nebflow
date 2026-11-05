@@ -49,10 +49,10 @@
   --nfc-title-size: var(--ds-fs-card-hero);
   --nfc-title-weight: 600;
   --nfc-title-ls: -0.2px;
-  --nfc-body-size: var(--ds-fs-card-body);
+  --nfc-body-size: var(--ds-fs-subtitle);
   --nfc-body-lh: var(--ds-lh-body);
   --nfc-body-max: 320px;                /* 基准正文换行宽 ≈310 */
-  --nfc-link-size: var(--ds-fs-card-body);
+  --nfc-link-size: var(--ds-fs-subtitle);
 }
 
 /* ── 暗档 = 官网 auth 域 dark 块逐值（html[data-theme] 强制档优先）───────── */
@@ -146,7 +146,7 @@ html[data-theme="dark"] {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
   width: 100%;
   margin: var(--nfc-gap-block) 0 0;
 }
@@ -189,7 +189,7 @@ html[data-theme="dark"] {
   width: 100%;
   box-sizing: border-box;
   margin: var(--ds-space-4) 0 0;
-  padding: var(--ds-space-1h) var(--ds-space-glass-x);
+  padding: var(--ds-space-1h) var(--ds-space-inline-x);
   border-radius: var(--ds-radius-input);
   font-size: var(--ds-fs-hint);   /* 12px 既有档 = --ds-fs-hint 同值 */
   line-height: 1.5;
@@ -230,7 +230,7 @@ html[data-theme="dark"] {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
   font-size: var(--nfc-body-size);
   line-height: 1.5;
   color: var(--nfc-subtle);

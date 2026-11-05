@@ -267,14 +267,14 @@
   width: 340px;
 }
 #modal-title {
-  font-size: var(--ds-fs-mobile-callout);
+  font-size: var(--ds-fs-callout);
   font-weight: 600;
   color: var(--color-frame-text-bright);
   margin-bottom: var(--ds-space-4);
 }
 #modal-input {
   border-radius: var(--ds-radius-xl);
-  padding: var(--ds-space-glass-x) 14px;
+  padding: var(--ds-space-block-y) 14px;
   font-size: 14px;
   font-family: inherit;
 }
@@ -297,7 +297,7 @@
   display: none;
 }
 #delete-title {
-  font-size: var(--ds-fs-mobile-callout);
+  font-size: var(--ds-fs-callout);
   font-weight: 600;
   color: var(--color-frame-text-bright);
   margin-bottom: var(--ds-space-3);
@@ -331,7 +331,7 @@
   display: none;
 }
 #conflict-title {
-  font-size: var(--ds-fs-mobile-callout);
+  font-size: var(--ds-fs-callout);
   font-weight: 600;
   color: var(--color-frame-text-bright);
   margin-bottom: var(--ds-space-3);
@@ -405,7 +405,7 @@
 .merged-tabs {
   display: flex;
   gap: var(--ds-space-half);
-  margin-bottom: var(--ds-space-glass-x);
+  margin-bottom: var(--ds-space-stack-gap);
   border-bottom: 1px solid var(--glass-border);
 }
 .merged-tab {
@@ -462,7 +462,7 @@
 #memory-modal-body {
   display: flex;
   flex-direction: column;
-  gap: var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
 }
 #memory-modal-actions {
   display: flex;
@@ -487,7 +487,7 @@
 #rules-modal-body {
   display: flex;
   flex-direction: column;
-  gap: var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
 }
 #rules-modal-actions {
   display: flex;
@@ -659,7 +659,7 @@
   position: relative;
   background: transparent;
   border: none;
-  padding: 0 var(--ds-space-glass-x);
+  padding: 0 var(--ds-space-inline-x);
   font-family: inherit;
   font-size: var(--ds-fs-hint);
   font-weight: 400;
@@ -804,7 +804,7 @@
   text-align: center;
   background: transparent;
   border: none;
-  padding: var(--ds-space-1) var(--ds-space-glass-x);
+  padding: var(--ds-space-1) var(--ds-space-inline-x);
   font-size: var(--ds-fs-hint);
   font-family: inherit;
   color: var(--color-frame-text);
@@ -864,7 +864,7 @@
   display: flex;
   align-items: center;
   gap: var(--ds-space-2);
-  margin-top: var(--ds-space-glass-x);
+  margin-top: var(--ds-space-stack-gap);
 }
 .cal-clear {
   background: transparent;
@@ -901,7 +901,7 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--ds-space-1) var(--ds-space-glass-x) var(--ds-space-3);
+  padding: var(--ds-space-1) var(--ds-space-inline-x) var(--ds-space-3);
   scrollbar-color: var(--color-frame-border) transparent;
 }
 .search-hint {
@@ -911,7 +911,7 @@
   color: var(--color-frame-text-muted);
 }
 .search-result {
-  padding: var(--ds-space-2) var(--ds-space-glass-x);
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
   border-radius: var(--ds-radius-button);
   cursor: pointer;
   transition: background 0.12s;
@@ -994,7 +994,7 @@
   display: flex;
   align-items: baseline;
   gap: var(--ds-space-1h);
-  padding: var(--ds-space-glass-x) var(--ds-space-glass-x) var(--ds-space-half);
+  padding: var(--ds-space-block-y) var(--ds-space-inline-x) var(--ds-space-half);
   font-size: var(--ds-fs-meta);
   color: var(--color-frame-text-muted);
 }
@@ -1128,8 +1128,8 @@
 .nebflow-toast-success .nebflow-toast-icon { color: var(--status-success-icon); }
 .nebflow-toast-link {
   display: inline-block;
-  margin-left: var(--ds-space-glass-x);
-  padding: 3px var(--ds-space-glass-x);
+  margin-left: var(--ds-space-indent-x);
+  padding: 3px var(--ds-space-inline-x);
   font-size: var(--ds-fs-hint);
   color: var(--color-text);
   text-decoration: none;
@@ -1165,7 +1165,7 @@
 .onboarding-sub {
   font-size: 14px;
   color: var(--color-text-muted);
-  margin-top: var(--ds-space-glass-x);
+  margin-top: var(--ds-space-stack-gap);
   line-height: 1.6;
 }
 /* ui-status-redesign（盘点 #37，S9 同族·CSS-only 限界）：13px 红字 → 中性正文，
@@ -1176,7 +1176,7 @@
   color: var(--status-word);
   margin-top: var(--ds-space-3);
   word-break: break-word;
-  padding: var(--ds-space-1h) var(--ds-space-glass-x);
+  padding: var(--ds-space-1h) var(--ds-space-inline-x);
   border-radius: var(--ds-radius-input);
   background: color-mix(in srgb, var(--status-error-icon) 8%, transparent);
   border-left: 2px solid var(--status-error-icon);
@@ -1188,7 +1188,7 @@
 }
 .onboarding-actions {
   display: flex;
-  gap: var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
   justify-content: center;
   margin-top: var(--ds-space-6);
 }
@@ -1234,7 +1234,7 @@
   background: transparent;
   color: var(--color-text-muted);
   font: 500 12px -apple-system, sans-serif;
-  padding: var(--ds-space-1) var(--ds-space-glass-x);
+  padding: var(--ds-space-1) var(--ds-space-inline-x);
   border-radius: var(--ds-radius-chip);
   cursor: pointer;
   transition: background 0.15s, color 0.15s, box-shadow 0.15s;
@@ -1254,7 +1254,7 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
   padding: 56px var(--ds-space-6);
   text-align: center;
 }
@@ -1280,7 +1280,7 @@
 .mp-body {
   display: flex;
   flex-direction: column;
-  gap: var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
   padding: var(--ds-space-3) var(--ds-space-4) var(--ds-space-4);
   overflow-y: auto;
 }
@@ -1383,7 +1383,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--ds-space-1h);
-  padding: 0 var(--ds-space-3) var(--ds-space-glass-x);
+  padding: 0 var(--ds-space-3) var(--ds-space-block-y);
 }
 .mp-note {
   font: 400 11.5px -apple-system, sans-serif;

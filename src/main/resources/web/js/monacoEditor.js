@@ -313,7 +313,7 @@ export async function createEditor(container, opts) {
           'left:12px',
           'right:12px',
           'bottom:10px',
-          'padding:var(--ds-space-1h) var(--ds-space-glass-x)',
+          'padding:var(--ds-space-1h) var(--ds-space-inline-x)',
           'border-radius:var(--ds-radius-input)',
           'border:1px solid var(--color-border, rgba(128,128,128,0.35))',
           'background:var(--color-surface, rgba(127,127,127,0.12))',

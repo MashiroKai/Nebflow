@@ -64,11 +64,11 @@
      「同名同值、任一侧改值同批对齐」纪律补登，值为运行时现盘读数逐字（不改值）。 */
   --dl-fs-bubble: 14.5px;         /* 主对话气泡（= --ds-fs-bubble；2026-09-12 裁定档） */
   --dl-fs-row: 13.5px;            /* 侧栏会话行主文案（= --ds-fs-row） */
-  --dl-fs-capsule: 14px;          /* canvas 标题胶囊（= --ds-fs-capsule） */
-  --dl-fs-card-body: 14px;        /* 过渡卡正文/说明（= --ds-fs-card-body） */
+  --dl-fs-subtitle: 14px;         /* 次标题/次级正文（= --ds-fs-subtitle；原 capsule+card-body 同值合并） */
   --dl-fs-card-hero: 21px;        /* 过渡卡主标题（= --ds-fs-card-hero） */
   --dl-fs-mobile-sub: 15px;       /* 手机次正文（= --ds-fs-mobile-sub） */
   --dl-fs-mobile-callout: 16px;   /* 手机正文/输入件（= --ds-fs-mobile-callout） */
+  --dl-fs-callout: 16px;          /* 桌面语境 16px（= --ds-fs-callout；与 mobile 槽同值异域） */
 
   /* ── ③ 行高/字距（与 --ds-lh-* / --ds-ls-* 同值） ── */
   --dl-lh-body: 1.5;            /* 聊天/选项 1.55 */
@@ -116,7 +116,13 @@
   --dl-sp-8: 32px;
   --dl-sp-12: 48px;   /* 区块级留白（Carbon $spacing-09） */
   --dl-sp-16: 64px;   /* 大区块留白（Carbon $spacing-10） */
-  --dl-sp-glass-x: 10px; /* 玻璃条横缝既有值档；迁移向 --dl-sp-2/3 渐进收 */
+  /* 10px 档按布局角色分六槽（= --ds-space-*，2026-11-04 命名债批）；值恒 10px */
+  --dl-sp-inline-x: 10px;   /* 内横距（= --ds-space-inline-x） */
+  --dl-sp-block-y: 10px;    /* 内纵距（= --ds-space-block-y） */
+  --dl-sp-inset: 10px;      /* 四边等内距（= --ds-space-inset） */
+  --dl-sp-inline-gap: 10px; /* 行内件缝（= --ds-space-inline-gap） */
+  --dl-sp-stack-gap: 10px;  /* 块间纵距（= --ds-space-stack-gap） */
+  --dl-sp-indent-x: 10px;   /* 行缩进（= --ds-space-indent-x） */
   --dl-sp-1h: 6px;       /* 半步件缝例外档：图标+文字小缝/chip 内距（实测最高频，禁作块距） */
 
   /* ── ⑤ 密度档（含 NVIDIA 密度联动机制；与 --ds-density-* 同值） ── */

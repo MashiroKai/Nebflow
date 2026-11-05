@@ -3,7 +3,7 @@
 
 /* Section container */
 .nf-filechanges {
-  margin-top: var(--ds-space-glass-x);
+  margin-top: var(--ds-space-stack-gap);
 }
 .nf-filechanges-head {
   display: flex;
@@ -500,7 +500,7 @@ span.nf-rcpt-note { cursor: default; }
   gap: var(--ds-space-1);
 }
 .nfp-empty {
-  padding: var(--ds-space-glass-x) var(--ds-space-1h);
+  padding: var(--ds-space-block-y) var(--ds-space-1h);
   font-size: var(--ds-fs-hint);
   line-height: 1.5;
   color: var(--color-text-muted, rgba(128, 128, 128, 0.9));

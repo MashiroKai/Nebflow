@@ -3129,7 +3129,7 @@ function renderAskAttachments(box, attachments, originLabel) {
     const foldBtn = document.createElement('button');
     foldBtn.type = 'button';
     foldBtn.className = 'glass-control ask-att-fold-btn';
-    foldBtn.style.cssText = 'font-size: var(--ds-fs-meta); padding: var(--ds-space-half) var(--ds-space-glass-x);';
+    foldBtn.style.cssText = 'font-size: var(--ds-fs-meta); padding: var(--ds-space-half) var(--ds-space-inline-x);';
     foldBtn.setAttribute('aria-expanded', 'false');
     foldBtn.textContent = t('askUser.attFoldTotal', { n: String(fileEntries.length) });
     foldBtn.onclick = () => {

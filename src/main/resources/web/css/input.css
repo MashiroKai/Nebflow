@@ -106,7 +106,7 @@
   pointer-events: auto;
   font: 500 12px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   border-radius: var(--ds-radius-input);
-  padding: 3px var(--ds-space-glass-x);
+  padding: 3px var(--ds-space-inline-x);
   cursor: pointer;
   transition: background 0.15s cubic-bezier(0.4, 0, 0.2, 1),
     border-color 0.15s cubic-bezier(0.4, 0, 0.2, 1),
@@ -337,7 +337,7 @@
   gap: var(--ds-space-1h);
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
-  padding: 0 var(--ds-space-glass-x);
+  padding: 0 var(--ds-space-inline-x);
   border-radius: var(--ds-radius-input);
   font-size: var(--ds-fs-hint);
   color: var(--color-text);
@@ -368,7 +368,7 @@
   background: rgb(var(--sapphire) / 0.06);
   border: 1px solid rgb(var(--sapphire) / 0.25);
   border-radius: var(--ds-radius-input);
-  padding: 0 var(--ds-space-glass-x);
+  padding: 0 var(--ds-space-inline-x);
   font-size: var(--ds-fs-hint);
   color: var(--color-text);
   position: relative;
@@ -629,7 +629,7 @@
   background: var(--glass-etched-bg, var(--color-surface));
   border-left: 2px solid var(--status-error-icon, var(--color-error));
   color: var(--status-word, var(--color-text));
-  padding: 3px var(--ds-space-glass-x);
+  padding: 3px var(--ds-space-inline-x);
   border-radius: var(--ds-radius-chip);
   font-size: var(--ds-fs-hint);
   transition: opacity 0.3s ease;
@@ -1012,10 +1012,10 @@
   -webkit-backdrop-filter: blur(20px) saturate(1.15);
   border: 1px solid rgba(255,255,255,0.12);
   border-radius: var(--ds-radius-card-md);
-  padding: var(--ds-space-glass-x) 14px;
+  padding: var(--ds-space-block-y) 14px;
   display: none;
   align-items: center;
-  gap: var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
   z-index: 200;
   opacity: 0;
   transform: translateY(6px);
@@ -1409,7 +1409,7 @@ html.no-backdrop #mention-dropdown {
 }
 .queue-item-btn {
   font-size: var(--ds-fs-meta);
-  padding: 3px var(--ds-space-glass-x);
+  padding: 3px var(--ds-space-inline-x);
   border-radius: var(--ds-radius-input);
   border: 1px solid var(--glass-etched-border);
   background: var(--glass-etched-bg);

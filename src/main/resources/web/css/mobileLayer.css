@@ -1145,7 +1145,7 @@ body.mobile-layer .mh-tpanel .tp-x {
 body.mobile-layer .mh-tpanel .tp-x svg { width: 13px; height: 13px; }
 body.mobile-layer .mh-tpanel .tp-bd {
   overflow-y: auto;
-  padding: 0 var(--ds-space-glass-x) var(--ds-space-3);
+  padding: 0 var(--ds-space-inline-x) var(--ds-space-3);
   display: flex;
   flex-direction: column;
   gap: var(--ds-space-1h);
@@ -1170,7 +1170,7 @@ body.mobile-layer .mh-tpanel .tp-card {
   background: var(--glass-control-bg);
   border: 1px solid var(--glass-control-border);
   border-radius: var(--ds-radius-xl);
-  padding: var(--ds-space-2) var(--ds-space-glass-x);
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
   flex: none;
 }
 body.mobile-layer .mh-tpanel .tp-card.tp-static { cursor: default; }
@@ -1350,7 +1350,7 @@ body.mobile-layer #search-modal .search-result {
   background: var(--glass-control-bg);
   border: 1px solid var(--glass-control-border);
   border-radius: var(--ds-radius-xl);
-  padding: var(--ds-space-2) var(--ds-space-glass-x);
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
   margin-bottom: var(--ds-space-1h);
 }
 /* 登录墙卡：内容面宽安全边距。 */
@@ -1423,7 +1423,7 @@ body.mobile-layer #bg-dropdown .bg-task-row.bg-task-row-child {
   padding-left: 18px;
 }
 body.mobile-layer #bg-dropdown .bg-dropdown-empty {
-  padding: var(--ds-space-glass-x) var(--ds-space-3);
+  padding: var(--ds-space-block-y) var(--ds-space-3);
 }
 /* 面板分区批（2026-10-29 ③ · 作者报障「后台任务和子智能体混在一起」）：手机端
    两节升格为**两张内嵌卡**——玻璃载体（morph 形变面）内各节独立卡面（边界 +
@@ -1485,7 +1485,7 @@ body.mobile-layer #memory-modal .ap-pane {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--ds-space-1) var(--ds-space-1) var(--ds-space-glass-x);
+  padding: var(--ds-space-1) var(--ds-space-1) var(--ds-space-block-y);
   scrollbar-width: none;
 }
 body.mobile-layer #memory-modal .ap-pane::-webkit-scrollbar { display: none; }
@@ -1513,7 +1513,7 @@ body.mobile-layer .mh-memory-cards {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--ds-space-1h) var(--ds-space-glass-x) var(--ds-space-3);
+  padding: var(--ds-space-1h) var(--ds-space-inline-x) var(--ds-space-3);
   scrollbar-width: none;
   display: flex;
   flex-direction: column;
@@ -2169,7 +2169,7 @@ body.mobile-layer .mf-stack-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: calc(16px + env(safe-area-inset-top, 0px)) var(--ds-space-4) var(--ds-space-glass-x);
+  padding: calc(16px + env(safe-area-inset-top, 0px)) var(--ds-space-4) var(--ds-space-block-y);
 }
 body.mobile-layer .mf-stack-count {
   font-size: var(--mfs-min);
@@ -2235,7 +2235,7 @@ body.mobile-layer .mf-deck-top {
   align-items: center;
   gap: var(--ds-space-2);
   height: 46px;
-  padding: 0 var(--ds-space-glass-x) 0 14px;
+  padding: 0 var(--ds-space-inline-x) 0 14px;
   border-bottom: 1px solid var(--th-border);
 }
 body.mobile-layer .mf-deck-icon {
@@ -2328,7 +2328,7 @@ body.mobile-layer .mf-deck-thumb .thumb-page {
 body.mobile-layer .mf-deck-thumb .thumb-page .ln { height: 6px; margin-bottom: var(--ds-space-2); }
 body.mobile-layer .mf-deck-thumb .thumb-flow { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
 body.mobile-layer .mf-deck-thumb .thumb-flow svg { width: 78%; height: 68%; color: var(--color-frame-text-muted); }
-body.mobile-layer .mf-deck-thumb .thumb-browser { position: absolute; inset: 0; padding: var(--ds-space-glass-x) var(--ds-space-3); }
+body.mobile-layer .mf-deck-thumb .thumb-browser { position: absolute; inset: 0; padding: var(--ds-space-block-y) var(--ds-space-3); }
 body.mobile-layer .mf-deck-thumb .thumb-browser .bar {
   height: 16px; border-radius: var(--ds-radius-chip); background: var(--bar-3);
   border: 1px solid var(--th-border); margin-bottom: 9px;
@@ -2476,7 +2476,7 @@ body.mobile-layer .mf-hub-label {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--color-text-muted);
-  padding: var(--ds-space-1) var(--ds-space-glass-x) var(--ds-space-glass-x);
+  padding: var(--ds-space-1) var(--ds-space-inline-x) var(--ds-space-block-y);
 }
 body.mobile-layer .mf-hub-rows {
   display: flex;
@@ -2536,7 +2536,7 @@ body.mobile-layer .mf-me-entry {
   gap: var(--ds-space-3);
   margin: var(--ds-space-3) 14px 0;
   min-height: 64px;
-  padding: var(--ds-space-glass-x) var(--ds-space-4);
+  padding: var(--ds-space-block-y) var(--ds-space-4);
   border: none;
   border-radius: var(--ds-radius-card-lg);
   background: var(--color-surface);
@@ -2642,7 +2642,7 @@ body.mobile-layer .mf-me-card .mf-me-name { font-size: var(--mfs-body); }
 body.mobile-layer .mf-me-login { flex: none; }
 /* 分组标签与账号行沿用 mf-hub 家族（mf-me-grouplabel 复用 mf-hub-label 口径，
    个人主页分组与 hub 分组视觉同族）。 */
-body.mobile-layer .mf-me-grouplabel { margin: 0 14px; padding-left: var(--ds-space-glass-x); padding-right: var(--ds-space-glass-x); }
+body.mobile-layer .mf-me-grouplabel { margin: 0 14px; padding-left: var(--ds-space-inline-x); padding-right: var(--ds-space-inline-x); }
 /* 个人主页账号行卡（无 .mf-hub 容器兜边距，壳级补 14px 侧距；分组标签紧贴其上）。 */
 body.mobile-layer .mobile-page[data-page="me"] .mf-hub-rows { margin: 0 14px; }
 /* 入口行右值（当前读数，如用户名/绑定的邮箱）。 */
@@ -2723,7 +2723,7 @@ body.mobile-layer .mf-social-sealed {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
   padding: var(--ds-space-4) 14px;
 }
 body.mobile-layer .mf-social-sealed-skel {
@@ -2733,7 +2733,7 @@ body.mobile-layer .mf-social-sealed-skel {
   border: 1px solid var(--glass-control-border);
 }
 body.mobile-layer .mf-social-sealed-note {
-  margin-top: var(--ds-space-glass-x);
+  margin-top: var(--ds-space-stack-gap);
   text-align: center;
   font-size: var(--mfs-sub);
   font-weight: 600;
@@ -2962,7 +2962,7 @@ body.mobile-layer #mobile-pages .team-card.project-card {
   margin: 0;
   flex: 0 0 auto;
   border-radius: var(--ds-radius-card-lg);
-  padding: var(--ds-space-glass-x) 14px;
+  padding: var(--ds-space-block-y) 14px;
 }
 body.mobile-layer #mobile-pages .team-card.project-card .team-card-header {
   padding: var(--ds-space-half) 0 var(--ds-space-2);
@@ -3291,7 +3291,7 @@ body.mobile-layer .mobile-page[data-page="messages"] .mh-search-dock.has-query ~
 body.mobile-layer .mh-scope-row {
   display: flex;
   gap: var(--ds-space-1h);
-  padding: var(--ds-space-glass-x) var(--ds-space-4) var(--ds-space-half);
+  padding: var(--ds-space-block-y) var(--ds-space-4) var(--ds-space-half);
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -3335,7 +3335,7 @@ body.mobile-layer .mh-search-results {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--ds-space-half) var(--ds-space-glass-x) var(--ds-space-3);
+  padding: var(--ds-space-half) var(--ds-space-inline-x) var(--ds-space-3);
   display: flex;
   flex-direction: column;
   gap: var(--ds-space-half);
@@ -3346,7 +3346,7 @@ body.mobile-layer .mh-sr-group {
   font-size: var(--mfs-min);
   font-weight: 600;
   color: var(--color-frame-text-muted);
-  padding: var(--ds-space-glass-x) var(--ds-space-glass-x) var(--ds-space-half);
+  padding: var(--ds-space-block-y) var(--ds-space-inline-x) var(--ds-space-half);
   flex: none;
 }
 body.mobile-layer .mh-sr-row {
@@ -3355,7 +3355,7 @@ body.mobile-layer .mh-sr-row {
   flex-direction: column;
   gap: var(--ds-space-half);
   width: 100%;
-  padding: var(--ds-space-2) var(--ds-space-glass-x);
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
   border: none;
   border-radius: var(--ds-radius-button);
   background: transparent;
@@ -3412,7 +3412,7 @@ body.mobile-layer .fm-flow .fm-msg.fm-reveal-flash {
    为免同页两枚输入框并存，手机层把桌面块内输入行（.fm-search）收起，只保留
    其结果卡（.fm-result-card，in-flow 推挤下方好友列表）；桌面零改动。 */
 body.mobile-layer #mobile-pages .mobile-page[data-page="contacts"] .fm-search-block {
-  padding: var(--ds-space-glass-x) var(--ds-space-half) 0;
+  padding: var(--ds-space-block-y) var(--ds-space-half) 0;
 }
 body.mobile-layer #mobile-pages .mobile-page[data-page="contacts"] .fm-search-block > .fm-search {
   display: none;
@@ -3532,7 +3532,7 @@ body.mobile-layer .fm-context-menu {
   display: flex !important;
   flex-direction: column;
   justify-content: center;
-  gap: var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
   background: var(--color-bg);
   border: none !important;
   border-radius: 0 !important;
@@ -3551,7 +3551,7 @@ body.mobile-layer .fm-context-menu button:not(.mfs-back) {
   border: 1px solid var(--glass-control-border);
   color: var(--color-frame-text, var(--color-text));
   font-size: var(--mfs-body);
-  padding: var(--ds-space-glass-x) 14px;
+  padding: var(--ds-space-block-y) 14px;
   text-align: center;
 }
 body.mobile-layer .fm-context-menu button.danger:not(.mfs-back) {
@@ -3969,7 +3969,7 @@ body.mobile-layer #attachment-preview .att-file .att-remove svg {
    令牌全走 --mfs-*/--mtap 桥（--ds-* 手机字号层），零新色值。 */
 body.mobile-layer .option-box .att-file.ask-att-file {
   min-height: var(--mtap);
-  padding: var(--ds-space-glass-x) var(--ds-space-3);
+  padding: var(--ds-space-block-y) var(--ds-space-3);
 }
 body.mobile-layer .option-box .att-file.ask-att-file > .att-file-name {
   flex: 0 1 210px;
@@ -4096,7 +4096,7 @@ body.mobile-layer #reminder-panel .schedule-card-ref {
   display: inline-flex;
   align-items: center;
   min-height: 32px;
-  padding: 0 var(--ds-space-glass-x);
+  padding: 0 var(--ds-space-inline-x);
 }
 body.mobile-layer #reminder-panel .schedule-card-chip::after,
 body.mobile-layer #reminder-panel .schedule-card-ref::after {
@@ -4250,7 +4250,7 @@ body.mobile-layer #mh-search-kind-row { height: auto; }
 body.mobile-layer .mh-sr-row {
   justify-content: center;
   min-height: var(--mrow);
-  padding: var(--mgap) var(--ds-space-glass-x);
+  padding: var(--mgap) var(--ds-space-inline-x);
 }
 
 /* 记忆/智能体合并面板的「编辑/完成」药丸：26 → 44。 */
@@ -4272,7 +4272,7 @@ body.mobile-layer .mf-hub-chev svg { width: var(--micon-sm); height: var(--micon
 body.mobile-layer .fm-row {
   align-items: center;
   min-height: var(--mrow);
-  padding: 0 var(--ds-space-glass-x);
+  padding: 0 var(--ds-space-inline-x);
 }
 
 /* 社交/好友请求动作钮与行内按钮族。 */
@@ -4648,7 +4648,7 @@ body.mobile-layer #top-overlays {
      · `#settings-profile-overlay` 铺平：overlay/box 两个类名已在上面 A 族的
        选择器里，本块只补「本面自己的内边距 + 字段行触控高」。 */
 body.mobile-layer .settings-identity-card {
-  margin: var(--ds-space-1) 0 var(--ds-space-glass-x);
+  margin: var(--ds-space-1) 0 var(--ds-space-stack-gap);
 }
 body.mobile-layer .settings-avatar-entry {
   min-width: 68px;

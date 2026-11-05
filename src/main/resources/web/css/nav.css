@@ -160,11 +160,11 @@
   gap: var(--ds-space-2);
   width: 48px;
   flex-shrink: 0;
-  margin: var(--ds-space-4) var(--ds-space-1) var(--ds-space-glass-x);
+  margin: var(--ds-space-4) var(--ds-space-1) var(--ds-space-stack-gap);
   max-height: calc(100vh - 26px);
   border-radius: var(--ds-radius-shell);
   overflow: hidden;
-  padding: var(--ds-space-glass-x) 0;
+  padding: var(--ds-space-block-y) 0;
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
@@ -190,7 +190,7 @@
 body.sidebar-collapsed #activity-bar {
   width: 48px;
   opacity: 1;
-  margin: var(--ds-space-4) var(--ds-space-1) var(--ds-space-glass-x);
+  margin: var(--ds-space-4) var(--ds-space-1) var(--ds-space-stack-gap);
 }
 /* prefers-reduced-motion: squash the Side Bar collapse animation
    (transition itself lives in base.css with the --panel-* tokens). */

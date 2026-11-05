@@ -302,7 +302,7 @@
   display: flex;
   align-items: center;
   gap: var(--ds-space-half);
-  padding: var(--ds-space-1) var(--ds-space-glass-x);
+  padding: var(--ds-space-1) var(--ds-space-inline-x);
   border-bottom: 1px solid color-mix(in srgb, var(--color-text, #000) 8%, transparent);
   flex-shrink: 0;
 }
@@ -361,7 +361,7 @@
   border-bottom: 1px solid color-mix(in srgb, var(--color-text, #000) 8%, transparent);
 }
 .tfl-filterbar {
-  padding: var(--ds-space-1) var(--ds-space-glass-x) var(--ds-space-1h);
+  padding: var(--ds-space-1) var(--ds-space-inline-x) var(--ds-space-1h);
   display: flex;
   flex-direction: column;
   gap: var(--ds-space-1);
@@ -567,7 +567,7 @@
   position: fixed;
   z-index: 10002;
   width: 220px;
-  padding: var(--ds-space-glass-x);
+  padding: var(--ds-space-inset);
   border-radius: var(--ds-radius-input);
   background: var(--tfl-pop-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
@@ -921,7 +921,7 @@
 /* ── 底部 Add footer（单标签视图常驻创建入口）─────────────────────────── */
 .tfl-footer {
   flex-shrink: 0;
-  padding: var(--ds-space-1h) var(--ds-space-glass-x) var(--ds-space-2);
+  padding: var(--ds-space-1h) var(--ds-space-inline-x) var(--ds-space-2);
   border-top: 1px solid color-mix(in srgb, var(--color-text, #000) 8%, transparent);
 }
 .tfl-add-btn {

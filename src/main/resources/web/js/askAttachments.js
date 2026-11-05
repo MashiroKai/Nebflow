@@ -137,7 +137,7 @@ function addChip(c, file) {
   chip.className = 'ask-answer-attach-chip';
   chip.tabIndex = 0;
   chip.style.cssText =
-    'position:relative;display:flex;align-items:center;gap:9px;padding:var(--ds-space-1h) var(--ds-space-glass-x) var(--ds-space-1h) var(--ds-space-1h);border-radius:var(--ds-radius-button);' +
+    'position:relative;display:flex;align-items:center;gap:9px;padding:var(--ds-space-1h) var(--ds-space-inline-x) var(--ds-space-1h) var(--ds-space-1h);border-radius:var(--ds-radius-button);' +
     'overflow:hidden;max-width:260px;border:1px solid var(--color-border,rgba(128,128,128,0.35));' +
     'background:var(--color-surface-2,rgba(127,127,127,0.08));';
   const isImage = (item.mime || '').startsWith('image/');
@@ -394,7 +394,7 @@ export function mountAnswerAttachments(box, opts) {
   overlay.className = 'ask-answer-drop-overlay';
   overlay.setAttribute('aria-hidden', 'true');
   overlay.style.cssText =
-    'position:absolute;inset:0;z-index:5;border-radius:11px;display:none;align-items:center;justify-content:center;gap:var(--ds-space-glass-x);' +
+    'position:absolute;inset:0;z-index:5;border-radius:11px;display:none;align-items:center;justify-content:center;gap:var(--ds-space-inline-gap);' +
     'background:color-mix(in srgb, var(--color-surface,rgba(20,22,28,0.9)) 88%, transparent);' +
     'border:2px dashed var(--color-primary,#07c160);color:var(--color-primary,#07c160);' +
     'font-weight:600;font-size:14px;pointer-events:none;';
@@ -504,7 +504,7 @@ export function mountAnsweredBadge(box, n) {
   badge.className = 'ask-answer-attach-badge';
   badge.textContent = t('askUser.attachCountBadge', { n: String(n) });
   badge.style.cssText =
-    'float:right;margin:0 0 var(--ds-space-1h) var(--ds-space-glass-x);font-size:10.5px;font-weight:600;padding:var(--ds-space-half) 9px;border-radius:var(--ds-radius-pill);' +
+    'float:right;margin:0 0 var(--ds-space-1h) var(--ds-space-indent-x);font-size:10.5px;font-weight:600;padding:var(--ds-space-half) 9px;border-radius:var(--ds-radius-pill);' +
     'letter-spacing:.3px;background:color-mix(in srgb, var(--color-primary,#07c160) 14%, transparent);' +
     'color:var(--color-primary,#07c160);';
   box.insertBefore(badge, box.firstChild);

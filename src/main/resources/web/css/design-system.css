@@ -116,10 +116,32 @@
   --ds-space-half: 2px;    /* Carbon $spacing-01：4px 栅格外半步微缝档 */
   --ds-space-12: 48px;     /* Carbon $spacing-09：区块级留白 */
   --ds-space-16: 64px;     /* Carbon $spacing-10：大区块留白 */
-  --ds-space-glass-x: 10px; /* 10px 例外档。**命名债**：本槽原本只为玻璃条横缝（--cv-pad-bar 语境）
-                               出生，2026-11-04 迁移批按定版文档 §3 把它当作 10px 的**唯一**归属档，
-                               实测 351 处消费里多数不是玻璃条 ⇒ 槽名比语义窄。改名属作者裁定项
-                               （建议 --ds-space-1x「2.5 栅格档」），本批不动名字，只如实记账。 */
+  /* ── 10px 档（2.5 栅格 · 例外档）：按**布局角色**分槽 ────────────────────
+     2026-11-04 前这一个值只有 `--ds-space-glass-x` 一个名字，而名字描述的是它的
+     出生语境（玻璃条横缝），却承接了全部 357 处 10px 消费 —— 槽名比语义窄 = 命名债。
+     本批（作者令 2026-11-04 20:49）按用途拆成六个角色槽，**值逐字不变（10px）**，
+     故零像素（与逐值快照对照为证）。不做 `--ds-space-1x` 式换名：那只是把同一笔债
+     换个字面重记一遍，消费面语义仍然不含信息。
+     六槽的分工是「轴 × 内外」，不是组件作用域 —— 按组件派生（--ds-chat-pad-x …）
+     才是同值别名堆，禁。
+       · inline-x   内横距：块/控件与内容的左右内距（padding 横轴）
+       · block-y    内纵距：块的上下内距（padding 纵轴）
+       · inset      四边等内距：`padding: X` 单值
+       · inline-gap 行内件缝：同一行相邻件之间（gap / column-gap）
+       · stack-gap  块间纵距：块与块之间的纵向间隙（margin 纵轴）
+       · indent-x   行缩进：相对容器左缘的横向偏移（margin 横轴）
+     实测消费（366 个 var() 原子）：inline-x 151 · block-y 95 · inline-gap 56 ·
+     stack-gap 49 · indent-x 9 · inset 5。
+     角色化是为了让**下一次收敛能逐角色裁定**（-inline-gap/-inset → 8；-block-y /
+     -stack-gap → 8 或 12；-indent-x → 8/12），而不是一次性动 357 处再看像素。
+     本批不动值：10px 是 4px 栅格的半步（2.5 格），与 6px 档同属「实测高频的半步
+     例外」—— 收敛它必然改 357 处布局，须单独立批 + 基准刷新，见批文档「未做/待裁」。 */
+  --ds-space-inline-x: 10px;
+  --ds-space-block-y: 10px;
+  --ds-space-inset: 10px;
+  --ds-space-inline-gap: 10px;
+  --ds-space-stack-gap: 10px;
+  --ds-space-indent-x: 10px;
   /* 半步件缝例外档（design-scale-spec 2026-11-04 §2.2/§3 登记，本批出生）：
      6px 是实测最高频间距档（349 处），集中在「图标+文字小缝」「chip 内距」——
      收敛 4px 会让密集控件贴死，收敛 8px 会让每行膨胀，故以具名半步档收编，
@@ -261,7 +283,13 @@
        --ds-row-selected / --ds-shadow-card 同法（令牌出生行放行，亮暗各站档）。
      · 胶囊几何三槽（字档/内距/件缝）与页签几何两槽（横内距/轨内距）为档外
        既有值，按 --ds-fs-bubble / --ds-row-inset 先例以具名槽收编（禁再派生）。 */
-  --ds-fs-capsule: 14px;                     /* canvas 标题胶囊字档（既有值） */
+  --ds-fs-subtitle: 14px;                    /* 次标题/次级正文档（body 13 上一档）。**同值两槽合一**：
+                                                原 --ds-fs-capsule（canvas 标题胶囊）与 --ds-fs-card-body
+                                                （过渡卡正文）同为 14px、同为「比正文大一档的标题/说明」；
+                                                两个名字描述的是同一档位 = 表象债。合并依据：值相同 + 角色
+                                                同族（body↔title 之间那一档）+ 两面都不需要比对方粗/细的
+                                                读数。合并后**值仍 14px**（零像素），改掉的是「一个值几个
+                                                名字」。禁再派生：其余 14px 消费面一律指本槽。 */
   --ds-capsule-pad: 6px 8px 6px 14px;        /* 胶囊内距（手机/基线档） */
   --ds-capsule-pad-desk: 4px 7px 4px 12px;   /* 桌面腿 36px 固定高胶囊内距 */
   --ds-capsule-gap: 6px;                     /* 胶囊内件缝（图标/标题/pop 钮） */
@@ -302,9 +330,10 @@
        旋转是循环周期而非过渡档，不并入 dur 阶梯）。
      · --ds-shadow-palette = 命令面板壳下投蓝晕影（rgb(--sapphire) 通道 α 组合，
        与 --ds-shadow-card 同法：墨/蓝通道 + α，令牌出生行放行）。
-     · 字档两槽 = 官网 auth 域过渡卡（接管 / 入场同族）标题 21 / 正文 14 既有
-       读数（off-ladder，按 --ds-fs-bubble 14.5px 先例以具名槽收编）；cards.css
-       的 --nfc-* 家族令牌改指本槽 —— 值不再在消费面出生。 */
+     · 字档一槽 = 官网 auth 域过渡卡（接管 / 入场同族）标题 21 既有读数
+       （off-ladder，按 --ds-fs-bubble 14.5px 先例以具名槽收编）；card 正文 14 已
+       与胶囊标题 14 合并为 --ds-fs-subtitle（见 §⑬ 头部注释）；cards.css 的
+       --nfc-* 家族令牌改指既有槽 —— 值不再在消费面出生。 */
   --ds-z-overlay: 310;      /* 遮罩基础带（settings / memory / rules / search / wsp） */
   --ds-z-quickinput: 9000;  /* 命令面板宿主（QuickInput 层） */
   --ds-z-toast: 10000;      /* 通知栈（右下角，不与居中弹窗重叠） */
@@ -313,7 +342,12 @@
   --ds-dur-spin: 0.8s;      /* 加载点旋转周期（门环 / 清单活动点） */
   --ds-shadow-palette: 0 18px 48px rgb(var(--sapphire) / 0.2);
   --ds-fs-card-hero: 21px;  /* 过渡卡主标题（官网 auth 域 21/600/-0.2px 档） */
-  --ds-fs-card-body: 14px;  /* 过渡卡正文 / 说明（实测 14×1.5） */
+  --ds-fs-callout: 16px;    /* callout 档：**桌面语境**的 16px（文档正文/弹窗标题/图标字形）。
+                               与 --ds-fs-mobile-callout 同值不同域：后者是手机档字阶，经 --mfs-callout
+                               桥进手机层；本槽承接全部「桌面语境的 16px」消费点（13 处：markdown h1 /
+                               epub 正文与 h3 / txt 阅读面 / 桌面气泡 h1 / 三弹窗标题 / 三个 × 字形钮 /
+                               邮件卡 h1）。把桌面件挂在 *mobile-* 槽上是槽名宽于语义的反向债
+                               （槽名说手机、消费者是桌面），本批归位。值不变 ⇒ 零像素。 */
 
   /* ── ⑮ 手机端字阶 / 热区桥槽（ui-unification-20261103-mobile）──
      作者令：手机端**与桌面共用同一套 --ds-* 槽位**，只是经 --mfs-* 手机字号层

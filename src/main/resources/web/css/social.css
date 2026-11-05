@@ -98,11 +98,11 @@
 /* weixin-scanbind (2026-10-03, 极简 pass): the rhythm loosens one step — the
    list breathes at 10px, the cards carry 14px air — all values stay in the
    existing token/length family (no new colour, radius or breakpoint). */
-.social-card-list { display: flex; flex-direction: column; gap: var(--ds-space-glass-x); min-width: 0; }
+.social-card-list { display: flex; flex-direction: column; gap: var(--ds-space-inline-gap); min-width: 0; }
 .social-card {
   display: flex;
   flex-direction: column;
-  gap: var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
   padding: 14px var(--ds-space-4);
   border-radius: var(--ds-radius-card-md);
   border: 1px solid var(--glass-border);
@@ -225,7 +225,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--ds-space-1);
-  padding: var(--ds-space-2) var(--ds-space-glass-x);
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
   border: 1px solid var(--glass-border);
   border-radius: var(--ds-radius-input);
   background: var(--glass-etched-bg);
@@ -264,7 +264,7 @@
 
 /* ── Remote-access section (令②): an independent section, NOT a channel card.
    This batch renders it inert on purpose — no link, no QR, no address. ──── */
-.social-remote-card { gap: var(--ds-space-glass-x); }
+.social-remote-card { gap: var(--ds-space-inline-gap); }
 .social-remote-note {
   font-size: var(--ds-fs-meta);
   line-height: 1.5;

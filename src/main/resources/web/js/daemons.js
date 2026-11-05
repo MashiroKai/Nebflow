@@ -140,7 +140,7 @@ const DAEMON_CSS = `
 
 /* ── Daemon Row ── */
 .daemon-row {
-  display: flex; align-items: center; gap: var(--ds-space-glass-x); padding: 9px var(--ds-space-glass-x);
+  display: flex; align-items: center; gap: var(--ds-space-inline-gap); padding: 9px var(--ds-space-inline-x);
   border-radius: var(--ds-radius-button); margin: 1px 0; transition: background 0.15s;
 }
 .daemon-row.anim { animation: daemonRowIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) backwards; }
@@ -219,7 +219,7 @@ const DAEMON_CSS = `
 /* ── Action Buttons ── */
 .daemon-actions { display: flex; align-items: center; gap: var(--ds-space-1); flex-shrink: 0; }
 .daemon-btn {
-  font: 500 11px -apple-system, sans-serif; padding: var(--ds-space-1) var(--ds-space-glass-x);
+  font: 500 11px -apple-system, sans-serif; padding: var(--ds-space-1) var(--ds-space-inline-x);
   border-radius: 7px; border: 1px solid transparent;
   background: var(--glass-control-bg);
   -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);

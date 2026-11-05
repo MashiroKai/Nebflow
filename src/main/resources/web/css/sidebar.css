@@ -9,7 +9,7 @@
   flex-shrink: 0;
   /* Bottom margin matches #input-area's padding-bottom (12px) so the sidebar
      card's bottom edge aligns with the chat's input bar. */
-  margin: var(--ds-space-4) var(--ds-space-1) var(--ds-space-glass-x);
+  margin: var(--ds-space-4) var(--ds-space-1) var(--ds-space-stack-gap);
   max-height: calc(100vh - 26px);
   border-radius: var(--ds-radius-shell);
   overflow: hidden;
@@ -161,7 +161,7 @@
   justify-content: center;
   gap: var(--ds-space-2);
   padding: var(--ds-space-3) var(--ds-space-4);
-  margin: var(--ds-space-2) var(--ds-space-glass-x) var(--ds-space-glass-x);
+  margin: var(--ds-space-2) var(--ds-space-indent-x) var(--ds-space-stack-gap);
   border-radius: var(--ds-radius-button);
   border: 2px dashed color-mix(in srgb, var(--ds-danger-icon) 35%, transparent);
   background: color-mix(in srgb, var(--ds-danger-icon) 6%, transparent);
@@ -490,7 +490,7 @@
   background: var(--ds-row-pinned);
   border: var(--ds-border-width) solid var(--ds-border);
   border-radius: var(--ds-radius-chip);
-  padding: var(--ds-space-1) var(--ds-space-glass-x);
+  padding: var(--ds-space-1) var(--ds-space-inline-x);
   color: var(--ds-text-frame);
   font-size: var(--ds-fs-body);
   font-family: inherit;
@@ -503,7 +503,7 @@
 .creation-path {
   font-size: var(--ds-fs-meta);
   color: var(--ds-text-muted);
-  padding: var(--ds-space-half) var(--ds-space-glass-x) var(--ds-space-1);
+  padding: var(--ds-space-half) var(--ds-space-inline-x) var(--ds-space-1);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -562,7 +562,7 @@
   color: var(--ds-text-muted);
   /* 上拉出卡：卡顶内距 6px + 组间留白 ⇒ 标题整段落在卡外灰底（呼吸感）。 */
   margin: -33px 0 var(--ds-space-3);
-  padding: 0 var(--ds-space-glass-x);
+  padding: 0 var(--ds-space-inline-x);
 }
 /* 卡内子组标题（嵌套 section 首题 / Overrides 副题）回落为卡内分隔子标题。 */
 .settings-section .settings-section-title {
@@ -577,7 +577,7 @@
   /* 热区档（本批新增判据）：行高 ≥44px（--ds-hit-row），矮内容行由 min-height
      撑到触控下限；行内距保持 10px 0（卡内行变体，规范 §5 未覆盖 → 不改值）。 */
   min-height: var(--ds-row-min-h);
-  padding: var(--ds-space-glass-x) 0;
+  padding: var(--ds-space-block-y) 0;
   border-bottom: 1px solid var(--ds-border-hairline);
 }
 .settings-row:last-child { border-bottom: none; }
@@ -608,13 +608,13 @@
    取 --ds-row-min-h）。 */
 /* keyRef 遮蔽行：.cfg-password-wrap 先例（sidebar.css:1259 现 §Config Modal 段）原样复用；
    卡内行道里占满行宽、同封顶 280px（原型 .pwd-wrap flex:1 1 auto; max-width:280px）。 */
-.cfg-card .cfg-hint { padding: 0 14px var(--ds-space-glass-x); margin-top: -4px; line-height: var(--ds-lh-std); }
+.cfg-card .cfg-hint { padding: 0 14px var(--ds-space-block-y); margin-top: -4px; line-height: var(--ds-lh-std); }
 /* 卡底动作行：内联反馈 + spacer + 保存钮右对齐（取代独立的块级保存行）。 */
 .card-actions {
   display: flex;
   align-items: center;
   gap: var(--ds-space-2);
-  padding: var(--ds-space-glass-x) 14px var(--ds-space-3);
+  padding: var(--ds-space-block-y) 14px var(--ds-space-3);
   border-top: 1px solid var(--color-frame-border-light);
 }
 .card-actions .spacer { flex: 1; }
@@ -682,7 +682,7 @@
   width: 100%;
   display: flex;
   align-items: center;
-  gap: var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
   text-align: left;
   padding: 11px 14px;
   border-radius: var(--ds-radius-card-md);
@@ -1006,7 +1006,7 @@
   flex-direction: column;
   align-items: center;
   gap: var(--ds-space-1);
-  padding: 14px var(--ds-space-4) var(--ds-space-glass-x);
+  padding: 14px var(--ds-space-4) var(--ds-space-block-y);
 }
 .sp-avatar-frame {
   position: relative;
@@ -1114,7 +1114,7 @@
   display: flex;
   align-items: flex-start;
   gap: var(--ds-space-2);
-  padding: 5px var(--ds-space-glass-x);
+  padding: 5px var(--ds-space-inline-x);
   border-top: 1px solid var(--color-frame-border-light);
 }
 .cfg-model-name {
@@ -1144,7 +1144,7 @@
   display: flex;
   align-items: center;
   gap: var(--ds-space-1h);
-  padding: var(--ds-space-2) var(--ds-space-glass-x);
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
   border-bottom: 1px solid var(--color-frame-border-light);
 }
 .cfg-card-title {
@@ -1166,7 +1166,7 @@
   background: none;
   border: none;
   color: var(--color-frame-text-muted);
-  font-size: var(--ds-fs-mobile-callout);
+  font-size: var(--ds-fs-callout);
   cursor: pointer;
   padding: 0 var(--ds-space-1);
   line-height: 1;
@@ -1380,7 +1380,7 @@
   font-size: 14px;
   font-weight: 600;
   color: var(--color-frame-text);
-  padding: 14px var(--ds-space-4) var(--ds-space-glass-x);
+  padding: 14px var(--ds-space-4) var(--ds-space-block-y);
   border-bottom: 1px solid var(--color-frame-border-light);
 }
 .cfg-modal-body { padding: var(--ds-space-3) var(--ds-space-4); }
@@ -1476,7 +1476,7 @@
   border: 1px solid var(--color-frame-border-light);
   color: var(--color-frame-text-muted);
   cursor: pointer;
-  padding: 3px var(--ds-space-glass-x);
+  padding: 3px var(--ds-space-inline-x);
   border-radius: var(--ds-radius-chip);
   font-size: var(--ds-fs-meta);
   font-family: inherit;
@@ -1531,7 +1531,7 @@
   display: flex;
   justify-content: flex-end;
   gap: var(--ds-space-2);
-  padding: var(--ds-space-glass-x) var(--ds-space-4) 14px;
+  padding: var(--ds-space-block-y) var(--ds-space-4) 14px;
   border-top: 1px solid var(--color-frame-border-light);
 }
 .cfg-modal-actions .cfg-btn { padding: var(--ds-space-1h) var(--ds-space-4); }
@@ -1554,7 +1554,7 @@
    布局钩子（fixed/bottom/z-index/动画）保留，正文可读性回到主题 token。 */
 .cfg-toast {
   position: fixed; bottom: 20px; right: 20px; z-index: 10000;
-  max-width: 400px; padding: var(--ds-space-glass-x) var(--ds-space-4); border-radius: var(--ds-radius-xl);
+  max-width: 400px; padding: var(--ds-space-block-y) var(--ds-space-4); border-radius: var(--ds-radius-xl);
   font-size: var(--ds-fs-body); line-height: 1.4;
   display: flex; align-items: flex-start; gap: var(--ds-space-2);
   background: var(--glass-control-bg);
@@ -1626,7 +1626,7 @@
 .agent-mgr-card {
   display: flex;
   align-items: center;
-  gap: var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
   padding: var(--ds-space-2) var(--ds-space-3);
   border-bottom: 1px solid var(--color-frame-border-light);
   cursor: pointer;
@@ -1981,7 +1981,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--ds-space-2);
-  margin-top: var(--ds-space-glass-x);
+  margin-top: var(--ds-space-stack-gap);
 }
 .segment-row {
   display: flex;
@@ -2036,7 +2036,7 @@
   border: none;
   color: var(--color-text-muted);
   cursor: pointer;
-  font-size: var(--ds-fs-mobile-callout);
+  font-size: var(--ds-fs-callout);
   line-height: 1;
   padding: var(--ds-space-half) var(--ds-space-1h);
   border-radius: var(--ds-radius-chip);
@@ -2134,7 +2134,7 @@
   background: transparent;
   color: var(--color-frame-text-muted);
   font-size: 11.5px;
-  padding: var(--ds-space-1) var(--ds-space-glass-x);
+  padding: var(--ds-space-1) var(--ds-space-inline-x);
   cursor: pointer;
   font-family: inherit;
 }
@@ -2187,7 +2187,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: var(--ds-space-glass-x);
+  margin-bottom: var(--ds-space-stack-gap);
 }
 .plugins-title {
   font: 600 14px -apple-system, sans-serif;
@@ -2242,7 +2242,7 @@
     inset 0 1px 0 var(--glass-control-highlight),
     inset 0 -1px 0 var(--glass-control-underedge),
     0 1px 3px var(--glass-control-glow);
-  padding: var(--ds-space-glass-x) var(--ds-space-3);
+  padding: var(--ds-space-block-y) var(--ds-space-3);
   display: flex;
   flex-direction: column;
   gap: var(--ds-space-1h);
@@ -2381,7 +2381,7 @@
   display: flex;
   justify-content: flex-end;
   align-items: center;
-  gap: var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
 }
 /* 卸载钮（材质 = .plugins-item-doc 同族 glass-control；语义色 = error 族——
    不可逆动作可辨识；尺寸比照 doc 钮 10px monospace）。 */
@@ -2390,7 +2390,7 @@
   align-items: center;
   gap: 5px;
   font: 500 10px ui-monospace, SFMono-Regular, monospace;
-  padding: 3px var(--ds-space-glass-x);
+  padding: 3px var(--ds-space-inline-x);
   border-radius: var(--ds-radius-input);
   cursor: pointer;
   background: var(--glass-control-bg);
@@ -2427,7 +2427,7 @@
      可用 321px，见 docs/20261102_plugin-panel-layout__*.md）。 */
   margin-right: auto;
   font: 500 10px ui-monospace, SFMono-Regular, monospace;
-  padding: 3px var(--ds-space-glass-x);
+  padding: 3px var(--ds-space-inline-x);
   border-radius: var(--ds-radius-input);
   cursor: pointer;
   background: var(--glass-control-bg);
@@ -2585,7 +2585,7 @@
   background: var(--glass-control-bg);
   border: 1px solid var(--glass-control-border);
   border-radius: var(--ds-radius-pill);
-  padding: 3px var(--ds-space-glass-x);
+  padding: 3px var(--ds-space-inline-x);
   cursor: pointer;
   text-align: left;
   transition: color 0.15s, border-color 0.15s, background 0.15s;
@@ -2741,8 +2741,8 @@
   display: flex;
   flex-direction: column;
   gap: var(--ds-space-1);
-  margin-top: var(--ds-space-glass-x);
-  padding: var(--ds-space-2) var(--ds-space-glass-x);
+  margin-top: var(--ds-space-stack-gap);
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
   border: 1px solid var(--color-frame-border-light);
   border-radius: var(--ds-radius-input);
   background: var(--color-frame-bg, transparent);

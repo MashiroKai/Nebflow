@@ -23,7 +23,7 @@ export function showStaleTabHint() {
   bar.id = 'stale-tab-hint';
   bar.setAttribute('style', [
     'position:fixed', 'top:10px', 'left:50%', 'transform:translateX(-50%)',
-    'z-index:2147483000', 'display:flex', 'align-items:center', 'gap:var(--ds-space-glass-x)',
+    'z-index:2147483000', 'display:flex', 'align-items:center', 'gap:var(--ds-space-inline-gap)',
     'padding:9px var(--ds-space-3) 9px var(--ds-space-4)', 'border-radius:var(--ds-radius-xl)',
     'background:rgba(28,30,38,0.92)', 'color:#f4f5f7',
     'font:13px/1.4 -apple-system,"Segoe UI",sans-serif',

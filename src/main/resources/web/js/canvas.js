@@ -1039,8 +1039,8 @@ function showExternalConflict(entry) {
   bar.setAttribute('role', 'status');
   bar.dataset.path = entry.absPath || '';
   bar.setAttribute('style', [
-    'display:flex', 'align-items:center', 'gap:var(--ds-space-glass-x)',
-    'margin:var(--ds-space-2) var(--ds-space-glass-x)', 'padding:var(--ds-space-2) var(--ds-space-glass-x) var(--ds-space-2) var(--ds-space-3)',
+    'display:flex', 'align-items:center', 'gap:var(--ds-space-inline-gap)',
+    'margin:var(--ds-space-2) var(--ds-space-indent-x)', 'padding:var(--ds-space-2) var(--ds-space-inline-x) var(--ds-space-2) var(--ds-space-3)',
     'border-radius:var(--ds-radius-button)',
     'background:rgba(28,30,38,0.92)', 'color:#f4f5f7',
     'font:12.5px/1.4 -apple-system,"Segoe UI",sans-serif',
@@ -1054,12 +1054,12 @@ function showExternalConflict(entry) {
   const keep = document.createElement('button');
   keep.className = 'nf-file-conflict-keep';
   keep.textContent = t('canvas.conflictKeep');
-  keep.setAttribute('style', 'flex:0 0 auto;cursor:pointer;padding:3px var(--ds-space-glass-x);border-radius:7px;border:1px solid rgba(255,255,255,0.22);background:transparent;color:inherit;font:inherit;');
+  keep.setAttribute('style', 'flex:0 0 auto;cursor:pointer;padding:3px var(--ds-space-inline-x);border-radius:7px;border:1px solid rgba(255,255,255,0.22);background:transparent;color:inherit;font:inherit;');
   keep.onclick = () => { entry._externalConflict = null; bar.remove(); };
   const reload = document.createElement('button');
   reload.className = 'nf-file-conflict-reload';
   reload.textContent = t('canvas.conflictReload');
-  reload.setAttribute('style', 'flex:0 0 auto;cursor:pointer;padding:3px var(--ds-space-glass-x);border-radius:7px;border:1px solid rgba(255,255,255,0.22);background:rgba(255,255,255,0.14);color:inherit;font:inherit;');
+  reload.setAttribute('style', 'flex:0 0 auto;cursor:pointer;padding:3px var(--ds-space-inline-x);border-radius:7px;border:1px solid rgba(255,255,255,0.22);background:rgba(255,255,255,0.14);color:inherit;font:inherit;');
   reload.onclick = () => { entry._externalConflict = null; bar.remove(); refreshFileTab(entry, { force: true }); };
   bar.append(text, keep, reload);
   pane.prepend(bar);
@@ -4808,7 +4808,7 @@ function cardWindowBootFace(fileName) {
   el.setAttribute('data-state', 'loading');
   el.style.cssText =
     'position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:5;' +
-    'display:flex;flex-direction:column;align-items:center;gap:var(--ds-space-glass-x);padding:22px 30px;' +
+    'display:flex;flex-direction:column;align-items:center;gap:var(--ds-space-inline-gap);padding:22px 30px;' +
     'border:1px solid var(--glass-border,#e0e1e4);border-radius:var(--ds-radius-card-md);' +
     'background:var(--glass-bg,#fff);color:var(--color-text,#1b1e26);' +
     "font:13px/1.6 -apple-system,'Segoe UI',sans-serif;text-align:center;max-width:78vw;";

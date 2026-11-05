@@ -661,7 +661,7 @@ function injectLoginModalStyles() {
    玻璃族（blur24 与 glass-control 同族色值域，键族 token 在 sapphire.css 登录键族块）。 */
 .nebflow-login-modal.login-idle { width: 300px; }
 .nebflow-login-modal.login-idle .login-modal-header { display: none; }
-.nebflow-login-modal.login-idle .login-modal-body { padding: var(--ds-space-6) 22px var(--ds-space-5); display: flex; flex-direction: column; align-items: center; gap: var(--ds-space-glass-x); }
+.nebflow-login-modal.login-idle .login-modal-body { padding: var(--ds-space-6) 22px var(--ds-space-5); display: flex; flex-direction: column; align-items: center; gap: var(--ds-space-inline-gap); }
 .login-lockup { color: var(--color-text); display: block; margin-bottom: var(--ds-space-half); }
 .login-lockup .stand-lockup { width: 136px; height: 25px; display: block; }
 .login-card-title { font-size: 15.5px; font-weight: 600; color: var(--color-text); margin: 0; letter-spacing: -0.01em; }
@@ -679,7 +679,7 @@ function injectLoginModalStyles() {
   justify-content: center;
   border: none;
   border-radius: var(--ds-radius-input);
-  padding: var(--ds-space-glass-x) var(--ds-space-4);
+  padding: var(--ds-space-block-y) var(--ds-space-4);
   font-size: 14px;
   font-weight: 500;
   background: #111827;

@@ -41,7 +41,7 @@
      最窄侧栏贴边临界，不在本批 named 范围。） */
 /* 手机层覆盖块（21:36 追加令）：以下逐条压上方桌面基值， specificity
    （元素+双类）高于裸类规则，无需 !important；桌面与手机渲染互不越界。 */
-body.mobile-layer .fm-row { padding: 9px var(--ds-space-glass-x); }
+body.mobile-layer .fm-row { padding: 9px var(--ds-space-inline-x); }
 body.mobile-layer .fm-avatar-36 { font-size: var(--ds-fs-mobile-callout); }
 body.mobile-layer .fm-avatar-40 { font-size: var(--ds-fs-lead); }
 body.mobile-layer .fm-row-name { font-size: var(--ds-fs-mobile-callout); line-height: 1.4; }
@@ -56,8 +56,8 @@ body.mobile-layer .fm-req-time { font-size: var(--ds-fs-hint); }
 .fm-row {
   display: flex;
   align-items: center;
-  gap: var(--ds-space-glass-x);
-  padding: 7px var(--ds-space-glass-x); /* 桌面档（12:50 批前基准；手机层 9px 见头部覆盖块） */
+  gap: var(--ds-space-inline-gap);
+  padding: 7px var(--ds-space-inline-x); /* 桌面档（12:50 批前基准；手机层 9px 见头部覆盖块） */
   border-radius: var(--ds-radius-button);
   cursor: pointer;
   transition: background 0.15s ease;
@@ -241,7 +241,7 @@ body.mobile-layer .fm-req-time { font-size: var(--ds-fs-hint); }
 #fm-contacts-body {
   flex: 1;
   overflow-y: auto;
-  padding: var(--ds-space-1) var(--ds-space-2) var(--ds-space-glass-x);
+  padding: var(--ds-space-1) var(--ds-space-2) var(--ds-space-block-y);
   display: flex;
   flex-direction: column;
   gap: var(--ds-space-1);
@@ -264,7 +264,7 @@ body.mobile-layer .fm-req-time { font-size: var(--ds-fs-hint); }
 .fm-search-input {
   flex: 1;
   min-width: 0;
-  padding: var(--ds-space-1h) var(--ds-space-glass-x);
+  padding: var(--ds-space-1h) var(--ds-space-inline-x);
   font-size: var(--ds-fs-body);
   border-radius: var(--ds-radius-input);
   border: 1px solid var(--glass-etched-border);
@@ -335,7 +335,7 @@ button.fm-search-btn:focus-visible {
 
 /* 结果区（命中 / 未找到 / 加载 / 失败 共用容器卡）：独立块，整宽 */
 .fm-result-card {
-  padding: var(--ds-space-glass-x);
+  padding: var(--ds-space-inset);
   border-radius: var(--ds-radius-xl);
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
@@ -359,7 +359,7 @@ button.fm-search-btn:focus-visible {
 .fm-result-person {
   display: flex;
   align-items: center;
-  gap: var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
   min-width: 0;
 }
 
@@ -417,7 +417,7 @@ button.fm-search-btn:focus-visible {
 .fm-verify-input {
   flex: 1;
   min-width: 0;
-  padding: 5px var(--ds-space-glass-x);
+  padding: 5px var(--ds-space-inline-x);
   font-size: var(--ds-fs-hint);
   border-radius: var(--ds-radius-input);
   border: 1px solid var(--glass-etched-border);
@@ -481,8 +481,8 @@ button.fm-verify-cancel:focus-visible {
 .fm-nf-entry {
   display: flex;
   align-items: center;
-  gap: var(--ds-space-glass-x);
-  padding: 7px var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
+  padding: 7px var(--ds-space-inline-x);
   border-radius: var(--ds-radius-button);
   cursor: pointer;
   transition: background 0.15s ease;
@@ -522,7 +522,7 @@ button.fm-verify-cancel:focus-visible {
   font-size: var(--ds-fs-meta);
   font-weight: 500;
   color: var(--color-text-muted, #888);
-  margin: var(--ds-space-2) var(--ds-space-glass-x) var(--ds-space-half);
+  margin: var(--ds-space-2) var(--ds-space-indent-x) var(--ds-space-half);
 }
 
 /* 请求行：放不下就换行（R5/R6）——动作区整体落到第二行右对齐，绝不挤压文本、
@@ -609,7 +609,7 @@ button.fm-req-decline:focus-visible {
 #fm-conversations {
   flex: 1;
   overflow-y: auto;
-  padding: var(--ds-space-1) var(--ds-space-2) var(--ds-space-glass-x);
+  padding: var(--ds-space-1) var(--ds-space-2) var(--ds-space-block-y);
 }
 
 .fm-conv-top { display: flex; align-items: baseline; gap: var(--ds-space-2); }
@@ -669,7 +669,7 @@ button.fm-req-decline:focus-visible {
 .fm-modal-header {
   display: flex;
   align-items: center;
-  gap: var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
   padding: var(--ds-space-3) var(--ds-space-4) var(--ds-space-3) var(--ds-space-5);
 }
 
@@ -736,7 +736,7 @@ button.fm-req-decline:focus-visible {
   font-family: inherit;
   font-size: var(--ds-fs-hint);
   font-weight: 500;
-  padding: var(--ds-space-1) var(--ds-space-glass-x);
+  padding: var(--ds-space-1) var(--ds-space-inline-x);
   border-radius: var(--ds-radius-input);
   border: 1px solid var(--glass-etched-border);
   background: transparent;
@@ -768,7 +768,7 @@ button.fm-req-decline:focus-visible {
 .fm-fwd-body {
   display: flex;
   flex-direction: column;
-  gap: var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
   padding: var(--ds-space-3) var(--ds-space-4) var(--ds-space-1);
   min-height: 0;
 }
@@ -841,7 +841,7 @@ button.fm-req-decline:focus-visible {
 .fm-fwd-row {
   display: flex;
   align-items: center;
-  gap: var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
   padding: var(--ds-space-2) var(--ds-space-3);
   background: transparent;
   border: none;
@@ -979,7 +979,7 @@ button.fm-req-decline:focus-visible {
 .fm-offline-bar,
 .fm-blocked-bar {
   margin: 0 var(--ds-space-4) var(--ds-space-1h);
-  padding: var(--ds-space-1h) var(--ds-space-glass-x);
+  padding: var(--ds-space-1h) var(--ds-space-inline-x);
   text-align: center;
   font-size: var(--ds-fs-hint);
   color: var(--color-text-muted, #888);
@@ -995,8 +995,8 @@ button.fm-req-decline:focus-visible {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: var(--ds-space-glass-x);
-  padding: var(--ds-space-2) var(--ds-space-4) var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
+  padding: var(--ds-space-2) var(--ds-space-4) var(--ds-space-block-y);
   border-top: 1px solid var(--glass-etched-border);
 }
 
@@ -1006,7 +1006,7 @@ button.fm-req-decline:focus-visible {
    （亮/暗同源，无新字面量色值）。 */
 .fm-flow-status {
   margin: auto;
-  padding: var(--ds-space-1h) var(--ds-space-glass-x);
+  padding: var(--ds-space-1h) var(--ds-space-inline-x);
   font-size: var(--ds-fs-hint);
   line-height: 1.5;
   text-align: center;
@@ -1292,7 +1292,7 @@ button.fm-req-decline:focus-visible {
 .fm-msg-md blockquote {
   border-left: 3px solid var(--color-border);
   margin: var(--ds-space-1h) 0;
-  padding-left: var(--ds-space-glass-x);
+  padding-left: var(--ds-space-inline-x);
   color: var(--color-text-muted);
 }
 .fm-msg-md hr {
@@ -1316,7 +1316,7 @@ button.fm-req-decline:focus-visible {
    的既有表达法；mask 只在溢出侧生效，短代码块不产生视觉差）。 */
 .fm-msg-md pre {
   background: var(--color-frame-hover);
-  padding: var(--ds-space-2) var(--ds-space-3) var(--ds-space-glass-x);
+  padding: var(--ds-space-2) var(--ds-space-3) var(--ds-space-block-y);
   border-radius: var(--ds-radius-input);
   margin: var(--ds-space-1h) 0;
   overflow-x: auto;
@@ -1608,7 +1608,7 @@ body > .fm-context-menu { z-index: 10001; }
   flex-direction: column;
   align-items: center;
   gap: var(--ds-space-1);
-  padding: var(--ds-space-glass-x) var(--ds-space-4) var(--ds-space-2);
+  padding: var(--ds-space-block-y) var(--ds-space-4) var(--ds-space-2);
 }
 .pf-hero-name {
   font-size: var(--ds-fs-title);
@@ -1632,7 +1632,7 @@ body > .fm-context-menu { z-index: 10001; }
 .pf-fields {
   display: flex;
   flex-direction: column;
-  gap: var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
   padding: var(--ds-space-1) var(--ds-space-4) var(--ds-space-2);
 }
 .pf-field {
@@ -1698,7 +1698,7 @@ body > .fm-context-menu { z-index: 10001; }
    🔴 文本 2 行封顶落在内层 `.fm-quote-text`（块盒本身不夹取）。 */
 .fm-quote-block {
   margin-bottom: var(--ds-space-1h);
-  padding: var(--ds-space-1h) var(--ds-space-glass-x);
+  padding: var(--ds-space-1h) var(--ds-space-inline-x);
   border-radius: var(--ds-radius-button);
   background: rgba(0, 0, 0, 0.035);
   box-shadow: none;
@@ -1757,7 +1757,7 @@ body > .fm-context-menu { z-index: 10001; }
    + 5/8 内边距），不按稿面另造「下沉面 + 10px 圆角」第二套。
    `[hidden]` 必须压过 display ⇒ 用 `:not([hidden])`。 */
 .fm-quote-strip {
-  padding: 0 var(--ds-space-4) var(--ds-space-glass-x);
+  padding: 0 var(--ds-space-4) var(--ds-space-block-y);
 }
 .fm-quote-strip:not([hidden]) { display: block; }
 .fm-quote-strip .att-ref { max-width: 100%; }
@@ -1811,7 +1811,7 @@ body > .fm-context-menu { z-index: 10001; }
    动作**等分**（`flex:1`）。可用动作 = 转发 / 逐条转发 / 合并转发（二期）+ 退出 ——
    实际接线 3 项（转发=转发窗口（D7）/ 逐条转发=既有目标选择器 / 退出），合并转发标二期。 */
 .fm-select-bar {
-  padding: var(--ds-space-glass-x) var(--ds-space-4) var(--ds-space-3);
+  padding: var(--ds-space-block-y) var(--ds-space-4) var(--ds-space-3);
   border-top: 1px solid var(--glass-etched-border);
   font-size: var(--ds-fs-hint);
   color: var(--color-text-muted, #888);
@@ -1844,7 +1844,7 @@ body > .fm-context-menu { z-index: 10001; }
 .fm-input-bar {
   display: flex;
   gap: var(--ds-space-2);
-  padding: var(--ds-space-glass-x) var(--ds-space-4) 14px;
+  padding: var(--ds-space-block-y) var(--ds-space-4) 14px;
   border-top: 1px solid var(--glass-etched-border);
 }
 
@@ -2052,12 +2052,12 @@ body > .fm-context-menu { z-index: 10001; }
 /* 群设置抽屉（窗头下方、消息区上方；可滚动） */
 .fm-group-settings {
   border-bottom: 1px solid rgb(var(--sapphire) / 0.12);
-  padding: var(--ds-space-glass-x) 14px var(--ds-space-3);
+  padding: var(--ds-space-block-y) 14px var(--ds-space-3);
   max-height: 46vh;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
 }
 .fm-gs-section { display: flex; flex-direction: column; gap: var(--ds-space-1h); }
 /* 抽屉「群信息头」规则组（`.fm-gs-head` / `-avatar` / `-meta` / `-name` / `-sub`）
@@ -2242,8 +2242,8 @@ body > .fm-context-menu { z-index: 10001; }
   gap: var(--ds-space-half);
 }
 .fm-pick-modal .fm-pick-row {
-  gap: var(--ds-space-glass-x);
-  padding: 7px var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
+  padding: 7px var(--ds-space-inline-x);
   border-radius: var(--ds-radius-button);
   transition: background 0.15s ease, box-shadow 0.15s ease;
 }
@@ -2337,7 +2337,7 @@ body > .fm-context-menu { z-index: 10001; }
   padding: var(--ds-space-half) var(--ds-space-1) var(--ds-space-1h); gap: var(--ds-space-1h);
 }
 .fm-device-fleet-bar .fleet-btn {
-  font-size: var(--ds-fs-meta); padding: var(--ds-space-1) var(--ds-space-glass-x); border-radius: var(--ds-radius-input); cursor: pointer;
+  font-size: var(--ds-fs-meta); padding: var(--ds-space-1) var(--ds-space-inline-x); border-radius: var(--ds-radius-input); cursor: pointer;
   border: 1px solid var(--glass-control-border);
   background: var(--glass-control-bg);
   color: var(--color-frame-text);

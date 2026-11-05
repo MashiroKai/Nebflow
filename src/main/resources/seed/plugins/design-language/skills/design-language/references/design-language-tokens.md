@@ -70,7 +70,7 @@
 |---|---|---|---|---|
 | 0 | 363 | 7 | 264 | 合法（清零） |
 | 8px | 239 | 186 | 24 | 阶梯 `--ds-space-2` |
-| **10px** | **235** | **53** | **22** | 档外高频；已成玻璃条横缝既有档 → 具名例外 `--ds-space-glass-x` |
+| **10px** | **235** | **53** | **22** | 档外高频；按布局角色分六槽（`--ds-space-{inline-x,block-y,inset,inline-gap,stack-gap,indent-x}`，2026-11-04 命名债批） |
 | 12px | 204 | 31 | 12 | 阶梯 `--ds-space-3` |
 | **6px** | **168** | **137** | **44** | 档外最高频（合计 349）→ 具名半步档（见 §3-②） |
 | 4px | 161 | 72 | 44 | 阶梯 `--ds-space-1` |
@@ -140,7 +140,7 @@
 
 `var()` 引用 209 处的集中度：`--ds-fs-meta` 46、`--mfs-min` 44（= `--ds-fs-body` 13）、`--ds-fs-body` 28、
 `--ds-fs-hint` 22、`--mfs-body` 15、`--mfs-sub` 12、`--mfs-callout` 9、`--ds-fs-btn` 5、`--ds-fs-title` 4、
-`--ds-fs-bubble` 1、`--ds-fs-row` 1、`--ds-fs-capsule` 1；感知域走 `--st-fs-*`（11/11.5/12.5/13/15 官网族）。
+`--ds-fs-bubble` 1、`--ds-fs-row` 1、`--ds-fs-subtitle` 14（= 原胶囊/卡正文两槽合并后的单槽）；感知域走 `--st-fs-*`（11/11.5/12.5/13/15 官网族）。
 
 ## 2. 定版刻度（档 = 变量名 + 值 + 用在哪）
 
@@ -172,7 +172,12 @@
 | 1 | `--ds-space-1` | 4px | 紧排件缝、行内图标与文字 |
 | 例外·半步（`--ds-space-1h`，2026-11-04 实施批出生） | `--ds-space-1h` | 6px | 图标+文字小缝、chip 内距（实测 349 处，见 §3-②） |
 | 2 | `--ds-space-2` | 8px | 控件间 gap、行内距、按钮行 |
-| 例外·玻璃条横缝 | `--ds-space-glass-x` | 10px | 玻璃条/胶囊横缝既有档（迁移向 8/12 渐进收） |
+| 例外·10px 内横距（2026-11-04 命名债批） | `--ds-space-inline-x` | 10px | 块/控件与内容的左右内距（151 处） |
+| 例外·10px 内纵距 | `--ds-space-block-y` | 10px | 块上下内距（95 处） |
+| 例外·10px 四边等内距 | `--ds-space-inset` | 10px | `padding` 单值（5 处） |
+| 例外·10px 行内件缝 | `--ds-space-inline-gap` | 10px | 同一行相邻件之间 `gap`（56 处） |
+| 例外·10px 块间纵距 | `--ds-space-stack-gap` | 10px | 块与块之间纵向 `margin`（49 处） |
+| 例外·10px 行缩进 | `--ds-space-indent-x` | 10px | 相对容器左缘的横向偏移（9 处） |
 | 3 | `--ds-space-3` | 12px | 卡内块距、行横距、节内块距 |
 | 4 | `--ds-space-4` | 16px | 节间距（`--ds-section-gap`）、弹窗头横距 |
 | 5 | `--ds-space-5` | 20px | 面板左右留白、弹窗体左右 |
@@ -220,11 +225,11 @@
 | title-lg | `--ds-fs-title-lg` | 28px | 手机大标题档 |
 | 具名槽·气泡 | `--ds-fs-bubble` | 14.5px | 主对话气泡（2026-09-12 裁定值） |
 | 具名槽·会话行 | `--ds-fs-row` | 13.5px | 侧栏会话行主文案 |
-| 具名槽·胶囊 | `--ds-fs-capsule` | 14px | canvas 标题胶囊 |
-| 具名槽·卡正文 | `--ds-fs-card-body` | 14px | 过渡卡正文/说明 |
+| 具名槽·次标题/次级正文 | `--ds-fs-subtitle` | 14px | body↔title 之间一档（原胶囊/卡正文两槽同值合并，2026-11-04） |
 | 具名槽·卡主标题 | `--ds-fs-card-hero` | 21px | 过渡卡主标题（官网 auth 域档） |
 | 具名槽·手机次说明 | `--ds-fs-mobile-sub` | 15px | 手机档次正文 |
 | 具名槽·手机正文/输入 | `--ds-fs-mobile-callout` | 16px | 手机正文/输入件（iOS 不缩放硬下限） |
+| 具名槽·桌面 callout | `--ds-fs-callout` | 16px | 桌面语境 16px（文档正文/弹窗标题/图标字形；与 mobile-callout 同值异域） |
 | 手机映射 | `--mfs-min/sub/body/callout/title` | 13/15/17/16/28 | 一跳别名指向上面同值槽（禁复制字面量） |
 
 ## 3. 收敛判定（近似档为何归这一档）
@@ -240,8 +245,8 @@
 ② **间距：4px 栅格为纲，但承认一个「半步」实测事实。**
 6px 实测 349 处（padding 168 + gap 137 + margin 44），集中在「图标与文字的缝」「chip 内距」两类
 场景——收敛到 4px 会让密集控件贴死、收敛到 8px 会让每行膨胀 2px×N 处，两者都是全局视觉回归。
-故 6px 以**具名半步档**收编（待建 `--ds-space-1h`），限定小件内缝；10px 同理已是既有
-`--ds-space-glass-x`。其余档外值（5/7/9/11/13/14/18/22…）无独立语义，一律就近归栅格档。
+故 6px 以**具名半步档**收编（待建 `--ds-space-1h`），限定小件内缝；10px 同理是既有半步例外，
+2026-11-04 起按布局角色分六槽（`inline-x/block-y/inset/inline-gap/stack-gap/indent-x`）。其余档外值（5/7/9/11/13/14/18/22…）无独立语义，一律就近归栅格档。
 
 ③ **字号：11px 是硬下限，下限外一律收敛。**
 10px 59 处 + 10.5px 13 + 9px 14 + 8.5/9.5/8/7px 9 处 = **95 处低于可读下限**，这是 §9 整改判例
@@ -370,19 +375,24 @@ node scripts/check-design-spec-sync.mjs --json   # 机器读
 | `--ds-space-8` | `32px` | 大区块留白 |
 | `--ds-space-12` | `48px` | 区块级留白 |
 | `--ds-space-16` | `64px` | 大区块级留白 |
-| `--ds-space-glass-x` | `10px` | 玻璃条横缝既有档（迁移向 8/12） |
+| `--ds-space-inline-x` | `10px` | 10px 档·内横距（左右内距，151 处） |
+| `--ds-space-block-y` | `10px` | 10px 档·内纵距（上下内距，95 处） |
+| `--ds-space-inset` | `10px` | 10px 档·四边等内距（padding 单值，5 处） |
+| `--ds-space-inline-gap` | `10px` | 10px 档·行内件缝（gap，56 处） |
+| `--ds-space-stack-gap` | `10px` | 10px 档·块间纵距（margin 纵轴，49 处） |
+| `--ds-space-indent-x` | `10px` | 10px 档·行缩进（margin 横轴，9 处） |
 | `--ds-space-1h` | `6px` | 半步件缝例外档：图标+文字小缝、chip 内距 |
 | `--ds-fs-meta` | `11px` | meta/徽标/小节标签（可读下限） |
 | `--ds-fs-hint` | `12px` | hint/caption |
 | `--ds-fs-btn` | `12px` | 按钮文字 |
 | `--ds-fs-body` | `13px` | 正文/表单标签/输入 |
 | `--ds-fs-row` | `13.5px` | 侧栏会话行主文案（具名槽） |
-| `--ds-fs-capsule` | `14px` | canvas 标题胶囊（具名槽） |
-| `--ds-fs-card-body` | `14px` | 过渡卡正文（具名槽） |
+| `--ds-fs-subtitle` | `14px` | 次标题/次级正文（具名槽；原 capsule+card-body 同值合并） |
 | `--ds-fs-bubble` | `14.5px` | 主对话气泡（具名槽） |
 | `--ds-fs-title` | `15px` | 面板标题、卡片问题行 |
 | `--ds-fs-mobile-sub` | `15px` | 手机次正文（具名槽） |
 | `--ds-fs-mobile-callout` | `16px` | 手机正文/输入件（具名槽） |
+| `--ds-fs-callout` | `16px` | 桌面语境 16px callout（具名槽，与 mobile-callout 同值异域） |
 | `--ds-fs-lead` | `17px` | 长文/引导正文 |
 | `--ds-fs-display` | `20px` | 页面级大标题、空态主句 |
 | `--ds-fs-card-hero` | `21px` | 过渡卡主标题（具名槽） |

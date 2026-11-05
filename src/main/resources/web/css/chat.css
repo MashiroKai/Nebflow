@@ -54,7 +54,7 @@
      折射细线不动（作者只裁底缘）。 */
   border-bottom-color: transparent;
   color: var(--color-frame-text-bright);
-  padding: var(--ds-space-glass-x) var(--ds-space-4);
+  padding: var(--ds-space-block-y) var(--ds-space-4);
   margin: var(--ds-space-4) 0 0 0;
   border-radius: var(--ds-radius-shell);
   font-size: 14px;
@@ -943,7 +943,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   align-items: center;
   justify-content: center;
   gap: var(--ds-space-1h);
-  padding: var(--ds-space-glass-x) 0;
+  padding: var(--ds-space-block-y) 0;
   font-size: var(--ds-fs-hint);
   color: #999;
   min-height: 36px;
@@ -957,7 +957,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 .history-end {
   text-align: center;
-  padding: var(--ds-space-glass-x) 0 var(--ds-space-1h);
+  padding: var(--ds-space-block-y) 0 var(--ds-space-1h);
   font-size: var(--ds-fs-meta);
   color: #bbb;
   user-select: none;
@@ -1214,7 +1214,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
   border-radius: var(--ds-radius-input);
-  padding: var(--ds-space-1h) var(--ds-space-glass-x);
+  padding: var(--ds-space-1h) var(--ds-space-inline-x);
   margin-top: var(--ds-space-half);
   color: var(--color-text);
   font-size: var(--ds-fs-hint);
@@ -1365,7 +1365,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .bubble.ai img.nf-img-failed {
   min-height: 44px;
   box-sizing: border-box;
-  padding: var(--ds-space-3) var(--ds-space-glass-x);
+  padding: var(--ds-space-3) var(--ds-space-inline-x);
   border: 1px dashed rgba(128, 128, 128, 0.45);
   border-radius: var(--ds-radius-input);
   background: transparent;
@@ -1395,7 +1395,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .bubble.ai li, .bubble.injected li, .ask-bub.ai li { margin: var(--ds-space-half) 0; }
 .bubble.ai pre, .bubble.injected pre, .ask-bub.ai pre {
   background: #f5f5f5;
-  padding: var(--ds-space-2) var(--ds-space-3) var(--ds-space-glass-x);
+  padding: var(--ds-space-2) var(--ds-space-3) var(--ds-space-block-y);
   border-radius: var(--ds-radius-input);
   overflow-x: auto;
   font-size: var(--ds-fs-hint);
@@ -1472,7 +1472,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .bubble.ai blockquote, .bubble.injected blockquote, .ask-bub.ai blockquote {
   border-left: 3px solid var(--color-border);
   margin: var(--ds-space-1h) 0;
-  padding-left: var(--ds-space-glass-x);
+  padding-left: var(--ds-space-inline-x);
   color: var(--color-text-muted);
 }
 .bubble.ai h1, .bubble.ai h2, .bubble.ai h3, .bubble.ai h4,
@@ -1481,7 +1481,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   margin: var(--ds-space-2) 0 var(--ds-space-1) 0;
   font-weight: 600;
 }
-.bubble.ai h1, .bubble.injected h1, .ask-bub.ai h1 { font-size: var(--ds-fs-mobile-callout); }
+.bubble.ai h1, .bubble.injected h1, .ask-bub.ai h1 { font-size: var(--ds-fs-callout); }
 .bubble.ai h2, .bubble.injected h2, .ask-bub.ai h2 { font-size: var(--ds-fs-title); }
 .bubble.ai h3, .bubble.injected h3, .ask-bub.ai h3 { font-size: 14px; }
 .bubble.ai table, .bubble.injected table, .ask-bub.ai table {
@@ -1620,7 +1620,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   overflow-x: auto;
   background: rgba(0,0,0,0.03);
   border-radius: var(--ds-radius-input);
-  padding: var(--ds-space-glass-x) var(--ds-space-3);
+  padding: var(--ds-space-block-y) var(--ds-space-3);
   border: 1px solid var(--color-frame-border);
 }
 .tool-stream-body pre.tool-body-pre {
@@ -2448,7 +2448,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .ob-actions {
   display: flex;
   gap: var(--ds-space-2);
-  margin-top: var(--ds-space-glass-x);
+  margin-top: var(--ds-space-stack-gap);
 }
 .ob-actions button {
   transition: background 0.15s, color 0.15s, border-color 0.15s,
@@ -2646,7 +2646,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   display: flex;
   flex-wrap: wrap;
   gap: var(--ds-space-2);
-  margin-top: var(--ds-space-glass-x);
+  margin-top: var(--ds-space-stack-gap);
 }
 /* Context-window row (personal-agent batch 2026-10-04, author item ②): the
    model question's "set the context size" control. Revealed when a configured
@@ -2723,7 +2723,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    （ghost 座）依旧零面，.ask-card 照旧直接浮在纸上——文字入泡、卡不上泡。
    旧「15px 内容轴」对齐（HYBRID §4.2）随题文入泡让位（作者令优先）。 */
 .bubble.ai.ob-ghost-seat .ob-body {
-  padding: var(--ds-space-glass-x) 14px;
+  padding: var(--ds-space-block-y) 14px;
   background: var(--glass-bub-ai-bg);
   border: 1px solid var(--glass-bub-ai-border);
   border-radius: var(--ds-radius-card-lg);
@@ -2745,7 +2745,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .ask-card .opt-row .option-btn {
   display: flex;
   align-items: flex-start;
-  gap: var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
   width: 100%;
   box-sizing: border-box;
   padding: 9px var(--ds-space-1h);
@@ -2925,7 +2925,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   display: flex;
   align-items: center;
   gap: var(--ds-space-1h);
-  padding: 5px var(--ds-space-glass-x);
+  padding: 5px var(--ds-space-inline-x);
   border: 1px solid var(--glass-control-border);
   border-radius: var(--ds-radius-input);
   font-size: var(--ds-fs-body);
@@ -3033,7 +3033,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   display: flex;
   align-items: center;
   gap: var(--ds-space-2);
-  padding: 5px var(--ds-space-glass-x);
+  padding: 5px var(--ds-space-inline-x);
   border: 1px solid var(--glass-control-border);
   border-radius: var(--ds-radius-input);
   font-size: var(--ds-fs-body);
@@ -3354,7 +3354,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   padding: var(--ds-space-1h) 14px;
   font-size: var(--ds-fs-hint);
   border-radius: var(--ds-radius-chip);
-  margin-bottom: var(--ds-space-glass-x);
+  margin-bottom: var(--ds-space-stack-gap);
   z-index: 20;
   box-shadow: 0 1px 4px rgba(0,0,0,0.1);
 }
@@ -3541,7 +3541,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   display: flex;
   flex-direction: column;
   gap: var(--ds-space-1);
-  padding: var(--ds-space-2) var(--ds-space-glass-x);
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
   border-bottom: 1px solid var(--color-border);
   font-size: var(--ds-fs-hint);
   line-height: 1.45;
@@ -3579,7 +3579,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   display: flex;
   align-items: center;
   gap: var(--ds-space-1h);
-  padding: var(--ds-space-1h) var(--ds-space-glass-x);
+  padding: var(--ds-space-1h) var(--ds-space-inline-x);
   margin-bottom: var(--ds-space-2);
   border-radius: var(--ds-radius-chip);
   font-size: var(--ds-fs-hint);
@@ -3625,11 +3625,11 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   gap: var(--ds-space-1h);
   background: rgba(139, 92, 246, 0.12);
   color: #8b5cf6;
-  padding: 3px var(--ds-space-glass-x);
+  padding: 3px var(--ds-space-inline-x);
   border-radius: 9999px;
   font-size: var(--ds-fs-meta);
   font-weight: 500;
-  margin-bottom: var(--ds-space-glass-x);
+  margin-bottom: var(--ds-space-stack-gap);
 }
 .perm-source-badge svg {
   flex-shrink: 0;
@@ -3664,8 +3664,8 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    为文本 chip：主操作「重启并续跑」amber 字，其余中性字，hover 才起淡底。
    No overlay dimming (per the standing no-overlay ruling). */
 .error-escalation-card {
-  margin: var(--ds-space-glass-x) 14px var(--ds-space-1) 14px;
-  padding: var(--ds-space-glass-x) var(--ds-space-3);
+  margin: var(--ds-space-stack-gap) 14px var(--ds-space-1) 14px;
+  padding: var(--ds-space-block-y) var(--ds-space-3);
   border-radius: var(--ds-radius-card-sm);
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
@@ -3719,7 +3719,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   pointer-events: auto;
   font: 500 12px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   border-radius: var(--ds-radius-input);
-  padding: var(--ds-space-1) var(--ds-space-glass-x);
+  padding: var(--ds-space-1) var(--ds-space-inline-x);
   cursor: pointer;
   white-space: nowrap;
   transition: background 0.15s cubic-bezier(0.4, 0, 0.2, 1),
@@ -3830,7 +3830,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    .dev-row/.dev-btn/.dev-menu 族（projectPanel.css），仅间距按面板基调微调；
    下拉菜单收窄一档（面板宽 520px，不必 300px 起步）。 */
 .wsp-dev-row {
-  margin-bottom: var(--ds-space-glass-x);
+  margin-bottom: var(--ds-space-stack-gap);
 }
 .wsp-dev-row .dev-menu {
   min-width: 240px;
@@ -3839,10 +3839,10 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .wsp-crumbs {
   font-size: var(--ds-fs-hint);
   color: var(--color-frame-text-muted);
-  margin-bottom: var(--ds-space-glass-x);
+  margin-bottom: var(--ds-space-stack-gap);
   word-break: break-all;
   line-height: 1.4;
-  padding: var(--ds-space-1h) var(--ds-space-glass-x);
+  padding: var(--ds-space-1h) var(--ds-space-inline-x);
   background: var(--glass-etched-bg);
   border-radius: var(--ds-radius-input);
   border: 1px solid var(--glass-border);
@@ -3900,7 +3900,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   color: var(--color-frame-input-text);
   border: 1px solid var(--glass-etched-border);
   border-radius: var(--ds-radius-input);
-  padding: var(--ds-space-1) var(--ds-space-glass-x);
+  padding: var(--ds-space-1) var(--ds-space-inline-x);
   font-size: var(--ds-fs-hint);
   font-family: inherit;
   outline: none;
@@ -4014,7 +4014,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .wsp-search-input {
   flex: 1;
   min-width: 0;
-  padding: var(--ds-space-1h) var(--ds-space-glass-x);
+  padding: var(--ds-space-1h) var(--ds-space-inline-x);
   font-size: var(--ds-fs-hint);
   font-family: inherit;
   border-radius: var(--ds-radius-input);
@@ -4052,7 +4052,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   font-size: var(--ds-fs-meta);
   color: var(--color-frame-text-muted);
   margin-bottom: var(--ds-space-2);
-  padding: 5px var(--ds-space-glass-x);
+  padding: 5px var(--ds-space-inline-x);
   border-radius: var(--ds-radius-input);
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-border);
@@ -4072,7 +4072,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   font-size: var(--ds-fs-meta);
   color: var(--status-word);
   margin-bottom: var(--ds-space-2);
-  padding: 5px var(--ds-space-glass-x);
+  padding: 5px var(--ds-space-inline-x);
   border-radius: var(--ds-radius-input);
   background: color-mix(in srgb, var(--status-error-icon) 8%, transparent);
   border: 1px solid color-mix(in srgb, var(--status-error-icon) 32%, transparent);
@@ -4258,7 +4258,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   inset: 0;
   display: flex;
   align-items: flex-start;
-  gap: var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
   min-width: 0;
   animation: nf-wl-in 0.3s ease both;
 }
@@ -4511,7 +4511,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    demo/pop-upgrade-demo.html (git-ignored via `.gitignore:38` `*demo*.html`).
    ═════════════════════════════════════════════════════════════════════════ */
 
-.row.pop-artifact { display: flex; justify-content: flex-start; margin: var(--ds-space-2) 0 var(--ds-space-glass-x); }
+.row.pop-artifact { display: flex; justify-content: flex-start; margin: var(--ds-space-2) 0 var(--ds-space-stack-gap); }
 /* footer 信息条落位（Pop 交付卡 footer 批，作者令 2026-11-01 16:19）：LLM Pop 行
    转**列向**——徽章（.duration-badge，buildPopArtifactRow 行尾追加）落卡片组下方、
    左缘对齐（AI 行族同侧；用户侧 .row.user-media 经 .row.user 的 column+flex-end
@@ -4520,7 +4520,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .row.pop-artifact:not(.user) { flex-direction: column; align-items: flex-start; }
 .pop-group {
   display: flex; flex-direction: column; align-items: flex-start;
-  gap: var(--ds-space-glass-x); min-width: 0;
+  gap: var(--ds-space-inline-gap); min-width: 0;
   /* 2026-10-30 收敛批：消费消息列宽单源 token（--msg-bubble-max-w，值的家 =
      sapphire.css「Shared message surface」③A3 判据——面内零字面量，改一处两侧同步；
      写死 78% 被 scripts/check-msgstyle-single-source.mjs「A3 面内不得再写死 78%」判红）。 */
@@ -4602,7 +4602,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .pop-img.nf-img-failed, .pop-video.nf-img-failed, .pop-audio.nf-img-failed {
   min-height: 44px;
   box-sizing: border-box;
-  padding: var(--ds-space-3) var(--ds-space-glass-x);
+  padding: var(--ds-space-3) var(--ds-space-inline-x);
   border: 1px dashed rgba(128, 128, 128, 0.45);
   border-radius: var(--ds-radius-input);
   background: transparent;
@@ -4714,7 +4714,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   position: absolute; bottom: calc(100% + 9px); right: -6px;
   background: #1b1e26; color: #fff;
   font-size: var(--ds-fs-meta); font-weight: 500; white-space: nowrap;
-  padding: 5px var(--ds-space-glass-x); border-radius: 7px;
+  padding: 5px var(--ds-space-inline-x); border-radius: 7px;
   opacity: 0; transform: translateY(3px);
   pointer-events: none; transition: opacity 0.16s, transform 0.16s;
   z-index: 5;
@@ -4756,7 +4756,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    `user` class (popArtifacts.buildUserMediaRow), so .row.user's
    align-items:flex-end owns the sender side; inside the group every card
    mirrors the same side (mixed 220px stack + 300px file cards stay flush). */
-.row.user-media { display: flex; justify-content: flex-start; margin: var(--ds-space-2) 0 var(--ds-space-glass-x); }
+.row.user-media { display: flex; justify-content: flex-start; margin: var(--ds-space-2) 0 var(--ds-space-stack-gap); }
 .row.user-media .pop-group { align-items: flex-end; }
 
 /* Canvas secondary entry on a media CARD (flat faces + expanded stack layers).
@@ -4818,7 +4818,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    the VIEW container; the lightbox mounts on document.body — clamp it there. */
 .nf-static .nf-lightbox.nf-lightbox--media, body .nf-static ~ .nf-lightbox.nf-lightbox--media { animation: none; }
 .nf-lightbox-stage {
-  display: flex; flex-direction: column; gap: var(--ds-space-glass-x);
+  display: flex; flex-direction: column; gap: var(--ds-space-inline-gap);
   max-width: min(92vw, 1100px);
   max-height: 90vh;
 }
@@ -4855,7 +4855,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .nf-lightbox-media.nf-img-failed {
   min-width: 220px; min-height: 44px;
   box-sizing: border-box;
-  padding: var(--ds-space-3) var(--ds-space-glass-x);
+  padding: var(--ds-space-3) var(--ds-space-inline-x);
   border: 1px dashed rgba(255, 255, 255, 0.4);
   object-fit: none;
 }
@@ -5004,7 +5004,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   width: auto;
   max-width: 264px;
   gap: 9px;
-  padding: 7px var(--ds-space-glass-x) 7px 7px;
+  padding: 7px var(--ds-space-inline-x) 7px 7px;
   background: var(--color-surface-2, rgba(127, 127, 127, 0.08));
   border: 1px solid var(--glass-etched-border, rgba(91, 127, 191, 0.10));
   border-radius: var(--ds-radius-card-sm);
@@ -5068,7 +5068,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .search-media-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
-  gap: var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
 }
 .search-media-card {
   position: relative;
@@ -5107,7 +5107,7 @@ object.search-media-thumb { object-fit: initial; }
 /* Link / file cards: icon + text rows. */
 .search-media-ext {
   flex-shrink: 0; align-self: flex-start;
-  margin: var(--ds-space-glass-x) 0 0 var(--ds-space-glass-x);
+  margin: var(--ds-space-stack-gap) 0 0 var(--ds-space-indent-x);
   min-width: 40px; height: 26px;
   display: inline-flex; align-items: center; justify-content: center;
   padding: 0 7px; border-radius: var(--ds-radius-chip);
@@ -5155,7 +5155,7 @@ object.search-media-thumb { object-fit: initial; }
    气泡驱宽复合盒，引用块渲染宽 = 气泡宽（窄气泡跟着窄），不再 ≤ 100% 行宽。 */
 .msg-quote-block {
   margin: 0 0 var(--ds-space-1h);
-  padding: var(--ds-space-1h) var(--ds-space-glass-x);
+  padding: var(--ds-space-1h) var(--ds-space-inline-x);
   border-radius: var(--ds-radius-button);
   background: rgba(0, 0, 0, 0.035);
   box-shadow: none;
@@ -5410,7 +5410,7 @@ body:not(.mobile-layer) #agent-avatar-btn .agent-avatar-logo-img {
 .ap-pane {
   display: flex;
   flex-direction: column;
-  gap: var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
 }
 #memory-modal[data-pane='memory'] .ap-pane { display: none; }
 .ap-pane .ap-avatar-box {
@@ -5495,7 +5495,7 @@ body:not(.mobile-layer) #agent-avatar-btn .agent-avatar-logo-img {
   flex: 1;
   min-width: 0;
   height: 34px;
-  padding: 0 var(--ds-space-glass-x);
+  padding: 0 var(--ds-space-inline-x);
   border-radius: var(--ds-radius-input);
   border: 1px solid var(--glass-border);
   background: var(--glass-etched-bg, rgba(0, 0, 0, 0.025));
