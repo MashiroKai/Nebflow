@@ -575,7 +575,7 @@ class AnthropicAdapter(
       val request = applyHeaders(
         basicRequest
           .post(uri"$endpoint")
-          .header("content-type", "application/json")
+          .contentType("application/json")
           .body(bodyOf(p, streaming = false).noSpaces)
       )
 
@@ -710,7 +710,7 @@ class AnthropicAdapter(
           val request = applyHeaders(
             basicRequest
               .post(uri"$endpoint")
-              .header("content-type", "application/json")
+              .contentType("application/json")
               .body(bodyOf(p, streaming = true).noSpaces)
           ).response(asStreamUnsafe(Fs2Streams[IO])).readTimeout(Defaults.LlmReadTimeoutSec.seconds)
 
