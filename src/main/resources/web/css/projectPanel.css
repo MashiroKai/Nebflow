@@ -72,7 +72,7 @@
   width: 26px;
   height: 26px;
   border: 1px solid var(--color-border);
-  border-radius: 7px;
+  border-radius: var(--ds-radius-input);
   background: transparent;
   color: var(--color-text-muted);
   display: inline-flex;
@@ -101,7 +101,7 @@
   width: 26px;
   height: 26px;
   border: 1px solid transparent;
-  border-radius: 7px;
+  border-radius: var(--ds-radius-input);
   background: transparent;
   color: var(--color-text-muted);
   display: inline-flex;
@@ -509,11 +509,11 @@
   min-width: 0;
   display: flex;
   align-items: flex-start;
-  gap: 5px;
+  gap: var(--ds-space-1);
   font-size: var(--ds-fs-hint);
   color: var(--status-word);
 }
-.proj-create-error .st-ic { width: 12px; height: 12px; margin-top: 1px; flex-shrink: 0; }
+.proj-create-error .st-ic { width: 12px; height: 12px; margin-top: var(--ds-space-hair); flex-shrink: 0; }
 .proj-create-count {
   flex: 0 0 auto;
   font-size: var(--ds-fs-hint);
@@ -523,7 +523,7 @@
 /* 超 500 时染色（ui-status-redesign 盘点 #50）：11.5px 红数字退役 → 数字转
    中性、行首 triangle-alert 琥珀图标（projectTab.js 注入，非阻断超量=警示档）。 */
 .proj-create-count.is-over { color: var(--status-word); }
-.proj-create-count.is-over .st-ic { width: 11px; height: 11px; margin-right: 3px; vertical-align: -1px; }
+.proj-create-count.is-over .st-ic { width: 11px; height: 11px; margin-right: var(--ds-space-1); vertical-align: -1px; }
 .proj-create-hint { flex: 1; min-width: 0; }
 
 /* ── D4 path slot (author ruling 2026-09-24: "use a path picker to choose, rather
@@ -545,7 +545,7 @@
   flex: 0 0 auto;
   font: 500 var(--ds-fs-hint) -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text);
-  padding: 7px 14px;
+  padding: var(--ds-space-2) 14px;
   border-radius: var(--ds-radius-button);
   cursor: pointer;
 }
@@ -578,8 +578,8 @@
 .dev-btn {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  padding: 7px var(--ds-space-3);
+  gap: var(--ds-space-1h);
+  padding: var(--ds-space-2) var(--ds-space-3);
   border: none;
   border-radius: var(--ds-radius-button);
   background: var(--color-frame-hover);
@@ -653,7 +653,7 @@
   display: flex;
   align-items: center;
   gap: var(--ds-space-2);
-  padding: 7px var(--ds-space-inline-x);
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
   border: none;
   border-radius: var(--ds-radius-chip);
   background: transparent;
@@ -713,7 +713,7 @@
   align-items: center;
   gap: var(--ds-space-1);
   padding: var(--ds-space-half) var(--ds-space-2);
-  border-radius: 7px;
+  border-radius: var(--ds-radius-input);
   background: rgb(var(--sapphire) / 0.12);
   color: rgb(var(--sapphire));
   font: 600 var(--ds-fs-meta)/1.6 -apple-system, BlinkMacSystemFont, sans-serif;
@@ -762,8 +762,8 @@
   display: inline-flex;
   align-items: center;
   gap: var(--ds-space-1);
-  padding: var(--ds-space-half) 7px;
-  border-radius: 7px;
+  padding: var(--ds-space-half) var(--ds-space-2);
+  border-radius: var(--ds-radius-input);
   background: rgb(var(--sapphire) / 0.12);
   color: rgb(var(--sapphire));
   font: 600 var(--ds-fs-meta)/1.5 -apple-system, BlinkMacSystemFont, sans-serif;
@@ -827,11 +827,11 @@
   justify-content: flex-end;
   gap: var(--ds-space-2);
 }
-.project-desc-save { font-size: var(--ds-fs-hint); padding: 5px 14px; }
+.project-desc-save { font-size: var(--ds-fs-hint); padding: var(--ds-space-1h) 14px; }
 .project-desc-cancel {
   border: none;
   background: transparent;
-  padding: 5px var(--ds-space-2);
+  padding: var(--ds-space-1h) var(--ds-space-2);
   font: 500 var(--ds-fs-hint)/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: var(--color-text-muted);
   cursor: pointer;
@@ -1003,7 +1003,7 @@
 .delegate-chain-meta {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--ds-space-1);
   min-width: 0;
   flex-wrap: wrap;
 }
@@ -1023,7 +1023,7 @@
 .delegate-chain-dot.st-pending { background: var(--color-text-muted, #888); }
 .delegate-chain-steps {
   flex: 0 0 auto;
-  margin-left: 3px;
+  margin-left: var(--ds-space-1);
   font: 600 var(--ds-fs-meta)/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text-muted);
 }

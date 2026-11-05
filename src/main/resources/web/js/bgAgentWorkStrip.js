@@ -44,12 +44,12 @@ const STRIP_CSS = `<style id="${STRIP_CSS_ID}">
   color: var(--color-frame-text-dim, var(--color-text-muted));
 }
 .bgws-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bgws-value .st-ic { width: 11px; height: 11px; margin-right: 3px; vertical-align: -1px; }
+.bgws-value .st-ic { width: 11px; height: 11px; margin-right: var(--ds-space-1); vertical-align: -1px; }
 .bgws-idle { color: var(--status-warn-icon); font-weight: 500; }
 .bgws-task {
   cursor: pointer;
   border-radius: var(--ds-radius-chip);
-  padding: 1px var(--ds-space-1);
+  padding: var(--ds-space-hair) var(--ds-space-1);
   margin-left: -4px;
 }
 .bgws-task:hover { background: var(--color-frame-hover); }

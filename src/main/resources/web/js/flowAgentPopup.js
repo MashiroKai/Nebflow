@@ -334,7 +334,7 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   animation: none;
 }
 .flow-agent-footer.stuck .fa-task { color: var(--status-word); }
-.flow-agent-footer .fa-task .st-ic { width: 11px; height: 11px; margin-right: 3px; vertical-align: -1px; }
+.flow-agent-footer .fa-task .st-ic { width: 11px; height: 11px; margin-right: var(--ds-space-1); vertical-align: -1px; }
 /* Stopped (user-intent interrupt): muted dot, no alarm. */
 .flow-agent-footer.stopped .fa-status-dot {
   background: var(--color-text-muted); opacity: 0.7;

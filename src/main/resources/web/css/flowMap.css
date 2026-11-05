@@ -9,7 +9,7 @@
   align-items: center;
   justify-content: flex-end;
   gap: var(--ds-space-3);
-  padding: var(--ds-space-3) 18px;
+  padding: var(--ds-space-3) var(--ds-space-5);
   padding-right: 56px; /* §5.8b 2026-09-04 修订：让出右上悬浮钮（16+40）+ 徽章区，摘要尾字不再被遮 */
   border-bottom: 1px solid var(--color-border);
   flex: 0 0 auto;
@@ -105,7 +105,7 @@
    选择器写成 .solar-node.fm-node：FLOW_CSS 是运行时注入 head 的 <style>，排在
    本文件的 <link> 之后，同特异度下后者胜——单靠 .fm-node 压不住 height:88px。 */
 .solar-node.fm-node {
-  display: flex; flex-direction: column; gap: 3px; cursor: pointer;
+  display: flex; flex-direction: column; gap: var(--ds-space-half); cursor: pointer;
   height: auto; min-height: 88px;
 }
 .fm-node > * { flex: 0 0 auto; }
@@ -129,7 +129,7 @@
 .fm-worktree-badge {
   font: 600 var(--ds-fs-meta)/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   letter-spacing: 0.02em;
-  padding: var(--ds-space-half) 5px;
+  padding: var(--ds-space-half) var(--ds-space-1h);
   border-radius: var(--ds-radius-badge);
   background: rgb(var(--sapphire) / 0.15);
   color: rgb(var(--sapphire) / 1);
@@ -149,7 +149,7 @@
 .fm-flag-badge {
   font: 600 var(--ds-fs-meta)/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   letter-spacing: 0.02em;
-  padding: var(--ds-space-half) 5px;
+  padding: var(--ds-space-half) var(--ds-space-1h);
   border-radius: var(--ds-radius-badge);
   border: 1px solid;
   white-space: nowrap;
@@ -206,13 +206,13 @@
      与家族一致（仅尺寸略小），配色通道唯一。 */
   font-size: var(--ds-fs-meta);
   letter-spacing: 0;
-  padding: var(--ds-space-half) 3px;
+  padding: var(--ds-space-half) var(--ds-space-1);
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 /* head 行排队变体：允许换行（默认 nowrap 单行）+ 行间距；徽标可收缩（其余徽标不收缩）。 */
-.fm-node-head.fm-head-queued { flex-wrap: wrap; row-gap: 3px; max-width: 100%; }
+.fm-node-head.fm-head-queued { flex-wrap: wrap; row-gap: var(--ds-space-half); max-width: 100%; }
 .fm-node-head.fm-head-queued > .fm-flag-queue { flex: 0 1 auto; min-width: 0; }
 /* 排队脚注（与既有 .fm-wait-note 同盒，仅配色区分成因）：卡片内不溢出由既有
    .fm-wait-note-text 的 ellipsis 口径承担（本类只做颜色区分，不改几何）。 */
@@ -224,16 +224,16 @@
 .fm-cfg-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 3px;
-  margin-top: 1px;
+  gap: var(--ds-space-half);
+  margin-top: var(--ds-space-hair);
 }
 .fm-cfg-badge {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: var(--ds-space-half);
   max-width: 100%;
   font: 500 var(--ds-fs-meta)/1.2 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  padding: 1.5px 5px;
+  padding: var(--ds-space-half) var(--ds-space-1h);
   border-radius: var(--ds-radius-badge);
   border: 1px solid;
   white-space: nowrap;
@@ -266,7 +266,7 @@
   font: 600 var(--ds-fs-meta)/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   text-transform: uppercase;
   letter-spacing: 0.03em;
-  padding: 1px 5px;
+  padding: var(--ds-space-hair) var(--ds-space-1h);
   margin-right: var(--ds-space-1);
   border-radius: var(--ds-radius-badge);
   background: var(--color-frame-hover);
@@ -294,8 +294,8 @@
   font: 400 var(--ds-fs-meta)/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: var(--color-text-muted);
   margin-top: var(--ds-space-half);
-  padding: 3px var(--ds-space-1h);
-  border-radius: 5px;
+  padding: var(--ds-space-1) var(--ds-space-1h);
+  border-radius: var(--ds-radius-chip);
   background: var(--color-frame-hover);
   white-space: nowrap;
   overflow: hidden;
@@ -344,7 +344,7 @@
 .flow-blocked-badge .flow-blocked-flag { width: 11px; height: 11px; flex: 0 0 auto; }
 .flow-blocked-category {
   font: 600 var(--ds-fs-meta)/1.4 ui-monospace, SFMono-Regular, monospace;
-  padding: var(--ds-space-half) 7px;
+  padding: var(--ds-space-half) var(--ds-space-2);
   border-radius: var(--ds-radius-pill);
   border: 1px solid rgb(var(--amber) / 0.5);
   background: rgb(var(--amber) / 0.14);
@@ -361,7 +361,7 @@
   font: 600 var(--ds-fs-meta)/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   text-transform: uppercase;
   letter-spacing: 0.03em;
-  padding: 1px 5px;
+  padding: var(--ds-space-hair) var(--ds-space-1h);
   border-radius: var(--ds-radius-badge);
   background: rgb(var(--amber) / 0.14);
   color: rgb(var(--amber));
@@ -371,7 +371,7 @@
   color: var(--color-text);
   white-space: pre-wrap;
   word-break: break-word;
-  margin-top: 3px;
+  margin-top: var(--ds-space-1);
 }
 .flow-blocked-raw { margin-top: var(--ds-space-stack-gap); }
 .flow-blocked-raw > summary {
@@ -573,7 +573,7 @@
 /* 展开态控件（链入口成员卡 head 行右端）：chevron 转 90° 朝下 = 「已展开，点击折起」，
    与归档条目 .fm-entry.expanded .fm-entry-chev 同一语义语言。 */
 .fm-chain-chev-open svg { transform: rotate(90deg); }
-.fm-chain-chev-open { width: 14px; height: 14px; margin-top: 1px; }
+.fm-chain-chev-open { width: 14px; height: 14px; margin-top: var(--ds-space-hair); }
 /* 链级取消控件（R2，chaincancel 批 2026-09-17）：与 `.fm-chain-chev` 同款体量与
    hover/focus 语言（同一 head 行、同一"克制"基调），但语义是**危险动作**——故常态
    用 `--color-error` 色相（既有点位：`.fm-chain-count.failed` 同 token），零新色值。
@@ -597,7 +597,7 @@
 /* 分状态计数行（spec §3.3「✓n · 跑n · ✗n」；零计数桶不渲染，故恒 ≤5 项）。
    复用节点卡 glyph 色板类（.solar-node-status.ok/.err/.warn），running 用链色圆点。 */
 .fm-chain-counts {
-  display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-top: 1px;
+  display: flex; align-items: center; gap: var(--ds-space-1h); flex-wrap: wrap; margin-top: var(--ds-space-hair);
   font: 500 var(--ds-fs-meta)/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   font-variant-numeric: tabular-nums;
 }
@@ -664,7 +664,7 @@
   align-self: stretch;
   align-items: center;
   justify-content: center;
-  gap: 3px;
+  gap: var(--ds-space-half);
   margin-top: var(--ds-space-1);
   font: 400 var(--ds-fs-meta) ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--color-text-muted);
@@ -794,7 +794,7 @@
 .fm-archive-panel.closing { transition-duration: 0.16s; transition-timing-function: ease; }
 .fm-panel-head {
   display: flex; align-items: center; gap: var(--ds-space-2); flex: 0 0 auto;
-  padding: 11px 14px; border-bottom: 1px solid var(--color-border);
+  padding: var(--ds-space-3) 14px; border-bottom: 1px solid var(--color-border);
 }
 .fm-panel-title { font: 600 var(--ds-fs-body)/1.3 -apple-system, BlinkMacSystemFont, sans-serif; }
 .fm-panel-count { font: 400 var(--ds-fs-meta)/1.3 -apple-system, BlinkMacSystemFont, sans-serif; color: var(--color-text-muted); }
@@ -866,7 +866,7 @@
 .fm-entry-nodes {
   flex: 0 0 auto; font: 500 var(--ds-fs-meta)/1 -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text-muted); border: 1px solid rgba(128, 128, 128, 0.18);
-  border-radius: var(--ds-radius-chip); padding: var(--ds-space-half) 5px; font-variant-numeric: tabular-nums;
+  border-radius: var(--ds-radius-chip); padding: var(--ds-space-half) var(--ds-space-1h); font-variant-numeric: tabular-nums;
 }
 .fm-entry-time {
   flex: 0 0 auto; margin-left: auto; font: 400 var(--ds-fs-meta)/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
@@ -884,7 +884,7 @@
 .fm-entry-chev svg { width: 10px; height: 10px; display: block; }
 .fm-entry.expanded .fm-entry-chev { transform: rotate(90deg); }
 .fm-entry-preview {
-  margin-top: 3px; font: 400 var(--ds-fs-meta)/1.45 -apple-system, BlinkMacSystemFont, sans-serif;
+  margin-top: var(--ds-space-1); font: 400 var(--ds-fs-meta)/1.45 -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 /* 链内成员列表（§5.5：展开后逐节点条目，点击 → 右侧详情）*/
@@ -892,8 +892,8 @@
 .fm-entry.expanded .fm-entry-members { display: block; }
 .fm-member {
   display: block; width: 100%; text-align: left;
-  border: 1px solid rgba(128, 128, 128, 0.1); border-radius: 7px;
-  background: rgba(128, 128, 128, 0.03); margin-bottom: var(--ds-space-1h); padding: 7px 9px;
+  border: 1px solid rgba(128, 128, 128, 0.1); border-radius: var(--ds-radius-input);
+  background: rgba(128, 128, 128, 0.03); margin-bottom: var(--ds-space-1h); padding: var(--ds-space-2) var(--ds-space-2);
   cursor: pointer; transition: background 0.15s, border-color 0.15s;
 }
 .fm-member:last-child { margin-bottom: 0; }
@@ -949,7 +949,7 @@
 .fm-detail.dock-left { right: 404px; }
 .fm-detail-head {
   display: flex; align-items: center; gap: var(--ds-space-2); flex: 0 0 auto;
-  padding: 11px 14px; border-bottom: 1px solid var(--color-border); min-width: 0;
+  padding: var(--ds-space-3) 14px; border-bottom: 1px solid var(--color-border); min-width: 0;
 }
 .fm-detail-st { flex: 0 0 auto; display: inline-flex; }
 .fm-detail-st svg { width: 12px; height: 12px; display: block; }
@@ -999,7 +999,7 @@
    字号/配色复用 fm-detail-meta 语言，零新 token ── */
 .fm-detail-kv {
   display: grid; grid-template-columns: auto minmax(0, 1fr);
-  column-gap: var(--ds-space-inline-gap); row-gap: 3px; margin: 0 0 var(--ds-space-half);
+  column-gap: var(--ds-space-inline-gap); row-gap: var(--ds-space-half); margin: 0 0 var(--ds-space-half);
 }
 .fm-detail-kv-label {
   font: 400 var(--ds-fs-meta)/1.6 -apple-system, BlinkMacSystemFont, sans-serif;
@@ -1036,10 +1036,10 @@
 .fm-md p { margin: var(--ds-space-1) 0; }
 .fm-md p:first-child { margin-top: 0; }
 .fm-md p:last-child { margin-bottom: 0; }
-.fm-md ul, .fm-md ol { margin: var(--ds-space-1) 0 var(--ds-space-1) 18px; }
+.fm-md ul, .fm-md ol { margin: var(--ds-space-1) 0 var(--ds-space-1) var(--ds-space-5); }
 .fm-md li { margin: var(--ds-space-half) 0; }
 .fm-md code {
-  background: var(--color-frame-hover); padding: 1px var(--ds-space-1); border-radius: 3px;
+  background: var(--color-frame-hover); padding: var(--ds-space-hair) var(--ds-space-1); border-radius: var(--ds-radius-badge);
   font: 400 0.9em ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all;
 }
 .fm-md pre { background: var(--color-frame-hover); padding: var(--ds-space-2) var(--ds-space-3); border-radius: var(--ds-radius-input); overflow-x: auto; margin: var(--ds-space-1h) 0; }
@@ -1057,7 +1057,7 @@
 .fm-md h3, .fm-md h4 { font-size: var(--ds-fs-hint); }
 .fm-md h5, .fm-md h6 { font-size: var(--ds-fs-hint); }
 .fm-md table { display: block; overflow-x: auto; border-collapse: collapse; margin: var(--ds-space-1h) 0; font-size: var(--ds-fs-hint); }
-.fm-md th, .fm-md td { border: 1px solid var(--color-border); padding: 3px 7px; }
+.fm-md th, .fm-md td { border: 1px solid var(--color-border); padding: var(--ds-space-1) var(--ds-space-2); }
 .fm-md th { background: var(--color-frame-hover); }
 .fm-md a { color: rgb(var(--sapphire)); }
 .fm-md hr { border: none; border-top: 1px solid var(--color-border); margin: var(--ds-space-2) 0; }
@@ -1065,8 +1065,8 @@
 .fm-md .md-empty { font-style: italic; color: var(--color-text-muted); opacity: 0.7; }
 /* 错误态（ui-status-redesign 盘点 #25，收编 flowMapArchive.js 原 inline 覆盖）：
    中性正文 + 行首 circle-x 红图标（红只上图标）。 */
-.fm-md .md-error { font-style: normal; opacity: 1; color: var(--status-word); display: inline-flex; align-items: flex-start; gap: 5px; }
-.fm-md .md-error .st-ic { width: 12px; height: 12px; margin-top: 1px; flex-shrink: 0; }
+.fm-md .md-error { font-style: normal; opacity: 1; color: var(--status-word); display: inline-flex; align-items: flex-start; gap: var(--ds-space-1); }
+.fm-md .md-error .st-ic { width: 12px; height: 12px; margin-top: var(--ds-space-hair); flex-shrink: 0; }
 
 /* ── v3 链未齐终态保留卡（§3.2）：opacity .78 后退一层、静态环染终态色、
    标签降 dim；hover 回 1——一眼区分「还在跑的」与「已完成待整链归档的」── */
@@ -1124,7 +1124,7 @@
 /* 图例：链未齐终态保留卡项（v3 取代锚点图例；A2 反向断言：无任何锚点项）*/
 .fm-legend-swatch.terminal {
   width: 14px; height: 10px; border-top: none;
-  border: 1px solid var(--color-success); border-radius: 3px; opacity: 0.8;
+  border: 1px solid var(--color-success); border-radius: var(--ds-radius-badge); opacity: 0.8;
 }
 
 /* ── 降级（§6.4：prefers-reduced-motion → opacity-only ≤10ms，脉冲/闪烁禁用）── */

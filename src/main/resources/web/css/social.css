@@ -71,7 +71,7 @@
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: var(--ds-space-4);
   min-width: 0;
 }
 
@@ -166,7 +166,7 @@
 }
 /* 危险 pill 词前图标（S13）：11px，与词距 3px，红由图标、字归中性。 */
 .social-status-pill[data-status="configInvalid"] .st-ic,
-.social-status-pill[data-status="failed"] .st-ic { width: 11px; height: 11px; margin-right: 3px; }
+.social-status-pill[data-status="failed"] .st-ic { width: 11px; height: 11px; margin-right: var(--ds-space-1); }
 
 .social-card-desc {
   font-size: var(--ds-fs-meta);
@@ -247,7 +247,7 @@
    危险文字项字转常规色，危险语义由行首 unplug 图标（红）承载；hover 时刻整键
    （字＋图标）转红 = 交互红保留（铁律三）。 */
 .social-btn-danger { color: var(--color-frame-text); }
-.social-btn-danger .st-ic { color: var(--status-error-icon); margin-right: 5px; }
+.social-btn-danger .st-ic { color: var(--status-error-icon); margin-right: var(--ds-space-1h); }
 .social-btn-danger:hover, .social-btn-danger:hover .st-ic { color: var(--btn-danger-ink); }
 /* 🔴 socpanel-min wave-2: `.social-archive-hint` REMOVED — 0 emitters. The
    hint's permanent line went away and its copy (social.feishu.archive.hint)

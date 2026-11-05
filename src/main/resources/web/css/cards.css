@@ -155,7 +155,7 @@ html[data-theme="dark"] {
    窄卡内的尺寸档——接管/入场同族批既有档承继） */
 .nfc-actions .g2-pill {
   height: 34px;
-  padding: 0 18px;
+  padding: 0 var(--ds-space-5);
   font-size: var(--ds-fs-body);
 }
 .nfc-actions .g2-pill:disabled { cursor: not-allowed; }
@@ -353,7 +353,7 @@ html[data-theme="dark"] {
   top: 50%;
   width: 7px;
   height: 2px;
-  border-radius: 1px;
+  border-radius: var(--ds-radius-thin);
   background: var(--status-error-icon);
 }
 .nf-entry-item[data-state="fail"] .nf-entry-dot::before { transform: translate(-50%, -50%) rotate(45deg); }

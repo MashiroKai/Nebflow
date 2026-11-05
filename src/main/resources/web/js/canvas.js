@@ -1054,12 +1054,12 @@ function showExternalConflict(entry) {
   const keep = document.createElement('button');
   keep.className = 'nf-file-conflict-keep';
   keep.textContent = t('canvas.conflictKeep');
-  keep.setAttribute('style', 'flex:0 0 auto;cursor:pointer;padding:3px var(--ds-space-inline-x);border-radius:7px;border:1px solid rgba(255,255,255,0.22);background:transparent;color:inherit;font:inherit;');
+  keep.setAttribute('style', 'flex:0 0 auto;cursor:pointer;padding:var(--ds-space-1) var(--ds-space-inline-x);border-radius:var(--ds-radius-input);border:1px solid rgba(255,255,255,0.22);background:transparent;color:inherit;font:inherit;');
   keep.onclick = () => { entry._externalConflict = null; bar.remove(); };
   const reload = document.createElement('button');
   reload.className = 'nf-file-conflict-reload';
   reload.textContent = t('canvas.conflictReload');
-  reload.setAttribute('style', 'flex:0 0 auto;cursor:pointer;padding:3px var(--ds-space-inline-x);border-radius:7px;border:1px solid rgba(255,255,255,0.22);background:rgba(255,255,255,0.14);color:inherit;font:inherit;');
+  reload.setAttribute('style', 'flex:0 0 auto;cursor:pointer;padding:var(--ds-space-1) var(--ds-space-inline-x);border-radius:var(--ds-radius-input);border:1px solid rgba(255,255,255,0.22);background:rgba(255,255,255,0.14);color:inherit;font:inherit;');
   reload.onclick = () => { entry._externalConflict = null; bar.remove(); refreshFileTab(entry, { force: true }); };
   bar.append(text, keep, reload);
   pane.prepend(bar);
@@ -4829,7 +4829,7 @@ function cardWindowBootFace(fileName) {
   retry.className = 'nf-cw-retry';
   retry.textContent = t('canvas.retry');
   retry.style.cssText =
-    'display:none;margin-top:var(--ds-space-half);padding:5px var(--ds-space-4);border-radius:var(--ds-radius-input);cursor:pointer;' +
+    'display:none;margin-top:var(--ds-space-half);padding:var(--ds-space-1h) var(--ds-space-4);border-radius:var(--ds-radius-input);cursor:pointer;' +
     'border:1px solid var(--glass-control-border,#d8d9dd);background:var(--glass-control-bg,transparent);' +
     'color:inherit;font-size:var(--ds-fs-hint);';
   retry.addEventListener('click', () => { try { location.reload(); } catch { /* 无历环境 */ } });

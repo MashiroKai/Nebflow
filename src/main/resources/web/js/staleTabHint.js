@@ -24,7 +24,7 @@ export function showStaleTabHint() {
   bar.setAttribute('style', [
     'position:fixed', 'top:10px', 'left:50%', 'transform:translateX(-50%)',
     'z-index:2147483000', 'display:flex', 'align-items:center', 'gap:var(--ds-space-inline-gap)',
-    'padding:9px var(--ds-space-3) 9px var(--ds-space-4)', 'border-radius:var(--ds-radius-xl)',
+    'padding:var(--ds-space-2) var(--ds-space-3) var(--ds-space-2) var(--ds-space-4)', 'border-radius:var(--ds-radius-xl)',
     'background:rgba(28,30,38,0.92)', 'color:#f4f5f7',
     'font:var(--ds-fs-body)/1.4 -apple-system,"Segoe UI",sans-serif',
     'box-shadow:0 6px 24px rgba(0,0,0,0.28)',

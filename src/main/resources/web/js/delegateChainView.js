@@ -586,11 +586,11 @@ const STRUCT_ARCHIVE_CSS = `
 .delegate-archive-drawer[hidden] { display: none; }
 .delegate-archive-row {
   display: flex; align-items: center; gap: var(--ds-space-2); min-width: 0;
-  padding: 7px var(--ds-space-1h); border-radius: var(--ds-radius-input); border: none;
+  padding: var(--ds-space-2) var(--ds-space-1h); border-radius: var(--ds-radius-input); border: none;
   background: transparent; color: inherit; width: 100%;
 }
 .delegate-archive-row:nth-child(odd) { background: var(--color-frame-hover, rgba(128,128,128,0.06)); }
-.delegate-archive-row-main { min-width: 0; flex: 1 1 auto; display: flex; flex-direction: column; gap: 1px; }
+.delegate-archive-row-main { min-width: 0; flex: 1 1 auto; display: flex; flex-direction: column; gap: var(--ds-space-hair); }
 .delegate-archive-row-title {
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font: 400 var(--ds-fs-hint)/1.5 -apple-system, BlinkMacSystemFont, sans-serif; color: var(--color-text);
@@ -601,7 +601,7 @@ const STRUCT_ARCHIVE_CSS = `
 }
 .delegate-archive-row-actions { flex-shrink: 0; display: inline-flex; gap: var(--ds-space-1); }
 .delegate-archive-act {
-  flex-shrink: 0; padding: var(--ds-space-half) var(--ds-space-2); border-radius: 7px; cursor: pointer;
+  flex-shrink: 0; padding: var(--ds-space-half) var(--ds-space-2); border-radius: var(--ds-radius-input); cursor: pointer;
   font: 500 var(--ds-fs-meta)/1.6 -apple-system, BlinkMacSystemFont, sans-serif;
   background: var(--glass-control-bg, transparent);
   border: 1px solid var(--glass-control-border, rgba(128,128,128,0.35));
@@ -623,7 +623,7 @@ const STRUCT_ARCHIVE_CSS = `
 }
 .delegate-archive-toast[hidden] { display: none; }
 .delegate-archive-toast-undo {
-  flex-shrink: 0; padding: 1px var(--ds-space-inline-x); border-radius: var(--ds-radius-input); cursor: pointer;
+  flex-shrink: 0; padding: var(--ds-space-hair) var(--ds-space-inline-x); border-radius: var(--ds-radius-input); cursor: pointer;
   font: 500 var(--ds-fs-meta)/1.7 -apple-system, BlinkMacSystemFont, sans-serif;
   background: rgb(var(--sapphire) / 0.12); color: rgb(var(--sapphire));
   border: 1px solid rgb(var(--sapphire) / 0.35);

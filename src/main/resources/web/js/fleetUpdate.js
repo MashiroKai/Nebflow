@@ -102,7 +102,7 @@ const FLEET_CSS = `
 .fleet-bar { height: 3px; border-radius: var(--ds-radius-thin); background: var(--glass-control-bg); margin-top: var(--ds-space-1h); overflow: hidden; }
 .fleet-bar > i { display: block; height: 100%; background: var(--color-frame-text-dim); width: 0; transition: width 0.3s; }
 .fleet-badge {
-  font-size: var(--ds-fs-meta); padding: 1px var(--ds-space-1h); border-radius: var(--ds-radius-chip); flex-shrink: 0;
+  font-size: var(--ds-fs-meta); padding: var(--ds-space-hair) var(--ds-space-1h); border-radius: var(--ds-radius-chip); flex-shrink: 0;
   border: 1px solid var(--glass-control-border); color: var(--color-frame-text-muted);
 }
 .fleet-summary { font-size: var(--ds-fs-hint); color: var(--color-frame-text); line-height: 1.6; margin: var(--ds-space-stack-gap) 0 var(--ds-space-1); }

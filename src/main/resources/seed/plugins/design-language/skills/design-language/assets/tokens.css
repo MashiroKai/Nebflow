@@ -125,6 +125,7 @@
   --dl-sp-stack-gap: 10px;  /* 块间纵距（= --ds-space-stack-gap） */
   --dl-sp-indent-x: 10px;   /* 行缩进（= --ds-space-indent-x） */
   --dl-sp-1h: 6px;       /* 半步件缝例外档：图标+文字小缝/chip 内距（实测最高频，禁作块距） */
+  --dl-sp-hair: 1px;     /* 发丝缝例外档（= --ds-space-hair；禁作内距） */
 
   /* ── ⑤ 密度档（含 NVIDIA 密度联动机制；与 --ds-density-* 同值） ── */
   --dl-density-row: 44px;          /* regular 行带（触控热区档） */

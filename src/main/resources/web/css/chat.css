@@ -186,12 +186,12 @@
 #bg-indicator {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--ds-space-1);
   background: rgba(7,193,96,0.15);
   /* Capsule + thin ring — the "oval ring" around the count */
   border-radius: var(--ds-radius-pill);
   border: 1px solid rgba(7,193,96,0.35);
-  padding: var(--ds-space-half) 9px;
+  padding: var(--ds-space-half) var(--ds-space-2);
   font-size: var(--ds-fs-hint);
   color: var(--color-primary);
   cursor: pointer;
@@ -217,7 +217,7 @@
 #bgagent-indicator {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--ds-space-1);
   /* NOTE: --sapphire is a space-separated RGB triplet — must use the modern
      rgb(... / alpha) syntax; rgba(var(--sapphire), a) is INVALID and silently
      dropped (this is why the capsule looked "gone"). */
@@ -225,7 +225,7 @@
   /* Capsule + thin ring — the "oval ring" around the count */
   border-radius: var(--ds-radius-pill);
   border: 1px solid rgb(var(--accent-agent-light) / 0.35);
-  padding: var(--ds-space-half) 9px;
+  padding: var(--ds-space-half) var(--ds-space-2);
   font-size: var(--ds-fs-hint);
   /* Unified panel spec §6.2 (20260830): counter hue = agent blue; light theme
      deepened (#46639c, 5.96:1) to clear WCAG 4.5 — replaces the P0 dark-mode
@@ -458,7 +458,7 @@
 .bg-task-state.bg-state-stuck,
 .bg-task-state.bg-state-error,
 .bg-task-state.bg-state-failed { color: var(--status-word); }
-.bg-task-state .st-ic { width: 11px; height: 11px; margin-right: 3px; }
+.bg-task-state .st-ic { width: 11px; height: 11px; margin-right: var(--ds-space-1); }
 .bg-task-state.bg-state-frozen { color: rgb(var(--accent-agent-light)); }
 .bg-task-state.bg-state-done { color: var(--ds-text-dim); }
 /* 延续态徽标（Flow 会话可见性批 2026-11-01）：delegate 已终态而链仍在跑的组头行
@@ -466,7 +466,7 @@
    workflow 图标同档），行不加 .done 灰化（活链 ≠ 死行——行体无 0.6 透明），状态点
    走 active 绿脉冲。链全终态后覆写缺席 → 行回普通终态样式（既有 done 档）。 */
 .bg-task-state.bg-task-chain { color: var(--status-warn-icon); font-weight: var(--ds-fw-btn); }
-.bg-task-state.bg-task-chain .st-ic { width: 11px; height: 11px; margin-right: 3px; color: var(--status-warn-icon); }
+.bg-task-state.bg-task-chain .st-ic { width: 11px; height: 11px; margin-right: var(--ds-space-1); color: var(--status-warn-icon); }
 /* ── 面板 chip 族：单一形态，一处声明（panel-ia 批 2026-11-03）─────────────
    六个 chip 类（kind / origin / mode / retries / device / badge）原先各写一套
    「10px / 6px / control-bg / muted」——六套同值声明就是视觉噪音的样式面成本
@@ -482,7 +482,7 @@
 .bg-task-badge {
   font-size: var(--ds-fs-meta);
   font-weight: var(--ds-fw-btn);
-  padding: 1px var(--ds-space-1h);
+  padding: var(--ds-space-hair) var(--ds-space-1h);
   border-radius: var(--ds-radius-chip);
   background: var(--ds-control-bg);
   border: var(--ds-border-width) solid var(--ds-control-border);
@@ -625,7 +625,7 @@
   white-space: nowrap;
   flex-shrink: 0;
 }
-.bg-task-offline .st-ic { width: 11px; height: 11px; margin-right: 3px; vertical-align: -1px; }
+.bg-task-offline .st-ic { width: 11px; height: 11px; margin-right: var(--ds-space-1); vertical-align: -1px; }
 .bg-task-uptime {
   font-size: var(--ds-fs-meta);
   color: var(--ds-text-muted);
@@ -648,7 +648,7 @@
   color: var(--ds-status-word);
   margin-top: var(--ds-space-half);
 }
-.bg-task-stuck .st-ic { width: 11px; height: 11px; margin-right: 3px; }
+.bg-task-stuck .st-ic { width: 11px; height: 11px; margin-right: var(--ds-space-1); }
 /* 心跳光点 error/stuck（盘点 #11 / S2）：终态/卡死光点由「红晕＋1s 闪烁」改
    静态红描边环点（dot-ghost 形态——形状仍可辨、去 alarm 动效，reduced-motion
    天然达标）；运行态绿点脉冲保留（活动性语义）。 */
@@ -734,7 +734,7 @@
   color: var(--ds-text-muted);
   flex-shrink: 0;
 }
-.bg-task-row-member { padding-left: 18px; border-top: 1px dotted var(--color-frame-border); }
+.bg-task-row-member { padding-left: var(--ds-space-5); border-top: 1px dotted var(--color-frame-border); }
 .bg-task-row-member .bg-task-name { font-size: var(--ds-fs-hint); }
 /* Frozen is the agent-blue accent: deep sapphire in light theme (agent-light
    token), back to the sapphire triplet in dark. Mirrors #bgagent-indicator. */
@@ -1032,7 +1032,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 /* Copy button inside duration badge */
 .duration-badge .msg-copy {
   opacity: 0.35;
-  padding: 1px;
+  padding: var(--ds-space-hair);
 }
 .duration-badge .msg-copy svg { width: 11px; height: 11px; }
 .duration-badge .msg-copy:hover { opacity: 0.6; }
@@ -1061,7 +1061,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 /* Recall button (same base style as copy, with hover feedback) */
 .duration-badge .msg-recall {
   opacity: 0.35;
-  padding: 1px;
+  padding: var(--ds-space-hair);
 }
 .duration-badge .msg-recall svg { width: 11px; height: 11px; }
 .duration-badge .msg-recall:hover { opacity: 0.6; color: var(--color-warning, #e5a00d); }
@@ -1073,7 +1073,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   display: inline-flex;
   align-items: center;
   opacity: 0.45;
-  padding: 1px;
+  padding: var(--ds-space-hair);
   color: var(--color-text);
 }
 .duration-badge .msg-pending-mark svg { width: 11px; height: 11px; }
@@ -1088,7 +1088,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .duration-badge .msg-failed-mark {
   display: inline-flex;
   align-items: center;
-  padding: 1px;
+  padding: var(--ds-space-hair);
   color: var(--color-error);
   font-size: var(--ds-fs-hint);
   font-weight: 700;
@@ -1153,7 +1153,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .delivery-badge {
   display: inline-block;
   margin-left: var(--ds-space-1h);
-  padding: 0 5px;
+  padding: 0 var(--ds-space-1h);
   border-radius: var(--ds-radius-badge);
   font-size: var(--ds-fs-meta);
   line-height: 14px;
@@ -1177,7 +1177,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   background: rgba(0,0,0,0.04);
   color: #888;
   font-size: var(--ds-fs-meta);
-  padding: 3px var(--ds-space-2);
+  padding: var(--ds-space-1) var(--ds-space-2);
   border-radius: var(--ds-radius-input);
   max-width: 160px;
   margin-top: var(--ds-space-half);
@@ -1267,10 +1267,10 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    图标/字级直接复用 .fc-icon/.fc-name/.fc-sub 全局类（单一来源，零第二套）。
    跳转交互（jumpRef）与引用身份 dataset 不变；html-element 引用维持上方旧面。 */
 .bubble.user .att-ref-card.file-lang {
-  display: flex; align-items: center; gap: 11px;
+  display: flex; align-items: center; gap: var(--ds-space-3);
   background: var(--color-surface);
   border: 1px solid rgba(0, 0, 0, 0.05);
-  border-radius: var(--ds-radius-xl); padding: 11px 13px;
+  border-radius: var(--ds-radius-xl); padding: var(--ds-space-3) var(--ds-space-3);
   width: 300px; max-width: 100%;
   color: var(--color-text); font-size: var(--ds-fs-hint); cursor: pointer;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
@@ -1284,7 +1284,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .bubble.user .att-ref-card.file-lang .att-ref-card-content {
-  font-size: var(--ds-fs-meta); color: var(--color-text-muted); margin-top: 3px;
+  font-size: var(--ds-fs-meta); color: var(--color-text-muted); margin-top: var(--ds-space-1);
 }
 @media (prefers-color-scheme: dark) {
   .bubble.user .att-ref-card.file-lang { border-color: var(--color-border); }
@@ -1303,7 +1303,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   font-size: var(--ds-fs-hint);
   color: var(--color-text);
   line-height: 1.4;
-  padding: 1px 0;
+  padding: var(--ds-space-hair) 0;
 }
 .att-task-line-icon {
   display: flex;
@@ -1374,7 +1374,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 .bubble.ai .file-tag {
   background: rgba(0,0,0,0.06);
-  padding: 3px var(--ds-space-2);
+  padding: var(--ds-space-1) var(--ds-space-2);
   border-radius: var(--ds-radius-badge);
   font-size: var(--ds-fs-hint);
   margin-top: var(--ds-space-1);
@@ -1391,7 +1391,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .bubble.ai p, .bubble.injected p, .ask-bub.ai p { margin: var(--ds-space-1) 0; }
 .bubble.ai p:first-child, .bubble.injected p:first-child, .ask-bub.ai p:first-child { margin-top: 0; }
 .bubble.ai p:last-child, .bubble.injected p:last-child, .ask-bub.ai p:last-child { margin-bottom: 0; }
-.bubble.ai ul, .bubble.ai ol, .bubble.injected ul, .bubble.injected ol, .ask-bub.ai ul, .ask-bub.ai ol { margin: var(--ds-space-1) 0 var(--ds-space-1) 18px; padding: 0; }
+.bubble.ai ul, .bubble.ai ol, .bubble.injected ul, .bubble.injected ol, .ask-bub.ai ul, .ask-bub.ai ol { margin: var(--ds-space-1) 0 var(--ds-space-1) var(--ds-space-5); padding: 0; }
 .bubble.ai li, .bubble.injected li, .ask-bub.ai li { margin: var(--ds-space-half) 0; }
 .bubble.ai pre, .bubble.injected pre, .ask-bub.ai pre {
   background: #f5f5f5;
@@ -1431,7 +1431,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   display: flex;
   align-items: center;
   gap: var(--ds-space-1);
-  padding: 3px var(--ds-space-2);
+  padding: var(--ds-space-1) var(--ds-space-2);
   border: 1px solid rgba(0,0,0,0.12);
   border-radius: var(--ds-radius-chip);
   background: rgba(255,255,255,0.8);
@@ -1464,8 +1464,8 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 .bubble.ai code, .bubble.injected code, .ask-bub.ai code {
   background: rgba(0,0,0,0.05);
-  padding: 1px var(--ds-space-1);
-  border-radius: 3px;
+  padding: var(--ds-space-hair) var(--ds-space-1);
+  border-radius: var(--ds-radius-badge);
   font-size: var(--ds-fs-hint);
   font-family: ui-monospace, SFMono-Regular, monospace;
 }
@@ -1690,7 +1690,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   align-items: center;
   gap: var(--ds-space-2);
   border-radius: var(--ds-radius-xl);
-  padding: 7px 14px;
+  padding: var(--ds-space-2) 14px;
   font-size: var(--ds-fs-hint);
   background: var(--color-surface);
   border: 1px solid var(--color-border);
@@ -1871,7 +1871,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   margin-bottom: var(--ds-space-2);
 }
 .option-btn {
-  padding: 5px var(--ds-space-3);
+  padding: var(--ds-space-1h) var(--ds-space-3);
   border: 1px solid rgba(145, 170, 210, 0.25);
   border-radius: var(--ds-radius-card-md);
   background: rgba(145, 170, 210, 0.04);
@@ -1923,7 +1923,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   gap: var(--ds-space-2);
   text-align: left;
   border-radius: var(--ds-radius-button);
-  padding: 7px var(--ds-space-3);
+  padding: var(--ds-space-2) var(--ds-space-3);
   width: 100%;
   box-sizing: border-box;
 }
@@ -2559,7 +2559,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 .ask-card {
   margin-top: var(--ds-space-3);
-  padding: 13px 14px;
+  padding: var(--ds-space-3) 14px;
   background: linear-gradient(180deg, var(--ask-card-top), var(--ask-card-bot));
   border: 1px solid var(--ask-card-bd);
   border-radius: var(--ds-radius-card-lg);
@@ -2595,7 +2595,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   display: block;
   color: var(--color-text-dim);
   font-size: var(--ds-fs-meta);
-  margin-top: 1px;
+  margin-top: var(--ds-space-hair);
 }
 .option-btn.picked .option-text small {
   color: rgba(255, 255, 255, 0.8);
@@ -2748,7 +2748,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   gap: var(--ds-space-inline-gap);
   width: 100%;
   box-sizing: border-box;
-  padding: 9px var(--ds-space-1h);
+  padding: var(--ds-space-2) var(--ds-space-1h);
   border: none;
   border-top: 1px solid var(--ask-line);
   border-radius: 0;
@@ -2834,7 +2834,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   display: inline-flex;
   align-items: center;
   width: auto;
-  padding: 5px 14px;
+  padding: var(--ds-space-1h) 14px;
   border: 1px solid var(--ask-line-strong);
   border-radius: var(--ds-radius-pill);
   background: transparent;
@@ -2925,7 +2925,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   display: flex;
   align-items: center;
   gap: var(--ds-space-1h);
-  padding: 5px var(--ds-space-inline-x);
+  padding: var(--ds-space-1h) var(--ds-space-inline-x);
   border: 1px solid var(--glass-control-border);
   border-radius: var(--ds-radius-input);
   font-size: var(--ds-fs-body);
@@ -3033,7 +3033,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   display: flex;
   align-items: center;
   gap: var(--ds-space-2);
-  padding: 5px var(--ds-space-inline-x);
+  padding: var(--ds-space-1h) var(--ds-space-inline-x);
   border: 1px solid var(--glass-control-border);
   border-radius: var(--ds-radius-input);
   font-size: var(--ds-fs-body);
@@ -3065,7 +3065,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   font-size: var(--ds-fs-meta);
   font-weight: 600;
   color: var(--color-text-muted);
-  padding: 1px 7px;
+  padding: var(--ds-space-hair) var(--ds-space-2);
   background: rgba(128,128,128,0.1);
   border-radius: var(--ds-radius-chip);
   max-width: 40%;
@@ -3094,11 +3094,11 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 #pending-asks-indicator {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--ds-space-1);
   background: color-mix(in srgb, var(--color-warning) 15%, transparent);
   border-radius: var(--ds-radius-pill);
   border: 1px solid color-mix(in srgb, var(--color-warning) 40%, transparent);
-  padding: var(--ds-space-half) 9px;
+  padding: var(--ds-space-half) var(--ds-space-2);
   font-size: var(--ds-fs-hint);
   color: var(--color-warning);
   cursor: pointer;
@@ -3115,11 +3115,11 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 #held-receipts-indicator {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--ds-space-1);
   background: color-mix(in srgb, var(--color-text-muted) 15%, transparent);
   border-radius: var(--ds-radius-pill);
   border: 1px solid color-mix(in srgb, var(--color-text-muted) 40%, transparent);
-  padding: var(--ds-space-half) 9px;
+  padding: var(--ds-space-half) var(--ds-space-2);
   font-size: var(--ds-fs-hint);
   color: var(--color-text-dim);
   cursor: pointer;
@@ -3257,7 +3257,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   gap: var(--ds-space-1);
   max-width: 85%;
   margin: var(--ds-space-half) 0;
-  padding: 3px var(--ds-space-3);
+  padding: var(--ds-space-1) var(--ds-space-3);
   font-size: var(--ds-fs-hint);
   font-weight: 500;
   color: var(--color-text-dim);
@@ -3374,8 +3374,8 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   letter-spacing: 0.6px;
   background: var(--color-primary);
   color: #fff;
-  padding: 1px 5px;
-  border-radius: 3px;
+  padding: var(--ds-space-hair) var(--ds-space-1h);
+  border-radius: var(--ds-radius-badge);
   margin-right: var(--ds-space-1h);
   vertical-align: middle;
   line-height: 1.4;
@@ -3625,8 +3625,8 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   gap: var(--ds-space-1h);
   background: rgba(139, 92, 246, 0.12);
   color: #8b5cf6;
-  padding: 3px var(--ds-space-inline-x);
-  border-radius: 9999px;
+  padding: var(--ds-space-1) var(--ds-space-inline-x);
+  border-radius: var(--ds-radius-pill);
   font-size: var(--ds-fs-meta);
   font-weight: 500;
   margin-bottom: var(--ds-space-stack-gap);
@@ -4052,7 +4052,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   font-size: var(--ds-fs-meta);
   color: var(--color-frame-text-muted);
   margin-bottom: var(--ds-space-2);
-  padding: 5px var(--ds-space-inline-x);
+  padding: var(--ds-space-1h) var(--ds-space-inline-x);
   border-radius: var(--ds-radius-input);
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-border);
@@ -4072,14 +4072,14 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   font-size: var(--ds-fs-meta);
   color: var(--status-word);
   margin-bottom: var(--ds-space-2);
-  padding: 5px var(--ds-space-inline-x);
+  padding: var(--ds-space-1h) var(--ds-space-inline-x);
   border-radius: var(--ds-radius-input);
   background: color-mix(in srgb, var(--status-error-icon) 8%, transparent);
   border: 1px solid color-mix(in srgb, var(--status-error-icon) 32%, transparent);
   border-left: 2px solid var(--status-error-icon);
   line-height: 1.4;
 }
-.wsp-err .st-ic { width: 12px; height: 12px; margin-top: 1px; flex-shrink: 0; }
+.wsp-err .st-ic { width: 12px; height: 12px; margin-top: var(--ds-space-hair); flex-shrink: 0; }
 .wsp-err span { word-break: break-all; min-width: 0; }
 /* [hidden] 守卫（social.css 先例）：上面的 display:flex 声明按级联来源压过 UA 的
    [hidden]{display:none} ⇒ 无错误时空容器仍渲染成一条空红框（面包屑与列表间）。
@@ -4098,7 +4098,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .wsp-clear {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--ds-space-1);
   border: 1px solid rgba(220, 60, 60, 0.3) !important;
   color: var(--color-text) !important;
   background: rgba(220, 60, 60, 0.04) !important;
@@ -4222,7 +4222,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   gap: var(--ds-space-1);
   max-width: 85%;
   margin: var(--ds-space-half) 0;
-  padding: 3px var(--ds-space-3);
+  padding: var(--ds-space-1) var(--ds-space-3);
   font-size: var(--ds-fs-hint);
   /* zcode-484 batch: ONE text row, fixed. The explicit px line-height makes the
      single-row height deterministic (it is also what the slot's fixed height
@@ -4348,7 +4348,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 
 /* pre-token dots (the old placeholder bubble's face, moved onto the line) —
    PURE TEXT pulse (UI-C): the three dots cycle opacity only. */
-.nf-wl-dots { display: inline-flex; gap: 3px; align-items: center; flex: none; }
+.nf-wl-dots { display: inline-flex; gap: var(--ds-space-half); align-items: center; flex: none; }
 .nf-wl-dots .thinking-dot {
   width: auto; height: auto; border-radius: 0; background: none;
   opacity: 0.35;
@@ -4633,7 +4633,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .dur-chip {
   position: absolute; right: 8px; bottom: 8px;
   background: rgba(0, 0, 0, 0.55); color: #fff;
-  font-size: var(--ds-fs-meta); padding: var(--ds-space-half) 7px; border-radius: var(--ds-radius-badge);
+  font-size: var(--ds-fs-meta); padding: var(--ds-space-half) var(--ds-space-2); border-radius: var(--ds-radius-badge);
   pointer-events: none; font-variant-numeric: tabular-nums;
 }
 .vd-progress {
@@ -4669,10 +4669,10 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 
 /* ── file card ── */
 .file-card {
-  display: flex; align-items: center; gap: 11px;
+  display: flex; align-items: center; gap: var(--ds-space-3);
   background: var(--color-surface);
   border: 1px solid rgba(0, 0, 0, 0.05);
-  border-radius: var(--ds-radius-xl); padding: 11px 13px;
+  border-radius: var(--ds-radius-xl); padding: var(--ds-space-3) var(--ds-space-3);
   width: 300px; max-width: 100%; cursor: pointer;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
   transition: box-shadow 0.15s, transform 0.12s;
@@ -4680,7 +4680,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .file-card:hover { box-shadow: 0 4px 14px rgba(0, 0, 0, 0.09); }
 .file-card:active { transform: scale(0.985); }
 .fc-icon {
-  width: 38px; height: 38px; border-radius: 9px; flex-shrink: 0;
+  width: 38px; height: 38px; border-radius: var(--ds-radius-button); flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
   color: #fff; font-size: var(--ds-fs-meta); font-weight: 800; letter-spacing: 0.6px;
 }
@@ -4698,7 +4698,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .fc-icon.data, .fc-icon.code { background: linear-gradient(135deg, #9aa2b1, #6f7684); }
 .fc-meta { min-width: 0; }
 .fc-name { font-size: var(--ds-fs-row); font-weight: 600; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fc-sub { font-size: var(--ds-fs-meta); color: var(--color-text-muted); margin-top: 3px; }
+.fc-sub { font-size: var(--ds-fs-meta); color: var(--color-text-muted); margin-top: var(--ds-space-1); }
 .fwd-btn {
   margin-left: auto; flex-shrink: 0;
   width: 30px; height: 30px; border-radius: 50%;
@@ -4714,7 +4714,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   position: absolute; bottom: calc(100% + 9px); right: -6px;
   background: #1b1e26; color: #fff;
   font-size: var(--ds-fs-meta); font-weight: 500; white-space: nowrap;
-  padding: 5px var(--ds-space-inline-x); border-radius: 7px;
+  padding: var(--ds-space-1h) var(--ds-space-inline-x); border-radius: var(--ds-radius-input);
   opacity: 0; transform: translateY(3px);
   pointer-events: none; transition: opacity 0.16s, transform 0.16s;
   z-index: 5;
@@ -4729,7 +4729,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .pop-warn {
   font-size: var(--ds-fs-meta); color: var(--color-text-dim);
   background: rgba(128, 128, 128, 0.1);
-  border-radius: var(--ds-radius-chip); padding: var(--ds-space-1) 9px;
+  border-radius: var(--ds-radius-chip); padding: var(--ds-space-1) var(--ds-space-2);
   max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
@@ -4836,7 +4836,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   flex-shrink: 0;
   display: flex; align-items: center; gap: var(--ds-space-1h);
   border: none; border-radius: var(--ds-radius-pill);
-  padding: 7px 14px; font-size: var(--ds-fs-hint); font-family: inherit;
+  padding: var(--ds-space-2) 14px; font-size: var(--ds-fs-hint); font-family: inherit;
   background: rgba(255, 255, 255, 0.14); color: #fff;
   cursor: pointer;
   transition: background 0.15s;
@@ -5003,8 +5003,8 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .fm-msg.out .fm-att-list .file-card {
   width: auto;
   max-width: 264px;
-  gap: 9px;
-  padding: 7px var(--ds-space-inline-x) 7px 7px;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-2) var(--ds-space-inline-x) var(--ds-space-2) var(--ds-space-2);
   background: var(--color-surface-2, rgba(127, 127, 127, 0.08));
   border: 1px solid var(--glass-etched-border, rgba(91, 127, 191, 0.10));
   border-radius: var(--ds-radius-card-sm);
@@ -5110,7 +5110,7 @@ object.search-media-thumb { object-fit: initial; }
   margin: var(--ds-space-stack-gap) 0 0 var(--ds-space-indent-x);
   min-width: 40px; height: 26px;
   display: inline-flex; align-items: center; justify-content: center;
-  padding: 0 7px; border-radius: var(--ds-radius-chip);
+  padding: 0 var(--ds-space-2); border-radius: var(--ds-radius-chip);
   background: rgba(64, 132, 240, 0.14); color: #7fb0f5;
   font-size: var(--ds-fs-meta); font-weight: 700; letter-spacing: 0.02em;
 }
@@ -5125,7 +5125,7 @@ object.search-media-thumb { object-fit: initial; }
 /* Source badge + time — the alignment markers (主题三). */
 .search-media-source {
   position: absolute; top: 6px; left: 6px;
-  padding: var(--ds-space-half) 7px; border-radius: var(--ds-radius-pill);
+  padding: var(--ds-space-half) var(--ds-space-2); border-radius: var(--ds-radius-pill);
   font-size: var(--ds-fs-meta);
   background: rgba(0, 0, 0, 0.55); color: #fff;
   pointer-events: none;
@@ -5190,7 +5190,7 @@ object.search-media-thumb { object-fit: initial; }
 .msg-quote-head {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--ds-space-1);
   line-height: 1;
 }
 .nf-qicon {
@@ -5277,7 +5277,7 @@ object.search-media-thumb { object-fit: initial; }
   align-items: center;
   gap: var(--ds-space-1h);
   max-width: 180px;
-  padding: 3px var(--ds-space-2) 3px var(--ds-space-1);
+  padding: var(--ds-space-1) var(--ds-space-2) var(--ds-space-1) var(--ds-space-1);
   border-radius: var(--ds-radius-chip);
   background: rgba(0, 0, 0, 0.06);
   font-size: var(--ds-fs-meta);
@@ -5289,7 +5289,7 @@ object.search-media-thumb { object-fit: initial; }
   flex: 0 0 auto;
   min-width: 20px;
   height: 20px;
-  padding: 0 3px;
+  padding: 0 var(--ds-space-1);
   border-radius: var(--ds-radius-badge);
   background: rgba(0, 0, 0, 0.08);
   display: inline-flex;
@@ -5523,8 +5523,8 @@ body:not(.mobile-layer) #agent-avatar-btn .agent-avatar-logo-img {
 .msg-token-chip {
   display: inline-block;
   max-width: 100%;
-  padding: 1px var(--ds-space-2);
-  margin: 0 1px;
+  padding: var(--ds-space-hair) var(--ds-space-2);
+  margin: 0 var(--ds-space-hair);
   border-radius: var(--ds-radius-input);
   border: 1px solid var(--glass-etched-border, rgba(91, 127, 191, 0.08));
   background: rgba(0, 0, 0, 0.045);

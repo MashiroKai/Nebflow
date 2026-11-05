@@ -142,6 +142,12 @@
   --ds-space-inline-gap: 10px;
   --ds-space-stack-gap: 10px;
   --ds-space-indent-x: 10px;
+  /* 发丝缝例外槽（2026-11-04 间距例外收敛批出生）：1px 是**形态值**不是"差一点的 2px"——
+     它是「存在感为零但把两件分开」的最细缝（分隔线、指示条偏移、发光描边 inset）。
+     收回 2px 会把每条发丝缝视觉加倍（99 处原子），密度直接退化；故立具名槽并限定用途：
+     **只许发丝缝/发丝偏移**，行/卡/控件的内距一律走栅格档（禁在 4px 栅格里拿它找补）。
+     值与现盘逐字相同（1px）⇒ 这 99 处像素零变化。 */
+  --ds-space-hair: 1px;
   /* 半步件缝例外档（design-scale-spec 2026-11-04 §2.2/§3 登记，本批出生）：
      6px 是实测最高频间距档（349 处），集中在「图标+文字小缝」「chip 内距」——
      收敛 4px 会让密集控件贴死，收敛 8px 会让每行膨胀，故以具名半步档收编，
@@ -722,7 +728,7 @@
   display: inline-flex;
   align-items: center;
   gap: var(--ds-space-1);
-  padding: 1px 7px;
+  padding: var(--ds-space-hair) var(--ds-space-2);
   font-size: var(--ds-fs-meta);
   font-weight: var(--ds-fw-btn);
   line-height: var(--ds-lh-tight);
@@ -813,7 +819,7 @@
 }
 .ds-tool-card:hover,
 .ds-tool-card--pending { background: var(--ds-control-bg-hover); }
-.ds-tool-card .icon { flex-shrink: 0; margin-top: 1px; }
+.ds-tool-card .icon { flex-shrink: 0; margin-top: var(--ds-space-hair); }
 .ds-tool-card .icon.ok { color: var(--ds-success-icon); }
 .ds-tool-card .icon.err { color: var(--ds-danger-icon); }
 .ds-tool-card .spinner {
@@ -988,11 +994,11 @@
 .ds-tool-card .tool-mail-msg p { margin: var(--ds-space-1) 0; }
 .ds-tool-card .tool-mail-msg p:first-child { margin-top: 0; }
 .ds-tool-card .tool-mail-msg p:last-child { margin-bottom: 0; }
-.ds-tool-card .tool-mail-msg ul, .ds-tool-card .tool-mail-msg ol { margin: var(--ds-space-1) 0 var(--ds-space-1) 18px; padding: 0; }
+.ds-tool-card .tool-mail-msg ul, .ds-tool-card .tool-mail-msg ol { margin: var(--ds-space-1) 0 var(--ds-space-1) var(--ds-space-5); padding: 0; }
 .ds-tool-card .tool-mail-msg li { margin: var(--ds-space-half) 0; }
 .ds-tool-card .tool-mail-msg code {
   background: color-mix(in srgb, var(--ds-text) 5%, transparent);
-  padding: 1px var(--ds-space-1);
+  padding: var(--ds-space-hair) var(--ds-space-1);
   border-radius: var(--ds-radius-badge);
   font-size: var(--ds-fs-meta);
   font-family: var(--ds-font-mono);
@@ -1026,8 +1032,8 @@
   display: inline-flex;
   align-items: center;
   max-width: 100%;
-  margin: 1px 0;
-  padding: 1px var(--ds-space-2);
+  margin: var(--ds-space-hair) 0;
+  padding: var(--ds-space-hair) var(--ds-space-2);
   font-family: var(--ds-font-ui);
   font-size: var(--ds-fs-meta);
   line-height: var(--ds-lh-tight);

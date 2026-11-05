@@ -206,7 +206,7 @@ body.voice-mode-active #queue-bar {
   left: 50%;
   top: -16px;
   transform: translateX(-50%);
-  gap: 3px;
+  gap: var(--ds-space-half);
   pointer-events: none;
   z-index: 5;
 }

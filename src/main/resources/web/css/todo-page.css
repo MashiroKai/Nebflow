@@ -139,7 +139,7 @@
 .todo-perm-chip {
   flex-shrink: 0;
   display: inline-block;
-  padding: 0 5px;
+  padding: 0 var(--ds-space-1h);
   border-radius: var(--ds-radius-chip);
   font-size: var(--ds-fs-meta);
   font-weight: 600;
@@ -182,8 +182,8 @@
   font-size: var(--ds-fs-meta);
   font-weight: 500;
   line-height: 18px;
-  padding: 0 9px;
-  border-radius: 9999px;
+  padding: 0 var(--ds-space-2);
+  border-radius: var(--ds-radius-pill);
   cursor: pointer;
   transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
@@ -201,7 +201,7 @@
 .reminder-proj-tag {
   flex-shrink: 0;
   display: inline-block;
-  padding: 0 5px;
+  padding: 0 var(--ds-space-1h);
   border-radius: var(--ds-radius-chip);
   font-size: var(--ds-fs-meta);
   font-weight: 500;
@@ -231,7 +231,7 @@
 .reminder-inline-project {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--ds-space-1h);
   padding: var(--ds-space-1) var(--ds-space-inline-x) var(--ds-space-block-y) 38px;
   color: var(--color-frame-text-muted);
 }

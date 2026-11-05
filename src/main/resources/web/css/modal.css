@@ -229,7 +229,7 @@
 /* ── Confirm button (main modal — 墨族主操作，2026-10-30 按钮体系批：绿实心底
    退役，hover 绿 glow 改中性抬升影，token 单源随面板主题 ink-swap) ───────── */
 #modal-confirm {
-  padding: var(--ds-space-2) 18px;
+  padding: var(--ds-space-2) var(--ds-space-5);
   border: none;
   border-radius: var(--ds-radius-button);
   background: var(--btn-primary-bg);
@@ -285,7 +285,7 @@
   justify-content: flex-end;
 }
 #modal-cancel {
-  padding: var(--ds-space-2) 18px;
+  padding: var(--ds-space-2) var(--ds-space-5);
   border-radius: var(--ds-radius-button);
   font-size: var(--ds-fs-subtitle);
 }
@@ -314,12 +314,12 @@
   justify-content: flex-end;
 }
 #delete-cancel {
-  padding: var(--ds-space-2) 18px;
+  padding: var(--ds-space-2) var(--ds-space-5);
   border-radius: var(--ds-radius-button);
   font-size: var(--ds-fs-subtitle);
 }
 #delete-confirm {
-  padding: var(--ds-space-2) 18px;
+  padding: var(--ds-space-2) var(--ds-space-5);
   border-radius: var(--ds-radius-button);
   font-size: var(--ds-fs-subtitle);
 }
@@ -351,7 +351,7 @@
 #conflict-cancel,
 #conflict-keep-both,
 #conflict-replace {
-  padding: var(--ds-space-2) 18px;
+  padding: var(--ds-space-2) var(--ds-space-5);
   border-radius: var(--ds-radius-button);
   font-size: var(--ds-fs-subtitle);
 }
@@ -678,7 +678,7 @@
   position: absolute;
   left: 8px; right: 8px; bottom: 0;
   height: 2px;
-  border-radius: 1px;
+  border-radius: var(--ds-radius-thin);
   background: rgba(91, 127, 191, 0.8);
   transform: scaleX(0);
   transition: transform 0.15s ease-out;
@@ -921,7 +921,7 @@
   display: flex;
   align-items: center;
   gap: var(--ds-space-2);
-  margin-bottom: 3px;
+  margin-bottom: var(--ds-space-1);
 }
 .search-result-session {
   font-size: var(--ds-fs-hint);
@@ -939,8 +939,8 @@
   letter-spacing: 0.4px;
   color: rgb(91, 127, 191);
   background: rgba(91, 127, 191, 0.08);
-  border-radius: 5px;
-  padding: 1px var(--ds-space-1h);
+  border-radius: var(--ds-radius-chip);
+  padding: var(--ds-space-hair) var(--ds-space-1h);
   flex-shrink: 0;
 }
 /* 作者令②（2026-10-30）：结果列表用户/AI 异色——token 见 base.css
@@ -967,7 +967,7 @@
    badge hints at the open-in-Canvas affordance. */
 .search-result[data-artifact="1"] .search-result-type::after {
   content: '↗';
-  margin-left: 5px;
+  margin-left: var(--ds-space-1h);
   opacity: 0.65;
   font-size: var(--ds-fs-meta);
 }
@@ -984,8 +984,8 @@
 .search-result-preview mark {
   background: rgba(91, 127, 191, 0.28);
   color: inherit;
-  border-radius: 3px;
-  padding: 0 1px;
+  border-radius: var(--ds-radius-badge);
+  padding: 0 var(--ds-space-hair);
 }
 
 /* Group header — session name + hit count (scope=all only).
@@ -1035,7 +1035,7 @@
   border: 1px solid color-mix(in srgb, var(--status-error-icon) 26%, transparent);
   border-left: 2px solid var(--status-error-icon);
 }
-.search-result-card-warn .st-ic { width: 12px; height: 12px; margin: 1px var(--ds-space-1h) 0 0; flex-shrink: 0; }
+.search-result-card-warn .st-ic { width: 12px; height: 12px; margin: var(--ds-space-hair) var(--ds-space-1h) 0 0; flex-shrink: 0; }
 
 /* Inline retry button in the status line (error state). */
 #search-status .cfg-btn { margin-left: var(--ds-space-2); }
@@ -1129,7 +1129,7 @@
 .nebflow-toast-link {
   display: inline-block;
   margin-left: var(--ds-space-indent-x);
-  padding: 3px var(--ds-space-inline-x);
+  padding: var(--ds-space-1) var(--ds-space-inline-x);
   font-size: var(--ds-fs-hint);
   color: var(--color-text);
   text-decoration: none;
@@ -1366,8 +1366,8 @@
   font: 500 var(--ds-fs-meta) -apple-system, sans-serif;
   color: var(--color-text-muted);
   background: rgba(128, 128, 128, 0.12);
-  border-radius: 3px;
-  padding: 1px 5px;
+  border-radius: var(--ds-radius-badge);
+  padding: var(--ds-space-hair) var(--ds-space-1h);
   flex-shrink: 0;
 }
 .mp-status-main {
@@ -1421,7 +1421,7 @@
   color: var(--color-text-muted);
   background: rgba(128, 128, 128, 0.12);
   border-radius: var(--ds-radius-badge);
-  padding: 1px var(--ds-space-1h);
+  padding: var(--ds-space-hair) var(--ds-space-1h);
   flex-shrink: 0;
 }
 .mp-model {

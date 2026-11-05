@@ -119,7 +119,7 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
   pointer-events: none;
   z-index: 1;
 }
-.bgt-title-wrap { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 1px; }
+.bgt-title-wrap { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: var(--ds-space-hair); }
 .bgt-title {
   font: 600 var(--ds-fs-body) -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text);
@@ -134,7 +134,7 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
   max-width: 100%;
 }
 .bgt-state-chip {
-  display: inline-flex; align-items: center; gap: 5px;
+  display: inline-flex; align-items: center; gap: var(--ds-space-1);
   flex-shrink: 0;
   font: 400 var(--ds-fs-meta) -apple-system, sans-serif;
   color: var(--color-frame-text-muted);
@@ -175,7 +175,7 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
   border-left: 2px solid var(--status-error-icon);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.bgt-error .st-ic { width: 12px; height: 12px; margin-top: 1px; flex-shrink: 0; }
+.bgt-error .st-ic { width: 12px; height: 12px; margin-top: var(--ds-space-hair); flex-shrink: 0; }
 
 /* 输出区（2026-09-10 作者指令：终端化内芯）：后台任务输出是终端任务——
    内芯 = 跟随主题的深/浅终端底（light #f5f5f5 / dark #111419，与代码块
@@ -270,7 +270,7 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
   content: '';
   display: inline-block;
   width: 5px; height: 12px;
-  margin-left: 1px;
+  margin-left: var(--ds-space-hair);
   background: var(--color-primary);
   vertical-align: text-bottom;
   animation: blink 1s steps(2) infinite;

@@ -140,8 +140,8 @@ const DAEMON_CSS = `
 
 /* ── Daemon Row ── */
 .daemon-row {
-  display: flex; align-items: center; gap: var(--ds-space-inline-gap); padding: 9px var(--ds-space-inline-x);
-  border-radius: var(--ds-radius-button); margin: 1px 0; transition: background 0.15s;
+  display: flex; align-items: center; gap: var(--ds-space-inline-gap); padding: var(--ds-space-2) var(--ds-space-inline-x);
+  border-radius: var(--ds-radius-button); margin: var(--ds-space-hair) 0; transition: background 0.15s;
 }
 .daemon-row.anim { animation: daemonRowIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) backwards; }
 .daemon-row.anim:nth-child(1) { animation-delay: 0ms; }
@@ -156,7 +156,7 @@ const DAEMON_CSS = `
 
 /* ── Status Dot ── */
 .daemon-status {
-  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-top: 3px;
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-top: var(--ds-space-1);
 }
 .daemon-status.running { background: var(--color-primary, #07c160); animation: daemon-pulse 1.6s ease-out infinite; }
 .daemon-status.stopped { background: var(--color-text-muted); opacity: 0.3; }
@@ -170,8 +170,8 @@ const DAEMON_CSS = `
 }
 
 /* ── Row Info ── */
-.daemon-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-.daemon-name-row { display: flex; align-items: baseline; gap: 5px; }
+.daemon-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--ds-space-hair); }
+.daemon-name-row { display: flex; align-items: baseline; gap: var(--ds-space-1); }
 .daemon-name {
   font-size: var(--ds-fs-body); font-weight: 500; color: var(--color-text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; letter-spacing: -0.01em;
@@ -220,7 +220,7 @@ const DAEMON_CSS = `
 .daemon-actions { display: flex; align-items: center; gap: var(--ds-space-1); flex-shrink: 0; }
 .daemon-btn {
   font: 500 var(--ds-fs-meta) -apple-system, sans-serif; padding: var(--ds-space-1) var(--ds-space-inline-x);
-  border-radius: 7px; border: 1px solid transparent;
+  border-radius: var(--ds-radius-input); border: 1px solid transparent;
   background: var(--glass-control-bg);
   -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
@@ -235,7 +235,7 @@ const DAEMON_CSS = `
 .daemon-btn.stop:hover { background: rgba(91, 127, 191, 0.08); }
 .daemon-btn-icon {
   width: 26px; height: 26px; padding: 0; display: flex;
-  align-items: center; justify-content: center; border-radius: 7px;
+  align-items: center; justify-content: center; border-radius: var(--ds-radius-input);
   border: 1px solid transparent; background: transparent; cursor: pointer;
   color: var(--color-text-muted); transition: all 0.15s;
 }

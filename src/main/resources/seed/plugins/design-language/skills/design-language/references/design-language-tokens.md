@@ -171,6 +171,7 @@
 | half | `--ds-space-half` | 2px | 4px 栅格外半步微缝（图标与角标、紧贴件） |
 | 1 | `--ds-space-1` | 4px | 紧排件缝、行内图标与文字 |
 | 例外·半步（`--ds-space-1h`，2026-11-04 实施批出生） | `--ds-space-1h` | 6px | 图标+文字小缝、chip 内距（实测 349 处，见 §3-②） |
+| 例外·发丝（2026-11-04 间距例外批） | `--ds-space-hair` | 1px | 发丝缝/发丝偏移（99 处原子；禁作内距，内距走 4px 栅格） |
 | 2 | `--ds-space-2` | 8px | 控件间 gap、行内距、按钮行 |
 | 例外·10px 内横距（2026-11-04 命名债批） | `--ds-space-inline-x` | 10px | 块/控件与内容的左右内距（151 处） |
 | 例外·10px 内纵距 | `--ds-space-block-y` | 10px | 块上下内距（95 处） |
@@ -383,6 +384,7 @@ node scripts/check-design-spec-sync.mjs --json   # 机器读
 | `--ds-space-stack-gap` | `10px` | 10px 档·块间纵距（margin 纵轴，49 处） |
 | `--ds-space-indent-x` | `10px` | 10px 档·行缩进（margin 横轴，9 处） |
 | `--ds-space-1h` | `6px` | 半步件缝例外档：图标+文字小缝、chip 内距 |
+| `--ds-space-hair` | `1px` | 发丝缝例外档：分隔线/指示条偏移/发光描边 inset（禁作内距） |
 | `--ds-fs-meta` | `11px` | meta/徽标/小节标签（可读下限） |
 | `--ds-fs-hint` | `12px` | hint/caption |
 | `--ds-fs-btn` | `12px` | 按钮文字 |

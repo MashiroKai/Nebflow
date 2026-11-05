@@ -47,8 +47,8 @@
   font-weight: 500;
   line-height: 14px;
   text-align: center;
-  border-radius: 7px;
-  padding: 0 3px;
+  border-radius: var(--ds-radius-input);
+  padding: 0 var(--ds-space-1);
   pointer-events: none;
   box-shadow: 0 1px 3px rgba(7, 193, 96, 0.25);
 }
@@ -213,7 +213,7 @@
 .todo-ask-chip {
   flex-shrink: 0;
   display: inline-block;
-  padding: 0 5px;
+  padding: 0 var(--ds-space-1h);
   border-radius: var(--ds-radius-chip);
   font-size: var(--ds-fs-meta);
   font-weight: 600;
@@ -261,9 +261,9 @@
   display: flex;
   align-items: center;
   gap: var(--ds-space-inline-gap);
-  padding: 9px var(--ds-space-inline-x);
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
   border-radius: var(--ds-radius-button);
-  margin: 1px 0;
+  margin: var(--ds-space-hair) 0;
   transition: background 0.15s, opacity 0.25s, transform 0.25s;
   position: relative;
   cursor: default;
@@ -360,7 +360,7 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: var(--ds-space-hair);
 }
 .reminder-row-text {
   font-size: var(--ds-fs-body);
@@ -380,7 +380,7 @@
   letter-spacing: -0.01em;
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: var(--ds-space-half);
 }
 .reminder-row-time svg {
   width: 11px;
@@ -449,11 +449,11 @@
   color: var(--status-word);
   background: rgba(244, 67, 54, 0.08);
   border: 1px solid color-mix(in srgb, var(--status-error-icon) 25%, transparent);
-  padding: 0 5px;
-  border-radius: 3px;
+  padding: 0 var(--ds-space-1h);
+  border-radius: var(--ds-radius-badge);
   line-height: 14px;
   letter-spacing: -0.01em;
-  margin-left: 3px;
+  margin-left: var(--ds-space-1);
 }
 .reminder-overdue-tag .st-ic { width: 9px; height: 9px; margin-right: var(--ds-space-half); }
 
@@ -509,7 +509,7 @@
   color: var(--color-text);
   outline: none;
   font-family: inherit;
-  padding: 3px 0;
+  padding: var(--ds-space-1) 0;
   letter-spacing: -0.01em;
 }
 .reminder-inline-input::placeholder {
@@ -576,7 +576,7 @@
   font-size: var(--ds-fs-meta);
   font-weight: 500;
   font-family: inherit;
-  padding: 3px 0;
+  padding: var(--ds-space-1) 0;
   border-radius: var(--ds-radius-chip);
   cursor: pointer;
   transition: background 0.15s ease, opacity 0.15s ease, box-shadow 0.15s ease;
@@ -616,7 +616,7 @@
   background: rgb(var(--sapphire) / 0.1);
   border: 1px solid rgb(var(--sapphire) / 0.22);
   border-radius: var(--ds-radius-badge);
-  padding: 0 5px;
+  padding: 0 var(--ds-space-1h);
   line-height: 15px;
   letter-spacing: -0.01em;
 }
@@ -635,7 +635,7 @@
   gap: var(--ds-space-1h);
   width: fit-content;
   max-width: min(440px, 82%);
-  padding: 11px 14px var(--ds-space-block-y);
+  padding: var(--ds-space-3) 14px var(--ds-space-block-y);
   border-radius: var(--ds-radius-card-md);
   /* 气泡族尾角：不就地复写 —— 本卡 = .bubble.injected 族（injectedRows.js
      建类「bubble injected schedule-card」），尾角 4px 由 chat.css
@@ -678,8 +678,8 @@
   font-weight: 600;
   letter-spacing: -0.01em;
   line-height: 17px;
-  padding: 0 7px;
-  border-radius: 5px;
+  padding: 0 var(--ds-space-2);
+  border-radius: var(--ds-radius-chip);
   color: rgb(var(--sapphire));
   background: rgb(var(--sapphire) / 0.10);
   border: 1px solid rgb(var(--sapphire) / 0.22);
@@ -703,7 +703,7 @@
   background: rgb(var(--sapphire) / 0.1);
   border: 1px solid rgb(var(--sapphire) / 0.22);
   border-radius: var(--ds-radius-badge);
-  padding: 0 5px;
+  padding: 0 var(--ds-space-1h);
   line-height: 15px;
   letter-spacing: -0.01em;
 }
@@ -719,7 +719,7 @@
 .schedule-card-body p { margin: var(--ds-space-1) 0; }
 .schedule-card-body p:first-child { margin-top: 0; }
 .schedule-card-body p:last-child { margin-bottom: 0; }
-.schedule-card-body ul, .schedule-card-body ol { margin: var(--ds-space-1) 0 var(--ds-space-1) 18px; padding: 0; }
+.schedule-card-body ul, .schedule-card-body ol { margin: var(--ds-space-1) 0 var(--ds-space-1) var(--ds-space-5); padding: 0; }
 .schedule-card-body pre {
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
@@ -733,13 +733,13 @@
 .schedule-card-ref {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--ds-space-1);
   font-size: var(--ds-fs-meta);
   color: var(--color-text);
   opacity: 0.55;
   letter-spacing: -0.01em;
-  padding: 5px var(--ds-space-2);
-  border-radius: 7px;
+  padding: var(--ds-space-1h) var(--ds-space-2);
+  border-radius: var(--ds-radius-input);
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
   min-width: 0;

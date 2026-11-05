@@ -49,7 +49,7 @@
 .tw-dash {
   font-style: normal;
   color: var(--color-text-muted);
-  padding: 0 1px;
+  padding: 0 var(--ds-space-hair);
 }
 
 /* ══ 面板本体（popover / sheet 两皮共用，规格 = 同构）═════════════════════ */
@@ -249,7 +249,7 @@ html.no-backdrop .tw-panel { background: var(--color-surface); }
   font-weight: 500;
   color: var(--color-text-muted);
 }
-.tw-panel.popover .tw-wheel-sep { padding: 0 9px; }
+.tw-panel.popover .tw-wheel-sep { padding: 0 var(--ds-space-2); }
 
 /* ══ 快捷档 / 星期（同族胶囊；热区 44）═══════════════════════════════════ */
 .tw-chips,

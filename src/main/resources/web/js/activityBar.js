@@ -654,7 +654,7 @@ function injectLoginModalStyles() {
    登录键族块 owns geometry/material — primary green solid tier, the
    "显眼位" ask), this block only stands the inline brand mark next to the
    label. Same one-family discipline as the keys above. */
-.login-social-btn { display: flex; align-items: center; justify-content: center; gap: 7px; }
+.login-social-btn { display: flex; align-items: center; justify-content: center; gap: var(--ds-space-1h); }
 .login-social-btn svg { width: 16px; height: 16px; flex-shrink: 0; }
 /* v3 登录卡（mobile-mockup-375 v3④）：单键制 + 官方横排 lockup。idle 面无头栏
    （lockup 即卡头；关闭 = Esc / 点外，既有链）；面板材质沿用上方 .nebflow-login-modal

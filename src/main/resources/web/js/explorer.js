@@ -1075,7 +1075,7 @@ function ensureExplorerSearch() {
   sortBtn.title = sortModeLabel(explorerSortMode);
   sortBtn.setAttribute('aria-label', sortModeLabel(explorerSortMode));
   sortBtn.textContent = sortModeLabel(explorerSortMode);
-  sortBtn.setAttribute('style', 'flex:0 0 auto;font:var(--ds-fs-hint)/1.2 inherit;padding:3px 7px;border-radius:7px;'
+  sortBtn.setAttribute('style', 'flex:0 0 auto;font:var(--ds-fs-hint)/1.2 inherit;padding:var(--ds-space-1) var(--ds-space-2);border-radius:var(--ds-radius-input);'
     + 'border:1px solid rgba(255,255,255,0.14);background:rgba(255,255,255,0.06);color:inherit;cursor:pointer;');
   sortBtn.addEventListener('click', (e) => {
     e.stopPropagation();

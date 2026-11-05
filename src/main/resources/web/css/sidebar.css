@@ -304,7 +304,7 @@
 }
 /* ui-status-redesign（S10 / 盘点 #47）：常显危险项（删除文件夹）——字转常规色、
    行首 trash-2 红图标（sidebar.js 注入）；hover 时刻字随交互转红（铁律三）。 */
-.session-ctx-menu .ctx-item .st-ic { width: 12px; height: 12px; margin-right: 7px; vertical-align: -2px; }
+.session-ctx-menu .ctx-item .st-ic { width: 12px; height: 12px; margin-right: var(--ds-space-2); vertical-align: -2px; }
 .session-ctx-menu .ctx-item[data-action="delete"] .st-ic { color: var(--ds-danger-icon); }
 .session-ctx-menu .ctx-item[data-action="delete"]:hover { color: var(--ds-danger-icon); }
 
@@ -684,7 +684,7 @@
   align-items: center;
   gap: var(--ds-space-inline-gap);
   text-align: left;
-  padding: 11px 14px;
+  padding: var(--ds-space-3) 14px;
   border-radius: var(--ds-radius-card-md);
   cursor: pointer;
   font-family: inherit;
@@ -710,7 +710,7 @@
 .secrets-entry .entry-sub { font-size: var(--ds-fs-meta); color: var(--color-frame-text-muted); flex: none; }
 .count-pill {
   font-size: var(--ds-fs-meta);
-  padding: 1px 7px;
+  padding: var(--ds-space-hair) var(--ds-space-2);
   border-radius: var(--ds-radius-badge);
   background: color-mix(in srgb, var(--color-frame-text-muted) 12%, transparent);
   color: var(--color-frame-text-muted);
@@ -774,7 +774,7 @@
 .stt-key-configured {
   display: inline-block;
   margin-left: var(--ds-space-2);
-  padding: 1px var(--ds-space-2);
+  padding: var(--ds-space-hair) var(--ds-space-2);
   font-size: var(--ds-fs-meta);
   font-weight: 500;
   color: rgb(var(--sapphire));
@@ -1066,7 +1066,7 @@
   align-items: baseline;
   justify-content: space-between;
   gap: var(--ds-space-3);
-  padding: 7px 0;
+  padding: var(--ds-space-2) 0;
   border-top: 1px solid var(--color-frame-border-light);
 }
 .sp-field:first-child { border-top: none; }
@@ -1114,7 +1114,7 @@
   display: flex;
   align-items: flex-start;
   gap: var(--ds-space-2);
-  padding: 5px var(--ds-space-inline-x);
+  padding: var(--ds-space-1h) var(--ds-space-inline-x);
   border-top: 1px solid var(--color-frame-border-light);
 }
 .cfg-model-name {
@@ -1122,7 +1122,7 @@
   color: var(--color-frame-text);
   flex-shrink: 0;
   min-width: 80px;
-  padding-top: 1px;
+  padding-top: var(--ds-space-hair);
 }
 .cfg-model-vision {
   flex-shrink: 0;
@@ -1131,7 +1131,7 @@
 /* Read-only vision badge (provider card list) */
 .vision-badge {
   font: 500 var(--ds-fs-meta) -apple-system, sans-serif;
-  padding: 1px var(--ds-space-2);
+  padding: var(--ds-space-hair) var(--ds-space-2);
   border-radius: var(--ds-radius-input);
   border: 1px solid rgb(var(--sapphire) / 0.35);
   background: rgb(var(--sapphire) / 0.08);
@@ -1155,8 +1155,8 @@
 }
 .cfg-card-badge {
   font-size: var(--ds-fs-meta);
-  padding: 1px var(--ds-space-1h);
-  border-radius: 3px;
+  padding: var(--ds-space-hair) var(--ds-space-1h);
+  border-radius: var(--ds-radius-badge);
   background: var(--color-frame-border);
   color: var(--color-frame-text-muted);
   font-weight: 500;
@@ -1266,7 +1266,7 @@
 .cfg-btn:focus-visible { outline: 2px solid var(--btn-focus-ring); outline-offset: 2px; }
 .cfg-btn-sm { font-size: var(--ds-fs-btn); padding: var(--ds-space-1) var(--ds-space-3); border-radius: var(--ds-radius-pill); }
 .cfg-btn-primary {
-  font-size: var(--ds-fs-btn); padding: var(--ds-space-1h) 18px; border-radius: var(--ds-radius-pill);
+  font-size: var(--ds-fs-btn); padding: var(--ds-space-1h) var(--ds-space-5); border-radius: var(--ds-radius-pill);
   border: 1px solid var(--btn-primary-bg);
   background: var(--btn-primary-bg);
   color: var(--btn-primary-ink);
@@ -1392,7 +1392,7 @@
 }
 .cfg-modal-body { padding: var(--ds-space-3) var(--ds-space-4); }
 .cfg-modal-body .cfg-form-group { margin-bottom: var(--ds-space-3); }
-.cfg-modal-body .cfg-label { margin-bottom: 5px; }
+.cfg-modal-body .cfg-label { margin-bottom: var(--ds-space-1h); }
 .cfg-input {
   width: 100%;
   background: var(--ds-etched-bg);
@@ -1483,7 +1483,7 @@
   border: 1px solid var(--color-frame-border-light);
   color: var(--color-frame-text-muted);
   cursor: pointer;
-  padding: 3px var(--ds-space-inline-x);
+  padding: var(--ds-space-1) var(--ds-space-inline-x);
   border-radius: var(--ds-radius-chip);
   font-size: var(--ds-fs-meta);
   font-family: inherit;
@@ -1577,7 +1577,7 @@
   color: var(--color-text);
   animation: cfg-toast-in 0.2s ease-out;
 }
-.cfg-toast-error .st-ic { width: 15px; height: 15px; margin-top: 1px; flex-shrink: 0; }
+.cfg-toast-error .st-ic { width: 15px; height: 15px; margin-top: var(--ds-space-hair); flex-shrink: 0; }
 .cfg-toast-error .cfg-toast-msg { color: var(--ds-status-word); min-width: 0; overflow-wrap: anywhere; }
 @keyframes cfg-toast-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
@@ -1602,8 +1602,8 @@
 }
 .agent-mgr-standalone-badge {
   font: 500 var(--ds-fs-meta) -apple-system, sans-serif;
-  padding: 1px 5px;
-  border-radius: 3px;
+  padding: var(--ds-space-hair) var(--ds-space-1h);
+  border-radius: var(--ds-radius-badge);
   background: rgba(100,200,100,0.15);
   color: #6a6;
   margin-left: var(--ds-space-1);
@@ -1614,14 +1614,14 @@
  * recipe (agent-mgr-avatar bg/color below), zero new color tokens.
  * Spec: 20260824_entity-icons-visual-spec §5. */
 .agent-mgr-group-header.orchestrator {
-  display: flex; align-items: center; gap: 5px;
+  display: flex; align-items: center; gap: var(--ds-space-1);
   color: rgb(var(--sapphire));
 }
 .agent-mgr-group-header.orchestrator svg { flex-shrink: 0; }
 .agent-mgr-orchestrator-badge {
   font: 500 var(--ds-fs-meta) -apple-system, sans-serif;
-  padding: 1px 5px;
-  border-radius: 3px;
+  padding: var(--ds-space-hair) var(--ds-space-1h);
+  border-radius: var(--ds-radius-badge);
   background: rgba(91,127,191,0.10);
   color: rgb(91,127,191);
   margin-left: var(--ds-space-1);
@@ -1651,7 +1651,7 @@
 }
 .agent-mgr-info {
   flex: 1; min-width: 0;
-  display: flex; flex-direction: column; gap: 1px;
+  display: flex; flex-direction: column; gap: var(--ds-space-hair);
 }
 .agent-mgr-card .agent-mgr-name {
   font: 600 var(--ds-fs-hint) -apple-system, sans-serif;
@@ -1671,7 +1671,7 @@
   font: 500 var(--ds-fs-meta) ui-monospace, SFMono-Regular, monospace;
   color: var(--color-frame-text-muted);
   background: var(--color-frame-border);
-  padding: 1px var(--ds-space-1h);
+  padding: var(--ds-space-hair) var(--ds-space-1h);
   border-radius: var(--ds-radius-badge);
 }
 .agent-mgr-model-pill.fallback {
@@ -1724,8 +1724,8 @@
   display: inline-flex;
   align-items: center;
   margin-left: var(--ds-space-2);
-  padding: 1px var(--ds-space-2);
-  border-radius: 9px;
+  padding: var(--ds-space-hair) var(--ds-space-2);
+  border-radius: var(--ds-radius-button);
   font-size: var(--ds-fs-meta);
   line-height: 16px;
   vertical-align: middle;
@@ -1884,7 +1884,7 @@
   margin-top: var(--ds-space-2);
   flex-shrink: 0;
   font: 500 var(--ds-fs-btn) -apple-system, sans-serif;
-  padding: 5px var(--ds-space-4);
+  padding: var(--ds-space-1h) var(--ds-space-4);
   border: 1px solid transparent;
   border-radius: var(--ds-radius-input);
   background: var(--ctl-neutral-bg);
@@ -1926,7 +1926,7 @@
 }
 .agent-detail-face-tab {
   font: 500 var(--ds-fs-meta) -apple-system, sans-serif;
-  padding: 3px var(--ds-space-3);
+  padding: var(--ds-space-1) var(--ds-space-3);
   border: 1px solid var(--color-border);
   border-radius: var(--ds-radius-pill);
   background: transparent;
@@ -2070,7 +2070,7 @@
   display: flex;
   align-items: center;
   gap: var(--ds-space-2);
-  padding: 3px 0;
+  padding: var(--ds-space-1) 0;
 }
 .orb-state-row .orb-state-name {
   flex: 1;
@@ -2083,13 +2083,13 @@
 }
 .orb-swatches {
   display: inline-flex;
-  gap: 3px;
+  gap: var(--ds-space-half);
   flex: none;
 }
 .orb-swatches i {
   width: 10px;
   height: 10px;
-  border-radius: 3px;
+  border-radius: var(--ds-radius-badge);
   border: 1px solid rgba(128, 128, 128, 0.35);
   display: inline-block;
 }
@@ -2110,7 +2110,7 @@
   display: flex;
   align-items: center;
   gap: var(--ds-space-2);
-  padding: 3px 0;
+  padding: var(--ds-space-1) 0;
 }
 .orb-slot-row .orb-slot-label { flex: 1; }
 .orb-slot-color {
@@ -2127,7 +2127,7 @@
 .orb-warn {
   color: #d9a53a;
   font-size: var(--ds-fs-meta);
-  padding: 1px 0 3px var(--ds-space-2);
+  padding: var(--ds-space-hair) 0 var(--ds-space-1) var(--ds-space-2);
 }
 .orb-theme-seg {
   display: inline-flex;
@@ -2213,7 +2213,7 @@
   white-space: nowrap;
 }
 .plugins-stats-sep { color: var(--color-frame-text-dim); }
-.plugins-section { margin-bottom: 18px; }
+.plugins-section { margin-bottom: var(--ds-space-5); }
 .plugins-section-title {
   font: 600 var(--ds-fs-meta) -apple-system, sans-serif;
   text-transform: uppercase;
@@ -2280,7 +2280,7 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   column-gap: var(--ds-space-2);
-  row-gap: 3px;
+  row-gap: var(--ds-space-half);
   align-items: center;
 }
 .plugins-card-head[data-plugin-item] {
@@ -2395,9 +2395,9 @@
 .plugins-item-uninstall {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--ds-space-1);
   font: 500 var(--ds-fs-meta) ui-monospace, SFMono-Regular, monospace;
-  padding: 3px var(--ds-space-inline-x);
+  padding: var(--ds-space-1) var(--ds-space-inline-x);
   border-radius: var(--ds-radius-input);
   cursor: pointer;
   background: var(--glass-control-bg);
@@ -2434,7 +2434,7 @@
      可用 321px，见 docs/20261102_plugin-panel-layout__*.md）。 */
   margin-right: auto;
   font: 500 var(--ds-fs-meta) ui-monospace, SFMono-Regular, monospace;
-  padding: 3px var(--ds-space-inline-x);
+  padding: var(--ds-space-1) var(--ds-space-inline-x);
   border-radius: var(--ds-radius-input);
   cursor: pointer;
   background: var(--glass-control-bg);
@@ -2455,7 +2455,7 @@
    styles live in the «nb-toggle» section below. The pill stays panel-local. */
 .plugins-state-pill {
   font: 500 var(--ds-fs-meta) -apple-system, sans-serif;
-  padding: 1px 7px;
+  padding: var(--ds-space-hair) var(--ds-space-2);
   border-radius: var(--ds-radius-input);
   border: 1px solid transparent;
   white-space: nowrap;
@@ -2475,7 +2475,7 @@
   background: color-mix(in srgb, var(--status-error-icon) 10%, transparent);
   border-color: color-mix(in srgb, var(--status-error-icon) 25%, transparent);
 }
-.plugins-state-pill.blocked .st-ic { width: 10px; height: 10px; margin-right: 3px; }
+.plugins-state-pill.blocked .st-ic { width: 10px; height: 10px; margin-right: var(--ds-space-1); }
 .plugins-card-desc {
   font: 400 var(--ds-fs-meta) -apple-system, sans-serif;
   color: var(--color-frame-text-muted);
@@ -2498,7 +2498,7 @@
 }
 .plugins-comp {
   font: 500 var(--ds-fs-meta) ui-monospace, SFMono-Regular, monospace;
-  padding: 1px 7px;
+  padding: var(--ds-space-hair) var(--ds-space-2);
   border-radius: var(--ds-radius-input);
   border: 1px solid var(--glass-control-border);
   background: var(--glass-control-bg);
@@ -2513,8 +2513,8 @@
 .plugins-card-hint {
   font: 400 var(--ds-fs-meta) -apple-system, sans-serif;
   line-height: 1.4;
-  border-radius: 7px;
-  padding: 5px var(--ds-space-2);
+  border-radius: var(--ds-radius-input);
+  padding: var(--ds-space-1h) var(--ds-space-2);
 }
 /* 已封禁提示（2026-09-13 无审批批）——可行动文案，error 族。 */
 /* （原 `.plugins-card-hint.dim` 的「未启用（默认拒绝）」灰字提示已随内容审批
@@ -2558,7 +2558,7 @@
 .plugins-rejected-pill {
   flex-shrink: 0;
   font: 500 var(--ds-fs-meta) -apple-system, sans-serif;
-  padding: 1px 7px;
+  padding: var(--ds-space-hair) var(--ds-space-2);
   border-radius: var(--ds-radius-input);
   color: rgb(var(--amber));
   background: rgb(var(--amber) / 0.1);
@@ -2592,7 +2592,7 @@
   background: var(--glass-control-bg);
   border: 1px solid var(--glass-control-border);
   border-radius: var(--ds-radius-pill);
-  padding: 3px var(--ds-space-inline-x);
+  padding: var(--ds-space-1) var(--ds-space-inline-x);
   cursor: pointer;
   text-align: left;
   transition: color 0.15s, border-color 0.15s, background 0.15s;
@@ -2729,7 +2729,7 @@
 .cfg-model-test-result {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: var(--ds-space-half);
   font: 400 var(--ds-fs-meta) ui-monospace, SFMono-Regular, monospace;
   color: var(--color-frame-text-muted);
   max-width: 220px;
