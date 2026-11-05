@@ -242,7 +242,7 @@ export function replayHistoryPageInitialLoad(msg, view) {
       label.className = 'ask-label';
       label.textContent = t('chat.askLabel');
       const content = document.createElement('div');
-      content.innerHTML = renderMarkdownWithMath(activeView.stream.askAnswerText, true, { cache: false }) + '<span class="cursor"></span>';
+      content.innerHTML = renderMarkdownWithMath(activeView.stream.askAnswerText, true, { cache: false, stream: true }) + '<span class="cursor"></span>';
       activeView.stream.currentAskBubble.appendChild(label);
       activeView.stream.currentAskBubble.appendChild(content);
       row.appendChild(activeView.stream.currentAskBubble);

@@ -1,0 +1,128 @@
+[sbt-gate] waiting for /Users/kaiyu/.stand/run/sbt.lock (another sbt holds the heavy-work gate; bypass: SBT_GATE=off sbt …)
+[sbt-gate] STILL waiting ~5min. escape hatch: SBT_GATE=off sbt …
+[sbt-gate] acquired after 315s
+[sbt-gate] gate acquired after 315s
+[sbt-gate] heap cap -Xmx2600m applied via SBT_OPTS
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project delegate-midturn-inject-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/project
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/delegate-midturn-inject/)
+[warn] javaOptions will be ignored, fork is set to false
+09:55:07.404 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=spawn detail=parent=- msgs=0
+09:55:07.425 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=start detail=msgs=0
+09:55:07.890 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash START: while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-
+09:55:08.090 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=immediate-input-queued detail=textLen=14
+09:55:08.833 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash
+  (while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-midturn-injection...) OK (971ms)
+09:55:08.841 [36mINFO [0m nebflow.tools.logger - Tools log retention: pruned files older than 2026-11-02
+09:55:08.856 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=immediate-input-injected-at-tools-complete detail=batch=1 texts=L1-USER-改用快速路径 remaining=0
+09:55:08.877 [36mINFO [0m nebflow.reminders - [time] Current time: 2026-11-05 09:55 +08:00
+09:55:08.877 [36mINFO [0m nebflow.reminders - [msgtoken] 消息身份牌：本条用户消息已铸牌 {{msg:039e531c-000001}}。向其它会话派发（Mail / Delegate / node 消息）时在文本中写入该牌，接收方会在投递前自动展开为消息全
+09:55:08.889 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash START: while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-
+[MTIT L1] calls=2 roundCompleteBeforeBoundary2=0 inFirst=false inSecond=true secondHasBatchEcho=true
+09:55:09.255 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=spawn detail=parent=- msgs=0
+09:55:09.256 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=start detail=msgs=0
+09:55:09.271 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash START: while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-
+09:55:09.582 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=user-input-queued detail=textLen=19 pending=1
+09:55:10.229 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash
+  (while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-midturn-injection...) OK (958ms)
+09:55:10.232 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=human-frame-injected-at-tools-complete detail=batch=1 blocks=1 texts=L1B-TYPELESS 带引用的追问 remainingUserInputs=0
+09:55:10.241 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash START: while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-
+09:55:11.127 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash
+  (while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-midturn-injection...) OK (886ms)
+09:55:11.142 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=turn-complete detail=msgs=7 textLen=12 textStreamed=true thinking=0 model=-
+[MTIT L1b] callsAfterBoundary1=2 inBoundaryRequest=Some(true) callsAfterTurnEnd=3 landing=1,2
+09:55:11.618 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=spawn detail=parent=- msgs=0
+09:55:11.619 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=start detail=msgs=0
+09:55:11.627 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash START: while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-
+09:55:11.946 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=immediate-input-queued detail=textLen=25
+09:55:12.579 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash
+  (while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-midturn-injection...) OK (953ms)
+09:55:12.581 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=immediate-input-injected-at-tools-complete detail=batch=1 texts=L2-DELEGATE-NOTIFY 节点失败通知 remaining=0
+09:55:12.588 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash START: while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-
+[MTIT L2] delegateInjectLive=true calls=2 inSecond=true secondHasBatchEcho=true
+09:55:12.894 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=spawn detail=parent=- msgs=0
+09:55:12.895 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=start detail=msgs=0
+09:55:12.904 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash START: while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-
+09:55:13.221 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=user-input-queued detail=textLen=30 pending=1 source=mail
+09:55:13.874 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash
+  (while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-midturn-injection...) OK (970ms)
+09:55:13.875 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=mail-injected-at-tools-complete detail=items=1 blocks=0 agesMs=654ms textLen=30 remainingUserInputs=0
+09:55:13.883 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash START: while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-
+[MTIT L2b] calls=2 inSecond=true
+09:55:14.173 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=spawn detail=parent=- msgs=0
+09:55:14.174 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=start detail=msgs=0
+09:55:14.181 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash START: while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-
+09:55:14.560 [33mWARN [0m nebflow.node.engine - NodeMessage: node 'n-l3' (n-l3) session cache self-healed -> midturn-l3 (cached=-, sessionRef=midturn-l3)
+09:55:14.560 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=immediate-input-queued detail=textLen=109
+09:55:14.561 [36mINFO [0m nebflow.node.engine - NodeMessage -> node 'n-l3' (n-l3) injected at turn boundary (session midturn-l3, 15 chars)
+09:55:15.175 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash
+  (while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-midturn-injection...) OK (994ms)
+09:55:15.177 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=immediate-input-injected-at-tools-complete detail=batch=1 texts=[NODE-MESSAGE] 来源：任务分发器 NodeMessage · 节点 remaining=0
+09:55:15.190 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash START: while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-
+[MTIT L3] sendNodeMessage=Right(Message delivered to running node 'n-l3' — it will) calls=2 inSecond=true
+09:55:15.488 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=spawn detail=parent=- msgs=0
+09:55:15.488 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=start detail=msgs=0
+09:55:15.495 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash START: while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-
+09:55:15.814 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=immediate-input-queued detail=textLen=19
+09:55:16.485 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash
+  (while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-midturn-injection...) OK (990ms)
+09:55:16.487 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=immediate-input-injected-at-tools-complete detail=batch=1 texts=L4-IDEMPOTENT 只出现一次 remaining=0
+09:55:16.490 [36mINFO [0m nebflow.reminders - [msgtoken] 消息身份牌：本条用户消息已铸牌 {{msg:7e900d80-000001}}。向其它会话派发（Mail / Delegate / node 消息）时在文本中写入该牌，接收方会在投递前自动展开为消息全
+09:55:16.494 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash START: while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-
+09:55:17.335 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash
+  (while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-midturn-injection...) OK (840ms)
+09:55:17.344 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=turn-complete detail=msgs=7 textLen=12 textStreamed=true thinking=0 model=-
+[MTIT L4] calls=3 afterBoundary1=Some(1) afterBoundary2=Some(1)
+09:55:17.657 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=spawn detail=parent=- msgs=0
+09:55:17.659 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=start detail=msgs=0
+09:55:17.670 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash START: while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-
+09:55:18.640 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash
+  (while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-midturn-injection...) OK (971ms)
+09:55:18.659 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash START: while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-
+09:55:19.294 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash
+  (while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-midturn-injection...) OK (636ms)
+09:55:19.299 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=turn-complete detail=msgs=5 textLen=12 textStreamed=true thinking=0 model=-
+09:55:19.701 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=start detail=msgs=6
+09:55:19.710 [36mINFO [0m nebflow.reminders - [msgtoken] 消息身份牌：本条用户消息已铸牌 {{msg:9fae40a8-000001}}。向其它会话派发（Mail / Delegate / node 消息）时在文本中写入该牌，接收方会在投递前自动展开为消息全
+09:55:19.714 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=turn-complete detail=msgs=8 textLen=16 textStreamed=true thinking=0 model=-
+[MTIT L5] roundCompleteBeforeIdle=0 calls=4 inTurnEndRound=Some(false) inNextTurn=Some(true) deliveries=0,0,0,1
+[MTIT G1] headOnlyDrained=List(A) stayed=List(B) compactionPendingDrained=0 mailPackageDrained=2 mailCompactionPendingDrained=0
+[32mnebflow.agent.MidTurnInjectionTimingSpec:[0m
+[32m  + [0m[32mL1 用户腿: 工具批次在飞时投入的控制台形 ImmediateInput 必在本回合的下一次 LLM 请求里[0m [90m2.098s[0m
+[32m  + [0m[32mL1b 用户腿(附件/引用承载形): typeless 帧的 UserInput 也必须在工具边界注入[0m [90m2.437s[0m
+[32m  + [0m[32mL2 Mail(delegate)腿: DelegateNotify.inject 的流程通知必在本回合的下一次 LLM 请求里[0m [90m1.258s[0m
+[32m  + [0m[32mL2b Mail 补充件腿: UserInput(source=mail) 必在本回合的下一次 LLM 请求里[0m [90m1.299s[0m
+[32m  + [0m[32mL3 node 腿: sendNodeMessage 对 running 节点的注入必在本回合的下一次 LLM 请求里[0m [90m1.29s[0m
+[32m  + [0m[32mL4 幂等: 同一条消息跨连续两个工具边界只注入一次[0m [90m2.172s[0m
+[32m  + [0m[32mL5 回落: 回合结束后到达的消息仍然送达（新回合）且只送达一次[0m [90m2.664s[0m
+[32m  + [0m[32mG1: 边界判据的两个门（compaction 挂起 / 队首一件）—— 纯函数面读数[0m [90m0.002s[0m
+09:55:20.296 [36mINFO [0m nebflow.core.injection-channel - [injection-channel] collapsed duplicate injection (source=merge-queue eventType=failed session=delegate-ext-inject-spec) — same notice within 600000ms
+09:55:20.297 [36mINFO [0m nebflow.core.injection-channel - [injection-channel] collapsed duplicate injection (source=merge-queue eventType=failed session=delegate-ext-inject-spec) — same notice within 600000ms
+[32mnebflow.agent.ExternalInjectionChannelSpec:[0m
+[32m  + [0m[32m① 所有外部事件来源都得到可见气泡标签（改前：merge-queue/bg-lifecycle/waiting-dock-care/chain-orphan/team 恒 None）[0m [90m0.001s[0m
+[32m  + [0m[32m② 来源标签口径：delegate-frozen / background 保留专属标签，其余取原 source（前端逐值可登记）[0m [90m0.0s[0m
+[32m  + [0m[32m③ 自写行腿不重复算（scheduled-task / todo-surface 由调度器自己落卡，走本门会双泡）[0m [90m0.0s[0m
+[32m  + [0m[32m④ deliver 一调用 ⇒ 落盘一行 + 广播一帧，且正文逐字一致（判据 ①②③）[0m [90m0.006s[0m
+[32m  + [0m[32m⑤ 判据 ④ 刷新后仍在：新开一个 store 读同一目录，行仍在（落盘不是纯内存渲染）[0m [90m0.008s[0m
+[32m  + [0m[32m⑥ 同来源同状态重复投递 ⇒ 折叠（零落盘零广播）；状态变化 ⇒ 追加[0m [90m0.006s[0m
+[32m  + [0m[32m⑦ 去重键含来源与发送方：不同来源/不同成员的同文不互相吞[0m [90m0.001s[0m
+[32m  + [0m[32m⑧ 窗口可关（-Dnebflow.inject.dedup.windowMs<=0）：逐条放行 —— 变异验红面[0m [90m0.003s[0m
+[32m  + [0m[32m⑨ 非外部事件族不参与去重（Mail/skill 等改动点默认 dedup=false ⇒ 行为逐字不变）[0m [90m0.006s[0m
+[32m  + [0m[32m⑩ 调度器两条腿改走 InjectionChannel（禁再手拼 user 帧 + 各自 appendUiMessages）[0m [90m0.003s[0m
+[32m  + [0m[32m⑪ agent 侧唯一发射点走同一入口（落盘/广播单点，禁止第三条腿）[0m [90m0.002s[0m
+[32mnebflow.agent.InjectionIntakeContractSpec:[0m
+[32m  + [0m[32m① 定名 pin：收件通道取值域 = {mail}，且 ∈ 后端自定名 source 词表（前端登记面因而覆盖它）[0m [90m0.001s[0m
+[32m  + [0m[32m② 置位侧不变量：intake 在 MailTool 面零置位点（腿① project-trigger 拆除）；node 腿家族一律裸构造、零置位[0m [90m0.188s[0m
+[32m  + [0m[32m③ 透传侧：intake 随 UserInput 透传，且 `source` 与桥的计数口径逐字未动（禁动面 tripwire）[0m [90m0.008s[0m
+[32m  + [0m[32m④ 帧字段 / 落盘字段同源：发射点 deepMerge + 编码器 + 解码器 + 前端两侧读取面[0m [90m0.011s[0m
+[32m  + [0m[32m⑤ 编解码行为：置位 ⇒ 落 `intake:mail`；缺席 ⇒ 不落键且解码回落 None（向后兼容 / 负控）[0m [90m0.002s[0m
+[32m  + [0m[32m⑥ 字段中文档面：intake 不得进入任何会计/去重判据（只做呈现判别）[0m [90m0.007s[0m
+[32mnebflow.agent.InjectionSourceContractSpec:[0m
+[32m  + [0m[32m① 后端自定名集合被 pin —— 新增/删除 source 必须显式改本 spec（提醒同步前端登记面）[0m [90m0.001s[0m
+[32m  + [0m[32m② 前端登记面 ⊇ 后端自定名集合（禁首字母大写兜底）[0m [90m0.003s[0m
+[32m  + [0m[32m③ 登记表标签非空且非兜底形态（每个 key 映射到显式字符串标签）[0m [90m0.011s[0m
+[32m  + [0m[32m④ 两侧同源字段名：后端写盘字段 ⇄ 前端 live 帧读取 / 历史恢复读取[0m [90m0.008s[0m
+[info] Passed: Total 29, Failed 0, Errors 0, Passed 29
+[success] Total time: 15 s, completed 2026年11月5日 09:55:20

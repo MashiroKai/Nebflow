@@ -156,10 +156,15 @@ object TurnBoundaryDrains:
   //
   // 判据单点 = [[isMailSupplement]]（结构谓词，可机械验定，非模糊判断）。
 
-  /** mail 来源补充件判据（唯一定义处）：非真人 + `source="mail"`（唯一写入点 =
-    * `MailTool` 投递腿——delegate 续聊腿 :1265 / 邮件腿 :2385）。 */
+  /** mail 来源补充件判据：非真人 + `source="mail"`（唯一写入点 = `MailTool` 投递腿
+    *  —— delegate 续聊腿 :1265 / 邮件腿 :2385）。
+    *
+    * 🔴 判据正文**已迁至** [[InjectionTiming.isMailSupplement]]（midturn-injection-timing
+    * 批 2026-11-05：三条注入腿收敛到一个判定点，`mail` 豁免只是它的一条子句）。
+    * 本处只做转发 ⇒ 既有调用点（`AgentProcessing` 的到达戳 / 各 spec）零改动，
+    * 谓词树内只有一份。 */
   def isMailSupplement(ui: AgentCommand.UserInput): Boolean =
-    !ui.fromUser && ui.source.contains("mail")
+    InjectionTiming.isMailSupplement(ui)
 
   /**
    * 工具边界的 mail 补充件摘取：从排队命令队列里摘出**全部** mail 来源件
@@ -172,14 +177,16 @@ object TurnBoundaryDrains:
     queue: List[AgentCommand],
     compactionPending: Boolean
   ): (List[AgentCommand.UserInput], List[AgentCommand]) =
+    // 分类谓词走 [[InjectionTiming]]（同一判定点），本函数只负责「摘取 + 留队」的
+    // 管道形态 —— 生产边界消费已改由 [[InjectionTiming.planBoundary]] 统一承担
+    // （mail 整包 + 真人 typeless 帧同拍决定），本函数保留供纯函数层直测与既有
+    // 调用面（`MailBoundaryInjectionSpec` / `MidTurnInjectionTimingSpec` G1）。
     if compactionPending then (Nil, queue)
     else
-      val mails = queue.collect { case ui: AgentCommand.UserInput if isMailSupplement(ui) => ui }
-      val rest = queue.filterNot {
-        case ui: AgentCommand.UserInput if isMailSupplement(ui) => true
-        case _ => false
+      val (mails, rest) = queue.zipWithIndex.partition { (c, _) =>
+        InjectionTiming.isMailSupplementCommand(c)
       }
-      (mails, rest)
+      (mails.map(_._1).collect { case ui: AgentCommand.UserInput => ui }, rest.map(_._1))
 
   /** 合并包体：正文 + 附件块。单件 ⇒ idle 等价形（无 blocks = 正文原样；有 blocks =
     * 块形态、正文不重复——G3 批「blocks 首块即正文、消费侧弃 text」同款）；多件 ⇒

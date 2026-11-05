@@ -1493,16 +1493,16 @@ body.canvas-deck-narrow .canvas-title { max-width: none; }
    位事件必须落穿到标题头手势链（按压/竖滑换卡/横滑关卡/右键引用照旧）。 */
 .cr-capsule.is-center {
   z-index: 3;
-  /* gap 7px 是覆层与本胶囊 .t-inner 的逐像素同栅格值（下方 padding 同用 7px，
-     非 6px 的 --ds-space-1h）；main 侧曾把 6px 写成本槽，合并取本批的 7px。 */
-  gap: 7px;
+  gap: var(--ds-space-1h);
   /* 件1 批（2026-11-05）：描边框归位 1px（border-color 仍透明）—— 标题胶囊是
      border-box 180 宽、内含 2×1px 描边；覆层此前 `border: 1px solid
      var(--g2-input-border)` 因该 token 已随液体玻璃批退役而整条失效（computed
      border-width = 0），内容盒比标题胶囊宽 2px（108 vs 106）—— pop 钮回位后
      #926「hover 不改文字布局」的 106px 档实测差 2px（改前无 pop 钮 ⇒ 138 vs
      140 同一 2px 偏差，此前无人发现）。补 border-width 后左右内缝与标题胶囊
-     逐像素同源（左 12 / 右 = 7 + --cr-popw(32) 均落在同一内容盒基准上）。 */
+     逐像素同源（左 12 / 右 = 7 + --cr-popw(32) 均落在同一内容盒基准上）。
+     收口裁定（作者 2026-11-05 09:40）：间距按 main 侧形态走档位令牌
+     （gap 用 --ds-space-1h），不保留裸 7px。 */
   border: var(--ds-border-width) solid transparent;
   padding: var(--ds-space-1) calc(7px + var(--cr-popw, 0px)) var(--ds-space-1) var(--ds-space-3);
   background: transparent;
@@ -2069,9 +2069,17 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
 }
 /* Markdown element styling — mirrors .bubble.ai */
 .canvas-md-viewer p { margin: var(--ds-space-1) 0; }
+/* 段落首行缩进（rich-render 批 2026-11-05，作者令 09:13）：同 .bubble.ai 口径 ——
+   只对 md 阅读面的**直接子** p 生效，列表/引用/表格/卡片内的段落不缩进。 */
+.canvas-md-viewer > p { text-indent: var(--ds-text-indent); }
 .canvas-md-viewer p:first-child { margin-top: 0; }
 .canvas-md-viewer p:last-child { margin-bottom: 0; }
-.canvas-md-viewer ul, .canvas-md-viewer ol { margin: var(--ds-space-1) 0 var(--ds-space-1) var(--ds-space-5); padding: 0; }
+/* 列表缩进走 token（原 18px / --ds-space-5 裸值退役，取 --ds-list-indent；二三级按级
+   累加），窄屏收一档（--ds-list-indent-narrow）。 */
+.canvas-md-viewer ul, .canvas-md-viewer ol { margin: var(--ds-space-1) 0 var(--ds-space-1) var(--ds-list-indent); padding: 0; }
+@media (max-width: 390px) {
+  .canvas-md-viewer ul, .canvas-md-viewer ol { margin-left: var(--ds-list-indent-narrow); }
+}
 .canvas-md-viewer li { margin: var(--ds-space-half) 0; }
 .canvas-md-viewer h1, .canvas-md-viewer h2, .canvas-md-viewer h3, .canvas-md-viewer h4 {
   margin: var(--ds-space-2) 0 var(--ds-space-1) 0;
