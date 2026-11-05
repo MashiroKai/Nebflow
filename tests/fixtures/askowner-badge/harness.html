@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<!-- askowner-badge harness.html — 归属命名批（作者令 2026-11-05 10:07）静态测试台。
+     「现在的后台agent的问题卡片还是只会显示stand，delegate现在不都是有name吗，
+     node也有name，那么可以显示 delegate name，node就是 delegate name · node name」
+
+     导入**真实**渲染模块（chat.js renderAskUser / askPending.js askSourceParts——
+     零替身、零打包），暴露驱动：
+       window.__render({ source, agentName, requestId }) → renderAskUser（live 腿）
+       window.__parts(source)                          → askSourceParts 纯函数读数
+       window.__label(source)                          → askSourceLabel 纯函数读数
+       window.__mobile(bool)                           → 切 body.mobile-layer（手机层档）
+
+     spec（tests/askowner-naming.spec.mjs）用一次性静态服务器（绝非 6138 宿主）
+     起本页，断言 DOM 文本 / scrollWidth ≤ clientWidth / 两段主次 / 截图。
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <!-- 真实 375 布局视口（🔴 无本行时移动 Chromium 回落 980px 布局视口再缩放，
+       375 档断言就成了假读数——样式按 980px 算，与真机不符）。 -->
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>askowner-badge harness</title>
+  <link rel="stylesheet" href="/src/main/resources/web/css/base.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/design-system.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/chat.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/ask.css">
+  <style>
+    html, body { margin: 0; height: 100%; background: var(--color-bg, #101418); }
+    #chat {
+      position: absolute; top: 0; bottom: 0; left: 50%; transform: translateX(-50%);
+      width: 680px; max-width: 96vw; margin: 0; padding: 16px 0 36px;
+    }
+    body.mobile-layer #chat { width: 100%; max-width: 100vw; padding: 8px 0 24px; }
+  </style>
+</head>
+<body>
+  <div id="chat"></div>
+  <script type="module">
+    const WEB = '/src/main/resources/web/js';
+
+    const { chatViews, ChatView, setActiveView } = await import(`${WEB}/chatView.js`);
+    const stateMod = await import(`${WEB}/state.js`);
+    const state = stateMod.default;
+
+    const chatEl = document.getElementById('chat');
+    chatViews.primary = new ChatView('primary', { chat: chatEl });
+    setActiveView(chatViews.primary);
+    state.activeSessionId = 'harness-session';
+
+    // 出站帧捕获：本台只渲染，不发任何 socket（confirm 路径永不触发）。
+    window.__captured = [];
+    state.ws = { readyState: 1, send: (d) => window.__captured.push(JSON.parse(d)) };
+    try { localStorage.removeItem('nebflow_askuser_drafts'); } catch {}
+
+    const chat = await import(`${WEB}/chat.js`);
+    const askPending = await import(`${WEB}/askPending.js`);
+
+    const ITEMS = [{ question: '归属命名：这张卡的归属应当显示什么？', options: [{ label: 'A' }, { label: 'B' }], allowOther: true }];
+
+    window.__render = (opts) => {
+      chatEl.innerHTML = '';
+      const o = opts || {};
+      const data = chat.renderAskUser(
+        o.items || ITEMS,
+        'harness-session',
+        o.agentName === undefined ? 'general' : o.agentName,
+        o.requestId || 'rid-harness',
+        o.source || undefined,
+        undefined
+      );
+      return data;
+    };
+    window.__parts = (source) => askPending.askSourceParts(source);
+    window.__label = (source) => askPending.askSourceLabel(source);
+    window.__mobile = (on) => {
+      document.body.classList.toggle('mobile-layer', !!on);
+    };
+    window.__ready = true;
+  </script>
+</body>
+</html>

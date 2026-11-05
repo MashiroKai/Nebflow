@@ -1864,7 +1864,9 @@ onMessage('askUser', (msg, view) => {
     delete state.sessionBusyTimeouts[sid];
   }
   // D6 批 F1: source-label passthrough (project/nodeName) for the badge.
-  const askSource = { project: msg.project, nodeName: msg.nodeName };
+  // 归属命名批（2026-11-05）：ownerName = 引擎侧解析的 delegate 批次短名，
+  // 与 project/nodeName 同路透传（卡片与待办条同一 `askSourceParts` 口径）。
+  const askSource = { project: msg.project, nodeName: msg.nodeName, ownerName: msg.ownerName };
   // 刷新存活 (2026-09-03): replayed frames — the hub snapshot re-sent by the
   // backend right after the initial historyPage of a session (re)subscribe
   // (browser refresh, WS reconnect, session switch). This is state
@@ -1893,7 +1895,7 @@ onMessage('askUser', (msg, view) => {
       if (rdata) saveAskMsgDedup(rdata, msg.sessionId, msg.requestId);
     } else if (sid) {
       // Non-active session: persist (deduped) so it can be restored on session switch
-      saveAskMsgDedup({ type: 'askUser', items: msg.items, agentName: msg.agentName, requestId: msg.requestId, project: msg.project, nodeName: msg.nodeName, attachments: msg.attachments }, sid, msg.requestId);
+      saveAskMsgDedup({ type: 'askUser', items: msg.items, agentName: msg.agentName, requestId: msg.requestId, project: msg.project, nodeName: msg.nodeName, ownerName: msg.ownerName, attachments: msg.attachments }, sid, msg.requestId);
     }
     return;
   }
@@ -1913,7 +1915,7 @@ onMessage('askUser', (msg, view) => {
     if (data) saveMsg(data, msg.sessionId);
   } else if (sid) {
     // Non-active session: persist so it can be restored on session switch
-    saveMsg({ type: 'askUser', items: msg.items, agentName: msg.agentName, requestId: msg.requestId, project: msg.project, nodeName: msg.nodeName, attachments: msg.attachments }, sid);
+    saveMsg({ type: 'askUser', items: msg.items, agentName: msg.agentName, requestId: msg.requestId, project: msg.project, nodeName: msg.nodeName, ownerName: msg.ownerName, attachments: msg.attachments }, sid);
   }
 });
 
