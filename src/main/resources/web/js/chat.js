@@ -3086,7 +3086,7 @@ function renderAskAttachments(box, attachments, originLabel) {
 
   const head = document.createElement('div');
   head.className = 'ask-attachments-head';
-  head.style.cssText = 'font: 600 11px -apple-system, sans-serif; color: var(--color-text-muted, #888); margin: var(--ds-space-half) 0 var(--ds-space-1);';
+  head.style.cssText = 'font: 600 var(--ds-fs-meta) -apple-system, sans-serif; color: var(--color-text-muted, #888); margin: var(--ds-space-half) 0 var(--ds-space-1);';
   // 标题词位 = 独立 span（文案读数不被折叠控件文本污染）。
   const label = document.createElement('span');
   label.className = 'ask-attachments-head-label';
@@ -3145,7 +3145,7 @@ function renderAskAttachments(box, attachments, originLabel) {
     const foldBtn = document.createElement('button');
     foldBtn.type = 'button';
     foldBtn.className = 'glass-control ask-att-fold-btn';
-    foldBtn.style.cssText = 'font-size: var(--ds-fs-meta); padding: var(--ds-space-half) var(--ds-space-glass-x);';
+    foldBtn.style.cssText = 'font-size: var(--ds-fs-meta); padding: var(--ds-space-half) var(--ds-space-inline-x);';
     foldBtn.setAttribute('aria-expanded', 'false');
     foldBtn.textContent = t('askUser.attFoldTotal', { n: String(fileEntries.length) });
     foldBtn.onclick = () => {
@@ -3240,7 +3240,7 @@ export function renderAskUser(items, askSessionId, agentName, requestId, source,
     const badge = document.createElement('div');
     badge.className = 'ask-user-source';
     badge.textContent = badgeLabel;
-    badge.style.cssText = 'font: 600 11px -apple-system, sans-serif; color: var(--color-text-muted, #888); margin-bottom: var(--ds-space-2); padding: var(--ds-space-half) var(--ds-space-2); background: var(--color-surface, rgba(255,255,255,0.06)); border-radius: var(--ds-radius-chip); display: inline-block;';
+    badge.style.cssText = 'font: 600 var(--ds-fs-meta) -apple-system, sans-serif; color: var(--color-text-muted, #888); margin-bottom: var(--ds-space-2); padding: var(--ds-space-half) var(--ds-space-2); background: var(--color-surface, rgba(255,255,255,0.06)); border-radius: var(--ds-radius-chip); display: inline-block;';
     bubble.appendChild(badge);
   }
   appendChatRow(chat, row);

@@ -7,7 +7,7 @@ import io.circe.Json
 import io.circe.syntax.*
 import io.circe.JsonObject
 import nebflow.actor.AgentCommand
-import nebflow.core.SessionStorePort
+import nebflow.core.{InjectionChannel, SessionStorePort}
 import nebflow.shared.{NebflowLogger, UiMessage}
 
 import java.time.format.DateTimeFormatter
@@ -254,44 +254,31 @@ class ScheduledTaskService(
     event: AgentCommand.ExternalEvent,
     scheduleMeta: Json
   ): IO[Unit] =
+    val now = System.currentTimeMillis()
+    // schedcard 批（2026-10-29）：触发行落盘时**必须带注入标记**（`injected=true` +
+    // `source="schedule"`）——无标记行会被前端历史恢复渲染成通用绿色用户气泡
+    // （= 作者报障的退化态）。渲染分支由前端 `buildInjectedRow` 的
+    // `source === 'schedule'` 专属卡接住（live 与两史恢复路径同 builder 同构）。
+    //
+    // 外部注入统一通道批（2026-11-05）：本腿改走**唯一投递入口**
+    // [[nebflow.core.InjectionChannel.deliver]]（落盘 + 广播一处收口）——改前这里是
+    // 第二份手写实现（自己的 `appendUiMessages` + 自己手拼的 `user` 帧），与
+    // `AgentActor#emitInjectedUserEvent` 的帧形态各写一份 ⇒ 两者漂移即「一边有泡一边
+    // 没有」。本腿专属的两枚帧键（`timestamp` / `schedule` 卡载荷）走 `extra` 段透传。
+    val row = UiMessage.User(
+      payload,
+      injected = true,
+      timestamp = now,
+      source = Some("schedule"),
+      eventType = Some("trigger"),
+      schedule = Some(scheduleMeta.asJson)
+    )
+    val extra = io.circe.JsonObject(
+      "timestamp" -> now.asJson,
+      "schedule" -> scheduleMeta.asJson
+    )
     for
-      // Persist the trigger as a user message in session history so it survives
-      // page refresh and behaves like a normal user message (shows bubble + busy state).
-      // schedcard 批（2026-10-29）：触发行落盘时**必须带注入标记**（`injected=true` +
-      // `source="schedule"`）——无标记行会被前端历史恢复渲染成通用绿色用户气泡
-      // （= 作者报障的退化态）。渲染分支由前端 `buildInjectedRow` 的
-      // `source === 'schedule'` 专属卡接住（live 与两史恢复路径同 builder 同构）。
-      _ <- sessionStore.appendUiMessages(
-        resolvedSessionId,
-        List(
-          UiMessage.User(
-            payload,
-            injected = true,
-            timestamp = System.currentTimeMillis(),
-            source = Some("schedule"),
-            eventType = Some("trigger"),
-            schedule = Some(scheduleMeta.asJson)
-          )
-        )
-      )
-      // Broadcast the user message so the frontend shows it in real-time.
-      // schedcard 批（2026-10-29）：帧形从裸 `userMessage`（前端零消费者——死帧，
-      // 卡片只有刷新后才出现）换成**注入 user 帧标准形**（`injected:true` +
-      // `source:"schedule"` + `schedule` 载荷）——与 main.js `onMessage('user')`
-      // 既有消费管道路径逐字段同形 ⇒ 触发即渲染专属卡，无需刷新。帧键集 =
-      // UiMessage.User 编码面 + sessionId（display 路由键），零新协议面。
-      _ <- broadcast(
-        io.circe.Json.obj(
-          "type" -> "user".asJson,
-          "sessionId" -> resolvedSessionId.asJson,
-          "text" -> payload.asJson,
-          "injected" -> true.asJson,
-          "source" -> "schedule".asJson,
-          "eventType" -> "trigger".asJson,
-          "timestamp" -> System.currentTimeMillis().asJson,
-          "schedule" -> scheduleMeta.asJson
-        )
-      )
+      _ <- InjectionChannel.deliver(sessionStore, broadcast, resolvedSessionId, row, extra = extra)
       // Route to agent — ExternalEvent so it queues properly if agent is busy
       _ <- routeToAgent(resolvedSessionId, event).handleErrorWith(e =>
         logger.warn(s"Failed to route scheduled task to agent: ${e.getMessage}")
@@ -311,30 +298,19 @@ class ScheduledTaskService(
     payload: String,
     event: AgentCommand.ExternalEvent
   ): IO[Unit] =
+    val now = System.currentTimeMillis()
+    // 外部注入统一通道批（2026-11-05）：同 [[injectScheduleCard]]——第三份手写投递腿
+    // 收口到 [[InjectionChannel.deliver]]（`extra` 只带本腿的 `timestamp` 帧键）。
+    val row = UiMessage.User(
+      payload,
+      injected = true,
+      timestamp = now,
+      source = Some("todo"),
+      eventType = Some("digest")
+    )
+    val extra = io.circe.JsonObject("timestamp" -> now.asJson)
     for
-      _ <- sessionStore.appendUiMessages(
-        resolvedSessionId,
-        List(
-          UiMessage.User(
-            payload,
-            injected = true,
-            timestamp = System.currentTimeMillis(),
-            source = Some("todo"),
-            eventType = Some("digest")
-          )
-        )
-      )
-      _ <- broadcast(
-        io.circe.Json.obj(
-          "type" -> "user".asJson,
-          "sessionId" -> resolvedSessionId.asJson,
-          "text" -> payload.asJson,
-          "injected" -> true.asJson,
-          "source" -> "todo".asJson,
-          "eventType" -> "digest".asJson,
-          "timestamp" -> System.currentTimeMillis().asJson
-        )
-      )
+      _ <- InjectionChannel.deliver(sessionStore, broadcast, resolvedSessionId, row, extra = extra)
       _ <- routeToAgent(resolvedSessionId, event).handleErrorWith(e =>
         logger.warn(s"Failed to route todo digest to agent: ${e.getMessage}")
       )

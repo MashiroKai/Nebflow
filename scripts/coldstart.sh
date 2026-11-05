@@ -340,7 +340,7 @@ else
       sleep 1
     done
     if [ "$released" != "1" ]; then
-      echo "[coldstart] WARN: 旧实例 120s 未释放端口 $COLDSTART_PORT（kill 已发但未收敛）→ 拒绝继续，绝不带占启动。" >&2
+      echo "[coldstart] WARN: 旧实例 120s 未释放端口 ${COLDSTART_PORT}（kill 已发但未收敛）→ 拒绝继续，绝不带占启动。" >&2
       echo "[coldstart] 人工处置：lsof -nP -iTCP:$COLDSTART_PORT -sTCP:LISTEN 验明占端 pid 后 kill -9 <pid>（该 pid 已通过验身，属本脚本实例）。" >&2
       exit 1
     fi
@@ -510,7 +510,7 @@ ensure_coldstart_secrets() {
   echo "[coldstart] 密钥持久位: $link → $COLDSTART_SECRETS_DIR （通道密钥落持久盘；/tmp 只放可丢缓存）"
 }
 if [ ! -d "$MAIN_HOME" ] && [ "$DRY_RUN" != "1" ]; then
-  echo "[coldstart] 主 home $MAIN_HOME 不存在 ⇒ 密钥持久位将由 mkdir -p 现建（$COLDSTART_SECRETS_DIR，仍持久）"
+  echo "[coldstart] 主 home $MAIN_HOME 不存在 ⇒ 密钥持久位将由 mkdir -p 现建（${COLDSTART_SECRETS_DIR}，仍持久）"
 fi
 ensure_coldstart_secrets
 

@@ -18,14 +18,14 @@
 }
 .neblink-login-btn {
   width: 100%;
-  padding: var(--ds-space-glass-x) var(--ds-space-4);
+  padding: var(--ds-space-block-y) var(--ds-space-4);
   border-radius: var(--ds-radius-input);
   border: none;
   /* 主操作 = 墨族单源（2026-10-30 按钮体系批：绿实底 → --btn-primary-*，
      随面板主题 ink-swap） */
   background: var(--btn-primary-bg);
   color: var(--btn-primary-ink);
-  font-size: 14px;
+  font-size: var(--ds-fs-subtitle);
   font-weight: 500;
   cursor: pointer;
   transition: opacity 0.15s;
@@ -33,7 +33,7 @@
 .neblink-login-btn:hover { opacity: 0.9; }
 .neblink-pairing-status {
   text-align: center;
-  font-size: 14px;
+  font-size: var(--ds-fs-subtitle);
   color: var(--color-text-muted);
   padding: var(--ds-space-4) 0;
 }
@@ -62,12 +62,12 @@
 .neblink-paircode-input {
   flex: 1 1 auto;
   min-width: 0;
-  padding: 9px var(--ds-space-glass-x);
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
   border-radius: var(--ds-radius-input);
   border: 1px solid var(--color-frame-border, var(--color-border));
   background: var(--color-frame-input-bg, var(--color-bg));
   color: var(--color-frame-text, var(--color-text));
-  font-size: 14px;
+  font-size: var(--ds-fs-subtitle);
   letter-spacing: 3px;
   text-align: center;
 }
@@ -78,7 +78,7 @@
 .neblink-paircode-btn {
   flex: 0 0 auto;
   width: auto;
-  padding: 9px 14px;
+  padding: var(--ds-space-2) 14px;
   font-size: var(--ds-fs-body);
 }
 .neblink-paircode-btn:disabled { opacity: 0.6; cursor: default; }
@@ -105,7 +105,7 @@
   flex: 0 0 auto;
   width: 6px;
   height: 6px;
-  margin-top: 5px;
+  margin-top: var(--ds-space-1h);
   border-radius: 50%;
   background: var(--color-warning);
 }
@@ -115,14 +115,14 @@
 /* Logged-in device list — sits directly under the avatar in the unified
    account block (2026-09-06); the old inner section label is retired. */
 .neblink-logged-in {
-  margin-top: var(--ds-space-glass-x);
+  margin-top: var(--ds-space-stack-gap);
 }
 
 /* Peers list */
 .neblink-peers-list {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: var(--ds-space-half);
   max-height: 180px;
   overflow-y: auto;
 }
@@ -130,8 +130,8 @@
 .neblink-peer {
   display: flex;
   align-items: center;
-  gap: var(--ds-space-glass-x);
-  padding: var(--ds-space-2) var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
   border-radius: var(--ds-radius-button);
   font-size: var(--ds-fs-body);
   background: var(--color-bg);
@@ -253,7 +253,7 @@
   text-overflow: ellipsis;
   color: var(--status-word);
 }
-.neblink-update-status .st-ic { margin-right: 3px; }
+.neblink-update-status .st-ic { margin-right: var(--ds-space-1); }
 .neblink-update-status.updating,
 .neblink-update-status.done,
 .neblink-update-status.error { color: var(--status-word); }

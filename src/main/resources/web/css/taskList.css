@@ -162,7 +162,7 @@
   display: flex;
   align-items: flex-start;
   gap: var(--ds-space-2);
-  padding: 3px 0;
+  padding: var(--ds-space-1) 0;
   font-size: var(--ds-fs-body);
   line-height: 1.4;
   cursor: pointer;
@@ -183,7 +183,7 @@
   flex-shrink: 0;
   width: 12px;
   height: 12px;
-  margin-top: 3px;
+  margin-top: var(--ds-space-1);
 }
 
 /* running：品牌绿（--color-primary #07C160）转动圆环——与 completed 静态实心
@@ -201,7 +201,7 @@
 
 /* wiring/pending：静默小方框（等待色 = muted 描边） */
 .task-node-box {
-  border-radius: 3px;
+  border-radius: var(--ds-radius-badge);
   border: 1.5px solid color-mix(in srgb, var(--color-text-muted, #888) 40%, transparent);
 }
 
@@ -220,7 +220,7 @@
 
 /* 首行 = 节点名 + 链徽标（P1 链级抽象 spec §7-B ⭐）。名可收缩省略、徽标不收缩
    （窄栏下先牺牲名字，链归属恒可读——信息优先级）。 */
-.task-node-label-row { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.task-node-label-row { display: flex; align-items: center; gap: var(--ds-space-1); min-width: 0; }
 
 .task-node-label {
   display: block;
@@ -237,8 +237,8 @@
    delegate 行复用：S16 外部行进度尾行同槽显示。 */
 .task-node-meta {
   display: block;
-  margin-top: 1px;
-  font-size: 10px;
+  margin-top: var(--ds-space-hair);
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   color: var(--color-text-muted, #888);
   overflow: hidden;
@@ -265,7 +265,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   font-family: ui-monospace, SFMono-Regular, monospace;
   font-variant-numeric: tabular-nums;
@@ -276,7 +276,7 @@
    header design language). Rows nest 10px under the header. */
 .task-node-group { margin-top: var(--ds-space-1); }
 .task-node-group-header {
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   font-weight: 600;
   color: var(--color-text-muted, #888);
   text-transform: uppercase;
@@ -284,7 +284,7 @@
   margin: var(--ds-space-1h) var(--ds-space-half) var(--ds-space-half);
   cursor: default;
 }
-.task-node-group .task-node { margin-left: var(--ds-space-glass-x); }
+.task-node-group .task-node { margin-left: var(--ds-space-indent-x); }
 
 /* ── 重启对账（2026-10-22）：打断徽标 + 折叠前会话灰腿 ─────────────────────
    徽标 = 行内首槽小胶囊（与 word 槽同 muted 语言，橙警示描边——打断 ≠ 失败红、
@@ -293,9 +293,9 @@
 .task-delegate-badge {
   flex-shrink: 0;
   display: inline-block;
-  padding: 0 5px;
+  padding: 0 var(--ds-space-1h);
   border-radius: var(--ds-radius-chip);
-  font-size: 9px;
+  font-size: var(--ds-fs-meta);
   font-weight: 600;
   line-height: 14px;
   letter-spacing: 0.02em;
@@ -328,7 +328,7 @@
   align-items: center;
   gap: var(--ds-space-1h);
   height: 20px;
-  margin: 1px 0 1px 18px; /* 头行缩进（与成员行 nest 首级同节奏） */
+  margin: var(--ds-space-hair) 0 var(--ds-space-hair) var(--ds-space-5); /* 头行缩进（与成员行 nest 首级同节奏） */
   padding-right: var(--ds-space-1h);
   cursor: pointer;
   opacity: 0.72;
@@ -350,7 +350,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted, #888);
 }
 .task-chain-folded.task-node-entering {
@@ -444,7 +444,7 @@
   justify-content: center;
   width: 12px;
   height: 12px;
-  margin-top: 3px; /* glyph-row baseline rhythm (same as the 12px glyph slot) */
+  margin-top: var(--ds-space-1); /* glyph-row baseline rhythm (same as the 12px glyph slot) */
   color: var(--color-text-muted, #888);
   transition: transform 0.15s;
 }
@@ -460,7 +460,7 @@
   align-items: center;
   gap: var(--ds-space-1h);
   min-width: 0;
-  margin-top: 3px;
+  margin-top: var(--ds-space-1);
   border-radius: var(--ds-radius-chip);
   cursor: pointer;
 }
@@ -476,7 +476,7 @@
 
 .task-chain-meta {
   flex: 0 0 auto;
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   font-variant-numeric: tabular-nums;
   color: var(--color-text-muted, #888);
   white-space: nowrap;
@@ -503,7 +503,7 @@
 .task-chain-depth {
   flex: 0 0 auto;
   min-width: 24px;
-  font-size: 9px;
+  font-size: var(--ds-fs-meta);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   color: color-mix(in srgb, var(--color-text-muted, #888) 70%, transparent);
@@ -533,7 +533,7 @@
 }
 .task-chain-member-time {
   flex: 0 0 auto;
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   font-family: ui-monospace, SFMono-Regular, monospace;
   font-variant-numeric: tabular-nums;
   color: var(--color-text-muted, #888);
@@ -620,7 +620,7 @@
   justify-content: center;
   width: 12px;
   height: 12px;
-  margin-top: 3px;
+  margin-top: var(--ds-space-1);
   overflow: hidden;
 }
 .task-delegate-icon img,
@@ -654,10 +654,10 @@
 /* ── Ready-to-merge queue rank chip (engine G5 mergeQueuePos verbatim) ── */
 .task-delegate-rank {
   flex-shrink: 0;
-  padding: 0 5px;
+  padding: 0 var(--ds-space-1h);
   border-radius: var(--ds-radius-chip);
   background: var(--color-frame-hover, rgba(128, 128, 128, 0.12));
-  font: 600 10px/16px ui-monospace, SFMono-Regular, monospace;
+  font: 600 var(--ds-fs-meta)/var(--ds-fs-callout) ui-monospace, SFMono-Regular, monospace;
   font-variant-numeric: tabular-nums;
   color: var(--color-text-muted, #888);
 }

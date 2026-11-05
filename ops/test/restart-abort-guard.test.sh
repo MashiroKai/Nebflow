@@ -252,8 +252,9 @@ grep -q "终态: dry-run\|终态: 只检测" "$SBX/t2.out" && bad "模式未落�
 hdr "T3 真实故障形态复现: 崩溃点是那条 PORT 行（bash 3.2 set -u）"
 # ==================================================================
 # 注: 下面第一行 **刻意保留裸 `$PORT（`**——它就是「改前形态」的复现样本（单引号内字面量，
-# 本脚本自身不执行它，而是交给 bash -uc 当被测输入）。全脚本扫同类时这一行是唯一豁免项。
-/bin/bash -uc 'PORT=6138; echo "x $PORT（日志 y"' >/dev/null 2>"$SBX/repro_bad.txt"; RC_BAD=$?
+# 本脚本自身不执行它，而是交给 bash -uc 当被测输入）。全仓扫同类时这一行是唯一豁免项，
+# 故带 T4-EXEMPT 标注（T4 只认这个标注，不认「某文件整体豁免」）。
+/bin/bash -uc 'PORT=6138; echo "x $PORT（日志 y"' >/dev/null 2>"$SBX/repro_bad.txt"; RC_BAD=$?   # T4-EXEMPT(改前形态复现样本：单引号内字面量，交给 bash -uc 当被测输入，本脚本从不展开它)
 /bin/bash -uc 'PORT=6138; echo "x ${PORT}（日志 y"' >"$SBX/repro_good.txt" 2>&1; RC_GOOD=$?
 [[ "$RC_BAD" != "0" ]] && LC_ALL=C grep -aq "unbound variable" "$SBX/repro_bad.txt" \
   && ok "改前形态必红: $(LC_ALL=C tr -d '\n' < "$SBX/repro_bad.txt")" || bad "改前形态未如预期报 unbound（rc=${RC_BAD}）"
@@ -261,30 +262,103 @@ hdr "T3 真实故障形态复现: 崩溃点是那条 PORT 行（bash 3.2 set -u�
   && ok "改后形态必绿: $(cat "$SBX/repro_good.txt")" || bad "改后形态仍失败（rc=${RC_GOOD}）"
 
 # ==================================================================
-hdr "T4 回归扫描: 全脚本 \$VAR 紧贴非 ASCII 字节（set -u 崩溃类）必须为 0"
+hdr "T4 回归扫描: 全仓 shell 脚本 \$VAR 紧贴非 ASCII 字节（set -u 崩溃类）必须为 0"
 # ==================================================================
 # 判据: `$NAME` 后面紧跟 ≥0x80 的字节（全角括号/中文标点/emoji/中文词）。
 #   bash 3.2 会把这些字节的首字节并进变量名 ⇒ 查未定义变量 ⇒ set -u 终止。
-# 只算**可执行代码**（整行以 # 开头 = 注释，不执行，不计）；本测试脚本自身刻意保留的
-# 「改前形态」样本行不参与（只扫被测脚本）。
-SCAN_HITS="$(python3 - "$SCRIPT_UNDER_TEST" <<'PY'
-import re, sys
+#   单字符特殊参数（`$?` `$1` `$@` `$*` `$$`）**不受影响**（3.2 取满一个字符即止，2026-11-05 实测），
+#   故判据只覆盖具名变量 `$[A-Za-z_][A-Za-z0-9_]*`，不把它们算进来。
+# 扫描面（2026-11-05 扩展，本批实测依据见 ops/README.md）: 原先只扫**被测脚本**一个文件，
+#   ops/ 之外的同类缺陷结构上无门禁可拦（实测在 scripts/ 与 sandbox-poc/ 各命中真缺陷）。
+#   现口径 = **全仓 shell 脚本**：`git ls-files '*.sh'`（排除 reports-evidence/ 纯过程证据树）
+#   + 无 .sh 后缀但首行是 sh/bash/zsh shebang 的入库脚本（ops/bin/*、tools/*、scripts/nebflow-bin/*）。
+#   `bash -n` 抓不到这一类比（语法合法、只在运行期展开时才崩），静态扫描是唯一机械拦口。
+# 不计/豁免: ①整行以 # 开头 = 注释，不执行，不计；②样本行必须自带 `T4-EXEMPT(<理由>)`
+#   标注才豁免（禁止静默跳过，豁免数单独报出）。
+REPO_ROOT="$(git -C "$HERE/../.." rev-parse --show-toplevel 2>/dev/null || true)"
+SCAN_LOG="$SBX/t4scan.log"
+python3 - "$REPO_ROOT" "$SCRIPT_UNDER_TEST" >"$SCAN_LOG" 2>&1 <<'PY'
+import os, re, subprocess, sys
+
+root, fallback = sys.argv[1], sys.argv[2]
 pat = re.compile(rb'\$[A-Za-z_][A-Za-z0-9_]*')
-hits = []
-with open(sys.argv[1], 'rb') as f:
-    for ln, line in enumerate(f, 1):
+SHEBANG = (b'#!/bin/bash', b'#!/usr/bin/env bash', b'#!/bin/sh', b'#!/usr/bin/env sh',
+           b'#!/bin/zsh', b'#!/usr/bin/env zsh')
+EXCLUDE_PREFIX = ('reports-evidence/',)
+
+
+def tracked(top):
+    try:
+        cp = subprocess.run(['git', '-C', top, 'ls-files', '-z'],
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    except Exception:
+        return None
+    if cp.returncode != 0:
+        return None
+    return [p.decode('utf-8', 'surrogateescape') for p in cp.stdout.split(b'\0') if p]
+
+
+def is_shell(rel, path):
+    if rel.endswith('.sh'):
+        return True
+    try:
+        with open(path, 'rb') as f:
+            first = f.readline(256)
+    except OSError:
+        return False
+    return any(first.startswith(s) for s in SHEBANG)
+
+
+def scan_one(rel, path, hits, exempt, files):
+    try:
+        with open(path, 'rb') as f:
+            data = f.read()
+    except OSError:
+        return
+    files.append(rel)
+    for ln, line in enumerate(data.splitlines(True), 1):
         if line.lstrip().startswith(b'#'):
             continue
+        found = []
         for m in pat.finditer(line):
             if m.end() < len(line) and line[m.end()] >= 0x80:
-                hits.append("%d:%s" % (ln, m.group().decode()))
-print("\n".join(hits))
+                found.append(m.group().decode())
+        if not found:
+            continue
+        if b'T4-EXEMPT' in line:
+            exempt.append('%s:%d' % (rel, ln))
+        else:
+            for g in found:
+                hits.append('%s:%d:%s' % (rel, ln, g))
+
+
+hits, exempt, files = [], [], []
+rels = tracked(root) if root else None
+if rels is None:
+    print('SCOPE degraded: 不在 git 仓库内（或 git 不可用）⇒ 只扫被测脚本 %s' % fallback)
+    scan_one(os.path.basename(fallback), fallback, hits, exempt, files)
+else:
+    for rel in rels:
+        if rel.startswith(EXCLUDE_PREFIX):
+            continue
+        path = os.path.join(root, rel)
+        if not os.path.isfile(path) or not is_shell(rel, path):
+            continue
+        scan_one(rel, path, hits, exempt, files)
+print('SCOPE: shell 脚本 %d 个（git ls-files *.sh + shebang 脚本；排除 reports-evidence/）' % len(files))
+for h in hits:
+    print('HIT ' + h)
+for e in exempt:
+    print('EXEMPT ' + e + '（T4-EXEMPT 标注样本，理由见该行）')
+print('SUMMARY files=%d hits=%d exempt=%d' % (len(files), len(hits), len(exempt)))
+sys.exit(0 if not hits else 1)
 PY
-)"
-if [[ -z "$SCAN_HITS" ]]; then
-  ok "可执行代码同类命中 = 0（set -u 下不会再因 \$VAR 紧跟中文而崩）"
+SCAN_RC=$?
+sed 's/^/  │ /' "$SCAN_LOG"
+if [[ "$SCAN_RC" == "0" ]]; then
+  ok "同类命中 = 0（set -u 下不会再因 \$VAR 紧跟中文而崩；扫描面见上）"
 else
-  bad "同类命中 $(echo "$SCAN_HITS" | wc -l | tr -d ' ') 处: $(echo "$SCAN_HITS" | tr '\n' ' ')"
+  bad "同类命中未清零（逐行 HIT 标注为待修项，读数见上）"
 fi
 
 # ==================================================================
