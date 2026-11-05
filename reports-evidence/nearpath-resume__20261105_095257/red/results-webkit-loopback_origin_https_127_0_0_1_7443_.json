@@ -1,0 +1,206 @@
+[
+  {
+    "engine": "webkit",
+    "axis": "loopback-origin(https://127.0.0.1:7443)",
+    "origin": "https://127.0.0.1:7443",
+    "variant": "V0-full",
+    "note": "四闸全开（真实链路；闸③ 走 :6411 观测代理 → :6410）",
+    "expect": "probe_unreachable",
+    "kind": "miss",
+    "reason": "probe_unreachable",
+    "missRaw": "{\"at\":1793844403519,\"reason\":\"probe_unreachable\"}",
+    "finalUrl": "https://127.0.0.1:7443/",
+    "hasInput": null,
+    "elapsedMs": 4359,
+    "consoleLines": [
+      "[warning] [blocked] The page at https://127.0.0.1:7443/ requested insecure content from http://127.0.0.1:6411/api/health. This content was blocked and must\n",
+      "[pageerror] Fetch API cannot load http: /127.0.0.1:6411/api/health due to access control checks.",
+      "[warning] [blocked] The page at https://127.0.0.1:7443/ requested insecure content from http://localhost:6411/api/health. This content was blocked and must\n",
+      "[pageerror] Fetch API cannot load http: /localhost:6411/api/health due to access control checks.",
+      "[info] [nearpath] loopback probe miss: probe_unreachable",
+      "[warning] [blocked] The page at https://127.0.0.1:7443/ requested insecure content from http://127.0.0.1:6410/api/nf-reach. This content was blocked and must\n",
+      "[pageerror] Fetch API cannot load http: /127.0.0.1:6410/api/nf-reach due to access control checks.",
+      "[warning] [blocked] The page at https://127.0.0.1:7443/ requested insecure content from http://localhost:6410/api/nf-reach. This content was blocked and must\n",
+      "[pageerror] Fetch API cannot load http: /localhost:6410/api/nf-reach due to access control checks.",
+      "[warning] [blocked] The page at https://127.0.0.1:7443/ requested insecure content from http://127.0.0.1:6410/api/nf-reach. This content was blocked and must\n",
+      "[pageerror] Fetch API cannot load http: /127.0.0.1:6410/api/nf-reach due to access control checks.",
+      "[warning] [blocked] The page at https://127.0.0.1:7443/ requested insecure content from http://localhost:6410/api/nf-reach. This content was blocked and must\n",
+      "[pageerror] Fetch API cannot load http: /localhost:6410/api/nf-reach due to access control checks."
+    ],
+    "requestFailed": [],
+    "apiResponses": [
+      {
+        "url": "https://127.0.0.1:7443/api/nf-authcheck",
+        "status": 204
+      },
+      {
+        "url": "https://127.0.0.1:7443/api/portal/status",
+        "status": 200
+      },
+      {
+        "url": "https://127.0.0.1:7443/api/health/loopback-info",
+        "status": 200
+      }
+    ],
+    "probeLog": [],
+    "ingressLog": [
+      {
+        "at": 1793844403104,
+        "method": "GET",
+        "path": "/api/nf-asset-stamp",
+        "cookie": true
+      },
+      {
+        "at": 1793844403105,
+        "method": "GET",
+        "path": "/api/projects",
+        "cookie": true
+      },
+      {
+        "at": 1793844403111,
+        "method": "GET",
+        "path": "/api/agents/Nebula/avatar/meta",
+        "cookie": true
+      },
+      {
+        "at": 1793844403145,
+        "method": "GET",
+        "path": "/api/neblink/status",
+        "cookie": true
+      },
+      {
+        "at": 1793844403146,
+        "method": "GET",
+        "path": "/api/plugins",
+        "cookie": true
+      },
+      {
+        "at": 1793844403164,
+        "method": "GET",
+        "path": "/api/plugins/updates",
+        "cookie": true
+      },
+      {
+        "at": 1793844403164,
+        "method": "GET",
+        "path": "/api/canvas-tabs",
+        "cookie": true
+      },
+      {
+        "at": 1793844403164,
+        "method": "GET",
+        "path": "/api/neblink/status",
+        "cookie": true
+      },
+      {
+        "at": 1793844403164,
+        "method": "GET",
+        "path": "/agents/Nebula/agent.json",
+        "cookie": true
+      },
+      {
+        "at": 1793844403168,
+        "method": "GET",
+        "path": "/api/nf-authcheck",
+        "cookie": true
+      },
+      {
+        "at": 1793844403207,
+        "method": "GET",
+        "path": "/brand/releases/71a456e2d388b27e/symbol-light.svg",
+        "cookie": true
+      },
+      {
+        "at": 1793844403207,
+        "method": "GET",
+        "path": "/api/neblink/status",
+        "cookie": true
+      },
+      {
+        "at": 1793844403208,
+        "method": "GET",
+        "path": "/js/wikiGraph.js",
+        "cookie": true
+      },
+      {
+        "at": 1793844403278,
+        "method": "GET",
+        "path": "/api/portal/status",
+        "cookie": true
+      },
+      {
+        "at": 1793844403279,
+        "method": "GET",
+        "path": "/api/neblink/status",
+        "cookie": true
+      },
+      {
+        "at": 1793844403279,
+        "method": "GET",
+        "path": "/brand/releases/71a456e2d388b27e/symbol-light.svg",
+        "cookie": true
+      },
+      {
+        "at": 1793844403403,
+        "method": "GET",
+        "path": "/api/health/loopback-info",
+        "cookie": true
+      },
+      {
+        "at": 1793844403527,
+        "method": "GET",
+        "path": "/api/neblink/nearpath?clientId=b4a065da-b50a-48ae-ba10-358f0a0a4c41&bound=36085c44-f4dd-5e72-bd18-2369aa155cb6",
+        "cookie": true
+      },
+      {
+        "at": 1793844403528,
+        "method": "GET",
+        "path": "/agents/Nebula/agent.json",
+        "cookie": true
+      },
+      {
+        "at": 1793844403532,
+        "method": "GET",
+        "path": "/api/delegates",
+        "cookie": true
+      },
+      {
+        "at": 1793844403533,
+        "method": "GET",
+        "path": "/api/agents/Nebula/avatar/meta",
+        "cookie": true
+      },
+      {
+        "at": 1793844403582,
+        "method": "GET",
+        "path": "/api/neblink/nearpath?clientId=b4a065da-b50a-48ae-ba10-358f0a0a4c41&bound=36085c44-f4dd-5e72-bd18-2369aa155cb6",
+        "cookie": true
+      },
+      {
+        "at": 1793844403584,
+        "method": "GET",
+        "path": "/brand/releases/71a456e2d388b27e/symbol-light.svg",
+        "cookie": true
+      },
+      {
+        "at": 1793844403653,
+        "method": "GET",
+        "path": "/brand/releases/71a456e2d388b27e/symbol-light.svg",
+        "cookie": true
+      },
+      {
+        "at": 1793844403686,
+        "method": "PUT",
+        "path": "/api/canvas-tabs",
+        "cookie": true
+      }
+    ],
+    "engineNearpathLines": [
+      "10:06:34.154 \u001b[36mINFO \u001b[0m nebflow.gateway - console ticket redeemed: session established (accountSub=sub-rig-owner, origin=relay-mint, sid=3Prd1Rz8…, networkId=n-nearpath-rig)"
+    ],
+    "presenceLinesDuringRun": 0,
+    "presenceSamples": [],
+    "screenshot": "webkit-loopback-origin-https-127.0.0.1-7443-V0-full.png",
+    "expectOk": true
+  }
+]

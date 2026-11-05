@@ -1,0 +1,14 @@
+# 生产日志降噪现状读数（2026-11-05 快照，只读）
+snapshot: /tmp/today-stand-snapshot.log sha256 5878d65276c2e5e330845af97011b0df9f1209e5363aa4d85f7cd3dfde7f740e
+span: 2026-11-05 08:17:40.012 → 10:13:25.884 (6945s = 1.93h)
+total_ts_lines = 20735
+presence sendData 逐条形态 = 0 ; session-sync push 逐条形态 = 0
+聚合形态（nebflow-log-noise-flusher, 含 ' in 60s ('）= 230 行
+presence family 其他行（[presence-dial] / dial failed）= 250 行
+growth = 2.75 MB/h (改前 12.07 MB/h)
+
+复算：
+  L=$(cp ~/.stand/logs/stand.log /tmp/today-stand-snapshot.log; echo $L)
+  grep -cE '^2026-' $L
+  grep -E '^2026-' $L | grep -c " in 6[0-9]s ("  # → 230
+  grep -E '^2026-' $L | grep -c 'presence sendData:'  # → 0

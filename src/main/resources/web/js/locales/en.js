@@ -398,6 +398,14 @@ export default {
   'contacts.blockTitle': 'Block',
   'contacts.blockConfirm': 'You will no longer receive messages or friend requests from {name}.',
   'messages.empty': 'No conversations',
+  // Conversation-list **fetch failure** face (empty-state-must-not-lie batch,
+  // 2026-11-05). 🔴 Distinct fact from the empty key above, never interchangeable:
+  // `messages.empty` renders only when the server ANSWERED that there are no
+  // conversations (200 + `[]`); any failed fetch (non-2xx / timeout / parse
+  // error) renders this key with a retry control. Self-explaining rule 8: the
+  // fact only — the retry control carries the next step.
+  'messages.listLoadFailed': "Couldn't load conversations",
+  'messages.retry': 'Retry',
   // 🔴 `systemNowFriends` belongs to the **friend-acceptance** context (its only
   // legal consumer = the `friend_accepted` branch of `onFriendEvent` in
   // messages.js) ⇒ the two group keys below are the **key split** product

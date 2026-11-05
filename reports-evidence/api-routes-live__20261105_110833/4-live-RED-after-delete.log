@@ -1,0 +1,7 @@
+[live] 启动沙箱实例：home=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nf-route-live-ETbNGn port=8097（隔离数据根，不碰作者 ~/.stand 与 6138）
+[live] 实例就绪（/api/health 已应答）。开始逐条探 141 条前端路径。
+✗ API route existence (live) — RED：1/141 条前端路径在运行实例上 404
+  · /api/conversations  （1 个字形全部 404）
+      /api/conversations → HEAD:404, GET:404, POST:404, PUT:404, PATCH:404, DELETE:404, OPTIONS:404
+  ⇒ 前端调了但实例上不存在：正是「404 ⇒ 面板渲染成空态」的事故形态，必须拦住。
+live_EXIT=1

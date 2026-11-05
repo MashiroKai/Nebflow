@@ -308,3 +308,24 @@ $$
 ```
 
 反例：`E = m*c^2`（纯文本，上下标丢失）、把公式截图成 PNG 贴进文档（不可检索、不可复制）。
+
+**④ 排版与缩写（文档面，作者裁定 2026-11-05 11:09 / 11:11）。** 三件事在每一份
+**文档产出**上都要成立（vault 知识文档、人读件、HTML 报告正文同理）：
+
+- **缩进**：正文段落首行以 `&emsp;&emsp;` 起行。Markdown 没有布局——**两个半角空格
+  会被 HTML 折叠吃掉，四个半角空格直接把这段变成代码块**（本部署 marked v12.0.2
+  实测）；HTML 实体 `&emsp;` 在 Obsidian 与 marked 两面都稳定生效。标题 / 列表 /
+  表格 / 引用 / 围栏 / 图片行与可视长度 <40 字符的短行不缩进。
+- **彩色**：Markdown 原生无色，只能内联 HTML `<span style="color:…">`。**一篇文档
+  ≤4 处**（建议 ≤3），只给**关键结论**与**风险/警告**；一般强调用加粗。语义钉死：
+  蓝 `#5e6ad2` = 结论/判定、红 `#d0342c` = 风险/警告、绿 `#12874a` = 已验证/通过
+  （三色在亮/暗两主题都实测过对比度）。
+- **缩写**：领域缩写（GCR / SCD / DPC / MC / NIEL…）与机构缩写（ICRP / IAEA /
+  CERN / NIST…）在**文档首次出现处**必须给全称或挂词条：`银河宇宙线（GCR）`、
+  `GCR（Galactic Cosmic Rays）`、`[[GCR]]（全称）`；单位与通用技术词走允许清单。
+
+机器面：`skills/wiki-docs/scripts/check_wiki_docs.py` 的 R7 `doc-color` / R8
+`doc-indent` / R9 `abbrev-expansion`（条款原文与正反例见
+`skills/wiki-docs/SKILL.md` 条款 ⑦⑧ 与「Document typography」「Abbreviations」两节）。
+新制文档（文件名时间块 ≥ `20261105_111100` 或在 frontmatter 声明 `style:`）按违规
+判，存量文档先记 advisory。
