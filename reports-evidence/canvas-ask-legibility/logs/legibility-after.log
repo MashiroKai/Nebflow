@@ -25,4 +25,3 @@ PASS  L7 亮档：三面 α = 1 且对比度 ≥ 4.5:1（双档同一律）  —
 PASS  L8 亮档：面板内部像素与背后内容无关（同 L3 判据）  — [{"maxDiff":0,"over":0},{"maxDiff":0,"over":0}]
 
 after: PASS=25 FAIL=0
-EXIT=0
