@@ -119,7 +119,20 @@ check-visual:
 	node scripts/visual-baseline.mjs --check --max-ratio $(VISUAL_MAX_RATIO)
 	@echo "Visual baseline gate passed (host-matched baselines, max-ratio $(VISUAL_MAX_RATIO))."
 
+# ── 两段式入库（2026-11-04 修陷阱批）────────────────────────────────────────
+# 改造前：`make visual-baseline`（= --update）**直接覆盖** tests/visual/baseline/，
+# 而本节的注释说「评审 .nebflow/ 评审区后再提交入库」—— 那句当时不成立：草稿没有
+# 独立落点，一跑 --update 入库基准就已经变了，"评审"只能事后 git diff 才看见。
+# 现在拆两段：
+#   make visual-baseline           → 只写评审区草稿 .nebflow/visual-baseline/<platform>/baseline-draft/
+#   make visual-baseline-promote   → 人工评审通过后，把草稿推进 tests/visual/baseline/<platform>/
+# 跑 promote 这个 target 本身即「已人眼评审」的声明（脚本对裸 CLI 调用仍强制
+# --i-reviewed）。忘了评审就 promote 的后果是入库图变了你没看过 —— 与改造前的
+# 区别是：现在它必须是**一次有名字的动作**，而不是顺手 --update 的副作用。
 visual-baseline:
 	node scripts/visual-baseline.mjs --update
-	@echo "Baselines written — 人工评审 .nebflow/visual-baseline/<platform>/ 后再提交 tests/visual/baseline/<platform>/。"
+	@echo "Draft written — 入库基准未触碰。评审 .nebflow/visual-baseline/<platform>/baseline-draft/ 后用 make visual-baseline-promote 入库。"
+
+visual-baseline-promote:
+	node scripts/visual-baseline.mjs --promote --i-reviewed
 
