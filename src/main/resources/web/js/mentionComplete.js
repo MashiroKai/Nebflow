@@ -1,62 +1,48 @@
-// mentionComplete.js — @-mention project autocomplete for the chat composer
-// (mention-routing batch, 2026-09-27).
+// mentionComplete.js — `@` 项目补全的**数据面 + provider 注册**（mention-routing
+// 批 2026-09-27 立；待办结构化批 2026-11-05 把弹层机器上移到 tokenComplete.js）.
 //
-// Behavior contract:
-//   - Typing '@' opens a floating list of mounted projects: name +
-//     workspace-path subtitle — unless the character right before the '@' is
-//     an ASCII letter or digit ('foo@', i.e. an email address, never
-//     triggers). Whitespace, line start, CJK characters and CJK punctuation
-//     all open the token, so '@' works anywhere in a Chinese sentence.
-//   - Continued typing filters the list (case-insensitive substring on the
-//     project name). The mention token lives from '@' up to the next
-//     whitespace — a manually typed space inside the token closes the popup.
-//   - ArrowUp/ArrowDown navigate; Tab / Enter / click insert '@<full name> '
-//     (one trailing space, cursor lands after it). Names with spaces and
-//     Chinese names are inserted verbatim — no quoting, no escaping (the
-//     prompt layer resolves the full-name mention).
-//   - Escape / blur / outside click close the popup. Zero matches shows a
-//     "no matching projects" line (informational only: Enter still sends the
-//     message as typed, Tab keeps its default focus behavior).
+// 本文件只剩两块职责：
+//   ① 项目清单**唯一**的取数与缓存（GET /api/projects，60s TTL、单飞、失败退避）
+//      —— 渲染侧（utils.js 的 @ 提及）、任务列表、`@` 补全三处共用这一份快照；
+//   ② 把 `@` 注册成 tokenComplete 引擎的一个 provider。
+// 弹层 DOM / 分词 / 键盘 / 插入 / 排序全部在 tokenComplete.js（一份实现，
+// `#` 待办复用同一条路 —— 见 todoComplete.js），本文件不再有第二套。
 //
-// Data source: fetchProjects() from nodeData.js (GET /api/projects) — the
-// SAME single source the projects panel and the task list use; no second
-// project list is maintained here. Fetched lazily on first trigger and
-// reused via a short-lived cache (60s TTL, one in-flight request, 10s retry
-// backoff on failure) so typing never refetches per keystroke.
+// `@` 的触发与交互契约（既有口径，逐字保留）：
+//   · `@` 前是 ASCII 字母/数字不触发（`foo@` 邮件）；行首、空白、汉字、中文标点
+//     一律开 token —— 中文句子里随处可用。
+//   · token 到下一个空白为止；继续输入即过滤。
+//   · ↑↓ 选择、Tab/Enter 确认、Esc 关闭；插入 `@<全名> `（一个尾随空格）。
+//   · 排序 = rankCandidates：名称精确 > 前缀 > 中段 > **拼音** > 工作区路径命中，
+//     同级按最近创建/活跃。拼音档（拼音匹配批新增）让 `dian` 也能命中「电离能损」。
 //
-// House rules respected by this module:
-//   - IME: no composition events are bound and no raw composition flags are
-//     read (scripts/check-ime-guard.mjs). All key handling runs behind the
-//     hoisted imeGuard short-circuit in input.js's keydown handler, so keys
-//     belonging to an IME session can neither navigate nor commit a pick.
-//   - Rendering: dynamic text goes through textContent only (project names
-//     and workspace paths are data, never markup).
-//   - Styling: the popup mirrors the #slash-dropdown glass recipe in
-//     css/input.css (same container, same hover/active family). No new
-//     design tokens.
+// 宿主纪律：
+//   · IME 判定单点在 imeGuard（本文件不读 composition 原始标志）。
+//   · 渲染只走 textContent（项目名/路径是数据不是标记）。
+//   · 样式沿用 `.mention-dropdown` 玻璃配方，不新增设计令牌。
 
-import { t, getLocale } from './i18n.js';
+import { t } from './i18n.js';
 import { fetchProjects } from './nodeData.js';
+import { registerProvider, rankCandidates } from './tokenComplete.js';
 
-// ── Project list cache (lazy, ≤60s TTL, single in-flight request) ────────
+// ── 项目清单缓存（惰性，≤60s TTL，单飞请求）──────────────────────────────
 const MENTION_CACHE_TTL_MS = 60_000;
 const MENTION_RETRY_BACKOFF_MS = 10_000;
-let cacheProjects = null; // last successful fetch result (array), or null
-let cacheAt = 0;          // epoch ms of the last successful fetch (0 = none)
-let failAt = 0;           // epoch ms of the last failed fetch (retry backoff)
-let inflight = null;      // in-flight fetch promise (request dedup)
+/** @type {any[] | null} */
+let cacheProjects = null; // 上次成功的结果（数组）或 null
+let cacheAt = 0;          // 上次成功的 epoch ms（0 = 从未成功）
+let failAt = 0;           // 上次失败的 epoch ms（重试退避）
+/** @type {Promise<any[]> | null} */
+let inflight = null;      // 在飞请求（去重）
 
-/** Resolve the mounted-project list, honoring the TTL cache. Never rejects:
- *  on fetch failure it resolves to the cached list, or [] when nothing is
- *  cached yet (cacheAt stays 0, so the renderer can tell "no projects" from
- *  "list unavailable" and stay quiet in the latter case). */
+/** 解析已挂载项目清单，走 TTL 缓存。永不 reject：失败时回落缓存，没缓存回落
+ *  []（cacheAt 保持 0，渲染侧据此区分「没有项目」与「清单不可用」并保持安静）。 */
 function getProjectsCached() {
   const now = Date.now();
   if (cacheProjects && now - cacheAt < MENTION_CACHE_TTL_MS) {
     return Promise.resolve(cacheProjects);
   }
-  // Failed recently — serve whatever we have instead of hammering the gateway
-  // on every keystroke until the backoff window passes.
+  // 刚失败过：先用手上的，别每个按键都去敲网关，等退避窗口过去。
   if (now - failAt < MENTION_RETRY_BACKOFF_MS) {
     return Promise.resolve(cacheProjects || []);
   }
@@ -66,8 +52,8 @@ function getProjectsCached() {
         cacheProjects = Array.isArray(projects) ? projects : [];
         cacheAt = Date.now();
         failAt = 0;
-        listGen++; // renderer LRU generation — cache invalidation on list change
-        notifyProjectsArrival(); // one-shot enhancement hook (main.js)
+        listGen++; // 渲染侧 LRU 代次 —— 清单变了缓存必须失效
+        notifyProjectsArrival(); // 一次性补齐钩子（main.js）
         return cacheProjects;
       })
       .catch(() => {
@@ -79,48 +65,43 @@ function getProjectsCached() {
   return inflight;
 }
 
-// ── Shared-list readouts (mention-render batch, 2026-09-27) ──────────────
-// The message renderer (utils.js, wired via main.js's provider) and the
-// click delegate below read the SAME cache through these exports — there is
-// exactly ONE project list and ONE fetch cache in the client (this module).
-// `listGen` bumps on every successful fetch, giving the renderer's LRU a
-// generation component so cached HTML can never contradict the current list.
+// ── 共享清单读口 ─────────────────────────────────────────────────────────
+// 消息渲染器（utils.js，main.js 注入 provider）与下方点击委托读**同一个**缓存
+// —— 客户端只有一份项目清单、一份取数缓存（就是本模块）。`listGen` 每次成功
+// 取数自增，渲染侧 LRU 用它做代次，缓存 HTML 就不可能和当前清单矛盾。
 let listGen = 0;
+/** @type {any[]} */
 const EMPTY_PROJECTS = [];
 
 /**
- * Synchronous snapshot of the mounted-project list. Zero-copy: consumers
- * treat the array as read-only (fetches replace the reference, never mutate
- * in place, so a returned snapshot stays stable across refetches).
- * @returns {Array<{name: string, workspace?: string}>}
+ * 已挂载项目清单的同步快照。零拷贝：消费方按只读处理（取数整体换引用，从不
+ * 原地改，返回的快照跨重取保持稳定）。
+ * @returns {Array<{name: string, workspace?: string, createdAt?: number}>}
  */
 export function getProjectsSnapshot() {
   return Array.isArray(cacheProjects) ? cacheProjects : EMPTY_PROJECTS;
 }
 
 /**
- * Generation of the shared list — increments on every successful fetch.
+ * 共享清单代次 —— 每次成功取数自增。
  * @returns {number}
  */
 export function getProjectsListGen() {
   return listGen;
 }
 
-/** Warm the shared list once (fire-and-forget). getProjectsCached never
- *  rejects; failures are absorbed by its retry backoff. */
+/** 预热共享清单（发后不管）。getProjectsCached 永不 reject，失败由退避吸收。 */
 export function preheatProjects() {
   void getProjectsCached();
 }
 
-// First-arrival hook: the renderer runs ONE targeted DOM enhancement when the
-// list first becomes non-empty, so messages already rendered as plain text
-// (list not yet arrived) gain their mention spans without user action.
+// 首次到达钩子：清单第一次变非空时，渲染侧跑**一次**定向 DOM 补齐 —— 之前已
+// 按纯文本画出来的气泡不用用户动手也能长出 @ 提及 span。
 /** @type {Array<() => void> | null} */
 let arrivalCbs = null;
 
 /**
- * Subscribe to the first successful non-empty list arrival. Fires at most
- * once per page load (immediately when the list is already populated).
+ * 订阅「首次非空到达」。每次页面加载最多触发一次（清单已就绪则立即触发）。
  * @param {() => void} cb
  */
 export function onProjectsArrival(cb) {
@@ -136,317 +117,42 @@ function notifyProjectsArrival() {
   const cbs = arrivalCbs;
   arrivalCbs = null;
   for (const fn of cbs) {
-    try { fn(); } catch (_) { /* one bad subscriber must not eat the rest */ }
+    try { fn(); } catch (_) { /* 一个坏订阅者不能吃掉其余 */ }
   }
 }
 
-// ── Popup state ──────────────────────────────────────────────────────────
-// The composer is a singleton (chatViews.primary owns #input; initInput runs
-// only for that view), so module-level state is sufficient — the same trade
-// the single static #slash-dropdown element already makes. `ctx.view` still
-// guards every key path so a foreign view can never drive this popup.
-let ddEl = null;      // lazily created dropdown element (#mention-dropdown)
-let ctx = null;       // { view, input } while the popup is open
-let items = [];       // currently rendered matches
-let selected = 0;     // highlighted row index
-let fetchSeq = 0;     // supersedes stale async renders after newer input/close
-let lastRenderKey = ''; // dedup: identical re-parses must not rebuild/reset rows
-
-const WHITESPACE_RE = /\s/;
-
-/** Active mention token at the caret, or null.
- *  Token = an '@' NOT preceded by an ASCII letter/digit (whitespace, line
- *  start, CJK characters and CJK punctuation all open it) up to the caret,
- *  with no whitespace between '@' and the caret. */
-function parseMentionToken(input) {
-  const caret = input.selectionStart ?? input.value.length;
-  const before = input.value.slice(0, caret);
-  const at = before.lastIndexOf('@');
-  if (at < 0) return null;
-  // Trigger gate: '@' preceded by an ASCII letter/digit (email addresses and
-  // the like) never triggers; every other preceding character opens the token.
-  const prev = at > 0 ? before[at - 1] : ' ';
-  if (/[a-zA-Z0-9]/.test(prev)) return null; // ASCII alnum precedes ⇒ email-like, skip
-  // The token ends at the first whitespace — a manually typed space closes.
-  if (WHITESPACE_RE.test(before.slice(at + 1))) return null;
-  return { start: at, query: before.slice(at + 1) };
-}
-
-/** Case-insensitive substring filter on the project name, then a natural
- *  sort in the current locale (Chinese names sort natively, no pinyin). */
-function filterProjects(projects, query) {
-  const q = query.toLowerCase();
-  const locale = getLocale();
-  return projects
-    .filter((p) => p && typeof p.name === 'string' && p.name.toLowerCase().includes(q))
-    .sort((a, b) => String(a.name).localeCompare(String(b.name), locale, { numeric: true }));
-}
-
-function ensureDropdownEl() {
-  if (ddEl) return ddEl;
-  ddEl = document.createElement('div');
-  ddEl.id = 'mention-dropdown';
-  ddEl.className = 'mention-dropdown';
-  ddEl.setAttribute('role', 'listbox');
-  ddEl.setAttribute('aria-label', t('mention.title'));
-  // Overlay target: same layer as #slash-dropdown (a child of #input-area,
-  // which is position:absolute; the dropdown itself is pointer-events:auto).
-  const area = document.getElementById('input-area') || document.body;
-  area.appendChild(ddEl);
-  return ddEl;
-}
-
-function syncActiveRow() {
-  if (!ddEl) return;
-  const rows = ddEl.querySelectorAll('.mention-item');
-  rows.forEach((el, i) => {
-    const active = i === selected;
-    el.classList.toggle('active', active);
-    el.setAttribute('aria-selected', String(active));
-  });
-  if (ctx && items.length > 0) {
-    ctx.input.setAttribute('aria-activedescendant', 'mention-opt-' + selected);
-  }
-  // Keep the highlighted row in view — same visible-range math as the slash
-  // dropdown's setSlashHighlight (deliberately NOT scrollIntoView: it can
-  // write programmatic scroll into overflow:hidden ancestors).
-  const active = rows[selected];
-  if (!active) return;
-  const top = active.offsetTop;
-  const bottom = top + active.offsetHeight;
-  if (top < ddEl.scrollTop) {
-    ddEl.scrollTop = top;
-  } else if (bottom > ddEl.scrollTop + ddEl.clientHeight) {
-    ddEl.scrollTop = bottom - ddEl.clientHeight;
-  }
-}
-
-function buildItem(project, index) {
-  const el = document.createElement('div');
-  el.className = 'mention-item';
-  el.id = 'mention-opt-' + index;
-  el.setAttribute('role', 'option');
-  el.setAttribute('aria-selected', 'false');
-  const name = document.createElement('span');
-  name.className = 'mention-name';
-  name.textContent = project.name;
-  el.appendChild(name);
-  if (typeof project.workspace === 'string' && project.workspace) {
-    const path = document.createElement('span');
-    path.className = 'mention-path';
-    path.textContent = project.workspace;
-    el.appendChild(path);
-  }
-  // Pick on mousedown (not click): preventDefault keeps the composer focused
-  // — no blur round-trip, and the caret stays ours until pickMention moves it.
-  el.addEventListener('mousedown', (e) => {
-    e.preventDefault();
-    pickMention(index);
-  });
-  el.addEventListener('mouseenter', () => {
-    if (selected !== index) {
-      selected = index;
-      syncActiveRow();
-    }
-  });
-  return el;
-}
-
-/** Force-close the popup and cancel any pending async render. */
-export function closeMentionDropdown() {
-  fetchSeq++;
-  lastRenderKey = '';
-  if (ctx && ctx.input) {
-    ctx.input.removeAttribute('aria-expanded');
-    ctx.input.removeAttribute('aria-controls');
-    ctx.input.removeAttribute('aria-activedescendant');
-  }
-  ctx = null;
-  items = [];
-  selected = 0;
-  if (ddEl) {
-    ddEl.classList.remove('on');
-    ddEl.textContent = '';
-  }
-}
-
-function renderDropdown(view, input, token, projects) {
-  items = filterProjects(projects, token.query);
-  // Dedup guard: selectionchange re-parses after every caret move (including
-  // the ones each keystroke causes), so identical renders must be no-ops —
-  // rebuilding rows would reset the user's highlight state. A CHANGED query
-  // (new key) still re-renders and resets the highlight to row 0.
-  const renderKey = token.start + '\u0000' + token.query + '\u0000' +
-    (items.length === 0 ? '<empty>' : items.map((p) => p.name).join('\u0001'));
-  if (ctx && ddEl && ddEl.classList.contains('on') && renderKey === lastRenderKey) return;
-  lastRenderKey = renderKey;
-  if (items.length === 0 && cacheAt === 0) {
-    // Fetch failed and nothing was ever cached — stay quiet rather than
-    // claiming "no matching projects" about an unknown list.
-    closeMentionDropdown();
-    return;
-  }
-  const dd = ensureDropdownEl();
-  ctx = { view, input };
-  selected = 0;
-  dd.textContent = '';
-  // 分组标题（换装批 2026-10-31）：类别签纯呈现 —— aria-hidden 非 option，
-  // 行序/键盘导航（.mention-item 索引）零影响。
-  const title = document.createElement('div');
-  title.className = 'dd-group-title';
-  title.setAttribute('aria-hidden', 'true');
-  title.textContent = t('mention.title');
-  dd.appendChild(title);
-  if (items.length === 0) {
-    const empty = document.createElement('div');
-    empty.className = 'mention-empty';
-    empty.setAttribute('role', 'option');
-    empty.setAttribute('aria-disabled', 'true');
-    empty.textContent = t('mention.noMatch');
-    dd.appendChild(empty);
-  } else {
-    items.forEach((project, i) => { dd.appendChild(buildItem(project, i)); });
-  }
-  dd.classList.add('on');
-  input.setAttribute('aria-expanded', 'true');
-  input.setAttribute('aria-controls', 'mention-dropdown');
-  syncActiveRow();
-}
-
-/** Input-event entry point: re-parse the token at the caret and refresh the
- *  popup. Safe against await races via fetchSeq (only the newest event
- *  renders, and only if the token is still live when data arrives). */
-function updateMentionDropdown(view) {
-  const input = view.dom.input;
-  if (!input) return;
-  const token = parseMentionToken(input);
-  if (!token) {
-    closeMentionDropdown();
-    return;
-  }
-  const seq = ++fetchSeq;
-  getProjectsCached().then((projects) => {
-    if (seq !== fetchSeq) return; // superseded by a newer input / close
-    const current = parseMentionToken(input); // text may have changed mid-await
-    if (!current) {
-      closeMentionDropdown();
-      return;
-    }
-    renderDropdown(view, input, current, projects);
-  });
-}
-
-/** Insert the highlighted project as '@<full name> ' at the token range and
- *  leave the cursor right after the trailing space. */
-function pickMention(index) {
-  const project = items[index];
-  if (!project || !ctx) return;
-  const { input } = ctx;
-  const token = parseMentionToken(input);
-  closeMentionDropdown();
-  if (!token) {
-    input.focus();
-    return;
-  }
-  const caret = input.selectionStart ?? input.value.length;
-  // FULL project name, verbatim — names with spaces / Chinese names ride as-is
-  // (zero quoting, zero escaping; the prompt layer matches the full name).
-  const insert = '@' + project.name + ' ';
-  input.value = input.value.slice(0, token.start) + insert + input.value.slice(caret);
-  const pos = token.start + insert.length;
-  input.focus();
-  input.setSelectionRange(pos, pos);
-  // Mirror the composer's own auto-resize, then re-dispatch 'input' so
-  // input.js's existing listeners re-sync everything else (ref-only gate,
-  // slash dropdown, scroll height). Precedent: projectTab.js:813.
-  input.style.height = 'auto';
-  input.style.height = Math.min(input.scrollHeight, 200) + 'px';
-  input.dispatchEvent(new Event('input', { bubbles: true }));
-}
-
-/**
- * Keydown hook for the popup. Call it from the composer's keydown handler
- * AFTER the imeGuard short-circuit (IME keys never reach this) and BEFORE
- * the slash-dropdown / history / Enter-to-send branches.
- *
- * Returns true when the key was consumed (caller must stop). Only consumes
- * keys while the popup is open: ArrowUp/Down navigate, Tab and bare Enter
- * insert the highlighted project, Escape closes. With zero matches the
- * popup is informational — Enter (with or without Shift) and Tab fall
- * through untouched.
- *
- * @param {KeyboardEvent} e
- * @param {object} view - the ChatView whose composer fired the event
- * @returns {boolean}
- */
-export function handleMentionKeydown(e, view) {
-  if (!ctx || ctx.view !== view || !ddEl || !ddEl.classList.contains('on')) return false;
-  if (e.key === 'ArrowDown' && items.length > 0) {
-    e.preventDefault();
-    selected = (selected + 1) % items.length;
-    syncActiveRow();
-    return true;
-  }
-  if (e.key === 'ArrowUp' && items.length > 0) {
-    e.preventDefault();
-    selected = (selected - 1 + items.length) % items.length;
-    syncActiveRow();
-    return true;
-  }
-  if ((e.key === 'Enter' || e.key === 'Tab') && !e.shiftKey && items.length > 0) {
-    e.preventDefault();
-    pickMention(selected);
-    return true;
-  }
-  if (e.key === 'Escape') {
-    e.preventDefault();
-    closeMentionDropdown();
-    return true;
-  }
-  return false;
-}
-
-/**
- * Bind the mention autocomplete to a composer view (input + blur listeners).
- * Call once from initInput. Idempotent per element (re-created DOM nodes are
- * correctly re-bound, mirroring bindImeGuard's marker pattern).
- *
- * @param {object} view - ChatView with dom.input
- */
-export function bindMention(view) {
-  const input = view.dom.input;
-  if (!input || input.__mentionBound) return;
-  input.__mentionBound = true;
-  input.addEventListener('input', () => { updateMentionDropdown(view); });
-  input.addEventListener('blur', () => { closeMentionDropdown(); });
-}
-
-// Outside click closes the popup. Bound ONCE at module scope (the slash
-// dropdown's document handler does the same for its element): one composer,
-// one popup, no per-initInput listener accumulation.
-document.addEventListener('click', (e) => {
-  if (!ctx || !ddEl) return;
-  const target = e.target;
-  if (target instanceof Element && (ctx.input.contains(target) || ddEl.contains(target))) return;
-  closeMentionDropdown();
+// ── provider 注册（`@` 项目）────────────────────────────────────────────
+registerProvider({
+  id: 'project',
+  trigger: '@',
+  titleKey: 'mention.title',
+  emptyKey: 'mention.noMatch',
+  /**
+   * 候选源：共享清单 → 补全行形状。项目名是 `@` 引用的解析键（逐字，含空格与
+   * 中文）；工作区路径既作副标题也作 detail 档（路径命中排在名称档之后，与旧版
+   * 「名称子串过滤」行为兼容且更宽一档）。
+   * @returns {Promise<Array<{name: string, subtitle: string, detail: string, createdAt: number}>>}
+   */
+  load: () => getProjectsCached().then((projects) => projects
+    .filter((p) => p && typeof p.name === 'string' && p.name)
+    .map((p) => {
+      const workspace = typeof p.workspace === 'string' ? p.workspace : '';
+      return {
+        name: p.name,
+        subtitle: workspace,
+        detail: workspace,
+        createdAt: Number.isFinite(p.createdAt) ? Number(p.createdAt) : 0,
+      };
+    })),
+  rank: (items, query) => rankCandidates(items, query),
+  // 全名逐字插入（含空格 / 中文名），零引号零转义 —— 提示词层按全名匹配。
+  insertText: (item) => '@' + item.name,
 });
 
-// Caret moves that fire NO input event (mouse click, ArrowLeft/Right, Home/
-// End) must re-live the token: the popup represents the token AT THE CARET,
-// so a caret that leaves the token closes the popup — the same liveness rule
-// as typing a space into the token. selectionchange is document-level, so
-// guard to the view that owns the open popup. Bound once at module scope.
-document.addEventListener('selectionchange', () => {
-  if (!ctx) return;
-  if (document.activeElement !== ctx.input) return;
-  updateMentionDropdown(ctx.view);
-});
-
-// ── Click-to-explorer delegation (mention-render batch, 2026-09-27) ──────
-// ONE document-level delegated listener covers every rendered .mention-tag —
-// bubbles added later, primary window and agent popups alike. The canonical
-// name resolves against the SAME shared snapshot: a name no longer mounted
-// (or without a workspace) is a silent no-op, never an error.
+// ── 点击→文件浏览器 委托 ─────────────────────────────────────────────────
+// 一个 document 级委托监听覆盖所有渲染出来的 .mention-tag —— 后加的气泡、
+// 主窗口与 agent 弹窗一视同仁。规范名对着**同一份**共享快照解析：已卸载（或
+// 无工作区）的名字是静默 no-op，绝不报错。
 document.addEventListener('click', (e) => {
   const target = e.target;
   if (!(target instanceof Element)) return;
@@ -457,8 +163,8 @@ document.addEventListener('click', (e) => {
   const project = getProjectsSnapshot().find((p) => p && p.name === name);
   const workspace = project && typeof project.workspace === 'string' ? project.workspace : '';
   if (!workspace) return;
-  // Same lazy-import + toast precedent as projectTab's workspace-open button:
-  // a static import here would drag the file tree into every page load.
+  // 与 projectTab 的「打开工作区」同一条懒加载 + toast 先例：静态 import 会把
+  // 文件树拖进每次页面加载。
   import('./explorer.js').then(({ openExplorerAt }) => {
     openExplorerAt(workspace);
     window.__showToast?.(t('project.workspaceOpened', { path: workspace }), 'info');

@@ -232,7 +232,10 @@ test.describe('件6 桌面 1440×900：事项名与内容两个独立输入面',
     expect(nameInputEllipsis.textOverflow, '名输入框失焦/溢出时读作截断').toBe('ellipsis');
     expect(nameInputEllipsis.value.length, '输入框 value = 全文').toBe(maxLen);
 
-    // ── E5 保存语义：updateItem 收到 { title, notes } ──
+    // ── E5 保存语义：updateItem 收到 { name, detail } ──
+    // 字段名随作者令改口径（待办结构化批 2026-11-05：「用 name 和 detail 这样的
+    // 架构」）：件6 当初把两段叫 title/notes，现在正名 name/detail；store 侧
+    // title/notes 作为同义别名保留，故 stored 断言两个口径都读，语义强度不减。
     await page.locator(NAME).click();
     await page.keyboard.press('ControlOrMeta+a');
     await page.keyboard.insertText('汇报ppt');
@@ -244,15 +247,17 @@ test.describe('件6 桌面 1440×900：事项名与内容两个独立输入面',
     const patches = await page.evaluate(() => window.__patches);
     const patch = patches[patches.length - 1];
     expect(patch.id).toBe('f-1');
-    expect(patch.patch.title).toBe('汇报ppt');
-    expect(patch.patch.notes).toBe('Q3 数据 + 三页结论');
+    expect(patch.patch.name).toBe('汇报ppt');
+    expect(patch.patch.detail).toBe('Q3 数据 + 三页结论');
     const stored = await page.evaluate(async () => {
       const { todoStore } = await import('/js/todoStore.js');
       const it = todoStore.visibleItems().find((x) => x.id === 'f-1');
-      return { title: it.title, notes: it.notes, dataSource: todoStore.dataSource };
+      return { name: it.name, detail: it.detail, title: it.title, notes: it.notes, dataSource: todoStore.dataSource };
     });
-    expect(stored.title).toBe('汇报ppt');
-    expect(stored.notes).toBe('Q3 数据 + 三页结论');
+    expect(stored.name).toBe('汇报ppt');
+    expect(stored.detail).toBe('Q3 数据 + 三页结论');
+    expect(stored.title, 'title 别名仍读到事项名').toBe('汇报ppt');
+    expect(stored.notes, 'notes 别名仍读到 detail').toBe('Q3 数据 + 三页结论');
     expect(stored.dataSource, '夹具模式（零后端）').toBe('fixture');
 
     // ── E6 零教学文案 ──
@@ -276,7 +281,7 @@ test.describe('件6 桌面 1440×900：事项名与内容两个独立输入面',
       E2: { childOrder: g.childOrder, sameNode: g.sameNode, focusValues: bothValues },
       E3: { tag: g.name.tag, maxLength: maxLen, afterNewline, longLen: afterLong.length, nameH: g.name.height, notesH: g.notes.height },
       E4: { inline: { ...inline, text: `<${inline.text.length} chars>` }, nameInputEllipsis: { ...nameInputEllipsis, value: `<${nameInputEllipsis.value.length} chars>` } },
-      E5: { patch: { title: patch.patch.title, notes: patch.patch.notes }, stored, dataSource: stored.dataSource },
+      E5: { patch: { name: patch.patch.name, detail: patch.patch.detail }, stored, dataSource: stored.dataSource },
       E6: { texts: copy.texts, attrs: copy.attrs },
     });
     await page.screenshot({ path: join(EVID, 'd1440-edit-panel.png') });
