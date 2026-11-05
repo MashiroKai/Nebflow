@@ -908,12 +908,14 @@ body.mobile-layer .mobile-page-title {
      全额归 min-height:0 的滚动面（流内占位的进退由上面的 margin 对承担）。 */
   flex: none;
 }
-/* 超宽页名钳宽后的右缘渐隐（省略号退役，作者令「走模糊淡出，不用省略号」）：
-   蒙版色走 currentColor（标题墨色）⇒ 零新色值；类由 applyRoll 按
-   scrollWidth > clientWidth 翻写（钳宽态才挂，不误伤正常短页名）。 */
+/* 超宽页名钳宽后的截断（作者令 2026-11-05 09:28「那个字的右侧有渐隐的效果，
+   这个不要」）：右缘 78%→97% 的 alpha 渐隐**撤除**，改**可见省略号**——
+   .mtitle-clip 仍由 applyRoll 按 scrollWidth > clientWidth 翻写（钳宽态才挂），
+   本类现在只负责「溢出时允许画 …」；装得下的短页名零变化。
+   为什么不再用渐隐：页名是「被截断的文本」，渐隐读作「字没写完 / 没渲染完」，
+   与真溢出语义相悖（作者两次同型报障：2026-11-04 13:03 列表行、本批页名）。 */
 body.mobile-layer .mobile-page-title.mtitle-clip {
-  -webkit-mask-image: linear-gradient(to right, currentColor 78%, transparent 97%);
-  mask-image: linear-gradient(to right, currentColor 78%, transparent 97%);
+  text-overflow: ellipsis;
 }
 /* 胶囊壳层 = **同一元素**的 ::before：玻璃样式包材质单源（--cv-* → glass.css，
    --glass-* 双主题自随），整层 opacity = --mtitle-p —— 背景/描边/阴影/毛玻璃
@@ -2248,16 +2250,17 @@ body.mobile-layer .mf-deck-icon {
   color: rgb(var(--sapphire, 96 165 250));
 }
 body.mobile-layer .mf-deck-icon svg { width: 18px; height: 18px; }
-/* 卡头标题：**零省略号**（作者铁律「长名/超宽内容走模糊淡出，不用省略号」）——
-   与顶部胶囊的 label 同一套语言：mask 水平 alpha 渐隐，不是「…」硬截。 */
+/* 卡头标题：作者令 2026-11-05 09:28「那个字的右侧有渐隐的效果，这个不要」——
+   右缘 18px alpha 渐隐**撤除**（与 H4 同批同判据：字被截断的语义不许用渐隐
+   表达），回落到**可见省略号**（省略号一直在这里只是被 mask 掩盖，见
+   `text-overflow` 下方；overflow:hidden/nowrap 保留 ⇒ 真溢出才出「…」，
+   装得下时零视觉差）。 */
 body.mobile-layer .mf-deck-title {
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  text-overflow: clip;
+  text-overflow: ellipsis;
   white-space: nowrap;
-  -webkit-mask-image: linear-gradient(90deg, black 0, black calc(100% - 18px), transparent 100%);
-  mask-image: linear-gradient(90deg, black 0, black calc(100% - 18px), transparent 100%);
   font-size: var(--mfs-sub);
   font-weight: 600;
 }
@@ -2759,31 +2762,28 @@ body.mobile-layer .mf-social-sealed-sub {
 /* ── 附件条 v4（uifix 批 2026-10-22）：手机层单行 + 「+N」折叠差异 ── */
 body.mobile-layer #attachment-preview { flex-wrap: nowrap; }
 
-/* ── 待办胶囊上手机层（胶囊面交互批 2026-11-04 ⑤；作者令「手机层胶囊必须
-   可见」）────────────────────────────────────────────────────────────────
-   原规则「任务带退场：#task-list 自动浮条由任务页接替 ⇒ 整条 display:none
-   !important」**退役**：胶囊成为手机端的待办入口，照常显示在顶带
-   #top-overlays 内（身份头之下 96+safe 的那一行，居中），点击自胶囊向下长出
-   同一张 .tfl-card 面板（宽 min(420px, 100vw − 32px)，见 css/todo-face.css
-   几何单源块）。
-   · 空态仍整条不显示（.has-tasks 缺席）⇒ 不占带、不推挤聊天；
-   · 有行时带高 +38px（26 胶囊 + 12 呼吸位），#chat 让位由 js/main.js
-     bandBottom() 的 ResizeObserver 自动跟随（零 JS 改动，与桌面同一条链）。
-   · 触控档：胶囊本体 26px 高（两态等宽不变量动不得），命中面经 ::after 外扩到
-     ≥44px（绝对定位伪元素 ⇒ 零布局影响、等宽口径不变）。
-   · 入口退役（左悬浮圆钮 / taskPanel 圆钮）归下游 entries 节点，本批不动。 */
-body.mobile-layer #task-list { display: block !important; }
-body.mobile-layer #task-list:not(.has-tasks) { display: none !important; }
-body.mobile-layer .tfl-capsule { position: relative; }
-body.mobile-layer .tfl-capsule::after {
-  content: '';
-  position: absolute;
-  top: -9px;
-  bottom: -9px;
-  left: -10px;
-  right: -10px;
-  border-radius: inherit;
-}
+/* ── 待办入口**端区分**（作者令 2026-11-05 09:28，逐字）──────────────────
+   「手机端的待办…跟电脑端的区分开，电脑端是一个胶囊，手机端还是需要是之前那个
+   左上角的一个悬浮的待办按钮」
+   ⇒ 本块回到「任务带退场」档：**手机层不显示待办胶囊**（桌面端继续用胶囊，本块
+   全部规则挂 body.mobile-layer，桌面零命中）。手机唯一待办入口 = 聊天根左上
+   「任务」悬浮圆钮（js/mobile/chatChrome.js 的 [data-chrome='tasks']，48px
+   g2-fab 档，top/left 走 --mchrome-top + env(safe-area-inset-top) 避刘海），
+   点击 pushPage('tasks') → #mobile-task-panel（面板体 = todoFace.mountTodoFaceInto
+   的页面即展开态）。
+   沿革（三次翻转，写清以免后人再翻）：
+     ① 胶囊面交互批 2026-11-04 ⑤ 让胶囊上手机层（当时口径「手机层胶囊必须可见」）；
+     ② 入口收敛批 2026-11-04 撤左上圆钮，胶囊 = 双端唯一入口；
+     ③ 本批（2026-11-05 09:28）按端区分回滚手机侧：胶囊退场、圆钮恢复。
+   为什么不是「同一组件两套皮」：胶囊与圆钮是**两份既有实现**，各有自己的挂载
+   面（胶囊 = #top-overlays 顶带流内一行；圆钮 = #mobile-fab-layer 零底带浮层），
+   本批只按端切换显示，不新建第二套组件、不改任何一份的形态。
+   判据：断点 = mobile/bootstrap.js 的 `matchMedia('(max-width: 768px)')`（既有响应
+   式断点，与 css/mobile.css 折叠点同源）—— body.mobile-layer 即「窄屏」的唯一
+   真值，本文件全部规则挂在它下面。 */
+body.mobile-layer #task-list { display: none !important; }
+/* 胶囊的触控外扩档随胶囊一起在手机层失效（不许留死样式：display:none 的子件
+   不可能被点到）。桌面档的胶囊外形与 ::after 命中面原样不动（css/todo-face.css）。 */
 
 /* 胶囊面件在手机层的尺寸口径（同一实现两套尺寸：桌面 34 / 手机 44）：
    · 右下角加号 = 44px 触摸档圆形钮；
@@ -3981,9 +3981,9 @@ body.mobile-layer .option-box .att-file.ask-att-file > .att-file-name {
   min-width: 0;
   max-width: none;
   font-size: var(--mfs-min);
-  text-overflow: clip;
-  -webkit-mask-image: linear-gradient(90deg, black 0, black calc(100% - 16px), transparent 100%);
-  mask-image: linear-gradient(90deg, black 0, black calc(100% - 16px), transparent 100%);
+  /* 作者令 2026-11-05 09:28：右缘 16px alpha 渐隐撤除（与 H4/卡头标题同批
+     判据），文件名截断走可见省略号。 */
+  text-overflow: ellipsis;
 }
 body.mobile-layer .option-box .att-file .ds-att-origin {
   top: -10px;
@@ -4842,6 +4842,9 @@ body.mobile-layer :is(
   .ud-stats-label, .ud-empty-hint,
   /* 待办面 */
   .tfl-row-badge, .tfl-row-due-text, .tfl-row-notes, .tfl-header-count,
+  /* 待办面空态（端区分批 2026-11-05：手机任务页恢复后重见 —— 探针实测 11px；
+     css/todo-face.css:944 的 .tfl-empty 是唯一载体，.tfl-empty-all 是同件修饰类） */
+  .tfl-empty, .tfl-empty-all,
   /* 设置面 */
   .cfg-label, .cfg-hint, .settings-section-title, .entry-sub, .count-pill, .st-badge,
   .neblink-logged-out-hint, .mchain-empty, .mp-note,
@@ -4884,8 +4887,10 @@ body.mobile-layer :is(.bubble pre, .bubble pre code, .bubble .md code, .bubble .
 
 /* ── H3 热区补齐（≥44×44）────────────────────────────────────────────
    两种合法补法（按「键是否串联」择一，禁两套同时上）：
-     · 形态键 / 串联键（输入框、按钮、行头、消息 footer 键族）：本体抬到
-       --mtap / --mhit 见方 —— 串联件**必须**用本体真尺寸（外扩盘必与邻键重叠）；
+     · 形态键（输入框、按钮、行头）：本体抬到 --mtap / --mhit 见方；
+     · 串联键（消息 footer 键族）：**纵轴**本体/伪元素抬到 --mhit，**横轴**回到
+       自然宽 + 半个键缝（2026-11-05 09:29 作者令「间距拉的很开」后的档位，
+       完整推导与实测见下方 .duration-badge 块头）；
      · 孤立小图标键（待办面 .tfl-icon-btn 族：一行一键、四周空白）：本体视觉
        不动，::after 外扩命中盒到 --mhit（既有解法，单点不另造）。 */
 body.mobile-layer :is(
@@ -4898,51 +4903,83 @@ body.mobile-layer :is(
 body.mobile-layer :is(.cfg-eye-btn, .merged-tab, .mf-me-login, .team-empty-cta) {
   min-width: var(--mtap);
 }
-/* 行内键的真实档位（消息 footer 徽章族）——**列向独占外扩**：键加宽到
-   --mhit（44px 见方宽度，纵向布局零变化），::after 只**纵向**垫高命中区
-   （height ≥ 44、width 100% = 本体宽），圆角 10 与键体形状同族。
-   为什么不是三种旧解法里的任何一种（每一刀都有实证）：
+/* 行内键的真实档位（消息 footer 徽章族）——**纵向 44 保、横向回自然宽**
+   （作者令 2026-11-05 09:29「手机端的消息的footer…跟电脑端不一致，间距拉的很开」）
+   ─────────────────────────────────────────────────────────────────────
+   改前实测（375×812 真渲染，tests/mobile-fade-todo-fab.spec.mjs）：
+     桌面 footer `.duration-badge` = 92px 宽，子项 [时间33 | 分隔1 | 复制13 | 引用13]
+        + gap 6 ⇒ 首尾子项 x 跨度 65px；
+     手机同一条 = **165px 宽**，子项 [时间44 | 分隔1 | 复制44 | 引用44] + gap 6
+        ⇒ 首尾跨度 107px（+65%）。根因 = 下面这条 `min-width: var(--mhit)`：
+       44px 宽的**本体布局盒**把 13px 的图标居中于 44px 里 ⇒ 每个字形两侧各
+       15.5px 空气 + 6px 缝 ≈ 字间 **37px** 空档（桌面 6px）＝「间距拉的很开」。
+   为什么不能两者兼得（物理约束，不是取舍偏好）：命中盒 ≥44 宽且互不重叠 ⇒
+   相邻键中心距 ≥44 ⇒ 4 件串联的徽章至少 176px，永远比桌面宽一倍。上一版选择
+   「命中优先」，本批按作者视觉裁定改为「间距优先」，并把被让掉的那一维补到
+   可达性下限之上：
+     · **纵轴**：命中高仍 = max(本体, 44)（下面 ::after 不动）——一排横键真正要
+       的是这一维，且纵向几何是聊天流敏感量（见下方沿革实证），一行都没动；
+     · **横轴**：本体回自然宽（= 桌面同款），::after 左右各吃**半个键缝**
+       （`calc(100% + var(--ds-space-1h))`，缝 12px ⇒ 各 6px ⇒ 命中宽 = 自然宽
+       + 12，与邻键命中盒**相邻不重叠**，零劫持）；
+     · **键缝**：桌面 6px 在触屏上会让中心距只有 19px（< 24），故手机档抬到
+       --ds-space-3（12px）＝中心距 25px ≥ 24，满足 WCAG 2.5.8「间距例外」
+       （旧版 44px 盒下的中心距是 50px，远超需求 = 纯浪费；12px 档是满足底线
+       的最小一档，且与桌面的 6px 是**同一套 --ds-space-* 语义**，只是同族上
+       一档，不换排版逻辑）。
+   旧解法的两条实证（保留为沿革，仍成立、仍是本批不敢碰纵向几何的原因）：
    · 本体抬 44 见方 ⇒ footer 徽章行高 +16px，聊天流整树重排 —— mobile-msg-
      longpress T2 下载点击瞬间 footer 重排把命中点挪走（intercepts）；
      search-return-pill 手机腿 smooth-scroll 目标位偏 73px，胶囊「用户滚离」
      误判即隐（settle 后 scrollTop 停 73 ≠ pendingTop 0）。**纵向几何是这条
      流路的敏感量，一行都不能动。**
    · 44px 横向外扩盘（同 .tfl-icon-btn 解法）⇒ 键间距 6px < 盘半径伸出量，
-     邻键外扩盘盖住本键本体 ⇒ 点击被引用钮劫持（同一 T2 报错）。
-   ⇒ 唯一同时满足「命中 ≥44 高」「纵向零位移」「横向零越界」的解 = 加宽本体
-   + 纵向外扩。列向布局（flex row，键宽自适应）天然容纳 44px 键宽。 */
+     邻键外扩盘盖住本键本体 ⇒ 点击被引用钮劫持（同一 T2 报错）——本批的
+     ::after 扩量锚在**缝宽**上（各 6px），结构上不可能越过邻键边界。 */
+body.mobile-layer .duration-badge { gap: var(--ds-space-3); }
 body.mobile-layer :is(.duration-badge .msg-copy, .duration-badge-time) {
   position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: var(--mhit);
 }
 body.mobile-layer :is(.duration-badge .msg-copy, .duration-badge-time)::after {
   content: '';
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 100%;
+  /* 横向 = 本体宽 + 一个键缝（左右各半缝）：吃满缝预算又不压邻键。 */
+  width: calc(100% + var(--ds-space-3));
   height: max(100%, var(--mhit));
   transform: translate(-50%, -50%);
   border-radius: var(--ds-radius-button);
 }
-/* 时间徽标是键盘可达的文字件（span + tabindex），命中区与图标键同档 44 高。 */
+/* 时间徽标是键盘可达的文字件（span + tabindex），命中高与图标键同档 44。 */
 
-/* ── H4 长名模糊淡出（禁省略号）──────────────────────────────────────
-   作者铁律：「长名/超宽内容走模糊淡出，不用省略号」。桌面腿 19 处
-   text-overflow: ellipsis 在手机层统一改写为 clip + 右缘 mask 渐隐（与
-   .mf-deck-title 既有解法同一语言，该件早已如此）。清单 = 探针实测。 */
-body.mobile-layer :is(
-  .dock-key .dock-label, .mf-me-name, .mf-me-sub, .mf-me-field-value, .mf-hub-row-val,
-  .tfl-row-badge, .tfl-row-notes, .ud-card-label, .ud-card-value, .fm-row-name,
-  .fm-conv-summary, .settings-identity-username, .entry-name, .tp-stats
-) {
-  text-overflow: clip;
-  -webkit-mask-image: linear-gradient(90deg, black 0, black calc(100% - 14px), transparent 100%);
-  mask-image: linear-gradient(90deg, black 0, black calc(100% - 14px), transparent 100%);
-}
+/* ── H4 长名模糊淡出（禁省略号）—— **整块退役**（作者令 2026-11-05 09:28）────
+   报障逐字：「关于手机端的ui，为什么那个字的右侧有有渐隐的效果，这个不要」。
+   定位证据（改前实测，375×812 真渲染）：`.dock-key .dock-label`（底部 dock 四
+   个栏名「消息/联系人/看板/工作台」）computed `mask-image` =
+   `linear-gradient(90deg, rgb(0,0,0) 0px, rgb(0,0,0) calc(100% - 14px), rgba(0,0,0,0) 100%)`
+   —— 本块**无条件**挂在元素上（不看是否真溢出），所以连装得下的短名也被啃掉
+   最后 14px（实拍 evidence/20261105_mobile-fade-todo/before/chat-375x812-dark.png
+   的 dock 栏名：每字右缘发虚）。同一族余下的 11 个选择器（我的页三行、用量卡
+   标签/值、待办行备注/徽标、会话行名、设置身份名、任务面板统计）同病。
+   沿革：本块 2026-11-03 由 ui-unification 批出生（当时口径「长名走模糊淡出，
+   不用省略号」）；2026-11-04 13:03 作者报过一次同型问题（「现在文字右侧都有
+   一个渐隐效果是怎么回事」），当时只把三条**列表行**选择器翻回省略号，本块其余
+   11 条留在原地 ⇒ 两次报障是同一病灶的两个残留面。
+   本批处置 = 撤除该效果本身（不是加不透明度覆盖）：
+     · 11 个选择器各自的**基座规则**本就带 `overflow:hidden` +
+       `text-overflow: ellipsis` + `white-space:nowrap`（逐个核过，见本块下方
+       各面的基座声明：mobileLayer.css:2603/2611/2649/2681/1121、
+       todo-face.css:708/725、usage.css:84/92、friends.css:105、sidebar.css:948）
+       ⇒ 删掉本块即回落到桌面同款的**可见省略号**，不做静默截断；
+     · 内容级 alpha 渐隐**只**保留「穿边」场合（作者 2026-11-04 裁定仍在）：
+       顶部签两侧 / 顶缘 #g2-edge-fade / Ask 列顶缘 —— 那些是**边缘羽化**，
+       不是「字被截断」，本批不动（清单见文件尾 mask 台账）。
+   反向护栏：tests/mobile-hig-assertions.spec.mjs 的 H4 腿同批改写为
+   「文本宿主不得挂右缘渐隐 mask」（旧判据「禁 ellipsis」已被本批作者令反转）。 */
 
 /* ── 作者令 2026-11-04 13:03①（回归撤除）：**列表行**回省略号截断 ─────────
    报障逐字：「现在文字右侧都有一个渐隐效果是怎么回事」。根因 = 上一条 H4
@@ -4952,11 +4989,17 @@ body.mobile-layer :is(
      · 内容级 alpha 渐隐**仅**用于「穿边」场合 —— Ask 列顶缘、顶部签两侧；
      · **列表行末尾一律省略号**（行内右侧还有时间/角标等邻件，渐隐带会与它们
        糊成一团，且与「这行有更多内容」的语义相悖）。
-   保留 .fm-row-name（表单行字段，非列表行）的既有模糊淡出。 */
-/* 选择器写成 body.mobile-layer.mobile-layer 是**刻意加倍体裁**：上面 H4 那条
-   :is() 与本条同特异度，靠源码顺序决胜负太脆（后续谁再插一条就会翻盘）——
-   本条要的是「列表行恒无横向渐隐」这一不变量，所以用特异度把它钉死。 */
-body.mobile-layer.mobile-layer :is(.fm-conv-summary, .todo-entry-summary, .entry-name) {
+   沿革落定（2026-11-05 09:28 作者令「这个不要」）：H4 整块已删，本条从
+   「三条列表行的例外」升级为**全域不变量**的防复活钉 —— 本轮起它作用的对象
+   是所有文本宿主（不再限于三条），万一有人把右缘 mask 加回任一行，本条的
+   `mask-image:none` + 省略号会把它按回去。选择器保留 `body.mobile-layer.mobile-layer`
+   加倍体裁（H4 那条 :is() 若被复活则与本条同特异度，靠源码顺序决胜负太脆）。 */
+body.mobile-layer.mobile-layer :is(
+  .fm-conv-summary, .todo-entry-summary, .entry-name,
+  .dock-key .dock-label, .mf-me-name, .mf-me-sub, .mf-me-field-value, .mf-hub-row-val,
+  .tfl-row-badge, .tfl-row-notes, .ud-card-label, .ud-card-value, .fm-row-name,
+  .settings-identity-username, .tp-stats
+) {
   -webkit-mask-image: none;
   mask-image: none;
   text-overflow: ellipsis;
