@@ -2,24 +2,71 @@ package nebflow.core.delegate
 
 import cats.effect.IO
 import cats.syntax.all.*
+import io.circe.{Json, JsonObject}
+import io.circe.parser.parse
+import io.circe.syntax.*
 import nebflow.core.AgentRuntimePort
 import nebflow.core.GitWorktrees
 import nebflow.shared.{NebflowLogger, PathUtil}
 
 /**
- * BaseDriftWatch —— **main 漂移通知**（引擎会话治理专项 · 缺陷四，作者令 2026-11-03）：
- * 在飞 delegate 的基分支（`baseBranch`，通常 main）被别人推进后，**向在飞 delegate
- * 会话注入一条 `[base-moved] old→new` 提示（含涉及文件列表）**，让它知道「脚下的
- * 基线动了」；同一 tip 只通知一次（节流 = 状态文件里的 last-notified tip）。
+ * BaseDriftWatch —— **基分支漂移：默认静默，只在可行动时聚合通知**
+ * （引擎会话治理专项 · 缺陷四最初落地 2026-11-03；**降噪重写 2026-11-05 作者报障**）。
  *
- * 病灶：改前引擎对 base tip 的漂移**零感知**——delegate 在自己的 worktree 里埋头干，
- * 基线被别人合并了几轮也不吭声，直到它自己合并时才发现冲突/被覆盖。
+ * ==作者报障与三条语义（2026-11-05 10:30，逐字）==
+ * 「…DELEGATE-NOTIFY · FLOW-NOTIFY [base-moved] main advanced … 这个通知也太多了，是
+ * 怎么回事？我们现在不是用 worktree 隔离了吗，这个通知是相对于其他 delegate 的，
+ * 还是说它派发的节点导致的？如果是其他 delegate 就不应该，因为有隔离，不需要通知。
+ * 如果是子节点的，也不需要通知。它在派发时，应该要考虑各节点并行时不冲突。」
  *
- * 通道：复用既有会话注入面 [[DelegateNotify.inject]]（ImmediateInput → idle 分支转
- * UserInput，零新机制）；目标会话不 live（已收尾/死亡）= 零动作（不是本通道的活）。
+ *  1. **其他 delegate 推进 base ⇒ 不该通知**：每个 delegate 跑在独立 worktree，
+ *     别人的合并不会污染它的工作树 ⇒ base 前进**本身不构成任何行动要求**。
+ *  2. **它派发的子节点推进 base ⇒ 更不该通知**：节点跑在 dispatcher 的 seat 内，
+ *     本来就没有独立 base 可谈 ⇒ 节点侧这条路直接不发（结构上也不发：见
+ *     [[trackable]]——节点不建分支/worktree，不进 [[DelegateRegistry]]，天然零命中）。
+ *  3. **派发时就该考虑并行不冲突**：基线快照在**派发时刻**落盘
+ *     （[[noteDispatch]]），后续判断冲突用这个快照比对，「预计要改的文件范围」用
+ *     分支**实际**改动面（`merge-base(base, branch)..branch`）——比预测更准且零猜测；
+ *     逐条弹通知的做法被聚合窗取代。
  *
- * 调度：搭既有扫描拍（[[nebflow.core.processor.TaskStuckWatcher.scan]] 拍尾，零新增
- * 定时器纪律）；状态落 `<dataRoot>/base-drift.json`（id → tip），重启后节流照旧。
+ * ==改前病灶（实测）==
+ * 每拍对每个在飞 delegate 比对 base tip，**只要 tip 变了就注入一条**，文案只说
+ * 「base 动了，收尾前复查」。于是噪音是 O(在飞任务数 × 合并数)：2026-11-05 上午
+ * 00:00–10:38 实测 **189 条**注入、涉及 **34 个任务**、**21 次 tip 移动**
+ * （≈9 条/次移动）。其中绝大多数移动与收件人改动的文件毫无交集 = 纯噪音。
+ *
+ * ==改后判据（机械可判）==
+ * 通知**仅当**下列之一成立（否则零注入）：
+ *   - **C1 真冲突**：把新的 base tip 三段合并进我的分支时**确实冲突**（
+ *     `git merge-tree --write-tree`，见 [[GitWorktrees.mergeTreeConflicts]]）——冲突
+ *     文件列表就是通知里的文件清单；
+ *   - **C2 历史被改写**：旧 tip 不再是新 tip 的祖先（`merge-base --is-ancestor`
+ *     rc=1）——别人 reset/rebase 了 base，盲合会丢东西。
+ * 且**同一任务 ≥ [[WindowMs]]（30min）最多一条**，内容聚合为
+ * 「base 已前进 N 次，其中 M 次会与你的分支冲突：<文件列表>」，绝不一事一条。
+ *
+ * ===为什么 C1 不用「文件交集」（实测否决）===
+ * 作者原始表述是「与我改过的文件集合有交集（潜在冲突）」。实测（2026-11-05 上午
+ * 28 次 tip 移动 × 25 个在飞分支）证明**单侧 diff 算不出「我改过的文件」**：
+ *   - `merge-base(base, branch)..branch`：分支并入过旧 main 的，把 main 自己的
+ *     改动全算成「我的改动」；
+ *   - `base..branch`：分支落在 base 后面的，把 base 走在前面的部分反向算成我的。
+ * 两种口径都让 25/25 个分支对几乎每次移动都「有交集」（连 `CONTRIBUTING.md` 这种
+ * 谁都没碰的文件都在列）⇒ 按交集发通知 = 复现原噪音。三段合并实况把假阳性压到
+ * **2/25 个分支**。故 C1 = 真冲突，而不是文件交集。
+ *
+ * 关于作者原文的另一条判据「我的分支已落后到无法 ff 合并」：**任何**自基点以来有
+ * 提交的 delegate 都无法 ff 到新 base（ff 会丢掉它自己的提交）——把它做成通知条件
+ * 只会复现原噪音，故**不进消息腿**：它的读数（moves 计数 / 落后状态）落在**面板
+ * 状态面**（[[statusJson]] 经 `GET /api/chains` 行的 `baseDrift` 键透出），
+ * 「base 动了」这个事实可见而不吵。这条取舍是作者令「默认静默」的直读。
+ *
+ * ==通道与调度（零新增机制）==
+ * 通道 = 既有会话注入面 [[DelegateNotify.inject]]（ImmediateInput → idle 分支转
+ * UserInput）；调度 = 搭既有扫描拍（[[nebflow.core.processor.TaskStuckWatcher.scan]]
+ * 拍尾，30s 一拍，零新增定时器）。状态落 `<dataRoot>/base-drift.json`（v2 JSON：
+ * 基线 + 挂账聚合 + 上次通知时刻），重启后聚合窗与基线照旧；v1 旧格式
+ * （`<id> <tip>` 逐行）原样读入迁移，**迁移绝不补发通知**。
  */
 object BaseDriftWatch:
 
@@ -28,102 +75,342 @@ object BaseDriftWatch:
   /** 单条通知里最多列出的文件数（防提示词膨胀）。 */
   val MaxFiles: Int = 20
 
+  /** 每条挂账最多记住的文件数（超出截断——聚合窗内极端情况下的状态文件护栏）。 */
+  private val MaxPendingFiles: Int = 200
+
+  /** 聚合窗：同一任务在该窗内**最多一条** base 漂移通知（作者令建议 ≥30min）。 */
+  val WindowMs: Long = 30L * 60L * 1000L
+
+  /** 状态文件版本（v1 = `<id> <tip>` 文本行；v2 = 本文件的 Entry JSON 表）。 */
+  val StateVersion: Int = 2
+
   private def statePath: os.Path = PathUtil.dataRoot / "base-drift.json"
+
+  /** 状态文件读改写锁（[[noteDispatch]] 的读-改-写短临界区走 blocking 池）。 */
+  private def withStateLock[A](f: => A): A = synchronized(f)
+
+  /**
+   * 单个 delegate 的漂移记账。
+   *
+   * @param baselineTip      **派发时刻**的 base tip（[[noteDispatch]] 落；缺失 = 首
+   *                         次扫见时的 tip，只记账不通知——不知道「从哪来」）
+   * @param lastSeenTip      已记账到的最新 base tip（节流锚：同一 tip 不再算移动）
+   * @param moves            自基线以来观测到的 base 移动次数（**面板可见量**）
+   * @param pendingMoves     上次通知以来累计的移动次数（聚合文案的 N；含非冲突移动）
+   * @param pendingConflicts 上次通知以来**会与我分支冲突**的移动次数（聚合文案的 M）
+   * @param pendingFiles     挂账的冲突文件名（去重截断；聚合文案的文件列表）
+   * @param pendingRewritten 挂账期间是否发生过 base 历史改写（C2）
+   * @param lastNotifyMs     上次实际注入时刻（0 = 从未）——聚合窗的时间锚
+   */
+  final case class Entry(
+    baselineTip: String,
+    lastSeenTip: String,
+    moves: Int = 0,
+    pendingMoves: Int = 0,
+    pendingConflicts: Int = 0,
+    pendingFiles: List[String] = Nil,
+    pendingRewritten: Boolean = false,
+    lastNotifyMs: Long = 0L
+  ):
+    /** 挂账里是否有**可行动**内容（无 = 静默，无论挂了几次移动）。 */
+    def actionablePending: Boolean = pendingConflicts > 0 || pendingRewritten
+
+    def toJson: Json =
+      Json.obj(
+        "baselineTip" -> baselineTip.asJson,
+        "lastSeenTip" -> lastSeenTip.asJson,
+        "moves" -> moves.asJson,
+        "pendingMoves" -> pendingMoves.asJson,
+        "pendingConflicts" -> pendingConflicts.asJson,
+        "pendingFiles" -> pendingFiles.asJson,
+        "pendingRewritten" -> pendingRewritten.asJson,
+        "lastNotifyMs" -> lastNotifyMs.asJson
+      )
+
+  object Entry:
+    def fromJson(j: Json): Option[Entry] =
+      val c = j.hcursor
+      for
+        lastSeen <- c.get[String]("lastSeenTip").toOption
+      yield Entry(
+        baselineTip = c.get[String]("baselineTip").toOption.getOrElse(lastSeen),
+        lastSeenTip = lastSeen,
+        moves = c.get[Int]("moves").toOption.getOrElse(0),
+        pendingMoves = c.get[Int]("pendingMoves").toOption.getOrElse(0),
+        pendingConflicts = c.get[Int]("pendingConflicts").toOption.getOrElse(0),
+        pendingFiles = c.get[List[String]]("pendingFiles").toOption.getOrElse(Nil),
+        pendingRewritten = c.get[Boolean]("pendingRewritten").toOption.getOrElse(false),
+        lastNotifyMs = c.get[Long]("lastNotifyMs").toOption.getOrElse(0L)
+      )
 
   /** 端口（生产 = [[fromResources]]；测试 = 假端口注入全部 IO 面）。 */
   trait Port:
     def delegates: IO[List[DelegateRegistry.Record]]
     def liveSessionIds: IO[Set[String]]
     def headTip(workspace: String, branch: String): Option[String]
-    def changedFiles(workspace: String, from: String, to: String): List[String]
+
+    /**
+     * 三段合并实况：把 base 的新 tip 并进我的分支**会不会真冲突**（冲突文件列表；
+     * 空 = 无冲突）。见 [[GitWorktrees.mergeTreeConflicts]]——这是「有没有撞上我」
+     * 的唯一可算判据（单侧 diff 的「文件交集」实测假阳性 25/25）。
+     */
+    def conflictFiles(workspace: String, branch: String, baseTip: String): List[String]
+
+    /** base 历史被改写 = 旧 tip 不再是新 tip 的祖先（不可确证 = false，宁静默）。 */
+    def baseRewritten(workspace: String, oldTip: String, newTip: String): Boolean
+
     def notify(sessionId: String, text: String): IO[Boolean]
-    def loadState: IO[Map[String, String]] = IO.blocking(BaseDriftWatch.readState())
-    def saveState(state: Map[String, String]): IO[Unit] = IO.blocking(BaseDriftWatch.writeState(state))
+    def nowMs: IO[Long] = IO.realTime.map(_.toMillis)
+    def loadState: IO[Map[String, Entry]] = IO.blocking(BaseDriftWatch.readState())
+    def saveState(state: Map[String, Entry]): IO[Unit] = IO.blocking(BaseDriftWatch.writeState(state))
 
   /** 生产端口（AgentRuntimePort 装配；git 读数走 GitWorktrees）。 */
   def fromResources(resources: AgentRuntimePort): Port = new Port:
-    def delegates = IO.blocking(DelegateRegistry.list()).handleErrorWith(_ => IO.pure(Nil))
-    def liveSessionIds = resources.agentRegistry.get.map(_.keySet)
-    def headTip(workspace: String, branch: String): Option[String] =
-      scala.util.Try(os.Path(workspace)).toOption.flatMap(ws => GitWorktrees.headShaOfBranch(ws, branch))
-    def changedFiles(workspace: String, from: String, to: String): List[String] =
+    private def pathOf(workspace: String): Option[os.Path] =
       scala.util.Try(os.Path(workspace)).toOption
-        .map(ws => GitWorktrees.changedFilesBetween(ws, from, to).take(MaxFiles))
-        .getOrElse(Nil)
+
+    def delegates: IO[List[DelegateRegistry.Record]] =
+      IO.blocking(DelegateRegistry.list()).handleErrorWith(_ => IO.pure(Nil))
+    def liveSessionIds: IO[Set[String]] = resources.agentRegistry.get.map(_.keySet)
+    def headTip(workspace: String, branch: String): Option[String] =
+      pathOf(workspace).flatMap(ws => GitWorktrees.headShaOfBranch(ws, branch))
+    def conflictFiles(workspace: String, branch: String, baseTip: String): List[String] =
+      pathOf(workspace).map(ws => GitWorktrees.mergeTreeConflicts(ws, branch, baseTip)).getOrElse(Nil)
+    def baseRewritten(workspace: String, oldTip: String, newTip: String): Boolean =
+      pathOf(workspace).flatMap(ws => GitWorktrees.isAncestor(ws, oldTip, newTip)).contains(false)
     def notify(sessionId: String, text: String): IO[Boolean] =
       DelegateNotify.inject(resources.agentRegistry, sessionId, text)
 
-  /** 通知文案（模型可见；`[base-moved] old→new` 前缀 = 作者令的 grep 锚）。 */
-  def message(delegateId: String, baseBranch: String, oldTip: String, newTip: String, files: List[String]): String =
+  /**
+   * 派发期基线快照（作者令第三条：**派发时就记**下基线，后续判断冲突拿它比对，
+   * 而不是每条都打扰人）。
+   *
+   * 幂等：已有记账 = 零动作（scan 可能已先落第一条；先到者为准，绝不覆盖已累计的
+   * 挂账）。fail-soft：非 git / 读不到 tip = 零动作（scan 首次见会自动补基线）。
+   * 与 scan 的拍尾写盘存在良性竞态（本函数只补**缺席**行；被拍尾覆盖 = 下次首见
+   * 重新取基线，偏晚一个扫描拍，零通知、零丢挂账）。
+   */
+  def noteDispatch(
+    delegateId: String,
+    workspace: Option[String],
+    baseBranch: Option[String]
+  ): IO[Unit] =
+    val snapshot = for
+      ws <- workspace.toList
+      branch <- baseBranch.toList
+      path <- scala.util.Try(os.Path(ws)).toOption.toList
+      tip <- GitWorktrees.headShaOfBranch(path, branch).toList
+    yield tip
+    snapshot.headOption match
+      case None => IO.unit
+      case Some(tip) =>
+        IO.blocking {
+          withStateLock {
+            val st = readState()
+            if !st.contains(delegateId) then
+              writeState(st.updated(delegateId, Entry(baselineTip = tip, lastSeenTip = tip)))
+          }
+        }
+          .handleErrorWith(e => logger.warn(s"[base-drift] dispatch baseline failed for $delegateId: ${e.getMessage}"))
+          .void
+
+  /** 通知文案（模型可见；`[base-moved]` 前缀 = 作者令的 grep 锚；**聚合一条**）。 */
+  def message(delegateId: String, baseBranch: String, e: Entry): String =
+    val shown = e.pendingFiles.take(MaxFiles)
+    val extra = e.pendingFiles.size - shown.size
     val filePart =
-      if files.isEmpty then "(no file list available)"
-      else files.mkString("\n  - ", "\n  - ", "")
-    s"""[base-moved] $baseBranch advanced $oldTip → $newTip while this task is in flight.
-       |
-       |Files touched by the move:$filePart
-       |
-       |What this means: the base branch you were branched from has moved. Before you finish, re-check that your work still applies cleanly onto the new tip (rebase or merge `$baseBranch` into your branch); if the move conflicts with your plan, say so in your report instead of merging over it.""".stripMargin
+      if shown.isEmpty then ""
+      else shown.mkString("\n  - ", "\n  - ", "") + (if extra > 0 then s"\n  … (+$extra more)" else "")
+    val rewritePart =
+      if !e.pendingRewritten then ""
+      else
+        s"""
+           |⚠ $baseBranch's history was rewritten (its previous tip is no longer an ancestor of the current one) — do NOT merge blindly; re-create your branch from the new tip and check that nothing you depend on was dropped.""".stripMargin
+    s"""[base-moved] $baseBranch advanced ${e.pendingMoves} time(s) since you were dispatched (baseline ${e.baselineTip} → now ${e.lastSeenTip}); ${e.pendingConflicts} of those moves now conflict with your branch:$filePart
+       |$rewritePart
+       |Why this one reached you (aggregated, at most once per ${WindowMs / 60000} min): your worktree is isolated, so a base move on its own needs no action from you — only a move that makes your branch conflict when it lands does. Merge $baseBranch into your branch and resolve these before you report merge; if the collision changes your plan, say so in your report instead of merging over it.""".stripMargin
 
   /**
-   * 单拍：对每个在飞 delegate 比对 base tip 与上次记账。
+   * 单拍：对每个在飞 delegate 推进记账，**只在可行动且聚合窗开放时**注入一条。
+   *
    *   - 首次见（无记账）⇒ 只记账（baseline，不通知——不知道「从哪来」）；
-   *   - tip 变了 ∧ 会话 live ⇒ 注入一次 + 记账到新 tip（同一 tip 只通知一次）；
-   *   - 会话不 live ⇒ 记账（避免会话被唤醒后再补发一条过期漂移）。
+   *   - tip 未变 ⇒ 若挂账已到窗口 ⇒ 补发聚合通知（否则零动作）；
+   *   - tip 变了 ⇒ 记账 moves/pending；**非可行动 ⇒ 只记账不通知**（默认静默）；
+   *     可行动 ⇒ 挂账；到窗口才注入（[[WindowMs]] 内最多一条）。
+   *
+   * @return 本拍实际注入的通知摘要（审计/测试读数）
    */
   def scan(port: Port): IO[List[String]] =
     for
       recs <- port.delegates
       live <- port.liveSessionIds
       prev <- port.loadState
-      tracked = recs.filter(r =>
-        r.archivedAt.isEmpty && r.cancelRequestedAt.isEmpty &&
-          r.branch.isDefined && r.baseBranch.isDefined && live.contains(r.id)
-      )
-      pairs = tracked.flatMap { r =>
+      now <- port.nowMs
+      pairs = trackable(recs).flatMap { r =>
         for
           branch <- r.baseBranch
           ws <- r.projectWorkspace.orElse(Some(r.cwd))
           tip <- port.headTip(ws, branch)
         yield (r, ws, branch, tip)
       }
-      drifted = pairs.collect {
-        case (r, ws, branch, tip) if prev.contains(r.id) && prev(r.id) != tip =>
-          (r, ws, branch, prev(r.id), tip)
+      stepped <- pairs.traverse { case (r, ws, branch, tip) =>
+        prev.get(r.id) match
+          case None =>
+            // 首见（派发期快照缺席）= 只记账当基线。绝不因「不知道从哪来」而通知。
+            IO.pure(r.id -> ((Entry(baselineTip = tip, lastSeenTip = tip), Option.empty[String])))
+          case Some(e) =>
+            step(port, r, ws, branch, tip, e, now, live.contains(r.id)).map(out => r.id -> out)
       }
-      notices <- drifted.traverse { case (r, ws, branch, oldTip, newTip) =>
-        val files = port.changedFiles(ws, oldTip, newTip)
-        port
-          .notify(r.id, message(r.id, branch, oldTip, newTip, files))
-          .map(ok => if ok then Some(s"${r.id}: $branch $oldTip→$newTip (${files.size} file(s))") else None)
-          .handleErrorWith(e => logger.warn(s"[base-drift] notify failed for ${r.id}: ${e.getMessage}").as(None))
-      }
-      // 记账：所有跟踪项写到当前 tip（首次见 = baseline；已通知 = 节流锚）。
-      next = pairs.foldLeft(prev) { case (m, (r, _, _, tip)) => m.updated(r.id, tip) }
-      _ <- port.saveState(next)
-    yield notices.flatten
+      notices = stepped.flatMap { case (_, (_, n)) => n }
+      // 记账：跟踪项写当前 Entry；**registry 里已消失的 id 顺手清掉**（零残留膨胀）。
+      known = recs.iterator.map(_.id).toSet
+      next = prev.filter { case (id, _) => known.contains(id) } ++ stepped.map { case (id, (e, _)) => id -> e }
+      _ <- if next == prev then IO.unit else port.saveState(next)
+    yield notices
 
-  // ── 状态文件（简单文本：`<delegateId> <tip>` 逐行）────────────────────────
+  /**
+   * 单条记录的推进（纯逻辑 + 端口读数）。
+   */
+  private def step(
+    port: Port,
+    r: DelegateRegistry.Record,
+    ws: String,
+    branch: String,
+    tip: String,
+    e: Entry,
+    now: Long,
+    live: Boolean
+  ): IO[(Entry, Option[String])] =
+    if e.lastSeenTip == tip then flushIfDue(port, r, branch, e, now, live)
+    else
+      val oldTip = e.lastSeenTip
+      val conflicts = port.conflictFiles(ws, branch, tip).distinct
+      val rewritten = port.baseRewritten(ws, oldTip, tip)
+      val counted = e.copy(
+        lastSeenTip = tip,
+        moves = e.moves + 1,
+        pendingMoves = e.pendingMoves + 1,
+        pendingConflicts = e.pendingConflicts + (if conflicts.nonEmpty then 1 else 0),
+        pendingFiles = (e.pendingFiles ++ conflicts).distinct.take(MaxPendingFiles),
+        pendingRewritten = e.pendingRewritten || rewritten
+      )
+      // 🔴 默认静默（作者令 2026-11-05 第一条与第二条）：base 前进**本身不构成任何
+      // 行动要求**——每个 delegate 跑在独立 worktree 里，别的 delegate 的合并不会
+      // 污染它的工作树；节点跑在 dispatcher 的 seat 内，base 变动由 dispatcher 统一
+      // 处理。⇒ 不可行动的移动只记进面板计数器（moves），不产生任何消息。
+      flushIfDue(port, r, branch, counted, now, live)
 
-  private def readState(): Map[String, String] =
+  /** 聚合窗到点且挂账可行动 ⇒ 注入一条；否则零动作（挂账留着下次拍再判）。 */
+  private def flushIfDue(
+    port: Port,
+    r: DelegateRegistry.Record,
+    branch: String,
+    e: Entry,
+    now: Long,
+    live: Boolean
+  ): IO[(Entry, Option[String])] =
+    val cleared = e.copy(
+      pendingMoves = 0,
+      pendingConflicts = 0,
+      pendingFiles = Nil,
+      pendingRewritten = false
+    )
+    // `lastNotifyMs == 0` = 从未通知过 ⇒ 窗恒开（不能用 `now - 0 >= WindowMs`：那只在
+    // 时钟绝对值够大时才成立，语义是错的）。
+    val windowOpen = e.lastNotifyMs == 0L || now - e.lastNotifyMs >= WindowMs
+    if !e.actionablePending then IO.pure((e, None))
+    else if !live then
+      // 会话不 live = 不是本通道的活：丢弃挂账（唤醒后绝不补发过期漂移），记账照走。
+      IO.pure((cleared, None))
+    else if !windowOpen then IO.pure((e, None))
+    else
+      val text = message(r.id, branch, e)
+      port
+        .notify(r.id, text)
+        .map { ok =>
+          if ok then
+            (
+              cleared.copy(lastNotifyMs = now),
+              Some(
+                s"${r.id}: $branch +${e.pendingMoves} move(s) since last notice, " +
+                  s"${e.pendingConflicts} conflicting (${e.pendingFiles.size} file(s) listed)"
+              )
+            )
+          else (cleared, None)
+        }
+        .handleErrorWith { e2 =>
+          logger.warn(s"[base-drift] notify failed for ${r.id}: ${e2.getMessage}").as((cleared, None))
+        }
+
+  /**
+   * 跟踪面闸（**节点结构性排除点**）：只有「在册 ∧ 未归档 ∧ 未取消 ∧ 真有分支与基
+   * 分支」的 delegate 记录在跟踪范围。节点（AgentFlow step）跑在 dispatcher 的 seat
+   * 内、不建分支与 worktree、**从不写 [[DelegateRegistry]]** ⇒ 结构上零命中，节点
+   * 侧这条通知永不发出（作者令第二条）。
+   *
+   * 会话是否 live **不进本闸**（进 [[flushIfDue]]）：已收尾会话照样推进记账，唤醒后
+   * 不补发过期漂移。
+   */
+  private def trackable(recs: List[DelegateRegistry.Record]): List[DelegateRegistry.Record] =
+    recs.filter(r =>
+      r.archivedAt.isEmpty && r.cancelRequestedAt.isEmpty &&
+        r.branch.isDefined && r.baseBranch.isDefined
+    )
+
+  // ── 面板状态面（作者令第五条：「base 动了」这个事实放面板，不进消息流）───────
+
+  /** 全量状态（面板读面用；读盘失败 = 空表）。 */
+  def statuses(): Map[String, Entry] = readState()
+
+  /**
+   * 面板投影（纯函数，测试可直喂状态表）：`{ "<delegateId>": {moves, pendingMoves,
+   * pendingConflicts, pendingFiles, lastNotifyMs, baselineTip, lastSeenTip} }`
+   * ——**只含 moves > 0 的行**（没动过的行不占面板）。
+   */
+  def statusProjection(st: Map[String, Entry]): Json =
+    val moved = st.filter { case (_, e) => e.moves > 0 }
+    Json.fromJsonObject(JsonObject.fromMap(moved.view.mapValues(_.toJson).toMap))
+
+  /** 面板投影（读盘版；挂入 `GET /api/chains` 的行 `baseDrift` 键）。 */
+  def statusJson(): Json = statusProjection(statuses())
+
+  // ── 状态文件（v2 JSON；v1 文本行原样迁移，绝不补发）────────────────────────
+
+  private def readState(): Map[String, Entry] =
     val p = statePath
     if !os.exists(p) then Map.empty
     else
-      os.read
-        .lines(p)
-        .iterator
-        .map(_.trim)
-        .filter(_.nonEmpty)
-        .flatMap { line =>
-          line.split("\\s+", 2) match
-            case Array(k, v) if k.nonEmpty && v.nonEmpty => Some(k -> v)
-            case _                                        => None
-        }
-        .toMap
+      val raw = scala.util.Try(os.read(p)).toOption.getOrElse("").trim
+      if raw.isEmpty then Map.empty
+      else if raw.startsWith("{") then
+        parse(raw).toOption
+          .flatMap(_.hcursor.downField("entries").as[Map[String, Json]].toOption)
+          .map(_.flatMap { case (id, j) => Entry.fromJson(j).map(id -> _) })
+          .getOrElse(Map.empty)
+      else
+        // v1 迁移：`<delegateId> <tip>` 逐行；baseline = lastSeen = tip，moves = 0
+        // （不追溯历史 ⇒ 升级本身零通知）。
+        raw.linesIterator
+          .map(_.trim)
+          .filter(_.nonEmpty)
+          .flatMap { line =>
+            line.split("\\s+", 2) match
+              case Array(k, v) if k.nonEmpty && v.nonEmpty => Some(k -> Entry(baselineTip = v, lastSeenTip = v))
+              case _                                       => None
+          }
+          .toMap
 
-  private def writeState(state: Map[String, String]): Unit =
+  private def writeState(state: Map[String, Entry]): Unit =
     try
       os.makeDir.all(statePath / os.up)
-      os.write.over(statePath, state.toList.sortBy(_._1).map((k, v) => s"$k $v").mkString("", "\n", "\n"))
+      val body =
+        Json
+          .obj(
+            "version" -> StateVersion.asJson,
+            "entries" -> Json.fromJsonObject(JsonObject.fromMap(state.toList.sortBy(_._1).map((k, e) => k -> e.toJson).toMap))
+          )
+          .spaces2
+      os.write.over(statePath, body)
     catch case e: Throwable => logger.warn(s"[base-drift] state write failed: ${e.getMessage}")
 
 end BaseDriftWatch
