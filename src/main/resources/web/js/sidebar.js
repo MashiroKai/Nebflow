@@ -2426,7 +2426,7 @@ export function resetChatForActiveSession() {
       row.className = 'row ai';
       pv.stream.currentAiBubble = document.createElement('div');
       pv.stream.currentAiBubble.className = 'bubble ai';
-      pv.stream.currentAiBubble.innerHTML = renderMarkdownWithMath(pv.stream.aiText, true, { cache: !isStreaming }) + (isStreaming ? '<span class="cursor"></span>' : '');
+      pv.stream.currentAiBubble.innerHTML = renderMarkdownWithMath(pv.stream.aiText, true, { cache: !isStreaming, stream: isStreaming }) + (isStreaming ? '<span class="cursor"></span>' : '');
       row.appendChild(pv.stream.currentAiBubble);
       chat.appendChild(row);
       if (!isStreaming) {

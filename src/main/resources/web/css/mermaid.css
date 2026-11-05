@@ -1,26 +1,38 @@
-/* mermaid.css — ```mermaid fenced blocks rendered as diagrams
-   (mermaid-md batch, 2026-10-23). Face-neutral component styles: the shared
-   markdown pipeline (utils.js) emits .nf-mermaid placeholders in EVERY
-   markdown face (canvas md viewer, wiki docs, chat bubbles, flow/report
-   cards); js/mermaidRenderer.js hydrates them lazily. Tokens only — no bare
-   values outside the reserved-height skeleton. */
+/* mermaid.css — 围栏族（```mermaid / ```svg / 数学公式占位）的共同样式。
+   入仓：mermaid-md 批 2026-10-23；rich-render 批 2026-11-05 扩面（作者令
+   08:51 / 08:53 / 08:55）。面中立件：共享 markdown 管线（utils.js）在**所有**
+   markdown 面（Canvas md viewer、wiki docs、聊天气泡、flow/report 卡、popup）
+   产出同一批占位 div，水合腿在 js/fenceKit.js + 各族渲染器。
+   令牌纪律：本文件零裸色值（色/尺寸一律 --* 变量）；新增面必须同纪律。 */
 
-.nf-mermaid {
+/* ── 块级围栏（图）：mermaid / svg 同一几何 ───────────────────────────── */
+.nf-mermaid,
+.nf-svg {
   margin: var(--ds-space-1h) 0;
 }
 
-.nf-mermaid .nf-mermaid-body {
+.nf-mermaid .nf-mermaid-body,
+.nf-svg .nf-svg-body {
   position: relative;
-  min-height: 72px; /* reserved slot: layout never collapses while the
-                       library loads / the diagram renders async */
+  min-height: 72px; /* reserved slot: 库装载/渲染期间布局不塌 */
   display: flex;
   align-items: center;
   justify-content: center;
   overflow-x: auto;
 }
 
-/* Skeleton slot (卡形占位 + 复用脉冲 family, projectPanel.css precedent). */
-.nf-mermaid .nf-mermaid-ph {
+/* 外来 SVG 的「纸面」：作者自带配色，暗色底下深墨会糊掉 —— 统一给一档面板底，
+   墨色由 svgFence.js 的墨色归一转成主题正文色（README 口径见该文件头注）。 */
+.nf-svg .nf-svg-body {
+  display: block;
+  border-radius: var(--ds-radius-input);
+  background: var(--color-surface);
+  padding: var(--ds-space-2) var(--ds-space-glass-x);
+}
+
+/* Skeleton slot（卡形占位 + 复用脉冲 family, projectPanel.css precedent）。 */
+.nf-mermaid .nf-mermaid-ph,
+.nf-svg .nf-svg-ph {
   width: 72%;
   min-height: 56px;
   border-radius: var(--ds-radius-input);
@@ -34,13 +46,22 @@
 
 /* Rendered diagram: mermaid emits max-width'd svg (useMaxWidth) — keep it
    inside the reading column and on the app background. */
-.nf-mermaid svg {
+.nf-mermaid svg,
+.nf-svg svg {
   max-width: 100%;
   height: auto;
 }
 
-/* Error state: quiet message row + inspectable source. Never blank. */
-.nf-mermaid-error .nf-mermaid-body {
+/* 净化读数行（确有剥离时的状态事实，不是解释句）。 */
+.nf-fence-notice {
+  margin-top: var(--ds-space-1);
+  font-size: var(--ds-fs-meta);
+  color: var(--color-text-muted);
+}
+
+/* ── 失败态：任何围栏共用（fenceKit.fenceError 单点构建） ────────────── */
+.nf-fence-error .nf-mermaid-body,
+.nf-fence-error .nf-svg-body {
   display: block;
   border: 1px solid var(--sapphire-edge-strong);
   border-radius: var(--ds-radius-input);
@@ -49,7 +70,7 @@
   min-height: 0;
 }
 
-.nf-mermaid-errrow {
+.nf-fence-errrow {
   display: flex;
   align-items: baseline;
   gap: var(--ds-space-2);
@@ -57,19 +78,19 @@
   font-size: var(--ds-fs-hint);
 }
 
-.nf-mermaid-errlabel {
+.nf-fence-errlabel {
   color: var(--color-danger);
   font-weight: 500;
 }
 
-.nf-mermaid-errdetail {
+.nf-fence-errdetail {
   color: var(--color-text-muted);
   word-break: break-all;
   min-width: 0;
   flex: 1 1 120px;
 }
 
-.nf-mermaid-srcbtn {
+.nf-fence-srcbtn {
   border: none;
   background: none;
   padding: 0;
@@ -78,9 +99,11 @@
   color: rgb(var(--sapphire));
   cursor: pointer;
 }
-.nf-mermaid-srcbtn:hover { text-decoration: underline; }
+.nf-fence-srcbtn:hover { text-decoration: underline; }
 
-.nf-mermaid-src {
+/* 回退原文：**默认可见**（作者令 2026-11-05 08:51 第 6 条「回退显示原代码」），
+   按钮是「收起」而不是「查看」。 */
+.nf-fence-src {
   margin: var(--ds-space-2) 0 0;
   padding: var(--ds-space-2) var(--ds-space-glass-x);
   border-radius: var(--ds-radius-chip);
@@ -89,4 +112,19 @@
   font-size: var(--ds-fs-hint);
   line-height: 1.5;
   max-height: 240px;
+}
+
+/* ── 数学公式占位 → KaTeX 产物（js/mathRender.js） ────────────────────
+   占位里躺着原始 LaTeX（未水合时即回退到源码，不空白）；水合后换 KaTeX 产物。
+   `.nf-math-display` 走 KaTeX 自己的 .katex-display 块级形态。 */
+.nf-math {
+  display: inline;
+}
+
+.nf-math[data-math-state="done"] {
+  color: var(--color-text);
+}
+
+.nf-math-error {
+  color: var(--color-danger);
 }

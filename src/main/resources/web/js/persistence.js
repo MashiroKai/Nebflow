@@ -16,7 +16,7 @@ import { dropDeviceMessageCache } from './fmDropboxCache.js';
 import { evict as evictLocalStore } from './localStore.js';
 import { activeView } from './chatView.js';
 import { t } from './i18n.js';
-import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, mountToolCardBody, delegatePromptRaw, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent, isBgAgentId, shouldFollowBottom, deviceTagHtml } from './utils.js';
+import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, appendUserTextWithFences, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, mountToolCardBody, delegatePromptRaw, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent, isBgAgentId, shouldFollowBottom, deviceTagHtml } from './utils.js';
 // output 块语法批（作者令 2026-10-31）：历史重放腿同 live 腿一个 output 面——
 // 平衡 <output> 对 ⇒ 正常态只渲染块内，角标展开回原文（turnGroup toggle）。
 import { applyOutputFace, hasOutputBlock } from './outputTag.js';
@@ -695,7 +695,7 @@ export function restoreFromStorage(opts = {}) {
           // Plain-text face with mention spans (mention-render batch):
           // identical output when nothing matches; user text never enters
           // markdown on a restore path either.
-          appendTextWithMentions(t, userUnified.text || '');
+          appendUserTextWithFences(t, userUnified.text || '');
           bubble.appendChild(t);
         }
         row.appendChild(bubble);
@@ -1151,7 +1151,7 @@ function buildHistoryRow(m, i, ctx) {
           // Plain-text face with mention spans (mention-render batch):
           // identical output when nothing matches; user text never enters
           // markdown on a restore path either.
-          appendTextWithMentions(t, userUnified.text || '');
+          appendUserTextWithFences(t, userUnified.text || '');
           bubble.appendChild(t);
         }
         (composite || row).appendChild(bubble);

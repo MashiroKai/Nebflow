@@ -1,50 +1,57 @@
-// mermaidRenderer.js — ```mermaid fenced blocks → lazy, themed, sandboxed SVG.
-// (mermaid-md batch, 2026-10-23; author order 「让我们的markdown支持mermaid渲染」)
+// mermaidRenderer.js — ```mermaid 围栏 → 懒加载、跟随主题、消毒后的 SVG。
+// 入仓批次：mermaid-md（2026-10-23 作者令「让我们的markdown支持mermaid渲染」）；
+// rich-render 批（2026-11-05 作者令 08:51 第 1/3/4/5/6 条）在此硬化：
+//   · 安全：securityLevel 'strict' + **htmlLabels 显式 false**（关掉 foreignObject
+//     这唯一的 HTML 注入面），产物落 DOM 前再过一道节点级扫描（不是只扫字符串）；
+//   · 落 DOM：DOMParser 解析 → 逐节点校验 → importNode/replaceChildren，
+//     本文件**零裸 innerHTML**（component-contract R5）；
+//   · 失败可见：错误态由 fenceKit 单点提供（原始源码默认可见）；
+//   · 流式：占位只由「消息已完成」的渲染产生（判据在 utils.js，见该文件
+//     `_trailingOpenFence` + opts.stream），本文件不猜流式状态。
 //
-// Pipeline split (same discipline as the katex/math pass in utils.js):
-//   · utils.js (string land) swaps ```mermaid fences for `.nf-mermaid`
-//     placeholder divs carrying the raw source in `data-mermaid-src` — every
-//     face sharing renderMarkdownWithMath (canvas md viewer, wiki docs, chat
-//     bubbles, flow/report cards, popups) gets the placeholder for free;
-//   · this module (DOM land) hydrates those placeholders:
-//       lazy viewport render (IntersectionObserver, 320px lead),
-//       on-demand library load (pdf.js single-flight script-inject precedent —
-//         the 5.5MB vendored mermaid never taxes documents without diagrams),
-//       theme following (matchMedia prefers-color-scheme, monaco precedent —
-//         mermaid theme variables read the sapphire token as the accent),
-//       securityLevel 'strict' + a defensive svg scan before DOM attach,
-//       error state that keeps the original source inspectable (不空白不吞).
+// 管线分工（与 utils.js 的 katex/human 面同一纪律）：
+//   utils.js（字符串面）把 ```mermaid 围栏换成 `.nf-mermaid` 占位（源码在
+//   data-mermaid-src）→ 本文件（DOM 面）水合：
+//     视口懒渲染（IntersectionObserver，见 fenceKit）、
+//     库按需装载（vendored 5.5MB IIFE，单飞 Promise，对齐 pdf.js「不进开屏包」）、
+//     主题跟随（prefers-color-scheme）、
+//     失败态（不空白不吞）。
 //
-// Wiring: ONE global MutationObserver (armMermaidAutoHydrate, armed in
-// main.js) covers every markdown face with zero per-callsite edits;
-// viewers/markdown.js additionally calls hydrateMermaidIn explicitly at the
-// primary document face. Hydration mutations are re-entrant safe: the state
-// attribute is set synchronously before any await, and the observer only
-// matches `.nf-mermaid:not([data-mermaid-state])`.
+// 接线：main.js 一次 `armMermaidAutoHydrate()`；viewers/markdown.js 额外显式
+// `hydrateMermaidIn`（主文档面）。两者皆幂等。
 //
-// Library PIN: vendored mermaid 12.2.0 (vendor/mermaid/README.md ledger,
-// sha256 a8a6a6f805b074a8261a2825c86f99c8054acb3b35f50bb7e24a4f9f2c3c3b9f).
+// 库 PIN：vendored mermaid 12.2.0（vendor/mermaid/README.md 台账，
+// sha256 a8a6a6f805b074a8261a2825c86f99c8054acb3b35f50bb7e24a4f9f2c3c3b9f）。
 
-import { t } from './i18n.js';
+import { armFenceAutoHydrate, fenceDone, fenceError, fenceBody, fenceSource, hydrateFencesIn, registerFence } from './fenceKit.js';
+import { normalizeComputedInk } from './svgInk.js';
 
 const MERMAID_SCRIPT = '/vendor/mermaid/mermaid.min.js';
 // Same stack as base.css body — diagrams must not introduce a foreign face.
 const MERMAID_FONT = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif";
-// Fail-closed svg gate (belt over mermaid strict): a sanitized svg never
-// carries script elements, inline handlers or javascript: URLs.
-const UNSAFE_SVG_RE = /<script[\s>]|javascript:|\son[a-z]+\s*=/i;
 const SVG_CACHE_CAP = 24;
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+/** @typedef {import('./fenceKit.js').FenceKind} FenceKind */
+
+/** @type {FenceKind} */
+const MERMAID_KIND = {
+  name: 'mermaid',
+  selector: '.nf-mermaid',
+  stateAttr: 'data-mermaid-state',
+  srcAttr: 'data-mermaid-src',
+  bodyClass: 'nf-mermaid-body',
+  phClass: 'nf-mermaid-ph',
+  render: renderBlock,
+};
 
 /** @type {Promise<any>|null} single-flight library load (pdf.js shape) */
 let mermaidReady = null;
-/** @type {IntersectionObserver|null} */
-let lazyIO = null;
-/** @type {MutationObserver|null} */
-let autoMO = null;
 let renderUid = 0;
 
 /** Rendered-svg LRU keyed by `${themeKey}|${source}` — streaming faces
  *  re-mount placeholders per frame; a cache hit re-attaches synchronously. */
+/** @type {Map<string, Node>} */
 const svgCache = new Map();
 
 const darkMQ = /** @type {MediaQueryList} */ (
@@ -60,16 +67,29 @@ function sapphireRgb() {
   return triplet || '91 127 191';
 }
 
-/** Mermaid init config for the CURRENT system theme. Light runs `neutral`
- *  (quiet greys fit the 低調 reading face) tinted sapphire; dark runs `dark`
- *  with transparent background over the app panels. */
+/** Mermaid init config for the CURRENT theme. Light runs `neutral` (quiet greys
+ *  fit the 低調 reading face) tinted sapphire; dark runs `dark` with transparent
+ *  background over the app panels. `htmlLabels: false` is a security setting,
+ *  not taste: html labels are <foreignObject> HTML islands inside the SVG and
+ *  the one channel mermaid's sanitizer could be bypassed through. */
 function themeConfig() {
   const sp = sapphireRgb();
   const fontFamily = MERMAID_FONT;
+  const base = {
+    fontFamily,
+    securityLevel: 'strict',
+    startOnLoad: false,
+    // 库自带失败面 = 往 <body> 塞一个 "Syntax error in text" 炸弹元素：页面污染
+    // 且在我们的错误态之外。错误归 fenceKit.fenceError（原始源码默认可见）。
+    suppressErrorRendering: true,
+    htmlLabels: false,
+    flowchart: { htmlLabels: false, useMaxWidth: true },
+    class: { htmlLabels: false },
+  };
   if (darkMQ.matches) {
     return {
+      ...base,
       theme: 'dark',
-      fontFamily,
       themeVariables: {
         fontFamily,
         background: 'transparent',
@@ -84,8 +104,8 @@ function themeConfig() {
     };
   }
   return {
+    ...base,
     theme: 'neutral',
-    fontFamily,
     themeVariables: {
       fontFamily,
       background: 'transparent',
@@ -110,11 +130,7 @@ function loadMermaid() {
     s.src = MERMAID_SCRIPT;
     s.onload = () => {
       if (!w.mermaid) { mermaidReady = null; reject(new Error('mermaid global missing after load')); return; }
-      // suppressErrorRendering: mermaid's default failure face is a "Syntax
-      // error in text" bomb element appended to <body> OUTSIDE our block —
-      // page-polluting and outside the error state's styling. Error handling
-      // belongs to showError() (in-block message + inspectable source).
-      w.mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', suppressErrorRendering: true, ...themeConfig() });
+      w.mermaid.initialize(themeConfig());
       resolve(w.mermaid);
     };
     s.onerror = () => { mermaidReady = null; reject(new Error('mermaid load failed')); };
@@ -123,133 +139,89 @@ function loadMermaid() {
   return mermaidReady;
 }
 
-/** Fresh placeholder body content (skeleton slot) for a queued block. */
-function placeholderBody(/** @type {HTMLElement} */ body) {
-  body.innerHTML = '';
-  const ph = document.createElement('div');
-  ph.className = 'nf-mermaid-ph';
-  body.appendChild(ph);
+/**
+ * 节点级消毒扫描（belt over mermaid strict）：svg 落 DOM 前逐节点查
+ * script / foreignObject / on* 属性 / 非片段 href。正则扫字符串挡不住实体与
+ * 大小写变体，节点扫描挡得住。
+ * @param {Element} root
+ * @returns {string} 干净 = 空串；脏 = 原因
+ */
+function svgScan(root) {
+  if (root.namespaceURI !== SVG_NS) return 'root is not svg';
+  const bad = root.querySelector('script, foreignObject');
+  if (bad) return 'unsafe element: ' + bad.tagName;
+  const all = [root, ...Array.from(root.querySelectorAll('*'))];
+  for (const el of all) {
+    for (const at of Array.from(el.attributes)) {
+      const name = at.name.toLowerCase();
+      if (name.startsWith('on')) return 'unsafe attribute: ' + at.name;
+      if ((name === 'href' || name.endsWith(':href')) && !at.value.trim().startsWith('#')) return 'external href';
+      if (/javascript:|data:text\/html/i.test(at.value)) return 'unsafe url';
+    }
+  }
+  return '';
+}
+
+/** svg 字符串 → 已扫描的 DOM 节点。 */
+function svgToNode(/** @type {string} */ svg) {
+  const doc = new DOMParser().parseFromString(svg, 'image/svg+xml');
+  if (doc.querySelector('parsererror')) throw new Error('svg parse failed');
+  const root = doc.documentElement;
+  const why = svgScan(root);
+  if (why) throw new Error(why);
+  return /** @type {Node} */ (document.importNode(root, true));
 }
 
 /** Render one `.nf-mermaid` block. Generation-guarded: a theme flip bumps
  *  `_mermaidGen` and drops in-flight writes from the previous theme. */
 async function renderBlock(/** @type {HTMLElement} */ el) {
-  const src = el.dataset.mermaidSrc || '';
-  const body = el.querySelector('.nf-mermaid-body');
-  if (!body) return;
-  el.dataset.mermaidState = 'loading';
-  const gen = (/** @type {any} */ (el)._mermaidGen = ((/** @type {any} */ (el)._mermaidGen || 0) + 1));
+  const src = fenceSource(el, MERMAID_KIND);
+  const anyEl = /** @type {any} */ (el);
+  const gen = (anyEl._mermaidGen = (anyEl._mermaidGen || 0) + 1);
   try {
     const mermaid = await loadMermaid();
     const key = themeKey() + '|' + src;
-    let svg = svgCache.get(key);
-    if (svg === undefined) {
+    let node = svgCache.get(key);
+    if (node === undefined) {
       // Re-initialize per render batch so a theme flip after library load is
       // picked up (initialize merges into the live config).
-      mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', suppressErrorRendering: true, ...themeConfig() });
-      ({ svg } = await mermaid.render('nf-mermaid-svg-' + (++renderUid), src));
-      if (UNSAFE_SVG_RE.test(svg)) throw new Error('svg rejected by defensive scan');
-      svgCache.set(key, svg);
+      mermaid.initialize(themeConfig());
+      const out = await mermaid.render('nf-mermaid-svg-' + (++renderUid), src);
+      node = svgToNode(String(out.svg || ''));
+      svgCache.set(key, node);
       if (svgCache.size > SVG_CACHE_CAP) svgCache.delete(svgCache.keys().next().value);
     }
-    if ((/** @type {any} */ (el)._mermaidGen) !== gen) return; // superseded mid-render
-    body.innerHTML = svg;
-    el.classList.add('nf-mermaid-done');
-    el.dataset.mermaidState = 'done';
+    if (anyEl._mermaidGen !== gen) return; // superseded mid-render
+    // 缓存节点可能已被上一处挂载消费 ⇒ 克隆再挂（replaceChildren 会移动原节点）。
+    fenceDone(el, MERMAID_KIND, /** @type {Node} */ (node).cloneNode(true));
+    // 墨色归一必须**挂载之后**做：mermaid 把自己的配色写在 svg 内部的 `<style>`
+    // 里，只有 getComputedStyle 才读得到；暗档实测有文本仍是 rgb(0,0,0)（对比度
+    // 1.16:1，肉眼不可读），这条 belt 把它换成主题正文墨色（行内 style 压过内部
+    // 样式表）。读数落到 data-nf-ink 供机械断言。
+    const body = fenceBody(el, MERMAID_KIND.bodyClass);
+    const svg = body ? body.querySelector('svg') : null;
+    if (svg) el.setAttribute('data-nf-ink', String(normalizeComputedInk(svg)));
   } catch (e) {
-    if ((/** @type {any} */ (el)._mermaidGen) !== gen) return; // superseded mid-render
-    showError(el, src, /** @type {Error} */ (e));
+    if (anyEl._mermaidGen !== gen) return; // superseded mid-render
+    fenceError(el, MERMAID_KIND, MERMAID_KIND.bodyClass, src, /** @type {Error} */ (e));
   }
 }
 
-/** Error state: message row + source toggle. The original fenced source stays
- *  inspectable (textContent-only) — never blanked, never swallowed. */
-function showError(/** @type {HTMLElement} */ el, /** @type {string} */ src, /** @type {Error} */ err) {
-  el.classList.remove('nf-mermaid-done');
-  el.classList.add('nf-mermaid-error');
-  el.dataset.mermaidState = 'error';
-  const body = el.querySelector('.nf-mermaid-body');
-  if (!body) return;
-  body.innerHTML = '';
-  const row = document.createElement('div');
-  row.className = 'nf-mermaid-errrow';
-  const label = document.createElement('span');
-  label.className = 'nf-mermaid-errlabel';
-  label.textContent = t('mermaid.renderFailed');
-  const detail = document.createElement('span');
-  detail.className = 'nf-mermaid-errdetail';
-  detail.textContent = String((err && err.message) || err).slice(0, 200);
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'nf-mermaid-srcbtn';
-  btn.textContent = t('mermaid.showSource');
-  const pre = document.createElement('pre');
-  pre.className = 'nf-mermaid-src';
-  pre.hidden = true;
-  const code = document.createElement('code');
-  code.textContent = src;
-  pre.appendChild(code);
-  btn.addEventListener('click', () => {
-    pre.hidden = !pre.hidden;
-    btn.textContent = pre.hidden ? t('mermaid.showSource') : t('mermaid.hideSource');
-  });
-  row.appendChild(label);
-  row.appendChild(detail);
-  row.appendChild(btn);
-  body.appendChild(row);
-  body.appendChild(pre);
-}
-
-/** Hydrate every pending `.nf-mermaid` under `root` (or `root` itself):
- *  mark queued synchronously, then let the viewport observer trigger renders. */
+/** 显式水合（主文档面用；幂等，无围栏时是空操作）。 */
 export function hydrateMermaidIn(/** @type {Element} */ root) {
-  if (!root) return;
-  if (root.matches('.nf-mermaid:not([data-mermaid-state])')) queueForViewport(/** @type {HTMLElement} */ (root));
-  root.querySelectorAll('.nf-mermaid:not([data-mermaid-state])').forEach((el) => queueForViewport(/** @type {HTMLElement} */ (el)));
+  hydrateFencesIn(root, 'mermaid');
 }
 
-function queueForViewport(/** @type {HTMLElement} */ el) {
-  el.dataset.mermaidState = 'pending';
-  if (!lazyIO) {
-    lazyIO = new IntersectionObserver((entries) => {
-      for (const en of entries) {
-        if (!en.isIntersecting) continue;
-        lazyIO?.unobserve(en.target);
-        renderBlock(/** @type {HTMLElement} */ (en.target));
-      }
-    }, { rootMargin: '320px 0px' });
-  }
-  lazyIO.observe(el);
-}
-
-/** ONE wiring point for every markdown face: a body-wide childList observer
- *  hydrates mermaid placeholders wherever the shared renderer emitted them
- *  (chat streams re-mount per frame; hydration is idempotent via the state
- *  attribute, and cache hits make remounts synchronous). */
+/** 全局接线：`mermaid` 族注册 + 一个 body 级 observer（fenceKit 单点）。 */
 export function armMermaidAutoHydrate() {
-  if (autoMO || !window.MutationObserver) return;
-  autoMO = new MutationObserver((records) => {
-    for (const rec of records) {
-      for (const node of rec.addedNodes) {
-        if (!(node instanceof Element)) continue;
-        if (node.matches('.nf-mermaid:not([data-mermaid-state])')) queueForViewport(/** @type {HTMLElement} */ (node));
-        else if (node.querySelector('.nf-mermaid:not([data-mermaid-state])')) hydrateMermaidIn(node);
-      }
-    }
-  });
-  autoMO.observe(document.body, { childList: true, subtree: true });
+  registerFence(MERMAID_KIND);
+  armFenceAutoHydrate();
 }
 
-// Theme flip: re-queue every settled block; renders read the fresh theme
-// config (and per-theme cache), generation guards drop stale in-flight writes.
-darkMQ.addEventListener?.('change', () => {
-  document.querySelectorAll('.nf-mermaid[data-mermaid-state="done"], .nf-mermaid[data-mermaid-state="error"]').forEach((el) => {
-    /** @type {HTMLElement} */ (el).classList.remove('nf-mermaid-done', 'nf-mermaid-error');
-    delete /** @type {HTMLElement} */ (el).dataset.mermaidState;
-    const body = /** @type {HTMLElement|null} */ (el.querySelector('.nf-mermaid-body'));
-    if (body) placeholderBody(body);
+/** 主题翻转时丢弃在飞渲染（换图由 fenceKit.requeueSettledFences 驱动）。 */
+export function bumpMermaidGeneration() {
+  document.querySelectorAll('.nf-mermaid').forEach((el) => {
     const anyEl = /** @type {any} */ (el);
     anyEl._mermaidGen = (anyEl._mermaidGen || 0) + 1;
-    queueForViewport(/** @type {HTMLElement} */ (el));
   });
-});
+}
