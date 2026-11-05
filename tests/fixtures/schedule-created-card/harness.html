@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<!-- schedule-created-card harness.html — 消息内嵌定时任务/待办卡片的试验台
+     （schedule-created-card 批 2026-11-05，作者令 09:03「你创建定时任务或者待办
+     的时候，应该有一个卡片……就在消息里……允许我直接在上面修改或取消」）。
+
+     🔴 与既有 tests/fixtures/schedule-card/harness.html 的分工（别混用）：
+       · 既有那个 = **触发后**注入行的卡（source:'schedule'，injectedRows 腿）；
+       · 本夹具   = **创建/编辑成功后**落进消息流的那张卡（renderTool 腿，
+                    <nf-sched-card>，可原地改/取消）。
+     两个面共用同一个 .bubble.injected.schedule-card 家族样式（这正是复用判据）。
+
+     形态照抄 tool-card-image-face / toolline-detail harness：真模块、真 CSS、
+     真 renderTool 链路，零引擎零 sbt。协议面 = 下面的帧桩，帧形状逐字取网关
+     WsTasksWorkspaceHandlers 的 listTaskJson / scheduledTaskUpdated /
+     scheduledTaskDeleted / error（键集合与网关同形）。
+
+     驱动（window.__h.*）：
+       renderTool(label, summary, content, isError, inputJson) → 真 chat.renderTool
+       seed(row)           种一行「引擎侧」记录（list 回读的权威源）
+       mode('ok'|'error'|'gone'|'offline'|'silent')   帧桩行为
+       sent() / clearSent()                           已发出的帧（写路径断言）
+       row(id)                                        帧桩 store 里的行
+       cardState(id)                                  组件实例状态快照
+       settle(ms)                                     等一拍（rAF + 定时）
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>schedule-created-card harness</title>
+  <link rel="stylesheet" href="/src/main/resources/web/css/base.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/chat.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/design-system.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/sapphire.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/glass.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/reminder.css">
+  <style>
+    html, body { margin: 0; height: 100%; background: var(--color-bg); }
+    #chat {
+      position: absolute; top: 0; bottom: 0; left: 50%; transform: translateX(-50%);
+      width: 680px; max-width: 96vw; margin: 0; padding: 16px 0 36px;
+      overflow-y: auto;
+    }
+  </style>
+</head>
+<body>
+  <div id="chat"></div>
+  <script type="module">
+    const WEB = '/src/main/resources/web/js';
+
+    const { chatViews, ChatView, setActiveView } = await import(`${WEB}/chatView.js`);
+    const stateMod = await import(`${WEB}/state.js`);
+    const state = stateMod.default;
+
+    const SID = 'sched-card-harness-session';
+    const chatEl = document.getElementById('chat');
+    chatViews.primary = new ChatView('primary', { chat: chatEl });
+    setActiveView(chatViews.primary);
+    state.activeSessionId = SID;
+    chatViews.primary.sessionId = SID;
+    // 无真 socket：出站帧只走帧桩（transport.send 覆盖为「记录 + 应答」）。
+    state.ws = { readyState: 1, send: () => {} };
+
+    const chatMod = await import(`${WEB}/chat.js`);
+    const api = await import(`${WEB}/scheduleApi.js`);
+    const cardMod = await import(`${WEB}/scheduleCard.js`);
+    chatViews.primary.nfBareProcessRows = true;
+
+    // ── 帧桩：store = 「引擎侧记录」；帧键集合逐字取网关 listTaskJson ─────────
+    const store = new Map();
+    let mode = 'ok';
+    let sentFrames = [];
+
+    function makeRow(patch) {
+      return {
+        id: 'abc12345', content: '', triggerAt: Date.now() + 3600_000, createdAt: Date.now(),
+        triggered: false, triggeredAt: null, referencePath: null, repeat: null, enabled: true,
+        kind: null, name: null, missCount: 0, sessionId: SID, project: null,
+        priority: 0, completed: false, completedAt: null, ...patch,
+      };
+    }
+
+    const later = (fn) => setTimeout(fn, 15);
+
+    function reply(frame) {
+      if (frame.type === 'listScheduledTasks') {
+        later(() => api.deliverFrame({
+          type: 'scheduledTaskList',
+          tasks: [...store.values()],
+          sessionId: frame.sessionId,
+          ...(frame.scope ? { scope: frame.scope, includeCompleted: !!frame.includeCompleted } : {}),
+        }));
+        return;
+      }
+      if (frame.type === 'updateScheduledTask') {
+        if (mode === 'error') {
+          later(() => api.deliverFrame({
+            type: 'error', msgType: 'updateScheduledTask', id: frame.id,
+            message: 'triggerAt must be in the future (stub rejection)',
+          }));
+          return;
+        }
+        const row = store.get(frame.id);
+        if (!row) {
+          // 网关口径：行已不在 ⇒ deleted 帧 + updateScheduledTask 错误帧同发。
+          later(() => {
+            api.deliverFrame({ type: 'scheduledTaskDeleted', id: frame.id, sessionId: frame.sessionId });
+            api.deliverFrame({
+              type: 'error', msgType: 'updateScheduledTask', id: frame.id,
+              message: `No entry with id "${frame.id}" — it was cancelled or completed elsewhere; nothing was saved.`,
+            });
+          });
+          return;
+        }
+        if (frame.content !== undefined) row.content = frame.content;
+        if (frame.project !== undefined) row.project = frame.project || null;
+        if (frame.triggerAt !== undefined) row.triggerAt = frame.triggerAt;
+        if (frame.repeat !== undefined) row.repeat = frame.repeat || null;
+        later(() => api.deliverFrame({ type: 'scheduledTaskUpdated', sessionId: row.sessionId, task: { ...row } }));
+        return;
+      }
+      if (frame.type === 'deleteScheduledTask') {
+        store.delete(frame.id);
+        later(() => api.deliverFrame({ type: 'scheduledTaskDeleted', id: frame.id, sessionId: frame.sessionId }));
+      }
+    }
+
+    api.transport.ready = () => mode !== 'offline';
+    api.transport.send = (frame) => {
+      sentFrames.push(frame);
+      if (mode !== 'silent') reply(frame);
+      return true;
+    };
+
+    const raf2 = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+    window.__h = {
+      api,
+      cardMod,
+      seed(row) { const r = makeRow(row); store.set(r.id, r); return r; },
+      mode(m) { mode = m; },
+      sent() { return sentFrames.slice(); },
+      clearSent() { const s = sentFrames; sentFrames = []; return s; },
+      row(id) { const r = store.get(id); return r ? { ...r } : null; },
+      cardState(id) {
+        const nodes = [...document.querySelectorAll('nf-sched-card')];
+        const target = nodes.find((n) => n.querySelector(`.schedule-card[data-sched-id="${id}"]`));
+        return cardMod.cardStateOf(target || nodes[0]);
+      },
+      async renderTool(label, summary, content, isError, inputJson) {
+        chatMod.renderTool(label, summary, content, !!isError, inputJson, SID);
+        await raf2();
+      },
+      async settle(ms = 80) { await new Promise((r) => setTimeout(r, ms)); await raf2(); },
+      q(sel) { return document.querySelector(sel); },
+      qa(sel) { return [...document.querySelectorAll(sel)]; },
+      text(sel) { const n = document.querySelector(sel); return n ? (n.textContent || '').trim() : null; },
+      chatHTMLRows() { return document.querySelectorAll('#chat > .row').length; },
+    };
+
+    window.__ready = true;
+  </script>
+</body>
+</html>
