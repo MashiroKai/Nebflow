@@ -3807,14 +3807,19 @@ body.mobile-layer #mobile-pages .mobile-page-body > #todo-page {
   height: auto;
 }
 /* ④ 项目面旧胶囊让位带收编（标题-内容间距修整批 2026-11-01 20:42）：
-   projectPanel.css 桌面规则 .canvas-tab-pane[data-type="projects"] 的
-   padding-top:56px + .team-scroll top:56px 是「桌面悬浮胶囊带」的纯定位让位
-   （原注释：absolute 列表体锚 padding box，pane padding 与 top 须同带改）。
+   projectPanel.css 桌面规则 .canvas-tab-pane[data-type="projects"] 的胶囊让位是
+   「桌面悬浮胶囊带」的纯定位让位（absolute 列表体锚 padding box ⇒ 让位只能写在
+   滚动体自身）。**件4（2026-11-05）桌面侧已换形**：pane padding-top 归零、
+   `.team-scroll` 改 top:0 + 自身 `padding-top: var(--panel-head-clear)`（穿顶带
+   机制，见 projectPanel.css「面板头穿顶带」块）—— 手机层这一对归零规则**语义不变**
+   （手机 = 页面壳大标题 + 悬浮返回钮自有让位，两支都不吃桌面胶囊带），故照旧
+   把桌面那套让位清掉。
    手机详情页大标题入流后这 56px 成为标题→首卡的纯增量空带（实测 68px vs
    全站标准 12px；B 批验收照 chromium-light-projects-expanded 在案）——手机层
    双维归零，首卡节奏交 .team-scroll 自带 padding 12px 承担（与其他面板一致）。
    桌面零感知（规则全挂 body.mobile-layer + #mobile-pages 页面体限定，桌面
-   projects pane 不在页面体子树）。 */
+   projects pane 不在页面体子树；反之件4 的穿顶带规则挂 body:not(.mobile-layer)，
+   两支互斥零交叉）。 */
 body.mobile-layer #mobile-pages .mobile-page-body > .canvas-tab-pane[data-type='projects'] {
   padding-top: 0;
 }
