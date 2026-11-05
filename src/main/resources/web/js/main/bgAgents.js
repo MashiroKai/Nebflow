@@ -33,6 +33,8 @@ import {
   wakeableOf,
   freezeBadgeKey,
   freezeReasonLabelKey,
+  delegateFreezeWire,
+  delegateFreezeIsInfra,
 } from '../freezeState.js';
 
 // --- Multi-agent events ---
@@ -1548,6 +1550,41 @@ function bgTaskRowHtml(id, info, opts = {}) {
   //     原因」徽标 + 「唤醒」按钮 + 三个真实出口的 tooltip。
   const frozenPart = (rowState === 'frozen')
     ? (() => {
+      // 冻结通知策略批（2026-11-05 作者令两连）：delegate 错误冻结族**一律**走本支
+      // ——它是「provider 故障 = 基础设施故障，不向上汇报，面板待你处理 + 引擎自愈」
+      // 的呈现面。判据 = freezeState.delegateFreezeWire（线值归一单点：实时帧送裸
+      // 原因码、快照送 `delegate-frozen:*`，两种形态都认）。
+      //   · 徽标 = 「已冻结 · 原因（待你处理）」，**带「唤醒」按钮**（唤醒腿 = 幂等
+      //     UserInput 注入 / 同 id 复活，不花 supervisor 重启预算）；
+      //   · tooltip = 这一族到底在等什么（供应商/额度）+ 原因 + 错误摘要 + 已自动续跑
+      //     次数（耗尽则明说需要你：充值/换模型/取消）+ 长期冻结龄。
+      const dwire = delegateFreezeWire(info);
+      if (dwire) {
+        const infra = delegateFreezeIsInfra(info);
+        const whyKey = freezeReasonLabelKey(dwire);
+        const why = info.frozenReasonLabel || (whyKey ? t(whyKey) : '');
+        const detail = String(info.frozenDetail || '');
+        const hours = Number(info.dormantHours) || 0;
+        const tries = Number(info.autoResumes) || 0;
+        const tip = [];
+        tip.push(t(infra ? 'subagents.frozenInfraTip' : 'subagents.frozenTip'));
+        if (why) tip.push(t('subagents.frozenReason', { reason: why }));
+        if (detail) tip.push(detail);
+        if (tries > 0) tip.push(t('subagents.frozenAutoResumes', { n: String(tries) }));
+        if (info.autoResumesExhausted) tip.push(t('subagents.frozenAutoResumesSpent'));
+        if (hours > 0) tip.push(t('subagents.frozenDormantTip', { hours: String(hours) }));
+        const label = why
+          ? t('subagents.frozenAwaitingYou', { reason: why })
+          : t('subagents.frozenAwaitingYouNoReason');
+        return '<span class="bg-task-frozen" role="status" title="' + escapeHtml(tip.join('\n')) + '">'
+          + statusIcon('snowflake', 11, 'st-warn')
+          + escapeHtml(label)
+          + '</span>'
+          + '<button class="bg-task-wake" type="button" data-bg-wake="'
+          + escapeHtml(String((info && info.sessionId) || '').replace(/^team-/, ''))
+          + '" title="' + escapeHtml(t('subagents.wakeTip')) + '">'
+          + escapeHtml(t('subagents.wake')) + '</button>';
+      }
       const kind = freezeKindOf(info);
       const whyKey = freezeReasonLabelKey(freezeReasonWire(info));
       const why = info.frozenReasonLabel || (whyKey ? t(whyKey) : '');
@@ -1798,7 +1835,25 @@ export function renderBgAgentDropdown() {
   }
   // Panel header carries the live count (aria-live polite, spec §5).
   const headerEl = dropdownEl ? dropdownEl.querySelector('.bg-dropdown-header') : null;
-  if (headerEl) headerEl.textContent = t('subagents.header', { count: model.total });
+  if (headerEl) {
+    // 冻结通知策略批（2026-11-05）：头部计数后缀 = **冻结静默统计**（后端
+    // `delegateFreezeDigest` 帧 / 快照同一形态）——「N 条已冻结（可唤醒）」/「M 条
+    // 冻结待你处理」。这是被压掉的逐条通知的**唯一去处**：作者主动打开面板才看到，
+    // 零弹窗零消息。
+    const digest = state.freezeDigest || null;
+    let digestText = '';
+    if (digest && (Number(digest.recoverable) > 0 || Number(digest.needsHuman) > 0)) {
+      const segs = [];
+      if (Number(digest.recoverable) > 0) {
+        segs.push(t('subagents.freezeDigestRecoverable', { count: Number(digest.recoverable) }));
+      }
+      if (Number(digest.needsHuman) > 0) {
+        segs.push(t('subagents.freezeDigestNeedsHuman', { count: Number(digest.needsHuman) }));
+      }
+      digestText = ' · ' + segs.join(' · ');
+    }
+    headerEl.textContent = t('subagents.header', { count: model.total }) + digestText;
+  }
   if (model.total === 0 && remoteHtml === '') {
     // 空态自动收起（修订批九点⑤ · 2026-10-09）：无内容不渲染空态区块——列表留白，
     // 头部计数（·0）即空态真值（原 spec §6 空态文案行停用，键保留）。
