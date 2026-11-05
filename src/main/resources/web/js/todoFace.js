@@ -444,7 +444,13 @@ class TodoFace {
     this.panel.append(this.header, this.filterWrap, this.listWrap, this.footer);
     // 岛 = 骨架；两个内容层（胶囊 / 面板）都在它内部 —— 骨架是唯一的形状载体。
     this.card.appendChild(this.panel);
+    // 胶囊（收起态内容层）= 岛骨架里的第二个内容层（灵动岛批 2026-11-05）：
+    // 收起态显示它、展开态显示上面的 panel，两者都在 .tfl-card 内部切换。
     this.card.appendChild(this.capsule);
+    // 新建抽屉（todo-fullbleed 批 2026-11-05）：**手机页面态**把新建表单从列表
+    // 流内搬到页面底部抽屉 —— 页面铺满时表单一常驻就把列表挤成一条（作者实拍
+    // 「新建卡片浮在中间、下面一大片白板」）。桌面胶囊浮层腿原样保留流内创建行。
+    if (this.mobile) this.buildCreateSheet();
     // 空白区建（作者令 2026-11-04 ②）：列表空白 / footer 空白点击 ⇒ 行内新建
     this.bindBlankCreate();
     this.mount.appendChild(this.card);
@@ -452,6 +458,12 @@ class TodoFace {
     if (this.mobile) {
       // 手机 = 页面即展开态：挂载槽即页面体，卡容器回退为流内块（CSS .tfl-mobile）
       this.mount.classList.add('tfl-mount-mobile');
+      // 计数搬家一次（todo-fullbleed 批 2026-11-05）：手机页面态表头只有**一行**
+      // （计数 + 筛选），面板头那条 .tp-hd 计数行退役 ⇒ 计数节点直接搬进
+      // .tfl-header-count 槽（同一颗 DOM 节点，桌面展开态走 expand() 的同一条搬家口）。
+      // 手机无胶囊（display:none）⇒ moveCountInto 的 FLIP 首帧宽为 0 自然跳过，
+      // 落位是瞬时的，无动画残留。
+      this.moveCountInto(true);
     }
   }
 
@@ -559,9 +571,16 @@ class TodoFace {
      `.tfl-list { padding-bottom }` 给出 ⇒ 永不压住最后一行。
      行为 = 复用既有行内创建行（startCreate → buildCreateRow → saveCreate 同一
      条路径，不另开写口）。创建行开在场时本钮仍常驻（不清场）：重复点按由
-     startCreate 的幂等闸吸收 —— 同一条创建行，绝不开第二条。 */
+     startCreate 的幂等闸吸收 —— 同一条创建行，绝不开第二条。
+
+     ★ todo-fullbleed 批（作者令 2026-11-05 17:33「加号按钮使用我们 canvas 同款的
+     按钮风格放在右下角悬浮」）：**手机腿加挂 `.g2-fab`** —— 材质（--cv-bg 玻璃底
+     / 1px 描边 / 零投影）、尺寸（48 = --mtap-lg = Canvas 圆钮档）、hover/active/
+     focus-visible/disabled 六态、按压 spring 全部来自 css/glass.css 的圆钮级浮件
+     档单源（该类同时是 Canvas 工具钮 / 页面壳返回钮 / ask 钮的基准类），不新造
+     第二套按钮样式。桌面腿（34px 小钮）刻意零改动 —— 本批只动手机端两个页面。*/
   buildFab() {
-    const fab = el('button', 'tfl-fab-add');
+    const fab = el('button', 'tfl-fab-add' + (this.mobile ? ' g2-fab' : ''));
     fab.type = 'button';
     fab.title = t('todoface.fabAdd');
     fab.setAttribute('aria-label', t('todoface.fabAdd'));
@@ -574,6 +593,45 @@ class TodoFace {
     });
     this.fabAdd = fab;
     this.listWrap.appendChild(fab);
+  }
+
+  /* ── 新建抽屉（todo-fullbleed 批 · 作者令 2026-11-05 17:33）─────────────────
+     为什么是**底部抽屉**而不是「浮层/气泡」：新建表单是**写入口**，手机端写入口
+     的既有语言就是底部抽屉（键盘弹起时贴底、不与列表抢视觉、关闭路径唯一 =
+     点遮罩或「取消」）；气泡式浮层在 375 宽上要么盖住半屏列表、要么被键盘顶出
+     屏幕，且没有自然的关闭手势。抽屉本体 = **扁平实底**（全站毛玻璃只许
+     `.nf-glass` 一枚，本文件不出第二套模糊面）。
+     落位：`.tfl-card` 在手机腿是定位静态件 ⇒ 本节点的包含块 = 页面壳
+     `.mobile-page`（absolute + overflow:hidden），抽屉因此覆盖**整页内容区**
+     （标题栏下沿 → Tab 栏上缘），滚动的列表不会带着它跑。
+     表单本体复用既有 `buildCreateRow()`（标题/备注/优先级/截止时间同一条 DOM、
+     同一条 saveCreate 写口），抽屉只是换宿主，零第二套表单。 */
+  buildCreateSheet() {
+    const sheet = el('div', 'mf-drawer');
+    sheet.hidden = true;
+    sheet.setAttribute('role', 'dialog');
+    sheet.setAttribute('aria-modal', 'true');
+    sheet.setAttribute('aria-label', t('todoface.sheetTitle'));
+
+    const scrim = el('div', 'mf-drawer-scrim');
+    scrim.addEventListener('click', () => this.cancelCreate());
+
+    const box = el('div', 'mf-drawer-box');
+    const head = el('div', 'mf-drawer-head');
+    head.appendChild(el('span', 'mf-drawer-title', t('todoface.sheetTitle')));
+    const cancel = el('button', 'mf-drawer-cancel-btn', t('todoface.cancel'));
+    cancel.type = 'button';
+    cancel.addEventListener('click', () => this.cancelCreate());
+    const done = el('button', 'mf-drawer-done-btn', t('todoface.done'));
+    done.type = 'button';
+    done.addEventListener('click', () => this.saveCreate());
+    head.append(cancel, done);
+
+    this.sheetBody = el('div', 'mf-drawer-body');
+    box.append(head, this.sheetBody);
+    sheet.append(scrim, box);
+    this.sheetEl = sheet;
+    this.card.appendChild(sheet);
   }
 
   /* ── 撤回条（完成后的撤销路径；作者令 2026-11-04 ④「取消完成必须可达」）────
@@ -885,6 +943,8 @@ class TodoFace {
 
     // 行内创建行在场时：只重画创建行之前的行（创建行 DOM 保输入态）
     this.listInner.textContent = '';
+    // 抽屉宿主（手机腿）同拍清场：表单只在一处，绝不同屏两份
+    if (this.mobile && this.sheetBody) this.sheetBody.textContent = '';
     for (const item of items) {
       if (this.completingRows.has(item.id) && this.completingEls.get(item.id)) {
         // 完成动画在飞：沿用既有 DOM（动画不因重渲打断）
@@ -899,13 +959,25 @@ class TodoFace {
       this.listInner.appendChild(row);
     }
     this.expandedJustRendered = false;
-    if (this.creating) this.listInner.appendChild(this.buildCreateRow());
+    // 创建行宿主：手机页面态 = 底部抽屉（列表不再被常驻表单挤成一条）；桌面 = 流内
+    if (this.creating) {
+      (this.mobile && this.sheetBody ? this.sheetBody : this.listInner).appendChild(this.buildCreateRow());
+    }
     if (!items.length && !this.creating) this.listInner.appendChild(this.buildEmpty());
-    if (typeof createIconsIn === 'function') createIconsIn(this.listInner);
+    if (typeof createIconsIn === 'function') {
+      createIconsIn(this.listInner);
+      if (this.mobile && this.sheetBody) createIconsIn(this.sheetBody);
+    }
+    // 抽屉开合随 creating 单一状态位（无第二处显隐写口）
+    if (this.mobile && this.sheetEl) this.sheetEl.hidden = !this.creating;
     // 编辑面板/创建面板高度过渡：先关后开（下一拍加 open 类，0fr→1fr 播动画）
     requestAnimationFrame(() => {
-      const wraps = this.listInner.querySelectorAll('.tfl-edit-wrap');
-      wraps.forEach((w) => w.classList.add('open'));
+      const scope = [this.listInner];
+      if (this.mobile && this.sheetBody) scope.push(this.sheetBody);
+      for (const host of scope) {
+        const wraps = host.querySelectorAll('.tfl-edit-wrap');
+        wraps.forEach((w) => w.classList.add('open'));
+      }
     });
   }
 
@@ -1206,7 +1278,10 @@ class TodoFace {
     wrap.appendChild(panel);
     row.appendChild(wrap);
     // 创建行非文本区点击 = 保存（复刻 onTapGesture 语义；输入框 click 不冒泡触发）
+    // 手机抽屉腿例外：抽屉里「点空白 = 保存」太易误触（抽屉本体就是一块大空白），
+    // 保存口收敛为抽屉头「完成」键 + 输入框回车两条，取消口 = 遮罩 / 「取消」键。
     row.addEventListener('click', (e) => {
+      if (this.mobile) return;
       if (e.target === this.createTitle || e.target === notes) return;
       if (e.target.closest('.tfl-edit-prio-btn') || e.target.closest('.tfl-switch') || e.target.closest('.tfl-due-holder')) return;
       this.saveCreate();
@@ -1215,6 +1290,9 @@ class TodoFace {
     // 一档聚焦即落地——对照表申报简化）
     setTimeout(() => { if (this.creating && this.createTitle) this.createTitle.focus(); }, 60);
     setTimeout(() => { // 滚进可视区（scrollTo anchor 等价，instant 不带动画）
+      // 手机抽屉腿不滚：表单本就在抽屉可视区内，scrollIntoView 只会把页面/列表
+      // 顺带蹭动一下（抽屉外的滚动容器与行不同链）。
+      if (this.mobile) return;
       if (this.creating && row.isConnected) row.scrollIntoView({ block: 'nearest' });
     }, 340);
     return row;
@@ -1250,6 +1328,12 @@ class TodoFace {
     this.refocusList();
   }
 
+  /** 创建行当前宿主（手机腿 = 底部抽屉；桌面腿 = 列表流内）。单一取值口：
+   *  读表单/清表单/挂表单三处都经它，杜绝「一处搬到抽屉、另一处还在列表」的错配。 */
+  createHost() {
+    return this.mobile && this.sheetBody ? this.sheetBody : this.listInner;
+  }
+
   startCreate() {
     // 幂等闸（胶囊面交互批）：创建行已开 ⇒ 只把焦点送回标题，绝不开第二条。
     // 三条入口（footer Add / 右下角加号 / 空白区点击）共用此闸。
@@ -1266,13 +1350,25 @@ class TodoFace {
     // 创建行滚进可视区 + 聚焦已内建（buildCreateRow 内延时档）
   }
 
+  /** 放弃新建（抽屉：遮罩点按 / 「取消」键两条关闭路径共用一个出口）。
+   *  与 saveCreate 的差别只在「不写 store」——表单清场与抽屉收起走同一条渲染链。 */
+  cancelCreate() {
+    if (!this.creating) return;
+    this.creating = false;
+    this.createTitle = null;
+    this.expandedJustRendered = true;
+    this.renderRows();
+    this.renderFooter();
+  }
+
   saveCreate() {
     if (!this.creating) return;
+    const host = this.createHost();
     const name = this.createTitle ? this.createTitle.value : '';
-    const notesEl = this.listInner.querySelector('.tfl-create-panel .tfl-edit-notes');
+    const notesEl = host.querySelector('.tfl-create-panel .tfl-edit-notes');
     const detail = notesEl instanceof HTMLInputElement || notesEl instanceof HTMLTextAreaElement ? notesEl.value : '';
-    const dueEl = this.listInner.querySelector('.tfl-create-panel .tfl-due-input');
-    const dueOn = this.listInner.querySelector('.tfl-create-panel .tfl-switch.on') != null;
+    const dueEl = host.querySelector('.tfl-create-panel .tfl-due-input');
+    const dueOn = host.querySelector('.tfl-create-panel .tfl-switch.on') != null;
     const due = dueOn && dueEl && dueEl.value ? new Date(dueEl.value).getTime() : null;
     this.creating = false;
     this.createTitle = null;

@@ -2252,6 +2252,10 @@ export default {
   // === Scheduled Tasks ===
   'task.empty': '暂无定时任务',
   'task.emptyHint': '点击空白处或按 + 创建',
+  // 新建抽屉（todo-fullbleed 批 2026-11-05：手机页面态新建入口改底部抽屉）
+  'task.sheetTitle': '新建定时任务',
+  'task.sheetCancel': '取消',
+  'task.sheetDone': '创建',
   'task.inputPlaceholder': '输入任务内容...',
   'task.triggerTime': '触发时间',
   'task.triggered': '已触发',
@@ -3182,6 +3186,9 @@ export default {
   'todoface.complete': '标记完成',
   'todoface.del': '删除',
   'todoface.fabAdd': '新建待办',
+  // 新建抽屉（todo-fullbleed 批 2026-11-05：手机页面态新建入口改底部抽屉）
+  'todoface.sheetTitle': '新建待办',
+  'todoface.cancel': '取消',
   'todoface.completedToast': '已完成',
   'todoface.undo': '撤回',
   'todoface.tagName': '提醒标签',

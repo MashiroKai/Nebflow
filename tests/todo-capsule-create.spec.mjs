@@ -526,7 +526,7 @@ test('⑦ 动画护栏：展开仍走 spring 几何通道（内联 height 逐帧
 // 作者令 2026-11-05 09:28：「电脑端是一个胶囊，手机端还是需要是之前那个左上角的
 // 一个悬浮的待办按钮」⇒ 本腿由「手机胶囊可见可展开」反转为「手机无胶囊、圆钮
 // 开面板」；面板内的触摸档断言（加号 44 / 行尾删除常显）原样保留。
-test('⑧ 手机 375：端区分——胶囊退场、左上任务圆钮开面板，加号 44px 触摸档', async ({ page }) => {
+test('⑧ 手机 375：端区分——胶囊退场、左上任务圆钮开面板，加号 48px（Canvas 圆钮档）', async ({ page }) => {
   mkdirSync(SHOT_DIR, { recursive: true });
   const { errors } = await bootApp(page, { viewport: { width: 375, height: 812 } });
   await page.waitForFunction(() => document.body.classList.contains('mobile-layer'), null, { timeout: 10000 });
@@ -554,10 +554,15 @@ test('⑧ 手机 375：端区分——胶囊退场、左上任务圆钮开面板
   await expect(page.locator('#mobile-task-panel .tfl-list')).toBeVisible();
   await page.screenshot({ path: join(SHOT_DIR, '05_mobile_panel_open.png') });
 
-  // 手机档尺寸：加号 44px；行尾删除常显
+  // 手机档尺寸：加号 = **Canvas 圆钮档 48**（todo-fullbleed 批 2026-11-05 作者令
+  // 「加号按钮使用我们 canvas 同款的按钮风格」⇒ 钮挂 .g2-fab，尺寸跟
+  // body.mobile-layer .g2-fab 的 48 = --mtap-lg，原 44 触摸档随批升档）；
+  // 行尾删除常显。
   const addBox = await page.locator('#mobile-task-panel .tfl-fab-add').boundingBox();
-  expect(Math.round(addBox.width)).toBe(44);
-  expect(Math.round(addBox.height)).toBe(44);
+  expect(Math.round(addBox.width)).toBe(48);
+  expect(Math.round(addBox.height)).toBe(48);
+  // 材质单源：加号必须是 .g2-fab 成员（不许自造第二套按钮样式）
+  await expect(page.locator('#mobile-task-panel .tfl-fab-add')).toHaveClass(/g2-fab/);
   const delOpacity = await page.locator('#mobile-task-panel .tfl-del').first().evaluate((el) => getComputedStyle(el).opacity);
   expect(Number(delOpacity)).toBe(1);
 
