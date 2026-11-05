@@ -1,5 +1,5 @@
-[fixture] /tmp/nf-cfg-single-source-1793861502910 (legacy nebflow.json only, fake apiKeys)
-  | 14:51:43.582 [36mINFO [0m nebflow.config.migrate - [config-migration] nebflow.json → stand.json (backup kept as nebflow.json.bak; values unchanged, 1045 bytes)
+[fixture] /tmp/nf-cfg-single-source-1793862270364 (legacy nebflow.json only, fake apiKeys)
+  | 15:04:31.052 [36mINFO [0m nebflow.config.migrate - [config-migration] nebflow.json → stand.json (backup kept as nebflow.json.bak; values unchanged, 1045 bytes)
 PASS  ① 隔离实例启动（独立 home + 独立端口，未触碰宿主 6138）  [http://127.0.0.1:8799]
 PASS  ①a stand.json 自动生成
 PASS  ①b 旧文件保留为 nebflow.json.bak（不删除）
@@ -19,7 +19,7 @@ PASS  ③b 删掉 ⇒ 候选集不再含 gamma（正）  [alpha/m1 → beta/m2]
 PASS  ③c 删掉 ⇒ llm.fallback 内的 gamma 引用被 prune（文件不再承诺打不通的候选）  [{"preferred":"alpha/m1","fallbacks":[]}]
 PASS  ③d 加回 provider gamma  [http 200]
 PASS  ③e 加回 ⇒ 立刻含 gamma（反）  [alpha/m1 → gamma/m3 → beta/m2]
-  | stand started (pid 16244) — https://mystand.space/portal?device=fc8e10c4-ca53-5d2b-9a03-4720e9b45dda
+  | stand started (pid 60914) — https://mystand.space/portal?device=de93e149-2412-58c8-b4f3-a013d93c9f3d
 PASS  ④c 面板只有一处 provider 级「添加不可用时段」  [provider-hosts=1 add-buttons=1]
 PASS  ④d 不再有 model 级不可用时段编辑面  [model-hosts=0]
 PASS  ⑤a 页面无括号式解释（「（留空 = 不限制）」）

@@ -9,5 +9,5 @@
 [info] 19 file(s) merged using strategy 'Rename' (Run the task at debug level to see the details)
 [info] 133 file(s) merged using strategy 'Discard' (Run the task at debug level to see the details)
 [info] Built: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-config-single-source/target/scala-3.5.2/stand-assembly-2026.10.26-beta.2.jar
-[info] Jar hash: 7e81274f4877a2416177ab423487a955fb9488f7
-[success] Total time: 10 s, completed 2026年11月5日 14:51:42
+[info] Jar hash: a818a13caa09cac2dd3d37519870a6f896049f77
+[success] Total time: 10 s, completed 2026年11月5日 15:04:30
