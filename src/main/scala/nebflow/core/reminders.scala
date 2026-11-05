@@ -20,12 +20,19 @@ case class PluginSurfaceChange(previous: String, current: String)
 object SystemReminders:
 
   /**
-   * Current time with timezone offset, JVM default zone, minute granularity.
-   * e.g. "2026-08-11 17:00 +08:00"
+   * 每回合时间锚。
+   *
+   * 格式**不再在本文件定义**——时间感知修复批（作者指令 2026-11-05 18:48）把全仓
+   * 唯一的时间锚渲染收进 [[nebflow.shared.TimeAnchor]]：本地时间 + UTC 偏移 +
+   * 时区名 + 星期几（英/中）+ epoch 毫秒。本函数只负责给它套上 `time` 提醒类别与
+   * `Current time:` 前缀（后者是持久化/裁剪契约的识别串，勿改，见
+   * [[isTimeReminderMessage]]）。
+   *
+   * 🔴 取值必须**每次现取**（[[nebflow.shared.TimeAnchor.now]]），不得缓存：缓存
+   * 的「现在」会让长回合/长会话读到冻结的时间，比没有时间锚更坏。
    */
   private def currentTime(): SystemReminder =
-    val now = ZonedDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm XXX"))
-    SystemReminder("time", s"Current time: $now")
+    SystemReminder("time", TimeAnchor.line())
 
   private val logger = NebflowLogger.forName("nebflow.reminders")
 
@@ -58,9 +65,13 @@ object SystemReminders:
    *
    * Reminder refactor (audit
    * finding: system reminders wasted a large token share per half-day):
-   *  - time: injected on real-user turns always; on system-event turns
-   *    (mail/external/skill injections) at most once per hour — the caller
-   *    passes `injectTime` after checking the gap.
+   *  - time: **每一个回合起始轮（isUserTurn）都注入**——时间感知修复批（2026-11-05）
+   *    取消了旧的「system-event 轮最多每小时一次」闸：那道闸的代价是让交给模型的
+   *    一部分新输入完全不带「现在」（节点消息 / Mail / 定时事件 / 外部事件驱动
+   *    的回合最多可读到 59 分钟前的时间锚，甚至一个都没读到），省下的 token 远小于
+   *    它造成的相对时间系统性误判。噪声面由「只在真有新输入时注入」本身兜住
+   *    （工具往返轮 `!isUserTurn` 不注入；长回合的新鲜度由请求级锚
+   *    `LlmRequest.systemDynamic` = [[nebflow.shared.TimeAnchor.block]] 每请求现取负责）。
    *  - tasks: team sessions only, real-user turns only (task redesign
    *    — moved from Nebula to team members); the caller supplies
    *    pre-rendered full/delta/unchanged text (change detection lives in
@@ -106,7 +117,6 @@ object SystemReminders:
     taskListText: String = "",
     language: Option[String] = None,
     isRootAgent: Boolean = false,
-    injectTime: Boolean = true,
     mountedProjectsDelta: String = "",
     pluginSurfaceChange: Option[PluginSurfaceChange] = None,
     /**
@@ -139,7 +149,7 @@ object SystemReminders:
               projectsReminder(mountedProjectsDelta),
               identityReminder(identityDelta)
             ).flatten
-        reminders = (if injectTime then collectAll(isUserTurn = true) else Nil) ++
+        reminders = collectAll(isUserTurn = true) ++
           contextReminders ++
           pluginSurfaceReminder(pluginSurfaceChange)
       yield reminders
@@ -468,6 +478,32 @@ object SystemReminders:
     msg.role == MessageRole.User && (msg.content match
       case Left(text) => text.startsWith("<system-reminder>\nCurrent time:")
       case Right(_) => false)
+
+  /**
+   * Insert the turn's time anchor **immediately BEFORE the message that triggered
+   * the turn** (时间感知修复批 2026-11-05).
+   *
+   * WHY 不是追加在尾部：锚是「这一轮输入发生在什么时刻」，语义上先时刻后输入；更
+   * 重要的是——全仓有多处读「最后一条 user 消息 = 本轮输入」（注入源归因
+   * `lastUserSource`、注入气泡判定、队列直通语义）。锚（`source = None`）若追加在
+   * 尾部就会顶掉那条不变量，把「谁叫醒的这一轮」读成「无源」。本批实测：追加形态
+   * 直接打挂 `QueueDirectPassSourceSpec` ②③ 两条既有用例。
+   *
+   * 保守判据：只有「最后一条是 User 且不是工具结果」时才插在其前（否则追加在尾）——
+   * 末尾是 Assistant 时插到它前面会造成 user/assistant 交替错位，故降级追加。
+   * `anchors` 为空 ⇒ 原样返回（零注入零改动）。
+   */
+  def insertAnchor(messages: List[Message], anchors: List[Message]): List[Message] =
+    if anchors.isEmpty then messages
+    else
+      messages.reverse match
+        case last :: rest if last.role == MessageRole.User && !isToolResultMessage(last) =>
+          rest.reverse ++ anchors ++ List(last)
+        case _ => messages ++ anchors
+
+  /** True when a User message carries tool results (mid-turn LLM round, not an input). */
+  private def isToolResultMessage(msg: Message): Boolean =
+    msg.content.toOption.exists(_.exists(_.isInstanceOf[ContentBlock.ToolResult]))
 
   /**
    * Prune older time-reminder messages, keeping only the most recent

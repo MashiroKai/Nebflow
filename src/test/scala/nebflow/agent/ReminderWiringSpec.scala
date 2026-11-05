@@ -21,15 +21,16 @@ import scala.concurrent.duration.FiniteDuration
 import scala.concurrent.duration.*
 
 /**
- * Reminder refactor (2026-08-20 user ruling) — WIRING pins on a real
- * AgentActor (Nebula def) + mock LLM. The unit specs cover
- * SystemReminders.collectAllIO semantics; these tests prove AgentCore's
- * pipeLlmCall actually passes the gating:
- *   ① system-event turns (ExternalEvent injection) inject ZERO time/tasks
- *   ② real-user turns inject time but NOT tasks for Nebula (task redesign
- *      2026-08-30: task injection moved to team sessions; Nebula has no
- *      task tools and its session is not team-registered)
- *   D6 (revised): systemStable NO LONGER carries the Task List Protocol
+ * WIRING pins on a real AgentActor (Nebula def) + mock LLM.
+ *
+ * Reminder refactor (2026-08-20 user ruling) covered: system-event turns used to
+ * inject ZERO time; real-user turns inject time but NOT tasks for Nebula (task
+ * redesign 2026-08-30). **时间感知修复批（作者指令 2026-11-05 18:48）把前者翻了**：
+ * 每一个起始轮（含 Mail / 节点消息 / 定时任务 / 外部事件驱动的 system-event 轮）
+ * 都必须带时间锚——没有可信「现在」正是相对时间系统性误判（「10 天前」说成「两年」）
+ * 的病根。本 spec 现在同时钉：① 起始轮有锚；② 每次请求的 systemDynamic 有当刻锚；
+ * ③ systemStable 里绝无时间戳（时间不得冻结进前缀缓存）。
+ * D6 (revised): systemStable NO LONGER carries the Task List Protocol
  *      section for Nebula (condition = agentCategory == "team")
  */
 class ReminderWiringSpec extends CatsEffectSuite:
@@ -111,7 +112,7 @@ class ReminderWiringSpec extends CatsEffectSuite:
     req.messages.map(_.textContent).mkString("\n")
 
   test(
-    "① system-event turn injects zero time/tasks; ② real-user turn injects time but Nebula gets NO tasks (task redesign)"
+    "① every input turn (system-event included) carries the time anchor; real-user turn injects time but Nebula gets NO tasks (task redesign)"
   ):
     val system = ActorSystem("reminder-wiring")
     val tmp = os.temp.dir()
@@ -164,9 +165,13 @@ class ReminderWiringSpec extends CatsEffectSuite:
         _ <- waitUntil(15.seconds)(requests.get.map(_.size >= 3))
         req3 <- requests.get.map(_.apply(2))
       yield
-        // ① system-event turn: no time, no tasks (even though the actor IS
-        // Nebula with an active task in the store)
-        assert(!textOf(req1).contains("Current time"), s"system-event turn must not inject time:\n${textOf(req1)}")
+        // ① system-event turn (ExternalEvent injection)：时间感知修复批（2026-11-05）
+        // **改为必须带锚**——旧契约「system-event 轮不注入时间」正是病根：交给模型的
+        // 新输入可以完全没有「现在」，于是相对时间靠猜。tasks 仍为 0（团队面语义未变）。
+        assert(
+          textOf(req1).contains("Current time"),
+          s"system-event turn MUST now carry the time anchor:\n${textOf(req1)}"
+        )
         assert(!textOf(req1).contains("Current Tasks"), s"system-event turn must not inject tasks:\n${textOf(req1)}")
         assert(!textOf(req1).contains("Tasks unchanged"), s"system-event turn must not inject tasks:\n${textOf(req1)}")
         // D6 revised (task redesign 2026-08-30): Nebula's systemStable must
@@ -195,6 +200,32 @@ class ReminderWiringSpec extends CatsEffectSuite:
           !textOf(req3).contains("## Current Tasks"),
           s"task redesign: Nebula no longer gets the task reminder:\n${textOf(req3)}"
         )
+        // ④ 每请求时间锚（时间感知修复批 2026-11-05）：三个请求（含 system-event 轮）
+        // 的 systemDynamic 都必须带当刻锚，且 **systemStable 里绝不许出现任何时间戳**
+        // ——写进稳定前缀 = 时间冻结（它只在生命周期节点重建）。同一条 spec 同时钉
+        // 正面（动态段有锚）与反面（stable 段无时刻）。
+        val stampRe = raw"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} [+-]\d{2}:\d{2}".r
+        List(req1, req2, req3).zipWithIndex.foreach { case (req, i) =>
+          val dyn = req.systemDynamic.getOrElse("")
+          assert(
+            dyn.contains("Clock (authoritative; re-read on every request)") && stampRe.findFirstIn(dyn).isDefined,
+            s"request #${i + 1}: every request must carry a fresh clock line in systemDynamic, got: $dyn"
+          )
+          assert(
+            dyn.contains("epoch_ms"),
+            s"request #${i + 1}: the anchor must expose epoch_ms (arithmetic base): $dyn"
+          )
+          req.systemStable.foreach { st =>
+            assert(
+              stampRe.findFirstIn(st).isEmpty,
+              s"request #${i + 1}: systemStable must NEVER carry a timestamp (frozen clock): $st"
+            )
+            assert(
+              st.contains(nebflow.shared.Defaults.TimeDisciplineRule),
+              s"request #${i + 1}: the time discipline rule must ride systemStable for every agent"
+            )
+          }
+        }
       program.unsafeRunSync()
     finally
       nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)

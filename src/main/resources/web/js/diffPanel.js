@@ -72,7 +72,7 @@ function ensurePanelDom() {
       <span class="nfp-meta"></span>
     </div>
     <div class="nfp-body">
-      <div class="nfp-empty"></div>
+      <div class="nfp-empty" data-cv-hint="empty"></div>
       <div class="nfp-list" role="listbox" aria-label="changed files"></div>
     </div>`;
   host.appendChild(panel);

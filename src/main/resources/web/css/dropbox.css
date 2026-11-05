@@ -288,9 +288,12 @@
    一并删除 —— 元素不存在、类名零引用 ⇒ 死 CSS 不留。拖拽目标仍是整个对话框
    （上面的 .dropbox-modal.drag-over），交互形态零变化。 */
 
-/* 输入条纸夹键（第二入口）：复用 .icon-btn 玻璃表达，尺寸收到输入条尺度 */
-.dropbox-attach-btn { width: 32px; height: 32px; flex-shrink: 0; }
-.dropbox-attach-btn svg { width: 18px; height: 18px; }
+/* 输入条纸夹键（第二入口）：复用 `.icon-btn` 玻璃表达。
+   四会话统一批 2026-11-05：原「尺寸收到输入条尺度」= 32×32 / 图标 18 的**自有档**
+   撤出 —— 同一枚纸夹在主会话是 `.icon-btn` 的 36×36 / 图标 20（手机层 48/--micon），
+   两个档差让「附件键比主会话小一圈」。本类现在只作标识（dropbox / 好友 / 群 / 设备
+   四条输入条共用同一个 `.icon-btn` 底档，与主会话同源）；几何全部回到 `.icon-btn`。 */
+.dropbox-attach-btn { flex-shrink: 0; }
 
 /* Input bar */
 .dropbox-input-bar {

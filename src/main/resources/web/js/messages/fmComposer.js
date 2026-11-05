@@ -154,8 +154,20 @@ export function buildFmComposer(opts) {
   // 发送键族统一批（作者 2026-09-15「正常绿 / 掉线灰」）：本键与全站发送键共用
   // 同一套状态色（`sapphire.css` 的发送族块）。`cfg-btn-primary` 只为**承接既有
   // 墨色**（既有类名 ⇒ 零新增字面量色值）；材质/几何/状态一律由发送族块覆盖。
-  const sendBtn = el('button', 'cfg-btn cfg-btn-primary fm-send-btn', t('messages.send'));
+  // 发送键 = **主会话同一枚**（四会话统一批 2026-11-05，作者令「按钮……都保持一致」）：
+  // `.ds-turn-btn.ds-turn-btn--send`（design-system.css 单点 = 圆钮 + 绿实底；
+  // 手机档 `--ds-turn-btn-size` 自动 48/22）。旧形态 = `.cfg-btn.cfg-btn-primary`
+  // 文字键 52×44 / r10 —— 与主会话 48×48 / r50% 差两档，正是作者点名的不同。
+  // `fm-send-btn` 保留为宿主钩子：`syncComposerSend` 的 disabled / `.disconnected`
+  // 两态、`sapphire.css` 发送族与 QA 断言面都按它寻址（禁第二套状态位）。
+  const sendBtn = el('button', 'ds-turn-btn ds-turn-btn--send fm-send-btn');
   sendBtn.type = 'button';
+  sendBtn.title = t('messages.send');
+  sendBtn.setAttribute('aria-label', t('messages.send'));
+  // 图标走节点装配（不写裸 innerHTML —— 组件契约 R5；lucide 仍是全站唯一字形源）。
+  const sendIcon = document.createElement('i');
+  sendIcon.setAttribute('data-lucide', 'send');
+  sendBtn.appendChild(sendIcon);
   bar.appendChild(input);
 
   // 附件入口（③）：三面共用同一枚纸夹（`fm-attach-btn` + `paperclip` 图标）——

@@ -344,7 +344,7 @@ function pluginsContentEl() {
     // 统一安全区（canvas-overlap-fix 批 2026-11-05）：canvas 顶行胶囊是浮层，
     // 面板正文的首块必须让到 --cv-safe-top（桌面 56 / 手机 72）之下 —— 类本身
     // 在 split.css「统一布局层」块里定义，本处只挂类，不写任何像素。
-    content.className = 'canvas-safe-top';
+    content.className = 'canvas-safe-top cv-safe-pad';
     pane.appendChild(content);
   }
   return content;
@@ -577,7 +577,7 @@ function renderRejectedCard(entry) {
 function topStatsHtml(plugins) {
   const skillCount = plugins.reduce((n, p) => n + (Array.isArray(p.skills) ? p.skills.length : 0), 0);
   const mcpCount = plugins.reduce((n, p) => n + (Array.isArray(p.mcpServers) ? p.mcpServers.length : 0), 0);
-  return `<span class="plugins-stats" data-plugins-stats>
+  return `<span class="plugins-stats" data-cv-hint="foot" data-plugins-stats>
     <span class="plugins-stats-item" data-stat-skills="${skillCount}">${esc(t('plugins.statSkills', { n: skillCount }))}</span>
     <span class="plugins-stats-sep" aria-hidden="true">·</span>
     <span class="plugins-stats-item" data-stat-mcp="${mcpCount}">${esc(t('plugins.statMcp', { n: mcpCount }))}</span>
@@ -588,7 +588,7 @@ function topStatsHtml(plugins) {
 export function renderPlugins() {
   const content = pluginsContentEl();
   if (!content) return;
-  content.innerHTML = `<div class="plugins-loading">${esc(t('plugins.loading'))}</div>`;
+  content.innerHTML = `<div class="plugins-loading" data-cv-hint="loading">${esc(t('plugins.loading'))}</div>`;
 
   loadPluginsData().then(async ({ registry, updates }) => {
     if (!content.isConnected) return; // tab closed while fetching
@@ -600,11 +600,11 @@ export function renderPlugins() {
     // 纯插件视角（2026-10-21 作者令①）：单一插件区块；顶部统计 = skill + MCP 口径。
     const listHtml = `
       <div class="plugins-section" id="plugins-section-plugins">
-        <div class="plugins-section-title">${esc(t('plugins.list'))}</div>
-        <div class="plugins-section-hint">${esc(t('plugins.listHint'))}</div>
+        <div class="plugins-section-title" data-cv-hint="divider">${esc(t('plugins.list'))}</div>
+        <div class="plugins-section-hint" data-cv-hint="page">${esc(t('plugins.listHint'))}</div>
         <div class="plugins-card-list">${(plugins.length || rejected.length)
           ? plugins.map(p => renderPluginCard(p, updateMap)).join('') + rejected.map(renderRejectedCard).join('')
-          : `<span class="plugins-none">${esc(t('plugins.empty'))}</span>`}</div>
+          : `<span class="plugins-none" data-cv-hint="empty">${esc(t('plugins.empty'))}</span>`}</div>
       </div>`;
 
     content.innerHTML = `
@@ -623,7 +623,7 @@ export function renderPlugins() {
     // （`fm-auth-required` 全局链保留，卡片为兜底可见反馈）」）：链负责弹窗、
     // 卡片负责**面板内可见反馈**（用户没看到弹窗时面板不留白、不误报「加载失败」）。
     if (err?.status === 401 || err?.status === 403) renderAuthRequired(content);
-    else content.innerHTML = `<div class="plugins-loading">${esc(t('plugins.loadFailed', { error: err?.message || err }))}</div>`;
+    else content.innerHTML = `<div class="plugins-loading" data-cv-hint="loading">${esc(t('plugins.loadFailed', { error: err?.message || err }))}</div>`;
   });
 }
 
@@ -642,7 +642,7 @@ function renderAuthRequired(content) {
     </div>
     <div class="plugins-section">
       <div class="fm-result-card fm-search-error" role="alert" data-plugins-auth-card>
-        <div class="fm-empty">${esc(t('plugins.authRequired'))}</div>
+        <div class="fm-empty" data-cv-hint="empty">${esc(t('plugins.authRequired'))}</div>
         <div class="fm-result-foot">
           <button type="button" class="glass-control fm-login-btn" data-plugins-relogin>${esc(t('plugins.relogin'))}</button>
         </div>

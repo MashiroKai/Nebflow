@@ -192,7 +192,9 @@ object Defaults:
    * 牌面 `{{msg:sid8-seq6}}` 后接「|短名」；短名 = 2-12 字为宜（硬上限 40，字符集
    * 禁 `{` `}` `|` 换行），给被引消息起的功能性名字（如「输入统一令」「迁移三裁定」）。
    * 短名是**纯展示注记**：前端把带名牌渲染成显示短名的小牌（点击看原文）；派发
-   * 消解时名剥除、投递的仍是全文——派发文本里不需要也不应该带短名。
+   * 消解（msgcard-agent-expand 批 2026-11-05）时牌展开为完整原文块，短名进展开
+   * 抬头（`[引用 · 短名 · 来自 作者 · 时间 · 共 N 字]`）、正文恒为全文——派发文本
+   * 里带不带短名都可，带则收信方多一个可读标签。
    *
    * 注入面：`PromptSections` order-378 **always 段**（所有 agent 会话——牌经 Mail /
    * delegate brief / node 消息流进每张面，任何面上都可能引用上游消息；同
@@ -203,7 +205,21 @@ object Defaults:
    */
   val MsgQuoteRule: String =
     """── Quote with message cards (引牌不引文) ──
-      |When your reply answers the author's (user's) message(s), cite each quoted message with its card plus a short name — do NOT restate the original text in full. Form: `{{msg:<sid8>-<seq>|<short-name>}}` (a `|` + short name right after the card face). The short name is the replyer's compact functional label for that message (2-12 chars ideal; no `{` `}` `|` or newlines), e.g. 输入统一令 / 迁移三裁定. One card per answered message: a reply that corresponds to several messages cites each one separately. Say the POINT in your own words next to the card; the full text already lives behind the card (click the chip in the chat to see it). Cards without a short name keep their plain form; delivery resolution strips short names — never add one in Mail/delegate/node dispatch text.""".stripMargin
+      |When your reply answers the author's (user's) message(s), cite each quoted message with its card plus a short name — do NOT restate the original text in full. Form: `{{msg:<sid8>-<seq>|<short-name>}}` (a `|` + short name right after the card face). The short name is the replyer's compact functional label for that message (2-12 chars ideal; no `{` `}` `|` or newlines), e.g. 输入统一令 / 迁移三裁定. One card per answered message: a reply that corresponds to several messages cites each one separately. Say the POINT in your own words next to the card; the full text already lives behind the card (click the chip in the chat to see it).
+      |Delivery rule (agent-facing legs: Mail body, Delegate brief, node messages, subagent/step prompts): a card is expanded before injection into the FULL original text — header `[引用 · <short name> · 来自 <author> · <time> · 共 N 字]`, then the verbatim body (never truncated; long quotes are kept whole with a marker), then `[引用结束 · …]`. So write the card, not a paraphrase, and keep the exact `msg:` prefixed form: a card that is malformed (e.g. missing `msg:`, wrong seq width) or whose mapping is missing is replaced by an explicit `[引用未能解析：<original>] 原因：…` marker — never passed through literally.""".stripMargin
+
+  /**
+   * 时间纪律节（时间感知修复批，作者指令 2026-11-05 18:48「修复你的时间感知问题」）：
+   * 模型面的时间纪律单点。段体 = 本常量；注入面 = `PromptSections` order-379
+   * **always 段**（所有 agent 会话——相对时间误判不分角色，同 order-377/378 的收窄
+   * 判据）。静态体落 systemStable（生命周期节点重建时携带）。
+   *
+   * 分工：**锚**由引擎发（[[TimeAnchor]]：每请求 `systemDynamic` 现取 + 每回合起始轮
+   * 持久化 `Current time:` 行），**用法**由本段规定（换算，不许计算；没锚不许说绝对
+   * 日期）。两者同批落地，缺一即为半修：只有锚没有纪律 = 模型照旧按印象推算；
+   * 只有纪律没有锚 = 纪律要求它读一条不存在的时间。
+   */
+  val TimeDisciplineRule: String = PromptCatalog.Shared.TimeDisciplineRule
 
   /**
    * A 段（等待屏障）开关：delegate 会话结束回合时存在未结等待型后台作业 ⇒

@@ -207,7 +207,7 @@ class MsgTokenRegistrySpec extends CatsEffectSuite:
 
   // ── msgchip 批（2026-11-01 作者令「消息身份牌系统升级」）：带短名引用形态 ────
 
-  test("带短名引用形态：{{msg:sid8-seq6|短名}} 消解展开为全文（短名剥除，不进替换物）") {
+  test("带短名引用形态：{{msg:sid8-seq6|短名}} 展开为完整原文块，短名进抬头（不进正文）") {
     withRegistry() { (reg, _) =>
       val userText = "把这份月报总结一下，周五前给我"
       for
@@ -218,11 +218,12 @@ class MsgTokenRegistrySpec extends CatsEffectSuite:
         _ = assert(MsgTokenRegistry.TokenRegex.findFirstMatchIn(named).isDefined)
         mm = MsgTokenRegistry.TokenRegex.findFirstMatchIn(named).get
         _ = assertEquals(mm.group(3), "输入统一令")
-        // 消解：带名形态与裸形态同值替换（目标 = 全文；名不进替换物）
-        expanded <- reg.resolve(s"先看这条：$named —— 再办下一条")
+        // 消解（msgcard-agent-expand 批 2026-11-05 起）：抬头带短名，正文 = 原文逐字
+        expanded <- reg.resolveForAgent(s"先看这条：$named —— 再办下一条")
         _ = assert(expanded.contains(userText), "带名形态应展开为消息全文")
-        _ = assert(!expanded.contains("输入统一令"), "短名是纯展示注记，替换物中剥除")
-        _ = assert(!expanded.contains(core), "展开后不应残留牌面核心")
+        _ = assert(expanded.contains("[引用 · 输入统一令"), "短名进展开抬头（作者裁定「展开成完整原文」）")
+        _ = assert(expanded.contains("[引用结束"), "展开块必须有结束标记")
+        _ = assert(!expanded.contains("{{msg:"), "展开后不应残留牌面")
         // 裸形态混合在场的双牌全消解
         m2 <- reg.mint(Some(Sid1), "第二条消息")
         mixed = s"$named 与 ${m2.get.token}"
@@ -244,30 +245,46 @@ class MsgTokenRegistrySpec extends CatsEffectSuite:
     }
   }
 
-  test("畸形带名形态不匹配正则 = 字面透传（零解析豁免、零崩溃面）") {
+  test("畸形但显然是牌 = 显式标记（不原样透传）；与牌无关的 {{…}} 文本逐字节原样") {
     withRegistry() { (reg, _) =>
+      // 判据③（msgcard-agent-expand 批 2026-11-05）：写坏的牌一律替换成 [引用未能解析：…]
       val malformed = List(
         "{{msg:zzzzzzzz-000001|坏sid8}}",            // sid8 非 hex
         s"{{msg:${reg.shortCode(Sid1)}-0001|短序号}}",   // seq 非 6 位
         s"{{msg:${reg.shortCode(Sid1)}-000001|}}",       // 空短名
         s"{{msg:${reg.shortCode(Sid1)}-000001|${"长" * 41}}}", // 超 40 字
-        s"{{msg:${reg.shortCode(Sid1)}-000001|a|b}}",    // 名内含竖线（整体不成牌）
-        s"{{msg:${reg.shortCode(Sid1)}-000001|a{b}}}",   // 名内含花括号
-        s"{{msg:${reg.shortCode(Sid1)}-000001|名\n换行}}", // 名内换行
-        "{{msg|无核心}}",
-        "{{msg:abc-1|x}}}}"
+        s"{{msg:${reg.shortCode(Sid1)}-0001}}",          // 裸形态短序号
+        "{{msg:abc-1|x}}"                                // 坏核裸牌
       )
       for
-        outs <- malformed.map(s => reg.resolve(s"保持${s}原样")).sequence
+        outs <- malformed.map(s => reg.resolveForAgent(s"保持${s}原样")).sequence
         _ = outs.zip(malformed).foreach { case (out, raw) =>
-              assert(out.contains(raw), s"畸形形态必须字面透传: $raw")
+              assert(
+                out.contains(s"[引用未能解析：$raw]"),
+                s"畸形牌必须被替换为显式标记（不许原样递送）: $raw → $out"
+              )
+              assert(!out.replace(s"[引用未能解析：$raw]", "").contains(raw), s"标记之外不许残留原串: $raw")
             }
-        // 真牌带空名整体不匹配 ⇒ 不消解也不报错（就是普通文本）
-        m <- reg.mint(Some(Sid1), "真消息")
-        coreOfM = m.get.token.stripSuffix("}}")
-        emptyName = s"{{msg:$coreOfM|}}"
-        outEmpty <- reg.resolve(s"看$emptyName")
-        _ = assert(outEmpty.contains(emptyName))
+        // 与牌无关的花括号文本（模板/代码片段）——零噪声逐字节原样
+        plains = List("{{user.name}}", "{{ foo-bar }}", "{{msg|无核心}}", "{{msg.body}}", "{{#if x}}y{{/if}}")
+        pouts <- plains.map(p => reg.resolveForAgent(s"代码：$p 结束")).sequence
+        _ = pouts.zip(plains).foreach { case (out, raw) =>
+              assertEquals(out, s"代码：$raw 结束", s"非牌文本必须原样: $raw")
+            }
+      yield ()
+    }
+  }
+
+  test("畸形诊断计数：malformedSeen / missingSeen 如实计数（可观测面）") {
+    withRegistry() { (reg, _) =>
+      for
+        _ <- reg.resolveForAgent("{{11111111-000101}}")            // 缺 msg: 前缀
+        _ <- reg.resolveForAgent("{{msg:bad-1}}")                  // 坏核
+        miss <- reg.resolveForAgent("{{msg:deadbeef-000001}}")     // 合法牌面但映射缺失
+        _ = assertEquals(reg.malformedSeen, 2L)
+        _ = assertEquals(reg.missingSeen, 1L)
+        _ = assert(miss.contains("[引用未能解析：{{msg:deadbeef-000001}}]"))
+        _ = assert(miss.contains("映射缺失"))
       yield ()
     }
   }

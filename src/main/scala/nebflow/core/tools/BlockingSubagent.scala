@@ -82,6 +82,11 @@ object BlockingSubagent:
           val parentSid = ctx.sessionId
           val childDepth = ctx.depth + 1
           for
+            // 消息身份牌消解（msgcard-agent-expand 批 2026-11-05）：子代理 prompt 也是
+            // **面向 agent 的文本**——Subagent 的 prompt 与 Workflow 步骤的 task 都从
+            // 这里进子会话，故投递前展开成完整原文块（映射缺失 / 格式残缺 ⇒ 显式标记）。
+            // 单点覆盖两条腿（SubagentTool 直接调、WorkflowTool 以 defName 变体调）。
+            resolvedPrompt <- resources.msgTokens.resolveForAgent(prompt)
             done <- IO.deferred[Option[String]]
             // 缺口①（子代理等待三缺口批 2026-10-25）：活性判定窗的完成源——子会话
             // 第一帧即落（见 startSpy）；预算窗内未落 = 判子死。
@@ -120,7 +125,7 @@ object BlockingSubagent:
                   taskId = childId,
                   parentSessionId = parentSid.getOrElse(""),
                   agentName = defName,
-                  prompt = prompt,
+                  prompt = resolvedPrompt,
                   description = description,
                   status = "running",
                   retryCount = 0,
@@ -136,7 +141,7 @@ object BlockingSubagent:
             // 只读侦察面无 Bash，规则是纯提示成本（~60 token）；workflow 步
             // （defName=nebflow，有执行面）是本注入的主对象。包装单点 =
             // [[promptWithRule]]（spec 判红锚）。
-            _ <- ref ! AgentCommand.UserInput(promptWithRule(prompt), None)
+            _ <- ref ! AgentCommand.UserInput(promptWithRule(resolvedPrompt), None)
             // ── 缺口① 两段等待（2026-10-25）——实现单点 [[awaitResult]]（spec 判红锚）
             result <- awaitResult(
               started = started,

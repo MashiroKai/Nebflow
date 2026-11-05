@@ -314,7 +314,44 @@
      chrome 簇几何块里覆写为 `--mchrome-clear`（簇顶 16 + 钮 48 + 呼吸 8 = 72）。
      消费面 = split.css 文件尾「Canvas 正文顶部安全区（统一布局层）」块 +
      侧边栏插件/agent 面板根节点（.canvas-safe-top 类，JS 挂）。 */
-  --cv-safe-top: var(--cv-head-clear);
+  --cv-safe-top: calc(var(--cv-head-top) + max(var(--cv-head-h), var(--cv-size-circle)) + var(--cv-safe-gap));
+  /* ↑ 顶边算式（canvas-hint-text 批 2026-11-05 修正）：
+       10（行顶）+ max(胶囊 36, 圆钮 40) + 8（呼吸缝）= **58**
+     修前 = --cv-head-clear（56）= 「10 + 胶囊 36 + 10 呼吸」—— 算式里只算了胶囊
+     高度，可顶行真正在场的圆钮是 `--cv-size-circle` = **40**（关签钮 / 返回钮 /
+     堆叠钮，实测 y26..66），于是「安全区 56」实际只让出 6px 净空，正是上一批
+     注释里那句「首行贴着胶囊下沿」的 4px 档差来源。本批把顶行**最高件**取大
+     后再加呼吸缝，**净空 = 呼吸缝本身**（几何上可读，不再靠算式巧合）。
+     为什么不动 --cv-head-clear：它是**控件锚点**（查找条 / 缩放条 / 顶行控件都
+     锚在它上面，值 56 是既有 15 个 spec 的判据读数），语义是「行下缘 + 一档缝」，
+     不是「安全区」。安全区与控件锚点本就是两把尺，本批只把安全区那把尺改对。 */
+  /* ── Canvas 安全区 · 四边（canvas-hint-text 批 2026-11-05，作者原话
+     「canvas 内所有的提示文字，要统一制作规范，不然会跟悬浮在上面的按钮/胶囊
+     重叠」）────────────────────────────────────────────────────────────
+     语义（本批把上面那条单边令牌扩成**四边一族**）：
+     **Canvas 面板内任何文字容器与浮层之间的净空，只能由这四个令牌给出**，
+     容器挂 `.cv-safe-pad`（css/canvasHint.css）即四边齐备，禁止各自写
+     padding 数值（禁止的理由是历史：`#plugins-content` / `#agents-content`
+     曾各写裸顶垫 16px ⇒ 首行压进胶囊带 30px）。
+
+     四边的浮层来源（判据统计范围 = 这几类，脚本
+     tests/canvas-hint-safe-area.spec.mjs 逐面实测）：
+       · 顶 = 居中标题胶囊 + 顶行关签钮/返回钮/堆叠钮 ⇒ 值 = --cv-safe-top
+         （= --cv-head-clear 56；手机层 mobileLayer.css 覆写为 --mchrome-clear 72）
+       · 右 = 右下 FAB 列（ask 钮 / 记事本钮）与顶部堆叠钮的右缘净档 ⇒ 16
+       · 下 = 底部浮钮带（源码 <> / 引用 / 查找 / 缩放条 + FAB 行）⇒ **地板 16，
+         真值由 .canvas-tab-pane 上的 max(地板, --canvas-bottom-clearance) 覆写**
+         （实测值由 viewers/shared.js syncBottomClearance 发布，理由见 split.css
+         文件尾「底部浮钮让位」块：钮档随设备/面板宽变，常量必在某个档位失真）
+       · 左 = 面板左内缘净档 ⇒ 16（= --ds-space-4，与项目面板族左右内距同档）
+     为什么右/左不是 0：无浮层时也要有一档稳定内距，否则文字贴面板边（另一种
+     不可读）。16 是既有的面板族左右内距档，不新造值。 */
+  --cv-safe-right: var(--ds-space-4);
+  --cv-safe-bottom: var(--ds-space-4);
+  --cv-safe-left: var(--ds-space-4);
+  /* 提示文字与浮层之间的最小呼吸缝：零交叠判据之外的**余量档**（浮层边缘与
+     文字墨迹之间至少留这一档，防「贴着但不重叠」的观感破绽）。 */
+  --cv-safe-gap: var(--ds-space-2);
   /* ── canvas 顶行浮钮列几何（同批：返回原文档钮 ↔ 关签钮重叠修复）──
      顶行 = 一条按序排布的浮钮列：
        [关签钮 #canvas-head-close] →8 缝→ [返回原文档钮] …(弹性)… [居中标题
@@ -786,23 +823,34 @@ button.glass-control.fm-login-btn:disabled {
    `title` i18n + 点击弹登录窗）不在本块职责内，逐条读数见报告 §4。 */
 
 /* ── Shared message surface ─────────────────────────────────────────────
-   好友消息面（#fm-chat-overlay）与 dropbox 面共用同一套气泡/元信息声明，写在这
-   里一次（2026-09-12 波2：判据 ③A1 字面量单源 / ③A2 几何跨面相等 / ③A3
-   max-width 同 token / ③A4 元信息字号色相等 / ③A5 文件卡同类名）。sapphire.css
+   🔴 四会话统一批（作者令 2026-11-05「优化一下联系人，群聊，设备的对话框的样式，
+   和我们主agent的对话窗口保持一致……气泡……卡片，文件，按钮……都保持一致」）：
+   好友 / 群 / 设备三种会话窗的气泡与 footer **改挂主会话的类族**
+   （`.bubble` / `.bubble.user` / `.bubble.peer` + `.duration-badge*` +
+   `.msg-copy`，类的家 = chat.css），本节的同值副本随之**从本层撤出**——
+   本节现在只服务 dropbox 面（`.dropbox-msg*`），不再是「两面共用」的一层。
+   撤出而非留双份的理由：同一套视觉只许有一个家（③A1 的初衷），主会话面就是
+   那个家；session 窗若继续留一份 13px/8-12/r14 的副本，就等于同一元素有两种
+   说法（本批实测旧读数 Δ：字号 −1.5px、内距 −2px、圆角 −2px、出向底色不同族）。
+   原沿革（2026-09-12 波2：判据 ③A1 字面量单源 / ③A2 几何跨面相等 / ③A3
+   max-width 同 token / ③A4 元信息字号色相等 / ③A5 文件卡同类名）保留如下；
+   dropbox 面仍逐条受这些判据约束。sapphire.css
    在 index.html 里最后加载，因此同特异度的特性 CSS 声明在此统一生效；两个特性
    文件里的重复声明已删除（同值不得双写）。
    基准（③-E 裁定）= 主对话框气泡形态：尾角 4px、元信息 pill、时间 10px 等宽
    tabular-nums、出向气泡无描边。纯数值按作者 2026-09-12 裁定第 5 条（②-4
    「保持 13px 档」）取 13px / padding 8-12 / r14 —— 未照搬主对话框的
    14.5px / 10-14 / r16，逐条偏离理由见本批结果件的偏离登记。
-   消息列宽 token `--msg-bubble-max-w`（下）的消费方 = 好友/设备两面的气泡 wrapper
-   （`.fm-msg` / `.dropbox-msg`）**与**群气泡发送者名 `.fm-msg-sender`（cired 批
+   🔴 四会话统一批后本 token 的消费方只剩 dropbox 面气泡 wrapper（`.dropbox-msg`）
+   **与**群气泡发送者名 `.fm-msg-sender`（好友/群/设备三窗的气泡已改挂主会话
+   `--ds-bubble-max-w`，见 friends.css 同名块）；群气泡发送者名（cired 批
    2026-09-17：该行原先就地写死 78%，现收归本 token ⇒ 面内零字面量、改一处两侧同步；
    未新增第二个 78% token —— 再起一个同值 token 即把「值的家」重新裂成两处，正是
    ③A3 要挡的漂移形态）。值保持 78% —— 收归只改「值的家」，不改计算值。 */
 :root {
   --msg-bubble-max-w: 78%;
-  /* 消息面元信息卡阴影 —— pill（`.fm-msg-meta` / `.dropbox-msg-meta`）与引用块
+  /* 消息面元信息卡阴影 —— pill（`.dropbox-msg-meta`；好友/群/设备的 pill 已改用
+     主会话 `.duration-badge` 的同一枚戒指影，见 chat.css）与引用块
      （`.fm-quote-block`）共用的同一枚「发丝环 + 微落影」。值的家只有这一处：
      两个消费面只消费 `var(--msg-meta-card-shadow)`，禁再就地复写（判据 ③A2/A4
      元信息 pill ring 阴影单源；scripts/check-msgstyle-single-source.mjs 的
@@ -811,15 +859,15 @@ button.glass-control.fm-login-btn:disabled {
 }
 
 /* wrapper — 同源结构与形态（③-E） */
-.fm-msg,
+/* 四会话统一批：`.fm-msg` 行壳的行宽上限改由 friends.css 指向
+   `--ds-bubble-max-w`（与主会话 `.bubble` 同 token、同 80%）——气泡本体不再在这里
+   取几何。本组只剩 dropbox 面（其气泡仍是 `.dropbox-msg-bubble` 自有形态）。 */
 .dropbox-msg {
   display: flex;
   flex-direction: column;
   max-width: var(--msg-bubble-max-w);
 }
-.fm-msg.out,
 .dropbox-msg.out { align-self: flex-end; align-items: flex-end; }
-.fm-msg.in,
 .dropbox-msg.in { align-self: flex-start; align-items: flex-start; }
 
 /* bubble — 几何 / 字号 / 行高 / 出向无描边 + 方向尾角 4px
@@ -827,7 +875,6 @@ button.glass-control.fm-login-btn:disabled {
    8px/12px = space-2/3、14px = radius-card-md、13px = fs-body、1.5 = lh-body）。
    列宽 token --msg-bubble-max-w 的值家**原地不动**（本文件，msgstyle 门禁 A3
    逐字钉死）；方向尾角 4px 亦保持字面（A1/A2 同门禁按字面计数）。 */
-.fm-msg-bubble,
 .dropbox-msg-bubble {
   padding: var(--ds-space-2) var(--ds-space-3);
   border-radius: var(--ds-radius-card-md);
@@ -836,12 +883,10 @@ button.glass-control.fm-login-btn:disabled {
   word-break: break-word;
   color: var(--color-text, #000);
 }
-.fm-msg.out .fm-msg-bubble,
 .dropbox-msg.out .dropbox-msg-bubble {
   background: var(--sapphire-tint-15);
   border-bottom-right-radius: 4px;
 }
-.fm-msg.in .fm-msg-bubble,
 .dropbox-msg.in .dropbox-msg-bubble {
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
@@ -859,7 +904,6 @@ button.glass-control.fm-login-btn:disabled {
    判据 = footer 内容缘 ≡ 气泡内容缘（出向/入向、三形态各 0px）。
    ⚠ 与主对话 `.duration-badge`（chat.css，不在本批所有权内）自本批起内距分档：主对话
    6/8、消息面 12/12 —— 两条轴线的「值的家」各自单源，禁在本规则再写第二份字面量。 */
-.fm-msg-meta,
 .dropbox-msg-meta {
   display: inline-flex;
   align-items: center;
@@ -875,9 +919,8 @@ button.glass-control.fm-login-btn:disabled {
   width: fit-content;
 }
 
-/* 入向气泡带 1px 描边（见上方 `.fm-msg.in .fm-msg-bubble`）⇒ 其内容缘自气泡盒缘起
+/* 入向气泡带 1px 描边（见上方 `.dropbox-msg.in .dropbox-msg-bubble`）⇒ 其内容缘自气泡盒缘起
    = 12 + 1 = 13px；pill 同向 +1px 才能与气泡内容同列（出向无描边，取 12 即可）。 */
-.fm-msg.in .fm-msg-meta,
 .dropbox-msg.in .dropbox-msg-meta {
   padding-left: calc(var(--ds-space-3) + 1px);
   padding-right: calc(var(--ds-space-3) + 1px);
@@ -887,7 +930,6 @@ button.glass-control.fm-login-btn:disabled {
    原先沿亮档值 ⇒ 黑 alpha 叠暗底「描边几乎不可见」。此处补上主对话取值（单环、
    去 3px 落影），三面同值。 */
 @media (prefers-color-scheme: dark) {
-  .fm-msg-meta,
   .dropbox-msg-meta {
     background: rgba(255, 255, 255, 0.04);
     box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
@@ -922,7 +964,8 @@ button.glass-control.fm-login-btn:disabled {
   text-overflow: ellipsis;
 }
 /* 主对话面独有几何：徽章悬在气泡上方（`.row.ai` = 列向 flex）⇒ 保留下外边距。
-   消息元信息行（`.fm-msg-meta` = 横向 inline-flex + align-items:center）**不取**
+   消息元信息行（`.duration-badge` / `.dropbox-msg-meta` = 横向 inline-flex +
+   align-items:center）**不取**
    本值（否则该行会多出 4px 底距、与时间文本错位）。
    🔴 作用域 = 主对话行（`.agent-row`）；**不是**组件的第二份定义 —— 组件定义
    仍只有上面那一个块（本行只是该组件在特定宿主里的落位几何）。 */
@@ -932,7 +975,6 @@ button.glass-control.fm-login-btn:disabled {
    S06/S07：取色与不透明度收敛到主对话口径 = `--color-text` + opacity .35
    （原先友/设备只声明字号/字体族/数字特性，颜色继承 pill 的 muted **实色**、
    且无 opacity ⇒ 与主对话「半透明浅档」不一致）。R6 = 保持现状「浅」档。 */
-.fm-msg-time,
 .dropbox-msg-time {
   font-size: var(--ds-fs-meta);
   font-family: ui-monospace, SFMono-Regular, monospace;
@@ -944,15 +986,13 @@ button.glass-control.fm-login-btn:disabled {
 }
 
 @media (prefers-color-scheme: dark) {
-  .fm-msg-time,
   .dropbox-msg-time { opacity: 0.28; }
 }
 
 /* 分隔符（S16/A5）：主对话口径 = 真 DOM 节点 1px×10px currentColor @ .2 +
    `flex-shrink:0`（chat.css:1150-1156）。设备面原先**无任何分隔符**（仅 6px flex
-   gap）⇒ 新增真节点；好友面原用 `.fm-msg-actions::before` 伪元素（A 方向保留，
-   视觉等价）但缺 `flex-shrink:0`，在 friends.css 补。 */
-.fm-msg-divider,
+   gap）⇒ 新增真节点。四会话统一批 2026-11-05：好友/群/设备的 pill 改挂
+   `.duration-badge-divider`（= 本规则的主会话同源件），本组只剩 dropbox 面。 */
 .dropbox-msg-divider {
   width: 1px;
   height: 10px;

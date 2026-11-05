@@ -783,7 +783,7 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
     ctx.sharedResources
       .map(_.msgTokens)
       .getOrElse(nebflow.core.msgtokens.MsgTokenRegistry.global)
-      .resolve(text)
+      .resolveForAgent(text)
 
   // ============================================================
   // R2 分层地址面

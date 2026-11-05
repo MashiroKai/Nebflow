@@ -1030,6 +1030,19 @@ button.fm-req-decline:focus-visible {
 /* 好友消息正文保留换行语义（dropbox 面走纯文本渲染，不共享此条） */
 .fm-msg-bubble { white-space: pre-wrap; }
 
+/* ── 气泡族改挂主会话（四会话统一批 2026-11-05）─────────────────────────────
+   气泡本体 = 主会话**同一个类族** `.bubble`（chat.css 单点：内距 10-14 / 圆角 16
+   / 字阶 --ds-fs-bubble / 行高 1.55 / 出向 --glass-bub-user-bg / 入向
+   --glass-bub-ai-bg + 1px 描边 + 柔影 / 方向尾角 4px）。本文件只留**行壳**与主
+   会话 `.row` 的关系差：
+     · 主会话：`.row`（全宽）> `.bubble`（max-width 80%）；
+     · 会话窗：`.fm-msg`（= 行壳，max-width 80%）> `.bubble`（100% of 行壳）。
+   两者等效上限都是「消息列宽的 80%」，且泡本体永远吃满行壳（内容自适应）。
+   80% 的**值的家** = design-system.css `--ds-bubble-max-w`（与主会话同 token）
+   —— 会话窗不再从 `--msg-bubble-max-w`（78%，现仅 dropbox 面消费）取数。 */
+.fm-msg { max-width: var(--ds-bubble-max-w); }
+.fm-msg > .bubble { max-width: 100%; }
+
 /* ── 附件卡（fm-att-card-unify 批 2026-11-02 · fm-att-component-lib 批同日换代）─────
    卡面本体 = 主会话卡语言（chat.css 的 `.file-card` / `.pop-media-flat` /
    `.pop-stack-area` 家族），渲染出口 = popArtifacts 标准组件（`buildMediaFlat` /
@@ -1487,7 +1500,10 @@ button.fm-req-decline:focus-visible {
    完整推导与主对话面的实测对照见 css/mobileLayer.css 的 .duration-badge 块头。
    🔴 本段挂 `body.mobile-layer`（与 mobileLayer.css 同开关）：桌面档零影响；
    本文件是消息面样式所有权面，手机覆盖不落 mobileLayer.css（另一腿所有）。 */
-body.mobile-layer .fm-msg-meta { gap: var(--ds-space-3); }
+/* 🔴 四会话统一批 2026-11-05：原 `body.mobile-layer .fm-msg-meta { gap:
+   var(--ds-space-3) }` 已撤 —— pill 改挂 `.duration-badge` 后，同一手机档在
+   mobileLayer.css `body.mobile-layer .duration-badge` 一条声明里给出（同值 12，
+   本批实测键缝一致）。同值双写正是要挡的漂移形态。 */
 body.mobile-layer .fm-msg-time,
 body.mobile-layer .fm-msg-act {
   position: relative;
