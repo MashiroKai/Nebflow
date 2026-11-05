@@ -419,128 +419,16 @@ class AgentControlE2ESpec extends CatsEffectSuite:
     end try
   }
 
-  // ── AC-T: v2 升级链权限分级（§5.3.3 / §7 验收 8）────────────
-  // 分级：Nebula/root 同桶全权不变 → 直接父（调用者==rec.parentSessionId）对
-  // Team 成员 restart/cancel 放行 → 其他调用者 Team 只读拒绝；跨 rootSessionId 拒。
-
-  test("AC-T1: non-parent caller restarting a Team member is rejected (Block 1 subtree guard)") {
-    val system = ActorSystem("ac-t1")
-    val tmp = os.temp.dir()
-    val prevRoot = PathUtil.dataRoot
-    PathUtil.setDataRoot(tmp / "data")
-    try
-      val program = for
-        _ <- nebflow.core.flow.TeamSessionRegistry.clear
-        resources <- mkResources(system, tmp, null)
-        // 同 root 桶：caller 不是 target 的直接父，也不是注册 Manager
-        // （Block 1 §B3：非 root 调用者走 managerAnchors 子树门 → 拒绝）
-        callerSid = "caller-agent"
-        teamSid = "team-member-agent"
-        _ <- resources.agentRegistry.update(
-          _ ++ Map(
-            callerSid -> AgentRecord(callerSid, null, AgentKind.Team, "rootA", None),
-            teamSid -> AgentRecord(teamSid, null, AgentKind.Team, "rootA", None, parentSessionId = "manager-agent")
-          )
-        )
-        res <- AgentControlTool.call(
-          JsonObject("action" -> "restart".asJson, "sessionId" -> teamSid.asJson, "reason" -> "e2e".asJson),
-          acCtx(resources, callerSid)
-        )
-      yield
-        assert(res.isLeft, s"non-parent restart of Team member must be rejected, got $res")
-        assert(
-          res.left.toOption.exists(_.message.contains("Permission denied")),
-          s"rejection must be the subtree denial, got ${res.left.toOption.map(_.message)}"
-        )
-      program.unsafeRunSync()
-    finally
-      PathUtil.setDataRoot(prevRoot)
-      system.stopAll.attempt.void.unsafeRunSync()
-      os.remove.all(tmp)
-    end try
-  }
-
-  test("AC-T2: direct parent (caller == parentSessionId) is allowed to restart a Team member") {
-    val system = ActorSystem("ac-t2")
-    val tmp = os.temp.dir()
-    val prevRoot = PathUtil.dataRoot
-    PathUtil.setDataRoot(tmp / "data")
-    try
-      val program = for
-        _ <- nebflow.core.flow.TeamSessionRegistry.clear
-        resources <- mkResources(system, tmp, null)
-        managerSid = "manager-agent"
-        teamSid = "team-member-agent"
-        // Block 0 注册链（生产形态）：Manager 注册进 TeamSessionRegistry——
-        // Block 1 子树门经 managerAnchors 放行，v2 直接父语义继续成立。
-        _ <- nebflow.core.flow.TeamSessionRegistry.registerSession("inst-t2", "Manager", managerSid)
-        _ <- nebflow.core.flow.TeamSessionRegistry.registerSession("inst-t2", "member", teamSid)
-        _ <- nebflow.core.flow.TeamSessionRegistry.registerManager("inst-t2", managerSid)
-        // probe ref 充当 Team 成员 actor（Stop 被记录；isAlive 会超时 → 执行层
-        // 报「did not stop」——但权限层必须放行：错误不得含 read-only/denied）
-        probeRef <- system.spawn(
-          {
-            def loop: Behavior[AgentCommand] =
-              Behaviors.receiveMessage[AgentCommand](cmd => IO.pure(loop))
-            loop
-          },
-          teamSid
-        )
-        _ <- resources.agentRegistry.update(
-          _ ++ Map(
-            managerSid -> AgentRecord(managerSid, null, AgentKind.Team, "rootA", None),
-            teamSid -> AgentRecord(teamSid, probeRef, AgentKind.Team, "rootA", None, parentSessionId = managerSid)
-          )
-        )
-        res <- AgentControlTool.call(
-          JsonObject("action" -> "restart".asJson, "sessionId" -> teamSid.asJson, "reason" -> "parent-restart".asJson),
-          acCtx(resources, managerSid)
-        )
-      yield assert(
-        res.isLeft && !res.left.toOption.exists(m =>
-          m.message.contains("read-only") || m.message.contains("Permission denied") || m.message.contains("Self-guard")
-        ),
-        s"direct parent must pass the permission layer (execution-layer failure is fine), got $res"
-      )
-      program.unsafeRunSync()
-    finally
-      nebflow.core.flow.TeamSessionRegistry.clear.void.unsafeRunSync()
-      PathUtil.setDataRoot(prevRoot)
-      system.stopAll.attempt.void.unsafeRunSync()
-      os.remove.all(tmp)
-    end try
-  }
-
-  test("AC-T3: cross-rootSessionId restart is rejected") {
-    val system = ActorSystem("ac-t3")
-    val tmp = os.temp.dir()
-    val prevRoot = PathUtil.dataRoot
-    PathUtil.setDataRoot(tmp / "data")
-    try
-      val program = for
-        resources <- mkResources(system, tmp, null)
-        callerSid = "caller-other-root"
-        teamSid = "team-member-agent"
-        _ <- resources.agentRegistry.update(
-          _ ++ Map(
-            callerSid -> AgentRecord(callerSid, null, AgentKind.Team, "rootB", None),
-            teamSid -> AgentRecord(teamSid, null, AgentKind.Team, "rootA", None, parentSessionId = "manager-agent")
-          )
-        )
-        res <- AgentControlTool.call(
-          JsonObject("action" -> "restart".asJson, "sessionId" -> teamSid.asJson, "reason" -> "e2e".asJson),
-          acCtx(resources, callerSid)
-        )
-      yield assert(
-        res.left.toOption.exists(_.message.contains("Permission denied")),
-        s"cross-root restart must be rejected with Permission denied, got $res"
-      )
-      program.unsafeRunSync()
-    finally
-      PathUtil.setDataRoot(prevRoot)
-      system.stopAll.attempt.void.unsafeRunSync()
-      os.remove.all(tmp)
-    end try
-  }
+  // ── AC-T（v2 升级链 Team 权限分级，§5.3.3 / §7 验收 8）────────
+  // 团队功能删除批（team-feature-deletion-20261104）阶段 3：AC-T1 / AC-T2 / AC-T3
+  // 三条用例**整段删除**（作者裁定「AgentControl 的 team scope 整段删除」）。
+  //   - AC-T1 non-parent caller restarting a Team member ⇒ 子树门拒绝
+  //   - AC-T2 direct parent allowed to restart（Block 0 注册链 + managerAnchors）
+  //   - AC-T3 cross-rootSessionId restart ⇒ Permission denied
+  // 三者断言的权限分级（直接父 / Manager 子树 / root 桶）其判据源 =
+  // managerAnchors + 团队会话登记表的 manager/parent 映射，均已随 team scope 删除；
+  // 现口径 = `AgentKind.Team` 目标对**任何**调用者 fail-closed 显式拒绝
+  // （"Team targets are not manageable"），该口径由 AgentControlToolSpec 直接钉住。
+  // 删因：**team scope 能力已退役**（不是「跑不过」）。
 
 end AgentControlE2ESpec

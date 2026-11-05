@@ -119,6 +119,24 @@ jobs:
         # step / tooltip fact). Only shrinks; a new locale file tolerates zero.
         # Same logic locally: node scripts/check-self-explaining.mjs (or `make frontend-gates`)
         run: node scripts/check-self-explaining.mjs
+      - name: API route existence (frontend calls x gateway route registry)
+        # Route-existence sentinel (empty-state-must-not-lie batch, 2026-11-05, item 3).
+        # The 2026-11-05 incident: the `GET /api/conversations` route case was deleted
+        # by a mistargeted edit (`SocialRoutes.scala`, commit 6c1feea6d). The gateway
+        # answered 404, the frontend's catch swallowed it, and the message panel
+        # rendered "No conversations". NOTHING asserted "the frontend calls a route
+        # the backend no longer registers" - the backend compiled, the frontend type
+        # gate passed, every test was green.
+        # Judgement: static diff of every `/api/` string literal in web/js (comments
+        # stripped by syntax) against the gateway route registry (`*Routes.scala`
+        # patterns: `Root / "a" / id`, pathInfo prefixes, proxied subpath tables).
+        # Frontend-only path => RED. Plus a CRITICAL whitelist (conversations /
+        # history / attachments / upload / friends / groups / sessions) asserted
+        # with exact method+shape, and a stale-exemption check (an EXTERNAL entry the
+        # frontend no longer calls is itself RED - exemptions may only shrink).
+        # Offline and hermetic: pure source-text scan, no network, no credentials.
+        # Same logic locally: node scripts/check-api-routes.mjs (or `make frontend-gates`)
+        run: node scripts/check-api-routes.mjs
       - name: Design spec scale sync (spec table <-> token source)
         # design-scale gate (author order 2026-11-04: "把我们对圆角 边距 文字离边缘
         # 的距离 各文字的大小 写进spec和前端开发包"): the four scales (radius /
@@ -198,6 +216,31 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check src/main for user-specific identifiers
         run: bash scripts/check-user-knowledge.sh
+
+  plugin-seed-parity:
+    name: Plugin seed parity (approved standard present in the seed tree)
+    timeout-minutes: 10
+    # Seed-parity gate (2026-11-05 seed-parity batch). Why it exists: three
+    # batches of approved wiki-docs rules (clause 6 images-live-with-the-doc,
+    # clauses 7/8 typography + abbreviations, R6-R9 + the abbreviation
+    # allowlist block + the 49-case regression fixture) shipped only in the
+    # RUNNING instance, while the repo seed stayed at the five-clause era.
+    # The seed is what a fresh install gets (SeedService.seedPlugin copies the
+    # whole directory from the classpath), so a stale seed hands every new
+    # home - and every machine - an obsolete standard, and a re-approve makes
+    # the digest arbitration overwrite the instance back to it.
+    # CI has no <data-root>/plugins, so this step runs the SELF-CHECK leg only:
+    # the seed itself must carry R1-R9, the allowlist markers, clauses 1-8 and
+    # the fixture (which is executed: >= 49 cases, all green). The instance vs
+    # seed drift leg needs a live instance and runs locally / pre-release.
+    # Same logic locally: tools/plugin-seed-parity --self-check (or
+    # `make plugin-seed-parity`, which also runs the drift leg when the
+    # instance is present).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Seed self-check (R1-R9 + allowlist block + fixture case count)
+        run: python3 tools/plugin-seed-parity --self-check
 
   dead-logging-gate:
     name: Dead Logging Gate
@@ -342,6 +385,40 @@ jobs:
       - name: Compile
         shell: bash
         run: sbt compile
+
+  api-routes-live:
+    # 路由存在性哨兵 · 运行期腿（empty-state-must-not-lie 批 · 件三②，2026-11-05）。
+    # 静态腿（上面 `API route existence (frontend calls x gateway route registry)`）判
+    # 「源码里注册了没」；这一条判「启动后真的答不答」——后者才是 2026-11-05 事故的
+    # 现场判据：`GET /api/conversations` 的 case 被误删后，前端拿到 404、面板渲染成
+    # 「暂无会话」，而当时所有静态门禁与测试全绿。
+    # 判据：沙箱实例起来后逐条打前端调用面（清单由 `check-api-routes.mjs --emit-paths`
+    # 单一真源给出），任一路径全 method 404 ⇒ 红。
+    # 隔离：数据根 mktemp（--home + STAND_HOME + NEBFLOW_HOME 三重注入）、端口 8097，
+    # 拒绝 6138/8080/<1024；端口已占用则拒绝复用；只 kill 自己 spawn 的进程组。
+    # Linux-only（脚本的端口复核用 lsof）：Windows runner 走静态腿已足够。
+    name: API route existence (live)
+    timeout-minutes: 40
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 23
+          cache: sbt
+      - name: Setup sbt
+        shell: bash
+        run: |
+          curl -fL "https://maven.aliyun.com/repository/central/org/scala-sbt/sbt-launch/1.10.10/sbt-launch-1.10.10.jar" -o /tmp/sbt-launch.jar
+          mkdir -p /tmp/sbt-bin
+          printf '#!/bin/bash\nexec java $SBT_OPTS -XX:+UseParallelGC -XX:+ExitOnOutOfMemoryError -jar /tmp/sbt-launch.jar "$@"\n' > /tmp/sbt-bin/sbt
+          chmod +x /tmp/sbt-bin/sbt
+          echo "/tmp/sbt-bin" >> $GITHUB_PATH
+      - name: Boot sandbox instance and probe every frontend-called route
+        shell: bash
+        # Same logic locally: node scripts/check-api-routes-live.mjs (or `make api-routes-live`)
+        run: node scripts/check-api-routes-live.mjs --port 8097 --timeout 1200
 
   test:
     name: Test

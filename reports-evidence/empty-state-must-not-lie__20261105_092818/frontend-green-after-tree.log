@@ -1,0 +1,27 @@
+(node:38575) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/delegate-empty-state-honest/src/main/resources/web/js/locales/zh-CN.js is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-empty-state-honest/package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+# served tree: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-empty-state-honest/src/main/resources/web
+# needles: empty="暂无会话" fail="会话列表加载失败" retry="重试"
+PASS  L1-a 会话列表确实被请求了（失败不是「没发请求」）  — listResponses=500,500
+PASS  L1-b 500 ⇒ **不渲染**空态文案「暂无会话」  — {"rows":0,"err":1,"retry":1,"empty":0,"auth":0}
+PASS  L1-c 500 ⇒ 渲染错误态（.fm-list-error + 重试键）  — {"rows":0,"err":1,"retry":1,"empty":0,"auth":0}
+PASS  L1-d 错误态文案 = 状态事实（`messages.listLoadFailed`）  — {"rows":0,"err":1,"retry":1,"empty":0,"auth":0}
+PASS  L1-e 错误态先于登录态（NebLink 已登录时不落到登录引导）  — {"rows":0,"err":1,"retry":1,"empty":0,"auth":0}
+PASS  L2-a 错误态带可点的重试键  — {"rows":0,"err":1,"retry":1,"empty":0,"auth":0}
+PASS  L2-b 重试确实重新取了会话列表  — listResponses=200
+PASS  L2-c 重试成功 ⇒ 会话行上屏  — {"rows":1,"err":0,"retry":0,"empty":0,"auth":0}
+PASS  L2-d 重试成功 ⇒ 错误态整块消失（不残留）  — {"rows":1,"err":0,"retry":0,"empty":0,"auth":0}
+PASS  L2-e 全程零 page error
+PASS  L3-a 200 + [] ⇒ 空态文案出现（这是唯一允许它出现的条件）  — {"rows":0,"err":0,"retry":0,"empty":1,"auth":0}
+PASS  L3-b 200 + [] ⇒ 错误态**不**在场（空态与错误态互斥）  — {"rows":0,"err":0,"retry":0,"empty":1,"auth":0}
+PASS  L3-c 空态那次请求的确是 200  — listResponses=200,200
+PASS  L4-a 网络失败 ⇒ **不渲染**空态文案  — {"rows":0,"err":1,"retry":1,"empty":0,"auth":0}
+PASS  L4-b 网络失败 ⇒ 渲染错误态  — {"rows":0,"err":1,"retry":1,"empty":0,"auth":0}
+PASS  L5-a 404（路由消失）⇒ **不渲染**空态文案 —— 本次事故的复现位  — {"rows":0,"err":1,"retry":1,"empty":0,"auth":0}
+PASS  L5-b 404 ⇒ 渲染错误态（可见、可重试）  — {"rows":0,"err":1,"retry":1,"empty":0,"auth":0}
+PASS  L5-c 404 那次请求确实是 404  — listResponses=404,404
+PASS  L6 错误态不粘滞且可重复进入（失败→成功→再失败）  — failed="{\"rows\":0,\"err\":1,\"retry\":1,\"empty\":0,\"auth\":0}" recovered="{\"rows\":1,\"err\":0,\"retry\":0,\"empty\":0,\"auth\":0}" again="{\"rows\":0,\"err\":1,\"retry\":1,\"empty\":0,\"auth\":0}"
+
+ALL PASS

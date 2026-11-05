@@ -1,0 +1,27 @@
+PASS  L0 页面零 pageerror
+PASS  L1a 三面计算背景 α = 1（气泡 / 用户气泡 / 输入条：不再透出底层文档）  — {"bub":"rgb(22, 26, 35)","user":"rgb(22, 26, 35)","input":"rgb(22, 26, 35)"}
+PASS  L1b 不透明底 = --glass-bg 压平在 --color-bg 上的合成值（同色收 α，零新色相）  — {"composite":{"r":22,"g":26,"b":35},"glassBgOpaque":{"r":22,"g":26,"b":35,"a":1},"glassBg":{"r":24,"g":28,"b":38,"a":0.68},"paper":{"r":19,"g":22,"b":28,"a":1},"cvBgOpaque":{"r":22,"g":26,"b":35,"a":1}}
+PASS  L1c 「Header 同款」逐项：blur 参数与 #header 相等 + 描边同 token + 顶缘折射线层同 token 在场  — {"bubBlur":"blur(24px) saturate(1.15)","inputBlur":"blur(24px) saturate(1.15)","headerBlur":"blur(24px) saturate(1.15)","bubBorder":"rgba(255, 255, 255, 0.06)","headerBorder":"rgba(255, 255, 255, 0.06)","headerRefraction":"linear-gradient(90deg, rgba(0, 0, 0, 0) 10%, rgba(91, 127, 1","bubRefraction":"linear-gradient(90deg, rgba(0, 0, 0, 0) 10%, rgba(91, 127, 1","inputRefractionH":"1px"}
+PASS  L2 正文与其最终合成背景的对比度 ≥ 4.5:1（气泡 + 输入条，WCAG AA）  — {"bub":14.45,"input":14.45,"bubBg":{"r":22,"g":26,"b":35,"a":1}}
+PASS  L3 面板内部像素与背后内容无关（最坏情况背景探针亮/灭两帧：差分像素 0、最大通道差 ≤2）  — {"frames":[{"px":42336,"maxDiff":0,"over":0},{"px":10320,"maxDiff":0,"over":0}]}
+PASS  L4a 把手 DOM 零装饰子节点（旧 .ds-resize-grip 三枚 L 形 <i> 退役；DOM 命中数 = 0）  — {"childCount":0,"gripHits":0}
+PASS  L4b 可见描边只剩一条直角弧（::before：上/左 2px，右/下 0，18px 臂长 + 7px 圆角）  — {"top":"2px","left":"2px","right":"0px","bottom":"0px","radius":"7px","width":"18px","height":"18px"}
+PASS  L4c 热区不回退（把手命中盒 ≥44×44，HIG 2.5.5）  — {"w":44,"h":44}
+PASS  L4d 形态单源面零 .ds-resize-grip 选择器残留（源码面）  — askCss hits=0
+PASS  L5a --ask-fade-h 短档：≤16px 且 = 12px（桌面档，规范值）  — fadeH=12px
+PASS  L5b mask 首段终停与 token 同值（transparent 0 → 全实 @--ask-fade-h）  — {"stops":[{"color":"rgba(0, 0, 0, 0)","v":0,"unit":"px"},{"color":"rgb(232, 234, 237)","v":12,"unit":"px"},{"color":"rgb(232, 234, 237)","v":100,"unit":"%"},{"color":"rgba(0, 0, 0, 0)","v":100,"unit":"%"}],"fadeH":"12px"}
+PASS  L5c 渐隐只占列顶那一条、不吃正文可读区（列 padding-top ≥ fade；静态首条气泡顶 ≥ 列顶 + fade）  — {"padTop":"18px","fadeH":"12px","bubTop":573.4375,"colTop":509.84375}
+PASS  L5d 底缘收口锚在列自己的盒上（mask 停点含 calc(100% - …)，且尾部渐出落在列 padding-bottom 之内）  — {"mask":"0px, rgb(232, 234, 237) 12px, rgb(232, 234, 237) calc(100% - 12px), rgba(0, 0, 0, 0) 100%)","padBottom":"12px","tail":"12px"}
+PASS  L6a 桌面三档（1920 / 1440 / 1024）：输入条顶边 − 列底边 恒 = dock row-gap（6px）  — [{"tier":"desktop-1920","gap":6,"expect":6},{"tier":"desktop-1440","gap":6,"expect":6},{"tier":"desktop-1024","gap":6,"expect":6}]
+PASS  L6b 桌面三档：输入条顶边 − 最新气泡底边 恒 = row-gap + --ask-col-tail（18px，无「一大段空白」）  — [{"tier":"desktop-1920","gap":18,"expect":18},{"tier":"desktop-1440","gap":18,"expect":18},{"tier":"desktop-1024","gap":18,"expect":18}]
+PASS  L6c 缓存变量零残留（--ask-trunc-h / --ask-trunc-from / --ask-col-overhang 三档全空 + dock 无内联尺寸样式）  — [{"truncH":"","truncFrom":"","overhang":"","inlineStyle":""},{"truncH":"","truncFrom":"","overhang":"","inlineStyle":""},{"truncH":"","truncFrom":"","overhang":"","inlineStyle":""}]
+PASS  L6e 列内无整段透明带：mask 归零线落列底 --ask-col-tail 之内（改前 = 列中部 96px ⇒ 空白带 220px）  — [{"tier":"desktop-1920","colH":237.2,"zeroLine":237.2,"blankBand":0,"tail":12},{"tier":"desktop-1440","colH":237.2,"zeroLine":237.2,"blankBand":0,"tail":12},{"tier":"desktop-1024","colH":237.2,"zeroLine":237.2,"blankBand":0,"tail":12}]
+PASS  L6d askDock.js 代码面零 syncTruncLine 定义/调用、零截断变量写入（状态机整体退役，不是刷新得更勤）  — {"decl":false,"calls":0,"truncVar":false}
+PASS  L6h 手机两档（375 / 768）：同两条几何判据（列底贴输入条 row-gap、内容底贴 18px 净空）  — [{"tier":"mobile-375","vis":true,"gap":6,"expect":6,"bub":18},{"tier":"mobile-768","vis":true,"gap":6,"expect":6,"bub":18}]
+PASS  L6i 手机两档列内无整段透明带（归零线落列底 tail 之内）  — [{"tier":"mobile-375","colH":208.8,"zeroLine":208.8,"blankBand":0},{"tier":"mobile-768","colH":188,"zeroLine":188,"blankBand":0}]
+PASS  L6f 手机档 --ask-fade-h 同为 12px（短渐隐不按腿分叉）  — ["12px","12px"]
+PASS  L6g 手机两档缓存变量同为零残留  — [{"truncH":"","truncFrom":"","overhang":"","inlineStyle":""},{"truncH":"","truncFrom":"","overhang":"","inlineStyle":""}]
+PASS  L7 亮档：三面 α = 1 且对比度 ≥ 4.5:1（双档同一律）  — {"bub":"rgb(250, 251, 252)","input":"rgb(250, 251, 252)","bubRatio":16.08,"inputRatio":16.08}
+PASS  L8 亮档：面板内部像素与背后内容无关（同 L3 判据）  — [{"maxDiff":0,"over":0},{"maxDiff":0,"over":0}]
+
+after: PASS=25 FAIL=0

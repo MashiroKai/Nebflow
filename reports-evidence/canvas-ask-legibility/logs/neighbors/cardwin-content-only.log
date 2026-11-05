@@ -1,0 +1,29 @@
+PASS  C1-0 文件卡入口在挂：卡头在挂 + 胶囊右座 .canvas-pop-btn 可用（件1 回归；右键菜单入口同时保留）  — {"hasHeader":true,"popIn":true}
+PASS  C1-1 打开链 = `/?card-window=1…`（canonical `/`，别名不在链上）  — http://127.0.0.1:8331/?card-window=1&path=%2Ftmp%2Fcw-content-only%2Falpha.md&title=alpha.md
+PASS  C1-2 首帧即卡面：html.card-window-boot 在挂（pre-paint 门）+ body.card-window 运行态  — {"htmlBoot":true,"bodyMode":true}
+PASS  C1-3 卡窗真容：readFile 通路渲染内容物（非骨架/非空）  — alpha
+内容物收口样本正文 v1
+
+PASS  C1-4 引导态面随真容即撤（防白屏链保留）
+PASS  C1-5 全功能 UI 面全部不在挂（display:none × 5）  — {"activity":"none","sidebar":"none","header":"none","chat":"none","input":"none"}
+PASS  C1-6 卡窗零 JS 错误
+PASS  C1-7 主窗零 JS 错误
+PASS  P1-1 面板页签：胶囊右座 .canvas-pop-btn 在挂但**禁用** + title/aria-label = 内容物收口提示（判据不降）  — {"popIn":true,"disabled":true,"hint":"仅文档、文件等内容物可独立窗口打开，功能面板不支持。","label":"仅文档、文件等内容物可独立窗口打开，功能面板不支持。"}
+PASS  P1-2 面板环卡不建独立钮（.deck-card-pop 缺席；文件环卡有钮的语义不回归）  — [{"tab":"plugins","popBtn":false}]
+PASS  P1-3 面板页签右键菜单：「在独立窗口打开」= 禁用态项（class disabled + aria-disabled）  — {"text":"在独立窗口打开","disabled":true,"ariaDisabled":"true","title":"仅文档、文件等内容物可独立窗口打开，功能面板不支持。"}
+PASS  P1-4 禁用态带提示文案（title = 内容物收口提示）  — 仅文档、文件等内容物可独立窗口打开，功能面板不支持。
+PASS  P1-5 点击禁用项 = 提示 toast + 零弹窗（无独立窗产生）  — toast="仅文档、文件等内容物可独立窗口打开，功能面板不支持。" pages 1→1
+PASS  P1-6 主窗零 JS 错误
+PASS  P2-1 别名深链归一：最终 URL pathname = `/`（别名只是跳板，query 原样保留）  — http://127.0.0.1:8331/?card-window=1&path=%2Ftmp%2Fcw-content-only%2Falpha.md&title=alpha.md
+PASS  P2-2 归一后首帧门照常在挂（html.card-window-boot）
+PASS  P2-3 别名跳板落点 = 内容物真容（卡窗链可用性不回归）  — alpha
+内容物收口样本正文 v1
+
+PASS  P3-1[dark] 无 path 深链：即刻失败卡（<3s，非 12s 超时）+ 壳隐藏  — {"state":"failed","hint":"该独立窗链接未携带内容路径，仅文档、文件等内容物可独立打开。","retry":"flex","shellHidden":true}
+PASS  P3-2[dark] 失败文案 = 内容物收口专用提示（非一般失败/登录形态）  — 该独立窗链接未携带内容路径，仅文档、文件等内容物可独立打开。
+PASS  P3-3[dark] 零 JS 错误
+PASS  P3-1[light] 无 path 深链：即刻失败卡（<3s，非 12s 超时）+ 壳隐藏  — {"state":"failed","hint":"该独立窗链接未携带内容路径，仅文档、文件等内容物可独立打开。","retry":"flex","shellHidden":true}
+PASS  P3-2[light] 失败文案 = 内容物收口专用提示（非一般失败/登录形态）  — 该独立窗链接未携带内容路径，仅文档、文件等内容物可独立打开。
+PASS  P3-3[light] 零 JS 错误
+
+23 PASS / 0 FAIL

@@ -1,0 +1,86 @@
+{
+  "phase": "after",
+  "tiers": [
+    {
+      "tier": "desktop-1920",
+      "vp": {
+        "w": 1920,
+        "h": 1080
+      },
+      "dockH": 301.2,
+      "colH": 237.2,
+      "rowGap": 6,
+      "tail": 12,
+      "fadeH": "12px",
+      "inputToColBottom": 6,
+      "inputToLastBub": 18,
+      "zeroLine": 237.2,
+      "blankBand": 0,
+      "expectCol": 6,
+      "expectBub": 18,
+      "legacy": {
+        "truncH": "",
+        "truncFrom": "",
+        "overhang": "",
+        "inlineStyle": ""
+      },
+      "gapOk": true,
+      "blankOk": true,
+      "visibleOk": true
+    },
+    {
+      "tier": "desktop-1440",
+      "vp": {
+        "w": 1440,
+        "h": 900
+      },
+      "dockH": 301.2,
+      "colH": 237.2,
+      "rowGap": 6,
+      "tail": 12,
+      "fadeH": "12px",
+      "inputToColBottom": 6,
+      "inputToLastBub": 18,
+      "zeroLine": 237.2,
+      "blankBand": 0,
+      "expectCol": 6,
+      "expectBub": 18,
+      "legacy": {
+        "truncH": "",
+        "truncFrom": "",
+        "overhang": "",
+        "inlineStyle": ""
+      },
+      "gapOk": true,
+      "blankOk": true,
+      "visibleOk": true
+    },
+    {
+      "tier": "desktop-1024",
+      "vp": {
+        "w": 1024,
+        "h": 900
+      },
+      "dockH": 301.2,
+      "colH": 237.2,
+      "rowGap": 6,
+      "tail": 12,
+      "fadeH": "12px",
+      "inputToColBottom": 6,
+      "inputToLastBub": 18,
+      "zeroLine": 237.2,
+      "blankBand": 0,
+      "expectCol": 6,
+      "expectBub": 18,
+      "legacy": {
+        "truncH": "",
+        "truncFrom": "",
+        "overhang": "",
+        "inlineStyle": ""
+      },
+      "gapOk": true,
+      "blankOk": true,
+      "visibleOk": true
+    }
+  ]
+}

@@ -32,6 +32,8 @@ object ConfigService:
   // first-touched dataRoot (test isolation) and skip the legacy fallback.
   private def configPath = PathUtil.configJsonReadPath(PathUtil.dataRoot)
 
+  private val logger = nebflow.shared.NebflowLogger.forName("nebflow.config")
+
   def isConfigured: IO[Boolean] = IO.blocking {
     if !os.exists(configPath) then false
     else
@@ -239,12 +241,31 @@ object ConfigService:
               .flatMap {
                 case Left(e) => IO.pure(Left(e.getMessage))
                 case Right(_) =>
-                  // Reference cleanup across agent.json (all three layers) and
-                  // model presets: pure deletes scrub, renames rewrite old→new.
-                  scrubAgentModelRefs(pureDeletes) *>
-                    rewriteAgentModelRefs(renames) *>
-                    scrubPresetRefs(pureDeletes) *>
-                    rewritePresetRefs(renames).as(Right(()))
+                  // 删除落地校验（provider-config-vs-runtime-mismatch 批）：
+                  // 无锁的旁路写者可能与刚才这次合并交叉，把已删 provider 写回。
+                  // 静默容忍 = 「界面上删了、运行期还在调」——本批的原始病症。
+                  // 因此回读核对，未落地即**上浮失败**（调用方回错误帧给界面）。
+                  val survived = undeletedProviders(pureDeletes)
+                  if survived.nonEmpty then
+                    IO.delay(
+                      logger.warnSync(
+                        s"Provider delete did NOT land for [${survived.mkString(", ")}] — " +
+                          "a concurrent nebflow.json writer restored them; the runtime will keep " +
+                          "using them until a successful delete. Re-save the settings to retry."
+                      )
+                    ).attempt *> IO.pure(
+                      Left(
+                        s"Provider deletion not persisted for: ${survived.mkString(", ")} " +
+                          "(a concurrent config write restored them — retry the removal)"
+                      )
+                    )
+                  else
+                    // Reference cleanup across agent.json (all three layers) and
+                    // model presets: pure deletes scrub, renames rewrite old→new.
+                    scrubAgentModelRefs(pureDeletes) *>
+                      rewriteAgentModelRefs(renames) *>
+                      scrubPresetRefs(pureDeletes) *>
+                      rewritePresetRefs(renames).as(Right(()))
               }
         end if
       }
@@ -727,6 +748,40 @@ object ConfigService:
       .flatMap(_.hcursor.downField("llm").downField("providers").as[Option[Map[String, Json]]].toOption.flatten)
       .map(_.collect { case (name, v) if v.isNull => name }.toList)
       .getOrElse(Nil)
+
+  /**
+   * 删除落地校验（provider-config-vs-runtime-mismatch 批，2026-11-05 作者令）。
+   *
+   * 病：`nebflow.json` 有多名**绕过 `writeLocked`** 的手术式写者
+   * （`PluginRegistry.mutateNebflowJson`、`PluginDispatchPolicy`、
+   * `PluginBlockPolicy`、`SocialChannels`、`FeishuCredentials` 等，均为
+   * 「读全量 → 改自己的子树 → 原子写回」）。它们与 `updateConfig` 的
+   * read-modify-write 无锁交叉 ⇒ 读到旧底稿的一方整文件覆写时，把刚删掉的
+   * provider **原样写回**（lost update）。今日病例：设置页删 kimi → 磁盘仍
+   * 有 kimi ⇒ 运行期按配置照常调用已被"删掉"的 provider，界面上却显示已删。
+   *
+   * 本函数 = 写后立刻回读、逐名核对「声明删除的 provider 是否真的不在了」。
+   * 返回仍存在于磁盘的名字列表（空 = 落地成功）。调用方据此**上浮失败**
+   * （fail-loud，不许静默沿用旧快照）。
+   */
+  private[nebflow] def undeletedProviders(declared: List[String]): List[String] =
+    if declared.isEmpty then Nil
+    else
+      val onDisk =
+        if !os.exists(configPath) then Set.empty[String]
+        else
+          parse(os.read(configPath)).toOption
+            .flatMap(
+              _.hcursor
+                .downField("llm")
+                .downField("providers")
+                .as[Option[Map[String, Json]]]
+                .toOption
+                .flatten
+            )
+            .map(_.keySet)
+            .getOrElse(Set.empty)
+      declared.filter(onDisk.contains)
 
   /** Every agent.json across standalone / team / flow layers. */
   private def allAgentJsonFiles(): List[os.Path] =

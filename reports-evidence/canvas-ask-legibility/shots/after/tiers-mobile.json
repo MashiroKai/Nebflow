@@ -1,0 +1,55 @@
+{
+  "phase": "after",
+  "mtiers": [
+    {
+      "tier": "mobile-375",
+      "vp": {
+        "w": 375,
+        "h": 812
+      },
+      "visible": true,
+      "colH": 208.8,
+      "rowGap": 6,
+      "tail": 12,
+      "fadeH": "12px",
+      "zeroLine": 208.8,
+      "blankBand": 0,
+      "inputToColBottom": 6,
+      "inputToLastBub": 18,
+      "legacy": {
+        "truncH": "",
+        "truncFrom": "",
+        "overhang": "",
+        "inlineStyle": ""
+      },
+      "gapOk": true,
+      "blankOk": true,
+      "visibleOk": true
+    },
+    {
+      "tier": "mobile-768",
+      "vp": {
+        "w": 768,
+        "h": 800
+      },
+      "visible": true,
+      "colH": 188,
+      "rowGap": 6,
+      "tail": 12,
+      "fadeH": "12px",
+      "zeroLine": 188,
+      "blankBand": 0,
+      "inputToColBottom": 6,
+      "inputToLastBub": 18,
+      "legacy": {
+        "truncH": "",
+        "truncFrom": "",
+        "overhang": "",
+        "inlineStyle": ""
+      },
+      "gapOk": true,
+      "blankOk": true,
+      "visibleOk": true
+    }
+  ]
+}

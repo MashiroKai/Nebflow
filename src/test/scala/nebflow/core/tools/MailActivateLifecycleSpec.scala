@@ -18,7 +18,6 @@ import nebflow.actor.{
 } // W1 shim: main exported these from nebflow.agent (protocol/AgentState); the merge moved them to actor
 import nebflow.core.FileChangeTracker
 import nebflow.core.compact.HistoryArchiver
-import nebflow.core.flow.TeamSessionRegistry
 import nebflow.core.task.FileTaskStore
 import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
@@ -179,7 +178,7 @@ class MailActivateLifecycleSpec extends FunSuite:
     assertEquals(refOpt.isDefined, true)
   }
 
-  test("#1 death watch clears actorMap, agentRegistry and busy on victim death") {
+  test("#1 death watch drops the agentRegistry record on victim death") {
     val system = ActorSystem(s"mail-dw-${java.util.UUID.randomUUID().toString.take(6)}")
     val tmp = os.temp.dir(prefix = "mail-deathwatch")
     val llm = new RecordingLlm
@@ -193,67 +192,33 @@ class MailActivateLifecycleSpec extends FunSuite:
         Behaviors.receiveMessage[AgentCommand](_ => IO.pure(Behaviors.stopped[AgentCommand])),
         s"victim-$sid"
       )
-      _ <- TeamSessionRegistry.registerActor(sid, victim, resources, rootSessionId = sid)
-      _ <- TeamSessionRegistry.markBusy(sid)
+      // 团队功能删除批阶段 3：夹具从已退役的登记表 actorMap 换成统一 agentRegistry
+      // （本看护现在只负责这一份权威记录的卫生：死则删记录）。
+      _ <- resources.agentRegistry.update(
+        _ + (sid -> AgentRecord(sessionId = sid, ref = victim, kind = AgentKind.Team, rootSessionId = sid))
+      )
       _ <- system.spawn(
         MailTool.teamAgentDeathWatch(sid, "victim", victim, resources),
         s"watcher-$sid"
       )
       _ <- victim ! AgentCommand.Interrupt()
-      _ <- waitUntil(10.seconds)(TeamSessionRegistry.getRunningActor(sid).map(_.isEmpty))
-      busy <- TeamSessionRegistry.isBusy(sid)
+      _ <- waitUntil(10.seconds)(resources.agentRegistry.get.map(_.get(sid).isEmpty))
       registryEntry <- resources.agentRegistry.get.map(_.get(sid))
-    yield (busy, registryEntry)
+    yield registryEntry
 
-    val (busy, registryEntry) = io.unsafeRunSync()
-    assert(!busy, "busy flag leaked past actor death")
+    val registryEntry = io.unsafeRunSync()
     assert(registryEntry.isEmpty, "agentRegistry entry leaked past actor death")
   }
 
   // ---- Block 0 registration chain (supervision trio §B2) ----
 
-  test("Block 0: member activation stamps parentSessionId=Manager sid + rootSessionId=mount root") {
-    val system = ActorSystem(s"mail-rc-${java.util.UUID.randomUUID().toString.take(6)}")
-    val tmp = os.temp.dir(prefix = "mail-regchain")
-    fixtureTeam(tmp)
-    val llm = new RecordingLlm
-
-    val io = for
-      sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
-      meta <- sessionStore.createSession(
-        "lifecyc/member",
-        agentName = Some("member"),
-        flowName = Some("lifecyc")
-      )
-      // Registry state as the mount would leave it: instance=lifecyc has a
-      // Manager (mgr-1) and was mounted from root-1.
-      _ <- TeamSessionRegistry.clear
-      _ <- TeamSessionRegistry.registerSession("lifecyc", "member", meta.id)
-      _ <- TeamSessionRegistry.registerSession("lifecyc", "Manager", "mgr-1")
-      _ <- TeamSessionRegistry.registerManager("lifecyc", "mgr-1")
-      _ <- TeamSessionRegistry.registerParentSession("lifecyc", "root-1")
-      resources <- mkResources(system, tmp, llm, sessionStore)
-      _ <- MailTool.activateAgent(meta.id, resources, system, ToolContext(projectRoot = os.pwd.toString))
-      memberRec <- resources.agentRegistry.get.map(_.get(meta.id))
-      // registerActor 4-arg (resumeInterruptedAgent path): the MANAGER branch
-      // of parentForRecord — parent = mounting root.
-      probeRef <- system.spawn(
-        Behaviors.receiveMessage[nebflow.actor.AgentCommand](_ => IO.pure(Behaviors.stopped)),
-        s"mgr-probe-${meta.id.take(6)}"
-      )
-      _ <- TeamSessionRegistry.registerActor("mgr-1", probeRef, resources, "root-1")
-      mgrRec <- resources.agentRegistry.get.map(_.get("mgr-1"))
-      _ <- TeamSessionRegistry.clear
-    yield (memberRec, mgrRec)
-
-    val (memberRec, mgrRec) = io.unsafeRunSync()
-    assert(memberRec.isDefined, "member was not registered in agentRegistry")
-    assertEquals(memberRec.get.parentSessionId, "mgr-1")
-    assertEquals(memberRec.get.rootSessionId, "root-1")
-    assert(mgrRec.isDefined, "registerActor 4-arg did not write the AgentRecord")
-    assertEquals(mgrRec.get.parentSessionId, "root-1")
-    assertEquals(mgrRec.get.rootSessionId, "root-1")
-  }
+  // Block 0 registration chain —— 团队功能删除批（team-feature-deletion-20261104）
+  // 阶段 3 删除。原用例断言 Mail 冷激活要在统一注册表里盖「parentSessionId=Manager
+  // sid + rootSessionId=挂载根」两戳，其状态源正是团队会话登记表的 managerMap /
+  // parentSessionMap（mount 时写入）。登记表本体已删 ⇒ 这两个戳的语义源不存在：
+  // 激活记录的 root 锚点改为**调用方会话的 root 桶**（`ctx.rootSessionId`），
+  // parent 收敛为「激活方会话」。
+  // 删因：**团队注册链（Manager / parentSession 映射）已退役**（不是「跑不过」）。
 
   // ---- R2 腿③（2026-09-12）：分发器身份发 root 不触发激活路径 ----
 
