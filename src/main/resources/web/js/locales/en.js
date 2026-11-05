@@ -2156,6 +2156,16 @@ export default {
   'canvas.pan': 'Pan (or hold Space)',
   'canvas.a11yZoomLevel': 'Zoom %d%', // mobile gesture batch: mobile-layer image viewer aria-live zoom level (spec §2.8)
   'canvas.imgFailed': 'Failed',
+  // image-in-doc batch (author report 2026-11-05 "the document only shows paths"):
+  // a missing image gets an explicit placeholder (reason + original path).
+  'canvas.imgFailTitle': 'Image failed to load',
+  'canvas.imgFailMissing': 'File not found (HTTP {status})',
+  'canvas.imgFailDenied': 'No read access — ticket rejected (HTTP {status})',
+  'canvas.imgFailBusy': 'Service busy (HTTP {status})',
+  'canvas.imgFailBadPath': 'Invalid path (HTTP {status})',
+  'canvas.imgFailUnsupported': 'This type is not served as image bytes (HTTP {status})',
+  'canvas.imgFailUnreachable': 'Cannot read this image (invalid path or no permission)',
+  'canvas.imgFailUnknown': 'Read failed (HTTP {status})',
   'canvas.closeTab': 'Close tab',
   'canvas.stackToggle': 'Stacked cards (wheel / vertical drag to switch · click front card to bring in · swipe away to close)',
   'canvas.noRef': 'This tab cannot be referenced',

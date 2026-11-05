@@ -2138,7 +2138,46 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
 .canvas-md-viewer a { color: var(--color-primary); }
 .canvas-md-viewer hr { border: none; border-top: 1px solid var(--color-border); margin: var(--ds-space-2) 0; }
 .canvas-md-viewer strong { font-weight: 600; }
-.canvas-md-viewer img { max-width: 100%; border-radius: var(--ds-radius-input); }
+/* ── 文档里放图批（作者报障 2026-11-05「文档里只有路径 图片没渲染出来」）──
+   1) 图片尺寸：默认不超过内容列宽（max-width:100%）、保持比例（height:auto 让
+      authored 的 height 属性也按比例缩、object-fit:contain 不裁切）。「点开看
+      原图」= 既有 lightbox 腿（utils.js 给每枚 markdown 图片加 .nf-zoom-img，
+      lightbox.js initLightbox 的文档级委托监听开大图）——不新增第二套。 */
+.canvas-md-viewer img {
+  max-width: 100%;
+  height: auto;
+  object-fit: contain;
+  border-radius: var(--ds-radius-input);
+}
+
+/*   2) 取不到图 ⇒ 明确失败占位（原因文案 + 原路径原文），绝不留白。
+      形态与 nf-fence-error（mermaid.css，围栏失败态）同族：同一个 --sapphire-edge
+      底 + 描边 + 圆角 + 字档，读作「这里本来有张图，它没取到」。 */
+.nf-md-img-fail {
+  display: block;
+  border: 1px solid var(--sapphire-edge-strong);
+  border-radius: var(--ds-radius-input);
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
+  background: var(--sapphire-edge);
+  margin: var(--ds-space-2) 0;
+}
+.nf-md-img-fail-title {
+  font-size: var(--ds-fs-hint);
+  font-weight: 500;
+  color: var(--color-danger);
+}
+.nf-md-img-fail-reason {
+  margin-top: var(--ds-space-half);
+  font-size: var(--ds-fs-hint);
+  color: var(--color-text-muted);
+}
+.nf-md-img-fail-path {
+  display: block;
+  margin-top: var(--ds-space-1);
+  font-size: var(--ds-fs-hint);
+  color: var(--color-text-muted);
+  word-break: break-all;
+}
 
 /* ── EPUB Reader — paginated ──
    P0 止血批（设计稿 20261030 §1.2/§2.1/§6）：三主题档（data-epub-theme）+
