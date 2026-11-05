@@ -139,6 +139,9 @@ class MergeQueueSpec extends CatsEffectSuite:
         parentSessionId = "nebula-root",
         description = s"task for $delegateId",
         readyAt = readyAt,
+        // 宣告闸批 2026-11-04：属主宣告在案（`delegate_report(category="merge")`）——授窗前提
+        declaredAt = Some(1_000L),
+        declareSource = Some(nebflow.core.delegate.MergeDeclaration.Source.ReportMerge),
         channelKind = "internal",
         internal = Some(MergeQueue.InternalLeg(child, sup))
       )
@@ -601,6 +604,9 @@ class MergeQueueSpec extends CatsEffectSuite:
         parentSessionId = "nebula-root",
         description = "legacy",
         readyAt = 1L,
+        // 宣告闸批 2026-11-04：本腿测「R5 前存量账面」形态 ⇒ 宣告在案（另一条判据）
+        declaredAt = Some(1_000L),
+        declareSource = Some(nebflow.core.delegate.MergeDeclaration.Source.ReportMerge),
         channelKind = "internal"
       )
       _ <- IO { MergeQueue.seedMemberForTest(legacy) } // 仅账本——无通道镜像
