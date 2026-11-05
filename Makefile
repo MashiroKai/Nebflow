@@ -82,7 +82,11 @@ quality-gate:
 # 但**本地**这条腿没有它 —— 断环的人跑 `make check` 看不到读数，存量环就是这么红着
 # 过夜的（CI 侧实证见批报告）。CI 那条腿照旧，这里补的是本地防回退。
 # 只跑前端门禁：`make frontend-gates`；全量静态检查：`make check`。
-FRONTEND_GATES := design-tokens msgstyle self-explaining circular fixture-secrets
+# api-routes 入列（empty-state-must-not-lie 批 · 件三，2026-11-05）：2026-11-05 事故
+# = 后端把 `GET /api/conversations` 的 case 误删，前端 404 被吞成「暂无会话」，
+# **没有任何断言发现「前端调了但后端没有」**。本闸静态对照两侧（前端 /api 字面量
+# 集合 × 网关路由注册面），前端调了后端没有 ⇒ 红。
+FRONTEND_GATES := design-tokens msgstyle self-explaining circular fixture-secrets api-routes
 
 frontend-gates:
 	@command -v node >/dev/null 2>&1 || { echo "node not found — 前端门禁需要 node"; exit 2; }
@@ -94,6 +98,9 @@ frontend-gates:
 	@# `reports-evidence/` 里出现「敏感键名 ∧ 值 ≥32 字符 ∧ 字符集 ≥3 类」的字面量即红
 	@# （占位词豁免）。判据与运行期脱敏词表同族（`nebflow.shared.SecretKeys`）。
 	node scripts/check-fixture-secrets.mjs
+	@# 路由存在性哨兵（empty-state-must-not-lie 批 · 件三）：前端 `/api/` 调用面 ×
+	@# 网关 `*Routes.scala` 注册面静态对照，前端调了但后端没注册 ⇒ 红。
+	node scripts/check-api-routes.mjs
 	@echo "Frontend static gates passed ($(FRONTEND_GATES))."
 
 # ── 视觉回归基线门禁（tests/visual/，2026-11-01 采纳批）──────────────────────

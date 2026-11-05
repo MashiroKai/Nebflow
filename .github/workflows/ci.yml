@@ -119,6 +119,24 @@ jobs:
         # step / tooltip fact). Only shrinks; a new locale file tolerates zero.
         # Same logic locally: node scripts/check-self-explaining.mjs (or `make frontend-gates`)
         run: node scripts/check-self-explaining.mjs
+      - name: API route existence (frontend calls x gateway route registry)
+        # Route-existence sentinel (empty-state-must-not-lie batch, 2026-11-05, item 3).
+        # The 2026-11-05 incident: the `GET /api/conversations` route case was deleted
+        # by a mistargeted edit (`SocialRoutes.scala`, commit 6c1feea6d). The gateway
+        # answered 404, the frontend's catch swallowed it, and the message panel
+        # rendered "No conversations". NOTHING asserted "the frontend calls a route
+        # the backend no longer registers" - the backend compiled, the frontend type
+        # gate passed, every test was green.
+        # Judgement: static diff of every `/api/` string literal in web/js (comments
+        # stripped by syntax) against the gateway route registry (`*Routes.scala`
+        # patterns: `Root / "a" / id`, pathInfo prefixes, proxied subpath tables).
+        # Frontend-only path => RED. Plus a CRITICAL whitelist (conversations /
+        # history / attachments / upload / friends / groups / sessions) asserted
+        # with exact method+shape, and a stale-exemption check (an EXTERNAL entry the
+        # frontend no longer calls is itself RED - exemptions may only shrink).
+        # Offline and hermetic: pure source-text scan, no network, no credentials.
+        # Same logic locally: node scripts/check-api-routes.mjs (or `make frontend-gates`)
+        run: node scripts/check-api-routes.mjs
       - name: Design spec scale sync (spec table <-> token source)
         # design-scale gate (author order 2026-11-04: "把我们对圆角 边距 文字离边缘
         # 的距离 各文字的大小 写进spec和前端开发包"): the four scales (radius /
