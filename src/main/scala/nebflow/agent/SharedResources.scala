@@ -302,6 +302,14 @@ case class SharedResources(
   def spawnAgentActor(system: ActorSystem, p: NodeRunner.SpawnParams): IO[ActorRef[AgentCommand]] =
     val actorName = if p.actorName.nonEmpty then p.actorName else p.sessionId
     for
+      // ── R-3a spawn 期硬闸（actor-tree spec v1 §13.2 #P2）────────────────────────
+      // 闸位 = **spawn 动作本身**（这是全仓 spawn 的唯一实现；NodeRunner 及其
+      // Delegate/SubTask/flow/node/dispatcher/恢复六路调用方全部经此）。判据 =
+      // `parentRef → registry → 父会话身份` 的 kernel 双重证据（mode 记录 ∪
+      // `delegate-kernel-` 前缀），见 core.delegate.KernelChildSpawnGate。
+      // 零行为变化：无父/未解析/非 kernel 身份一律放行（dispatcher 是本闸之后
+      // 唯一被允许派生的 delegate 形态）。
+      _ <- nebflow.core.delegate.KernelChildSpawnGate.check(agentRegistry, p.parentRef, p.sessionId)
       readTracker <- ReadTracker.create
       fileHistory <- FileHistory.create()
       ref <- system.spawn(
