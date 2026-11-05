@@ -221,6 +221,89 @@ check('④ 置入触发者可辨识（by=loop-guard / schedule-gate / error-back
   return '4 个 by 注记在册（回答「谁冻的」）';
 });
 
+// ══ ⑤ 单一真相（冻结状态两套真相批 2026-11-05 10:42 报障）════════════════
+// 报障逐字：「显示需要我唤醒，我点了唤醒又弹 frozenReason=none」。
+// 判据 = 面板可操作性与唤醒闸必须读**同一份派生读数**（后端 FreezeTruth 的
+// `wakeable`），任何一端再自己算一套就算红。
+
+const FREEZE_TRUTH_SCALA = join(ROOT, 'src', 'main', 'scala', 'nebflow', 'actor', 'FreezeTruth.scala');
+const WS_HANDLERS_SCALA = join(ROOT, 'src', 'main', 'scala', 'nebflow', 'gateway', 'WsSessionChatHandlers.scala');
+const WS_ROUTES_SCALA = join(ROOT, 'src', 'main', 'scala', 'nebflow', 'gateway', 'WebSocketRoutes.scala');
+const DELEGATE_FREEZE_SCALA = join(ROOT, 'src', 'main', 'scala', 'nebflow', 'core', 'delegate', 'DelegateFreeze.scala');
+const MAIL_TOOL_SCALA = join(ROOT, 'src', 'main', 'scala', 'nebflow', 'core', 'tools', 'MailTool.scala');
+const WS_JS = join(WEB, 'js', 'ws.js');
+
+check('⑤ 后端判定单点 FreezeTruth 在册（并集派生 + wakeable 面）', () => {
+  assert(existsSync(FREEZE_TRUTH_SCALA), '缺少 nebflow/actor/FreezeTruth.scala');
+  const s = readFileSync(FREEZE_TRUTH_SCALA, 'utf8');
+  for (const key of ['val frozen = agentFrozen || slotFrozen', 'wakeable = fd.needsHuman', 'def json', 'notWakableWhy']) {
+    assert(s.includes(key), `FreezeTruth 缺 ${key}`);
+  }
+  return '两处写点并集派生，wakeable = 冻结 ∧ 需人';
+});
+
+check('⑤ 唤醒闸读 FreezeTruth（不再各算一套 die 判据）', () => {
+  const s = readFileSync(WS_HANDLERS_SCALA, 'utf8');
+  const at = s.indexOf('private def handleDelegateWake');
+  assert(at >= 0, '缺 handleDelegateWake');
+  const chunk = s.slice(at, at + 9000);
+  assert(/FreezeTruth\.of\(/.test(chunk), '唤醒闸未走 FreezeTruth');
+  assert(/!truth\.frozen/.test(chunk) && /!truth\.wakeable/.test(chunk), '缺 frozen/wakeable 分路');
+  assert(/"actualStatus"/.test(chunk) && /"freeze" -> truth\.json/.test(chunk),
+    '拒收回执必须带实际状态 + 权威冻结块（不许只回 frozenReason=none）');
+  return '闸 = truth.frozen / truth.wakeable；拒收带 actualStatus + freeze 块';
+});
+
+check('⑤ 快照行冻结面由同一份读数派生（同屏不再自相矛盾）', () => {
+  const s = readFileSync(WS_ROUTES_SCALA, 'utf8');
+  assert(/freezeTruth: Option\[nebflow\.actor\.FreezeTruth\]/.test(s), 'activeAgentEntryJson 未接 FreezeTruth');
+  assert(/"freeze" -> truth\.json/.test(s), '快照缺 freeze 权威块');
+  assert(/"frozenReason" -> \(if truth\.frozen then/.test(s), 'frozenReason 未由 truth 派生');
+  assert(/"wakeAddress" -> \(if truth\.wakeable then/.test(s), 'wakeAddress 未由 wakeable 派生');
+  return '扁平字段 + freeze 块同源';
+});
+
+check('⑤ 前端按钮判据 = 权威块 wakeable（旧后端才回落分类表）', () => {
+  const fz = readFileSync(MODULE, 'utf8');
+  for (const name of ['freezeBlockOf', 'mergeFreeze', 'wakeableOf']) {
+    assert(new RegExp(`export\\s+function\\s+${name}`).test(fz), `freezeState.js 缺 ${name}`);
+  }
+  const bg = readFileSync(join(WEB, 'js', 'main', 'bgAgents.js'), 'utf8');
+  assert(/if \(!wakeableOf\(info\)\)/.test(bg), 'bgAgents 未用 wakeableOf 判按钮');
+  const mp = readFileSync(join(WEB, 'js', 'managePanel.js'), 'utf8');
+  assert(/wakeableOf\(meta/.test(mp), 'managePanel 未用 wakeableOf 判恢复入口');
+  const main = readFileSync(MAIN_JS, 'utf8');
+  assert(/mergeFreeze\(entry, a\.freeze \|\| null\)/.test(main), '快照合并未按权威块定序');
+  return '快照按 asOf 定序、按钮=wakeable（可降级）';
+});
+
+// ══ ⑥ 任何状态变更都推帧（Mail 唤醒后必须自动刷新）══════════════════════
+check('⑥ 唤醒腿（含 Mail）都发状态变更帧 delegateWoken', () => {
+  const df = readFileSync(DELEGATE_FREEZE_SCALA, 'utf8');
+  assert(/def onWoken\([\s\S]{0,300}wsSend: Option\[Json => IO\[Unit\]\]/.test(df),
+    'onWoken 缺 wsSend（Mail 唤醒腿无从发帧——本轮报障成因）');
+  assert(/"delegateWoken"/.test(df), 'onWoken 未发 delegateWoken 帧');
+  assert(/"freeze" -> nebflow\.actor\.FreezeTruth\.running/.test(df), '帧缺非冻结 freeze 块');
+  const mail = readFileSync(MAIL_TOOL_SCALA, 'utf8');
+  assert(/onWoken\(res, id, "mail-live-wake", ctx\.wsSend\)/.test(mail), 'Mail 唤醒腿未传 wsSend');
+  const ws = readFileSync(WS_JS, 'utf8');
+  assert(/'delegateWoken'/.test(ws), "ws.js 帧过滤集缺 'delegateWoken'（会被入口过滤器静默丢弃）");
+  const main = readFileSync(MAIN_JS, 'utf8');
+  assert(/onMessage\('delegateWoken'/.test(main), 'main.js 未收 delegateWoken');
+  assert(/mergeFreeze\(info, msg\.freeze\)/.test(main), 'delegateWoken 未按权威块落行');
+  return 'Mail/面板/复活三腿发帧；前端收帧即降级';
+});
+
+check('⑥ 一致性扫描工具在册（可复现今日 case）', () => {
+  const scan = join(ROOT, 'scripts', 'check-freeze-consistency.mjs');
+  assert(existsSync(scan), '缺少 scripts/check-freeze-consistency.mjs');
+  const s = readFileSync(scan, 'utf8');
+  for (const k of ['--today-case', '--panel', 'mergeFreeze', 'wakeableOf']) {
+    assert(s.includes(k), `扫描器缺 ${k}`);
+  }
+  return '全量扫描 / 面板对账 / 今日 case 复现三模式';
+});
+
 // ── 报告 ──────────────────────────────────────────────────────────────
 for (const line of ok) console.log(`  ok   ${line}`);
 for (const line of fails) console.log(`  FAIL ${line}`);

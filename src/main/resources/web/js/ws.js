@@ -386,7 +386,10 @@ const TERMINAL_MSG_TYPES = new Set([
   //   delegateFrozen        冻结发生（徽标上线 + 详情卡原因/唤醒入口）
   //   delegateFrozenDormant 长期无人唤醒提示（dormantSweep 的 24h 提醒）
   //   delegateWakeResult    面板「唤醒」动作回执
-  'delegateFrozen', 'delegateFrozenDormant', 'delegateWakeResult',
+  //   delegateWoken         状态变更帧（冻结状态两套真相批 2026-11-05）：任何腿
+  //                         （面板/Mail/自动恢复/复活）清掉冻结后必发——面板据此
+  //                         即时收起「需唤醒」；漏进过滤集 = Mail 唤醒后不刷新（原报障）。
+  'delegateFrozen', 'delegateFrozenDormant', 'delegateWakeResult', 'delegateWoken',
   'heldReceipts', // held-receipt 投递可靠性批（2026-10-21）：父会话积压/未读计数
   // #753 速率闸熔断告警帧：{sessionId, rootSessionId, count, windowSec,
   // cooldownSec}——sessionId = 被熔断的（往往非活跃）会话。不入门面过滤集会被
