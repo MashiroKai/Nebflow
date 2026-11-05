@@ -1,0 +1,22 @@
+
+Running 9 tests using 1 worker
+
+  ✓  1 tests/canvas-file-refresh.spec.mjs:114:3 › refresh button › A1 exists on file tabs, seats bottom-right without overlapping the corner cluster (544ms)
+  ✓  2 tests/canvas-file-refresh.spec.mjs:164:3 › refresh button › A2 md tab: click re-reads from disk and re-renders changed content (813ms)
+  ✓  3 tests/canvas-file-refresh.spec.mjs:179:3 › refresh button › A3 unchanged content: click is harmless — no remount, scroll kept, busy cleared (1.8s)
+[A4] booted
+[A4] nf-file fetch # 1
+[A4] first render fetches = 1
+[A4] refresh clicked
+[A4] nf-file fetch # 2
+[A4] re-fetch observed, count = 2
+[A4] done
+  ✓  4 tests/canvas-file-refresh.spec.mjs:213:3 › refresh button › A4 image tab: refresh invalidates the blob ledger and re-fetches bytes (957ms)
+  ✓  5 tests/canvas-file-refresh.spec.mjs:245:3 › refresh button › A5 dirty tab: refresh refuses to clobber and says so; no readFile is sent (1.8s)
+  ✓  6 tests/canvas-file-refresh.spec.mjs:284:3 › refresh button › A6 refresh button hides in source mode and returns in rendered mode (1.1s)
+  ✓  7 tests/canvas-file-refresh.spec.mjs:308:3 › refresh button › A8 scroll pin: pane self-scroll (yaml/.scrollable class) never moves the button (860ms)
+  ✓  8 tests/canvas-file-refresh.spec.mjs:359:3 › refresh button › A9 theme pin: light and dark give identical button geometry (1.3s)
+[canvas-file-refresh] preloaded source-open latency: 168ms (budget 1500ms)
+  ✓  9 tests/canvas-file-refresh.spec.mjs:408:3 › view-source latency › A7 preloaded source open mounts within the performance budget (1500ms) (782ms)
+
+  9 passed (10.9s)

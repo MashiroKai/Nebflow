@@ -115,9 +115,12 @@ function paintTermTip(a, info) {
   if (el.classList.contains('touch')) mobileSheetBack(el, hideTermTip);
   el.querySelector('.tt').textContent = info.name || '';
   el.querySelector('.ts').textContent = info.definition || '';
-  const doc = info.doc || (info.rel ? String(info.rel).split('/').pop().replace(/\.(md|markdown|html?)$/i, '') : '');
-  el.querySelector('.td').textContent =
-    (doc ? t('wiki.termSource') + doc + ' · ' : '') + t('wiki.termJumpHint');
+  // 气泡的显示字符串 = 词条名 + 定义（term-system-v2 词条视觉面批 2026-11-05，
+  // 作者令「不需要显示文档名」）：第三行不再拼「来源：<文档>」——文档名统一落进
+  // 正文尾部自动生成的「词条索引」块（viewers/markdown.js renderTermIndex），
+  // 气泡内不再作为显示文本出现。剩下的跳转提示只在真有导航承载时给（docs
+  // viewer 注入了 termTipNav；聊天气泡 / human 卡没有，那里说「点击跳转」是假话）。
+  el.querySelector('.td').textContent = termTipNav ? t('wiki.termJumpHint') : '';
   el.style.display = 'block';
   // Viewport-clamped placement: above the link when there is room, else below.
   const r = a.getBoundingClientRect();

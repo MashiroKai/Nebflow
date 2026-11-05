@@ -26,7 +26,9 @@ import { showToast } from './modal.js';
 import { isBgAgentId } from './utils.js';
 // 冻结态误报批（2026-11-05）：冻结行的恢复入口判据（需人介入才给按钮）。
 // 冻结状态两套真相批（2026-11-05）：改读后端权威块的 `wakeable`（单一真相）。
-import { wakeableOf } from './freezeState.js';
+// 冻结通知策略批（2026-11-05）：provider 故障族额外排除「重启并续跑」——这一族不是任务
+// 失败，RestartAgent 会扣 supervisor 重启预算；它只给「唤醒」（幂等 UserInput 腿）。
+import { wakeableOf, delegateFreezeIsInfra } from './freezeState.js';
 
 /** Kinds the user may stop/restart (AgentControl §4 operable bucket). */
 export const OPERABLE_KINDS = new Set(['Delegate', 'SubTask', 'Ephemeral']);
@@ -64,7 +66,17 @@ export function isProcessingStatus(status) {
 export function isRetryableStatus(status, meta) {
   // 冻结状态两套真相批（2026-11-05）：恢复入口只认后端权威块的 `wakeable`
   // （旧后端无块 ⇒ 退回分类表，同一张表的退化副本）。
-  if (status === 'frozen') return wakeableOf(meta || { frozen: true });
+  // 冻结通知策略批（2026-11-05 作者令 + 对齐清单第③条）：provider 故障族再叠一把闸——
+  // 即便后端块说「可唤醒」，也**不给**「重启并续跑」（RestartAgent(Soft) 扣 2 次/5min
+  // 重启预算，而 provider 故障不是任务失败）；该族的入口是行上的「唤醒」按钮。
+  if (status === 'frozen') {
+    const m = meta || { frozen: true };
+    // ① 权威块优先：恢复入口只认后端 FreezeTruth 的 wakeable（两套真相批）。
+    if (!wakeableOf(meta || { frozen: true })) return false;
+    // ② 再叠 provider 故障族闸：即便可唤醒，也不给「重启并续跑」。
+    if (delegateFreezeIsInfra(m)) return false;
+    return true;
+  }
   return status === 'failed' || status === 'stuck' || status === 'stopped';
 }
 

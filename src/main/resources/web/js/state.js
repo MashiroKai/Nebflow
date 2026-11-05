@@ -347,6 +347,11 @@ export default {
   // parent session isn't currently displayed, preventing stale indicators.
   sessionBgAgents: {},
 
+  // 冻结通知策略批（2026-11-05）：一批冻结的**静默统计**（后端 `delegateFreezeDigest`
+  // 帧；面板头部读数的数据源）。可恢复冻结（provider 故障族）不推消息，只有这样
+  // 作者主动打开面板时能看到「N 条已冻结（可唤醒）」。缺省 null = 未收到帧。
+  freezeDigest: null,
+
   // 台账 #929（后台子智能体跨设备透明）：远端设备投影行（引擎 remoteAgents 帧）。
   // deviceId -> { deviceName, online, rows: { [sessionId]: row } }。行 = 引擎摘要
   // （title/source/status/startedAt/endedAt/retryCount），LWW 已在引擎投影仓收敛，

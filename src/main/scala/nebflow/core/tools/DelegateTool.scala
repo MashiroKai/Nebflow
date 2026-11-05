@@ -297,7 +297,17 @@ Advance: the chain's nodes all run in THIS session's workspace (inside this sess
               val withName =
                 if !isStart || delegateName.isEmpty || withParent.contains("delegateName") then withParent
                 else withParent.add("delegateName", delegateName.get.asJson)
-              val builder = withName.add("rootSessionId", sid.asJson).add("sessionId", sid.asJson)
+              // name/address 批（2026-11-05）：agentStart 同判据注入 mailAddress——live
+              // 行即时拿到可复制地址，不等快照回填（形态由 MailAddress 单点推导，与快照
+              // face / AgentControl list 逐字同源）。只在「有短名 = 本派发路径确为 Delegate
+              // 批次」时注入：subtask-/legacy 腿不该被贴上 delegate: 地址。
+              val withAddr =
+                if !isStart || delegateName.isEmpty || withName.contains("mailAddress") then withName
+                else
+                  nebflow.core.delegate.MailAddress.of(AgentKind.Delegate, subagentId) match
+                    case Some(addr) => withName.add("mailAddress", addr.asJson)
+                    case None => withName
+              val builder = withAddr.add("rootSessionId", sid.asJson).add("sessionId", sid.asJson)
               val finalObj =
                 if obj.contains("nodeSessionId") then builder
                 else builder.add("nodeSessionId", subagentId.asJson)

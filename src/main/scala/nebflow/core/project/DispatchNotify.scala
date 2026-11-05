@@ -2,6 +2,7 @@ package nebflow.core.project
 
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
+import nebflow.core.delegate.FreezeNotice
 import nebflow.shared.NebflowLogger
 
 import scala.concurrent.duration.*
@@ -437,7 +438,28 @@ final class DispatchNotify(
       case NotifyReason.Failed =>
         // 不查 flag（设计 §2.2 四理由：failed 是异常低频事件，拓扑主人全知情）；
         // 持久去重同样按 store 现读判定。
+        //
+        // 冻结通知策略批（2026-11-05 10:36 作者令逐字「不论是节点还是delegate，由于
+        // provider 故障，都不需要向上通知…所以不需要向上汇报。因为provider 故障上级也
+        // 基本死了，汇报给上级没用」）：节点失败正文属**基础设施故障**（provider /
+        // 网络 / 额度 / 鉴权——判据单点 `FreezeNotice.infraFault`，与 delegate 冻结面
+        // 共用同一把尺）⇒ **零向上通知**：不投父会话、不进补投候选（落 notifySentAt
+        // 止重扫，避免 30s 拍反复尝试），只 WARN 留痕。节点仍保持 failed 终态（面板 /
+        // Flow Map 可见、可 NodeEdit 重激活）——**这不是失败汇报的删除，是"别用一条
+        // 上游也救不了的消息去吵一个同样在挨饿的上级"**。
         if node.status != NodeLifecycle.Failed then IO.pure(false)
+        else if DispatchNotify.suppressFailedNotifyForInfraFault(
+            node,
+            nebflow.shared.Defaults.DelegateFreezeSilence
+          )
+        then
+          logger
+            .warn(
+              s"dispatch-notify: node '${node.name}' (${node.id}) failed on an INFRASTRUCTURE fault " +
+                s"(${node.result.getOrElse("").take(160)}) — upward failed-notification suppressed " +
+                "(provider faults are not task failures); the node stays failed and visible on the flow map, re-activate with NodeEdit"
+            )
+            .as(()) *> markSent(node.id).as(false)
         else markerEmpty(node.id)
       case NotifyReason.Cancelled =>
         // R1：与 failed 完全对称——不查 flag。取消同样是
@@ -1236,6 +1258,22 @@ end DispatchNotify
 object DispatchNotify:
   /** 链级通知预算默认值（设计约束③建议值；completion/failed 同值独立分账）。 */
   val DefaultBudget: Int = 5
+
+  /**
+   * **failed 通知的「基础设施故障 ⇒ 不向上汇报」判据**（纯函数；spec 判红锚）。
+   *
+   * 冻结通知策略批（2026-11-05 10:36 作者令逐字「不论是节点还是delegate，由于provider
+   * 故障，都不需要向上通知…因为provider 故障上级也基本死了，汇报给上级没用」）：
+   * 节点 failed 且失败正文属基础设施故障（provider / 网络 / 额度 / 鉴权——判据单点
+   * `FreezeNotice.infraFault`，与 delegate 冻结面同一把尺）⇒ **不投递**。节点仍是
+   * failed 终态（Flow Map / 面板可见、可 NodeEdit 重激活）——被压掉的只是这条**上游
+   * 也救不了**的消息。
+   *
+   * @param silenceOn 静默总闸（`Defaults.DelegateFreezeSilence`；关 = 回旧行为）
+   */
+  def suppressFailedNotifyForInfraFault(node: NodeDef, silenceOn: Boolean): Boolean =
+    silenceOn && node.status == NodeLifecycle.Failed &&
+      FreezeNotice.infraFault(node.result.getOrElse(""))
 
   /**
    * **R1/R4 文本契约锚**：user-cancel 变体的可判读标记

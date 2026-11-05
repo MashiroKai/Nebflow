@@ -734,6 +734,32 @@
 }
 .bg-task-wake:hover { background: rgb(var(--accent-agent-light) / 0.22); }
 .bg-task-wake:disabled { opacity: 0.5; cursor: default; }
+/* Mail 续传地址 chip（AgentControl name/address 批 2026-11-05 · 作者令「工具返回
+   name 与地址，方便投递」的面板面）：chip 族同一形态（值全走 --ds-* 槽，与
+   .bg-task-kind 族同源，不做第二套材质）；差异只在两处真实需要：
+   · 截断——行宽有限，长 id ellipsis（**全文在 title 与 data-bg-copy**，复制恒给全文，
+     截断只是版式，不是数据）；
+   · 复制手势——cursor: copy + 点击后 is-copied 一瞬强调色（复制是最轻的动作，
+     反馈不弹 toast、不占布局）。 */
+.bg-task-addr {
+  font-size: var(--ds-fs-meta);
+  font-weight: var(--ds-fw-body);
+  padding: var(--ds-space-hair) var(--ds-space-1h);
+  border-radius: var(--ds-radius-chip);
+  background: var(--ds-control-bg);
+  border: var(--ds-border-width) solid var(--ds-control-border);
+  color: var(--ds-text-muted);
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 168px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: copy;
+  user-select: all;
+}
+.bg-task-addr:hover { color: var(--ds-text); border-color: var(--ds-text-muted); }
+.bg-task-addr.is-copied { color: rgb(var(--accent-agent-light)); border-color: rgb(var(--accent-agent-light) / 0.55); }
 /* #752 空闲细分注记（在等什么）：等后台任务名+时长 / 等子代理回执 N 条 ——
    中性次行；长空闲（>10min 无在飞工作）= 琥珀提醒徽标（timer-off 图标 +
    status-warn 字色，role=alert）。 */
@@ -1006,38 +1032,15 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   color: #bbb;
   user-select: none;
 }
-/* ---------- Initial-load skeleton（audit ②27，2026-10-25）----------
-   初次进会话（历史未加载完）的渐变占位泡：官网气泡同语言（AI 左 / 用户右对齐、
-   16px 圆角族、80% 宽上限），shimmer = sapphire 弱 tint 扫过 --color-bubble-ai 底
-   （用户位 = --color-bubble-user 底 + 白光扫）。挂载/摘除单点 =
-   historyIndicators.showChatSkeleton / hideChatSkeleton（historyPage 处理器同帧
-   摘除 ⇒ 加载完成让位零跳变）；prefers-reduced-motion 降级为静态浅底。 */
-.chat-skeleton { display: flex; flex-direction: column; gap: var(--ds-space-half); padding: var(--ds-space-1h) 0; }
-.chat-sk-row { display: flex; justify-content: flex-start; animation: fadeIn 0.2s ease; }
-.chat-sk-row-me { justify-content: flex-end; }
-.chat-sk-bubble {
-  height: 38px;
-  max-width: 80%;
-  border-radius: var(--ds-radius-card-lg);
-  border-bottom-left-radius: 4px;
-  background-color: var(--glass-bub-ai-bg);
-  background-image: linear-gradient(90deg,
-    rgb(var(--sapphire) / 0.05) 25%, rgb(var(--sapphire) / 0.13) 50%, rgb(var(--sapphire) / 0.05) 75%);
-  background-size: 200% 100%;
-  animation: chat-sk-shimmer 1.4s ease-in-out infinite;
-}
-.chat-sk-row-me .chat-sk-bubble { border-bottom-left-radius: 16px; border-bottom-right-radius: 4px; background-color: var(--glass-bub-user-bg); }
-.chat-sk-w62 { width: 62%; }
-.chat-sk-w38 { width: 38%; }
-.chat-sk-w76 { width: 76%; }
-.chat-sk-w50 { width: 50%; }
-@keyframes chat-sk-shimmer {
-  from { background-position: 130% 0; }
-  to { background-position: -30% 0; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .chat-sk-bubble { animation: none; }
-}
+/* ---------- Initial-load placeholder（audit ②27，2026-10-25）→ 已整件退役
+   （作者令 2026-11-05 12:28「进来就应该是加载好的 这个占位逻辑多余了」；实拍
+   IMG_1744 = 消息流顶部 4 条大圆角占位泡，右侧那条是用户位绿泡）----------------
+   旧块 = `.chat-skeleton / .chat-sk-row(-me) / .chat-sk-bubble / .chat-sk-w*` 四个
+   规则 + 一条 shimmer 关键帧（渐变占位泡 + 蓝紫扫光）。退役理由与三档判据的
+   落在 js/main/historyIndicators.js 头注与 js/sidebar.js 挂载点：只有线程**真空**
+   时给一条既有细加载行 `.history-loader`（见上「History pagination indicators」），
+   有内容时零占位，失败/空态各有自己的面。零 CSS 残留（禁第二套占位语言）——
+   含 reduced-motion 降级档里那条占位泡动画关闭规则，一并删除。 */
 .row {
   display: flex;
   margin: var(--ds-space-1h) 0;
@@ -2360,22 +2363,79 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   }
 }
 
-/* ══ AskUser 卡附件区（ui-unification-20261103-askuser-attach 2026-11-04）════
-   作者令（IMG_1725 实拍 + 原话）：卡内附件与输入框附件「同源」；图片/视频以
-   **叠卡**形态内嵌（点击即预览）；文件卡左上角挂**来源标签**；默认只显缩略图/
-   前 N 个——卡身不再随件数线性膨胀。
+/* ══ AskUser 卡附件区（ui-unification-20261103-askuser-attach 2026-11-04；
+   attachment-thumb-unify 批 2026-11-05 12:57 改形态）════════════════════════
+   作者令（本批，逐字）：「附件这里添加的图片文件等应该用我们输入框同款的小图标/
+   缩略图」——被取代的形态 = 220px 卡语言媒体卡（竖图被放大成 220×476 的大卡，
+   卡身溢出、右侧大留白，作者实拍两图）。
    形态单源声明（本段只放「卡区宿主差异档」，零第二套形）：
-   · 媒体 = popArtifacts 标准叠卡组件（`.ds-media-stack` 族——design-system.css
-     §⑨ 形态唯一家；单件 = `.pop-media-flat` 平面卡）。卡内容宽 <「钮 32 缝 +
-     220 卡脸」时钮折行到卡脸上方（friends.css 窄宿主同法：wrap，非第二几何）。
-   · 文件 chip = chat.js `renderAttachmentFace` 单源（输入框附件条同一函数）；
-     `.att-file` 基座形在 css/input.css 单点，此处只加可点态 / 折叠收件 / 降级态。
+   · 图片 = `.att-thumb` 小缩略图（基座在 css/input.css，与输入框附件条逐值同盒：
+     28px 方盒 / --ds-radius-input 圆角 / --glass-border 描边 / object-fit:cover
+     ⇒ 3000px 宽幅、超长竖图都恒为 28×28，撑不破容器）。
+   · 其余类型 = `.att-file` 文件 chip（同一函数 `renderAttachmentFace`）：类型小
+     图标（`.fc-icon` 色族单源）+ 文件名（省略号截断）。
+   · 一条 `flex-wrap: wrap` 窄条带 ⇒ 多附件按容器宽度换行，间距全走 --ds-space-*。
    · 全部令牌走 --ds-*（check-design-tokens.mjs 计数只减不增）。 */
-/* 卡内叠卡宿主：窄卡（手机 ~302px 内容宽）装不下横排 [钮|卡脸] ⇒ 折行，
-   「展开 N」钮升到卡脸上方成一行（展开展开的自然读序：先钮后脸）。 */
-.option-box .pop-stack-area { flex-wrap: wrap; row-gap: var(--ds-space-2); width: 100%; }
-.option-box .pop-stack-area > .pill { margin-right: 0; order: -1; }
-.option-box .pop-media-flat { max-width: 100%; }
+/* 标题行（「附件 · N」+ 来源标签一处）：原 inline cssText 收编到此处 —— 内联
+   font 简写会压过手机层字阶覆盖（--mfs-min 档此前是死规则）。
+   来源标签本批从「每枚 chip 左上角 notch」收拢到这一行：28px chip 装不下 14px
+   notch（会盖住缩略图上半并被下一行叠压），信息不丢、位置从压字变同行内联。 */
+.ask-attachments-head {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-1h);
+  min-width: 0;
+  max-width: 100%;
+  margin: var(--ds-space-half) 0 var(--ds-space-1);
+  font-size: var(--ds-fs-meta);
+  font-weight: var(--ds-fw-title);
+  color: var(--ds-text-muted);
+}
+.ask-attachments-head-label { flex: none; }
+.ask-attachments-head .ds-att-origin::before {
+  /* 分隔符（视觉 only，不进口径）：标题词与来源标签之间一个中点，避免
+     「附件 · 1 AskUser · …」读成一串。 */
+  content: '·';
+  margin: 0 var(--ds-space-1h);
+  opacity: 0.7;
+}
+.ask-attachments-head .ds-att-origin {
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* 字阶/字重随标题行继承（手机层由 body.mobile-layer 的 --mfs-min 档接管 ——
+     在此钉死字阶会把手机端可读档压回 12px）。 */
+  font-weight: var(--ds-fw-body);
+  color: var(--ds-text-muted);
+  pointer-events: none;   /* 纯标注面，不吃点击 */
+}
+/* 附件条：一条 flex-wrap 窄条带（图/文件同条带同基线）。间距 = 4px 栅格 8px 档，
+   行内/行间同值 —— 单一 --ds-space-2，零魔法数字。 */
+.ask-attachments-wrap .ask-attachments-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ds-space-2);
+  min-width: 0;
+  max-width: 100%;
+}
+/* 图片档（卡区可点面）：光标 + 键盘焦点环；盒形/描边/圆角全继承 .att-thumb 基座
+   （禁在此改尺寸 —— 与输入框条同档是本批硬约束）。
+   `margin: 0` = R4 同款隔离（chat.css:1395 的 `.bubble.ai img` 给卡内**每个** img
+   塞 margin-top:4px，实测把 28px 缩略帧挤成 32px 高的 ⌀ 盒 ⇒ 与相邻 chip 基线错 4px；
+   先例 = `.option-preview .preview-img` 同法断渗漏）。 */
+.ask-attachments-wrap .ask-att-thumb { cursor: pointer; }
+.ask-attachments-wrap .ask-att-thumb .att-thumb {
+  margin: 0;
+  max-width: 100%;
+}
+.ask-attachments-wrap .ask-att-thumb:focus-visible {
+  outline: 2px solid var(--ds-focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--ds-radius-input);
+}
 /* 卡内文件 chip：可点档（role=button）光标 + 键盘焦点环；高度放 auto（降级态
    原因档/重试键要折行）。基座 28px 档仍是下限（min-height）。 */
 .option-box .att-file.ask-att-file {
@@ -2392,42 +2452,10 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   outline: 2px solid var(--ds-focus-ring);
   outline-offset: 2px;
 }
-.option-box .att-file.ask-att-file .att-file-name { max-width: 100%; }
+.option-box .att-file.ask-att-file .att-file-name { min-width: 0; }
 /* 折叠收件（>3 枚默认只显前 3）：两成特异度压过 .att-file 的 inline-flex
    基座（input.css 后载，同特异性会反压 —— 见 input.css 基座闸先例）。 */
 .ask-attachments-wrap .ask-att-folded { display: none; }
-/* 来源标签的行间余量：标签是绝对定位 notch（top 负值压在 chip 描边上），
-   列表 inline gap 8px 压不住 ⇒ 首个 chip 由 list padding-top 让位、后续 chip
-   由相邻边距补 4px（inline style gap 不可被类规则覆盖，故走 margin 而非 gap）。 */
-.ask-attachments-wrap .ask-attachments-list { padding-top: var(--ds-space-3); }
-.ask-attachments-wrap .ask-attachments-list > .att-file + .att-file { margin-top: var(--ds-space-1); }
-/* 来源标签（文件卡左上角，作者令例「AskUser · 图片缩放确认」）：错位 notch 形
-   —— 压在 chip 上描边上，底 = 卡面底色把描边「洗断」。标签比 chip 宽是常态
-   （chip 随文件名收窄，标签是来源摘要）⇒ 上限按卡内容宽给，超长走**模糊淡出**
-   （mask 渐隐，作者铁律「禁省略号」——与 .att-file-name 手机档同语言），
-   pointer-events:none ⇒ 越界部分不吃点击。
-   输入框条不传 origin ⇒ 本槽零消费（桌面输入条逐像素不动）。 */
-.att-file .ds-att-origin {
-  position: absolute;
-  top: -7px;
-  left: 6px;
-  max-width: min(260px, calc(100vw - 32px));
-  padding: 0 var(--ds-space-1h);
-  font-size: var(--ds-fs-meta);
-  line-height: 14px;
-  font-weight: var(--ds-fw-title);
-  letter-spacing: var(--ds-ls-label);
-  color: var(--ds-text-muted);
-  background: var(--ds-surface);
-  border: 1px solid var(--ds-etched-border);
-  border-radius: var(--ds-radius-badge);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: clip;
-  -webkit-mask-image: linear-gradient(90deg, black 0, black calc(100% - 10px), transparent 100%);
-  mask-image: linear-gradient(90deg, black 0, black calc(100% - 10px), transparent 100%);
-  pointer-events: none;
-}
 /* 降级态（探针不可读 / 下载链失败）：虚线描边 + 原因档 + 重试下载真动作
    （IMG_1725 ⑤a「fig3b_cabin_zoom.png · 不可用」裸奔形态退役——原因 + 动作）。 */
 .att-file.ask-att-unavailable { border-style: dashed; }

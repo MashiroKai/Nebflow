@@ -239,7 +239,7 @@ test.beforeAll(async () => { server = await startServer(); });
 test.afterAll(async () => { server.close(); });
 
 test.describe('§T1 hover 气泡主路径（载荷命中零请求）', () => {
-  test('terms[] 直读出泡：词条名+定义+所在文档+跳转提示；/api/wiki/term 请求数=0', async ({ browser }) => {
+  test('terms[] 直读出泡：词条名+定义+跳转提示（文档名下沉到词条索引块）；/api/wiki/term 请求数=0', async ({ browser }) => {
     const { context, page, pageErrors, getTermApiHits } = await boot(browser);
     await openSourceDoc(page);
     const link = page.locator('a.nf-wikilink-term', { hasText: 'GCR' });
@@ -250,8 +250,18 @@ test.describe('§T1 hover 气泡主路径（载荷命中零请求）', () => {
     expect(await tip.locator('.tt').textContent(), '词条名').toBe('GCR');
     expect(await tip.locator('.ts').textContent(), '定义文本（载荷 terms[].definition）')
       .toContain('银河宇宙线（Galactic Cosmic Rays）');
-    expect(await tip.locator('.td').textContent(), '所在文档标题').toContain('词汇表');
+    // 作者令（term-system-v2 词条视觉面批 2026-11-05）：「词条被使用的时候，应该是
+    // 一个蓝色的文字，然后不需要显示文档名」——气泡的显示字符串只剩词条名 + 定义，
+    // 所在文档整体下沉到正文尾部的词条索引块（markdown.js renderTermIndex）。
+    expect(await tip.locator('.td').textContent(), '气泡不再显示文档名').not.toContain('词汇表');
     expect(await tip.locator('.td').textContent(), '跳转提示').toContain('点击跳转');
+    const index = page.locator('.canvas-md-viewer .nf-term-index');
+    await expect(index, '词条索引块（本文引用的词条所在文档）').toHaveCount(1);
+    expect(await index.locator('summary').textContent(), 'summary = 词条索引（N）').toBe('词条索引（1）');
+    expect(await index.locator('li').count(), 'GCR 一条目').toBe(1);
+    expect(await index.locator('.nf-term-index-docname').first().textContent(), '条目带所在文档').toBe('词汇表');
+    expect(await index.locator('a.nf-term-index-term').first().getAttribute('data-wiki-resolved'),
+      '条目可点击跳转（复用既有 wikilink 委派）').toBeTruthy();
     expect(await tip.getAttribute('class'), '桌面面无 .touch（pointer-events:none 不挡点击）').not.toContain('touch');
     await page.waitForTimeout(400);  // 兜底腿若被误挂，150ms 防抖+fetch 已会落地
     expect(getTermApiHits(), '载荷命中 = 兜底 API 零请求').toBe(0);

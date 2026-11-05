@@ -82,14 +82,30 @@ class FreezeDisplaySpec extends FunSuite:
     assertEquals(fd.needsHuman, false)
   }
 
-  test("线值判定：delegate-frozen:* 一律需唤醒（needsHuman）") {
+  test("线值判定：delegate-frozen:* 一律 needsHuman（行面给唤醒入口），provider 故障族额外标可自动恢复") {
     List("delegate-frozen:llm-failure", "delegate-frozen:tool-failure", "delegate-frozen:engine-fault",
       "delegate-frozen:cancelled-by-quota").foreach { wire =>
       val fd = FreezeDisplay.ofWire(wire, None, now)
       assertEquals(fd.kind, FreezeKind.NeedsHuman, wire)
       assertEquals(fd.needsHuman, true, wire)
-      assert(fd.labelZh.contains("需唤醒"), s"$wire: ${fd.labelZh}")
+      assert(fd.labelZh.contains("已冻结"), s"$wire: ${fd.labelZh}")
       assert(FreezeDisplay.needsHumanWire(wire), wire)
+    }
+    // 冻结通知策略批（2026-11-05 10:36 作者令）：provider 故障 = 基础设施故障 ⇒
+    // 「待你处理」+ **可自动恢复**（引擎探测恢复后续跑），不再说「引擎不会自动续跑」。
+    List("delegate-frozen:llm-failure", "delegate-frozen:cancelled-by-quota").foreach { wire =>
+      val fd = FreezeDisplay.ofWire(wire, None, now)
+      assert(fd.autoRecoverable, s"$wire: provider faults are auto-recoverable")
+      assert(fd.labelZh.contains("待你处理"), s"$wire: ${fd.labelZh}")
+      assert(!fd.hintZh.contains("不会自动续跑"), s"$wire: ${fd.hintZh}")
+      assert(fd.hintZh.contains("自动续跑"), s"$wire: ${fd.hintZh}")
+    }
+    // 确定性缺陷仍走「需唤醒 + 引擎不会自动续跑」。
+    List("delegate-frozen:tool-failure", "delegate-frozen:engine-fault").foreach { wire =>
+      val fd = FreezeDisplay.ofWire(wire, None, now)
+      assert(!fd.autoRecoverable, s"$wire: a deterministic defect is not auto-recoverable")
+      assert(fd.labelZh.contains("需唤醒"), s"$wire: ${fd.labelZh}")
+      assert(fd.hintZh.contains("不会自动续跑"), s"$wire: ${fd.hintZh}")
     }
   }
 
