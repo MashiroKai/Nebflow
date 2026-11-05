@@ -1,5 +1,6 @@
 .PHONY: compile run assembly clean install \
-  lint fmt fix fmt-check check quality-gate check-visual visual-baseline frontend-gates component-contract
+  lint fmt fix fmt-check check quality-gate check-visual visual-baseline frontend-gates component-contract \
+  plugin-seed-parity
 
 # Auto-detect fastest Maven mirror (Aliyun for China, Maven Central otherwise)
 # Respects user-set COURSIER_REPOSITORIES; only runs detection if unset
@@ -55,9 +56,24 @@ fix:
 fmt-check:
 	sbt scalafmtCheckAll
 
-check: compile fmt-check lint frontend-gates
+check: compile fmt-check lint frontend-gates plugin-seed-parity
 	node scripts/check-component-contract.mjs
 	@echo "All automated checks passed."
+
+# 插件种子对账门禁（seed-parity 批 2026-11-05）
+# 动机（实测）：visual-report 的 ⑥⑦⑧ 条款 + R6/R7/R8/R9 + 允许清单块 + 49 例回归夹具
+# 全部只落在运行实例，仓库种子停在五条款时代。种子是 fresh home 的安装源
+# （SeedService.seedPlugin 整目录复制），旧种子 = 新装实例自带旧标准；实例一旦被
+# re-approve，digest 仲裁还会把种子覆盖回实例。「记得同步」不是机制，这条腿是。
+# 两条腿：腿 A 自检种子自带批准形态（CI 同此形态，不需要实例）；腿 B 逐文件比对
+# 实例 ↔ 种子在规范/脚本/测试三类别上的漂移，未登记的漂移即红（登记面 =
+# tools/plugin-seed-parity-known-drift.json，条目必须仍在漂移，否则判陈旧）。
+# 只读：本 target 从不改写任何一侧；方向永远是「批准的那一侧 → 另一侧」。
+plugin-seed-parity:
+	@command -v python3 >/dev/null 2>&1 || { echo "python3 not found — 种子对账门禁需要 python3"; exit 2; }
+	python3 tools/plugin-seed-parity --self-check
+	python3 tools/plugin-seed-parity --parity
+	@echo "Plugin seed parity gate passed (self-check + drift leg)."
 
 # 前端组件契约门禁（单独一条腿，不依赖 sbt）
 component-contract:

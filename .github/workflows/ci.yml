@@ -217,6 +217,31 @@ jobs:
       - name: Check src/main for user-specific identifiers
         run: bash scripts/check-user-knowledge.sh
 
+  plugin-seed-parity:
+    name: Plugin seed parity (approved standard present in the seed tree)
+    timeout-minutes: 10
+    # Seed-parity gate (2026-11-05 seed-parity batch). Why it exists: three
+    # batches of approved wiki-docs rules (clause 6 images-live-with-the-doc,
+    # clauses 7/8 typography + abbreviations, R6-R9 + the abbreviation
+    # allowlist block + the 49-case regression fixture) shipped only in the
+    # RUNNING instance, while the repo seed stayed at the five-clause era.
+    # The seed is what a fresh install gets (SeedService.seedPlugin copies the
+    # whole directory from the classpath), so a stale seed hands every new
+    # home - and every machine - an obsolete standard, and a re-approve makes
+    # the digest arbitration overwrite the instance back to it.
+    # CI has no <data-root>/plugins, so this step runs the SELF-CHECK leg only:
+    # the seed itself must carry R1-R9, the allowlist markers, clauses 1-8 and
+    # the fixture (which is executed: >= 49 cases, all green). The instance vs
+    # seed drift leg needs a live instance and runs locally / pre-release.
+    # Same logic locally: tools/plugin-seed-parity --self-check (or
+    # `make plugin-seed-parity`, which also runs the drift leg when the
+    # instance is present).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Seed self-check (R1-R9 + allowlist block + fixture case count)
+        run: python3 tools/plugin-seed-parity --self-check
+
   dead-logging-gate:
     name: Dead Logging Gate
     timeout-minutes: 10
