@@ -561,4 +561,53 @@ class ProviderRegistry(
    */
   def filterKnownProviders(candidates: List[ModelCandidate]): IO[List[ModelCandidate]] =
     configRef.get.map(cfg => candidates.filter(c => cfg.llm.providers.contains(c.providerId)))
+
+  /**
+   * [[filterKnownProviders]] 的**带原因**版本（缺陷批 2026-11-05）：被剔的候选不
+   * 再静默消失，返回 `(存活, 被剔[(ref, 原因)])`，原因 = `not-configured`（provider
+   * 不在当前配置里：#33 的过期会话 override / 热重载竞态）。
+   */
+  def filterKnownProvidersDetailed(
+    candidates: List[ModelCandidate]
+  ): IO[(List[ModelCandidate], List[(String, CandidateSkipCause)])] =
+    configRef.get.map { cfg =>
+      val (kept, dropped) = candidates.partition(c => cfg.llm.providers.contains(c.providerId))
+      val skips = dropped.map(c =>
+        s"${c.providerId}/${c.model}" -> CandidateSkipCause.NotConfigured("provider not in current config")
+      )
+      (kept, skips)
+    }
+
+  /**
+   * 配置可见全集（静默排除审计的基准，缺陷批 2026-11-05）：当前配置里**所有**
+   * 未标 `disabled` 的 `provider/model` ref（字典序，可复现）。
+   *
+   * 用途 = 在请求入口拿它与「实际进链 + 已记录跳过原因」对账：
+   * `expected - chain - skipped` 非空 ⇒ 有候选在没有任何阶段原因的情况下被扔掉
+   * （作者报障的核心形态：面板显示 up、配置里有，delegate 却当它不存在）。
+   * 判定与渲染单点 = [[nebflow.shared.CandidateDisposition]]。
+   */
+  def expectedCandidateRefs(): IO[List[String]] =
+    configRef.get.map { config =>
+      config.llm.providers.toList.sortBy(_._1).flatMap { case (providerId, provider) =>
+        if isDisabled(provider) then Nil
+        else provider.models.sortBy(_.id).map(mc => s"$providerId/${mc.id}")
+      }
+    }
+
+  /**
+   * 配置级「本来就不可入选」的 ref 与原因（缺陷批 2026-11-05）：`disabled: true`
+   * 的 provider 下的每个模型 → `not-configured (provider disabled)`。它让「为什么
+   * 它不在链上」变成账本里的一行，而不是一片沉默。
+   */
+  def configLevelExclusions(): IO[List[(String, CandidateSkipCause)]] =
+    configRef.get.map { config =>
+      config.llm.providers.toList.sortBy(_._1).flatMap { case (providerId, provider) =>
+        if !isDisabled(provider) then Nil
+        else
+          provider.models.sortBy(_.id).map(mc =>
+            s"$providerId/${mc.id}" -> CandidateSkipCause.NotConfigured("provider disabled")
+          )
+      }
+    }
 end ProviderRegistry
