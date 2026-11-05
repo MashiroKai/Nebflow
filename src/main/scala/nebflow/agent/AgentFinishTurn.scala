@@ -538,7 +538,9 @@ private[agent] object AgentFinishTurn:
                 Some(e.eventType),
                 e.metadata("agentName").flatMap(_.asString),
                 fileChanges = e.metadata("fileChanges"),
-                sessionProject = state.projectName
+                sessionProject = state.projectName,
+                // 外部注入统一通道批（2026-11-05）：外部事件气泡的呈现级去重。
+                dedup = true
               )
             case None => IO.unit
         )

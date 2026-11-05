@@ -46,6 +46,11 @@ class InjectionIntakeContractSpec extends FunSuite:
   private lazy val mailTool: String = read("src/main/scala/nebflow/core/tools/MailTool.scala")
   private lazy val projectActor: String = read("src/main/scala/nebflow/core/project/ProjectActor.scala")
   private lazy val agentActor: String = read("src/main/scala/nebflow/agent/AgentActor.scala")
+  /** 注入帧组装单点（外部注入统一通道批 2026-11-05）：`intake` / `header` /
+   *  `fileChanges` 等可选帧键的 deepMerge 面从 `AgentActor#emitInjectedUserEvent`
+   *  **整体迁入**本件（`InjectionChannel.frame`）。判据不变（同一批名字、缺席即不落键），
+   *  只是 pin 跟着单点走——先例 = 2026-09-28 FE 拆分时 pin 随迁注入行族。 */
+  private lazy val injectionChannel: String = read("src/main/scala/nebflow/core/InjectionChannel.scala")
   private lazy val sharedProtocol: String = read("src/main/scala/nebflow/shared/protocol.scala")
   // 2026-09-28 FE 组件化批次三拆分：注入行族（含 injectedSourceLabel）迁到
   // js/chat/injectedRows.js，chat.js 只留转发 export；消费侧 pin 随迁（先例 1c4cbb0）。
@@ -148,8 +153,13 @@ class InjectionIntakeContractSpec extends FunSuite:
 
   test("④ 帧字段 / 落盘字段同源：发射点 deepMerge + 编码器 + 解码器 + 前端两侧读取面"):
     assert(
-      agentActor.contains("""deepMerge(Json.obj("intake" -> i.asJson))"""),
-      "AgentActor#emitInjectedUserEvent 缺 intake 的 deepMerge 帧字段（与 senderTeam/delivery 同款）"
+      injectionChannel.contains("""deepMerge(Json.obj("intake" -> i.asJson))"""),
+      "InjectionChannel.frame 缺 intake 的 deepMerge 帧字段（与 senderTeam/delivery 同款）——" +
+        "该 deepMerge 面已随外部注入统一通道批从 AgentActor#emitInjectedUserEvent 整体迁入本件"
+    )
+    assert(
+      !agentActor.contains("""deepMerge(Json.obj("intake" -> i.asJson))"""),
+      "AgentActor 又出现第二份 intake 帧 deepMerge —— 帧组装必须单点（InjectionChannel.frame）"
     )
     assert(
       sharedProtocol.contains("""deepMerge(Json.obj("intake" -> i.asJson))"""),

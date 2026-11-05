@@ -168,7 +168,14 @@ private[agent] object AgentIdle:
                 intake = intake,
                 // 气泡四段式统一批（2026-09-15）：PROJECT 段链首级/② 级。
                 project = project,
-                sessionProject = stateWithWidth.projectName
+                sessionProject = stateWithWidth.projectName,
+                // 外部注入统一通道批（2026-11-05）：引擎通知族（merge-queue 放行/阻塞、
+                // bg-lifecycle 催办、waiting-dock-care、chain-orphan、team 升级）走
+                // **呈现级去重** —— 同一条重试提示按 care tick 重复投递时只留一条蓝泡，
+                // 状态一变（正文变）才追加（键见 `InjectionChannel.dedupKey`）。
+                // Mail / node / skill 等族**不在此列**：同一发送方的同文两次是两次合法
+                // 投递，呈现层不得吞。
+                dedup = AgentActor.DedupedNoticeSources.contains(src)
               )
             case None => IO.unit
           val sessionBusyIO =
@@ -465,7 +472,10 @@ private[agent] object AgentIdle:
                 // delegate 终态 metadata 的 diff 载荷（缺席 = 旧行为逐字）。
                 fileChanges = metadata("fileChanges"),
                 sessionProject = state.projectName,
-                waitingForBatch = waiting
+                waitingForBatch = waiting,
+                // 外部注入统一通道批（2026-11-05）：外部事件的呈现级去重（同一
+                // 成员同一状态的重试提示只留一条蓝泡，状态变化才追加）。
+                dedup = true
               )
             case None => IO.unit)
         // ── Sub-agent result barrier (worker blocking semantics) ──────────

@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<!-- external-inject-visible harness.html — 外部注入统一通道批（2026-11-05）前端判据台。
+
+     作者报障逐字：「所有的外部注入消息应该有统一的途径和蓝色气泡通知，我刚刚看到你
+     好多条消息触发你，我都看不到是什么」。
+
+     Imports the REAL frontend render modules (chatView / persistence / chat — no
+     stubs) and drives the two render legs an external injection actually flows
+     through:
+
+       window.__liveInject(rows)    → renderInjectedBubble(...)  (live WS 帧腿)
+       window.__replayBackend(rows) → restoreFromBackendHistory  (刷新后历史腿)
+       window.__replayCache(rows)   → localStorage + restoreFromStorage (本地缓存腿)
+       window.__census()            → DOM 读数（气泡行 / 来源标识 / 摘要 / 正文）
+       window.__reset()             → 清空 #chat
+
+     行形态 = 引擎 `InjectionChannel.deliver` 落盘的 `.ui.json` 行
+     （injected:true + source + eventType + header 可选 + text）。
+
+     Served over a throwaway static file server spawned and killed by the spec
+     itself (never the 6138 host) — same discipline as tests/fixtures/schedule-card.
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>external-inject-visible harness</title>
+  <link rel="stylesheet" href="/src/main/resources/web/css/base.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/design-system.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/sapphire.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/glass.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/chat.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/reminder.css">
+  <style>
+    html, body { margin: 0; height: 100%; background: var(--color-bg, #f5f6f8); }
+    #chat {
+      position: absolute; top: 0; bottom: 0; left: 50%; transform: translateX(-50%);
+      width: 680px; max-width: 96vw; margin: 0; padding: 16px 0 36px;
+      overflow-y: auto;
+    }
+  </style>
+</head>
+<body>
+  <div id="chat"></div>
+  <script type="module">
+    const WEB = '/src/main/resources/web/js';
+
+    const { chatViews, ChatView, setActiveView } = await import(`${WEB}/chatView.js`);
+    const stateMod = await import(`${WEB}/state.js`);
+    const state = stateMod.default;
+    const { LS_SESSIONS_KEY } = stateMod;
+
+    const chatEl = document.getElementById('chat');
+    chatViews.primary = new ChatView('primary', { chat: chatEl });
+    setActiveView(chatViews.primary);
+    state.activeSessionId = 'extinject-harness';
+    chatViews.primary.sessionId = 'extinject-harness';
+    // No real socket may exist in this harness.
+    window.__captured = [];
+    state.ws = { readyState: 1, send: (data) => window.__captured.push(JSON.parse(data)) };
+
+    const raf2 = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+    // ---- Driver 1: live WS-frame path ----
+    window.__liveInject = async (rows) => {
+      const chat = await import(`${WEB}/chat.js`);
+      for (const m of rows) {
+        if (m.type !== 'user' || !m.injected) continue;
+        chat.renderInjectedBubble(m.text, m.source, m.timestamp, m.eventType, m.sender || '', m.senderTeam || '',
+          m.delivery || null, m.intake || null, m.header || null, m.fileChanges || null, m.schedule || null);
+      }
+      await raf2();
+    };
+
+    // ---- Driver 2: backend history restore (the post-refresh path) ----
+    window.__replayBackend = async (rows) => {
+      const { restoreFromBackendHistory } = await import(`${WEB}/persistence.js`);
+      restoreFromBackendHistory(rows);
+      await raf2();
+    };
+
+    // ---- Driver 3: localStorage cache restore ----
+    window.__replayCache = async (rows) => {
+      const all = {};
+      all[state.activeSessionId] = rows;
+      localStorage.setItem(LS_SESSIONS_KEY, JSON.stringify(all));
+      const { restoreFromStorage } = await import(`${WEB}/persistence.js`);
+      restoreFromStorage();
+      await raf2();
+    };
+
+    // ---- DOM census（判据 ①②③④ 的读数面；纯 DOM 契约）----
+    window.__census = () => {
+      const chat = document.getElementById('chat');
+      const bubbles = Array.from(chat.querySelectorAll('.row.user > .bubble.injected'));
+      return {
+        injectedRows: bubbles.length,
+        greenBubbles: chat.querySelectorAll('.row.user > .bubble.user').length,
+        rows: bubbles.map((b) => {
+          const label = b.querySelector('.injected-source-label');
+          const summary = b.querySelector('.nf-inject-summary');
+          const content = b.querySelector('.injected-content');
+          return {
+            // 判据 ②：来源标识（引擎 header 优先，回落 injectedSourceLabel）
+            label: label ? label.textContent.trim() : null,
+            labelVisible: label ? getComputedStyle(label).display !== 'none' : false,
+            // 判据 ③①：折叠态摘要行（来源行紧邻兄弟）
+            summary: summary ? summary.textContent.trim() : null,
+            summaryVisible: summary ? getComputedStyle(summary).display !== 'none' : false,
+            summaryIsNextSibling: summary ? summary.previousElementSibling === label : false,
+            // 判据 ③：完整正文（展开后逐字可见，不是摘要替身）
+            body: content ? content.textContent.trim() : null,
+            expanded: label ? label.getAttribute('aria-expanded') : null,
+            injected: b.classList.contains('injected'),
+            // 蓝色气泡的视觉判据：背景由 --sapphire tint 驱动（非 user 绿）
+            bg: getComputedStyle(b).backgroundColor,
+          };
+        }),
+      };
+    };
+
+    window.__expand = async (i) => {
+      const chat = document.getElementById('chat');
+      const labels = chat.querySelectorAll('.row.user > .bubble.injected .injected-source-label');
+      labels[i]?.click();
+      await raf2();
+    };
+
+    window.__reset = async () => {
+      const { restoreFromBackendHistory } = await import(`${WEB}/persistence.js`);
+      restoreFromBackendHistory([]);
+      chatEl.replaceChildren();
+      await raf2();
+    };
+
+    window.__ready = true;
+  </script>
+</body>
+</html>

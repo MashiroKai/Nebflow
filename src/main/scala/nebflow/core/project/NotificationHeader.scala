@@ -89,7 +89,14 @@ object NotificationHeader:
     "schedule" -> "SCHEDULE",
     // 待办浮出腿（#822 复活批「Schedule 双面化」2026-10-29，单口合并时登记）：
     // ScheduledTaskService.surfaceDigest 的每日 09:00 待办汇总 digest。
-    "todo" -> "TODO"
+    "todo" -> "TODO",
+    // 外部注入统一通道批（2026-11-05）：可见性判据翻成总函数后新到的五个源
+    // （集合同值硬门 NotificationHeaderSpec 要求本表键集 = BackendNamedSources）。
+    "merge-queue" -> "MERGE-QUEUE",
+    "bg-lifecycle" -> "BG-LIFECYCLE",
+    "waiting-dock-care" -> "WAITING-DOCK-CARE",
+    "chain-orphan" -> "CHAIN-ORPHAN",
+    "team" -> "TEAM"
   )
 
   /**
