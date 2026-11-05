@@ -52,8 +52,11 @@
 //          条元素，渐隐本体 = .ask-col 自身的 mask-image（内容 alpha 渐到 0）；
 //          面板/滚动容器整体透明无边框（①-批 .ask-veil + .ds-edge-fade 成员形态退役）。
 //   T12 风格统一（三修③ 作者令 2026-10-29「ask 输入条/气泡对齐 canvas 统一风格，
-//       不新造风格」）：输入条/气泡三面计算材质与聊天 #header 玻璃模板（--cv-* 单源）
-//       逐项相等；入口钮材质随液体玻璃 v3 F1 扩面批（2026-10-31 作者 12:32 点选
+//       不新造风格」）：输入条/气泡与聊天 #header 同一套配方（blur 参数 / 描边 token
+//       逐项相等）+ **底收不透明档**（α=1，= --glass-bg 压平 --color-bg 的合成值）
+//       ——判据由「底逐项相等」改判于 2026-11-05 09:32 作者令「看不清楚，要 Header
+//       同款，那个是不透明的」（半透底背后是 canvas 文档正文 ⇒ 双层重影）；
+//       入口钮材质随液体玻璃 v3 F1 扩面批（2026-10-31 作者 12:32 点选
 //       「悬浮族 = F1」，liquid-glass.css ④）归 --g2-fab-* 单源 = #deck-fab 同族
 //       （本批实测对齐——旧断言比 #header 为 v3 批欠账，main 快照同红）；
 //       发送钮 = 微信绿跟随主对话（v3 实现批 2026-10-31 作者 12:32「其它面板发送钮
@@ -683,6 +686,39 @@ try {
       const cs = getComputedStyle(el);
       return { bg: cs.backgroundColor, border: cs.borderTopColor, blur: cs.backdropFilter };
     };
+    // 不透明毛玻璃改判批（作者令 2026-11-05 09:32「看不清楚 ⇒ 要 Header 同款，
+    // 那个是不透明的」）：Ask 面（输入条/气泡）与 #header 的关系从「底逐项相等」
+    // 改判成「同一套配方 + 底收 α 到 1」。判据拆成三件实测：
+    //   ① 配方件（blur 参数 / 描边 token）与 #header 逐项相等；
+    //   ② Ask 面底的 α = 1（= 不再透出背后文档正文；#header 仍是 .55/.68，它靠
+    //      #chat 的 mask 把内容洗掉才读成不透明，见 sapphire --glass-bg-opaque 注）；
+    //   ③ Ask 面底 = --glass-bg 压平在 --color-bg 上的合成值（同色收 α，零新色相）。
+    const probe = document.createElement('div');
+    document.body.appendChild(probe);
+    const norm = (raw) => {
+      if (!raw) return null;
+      probe.style.backgroundColor = '';
+      probe.style.backgroundColor = String(raw).trim();
+      const m = String(getComputedStyle(probe).backgroundColor).match(/rgba?\(([^)]+)\)/);
+      if (!m) return null;
+      const p = m[1].split(/[,/]/).map((x) => parseFloat(x.trim()));
+      return { r: p[0], g: p[1], b: p[2], a: p.length > 3 ? p[3] : 1 };
+    };
+    const cs0 = getComputedStyle(probe);
+    const glassBg = norm(cs0.getPropertyValue('--glass-bg'));
+    const paper = norm(cs0.getPropertyValue('--color-bg'));
+    probe.remove();
+    const composite = glassBg && paper ? {
+      r: Math.round(glassBg.a * glassBg.r + (1 - glassBg.a) * paper.r),
+      g: Math.round(glassBg.a * glassBg.g + (1 - glassBg.a) * paper.g),
+      b: Math.round(glassBg.a * glassBg.b + (1 - glassBg.a) * paper.b),
+    } : null;
+    const asRgba = (s) => {
+      const m = String(s).match(/rgba?\(([^)]+)\)/);
+      if (!m) return null;
+      const p = m[1].split(/[,/]/).map((x) => parseFloat(x.trim()));
+      return { r: p[0], g: p[1], b: p[2], a: p.length > 3 ? p[3] : 1 };
+    };
     return {
       fab: pick(document.querySelector('.ask-fab')),
       input: pick(document.querySelector('.ask-input')),
@@ -690,6 +726,9 @@ try {
       // 悬浮族 F1 参照（v3 批 liquid-glass.css ④：ask-fab 与 deck-fab 同族配方）
       deck: pick(document.getElementById('deck-fab')),
       header: pick(document.getElementById('header')),
+      inputBg: asRgba(pick(document.querySelector('.ask-input')).bg),
+      bubBg: asRgba(pick(document.querySelector('.ask-bub.ai')).bg),
+      composite,
     };
   });
   const matSame = (a, b) => !!a && !!b && a.bg === b.bg && a.border === b.border && a.blur === b.blur;
@@ -697,8 +736,15 @@ try {
   // #deck-fab 同族（旧「= #header」断言为 v3 批欠账——ask.css 三修③ 的 --cv-*
   // 基础档被 liquid-glass.css ④ 后写胜出，#deck-fab 同吃同配方，两者计算样式相等）。
   ok('T12a 入口钮材质 = 悬浮族 F1 单源（#deck-fab 同配方逐项相等）', matSame(mat.fab, mat.deck), JSON.stringify({ fab: mat.fab, deck: mat.deck }));
-  ok('T12b 输入条材质 = #header 玻璃模板', matSame(mat.input, mat.header), JSON.stringify({ input: mat.input, ref: mat.header }));
-  ok('T12c 气泡材质 = #header 玻璃模板', matSame(mat.bub, mat.header), JSON.stringify({ bub: mat.bub, ref: mat.header }));
+  // 配方件相等（blur / border 逐项）+ 底 α=1 + 底 = 压平合成值（2026-11-05 改判）
+  const recipeSame = (a, b) => !!a && !!b && a.border === b.border && a.blur === b.blur;
+  const near3 = (x, y) => !!x && !!y && Math.abs(x.r - y.r) <= 1 && Math.abs(x.g - y.g) <= 1 && Math.abs(x.b - y.b) <= 1;
+  ok('T12b 输入条 = #header 同套配方（blur/描边逐项相等）+ 底收不透明档（α=1 且 = 玻璃压平纸面的合成值）',
+    recipeSame(mat.input, mat.header) && !!mat.inputBg && mat.inputBg.a === 1 && near3(mat.inputBg, mat.composite),
+    JSON.stringify({ input: mat.input, ref: mat.header, bg: mat.inputBg, composite: mat.composite }));
+  ok('T12c 气泡 = #header 同套配方（blur/描边逐项相等）+ 底收不透明档（α=1 且 = 玻璃压平纸面的合成值）',
+    recipeSame(mat.bub, mat.header) && !!mat.bubBg && mat.bubBg.a === 1 && near3(mat.bubBg, mat.composite),
+    JSON.stringify({ bub: mat.bub, ref: mat.header, bg: mat.bubBg, composite: mat.composite }));
   const greenFaces = await page.evaluate(() => ({
     send: getComputedStyle(document.querySelector('.ask-input .ask-send')).backgroundColor,
     sendInk: getComputedStyle(document.querySelector('.ask-input .ask-send')).color,
