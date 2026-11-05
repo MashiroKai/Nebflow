@@ -1,44 +1,22 @@
-wiki-docs 校验：1234 条违规（/Users/kaiyu/.stand/projects/stand/.stand/docs）
+wiki-docs 校验：1208 条违规（/Users/kaiyu/.stand/projects/stand/.stand/docs）
 
-── R1 obsidian-format（1）──
-  .backup-instance-wiki-docs-20261105_140326/SKILL.md:1  front-matter 缺 type/status 字段
-
-── R3 concept-first-use（2）──
-  term-v2-inventory__20261105_122137.md:224  概念「概念首现」首现未解释且未引用——就地一句话解释，或 [[glossary#^concept-first-use]]
-  term-v2-recon__20261105_110513.md:49  概念「文档库（vault）」首现未解释且未引用——就地一句话解释，或 [[glossary#^vault]]
-
-── R6 image-outside-vault（1）──
-  .backup-instance-wiki-docs-20261105_140326/SKILL.md:739  `key-chart.png` → vault 内不存在该图片文件（死引用：换机器/清工作树后必然断链）——先把图落进 vault 再引用
-
-── R8 doc-indent（13）──
-  term-v2-inventory__20261105_122137.md:8  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
-  term-v2-inventory__20261105_122137.md:10  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
-  term-v2-inventory__20261105_122137.md:24  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
-  term-v2-inventory__20261105_122137.md:41  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
-  term-v2-inventory__20261105_122137.md:43  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
-  term-v2-inventory__20261105_122137.md:67  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
-  term-v2-inventory__20261105_122137.md:103  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
-  term-v2-inventory__20261105_122137.md:109  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
-  term-v2-inventory__20261105_122137.md:126  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
-  term-v2-inventory__20261105_122137.md:163  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
-  term-v2-inventory__20261105_122137.md:165  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
-  term-v2-inventory__20261105_122137.md:180  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
-  term-v2-inventory__20261105_122137.md:240  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
-
-── R9 abbrev-expansion（2）──
-  term-v2-inventory__20261105_122137.md:67  缩写「README」首现既无全称也无词条链接——写成 `全称（README）` / `README（全称）` / `[[README]]（全称）`；跨文档通用的词请注册成词条，通用词（单位/技术词）才进 SKILL.md 允许清单
-  term-v2-inventory__20261105_122137.md:163  缩写「TOP」首现既无全称也无词条链接——写成 `全称（TOP）` / `TOP（全称）` / `[[TOP]]（全称）`；跨文档通用的词请注册成词条，通用词（单位/技术词）才进 SKILL.md 允许清单
+── R8 doc-indent（7）──
+  attachment-thumbnail-unify__20261105_141800.md:58  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+  attachment-thumbnail-unify__20261105_141800.md:132  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+  term-system-v2-renumber__20261105_141421.md:14  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+  term-system-v2-renumber__20261105_141421.md:20  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+  term-system-v2-renumber__20261105_141421.md:68  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+  term-system-v2-renumber__20261105_141421.md:137  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+  term-system-v2-renumber__20261105_141421.md:153  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
 
 ── R10 plain-language（1）──
   term-system-v2__20261105_134905.md:70  「对齐」是禁用/避用词（读者要二次解码）——建议：改成一致（写清哪两处改成一致）；能用平实动词+名词说清的，不用抽象名词包裹
 
-── R11 doc-structure（3）──
+── R11 doc-structure（4）──
   term-system-v2__20261105_134905.md:104  章节「2 证据区」开头缺分点结论句——首行写一句加粗结论（`**一句话结论。**`），论证细节往下放进折叠块
   term-system-v2__20261105_134905.md:229  章节「3 存量数字」开头缺分点结论句——首行写一句加粗结论（`**一句话结论。**`），论证细节往下放进折叠块
   term-system-v2__20261105_134905.md:312  章节「8 现在还剩什么」首行 108 字符，超出一句话（上限 80）——结论压成一句，其余进折叠块
-
-── R11 detail-fold（1）──
-  term-system-v2__20261105_134905.md:95  章节「2 证据区」敞开正文 958 可视字符（阈值 600）且没有折叠块——把论证细节包进 `<details><summary>论证细节</summary>…</details>`，结论与关键数字留在外面
+  term-system-v2__20261105_134905.md:318  章节「9 追加（2026-11-05 14:06）· base 再移动与本档三处更正」开头缺分点结论句——首行写一句加粗结论（`**一句话结论。**`），论证细节往下放进折叠块
 
 ── R12 image-caption（4）──
   term-system-v2__20261105_134905.md:74  图 `attachments/term-v2-render-1440-light.png` 没有图注——图片下一行写一行 `图 N …`，一句话说这张图证明了什么（图里少写字，解释放图注与正文）
@@ -46,9 +24,7 @@ wiki-docs 校验：1234 条违规（/Users/kaiyu/.stand/projects/stand/.stand/do
   term-system-v2__20261105_134905.md:78  图 `attachments/term-v2-render-1440-dark.png` 没有图注——图片下一行写一行 `图 N …`，一句话说这张图证明了什么（图里少写字，解释放图注与正文）
   term-system-v2__20261105_134905.md:80  图 `attachments/term-v2-render-375-dark.png` 没有图注——图片下一行写一行 `图 N …`，一句话说这张图证明了什么（图里少写字，解释放图注与正文）
 
-── R13 doc-reference（1106）──
-  .backup-instance-wiki-docs-20261105_140326/SKILL.md:63  the "wire every new document to glossary **or index.md**" requirement (the → 正文裸 .md 引用「index.md」——不允许引用文档路径，改写为已注册词条 `[[词条名]]`（或带锚 `[[doc#^term-slug]]`）
-  .backup-instance-wiki-docs-20261105_140326/SKILL.md:816  (docs/design/20261030_human-readable-presentation.zh-CN.md). → 正文裸 .md 引用「docs/design/20261030_human-readable-presentation.zh-CN.md」——不允许引用文档路径，改写为已注册词条 `[[词条名]]`（或带锚 `[[doc#^term-slug]]`）
+── R13 doc-reference（1104）──
   Jev与生图配置面板对齐LLM__20261105_091500__delegate-nebflow-79bb6698.md:22  （同期 `8df5f075d`「设置页增量对齐」只动 CSS/token，与本批无交集，见 [[弹窗退场批__20261031_193000__delegate-nebflow-4c0dfd9f]] 同款判定法。） → `[[弹窗退场批__20261031_193000__delegate-nebflow-4c0dfd9f]]` 解析到文档 弹窗退场批__20261031_193000__delegate-nebflow-4c0dfd9f.md 而非词条——这是引用文档；改写为已注册词条 `[[词条名]]`，或带锚 `[[doc#^term-slug]]`
   Jev与生图配置面板对齐LLM__20261105_091500__delegate-nebflow-79bb6698.md:102  相关：[[手机端顶部身份头消失归因__20261104_203500__delegate-nebflow-f51decdf]] → `[[手机端顶部身份头消失归因__20261104_203500__delegate-nebflow-f51decdf]]` 解析到文档 手机端顶部身份头消失归因__20261104_203500__delegate-nebflow-f51decdf.md 而非词条——这是引用文档；改写为已注册词条 `[[词条名]]`，或带锚 `[[doc#^term-slug]]`
   actor-as-agent-framework-creation-paths-and-invariants__20261104_214436__delegate-nebflow-f3849ed1.md:14  上游事实面 = [[actorization-gap-and-pekko-migration-audit__20261104_211833__delegate-nebflow-18eb158f]]（六面 actor 判定、四条硬边界、四刀改法）。同域既有件：三段式状态机规范 [[actor-fsm-backend-spec__20261104_115529__actor-fsm-batch]]、… → `[[actorization-gap-and-pekko-migration-audit__20261104_211833__delegate-nebflow-18eb158f]]` 解析到文档 actorization-gap-and-pekko-migration-audit__20261104_211833__delegate-nebflow-18eb158f.md 而非词条——这是引用文档；改写为已注册词条 `[[词条名]]`，或带锚 `[[doc#^term-slug]]`
@@ -1183,28 +1159,20 @@ wiki-docs 校验：1234 条违规（/Users/kaiyu/.stand/projects/stand/.stand/do
   wiki-dead-image-ref-fix__20261105_101128.md:124  | 23 | 同上 | shots-layer3-post/shell-1440-dark.png | 同上 | 同上组路径 | → 图片路径以纯文本出现「shots-layer3-post/shell-1440-dark.png」——图片只有两种合法形态：直接嵌入 `![[shell-1440-dark.png]]` 或可点击跳转 `[说明](shots-layer3-post/shell-1440-dark.png)`
   wiki-dead-image-ref-fix__20261105_101128.md:125  | 24 | 同上 | shots-layer3-post/shell-375-dark.png | 同上 | 同上组路径 | → 图片路径以纯文本出现「shots-layer3-post/shell-375-dark.png」——图片只有两种合法形态：直接嵌入 `![[shell-375-dark.png]]` 或可点击跳转 `[说明](shots-layer3-post/shell-375-dark.png)`
 
-── broken-block（4）──
-  .backup-instance-wiki-docs-20261105_140326/SKILL.md:67  块锚不存在：[[glossary#^block-id]]（目标无 ^block-id）
-  .backup-instance-wiki-docs-20261105_140326/SKILL.md:547  块锚不存在：[[glossary#^gcr]]（目标无 ^gcr）
-  .backup-instance-wiki-docs-20261105_140326/SKILL.md:833  块锚不存在：[[glossary#^retry-storm]]（目标无 ^retry-storm）
-  .backup-instance-wiki-docs-20261105_140326/SKILL.md:865  块锚不存在：[[glossary#^retry-budget]]（目标无 ^retry-budget）
+── R16 detail-fold（2）──
+  term-system-v2__20261105_134905.md:95  章节「2 证据区」敞开正文 958 可视字符（阈值 600）且没有折叠块——把论证细节包进 `<details><summary>论证细节</summary>…</details>`，结论与关键数字留在外面
+  term-system-v2__20261105_134905.md:316  章节「9 追加（2026-11-05 14:06）· base 再移动与本档三处更正」敞开正文 1474 可视字符（阈值 600）且没有折叠块——把论证细节包进 `<details><summary>论证细节</summary>…</details>`，结论与关键数字留在外面
 
-── broken-link（15）──
-  .backup-instance-wiki-docs-20261105_140326/SKILL.md:89  引用目标不存在：[[key-chart.png]]
-  .backup-instance-wiki-docs-20261105_140326/SKILL.md:103  引用目标不存在：[[key-chart.png]]
-  .backup-instance-wiki-docs-20261105_140326/SKILL.md:209  引用目标不存在：[[doc]]
-  .backup-instance-wiki-docs-20261105_140326/SKILL.md:210  引用目标不存在：[[doc]]
-  .backup-instance-wiki-docs-20261105_140326/SKILL.md:251  引用目标不存在：[[<sub>/docs/topic.md]]
-  .backup-instance-wiki-docs-20261105_140326/SKILL.md:300  引用目标不存在：[[key-chart.png]]
-  .backup-instance-wiki-docs-20261105_140326/SKILL.md:364  引用目标不存在：[[path]]
-  .backup-instance-wiki-docs-20261105_140326/SKILL.md:832  引用目标不存在：[[auth-flow-review]]
-  .backup-instance-wiki-docs-20261105_140326/SKILL.md:836  引用目标不存在：[[architecture.svg]]
-  .backup-instance-wiki-docs-20261105_140326/SKILL.md:837  引用目标不存在：[[topic.md]]
-  .backup-instance-wiki-docs-20261105_140326/SKILL.md:915  引用目标不存在：[[doc]]
-  .backup-instance-wiki-docs-20261105_140326/SKILL.md:916  引用目标不存在：[[Name]]
-  .backup-instance-wiki-docs-20261105_140326/SKILL.md:985  引用目标不存在：[[firstauthor-year-shorttitle.pdf]]
-  .backup-instance-wiki-docs-20261105_140326/SKILL.md:988  引用目标不存在：[[literature-note]]
-  .backup-instance-wiki-docs-20261105_140326/SKILL.md:1029  引用目标不存在：[[figure.png]]
+── broken-anchor（2）──
+  term-system-v2-renumber__20261105_141421.md:99  标题锚不存在：[[index#fixture index]]
+  term-system-v2-renumber__20261105_141421.md:216  标题锚不存在：[[visual-report-writing-style-v2__20261105_131711#6. 门禁读数]]
+
+── broken-link（2）──
+  term-system-v2-renumber__20261105_141421.md:99  引用目标不存在：[[sample]]
+  term-system-v2-renumber__20261105_141421.md:109  引用目标不存在：[[shot.png]]
+
+── broken-block（1）──
+  term-system-v2-renumber__20261105_141421.md:109  块锚不存在：[[glossary#^term-gate]]（目标无 ^term-gate）
 
 ── term-tag-missing（54）──
   design/button-system-monochrome-redesign__20261030_201846__delegate-nebflow-fa3d4d6f.zh-CN.md:14  - 墨族（ink family）— 本稿主操作色族：近黑实色 `#111827`（亮面板）/ 浅墨 `#e6edf3`（暗面板），白/深字，随面板主题墨水互换（ink-swap），取自官网认证按钮 `--auth-btn-bg` 双档。 ^term-ink-family → 词条「- 墨族（ink family）」缺 #proj/<slug>（必须恰好一个项目标签）；缺 #topic/<slug>（至少一个主题标签）
@@ -1263,10 +1231,8 @@ wiki-docs 校验：1234 条违规（/Users/kaiyu/.stand/projects/stand/.stand/do
   glossary.md:121  转移表（transition table） — actor 状态机的穷举表：行 = 状态、列 = 消息，每格 = (次态, 动作列表)；每个 actor 必须能画出它，并满足无不可达态（每个状态有入边）、无死锁（无只能进不能出的等待态）、无 `else` 吞错腿（兜底分支必须写明理由）。 ^transition-table → 词条「转移表（transition table）」缺 #proj/<slug>（必须恰好一个项目标签）；缺 #topic/<slug>（至少一个主题标签）
 
 
-图片纪律（R6 image-outside-vault）：图片引用 52 处 · 违规 1 条 · 行内豁免 0 条
-  悬空豁免标注 .backup-instance-wiki-docs-20261105_140326/SKILL.md:110  ← reason（该行及下一行无图片引用 ⇒ 未生效）
-  图外挂提示（info，不计违规）：114 篇文档点名 vault 外证据树路径
-    .backup-instance-wiki-docs-20261105_140326/SKILL.md:243  reports-evidence/ 等 10 处
+图片纪律（R6 image-outside-vault）：图片引用 61 处 · 违规 0 条 · 行内豁免 0 条
+  图外挂提示（info，不计违规）：113 篇文档点名 vault 外证据树路径
     Jev与生图配置面板对齐LLM__20261105_091500__delegate-nebflow-79bb6698.md:87  .stand/evidence/20261103_jev-imagegen-align-llm/shots/{red,green}/
     actor-as-agent-framework-creation-paths-and-invariants__20261104_214436__delegate-nebflow-f3849ed1.md:552  reports-evidence/
     agent-panel-row-dedup__20261102_223000__delegate-nebflow-4e1fad0a.md:25  .nebflow/worktrees/delegate-nebflow-4e1fad0a/src/main/resources/web/js/main/bgAgents.js
@@ -1281,55 +1247,58 @@ wiki-docs 校验：1234 条违规（/Users/kaiyu/.stand/projects/stand/.stand/do
     canvas-bottom-button-clearance__20261105_132309.md:120  reports-evidence/canvas-bottom-clearance__20261105_1247/before/shots/desktop-long-bottom.png 等 7 处
     canvas-capsule-mobile-horizontal__20261105_133000.md:80  reports-evidence/canvas-capsule-touch-row__20261105_131500/{before,after} 等 3 处
     canvas-hover-zero-layout__20261103_215500__delegate-nebflow-bb1a8bbb.md:54  .stand/evidence/ui-unification-20261103/hover-layout/
-    canvas-note-button__20261105_122526.md:72  .stand/evidence/canvas-note-button/{readings.json,readings-mobile.json,note-open.png,note-resized.png,note-mobile.png} 等 3 处
+    canvas-note-button__20261105_122526.md:14  reports-evidence/canvas-ask-legibility/shots/after/* 等 4 处
     canvas-stack-view__20261104_093201__ui-unification-20261103-supp4.md:10  .stand/evidence/ui-unification-20261103/canvas-stack-view/
     canvas-top-tabs-swipe__20261104_142800__ui-final-four.md:75  .stand/evidence/ui-unification-20261103/ui-final-four/{before,after}/swipe/
     config-single-source__20261105_124500.md:70  reports-evidence/config-single-source-e2e/01-migration-diff.txt
     console-ask-grow__20261104_132000__delegate-nebflow-bb1a8bbb.md:36  .stand/evidence/ui-unification-20261103/console-ask-grow/{before,after}/ 等 2 处
-    …（余 94 篇，见 --json 违规清单外的存量盘点报告）
-排版与缩写（R7-R9）：硬查 24 篇 · 存量 401 篇 · 彩色 3 处 · 正文段落 6510 段 · 缩写 3156 个（允许清单豁免 1333 · 同档小写词形 494）
-结构与图注（R10-R12）：章节 3245 节 · 未折叠细节 190 处 · 图 49 张（缺图注 39 · 图注过长 0）· 禁用词 203 处
-图谱连线（advisory，不计违规）：1 篇零出链且零入链——图谱面建议，词条面不靠它
-  存量样式/缩写/图注（advisory，不计违规，时间界 20261105_111100）：7207 条 —— abbrev-expansion 1085 · detail-fold 189 · doc-indent 4356 · doc-structure 1340 · image-caption 35 · plain-language 202
-    .backup-instance-wiki-docs-20261105_140326/SKILL.md:8  【doc-indent】正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
-    .backup-instance-wiki-docs-20261105_140326/SKILL.md:13  【doc-indent】正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
-    .backup-instance-wiki-docs-20261105_140326/SKILL.md:24  【doc-indent】正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
-    .backup-instance-wiki-docs-20261105_140326/SKILL.md:31  【doc-indent】正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
-    .backup-instance-wiki-docs-20261105_140326/SKILL.md:160  【doc-indent】正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
-    .backup-instance-wiki-docs-20261105_140326/SKILL.md:282  【doc-indent】正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
-    .backup-instance-wiki-docs-20261105_140326/SKILL.md:286  【doc-indent】正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
-    .backup-instance-wiki-docs-20261105_140326/SKILL.md:294  【doc-indent】正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
-    .backup-instance-wiki-docs-20261105_140326/SKILL.md:324  【doc-indent】正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
-    .backup-instance-wiki-docs-20261105_140326/SKILL.md:333  【doc-indent】正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
-    .backup-instance-wiki-docs-20261105_140326/SKILL.md:339  【doc-indent】正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
-    .backup-instance-wiki-docs-20261105_140326/SKILL.md:348  【doc-indent】正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
-    .backup-instance-wiki-docs-20261105_140326/SKILL.md:356  【doc-indent】正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
-    .backup-instance-wiki-docs-20261105_140326/SKILL.md:364  【doc-indent】正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
-    .backup-instance-wiki-docs-20261105_140326/SKILL.md:374  【doc-indent】正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
-    …（余 7192 条；`--strict-style` 可把存量一并按违规判）
-── 行内豁免（1 条：生效 0、悬空 1；均不计违规）──
-  · term-v2-inventory__20261105_122137.md:250  悬空标注（该行无违规，标注可清理）理由：理由
+    conversation-heads-always-visible__20261105_084500__delegate-nebflow-fec6393b.md:83  reports-evidence/conversation-heads-always-visible__20261104_213000__delegate-nebflow-fec6393b/
+    …（余 93 篇，见 --json 违规清单外的存量盘点报告）
+排版与缩写（R7-R9）：硬查 29 篇 · 存量 400 篇 · 彩色 4 处 · 正文段落 6583 段 · 缩写 3148 个（允许清单豁免 1344 · 同档小写词形 480）
+结构与图注（R10-R12）：章节 3268 节 · 未折叠细节 184 处 · 图 58 张（缺图注 38 · 图注过长 0）· 禁用词 197 处
+图谱连线（advisory，不计违规）：5 篇零出链且零入链——图谱面建议，词条面不靠它
+  存量样式/缩写/图注（advisory，不计违规，时间界 20261105_111100）：7099 条 —— abbrev-expansion 1077 · detail-fold 182 · doc-indent 4283 · doc-structure 1327 · image-caption 34 · plain-language 196
+    Jev与生图配置面板对齐LLM__20261105_091500__delegate-nebflow-79bb6698.md:12  【doc-indent】正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+    Jev与生图配置面板对齐LLM__20261105_091500__delegate-nebflow-79bb6698.md:17  【doc-indent】正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+    Jev与生图配置面板对齐LLM__20261105_091500__delegate-nebflow-79bb6698.md:34  【doc-indent】正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+    Jev与生图配置面板对齐LLM__20261105_091500__delegate-nebflow-79bb6698.md:67  【doc-indent】正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+    Jev与生图配置面板对齐LLM__20261105_091500__delegate-nebflow-79bb6698.md:81  【doc-indent】正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+    Jev与生图配置面板对齐LLM__20261105_091500__delegate-nebflow-79bb6698.md:87  【doc-indent】正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+    Jev与生图配置面板对齐LLM__20261105_091500__delegate-nebflow-79bb6698.md:102  【doc-indent】正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+    Jev与生图配置面板对齐LLM__20261105_091500__delegate-nebflow-79bb6698.md:21  【abbrev-expansion】缩写「DOM」首现既无全称也无词条链接——写成 `全称（DOM）` / `DOM（全称）` / `[[DOM]]（全称）`；跨文档通用的词请注册成词条，通用词（单位/技术词）才进 SKILL.md 允许清单
+    Jev与生图配置面板对齐LLM__20261105_091500__delegate-nebflow-79bb6698.md:10  【plain-language】「对齐」是禁用/避用词（读者要二次解码）——建议：改成一致（写清哪两处改成一致）；能用平实动词+名词说清的，不用抽象名词包裹
+    Jev与生图配置面板对齐LLM__20261105_091500__delegate-nebflow-79bb6698.md:34  【doc-structure】章节「法医取证（链断在哪）」开头缺分点结论句——首行写一句加粗结论（`**一句话结论。**`），论证细节往下放进折叠块
+    Jev与生图配置面板对齐LLM__20261105_091500__delegate-nebflow-79bb6698.md:93  【doc-structure】章节「未做 / 开放项」开头缺分点结论句——首行写一句加粗结论（`**一句话结论。**`），论证细节往下放进折叠块
+    actor-as-agent-framework-creation-paths-and-invariants__20261104_214436__delegate-nebflow-f3849ed1.md:14  【doc-indent】正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+    actor-as-agent-framework-creation-paths-and-invariants__20261104_214436__delegate-nebflow-f3849ed1.md:16  【doc-indent】正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+    actor-as-agent-framework-creation-paths-and-invariants__20261104_214436__delegate-nebflow-f3849ed1.md:33  【doc-indent】正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+    actor-as-agent-framework-creation-paths-and-invariants__20261104_214436__delegate-nebflow-f3849ed1.md:39  【doc-indent】正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+    …（余 7084 条；`--strict-style` 可把存量一并按违规判）
+── 行内豁免（2 条：生效 0、悬空 2；均不计违规）──
+  · term-system-v2-renumber__20261105_141421.md:113  悬空标注（该行无违规，标注可清理）理由：迁移中
+  · term-v2-inventory__20261105_122137.md:252  悬空标注（该行无违规，标注可清理）理由：理由
 
 ── 计数汇总（按类）──
-  R1 obsidian-format      1
+  R1 obsidian-format      0
   R2 citation-graph       0
-  R3 concept-first-use    2
+  R3 concept-first-use    0
   R4 term-registry        0
   R5 doc-naming           0
-  R6 image-outside-vault  1
+  R6 image-outside-vault  0
   R7 doc-color            0
-  R8 doc-indent           13
-  R9 abbrev-expansion     2
+  R8 doc-indent           7
+  R9 abbrev-expansion     0
   R10 plain-language       1
-  R11 doc-structure        3
-  R11 detail-fold          1
+  R11 doc-structure        4
   R12 image-caption        4
-  R13 doc-reference        1106
+  R13 doc-reference        1104
   R14 bare-image-path      27
   R15 dangling-term        0
-  -- broken-block         4
-  -- broken-link          15
+  R16 detail-fold          2
+  -- broken-anchor        2
+  -- broken-block         1
+  -- broken-link          2
   -- term-tag-missing     54
-  行内豁免 1（生效 0、悬空 1）——不计违规
-  合计 1234
+  行内豁免 2（生效 0、悬空 2）——不计违规
+  合计 1208
 
