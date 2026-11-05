@@ -82,7 +82,7 @@ quality-gate:
 # 但**本地**这条腿没有它 —— 断环的人跑 `make check` 看不到读数，存量环就是这么红着
 # 过夜的（CI 侧实证见批报告）。CI 那条腿照旧，这里补的是本地防回退。
 # 只跑前端门禁：`make frontend-gates`；全量静态检查：`make check`。
-FRONTEND_GATES := design-tokens msgstyle self-explaining circular fixture-secrets freeze-state
+FRONTEND_GATES := design-tokens msgstyle self-explaining circular fixture-secrets freeze-state freeze-silence
 
 frontend-gates:
 	@command -v node >/dev/null 2>&1 || { echo "node not found — 前端门禁需要 node"; exit 2; }
@@ -97,6 +97,10 @@ frontend-gates:
 	@# 冻结态呈现门禁（冻结态误报批 2026-11-05）：可自动恢复的冻结不得写「已冻结」/不得
 	@# 给按钮；需人介入的冻结必须有恢复入口；恢复失败必须可见；迁移日志在场。
 	node scripts/check-freeze-state.mjs
+	@# 冻结通知策略门禁（冻结通知策略批 2026-11-05）：provider 故障 = 基础设施故障 ⇒
+	@# delegate/flow 两条向上通知腿零产出、面板显形（统计 + 待你处理 + 唤醒按钮）、
+	@# 引擎自动续跑走既有唤醒腿（不花重启预算，有上限 + 递增间隔）、同波一条聚合告警。
+	node scripts/check-freeze-silence.mjs
 	@echo "Frontend static gates passed ($(FRONTEND_GATES))."
 
 # ── 视觉回归基线门禁（tests/visual/，2026-11-01 采纳批）──────────────────────

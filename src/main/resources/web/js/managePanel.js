@@ -25,7 +25,7 @@ import { t } from './i18n.js';
 import { showToast } from './modal.js';
 import { isBgAgentId } from './utils.js';
 // 冻结态误报批（2026-11-05）：冻结行的恢复入口判据（需人介入才给按钮）。
-import { freezeNeedsHuman } from './freezeState.js';
+import { freezeNeedsHuman, delegateFreezeIsInfra } from './freezeState.js';
 
 /** Kinds the user may stop/restart (AgentControl §4 operable bucket). */
 export const OPERABLE_KINDS = new Set(['Delegate', 'SubTask', 'Ephemeral']);
@@ -61,7 +61,14 @@ export function isProcessingStatus(status) {
  *  不该变成用户的按钮）。判据单点 = freezeState.js（后端 FreezeDisplay 的呈现面）。
  *  @param {string} status  @param {any} [meta] 行/弹窗 meta（读 freezeKind / 原因线值） */
 export function isRetryableStatus(status, meta) {
-  if (status === 'frozen') return freezeNeedsHuman(meta || { frozen: true });
+  if (status === 'frozen') {
+    const m = meta || { frozen: true };
+    // 冻结通知策略批（2026-11-05 作者令 + 对齐清单第③条）：provider 故障族**只给
+    // 「唤醒」**（幂等 UserInput 腿，不花 supervisor 重启预算）；「重启并续跑」=
+    // RestartAgent(Soft) 会扣 2 次/5min 的重启预算，provider 故障不是任务失败，不给。
+    if (delegateFreezeIsInfra(m)) return false;
+    return freezeNeedsHuman(m);
+  }
   return status === 'failed' || status === 'stuck' || status === 'stopped';
 }
 

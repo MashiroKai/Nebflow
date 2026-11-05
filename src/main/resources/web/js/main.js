@@ -2579,6 +2579,30 @@ onMessage('delegateWakeResult', (msg) => {
   renderBgAgentDropdown && renderBgAgentDropdown();
 });
 
+// 冻结通知策略批（2026-11-05 作者令两连）：**静默统计帧**（后端
+// `FreezeAlertSweep.digestTick` → `delegateFreezeDigest`）。被压掉的逐条冻结通知的唯一
+// 去处 = 面板头部读数（「N 条已冻结（可唤醒）」/「M 条冻结待你处理」）＋ 逐行徽标。
+// 零弹窗、零消息、零 toast：可恢复的冻结不该在消息流里出现。
+onMessage('delegateFreezeDigest', (msg) => {
+  state.freezeDigest = {
+    total: Number(msg.total) || 0,
+    recoverable: Number(msg.recoverable) || 0,
+    needsHuman: Number(msg.needsHuman) || 0,
+    windowMs: Number(msg.windowMs) || 0,
+    items: Array.isArray(msg.items) ? msg.items : [],
+  };
+  // 逐项读数回灌到对应行（自动续跑次数 / 次数用尽标记）——行 tooltip 要用。
+  for (const it of state.freezeDigest.items) {
+    const sid = String((it && it.sessionId) || '').replace(/^team-/, '');
+    if (!sid) continue;
+    applyDelegateFrozen(it.parentSessionId, sid, {
+      autoResumes: Number(it.autoResumes) || 0,
+      autoResumesExhausted: !!it.autoResumesExhausted,
+    });
+  }
+  renderBgAgentDropdown && renderBgAgentDropdown();
+});
+
 onMessage('agentDone', (msg, view) => {
   resetStreamTimeout(msg.sessionId);
   // composer-resync（2026-10-28）：agentDone 若直接携带会话 id（无 nodeSessionId

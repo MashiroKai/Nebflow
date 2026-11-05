@@ -133,3 +133,39 @@ export function freezeReasonLabelKey(wire) {
 export function freezeNeedsHuman(info) {
   return showsRecoveryAction(freezeKindOf(info));
 }
+
+// ═══ 冻结通知策略批（2026-11-05 作者令两连）═══════════════════════════════════
+// 「provider 故障 = 基础设施故障，不是任务失败」：这一族的冻结**不向上汇报**，面板标
+// 「已冻结 · 待你处理（原因）」+ 自动续跑次数 + 「唤醒」按钮（引擎自己也会在供应商恢复
+// 后续跑）。本段是**线值归一**的单点——实时帧送裸原因码（`llm-failure`），快照送带前缀
+// 线值（`delegate-frozen:llm-failure`），两种形态归一后才能与后端 `FreezeDisplay`
+// 同一张表判读。
+
+/** delegate 错误冻结的四个原因码（与后端 `DelegateFreeze.Reason` 逐字同集）。 */
+const DELEGATE_CODES = ['llm-failure', 'tool-failure', 'engine-fault', 'cancelled-by-quota'];
+
+/** provider 故障族（基础设施故障）原因码（与后端 `FreezeDisplay.InfraReasonCodes` 同集）。 */
+const INFRA_CODES = ['llm-failure', 'cancelled-by-quota'];
+
+/**
+ * 归一的 delegate 冻结线值（`delegate-frozen:<code>`）；非本族 ⇒ 空串。
+ * @param {any} info
+ * @returns {string}
+ */
+export function delegateFreezeWire(info) {
+  const w = freezeReasonWire(info);
+  if (!w) return '';
+  if (w.startsWith('delegate-frozen')) return w;
+  if (DELEGATE_CODES.includes(w)) return 'delegate-frozen:' + w;
+  return '';
+}
+
+/**
+ * 该行是否属 provider 故障族（基础设施故障：不汇报、引擎自愈续跑、面板待你处理）。
+ * @param {any} info
+ */
+export function delegateFreezeIsInfra(info) {
+  const w = delegateFreezeWire(info);
+  if (!w) return false;
+  return INFRA_CODES.includes(w.replace(/^delegate-frozen:?/, ''));
+}

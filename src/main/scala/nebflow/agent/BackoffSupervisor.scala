@@ -1071,6 +1071,16 @@ object BackoffSupervisor:
             detail = d,
             workspace = workspace
           )
+        // 冻结通知策略批（2026-11-05 作者令两连：「然后frozen这种可恢复的，不需要通知，」
+        // + 10:36「不论是节点还是delegate，由于provider 故障，都不需要向上通知，冻结等待
+        // 恢复就行…因为provider 故障上级也基本死了，汇报给上级没用」）：
+        // 分类单点 = `FreezeDisplay`（经 `FreezeNotice`）——**provider 故障族**
+        // （llm-failure / cancelled-by-quota）⇒ **零向上投递**（父会话收不到任何东西），
+        // 面板标「已冻结 · 待你处理」，引擎自己探测恢复后续跑（次数上限 + 递增间隔）；
+        // **确定性缺陷**（tool-failure / engine-fault）⇒ 也不逐条推，交给同波聚合
+        // （`FreezeAlertSweep` 一拍内合并成一条）。静默总闸关闭（回滚开关）时保留旧回执。
+        val tier = nebflow.core.delegate.FreezeNotice.tierOfReason(reason, d)
+        val quiet = nebflow.shared.Defaults.DelegateFreezeSilence
         val frozenEvent = AgentCommand.ExternalEvent(
           source = "delegate",
           eventType = "frozen",
@@ -1081,6 +1091,7 @@ object BackoffSupervisor:
             "frozenDelegateId" -> subagentId.asJson,
             "frozenReason" -> nebflow.core.delegate.DelegateFreeze.wire(reason).asJson,
             "frozenReasonLabel" -> nebflow.core.delegate.DelegateFreeze.reasonLabelZh(reason).asJson,
+            "noticeTier" -> nebflow.core.delegate.FreezeNotice.tierWire(tier).asJson,
             "frozenDetail" -> d.asJson,
             "wakeAddress" -> s"delegate:$subagentId".asJson,
             "retryable" -> true.asJson,
@@ -1099,18 +1110,34 @@ object BackoffSupervisor:
               nebflow.core.delegate.DelegateFreeze.markRegistryState(resources, subagentId, reason) *>
                 IO(nebflow.core.delegate.DelegateFreeze.requeueMergeMember(subagentId, d)) *>
                 DelegateBudget.release(subagentId) *>
-                MailboxProducer
-                  .deliver(
-                    resources,
-                    parentSessionId,
-                    frozenEvent,
-                    identity = s"frozen-$subagentId-${frozenAt.getOrElse(0L)}",
-                    kind = "delegate-frozen",
-                    coalesce = false,
-                    producer = "backoff-supervisor"
-                  )
+                // 通知面：静默总闸开 ⇒ 监督者**一条都不推**（provider 故障族靠面板 +
+                // 引擎自愈；确定性缺陷由同波聚合发一条）；只记一行 INFO（静默不等于
+                // 无声，日志与面板可查）。总闸关（回滚开关）⇒ 逐字节回旧回执行为。
+                (if quiet then
+                   logger.info(
+                     s"[delegate-freeze] $subagentId frozen (${nebflow.core.delegate.DelegateFreeze.wire(reason)}, " +
+                       s"tier=${nebflow.core.delegate.FreezeNotice.tierWire(tier)}) — no upward notification by design " +
+                       "(provider faults are infrastructure faults, not task failures); the panel badge + panel digest carry it"
+                   )
+                 else
+                   MailboxProducer
+                     .deliver(
+                       resources,
+                       parentSessionId,
+                       frozenEvent,
+                       identity = s"frozen-$subagentId-${frozenAt.getOrElse(0L)}",
+                       kind = "delegate-frozen",
+                       coalesce = false,
+                       producer = "backoff-supervisor"
+                     )
+                     .handleErrorWith(e =>
+                       logger.warn(s"[delegate-freeze] frozen receipt delivery failed for $subagentId: ${e.getMessage}")
+                     )) *>
+                // 面板即时读数（静默统计帧）：冻结一落盘就刷新「N 条已冻结（可唤醒）」。
+                FreezeAlertSweep
+                  .digestTick(resources, wsSend)
                   .handleErrorWith(e =>
-                    logger.warn(s"[delegate-freeze] frozen receipt delivery failed for $subagentId: ${e.getMessage}")
+                    logger.warn(s"[delegate-freeze] digest refresh failed for $subagentId: ${e.getMessage}")
                   ) *>
                 wsSend.fold(IO.unit) { send =>
                   send(
@@ -1122,6 +1149,9 @@ object BackoffSupervisor:
                       "frozenSince" -> frozenAt.getOrElse(System.currentTimeMillis()).asJson,
                       "frozenReason" -> nebflow.core.delegate.DelegateFreeze.wire(reason).asJson,
                       "frozenReasonLabel" -> nebflow.core.delegate.DelegateFreeze.reasonLabelZh(reason).asJson,
+                      "noticeTier" -> nebflow.core.delegate.FreezeNotice.tierWire(tier).asJson,
+                      "tierLabel" -> nebflow.core.delegate.FreezeNotice.tierLabelZh(tier).asJson,
+                      "notified" -> (!quiet).asJson,
                       "frozenDetail" -> d.asJson,
                       "wakeAddress" -> s"delegate:$subagentId".asJson,
                       "childAlive" -> childAlive.asJson
