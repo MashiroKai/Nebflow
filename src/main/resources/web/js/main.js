@@ -214,7 +214,7 @@ import { applyVoiceSeal } from './voiceSeal.js';
 // window.* 挂钩行与顶层 setInterval/addEventListener 挂点保留在 main.js 原位置)。
 import { stopThinkingTimer } from './main/thinkingTimer.js';
 import { applyLocalFreeze, setFrozenBarState, skipCurrentFreeze } from './main/freeze.js';
-import { showHistoryLoader, hideHistoryLoader, showHistoryEnd, clearHistoryIndicators, hideChatSkeleton } from './main/historyIndicators.js';
+import { showHistoryLoader, hideHistoryLoader, showHistoryEnd, clearHistoryIndicators } from './main/historyIndicators.js';
 import { showGlobalPermissionToast, dismissGlobalPermissionToasts } from './main/permToast.js';
 import { updateBgAgentIndicator, bgAgentKindFromSession, renderBgAgentDropdown, armBgUptimeTick, fetchActiveAgentsOnOpen, clearBgStuck, bgScopeRootForBucket, refreshAllBgAgentIndicators } from './main/bgAgents.js';
 // uifix 批（2026-10-22 作者令「附件放在对话框上面，不要遮挡文字」）：附件条 in-flow
@@ -2150,7 +2150,6 @@ onMessage('historyPage', (msg, view) => {
 
   const sid = msg.sessionId;
   hideHistoryLoader();
-  hideChatSkeleton(); // audit ②27：初载骨架卡让位（与渲染同一任务帧 ⇒ 零布局跳变）
   if (!view) return;
 
   // Use explicit flag instead of historyOffset === 0 to prevent double-clear.
@@ -2336,6 +2335,9 @@ onMessage('agentStart', (msg, view) => {
     // 面板命名批（2026-10-31 ②）：批次短名（live 帧 routeWsSend 注入；快照面
     // activeAgentEntryJson 同键）——跨 turn 保留同款合并语义。
     delegateName: msg.delegateName || (prev && prev.delegateName) || '',
+    // name/address 批（2026-11-05）：续传地址（live 帧 routeWsSend 注入；快照面
+    // activeAgentEntryJson 同键）——跨 turn 保留同款合并语义。
+    mailAddress: msg.mailAddress || (prev && prev.mailAddress) || '',
     kind: (prev && prev.kind) || bgAgentKindFromSession(msg.nodeSessionId || ''),
     // Project attribution badge: live frames carry it only on agentStart
     // (routeSubagentWsSend injects it for node-*/dispatcher-* sessions);
@@ -5054,6 +5056,10 @@ onMessage('activeAgents', (msg) => {
       // 面板命名批（2026-10-31 ②）：批次短名随快照出帧；旧后端无字段 → 回落本地
       // 值（同 parentSessionId 合并类——不降级已渲染行）。
       delegateName: a.delegateName || (prev && prev.delegateName) || '',
+      // name/address 批（2026-11-05）：Mail 续传地址随快照出帧（后端 MailAddress
+      // 单点推导）——面板行地址 chip 的唯一数据源；旧后端无字段 ⇒ 回落本地值
+      // （同 delegateName 合并类，不降级已渲染行）。空 = 本 kind 无 Mail 面 ⇒ 零 chip。
+      mailAddress: a.mailAddress || (prev && prev.mailAddress) || '',
       // Project attribution (2026-09-06): activeAgents restore entries carry
       // project for node-*/dispatcher-* rows (AgentRecord.project →
       // activeAgentEntryJson); empty string → no badge.

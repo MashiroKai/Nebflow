@@ -71,6 +71,19 @@ final class ProviderHealthMonitor(registry: ProviderRegistry) extends ProviderHe
    */
   private val avoidUntilRef: Ref[IO, Map[String, Long]] = Ref.unsafe(Map.empty)
 
+  /**
+   * 5xx 冷却的连续命中计数（5xx 归批 2026-11-05）：key → strikes。
+   *
+   * 与 [[avoidUntilRef]] 配对使用：[[]] 里 5xx 走 [[coolDown]] 而非
+   * [[markDown]]——窗长 = `UpstreamUnavailable.cooldownMs(strikes)`
+   * （15s → 30s → 60s → 120s → 240s 封顶，strikes 封顶
+   * [[UpstreamUnavailable.CooldownMaxStrikes]]）。**成功即清零**
+   * （[[markUp]] 与真实请求成功都过这里）——「冷却后成功 ⇒ 恢复」的判据就是
+   * 这一条，不需要额外的探测动作。窗口到期后 candidate 自然回到链上 = 半开
+   * 试探（试一发，成功清零 / 失败 strikes 继续递增）。
+   */
+  private val strikesRef: Ref[IO, Map[String, Int]] = Ref.unsafe(Map.empty)
+
   /** Deferred that completes when any provider transitions Down→Up. */
   private val signalRef: Ref[IO, Deferred[IO, Unit]] =
     Ref.unsafe(Deferred.unsafe[IO, Unit])
@@ -115,15 +128,51 @@ final class ProviderHealthMonitor(registry: ProviderRegistry) extends ProviderHe
   /** Mark a candidate as Up and wake waiters. No-op if already Up. */
   def markUp(providerId: String, model: String): IO[Unit] =
     val k = key(providerId, model)
+    // 5xx 归批（2026-11-05）：一次真实成功 = 冷却计数清零（半开试探成功的判据），
+    // 与健康态清理解耦——provider 本来就没被 markDown，strikes 却是要清的。
+    val clearStrikes = strikesRef.update(m => if m.contains(k) then m - k else m)
     statesRef.get.flatMap { states =>
       states.get(k) match
         case Some(HealthState.Down(_, _)) =>
-          statesRef
+          clearStrikes *> statesRef
             .set(states.updated(k, HealthState.Up))
             .*>(logger.info(s"Provider $k recovered (UP)"))
             .*>(signalRecovery())
-        case _ => IO.unit
+        case _ => clearStrikes
     }
+
+  /**
+   * 5xx 冷却（5xx 归批 2026-11-05，作者令「deepseek 抖一下不能把 agent 冻掉」）：
+   * 上游暂时不可用（500/502/503/504/550，见 [[UpstreamUnavailable]]）时，
+   * 不 markDown（进探测集 ⇒ 空历史探测秒成功 ⇒ 秒回 UP ⇒ 下一发再 5xx ⇒
+   * DOWN/UP flap 风暴），而是记一次 strike 并把 candidate 软回避
+   * `UpstreamUnavailable.cooldownMs(strikes)` 毫秒（15s→30s→60s→120s→240s
+   * 封顶，strikes 封顶 [[UpstreamUnavailable.CooldownMaxStrikes]]）。窗口到期候选
+   * 自然回链 = 半开试探：一次成功 [[markUp]] 清零 strikes，一次失败 strikes+1。
+   *
+   * 冷却期内 [[filterCandidates]] 把它从候选里剔掉（不进 down/探测集），
+   * 全链都在冷却时由 all-Down 门的 5s tick 兜底（窗到期自行放回）——与配额软
+   * 回避窗同一机制，语义标签不同，面板/日志都能 grep 到。
+   */
+  def coolDown(providerId: String, model: String, detail: String = "upstream 5xx"): IO[Unit] =
+    val k = key(providerId, model)
+    strikesRef.get.flatMap { m =>
+      val strikes = math.min(m.getOrElse(k, 0) + 1, UpstreamUnavailable.CooldownMaxStrikes)
+      val windowMs = UpstreamUnavailable.cooldownMs(strikes)
+      strikesRef
+        .update(_.updated(k, strikes))
+        .*>(
+          avoidUntilRef
+            .update(_.updated(k, System.currentTimeMillis() + windowMs))
+            .*>(logger.warn(
+              s"Provider $k cooled down for ${windowMs}ms ($detail — strike $strikes/" +
+                s"${UpstreamUnavailable.CooldownMaxStrikes}, NOT evicted, no probe; half-open on expiry)"
+            ))
+        )
+    }
+
+  /** 当前连续 5xx 计数（观测 / spec 断言用）。 */
+  private[llm] def getCooldownStrikes: IO[Map[String, Int]] = strikesRef.get
 
   /**
    * 软回避（审计 20260903 子项③；配额分层 2026-09-21 令）：把 candidate 排除出

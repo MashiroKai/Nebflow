@@ -809,7 +809,10 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
     // 会话落本类（`Standalone`：普通子代理、节点会话等，**无团队授权语境**）。
     else SenderRole.Standalone
 
-  private val NodePrefix = "node:"
+  // AgentControl name/address 批（2026-11-05）：三个续聊/投递前缀的**字符串单源**
+  // 移入 MailAddress（读面 = AgentControl list/status 与后台代理面板行，给出的地址
+  // 必须能原样粘进本工具的 address 参数）。此处只留窄别名，解析分支逐字不动。
+  private val NodePrefix = nebflow.core.delegate.MailAddress.NodePrefix
   private val ProjectPrefix = "project:"
 
   /**
@@ -818,10 +821,33 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
    * [[layeredRoute]]). id = the full session id `delegate-kernel-<8hex>` (the registry
    * key, unambiguous).
    */
-  private val KernelPrefix = "kernel:"
+  private val KernelPrefix = nebflow.core.delegate.MailAddress.KernelPrefix
 
   /** 统一 delegate 续聊地址前缀。 */
-  private val DelegatePrefix = "delegate:"
+  private val DelegatePrefix = nebflow.core.delegate.MailAddress.DelegatePrefix
+
+  /**
+   * 分层地址面判据（name/address 批 2026-11-05）：该字符串是否落在本工具的
+   * **分层地址腿**（`delegate:` / `kernel:` / `node:`，前缀 + 非空 target）。
+   *
+   * 用途：读面（AgentControl list/status 的 address 列、后台代理面板的地址 chip）
+   * 产出的地址必须能原样投进本工具——单测拿它做「形态可解析」的断言（真发信会
+   * 碰真实例，本批硬约束禁）。判据用的是**同一组前缀常量**（单源在 MailAddress），
+   * 所以它不会说谎：前缀改了这里跟着改，读面跟着改。
+   */
+  def isLayeredAddress(address: String): Boolean =
+    layeredAddressFormOf(address).isDefined
+
+  /** 分层地址形态名（"delegate" / "kernel" / "node"）；非分层面或 target 为空 ⇒ None。 */
+  def layeredAddressFormOf(address: String): Option[String] =
+    val a = Option(address).getOrElse("").trim
+    if a.startsWith(DelegatePrefix) then
+      Option(a.stripPrefix(DelegatePrefix).trim).filter(_.nonEmpty).map(_ => "delegate")
+    else if a.startsWith(KernelPrefix) then
+      Option(a.stripPrefix(KernelPrefix).trim).filter(_.nonEmpty).map(_ => "kernel")
+    else if a.startsWith(NodePrefix) then Option(a.stripPrefix(NodePrefix).trim).filter(_.nonEmpty).map(_ => "node")
+    else None
+
 
   private def rootFace: String = "\"delegate:<id>\"/\"kernel:<id>\"（续聊）或 \"node:<节点id或名>\"（已登记 delegate 链）——项目地址（project:<名> 或裸挂载项目名）不是 Mail 面，派发走 Delegate"
   private def dispatcherFace: String = "\"Nebula\"（root）或 \"node:<节点id或名>\""

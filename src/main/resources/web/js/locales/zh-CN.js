@@ -903,6 +903,8 @@ export default {
   'subagents.frozenDormantTip': '已冻结 {hours} 小时仍无人唤醒（超保留期会归档记录，转录与工作区保留）。',
   'subagents.wake': '唤醒',
   'subagents.wakeTip': '在原会话上下文上继续（同一会话、历史在场，已完成的不重做）',
+  // name/address 批（2026-11-05）：地址 chip 的 tooltip 后缀（前面拼完整地址本身）。
+  'subagents.copyAddress': '复制地址',
   'subagents.wakeFailed': '唤醒失败：记录与转录已保留，可稍后重试',
   // 冻结原因四类短名（快照恢复路径按线值 `delegate-frozen:<code>` 本地映射；与
   // DelegateFreeze.reasonLabelZh 逐字一致）。
@@ -2578,6 +2580,9 @@ export default {
   // 词条引用批 batch 2（hover 气泡 + 返回原文档钮）
   'wiki.termSource': '来源：',
   'wiki.termJumpHint': '点击跳转',
+  // 词条索引块（term-system-v2 词条视觉面批 2026-11-05）：文档尾自动生成的
+  // 「本文引用的词条 + 它所在的文档」折叠小节；{n} = 词条条数。
+  'wiki.termIndexCount': '词条索引（{n}）',
   'wiki.backToSource': '返回原文档',
   // 左栏控制面（搜索/chips/详情卡/断链清单/统计行）
   'wiki.chipAll': '全部',

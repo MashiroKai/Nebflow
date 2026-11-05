@@ -1359,6 +1359,11 @@ private[gateway] object WsSessionChatHandlers:
                           frozenSince = frozenSince,
                           frozenReason = frozenReason,
                           wakeAddress = frozenSince.map(_ => s"delegate:${rec.sessionId}"),
+                          // name/address 批（2026-11-05）：Mail 续传地址随快照出帧
+                          // ——推导单点 = MailAddress（与 AgentControl list/status 同源，
+                          // 前端面板只读不算）。纯函数，零额外 IO。
+                          mailAddress = nebflow.core.delegate.MailAddress
+                            .of(rec.kind, rec.sessionId, rec.displayName),
                           // 冻结状态两套真相批（2026-11-05）：**预算好的单一真相**随快照
                           // 出帧——内存态（rec.status/frozenReason）与落盘槽（frozenSince/
                           // frozenReason）在这一处合流，面板与唤醒闸此后读同一份读数。

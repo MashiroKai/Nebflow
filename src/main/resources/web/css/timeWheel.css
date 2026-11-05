@@ -163,10 +163,13 @@ html.no-backdrop .tw-panel { background: var(--color-surface); }
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease;
 }
-.tw-btn:hover {
-  background: var(--glass-etched-bg);
-  color: var(--color-text);
+@media (hover: hover) {
+  .tw-btn:hover {
+    background: var(--glass-etched-bg);
+    color: var(--color-text);
+  }
 }
+
 .tw-btn.tw-confirm { color: var(--color-primary); font-weight: 600; }
 .tw-btn.tw-confirm:disabled { opacity: 0.35; cursor: not-allowed; }
 

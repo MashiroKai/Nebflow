@@ -42,10 +42,13 @@
   opacity: 0.4;
   transition: opacity 0.15s, background 0.15s;
 }
-.explorer-folder-btn:hover {
-  opacity: 0.8;
-  background: var(--color-hover, rgba(128, 128, 128, 0.1));
+@media (hover: hover) {
+  .explorer-folder-btn:hover {
+    opacity: 0.8;
+    background: var(--color-hover, rgba(128, 128, 128, 0.1));
+  }
 }
+
 .explorer-actions {
   display: flex;
   gap: var(--ds-space-half);
@@ -66,10 +69,13 @@
   opacity: 0.4;
   transition: opacity 0.15s, background 0.15s;
 }
-.explorer-action-btn:hover {
-  opacity: 0.8;
-  background: var(--color-hover, rgba(128, 128, 128, 0.1));
+@media (hover: hover) {
+  .explorer-action-btn:hover {
+    opacity: 0.8;
+    background: var(--color-hover, rgba(128, 128, 128, 0.1));
+  }
 }
+
 
 /* ── Inline name input (create file/folder) ── */
 .explorer-name-input {
@@ -121,11 +127,14 @@
   border-radius: var(--ds-radius-badge);
   transition: background 0.1s;
 }
-.explorer-context-menu button:hover,
-.canvas-tab-context-menu button:hover,
-.fm-context-menu button:hover {
-  background: var(--color-hover, rgba(128,128,128,0.1));
+@media (hover: hover) {
+  .explorer-context-menu button:hover,
+  .canvas-tab-context-menu button:hover,
+  .fm-context-menu button:hover {
+    background: var(--color-hover, rgba(128,128,128,0.1));
+  }
 }
+
 /* 禁用态菜单项 — 独立窗口内容物收口批（2026-10-22）：非内容物页签的「在独立
    窗口打开」恒渲染但禁用（边界可见 + title 提示）；muted 面禁 hover 反馈。 */
 .explorer-context-menu button.disabled,
@@ -135,11 +144,14 @@
   cursor: default;
   opacity: 0.62;
 }
-.explorer-context-menu button.disabled:hover,
-.canvas-tab-context-menu button.disabled:hover,
-.fm-context-menu button.disabled:hover {
-  background: none;
+@media (hover: hover) {
+  .explorer-context-menu button.disabled:hover,
+  .canvas-tab-context-menu button.disabled:hover,
+  .fm-context-menu button.disabled:hover {
+    background: none;
+  }
 }
+
 /* 危险菜单项 — 2026-09-16 按钮批：本节原字面量红退役，改 `--btn-danger-*`
    具名 token（同语义唯一：红值集合大小 = 1）；描边走 inset 环（本节条目
    `border-width: 0` ⇒ 不引入几何漂移）。 */
@@ -147,14 +159,18 @@
 .fm-context-menu button.danger,
 .canvas-tab-context-menu button.danger {
   color: var(--btn-danger-ink);
-  box-shadow: inset 0 0 0 1px var(--btn-danger-stroke);
+  outline: 1px solid var(--btn-danger-stroke);
+  outline-offset: calc(-1 * 1px);
 }
-.explorer-context-menu button.danger:hover,
-.fm-context-menu button.danger:hover,
-.canvas-tab-context-menu button.danger:hover {
-  background: var(--btn-danger-tint);
-  color: var(--btn-danger-ink);
+@media (hover: hover) {
+  .explorer-context-menu button.danger:hover,
+  .fm-context-menu button.danger:hover,
+  .canvas-tab-context-menu button.danger:hover {
+    background: var(--btn-danger-tint);
+    color: var(--btn-danger-ink);
+  }
 }
+
 .explorer-context-menu hr {
   border: none;
   border-top: 1px solid var(--glass-border, rgba(0,0,0,0.06));
@@ -859,10 +875,13 @@ body:not(.mobile-layer) .canvas-header .canvas-close-btn {
   flex-shrink: 0;
   transition: color 0.15s, background 0.15s;
 }
-.canvas-close-btn:hover {
-  background: var(--color-border);
-  color: var(--color-text);
+@media (hover: hover) {
+  .canvas-close-btn:hover {
+    background: var(--color-border);
+    color: var(--color-text);
+  }
 }
+
 .canvas-close-btn svg {
   width: 10px;
   height: 10px;
@@ -2366,7 +2385,10 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   cursor: pointer;
   transition: background 0.15s;
 }
-.epub-menu-btn:hover { background: var(--glass-control-bg-hover); }
+@media (hover: hover) {
+  .epub-menu-btn:hover { background: var(--glass-control-bg-hover); }
+}
+
 .epub-menu-btn.on {
   border-color: rgb(var(--brand-green) / 0.5);
   background: rgb(var(--brand-green) / 0.14);
@@ -2411,7 +2433,10 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   padding: 0;
 }
 .epub-nav-btn[hidden] { display: none; }
-.epub-nav-btn:hover { background: var(--color-frame-hover); color: var(--color-text); }
+@media (hover: hover) {
+  .epub-nav-btn:hover { background: var(--color-frame-hover); color: var(--color-text); }
+}
+
 .epub-nav-btn:disabled { opacity: 0.3; cursor: default; }
 .epub-nav-info {
   flex: none;
@@ -2987,14 +3012,14 @@ body.mobile-layer #canvas-content:has(.canvas-tab-pane.active .epub-reader) > .c
   cursor: pointer;
   transition: background .15s ease, color .15s ease, transform .15s ease, border-color .15s ease;
 }
-.canvas-zoom-btn:hover {
-  background: var(--cv-hover-bg);
-  border-color: var(--cv-hover-border);
-  color: var(--color-text);
-  box-shadow:
-    inset 0 1px 0 var(--cv-hover-highlight),
-    inset 0 -1px 0 var(--cv-hover-underedge);
+@media (hover: hover) {
+  .canvas-zoom-btn:hover {
+    background: var(--cv-hover-bg);
+    border-color: var(--cv-hover-border);
+    color: var(--color-text);
+  }
 }
+
 .canvas-zoom-btn:active { transform: scale(var(--cv-active-scale, 0.96)); }
 /* 抓手开关 is-on 档 = 同 hover 材质（latch 态常亮可读，非一次性反馈）。 */
 .canvas-zoom-btn.canvas-pan-toggle.is-on {
@@ -3434,7 +3459,10 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="markdown"] .canvas-find-togg
   display: flex; align-items: center; justify-content: center;
   transition: background .15s ease, color .15s ease;
 }
-.nf-findbar-btn:hover { background: var(--cv-hover-bg); color: var(--color-text); }
+@media (hover: hover) {
+  .nf-findbar-btn:hover { background: var(--cv-hover-bg); color: var(--color-text); }
+}
+
 
 /* Find hit marks (both the app-document face and the iframe face). */
 mark.nf-find-hit { background: rgba(255, 213, 0, 0.45); color: inherit; border-radius: var(--ds-radius-thin); }
@@ -3624,23 +3652,93 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
   display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden;
 }
 .nf-term-tip .td { color: var(--color-frame-text-dim, var(--color-text-muted)); font-size: var(--ds-fs-meta); margin-top: var(--ds-space-1h); }
+/* 第三行（来源文档 / 跳转提示）撤掉后不占位（term-system-v2 词条视觉面批
+   2026-11-05：文档名归词条索引块，气泡只剩词条名 + 定义）。 */
+.nf-term-tip .td:empty { display: none; }
 
-/* 词条引用的视觉面（F3）：resolved 词条链接 = 点线底纹（区别于普通文档级
-   wikilink 的纯色亮面）；兜底腿的 unresolved 短形引用同纹（hover 可出泡的
-   信号），颜色随既有 unresolved 态。 */
+/* 词条引用的视觉面（term-system-v2 词条视觉面批 2026-11-05）────────────
+   作者令原话：「词条被使用的时候，应该是一个蓝色的文字，然后不需要显示文档名。
+   在目前基础上把文字变蓝色然后去掉括号里的文档就行。」
+   ① 蓝色：字色 = `--ds-link-term`（design-system.css 语义别名 → stand-tokens.css
+      蓝族 ink 双档）。亮 70 99 156 / 暗 sapphire-glow，阅读面合成底实测
+      5.76:1 / 6.52:1（tests/_term-face-harness.mjs 打印），正文门槛 4.5:1。
+      **规则里零裸色值** —— 改色改令牌，不改本块。
+   ② 可点击信号保留且仍分两档（原 F3/B5-1 的「信号 vs 提示」层级不丢，只把
+      区分从字色挪到底纹强度，因为字色已由作者统一定为蓝）：手写引用 = 底纹
+      55% 蓝（信号）；正文裸词自动链 = 底纹 30% 蓝（提示，密度高一个量级）。
+      悬停两档都收成实色 = 可点确认。
+   未解析短形引用（兜底腿 .nf-wikilink-unresolved + .nf-wikilink-term）同样取
+   蓝色：hover 能出泡就说明「这是词条」，词条面不该有两种字色。 */
 a.nf-wikilink.nf-wikilink-term {
-  text-decoration: underline dotted currentColor 1px;
+  color: var(--ds-link-term);
+  /* 底纹 = 既有 .nf-wikilink 的 border-bottom 通道（虚线改点线 + 换蓝），
+     不再叠一条 text-decoration —— 两条底纹会在词条上叠成双线。 */
+  border-bottom: 1px dotted rgb(var(--term-link-ink) / 0.55);
+  text-decoration: none;
   text-underline-offset: 3px;
 }
+a.nf-wikilink.nf-wikilink-term:hover { border-bottom-color: currentColor; filter: none; }
 
-/* 正文裸词识别（B5-1）：自动链接的词条取同一套点线底纹，但不改字色 ——
-   作者手写的引用是「信号」，自动生成的是「提示」：密度高一个量级，视觉必须
-   更轻；字色继承正文，只有底纹在标识可点。 */
+/* 正文裸词识别（B5-1）：同一枚字色（同一实体同一 token —— 两种蓝会教出两种
+   含义），底纹压到 30% 保持「提示」轻量。 */
 a.nf-term {
-  color: inherit;
-  text-decoration: underline dotted currentColor 1px;
-  text-underline-offset: 3px;
+  color: var(--ds-link-term);
+  border-bottom: 1px dotted rgb(var(--term-link-ink) / 0.3);
+  text-decoration: none;
   cursor: pointer;
+}
+a.nf-term:hover { border-bottom-color: currentColor; }
+
+/* ── 词条索引（term-system-v2 词条视觉面批 2026-11-05）─────────────────
+   作者令原话：「引用了词条之后，引擎自动在下方建立索引，就是引用的词条所在的
+   文档。也可以点击跳转。」文档名从行内词条（链接文本 / 悬停气泡）撤出后落在这
+   一块：正文尾部由 viewers/markdown.js 的 renderTermIndex 自动生成（用户不手写），
+   `<details>` 默认收起，summary = `词条索引（N）`，0 引用整块不渲染。
+   几何与 .nf-backlinks（上方 3376 行族）同族：同一条上分隔线、同一档内距；
+   条目用 flex + wrap，375 宽逐条折行不溢出。颜色全走既有 token。 */
+.canvas-md-viewer .nf-term-index {
+  margin: var(--ds-space-5) 0 var(--ds-space-half);
+  padding-top: var(--ds-space-block-y);
+  border-top: 1px solid var(--ds-border);
+  font-size: var(--ds-fs-hint);
+  color: var(--ds-text-dim);
+}
+.canvas-md-viewer .nf-term-index summary {
+  cursor: pointer;
+  user-select: none;
+  opacity: 0.85;
+}
+.canvas-md-viewer .nf-term-index summary:hover { opacity: 1; }
+.canvas-md-viewer .nf-term-index ul {
+  margin: var(--ds-space-2) 0 var(--ds-space-half) var(--ds-space-5);
+  padding: 0;
+  list-style: none;
+}
+.canvas-md-viewer .nf-term-index li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--ds-space-1h);
+  margin: var(--ds-space-1) 0;
+  min-width: 0;
+}
+/* 条目 = 词条名（可点，跳它所在的文档并落到定义段）+ 所在文档名（暗一档）。
+   条目名与正文里的词条同色（同一实体同一 token），底纹同手写引用档。 */
+.canvas-md-viewer .nf-term-index .nf-term-index-term {
+  color: var(--ds-link-term);
+  border-bottom: 1px dotted rgb(var(--term-link-ink) / 0.55);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+.canvas-md-viewer .nf-term-index .nf-term-index-term:hover {
+  border-bottom-color: currentColor;
+  filter: none;
+}
+.canvas-md-viewer .nf-term-index .nf-term-index-docname {
+  color: var(--ds-text-dim);
+  font-size: var(--ds-fs-meta);
+  opacity: 0.85;
+  overflow-wrap: anywhere;
 }
 
 /* ── 返回原文档按钮（词条引用批 batch 2, F5；作者令 2026-10-29 11:49
@@ -3665,7 +3763,6 @@ a.nf-term {
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  box-shadow: var(--frost-shadow);
   color: var(--color-frame-text-bright, var(--color-text));
   font-size: var(--ds-fs-btn);
   font-weight: 500;
@@ -3675,7 +3772,10 @@ a.nf-term {
   cursor: pointer;
   transition: filter 0.12s ease;
 }
-.canvas-refback-btn:hover { filter: brightness(1.06); }
+@media (hover: hover) {
+  .canvas-refback-btn:hover { filter: brightness(1.06); }
+}
+
 .canvas-refback-btn:active { filter: brightness(0.92); }
 body.mobile-layer #canvas-refback-btn {
   /* 手机层卡头通栏（mobileLayer.css §⑨ top:8 + 高 ~40px），按钮下移一行。 */
@@ -3755,7 +3855,10 @@ body.wg-side-active #panel-sessions #explorer-section { display: none; }
   border: 0; background: transparent; padding: 0; font: inherit; font-size: var(--ds-fs-hint);
   color: var(--color-frame-text-muted); cursor: pointer;
 }
-.wg-crumbs button.crumb:hover { color: var(--color-frame-text); text-decoration: underline; }
+@media (hover: hover) {
+  .wg-crumbs button.crumb:hover { color: var(--color-frame-text); text-decoration: underline; }
+}
+
 .wg-crumbs .crumb.cur { color: var(--color-frame-text); font-weight: 500; cursor: default; }
 
 /* Search + chips (shared with the mobile panebar). Material = frosted 标准
@@ -3965,7 +4068,10 @@ body:not(.mobile-layer) .canvas-header .canvas-title { flex: 1; min-width: 0; }
   cursor: pointer;
   transition: background 0.12s ease, color 0.12s ease;
 }
-.canvas-pop-btn:hover { background: var(--cv-hover-bg); color: var(--color-text); }
+@media (hover: hover) {
+  .canvas-pop-btn:hover { background: var(--cv-hover-bg); color: var(--color-text); }
+}
+
 .canvas-pop-btn:active { transform: scale(var(--cv-active-scale)); }
 .canvas-pop-btn svg { width: 13px; height: 13px; }
 .canvas-pop-btn .pop-ic-merge { display: none; }
@@ -3976,7 +4082,10 @@ body:not(.mobile-layer) .canvas-header .canvas-title { flex: 1; min-width: 0; }
   cursor: not-allowed;
   opacity: 0.35;
 }
-.canvas-pop-btn[disabled]:hover { background: transparent; color: var(--color-text-muted); }
+@media (hover: hover) {
+  .canvas-pop-btn[disabled]:hover { background: transparent; color: var(--color-text-muted); }
+}
+
 /* 原生 hidden 的 UA display:none 会被上面的 display:inline-flex 压过 ⇒ 显式钉死
    （同 .canvas-refresh-toggle[hidden] 先例）。 */
 .canvas-pop-btn[hidden] { display: none !important; }
@@ -4175,7 +4284,10 @@ body.card-window #canvas-panel .canvas-header { padding-top: var(--ds-space-1); 
   cursor: pointer;
   transition: background 0.12s ease, color 0.12s ease;
 }
-.canvas-merge-btn:hover { background: var(--cv-hover-bg); color: var(--color-text); }
+@media (hover: hover) {
+  .canvas-merge-btn:hover { background: var(--cv-hover-bg); color: var(--color-text); }
+}
+
 .canvas-merge-btn:active { transform: scale(var(--cv-active-scale, 0.96)); }
 /* 卡窗合并 out 动画（requestMergeSelf 挂类，180ms 后 close） */
 body.card-window #canvas-panel.card-win-merging { animation: nf-card-win-out 0.18s ease-in forwards; }

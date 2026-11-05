@@ -30,7 +30,10 @@
   cursor: pointer;
   transition: opacity 0.15s;
 }
-.neblink-login-btn:hover { opacity: 0.9; }
+@media (hover: hover) {
+  .neblink-login-btn:hover { opacity: 0.9; }
+}
+
 .neblink-pairing-status {
   text-align: center;
   font-size: var(--ds-fs-subtitle);
@@ -200,10 +203,13 @@
   flex-shrink: 0;
   transition: all 0.15s;
 }
-.neblink-peer-update-btn:hover {
-  color: var(--color-primary);
-  border-color: var(--color-primary);
+@media (hover: hover) {
+  .neblink-peer-update-btn:hover {
+    color: var(--color-primary);
+    border-color: var(--color-primary);
+  }
 }
+
 
 /* Inline channel selection */
 .neblink-update-inline {
@@ -222,14 +228,20 @@
   cursor: pointer;
   transition: all 0.15s;
 }
-.neblink-ch-btn:hover {
-  border-color: var(--color-primary);
-  color: var(--color-primary);
+@media (hover: hover) {
+  .neblink-ch-btn:hover {
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+  }
 }
-.neblink-ch-btn.neblink-ch-beta:hover {
-  border-color: var(--color-warning);
-  color: var(--color-warning);
+
+@media (hover: hover) {
+  .neblink-ch-btn.neblink-ch-beta:hover {
+    border-color: var(--color-warning);
+    color: var(--color-warning);
+  }
 }
+
 .neblink-ch-cancel {
   font-size: var(--ds-fs-meta);
   padding: var(--ds-space-half) var(--ds-space-1h);
@@ -270,7 +282,10 @@
   align-items: center;
   transition: color 0.15s, background 0.15s;
 }
-#neblink-btn:hover { color: var(--color-text); background: var(--color-bg); }
+@media (hover: hover) {
+  #neblink-btn:hover { color: var(--color-text); background: var(--color-bg); }
+}
+
 #neblink-btn.hidden { display: none; }
 
 /* （NL 号（[U3]）自定义 UI 样式已随 2026-09-05 10:54 裁定的入口移除一并删除
@@ -304,10 +319,13 @@
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
 }
-.neblink-switch-btn:hover {
-  background: rgba(7, 193, 96, 0.22);
-  border-color: rgba(7, 193, 96, 0.28);
+@media (hover: hover) {
+  .neblink-switch-btn:hover {
+    background: rgba(7, 193, 96, 0.22);
+    border-color: rgba(7, 193, 96, 0.28);
+  }
 }
+
 .neblink-switch-btn:active { background: rgba(7, 193, 96, 0.28); }
 .neblink-switch-btn:disabled { opacity: 0.5; cursor: default; }
 

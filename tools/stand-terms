@@ -1,0 +1,1206 @@
+#!/usr/bin/env python3
+# stand-terms — 词条索引库 + 查询 CLI（stand 仓 tools/）
+#
+# 用途：把「词条注册表」从 vault 里的正文块锚抽成**可查询的库**——词条名/别名/
+#       定义/标签/被引用位置一枪答完，供 agent（节点 / delegate / 引擎读侧）与
+#       作者按名检索，不必 grep 四百个 Markdown 文件。
+#       库是**派生物**：文档是事实源，库可删可重建，任何时刻 rebuild 一次即最新。
+#
+# 数据源（单一抽取出口，绝不自己重新解析词条语法）：
+#   词条面 = 插件脚本的机器出口
+#       python3 <scripts>/check_wiki_docs.py --root <vault> --project <name> \
+#               --dump-terms --json
+#     输出 {root, generated_at, terms:[{name,aliases,rel,anchor,line,end_line,
+#     definition,source,tags:{project,topic,extra}}], refs:[{name_key,from_rel,
+#     line,raw,resolved}]}；本工具只**消费**它（解析口径单源，跨语言一致性由
+#     该出口保证）。不再对正文做第二次词条抽取。
+#   文档面 = vault 内 .md/.markdown/.html 文件（标题取首个 H1、type/status 取
+#     front-matter 顶层标量、mtime/size 取磁盘事实）——只补文档元数据，不碰词条。
+#   vault 落位 = <data_root>/projects/<项目>/.stand/docs（与插件脚本
+#     resolve_project_docs_root 同口径；项目枚举 = <data_root>/projects/*/ 下
+#     有 project.json 的目录）。
+#   数据根解析序（与引擎 PathUtil.dataRoot / 插件脚本同序，刻意**不**读
+#     STAND_DATA_ROOT——保持与抽取出口同一把尺）：
+#         STAND_HOME → NEBFLOW_HOME → ~/.stand
+#
+# 库：默认 <data_root>/wiki-index/terms.db（--db 覆盖）。全库单文件、多项目
+#   统一管理（每个项目一个 documents.project 分桶）。schema 见 SCHEMA_SQL：
+#     meta(key,value)                       schema_version / last_rebuild / rebuild_source
+#     documents(id,project,rel,abs_path,title,doc_type,status,mtime,size,
+#               term_count,scanned_at, UNIQUE(project,rel))
+#     terms(id,doc_id→documents,name,name_key,anchor,line,end_line,definition,
+#           source,raw_name,updated_at, UNIQUE(doc_id,anchor))
+#     term_aliases(term_id,alias,alias_key, PK(term_id,alias_key))
+#     term_tags(term_id,facet,value, PK(term_id,facet,value))
+#     term_refs(id,term_id,from_doc_id,from_rel,line,raw,resolved)
+#        term_id  = 本工具按**清洗后的查找键**消解（`- ` 列表前缀不进查找键）；
+#        resolved = 抽取出口的判定原文（上游口径：`- ` 前缀会害它消解失败）。
+#        两者可不等：term_id 有值而 resolved=0 是**上游已知缺陷**的显形，不是脏数据——
+#        引用确实指向该词条（查询面据此统计 ref_count），只是引擎侧不认。
+#     索引 idx_terms_key(name_key) / idx_tags(facet,value)
+#     视图 v_term_summary（词条名 → 定义文档/锚点/标签/被引用次数/最后更新时间）
+#
+# 用法：
+#   stand-terms rebuild [--root <vault>] [--project <名>] [--db PATH] [--scripts DIR]
+#   stand-terms list [--project <tag>] [--topic <tag>] [--source glossary|doc]
+#                    [--limit N] [--json]
+#   stand-terms show <词条名> [--fuzzy] [--json]
+#   stand-terms doc <rel 或 basename> [--project <tag>] [--json]
+#   stand-terms refs <词条名> [--fuzzy] [--json]
+#   stand-terms stats [--json]
+#   通用选项：--db PATH（默认 <data_root>/wiki-index/terms.db）| --json | --root <vault>
+#     （rebuild = 只索引该 vault；查询命令 = 从该 vault 路径推出项目名并按其过滤）
+#
+#   例：
+#     tools/stand-terms rebuild                       # 全数据根所有项目 → 默认库
+#     tools/stand-terms show 墨族                      # 精确（含别名精确）
+#     tools/stand-terms show 墨 --fuzzy                # 子串模糊
+#     tools/stand-terms list --project stand --limit 20
+#     tools/stand-terms list --topic term-index
+#     tools/stand-terms doc GLOSSARY.md
+#     tools/stand-terms refs 词条索引库
+#     tools/stand-terms stats --json
+#
+# 脚本定位（词条抽取出口找不到就说不清「数据从哪来」，故单独一条退出码）：
+#   --scripts DIR > 环境变量 STAND_WIKI_DOCS_SCRIPTS > <data_root>/plugins/
+#   visual-report/skills/wiki-docs/scripts > 本工具所在仓的 seed 路径
+#   （../src/main/resources/seed/plugins/visual-report/skills/wiki-docs/scripts）。
+#
+# 退出码：0 = 成功；1 = 无结果（词条/文档/引用查不到，或没有可索引的 vault）；
+#   2 = 用法错（参数非法、--root 推不出项目名）；3 = 库不存在（提示先 rebuild）；
+#   4 = 找不到 check_wiki_docs.py（含修复提示）。
+#
+# 零第三方依赖：Python3 标准库（argparse/json/os/re/sqlite3/subprocess/unicodedata）。
+# 写面只有两处：库文件本身（rebuild）、以及 SQLite 的 -wal/-shm 旁文件。
+
+import argparse
+import json
+import os
+import re
+import sqlite3
+import subprocess
+import sys
+import unicodedata
+from datetime import datetime
+from pathlib import Path
+
+SCHEMA_VERSION = "1"
+CHECK_SCRIPT_NAME = "check_wiki_docs.py"
+DATA_ROOT_ENV_VARS = ("STAND_HOME", "NEBFLOW_HOME")
+SCRIPTS_ENV_VAR = "STAND_WIKI_DOCS_SCRIPTS"
+DEFAULT_HOME_DIRNAME = ".stand"
+INDEX_REL = ("wiki-index", "terms.db")
+PLUGIN_SCRIPTS_REL = ("plugins", "visual-report", "skills", "wiki-docs", "scripts")
+SEED_SCRIPTS_REL = ("src", "main", "resources", "seed") + PLUGIN_SCRIPTS_REL
+DOC_EXTENSIONS = {".md", ".markdown", ".html"}
+
+EXIT_OK = 0
+EXIT_NONE = 1
+EXIT_USAGE = 2
+EXIT_NO_DB = 3
+EXIT_NO_SCRIPT = 4
+
+# 词条名清洗：上游 name 保留列表符号（`- 墨族（ink family）`），库里存干净名，
+# 原文另存 terms.raw_name 以便回溯。
+LIST_BULLET_RE = re.compile(r"^\s*(?:[-*+]\s+|\d+[.)]\s+)")
+NAME_SEP_RE = re.compile(r"\s*[—–]\s*|\s*[:：]\s*")
+TAG_TOKEN_RE = re.compile(r"(?:^|\s)#[A-Za-z0-9_.\-\u4e00-\u9fa5]+/[A-Za-z0-9_.\-\u4e00-\u9fa5]+")
+ANCHOR_TOKEN_RE = re.compile(r"\s\^[A-Za-z0-9][A-Za-z0-9-]*")
+H1_RE = re.compile(r"^#\s+(.+?)\s*$")
+FM_KV_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_-]*)\s*:\s*(.*)$")
+
+
+# ── 退出与输出 ───────────────────────────────────────────────────────
+
+
+def fail(code, msg, hint=None):
+    """统一错误出口：stderr 一行原因 + 可选修复提示，然后退出。"""
+    print(f"ERROR: {msg}", file=sys.stderr)
+    if hint:
+        print(f"  修复：{hint}", file=sys.stderr)
+    sys.exit(code)
+
+
+def fmt_ts(ts):
+    return ts or "-"
+
+
+# ── 路径解析（与插件脚本同序同公式，别自创）──────────────────────────
+
+
+def resolve_data_root(explicit=None):
+    """数据根：--data-root/显式 > STAND_HOME > NEBFLOW_HOME > ~/.stand。"""
+    if explicit:
+        return Path(os.path.expanduser(str(explicit)))
+    for key in DATA_ROOT_ENV_VARS:
+        raw = (os.environ.get(key) or "").strip()
+        if raw:
+            return Path(os.path.expanduser(raw))
+    return Path.home() / DEFAULT_HOME_DIRNAME
+
+
+def project_vault(data_root, project):
+    """项目名 → vault：<data_root>/projects/<project>/.stand/docs。"""
+    return data_root / "projects" / project / ".stand" / "docs"
+
+
+def enumerate_vaults(data_root):
+    """项目枚举：<data_root>/projects/*/ 下有 project.json 的目录（有 .stand/docs 才收）。"""
+    pdir = data_root / "projects"
+    out = []
+    if not pdir.is_dir():
+        return out
+    for entry in sorted(pdir.iterdir(), key=lambda p: p.name):
+        if not entry.is_dir():
+            continue
+        if not (entry / "project.json").is_file():
+            continue
+        vault = entry / ".stand" / "docs"
+        if vault.is_dir():
+            out.append((entry.name, vault))
+    return out
+
+
+def infer_project(vault):
+    """vault 路径 → 项目名（只认 <root>/projects/<name>/.stand/docs 这一种形状）。"""
+    parts = Path(vault).resolve().parts
+    if len(parts) >= 3 and parts[-1] == "docs" and parts[-2] == ".stand" and parts[-4] == "projects":
+        return parts[-3]
+    return None
+
+
+# ── 词条抽取出口定位 ─────────────────────────────────────────────────
+
+
+def script_supports_dump(path):
+    """该副本是否带 --dump-terms 出口（旧版插件副本没有；只读源码探测，零执行）。"""
+    try:
+        return "--dump-terms" in path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+
+
+def find_script(explicit, data_root):
+    """按固定次序定位抽取出口，返回 (path|None, source|None, stale|[], tried|[])。
+
+    次序：--scripts > $STAND_WIKI_DOCS_SCRIPTS > <data_root>/plugins/... >
+    仓内 seed。**但只认带 --dump-terms 的副本**——已安装插件副本可能落后于
+    seed（老版本没有该出口），此时跳过并记入 stale（stderr 明示，不静默降级）；
+    若一个都没有则退回「第一个存在的副本」让调用方报错并把话说清楚。"""
+    cands = []
+    if explicit:
+        cands.append(("--scripts", Path(os.path.expanduser(str(explicit)))))
+    env = (os.environ.get(SCRIPTS_ENV_VAR) or "").strip()
+    if env:
+        cands.append((f"${SCRIPTS_ENV_VAR}", Path(os.path.expanduser(env))))
+    cands.append(("插件安装路径", data_root.joinpath(*PLUGIN_SCRIPTS_REL)))
+    cands.append(("仓内 seed", Path(__file__).resolve().parent.joinpath("..").joinpath(*SEED_SCRIPTS_REL)))
+
+    tried, stale, first_existing = [], [], None
+    for source, cand in cands:
+        path = cand if cand.suffix == ".py" else cand / CHECK_SCRIPT_NAME
+        if not path.is_file():
+            tried.append(f"{source}: {path}（不存在）")
+            continue
+        tried.append(f"{source}: {path}")
+        if first_existing is None:
+            first_existing = (path, source)
+        if script_supports_dump(path):
+            return path, source, stale, tried
+        stale.append(f"{source}: {path}")
+    if first_existing:
+        return first_existing[0], first_existing[1], stale, tried
+    return None, None, stale, tried
+
+
+def run_dump(script, vault, project):
+    """调插件机器出口，返回解析好的 JSON（形状见文件头）。"""
+    cmd = [sys.executable, str(script), "--root", str(vault),
+           "--project", project, "--dump-terms", "--json"]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        tail = (proc.stderr or proc.stdout or "").strip().splitlines()
+        raise RuntimeError(f"抽取失败（{vault}，exit={proc.returncode}）："
+                           + (" / ".join(tail[-3:]) or "无输出"))
+    try:
+        data = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"抽取输出不是合法 JSON（{vault}）：{exc}")
+    for key in ("terms", "refs"):
+        if key not in data:
+            raise RuntimeError(f"抽取输出缺 {key} 键（{vault}）——先升级插件脚本")
+    return data
+
+
+# ── 文档元数据（只补标题/类型/状态；词条一律走抽取出口）──────────────
+
+
+def parse_doc_meta(text, rel):
+    """→ (title, doc_type, status)。front-matter 顶层标量 + 首个围栏外 H1。"""
+    doc_type = status = ""
+    lines = text.splitlines()
+    start = 0
+    if lines and lines[0].strip() == "---":
+        for i in range(1, len(lines)):
+            line = lines[i]
+            if line.strip() == "---":
+                start = i + 1
+                break
+            m = FM_KV_RE.match(line)
+            if not m:
+                continue
+            key, value = m.group(1), m.group(2).strip().strip('"').strip("'")
+            if key == "type" and not doc_type:
+                doc_type = value
+            elif key == "status" and not status:
+                status = value
+    title = ""
+    in_fence = False
+    for line in lines[start:]:
+        stripped = line.strip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        m = H1_RE.match(line)
+        if m:
+            title = m.group(1).strip()
+            break
+    if not title:
+        title = Path(rel).stem
+    return title, doc_type, status
+
+
+def scan_documents(vault):
+    """vault 内文档清单（rel/abs/mtime/size/title/type/status）；读不了的跳过（同插件）。"""
+    rows = []
+    for path in sorted(vault.rglob("*")):
+        if not path.is_file():
+            continue
+        if path.suffix.lower() not in DOC_EXTENSIONS:
+            continue
+        rel = path.relative_to(vault).as_posix()
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        try:
+            st = path.stat()
+            mtime, size = int(st.st_mtime), int(st.st_size)
+        except OSError:
+            mtime, size = 0, 0
+        title, doc_type, status = parse_doc_meta(text, rel)
+        rows.append({"rel": rel, "abs_path": str(path), "title": title,
+                     "doc_type": doc_type, "status": status,
+                     "mtime": mtime, "size": size})
+    rows.sort(key=lambda r: r["rel"])
+    return rows
+
+
+# ── 名字归一 ─────────────────────────────────────────────────────────
+
+
+def clean_name(raw):
+    """上游名字 → 干净显示名：去列表符号、去包裹强调。"""
+    text = (raw or "").strip()
+    text = LIST_BULLET_RE.sub("", text)
+    text = text.strip().strip("*").strip()
+    return re.sub(r"\s+", " ", text)
+
+
+def name_key(raw):
+    """查找键：干净名、小写、空白折叠（大小写不敏感 = 精确判定口径）。"""
+    return clean_name(raw).lower()
+
+
+def short_definition(definition, name, limit=120):
+    """单行定义摘录（库里存原文整段；展示侧按本词条位置截取到下一个块锚之前）。"""
+    blob = re.sub(r"\s+", " ", definition or "").strip()
+    idx = blob.find(name) if name else -1
+    seg = blob[idx + len(name):] if idx >= 0 else blob
+    m = NAME_SEP_RE.search(seg)
+    if m:
+        seg = seg[m.end():]
+    # 同一段落里并列多条词条：本条定义到下一个 `^块锚` 为止
+    cut = ANCHOR_TOKEN_RE.search(seg)
+    if cut:
+        seg = seg[:cut.start()]
+    seg = TAG_TOKEN_RE.sub(" ", seg)
+    seg = re.sub(r"\s+", " ", seg).strip()
+    if len(seg) > limit:
+        seg = seg[:limit].rstrip() + "…"
+    return seg or "-"
+
+
+# ── schema ───────────────────────────────────────────────────────────
+
+SCHEMA_SQL = """
+PRAGMA journal_mode = WAL;
+PRAGMA foreign_keys = ON;
+
+CREATE TABLE IF NOT EXISTS meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS documents (
+    id         INTEGER PRIMARY KEY,
+    project    TEXT NOT NULL,
+    rel        TEXT NOT NULL,
+    abs_path   TEXT NOT NULL DEFAULT '',
+    title      TEXT NOT NULL DEFAULT '',
+    doc_type   TEXT NOT NULL DEFAULT '',
+    status     TEXT NOT NULL DEFAULT '',
+    mtime      INTEGER NOT NULL DEFAULT 0,
+    size       INTEGER NOT NULL DEFAULT 0,
+    term_count INTEGER NOT NULL DEFAULT 0,
+    scanned_at TEXT NOT NULL DEFAULT '',
+    UNIQUE(project, rel)
+);
+
+CREATE TABLE IF NOT EXISTS terms (
+    id         INTEGER PRIMARY KEY,
+    doc_id     INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    name       TEXT NOT NULL,
+    name_key   TEXT NOT NULL,
+    anchor     TEXT NOT NULL,
+    line       INTEGER NOT NULL,
+    end_line   INTEGER NOT NULL,
+    definition TEXT NOT NULL DEFAULT '',
+    source     TEXT NOT NULL,
+    raw_name   TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT '',
+    UNIQUE(doc_id, anchor)
+);
+
+CREATE TABLE IF NOT EXISTS term_aliases (
+    term_id   INTEGER NOT NULL REFERENCES terms(id) ON DELETE CASCADE,
+    alias     TEXT NOT NULL,
+    alias_key TEXT NOT NULL,
+    PRIMARY KEY(term_id, alias_key)
+);
+
+CREATE TABLE IF NOT EXISTS term_tags (
+    term_id INTEGER NOT NULL REFERENCES terms(id) ON DELETE CASCADE,
+    facet   TEXT NOT NULL,
+    value   TEXT NOT NULL,
+    PRIMARY KEY(term_id, facet, value)
+);
+
+CREATE TABLE IF NOT EXISTS term_refs (
+    id          INTEGER PRIMARY KEY,
+    term_id     INTEGER REFERENCES terms(id) ON DELETE CASCADE,
+    from_doc_id INTEGER REFERENCES documents(id) ON DELETE CASCADE,
+    from_rel    TEXT NOT NULL DEFAULT '',
+    line        INTEGER NOT NULL DEFAULT 0,
+    raw         TEXT NOT NULL DEFAULT '',
+    resolved    INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_terms_key ON terms(name_key);
+CREATE INDEX IF NOT EXISTS idx_tags      ON term_tags(facet, value);
+CREATE INDEX IF NOT EXISTS idx_refs_term ON term_refs(term_id);
+CREATE INDEX IF NOT EXISTS idx_docs_rel  ON documents(project, rel);
+
+-- 一枪答完「词条名 → 定义文档/锚点/标签/被引用次数/最后更新时间」。
+-- group_concat 的桶内顺序依赖插入顺序（rebuild 按 key 排序写入，故确定）。
+CREATE VIEW IF NOT EXISTS v_term_summary AS
+SELECT t.id                                   AS term_id,
+       t.name                                 AS name,
+       t.name_key                             AS name_key,
+       d.project                              AS project,
+       d.rel                                  AS rel,
+       t.anchor                               AS anchor,
+       t.line                                 AS line,
+       t.end_line                             AS end_line,
+       t.definition                           AS definition,
+       t.source                               AS source,
+       t.updated_at                           AS updated_at,
+       COALESCE((SELECT group_concat(a.alias, ',')
+                 FROM term_aliases a WHERE a.term_id = t.id), '')        AS aliases,
+       COALESCE((SELECT group_concat(x.facet || '/' || x.value, ',')
+                 FROM term_tags x WHERE x.term_id = t.id), '')           AS tags,
+       COALESCE((SELECT group_concat(x.value, ',')
+                 FROM term_tags x WHERE x.term_id = t.id AND x.facet = 'project'), '') AS project_tags,
+       COALESCE((SELECT group_concat(x.value, ',')
+                 FROM term_tags x WHERE x.term_id = t.id AND x.facet = 'topic'), '')   AS topic_tags,
+       (SELECT count(*) FROM term_refs r WHERE r.term_id = t.id)        AS ref_count
+FROM terms t
+JOIN documents d ON d.id = t.doc_id;
+"""
+
+
+def connect(db_path, create=False):
+    if not create and not Path(db_path).is_file():
+        fail(EXIT_NO_DB, f"索引库不存在：{db_path}",
+             "先建库：tools/stand-terms rebuild（默认写到 <data_root>/wiki-index/terms.db）")
+    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(str(db_path))
+    con.row_factory = sqlite3.Row
+    con.execute("PRAGMA journal_mode = WAL")
+    con.execute("PRAGMA foreign_keys = ON")
+    return con
+
+
+def open_query_db(db_path):
+    con = connect(db_path)
+    try:
+        con.execute("SELECT 1 FROM v_term_summary LIMIT 1")
+    except sqlite3.Error:
+        con.close()
+        fail(EXIT_NO_DB, f"库文件不是词条索引（缺 v_term_summary）：{db_path}",
+             "删掉重建：tools/stand-terms rebuild")
+    return con
+
+
+def meta_of(con):
+    try:
+        return {r["key"]: r["value"] for r in con.execute("SELECT key, value FROM meta")}
+    except sqlite3.Error:
+        return {}
+
+
+# ── rebuild ──────────────────────────────────────────────────────────
+
+
+def cmd_rebuild(args, data_root):
+    script, source, stale, tried = find_script(args.scripts, data_root)
+    if script is None:
+        fail(EXIT_NO_SCRIPT,
+             "找不到词条抽取出口 " + CHECK_SCRIPT_NAME + "（尝试过：\n    "
+             + "\n    ".join(tried) + "）",
+             "用 --scripts <wiki-docs/scripts 目录> 显式指定，或 "
+             f"export {SCRIPTS_ENV_VAR}=<同目录>，或安装 visual-report 插件"
+             f"（应为 {data_root.joinpath(*PLUGIN_SCRIPTS_REL)}）")
+    for item in stale:
+        print(f"注意：跳过不带 --dump-terms 的副本（版本落后）：{item}", file=sys.stderr)
+    if stale and not script_supports_dump(script):
+        fail(EXIT_NO_SCRIPT,
+             f"找到的 {CHECK_SCRIPT_NAME} 都不带 --dump-terms 出口：{script}",
+             "插件副本落后于 seed——用 --scripts 指向 "
+             f"<仓>/src/main/resources/seed/{'/'.join(PLUGIN_SCRIPTS_REL)}，"
+             "或重装 visual-report 插件")
+
+    if args.root:
+        vault = Path(os.path.expanduser(str(args.root)))
+        if not vault.is_dir():
+            fail(EXIT_USAGE, f"--root 不是目录：{vault}")
+        project = (args.project or "").strip() or infer_project(vault) or "local"
+        vaults = [(project, vault)]
+    else:
+        vaults = enumerate_vaults(data_root)
+        if not vaults:
+            fail(EXIT_NONE, f"{data_root}/projects/ 下没有带 .stand/docs 的项目 vault",
+                 "项目 vault 落位 = <data_root>/projects/<项目>/.stand/docs")
+        if (args.project or "").strip():
+            keep = args.project.strip()
+            vaults = [(p, v) for p, v in vaults if p == keep]
+            if not vaults:
+                fail(EXIT_NONE, f"项目 {keep} 没有 .stand/docs vault")
+
+    db_path = Path(os.path.expanduser(str(args.db))) if args.db else data_root.joinpath(*INDEX_REL)
+    now = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+    con = connect(db_path, create=True)
+    con.executescript(SCHEMA_SQL)
+
+    stats = {"vaults": [], "documents": 0, "terms": 0, "aliases": 0,
+             "tags": 0, "refs": 0, "refs_resolved": 0, "duplicate_anchors": 0,
+             "skipped": []}
+    try:
+        with con:  # 单一事务：先清后插（全量替换 = 确定性）
+            for table in ("term_refs", "term_aliases", "term_tags", "terms",
+                          "documents", "meta"):
+                con.execute(f"DELETE FROM {table}")
+
+            for project, vault in vaults:
+                data = run_dump(script, vault, project)
+                api_terms = data["terms"]
+                doc_rows = {r["rel"]: r for r in scan_documents(vault)}
+                term_counts = {}
+                for t in api_terms:
+                    term_counts[t["rel"]] = term_counts.get(t["rel"], 0) + 1
+                # 抽取出口报到的文档必须进 documents（防御：README 等在 vault 外的边界）
+                for rel in term_counts:
+                    if rel not in doc_rows:
+                        abs_path = vault / rel
+                        try:
+                            st = abs_path.stat()
+                            mtime, size = int(st.st_mtime), int(st.st_size)
+                        except OSError:
+                            mtime, size = 0, 0
+                        doc_rows[rel] = {"rel": rel, "abs_path": str(abs_path),
+                                         "title": Path(rel).stem, "doc_type": "",
+                                         "status": "", "mtime": mtime, "size": size}
+
+                doc_ids = {}
+                for rel in sorted(doc_rows):
+                    row = doc_rows[rel]
+                    cur = con.execute(
+                        "INSERT INTO documents (project, rel, abs_path, title, doc_type,"
+                        " status, mtime, size, term_count, scanned_at)"
+                        " VALUES (?,?,?,?,?,?,?,?,?,?)",
+                        (project, rel, row["abs_path"], row["title"], row["doc_type"],
+                         row["status"], row["mtime"], row["size"],
+                         term_counts.get(rel, 0), now))
+                    doc_ids[rel] = cur.lastrowid
+                stats["documents"] += len(doc_rows)
+
+                keys = {}   # 查找键 → [(term_id, source)]
+                seen_anchors = set()
+                v_terms = v_aliases = v_tags = 0
+                for t in sorted(api_terms, key=lambda x: (x["rel"], x["line"], x["name"])):
+                    doc_id = doc_ids[t["rel"]]
+                    anchor = t["anchor"]
+                    if (doc_id, anchor) in seen_anchors:
+                        stats["duplicate_anchors"] += 1
+                        stats["skipped"].append(f"{project}:{t['rel']} {anchor}（块锚重复，保留首条）")
+                        continue
+                    seen_anchors.add((doc_id, anchor))
+                    display = clean_name(t["name"])
+                    key = name_key(t["name"])
+                    cur = con.execute(
+                        "INSERT INTO terms (doc_id, name, name_key, anchor, line, end_line,"
+                        " definition, source, raw_name, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                        (doc_id, display, key, anchor, int(t["line"]), int(t["end_line"]),
+                         t.get("definition", ""), t.get("source", "doc"),
+                         t["name"], now))
+                    term_id = cur.lastrowid
+                    v_terms += 1
+                    keys.setdefault(key, []).append((term_id, t.get("source", "doc")))
+                    aliases = {}
+                    for alias in t.get("aliases") or []:
+                        akey = name_key(alias)
+                        araw = clean_name(alias)
+                        if not akey or akey in aliases:
+                            continue
+                        aliases[akey] = araw
+                    for akey in sorted(aliases):
+                        con.execute("INSERT OR IGNORE INTO term_aliases"
+                                    " (term_id, alias, alias_key) VALUES (?,?,?)",
+                                    (term_id, aliases[akey], akey))
+                        keys.setdefault(akey, []).append((term_id, t.get("source", "doc")))
+                        v_aliases += 1
+                    tags = t.get("tags") or {}
+                    triples = []
+                    for bucket, facet in (("project", "project"), ("topic", "topic")):
+                        for value in tags.get(bucket) or []:
+                            triples.append((facet, value))
+                    for extra in tags.get("extra") or []:
+                        if "/" not in extra:
+                            continue
+                        facet, value = extra.split("/", 1)
+                        triples.append((facet.strip(), value.strip()))
+                    for facet, value in sorted(set(triples)):
+                        if not facet or not value:
+                            continue
+                        con.execute("INSERT OR IGNORE INTO term_tags"
+                                    " (term_id, facet, value) VALUES (?,?,?)",
+                                    (term_id, facet, value))
+                        v_tags += 1
+                stats["terms"] += v_terms
+                stats["aliases"] += v_aliases
+                stats["tags"] += v_tags
+
+                refs = refs_of(con, data["refs"], doc_ids, keys, stats)
+                stats["refs"] += refs[0]
+                stats["refs_resolved"] += refs[1]
+                stats["vaults"].append({"project": project, "vault": str(vault),
+                                        "documents": len(doc_rows), "terms": v_terms,
+                                        "refs": refs[0]})
+
+            meta_rows = [
+                ("schema_version", SCHEMA_VERSION),
+                ("last_rebuild", now),
+                ("rebuild_source", "vaults=" + ",".join(p for p, _v in vaults)
+                 + f";script={script}"),
+            ]
+            for key, value in meta_rows:
+                con.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?,?)",
+                            (key, value))
+    except RuntimeError as exc:
+        try:
+            con.rollback()
+        except sqlite3.Error:
+            pass
+        con.close()
+        fail(EXIT_NONE, str(exc), "确认插件脚本可独立运行："
+             f"python3 {script} --root <vault> --dump-terms --json")
+    else:
+        # 提交换档 + checkpoint：确保落库完整（WAL 侧文件可被 --dump 完整读到）
+        con.commit()
+        try:
+            con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        except sqlite3.Error:
+            pass
+        con.close()
+
+    payload = {"db": str(db_path), "schema_version": SCHEMA_VERSION,
+               "last_rebuild": now, "script": str(script), "script_source": source,
+               **{k: v for k, v in stats.items()}}
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=1))
+        return EXIT_OK
+
+    print(f"索引库：{db_path}")
+    print(f"schema 版本：{SCHEMA_VERSION}　最后重建：{now}")
+    print(f"抽取出口：{script}（来源：{source}）")
+    print()
+    rows = [(v["project"], str(v["documents"]), str(v["terms"]), str(v["refs"]), v["vault"])
+            for v in stats["vaults"]]
+    print(render_table(["项目", "文档", "词条", "引用", "vault"], rows,
+                       aligns="rrrrl"))
+    print()
+    print(f"合计：文档 {stats['documents']}　词条 {stats['terms']}　"
+          f"别名 {stats['aliases']}　标签 {stats['tags']}　"
+          f"引用 {stats['refs']}（上游已消解 {stats['refs_resolved']}）")
+    if stats["duplicate_anchors"]:
+        print(f"警告：{stats['duplicate_anchors']} 个块锚重复（同文档内同锚），"
+              "已保留首条：", file=sys.stderr)
+        for line in stats["skipped"]:
+            print(f"  {line}", file=sys.stderr)
+    return EXIT_OK
+
+
+def refs_of(con, api_refs, doc_ids, keys, stats):
+    """写 term_refs；返回 (总引用数, 已消解引用数)。"""
+    total = resolved = 0
+    for ref in sorted(api_refs, key=lambda r: (r["from_rel"], r["line"], r["raw"])):
+        key = (ref.get("name_key") or "").strip()
+        hits = keys.get(key) or []
+        glossary = [tid for tid, src in hits if src == "glossary"]
+        if len(glossary) == 1:
+            term_id = glossary[0]
+        elif not glossary and len({tid for tid, _s in hits}) == 1:
+            term_id = hits[0][0]
+        else:
+            term_id = None
+        con.execute("INSERT INTO term_refs (term_id, from_doc_id, from_rel, line, raw,"
+                    " resolved) VALUES (?,?,?,?,?,?)",
+                    (term_id, doc_ids.get(ref["from_rel"]), ref["from_rel"],
+                     int(ref["line"]), ref["raw"], 1 if ref.get("resolved") else 0))
+        total += 1
+        resolved += 1 if ref.get("resolved") else 0
+    return total, resolved
+
+
+# ── 展示（对齐列 + 中文标签；CJK 按双宽算）────────────────────────────
+
+
+def display_width(text):
+    width = 0
+    for ch in text:
+        width += 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+    return width
+
+
+def clip(text, width):
+    if width <= 0:
+        return ""
+    if display_width(text) <= width:
+        return text
+    out, used = "", 0
+    limit = width - 1
+    for ch in text:
+        w = 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+        if used + w > limit:
+            break
+        out += ch
+        used += w
+    return out + "…"
+
+
+def pad(text, width, align="l"):
+    gap = max(0, width - display_width(text))
+    if align == "r":
+        return " " * gap + text
+    return text + " " * gap
+
+
+def render_table(headers, rows, aligns="l"):
+    cells = [[str(c) for c in r] for r in rows]
+    widths = [display_width(h) for h in headers]
+    for row in cells:
+        for i, cell in enumerate(row):
+            widths[i] = max(widths[i], display_width(cell))
+    lines = ["  ".join(pad(h, widths[i]) for i, h in enumerate(headers)).rstrip()]
+    lines.append("  ".join("-" * widths[i] for i in range(len(headers))))
+    for row in cells:
+        lines.append("  ".join(pad(c, widths[i], aligns[i]) for i, c in enumerate(row)).rstrip())
+    return "\n".join(lines)
+
+
+def term_row(summary):
+    return (summary["name"], summary["project_tags"] or "-",
+            summary["topic_tags"] or "-", summary["source"],
+            f"{summary['rel']}:{summary['line']}", str(summary["ref_count"]))
+
+
+TERM_HEADERS = ["词条", "项目标签", "主题标签", "来源", "文档:行", "引用"]
+
+
+def render_terms(items, limit_note=""):
+    if not items:
+        return ""
+    rows = [term_row(s) for s in items]
+    out = render_table(TERM_HEADERS, rows, aligns="lllllr")
+    if limit_note:
+        out += "\n" + limit_note
+    return out
+
+
+def summary_json(item, with_definition=True):
+    data = {
+        "name": item["name"],
+        "aliases": [a for a in (item["aliases"] or "").split(",") if a],
+        "project": item["project"],
+        "rel": item["rel"],
+        "anchor": item["anchor"],
+        "line": item["line"],
+        "end_line": item["end_line"],
+        "source": item["source"],
+        "tags": {"project": [t for t in (item["project_tags"] or "").split(",") if t],
+                 "topic": [t for t in (item["topic_tags"] or "").split(",") if t],
+                 "all": [t for t in (item["tags"] or "").split(",") if t]},
+        "ref_count": item["ref_count"],
+        "updated_at": item["updated_at"],
+    }
+    if with_definition:
+        data["definition"] = short_definition(item["definition"], item["name"])
+    return data
+
+
+def render_term_detail(item, index=None):
+    head = f"词条：{item['name']}"
+    if index is not None:
+        head = f"[{index}] " + head
+    lines = [head]
+    aliases = [a for a in (item["aliases"] or "").split(",") if a]
+    lines.append(f"  别名：{'、'.join(aliases) if aliases else '-'}")
+    lines.append(f"  来源：{item['source']}"
+                 + ("（词表）" if item["source"] == "glossary" else "（文档声明块）"))
+    lines.append(f"  位置：{item['rel']}:{item['line']}-{item['end_line']}"
+                 f"　锚点 {item['anchor']}　文档项目 {item['project']}")
+    tags = item["tags"] or "-"
+    lines.append(f"  标签：{tags}")
+    lines.append(f"  引用：{item['ref_count']} 处　更新：{fmt_ts(item['updated_at'])}")
+    lines.append(f"  定义：{short_definition(item['definition'], item['name'], 300)}")
+    return "\n".join(lines)
+
+
+# ── 查询命令 ─────────────────────────────────────────────────────────
+
+
+def normalize_tag(arg, namespace):
+    """--project/--topic 的参数宽容化：`#proj/stand`、`proj/stand`、`stand` 等价。"""
+    text = (arg or "").strip().lstrip("#")
+    for prefix in (namespace + "/", "proj/" if namespace == "project" else None):
+        if prefix and text.startswith(prefix):
+            text = text[len(prefix):]
+    return text
+
+
+def query_by_tag(con, facet, value):
+    return [r["term_id"] for r in con.execute(
+        "SELECT term_id FROM term_tags WHERE facet = ? AND value = ?", (facet, value))]
+
+
+def resolve_name(con, target, fuzzy=False):
+    """精确名 → 精确别名 → （--fuzzy）子串。返回按 name_key 排序的汇总行。"""
+    key = name_key(target)
+    rows = con.execute(
+        "SELECT * FROM v_term_summary WHERE name_key = ? ORDER BY project, rel, line",
+        (key,)).fetchall()
+    if not rows:
+        rows = con.execute(
+            "SELECT DISTINCT s.* FROM v_term_summary s JOIN term_aliases a"
+            " ON a.term_id = s.term_id WHERE a.alias_key = ?"
+            " ORDER BY s.project, s.rel, s.line", (key,)).fetchall()
+    if not rows and fuzzy:
+        needle = f"%{key}%"
+        rows = con.execute(
+            "SELECT DISTINCT s.* FROM v_term_summary s LEFT JOIN term_aliases a"
+            " ON a.term_id = s.term_id"
+            " WHERE s.name_key LIKE ? OR a.alias_key LIKE ?"
+            " ORDER BY s.name_key, s.project, s.rel", (needle, needle)).fetchall()
+    return rows
+
+
+def cmd_list(con, args, root_project):
+    sql = ["SELECT * FROM v_term_summary WHERE 1 = 1"]
+    params = []
+    if args.project:
+        value = normalize_tag(args.project, "project")
+        if not value:
+            fail(EXIT_USAGE, "--project 需要一个标签值（如 stand / #proj/stand）")
+        sql.append("AND EXISTS (SELECT 1 FROM term_tags x WHERE x.term_id ="
+                   " v_term_summary.term_id AND x.facet = 'project' AND x.value = ?)")
+        params.append(value)
+    if args.topic:
+        value = normalize_tag(args.topic, "topic")
+        if not value:
+            fail(EXIT_USAGE, "--topic 需要一个标签值（如 term-index / #topic/term-index）")
+        sql.append("AND EXISTS (SELECT 1 FROM term_tags x WHERE x.term_id ="
+                   " v_term_summary.term_id AND x.facet = 'topic' AND x.value = ?)")
+        params.append(value)
+    if args.source:
+        sql.append("AND source = ?")
+        params.append(args.source)
+    if root_project and not args.project:
+        sql.append("AND project = ?")
+        params.append(root_project)
+    sql.append("ORDER BY name_key, project, rel, line")
+    rows = con.execute(" ".join(sql), params).fetchall()
+    limit = args.limit if args.limit is not None else 50
+    if limit and limit > 0:
+        shown = rows[:limit]
+    else:
+        shown = rows
+    if args.json:
+        print(json.dumps({
+            "count": len(rows), "shown": len(shown),
+            "filters": {"project": args.project, "topic": args.topic,
+                        "source": args.source, "limit": limit},
+            "results": [summary_json(r, with_definition=False) for r in shown],
+        }, ensure_ascii=False, indent=1))
+        return EXIT_OK if rows else EXIT_NONE
+    if not rows:
+        print("（无结果：没有匹配的词条——放宽 --project/--topic/--source 或先 rebuild）")
+        return EXIT_NONE
+    note = ""
+    if limit and limit > 0 and len(rows) > limit:
+        note = f"（显示 {limit}/{len(rows)} 条；--limit 0 看全部）"
+    print(render_terms(shown, note))
+    return EXIT_OK
+
+
+def cmd_show(con, args, root_project):
+    rows = resolve_name(con, args.name, fuzzy=args.fuzzy)
+    if root_project:
+        scoped = [r for r in rows if r["project"] == root_project]
+        rows = scoped or []
+    if args.json:
+        print(json.dumps({"query": args.name, "fuzzy": bool(args.fuzzy),
+                          "count": len(rows),
+                          "results": [summary_json(r) for r in rows]},
+                         ensure_ascii=False, indent=1))
+        return EXIT_OK if rows else EXIT_NONE
+    if not rows:
+        hint = "" if args.fuzzy else "（精确未命中——试 --fuzzy 子串搜索）"
+        print(f"（无结果：库里没有词条「{args.name}」{hint}）")
+        return EXIT_NONE
+    print("\n\n".join(render_term_detail(r, i + 1 if len(rows) > 1 else None)
+                      for i, r in enumerate(rows)))
+    if len(rows) > 1:
+        print(f"\n— {len(rows)} 条命中（跨文档同名/别名命中，按项目+文档排序）")
+    return EXIT_OK
+
+
+def match_documents(con, target, project=None):
+    """rel 精确 > 带扩展名 > basename/去扩展名 basename > 子串。返回最高分一组。"""
+    query = (target or "").strip().replace("\\", "/")
+    while query.startswith("./"):
+        query = query[2:]
+    docs = con.execute("SELECT * FROM documents ORDER BY project, rel").fetchall()
+    if project:
+        docs = [d for d in docs if d["project"] == project]
+    scored = []
+    for doc in docs:
+        rel = doc["rel"]
+        base = rel.rsplit("/", 1)[-1]
+        stem = base.rsplit(".", 1)[0] if "." in base else base
+        score = 0
+        if rel == query or rel == query + ".md" or rel == query + ".markdown":
+            score = 100
+        elif base == query or base == query + ".md" or stem == query:
+            score = 90
+        elif query and query in rel:
+            score = 60
+        if score:
+            scored.append((score, doc))
+    if not scored:
+        return []
+    top = max(s for s, _ in scored)
+    return [doc for score, doc in scored if score == top]
+
+
+def cmd_doc(con, args, root_project):
+    docs = match_documents(con, args.target, project=root_project)
+    if not docs:
+        if args.json:
+            print(json.dumps({"query": args.target, "documents": [], "count": 0},
+                             ensure_ascii=False, indent=1))
+        else:
+            print(f"（无结果：库里没有文档「{args.target}」——试 basename 或 vault 相对路径）")
+        return EXIT_NONE
+    payload = []
+    for doc in docs:
+        terms = con.execute(
+            "SELECT * FROM v_term_summary WHERE rel = ? AND project = ?"
+            " ORDER BY line", (doc["rel"], doc["project"])).fetchall()
+        payload.append({
+            "project": doc["project"], "rel": doc["rel"], "title": doc["title"],
+            "doc_type": doc["doc_type"], "status": doc["status"],
+            "term_count": doc["term_count"], "line_count": len(terms),
+            "terms": [summary_json(t) for t in terms],
+            # 渲染用原始汇总行（summary_json 是给机器看的嵌套形状，列渲染要扁平列）
+            "terms_raw": terms,
+        })
+    if args.json:
+        print(json.dumps({"query": args.target, "count": len(payload),
+                          "documents": [{k: v for k, v in item.items()
+                                         if k != "terms_raw"} for item in payload]},
+                         ensure_ascii=False, indent=1))
+        return EXIT_OK
+    blocks = []
+    for item in payload:
+        head = (f"文档：{item['rel']}　项目 {item['project']}")
+        meta = (f"  标题：{item['title']}　类型：{item['doc_type'] or '-'}　"
+                f"状态：{item['status'] or '-'}　词条 {item['line_count']} 条")
+        if not item["terms"]:
+            blocks.append(head + "\n" + meta + "\n  （该文档没有词条声明块）")
+            continue
+        rows = [(t["name"], t["aliases"] or "-", t["topic_tags"] or "-", t["source"],
+                 str(t["line"]), str(t["ref_count"])) for t in item["terms_raw"]]
+        blocks.append(head + "\n" + meta + "\n"
+                      + render_table(["词条", "别名", "主题标签", "来源", "行", "引用"], rows,
+                                     aligns="llllrr"))
+    print("\n\n".join(blocks))
+    if len(payload) > 1:
+        print(f"\n— {len(payload)} 个文档同名命中（用完整 rel 可唯一定位）")
+    return EXIT_OK
+
+
+def cmd_refs(con, args, root_project):
+    rows = resolve_name(con, args.name, fuzzy=args.fuzzy)
+    if root_project:
+        rows = [r for r in rows if r["project"] == root_project]
+    if not rows:
+        if args.json:
+            print(json.dumps({"query": args.name, "results": [], "count": 0},
+                             ensure_ascii=False, indent=1))
+        else:
+            print(f"（无结果：库里没有词条「{args.name}」）")
+        return EXIT_NONE
+    payload = []
+    for item in rows:
+        refs = con.execute(
+            "SELECT * FROM term_refs WHERE term_id = ? ORDER BY from_rel, line, raw",
+            (item["term_id"],)).fetchall()
+        payload.append({
+            "term": {"name": item["name"], "project": item["project"],
+                     "rel": item["rel"], "anchor": item["anchor"],
+                     "line": item["line"], "ref_count": item["ref_count"]},
+            "refs": [{"from_rel": r["from_rel"], "line": r["line"], "raw": r["raw"],
+                      "resolved": bool(r["resolved"])} for r in refs],
+        })
+    if args.json:
+        print(json.dumps({"query": args.name, "count": len(payload),
+                          "results": payload}, ensure_ascii=False, indent=1))
+        return EXIT_OK
+    blocks = []
+    for item in payload:
+        head = (f"词条：{item['term']['name']}　（{item['term']['rel']}:"
+                f"{item['term']['line']} {item['term']['anchor']}）"
+                f"　被引用 {len(item['refs'])} 处")
+        if item["refs"]:
+            rows_out = [(f"{r['from_rel']}:{r['line']}", r["raw"],
+                         "是" if r["resolved"] else "否") for r in item["refs"]]
+            body = render_table(["位置", "原文", "上游消解"], rows_out, aligns="lll")
+        else:
+            body = "  （没有任何 [[名]] 短形引用指向它）"
+        blocks.append(head + "\n" + body)
+    print("\n\n".join(blocks))
+    return EXIT_OK
+
+
+def cmd_stats(con, args, root_project):
+    where, params = "", []
+    if root_project:
+        where, params = " WHERE project = ?", [root_project]
+    totals = {
+        "terms": con.execute(f"SELECT count(*) FROM v_term_summary{where}", params).fetchone()[0],
+        "documents": con.execute(
+            "SELECT count(*) FROM documents" + (" WHERE project = ?" if root_project else ""),
+            params).fetchone()[0],
+        "documents_with_terms": con.execute(
+            "SELECT count(*) FROM documents WHERE term_count > 0"
+            + (" AND project = ?" if root_project else ""), params).fetchone()[0],
+        "refs": con.execute("SELECT count(*) FROM term_refs").fetchone()[0],
+        "refs_resolved": con.execute(
+            "SELECT count(*) FROM term_refs WHERE resolved = 1").fetchone()[0],
+        "aliases": con.execute("SELECT count(*) FROM term_aliases").fetchone()[0],
+        "tags": con.execute("SELECT count(*) FROM term_tags").fetchone()[0],
+    }
+    scope = (" AND d.project = ?" if root_project else "")
+    def dist(facet):
+        return con.execute(
+            "SELECT t.value AS value, count(*) AS n FROM term_tags t"
+            " JOIN terms m ON m.id = t.term_id JOIN documents d ON d.id = m.doc_id"
+            f" WHERE t.facet = ?{scope} GROUP BY t.value ORDER BY n DESC, t.value",
+            [facet] + params).fetchall()
+    by_project = [(r["value"], r["n"]) for r in dist("project")]
+    by_topic = [(r["value"], r["n"]) for r in dist("topic")]
+    by_source = [(r["source"], r["n"]) for r in con.execute(
+        f"SELECT source, count(*) AS n FROM v_term_summary{where}"
+        " GROUP BY source ORDER BY source", params).fetchall()]
+    meta = meta_of(con)
+    if args.json:
+        print(json.dumps({
+            "db": str(args.db_path), "schema_version": meta.get("schema_version", ""),
+            "last_rebuild": meta.get("last_rebuild", ""),
+            "rebuild_source": meta.get("rebuild_source", ""),
+            "totals": totals,
+            "by_project": [{"value": v, "terms": n} for v, n in by_project],
+            "by_topic": [{"value": v, "terms": n} for v, n in by_topic],
+            "by_source": [{"value": v, "terms": n} for v, n in by_source],
+        }, ensure_ascii=False, indent=1))
+        return EXIT_OK
+    print(f"库：{args.db_path}")
+    print(f"schema 版本：{meta.get('schema_version', '-')}　"
+          f"最后重建：{fmt_ts(meta.get('last_rebuild'))}")
+    print()
+    print(f"总词条：{totals['terms']}　文档：{totals['documents']}"
+          f"（其中带词条 {totals['documents_with_terms']}）　"
+          f"引用：{totals['refs']}（上游已消解 {totals['refs_resolved']}）")
+    print(f"别名：{totals['aliases']}　标签：{totals['tags']}")
+    if not totals["terms"]:
+        return EXIT_OK
+    labels = {"glossary": "词表", "doc": "文档声明块"}
+    print("\n按来源：")
+    print(render_table(["来源", "词条"],
+                       [(labels.get(v, v), str(n)) for v, n in by_source], aligns="lr"))
+    def block(title, items, empty):
+        print(f"\n{title}")
+        if not items:
+            print(f"  （{empty}）")
+            return
+        print(render_table(["标签", "词条"], [(v, str(n)) for v, n in items], aligns="lr"))
+    block("按项目（#proj/…）：", by_project, "所有词条都缺 #proj/ 标签")
+    block("按主题（#topic/…）：", by_topic, "所有词条都缺 #topic/ 标签")
+    return EXIT_OK
+
+
+# ── CLI ──────────────────────────────────────────────────────────────
+
+
+def build_parser():
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--db", default=argparse.SUPPRESS,
+                        help="索引库路径（默认 <data_root>/wiki-index/terms.db）")
+    common.add_argument("--json", action="store_true", default=argparse.SUPPRESS,
+                        help="机器形状输出（合法 JSON，stdout）")
+    common.add_argument("--root", default=argparse.SUPPRESS,
+                        help="vault 根（rebuild：只索引该 vault；查询：由路径推项目名并按项目过滤）")
+
+    ap = argparse.ArgumentParser(
+        prog="stand-terms",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="词条索引库 + 查询 CLI：vault 里的词条声明抽成 SQLite 库，按名/项目/主题/文档/引用查询。",
+        epilog="""\
+数据从哪来（唯一边界）：
+  词条 = 插件脚本的机器出口 check_wiki_docs.py --dump-terms --json（本工具只消费，
+  不第二次解析正文）；文档元数据 = vault 内 .md/.markdown/.html 的磁盘事实。
+  库是派生物：文档是事实源，随时可删可重建。
+
+vault 与数据根：
+  vault = <data_root>/projects/<项目>/.stand/docs（项目 = 有 project.json 的目录）
+  data_root = STAND_HOME → NEBFLOW_HOME → ~/.stand（与抽取出口同一把尺）
+
+常用示例：
+  %(prog)s rebuild                              # 全项目重建默认库
+  %(prog)s rebuild --root ~/.stand/projects/stand/.stand/docs --db /tmp/t.db
+  %(prog)s list --project stand --limit 20
+  %(prog)s list --topic term-index
+  %(prog)s show 墨族                             # 精确名/别名（大小写不敏感）
+  %(prog)s show 墨 --fuzzy                       # 子串模糊
+  %(prog)s doc GLOSSARY.md                       # rel 或 basename
+  %(prog)s refs 词条索引库
+  %(prog)s stats --json
+
+退出码：0=成功 1=无结果 2=用法错 3=库不存在（先 rebuild）4=找不到 check_wiki_docs.py
+""")
+    ap.add_argument("--db", help="索引库路径（默认 <data_root>/wiki-index/terms.db）")
+    ap.add_argument("--json", action="store_true", help="机器形状输出（合法 JSON，stdout）")
+    ap.add_argument("--root", help="vault 根（rebuild：只索引该 vault；查询：推项目名过滤）")
+    ap.add_argument("--data-root", help="数据根（默认 STAND_HOME > NEBFLOW_HOME > ~/.stand）")
+
+    sub = ap.add_subparsers(dest="cmd")
+    rb = sub.add_parser("rebuild", parents=[common],
+                        help="重建索引库（单事务全量替换：先删后插）",
+                        description="重建索引库：逐个项目 vault 调抽取出口，单事务全量替换。")
+    rb.add_argument("--project", help="项目名（--root 时用作库内项目标签；缺省从路径推断）")
+    rb.add_argument("--scripts", help="wiki-docs/scripts 目录（含 check_wiki_docs.py）或该脚本路径")
+
+    ls = sub.add_parser("list", parents=[common], help="按项目/主题/来源过滤列词条")
+    ls.add_argument("--project", help="按 #proj/<slug> 标签过滤（不是文档所属项目；接受 stand / proj/stand / #proj/stand）")
+    ls.add_argument("--topic", help="按 #topic/<slug> 标签过滤（接受 term-index / #topic/term-index）")
+    ls.add_argument("--source", choices=("glossary", "doc"), help="来源：glossary=词表，doc=文档声明块")
+    ls.add_argument("--limit", type=int, default=50, help="最多显示 N 条（0 = 全部；默认 50）")
+
+    sh = sub.add_parser("show", parents=[common], help="按词条名显示详情（精确优先）")
+    sh.add_argument("name", help="词条名（含别名；大小写不敏感）")
+    sh.add_argument("--fuzzy", action="store_true", help="精确未命中时走子串模糊（名与别名）")
+
+    dc = sub.add_parser("doc", parents=[common], help="列某文档下的全部词条")
+    dc.add_argument("target", help="vault 相对路径或 basename（如 GLOSSARY.md）")
+    dc.add_argument("--project", help="只在某个项目里找同名文档")
+
+    rf = sub.add_parser(
+        "refs", parents=[common], help="列某词条被引用的位置",
+        description="列某词条被引用的位置（from_rel:line + 原文）。引用归属按**清洗后的"
+                    "查找键**消解（`- ` 列表前缀不进查找键）；「上游消解」列是抽取出口的"
+                    "判定原文——两者不一致 = 上游已知的 `- ` 前缀缺陷（引用仍挂在该词条上，"
+                    "只是引擎侧不认），不是脏数据。")
+    rf.add_argument("name", help="词条名")
+    rf.add_argument("--fuzzy", action="store_true", help="子串模糊匹配")
+
+    sub.add_parser("stats", parents=[common], help="总量与按 project/topic 的分布")
+    return ap
+
+
+def main(argv=None):
+    ap = build_parser()
+    args = ap.parse_args(argv)
+    if not args.cmd:
+        ap.error("需要子命令：rebuild / list / show / doc / refs / stats")
+
+    data_root = resolve_data_root(getattr(args, "data_root", None))
+    args.db_path = Path(os.path.expanduser(args.db)) if getattr(args, "db", None) \
+        else data_root.joinpath(*INDEX_REL)
+
+    if args.cmd == "rebuild":
+        return cmd_rebuild(args, data_root)
+
+    con = open_query_db(args.db_path)
+    root_project = None
+    if getattr(args, "root", None):
+        root_path = Path(os.path.expanduser(str(args.root)))
+        root_project = infer_project(root_path)
+        if not root_project:
+            con.close()
+            fail(EXIT_USAGE, f"--root 无法推出项目名：{root_path}",
+                 "查询侧 --root 只接受 <data_root>/projects/<项目>/.stand/docs 形状；"
+                 "按项目过滤请改用 --project <项目名>")
+    try:
+        if args.cmd == "list":
+            return cmd_list(con, args, root_project)
+        if args.cmd == "show":
+            return cmd_show(con, args, root_project)
+        if args.cmd == "doc":
+            return cmd_doc(con, args, root_project)
+        if args.cmd == "refs":
+            return cmd_refs(con, args, root_project)
+        if args.cmd == "stats":
+            return cmd_stats(con, args, root_project)
+        con.close()
+        ap.error(f"未知子命令：{args.cmd}")
+    finally:
+        try:
+            con.close()
+        except sqlite3.Error:
+            pass
+
+
+if __name__ == "__main__":
+    sys.exit(main())
