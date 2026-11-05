@@ -53,6 +53,13 @@
       "top": 718,
       "bottom": 766,
       "h": 48
+    },
+    {
+      "sel": ".ask-fab",
+      "visible": true,
+      "top": 718,
+      "bottom": 766,
+      "h": 48
     }
   ],
   "chromeTop": 718,

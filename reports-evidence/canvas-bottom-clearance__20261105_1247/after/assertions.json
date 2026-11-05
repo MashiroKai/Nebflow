@@ -1,8 +1,8 @@
 {
-  "when": "2026-11-05T04:45:20.639Z",
+  "when": "2026-11-05T05:21:31.026Z",
   "webRoot": "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-canvas-bottom-clearance/src/main/resources/web",
   "browser": "chromium-151",
-  "out": "/tmp/nf-clearance-after",
+  "out": "/tmp/nf-v2-after",
   "pass": 15,
   "fail": 0,
   "rows": [
@@ -10,7 +10,7 @@
       "id": "A1",
       "name": "桌面 1440 · 滚到底：末行完整停在底部浮钮带之上（≥8px 呼吸）",
       "verdict": "PASS",
-      "readout": "末块 <P> bottom=792.98；浮钮带顶=825；空隙=32.02px（阈值 ≥8）；末块文字=\"末行标记：END-OF-DOCUMENT-末行\"；浮钮=.canvas-source-toggle(top 825,h 40) / .canvas-find-toggle(top 825,h 40) / .canvas-refresh-toggle(top 825,h 40)"
+      "readout": "末块 <P> bottom=788.98；浮钮带顶=821；空隙=32.02px（阈值 ≥8）；末块文字=\"末行标记：END-OF-DOCUMENT-末行\"；浮钮=.canvas-source-toggle(top 825,h 40) / .canvas-find-toggle(top 825,h 40) / .canvas-refresh-toggle(top 825,h 40) / .ask-fab(top 821,h 48)"
     },
     {
       "id": "A2",
@@ -22,43 +22,43 @@
       "id": "A3",
       "name": "桌面 1440 · 机制一致：--canvas-bottom-clearance = pane 底距 − 浮钮带顶 + 12",
       "verdict": "PASS",
-      "readout": "变量=68px；独立算得 68px；计算后 padding-bottom=68px"
+      "readout": "变量=72px；独立算得 72px；计算后 padding-bottom=72px"
     },
     {
       "id": "A4",
       "name": "桌面 1440 · 长文档确实可滚且已到 max",
       "verdict": "PASS",
-      "readout": "scrollTop=5342 / max=5342（sh=6206 ch=864）"
+      "readout": "scrollTop=5346 / max=5346（sh=6210 ch=864）"
     },
     {
       "id": "A5",
       "name": "桌面 1440 · 留白刚好用完：内容底缘 = 滚动盒底 − padding-bottom",
       "verdict": "PASS",
-      "readout": "内容底缘=812.98；滚动盒底=881；padding-bottom=68；差=0.02px（阈值 |·|≤1.5）"
+      "readout": "内容底缘=808.98；滚动盒底=881；padding-bottom=72；差=0.02px（阈值 |·|≤1.5）"
     },
     {
       "id": "A6",
       "name": "桌面 1440 · 短文档（不满一屏）：无滚动条 / 无空白滚动区",
       "verdict": "PASS",
-      "readout": "scrollHeight=864 ≤ clientHeight=864 +1 ⇒ maxScroll=0；末块 bottom=173.17 vs 浮钮带顶 825；padding-bottom=68（垫存在但装得下 ⇒ 零滚动）"
+      "readout": "scrollHeight=864 ≤ clientHeight=864 +1 ⇒ maxScroll=0；末块 bottom=173.17 vs 浮钮带顶 821；padding-bottom=72（垫存在但装得下 ⇒ 零滚动）"
     },
     {
       "id": "A7",
       "name": "桌面 1440 · 底部浮钮全部隐藏：留白归零（不留多余空白）",
       "verdict": "PASS",
-      "readout": "隐藏 3 颗浮钮 → 变量=0px；计算后 padding-bottom=0px（阈值 0）"
+      "readout": "隐藏 4 颗浮钮 → 变量=0px；计算后 padding-bottom=0px（阈值 0）"
     },
     {
       "id": "A7b",
       "name": "桌面 1440 · 浮钮恢复显示：留白随实测回填",
       "verdict": "PASS",
-      "readout": "变量=68px；独立算得 68px；padding-bottom=68px"
+      "readout": "变量=72px；独立算得 72px；padding-bottom=72px"
     },
     {
       "id": "A8",
       "name": "桌面 1440 · 浮钮变高 40→64：留白跟随实测（ResizeObserver 腿）",
       "verdict": "PASS",
-      "readout": "改前变量=68px → 钮高 64 后变量=92px（应 +24 = 92）；独立算得 92px；padding-bottom=92px"
+      "readout": "改前变量=72px → 钮高 64 后变量=92px（涨 20px：钮顶抬高 24 后成为整条带最高点之一，取整条带最高者）+ 独立算得 92px；padding-bottom=92px"
     },
     {
       "id": "A9",
@@ -76,7 +76,7 @@
       "id": "B1",
       "name": "手机 390 · 滚到底：末行完整停在底部浮钮带之上（≥8px 呼吸）",
       "verdict": "PASS",
-      "readout": "末块 bottom=685.64；浮钮带顶=718；空隙=32.36px（阈值 ≥8）；浮钮=.canvas-source-toggle(top 718,h 48) / .canvas-find-toggle(top 718,h 48)"
+      "readout": "末块 bottom=685.64；浮钮带顶=718；空隙=32.36px（阈值 ≥8）；浮钮=.canvas-source-toggle(top 718,h 48) / .canvas-find-toggle(top 718,h 48) / .ask-fab(top 718,h 48)"
     },
     {
       "id": "B2",

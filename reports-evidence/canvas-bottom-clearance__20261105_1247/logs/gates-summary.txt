@@ -1,0 +1,11 @@
+gate,exit
+check-js-types,0
+check-design-tokens,1
+check-msgstyle-single-source,0
+check-self-explaining,0
+check-circular,0
+check-component-contract,1
+check-fixture-secrets,0
+check-freeze-state,0
+check-ime-guard,0
+build-web,0

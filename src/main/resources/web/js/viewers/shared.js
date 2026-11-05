@@ -979,8 +979,9 @@ function _bottomChromeCandidates(pane) {
   const shell = pane.parentElement;
   const refresh = shell ? shell.querySelector(':scope > .canvas-refresh-toggle') : null;
   if (refresh) out.push(refresh);
-  const panel = pane.closest('#canvas-panel') || document;
-  for (const el of panel.querySelectorAll(BOTTOM_CHROME_GLOBAL_SEL)) out.push(el);
+  // 全局同带 fab 走**类选择器 + 几何过滤**（不用面 id 选择器：本模块无面，
+  // 跨面 id 直查会踩组件契约 R2；几何过滤本身就是判定「是否与这个 pane 同带」）。
+  for (const el of document.querySelectorAll(BOTTOM_CHROME_GLOBAL_SEL)) out.push(el);
   return out;
 }
 

@@ -60,6 +60,13 @@
       "top": 825,
       "bottom": 865,
       "h": 40
+    },
+    {
+      "sel": ".ask-fab",
+      "visible": true,
+      "top": 821,
+      "bottom": 869,
+      "h": 48
     }
   ],
   "chromeTop": 801,

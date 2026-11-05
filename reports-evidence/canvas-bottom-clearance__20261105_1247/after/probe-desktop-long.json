@@ -14,13 +14,13 @@
   },
   "paneClass": "canvas-tab-pane active",
   "scroller": {
-    "sh": 6206,
+    "sh": 6210,
     "ch": 864,
-    "st": 5342,
-    "maxScroll": 5342,
-    "padBottom": 68,
-    "padBottomRaw": "68px",
-    "scrollPadBottom": "68px",
+    "st": 5346,
+    "maxScroll": 5346,
+    "padBottom": 72,
+    "padBottomRaw": "72px",
+    "scrollPadBottom": "72px",
     "isPane": false,
     "box": {
       "x": 879,
@@ -33,11 +33,11 @@
   },
   "viewer": {
     "x": 879,
-    "y": -5273,
+    "y": -5277,
     "w": 550,
     "h": 6085.98,
     "right": 1429,
-    "bottom": 812.98
+    "bottom": 808.98
   },
   "chrome": [
     {
@@ -60,21 +60,28 @@
       "top": 825,
       "bottom": 865,
       "h": 40
+    },
+    {
+      "sel": ".ask-fab",
+      "visible": true,
+      "top": 821,
+      "bottom": 869,
+      "h": 48
     }
   ],
-  "chromeTop": 825,
-  "clearanceVar": "68px",
-  "clearanceVarPx": 68,
-  "padBottom": 68,
+  "chromeTop": 821,
+  "clearanceVar": "72px",
+  "clearanceVarPx": 72,
+  "padBottom": 72,
   "lastBlock": {
     "tag": "P",
     "x": 903,
-    "y": 771.3,
+    "y": 767.3,
     "w": 502,
     "h": 21.69,
     "right": 1405,
-    "bottom": 792.98,
+    "bottom": 788.98,
     "text": "末行标记：END-OF-DOCUMENT-末行"
   },
-  "predicted": 68
+  "predicted": 72
 }

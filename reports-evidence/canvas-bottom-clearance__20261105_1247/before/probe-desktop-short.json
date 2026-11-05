@@ -60,9 +60,16 @@
       "top": 825,
       "bottom": 865,
       "h": 40
+    },
+    {
+      "sel": ".ask-fab",
+      "visible": true,
+      "top": 821,
+      "bottom": 869,
+      "h": 48
     }
   ],
-  "chromeTop": 825,
+  "chromeTop": 821,
   "clearanceVar": "",
   "clearanceVarPx": 0,
   "padBottom": 0,
@@ -76,5 +83,5 @@
     "bottom": 173.17,
     "text": "末行标记：SHORT-END。"
   },
-  "predicted": 68
+  "predicted": 72
 }
