@@ -248,13 +248,36 @@ object DelegateTerminal:
           case false => None
         }
 
-    standbyDecision.flatMap {
-      case Some(outcome) => IO.pure(outcome)
-      case None =>
-        idleDecision.flatMap {
-          case Some(outcome) => IO.pure(outcome)
-          case None          => chain
-        }
+    // 就地写盘护栏（补充令第 2 条）：先检后交付——命中即回执标红（Release 腿），
+    // 只读任务零误报（判据见 [[inPlaceWriteAlarm]]）。命中同时写三处：WARN 日志、
+    // ChainStore `in-place-write-alarm` 行、交付正文首行（「不许只在日志里留一行」）。
+    val inPlaceAlarm: IO[Option[String]] =
+      inPlaceWriteAlarm(record).flatTap {
+        case None => IO.unit
+        case Some(a) =>
+          IO.blocking(
+            ChainStore.appendSync(
+              ChainStore.keyFor(taskId, delegateId),
+              "in-place-write-alarm",
+              Json.obj(
+                "delegateId" -> Json.fromString(delegateId),
+                "taskId" -> taskId.map(Json.fromString).getOrElse(Json.Null),
+                "alarm" -> Json.fromString(a)
+              )
+            )
+          ).handleErrorWith(e => logger.warn(s"in-place-write-alarm chain line failed: ${e.getMessage}")) *>
+            IO(logger.warn(s"delegate $delegateId: in-place write alarm — $a"))
+      }
+
+    inPlaceAlarm.flatMap { alarm =>
+      standbyDecision.flatMap {
+        case Some(outcome) => IO.pure(withInPlaceAlarm(outcome, alarm))
+        case None =>
+          idleDecision.flatMap {
+            case Some(outcome) => IO.pure(withInPlaceAlarm(outcome, alarm))
+            case None          => chain.map(o => withInPlaceAlarm(o, alarm))
+          }
+      }
     }
     }
   end onCompleted
@@ -930,6 +953,65 @@ object DelegateTerminal:
       mergeOutcome
     ) *> standbyClear *> autoArchive *> graceRemoval
   end onTerminalCleanup
+
+  // ── 就地写盘护栏（delegate-param-decisions 批 2026-11-04 · 作者补充令第 2 条）──
+
+  /** 回执标红行的前缀（机械判据锚：spec 与运维 grep 共用）。 */
+  val InPlaceWriteAlarmPrefix: String =
+    "🔴 [IN-PLACE WRITE ALARM] 本任务未分配 worktree 但改动了项目工作区，路径清单如下 / this task was dispatched WITHOUT a worktree (the read-only channel) yet it changed the project workspace:"
+
+  /**
+   * 「没分配 tree 却动了工作区」的机械护栏（作者补充令：「不填 worktree 的任务是
+   * 适合于只读型任务 工作还是要默认创建worktree ⇒ 必须有不依赖人记性的东西能在
+   * 没树却动手时叫出来」）。
+   *
+   * 判据（全部机械读数，对比 spawn 时快照 [[DelegateRegistry.Record.seatSnapshotSha]] /
+   * `seatSnapshotDirty`）：
+   *   - **新增脏路径**：`git status --porcelain` 现读 − spawn 快照（集合差）；
+   *   - **产生了提交**：工作区 HEAD 与 spawn 快照不同；
+   *   - 任一命中 ⇒ 返回**标红回执行**（含完整路径清单）；都不中 ⇒ `None`（只读任务
+   *     不误报）。
+   *
+   * 判据适用面：只有「无 worktree 绑定」且「有快照」（= 走的是零分配就地腿）的
+   * 记录才检——有树的 delegate 在自己的树里写是本分，不是越界。
+   */
+  private[delegate] def inPlaceWriteAlarm(record: Option[DelegateRegistry.Record]): IO[Option[String]] =
+    record match
+      case None => IO.pure(None)
+      case Some(rec) if rec.worktree.isDefined => IO.pure(None)
+      case Some(rec) if rec.seatSnapshotSha.isEmpty && rec.seatSnapshotDirty.isEmpty => IO.pure(None)
+      case Some(rec) =>
+        IO.blocking {
+          val ws = Try(os.Path(rec.projectWorkspace.getOrElse(rec.cwd))).toOption
+          ws.flatMap { p =>
+            if !GitWorktrees.isGitRepo(p) then None
+            else
+              val before = rec.seatSnapshotDirty.getOrElse(Nil).map(_.trim).filter(_.nonEmpty).toSet
+              val now = GitWorktrees.dirtyPaths(p).getOrElse(Nil).map(_.trim).filter(_.nonEmpty)
+              val added = now.filterNot(before.contains)
+              val headMoved = rec.seatSnapshotSha.exists(sha => GitWorktrees.headSha(p).exists(_ != sha))
+              val branchAhead = rec.branch
+                .flatMap(b => rec.baseBranch.map(bb => GitWorktrees.commitsAhead(p, bb, b)))
+                .exists(_ > 0)
+              if added.isEmpty && !headMoved && !branchAhead then None
+              else
+                val facts = List(
+                  Option.when(added.nonEmpty)(s"${added.size} new path(s): ${added.take(20).mkString(", ")}${if added.size > 20 then " …" else ""}"),
+                  Option.when(headMoved)(s"HEAD moved (was ${rec.seatSnapshotSha.getOrElse("?").take(9)}, now ${GitWorktrees.headSha(p).getOrElse("?").take(9)}) — commits were created"),
+                  Option.when(branchAhead)(s"branch ${rec.branch.getOrElse("?")} is ahead of ${rec.baseBranch.getOrElse("?")}")
+                ).flatten
+                Some(s"$InPlaceWriteAlarmPrefix\n  - ${facts.mkString("\n  - ")}")
+          }
+        }.handleErrorWith(_ => IO.pure(None))
+
+  /**
+   * 把标红行缀进交付正文（Release 腿单点）。纯函数——spec 判红锚：命中时**正文
+   * 首行**就是标红行（不许埋在尾部），无命中时正文逐字节不变。
+   */
+  private[delegate] def withInPlaceAlarm(outcome: Outcome, alarm: Option[String]): Outcome =
+    (outcome, alarm) match
+      case (Outcome.Release(text, mergeOutcome), Some(a)) => Outcome.Release(s"$a\n\n$text", mergeOutcome)
+      case _ => outcome
 
   // ── 内部 ──────────────────────────────────────────────────────────────
 

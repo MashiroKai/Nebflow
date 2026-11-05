@@ -1186,6 +1186,17 @@ object LlmInterface extends LlmRuntime:
                                                         .getOrElse("")
                                                       + s" [status=${classification.statusCode.map(_.toString).getOrElse("n/a")}, " +
                                                       s"evict=${classification.evict}, round=$round/${Fallback.MaxChainRounds}]"
+                                                      // flysin 收口批（2026-11-04）：能力不匹配单独打一个
+                                                      // `capability=` 标记（带 provider/model）——否则这类 400
+                                                      // 在日志里与「请求形状写错」长得一模一样，只能靠人读上游
+                                                      // 原话分辨。判据 = 上游明说「该模型不收图」（不是关键词猜测）。
+                                                      + nebflow.shared.ImageCapabilityRejection.logNote(
+                                                        candidate.providerId,
+                                                        candidate.model,
+                                                        classification.message
+                                                          .orElse(Option(err.getMessage))
+                                                          .getOrElse("")
+                                                      )
                                                   )
                                                     *> failureRef.update(_ :+ attempt)
                                                     *> notify

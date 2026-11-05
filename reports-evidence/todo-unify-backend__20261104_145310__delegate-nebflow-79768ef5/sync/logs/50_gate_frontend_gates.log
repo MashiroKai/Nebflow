@@ -1,0 +1,50 @@
+$ cd /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-79768ef5
+$ make frontend-gates
+node scripts/check-design-tokens.mjs
+design-tokens：131 文件 / 2079 处颜色字面量 / 133 个基线条目
+  ℹ css/glass.css: 语义关键字（不计档外） radius×1(inherit)
+  ℹ css/mobileLayer.css: 语义关键字（不计档外） radius×5(inherit)
+  ℹ css/split.css: 语义关键字（不计档外） radius×1(inherit)
+  ↑ css/chat.css: color 342 → 286（改善，建议下次 --update-baseline 收紧）
+  ↑ css/chat.css: fsSmall 34 → 21（改善，建议下次 --update-baseline 收紧）
+  ↑ css/chat.css: radiusOff 25 → 20（改善，建议下次 --update-baseline 收紧）
+  ↑ css/input.css: color 104 → 103（改善，建议下次 --update-baseline 收紧）
+  ↑ css/keyboard.css: fsSmall 2 → 1（改善，建议下次 --update-baseline 收紧）
+  ↑ css/mobileLayer.css: color 135 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ css/mobileLayer.css: radiusOff 13 → 12（改善，建议下次 --update-baseline 收紧）
+  ↑ css/modal.css: color 49 → 47（改善，建议下次 --update-baseline 收紧）
+  ↑ css/modal.css: radiusOff 8 → 7（改善，建议下次 --update-baseline 收紧）
+  ↑ css/reminder.css: color 55 → 49（改善，建议下次 --update-baseline 收紧）
+  ↑ css/sidebar.css: color 116 → 52（改善，建议下次 --update-baseline 收紧）
+  ↑ css/sidebar.css: transitionAll 7 → 3（改善，建议下次 --update-baseline 收紧）
+  ↑ css/sidebar.css: fsSmall 6 → 5（改善，建议下次 --update-baseline 收紧）
+  ↑ css/sidebar.css: radiusOff 8 → 7（改善，建议下次 --update-baseline 收紧）
+  ↑ css/split.css: color 253 → 225（改善，建议下次 --update-baseline 收紧）
+  ↑ css/split.css: transitionAll 5 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ css/split.css: radiusOff 27 → 26（改善，建议下次 --update-baseline 收紧）
+  ↑ css/taskList.css: color 42 → 40（改善，建议下次 --update-baseline 收紧）
+  ↑ css/todo-face.css: color 73 → 70（改善，建议下次 --update-baseline 收紧）
+  ↑ js/bgAgentPopup.js: color 18 → 9（改善，建议下次 --update-baseline 收紧）
+  ↑ js/bgTaskOutputPopup.js: color 15 → 6（改善，建议下次 --update-baseline 收紧）
+  ↑ js/chat.js: color 31 → 27（改善，建议下次 --update-baseline 收紧）
+  ↑ js/flowAgentPopup.js: color 21 → 5（改善，建议下次 --update-baseline 收紧）
+  ↑ js/persistence.js: color 27 → 22（改善，建议下次 --update-baseline 收紧）
+  ↑ js/reference.js: color 6 → 5（改善，建议下次 --update-baseline 收紧）
+PASS: 无新增设计字面量；严格面（设置页结构面 + 设计体系层）零跑偏，令牌引用全部有定义。
+node scripts/check-msgstyle-single-source.mjs
+  ok  A1 出向气泡底色（③A1）  [sapphire.css×1]
+  ok  A3 气泡 max-width 同 token（③A3）  [sapphire.css×1]
+  ok  A3 面内不得再写死 78%（③A3）  [0 命中]
+  ok  A5 文件卡单一类名（③A5）  [sapphire.css×1]
+  ok  A5 文件卡旧类名零残留（③A5）  [0 命中]
+  ok  A1/A2 气泡方向尾角 4px（②A1）  [chat.css×5, sapphire.css×1]
+  ok  A2/A4 元信息 pill 戒指阴影（②A3）  [sapphire.css×1]
+msgstyle-single-source: 7 rules, 40 css files scanned.
+PASS: 消息面同值字面量全部单源（共享层 = css/sapphire.css）。
+node scripts/check-self-explaining.mjs
+self-explaining：2 个语言包 + index.html，27 命中（behavior-teaching×3 path-guidance×17 capability-claim×7）；基线 27 条
+PASS: 页面文案零新增教学句；留存命中全部落在铁律 8 保留清单（状态事实/失败收口/动作标签/空态下一步/tooltip 事实句）。
+node scripts/check-circular.mjs
+circular-deps PASS: 236 files, static import graph is acyclic.
+Frontend static gates passed (design-tokens msgstyle self-explaining circular).
+EXIT=0

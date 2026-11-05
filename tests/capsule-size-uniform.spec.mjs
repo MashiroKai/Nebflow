@@ -321,9 +321,9 @@ const activate = async (page, tabId) => { await page.evaluate((id) => document.q
     (sap.match(/--capsule-h:\s*36px/g) || []).length === 1
     && (sap.match(/--capsule-w:\s*180px/g) || []).length === 1,
     `h=${(sap.match(/--capsule-h:\s*36px/g) || []).length} w=${(sap.match(/--capsule-w:\s*180px/g) || []).length}`);
-  ok('F6b 两胶囊脸消费 token（split.css：var(--capsule-w) 3 处〔标题头 width + .cr-capsule width/max-width 护栏〕+ var(--capsule-h) 6 处〔标题头 height/环胶囊 height/卡窗胶囊/内容顶垫档等〕——竖环回退批 2026-10-31：环胶囊 height 消费随还原 +1〔扇卡期 220px 卡面为有意字面量，F6b 扇代锚 5 处作废〕，无第二字面量档）',
+  ok('F6b 两胶囊脸消费 token（split.css：var(--capsule-w) 3 处〔标题头 width + .cr-capsule width/max-width 护栏〕+ var(--capsule-h) 4 处〔标题头 height / 环胶囊 height / 卡窗胶囊 height / md 面常驻顶垫〕——竖环回退批 2026-10-31：环胶囊 height 消费随还原 +1〔扇卡期 220px 卡面为有意字面量，F6b 扇代锚 5 处作废〕；透传悬浮批 ui-unification-20261103-mobile-canvas-topbar：手机档顶垫换源 --mchrome-clear（−1）；hover 零布局批 2026-11-03：`.capsule-ring-open ⇒ padding-top` 联动整条退役（hover 不许改布局，那张图跟着图片动）⇒ 再 −1，无第二字面量档）',
     (split.match(/var\(--capsule-w/g) || []).length === 3
-    && (split.match(/var\(--capsule-h/g) || []).length === 6
+    && (split.match(/var\(--capsule-h/g) || []).length === 4
     && !/\.cr-capsule\s*\{[^}]*width:\s*\d+px/.test(split),
     `w-ref=${(split.match(/var\(--capsule-w/g) || []).length} h-ref=${(split.match(/var\(--capsule-h/g) || []).length}`);
   ok('F6c 标题头固定宽不再有 fit-content 桌面档（body:not(.mobile-layer) 规则内）',

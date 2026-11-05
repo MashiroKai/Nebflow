@@ -21,6 +21,8 @@
   <title>askuser-history-attach harness</title>
   <link rel="stylesheet" href="/src/main/resources/web/css/base.css">
   <link rel="stylesheet" href="/src/main/resources/web/css/chat.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/input.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/design-system.css">
   <style>
     html, body { margin: 0; height: 100%; background: var(--color-bg, #101418); }
     #chat {
@@ -114,12 +116,22 @@
       return window.__read();
     };
 
-    /** 现场读数：附件块 + 插位 + 问题下标 + 可点性（全部机器可读）。 */
+    /** 现场读数：附件块 + 插位 + 问题下标 + 可点性（全部机器可读）。
+     *  ui-unification-20261103-askuser-attach 批（2026-11-04）行形态换代：
+     *  旧行 = button.ob-compare-btn / span.ask-attachment-static；新行 =
+     *  div.att-file（同源文件 chip，可点档带 .is-clickable + role=button）。
+     *  读数选择器两代通吃；disabled/clickable 两代各取自己的信号源。 */
+    const ROW_SEL = '.ask-attachments-wrap .ob-compare-btn, .ask-attachments-wrap .ask-attachment-static, .ask-attachments-wrap .ask-attachments-list > .att-file';
+    const rowClickable = (r) => (r.tagName === 'BUTTON')
+      ? typeof r.onclick === 'function'
+      : r.classList.contains('is-clickable');
+    const rowLocked = (r) => (r.tagName === 'BUTTON') ? !!r.disabled : r.getAttribute('aria-disabled') === 'true';
+
     window.__read = () => {
       const chat = chatElNow();
       const box = chat.querySelector('.option-box');
       const wrap = box ? box.querySelector('.ask-attachments-wrap') : null;
-      const rows = wrap ? [...wrap.querySelectorAll('.ob-compare-btn, .ask-attachment-static')] : [];
+      const rows = wrap ? [...wrap.querySelectorAll('.ob-compare-btn, .ask-attachment-static, .ask-attachments-list > .att-file')] : [];
       const btnRow = box ? box.querySelector('.option-btn-row') : null;
       const kids = box ? [...box.children] : [];
       const qWrappers = box ? [...box.querySelectorAll('.option-q-wrapper')] : [];
@@ -129,16 +141,21 @@
         hasWrap: !!wrap,
         rows: rows.length,
         rowTags: rows.map(r => r.tagName),
-        rowDisabled: rows.map(r => (r.tagName === 'BUTTON' ? !!r.disabled : null)),
+        rowDisabled: rows.map(rowLocked),
         rowTabIndex: rows.map(r => r.getAttribute('tabindex')),
         rowTitles: rows.map(r => r.title || r.getAttribute('title') || ''),
+        rowPaths: rows.map(r => r.dataset.askAttPath || r.title || ''),
+        foldButtons: wrap ? wrap.querySelectorAll('.ask-att-fold-btn').length : 0,
+        foldedChips: wrap ? wrap.querySelectorAll('.ask-att-folded').length : 0,
+        originTags: wrap ? wrap.querySelectorAll('.ds-att-origin').length : 0,
+        originText: wrap && wrap.querySelector('.ds-att-origin') ? wrap.querySelector('.ds-att-origin').textContent : null,
         wrapIsQWrapper: wrap ? wrap.classList.contains('option-q-wrapper') : null,
         qWrapperCount: qWrappers.length,
         questionAtIndexZero: firstQuestion ? kids.indexOf(firstQuestion) === 0 : null,
         beforeBtnRow: !!(wrap && btnRow && kids.indexOf(wrap) < kids.indexOf(btnRow)),
         boxResolved: box ? box.classList.contains('resolved') : null,
         boxHistoryReplay: box ? box.dataset.historyReplay === '1' : null,
-        clickHandlerAttached: rows.map(r => r.tagName === 'BUTTON' ? typeof r.onclick === 'function' : null),
+        clickHandlerAttached: rows.map(rowClickable),
         sentFrames: window.__sent.map(f => f.type),
         railCounts: { ...window.__railCounts },
       };
@@ -147,7 +164,7 @@
     /** 程序化点击第 i 行（探针窗口内），回报单点入口是否真的发出事件。 */
     window.__clickRow = async (i) => {
       const box = chatElNow().querySelector('.option-box');
-      const rows = box ? [...box.querySelectorAll('.ask-attachments-wrap .ob-compare-btn, .ask-attachments-wrap .ask-attachment-static')] : [];
+      const rows = box ? [...box.querySelectorAll(ROW_SEL)] : [];
       const row = rows[i];
       if (!row) return { clicked: false, reason: 'no-row' };
       window.__events.length = 0;
@@ -210,10 +227,10 @@
       await settle();
       const readRows = () => {
         const box = chatElNow().querySelector('.option-box');
-        const rows = box ? [...box.querySelectorAll('.ask-attachments-wrap .ob-compare-btn')] : [];
+        const rows = box ? [...box.querySelectorAll('.ask-attachments-wrap .ob-compare-btn, .ask-attachments-wrap .ask-attachments-list > .att-file')] : [];
         return {
           rows: rows.length,
-          disabled: rows.map(r => !!r.disabled),
+          disabled: rows.map(rowLocked),
           boxResolved: box ? box.classList.contains('resolved') : null,
         };
       };
@@ -235,7 +252,7 @@
      *  「历史卡附件行可点」在**不改 `lockOptionBox` 本体**的前提下不可达。 */
     window.__forceEnableAndClick = async (i) => {
       const box = chatElNow().querySelector('.option-box');
-      const rows = box ? [...box.querySelectorAll('.ask-attachments-wrap .ob-compare-btn')] : [];
+      const rows = box ? [...box.querySelectorAll('.ask-attachments-wrap .ob-compare-btn, .ask-attachments-wrap .ask-attachments-list > .att-file')] : [];
       const row = rows[i];
       if (!row) return { clicked: false, reason: 'no-row' };
       row.disabled = false;
@@ -247,7 +264,7 @@
       const stillConnected = row.isConnected;
       return {
         clicked: true,
-        disabledAfterReset: !!row.disabled,
+        disabledAfterReset: rowLocked(row),
         rowStillInDom: stillConnected,
         dispatched: window.__events.length,
         detailIds: window.__events.map(d => d && d.id),
@@ -279,11 +296,11 @@
         { project: last.project, nodeName: last.nodeName }, last.attachments);
       await settle();
       const box = chat.querySelector('.option-box');
-      const rows = box ? [...box.querySelectorAll('.ask-attachments-wrap .ob-compare-btn')] : [];
+      const rows = box ? [...box.querySelectorAll('.ask-attachments-wrap .ob-compare-btn, .ask-attachments-wrap .ask-attachments-list > .att-file')] : [];
       const read = {
         boxes: chat.querySelectorAll('.option-box').length,
         rows: rows.length,
-        disabled: rows.map(r => !!r.disabled),
+        disabled: rows.map(rowLocked),
         boxResolved: box ? box.classList.contains('resolved') : null,
       };
       const row = rows[0];

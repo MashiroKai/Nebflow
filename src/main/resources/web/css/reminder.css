@@ -11,7 +11,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   color: var(--color-frame-text-muted);
   position: relative;
   flex-shrink: 0;
@@ -63,7 +63,7 @@
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  border-radius: 16px;
+  border-radius: var(--ds-radius-card-lg);
   border: 1px solid var(--sapphire-edge);
   box-shadow:
     inset 0 -1px 0 0 rgba(91, 127, 191, 0.025),
@@ -108,11 +108,11 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 14px 6px;
+  padding: var(--ds-space-3) 14px var(--ds-space-1h);
   flex-shrink: 0;
 }
 .reminder-panel-title {
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-weight: 600;
   color: var(--color-text);
   letter-spacing: -0.02em;
@@ -120,7 +120,7 @@
 .reminder-panel-header-right {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
 }
 .reminder-panel-count {
   font-size: 10px;
@@ -134,7 +134,7 @@
 .reminder-panel-body {
   flex: 1;
   overflow-y: auto;
-  padding: 4px 6px 8px;
+  padding: var(--ds-space-1) var(--ds-space-1h) var(--ds-space-2);
   min-height: 100px;
   scroll-behavior: smooth;
   overscroll-behavior: contain;
@@ -143,7 +143,7 @@
 .reminder-panel-body::-webkit-scrollbar-track { background: transparent; }
 .reminder-panel-body::-webkit-scrollbar-thumb {
   background: rgba(128, 128, 128, 0.15);
-  border-radius: 2px;
+  border-radius: var(--ds-radius-thin);
 }
 
 /* ── Panel Footer ─────────────────────────────────────────────────────── */
@@ -160,7 +160,7 @@
   width: 22px;
   height: 22px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   background: transparent;
   color: rgb(91, 127, 191);
   cursor: pointer;
@@ -193,7 +193,7 @@
   width: 22px;
   height: 22px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   background: transparent;
   color: rgb(91, 127, 191);
   cursor: pointer;
@@ -214,7 +214,7 @@
   flex-shrink: 0;
   display: inline-block;
   padding: 0 5px;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   font-size: 9px;
   font-weight: 600;
   line-height: 14px;
@@ -232,25 +232,25 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 40px 16px 36px;
-  gap: 6px;
+  padding: 40px var(--ds-space-4) 36px;
+  gap: var(--ds-space-1h);
   cursor: pointer;
   user-select: none;
-  border-radius: 10px;
-  margin: 0 4px;
+  border-radius: var(--ds-radius-button);
+  margin: 0 var(--ds-space-1);
   transition: background 0.15s;
 }
 .reminder-empty:hover {
   background: rgba(91, 127, 191, 0.04);
 }
 .reminder-empty-text {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text);
   opacity: 0.3;
   letter-spacing: -0.01em;
 }
 .reminder-empty-hint {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text);
   opacity: 0.18;
   letter-spacing: -0.01em;
@@ -260,9 +260,9 @@
 .reminder-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 9px 10px;
-  border-radius: 10px;
+  gap: var(--ds-space-glass-x);
+  padding: 9px var(--ds-space-glass-x);
+  border-radius: var(--ds-radius-button);
   margin: 1px 0;
   transition: background 0.15s, opacity 0.25s, transform 0.25s;
   position: relative;
@@ -363,7 +363,7 @@
   gap: 1px;
 }
 .reminder-row-text {
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   color: var(--color-text);
   line-height: 1.3;
   overflow: hidden;
@@ -373,7 +373,7 @@
 }
 .reminder-row-time {
   flex-shrink: 0;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: #5B7FBF;
   opacity: 0.65;
   white-space: nowrap;
@@ -403,7 +403,7 @@
   color: var(--color-text);
   opacity: 0.45;
   letter-spacing: -0.01em;
-  margin-top: 2px;
+  margin-top: var(--ds-space-half);
   white-space: normal;
 }
 
@@ -455,7 +455,7 @@
   letter-spacing: -0.01em;
   margin-left: 3px;
 }
-.reminder-overdue-tag .st-ic { width: 9px; height: 9px; margin-right: 2px; }
+.reminder-overdue-tag .st-ic { width: 9px; height: 9px; margin-right: var(--ds-space-half); }
 
 /* ── Triggered (completed) Row ────────────────────────────────────────── */
 .reminder-row.triggered {
@@ -484,11 +484,11 @@
 
 /* ===== Inline Create Row ===== */
 .reminder-inline-create {
-  padding: 8px 10px;
-  border-radius: 10px;
+  padding: var(--ds-space-2) var(--ds-space-glass-x);
+  border-radius: var(--ds-radius-button);
   background: rgba(91, 127, 191, 0.03);
   border: 1px solid rgba(91, 127, 191, 0.10);
-  margin: 2px 2px;
+  margin: var(--ds-space-half) var(--ds-space-half);
   animation: reminderInlineIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 @keyframes reminderInlineIn {
@@ -499,13 +499,13 @@
 .reminder-inline-main {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--ds-space-glass-x);
 }
 .reminder-inline-input {
   flex: 1;
   border: none;
   background: transparent;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   color: var(--color-text);
   outline: none;
   font-family: inherit;
@@ -520,13 +520,13 @@
 
 /* ── Inline Detail (time picker) ──────────────────────────────────────── */
 .reminder-inline-detail {
-  margin-top: 8px;
+  margin-top: var(--ds-space-2);
   padding-left: 28px;
 }
 .reminder-time-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
 }
 .reminder-time-row > svg,
 .reminder-time-row > i[data-lucide="clock"] {
@@ -535,33 +535,21 @@
   opacity: 0.35;
   flex-shrink: 0;
 }
-.reminder-time-row input[type="datetime-local"] {
+/* 触发时刻面：时间滚轮选择器批（2026-11-03）后不再是原生 datetime-local
+   输入框，而是同款 `.tw-trigger`（样式单源 = timeWheel.css）；此处只声明
+   它在行内的伸展（行布局归本文件）。 */
+.reminder-time-row .tw-trigger {
   flex: 1;
-  border-radius: 6px;
-  padding: 4px 8px;
-  font-size: 12px;
-  font-family: inherit;
-  color: var(--color-text);
-  background: var(--glass-etched-bg);
-  outline: none;
-  border: 1px solid var(--glass-etched-border);
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  min-width: 0;
 }
-.reminder-time-row input[type="datetime-local"]:focus {
-  border-color: var(--glass-etched-border-focus);
-  box-shadow: 0 0 0 2px rgba(91, 127, 191, 0.08);
-}
-.reminder-time-row input[type="datetime-local"]::-webkit-calendar-picker-indicator {
-  opacity: 0.3;
-  cursor: pointer;
-}
+.reminder-time-row input[type="hidden"] { display: none; }
 
 /* ── Inline Repeat Selector (segmented control) ───────────────────────── */
 .reminder-repeat-row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-top: 6px;
+  gap: var(--ds-space-1h);
+  margin-top: var(--ds-space-1h);
 }
 .reminder-repeat-row > svg,
 .reminder-repeat-row > i[data-lucide="repeat"] {
@@ -573,11 +561,11 @@
 .reminder-repeat-seg {
   flex: 1;
   display: flex;
-  gap: 2px;
+  gap: var(--ds-space-half);
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
-  border-radius: 8px;
-  padding: 2px;
+  border-radius: var(--ds-radius-input);
+  padding: var(--ds-space-half);
 }
 .reminder-repeat-seg button {
   flex: 1;
@@ -585,11 +573,11 @@
   background: transparent;
   color: var(--color-text);
   opacity: 0.45;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   font-family: inherit;
   padding: 3px 0;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   cursor: pointer;
   transition: background 0.15s ease, opacity 0.15s ease, box-shadow 0.15s ease;
   white-space: nowrap;
@@ -613,7 +601,7 @@
 .reminder-row-title {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   min-width: 0;
 }
 .reminder-row-title .reminder-row-text {
@@ -627,7 +615,7 @@
   color: rgb(var(--sapphire));
   background: rgb(var(--sapphire) / 0.1);
   border: 1px solid rgb(var(--sapphire) / 0.22);
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   padding: 0 5px;
   line-height: 15px;
   letter-spacing: -0.01em;
@@ -644,11 +632,11 @@
 .bubble.schedule-card {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   width: fit-content;
   max-width: min(440px, 82%);
-  padding: 11px 14px 10px;
-  border-radius: 14px;
+  padding: 11px 14px var(--ds-space-glass-x);
+  border-radius: var(--ds-radius-card-md);
   /* 气泡族尾角：不就地复写 —— 本卡 = .bubble.injected 族（injectedRows.js
      建类「bubble injected schedule-card」），尾角 4px 由 chat.css
      `.bubble.injected` 单源下发（2026-10-30 收敛批：此处写死被判据
@@ -671,7 +659,7 @@
 .schedule-card-head {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   min-width: 0;
 }
 .schedule-card-head > i[data-lucide="bell-ring"],
@@ -697,7 +685,7 @@
   border: 1px solid rgb(var(--sapphire) / 0.22);
 }
 .schedule-card-name {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   font-weight: 600;
   color: var(--color-text);
   letter-spacing: -0.01em;
@@ -714,7 +702,7 @@
   color: rgb(var(--sapphire));
   background: rgb(var(--sapphire) / 0.1);
   border: 1px solid rgb(var(--sapphire) / 0.22);
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   padding: 0 5px;
   line-height: 15px;
   letter-spacing: -0.01em;
@@ -722,23 +710,23 @@
 
 /* ── 正文（任务内容，markdown 面）──────────────────────────────────────── */
 .schedule-card-body {
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   line-height: 1.45;
   color: var(--color-text);
   letter-spacing: -0.01em;
   word-break: break-word;
 }
-.schedule-card-body p { margin: 4px 0; }
+.schedule-card-body p { margin: var(--ds-space-1) 0; }
 .schedule-card-body p:first-child { margin-top: 0; }
 .schedule-card-body p:last-child { margin-bottom: 0; }
-.schedule-card-body ul, .schedule-card-body ol { margin: 4px 0 4px 18px; padding: 0; }
+.schedule-card-body ul, .schedule-card-body ol { margin: var(--ds-space-1) 0 var(--ds-space-1) 18px; padding: 0; }
 .schedule-card-body pre {
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
-  padding: 8px 12px 10px;
-  border-radius: 8px;
+  padding: var(--ds-space-2) var(--ds-space-3) var(--ds-space-glass-x);
+  border-radius: var(--ds-radius-input);
   overflow-x: auto;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
 }
 
 /* ── 参考文档行（referencePath 在场才渲染）──────────────────────────────── */
@@ -746,11 +734,11 @@
   display: flex;
   align-items: center;
   gap: 5px;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text);
   opacity: 0.55;
   letter-spacing: -0.01em;
-  padding: 5px 8px;
+  padding: 5px var(--ds-space-2);
   border-radius: 7px;
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
@@ -774,8 +762,8 @@
 .schedule-card-time {
   display: flex;
   align-items: center;
-  gap: 4px;
-  font-size: 11px;
+  gap: var(--ds-space-1);
+  font-size: var(--ds-fs-meta);
   color: rgb(var(--sapphire));
   opacity: 0.7;
   letter-spacing: -0.01em;
@@ -842,16 +830,6 @@
   .reminder-inline-create {
     background: rgba(91, 127, 191, 0.04);
     border-color: rgba(91, 127, 191, 0.10);
-  }
-
-  .reminder-time-row input[type="datetime-local"] {
-    background: rgba(255, 255, 255, 0.04);
-    border-color: rgba(91, 127, 191, 0.08);
-    color: #e0e0e0;
-  }
-  .reminder-time-row input[type="datetime-local"]:focus {
-    border-color: rgba(91, 127, 191, 0.30);
-    box-shadow: 0 0 0 2px rgba(91, 127, 191, 0.10);
   }
 
   .reminder-repeat-seg button.active {

@@ -1,0 +1,23 @@
+$ # 件一 改前读数（red-sbt.log 摘录，HEAD 代码 + 新 spec）
+nebflow.core.SecretMaskingCoverageSpec:
+==> X nebflow.core.SecretMaskingCoverageSpec.text leg (LlmLogWriter.redactSecrets): every credential key is masked  0.248s munit.ComparisonFailException: src/test/scala/nebflow/core/SecretMaskingCoverageSpec.scala:33
+    at nebflow.core.SecretMaskingCoverageSpec.$init$$$anonfun$1(SecretMaskingCoverageSpec.scala:33)
+==> X nebflow.core.SecretMaskingCoverageSpec.text leg: underscore / hyphen / case variants are masked too  0.001s munit.ComparisonFailException: src/test/scala/nebflow/core/SecretMaskingCoverageSpec.scala:39
+    at nebflow.core.SecretMaskingCoverageSpec.$init$$$anonfun$2(SecretMaskingCoverageSpec.scala:39)
+==> X nebflow.core.SecretMaskingCoverageSpec.key predicate (GateRedact.isSecretKey): every credential key is sensitive  0.001s munit.ComparisonFailException: src/test/scala/nebflow/core/SecretMaskingCoverageSpec.scala:44
+    at nebflow.core.SecretMaskingCoverageSpec.$init$$$anonfun$3(SecretMaskingCoverageSpec.scala:44)
+nebflow.neblink.DeviceTokenMaskingSpec:
+==> X nebflow.neblink.DeviceTokenMaskingSpec.tunnel leg (RelayTunnelDiagnostics.redact): every credential key is masked  0.003s munit.ComparisonFailException: src/test/scala/nebflow/neblink/DeviceTokenMaskingSpec.scala:26
+    at nebflow.neblink.DeviceTokenMaskingSpec.$init$$$anonfun$1(DeviceTokenMaskingSpec.scala:26)
+==> X nebflow.neblink.DeviceTokenMaskingSpec.tunnel leg: underscore / hyphen / case variants are masked too  0.001s munit.ComparisonFailException: src/test/scala/nebflow/neblink/DeviceTokenMaskingSpec.scala:34
+    at nebflow.neblink.DeviceTokenMaskingSpec.$init$$$anonfun$2(DeviceTokenMaskingSpec.scala:34)
+nebflow.cli.ConfigSecretKeySpec:
+==> X nebflow.cli.ConfigSecretKeySpec.ConfigCommand.isSecretKey: every credential key is sensitive  0.004s munit.ComparisonFailException: src/test/scala/nebflow/cli/ConfigSecretKeySpec.scala:22
+    at nebflow.cli.ConfigSecretKeySpec.$init$$$anonfun$1(ConfigSecretKeySpec.scala:22)
+==> X nebflow.cli.ConfigSecretKeySpec.ConfigCommand.isSecretKey: underscore / hyphen / case variants are sensitive  0.0s munit.ComparisonFailException: src/test/scala/nebflow/cli/ConfigSecretKeySpec.scala:28
+    at nebflow.cli.ConfigSecretKeySpec.$init$$$anonfun$2(ConfigSecretKeySpec.scala:28)
+==> X nebflow.gateway.AvatarSelfByteCacheSpec.second request to the own avatar route is served from cache (hit, zero upstream)  1.125s munit.ComparisonFailException: src/test/scala/nebflow/gateway/AvatarSelfByteCacheSpec.scala:158
+[error] Failed: Total 13, Failed 8, Errors 0, Passed 5
+[error] 	nebflow.cli.ConfigSecretKeySpec
+[error] 	nebflow.neblink.DeviceTokenMaskingSpec
+[error] 	nebflow.core.SecretMaskingCoverageSpec

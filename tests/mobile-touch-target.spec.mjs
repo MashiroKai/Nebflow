@@ -347,10 +347,13 @@ const hubTo = async (face) => {
 await measurePanel('login', async () => { await page.waitForTimeout(150); });
 await dismissLoginModal();
 await measurePanel('chat', async () => { await page.waitForTimeout(200); });
-await measurePanel('tasks', async () => {
-  await page.locator('.mh-chrome-btn[data-chrome="tasks"]').click();
-  await page.waitForTimeout(400);
-});
+// ⛔ 入口收敛批 todo-unify-entry-collapse 2026-11-04：'tasks' 前（聊天头左上任务
+// 圆钮 → #mobile-task-panel 任务页）与 'todo' 页（#todo-page）两腿整面退役 ⇒
+// 无面可量，腿退役（脚本保留，恢复入口即可复用）：
+// await measurePanel('tasks', async () => {
+//   await page.locator('.mh-chrome-btn[data-chrome="tasks"]').click();
+//   await page.waitForTimeout(400);
+// });
 await measurePanel('messages', () => dockTo('messages'));
 await measurePanel('contacts', () => dockTo('contacts'));
 await measurePanel('canvas', () => dockTo('canvas'));
@@ -366,7 +369,8 @@ await measurePanel('daemon', () => hubTo('daemon'));
 await measurePanel('background', () => hubTo('background'));
 await measurePanel('plugins', () => hubTo('plugins'));
 await measurePanel('usage', () => hubTo('usage'));
-await measurePanel('todo', () => hubTo('todo'));
+// ⛔ 入口收敛批 2026-11-04：'todo' 页（#todo-page）整面退役 ⇒ 无面可量，腿退役。
+// await measurePanel('todo', () => hubTo('todo'));
 await measurePanel('projects', () => hubTo('projects'));
 await measurePanel('graph', () => hubTo('graph'));
 await measurePanel('search', async () => {

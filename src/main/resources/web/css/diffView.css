@@ -3,37 +3,37 @@
 
 /* Section container */
 .nf-filechanges {
-  margin-top: 10px;
+  margin-top: var(--ds-space-glass-x);
 }
 .nf-filechanges-head {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
 }
 
 /* File list */
 .nf-filechanges-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  margin-top: 6px;
+  gap: var(--ds-space-1);
+  margin-top: var(--ds-space-1h);
 }
 
 /* One file entry (details/summary = click to expand the diff) */
 .nf-fc {
   border: 1px solid var(--color-border, rgba(128, 128, 128, 0.25));
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   overflow: hidden;
   background: var(--color-bg, transparent);
 }
 .nf-fc-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 5px 8px;
+  gap: var(--ds-space-2);
+  padding: 5px var(--ds-space-2);
   cursor: pointer;
   user-select: none;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   min-width: 0;
 }
 .nf-fc-row:hover {
@@ -46,7 +46,7 @@
 }
 .nf-fc-path {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -55,7 +55,7 @@
 }
 .nf-fc-counts {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   white-space: nowrap;
 }
 .nf-fc-added {
@@ -68,8 +68,8 @@
 /* change-type badges */
 .nf-fc-badge {
   font-size: 10px;
-  padding: 1px 6px;
-  border-radius: 4px;
+  padding: 1px var(--ds-space-1h);
+  border-radius: var(--ds-radius-badge);
   white-space: nowrap;
   border: 1px solid transparent;
 }
@@ -91,7 +91,7 @@
   font-size: 10px;
   color: var(--color-text-muted, rgba(128, 128, 128, 0.9));
   border: 1px solid var(--color-border, rgba(128, 128, 128, 0.3));
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   padding: 0 5px;
   white-space: nowrap;
 }
@@ -103,8 +103,8 @@
   overflow: auto;
 }
 .nf-fc-empty {
-  padding: 8px;
-  font-size: 11px;
+  padding: var(--ds-space-2);
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted, rgba(128, 128, 128, 0.9));
 }
 
@@ -114,15 +114,15 @@
 }
 .nf-diff-body {
   margin: 0;
-  padding: 6px 0;
+  padding: var(--ds-space-1h) 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   line-height: 1.5;
   white-space: pre;
   overflow-x: auto;
 }
 .nf-diff-row {
-  padding: 0 8px;
+  padding: 0 var(--ds-space-2);
 }
 .nf-diff-add {
   background: rgba(63, 185, 80, 0.15);
@@ -166,7 +166,7 @@
   min-height: 0;
   min-width: 0;
   overflow: auto;
-  padding: 56px 0 12px;
+  padding: 56px 0 var(--ds-space-3);
 }
 /* ── 粘顶文件头标题胶囊（2026-10-22 作者三令批）────────────────────────────
    作者令①居中 ②全量 frosted token ③动画节奏放慢（慢一点/自然一点/流畅一点，
@@ -201,20 +201,20 @@
   z-index: 2;
   display: flex;
   justify-content: center;
-  padding: 6px 12px 4px;
-  font-size: 12px;
+  padding: var(--ds-space-1h) var(--ds-space-3) var(--ds-space-1);
+  font-size: var(--ds-fs-hint);
   min-width: 0;
   pointer-events: none;
 }
 .fcv-headpill {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
   width: fit-content;
   max-width: 100%;
   min-width: 0;
-  padding: 4px 12px;
-  border-radius: 999px;
+  padding: var(--ds-space-1) var(--ds-space-3);
+  border-radius: var(--ds-radius-pill);
   border: 1px solid var(--glass-border);
   background:
     linear-gradient(90deg, transparent 10%, var(--sapphire-refraction) 50%, transparent 90%) center top / 80% 1px no-repeat,
@@ -257,15 +257,15 @@
   to   { box-shadow: var(--frost-shadow), 0 4px 14px rgba(0, 0, 0, 0.10); }
 }
 .fcv-view .nf-diff-body {
-  padding: 6px 8px 8px;
+  padding: var(--ds-space-1h) var(--ds-space-2) var(--ds-space-2);
 }
 /* 手机层文件条（mobile-layer = 左栏面板退场层，diffCanvas 仅在该层渲染）：
    pills 横滚，行族 = .nf-fc 复用；选中态与左栏面板同式（背景 + 阴影）。 */
 .fcv-filestrip {
   display: flex;
-  gap: 4px;
+  gap: var(--ds-space-1);
   overflow-x: auto;
-  padding: 8px 12px;
+  padding: var(--ds-space-2) var(--ds-space-3);
   border-bottom: 1px solid var(--color-border, rgba(128, 128, 128, 0.2));
 }
 .fcv-filestrip .nf-fc {
@@ -297,7 +297,7 @@
 .nf-rcpt-top:focus-visible {
   outline: 2px solid var(--btn-focus-ring);
   outline-offset: 2px;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
 }
 /* 单行卡面行：弹性一行不换行；整条 hover = 可点击反馈——sapphire 微底 +
    inset hairline 描边微变（克制档，给块级 hover 留层次；不糊满整条）。负边距补偿
@@ -305,11 +305,11 @@
 .nf-rcpt-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
   min-width: 0;
   margin: -2px -6px;
-  padding: 2px 6px;
-  border-radius: 6px;
+  padding: var(--ds-space-half) var(--ds-space-1h);
+  border-radius: var(--ds-radius-chip);
   cursor: pointer;
   transition: background-color 0.15s ease, box-shadow 0.15s ease;
 }
@@ -338,7 +338,7 @@
   line-height: 1.3;
   padding: 1px 9px;
   border: 1px solid var(--color-border);
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 .nf-rcpt-pill:hover {
@@ -387,14 +387,14 @@
 .nf-rcpt-summary {
   display: none;
   align-items: baseline;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   min-width: 0;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text);
 }
 .nf-rcpt-top[aria-expanded='true'] + .nf-rcpt-summary {
   display: flex;
-  margin-top: 4px;
+  margin-top: var(--ds-space-1);
 }
 .nf-rcpt-summary-text {
   flex: 1 1 auto;
@@ -406,7 +406,7 @@
 .nf-rcpt-hash {
   flex: 0 0 auto;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted);
 }
 /* 块二：diff 统计胶囊（版式批①②③——该批**合并**的代码量变化「+新增 −删除」）：
@@ -420,24 +420,40 @@
    cursor 默认——无点击面不装可点）。+a/−r 两段各走 span，字面空格文本节点保留
    ⇒ textContent 逐字节「+a −r」。 */
 .nf-rcpt-note {
+  position: relative; /* 命中盒外扩的定位根（::after，见下） */
   display: inline-flex;
   align-items: baseline;
   flex: 0 0 auto;
-  gap: 4px;
+  gap: var(--ds-space-1);
   padding: 1px 9px;
   margin: 0;
   border: 1px solid var(--color-border);
   background: none;
   font: inherit;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   /* 行距 1.3 显式落定：不落则继承泡体正文行距，mono 段撑破单行带
      （B1 ≤24px 判红实证 25.05px）。 */
   line-height: 1.3;
   color: var(--color-text-muted);
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   white-space: nowrap;
   transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+/* 命中盒（作者令 2026-11-04「diff 徽标点击退化」）：
+   徽标可见本体只有 ~18px 高（单行卡面 10px/1.3 字阶里的 mono 段），点击面同样
+   只有 18px —— 远低于 --ds-hit-row 44（HIG / WCAG 2.5.5 触控下限），实测命中盒
+   18.3px：鼠标要精确瞄准一条细带，手机上基本点不中 ⇒ 「点了没反应」。
+   修法 = ::after 只**纵向**外扩到 44（横向保持徽标宽，绝不侵占左侧 .nf-rcpt-pill
+   的命中面：同一行两颗块各有各的热区），视觉零变化（伪元素透明、无背景无描边，
+   不参与布局）。 */
+.nf-rcpt-note::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: min(0px, calc((100% - var(--ds-hit-row)) / 2));
+  bottom: min(0px, calc((100% - var(--ds-hit-row)) / 2));
 }
 button.nf-rcpt-note { cursor: pointer; }
 span.nf-rcpt-note { cursor: default; }
@@ -450,7 +466,7 @@ span.nf-rcpt-note { cursor: default; }
 .nf-rcpt-note:focus-visible {
   outline: 1px solid var(--color-border);
   outline-offset: 2px;
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
 }
 .nf-rcpt-note[aria-pressed='true'] .nf-rcpt-note-add,
 .nf-rcpt-note[aria-pressed='true'] .nf-rcpt-note-del {
@@ -459,7 +475,7 @@ span.nf-rcpt-note { cursor: default; }
 /* 展开态间距：摘要/正文只在可见时计费（折叠 display:none ⇒ 零高度贡献）。 */
 .nf-rcpt-summary + .injected-content,
 .nf-rcpt-top[aria-expanded='true'] + .injected-content {
-  margin-top: 6px;
+  margin-top: var(--ds-space-1h);
 }
 
 /* ── 左栏「变更文件」面板（#panel-filechanges，拆面板批 2026-10-22）────────
@@ -468,7 +484,7 @@ span.nf-rcpt-note { cursor: default; }
    铁律 5「侧边栏激活态用阴影，不用竖线」）。 */
 .nfp-meta {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted, rgba(128, 128, 128, 0.9));
   white-space: nowrap;
   overflow: hidden;
@@ -478,21 +494,21 @@ span.nf-rcpt-note { cursor: default; }
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 8px;
+  padding: var(--ds-space-2);
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--ds-space-1);
 }
 .nfp-empty {
-  padding: 10px 6px;
-  font-size: 12px;
+  padding: var(--ds-space-glass-x) var(--ds-space-1h);
+  font-size: var(--ds-fs-hint);
   line-height: 1.5;
   color: var(--color-text-muted, rgba(128, 128, 128, 0.9));
 }
 .nfp-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--ds-space-1);
 }
 .nfp-list .nf-fc {
   cursor: pointer;
@@ -511,8 +527,8 @@ span.nf-rcpt-note { cursor: default; }
    装载态 + 失败可见反馈面。颜色只用既有 --color-* token（禁裸 hex）。 ── */
 /* 流式渲染进行中：Canvas 阅读器首帧的装载态行（渲染完成即移除）。 */
 .nf-diff-loading {
-  padding: 8px 6px;
-  font-size: 12px;
+  padding: var(--ds-space-2) var(--ds-space-1h);
+  font-size: var(--ds-fs-hint);
   color: var(--color-text-muted, rgba(128, 128, 128, 0.9));
   animation: nf-diff-loading-pulse 1.2s ease-in-out infinite;
 }
@@ -523,7 +539,7 @@ span.nf-rcpt-note { cursor: default; }
 /* 面板 meta 槽的失败文案（打开链 import/容器失败——禁静默无响应）。 */
 .nfp-meta-err {
   color: var(--color-danger, #d64545);
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
 }
 /* 打开失败行的行内标记（下次成功开图时移除）。 */
 .nf-fc-openfail {

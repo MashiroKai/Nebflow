@@ -1,0 +1,22 @@
+$ git merge --no-edit main   # 追平 995142a5f
+Merge made by the 'ort' strategy.
+ Makefile                                           |   9 +-
+ .../20261104_worktree-cleanup/inventory.md         | 358 +++++++++++++++++++++
+ src/main/resources/web/js/mobile/chatChrome.js     |   4 +-
+ src/main/resources/web/js/mobile/navController.js  |  13 +-
+ src/main/resources/web/js/mobile/navEvents.js      |  29 ++
+ src/main/resources/web/js/mobile/searchFace.js     |   2 +-
+ src/main/resources/web/js/mobile/socialSearch.js   |   2 +-
+ src/main/resources/web/js/mobile/taskPanel.js      |   5 +-
+ src/main/resources/web/js/msgQuote.js              |  13 +-
+ src/main/resources/web/js/refModel.js              | 227 +++++++++++++
+ src/main/resources/web/js/reference.js             | 222 +------------
+ 11 files changed, 659 insertions(+), 225 deletions(-)
+ create mode 100644 reports-evidence/20261104_worktree-cleanup/inventory.md
+ create mode 100644 src/main/resources/web/js/mobile/navEvents.js
+ create mode 100644 src/main/resources/web/js/refModel.js
+EXIT=0
+
+$ git status --porcelain
+?? reports-evidence/20261104_todo-unify-backend__delegate-nebflow-79768ef5/sync/
+?? reports-evidence/20261104_todo-unify-backend__delegate-nebflow-79768ef5/treecheck/

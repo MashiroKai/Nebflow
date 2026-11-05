@@ -1,0 +1,10 @@
+{
+  "sessionId": "43c37951-8f8d-49d4-a0e2-a2c7b1084616",
+  "liveState": {
+    "dataSource": "backend",
+    "openCount": 0,
+    "visible": [],
+    "completed": []
+  },
+  "storeRows": []
+}

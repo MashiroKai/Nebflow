@@ -8,11 +8,14 @@
 //     一个胶囊」）：宽度由内容决定（内联 flex + 左右对称内距），有逾期时**翻面**
 //     成「N 逾期」（红字），两态外框宽高严格相等（宽度由 inline-grid 叠层取两态
 //     最大自然宽，构造上恒等）；点开 = 自胶囊向上生长的浮层面板。
-//     手机 = 左侧悬浮圆钮照旧（chatChrome FAB），点开进任务页 = 本面展开态。
+//     手机 = 胶囊同样显示（胶囊面交互批 2026-11-04 ⑤：mobileLayer.css 的整条
+//     display:none 退役）；任务页（mobile/taskPanel.js 圆钮入口）照旧是页面即
+//     展开态的另一条腿，入口退役归下游 entries 节点。
 //   · 展开态 = ReminderIsland ReminderListView 整体复刻：极简头（计数/筛选/收起）、
 //     可折叠筛选栏（All + 标签 chips + 新建 + 重要度四签）、列表行（重要度点/
 //     mono 标题/备注/截止时间/标签徽标/完成钮三段动画）、行内编辑面板、行内创建行、
-//     底部 Add footer（单标签视图）、空态；chips 悬停放大挤开 + 450ms 教学气泡、
+//     底部 Add footer（单标签视图）、空态；标签列尾垃圾桶 + 删除模式叉号（台账
+//     台账1376 基线 2026-11-04：hover 动画与 450ms 教学气泡整套退役）、
 //     横拖重排（幽灵快照 + 0.25 源 chip）、上划改名/下划删除（25px 阈值 +
 //     pencil/xmark 渐显）、色板 popover（220px + 十色 5 列网格）。
 //   · delegate 条目从本面退场：旧 delegate 渲染路径（taskList.js renderTaskList
@@ -23,9 +26,9 @@
 // ω=2π/response，k=ω²，c=2·ζ·ω，质量 1；逐条对应见 docs 对照表）：
 //   open  spring(0.42, 0.8) / close spring(0.45, 1.0) / pop spring(0.45, 0.45)
 //   行展开·创建行·行保存收起 spring(0.3, 0.8) / 完成钮 spring(0.3, 0.7) +
-//   对勾 spring(0.2, 0.6) / 筛选栏·视图切换 spring(0.25, 0.8) / chip 悬停
-//   spring(0.3, 0.65) / 重排 spring(0.3, 0.8) / 教学气泡收 spring(0.3, 0.85)、
-//   消失 easeOut 0.15 / 循环箭头 easeInOut 0.5 往复。
+//   对勾 spring(0.2, 0.6) / 筛选栏·视图切换 spring(0.25, 0.8) /
+//   重排 spring(0.3, 0.8) / 循环箭头 easeInOut 0.5 往复。
+//   （chip 悬停 spring 与教学气泡两档已于 2026-11-04 R05 批退役 —— 悬停零动画。）
 //
 // 主题：ReminderIsland = macOS 纯黑毛玻璃。白透明度层按结构映射
 // color-mix(var(--color-text) x%, transparent)（亮色 = 反极等价、暗色 ≈ 原生），
@@ -36,6 +39,11 @@ import { createIconsIn } from './utils.js';
 import { isImeComposing } from './imeGuard.js';
 import { sessionShowsNodeEntries } from './taskList.js';
 import { todoStore, TAG_COLOR_PRESETS, PRIORITY_COLORS, PRIORITY_LABEL_KEYS } from './todoStore.js';
+// 时间滚轮选择器（time-wheel-picker 实施批 2026-11-03，作者令 22:16/22:20）：
+// 待办截止时刻从裸 `<input type="datetime-local">` 收编为同款点选面。交互单源
+// = ./timeWheel.js；隐藏输入 `.tfl-due-input` 保留为值域载体（saveEditing /
+// saveCreate 读面零改）。
+import { pointTriggerHTML, attachTimeTriggers, msToLocalInput } from './timeWheel.js';
 
 const REDUCED_MOTION = typeof matchMedia === 'function' &&
   matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -103,6 +111,10 @@ const SPRING = {
   hintIn: { response: 0.3,  damping: 0.85 },
 };
 
+/** 空白区建：pointerdown → click 位移超过此值即判为拖动/滑屏（不建）。
+ *  8px = 手指抖动余量；与 tests/todo-capsule-create.spec.mjs ③ 同值。 */
+const BLANK_DRAG_PX = 8;
+
 // ── 小件 ────────────────────────────────────────────────────────────────
 
 function el(tag, cls, text) {
@@ -112,11 +124,68 @@ function el(tag, cls, text) {
   return n;
 }
 
+/** 行尾删除 × 的 SVG 元素（命名空间 API 装配）。
+ *  既有件多为内联 SVG 字符串（裸 innerHTML 赋值写面，属 component-contract R5 的存量
+ *  基线债）；本批新增的删除钮**不进这笔债**，改由 createElementNS 逐属性装配 ——
+ *  viewBox/描边/圆头与 X_VIEWBOX/X_PATH_D 单源逐字对应，渲染结果与字符串形态等价。 */
+function xIconEl() {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', X_VIEWBOX);
+  svg.setAttribute('aria-hidden', 'true');
+  const path = document.createElementNS(NS, 'path');
+  path.setAttribute('d', X_PATH_D);
+  path.setAttribute('fill', 'none');
+  path.setAttribute('stroke', 'currentColor');
+  path.setAttribute('stroke-width', '1.5');
+  path.setAttribute('stroke-linecap', 'round');
+  svg.appendChild(path);
+  return svg;
+}
+
+/** 实心圆 + 叉字形（`XMARK_CIRCLE_SVG` 的同款几何，走命名空间 API —— 组件契约
+ *  R5 禁裸 innerHTML 赋值，本钮是本批新增调用点，必须落在基线条目内）。
+ *  形状色全部交给 CSS（`.tfl-chip-x svg circle` 吃 currentColor，
+ *  `path` 吃 `--tfl-glyph`）⇒ JS 侧零色值字面量。 */
+function xmarkCircleGlyph() {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('aria-hidden', 'true');
+  const circle = document.createElementNS(NS, 'circle');
+  circle.setAttribute('cx', '12');
+  circle.setAttribute('cy', '12');
+  circle.setAttribute('r', '11');
+  circle.setAttribute('fill', 'currentColor');
+  const path = document.createElementNS(NS, 'path');
+  path.setAttribute('d', 'M8.4 8.4l7.2 7.2M15.6 8.4l-7.2 7.2');
+  path.setAttribute('fill', 'none');
+  path.setAttribute('stroke-width', '2.2');
+  path.setAttribute('stroke-linecap', 'round');
+  svg.append(circle, path);
+  return svg;
+}
+
+/** lucide 图标槽（`<i data-lucide="…">`，与筛选/收起/建行诸钮同一渲染腿）。
+ *  同样避开裸 innerHTML 赋值：本仓图标走 createIconsIn 的 data-lucide 替换，
+ *  元素自带属性即足够，无需再拼字符串。 */
+function lucideIcon(name) {
+  const ic = document.createElement('i');
+  ic.setAttribute('data-lucide', name);
+  return ic;
+}
+
 const PLUS_CIRCLE_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="11" fill="currentColor"/><path d="M12 6.5v11M6.5 12h11" stroke="rgba(0,0,0,0.55)" stroke-width="2.2" stroke-linecap="round"/></svg>';
 const CHECK_CIRCLE_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="11" fill="currentColor"/><path d="M7 12.5l3.4 3.4L17.2 9" stroke="rgba(0,0,0,0.55)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>';
 const PENCIL_CIRCLE_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="11" fill="currentColor"/><path d="M8.2 15.8l.6-2.6 5.2-5.2 2 2-5.2 5.2-2.6.6z" fill="rgba(0,0,0,0.55)" stroke="rgba(0,0,0,0.35)" stroke-width="0.6" stroke-linejoin="round"/></svg>';
 const XMARK_CIRCLE_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="11" fill="currentColor"/><path d="M8.4 8.4l7.2 7.2M15.6 8.4l-7.2 7.2" stroke="rgba(0,0,0,0.55)" stroke-width="2.2" stroke-linecap="round"/></svg>';
 const CHECK_SVG = '<svg viewBox="0 0 14 14" aria-hidden="true"><path d="M3 7.4l3 3L11 4.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+// 行尾删除（细线 ×，克制；不用填充圆钮——与完成钮的实心语义区分，避免被读成「已完成」）
+// 几何单源仍在此注释块（viewBox 14 / 两笔 45° 交叉 / 1.5 描边 / 圆头）；装配改走
+// 命名空间 API（见下方 xIconEl）——component-contract R5 禁裸 innerHTML 赋值，
+// 而本钮是本批新增调用点，必须落在基线内。逐属性与字符串形态一一对应 ⇒ 渲染不变。
+const X_VIEWBOX = '0 0 14 14';
+const X_PATH_D = 'M3.6 3.6l6.8 6.8M10.4 3.6l-6.8 6.8';
 const CLOCK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
 
 /** 截止时间文案（ReminderIsland = style:.time 纯时刻；web 面条目常跨天，
@@ -133,6 +202,32 @@ function dueInputValue(ms) {
   const d = new Date(ms);
   const p = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/** 截止时刻面（时间滚轮选择器批 2026-11-03）：同款点选钮 + 隐藏值域输入。
+ *  隐藏输入保留 `.tfl-due-input` 类与 datetime-local 串值域 ⇒ 既有读面
+ *  （saveEditing / saveCreate 的 `new Date(dueEl.value)`）零改动；
+ *  面板确认后经 attachTimeTriggers 的 onPointChange 回写。
+ *  @param {number} ms 初始时刻 */
+function dueFieldEls(ms) {
+  const date = dueInputValue(ms).slice(0, 10);
+  const time = dueInputValue(ms).slice(11, 16);
+  const holder = el('div', 'tfl-due-holder');
+  holder.innerHTML = pointTriggerHTML({ date, time, label: t('timewheel.deadline') });
+  const hidden = el('input', 'tfl-due-input');
+  hidden.type = 'hidden';
+  hidden.value = dueInputValue(ms);
+  holder.appendChild(hidden);
+  attachTimeTriggers(holder, {
+    onPointChange: (btn) => {
+      const next = `${btn.dataset.date}T${btn.dataset.time}`;
+      const at = new Date(next).getTime();
+      if (!Number.isNaN(at)) hidden.value = msToLocalInput(at);
+    },
+  });
+  // 面板点击不冒泡到行体（行体点击 = 保存/进编辑）
+  holder.addEventListener('click', (e) => e.stopPropagation());
+  return { holder, hidden };
 }
 
 // ── 面实例 ───────────────────────────────────────────────────────────────
@@ -152,14 +247,17 @@ class TodoFace {
     this.creatingTag = false;
     // 完成动画在飞行集（renderRows 跳过重建，动画完整落地后再销账）
     this.completingRows = new Set();
+    // 删除在飞行集（同款：退场动画期间不重入）
+    this.deletingRows = new Set();
     this.completingEls = new Map();
     this.expandedJustRendered = false;
     // chips 拖拽/滚动
     this.chipDrag = null; // { id, dir, dx, dy, ghost, frozen: Map }
     this.chipScroll = 0;
-    this.chipHover = null;
-    this.hintTimer = null;
-    this.hintLayer = null;
+    // 标签删除模式（R06：点垃圾桶 ⇒ 每枚标签显叉号；叉号点击 = 走二次确认删除）。
+    // 悬停教学气泡随 R05（「标签 hover 不要动画」）整链退役 —— 原 chipHover/
+    // hintTimer/hintLayer 三个状态位同时摘除（hover 侧零状态）。
+    this.chipDeleteMode = false;
     this.tagPopover = null;
     this.outsideBound = false;
     this.cancelMorph = null;
@@ -217,6 +315,10 @@ class TodoFace {
     this.panel = el('div', 'tfl-panel');
     this.buildHeader();
     this.buildFilterBar();
+    // 列表包裹层（胶囊面交互批 2026-11-04）：列表 + 右下角新建加号 + 撤回条
+    // 三者共一个定位祖先 —— 加号压不到列表末行（列表内距让位由 CSS 承担），
+    // 撤回条浮在列表底部中央而不是页面级 absolute（手机页面态无定位卡容器）。
+    this.listWrap = el('div', 'tfl-list-wrap');
     this.listScroll = el('div', 'tfl-list');
     this.listScroll.tabIndex = -1;
     this.listScroll.setAttribute('role', 'listbox');
@@ -224,9 +326,14 @@ class TodoFace {
     this.listScroll.addEventListener('keydown', (e) => this.onListKey(e));
     this.listInner = el('div', 'tfl-list-inner');
     this.listScroll.appendChild(this.listInner);
+    this.listWrap.appendChild(this.listScroll);
+    this.buildFab();
+    this.buildUndoBar();
     this.footer = el('div', 'tfl-footer');
-    this.panel.append(this.header, this.filterWrap, this.listScroll, this.footer);
+    this.panel.append(this.header, this.filterWrap, this.listWrap, this.footer);
     this.card.appendChild(this.panel);
+    // 空白区建（作者令 2026-11-04 ②）：列表空白 / footer 空白点击 ⇒ 行内新建
+    this.bindBlankCreate();
     // DOM 顺序 = 面板在前、胶囊在后（面板排在胶囊上方；声明顺序即视觉顺序）
     this.mount.appendChild(this.card);
     this.mount.appendChild(this.capsule);
@@ -295,7 +402,22 @@ class TodoFace {
         this.setChipScroll(this.chipScroll + (e.deltaX || e.deltaY));
       }
     }, { passive: false });
-    this.chipsRow.append(this.chipLeft, this.chipsViewport, this.chipRight);
+    // R05 垃圾桶（台账1376，作者 recall 2026-11-02 12:05「标签列放垃圾桶图标」）：
+    // 常驻在 chips 行**尾**（不随 chips 滚动区滚走 —— 与新建钮不同位置：新建在
+    // track 内（跟着最后一条标签走），垃圾桶在行尾固定）。点按 = 切换标签删除模式
+    // （R06：每枚标签显叉号）；armed 态同时给样式与 aria-pressed。
+    this.trashBtn = el('button', 'tfl-chip-trash');
+    this.trashBtn.type = 'button';
+    // 图标走 DOM 构建（lucide 扫 data-lucide 属性自渲染）——不新增裸 innerHTML
+    // 赋值（组件契约 R5 判据；本文件基线条目只许减不许增）。
+    const trashIcon = document.createElement('i');
+    trashIcon.setAttribute('data-lucide', 'trash-2');
+    this.trashBtn.appendChild(trashIcon);
+    this.trashBtn.title = t('todoface.tagDeleteTitle');
+    this.trashBtn.setAttribute('aria-label', t('todoface.tagDeleteTitle'));
+    this.trashBtn.setAttribute('aria-pressed', 'false');
+    this.trashBtn.addEventListener('click', () => this.toggleChipDeleteMode());
+    this.chipsRow.append(this.chipLeft, this.chipsViewport, this.chipRight, this.trashBtn);
     // 第二行：重要度四签
     this.prioRow = el('div', 'tfl-prio-row');
     this.filterBar.append(this.chipsRow, this.prioRow);
@@ -317,6 +439,132 @@ class TodoFace {
       btn.addEventListener('click', () => this.startCreate());
     }
     this.footer.appendChild(btn);
+  }
+
+  /* ── 右下角新建加号（胶囊面交互批 · 作者令 2026-11-04 ①）──────────────────
+     形态口径：小而克制的圆钮（桌面 34px / 手机 44px，两套尺寸口径在 CSS
+     `.tfl-fab-add` + `body.mobile-layer` 分支里），次级色（--color-text 8% 底 /
+     60% 墨），不抢主视觉；位置 = 列表包裹层右下角（absolute），列表末行让位由
+     `.tfl-list { padding-bottom }` 给出 ⇒ 永不压住最后一行。
+     行为 = 复用既有行内创建行（startCreate → buildCreateRow → saveCreate 同一
+     条路径，不另开写口）。创建行开在场时本钮仍常驻（不清场）：重复点按由
+     startCreate 的幂等闸吸收 —— 同一条创建行，绝不开第二条。 */
+  buildFab() {
+    const fab = el('button', 'tfl-fab-add');
+    fab.type = 'button';
+    fab.title = t('todoface.fabAdd');
+    fab.setAttribute('aria-label', t('todoface.fabAdd'));
+    fab.appendChild(lucideIcon('plus'));
+    fab.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!this.expanded) return;
+      this.startCreate();
+    });
+    this.fabAdd = fab;
+    this.listWrap.appendChild(fab);
+  }
+
+  /* ── 撤回条（完成后的撤销路径；作者令 2026-11-04 ④「取消完成必须可达」）────
+     完成帧发出后浮出一条 `已完成 · 撤回`，点击 = todoStore.uncompleteItem
+     （uncompleteTodo 帧 + 行回可见面）。6s 自动消失；reduced-motion 下无过渡。 */
+  buildUndoBar() {
+    const bar = el('div', 'tfl-undo');
+    bar.hidden = true;
+    bar.setAttribute('role', 'status');
+    this.undoText = el('span', 'tfl-undo-text', t('todoface.completedToast'));
+    this.undoBtn = el('button', 'tfl-undo-btn', t('todoface.undo'));
+    this.undoBtn.type = 'button';
+    this.undoBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.undoComplete();
+    });
+    bar.append(this.undoText, this.undoBtn);
+    this.undoBar = bar;
+    this.listWrap.appendChild(bar);
+  }
+
+  /** 完成后的撤回窗口（单条：后完成覆盖前一条的撤回目标，与系统提示同语义）。 */
+  showUndo(id) {
+    if (!this.undoBar) return;
+    this.undoId = id;
+    this.undoBar.hidden = false;
+    clearTimeout(this.undoTimer);
+    this.undoTimer = setTimeout(() => this.hideUndo(), 6000);
+  }
+
+  hideUndo() {
+    clearTimeout(this.undoTimer);
+    this.undoId = null;
+    if (this.undoBar) this.undoBar.hidden = true;
+  }
+
+  /** 取消完成（uncompleteTodo 帧）—— 行回到可见面，计数翻牌回滚。 */
+  undoComplete() {
+    const id = this.undoId;
+    this.hideUndo();
+    if (!id) return;
+    todoStore.uncompleteItem(id);
+  }
+
+  /* ── 空白区建（作者令 2026-11-04 ②「点击空白处也能创建」）──────────────────
+     落点 = `.tfl-list` 的空白（行之间的空隙 / 列表下方的空白）与 `.tfl-footer`
+     的空白（Add footer 之外的留白）。命中即 startCreate（同一 saveCreate 路径）。
+
+     **防误触口径（四条，逐条落在此处 + tests/todo-capsule-create.spec.mjs）**：
+      ① 互斥：新建行已开 或 卡内任一输入框聚焦 ⇒ 不打断、不重开（直接 return）；
+      ② 命中排除：点击落在行 / 创建行 / chip / 按钮 / 编辑面板 / 筛选栏 / 表头 /
+         加号钮 / 滚动条 ⇒ 不触发（浏览器滚动条命中目标是宿主元素本身，按
+         clientWidth 判别，见 isScrollbarClick）；
+      ③ 滚动抑制：pointerdown → click 位移 > 8px（拖动列表 / 滑屏）⇒ 不触发；
+      ④ 触摸同口径：只挂 `click`（桌面与触摸由浏览器统一派发一次），**不**另挂
+         touchend ⇒ 无双发；位移判据在触摸端同样生效。 */
+  bindBlankCreate() {
+    const hosts = [this.listScroll, this.footer];
+    for (const host of hosts) {
+      host.addEventListener('pointerdown', (e) => {
+        // 只记起点：位移判据在 click 拍消费（③）。
+        this.blankDown = { x: e.clientX, y: e.clientY, target: e.target, host };
+      });
+      host.addEventListener('click', (e) => this.onBlankClick(e, host));
+    }
+  }
+
+  /** 点击是否落在「可建空白」上（口径见 bindBlankCreate 四条注解）。 */
+  onBlankClick(e, host) {
+    const down = this.blankDown;
+    this.blankDown = null;
+    if (this.destroyed || !this.expanded) return;
+    // ① 互斥：创建行在开 / 任一输入框聚焦 ⇒ 不打断不重开
+    if (this.creating || this.editingId != null) return;
+    const active = document.activeElement;
+    if (active && this.card.contains(active) && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
+    // ② 命中排除：可交互件（行/chip/按钮/编辑面板/筛选栏/表头/加号/滚动条）
+    const tgt = e.target;
+    if (tgt && tgt.closest && tgt.closest(
+      '.tfl-row, .tfl-create-row, .tfl-chip, .tfl-chip-add, .tfl-chip-arrow, .tfl-edit-panel, '
+      + '.tfl-filter-wrap, .tfl-header, .tfl-fab-add, .tfl-add-btn, .tfl-undo, '
+      + 'button, input, textarea, a, [role="button"]',
+    )) return;
+    if (this.isScrollbarClick(e, host)) return;
+    // ③ 滚动抑制：位移 > 8px = 拖动/滑屏，不是点击
+    if (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) > BLANK_DRAG_PX) return;
+    // ④ 单一事件源（click）⇒ 触摸端不会双发；此处直接进创建。
+    if (!this.editingTagId && !this.creatingTag) this.startCreate();
+  }
+
+  /** 滚动条命中：指针横/纵向落在宿主的内容盒之外（轨道区）。 */
+  isScrollbarClick(e, host) {
+    if (!host || !host.getBoundingClientRect) return false;
+    const r = host.getBoundingClientRect();
+    const x = e.clientX - r.left;
+    const y = e.clientY - r.top;
+    const sbw = host.offsetWidth - host.clientWidth;
+    const sbh = host.offsetHeight - host.clientHeight;
+    if (sbw > 0 && x > host.clientWidth) return true;
+    if (sbh > 0 && y > host.clientHeight) return true;
+    return false;
   }
 
   // ── 渲染 ──────────────────────────────────────────────────────────────
@@ -368,6 +616,20 @@ class TodoFace {
         if (this.capsule) this.capsule.classList.remove('tfl-cap-flip');
       }, 260);
     }
+    // L3 计数翻转：读数真的变了那一拍，在计数**当前所在宿主**上播一次翻牌
+    // （展开态 = 面板头槽；收起态 = 胶囊）。文本上面已写终值 ⇒ 多条同时变化只
+    // 翻一次、恒落终值；动画只是视觉层，绝不参与读数。
+    if (this.lastCount !== undefined && this.lastCount !== n) {
+      const host = this.capsuleFaces.parentElement;
+      if (host) {
+        host.classList.remove('tfl-count-flip');
+        void host.offsetWidth; // 强制回流，重启动画
+        host.classList.add('tfl-count-flip');
+        clearTimeout(this.countFlipTimer);
+        this.countFlipTimer = setTimeout(() => { host.classList.remove('tfl-count-flip'); }, 340);
+      }
+    }
+    this.lastCount = n;
     // 翻面态的可读性收口：非当期面 aria-hidden + 胶囊 aria-label 带出唯一读数
     this.faceTodo.setAttribute('aria-hidden', String(overdue));
     this.faceOverdue.setAttribute('aria-hidden', String(!overdue));
@@ -376,8 +638,13 @@ class TodoFace {
   }
 
   renderHeader() {
-    const n = todoStore.visibleItems().length;
-    this.headerCount.textContent = n > 0 ? String(n) : '';
+    // L2 单一计数节点：标题计数**不是**另画的一份文案 —— 它就是胶囊里那颗
+    // `.tfl-cap-faces`（展开时搬进 .tfl-header-count 槽）。所以这里绝不能再写
+    // textContent（会抹掉搬进来的节点）；头槽的可读性只靠下面的状态镜像。
+    const n = todoStore.openCount();
+    const od = todoStore.overdueCount();
+    this.headerCount.classList.toggle('is-overdue', od > 0);
+    this.headerCount.classList.toggle('has-count', n > 0);
     this.filterToggle.classList.toggle('active', this.showFilterBar);
     this.collapseBtn.hidden = this.mobile; // 手机页面由页面框架收回
   }
@@ -425,18 +692,45 @@ class TodoFace {
     const dot = el('span', 'tfl-chip-dot');
     chip.appendChild(dot);
     chip.appendChild(el('span', 'tfl-chip-name', tag.name));
+    // R06 叉号（台账1376「点垃圾桶后在标签上出现叉号用于删除」）：节点常驻、
+    // 仅删除模式可见（CSS 由 `.tfl-chips-row.tfl-chips-deleting` 驱动 —— 状态单点
+    // 在行级类，不在每枚 chip 上各挂一份）。用 span[role=button] 而非 button：
+    // chip 本身是 button，嵌套 button 非法（HTML 内容模型）。
+    const x = el('span', 'tfl-chip-x');
+    x.setAttribute('role', 'button');
+    x.setAttribute('tabindex', '-1');
+    x.setAttribute('aria-label', t('todoface.tagDeleteTitle') + '：' + tag.name);
+    x.title = t('todoface.tagDeleteTitle') + '：' + tag.name;
+    // 同款「实心圆 + 叉」字形，但走 SVG DOM 构建（组件契约 R5：不新增裸 innerHTML
+    // 赋值；形状色全交给 CSS —— `.tfl-chip-x svg circle/path` 吃 currentColor 与
+    // --tfl-glyph，JS 侧零色值字面量）。
+    x.appendChild(xmarkCircleGlyph());
+    x.addEventListener('click', (ev) => {
+      ev.stopPropagation(); // 不许冒泡成 chip 的视图切换
+      ev.preventDefault();
+      this.confirmDeleteTag(tag); // 破坏性操作 ⇒ 既有二次确认单点（HIG）
+    });
+    chip.appendChild(x);
     chip.setAttribute('aria-pressed', String(isSelected));
     chip.addEventListener('click', () => {
       // 手势后抑制误触发（click 在 pointerup 后仍会派发——拖/划过即吞掉本次 click）
       if (this.chipDrag || chip.dataset.gestureDone) { delete chip.dataset.gestureDone; return; }
       this.switchView(isSelected ? null : tag.id);
     });
-    // 悬停放大挤开（布局级：hover 类驱动 padding/字号/点径）+ 教学气泡 450ms
-    chip.addEventListener('pointerenter', () => this.onChipHover(tag.id, chip, true));
-    chip.addEventListener('pointerleave', () => this.onChipHover(tag.id, chip, false));
+    // R05：悬停**零**动画零教学气泡（原 hover 放大挤开 + 450ms 四向提示整套退役，
+    // 见 css/todo-face.css 同名注）——这里不再挂 pointerenter/pointerleave。
     // 拖拽手势（横拖重排 / 上划改名 / 下划删除——方向锁判定复刻 DragGesture）
     chip.addEventListener('pointerdown', (e) => this.onChipPointerDown(e, tag, chip));
     return chip;
+  }
+
+  /** 标签删除模式开关（R06 入口）：行级单类 + 垃圾桶 armed 态 + aria 镜像。
+   * 关模式时不留任何逐 chip 状态（叉号可见性全由 `.tfl-chips-deleting` 一处决定）。 */
+  toggleChipDeleteMode() {
+    this.chipDeleteMode = !this.chipDeleteMode;
+    this.chipsRow.classList.toggle('tfl-chips-deleting', this.chipDeleteMode);
+    this.trashBtn.classList.toggle('armed', this.chipDeleteMode);
+    this.trashBtn.setAttribute('aria-pressed', String(this.chipDeleteMode));
   }
 
   renderPrioChips() {
@@ -463,6 +757,9 @@ class TodoFace {
   renderFooter() {
     this.buildFooter();
     this.footer.style.display = todoStore.isAllView() ? 'none' : '';
+    // 加号常在场（创建行开时不清场）：重复点按由 startCreate 的幂等闸吸收
+    // （同一条创建行，绝不开第二条）——「重复点击零新行」的机械判据。
+    if (this.fabAdd) this.fabAdd.hidden = false;
   }
 
   renderRows() {
@@ -570,6 +867,7 @@ class TodoFace {
     }
     row.appendChild(main);
     row.appendChild(this.buildCompleteButton(item));
+    row.appendChild(this.buildDeleteButton(item, row));
     if (editing) {
       row.classList.add('tfl-row-editing');
       const wrap = el('div', 'tfl-edit-wrap');
@@ -591,6 +889,23 @@ class TodoFace {
     return btn;
   }
 
+  /** 行尾删除钮（作者令 2026-11-04 ④「删除 = 行尾 ×」）：桌面 hover 渐显、
+   *  手机常显 44px 触摸档（CSS `body.mobile-layer .tfl-del`）。stopPropagation
+   *  ⇒ 不触发主区「点行进编辑」。 */
+  buildDeleteButton(item, row) {
+    const btn = el('button', 'tfl-del');
+    btn.type = 'button';
+    btn.setAttribute('aria-label', t('todoface.del'));
+    btn.title = t('todoface.del');
+    btn.appendChild(xIconEl());
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.performDelete(item.id, row);
+    });
+    return btn;
+  }
+
   /** 完成三段动画（performComplete 逐帧迁移）：
    *  0s 圆环→绿填 spring(0.3,0.7)；+0.15s 对勾 scale spring(0.2,0.6)；
    *  +0.5s 行淡出上移 easeOut 0.3；+0.8s 真删除（store completeItem）。 */
@@ -608,11 +923,27 @@ class TodoFace {
         (this.completingEls = this.completingEls || new Map()).set(id, rowEl);
       }
       todoStore.completeItem(id);
+      // 完成 = 行退场 + 完成帧（三段动画/计数翻牌全程未改）；退场后给撤回窗口，
+      // 取消完成的唯一可达路径（作者令 2026-11-04 ④）。
+      this.showUndo(id);
       setTimeout(() => { // 下一拍重渲后销账（避免本拍把在飞 DOM 接回去）
         this.completingRows.delete(id);
         if (this.completingEls) this.completingEls.delete(id);
       }, 0);
     }, 800);
+  }
+
+  /** 行尾删除（物理删除 `deleteScheduledTask`；与「完成」语义区分，不可逆）。
+   *  形态：行尾 ×，桌面 hover 渐显、手机常显且 44px 触摸档（CSS）；点击先播
+   *  退场（tfl-row-removing 同款过渡），180ms 后发帧，视觉与数据同拍收敛。 */
+  performDelete(id, rowEl) {
+    if (this.deletingRows.has(id)) return;
+    this.deletingRows.add(id);
+    if (rowEl) rowEl.classList.add('tfl-row-removing');
+    setTimeout(() => {
+      todoStore.removeItem(id);
+      this.deletingRows.delete(id);
+    }, 180);
   }
 
   buildEditPanel(item) {
@@ -653,18 +984,17 @@ class TodoFace {
     toggle.setAttribute('aria-checked', String(hasDue));
     toggle.appendChild(el('span', 'tfl-switch-label', hasDue ? t('todoface.hasDue') : t('todoface.noDue')));
     toggle.appendChild(el('span', 'tfl-switch-knob-wrap', '')).appendChild(el('span', 'tfl-switch-knob'));
-    const dueInput = el('input', 'tfl-due-input');
-    dueInput.type = 'datetime-local';
-    dueInput.value = dueInputValue(item.due != null ? item.due : Date.now() + 3600_000);
-    dueInput.style.display = hasDue ? '' : 'none';
+    // 截止时间开关 + 同款时间滚轮点选面（time-wheel-picker 批 2026-11-03）
+    const { holder: dueHolder, hidden: dueInput } = dueFieldEls(item.due != null ? item.due : Date.now() + 3600_000);
+    dueHolder.style.display = hasDue ? '' : 'none';
     toggle.addEventListener('click', () => {
       hasDue = !hasDue;
       toggle.classList.toggle('on', hasDue);
       toggle.setAttribute('aria-checked', String(hasDue));
       toggle.querySelector('.tfl-switch-label').textContent = hasDue ? t('todoface.hasDue') : t('todoface.noDue');
-      dueInput.style.display = hasDue ? '' : 'none';
+      dueHolder.style.display = hasDue ? '' : 'none';
     });
-    dueRow.append(toggle, dueInput);
+    dueRow.append(toggle, dueHolder);
     panel.appendChild(dueRow);
     this.editDraft = { notesEl: notes, dueInput, get hasDue() { return hasDue; } };
     return panel;
@@ -698,9 +1028,10 @@ class TodoFace {
     });
     panel.appendChild(notes);
     const prioRow = el('div', 'tfl-edit-prio');
-    this.createPrio = 0;
+    // 重要度选择跨重渲保持（store 广播重画时不清场）；startCreate 时重置为 0。
+    if (this.createPrio == null) this.createPrio = 0;
     for (let p = 0; p <= 3; p++) {
-      const b = el('button', 'tfl-edit-prio-btn' + (p === 0 ? ' selected' : ''));
+      const b = el('button', 'tfl-edit-prio-btn' + (p === this.createPrio ? ' selected' : ''));
       b.type = 'button';
       b.style.setProperty('--tag-color', PRIORITY_COLORS[p]);
       b.appendChild(el('span', 'tfl-chip-dot'));
@@ -720,25 +1051,23 @@ class TodoFace {
     toggle.setAttribute('aria-checked', 'false');
     toggle.appendChild(el('span', 'tfl-switch-label', t('todoface.noDue')));
     toggle.appendChild(el('span', 'tfl-switch-knob-wrap', '')).appendChild(el('span', 'tfl-switch-knob'));
-    const dueInput = el('input', 'tfl-due-input');
-    dueInput.type = 'datetime-local';
-    dueInput.value = dueInputValue(Date.now() + 3600_000);
-    dueInput.style.display = 'none';
+    const { holder: dueHolder } = dueFieldEls(Date.now() + 3600_000);
+    dueHolder.style.display = 'none';
     toggle.addEventListener('click', () => {
       hasDue = !hasDue;
       toggle.classList.toggle('on', hasDue);
       toggle.setAttribute('aria-checked', String(hasDue));
       toggle.querySelector('.tfl-switch-label').textContent = hasDue ? t('todoface.hasDue') : t('todoface.noDue');
-      dueInput.style.display = hasDue ? '' : 'none';
+      dueHolder.style.display = hasDue ? '' : 'none';
     });
-    dueRow.append(toggle, dueInput);
+    dueRow.append(toggle, dueHolder);
     panel.appendChild(dueRow);
     wrap.appendChild(panel);
     row.appendChild(wrap);
     // 创建行非文本区点击 = 保存（复刻 onTapGesture 语义；输入框 click 不冒泡触发）
     row.addEventListener('click', (e) => {
-      if (e.target === this.createTitle || e.target === notes || e.target === dueInput) return;
-      if (e.target.closest('.tfl-edit-prio-btn') || e.target.closest('.tfl-switch')) return;
+      if (e.target === this.createTitle || e.target === notes) return;
+      if (e.target.closest('.tfl-edit-prio-btn') || e.target.closest('.tfl-switch') || e.target.closest('.tfl-due-holder')) return;
       this.saveCreate();
     });
     // 展开后聚焦标题（ReminderIsland onAppear 聚焦等价：web 无懒实例化竞态，
@@ -781,8 +1110,15 @@ class TodoFace {
   }
 
   startCreate() {
+    // 幂等闸（胶囊面交互批）：创建行已开 ⇒ 只把焦点送回标题，绝不开第二条。
+    // 三条入口（footer Add / 右下角加号 / 空白区点击）共用此闸。
+    if (this.creating) {
+      if (this.createTitle && this.createTitle.isConnected) this.createTitle.focus();
+      return;
+    }
     this.saveEditing(); // 互斥（复刻 collapseEditingRow）
     this.creating = true;
+    this.createPrio = 0; // 每次新开重置重要度（重渲不清场，见 buildCreateRow）
     this.expandedJustRendered = true;
     this.renderRows();
     this.renderFooter();
@@ -889,29 +1225,144 @@ class TodoFace {
 
   expand() {
     if (this.expanded || this.destroyed) return;
+    // L1 起点 = **展开前的胶囊盒**（先量后翻态，隐藏后不可测）。
+    const capRect = this.capsuleRectNow();
     this.expanded = true;
     this.card.dataset.state = 'open';
     this.mount.classList.add('is-open');
     this.capsule.setAttribute('aria-expanded', 'true');
     if (this.cancelMorph) this.cancelMorph();
+    // L2 计数节点先左移成面板标题（同一个 DOM 节点搬家，不是两处文案）。
+    this.moveCountInto(true);
     this.panel.classList.add('tfl-panel-in');
+    this.renderAll();
     if (this.mobile) {
       this.panel.classList.add('tfl-panel-open');
-      this.renderAll();
       return;
     }
-    const from = REDUCED_MOTION ? 1 : 0.94;
-    this.cancelMorph = springAnimate([
-      { from, to: 1, set: (v) => { this.card.style.scale = String(v); } },
-    ], SPRING.open, () => {
-      this.card.style.scale = '';
+    // 胶囊让位：形态本体由面板接管（visibility 而非 display ⇒ 收起时仍可量）。
+    this.capsule.style.visibility = 'hidden';
+    this.panel.classList.add('tfl-panel-open');
+    this.morphFrom(capRect, SPRING.open, () => {
+      this.card.style.transform = '';
+      this.card.style.borderRadius = '';
+      this.card.style.transformOrigin = '';
       this.panel.classList.remove('tfl-panel-in');
-      this.panel.classList.add('tfl-panel-open');
       this.measurePanel();
       this.refocusList(); // 列表持有焦点，↑↓/Return 立即可用（复刻 onAppear）
       this.bindOutsideClose();
     });
-    this.renderAll();
+  }
+
+  /** 胶囊当帧几何（收起态可见；展开态 visibility:hidden 仍可量 ⇒ 可复用）。 */
+  capsuleRectNow() {
+    if (this.mobile) return null;
+    const r = this.capsule.getBoundingClientRect();
+    if (!r.width || !r.height) return null;
+    return { left: r.left, top: r.top, width: r.width, height: r.height };
+  }
+
+  /**
+   * L1 生长形变：面板**从胶囊矩形长成自己的矩形** —— 同一个 .tfl-card 元素在
+   * 变形（不是「关胶囊 + 开面板」两节点交叉淡入）。五个通道（中心位移 tx/ty、
+   * 双轴缩放 sx/sy、圆角 r）逐帧写一条 transform + border-radius：
+   *   起点 = 精确的胶囊盒（含胶囊端圆角），终点 = identity（= 面板自身盒）。
+   * 锚点用 50% 50% 而不是 CSS 的 50% calc(0% − 8px)：几何映射要的是「面板盒 ↔
+   * 胶囊盒」的精确中心对应，顶缘原点会把起点算歪（胶囊不在面板顶缘正中）。
+   */
+  morphFrom(capRect, spring, done) {
+    const pan = this.card.getBoundingClientRect();
+    if (!capRect || REDUCED_MOTION || !pan.width || !pan.height) {
+      // L5 降级：整条形变退役，直接换态（状态读数不变）
+      this.card.style.transform = '';
+      if (done) done();
+      return;
+    }
+    const sx = capRect.width / pan.width;
+    const sy = capRect.height / pan.height;
+    const tx = (capRect.left + capRect.width / 2) - (pan.left + pan.width / 2);
+    const ty = (capRect.top + capRect.height / 2) - (pan.top + pan.height / 2);
+    const r0 = Math.min(capRect.height / 2, 14);   // 胶囊端圆角
+    const r1 = 24;                                 // 面板顶圆角（.tfl-card）
+    const m = { x: tx, y: ty, a: sx, b: sy, r: r0 };
+    const write = () => {
+      this.card.style.transform =
+        `translateX(-50%) translate(${m.x.toFixed(2)}px, ${m.y.toFixed(2)}px) scale(${m.a.toFixed(4)}, ${m.b.toFixed(4)})`;
+      this.card.style.borderRadius = `${m.r.toFixed(1)}px`;
+    };
+    this.card.style.transformOrigin = '50% 50%';
+    write();
+    this.cancelMorph = springAnimate([
+      { from: tx, to: 0, set: (v) => { m.x = v; write(); } },
+      { from: ty, to: 0, set: (v) => { m.y = v; write(); } },
+      { from: sx, to: 1, set: (v) => { m.a = v; write(); } },
+      { from: sy, to: 1, set: (v) => { m.b = v; write(); } },
+      { from: r0, to: r1, set: (v) => { m.r = v; write(); } },
+    ], spring, done);
+  }
+
+  /** L4 收起形变：面板矩形原路长回胶囊（同一元素、同一路径、几何连续）。 */
+  morphTo(capRect, spring, done) {
+    const pan = this.card.getBoundingClientRect();
+    if (!capRect || REDUCED_MOTION || !pan.width || !pan.height) {
+      this.card.style.transform = '';
+      if (done) done();
+      return;
+    }
+    const sx = capRect.width / pan.width;
+    const sy = capRect.height / pan.height;
+    const tx = (capRect.left + capRect.width / 2) - (pan.left + pan.width / 2);
+    const ty = (capRect.top + capRect.height / 2) - (pan.top + pan.height / 2);
+    const m = { x: 0, y: 0, a: 1, b: 1, r: 24 };
+    const r1 = Math.min(capRect.height / 2, 14);
+    const write = () => {
+      this.card.style.transform =
+        `translateX(-50%) translate(${m.x.toFixed(2)}px, ${m.y.toFixed(2)}px) scale(${m.a.toFixed(4)}, ${m.b.toFixed(4)})`;
+      this.card.style.borderRadius = `${m.r.toFixed(1)}px`;
+    };
+    this.card.style.transformOrigin = '50% 50%';
+    write();
+    this.cancelMorph = springAnimate([
+      { from: 0, to: tx, set: (v) => { m.x = v; write(); } },
+      { from: 0, to: ty, set: (v) => { m.y = v; write(); } },
+      { from: 1, to: sx, set: (v) => { m.a = v; write(); } },
+      { from: 1, to: sy, set: (v) => { m.b = v; write(); } },
+      { from: 24, to: r1, set: (v) => { m.r = v; write(); } },
+    ], spring, done);
+  }
+
+  /**
+   * L2 单一计数节点：胶囊里的 `.tfl-cap-faces`（todo/overdue 两面 + 计数文本）
+   * 整块搬进面板头 `.tfl-header-count` 槽 / 搬回胶囊 —— **同一个节点在移动**。
+   * 搬家时做一次位移+缩放 FLIP ⇒ 视觉上「文字左移、放大成标题」而不是淡出淡入。
+   */
+  moveCountInto(expanded) {
+    const from = this.capsuleFaces.getBoundingClientRect();
+    if (expanded) {
+      if (this.capsuleFaces.parentElement !== this.headerCount) this.headerCount.appendChild(this.capsuleFaces);
+      this.headerCount.classList.add('has-faces');
+    } else {
+      if (this.capsuleFaces.parentElement !== this.capsule) this.capsule.appendChild(this.capsuleFaces);
+      this.headerCount.classList.remove('has-faces');
+    }
+    if (REDUCED_MOTION || !from.width) return;
+    const to = this.capsuleFaces.getBoundingClientRect();
+    if (!to.width) return;
+    const dx = (from.left + from.width / 2) - (to.left + to.width / 2);
+    const dy = (from.top + from.height / 2) - (to.top + to.height / 2);
+    const sc = from.height / to.height || 1;
+    if (this.cancelCountMorph) this.cancelCountMorph();
+    const m = { x: dx, y: dy, s: sc };
+    const paint = () => {
+      this.capsuleFaces.style.transform =
+        `translate(${m.x.toFixed(2)}px, ${m.y.toFixed(2)}px) scale(${m.s.toFixed(3)})`;
+    };
+    paint();
+    this.cancelCountMorph = springAnimate([
+      { from: dx, to: 0, set: (v) => { m.x = v; paint(); } },
+      { from: dy, to: 0, set: (v) => { m.y = v; paint(); } },
+      { from: sc, to: 1, set: (v) => { m.s = v; paint(); } },
+    ], SPRING.pop, () => { this.capsuleFaces.style.transform = ''; });
   }
 
   collapse() {
@@ -920,7 +1371,6 @@ class TodoFace {
     if (this.editingId) this.saveEditing();
     if (this.creating) { this.creating = false; }
     this.closeTagPopover(false);
-    this.dismissHint();
     this.expanded = false;
     this.mount.classList.remove('is-open');
     this.capsule.setAttribute('aria-expanded', 'false');
@@ -928,18 +1378,21 @@ class TodoFace {
     if (this.cancelMorph) this.cancelMorph();
     this.panel.classList.remove('tfl-panel-open');
     this.panel.classList.add('tfl-panel-out');
+    const capRect = this.capsuleRectNow();
     // 收起动画期间卡容器保持 display:flex（data-state 在动画落地后才翻），
     // 否则一翻类就 display:none、无退场可看，胶囊侧也观察不到「从面板收成胶囊」。
     const done = () => {
-      this.card.style.scale = '';
+      this.card.style.transform = '';
+      this.card.style.borderRadius = '';
+      this.card.style.transformOrigin = '';
       this.card.dataset.state = 'capsule';
       this.panel.classList.remove('tfl-panel-in', 'tfl-panel-out');
+      this.moveCountInto(false); // 计数节点回胶囊（同一节点，末帧位置≈胶囊位）
+      this.capsule.style.visibility = '';
       this.refocusList();
     };
     if (REDUCED_MOTION) { done(); return; }
-    this.cancelMorph = springAnimate([
-      { from: 1, to: 0.94, set: (v) => { this.card.style.scale = String(v); } },
-    ], SPRING.close, done);
+    this.morphTo(capRect, SPRING.close, done);
   }
 
   /** 面板/胶囊实测（取证与回归断言用；几何已由 CSS 决定，此处只读不写）。 */
@@ -978,8 +1431,7 @@ class TodoFace {
       if (!this.expanded || this.destroyed) return;
       const path = e.composedPath ? e.composedPath() : [];
       const insideCard = path.includes(this.card);
-      const insideLayer = (this.tagPopover && path.includes(this.tagPopover)) ||
-        (this.hintLayer && path.includes(this.hintLayer));
+      const insideLayer = this.tagPopover && path.includes(this.tagPopover);
       if (insideCard || insideLayer || path.includes(this.mount)) return;
       if (this.editingId) this.saveEditing();
       if (this.creating) { this.creating = false; this.renderRows(); this.renderFooter(); }
@@ -989,7 +1441,7 @@ class TodoFace {
     document.addEventListener('pointerdown', this.outsideHandler, true);
     this.escHandler = (e) => {
       if (e.key !== 'Escape' || !this.expanded || this.destroyed) return;
-      if (isImeComposing(e)) return;
+      if (isImeComposing(e, null)) return;
       // 列表内的 Esc 由 onListKey 分层处理（行编辑/创建行/popover 优先），
       // 此处只在焦点不在面板子树内时才接管 —— 避免同一次按键双重动作。
       if (this.card.contains(document.activeElement)) return;
@@ -1049,71 +1501,13 @@ class TodoFace {
     this.setChipScroll(this.chipScroll + step * dir, true);
   }
 
-  // ── chips 手势：悬停教学 / 横拖重排 / 上划改名 / 下划删除 ─────────────────
-
-  onChipHover(tagId, chip, entering) {
-    if (entering) {
-      chip.classList.add('hovered'); // 布局级放大挤开（立即，spring 0.3/0.65）
-      if (this.editingTagId != null || this.creatingTag || this.mobile) return;
-      clearTimeout(this.hintTimer);
-      this.hintTimer = setTimeout(() => this.showHint(chip), 450); // 扫过防误触延迟
-    } else {
-      chip.classList.remove('hovered');
-      if (this.chipHoverId === tagId) this.dismissHint();
-    }
-  }
-
-  showHint(chip) {
-    if (!chip.isConnected || this.chipDrag) return;
-    this.dismissHint();
-    this.chipHoverId = chip.dataset.tagId;
-    const r = chip.getBoundingClientRect();
-    const layer = el('div', 'tfl-hint-layer');
-    this.hintLayer = layer;
-    const mk = (cls, html) => {
-      const n = el('div', `tfl-hint ${cls}`);
-      n.innerHTML = html;
-      return n;
-    };
-    const top = mk('tfl-hint-top',
-      `<span class="tfl-hint-arrow tfl-hint-up">${this.chevSvg('up')}</span><span class="tfl-hint-ic tfl-cyan">${PENCIL_CIRCLE_SVG}</span><span>${t('todoface.tagRename')}</span>`);
-    const bottom = mk('tfl-hint-bottom',
-      `<span class="tfl-hint-arrow tfl-hint-down">${this.chevSvg('down')}</span><span class="tfl-hint-ic tfl-red">${XMARK_CIRCLE_SVG}</span><span>${t('todoface.tagDelete')}</span>`);
-    const left = mk('tfl-hint-side tfl-hint-left', this.chevSvg('left', 'tfl-yellow'));
-    const right = mk('tfl-hint-side tfl-hint-right', this.chevSvg('right', 'tfl-yellow'));
-    layer.append(top, bottom, left, right);
-    const place = (n, x, y, tf) => {
-      n.style.left = `${x}px`;
-      n.style.top = `${y}px`;
-      if (tf) n.style.transform = tf;
-    };
-    document.body.appendChild(layer);
-    // 位置在挂载后量（层内布局居中换算）
-    place(top, r.left + r.width / 2 - top.offsetWidth / 2, r.top - top.offsetHeight - 6);
-    place(bottom, r.left + r.width / 2 - bottom.offsetWidth / 2, r.bottom + 6);
-    place(left, r.left - left.offsetWidth - 8, r.top + r.height / 2 - left.offsetHeight / 2);
-    place(right, r.right + 8, r.top + r.height / 2 - right.offsetHeight / 2);
-    layer.classList.add('tfl-hint-show'); // opacity 过渡（spring 0.3/0.85 近似）
-  }
-
-  chevSvg(dir, cls = '') {
-    const d = {
-      up: 'M4 9l4-4 4 4', down: 'M4 5l4 4 4-4',
-      left: 'M9 4L5 8l4 4', right: 'M5 4l4 4-4 4',
-    }[dir];
-    return `<svg class="tfl-chev ${cls}" viewBox="0 0 16 16" aria-hidden="true"><path d="${d}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-  }
-
-  dismissHint() {
-    clearTimeout(this.hintTimer);
-    this.chipHoverId = null;
-    if (this.hintLayer) {
-      const layer = this.hintLayer;
-      this.hintLayer = null;
-      layer.classList.remove('tfl-hint-show'); // easeOut 0.15 消失（复刻）
-      setTimeout(() => layer.remove(), 160);
-    }
-  }
+  // ── chips 手势：横拖重排 / 上划改名 / 下划删除 ────────────────────────────
+  // ⛔ 悬停教学气泡（450ms 四向提示）与「悬停放大挤开」整套于**标签删除模式批**
+  // 2026-11-04 退役（UI 批次审计 D 档 R05 收口；台账1376 作者 recall 2026-11-02
+  // 12:05「标签 hover 不要动画」）：`onChipHover` / `showHint` / `chevSvg` /
+  // `dismissHint` 四函数 + 三处状态位（chipHover/chipTimer/hintLayer）整链摘除，
+  // 样式侧对应块见 css/todo-face.css 同名注。**本仓退役不物理删除**的惯例在此
+  // 例外：死码本身是本批被审的缺陷形态（审计 R08 亦因死码判 D），故真删。
 
   onChipPointerDown(e, tag, chip) {
     if (e.button !== 0 || this.chipDrag) return;
@@ -1184,7 +1578,6 @@ class TodoFace {
   }
 
   beginChipSwipe(tag, chip, dir) {
-    this.dismissHint();
     chip.classList.add(dir === 'up' ? 'swiping-up' : 'swiping-down');
     const indicator = el('span', 'tfl-chip-swipe-ic');
     indicator.innerHTML = dir === 'up' ? PENCIL_CIRCLE_SVG : XMARK_CIRCLE_SVG;
@@ -1194,10 +1587,16 @@ class TodoFace {
   }
 
   beginChipDrag(tag, chip, ev) {
-    this.dismissHint();
     const frozen = new Map();
+    // 冻结帧表必须**含被拖 chip 自己**（R08 死码根因，UI 批次审计 2026-11-04 判 D；
+    // 台账1376 作者 recall 2026-11-02 12:05「左右推动标签顺序的功能要保留」）：
+    // 改前这里写的是 `if (id !== tag.id) frozen.set(...)`，于是 `moveChipDrag` 首句
+    // `const r0 = drag.frozen.get(drag.id); if (!r0) return;` 恒取不到自己那一帧、
+    // 逐帧早退 ⇒ `todoStore.reorderTag()` 永不可达（拖过 2 枚邻 chip 顺序不动）。
+    // 现在全表冻结：r0 = 被拖 chip 的拖动起点帧（它是**不动**的源 chip，ghost 才跟手），
+    // 越位判据与 `centerAdjust` 补偿都以此帧为基准 —— 与源 chip 的连线语义一致。
     for (const [id, elx] of (this.chipEls || new Map())) {
-      if (id !== tag.id) frozen.set(id, elx.getBoundingClientRect());
+      if (elx && elx.isConnected) frozen.set(id, elx.getBoundingClientRect());
     }
     const ghost = chip.cloneNode(true);
     ghost.classList.add('tfl-chip-ghost');
@@ -1225,7 +1624,7 @@ class TodoFace {
     const r0 = drag.frozen.get(drag.id);
     if (!r0) return;
     const center = r0.left + r0.width / 2 + dx + (drag.centerAdjust || 0);
-    const order = todoStore.tags;
+    const order = /** @type {any[]} */ (todoStore.tags);   // checkJs：indexOf 的入参族见下方登记（既有面，非本批引入）
     const idx = order.findIndex((x) => x.id === drag.id);
     for (const other of order) {
       if (other.id === drag.id) continue;
@@ -1301,7 +1700,6 @@ class TodoFace {
 
   openTagPopover(editTagId) {
     this.closeTagPopover(false);
-    this.dismissHint();
     const editing = editTagId != null;
     const tag = editing ? todoStore.tagById(editTagId) : null;
     this.editingTagId = editing ? editTagId : null;
@@ -1385,7 +1783,6 @@ class TodoFace {
     this.unsub();
     this.unbindOutsideClose();
     if (this.cancelMorph) this.cancelMorph();
-    this.dismissHint();
     if (this.tagPopover) this.tagPopover.remove();
     if (this.root && this.root.isConnected) this.root.remove();
   }

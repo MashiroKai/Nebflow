@@ -537,7 +537,7 @@
   border-radius: var(--ds-radius-card-lg);
   box-shadow: var(--ds-shadow-card);
   margin: 40px 0 0;
-  padding: 6px var(--ds-space-4);
+  padding: var(--ds-space-1h) var(--ds-space-4);
   display: flow-root;
 }
 @media (prefers-color-scheme: dark) {
@@ -562,11 +562,11 @@
   color: var(--ds-text-muted);
   /* 上拉出卡：卡顶内距 6px + 组间留白 ⇒ 标题整段落在卡外灰底（呼吸感）。 */
   margin: -33px 0 var(--ds-space-3);
-  padding: 0 10px;
+  padding: 0 var(--ds-space-glass-x);
 }
 /* 卡内子组标题（嵌套 section 首题 / Overrides 副题）回落为卡内分隔子标题。 */
 .settings-section .settings-section-title {
-  margin: 14px 0 6px;
+  margin: 14px 0 var(--ds-space-1h);
   padding: 0;
 }
 .settings-row {
@@ -577,7 +577,7 @@
   /* 热区档（本批新增判据）：行高 ≥44px（--ds-hit-row），矮内容行由 min-height
      撑到触控下限；行内距保持 10px 0（卡内行变体，规范 §5 未覆盖 → 不改值）。 */
   min-height: var(--ds-row-min-h);
-  padding: 10px 0;
+  padding: var(--ds-space-glass-x) 0;
   border-bottom: 1px solid var(--ds-border-hairline);
 }
 .settings-row:last-child { border-bottom: none; }
@@ -608,20 +608,20 @@
    取 --ds-row-min-h）。 */
 /* keyRef 遮蔽行：.cfg-password-wrap 先例（sidebar.css:1259 现 §Config Modal 段）原样复用；
    卡内行道里占满行宽、同封顶 280px（原型 .pwd-wrap flex:1 1 auto; max-width:280px）。 */
-.cfg-card .cfg-hint { padding: 0 14px 10px; margin-top: -4px; line-height: var(--ds-lh-std); }
+.cfg-card .cfg-hint { padding: 0 14px var(--ds-space-glass-x); margin-top: -4px; line-height: var(--ds-lh-std); }
 /* 卡底动作行：内联反馈 + spacer + 保存钮右对齐（取代独立的块级保存行）。 */
 .card-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 14px 12px;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-glass-x) 14px var(--ds-space-3);
   border-top: 1px solid var(--color-frame-border-light);
 }
 .card-actions .spacer { flex: 1; }
 .inline-state {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--ds-space-1);
   font-size: var(--ds-fs-meta);
   color: var(--ds-status-word);
   min-width: 0;
@@ -633,9 +633,9 @@
 .st-badge {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--ds-space-1);
   font-size: 10px;
-  padding: 2px 8px;
+  padding: var(--ds-space-half) var(--ds-space-2);
   border-radius: var(--ds-radius-badge);
   border: 1px solid transparent;
   color: var(--ds-status-word);
@@ -682,7 +682,7 @@
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--ds-space-glass-x);
   text-align: left;
   padding: 11px 14px;
   border-radius: var(--ds-radius-card-md);
@@ -726,7 +726,7 @@
 .settings-collapse-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   background: none;
   border: none;
   padding: 0;
@@ -769,12 +769,12 @@
   transform: rotate(-90deg);
 }
 .settings-collapse-body {
-  padding: var(--ds-space-1) 0 6px;
+  padding: var(--ds-space-1) 0 var(--ds-space-1h);
 }
 .stt-key-configured {
   display: inline-block;
-  margin-left: 8px;
-  padding: 1px 8px;
+  margin-left: var(--ds-space-2);
+  padding: 1px var(--ds-space-2);
   font-size: var(--ds-fs-meta);
   font-weight: 500;
   color: rgb(var(--sapphire));
@@ -790,7 +790,7 @@
    file (glass-control material + brand-green accent, both themes auto-adapt). */
 /* Config editor */
 .config-editor-wrap {
-  margin-top: 8px;
+  margin-top: var(--ds-space-2);
 }
 #config-editor {
   width: 100%;
@@ -799,7 +799,7 @@
   color: var(--color-frame-input-text);
   border: 1px solid var(--color-frame-input-border);
   border-radius: var(--ds-radius-chip);
-  padding: 8px;
+  padding: var(--ds-space-2);
   font-size: var(--ds-fs-meta);
   font-family: ui-monospace, SFMono-Regular, monospace;
   line-height: var(--ds-lh-body);
@@ -809,12 +809,12 @@
 #config-editor:focus { outline: none; border-color: var(--color-frame-text-muted); }
 .config-actions {
   display: flex;
-  gap: 6px;
-  margin-top: 8px;
+  gap: var(--ds-space-1h);
+  margin-top: var(--ds-space-2);
 }
 .config-actions button {
   font-size: var(--ds-fs-meta);
-  padding: 4px 12px;
+  padding: var(--ds-space-1) var(--ds-space-3);
   border-radius: var(--ds-radius-badge);
   border: 1px solid var(--color-frame-border);
   background: none;
@@ -852,8 +852,8 @@
    #activity-avatar). Tokens only. */
 .settings-avatar-entry {
   display: block;
-  margin: 2px auto 6px;
-  padding: 6px;
+  margin: var(--ds-space-half) auto var(--ds-space-1h);
+  padding: var(--ds-space-1h);
   background: transparent;
   border: none;
   border-radius: 50%;
@@ -916,16 +916,16 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
-  margin: 2px 0 8px;
+  gap: var(--ds-space-1h);
+  margin: var(--ds-space-half) 0 var(--ds-space-2);
 }
 /* 胶囊：一行文字 + 右侧 chevron；宽度随内容（不铺满，作者「胶囊」语义）。 */
 .settings-identity-capsule {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   max-width: 100%;
-  padding: 6px 12px;
+  padding: var(--ds-space-1h) var(--ds-space-3);
   background: var(--color-frame-input-bg);
   color: var(--color-text);
   border: 1px solid var(--color-frame-input-border);
@@ -1005,8 +1005,8 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
-  padding: 14px 16px 10px;
+  gap: var(--ds-space-1);
+  padding: 14px var(--ds-space-4) var(--ds-space-glass-x);
 }
 .sp-avatar-frame {
   position: relative;
@@ -1059,13 +1059,13 @@
 .sp-fields {
   display: flex;
   flex-direction: column;
-  padding: 4px 16px 8px;
+  padding: var(--ds-space-1) var(--ds-space-4) var(--ds-space-2);
 }
 .sp-field {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--ds-space-3);
   padding: 7px 0;
   border-top: 1px solid var(--color-frame-border-light);
 }
@@ -1086,7 +1086,7 @@
 .sp-field[data-sp-state='unavailable'] .sp-value { color: var(--color-text-muted); }
 .sp-note {
   margin: 0;
-  padding: 0 16px 8px;
+  padding: 0 var(--ds-space-4) var(--ds-space-2);
   font-size: var(--ds-fs-hint);
   line-height: 17px;
   color: var(--color-text-muted);
@@ -1102,19 +1102,19 @@
   background: var(--color-frame-input-bg);
   border: 1px solid var(--color-frame-input-border);
   border-radius: var(--ds-radius-chip);
-  margin-bottom: 8px;
+  margin-bottom: var(--ds-space-2);
   cursor: pointer;
   overflow: hidden;
   transition: border-color 0.15s;
 }
 .cfg-card:hover { border-color: rgb(var(--sapphire) / 0.35); }
 /* Model rows inside provider cards */
-.cfg-model-list { padding: 4px 0; }
+.cfg-model-list { padding: var(--ds-space-1) 0; }
 .cfg-model-row {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
-  padding: 5px 10px;
+  gap: var(--ds-space-2);
+  padding: 5px var(--ds-space-glass-x);
   border-top: 1px solid var(--color-frame-border-light);
 }
 .cfg-model-name {
@@ -1131,7 +1131,7 @@
 /* Read-only vision badge (provider card list) */
 .vision-badge {
   font: 500 9.5px -apple-system, sans-serif;
-  padding: 1px 8px;
+  padding: 1px var(--ds-space-2);
   border-radius: var(--ds-radius-input);
   border: 1px solid rgb(var(--sapphire) / 0.35);
   background: rgb(var(--sapphire) / 0.08);
@@ -1143,8 +1143,8 @@
 .cfg-card-header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 10px;
+  gap: var(--ds-space-1h);
+  padding: var(--ds-space-2) var(--ds-space-glass-x);
   border-bottom: 1px solid var(--color-frame-border-light);
 }
 .cfg-card-title {
@@ -1155,7 +1155,7 @@
 }
 .cfg-card-badge {
   font-size: 10px;
-  padding: 1px 6px;
+  padding: 1px var(--ds-space-1h);
   border-radius: 3px;
   background: var(--color-frame-border);
   color: var(--color-frame-text-muted);
@@ -1166,9 +1166,9 @@
   background: none;
   border: none;
   color: var(--color-frame-text-muted);
-  font-size: 16px;
+  font-size: var(--ds-fs-mobile-callout);
   cursor: pointer;
-  padding: 0 4px;
+  padding: 0 var(--ds-space-1);
   line-height: 1;
   transition: color 0.15s;
 }
@@ -1182,12 +1182,12 @@
 .cfg-card-sub {
   font-size: var(--ds-fs-meta);
   color: var(--color-frame-text-muted);
-  margin-right: 4px;
+  margin-right: var(--ds-space-1);
 }
 .cfg-empty {
   color: var(--color-frame-text-muted);
   font-size: var(--ds-fs-hint);
-  padding: 8px 0;
+  padding: var(--ds-space-2) 0;
 }
 /* 配置提供方卡片 · 三面共用态（jev-imagegen-align-llm 批 · card 件，契约 §A.3）：
    追加到 Config Cards 段尾，零新字面量 ——
@@ -1202,18 +1202,18 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--ds-space-1);
 }
 .mchain-chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--ds-space-1);
   font: 400 11px ui-monospace, SFMono-Regular, monospace;
   color: var(--color-text);
   background: var(--ds-etched-bg);
   border: 1px solid var(--ds-etched-border);
   border-radius: var(--ds-radius-chip);
-  padding: 2px 8px;
+  padding: var(--ds-space-half) var(--ds-space-2);
   max-width: 100%;
 }
 .mchain-chip.preferred {
@@ -1251,7 +1251,7 @@
    双保险）；cfg-btn-add 虚线幽灵档由本条自管。 */
 .cfg-btn {
   font-size: var(--ds-fs-btn);
-  padding: 6px 16px;
+  padding: var(--ds-space-1h) var(--ds-space-4);
   border-radius: var(--ds-radius-pill);
   border: 1px solid var(--ctl-neutral-bg);
   background: var(--ctl-neutral-bg);
@@ -1264,9 +1264,9 @@
 .cfg-btn:hover { background: var(--ctl-neutral-bg-hover); color: var(--ctl-neutral-ink); }
 .cfg-btn:active { background: var(--ctl-neutral-bg-active); }
 .cfg-btn:focus-visible { outline: 2px solid var(--btn-focus-ring); outline-offset: 2px; }
-.cfg-btn-sm { font-size: var(--ds-fs-btn); padding: 4px 12px; border-radius: var(--ds-radius-pill); }
+.cfg-btn-sm { font-size: var(--ds-fs-btn); padding: var(--ds-space-1) var(--ds-space-3); border-radius: var(--ds-radius-pill); }
 .cfg-btn-primary {
-  font-size: var(--ds-fs-btn); padding: 6px 18px; border-radius: var(--ds-radius-pill);
+  font-size: var(--ds-fs-btn); padding: var(--ds-space-1h) 18px; border-radius: var(--ds-radius-pill);
   border: 1px solid var(--btn-primary-bg);
   background: var(--btn-primary-bg);
   color: var(--btn-primary-ink);
@@ -1282,7 +1282,7 @@
 .cfg-btn-add {
   width: 100%;
   border-style: dashed;
-  margin-top: 4px;
+  margin-top: var(--ds-space-1);
   background: none;
   color: var(--color-frame-text-muted);
   border-color: var(--color-frame-border);
@@ -1292,18 +1292,18 @@
 /* ── Config Select / Tag List ──────────────────────────────────────────────
    设计语言批 2026-10-21：表单控件字号 13px（与正文同档，12px 判偏整改）；
    hint 12px 纯 muted（10px+opacity .6 判偏整改——可读下限 11px，hint 档 12）。 */
-.cfg-form-group { margin-bottom: 12px; }
+.cfg-form-group { margin-bottom: var(--ds-space-3); }
 .cfg-label {
   display: block;
   font-size: var(--ds-fs-hint);
   color: var(--color-frame-text-muted);
-  margin-bottom: 4px;
+  margin-bottom: var(--ds-space-1);
 }
 .cfg-hint {
   font-size: var(--ds-fs-hint);
   line-height: var(--ds-lh-body);
   color: var(--color-frame-text-muted);
-  margin-top: 4px;
+  margin-top: var(--ds-space-1);
 }
 .cfg-select {
   width: 100%;
@@ -1387,11 +1387,11 @@
   font-size: 14px;
   font-weight: 600;
   color: var(--color-frame-text);
-  padding: 14px 16px 10px;
+  padding: 14px var(--ds-space-4) var(--ds-space-glass-x);
   border-bottom: 1px solid var(--color-frame-border-light);
 }
-.cfg-modal-body { padding: 12px 16px; }
-.cfg-modal-body .cfg-form-group { margin-bottom: 12px; }
+.cfg-modal-body { padding: var(--ds-space-3) var(--ds-space-4); }
+.cfg-modal-body .cfg-form-group { margin-bottom: var(--ds-space-3); }
 .cfg-modal-body .cfg-label { margin-bottom: 5px; }
 .cfg-input {
   width: 100%;
@@ -1430,12 +1430,12 @@
 .cfg-models-container {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--ds-space-1h);
 }
 .cfg-model-row {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--ds-space-1);
 }
 .cfg-model-row .cfg-input {
   flex: 1;
@@ -1450,7 +1450,7 @@
   cursor: pointer;
   font-size: 18px;
   line-height: 1;
-  padding: 4px 6px;
+  padding: var(--ds-space-1) var(--ds-space-1h);
   border-radius: var(--ds-radius-badge);
   flex-shrink: 0;
 }
@@ -1465,7 +1465,7 @@
   border: 1px dashed var(--color-frame-text-dim);
   color: var(--color-frame-text-muted);
   cursor: pointer;
-  padding: 4px 12px;
+  padding: var(--ds-space-1) var(--ds-space-3);
   border-radius: var(--ds-radius-badge);
   font-size: var(--ds-fs-body);
   align-self: flex-start;
@@ -1475,15 +1475,15 @@
 .cfg-fetch-status-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 2px 0 6px;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-half) 0 var(--ds-space-1h);
 }
 .cfg-fetch-models-btn {
   background: none;
   border: 1px solid var(--color-frame-border-light);
   color: var(--color-frame-text-muted);
   cursor: pointer;
-  padding: 3px 10px;
+  padding: 3px var(--ds-space-glass-x);
   border-radius: var(--ds-radius-chip);
   font-size: var(--ds-fs-meta);
   font-family: inherit;
@@ -1510,7 +1510,7 @@
   align-items: center;
 }
 .cfg-password-wrap input {
-  padding-right: 32px;
+  padding-right: var(--ds-space-8);
 }
 .cfg-eye-btn {
   position: absolute;
@@ -1519,7 +1519,7 @@
   border: none;
   cursor: pointer;
   color: var(--color-frame-text-muted);
-  padding: 4px;
+  padding: var(--ds-space-1);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1537,11 +1537,11 @@
 .cfg-modal-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
-  padding: 10px 16px 14px;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-glass-x) var(--ds-space-4) 14px;
   border-top: 1px solid var(--color-frame-border-light);
 }
-.cfg-modal-actions .cfg-btn { padding: 6px 16px; }
+.cfg-modal-actions .cfg-btn { padding: var(--ds-space-1h) var(--ds-space-4); }
 .cfg-btn-save {
   border-color: rgb(var(--sapphire) / 0.35) !important;
   color: rgb(var(--sapphire)) !important;
@@ -1561,9 +1561,9 @@
    布局钩子（fixed/bottom/z-index/动画）保留，正文可读性回到主题 token。 */
 .cfg-toast {
   position: fixed; bottom: 20px; right: 20px; z-index: 10000;
-  max-width: 400px; padding: 10px 16px; border-radius: var(--ds-radius-xl);
+  max-width: 400px; padding: var(--ds-space-glass-x) var(--ds-space-4); border-radius: var(--ds-radius-xl);
   font-size: var(--ds-fs-body); line-height: 1.4;
-  display: flex; align-items: flex-start; gap: 8px;
+  display: flex; align-items: flex-start; gap: var(--ds-space-2);
   background: var(--glass-control-bg);
   -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
@@ -1586,18 +1586,18 @@
 .agent-mgr-empty {
   font: 400 11px -apple-system, sans-serif;
   color: var(--color-frame-text-muted);
-  padding: 20px 12px;
+  padding: var(--ds-space-5) var(--ds-space-3);
   text-align: center;
 }
 
 /* Category groups */
-.agent-mgr-group { margin-bottom: 12px; }
+.agent-mgr-group { margin-bottom: var(--ds-space-3); }
 .agent-mgr-group-header {
   font: 600 11px -apple-system, sans-serif;
   text-transform: uppercase;
   letter-spacing: 0.5px;
   color: var(--color-frame-text-muted, #888);
-  padding: 8px 12px 4px;
+  padding: var(--ds-space-2) var(--ds-space-3) var(--ds-space-1);
   user-select: none;
 }
 .agent-mgr-standalone-badge {
@@ -1606,7 +1606,7 @@
   border-radius: 3px;
   background: rgba(100,200,100,0.15);
   color: #6a6;
-  margin-left: 4px;
+  margin-left: var(--ds-space-1);
   white-space: nowrap;
 }
 
@@ -1624,7 +1624,7 @@
   border-radius: 3px;
   background: rgba(91,127,191,0.10);
   color: rgb(91,127,191);
-  margin-left: 4px;
+  margin-left: var(--ds-space-1);
   white-space: nowrap;
 }
 .agent-mgr-avatar svg { display: block; }
@@ -1633,8 +1633,8 @@
 .agent-mgr-card {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
+  gap: var(--ds-space-glass-x);
+  padding: var(--ds-space-2) var(--ds-space-3);
   border-bottom: 1px solid var(--color-frame-border-light);
   cursor: pointer;
   transition: background 0.15s;
@@ -1642,7 +1642,7 @@
 .agent-mgr-card:hover { background: rgba(0,0,0,0.03); }
 .agent-mgr-avatar {
   width: 32px; height: 32px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   background: rgba(91,127,191,0.10);
   color: rgb(91,127,191);
   font: 600 14px -apple-system, sans-serif;
@@ -1671,8 +1671,8 @@
   font: 500 9px ui-monospace, SFMono-Regular, monospace;
   color: var(--color-frame-text-muted);
   background: var(--color-frame-border);
-  padding: 1px 6px;
-  border-radius: 4px;
+  padding: 1px var(--ds-space-1h);
+  border-radius: var(--ds-radius-badge);
 }
 .agent-mgr-model-pill.fallback {
   color: rgb(91,127,191);
@@ -1684,7 +1684,7 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 16px 20px;
+  padding: var(--ds-space-4) var(--ds-space-5);
   scrollbar-color: var(--color-frame-border) transparent;
 }
 #agents-content .agent-mgr-group {
@@ -1697,7 +1697,7 @@
 .agent-detail {
   display: flex; flex-direction: column;
   height: 100%; min-height: 0;
-  padding: 24px 28px; max-width: 720px;
+  padding: var(--ds-space-6) 28px; max-width: 720px;
   overflow-y: auto;
   scrollbar-color: var(--color-frame-border) transparent;
 }
@@ -1708,11 +1708,11 @@
 }
 .agent-detail-header {
   display: flex; align-items: flex-start; gap: 14px;
-  margin-bottom: 24px;
+  margin-bottom: var(--ds-space-6);
 }
 .agent-detail-avatar {
   width: 48px; height: 48px;
-  border-radius: 12px;
+  border-radius: var(--ds-radius-xl);
   background: rgba(91,127,191,0.10);
   color: rgb(91,127,191);
   font: 600 22px -apple-system, sans-serif;
@@ -1723,10 +1723,10 @@
 .agent-detail-builtin-badge {
   display: inline-flex;
   align-items: center;
-  margin-left: 8px;
-  padding: 1px 8px;
+  margin-left: var(--ds-space-2);
+  padding: 1px var(--ds-space-2);
   border-radius: 9px;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   line-height: 16px;
   vertical-align: middle;
   background: rgba(var(--sapphire-rgb, 60, 130, 246), 0.12);
@@ -1735,8 +1735,8 @@
 }
 
 .agent-detail-builtin-note {
-  margin-top: 4px;
-  font-size: 11px;
+  margin-top: var(--ds-space-1);
+  font-size: var(--ds-fs-meta);
   opacity: 0.7;
 }
 
@@ -1744,7 +1744,7 @@
   font: 600 20px -apple-system, sans-serif;
   color: var(--color-text);
   letter-spacing: -0.02em;
-  margin-bottom: 2px;
+  margin-bottom: var(--ds-space-half);
 }
 .agent-detail-desc {
   font: 400 13px -apple-system, sans-serif;
@@ -1755,11 +1755,11 @@
   font: 400 11px ui-monospace, SFMono-Regular, monospace;
   color: var(--color-text-muted);
   opacity: 0.7;
-  margin-top: 4px;
+  margin-top: var(--ds-space-1);
 }
 .agent-detail-section {
-  margin-bottom: 20px;
-  padding-top: 16px;
+  margin-bottom: var(--ds-space-5);
+  padding-top: var(--ds-space-4);
   border-top: 1px solid var(--color-border);
   flex-shrink: 0;
 }
@@ -1775,13 +1775,13 @@
   color: var(--color-text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  margin-bottom: 8px;
+  margin-bottom: var(--ds-space-2);
 }
 .agent-detail-model-row {
-  display: flex; align-items: center; gap: 8px;
-  padding: 8px 12px;
+  display: flex; align-items: center; gap: var(--ds-space-2);
+  padding: var(--ds-space-2) var(--ds-space-3);
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   background: rgba(0,0,0,0.02);
   cursor: grab;
 }
@@ -1816,25 +1816,25 @@
   border-top: 2px solid var(--color-primary, #07c160);
   box-shadow: 0 0 0 2px rgba(7,193,96,0.15);
 }
-.agent-detail-model-add { margin-top: 8px; }
+.agent-detail-model-add { margin-top: var(--ds-space-2); }
 .agent-detail-model-add select {
   width: 100%; height: 28px;
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   background: rgba(0,0,0,0.02);
   color: var(--color-text);
   font: 500 11px -apple-system, sans-serif;
-  padding: 0 8px;
+  padding: 0 var(--ds-space-2);
   cursor: pointer; outline: none;
 }
 .agent-detail-empty-spacer { height: 4px; }
 
 /* Read-only resolved chain (agent detail) — editing lives in the /model panel */
-.agent-detail-model-chain { margin-bottom: 6px; }
+.agent-detail-model-chain { margin-bottom: var(--ds-space-1h); }
 .agent-detail-model-current {
   font: 400 11px -apple-system, sans-serif;
   color: var(--color-text-muted);
-  display: flex; align-items: center; gap: 6px;
+  display: flex; align-items: center; gap: var(--ds-space-1h);
   min-height: 14px;
 }
 .agent-detail-current-ref {
@@ -1856,7 +1856,7 @@
 /* Model remove button */
 .agent-detail-model-remove {
   cursor: pointer; opacity: 0.35;
-  font-size: 14px; padding: 0 2px;
+  font-size: 14px; padding: 0 var(--ds-space-half);
   flex-shrink: 0;
   transition: opacity 0.15s, color 0.15s;
 }
@@ -1871,8 +1871,8 @@
   color: var(--color-text);
   background: rgba(0,0,0,0.02);
   border: 1px solid var(--color-border);
-  border-radius: 8px;
-  padding: 12px;
+  border-radius: var(--ds-radius-input);
+  padding: var(--ds-space-3);
   resize: none;
   outline: none;
   transition: border-color 0.2s;
@@ -1881,12 +1881,12 @@
 }
 .agent-detail-prompt-edit:focus { border-color: var(--color-frame-text-muted); }
 .agent-detail-save-btn {
-  margin-top: 8px;
+  margin-top: var(--ds-space-2);
   flex-shrink: 0;
   font: 500 12px -apple-system, sans-serif;
-  padding: 5px 16px;
+  padding: 5px var(--ds-space-4);
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   background: var(--ctl-neutral-bg);
   color: var(--ctl-neutral-ink);
   cursor: pointer;
@@ -1899,13 +1899,13 @@
 /* System Prompt label row + render/source toggle */
 .agent-detail-label-row {
   display: flex; align-items: center; justify-content: space-between;
-  margin-bottom: 8px;
+  margin-bottom: var(--ds-space-2);
 }
 .agent-detail-label-row .agent-detail-label { margin-bottom: 0; }
 .agent-detail-prompt-toggle {
   display: inline-flex; align-items: center; justify-content: center;
   width: 24px; height: 24px; padding: 0;
-  border: 1px solid var(--color-border); border-radius: 6px;
+  border: 1px solid var(--color-border); border-radius: var(--ds-radius-chip);
   background: transparent; cursor: pointer;
   color: var(--color-text-muted); flex-shrink: 0;
   transition: all 0.15s;
@@ -1921,14 +1921,14 @@
    提示词双面页签（delegate 默认面 + node 面）。只读展示——无编辑器、无保存通道，
    与内置 agent 只读口径一致。 */
 .agent-detail-face-tabs {
-  display: flex; align-items: center; gap: 6px;
-  margin-bottom: 6px; flex-shrink: 0;
+  display: flex; align-items: center; gap: var(--ds-space-1h);
+  margin-bottom: var(--ds-space-1h); flex-shrink: 0;
 }
 .agent-detail-face-tab {
   font: 500 11px -apple-system, sans-serif;
-  padding: 3px 12px;
+  padding: 3px var(--ds-space-3);
   border: 1px solid var(--color-border);
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   background: transparent;
   color: var(--color-text-muted);
   cursor: pointer;
@@ -1943,7 +1943,7 @@
 .agent-detail-face-hint {
   font: 400 11px -apple-system, sans-serif;
   color: var(--color-text-muted);
-  margin-bottom: 6px; flex-shrink: 0;
+  margin-bottom: var(--ds-space-1h); flex-shrink: 0;
 }
 
 /* Rendered markdown view of the system prompt (shares .canvas-md-viewer styles).
@@ -1953,7 +1953,7 @@
   min-height: 0;
   overflow-y: auto;
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   scrollbar-color: var(--color-frame-border) transparent;
 }
 
@@ -1961,7 +1961,7 @@
 .agent-detail-scheme-note {
   font: 400 12px -apple-system, sans-serif;
   color: var(--color-text-muted, #888);
-  padding: 2px 0 6px;
+  padding: var(--ds-space-half) 0 var(--ds-space-1h);
 }
 
 /* Tool toggle chip grid — retired 2026-09-06 (agent-detail capability
@@ -1987,36 +1987,36 @@
 .segment-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-top: 10px;
+  gap: var(--ds-space-2);
+  margin-top: var(--ds-space-glass-x);
 }
 .segment-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
   flex-wrap: wrap;      /* narrow panels: cross-midnight chip wraps to its own line */
-  row-gap: 4px;
+  row-gap: var(--ds-space-1);
   background: var(--glass-etched-bg, rgba(128,128,128,0.06));
   border: 1px solid var(--glass-etched-border, rgba(128,128,128,0.14));
-  border-radius: 8px;
-  padding: 6px 8px 6px 12px;
+  border-radius: var(--ds-radius-input);
+  padding: var(--ds-space-1h) var(--ds-space-2) var(--ds-space-1h) var(--ds-space-3);
 }
 .segment-row .seg-label {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text-muted);
   flex-shrink: 0;
 }
 /* Cross-midnight hint — a freeze segment whose start > end spans into the
    next day (e.g. 23:00-08:00). Sapphire chip, same language as .frozen-status. */
 .seg-cross-midnight {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   white-space: nowrap;
   color: rgb(var(--sapphire));
   background: rgb(var(--sapphire) / 0.1);
   border: 1px solid rgb(var(--sapphire) / 0.22);
-  border-radius: 6px;
-  padding: 2px 6px;
+  border-radius: var(--ds-radius-chip);
+  padding: var(--ds-space-half) var(--ds-space-1h);
   flex-shrink: 0;
 }
 .time-input {
@@ -2024,9 +2024,9 @@
   background: var(--glass-etched-bg);
   color: var(--color-frame-input-text);
   border: 1px solid var(--glass-etched-border);
-  border-radius: 8px;
-  padding: 4px 8px;
-  font-size: 13px;
+  border-radius: var(--ds-radius-input);
+  padding: var(--ds-space-1) var(--ds-space-2);
+  font-size: var(--ds-fs-body);
   font-family: inherit;
   font-variant-numeric: tabular-nums;
   text-align: center;
@@ -2043,10 +2043,10 @@
   border: none;
   color: var(--color-text-muted);
   cursor: pointer;
-  font-size: 16px;
+  font-size: var(--ds-fs-mobile-callout);
   line-height: 1;
-  padding: 2px 6px;
-  border-radius: 6px;
+  padding: var(--ds-space-half) var(--ds-space-1h);
+  border-radius: var(--ds-radius-chip);
   flex-shrink: 0;
   transition: background 0.15s, color 0.15s;
 }
@@ -2064,12 +2064,12 @@
    only layout helpers + swatches are new. No new color tokens. */
 .orb-state-map-title {
   font-size: 12.5px;
-  padding: 8px 0 2px;
+  padding: var(--ds-space-2) 0 var(--ds-space-half);
 }
 .orb-state-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
   padding: 3px 0;
 }
 .orb-state-row .orb-state-name {
@@ -2096,20 +2096,20 @@
 .orb-custom-controls {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
   flex-wrap: wrap;
-  padding: 6px 0;
+  padding: var(--ds-space-1h) 0;
 }
 .orb-slot-label {
   flex: 1;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-frame-text-muted);
   min-width: 0;
 }
 .orb-slot-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
   padding: 3px 0;
 }
 .orb-slot-row .orb-slot-label { flex: 1; }
@@ -2118,21 +2118,21 @@
   height: 24px;
   padding: 0;
   border: 1px solid var(--color-frame-border-light);
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   background: none;
   cursor: pointer;
   flex: none;
 }
-.orb-slot-hex { width: 82px; flex: none; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+.orb-slot-hex { width: 82px; flex: none; font-family: ui-monospace, Menlo, monospace; font-size: var(--ds-fs-hint); }
 .orb-warn {
   color: #d9a53a;
-  font-size: 11px;
-  padding: 1px 0 3px 8px;
+  font-size: var(--ds-fs-meta);
+  padding: 1px 0 3px var(--ds-space-2);
 }
 .orb-theme-seg {
   display: inline-flex;
   border: 1px solid var(--color-frame-border-light);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   overflow: hidden;
   flex: none;
 }
@@ -2141,7 +2141,7 @@
   background: transparent;
   color: var(--color-frame-text-muted);
   font-size: 11.5px;
-  padding: 4px 10px;
+  padding: var(--ds-space-1) var(--ds-space-glass-x);
   cursor: pointer;
   font-family: inherit;
 }
@@ -2152,8 +2152,8 @@
 .orb-preview-wrap {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 8px 0 2px;
+  gap: var(--ds-space-3);
+  padding: var(--ds-space-2) 0 var(--ds-space-half);
 }
 .orb-preview-canvas {
   width: 84px;
@@ -2175,7 +2175,7 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 16px 20px 24px;
+  padding: var(--ds-space-4) var(--ds-space-5) var(--ds-space-6);
   scrollbar-color: var(--color-frame-border) transparent;
 }
 #plugins-content > .plugins-section,
@@ -2187,14 +2187,14 @@
 .plugins-loading {
   font: 400 12px -apple-system, sans-serif;
   color: var(--color-frame-text-muted);
-  padding: 24px 12px;
+  padding: var(--ds-space-6) var(--ds-space-3);
   text-align: center;
 }
 .plugins-topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 10px;
+  margin-bottom: var(--ds-space-glass-x);
 }
 .plugins-title {
   font: 600 14px -apple-system, sans-serif;
@@ -2206,7 +2206,7 @@
 .plugins-stats {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   font: 500 10px ui-monospace, SFMono-Regular, monospace;
   font-variant-numeric: tabular-nums;
   color: var(--color-frame-text-muted);
@@ -2219,13 +2219,13 @@
   text-transform: uppercase;
   letter-spacing: 0.5px;
   color: var(--color-frame-text-muted);
-  padding: 4px 2px 6px;
+  padding: var(--ds-space-1) var(--ds-space-half) var(--ds-space-1h);
   user-select: none;
 }
 .plugins-section-hint {
   font: 400 10px -apple-system, sans-serif;
   color: var(--color-frame-text-dim);
-  padding: 0 2px 8px;
+  padding: 0 var(--ds-space-half) var(--ds-space-2);
 }
 .plugins-none {
   font: 400 10px -apple-system, sans-serif;
@@ -2237,22 +2237,22 @@
 .plugins-card-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--ds-space-2);
 }
 .plugins-card {
   background: var(--glass-control-bg);
   -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   border: 1px solid var(--glass-control-border);
-  border-radius: 10px;
+  border-radius: var(--ds-radius-card-sm);
   box-shadow:
     inset 0 1px 0 var(--glass-control-highlight),
     inset 0 -1px 0 var(--glass-control-underedge),
     0 1px 3px var(--glass-control-glow);
-  padding: 10px 12px;
+  padding: var(--ds-space-glass-x) var(--ds-space-3);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   transition: border-color 0.15s;
 }
 .plugins-card.on { border-color: rgb(var(--sapphire) / 0.28); }
@@ -2279,14 +2279,14 @@
 .plugins-card-head {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  column-gap: 8px;
+  column-gap: var(--ds-space-2);
   row-gap: 3px;
   align-items: center;
 }
 .plugins-card-head[data-plugin-item] {
   cursor: pointer;
-  border-radius: 8px;
-  padding: 2px 4px;
+  border-radius: var(--ds-radius-input);
+  padding: var(--ds-space-half) var(--ds-space-1);
   margin: -2px -4px;
   transition: background 0.15s;
 }
@@ -2303,7 +2303,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 4px 8px;
+  gap: var(--ds-space-1) var(--ds-space-2);
 }
 .plugins-item-icon {
   flex: none;
@@ -2346,7 +2346,7 @@
   grid-row: 1;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
 }
 /* 行 2 = 一行摘要（补充令③：独立行，最多两行，超出省略）。 */
 .plugins-item-summary {
@@ -2371,8 +2371,8 @@
 .plugins-item-detail {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding-top: 8px;
+  gap: var(--ds-space-1h);
+  padding-top: var(--ds-space-2);
 }
 .plugins-item-detail[hidden] { display: none; }
 .plugins-item-detail .plugins-card-desc { -webkit-line-clamp: unset; }
@@ -2388,7 +2388,7 @@
   display: flex;
   justify-content: flex-end;
   align-items: center;
-  gap: 10px;
+  gap: var(--ds-space-glass-x);
 }
 /* 卸载钮（材质 = .plugins-item-doc 同族 glass-control；语义色 = error 族——
    不可逆动作可辨识；尺寸比照 doc 钮 10px monospace）。 */
@@ -2397,8 +2397,8 @@
   align-items: center;
   gap: 5px;
   font: 500 10px ui-monospace, SFMono-Regular, monospace;
-  padding: 3px 10px;
-  border-radius: 8px;
+  padding: 3px var(--ds-space-glass-x);
+  border-radius: var(--ds-radius-input);
   cursor: pointer;
   background: var(--glass-control-bg);
   border: 1px solid color-mix(in srgb, var(--status-error-icon) 28%, transparent);
@@ -2426,7 +2426,7 @@
 .plugins-item-doc {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   /* 操作区一行化批（2026-11-02）：入口自独立行并入 .plugins-item-actions ——
      原 `align-self: flex-start`（单行贴左）随之退役，竖向交给行内
      align-items:center 三条同轴（机械断言②）；横向由 margin-right:auto 顶到
@@ -2434,8 +2434,8 @@
      可用 321px，见 docs/20261102_plugin-panel-layout__*.md）。 */
   margin-right: auto;
   font: 500 10px ui-monospace, SFMono-Regular, monospace;
-  padding: 3px 10px;
-  border-radius: 8px;
+  padding: 3px var(--ds-space-glass-x);
+  border-radius: var(--ds-radius-input);
   cursor: pointer;
   background: var(--glass-control-bg);
   border: 1px solid var(--glass-control-border);
@@ -2456,7 +2456,7 @@
 .plugins-state-pill {
   font: 500 9px -apple-system, sans-serif;
   padding: 1px 7px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   border: 1px solid transparent;
   white-space: nowrap;
   color: var(--color-frame-text-muted);
@@ -2493,13 +2493,13 @@
 .plugins-card-composition {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--ds-space-1);
   align-items: center;
 }
 .plugins-comp {
   font: 500 9px ui-monospace, SFMono-Regular, monospace;
   padding: 1px 7px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   border: 1px solid var(--glass-control-border);
   background: var(--glass-control-bg);
   color: var(--color-frame-text-muted);
@@ -2514,7 +2514,7 @@
   font: 400 10px -apple-system, sans-serif;
   line-height: 1.4;
   border-radius: 7px;
-  padding: 5px 8px;
+  padding: 5px var(--ds-space-2);
 }
 /* 已封禁提示（2026-09-13 无审批批）——可行动文案，error 族。 */
 /* （原 `.plugins-card-hint.dim` 的「未启用（默认拒绝）」灰字提示已随内容审批
@@ -2524,7 +2524,7 @@
   background: color-mix(in srgb, var(--status-error-icon) 8%, transparent);
   border: 1px solid color-mix(in srgb, var(--status-error-icon) 25%, transparent);
 }
-.plugins-card-hint.blocked .st-ic { width: 11px; height: 11px; margin-right: 4px; vertical-align: -1px; }
+.plugins-card-hint.blocked .st-ic { width: 11px; height: 11px; margin-right: var(--ds-space-1); vertical-align: -1px; }
 /* （原「次级动作：更多菜单 + 封禁/解封」整段样式随 2026-09-14 面板收敛批退场：
    `.plugins-more-btn`（含 hover / [aria-expanded="true"]）、`.plugins-card-more`
    （含 [hidden]）、`.plugins-block-btn`（含 :hover / .unblock / :disabled）、
@@ -2540,7 +2540,7 @@
 .plugins-card-dispatch {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
 }
 .plugins-dispatch-label {
   font: 500 10px -apple-system, sans-serif;
@@ -2552,14 +2552,14 @@
   font: 400 10px -apple-system, sans-serif;
   line-height: 1.4;
   color: var(--color-frame-text-dim);
-  padding: 0 2px;
+  padding: 0 var(--ds-space-half);
 }
 .plugins-dispatch-note[hidden] { display: none; }
 .plugins-rejected-pill {
   flex-shrink: 0;
   font: 500 9px -apple-system, sans-serif;
   padding: 1px 7px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   color: rgb(var(--amber));
   background: rgb(var(--amber) / 0.1);
   border: 1px solid rgb(var(--amber) / 0.25);
@@ -2577,22 +2577,22 @@
 .plugins-item-skills {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--ds-space-1);
   max-height: 240px;
   overflow-y: auto;
 }
 .plugins-skill-capsule {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   min-width: 0;
   max-width: 100%;
   font: 400 10px -apple-system, sans-serif;
   color: var(--color-frame-text-muted);
   background: var(--glass-control-bg);
   border: 1px solid var(--glass-control-border);
-  border-radius: 999px;
-  padding: 3px 10px;
+  border-radius: var(--ds-radius-pill);
+  padding: 3px var(--ds-space-glass-x);
   cursor: pointer;
   text-align: left;
   transition: color 0.15s, border-color 0.15s, background 0.15s;
@@ -2641,7 +2641,7 @@
   width: 36px;
   height: 20px;
   padding: 0;
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
   flex-shrink: 0;
   cursor: pointer;
   background: var(--glass-control-bg);
@@ -2702,7 +2702,7 @@
   border: 1px solid var(--color-frame-border-light);
   background: transparent;
   color: var(--color-frame-text-muted);
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   width: 22px;
   height: 22px;
   display: inline-flex;
@@ -2747,23 +2747,23 @@
 .cfg-test-results {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  margin-top: 10px;
-  padding: 8px 10px;
+  gap: var(--ds-space-1);
+  margin-top: var(--ds-space-glass-x);
+  padding: var(--ds-space-2) var(--ds-space-glass-x);
   border: 1px solid var(--color-frame-border-light);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   background: var(--color-frame-bg, transparent);
 }
 .cfg-test-results:empty { display: none; }
 .cfg-test-result-line {
   display: flex;
   align-items: flex-start;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   font: 400 11px/1.5 ui-monospace, SFMono-Regular, monospace;
   color: var(--color-frame-text);
   min-width: 0;
 }
-.cfg-test-result-line .st-ic { width: 12px; height: 12px; flex-shrink: 0; margin-top: 2px; }
+.cfg-test-result-line .st-ic { width: 12px; height: 12px; flex-shrink: 0; margin-top: var(--ds-space-half); }
 .cfg-test-line-head { flex-shrink: 0; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cfg-test-line-text {
   flex: 1;
@@ -2782,10 +2782,10 @@
    玻璃基座零新色值（边框走 frame token，随亮暗双主题）。 */
 .cfg-test-thumb {
   display: block;
-  margin-top: 6px;
+  margin-top: var(--ds-space-1h);
   max-width: 132px;
   max-height: 132px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   border: 1px solid var(--color-frame-border-light);
   background: var(--color-frame-bg, transparent);
 }
@@ -2807,15 +2807,15 @@ body.stt-disabled .fm-mic-btn { display: none !important; }
 .imagegen-notcompiled {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   font-size: 12.5px;
   color: var(--color-frame-text-muted);
-  padding: 2px 0;
+  padding: var(--ds-space-half) 0;
 }
-.cfg-imagegen-keyrow { display: flex; align-items: center; gap: 8px; }
+.cfg-imagegen-keyrow { display: flex; align-items: center; gap: var(--ds-space-2); }
 .cfg-imagegen-keyrow .cfg-password-wrap { flex: 1 1 auto; min-width: 0; }
 
 /* ④ JeV 分配区重排（C 件）：组件族已并入 STT 高级设置同款
    （settings-collapse-toggle / settings-collapse-body / cfg-form-group，
    零新形态）；仅清掉旧卡头形态在折叠体内的残留间距依赖。 */
-#jev-advance-body .cfg-form-group { margin-top: 4px; }
+#jev-advance-body .cfg-form-group { margin-top: var(--ds-space-1); }

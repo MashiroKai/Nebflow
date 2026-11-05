@@ -2,6 +2,16 @@
 /* 输入框瘦身批（2026-10-31 作者令「消息输入框的上下留白尽量小 让输入框的占比
    小一点 让主要信息凸显」）：#input-area 底缘外留白 10px → 4px（4px 栅格档）。
    JS 让位逻辑读 #input-area.offsetHeight ⇒ 消息列底缘让位同步收紧，零 JS 改动。 */
+/* 收窄 + 齐平批 2026-11-04（UI 批次审计 D 档 R69 / R70 收口批；台账 #1475⑤，
+   作者 recall 2026-11-03 18:30 + 2026-11-04 11:09）：
+   · R69 收窄：改前 `#input-area` 是 left:0/right:0 且 bar 无 max-width ⇒ 两侧留白
+     **0.0 / 0.0**（完全顶满）。现改由本层的水平内距供留白 —— 桌面 = --ds-space-4
+     (16px)，手机层 = --dock-inset-x (12px，见 mobileLayer.css 同名块) ⇒ 两侧逐值
+     相等、且手机档与 dock 胶囊同一竖轴边距。留白走**外距**不占 bar 自身 padding
+     （bar 的 6/12px 是内距，与本项无关）。
+   · R70 齐平：本层底缘外留白 4px 归零 —— 让位由 #main 的 10px 底距供（见
+     split.css #main 注），input 条底缘因此与 #sidebar / #canvas-panel 底缘齐平
+     （改前差 6px / 10px）。safe-area 仍在（iOS 悬浮层场景 env() 非零时照旧让开）。 */
 #input-area {
   position: absolute;
   bottom: 0;
@@ -10,20 +20,20 @@
   z-index: 20;
   /* Safe area (viewport-fit=cover): keeps the composer above the browser's
      own home-indicator / toolbar controls on phone viewports. */
-  padding: 0 0 max(4px, env(safe-area-inset-bottom)) 0;
+  padding: 0 var(--ds-space-4) env(safe-area-inset-bottom, 0px);
   pointer-events: none;
 }
 
 #input-bar {
   position: relative;
   pointer-events: auto;
-  border-radius: 20px;
+  border-radius: var(--ds-radius-shell);
   /* 瘦身批：垂直内 padding 8px → 6px（横向 12px 不动；mic-orb 64px/图标钮 36px
      为静息态高度驱动件，本项在输入态（textarea 驱动行高）再省 4px）。 */
-  padding: 6px 12px;
+  padding: var(--ds-space-1h) var(--ds-space-3);
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
   flex-shrink: 0;
   /* 统一按钮玻璃批 2026-11-01：材质（--glass-bg + blur24 sat1.15 双写 +
      --cv-shadow 三档栈 + 顶缘折射线 ::before）迁 css/glass.css 面级浮件档
@@ -65,9 +75,9 @@
 .error-recovery-strip {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 6px 6px 6px;
-  font-size: 12px;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-1) var(--ds-space-1h) var(--ds-space-1h) var(--ds-space-1h);
+  font-size: var(--ds-fs-hint);
   color: rgb(var(--amber) / 1);
   user-select: none;
 }
@@ -81,7 +91,7 @@
   min-width: 0;
   flex: 1;
   color: var(--color-text);
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -95,8 +105,8 @@
 .error-abandon-btn {
   pointer-events: auto;
   font: 500 12px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  border-radius: 8px;
-  padding: 3px 10px;
+  border-radius: var(--ds-radius-input);
+  padding: 3px var(--ds-space-glass-x);
   cursor: pointer;
   transition: background 0.15s cubic-bezier(0.4, 0, 0.2, 1),
     border-color 0.15s cubic-bezier(0.4, 0, 0.2, 1),
@@ -182,16 +192,16 @@
 .skip-freeze-btn {
   display: none;
   align-items: center;
-  gap: 4px;
+  gap: var(--ds-space-1);
   flex-shrink: 0;
-  padding: 3px 8px;
-  font-size: 12px;
+  padding: 3px var(--ds-space-2);
+  font-size: var(--ds-fs-btn);
   font-weight: 500;
   white-space: nowrap;
   color: rgb(var(--sapphire));
   background: transparent;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   cursor: pointer;
   transition: background 0.15s cubic-bezier(0.4, 0, 0.2, 1),
     color 0.15s cubic-bezier(0.4, 0, 0.2, 1);
@@ -271,9 +281,9 @@
 #attachment-preview {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   /* 瘦身批：与 textarea 的间距 6px → 4px（栅格档；in-flow 行，零遮挡语义不变）。 */
-  margin: 0 0 4px;
+  margin: 0 0 var(--ds-space-1);
   flex-wrap: wrap;
   overflow: visible;
   scrollbar-width: none;
@@ -287,14 +297,14 @@
   flex: none;
   min-width: 28px;
   height: 28px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   display: flex;
   align-items: center;
   justify-content: center;
   background: var(--glass-etched-bg, rgba(0, 0, 0, 0.025));
   border: 1px solid var(--glass-border);
   color: var(--color-text-muted, #8b8e96);
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   padding: 0 7px;
   font-variant-numeric: tabular-nums;
   cursor: pointer;
@@ -313,7 +323,7 @@
 .att-thumb {
   width: 28px; height: 28px;
   object-fit: cover;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   border: 1px solid var(--glass-border);
   box-sizing: border-box;
   display: block;
@@ -324,12 +334,12 @@
   box-sizing: border-box;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
-  padding: 0 10px;
-  border-radius: 8px;
-  font-size: 12px;
+  padding: 0 var(--ds-space-glass-x);
+  border-radius: var(--ds-radius-input);
+  font-size: var(--ds-fs-hint);
   color: var(--color-text);
 }
 .att-file .att-file-name {
@@ -352,14 +362,14 @@
 .att-taskref {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   height: 28px;                    /* uifix 批 2026-10-22：同条带统一 28px 档 */
   box-sizing: border-box;
   background: rgb(var(--sapphire) / 0.06);
   border: 1px solid rgb(var(--sapphire) / 0.25);
-  border-radius: 8px;
-  padding: 0 10px;
-  font-size: 12px;
+  border-radius: var(--ds-radius-input);
+  padding: 0 var(--ds-space-glass-x);
+  font-size: var(--ds-fs-hint);
   color: var(--color-text);
   position: relative;
   max-width: 100%;                 /* never exceed the chips container (B13) */
@@ -398,7 +408,7 @@
   min-width: 0;                    /* allow shrink → ellipsis on narrow view */
   flex-shrink: 1;
   border-left: 1px solid rgb(var(--sapphire) / 0.2);
-  padding-left: 6px;
+  padding-left: var(--ds-space-1h);
 }
 .att-taskref-opinion[hidden] {
   display: none;
@@ -420,15 +430,15 @@
 .att-ref {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   height: 28px;                  /* A1: 固定单行高（紧凑 chip），含边框 */
   box-sizing: border-box;
   max-width: 100%;
   background: rgb(var(--sapphire) / 0.06);
   border: 1px solid rgb(var(--sapphire) / 0.25);
-  border-radius: 8px;
-  padding: 0 6px;
-  font-size: 12px;
+  border-radius: var(--ds-radius-input);
+  padding: 0 var(--ds-space-1h);
+  font-size: var(--ds-fs-hint);
   color: var(--color-text);
   overflow: hidden;              /* A1 */
   cursor: pointer;
@@ -440,7 +450,7 @@
   max-height: 72px;
   align-items: flex-start;
   overflow-y: auto;
-  padding: 5px 6px;
+  padding: 5px var(--ds-space-1h);
 }
 .att-ref-icon {
   color: rgb(var(--sapphire));
@@ -451,7 +461,7 @@
 .att-ref-body {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   min-width: 0;
   flex: 1;
 }
@@ -468,7 +478,7 @@
 .att-ref-meta {
   display: none;
   color: var(--color-text-muted);
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   line-height: 1.5;
   min-width: 0;
   white-space: pre-line;
@@ -494,11 +504,11 @@
   max-height: 56px;              /* header + 2 行摘要的固定 footprint */
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
-  border-radius: 8px;
-  padding: 5px 8px;
+  border-radius: var(--ds-radius-input);
+  padding: 5px var(--ds-space-2);
   align-items: flex-start;
 }
-.att-ref-fm .att-ref-icon { margin-top: 2px; }
+.att-ref-fm .att-ref-icon { margin-top: var(--ds-space-half); }
 .att-ref-fm-body {
   display: flex;
   flex-direction: column;
@@ -510,7 +520,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--ds-space-2);
   min-width: 0;
 }
 .att-ref-fm-name {
@@ -522,7 +532,7 @@
 }
 .att-ref-fm-date {
   color: var(--color-text-muted);
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   flex-shrink: 0;
 }
 .att-ref-fm-text {
@@ -555,7 +565,7 @@
   background: transparent;
   color: var(--color-text-muted);
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   padding: 0;
 }
 .att-ref-expand:hover,
@@ -583,8 +593,8 @@
    溢出处理 = 折叠腿「+N」收展（attachStripFold.js；B12 断言的「换行不横向溢出」
    由折叠态 display:none 同判成立 —— 条带 scrollWidth 恒 ≤ clientWidth）。── */
 #attachment-preview .att-ref[data-ref-type="chat-message"] {
-  gap: 4px;
-  padding: 0 6px 0 8px;
+  gap: var(--ds-space-1);
+  padding: 0 var(--ds-space-1h) 0 var(--ds-space-2);
   flex: 0 1 auto;
   min-width: 0;
 }
@@ -598,7 +608,7 @@
   --nf-qicon-size: 18px;
   width: 18px;
   height: 18px;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
 }
 .att-ref .att-ref-icon .nf-qicon.is-thumb { background: rgba(0, 0, 0, 0.06); }
 .att-ref .att-ref-icon .nf-qicon.fc-icon { font-size: 8px; }
@@ -619,9 +629,9 @@
   background: var(--glass-etched-bg, var(--color-surface));
   border-left: 2px solid var(--status-error-icon, var(--color-error));
   color: var(--status-word, var(--color-text));
-  padding: 3px 10px;
-  border-radius: 6px;
-  font-size: 12px;
+  padding: 3px var(--ds-space-glass-x);
+  border-radius: var(--ds-radius-chip);
+  font-size: var(--ds-fs-hint);
   transition: opacity 0.3s ease;
 }
 .att-error-fade { opacity: 0; }
@@ -673,11 +683,11 @@
 #input {
   border: none;
   background: transparent;
-  border-radius: 18px;
+  border-radius: var(--ds-radius-2xl);
   /* 瘦身批：垂直内 padding 8px → 6px（横向 14px 不动；多行增长逻辑读
      scrollHeight，与本 padding 无耦合）。 */
-  padding: 6px 14px;
-  font-size: 14.5px;
+  padding: var(--ds-space-1h) 14px;
+  font-size: var(--ds-fs-bubble);
   outline: none;
   width: 100%;
   line-height: 1.4;
@@ -697,7 +707,7 @@
   border: 1px solid transparent; /* reserves edge space for glass hover — no layout shift */
   color: var(--color-frame-text-muted);
   cursor: pointer;
-  padding: 6px;
+  padding: var(--ds-space-1h);
   width: 36px; height: 36px;
   display: flex;
   align-items: center;
@@ -751,7 +761,7 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   flex-shrink: 0;
   /* Orb base gradient (dark default); light theme overrides below. */
   --orb-base: radial-gradient(120% 120% at 32% 28%, #b6cff5 0%, #8C7DD6 45%, #2f3d78 100%);
@@ -927,50 +937,25 @@
   .orb-ripple { display: none; }
 }
 #send-btn {
-  /* 液体玻璃 v3 实现批（作者 10-31 12:32 点选逐字：「主对话窗口的发送按钮
-     改回之前的绿色」）：配色恢复 10-30 墨族换代前的微信绿考古值（git
-     c91de8456^ 本块：rest #07C160 / hover #06AD56 / active #059A4C，白字，
-     1px 深绿缘 #06AD56）——全走 --ctl-send-* 单源（stand-tokens.css，双主题
-     同值）。
-     🔴 形态回归修正（作者令 2026-11-03 10:11 ③「发送/停止钮钉死圆形旧版…
-     把 send 与 stop 两态统一钉回圆形按钮形态（图标在圆内切换）…禁止再出现
-     圆角方块」）：v2 批（d4cc8d1890, 2026-10-31 10:45「液体玻璃 v2 三件 —
-     按钮族全端换代」）把本键从考古圆形（r50% 36×36，见 d4cc8d1890^）改成
-     999px 药丸（h32 + 横向 padding 0 14px）。本批**收回药丸几何**、钉回
-     d4cc8d1890^ 基准：圆形 36×36 正圆 + 零横向 padding + 18px 图标 —— 与
-     #stop-btn 逐值同几何（两态只换图标与配色，形状语言零差异）。
-     材质维持 v3 C1 扁平实底（无 blur / 无镜面高光 / 无浮影 / 按压 = 色深一档
-     无弹缩）；禁用灰玻璃（--btn-disabled-*）与掉线灰档语义不变。
-     （10-30/v2 批注释见 git 历史；本块自 v3 起只描述现态。） */
-  background: var(--ctl-send-bg);
-  color: var(--ctl-send-ink);
-  /* Edge: 圆钮同底色描边（按压/悬停递进 --ctl-send-bg-hover/active）。 */
-  border: 1px solid var(--ctl-send-border);
-  border-radius: 50%;
-  width: 36px;
-  height: 36px;
-  padding: 0;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  transition:
-    background-color 0.15s ease,
-    border-color 0.15s ease;
+  /* 形态单源已迁 design-system.css `.ds-turn-btn`（ui-unification-20261103-
+     canvas-ask-resize 批，作者令「发送按钮与终止按钮样式与主会话完全统一（同一
+     组件/同一 design-system 令牌，不得另做一套）」）：
+       · 几何 36×36 / r50% / padding 0 / 图标 18px / stroke 2.5 → --ds-turn-btn-*
+       · 两态配色 send = --ds-turn-send-*（= --ctl-send-* 微信绿考古值）
+       · 热区 ::after 外扩到 44（HIG）→ --ds-turn-hit
+     本块**只留主会话专属状态**：禁用（空正文闸）/ 掉线（未连接灰档）。
+     历史沿革（10-31 v2 药丸 → 11-03 ③ 收回圆形）见 git 与 design-system.css
+     §⑰ 注释，本文件不再重复形态描述 —— 再写一遍就是第二套。 */
+  /* 掉线档：本键状态色仍以主会话为全站基准（见下 .disconnected 块）。 */
 }
-#send-btn:hover {
-  /* 绿阶深一档（C1 实底反馈）：hover = --ctl-send-bg-hover，描边同色。 */
-  background-color: var(--ctl-send-bg-hover);
-  border-color: var(--ctl-send-bg-hover);
-}
-#send-btn:active {
-  /* 再深一档（C2）；扁平按压 = 色深一档，无弹缩（v3 §D 族纪律）。 */
-  background-color: var(--ctl-send-bg-active);
-  border-color: var(--ctl-send-bg-active);
-}
+/* 圆钮内的状态图标透明度档（禁用/掉线）留在消费面：它们是主会话的**状态**，
+   不是按钮形态。 */
+#send-btn:disabled svg { opacity: 0.45; }
 #send-btn:disabled {
-  /* 灰玻璃禁用档（--btn-disabled-*）：发送键 = 空正文闸，语义不变。 */
+  /* 灰玻璃禁用档（--btn-disabled-*）：发送键 = 空正文闸，语义不变。
+     形态批：几何（宽高/圆角/padding）已上抬组件层，本块只留**状态色**——
+     `:disabled` 的颜色不是「send 档」的一部分（停用件既不是绿也不是红），
+     因此不进 .ds-turn-btn--send / --stop 那两档。 */
   background: var(--btn-disabled-bg);
   border-color: var(--btn-disabled-stroke);
   color: var(--btn-disabled-ink);
@@ -978,10 +963,6 @@
   cursor: default;
   transform: none;
 }
-#send-btn:disabled svg { opacity: 0.45; }
-/* 图标 18px（2026-11-03 10:11 ③ 回归修正）：与 #stop-btn 的 18px 图标同档 ——
-   圆形钮内两态只换图标（send 纸飞机 ⇄ stop 方块），图标档位一致才「在圆内切换」。 */
-#send-btn svg { width: 18px; height: 18px; stroke-width: 2.5; }
 /* Disconnected state — doubles as the connection indicator: the send button
    fades into the family's **gray** (掉线灰) so users see they can't send until
    the link is back.
@@ -991,7 +972,9 @@
    （`sapphire.css` 发送族块的 `.disconnected`，与本键同判据 `!state.connected`）。
    原「淡绿即链接不可用」的裁定**被本令取代**（作废，不再作为待拍板项）。
    灰取本仓既有发送族灰 token（零新增字面量色值）；rest / hover / active 三档
-   **一字未改**（`#send-btn` 仍是本批全站发送键的状态色基准）。 */
+   **一字未改**（`#send-btn` 仍是本批全站发送键的状态色基准）。
+   形态批（2026-11-03）：几何与两态配色已上抬 `.ds-turn-btn`；本档只剩**掉线**
+   这一个状态差分，是主会话独有的（Canvas Ask 面板无连接态钮）。 */
 #send-btn.disconnected {
   background: var(--glass-send-bg-active);
   border-color: var(--glass-send-border-active);
@@ -1004,27 +987,19 @@
 /* v3 实现批：hover/active = --ctl-send-* 绿阶（见本块头注）；10-30 墨族注释
    与暗档绿字面量组已随换代移除（git 历史可查）。 */
 
-#stop-btn {
-  background: var(--color-error);
-  color: #fff;
-  /* 统一按钮玻璃批 2026-11-01：非悬浮面孤儿玻璃底（blur8 + inset 双高光）
-   随批扁平化——归非悬浮墨玻璃包强调/危险档口径（v3 C1 扁平族纪律：纯色/
-   无 blur/无高光/无浮影）。悬浮玻璃只允许消费 glass.css 包档，非悬浮面
-   不再残留包外材质（原为 v3 扁平口径外的唯一残留，侦察批 inventory §四）。 */
-  border: 1px solid transparent;
-  /* 圆形形态 = 本批基准（作者令 2026-11-03 10:11 ③）：#stop-btn 的 36×36 正圆
-     是**锚**，#send-btn 逐值对齐它（两态同几何，禁止任一侧再出现圆角方块/药丸）。 */
-  border-radius: 50%;
-  width: 36px; height: 36px;
-  cursor: pointer;
-  display: none;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  transition: background 0.15s ease;
-}
-#stop-btn:hover { background: color-mix(in srgb, var(--color-error) 88%, black); }
-#stop-btn svg { width: 18px; height: 18px; stroke-width: 2.5; }
+/* #stop-btn：几何/配色单源同上（.ds-turn-btn--stop + `.ds-turn-btn`）。
+   **默认 display:none 也已在组件层**（`.ds-turn-btn--stop`）——idle↔busy 的
+   显隐由 js/input/composer.js applyTurnChrome 内联 display 单点驱动，
+   消费面不再各写一份初始态。本块刻意留空（不留第二套形态）。 */
+
+/* ── 输入条双钮热区补齐（作者报障 2026-11-03 22:15「手机端发送按钮和终止按钮
+   大小怎么没有统一」/ 待办 #1475 第八条）────────────────────────────────
+   历史口径（保留为设计依据，声明本体已上抬）：两钮是**同位同角色的互斥两态**
+   （busy 时 #send-btn 隐 / #stop-btn 显，见 js/input/composer.js
+   applyTurnChrome）⇒ 必须同尺寸档、同热区档；主次只由颜色表达。
+   形态批（ui-unification-20261103-canvas-ask-resize）：`position: relative` 与
+   `::after` 热区外扩两条声明**已迁 design-system.css `.ds-turn-btn`**——同一对
+   按钮现在也服务 Canvas Ask 面板，热区规则只能有一份。本文件不再声明。 */
 
 /* ---------- Voice Overlay ---------- */
 .voice-overlay {
@@ -1036,11 +1011,11 @@
   backdrop-filter: blur(20px) saturate(1.15);
   -webkit-backdrop-filter: blur(20px) saturate(1.15);
   border: 1px solid rgba(255,255,255,0.12);
-  border-radius: 14px;
-  padding: 10px 14px;
+  border-radius: var(--ds-radius-card-md);
+  padding: var(--ds-space-glass-x) 14px;
   display: none;
   align-items: center;
-  gap: 10px;
+  gap: var(--ds-space-glass-x);
   z-index: 200;
   opacity: 0;
   transform: translateY(6px);
@@ -1084,7 +1059,7 @@
 }
 .voice-hint {
   color: rgba(255,255,255,0.55);
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   flex-shrink: 0;
 }
 
@@ -1110,14 +1085,14 @@
   bottom: 100%;
   left: 12px;
   right: 12px;
-  border-radius: 16px;
-  margin-bottom: 8px;
+  border-radius: var(--ds-radius-card-lg);
+  margin-bottom: var(--ds-space-2);
   max-height: 240px;
   overflow-y: auto;
   display: none;
   z-index: 50;
   pointer-events: auto;
-  padding: 6px 0;
+  padding: var(--ds-space-1h) 0;
   /* 行态 wash 双变量（亮档默认；暗档双写见下方两组选择器） */
   --dd-row-active: rgba(17, 24, 39, 0.08);
   --dd-row-hover: rgba(17, 24, 39, 0.04);
@@ -1141,45 +1116,45 @@ html[data-theme="dark"] #mention-dropdown {
 /* 分组标题（换装批）：两浮层顶部的类别签，纯呈现（aria-hidden，非 listbox
    option，键盘导航/行序零影响）；字号取元信息档 11px/500。 */
 .dd-group-title {
-  padding: 4px 16px 6px;
-  font-size: 11px;
+  padding: var(--ds-space-1) var(--ds-space-4) var(--ds-space-1h);
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   letter-spacing: 0.04em;
   color: var(--color-text-muted);
   user-select: none;
 }
 .slash-item {
-  padding: 8px 12px;
-  margin: 0 6px;
-  border-radius: 10px;
+  padding: var(--ds-space-2) var(--ds-space-3);
+  margin: 0 var(--ds-space-1h);
+  border-radius: var(--ds-radius-button);
   cursor: pointer;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--ds-space-half);
   position: relative;
   transition: background-color 0.15s ease;
 }
-.slash-item + .slash-item { margin-top: 2px; }
+.slash-item + .slash-item { margin-top: var(--ds-space-half); }
 .slash-item:hover { background: var(--dd-row-hover); }
 .slash-item.active {
   background: var(--dd-row-active);
 }
 .slash-cmd {
-  font-size: 14.5px;
+  font-size: var(--ds-fs-bubble);
   font-weight: 500;
   line-height: 1.5;
   color: var(--color-text);
 }
 .slash-desc {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text-muted);
 }
 .slash-when {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted);
   opacity: 0.7;
   display: block;
-  margin-top: 2px;
+  margin-top: var(--ds-space-half);
   font-style: italic;
 }
 .slash-badge {
@@ -1188,9 +1163,9 @@ html[data-theme="dark"] #mention-dropdown {
   font-weight: 500;
   letter-spacing: 0.3px;
   text-transform: uppercase;
-  padding: 1px 6px;
-  border-radius: 4px;
-  margin: 0 6px;
+  padding: 1px var(--ds-space-1h);
+  border-radius: var(--ds-radius-badge);
+  margin: 0 var(--ds-space-1h);
   line-height: 1.4;
   vertical-align: middle;
 }
@@ -1207,8 +1182,8 @@ html[data-theme="dark"] #mention-dropdown {
   display: none;
   cursor: pointer;
   color: var(--color-text-muted);
-  padding: 4px;
-  border-radius: 4px;
+  padding: var(--ds-space-1);
+  border-radius: var(--ds-radius-badge);
   transition: color 0.15s, background 0.15s;
 }
 .slash-item:hover .slash-delete {
@@ -1224,28 +1199,28 @@ html[data-theme="dark"] #mention-dropdown {
    Item rows mirror the .slash-item family (same paddings, same hover/active
    treatment) so the two dropdowns read as one pattern. */
 .mention-item {
-  padding: 8px 12px;
-  margin: 0 6px;
-  border-radius: 10px;
+  padding: var(--ds-space-2) var(--ds-space-3);
+  margin: 0 var(--ds-space-1h);
+  border-radius: var(--ds-radius-button);
   cursor: pointer;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--ds-space-half);
   transition: background-color 0.15s ease;
 }
-.mention-item + .mention-item { margin-top: 2px; }
+.mention-item + .mention-item { margin-top: var(--ds-space-half); }
 .mention-item:hover { background: var(--dd-row-hover); }
 .mention-item.active {
   background: var(--dd-row-active);
 }
 .mention-name {
-  font-size: 14.5px;
+  font-size: var(--ds-fs-bubble);
   font-weight: 500;
   line-height: 1.5;
   color: var(--color-text);
 }
 .mention-path {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   line-height: 1.5;
   color: var(--color-text-muted);
   white-space: nowrap;
@@ -1254,8 +1229,8 @@ html[data-theme="dark"] #mention-dropdown {
 }
 /* Zero-match state: informational line, not a clickable row. */
 .mention-empty {
-  padding: 8px 16px;
-  font-size: 12px;
+  padding: var(--ds-space-2) var(--ds-space-4);
+  font-size: var(--ds-fs-hint);
   color: var(--color-text-muted);
   cursor: default;
 }
@@ -1291,9 +1266,9 @@ html.no-backdrop #mention-dropdown {
 #queue-bar.visible {
   max-height: 280px;
   opacity: 1;
-  margin-bottom: 4px;
+  margin-bottom: var(--ds-space-1);
   overflow-y: auto;
-  border-radius: 20px;
+  border-radius: var(--ds-radius-shell);
   /* Sapphire glass — identical material to #input-bar（材质迁 glass.css
      面级浮件档：--glass-bg + blur24 sat1.15 双写 + --cv-shadow + 折射线） */
 }
@@ -1303,9 +1278,9 @@ html.no-backdrop #mention-dropdown {
 .queue-bar-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 16px 4px;
-  font-size: 12px;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-2) var(--ds-space-4) var(--ds-space-1);
+  font-size: var(--ds-fs-hint);
   cursor: default;
 }
 .queue-bar-title {
@@ -1323,7 +1298,7 @@ html.no-backdrop #mention-dropdown {
   padding: 0;
   border: none;
   background: transparent;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   cursor: pointer;
   color: var(--color-text-muted);
   transition: background 0.15s, color 0.15s;
@@ -1348,8 +1323,8 @@ html.no-backdrop #mention-dropdown {
 .queue-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 16px;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-1) var(--ds-space-4);
   transition: background 0.12s ease;
 }
 .queue-item:hover {
@@ -1366,7 +1341,7 @@ html.no-backdrop #mention-dropdown {
   color: var(--color-text-muted);
   font-size: 14px;
   opacity: 0.5;
-  padding: 0 2px;
+  padding: 0 var(--ds-space-half);
   flex-shrink: 0;
   user-select: none;
   transition: opacity 0.15s;
@@ -1380,7 +1355,7 @@ html.no-backdrop #mention-dropdown {
 .queue-item-text {
   flex: 1;
   min-width: 0;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   line-height: 1.4;
   color: var(--color-text);
   white-space: nowrap;
@@ -1396,13 +1371,13 @@ html.no-backdrop #mention-dropdown {
 .queue-item-att {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--ds-space-1);
   flex-shrink: 0;
 }
 .queue-item-att-thumb {
   width: 24px;
   height: 24px;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   object-fit: cover;
   border: 1px solid var(--glass-border);
   flex-shrink: 0;
@@ -1411,8 +1386,8 @@ html.no-backdrop #mention-dropdown {
   font-size: 10px;
   color: var(--color-text-muted);
   background: var(--glass-etched-bg);
-  padding: 2px 6px;
-  border-radius: 4px;
+  padding: var(--ds-space-half) var(--ds-space-1h);
+  border-radius: var(--ds-radius-badge);
   white-space: nowrap;
   max-width: 80px;
   overflow: hidden;
@@ -1422,20 +1397,20 @@ html.no-backdrop #mention-dropdown {
   font-size: 10px;
   color: var(--color-text-muted);
   background: var(--glass-etched-bg);
-  padding: 2px 5px;
-  border-radius: 4px;
+  padding: var(--ds-space-half) 5px;
+  border-radius: var(--ds-radius-badge);
   flex-shrink: 0;
 }
 .queue-item-actions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--ds-space-1);
   flex-shrink: 0;
 }
 .queue-item-btn {
-  font-size: 11px;
-  padding: 3px 10px;
-  border-radius: 8px;
+  font-size: var(--ds-fs-meta);
+  padding: 3px var(--ds-space-glass-x);
+  border-radius: var(--ds-radius-input);
   border: 1px solid var(--glass-etched-border);
   background: var(--glass-etched-bg);
   color: var(--color-text);
@@ -1453,7 +1428,7 @@ html.no-backdrop #mention-dropdown {
 }
 .queue-item-btn.recall {
   padding: 3px 7px;
-  font-size: 12px;
+  font-size: var(--ds-fs-btn);
   color: var(--color-text-muted);
   border-color: transparent;
   background: transparent;
@@ -1467,7 +1442,7 @@ html.no-backdrop #mention-dropdown {
 }
 .queue-item-btn.remove {
   padding: 3px 7px;
-  font-size: 15px;
+  font-size: var(--ds-fs-title);
   line-height: 1;
   color: var(--color-text-muted);
   border-color: transparent;
@@ -1491,7 +1466,7 @@ html.no-backdrop #mention-dropdown {
   opacity: 0.85;
 }
 .queue-item-failed-note {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--status-word, var(--color-text));
   flex-shrink: 0;
   white-space: nowrap;

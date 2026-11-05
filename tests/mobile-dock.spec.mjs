@@ -414,20 +414,25 @@ test('D4 canvas page: empty state on entry, doc cards via openTab (chips/stepper
   expect(errors).toEqual([]);
 });
 
-test('D7 tasks page via chat chrome key: page live, panel adopted, header back pops (panel X retired in page)', async ({ page }) => {
+test('D7 tasks entry retired (入口收敛批 2026-11-04): chrome tasks key + tasks page + task panel all absent; capsule slot is the to-do entry', async ({ page }) => {
   const errors = watchErrors(page);
-  await page.locator('[data-chrome="tasks"]').click();
-  await expect(page.locator('.mobile-page[data-page="tasks"]')).toHaveClass(/live/);
-  await settlePage(page, 'tasks');
-  // 面板收编进页面体（懒建 + 收编同步腿）。
-  await expect(page.locator('.mobile-page[data-page="tasks"] .mobile-page-body > #mobile-task-panel')).toHaveCount(1);
-  await expect(page.locator('#mobile-task-panel')).toBeVisible();
-  // 重复返回钮清查批：面板头 X 在页面壳内退场（返回 = 页面壳唯一「<」）。
-  expect(await page.locator('#mobile-task-panel .tp-x').evaluate((el) => getComputedStyle(el).display)).toBe('none');
-  // 「<」关闭 → 弹栈回聊天根。
-  await page.locator('.mobile-page[data-page="tasks"] .mobile-back-btn').click();
-  await expect(page.locator('#mobile-task-panel')).toBeHidden();
-  expect(await page.evaluate(() => window.__nfMobileNav?.top)).toBe('chat');
+  // 原 D7 钉「聊天头任务键 → tasks 页 live、面板收编、返回钮弹栈」。入口收敛批
+  // 把该入口（左上任务圆钮）与 tasks 导航页整面退役 ⇒ 原断言对象消失，本测试
+  // 转为退役护栏（防回退），意图保留：手机端不得再出现第二套待办入口。
+  await expect(page.locator('[data-chrome="tasks"]')).toHaveCount(0);
+  await expect(page.locator('.mobile-page[data-page="tasks"]')).toHaveCount(0);
+  await expect(page.locator('#mobile-task-panel')).toHaveCount(0);
+  // 直接打导航缝也不再建页（PAGES 已撤除 'tasks' / 'todo'）。
+  const nav = await page.evaluate(async () => {
+    const m = await import('/js/mobile/navController.js');
+    m.pushPage('tasks');
+    m.pushPage('todo');
+    await new Promise((r) => setTimeout(r, 250));
+    return { top: window.__nfMobileNav?.top, pages: document.querySelectorAll('.mobile-page[data-page="tasks"], .mobile-page[data-page="todo"]').length };
+  });
+  expect(nav).toMatchObject({ top: 'chat', pages: 0 });
+  // 待办入口接班 = 顶带胶囊槽（#top-overlays 内，双端同现）。
+  await expect(page.locator('#top-overlays > #task-list')).toHaveCount(1);
   expect(errors).toEqual([]);
 });
 

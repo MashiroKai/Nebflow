@@ -91,8 +91,14 @@ private[nebflow] object P2pPathDecision:
     val list = if peer.endpoints.nonEmpty then peer.endpoints else List(peer.address)
     list.filter(_.nonEmpty).sorted.distinct.mkString("|")
 
-  /** Path-memory entry: which transport last succeeded, when, and for which address set. */
-  final case class PathMemory(method: String, atMs: Long, addressKey: String)
+  /**
+   * Path-memory entry: which transport last succeeded, when, for which address set,
+   * and (p2p only) **which endpoint actually answered**.
+   *
+   * 砍探测税批（2026-11-04）：`endpoint` 是新增读数——P2P 成功时记住**赢的那个端点**，
+   * 记忆新鲜时直接复用它、**不再付一次探测**（否则每次下发都要重拨一遍才能知道打谁）。
+   */
+  final case class PathMemory(method: String, atMs: Long, addressKey: String, endpoint: String = "")
 
   def isFresh(mem: PathMemory, nowMs: Long): Boolean = nowMs - mem.atMs < PathMemoryTtlMs
 
@@ -106,12 +112,25 @@ private[nebflow] object P2pPathDecision:
    * so the window always expires and P2P is re-probed at least once per TTL. P2P
    * successes *do* renew (staying on P2P is the desired state).
    */
-  def record(existing: Option[PathMemory], method: String, peer: PeerInfo, nowMs: Long): PathMemory =
+  def record(
+    existing: Option[PathMemory],
+    method: String,
+    peer: PeerInfo,
+    nowMs: Long,
+    endpoint: String = ""
+  ): PathMemory =
     val key = addressKey(peer)
     existing match
       case Some(m) if method == "relay" && m.method == "relay" && m.addressKey == key && isFresh(m, nowMs) =>
         m // no renewal — see scaladoc
-      case _ => PathMemory(method, nowMs, key)
+      case _ =>
+        // 端点只在 p2p 记忆上有效；未带端点的 p2p 续记沿用同地址集的既有端点
+        // （`raceP2PAndRelay` 这一层拿不到端点，不能让记忆退化成「下次再探一次」）。
+        val ep =
+          if method != "p2p" then ""
+          else if endpoint.nonEmpty then endpoint
+          else existing.filter(m => m.method == "p2p" && m.addressKey == key).map(_.endpoint).getOrElse("")
+        PathMemory(method, nowMs, key, ep)
 
 end P2pPathDecision
 
@@ -203,24 +222,50 @@ class RemoteExecutor(
     bgWaitFibers.get.map(_.contains(jobId))
 
   /**
+   * T7（作者令 2026-11-04）：**外部腿的等待句柄登记**——设备腿（`BashTool` 的
+   * `ctx.isRemoteExec` 支）在本实例收编对端请求的命令时，其终态腿不是本类的 HTTP
+   * fiber，但台账行 `kind="remote"` 的死亡看护（[[BgTaskLiveness.probeRemote]]）只
+   * 读本图。登记进去 = 收编行在收割器面前 Alive（句柄在图 = 终态腿在飞），命令跑完
+   * （或取消）即由登记者出图（见 [[unregisterWaitFiber]]）。
+   */
+  private[tools] def registerWaitFiber(jobId: String, fiber: Fiber[IO, Throwable, Unit]): IO[Unit] =
+    bgWaitFibers.update(_ + (jobId -> fiber))
+
+  /** 外部腿出图（与 [[registerWaitFiber]] 成对；缺键 no-op）。 */
+  private[tools] def unregisterWaitFiber(jobId: String): IO[Unit] =
+    bgWaitFibers.update(_ - jobId)
+
+  /**
    * P2 单任务取消**传输腿**（簿记/通知归 BgTaskCancel 统一面）：① 取消本侧
    * 等待 fiber（在图才取消；缺席 = 终态腿已走完，簿记方 first-terminal-wins
    * 判读）；② 对端 `bg-cancel` 动作经 [[executeViaBestPath]] 下发（relay 优先/
    * P2P 兜底同既有腿，确认帧 = 动作响应）杀对端进程树。
    *
-   * 对端不可达/未登记 ⇒ Left（可读原因）——调用方照收本地终态（等待 fiber 已
-   * 取消，通知绝路；残留对端进程随自然终态/对端重启消亡），回执如实带原因。
-   * 零墙钟新增：BgCancel 往返只消费既有 connect 超时档。
+   * T7（作者令 2026-11-04）：`cancelLocalWait=false` —— **从终态腿内部**调用时
+   * （bgHttpWaitTimeout 到点，契约 3「先 bg-cancel 再收行」）必须跳过本侧 fiber 的
+   * 取消：那条 fiber 就是调用者自己，自取消会在落终态之前把整条终态腿打断（终态
+   * 事件绝路 = 行残留病灶）。只发对端 bg-cancel，本侧 fiber 由它自己的收行路径终结。
+   * 外部调用方（BgTaskCancel 面）保持缺省 true = 既有语义逐字节不变。
    */
   private[tools] def requestPeerCancel(deviceName: String, jobId: String): IO[Either[String, String]] =
+    requestPeerCancel(deviceName, jobId, cancelLocalWait = true)
+
+  private[tools] def requestPeerCancel(
+    deviceName: String,
+    jobId: String,
+    cancelLocalWait: Boolean
+  ): IO[Either[String, String]] =
     resolvePeerByName(deviceName).flatMap {
       case None => IO.pure(Left(s"device '$deviceName' not found among peers (already unpaired/offline?)"))
       case Some(peer) =>
-        val cancelWait = bgWaitFibers.get.flatMap { fibers =>
-          fibers.get(jobId) match
-            case Some(fib) => fib.cancel.as(true)
-            case None      => IO.pure(false)
-        }
+        val cancelWait =
+          if !cancelLocalWait then IO.pure(false)
+          else
+            bgWaitFibers.get.flatMap { fibers =>
+              fibers.get(jobId) match
+                case Some(fib) => fib.cancel.as(true)
+                case None      => IO.pure(false)
+            }
         val confirm = executeViaBestPath(
           peer,
           "BgCancel",
@@ -279,11 +324,11 @@ class RemoteExecutor(
   @volatile private var lastSuccessPath: Map[String, P2pPathDecision.PathMemory] = Map.empty
 
   /**
-   * Negative P2P evidence (A): deviceId → timestamp of the last real P2P
-   * failure. Only a fresh entry here (see [[P2pPathDecision.NegativeCacheTtlMs]])
-   * justifies bypassing P2P — "no presence WS" no longer does.
+   * Negative P2P evidence (A) —— 砍探测税批（2026-11-04）起**真源**移到
+   * [[P2pReachability]] 账本：带指数退避窗口 + 地址集失效 + 成功即清。
+   * 改前这里是 `deviceId → 时间戳` + 固定 60 s 常量 ⇒ 每分钟重付一次探测税。
    */
-  @volatile private var p2pFailures: Map[String, Long] = Map.empty
+  private def reachLedger: P2pReachability = P2pReachability.current
 
   /**
    * Read the cached transport **only if** it is both TTL-fresh and still refers
@@ -297,10 +342,19 @@ class RemoteExecutor(
       lastSuccessPath = lastSuccessPath.removed(peer.deviceId)
     usable.map(_.method)
 
-  private def recordPathMemory(peer: PeerInfo, method: String): IO[Unit] = IO {
+  /** 记忆里那个**真答过话的端点**（P2P 记忆新鲜时直接复用，省一次探测）。 */
+  private def rememberedEndpoint(peer: PeerInfo): Option[String] =
+    val now = System.currentTimeMillis()
+    P2pPathDecision
+      .reusable(lastSuccessPath.get(peer.deviceId), peer, now)
+      .filter(_.method == "p2p")
+      .map(_.endpoint)
+      .filter(_.nonEmpty)
+
+  private def recordPathMemory(peer: PeerInfo, method: String, endpoint: String = ""): IO[Unit] = IO {
     lastSuccessPath = lastSuccessPath.updated(
       peer.deviceId,
-      P2pPathDecision.record(lastSuccessPath.get(peer.deviceId), method, peer, System.currentTimeMillis())
+      P2pPathDecision.record(lastSuccessPath.get(peer.deviceId), method, peer, System.currentTimeMillis(), endpoint)
     )
   }
 
@@ -310,11 +364,15 @@ class RemoteExecutor(
 
   /** Record real P2P failure evidence (A) — the ONLY thing that bypasses P2P. */
   private def recordP2pFailure(peer: PeerInfo): IO[Unit] = IO {
-    p2pFailures = p2pFailures.updated(peer.deviceId, System.currentTimeMillis())
+    val n = reachLedger.noteFailure(peer.deviceId, P2pPathDecision.addressKey(peer), System.currentTimeMillis())
+    logger.info(
+      s"[p2p-probe] device=${peer.deviceName} negative evidence #$n " +
+        s"window=${P2pProbePolicy.negativeWindowMs(n)}ms"
+    )
   }
 
-  private def hasRecentP2pFailure(deviceId: String): Boolean =
-    p2pFailures.get(deviceId).exists(ts => System.currentTimeMillis() - ts < P2pPathDecision.NegativeCacheTtlMs)
+  private def hasRecentP2pFailure(peer: PeerInfo): Boolean =
+    reachLedger.shouldSkip(peer.deviceId, P2pPathDecision.addressKey(peer), System.currentTimeMillis())
 
   /**
    * HTTP backend for a probe budget (A): the short-connect backend when the
@@ -539,7 +597,9 @@ class RemoteExecutor(
       params,
       60.seconds,
       "",
-      P2pPathDecision.probeBudget(true),
+      // 砍探测税批（2026-11-04）：连接级失败不再靠重试硬扛（每次重试都是一个
+      // connect 超时），回落 relay 本来就是即时的 —— 重试只会把税加倍。
+      P2pPathDecision.probeBudget(false),
       kind = "capture"
     )
       .flatMap {
@@ -641,7 +701,10 @@ class RemoteExecutor(
       params,
       60.seconds,
       "",
-      P2pPathDecision.probeBudget(true),
+      // 砍探测税批（2026-11-04）：浏览腿是**多下发腿**（1 次目录探针 + N 块），
+      // 改前每次下发都付一遍 P2P 探测税且带 3 次重试 ⇒ 税 × 4 × 11。这里改为
+      // fast-fail 预算：探测由 `resolveP2pEndpoint` 一次付清（且带负缓存）。
+      P2pPathDecision.probeBudget(false),
       kind = "browse"
     ).flatMap {
       case Right(out) => IO.pure(Right(out))
@@ -661,7 +724,20 @@ class RemoteExecutor(
 
   // ---- M2（2026-10-20）：浏览取件分块拉取腿（进度/取消/续传/逐块校验） ----
 
-  final case class ScopedFetchResult(path: os.Path, size: Long, wholeSha256: String)
+  /**
+   * 分块取件结果。`chunks` / `chunkSize` / `window` / `elapsedMs` 是砍串行搬运批
+   * （2026-11-04）新增的**读数键**——只为「每次开文件的耗时打到日志」那条硬要求服务
+   * （`[file-open-timing]` 行），不参与任何判据。
+   */
+  final case class ScopedFetchResult(
+    path: os.Path,
+    size: Long,
+    wholeSha256: String,
+    chunks: Long = 0L,
+    chunkSize: Int = 0,
+    window: Int = 0,
+    elapsedMs: Long = 0L
+  )
 
   /**
    * 浏览面**单件取件 · 分块拉取腿**（设计 v1 §7 M2-1）：改前 `transferGetScoped` 单请求
@@ -678,14 +754,22 @@ class RemoteExecutor(
    *
    * @param onProgress (bytesReceived, totalBytes, lastChunkMs)——每块落盘后回调（权威
    *   读数 = 落盘长度，禁假进度）；`lastChunkMs` = 刚落那块的往返耗时（前端停滞阈依据）。
+   * @param totalBytesHint 整件字节数的**提示**（来自目录指纹，可缺省 `0`）——只用来选块长
+   *   档位与流水线窗口（[[ChunkSizing]]），不参与任何校验/判据。
    */
   def transferGetScopedChunked(
     peer: PeerInfo,
     remotePath: String,
-    onProgress: (Long, Long, Long) => IO[Unit]
+    onProgress: (Long, Long, Long) => IO[Unit],
+    totalBytesHint: Long = 0L
   ): IO[Either[String, ScopedFetchResult]] =
     val target = PointerPickup.pickupPath(peer.deviceId, remotePath)
     val (flag, unregister) = BrowseFetchRegistry.register(peer.deviceId, remotePath)
+    // 块长按**整件大小**选档（调用方已从目录指纹拿到 size 时就不必慢启动），
+    // 窗口按在飞字节预算派生。两者是纯函数（`ChunkSizing`），此处只取值。
+    val chunkSize = ChunkSizing.chunkSizeFor(totalBytesHint)
+    val window = ChunkSizing.windowFor(chunkSize)
+    val startedNs = System.nanoTime()
     def fetchChunk(index: Int, chunkSize: Int, wantWholeSha: Boolean): IO[Either[String, BrowseGetCursor.ChunkReply]] =
       val params = JsonObject(
         "direction" -> "get".asJson,
@@ -707,10 +791,21 @@ class RemoteExecutor(
       if flag.get then IO.unit // 已叫停：不再外发进度帧（终态帧随后）
       else onProgress(bytes, total, ms)
     BrowseGetLoop
-      .run(target, fetchChunk, progress, flag)
+      .run(target, fetchChunk, progress, flag, startChunkSize = chunkSize, window = window)
       .guarantee(unregister)
       .map {
-        case Right((path, size, sha)) => Right(ScopedFetchResult(path, size, sha))
+        case Right((path, size, sha)) =>
+          Right(
+            ScopedFetchResult(
+              path,
+              size,
+              sha,
+              chunks = if chunkSize > 0 then (size + chunkSize - 1) / chunkSize else 0L,
+              chunkSize = chunkSize,
+              window = window,
+              elapsedMs = (System.nanoTime() - startedNs) / 1000000L
+            )
+          )
         case Left(err) => Left(err)
       }
 
@@ -937,18 +1032,27 @@ class RemoteExecutor(
   /**
    * Execute a remote command in the foreground until it completes.
    *
-   * #26（2026-08-30 用户裁定「Bash 工具不再自动转后台」）：删除 30s 自动转后台
-   * ——远程前台调用一直等到 HTTP 返回（或 BgTimeout 网络超时兜底），返回真实
-   * 输出，不产生「[Remote command moved to background]」占位。
+   * #26（2026-08-30 用户裁定「Bash 工具不再自动转后台」）：曾删除 30s 自动转后台。
    *
-   * 远程执行无本地进程树、无进程级进展探测（HTTP 等待中无法区分「命令在跑」
-   * 与「设备无响应」），因此：
-   * - 进程侧活动心跳（每 30s touch **processActivityMs**，2026-09-10 换轴前写的是
-   *   lastActivityMs）——「对端还在等」的旁证；**不再**参与卡死判据，远程长命令
-   *   的看护改由工具相位判据承担（单个工具调用超 ToolPhaseStuckMs 且 turn 未完成
-   *   → TaskStuckWatcher 分级恢复）
-   * - 真挂起（设备无响应）由 BgTimeout（3600s 网络超时）兜底——远程固有局限：
-   *   无法像本地 Bash 一样用输出/CPU 停滞检测，网络层超时是唯一防线
+   * 🔴 T7（bash overhaul，作者令 2026-11-04，自查件 D9 M6/§4）**恢复并重建**该语义：
+   * 「不自动转后台」的实质诉求是**不杀、不丢**，而不是让主会话无限阻塞——设备腿
+   * 前台因此改为**与本地前台腿同构**：
+   *  - 唯一等待上限 = `min(显式 timeout, ctx.bashConfig.foregroundWaitBudgetMs)`
+   *    （与 `BashTool.executeForeground` **同源单点**；显式 timeout 只收窄，禁第二个上限）；
+   *  - 预算内返回 ⇒ 真结果直通（行为与改前逐字节一致，含远端错误如实左路）；
+   *  - 到点未完成 ⇒ **收编**：本侧铸 jobId（同时作为 `bgJobId` 下发对端 ⇒ 对端
+   *    `RemoteExecCancelRegistry` 与它自己那份收编行用**同一个 id**），登记
+   *    `BgTaskRegistry`（`kind="remote"`，origin = 设备名）、起心跳、把仍在飞的 HTTP
+   *    调用挂成本侧后台任务，回与本地 auto-background **逐字同形**的回执
+   *    （[[RemoteExecutor.autoBackgroundReceipt]]，`isError=false`），可被 `BgWait`
+   *    等、可被 `BgTaskCancel` 按同一 id 取消（对端 bg-cancel ⇒ 精确杀对端进程树）；
+   *  - 该 HTTP fiber 的等待上限仍是 [[bgHttpWaitTimeout]]（1h 网络兜底 / persistent 豁免）；
+   *    上限到点 ⇒ **先** `requestPeerCancel`（行仍在运行才发）**再**落终态
+   *    （[[remoteTerminalLeg]]，契约 3）。
+   *
+   * 远程执行无本地进程树、无进程级进展探测（HTTP 等待中无法区分「命令在跑」与
+   * 「设备无响应」），因此保留既有旁证：等待期间每 30s touch **processActivityMs**
+   * （不参与卡死判据）；真挂起由网络超时兜底。
    */
   private def executeForegroundSync(
     peer: PeerInfo,
@@ -956,10 +1060,22 @@ class RemoteExecutor(
     params: JsonObject,
     ctx: ToolContext
   ): IO[Either[ToolError, String]] =
-    val remoteParams = ensureRemoteTimeout(RemoteExecutor.stripLocalBgFlags(params))
+    // 上限同源单点（与本地前台腿同一个值、同一处钳法）：显式 timeout 只收窄。
+    val budgetMs = math.max(1L, ctx.bashConfig.foregroundWaitBudgetMs)
+    val explicitMs = params("timeout").flatMap(_.asNumber).flatMap(_.toLong).filter(_ > 0L)
+    val waitBudgetMs = explicitMs.fold(budgetMs)(_.min(budgetMs))
+    // 收编用 jobId 先行铸出（下发对端 + 本侧登记行/回执/等待/取消 同一 id）。
+    val jobId = java.util.UUID.randomUUID().toString.take(8)
+    val networkCap = RemoteExecutor.bgHttpWaitTimeout(persistent = false)
+    val remoteParams = ensureRemoteTimeout(
+      RemoteExecutor.stripLocalBgFlags(params).add("bgJobId", jobId.asJson),
+      networkCap
+    )
     val commandStr = params("command").flatMap(_.asString).getOrElse(toolName)
     val firstLine = commandStr.split('\n').headOption.getOrElse(commandStr).take(80)
     val description = s"[${peer.deviceName}] ${params("description").flatMap(_.asString).getOrElse(firstLine)}"
+    val outputPath = RemoteBgOutputLog.parseRedirect(commandStr).getOrElse("")
+    val startedAtMs = System.currentTimeMillis()
 
     for
       // 进程侧活动心跳（2026-09-10 换轴）：等待期间每 30s 刷新
@@ -967,9 +1083,23 @@ class RemoteExecutor(
       // 还活着」不等于 agent 侧有进展；旧写点与 BashTool 活动桥同属事故根因族）。
       // 本侧旗标（run_in_background/persistent）与后台腿同法摘除，不过线。
       hbFiber <- (IO.sleep(30.seconds) *> touchAgentActivity(ctx)).foreverM.start
-      r <- executeViaBestPath(peer, toolName, remoteParams, RemoteExecutor.BgTimeout, ctx.projectRoot)
+      // racePair（不是 race）：落败侧必须继续活着——预算到点时那条 HTTP 调用要被
+      // 收编，绝不取消（取消 = 设备侧白跑一条命令且结果无人接收）。
+      execFiber <- executeViaBestPath(peer, toolName, remoteParams, networkCap, ctx.projectRoot).start
+      raced <- IO.racePair(joinResult(execFiber), IO.sleep(waitBudgetMs.millis))
+      result <- (raced match
+        case Left((winOutcome, budgetFiber)) =>
+          // 预算内完成 —— 既有真结果直通（成功/远端错误逐字不变）。
+          budgetFiber.cancel *> unwrapOutcome(winOutcome)
+        case Right(_) =>
+          // 预算到点仍在跑 —— 收编，命令不杀，回执 isError=false。
+          adoptRemoteForeground(peer, ctx, jobId, description, execFiber, waitBudgetMs, outputPath, startedAtMs)
+      ).handleErrorWith(e =>
+        // 兜底：执行 fiber 崩溃/被取消也不能把工具调用整条打挂（与改前同域）。
+        IO.pure(Left(ToolError(s"Error: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}")))
+      )
       _ <- hbFiber.cancel
-    yield r
+    yield result
   end executeForegroundSync
 
   /**
@@ -986,6 +1116,102 @@ class RemoteExecutor(
             case None => (m, ())
         }
       case _ => IO.unit
+
+  /**
+   * Join 语义的小工具（与 `BashTool.joinResult` 同形；本类收编腿 join 的是
+   * `Fiber[IO, Throwable, Either[ToolError, String]]`——Succeeded 取内层 attempt 值、
+   * Errored 重抛、Canceled 视为被打断并升为 InterruptedException）。
+   */
+  private def unwrapOutcome[A](oc: cats.effect.kernel.Outcome[IO, Throwable, A]): IO[A] =
+    oc match
+      case cats.effect.kernel.Outcome.Succeeded(fa) => fa
+      case cats.effect.kernel.Outcome.Errored(e)    => IO.raiseError[A](e)
+      case cats.effect.kernel.Outcome.Canceled() =>
+        IO.raiseError[A](new InterruptedException("remote wait fiber cancelled"))
+
+  private def joinResult[A](fiber: Fiber[IO, Throwable, A]): IO[A] =
+    fiber.join.flatMap(unwrapOutcome)
+
+  /**
+   * T7（作者令 2026-11-04）：把仍在飞的远端前台调用**收编**为本侧后台任务
+   * （登记台账 / 心跳 / 挂终态腿），回执 = [[RemoteExecutor.autoBackgroundReceipt]]
+   * ——与本地 auto-background 逐字同形。
+   *
+   * 与 [[executeRemoteBackground]] 同一台账面、同一终态腿、同一回执构造点；差别只在
+   * 「命令已经在下发途中」（不重发命令，join 既有 HTTP fiber）。
+   *
+   * `denySpawnIfFinalized` 守卫**不适用**：那是「创建之前拦住一次创建」的闸，而这里
+   * 命令已经在设备上跑着；拦住它等于让一条真在跑的命令失去台账行（结果绝路）。会话
+   * 终态场景由终态腿的 first-terminal-wins 兜住。
+   */
+  private def adoptRemoteForeground(
+    peer: PeerInfo,
+    ctx: ToolContext,
+    jobId: String,
+    description: String,
+    execFiber: Fiber[IO, Throwable, Either[ToolError, String]],
+    waitedMs: Long,
+    outputPath: String,
+    startedAtMs: Long
+  ): IO[Either[ToolError, String]] =
+    val (bgOrigin, bgOriginLabel) = BgTaskRegistry.deviceOrigin(peer.deviceName)
+    for
+      _ <- logger.info(
+        s"Remote foreground call $jobId on ${peer.deviceName} reached the wait budget (${waitedMs}ms) — " +
+          "adopted as a background job (command NOT killed, HTTP wait continues)"
+      )
+      _ <- emitBgTaskStarted(ctx, jobId, description, bgOrigin, bgOriginLabel)
+      _ <- BgTaskRegistry.register(
+        jobId,
+        ctx.sessionId.getOrElse(""),
+        description,
+        "remote",
+        ctx.rootSessionId.orElse(ctx.sessionId).getOrElse(""),
+        false,
+        bgOrigin,
+        bgOriginLabel,
+        peer.deviceName,
+        outputPath,
+        nebflow.core.delegate.DelegateRegistry.modeFaceOf(ctx.sessionId).getOrElse(""),
+        nebflow.core.delegate.DelegateRegistry.ownerNameOf(ctx.sessionId).getOrElse("")
+      )
+      doneRef <- IO.ref(false)
+      _ <- startRemoteHeartbeat(ctx, jobId, description, doneRef)
+      // 收编的终态腿：join 既有 HTTP fiber（同一句柄，不重发命令）⇒ 终态落账 + 通知。
+      _ <- IO(attachRemoteBgFiber(peer, ctx, jobId, description, execFiber, doneRef, outputPath, startedAtMs))
+    yield Right(RemoteExecutor.autoBackgroundReceipt(jobId, waitedMs))
+  end adoptRemoteForeground
+
+  /** 收编腿的终态腿挂载：join 既有 fiber ⇒ [[remoteTerminalLeg]] ⇒ doneRef。 */
+  private def attachRemoteBgFiber(
+    peer: PeerInfo,
+    ctx: ToolContext,
+    jobId: String,
+    description: String,
+    execFiber: Fiber[IO, Throwable, Either[ToolError, String]],
+    doneRef: Ref[IO, Boolean],
+    outputPath: String,
+    startedAtMs: Long
+  ): Unit =
+    val completionIO =
+      joinResult(execFiber).attempt
+        .flatMap {
+          case Right(res) =>
+            remoteTerminalLeg(peer, ctx, jobId, description, res, outputPath, startedAtMs)
+          case Left(e) =>
+            remoteTerminalLeg(
+              peer,
+              ctx,
+              jobId,
+              description,
+              Left(ToolError(s"Error: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}")),
+              outputPath,
+              startedAtMs
+            )
+        }
+        .flatMap(_ => doneRef.set(true))
+    runRemoteBgFiber(completionIO, jobId, ctx, description, doneRef)
+  end attachRemoteBgFiber
 
   /**
    * Launch the HTTP call in a detached fiber; notify agent + frontend when done.
@@ -1006,18 +1232,105 @@ class RemoteExecutor(
   ): Unit =
     val completionIO =
       executeViaBestPath(peer, toolName, params, waitTimeout, ctx.projectRoot)
-        .flatMap {
-          case Right(output) =>
-            notifyRemoteBgResult(ctx, jobId, description, Right(output), peer.deviceName, outputPath, startedAtMs)
-          case Left(err) =>
-            notifyRemoteBgResult(ctx, jobId, description, Left(err.message), peer.deviceName, outputPath, startedAtMs)
-        }
+        .flatMap(res => remoteTerminalLeg(peer, ctx, jobId, description, res, outputPath, startedAtMs))
         .flatMap(_ => doneRef.set(true))
+    runRemoteBgFiber(completionIO, jobId, ctx, description, doneRef)
+  end startRemoteBgFiber
 
-    // P2：等待 fiber 句柄入图/出图与 fiber 生命同括号——cancel 经句柄图精确
-    // 打断本任务等待（1/N：只动指定 jobId 的 fiber），death-watch 以「句柄在图」
-    // 为远端活性读数。guarantee 保证取消路径也出图（无双写）。崩溃腿收在
-    // fiber 体内（.start 后子 fiber 错误不再外抛）：WS failed + 注销行 + 停心跳。
+  /**
+   * 终态腿的**唯一落点**（T7 契约 3，作者令 2026-11-04）：远端后台任务的 HTTP
+   * 等待上限（[[RemoteExecutor.bgHttpWaitTimeout]]）到点时，**先**向对端下发
+   * `bg-cancel`（行仍在运行才发）**再**落本侧终态——上限到点 ≠ 杀对端进程，
+   * 改前收行只写一条「timed out」，对端那条命令继续裸跑到自然终态，谁也不再管它。
+   *
+   * 语义边界：
+   *  - **真结果**（成功/远端明确报错）⇒ 直接落终态，绝不发 bg-cancel（对端命令已结束）。
+   *  - **等待上限到点**（[[RemoteExecutor.isWaitCapTimeout]] 判据）⇒ ① 行仍在册 ⇒
+   *    对端 bg-cancel（`cancelLocalWait=false`：本 fiber 就是终态腿自己，自取消会在
+   *    落终态前打断它）② 对端确认失败也照落本侧终态，并**如实带原因**（不吞、不假装
+   *    已杀）③ first-terminal-wins 由 [[notifyRemoteBgResult]] 的注销判空保持。
+   *  - **对端已先行收编**（它自己的前台预算先到点，回执先到）⇒ 本侧代理行按
+   *    「命令已在设备侧继续」如实落终态（[[RemoteExecutor.peerAdoptionHandoffBody]]），
+   *    不再伪装成「跑完」。
+   */
+  private def remoteTerminalLeg(
+    peer: PeerInfo,
+    ctx: ToolContext,
+    jobId: String,
+    description: String,
+    res: Either[ToolError, String],
+    outputPath: String,
+    startedAtMs: Long
+  ): IO[Unit] =
+    res match
+      case Right(out) if RemoteExecutor.isPeerAdoptionReceipt(jobId, out) =>
+        logger.info(
+          s"Remote background task $jobId was adopted by ${peer.deviceName} first (peer foreground budget) — " +
+            "settling the host-side proxy row with the handoff body"
+        ) *>
+          notifyRemoteBgResult(
+            ctx,
+            jobId,
+            description,
+            Right(RemoteExecutor.peerAdoptionHandoffBody(jobId, peer.deviceName, out)),
+            peer.deviceName,
+            outputPath,
+            startedAtMs
+          )
+      case Right(out) =>
+        notifyRemoteBgResult(ctx, jobId, description, Right(out), peer.deviceName, outputPath, startedAtMs)
+      case Left(err) if RemoteExecutor.isWaitCapTimeout(err.message) =>
+        // 契约 3：行仍在运行才发取消（行已不在册 ⇒ 终态已有人落，直接如实收行）。
+        BgTaskRegistry.find(jobId).flatMap {
+          case None =>
+            logger.info(
+              s"Remote background task $jobId hit the HTTP wait cap but its registry row is already gone — " +
+                "terminal already settled elsewhere, no peer cancel"
+            ) *>
+              notifyRemoteBgResult(ctx, jobId, description, Left(err.message), peer.deviceName, outputPath, startedAtMs)
+          case Some(_) =>
+            requestPeerCancel(peer.deviceName, jobId, cancelLocalWait = false)
+              .attempt
+              .map(
+                _.fold(
+                  e =>
+                    s"\n[bg-cancel ERROR] peer cancel dispatch failed: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}",
+                  cancelRes => RemoteExecutor.peerCancelNote(cancelRes)
+                )
+              )
+              .flatMap(note =>
+                notifyRemoteBgResult(
+                  ctx,
+                  jobId,
+                  description,
+                  Left(err.message + note),
+                  peer.deviceName,
+                  outputPath,
+                  startedAtMs
+                )
+              )
+        }
+      case Left(err) =>
+        notifyRemoteBgResult(ctx, jobId, description, Left(err.message), peer.deviceName, outputPath, startedAtMs)
+  end remoteTerminalLeg
+
+  /**
+   * P2：等待 fiber 句柄入图/出图与 fiber 生命同括号——cancel 经句柄图精确
+   * 打断本任务等待（1/N：只动指定 jobId 的 fiber），death-watch 以「句柄在图」
+   * 为远端活性读数。guarantee 保证取消路径也出图（无双写）。崩溃腿收在
+   * fiber 体内（.start 后子 fiber 错误不再外抛）：WS failed + 注销行 + 停心跳。
+   *
+   * 两个调用方共用本单点：① [[startRemoteBgFiber]]（显式 run_in_background 的
+   * 远端腿，自己起 HTTP）② [[attachRemoteBgFiber]]（T7 前台收编腿，join 已在飞的
+   * HTTP）——两条路径的终态/取消/死亡看护因此逐字节同面。
+   */
+  private def runRemoteBgFiber(
+    completionIO: IO[Unit],
+    jobId: String,
+    ctx: ToolContext,
+    description: String,
+    doneRef: Ref[IO, Boolean]
+  ): Unit =
     dispatcher.unsafeRunAndForget(
       completionIO
         .handleErrorWith(e =>
@@ -1034,7 +1347,8 @@ class RemoteExecutor(
         .void
         .handleErrorWith(e => logger.warn(s"Remote background fiber registration failed for $jobId: ${e.getMessage}"))
     )
-  end startRemoteBgFiber
+  end runRemoteBgFiber
+
 
   // ---- WS helpers (match BashTool's backgroundTaskUpdate format) ----
 
@@ -1312,46 +1626,136 @@ class RemoteExecutor(
     val all = if peer.endpoints.nonEmpty then peer.endpoints else List(peer.address)
     all.filter(_.nonEmpty).distinct
 
+  /**
+   * P2P 下发入口（三档选路批 2026-11-04 起**先选路再拨**）。
+   *
+   * 三步（见 [[resolveP2pEndpoint]]）：
+   *   ① 选路计划（[[DirectRoute.plan]]）= ① Tailscale 档（探测可用才选）/ ② 自研 P2P
+   *      （未实现 ⇒ 恒跳过）/ ③ relay 兜底；计划里 `attempt` 为空 ⇒ **一个字节都不拨**，
+   *      直接把 relay 决策交回调用方（不落到「排第一 → 失败 → 回落」）；
+   *   ② 路径记忆新鲜且`method=p2p` ⇒ 直接用记忆里的端点（**零探测**）；
+   *   ③ 负缓存命中（[[P2pReachability]]）⇒ 零成本走 relay；
+   *   ④ 否则**并发探测计划里的候选、首胜即放行**，全不通则写负证据。
+   */
   private def p2pExecute(
     peer: PeerInfo,
     toolName: String,
     params: JsonObject,
     timeout: FiniteDuration,
-    budget: P2pPathDecision.ProbeBudget
+    budget: P2pPathDecision.ProbeBudget,
+    plan: RoutePlan
   ): IO[Either[ToolError, String]] =
     for
       selfDeviceId <- neblinkService.identity.map(_.deviceId)
-      // C1: 每个候选短超时串行短路，首个成功者即本次直连端点。
-      result <- p2pExecuteCandidates(p2pCandidates(peer), peer, selfDeviceId, toolName, params, timeout, budget)
+      decision <- resolveP2pEndpoint(peer, budget, plan)
+      result <- decision.endpoint match
+        case Some(endpoint) =>
+          p2pExecuteAt(peer, endpoint, selfDeviceId, toolName, params, timeout, budget).flatMap {
+            case r @ Right(_) => recordPathMemory(peer, "p2p", endpoint).as(r)
+            case l @ Left(_)  => IO.pure(l)
+          }
+        case None =>
+          IO.pure(
+            Left(
+              ToolError(
+                if plan.isEmpty then
+                  s"Cannot reach ${peer.deviceName}: 直连档全部跳过（via=relay reasons=" +
+                    s"${plan.reasons.mkString(",")}；0ms，未付探测税）"
+                else if decision.negativeHit then
+                  s"Cannot reach ${peer.deviceName}: P2P endpoint(s) known unreachable " +
+                    s"(negative cache, no probe paid; tried ${plan.attempt.size} candidate endpoint(s))"
+                else
+                  s"Cannot reach ${peer.deviceName}: no candidate endpoint answered " +
+                    s"(probed ${decision.probed} endpoint(s) concurrently in ${decision.probeMs}ms)"
+              )
+            )
+          )
     yield result
 
   /**
-   * Walk the candidate list, short-circuiting on the first success (C1 目标口径
-   * §3.3). Only a *connection-level* failure moves on to the next candidate —
-   * an HTTP 403/5xx proves the endpoint is up, so hopping would just burn the
-   * budget on a peer that is answering.
+   * 端点解析（**唯一判据点**）：选路计划 → 记忆 → 负缓存 → 并发探测。返回
+   * [[P2pReachability.Decision]]（端点 + 探测读数），读数随日志外发供本批取数。
+   *
+   * 三档选路批（2026-11-04）：候选集改为 `plan.attempt`（① 档的门已经过滤掉不可用的
+   * tailnet 候选），并在**每个分支**落一行结构化选路日志（`[route] …`）——这是「为什么
+   * 没直连」的唯一可读面。
    */
-  private def p2pExecuteCandidates(
-    candidates: List[String],
+  private def resolveP2pEndpoint(
     peer: PeerInfo,
-    selfDeviceId: String,
-    toolName: String,
-    params: JsonObject,
-    timeout: FiniteDuration,
-    budget: P2pPathDecision.ProbeBudget
-  ): IO[Either[ToolError, String]] =
-    candidates match
-      case Nil =>
-        IO.pure(Left(ToolError(s"Cannot reach ${peer.deviceName}: no usable endpoint address")))
-      case endpoint :: rest =>
-        p2pExecuteAt(peer, endpoint, selfDeviceId, toolName, params, timeout, budget).flatMap {
-          case r @ Right(_) => IO.pure(r)
-          case Left(err) if rest.nonEmpty && isTransientError(err) =>
-            p2pExecuteCandidates(rest, peer, selfDeviceId, toolName, params, timeout, budget)
-          case l => IO.pure(l)
-        }
+    budget: P2pPathDecision.ProbeBudget,
+    plan: RoutePlan
+  ): IO[P2pReachability.Decision] =
+    val now = System.currentTimeMillis()
+    val addressKey = P2pPathDecision.addressKey(peer)
+    val candidates = plan.attempt
+    val routeLog: IO[Unit] = IO(DirectRoute.logPlan(peer.deviceName, plan))
+    rememberedEndpoint(peer) match
+      case Some(ep) =>
+        routeLog.as(
+          P2pReachability.Decision(Some(ep), probed = 0, probeMs = 0L, negativeHit = false, probeFailed = false)
+        )
+      case None =>
+        if candidates.isEmpty then
+          // ① 档不可用且（② 恒不可用）⇒ 零成本 relay 决策：**不探测、不拨号**。
+          routeLog.as(
+            P2pReachability.Decision(None, probed = 0, probeMs = 0L, negativeHit = false, probeFailed = false)
+          )
+        else if reachLedger.shouldSkip(peer.deviceId, addressKey, now) then
+          val left = reachLedger.negativeRemainingMs(peer.deviceId, addressKey, now).getOrElse(0L)
+          routeLog *> IO(reachLedger.noteSkip()) *> logger.info(
+            s"[p2p-probe] device=${peer.deviceName} decision=relay (negative cache, ${left}ms left, 0ms paid)"
+          )
+          IO.pure(
+            P2pReachability.Decision(None, probed = 0, probeMs = 0L, negativeHit = true, probeFailed = false)
+          )
+        else
+          // 探测预算：短连接预算（fast-fail）与硬上限取小——探测本身不该比下发更贵。
+          val probeBudgetMs =
+            math.min(budget.connectTimeout.toMillis, P2pProbePolicy.ProbeConnectTimeoutMs.toLong).toInt
+          val t0 = System.nanoTime()
+          routeLog *> IO(reachLedger.noteProbeAttempt()) *>
+            P2pReachability.probeConcurrently(candidates, probeBudgetMs).map { winner =>
+              val ms = (System.nanoTime() - t0) / 1000000L
+              winner match
+                case Some(ep) =>
+                  // 探通即清账（负证据的可失效条件之一）：端点回来了就不该继续旁路。
+                  reachLedger.noteSuccess(peer.deviceId)
+                  logger.info(
+                    s"[p2p-probe] device=${peer.deviceName} decision=${DirectRoute.viaOf(ep)} endpoint=$ep " +
+                      s"probed=${candidates.size} probeMs=$ms (concurrent, first-wins)"
+                  )
+                  P2pReachability.Decision(
+                    Some(ep),
+                    probed = candidates.size,
+                    probeMs = ms,
+                    negativeHit = false,
+                    probeFailed = false
+                  )
+                case None =>
+                  val n = reachLedger.noteFailure(peer.deviceId, addressKey, System.currentTimeMillis())
+                  logger.info(
+                    s"[p2p-probe] device=${peer.deviceName} decision=relay " +
+                      s"probed=${candidates.size} probeMs=$ms (all timed out; negative #$n " +
+                      s"window=${P2pProbePolicy.negativeWindowMs(n)}ms)"
+                  )
+                  P2pReachability.Decision(
+                    None,
+                    probed = candidates.size,
+                    probeMs = ms,
+                    negativeHit = false,
+                    probeFailed = true
+                  )
+            }
+  end resolveP2pEndpoint
 
-  /** One P2P HTTP dispatch against one concrete endpoint. */
+  /**
+   * 改前的「串行挨个拨候选」实现已随砍探测税批（2026-11-04）**退役**：其判据
+   * （首成功者即短路）被 [[resolveP2pEndpoint]] 的「并发探测 + 首胜即放行」取代
+   * ——语义不变（第一个通的就是要打的那个），成本从「候选数 × 预算」降到
+   * 「单端点预算」。删除而非保留的理由：留下就会有人再调它，税就回来了。
+   *
+   * One P2P HTTP dispatch against one concrete endpoint.
+   */
   private def p2pExecuteAt(
     peer: PeerInfo,
     endpoint: String,
@@ -1433,6 +1837,11 @@ class RemoteExecutor(
    * A: the budget is the caller's (see [[P2pPathDecision.probeBudget]]) — a
    * `directOnline=false` dispatch probes once with a 1.5s connect timeout
    * instead of paying 4 attempts + backoff before the relay fallback.
+   *
+   * 三档选路批（2026-11-04）：**选路计划在重试循环之外算一次**。计划为空（① 档探测
+   * 不可用 + ② 档未实现）⇒ 直接返回 relay 决策：**零拨号、零探测、零重试**
+   * ——否则「Cannot reach」会被 [[isTransientError]] 判成可重试，白付 1+2+3s 退避
+   * （改前正是这种形态，只是白付的是三个 connect 超时）。
    */
   private def p2pExecuteWithRetry(
     peer: PeerInfo,
@@ -1443,18 +1852,32 @@ class RemoteExecutor(
     budget: P2pPathDecision.ProbeBudget,
     kind: String = ""
   ): IO[Either[ToolError, String]] =
-    def attempt(n: Int): IO[Either[ToolError, String]] =
-      p2pExecute(peer, toolName, params, timeout, budget).flatMap {
+    def attempt(n: Int, plan: RoutePlan): IO[Either[ToolError, String]] =
+      p2pExecute(peer, toolName, params, timeout, budget, plan).flatMap {
         case Right(result) => IO.pure(Right(result))
         case Left(err) if n < budget.maxRetries && isTransientError(err) =>
           val delay = (n + 1).seconds
           logger.info(s"Retrying ${peer.deviceName} in ${delay.toSeconds}s (attempt ${n + 1}/${budget.maxRetries})") *>
-            IO.sleep(delay) *> attempt(n + 1)
+            IO.sleep(delay) *> attempt(n + 1, plan)
         case Left(err) => IO.pure(Left(err))
       }
     // T4：一次逻辑下发的审计行（在第一次网络尝试前落——重试是同一行下发，
     // 不重复记行；下发本身失败也记，审计关心「试图驱动了哪台设备」）。
-    auditDispatch(peer, toolName, params, projectRoot, "p2p", kind) *> attempt(0)
+    DirectRoute.plan(peer.deviceName, p2pCandidates(peer)).flatMap { plan =>
+      // 审计的 `via` 仍是 "p2p"（分档信息在 `[route]` 行里；不改既有审计字段值域）。
+      auditDispatch(peer, toolName, params, projectRoot, "p2p", kind) *>
+        (if plan.isEmpty then
+           IO(DirectRoute.logPlan(peer.deviceName, plan)) *>
+             IO.pure(
+               Left(
+                 ToolError(
+                   s"Cannot reach ${peer.deviceName}: 直连档全部跳过（via=relay reasons=" +
+                     s"${plan.reasons.mkString(",")}；0ms，未付探测税）"
+                 )
+               )
+             )
+         else attempt(0, plan))
+    }
 
   end p2pExecuteWithRetry
 
@@ -1529,7 +1952,7 @@ class RemoteExecutor(
         val directOnline = neblinkService.presenceServiceOpt.exists(_.isConnected(peer.deviceId))
         // A: 负证据驱动 —— 只有「有近期真实 P2P 失败证据」才旁路，否则尝试 P2P。
         val memoryOpt = getPathMemory(peer)
-        val recentP2pFailure = hasRecentP2pFailure(peer.deviceId)
+        val recentP2pFailure = hasRecentP2pFailure(peer)
         val skipP2p = P2pPathDecision.shouldSkipP2pForRelay(memoryOpt, recentP2pFailure, relayAvailable)
         val budget = P2pPathDecision.probeBudget(directOnline)
 
@@ -1739,6 +2162,55 @@ object RemoteExecutor:
    */
   def bgHttpWaitTimeout(persistent: Boolean): FiniteDuration =
     if persistent then PersistentBgHttpTimeout else BgTimeout
+
+  // ---- T7（作者令 2026-11-04）：设备腿前台对齐本地腿的四块判据（纯函数，spec 直测）----
+
+  /** 自动转后台回执的**唯一构造点**（本地腿 `BashTool.autoBackground` 与设备腿
+   *  `RemoteExecutor.executeForegroundSync` / `BashTool` 的 remote 支共用）。
+   *
+   * 禁止第二份字符串：契约 1 要求「与本地 auto-background **逐字同形**」，而
+   * 「两处写法看起来一样」不是同形——只有同一个函数才保证。改文案只改这里。
+   */
+  def autoBackgroundReceipt(jobId: String, waitedMs: Long): String =
+    s"[Background job started] Job ID: $jobId\n" +
+      s"Auto-backgrounded after ${waitedMs / 1000}s in the foreground (wait budget reached — the command was NOT killed). " +
+      "It keeps running in the background and you will be automatically notified when it finishes — continue with other work or finish your turn. " +
+      s"""Wait with BgWait (jobIds: ["$jobId"]) if you are genuinely blocked, or end your turn — you will be notified on completion. Cancel with background_job_id + cancel_background_job: true."""
+
+  /**
+   * 「对端已先行收编」判据：对端实例的前台预算先到点 ⇒ 它把命令收编进它自己的后台
+   * 并对本次 HTTP 调用回了收编回执（回执头 + **同一个** jobId，因为 host 把 id 随
+   * `bgJobId` 下发了）。本侧代理行据此如实落终态，绝不把它当成命令自己跑完的输出
+   * （否则「输出 = 一条回执」= 结果被吞）。
+   */
+  def isPeerAdoptionReceipt(jobId: String, output: String): Boolean =
+    output.startsWith(s"[Background job started] Job ID: $jobId\n")
+
+  /** 对端已收编时的本侧终态正文（如实说明命令还在设备上跑、去哪取输出）。 */
+  def peerAdoptionHandoffBody(jobId: String, deviceName: String, receipt: String): String =
+    s"[Adopted on $deviceName] Job ID: $jobId\n" +
+      "The device reached its own foreground budget first and adopted the command into ITS background " +
+      "registry under the SAME job id — the command was NOT killed and may still be running there. " +
+      s"""Its live state and output live on that device: ask for them with Bash (device: "$deviceName", background_job_id: "$jobId").\n""" +
+      receipt
+
+  /**
+   * 「等待上限到点」判据（契约 3 的触发面）：远端 HTTP 等待被网络层上限打断
+   * （`Command timed out on <device> after Ns: …`、relay 侧的 timeout 文案、或底层
+   * `timeout` / `timed out` 措辞）。**这是「本侧不再等」，不是「对端命令失败」**
+   * ——所以它必须触发「先 bg-cancel 再收行」，而不是当普通错误收行。
+   */
+  def isWaitCapTimeout(message: String): Boolean =
+    val lower = message.toLowerCase
+    lower.contains("timed out") || lower.contains("timeout")
+
+  /** bg-cancel 结果的如实注记（确认失败也照落终态，但绝不假装已杀）。 */
+  def peerCancelNote(result: Either[String, String]): String =
+    result match
+      case Left(reason) => s"\n[bg-cancel ERROR] peer cancel dispatch failed: $reason"
+      case Right(msg) if msg.contains("UNCONFIRMED") =>
+        s"\n[bg-cancel NOT confirmed] $msg — the command may still be running on the device."
+      case Right(msg) => s"\n[bg-cancel] $msg"
 
   /**
    * `bg-cancel` 动作往返的等待上限（P2 单任务取消批）：独立短档——取消确认是

@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<!-- tool-process-fold harness.html — 「流式完成态」与「刷新/重连回放态」默认态
+     DOM 指纹对照试验台（过程泄漏修复批 2026-11-04，作者令：工具/思考过程在
+     刷新或断网回放时被完整摊开 + 折叠态被撑长）。
+
+     三个驱动，全部 import **真实前端模块**（无替身、无手抄副本）：
+
+       window.__liveTurn(opts)   → 真实 WS 帧路径搭出一整轮并收口：
+                                   renderUserBubble → appendThinkingDelta →
+                                   finishThinking → appendAiText → finishAi →
+                                   renderToolPending/renderTool ×2 →
+                                   turnGroup.collapseTurn（main.js done 帧同款）。
+                                   收口后 DOM = 作者看到的「流式刚完成」默认态。
+       window.__replayTurn(msgs) → 真实刷新回放腿 restoreFromBackendHistory
+                                   （chat/historyReplay.js 初载腿读的是同一函数）。
+       window.__socketCycle(msgs, opts) → 真实 ws.js：connect → historyPage 首帧
+                                   重放 → 服务端 abrupt drop（断网）→ onclose →
+                                   退避重连 → onReconnect 拉 getHistory → 第二帧
+                                   重放（重连重放腿）。
+
+     window.__fingerprint() 是所有判据的唯一读数口：默认态（未点击）的折叠态
+     class / 明细可见性 / 可见文本长度 / 卡片高度，逐项可序列化对照。
+
+     被测树 = 伺服根（本树或 NB_UX_ROOT 红腿基线树——spec 把本 harness 覆盖
+     复制过去；同一份 harness 在两棵树上的行为差 = 被测代码差）。
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>tool-process-fold harness</title>
+  <link rel="stylesheet" href="/src/main/resources/web/css/base.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/chat.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/design-system.css">
+  <style>
+    /* Minimal stand-in for the app shell (reconnect-collapse / tool-card-leak 同款) */
+    html, body { margin: 0; height: 100%; background: var(--color-bg, #101418); }
+    #chat {
+      position: absolute; top: 0; bottom: 0; left: 50%; transform: translateX(-50%);
+      width: 680px; max-width: 96vw; margin: 0; padding: 16px 0 36px;
+      overflow-y: auto;
+    }
+  </style>
+</head>
+<body>
+  <div id="chat"></div>
+  <script type="module">
+    const WEB = '/src/main/resources/web/js';
+
+    const chatViewMod = await import(`${WEB}/chatView.js`);
+    const { chatViews, ChatView, setActiveView } = chatViewMod;
+    const stateMod = await import(`${WEB}/state.js`);
+    const state = stateMod.default;
+    const chat = await import(`${WEB}/chat.js`);
+    const persistence = await import(`${WEB}/persistence.js`);
+    const utilsMod = await import(`${WEB}/utils.js`);
+    const turnGroup = await import(`${WEB}/turnGroup.js`);
+    const historyReplay = await import(`${WEB}/chat/historyReplay.js`);
+    const wsMod = await import(`${WEB}/ws.js`).catch(() => null);
+
+    const chatEl = document.getElementById('chat');
+    const SID = 'fold-harness-session';
+    chatViews.primary = new ChatView('primary', { chat: chatEl });
+    chatViews.primary.sessionId = SID;
+    setActiveView(chatViews.primary);
+    state.activeSessionId = SID;
+    utilsMod.initScrollFollow(chatViews.primary);
+    window.__captured = [];
+    state.ws = { readyState: 1, send: (data) => window.__captured.push(JSON.parse(data)) };
+    try { localStorage.removeItem('nebflow_sessions'); } catch {}
+
+    const view = () => chatViews.primary;
+
+    /** 默认态读数（未点击摘要）——本批所有断言与指纹的唯一数据源。 */
+    window.__fingerprint = () => {
+      const chat = chatEl;
+      const rows = [...chat.children].filter(el => el.classList && el.classList.contains('row'));
+      /** 某元素是否「可见正文」：几何高度 > 0.5px（折叠/隐藏态即 0） */
+      const h = (el) => { const r = el.getBoundingClientRect(); return Math.round(r.height * 100) / 100; };
+      const visibleTextLen = (root) => {
+        // 只算真正可见的文字：逐后代取矩形高度 > 0.5 且有直接文本的节点。
+        let n = 0;
+        const walk = (el) => {
+          if (!el || el.nodeType !== 1) return;
+          const cs = getComputedStyle(el);
+          if (cs.display === 'none' || cs.visibility === 'hidden') return;
+          if (el.getBoundingClientRect().height <= 0.5) return;
+          for (const node of el.childNodes) {
+            if (node.nodeType === 3) {
+              const t = node.textContent.trim();
+              if (t) n += t.length;
+            } else walk(node);
+          }
+        };
+        walk(root);
+        return n;
+      };
+      const toolRows = rows.filter(r => r.classList.contains('tool'));
+      const thinkRows = rows.filter(r => r.classList.contains('thinking-row'));
+      const header = chat.querySelector(':scope > .turn-header');
+      const cardFaces = toolRows.map(r => {
+        const card = r.querySelector('.tool-card');
+        const preview = r.querySelector('.ds-tool-card__preview');
+        const body = r.querySelector('.body');
+        const toggle = r.querySelector('.ds-tool-card__toggle');
+        const detail = r.querySelector('.detail-cmd');
+        const pres = [...r.querySelectorAll('.content pre')];
+        return {
+          rowTucked: r.classList.contains('nf-tucked'),
+          rowHeight: h(r),
+          cardHeight: card ? h(card) : -1,
+          previewPresent: !!preview,
+          previewHeight: preview ? h(preview) : 0,
+          togglePresent: !!toggle,
+          toggleText: toggle ? (toggle.textContent || '').trim() : '',
+          detailPresent: !!detail,
+          detailText: detail ? (detail.textContent || '').trim() : '',
+          bodyOpen: body ? body.classList.contains('open') : null,
+          bodyHeight: body ? h(body) : 0,
+          preCount: pres.length,
+          preLines: pres.reduce((a, p) => a + (p.textContent || '').split('\n').length, 0),
+          imgRefs: r.querySelectorAll('.tool-img-ref').length,
+          cardVisibleTextLen: card ? visibleTextLen(card) : 0,
+        };
+      });
+      const thinkFaces = thinkRows.map(r => {
+        const content = r.querySelector('.thinking-content');
+        const label = r.querySelector('.thinking-label');
+        return {
+          rowTucked: r.classList.contains('nf-tucked'),
+          rowHeight: h(r),
+          labelText: label ? (label.textContent || '').trim() : '',
+          contentDisplay: content ? content.style.display : null,
+          contentHeight: content ? h(content) : 0,
+          contentTextLen: content ? (content.textContent || '').trim().length : 0,
+          visibleTextLen: visibleTextLen(r),
+        };
+      });
+      return {
+        header: header ? {
+          present: true,
+          cls: header.className,
+          turnState: header.dataset.turnState || '',
+          ariaExpanded: header.getAttribute('aria-expanded'),
+          text: (header.querySelector('.turn-header-text') || {}).textContent || '',
+          height: h(header),
+        } : { present: false },
+        headers: chat.querySelectorAll(':scope > .turn-header').length,
+        toolRows: toolRows.length,
+        toolRowsTucked: toolRows.filter(r => r.classList.contains('nf-tucked')).length,
+        thinkRows: thinkRows.length,
+        thinkRowsTucked: thinkRows.filter(r => r.classList.contains('nf-tucked')).length,
+        cardFaces,
+        thinkFaces,
+        // 整段默认态：可见文本长度 / 可见行数 / 总高度
+        visibleTextLen: visibleTextLen(chat),
+        visibleToolCardTextLen: cardFaces.reduce((a, c) => a + (c.rowTucked ? 0 : c.cardVisibleTextLen), 0),
+        chatHeight: h(chat),
+        rowHeights: rows.map(r => ({
+          cls: r.className, height: h(r),
+          visibleText: visibleTextLen(r),
+        })),
+      };
+    };
+
+    const THINK = [
+      '我先梳理一下当前文件的结构：',
+      '',
+      '- 入口在 src/main/scala/Main.scala',
+      '- 核心逻辑分三层：router / session / recorder',
+      '- 需要先确认 500ms 落盘批次是否与回合终态对齐',
+      '- 再看 markRoundTerminal 的段感知分支',
+    ].join('\n');
+
+    const LONG_OUT = Array.from({ length: 24 }, (_, i) =>
+      `drwxr-xr-x  12 kaiyu  staff   384 Nov  4 1${String(i).padStart(2, '0')}:00 src/main/resources/web/js/module-${i}.js`).join('\n');
+    const LONG_INPUT = { command: 'ls -la src/main/resources/web/js', device: 'local' };
+
+    /** 驱动 1：流式腿 —— 真实 WS 帧同款函数搭出整轮并收口（main.js done 帧同款）。 */
+    window.__liveTurn = async ({ durationMs = 24000 } = {}) => {
+      chatEl.innerHTML = '';
+      chatEl.dataset.nfReplayConsumed = '';
+      const v = view();
+      v.resetStream();
+      delete state.sessionThinkingBuffers[SID];
+      delete state.sessionTexts[SID];
+      delete state.sessionPendingTools[SID];
+      state.busySessionIds.delete(SID);
+      try { localStorage.removeItem('nebflow_sessions'); } catch {}
+      // 闭组光标清空（同一 harness 顺序多次调用）
+      v.pagination.lastReplaySig = null;
+
+      chat.renderUserBubble('看一下 web/js 里的模块');
+      state.busySessionIds.add(SID);
+      chat.appendThinkingDelta(THINK, { round: 1, block: 1 });
+      chat.finishThinking();
+      chat.appendAiText('先看目录结构。');
+      chat.finishAi(null, null);
+
+      // 工具 1（长输出 24 行）
+      chat.renderToolPending('Bash', SID);
+      chat.renderTool('Bash', 'ls -la src/main/resources/web/js', LONG_OUT, false, LONG_INPUT, SID);
+      // 工具 2（短输出）
+      chat.renderToolPending('Read', SID);
+      chat.renderTool('Read', 'src/main/scala/Main.scala',
+        'package example\n\nobject Main extends App {\n  println("hello")\n}', false,
+        { file_path: 'src/main/scala/Main.scala' }, SID);
+
+      chat.appendAiText('目录共 24 个模块，入口文件很短。');
+      chat.finishAi(durationMs, 'harness-model');
+      state.busySessionIds.delete(SID);
+      // done 帧同款收口（main.js:1516）
+      const badges = [...chatEl.querySelectorAll('.duration-badge')];
+      const lastBadge = [...badges].reverse().find(b => b.dataset && b.dataset.nfPhrase) || badges[badges.length - 1];
+      turnGroup.collapseTurn(view(), {
+        durationMs,
+        model: 'harness-model',
+        phrase: (lastBadge && lastBadge.dataset && lastBadge.dataset.nfPhrase) || '',
+        title: (lastBadge && lastBadge.querySelector('.duration-badge-time')?.textContent) || '',
+        sessionId: SID,
+      });
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      return window.__fingerprint();
+    };
+
+    /** 驱动 1b：回放后该轮**真正收尾**（main.js done 帧同款：finishAi + collapseTurn）
+     *  —— 验「回放建的中性摘要行被 live 终态采用，不并列第二枚」。 */
+    window.__finishLiveTurn = async ({ durationMs = 24000 } = {}) => {
+      const v = view();
+      state.busySessionIds.add(SID);
+      chat.appendAiText('这是收尾那一轮的回答。');
+      chat.finishAi(durationMs, 'harness-model');
+      state.busySessionIds.delete(SID);
+      const badges = [...chatEl.querySelectorAll('.duration-badge')];
+      const lastBadge = [...badges].reverse().find(b => b.dataset && b.dataset.nfPhrase) || badges[badges.length - 1];
+      turnGroup.collapseTurn(view(), {
+        durationMs,
+        model: 'harness-model',
+        phrase: (lastBadge && lastBadge.dataset && lastBadge.dataset.nfPhrase) || '',
+        title: (lastBadge && lastBadge.querySelector('.duration-badge-time')?.textContent) || '',
+        sessionId: SID,
+      });
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      return window.__fingerprint();
+    };
+
+    /** 驱动 2：刷新回放腿 —— 全新容器 + 真实 restoreFromBackendHistory。 */
+    window.__replayTurn = async (msgs, opts = {}) => {
+      chatEl.innerHTML = '';
+      chatEl.dataset.nfReplayConsumed = '';
+      const v = view();
+      v.resetStream();
+      v.pagination.lastReplaySig = null;
+      state.busySessionIds.clear();
+      delete state.sessionThinkingBuffers[SID];
+      delete state.sessionTexts[SID];
+      if (opts.busy) state.busySessionIds.add(SID);
+      persistence.restoreFromBackendHistory(msgs, { busyTail: !!opts.busy });
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      return window.__fingerprint();
+    };
+
+    /** 驱动 3：真实初载腿（chat/historyReplay.js —— main.js historyPage 初载同源）。 */
+    window.__replayInitial = (msg, v) => historyReplay.replayHistoryPageInitialLoad(msg, v);
+
+    /** ws.js 侧接线：第一帧/重连帧都走真实初载重放腿。 */
+    window.__wsState = { replays: 0, waiters: [], history: [] };
+    if (wsMod) {
+      wsMod.onMessage('historyPage', (msg, v) => {
+        if (!v) return;
+        v.pagination.loading = false;
+        if (v.pagination.pendingInitialLoad) window.__replayInitial(msg, v);
+        window.__wsState.replays++;
+        window.__wsState.lastMessages = msg.messages;
+        window.__wsState.waiters.splice(0).forEach(w => w());
+      });
+      wsMod.onReconnect(() => {
+        const v = chatViewMod.activeView;
+        v.pagination.pendingInitialLoad = true;
+        wsMod.sendWs({ type: 'getHistory', sessionId: SID, limit: 50 });
+      });
+    }
+
+    /** 驱动 3：断网重连循环 —— connect → 首帧重放 → 服务端 abrupt drop →
+     *  客户端退避重连 → onReconnect → getHistory → 第二帧重放。 */
+    window.__socketCycle = async (msgs, { busy = false, drops = 1 } = {}) => {
+      // 历史容器复位 + busy 态（断网时该轮仍在飞）。
+      chatEl.innerHTML = '';
+      chatEl.dataset.nfReplayConsumed = '';
+      const v = view();
+      v.resetStream();
+      v.pagination.lastReplaySig = null;
+      v.pagination.pendingInitialLoad = true;
+      state.busySessionIds.clear();
+      if (busy) state.busySessionIds.add(SID);
+      window.__wsState.history = msgs;
+      window.__wsState.replays = 0;
+      if (!wsMod) return { error: 'ws.js missing' };
+      wsMod.connect();
+      const wait = (from, ms = 15000) => new Promise((res) => {
+        const dl = Date.now() + ms;
+        const tick = () => {
+          if (window.__wsState.replays > from) return res(true);
+          if (Date.now() > dl) return res(false);
+          setTimeout(tick, 30);
+        };
+        tick();
+      });
+      const got = await wait(0);
+      // 每轮：等待一帧重放 → 服务端硬断（断网）→ 客户端 onclose → 退避重连。
+      let replays = 0;
+      for (let i = 0; i < drops; i++) {
+        if (!got && i === 0) break;
+        await new Promise(r => setTimeout(r, 250));
+        const from = window.__wsState.replays;
+        window.__dropSockets();          // 服务端侧 abrupt drop = 断网
+        const again = await wait(from);
+        if (!again) break;
+        replays = window.__wsState.replays;
+        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      }
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      return { replays: window.__wsState.replays, wsState: state.ws ? state.ws.readyState : -1 };
+    };
+
+    /** 服务端侧断网开关（spec 在 beforeAll 里挂上真实 dropAll）。 */
+    window.__dropSockets = () => { if (window.__peerDropAll) window.__peerDropAll(); };
+
+    /** 折叠态摘要点击（展开 / 收回）。 */
+    window.__clickHeader = () => {
+      const h = chatEl.querySelector(':scope > .turn-header');
+      if (!h) return false;
+      h.click();
+      return true;
+    };
+    /** 卡片内展开控件点击（折叠卡显式主路径）。 */
+    window.__clickCard = (i = 0) => {
+      const rows = [...chatEl.querySelectorAll(':scope > .row.tool')];
+      const card = rows[i] && rows[i].querySelector('.tool-card');
+      if (!card) return false;
+      const toggle = card.querySelector('.ds-tool-card__toggle');
+      if (toggle) toggle.click(); else card.click();
+      return true;
+    };
+
+    window.__ready = true;
+  </script>
+</body>
+</html>

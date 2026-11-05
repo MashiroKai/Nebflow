@@ -1,0 +1,2 @@
+self-explaining：2 个语言包 + index.html，27 命中（behavior-teaching×3 path-guidance×17 capability-claim×7）；基线 27 条
+PASS: 页面文案零新增教学句；留存命中全部落在铁律 8 保留清单（状态事实/失败收口/动作标签/空态下一步/tooltip 事实句）。

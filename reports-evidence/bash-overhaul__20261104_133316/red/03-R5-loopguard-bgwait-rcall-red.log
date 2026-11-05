@@ -1,0 +1,11 @@
+## repro: cd <worktree> && sbt -batch "testOnly nebflow.core.processor.LoopGuardSpec"
+==> X nebflow.core.processor.LoopGuardSpec.R5 (bash overhaul): 20 identical BgWait calls never Terminate (a bounded wait is not a loop)  0.002s munit.FailException: src/test/scala/nebflow/core/processor/LoopGuardSpec.scala:398 repeated bounded waits (BgWait) must NOT Terminate (got: loop-detected: tool 'BgWait' has now been called 20 times in a row with identical arguments — turn terminated to avoid spinning. Change the approach; for long-running work use run_in_background instead of repeating the same call.)
+397:    v match
+398:      case t: LoopGuard.Verdict.Terminate => fail(s"$what must NOT Terminate (got: ${t.msg})")
+399:      case f: LoopGuard.Verdict.Freeze    => fail(s"$what must NOT Freeze (got: ${f.msg})")
+    at munit.Assertions.fail(Assertions.scala:274)
+    at munit.Assertions.fail$(Assertions.scala:24)
+    at munit.FunSuite.fail(FunSuite.scala:13)
+    at nebflow.core.processor.LoopGuardSpec.assertNotTerminal(LoopGuardSpec.scala:398)
+    at nebflow.core.processor.LoopGuardSpec.$init$$$anonfun$29(LoopGuardSpec.scala:441)
+nebflow.core.tools.BashOverhaulGateSpec:

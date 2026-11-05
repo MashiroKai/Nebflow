@@ -95,10 +95,17 @@ object ConsoleTicketRoutes:
                       // `*>` 绑进链：裸 logger.info 是孤儿 IO（构造即丢弃，永不执行
                       // ——兑换已发生而日志零痕迹的存量缺陷，2026-10-29 随门户身份
                       // 透传批 e2e 取证修正）。
+                      // 近路批·正交计数（best-effort，2026-11-04）：本机票在**环回腿**
+                      // 兑换成功 = 「近路真的走通了」的最硬证据（浏览器自报的 hit 是自
+                      // 申报值，本机票的 socket 腿是服务端事实）。判据复用 LoopbackLeg
+                      // 单点；只加一，**不参与任何判定/拒绝语义**（拒绝分支在更上层，
+                      // 已经返回，到不了这里）。
+                      val redeemedOnLoopback = LoopbackLeg.isLoopback(req)
                       logger.info(
                         s"console ticket redeemed: session established (accountSub=${t.accountSub}, " +
                           s"origin=${t.origin}, sid=${rec.sessionId.take(8)}…, networkId=${nid.take(24)})"
                       ) *> IO.pure({
+                        if redeemedOnLoopback then NearPathStats.noteRedeemedLoopback()
                         // 独立窗口本机加速批（2026-10-29）：兑换 303 保留 ticket 之外的
                         // 全部 query（card-window=1&path=…&title=…&cwpo=…）—— 直连卡窗
                         // 深链 `http://<本机>:<port>/?card-window=1&path=…&ticket=…`

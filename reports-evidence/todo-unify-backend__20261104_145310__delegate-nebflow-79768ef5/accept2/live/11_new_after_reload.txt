@@ -1,0 +1,27 @@
+{
+  "storeRows": [
+    {
+      "id": "c4b28374",
+      "content": "PERSIST-①-新建高重要度",
+      "priority": 3,
+      "completedAt": null,
+      "__file": "/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/qa-acc2-todo-accept/scheduled-tasks/47d92893-02f3-4df9-948a-3fffdcb7b2d0.json"
+    }
+  ],
+  "live": {
+    "dataSource": "backend",
+    "openCount": 1,
+    "visible": [
+      {
+        "id": "c4b28374",
+        "title": "PERSIST-①-新建高重要度",
+        "priority": 3,
+        "completed": false
+      }
+    ],
+    "completed": []
+  },
+  "domTitles": [
+    "PERSIST-①-新建高重要度"
+  ]
+}

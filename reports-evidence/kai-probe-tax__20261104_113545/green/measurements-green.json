@@ -1,0 +1,140 @@
+{
+  "batch": "2026-11-04 kai-probe-tax (GREEN / 改后)",
+  "generated_at": "2026-11-04",
+  "harness": {
+    "main": "nebflow.core.tools.ProbeTaxMeasureMain (Test scope, 可重跑)",
+    "run": "sbt \"Test/runMain nebflow.core.tools.ProbeTaxMeasureMain\"",
+    "runs_captured": [
+      "reports-evidence/20261104_kai-probe-tax/green/harness-raw.log",
+      "reports-evidence/20261104_kai-probe-tax/green/harness-raw-run3.log"
+    ],
+    "code_under_test": "生产本体：P2pReachability.probeConcurrently / P2pProbePolicy / BrowseGetLoop.run(window)",
+    "not_a_stub": "探针 = 真 HTTP GET /api/health；传送 = 真 socket、真 5 MiB 字节、对端桩注入 43ms 单程 RTT（实测 relay RTT 档位）"
+  },
+
+  "probe_real_kai_endpoints": {
+    "endpoints": ["http://100.91.165.120:6138", "http://192.168.1.145:6138"],
+    "state_during_measurement": "两个端点均为 SYN 黑洞（HTTP 探针 connected=false），与改前红数采集期同态",
+    "legacy_serial_ms":       [4657, 4666, 4822],
+    "concurrent_cold_ms":     [1527, 1517, 1506],
+    "negative_cache_hit_ms":  [0, 0, 0],
+    "expired_half_open":      {"hit": false, "note": "窗口到期 ⇒ 判据放行（一次半开探测），判断本身 0ms"},
+    "per_endpoint_legacy": [
+      {"endpoint": "http://100.91.165.120:6138", "ms": [3155, 3164, 3317], "connected": false},
+      {"endpoint": "http://192.168.1.145:6138", "ms": [1501, 1501, 1503], "connected": false}
+    ],
+    "median": {"legacy_serial": 4666, "concurrent_cold": 1517, "negative_cache_hit": 0},
+    "speedup": {"serial_to_concurrent": 3.08, "serial_to_negative_cache": "∞ (0ms)"}
+  },
+
+  "probe_control_rfc5737": {
+    "endpoints": ["http://203.0.113.7:6138", "http://198.51.100.9:6138"],
+    "why": "对照组：本机透明代理会让裸 TCP connect 对任意地址『秒连』，用 RFC 5737 TEST-NET 钉住『HTTP 探针不被代理骗』这件事",
+    "legacy_serial_ms":      [4502, 4511, 4516],
+    "concurrent_cold_ms":    [1202, 1204, 1219],
+    "negative_cache_hit_ms": [0, 0, 0],
+    "median": {"legacy_serial": 4511, "concurrent_cold": 1204, "negative_cache_hit": 0},
+    "speedup": {"serial_to_concurrent": 3.75}
+  },
+
+  "transfer_production_pipeline": {
+    "bytes": 5242880,
+    "rtt_ms": 43,
+    "path": "生产 BrowseGetLoop（分块拉取 + 本侧自算块/整件摘要 + 落盘）",
+    "variants": [
+      {
+        "label": "改前语义 serial",
+        "chunkSize": 524288,
+        "window": 1,
+        "chunks": 10,
+        "ms": [905, 684, 953, 598, 1143, 661],
+        "median_ms": 794.5,
+        "bytesIntact": true,
+        "shaMatch": true
+      },
+      {
+        "label": "流水线 window=4（块长不变）",
+        "chunkSize": 524288,
+        "window": 4,
+        "chunks": 10,
+        "ms": [507, 293, 272, 255, 292, 260],
+        "median_ms": 282,
+        "bytesIntact": true,
+        "shaMatch": true
+      },
+      {
+        "label": "自适应块长 + 窗口（chunkSizeFor(5MiB)=1MiB, windowFor=8）",
+        "chunkSize": 1048576,
+        "window": 8,
+        "chunks": 5,
+        "ms": [181, 173, 154, 155, 174, 256],
+        "median_ms": 173.5,
+        "bytesIntact": true,
+        "shaMatch": true
+      }
+    ],
+    "speedup": {"serial_to_window4": 2.82, "serial_to_adaptive": 4.58},
+    "correctness": "全部 bytesIntact=true / shaMatch=true（流水线不改顺序语义：按 index 升序校验落盘，摘要不符同块重拉）"
+  },
+
+  "cold_open_projection": {
+    "caveat": "⚠ 这不是在运行实例上复测的端到端读数——引擎不可重启（本批硬约束），且不得另起实例（同数据根 / 抢端口 / 会在生产设备表新增行）。下表 = 红数（真机实测）+ 本批分层实测的合成推演，每一项输入都有实测出处。",
+    "inputs": {
+      "red_cold_median_ms": 5051,
+      "red_probe_tax_measured_ms": 4502,
+      "red_residual_non_probe_ms": 549,
+      "red_residual_basis": "5051 - 4502 = 549（同一台 KAI、同一 read 腿；warm 会话 132ms = 纯 transport+往返，冷开多出的 ~417ms 为路径记忆/负证据缺失仍要走的既有判定腿）",
+      "green_probe_first_ms": 1517,
+      "green_probe_cached_ms": 0.0
+    },
+    "cases": [
+      {"case": "改后首个整窗外冷开（负缓存空，两个候选全死）", "probe_ms": 1517, "total_ms": 2066, "verdict": "未达 <1s（下一刀见报告 §5）"},
+      {"case": "改后窗口内冷开（负缓存命中；窗口 60s 起指数退避，5 次失败后 15min）", "probe_ms": 0, "total_ms": 549, "verdict": "达标 <1s"},
+      {"case": "改后端点真活（探通即放行）", "probe_ms": "≈RTT+一跳 (实测同网段 1ms 档 / Tailscale 100ms 档)", "total_ms": "<600ms 且走 P2P 直传", "verdict": "达标（P2P 命中时比 relay 更短）"},
+      {"case": "改前对照（红，实测）", "probe_ms": 4502, "total_ms": 5051, "verdict": "中位 5051ms / 最大 10032ms"}
+    ],
+    "warm_open": {
+      "red_measured_median_ms": 132,
+      "red_measured_n": 6,
+      "green_note": "60s 内续开在改前也不付探测税（路径记忆 60s 内有效）⇒ 本批不改续开语义，仅大件续开受益于流水线（多块文件的 3~4.6 倍）"
+    }
+  },
+
+  "e2e_real_engine": {
+    "why": "引擎在 12:42 重启为 main c2312836e（**含本批代码**，jar 内可见 resolveP2pEndpoint/probeConcurrently/file-open-timing 字符串）⇒ 任务书要求的「改后真机端到端」这次真的跑成了",
+    "engine": {"pid": 78176, "build": "main c2312836e", "started_at": "2026-11-04 12:42", "port": 6138},
+    "device": {"name": "KAI", "deviceId": "40742cd4-851a-4ec4-a49d-6db2509bf03d"},
+    "method": "WS readFile + device=KAI（与浏览器开文件同一条腿：WsFileOpsHandlers.readRemoteFile → transferGetScopedChunked），客户端墙钟 = 用户体感；样本 = 只读仓库文件",
+    "raw_log": "reports-evidence/20261104_kai-probe-tax/green/kai-e2e-new-engine.log",
+    "cold_samples_ms": [
+      {"label": "VERSION",     "ms": 1531},
+      {"label": "VERSION(2nd)","ms": 11326, "note": "离群：同秒 presence dial 占满 io-compute-blocker（见下），非探测税"},
+      {"label": "README.md",   "ms": 1660},
+      {"label": "build.sbt",   "ms": 1667}
+    ],
+    "cold": {"n": 4, "median_ms": 1663.5, "max_ms": 11326, "min_ms": 1531},
+    "warm_samples_ms": [293, 166, 114],
+    "warm": {"n": 3, "median_ms": 166, "all_cached_flag": true, "note": "全部命中 FileOpenCache（cached=true）= 续开三级缓存生效"},
+    "vs_red": {"cold_median": "5051ms → 1663.5ms (3.04×)", "warm": "132ms → 166ms（同档；语义从路径记忆升级为 bytes 缓存命中）"},
+    "split_unavailable": "本次 e2e **拿不到** 探测/传输分解：[file-open-timing] 在跑的引擎里一行未出 —— 根因 = NebflowLogger.info 返回 IO[Unit]，我给的三处调用裸写在块里被**丢弃不执行**（实测抓到的真 bug，已修：`*>` 串起，见提交）。客户端墙钟不受影响。",
+    "residual_floor": "冷开仍有 ~1.5s 地板（首个冷开 1531ms、README 1660ms、build.sbt 1667ms）⇒ 与 P2P 探测无关，是「目录指纹探测 + 分块首响应」两次 relay 往返的成本，需下一刀（见报告 §5）。",
+    "thread_starvation_evidence": [
+      "2026-11-04 12:52:13.738 WARN nebflow.neblink.presence - Presence dial failed for KAI via http://192.168.1.145:6138: timeout after 1500ms [io-compute-blocker-59]",
+      "2026-11-04 12:52:42.323 WARN nebflow.neblink.presence - Presence dial failed for KAI via http://100.91.165.120:6138: timeout after 3000ms [io-compute-blocker-0]",
+      "结论：presence 心跳仍每拍串行拨 4.5s 且**占用 io-compute-blocker 线程**（本批未改该文件），线程池被占 ⇒ 用户冷开可被拖到 11.3s。这是本批之外、但必须先修的一刀。"
+    ]
+  },
+
+  "evidence_files": {
+    "red": [
+      "red/kai-open-timings.log",
+      "red/presence-dial-tax.log",
+      "red/measurements-red.json"
+    ],
+    "green": [
+      "green/harness-raw.log",
+      "green/harness-raw-run3.log",
+      "green/measurements-green.json"
+    ]
+  }
+}

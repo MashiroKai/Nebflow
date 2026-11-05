@@ -90,15 +90,13 @@ class DelegateToolSpec extends CatsEffectSuite:
 
   // ---------- 1. schema 面 ----------
 
-  test("schema: exactly task/name/project/executor/mode — description and the legacy parameters are gone"):
-    // external-executors 批 #1225（S14 运行时半）：`executor` 入场——主 agent
-    // 动态选择执行器的唯一显式输入（缺省 nebflow）；legacy 集合照旧反向钉死。
-    // 双模式批（2026-10-28）：`mode` 入场——执行形态显式声明（kernel|dispatcher|
-    // auto，缺省 auto；enum 契约由 DualModeToolFaceSpec F7 钉死）；闸关时参数
-    // 照旧声明（schema 是静态面——Inert 语义在 call 侧）。
-    // 面板命名批（2026-10-31 · 作者令②）：`name` 入场——批次短名（≤12 字，
-    // maxLength 12 钉死；可选，required 不变）。
-    assertEquals(props, Set("task", "name", "project", "executor", "mode"))
+  test("schema: exactly task/name/project/executor/worktree/force/mode — legacy parameters stay gone"):
+    // external-executors 批 #1225（S14 运行时半）：`executor` 入场。
+    // 面板命名批（2026-10-31）：`name` 入场（≤12 字，maxLength 钉死）。
+    // worktree-reuse-selection 批（2026-11-02）：`worktree` / `force` 入场。
+    // delegate-param-decisions 批（2026-11-04）：`mode` 值域收敛为 kernel|dispatcher，
+    // `worktree` 语义改为「worktree 的 name（不填 = 零分配的就地只读通道）」。
+    assertEquals(props, Set("task", "name", "project", "executor", "worktree", "force", "mode"))
     assertEquals(required, List("task"))
     val nameMaxLen: Option[Int] = io.circe.Json
       .fromJsonObject(DelegateTool.inputSchema)
@@ -113,12 +111,49 @@ class DelegateToolSpec extends CatsEffectSuite:
       Some(12),
       "name must carry maxLength 12 (author ruling ≤12 chars)"
     )
-    Set("prompt", "agent", "lifecycle", "taskDescription", "images", "preset").foreach { legacy =>
-      assert(!props.contains(legacy), s"legacy parameter must be deleted from the schema: $legacy")
-    }
-    // 2026-09-14 作者裁定 U1/U2：`device` 是摘除目标（非 legacy 参数）——逐字钉死。
-    assert(!props.contains("device"), s"device must be gone from the Delegate schema, got: $props")
-    assertEquals(DelegateTool.name, "Delegate")
+    // 分配器已删：schema enum 里绝不能再出现 auto（静默映射的反面）。
+    val modeEnum: List[String] = io.circe.Json
+      .fromJsonObject(DelegateTool.inputSchema)
+      .hcursor
+      .downField("properties")
+      .downField("mode")
+      .downField("enum")
+      .as[List[String]]
+      .toOption
+      .getOrElse(Nil)
+    assertEquals(modeEnum, List("kernel", "dispatcher"), "mode enum = the two words, no auto")
+    // 描述文本与代码同步（作者令：文档与代码不同步等于没改）——旧口径的两句假话
+    // 必须在 schema 与工具描述两处都消失。
+    val modeDesc = io.circe.Json
+      .fromJsonObject(DelegateTool.inputSchema)
+      .hcursor
+      .downField("properties")
+      .downField("mode")
+      .downField("description")
+      .as[String]
+      .toOption
+      .getOrElse("")
+    val wtDesc = io.circe.Json
+      .fromJsonObject(DelegateTool.inputSchema)
+      .hcursor
+      .downField("properties")
+      .downField("worktree")
+      .downField("description")
+      .as[String]
+      .toOption
+      .getOrElse("")
+    assert(!modeDesc.contains("mode allocator decides"), modeDesc)
+    assert(!modeDesc.contains("JeV -> LLM fallback"), modeDesc)
+    assert(modeDesc.contains("deterministically"), modeDesc)
+    assert(!wtDesc.contains("REUSE an existing delegate worktree instead of creating a fresh one"), wtDesc)
+    assert(!wtDesc.contains("Omit (default) = fresh worktree"), wtDesc)
+    assert(wtDesc.contains("MUST pass it"), wtDesc)
+    assert(wtDesc.contains("read-only"), wtDesc)
+    val toolDesc = DelegateTool.description
+    assert(!toolDesc.contains("mode allocator decides"), "the model-visible tool description must not carry the removed allocator copy")
+    assert(!toolDesc.contains("creates a fresh worktree exactly as before"), toolDesc)
+    assert(toolDesc.contains("Omit it ONLY for read-only tasks"), toolDesc)
+    assert(toolDesc.contains("IN PLACE in the project workspace"), toolDesc)
 
   test("name parameter: short-name guidance is model-visible (dispatch prompt face)"):
     // 面板命名批（2026-10-31 ②）：dispatch 提示词面（description = 模型可见指导）
@@ -353,11 +388,16 @@ class DelegateToolSpec extends CatsEffectSuite:
   // ---------- 5. 内核工具面常量（装配面单点来源） ----------
 
   test(
-    "nebflow tool face = BaseTools + AskUserQuestion + Subagent + AgentFlow (9 items) and excludes orchestration/message tools"
+    "nebflow tool face = BaseTools + AskUserQuestion + Subagent + AgentFlow (10 items) and excludes orchestration/message tools"
   ):
     val face = nebflow.agent.AgentCore.NebflowFixedTools
     assertEquals(face, nebflow.agent.AgentCore.BaseTools + "AskUserQuestion" + "Subagent" + "AgentFlow")
-    assertEquals(face.size, 9)
+    // bash overhaul T1（2026-11-04，作者令「组织优化 bash，用业界成熟做法完整实现」）：
+    // `BaseTools` 六件 → **七件**（+`BgWait`，后台任务的唯一等待原语）⇒ 本面九件 → **十件**。
+    // 计数随机制面变更（非为过测放宽）：带 `device` 者仍恰为六件（`RemoteExecutor.remoteableTools`
+    // 未动，`BgWait` 刻意不入远端注入面——等待是本机语义），该不变式由
+    // `RemoteableDeviceParamSpec` 逐件钉死。
+    assertEquals(face.size, 10)
     // R2 2026-09-12 承继：执行 agent 面零 Mail（无消息工具）；编排/管控/退役件
     // 一律不在（Delegate 派发、AgentControl 管控归 Nebula；Task/NodeMessage 已删净）。
     Set("Delegate", "SubTask", "Task", "NodeMessage", "TaskBoard", "node_report", "AgentControl", "Mail", "Pop")

@@ -303,13 +303,13 @@ html[data-theme="light"] {
   position: relative;
   isolation: isolate;
   height: 36px;
-  padding: 0 20px;
-  border-radius: 999px;
+  padding: 0 var(--ds-space-5);
+  border-radius: var(--ds-radius-pill);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  font-size: 13px;
+  gap: var(--ds-space-2);
+  font-size: var(--ds-fs-body);
   font-weight: 500;
   letter-spacing: 0.01em;
   font-family: inherit;
@@ -464,25 +464,22 @@ body.mobile-layer .g2-fab:active {
 
 /* ── 顶缘滚入渐隐带 #g2-edge-fade（M9：待作者裁项，维持现状逐字保留）──────
    桌面恒隐；材质 = --g2-veil + blur 18 sat 1.5 + 两段式 mask（veil 子族
-   token 随渐隐带保留在 stand-tokens.css，不随 --g2-fab-* 退役） */
+   token 随渐隐带保留在 stand-tokens.css，不随 --g2-fab-* 退役）
+   ── ui-unification-20261103-doc-ask-fade（作者令 2026-11-03）：材质段整段收编到
+   design-system.css 的 `.ds-edge-fade` 单源（本节点只挂类 + 本面差异档：手机层
+   恒显/落位/带高/z 序）。
+   ── ask-fade-content-opacity（作者令 2026-11-04）：「一套渐隐、两处成员」解体——
+   Ask 面板 .ask-veil 退役（遮罩条手法被作者否：渐隐须是内容本体透明度渐到 0），
+   其渐隐改走 ask.css .ask-col 的内容级 mask；本类成员只剩主对话窗一处，单源
+   纪律不变（禁在此再写第二份 veil/blur/mask）。
+   降级档（@supports 无 backdrop / html.no-backdrop）同批收编到该类。 */
 #g2-edge-fade {
   display: none;
 }
 body.mobile-layer #g2-edge-fade {
   display: block;
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
   height: var(--g2-fade-height);
   z-index: 25; /* 内容(0) < 渐隐带 25 < 悬浮圆钮层 30 < 页面栈 156 < dock 200 */
-  pointer-events: none; /* 不是栏：不拦截任何交互 */
-  background: var(--g2-veil);
-  -webkit-backdrop-filter: blur(var(--g2-fade-blur)) saturate(var(--g2-fade-sat));
-  backdrop-filter: blur(var(--g2-fade-blur)) saturate(var(--g2-fade-sat));
-  /* 两段式 ease-out 衰减：内容滚入「先糊后没」（mask 双写 -webkit-） */
-  -webkit-mask-image: linear-gradient(to bottom, #000 0%, rgba(0, 0, 0, 0.55) 50%, transparent 100%);
-  mask-image: linear-gradient(to bottom, #000 0%, rgba(0, 0, 0, 0.55) 50%, transparent 100%);
 }
 
 /* ── 降级（微信内置浏览器 / 旧 WebView / X5 无 backdrop-filter）────────────
@@ -523,10 +520,8 @@ body.mobile-layer #g2-edge-fade {
     backdrop-filter: none;
     background: var(--glass-bg);
   }
-  body.mobile-layer #g2-edge-fade {
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
-  }
+  /* 渐隐带降级档随 doc-ask-fade 批收编到 design-system.css `.ds-edge-fade`
+     （@supports / html.no-backdrop 两处），此处不再单列 —— 防双源漂移。 */
 }
 html.no-backdrop #input-bar,
 html.no-backdrop #queue-bar.visible,
@@ -560,7 +555,4 @@ html.no-backdrop body.mobile-layer .mh-idhead-name,html.no-backdrop body.mobile-
   backdrop-filter: none !important;
   background: var(--glass-bg);
 }
-html.no-backdrop body.mobile-layer #g2-edge-fade {
-  -webkit-backdrop-filter: none !important;
-  backdrop-filter: none !important;
-}
+/* 渐隐带降级档：见上一条 @supports 块同注（收编到 .ds-edge-fade 单源）。 */

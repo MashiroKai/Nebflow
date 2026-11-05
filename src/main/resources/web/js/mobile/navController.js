@@ -56,7 +56,14 @@ import { key } from '../branding.js';
 import { openSettingsPanel, closeSettingsPanel, isSettingsPanelActive } from '../sidebar.js';
 import { createIconsIn } from '../utils.js';
 import { ensureSocialPage, syncSocialFaces } from './socialFaces.js';
-import { ensureTaskPanel, closeTaskPanel } from './taskPanel.js';
+// ⛔ 【入口收敛批 todo-unify-entry-collapse 2026-11-04】任务面板（taskPanel.js）的
+// 页面收编腿退役：'tasks' 页（聊天头左上圆钮 push）已随待办入口收敛撤除，本模块
+// 不再需要 ensureTaskPanel/closeTaskPanel —— import 撤除（模块内已无引用），
+// taskPanel.js 因此无任何 import 方（见该文件头退役注记）。
+// import { ensureTaskPanel, closeTaskPanel } from './taskPanel.js';
+// 层事件流水（循环门禁修复批 2026-11-04）：叶子模块，taskPanel 等打事件方直取它，
+// 本模块只写 + 在 activateNav 挂 window（见该定义处注释）。
+import { logEvent, navLayerEvents } from './navEvents.js';
 import { buildMeFace } from './meFace.js';
 // 弹窗退场批③（2026-10-31）：设置页折叠配置项 → 层级子页（meFace 同款注入式）。
 import { buildSettingsSubFace, syncSettingsSubFaces, initSettingsSub, SETTINGS_SUB } from './settingsSub.js';
@@ -112,12 +119,20 @@ export const PAGES = [
   { id: 'graph',    tabId: 'wiki-graph', icon: 'sparkles',      zh: '图谱',     en: 'Wiki Graph' },
   { id: 'plugins',  tabId: 'plugins',  icon: 'puzzle',          zh: '插件',     en: 'Plugins' },
   { id: 'usage',    tabId: null,       icon: 'bar-chart-3',     zh: 'token 用量', en: 'Usage' },
-  { id: 'tasks',    tabId: null,       icon: 'list-todo',       zh: '任务',     en: 'Tasks' },
+  // ⛔ 【退役】入口收敛批 todo-unify-entry-collapse 2026-11-04：'tasks' 页撤除
+  // （入口 = 聊天头左上「任务」圆钮，已随待办入口收敛退役；手机端待办唯一入口
+  // = 顶带待办胶囊，点开即展开面板，不再需要第二个页面腿）。
+  // { id: 'tasks',    tabId: null,       icon: 'list-todo',       zh: '任务',     en: 'Tasks' },
   { id: 'search',   tabId: null,       icon: 'search',          zh: '搜索',     en: 'Search' },
   { id: 'reminder', tabId: null,       icon: 'alarm-clock',     zh: '定时任务', en: 'Scheduled' },
   // 改版批（2026-10-31 作者令）：待办事项页——入口 = 消息列表顶部行（桌面 =
   // #todo-page 玻璃 overlay；手机 = 本详情页收编同一 DOM，层级下钻左上返回）。
-  { id: 'todo',     tabId: null,       icon: 'list-checks',     zh: '待办事项', en: 'To-Dos' },
+  // ⛔ 【整面退役】todo-unify-entry-collapse 2026-11-04：#todo-page 处置 = (a)
+  // 整面退役（DOM 保留在 index.html、不可达）。两个入口（消息列表入口行 /
+  // `nf:mobile-todo-entry` → pushPage('todo')）同时撤除后，本页已无触发器；
+  // 待办面唯一实现 = 顶带胶囊 + 展开面板（js/todoFace.js / todoStore 真源）。
+  // 理由全文见 js/scheduled-task.js openTodoPage 的退役注记。
+  // { id: 'todo',     tabId: null,       icon: 'list-checks',     zh: '待办事项', en: 'To-Dos' },
   { id: 'daemon',   tabId: null,       icon: 'heart-pulse',     zh: '心跳',     en: 'Daemons' },
   { id: 'background', tabId: null,     icon: 'square-terminal', zh: '后台任务', en: 'Background' },
   { id: 'profile',  tabId: null,       icon: 'bot',             zh: '智能体', en: 'Agent' },
@@ -173,10 +188,10 @@ function tt(zh, en) {
 }
 
 // ── 层事件流水（QA 探针 window.__nfMobileLayerEvents，只读）──────────
-const __nfEvents = [];
-export function logEvent(kind, extra = {}) {
-  __nfEvents.push({ t: Date.now(), kind, ...extra });
-}
+// 循环门禁修复批（2026-11-04）：流水 + logEvent 抽到叶子 navEvents.js —— 这里是
+// 它的**挂载点**（activateNav 把同一数组引用挂 window）。taskPanel/searchFace/
+// socialSearch/chatChrome 打事件时直取叶子，不再反过来 import 本模块（那是 SCC[2]
+// 的一半：本模块 → taskPanel 的页面收编是真集成，不动）。
 
 // ── 首触标记（启动自动展开抑制的判据）────────────────────────────────
 let layerTouched = false;
@@ -563,8 +578,11 @@ const overlayFaceByPage = {
   daemon: '#daemon-panel',
   background: '#bg-dropdown',
   profile: '#memory-modal',
-  tasks: '#mobile-task-panel',
-  todo: '#todo-page',
+  // ⛔ 【退役】todo-unify-entry-collapse 2026-11-04：'tasks'（#mobile-task-panel）
+  // 与 'todo'（#todo-page）两个页面腿已整面退役（见 PAGES 同批注记），不再有
+  // 页面收编 → overlay 面向；DOM 载体原样保留（不可达面）。
+  // tasks: '#mobile-task-panel',
+  // todo: '#todo-page',
 };
 
 /** 把 overlay 内容面移入页面体（幂等；锚点照 paneAnchors 惯例记录）。 */
@@ -647,13 +665,16 @@ async function ensurePanelContent(pageId) {
     case 'reminder':
       if (!document.querySelector('#reminder-panel.open')) clickDesktopBtn('reminder-btn');
       break;
-    case 'todo':
-      // 改版批（2026-10-31）：待办页无桌面钮（入口 = 消息列表行）——直调
-      // scheduled-task.js 开合臂；overlay 首开此刻建态，收编由 syncOverlayFaces 对账。
-      import('../scheduled-task.js')
-        .then((m) => m.openTodoPage())
-        .catch((e) => console.error('[mobile-layer] todo', e));
-      break;
+    // ⛔ 【退役】todo-unify-entry-collapse 2026-11-04：'todo' 页整面退役（PAGES
+    // 与 overlayFaceByPage 的同批注记）——本分支不再可达（无 pushPage('todo')），
+    // 原文留档，零物理删除：
+    // case 'todo':
+    //   // 改版批（2026-10-31）：待办页无桌面钮（入口 = 消息列表行）——直调
+    //   // scheduled-task.js 开合臂；overlay 首开此刻建态，收编由 syncOverlayFaces 对账。
+    //   import('../scheduled-task.js')
+    //     .then((m) => m.openTodoPage())
+    //     .catch((e) => console.error('[mobile-layer] todo', e));
+    //   break;
     case 'daemon':
       if (!document.querySelector('#daemon-panel.open')) clickDesktopBtn('daemon-btn');
       break;
@@ -672,12 +693,15 @@ async function ensurePanelContent(pageId) {
         if (ap.openProfilePanel) ap.openProfilePanel();
       } catch (e) { console.error('[mobile-layer] profile', e); }
       break;
-    case 'tasks':
-      ensureTaskPanel();
-      // 面板惰性建出 —— 建好即挂关闭对账 + 收编（X 关闭 → hidden → 弹栈）。
-      ensureOverlayReconcile('tasks', '#mobile-task-panel', (el) => !!el.hidden, ['hidden']);
-      syncOverlayFaces();
-      break;
+    // ⛔ 【退役】todo-unify-entry-collapse 2026-11-04：'tasks' 页整面退役（PAGES
+    // 与 overlayFaceByPage 的同批注记）——本分支不再可达（无 pushPage('tasks')），
+    // 原文留档，零物理删除：
+    // case 'tasks':
+    //   ensureTaskPanel();
+    //   // 面板惰性建出 —— 建好即挂关闭对账 + 收编（X 关闭 → hidden → 弹栈）。
+    //   ensureOverlayReconcile('tasks', '#mobile-task-panel', (el) => !!el.hidden, ['hidden']);
+    //   syncOverlayFaces();
+    //   break;
     default:
       break;
   }
@@ -743,31 +767,41 @@ const SWIPE_SWITCH_PX = 48;
 //   · |k|=2 = ±190px：被环带 mask 咬掉 + 曲线归零 = 读作已绕到圈外
 //     （.is-far 零透明零命中）；
 //   · 露出半径 RING_VISIBLE = 1 —— 环带净宽只容得下「中签 + 左右各一枚邻签」。
-const RING_DX1 = 95;
+const RING_DX1 = 93.5;
 const RING_VISIBLE = 1;
-// 宽度档住 CSS（唯一视觉源）：两侧签 `.mf-strip-chip` max-width 68px、中签
+// 宽度档住 CSS（唯一视觉源）：两侧签 `.mf-strip-chip` max-width 66px、中签
 // `.mf-strip-chip.on` max-width 112px —— JS 只给 scale，不改宽，两者相乘才是
-// 渲染宽度（中签 112×1.14 = 127.7 / 邻签 68×0.80 = 54.4）。
+// 渲染宽度（中签 112×1.10 = 123.2 / 邻签 66×0.87 = 57.4）。
 // 连续曲线（作者令「越到边缘越模糊」+「不用…号」）：三条量全按 t = min(|k|,2)/2
 // ∈ [0,1] 连续单调取值，不再分三档跳；k 取整数，故实际采样点 = |k| 0/1/2，
 // 其余行只为证明曲线连续（拖动换签的过渡帧即落在这些 t 上）。
-//   t   |k|   scale           opacity        blur
-//   0    0    1.140           1.000          0.00px   ← 中签
-//   0.25 0.5  0.958           0.841          0.19px
-//   0.5  1    0.800           0.660          0.70px   ← 邻签（唯一可见的非中签）
-//   0.75 1.5  0.674           0.435          1.51px
-//   1    2    0.600           0.000          2.60px   ← 与 .is-far 的无缝点
-// 三条曲线（指数取值的由来）：scale 用 (1−t)^1.43 使邻签落 0.80（旧 0.82，
-// 略小一档让中签的「稍微大一点」可读）；op 用 (1−t)^0.6 —— 指数 < 1 ⇒ 前段
-// 掉得陡、后段收敛，邻签 0.66（旧 0.78）仍清晰可辨，|k|≥2 归零衔接 .is-far；
-// blur 用 t^1.9 —— 指数 > 1 ⇒ 起手温柔（邻签仅 0.70px，不糊字）、边缘陡增
-// （2.60px 糊成一团 = 「直接模糊隐藏」的读感）。三条全单调 ⇒ 越靠边越淡越糊。
-const RING_SCALE_ON = 1.14;      // 中签缩径（旧 1.0 —— 作者令「中间的稍微大一点」）
+//   t   |k|   scale           opacity        blur        rotY
+//   0    0    1.100           1.000          0.00px      0.0°
+//   0.25 0.5  0.988           0.951          0.10px      −12.0°
+//   0.5  1    0.870           0.901          0.40px      −24.0°  ← 邻签（唯一可见的非中签）
+//   0.75 1.5  0.735           0.772          1.05px      −36.0°
+//   1    2    0.600           0.000          2.40px      −48.0°  ← 与 .is-far 的无缝点
+// 三条曲线（**可读字批 2026-11-03 12:59 作者令**重定 —— 「两边的标签尽量能清晰
+// 显现」+「切换要有旋转感」）：
+//   · scale 用 (1−t)^0.889：邻签 0.87（旧 0.80）—— 字号档 × 0.87 ≥13px 可读
+//     下限（基档 --mfs-sub 15 ⇒ 13.05px 有效），|k|≥2 仍触底 0.60 保轨迹连续；
+//   · op 用 (1−t)^0.15：邻签 0.901（旧 0.66 —— 作者判「近乎不可见」的根因面）——
+//     指数 < 0.2 ⇒ 前段几乎平坦（邻签保持全可见），只在 |k| 1→2 的最后一段
+//     陡降到 0，与 .is-far 无缝衔接（可见集恒 = |k| ≤ 1）；
+//   · blur 用 t^2.6（MAX 2.40）：邻签 0.40px（旧 0.70 —— 糊字半边来源），
+//     边缘 2.40px 仍「糊成一团」＝越靠边越糊的读感保留；
+//   · rotY = −24°·k：**转盘位姿**（见 layoutRing 的 --rrot）。环是横向圆环，
+//     邻签绕圆心转到侧面 ⇒ 环绕 Y 轴转 24°（左邻右缘退到纸面里、右邻对称），
+//     换签时 k 变动 ⇒ 位移 + 缩径 + 旋转三者同步插值 = 「转盘转过去」的动效
+//     （纯淡入淡出被否 —— 作者令「不要纯淡入淡出」）。
+const RING_SCALE_ON = 1.10;      // 中签缩径（旧 1.14：与邻签 0.87 的宽度差仍 >2×）
 const RING_SCALE_MIN = 0.60;     // 环外下限（|k| ≥ 2）
-const RING_SCALE_POW = 1.4327;   // s = MIN + (ON − MIN)·(1−t)^P ⇒ |k|=1 恰 0.800
-const RING_OP_POW = 0.60;        // op = (1−t)^P ⇒ |k|=1 0.660、|k|=2 恰 0
-const RING_BLUR_MAX = 2.60;      // blur = MAX·t^P ⇒ |k|=1 0.70px、|k|=2 2.60px
-const RING_BLUR_POW = 1.9;
+const RING_SCALE_POW = 0.889;    // s = MIN + (ON − MIN)·(1−t)^P ⇒ |k|=1 恰 0.870
+const RING_OP_POW = 0.15;        // op = (1−t)^P ⇒ |k|=1 0.901、|k|=2 恰 0
+const RING_BLUR_MAX = 2.40;      // blur = MAX·t^P ⇒ |k|=1 0.40px、|k|=2 2.40px
+const RING_BLUR_POW = 2.6;
+/** 邻签绕 Y 轴转角（转盘位姿；单位 °，符号 = 环形偏移 k 的负值）。 */
+const RING_ROT_Y_DEG = 24;
 
 // ── 底部小点指示器（作者令：1 个标签不显示 / 2 个起显示 / 最多 3 点）──────
 // 省略策略（申报，批文档 §3「小点数量规则」）：n > 3 时点数**恒为 3**，点位 =
@@ -958,6 +992,11 @@ function layoutRing() {
     el.style.setProperty('--rsc', p.s.toFixed(3));
     el.style.setProperty('--rop', p.op.toFixed(2));
     el.style.setProperty('--rbl', `${p.blur.toFixed(2)}px`);
+    /* 转盘位姿（可读字批 2026-11-03）：邻签绕 Y 轴 −24°×k —— 环是横向圆环，
+       邻签绕到圆心侧面 ⇒ 左邻右缘退进纸面、右邻对称；换签时 k 变 ⇒ 位移 +
+       缩径 + 旋转同步插值（CSS transform 过渡）＝「转盘转过去」。中签 k=0
+       恒 0°（正面朝向读者，不受透视变形 ⇒ 文字恒正）。 */
+    el.style.setProperty('--rrot', `${(-RING_ROT_Y_DEG * k).toFixed(1)}deg`);
     el.classList.toggle('on', k === 0);
     el.classList.toggle('is-far', Math.abs(k) > RING_VISIBLE);
     /* 胶囊边缘渐隐批（作者令 2026-11-02 21:47 §一）：**朝中心一侧清晰、朝外
@@ -967,7 +1006,11 @@ function layoutRing() {
        只用视觉层（mask），不动 DOM 文本 ⇒ 读屏/title 拿到的仍是全名。 */
     el.classList.toggle('side-l', k < 0);
     el.classList.toggle('side-r', k > 0);
-    el.style.setProperty('--rfade', `${Math.min(1, Math.abs(k)) * 55}%`);
+    /* 可读字批（2026-11-03 12:59 作者令「希望两边标签的文字尽量能清晰显现」）：
+       朝外渐隐带宽 55% → 18% —— 旧值把邻签朝外半边**连同文字**整块吃掉（作者
+       实拍「2026…」近乎不可见的主因之一）；18% 只羽化最外缘（约 10px），文字
+       主体恒实色，与字色档（--ds-text）/不透明度 0.901 三件一起构成 ≥4.5:1。 */
+    el.style.setProperty('--rfade', `${Math.min(1, Math.abs(k)) * 18}%`);
     el.setAttribute('aria-selected', k === 0 ? 'true' : 'false');
     el.tabIndex = Math.abs(k) <= 1 ? 0 : -1;
   }
@@ -1405,6 +1448,19 @@ function mountDeckSnapNode(slot, node, srcW, kind) {
   const slotW = Math.max(1, slot.clientWidth || (deckUI ? deckCardW() : 320));
   if (kind === 'img') {
     /** @type {HTMLElement} */ (node).classList.add('mf-deck-snap-img');
+    /* 图片快照腿的几何单源 = 槽盒（CSS `.mf-deck-snap[data-kind="img"]
+       .mf-deck-snap-inner { inset:0 }` ⇒ img 的 100%/100% + object-fit:contain
+       有确定盒可解 = 按槽宽等比铺满、高受限时居中留白）。
+       但克隆节点带的是**阅读面当时的内联变换**（viewers/image.js 的
+       `translate(tx,ty) scale(s)`）—— 那是「按阅读视口算的适屏比」，原样带进
+       卡槽就是作者实拍的「缩略图缩成中间一小块四周全白」（实测渲染宽 = 槽宽
+       的 0.349 = 旧 fit 的 s 值，不是槽盒几何）。故此处必须掐掉内联几何：
+       卡面是**只读缩放面**，视觉尺寸只由槽盒决定，与源视口的缩放态无关。 */
+    const imgEl = /** @type {HTMLElement} */ (node);
+    imgEl.style.transform = '';
+    imgEl.style.transformOrigin = '';
+    imgEl.style.width = '';
+    imgEl.style.height = '';
     inner.appendChild(node);
   } else {
     const k = srcW > 0 ? slotW / srcW : 1;
@@ -1740,6 +1796,7 @@ function buildCanvasPage(body) {
   const host = document.createElement('div');
   host.className = 'mf-cv-host';
   bindDocSwipe(host);
+  bindStripSwipe(strip);
   const dots = document.createElement('div');
   dots.className = 'mf-dots';
   dots.hidden = true;
@@ -1777,6 +1834,136 @@ function buildCanvasPage(body) {
   // 字体算出的截断点。document.fonts 缺失（老 WebView）则跳过，无副作用。
   document.fonts?.ready?.then(() => { fitRingLabels(); }).catch(() => {});
   void stackView;
+}
+
+// ══ 顶部环签横滑切签（ui-final-four ②；作者令 2026-11-04 13:04 逐字
+// 「把canvas顶部的标签 支持左右滑的手势现在也没了」）══════════════════════
+// 史检（本腿第一步，结论先行）：签条**从未**有过切签手势 —— 全史（git log -60
+// 逐版 navController.js）对 `.mf-strip` / `.mf-strip-chip` 的 pointer 绑定命中数
+// 恒为 0（chip 只绑 click）；切卡横滑一直是**内容区**那条腿（bindDocSwipe，
+// dc7c965bb 引入，至今在场）。作者读到的「没了」= 签条横拖**响应面退化**：
+// 9a992ea68（2026-11-02 08:39 标签栏重做）把签条从 in-flow `overflow-x:auto`
+// 签行（横拖 = 原生横滚）改成离流覆盖带（overflow:visible + 带 pointer-events:
+// none + 签 touch-action:manipulation）⇒ 横拖在签上零响应、零位移、零切签。
+// 故本腿 = **加法**：只给签本体加横滑切签（内容是环式的既有语义一字不动 ——
+// tests/mobile-canvas-sheet.spec.mjs T3 钉死）。判据三条：
+//   ① 横滑真的切签（setActiveTab → syncCanvasPage；非「整段禁切」凑绿）；
+//   ② 端点**非环式**：首/尾越界一律阻尼回弹，active 不变、不越界、不闪白；
+//   ③ 纵拖一律不认领（axis=y 时不 setPointerCapture、不 preventDefault，原生
+//      滚动路径保持）；横滑判定 = 双条件（|dx| ≥ 1.2×|dy| ∧ |dx| ≥ 8px），
+//      轴锁后单次成立不来回翻转。
+const STRIP_AXIS_PX = 8;        // 轴锁最小位移（与内容区 SWIPE_AXIS_PX 同参）
+const STRIP_AXIS_RATIO = 1.2;   // 横滑判据：|dx| ≥ 1.2×|dy|（两条件缺一不认）
+const STRIP_SWITCH_PX = 48;     // 提交阈（与内容区 SWIPE_SWITCH_PX 同参）
+const STRIP_BOUNCE_K = 0.35;    // 端点越界段阻尼（跟手 0.35 折 = 回弹手感）
+
+/** 签条横滑切签（非环式端点；只认签上的指针序列）。
+ *  跟手位移 = 签组统一变量 `--sdx`（chip 的 transform 链里加一项，布局零改、
+ *  环位姿 --rdx 照旧各算各的）；松手先摘 `.is-swiping`（恢复 CSS 过渡）再写 0
+ *  ⇒ 真回弹（不靠 JS 补间）。探针 `window.__nfStripSwipe` = 只读判据面。
+ *  @param {HTMLElement} strip */
+function bindStripSwipe(strip) {
+  /** @type {{id: number, x0: number, y0: number, axis: 'x'|'y'|null}|null} */
+  let g = null;
+  /** 横滑后必须吞掉的那一次 click（否则松手瞬间 chip 的 click 腿会把刚切好的
+   *  签再切一次 / 展开中签全名）。 */
+  let swallowClick = false;
+  const probe = { axis: /** @type {string|null} */ (null), claims: 0, switches: 0, bounces: 0, lastDx: 0, lastOffset: 0 };
+  (/** @type {any} */ (window)).__nfStripSwipe = probe;
+  const writeOffset = (px) => {
+    strip.style.setProperty('--sdx', `${px.toFixed(1)}px`);
+    probe.lastOffset = +px.toFixed(1);
+  };
+  const ringState = () => {
+    const docs = docTabs();
+    const i = docs.findIndex((d) => d.id === activeDocId());
+    return { i, n: docs.length, atStart: i <= 0, atEnd: i < 0 || i >= docs.length - 1 };
+  };
+  /** 端点越界段阻尼（首签右滑 / 尾签左滑 —— 非环式，不许环绕）。 */
+  const rubberBand = (dx, s) => ((s.atEnd && dx < 0) || (s.atStart && dx > 0) ? dx * STRIP_BOUNCE_K : dx);
+  const drop = () => { g = null; strip.classList.remove('is-swiping'); };
+
+  strip.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    const target = e.target instanceof Element ? e.target : null;
+    if (!target) return;
+    // 仲裁①原样保留（内容手势面起手永不接管；签条不压在内容面上，本闸是
+    // 「内容优先」硬口径的延续，防未来叠加层/标记面把内容手势漏进切签腿）。
+    if (target.closest(CONTENT_GESTURE_SELECTOR)) return;
+    if (docTabs().length < 2) return;     // 单签 / 空态：切签无对象
+    if (g) return;
+    swallowClick = false;
+    probe.axis = null;
+    g = { id: e.pointerId, x0: e.clientX, y0: e.clientY, axis: null };
+  });
+
+  strip.addEventListener('pointermove', (e) => {
+    if (!g || e.pointerId !== g.id) return;
+    // 双指 = pinch（调尺寸/缩放）：解除已武装的签条手势，让位内容操作。
+    if (e.isPrimary === false) { drop(); writeOffset(0); return; }
+    const dx = e.clientX - g.x0;
+    const dy = e.clientY - g.y0;
+    if (!g.axis) {
+      const ax = Math.abs(dx);
+      const ay = Math.abs(dy);
+      if (ax >= STRIP_AXIS_PX && ax >= STRIP_AXIS_RATIO * ay) g.axis = 'x';
+      else if (ay >= STRIP_AXIS_PX) g.axis = 'y';
+      else return;                                    // 死区内：不判定（点按路径原样）
+      probe.axis = g.axis;
+      if (g.axis === 'y') return;                     // 纵拖：零 capture / 零 preventDefault
+      // 横轴锁后**单次**成立（不来回翻转）：此刻才抢 capture + 关过渡（跟手）。
+      try { strip.setPointerCapture(e.pointerId); } catch { /* 合成事件无 capture */ }
+      swallowClick = true;
+      strip.classList.add('is-swiping');
+      probe.claims += 1;
+    }
+    if (g.axis !== 'x') return;
+    e.preventDefault();
+    probe.lastDx = dx;
+    writeOffset(rubberBand(dx, ringState()));
+  });
+
+  const finish = (e) => {
+    if (!g || e.pointerId !== g.id) return;
+    const { axis } = g;
+    g = null;
+    strip.classList.remove('is-swiping');
+    if (axis !== 'x') return;                 // 纵拖 / 死区：零接管、零归位写入
+    const dx = probe.lastDx;
+    const s = ringState();
+    const dir = dx < 0 ? 1 : -1;              // 左滑 = 下一张签，右滑 = 上一张签
+    const nextIdx = s.i + dir;
+    const canSwitch = Math.abs(dx) >= STRIP_SWITCH_PX && s.n > 1 && s.i >= 0
+      && nextIdx >= 0 && nextIdx < s.n;       // 端点非环式：越界一律回弹
+    // 弹簧归位：先摘 `.is-swiping`（恢复 CSS transform 过渡）并强制一次样式刷新，
+    // 再写 0 —— 同一帧「摘类 + 改值」在 WebKit 按无过渡直跳（实测），刷新后写值
+    // 才是真回弹；换签腿同样归零（新环位姿接管位移，不叠双重偏移）。
+    void strip.offsetWidth;
+    writeOffset(0);
+    // 吞 click 的旗有看门狗：pointercancel 路径不会到来 click，若旗滞留会吞掉
+    // 下一次真实的键盘/辅助点击（指针路径的 pointerdown 已重置，这里再兜一层）。
+    if (swallowClick) setTimeout(() => { swallowClick = false; }, 400);
+    if (canSwitch) {
+      probe.switches += 1;
+      logEvent('card-switch', { via: 'strip-swipe', dir });
+      switchToIndex(nextIdx);
+    } else {
+      probe.bounces += 1;
+      logEvent('strip-swipe-bounce', {
+        dir, edge: s.atStart ? 'start' : (s.atEnd ? 'end' : 'none'), dx: Math.round(dx),
+      });
+    }
+  };
+  strip.addEventListener('pointerup', finish);
+  strip.addEventListener('pointercancel', finish);
+
+  // 横滑吞 click（捕获阶段先于 chip 自身的 click 腿）。
+  strip.addEventListener('click', (e) => {
+    if (!swallowClick) return;
+    swallowClick = false;
+    e.stopPropagation();
+    e.preventDefault();
+  }, true);
 }
 
 /** 文档区横滑切卡（轴锁 8px / 阈 48px；环式；纵滚零劫持 —— 卡头手势同参数）。
@@ -2136,11 +2323,11 @@ function closePageFace(pageId) {
     case 'reminder':
       document.querySelector('#reminder-panel')?.classList.remove('open');
       break;
-    case 'todo':
-      // 改版批（2026-10-31）：待办页出栈 ⇒ overlay 载体关态（收编面归还由
-      // syncOverlayFaces 对账；桌面 outside-close 同源语义）。
-      document.querySelector('#todo-page')?.classList.remove('open');
-      break;
+    // ⛔ 【退役】todo-unify-entry-collapse 2026-11-04：'todo' 页整面退役（PAGES
+    // 同批注记）；原文留档，零物理删除：
+    // case 'todo':
+    //   document.querySelector('#todo-page')?.classList.remove('open');
+    //   break;
     case 'daemon':
       document.querySelector('#daemon-panel')?.classList.remove('open');
       break;
@@ -2150,9 +2337,11 @@ function closePageFace(pageId) {
     case 'profile':
       import('../memory.js').then((m) => m.closeMemoryModal?.()).catch(() => { /* 未载即未开 */ });
       break;
-    case 'tasks':
-      closeTaskPanel(true);
-      break;
+    // ⛔ 【退役】todo-unify-entry-collapse 2026-11-04：'tasks' 页整面退役，closeTaskPanel
+    // 的 import 已撤（taskPanel.js 无 import 方）；原文留档，零物理删除：
+    // case 'tasks':
+    //   closeTaskPanel(true);
+    //   break;
     case 'canvas':
       // 双页叠开修复批①（2026-10-31）：离页即归还活动文档 pane（头注既有契约
       // 「canvas 页离开 = 面归还、文档保留」的兑现——修前默认 no-op，pane 滞留
@@ -2304,7 +2493,9 @@ const CLOSE_WATCH = [
   { page: 'settings', sel: '#settings-overlay', off: (el) => !el.classList.contains('on'), attr: ['class'] },
   { page: 'search', sel: '#search-overlay', off: (el) => !el.classList.contains('on'), attr: ['class'] },
   { page: 'reminder', sel: '#reminder-panel', off: (el) => !el.classList.contains('open'), attr: ['class'] },
-  { page: 'todo', sel: '#todo-page', off: (el) => !el.classList.contains('open'), attr: ['class'] },
+  // ⛔ 【退役】todo-unify-entry-collapse 2026-11-04：'todo' 页整面退役 ⇒ 关闭对账
+  // 无对象（#todo-page 不再有 .open 开合路径）；原文留档：
+  // { page: 'todo', sel: '#todo-page', off: (el) => !el.classList.contains('open'), attr: ['class'] },
   { page: 'daemon', sel: '#daemon-panel', off: (el) => !el.classList.contains('open'), attr: ['class'] },
   { page: 'background', sel: '#bg-dropdown', off: (el) => el.classList.contains('hidden'), attr: ['class'] },
   { page: 'profile', sel: '#memory-overlay', off: (el) => !el.classList.contains('on'), attr: ['class'] },
@@ -2621,8 +2812,10 @@ function watchCanvasEvents() {
   document.addEventListener('canvas-independent-changed', onSwitch);
   // 「手机接入」入口行已撤除（作者令 2026-10-31 22:55）——nf:mobile-social-entry
   // 事件环外发腿随之摘除，联系人页无 social 页 push 路径。
-  // 改版批（2026-10-31）：消息列表「待办事项」入口行的手机层推页腿。
-  document.addEventListener('nf:mobile-todo-entry', () => pushPage('todo'));
+  // ⛔ 【退役】todo-unify-entry-collapse 2026-11-04：消息列表「待办事项」入口行已撤
+  // ⇒ 它的手机层推页腿（事件环外发 nf:mobile-todo-entry → pushPage('todo')）随之
+  // 摘除；手机端待办唯一入口 = 顶带待办胶囊（点开即展开面板）。原文留档：
+  // document.addEventListener('nf:mobile-todo-entry', () => pushPage('todo'));
   document.addEventListener('nf:mobile-goto', (e) => {
     const page = (/** @type {CustomEvent<{page?: string}>} */ (e)).detail?.page;
     if (page && PAGE_BY_ID.get(page)?.dock) dockTo(page);
@@ -2647,7 +2840,7 @@ function watchCanvasEvents() {
 // ── 激活 / 拆除 ─────────────────────────────────────────────────────
 
 export function activateNav() {
-  (/** @type {any} */ (window)).__nfMobileLayerEvents = __nfEvents;
+  (/** @type {any} */ (window)).__nfMobileLayerEvents = navLayerEvents();
   // 堆叠视角只读探针（性能验收 I9：首建耗时 / 缓存命中数 / 缓存条目）。
   (/** @type {any} */ (window)).__nfDeckProbe = () => ({
     lastMs: +deckSnapLastMs.toFixed(2),

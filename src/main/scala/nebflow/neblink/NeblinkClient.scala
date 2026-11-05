@@ -286,21 +286,36 @@ class NeblinkClient(
         nics.flatMap { nic =>
           val label = Option(nic.getDisplayName).filter(_.nonEmpty).orElse(Option(nic.getName)).getOrElse("")
           nic.getInetAddresses.asScala.toList
-            .filter(_.isInstanceOf[java.net.Inet4Address])
+            // IPv6 优先批（2026-11-04）：改前只取 `Inet4Address`，双栈主机的 v6 面整条被
+            // 丢掉（对端在有 v6 的链路上只能看到一条 v4 候选）。现在 v4/v6 都收，由
+            // `PresenceCandidateProbe.preferV6` 统一排序（v6 优先、v4 必留槽）。
+            // 判据边界（别把 v6 塞进只认 v4 的地方）：
+            //   - `EndpointPreference.subnet24` / `DialBudget.isPrivateOrLoopbackHost` 只认
+            //     v4 字面量 ⇒ v6 天然落到 `rank 2` / `Other` 档，不会被当成「同网段」；
+            //   - 候选 URL 一律经 `EndpointPreference.urlOf` 拼装（v6 自动加方括号）；
+            //   - **信任 IP 面（`peerAddresses` → `updateTrustedIps`）保持 v4 专属**——那里
+            //     是「连接源地址字符串精确匹配」，全仓没有 v6 文本规范化，塞进去只会制造
+            //     「同一地址两种写法」的假阴性。
+            .filter(addr => addr.isInstanceOf[java.net.Inet4Address] || addr.isInstanceOf[java.net.Inet6Address])
             .map(addr => NeblinkEndpoint(addr.getHostAddress, serverPort, classifyKind(addr.getHostAddress), label))
         }
 
       val physical = allNics.filterNot(isLikelyVirtualNic)
       val preferred = toEndpoints(physical)
-      val chosen = if preferred.nonEmpty then preferred else toEndpoints(allNics) // never lose all endpoints
+      val raw = if preferred.nonEmpty then preferred else toEndpoints(allNics) // never lose all endpoints
+      // 上报面卫生（presence-direct 批 C-3）：丢链路本地/未指定/组播地址、丢隧道网卡的非 tailnet
+      // 地址、去重、封顶 4 条；过滤后为空则原样返回 ⇒ 永不失去全部候选。保序，排序权仍在 EndpointPreference。
+      // IPv6 优先（本批）：在卫生过滤**之前**把 v6 提到前面，且**永远给 v4 留槽位**（见 preferV6）。
+      val chosen = PresenceCandidateProbe.sanitizeReported(PresenceCandidateProbe.preferV6(raw))
       cachedLocalPrefixes = EndpointPreference.localPrefixesOf(chosen.map(_.address))
       chosen
     catch case _: Exception => Nil
   }
 
-  /** C1 地址口径 (§3.3): `100.64.0.0/10` ⇒ `tailscale`，其余 IPv4 ⇒ `lan`. */
+  /** C1 地址口径 (§3.3): `100.64/10` 与 v6 ULA `fd7a:115c:a1e0::/48` ⇒ `tailscale`，其余 ⇒ `lan`。 */
   private def classifyKind(address: String): String =
-    if EndpointPreference.isTailscaleHost(address) then "tailscale" else "lan"
+    if EndpointPreference.isTailscaleHost(address) || EndpointPreference.isTailnetV6(address) then "tailscale"
+    else "lan"
 
   /**
    * Local `/24` prefixes seen by the most recent [[detectLocalEndpoints]] run.
@@ -1428,7 +1443,10 @@ class NeblinkClient(
       .filter(_.endpoints.nonEmpty)
       .map { p =>
         val urls = EndpointPreference.order(
-          p.endpoints.map(ep => s"http://${ep.address}:${ep.port}"),
+          // IPv6 优先批：唯一拼装点 `EndpointPreference.urlOf`（v6 自动加方括号）——
+          // 改前这里是裸的 `s"http://${ep.address}:${ep.port}"`，v6 地址会拼出不可解析的
+          // 形态（`http://fd7a:115c:a1e0::1:6138`），等于「v6 地址塞进只认 v4 的地方」。
+          p.endpoints.map(ep => EndpointPreference.urlOf(ep.address, ep.port)),
           prefixes
         )
         PeerInfo(
@@ -1443,9 +1461,20 @@ class NeblinkClient(
 
   end toNeblinkPeers
 
-  /** Extract all peer IP addresses from NebLink Server peer list. */
+  /**
+   * Extract all peer IP addresses from NebLink Server peer list.
+   *
+   * 🔴 IPv4 专属（IPv6 优先批 2026-11-04）：本集合的唯一消费者是
+   * `NeblinkService.updateTrustedIps` → `isTrustedPeer(remoteAddr)`，那是**连接源地址字符串
+   * 精确匹配**。全仓没有 v6 文本规范化（压缩/展开/scope id 三种写法都合法），把 v6 塞进
+   * 信任面只会制造「同一地址两种写法 ⇒ 匹配不上」的假阴性——那不会安全开洞，但会把一条
+   * 已配对链路判成不可信。故 v6 只进**拨号候选面**（`endpoints`），不进信任面。
+   */
   def peerAddresses(serverPeers: List[NeblinkPeerInfo]): Set[String] =
-    serverPeers.flatMap(_.endpoints.map(_.address)).toSet
+    serverPeers
+      .flatMap(_.endpoints.map(_.address))
+      .filterNot(EndpointPreference.isIpv6Literal)
+      .toSet
 
   // ===== 跨设备 Nebula 邮件（device-mail 批，2026-09-15；契约 v2）=====
 

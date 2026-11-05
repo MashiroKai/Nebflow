@@ -116,18 +116,55 @@ class BgWaitCapLedgerSpec extends CatsEffectSuite:
       }
     go(System.currentTimeMillis() + timeout.toMillis)
 
+  /** delegate 轨终态交付面 = 父会话**持久邮箱**（P2 邮箱化：不再 actor 直投）。 */
+  private def terminalMail(parentSid: String): IO[List[nebflow.core.mail.SessionMailbox.Entry]] =
+    nebflow.core.mail.SessionMailbox
+      .scanPending(parentSid)
+      .map(_.filter(_.kind == "delegate-terminal"))
+      .handleErrorWith(_ => IO.pure(Nil))
+
+  /**
+   * 真 delegate 形态的注册表前置：记录在册 **且已申报**（`delegate_report(finish)`）。
+   *
+   * 为什么必须有：终态矩阵的「complete × 未申报」腿（`Outcome.NudgeIdle`）按作者令
+   * 零父投递（只武装提醒）——本 spec 观测的是 cap 触发的诚实注记交付，夹具取矩阵的
+   * `complete × 已申报` 腿。
+   */
+  private def seedDeclaredReport(childSid: String, parentSid: String): IO[Unit] =
+    IO {
+      nebflow.core.delegate.DelegateRegistry.put(
+        nebflow.core.delegate.DelegateRegistry.Record(
+          id = childSid,
+          executor = "nebflow",
+          cwd = os.pwd.toString,
+          project = None,
+          taskId = Some("33"),
+          parentSessionId = parentSid,
+          title = s"cap ledger spec $childSid",
+          createdAt = System.currentTimeMillis()
+        )
+      )
+      nebflow.core.delegate.DelegateRegistry.updateReport(childSid, "finish", "cap ledger done", "") match
+        case Left(e)  => throw new RuntimeException(s"seed declared report failed: $e")
+        case Right(_) => ()
+    }
+
   test("C1 cap 触发 ⇒ 未结任务孤儿入账（含输出尾段快照）+ 诚实注记照旧交付"):
     val prevRoot = PathUtil.dataRoot
     val tmpRoot = os.temp.dir()
     PathUtil.setDataRoot(tmpRoot / "data")
     val system = ActorSystem("bgwait-ledger-1")
     val tmp = os.temp.dir()
-    val parentSid = "capledger-parent-1"
     val childSid = "delegate-capledger-1"
     val jobId = "job-capledger-1"
     val program = for
       resources <- mkResources(system, tmp)
+      // 父会话必须是**真会话**：邮箱生产者按父会话在场判定投递
+      // （MailboxProducer：会话已删 ⇒ parent-session-gone 跳过写箱）。
+      parent <- resources.sessionStore.createSession("Nebula-root", agentName = Some("Nebula"))
+      parentSid = parent.id
       _ <- resources.subAgentTaskStore.recordTask(mkTask(parentSid, childSid))
+      _ <- seedDeclaredReport(childSid, parentSid)
       // P2 death-watch 批：fixture 升级为真进程（真实 ShellSession + 后台 sleep）——
       // 活性探针读内核进程事实，合成行会被判 owner-lost 收割，cap 语义无从钉住。
       shell <- ShellSession.forSession(childSid)
@@ -159,14 +196,10 @@ class BgWaitCapLedgerSpec extends CatsEffectSuite:
         "supervisor-capledger-1"
       )
       _ <- supervisor ! AgentEvent.Completed(childSid, List(assistantMsg("turn done; bg job still running")))
-      // cap 300ms 后强制终判：诚实注记（回归面，A-4 语义零漂移）
+      // cap 300ms 后强制终判：诚实注记（回归面，A-4 语义零漂移）——交付面 = 父**持久邮箱**
       _ <- waitUntil(15.seconds)(
-        parentEvents.get.map(events =>
-          events
-            .collect { case e: AgentCommand.ExternalEvent =>
-              e
-            }
-            .exists(e => e.eventType == "completed" && e.payload.contains("[delegate-bg-wait]"))
+        terminalMail(parentSid).map(
+          _.exists(e => e.event.eventType == "completed" && e.event.payload.contains("[delegate-bg-wait]"))
         )
       )
       // 账本面：孤儿条目 = 未结任务的完成事件+输出尾段供续会话拾取（fix 3 本体）
@@ -183,11 +216,20 @@ class BgWaitCapLedgerSpec extends CatsEffectSuite:
         "[Background task completed] \"Full test suite (sbt -batch test)\":\nall green"
       )
       upgraded <- BgTaskLedger.pending(childSid)
+      mails <- terminalMail(parentSid)
       _ <- shell.cancelBackgroundJob(jobId).attempt.void
       _ <- ShellSession.destroySession(childSid).attempt.void
       _ <- BgTaskRegistry.unregisterSession(Some(childSid))
       _ <- system.stopAll
     yield
+      // 交付面（本批迁移的断言面）：诚实注记经父**持久邮箱**恰一条
+      assertEquals(mails.size, 1, s"exactly one delegate-terminal mail, got: ${mails.map(_.kind)}")
+      assertEquals(mails.head.kind, "delegate-terminal")
+      assertEquals(mails.head.event.eventType, "completed")
+      assert(
+        mails.head.event.payload.contains("[delegate-bg-wait]"),
+        s"honest note rides the mailbox delivery: ${mails.head.event.payload}"
+      )
       val orphan = pendingNow.find(_.jobId == jobId).get
       assertEquals(orphan.kind, "orphan", "cap hit with a pending task ⇒ orphan entry in the ledger")
       assertEquals(orphan.description, "Full test suite (sbt -batch test)")

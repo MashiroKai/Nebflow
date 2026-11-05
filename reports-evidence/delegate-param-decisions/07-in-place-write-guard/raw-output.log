@@ -1,0 +1,45 @@
+[sbt-gate] gate acquired after 0s
+[sbt-gate] heap cap -Xmx2600m applied via SBT_OPTS
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project delegate-nebflow-dcdeaa46-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-dcdeaa46/project
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/delegate-nebflow-dcdeaa46/)
+[info] compiling 1 Scala source to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-dcdeaa46/target/scala-3.5.2/test-classes ...
+[info] done compiling
+[warn] javaOptions will be ignored, fork is set to false
+── [用例A · 写入] inPlaceWriteAlarm ⇒ Some(
+🔴 [IN-PLACE WRITE ALARM] 本任务未分配 worktree 但改动了项目工作区，路径清单如下 / this task was dispatched WITHOUT a worktree (the read-only channel) yet it changed the project workspace:
+  - 1 new path(s): ?? sneaky.txt
+── [用例A · 写入] )
+── [用例B · 只读] inPlaceWriteAlarm ⇒ None
+── [用例E · 只提交] inPlaceWriteAlarm ⇒ Some(🔴 [IN-PLACE WRITE ALARM] 本任务未分配 worktree 但改动了项目工作区，路径清单如下 / this task was dispatched WITHOUT a worktree (the read-only channel) yet it changed the project workspace: ⏎   - HEAD moved (was 29e85b3, now 69d87d8) — commits were created)
+nebflow.core.delegate.InPlaceWriteGuardSpec:
+  + A 标红：没分配 worktree 却写文件 ⇒ 回执行点名改动路径 0.447s
+  + B 不误报：同一快照、确实只读 ⇒ None 0.156s
+  + C 有树不检：绑定了 worktree 的记录（在自家树里写是本分）⇒ None 0.161s
+  + D 回执位形：标红行是交付正文的第一行（不许埋尾部） 0.002s
+  + E 提交也算：没写文件但产生了提交（HEAD 移动）⇒ 标红 0.173s
+nebflow.core.delegate.DelegateWorkspaceWorktreeLegSpec:
+  + W1 零分配：worktree 参数缺省 ⇒ 不建树，新建目录清单前后逐项相同 + brief/回执都写明未分配 0.134s
+  + W2 按名建树：worktree="<name>" ⇒ <worktreeRoot>/<name> 且分支 delegate/<name>，回执写『精确 name/新建』 0.175s
+  + W3 同名复用：同一 name 再派一次 ⇒ 复用既有树，不产生第二个目录 0.389s
+  + W4 零模型调用：装计数判官面，跑完零分配腿 + 按名建树腿 + 模式解析后计数仍为 0 0.348s
+  + W5 非 git 工作区：就地腿 = None（旧语义不回归） 0.017s
+nebflow.core.delegate.ModeParamSpec:
+  + P1 纯函数形态：resolve 返回 Either（无 IO / 无端口）——零模型调用是类型级保证 0.001s
+  + P2 不填 mode ⇒ 确定性 kernel（leg=default，理由里写明 zero model calls） 0.001s
+  + P2b 显式 kernel/dispatcher 原样采纳（大小写/空白容忍，leg=param） 0.0s
+  + P3 显式 auto ⇒ 明确报错（含引导语），绝不静默映射成 kernel 0.001s
+  + P3b 值域外的词 ⇒ 显式报错（enum 单点来自 DualModeConfig.ModeWords） 0.001s
+  + P4 旧双模式总闸配置已退役：nebflow.json 里怎么写都不改变解析结果 0.001s
+  + P5 值域词表与 schema enum 同源（ModeWords = kernel|dispatcher，无 auto） 0.0s
+nebflow.core.delegate.DeviceWorktreeResolutionSpec:
+  + 态① 设备项目的座位腿不再问设备 git：本机不建任何树（判定机与设备建树腿均已删除） 0.012s
+  + 态② 设备项目 + worktree 参数 = 显式拒（文案含 DELEGATE_WORKTREE_REMOTE 与出路） 0.003s
+  + spawn 行契约：workspaceSeat 键 additive——传则落键，缺省则键缺席（旧行字节零漂移） 0.002s
+  + spawn 行契约：座位来源键 seat / seatName（本批新增——命中哪条规则可审计） 0.0s
+  + sq shell 转义: 空格/单引号路径内嵌安全（设备本地路径禁裸拼的唯一转义点） 0.0s
+[info] Passed: Total 22, Failed 0, Errors 0, Passed 22
+[success] Total time: 8 s, completed 2026年11月4日 22:07:36
+EXIT=0

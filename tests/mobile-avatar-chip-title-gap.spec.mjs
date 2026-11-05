@@ -360,7 +360,8 @@ async function avatarLeg(engineName, scheme) {
       ['usage', 'usage', '#usage-dashboard .ud-filters'],
       ['projects', 'projects', '.team-scroll .project-card'],
       ['settings', 'settings', '#settings-content .settings-section'],
-      ['todo', null, '#todo-page .todo-page-header'],
+      // ⛔ 入口收敛批 2026-11-04：'todo' 页整面退役（#todo-page 不可达）⇒ 腿退役。
+      // ['todo', null, '#todo-page .todo-page-header'],
       ['plugins', 'plugins', '#plugins-content'],
       ['daemon', 'daemon', '#daemon-panel .daemon-panel-header'],
       ['reminder', 'reminder', '#reminder-panel .reminder-panel-header'],
@@ -380,7 +381,7 @@ async function avatarLeg(engineName, scheme) {
       } else {
         ok(`${tag} B1 ${pid} 标题→首可见件 ≤16px`, g.gap <= 16, `${g.firstTag} gap=${g.gap}`);
       }
-      if (['usage', 'projects', 'settings', 'todo'].includes(pid)) {
+      if (['usage', 'projects', 'settings'].includes(pid)) {
         await page.screenshot({ path: join(SHOTS, `${tag}-${pid}-expanded.png`) });
       }
     }

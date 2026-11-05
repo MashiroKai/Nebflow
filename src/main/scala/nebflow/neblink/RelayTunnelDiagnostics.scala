@@ -112,12 +112,13 @@ private[neblink] object RelayTunnelDiagnostics:
    * revision could echo) are masked.
    */
   private[neblink] def redact(s: String): String =
-    s
-      .replaceAll("(?i)bearer\\s+[A-Za-z0-9._~+/-]+=*", "Bearer <redacted>")
-      .replaceAll("eyJ[A-Za-z0-9_-]{6,}\\.[A-Za-z0-9_-]{6,}(\\.[A-Za-z0-9_-]+)?", "<redacted-jwt>")
-      .replaceAll(
-        "(?i)\"(token|sessiontoken|devicetoken|refresh_token|access_token)\"\\s*:\\s*\"[^\"]*\"",
-        "\"$1\":\"<redacted>\""
-      )
+    // 🔴 2026-11-04 两小件批 · 件一：键表收归单一真源
+    // [[nebflow.shared.SecretKeys.redactText]]。旧实现自带一份三字面量键表
+    // （`token|sessiontoken|devicetoken|refresh_token|access_token`）——缺
+    // `device_token` 下划线变体、`clientSecret` / `password` / `apiKey`，与日志腿、
+    // CLI 腿、MCP 卡面腿各写一份正是缺口根因。语义不变的两条（服务端鉴权拒绝体
+    // `{"error":"Missing or invalid token"}` 逐字存活 · JWT / Bearer 一律抹除）由真源
+    // 的「赋值语境」判据与 JWT 腿承接，见 `RelayTunnelDiagnosticsSpec`。
+    nebflow.shared.SecretKeys.redactText(s)
 
 end RelayTunnelDiagnostics

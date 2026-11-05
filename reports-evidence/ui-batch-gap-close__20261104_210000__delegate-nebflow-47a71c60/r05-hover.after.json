@@ -1,0 +1,28 @@
+{
+  "before": {
+    "left": 396,
+    "top": 152,
+    "width": 44,
+    "height": 26,
+    "padding": "3px 6px",
+    "fontSize": "10px",
+    "dotW": "6px",
+    "dotH": "6px",
+    "nameFont": "10px",
+    "cls": "tfl-chip tfl-chip-tag"
+  },
+  "after": {
+    "left": 396,
+    "top": 152,
+    "width": 44,
+    "height": 26,
+    "padding": "3px 6px",
+    "fontSize": "10px",
+    "dotW": "6px",
+    "dotH": "6px",
+    "nameFont": "10px",
+    "cls": "tfl-chip tfl-chip-tag"
+  },
+  "hintLayers": 0,
+  "aria": "删除标签"
+}

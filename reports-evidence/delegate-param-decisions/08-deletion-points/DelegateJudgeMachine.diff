@@ -1,0 +1,215 @@
+diff --git a/src/main/scala/nebflow/llm/decision/DelegateJudgeMachine.scala b/src/main/scala/nebflow/llm/decision/DelegateJudgeMachine.scala
+index 2496a38e5..59fb343b9 100644
+--- a/src/main/scala/nebflow/llm/decision/DelegateJudgeMachine.scala
++++ b/src/main/scala/nebflow/llm/decision/DelegateJudgeMachine.scala
+@@ -11,13 +11,17 @@ import nebflow.shared.{Config, Defaults, Message, MessageRole, NebflowLogger}
+ import scala.concurrent.duration.*
+ 
+ /**
+- * DelegateJudgeMachine —— 判定机执行体（worktree-judge-fifo 批 #1224 增补 §3.1：
+- * **⑦ 判定机两层＝Jev 优先＋SmallJudge（LLM）兜底**，与分配族机制同一）.
++ * DelegateJudgeMachine —— **终态**判定机执行体（worktree-judge-fifo 批 #1224 增补
++ * §3.1：⑦ 判定机两层＝Jev 优先＋SmallJudge（LLM）兜底，与分配族机制同一）.
+  *
+  * 分层：core 只见 `DelegateJudgePort`（core 零 llm import 纪律——JevAllocatorPort
+  * 同款裁定）；本件落 llm.decision，注册点 = `agent.SharedResources` 构造行
+  * （`DelegateJudgePort.install(face(resources.providerRegistry))` 一行）。
+  *
++ * 本批删除（delegate-param-decisions 2026-11-04）：spawn 前的「会否改文件」判定
++ * 腿（worktree judge）整条移除——worktree 分配改由 `Delegate.worktree` 参数
++ * 决定，spawn 路径不再有任何模型调用。本件只剩终态判词一条腿。
++ *
+  * 两层语义：
+  *   ① Jev 优先 —— `jev` 节已配置（`JevSettings.fromConfig` 非 None）⇒ 走
+  *      [[DecisionProvider]] 批量问句机制（与 JevAllocator 同族：Choice 问句 +
+@@ -28,9 +32,8 @@ import scala.concurrent.duration.*
+  *      LlmAllocator.candidatesFrom/chainCall 同一模板：`judge.utilityModel`
+  *      钉首位＋去重，缺省 = 全局候选链；JSON 输出）。
+  *
+- * 失败语义：两层全败 ⇒ `None`（fail-open——spawn 腿两层全败＝按判是（fail-open
+- * 反转）；判否＝整腿无绑定，终态腿落自申报/既有完成语义；判定机绝不阻塞派发与
+- * 终态，JevAllocator 的 adjudicated #3 posture 同款）。
++ * 失败语义：两层全败 ⇒ `None`（fail-open——终态腿落自申报/既有完成语义；判定机
++ * 绝不阻塞终态，JevAllocator 的 adjudicated #3 posture 同款）。
+  *
+  * 🔴 判定机的问句/状态文本是**判定模型可见文案**——本批最小成稿（§16 待过目，
+  * 终稿归 N3 提示词批）。
+@@ -42,54 +45,19 @@ object DelegateJudgeMachine:
+   /** 判定调用时限缺省（JudgeConfig.timeoutMs 缺省口径；30s——判定有界）。 */
+   val DefaultTimeoutMs: Long = 30_000L
+ 
+-  /**
+-   * 「会否改文件」问句单点（Jev 腿与 SmallJudge 腿共用——两腿同问句，判据不分叉；
+-   * 新语义：只有会改文件的 delegate 建分支/worktree、进 FIFO 合并机制）。
+-   */
+-  val FileChangeQuestion: String =
+-    "Will this delegated task change any file under the project workspace? Judge ONLY from the brief's requested actions: " +
+-      "answer yes iff at least one holds — (1) the brief asks to edit, create, delete, move, or rename files or directories " +
+-      "under the workspace, or names files it will write; (2) the brief asks to run commands that write state into the " +
+-      "repository (git commit/branch/tag, code or artifact generation meant to be checked in, dependency or config file changes); " +
+-      "(3) the brief's deliverable is defined as changes that must land in the repository (fix/feature/refactor/migration). " +
+-      "Answer no iff every requested action is read-only — read, search, list, inspect (git log/status/diff/show), analyse, " +
+-      "measure, summarise, answer — with any writing confined to outside the repository (the chat reply, system temp dirs). " +
+-      "Uncertain => answer yes (the file-changing leg is the safe default: branch discipline applies)."
+-
+   /** 判定会话的身份戳（SendMessageParams 元数据；router 日志归因）。 */
+   private val JudgeSessionId = "delegate-judge"
+ 
+   // ── Face 装配（注册点唯一消费面） ────────────────────────────────────
+ 
++  /**
++   * 终态判定面。**本批（delegate-param-decisions 2026-11-04）删除 spawn 腿**：
++   * `.decideWorktree` / `.decideWorktreeDetailed` 连同 `FileChangeQuestion` /
++   * `jevWorktree` / `smallJudgeWorktree` / `parseWorktree` 一并移除——worktree
++   * 分配不再由模型决定（`Delegate` 的 `worktree` 参数决定），spawn 路径零模型调用。
++   */
+   def face(registry: ProviderRegistry): DelegateJudgePort.Face =
+     new DelegateJudgePort.Face:
+-      def decideWorktree(task: String): IO[Option[Boolean]] =
+-        decideWorktreeDetailed(task).map(_.map(_.changesFiles))
+-
+-      // 引擎加固批 2026-10-09：裁决＋判定腿（spawn 行 judgeLeg 审计键的数据源）。
+-      // 两层全败（None）的 fail-open 反转腿由调用方（DelegateWorkspace.prepare）标注。
+-      override def decideWorktreeDetailed(task: String): IO[Option[DelegateJudge.WorktreeJudgement]] =
+-        jevLeg
+-          .flatMap {
+-            case Some(p) =>
+-              jevWorktree(p, judgeTimeoutMs, task).map(
+-                _.map(b => DelegateJudge.WorktreeJudgement(b, DelegateJudge.JudgeLeg.Jev))
+-              )
+-            case None =>
+-              smallJudgeWorktree(registry, task).map(
+-                _.map(b => DelegateJudge.WorktreeJudgement(b, DelegateJudge.JudgeLeg.SmallJudge))
+-              )
+-          }
+-          .flatTap {
+-            case None =>
+-              IO(
+-                logger.warnSync(
+-                  "delegate-judge: file-change decision unavailable on both legs — failing open to file-changing (branch discipline + merge-queue eligibility preserved)"
+-                )
+-              )
+-            case _ => IO.unit
+-          }
+-
+       def judgeTerminal(input: TerminalInput): IO[Option[Verdict]] =
+         jevLeg
+           .flatMap {
+@@ -121,39 +89,6 @@ object DelegateJudgeMachine:
+     IO.blocking(JevSettings.fromConfig(health = None))
+       .map(_.flatMap(DecisionProviders.build(_)))
+ 
+-  /** 判 worktree 的 Jev 问句（Choice；need_ 同族判据 P(yes)≥0.5）。 */
+-  private def jevWorktree(p: DecisionProvider[IO], timeoutMs: Long, task: String): IO[Option[Boolean]] =
+-    val req = DecisionRequest(
+-      state = worktreeState(task),
+-      questions = List(
+-        DecisionQuestion.Choice(
+-          id = "worktree",
+-          instructions = FileChangeQuestion,
+-          criteria = Map(
+-            "yes" -> Some(
+-              "the brief requests file writes/edits/creations/deletes/moves under the workspace, repo-mutating commands, or a deliverable defined as repository changes — the delegate gets branch delegate/<id> (worktree per the judge) and enters the merge queue on completion"
+-            ),
+-            "no" -> Some(
+-              "every requested action is read-only and any writing lands outside the repository — the delegate still gets branch delegate/<id> and an isolated read-only worktree seat, but with zero commits ahead of the base it never enters the merge queue and finishes directly"
+-            )
+-          )
+-        )
+-      )
+-    )
+-    p.predict(req).timeout(timeoutMs.millis).attempt.flatMap {
+-      case Right(Right(resp)) =>
+-        IO.pure(resp.answers.get("worktree").flatMap(DecisionAnswer.pYes).map(_ >= DecisionAnswer.YesThreshold))
+-      case Right(Left(err)) =>
+-        IO(logger.warnSync(s"delegate-judge: jev worktree leg failed (${err.message}) — SmallJudge fallback")) *> IO
+-          .pure(None)
+-      case Left(e) =>
+-        IO(
+-          logger
+-            .warnSync(s"delegate-judge: jev worktree leg errored (${e.getClass.getSimpleName}) — SmallJudge fallback")
+-        ) *> IO.pure(None)
+-    }
+-  end jevWorktree
+-
+   /**
+    * 终态判词的 Jev 问句（Choice；「blocked」= 注记通道——#566：blocked 判词退役，
+    *  判官的「没做成」折 completed＋注记，不是独立状态）。
+@@ -265,54 +200,6 @@ object DelegateJudgeMachine:
+       .filter(_ > 0)
+       .getOrElse(DefaultTimeoutMs)
+ 
+-  private def smallJudgeWorktree(registry: ProviderRegistry, task: String): IO[Option[Boolean]] =
+-    utilityCandidates(registry).flatMap {
+-      // 四修③（2026-10-07 修复令）：候选链空（整链，非旧链头）不再静默——WARN
+-      // 在案（fail-open 结构态：判定全败只有 finally 的两条腿级 warn，无此因）。
+-      case Nil =>
+-        IO(
+-          logger.warnSync(
+-            "delegate-judge: small-judge worktree leg unavailable — utility model resolves to no candidate (judge.utilityModel unresolved AND root candidate chain empty)"
+-          )
+-        ) *> IO.pure(None)
+-      case cands =>
+-        val params = SendMessageParams(
+-          messages = List(
+-            Message(
+-              MessageRole.User,
+-              Left(
+-                s"""${worktreeState(task)}
+-               |
+-               |$FileChangeQuestion
+-               |
+-               |Answer with ONLY a JSON object: {"worktree": true|false} — true = the task will change files (branch + worktree discipline applies); false = pure read / no file changes (read-only seat: a branch delegate/<id> and an isolated worktree are still created, but with zero commits ahead the delegate never enters the merge queue — finish directly).""".stripMargin
+-              )
+-            )
+-          ),
+-          model = cands.head.model, // 占位：chainCall 逐候选 copy(model) 覆写
+-          sessionId = Some(JudgeSessionId),
+-          agentId = Some(JudgeSessionId),
+-          // 辅面钉旧值（钳制批 2026-10-21）：小判官是单 JSON 短答调用，钉
+-          // ProbeMaxTokens（16384，升额前服务值）——128000 常量不再随主面上线。
+-          maxTokensOverride = Some(Defaults.ProbeMaxTokens)
+-        )
+-        chainCall(registry, cands)(params).flatMap {
+-          // 链耗尽 = 可恢复调用层失败（归因词与主分配腿 LlmError 口径一致：
+-          // 「candidate chain exhausted」——绝不与结构性 fail-open 混记；逐候选
+-          // 真因已由缝内 WARN 落线）。
+-          case None =>
+-            IO(
+-              logger.warnSync(
+-                "delegate-judge: small-judge worktree call failed (candidate chain exhausted — see per-candidate WARN lines)"
+-              )
+-            ) *> IO.pure(None)
+-          // 解析失败保持四修③既有口径：worktree 腿 parse 静默（None = 回落接手，
+-          // 非误判）；WARN 位点只在终态判词腿（DelegateJudgeObserveSpec 钉面）。
+-          case Some(raw) => IO.pure(parseWorktree(raw))
+-        }
+-    }
+-  end smallJudgeWorktree
+-
+   private def smallJudgeVerdict(registry: ProviderRegistry, input: TerminalInput): IO[Option[Verdict]] =
+     utilityCandidates(registry).flatMap {
+       // 四修③：候选链空（整链，非旧链头）不再静默——WARN 在案（fail-open 结构态）。
+@@ -427,11 +314,6 @@ object DelegateJudgeMachine:
+ 
+   // ── 状态拼装与解析（纯函数——spec 判红锚） ───────────────────────────
+ 
+-  private def worktreeState(task: String): String =
+-    val capped = if task.length > 12000 then task.take(12000) else task
+-    s"""=== TASK BRIEF ===
+-$capped"""
+-
+   /**
+    * 判词输入硬化（引擎加固批 2026-10-09，上游审计 #31 结论②）：
+    *   - delegate 终文段 = **不可信输入**：结构化分隔（`<<<RESULT-BEGIN/END>>>`）+
+@@ -486,10 +368,6 @@ inFlightChains: ${input.inFlightChains}"""
+     if start < 0 || end <= start then None
+     else io.circe.parser.parse(t.substring(start, end + 1)).toOption
+ 
+-  /** SmallJudge worktree JSON：`{"worktree": true|false}`。 */
+-  private[decision] def parseWorktree(text: String): Option[Boolean] =
+-    extractJsonObject(text).flatMap(j => j.hcursor.get[Boolean]("worktree").toOption)
+-
+   /**
+    * SmallJudge 三态 JSON：`{"verdict": "...", "reason": "..."}`（#566：blocked
+    *  答案折 completed＋注记——退役状态，不再是独立判词）。

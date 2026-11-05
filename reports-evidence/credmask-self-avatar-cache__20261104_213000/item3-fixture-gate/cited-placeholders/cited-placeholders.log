@@ -1,0 +1,10 @@
+$ # ④ 作者点名的「现状不该误报」样本：逐个列出敏感键字面量及其门禁判据（值本身不打印）
+$ # 判据 = 键名命中 ∧ 值 ≥32 ∧ 字符类 ≥3 ∧ 非占位词；任一不成立 ⇒ 门禁绿
+  tests/fixtures/tool-card-leak-on-reload/fixture.json:123  key=deviceToken  value_len=41  classes=3  verdict=GREEN  (placeholder ⇒ 不红)
+  tests/fixtures/tool-card-leak-on-reload/fixture-legacy.json:123  key=deviceToken  value_len=41  classes=3  verdict=GREEN  (placeholder ⇒ 不红)
+  tests/fixtures/msg-token-chip/reinject-llm.mjs:21  key=apiKey  value_len=15  classes=2  verdict=GREEN  (len<32 ∧ classes<3 ⇒ 不红)
+  tests/fixtures/msg-token-chip/harness.html:80  key=token  value_len=18  classes=3  verdict=GREEN  (len<32 ⇒ 不红)
+  tests/fixtures/msg-token-chip/harness.html:109  key=token  value_len=15  classes=2  verdict=GREEN  (len<32 ∧ classes<3 ⇒ 不红)
+  tests/fixtures/provider-test-modal/harness.html:35  key=apiKey  value_len=21  classes=2  verdict=GREEN  (len<32 ∧ classes<3 ⇒ 不红)
+
+合计 6 处；判据全绿（RED=0）

@@ -1,0 +1,78 @@
+
+Running 2 tests using 1 worker
+
+[1/2] tests/todo-entry-collapse.spec.mjs:149:1 › ①③④ 桌面 1280×800：入口行退役、胶囊唯一入口且可展开、面板承载计数/逾期/四签/分组
+  1) tests/todo-entry-collapse.spec.mjs:149:1 › ①③④ 桌面 1280×800：入口行退役、胶囊唯一入口且可展开、面板承载计数/逾期/四签/分组 ───
+
+    Test timeout of 180000ms exceeded.
+
+    Error: locator.click: Test timeout of 180000ms exceeded.
+    Call log:
+      - waiting for locator('#task-list .tfl-capsule')
+        - locator resolved to <button type="button" aria-label="1 逾期" aria-expanded="true" class="tfl-capsule has-overdue is-overdue">…</button>
+      - attempting click action
+        2 × waiting for element to be visible, enabled and stable
+          - element is not visible
+        - retrying click action
+        - waiting 20ms
+        2 × waiting for element to be visible, enabled and stable
+          - element is not visible
+        - retrying click action
+          - waiting 100ms
+        330 × waiting for element to be visible, enabled and stable
+            - element is not visible
+          - retrying click action
+            - waiting 500ms
+
+
+      252 |
+      253 |   // 收起：再点胶囊 ⇒ 面板收回、胶囊仍在（toggle 语义）。
+    > 254 |   await capsule.click();
+          |                 ^
+      255 |   await expect(card).toHaveAttribute('data-state', 'capsule');
+      256 |   await expect(capsule).toBeVisible();
+      257 |
+        at /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-79768ef5/tests/todo-entry-collapse.spec.mjs:254:17
+
+    Error Context: test-results/todo-entry-collapse-①③④-桌面-5544e-、胶囊唯一入口且可展开、面板承载计数-逾期-四签-分组/error-context.md
+
+
+[2/2] tests/todo-entry-collapse.spec.mjs:261:1 › ②③④⑤ 手机 375×812：任务圆钮/任务页退役，胶囊是唯一入口且可展开，信息不丢
+  2) tests/todo-entry-collapse.spec.mjs:261:1 › ②③④⑤ 手机 375×812：任务圆钮/任务页退役，胶囊是唯一入口且可展开，信息不丢 ────────
+
+    Test timeout of 180000ms exceeded.
+
+    Error: locator.click: Test timeout of 180000ms exceeded.
+    Call log:
+      - waiting for locator('#task-list .tfl-capsule')
+        - locator resolved to <button type="button" aria-label="1 逾期" aria-expanded="true" class="tfl-capsule has-overdue is-overdue">…</button>
+      - attempting click action
+        2 × waiting for element to be visible, enabled and stable
+          - element is not visible
+        - retrying click action
+        - waiting 20ms
+        2 × waiting for element to be visible, enabled and stable
+          - element is not visible
+        - retrying click action
+          - waiting 100ms
+        341 × waiting for element to be visible, enabled and stable
+            - element is not visible
+          - retrying click action
+            - waiting 500ms
+
+
+      374 |   //     dock 页 = #mobile-pages 全屏页（z156）按设计盖住顶带 —— 与退役前左上
+      375 |   //     圆钮（z30）同一可达面：待办入口只在聊天根页可点，回聊天根一次 dock 键。
+    > 376 |   await capsule.click(); // 先收起面板，避免遮挡判读
+          |                 ^
+      377 |   await page.locator('#mobile-dock .dock-key[data-dock="messages"]').click();
+      378 |   await expect(page.locator('.mobile-page[data-page="messages"].live')).toHaveCount(1);
+      379 |   await expect(page.locator('.mobile-page[data-page="messages"] .fm-todo-entry')).toHaveCount(0);
+        at /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-79768ef5/tests/todo-entry-collapse.spec.mjs:376:17
+
+    Error Context: test-results/todo-entry-collapse-②③④⑤-手-c23e2-任务圆钮-任务页退役，胶囊是唯一入口且可展开，信息不丢/error-context.md
+
+
+  2 failed
+    tests/todo-entry-collapse.spec.mjs:149:1 › ①③④ 桌面 1280×800：入口行退役、胶囊唯一入口且可展开、面板承载计数/逾期/四签/分组 ────
+    tests/todo-entry-collapse.spec.mjs:261:1 › ②③④⑤ 手机 375×812：任务圆钮/任务页退役，胶囊是唯一入口且可展开，信息不丢 ─────────

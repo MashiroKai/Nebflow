@@ -137,6 +137,29 @@ object MergeQueue:
     /** 最近一次未放行原因（净空闸/分支闸；面板可见——waiting 成员的「为什么还没轮到」）。 */
     lastBlockReason: Option[String] = None,
     /**
+     * R1（队头不再堵死全队批 2026-11-04）：连续未能授窗的拍数——每次
+     * [[requeueBlocked]] +1，授窗送达/关账时清零。**落账本**（跨重启保留：
+     * 重启后敏感度不归零，队列不会从头再撞同一堵墙一遍）。
+     */
+    blockedRounds: Int = 0,
+    /**
+     * R1 跳过窗（退避截止，ms）：此刻之前本成员**不参与放行轮转**
+     * （[[pumpWith]] 挑候选时跳过）——队头退避期间，后面能走的人先走。
+     * 指数退避 + 抖动，上界 [[BackoffMaxMs]]。
+     */
+    skipUntilMs: Option[Long] = None,
+    /**
+     * R1 退避上界后的**显式降级态**（"needs-human" + 原因全文）：非空 = 队列不再
+     * 自动授窗（重试到上界，再撞也无意义），成员资格保留、careTick 每拍只在面板
+     * 上标红；人工把分支并了之后，下一拍**账实核对**会自己关账 merged（R2）。
+     *
+     * 语义边界（作者 2026-11-03 18:14 四态矩阵）：这是**机制挂起**的显式面
+     * （引擎自己放弃自动放行），不是「等作者裁定」——delegate 申报 standby 等
+     * 作者回答的语义在 DelegateCompletionMatrix，与队列账本无关，两者绝不合并成
+     * 一个状态名。
+     */
+    needsHuman: Option[String] = None,
+    /**
      * 内部腿通道（进程内运行态，闭包/ref **不持久**——R5 起成员资格的数据面由
      * write-ahead 通道 [[MergeQueueChannel]] 持久，闭包本身仍随进程消亡）：child =
      * 注入目标 actor，supervisor = 合并轮终态回路的 replyTo。持久账本回载后为
@@ -190,7 +213,10 @@ object MergeQueue:
     "grantedBaseTip" -> m.grantedBaseTip.asJson,
     "closedAt" -> m.closedAt.asJson,
     "closeReason" -> m.closeReason.asJson,
-    "lastBlockReason" -> m.lastBlockReason.asJson
+    "lastBlockReason" -> m.lastBlockReason.asJson,
+    "blockedRounds" -> m.blockedRounds.asJson,
+    "skipUntilMs" -> m.skipUntilMs.asJson,
+    "needsHuman" -> m.needsHuman.asJson
   )
 
   private def memberFromJson(j: Json): Option[Member] =
@@ -219,7 +245,11 @@ object MergeQueue:
       grantedBaseTip = c.get[Option[String]]("grantedBaseTip").toOption.flatten,
       closedAt = c.get[Option[Long]]("closedAt").toOption.flatten,
       closeReason = c.get[Option[String]]("closeReason").toOption.flatten,
-      lastBlockReason = c.get[Option[String]]("lastBlockReason").toOption.flatten
+      lastBlockReason = c.get[Option[String]]("lastBlockReason").toOption.flatten,
+      // R1 退避态（旧账本缺键 = 0/None：升级后存量成员从零开始计数，不误降级）。
+      blockedRounds = c.get[Int]("blockedRounds").toOption.getOrElse(0),
+      skipUntilMs = c.get[Option[Long]]("skipUntilMs").toOption.flatten,
+      needsHuman = c.get[Option[String]]("needsHuman").toOption.flatten
     )
 
   private def persistLocked(): Unit =
@@ -432,9 +462,16 @@ object MergeQueue:
   private final case class NotifyMemo(lastKey: String, rounds: Int, escalated: Boolean)
   private var notifyMemos: Map[String, NotifyMemo] = Map.empty
 
+  /** R1 「已把 needs-human 升级摆到人面前」的成员集（进程内，每成员一次）。 */
+  private var needsHumanAnnounced: Set[String] = Set.empty
+
   // lock held
   private def clearNotifyMemoLocked(delegateId: String): Unit =
     notifyMemos = notifyMemos - delegateId
+
+  // lock held（R1 退避/降级记账清理单点：关账、授窗成功、人工/冻结路径复位）
+  private def clearBackoffMemosLocked(delegateId: String): Unit =
+    needsHumanAnnounced = needsHumanAnnounced - delegateId
 
   /**
    * 阻塞/失败通知入口（去重 + 升级单点）。同 (kind, reason) 只发一次；原因或
@@ -483,7 +520,13 @@ object MergeQueue:
     holder: Option[String],
     /** 本条状态（waiting / turn-granted）。 */
     state: String,
-    readyAt: Long
+    readyAt: Long,
+    /** R1：连续被堵拍数（面板「为什么它一直不去合」的读数）。 */
+    blockedRounds: Int = 0,
+    /** R1：退避跳过窗截止（ms；None = 不在退避——本拍参与轮转）。 */
+    skipUntilMs: Option[Long] = None,
+    /** R1：显式降级态（非空 = 队列已停止自动授窗，请人工处理；面板标红）。 */
+    needsHuman: Option[String] = None
   )
 
   def queueViewOf(delegateId: String): Option[QueueView] = lock.synchronized {
@@ -504,7 +547,10 @@ object MergeQueue:
             ahead = open.take(pos).map(_.delegateId),
             holder = open.find(_.state == State.TurnGranted).map(_.delegateId),
             state = me.state,
-            readyAt = me.readyAt
+            readyAt = me.readyAt,
+            blockedRounds = me.blockedRounds,
+            skipUntilMs = me.skipUntilMs,
+            needsHuman = me.needsHuman
           )
         )
     }
@@ -680,8 +726,15 @@ object MergeQueue:
         members.get(entry.delegateId) match
           case Some(existing) if existing.open =>
             // 幂等：已在账的开放成员不重复入账（重复完成/钩子重放），只刷新通道。
-            val refreshed = existing.copy(internal = entry.internal.orElse(existing.internal), external = entry.external.orElse(existing.external))
+            val channelMerged =
+              existing.copy(internal = entry.internal.orElse(existing.internal), external = entry.external.orElse(existing.external))
+            // R1 自愈腿：通道重新出现 ⇒ 清退避窗/needsHuman 降级（复活后本拍即可授窗）。
+            val (refreshed, revived) = reviveOnChannelLocked(existing, channelMerged)
             members = members.updated(entry.delegateId, refreshed)
+            if revived then
+              MergeQueueChannel.sync(refreshed.delegateId, refreshed.state, memberJson(refreshed))
+              persistLocked()
+              record(refreshed, "channel-restored-revive", Json.obj("state" -> refreshed.state.asJson))
             record(refreshed, "enqueued-duplicate", Json.obj("state" -> refreshed.state.asJson))
             if refreshed.state == State.Waiting then Some(refreshed) else None
           case _ =>
@@ -716,9 +769,15 @@ object MergeQueue:
       ensureLoadedLocked()
       members.get(entry.delegateId) match
         case Some(existing) if existing.open =>
-          val refreshed =
+          val channelMerged =
             existing.copy(internal = entry.internal.orElse(existing.internal), external = entry.external.orElse(existing.external))
+          // R1 自愈腿（见 reviveOnChannelLocked）：申报腿带来的新通道腿 = 条件已变。
+          val (refreshed, revived) = reviveOnChannelLocked(existing, channelMerged)
           members = members.updated(entry.delegateId, refreshed)
+          if revived then
+            MergeQueueChannel.sync(refreshed.delegateId, refreshed.state, memberJson(refreshed))
+            persistLocked()
+            record(refreshed, "channel-restored-revive", Json.obj("state" -> refreshed.state.asJson))
           record(refreshed, "enqueued-pending-duplicate", Json.obj("state" -> refreshed.state.asJson))
         case _ =>
           // write-ahead（R5）：成员镜像先落持久通道——进程死在内存/账本写盘前，
@@ -768,40 +827,163 @@ object MergeQueue:
         case false => IO.blocking(BlockNotifyPort.deliver(entry, "enqueue-failed", reason))
       }
 
+  // ── R1 队头跳过 + 退避（队头不再堵死全队批 2026-11-04 · 审计 R1）──────
+  //
+  // 病灶（停顿审计 20261104_164800 §4-R1）：`Deferred`（无投递通道）与持续被拒
+  // 的成员**照样占队头**——`requeueBlocked` 保 `readyAt`（FIFO 键不变）⇒ 下一拍
+  // 还是它 ⇒ 整条队零放行（79c40e17 220 拍 / c102e6d0 同形态）。四处都读这条。
+  //
+  // 收口：**跳过 + 退避重试 + 上界降级**——被堵的成员让开队头（`skipUntilMs` 窗
+  // 内不参与轮转），后面能走的先走；窗到期再试；连续 [[MaxBlockedRounds]] 拍都不
+  // 行 ⇒ 置 `needsHuman`（显式「请人工处理」态，队列不再自动授窗，只等账实核对
+  // 或人工）。**绝不无限重试**，也绝不静默：每拍一次 `grant-blocked` 审计行 +
+  // 首次/变化必通知（既有 #943 面），降级时一条 escalate。
+  //
+  // **两条上界**（不足批实测修正）：**正在饿死别人**的死结 8 拍到顶即降级；**孤身
+  // 死结**（队列里没有别的可放行者）走 [[SoloMaxBlockedRounds]]（3×）绝对封顶——
+  // 给既有「N 拍同因升级作者」阶梯（[[EscalateAfterBlockedRounds]]）留完整跑道
+  // （实测：把孤身腿也压到 8 拍会让 `MergeQueueSpec` ⑬ 的升级拍点漂移）。
+  //
+  // 参数现读 prop（`BgGateWaitTimeoutMs` 同款先例）⇒ spec 可即时翻转；生产无
+  // 在线翻转路由（改值需重启宿主）。
+
+  /** 退避首拍间隔（ms，默认 30s ≈ 一拍扫描；指数退避的基数）。 */
+  def BackoffBaseMs: Long =
+    sys.props.getOrElse("nebflow.mergequeue.backoff.baseMs", "30000").toLong
+
+  /** 退避上界（ms，默认 10min——上界内一定还会再试一次，不是放弃）。 */
+  def BackoffMaxMs: Long =
+    sys.props.getOrElse("nebflow.mergequeue.backoff.maxMs", "600000").toLong
+
+  /** 连续被堵拍数上界（到顶降级 `needsHuman`：**不许无限重试**）——适用于**正在
+    * 饿死别人**的死结（让位之后仍是它）；孤身死结走 [[SoloMaxBlockedRounds]]。 */
+  def MaxBlockedRounds: Int =
+    sys.props.getOrElse("nebflow.mergequeue.backoff.maxRounds", "8").toInt
+
+  /** 孤身死结的绝对封顶倍数（队列里没有别的可放行者 ⇒ 3× 上界才降级）。 */
+  val SoloBlockedRoundFactor: Int = 3
+
+  /** 孤身死结的绝对封顶（拍）：到顶照样降级 `needsHuman`——**有限**，只是跑道更长。 */
+  def SoloMaxBlockedRounds: Int = MaxBlockedRounds * SoloBlockedRoundFactor
+
+  /** 退避抖动幅度（±ratio；兄弟成员同拍被堵时不共振，避免再次集体同拍）。 */
+  val BackoffJitterRatio: Double = 0.2
+
+  /** 单拍内连续改授的最大深度（一次 pump 里让多少个被堵成员靠边站；防递归爆栈）。 */
+  private val MaxGrantChainDepth: Int = 16
+
+  /**
+   * 退避间隔（纯函数，spec 判红锚）：`base × 2^(rounds-1)` 封顶 `maxMs`，再乘
+   * `1 ± jitter`（`jitter ∈ [0,1)` 注入 ⇒ 生产传 `math.random()`，spec 传定值）。
+   */
+  private[delegate] def backoffDelayMs(rounds: Int, baseMs: Long, maxMs: Long, jitter: Double): Long =
+    val exp = math.max(0, math.min(rounds - 1, 20))
+    val raw = math.min(maxMs.toDouble, baseMs.toDouble * math.pow(2.0, exp.toDouble))
+    val factor = 1.0 + (jitter * 2.0 - 1.0) * BackoffJitterRatio
+    math.max(0L, math.round(raw * factor))
+
+  /** 本拍是否可参与放行轮转（R1 跳过判据）：非降级态 ∧ 退避窗已过。 */
+  private def grantEligibleLocked(m: Member, nowMs: Long): Boolean =
+    m.needsHuman.isEmpty && m.skipUntilMs.forall(_ <= nowMs)
+
+  // lock held：本项目里**除自己以外**还有可放行的等待成员（R1 让位的意义判据）。
+  // 单成员队列里让位 = 空转一拍（谁也不走、升级阶梯还倒退），所以只有「后面真有人
+  // 能走」时才让位——这正是审计 §4-R1「让后面能走的先走」的原文语义。
+  private def otherEligibleWaitingLocked(projectKey: String, excludeId: String, nowMs: Long): Boolean =
+    members.values.exists(m =>
+      m.projectKey == projectKey && m.open && m.state == State.Waiting && m.delegateId != excludeId &&
+        grantEligibleLocked(m, nowMs)
+    )
+
+  /**
+   * **R1 自愈腿**（降级不是终态）——成员的投递通道**重新出现**（属主回合收尾后重入队
+   * 带 leg / 监督者 respawn 换绑 / 续聊腿重新安装）⇒ 队列终于读到一个「条件已变」的
+   * 硬信号 ⇒ 清退避窗与 `needsHuman` 降级，本拍即可重新轮转。
+   *
+   * 为什么必须有：`no-channel` 的上界降级是「别在死结上空转」，不是「永久封存」。
+   * 没有这条自愈腿，`79c40e17` 形态会被自己的上界钉死——属主回合收尾、leg 回来了，
+   * 队列却再也不授窗（只能等人工/账实核对），把「不许无限重试」偷换成「一次降级永不
+   * 翻身」。通道是否在场是队列**能自己读到**的判据（[[notifyTurn]] 同一读数），
+   * 所以这条自愈腿不给机制引入新的猜测面。
+   *
+   * @return 该成员是否被复活（调用方据此落审计行/写盘）。
+   */
+  private def reviveOnChannelLocked(previous: Member, merged: Member): (Member, Boolean) =
+    val gainedLeg =
+      previous.internal.isEmpty && merged.internal.isDefined ||
+        previous.external.isEmpty && merged.external.isDefined
+    val degraded = previous.needsHuman.isDefined || previous.skipUntilMs.isDefined || previous.blockedRounds > 0
+    if !gainedLeg || !degraded then (merged, false)
+    else
+      clearBackoffMemosLocked(previous.delegateId)
+      // 以**合并后**的成员为底（新通道腿必须留在账上——复活后的第一拍就要用它投递）。
+      (merged.copy(blockedRounds = 0, skipUntilMs = None, needsHuman = None), true)
+
+
   // ── 放行（waiting → turn-granted；通知即放行） ────────────────────────
 
   /**
-   * 一拍放行尝试（本 projectKey）。窗被持（已有 turn-granted）⇒ 零动作；
-   * 队头 waiting 成员按闸序核对：账实核对（已并 → 关账，永不通知合并）→
-   * 净空闸（脏/分支错位 → 留队记账）→ 通知放行（通道失败 → owner-gone）。
+   * 一拍放行尝试（本 projectKey）。窗被持（已有 turn-granted）⇒ 零动作；否则在
+   * waiting 成员里按 FIFO 序挑**第一个可放行的**（R1：退避窗内 / 已降级 needs-human
+   * 的成员被跳过——队头堵不动时后面能走的先走）：账实核对（已并 → 关账，永不
+   * 通知合并）→ 道闸 → 净空闸 → 通知放行（通道失败 → owner-gone）。
    * 锁内只做账本迁移；git 面与通道注入全部锁外。
    */
-  def pump(projectKey: String): Unit =
+  def pump(projectKey: String): Unit = pumpWith(projectKey, headSkip = true)
+
+  /**
+   * `headSkip = false` = **R1 之前的旧语义**（只挑 FIFO 队头、不看退避/降级）——
+   * spec 反向验红缝（同一夹具下必须复现「队头堵死全队」），生产恒为 true。
+   *
+   * `attempted` = **本拍内已经试过的成员**（一次 pump 链的判重集）：每个成员在一拍
+   * 里最多占窗**一次**——否则「让位后立刻续放」会在同拍里把这个刚被堵的成员再捞
+   * 回来（退避窗极短时尤其明显）。跨拍不保留：下一拍是新局面。
+   */
+  private[delegate] def pumpWith(
+    projectKey: String,
+    headSkip: Boolean,
+    depth: Int = 0,
+    attempted: Set[String] = Set.empty
+  ): Unit =
     val candidate = lock.synchronized {
       ensureLoadedLocked()
       if holderLocked(projectKey).isDefined then None // 单飞行：窗被持
       else
-        openSortedLocked(projectKey).find(_.state == State.Waiting).map { head =>
-          // 占窗前先取**通道前提**（R5）：本次占窗自己会写镜像，前提必须在自写之前
-          // 判读——占窗前镜像已在盘 = 成员资格先于本进程存在（重启幸存者/直写盘面）；
-          // 占窗前无镜像 = 本批前存量账面，通道丢失照旧关账（前提成立）。
-          val channelPremised = MergeQueueChannel.hasOpenRecord(head.delegateId, State.Open)
-          // 先占窗（占位即迁移）——通知在锁外，绝不双授。
-          val reserved = head.copy(state = State.TurnGranted, grantedAt = Some(System.currentTimeMillis()))
-          MergeQueueChannel.sync(reserved.delegateId, reserved.state, memberJson(reserved)) // write-ahead（R5）
-          members = members.updated(head.delegateId, reserved)
-          persistLocked()
-          (reserved, channelPremised)
-        }
+        val now = System.currentTimeMillis()
+        openSortedLocked(projectKey)
+          .filter(_.state == State.Waiting)
+          .find(m => !attempted.contains(m.delegateId) && (!headSkip || grantEligibleLocked(m, now)))
+          .map { head =>
+            // 占窗前先取**通道前提**（R5）：本次占窗自己会写镜像，前提必须在自写之前
+            // 判读——占窗前镜像已在盘 = 成员资格先于本进程存在（重启幸存者/直写盘面）；
+            // 占窗前无镜像 = 本批前存量账面，通道丢失照旧关账（前提成立）。
+            val channelPremised = MergeQueueChannel.hasOpenRecord(head.delegateId, State.Open)
+            // 先占窗（占位即迁移）——通知在锁外，绝不双授。
+            val reserved = head.copy(state = State.TurnGranted, grantedAt = Some(System.currentTimeMillis()))
+            MergeQueueChannel.sync(reserved.delegateId, reserved.state, memberJson(reserved)) // write-ahead（R5）
+            members = members.updated(head.delegateId, reserved)
+            persistLocked()
+            (reserved, channelPremised)
+          }
     }
-    candidate.foreach((reserved, premised) => grant(reserved, premised))
+    candidate.foreach((reserved, premised) =>
+      grant(reserved, premised, headSkip, depth, attempted + reserved.delegateId)
+    )
 
   /**
    * 已占窗成员的放行腿：账实核对 → 净空闸 → 通知（任一关账腿释放窗并续放下一位）。
    * `channelPremised` = 占窗前的通道前提读数（R5，pump 捕获——占窗自写镜像之前）：
    * true = 成员资格有先于本进程的通道镜像（重启幸存面），通道闭包缺席不判死。
+   * `depth` = R1 本拍内改授链深度（`headSkip` 生效时被堵成员让位，同一拍把窗交给
+   * 下一个可放行者；[[MaxGrantChainDepth]] 封顶）；`attempted` = 本拍已试成员。
    */
-  private def grant(reserved: Member, channelPremised: Boolean): Unit =
+  private def grant(
+    reserved: Member,
+    channelPremised: Boolean,
+    headSkip: Boolean = true,
+    depth: Int = 0,
+    attempted: Set[String] = Set.empty
+  ): Unit =
     // ① 账实核对（先于一切——已并成员直接关账，不再通知不再重试）。
     alreadyMerged(reserved) match
       case true =>
@@ -817,12 +999,12 @@ object MergeQueue:
     // 自家残留（OwnLeftover）放行——合并 brief 教学 abort+重试，属内自愈。
     val lane = laneVerdictFor(reserved)
     if !laneGrants(lane) then
-      requeueBlocked(reserved, laneBlockReason(lane))
+      requeueBlocked(reserved, laneBlockReason(lane), BlockClass.Gate, headSkip, depth, attempted)
       return
     // ③ 净空闸（引擎侧 base 净空维护——白名单工件还原/收编；非合并执行）。
     baseReady(reserved) match
       case Left(blockReason) =>
-        requeueBlocked(reserved, blockReason)
+        requeueBlocked(reserved, blockReason, BlockClass.Gate, headSkip, depth, attempted)
         return
       case Right(baseTip) => ()
     end match
@@ -833,7 +1015,7 @@ object MergeQueue:
         lock.synchronized {
           clearNotifyMemoLocked(reserved.delegateId) // 放行成功：阻塞计数/去重账清零
           members.get(reserved.delegateId).foreach { cur =>
-            val stamped = cur.copy(grantedBaseTip = tip)
+            val stamped = cur.copy(grantedBaseTip = tip, blockedRounds = 0, skipUntilMs = None, needsHuman = None)
             MergeQueueChannel.sync(stamped.delegateId, stamped.state, memberJson(stamped)) // write-ahead（R5）
             members = members.updated(cur.delegateId, stamped)
             persistLocked()
@@ -844,18 +1026,30 @@ object MergeQueue:
           s"[merge-queue] turn granted to '${reserved.delegateId}' (branch '${reserved.branch}' → '${reserved.baseBranch}', window holder = single)"
         )
       case NotifyResult.Deferred(reason) =>
-        // 通道镜像在盘、闭包缺席（重启后常态）——留队缓一拍，绝不 owner-gone（R5）。
-        requeueBlocked(reserved, reason)
+        // 通道闭包缺席但成员资格在盘（R5 前提反转）——留队，绝不 owner-gone。
+        // R1：**无投递通道不再占队头**——让位 + 退避（79c40e17 那 220 拍自锁的自愈面）。
+        requeueBlocked(reserved, reason, BlockClass.NoChannel, headSkip, depth, attempted)
       case NotifyResult.Failed(err) =>
         markOwnerGone(reserved.delegateId, s"merge-turn notification undeliverable: ${err.take(200)}")
         pump(reserved.projectKey)
   end grant
 
   /** 账实核对单点：分支头已是基分支祖先 ⟺ 已并入（今晚 should-not-happen 的消除闸）。 */
-  private def alreadyMerged(m: Member): Boolean =
+  private def alreadyMerged(m: Member): Boolean = factCheck(m).contains(true)
+
+  /**
+   * 账实核对**三态**（R2 批 2026-11-04 引入；`alreadyMerged` 是它的保守投影）：
+   *   - `Some(true)`  分支已是基分支祖先（`git merge-base --is-ancestor` exit 0）；
+   *   - `Some(false)` 未并入（exit 1，可信的否定）；
+   *   - `None`        **读数不可得**（基工作区不是 git 仓库 / git 报错 / ref 不可读）。
+   *
+   * 只读：一条 `merge-base --is-ancestor`，零写操作、零工作区触碰（红线：核对
+   * 失败时**绝不**据此关账——见 [[factCheckOpenMembers]] 的 fail-soft 分支）。
+   */
+  private[delegate] def factCheck(m: Member): Option[Boolean] =
     Try(os.Path(m.baseWs)).toOption.filter(GitWorktrees.isGitRepo) match
-      case None => false // 读数不可得 = 不判（fail-open，交给回合终态核对）
-      case Some(ws) => GitWorktrees.isAncestor(ws, m.branch, m.baseBranch).contains(true)
+      case None => None // 读数不可得 = 不判（fail-open，交给回合终态核对）
+      case Some(ws) => GitWorktrees.isAncestor(ws, m.branch, m.baseBranch)
 
   /** base tip（放行通知携带；不可读 = None，brief 用 "unknown"）。 */
   private def baseTipOf(m: Member): Option[String] =
@@ -909,25 +1103,114 @@ object MergeQueue:
           case e: Throwable => Right(baseTipOf(m)) // 闸面自身故障 = fail-open（不楔死队列）
   end baseReady
 
+  /** 阻塞类别（R1 面板/审计分类；**语义边界**：两类都是「机制挂起」，与
+    * delegate 自己申报的 standby（等作者裁定）毫无关系）。 */
+  object BlockClass:
+    /** 无投递通道（`Deferred`：闭包缺席而成员资格在盘——属主回合未收尾）。 */
+    val NoChannel: String = "no-channel"
+    /** 闸未过（道忙 / 净空 / 方向闸）——放行条件暂不满足。 */
+    val Gate: String = "gate"
+  end BlockClass
+
   /**
    * 放行闸未过：窗让回（state → waiting）+ 记账 + 面板可见原因 + **必通知**
    * （#943：阻塞绝不静默——父会话收到可行动原因全文；同因去重，N 拍仍堵升级）；
    * 等下一拍。
+   *
+   * **R1（2026-11-04）**：额外做三件事——
+   *   ① `blockedRounds + 1`；**无投递通道**（`no-channel`，成员自己的死结）且后面
+   *      确实有人能走 ⇒ `skipUntilMs = now + 指数退避(±抖动)`：本成员从队头退开，
+   *      后面能走的先走（不再出现「一个无通道成员堵死整条队」）；
+   *   ② `no-channel` 连续 [[MaxBlockedRounds]] 拍到顶 ⇒ `needsHuman`（显式「请人工
+   *      处理」态，队列停止自动授窗，一条 escalate 说明处置要求）——**绝不无限重试**；
+   *   ③ 让位生效时同一拍续放：[[pumpWith]] 下一位（[[MaxGrantChainDepth]] 封顶）。
+   *
+   * **为什么闸类阻塞（`gate`）不套退避/降级**（本批的一次实测修正）：道忙 / 净空 /
+   * 方向闸是对**同一个 base 工作区**的判读——队头过不去，后面的成员过的是同一道闸，
+   * 让位换不来任何放行，只会把既有「N 拍同因升级作者」的阶梯拖长（实测：三个既有
+   * spec 的升级拍点因此漂移）。而且闸的条件由外部改变（道净 / 检出分支纠正），
+   * 队列侧没有「条件已变」的信号，降级会把它永久钉在 needs-human。所以：
+   * **成员自己的死结退避降级，项目级的闸照旧逐拍重试 + N 拍升级**。
+   * 单成员队列同样不让位（[[otherEligibleWaitingLocked]]）：让位是为了让别人走。
    */
-  private def requeueBlocked(reserved: Member, reason: String): Unit =
+  private def requeueBlocked(
+    reserved: Member,
+    reason: String,
+    blockClass: String = BlockClass.Gate,
+    headSkip: Boolean = true,
+    depth: Int = 0,
+    attempted: Set[String] = Set.empty
+  ): Unit =
+    val now = System.currentTimeMillis()
+    var handOff: Boolean = false
     val memoTarget = lock.synchronized {
       members.get(reserved.delegateId) match
         case Some(cur) if cur.state == State.TurnGranted =>
-          val back = cur.copy(state = State.Waiting, grantedAt = None, lastBlockReason = Some(reason.take(2000)))
+          val rounds = cur.blockedRounds + 1
+          // 成员自己的死结（无投递通道）才值得让位与降级；且必须后面真有人能走。
+          val memberDeadlock = blockClass == BlockClass.NoChannel
+          val blockingOthers =
+            headSkip && memberDeadlock && otherEligibleWaitingLocked(cur.projectKey, cur.delegateId, now)
+          handOff = blockingOthers
+          // 两条上界（见批注）：正在饿死别人 ⇒ MaxBlockedRounds（8）；孤身死结 ⇒
+          // SoloMaxBlockedRounds（24，给既有「N 拍同因升级作者」阶梯留完整跑道）。
+          val ceiling = if blockingOthers then MaxBlockedRounds else SoloMaxBlockedRounds
+          val exhausted = memberDeadlock && rounds >= ceiling
+          val delay = backoffDelayMs(rounds, BackoffBaseMs, BackoffMaxMs, math.random())
+          val back = cur.copy(
+            state = State.Waiting,
+            grantedAt = None,
+            lastBlockReason = Some(reason.take(2000)),
+            blockedRounds = rounds,
+            skipUntilMs = if handOff && !exhausted then Some(now + delay) else None,
+            needsHuman =
+              if exhausted then
+                Some(
+                  s"merge queue gave up automatic grants after $rounds consecutive blocked rounds ($blockClass) — " +
+                    s"needs human handling: merge '${cur.branch}' into '${cur.baseBranch}' by hand (the queue fact-checks every tick " +
+                    s"and closes the membership as merged) or revive the owner session; last reason: ${reason.take(600)}"
+                )
+              else cur.needsHuman
+          )
           MergeQueueChannel.sync(back.delegateId, back.state, memberJson(back)) // write-ahead（R5）
           members = members.updated(cur.delegateId, back)
           persistLocked()
-          record(back, "grant-blocked", Json.obj("reason" -> reason.take(2000).asJson))
+          record(
+            back,
+            "grant-blocked",
+            Json.obj(
+              "reason" -> reason.take(2000).asJson,
+              "blockClass" -> blockClass.asJson,
+              "blockedRounds" -> rounds.asJson,
+              "skipMs" -> (if handOff then delay else 0L).asJson,
+              "needsHuman" -> exhausted.asJson
+            )
+          )
           Some(back)
         case _ => None // 两拍间已关账——不动
     }
-    memoTarget.foreach(m => noteBlockedOrFailed(m, "blocked", reason))
-    logger.warn(s"[merge-queue] grant blocked for '${reserved.delegateId}': $reason")
+    memoTarget.foreach { m =>
+      noteBlockedOrFailed(m, "blocked", reason)
+      // 退避上界：一条显式升级（每成员只发一次——去重表独立于 blocked 去重，
+      // 不扰动既有「同因只发一次 / 状态变化重发」的 #943 语义）。
+      m.needsHuman.foreach { hint =>
+        val firstTime = lock.synchronized {
+          val seen = needsHumanAnnounced.contains(m.delegateId)
+          needsHumanAnnounced = needsHumanAnnounced + m.delegateId
+          !seen
+        }
+        if firstTime then BlockNotifyPort.deliver(m, "escalate", hint)
+      }
+      logger.warn(
+        s"[merge-queue] grant blocked for '${reserved.delegateId}' ($blockClass, round ${m.blockedRounds}/$MaxBlockedRounds): $reason" +
+          (if handOff then " — head yielded (a healthy tail takes the window this tick)" else "") +
+          m.needsHuman.fold("")(h => s" — NEEDS HUMAN (queue stopped auto-granting): $h")
+      )
+    }
+    // ③ 让位后同一拍续放（一次 pump 内可连跳多个被堵成员；`attempted` 保每个成员
+    //    一拍只占窗一次，深度封顶不递归爆栈）。没让位就没有可续的窗口移交。
+    if handOff && depth < MaxGrantChainDepth then
+      pumpWith(reserved.projectKey, headSkip, depth + 1, attempted)
   end requeueBlocked
 
   /** 放行通知三态（R5 前提反转引入 Deferred）：Delivered = 已送达属主；
@@ -1040,8 +1323,13 @@ object MergeQueue:
             val closed = m.copy(
               state = State.Merged,
               closedAt = Some(System.currentTimeMillis()),
-              closeReason = closeReason.orElse(Some(s"merge landed (via $via)"))
+              closeReason = closeReason.orElse(Some(s"merge landed (via $via)")),
+              // R1 退避/降级账随关账清零（终态成员不参与轮转，残留只会污染面板）。
+              blockedRounds = 0,
+              skipUntilMs = None,
+              needsHuman = None
             )
+            clearBackoffMemosLocked(delegateId)
             MergeQueueChannel.sync(closed.delegateId, closed.state, memberJson(closed)) // write-ahead（R5）
             members = members.updated(delegateId, closed)
             persistLocked()
@@ -1105,7 +1393,15 @@ object MergeQueue:
         val closed = lock.synchronized {
           members.get(delegateId) match
             case Some(cur) if cur.open =>
-              val c = cur.copy(state = State.OwnerGone, closedAt = Some(System.currentTimeMillis()), closeReason = Some(reason.take(300)))
+              val c = cur.copy(
+                state = State.OwnerGone,
+                closedAt = Some(System.currentTimeMillis()),
+                closeReason = Some(reason.take(300)),
+                blockedRounds = 0,
+                skipUntilMs = None,
+                needsHuman = None
+              )
+              clearBackoffMemosLocked(delegateId)
               MergeQueueChannel.sync(c.delegateId, c.state, memberJson(c)) // write-ahead（R5）
               members = members.updated(delegateId, c)
               persistLocked()
@@ -1165,7 +1461,17 @@ object MergeQueue:
       ensureLoadedLocked()
       members.get(delegateId) match
         case Some(cur) if cur.state == State.TurnGranted =>
-          val back = cur.copy(state = State.Waiting, grantedAt = None, grantedBaseTip = None, lastBlockReason = Some(reason.take(2000)))
+          val back = cur.copy(
+            state = State.Waiting,
+            grantedAt = None,
+            grantedBaseTip = None,
+            lastBlockReason = Some(reason.take(2000)),
+            // R1：重排回 waiting = 新起点（退避/降级账清零——下一拍照常参与轮转）。
+            blockedRounds = 0,
+            skipUntilMs = None,
+            needsHuman = None
+          )
+          clearBackoffMemosLocked(delegateId)
           members = members.updated(delegateId, back)
           persistLocked()
           record(back, "lane-requeued", Json.obj("reason" -> reason.take(2000).asJson))
@@ -1234,7 +1540,15 @@ object MergeQueue:
         ensureLoadedLocked()
         members.get(delegateId) match
           case Some(m) if m.open =>
-            val closed = m.copy(state = State.Failed, closedAt = Some(System.currentTimeMillis()), closeReason = Some(reason.take(300)))
+            val closed = m.copy(
+              state = State.Failed,
+              closedAt = Some(System.currentTimeMillis()),
+              closeReason = Some(reason.take(300)),
+              blockedRounds = 0,
+              skipUntilMs = None,
+              needsHuman = None
+            )
+            clearBackoffMemosLocked(delegateId)
             MergeQueueChannel.sync(closed.delegateId, closed.state, memberJson(closed)) // write-ahead（R5）
             members = members.updated(delegateId, closed)
             persistLocked()
@@ -1253,9 +1567,11 @@ object MergeQueue:
 
   /**
    * 一拍看护（事件判据，零时间判据）：
+   *   - **R2（2026-11-04）全部开放成员只读账实核对**：不看状态、不等队头——分支
+   *     已并入 base ⇒ 直接按 merged 关账（[[factCheckOpenMembers]]）；
    *   - 持窗成员（turn-granted）**先账实核对**（投递可靠性批 2026-10-29 · 病灶③，
    *     作者令 00:13「窗口释放必须绑定合并 commit 落 main 或属主终态事件自动销账，
-     *     不依赖属主下一拍主动还窗」）：分支已是基分支祖先 = 合并真落地 ⇒ 立即关账
+   *     不依赖属主下一拍主动还窗」）：分支已是基分支祖先 = 合并真落地 ⇒ 立即关账
    *     merged + pump 下一位（属主死灭/迟报/漏报都不再扣窗）；
    *   - 持窗成员内部腿属主 actor 已死 ⇒ owner-gone（窗绝不许尸体持死；孤儿
    *     MERGE_HEAD 收场随 [[markOwnerGone]] 的 abort 腿——病灶①）；
@@ -1263,7 +1579,15 @@ object MergeQueue:
    *     重排成员的自然推进——病灶②的重排兑现腿）。
    * 幂等：动作过的成员已关账，重复扫描零重复动作。
    */
-  def careTick(): Unit =
+  def careTick(): Unit = careTickWith(openFactCheck = true)
+
+  /**
+   * `openFactCheck = false` / `headSkip = false` = **本批之前的旧语义**（只核对持窗
+   * 成员 + 只看 FIFO 队头，等在前面的 waiting 成员永远轮不到核对）——spec 反向验
+   * 红缝，生产恒为默认值。红/绿两条腿要一起关：R1 的让位会让队尾走到放行腿，而
+   * 放行腿自带账实核对，会把 R2 的缺口遮住。
+   */
+  private[delegate] def careTickWith(openFactCheck: Boolean, headSkip: Boolean = true): Unit =
     val granted = snapshot.filter(m => m.state == State.TurnGranted)
     granted.foreach { m =>
       if alreadyMerged(m) then
@@ -1283,10 +1607,61 @@ object MergeQueue:
             if frozenAwaitingWake(m.delegateId) then
               requeueForLane(m.delegateId, "delegate frozen (supervisor stopped) while holding the merge window — membership kept (awaiting wake)")
             else
-              markOwnerGone(m.delegateId, "merge-round holder session is no longer live — needs dispatcher handling")
+              markOwnerGone(delegateId = m.delegateId, reason = "merge-round holder session is no longer live — needs dispatcher handling")
           case _ => ()
     }
-    snapshot.map(_.projectKey).distinct.foreach(pump)
+    // R2：全部开放成员（waiting 也在内）只读账实核对——「别人已经帮它并进去了」
+    // 这件事以前只有排到队头才看得见，于是 7 个成员分支早在 main 上、账上还开放。
+    if openFactCheck then factCheckOpenMembers()
+    snapshot.map(_.projectKey).distinct.foreach(p => pumpWith(p, headSkip))
+  end careTickWith
+
+  /** R2：每次核对打印不可读读数的成员（进程内每成员一次——防每拍刷屏；读数恢复后清）。 */
+  private var factCheckUnreadable: Set[String] = Set.empty
+
+  /**
+   * R2 —— 全部开放成员的**只读**账实核对（审计 20261104_164800 §4-R2）。
+   *
+   * 判据 = `git merge-base --is-ancestor <branch> <baseBranch>`（[[factCheck]]），
+   * **只读**：不写分支、不写 base 工作区、不 checkout、不 merge。命中 `Some(true)`
+   * ⇒ [[closeMerged]]（via = `fact-check-care-tick`）——与「人工兜底」配对：作者/
+   * dispatcher 把分支手工并进 main 之后，队列**下一拍自己就知道**，不必再排一次队、
+   * 也不必等属主还窗。
+   *
+   * 🔴 红线（fail-soft）：`None`（仓库不可读 / git 报错 / 非 git 目录）**绝不关账**
+   * ——核对失败 ≠ 已并入；只留一条 WARN（每成员一次），成员照旧在队。
+   */
+  private[delegate] def factCheckOpenMembers(): Unit =
+    val open = snapshot.filter(_.open)
+    open.foreach { m =>
+      factCheck(m) match
+        case Some(true) =>
+          logger.info(
+            s"[merge-queue] care-tick open fact-check: '${m.delegateId}' branch '${m.branch}' is already an ancestor of '${m.baseBranch}' " +
+              s"(state was '${m.state}') — closing the membership as merged without a merge window"
+          )
+          closeMerged(
+            m.delegateId,
+            via = "fact-check-care-tick",
+            closeReason = Some("branch already merged into base — closed by read-only care-tick fact-check (no merge window needed)"),
+            cleanup = true
+          )
+          lock.synchronized { factCheckUnreadable = factCheckUnreadable - m.delegateId }
+        case Some(false) =>
+          lock.synchronized { factCheckUnreadable = factCheckUnreadable - m.delegateId }
+        case None =>
+          val firstTime = lock.synchronized {
+            val seen = factCheckUnreadable.contains(m.delegateId)
+            factCheckUnreadable = factCheckUnreadable + m.delegateId
+            !seen
+          }
+          if firstTime then
+            logger.warn(
+              s"[merge-queue] care-tick open fact-check SKIPPED for '${m.delegateId}' (base '${m.baseWs}' unreadable or not a git repo) " +
+                "— fail-soft: the membership stays open, a failed fact-check never closes a member"
+            )
+    }
+  end factCheckOpenMembers
 
   /** IO 包装（扫描腿是 IO 上下文）。 */
   def careTickIO: IO[Unit] = IO.blocking(careTick())
@@ -1303,8 +1678,20 @@ object MergeQueue:
       members.get(delegateId).filter(_.open) match
         case None => ()
         case Some(m) =>
-          val refreshed = m.copy(internal = m.internal.map(_.copy(childRef = newChildRef)))
+          val rebound = m.copy(internal = m.internal.map(_.copy(childRef = newChildRef)))
+          // R1 自愈腿：respawn 换绑 = 通道重新可用 ⇒ 清退避窗/needsHuman（否则降级过的
+          // 成员会被自己的上界永久钉死，见 reviveOnChannelLocked）。
+          val degraded = m.needsHuman.isDefined || m.skipUntilMs.isDefined || m.blockedRounds > 0
+          val refreshed =
+            if degraded then
+              clearBackoffMemosLocked(delegateId)
+              rebound.copy(blockedRounds = 0, skipUntilMs = None, needsHuman = None)
+            else rebound
           members = members.updated(delegateId, refreshed)
+          if degraded then
+            MergeQueueChannel.sync(refreshed.delegateId, refreshed.state, memberJson(refreshed))
+            persistLocked()
+            record(refreshed, "channel-restored-revive", Json.obj("phase" -> "respawn-reattach".asJson))
           // 通道闭包不落盘（进程内运行态）——只落审计行。
           record(refreshed, "session-reattached", Json.obj("phase" -> "respawn-reattach".asJson))
     }
@@ -1326,7 +1713,16 @@ object MergeQueue:
     val target = lock.synchronized {
       ensureLoadedLocked()
       members.get(delegateId).filter(_.open).map { cur =>
-        val back = cur.copy(state = State.Waiting, grantedAt = None, lastBlockReason = Some(reason.take(2000)))
+        val back = cur.copy(
+          state = State.Waiting,
+          grantedAt = None,
+          lastBlockReason = Some(reason.take(2000)),
+          // R1：重启保留 = 新起点（退避窗不跨进程残留，重启后立刻可再试一次）。
+          blockedRounds = 0,
+          skipUntilMs = None,
+          needsHuman = None
+        )
+        clearBackoffMemosLocked(delegateId)
         MergeQueueChannel.sync(back.delegateId, back.state, memberJson(back)) // write-ahead（R5）
         members = members.updated(delegateId, back)
         persistLocked()
@@ -1387,6 +1783,8 @@ Merge ledger close-out: your branch `${m.branch}` is ALREADY merged into `${m.ba
   private[nebflow] def reset(): Unit = lock.synchronized {
     members = Map.empty
     notifyMemos = Map.empty
+    needsHumanAnnounced = Set.empty
+    factCheckUnreadable = Set.empty
     loaded = false
     try if os.exists(ledgerPath) then os.remove.all(ledgerPath)
     catch case _: Throwable => ()

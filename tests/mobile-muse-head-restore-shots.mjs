@@ -279,10 +279,12 @@ async function runMobile(scheme) {
     // 现契约：**任何状态（静止 / 滚动中 / 贴顶 / 无名字）都必须同一行，≤1px**。
     // 静止态 spread 之所以曾是 60：sticky 的两个落点由两个不同表达式给定、恒差
     // 64；同行批把 top 与 margin-top 统一成同一表达式后，静止落点 ≡ 贴顶落点。
-    const spreadRest = Math.max(Math.abs(rest.avCy - rest.taskCy), Math.abs(rest.avCy - rest.searchCy));
-    ok(`${scheme} C 静止态头像中心 ↔ 左右双钮中心垂直极差 ≤1px（旧豁免取消）`,
+    // 入口收敛批 todo-unify-entry-collapse 2026-11-04：左上「任务」圆钮退役 ⇒
+    // taskCy 恒 -1（无该节点），极差口径改为「头像 ↔ 现役唯一顶缘键（搜索）」。
+    const spreadRest = Math.abs(rest.avCy - rest.searchCy);
+    ok(`${scheme} C 静止态头像中心 ↔ 顶缘键中心垂直极差 ≤1px（旧豁免取消）`,
       spreadRest <= 1,
-      `spread=${spreadRest.toFixed(2)} avCy=${rest.avCy} taskCy=${rest.taskCy} searchCy=${rest.searchCy}（修前实测 60.00，被旧口径放过）`);
+      `spread=${spreadRest.toFixed(2)} avCy=${rest.avCy} searchCy=${rest.searchCy} taskCy=${rest.taskCy}(退役=-1)（修前实测 60.00，被旧口径放过）`);
     ok(`${scheme} C 静止态身份组锚落位（组顶 4 ±1 / 头像顶 12 ±1 —— 与贴顶态逐值相同）`,
       Math.abs(rest.headTop - 4) <= 1 && Math.abs(rest.avTop - 12) <= 1,
       `headTop=${rest.headTop} avTop=${rest.avTop}（修前 64 / 72）`);
@@ -315,10 +317,11 @@ async function runMobile(scheme) {
       mid.scrollTop > 0 && mid.behindHits > 0 && mid.behindMaxArea > 0,
       `scrollTop=${mid.scrollTop} 相交行数=${mid.behindHits} 最大交叠面积=${mid.behindMaxArea}px²`);
     // ── C（贴顶态）头像中心 ↔ 双钮中心极差（同批收紧 12 → 1）─────────
-    const spreadPinned = Math.max(Math.abs(mid.avCy - mid.taskCy), Math.abs(mid.avCy - mid.searchCy));
-    ok(`${scheme} C 贴顶态头像中心 ↔ 左右双钮中心垂直极差 ≤1px`,
+    // 同上（任务键退役）：极差只对现役顶缘键（搜索）口径。
+    const spreadPinned = Math.abs(mid.avCy - mid.searchCy);
+    ok(`${scheme} C 贴顶态头像中心 ↔ 顶缘键中心垂直极差 ≤1px`,
       spreadPinned <= 1,
-      `spread=${spreadPinned.toFixed(2)} avCy=${mid.avCy} taskCy=${mid.taskCy} searchCy=${mid.searchCy}（静止态 spread=${Math.max(Math.abs(rest.avCy - rest.taskCy), Math.abs(rest.avCy - rest.searchCy)).toFixed(2)}，本批起同样判红）`);
+      `spread=${spreadPinned.toFixed(2)} avCy=${mid.avCy} searchCy=${mid.searchCy} taskCy=${mid.taskCy}(退役=-1)（静止态 spread=${Math.abs(rest.avCy - rest.searchCy).toFixed(2)}，本批起同样判红）`);
     // ── E 滚动态 sticky 锚落点 ─────────────────────────────────────
     // 贴顶判据（同行批改）：静态落点与贴顶落点取同一表达式 ⇒ 组顶恒 4、头像顶恒 12，
     // 滚动不产生任何位移（修前是「静止 64/72 → 贴顶 0/8」的 64px converge）。

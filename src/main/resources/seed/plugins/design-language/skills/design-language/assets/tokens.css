@@ -59,6 +59,16 @@
   --dl-fs-btn: 12px;      /* 按钮，500 */
   --dl-fs-hint: 12px;     /* hint/caption，400。反例：10px+opacity.6 */
   --dl-fs-meta: 11px;     /* meta/徽标/小节标签，400-600。反例：10px */
+  /* 档外具名槽补登（design-scale-batch 2026-11-04）：以下 7 槽此前只在运行时
+     --ds-fs-* 出生、账本缺行 ⇒ 账本与运行时对位出现缺口。按 2026-11-03 值重定批
+     「同名同值、任一侧改值同批对齐」纪律补登，值为运行时现盘读数逐字（不改值）。 */
+  --dl-fs-bubble: 14.5px;         /* 主对话气泡（= --ds-fs-bubble；2026-09-12 裁定档） */
+  --dl-fs-row: 13.5px;            /* 侧栏会话行主文案（= --ds-fs-row） */
+  --dl-fs-capsule: 14px;          /* canvas 标题胶囊（= --ds-fs-capsule） */
+  --dl-fs-card-body: 14px;        /* 过渡卡正文/说明（= --ds-fs-card-body） */
+  --dl-fs-card-hero: 21px;        /* 过渡卡主标题（= --ds-fs-card-hero） */
+  --dl-fs-mobile-sub: 15px;       /* 手机次正文（= --ds-fs-mobile-sub） */
+  --dl-fs-mobile-callout: 16px;   /* 手机正文/输入件（= --ds-fs-mobile-callout） */
 
   /* ── ③ 行高/字距（与 --ds-lh-* / --ds-ls-* 同值） ── */
   --dl-lh-body: 1.5;            /* 聊天/选项 1.55 */
@@ -81,6 +91,7 @@
   --dl-r-2xl: 18px;     /* 大卡/工具卡档（Apple rounded.lg） */
   --dl-r-shell: 20px;   /* 弹窗外壳（全站唯一弹窗圆角） */
   --dl-r-pill: 999px;
+  --dl-r-thin: 2px;     /* 细件例外槽：滚动条拇指/进度条/微圆点（禁他处复用） */
 
   /* ── ④ 阴影三族 ── */
   --dl-shadow-panel:
@@ -106,6 +117,7 @@
   --dl-sp-12: 48px;   /* 区块级留白（Carbon $spacing-09） */
   --dl-sp-16: 64px;   /* 大区块留白（Carbon $spacing-10） */
   --dl-sp-glass-x: 10px; /* 玻璃条横缝既有值档；迁移向 --dl-sp-2/3 渐进收 */
+  --dl-sp-1h: 6px;       /* 半步件缝例外档：图标+文字小缝/chip 内距（实测最高频，禁作块距） */
 
   /* ── ⑤ 密度档（含 NVIDIA 密度联动机制；与 --ds-density-* 同值） ── */
   --dl-density-row: 44px;          /* regular 行带（触控热区档） */

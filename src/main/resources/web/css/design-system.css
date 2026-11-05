@@ -116,7 +116,15 @@
   --ds-space-half: 2px;    /* Carbon $spacing-01：4px 栅格外半步微缝档 */
   --ds-space-12: 48px;     /* Carbon $spacing-09：区块级留白 */
   --ds-space-16: 64px;     /* Carbon $spacing-10：大区块留白 */
-  --ds-space-glass-x: 10px; /* 玻璃条横缝既有值档（--cv-pad-bar 语境）；迁移向 --ds-space-2/3 由门禁渐进收 */
+  --ds-space-glass-x: 10px; /* 10px 例外档。**命名债**：本槽原本只为玻璃条横缝（--cv-pad-bar 语境）
+                               出生，2026-11-04 迁移批按定版文档 §3 把它当作 10px 的**唯一**归属档，
+                               实测 351 处消费里多数不是玻璃条 ⇒ 槽名比语义窄。改名属作者裁定项
+                               （建议 --ds-space-1x「2.5 栅格档」），本批不动名字，只如实记账。 */
+  /* 半步件缝例外档（design-scale-spec 2026-11-04 §2.2/§3 登记，本批出生）：
+     6px 是实测最高频间距档（349 处），集中在「图标+文字小缝」「chip 内距」——
+     收敛 4px 会让密集控件贴死，收敛 8px 会让每行膨胀，故以具名半步档收编，
+     **限定小件内缝**（行/卡的块距仍走栅格 8/12/16）。值 = 现盘 6px 逐字搬迁。 */
+  --ds-space-1h: 6px;
   --ds-density-row-compact: 36px; /* 紧凑行档（= --cv-head-h 胶囊行带值 36px） */
   --ds-row-pad: 8px 12px;              /* 列表行静息档 */
   --ds-row-pad-tight: 8px 10px;
@@ -145,6 +153,12 @@
   --ds-radius-card-lg: 16px; /* 聊天浮层卡 */
   --ds-radius-shell: 20px;   /* 弹窗外壳（全站统一值） */
   --ds-radius-pill: 999px;
+  /* 细件例外槽（design-scale-spec 2026-11-04 §2.1/§3 登记，本批出生）：
+     2px 不是「差一点的 badge」，是细件几何 —— 8px 宽滚动条拇指上归 4px 会变药丸、
+     改滚动条观感。故立具名例外槽，**只许细件用**（滚动条拇指 / 进度条 / 微圆点）；
+     任何「想让边角再柔一点」的诉求走 badge/chip，禁在此槽身上找补。
+     值 = 现盘 21 处 2px 的逐字搬迁，计算值零漂移。 */
+  --ds-radius-thin: 2px;
 
   /* ── ⑥ 阴影（3 族；SKILL.md §4，禁族外自造）── */
   --ds-shadow-panel: var(--frost-shadow);
@@ -344,6 +358,55 @@
   --ds-shadow-thumb: 0 2px 8px rgb(0 0 0 / 0.08);       /* 缩略页纸面投影 */
   --ds-shadow-deck-card: 0 14px 38px rgb(8 10 16 / 0.34); /* 堆叠卡浮影 */
   --ds-scrim-stack: rgb(12 15 22 / 0.34);        /* 堆叠视角背景压暗层 */
+
+  /* ── ⑰ 转回合按钮槽（send / stop 单源；ui-unification-20261103-canvas-ask-resize）──
+     作者令（逐字）：「发送按钮与终止按钮样式与主会话**完全统一**（同一组件/同一
+     design-system 令牌，不得另做一套）」。此前同一对按钮在两条腿各长一套几何：
+     主会话 `#send-btn`/`#stop-btn` = 36×36 正圆 + 18px 图标（input.css，作者
+     2026-11-03 10:11 ③ 裁决的圆形旧版基准），Canvas Ask 面板 `.ask-send`/
+     `.ask-stop` = 32×32 正圆 + 14px 图标（ask.css）——「两态只换图标」在面板侧
+     劣化成一套更小的第二形态。
+     以下槽 = **主会话现盘读数逐字搬迁**（值的家从 input.css 消费面迁到令牌层，
+     计算值零漂移），不是新规范值：36/18/2.5 三档取自 input.css:950-951（宽高）、
+     :984（图标）、:1017-1018（stop 同值）；44 = Apple HIG / WCAG 2.5.5 触控下限
+     （input.css:1037-1039 的 ::after 外扩目标值，原先写在消费面）。
+     配色两档一跳别名到既有单源（本层不复制字面量）：
+       send = --ctl-send-*（stand-tokens.css 微信绿考古值，亮暗同值）
+       stop = --color-error（base.css）+ --ds-ink-inverse（§⑯ 实底反极字）
+     hover 红阶 = 既有 color-mix 配方原样搬家（input.css:1026「--color-error 88%
+     + black」）；混入关键字 black 是**配方常量**不是新色值，与消费面逐字同式。 */
+  --ds-turn-btn-size: 36px;          /* 圆钮边长（主会话现盘；desktop 档） */
+  --ds-turn-btn-icon: 18px;          /* 圆内图标档（两态同档才「在圆内切换」） */
+  --ds-turn-btn-stroke: 2.5;         /* 图标线宽（input.css:984/1027 同值） */
+  --ds-turn-hit: 44px;               /* 命中盒下限：::after 外扩到此（HIG 44） */
+  --ds-turn-send-bg: var(--ctl-send-bg);
+  --ds-turn-send-bg-hover: var(--ctl-send-bg-hover);
+  --ds-turn-send-bg-active: var(--ctl-send-bg-active);
+  --ds-turn-send-ink: var(--ctl-send-ink);
+  --ds-turn-send-border: var(--ctl-send-border);
+  --ds-turn-stop-bg: var(--color-error);
+  --ds-turn-stop-bg-hover: color-mix(in srgb, var(--color-error) 88%, black);
+  --ds-turn-stop-ink: var(--ds-ink-inverse);
+
+  /* ── ⑱ 面板拖柄槽（Canvas Ask 面板拖拽改尺寸；同批）──
+     作者令：「允许用户交互拖拽调整对话框大小（拖柄可见、热区 ≥44px，按 Apple
+     HIG）」。缺槽先扩再消费：面板拖柄此前无任何形态（.ask-dock 尺寸由 CSS
+     令牌固定），故以下为**新面槽位**，不是既有读数搬迁；取值依据均在行尾注。
+     热区 44 = HIG 下限（与 --ds-hit-row 同值同为触控/指针双达标的硬底线）；
+     抓手可见径 18 = 图标档（--ds-turn-btn-icon 同值，视觉体重一致但不共享槽位——
+     语义不同：一个是图标、一个是把手本体）。 */
+  --ds-resize-hit: 44px;             /* 拖柄热区边长（HIG / WCAG 2.5.5 下限） */
+  --ds-resize-grip: 18px;            /* 可见抓手本体边长 */
+  --ds-resize-ink: var(--ds-text-muted);        /* 静息把手色（低对比，不争焦点） */
+  --ds-resize-ink-active: var(--ds-focus-ring); /* hover / 拖拽态把手色 */
+  --ds-resize-bg-active: var(--ds-veil-focus);  /* hover / 拖拽态底（极低调洗选） */
+  --ds-resize-border: var(--ds-etched-border);  /* hover / 拖拽态描边 */
+  --ds-resize-min-w: 260px;          /* 拖拽宽度下限（≤ 此宽度列内气泡已不可读） */
+  --ds-resize-min-h: 120px;          /* 拖拽高度下限（列可滚，保一条气泡可读） */
+  --ds-resize-safe: 12px;            /* 视口安全缝（左缘 / 上缘统一同一档） */
+  --ds-resize-top-guard: 44px;       /* 顶缘保险带：面板顶距视口顶不得小于此值（= 热区边长，
+                                        保证拖柄本体永远完整可点、不被顶行胶囊压住） */
+  --ds-resize-step: 16px;            /* 键盘步进（←→ 改宽 / ↑↓ 改高；4px 栅格的 4 倍档） */
 }
 
 /* 浮层阴影暗档（令牌层单点解析：消费面不再各写一份 prefers-color-scheme）。 */
@@ -368,6 +431,20 @@
        mobileLayer.css 原字面 #16181d，取值随本槽） */
     --ds-badge-ring-dark: #16181d;
   }
+}
+
+/* ── ㉑ 渐隐带槽（`.ds-edge-fade` 材质桥；ui-unification-20261103-doc-ask-fade）──
+   渐隐带（顶缘「先糊后没」层）的材质真值出生在液体玻璃 v2 渐隐带子族
+   `--g2-veil` / `--g2-fade-*`（stand-tokens.css 该子族块，三态解析：
+   :root 亮档 → html[data-theme] 强制档 → prefers-color-scheme 回退）。
+   **本层不复制字面量**：四个 `--ds-fade-*` 槽一律 `var()` 桥到既有单源，
+   与手机层 `--ds-*` → `--mfs-*` 桥同式（缺槽先扩再消费，来源即上行 token 族）。
+   改渐隐带的颜色/模糊/饱和/高 = 改 stand-tokens.css 那四个 `--g2-*`，本层零改动。 */
+:root {
+  --ds-fade-veil: var(--g2-veil);          /* 渐层罩（色 = 页面底色族，只吃内容不吃底） */
+  --ds-fade-blur: var(--g2-fade-blur);     /* backdrop 模糊径 */
+  --ds-fade-sat: var(--g2-fade-sat);       /* backdrop 饱和倍率 */
+  --ds-fade-height: var(--g2-fade-height); /* 聊天根带高（88）；面板档另由消费面声明 */
 }
 
 /* ══ 组件类层（`.ds-*`）══════════════════════════════════════════════
@@ -410,6 +487,173 @@
 .ds-btn--danger { color: var(--ds-danger-icon); background: transparent; border-color: transparent; box-shadow: none; }
 .ds-btn--danger:hover { background: var(--ds-etched-bg); }
 .ds-btn:focus-visible { outline: 2px solid var(--ds-focus-ring); outline-offset: 2px; }
+
+/* ①b 转回合按钮（send / stop）：**主会话与 Canvas Ask 面板同一组件**
+   ── ui-unification-20261103-canvas-ask-resize（作者令「同一组件/同一 design-system
+      令牌，不得另做一套」）──
+   形态 = 作者 2026-11-03 10:11 ③ 裁定的**圆形旧版**：36×36 正圆 / r50% / 零横向
+   padding / 图标 18px 圆内切换（send 纸飞机 ⇄ stop 方块）。两态几何逐值相等，
+   主次只由配色表达 —— 尺寸永远不承担语义。
+   消费面（两处，零第二套）：
+     · 主会话  index.html `#send-btn` / `#stop-btn`（+ `.ds-turn-btn`）
+     · 面板    js/askDock.js `.ask-send` / `.ask-stop`（+ `.ds-turn-btn`）
+   `.ask-send` / `.ask-stop` 在 ask.css 里**已无任何规则**（纯身份钩子，供既有
+   spec 定位）；一切形态来自本块 ⇒ 「同名类改一处两边同时改」。
+   热区：`::after` 外扩到 --ds-turn-hit 44（本体 36 时 inset -4；本体 ≥44 的手机层
+   48 用 min() 收到 0 —— 不外溢到邻居钮，busy↔idle 显隐互换时热区与几何都对称）。 */
+.ds-turn-btn {
+  position: relative;
+  width: var(--ds-turn-btn-size);
+  height: var(--ds-turn-btn-size);
+  min-width: var(--ds-turn-btn-size);
+  min-height: var(--ds-turn-btn-size);
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: background-color var(--ds-dur-hover) var(--ds-ease-std),
+              border-color var(--ds-dur-hover) var(--ds-ease-std);
+}
+.ds-turn-btn svg {
+  width: var(--ds-turn-btn-icon);
+  height: var(--ds-turn-btn-icon);
+  stroke-width: var(--ds-turn-btn-stroke);
+  pointer-events: none;
+}
+.ds-turn-btn::after {
+  content: '';
+  position: absolute;
+  border-radius: 50%;
+  /* 本体 < 44 ⇒ 负 inset 外扩；本体 ≥ 44 ⇒ 收到 0（不减缩、不外溢） */
+  inset: min(0px, calc((100% - var(--ds-turn-hit)) / 2));
+}
+.ds-turn-btn:focus-visible { outline: 2px solid var(--ds-focus-ring); outline-offset: 2px; }
+/* 发送档：微信绿实底（--ctl-send-* 一跳别名，亮暗同值） */
+.ds-turn-btn--send {
+  background: var(--ds-turn-send-bg);
+  color: var(--ds-turn-send-ink);
+  border-color: var(--ds-turn-send-border);
+}
+.ds-turn-btn--send:hover {
+  background-color: var(--ds-turn-send-bg-hover);
+  border-color: var(--ds-turn-send-bg-hover);
+}
+.ds-turn-btn--send:active {
+  background-color: var(--ds-turn-send-bg-active);
+  border-color: var(--ds-turn-send-bg-active);
+}
+/* 中断档：红实底白标；**默认隐**（idle 由发送钮在位），busy 由
+   input/composer.js applyTurnChrome 以内联 display:flex 上位 —— 显隐单点仍在
+   状态机，与主会话 #stop-btn 同一实现（本类的 display:none 是两处共用的初始态，
+   消费面不再各写一份）。 */
+.ds-turn-btn--stop {
+  background: var(--ds-turn-stop-bg);
+  color: var(--ds-turn-stop-ink);
+  border-color: transparent;
+  display: none;
+}
+.ds-turn-btn--stop:hover { background: var(--ds-turn-stop-bg-hover); }
+/* 禁用 / 掉线两档**不在此层**：它们是主会话输入条的状态语义（空正文闸 / 未连接），
+   消费面 `#send-btn:disabled` / `#send-btn.disconnected`（input.css，ID 特异性）
+   继续独占——Canvas Ask 面板的发送钮不存在这两态，把它抬到组件层等于给面板凭空
+   加两档不存在的状态。组件层只管**形态与两态配色**。 */
+
+/* ①c 面板拖柄（Canvas Ask 面板拖拽改尺寸；同批）
+   ── 作者令：「允许用户交互拖拽调整对话框大小（拖柄可见、热区 ≥44px，按 Apple
+      HIG）」──
+   热区 = 元素本体 44×44（`--ds-resize-hit`），**不靠 ::after 外扩**：HIG 要的是
+   「可点面积」，而拖拽件的外扩伪元素在 pointer capture 下会与相邻元素抢命中；
+   本体即热区 ⇒ `getBoundingClientRect()` 直接达标（判据里的 fallback 无隐患）。
+   可见抓手 18×18 在热区正中（视觉轻、命中重）。静息半透明（不争焦点），
+   hover / 键盘聚焦 / 拖拽中三态同档提亮，全部走 --ds-resize-* 槽。
+   本块只给**形**：落位（left/top）、上下限计算、指针状态机都在消费面
+   （js/askDock.js + css/ask.css），桌面与手机同一实现、零分叉。 */
+.ds-resize-handle {
+  position: absolute;
+  width: var(--ds-resize-hit);
+  height: var(--ds-resize-hit);
+  padding: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  cursor: nwse-resize;
+  touch-action: none;
+  /* 命中盒（44×44）保持整块；可见形态交给抓手伪元素 ⇒ 本体背景/描边保持透明
+     （作者令 2026-11-04 12:52「调整 Ask 窗口大小的控件改成一个直角左上角的
+     直角弧度」——旧 10px 圆角方块/抓手圆芯片随本批退役）。 */
+  border-radius: 0;
+  border: none;
+  background: transparent;
+  color: var(--ds-resize-ink);
+  opacity: 0.55;
+  z-index: 3;
+  transition: opacity var(--ds-dur-hover) var(--ds-ease-std),
+              color var(--ds-dur-hover) var(--ds-ease-std);
+}
+.ds-resize-handle:hover,
+.ds-resize-handle:focus-visible,
+.ds-resize-handle[data-resizing='true'] {
+  opacity: 1;
+  color: var(--ds-resize-ink-active);
+  outline: none;
+}
+/* 可见形态 = 左上角直角弧（L 形拐角 + 拐角圆角）：两条边臂沿面板上缘/左缘
+   走到 18px 处收头，拐角 7px 圆角（--ds-radius-chip 档）。紧贴面板外缘
+   （面板自带 12px 圆角，直角臂正好叠在玻璃边上、视觉与面板一体）。
+   hover/拖拽态只提亮（color 加深一档），不改几何。 */
+.ds-resize-handle::before {
+  content: '';
+  position: absolute;
+  /* 臂原点 = 面板左上角在把手盒内的坐标（桌面把手外挂 14px ⇒ 臂落 14/14；
+     手机内挂 ⇒ 0/0）。由宿主面按落位声明，本件不猜。 */
+  left: var(--ds-resize-arm-x, 0);
+  top: var(--ds-resize-arm-y, 0);
+  width: 18px;
+  height: 18px;
+  pointer-events: none;
+  border-top: 2px solid currentColor;
+  border-left: 2px solid currentColor;
+  border-top-left-radius: 7px;
+}
+.ds-resize-grip {
+  position: absolute;
+  left: calc(var(--ds-resize-arm-x, 0px) + 5px);
+  top: calc(var(--ds-resize-arm-y, 0px) + 5px);
+  width: var(--ds-resize-grip);
+  height: var(--ds-resize-grip);
+  display: block;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  pointer-events: none;
+}
+.ds-resize-grip i {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  border-left: 1.5px solid currentColor;
+  border-top: 1.5px solid currentColor;
+}
+.ds-resize-grip i:nth-child(1) {
+  transform: translate(2px, 2px);
+  opacity: 0.55;
+}
+.ds-resize-grip i:nth-child(2) {
+  transform: translate(4px, 4px);
+  opacity: 0.35;
+}
+.ds-resize-grip i:nth-child(3) {
+  transform: translate(6px, 6px);
+  opacity: 0.2;
+}
+
 
 /* ② 行：静息无边框盒，hairline 分隔，hover 只做底色 wash（平面族）——
    热区 44px 起，可点行整行命中（点击目标 = 行本身，不是行内某个 span）。 */
@@ -519,6 +763,10 @@
   background: var(--ds-etched-bg);
   color: var(--ds-text);
   cursor: pointer;
+  /* 越界闸（tool-card-image-face 批 2026-11-04）：卡内任何子元素的外接矩形
+     都不许越出卡壳——越界内容裁掉（卡体自身永不「漏」到流里）。子级滚动
+     容器（.body.open）在自己的盒内照常滚动。 */
+  overflow: hidden;
   transition: background var(--ds-dur-hover) var(--ds-ease-std);
 }
 .ds-tool-card:hover,
@@ -541,6 +789,9 @@
   font-size: var(--ds-fs-hint);
   overflow: hidden;
   text-overflow: ellipsis;
+  /* 过程泄漏修复批（2026-11-04）：label 行恒单行——超长参数省略号截断，
+     第二行（"Tool(args)\n  (detail)" 的参数行）进展开面（mountToolFold）。 */
+  white-space: nowrap;
 }
 .ds-tool-card .label .tool-detail { color: var(--ds-text-dim); font-size: var(--ds-fs-meta); }
 /* 设备角标：旧「金属渐变字」收编语义档（muted→dim→muted），三色随主题。 */
@@ -563,12 +814,39 @@
   opacity: 0.85;
 }
 
-/* ── 卡体：预览面（默认可见）与全文槽（.body）共用同一套正文排版 ── */
+/* ── 卡体：单行摘要面（默认可见）与全文槽（.body）─────────────────────────
+   过程泄漏修复批（作者令 2026-11-04 14:14 · 问题②）：默认面 = **一行摘要**
+   （icon 状态 + label 首行「工具名 — 单行关键参数」+ 失败状态词 + 图片引用件）。
+   改前（6f6b6a81d）这里是「≤8 行预览 + 命令全文 + 展开控件」，实测 Bash 卡
+   previewHeight=264px / cardHeight=297px，作者「还没点击，内容和结果就已经很长」。
+   正文/结果默认不进 DOM（utils.mountToolCardBody 懒装配）——所以本文件的默认面
+   只有摘要行：可见正文高度恒为 0。超长参数一行省略号截断（nowrap + ellipsis），
+   label 第二行（参数行）被单行壳裁掉，展开面随 mountToolFold 回归（内容不丢）。 */
 .ds-tool-card .ds-tool-card__preview {
-  margin-top: var(--ds-space-1);
-  color: var(--ds-text);
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-1);
+  min-width: 0;
+  max-width: 100%;
+  /* 单行硬闸：一行文案 + 内联 chip，多出来的（label 第二行）裁掉 */
+  overflow: hidden;
+}
+.ds-tool-card .ds-tool-card__preview .label {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ds-tool-card .ds-tool-card__preview .tool-img-ref,
+.ds-tool-card .ds-tool-card__preview .ds-tool-card__status { flex: 0 0 auto; }
+/* 失败状态词（摘要行要看得出成败；成功由 .icon.ok 承载，不加字） */
+.ds-tool-card__status {
+  font-family: var(--ds-font-ui);
   font-size: var(--ds-fs-meta);
-  line-height: 1.4;
+  font-weight: var(--ds-fw-btn);
+  color: var(--ds-danger-icon);
+  white-space: nowrap;
 }
 .ds-tool-card .body {
   color: var(--ds-text);
@@ -597,6 +875,10 @@
   scrollbar-color: color-mix(in srgb, var(--ds-text) 15%, transparent) transparent;
 }
 .ds-tool-card pre.tool-body-pre { white-space: pre; }
+/* 预览面折行（同批）：预览是「摘要读数」不是逐字文档——长行折行而非横向溢出
+   （越界闸之上的第二道，内容仍可读）。展开态全文槽保留 `white-space: pre` +
+   .body.open 自身的横向滚动（逐字保真，作者手势不变）。 */
+.ds-tool-card .ds-tool-card__preview pre.tool-body-pre { white-space: pre-wrap; word-break: break-all; }
 .ds-tool-card pre.hljs {
   white-space: pre-wrap;
   word-break: break-all;
@@ -626,6 +908,10 @@
   border-bottom: 1px solid var(--ds-border-hairline);
   padding-bottom: var(--ds-space-1);
   margin-bottom: var(--ds-space-1);
+  /* 越界闸之二（tool-card-image-face 批 2026-11-04）：命令/参数行含无断点长串
+     （base64、一行式脚本、git patch）时逐字溢出卡壳 2000px 级——真读数见批文档
+     §改前。断行闸打在这里：内容自己收进盒内，不靠外层裁切。 */
+  overflow-wrap: anywhere;
 }
 .ds-tool-card .delegate-prompt {
   border-bottom: 1px solid var(--ds-border-hairline);
@@ -650,25 +936,10 @@
   color: var(--ds-text);
 }
 
-/* ── 折叠控件（显式主路径；整卡可点习惯由 attachToolClick 保留）── */
-.ds-tool-card__toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--ds-space-half);
-  margin-top: var(--ds-space-half);
-  padding: 1px var(--ds-space-1);
-  font-family: var(--ds-font-ui);
-  font-size: var(--ds-fs-meta);
-  font-weight: var(--ds-fw-btn);
-  line-height: var(--ds-lh-tight);
-  color: var(--ds-text-muted);
-  background: transparent;
-  border: none;
-  border-radius: var(--ds-radius-badge);
-  cursor: pointer;
-}
-.ds-tool-card__toggle:hover { color: var(--ds-text); background: var(--ds-veil-focus); }
-.ds-tool-card__toggle:focus-visible { outline: 2px solid var(--ds-focus-ring); outline-offset: 1px; }
+/* ── 折叠控件：过程泄漏修复批（2026-11-04）退役 .ds-tool-card__toggle ──────
+   默认面改单行摘要后，展开控件（第二个可见行）不再存在：整卡可点 + 摘要行
+   aria-expanded + title 提示承载同一语义（attachToolClick 维持 aria/title 联动），
+   卡内点击=展开全文、再点收回，语义与改前一致。 */
 
 /* ── Mail 工具：卡内 markdown 正文（自 chat.css 迁入本族，色面走语义档）── */
 .ds-tool-card .tool-mail-msg { font-size: var(--ds-fs-body); line-height: var(--ds-lh-body); color: var(--ds-text); }
@@ -679,7 +950,7 @@
 .ds-tool-card .tool-mail-msg li { margin: var(--ds-space-half) 0; }
 .ds-tool-card .tool-mail-msg code {
   background: color-mix(in srgb, var(--ds-text) 5%, transparent);
-  padding: 1px 4px;
+  padding: 1px var(--ds-space-1);
   border-radius: var(--ds-radius-badge);
   font-size: var(--ds-fs-meta);
   font-family: var(--ds-font-mono);
@@ -702,6 +973,34 @@
 .ds-tool-card .tool-mail-msg strong { font-weight: var(--ds-fw-title); }
 /* 链接蓝化同登记项（chat 链接全面蓝化，与 .bubble.ai a 同 token 同源）。 */
 .ds-tool-card .tool-mail-msg a { color: rgb(var(--sapphire)); }
+
+/* ── 卡内图片引用件（tool-card-image-face 批 2026-11-04）───────────────
+   语义：工具卡 = 摘要面（命令/参数 + 行数 + 状态）。图片**绝不内嵌渲染**——
+   md 图片语法与漏网 <img> 一律折叠成这枚引用件（utils.js foldToolCardMedia /
+   splitToolBodyImages 单点），点击走灯箱（lightbox.js 唯一出口）。
+   兜底闸：任何路径漏进来的 <img> 在卡内一律不渲染（新腿零回归成本）。 */
+.ds-tool-card img { display: none; }
+.ds-tool-card .tool-img-ref {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  margin: 1px 0;
+  padding: 1px var(--ds-space-2);
+  font-family: var(--ds-font-ui);
+  font-size: var(--ds-fs-meta);
+  line-height: var(--ds-lh-tight);
+  color: var(--ds-text-muted);
+  background: var(--ds-control-bg-hover);
+  border: none;
+  border-radius: var(--ds-radius-badge);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background var(--ds-dur-hover) var(--ds-ease-std), color var(--ds-dur-hover) var(--ds-ease-std);
+}
+.ds-tool-card .tool-img-ref:hover { color: var(--ds-text); background: var(--ds-veil-focus); }
+.ds-tool-card .tool-img-ref:focus-visible { outline: 2px solid var(--ds-focus-ring); outline-offset: 1px; }
 
 /* ══ ⑧ 侧栏族（.ds-side-*）——ui-unification-20261103-sidebar ═══════════
    侧栏导航项的**形态唯一家**：行基座 / 紧凑树行 / 行主文案 / 行 meta /
@@ -999,6 +1298,58 @@
   background: none;
   box-shadow: none;
   pointer-events: none;
+}
+
+/* ── 顶缘渐隐带（.ds-edge-fade）——「先糊后没」的唯一实现 ──
+   ui-unification-20261103-doc-ask-fade（作者令 2026-11-03 实拍 IMG_1720/IMG_1721）：
+   「上边缘过渡：现在上方边缘有很明显的截断。我想要的效果是像主对话窗口那样，做一个
+   慢慢渐渐隐去的消失效果来做过渡」。
+   本类是**主对话窗顶缘滚入渐隐带**（glass.css 原 `#g2-edge-fade` 材质段）的收编体。
+   成员史：①-批曾收编 Ask 面板 .ask-veil 为第二成员；2026-11-04 ask-fade-content-opacity
+   批作者裁定「渐隐应该是消息透明度渐到 0 的过程，不是放一条过渡带」⇒ .ask-veil
+   退役，Ask 渐隐改走 ask.css .ask-col 的内容级 mask（零底色零 backdrop）。本类
+   成员回归单员 = 主对话窗；两处形态自此分治。
+   材质三件（顺序不可拆，缺一件就退化成一条色带）：
+     ① veil 渐层 `--ds-fade-veil`（色 = 页面底色族 ⇒ 本身几乎不可见，作用是把内容
+        「洗掉」而不是盖一块色）；
+     ② backdrop blur+saturate `--ds-fade-blur`/`--ds-fade-sat`（内容越靠顶越糊）；
+     ③ 两段式 ease-out mask（0% 全实 → 50% 0.55 → 100% 透明）= 「先糊后没」的
+        衰减曲线本身。
+   ── 已知坑（前几轮实证，消费面必须绕开）────────────────────────────
+   ① mask × backdrop-filter **同元素**在自适应/降级路径上会被合成器架空（blur 按
+      未裁剪全幅输出）⇒ 本类的 mask 只承担「带自身的上下缘衰减」，消费面**不得**
+      再给本类叠加第二层 mask / opacity 裁剪；
+   ② mask 参与 hit-test 裁剪（alpha≈0 处整块 pointer-events 透传）⇒ 本类恒
+      `pointer-events:none`（纯视觉层），且**内容宿主绝不许挂 mask**——内容必须
+      保持可滚可点（Ask 面板原「colwrap 挂 mask」的形态即栽在这里，本批已摘）；
+   ③ mask 里的颜色只为取 alpha 通道，故用 `currentColor` + `color-mix()` 表达
+      0.55 中间档（严格面：设计体系层整文件零裸色值，见 scripts/check-design-tokens.mjs）。
+   本类**不定高**（消费面自行声明，现盘 = 聊天根 `--ds-fade-height` 88px）、
+   **不定 z 序**、**不定左右缩进** —— 由消费面声明。 */
+.ds-edge-fade {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  color: var(--ds-text);   /* 只为 mask 取 alpha（见坑③），不参与可见配色 */
+  pointer-events: none;
+  background: var(--ds-fade-veil);
+  -webkit-backdrop-filter: blur(var(--ds-fade-blur)) saturate(var(--ds-fade-sat));
+  backdrop-filter: blur(var(--ds-fade-blur)) saturate(var(--ds-fade-sat));
+  -webkit-mask-image: linear-gradient(to bottom, currentColor 0%, color-mix(in srgb, currentColor 55%, transparent) 50%, transparent 100%);
+  mask-image: linear-gradient(to bottom, currentColor 0%, color-mix(in srgb, currentColor 55%, transparent) 50%, transparent 100%);
+}
+/* 降级（微信内置浏览器 / 旧 WebView / X5 无 backdrop-filter）：带退化为纯渐层罩，
+   渐隐语义不破（原 glass.css #g2-edge-fade 降级档逐条收编到本类单源）。 */
+@supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .ds-edge-fade {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+html.no-backdrop .ds-edge-fade {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
 }
 
 @keyframes modalIn {

@@ -13,7 +13,7 @@ import { voiceEnabled } from './featureFlags.js';
 // 今天仍为纯时钟（formatHm），更早按本地日历日加日期层（昨天/星期X/M月D日/跨年）。
 import { formatHm, formatFooterTime, toggleTimeFormat, bindTimeToggle } from './timeFormat.js';
 import { activeView, setActiveView, findViewBySessionId, chatViews } from './chatView.js';
-import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, buildToolDetail, buildDelegatePromptHtml, attachToolClick, mountToolCardBody, delegatePromptRaw, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode, createMsgCopyButton, createIconsIn, statusIcon, isNearBottom, shouldFollowBottom, NEAR_BOTTOM_PX, deviceTagHtml } from './utils.js';
+import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, buildToolDetail, buildDelegatePromptHtml, attachToolClick, mountToolCardBody, delegatePromptRaw, foldToolCardMedia, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode, createMsgCopyButton, createIconsIn, statusIcon, isNearBottom, shouldFollowBottom, NEAR_BOTTOM_PX, deviceTagHtml } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
 import { t } from './i18n.js';
 // msgchip-provenance 批（2026-11-01）：渠道/平台来源注记剥离单点（牌窗与气泡共用）。
@@ -964,6 +964,10 @@ export function finishAgent(agentId) {
 // popArtifacts.js).
 export { openPopArtifact, popArtifactFromInput } from './popArtifacts.js';
 import { isPopPayload, parsePopPayload, buildPopArtifactRow, renderPopToolRow, applyLegacyPopCard, buildUserMediaRow, registerUserMediaRow, patchUserMediaRow, unifyUserMediaFace, fileIconStyle, extOf } from './popArtifacts.js';
+// ui-unification-20261103-askuser-attach（作者令 2026-11-04）：AskUser 卡内附件的
+// 媒体档 = **卡语言标准组件**（叠卡 `.ds-media-stack` 族 / 平面 `.pop-media-flat`）；
+// 预览层 = 灯箱单点。禁在本文件再写第二套媒体卡 / 叠卡 / 预览实现。
+import { buildMediaStack, buildMediaFlat, openMediaLightbox } from './popArtifacts.js';
 
 /** quote-message 一期：AskUser 卡首个 question 的纯文本（剥 HTML 标签；镜像
  *  persistence.js askUserQuestionText 的剥标签先例 —— chat.js 不反向 import
@@ -1170,6 +1174,10 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
     card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
       '<div class="content"><div class="label">' + labelHtml + '</div>' +
       (mailBody ? '<div class="body">' + mailBody + '</div>' : '') + '</div>';
+    // 工具卡图片引用面（tool-card-image-face 批 2026-11-04）：Mail 卡 markdown
+    // 正文里的图片语法被 marked 渲成真 <img> —— 工具卡是摘要面，图片一律折叠为
+    // 「🖼 图片 ×N」引用件（灯箱单点），绝不内嵌渲染。utils 单点兜底。
+    if (mailBody) foldToolCardMedia(card);
     smartScroll();
     if (mailBody) attachToolClick(card);
     return { type: 'tool', label, summary, content: null, isError, input: inputJson };
@@ -1246,7 +1254,7 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
     + (labelParts.length > 1 ? '<br><span class="tool-detail">' + escapeHtml(labelParts[1]) + '</span>' : '');
   card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
     '<div class="content"><div class="label">' + labelHtml + '</div></div>';
-  const { hasBody } = mountToolCardBody(card, { detailHtml, promptText, content, label });
+  const { hasBody } = mountToolCardBody(card, { detailHtml, promptText, content, label, labelTail: labelParts[1] || '' });
   smartScroll();
 
   if (hasBody) attachToolClick(card);
@@ -1855,7 +1863,7 @@ export function renderStillProcessingNotice(sid, rung = 0) {
   const text = document.createElement('span');
   text.textContent = t('chat.stillProcessing');
   card.appendChild(text);
-  const btnCss = 'padding:4px 12px;border-radius:6px;border:1px solid var(--color-frame-border);background:var(--color-frame-hover);color:var(--color-frame-text);cursor:pointer;font-size:13px;font-family:inherit;';
+  const btnCss = 'padding:var(--ds-space-1) var(--ds-space-3);border-radius:var(--ds-radius-chip);border:1px solid var(--color-frame-border);background:var(--color-frame-hover);color:var(--color-frame-text);cursor:pointer;font-size:var(--ds-fs-body);font-family:inherit;';
   // ① 首次动作：`chat.retry`（文案不变、语义变为**需确认**）——turn 仍在跑时不发 interrupt，
   //    只把行推进到确认态；turn 已结束（busy 已清）则直接重发，无需确认。
   const retryBtn = document.createElement('button');
@@ -1964,7 +1972,7 @@ function renderTerminalRow(sid, i18nKey, dataset = {}) {
   card.appendChild(text);
   const btn = document.createElement('button');
   btn.textContent = t('chat.retry');
-  btn.style.cssText = 'padding:4px 12px;border-radius:6px;border:1px solid var(--color-frame-border);background:var(--color-frame-hover);color:var(--color-frame-text);cursor:pointer;font-size:13px;font-family:inherit;';
+  btn.style.cssText = 'padding:var(--ds-space-1) var(--ds-space-3);border-radius:var(--ds-radius-chip);border:1px solid var(--color-frame-border);background:var(--color-frame-hover);color:var(--color-frame-text);cursor:pointer;font-size:var(--ds-fs-body);font-family:inherit;';
   btn.onmouseenter = () => { btn.style.background = 'var(--color-frame-active)'; };
   btn.onmouseleave = () => { btn.style.background = 'var(--color-frame-hover)'; };
   btn.onclick = () => {
@@ -2817,7 +2825,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     if (answerAttachments.length) {
       const countLine = document.createElement('div');
       countLine.className = 'option-answer';
-      countLine.style.cssText = 'color: var(--color-text-muted, #888); font-size: 12px;';
+      countLine.style.cssText = 'color: var(--color-text-muted, #888); font-size: var(--ds-fs-hint);';
       countLine.textContent = t('askUser.attachAnswerCount', { n: String(answerAttachments.length) });
       box.appendChild(countLine);
       mountAnsweredBadge(box, answerAttachments.length);
@@ -2951,10 +2959,15 @@ async function probeAttachmentFile(path) {
   try {
     const { queuedTicketUrl } = await import('./nfTicket.js');
     const url = await queuedTicketUrl(path);
-    if (!url) return false;
+    if (!url) return { ok: false, reason: 'unsupported' };
     const resp = await fetch(url, { headers: { Range: 'bytes=0-0' } });
-    return resp.ok;
-  } catch { return false; }
+    if (resp.ok) return { ok: true, reason: 'ok' };
+    // 作者实拍 IMG_1725 ⑤a（「不可用」三个字既无原因也无动作）：不可读**给原因档**，
+    // 三档正好覆盖作者现场的三种成因（会话未登录 / 文件已迁走 / 网络不可达）。
+    if (resp.status === 401 || resp.status === 403) return { ok: false, reason: 'denied' };
+    if (resp.status === 404 || resp.status === 410) return { ok: false, reason: 'missing' };
+    return { ok: false, reason: 'network' };
+  } catch { return { ok: false, reason: 'network' }; }
 }
 
 // ---------- AskUser 附件行（顶层 `attachments` ⇒ 整次提问层，2026-10-02；askuser-attach-align 2026-10-07 重写判定面） ----------
@@ -2968,6 +2981,16 @@ const ASK_ATTACHMENT_FOLD_AT = 3;
 function askAttachmentBasename(p) {
   const parts = String(p).split('/');
   return parts[parts.length - 1] || String(p);
+}
+
+/** 来源标签文本（ui-unification-20261103-askuser-attach 批）：文件卡左上角
+ *  「AskUser · <问题摘要/短 id>」（作者令原话例「AskUser · 图片缩放确认」）。
+ *  摘要 = 首问剥标签文本前 14 字（长问截断进 title——完整摘要在卡面本就可见）；
+ *  无问题文本时回退 requestId 尾段（短 id 档——作者令给出的第二选项）。 */
+function askAttOriginLabel(items, requestId) {
+  const q = askUserCardQuestionText(items);
+  const head = q ? q.slice(0, 14) : (requestId ? String(requestId).slice(-6) : '');
+  return head ? 'AskUser · ' + head : 'AskUser';
 }
 
 /** AskUser 答复附件**不再开 Canvas**（askuser-attach-replyrender 批 2026-10-30，
@@ -3002,154 +3025,157 @@ async function downloadAttachmentFile(path, base) {
   } catch { return false; }
 }
 
-/** 附件行的**单一渲染位**（整次提问层；`renderAskUser` 唯一调用方）。
+/** 附件行的**单一渲染位**（整次提问层；`renderAskUser` / `renderAskUserHistory` 唯二调用方）。
  *
  *  §三 落点 = 卡内 `.option-q-wrapper` 之内、`.option-btn-row` 之前：本函数自建一个
- *  承载块并复用**既有类名** `.option-q-wrapper`（全仓无该类的 CSS 规则，纯 JS 钩子 ⇒
- *  零新增 CSS），插在 `box.children` 里的 `.option-btn-row` 之前。该块**不**登记进
- *  `createDepVisibility`（那是逐问题的 dependsOn 控件）⇒ 末条问题被条件隐藏时附件行
- *  不随之消失。挂载序号在**全部问题 wrapper 之后** ⇒ `markAnsweredPick` 的
- *  `wrappers[qi]`（按问题下标取）不受影响。
+ *  承载块并复用**既有类名** `.option-q-wrapper`（纯 JS 钩子），插在 `box.children`
+ *  里的 `.option-btn-row` 之前。该块**不**登记进 `createDepVisibility` ⇒ 末条问题被
+ *  条件隐藏时附件行不随之消失。挂载序号在**全部问题 wrapper 之后** ⇒
+ *  `markAnsweredPick` 的 `wrappers[qi]`（按问题下标取）不受影响。
  *
- *  行形态（askuser-attach-replyrender 批 2026-10-30 起，作者令「我回复你的附件，
- *  不需要在 Canvas 打开」；此前形态 = askuser-attach-align 2026-10-07「跟 Pop 保持
- *  一致」——注册表认领的类型一律跳 Canvas 标签页）：
- *   · 图片（判据 = `itemTypeForFileName` === 'image'，真源仍是 viewer 注册表自身，
- *     禁第二张扩展名表）⇒ **会话流内联缩略帧**（`nfViewerSource` 账本单点取数，
- *     与设备内联图/lightbox 同一条字节腿）+ 点击 **lightbox** 大图 —— 零 Canvas
- *     依赖，不新开任何标签。
- *   · 其余全部类型（含注册表未认领）⇒ 真按钮，点击走**下载腿**
- *     （`downloadAttachmentFile` = 设备面下载键同通路）。
- *   · 探针判定缺失/不可读（`probeAttachmentFile` 败）⇒ 该行**就地降级**为
- *     静态行 + `attachmentUnavailable` 标注；图片行取数额外失败时先降级为下载行
- *     （附件仍可拿，禁死行）。🔴 静态行零按钮语义（不出 `<button>` / `[role=button]`）。
- *  文案一律取自 `t()`（🔴 禁硬编码中文串入 JS）。 */
-function renderAskAttachments(box, attachments) {
+ *  形态（ui-unification-20261103-askuser-attach 批 2026-11-04，作者令原话「跟我们
+ *  输入框的这些显示应该要是同源的……图片和视频：也是以这种叠卡的形式存在；文件：
+ *  以我们目前的形式存在，只是在左上角打一个标签……原本的 AskUser 卡片里面就可以
+ *  只显示缩略图」；此前形态 = askuser-attach-replyrender 2026-10-30 的按钮行列表）：
+ *   · 图片 + 视频（判据 = `itemTypeForFileName` ∈ {image, video}，真源仍是 viewer
+ *     注册表自身，禁第二张扩展名表）⇒ **卡语言标准叠卡组件**（popArtifacts 单点：
+ *     单件 `buildMediaFlat` / 多件 `buildMediaStack`——`.ds-media-stack` 标准类族，
+ *     与主会话 Pop 媒体卡/社交三窗同一形态唯一家）。**折叠态默认**：恒一张 220×280
+ *     卡脸（不随件数膨胀），「展开 N」钮展开列；点卡脸 = 灯箱大图/视频（预览层单点
+ *     `openMediaLightbox`，零 Canvas 依赖——10-30 作者令「不需要在 Canvas 打开」）。
+ *   · 其余全部类型 ⇒ 文件 chip（`renderAttachmentFace` —— 与输入框附件条
+ *     `renderAttachmentPreviewInner` **同一函数**的同一张脸），左上角挂**来源标签**
+ *     （`ds-att-origin`，文本 = 「AskUser · 问题摘要」）。默认只显前 3 枚 +
+ *     「共 N 个」展开（不再整列大图标卡撑长卡身）。
+ *   · 探针判定不可读 ⇒ chip 就地落**降级态**：名字 + **原因档**（401/403 无权限 /
+ *     404/410 已不存在 / 其余网络不可达——「不可用」三字裸奔形态退役）+
+ *     「重试下载」真动作（不净死）。字节腿失败（下载链出错）同样落该降级态。
+ *  文案一律取自 `t()`（🔴 禁硬编码中文串入 JS）。
+ *
+ *  @param {HTMLElement} box 卡根（.option-box）
+ *  @param {string[]|{path:string}[]} attachments 附件绝对路径清单
+ *  @param {string} [originLabel] 来源标签文本（问题摘要腿；缺省回退 requestId 尾段） */
+function renderAskAttachments(box, attachments, originLabel) {
   const atts = Array.isArray(attachments)
-    ? attachments.filter(p => typeof p === 'string' && p.length > 0)
+    ? attachments.filter(p => typeof p === 'string' ? p.length > 0 : !!(p && p.path))
     : [];
   if (!box || atts.length === 0) return;
+  const paths = atts.map(p => typeof p === 'string' ? p : p.path);
   const btnRow = box.querySelector('.option-btn-row');
   if (!btnRow) return; // 形态兜底：无按钮行就无插位（改前形态逐字保留）
 
   const wrap = document.createElement('div');
-  // 既有类名（零新增 CSS）+ 本批专属钩子类（纯 JS 选择器，无 CSS 规则 ⇒ 不触单源闸）
+  // 既有类名 + 本批钩子类（纯 JS 选择器，形在 css/chat.css / mobileLayer.css 单点）
   wrap.className = 'option-q-wrapper ask-attachments-wrap';
 
   const head = document.createElement('div');
   head.className = 'ask-attachments-head';
-  head.style.cssText = 'font: 600 11px -apple-system, sans-serif; color: var(--color-text-muted, #888); margin: 2px 0 4px;';
-  // 标题词位 = 独立 span（折叠控件是同级 `<button>`）⇒ 文案读数不被控件文本污染。
+  head.style.cssText = 'font: 600 11px -apple-system, sans-serif; color: var(--color-text-muted, #888); margin: var(--ds-space-half) 0 var(--ds-space-1);';
+  // 标题词位 = 独立 span（文案读数不被折叠控件文本污染）。
   const label = document.createElement('span');
   label.className = 'ask-attachments-head-label';
+  label.textContent = t('askUser.attachmentsTitle') + ' · ' + paths.length;
   head.appendChild(label);
 
   const list = document.createElement('div');
   list.className = 'ask-attachments-list';
-  list.style.cssText = 'display: flex; flex-direction: column; gap: 4px; align-items: flex-start;';
+  list.style.cssText = 'display: flex; flex-direction: column; gap: var(--ds-space-2); align-items: flex-start; min-width: 0; max-width: 100%;';
 
-  /** 静态（不可点）行：探针失败 / 下载腿失败共用同一形态 —— 🔴 零按钮语义。 */
-  function makeStaticRow(path, unavailable) {
+  // ── 媒体档（image/video ⇒ 标准叠卡组件）与文件档（其余 ⇒ 同源文件 chip）分拣 ──
+  const mediaItems = [];
+  const fileEntries = [];
+  paths.forEach((path, i) => {
+    const kind = itemTypeForFileName(path);
     const base = askAttachmentBasename(path);
-    const row = document.createElement('span');
-    row.className = 'ask-attachment-static';
-    row.title = path; // 悬停给全路径（可见标签只给 basename）
-    row.style.cssText = 'font-size: 12px; color: var(--color-text-muted, #888); opacity: 0.75;';
-    row.textContent = unavailable ? base + ' · ' + t('askUser.attachmentUnavailable') : base;
-    return row;
-  }
-
-  /** 图片行：内联缩略帧 + 点击 lightbox 大图（askuser-attach-replyrender 批）。
-   *  取数 = `nfViewerSource` 账本单点（动态 import——静态边纪律同 lightbox.js），
-   *  失败 ⇒ 就地降级为下载行（附件仍可拿，禁死行）。 */
-  function makeImageRow(path, base) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'glass-control ask-attachment-image';
-    btn.title = path;
-    btn.setAttribute('aria-label', t('askUser.attachmentPreview', { name: base }));
-    btn.style.cssText = 'padding: 2px; border: none; background: none; line-height: 0;';
-    const img = document.createElement('img');
-    img.alt = base;
-    img.style.cssText = 'display: block; max-width: 240px; max-height: 180px; border-radius: 8px;';
-    btn.appendChild(img);
-    btn.onclick = () => {
-      // lightbox 自身亦经 nfViewerSource 单点 ⇒ 账本命中零二次抓取。
-      if (!img.src) return;
-      import('./lightbox.js')
-        .then(({ openLightbox }) => openLightbox(img.src, base, path))
-        .catch(() => {});
-    };
-    import('./nfFileCache.js')
-      .then(({ nfViewerSource }) => nfViewerSource({ absPath: path, objectUrl: null, pane: btn }))
-      .then(({ url }) => { if (btn.isConnected && !img.src) img.src = url; })
-      .catch(() => {
-        if (!btn.isConnected) return;
-        const row = makeDownloadRow(path, base);
-        btn.replaceWith(row);
-        createIconsIn(row);
-      });
-    return btn;
-  }
-
-  /** 非图片行（含注册表未认领类型）：下载腿 —— 设备面下载键同一字节通路。 */
-  function makeDownloadRow(path, base) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'glass-control ob-compare-btn';
-    btn.title = path;
-    btn.setAttribute('aria-label', t('askUser.attachmentDownload', { name: base }));
-    btn.innerHTML = '<i data-lucide="paperclip"></i><span>' + escapeHtml(base) + '</span>';
-    btn.onclick = () => {
-      downloadAttachmentFile(path, base).then(ok => { if (!ok) degradeRow(btn, path); });
-    };
-    return btn;
-  }
-
-  atts.forEach(path => {
-    const base = askAttachmentBasename(path);
-    // 类型判定 = viewer 注册表自身（禁第二张扩展名表）：
-    // 图片 ⇒ 内联/lightbox（makeImageRow）；其余 ⇒ 下载（makeDownloadRow）。
-    // 两条开法都**不开 Canvas**（作者令 2026-10-30）。
-    const row = itemTypeForFileName(path) === 'image'
-      ? makeImageRow(path, base)
-      : makeDownloadRow(path, base);
-    list.appendChild(row);
-    // 可达性探针（票据轨首字节探针 `probeAttachmentFile`——零 Canvas 副作用）：
-    // 🔴 失败只降级**本行**，整卡渲染一点不改。
-    probeAttachmentFile(path).then(ok => { if (!ok) degradeRow(row, path); });
+    if (kind === 'image' || kind === 'video') {
+      mediaItems.push({ kind, name: base, path, index: i });
+    } else {
+      fileEntries.push({ path, base, index: i });
+    }
   });
 
-  /** 就地降级：可点行 → 不可点静态行（探针失败 / 下载腿失败共用）。
-   *  卡已被替换或移除（`isConnected === false`）时静默跳过 —— 降级只服务在卡行。 */
-  function degradeRow(btn, path) {
-    if (!btn.isConnected) return;
-    btn.replaceWith(makeStaticRow(path, true));
+  // 媒体：标准组件装配（单件平面 / 多件叠卡——与主会话同一形态唯一家）。
+  // onOpen = 灯箱预览单点（10-30 作者令：AskUser 附件零 Canvas 开面；本组件的
+  // 默认角标 canvasCornerButton 开的是 Canvas ⇒ 显式传 cornerFor:null 摘掉）。
+  const openAskMedia = (item) => openMediaLightbox(item);
+  if (mediaItems.length === 1) {
+    list.appendChild(buildMediaFlat(mediaItems[0], { onOpen: openAskMedia, corner: null }));
+  } else if (mediaItems.length > 1) {
+    list.appendChild(buildMediaStack(mediaItems, { onOpen: openAskMedia, cornerFor: () => null }));
   }
 
-  if (atts.length > ASK_ATTACHMENT_FOLD_AT) {
-    // 折叠态：标题位显「N 个附件」；展开后显标题词。切换件是真控件（展开/收起确实可做）。
+  // 文件：同源 chip（renderAttachmentFace —— 输入框附件条同一函数同一张脸）。
+  // >3 枚折叠：默认只显前 3 + 「共 N 个」展开（作者令「原本的卡里只显示缩略图/
+  // 前 N 个」——卡身不再随件数线性膨胀）。
+  const origin = originLabel || '';
+  fileEntries.forEach((fe, fi) => {
+    const chip = renderAttachmentFace({ name: fe.base }, {
+      origin,
+      className: 'ask-att-file',
+      ariaLabel: t('askUser.attachmentDownload', { name: fe.base }),
+      onClick: () => { downloadAttachmentFile(fe.path, fe.base).then(ok => { if (!ok) degradeAskFileChip(chip, fe); }); },
+    });
+    chip.dataset.askAttPath = fe.path;
+    if (fi >= ASK_ATTACHMENT_FOLD_AT) chip.classList.add('ask-att-folded');
+    list.appendChild(chip);
+    // 可达性探针（票据轨首字节，probeAttachmentFile 单点）：失败 = 就地降级态
+    // （原因档 + 重试下载键），只降级本枚。
+    probeAttachmentFile(fe.path).then(res => { if (res && !res.ok) degradeAskFileChip(chip, fe, res.reason); });
+  });
+
+  if (fileEntries.length > ASK_ATTACHMENT_FOLD_AT) {
+    // 折叠控件：文案 = 「共 N 个」（件数真相）；展开后全部可见。真控件（确实可切换）。
     let expanded = false;
-    label.textContent = t('askUser.attachmentsCount', { n: String(atts.length) });
-    list.style.display = 'none';
-    const toggle = document.createElement('button');
-    toggle.type = 'button';
-    toggle.className = 'glass-control';
-    toggle.style.cssText = 'font-size: 11px; padding: 1px 8px; margin-left: 6px;';
-    toggle.setAttribute('aria-expanded', 'false');
-    toggle.textContent = t('ref.expand');
-    toggle.onclick = () => {
+    const foldBtn = document.createElement('button');
+    foldBtn.type = 'button';
+    foldBtn.className = 'glass-control ask-att-fold-btn';
+    foldBtn.style.cssText = 'font-size: var(--ds-fs-meta); padding: var(--ds-space-half) var(--ds-space-glass-x);';
+    foldBtn.setAttribute('aria-expanded', 'false');
+    foldBtn.textContent = t('askUser.attFoldTotal', { n: String(fileEntries.length) });
+    foldBtn.onclick = () => {
       expanded = !expanded;
-      list.style.display = expanded ? '' : 'none';
-      label.textContent = expanded
-        ? t('askUser.attachmentsTitle')
-        : t('askUser.attachmentsCount', { n: String(atts.length) });
-      toggle.textContent = expanded ? t('ref.collapse') : t('ref.expand');
-      toggle.setAttribute('aria-expanded', String(expanded));
+      list.querySelectorAll('.ask-att-folded').forEach(el => el.classList.toggle('ask-att-folded', !expanded));
+      foldBtn.textContent = expanded ? t('ref.collapse') : t('askUser.attFoldTotal', { n: String(fileEntries.length) });
+      foldBtn.setAttribute('aria-expanded', String(expanded));
     };
-    head.appendChild(toggle);
-  } else {
-    label.textContent = t('askUser.attachmentsTitle');
+    list.appendChild(foldBtn);
+  }
+
+  /** 就地降级：chip → 不可读态（原因档 + 重试下载真动作——「不可用」裸奔退役）。
+   *  卡已被替换/移除（isConnected=false）时静默跳过。 */
+  function degradeAskFileChip(chip, fe, reason) {
+    if (!chip || !chip.isConnected) return;
+    chip.classList.add('ask-att-unavailable');
+    let note = chip.querySelector('.ask-att-reason');
+    if (!note) {
+      note = document.createElement('span');
+      note.className = 'ask-att-reason';
+      const name = chip.querySelector('.att-file-name');
+      if (name) name.after(note);
+    }
+    const why = t('askUser.attUnavailable_' + (reason || 'network'));
+    note.textContent = why + ' · ' + t('askUser.attCanDownload');
+    let retry = chip.querySelector('.ask-att-retry');
+    if (!retry) {
+      retry = document.createElement('button');
+      retry.type = 'button';
+      retry.className = 'ask-att-retry glass-control';
+      retry.textContent = t('askUser.attRetryDownload');
+      retry.onclick = (e) => {
+        e.stopPropagation();
+        downloadAttachmentFile(fe.path, fe.base).then(ok => {
+          if (!ok) {
+            retry.textContent = t('askUser.attDownloadFailed');
+            window.__showToast?.(t('askUser.attachUploadFailedToast', { name: fe.base }), 'error');
+          } else {
+            chip.classList.remove('ask-att-unavailable');
+            note.remove();
+            retry.remove();
+          }
+        });
+      };
+      chip.appendChild(retry);
+    }
   }
 
   wrap.appendChild(head);
@@ -3198,7 +3224,7 @@ export function renderAskUser(items, askSessionId, agentName, requestId, source,
     const badge = document.createElement('div');
     badge.className = 'ask-user-source';
     badge.textContent = badgeLabel;
-    badge.style.cssText = 'font: 600 11px -apple-system, sans-serif; color: var(--color-text-muted, #888); margin-bottom: 8px; padding: 2px 8px; background: var(--color-surface, rgba(255,255,255,0.06)); border-radius: 6px; display: inline-block;';
+    badge.style.cssText = 'font: 600 11px -apple-system, sans-serif; color: var(--color-text-muted, #888); margin-bottom: var(--ds-space-2); padding: var(--ds-space-half) var(--ds-space-2); background: var(--color-surface, rgba(255,255,255,0.06)); border-radius: var(--ds-radius-chip); display: inline-block;';
     bubble.appendChild(badge);
   }
   appendChatRow(chat, row);
@@ -3276,7 +3302,7 @@ export function renderAskUser(items, askSessionId, agentName, requestId, source,
     // 的 options 区（`showOptions` 内层）原样不动 ⇒ dirPicker 路径
     // (ProjectTool.scala，原 ProjectCreateTool.scala:425) 不受影响、免回归。
     // showOptions 同步完成 `container.appendChild(box)` ⇒ 此处 box 已在 DOM 内。
-    renderAskAttachments(bubble.querySelector('.option-box'), attachments);
+    renderAskAttachments(bubble.querySelector('.option-box'), attachments, askAttOriginLabel(items, requestId));
     // 感知域增强（mail-perception-impl 批）：OTP 单码片 + 感知草稿快照卡。
     // 单一可选钩子——perception.js 未装载（或未注册）时恒为 no-op，本路径与
     // 改前逐字节同行为；钩子自身零抛出（实现侧 self-contained）。答复由
@@ -3433,7 +3459,7 @@ export function renderAskUserHistory(bubble, items, answerText, requestId, attac
   // 调用 —— 🔴 经 `.option-box` 定位、插位由 `renderAskAttachments` 自身决定
   // （卡内 `.option-btn-row` 之前），本函数不新开第二套开法 / 不新增模块 / 不新增 CSS。
   // 缺席或空列表 ⇒ 函数内早退 ⇒ 历史卡形态与改前逐字节同。
-  renderAskAttachments(box, attachments);
+  renderAskAttachments(box, attachments, askAttOriginLabel(items, requestId));
   // askuser-dragdrop 批（2026-10-19，批 #551）：**作答**附件的只读面——只在确有
   // 作答（非取消 / 非「无作答记录」）时渲染：徽标（已回答 · 附 N 个文件）+
   // renderAskAttachments 同一渲染器的只读行。判据 = answerText 为真且非取消哨兵
@@ -3444,7 +3470,7 @@ export function renderAskUserHistory(bubble, items, answerText, requestId, attac
   const cancelled = answerText === '__cancelled__';
   if (answerText && !cancelled && answerAtts.length) {
     mountAnsweredBadge(box, answerAtts.length);
-    renderAskAttachments(box, answerAtts.map(a => a.path));
+    renderAskAttachments(box, answerAtts.map(a => a.path), askAttOriginLabel(items, requestId));
   }
   // 单一判据的形态锚（`sameAskCards` ②）：这张卡来自历史恢复，不是 live 卡。
   // 属性不进 innerHTML ⇒ 与 live 卡的逐字节 parity 断言（history-replay-cards.spec）
@@ -3765,11 +3791,74 @@ export function renderAttachmentPreview(target) {
   return withFocusKey(box instanceof HTMLElement ? box : null, () => renderAttachmentPreviewInner(target));
 }
 
-/** 附件条重建本体（重渲保焦包装见 renderAttachmentPreview）。 */
+/** ── 附件面单源组件（ui-unification-20261103-askuser-attach）──────────────
+ *  输入框附件条（renderAttachmentPreviewInner）与 AskUser 卡附件区
+ *  （renderAskAttachments）**同一函数**产出附件面 —— 机械断言 a)「两处附件渲染
+ *  共用同一组件/函数（grep 无第二份实现）」的本体：
+ *   · 图片档（有本地 data: 预览源 = 输入框即时选中的本地 File）⇒ `.att-thumb`
+ *     真缩略帧（同一 28px 几何档，桌面/手机层各自由 CSS 接管尺寸）；
+ *   · 其余/图无源 ⇒ `.att-file` chip（glyph + 色族块 `.fc-icon` + 文件名；图标
+ *     语言 = fileIcon.js 色族单源）。
+ *  卡区（opts.card）的文件 chip 额外吃 role/键盘/来源标签：Media 档在卡区不走
+ *  本函数——由卡语言标准组件（buildMediaFlat/buildMediaStack，.ds-media-stack
+ *  族）装配，禁第二套媒体卡实现。
+ *  @param {{name:string, src?:string, mime?:string}} att src = data: 直显源
+ *  @param {{rm?:Element, origin?:string, className?:string, ariaLabel?:string,
+ *           onClick?:Function}} opts
+ *    rm      输入框条传入 ✕ 圆盘（卡区不传——只读面无删除语义）
+ *    origin  来源标签文本（卡区传「AskUser · 摘要」；输入框不传 = 零挂载） */
+function renderAttachmentFace(att, opts) {
+  const o = opts || {};
+  const nameText = String(att.name || '');
+  const src = String(att.src || '');
+  const isMedia = /^image\//.test(String(att.mime || '')) || itemTypeForFileName(nameText) === 'image';
+  if (isMedia && src) {
+    const mediaWrap = document.createElement('div');
+    mediaWrap.style.position = 'relative';
+    const img = document.createElement('img');
+    img.src = src;
+    img.className = 'att-thumb';
+    img.alt = nameText;
+    img.onerror = () => { img.style.display = 'none'; };
+    mediaWrap.appendChild(img);
+    if (o.rm) mediaWrap.appendChild(o.rm);
+    return mediaWrap;
+  }
+  const wrap = document.createElement('div');
+  wrap.className = 'att-file' + (o.className ? ' ' + o.className : '');
+  wrap.style.position = 'relative';
+  const iconSpec = fileIconStyle(extOf(nameText));
+  wrap.title = nameText;
+  wrap.innerHTML = '<svg class="att-file-glyph" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>'
+    + '<span class="att-file-icon fc-icon ' + iconSpec.cls + '" aria-hidden="true">' + escapeHtml(iconSpec.label) + '</span>'
+    + '<span class="att-file-name">' + escapeHtml(nameText) + '</span>';
+  if (o.origin) {
+    // 左上角来源标签（作者令：文件卡「在左上角打一个标签，说明这些文件来源于
+    // 哪一个 AskUser」）。形 = css/chat.css `.ds-att-origin` 槽（本批落）。
+    const tag = document.createElement('span');
+    tag.className = 'ds-att-origin';
+    tag.textContent = o.origin;
+    wrap.appendChild(tag);
+  }
+  if (o.onClick) {
+    wrap.classList.add('is-clickable');
+    wrap.setAttribute('role', 'button');
+    wrap.tabIndex = 0;
+    if (o.ariaLabel) wrap.setAttribute('aria-label', o.ariaLabel);
+    wrap.addEventListener('click', /** @type {EventListener} */ (/** @type {any} */ (o.onClick)));
+    wrap.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); o.onClick(e); }
+    });
+  }
+  if (o.rm) wrap.appendChild(o.rm);
+  return wrap;
+}
+
+/** 附件条重建本体（重渲保焦包装见 renderAttachmentPreview）。
+ *  target: optional { attPreviewEl, attachments } for non-primary windows.
+ *  Defaults to the primary window's attPreview + pendingAttachments so existing
+ *  call sites are unaffected. */
 function renderAttachmentPreviewInner(target) {
-  // target: optional { attPreviewEl, attachments } for non-primary windows.
-  // Defaults to the primary window's attPreview + pendingAttachments so existing
-  // call sites are unaffected.
   const attPreview = (target && target.attPreviewEl) || activeView.dom.attPreview;
   const attachments = (target && target.attachments) || activeView.pendingAttachments;
   if (!attPreview) return;
@@ -3799,13 +3888,6 @@ function renderAttachmentPreviewInner(target) {
         remove);
       attPreview.appendChild(card);
     } else if (att.type === 'image' && att.preview && typeof att.preview === 'string' && att.preview.startsWith('data:')) {
-      const wrap = document.createElement('div');
-      wrap.style.position = 'relative';
-      const img = document.createElement('img');
-      img.src = att.preview;
-      img.className = 'att-thumb';
-      img.onerror = () => { img.style.display = 'none'; };
-      wrap.appendChild(img);
       const rm = document.createElement('div');
       rm.className = 'att-remove';
       // 修正②（作者 2026-09-19 04:22）：图形由文本字符 'x' 改为**几何对称 SVG ✕**
@@ -3818,11 +3900,16 @@ function renderAttachmentPreviewInner(target) {
         attachments.splice(idx, 1);
         renderAttachmentPreview(target);
       };
-      wrap.appendChild(rm);
-      attPreview.appendChild(wrap);
+      // 面本体 = 单源组件（图片档 ⇒ .att-thumb 真缩略帧 + ✕；卡区同函数同面）。
+      attPreview.appendChild(renderAttachmentFace(
+        { name: String(att.name || ''), src: att.preview, mime: att.mimeType || 'image/jpeg' },
+        { rm },
+      ));
     } else {
       // 输入框附件图标化批（作者令 2026-11-02「输入框里的附件条不显示文件名，
       // 用与图片附件缩略图一样大小的图标代替」）：
+      //  · chip 本体 = `renderAttachmentFace`（本批同源化：AskUser 卡附件区
+      //    消费同一函数——机械断言 a) 单点；下方注释逐字保留原实现说明）。
       //  · `.att-file-icon` = 扩展名族色块（fileIconStyle/`.fc-icon` 既有色档单源：
       //    文档蓝/表格绿/演示橙/PDF 红/压缩紫/代码灰），**手机层**由
       //    css/mobileLayer.css 作用域规则接管为 28×28 图标盒（与 .att-thumb 逐值
@@ -3830,15 +3917,7 @@ function renderAttachmentPreviewInner(target) {
       //    ⇒ 桌面 chip 逐像素原样，按令「桌面共组件先不动」）。
       //  · 文件名信息不丢：名字进 chip 的 title（指针悬停）与 aria-label（读屏），
       //    只褪出条面；✕ 删除角标与图片附件逐字同族。
-      const wrap = document.createElement('div');
-      wrap.className = 'att-file';
-      wrap.style.position = 'relative';
       const nameText = String(att.name || '');
-      const iconSpec = fileIconStyle(extOf(nameText));
-      wrap.title = nameText;
-      wrap.innerHTML = '<svg class="att-file-glyph" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>'
-        + '<span class="att-file-icon fc-icon ' + iconSpec.cls + '" aria-hidden="true">' + escapeHtml(iconSpec.label) + '</span>'
-        + '<span class="att-file-name">' + escapeHtml(nameText) + '</span>';
       const rm = document.createElement('div');
       rm.className = 'att-remove';
       rm.innerHTML = CLOSE_X_SVG;   // 修正②：几何对称 ✕（同图片附件键）
@@ -3849,7 +3928,7 @@ function renderAttachmentPreviewInner(target) {
         attachments.splice(idx, 1);
         renderAttachmentPreview(target);
       };
-      wrap.appendChild(rm);
+      const wrap = renderAttachmentFace({ name: nameText }, { rm });
       attPreview.appendChild(wrap);
     }
   });

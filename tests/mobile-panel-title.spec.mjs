@@ -198,12 +198,17 @@ async function openPage(page, hubPage, liveSelector) {
   await page.waitForTimeout(450); // 面装配/图标渲染收敛
 }
 
-async function openTodo(page) {
-  await gotoWorkbench(page);
-  await page.evaluate(() => document.dispatchEvent(new CustomEvent('nf:mobile-todo-entry')));
-  await page.waitForSelector('#mobile-pages .mobile-page.live[data-page="todo"] #todo-page .reminder-row', { timeout: 15000 });
-  await page.waitForTimeout(450);
-}
+// ⛔ 【退役】入口收敛批 todo-unify-entry-collapse 2026-11-04：#todo-page 整面退役
+// （DOM 保留、不可达）⇒ 原「nf:mobile-todo-entry → pushPage('todo')」下钻腿失效。
+// 待办面的现役形态 = 顶带胶囊 + 展开面板（js/todoFace.js），它不是页面栈成员、
+// 没有页面壳标题 ⇒ 本 spec（页面壳标题吸附几何）对该面无适用对象，腿随之退役；
+// 函数体留档不删（恢复入口即可复用）：
+// async function openTodo(page) {
+//   await gotoWorkbench(page);
+//   await page.evaluate(() => document.dispatchEvent(new CustomEvent('nf:mobile-todo-entry')));
+//   await page.waitForSelector('#mobile-pages .mobile-page.live[data-page="todo"] #todo-page .reminder-row', { timeout: 15000 });
+//   await page.waitForTimeout(450);
+// }
 
 /* ── 探针：读页面壳标题态 ───────────────────────────────────────────────
    标题单元素化批 2026-11-02 22:32（作者令「一直是同一个的形式」）：吸附态装饰
@@ -552,9 +557,10 @@ async function themeLeg(engineName, scheme) {
     ok(`${tag}-settings 设置内容滚动域成立（夹具充足）`, setScrollable > 100, `surplus=${setScrollable}`);
     await panelLeg(page, `${tag}-settings`, 'settings', '#mobile-pages .mobile-page.live[data-page="settings"] #settings-content');
 
-    // ③ 待办事项（in-flow 页：todo 几何 auto 后主滚轴 = .todo-page-body）。
-    await openTodo(page);
-    await panelLeg(page, `${tag}-todo`, 'todo', '#mobile-pages .mobile-page.live[data-page="todo"] #todo-page');
+    // ③ 待办事项页 —— ⛔ 腿退役（入口收敛批 2026-11-04）：#todo-page 整面退役，
+    //    不再有页面栈成员 ⇒ 页面壳标题吸附几何对本面无测点（见文件头退役注记）。
+    // await openTodo(page);
+    // await panelLeg(page, `${tag}-todo`, 'todo', '#mobile-pages .mobile-page.live[data-page="todo"] #todo-page');
 
     // ── P4 面板切换对账：吸附态离场 → 下一面板静止态（不继承）──
     await openPage(page, 'projects', '#mobile-pages .mobile-page.live[data-page="projects"] .team-scroll .project-card, #mobile-pages .mobile-page.live[data-page="projects"] .team-scroll');
@@ -613,7 +619,10 @@ async function shellLeg() {
       const EXCLUDED = new Set(['conversation']);
       return nav.PAGES.filter((p) => !p.dock && !EXCLUDED.has(p.id)).map((p) => p.id);
     });
-    ok('⑦ 页壳表在场（PAGES 非根页 ≥ 19）', ids.length >= 19, `n=${ids.length}`);
+    // 入口收敛批 todo-unify-entry-collapse 2026-11-04：'tasks'（任务页面板）与
+    // 'todo'（待办页）两个导航页随入口收敛退役（PAGES 常数 20 → 18），页壳表
+    // 收缩 2 ⇒ 在场下限由 19 下调为 17（仍能捕获整表崩掉，只是不再假设两页在场）。
+    ok('⑦ 页壳表在场（PAGES 非根页 ≥ 17）', ids.length >= 17, `n=${ids.length}`);
     const rows = [];
     for (const id of ids) {
       const r = await page.evaluate(async (pid) => {

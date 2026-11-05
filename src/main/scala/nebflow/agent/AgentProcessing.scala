@@ -406,8 +406,6 @@ private[agent] object AgentProcessing:
                 )
               val errMsg = error match
                 case e: FallbackExhaustedError =>
-                  val attemptSummaries =
-                    e.attempts.map(a => s"${a.providerId}/${a.model}: ${a.reason.map(_.toString).getOrElse("unknown")}")
                   // visionfix (甲): the user-facing "images could not be sent"
                   // text is gated on whether THIS turn carried images, so the
                   // predicate must be fed the very message list the failed call
@@ -416,11 +414,14 @@ private[agent] object AgentProcessing:
                   // fall back to the state's messages for error instances built
                   // elsewhere (e.g. rethrown wrappers) so the flag is never
                   // silently lost. `hadImageIn` is the single predicate.
+                  //
+                  // flysin 收口批（2026-11-04）：字段装配收口到
+                  // `NebflowError.llmFailure`（与 ChatRoutes 同一装配点）——
+                  // 「谁拒收图片」的判据不许在各调用点各拼一份，否则总有一处
+                  // 忘了传，作者在那里就重新看到笼统的 provider 失败。
                   val turnHadImage =
                     e.hadImage || nebflow.llm.LlmInterface.hadImageIn(cleanedState.messages)
-                  NebflowError.toUserMessage(
-                    NebflowError.LlmFailed(e.getMessage, attemptSummaries, hadImage = turnHadImage)
-                  )
+                  NebflowError.toUserMessage(NebflowError.llmFailure(e, hadImage = turnHadImage))
                 case e: ToolPipelineError =>
                   e.message
                 case e: LoopDetectedError =>
@@ -1189,8 +1190,13 @@ private[agent] object AgentProcessing:
                     )
                 }
                 .handleErrorWith(_ => IO.unit)
+              // 收殓回执重感知腿（中断恢复批 2026-11-04 · 审计 D1）：压缩正是「一次
+              // 性注入被抹除」的那一拍——父会话若有未确认的重启丢失通知（持久提醒账
+              // `<dataRoot>/sessions/<sid>/restart-loss-ledger.json`），把一句
+              // `<system-reminder>` 重述拼在压缩后历史的尾部（每条至多 2 次，24h 自清）。
+              // 无账 = os.exists 快路 None（零行为漂移）。
               val compactedState = state
-                .withMessages(compactedMessages)
+                .withMessages(compactedMessages ++ RestartLossLedger.restatementForTail(state.sessionId, compactedMessages).toList)
                 .withPendingCompaction(None)
                 .withCompactionFailures(0)
                 .withEmptyResponseRetries(0)

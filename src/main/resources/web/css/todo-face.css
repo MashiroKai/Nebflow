@@ -15,7 +15,8 @@
   --tfl-yellow: rgb(255, 204, 0);
   --tfl-green: rgba(52, 199, 89, 0.85);
   --tfl-green-solid: rgb(52, 199, 89);
-  /* 教学气泡（黑底胶囊保证浮在玻璃上的可读性——复刻，双主题同黑） */
+  /* 黑底胶囊 token（原名取自教学气泡；气泡已于 2026-11-04 R05 批退役，现唯一
+     消费方 = 完成后撤回条 `.tfl-undo`。名字未改 = 零值漂移，只如实记来源迁移） */
   --tfl-hint-bg: rgba(0, 0, 0, 0.75);
   --tfl-hint-stroke: rgba(255, 255, 255, 0.12);
   --tfl-hint-text: rgba(255, 255, 255, 0.6);
@@ -54,8 +55,9 @@
      面板就被顶下去）。relative 让槽位成为最近的定位祖先，`top:100%` 即「胶囊
      行底」；同时本节点 overflow 为 visible，面板不被裁剪（裁剪只沿包含块链生效）。
    · 胶囊宽/高/翻面口径**一字未改**（--tfl-cap-h 26 / 两态叠层严格等宽）。
-   · 手机层 `#task-list` 仍由 mobileLayer.css 整条 display:none 压死（手机共用
-     的是 .tfl-mobile 展开面），本块对手机零影响。 */
+   · 手机层也显示胶囊（胶囊面交互批 2026-11-04 ⑤：mobileLayer.css 的整条
+     display:none 退役）—— 手机层 = 顶带内同一条居中胶囊行，点击长出的是本卡
+     那张桌面腿浮层（手机任务页的 .tfl-mobile 页面态是另一条腿）；空态不显示。 */
 #task-list {
   /* 老规则（css/taskList.css）给的是顶带通栏 #task-list { padding:0 8px;
      max-height:0; overflow:hidden; display:flex; flex-direction:column } ——
@@ -65,7 +67,7 @@
   /* 胶囊与顶栏/聊天之间的呼吸位（4px 栅格）：6px 上 + 6px 下。槽位在顶带内，
      其下缘即 #chat 让位的观测点之一（js/main.js bandBottom 读 #top-overlays
      实测盒 ⇒ 胶囊出现即把消息列让出）。 */
-  padding: 6px 8px;
+  padding: var(--ds-space-1h) var(--ds-space-2);
   margin: 0;
   max-height: none;
   overflow: visible;
@@ -78,7 +80,7 @@
 }
 #task-list.has-tasks {
   max-height: none;
-  padding: 6px 8px;
+  padding: var(--ds-space-1h) var(--ds-space-2);
   display: block;
   overflow: visible;
   flex-direction: initial;
@@ -184,9 +186,32 @@
   justify-content: center;
   white-space: nowrap;
 }
-/* 当期面：逾期优先（is-overdue 在胶囊上） */
+/* 当期面：逾期优先（is-overdue 在胶囊上；展开后计数搬到面板头，状态镜像到
+   `.tfl-header-count` —— 同一节点、同一套可见性规则，见「生长」段） */
 .tfl-capsule:not(.is-overdue) .tfl-cap-face-overdue,
 .tfl-capsule.is-overdue .tfl-cap-face-todo { visibility: hidden; }
+
+/* ── L3 计数翻转（作者令 2026-11-03 14:53「同时待办更新，这计数要有翻转的
+   效果」）：读数**真的变了**那一拍，在计数当前所在宿主上播一次 rotateX 翻牌
+   （方向统一：由上缘向下翻 ⇒ 0deg → −90deg → 0deg，视觉即「旧牌翻面、新牌
+   落下」）。多条同时变化只翻一次 —— JS 侧同一拍只挂一次类、文本恒写终值，
+   动画纯粹是视觉层，读数永不半途。 */
+.tfl-count-flip {
+  animation: tfl-count-flip 0.32s cubic-bezier(0.2, 0.7, 0.3, 1);
+  transform-style: preserve-3d;
+  backface-visibility: hidden;
+}
+@keyframes tfl-count-flip {
+  0%   { transform: perspective(320px) rotateX(0deg);   opacity: 1; }
+  45%  { transform: perspective(320px) rotateX(-88deg); opacity: 0.15; }
+  55%  { transform: perspective(320px) rotateX(88deg);  opacity: 0.15; }
+  100% { transform: perspective(320px) rotateX(0deg);   opacity: 1; }
+}
+/* L5 降级：reduced-motion 下翻转整条退役（换读数即换读数，不做动画） */
+@media (prefers-reduced-motion: reduce) {
+  .tfl-count-flip { animation: none; }
+}
+
 /* 翻面淡入：JS 在读数翻面那一拍挂 `.tfl-cap-flip`（260ms 后摘），只让当期面
    播 —— 旧面在同一帧已 visibility:hidden ⇒ 过渡中永不出现并排帧，外框宽高
    零变化（宽由 max-content 叠层决定，高由单行行高决定，动画只动 opacity/
@@ -276,16 +301,38 @@
 .tfl-header {
   display: flex;
   align-items: center;
-  gap: 2px;
-  padding: 4px 10px;
+  gap: var(--ds-space-half);
+  padding: var(--ds-space-1) var(--ds-space-glass-x);
   border-bottom: 1px solid color-mix(in srgb, var(--color-text, #000) 8%, transparent);
   flex-shrink: 0;
 }
 .tfl-header-count {
+  display: inline-block;
+  min-width: 0;
   font: 500 11px/1.2 ui-monospace, SFMono-Regular, monospace;
   font-variant-numeric: tabular-nums;
   color: color-mix(in srgb, var(--color-text, #000) 40%, transparent);
 }
+/* ── L2 标题计数 = 胶囊那颗计数节点（搬家后的同一 DOM 节点）─────────────
+   `.has-faces` = 展开态：胶囊的 `.tfl-cap-faces` 整块搬进本槽（JS
+   moveCountInto），所以这里要接住它的可见性/翻面状态 —— 状态类镜像在槽上
+   （is-overdue），可见性规则与胶囊侧逐条对齐（当期面可见、非当期面 hidden
+   ⇒ 槽内永不并排两态）。字号放大到标题档（作者令「放大成标题那个待办计数」）。 */
+.tfl-header-count.has-faces {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space-1h);
+  font-size: var(--ds-fs-body);
+  font-weight: 600;
+  color: color-mix(in srgb, var(--color-text, #000) 78%, transparent);
+}
+.tfl-header-count.has-faces .tfl-cap-faces { justify-items: start; }
+.tfl-header-count:not(.is-overdue) .tfl-cap-face-overdue,
+.tfl-header-count.is-overdue .tfl-cap-face-todo { visibility: hidden; }
+.tfl-header-count.is-overdue { color: var(--tfl-red-o); }
+/* 搬家的连续位移层：JS 逐帧写 transform（位移+缩放 FLIP），此处只给个合成提示 */
+.tfl-cap-faces { will-change: transform; }
+
 .tfl-header-spacer { flex: 1; }
 .tfl-icon-btn {
   display: flex;
@@ -295,7 +342,7 @@
   height: 24px;
   padding: 0;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   background: transparent;
   color: color-mix(in srgb, var(--color-text, #000) 35%, transparent);
   cursor: pointer;
@@ -314,10 +361,10 @@
   border-bottom: 1px solid color-mix(in srgb, var(--color-text, #000) 8%, transparent);
 }
 .tfl-filterbar {
-  padding: 4px 10px 6px;
+  padding: var(--ds-space-1) var(--ds-space-glass-x) var(--ds-space-1h);
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--ds-space-1);
   opacity: 0;
   transform: translateY(-8px);
   transition: opacity 0.25s cubic-bezier(0.4, 0, 0.2, 1), transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
@@ -326,7 +373,7 @@
 .tfl-chips-row {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--ds-space-1);
   min-width: 0;
 }
 .tfl-chips-viewport {
@@ -337,14 +384,14 @@
 .tfl-chips-track {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--ds-space-1);
   will-change: transform;
 }
 .tfl-chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 3px 6px;
+  gap: var(--ds-space-1);
+  padding: 3px var(--ds-space-1h);
   min-height: 26px;
   border: 0.8px solid transparent;
   border-radius: 5px;
@@ -354,8 +401,12 @@
   white-space: nowrap;
   cursor: pointer;
   flex-shrink: 0;
-  transition: padding 0.32s cubic-bezier(0.34, 1.4, 0.64, 1),
-    background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s, font-size 0.32s cubic-bezier(0.34, 1.4, 0.64, 1);
+  /* 悬停动画退役批 2026-11-04（UI 批次审计 D 档 R05 收口；台账1376 作者
+     recall 2026-11-02 12:05「标签 hover 不要动画」）：原 transition 含
+     `padding 0.32s` 与 `font-size 0.32s` 两条**布局级**弹簧（hover 时把邻 chip
+     挤开）——两条连同 `.hovered` 规则整组退役，只留非布局的可感知槽
+     （background/color/border-color/box-shadow 承载 selected 态切换，不属 hover）。 */
+  transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
 .tfl-chip-dot {
   flex-shrink: 0;
@@ -363,7 +414,7 @@
   height: 6px;
   border-radius: 50%;
   background: var(--tag-color, color-mix(in srgb, var(--color-text, #000) 60%, transparent));
-  transition: width 0.32s cubic-bezier(0.34, 1.4, 0.64, 1), height 0.32s cubic-bezier(0.34, 1.4, 0.64, 1);
+  /* 点径弹簧（hover 6→8px）随 R05 退役：点径现为常量，尺寸变化只由 selected 配色表达。 */
 }
 .tfl-chip.selected {
   background: color-mix(in srgb, var(--tag-color, var(--color-text, #000)) 18%, transparent);
@@ -388,11 +439,12 @@
   box-shadow: 0 0 3px color-mix(in srgb, var(--color-text, #000) 30%, transparent);
 }
 .tfl-chip-all i, .tfl-chip-all svg { width: 9px; height: 9px; }
-/* 悬停放大挤开（布局级：chip 变宽挤开两侧，spring 0.3/0.65 近似） */
-.tfl-chip-tag.hovered { padding: 3px 9px; }
-.tfl-chip-tag.hovered .tfl-chip-dot { width: 8px; height: 8px; }
-.tfl-chip-tag.hovered .tfl-chip-name { font-size: 11.5px; }
-.tfl-chip-tag.hovered { box-shadow: 0 0 4px color-mix(in srgb, var(--tag-color) 60%, transparent); }
+/* ⛔ 悬停放大挤开（padding 3px 6px→3px 9px / 点径 6→8px / 字号 10→11.5px / 辉光）
+   与 450ms 四向教学气泡（`.tfl-hint*`）于**标签删除模式批** 2026-11-04 整组退役
+   （UI 批次审计 D 档 R05 收口；台账1376 作者 recall「标签 hover 不要动画」）。
+   退役理由（审计原文）：这套语言与作者「hover 不动」正面冲突，且教学气泡教的
+   是「上划改名 / 下划删除」——删除入口本批改为**垃圾桶 + 叉号**（R06），提示对象
+   已不存在。判定见 tests/todo-tag-delete-mode.spec.mjs（hover 前后 chip 盒逐值相等）。 */
 /* 拖拽中：源 chip 25% 透明（复刻 isDragged opacity） */
 .tfl-chip-tag.dragging { opacity: 0.25; }
 .tfl-chip-ghost {
@@ -426,7 +478,7 @@
   height: 26px;
   padding: 0;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   background: transparent;
   color: color-mix(in srgb, var(--color-text, #000) 50%, transparent);
   cursor: pointer;
@@ -462,51 +514,61 @@
   color: color-mix(in srgb, var(--color-text, #000) 95%, transparent);
 }
 
-/* ── 悬停教学气泡（上↑改名 / 下↓删除 / 左右横箭头；450ms 延迟浮现）────── */
-.tfl-hint-layer {
-  position: fixed;
-  inset: 0;
-  z-index: 10001;
-  pointer-events: none;
-}
-.tfl-hint {
-  position: absolute;
-  display: inline-flex;
+/* ⛔ 悬停教学气泡（`.tfl-hint-layer` / `.tfl-hint*` / `.tfl-chev*` + 四支
+   `tfl-hint-*` keyframes 与其左右摆尾两条规则）已于标签删除模式批 2026-11-04
+   整块摘除 —— 与 JS 侧 `showHint`/`chevSvg`/`dismissHint` 同批退役（审计 D 档 R05；
+   理由见上方 chip 块注）。本仓「退役样式保留不物理删除」的惯例在此例外：死规则
+   正是本批被审的缺陷形态。 */
+
+/* ── 标签删除模式（R05 垃圾桶 + R06 叉号；台账1376）────────────────────
+   入口 = chips 行尾常驻垃圾桶钮；点按 ⇒ 行级类 `.tfl-chips-deleting` ⇒ 每枚标签
+   右缘显叉号（`.tfl-chip-x`）。叉号点击走既有 `confirmDeleteTag`（破坏性操作二次
+   确认单点），不新增确认面。几何：垃圾桶 24×26（与新建钮同档），叉号 11px 圆钮
+   压在 chip 右内缘（不改变 chip 自身盒 ⇒ 删除模式不引起 chips 行重排）。 */
+.tfl-chip-trash {
+  display: flex;
   align-items: center;
-  gap: 3px;
-  padding: 2px 7px;
-  border-radius: 999px;
-  background: var(--tfl-hint-bg);
-  border: 0.5px solid var(--tfl-hint-stroke);
-  color: var(--tfl-hint-text);
-  font: 500 10px/1.3 ui-monospace, SFMono-Regular, monospace;
-  white-space: nowrap;
-  opacity: 0;
-  transition: opacity 0.25s;
+  justify-content: center;
+  width: 24px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: var(--ds-radius-chip);
+  background: transparent;
+  color: color-mix(in srgb, var(--color-text, #000) 50%, transparent);
+  cursor: pointer;
+  flex-shrink: 0;
 }
-.tfl-hint-show .tfl-hint { opacity: 1; }
-.tfl-hint-ic { display: inline-flex; }
-.tfl-hint-ic svg { width: 10px; height: 10px; }
-.tfl-hint-ic.tfl-cyan { color: var(--tfl-cyan); filter: drop-shadow(0 0 3px color-mix(in srgb, var(--tfl-cyan) 60%, transparent)); }
-.tfl-hint-ic.tfl-red { color: var(--tfl-red); filter: drop-shadow(0 0 3px color-mix(in srgb, var(--tfl-red) 60%, transparent)); }
-.tfl-chev { width: 9px; height: 9px; color: var(--tfl-hint-text); }
-.tfl-chev.tfl-yellow { color: var(--tfl-yellow); }
-@keyframes tfl-hint-up { from { transform: translateY(-1.5px); } to { transform: translateY(1.5px); } }
-@keyframes tfl-hint-down { from { transform: translateY(1.5px); } to { transform: translateY(-1.5px); } }
-@keyframes tfl-hint-l { from { transform: translateX(-2px); } to { transform: translateX(2px); } }
-@keyframes tfl-hint-r { from { transform: translateX(2px); } to { transform: translateX(-2px); } }
-.tfl-hint-up { animation: tfl-hint-up 0.5s ease-in-out infinite alternate; }
-.tfl-hint-down { animation: tfl-hint-down 0.5s ease-in-out infinite alternate; }
-.tfl-hint-left { animation: tfl-hint-l 0.5s ease-in-out infinite alternate; }
-.tfl-hint-right { animation: tfl-hint-r 0.5s ease-in-out infinite alternate; }
+.tfl-chip-trash svg { width: 11px; height: 11px; }
+.tfl-chip-trash:hover { color: color-mix(in srgb, var(--color-text, #000) 80%, transparent); }
+.tfl-chip-trash.armed { background: color-mix(in srgb, var(--tfl-red) 16%, transparent); }
+.tfl-chip-trash.armed svg { color: var(--tfl-red); }
+/* 叉号：常驻节点，仅删除模式可见（display 切换 ⇒ 非删除模式零占位零命中） */
+.tfl-chip-x {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 11px;
+  height: 11px;
+  margin-left: var(--ds-space-half);
+  flex-shrink: 0;
+  cursor: pointer;
+  color: var(--tfl-red);
+  filter: drop-shadow(0 0 2px color-mix(in srgb, var(--tfl-red) 55%, transparent));
+}
+.tfl-chip-x svg { width: 11px; height: 11px; }
+/* 字形色（形状在 JS 侧零色值：圆吃 currentColor、叉吃 --tfl-glyph 镂空档） */
+.tfl-chip-x svg circle { fill: currentColor; }
+.tfl-chip-x svg path { stroke: var(--tfl-glyph); }
+.tfl-chips-row.tfl-chips-deleting .tfl-chip-x { display: inline-flex; }
 
 /* ── 标签 popover（名 + 十色 5 列网格；arrowEdge bottom 锚定）──────────── */
 .tfl-tag-popover {
   position: fixed;
   z-index: 10002;
   width: 220px;
-  padding: 10px;
-  border-radius: 8px;
+  padding: var(--ds-space-glass-x);
+  border-radius: var(--ds-radius-input);
   background: var(--tfl-pop-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
@@ -519,7 +581,7 @@
 .tfl-tag-popover.open { opacity: 1; transform: none; }
 .tfl-tag-name {
   width: 100%;
-  padding: 6px 8px;
+  padding: var(--ds-space-1h) var(--ds-space-2);
   border: none;
   border-radius: 5px;
   background: color-mix(in srgb, var(--color-text, #fff) 10%, transparent);
@@ -530,9 +592,9 @@
 .tfl-tag-colors {
   display: grid;
   grid-template-columns: repeat(5, 26px);
-  gap: 6px;
+  gap: var(--ds-space-1h);
   justify-content: center;
-  margin-top: 8px;
+  margin-top: var(--ds-space-2);
 }
 .tfl-tag-color {
   width: 26px;
@@ -558,24 +620,41 @@
 }
 
 /* ── 列表 ─────────────────────────────────────────────────────────────── */
+/* 列表包裹层（胶囊面交互批 2026-11-04）：列表 + 右下角新建加号 + 撤回条的
+   共同定位祖先。加号绝对压在**列表区**右下角（不是卡片右下角）⇒ 与底部
+   Add footer 永不重叠；列表末行让位由 .tfl-list 的 padding-bottom 给出。 */
+.tfl-list-wrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  /* 加号直径（桌面档 34px；手机档 44px 见 css/mobileLayer.css 同名变量覆盖） */
+  --tfl-fab-size: 34px;
+}
 .tfl-list {
   flex: 1 1 auto;
   min-height: 0;
   max-height: 44vh;
   overflow-y: auto;
   scrollbar-width: none;
-  padding: 2px 6px 6px;
+  /* 末行让位 = 加号直径 + 呼吸位（加号绝不压列表末行：机械判据见
+     tests/todo-capsule-create.spec.mjs ① 与 ⑧）。
+     收口 merge 2026-11-04：本行取本批（加号让位）为准，数值口径换成 main
+     design-scale 令牌（half=2px / 1h=6px / 1=4px，与 main 侧原值逐位等值）。 */
+  padding: var(--ds-space-half) var(--ds-space-1h)
+    calc(var(--ds-space-1h) + var(--tfl-fab-size) + var(--ds-space-1));
   outline: none;
 }
 .tfl-list::-webkit-scrollbar { display: none; }
-.tfl-list-inner { display: flex; flex-direction: column; gap: 2px; }
+.tfl-list-inner { display: flex; flex-direction: column; gap: var(--ds-space-half); }
 
 .tfl-row {
   display: flex;
   align-items: flex-start;
   gap: 5px;
-  padding: 3px 6px;
-  border-radius: 4px;
+  padding: 3px var(--ds-space-1h);
+  border-radius: var(--ds-radius-badge);
   background: color-mix(in srgb, var(--color-text, #000) 4%, transparent);
   border: 0.6px solid transparent;
   transition: opacity 0.3s ease-out, transform 0.3s ease-out, background 0.15s, border-color 0.15s;
@@ -590,7 +669,7 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  margin-top: 6px;
+  margin-top: var(--ds-space-1h);
 }
 .tfl-row-main {
   flex: 1 1 auto;
@@ -603,7 +682,7 @@
 .tfl-row-titleline {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--ds-space-1);
   min-width: 0;
 }
 .tfl-row-title {
@@ -641,7 +720,7 @@
   white-space: nowrap;
   font: 400 9px/1.4 ui-monospace, SFMono-Regular, monospace;
   color: color-mix(in srgb, var(--color-text, #000) 55%, transparent);
-  padding: 1.5px 4px;
+  padding: 1.5px var(--ds-space-1);
   border-radius: 3px;
   background: color-mix(in srgb, var(--tag-color, var(--color-text, #000)) 12%, transparent);
   border: 0.5px solid color-mix(in srgb, var(--tag-color, var(--color-text, #000)) 25%, transparent);
@@ -716,18 +795,18 @@
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 6px;
-  padding: 6px 6px 6px 16px;
-  margin-top: 2px;
-  border-radius: 4px;
+  gap: var(--ds-space-1h);
+  padding: var(--ds-space-1h) var(--ds-space-1h) var(--ds-space-1h) var(--ds-space-4);
+  margin-top: var(--ds-space-half);
+  border-radius: var(--ds-radius-badge);
   background: color-mix(in srgb, var(--color-text, #000) 5%, transparent);
 }
 .tfl-edit-notes {
   border: none;
   outline: none;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   background: color-mix(in srgb, var(--color-text, #000) 6%, transparent);
-  padding: 3px 6px;
+  padding: 3px var(--ds-space-1h);
   font: 400 10px/1.4 ui-monospace, SFMono-Regular, monospace;
   color: color-mix(in srgb, var(--color-text, #000) 70%, transparent);
 }
@@ -737,10 +816,10 @@
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  padding: 3px 6px;
+  padding: 3px var(--ds-space-1h);
   min-height: 26px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   background: transparent;
   color: color-mix(in srgb, var(--color-text, #000) 45%, transparent);
   font: 400 10px/1.2 -apple-system, BlinkMacSystemFont, sans-serif;
@@ -769,11 +848,11 @@
 .tfl-switch-knob-wrap {
   width: 26px;
   height: 15px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   background: color-mix(in srgb, var(--color-text, #000) 20%, transparent);
   display: flex;
   align-items: center;
-  padding: 2px;
+  padding: var(--ds-space-half);
   transition: background 0.15s;
 }
 .tfl-switch-knob {
@@ -785,16 +864,17 @@
 }
 .tfl-switch.on .tfl-switch-knob-wrap { background: var(--tfl-green-solid); }
 .tfl-switch.on .tfl-switch-knob { transform: translateX(11px); }
-.tfl-due-input {
-  border-radius: 6px;
-  padding: 3px 8px;
-  font: 400 11px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
-  color: var(--color-text, #000);
-  background: var(--glass-etched-bg, rgba(128, 128, 128, 0.08));
-  border: 1px solid var(--glass-etched-border, rgba(128, 128, 128, 0.15));
-  outline: none;
+/* 截止时刻面（time-wheel-picker 批 2026-11-03）：原生 datetime-local 退役 ⇒
+   值域载体是隐藏输入（.tfl-due-input），可见面 = 同款 `.tw-trigger`
+   （样式单源 = timeWheel.css；此处只管行内伸展与密度）。 */
+.tfl-due-holder {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex: 1 1 auto;
 }
-.tfl-due-input:focus { border-color: var(--glass-etched-border-focus, rgba(91, 127, 191, 0.4)); }
+.tfl-due-holder .tw-trigger { flex: 1 1 auto; min-width: 0; }
+.tfl-due-input { display: none; }
 
 /* 行标题输入（编辑/创建共用） */
 .tfl-row-title-input {
@@ -814,18 +894,18 @@
 .tfl-create-row {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--ds-space-half);
   animation: tfl-fade-in 0.28s ease backwards;
 }
 .tfl-create-head {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 3px 6px;
-  border-radius: 4px;
+  gap: var(--ds-space-1h);
+  padding: 3px var(--ds-space-1h);
+  border-radius: var(--ds-radius-badge);
   background: color-mix(in srgb, var(--color-text, #000) 5%, transparent);
 }
-.tfl-create-panel { padding-left: 6px; }
+.tfl-create-panel { padding-left: var(--ds-space-1h); }
 
 /* 空态 */
 .tfl-empty {
@@ -841,14 +921,14 @@
 /* ── 底部 Add footer（单标签视图常驻创建入口）─────────────────────────── */
 .tfl-footer {
   flex-shrink: 0;
-  padding: 6px 10px 8px;
+  padding: var(--ds-space-1h) var(--ds-space-glass-x) var(--ds-space-2);
   border-top: 1px solid color-mix(in srgb, var(--color-text, #000) 8%, transparent);
 }
 .tfl-add-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   width: 100%;
   height: 30px;
   padding: 0;
@@ -869,6 +949,97 @@
 .tfl-add-ic-done { color: var(--tfl-green); }
 .tfl-add-ic-done svg { stroke: var(--tfl-glyph); }
 
+/* ── 右下角新建加号（胶囊面交互批 · 作者令 2026-11-04 ①）───────────────────
+   形态参考 Apple 待办：小而克制的圆钮、次级色（--color-text 8% 底 / 60% 墨），
+   桌面 34px（32–40 量级内）；手机 44px 触摸档（css/mobileLayer.css 覆盖
+   --tfl-fab-size）。位置 = 列表包裹层右下角，与 Add footer 同一右缘语言。
+   毛玻璃底：滚动行会从钮下穿过，纯半透明底会透出文字 ⇒ 补 blur（卡片同源）。 */
+.tfl-fab-add {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--tfl-fab-size);
+  height: var(--tfl-fab-size);
+  padding: 0;
+  border: 0.5px solid color-mix(in srgb, var(--color-text) 12%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-text) 8%, transparent);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  color: color-mix(in srgb, var(--color-text) 60%, transparent);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, transform 0.15s;
+}
+.tfl-fab-add:hover {
+  background: color-mix(in srgb, var(--color-text) 14%, transparent);
+  color: color-mix(in srgb, var(--color-text) 85%, transparent);
+}
+.tfl-fab-add:active { transform: scale(0.94); }
+.tfl-fab-add:focus-visible {
+  outline: 1.5px solid color-mix(in srgb, var(--color-text) 45%, transparent);
+  outline-offset: 1px;
+}
+.tfl-fab-add svg { width: 15px; height: 15px; }
+.tfl-fab-add[hidden] { display: none; }
+
+/* ── 行尾删除钮（作者令 2026-11-04 ④「删除」）────────────────────────────
+   桌面 hover 渐显（不抢主视觉、布局位常驻 ⇒ 行宽零跳动）；手机常显 + 44px
+   命中面（::after 外扩，见 css/mobileLayer.css）。 */
+.tfl-del {
+  flex: 0 0 auto;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: color-mix(in srgb, var(--color-text) 30%, transparent);
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 0.15s, color 0.15s;
+}
+.tfl-row:hover .tfl-del, .tfl-del:focus-visible { opacity: 1; }
+.tfl-del:hover { color: var(--tfl-red-o); }
+.tfl-del svg { width: 13px; height: 13px; }
+
+/* ── 完成后撤回条（取消完成的可达路径，作者令 2026-11-04 ④）──────────────
+   浮在列表底部中央（加号之上），6s 自动收起；配色沿用教学气泡 token
+   （黑底胶囊 + 次级白字，双主题同黑 = 复刻口径），无需新色值。 */
+.tfl-undo {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--tfl-fab-size) + 14px);
+  transform: translateX(-50%);
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--tfl-hint-stroke);
+  background: var(--tfl-hint-bg);
+  color: var(--tfl-hint-text);
+  font: 500 11px/1 ui-monospace, SFMono-Regular, monospace;
+  animation: tfl-fade-in 0.2s ease backwards;
+}
+.tfl-undo[hidden] { display: none; }
+.tfl-undo-btn {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--tfl-cyan);
+  font: 500 11px/1 ui-monospace, SFMono-Regular, monospace;
+  cursor: pointer;
+}
+.tfl-undo-btn:hover { filter: brightness(1.25); }
+
 /* ── 手机变体（页面即展开态：无胶囊、高度随页面体）──────────────────────
    重做批：桌面胶囊/浮层两条规则（.tfl-capsule 小件、.tfl-card absolute 浮层）
    一律不得带崩手机 —— 手机腿在此整条回退成流内块。 */
@@ -880,7 +1051,7 @@
   transform: none;
   width: auto;
   height: auto;
-  border-radius: 16px;
+  border-radius: var(--ds-radius-card-lg);
   animation: none;
   transform-origin: center;
 }
@@ -891,7 +1062,10 @@
 @media (prefers-reduced-motion: reduce) {
   .tfl-card, .tfl-panel, .tfl-capsule, .tfl-chip, .tfl-chip-dot,
   .tfl-row, .tfl-edit-wrap, .tfl-complete-fill, .tfl-complete-fill svg,
-  .tfl-filterbar, .tfl-tag-popover, .tfl-hint, .tfl-switch-knob,
-  .tfl-switch-knob-wrap, .tfl-cap-face { transition: none !important; animation: none !important; }
+  .tfl-filterbar, .tfl-tag-popover, .tfl-switch-knob,
+  .tfl-switch-knob-wrap, .tfl-cap-face, .tfl-fab-add, .tfl-del, .tfl-undo {
+    transition: none !important;
+    animation: none !important;
+  }
   .tfl-row.tfl-row-enter, .tfl-create-row { animation: none !important; }
 }

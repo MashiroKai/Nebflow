@@ -190,7 +190,7 @@ class DelegatePluginAllocationSpec extends CatsEffectSuite:
         parentRef = None,
         wsSend = None,
         parentSessionId = Some("root-x"),
-        judgeWorkspace = false
+        allocateSeat = false
       )
       .map(r => (r, system.stopAll.attempt.void))
 

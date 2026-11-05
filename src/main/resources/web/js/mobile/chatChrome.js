@@ -8,6 +8,10 @@
 //     正圆 = .g2-fab 共享材质：blur/sat 双档、上半镜面高光、spring 按压回弹、
 //     边缘光折射；liquid-glass.css），top:16px 左右 16px，z 高于顶缘渐隐带；
 //     任务键徽标 = taskBadgeCount 镜像（dock 批机制零变化）；
+//     ⛔ 【入口收敛批 todo-unify-entry-collapse 2026-11-04】左上「任务」键（含
+//     徽标）退役 ⇒ 本层只剩右上「搜索」键；待办唯一入口 = 顶带待办胶囊
+//     （#top-overlays 内，双端同现，点开即展开面板；读数 = 胶囊计数节点
+//     .tfl-cap-faces，展开时同一节点搬进面板头 .tfl-header-count）；
 //   · 页标题入流：原 #header .header-center 三节点（#agent-avatar-btn /
 //     #session-name / #memory-btn）整体迁入 #chat 内容流首的 .g2-chat-head，
 //     节点迁移非复制：桌面 JS（agentProfile/sidebar 改名链）照写原节点，
@@ -37,11 +41,19 @@
 
 import { t } from '../i18n.js';
 import { createIconsIn } from '../utils.js';
-import { taskBadgeCount } from './taskPanel.js';
-import { pushPage, logEvent, touchLayer } from './navController.js';
+// 【入口收敛批 todo-unify-entry-collapse 2026-11-04】手机左上角「任务」圆钮退役
+// （作者口径：待办入口收敛到胶囊一处）。承载信息 = 待办数，已由顶带待办胶囊
+// 承载：胶囊计数节点 `.tfl-cap-faces`（逾期翻面 + 未完成计数），展开时**同一
+// 节点**搬进面板头 `.tfl-header-count`（js/todoFace.js renderCapsule /
+// bindFacesIntoHeader）—— 故徽标腿随圆钮一并退役，读数不丢。
+// 旧代码（圆钮建层 / syncTaskBadge / taskBadgeCount 镜像）按本仓退役惯例以注释
+// 留档于原位，零物理删除；模块 import 随之撤（taskPanel.js 已无任何调用方）。
+// import { taskBadgeCount } from './taskPanel.js';
+import { pushPage, touchLayer } from './navController.js';
+// 层事件流水（循环门禁修复批 2026-11-04）：事件走叶子 navEvents.js 单点。
+import { logEvent } from './navEvents.js';
 import { paintSlot } from '../agentProfile.js';
 import { brand } from '../brand.js';
-import { bindIdHeadFade } from './sessionHead.js';
 
 /** @type {HTMLButtonElement|null} */
 let taskBtn = null;
@@ -53,8 +65,6 @@ let fabLayer = null;
 let chatHead = null;
 /** @type {MutationObserver|null} 聊天清空路径守望（见 activateChatChrome 注记）。 */
 let headMo = null;
-/** @type {(() => void)|null} 身份头滚动渐隐解绑（sessionHead.bindIdHeadFade）。 */
-let unbindHeadFade = null;
 /** @type {Array<() => void>} */
 let unsubs = [];
 
@@ -83,15 +93,19 @@ function paintAgentSlotLogo(slot) {
   slot.replaceChildren(pic);
 }
 
+/* ⛔ 【退役】todo-unify-entry-collapse 2026-11-04：任务圆钮退役 ⇒ 本徽标腿无宿主
+   （读数去向 = 顶带待办胶囊的 .tfl-cap-faces 计数节点，见文件头）。原文留档
+   （内层 JSDoc 注释标记已改写为行注释，避免嵌套闭合）：
 function syncTaskBadge() {
   if (!taskBtn) return;
   const n = taskBadgeCount();
-  const b = /** @type {HTMLElement|null} */ (taskBtn.querySelector('.mh-chrome-badge'));
+  const b = (taskBtn.querySelector('.mh-chrome-badge')); // 原注：HTMLElement|null
   if (!b) return;
   b.hidden = n === 0;
   b.textContent = n > 99 ? '99+' : String(n);
   taskBtn.title = t('taskpanel.title');
 }
+*/
 
 export function activateChatChrome() {
   const header = document.getElementById('header');
@@ -124,8 +138,16 @@ export function activateChatChrome() {
     headMo.observe(chat, { childList: true });
     /* 滚动渐隐（会话页头同构批）：滚动源 = #chat 自身（#chat 内有滚轴时优先；
        页面栈/输入卡挤压等极端态下 #main 内的滚轴不参与 —— 与好友/群/设备面
-       的「取最大 scrollTop」口径同源）。渐隐只改 opacity（rAF 合帧，值不变不写）。 */
-    unbindHeadFade = bindIdHeadFade(chatHead, chat);
+       的「取最大 scrollTop」口径同源）。渐隐只改 opacity（rAF 合帧，值不变不写）。
+       🔴 **主对话腿已摘（顶部身份头常显批 2026-11-04，作者报障「跟主 agent 的
+       对话窗口 agent 头像和 agent name 都不显示」）**：本驱动器 11-02 同构批接入
+       后，scrollTop ≥ 64px 会把**整块**（头像 + 名字）推到 opacity 0 并置
+       visibility:hidden —— 而手机端对话进场即落底（任何超过一屏的会话 scrollTop
+       恒 ≫ 64），于是这个身份头在**有内容的会话里 100% 不可见**，且连带
+       `pointer-events:auto` 的头像一起退场 = profile 面板入口不可达（功能损失，
+       不只是视觉）。主对话 = 身份常显面，不再随滚动隐没；好友/群/设备会话
+       （sessionHead.createSessionIdentityHead + 各自的 bindIdHeadFade 调用点）
+       的悬浮身份头口径**零改动** —— 上一批的渐隐设计在那里保留。 */
     /* 顶栏建层广播已随机制退役（会话页头同构批）：悬浮身份头不在流内、main.js
        的顶让位不再按它实测（回 bandBottom 单一真值），故无需通知观察器重取。 */
   }
@@ -165,7 +187,8 @@ export function activateChatChrome() {
   headTopRo.observe(chat);
   unsubs.push(() => headTopRo.disconnect());
 
-  // ── 左右悬浮圆钮层（任务/搜索；48px v2 液体玻璃正圆）──
+  // ── 悬浮圆钮层（原「任务/搜索」双钮 → 本批收敛为**只右上方搜索钮**；48px v2
+  //    液体玻璃正圆）────────────────────────────────────────────────────────
   fabLayer = document.createElement('div');
   fabLayer.id = 'mobile-fab-layer';
   // 零底带类 = design-system.css 单源（透传悬浮批 2026-11-03）：聊天根本来就是
@@ -173,6 +196,9 @@ export function activateChatChrome() {
   // 收编进同一族（一处定义处处引用）。
   fabLayer.className = 'ds-chrome-band';
 
+  /* ⛔ 【退役】todo-unify-entry-collapse 2026-11-04：手机左上角「任务」圆钮撤除
+     ——待办入口收敛到顶带胶囊一处（胶囊 = 手机上**唯一**待办入口；点开即展开
+     面板，面板头 = 同一计数节点）。旧建层原文留档，零物理删除：
   taskBtn = document.createElement('button');
   taskBtn.type = 'button';
   taskBtn.className = 'mh-chrome-btn g2-fab';
@@ -182,12 +208,12 @@ export function activateChatChrome() {
   taskBtn.innerHTML =
     '<i data-lucide="list-todo"></i><span class="mh-chrome-badge" hidden></span>';
   taskBtn.addEventListener('click', (e) => {
-    // 桌面面 outside-close 监听 document 冒泡 —— 入口键停冒泡防误关（hub 行同款）。
     e.stopPropagation();
     touchLayer();
     logEvent('chrome-click', { face: 'tasks' });
     pushPage('tasks');
   });
+  */
 
   searchBtn = document.createElement('button');
   searchBtn.type = 'button';
@@ -203,22 +229,19 @@ export function activateChatChrome() {
     pushPage('search');
   });
 
-  fabLayer.append(taskBtn, searchBtn);
+  // 【入口收敛批 2026-11-04】任务圆钮已撤 ⇒ 本层只剩搜索钮（appendChild 单件；
+  // 原 `fabLayer.append(taskBtn, searchBtn)` 的双件形态退役）。
+  fabLayer.appendChild(searchBtn);
   main.appendChild(fabLayer);
   if (typeof lucide !== 'undefined') createIconsIn(fabLayer);
 
-  syncTaskBadge();
-  const onMirror = () => syncTaskBadge();
-  window.addEventListener('delegate-chain-mirror-updated', onMirror);
-  window.addEventListener('nebflow-session-change', onMirror);
+  // 【入口收敛批 2026-11-04】徽标同步三腿（syncTaskBadge 首刷 / 镜像与会话
+  // 事件镜像 / todoStore 订阅）随任务圆钮一并退役；locale 腿只留搜索钮标题。
   const onLocale = () => {
-    syncTaskBadge();
     if (searchBtn) searchBtn.title = t('search.placeholder') || '搜索聊天记录';
   };
   window.addEventListener('locale-changed', onLocale);
   unsubs.push(() => {
-    window.removeEventListener('delegate-chain-mirror-updated', onMirror);
-    window.removeEventListener('nebflow-session-change', onMirror);
     window.removeEventListener('locale-changed', onLocale);
   });
 
@@ -231,7 +254,6 @@ export function activateChatChrome() {
     // 消息流身份头随 Muse 式悬浮头像批退役（挂出链已摘，DOM 无此节点）。
     document.querySelectorAll('#agent-avatar-btn .agent-avatar-stand-logo').forEach((n) => n.remove());
     // 身份头滚动渐隐解绑（会话页头同构批）：#chat 上是同一个监听，拆除必须对称注销。
-    if (unbindHeadFade) { try { unbindHeadFade(); } catch { /* 解绑失败不阻断归还 */ } unbindHeadFade = null; }
     chatHead?.style.removeProperty('--idhead-p');
     // 归位重绘（桌面腿 2026-11-01）：摘除走的是同名类（注入档 + paintSlot 自绘档
     // 一并中招）——归还桌面形态前必须补一次 paintSlot，否则空槽挂到下一个事件。

@@ -1,0 +1,40 @@
+== [A1] symlink census on the pristine replica ==
+ "total": 27,
+ "ok_in_root_resolvable": 8,
+ "broken": 14,
+ "socket": 0,
+ "outside": 5,
+ "stat_fail": 0
+== [A2] baseline fingerprint (independent sha256 of the whole replica) ==
+[fingerprint] root=/Volumes/rehearsal/root objects=598957 files=556904 bytes=43546868993 -> /Volumes/KINGSTON/rehearsal-evidence/replica-baseline.tsv
+[fingerprint] aggregate entries=105 -> /Volumes/KINGSTON/rehearsal-evidence/replica-baseline-agg.json
+== [A3] migrate() on the pristine replica (expected: abort on a hazard symlink) ==
+[A3] driver exit=1
+[bigroot] rehearsal root = /Volumes/rehearsal/root
+[bigroot] pre-migrate ladder = flat (effective=/Volumes/rehearsal/root), PathUtil.dataRoot=/Volumes/rehearsal/root
+  PASS  pre-migrate ladder is flat (no layout.json) - flat
+  PASS  pre-migrate effective root == machine root 
+[bigroot] top-level entries before migrate = 105
+Exception in thread "main" java.nio.file.NoSuchFileException: /Volumes/rehearsal/root/backups/pre-migrate-20261010T100730/projects/slideblocks/.nebflow/Agent.md
+	at java.base/sun.nio.fs.UnixException.translateToIOException(UnixException.java:92)
+	at java.base/sun.nio.fs.UnixException.rethrowAsIOException(UnixException.java:106)
+	at java.base/sun.nio.fs.UnixException.rethrowAsIOException(UnixException.java:111)
+	at java.base/sun.nio.fs.UnixFileSystemProvider.newByteChannel(UnixFileSystemProvider.java:262)
+	at java.base/java.nio.file.Files.newByteChannel(Files.java:380)
+	at java.base/java.nio.file.Files.newByteChannel(Files.java:432)
+Exception in thread "main" java.nio.file.NoSuchFileException: /Volumes/rehearsal/root/backups/pre-migrate-20261010T100730/projects/slideblocks/.nebflow/Agent.md
+	at java.base/sun.nio.fs.UnixException.translateToIOException(UnixException.java:92)
+	at java.base/sun.nio.fs.UnixException.rethrowAsIOException(UnixException.java:106)
+	at java.base/sun.nio.fs.UnixException.rethrowAsIOException(UnixException.java:111)
+	at nebflow.core.root.RootLayout$.copyTree(RootLayout.scala:226)
+	at nebflow.core.root.RootLayout$.copyTree$$anonfun$2(RootLayout.scala:224)
+== [A4] containment: re-fingerprint and diff against baseline ==
+[fingerprint] root=/Volumes/rehearsal/root objects=601534 files=558722 bytes=43758478459 -> /Volumes/KINGSTON/rehearsal-evidence/replica-after-crash.tsv
+[A4] containment diff exit=0
+[diff] before=598957 after=601534
+[diff] ignored-prefixes=['pending-claim', 'accounts', 'migration-report.json', 'layout.json', 'active-account']
+[diff] changed=0 added=0 removed=0
+[diff] layout-managed appeared=2577 disappeared=0
+   (managed, ignored) e.g. ['pending-claim', 'pending-claim/20261104-144346', 'pending-claim/20261104-144346/()']
+[diff] PASS — every non-managed object is byte-identical
+== phase A done ==

@@ -1,0 +1,4 @@
+$ bash scripts/check-process-artifacts.sh
+✓ process-artifacts gate clean: git ls-files evidence/ reports/ docs/ = 0 违规（0 个被白名单豁免）
+  白名单：0 条生效（scripts/process-artifacts-allowlist.txt）
+  铁律：每次跨仓合并之后必须重跑本脚本（双向合并会把对方仍 tracked 的文件带回来）。

@@ -62,13 +62,10 @@ class DelegateTerminalStandbySpec extends CatsEffectSuite:
 
   /** 判定机在场的证明件：被问即炸——待命裁决必须零 LLM 消耗。 */
   private class ExplodingJudge extends DelegateJudge.DelegateJudgePort.Face:
-    def decideWorktree(task: String): IO[Option[Boolean]] =
-      IO.raiseError(new RuntimeException("judge must NOT be consulted on a standby turn"))
     def judgeTerminal(input: DelegateJudge.TerminalInput): IO[Option[DelegateJudge.Verdict]] =
       IO.raiseError(new RuntimeException("judge must NOT be consulted on a standby turn"))
 
   private class CompletedJudge extends DelegateJudge.DelegateJudgePort.Face:
-    def decideWorktree(task: String): IO[Option[Boolean]] = IO.pure(None)
     def judgeTerminal(input: DelegateJudge.TerminalInput): IO[Option[DelegateJudge.Verdict]] =
       IO.pure(Some(DelegateJudge.Verdict.Completed))
 

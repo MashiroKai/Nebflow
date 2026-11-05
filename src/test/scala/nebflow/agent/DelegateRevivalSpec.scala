@@ -8,6 +8,7 @@ import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.{AgentCommand, AgentKind}
 import nebflow.core.FileChangeTracker
+import nebflow.core.project.ScopeHandover
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.mail.SessionMailbox
 import nebflow.core.task.FileTaskStore
@@ -398,20 +399,39 @@ class DelegateRevivalSpec extends CatsEffectSuite:
     }
   }
 
-  test("V10: standby at engine restart (案A 批 2026-10-31 · 状态矩阵批收编) → sweep refuses revival (parked awaiting the author, not working), salvage settles failed — Mail continuation remains the wake path") {
+  // ══════════════════════════════════════════════════════════════════════════
+  // standby 分型（中断恢复批 2026-11-04 · 审计 D2；作者 2026-11-04 11:27 裁定
+  // 「链等待形态必须自动复活」）——band 正反用例：
+  //  V10 反向①：**纯待命**（无任何在飞旁证）⇒ 仍不复活，落收殓（诚实 failed+
+  //      父通知），Mail 可续。案A 批（`f62a1795c`）语义逐字保留。
+  //  V11 正向①：待命 + 作用域图仍有非终态节点（BB1 形态，等自家链）⇒ 自动复活。
+  //  V12 正向②：待命 + worktree 脏（手上有未提交工作）⇒ 自动复活。
+  //  V13 正向③：待命 + 分支领先基分支（有未合并交付提交）⇒ 自动复活。
+  //  V14 反向②：待命 + 在飞旁证 + **cancel 墓碑** ⇒ 仍不复活（墓碑压过旁证）。
+  //
+  // 三分法结论（arch919 考古，可直接核对）：9.19 所指 = annotated tag `2026.9.19`
+  // → commit `249a83958`（恢复面与 `949ce9159` 逐字节一致）；**能力退化：无**；
+  // **触发条件收紧：仅 standby 闸这一项**（案A 批 `f62a1795c` 新增）——V10–V14
+  // 即对这一项的分型修正，其余资格判据（kill-switch / 座位 / 父会话 / 预算 /
+  // 年龄 / 并发 cap）9.19 起无一收紧、本批零改动。
+  // ══════════════════════════════════════════════════════════════════════════
+
+  test("V10: PURE standby (zero in-flight evidence) at engine restart → still refused, salvage settles failed — 案A semantics preserved") {
     withFx("v10") { fx =>
       for
         parent <- fx.sessionStore.createSession("Nebula", agentName = Some("Nebula"))
         child = "delegate-nebflow-v10"
         _ <- fx.store.recordTask(mkTask(child, parent.id))
-        // 待命停靠形态：record.standbySince 在场（回合收尾采纳 standby 的落盘）。
+        // 待命停靠形态：record.standbySince 在场（回合收尾采纳 standby 的落盘），
+        // 且**零在飞旁证**：无作用域图、座位非 git 仓、不在合并队列。
         _ <- IO(
           nebflow.core.delegate.DelegateRegistry.put(
-            mkRecord(child, parent.id, fx.seat.toString).copy(standbySince = Some(System.currentTimeMillis()))
+            mkRecord(child, parent.id, fx.seat.toString)
+              .copy(standbySince = Some(System.currentTimeMillis()), reportStatus = Some("standby"))
           )
         )
         report <- sweepWith(fx)
-        _ = assertEquals(report.revived, Nil, "a parked standby delegate must NOT be revived into a working session")
+        _ = assertEquals(report.revived, Nil, "a PURE parked standby delegate must NOT be revived into a working session")
         _ = assertEquals(report.terminalized, List(child))
         _ = assert(
           report.revivalSkipped.exists((id, r) => id == child && r.contains("standby at engine restart")),
@@ -420,10 +440,258 @@ class DelegateRevivalSpec extends CatsEffectSuite:
         row <- fx.store.loadTasks(parent.id).map(_.find(_.taskId == child).get)
         _ = assertEquals(row.status, "failed", "salvage settles the honest terminal (never a completed fake, never left running)")
         live <- fx.resources.agentRegistry.get.map(_.contains(child))
-        _ = assert(!live, "standby orphan must not be spawned")
+        _ = assert(!live, "pure standby orphan must not be spawned")
       yield ()
     }
   }
+
+  test("V11: standby WHILE its own chain is still in flight (non-terminal scope node) → auto-revived (BB1 form, author ruling 2026-11-04 11:27)") {
+    withFx("v11") { fx =>
+      val child = "delegate-nebflow-v11"
+      for
+        parent <- fx.sessionStore.createSession("Nebula", agentName = Some("Nebula"))
+        _ <- fx.store.recordTask(mkTask(child, parent.id))
+        _ <- IO(
+          nebflow.core.delegate.DelegateRegistry.put(
+            mkRecord(child, parent.id, fx.seat.toString)
+              .copy(standbySince = Some(System.currentTimeMillis()), reportStatus = Some("standby"))
+          )
+        )
+        // 作用域图：一个仍在跑的节点（= 等自家链，不是在等作者）。
+        scopeDir = ScopeHandover.scopeDir(fx.seat.toString, child)
+        _ <- IO(os.makeDir.all(scopeDir))
+        _ <- IO(
+          os.write(
+            scopeDir / "flow-map.json",
+            """{"nodes":{"n-inflight":{"id":"n-inflight","name":"n-inflight","agent":"general","status":"running"}}}"""
+          )
+        )
+        _ <- fx.sessionStore.saveMessagesForSession(
+          child,
+          List(Message(MessageRole.User, Left("brief")), Message(MessageRole.Assistant, Left("spawned n-inflight")))
+        )
+        report <- sweepWith(fx)
+        row <- fx.store.loadTasks(parent.id).map(_.find(_.taskId == child).get)
+        live <- fx.resources.agentRegistry.get.map(_.contains(child))
+        _ = assertEquals(
+          report.revived,
+          List(child),
+          s"chain-wait standby must be auto-revived (report=${report.summary}, skip=${report.revivalSkipped})"
+        )
+        _ = assertEquals(row.status, "running", "revived row keeps running (Processing)")
+        _ = assertEquals(row.revivalCount, Some(1))
+        _ = assert(live, "revived chain-wait standby must be registered live")
+      yield ()
+    }
+  }
+
+  test("V12: standby + DIRTY worktree (uncommitted work in the seat) → auto-revived") {
+    withFx("v12") { fx =>
+      val child = "delegate-nebflow-v12"
+      for
+        parent <- fx.sessionStore.createSession("Nebula", agentName = Some("Nebula"))
+        _ <- fx.store.recordTask(mkTask(child, parent.id))
+        _ <- IO(gitFixture(fx.seat))
+        _ <- IO(os.write(fx.seat / "work-in-progress.txt", "uncommitted deliverable"))
+        _ <- IO(
+          nebflow.core.delegate.DelegateRegistry.put(
+            mkRecord(child, parent.id, fx.seat.toString)
+              .copy(standbySince = Some(System.currentTimeMillis()), reportStatus = Some("standby"))
+          )
+        )
+        _ <- fx.sessionStore.saveMessagesForSession(
+          child,
+          List(Message(MessageRole.User, Left("brief")), Message(MessageRole.Assistant, Left("wrote work-in-progress")))
+        )
+        report <- sweepWith(fx)
+        row <- fx.store.loadTasks(parent.id).map(_.find(_.taskId == child).get)
+        _ = assertEquals(
+          report.revived,
+          List(child),
+          s"standby with a dirty worktree = unfinished work in hand ⇒ revivable (skip=${report.revivalSkipped})"
+        )
+        _ = assertEquals(row.status, "running")
+      yield ()
+    }
+  }
+
+  test("V13: standby + branch ahead of its base (unmerged deliverable commits) → auto-revived") {
+    withFx("v13") { fx =>
+      val child = "delegate-nebflow-v13"
+      for
+        parent <- fx.sessionStore.createSession("Nebula", agentName = Some("Nebula"))
+        _ <- fx.store.recordTask(mkTask(child, parent.id))
+        base <- IO(gitFixture(fx.seat))
+        _ <- IO {
+          os.proc("git", "-C", fx.seat.toString, "checkout", "-q", "-b", "delegate/spec-v13").call(cwd = fx.seat, check = true)
+          os.write(fx.seat / "delivered.txt", "committed deliverable")
+          os.proc("git", "-C", fx.seat.toString, "add", "-A").call(cwd = fx.seat, check = true)
+          os.proc("git", "-C", fx.seat.toString, "commit", "-q", "-m", "deliverable").call(cwd = fx.seat, check = true)
+        }
+        _ <- IO(
+          nebflow.core.delegate.DelegateRegistry.put(
+            mkRecord(child, parent.id, fx.seat.toString).copy(
+              standbySince = Some(System.currentTimeMillis()),
+              reportStatus = Some("standby"),
+              branch = Some("delegate/spec-v13"),
+              baseBranch = Some(base)
+            )
+          )
+        )
+        _ <- fx.sessionStore.saveMessagesForSession(
+          child,
+          List(Message(MessageRole.User, Left("brief")), Message(MessageRole.Assistant, Left("committed deliverable")))
+        )
+        report <- sweepWith(fx)
+        row <- fx.store.loadTasks(parent.id).map(_.find(_.taskId == child).get)
+        _ = assertEquals(
+          report.revived,
+          List(child),
+          s"standby with unmerged deliverable commits ⇒ revivable (skip=${report.revivalSkipped})"
+        )
+        _ = assertEquals(row.status, "running")
+      yield ()
+    }
+  }
+
+  test("V14: cancel tombstone WINS over in-flight evidence — a cancelled delegate is never revived (author: only manual cancel/close stay dead)") {
+    withFx("v14") { fx =>
+      val child = "delegate-nebflow-v14"
+      for
+        parent <- fx.sessionStore.createSession("Nebula", agentName = Some("Nebula"))
+        _ <- fx.store.recordTask(mkTask(child, parent.id))
+        _ <- IO(
+          nebflow.core.delegate.DelegateRegistry.put(
+            mkRecord(child, parent.id, fx.seat.toString)
+              .copy(standbySince = Some(System.currentTimeMillis()), reportStatus = Some("standby"))
+          )
+        )
+        _ <- IO(nebflow.core.delegate.DelegateRegistry.markCancelRequested(child, "the user panel"))
+        // 在飞旁证齐备（作用域图有非终态节点）——墓碑仍须压过旁证。
+        scopeDir = ScopeHandover.scopeDir(fx.seat.toString, child)
+        _ <- IO(os.makeDir.all(scopeDir))
+        _ <- IO(
+          os.write(
+            scopeDir / "flow-map.json",
+            """{"nodes":{"n1":{"id":"n1","name":"n1","agent":"general","status":"running"}}}"""
+          )
+        )
+        _ <- fx.sessionStore.saveMessagesForSession(child, List(Message(MessageRole.User, Left("brief"))))
+        report <- sweepWith(fx)
+        row <- fx.store.loadTasks(parent.id).map(_.find(_.taskId == child).get)
+        live <- fx.resources.agentRegistry.get.map(_.contains(child))
+        _ = assertEquals(report.revived, Nil, "cancel tombstone must veto the in-flight exemption")
+        _ = assert(
+          report.revivalSkipped.exists((id, r) => id == child && r.contains("cancel tombstone")),
+          s"refusal attributed to the tombstone gate: ${report.revivalSkipped}"
+        )
+        _ = assertEquals(row.status, "failed")
+        _ = assert(!live, "no actor may be spawned for a cancelled delegate")
+      yield ()
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // failed 行复活腿（中断恢复批 2026-11-04 · 任务②；作者原话「只有人工 cancel/
+  // close 的才不复活」）：
+  //  V15 正向：failed ∧ RestartLossFingerprint ∧ 无墓碑 ⇒ 下一 boot 复活续跑。
+  //  V16 反向：failed ∧ **自然失败**（LLM 网络错等，无指纹）⇒ 永不被复活腿捞起。
+  //  V17 有界：failed ∧ 指纹 ∧ 预算耗尽 ⇒ 不复活（只幂等重走收殓，不无限 spawn）。
+  // ══════════════════════════════════════════════════════════════════════════
+
+  test("V15: failed row carrying the restart-loss fingerprint → revivable on the next boot (no manual Mail needed)") {
+    withFx("v15") { fx =>
+      val child = "delegate-nebflow-v15"
+      val lost = s"${SubAgentStartupRecovery.RestartLossFingerprint} — partial result salvaged and delivered to parent (startup recovery V2)"
+      for
+        parent <- fx.sessionStore.createSession("Nebula", agentName = Some("Nebula"))
+        _ <- fx.store.recordTask(
+          mkTask(child, parent.id, status = "failed").copy(lastError = Some(lost), completedAt = Some(System.currentTimeMillis() - 5_000L))
+        )
+        _ <- IO(nebflow.core.delegate.DelegateRegistry.put(mkRecord(child, parent.id, fx.seat.toString)))
+        _ <- fx.sessionStore.saveMessagesForSession(
+          child,
+          List(Message(MessageRole.User, Left("brief")), Message(MessageRole.Assistant, Left("halfway done")))
+        )
+        report <- sweepWith(fx)
+        row <- fx.store.loadTasks(parent.id).map(_.find(_.taskId == child).get)
+        live <- fx.resources.agentRegistry.get.map(_.contains(child))
+        _ = assertEquals(
+          report.revived,
+          List(child),
+          s"a restart-lost failed row must get a second chance (report=${report.summary}, skip=${report.revivalSkipped})"
+        )
+        _ = assertEquals(row.status, "running", "revival flips the row back to running")
+        _ = assertEquals(row.revivalCount, Some(1), "budget accounted exactly once")
+        _ = assertEquals(row.lastError, None, "the stale restart-loss error is cleared by the new execution window")
+        _ = assert(live, "the revived failed row is spawned live")
+      yield ()
+    }
+  }
+
+  test("V16: failed row from a NATURAL failure (no restart fingerprint) → never picked up by the revival leg") {
+    withFx("v16") { fx =>
+      val child = "delegate-nebflow-v16"
+      for
+        parent <- fx.sessionStore.createSession("Nebula", agentName = Some("Nebula"))
+        _ <- fx.store.recordTask(
+          mkTask(child, parent.id, status = "failed").copy(
+            lastError = Some("LLM stream error: chunked transfer encoding"),
+            completedAt = Some(System.currentTimeMillis() - 5_000L)
+          )
+        )
+        _ <- IO(nebflow.core.delegate.DelegateRegistry.put(mkRecord(child, parent.id, fx.seat.toString)))
+        _ <- fx.sessionStore.saveMessagesForSession(child, List(Message(MessageRole.User, Left("brief"))))
+        report <- sweepWith(fx)
+        row <- fx.store.loadTasks(parent.id).map(_.find(_.taskId == child).get)
+        live <- fx.resources.agentRegistry.get.map(_.contains(child))
+        _ = assertEquals(report.revived, Nil, "an honest natural failure is NOT an orphan of the restart")
+        _ = assertEquals(report.terminalized, Nil, "and it is not re-terminalized either (zero action)")
+        _ = assertEquals(row.status, "failed")
+        _ = assertEquals(row.lastError, Some("LLM stream error: chunked transfer encoding"), "the honest error is untouched")
+        _ = assert(!live, "no spawn for a genuinely failed delegate")
+      yield ()
+    }
+  }
+
+  test("V17: failed row with the fingerprint but an EXHAUSTED budget → no revival (bounded, no infinite loop)") {
+    withFx("v17") { fx =>
+      val child = "delegate-nebflow-v17"
+      val lost = s"${SubAgentStartupRecovery.RestartLossFingerprint} — result lost, parent notified (startup recovery V2)"
+      for
+        parent <- fx.sessionStore.createSession("Nebula", agentName = Some("Nebula"))
+        _ <- fx.store.recordTask(
+          mkTask(child, parent.id, status = "failed", revivalCount = Some(2)).copy(lastError = Some(lost))
+        )
+        _ <- IO(nebflow.core.delegate.DelegateRegistry.put(mkRecord(child, parent.id, fx.seat.toString)))
+        _ <- fx.sessionStore.saveMessagesForSession(child, List(Message(MessageRole.User, Left("brief"))))
+        report <- sweepWith(fx)
+        row <- fx.store.loadTasks(parent.id).map(_.find(_.taskId == child).get)
+        live <- fx.resources.agentRegistry.get.map(_.contains(child))
+        _ = assertEquals(report.revived, Nil, "budget exhausted ⇒ no spawn (maxPerTask bound holds)")
+        _ = assert(
+          report.revivalSkipped.exists((id, r) => id == child && r.contains("revival budget exhausted")),
+          s"skip reason = budget: ${report.revivalSkipped}"
+        )
+        _ = assertEquals(row.status, "failed")
+        _ = assertEquals(row.revivalCount, Some(2), "no extra budget consumption on the refused attempt")
+        _ = assert(!live)
+      yield ()
+    }
+  }
+
+  // ── git 夹具（V12/V13）：临时座位建成真 git 仓（只写仓库本地 config，绝不碰全局）。 ──
+  private def gitFixture(ws: os.Path): String =
+    def git(args: String*): String =
+      os.proc(Seq("git", "-C", ws.toString) ++ args).call(cwd = ws, check = true).out.trim()
+    git("init", "-q")
+    git("config", "user.email", "spec@nebflow.local")
+    git("config", "user.name", "spec")
+    os.write(ws / "seed.txt", "seed")
+    git("add", "-A")
+    git("commit", "-q", "-m", "seed")
+    git("rev-parse", "--abbrev-ref", "HEAD")
+
 
   test("V9: cancel tombstone on record → sweep refuses revival, salvage settles failed (R1 三路径·boot sweep 腿)") {
     withFx("v9") { fx =>

@@ -1,0 +1,28 @@
+$ playwright test tests/todo-store-backend.spec.mjs tests/todo-capsule-create.spec.mjs tests/todo-entry-collapse.spec.mjs tests/todo-split.spec.mjs --reporter=line
+
+Running 22 tests using 1 worker
+
+[1/22] tests/todo-capsule-create.spec.mjs:242:1 › ① 右下角加号：34px 圆钮贴列表右下角且不压末行，点击 ⇒ 行内新建行出现并聚焦
+[2/22] tests/todo-capsule-create.spec.mjs:289:1 › ② 空白区点击建：列表空白 ⇒ 新建并聚焦；footer 空白 ⇒ 新建并聚焦
+[3/22] tests/todo-capsule-create.spec.mjs:320:1 › ③ 防误触①②：创建行在开 / 输入框聚焦 ⇒ 重复点击零新行；行/chip/筛选栏 ⇒ 不触发
+[4/22] tests/todo-capsule-create.spec.mjs:359:1 › ④ 防误触③：pointerdown→up 位移 > 8px（拖动/滑屏）⇒ 不进入新建
+[5/22] tests/todo-capsule-create.spec.mjs:397:1 › ⑤ 新建择重要度 ⇒ createScheduledTask 帧带 priority（落库，不是只排内存）
+[6/22] tests/todo-capsule-create.spec.mjs:423:1 › ⑥ 完成 / 撤回（取消完成）/ 删除 ⇒ completeTodo / uncompleteTodo / deleteScheduledTask 三帧
+[7/22] tests/todo-capsule-create.spec.mjs:461:1 › ⑦ 动画护栏：展开仍走 spring 形变路径（内联 scale 逐帧写入→落地清空）；计数翻牌与逾期翻面仍在
+[8/22] tests/todo-capsule-create.spec.mjs:504:1 › ⑧ 手机 375：body.mobile-layer 下胶囊可见、可展开，加号 44px 触摸档
+[9/22] tests/todo-entry-collapse.spec.mjs:149:1 › ①③④ 桌面 1280×800：入口行退役、胶囊唯一入口且可展开、面板承载计数/逾期/四签/分组
+[10/22] tests/todo-entry-collapse.spec.mjs:262:1 › ②③④⑤ 手机 375×812：任务圆钮/任务页退役，胶囊是唯一入口且可展开，信息不丢
+[11/22] tests/todo-split.spec.mjs:184:1 › ①② 分家渲染 + 待办入口收敛：提醒面纯定时任务（徽标=超时 1），侧边栏 todo 槽退役，入口行退役，胶囊读数=4 待办 / 1 逾期
+[12/22] tests/todo-split.spec.mjs:219:1 › ③ 待办面（胶囊展开面板）：行集=人待办 4 行（镜像行不入），逾期行红字，分组 chips=stand/DOSTEL
+[13/22] tests/todo-split.spec.mjs:246:1 › ④ 闭环：完成钮 ⇒ completeTodo 帧带行自身 sessionId；计数收敛 4→3；收件箱请求帧带 scope:all
+[14/22] tests/todo-split.spec.mjs:272:1 › ⑤ 待办创建：面板加号内联创建 ⇒ createScheduledTask 帧带 kind:todo；乐观行落胶囊面，提醒面零混入
+[15/22] tests/todo-split.spec.mjs:300:1 › ⑦ 项目维度（追加令①②）：分组 chips 单选生效（行随滤）；行内编辑 ⇒ updateScheduledTask 帧带 content+project
+[16/22] tests/todo-split.spec.mjs:348:1 › ⑥ 手机层级：胶囊是唯一待办入口（聊天根顶带），点击直接展开；无入口行、无 todo 页面腿
+[17/22] tests/todo-store-backend.spec.mjs:269:1 › ① 首次挂载惰性拉真源：listScheduledTasks{scope:"all"} 一发 + 渲染面取到回执数据（后端排序权威，chips 行序不参与）
+[18/22] tests/todo-store-backend.spec.mjs:308:1 › ② completeItem ⇒ completeTodo 帧（跨会话行带行自身 sessionId）+ 乐观退场 + 回执收敛 + uncomplete 回退
+[19/22] tests/todo-store-backend.spec.mjs:347:1 › ③ updateItem(priority/title) ⇒ updateScheduledTask 字段级 patch；removeItem ⇒ deleteScheduledTask；新建 ⇒ createScheduledTask{kind:"todo"}
+[20/22] tests/todo-store-backend.spec.mjs:417:1 › ④ 服务端广播/清单回执 ⇒ 可见面收敛（零用户操作）
+[21/22] tests/todo-store-backend.spec.mjs:451:1 › ⑤ __seed 测试缝不破：夹具数据注入仍可用（旧排序语义 + dataSource=fixture + 零写帧），__live 回真源
+[22/22] tests/todo-store-backend.spec.mjs:507:1 › ⑥ 服务端显式拒绝 ⇒ 回滚 + console.error（不静默吞）
+  22 passed (58.0s)
+SPECS_EXIT=0

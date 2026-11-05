@@ -1,0 +1,147 @@
+[sbt-gate] waiting for /Users/kaiyu/.stand/run/sbt.lock (another sbt holds the heavy-work gate; bypass: SBT_GATE=off sbt …)
+[sbt-gate] acquired after 3s
+[sbt-gate] gate acquired after 3s
+[sbt-gate] heap cap -Xmx2600m applied via SBT_OPTS
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project delegate-nebflow-7c3dd022-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-7c3dd022/project
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/delegate-nebflow-7c3dd022/)
+[warn] javaOptions will be ignored, fork is set to false
+[item1] fake-deviceToken masked: raw-visible=false masked-visible=true len 111 -> 81
+[item1] ordinary-log diff=0 chars=618
+[32mnebflow.shared.SecretKeysSpec:[0m
+[32m  + [0m[32mcanonical list: the eight credential keys are all sensitive[0m [90m0.009s[0m
+[32m  + [0m[32mcanonical list: underscore / hyphen / case variants normalize to the same root[0m [90m0.0s[0m
+[32m  + [0m[32mquota exemption: maxTokens / budgetTokens / tokensUsed are NOT credentials[0m [90m0.001s[0m
+[32m  + [0m[32mtext leg: a fake deviceToken is masked (the leak shape from the avatar batch)[0m [90m0.002s[0m
+[32m  + [0m[32mtext leg: fake apiKey / clientSecret / password / authorization are masked[0m [90m0.002s[0m
+[32m  + [0m[32mno over-mask: an ordinary log must be byte-for-byte unchanged (diff = 0)[0m [90m0.008s[0m
+[32m  + [0m[32mlegs agree with the single source (text leg + MCP face predicate)[0m [90m0.202s[0m
+[32m  + [0m[32midempotent: redacting twice equals redacting once[0m [90m0.0s[0m
+[32mnebflow.core.SecretMaskingCoverageSpec:[0m
+[32m  + [0m[32mtext leg (LlmLogWriter.redactSecrets): every credential key is masked[0m [90m0.001s[0m
+[32m  + [0m[32mtext leg: underscore / hyphen / case variants are masked too[0m [90m0.0s[0m
+[32m  + [0m[32mkey predicate (GateRedact.isSecretKey): every credential key is sensitive[0m [90m0.0s[0m
+[32m  + [0m[32mno over-mask: an ordinary log line is byte-for-byte unchanged[0m [90m0.001s[0m
+[32m  + [0m[32mno over-mask: quota keys are NOT credentials (maxTokens / budgetTokens)[0m [90m0.0s[0m
+[32mnebflow.core.McpToolGateSpec:[0m
+[32m  + [0m[32mA1-1 未声明 MCP 工具在 ConfirmEdits 出卡；声明档标 undeclared（反转免审缺省）[0m [90m0.039s[0m
+[32m  + [0m[32mA1-2 接缝注入 declare：同 server 两工具对照（auto→0 卡 / confirm→≥1 卡）[0m [90m0.001s[0m
+[32m  + [0m[32mA1-2(接缝边界) 接缝级达成 vs 端到端 manifest 消费 —— 本批缺省实现恒 undeclared[0m [90m0.0s[0m
+[32m  + [0m[32mA1-3 L3 宿主动作在 AutoAll 仍出卡且带 hostBanner（全表唯一 AA 仍审行）[0m [90m0.001s[0m
+[32m  + [0m[32mA1-3(声明面) 声明 auto 亦不能豁免 L3（宿主红线优先于声明档）[0m [90m0.001s[0m
+[32m  + [0m[32mA1-4 非 L3 卡可升档；L3 卡不渲染升级选项；deny+upgrade 与未知目标被拒[0m [90m0.001s[0m
+[32m  + [0m[32mA1-4(策略表口径) 升档到 auto-edits 后**未声明 L1 仍出卡** —— 与 A1-4 字面「L1 免审」不一致（呈裁项）[0m [90m0.0s[0m
+[32m  + [0m[32mA1-6 session 放行免审 + 新会话恢复出卡 + 会话终态清空[0m [90m0.001s[0m
+[32m  + [0m[32mA1-6(L3 红线) 会话放行不外溢宿主红线：L3 恒审[0m [90m0.0s[0m
+[32m  + [0m[32mA1-8 内置工具面判定为 None（不进审批门）；isReversible 四类判定逐条不变[0m [90m0.085s[0m
+[32m  + [0m[32m§2.2 策略表逐格：12 格 × 3 档 = 36 格全对（含 L3 全表唯一恒审行）[0m [90m0.001s[0m
+[32m  + [0m[32m形态修正：宿主形态下 screenshot 判 L3；容器形态下 L3 结构性失效、无 hostBanner[0m [90m0.001s[0m
+[32m  + [0m[32m工具标识解析：plugin 三段式 / agent 级 / 畸形名不猜[0m [90m0.001s[0m
+[32m  + [0m[32m覆盖面：MCP（名模式）与 ScriptTool（注册表身份）两类都进面判定；普通未知名不进[0m [90m0.0s[0m
+[32m  + [0m[32m卡面 payload：必备字段齐备（§2.2 附表）、凭据被遮蔽、不带原始 input[0m [90m0.038s[0m
+[32m  + [0m[32mN3 redact：字段名启发式遮蔽（递归）+ 截断防卡面爆炸[0m [90m0.002s[0m
+[32m  + [0m[32m审计行：含 tier / declared / 来源 / 形态 / 决定[0m [90m0.003s[0m
+[32mnebflow.core.LlmHttpErrorLogSpec:[0m
+[32m  + [0m[32mT1: enabled=false 时 4xx 响应体仍落盘（豁免门），且带状态码 / 关联 id[0m [90m0.022s[0m
+[32m  + [0m[32mT2: 非 4xx（2xx / 5xx）一行不写[0m [90m0.002s[0m
+[32m  + [0m[32mT3: 隐私面——响应体里的凭据形态必须被抹除（禁落 apiKey / Authorization）[0m [90m0.002s[0m
+[32m  + [0m[32mT4: 纯函数 redactSecrets 的二值读数（含**顺序敏感**钉版）[0m [90m0.001s[0m
+[32mnebflow.cli.ConfigSecretKeySpec:[0m
+[32m  + [0m[32mConfigCommand.isSecretKey: every credential key is sensitive[0m [90m0.002s[0m
+[32m  + [0m[32mConfigCommand.isSecretKey: underscore / hyphen / case variants are sensitive[0m [90m0.0s[0m
+[32m  + [0m[32mConfigCommand.isSecretKey: quota keys stay visible (not credentials)[0m [90m0.0s[0m
+WARN: ignoring inherited STAND_GATEWAY_PORT=6138 — this invocation's data root is /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/cli-router-port-spec4053445426832607080 (an isolated root, not the default root), so an inherited port is not treated as explicit
+stand is not running
+[32mnebflow.cli.CliRouterSpec:[0m
+[32m  + [0m[32mparseArgs: long form[0m [90m0.003s[0m
+[32m  + [0m[32mparseArgs: short form[0m [90m0.0s[0m
+[32m  + [0m[32mparseArgs: positional form[0m [90m0.0s[0m
+[32m  + [0m[32mparseArgs: unknown long flag is an error, not a named param (A12)[0m [90m0.0s[0m
+[32m  + [0m[32mparseArgs: unknown short flag is an error (A12)[0m [90m0.001s[0m
+[32m  + [0m[32mparseArgs: a numeric short token stays positional (negative values survive)[0m [90m0.0s[0m
+[32m  + [0m[32mparseArgs: a value-less flag becomes "true" (long and short)[0m [90m0.0s[0m
+[32m  + [0m[32mparseArgs: mixed forms keep their sides[0m [90m0.0s[0m
+[32m  + [0m[32mA11: positional slots fill required params in declaration order[0m [90m0.002s[0m
+[32m  + [0m[32mA11: ask "q" reports the missing required session[0m [90m0.0s[0m
+[32m  + [0m[32mA11: a single required param is filled by one positional (interrupt SESSION)[0m [90m0.001s[0m
+[32m  + [0m[32mA11: a named value satisfies a required param declared after a positional-filling one[0m [90m0.004s[0m
+[32m  + [0m[32mA11: short-flag names count as named[0m [90m0.0s[0m
+[32m  + [0m[32mA12: an unknown subcommand is an error, not a fallback to the first subcommand[0m [90m0.015s[0m
+[32m  + [0m[32mV16: a bare multi-subcommand command explains the missing subcommand[0m [90m0.001s[0m
+[32m  + [0m[32mA7: `--help` and `-h` print the top-level help and exit 0[0m [90m0.022s[0m
+[32m  + [0m[32mA6/V6: `help <command>` reaches the command help (the argument list the entry point forwards)[0m [90m0.01s[0m
+[32m  + [0m[32mA8/V8: `help --json` is JSON while plain `help` stays text (the flag must survive to the router)[0m [90m0.009s[0m
+[32m  + [0m[32mT1/T3/T4/T13: the top-level help carries every new line[0m [90m0.002s[0m
+[32m  + [0m[32mT5/T6: a parameter line renders the flag pair plus annotations[0m [90m0.0s[0m
+[32m  + [0m[32mA9/V9: `session --help` renders Parameters and the declared flags[0m [90m0.001s[0m
+[32m  + [0m[32mA9: `--help` after a subcommand still shows the command help[0m [90m0.001s[0m
+[32m  + [0m[32mT10/A14: `skill audit` is marked as needing no gateway[0m [90m0.002s[0m
+[32m  + [0m[32mT7: the false 'without arguments to show help' claim is gone[0m [90m0.011s[0m
+[32m  + [0m[32mA14/A18: offline classification is subcommand-aware[0m [90m0.001s[0m
+[32m  + [0m[32mA1: a 403 response fails with the T8 wording (no silent empty payload)[0m [90m0.187s[0m
+[32m  + [0m[32mA1: a 200 response is not judged as a failure[0m [90m0.009s[0m
+[32m  + [0m[32mA1: requestError wording uses the body's error field, then a raw fallback[0m [90m0.001s[0m
+[32m  + [0m[32mA4/C1: the CLI-side port override wins over env and the default[0m [90m0.01s[0m
+[32m  + [0m[32mA4/C1: without an override, env wins, then the config port key, then the brand default[0m [90m0.01s[0m
+[32m  + [0m[32mA3: `interrupt SESSION` (positional) reaches the wire[0m [90m0.005s[0m
+[32m  + [0m[32mA3: `config set --key K --value V` (named) is accepted[0m [90m0.005s[0m
+[32m  + [0m[32mD6: masking hits secret-named keys only[0m [90m0.0s[0m
+[32m  + [0m[32mD6: numeric quota fields are NOT masked (non-secret fields stay as-is)[0m [90m0.001s[0m
+[32m  + [0m[32mA17: mcp config is built through the JSON encoder — a quoted id survives[0m [90m0.001s[0m
+[32m  + [0m[32mA16: chat uses the real WS vocabulary frames[0m [90m0.0s[0m
+[32m  + [0m[32mA16: the createSession reply's sessionId is consumed[0m [90m0.001s[0m
+[32m  + [0m[32mA13: the CLI sets the logback status switch when it is unset[0m [90m0.001s[0m
+[32m  + [0m[32mstop and restart are registered and offline[0m [90m0.001s[0m
+[32m  + [0m[32mstop digests --json/--quiet through the router and exits 0 when not running[0m [90m0.007s[0m
+[32m  + [0m[32mstop outcome mapping: NotRunning exits 0 with the plain text face[0m [90m0.001s[0m
+[32m  + [0m[32mstop accepts --force/--tree as declared params (no unknown-flag rejection)[0m [90m0.001s[0m
+[32mnebflow.neblink.DeviceTokenMaskingSpec:[0m
+[32m  + [0m[32mtunnel leg (RelayTunnelDiagnostics.redact): every credential key is masked[0m [90m0.001s[0m
+[32m  + [0m[32mtunnel leg: underscore / hyphen / case variants are masked too[0m [90m0.0s[0m
+[32m  + [0m[32mno over-mask: the auth-rejection body survives verbatim[0m [90m0.001s[0m
+[32mnebflow.neblink.RelayTunnelDiagnosticsSpec:[0m
+[32m  + [0m[32mdescribe: bare WebSocketHandshakeException carries the HTTP status (U1)[0m [90m0.002s[0m
+[32m  + [0m[32mdescribe: ExecutionException wrapping (CompletableFuture.get) is unwrapped[0m [90m0.001s[0m
+[32m  + [0m[32mdescribe: deeper CompletionException -> ExecutionException -> handshake chain is unwrapped[0m [90m0.0s[0m
+[32m  + [0m[32mdescribe: a null-message failure still yields a non-null summary (the 22 'error: null' lines)[0m [90m0.001s[0m
+[32m  + [0m[32mdescribe: 5xx status is distinguishable from 401/403 (cross-project discriminator, report §6)[0m [90m0.0s[0m
+[32m  + [0m[32mredact: credentials are masked but the auth-rejection body survives[0m [90m0.001s[0m
+[32m  + [0m[32mdescribe: an over-long body is truncated[0m [90m0.001s[0m
+[32m  + [0m[32mshouldHealAuthFailure: first rejection of a streak heals; repeats are bounded by the cooldown[0m [90m0.001s[0m
+[32m  + [0m[32mstatusJson: no rejection yet -> available + authRejected=false + nulls[0m [90m0.001s[0m
+[32m  + [0m[32mstatusJson: an ACTIVE 403 with a failed heal is its own state (F7)[0m [90m0.0s[0m
+[32m  + [0m[32mstatusJson: healed and connected -> historical code kept, authRejected cleared[0m [90m0.001s[0m
+[32m  + [0m[32mstatusJson: a reported-only rejection (5xx path never heals) reads selfHeal=not-attempted[0m [90m0.0s[0m
+21:43:33.440 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-avatar-self-cache3180590921080666596/device.json — minted deviceId=9a09fc5e-acc0-5271-a6b0-87730a1d697a (scope=home|dbc5ba23-56df-533c-9a69-008c2e5c1442, machine-code derived) and persisted
+21:43:34.124 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-avatar-self-cache2212290519260971843/device.json — minted deviceId=07ce92eb-4f72-5c1d-bf3d-f1b1424ec69b (scope=home|00f36469-a475-5390-ac1b-3952b617740d, machine-code derived) and persisted
+[32mnebflow.gateway.AvatarSelfByteCacheSpec:[0m
+[32m  + [0m[32msecond request to the own avatar route is served from cache (hit, zero upstream)[0m [90m0.729s[0m
+[32m  + [0m[32mupstream failure is never cached: the second call still hits upstream and still 502s[0m [90m0.043s[0m
+21:43:34.194 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-avatar-spec6723222364166280269/device.json — minted deviceId=f9bc86bf-d4e8-5a19-b5c3-43355b0aedfb (scope=home|0a4b7be7-b969-57e3-b204-9423197883b4, machine-code derived) and persisted
+21:43:34.221 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-avatar-spec2408114276264509296/device.json — minted deviceId=91b0ec7b-f43b-5217-b6a7-50ebd4302b81 (scope=home|a111be95-7eca-5262-bd28-ab01374a47f0, machine-code derived) and persisted
+21:43:34.257 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-avatar-spec8060362224226438601/device.json — minted deviceId=262543fd-3836-54ad-821d-2a6c6c7545fd (scope=home|0e5e2216-3a31-5e5f-9b95-978bfcc9f4ec, machine-code derived) and persisted
+[32mnebflow.gateway.AvatarProxyRouteSpec:[0m
+[32m  + [0m[32mauth gate: no token -> 403[0m [90m0.003s[0m
+[32m  + [0m[32mneblinkService absent -> 404 NebLink not enabled[0m [90m0.024s[0m
+[32m  + [0m[32midentity without avatarUrl -> 404 no avatar[0m [90m0.028s[0m
+[32m  + [0m[32mupstream 200 -> bytes and Content-Type pass through[0m [90m0.036s[0m
+[32m  + [0m[32mupstream non-200 -> 502[0m [90m0.029s[0m
+[32mnebflow.neblink.AvatarProxyRedirectSpec:[0m
+[32m  + [0m[32m五种跳转状态码（301/302/303/307/308）逐个被跟随 ⇒ 终点字节[0m [90m0.011s[0m
+[32m  + [0m[32m跳数上限存在且被遵守（自指 301 ⇒ Left 且点名 redirect，不无限跟随）[0m [90m0.005s[0m
+[32m  + [0m[32m跳数上限幅度在 (0, 5] —— 有界但足够覆盖真实一跳[0m [90m0.0s[0m
+[32m  + [0m[32m白名单外跳转 ⇒ 拒跟（Left，且请求不外发到第三方主机）[0m [90m0.002s[0m
+[32m  + [0m[32mIsRedirect 集合语义：3xx 跳转面钉死（300/304/305/306 与 2xx/4xx 不是跳转）[0m [90m0.001s[0m
+[32m  + [0m[32mresolveRedirect：相对地址按 RFC 3986 相对当前 URL 解析；畸形/空 ⇒ Left[0m [90m0.0s[0m
+[32m  + [0m[32mredirectAllowed：同 origin 与产品域族内放行；异 host 拒绝[0m [90m0.001s[0m
+[32m  + [0m[32mredirectAllowed：https→http 降级与非 http(s) scheme 一律拒绝[0m [90m0.0s[0m
+[32m  + [0m[32mredirectHostFamilies：含当前品牌域（单一真源 Branding.domain）与旧服务子域族[0m [90m0.001s[0m
+[32m  + [0m[32m缓存：未命中 ⇒ fetch 一次；再取 ⇒ 零 fetch（可数）[0m [90m0.004s[0m
+[32m  + [0m[32m缓存：失败不落盘（Left 原样上抛，条目数为 0）[0m [90m0.002s[0m
+[32m  + [0m[32m缓存：TTL 过期 ⇒ 再未命中（不会永久吐旧字节）[0m [90m0.082s[0m
+[32m  + [0m[32m缓存：条目数与总字节有界（超限淘汰最旧，绝不无界增长）[0m [90m0.004s[0m
+[info] Passed: Total 114, Failed 0, Errors 0, Passed 114
+[success] Total time: 3 s, completed 2026年11月4日 21:43:34
+EXIT=0

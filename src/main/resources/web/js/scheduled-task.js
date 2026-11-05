@@ -29,6 +29,10 @@ import { registerActionableProvider, notifyActionableChanged } from './actionabl
 // 腿退役后本文件零聊天流 DOM 注入（卡片唯一呈现 = 注入 user 帧专属卡分支）。
 // ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
+// 时间滚轮选择器（time-wheel-picker 实施批 2026-11-03，作者令 22:16/22:20）：
+// 定时任务的触发时刻从裸 `<input type="datetime-local">` 收编为同款点选面
+// （日期列 + 时/分滚轮）。交互单源 = ./timeWheel.js（禁第二份实现）。
+import { pointTriggerHTML, paintPointTrigger, attachTimeTriggers, msToLocalInput } from './timeWheel.js';
 
 // Inline locale getter to avoid caching issues with module imports
 function getLocale() {
@@ -237,7 +241,12 @@ function updateBadge() {
   // 已退役）。徽标 = 待销账待办数（含待答/待批准镜像）。
   // 可行动总量变了 ⇒ 通知 messages 徽标等订阅者（P6 判据单一聚合面）。
   notifyActionableChanged();
-  refreshTodoEntry();
+  // 【入口收敛批 todo-unify-entry-collapse 2026-11-04】入口行已退役（消息列表
+  // 顶部「待办事项」行撤除，唯一入口 = 顶带待办胶囊）⇒ 行上漆/就地刷新腿随之
+  // 停跑；函数体（refreshTodoEntry / paintTodoEntry / buildTodoEntryRow）保留，
+  // 注释退役。待销账计数仍由 notifyActionableChanged 的聚合面外发（胶囊订阅
+  // todoStore 自刷，两路同源 scope:'all' kind=todo）。
+  // refreshTodoEntry();
 }
 
 // ── Render ─────────────────────────────────────────────────────────────
@@ -660,7 +669,7 @@ function buildInlineCreate() {
   wrap.id = 'reminder-inline-create';
 
   const dtStr = toLocalDatetimeString(defaultTriggerAt());
-  const minStr = toLocalDatetimeString(new Date());
+  const [dtDate, dtTime] = dtStr.split('T');
 
   wrap.innerHTML = `
     <div class="reminder-inline-main">
@@ -671,7 +680,8 @@ function buildInlineCreate() {
     <div class="reminder-inline-detail">
       <div class="reminder-time-row">
         <i data-lucide="clock"></i>
-        <input type="datetime-local" id="reminder-time-input" value="${dtStr}" min="${minStr}">
+        ${pointTriggerHTML({ date: dtDate, time: dtTime, label: t('task.triggerTime') })}
+        <input type="hidden" id="reminder-time-input" value="${dtStr}">
       </div>
       <div class="reminder-repeat-row">
         <i data-lucide="repeat"></i>
@@ -688,7 +698,6 @@ function buildInlineCreate() {
   const input = /** @type {HTMLInputElement|null} */ (wrap.querySelector('#reminder-inline-input'));
   const timeInput = /** @type {HTMLInputElement|null} */ (wrap.querySelector('#reminder-time-input'));
   const repeatSeg = wrap.querySelector('#reminder-repeat-seg');
-
   // Repeat segmented control — the active pill is currentRepeat; values match
   // ScheduleTool schema ("hourly"|"daily"|"weekly"; "once" omits repeat).
   if (repeatSeg) {
@@ -721,10 +730,18 @@ function buildInlineCreate() {
     });
   }
 
-  // Update min when time input is focused (prevents stale past-time validation)
-  if (timeInput) {
-    timeInput.addEventListener('focus', () => {
-      timeInput.min = toLocalDatetimeString(new Date());
+  // 触发时刻 = 时间滚轮点选面（time-wheel-picker 批 2026-11-03）：面板确认后
+  // 把 date/time 回写成 `#reminder-time-input` 的 datetime-local 串，下游
+  // saveInlineTask 的 `new Date(value).getTime()` 腿保持不变（单一写入点）。
+  // 旧的 `focus → 刷 min` 现已无意义（min 约束随原生控件一起退役；过期时刻由
+  // saveInlineTask 的 ≤now+60s 自动顺延兜底，语义不变）。
+  if (wrap.querySelector('[data-tw-point]')) {
+    attachTimeTriggers(wrap, {
+      onPointChange: (btn) => {
+        if (!timeInput) return;
+        const ms = new Date(`${btn.dataset.date}T${btn.dataset.time}`).getTime();
+        if (!Number.isNaN(ms)) timeInput.value = msToLocalInput(ms);
+      },
     });
   }
 
@@ -843,6 +860,23 @@ function requestTodoInbox() {
  * 待办事项页开合（改版批 2026-10-31）。桌面 = 入口行点击直开；手机层由
  * navController pushPage('todo') 后经 ensurePanelContent 调到这里（面被收编
  * 进页面体，.open 语义同 reminder-panel 先例）。打开即刷新收件箱。
+ *
+ * ⛔ 【整面退役】todo-unify-entry-collapse 2026-11-04 —— #todo-page 处置 = (a)
+ *   整面退役（DOM 保留、不可达），理由：
+ *   ① 入口收敛批把两个入口都撤了（消息列表入口行 / 手机 pushPage('todo')），
+ *      本页已经没有任何触发器；
+ *   ② 同一个「待办面」已有**更新的完整实现** = 顶带胶囊 + 展开面板
+ *      （js/todoFace.js：列表/行内新建/完成三段动画/删除/重要度四签/分组/
+ *      逾期红面/计数翻牌），且它是待办体系统一批（2026-11-04）的真源适配面
+ *      （todoStore.js ↔ ScheduledTaskStore）；本页渲染核仍是 scheduled-task.js
+ *      的旧收件箱行渲染（inboxTodos + 独立缓存），两套并存必然分叉 →
+ *      与其留一个可达但只覆盖旧语义的面，不如整面退到不可达；
+ *   ③ 选 (b)「收编为胶囊展开面板的全屏形态」会让同一份 DOM 拥有两套状态机
+ *      （scheduled-task 的 todoPageOpen / todoFace 的 expanded），且是对②已有
+ *      完整面的重复建设。
+ *   DOM（index.html #todo-page）、CSS（css/todo-page.css）与本文件渲染核
+ *   **原样保留**（本仓退役惯例：不物理删成半成品），导航注册见
+ *   js/mobile/navController.js 的同批退役注释。
  */
 export function openTodoPage() {
   const page = $('#todo-page');
@@ -1018,7 +1052,9 @@ function saveInlineTask() {
 
   const triggerAt = new Date(timeInput.value).getTime();
   if (!triggerAt || isNaN(triggerAt)) {
-    timeInput.focus();
+    // 触发时刻已由滚轮面维护（值恒合法）；兜底把焦点交给那颗触发钮，
+    // hidden 输入不可聚焦。
+    /** @type {HTMLElement|null} */ (document.querySelector('#reminder-inline-create [data-tw-point]'))?.focus();
     return;
   }
 
@@ -1397,6 +1433,15 @@ export function initScheduledTask() {
  * 圆形图标头像 + 行名 + 副行（最早一条待办摘录）+ 右侧计数徽标。渲染核在
  * messages.js renderList（prepend，随 #fm-conversations 双端同现——手机端
  * 整容器收编进消息页）。点击：桌面 = 直开 #todo-page；手机层 = 事件环推页。
+ *
+ * ⛔ 【退役】入口收敛批 todo-unify-entry-collapse 2026-11-04（作者口径：
+ *   待办入口收敛到胶囊一处）。本函数**已无任何调用方**（messages.js
+ *   renderListInner 的 prepend 已注释、import 已撤），代码按本仓惯例保留
+ *   不物理删除，仅注释退役。承载信息去向：
+ *   · 待销账待办数徽标 ⇒ 胶囊计数节点 `.tfl-cap-faces`（css/todo-face.css
+ *     「L2 标题计数」块；展开时同一节点搬进面板头 `.tfl-header-count`）；
+ *   · 最早一条待办摘录 ⇒ 胶囊展开面板列表首行（同源 scope:'all' 收件箱）；
+ *   · 点击开 #todo-page 的入口 ⇒ 面已整面退役（见 openTodoPage 注记）。
  */
 export function buildTodoEntryRow() {
   // 注意：不挂 .fm-conv-row——那是真会话行的定位面（messages.js 行集查询/
@@ -1473,7 +1518,9 @@ function paintTodoEntry(row) {
   }
 }
 
-/** 入口行副行/徽标就地刷新（updateBadge 同源计数；行未挂树 = no-op）。 */
+/** 入口行副行/徽标就地刷新（updateBadge 同源计数；行未挂树 = no-op）。
+ *  ⛔ 【退役】todo-unify-entry-collapse 2026-11-04：入口行撤除 ⇒ 调用方已注释
+ *  （updateBadge）。行不存在的查询恒 null，本函数如今恒 no-op；保留存档。 */
 function refreshTodoEntry() {
   const row = document.querySelector('.fm-todo-entry');
   if (!row) return;

@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<!-- tool-card-image-face harness.html — 工具卡图片引用面回归试验台（作者 2026-11-04
+     12:46 令：「图片是还是会存在工具卡片泄露出来的问题」）。
+
+     驱动（toolline-detail / tool-card-leak-on-reload harness 同款自举——真模块、
+     零 stub、零引擎）：
+       window.__tcDone(label, summary, content, isError, inputJson)
+                                     → renderTool(...)（WS toolEnd 形状）
+       window.__imgCensus()          → 卡内 <img> / .tool-img-ref 引用件 / 灯箱读数
+
+     被测树 = 伺服根（本树或 NB_UX_ROOT 红腿基线树）。驱动里 await import(...)
+     拿到的是**该树**的模块 ⇒ 同一份 harness 在两棵树上的行为差 = 被测代码差。
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>tool-card-image-face harness</title>
+  <!-- 与 index.html 同序的真应用面：marked/hljs 是 markdown 与高亮两腿的运行时
+       依赖（Mail 卡正文走 renderMarkdownWithMath ⇒ 缺 marked 时图片根本进不了
+       DOM，注入路径测不出来）。 -->
+  <script src="/src/main/resources/web/vendor/marked.min.js"></script>
+  <script src="/src/main/resources/web/vendor/highlight.min.js"></script>
+  <link rel="stylesheet" href="/src/main/resources/web/css/base.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/chat.css">
+  <!-- ui-unification-20261103-chat-stream：真应用加载面含 design-system.css
+       （.ds-tool-card 族 = 工具卡样式唯一家）——缺失时 .body 无 display:none 档。 -->
+  <link rel="stylesheet" href="/src/main/resources/web/css/design-system.css">
+  <style>
+    html, body { margin: 0; height: 100%; background: var(--color-bg, #101418); }
+    #chat {
+      position: absolute; top: 0; bottom: 0; left: 50%; transform: translateX(-50%);
+      width: 680px; max-width: 96vw; margin: 0; padding: 16px 0 36px;
+      overflow-y: auto;
+    }
+  </style>
+</head>
+<body>
+  <div id="chat"></div>
+  <script type="module">
+    const WEB = '/src/main/resources/web/js';
+
+    const { chatViews, ChatView, setActiveView } = await import(`${WEB}/chatView.js`);
+    const stateMod = await import(`${WEB}/state.js`);
+    const state = stateMod.default;
+
+    const chatEl = document.getElementById('chat');
+    chatViews.primary = new ChatView('primary', { chat: chatEl });
+    setActiveView(chatViews.primary);
+    state.activeSessionId = 'tcimg-harness-session';
+    chatViews.primary.sessionId = 'tcimg-harness-session';
+    // No real socket may exist in this harness.
+    state.ws = { readyState: 1, send: () => {} };
+
+    const chatMod = await import(`${WEB}/chat.js`);
+    await import(`${WEB}/lightbox.js`).then(m => m.initLightbox());
+    const view = chatViews.primary;
+    const SID = 'tcimg-harness-session';
+
+    const raf2 = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+    // WS toolEnd shape → renderTool（完成翻转面）。
+    window.__tcDone = async (label, summary, content, isError, inputJson) => {
+      chatMod.renderTool(label, summary, content, !!isError, inputJson, SID);
+      await raf2();
+    };
+
+    // WS toolEnd shape → renderTool（完成翻转面）。bareProcessRows：真实会话里
+    // renderTool 行的可见性由 turnGroup 折叠剧场面（nf-tucked）+ 收拢（turn
+    // header）决定——harness 走弹窗裸行档（nfBareProcessRows=true），让卡体
+    // 以自然几何参与测量，判据读数零夹具噪声。
+    view.nfBareProcessRows = true;
+
+    // Census：卡内 <img> / 引用件 / 灯箱，只读 DOM 契约。
+    window.__imgCensus = () => {
+      const cards = [...document.querySelectorAll('#chat .tool-card')];
+      const cardImgs = cards.flatMap(c => [...c.querySelectorAll('img')]);
+      const refs = [...document.querySelectorAll('#chat .tool-img-ref')];
+      const refImgs = refs.flatMap(r => [...r.querySelectorAll('img')]);
+      const overlay = document.querySelector('.nf-lightbox');
+      const overlayImgs = overlay ? [...overlay.querySelectorAll('img')] : [];
+      const overlayOpen = !!(overlay && overlay.classList.contains('on'));
+      return {
+        toolCards: cards.length,
+        imgs: cardImgs.length,
+        imgRefs: refs.length,
+        refImgs: refImgs.length,
+        refText: refs.map(r => (r.textContent || '').trim()).join(' | '),
+        lightbox: overlayOpen,
+        imgsOutsideLightbox: cardImgs.filter(i => !overlay || (!overlay.contains(i) && !i.classList.contains('nf-lightbox-img'))).length,
+        overlayImgs: overlayImgs.length,
+      };
+    };
+
+    // 越界闸读数（作者假设 B 的机械判据，双判据）：
+    //   ① 几何：卡内每个子元素的外接矩形必须完全落在卡壳外接矩形内（±1px）；
+    //   ② 内容：子元素的 scrollWidth 不得超出自身 clientWidth（±1px）——即内容
+    //      自己收在盒内（`overflow-x: visible` 的盒子没有裁切权，超一点就是画到
+    //      卡外）。滚动容器（.body.open）是作者手势面，豁免。
+    window.__containment = () => {
+      const out = { children: 0, escaped: [], previewVisible: false };
+      for (const card of document.querySelectorAll('#chat .tool-card')) {
+        const box = card.getBoundingClientRect();
+        const pv = card.querySelector('.ds-tool-card__preview');
+        if (pv && pv.getBoundingClientRect().height > 0) out.previewVisible = true;
+        for (const el of card.querySelectorAll('*')) {
+          const r = el.getBoundingClientRect();
+          if (!r.width || !r.height) continue;         // 隐藏件不参与
+          out.children++;
+          const over = [];
+          if (r.right > box.right + 1) over.push(`right+${Math.round(r.right - box.right)}`);
+          if (r.left < box.left - 1) over.push(`left-${Math.round(box.left - r.left)}`);
+          if (r.bottom > box.bottom + 1) over.push(`bottom+${Math.round(r.bottom - box.bottom)}`);
+          if (over.length) {
+            out.escaped.push({
+              tag: el.tagName.toLowerCase(),
+              cls: el.className && el.className.baseVal === undefined ? String(el.className) : '',
+              over: over.join(','),
+            });
+          }
+          // ② 内容越界（不含滚动容器；字体/亚像素给 1px 余量）
+          const ox = getComputedStyle(el).overflowX;
+          if (ox === 'visible' && el.scrollWidth - el.clientWidth > 1) {
+            out.escaped.push({
+              tag: el.tagName.toLowerCase(),
+              cls: el.className && el.className.baseVal === undefined ? String(el.className) : '',
+              over: `content+${el.scrollWidth - el.clientWidth}px`,
+            });
+          }
+        }
+      }
+      return out;
+    };
+
+    window.__ready = true;
+  </script>
+</body>
+</html>

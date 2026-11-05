@@ -1,0 +1,7 @@
+$ node scripts/check-fixture-secrets.mjs   # ① 反向验红：在 tests/fixtures/ 种一条假长令牌
+[fixture-secrets] 2 high-entropy long token literal(s) found:
+  tests/fixtures/_gate-selftest-planted.json:3  key=deviceToken  len=48  classes=3
+  tests/fixtures/_gate-selftest-planted.json:4  key=apiKey  len=43  classes=4
+
+修复口径：夹具/证据里的凭据位换占位词（example/placeholder/redacted…）或短化到 < 32；真值只许放在 secrets store（凭据仓库），不进 git。
+EXIT=1

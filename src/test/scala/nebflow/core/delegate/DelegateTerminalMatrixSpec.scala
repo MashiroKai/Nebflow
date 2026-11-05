@@ -55,7 +55,6 @@ class DelegateTerminalMatrixSpec extends CatsEffectSuite:
       fs2.Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
 
   private class CompletedJudge extends DelegateJudge.DelegateJudgePort.Face:
-    def decideWorktree(task: String): IO[Option[Boolean]] = IO.pure(None)
     def judgeTerminal(input: DelegateJudge.TerminalInput): IO[Option[DelegateJudge.Verdict]] =
       IO.pure(Some(DelegateJudge.Verdict.Completed))
 

@@ -1,0 +1,6 @@
+checkJs: 3 errors (baseline 0, zero-gate files: 3)
+
+checkJs GATE FAILURES:
+  src/main/resources/web/js/mobile/chatChrome.js: new file with 3 errors — new/touched files must be checkJs-clean
+  total errors 3 > baseline 0
+EXIT_JS_TYPES=1

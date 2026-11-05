@@ -477,7 +477,7 @@ function openConfigCard(existing) {
   const presetCache = new Map();
   let presetTimer = null;
   function updateAutoNote() {
-    const a = (overlay.querySelector('#pp-cfg-addr') || {}).value || '';
+    const a = (/** @type {any} */ (overlay.querySelector('#pp-cfg-addr') || {})).value || '';
     const addr = a.trim();
     if (!addr || addr.indexOf('@') < 0) { autoNoteEl.textContent = t('perception.cfgAutoNote'); return; }
     if (presetCache.has(addr)) { applyPreset(addr, presetCache.get(addr)); return; }
@@ -488,7 +488,7 @@ function openConfigCard(existing) {
     });
   }
   function applyPreset(addr, data) {
-    const cur = (overlay.querySelector('#pp-cfg-addr') || {}).value || '';
+    const cur = (/** @type {any} */ (overlay.querySelector('#pp-cfg-addr') || {})).value || '';
     if (cur.trim() !== addr) return; // 地址已改：过期响应弃用
     if (data && data.recognized) {
       // 服务端解析面（根治批 2026-11-01）：preset 端点带 host:port/TLS——
@@ -499,10 +499,10 @@ function openConfigCard(existing) {
       const tls = data.smtpImplicitTls === false ? 'STARTTLS' : 'SSL';
       const resolved = ih && sh ? `${ih}:${ip || 993} · ${sh}:${sp || 465}（${tls}）` : '';
       autoNoteEl.textContent = t('perception.cfgAutoResolved', { addr, resolved: resolved || t('perception.cfgAutoNote') });
-      const imapEl = overlay.querySelector('#pp-cfg-imap');
-      const smtpEl = overlay.querySelector('#pp-cfg-smtp');
-      const ipEl = overlay.querySelector('#pp-cfg-imapport');
-      const spEl = overlay.querySelector('#pp-cfg-smtpport');
+      const imapEl = /** @type {HTMLInputElement|null} */ (overlay.querySelector('#pp-cfg-imap'));
+      const smtpEl = /** @type {HTMLInputElement|null} */ (overlay.querySelector('#pp-cfg-smtp'));
+      const ipEl = /** @type {HTMLInputElement|null} */ (overlay.querySelector('#pp-cfg-imapport'));
+      const spEl = /** @type {HTMLInputElement|null} */ (overlay.querySelector('#pp-cfg-smtpport'));
       const dom = addr.slice(addr.indexOf('@') + 1).toLowerCase();
       const qqish = /^(qq|foxmail|vip\.qq)\.com$/.test(dom);
       // 预填只填占位符不填值：显式手填优先于推断（权威识别在服务端）。
@@ -846,10 +846,10 @@ export async function openMailEditor(draftId, opts = {}) {
 
   const tools = document.createElement('div');
   tools.className = 'canvas-tools';
-  tools.style.cssText = 'position:absolute;top:10px;right:14px;z-index:30;display:flex;align-items:center;gap:6px;padding:4px 6px 4px 10px;border-radius:999px;background:var(--st-control-bg);border:1px solid var(--st-control-border);box-shadow:inset 0 1px 0 var(--st-control-highlight),inset 0 -1px 0 var(--st-control-underedge),0 1px 3px var(--st-control-glow),0 2px 8px var(--st-control-shadow)';
+  tools.style.cssText = 'position:absolute;top:10px;right:14px;z-index:30;display:flex;align-items:center;gap:var(--ds-space-1h);padding:var(--ds-space-1) var(--ds-space-1h) var(--ds-space-1) var(--ds-space-glass-x);border-radius:var(--ds-radius-pill);background:var(--st-control-bg);border:1px solid var(--st-control-border);box-shadow:inset 0 1px 0 var(--st-control-highlight),inset 0 -1px 0 var(--st-control-underedge),0 1px 3px var(--st-control-glow),0 2px 8px var(--st-control-shadow)';
   tools.innerHTML = `
     <button class="pp-btn" data-t="abandon" style="border:none;background:transparent;box-shadow:none;color:var(--st-text-muted)">${esc(t('perception.abandon'))}</button>
-    <button class="pp-btn primary" data-t="send" style="border-radius:999px;padding:4px 14px">${esc(t('perception.send'))}</button>`;
+    <button class="pp-btn primary" data-t="send" style="border-radius:var(--ds-radius-pill);padding:var(--ds-space-1) 14px">${esc(t('perception.send'))}</button>`;
   pane.appendChild(tools);
 
   const wrap = document.createElement('div');

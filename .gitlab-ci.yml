@@ -196,6 +196,11 @@ js-types:
     # ③-G gate：friend chat modal 与 dropbox modal 共享的消息面值唯一字面家 =
     # css/sapphire.css，feature CSS 重抄即红。
     - node scripts/check-msgstyle-single-source.mjs
+    # design-scale gate（作者令 2026-11-04「把圆角 边距 文字离边缘的距离 各文字的大小
+    # 写进spec和前端开发包」）：四类刻度只在 design-language 插件 references/
+    # design-language-tokens.md 的 spec 表登记；spec 行与令牌源双向漂移即红
+    # （spec→源：变量存在且同值；源→spec：刻度族新档必须进表），另查 --dl-* 账本镜像。
+    - node scripts/check-design-spec-sync.mjs
     # Provider model-list endpoint 必须由协议 face 声明，gateway 不得拼 baseUrl。
     - node scripts/check-provider-modellist.mjs
     # Gate #491：ship face 不带贡献者本机标识（运行时自推导执行机身份）。

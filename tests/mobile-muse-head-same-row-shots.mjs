@@ -176,10 +176,12 @@ async function probeState(page) {
 
 /** ① 同行断言（四态共用，≤1px；静止态不再豁免）。 */
 function assertSameRow(tag, st) {
-  const spread = Math.max(Math.abs(st.avCy - st.taskCy), Math.abs(st.avCy - st.searchCy));
-  ok(`${tag} ① 头像 cy ↔ 双钮 cy 偏差 ≤1px`,
+  // 入口收敛批 2026-11-04：左上「任务」键退役（taskCy 恒 -1）⇒ 只对现役顶缘键
+  // （搜索）取极差；双钮同轴的历史口径随入口收敛变为单键同行。
+  const spread = Math.abs(st.avCy - st.searchCy);
+  ok(`${tag} ① 头像 cy ↔ 顶缘键 cy 偏差 ≤1px`,
     spread <= 1,
-    `spread=${spread.toFixed(2)} avCy=${st.avCy} 双钮 cy=${st.taskCy}/${st.searchCy}`);
+    `spread=${spread.toFixed(2)} avCy=${st.avCy} 键 cy=${st.searchCy} taskCy=${st.taskCy}(退役=-1)`);
   return spread;
 }
 /** ② 水平居中（四态共用）。 */
@@ -452,8 +454,8 @@ async function runSafeArea(scheme) {
       `firstRowTop=${st.firstRowTop} nameBottom=${st.nameBottom}`);
     ok(`${scheme} 安全区 ${SAFE} ⑦ 锚随安全区整体下移（组顶 = 锚 4 + safe 44 = 48 ±1）`,
       Math.abs(st.headTop - (4 + SAFE)) <= 1,
-      `headTop=${st.headTop} 期望 48；头像顶=${st.avTop}（期望 56）、头像 cy=${st.avCy}、双钮 cy=${st.taskCy}`);
-    console.log(`      · 安全区实测：组顶 ${st.headTop} / 头像 ${st.avTop}→${st.avBottom}（cy ${st.avCy}）/ 双钮 cy ${st.taskCy} / 胶囊底 ${st.nameBottom} / 首行 ${st.firstRowTop}`);
+      `headTop=${st.headTop} 期望 48；头像顶=${st.avTop}（期望 56）、头像 cy=${st.avCy}、键 cy=${st.searchCy}`);
+    console.log(`      · 安全区实测：组顶 ${st.headTop} / 头像 ${st.avTop}→${st.avBottom}（cy ${st.avCy}）/ 键 cy ${st.searchCy}（任务键退役）/ 胶囊底 ${st.nameBottom} / 首行 ${st.firstRowTop}`);
     await page.screenshot({ path: join(OUT, `safe-area-${scheme}.png`) });
     ok(`${scheme} 安全区 ${SAFE} R0 零 console error`, errors.length === 0, errors.slice(0, 3).join(' | '));
     await ctx.close();

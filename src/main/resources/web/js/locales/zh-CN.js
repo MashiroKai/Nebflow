@@ -768,11 +768,14 @@ export default {
   'settings.thinkingMode': '思考模式',
   'settings.llmLog': 'LLM 日志记录',
   'settings.workSchedule': '冻结时间（非工作时间）',
-  'settings.workScheduleOnHint': '在冻结时段内，agent 在工具执行完成后自动冻结，不调用 LLM（零 token 消耗），到点自动恢复继续。期间输入栏与麦克风禁用，点击「跳过本次」即可立即解冻。',
+  // 自解释批（2026-11-04 铁律 8）：原文尾句「点击「跳过本次」即可立即解冻」= 行为教学，
+  // 删除——「跳过本次」按钮名即动作（细则 b 动作标签）。保留的是冻结期间的事实状态。
+  'settings.workScheduleOnHint': '冻结时段内 agent 在工具执行完成后暂停，不调用 LLM（零 token 消耗），到点自动恢复。期间输入栏与麦克风禁用。',
   'settings.workScheduleOffHint': '默认关闭。关闭时所有 agent 全天候工作，行为与现状完全一致。',
   'settings.addSegment': '添加冻结时段',
   'settings.removeSegment': '删除该时段',
   'settings.segmentLabel': '时段 {n}',
+  'settings.segmentEdit': '编辑冻结时段',
   'settings.segmentTo': '至',
   'settings.scheduleInvalidTime': '时间格式应为 HH:mm',
   'settings.scheduleInvalidRange': '时段起止不能相同',
@@ -1405,6 +1408,44 @@ export default {
   'provider.unavailableWindows': '不可用时段',
   'provider.unavailableWindowsPlaceholder': '如 14:00-18:00；多条用逗号分隔，跨午夜写 23:00-07:00；留空 = 不限制',
   'provider.unavailableWindowsInvalid': '不可用时段格式错误：「{value}」（需 HH:mm-HH:mm，且开始≠结束）',
+  'provider.unavailableWindowsEmpty': '无限制（留空 = 不限制）',
+  'provider.unavailableWindowsAdd': '添加不可用时段',
+  'provider.unavailableWindowsDaysReadonly': '按星期 · 手编只读',
+  'provider.unavailableWindowsDays': '生效星期',
+
+  // ── 时间滚轮选择器（time-wheel-picker 实施批 2026-11-03，组件单源 js/timeWheel.js）──
+  // 设计出处 docs/design/20261101_163000_time-wheel-picker-spec__*.zh-CN.md §7/§9。
+  'timewheel.titleRange': '选择时间段',
+  'timewheel.titlePoint': '选择时间',
+  'timewheel.cancel': '取消',
+  'timewheel.confirm': '确定',
+  'timewheel.sepTo': '至',
+  'timewheel.editRange': '编辑时间段',
+  'timewheel.editPoint': '编辑时间',
+  'timewheel.crossDay': '跨零点时段：至次日 {to} 结束（合法，同现役跨午夜语义）',
+  'timewheel.equalError': '起止不能相同（零长度时段无意义，后端校验会拒绝）',
+  'timewheel.exactInput': '精确输入 HH:mm',
+  'timewheel.startHour': '开始·时',
+  'timewheel.startMin': '开始·分',
+  'timewheel.endHour': '结束·时',
+  'timewheel.endMin': '结束·分',
+  'timewheel.hourUnit': '时',
+  'timewheel.minUnit': '分',
+  'timewheel.dateLabel': '日期',
+  'timewheel.daysLabel': '生效星期',
+  'timewheel.everyDay': '每天',
+  'timewheel.mon': '一',
+  'timewheel.tue': '二',
+  'timewheel.wed': '三',
+  'timewheel.thu': '四',
+  'timewheel.fri': '五',
+  'timewheel.sat': '六',
+  'timewheel.sun': '日',
+  'timewheel.presetAllDay': '全天',
+  'timewheel.presetNight': '深夜 23–08',
+  'timewheel.presetDay': '白天 09–18',
+  'timewheel.presetAfternoon': '午后 14–18',
+  'timewheel.deadline': '截止时间',
 
   // Model fields in modal
   'model.idPlaceholder': '模型 ID',
@@ -1509,10 +1550,18 @@ export default {
   // cardguard（作者裁定 2026-09-17 · #687①）：含卡片哨兵的工具结果不再以 <pre>
   // 兜底渲染原文 ⇒ 走卡片路径，提取失败时显示本占位（🔴 原文不进 DOM）。
   'chat.toolCardUnavailable': '卡片内容不可用（未渲染原始数据）',
-  // 工具卡折叠控件（ui-unification-20261103-chat-stream）：长输出默认 ≤8 行预览，
+  // 工具卡折叠控件（ui-unification-20261103-chat-stream）：长输出默认折叠，
   // 控件明示全文行数；收起文案与 aria-expanded 联动（收起态回显行数）。
+  // 过程泄漏修复批（2026-11-04）：收起态 = 单行摘要，行数/文案改挂 title
+  // （无视觉噪声的可达性面），默认面不再渲染预览正文。
   'chat.toolExpandMore': '展开全部 {n} 行',
   'chat.toolCollapse': '收起',
+  // 失败状态词（过程泄漏修复批 2026-11-04）：摘要行要能看出成败——失败必须
+  // 显式写出来（成功由 ✓ 图标承载，不加字：每卡写「成功」是纯噪声）。
+  'chat.toolStatusFailed': '失败',
+  // 工具卡图片引用件（tool-card-image-face 批 2026-11-04）：工具卡 = 摘要面，
+  // 卡内图片一律折叠成「🖼 图片 ×N」引用，点开走灯箱——绝不内嵌渲染。
+  'chat.toolImgRef': '🖼 图片 ×{n}',
   // pop-upgrade 批(2026-10-03):Pop 工件面(叠卡/文件卡片)文案
   'chat.popExpand': '展开 {n}',
   'chat.popCollapse': '收起',
@@ -1588,6 +1637,17 @@ export default {
   'askUser.attachmentUnavailable': '不可用',
   'askUser.attachmentPreview': '预览 {name}',
   'askUser.attachmentDownload': '下载 {name}',
+  // ui-unification-20261103-askuser-attach 批（2026-11-04，IMG_1725 实拍）：附件区
+  // 同源化 + 叠卡 + 来源标签 + 折叠；不可用态给**原因档**与可执行动作（⑤a「· 不可用」
+  // 裸奔退役）。
+  'askUser.attUnavailable_missing': '文件不存在或已被移动',
+  'askUser.attUnavailable_denied': '暂无读取权限（登录态/票据失效）',
+  'askUser.attUnavailable_network': '网络不可达，稍后可重试',
+  'askUser.attUnavailable_unsupported': '该类型暂不支持预览',
+  'askUser.attCanDownload': '可尝试下载',
+  'askUser.attRetryDownload': '重试下载',
+  'askUser.attDownloadFailed': '下载未成功',
+  'askUser.attFoldTotal': '共 {n} 个',
     'askUser.pendingTitle': '待回答问题',
   // held-receipt 投递可靠性批（2026-10-21 fix 3）：「N 条回执待投递」徽标词条。
   // 补投静默批（2026-10-29）：词条去机制名——「被子代理屏障扣留」（引擎内部
@@ -2100,6 +2160,7 @@ export default {
   'task.empty': '暂无定时任务',
   'task.emptyHint': '点击空白处或按 + 创建',
   'task.inputPlaceholder': '输入任务内容...',
+  'task.triggerTime': '触发时间',
   'task.triggered': '已触发',
   'task.triggerTitle': '定时任务已触发',
   'task.scheduledAt': '预定于 {time} 触发，正在执行...',
@@ -2171,7 +2232,9 @@ export default {
   'neblink.reachDirect': 'P2P 直连已建立',
   'neblink.reachRelay': '可经服务器中继',
   'neblink.reachServerOnly': '在线——暂无直连通道',
-  'neblink.loggedOutHint': '未登录 —— 点击上方头像登录 {lowerBrand} 账号，登录后自动入网',
+  // 自解释批（2026-11-04 铁律 8）：删尾句「登录后自动入网」= 行为教学/能力说明；
+  // 「未登录」+「点击上方头像登录」= 空态状态 + 下一步动作（细则 b 空态，保留）。
+  'neblink.loggedOutHint': '未登录 —— 点击上方头像登录 {lowerBrand} 账号',
   // 缺陷 A（2026-09-18）：未登录面板的两条读数 —— ①「清理并重登」入口（只在
   // 本地凭据文件类分类下渲染）；②状态面降级（`/status` 非 2xx 的可见读数，修前静默）。
   'neblink.cleanupRelogin': '清理并重登',
@@ -2200,8 +2263,12 @@ export default {
   'fleet.title': '全设备统一更新',
   'fleet.subtitle': '本机 v{current} → 目标 v{target} · 阶段：{stages}',
   'fleet.stages': '准备 → 下载 → 校验 → 切换 → 重启 → 自检 → 完成',
-  'fleet.blocking': '正在更新，请稍候——当前阶段「{stage}」，{eta}。更新期间本控制台不可用，完成后自动接续。',
-  'fleet.reconnecting': '设备已发起重启，正在等待它回来（回到本页会自动接续，不需要手动刷新）。',
+  // 自解释批（2026-11-04 铁律 8 反例 2 同族）：原「正在更新，请稍候……更新期间本控制台
+  // 不可用，完成后自动接续」= 行为教学（教用户等）+ 能力承诺；改为状态事实：阶段名 + ETA。
+  'fleet.blocking': '正在更新——当前阶段「{stage}」，{eta}。',
+  // 原「设备已发起重启，正在等待它回来（回到本页会自动接续，不需要手动刷新）」= 行为教学 +
+  // 括号补注；改为状态事实：重启中 / 等待重连（细则 b 状态事实）。
+  'fleet.reconnecting': '本机已发起重启——等待重连。',
   'fleet.eta': '预计 3–5 分钟',
   'fleet.empty': '暂无可更新的设备。',
   'fleet.close': '关闭',
@@ -2216,7 +2283,10 @@ export default {
   'fleet.versionUnknown': '版本未知',
   'fleet.attempt': '第 {n} 次尝试',
   'fleet.manualTitle': '需手动更新（版本过旧或无法远控）',
-  'fleet.manualHow': '到该设备上打开控制台 → 设置 → 检查更新，或运行安装脚本',
+  // `fleet.manualHow` 已删（自解释批 2026-11-04 铁律 8 反例 1 原样点名）：路径指引
+  // 「到该设备上打开控制台 → 设置 → 检查更新」。用户要的是「这行为什么不能一键推」，
+  // 由上面的事实徽标（`fleet.capability.*` / `fleet.stage.manual`）承载；行内只剩
+  // 设备名 + 版本（事实）。渲染点 `fleetUpdate.js` 的手动行徽标同批摘除。
   'fleet.pendingTitle': '待上线（上线后自动补推）',
   'fleet.summary.counts': '{updated} 台已更新、{failed} 台失败、{manual} 台需手动、{pending} 台待上线',
   // 收口状态（引擎 `FleetSummary.status` 的 messageKey 面）
@@ -2244,9 +2314,12 @@ export default {
   'fleet.stage.cancelled': '已中断',
   // 失败五类 + 可操作建议（`fleet.failure.<wire>` / `.advice`）
   'fleet.failure.download-failed': '下载失败',
-  'fleet.failure.download-failed.advice': '建议：网络恢复后点「重试失败项」；多次失败请在该设备上手动更新。',
+  // 自解释批（2026-11-04 铁律 8）：删两条 advice 的第二句「多次失败请在该设备上手动更新」
+  // ——能力徽标（需手动更新）已说明该事实（重复说明）；保留「失败原因 + 下一步」的失败收口
+  // （细则 b 失败收口，一句话）。
+  'fleet.failure.download-failed.advice': '建议：网络恢复后点「重试失败项」。',
   'fleet.failure.verify-failed': '校验不过（安装包与本机记录不符）',
-  'fleet.failure.verify-failed.advice': '建议：重试一次；仍不过说明包源有问题，请在该设备上手动更新并保留日志。',
+  'fleet.failure.verify-failed.advice': '建议：重试一次；仍不过说明包源有问题。',
   'fleet.failure.switch-rolled-back': '切换回滚（新版本未站住，已退回上一版）',
   'fleet.failure.switch-rolled-back.advice': '建议：已自动回滚到可用版本，本机仍在正常服务；请查看该设备日志后手动更新。',
   'fleet.failure.healthcheck-failed': '自检没过（重启后健康检查失败）',
@@ -2645,7 +2718,9 @@ export default {
   'plugins.sourceUnreachable': '远端不可达，保持本地版本',
   'plugins.sourceNotInstalled': '未安装',
   'plugins.sourceUpdate': '更新',
-  'plugins.sourceUpdateTitle': '拉取并生效：v{from} → v{to}（零重启；失败则本地版本不变）',
+  // 自解释批（2026-11-04 铁律 8）：删括号补注「（零重启；失败则本地版本不变）」——能力说明
+  // + 行为承诺；保留版本迁移事实 v{from} → v{to}（细则 c 正例 1 同形）。
+  'plugins.sourceUpdateTitle': '拉取并生效：v{from} → v{to}',
   'plugins.sourceUpdated': '{name} 已更新',
   'explorer.loading': '加载中...',
   'explorer.empty': '空',
@@ -3003,6 +3078,10 @@ export default {
   'todoface.emptyAll': '暂无提醒',
   'todoface.emptyAdd': '点按添加提醒',
   'todoface.complete': '标记完成',
+  'todoface.del': '删除',
+  'todoface.fabAdd': '新建待办',
+  'todoface.completedToast': '已完成',
+  'todoface.undo': '撤回',
   'todoface.tagName': '提醒标签',
   'todoface.tagNew': '新建标签',
   'todoface.tagRename': '重命名',

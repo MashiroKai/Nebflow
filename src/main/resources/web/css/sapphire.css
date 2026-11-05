@@ -444,8 +444,8 @@
      一律压过 .cfg-btn / .cfg-btn-primary 的常态与 hover 声明（本文件最后加载）。 */
   background: var(--ctl-send-bg);
   border: 1px solid var(--ctl-send-border);
-  border-radius: 10px;
-  padding: 5px 12px;
+  border-radius: var(--ds-radius-button);
+  padding: 5px var(--ds-space-3);
   font-family: inherit;
   font-weight: 500;
   cursor: pointer;
@@ -651,10 +651,10 @@ button.glass-control.fm-login-btn {
   display: block;
   width: 100%;
   box-sizing: border-box;
-  padding: 10px 20px;
-  border-radius: 10px;
+  padding: var(--ds-space-glass-x) var(--ds-space-5);
+  border-radius: var(--ds-radius-button);
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-weight: 500;
   line-height: 1.25;
   text-align: center;
@@ -790,21 +790,37 @@ button.glass-control.fm-login-btn:disabled {
 
 /* meta pill — 逐条搬主对话框 .duration-badge（chat.css:1138-1149）
    三窗口 footer 统一（2026-09-14 作者七答 · 方向 A）：S01 补齐主对话已有的
-   `user-select:none` / `width:fit-content`（消除隐式默认，友/设备原缺）。 */
+   `user-select:none` / `width:fit-content`（消除隐式默认，友/设备原缺）。
+   🔴 ui-final-four ⑧（2026-11-03，作者令「消息下方 footer」）· 左右内距 = 气泡内容内距
+   —— 修前 `2px 8px 2px 6px`：pill 盒缘虽与气泡盒缘对齐（实测 Δ=0），但 pill 内容缘
+   与气泡**内容缘**相差（出向右 −4px / 入向左 −7px，逐条实测见 ⑧ 诊断表）；且 6↔8 的
+   左右不对称使时间文字与右端动作钮的光学边距不等。现状改为一律 `var(--ds-space-3)`
+   = 12px（= 气泡内距 `--ds-space-3`），入向再 +1px（气泡有 1px 描边 ⇒ 内容缘 = 13）。
+   判据 = footer 内容缘 ≡ 气泡内容缘（出向/入向、三形态各 0px）。
+   ⚠ 与主对话 `.duration-badge`（chat.css，不在本批所有权内）自本批起内距分档：主对话
+   6/8、消息面 12/12 —— 两条轴线的「值的家」各自单源，禁在本规则再写第二份字面量。 */
 .fm-msg-meta,
 .dropbox-msg-meta {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  margin-top: 4px;
-  padding: 2px 8px 2px 6px;
+  gap: var(--ds-space-1h);
+  margin-top: var(--ds-space-1);
+  padding: var(--ds-space-half) var(--ds-space-3);
   background: var(--color-surface);
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   box-shadow: var(--msg-meta-card-shadow);
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted, #888);
   user-select: none;
   width: fit-content;
+}
+
+/* 入向气泡带 1px 描边（见上方 `.fm-msg.in .fm-msg-bubble`）⇒ 其内容缘自气泡盒缘起
+   = 12 + 1 = 13px；pill 同向 +1px 才能与气泡内容同列（出向无描边，取 12 即可）。 */
+.fm-msg.in .fm-msg-meta,
+.dropbox-msg.in .dropbox-msg-meta {
+  padding-left: calc(var(--ds-space-3) + 1px);
+  padding-right: calc(var(--ds-space-3) + 1px);
 }
 
 /* pill 暗档（S04/A2）：主对话有专属暗档覆盖（chat.css:1564-1567），友/设备两面
@@ -831,11 +847,11 @@ button.glass-control.fm-login-btn:disabled {
 .agent-badge,
 .fm-msg-agent-badge {
   display: inline-block;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   letter-spacing: normal;
   text-transform: none;
-  padding: 1px 8px;
+  padding: 1px var(--ds-space-2);
   border-radius: 9999px;
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
@@ -850,7 +866,7 @@ button.glass-control.fm-login-btn:disabled {
    本值（否则该行会多出 4px 底距、与时间文本错位）。
    🔴 作用域 = 主对话行（`.agent-row`）；**不是**组件的第二份定义 —— 组件定义
    仍只有上面那一个块（本行只是该组件在特定宿主里的落位几何）。 */
-.agent-row > .agent-badge { margin-bottom: 4px; }
+.agent-row > .agent-badge { margin-bottom: var(--ds-space-1); }
 
 /* time — 10px 等宽栈 + tabular-nums（主对话框 chat.css:1157-1162）
    S06/S07：取色与不透明度收敛到主对话口径 = `--color-text` + opacity .35
@@ -895,8 +911,8 @@ button.glass-control.fm-login-btn:disabled {
 
 /* file card — 单一类名 .msg-file-card（③A5）；out 变体是修饰态，不是第二份规则 */
 .msg-file-card {
-  padding: 8px 12px;
-  border-radius: 12px;
+  padding: var(--ds-space-2) var(--ds-space-3);
+  border-radius: var(--ds-radius-xl);
   background: var(--glass-etched-bg, rgba(128, 128, 128, 0.06));
   border: 1px solid var(--glass-etched-border, rgba(128, 128, 128, 0.12));
   min-width: 180px;

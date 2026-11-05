@@ -183,11 +183,18 @@ test.describe('改后树（fixed）— 附件行在位', () => {
     expect(pageErrors).toEqual([]);
     expect(r.hasBox).toBe(true);
     expect(r.hasWrap, '附件块必须在位').toBe(true);
-    expect(r.rows, '两件附件 ⇒ 两行').toBe(2);
+    expect(r.rows, '两件附件 ⇒ 两枚文件 chip').toBe(2);
     expect(r.wrapIsQWrapper, '承载块复用既有 .option-q-wrapper').toBe(true);
     expect(r.beforeBtnRow, '插位在 .option-btn-row 之前').toBe(true);
-    expect(r.rowTags, '有 viewer 认领 ⇒ 真 <button>（非假按钮）').toEqual(['BUTTON', 'BUTTON']);
-    expect(r.rowTitles.every(t => t.startsWith('/tmp/nb-histatt-fixture/')), '全路径只进 title').toBe(true);
+    // ui-unification-20261103-askuser-attach 批：行形态换代（button 行 → 同源
+    // 文件 chip `div.att-file`，可点档 role=button）；全路径不当可见标签——
+    // 路径进 dataset.askAttPath（悬停 title = basename）。
+    expect(r.rowTags, '同源文件 chip（非假按钮）').toEqual(['DIV', 'DIV']);
+    expect(r.rowPaths.every(t => t.startsWith('/tmp/nb-histatt-fixture/')), '全路径只进 dataset').toBe(true);
+    expect(r.rowTitles.every(t => !t.includes('/')), '可见标签只给 basename').toBe(true);
+    expect(r.clickHandlerAttached, 'chip 可点档在位').toEqual([true, true]);
+    expect(r.originTags, '每枚文件 chip 挂来源标签').toBe(2);
+    expect(r.originText && r.originText.includes('AskUser'), '来源标签含 AskUser 标识').toBe(true);
     expect(r.boxHistoryReplay, '历史恢复形态锚在场').toBe(true);
     await page.screenshot({ path: path.join(SHOT_DIR, '20261002_askhistatt-1-fixed-attach-rows.png'), fullPage: true });
     await context.close();
@@ -213,11 +220,11 @@ test.describe('改后树（fixed）— 附件行在位', () => {
       (await page.evaluate(() => window.__railCounts)).nfFile,
       { timeout: 5000 }).toBeGreaterThanOrEqual(2);
 
-    // ① 卡级真点击（终态卡内）：哨兵豁免附件行 ⇒ 点击到达行 onclick；行入口 =
+    // ① 卡级真点击（终态卡内）：哨兵豁免附件区 ⇒ 点击到达 chip；入口 =
     //    下载腿 ⇒ 零 workspace-open-item（Canvas 面整批退役）。
     const viaClick = await page.evaluate(() => window.__clickRow(0));
     expect(viaClick.clicked).toBe(true);
-    expect(viaClick.tag).toBe('BUTTON');
+    expect(viaClick.tag).toBe('DIV');
     expect(viaClick.dispatched, '下载腿 ⇒ 零 workspace-open-item').toBe(0);
     await expect.poll(async () =>
       (await page.evaluate(() => window.__railCounts)).nfFile,

@@ -233,9 +233,17 @@ object MailTool extends Tool:
   private val dispatcherMailState: Ref[IO, DispatcherMailState] =
     Ref.unsafe[IO, DispatcherMailState](DispatcherMailState())
 
-  /** 生效窗长（现读 prop `nebflow.mail.dispatcherBatchMs`，默认 5000；`≤ 0` = 关窗）。 */
+  /**
+   * 生效窗长（现读 prop `nebflow.mail.dispatcherBatchMs`，默认 5000；`≤ 0` = 关窗）。
+   *
+   * seal 批（2026-11-03，作者令「邮件和心跳进程功能，进入封存，发布剔除，本地sbt run
+   * 可用。」）：`Defaults.MailProcessEnabled == false` ⇒ **恒 0 = 关窗**——打包窗是
+   * 一条后台定时腿（`IO.sleep(windowMs).start`，见 `enqueueDispatcherReply`），封存即
+   * 不挂它；投递本体不受影响（每条直投，`Some(text)` 旁路，与 prop 手设 0 同一条路径）。
+   */
   private[tools] def dispatcherMailWindowMs: Long =
-    sys.props.getOrElse("nebflow.mail.dispatcherBatchMs", "5000").trim.toLongOption.getOrElse(5000L)
+    if !Defaults.MailProcessEnabled then 0L
+    else sys.props.getOrElse("nebflow.mail.dispatcherBatchMs", "5000").trim.toLongOption.getOrElse(5000L)
 
   /** 生效条数上限（现读 prop `nebflow.mail.dispatcherBatchMax`，默认 10；`< 1` 归一到 1）。 */
   private[tools] def dispatcherMailBatchMax: Int =

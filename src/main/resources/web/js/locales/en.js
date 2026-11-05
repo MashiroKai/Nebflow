@@ -812,11 +812,15 @@ export default {
   'settings.thinkingMode': 'Thinking Mode',
   'settings.llmLog': 'LLM Logging',
   'settings.workSchedule': 'Freeze time (non-work hours)',
-  'settings.workScheduleOnHint': 'During a freeze window the agent parks after each tool round — no LLM calls (zero token cost) — and resumes automatically when the window ends. The input bar and mic are disabled during a freeze; click "Skip this freeze" to unfreeze immediately.',
+  // Self-explaining batch (2026-11-04, rule 8): the trailing "click Skip this freeze to
+  // unfreeze immediately" taught an action the button label already carries (action-label
+  // retention). What stays is the freeze-window fact.
+  'settings.workScheduleOnHint': 'During a freeze window the agent parks after each tool round — no LLM calls (zero token cost) — and resumes automatically when the window ends. The input bar and mic are disabled during a freeze.',
   'settings.workScheduleOffHint': 'Off by default. When off, all agents work around the clock exactly as today.',
   'settings.addSegment': 'Add freeze segment',
   'settings.removeSegment': 'Remove segment',
   'settings.segmentLabel': 'Segment {n}',
+  'settings.segmentEdit': 'Edit freeze window',
   'settings.segmentTo': 'to',
   'settings.scheduleInvalidTime': 'Time must be in HH:mm format',
   'settings.scheduleInvalidRange': 'Start and end must differ',
@@ -1453,6 +1457,43 @@ export default {
   'provider.unavailableWindows': 'Unavailable windows',
   'provider.unavailableWindowsPlaceholder': 'e.g. 14:00-18:00; comma-separate multiple; cross-midnight as 23:00-07:00; empty = no restriction',
   'provider.unavailableWindowsInvalid': 'Invalid unavailable window: "{value}" (expected HH:mm-HH:mm, start ≠ end)',
+  'provider.unavailableWindowsEmpty': 'No restriction (empty = unrestricted)',
+  'provider.unavailableWindowsAdd': 'Add unavailable window',
+  'provider.unavailableWindowsDaysReadonly': 'By weekday · hand-edited, read-only',
+  'provider.unavailableWindowsDays': 'Active weekdays',
+
+  // ── Time wheel picker (time-wheel-picker impl batch 2026-11-03; single source js/timeWheel.js) ──
+  'timewheel.titleRange': 'Select time range',
+  'timewheel.titlePoint': 'Select time',
+  'timewheel.cancel': 'Cancel',
+  'timewheel.confirm': 'Done',
+  'timewheel.sepTo': 'to',
+  'timewheel.editRange': 'Edit time range',
+  'timewheel.editPoint': 'Edit time',
+  'timewheel.crossDay': 'Crosses midnight: ends at {to} the next day (valid, same as the current cross-midnight semantics)',
+  'timewheel.equalError': 'Start and end cannot be equal (a zero-length window is meaningless and the backend rejects it)',
+  'timewheel.exactInput': 'Type exact HH:mm',
+  'timewheel.startHour': 'Start hour',
+  'timewheel.startMin': 'Start minute',
+  'timewheel.endHour': 'End hour',
+  'timewheel.endMin': 'End minute',
+  'timewheel.hourUnit': 'h',
+  'timewheel.minUnit': 'm',
+  'timewheel.dateLabel': 'Date',
+  'timewheel.daysLabel': 'Active weekdays',
+  'timewheel.everyDay': 'Every day',
+  'timewheel.mon': 'Mo',
+  'timewheel.tue': 'Tu',
+  'timewheel.wed': 'We',
+  'timewheel.thu': 'Th',
+  'timewheel.fri': 'Fr',
+  'timewheel.sat': 'Sa',
+  'timewheel.sun': 'Su',
+  'timewheel.presetAllDay': 'All day',
+  'timewheel.presetNight': 'Night 23–08',
+  'timewheel.presetDay': 'Day 09–18',
+  'timewheel.presetAfternoon': 'Afternoon 14–18',
+  'timewheel.deadline': 'Due time',
 
   // Model fields in modal
   'model.idPlaceholder': 'Model ID',
@@ -1564,10 +1605,20 @@ export default {
   // card path, and this placeholder when extraction fails (raw text never in DOM).
   'chat.toolCardUnavailable': 'Card content unavailable (raw data not rendered)',
   // Tool-card fold toggle (ui-unification-20261103-chat-stream): long output
-  // collapses to an <=8-line preview; the toggle names the full line count and
-  // mirrors aria-expanded (collapsed state echoes the count).
+  // collapses by default; the toggle names the full line count and mirrors
+  // aria-expanded. Process-leak fix (2026-11-04): the collapsed face is now a
+  // single summary line — the line count/copy ride the title (accessible, no
+  // visual noise) and the default face renders no preview body at all.
   'chat.toolExpandMore': 'Expand all {n} lines',
   'chat.toolCollapse': 'Collapse',
+  // Failure status word (process-leak fix, 2026-11-04): the summary line must
+  // show success/failure — failure is spelled out (success rides the check
+  // icon; printing "succeeded" on every card is noise).
+  'chat.toolStatusFailed': 'failed',
+  // Tool-card image ref chip (tool-card-image-face batch, 2026-11-04): a tool
+  // card is a summary face — images fold into a "🖼 N image(s)" reference that
+  // opens the lightbox; never rendered inline.
+  'chat.toolImgRef': '🖼 {n} image(s)',
   // pop-upgrade batch (2026-10-03): Pop artifact faces (media stack / file cards)
   'chat.popExpand': 'Expand {n}',
   'chat.popCollapse': 'Collapse',
@@ -1647,6 +1698,18 @@ export default {
   'askUser.attachmentUnavailable': 'unavailable',
   'askUser.attachmentPreview': 'Preview {name}',
   'askUser.attachmentDownload': 'Download {name}',
+  // ui-unification-20261103-askuser-attach batch (2026-11-04, IMG_1725): the
+  // attachment area unifies with the input strip + embedded media stack + source
+  // tag + folding; the unavailable state carries a REASON tier and an action
+  // (the bare "unavailable" wording retires per ⑤a).
+  'askUser.attUnavailable_missing': 'File missing or moved',
+  'askUser.attUnavailable_denied': 'No read permission (session/ticket expired)',
+  'askUser.attUnavailable_network': 'Network unreachable — retry later',
+  'askUser.attUnavailable_unsupported': 'Preview not supported for this type',
+  'askUser.attCanDownload': 'download available',
+  'askUser.attRetryDownload': 'Retry download',
+  'askUser.attDownloadFailed': 'Download failed',
+  'askUser.attFoldTotal': '{n} total',
     'askUser.pendingTitle': 'Pending questions',
   // held-receipt 投递可靠性批（2026-10-21 fix 3）：「N 条回执待投递」徽标词条。
   // 补投静默批（2026-10-29）：词条去机制名——"held by the sub-agent barrier"
@@ -2172,6 +2235,7 @@ export default {
   'task.empty': 'No scheduled tasks',
   'task.emptyHint': 'Click empty area or press + to create',
   'task.inputPlaceholder': 'Enter task...',
+  'task.triggerTime': 'Trigger time',
   'task.triggered': 'Triggered',
   'task.triggerTitle': 'Scheduled Task Triggered',
   'task.scheduledAt': 'Scheduled at {time}, executing...',
@@ -2245,7 +2309,9 @@ export default {
   'neblink.reachDirect': 'Direct P2P connection established',
   'neblink.reachRelay': 'Reachable via server relay',
   'neblink.reachServerOnly': 'Online — no direct data path',
-  'neblink.loggedOutHint': 'Not signed in — click the avatar above to sign in with your {lowerBrand} account; signing in joins the network automatically.',
+  // Self-explaining batch (2026-11-04, rule 8): dropped the trailing "signing in joins
+  // the network automatically" (behaviour teaching). State + next step stay.
+  'neblink.loggedOutHint': 'Not signed in — click the avatar above to sign in with your {lowerBrand} account',
   // Defect A (2026-09-18): two readings of the signed-out panel — (1) the
   // "clean up and sign in again" entry (local credential-file class only);
   // (2) the status-face degradation line (a non-2xx `/status` used to be silent).
@@ -2277,8 +2343,13 @@ export default {
   'fleet.title': 'Update all devices',
   'fleet.subtitle': 'This device v{current} → target v{target} · stages: {stages}',
   'fleet.stages': 'prepare → download → verify → switch → restart → self-check → done',
-  'fleet.blocking': 'Updating — please wait. Current stage "{stage}", {eta}. This console is unavailable during the update and resumes automatically when it finishes.',
-  'fleet.reconnecting': 'The device has started restarting; waiting for it to come back (this page resumes automatically, no manual refresh needed).',
+  // Self-explaining batch (2026-11-04, rule 8, same family as the rule's counter-example 2):
+  // "please wait" / "this console is unavailable … resumes automatically" taught waiting and
+  // promised behaviour; what stays is the state fact (stage name + ETA).
+  'fleet.blocking': 'Updating — current stage "{stage}", {eta}.',
+  // Was "…waiting for it to come back (this page resumes automatically, no manual refresh
+  // needed)" — behaviour teaching plus a parenthetical. Now a state fact.
+  'fleet.reconnecting': 'This device is restarting — waiting to reconnect.',
   'fleet.eta': 'ETA 3–5 minutes',
   'fleet.empty': 'No devices to update right now.',
   'fleet.close': 'Close',
@@ -2293,7 +2364,9 @@ export default {
   'fleet.versionUnknown': 'version unknown',
   'fleet.attempt': 'attempt {n}',
   'fleet.manualTitle': 'Needs a manual update (too old or not remotely updatable)',
-  'fleet.manualHow': 'Open the console on that device → Settings → check for updates, or run the install script',
+  // `fleet.manualHow` removed (self-explaining batch 2026-11-04, rule 8 counter-example 1):
+  // it was the "open the console on that device → Settings → …" walkthrough. Why this row
+  // cannot be pushed is carried by the capability badge; the row keeps name + version.
   'fleet.pendingTitle': 'Waiting for the device to come online (pushed automatically)',
   'fleet.summary.counts': '{updated} updated, {failed} failed, {manual} need a manual update, {pending} waiting to come online',
   'fleet.summary.all-consistent': 'All devices consistent',
@@ -2317,9 +2390,12 @@ export default {
   'fleet.stage.waiting-online': 'waiting for the device',
   'fleet.stage.cancelled': 'stopped',
   'fleet.failure.download-failed': 'download failed',
-  'fleet.failure.download-failed.advice': 'Try "Retry failed" after the network recovers; if it keeps failing, update that device manually.',
+  // Self-explaining batch (2026-11-04, rule 8): dropped the second clause ("update that
+  // device manually …") — the capability badge already states it (duplicate explanation).
+  // What stays is the failure closure: cause + next step, one sentence.
+  'fleet.failure.download-failed.advice': 'Try "Retry failed" after the network recovers.',
   'fleet.failure.verify-failed': 'checksum/size check failed',
-  'fleet.failure.verify-failed.advice': 'Retry once; if it still fails the package source is wrong — update that device manually and keep the log.',
+  'fleet.failure.verify-failed.advice': 'Retry once; if it still fails the package source is wrong.',
   'fleet.failure.switch-rolled-back': 'rolled back (the new version did not take hold)',
   'fleet.failure.switch-rolled-back.advice': 'It rolled back to a working version and keeps serving; read that device log, then update it manually.',
   'fleet.failure.healthcheck-failed': 'health check failed after restart',
@@ -2721,7 +2797,10 @@ export default {
   'plugins.sourceUnreachable': 'source unreachable, keeping the local version',
   'plugins.sourceNotInstalled': 'not installed',
   'plugins.sourceUpdate': 'Update',
-  'plugins.sourceUpdateTitle': 'Pull and activate: v{from} → v{to} (zero restart; the local version stays if this fails)',
+  // Self-explaining batch (2026-11-04, rule 8): dropped the parenthetical "(zero restart;
+  // the local version stays if this fails)" — capability claim + behaviour promise. The
+  // version-migration fact v{from} → v{to} stays.
+  'plugins.sourceUpdateTitle': 'Pull and activate: v{from} → v{to}',
   'plugins.sourceUpdated': '{name} updated',
   'explorer.loading': 'Loading...',
   'explorer.empty': 'Empty',
@@ -3088,6 +3167,10 @@ export default {
   'todoface.emptyAll': 'No reminders',
   'todoface.emptyAdd': 'Tap to add a reminder',
   'todoface.complete': 'Mark complete',
+  'todoface.del': 'Delete',
+  'todoface.fabAdd': 'New to-do',
+  'todoface.completedToast': 'Completed',
+  'todoface.undo': 'Undo',
   'todoface.tagName': 'Tag name',
   'todoface.tagNew': 'New tag',
   'todoface.tagRename': 'Rename',

@@ -1,0 +1,2 @@
+=== type baseline identity vs main ===
+BASELINE_DIFF_LINES=0

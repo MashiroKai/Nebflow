@@ -382,10 +382,16 @@ async function mobileLeg(browser, colorScheme) {
   const { page, errors, ctx } = await makePage(browser, { colorScheme, mobile: true });
   try {
     await page.waitForSelector('[data-chrome="tasks"]', { timeout: 8000 });
-    ok(`手机[${tag}] 桌面胶囊槽位不显示`, await page.evaluate(() => {
+    /* 口径翻新（胶囊面交互批 2026-11-04 ⑤ · 作者令「手机层胶囊必须可见」）：
+       原断言 = 「手机层桌面胶囊槽位整条 display:none」（css/mobileLayer.css 的
+       旧规则，已在本批退役）。新口径 = 槽位可见且胶囊在场（手机端待办入口），
+       任务页（taskPanel 圆钮）那条腿仍不动 —— 入口退役归下游 entries 节点。 */
+    ok(`手机[${tag}] 桌面胶囊槽位在手机层显示`, await page.evaluate(() => {
       const el = document.getElementById('task-list');
-      return !el || getComputedStyle(el).display === 'none';
+      if (!el || getComputedStyle(el).display === 'none') return false;
+      return !!el.querySelector('.tfl-capsule');
     }));
+    ok(`手机[${tag}] 手机层胶囊可见`, await page.locator('#task-list .tfl-capsule:visible').count() === 1);
     await page.click('[data-chrome="tasks"]');
     await page.waitForSelector('#mobile-task-panel:not([hidden]) .tfl-mobile', { timeout: 6000 });
     await page.waitForTimeout(600);

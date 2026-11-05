@@ -1,0 +1,2 @@
+$ node scripts/check-circular.mjs
+circular-deps PASS: 236 files, static import graph is acyclic.

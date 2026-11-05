@@ -1,0 +1,10 @@
+
+Running 6 tests using 1 worker
+
+[1/6] tests/todo-store-backend.spec.mjs:269:1 › ① 首次挂载惰性拉真源：listScheduledTasks{scope:"all"} 一发 + 渲染面取到回执数据（后端排序权威，chips 行序不参与）
+[2/6] tests/todo-store-backend.spec.mjs:308:1 › ② completeItem ⇒ completeTodo 帧（跨会话行带行自身 sessionId）+ 乐观退场 + 回执收敛 + uncomplete 回退
+[3/6] tests/todo-store-backend.spec.mjs:347:1 › ③ updateItem(priority/title) ⇒ updateScheduledTask 字段级 patch；removeItem ⇒ deleteScheduledTask；新建 ⇒ createScheduledTask{kind:"todo"}
+[4/6] tests/todo-store-backend.spec.mjs:417:1 › ④ 服务端广播/清单回执 ⇒ 可见面收敛（零用户操作）
+[5/6] tests/todo-store-backend.spec.mjs:451:1 › ⑤ __seed 测试缝不破：夹具数据注入仍可用（旧排序语义 + dataSource=fixture + 零写帧），__live 回真源
+[6/6] tests/todo-store-backend.spec.mjs:507:1 › ⑥ 服务端显式拒绝 ⇒ 回滚 + console.error（不静默吞）
+  6 passed (7.3s)

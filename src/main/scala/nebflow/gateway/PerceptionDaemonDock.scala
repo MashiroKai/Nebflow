@@ -169,12 +169,23 @@ object PerceptionDaemonDock:
    * boot 腿第一半：upsert 托管条目（用户条目零触碰）。GatewayMain 在
    * autoStart **之前**调用（条目在场才可被家族拉起）。None = jpackage 形态
    * （spawn 不可行；面板条目已登记，WARN 可见）。
+   *
+   * seal 批（2026-11-03，作者令「邮件和心跳进程功能，进入封存，发布剔除，本地sbt run
+   * 可用。」）：`Defaults.MailProcessEnabled == false` ⇒ **直接 None**——不写 boot
+   * token、不 upsert 条目、不挑端口（零初始化，半小时后的 autoStart 也就没有可拉起的
+   * 感知条目）。`upsertEntry` 本身保留原样（面板/单次 start 与既有 spec 的调用面不封）。
    */
   def prepare(store: DaemonStore, enginePort: Int, home: os.Path = PathUtil.dataRoot): IO[Option[Upserted]] =
-    upsertEntry(store, home, enginePort).map {
-      case u if u.spawnable => Some(u)
-      case _                => None
-    }
+    if !nebflow.shared.Defaults.MailProcessEnabled then
+      nebflow.core.boot.ProcessSeal.sealedNotice(
+        nebflow.core.boot.ProcessSeal.Realm.Mail,
+        "perception-daemon（dock prepare/upsert）"
+      ).as(None)
+    else
+      upsertEntry(store, home, enginePort).map {
+        case u if u.spawnable => Some(u)
+        case _                => None
+      }
 
   /** boot 腿第二半：autoStart 之后等 /health 200（10s 有界，WARN-only）。 */
   def handshake(up: Upserted): IO[Unit] = awaitHandshake(up.daemonPort, up.token)

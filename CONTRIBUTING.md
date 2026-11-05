@@ -25,10 +25,10 @@ Consequently `scripts/check-jdk-baseline.sh` asserts `-release == JDK_BYTECODE_T
 ```bash
 sbt compile        # compile
 sbt assembly       # fat JAR -> target/scala-3.5.2/
-sbt run            # start the web server at http://localhost:8080
+sbt run            # start the web server at http://localhost:6138
 ```
 
-To isolate a dev server from anything already on 8080, give it its own home and port (`--home` / `--port` are global flags):
+To isolate a dev server from the running gateway (default port 6138), give it its own home and port (`--home` / `--port` are global flags):
 
 ```bash
 sbt "run --home /tmp/nb-dev --port 8090"

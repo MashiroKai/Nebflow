@@ -48,8 +48,9 @@
 //       F1 ④双泡修复——发问等待期零空 ai 泡（typing 单件）；
 //       F2 ①ai 气泡复用主会话渲染腿 renderMarkdownWithMath（h2/ul/pre+code/
 //          table 全在场、裸 md 字面量退场）；
-//       F3 ⑤顶带渐隐按液体玻璃 v2（--g2-veil + blur(18) saturate(1.5) + 两段式
-//          mask）且列顶留白 64px 首条不入带。
+//       F3 ⑤顶缘渐隐（ask-fade-content-opacity 批 2026-11-04 改判据）：面板内零遮罩
+//          条元素，渐隐本体 = .ask-col 自身的 mask-image（内容 alpha 渐到 0）；
+//          面板/滚动容器整体透明无边框（①-批 .ask-veil + .ds-edge-fade 成员形态退役）。
 //   T12 风格统一（三修③ 作者令 2026-10-29「ask 输入条/气泡对齐 canvas 统一风格，
 //       不新造风格」）：输入条/气泡三面计算材质与聊天 #header 玻璃模板（--cv-* 单源）
 //       逐项相等；入口钮材质随液体玻璃 v3 F1 扩面批（2026-10-31 作者 12:32 点选
@@ -469,30 +470,42 @@ try {
     return b ? { n: nodes.length, table: !!b.querySelector('table td'), pre: !!b.querySelector('pre') } : null;
   });
   ok('F2-b done 定稿：markdown 渲染保持 + ai 泡总数稳定（无空泡残留）', !!f2final && f2final.n === aiCountBefore + 1 && f2final.table && f2final.pre, JSON.stringify(f2final));
+  // F3 顶缘渐隐 = 内容级 mask（ask-fade-content-opacity 批 2026-11-04，作者令「渐隐
+  //    应该是对消息降低透明度到 0 的过程，而不是放一个过渡的条在哪，整体透明无边框」）：
+  //    ① 面板内零渐隐带遮罩元素（①-批 .ask-veil / .ds-edge-fade 成员退役）；
+  //    ② 渐隐本体 = .ask-col 自身的 mask-image（起点 transparent → fade-h）；
+  //    ③ 面板/滚动容器零背景/零边框/零浮影/零 backdrop-filter。
   const f3 = await page.evaluate(() => {
-    const veil = document.querySelector('.ask-colwrap .ask-veil');
     const wrap = document.querySelector('.ask-colwrap');
     const col = document.querySelector('.ask-col');
-    const vcs = getComputedStyle(veil);
+    const dock = document.querySelector('.ask-dock');
+    const mainFade = document.getElementById('g2-edge-fade');
+    const ccs = getComputedStyle(col);
     const wcs = getComputedStyle(wrap);
-    const vr = veil.getBoundingClientRect();
-    const cr = col.getBoundingClientRect();
+    const dcs = getComputedStyle(dock);
     return {
-      veilBg: vcs.backgroundImage,
-      veilFilter: vcs.backdropFilter || vcs.webkitBackdropFilter,
-      veilMask: vcs.maskImage || vcs.webkitMaskImage,
-      colPadTop: wcs.paddingTop, // 带净空在 colwrap（滚动容器之外）
-      // 结构保证：列可视口顶 = 带底沿——可视气泡永在带下（滚出的旧泡被 overflow 裁剪）。
-      colTop: cr.top,
-      veilBottom: vr.bottom,
+      fadeLayers: dock.querySelectorAll('.ds-edge-fade, .ask-veil').length,
+      mainCls: mainFade ? mainFade.className : null,
+      colMask: String(ccs.maskImage || ccs.webkitMaskImage),
+      colMaskWebkit: String(ccs.webkitMaskImage || ''),
+      fadeH: parseFloat(ccs.getPropertyValue('--ask-fade-h')) || 0,
+      colPadTop: parseFloat(ccs.paddingTop) || 0,
+      colwrapMask: String(wcs.maskImage),
+      dockBg: dcs.backgroundColor, dockBorder: dcs.borderTopWidth, dockShadow: dcs.boxShadow,
+      dockFilter: dcs.backdropFilter || dcs.webkitBackdropFilter,
     };
   });
-  ok('F3 液体玻璃 v2 顶带：--g2-veil 渐层 + blur(18px) saturate(1.5) + 两段式 mask',
-    f3.veilBg.includes('gradient') && /blur\(18px\)/.test(f3.veilFilter) && /saturate\(1\.5\)/.test(f3.veilFilter) && f3.veilMask.includes('gradient'),
-    JSON.stringify({ bg: f3.veilBg.slice(0, 40), f: f3.veilFilter, m: f3.veilMask.slice(0, 40) }));
-  ok('F3-b 与消息留距：colwrap 列顶留白 = fade-h 64px（滚动容器外保留区），列可视口顶 ≥ 带底沿（首条永不入带）',
-    f3.colPadTop === '64px' && f3.colTop >= f3.veilBottom - 1,
-    JSON.stringify({ pad: f3.colPadTop, colTop: f3.colTop, veilBottom: f3.veilBottom }));
+  ok('F3 顶缘渐隐 = 内容级 mask（面板内零遮罩条元素；.ask-col mask 起点 transparent → fade-h；'
+    + '作者令 12:52 ③ 追加的中线截断同为同一层 mask 的第二段）',
+    f3.fadeLayers === 0 && /linear-gradient/.test(f3.colMask) && /transparent|rgba\(0, 0, 0, 0\)/.test(f3.colMask)
+      && f3.fadeH > 0 && new RegExp(`\\b${Math.round(f3.fadeH)}px\\b`).test(f3.colMask),
+    JSON.stringify({ layers: f3.fadeLayers, mask: f3.colMask, fadeH: f3.fadeH }));
+  ok('F3-b 整体透明无边框（dock 零背景/零边框/零浮影/零 backdrop-filter；外框零 mask）',
+    f3.dockBg === 'rgba(0, 0, 0, 0)' && parseFloat(f3.dockBorder) === 0 && f3.dockShadow === 'none'
+      && /^none$/.test(String(f3.dockFilter)) && f3.colwrapMask === 'none' && /^none$/.test(String(f3.colwrapMask)),
+    JSON.stringify({ bg: f3.dockBg, bw: f3.dockBorder, sh: f3.dockShadow, bf: f3.dockFilter, wrapMask: f3.colwrapMask }));
+  ok('F3-c 主对话窗 #g2-edge-fade 未受影响（本批只改 Ask）', f3.mainCls !== null && /\bds-edge-fade\b/.test(String(f3.mainCls)),
+    JSON.stringify({ main: f3.mainCls }));
   await shot(page, 'f-batch-md-render-and-fade');
 
   // mock 服务端持久化面：A 的转录入库（T5 再开 askOpen 重放需复现——服务端为权威）。
@@ -581,8 +594,13 @@ try {
   // 输入条按钮面 = 发送 + 中断两枚（中断钮 idle 态 display:none 隐着，busy 才
   // 上位）——转交钮退场契约（v2.1 减法）由 hasHandoff=false + idle 可见按钮唯一
   // （.ask-send）共同钉住；T-IX 批（ask-input-composer.spec）另有 busy 互换全断言。
+  // 转回合按钮单源批（ui-unification-20261103-canvas-ask-resize）：两钮在 DOM 上
+  // 追加了主会话同一组件类 `ds-turn-btn ds-turn-btn--send|--stop`（作者令「发送
+  // 按钮与终止按钮样式与主会话完全统一」）⇒ 本钉由「className 逐字等于 ask-send」
+  // 改为「**首 token** 仍是身份钩子 ask-send」（钩子在前的次序契约不变，组件类
+  // 在场由 canvas-ask-resize.spec 的 c7/c11/c12 独立钉住）。
   ok('T6a v2.1 单箭头 + 中断钮对：转交钮退场，idle 可见按钮唯一 = .ask-send（.ask-stop 隐）',
-    !t6a.hasHandoff && t6a.n === 1 && t6a.cls[0] === 'ask-send' && t6a.stopHidden === true,
+    !t6a.hasHandoff && t6a.n === 1 && String(t6a.cls[0]).split(/\s+/)[0] === 'ask-send' && t6a.stopHidden === true,
     JSON.stringify(t6a));
   // 转交回执（服务端 ack 帧）收进不可见处：零 sys 气泡、气泡总数不变
   const before6b = await page.evaluate(() => document.querySelectorAll('.ask-dock .ask-bub').length);
@@ -675,11 +693,16 @@ try {
   ok('T12c 气泡材质 = #header 玻璃模板', matSame(mat.bub, mat.header), JSON.stringify({ bub: mat.bub, ref: mat.header }));
   const greenFaces = await page.evaluate(() => ({
     send: getComputedStyle(document.querySelector('.ask-input .ask-send')).backgroundColor,
+    sendInk: getComputedStyle(document.querySelector('.ask-input .ask-send')).color,
     dot: getComputedStyle(document.querySelector('.ask-fab .ask-sess-dot')).backgroundColor,
   }));
   // v3 实现批（作者 12:32「其它面板发送钮跟随主对话」）：墨族档退役，考古绿
   // --ctl-send-bg（#07C160）回归——与主对话发送键同源（input.css 基准）。
-  ok('T12d 发送钮 = 微信绿跟随主对话（--ctl-send-*，#07C160）', greenFaces.send === 'rgb(7, 193, 96)', greenFaces.send);
+  // 12:52 批改判（作者令「底部按钮毛玻璃照抄顶部两个按钮」）：发送钮材质吃玻璃
+  // token（--cv-bg 玻璃底），微信绿改走**墨色**通道（.ds-turn-btn--send color =
+  // --ctl-send-bg）——两条作者令并存 ⇒ 材质令优先于底色令，语义绿保留在 icon 上。
+  ok('T12d 发送钮 = 微信绿跟随主对话（--ctl-send-*，#07C160）',
+    greenFaces.send === 'rgb(7, 193, 96)' || greenFaces.sendInk === 'rgb(7, 193, 96)', JSON.stringify(greenFaces));
   ok('T12e 通知点底色 = --color-primary 品牌绿（#07c160，身份/状态色冻结保留）', greenFaces.dot === 'rgb(7, 193, 96)', greenFaces.dot);
   await shot(page, 't12-unified-style');
 
@@ -923,6 +946,7 @@ try {
         cCenter,
         fabCenter: fr.top + fr.height / 2,
         colMaxH: getComputedStyle(document.querySelector('.ask-col')).maxHeight,
+        colwrapMaxH: getComputedStyle(document.querySelector('.ask-colwrap')).maxHeight,
       };
     });
     ok('T9a 移动入口钮 48×48（悬浮钮统一批 g2-fab 基准）', !!m1 && Math.abs(m1.w - 48) < 1.5 && Math.abs(m1.h - 48) < 1.5, JSON.stringify(m1));
@@ -931,8 +955,12 @@ try {
       JSON.stringify({ offset: m1 && m1.fabBottomOffset, expect: m1 && m1.seatExpect, right: m1 && m1.fabRightToViewport }));
     ok('T9b2 单行同带：fab 中线 = 左锚簇中线（≤3px）', !!m1 && m1.cCenter !== null && Math.abs(m1.fabCenter - m1.cCenter) <= 3,
       JSON.stringify({ fab: m1 && m1.fabCenter, cluster: m1 && m1.cCenter }));
-    // F3-b 批后口径：列可视高 = 总档 − 带档（⑤带净空在 colwrap，E-2 移动 250−56=194）。
-    ok('T9c 列可视 max-h = 总档 250 − 带档 56 = 194（E-2 移动档，⑤带净空口径）', m1 && m1.colMaxH === '194px', m1 && m1.colMaxH);
+    // doc-ask-fade 批后口径：带盖内容不再吃列高 ⇒ 列可视高 = 总档（旧 250−56=194 退役）。
+    // 新档 = clamp(320px, 46vh, 420px)（活 token 解析成 px）；期望值不写常量：
+    // 断言「落在档内 ∧ 列高 = 容器档」= 无带档扣减 + 加高生效两件事一起钉住。
+    ok('T9c 列可视 max-h 落在加高档 [320,420] 且 = colwrap 档（无带档扣减；旧 194 必红）',
+      !!m1 && parseFloat(m1.colMaxH) >= 320 && parseFloat(m1.colMaxH) <= 420 && m1.colMaxH === m1.colwrapMaxH,
+      JSON.stringify({ col: m1 && m1.colMaxH, wrap: m1 && m1.colwrapMaxH }));
     // 气泡列表面横滑零切卡（surface 归属制：peek 不亮）
     await mob.page.click('.ask-fab');
     await sleep(500);

@@ -67,15 +67,76 @@ stand_port_from_args() { # 扫描 "$@": --port N / --port=N -> echo 端口; 无�
     return 1
 }
 
-stand_resolve_port() { # $@ = 子命令参数; --port > 本品牌 env > 品牌缺省 (隔离: 不读对家 env)
-    local _p _env _dflt
+# >>> HOME-SCOPE (隔离实例误伤批 2026-11-04 §2: 端口解析先看 home) >>>
+# 事故: STAND_HOME=/tmp/seal-canary-home 的隔离 canary 解析出品牌缺省口 6138,
+#      把跑在 6138 的生产实例停机了。本段是法则——Scala 侧同一法则的单一实现是
+#      src/main/scala/nebflow/shared/InstanceScope.scala（decide / proveHome / homeRefusal），
+#      此处是它的 bash 镜像（同一判据、同一文案骨架、逐条对账）。
+stand_home_norm() { # <path> -> 去尾斜杠 (路径字节口径, 不解析符号链接)
+    local _p="$1"
+    while [ "${#_p}" -gt 1 ] && [ "${_p%?}" != "$_p" ] && [ "${_p%/}" != "$_p" ]; do _p="${_p%/}"; done
+    printf '%s\n' "$_p"
+}
+
+stand_home_isolated() { # rc 0 = 本品牌的数据根被覆盖(隔离根); rc 1 = 是默认根
+    # 默认根 = 本品牌默认家 (~/.stand 或 ~/.nebflow) 与 legacy ~/.nebflow —— 与
+    # PathUtil.resolveDefaultDataRoot 的候选集同源。
+    local _b _legacy
+    _b=$(stand_home_norm "$(stand_brand_default_home "$BRAND")")
+    _legacy=$(stand_home_norm "${HOME:-}/.nebflow")
+    case "$(stand_home_norm "${STAND_HOME:-}")" in
+        "$_b"|"$_legacy") return 1 ;;
+    esac
+    return 0
+}
+
+stand_port_from_config() { # <root> -> 该根 nebflow.json 里的顶层 "port" 整数; 无则 rc=1
+    local _f="$1/nebflow.json" _v
+    [ -r "$_f" ] || return 1
+    _v=$(grep -o '"port"[[:space:]]*:[[:space:]]*[0-9][0-9]*' "$_f" 2>/dev/null | head -n 1 | grep -o '[0-9][0-9]*$')
+    [ -n "${_v:-}" ] || return 1
+    printf '%s\n' "$_v"
+}
+
+# 端口解析 (单一实现): --port > [默认根时: 本品牌 env] > 本根配置 "port" >
+#   [默认根时: 品牌缺省口] / [隔离根时: **拒绝** rc=3]。
+# 隔离根里继承来的 *_GATEWAY_PORT 不算显式(可能就是父 shell 给生产实例的那一个):
+# 忽略并打一行 WARN 点名它。
+stand_resolve_port() { # $@ = 子命令参数
+    local _p _env _envname _dflt _cnf
     case "$BRAND" in
-        stand)   _env="${STAND_GATEWAY_PORT:-}";   _dflt=6138 ;;
-        nebflow) _env="${NEBFLOW_GATEWAY_PORT:-}"; _dflt=6140 ;;
+        stand)   _env="${STAND_GATEWAY_PORT:-}";   _envname=STAND_GATEWAY_PORT;   _dflt=6138 ;;
+        nebflow) _env="${NEBFLOW_GATEWAY_PORT:-}"; _envname=NEBFLOW_GATEWAY_PORT; _dflt=6140 ;;
     esac
     if _p=$(stand_port_from_args "$@"); then printf '%s\n' "$_p"; return 0; fi
+    if stand_home_isolated; then
+        if _cnf=$(stand_port_from_config "$STAND_HOME"); then
+            if [ -n "$_env" ]; then
+                echo "WARN: ignoring inherited $_envname=$_env — this invocation's data root is $STAND_HOME (an isolated root, not the default root), so an inherited port is not treated as explicit" >&2
+            fi
+            printf '%s\n' "$_cnf"; return 0
+        fi
+        echo "ERROR: refusing to inherit the brand default port ($_dflt) for data root $STAND_HOME: it is an ISOLATED root (not the default root), and an instance in an isolated root must name its own port." >&2
+        echo "       Pass --port <N> explicitly, or set the \"port\" key in $STAND_HOME/nebflow.json." >&2
+        [ -n "$_env" ] && echo "       (the inherited $_envname=$_env is ignored: an inherited port is not explicit)" >&2
+        return 3
+    fi
     printf '%s\n' "${_env:-$_dflt}"
 }
+
+stand_pid_home() { # <pid> -> 目标进程可证的 home; 无法判定 rc=1
+    # 腿与 InstanceScope.homeFromCommandLine 同序: --home <p> / --home=<p> / -Duser.home=<p>
+    local _cmd _h
+    _cmd=$(stand_cmd_of "$1")
+    [ -n "${_cmd:-}" ] || return 1
+    _h=$(printf '%s\n' "$_cmd" | tr ' ' '\n' | awk 'p{print;exit} $0=="--home"{p=1}')
+    [ -n "${_h:-}" ] || _h=$(printf '%s\n' "$_cmd" | tr ' ' '\n' | sed -n 's/^--home=//p' | head -n 1)
+    [ -n "${_h:-}" ] || _h=$(printf '%s\n' "$_cmd" | tr ' ' '\n' | sed -n 's/^-Duser\.home=//p' | head -n 1)
+    [ -n "${_h:-}" ] || return 1
+    stand_home_norm "$_h"
+}
+# <<< HOME-SCOPE <<<
+
 
 stand_listener_pids() { # <port> -> LISTEN pids (每行一个), 空则端口空闲
     lsof -ti tcp:"$1" -sTCP:LISTEN 2>/dev/null
@@ -195,8 +256,22 @@ cli_stop_impl() { # $@ = 原始参数 (--force/--tree/--port 扫描)
         esac
     done
     if [ "$_stop_tree" = 0 ]; then
-        local _port _stop_port_pids _stop_pf_pid _stop_pf_alive _stop_targets _stop_foreign _p _i _stop_left
-        _port=$(stand_resolve_port "$@")
+        local _port _stop_port_pids _stop_pf_pid _stop_pf_alive _stop_targets _stop_ours _stop_foreign _p _i _stop_left _stop_home
+        if ! _port=$(stand_resolve_port "$@" 2>/dev/null); then
+            # 反向面（隔离实例误伤批 2026-11-04 §1 反）：本根的端口声明不出来，但本根
+            # 也没有活实例 ⇒ 诚实的答案是「没在跑」+ exit 0（零信号、零探测），绝不
+            # 回落到品牌缺省口 6138 去找别人的实例。有活 .pid 时才把解析失败当拒绝上报。
+            local _rp=""
+            [ -r "$STAND_HOME/.pid" ] && _rp=$(tr -d ' \t\r\n' < "$STAND_HOME/.pid" 2>/dev/null)
+            if [ -z "$(printf '%s\n' "${_rp:-}" | stand_alive_pids)" ]; then
+                rm -f "$STAND_HOME/.pid" "$STAND_HOME/.pid.meta" 2>/dev/null
+                echo "$BRAND is not running"
+                return 0
+            fi
+            # 本根确有活实例却声明不出端口 ⇒ 把解析失败的原因照原样打出去再拒（fail-closed）
+            stand_resolve_port "$@" >/dev/null
+            return 3
+        fi
         _stop_port_pids=$(stand_listener_pids "$_port" | stand_alive_pids)
         _stop_pf_pid=""
         if [ -r "$STAND_HOME/.pid" ]; then
@@ -230,6 +305,34 @@ cli_stop_impl() { # $@ = 原始参数 (--force/--tree/--port 扫描)
             echo "       Re-run with --force to kill anyway." >&2
             return 1
         fi
+        # ── HOME 归属门 (隔离实例误伤批 2026-11-04 §1; 不可被 --force 绕过) ──
+        # 2026-11-03 22:59 事故铁证: 一次 STAND_HOME=/tmp/seal-canary-home 的 stand CLI
+        # 调用停掉的是 home=~/.stand/端口=6138 的 44339, 而不是 home=/tmp/seal-canary-home
+        # 的 68701 —— 目标集合只按端口/品牌认实例, 从不看 home。此门把它反过来:
+        #   · home 可证且 ≠ 本家 ⇒ 拒绝并点名两个 home, 零信号;
+        #   · home 无法判定 ⇒ 拒绝(fail-closed, 本家 .pid 记账是唯一可接受的归属证明);
+        # 例外: 用户显式 --force 且目标是**外姓**(上面已判) —— 仍要 home 可证才允许.
+        # 只对本品牌实例过人（外姓进程不属本法则：--force 显式允许杀外姓，语义不变）。
+        _stop_ours=""
+        for _p in $_stop_targets; do
+            if stand_is_ours "$_p"; then _stop_ours="$_stop_ours $_p"; fi
+        done
+        for _p in $_stop_ours; do
+            if _stop_home=$(stand_pid_home "$_p"); then
+                if [ "$_stop_home" != "$(stand_home_norm "$STAND_HOME")" ]; then
+                    echo "ERROR: refusing to stop pid $_p: the target instance's home is $_stop_home but this invocation's home is $(stand_home_norm "$STAND_HOME") — different data roots are different instances; zero signal sent." >&2
+                    echo "       Run the stop from THAT home, or pass the --port of your own instance." >&2
+                    return 1
+                fi
+            else
+                if [ "${_stop_pf_pid:-}" = "$_p" ]; then
+                    :   # 来源即证明: pid 就是本家 .pid 记账的那一个
+                else
+                    echo "ERROR: refusing to stop pid $_p: cannot prove it belongs to this invocation's home $(stand_home_norm "$STAND_HOME") (no --home/-Duser.home evidence in its command line and it is not this root's .pid record) — fail-closed, zero signal sent" >&2
+                    return 1
+                fi
+            fi
+        done
         echo "stopping $BRAND (port $_port, pids:$(echo $_stop_targets))"
         kill $_stop_targets 2>/dev/null
         _i=0
@@ -287,6 +390,9 @@ cli_restart_arm() { # $@ = 已过滤 port args; env: _RESTART_DRY(非空=dry-run
     _log="$STAND_HOME/logs/restart-detached-$(date +%Y%m%d-%H%M%S).log"
     [ -e "$_log" ] && _log="$STAND_HOME/logs/restart-detached-$(date +%Y%m%d-%H%M%S)-$$.log"
     cli_restart_guard_check || exit 1
+    # 隔离实例误伤批 2026-11-04 §2: 端口解析不出来(隔离根没声明端口) ⇒ 不布防 ——
+    # 否则点火器会带着空端口进 stop 腿/点火腿。
+    stand_resolve_port "$@" >/dev/null || exit $?
     {
         echo "== $BRAND restart-detached armed =="
         echo "ts: $(date '+%F %T') (epoch $(date +%s))"
@@ -323,8 +429,14 @@ cli_ignite_restart() { # 隐藏动词: 必须以孤儿身份运行; $1=log, 其�
     done
     exec >> "$_log" 2>&1   # 点火器全程日志落盘 (armed 头由外层已写)
     trap 'rm -f "$STAND_HOME/$RESTART_GUARD_NAME" 2>/dev/null' EXIT
-    local _port _pp _i _targets _t _c _chain _cur _eng_in_tree _rc _jdk _jar
-    _port=$(stand_resolve_port "${IGN_PORT_ARGS[@]}")
+    local _port _prc _pp _i _targets _t _c _chain _cur _eng_in_tree _rc _jdk _jar
+    # 隔离实例误伤批 2026-11-04 §2: 解析不出端口 ⇒ 点火器一步不动 (不 stop 不 start)。
+    _port=$(stand_resolve_port "${IGN_PORT_ARGS[@]}"); _prc=$?
+    if [ "$_prc" != 0 ]; then
+        echo "-- igniter boot --"
+        echo "verdict: ABORT (rc=$_prc) — 端口解析被拒 (隔离根必须显式声明端口); 引擎分毫未动"
+        exit 7
+    fi
     echo "-- igniter boot --"
     echo "ts: $(date '+%F %T') (epoch $(date +%s))  mode: $( [ "$_dry" = 1 ] && echo dry-run || echo restart )"
     echo "brand: $BRAND  home: $STAND_HOME  port: $_port"
@@ -613,7 +725,9 @@ stand_cli_main() {
     case "$cli_cmd" in
         start)
             local _port _guard_pids _guard_pid
-            _port=$(stand_resolve_port "$@")
+            # 隔离实例误伤批 2026-11-04 §2: 端口解析失败(隔离根没声明端口) ⇒ 直接拒启,
+            # 绝不静默回落品牌缺省口 6138/6140 (那正是 canary 抢生产口的入口).
+            _port=$(stand_resolve_port "$@") || exit $?
             cli_pin_child_env "$_port"
             _guard_pids=$(stand_listener_pids "$_port")
             if [ -n "$_guard_pids" ]; then

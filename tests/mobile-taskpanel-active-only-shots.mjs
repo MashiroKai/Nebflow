@@ -101,17 +101,22 @@ async function probe(page, sel) {
   }, sel);
 }
 
-// ── 手机 375：任务页（dock 批形态——聊天头任务键 push 页）──
-for (const theme of ['dark', 'light']) {
-  const page = await makePage({ width: 375, height: 812, colorScheme: theme });
-  await seedTasks(page);
-  await page.click('.mh-chrome-btn[data-chrome="tasks"]');
-  await page.waitForTimeout(600);
-  const probeData = await probe(page, '.mobile-page[data-page="tasks"] #mobile-task-panel');
-  console.log(`[m375 ${theme}]`, JSON.stringify(probeData, null, 2));
-  await page.screenshot({ path: join(OUT, `m375-${theme}-taskpanel.png`) });
-  await page.close();
-}
+// ── 手机 375：任务页 ──
+// ⛔ 【腿退役】入口收敛批 todo-unify-entry-collapse 2026-11-04：聊天头左上「任务」
+// 圆钮 + 'tasks' 导航页 + #mobile-task-panel 整面退役（手机端待办唯一入口 = 顶带
+// 待办胶囊）。原「点任务键 → 收编页面体 → 量活跃过滤卡组」腿无面可量 ⇒ 退役；
+// 原代码留档，恢复入口即可复用：
+// for (const theme of ['dark', 'light']) {
+//   const page = await makePage({ width: 375, height: 812, colorScheme: theme });
+//   await seedTasks(page);
+//   await page.click('.mh-chrome-btn[data-chrome="tasks"]');
+//   await page.waitForTimeout(600);
+//   const probeData = await probe(page, '.mobile-page[data-page="tasks"] #mobile-task-panel');
+//   console.log(`[m375 ${theme}]`, JSON.stringify(probeData, null, 2));
+//   await page.screenshot({ path: join(OUT, `m375-${theme}-taskpanel.png`) });
+//   await page.close();
+// }
+// 现役手机待办面的取证 = tests/todo-face-shots.mjs 的 mobileScenario（胶囊 + 展开面板）。
 
 // ── 桌面 1440：现役窗口径不变（running + ready-to-merge 在列；终态退场）──
 {

@@ -4,16 +4,16 @@
 .project-card .project-fields {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px 14px 12px;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-glass-x) 14px var(--ds-space-3);
   border-top: 1px solid var(--color-border);
-  margin-top: 10px;
+  margin-top: var(--ds-space-glass-x);
 }
 
 .project-field {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
   min-width: 0;
 }
 
@@ -65,7 +65,7 @@
   transition: opacity 150ms ease;
 }
 .project-link-btn:hover { opacity: 0.75; text-decoration: underline; }
-.project-link-btn:focus-visible { box-shadow: 0 0 0 2px var(--glass-control-border); border-radius: 4px; }
+.project-link-btn:focus-visible { box-shadow: 0 0 0 2px var(--glass-control-border); border-radius: var(--ds-radius-badge); }
 
 .project-open-btn {
   flex: 0 0 auto;
@@ -79,7 +79,7 @@
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  margin-left: 4px;
+  margin-left: var(--ds-space-1);
   transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
 }
 
@@ -118,15 +118,15 @@
    不抢 mounted 卡的视觉权重；分组头一行小标题 + 语义提示。深浅主题全走
    var(--color-*) token，零裸 hex。 */
 .project-unmounted-group {
-  margin: 14px 2px 4px;
-  padding-top: 10px;
+  margin: 14px var(--ds-space-half) var(--ds-space-1);
+  padding-top: var(--ds-space-glass-x);
   border-top: 1px dashed var(--color-border);
 }
 .project-unm-head {
   display: flex;
   align-items: baseline;
-  gap: 8px;
-  padding: 0 12px 6px;
+  gap: var(--ds-space-2);
+  padding: 0 var(--ds-space-3) var(--ds-space-1h);
   min-width: 0;
 }
 .project-unm-title {
@@ -148,11 +148,11 @@
 .project-unm-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  border-radius: 10px;
+  gap: var(--ds-space-glass-x);
+  padding: var(--ds-space-2) var(--ds-space-3);
+  border-radius: var(--ds-radius-button);
 }
-.project-unm-row + .project-unm-row { margin-top: 2px; }
+.project-unm-row + .project-unm-row { margin-top: var(--ds-space-half); }
 .project-unm-name {
   flex: 0 1 auto;
   min-width: 0;
@@ -166,7 +166,7 @@
 .project-unm-ws {
   flex: 1 1 auto;
   min-width: 0;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted);
   opacity: 0.7;
   white-space: nowrap;
@@ -176,7 +176,7 @@
 }
 .project-unm-remount {
   flex: 0 0 auto;
-  padding: 4px 10px;
+  padding: var(--ds-space-1) var(--ds-space-glass-x);
   font: 500 11px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   cursor: pointer;
 }
@@ -192,9 +192,9 @@
 .flowmap-nav-bar {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--ds-space-3);
   flex: 0 0 auto;
-  padding: 10px 14px;
+  padding: var(--ds-space-glass-x) 14px;
   border-bottom: 1px solid var(--color-border);
   background: var(--glass-bg);
 }
@@ -202,15 +202,15 @@
 .flowmap-back-btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   max-width: min(60%, 420px); /* 顶栏合并批：100%→60% 给右侧摘要让位，超出由名字 span ellipsis 承接 */
   min-width: 0;
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   background: transparent;
   color: var(--color-text);
   font: 500 12px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  padding: 6px 10px;
+  padding: var(--ds-space-1h) var(--ds-space-glass-x);
   cursor: pointer;
   transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
 }
@@ -266,9 +266,9 @@
 .project-empty-tag {
   font: 500 10px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: var(--color-text-muted);
-  margin-left: 6px;
-  padding: 2px 6px;
-  border-radius: 4px;
+  margin-left: var(--ds-space-1h);
+  padding: var(--ds-space-half) var(--ds-space-1h);
+  border-radius: var(--ds-radius-badge);
   background: var(--color-frame-hover);
   white-space: nowrap;
   vertical-align: 2px;
@@ -336,7 +336,7 @@
   display: inline-block;
   width: 46px;
   height: 7px;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   background: var(--color-frame-hover);
   animation: projectSkeletonPulse 1.2s ease-in-out infinite;
 }
@@ -495,9 +495,9 @@
 .proj-create-panel { width: 520px; }
 .proj-create-label {
   display: block;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-frame-text-dim);
-  margin-bottom: 6px;
+  margin-bottom: var(--ds-space-1h);
 }
 .proj-create-desc {
   font-family: inherit;
@@ -507,8 +507,8 @@
 .proj-create-meter {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 6px;
+  gap: var(--ds-space-2);
+  margin-top: var(--ds-space-1h);
   min-height: 16px;
 }
 /* 错误行占满左侧，计数器固定右侧。ui-status-redesign（盘点 #35，S9 同族）：
@@ -547,7 +547,7 @@
 .proj-create-path-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--ds-space-glass-x);
   margin-bottom: 14px;
 }
 .proj-create-pick {
@@ -555,14 +555,14 @@
   font: 500 12.5px -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text);
   padding: 7px 14px;
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
   cursor: pointer;
 }
 .proj-create-pick:hover { background: var(--glass-control-bg-hover); }
 .proj-create-path {
   flex: 1;
   min-width: 0;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-frame-text-dim);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -581,16 +581,16 @@
   position: relative; /* .dev-menu 的锚（absolute 下拉） */
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
   margin-bottom: 14px;
 }
 .dev-btn {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  padding: 7px 12px;
+  padding: 7px var(--ds-space-3);
   border: none;
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
   background: var(--color-frame-hover);
   color: var(--color-text);
   font: 500 12.5px -apple-system, BlinkMacSystemFont, sans-serif;
@@ -620,15 +620,15 @@
   left: 0;
   z-index: 300;
   min-width: 300px;
-  padding: 4px;
+  padding: var(--ds-space-1);
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--ds-space-half);
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
   box-shadow:
     inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
     0px 2px 8px rgba(0, 0, 0, 0.04),
@@ -661,10 +661,10 @@
 .dev-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 10px;
+  gap: var(--ds-space-2);
+  padding: 7px var(--ds-space-glass-x);
   border: none;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   background: transparent;
   color: var(--color-frame-text);
   font-size: 12.5px;
@@ -687,8 +687,8 @@
 .dev-item .off-tag {
   flex: 0 0 auto;
   margin-left: auto;
-  padding: 2px 6px;
-  border-radius: 6px;
+  padding: var(--ds-space-half) var(--ds-space-1h);
+  border-radius: var(--ds-radius-chip);
   background: var(--color-frame-hover);
   font: 600 10px/1 -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-frame-text-muted);
@@ -697,9 +697,9 @@
 .dev-item.disabled { opacity: 0.5; cursor: default; }
 .dev-item.disabled:hover { background: transparent; }
 .dev-menu-foot {
-  padding: 6px 10px 4px;
+  padding: var(--ds-space-1h) var(--ds-space-glass-x) var(--ds-space-1);
   border-top: 1px solid var(--glass-border);
-  margin-top: 2px;
+  margin-top: var(--ds-space-half);
   font-size: 10.5px;
   line-height: 1.45;
   color: var(--color-frame-text-muted);
@@ -708,20 +708,20 @@
 .dev-hintline {
   display: flex;
   align-items: flex-start;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   margin: -4px 0 14px;
   font-size: 11.5px;
   line-height: 1.5;
   color: var(--color-frame-text-muted);
 }
-.dev-hintline svg { width: 12px; height: 12px; margin-top: 2px; flex: 0 0 auto; color: rgb(var(--sapphire)); }
+.dev-hintline svg { width: 12px; height: 12px; margin-top: var(--ds-space-half); flex: 0 0 auto; color: rgb(var(--sapphire)); }
 /* 远端回显 chip（创建弹层路径行 + 选择器面包屑共用一件）：hard-drive 图形 + 设备名，
    sapphire 着色（与 .dev-btn.is-remote 同族）。 */
 .path-chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
+  gap: var(--ds-space-1);
+  padding: var(--ds-space-half) var(--ds-space-2);
   border-radius: 7px;
   background: rgb(var(--sapphire) / 0.12);
   color: rgb(var(--sapphire));
@@ -734,7 +734,7 @@
   font: 600 10px/1.4 ui-monospace, SFMono-Regular, monospace;
   color: var(--color-frame-text-muted);
 }
-.proj-create-error .err-acts { display: inline-flex; gap: 10px; margin-left: 8px; }
+.proj-create-error .err-acts { display: inline-flex; gap: var(--ds-space-glass-x); margin-left: var(--ds-space-2); }
 .proj-create-error .err-act {
   border: none;
   background: transparent;
@@ -745,23 +745,23 @@
 }
 .proj-create-error .err-act:hover { text-decoration: underline; }
 /* 创建中四步说明（设计稿 §1.2）：spinner + 四枚静态 chips + 步间分隔点。 */
-.creating-row { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.creating-row { display: inline-flex; align-items: center; gap: var(--ds-space-1h); flex-wrap: wrap; }
 .creating-row .spin {
   width: 12px; height: 12px; flex: 0 0 auto;
   color: rgb(var(--sapphire));
   animation: proj-create-spin 0.9s linear infinite;
 }
 @keyframes proj-create-spin { to { transform: rotate(360deg); } }
-.creating-row .step { display: inline-flex; align-items: center; gap: 4px; }
+.creating-row .step { display: inline-flex; align-items: center; gap: var(--ds-space-1); }
 .creating-row .step-n {
   display: inline-flex; align-items: center; justify-content: center;
   width: 14px; height: 14px;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   background: var(--color-frame-hover);
   font: 600 9px/1 ui-monospace, SFMono-Regular, monospace;
   color: var(--color-frame-text-muted);
 }
-.creating-row .step-t { font-size: 11px; color: var(--color-frame-text-dim); }
+.creating-row .step-t { font-size: var(--ds-fs-meta); color: var(--color-frame-text-dim); }
 .creating-row .step-sep { color: var(--color-frame-text-muted); opacity: 0.55; }
 
 /* ── ui-device-faces 批（2026-10-10）面C：项目卡设备徽标 ─────────────────────
@@ -770,8 +770,8 @@
 .dev-badge {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 7px;
+  gap: var(--ds-space-1);
+  padding: var(--ds-space-half) 7px;
   border-radius: 7px;
   background: rgb(var(--sapphire) / 0.12);
   color: rgb(var(--sapphire));
@@ -801,7 +801,7 @@
   width: 24px;
   height: 24px;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   background: transparent;
   color: var(--color-text-muted);
   display: inline-flex;
@@ -821,8 +821,8 @@
 .project-desc-editor {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-top: 2px;
+  gap: var(--ds-space-2);
+  margin-top: var(--ds-space-half);
 }
 .project-desc-input {
   width: 100%;
@@ -834,20 +834,20 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--ds-space-2);
 }
-.project-desc-save { font-size: 12px; padding: 5px 14px; }
+.project-desc-save { font-size: var(--ds-fs-hint); padding: 5px 14px; }
 .project-desc-cancel {
   border: none;
   background: transparent;
-  padding: 5px 8px;
+  padding: 5px var(--ds-space-2);
   font: 500 12px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: var(--color-text-muted);
   cursor: pointer;
   transition: color 150ms ease;
 }
 .project-desc-cancel:hover { color: var(--color-text); }
-.project-desc-cancel:focus-visible { box-shadow: 0 0 0 2px var(--glass-control-border); border-radius: 6px; }
+.project-desc-cancel:focus-visible { box-shadow: 0 0 0 2px var(--glass-control-border); border-radius: var(--ds-radius-chip); }
 
 /* ── 减动效降级（🔴 本文件首个 `prefers-reduced-motion` 块；取证 §E 实测本文件此前无覆盖）──
    降级后语义仍完整（§F-3）：
@@ -893,9 +893,9 @@
    重试面——FSM loaderr 终态）。muted 克制文案 + 虚线框，读作「暂不可达」非报错。 */
 .delegate-chain-failsoft {
   align-self: stretch;
-  padding: 26px 16px;
+  padding: 26px var(--ds-space-4);
   border: 1px dashed var(--color-border);
-  border-radius: 12px;
+  border-radius: var(--ds-radius-xl);
   background: transparent;
   color: var(--color-text-muted);
   font: 400 13px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -923,7 +923,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: flex-start;
-  gap: 12px;
+  gap: var(--ds-space-3);
 }
 .delegate-chain-card { flex: 0 0 auto; }
 /* 卡片流内定位钉（delegate-ui 批 2026-10-08 · R3 聚合分组时实测暴露；两层架构批
@@ -937,8 +937,8 @@
 .delegate-chain-frames {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding-top: 8px;
+  gap: var(--ds-space-half);
+  padding-top: var(--ds-space-2);
   border-top: 1px dashed var(--color-border);
 }
 .delegate-chain-frame {
@@ -955,15 +955,15 @@
 .delegate-structure-head {
   font: 600 15px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: var(--color-text);
-  padding-bottom: 2px;
+  padding-bottom: var(--ds-space-half);
 }
 .delegate-structure-section {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 10px 12px;
+  gap: var(--ds-space-1h);
+  padding: var(--ds-space-glass-x) var(--ds-space-3);
   border: 1px solid var(--color-border);
-  border-radius: 12px;
+  border-radius: var(--ds-radius-xl);
   background: var(--color-surface);
 }
 .delegate-structure-label {
@@ -975,7 +975,7 @@
 .delegate-structure-lane-item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
   min-width: 0;
 }
 .delegate-seat-executor { flex: 0 0 auto; display: inline-flex; }
@@ -990,8 +990,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0 4px;
-  border-radius: 6px;
+  padding: 0 var(--ds-space-1);
+  border-radius: var(--ds-radius-chip);
   background: var(--color-frame-hover);
   font: 600 10px/1 ui-monospace, SFMono-Regular, monospace;
   color: var(--color-text-muted);
@@ -1043,8 +1043,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0 4px;
-  border-radius: 6px;
+  padding: 0 var(--ds-space-1);
+  border-radius: var(--ds-radius-chip);
   background: rgb(var(--sapphire) / 0.14);
   font: 600 10px/1 ui-monospace, SFMono-Regular, monospace;
   font-variant-numeric: tabular-nums;

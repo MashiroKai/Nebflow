@@ -101,17 +101,6 @@ class WorktreeReuseSelectionSpec extends FunSuite:
       )
     wt
 
-  /** fake 判定机（判是 = 工作座位；续用腿照判）。 */
-  private def withJudge(changesFiles: Boolean = true)(io: IO[Any]): Any =
-    DelegateJudge.DelegateJudgePort.install(
-      new DelegateJudge.DelegateJudgePort.Face:
-        def decideWorktree(task: String): IO[Option[Boolean]] = IO.pure(Some(changesFiles))
-        def judgeTerminal(input: DelegateJudge.TerminalInput): IO[Option[DelegateJudge.Verdict]] = IO.pure(None)
-    )
-    val out = io.unsafeRunSync()
-    DelegateJudge.DelegateJudgePort.clear()
-    out
-
   // ── J2 候选清单：三态标注 ────────────────────────────────────────────────
 
   test("J2 candidate inventory tags the three states correctly (orphan / active / done) with work readings") {
@@ -173,7 +162,7 @@ class WorktreeReuseSelectionSpec extends FunSuite:
     val inv = WorktreeCandidates.inventory(repo.toString).unsafeRunSync()
     val text = WorktreeCandidates.render(inv, repo.toString)
 
-    assert(text.contains("# Existing delegate worktrees (reuse candidates)"), text)
+    assert(text.contains("# Existing delegate worktrees (name reuse candidates)"), text)
     assert(text.contains("**orphan**"), s"orphan status word missing:\n$text")
     assert(text.contains("**active**"), s"active status word missing:\n$text")
     assert(text.contains("**done**"), s"done status word missing:\n$text")
@@ -183,7 +172,7 @@ class WorktreeReuseSelectionSpec extends FunSuite:
     assert(text.contains("delegate-nebflow-orphan \"task of delegate-nebflow-orphan\""), s"title missing:\n$text")
     assert(text.contains("Delegate(worktree="), s"the reuse instruction must be present:\n$text")
     assert(text.contains("force=true"), s"the force escape hatch must be documented:\n$text")
-    assert(text.contains("fresh worktree"), s"the default must be documented as unchanged:\n$text")
+    assert(text.contains("omitting `worktree` allocates nothing"), s"the zero-allocation default must be documented:\n$text")
     // 空清单 = 空串（段不注入——零字节变化）
     assertEquals(WorktreeCandidates.render(WorktreeCandidates.Inventory(Nil), repo.toString), "")
   }
@@ -204,9 +193,9 @@ class WorktreeReuseSelectionSpec extends FunSuite:
       case WorktreeCandidates.Decision.Reuse(Some(c), _) => c
       case other                                         => fail(s"expected a reuse decision, got: $other")
 
-    val binding = withJudge(true)(
-      DelegateWorkspace.prepareReuse(repo.toString, "continue the P1 fix", "delegate-nebflow-new", cand)
-    ).asInstanceOf[DelegateWorkspace.Binding]
+    val binding = DelegateWorkspace
+      .reuse(repo.toString, "delegate-nebflow-new", cand, DelegateWorkspace.SeatSource.Legacy)
+      .unsafeRunSync()
 
     // 座位 = 那棵树（不是新建的第二棵）
     assertEquals(binding.worktree, Some(orphanWt.toString))
@@ -215,7 +204,7 @@ class WorktreeReuseSelectionSpec extends FunSuite:
     assertEquals(binding.baseWs, repo.toString)
     assertEquals(binding.baseBranch, Some("main"))
     assertEquals(binding.reusedFrom, Some("delegate-nebflow-4b756df9"))
-    assertEquals(binding.worktreeJudged, Some(true))
+    assertEquals(binding.seatSource, DelegateWorkspace.SeatSource.Legacy)
     // 树上没有第二棵树（零新建）
     assertEquals(GitWorktrees.worktreeList(repo).size, 2, "只有 main + 那一棵既有树，未新建")
     // 继承的未提交改动仍在（模型开局就在成果之上）
@@ -238,7 +227,7 @@ class WorktreeReuseSelectionSpec extends FunSuite:
 
   // ── J4 默认不续用（行为与改前一致） ─────────────────────────────────────
 
-  test("J4 without the worktree parameter the allocation still creates a FRESH worktree (default unchanged)") {
+  test("J4 without the worktree parameter NOTHING is allocated: the seat is the workspace itself (read-only channel)") {
     assume(gitAvailable, "git required")
     val repo = mkRepo(tempRoot / "j4-repo")
     val orphanWt = mkDelegateWorktree(repo, "delegate-nebflow-orphan", commit = true, dirty = true)
@@ -246,18 +235,22 @@ class WorktreeReuseSelectionSpec extends FunSuite:
       new WorktreeCandidates.LiveSessions.Face:
         def liveAmong(ids: List[String]): IO[Set[String]] = IO.pure(Set.empty)
     )
-    // 缺省腿 = DelegateWorkspace.prepare（reuseCandidate=None 时 spawnWithPlugins 走这里）
-    val binding = withJudge(true)(
-      DelegateWorkspace.prepare(repo.toString, "an unrelated new task", "delegate-nebflow-fresh")
-    ).asInstanceOf[Option[DelegateWorkspace.Binding]].getOrElse(fail("fresh leg must produce a binding"))
+    val before = os.list(repo / ".nebflow" / "worktrees").map(_.last).toList.sorted
+    // 缺省腿 = DelegateWorkspace.prepareInPlace（spawnWithPlugins 的 InPlace 计划）
+    val binding = DelegateWorkspace
+      .prepareInPlace(repo.toString, "delegate-nebflow-fresh")
+      .unsafeRunSync()
+      .getOrElse(fail("the in-place leg must produce a binding in a git workspace"))
 
-    assertNotEquals(binding.worktree, Some(orphanWt.toString), "must NOT land in the existing orphan tree")
+    assertEquals(binding.worktree, None, "zero allocation: no worktree in the binding")
+    assertEquals(binding.cwd, repo.toString, "the seat is the shared project workspace")
+    assertEquals(binding.seatSource, DelegateWorkspace.SeatSource.InPlace)
     assertEquals(binding.branch, "delegate/delegate-nebflow-fresh", "a NEW branch for the new session")
-    assertEquals(binding.reusedFrom, None, "the fresh leg carries no reuse marker")
-    val created = binding.worktree.getOrElse(fail("fresh worktree seat"))
-    assert(os.exists(os.Path(created) / ".git"), "the fresh worktree is a real worktree")
-    assertEquals(GitWorktrees.worktreeList(repo).size, 3, "main + existing orphan + the NEW one")
-    // 既有树原样未动（默认腿绝不碰别人的树）
+    assertEquals(binding.reusedFrom, None, "no reuse marker")
+    val after = os.list(repo / ".nebflow" / "worktrees").map(_.last).toList.sorted
+    assertEquals(after, before, "not even one new worktree directory may appear")
+    assertNotEquals(binding.worktree, Some(orphanWt.toString), "must NOT land in the existing orphan tree")
+    // 既有树原样未动
     assert(os.exists(orphanWt / "in-progress.txt"))
   }
 
@@ -305,7 +298,7 @@ class WorktreeReuseSelectionSpec extends FunSuite:
       case WorktreeCandidates.Decision.Refuse(code, msg) =>
         assertEquals(code, WorktreeCandidates.RefuseCode.NotFound)
         assert(msg.contains("no worktree matches"), msg)
-        assert(msg.contains("Omitting the parameter creates a fresh worktree"), s"the default must be restated:\n$msg")
+        assert(msg.contains("allocates no worktree at all"), s"the zero-allocation default must be restated:\n$msg")
       case other => fail(s"expected a refusal, got: $other")
   }
 

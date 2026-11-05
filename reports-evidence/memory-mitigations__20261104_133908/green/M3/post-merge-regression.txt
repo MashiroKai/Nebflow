@@ -1,0 +1,15 @@
+# 合并 main(7f4202ffc) 后的端到端回归（2026-11-04 13:46:39 起，4m51s）
+
+命令: sbt -batch "testOnly ShellOutputSpillSpec ShellSessionCharsetProbeSpec BashToolSpec"
+（本机 sbt 已解析到 ~/.stand/bin/sbt = M1 全局闸，故本次构建本身也在闸内排队）
+
+[stderr 实录]
+[sbt-gate] waiting for /Users/kaiyu/.stand/run/sbt.lock (another sbt holds the heavy-work gate; bypass: SBT_GATE=off sbt …)
+[sbt-gate] acquired after 277s
+[sbt-gate] gate acquired after 277s
+[sbt-gate] heap cap -Xmx1500m applied via SBT_OPTS
+[M3-evidence] heapBefore=213249KB heapAfter=213377KB heapDelta=128KB outLen=131271 spilledBytes=104857600
+[info] Passed: Total 19, Failed 0, Errors 0, Passed 19
+
+结论: 19/19 全绿；同一 100MB 场景第三次读数 heapDelta=128KB（≤1024KB）；
+      排队 277s 后独占闸（另一 delegate 会话的 sbt 构建正在跑）——闸在真实多会话下生效。

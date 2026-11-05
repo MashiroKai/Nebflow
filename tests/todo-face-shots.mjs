@@ -11,9 +11,14 @@
 // 产出 = .nebflow/evidence/20261101_todo-face/shots/
 //        d-{capsule,expand-mid,open,filter,add-mid,add-done,complete-mid1,
 //           complete-mid2,complete-done,swipe-mid,swipe-done,pop-mid,after-close}
-//        -{chromium,webkit}-{light,dark}.png + m-open/m-add-mid/m-add-done/
-//        m-complete-mid-{engine}-{light,dark}.png
+//        -{chromium,webkit}-{light,dark}.png + m-capsule/m-open/m-add-mid/
+//        m-add-done/m-complete-mid-{engine}-{light,dark}.png
 // 用法：node tests/todo-face-shots.mjs
+//
+// ⚠ 入口收敛批 todo-unify-entry-collapse 2026-11-04：手机腿的入口从「聊天头
+// 左上『任务』圆钮 → #mobile-task-panel 任务页」收敛为「顶带待办胶囊 → 同一张
+// 展开面板」；原 m-capsule-fab 截图改名 m-capsule（拍的是胶囊本体），任务页
+// 相关断言改为退役断言（圆钮/面板零命中）。
 import { chromium, webkit } from '/Users/kaiyu/Claude code/Stand/node_modules/playwright/index.mjs';
 import { readFileSync, mkdirSync } from 'node:fs';
 import { join, dirname, extname, normalize } from 'node:path';
@@ -125,12 +130,13 @@ async function makePage(browser, engine, colorScheme, { mobile = false } = {}) {
     return s.activeSessionId === sid && s.ws && s.ws.readyState === 1;
   }, ROOT_SID, { timeout: 20000 });
   await page.evaluate(seedScript());
-  if (!mobile) {
-    await page.evaluate(async (sid) => {
-      const f = await import('/js/todoFace.js');
-      f.renderTodoTaskList(sid);
-    }, ROOT_SID);
-  }
+  // 胶囊面驱动两条腿同源（入口收敛批 2026-11-04）：桌面与手机都由
+  // sidebar 的会话切换 → renderTodoTaskList 建面；手机腿此前由任务页面板
+  // （mobile/taskPanel.js）承载，该页面已退役 ⇒ 手机也走同一胶囊面。
+  await page.evaluate(async (sid) => {
+    const f = await import('/js/todoFace.js');
+    f.renderTodoTaskList(sid);
+  }, ROOT_SID);
   await page.waitForTimeout(500);
   return { page, errors, ctx };
 }
@@ -306,46 +312,56 @@ async function desktopScenario(browser, engine, colorScheme) {
 }
 
 // ── 手机场景 ─────────────────────────────────────────────────────────────
+// 入口收敛批 todo-unify-entry-collapse 2026-11-04 改写：手机端入口 = 顶带待办
+// 胶囊（左悬浮「任务」圆钮 + #mobile-task-panel 任务页已退役）。本场景因此
+// 由「点圆钮开任务页」改为「胶囊读数 → 点胶囊展开同一张面板」，断言面与
+// 桌面同源（.tfl-* 一套实现）：读数 = 胶囊计数节点（不含 FAB 徽标腿）。
 async function mobileScenario(browser, engine, colorScheme) {
   const tag = `${engine}-${colorScheme}`;
   const { page, errors, ctx } = await makePage(browser, engine, colorScheme, { mobile: true });
   try {
-    // 左侧悬浮圆钮（静默态形态维持）+ 徽标 = 待办数
-    await page.waitForSelector('[data-chrome="tasks"]', { timeout: 8000 });
+    await page.waitForSelector('#task-list .tfl-capsule', { timeout: 8000 });
     ok(`mobile layer active (${tag})`,
       await page.evaluate(() => document.body.classList.contains('mobile-layer')));
-    const badge = await page.textContent('[data-chrome="tasks"] .mh-chrome-badge');
-    ok(`FAB badge = 8 (${tag})`, badge && badge.trim() === '8', String(badge));
-    await shot(page, `m-capsule-fab-${tag}`);
+    // 已退役入口零命中（回退护栏）。
+    ok(`mobile tasks FAB retired (${tag})`,
+      (await page.locator('[data-chrome="tasks"]').count()) === 0);
+    ok(`mobile task panel retired (${tag})`,
+      (await page.locator('#mobile-task-panel').count()) === 0);
+    // 读数 = 胶囊计数节点（8 条种子，含 1 条逾期 ⇒ 翻面显示「1 逾期」）。
+    const capsuleText = await page.textContent('#task-list .tfl-capsule');
+    ok(`mobile capsule count (${tag})`, /8/.test(capsuleText || ''), String(capsuleText));
+    ok(`mobile capsule overdue face (${tag})`, /1 逾期/.test(capsuleText || ''), String(capsuleText));
+    await shot(page, `m-capsule-${tag}`);
 
-    // 点开任务页 = 展开态（待办列表换血）
-    await page.click('[data-chrome="tasks"]');
-    await page.waitForSelector('#mobile-task-panel:not([hidden]) .tfl-mobile', { timeout: 6000 });
+    // 点胶囊 = 展开态（同一张 .tfl-card 面板，非第二套页面）
+    await page.click('#task-list .tfl-capsule');
+    await page.waitForSelector('#task-list .tfl-card[data-state="open"]', { timeout: 6000 });
     await page.waitForTimeout(600);
-    ok(`mobile face rows (${tag})`, (await page.locator('#mobile-task-panel .tfl-row').count()) === 8);
+    ok(`mobile face rows (${tag})`, (await page.locator('#task-list .tfl-row').count()) === 8);
     await shot(page, `m-open-${tag}`);
 
     // 添加流（开筛选栏 → 单标签视图 → footer 创建行）
-    await page.click('#mobile-task-panel .tfl-filter-toggle');
+    await page.click('#task-list .tfl-filter-toggle');
     await page.waitForTimeout(400);
-    await page.locator('#mobile-task-panel .tfl-chip-tag').first().click();
+    await page.locator('#task-list .tfl-chip-tag').first().click();
     await page.waitForTimeout(400);
-    await page.click('#mobile-task-panel .tfl-add-btn');
+    await page.click('#task-list .tfl-add-btn');
     await page.waitForTimeout(400);
     await page.keyboard.type('手机端的一条新待办');
     await page.waitForTimeout(150);
-    await shotEl(page, '#mobile-task-panel', `m-add-mid-${tag}`);
+    await shotEl(page, '#task-list .tfl-card', `m-add-mid-${tag}`);
     await page.keyboard.press('Enter');
     await page.waitForTimeout(600);
-    ok(`mobile created row (${tag})`, (await page.locator('#mobile-task-panel .tfl-row').count()) === 4);
-    await shotEl(page, '#mobile-task-panel', `m-add-done-${tag}`);
+    ok(`mobile created row (${tag})`, (await page.locator('#task-list .tfl-row').count()) === 4);
+    await shotEl(page, '#task-list .tfl-card', `m-add-done-${tag}`);
 
     // 完成流（中间帧）
-    await page.locator('#mobile-task-panel .tfl-row').first().locator('.tfl-complete').click();
+    await page.locator('#task-list .tfl-row').first().locator('.tfl-complete').click();
     await page.waitForTimeout(260);
     ok(`mobile complete check (${tag})`,
-      await page.locator('#mobile-task-panel .tfl-complete.checked').count() === 1);
-    await shotEl(page, '#mobile-task-panel', `m-complete-mid-${tag}`);
+      await page.locator('#task-list .tfl-complete.checked').count() === 1);
+    await shotEl(page, '#task-list .tfl-card', `m-complete-mid-${tag}`);
     await page.waitForTimeout(1400);
 
     ok(`zero console errors mobile (${tag})`, errors.length === 0, errors.slice(0, 3).join(' | '));

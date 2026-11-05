@@ -262,8 +262,26 @@ export function paintSlot() {
   if (img) {
     img.className = 'agent-avatar-img';
     img.draggable = false;
+    /* 🔴 坏字节兜底（顶部头像可见性批 2026-11-04）：本地条目存在但**解不出位图**
+       （dataURL 截断/损坏、配额写坏的半条、非图像 mime 的落盘）时，改前本函数
+       直接把这个 <img> 挂进槽就结束 —— 之后没有任何一处接管：槽位是一个只有
+       芯片底色的**空圆**（既无照片也无 logo），而 chatChrome 的空态守望又把
+       「槽里有 .agent-avatar-img」当成本头有图 ⇒ 不注入 logo。作者症状
+       「顶部的头像不显示」正是这一档。收敛腿也救不了：条目 sha 与服务端相符时
+       convergeAvatar 走「已收敛」早退，永不自愈。
+       本兜底只在**解码失败事件**上动作（onerror），不预判加载中态 ⇒ 正常照片
+       的加载窗口零影响（同 paintAvatarSlot / neblink.js 的「翻面推到字节就绪」纪律）。 */
+    const fallbackToLogo = () => {
+      if (!slot || !slot.contains(img)) return; // 已被别的重绘替换：不越权改槽
+      slot.classList.remove('has-img');
+      slot.replaceChildren(standLogoNode());
+    };
+    // 兜底接 error 事件；但复用池拿回的节点可能**上一次就已加载失败**（onerror 早于
+    // 本次挂载触发）⇒ 挂载后补一次「已完成且零宽」的既有失败判定。
+    img.onerror = fallbackToLogo;
     slot.replaceChildren(img);
     slot.classList.add('has-img');
+    if (img.complete && img.naturalWidth === 0) fallbackToLogo();
     return;
   }
   // 无自定义头像 ⇒ stand logo（作者令 2026-10-31 22:50；原首字母牌/人形字形
