@@ -1,0 +1,136 @@
+[sbt-gate] gate acquired after 0s
+[sbt-gate] heap cap -Xmx2600m applied via SBT_OPTS
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project delegate-midturn-inject-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/project
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/delegate-midturn-inject/)
+[warn] javaOptions will be ignored, fork is set to false
+09:39:50.600 [36mINFO [0m nebflow.agent.lifecycle - [32mBusyConsoleProbe-busy-con[0m [35mBusyConsoleProbe/busy-con[0m event=spawn detail=parent=- msgs=0
+09:39:50.646 [36mINFO [0m nebflow.agent.lifecycle - [32mBusyConsoleProbe-busy-con[0m [35mBusyConsoleProbe/busy-con[0m event=start detail=msgs=0
+09:39:51.473 [36mINFO [0m nebflow.agent.lifecycle - [32mBusyConsoleProbe-busy-con[0m [35mBusyConsoleProbe/busy-con[0m event=immediate-input-queued detail=textLen=9
+09:39:51.659 [36mINFO [0m nebflow.handlers - [32mBusyConsoleProbe[0m [35mBusyConsoleProbe[0m Tool Bash START: while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-
+09:39:52.362 [36mINFO [0m nebflow.handlers - [32mBusyConsoleProbe[0m [35mBusyConsoleProbe[0m Tool Bash
+  (while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-busy-console-inpu...) OK (752ms)
+09:39:52.369 [36mINFO [0m nebflow.tools.logger - Tools log retention: pruned files older than 2026-11-02
+09:39:52.393 [36mINFO [0m nebflow.agent.lifecycle - [32mBusyConsoleProbe-busy-con[0m [35mBusyConsoleProbe/busy-con[0m event=immediate-input-injected-at-tools-complete detail=batch=1 texts=直通：改用快速路径 remaining=0
+09:39:52.422 [36mINFO [0m nebflow.reminders - [time] Current time: 2026-11-05 09:39 +08:00
+09:39:52.422 [36mINFO [0m nebflow.reminders - [msgtoken] 消息身份牌：本条用户消息已铸牌 {{msg:b5e6b3fc-000004}}。向其它会话派发（Mail / Delegate / node 消息）时在文本中写入该牌，接收方会在投递前自动展开为消息全
+09:39:52.436 [36mINFO [0m nebflow.agent.lifecycle - [32mBusyConsoleProbe-busy-con[0m [35mBusyConsoleProbe/busy-con[0m event=turn-complete detail=msgs=5 textLen=19 textStreamed=true thinking=0 model=-
+09:39:52.745 [36mINFO [0m nebflow.agent.lifecycle - [32mBusyConsoleLlmProbe-busy-con[0m [35mBusyConsoleLlmProbe/busy-con[0m event=spawn detail=parent=- msgs=0
+09:39:52.748 [36mINFO [0m nebflow.agent.lifecycle - [32mBusyConsoleLlmProbe-busy-con[0m [35mBusyConsoleLlmProbe/busy-con[0m event=start detail=msgs=0
+09:39:52.773 [36mINFO [0m nebflow.agent.lifecycle - [32mBusyConsoleLlmProbe-busy-con[0m [35mBusyConsoleLlmProbe/busy-con[0m event=immediate-input-queued detail=textLen=11
+09:39:52.776 [36mINFO [0m nebflow.agent.lifecycle - [32mBusyConsoleLlmProbe-busy-con[0m [35mBusyConsoleLlmProbe/busy-con[0m event=turn-complete detail=msgs=1 textLen=12 textStreamed=true thinking=0 model=-
+09:39:52.777 [36mINFO [0m nebflow.agent.lifecycle - [32mBusyConsoleLlmProbe-busy-con[0m [35mBusyConsoleLlmProbe/busy-con[0m event=immediate-input-injected-at-turn-end detail=batch=1 texts=直通：趁你在跑先看这个
+09:39:52.793 [36mINFO [0m nebflow.reminders - [msgtoken] 消息身份牌：本条用户消息已铸牌 {{msg:703b9ebc-000004}}。向其它会话派发（Mail / Delegate / node 消息）时在文本中写入该牌，接收方会在投递前自动展开为消息全
+09:39:52.799 [36mINFO [0m nebflow.agent.lifecycle - [32mBusyConsoleLlmProbe-busy-con[0m [35mBusyConsoleLlmProbe/busy-con[0m event=turn-complete detail=msgs=4 textLen=19 textStreamed=true thinking=0 model=-
+09:39:53.103 [36mINFO [0m nebflow.agent.lifecycle - [32mBusyConsoleProbe-busy-con[0m [35mBusyConsoleProbe/busy-con[0m event=spawn detail=parent=- msgs=0
+09:39:53.106 [36mINFO [0m nebflow.agent.lifecycle - [32mBusyConsoleProbe-busy-con[0m [35mBusyConsoleProbe/busy-con[0m event=start detail=msgs=0
+09:39:53.132 [36mINFO [0m nebflow.agent.lifecycle - [32mBusyConsoleProbe-busy-con[0m [35mBusyConsoleProbe/busy-con[0m event=user-input-queued detail=textLen=6 pending=1
+09:39:53.135 [36mINFO [0m nebflow.handlers - [32mBusyConsoleProbe[0m [35mBusyConsoleProbe[0m Tool Bash START: while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-
+09:39:53.830 [36mINFO [0m nebflow.handlers - [32mBusyConsoleProbe[0m [35mBusyConsoleProbe[0m Tool Bash
+  (while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-busy-console-inpu...) OK (696ms)
+09:39:53.845 [36mINFO [0m nebflow.agent.lifecycle - [32mBusyConsoleProbe-busy-con[0m [35mBusyConsoleProbe/busy-con[0m event=turn-complete detail=msgs=3 textLen=19 textStreamed=true thinking=0 model=-
+09:39:53.847 [36mINFO [0m nebflow.agent.lifecycle - [32mBusyConsoleProbe-busy-con[0m [35mBusyConsoleProbe/busy-con[0m event=start detail=msgs=4
+09:39:53.854 [36mINFO [0m nebflow.reminders - [msgtoken] 消息身份牌：本条用户消息已铸牌 {{msg:61f8b327-000001}}。向其它会话派发（Mail / Delegate / node 消息）时在文本中写入该牌，接收方会在投递前自动展开为消息全
+09:39:53.863 [36mINFO [0m nebflow.agent.lifecycle - [32mBusyConsoleProbe-busy-con[0m [35mBusyConsoleProbe/busy-con[0m event=llm-fail detail=err=unexpected stream call #2
+09:39:53.881 [36mINFO [0m nebflow.agent.lifecycle - [32mBusyConsoleProbe-busy-con[0m [35mBusyConsoleProbe/busy-con[0m event=error-freeze detail=reason=llm-transient err=unexpected stream call #2 resumeIn=5410ms
+[32mnebflow.agent.BusyConsoleInputInjectionSpec:[0m
+[32m  + [0m[32mW1: busy 会话的控制台形 ImmediateInput 在工具边界并入续轮请求（在飞批次完整跑完）[0m [90m2.824s[0m
+[32m  + [0m[32mW2: Deferred 门扣住的 LLM 流在飞窗口投入 ImmediateInput ⇒ 在飞轮完整跑完后续轮携带该正文[0m [90m0.35s[0m
+[32m  + [0m[32mW3: busy 会话的真人 UserInput（queue 旧轨引擎承载形）不进工具边界续轮——旧排队语义逐字不变[0m [90m1.25s[0m
+09:39:54.385 [36mINFO [0m nebflow.agent.lifecycle - [32mMailBoundaryProbe-mail-bou[0m [35mMailBoundaryProbe/mail-bou[0m event=spawn detail=parent=- msgs=0
+09:39:54.386 [36mINFO [0m nebflow.agent.lifecycle - [32mMailBoundaryProbe-mail-bou[0m [35mMailBoundaryProbe/mail-bou[0m event=start detail=msgs=0
+09:39:54.398 [36mINFO [0m nebflow.handlers - [32mMailBoundaryProbe[0m [35mMailBoundaryProbe[0m Tool Bash START: while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-
+09:39:54.713 [36mINFO [0m nebflow.agent.lifecycle - [32mMailBoundaryProbe-mail-bou[0m [35mMailBoundaryProbe/mail-bou[0m event=user-input-queued detail=textLen=29 pending=1 source=mail
+09:39:54.713 [36mINFO [0m nebflow.agent.lifecycle - [32mMailBoundaryProbe-mail-bou[0m [35mMailBoundaryProbe/mail-bou[0m event=user-input-queued detail=textLen=15 pending=2
+09:39:55.397 [36mINFO [0m nebflow.handlers - [32mMailBoundaryProbe[0m [35mMailBoundaryProbe[0m Tool Bash
+  (while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-mail-boundary-inj...) OK (1000ms)
+09:39:55.401 [36mINFO [0m nebflow.agent.lifecycle - [32mMailBoundaryProbe-mail-bou[0m [35mMailBoundaryProbe/mail-bou[0m event=mail-injected-at-tools-complete detail=items=1 blocks=0 agesMs=686ms textLen=29 remainingUserInputs=1
+09:39:55.408 [36mINFO [0m nebflow.agent.lifecycle - [32mMailBoundaryProbe-mail-bou[0m [35mMailBoundaryProbe/mail-bou[0m event=turn-complete detail=msgs=5 textLen=19 textStreamed=true thinking=0 model=-
+09:39:55.412 [36mINFO [0m nebflow.agent.lifecycle - [32mMailBoundaryProbe-mail-bou[0m [35mMailBoundaryProbe/mail-bou[0m event=start detail=msgs=6
+09:39:55.418 [36mINFO [0m nebflow.reminders - [msgtoken] 消息身份牌：本条用户消息已铸牌 {{msg:7e598557-000001}}。向其它会话派发（Mail / Delegate / node 消息）时在文本中写入该牌，接收方会在投递前自动展开为消息全
+09:39:55.420 [36mINFO [0m nebflow.agent.lifecycle - [32mMailBoundaryProbe-mail-bou[0m [35mMailBoundaryProbe/mail-bou[0m event=llm-fail detail=err=unexpected stream call #2
+09:39:55.420 [36mINFO [0m nebflow.agent.lifecycle - [32mMailBoundaryProbe-mail-bou[0m [35mMailBoundaryProbe/mail-bou[0m event=error-freeze detail=reason=llm-transient err=unexpected stream call #2 resumeIn=5304ms
+09:39:55.698 [36mINFO [0m nebflow.agent.lifecycle - [32mMailBoundaryProbe-mail-bou[0m [35mMailBoundaryProbe/mail-bou[0m event=spawn detail=parent=- msgs=0
+09:39:55.700 [36mINFO [0m nebflow.agent.lifecycle - [32mMailBoundaryProbe-mail-bou[0m [35mMailBoundaryProbe/mail-bou[0m event=start detail=msgs=0
+09:39:55.708 [36mINFO [0m nebflow.handlers - [32mMailBoundaryProbe[0m [35mMailBoundaryProbe[0m Tool Bash START: while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-
+09:39:56.026 [36mINFO [0m nebflow.agent.lifecycle - [32mMailBoundaryProbe-mail-bou[0m [35mMailBoundaryProbe/mail-bou[0m event=user-input-queued detail=textLen=33 pending=1 source=mail
+09:39:56.760 [36mINFO [0m nebflow.handlers - [32mMailBoundaryProbe[0m [35mMailBoundaryProbe[0m Tool Bash
+  (while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-mail-boundary-inj...) OK (1051ms)
+09:39:56.762 [36mINFO [0m nebflow.agent.lifecycle - [32mMailBoundaryProbe-mail-bou[0m [35mMailBoundaryProbe/mail-bou[0m event=mail-injected-at-tools-complete detail=items=1 blocks=0 agesMs=736ms textLen=33 remainingUserInputs=0
+09:39:56.783 [36mINFO [0m nebflow.agent.lifecycle - [32mMailBoundaryProbe-mail-bou[0m [35mMailBoundaryProbe/mail-bou[0m event=turn-complete detail=msgs=5 textLen=19 textStreamed=true thinking=0 model=-
+09:39:56.993 [36mINFO [0m nebflow.agent.lifecycle - [32mIdleProbe-mail-bou[0m [35mIdleProbe/mail-bou[0m event=spawn detail=parent=- msgs=0
+09:39:56.994 [36mINFO [0m nebflow.agent.lifecycle - [32mIdleProbe-mail-bou[0m [35mIdleProbe/mail-bou[0m event=start detail=msgs=0
+09:39:57.004 [36mINFO [0m nebflow.agent.lifecycle - [32mIdleProbe-mail-bou[0m [35mIdleProbe/mail-bou[0m event=turn-complete detail=msgs=1 textLen=11 textStreamed=true thinking=0 model=-
+[32mnebflow.agent.MailBoundaryInjectionSpec:[0m
+[32m  + [0m[32m判据单点：mail 来源件 = 非真人 + source=mail；真人/其它来源一律不算[0m [90m0.003s[0m
+[32m  + [0m[32m摘取：mail 件全部摘出且到达序保持；真人件与其它命令原样留队（去重不重复）[0m [90m0.004s[0m
+[32m  + [0m[32mcompaction 挂起 ⇒ 零消费（持久化不丢的守卫面：注入进将被摘要替换的历史 = 丢失）[0m [90m0.0s[0m
+[32m  + [0m[32m合并窗口：单件 = idle 等价形（正文原样；带块件不重复正文）；多件 = 批头 + 逐件分节保序[0m [90m0.005s[0m
+[32m  + [0m[32m完成债原料：摘出件携带 replyTo 供 owedCompletion 并入（结算不搁浅的判据面）[0m [90m0.002s[0m
+[32m  + [0m[32mW1: Processing 中到达的 mail 件在工具边界并入续轮请求（而非干等 turn 末）[0m [90m1.323s[0m
+[32m  + [0m[32mW2: 边界注入的 mail 件 replyTo 在 turn 末收付 Completed（结算不搁浅）[0m [90m1.186s[0m
+[32m  + [0m[32mW3: idle 会话的 mail 件走既有即时腿（新 turn 立即开——降级语义逐字不变）[0m [90m0.206s[0m
+[32mnebflow.gateway.DeviceProvenanceInjectionGateSpec:[0m
+[32m  + [0m[32m①a dispatchUserText: the UiMessage display row stays BARE content (marker can never leak to the chat stream)[0m [90m0.019s[0m
+[32m  + [0m[32m①b dispatchUserText: the marker reaches the model via ImmediateInput only (device.fold ⇒ compose)[0m [90m0.002s[0m
+[32m  + [0m[32m② the typeless leg prepends the marker BLOCK (prependMarker), never rewrites the content[0m [90m0.001s[0m
+[32m  + [0m[32m②b the immediateInput leg resolves the frame's device stamp and threads it into handleUserText[0m [90m0.005s[0m
+[32m  + [0m[32m③ every real-human send site in the frontend stamps device: deviceStamp()[0m [90m0.086s[0m
+[32m  + [0m[32mA1a the handshake extracts SessionIdentity at the SAME point as the takeover precedent (ViaSession projection)[0m [90m0.001s[0m
+[32m  + [0m[32mA1b the receive pipe threads the identity into handleMessage (per-connection closure, same scope as takeover)[0m [90m0.0s[0m
+[32m  + [0m[32mA1c the typeless leg resolves with the session identity; the REST public face stays None (byte-identical)[0m [90m0.001s[0m
+[32m  + [0m[32mA1d the immediateInput seam closes over the connection identity in the dispatch context[0m [90m0.001s[0m
+[32m  + [0m[32mA1e the owner-anchor read is session-gated (Bearer rail pays zero credential-file IO)[0m [90m0.0s[0m
+[32mnebflow.agent.SubAgentInboxMirrorSpec:[0m
+[32m  + [0m[32m① -1 白名单族（mail / mail-queue）逐族命中：目标集 = parent 链 π 子代理族前缀，去重且稳定[0m [90m0.001s[0m
+[32m  + [0m[32m① -2 反例：豁免族逐族零命中（原生族 / node / ask / 非注入族）[0m [90m0.001s[0m
+[32m  + [0m[32m① -3 反例：不相关子代理不收到（跨 root / 无归属 / 非子代理族）——逐条给读数[0m [90m0.001s[0m
+[32m  + [0m[32m① -4 反例：发射者本身是子代理会话 ⇒ 零目标（镜像只在主控/根侧发射时生效）[0m [90m0.001s[0m
+[32m  + [0m[32m① -5 变异验红（开关）：默认开 ⇒ 命中；开关关 ⇒ 同一输入归零（证明读数在看镜像面）[0m [90m0.003s[0m
+[32m  + [0m[32m② 镜像行逐字段同形落入目标子代理会话流；无关根零行；发射者自身零增量[0m [90m0.028s[0m
+[32m  + [0m[32m③ -1 前端登记面逐值同源：后端族前缀表 == utils.js#isBgAgentId 字面量[0m [90m0.004s[0m
+[32m  + [0m[32m③ -2 单点收口：注入行唯一发射点仍在，调用点零改（含 idle 窗载体腿），镜像腿挂在发射点内[0m [90m0.015s[0m
+[32m  + [0m[32m③ -3 禁越面：镜像件零 WS 帧、零 agent 投递、零注入文案/生成面改动[0m [90m0.002s[0m
+[32mnebflow.agent.CompactionQueueStoreSpec:[0m
+[32m  + [0m[32msave/load round-trip preserves every field (imms + events)[0m [90m0.01s[0m
+[32m  + [0m[32m② human-origin bit survives 入队 ↔ 崩溃恢复 round-trip (fromUser)[0m [90m0.004s[0m
+[32m  + [0m[32m② pre-② snapshot without the field decodes as fromUser=false (backward compatible)[0m [90m0.007s[0m
+[32m  + [0m[32msave of empty queues clears the file[0m [90m0.005s[0m
+[32m  + [0m[32mload of a missing file returns None[0m [90m0.001s[0m
+[32m  + [0m[32mload of a corrupt file returns None (warn, not crash)[0m [90m0.003s[0m
+[32m  + [0m[32msave/load with empty sessionId is a no-op[0m [90m0.002s[0m
+[32m  + [0m[32mlegacy file missing imms/events decodes with empty defaults (forward compat)[0m [90m0.002s[0m
+09:39:57.557 [33mWARN [0m nebflow.node.engine - NodeMessage: node 'n-s1' (n-s1) session cache self-healed -> node-s1-session (cached=-, sessionRef=node-s1-session)
+09:39:57.559 [36mINFO [0m nebflow.node.engine - NodeMessage -> node 'n-s1' (n-s1) injected at turn boundary (session node-s1-session, 18 chars)
+[NMP S1] sendNodeMessage = Right(Message delivered to running node 'n-s1' — it will be inject)
+[NMP S1] ledger rows = 2 : queued/nm-mw2vop1q-10127f, injected/nm-mw2vop1q-10127f
+[NMP S1] folding state = nm-mw2vop1q-10127f=injected
+[NMP S1] probe received with marker = true
+[NMP S1] ledger path = /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nmp-s113912666675406249534/ws-s1/.nebflow/node-messages.jsonl
+09:39:57.773 [33mWARN [0m nebflow.node.engine - NodeMessage: node 'n-s2' (n-s2) session cache self-healed -> node-s2-session (cached=-, sessionRef=node-s2-session)
+09:39:57.775 [36mINFO [0m nebflow.node.engine - NodeMessage -> node 'n-s2' (n-s2) injected at turn boundary (session node-s2-session, 31 chars)
+09:39:57.844 [36mINFO [0m nebflow.node.engine - [boot-recovery] node 'n-s2' (n-s2) claimed for rehydrate: resume (sessionRef=node-s2-session msgs=2)
+09:39:57.883 [36mINFO [0m nebflow.node.engine - [boot-recovery] node 'n-s2' (n-s2): 1 node-message(s) replayed into the resume prompt (nm-mw2vop8s-7780f7); 0 already consumed, 0 terminal
+09:39:57.904 [36mINFO [0m nebflow.node.engine - [boot-recovery] node 'n-s2' (n-s2) claimed for rehydrate: resume (sessionRef=node-s2-session msgs=3)
+[NMP S2] ledger after send = nm-mw2vop8s-7780f7=injected
+[NMP S2] boot#1 claim = Some(Right(resume)) ; prompt carries marker = true
+[NMP S2] ledger after boot#1 = nm-mw2vop8s-7780f7=replayed
+[NMP S2] boot#2 claim = Some(Right(resume)) ; prompt carries marker = false
+[NMP S2] ledger after boot#2 = nm-mw2vop8s-7780f7=consumed
+[NMP S2] pre-crash context restored in prompt#1 = true
+[NMP S2] probe tells (must stay 1 — the ledger never talks to the actor) = 1
+[NMP S3] sendNodeMessage = Left(Node 'n-s3' is terminal (status=completed) — messages are refused: a finished node is neve)
+[NMP S3] ledger rows = 0
+[NMP S3] probe received = 0
+[NMP S3] node.task carries the body = false
+[32mnebflow.core.project.NodeMessagePersistenceSpec:[0m
+[32m  + [0m[32mS1 落盘前置: sendNodeMessage 成功即台账有账（queued/injected）+ 幂等标记随正文[0m [90m0.331s[0m
+[32m  + [0m[32mS2 重放幂等: 未消费消息进 resume prompt 恰一次；转录已含标记 ⇒ 终态 consumed 且零重放[0m [90m0.327s[0m
+[32m  + [0m[32mS3 terminal 仍拒绝: completed 节点拒收 ⇒ 零投递、零台账、零注入[0m [90m0.132s[0m
+[32mnebflow.core.delegate.DelegateNotifyInjectSpec:[0m
+[32m  + [0m[32mT1: a live target ACTUALLY receives the injection (the `ref ! msg` IO is executed, not discarded) and inject reports true[0m [90m0.011s[0m
+[32m  + [0m[32mT2: a target that is not in the registry yields false and delivers nothing (the caller's park branch)[0m [90m0.004s[0m
+[info] Passed: Total 43, Failed 0, Errors 0, Passed 43
+[success] Total time: 12 s, completed 2026年11月5日 09:39:58
