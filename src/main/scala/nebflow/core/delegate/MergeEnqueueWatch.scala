@@ -44,8 +44,9 @@ import scala.util.Try
  *
  * 代办入队的锚：`readyAt = lastActivityMs`（会话最后一次**agent 侧**活动的时刻——
  * 「它什么时候干完的」最诚实读面；用扫描时刻会把漏网成员一律排到队尾），通道 =
- * 活体注册表行的 `InternalLeg(rec.ref, supervisorRef)`（两件都在则挂，属主还能被
- * 通知到；无活体 = 无闭包，交给 [[MergeQueue]] 既有的 R5 通道前提判定）。
+ * **收件方身份**（`Member.ownerSessionId = rec.id`，P1 投递身份化后的唯一形态；投递
+ * 走收件方持久邮箱，无闭包可挂）。属主会话已不在注册表 = 无身份可投，交给
+ * [[MergeQueue]] 既有的「不可投递 ⇒ owner-gone」闸判定，扫描器不预判。
  *
  * 幂等：`hasOpenEntry` 是唯一闸——重复扫描零重复入队、零重复通知。
  */

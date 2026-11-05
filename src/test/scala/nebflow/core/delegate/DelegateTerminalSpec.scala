@@ -55,6 +55,22 @@ class DelegateTerminalSpec extends CatsEffectSuite:
 
   override def afterEach(context: munit.AfterEach): Unit = MergeQueue.reset()
 
+  /**
+   * `SharedResources` 的构造行会安装**生产**投递端口（磁盘邮箱 + 会话行在场判定）——
+   * `mkResources` 因此会把 beforeEach 里装好的测试端口顶掉，而本套夹具的 delegate 行
+   * 是直写 `DelegateRegistry` 的（会话行不存在）⇒ 生产端口如实回 `parent-session-gone`
+   * ⇒ 放行即 owner-gone，合并轮形态当场失位（本套要判的是终态判定，不是投递可达性）。
+   *
+   * 因此每次构造后把测试端口**重新装回**：夹具声明「属主会话在场，投递恒成功」，与
+   * 生产端口的契约面（身份 → 落盘邮箱）同形，断言强度不变。
+   */
+  private def mkResourcesWithTestPort(
+    system: ActorSystem,
+    tmp: os.Path,
+    llm: LlmHandle[IO]
+  ): IO[SharedResources] =
+    SpecResources.mkResources(system, tmp, llm).flatTap(_ => IO(MergeQueueTestPorts.install()))
+
   private class SilentLlm extends LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
 
@@ -159,7 +175,7 @@ class DelegateTerminalSpec extends CatsEffectSuite:
   ) {
     val system = ActorSystem(s"dt-1-${scala.util.Random.nextInt(100000)}")
     for
-      res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
+      res <- mkResourcesWithTestPort(system, tempRoot, new SilentLlm)
       (child, sup) <- noopRefs(system)
       _ = seedRecord("delegate-nebflow-f1", Some("41"))
       r1 <- withJudgeAbsent(
@@ -207,7 +223,7 @@ class DelegateTerminalSpec extends CatsEffectSuite:
     val system = ActorSystem(s"dt-2-${scala.util.Random.nextInt(100000)}")
     try
       for
-        res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
+        res <- mkResourcesWithTestPort(system, tempRoot, new SilentLlm)
         // 注册在 mkResources **之后**——SharedResources 构造行安装的是真判定机
         // 执行体（DelegateJudgeMachine.face），先装会被覆盖（测试装配顺序面）。
         _ = DelegateJudge.DelegateJudgePort.install(
@@ -293,7 +309,7 @@ class DelegateTerminalSpec extends CatsEffectSuite:
     val system = ActorSystem(s"dt-3-${scala.util.Random.nextInt(100000)}")
     try
       for
-        res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
+        res <- mkResourcesWithTestPort(system, tempRoot, new SilentLlm)
         // 同②：真判定机在 mkResources 构造行安装，fake 必须后装才生效。
         _ = DelegateJudge.DelegateJudgePort.install(
           new DelegateJudge.DelegateJudgePort.Face:
@@ -330,7 +346,7 @@ class DelegateTerminalSpec extends CatsEffectSuite:
     val system = ActorSystem(s"dt-5-${scala.util.Random.nextInt(100000)}")
     try
       for
-        res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
+        res <- mkResourcesWithTestPort(system, tempRoot, new SilentLlm)
         // 同②③：真判定机在 mkResources 构造行安装，fake 必须后装才生效。
         _ = DelegateJudge.DelegateJudgePort.install(
           new DelegateJudge.DelegateJudgePort.Face:
@@ -381,7 +397,7 @@ class DelegateTerminalSpec extends CatsEffectSuite:
   ) {
     val system = ActorSystem(s"dt-4-${scala.util.Random.nextInt(100000)}")
     for
-      res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
+      res <- mkResourcesWithTestPort(system, tempRoot, new SilentLlm)
       (child, sup) <- noopRefs(system)
       _ = seedRecord("delegate-nebflow-fail", Some("71"), branch = Some("delegate/delegate-nebflow-fail"))
       _ = MergeQueue.enqueue(
@@ -500,7 +516,7 @@ class DelegateTerminalSpec extends CatsEffectSuite:
   ) {
     val system = ActorSystem(s"dt-6-${scala.util.Random.nextInt(100000)}")
     for
-      res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
+      res <- mkResourcesWithTestPort(system, tempRoot, new SilentLlm)
       // 判定机缺席：漂移闸独立定罪（确证 ⇒ 根本不进判定机——闸先于判定机）
       (child, sup) <- noopRefs(system)
       (repo, fork, baseTip) = mkDriftRepo(
@@ -555,7 +571,7 @@ class DelegateTerminalSpec extends CatsEffectSuite:
   ) {
     val system = ActorSystem(s"dt-7-${scala.util.Random.nextInt(100000)}")
     for
-      res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
+      res <- mkResourcesWithTestPort(system, tempRoot, new SilentLlm)
       (child, sup) <- noopRefs(system)
       (repo, _, _) = mkDriftRepo(tempRoot / "drift-attr", "delegate/delegate-nebflow-dg2", advance = "delegateMerge")
       // 账本行：真流程由 MergeQueue.record 落在被并 delegate 自己的键下（跨键扫描
@@ -603,7 +619,7 @@ class DelegateTerminalSpec extends CatsEffectSuite:
   test("⑧ (红验③) mergeRound=true ⇒ drift exempt (the A4 merge-round re-judge stays reachable)") {
     val system = ActorSystem(s"dt-8-${scala.util.Random.nextInt(100000)}")
     for
-      res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
+      res <- mkResourcesWithTestPort(system, tempRoot, new SilentLlm)
       // 判定机缺席（withJudgeAbsent 同⑥⑦⑨）：闸豁免后走既有回落链——completed
       (child, sup) <- noopRefs(system)
       (repo, _, _) = mkDriftRepo(tempRoot / "drift-round", "delegate/delegate-nebflow-dg3", advance = "direct")
@@ -708,7 +724,7 @@ class DelegateTerminalSpec extends CatsEffectSuite:
       queueFootprint = _ => true
     )
     for
-      res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
+      res <- mkResourcesWithTestPort(system, tempRoot, new SilentLlm)
       (child, sup) <- noopRefs(system)
       // e2e：branch ref 缺失（rev-parse 不可确证）⇒ 闸 WARN 不罚
       (repo, _, _) = mkDriftRepo(tempRoot / "drift-gone", "delegate/delegate-nebflow-dg4", advance = "direct")
@@ -739,7 +755,7 @@ class DelegateTerminalSpec extends CatsEffectSuite:
     val captured = ListBuffer.empty[DelegateJudge.TerminalInput]
     try
       for
-        res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
+        res <- mkResourcesWithTestPort(system, tempRoot, new SilentLlm)
         // fake 判定机（后装覆盖真机——同②③⑤装配序）：捕获 gitDigest 输入
         _ = DelegateJudge.DelegateJudgePort.install(
           new DelegateJudge.DelegateJudgePort.Face:
@@ -891,7 +907,7 @@ class DelegateTerminalSpec extends CatsEffectSuite:
     val system = ActorSystem(s"dt-13-${scala.util.Random.nextInt(100000)}")
     try
       for
-        res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
+        res <- mkResourcesWithTestPort(system, tempRoot, new SilentLlm)
         // 同②③：真判定机在 mkResources 构造行安装，fake 必须后装才生效。
         // 判定机裁定 completed（「无可并之物」的误判形态——引擎凭确定性读数翻转）。
         _ = DelegateJudge.DelegateJudgePort.install(
@@ -991,7 +1007,7 @@ class DelegateTerminalSpec extends CatsEffectSuite:
     val system = ActorSystem(s"dt-14-${scala.util.Random.nextInt(100000)}")
     try
       for
-        res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
+        res <- mkResourcesWithTestPort(system, tempRoot, new SilentLlm)
         _ = DelegateJudge.DelegateJudgePort.install(
           new DelegateJudge.DelegateJudgePort.Face:
             def judgeTerminal(input: DelegateJudge.TerminalInput): IO[Option[DelegateJudge.Verdict]] =

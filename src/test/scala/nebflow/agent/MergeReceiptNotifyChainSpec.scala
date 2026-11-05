@@ -10,7 +10,8 @@ import nebflow.actor.{ActorSystem, Behavior, Behaviors}
 import nebflow.actor.{AgentCommand, AgentEvent, AgentKind, AgentRecord}
 import nebflow.core.FileChangeTracker
 import nebflow.core.compact.HistoryArchiver
-import nebflow.core.delegate.{DelegateDeliveryReceipts, DelegateJudge, DelegateRegistry, MergeQueue}
+import nebflow.core.delegate.{DelegateJudge, DelegateRegistry, MergeDeclaration, MergeQueue}
+import nebflow.core.mail.SessionMailbox
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
 import nebflow.core.{RateLimiter, SessionStore}
@@ -43,8 +44,22 @@ import scala.concurrent.duration.*
  *
  * 断点锚（修复前红态）：10-29「停靠即投」让停靠件与合并回执共用
  * correlationId=delegateId，父 intake 的 DeliveredReceiptLedger 恰一次判重把合并
- * 回执滤除（external-event-duplicate-suppressed）——本 spec 的 R1 在修复前红在
- * 「停靠后父已收到 1 件（work result），合并后仍是那 1 件、payload 无判词行」。
+ * 回执滤除——本 spec 的 R1 在修复前红在「停靠后父已收到 1 件（work result），
+ * 合并后仍是那 1 件、payload 无判词行」。
+ *
+ * **判读面重对齐（P2 邮箱化 2026-11-01 · 本批 2026-11-06）**：本 spec 原先的观测面是
+ * 「父会话 actor 收到 `AgentCommand.ExternalEvent`」——那是 **P2 之前的 push 链**
+ * （`ref ! ExternalEvent`），delegate 轨终态早已改走**收件方持久邮箱**
+ * （`MailboxProducer.deliver` → `SessionMailbox` 落盘条目 + 门铃 best-effort；
+ * 见 BackoffSupervisor `notifyParentAndStopImpl` 的 P2 段）。因此「投出去了」的物理
+ * 事实 = **父会话磁盘邮箱里的条目**（写成功 = 必达，与父此刻是否 live 无关）。
+ * 本文件按新语义重写观测面（断言强度不降：仍钉「停靠零件 / 恰一次 / 判词行 +
+ * 工作结果全文随行」，只是读数从 actor 信箱换成落盘邮箱——**更硬**：条目在盘即可
+ * 跨重启核对）；同时补上旧夹具缺的一步：**父会话行必须存在**（`MailboxProducer`
+ * 对已删父会话拒绝写盘，这是它「不产无人读的垃圾文件」的守卫）。
+ *
+ * 这不是 P1（投递身份化）引入的回归：本套在 pre-P1 树（b971e6144）上同样 2/2 红
+ * （同一 waitUntil 超时），红因是上面两条判读面/夹具缺口，不是 P1 的闭包改动。
  */
 class MergeReceiptNotifyChainSpec extends CatsEffectSuite:
 
@@ -61,11 +76,13 @@ class MergeReceiptNotifyChainSpec extends CatsEffectSuite:
 
   override def beforeEach(context: munit.BeforeEach): Unit =
     MergeQueue.reset()
+    MergeDeclaration.reset()
     nebflow.ForceRemove.removeAll(tempRoot / "delegates")
     nebflow.ForceRemove.removeAll(tempRoot / "merge-channel")
 
   override def afterEach(context: munit.AfterEach): Unit =
     MergeQueue.reset()
+    MergeDeclaration.reset()
     DelegateJudge.DelegateJudgePort.clear()
 
   private val fakeLlm = new LlmHandle[IO]:
@@ -155,6 +172,10 @@ class MergeReceiptNotifyChainSpec extends CatsEffectSuite:
   private def parentEventsNow(events: List[AgentCommand]): List[AgentCommand.ExternalEvent] =
     events.collect { case e: AgentCommand.ExternalEvent => e }
 
+  /** 终态回执的**投递真值**（P2 邮箱化）：父会话落盘邮箱里的 delegate-terminal 条目。 */
+  private def terminalEntries(sid: String): IO[List[SessionMailbox.Entry]] =
+    SessionMailbox.scanPending(sid).map(_.filter(_.kind == "delegate-terminal"))
+
   /**
    * 真仓夹具：main 一个基提交 + `delegate/<sid>` 一个领先提交（模拟工作轮交付），
    * checkout 回 main（合并轮由夹具代 delegate 执行 `git merge --no-ff`）。
@@ -202,6 +223,16 @@ class MergeReceiptNotifyChainSpec extends CatsEffectSuite:
     for
       repo <- mkRepo(tmp, childSid)
       resources <- mkResources(system, tmp)
+      // 邮箱化的两个前提（旧夹具缺的两步，见文件头「判读面重对齐」）：
+      // ① 父/子会话行必须在场——MailboxProducer 对**已删**会话拒绝写盘（不产无人读的
+      //    垃圾文件）；② 属主宣告必须在案——P1 后的授窗闸只认「属主宣告完成且可合」
+      //    （判定机推出来的 ready-to-merge 不是宣告），否则成员停在 park、合并轮不成立。
+      _ <- resources.sessionStore.getOrCreateSession(parentSid, "merge-receipt-parent").void
+      _ <- resources.sessionStore.getOrCreateSession(childSid, "merge-receipt-child").void
+      _ <- IO(
+        MergeDeclaration
+          .write(childSid, MergeDeclaration.Source.ReportMerge, Some(s"delegate/$childSid"), Some("main"), None)
+      )
       _ <- resources.subAgentTaskStore.recordTask(mkTask(parentSid, childSid))
       _ <- IO {
         DelegateRegistry.put(
@@ -254,6 +285,7 @@ class MergeReceiptNotifyChainSpec extends CatsEffectSuite:
       )
       _ <- waitUntil(10.seconds)(IO(MergeQueue.isMergeRound(childSid)))
       parkedEvents <- parentEvents.get
+      parkedMailbox <- terminalEntries(parentSid)
       parkedWorkReport <- IO(DelegateRegistry.find(childSid).flatMap(_.workReport))
       // ── 合并轮：夹具代 delegate 执行真合并（机械验收的双亲+祖先判据）──
       _ <- IO.blocking {
@@ -268,37 +300,38 @@ class MergeReceiptNotifyChainSpec extends CatsEffectSuite:
           .loadTasks(parentSid)
           .map(_.exists(t => t.taskId == childSid && t.status == "completed"))
       )
-      _ <- waitUntil(15.seconds)(parentEvents.get.map(_.nonEmpty))
+      _ <- waitUntil(15.seconds)(terminalEntries(parentSid).map(_.nonEmpty))
       _ <- waitUntil(15.seconds)(IO(MergeQueue.find(childSid).exists(m => !m.open)))
-      events <- parentEvents.get
+      mailbox <- terminalEntries(parentSid)
       tasks <- resources.subAgentTaskStore.loadTasks(parentSid)
-      receipt <- IO(DelegateDeliveryReceipts.find(childSid))
       _ <- system.stopAll
     yield
       // 停靠面：父零通知（「合并前的中间态不吵」——修复前红态：此时父已收到 work result）
       assertEquals(parentEventsNow(parkedEvents), Nil, s"park phase must NOT notify the parent, got: $parkedEvents")
+      assertEquals(
+        parkedMailbox,
+        Nil,
+        "park phase must leave ZERO terminal entries in the parent mailbox (durable-mailbox reading)"
+      )
       assertEquals(
         parkedWorkReport,
         Some(workText),
         "the work result must be preserved into the registry slot at park time"
       )
       // 合并落地面：恰一次 completed 终态回执 = 判词行 + 工作结果全文一次到齐
-      val ext = parentEventsNow(events)
-      assertEquals(ext.size, 1, s"exactly ONE merge receipt must reach the dispatcher, got: $events")
-      assertEquals(ext.head.eventType, "completed")
-      assertEquals(ext.head.correlationId, Some(childSid))
+      assertEquals(mailbox.size, 1, s"exactly ONE merge receipt must reach the dispatcher mailbox, got: $mailbox")
+      val receipt = mailbox.head
+      assertEquals(receipt.event.eventType, "completed")
+      assertEquals(receipt.event.correlationId, Some(childSid))
       assert(
-        ext.head.payload.contains("[delegate-judge] verdict: completed"),
-        s"verdict line missing: ${ext.head.payload}"
+        receipt.event.payload.contains("[delegate-judge] verdict: completed"),
+        s"verdict line missing: ${receipt.event.payload}"
       )
-      assert(ext.head.payload.contains(mergeText), s"merge-round final text missing: ${ext.head.payload}")
+      assert(receipt.event.payload.contains(mergeText), s"merge-round final text missing: ${receipt.event.payload}")
       assert(
-        ext.head.payload.contains(workText),
-        s"the preserved work result must ride the single receipt: ${ext.head.payload}"
+        receipt.event.payload.contains(workText),
+        s"the preserved work result must ride the single receipt: ${receipt.event.payload}"
       )
-      // 交付回执落盘（补投机器面）
-      assert(receipt.isDefined, "the terminal delivery receipt must be recorded")
-      assertEquals(receipt.map(_.eventType), Some("completed"))
       // 队列关账 + 任务行终态
       assertEquals(tasks.find(_.taskId == childSid).map(_.status), Some("completed"))
     end for
@@ -313,6 +346,16 @@ class MergeReceiptNotifyChainSpec extends CatsEffectSuite:
     for
       repo <- mkRepo(tmp, childSid)
       resources <- mkResources(system, tmp)
+      // 邮箱化的两个前提（旧夹具缺的两步，见文件头「判读面重对齐」）：
+      // ① 父/子会话行必须在场——MailboxProducer 对**已删**会话拒绝写盘（不产无人读的
+      //    垃圾文件）；② 属主宣告必须在案——P1 后的授窗闸只认「属主宣告完成且可合」
+      //    （判定机推出来的 ready-to-merge 不是宣告），否则成员停在 park、合并轮不成立。
+      _ <- resources.sessionStore.getOrCreateSession(parentSid, "merge-receipt-parent").void
+      _ <- resources.sessionStore.getOrCreateSession(childSid, "merge-receipt-child").void
+      _ <- IO(
+        MergeDeclaration
+          .write(childSid, MergeDeclaration.Source.ReportMerge, Some(s"delegate/$childSid"), Some("main"), None)
+      )
       _ <- resources.subAgentTaskStore.recordTask(mkTask(parentSid, childSid))
       _ <- IO {
         DelegateRegistry.put(
@@ -364,6 +407,7 @@ class MergeReceiptNotifyChainSpec extends CatsEffectSuite:
       )
       _ <- waitUntil(10.seconds)(IO(MergeQueue.isMergeRound(childSid)))
       parkedEvents <- parentEvents.get
+      parkedMailbox <- terminalEntries(parentSid)
       // 合并轮夭折：合并窗超时取消（会话停靠期的既有取消链）
       _ <- supervisor ! AgentEvent.Cancelled(childSid, "merge-window-timeout")
       _ <- waitUntil(15.seconds)(
@@ -371,18 +415,26 @@ class MergeReceiptNotifyChainSpec extends CatsEffectSuite:
           .loadTasks(parentSid)
           .map(_.exists(t => t.taskId == childSid && t.status == "cancelled"))
       )
-      _ <- waitUntil(15.seconds)(parentEvents.get.map(_.nonEmpty))
-      events <- parentEvents.get
+      _ <- waitUntil(15.seconds)(terminalEntries(parentSid).map(_.nonEmpty))
+      mailbox <- terminalEntries(parentSid)
       _ <- system.stopAll
     yield
       assertEquals(parentEventsNow(parkedEvents), Nil, s"park phase must NOT notify the parent, got: $parkedEvents")
-      val ext = parentEventsNow(events)
-      assertEquals(ext.size, 1, s"exactly ONE terminal notification for the aborted merge round, got: $events")
-      assertEquals(ext.head.eventType, "cancelled")
-      assert(ext.head.payload.contains("merge-window-timeout"), s"cancel reason must ride: ${ext.head.payload}")
+      assertEquals(
+        parkedMailbox,
+        Nil,
+        "park phase must leave ZERO terminal entries in the parent mailbox (durable-mailbox reading)"
+      )
+      assertEquals(mailbox.size, 1, s"exactly ONE terminal notification for the aborted merge round, got: $mailbox")
+      val receipt = mailbox.head
+      assertEquals(receipt.event.eventType, "cancelled")
       assert(
-        ext.head.payload.contains(workText),
-        s"the preserved work result must ride the aborted-round terminal: ${ext.head.payload}"
+        receipt.event.payload.contains("merge-window-timeout"),
+        s"cancel reason must ride: ${receipt.event.payload}"
+      )
+      assert(
+        receipt.event.payload.contains(workText),
+        s"the preserved work result must ride the aborted-round terminal: ${receipt.event.payload}"
       )
     end for
   }

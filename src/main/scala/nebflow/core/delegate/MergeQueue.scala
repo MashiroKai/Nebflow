@@ -1425,14 +1425,16 @@ object MergeQueue:
           case e: Throwable => Right(baseTipOf(m)) // 闸面自身故障 = fail-open（不楔死队列）
   end baseReady
 
-  /** 阻塞类别（R1 面板/审计分类；**语义边界**：两类都是「机制挂起」，与
-    * delegate 自己申报的 standby（等作者裁定）毫无关系）。 */
+  /** 阻塞类别（R1 面板/审计分类；**语义边界**：都是「机制挂起」，与 delegate
+    * 自己申报的 standby（等作者裁定）毫无关系）。 */
   object BlockClass:
-    /** 无投递通道——**P1 投递身份化后不再产生**（身份投递没有「无通道」形态：
-     * 身份恒在，投不出去就是会话真没了 ⇒ owner-gone）。保留分类名只为让存量审计行/
-     * 面板历史值仍可解释，新代码不得再用它发起阻塞。 */
-    val NoChannel: String = "no-channel"
-    /** 闸未过（道忙 / 净空 / 方向闸）——放行条件暂不满足。 */
+    /** 闸未过（道忙 / 净空 / 方向闸）——放行条件暂不满足。
+     *
+     * 前身 `NoChannel`（`"no-channel"`）**已删除**（P1 投递身份化 2026-11-05）：身份投递
+     * 下不存在「无通道」形态——投不出去只有一种原因 = 收件会话真没了，而那是
+     * `owner-gone` **终态**（放行腿当拍即收口），不是可重试的阻塞。保留一个永无生产者
+     * 的分类值只会让面板出现没人能解释的状态；随之退役的还有它驱动的「成员自己的死结」
+     * 退避窗 + 上界降级阶梯（见 [[requeueBlocked]]）。 */
     val Gate: String = "gate"
   end BlockClass
 
@@ -1441,21 +1443,19 @@ object MergeQueue:
    * （#943：阻塞绝不静默——父会话收到可行动原因全文；同因去重，N 拍仍堵升级）；
    * 等下一拍。
    *
-   * **R1（2026-11-04）**：额外做三件事——
-   *   ① `blockedRounds + 1`；**无投递通道**（`no-channel`，成员自己的死结）且后面
-   *      确实有人能走 ⇒ `skipUntilMs = now + 指数退避(±抖动)`：本成员从队头退开，
-   *      后面能走的先走（不再出现「一个无通道成员堵死整条队」）；
-   *   ② `no-channel` 连续 [[MaxBlockedRounds]] 拍到顶 ⇒ `needsHuman`（显式「请人工
-   *      处理」态，队列停止自动授窗，一条 escalate 说明处置要求）——**绝不无限重试**；
-   *   ③ 让位生效时同一拍续放：[[pumpWith]] 下一位（[[MaxGrantChainDepth]] 封顶）。
+   * **P1 投递身份化（2026-11-05）后的唯一阻塞类 = 闸**（[[BlockClass]]）：
+   *   - 逐拍重试、保 FIFO 位次（`readyAt` 不动）——闸的条件由**外部**改变（道净 /
+   *     检出分支纠正 / 净空维护完成），队列侧读不到「条件已变」的信号，退避窗与
+   *     降级只会把成员永久钉在 needs-human，换不来任何放行（实测：三个既有 spec 的
+   *     升级拍点因此漂移）；
+   *   - 同因连续 [[EscalateAfterBlockedRounds]] 拍 ⇒ 恰一次 `escalate`（作者面，
+   *     见 [[noteBlockedOrFailed]]）——**绝不无限静默**；被准确升级之后仍逐拍重试
+   *     （条件一变当拍就能走）。
    *
-   * **为什么闸类阻塞（`gate`）不套退避/降级**（本批的一次实测修正）：道忙 / 净空 /
-   * 方向闸是对**同一个 base 工作区**的判读——队头过不去，后面的成员过的是同一道闸，
-   * 让位换不来任何放行，只会把既有「N 拍同因升级作者」的阶梯拖长（实测：三个既有
-   * spec 的升级拍点因此漂移）。而且闸的条件由外部改变（道净 / 检出分支纠正），
-   * 队列侧没有「条件已变」的信号，降级会把它永久钉在 needs-human。所以：
-   * **成员自己的死结退避降级，项目级的闸照旧逐拍重试 + N 拍升级**。
-   * 单成员队列同样不让位（[[otherEligibleWaitingLocked]]）：让位是为了让别人走。
+   * 旧 R1 的「成员自己的死结」退避窗（`skipUntilMs`）+ 上界降级（`needsHuman`）
+   * 随 `BlockClass.NoChannel` 一起退役：身份投递下投不出去 = 收件会话已删 =
+   * `owner-gone` **终态**（[[grant]] ⑥ 当拍收口），不是可重试的阻塞，因此不存在
+   * 「无通道成员堵死整条队」这一形态可退避。
    */
   private def requeueBlocked(
     reserved: Member,
@@ -1465,36 +1465,18 @@ object MergeQueue:
     depth: Int = 0,
     attempted: Set[String] = Set.empty
   ): Unit =
-    val now = System.currentTimeMillis()
-    var handOff: Boolean = false
     val memoTarget = lock.synchronized {
       members.get(reserved.delegateId) match
         case Some(cur) if cur.state == State.TurnGranted =>
           val rounds = cur.blockedRounds + 1
-          // 成员自己的死结（无投递通道）才值得让位与降级；且必须后面真有人能走。
-          val memberDeadlock = blockClass == BlockClass.NoChannel
-          val blockingOthers =
-            headSkip && memberDeadlock && otherEligibleWaitingLocked(cur.projectKey, cur.delegateId, now)
-          handOff = blockingOthers
-          // 两条上界（见批注）：正在饿死别人 ⇒ MaxBlockedRounds（8）；孤身死结 ⇒
-          // SoloMaxBlockedRounds（24，给既有「N 拍同因升级作者」阶梯留完整跑道）。
-          val ceiling = if blockingOthers then MaxBlockedRounds else SoloMaxBlockedRounds
-          val exhausted = memberDeadlock && rounds >= ceiling
-          val delay = backoffDelayMs(rounds, BackoffBaseMs, BackoffMaxMs, math.random())
+          // P1：闸未过 = 逐拍重试（见上注释）——不设退避窗、不降级（`skipUntilMs` /
+          // `needsHuman` 只由 parkRefused 与人工/自愈路径写）。
           val back = cur.copy(
             state = State.Waiting,
             grantedAt = None,
             lastBlockReason = Some(reason.take(2000)),
             blockedRounds = rounds,
-            skipUntilMs = if handOff && !exhausted then Some(now + delay) else None,
-            needsHuman =
-              if exhausted then
-                Some(
-                  s"merge queue gave up automatic grants after $rounds consecutive blocked rounds ($blockClass) — " +
-                    s"needs human handling: merge '${cur.branch}' into '${cur.baseBranch}' by hand (the queue fact-checks every tick " +
-                    s"and closes the membership as merged) or revive the owner session; last reason: ${reason.take(600)}"
-                )
-              else cur.needsHuman
+            skipUntilMs = None
           )
           MergeQueueChannel.sync(back.delegateId, back.state, memberJson(back)) // write-ahead（R5）
           members = members.updated(cur.delegateId, back)
@@ -1505,9 +1487,7 @@ object MergeQueue:
             Json.obj(
               "reason" -> reason.take(2000).asJson,
               "blockClass" -> blockClass.asJson,
-              "blockedRounds" -> rounds.asJson,
-              "skipMs" -> (if handOff then delay else 0L).asJson,
-              "needsHuman" -> exhausted.asJson
+              "blockedRounds" -> rounds.asJson
             )
           )
           Some(back)
@@ -1515,26 +1495,10 @@ object MergeQueue:
     }
     memoTarget.foreach { m =>
       noteBlockedOrFailed(m, "blocked", reason)
-      // 退避上界：一条显式升级（每成员只发一次——去重表独立于 blocked 去重，
-      // 不扰动既有「同因只发一次 / 状态变化重发」的 #943 语义）。
-      m.needsHuman.foreach { hint =>
-        val firstTime = lock.synchronized {
-          val seen = needsHumanAnnounced.contains(m.delegateId)
-          needsHumanAnnounced = needsHumanAnnounced + m.delegateId
-          !seen
-        }
-        if firstTime then BlockNotifyPort.deliver(m, "escalate", hint)
-      }
       logger.warn(
-        s"[merge-queue] grant blocked for '${reserved.delegateId}' ($blockClass, round ${m.blockedRounds}/$MaxBlockedRounds): $reason" +
-          (if handOff then " — head yielded (a healthy tail takes the window this tick)" else "") +
-          m.needsHuman.fold("")(h => s" — NEEDS HUMAN (queue stopped auto-granting): $h")
+        s"[merge-queue] grant blocked for '${reserved.delegateId}' ($blockClass, round ${m.blockedRounds}/$EscalateAfterBlockedRounds): $reason"
       )
     }
-    // ③ 让位后同一拍续放（一次 pump 内可连跳多个被堵成员；`attempted` 保每个成员
-    //    一拍只占窗一次，深度封顶不递归爆栈）。没让位就没有可续的窗口移交。
-    if handOff && depth < MaxGrantChainDepth then
-      pumpWith(reserved.projectKey, headSkip, depth + 1, attempted)
   end requeueBlocked
 
   /** 放行通知两态（P1 身份化：`Deferred` 随通道闭包一起退役——身份投递不存在

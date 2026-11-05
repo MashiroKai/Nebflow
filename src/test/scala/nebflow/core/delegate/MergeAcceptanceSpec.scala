@@ -47,6 +47,19 @@ class MergeAcceptanceSpec extends CatsEffectSuite:
 
   override def afterEach(context: munit.AfterEach): Unit = MergeQueue.reset()
 
+  /**
+   * `SharedResources` 的构造行会安装**生产**投递端口（磁盘邮箱 + 会话行在场判定）——
+   * `mkResources` 因此会把 beforeEach 里装好的测试端口顶掉，而本套夹具的 delegate 行
+   * 是直写 `DelegateRegistry` 的（会话行不存在）⇒ 生产端口如实回 `parent-session-gone`
+   * ⇒ 放行即 owner-gone，合并轮形态当场失位（本套要判的是机械验收闸，不是投递可达性）。
+   */
+  private def mkResourcesWithTestPort(
+    system: ActorSystem,
+    tmp: os.Path,
+    llm: LlmHandle[IO]
+  ): IO[SharedResources] =
+    SpecResources.mkResources(system, tmp, llm).flatTap(_ => IO(nebflow.core.delegate.MergeQueueTestPorts.install()))
+
   private def g(dir: os.Path, args: String*): String =
     os.proc(Seq("git", "-C", dir.toString) ++ args).call(check = true, stdout = os.Pipe, stderr = os.Pipe).out.trim()
 
@@ -178,7 +191,7 @@ class MergeAcceptanceSpec extends CatsEffectSuite:
     val system = ActorSystem(s"ma-5-${scala.util.Random.nextInt(100000)}")
     try
       for
-        res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
+        res <- mkResourcesWithTestPort(system, tempRoot, new SilentLlm)
         (child, sup) <- noopRefs(system)
         // 分叉形态（支上真有一笔领先提交——台账 #896 起若 park 在 fork，放行时
         // 账实核对直接关账 merged，合并轮在飞形态就位不了）。
