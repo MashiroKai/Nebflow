@@ -1250,7 +1250,8 @@ function bindJevSectionEvents() {
     const style = /** @type {any} */ (input.style);
     const isMasked = style.webkitTextSecurity === 'disc';
     style.webkitTextSecurity = isMasked ? 'none' : 'disc';
-    eye.innerHTML = isMasked ? eyeOffSvg : eyeSvg;
+    eye.replaceChildren();
+    eye.insertAdjacentHTML('afterbegin', isMasked ? eyeOffSvg : eyeSvg);
     const label = t(isMasked ? 'settings.jev.keyHide' : 'settings.jev.keyShow');
     eye.setAttribute('aria-label', label);
     eye.title = label;

@@ -1325,8 +1325,6 @@ export default {
   // 两个新分组 = 「该配置节当前使用哪个提供方」的指针切换器（不是 agent 模型链）。
   'model.groupJev': 'Jev（插件分配）',
   'model.groupImagegen': '生图',
-  'model.groupJevHint': 'Jev 使用的模型与提供方由设置页「Jev」节决定。',
-  'model.groupImagegenHint': '生图使用的模型与提供方由设置页「生图」节决定。',
   'model.groupSwitch': '切换',
   'model.groupSwitched': '已切换到 {name}',
   'settings.advanced': '高级',

@@ -717,13 +717,13 @@ export function mountModelChainSection(container) {
 // `<details>/<summary>`（不是 <button>），首屏零新增可见高度。
 
 /**
- * 两个「面」的静态描述（读数端点 / 指针字段 / 标题与 hint 键 / data-group 名）。
+ * 两个「面」的静态描述（读数端点 / 指针字段 / 标题键 / data-group 名）。
  * 单点定义：读数、渲染、写通道三处都从这里取，禁第二份字面量。
- * @type {Array<{group: 'jev'|'imagegen', endpoint: string, pointer: string, titleKey: string, hintKey: string}>}
+ * @type {Array<{group: 'jev'|'imagegen', endpoint: string, pointer: string, titleKey: string}>}
  */
 const SWITCH_FACES = [
-  { group: 'jev', endpoint: '/api/config/jev', pointer: 'provider', titleKey: 'model.groupJev', hintKey: 'model.groupJevHint' },
-  { group: 'imagegen', endpoint: '/api/config/imagegen', pointer: 'defaultProvider', titleKey: 'model.groupImagegen', hintKey: 'model.groupImagegenHint' },
+  { group: 'jev', endpoint: '/api/config/jev', pointer: 'provider', titleKey: 'model.groupJev' },
+  { group: 'imagegen', endpoint: '/api/config/imagegen', pointer: 'defaultProvider', titleKey: 'model.groupImagegen' },
 ];
 
 /** group → 状态投影（`null` = 该面读数失败 ⇒ 该分组隐藏）。 */
@@ -795,15 +795,19 @@ function buildSwitchGroup(face, opts = {}) {
 
   const head = document.createElement(collapsible ? 'summary' : 'div');
   head.className = 'mp-group-head';
-  head.innerHTML = `<span class="mp-group-title">${esc(t(face.titleKey))}</span>`
-    + (current ? `<span class="mp-group-cur">${esc(current)}</span>` : '');
+  const title = document.createElement('span');
+  title.className = 'mp-group-title';
+  title.textContent = t(face.titleKey);
+  head.appendChild(title);
+  if (current) {
+    const cur = document.createElement('span');
+    cur.className = 'mp-group-cur';
+    cur.textContent = current;
+    head.appendChild(cur);
+  }
 
   const body = document.createElement('div');
   body.className = 'mp-group-body';
-  const hint = document.createElement('div');
-  hint.className = 'mp-group-hint';
-  hint.textContent = t(face.hintKey);
-  body.appendChild(hint);
 
   if (names.length === 0) {
     const empty = document.createElement('div');

@@ -1370,8 +1370,6 @@ export default {
   // NOT agent model chains.
   'model.groupJev': 'Jev (plugin allocation)',
   'model.groupImagegen': 'Image generation',
-  'model.groupJevHint': 'The model and provider Jev uses are set in Settings → Jev.',
-  'model.groupImagegenHint': 'The model and provider image generation uses are set in Settings → Image generation.',
   'model.groupSwitch': 'Switch',
   'model.groupSwitched': 'Switched to {name}',
   'settings.advanced': 'Advanced',
