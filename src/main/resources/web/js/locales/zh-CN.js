@@ -1723,6 +1723,15 @@ export default {
   'chat.copy': '复制',
   'human.details': '细节',
   // 认知二期产品批①选档器（§6.2 五档参数表产品化；档名/档价值观/覆盖参数）
+  // rich-render 批（2026-11-05）：图围栏 / SVG 围栏 / 公式共用的失败态与读数。
+  'fence.renderFailed': '图表渲染失败',
+  'fence.showSource': '展开源码',
+  'fence.hideSource': '收起源码',
+  'fence.sanitized': '已移除 {n} 项不安全内容',
+  'fence.svgParseFailed': 'SVG 语法错误',
+  'fence.svgRootRequired': '根元素不是 svg',
+  'fence.svgNothingLeft': '无可绘制内容',
+  'fence.mathFailed': '公式渲染失败',
   'mermaid.showSource': '查看源码',
   'mermaid.hideSource': '收起源码',
   'chat.copyFailed': '复制失败',
