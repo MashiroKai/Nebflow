@@ -5,13 +5,16 @@
 /* 收窄 + 齐平批 2026-11-04（UI 批次审计 D 档 R69 / R70 收口批；台账 #1475⑤，
    作者 recall 2026-11-03 18:30 + 2026-11-04 11:09）：
    · R69 收窄：改前 `#input-area` 是 left:0/right:0 且 bar 无 max-width ⇒ 两侧留白
-     **0.0 / 0.0**（完全顶满）。现改由本层的水平内距供留白 —— 桌面 = --ds-space-4
-     (16px 栅格档令牌，#header 的**同一槽**以水平外距消费 ⇒ 输入条外盒与顶栏外盒
-     左右缘逐像素重合 = 作者令「输入框宽度 = 顶栏宽度」的单源实现；收口裁定
-     2026-11-05 09:40：同档即用既有档位，不新造 --chat-gutter-x 别名)，
-     手机层 = --dock-inset-x (12px，见 mobileLayer.css 同名块)
-     ⇒ 两侧逐值相等、且手机档与 dock 胶囊同一竖轴边距。留白走**外距**不占 bar 自身
-     padding（bar 的 6/12px 是内距，与本项无关）。
+     **0.0 / 0.0**（完全顶满）。现改由本层的水平内距供留白 —— 桌面 = 共用槽
+     --ds-main-col-edge-x（design-system.css 出生行；**同一槽**由 #header 以水平外距
+     消费 ⇒ 输入条外盒与顶栏外盒左右缘逐像素重合 = 作者令「输入框宽度 = 顶栏宽度」
+     的单源实现），手机层 = --dock-inset-x (12px，见 mobileLayer.css 同名块)
+     ⇒ 桌面两侧逐值相等、且手机档与 dock 胶囊同一竖轴边距。留白走**外距**不占 bar
+     自身 padding（bar 的 6/12px 是内距，与本项无关）。
+     宽度还原批（header-input-width-align 2026-11-05，作者令「我让统一的意思是跟
+     Header 的宽度保持一致，现在反而把 Header 缩短了」）：该槽值由 16px 归零 ⇒
+     本层水平内距为 0，bar 外盒与顶栏玻璃盒同铺 #main 全宽（顶栏是锚，输入条向它
+     看齐，反方向不许做）。
    · R70 齐平：本层底缘外留白 4px 归零 —— 让位由 #main 的 10px 底距供（见
      split.css #main 注），input 条底缘因此与 #sidebar / #canvas-panel 底缘齐平
      （改前差 6px / 10px）。safe-area 仍在（iOS 悬浮层场景 env() 非零时照旧让开）。 */
@@ -23,7 +26,7 @@
   z-index: 20;
   /* Safe area (viewport-fit=cover): keeps the composer above the browser's
      own home-indicator / toolbar controls on phone viewports. */
-  padding: 0 var(--ds-space-4) env(safe-area-inset-bottom, 0px);
+  padding: 0 var(--ds-main-col-edge-x) env(safe-area-inset-bottom, 0px);
   pointer-events: none;
 }
 
