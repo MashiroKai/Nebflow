@@ -785,6 +785,10 @@ export default {
   // the popup's no-match state and its ARIA label only.
   'mention.title': 'Projects',
   'mention.noMatch': 'No matching projects',
+  // `#` todo-reference completion (todo name+detail batch, 2026-11-05).
+  'todoComplete.title': 'Todos',
+  'todoComplete.noMatch': 'No matching todos',
+  'todoComplete.detailUnavailable': 'This todo is not in the current list',
   'modal.newSession': 'New Session',
   'modal.sessionName': 'Session name',
   'modal.cancel': 'Cancel',
@@ -3159,6 +3163,9 @@ export default {
   'todoface.done': 'Done',
   'todoface.titlePh': 'Title',
   'todoface.notesPh': 'Notes (optional)',
+  // Two-field split (todo name+detail batch, 2026-11-05).
+  'todoface.detailToggle': 'Show details',
+  'todoface.detailFieldLabel': 'Details',
   'todoface.prioNone': 'None',
   'todoface.prioLow': 'Low',
   'todoface.prioMed': 'Med',

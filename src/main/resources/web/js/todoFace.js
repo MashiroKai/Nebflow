@@ -117,6 +117,24 @@ const BLANK_DRAG_PX = 8;
 
 // ── 小件 ────────────────────────────────────────────────────────────────
 
+/** 行尾 detail 折角钮的下折箭头（两段化批 2026-11-05）：命名空间 API 装配，
+ *  零裸 innerHTML（component-contract R5）；颜色走 currentColor，不新增色值。 */
+function chevronEl() {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 12 12');
+  svg.setAttribute('aria-hidden', 'true');
+  const path = document.createElementNS(NS, 'path');
+  path.setAttribute('d', 'M3 5l3 3 3-3');
+  path.setAttribute('fill', 'none');
+  path.setAttribute('stroke', 'currentColor');
+  path.setAttribute('stroke-width', '1.5');
+  path.setAttribute('stroke-linecap', 'round');
+  path.setAttribute('stroke-linejoin', 'round');
+  svg.appendChild(path);
+  return svg;
+}
+
 function el(tag, cls, text) {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
@@ -825,7 +843,7 @@ class TodoFace {
     if (editing) {
       this.titleInput = el('input', 'tfl-row-title-input');
       this.titleInput.type = 'text';
-      this.titleInput.value = item.title;
+      this.titleInput.value = item.name;
       this.titleInput.placeholder = t('todoface.titlePh');
       this.titleInput.setAttribute('aria-label', t('todoface.titlePh'));
       this.titleInput.addEventListener('keydown', (e) => {
@@ -833,8 +851,8 @@ class TodoFace {
       });
       titleline.appendChild(this.titleInput);
     } else {
-      const title = el('span', 'tfl-row-title', item.title);
-      title.title = item.title;
+      const title = el('span', 'tfl-row-title', item.name);
+      title.title = item.name;
       titleline.appendChild(title);
       // 标签徽标（总条目视图；行尾右对齐与标题同行，标题优先截断——复刻）
       if (todoStore.isAllView()) {
@@ -848,10 +866,28 @@ class TodoFace {
       }
     }
     main.appendChild(titleline);
-    if (item.notes && !editing) {
-      const notes = el('span', 'tfl-row-notes', item.notes);
-      notes.title = item.notes;
-      main.appendChild(notes);
+    // detail 折叠（两段化，待办结构化批 2026-11-05）：列表行默认**只显 name**，
+    // detail 收在一行折叠区里；行尾折角钮切换，展开态 = 多行全文（CSS --open）。
+    if (item.detail && !editing) {
+      const foldBtn = el('button', 'tfl-row-fold');
+      foldBtn.type = 'button';
+      foldBtn.setAttribute('aria-expanded', 'false');
+      foldBtn.setAttribute('aria-label', t('todoface.detailToggle'));
+      foldBtn.title = t('todoface.detailToggle');
+      foldBtn.appendChild(chevronEl());
+      const detail = el('div', 'tfl-row-detail', item.detail);
+      detail.hidden = true;
+      foldBtn.addEventListener('click', (e) => {
+        // 行体点击 = 进编辑；折叠钮必须自己吃掉事件，否则一按就跳编辑态。
+        e.preventDefault();
+        e.stopPropagation();
+        const open = detail.hidden;
+        detail.hidden = !open;
+        foldBtn.setAttribute('aria-expanded', String(open));
+        row.classList.toggle('tfl-row-open', open);
+      });
+      titleline.appendChild(foldBtn);
+      main.appendChild(detail);
     }
     if (item.due != null && !editing) {
       const due = el('span', 'tfl-row-due');
@@ -948,16 +984,14 @@ class TodoFace {
 
   buildEditPanel(item) {
     const panel = el('div', 'tfl-edit-panel');
-    // 备注（单行，回车保存——复刻「多行 Return=换行永不 onSubmit」教训）
-    const notes = el('input', 'tfl-edit-notes');
-    notes.type = 'text';
-    notes.value = item.notes || '';
-    notes.placeholder = t('todoface.notesPh');
-    notes.setAttribute('aria-label', t('todoface.notesPh'));
-    notes.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !isImeComposing(e, notes)) { e.preventDefault(); e.stopPropagation(); this.saveEditing(); }
-    });
-    panel.appendChild(notes);
+    // detail（两段化的第二段；多行文本域 —— 换行归内容，不吞回车保存语义：
+    // name 输入框仍是「回车即保存」的唯一入口）
+    const detailEl = el('textarea', 'tfl-edit-notes tfl-edit-detail');
+    detailEl.rows = 2;
+    detailEl.value = item.detail || '';
+    detailEl.placeholder = t('todoface.notesPh');
+    detailEl.setAttribute('aria-label', t('todoface.detailFieldLabel'));
+    panel.appendChild(detailEl);
     // 重要度四选
     const prioRow = el('div', 'tfl-edit-prio');
     this.editPrio = item.priority;
@@ -996,7 +1030,7 @@ class TodoFace {
     });
     dueRow.append(toggle, dueHolder);
     panel.appendChild(dueRow);
-    this.editDraft = { notesEl: notes, dueInput, get hasDue() { return hasDue; } };
+    this.editDraft = { notesEl: detailEl, dueInput, get hasDue() { return hasDue; } };
     return panel;
   }
 
@@ -1094,16 +1128,16 @@ class TodoFace {
   saveEditing() {
     if (!this.editingId) return;
     const id = this.editingId;
-    const title = this.titleInput ? this.titleInput.value : '';
-    const notes = this.editDraft && this.editDraft.notesEl ? this.editDraft.notesEl.value : '';
+    const name = this.titleInput ? this.titleInput.value : '';
+    const detail = this.editDraft && this.editDraft.notesEl ? this.editDraft.notesEl.value : '';
     const due = this.editDraft && this.editDraft.hasDue && this.editDraft.dueInput.value
       ? new Date(this.editDraft.dueInput.value).getTime() : null;
     const priority = this.editPrio != null ? this.editPrio : 0;
     this.editingId = null;
     this.editDraft = null;
     this.titleInput = null;
-    // 空标题照存（EventKit 允许空标题行——复刻 saveEdits 原语义）
-    todoStore.updateItem(id, { title, notes, due, priority });
+    // 空 name 照存（EventKit 允许空标题行——复刻 saveEdits 原语义）
+    todoStore.updateItem(id, { name, detail, due, priority });
     this.expandedJustRendered = true;
     this.renderRows();
     this.refocusList();
@@ -1127,9 +1161,9 @@ class TodoFace {
 
   saveCreate() {
     if (!this.creating) return;
-    const title = this.createTitle ? this.createTitle.value : '';
+    const name = this.createTitle ? this.createTitle.value : '';
     const notesEl = this.listInner.querySelector('.tfl-create-panel .tfl-edit-notes');
-    const notes = notesEl ? notesEl.value : '';
+    const detail = notesEl instanceof HTMLInputElement || notesEl instanceof HTMLTextAreaElement ? notesEl.value : '';
     const dueEl = this.listInner.querySelector('.tfl-create-panel .tfl-due-input');
     const dueOn = this.listInner.querySelector('.tfl-create-panel .tfl-switch.on') != null;
     const due = dueOn && dueEl && dueEl.value ? new Date(dueEl.value).getTime() : null;
@@ -1137,9 +1171,9 @@ class TodoFace {
     this.createTitle = null;
     this.renderRows();
     this.renderFooter();
-    if (title.trim()) {
+    if (name.trim()) {
       todoStore.createItem({
-        tagId: todoStore.activeTagId, title, notes,
+        tagId: todoStore.activeTagId, name, detail,
         due, priority: this.createPrio || 0,
       });
     }

@@ -374,6 +374,145 @@ function restoreMentions(html, blocks) {
   });
 }
 
+// === `#` 待办引用渲染（待办结构化批, 2026-11-05 作者令「允许使用 # 来引用待办」）===
+//
+// 与 `@` 同一条渲染管线、同一套「最长名匹配」算法，只是触发符与边界判据不同：
+//   · 触发符 `#`，起始门与 `@` 一致（前置 ASCII 字母/数字不触发，行首/空白/汉字/
+//     中文标点之后触发）；
+//   · `#` 后紧跟纯数字（任务号形状：井号+数字）或 3/4/6/8 位十六进制（CSS 色值
+//     形状：井号+十六进制）**不识别**
+//     —— 与补全侧的门禁逐条对齐（同一份判据文字，两处各自实现但规则同源）；
+//   · 名字结束边界：空、非字母数字非汉字（标点/空白）—— 中文逗号句号紧跟其后
+//     也照样收，这是 `@` 那套"必须空白"判据在中文里的必然放宽；
+//   · **识别不到就原样显示**：匹配失败不吞字，扫描只跳过这一个 `#` 继续走。
+// 数据面同样走 provider（main.js 注入 todoStore.openItems 快照），本文件不 import
+// 待办 store —— 与 @ 提及保持同一个单向依赖形状。
+
+/**
+ * 一条可引用的待办（渲染侧只需要名字与详情/ id）。
+ * @typedef {{name: string, detail?: string, id?: string}} MentionTodo
+ */
+
+/** @type {null | (() => {todos: MentionTodo[], gen: number})} */
+let _todoProvider = null;
+
+/**
+ * 注入待办清单读口（main.js 启动时一次）。provider 是唯一数据路径：
+ * 本模块不取数、不缓存待办。
+ * @param {() => {todos: MentionTodo[], gen: number}} fn
+ */
+export function setTodoListProvider(fn) {
+  _todoProvider = fn;
+}
+
+/**
+ * 当前待办清单状态；安全回落 = 空清单（清单未到 ⇒ 引用按纯文本显示）。
+ * @returns {{todos: MentionTodo[], gen: number}}
+ */
+function todoListState() {
+  if (!_todoProvider) return { todos: [], gen: 0 };
+  try {
+    const s = _todoProvider();
+    if (s && Array.isArray(s.todos)) return { todos: /** @type {MentionTodo[]} */ (s.todos), gen: s.gen };
+  } catch (_) { /* provider 打嗝不能影响渲染 */ }
+  return { todos: [], gen: 0 };
+}
+
+/** `#` 之后的 token 若命中色值/任务号形状 ⇒ 不是待办引用。 */
+const TODO_DIGIT_HEAD_RE = /^\d/;
+const TODO_HEX_SHAPE_RE = /^[0-9a-f]{3}$|^[0-9a-f]{4}$|^[0-9a-f]{6}$|^[0-9a-f]{8}$/i;
+/** 名字后续字符必须是"词边界"（非字母数字非汉字）才算完整引用。 */
+const TODO_WORD_CONT_RE = /[\p{L}\p{N}_]/u;
+
+/**
+ * `#` 处的待办引用最长名匹配。
+ *
+ * @param {string} text 正在扫描的片段
+ * @param {number} at `#` 的下标
+ * @param {MentionTodo[]} todos 只读清单快照
+ * @returns {{todo: MentionTodo, len: number} | null}
+ */
+function matchTodoAt(text, at, todos) {
+  const after = text.slice(at + 1);
+  if (!after) return null;
+  // 形状门禁（与补全侧 blockDigitStart / blockHexColor 同源）：任务号与色值一律
+  // 不认作待办引用。
+  if (TODO_DIGIT_HEAD_RE.test(after)) return null;
+  const token = after.split(/[\s，。！？；：、,.!?;:)/\]】」』]/)[0];
+  if (token && TODO_HEX_SHAPE_RE.test(token)) return null;
+  /** @type {MentionTodo | null} */
+  let best = null;
+  let bestLen = 0;
+  for (const todo of todos) {
+    const name = todo && typeof todo.name === 'string' ? todo.name : '';
+    if (!name || after.length < name.length) continue;
+    if (after.slice(0, name.length).toLowerCase() !== name.toLowerCase()) continue;
+    const tail = after.slice(name.length);
+    if (tail && TODO_WORD_CONT_RE.test(tail[0])) continue;
+    if (name.length > bestLen) {
+      bestLen = name.length;
+      best = todo;
+    }
+  }
+  return best ? { todo: best, len: bestLen } : null;
+}
+
+/**
+ * 把 prose 片段里的 `#<待办名>` 换成 TODOBLOCK 占位符（收集进 `out`），
+ * marked.parse 之后再还原成可点 chip。纯函数：无命中 ⇒ 原样返回。
+ *
+ * @param {string} seg
+ * @param {Array<{todo: MentionTodo, slice: string}>} out
+ * @returns {string}
+ */
+function protectTodoRefs(seg, out) {
+  const { todos } = todoListState();
+  if (todos.length === 0) return seg;
+  let result = '';
+  let i = 0;
+  while (i < seg.length) {
+    const at = seg.indexOf('#', i);
+    if (at < 0) {
+      result += seg.slice(i);
+      break;
+    }
+    // 起始门与 `@` 逐字同源：ASCII 字母/数字之前不触发（`C#` / `a#1`）。
+    const wordStart = at === 0 || !/[a-zA-Z0-9]/.test(seg[at - 1]);
+    const hit = wordStart ? matchTodoAt(seg, at, todos) : null;
+    if (hit) {
+      out.push({ todo: hit.todo, slice: seg.slice(at + 1, at + 1 + hit.len) });
+      result += seg.slice(i, at) + 'TODOBLOCK' + (out.length - 1) + 'END';
+      i = at + 1 + hit.len;
+    } else {
+      result += seg.slice(i, at + 1);
+      i = at + 1;
+    }
+  }
+  return result;
+}
+
+/**
+ * 还原 TODOBLOCK 占位符为可点待办 chip。动态值一律 escapeHtml；落进双引号
+ * 属性的值再转义 `"`（escapeHtml 是文本节点序列化器，不转引号）。
+ *
+ * @param {string} html
+ * @param {Array<{todo: MentionTodo, slice: string}>} blocks
+ * @returns {string}
+ */
+function restoreTodoRefs(html, blocks) {
+  return html.replace(RE_TODO_RESTORE, (m, idx) => {
+    const rec = blocks[parseInt(idx, 10)];
+    if (!rec) return m;
+    const t0 = rec.todo;
+    const nameAttr = escapeHtml(t0.name).replace(/"/g, '&quot;');
+    const idAttr = escapeHtml(t0.id || '').replace(/"/g, '&quot;');
+    const detailAttr = escapeHtml(t0.detail || '').replace(/"/g, '&quot;');
+    return '<span class="todo-tag" data-todo="' + nameAttr + '" data-todo-id="' + idAttr
+      + '" data-todo-detail="' + detailAttr + '" role="button" tabindex="0">#'
+      + escapeHtml(rec.slice) + '</span>';
+  });
+}
+
 // === KaTeX math rendering - protect math blocks from Markdown processing ===
 // Bounded LRU cache for rendered markdown HTML. History restore and session
 // switching re-render identical content; caching avoids repeated
@@ -410,6 +549,7 @@ const RE_OUTPUT_RESTORE = /OUTPUTBLOCK(\d+)END/g;
 const RE_OUTPUT_PAIR = /<output>([\s\S]*?)<\/output>/g;
 const RE_OUTPUT_ANY_TAG = /<\/?output>/g;
 const RE_MENTION_RESTORE = /MENTIONBLOCK(\d+)END/g;
+const RE_TODO_RESTORE = /TODOBLOCK(\d+)END/g;
 // msgchip 批（2026-11-01 作者令「消息身份牌系统升级」）：带短名引用形态
 // {{msg:sid8-seq6|短名}} → 渲染成可点小牌 chip（牌面 = 短名；点击弹小窗看原消息）。
 // 语法与引擎侧单一实现源（scala nebflow.core.msgtokens.MsgTokenRegistry.TokenRegex）
@@ -442,7 +582,7 @@ export function renderMarkdownWithMath(text, parseVoice = true, opts) {
   if (opts && opts.cache === false) return _renderMarkdownWithMath(text, parseVoice, safe);
   // 🔴 safe 是 key 的一部分：同一段文本在两条信任档下产物不同，混键会把
   // 「agent 面可信渲染」与「外部消息安全渲染」互相串味（缓存投毒面）。
-  const key = `${parseVoice ? 1 : 0}${typeof marked !== 'undefined' ? 1 : 0}${typeof katex !== 'undefined' ? 1 : 0}${getLocale()}|${outputBlockEnabled() ? 1 : 0}${mentionListState().gen}|${safe ? 'S' : 'T'}|${text}`;
+  const key = `${parseVoice ? 1 : 0}${typeof marked !== 'undefined' ? 1 : 0}${typeof katex !== 'undefined' ? 1 : 0}${getLocale()}|${outputBlockEnabled() ? 1 : 0}${mentionListState().gen}.${todoListState().gen}|${safe ? 'S' : 'T'}|${text}`;
   const hit = _mdCache.get(key);
   if (hit !== undefined) {
     _mdCache.delete(key);
@@ -782,6 +922,9 @@ function _renderMarkdownInternal(protected_, voiceBlocks, noHuman, outputBlocks,
   const humanOn = !noHuman && !safe && _humanFencesBalanced(protected_);
   const mathBlocks = [];
   const mentionBlocks = [];
+  // `#` 待办引用块（待办结构化批 2026-11-05）：与 @ 提及同一条保护/还原管线，
+  // 代码段已在 RE_CODE_SPLIT 里被切走 ⇒ 围栏/行内代码内的 `#` 天然 inert。
+  const todoBlocks = [];
   // Math is protected BEFORE marked.parse and restored AFTER it on the whole
   // HTML string, so the protection must be blind to code regions — otherwise
   // a `$` inside code (shell/JS snippets) is paired up and the KaTeX markup is
@@ -809,7 +952,11 @@ function _renderMarkdownInternal(protected_, voiceBlocks, noHuman, outputBlocks,
   };
   protected_ = protected_
     .split(RE_CODE_SPLIT)
-    .map((seg, i) => (i % 2 === 1 ? seg : protectMentions(protectMath(protectMsgTokens(seg, msgTokens)), mentionBlocks)))
+    .map((seg, i) => (i % 2 === 1
+      ? seg
+      : protectTodoRefs(
+        protectMentions(protectMath(protectMsgTokens(seg, msgTokens)), mentionBlocks),
+        todoBlocks)))
     .join('');
   // safe 档：**逐次调用**注入硬化渲染器（marked.parse 的 per-call option，
   // 实测不污染后续调用 ⇒ agent 面永远走默认渲染器；禁 marked.use 全局换装，
@@ -892,6 +1039,9 @@ function _renderMarkdownInternal(protected_, voiceBlocks, noHuman, outputBlocks,
   });
   // Restore mention blocks as clickable blue spans (shared-list longest match).
   html = restoreMentions(html, mentionBlocks);
+  // Restore `#` 待办引用块同样式 chip（待办结构化批）：未匹配的 `#` 从未被
+  // 换进占位符，所以这里只还原真命中，其余文本原样留着（不吞字）。
+  html = restoreTodoRefs(html, todoBlocks);
   // Restore msg-token chips (msgchip 批): 带短名引用形态 → 可点小牌（牌面 = 短名）。
   // 交互面（popover/取数）单点在 js/chat/msgTokenChip.js —— 文档级事件委托，不在此绑
   // （innerHTML 重建会掉 listener；委托天然存活于流式/历史/重放全渲染腿）。
@@ -926,29 +1076,51 @@ function _renderMarkdownInternal(protected_, voiceBlocks, noHuman, outputBlocks,
  */
 export function appendTextWithMentions(parent, text) {
   const { projects } = mentionListState();
-  if (!projects.length) {
+  const { todos } = todoListState();
+  if (!projects.length && !todos.length) {
     parent.appendChild(document.createTextNode(text));
     return;
   }
   let rest = text;
   for (;;) {
-    const at = rest.indexOf('@');
-    if (at < 0) break;
+    // 两个触发符里取更靠前的那个（同一次扫描处理 @ 与 #，顺序 = 文本顺序）。
+    const atMention = projects.length ? rest.indexOf('@') : -1;
+    const atTodo = todos.length ? rest.indexOf('#') : -1;
+    /** @type {{ch: string, at: number}} */
+    let pick = { ch: '@', at: atMention };
+    if (atTodo >= 0 && (atMention < 0 || atTodo < atMention)) pick = { ch: '#', at: atTodo };
+    if (pick.at < 0) break;
+    const { ch, at } = pick;
     const wordStart = at === 0 || MENTION_WHITESPACE_RE.test(rest[at - 1]);
-    const hit = wordStart ? matchMentionAt(rest, at, projects) : null;
+    const hit = !wordStart
+      ? null
+      : (ch === '@' ? matchMentionAt(rest, at, projects) : matchTodoAt(rest, at, todos));
     if (!hit) {
-      // Keep scanning after this non-matching '@'.
+      // Keep scanning after this non-matching trigger char.
       parent.appendChild(document.createTextNode(rest.slice(0, at + 1)));
       rest = rest.slice(at + 1);
       continue;
     }
     if (at > 0) parent.appendChild(document.createTextNode(rest.slice(0, at)));
     const span = document.createElement('span');
-    span.className = 'mention-tag';
-    span.setAttribute('data-project', hit.canonical);
-    span.textContent = '@' + rest.slice(at + 1, at + 1 + hit.len);
+    if (ch === '@') {
+      const mhit = /** @type {{canonical: string, len: number}} */ (hit);
+      span.className = 'mention-tag';
+      span.setAttribute('data-project', mhit.canonical);
+      span.textContent = '@' + rest.slice(at + 1, at + 1 + mhit.len);
+      rest = rest.slice(at + 1 + mhit.len);
+    } else {
+      const thit = /** @type {{todo: MentionTodo, len: number}} */ (hit);
+      span.className = 'todo-tag';
+      span.setAttribute('data-todo', thit.todo.name);
+      span.setAttribute('data-todo-id', thit.todo.id || '');
+      span.setAttribute('data-todo-detail', thit.todo.detail || '');
+      span.setAttribute('role', 'button');
+      span.setAttribute('tabindex', '0');
+      span.textContent = '#' + rest.slice(at + 1, at + 1 + thit.len);
+      rest = rest.slice(at + 1 + thit.len);
+    }
     parent.appendChild(span);
-    rest = rest.slice(at + 1 + hit.len);
   }
   if (rest) parent.appendChild(document.createTextNode(rest));
 }
@@ -969,7 +1141,8 @@ export function appendTextWithMentions(parent, text) {
  */
 export function enhanceMentionSpansInDom() {
   const { projects } = mentionListState();
-  if (!projects.length) return;
+  const { todos } = todoListState();
+  if (!projects.length && !todos.length) return;
   const bubbles = document.querySelectorAll('#chat .bubble, .flow-agent-modal .bubble');
   bubbles.forEach((bubble) => {
     const walker = document.createTreeWalker(bubble, NodeFilter.SHOW_TEXT, {
@@ -980,7 +1153,7 @@ export function enhanceMentionSpansInDom() {
       acceptNode(node) {
         const parent = node.parentElement;
         if (!parent) return NodeFilter.FILTER_REJECT;
-        if (parent.closest('pre, code, .voice-block, .mention-tag, .katex, button, svg, script, style')) {
+        if (parent.closest('pre, code, .voice-block, .mention-tag, .todo-tag, .katex, button, svg, script, style')) {
           return NodeFilter.FILTER_REJECT;
         }
         return NodeFilter.FILTER_ACCEPT;
@@ -993,42 +1166,63 @@ export function enhanceMentionSpansInDom() {
     while (node) {
       const textNode = /** @type {Text} */ (node);
       node = walker.nextNode();
-      wrapMentionsInTextNode(textNode, projects);
+      wrapMentionsInTextNode(textNode, projects, todos);
     }
   });
 }
 
 /**
- * Splice every mention hit of ONE text node into spans, right-to-left so
- * earlier hit indices stay valid while splitting.
+ * Splice every mention/todo-reference hit of ONE text node into spans,
+ * right-to-left so earlier hit indices stay valid while splitting.
  *
  * @param {Text} textNode
  * @param {MentionProject[]} projects read-only shared snapshot
+ * @param {MentionTodo[]} [todos] read-only shared snapshot（`#` 引用；缺省 = 不处理）
  */
-function wrapMentionsInTextNode(textNode, projects) {
+function wrapMentionsInTextNode(textNode, projects, todos = []) {
   const data = textNode.data;
-  /** @type {Array<{start: number, canonical: string, len: number}>} */
+  /** @type {Array<{start: number, len: number, canonical?: string, todo?: MentionTodo}>} */
   const hits = [];
   let scan = 0;
   while (scan < data.length) {
-    const idx = data.indexOf('@', scan);
+    const atMention = projects.length ? data.indexOf('@', scan) : -1;
+    const atTodo = todos.length ? data.indexOf('#', scan) : -1;
+    let idx = atMention;
+    let ch = '@';
+    if (atTodo >= 0 && (atMention < 0 || atTodo < atMention)) { idx = atTodo; ch = '#'; }
     if (idx < 0) break;
     const wordStart = idx === 0 || MENTION_WHITESPACE_RE.test(data[idx - 1]);
-    const hit = wordStart ? matchMentionAt(data, idx, projects) : null;
-    if (hit) {
-      hits.push({ start: idx, canonical: hit.canonical, len: hit.len });
-      scan = idx + 1 + hit.len;
+    const hit = !wordStart
+      ? null
+      : (ch === '@' ? matchMentionAt(data, idx, projects) : matchTodoAt(data, idx, todos));
+    if (hit && ch === '#') {
+      const thit = /** @type {{todo: MentionTodo, len: number}} */ (hit);
+      hits.push({ start: idx, len: thit.len, todo: thit.todo });
+      scan = idx + 1 + thit.len;
+    } else if (hit) {
+      const mhit = /** @type {{canonical: string, len: number}} */ (hit);
+      hits.push({ start: idx, len: mhit.len, canonical: mhit.canonical });
+      scan = idx + 1 + mhit.len;
     } else {
       scan = idx + 1;
     }
   }
   for (let h = hits.length - 1; h >= 0; h--) {
-    const { start, canonical, len } = hits[h];
+    const { start, len, canonical, todo } = hits[h];
     textNode.splitText(start + 1 + len); // tail (rest of the node) becomes a sibling
-    const mid = textNode.splitText(start); // mid = the '@<slice>' text node
+    const mid = textNode.splitText(start); // mid = the '@<slice>' / '#<slice>' text node
     const span = document.createElement('span');
-    span.className = 'mention-tag';
-    span.setAttribute('data-project', canonical);
+    if (todo) {
+      span.className = 'todo-tag';
+      span.setAttribute('data-todo', todo.name);
+      span.setAttribute('data-todo-id', todo.id || '');
+      span.setAttribute('data-todo-detail', todo.detail || '');
+      span.setAttribute('role', 'button');
+      span.setAttribute('tabindex', '0');
+    } else {
+      span.className = 'mention-tag';
+      span.setAttribute('data-project', canonical || '');
+    }
     span.textContent = mid.data;
     mid.replaceWith(span);
   }
