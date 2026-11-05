@@ -1,0 +1,47 @@
+{
+  "storeFiles": 111,
+  "N": 1769,
+  "registryIds": 1224,
+  "buckets": {
+    "head": 1411,
+    "parented": 249,
+    "wild": 109
+  },
+  "pct": {
+    "head": "79.8",
+    "parented": "14.1",
+    "wild": "6.2"
+  },
+  "wildByKind": {
+    "other-uuid": 28,
+    "node-*": 81
+  },
+  "wildStatus": {
+    "failed": 6,
+    "completed": 101,
+    "cancelled": 2
+  },
+  "distinctWildParents": 28,
+  "topParents": [
+    [
+      "52ad5890-ab0c-4418-b001-77debbc333ac",
+      21
+    ],
+    [
+      "node-4e5b22e3",
+      10
+    ],
+    [
+      "node-a4023eb1",
+      8
+    ],
+    [
+      "node-2726ed02",
+      5
+    ],
+    [
+      "node-338261c7",
+      5
+    ]
+  ]
+}
