@@ -108,6 +108,18 @@
 
 ---
 
-## 5. 未合并状态
+## 5. 合并状态（如实申报）
 
-本阶段四个提交在 `delegate/delegate-nebflow-f97716ed` 上。`main` 在本步执行期间**多次前进**（`2af513702` → … → 请见收尾报告的实测 tip），合并动作由收尾报告如实申报（`git merge-base --is-ancestor`）。
+本阶段四个提交 + 两个合并提交在分支 `delegate/delegate-nebflow-f97716ed` 上。
+
+`main` 在本步执行期间**连续前进 12 次**（`2af513702` → `8c5c26076` → `5709ba000` 等），
+因此分两次把 `main` 合入本分支（冲突各 1 处，均为「main 新增能力 vs 本分支已删团队半」的形状）：
+
+| 合并 | 冲突 | 处置 |
+|---|---|---|
+| `5166d9898`（main@`8c5c26076`） | `web/js/flowViewers.js` | main 侧唯一改动落在已删的 `openRules` 内（`font:` 简写→`var(--ds-fs-meta)`），取本分支版本 |
+| `a3f269721`（main@`5709ba000`） | `core/tools/AgentControlTool.scala` | 保留 main 的 freeze 展示腿（`freezeLines`），删掉 main 侧复活的 `|| teamRestartable` |
+
+**最终读数**：`HEAD = a3f269721`（merge main@`5709ba000`）；`git rev-list --left-right --count main...HEAD` = **0 11**（领先 11、落后 0）；
+`git merge-base --is-ancestor HEAD main` ⇒ **EXIT=1 = 未合并进 main**；工作树 0 改动。
+合并后 `compile` 14 s / `Test/compile` 3 s 全绿；受影响 24 spec：**Total 197 · Passed 197 · Failed 0 · Errors 0 · Ignored 2**。
