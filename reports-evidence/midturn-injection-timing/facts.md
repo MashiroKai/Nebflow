@@ -142,3 +142,108 @@ sbt -mem 2600 "testOnly nebflow.agent.BusyConsoleInputInjectionSpec nebflow.agen
   nebflow.agent.CompactionQueueStoreSpec nebflow.core.project.NodeMessagePersistenceSpec \
   nebflow.core.delegate.DelegateNotifyInjectSpec"                          # 43 条：42 绿 1 红(既有)
 ```
+
+## 8. 增补：收敛落地后的实测（实现节点，2026-11-05）
+
+本节是**实现后**追加的增补：§1-§7 是改前现状，本节是「三条腿收敛到单点」的真实读数与
+**结构性无法统一的部分**（如实记，不假装统一）。
+
+### 8.1 判定单点与三条腿的调用点
+
+单点 = `src/main/scala/nebflow/agent/InjectionTiming.scala`：
+`decide`（`InjectionTiming.scala:158`，唯一的「此刻注入 / 等下一个边界」判定）、
+`planBoundary`（`:217`，把两条队列按该判定合成一次边界的注入计划）、
+`hasInjectable`（`:254`，回合末腿的「该不该开注入轮」）。
+
+| 腿 | 生产调用点（都指向同一符号） | 判定 |
+|---|---|---|
+| ①用户（纯文本 `ImmediateInput`） | `AgentProcessing.scala:710` `InjectionTiming.planBoundary(...)` → `InjectionTiming.scala:158` | `InjectNow`（immediate 队首一件） |
+| ①′用户（typeless 帧 `UserInput`+`clientMessageId`+`blocks`） | 同上一条调用点（同一计划里 `humanFrames` 字段） | `InjectNow`（本批新纳入；此前落回合末） |
+| ②Mail（`DelegateNotify` → `ImmediateInput`；`MailTool` → `UserInput(source=mail)`） | 同上一条调用点（`immediate` / `mails` 字段） | `InjectNow`（mail 整包） |
+| ③node（`NodeDelivery.injectRunning` → `ImmediateInput(source=system)`） | 同上一条调用点（`immediate` 字段） | `InjectNow` |
+| 回落面（中断恢复 / 回合末） | `AgentProcessing.scala:282`（`Stage.AbortRecovery`）、`AgentFinishTurn.scala:573`+`:578`（`Stage.TurnEnd`） | 同判据、不同 stage 口径 |
+
+判据子句也只剩一份：`isMailSupplement`（`:101`）与 `isHumanFrame`（`:124`）都在该 object，
+`TurnBoundaryDrains.isMailSupplement` / `drainMailPackage` 改为**转发**（`TurnBoundaryDrains.scala:167` / `:187`）。
+
+### 8.2 五条断言 + L1b 的实测（`logs/green-5efbc90c6-20261105_092120-run1.log` / `-run2.log`）
+
+两份日志 = 同一 HEAD（`5efbc90c6`）**连跑两次**，各自 `Passed: Total 8, Failed 0, Errors 0, Passed 8`
+（8/8 全绿，含改前必红的 L1b）。逐条读数（两次一致）：
+
+`E:[MTIT L1] calls=2 roundCompleteBeforeBoundary2=0 inFirst=false inSecond=true secondHasBatchEcho=true`
+`E:[MTIT L1b] callsAfterBoundary1=2 inBoundaryRequest=Some(true) callsAfterTurnEnd=3 landing=1,2`
+`E:[MTIT L2] delegateInjectLive=true calls=2 inSecond=true`
+`E:[MTIT L2b] calls=2 inSecond=true`
+`E:[MTIT L3] sendNodeMessage=Right(...) calls=2 inSecond=true`
+`E:[MTIT L4] calls=3 afterBoundary1=Some(1) afterBoundary2=Some(1)`
+`E:[MTIT L5] roundCompleteBeforeIdle=0 calls=4 inTurnEndRound=Some(false) inNextTurn=Some(true) deliveries=0,0,0,1`
+
+L1b 由红转绿的确切读数变化：`inBoundaryRequest=Some(false) landing=3` → **`Some(true) landing=1,2`**
+—— 正文出现在**第 2 次 LLM 请求**（本次工具批次的续轮）里 = 本回合内的工具边界注入，
+不是「最终送达」。
+
+### 8.3 反向验红（`logs/reverse-red.log`）：单点确实承载三条腿
+
+做法：把 `InjectionTiming.decide` **真改代码**短路为「本边界永不注入」（恒 `HoldForNextBoundary`），
+跑同一套断言 ⇒ `E:Failed: Total 8, Failed 6, Errors 0, Passed 2`：
+**L1 / L1b / L2 / L2b / L3 / L4 六条复红**（L1 `second=run the gated batches` 无正文、
+L1b `landingIndex=3`、L4 `afterBoundary1=Some(0)`），L5 与 G1 仍绿（它们本就是回落面／纯函数读数）。
+复原后 `git diff` 输出为空、`git status --short` 只剩该次红日志本身（随后随证据提交）；
+复原态下连跑两次全绿（§8.2）。
+
+### 8.2-b 幂等（L4）曾出现一次红 —— 如实记录与根因（不静默抹掉）
+
+**事实**：09:18:52 的一次运行读数 `Failed: Total 8, Failed 1, Passed 7`，红的是
+`L4 幂等（转录里必须恰一次）`：`afterBoundary1=Some(1) afterBoundary2=Some(2)`，
+日志另存 `logs/red-l4-stale-queue-replay-20261105_091852.log`（未删除、未覆盖）。
+
+**根因（不是判定点跨边界重复注入）**：该次日志的边界事件行是
+`event=immediate-input-injected-at-tools-complete detail=batch=1 texts=L4-IDEMPOTENT … remaining=1`
+—— **第一个边界投完之后队列里还剩一件**，第二个边界把剩下的那件又投了一次。残留那件的来源：
+本 spec 夹具的 `dataRoot = target/test-midturn-injection-timing/data` **跨多次运行共用**，而会话
+spawn 即自投 `AgentCommand.RecoverPersistedQueues`（`AgentActor.scala:1035`）→
+`CompactionQueueStore.load(<dataRoot>/sessions/<sid>/injection-queues.json)`
+（`AgentIdle.scala:738-752`）⇒ **上一轮运行留在盘上的 F2 队列快照**被当「崩溃未投递件」
+重放进 `pendingImmediateInputs`。同一正文于是两份（上一轮残留 + 本轮新入队），第一个边界消费
+新件、第二个边界消费残留件。判定点自身的单进程幂等是成立的：**消费即出队**（`remaining*`
+里不再有它）+ 窗展开件 `windowItems` 清零 + 边界注入同拍登记 `clientMessageId`。
+
+**修法（断言强度一字未放宽）**：`MidTurnInjectionTimingSpec.withGatedTurn` 在每个用例开始清空
+`<dataRoot>/sessions`（测试代码 `src/test/scala/nebflow/agent/MidTurnInjectionTimingSpec.scala`
+夹具段，附同文注释）⇒ 每个用例都从「新进程 + 空队列快照」起步 = 生产 spawn 无残留态的初始条件；
+L4 仍断言「第二个边界的请求里该正文恰出现 1 次」。**为何现在确定**：同一 HEAD（`5efbc90c6`）
+连跑两次均 8/8 绿、L4 两次都是 `afterBoundary1=Some(1) afterBoundary2=Some(1)`
+（收尾证据 §8.2）。
+
+**顺带如实标注的生产面（非本批引入、本批未改）**：`injection-queues.json` 的写点是「入队 +
+边界 drain 后快照」（`AgentProcessing.scala:994` 等），崩溃发生在「已注入、快照未刷新」的窗口时，
+重启重放仍可能把同一件再投一次 —— 这是 F2 崩溃重放面的既有窗口（同族注释见
+`NodeMessageLedger` / `DeliveredReceiptLedger` 的「快照-投递窗口」段），与「工具边界判定重复注入」
+不是同一件事，本批按最小改动纪律未动持久化面。
+
+### 8.4 结构性**无法**统一的腿与回落口径（如实记）
+
+1. **纯文本真人 `UserInput`（无 blocks / `fromUser=true`）仍落回合末。** 这是 `BusyConsoleInputInjectionSpec`
+   W3 的负对照面（2026-09-15「排队消息逐条独立 turn」裁定）。它**不是**本轮要修的承载形：
+   纯文本真人件在前端已走 `immediateInput` 帧（腿①，边界注入），仍走 `UserInput` 的那份是
+   显式 queue 旧轨。本批**刻意**不统一它 —— 统一它会直接推翻 Pinned 裁定，且没有作者点头。
+2. **前端 queue 模式 drain 腿带附件时与直投帧逐字节同形** ⇒ 引擎侧不可区分 ⇒ 该形现在也走
+   边界注入，等价于把 2026-09-15 裁定收窄为「显式 queue 模式的纯文本件」。**这是政策收窄、
+   非技术不确定**，代码注释与本节都在此如实留痕，待作者裁定；若作者要求保留 queue 模式语义，
+   需要前端在帧上加可判别标记（协议增量，本轮未做）。
+3. **compaction 挂起期间三腿一律留队（零消费）**：注入进将被 summary 替换的历史 = 消费即丢失；
+   回落 = `CompactionComplete` 再排空。判据在同一单点（`decide` 的首个守卫）。
+4. **`AgentActor.drainQueuesAfterCompaction`（压缩窗全量 flush 面）未纳入本单点**：它是压缩完成
+   后的一次性 flush 车道（既有语义：整批事件 + 一件排队消息），不属于「工具边界判定」。
+   本批零改动，行为逐字保留。
+5. **回合已结束时到达的真人 typeless 帧**：`Stage.TurnEnd` 下 `decide` 返回 `HoldForNextBoundary`
+   ⇒ 留队由 `AgentFinishTurn` 的 head-forward 作为**新回合**投出（不丢消息、不改回合边界）。
+
+### 8.5 回归（`logs/post.log`）
+
+`E:[error] Failed: Total 43, Failed 1, Errors 0, Passed 42` —— 与 §4 基线**逐条一致**，
+唯一红仍是既有 `SubAgentInboxMirrorSpec ③ -2`（静态调用点定值 14 vs 树内 16，非本批引入；
+本批 `emitInjectedUserEvent(` 调用点数未变）。**本批零新增红**，且 `BusyConsoleInputInjectionSpec`
+的 W3 负对照仍绿。
+
