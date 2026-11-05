@@ -18,7 +18,7 @@ import nebflow.actor.{
 } // W1 shim: main exported these from nebflow.agent (protocol/AgentState); the merge moved them to actor
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.FileChangeTracker
-import nebflow.core.flow.{MailDeliveryDedup, MailQueueStore, TeamSessionRegistry}
+import nebflow.core.flow.{MailDeliveryDedup, MailQueueStore}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
@@ -160,7 +160,6 @@ class MailDedupWiringSpec extends FunSuite:
     val io = for
       sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
       meta <- sessionStore.createSession("dq/member", agentName = Some("member"), flowName = Some("dq"))
-      _ <- TeamSessionRegistry.registerSession("dq", "member", meta.id)
       resources <- mkResources(system, tmp, llm, sessionStore)
       refOpt <- MailTool.activateAgent(meta.id, resources, system, ctxFor(resources, system, "sender-dd"))
       // First item — delivers normally
@@ -199,7 +198,6 @@ class MailDedupWiringSpec extends FunSuite:
     val io = for
       sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
       meta <- sessionStore.createSession("dq/member", agentName = Some("member"), flowName = Some("dq"))
-      _ <- TeamSessionRegistry.registerSession("dq", "member", meta.id)
       // The pre-restart delivery is recorded on disk only (JVM restarted)
       _ <- IO(
         seedDisk(MailDeliveryDedup.fingerprint("tester", meta.id, "REPLAY_MARKER_W2"), System.currentTimeMillis())
@@ -236,7 +234,6 @@ class MailDedupWiringSpec extends FunSuite:
     val io = for
       sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
       meta <- sessionStore.createSession("dq/member", agentName = Some("member"), flowName = Some("dq"))
-      _ <- TeamSessionRegistry.registerSession("dq", "member", meta.id)
       // Identical content was delivered LONG ago — outside the window
       _ <- IO(
         seedDisk(
@@ -283,7 +280,6 @@ class MailDedupWiringSpec extends FunSuite:
     val io = for
       sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
       meta <- sessionStore.createSession("dq/member", agentName = Some("member"), flowName = Some("dq"))
-      _ <- TeamSessionRegistry.registerSession("dq", "member", meta.id)
       resources <- mkResources(system, tmp, llm, sessionStore)
       refOpt <- MailTool.activateAgent(meta.id, resources, system, ctxFor(resources, system, "sender-dd"))
       // First item — delivered while idle (records the fingerprint)
@@ -328,7 +324,6 @@ class MailDedupWiringSpec extends FunSuite:
     val io = for
       sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
       meta <- sessionStore.createSession("dq/member", agentName = Some("member"), flowName = Some("dq"))
-      _ <- TeamSessionRegistry.registerSession("dq", "member", meta.id)
       resources <- mkResources(system, tmp, llm, sessionStore)
       suppressedBefore <- IO(MailDeliveryDedup.suppressedTotal)
       // 分发器身份 + node: 地址 + delivery=queue（R2 腿② 必须拒 queue；退役批文案单点）

@@ -423,7 +423,7 @@ const STREAM_MSG_TYPES = new Set([
   // teamTaskListUpdate 已移出（2026-09-05 10:54 裁定：旧任务区退役）——
   // 无 sessionId 帧直达分发但无订阅者 = no-op（后端照发，零触碰）。
   // Legacy flow-canvas events (flowMail/flowStarted/flowNodesAdded/
-  // flowProgress/flowCompleted/teamList/treeBranch*) removed 2026-09-05
+  // flowProgress/flowCompleted/teamList/tree-branch*) removed 2026-09-05
   // 旧 UI 退役 — the backend may still broadcast them; unknown types with no
   // registered handler are dispatched to an empty handler list (no-op), and
   // off-session frames are dropped by the entry filter above.

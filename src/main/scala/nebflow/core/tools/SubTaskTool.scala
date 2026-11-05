@@ -22,7 +22,7 @@ import nebflow.shared.*
  *   - **Not for the root agent**: rejected when the caller is Nebula (#28) —
  *     the root orchestrator exists exactly once and must never be
  *     self-cloned, even if a custom agent.json lists the tool.
- *   - **No Mail identity**: never registered in TeamSessionRegistry / sessionMap.
+ *   - **No Mail identity**: never registered in the (retired) team session registry / its sessionMap.
  *     The worker is a leaf: Mail/SubTask/Delegate are stripped from its tool
  *     set (see AgentCore.buildAllowedToolSet), and the Worker Identity Block
  *     appended to its system prompt declares it has no team.
@@ -300,7 +300,7 @@ A task with 2+ independent parts — different file domains, or different nature
       )
       _ = logger.info(s"Spawned supervised sub-task worker: $subtaskId (depth=$childDepth, agent=${agentDef.name})")
       // Registered in agentRegistry (active snapshot + kind) but NOT in
-      // TeamSessionRegistry/sessionMap — the worker has no Mail identity.
+      // the (retired) team session registry / its sessionMap — the worker has no Mail identity.
       _ <- NodeRunner.registerAgent(
         resources,
         id = subtaskId,

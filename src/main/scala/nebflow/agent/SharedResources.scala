@@ -94,9 +94,11 @@ case class SharedResources(
   runtimeModels: Ref[IO, Map[String, String]] = Ref.unsafe[IO, Map[String, String]](Map.empty),
   /**
    * P1 统一注册表: the single registry for ALL running agents
-   * (Root/Team/Flow/Delegate/Ephemeral). Replaces `subAgentRegistry`; during P1
-   * `rootAgents` and `TeamSessionRegistry.actorMap` remain as dual-written
-   * caches (P3 removes them). Interaction answers route through this map only —
+   * (Root/Flow/Delegate/Ephemeral/SubTask). Replaces `subAgentRegistry`; during
+   * P1 `rootAgents` remained as a dual-written cache. 团队功能删除批
+   * （team-feature-deletion-20261104）阶段 3：另一份 dual-write 缓存（团队会话
+   * 登记表的 actorMap）随团队面整体删除 ⇒ 本表自此是 agent 记录的**唯一**权威。
+   * Interaction answers route through this map only —
    * a lookup miss never spawns a ghost agent.
    */
   agentRegistry: Ref[IO, Map[String, AgentRecord]] = Ref.unsafe[IO, Map[String, AgentRecord]](Map.empty),
