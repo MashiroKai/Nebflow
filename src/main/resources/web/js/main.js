@@ -1068,6 +1068,13 @@ onMessage('agentFrozen', (msg, view) => {
     state.sessionBgAgents[sid][aid].frozenResumeAt = msg.resumeAt || null;
     // Error-recovery family: pass the reason (UI-7 amber dot vs sapphire).
     state.sessionBgAgents[sid][aid].freezeReason = normalizeReason(msg.reason);
+    // 冻结态误报批（2026-11-05）：后端判定分类随帧到（freezeKind/needsHuman/
+    // autoRecoverable）——面板据此决定「自动恢复中（不给按钮）」还是「需人工（给
+    // 唤醒/重启）」，不再从 reason 猜。缺字段（旧后端）⇒ 空串，freezeState.js 回落
+    // 同一张表。
+    state.sessionBgAgents[sid][aid].freezeKind = msg.freezeKind || '';
+    state.sessionBgAgents[sid][aid].needsHuman = msg.needsHuman === true;
+    state.sessionBgAgents[sid][aid].freezeReasonWire = msg.reason || '';
     if (view) renderBgAgentDropdown();
   }
   // R4-a (wait-timeout-fix, audit 20260903 Q2-A): a sub-agent freeze parks the
@@ -1098,6 +1105,11 @@ onMessage('agentResumed', (msg, view) => {
     state.sessionBgAgents[sid][aid].frozen = false;
     state.sessionBgAgents[sid][aid].frozenResumeAt = null;
     state.sessionBgAgents[sid][aid].freezeReason = null;
+    // 冻结态误报批（2026-11-05）：恢复即清分类三字段——否则行会带着上一轮的
+    // 「需人工」判定留在面板上（冻结已解、按钮还在）。
+    state.sessionBgAgents[sid][aid].freezeKind = '';
+    state.sessionBgAgents[sid][aid].needsHuman = false;
+    state.sessionBgAgents[sid][aid].freezeReasonWire = '';
     if (view) renderBgAgentDropdown();
   }
   // 现象2 fix: when background agents wake, re-evaluate the foreground freeze
@@ -2554,15 +2566,21 @@ onMessage('delegateFrozenDormant', (msg) => {
 
 // 面板「唤醒」动作回执（delegateWakeResult）：成功 ⇒ 撤掉冻结标记（同一会话续跑，
 // 行回到普通进行中）；失败 ⇒ 保留冻结标记并抛出可见告警（绝不静默）。
+// 冻结态误报批（2026-11-05）：回执三态分明——`mode=live|revived|restart` 是真的动了
+// 会话（撤标记）；`ok=false` 一律保留标记 + 弹出后端的原话（含 mode：自动恢复族会
+// 明确说「不需要唤醒，原因 X 到期自己续跑」）——失败绝不伪装成已恢复。
 onMessage('delegateWakeResult', (msg) => {
   const sid = String(msg.sessionId || '').replace(/^team-/, '');
   if (!sid) return;
   const ok = !!msg.ok;
   applyDelegateFrozen(null, sid, ok
-    ? { frozen: false, frozenSince: null, frozenReason: '', frozenDetail: '', dormantHours: 0 }
+    ? {
+      frozen: false, frozenSince: null, frozenReason: '', frozenDetail: '', dormantHours: 0,
+      freezeKind: '', needsHuman: false, freezeReasonWire: '', freezeReason: null, freezeResumeAt: null,
+    }
     : {});
   if (!ok) {
-    console.warn('[delegateWake] failed for', sid, msg.error || '');
+    console.warn('[delegateWake] failed for', sid, msg.mode || '', msg.error || '');
     window.__showToast?.(msg.error || t('subagents.wakeFailed'), 'error');
   }
   renderBgAgentDropdown && renderBgAgentDropdown();
@@ -4969,9 +4987,17 @@ onMessage('activeAgents', (msg) => {
       // （#752 最近动作摘要在刷新恢复路径可用——旧行为刷新后工具行丢失）。
       currentTool: (prev && prev.currentTool) || a.currentTool || null,
       stuck: (prev && prev.stuck) || null,
-      frozen: (prev && prev.frozen) || false,
+      // 冻结态误报批（2026-11-05）：**快照 status=Frozen 也是冻结族**——actor 级
+      // 冻结（循环检测 L2 / 错误退避 / 时间表）只写 registry 状态、盘上没有 delegate
+      // 冻结槽，旧快照合并只看 prev.frozen ⇒ 刷新后冻结行画成「进行中」（面板与
+      // AgentControl 读数打架）。分类三字段随快照出帧（后端 FreezeDisplay 判定），
+      // 旧后端无字段 ⇒ 空串，freezeState.js 按原因线值回落同一张表。
+      frozen: (prev && prev.frozen) || a.status === 'Frozen' || false,
       freezeResumeAt: (prev && prev.freezeResumeAt) || null,
       freezeReason: (prev && prev.freezeReason) || null,
+      freezeKind: (prev && prev.freezeKind) || a.frozenKind || '',
+      needsHuman: a.needsHuman === true || !!(prev && prev.needsHuman),
+      freezeReasonWire: (prev && prev.freezeReasonWire) || a.freezeReasonWire || '',
       // 错误冻结批（2026-11-01）：**delegate 错误冻结**的刷新恢复面——快照
       // frozenSince / frozenReason（DelegateRegistry 冻结槽，线值 `delegate-frozen:<reason>`）
       // 在场 ⇒ 行「已冻结」徽标 + 原因 tooltip + 唤醒按钮随刷新复原（delegateFrozen

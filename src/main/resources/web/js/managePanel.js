@@ -24,6 +24,8 @@ import { sendWs, onMessage } from './ws.js';
 import { t } from './i18n.js';
 import { showToast } from './modal.js';
 import { isBgAgentId } from './utils.js';
+// 冻结态误报批（2026-11-05）：冻结行的恢复入口判据（需人介入才给按钮）。
+import { freezeNeedsHuman } from './freezeState.js';
 
 /** Kinds the user may stop/restart (AgentControl §4 operable bucket). */
 export const OPERABLE_KINDS = new Set(['Delegate', 'SubTask', 'Ephemeral']);
@@ -50,8 +52,16 @@ export function isProcessingStatus(status) {
 
 /** True when a restart makes sense (retry button visible).
  *  'failed' comes from the activeAgents snapshot status ("Error(msg)" form —
- *  the backend has no WS failed event for sub-agents yet). */
-export function isRetryableStatus(status) {
+ *  the backend has no WS failed event for sub-agents yet).
+ *
+ *  冻结态误报批（2026-11-05）：`frozen` **按分类**进白名单——需人介入的冻结
+ *  （循环检测 L2 / delegate 错误冻结 / 已升级到人）必须有可见的恢复入口（这里 =
+ *  「重启并续跑」= restartAgent soft，与 AgentControl restart 同机制，同会话从
+ *  检查点续跑）；自动恢复族（时间表/退避/探测）**不给按钮**（引擎正在自己做的事
+ *  不该变成用户的按钮）。判据单点 = freezeState.js（后端 FreezeDisplay 的呈现面）。
+ *  @param {string} status  @param {any} [meta] 行/弹窗 meta（读 freezeKind / 原因线值） */
+export function isRetryableStatus(status, meta) {
+  if (status === 'frozen') return freezeNeedsHuman(meta || { frozen: true });
   return status === 'failed' || status === 'stuck' || status === 'stopped';
 }
 
@@ -163,7 +173,7 @@ export function syncManageControls(bar, meta, sessionId) {
   const policy = managePolicy(meta.kind || '', sessionId);
   const status = meta.status || '';
   const processing = isProcessingStatus(status);
-  const retryable = isRetryableStatus(status);
+  const retryable = isRetryableStatus(status, meta);
 
   if (!policy.operable) {
     // Read-only: greyed, disabled, tooltip explains why.

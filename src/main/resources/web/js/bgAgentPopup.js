@@ -15,7 +15,9 @@ import state from './state.js';
 import { key } from './branding.js';
 import { t } from './i18n.js';
 import { buildManageBar, bindManageActions, syncManageControls, onCancelResult, isFailedSnapshotStatus } from './managePanel.js';
-import { isErrorReason, errorTileText, errorIcon } from './errorRecovery.js';
+import { isErrorReason, errorTileText, errorIcon, reasonText } from './errorRecovery.js';
+// 冻结态误报批（2026-11-05）：页脚冻结词按呈现分类分词（自动恢复族 vs 需人介入族）。
+import { FREEZE_KIND, freezeKindOf } from './freezeState.js';
 import { cleanupCardIframes } from './cardRegistry.js';
 // 两层架构批（2026-10-09 · 规格 §A 净化）：弹窗只留 G4 单查一个数据缝——星型区
 // （G3 children）迁任务列表（§B）、flow 节点区迁 L1 委托流程图（§C）、归档动作
@@ -425,7 +427,14 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
       if (!entry.meta.status && row.status) {
         if (isFailedSnapshotStatus(row.status)) entry.meta.status = 'failed';
         else if (row.status === 'Processing') entry.meta.status = 'running';
-        else if (row.status === 'Frozen') entry.meta.status = 'frozen';
+        else if (row.status === 'Frozen') {
+          entry.meta.status = 'frozen';
+          // 冻结态误报批（2026-11-05）：呈现分类随快照恢复（缺字段 ⇒ freezeState.js
+          // 按原因线值回落同一张表）。没有这三行，刷新后的冻结页脚只能从 reason 猜。
+          entry.meta.freezeKind = row.frozenKind || '';
+          entry.meta.needsHuman = row.needsHuman === true;
+          entry.meta.freezeReasonWire = row.freezeReasonWire || '';
+        }
         // held-receipt 投递可靠性批（2026-10-21 fix 4）：显式停靠态快照恢复——
         // 「等合并轮」的 delegate 行不再貌似 Idle。
         else if (row.status === 'Waiting') entry.meta.status = 'waiting';
@@ -699,11 +708,18 @@ export function interceptBgAgentStep(msg) {
     entry.meta.status = 'frozen';
     entry.meta.frozenResumeAt = msg.resumeAt || null;
     entry.meta.freezeReason = msg.reason; // UI-7: error-family → amber tile
+    // 冻结态误报批（2026-11-05）：呈现分类随帧到（后端 FreezeDisplay 判定）。
+    entry.meta.freezeKind = msg.freezeKind || '';
+    entry.meta.needsHuman = msg.needsHuman === true;
+    entry.meta.freezeReasonWire = msg.reason || '';
     entry.meta.escalation = msg.escalation ? msg.escalation.level : null;
   } else if (msg.type === 'agentResumed') {
     entry.meta.status = 'running';
     entry.meta.frozenResumeAt = null;
     entry.meta.freezeReason = null;
+    entry.meta.freezeKind = '';
+    entry.meta.needsHuman = false;
+    entry.meta.freezeReasonWire = '';
     entry.meta.escalation = null;
   } else if (msg.type === 'agentThinking') {
     // Granular phase (#343): LLM reasoning in progress — set once, subsequent
@@ -942,24 +958,31 @@ function updateFooterStatus(entry) {
   entry.footerEl.classList.remove('running', 'done', 'failed', 'frozen', 'thinking', 'tool', 'responding', 'stuck', 'stopped', 'error');
   if (status) entry.footerEl.classList.add(status);
   const taskEl = entry.footerEl.querySelector('.fa-task');
-  const isErrorFrozen = status === 'frozen' && isErrorReason(entry.meta.freezeReason);
+  // 冻结态误报批（2026-11-05）：冻结页脚按**呈现分类**分词——
+  //   · 需人介入族（循环检测 / 错误冻结 / 已升级到人）：amber 原因词（既有 UI-7），
+  //     恢复入口在页脚管理条（managePanel 的「重启并续跑」）；
+  //   · 自动恢复族（时间表/退避/探测/断点续跑）：只写「在等什么 + 会自己续跑」，
+  //     绝不写「已冻结」（那是需人工措辞——作者报障的原文就是被这句话骗的）。
+  const freezeKind = status === 'frozen' ? freezeKindOf(entry.meta) : '';
+  const isErrorFrozen = status === 'frozen' && freezeKind === FREEZE_KIND.manual;
   // UI-7: error-recovery frozen → amber tile (add .error modifier).
   if (isErrorFrozen) entry.footerEl.classList.add('error');
   if (taskEl) {
     if (status === 'frozen') {
-      if (isErrorFrozen) {
-        // Error family: reason short text (重试中 / 等恢复 / 等待上级决策).
+      if (!isErrorFrozen) {
+        // 自动恢复族：状态事实（原因 + 在等什么），零按钮。
+        const why = reasonText(entry.meta.freezeReason) || '';
+        taskEl.textContent = freezeKind === FREEZE_KIND.window
+          ? t('chat.freezeWindowTile')
+          : (why ? t('chat.freezeAutoTile', { reason: why }) : t('chat.freezeAutoTile', { reason: '' }).replace(/\s*·\s*$/, ''));
+      } else if (isErrorReason(entry.meta.freezeReason)) {
+        // 需人介入 + 错误族原因（循环检测 L2 / 已升级到人）：amber 原因词自带判词
+        // （loop ⇒「循环检测暂停 · 不会自动恢复」），恢复入口在页脚管理条。
         const escTxt = errorTileText(entry.meta);
         taskEl.innerHTML = `${errorIcon(entry.meta.freezeReason, 'error-icon')}<span class="fa-task-text">${escTxt}</span>`;
       } else {
-        // Frozen tile: "已冻结 · HH:mm 恢复" — resumeAt epoch → local HH:mm
-        const at = entry.meta.frozenResumeAt;
-        const clock = at ? (() => {
-          const d = new Date(at);
-          if (Number.isNaN(d.getTime())) return '';
-          return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-        })() : '';
-        taskEl.textContent = clock ? t('chat.frozenShort', { time: clock }) : t('chat.frozenNoTime');
+        // 需人介入但非错误族（delegate 错误冻结 / 原因未记录）：如实说「需处理」。
+        taskEl.textContent = t('subagents.freezeBadge');
       }
     } else if (status === 'stuck' && entry.meta.stuck) {
       // Restrained stuck label (manage-panel, 2026-08-22) — ui-status-redesign
