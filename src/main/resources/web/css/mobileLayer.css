@@ -573,8 +573,6 @@ body.mobile-layer #mobile-dock {
   align-items: stretch;
   border-radius: var(--ds-radius-pill);
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
-  backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
   border: 1px solid var(--glass-border);
   box-shadow: var(--cv-shadow);
 }
@@ -928,8 +926,6 @@ body.mobile-layer .mobile-page-title::before {
   inset: 0;
   border-radius: inherit;
   background: var(--cv-bg, var(--glass-bg));
-  -webkit-backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
-  backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
   border: 1px solid var(--cv-border, var(--glass-border));
   box-shadow: var(--cv-shadow);
   opacity: var(--mtitle-p);
@@ -1802,8 +1798,6 @@ body.mobile-layer .mf-strip-chip::after {
 }
 /* 中签玻璃层 = 完整毛玻璃档（毛玻璃 blur 只在无 mask 的层上安全 —— 见上）。 */
 body.mobile-layer .mf-strip-chip.on::after {
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
 }
 /* 环外（|k| > 露出半径）：位姿仍算（换签轨迹连续），命中与可见双关。 */
 body.mobile-layer .mf-strip-chip.is-far { pointer-events: none; }
@@ -2027,8 +2021,6 @@ body.mobile-layer .mf-dots {
   border-radius: var(--ds-radius-pill);
   border: 1px solid var(--glass-border);
   background: var(--ds-wash-16);
-  -webkit-backdrop-filter: blur(10px) saturate(1.2);
-  backdrop-filter: blur(10px) saturate(1.2);
   box-shadow: var(--ds-shadow-dots);
   touch-action: none;
   cursor: grab;
@@ -2122,8 +2114,6 @@ body.mobile-layer .mf-swipe-ring {
   border-radius: 50%;
   border: 2px solid var(--glass-border);
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(8px) saturate(1.3);
-  backdrop-filter: blur(8px) saturate(1.3);
   box-shadow: var(--cv-shadow, none);
   pointer-events: none;
   opacity: 0;
@@ -2148,8 +2138,6 @@ body.mobile-layer .mf-stack-view {
   /* 背景重度模糊（参考图的桌面 blur 档）：玻璃底 + 18px→26px 上移一档，
      saturate 加强避免糊成灰板；阅读面在背后化开但不消失（空间感）。 */
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(26px) saturate(1.6);
-  backdrop-filter: blur(26px) saturate(1.6);
   /* 开合两段：浮面整体淡入（.open）+ 卡列自落位升起（:not(.open) 初始态；
      收面 .closing 清零递延不拖尾）。 */
   opacity: 0;
@@ -2212,8 +2200,6 @@ body.mobile-layer .mf-deck-card {
   border: 1px solid var(--card-border);
   border-radius: var(--ds-radius-shell);
   background: var(--card-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.2);
   color: var(--color-frame-text);
   box-shadow: var(--ds-shadow-deck-card);
   /* 位姿：横移（--dtx，卡列）+ 纵坠（--dty，跟手预览）+ 缩径（--dsc）。
@@ -3242,8 +3228,6 @@ body.mobile-layer .mh-search-bar:not(.g2-fab) {
   border-radius: var(--ds-radius-pill);
   background: var(--glass-control-bg);
   border: 1px solid var(--glass-control-border);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   box-shadow:
     inset 0 1px 0 var(--glass-control-highlight),
     inset 0 -1px 0 var(--glass-control-underedge),
@@ -4598,8 +4582,6 @@ body.mobile-layer :is(.mh-idhead-name, .mh-idhead > #session-name) {
   padding: var(--ds-space-1) 14px;
   border-radius: var(--ds-radius-pill);
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
-  backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
   font-size: var(--ds-fs-mobile-sub);
   font-weight: 600;
   line-height: 1.2;

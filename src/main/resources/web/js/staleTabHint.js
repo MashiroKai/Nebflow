@@ -28,7 +28,9 @@ export function showStaleTabHint() {
     'background:rgba(28,30,38,0.92)', 'color:#f4f5f7',
     'font:var(--ds-fs-body)/1.4 -apple-system,"Segoe UI",sans-serif',
     'box-shadow:0 6px 24px rgba(0,0,0,0.28)',
-    'backdrop-filter:blur(8px)', '-webkit-backdrop-filter:blur(8px)',
+    // glass-unify 批 2026-11-05：原 blur(8px) 摘除（α.92 近实心深色提示条，
+    // 8% 透光下模糊不可见；且这是第二处 backdrop-filter，违反「全站只有一处
+    // 毛玻璃」）。深色提示条不是玻璃面，故不入 .nf-glass。
     'border:1px solid rgba(255,255,255,0.12)',
     'max-width:min(92vw,560px)',
   ].join(';'));

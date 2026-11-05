@@ -110,8 +110,6 @@
   border: 1px solid var(--glass-border);
   border-radius: var(--ds-radius-card-md);
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.4);
-  backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.4);
   box-shadow: var(--ds-shadow-palette);
   color: var(--color-text);
   font-family: inherit;

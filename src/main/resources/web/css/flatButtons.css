@@ -49,7 +49,9 @@
   .fm-modal-title-btn, .fm-modal-close, .fm-gs-open,
   .project-link-btn, .project-unmount-btn, .project-desc-edit-btn,
   .agent-detail-prompt-toggle, .panel-toggle-btn,
-  .task-delegate-btn, .todo-create-btn, .tw-btn
+  .task-delegate-btn, .todo-create-btn, .tw-btn,
+  /* canvas-video-player 批（2026-11-05）：画布视频控件族（播放/静音/画中画/全屏） */
+  .canvas-video-btn
 ):active {
   transform: scale(var(--btn-press-scale));
 }
@@ -78,7 +80,9 @@
   /* 手机层搜索浮钮：原只有 hover/focus 共用一条底色规则、没有描边环 ⇒ 进本表 */
   .mh-search-fab,
   /* 本批收尾补位（盘点表里此前无焦点态的族） */
-  .task-delegate-btn, .todo-create-btn, .tw-btn
+  .task-delegate-btn, .todo-create-btn, .tw-btn,
+  /* canvas-video-player 批（2026-11-05）：画布视频控件族 */
+  .canvas-video-btn
 ):focus-visible {
   outline: var(--btn-ring-w) solid var(--btn-ring);
   outline-offset: var(--btn-ring-offset);
@@ -108,7 +112,9 @@
   .project-desc-edit-btn, .agent-detail-prompt-toggle, .activity-avatar,
   .scroll-new-pill,
   /* 本批收尾补位（盘点表里此前无 disabled 档的族） */
-  .todo-create-btn, .tfl-fab-add, .activity-btn, .tw-btn
+  .todo-create-btn, .tfl-fab-add, .activity-btn, .tw-btn,
+  /* canvas-video-player 批（2026-11-05）：画中画在不支持的浏览器上走原生 disabled */
+  .canvas-video-btn
 ):is(:disabled, [aria-disabled="true"]) {
   opacity: var(--btn-disabled-opacity);
   cursor: not-allowed;
@@ -131,6 +137,11 @@
   :is(.mp-mode-btn, .settings-collapse-toggle):not(:disabled):hover {
     background-color: var(--btn-hover-bg);
   }
+  /* canvas-video-player 批（2026-11-05）：画布视频控件族的 hover —— 底色升一档
+     （默认态是透明底，hover 才从条面浮出一档浅洗；按下态在 split.css 再深一档）。 */
+  .canvas-video-btn:not(:disabled):hover {
+    background-color: var(--btn-hover-bg);
+  }
 }
 
 /* ── ⑤ 状态过渡（只过渡扁平允许项：底色 / 描边 / 字色 / 缩放 / 透明度）──────
@@ -144,7 +155,8 @@
   .session-delete, .folder-delete, .settings-collapse-toggle,
   .fm-modal-title-btn, .fm-modal-close, .fm-gs-open,
   .project-link-btn, .project-unmount-btn, .project-desc-edit-btn,
-  .agent-detail-prompt-toggle, .canvas-zoom-btn, .canvas-refback-btn
+  .agent-detail-prompt-toggle, .canvas-zoom-btn, .canvas-refback-btn,
+  .canvas-video-btn
 ) {
   transition:
     background-color var(--btn-dur-state) ease,
@@ -166,7 +178,7 @@
     .session-delete, .folder-delete, .settings-collapse-toggle,
     .fm-modal-title-btn, .fm-modal-close, .fm-gs-open,
     .project-link-btn, .project-unmount-btn, .project-desc-edit-btn,
-    .agent-detail-prompt-toggle
+    .agent-detail-prompt-toggle, .canvas-video-btn
   ):active {
     transform: scale(var(--btn-press-scale-touch));
     background-color: var(--btn-press-bg);
@@ -184,7 +196,7 @@
     .session-delete, .folder-delete, .settings-collapse-toggle,
     .fm-modal-title-btn, .fm-modal-close, .fm-gs-open,
     .project-link-btn, .project-unmount-btn, .project-desc-edit-btn,
-    .agent-detail-prompt-toggle
+    .agent-detail-prompt-toggle, .canvas-video-btn
   ):active {
     transform: none;
     opacity: var(--btn-press-fade);
@@ -197,7 +209,8 @@
     .session-delete, .folder-delete, .settings-collapse-toggle,
     .fm-modal-title-btn, .fm-modal-close, .fm-gs-open,
     .project-link-btn, .project-unmount-btn, .project-desc-edit-btn,
-    .agent-detail-prompt-toggle, .canvas-zoom-btn, .canvas-refback-btn
+    .agent-detail-prompt-toggle, .canvas-zoom-btn, .canvas-refback-btn,
+    .canvas-video-btn
   ) {
     transition-duration: 0.01s;
   }

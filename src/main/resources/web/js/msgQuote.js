@@ -486,60 +486,92 @@ export function syncQuoteJumpStates(root) {
   });
 }
 
+/** 单件媒体缩略（引用块 1 张图的原样形态，2026-10-31 附件批）：48px 方缩略，
+ *  字节腿与 Pop 脸同一 hydrateMedia；点击 = openMediaItemClick 同款单点
+ *  （有 path 开 Canvas，纯内联字节进灯箱）。stopPropagation —— 不触发引用块
+ *  自身的跳转。 */
+function quoteMediaCell(pop, a) {
+  const item = { kind: a.type, name: a.name, src: a.preview, path: a.path || '' };
+  const cell = document.createElement('div');
+  cell.className = 'msg-quote-att-media';
+  const media = document.createElement(a.type === 'video' ? 'video' : 'img');
+  media.className = 'msg-quote-att-img';
+  if (a.type === 'video') { const v = /** @type {HTMLVideoElement} */ (media); v.muted = true; v.playsInline = true; v.preload = 'metadata'; }
+  else { const img = /** @type {HTMLImageElement} */ (media); img.alt = a.name || ''; img.draggable = false; }
+  pop.hydrateMedia(media, item, null);
+  cell.appendChild(media);
+  if (a.path) {
+    cell.setAttribute('role', 'button');
+    cell.title = a.name || '';
+    cell.addEventListener('click', (e) => {
+      e.stopPropagation();
+      pop.openMediaItemClick(item);
+    });
+  } else {
+    cell.title = a.name || '';
+  }
+  return cell;
+}
+
+/** 非媒体附件 chip（图标 + 文件名；有 path 才挂打开，零死点击）。 */
+function quoteFileChip(pop, a) {
+  const chip = document.createElement('div');
+  chip.className = 'msg-quote-att-file';
+  const icon = document.createElement('span');
+  icon.className = 'msg-quote-att-file-icon';
+  icon.textContent = (a.name || '').split('.').pop() ? (a.name.split('.').pop() || '').slice(0, 4).toUpperCase() : 'FILE';
+  const label = document.createElement('span');
+  label.className = 'msg-quote-att-file-name';
+  label.textContent = a.name || (a.path ? a.path.split('/').pop() : '') || '';
+  chip.append(icon, label);
+  chip.title = a.path || a.name || '';
+  if (a.path) {
+    chip.setAttribute('role', 'button');
+    chip.addEventListener('click', (e) => {
+      e.stopPropagation();
+      pop.openPopArtifact(a.path, a.name || a.path.split('/').pop());
+    });
+  }
+  return chip;
+}
+
 /** 引用块附件缩略带（附件批 2026-10-31）：图片/视频 = 48px 缩略（字节腿与 Pop 脸
  *  同一 hydrateMedia；点击 = openMediaItemClick 同款——有 path 开 Canvas，纯内联
  *  字节进灯箱），文件 = 图标 + 文件名 chip（有 path 才挂打开，零死点击）。
  *  动态 import：popArtifacts.js 静态依赖本模块（attachQuoteMenu/nextChatMsgId），
  *  本模块禁静态回指（renderQuoteStrip 动态导入 chat.js 同款先例）。缩略面点击
- *  stopPropagation —— 不触发引用块自身的跳转。 */
+ *  stopPropagation —— 不触发引用块自身的跳转。
+ *
+ *  🔴 多图叠卡（2026-11-05 作者令逐字「引用多张图片的时候，也走叠卡」）：
+ *  被引消息的媒体组 ≥2 件 ⇒ **整组走既有叠卡组件**
+ *  `popArtifacts.buildMediaStack`（Pop 多图交付卡 / 用户媒体行 / 好友三窗
+ *  共用的同一条实现：前卡 + 露边层、拖划·横滑翻页、「展开 N」摊平、整面点开
+ *  进 Canvas/灯箱）。引用块**零第二套视觉**：只做宿主尺度收口（chat.css
+ *  「引用牌 · 多图叠卡」段把卡面尺度单源 --ds-media-face-w 收一档小卡），
+ *  手势/布局/开件单点全在组件内。1 件保持 48px 缩略原样（作者令「单图原样」）。
+ *  高度收敛：卡面固定 ⇒ 叠卡态高度不随张数增长（展开态是用户显式动作）。 */
 function renderQuoteAttStrip(atts) {
   const strip = document.createElement('div');
   strip.className = 'msg-quote-atts';
+  const list = Array.isArray(atts) ? atts : [];
   import('./popArtifacts.js').then((pop) => {
     if (!strip.isConnected) return;
-    atts.forEach((a) => {
-      if (a.type === 'image' || a.type === 'video') {
-        const item = { kind: a.type, name: a.name, src: a.preview, path: a.path || '' };
-        const cell = document.createElement('div');
-        cell.className = 'msg-quote-att-media';
-        const media = document.createElement(a.type === 'video' ? 'video' : 'img');
-        media.className = 'msg-quote-att-img';
-        if (a.type === 'video') { const v = /** @type {HTMLVideoElement} */ (media); v.muted = true; v.playsInline = true; v.preload = 'metadata'; }
-        else { const img = /** @type {HTMLImageElement} */ (media); img.alt = a.name || ''; img.draggable = false; }
-        pop.hydrateMedia(media, item, null);
-        cell.appendChild(media);
-        if (a.path) {
-          cell.setAttribute('role', 'button');
-          cell.title = a.name || '';
-          cell.addEventListener('click', (e) => {
-            e.stopPropagation();
-            pop.openMediaItemClick(item);
-          });
-        } else {
-          cell.title = a.name || '';
-        }
-        strip.appendChild(cell);
-      } else {
-        const chip = document.createElement('div');
-        chip.className = 'msg-quote-att-file';
-        const icon = document.createElement('span');
-        icon.className = 'msg-quote-att-file-icon';
-        icon.textContent = (a.name || '').split('.').pop() ? (a.name.split('.').pop() || '').slice(0, 4).toUpperCase() : 'FILE';
-        const label = document.createElement('span');
-        label.className = 'msg-quote-att-file-name';
-        label.textContent = a.name || (a.path ? a.path.split('/').pop() : '') || '';
-        chip.append(icon, label);
-        chip.title = a.path || a.name || '';
-        if (a.path) {
-          chip.setAttribute('role', 'button');
-          chip.addEventListener('click', (e) => {
-            e.stopPropagation();
-            pop.openPopArtifact(a.path, a.name || a.path.split('/').pop());
-          });
-        }
-        strip.appendChild(chip);
-      }
-    });
+    const media = list.filter(a => a && (a.type === 'image' || a.type === 'video'));
+    const files = list.filter(a => a && a.type !== 'image' && a.type !== 'video');
+    if (media.length >= 2) {
+      const items = media.map(a => ({ kind: a.type, name: a.name, src: a.preview, path: a.path || '' }));
+      strip.classList.add('msg-quote-atts--stack');
+      const stack = pop.buildMediaStack(items);
+      // 引用块整块 = 跳转原消息（renderQuoteBlock 的 click/keydown 监听）——
+      // 叠卡内部自成一体：翻页/开件/展开都不许升级成「跳回原消息」。
+      const stop = (/** @type {Event} */ e) => e.stopPropagation();
+      stack.addEventListener('click', stop);
+      stack.addEventListener('keydown', stop);
+      strip.appendChild(stack);
+    } else if (media.length === 1) {
+      strip.appendChild(quoteMediaCell(pop, media[0]));
+    }
+    files.forEach((a) => strip.appendChild(quoteFileChip(pop, a)));
   }).catch(() => {});
   return strip;
 }
@@ -552,7 +584,9 @@ function renderQuoteAttStrip(atts) {
 export function renderQuoteBlock(quote) {
   const q = quoteViewOf(quote);
   const box = document.createElement('div');
-  box.className = 'msg-quote-block';
+  // glass-unify 批 2026-11-05：引用卡/胶囊挂唯一毛玻璃工具类（作者令「所有需要
+  // 毛玻璃的面板/浮层/卡片/胶囊一律用它」；实拍图1 那张半透明引用牌就是这里）。
+  box.className = 'msg-quote-block nf-glass';
   if (!q || (!q.excerpt && !q.refMessageId)) {
     box.dataset.quoteJump = 'none';
     const note = document.createElement('div');

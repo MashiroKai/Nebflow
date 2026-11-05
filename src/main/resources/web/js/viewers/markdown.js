@@ -1300,6 +1300,20 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
   const mdHost = document.createElement('div');
   mdHost.className = 'canvas-md-viewer';
   mdHost.innerHTML = html;
+  // 段首空白归一（撤回批 2026-11-05 16:43 作者令「文档只缩进首行」）：文档首行缩进
+  // 有两个来源 —— ① 阅读面 CSS `.canvas-md-viewer > p { text-indent: 2em }`（split.css，
+  // 任何 md 都成立）；② 源文件以 `&emsp;&emsp;` 起行（文档写作纪律，作者 11:09 令：
+  // Markdown 无布局，实体是 Obsidian 与渲染器都认的写法）。两者叠加会让首行变成
+  // **四字**，与「只缩进首行（两字）」相悖。此处把段首的 em space / 全角空格剥掉，
+  // 让 CSS 的 2em 成为唯一来源 —— 源文件不动（Obsidian 侧仍由实体承载缩进），渲染面
+  // 恒为两字。只处理**直接子** p：列表 / 引用 / 表格 / 代码块内的段落本就不吃缩进。
+  mdHost.querySelectorAll(':scope > p').forEach((p) => {
+    const first = /** @type {Text} */ (p.firstChild);
+    if (!first || first.nodeType !== 3) return;
+    const raw = first.nodeValue || '';
+    const stripped = raw.replace(/^[\u2003\u3000]+/, '');
+    if (stripped !== raw) first.nodeValue = stripped;
+  });
   const mdScroller = document.createElement('div');
   mdScroller.className = 'canvas-md-scroll canvas-viewer-safe-top';
   mdScroller.appendChild(mdHost);

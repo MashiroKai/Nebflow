@@ -25,6 +25,7 @@ import { togglePalette, openPalette } from './commandPalette.js';
 import { enterEdit, enterMeta, stepCenter, stepSidebar } from './mode.js';
 import { treeKeyAction, clearTreeSelection } from './explorer.js';
 import { deckKeyAction } from './canvas.js';
+import { videoKeyAction } from './viewers/video.js';
 
 /**
  * @typedef {Object} KeyRule
@@ -123,8 +124,12 @@ export const KEY_RULES = [
   // plugins.js:1011、main.js:2161、contacts.js:430）：焦点在可激活控件上时**不接管**，
   // 让原生 Space 走激活语义 —— 否则「Tab 到按钮 + 空格」就废了。
   // 三期：这条纪律从 handler 里的两句 if 变成 when 子句（`!activatableFocus`）。
+  // 视频面让位（canvas-video-player 批 2026-11-05）：画布视频页签在前台时，空格是
+  // **播放/暂停**（canvas.video.playPause），不是「进输入模式」。不加 `!canvasVideoOpen`
+  // 这条腿的话，两条 @Space 规则按注册序取先者 ⇒ 看视频按空格会跳进输入模式。
   {
-    id: 'mode.enterEdit', key: '@Space', when: `${META} && !activatableFocus && !textInputFocus`,
+    id: 'mode.enterEdit', key: '@Space',
+    when: `${META} && !activatableFocus && !textInputFocus && !canvasVideoOpen`,
     group: '键盘', description: '进入输入模式（edit）', run: () => enterEdit(),
   },
   {
@@ -227,6 +232,47 @@ export const KEY_RULES = [
   {
     id: 'canvas.mergeSelf', key: 'Escape', when: 'cardWindow && !textInputFocus',
     group: '画布', description: '卡片窗：合并回主窗', run: () => deckKeyAction('mergeSelf'),
+  },
+
+  // ── ⑦ 画布视频面（canvas-video-player 批 2026-11-05）──────────────────────
+  // 作者报障「视频样式很丑」顺带要求「键盘可达：空格播放/暂停、左右方向键 ±5s、
+  // M 静音，与既有快捷键不冲突」。准入闸 = **焦点落在播放器子树内**
+  // （`canvasVideoFocus`，viewers/video.js provide；点一下画面即入焦点 —— stage 的
+  // tabindex=-1，键盘路径走控件条的播放钮，同样在子树内）。为什么不用「视频页签
+  // 在前台」当闸：实测 2026-11-05 应用启动后 activeElement 就是对话输入框
+  // （#input TEXTAREA），那样的闸要么永远不放行（加了 !textInputFocus），要么把
+  // 「在对话里打空格」变成「视频播放」（不加）。焦点闸两个毛病都没有，且
+  // 「不冲突」成为结构事实。
+  // 另两条前置：
+  //   · `!deckOpen` —— 叠卡时 ←/→ 归 deck.prev/next（那两条的 when 是 deckOpen，
+  //     本表按注册序在其后；不加这条就得靠「谁先注册谁赢」的隐式规则，不写死不算数）；
+  //   · `!activatableFocus`（**只给空格**）—— 焦点落在本控件条的按钮上时，空格是
+  //     原生「激活按钮」，再补一条就成双重触发（播放按钮 ↔ 空格互搏）。
+  //     方向键与 M 对按钮没有原生语义，不必让位。
+  // `@Space` 按物理键（e.code），输入法/布局无关（keymap.js 文法注）。
+  {
+    id: 'canvas.video.playPause', key: '@Space',
+    when: 'canvasVideoFocus && !deckOpen && !activatableFocus',
+    group: '画布', description: '画布视频：播放 / 暂停',
+    run: () => videoKeyAction('playPause'),
+  },
+  {
+    id: 'canvas.video.seekForward', key: 'ArrowRight',
+    when: 'canvasVideoFocus && !deckOpen',
+    group: '画布', description: '画布视频：快进 5 秒',
+    run: () => videoKeyAction('seekForward'),
+  },
+  {
+    id: 'canvas.video.seekBackward', key: 'ArrowLeft',
+    when: 'canvasVideoFocus && !deckOpen',
+    group: '画布', description: '画布视频：后退 5 秒',
+    run: () => videoKeyAction('seekBackward'),
+  },
+  {
+    id: 'canvas.video.mute', key: 'M',
+    when: 'canvasVideoFocus && !deckOpen',
+    group: '画布', description: '画布视频：静音切换',
+    run: () => videoKeyAction('mute'),
   },
 ];
 

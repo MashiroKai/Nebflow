@@ -150,6 +150,17 @@
   --ds-space-inline-gap: 10px;
   --ds-space-stack-gap: 10px;
   --ds-space-indent-x: 10px;
+  /* ── 主列边缘盒共用槽（header-input-width-align 批 2026-11-05）─────────────
+     消费者恰两个，且必须逐像素同值：#header 的水平**外**距 与 #input-area 的水平
+     **内**距。两盒都是 `left:0; right:0` 的绝对层 ⇒ 本槽 = 0 时二者的 border-box
+     都铺满 #main 全宽，左右缘逐像素重合。
+     **这是「顶栏宽度 == 输入条宽度」的唯一来源**：改本行 = 两盒同时内缩/外扩；
+     禁止在任一消费点另写一个数（上一轮做偏的根源正是两个独立数值：顶栏水平内距搬
+     到外距、输入区另给内距，两个 16px 各写一处 ⇒ 顶栏被单独缩短 32px，考古见
+     vault 报告 header-input-width-align：62ed39ed2 与 48ec83961）。
+     本槽不是 4px 栅格里的间距档（它是「铺满 / 内缩」的开关量，历史正常值 = 0），
+     故不占用 --ds-space-* 刻度族槽位。 */
+  --ds-main-col-edge-x: 0px;
   /* 发丝缝例外槽（2026-11-04 间距例外收敛批出生）：1px 是**形态值**不是"差一点的 2px"——
      它是「存在感为零但把两件分开」的最细缝（分隔线、指示条偏移、发光描边 inset）。
      收回 2px 会把每条发丝缝视觉加倍（99 处原子），密度直接退化；故立具名槽并限定用途：
@@ -161,12 +172,14 @@
      收敛 4px 会让密集控件贴死，收敛 8px 会让每行膨胀，故以具名半步档收编，
      **限定小件内缝**（行/卡的块距仍走栅格 8/12/16）。值 = 现盘 6px 逐字搬迁。 */
   --ds-space-1h: 6px;
-  /* 段落排版缩进组（rich-render 批 2026-11-05，作者令 09:13 逐字「输出要求: 对
-     段落内容，要有缩进」）：以 em 表达（跟字号走，亮暗双档同值，拖动字号不脱节）。
-       · 首行缩进 = 2em（中文排版两字）；
+  /* 文档排版缩进组（撤回批 2026-11-05 16:43 作者令：①「你发的消息不加缩进功能」
+     ②「文档只缩进首行」）：以 em 表达（跟字号走，亮暗双档同值，拖动字号不脱节）。
+       · 首行缩进 = 2em（中文排版两字）——**只**用于文档阅读面（css/split.css
+         .canvas-md-viewer 的直接子 p）；气泡面（css/chat.css）零缩进，不再引用它。
        · 列表每级缩进 = 1.6em（> 一档字号 ⇒ 二三级可辨层级；嵌套按级累加）；
        · 窄屏（≤390px）收一档 1.15em：手机上 2em 级联三级会吃掉可用宽度。
-     消费面（禁裸 margin 拼缩进）：css/chat.css 气泡族 + css/split.css md 阅读面。 */
+     消费面（禁裸 margin 拼缩进）：css/split.css md 阅读面（chat.css 气泡族已于
+     撤回批退出本组）。 */
   --ds-text-indent: 2em;
   --ds-list-indent: 1.6em;
   --ds-list-indent-narrow: 1.15em;
@@ -1425,8 +1438,6 @@
   color: var(--ds-text);   /* 只为 mask 取 alpha（见坑③），不参与可见配色 */
   pointer-events: none;
   background: var(--ds-fade-veil);
-  -webkit-backdrop-filter: blur(var(--ds-fade-blur)) saturate(var(--ds-fade-sat));
-  backdrop-filter: blur(var(--ds-fade-blur)) saturate(var(--ds-fade-sat));
   -webkit-mask-image: linear-gradient(to bottom, currentColor 0%, color-mix(in srgb, currentColor 55%, transparent) 50%, transparent 100%);
   mask-image: linear-gradient(to bottom, currentColor 0%, color-mix(in srgb, currentColor 55%, transparent) 50%, transparent 100%);
 }

@@ -235,8 +235,6 @@
   position: absolute;
   border-radius: var(--ds-radius-card-md);
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur, 24px)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur, 24px)) saturate(1.15);
   border: 1px solid var(--glass-border);
   box-shadow:
     0 2px 8px rgba(0, 0, 0, 0.06),

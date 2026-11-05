@@ -377,7 +377,10 @@ function buildDock() {
     // main（ask-fade-content-opacity 批）已把 .ask-veil 遮罩条退役——渐隐归
     // .ask-col 的 mask-image，本组件不复活任何渐隐元素。
     h('div', { class: 'ask-colwrap' }, [h('div', { class: 'ask-col' })]),
-    h('div', { class: 'ask-input' }, [input, send, stop]),
+    // 输入条 = 毛玻璃唯一工具类 `.nf-glass`（glass-unify 批）：材质/描边/内高光/
+    // 模糊全部来自 stand-tokens.css 的 --nf-glass-* 单源，本组件零本地材质声明。
+    // `ask-input` 身份类保留（既有 spec 选择器），它在本文件只承载几何与焦点态。
+    h('div', { class: 'ask-input nf-glass' }, [input, send, stop]),
   ]);
 }
 
@@ -827,6 +830,31 @@ function wireObserversOnce() {
     // 画布开合（宽度过渡）会移动右下角座位——面板尺寸变化即重算。
     const panel = document.getElementById('canvas-panel');
     if (panel) new ResizeObserver(() => syncSeat()).observe(panel);
+    // ── 气泡穿入输入条批（作者令 2026-11-05 16:50）─────────────────────────
+    // 「气泡消息要能从输入框底下穿过，截止位置为输入框中间部分」。
+    // 几何契约：气泡列的**盒底** = 输入条垂直中线（见 ask.css .ask-colwrap
+    // 的负 margin），输入条以更高 z 序盖在气泡上 ⇒ 视觉上气泡钻到输入条下面
+    // 被它截住，而不是在它上面 6px 就断层。
+    // 中线随内容变（textarea 从 1 行长到 120px、手机档 44/48 钮、安全区内距），
+    // 所以不能写死 px —— 由本 RO 实测输入条高度写 `--ask-under = h / 2`。
+    const measureUnder = () => {
+      if (!el || !el.inputRow) return;
+      // 下一帧再量：RO 回调可能落在「输入条刚插入、发送钮/字号还没落位」的那一拍，
+      // 量到的是半成品高度（实测 34.8 而非 58 ⇒ 中线偏 6px）。
+      requestAnimationFrame(() => {
+        // ⚠ 必须用 offsetHeight（布局高度），不能用 getBoundingClientRect()：
+        // 收起态 `.ask-dock.closed` 带 `transform: scale(0.6)`，bbox 返回的是**变换后**
+        // 的 34.8px 而不是 58px ⇒ 中线偏 11.6px（实测 colBottom 774.4 vs inputMid 786）。
+        // 而且 ResizeObserver 观察的是 border-box（不受 transform 影响），高度不会
+        // 再变 ⇒ 这个错值不会被第二次回调纠正。布局高度对此免疫。
+        const h = el.inputRow.offsetHeight;
+        if (h > 0) el.dock.style.setProperty('--ask-under', (h / 2).toFixed(2) + 'px');
+      });
+    };
+    if (el && el.inputRow) {
+      measureUnder();
+      new ResizeObserver(measureUnder).observe(el.inputRow);
+    }
   }
   if (typeof MutationObserver === 'function') {
     // 排布批③：角落圆钮簇晚于切卡事件挂载（readFile 异步渲染腿把查找/源码钮
@@ -1159,7 +1187,8 @@ async function syncNoteForFile() {
   el.noteText.value = loadNote(sid);
 }
 
-// ── 渲染（弹幕式升腾 + 按龄渐隐 + 顶带渐隐由 CSS mask 承担）────────────────
+// ── 渲染（升腾入场 + 顶带 12px 内容级渐隐由 CSS mask 承担）────────────────
+// glass-unify 批 2026-11-05：原「按龄渐隐」腿已退役（见下方 render() 内注释）。
 
 function render() {
   if (!el) return;
@@ -1169,8 +1198,13 @@ function render() {
   // v2.1 显示面减法：只出 user/ai 两族——sys（回执/状态噪声类）转录仍存但永不
   // 呈现（收进不可见处；主会话回问在 consumeFrame 已按 §7 落 user 族）。
   const vis = s.msgs.filter((m) => m.role !== 'sys');
-  vis.forEach((m, i) => {
-    const b = h('div', { class: 'ask-bub ' + (m.role === 'user' ? 'user' : 'ai') });
+  vis.forEach((m) => {
+    // glass-unify 批 2026-11-05：气泡挂**唯一毛玻璃工具类** `.nf-glass`
+    // （作者令「这三处全部吃你这一批正在立的唯一毛玻璃标准，不许为 ask 气泡
+    // 另造一套等效样式」）。材质/描边/内高光/模糊全部来自 --nf-glass-* 单源，
+    // 本组件零本地材质声明；`ask-bub` / `user` / `ai` 三个身份类只承载几何与
+    // 语义色（气泡最大宽度、圆角、user 侧 sapphire tint）。
+    const b = h('div', { class: 'ask-bub nf-glass ' + (m.role === 'user' ? 'user' : 'ai') });
     // ① 修复批 2026-10-31：ai 族走主会话渲染腿（markdown 全套）；user 族
     // 维持 textContent（用户输入纯文本面，与主会话一致）。渲染腿复用不重写。
     // ⚠ **本模块唯一的 HTML 落点 = markdown 渲染腿**（renderMarkdownWithMath 的
@@ -1178,10 +1212,19 @@ function render() {
     // marked+KaTeX 护栏）；业务 DOM（气泡壳、图标、拖柄、输入条）一律走 h()/frag()。
     if (m.role === 'user') b.textContent = m.text;
     else b.innerHTML = renderMarkdownWithMath(m.text);
-    // 弹幕感：越靠上（越旧）越透明（样张按龄渐隐同律）。
-    const d = vis.length - 1 - i;
-    b.style.setProperty('--ask-age-alpha', String(Math.max(0.3, 1 - d * 0.13)));
-    b.setAttribute('data-age', String(d));
+    // ── glass-unify 批 2026-11-05：「按龄渐隐」整条腿退役 ──────────────────
+    // 作者令（2026-11-05 16:50 逐字）：「canvas的ask现在有bug……是只有最新一条
+    // 消息能看清，其他前面的消息又是半透明的了。」
+    // 根因就在这里：原实现给**每条**历史气泡写 `--ask-age-alpha = max(0.3,
+    // 1 - 距底条数 × 0.13)`（第 1 条旧 = .87、第 3 条 = .61、第 6 条起压到 .30），
+    // CSS 侧 `.ask-bub[data-age] { opacity: var(--ask-age-alpha) }` 直接吃这个值。
+    // 于是「最新一条 α=1 清楚、前面全部半透明、底下的文档正文透上来」——这是
+    // 设计意图「弹幕感」与作者新令「毛玻璃一律不透底」的正面冲突，按**后者胜**
+    // 处理：整条年龄透明度腿删除（不写 --ask-age-alpha、不写 data-age）。
+    // 与「顶缘 12px 内容级渐隐」不冲突：那是作者 2026-11-04 09:22 明确要的
+    // 「滚到列顶时自身的 alpha 渐到 0」，作用在滚动容器 mask 上且只有 12px 高，
+    // 不是「每条历史消息整体降透明度」。两者被本批区分为「位置渐隐」vs「年龄渐隐」，
+    // 只保留前者。tests/canvas-ask-legibility.spec.mjs 的 mask 断言不受影响。
     el.col.appendChild(b);
   });
   requestAnimationFrame(() => { el.col.scrollTop = el.col.scrollHeight; });
