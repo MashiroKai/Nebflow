@@ -627,7 +627,8 @@ function buildFollowerBlock(container, role, commit) {
 
 /**
  * 节级渲染：Nebula 数据读数失败 ⇒ 台账 #937 同款显式降级面（节级缩小版），
- * 不静默半死。
+ * 不静默半死。Jev/生图 两组**与本节的 Nebula 状态互不连坐**——降级面之后照常
+ * 追加（两面各自读过，失败即隐藏自己那组）。
  * @param {HTMLElement} container #model-chain-section-body
  */
 function renderChainSectionBody(container) {
@@ -656,18 +657,24 @@ function renderChainSectionBody(container) {
     });
     face.append(icon, title, hint, retry);
     container.appendChild(face);
-    return;
+  } else {
+    const wrap = document.createElement('div');
+    wrap.className = 'chain-section-face';
+    buildNebulaChainFace(wrap, saveChain);
+    container.appendChild(wrap);
   }
-  const wrap = document.createElement('div');
-  wrap.className = 'chain-section-face';
-  buildNebulaChainFace(wrap, saveChain);
-  container.appendChild(wrap);
+  // Jev / 生图 两组（与 /model 面板同一次产出）——此路取**折叠形态**（方案 B：
+  // contract §I-1；折叠控件 = 原生 <details>/<summary>，故本节 <button> 数仍为 0）。
+  const list = document.createElement('div');
+  list.className = 'mp-group-list';
+  container.appendChild(list);
+  renderSwitchGroups(list, { collapsible: true });
 }
 
-/** 拉取 Nebula 最新读数 → 重绘节内容（seq 守卫丢弃陈旧响应）。 */
+/** 拉取 Nebula 最新读数 + 两面状态投影 → 重绘节内容（seq 守卫丢弃陈旧响应）。 */
 async function refreshChainSection(container) {
   const seq = ++chainSectionSeq;
-  const data = await fetchModelOf('Nebula');
+  const [, data] = await Promise.all([fetchFaceStatuses(), fetchModelOf('Nebula')]);
   if (seq !== chainSectionSeq) return;
   const st = roleState.get('Nebula') || { chain: null, expanded: false };
   st.data = data;
@@ -692,6 +699,273 @@ export function mountModelChainSection(container) {
   return () => { alive = false; off(); };
 }
 
+// ── Jev / 生图 切换分组（jev-imagegen-align-llm 批 2026-11-02，作者令第 4 条）
+// 契约 §I-3 定案：这两面**不是** agent 模型回退链（没有「角色」，各自是单
+// provider 单 model 的配置节）——/model 里的两个新组是「该配置节当前使用哪个
+// provider」的**指针切换器**，写 `jev.provider` / `imagegen.defaultProvider`。
+// 故写通道独立于 PUT /api/agents/:name/model，也**不进** ALL_ROLES / ROLES /
+// FOLLOWER_ROLES / SETTABLE_ROLES（那四行被 roles-hiddenfilter spec 逐字钉死）。
+//
+// 🔴 契约 §E.4 / §I-2 三条结构铁钉（违反即红）：
+//   ① 分组 class = `.mp-group[data-group=…]`，**绝不** `.mp-roleblock`
+//      （model-panel-degraded.spec.mjs:148/163 钉 `.mp-roleblock` 计数恒为 2）；
+//   ② 切换控件只有 `<select>`（model-chain-slim.spec.mjs:217/227 钉设置页节内
+//      `<button>` 数恒为 0）；
+//   ③ 两句 hint 放**分组内**、不进节头 `.cfg-hint`（同 spec:189/204-206 钉节头
+//      说明 = 单行高）。
+// 视觉基线（§I-1）：选**方案 B**——设置页节的两组默认折叠，折叠控件是原生
+// `<details>/<summary>`（不是 <button>），首屏零新增可见高度。
+
+/**
+ * 两个「面」的静态描述（读数端点 / 指针字段 / 标题键 / data-group 名）。
+ * 单点定义：读数、渲染、写通道三处都从这里取，禁第二份字面量。
+ * @type {Array<{group: 'jev'|'imagegen', endpoint: string, pointer: string, titleKey: string}>}
+ */
+const SWITCH_FACES = [
+  { group: 'jev', endpoint: '/api/config/jev', pointer: 'provider', titleKey: 'model.groupJev' },
+  { group: 'imagegen', endpoint: '/api/config/imagegen', pointer: 'defaultProvider', titleKey: 'model.groupImagegen' },
+];
+
+/** group → 状态投影（`null` = 该面读数失败 ⇒ 该分组隐藏）。 */
+const /** @type {Map<string, any>} */ faceState = new Map();
+
+/**
+ * 读一面的状态投影（GET /api/config/jev 或 /api/config/imagegen）。
+ * @param {{endpoint: string}} face
+ * @returns {Promise<any|null>} 非 2xx / 非对象 / 异常 ⇒ null
+ */
+async function fetchFaceStatus(face) {
+  try {
+    const resp = await fetch(face.endpoint, { headers: authHeaders() });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    return data && typeof data === 'object' ? data : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 并行重读两面投影：一面失败只影响那一面（互不连坐）。 */
+async function fetchFaceStatuses() {
+  const results = await Promise.all(SWITCH_FACES.map(fetchFaceStatus));
+  SWITCH_FACES.forEach((face, i) => faceState.set(face.group, results[i]));
+}
+
+/**
+ * 该面已配置的 provider（名 → 条目）。投影缺 `providers` / 非对象 = 空。
+ * @param {any} status
+ * @returns {Record<string, any>}
+ */
+function faceProvidersOf(status) {
+  const p = status?.providers;
+  return p && typeof p === 'object' ? /** @type {Record<string, any>} */ (p) : {};
+}
+
+/**
+ * 选项文案 `name · model`（模型器名缺席时只留 provider 名——不造假字段）。
+ * @param {string} name
+ * @param {any} entry
+ * @returns {string}
+ */
+function switchOptionLabel(name, entry) {
+  const model = entry && typeof entry.model === 'string' ? entry.model : '';
+  return model ? `${name} · ${model}` : name;
+}
+
+/**
+ * 一个切换分组的 DOM（Jev / 生图 × /model 面板 / 设置页节 = **同一次产出**，
+ * 差别只在 `opts.collapsible`）。
+ *  - 读数失败 ⇒ 返回 null（调用方不渲染该组，面板不炸）；
+ *  - 未配置任何 provider ⇒ 组内一行空态提示 + 禁用的 select（绝不造假选项）。
+ * @param {(typeof SWITCH_FACES)[number]} face
+ * @param {{collapsible?: boolean}} [opts] true ⇒ 折叠形态（<details>/<summary>，默认合上）
+ * @returns {HTMLElement|null}
+ */
+function buildSwitchGroup(face, opts = {}) {
+  const status = faceState.get(face.group);
+  if (!status) return null;
+  const providers = faceProvidersOf(status);
+  const names = Object.keys(providers);
+  const current = typeof status[face.pointer] === 'string' ? status[face.pointer] : '';
+  const collapsible = opts.collapsible === true;
+
+  const root = document.createElement(collapsible ? 'details' : 'div');
+  root.className = 'mp-group';
+  root.dataset.group = face.group;
+
+  const head = document.createElement(collapsible ? 'summary' : 'div');
+  head.className = 'mp-group-head';
+  const title = document.createElement('span');
+  title.className = 'mp-group-title';
+  title.textContent = t(face.titleKey);
+  head.appendChild(title);
+  if (current) {
+    const cur = document.createElement('span');
+    cur.className = 'mp-group-cur';
+    cur.textContent = current;
+    head.appendChild(cur);
+  }
+
+  const body = document.createElement('div');
+  body.className = 'mp-group-body';
+
+  if (names.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'mp-group-empty';
+    empty.textContent = t('settings.cfgCard.emptyHint');
+    body.appendChild(empty);
+  }
+
+  const sel = document.createElement('select');
+  sel.className = 'mp-group-switch';
+  sel.setAttribute('aria-label', `${t(face.titleKey)} — ${t('model.groupSwitch')}`);
+  if (names.length === 0) {
+    sel.disabled = true;
+    const ph = document.createElement('option');
+    ph.value = '';
+    ph.textContent = t('settings.cfgCard.keyMissing');
+    sel.appendChild(ph);
+  } else {
+    if (!names.includes(current)) {
+      // 指针缺席/悬空（该节还没选过 provider）：占位行不当成「已选第 0 项」。
+      const ph = document.createElement('option');
+      ph.value = '';
+      ph.textContent = t('settings.cfgCard.keyMissing');
+      ph.selected = true;
+      sel.appendChild(ph);
+    }
+    for (const name of names) {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = switchOptionLabel(name, providers[name]);
+      if (name === current) opt.selected = true;
+      sel.appendChild(opt);
+    }
+    sel.addEventListener('change', () => {
+      const next = sel.value;
+      if (!next || next === current) return;
+      void applyFaceSwitch(face, next);
+    });
+  }
+
+  body.appendChild(sel);
+  root.appendChild(head);
+  root.appendChild(body);
+  return root;
+}
+
+/**
+ * 把两面分组渲染进容器（**两处唯一实现**：/model 面板的 `.mp-groups-slot` 与
+ * 设置页 `#model-chain-section-body` 尾部的 `.mp-group-list`）。
+ * 两面都读不到 ⇒ 容器留空且隐藏（不占位、不炸面）。
+ * @param {HTMLElement|null} container
+ * @param {{collapsible?: boolean}} [opts]
+ */
+function renderSwitchGroups(container, opts = {}) {
+  if (!container) return;
+  // 折叠态跨重渲保留（设置页每次保存后整节重绘，用户展开的组不该自己合上）。
+  const openGroups = new Set(
+    [...container.querySelectorAll('details.mp-group[open]')].map((d) => /** @type {HTMLElement} */ (d).dataset.group),
+  );
+  /** @type {HTMLElement[]} */
+  const groups = [];
+  for (const face of SWITCH_FACES) {
+    const el = buildSwitchGroup(face, opts);
+    if (!el) continue;
+    if (el instanceof HTMLDetailsElement && openGroups.has(face.group)) el.open = true;
+    groups.push(el);
+  }
+  container.replaceChildren(...groups);
+  container.style.display = groups.length ? '' : 'none';
+}
+
+/** /model 面板的切换分组槽（面板未开 ⇒ no-op；不触发整面板重渲）。 */
+function renderPanelGroups() {
+  const slot = /** @type {HTMLElement|null} */ (panelEl?.querySelector('.mp-groups-slot') || null);
+  renderSwitchGroups(slot, { collapsible: false });
+}
+
+/**
+ * Jev 切换载荷：只写顶层 `provider` 指针 + 该 provider 的 model
+ * （ConfigService.setJevSection 是**逐键 merge** ⇒ 其余键与 `providers` 整块原样
+ * 保留）。条目无 model ⇒ 不带 model 键（不把顶层 model 写成 null）。
+ * @param {string} name
+ * @returns {Record<string, string>}
+ */
+function jevSwitchPayload(name) {
+  /** @type {Record<string, string>} */
+  const body = { provider: name };
+  const entry = faceProvidersOf(faceState.get('jev'))[name];
+  const model = entry && typeof entry.model === 'string' ? entry.model : '';
+  if (model) body.model = model;
+  return body;
+}
+
+/**
+ * 生图切换载荷（PUT /api/config/imagegen 是**整节替换**语义 ⇒ 先读回现有节再
+ * 合并写，绝不把 providers 写没）：
+ *  - 活快照 `state.parsedConfig.imagegen` 优先（保真：未进投影的字段如
+ *    `timeoutMs` 逐字保留），投影 `providers` 兜底（快照缺席/过期）；
+ *  - `keyConfigured` 是投影字段，永不回写。
+ * @param {string} name
+ * @returns {{enabled: boolean, defaultProvider: string, providers: Record<string, any>}}
+ */
+function imagegenSwitchPayload(name) {
+  const live = /** @type {any} */ (state.parsedConfig)?.imagegen;
+  const liveProviders = live && typeof live === 'object' && live.providers && typeof live.providers === 'object'
+    ? /** @type {Record<string, any>} */ (live.providers)
+    : null;
+  const projection = faceProvidersOf(faceState.get('imagegen'));
+  /** @type {Record<string, any>} */
+  const providers = {};
+  for (const [provName, entry] of Object.entries(projection)) {
+    // 投影给必填的 type/model + 可选 baseUrl/keyRef（派生节的最小可解码形态）。
+    /** @type {Record<string, any>} */
+    const row = { type: entry.type, model: entry.model };
+    if (entry.baseUrl != null) row.baseUrl = entry.baseUrl;
+    if (entry.keyRef != null) row.keyRef = entry.keyRef;
+    // 活快照补投影没覆盖的字段（timeoutMs 等），绝不覆盖投影已定的键。
+    const src = liveProviders && liveProviders[provName] && typeof liveProviders[provName] === 'object'
+      ? /** @type {Record<string, any>} */ (liveProviders[provName]) : null;
+    if (src) {
+      for (const [k, v] of Object.entries(src)) if (!(k in row)) row[k] = v;
+    }
+    providers[provName] = row;
+  }
+  const enabled = typeof live?.enabled === 'boolean'
+    ? live.enabled
+    : !!(faceState.get('imagegen')?.enabled);
+  return { enabled, defaultProvider: name, providers };
+}
+
+/**
+ * 切换某面当前使用的 provider（指针切换，不是回退链）。成功后 toast
+ * `model.groupSwitched` 并重渲分组——重渲走**既有** onModelChainChange 订阅
+ * （与 putChain 同口径，不引第二套事件）。
+ * @param {(typeof SWITCH_FACES)[number]} face
+ * @param {string} name 目标 provider 名
+ */
+async function applyFaceSwitch(face, name) {
+  const body = face.group === 'jev' ? jevSwitchPayload(name) : imagegenSwitchPayload(name);
+  try {
+    const resp = await fetch(face.endpoint, {
+      method: 'PUT',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(/** @type {any} */ (err).error || `HTTP ${resp.status}`);
+    }
+    window.__showToast?.(t('model.groupSwitched', { name }), 'success');
+  } catch (e) {
+    window.__showToast?.(String(/** @type {any} */ (e).message || e), 'error');
+  }
+  await fetchFaceStatuses(); // 失败也回读真态（下拉回到服务端值）
+  renderPanelGroups();
+  emitChainChange(); // 设置页节同步腿（既有订阅，零新事件）
+}
+
 // ── Panel skeleton + render ────────────────────────────────
 
 function renderBannerContent() {
@@ -712,7 +986,7 @@ function renderPanelLoadError() {
   if (!panelEl) return;
   const body = panelEl.querySelector('.mp-body');
   if (!body) return;
-  for (const sel of ['.mp-nebula-slot', '.mp-followers']) {
+  for (const sel of ['.mp-nebula-slot', '.mp-followers', '.mp-groups-slot']) {
     const slot = body.querySelector(sel);
     if (!slot) continue;
     slot.replaceChildren();
@@ -771,8 +1045,7 @@ function renderPanel() {
   if (allRolesUnreadable()) {
     renderPanelLoadError();
     return;
-  }
-  // 恢复腿：出降级态先拆降级面 + 复原被降级面压掉的槽位可见性。
+  }  // 恢复腿：出降级态先拆降级面 + 复原被降级面压掉的槽位可见性。
   panelEl.querySelector('.mp-load-error')?.remove();
   nebula.style.display = '';
   nebula.replaceChildren();
@@ -787,18 +1060,24 @@ function renderPanel() {
     buildFollowerBlock(followers, drill, commit);
     const banner = panelEl.querySelector('.mp-banner');
     if (banner) banner.style.display = 'none';
+    // 下钻态只看该角色 —— Jev/生图 分组让位（回列表时 renderPanel 重建）。
+    const groupsSlot = /** @type {HTMLElement|null} */ (panelEl.querySelector('.mp-groups-slot'));
+    if (groupsSlot) groupsSlot.style.display = 'none';
     return;
   }
   buildNebulaBlock(nebula, commit);
   FOLLOWER_ROLES.forEach(role => buildFollowerBlock(followers, role, commit));
   renderBannerContent();
+  // Jev / 生图 两个切换分组（与设置页节同一次产出；手机下钻态已让位）。
+  renderPanelGroups();
   // Block visibility = f(mode, fork state) — the shared widget decides which
   // of the banner / follower group is showing.
   panelVisibility?.update();
 }
 
 async function refreshPanel() {
-  await fetchAllRoles();
+  // 角色链 + 两面状态投影并行读数（互不连坐：任一面失败只影响它自己那组）。
+  await Promise.all([fetchAllRoles(), fetchFaceStatuses()]);
   renderPanel();
 }
 
@@ -830,6 +1109,7 @@ function buildPanel() {
       <div class="mp-body">
         <div class="mp-nebula-slot"></div>
         <div class="mp-followers" style="display:none"></div>
+        <div class="mp-groups-slot"></div>
       </div>
     </div>`;
   document.body.appendChild(overlay);

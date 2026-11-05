@@ -4472,9 +4472,14 @@ body.mobile-layer #usage-grid .ud-cell[data-date]::after {
        名字玻璃胶囊（绝对定位挂在头像正下方居中；空名 :empty 不渲染，头像仍
        居中）。头本体 position:absolute 悬浮在内容之上：零背景、零描边、
        pointer-events:none（只有头像/名字各自接事件），内容从其后穿过。
-     · 滚动渐隐：滚动量由 mobile/sessionHead.js 的 bindIdHeadFade **唯一实现**
-       写成 --idhead-p（0→1，行程 64px，rAF 合帧），本块消费为
-       opacity: calc(1 - var(--idhead-p))。四种会话同一驱动器，禁第二套进度。
+     · 身份头**常显**（身份头常显批 2026-11-04，作者 20:49 裁定「按你的推荐走」）：
+       11-02 同构批曾由 mobile/sessionHead.js 的 bindIdHeadFade 写 --idhead-p
+       （0→1，行程 64px），本块消费为 opacity: calc(1 - var(--idhead-p))。
+       该驱动器**整条退役**（主对话腿先摘 = 顶部身份头常显批 2026-11-04；好友/
+       群/设备三族同批摘除）：会话一打开消息流即贴底 ⇒ 进度恒满档 ⇒ 身份头
+       100% 不可见（main 实测 --idhead-p=1 / opacity=0）。作者铁律「腾空间用
+       缩高或上移，不许让元素消失」⇒ 本块不再有 opacity 进度腿，--idhead-p
+       零消费者、已删（禁死 CSS）。
      · 四种会话同形：头像尺寸（--idhead-avatar 56）、名字胶囊的字号/padding/
        圆角/背景 token 全部由**同一组声明**给出（选择器用 :is() 合并写），
        好友/群/设备 与主对话之间零样式分叉。
@@ -4498,7 +4503,6 @@ body.mobile-layer .mh-idhead {
   --idhead-avatar: 56px;
   --idhead-seat: 12px;  /* 头顶净空：12 + 56/2 = 40 = 左右 48px 钮的中心（top 16 + 24）
                            ⇒ 头像中心与两颗钮同轴，且头像视觉中心落在同一水平线 */
-  --idhead-p: 0;        /* 滚动渐隐进度（JS 写；无 JS 时恒 0 = 常显） */
   position: absolute;
   top: calc(var(--idhead-seat) + env(safe-area-inset-top, 0px));
   left: 0;
@@ -4511,7 +4515,8 @@ body.mobile-layer .mh-idhead {
   border: none;
   box-shadow: none;
   pointer-events: none;
-  opacity: calc(1 - var(--idhead-p));
+  /* 常显：本块**不设** opacity / visibility 腿（身份头常显批 2026-11-04）；
+     身份/入口类元素不许随滚动消失（作者铁律）。 */
 }
 /* ② 头像：唯一流内子节点 ⇒ 水平恒居屏幕中线（名字/副行都不参与 flex 居中，
    故「头像中心 − 屏幕中线」是结构性 0，不靠测量对齐）。四种会话同一尺寸档
