@@ -624,9 +624,11 @@ final class FriendService(
   def listConversations: IO[Either[String, List[ConversationSummary]]] =
     withClient(_.listConversations).flatMap {
       case Left(err) =>
-        logger.warn(s"listConversations failed: $err").as(
-          Left(err): Either[String, List[ConversationSummary]]
-        )
+        logger
+          .warn(s"listConversations failed: $err")
+          .as(
+            Left(err): Either[String, List[ConversationSummary]]
+          )
       case Right(convs) =>
         // 件一（2026-11-02）：内嵌 `friend` 档案的第二个描述（bio）同样在此合并
         // —— 与 `GET /api/friends` 同一出口口径（禁各调用点自行 map）。

@@ -59,7 +59,10 @@ class NfFileLegacyRootSpec extends CatsEffectSuite:
     val rel = Path.of("uploads", "sess-2", "doc.pdf")
     val migrated = write(home.resolve(".nebflow-migrated-20261020_190800").resolve(rel), "pdf")
     val legacyLiteral = home.resolve(".nebflow").resolve(rel)
-    assertEquals(NfFilePolicy.legacyRootResidual(legacyLiteral, dataRoot, home).map(_.toString), Some(migrated.toString))
+    assertEquals(
+      NfFilePolicy.legacyRootResidual(legacyLiteral, dataRoot, home).map(_.toString),
+      Some(migrated.toString)
+    )
   }
 
   test("③ 两棵迁移树都有 ⇒ 最新（字典序降序）优先") {
@@ -126,3 +129,4 @@ class NfFileLegacyRootSpec extends CatsEffectSuite:
         case other => fail(s"expected Denied, got $other")
     }
   }
+end NfFileLegacyRootSpec
