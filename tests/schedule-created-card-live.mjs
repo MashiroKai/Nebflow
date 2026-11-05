@@ -196,7 +196,8 @@ async function main() {
     viewport: { width: 1440, height: 900 } });
   const page = await ctx.newPage();
   const pageErrors = [];
-  page.on('pageerror', (e) => pageErrors.push(e.message));
+  // 记 stack：S2 红的时候只有 message 无法定位（第一现场原则：诊断信息随断言走）。
+  page.on('pageerror', (e) => pageErrors.push(`${e.message}\n${e.stack || ''}`));
   await establishSession(BASE, tok, page);
   await page.waitForFunction(() => !!document.querySelector('#chat'), null, { timeout: 20000 });
   // 首次启动的 onboarding 覆盖层（隔离 home 无 provider）：有就关掉，否则挡住点击。
