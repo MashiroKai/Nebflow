@@ -85,7 +85,7 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
       Files.createDirectories(dataRoot.resolve("secrets"))
       Files.write(dataRoot.resolve("secrets/x.txt"), "s".getBytes(StandardCharsets.UTF_8))
       Files.write(dataRoot.resolve("auth.json"), "\"token\"".getBytes(StandardCharsets.UTF_8))
-      Files.write(dataRoot.resolve("nebflow.json"), "{}".getBytes(StandardCharsets.UTF_8))
+      Files.write(dataRoot.resolve(nebflow.shared.Branding.configFileName), "{}".getBytes(StandardCharsets.UTF_8))
       Files.write(outside.resolve("x.json"), "{\"ok\":true}".getBytes(StandardCharsets.UTF_8))
       Files.write(outside.resolve("vps.env"), "A=1".getBytes(StandardCharsets.UTF_8))
 
@@ -198,7 +198,7 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
         // the R2 inode snapshot remains the alias guard on top).
         for (rel, want) <- List(
             ("auth.json", "credential-path"),
-            ("nebflow.json", "credential-path"),
+            (nebflow.shared.Branding.configFileName, "credential-path"),
             ("secrets/x.txt", "credential-path")
           )
         do

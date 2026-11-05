@@ -62,7 +62,7 @@ class PluginDispatchFaceSpec extends CatsEffectSuite:
       s"""{"name":"$agent","description":"dispatch-face spec agent","tools":[],"category":"standalone"}"""
     )
     os.write.over(tempRoot / "agents" / agent / "system.md", s"# $agent\n")
-  os.write.over(tempRoot / "nebflow.json", "{}")
+  os.write.over(tempRoot / nebflow.shared.Branding.configFileName, "{}")
 
   private val skillDir = tempRoot / "plugins" / "inject-skill"
   os.makeDir.all(skillDir / "skills" / "howto")
@@ -90,7 +90,7 @@ class PluginDispatchFaceSpec extends CatsEffectSuite:
 
   override def beforeEach(context: munit.BeforeEach): Unit =
     // 每用例回到「零 dispatch 记录」的干净面（trust 记录保留）
-    os.write.over(tempRoot / "nebflow.json", "{}")
+    os.write.over(tempRoot / nebflow.shared.Branding.configFileName, "{}")
     PluginRegistry.invalidateCache()
     ProjectRuntimeRegistry.clear
 

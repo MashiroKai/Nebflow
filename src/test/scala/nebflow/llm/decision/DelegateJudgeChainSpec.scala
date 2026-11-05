@@ -162,7 +162,7 @@ class DelegateJudgeChainSpec extends CatsEffectSuite:
 
   test("utilityCandidates: ref 可解 ⇒ 钉首位＋链内重复候选去重（后备不重复烧调用）") {
     withTempDataRoot { tmp =>
-      IO(os.write(tmp / "nebflow.json", """{"judge":{"utilityModel":"p/util-1"}}""")).flatMap { _ =>
+      IO(os.write(tmp / nebflow.shared.Branding.configFileName, """{"judge":{"utilityModel":"p/util-1"}}""")).flatMap { _ =>
         val registry = StubRegistry(
           adapters = Map.empty,
           chain = List(cand("p", "util-1"), cand("q", "m2"), cand("p", "util-1")),

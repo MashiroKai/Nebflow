@@ -43,7 +43,7 @@ class PluginLoadVisibilitySpec extends CatsEffectSuite:
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot)
-  os.write.over(tempRoot / "nebflow.json", "{}")
+  os.write.over(tempRoot / nebflow.shared.Branding.configFileName, "{}")
 
   override def afterAll(): Unit =
     PathUtil.setDataRoot(originalRoot)
@@ -95,7 +95,7 @@ class PluginLoadVisibilitySpec extends CatsEffectSuite:
   /** 固定状态：ok-a / ok-b 有审计记录；drifted 记录后改动（内容变更）；blocked-pkg 封禁。 */
   private def establishState(): IO[Unit] =
     for
-      _ <- IO.blocking(os.write.over(tempRoot / "nebflow.json", "{}"))
+      _ <- IO.blocking(os.write.over(tempRoot / nebflow.shared.Branding.configFileName, "{}"))
       _ <- IO(PluginRegistry.invalidateCache())
       _ <- PluginRegistry.approve("ok-a")
       _ <- PluginRegistry.approve("ok-b")
@@ -203,7 +203,7 @@ class PluginLoadVisibilitySpec extends CatsEffectSuite:
       _ <- establishState() // 保证去重记账处于「有异常」态，随后验证复位
       _ <- IO.blocking {
         os.remove.all(tempRoot / "plugins")
-        os.write.over(tempRoot / "nebflow.json", "{}")
+        os.write.over(tempRoot / nebflow.shared.Branding.configFileName, "{}")
         writePlugin("ok-a", "可见插件 A")
         writePlugin("ok-b", "可见插件 B")
       }

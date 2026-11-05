@@ -101,7 +101,7 @@ class PluginSourceSyncSpec extends FunSuite:
       enabled: Boolean,
       branch: String = "main"
   ): Unit =
-    val cfg = home / "nebflow.json"
+    val cfg = home / nebflow.shared.Branding.configFileName
     val decl = Json.obj(
       "kind" -> Json.fromString(kind),
       "url" -> Json.fromString(url),
@@ -183,7 +183,7 @@ class PluginSourceSyncSpec extends FunSuite:
 
   test("①c a malformed declaration is dropped with a warning, the rest of the table survives"):
     os.write.over(
-      home / "nebflow.json",
+      home / nebflow.shared.Branding.configFileName,
       Json
         .obj(
           "plugins" -> Json.obj(
@@ -388,7 +388,7 @@ class PluginSourceSyncSpec extends FunSuite:
     declareLocalSource(v1.toString, preinstall = true)
     // 写卸载标记（= PluginRemovePolicy 的 plugins.removed.<name>）
     os.write.over(
-      home / "nebflow.json",
+      home / nebflow.shared.Branding.configFileName,
       Json
         .obj(
           "plugins" -> Json.obj(

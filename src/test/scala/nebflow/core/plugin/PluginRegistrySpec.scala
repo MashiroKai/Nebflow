@@ -129,7 +129,7 @@ class PluginRegistrySpec extends CatsEffectSuite:
   )
 
   // 隔离 nebflow.json（审计记录 / 封禁表读写落临时根）
-  os.write.over(tempRoot / "nebflow.json", "{}")
+  os.write.over(tempRoot / nebflow.shared.Branding.configFileName, "{}")
 
   override def afterAll(): Unit =
     PathUtil.setDataRoot(originalRoot)
@@ -138,7 +138,7 @@ class PluginRegistrySpec extends CatsEffectSuite:
   private def names: IO[Set[String]] = scan.map(_.map(_.name).toSet)
 
   private def reset: IO[Unit] = IO {
-    os.write.over(tempRoot / "nebflow.json", "{}")
+    os.write.over(tempRoot / nebflow.shared.Branding.configFileName, "{}")
     PluginRegistry.invalidateCache()
   }
 
@@ -360,7 +360,7 @@ class PluginRegistrySpec extends CatsEffectSuite:
       _ <- PluginBlockPolicy.block("skills-only", "spec: survive auto-approve", "spec")
       _ <- PluginRegistry.approve("skills-only") // 种子路径的等价动作（writeTrustEntry 整对象替换）
       stillBlocked <- PluginRegistry.resolve("skills-only")
-      revokedOnDisk <- IO.blocking(os.read(tempRoot / "nebflow.json").contains("revoked"))
+      revokedOnDisk <- IO.blocking(os.read(tempRoot / nebflow.shared.Branding.configFileName).contains("revoked"))
       _ <- PluginBlockPolicy.unblock("skills-only", "spec")
       restored <- PluginRegistry.resolve("skills-only")
     yield
@@ -432,11 +432,11 @@ class PluginRegistrySpec extends CatsEffectSuite:
 
   test("§G.2 flag: plugins.enabled=false → catalog 为空（目录不注入）") {
     for
-      _ <- IO.blocking(os.write.over(tempRoot / "nebflow.json", """{"plugins":{"enabled":false}}"""))
+      _ <- IO.blocking(os.write.over(tempRoot / nebflow.shared.Branding.configFileName, """{"plugins":{"enabled":false}}"""))
       _ <- IO(PluginRegistry.invalidateCache())
       catalog <- PluginRegistry.renderCatalog()
       enabled <- PluginsConfig.enabled
-      _ <- IO.blocking(os.write.over(tempRoot / "nebflow.json", "{}"))
+      _ <- IO.blocking(os.write.over(tempRoot / nebflow.shared.Branding.configFileName, "{}"))
       _ <- IO(PluginRegistry.invalidateCache())
     yield
       assertEquals(enabled, false, "flag must read false from nebflow.json")
@@ -444,7 +444,7 @@ class PluginRegistrySpec extends CatsEffectSuite:
   }
 
   test("§G.2 flag 缺省: absent → enabled=true（fail-safe 方向 = 新能力开启）") {
-    IO.blocking(os.write.over(tempRoot / "nebflow.json", "{}")).flatMap { _ =>
+    IO.blocking(os.write.over(tempRoot / nebflow.shared.Branding.configFileName, "{}")).flatMap { _ =>
       PluginsConfig.enabled.map(e => assertEquals(e, true, "absent flag defaults to enabled"))
     }
   }

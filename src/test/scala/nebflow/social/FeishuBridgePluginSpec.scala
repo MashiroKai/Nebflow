@@ -831,7 +831,7 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
     // started — no socket, fully offline).
     val root = tmpRoot()
     os.write(
-      root / "nebflow.json",
+      root / nebflow.shared.Branding.configFileName,
       """{"socialChannels":{"channels":{"feishu":{"enabled":true,"fields":{"app_id":"cli_storedapp0000001","region":"feishu"}}}}}"""
     )
     val p = new FeishuBridgePlugin(
@@ -859,7 +859,7 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
   test("FB-F3 connection face: matching worlds read match; no adapter reads unknown") {
     val root = tmpRoot()
     os.write(
-      root / "nebflow.json",
+      root / nebflow.shared.Branding.configFileName,
       """{"socialChannels":{"channels":{"feishu":{"enabled":true,"fields":{"app_id":"cli_sameapp00000001","region":"feishu"}}}}}"""
     )
     val p = new FeishuBridgePlugin(

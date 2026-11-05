@@ -164,7 +164,7 @@ class JevProvidersAlignmentSpec extends FunSuite:
 
   private def seedJevConfig(root: os.Path): Unit =
     os.write(
-      root / "nebflow.json",
+      root / nebflow.shared.Branding.configFileName,
       s"""{"jev":{"enabled":true,"provider":"typesafe-jev",
          |"endpoint":"https://api.typesafe.ai/v1/systemone","model":"jev-latest",
          |"keyRef":"jev-typesafe-jev-key",
@@ -231,7 +231,7 @@ class JevProvidersAlignmentSpec extends FunSuite:
         Right(()),
         "providers 必须在白名单里（契约 §B.3）"
       )
-      val after = parser.parse(os.read(root / "nebflow.json")).toOption.get
+      val after = parser.parse(os.read(root / nebflow.shared.Branding.configFileName)).toOption.get
       assertEquals(
         after.hcursor.downField("jev").downField("providers").downField("typesafe-jev").downField("model").as[String],
         Right("jev-latest"),
@@ -245,7 +245,7 @@ class JevProvidersAlignmentSpec extends FunSuite:
       // 值型键（即便混进白名单也拦）：本面永不收凭据值（契约 §C.6）。
       val valueBearing = ConfigService.setJevSection(Map("apiKey" -> FakeSecretValue.asJson)).unsafeRunSync()
       assert(valueBearing.isLeft, s"值型凭据键必须拒写: $valueBearing")
-      val after2 = parser.parse(os.read(root / "nebflow.json")).toOption.get
+      val after2 = parser.parse(os.read(root / nebflow.shared.Branding.configFileName)).toOption.get
       assert(after2.hcursor.downField("jev").downField("apiKey").focus.isEmpty, "被拒的写不得落盘")
     }
   }
@@ -361,7 +361,7 @@ class JevProvidersAlignmentSpec extends FunSuite:
       val ok = routes(authed(Method.PUT, "/config/jev", Some(body))).value.unsafeRunSync().getOrElse(fail("PUT /config/jev fell through"))
       assertEquals(ok.status, Status.Ok, s"PUT 必须接受 providers: ${bodyJson(ok).noSpaces}")
       assertEquals(bodyJson(ok).hcursor.downField("updated").as[Boolean].toOption, Some(true))
-      val after = parser.parse(os.read(root / "nebflow.json")).toOption.get
+      val after = parser.parse(os.read(root / nebflow.shared.Branding.configFileName)).toOption.get
       assertEquals(
         after.hcursor.downField("jev").downField("providers").downField("typesafe-jev").downField("keyRef").as[String],
         Right("jev-typesafe-jev-key"),
@@ -371,7 +371,7 @@ class JevProvidersAlignmentSpec extends FunSuite:
       val bad = parser.parse("""{"apiKey":"test-key-not-real","mystery":1}""").toOption.get
       val refused = routes(authed(Method.PUT, "/config/jev", Some(bad))).value.unsafeRunSync().getOrElse(fail("PUT fell through"))
       assertEquals(refused.status, Status.BadRequest, "越界/值型键一律 400（契约 §C.6）")
-      val after2 = parser.parse(os.read(root / "nebflow.json")).toOption.get
+      val after2 = parser.parse(os.read(root / nebflow.shared.Branding.configFileName)).toOption.get
       assert(after2.hcursor.downField("jev").downField("apiKey").focus.isEmpty, "被拒的写不得落盘")
     }
   }

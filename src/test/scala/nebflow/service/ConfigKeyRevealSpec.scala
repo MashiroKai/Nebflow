@@ -75,7 +75,7 @@ class ConfigKeyRevealSpec extends CatsEffectSuite:
       "embedding" -> Json.obj("keyRef" -> Json.fromString("embed-key"), "model" -> Json.fromString("emb-1"))
     ).spaces2
 
-  private def writeSeed(): Unit = os.write.over(PathUtil.dataRoot / "nebflow.json", seedConfig())
+  private def writeSeed(): Unit = os.write.over(PathUtil.dataRoot / nebflow.shared.Branding.configFileName, seedConfig())
 
   // ── 1. 投影形态（service 层）────────────────────────────────────────────
 
@@ -103,14 +103,14 @@ class ConfigKeyRevealSpec extends CatsEffectSuite:
 
   test("reveal is a pure read: the on-disk file is byte-identical after the projection") {
     writeSeed()
-    val before = os.read(PathUtil.dataRoot / "nebflow.json")
+    val before = os.read(PathUtil.dataRoot / nebflow.shared.Branding.configFileName)
     ConfigService.revealProviderApiKeys.unsafeRunSync()
-    val after = os.read(PathUtil.dataRoot / "nebflow.json")
+    val after = os.read(PathUtil.dataRoot / nebflow.shared.Branding.configFileName)
     assertEquals(after, before, "回读不落盘——盘上真相不变")
   }
 
   test("reveal on a missing config lands an empty providers map (fresh-install safe)") {
-    os.remove.all(PathUtil.dataRoot / "nebflow.json")
+    os.remove.all(PathUtil.dataRoot / nebflow.shared.Branding.configFileName)
     val revealed = ConfigService.revealProviderApiKeys.unsafeRunSync()
     assertEquals(revealed.hcursor.downField("providers").as[Map[String, Json]].toOption, Some(Map.empty))
   }
