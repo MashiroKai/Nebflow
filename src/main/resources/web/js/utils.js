@@ -1,6 +1,5 @@
 import state from './state.js';
-import { t, getLocale } from './i18n.js';
-// 本机设备显示名读数（设备角标本名批 2026-10-27）：deviceRoster 单一读取点
+import { t, getLocale } from './i18n.js';// 本机设备显示名读数（设备角标本名批 2026-10-27）：deviceRoster 单一读取点
 // （花名册 self + configData.selfDevice 两源缓存），utils 只消费其同步读数面。
 import { currentSelfDeviceName } from './deviceRoster.js';
 // voice 块补封批 2026-10-31（作者令「封存所有会话的 voice 块——应随全双工 TTS
@@ -11,6 +10,8 @@ import { voiceEnabled } from './featureFlags.js';
 // outputBlockEnabled 读 nebflow.json `outputBlock.enabled`（缺席 = 关），
 // 与渠道剥离面同一键。同模块、无导入环。
 import { outputBlockEnabled } from './featureFlags.js';
+// 四会话统一批 2026-11-05：回到底部胶囊 = 组件唯一实现（好友/群/设备会话窗同一枚）。
+import { createScrollBackPill } from './scrollBackPill.js';
 
 // ── Exported protocol typedefs (P2-3 core contracts) ──────────────────────
 
@@ -2089,7 +2090,7 @@ function viewChat(view) {
 function pillRecord(view) {
   let rec = _pillRecords.get(view);
   if (!rec) {
-    rec = { el: null, count: 0, atBottom: true, obs: null };
+    rec = { el: null, pill: null, count: 0, atBottom: true, obs: null };
     _pillRecords.set(view, rec);
   }
   // Mirror onto the view's own stream state (per-view, as specified).
@@ -2112,40 +2113,43 @@ function pillHost(view) {
 
 function ensureScrollPill(view) {
   const rec = pillRecord(view);
-  if (rec.el && rec.el.isConnected) return rec.el;
+  if (rec.pill && rec.pill.el.isConnected) return rec.pill;
   const host = pillHost(view);
   if (!host) return null;
-  const el = document.createElement('button');
-  el.type = 'button';
-  el.className = 'scroll-new-pill hidden';
-  el.setAttribute('aria-live', 'polite');
-  el.addEventListener('click', () => scrollPillDismiss(view));
-  host.appendChild(el);
-  rec.el = el;
-  return el;
+  const chat = viewChat(view) || view.dom.chat;
+  // 四会话统一批（2026-11-05）：胶囊本体 = `js/scrollBackPill.js` 唯一组件
+  // （好友/群/设备会话窗同一个）。本文件只保留 view 级**状态**（count 计数 /
+  // 贴底 latch），几何与显隐口径全在组件里 —— 改一处四处同时改。
+  rec.pill = createScrollBackPill({
+    host,
+    scrollEl: chat,
+    // 底部参照件：主窗 = #input-area（多行输入会长高，组件每次落位现算）；
+    // agent 弹窗 = 其 footer 条。
+    anchor: () => (host.classList.contains('flow-agent-modal')
+      ? host.querySelector('.flow-agent-footer')
+      : document.getElementById('input-area')),
+    onReturn: () => {
+      rec.count = 0;
+      if (view.stream) view.stream.scrollSnapped = true;
+    },
+  });
+  rec.el = rec.pill.el;
+  return rec.pill;
 }
 
-/** Park the pill just above whatever sits at the bottom of the view:
- *  #input-area (primary, dynamic height) or the popup footer bar. */
+/** Park the pill just above whatever sits at the bottom of the view.
+ *  四会话统一批：落位公式已上抬组件（`scrollBackPill.park`，视口矩形反算，
+ *  手机层收编窗与桌面窗同一式）——本文件不再保留第二份 offset 算术。 */
 function positionScrollPill(view, el) {
-  const host = el.parentElement;
-  if (!host) return;
-  if (host.classList.contains('flow-agent-modal')) {
-    const foot = host.querySelector('.flow-agent-footer');
-    el.style.bottom = `${(foot ? foot.offsetHeight : 0) + 12}px`;
-  } else {
-    const inputArea = document.getElementById('input-area');
-    el.style.bottom = `${(inputArea ? inputArea.offsetHeight : 54) + 12}px`;
-  }
+  const rec = pillRecord(view);
+  if (rec.pill) rec.pill.refresh();
 }
 
 /** Re-park a visible pill (called by main.js's #input-area ResizeObserver so a
  *  growing multi-line input can never be covered by the pill). */
 export function refreshScrollPill(view) {
   const rec = view ? _pillRecords.get(view) : null;
-  if (rec && rec.el && rec.el.isConnected && !rec.el.classList.contains('hidden')) {
-    positionScrollPill(view, rec.el);
-  }
+  if (rec && rec.pill) rec.pill.refresh();
 }
 
 // ── "real new message" criterion (2026-09-13 口径裁定) ───────────────────
@@ -2207,29 +2211,19 @@ export function countsAsRealMessage(row) {
 export function syncScrollPill(view, atBottom) {
   if (!view || !view.dom || !view.dom.chat) return;
   const rec = pillRecord(view);
-  const el = ensureScrollPill(view);
-  if (!el) return;
-  if (atBottom === undefined) atBottom = isNearBottom(viewChat(view) || view.dom.chat);
+  const pill = ensureScrollPill(view);
+  if (!pill) return;
+  const chat = viewChat(view) || view.dom.chat;
+  if (atBottom === undefined) atBottom = isNearBottom(chat);
   rec.atBottom = atBottom;
   if (atBottom) rec.count = 0; // reached the bottom (any cause) → nothing unseen
-  const show = !atBottom && rec.count > 0;
-  el.classList.toggle('hidden', !show);
-  if (show) {
-    const label = t('chat.newMessages', { n: rec.count });
-    if (el.textContent !== label) el.textContent = label;
-    positionScrollPill(view, el);
-  }
+  // 显隐口径单源在组件：无未读但距底 ≥ SHOW_AFTER_PX ⇒ 「回到底部」；
+  // 有未读 ⇒ 「↓ N 条新消息」（作者令 2026-11-05 18:11）。
+  pill.sync({ count: rec.count, atBottom });
 }
 
-/** Pill click: jump to the bottom, clear the counter, resume following. */
-function scrollPillDismiss(view) {
-  const rec = pillRecord(view);
-  const chat = view.dom.chat;
-  chat.scrollTop = chat.scrollHeight;
-  rec.count = 0;
-  if (view.stream) view.stream.scrollSnapped = true;
-  syncScrollPill(view);
-}
+/** Pill click 腿已上抬组件（`scrollBackPill.js` 的 `scrollToBottom`：平滑贴底 +
+ *  计数清零 + 尊重 reduced-motion）——本文件不再留第二份点击实现。 */
 
 /**
  * Attach the per-view scroll-follow machinery: row-level MutationObserver +

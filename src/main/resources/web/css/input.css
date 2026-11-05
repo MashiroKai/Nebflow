@@ -985,8 +985,11 @@
    历史沿革（10-31 v2 药丸 → 11-03 ③ 收回圆形）见 git 与 design-system.css §⑰。 */
 /* 圆钮内的状态图标透明度档（禁用/掉线）留在消费面：它们是主会话的**状态**，
    不是按钮形态。 */
-#send-btn:disabled svg { opacity: 0.45; }
-#send-btn:disabled {
+/* 四会话统一批 2026-11-05：**同一状态档**同时服务主会话发送键与三种会话窗的
+   发送键（三窗改挂 `.ds-turn-btn--send` 后，禁用/掉线两态必须同源 —— 否则同一
+   枚圆钮在会话窗里会「按下没反应也没变灰」）。 */
+:is(#send-btn, .fm-send-btn):disabled svg { opacity: 0.45; }
+:is(#send-btn, .fm-send-btn):disabled {
   /* 灰玻璃禁用档（--btn-disabled-*）：发送键 = 空正文闸，语义不变。
      形态批：几何（宽高/圆角/padding）已上抬组件层，本块只留**状态色**——
      `:disabled` 的颜色不是「send 档」的一部分（停用件既不是绿也不是红），
@@ -1009,15 +1012,15 @@
    **一字未改**（`#send-btn` 仍是本批全站发送键的状态色基准）。
    形态批（2026-11-03）：几何与两态配色已上抬 `.ds-turn-btn`；本档只剩**掉线**
    这一个状态差分，是主会话独有的（Canvas Ask 面板无连接态钮）。 */
-#send-btn.disconnected {
+:is(#send-btn, .fm-send-btn).disconnected {
   background: var(--glass-send-bg-active);
   border-color: var(--glass-send-border-active);
   color: var(--color-text-muted);
   cursor: not-allowed;
 }
-#send-btn.disconnected svg { opacity: 0.45; }
+:is(#send-btn, .fm-send-btn).disconnected svg { opacity: 0.45; }
 @media (hover: hover) {
-  #send-btn.disconnected:hover { background: var(--glass-send-bg-active); }
+  :is(#send-btn, .fm-send-btn).disconnected:hover { background: var(--glass-send-bg-active); }
 }
 
 /* v3 实现批：hover/active = --ctl-send-* 绿阶（见本块头注）；10-30 墨族注释

@@ -1640,6 +1640,10 @@ export default {
   // A-branch scroll-follow convergence: new-message pill (N = message rows
   // added since the user left the bottom).
   'chat.newMessages': '↓ {n} new messages',
+  // Back-to-bottom pill (four-session unification batch 2026-11-05,
+  // js/scrollBackPill.js): no unread, just scrolled far enough up
+  // (distance-to-bottom >= SHOW_AFTER_PX) — same pill, count-less arm.
+  'chat.backToBottom': 'Back to bottom',
   // Search jump return pill (author order 2026-11-01, searchReturnPill.js):
   // anchor live => back to the pre-jump reading spot; anchor gone => honest
   // degrade to the latest message.

@@ -69,6 +69,9 @@ import { formatHm, formatFooterTime, bindTimeToggle, TIME_FORMAT_CHANGED } from 
 // follow 批（2026-10-08）：贴底判定 `isAtBottom`（AT_BOTTOM_PX 单源）也从这一份
 // 实现出 —— 到达跟随、锚点补偿、回底胶囊三处共用同一判据，本面内禁第二个数。
 import { preserveScrollAnchor, isAtBottom } from './msgScrollAnchor.js';
+// 回到底部胶囊（四会话统一批 2026-11-05）：主会话 / 好友 / 群 / 设备**同一实现**
+// （`js/scrollBackPill.js`）。本模块只持「未读计数」宿主状态，几何/显隐全在组件。
+import { createScrollBackPill } from './scrollBackPill.js';
 // 进场落底「武装窗」（手机端进场落顶修复批 · 2026-11-02）：一次性同步钉底对
 // **容器搬家/异步撑高**两类时序都只能赢一次 —— 本模块的会话窗在手机层会被
 // `navController.watchChatModal` re-parent 进页面体（迁移即把 scrollTop 归零），
@@ -1534,17 +1537,19 @@ function renderChatModal(conv) {
   // 本窗滚动判定点**只有这一处**监听：每次滚动重读贴底态并同步胶囊（回底即清零）；
   // 只读几何 + 胶囊态，**不写滚动位**（锚点补偿仍归 preserveScrollAnchor 单点）。
   flow.addEventListener('scroll', () => fmSyncFollowPill(), { passive: true });
-  // 胶囊 DOM/样式/文案全复用 agent 面既有件（零新 CSS、零新 i18n 键）：
-  // `.scroll-new-pill` = chat.css:3691（全局载入，index.html:37）；文案键
-  // `chat.newMessages`（en.js:1178 / zh-CN.js:1137，「↓ {n} 条新消息」）。挂
-  // `.fm-modal`（position:relative，friends.css:618）内绝对定位，落位 =
-  // flow 下缘与窗底之间那截（输入条/引用条/多选条）之上 12px，显示时现算。
-  const followPill = document.createElement('button');
-  followPill.type = 'button';
-  followPill.className = 'scroll-new-pill hidden';
-  followPill.setAttribute('aria-live', 'polite');
-  followPill.addEventListener('click', fmFollowBottom);
-  modal.appendChild(followPill);
+  // 胶囊 = **四处共用的唯一组件**（四会话统一批 2026-11-05，作者令「主会话/群/
+  // 设备/好友……应该有一个胶囊按钮 点击可回到底部。正好我们这批要做的就是他们
+  // 三者的统一」）：本体/显隐口径/落位/平滑贴底全在 `js/scrollBackPill.js`，
+  // 主会话面（utils.js `syncScrollPill`）走**同一个** `createScrollBackPill`。
+  // 本窗只保留「未读计数」这一项宿主状态（`fmUnseenCount`），几何零算术。
+  // 落位参照 = 本窗输入条 `.fm-input-bar` 顶缘（引用条/多选条/输入条三档高度
+  // 变化都由它现算，零重叠，读数见批文档断言表）。
+  const fmPillNew = createScrollBackPill({
+    host: modal,
+    scrollEl: flow,
+    anchor: () => modal.querySelector('.fm-input-bar'),
+    onReturn: () => { fmUnseenCount = 0; },
+  });
 
   // ── msgmenu 一期 + visup-b（作者 2026-09-19 04:22 照案）：两个新 UI 面 ─────────
   // ① 引用态条（**D2：挂输入条下方**）—— 组件本体仍是既有输入框引用块渲染器
@@ -1628,7 +1633,7 @@ function renderChatModal(conv) {
   // tail must never leak into this one).
   chatMsgs = [];
   // follow 批：跟随/胶囊态随窗同拍归零（跨窗残留 = 上个会话的未读数）。
-  fmFollowPill = followPill;
+  fmPill = fmPillNew;
   fmUnseenCount = 0;
   // msgmenu 一期：两个新态同拍归零（关窗重开 ⇒ 选中归零、无跨窗引用态）。
   selectionMode = false;
@@ -3238,7 +3243,13 @@ function bubbleEl(m, conv) {
   // 不构成「agent 发」的定论；服务端强制属 MVP-2。
   wrap.dataset.origin = (m && m.origin === 'agent') ? 'agent' : 'user';
 
-  const bubble = el('div', 'fm-msg-bubble');
+  // 气泡 = 主会话面**同一个类族**（四会话统一批 2026-11-05，作者令「普通消息气泡、
+  // 自己的与他人气泡……与主 agent 面同款」）：`bubble` 基类承担几何/字阶/行高/底色
+  // （chat.css `.bubble` 单点），方向只选**角色类** —— 出向 = `user`（= 主会话自己
+  // 的气泡），入向 = `peer`（= 对方；与 `.bubble.ai` 同一条声明块，见 chat.css
+  // `:is(.bubble.ai, .bubble.peer)`：入向气泡在主会话叫 ai、在会话窗叫 peer，
+  // **样式只有一份**）。旧 `.fm-msg-bubble` 保留为宿主钩子（滚动/断词/QA 断言面）。
+  const bubble = el('div', `fm-msg-bubble bubble ${out ? 'user' : 'peer'}`);
   // 群气泡发送者名：仅群窗、仅入站（他人）消息挂名（本机消息右侧不挂，微信式）。
   // 成员名册未到时留空槽（data-sender-id），hydrateGroupSenderNames 到达后回填。
   if (conv.kind === 'group' && !out && m.senderId) {
@@ -3278,7 +3289,11 @@ function bubbleEl(m, conv) {
     ]);
   });
 
-  const meta = el('div', 'fm-msg-meta');
+  // footer 元信息 pill = 主会话**同一个组件类**（四会话统一批 2026-11-05）：
+  // `.duration-badge`（chat.css 单点：内距/圆角/戒指影/暗档）+ 时间 `.duration-badge-time`
+  // + 分隔 `.duration-badge-divider` + 复制键 `.msg-copy`。旧 `.fm-msg-*` 类保留为
+  // 宿主钩子（断言面/滚动面引用），几何与配色不再由本文件另写一份。
+  const meta = el('div', 'fm-msg-meta duration-badge');
   // 批 D（作者裁定 2026-09-14 20:5x「双方可见」）：徽标**两端渲染**、无抑制逻辑
   // —— 修前判据 `out && isAgentSent(m)` 让接收侧（`out === false`）**永不进入**
   // 本分支（即便 `origin` 已修复到位，对方也看不到）⇒ 与作者诉求相左。
@@ -3303,7 +3318,7 @@ function bubbleEl(m, conv) {
   //     formatter 就地重排（旧形态只在同日的裸时钟上挂 data-ts-text，昨天的
   //     「昨天」文本切制后就与 renderer 脱钩）；
   //   · `bindTimeToggle` 恒绑（主会话恒绑 ⇒ 热区/键盘/aria 语义三面同款）。
-  const timeSpan = el('span', 'fm-msg-time', timeMs ? formatFooterTime(timeMs) : '');
+  const timeSpan = el('span', 'fm-msg-time duration-badge-time', timeMs ? formatFooterTime(timeMs) : '');
   if (timeMs) {
     timeSpan.setAttribute('data-ts', String(timeMs));
     timeSpan.setAttribute('data-ts-text', String(timeMs));
@@ -3313,7 +3328,7 @@ function bubbleEl(m, conv) {
   meta.appendChild(timeSpan);
 
   const actions = el('span', 'fm-msg-actions');
-  const copyBtn = el('button', 'fm-msg-act');
+  const copyBtn = el('button', 'fm-msg-act msg-copy');
   copyBtn.innerHTML = '<i data-lucide="copy"></i>';
   copyBtn.title = t('messages.copy');
   copyBtn.setAttribute('aria-label', t('messages.copy')); // title 不保证被 AT 播报
@@ -3353,7 +3368,7 @@ function bubbleEl(m, conv) {
   // @.2 + flex-shrink:0）—— fm-footer-align 批 2026-11-02：旧形态用
   // `.fm-msg-actions::before` 伪元素（视觉等价、结构不同），现与主会话同构：真节点、
   // 同几何、同间距档（pill gap 6 + 1 + 6 = 13px，主会话实测同档）。
-  meta.appendChild(el('span', 'fm-msg-divider'));
+  meta.appendChild(el('span', 'fm-msg-divider duration-badge-divider'));
   meta.appendChild(actions);
 
   wrap.appendChild(meta);
@@ -3706,39 +3721,34 @@ function prependMessages(older) {
   flow.scrollTop = flow.scrollHeight - prevHeight + prevTop;
 }
 
-// ── 贴底跟随/回底胶囊·状态与腿（follow 批 2026-10-08）─────────────────────
-// 状态生命周期与窗同拍：`fmFollowPill`/`fmUnseenCount` 在 renderChatModal 的
-// reset 块归零重挂，`closeChat` 随 overlay.remove() 一起弃置（胶囊是 modal 子节点）。
+// ── 贴底跟随/回底胶囊·状态与腿（follow 批 2026-10-08；四会话统一批 2026-11-05）──
+// 状态生命周期与窗同拍：`fmPill`/`fmUnseenCount` 在 renderChatModal 的 reset 块
+// 归零重挂，`closeChat` 随 overlay.remove() 一起弃置（胶囊是 modal 子节点）。
 // 计数语义与 agent 面 `syncScrollPill` 对齐：只数「离开贴底区后到达的消息条目」；
 // 本机所发不计数（本机发送即回底，计数同拍归零）。
+// 🔴 四会话统一批：胶囊本体/显隐口径/落位/平滑贴底全部上抬 `scrollBackPill.js`
+//    （与主会话面同一个 `createScrollBackPill`）；本文件只剩「未读计数」一项宿主状态。
 let fmUnseenCount = 0;
-let fmFollowPill = null;
+/** @type {ReturnType<typeof createScrollBackPill>|null} */
+let fmPill = null;
 
 /** 胶囊唯一同步点（滚动监听 / 到达计数 / 回底腿都汇到这里；幂等、自愈）：
- *  任何原因回到贴底区 ⇒ 无未读，计数清零、胶囊隐藏；否则按计数显隐 + 现算落位。 */
+ *  贴底 ⇒ 计数清零；离底 ⇒ 未读优先，其次「距底 ≥ 320px」拐点（组件内单源）。 */
 function fmSyncFollowPill() {
-  if (!fmFollowPill || !modalEls) return;
+  if (!fmPill || !modalEls) return;
   const flow = modalEls.flow;
   if (isAtBottom(flow)) fmUnseenCount = 0;
-  const show = fmUnseenCount > 0;
-  fmFollowPill.classList.toggle('hidden', !show);
-  if (!show) return;
-  const label = t('chat.newMessages', { n: fmUnseenCount });
-  if (fmFollowPill.textContent !== label) fmFollowPill.textContent = label;
-  const modal = fmFollowPill.parentElement;
-  if (modal && flow) {
-    const below = modal.offsetHeight - (flow.offsetTop + flow.offsetHeight);
-    fmFollowPill.style.bottom = `${Math.max(below, 0) + 12}px`;
-  }
+  fmPill.sync({ count: fmUnseenCount, atBottom: isAtBottom(flow) });
 }
 
-/** 「回到最新」腿（胶囊点击 / 本机发送 / 本机回显 / 贴底到达共用）：
- *  钉底 + 计数归零 + 胶囊收敛，一步到位（与主窗「本机消息恒回底」裁定同向）。 */
+/** 「回到最新」腿（本机发送 / 本机回显 / 贴底到达共用）：钉底 + 计数归零 +
+ *  胶囊收敛，一步到位（与主窗「本机消息恒回底」裁定同向）。
+ *  `smooth:false` —— 这是**程序化跟随**不是用户点击，不该有缓动。 */
 function fmFollowBottom() {
   if (!modalEls) return;
-  modalEls.flow.scrollTop = modalEls.flow.scrollHeight;
   fmUnseenCount = 0;
-  fmSyncFollowPill();
+  if (fmPill) { fmPill.scrollToBottom({ smooth: false }); return; }
+  modalEls.flow.scrollTop = modalEls.flow.scrollHeight;
 }
 
 /**

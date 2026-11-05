@@ -4337,15 +4337,23 @@ body.mobile-layer #attachment-preview .att-file .att-remove::after { inset: -11p
 /* ── 输入卡附件圆键：36×36 → 48 ───────────────────────────────────────
    与发送键（本文件上方 #send-btn 块，已一并升到 --mtap-lg）同档——两者是
    输入条上**全局最高频**的触控目标，36 明显偏小。图标本体同步 --micon。 */
+/* 四会话统一批 2026-11-05：三种会话窗输入条的两枚图标键（附件 `.fm-attach-btn` /
+   话筒 `.fm-mic-btn`）与主会话 `#attach-btn` **同一条规则**——同一组件族、同一
+   48 档、同一 `--micon` 图标档。改前它们停在桌面档 32/36（`.icon-btn` 底档），
+   与主会话 48 相差一整档（本批截图 + 读数）。 */
 body.mobile-layer #attach-btn,
-body.mobile-layer #quote-item-btn {
+body.mobile-layer #quote-item-btn,
+body.mobile-layer .fm-attach-btn,
+body.mobile-layer .fm-mic-btn {
   width: var(--mtap-lg);
   height: var(--mtap-lg);
   min-width: var(--mtap-lg);
   min-height: var(--mtap-lg);
 }
 body.mobile-layer #attach-btn svg,
-body.mobile-layer #quote-item-btn svg {
+body.mobile-layer #quote-item-btn svg,
+body.mobile-layer .fm-attach-btn svg,
+body.mobile-layer .fm-mic-btn svg {
   width: var(--micon);
   height: var(--micon);
 }
@@ -4857,6 +4865,10 @@ body.mobile-layer .epub-reader-content { font-size: var(--mfs-body, 17px); }
    12（待办行标题、插件卡名）—— 手机层统一抬到 --mfs-body（17）。
    （个人主页名字 / 入口行主文案 / 字段行主标签 / 页面大标题已在位：17/17/17/28。） */
 body.mobile-layer #chat .bubble,
+/* 四会话统一批 2026-11-05：好友/群/设备会话窗的气泡挂同一个 `.bubble` 类族，
+   但它们在 `.fm-flow` 里（不在 `#chat`）⇒ 本铁律清单补上这条宿主腿，
+   否则手机档两族会差一整档（17 vs 14.5，本批实测读数为证）。 */
+body.mobile-layer .fm-flow .bubble,
 body.mobile-layer .fm-row-name,
 body.mobile-layer .entry-name,
 body.mobile-layer .tfl-row-title,

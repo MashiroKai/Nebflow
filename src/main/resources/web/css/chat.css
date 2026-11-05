@@ -1415,9 +1415,16 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   min-width: 40px;
 }
 
-.bubble.ai {
+.bubble.ai,
+.bubble.peer {
   /* 统一按钮玻璃批 2026-11-01：面/边/柔影走 glass.css 气泡档 token（亮暗
-     双档随包解析；底色仍以 --color-bubble-ai 为色相单源 color-mix 出 α） */
+     双档随包解析；底色仍以 --color-bubble-ai 为色相单源 color-mix 出 α）
+     ── 四会话统一批 2026-11-05：**同一个声明块**同时服务两个说话人角色：
+        `.ai`   = 主会话里 agent 的回复（入向左贴）；
+        `.peer` = 好友/群/设备会话窗里**对方**的消息（入向左贴）。
+     人物不同、脸相同（作者令「自己的与他人气泡……与主 agent 面同款」）；
+     起 `.peer` 这个角色名而**不直接复用 `.ai`**，是因为把人类说成 ai 会在
+     徽章/转发/统计类判据里留下语义坑。本块是两者唯一的形态来源 ⇒ 禁再写第二份。 */
   background: var(--glass-bub-ai-bg);
   color: var(--color-text);
   /* Whisper edge — separates bubble from background without feeling deliberate */
@@ -1425,7 +1432,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   border-bottom-left-radius: 4px;
   box-shadow: var(--glass-bub-ai-shadow);
 }
-.bubble.ai img, .bubble.injected img, .ask-bub.ai img { max-width: 220px; max-height: 220px; border-radius: var(--ds-radius-input); display: block; margin-top: var(--ds-space-1); }
+.bubble.ai img, .bubble.peer img, .bubble.injected img, .ask-bub.ai img { max-width: 220px; max-height: 220px; border-radius: var(--ds-radius-input); display: block; margin-top: var(--ds-space-1); }
 
 /* 末条气泡圆角化批 2026-11-04（UI 批次审计 D 档 R71 收口批；台账 #1475⑥，作者
    recall 2026-11-03 18:30 + 2026-11-04 11:09）：会话**末条**消息的说话人尾角
@@ -4328,6 +4335,60 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 @media (prefers-reduced-motion: reduce) {
   .scroll-new-pill { animation: none; transition: none; }
   .scroll-new-pill:hover, .scroll-new-pill:active { transform: translateX(-50%); }
+}
+
+/* ---------- 「回到底部」胶囊（四会话统一批 2026-11-05）----------
+   作者令逐字：「主会话/群/设备/好友的消息 往上放太多了之后，应该有一个胶囊按钮
+   点击可回到底部。正好我们这批要做的就是他们三者的统一」。
+   · 唯一实现 = js/scrollBackPill.js（四处消费：主会话 + 好友/群/设备会话窗）；
+     本块是它的**唯一形态声明**，消费面零样式分叉。
+   · 落位 = 消息区**右下**、输入区之上（`right:16` + JS 反算 `bottom`），
+     与上面横居中的 `.scroll-new-pill`（搜索返回胶囊专用）锚点不同 ⇒ 分家。
+   · 材质 = 扁平：`--color-surface` 实底 + 1px `--glass-border` 发丝环。
+     **零 box-shadow / 零渐变 / 零 backdrop-filter**（check-flat-buttons F1/F3 的
+     正面形态；作者令「胶囊扁平风；若需要毛玻璃只许用唯一 .nf-glass」——本件不需要
+     毛玻璃：它浮在消息流之上，实底比玻璃更易读且滚动零合成成本）。
+   · 尺寸走既有令牌：高 28 / 内距 12 / 圆角 --ds-radius-pill / 字档 --ds-fs-hint
+     （与 `.scroll-new-pill` 同一档，两枚胶囊视觉体重一致）。 */
+.scroll-back-pill {
+  position: absolute;
+  right: 16px;
+  z-index: 25; /* 同族：在 #chat / .fm-flow 之上，在输入条（20）之下 */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ds-space-1);
+  height: 28px;
+  padding: 0 var(--ds-space-3);
+  font: 500 var(--ds-fs-hint)/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  letter-spacing: 0;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--ds-radius-pill);
+  cursor: pointer;
+  white-space: nowrap;
+  animation: nf-sbp-in 0.18s ease;
+}
+/* 扁平三态（F1/F5 正面形态）：反馈只改底色阶，不位移、不投影。 */
+@media (hover: hover) {
+  .scroll-back-pill:hover { background: var(--glass-control-bg-hover); }
+}
+.scroll-back-pill:active {
+  background: var(--btn-press-bg);
+  transform: scale(var(--btn-press-scale));
+}
+.scroll-back-pill.hidden { display: none; }
+.scroll-back-pill:focus-visible { outline: 2px solid var(--sapphire-refraction); outline-offset: 2px; }
+
+@keyframes nf-sbp-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scroll-back-pill { animation: none; transition: none; }
+  .scroll-back-pill:active { transform: none; }
 }
 
 /* ---------- the turn line (stream-ux redesign, 2026-10-03) ----------
