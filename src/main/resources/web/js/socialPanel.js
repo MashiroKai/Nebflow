@@ -1078,6 +1078,7 @@ function fieldHTML(ch, f) {
     return `<label class="social-field" for="${id}">
         <span class="social-field-label">${label}</span>
         <input id="${id}" class="social-input" type="password" autocomplete="off"
+               spellcheck="false" autocapitalize="off" autocorrect="off"
                data-field="${escapeHtml(f.key)}" data-secret="1"
                placeholder="${escapeHtml(t('social.secret.placeholder'))}" value="">
         <span class="social-secret-state">${escapeHtml(state)}</span>
@@ -1102,6 +1103,7 @@ function fieldHTML(ch, f) {
   return `<label class="social-field" for="${id}">
       <span class="social-field-label">${label}</span>
       <input id="${id}" class="social-input" type="text" autocomplete="off"
+             spellcheck="false" autocapitalize="off" autocorrect="off"
              data-field="${escapeHtml(f.key)}"
              placeholder="${escapeHtml(f.placeholder || '')}"
              value="${escapeHtml(stored || '')}">
