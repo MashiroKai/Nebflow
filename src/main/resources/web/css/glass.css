@@ -157,8 +157,10 @@ html[data-theme="light"] {
   box-shadow: var(--cv-shadow);
 }
 
-/* canvas ask 输入条（ask.css 保留几何与 focus-within 活性描边） */
-.ask-input {
+/* canvas ask 输入条 + canvas 记事本内容盒（ask.css 保留几何与 focus-within 活性
+   描边；记事本批 2026-11-05 以**成员**入册 —— 材质单源，不复制一份 .note-* 配方） */
+.ask-input,
+.note-body {
   background: var(--cv-bg, var(--glass-bg));
   -webkit-backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
   backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));

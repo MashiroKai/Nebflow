@@ -58,6 +58,9 @@
   --ask-fab-bottom: 24px;        /* 钮距画布下缘（JS 随通栏底栏实测让位） */
   --ask-dock-w: 372px;           /* 覆盖层宽（= 输入框档宽） */
   --ask-col-maxh: 316px;         /* 气泡列 max-height（小巧不占 canvas） */
+  /* 记事本批（2026-11-05）：记事本窗高（拖拽状态机写这条 —— 与 --ask-col-maxh
+   * 同档位、同一份 resizeLimits；默认高取「一页便签」量级，不遮挡文档主体）。 */
+  --note-h: 240px;
   --ask-fade-h: 64px;            /* 顶缘渐隐衰减区高（内容级 mask：transparent 0 →
                                   * currentColor 本值；= 列 padding 净空，静态首条
                                   * 在衰减区之下完整清晰） */
@@ -145,10 +148,34 @@ nf-ask-dock { display: contents; }
  * （出布局出命中盒，非视觉弱化），切卡离开文件 tab 即摘。闸由 askDock.syncGate
  * 随切卡/关卡/恢复每拍落位（「常驻可点」口径 = 文件卡在场的常驻）。 */
 .ask-fab.gate-off,
-.ask-dock.gate-off { display: none; }
+.ask-dock.gate-off,
+.note-dock.gate-off { display: none; }
 
-/* ═══ 覆盖层（作者令④无窗体）：气泡列 + 输入条，z < 顶行（v2.1：徽标退场）═══ */
-.ask-dock {
+/* ═══ 记事本（note）批（作者令 2026-11-05 11:38「放 ask 按钮旁边，同样风格的
+ *     一个 note 按钮…点击出来一个窗口，左上角可以调整窗口大小」）══════════
+ * 本批**零第二套样式**：钮挂 `.ask-fab`（材质/尺寸/圆/图标档/hover/active/
+ * focus-visible/手机档全部来自既有单源），窗挂 `.ask-dock`（座位/开合曲线/宽档
+ * `.closed`/`.is-resizing`/`.gate-off`/手机档，见下方各规则的成员名单），拖柄挂
+ * design-system.css `.ds-resize-handle` 原件。这里新增的只有两条落位/几何：
+ *   ① 钮的**落位**：ask 钮左邻一格（同一行同一中线，间距 = 4px 栅格一档
+ *      --ds-space-2；bottom 完全继承 --ask-fab-bottom 单源，含 JS 让位腿）；
+ *   ② 窗内**内容盒** .note-body 的几何（材质 = glass.css 面级浮件档成员）。
+ * 只是把「钮的落位」补成 ask 钮左邻一格。
+ * ⚠ 让位用 **margin-right** 而不是重算 `right`：ask 钮的 right 在三处各不相同
+ * （桌面 --ask-fab-gap 14 / 手机 body.mobile-layer .ask-fab 16 / JS 让位腿只动
+ * bottom），重算任何一个值都会在另一档漂 —— margin 只是把这颗钮再往左推
+ * 「一格钮宽 + 一档 8px」，ask 钮的 right 是几都自动跟住（桌面与手机同一条规则，
+ * 零分叉、零特异性战争）。 */
+.ask-fab.note-fab {
+  margin-right: calc(var(--ask-fab-size) + var(--ds-space-2));
+}
+
+/* ═══ 覆盖层（作者令④无窗体）：气泡列 + 输入条，z < 顶行（v2.1：徽标退场）═══
+ * 记事本批（2026-11-05）：`.note-dock` 是本规则的**成员**（不是副本）——同一座位
+ * /同一宽档 `--ask-dock-w`/同一条开合曲线/同一 z 序；它只是把气泡列换成一块
+ * 纯文本内容盒（.note-body）。改座位改这一条，两个浮窗同时生效。 */
+.ask-dock,
+.note-dock {
   position: absolute;
   right: var(--ask-fab-gap);
   bottom: calc(var(--ask-fab-bottom) + var(--ask-fab-size) + 10px);
@@ -158,7 +185,8 @@ nf-ask-dock { display: contents; }
   transform-origin: 100% 100%; /* ⑧ 锚定 = 右下角按钮圆心方向，开合同一曲线 */
   transition: transform var(--panel-duration, 0.32s) var(--panel-ease, cubic-bezier(0.32, 0.72, 0, 1)), opacity 0.24s ease;
 }
-.ask-dock.closed { opacity: 0; transform: translateY(16px) scale(0.6); pointer-events: none; }
+.ask-dock.closed,
+.note-dock.closed { opacity: 0; transform: translateY(16px) scale(0.6); pointer-events: none; }
 
 /* ═══ 可拖拽改尺寸（作者令 2026-11-04「允许用户交互拖拽调整对话框大小（拖柄
  *     可见、热区 ≥44px，按 Apple HIG）」）════════════════════════════════
@@ -167,28 +195,62 @@ nf-ask-dock { display: contents; }
  * 本文件只声明**落位**：面板左上角，外挂 14px 让抓手的视觉中心正好落在面板角上
  * （dock 右 14px 钉位，向左/向上 14px 仍在画布内，视觉上不内含任何气泡文字）。
  * 尺寸本身由 JS 写两条 CSS 变量（--ask-dock-w 宽 / --ask-col-maxh 列高），
- * 桌面与手机**同一段 JS、同一组变量**——本文件不出现第二套拖拽实现。 */
-.ask-dock .ds-resize-handle { left: -14px; top: -14px; }
+ * 桌面与手机**同一段 JS、同一组变量**——本文件不出现第二套拖拽实现。
+ * 记事本批：`.note-dock` 是本规则与下面三条状态档的成员——把手同一个类、同一段
+ * 外挂落位（左上 −14px）、同一段 JS 状态机（尺寸变量换成 --note-h），零第二套。 */
+.ask-dock .ds-resize-handle,
+.note-dock .ds-resize-handle { left: -14px; top: -14px; }
 /* 手机层落位差异（**只此一条**，不是第二套实现）：手机层 dock 宽 = 视口 − 24px、
    右缘钉 12px ⇒ 面板左缘距视口左缘只有 12px，桌面那条「外挂 14px」会把把手推出
    视口 2px（本批实测：默认态 handle.left = −2）。手机档改**内挂 left:0**（抓手
    落在面板左上角内侧；气泡右对齐 ⇒ 左上角本就是留白区，零遮挡），外挂量为 0，
    JS 侧实测外挂量自适应、零分叉。 */
-body.mobile-layer .ask-dock .ds-resize-handle {
+body.mobile-layer .ask-dock .ds-resize-handle,
+body.mobile-layer .note-dock .ds-resize-handle {
   left: 0;
   /* 手机内挂：臂原点回到把手盒原点（= 面板左上角）。top 沿用桌面 −14
      （既有手机腿几何，本批不动 —— 只改可见形态，不改命中盒落位）。 */
   --ds-resize-arm-x: 0px; --ds-resize-arm-y: 14px;
 }
 /* 拖拽中：跟手（面板尺寸过渡关掉，不加任何补间），抓手由 [data-resizing] 提亮。 */
-.ask-dock.is-resizing { transition: none; }
+.ask-dock.is-resizing,
+.note-dock.is-resizing { transition: none; }
 /* 直角弧的臂原点（作者令 2026-11-04 12:52 ④）：桌面把手外挂 14px ⇒ 臂落
    14/14（正好压在面板左上角的圆角边上，视觉与玻璃面板一体）；手机内挂 ⇒ 0/0。 */
-.ask-dock .ds-resize-handle { --ds-resize-arm-x: 14px; --ds-resize-arm-y: 14px; }
+.ask-dock .ds-resize-handle,
+.note-dock .ds-resize-handle { --ds-resize-arm-x: 14px; --ds-resize-arm-y: 14px; }
 /* 拖拽中面板外缘同步提亮一档（活性蓝既有词汇，与 .ask-input:focus-within 同值）——
    让「正在改尺寸的是这一块」在抓手之外还有一处回显。 */
 .ask-dock.is-resizing .ask-input,
 .ask-dock.is-resizing .ask-bub { border-color: rgb(var(--sapphire) / 0.35); }
+
+/* ═══ 记事本内容盒（记事本批 2026-11-05）═══════════════════════════════════
+ * 纯文本窗的内容面：一块玻璃卡 + 一个占满的 textarea（无富文本/无页签/无分类
+ * ——作者令「不需要复杂功能，风格和 ask 的保持一致」）。
+ * 复用而非复制：
+ *   · 材质（底/描边/浮影/毛玻璃）不在此声明 —— glass.css 面级浮件档成员
+ *     `.note-body`，与 `.ask-input`（本组件输入条）同一块配方，改配方两个面一起变；
+ *   · 字/色/caret/placeholder 不在此声明 —— `.ask-input textarea` 那条既有规则
+ *     加了成员 `.note-body textarea`（同一 font 档 13.5px / 同一 caret 色）；
+ *   · 圆角走 --cv-radius-bar（与输入条同档 12px，不是新搓一个数）。
+ * 这里只声明**几何**：占满窗宽、窗高 = --note-h（拖拽状态机写的唯一一条变量）、
+ * 内距一档 12px（4px 栅格）、裁切到圆角内。 */
+.note-dock .note-body {
+  width: 100%;
+  height: var(--note-h);
+  box-sizing: border-box;
+  padding: var(--ds-space-3);
+  border-radius: var(--cv-radius-bar, 12px);
+  overflow: hidden;
+  display: flex;
+}
+/* textarea 本体只补「占满 + 可滚」（其余全部继承 .ask-input textarea 那条规则的
+ * 字档/色/无边框/无内距/无 resize —— 与 ask 输入条同一份声明）。 */
+.note-dock .note-body textarea {
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+}
 
 
 /* 气泡列：从按钮位置长出；顶缘渐隐 = 内容本体 alpha 渐到 0（作者令 2026-11-04
@@ -288,14 +350,19 @@ body.mobile-layer .ask-dock .ds-resize-handle {
 }
 .ask-input:focus-within { border-color: rgb(var(--sapphire) / 0.45); }
 /* 输入行为包批（2026-11-02 作者令）：input → textarea（rows=1）——Shift+Enter
- * 换行键位契约与主会话逐一对齐；单行视觉不变，超行自动长高（JS 封顶 120px）。 */
-.ask-input textarea {
+ * 换行键位契约与主会话逐一对齐；单行视觉不变，超行自动长高（JS 封顶 120px）。
+ * 记事本批（2026-11-05）：`.note-body textarea` 是本规则的**成员**——字档/字族/
+ * 色/caret/placeholder/无边框/无内距/无 resize 全部同一份声明（记事本只在自己的
+ * 几何规则里补「占满 + 可滚」，见上方 .note-dock .note-body 段）。 */
+.ask-input textarea,
+.note-body textarea {
   flex: 1; min-width: 0; border: none; outline: none; background: transparent;
   resize: none; overflow: hidden; display: block; padding: 0; margin: 0;
   font: 400 13.5px -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Segoe UI', Roboto, sans-serif;
   line-height: 1.4; color: var(--color-text); caret-color: var(--color-primary);
 }
-.ask-input textarea::placeholder { color: var(--color-text-muted); }
+.ask-input textarea::placeholder,
+.note-body textarea::placeholder { color: var(--color-text-muted); }
 /* 发送钮 / 中断钮：**零本地形态**（作者令 ui-unification-20261103-canvas-ask-resize
  * 「发送按钮与终止按钮样式与主会话完全统一（同一组件/同一 design-system 令牌，
  * 不得另做一套）」）。
@@ -423,7 +490,8 @@ body.mobile-layer .ask-fab {
   bottom: calc(var(--dock-h, 54px) + var(--dock-inset-b, 0px) + env(safe-area-inset-bottom, 0px) + 16px);
   z-index: 260;
 }
-body.mobile-layer .ask-dock {
+body.mobile-layer .ask-dock,
+body.mobile-layer .note-dock {
   --ask-dock-w: calc(100% - 24px);
   /* 消息区加高（作者令 2026-11-03 ②「把 Ask 对话窗口里消息区域的高度再调高一点，
    * 让它能有更多空间显示内容」）：250 → clamp(320, 46vh, 420)。
@@ -453,4 +521,5 @@ body.mobile-layer .ask-bub.ai th,
 body.mobile-layer .ask-bub.ai td { min-width: 4em; }
 body.mobile-layer .ask-bub.ai th:first-child,
 body.mobile-layer .ask-bub.ai td:first-child { white-space: nowrap; }
-body.mobile-layer .ask-input textarea { font-size: var(--ds-fs-mobile-sub); } /* iOS 聚焦不缩放（输入行为包批：input→textarea 同律；15px = --ds-fs-mobile-sub 逐值同档） */
+body.mobile-layer .ask-input textarea,
+body.mobile-layer .note-body textarea { font-size: var(--ds-fs-mobile-sub); } /* iOS 聚焦不缩放（输入行为包批：input→textarea 同律；15px = --ds-fs-mobile-sub 逐值同档） */
