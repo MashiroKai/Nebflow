@@ -60,9 +60,12 @@ export function initBgMergedPanel() {
 
   // 空节收签：列表 0 子 → 签 hidden（渲染面写 innerHTML/增删行都会触发）；
   // 计数随行数现算（签文案 = t('bg.sectionAgents') + ' · N'）。
+  // 野节点归置批（2026-11-05 腿③）：签数改数**行**（.bg-task-row），不数列表子元素
+  // ——野节点分组的组头是标签不是行（data-bg-orphan-group），数子元素会把标签算成
+  // 一行，签与行集当场打架。口径与 data-bg-row-total / 头部计数同源：一行一个数。
   const sync = () => {
     if (!grpLabel || !grpList) return;
-    const n = grpList.children.length;
+    const n = grpList.querySelectorAll('.bg-task-row').length;
     grpLabel.hidden = n === 0;
     grpLabel.textContent = t('bg.sectionAgents') + (n > 0 ? ' · ' + n : '');
   };

@@ -1,0 +1,526 @@
+[sbt-gate] waiting for /Users/kaiyu/.stand/run/sbt.lock (another sbt holds the heavy-work gate; bypass: SBT_GATE=off sbt …)
+[sbt-gate] acquired after 86s
+[sbt-gate] gate acquired after 86s
+[sbt-gate] heap cap -Xmx2600m applied via SBT_OPTS
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project delegate-merge-queue-gate-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/project
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/)
+[info] compiling 18 Scala sources to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/target/scala-3.5.2/test-classes ...
+[info] done compiling
+[warn] javaOptions will be ignored, fork is set to false
+[32mnebflow.core.delegate.MergeQueueDeclarationGateSpec:[0m
+[32m  + [0m[32mA: a member whose branch HAS commits but whose owner never declared 'done and mergeable' never receives a merge turn[0m [90m0.499s[0m
+[32m  + [0m[32mB: an owner-gone member (no live delivery channel) is never granted a merge turn — parked with a visible alert instead[0m [90m0.111s[0m
+[32m  + [0m[32mC: a declared but half-finished branch (conflict markers left in its files) is refused by the health gate with the reason[0m [90m0.166s[0m
+[32m  + [0m[32mC2: a declared branch whose build is broken (health gate says the compile fails) is refused and the reason is reported[0m [90m0.122s[0m
+[91m==> X [0m[91mnebflow.core.delegate.MergeQueueDeclarationGateSpec[0m.[91mD: a declared member with a live owner IS granted the merge turn normally (the gate does not block healthy batches)[0m  [90m0.339s[0m munit.FailException: src/test/scala/nebflow/core/delegate/MergeQueueDeclarationGateSpec.scala:290 declare source on record
+289:      assertEquals(payload.hcursor.get[Boolean]("ownerPresent").toOption, Some(true), "the audit row records owner presence")
+[7m290:      assert(payload.hcursor.get[String]("declareSource").toOption.contains(MergeDeclaration.Source.ReportMerge), "declare source on record")[0m
+291:      assert(payload.hcursor.get[String]("branchTip").toOption.exists(_.nonEmpty), "the branch tip at grant time is recorded")
+[90m    at [0m[90mmunit.FunSuite.assert[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.core.delegate.MergeQueueDeclarationGateSpec.$init$$$anonfun$5$$anonfun$2$$anonfun$3$$anonfun$1$$anonfun$2$$anonfun$3$$anonfun$2[0m[1m([0m[1mMergeQueueDeclarationGateSpec.scala[0m:[1m290[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeQueueDeclarationGateSpec.$init$$$anonfun$5$$anonfun$2$$anonfun$3$$anonfun$1$$anonfun$2$$anonfun$3[0m[1m([0m[1mMergeQueueDeclarationGateSpec.scala[0m:[1m279[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.delegate.MergeQueueDeclarationGateSpec.$init$$$anonfun$5$$anonfun$2$$anonfun$3$$anonfun$1$$anonfun$2$$anonfun$3[0m[1m([0m[1mMergeQueueDeclarationGateSpec.scala[0m:[1m279[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeQueueDeclarationGateSpec.$init$$$anonfun$5$$anonfun$2$$anonfun$3$$anonfun$1$$anonfun$2[0m[1m([0m[1mMergeQueueDeclarationGateSpec.scala[0m:[1m272[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.delegate.MergeQueueDeclarationGateSpec.$init$$$anonfun$5$$anonfun$2$$anonfun$3$$anonfun$1$$anonfun$2[0m[1m([0m[1mMergeQueueDeclarationGateSpec.scala[0m:[1m272[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeQueueDeclarationGateSpec.$init$$$anonfun$5$$anonfun$2$$anonfun$3$$anonfun$1$$anonfun$2[0m[1m([0m[1mMergeQueueDeclarationGateSpec.scala[0m:[1m272[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeQueueDeclarationGateSpec.$init$$$anonfun$5$$anonfun$2$$anonfun$3$$anonfun$1[0m[1m([0m[1mMergeQueueDeclarationGateSpec.scala[0m:[1m271[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeQueueDeclarationGateSpec.$init$$$anonfun$5$$anonfun$2$$anonfun$3$$anonfun$1[0m[1m([0m[1mMergeQueueDeclarationGateSpec.scala[0m:[1m271[0m[1m)[0m
+[90m    at [0m[90mupdate @ nebflow.actor.LocalActorSystem.actorLoop[0m[90m([0m[90mActorSystem.scala[0m:[90m212[0m[90m)[0m
+[90m    at [0m[90mmap @ nebflow.actor.LocalActorSystem.spawn$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1[0m[90m([0m[90mActorSystem.scala[0m:[90m81[0m[90m)[0m
+[90m    at [0m[90mcomplete @ nebflow.actor.LocalActorSystem.spawn$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$1[0m[90m([0m[90mActorSystem.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90mflatMap @ nebflow.actor.LocalActorSystem.spawn$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$1[0m[90m([0m[90mActorSystem.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90mflatMap @ nebflow.actor.LocalActorSystem.spawn$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$1[0m[90m([0m[90mActorSystem.scala[0m:[90m79[0m[90m)[0m
+[90m    at [0m[90mof @ nebflow.actor.LocalActorSystem.spawn$$anonfun$1$$anonfun$1[0m[90m([0m[90mActorSystem.scala[0m:[90m72[0m[90m)[0m
+[90m    at [0m[90mflatMap @ nebflow.actor.LocalActorSystem.spawn$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1[0m[90m([0m[90mActorSystem.scala[0m:[90m78[0m[90m)[0m
+[90m    at [0m[90mflatMap @ nebflow.actor.LocalActorSystem.spawn$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2[0m[90m([0m[90mActorSystem.scala[0m:[90m77[0m[90m)[0m
+[90m    at [0m[90mapply @ nebflow.actor.LocalActorSystem.spawn$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1[0m[90m([0m[90mActorSystem.scala[0m:[90m74[0m[90m)[0m
+[32mnebflow.core.delegate.MergeQueueSpec:[0m
+[32m  + [0m[32m① FIFO rank = readyAt (completion time) and cross-project parallel grants — the late-enqueued earlier-finisher is notified first[0m [90m0.823s[0m
+[32m  + [0m[32m③ cross-project: two different projectKeys are granted immediately (per-project single holder never blocks the other)[0m [90m0.564s[0m
+[32m  + [0m[32m② single holder per project: a second ready-to-merge in the SAME project stays waiting until the holder's round closes[0m [90m0.642s[0m
+[32m  + [0m[32m④ merge brief pins the direction + read-only fact-check pre-check: git -C <baseWs> merge --no-ff <branch>, conflict = resolve in place (hardened 2026-10-31)[0m [90m0.097s[0m
+[32m  + [0m[32m④b conflicted merge turn: brief hardens resolve-in-place + post-merge tests + honesty gate + Canvas counter-example[0m [90m0.095s[0m
+[32m  + [0m[32m⑤ fact-check at grant: an already-merged member closes as merged WITHOUT a merge notice (the e300e71c class is gone)[0m [90m0.257s[0m
+[32m  + [0m[32m⑥ round terminal closes the ledger: refused ⇒ failed with the reason (no retry, no park); merged ⇒ merged[0m [90m0.399s[0m
+[91m==> X [0m[91mnebflow.core.delegate.MergeQueueSpec[0m.[91m⑦ owner-gone: a turn granted to a DEAD owner session closes as owner-gone and escalates via OwnerGonePort[0m  [90m0.216s[0m munit.ComparisonFailException: src/test/scala/nebflow/core/delegate/MergeQueueSpec.scala:385
+384:      assertEquals(got.size, 0, "no merge notice is ever injected into a dead session")
+[7m385:      assertEquals(state, Some("owner-gone"), "the member is closed as owner-gone (visible, never silently parked)")[0m
+386:      assert(reason.exists(_.contains("undeliverable")), s"the close reason names the delivery failure: $reason")
+the member is closed as owner-gone (visible, never silently parked)
+[1m=> Obtained[0m
+Some(
+  value = "waiting"
+)
+[1m=> Diff[0m ([91m- expected[0m, [92m+ obtained[0m)
+ Some(
+[91m-  value = "owner-gone"[0m
+[92m+  value = "waiting"[0m
+ )
+[90m    at [0m[90mmunit.FunSuite.assertEquals[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.core.delegate.MergeQueueSpec.$init$$$anonfun$8$$anonfun$3$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueSpec.scala[0m:[1m385[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeQueueSpec.$init$$$anonfun$8$$anonfun$3$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueSpec.scala[0m:[1m381[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.delegate.MergeQueueSpec.$init$$$anonfun$8$$anonfun$3$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueSpec.scala[0m:[1m381[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.delegate.MergeQueueSpec.$init$$$anonfun$8$$anonfun$3$$anonfun$2[0m[1m([0m[1mMergeQueueSpec.scala[0m:[1m377[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeQueueSpec.$init$$$anonfun$8$$anonfun$3$$anonfun$2[0m[1m([0m[1mMergeQueueSpec.scala[0m:[1m377[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeQueueSpec.$init$$$anonfun$8$$anonfun$3[0m[1m([0m[1mMergeQueueSpec.scala[0m:[1m376[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeQueueSpec.$init$$$anonfun$8$$anonfun$3[0m[1m([0m[1mMergeQueueSpec.scala[0m:[1m376[0m[1m)[0m
+[90m    at [0m[90mupdate @ nebflow.actor.LocalActorSystem.actorLoop[0m[90m([0m[90mActorSystem.scala[0m:[90m212[0m[90m)[0m
+[90m    at [0m[90mmap @ nebflow.actor.LocalActorSystem.spawn$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1[0m[90m([0m[90mActorSystem.scala[0m:[90m81[0m[90m)[0m
+[90m    at [0m[90mcomplete @ nebflow.actor.LocalActorSystem.spawn$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$1[0m[90m([0m[90mActorSystem.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90mflatMap @ nebflow.actor.LocalActorSystem.spawn$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$1[0m[90m([0m[90mActorSystem.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90mflatMap @ nebflow.actor.LocalActorSystem.spawn$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$1[0m[90m([0m[90mActorSystem.scala[0m:[90m79[0m[90m)[0m
+[90m    at [0m[90mof @ nebflow.actor.LocalActorSystem.spawn$$anonfun$1$$anonfun$1[0m[90m([0m[90mActorSystem.scala[0m:[90m72[0m[90m)[0m
+[32m  + [0m[32m⑦b roundless terminal (merge-window timeout / cancel) fact-checks first, then closes owner-gone[0m [90m0.52s[0m
+[32m  + [0m[32m⑧ ledger persistence: state survives a memory drop (restart simulation) and reloads from disk[0m [90m0.408s[0m
+[32m  + [0m[32m⑨ leftover dirt no longer blocks the grant (fail-soft): the turn is granted with a WARN, no grant-blocked, no requeue[0m [90m0.456s[0m
+[32m  + [0m[32m⑩ branch-direction gate still parks the member but MUST notify: full reason once per cause, escalation after N blocked rounds[0m [90m2.232s[0m
+[32m  + [0m[32m⑪ a refused merge round closes failed AND notifies the parent with the FULL untruncated reason[0m [90m0.394s[0m
+[32m  + [0m[32m⑤b enqueue is idempotent for open members and audited; unknown onTerminal is a no-op[0m [90m0.376s[0m
+[32m  + [0m[32m⑫ write-ahead channel + boot replay: enqueue→restart restores queue state — including a member whose ledger write never landed (the ready-killed gap)[0m [90m0.313s[0m
+[91m==> X [0m[91mnebflow.core.delegate.MergeQueueSpec[0m.[91m⑬ owner-gone premise inversion: a restarted member with an un-closed channel record is preserved on grant attempts (never owner-gone); a ledger-only member without a record still closes owner-gone[0m  [90m0.521s[0m munit.FailException: src/test/scala/nebflow/core/delegate/MergeQueueSpec.scala:617 the block reason names the channel premise: Some(owner not present: no live delivery channel back to 'd-premise' (the session did not survive / is not live), so nobody can be asked whether this batch is finished — the merge queue does NOT merge while the owner is absent (the old behaviour resurrected such members and handed them a merge turn). Branch 'delegate/d-premise' → 'main' is parked for a human: revive the owner session, or merge the branch by hand (the queue re-checks every tick and closes the membership as merged once it is an ancestor).)
+616:      assertEquals(state, Some("waiting"), "a member with an un-closed channel record must NOT be owner-gone on memory absence")
+[7m617:      assert(reason.exists(_.contains("un-closed record")), s"the block reason names the channel premise: $reason")[0m
+618:      // 三条通知：preserve 落账（原因 A）→ Deferred 原因 B ≠ A ⇒ 状态变化重发（既有
+[90m    at [0m[90mmunit.FunSuite.assert[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.core.delegate.MergeQueueSpec.$init$$$anonfun$16$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$3$$anonfun$3$$anonfun$3$$anonfun$3$$anonfun$2$$anonfun$3$$anonfun$2[0m[1m([0m[1mMergeQueueSpec.scala[0m:[1m617[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeQueueSpec.$init$$$anonfun$16$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$3$$anonfun$3$$anonfun$3$$anonfun$3$$anonfun$2$$anonfun$3[0m[1m([0m[1mMergeQueueSpec.scala[0m:[1m612[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.delegate.MergeQueueSpec.$init$$$anonfun$16$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$3$$anonfun$3$$anonfun$3$$anonfun$3$$anonfun$2$$anonfun$3[0m[1m([0m[1mMergeQueueSpec.scala[0m:[1m612[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeQueueSpec.$init$$$anonfun$16$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$3$$anonfun$3$$anonfun$3$$anonfun$3$$anonfun$2[0m[1m([0m[1mMergeQueueSpec.scala[0m:[1m610[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.delegate.MergeQueueSpec.$init$$$anonfun$16$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$3$$anonfun$3$$anonfun$3$$anonfun$3$$anonfun$2[0m[1m([0m[1mMergeQueueSpec.scala[0m:[1m610[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeQueueSpec.$init$$$anonfun$16$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$3$$anonfun$3$$anonfun$3$$anonfun$3$$anonfun$2[0m[1m([0m[1mMergeQueueSpec.scala[0m:[1m610[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeQueueSpec.$init$$$anonfun$16$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$3$$anonfun$3$$anonfun$3$$anonfun$3[0m[1m([0m[1mMergeQueueSpec.scala[0m:[1m609[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeQueueSpec.$init$$$anonfun$16$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$3$$anonfun$3$$anonfun$3$$anonfun$3[0m[1m([0m[1mMergeQueueSpec.scala[0m:[1m609[0m[1m)[0m
+[1m    at [0m[1mblocking @ nebflow.core.delegate.MergeQueueSpec.$init$$$anonfun$12$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueSpec.scala[0m:[1m477[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.delegate.MergeQueueSpec.$init$$$anonfun$16$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$3$$anonfun$3$$anonfun$3[0m[1m([0m[1mMergeQueueSpec.scala[0m:[1m592[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeQueueSpec.$init$$$anonfun$16$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$3$$anonfun$3$$anonfun$3[0m[1m([0m[1mMergeQueueSpec.scala[0m:[1m592[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeQueueSpec.$init$$$anonfun$16$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$3$$anonfun$3[0m[1m([0m[1mMergeQueueSpec.scala[0m:[1m589[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.delegate.MergeQueueSpec.$init$$$anonfun$16$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$3$$anonfun$3[0m[1m([0m[1mMergeQueueSpec.scala[0m:[1m589[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeQueueSpec.$init$$$anonfun$16$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$3$$anonfun$3[0m[1m([0m[1mMergeQueueSpec.scala[0m:[1m589[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeQueueSpec.$init$$$anonfun$16$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$3[0m[1m([0m[1mMergeQueueSpec.scala[0m:[1m587[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.delegate.MergeQueueSpec.$init$$$anonfun$16$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$3[0m[1m([0m[1mMergeQueueSpec.scala[0m:[1m587[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeQueueSpec.$init$$$anonfun$16$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$3[0m[1m([0m[1mMergeQueueSpec.scala[0m:[1m587[0m[1m)[0m
+[32m  + [0m[32m⑭ closed memberships compact out of the write-ahead channel; open mirrors survive; the ledger keeps the audit row[0m [90m0.383s[0m
+[32mnebflow.core.delegate.MergeLaneGateSpec:[0m
+[32m  + [0m[32m① classifyLane: the five verdicts by MERGE_HEAD presence × owner liveness (pure decision face)[0m [90m0.003s[0m
+[32m  + [0m[32m② grant-side lane gate: a foreign in-progress merge blocks the grant with a notice; clearing the lane re-grants[0m [90m0.708s[0m
+[32m  + [0m[32m③ requeueForLane keeps the membership: turn-granted → waiting, grantedAt cleared, reason recorded, audit line rides[0m [90m0.131s[0m
+[32m  + [0m[32m④ owner-gone with the member's own leftover MERGE_HEAD aborts the orphan merge (recovery, not an engine merge)[0m [90m0.252s[0m
+[32m  + [0m[32m⑤ a MERGE_HEAD belonging to another branch is NEVER aborted on owner-gone (human manual merge protection)[0m [90m0.248s[0m
+[91m==> X [0m[91mnebflow.core.delegate.MergeLaneGateSpec[0m.[91m⑥ care-tick fact-check releases the window as soon as the merge commit lands (the owner never reports back)[0m  [90m0.161s[0m munit.FailException: src/test/scala/nebflow/core/delegate/MergeLaneGateSpec.scala:324 the close reason names the fact-check release: Some(merge OBSERVED as landed (care-tick read-only fact-check; the owner did not report back) — the queue did not execute this merge)
+323:        s"the close reason names the fact-check release: ${after.flatMap(_._2)}"
+[7m324:      )[0m
+325:    end for
+[90m    at [0m[90mmunit.FunSuite.assert[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.core.delegate.MergeLaneGateSpec.$init$$$anonfun$6$$anonfun$1$$anonfun$3$$anonfun$3$$anonfun$2[0m[1m([0m[1mMergeLaneGateSpec.scala[0m:[1m324[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeLaneGateSpec.$init$$$anonfun$6$$anonfun$1$$anonfun$3$$anonfun$3[0m[1m([0m[1mMergeLaneGateSpec.scala[0m:[1m317[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.delegate.MergeLaneGateSpec.$init$$$anonfun$6$$anonfun$1$$anonfun$3$$anonfun$3[0m[1m([0m[1mMergeLaneGateSpec.scala[0m:[1m317[0m[1m)[0m
+[90m    at [0m[90mblocking @ nebflow.core.delegate.MergeQueueSpec.$init$$$anonfun$12$$anonfun$2$$anonfun$2$$anonfun$2[0m[90m([0m[90mMergeQueueSpec.scala[0m:[90m477[0m[90m)[0m
+[1m    at [0m[1mmap @ nebflow.core.delegate.MergeLaneGateSpec.$init$$$anonfun$6$$anonfun$1$$anonfun$3[0m[1m([0m[1mMergeLaneGateSpec.scala[0m:[1m315[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeLaneGateSpec.$init$$$anonfun$6$$anonfun$1$$anonfun$3[0m[1m([0m[1mMergeLaneGateSpec.scala[0m:[1m315[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeLaneGateSpec.$init$$$anonfun$6$$anonfun$1[0m[1m([0m[1mMergeLaneGateSpec.scala[0m:[1m313[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.delegate.MergeLaneGateSpec.$init$$$anonfun$6$$anonfun$1[0m[1m([0m[1mMergeLaneGateSpec.scala[0m:[1m308[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeLaneGateSpec.$init$$$anonfun$6$$anonfun$1[0m[1m([0m[1mMergeLaneGateSpec.scala[0m:[1m308[0m[1m)[0m
+[90m    at [0m[90mupdate @ nebflow.actor.LocalActorSystem.actorLoop[0m[90m([0m[90mActorSystem.scala[0m:[90m212[0m[90m)[0m
+[90m    at [0m[90mmap @ nebflow.actor.LocalActorSystem.spawn$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1[0m[90m([0m[90mActorSystem.scala[0m:[90m81[0m[90m)[0m
+[90m    at [0m[90mcomplete @ nebflow.actor.LocalActorSystem.spawn$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$1[0m[90m([0m[90mActorSystem.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90mflatMap @ nebflow.actor.LocalActorSystem.spawn$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$1[0m[90m([0m[90mActorSystem.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90mflatMap @ nebflow.actor.LocalActorSystem.spawn$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$1[0m[90m([0m[90mActorSystem.scala[0m:[90m79[0m[90m)[0m
+[90m    at [0m[90mof @ nebflow.actor.LocalActorSystem.spawn$$anonfun$1$$anonfun$1[0m[90m([0m[90mActorSystem.scala[0m:[90m72[0m[90m)[0m
+[90m    at [0m[90mflatMap @ nebflow.actor.LocalActorSystem.spawn$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1[0m[90m([0m[90mActorSystem.scala[0m:[90m78[0m[90m)[0m
+[90m    at [0m[90mflatMap @ nebflow.actor.LocalActorSystem.spawn$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2[0m[90m([0m[90mActorSystem.scala[0m:[90m77[0m[90m)[0m
+[32m  + [0m[32m⑦ the merge brief teaches the OWN-leftover recovery (abort your own MERGE_HEAD and retry once in-round)[0m [90m0.118s[0m
+10:53:45.645 [33mWARN [0m nebflow.core.delegate.merge-enqueue - [merge-enqueue] no registry record for 'delegate-a2-ghost' — merge membership not pre-booked
+10:53:45.646 [33mWARN [0m nebflow.core.delegate.merge-enqueue - [merge-enqueue] 'delegate-a2-nobase' has no branch/baseBranch anchor (branch=delegate/delegate-a2-nobase, baseBranch=-) — merge target unknown, membership NOT pre-booked (the engine never guesses 'main')
+10:53:45.647 [33mWARN [0m nebflow.core.delegate.merge-enqueue - [merge-enqueue] 'delegate-a2-nobranch' has no branch/baseBranch anchor (branch=-, baseBranch=main) — merge target unknown, membership NOT pre-booked (the engine never guesses 'main')
+[32mnebflow.core.delegate.MergeQueueFifoNotifySpec:[0m
+[32m  + [0m[32mA1 申报点预记账：delegate_report(merge) 落槽即入队（终态腿没跑成也不会有零台账行）+ 回执显式 CONFIRMED[0m [90m0.13s[0m
+[32m  + [0m[32mA2 零猜：ensurePending 只认 branch ∧ baseBranch 两锚（缺锚 = false，绝不猜 main；无记录 = false）[0m [90m0.155s[0m
+[32m  + [0m[32mA3 核实入队的失败腿：账本核不到开放条目 ⇒ 返回 false + enqueue-failed 必通知，绝不抛[0m [90m0.097s[0m
+[32m  + [0m[32mA4 核实入队的好腿：开放条目核到 ⇒ 返回 true 且零通知[0m [90m0.296s[0m
+[32m  + [0m[32mB1 排空序：readyAt 300/100/200 反序注入 ⇒ 放行序必须 100 → 200 → 300（FIFO = 完成时间序，不是入队序）[0m [90m0.927s[0m
+[32m  + [0m[32mC1 merged 必通知：队列侧异步关账（放行前账实核对命中已并）⇒ BlockNotifyPort kind=merged（落地也是状态变化）[0m [90m0.276s[0m
+[32m  + [0m[32mC2 不许双通知：属主合并轮终态（onTerminal Merged）⇒ 队列侧零通知（父通知由属主自己的 Release 承担）[0m [90m0.515s[0m
+[32m  + [0m[32mC3 failed 必通知：合并轮被拒 ⇒ kind=failed 且原因原文逐字随行（无重试无 park）[0m [90m0.484s[0m
+[32mnebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec:[0m
+[32m  + [0m[32mR2-红：旧语义（只核持窗成员）下，队头堵着 + 队尾分支已在 base 上 ⇒ N 拍零变化，永远开不了账[0m [90m0.3s[0m
+[32m  + [0m[32mR2-绿：同一夹具 + 一拍 careTick（生产路径）⇒ 只读核对命中，队尾成员按 merged 关账（不占合并窗）[0m [90m0.262s[0m
+[32m  + [0m[32mR2-红线：核对读数不可得（base 工作区不是 git 仓/不可读）⇒ fail-soft，绝不关账[0m [90m0.097s[0m
+[91m==> X [0m[91mnebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec[0m.[91mR1-红：旧语义（headSkip=false）下，无投递通道的队头占窗 N 拍，健康队尾零获窗（饿死）[0m  [90m0.272s[0m munit.ComparisonFailException: src/test/scala/nebflow/core/delegate/MergeQueueHeadSkipFactCheckSpec.scala:285
+284:      assertEquals(tailAfter.map(_.state), Some(MergeQueue.State.Waiting), "tail never left waiting")
+[7m285:      assertEquals(headAfter.map(_.blockedRounds), Some(5), "the leg-less head was re-granted and re-blocked 5 times")[0m
+286:      assertEquals(blocked.size, 5, "5 grant-blocked audit rows — the self-lock the audit counted 220 times")
+the leg-less head was re-granted and re-blocked 5 times
+[1m=> Obtained[0m
+Some(
+  value = 0
+)
+[1m=> Diff[0m ([91m- expected[0m, [92m+ obtained[0m)
+ Some(
+[91m-  value = 5[0m
+[92m+  value = 0[0m
+ )
+[90m    at [0m[90mmunit.FunSuite.assertEquals[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$4$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m285[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$4$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m281[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$4$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m281[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$4$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m280[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$4$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m280[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$4$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m279[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$4$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m279[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$4$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m278[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$4$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m278[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$4$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m277[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$4$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m277[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$4$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m276[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$4$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m276[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$4$$anonfun$1$$anonfun$1$$anonfun$1[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m275[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$4$$anonfun$1$$anonfun$1$$anonfun$1[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m275[0m[1m)[0m
+[90m    at [0m[90mblocking @ nebflow.core.delegate.MergeQueueSpec.$init$$$anonfun$12$$anonfun$2$$anonfun$2$$anonfun$2[0m[90m([0m[90mMergeQueueSpec.scala[0m:[90m477[0m[90m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$4$$anonfun$1$$anonfun$1[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m274[0m[1m)[0m
+[91m==> X [0m[91mnebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec[0m.[91mR1-绿：同一夹具 + 一次 pump（生产路径）⇒ 队头让位退避，同一拍内队尾获窗[0m  [90m0.403s[0m munit.ComparisonFailException: src/test/scala/nebflow/core/delegate/MergeQueueHeadSkipFactCheckSpec.scala:315
+314:      assertEquals(headAfter.map(_.state), Some(MergeQueue.State.Waiting), "head returned to waiting (membership kept)")
+[7m315:      assertEquals(headAfter.map(_.blockedRounds), Some(1), "head's blocked round is counted")[0m
+316:      assert(headAfter.flatMap(_.skipUntilMs).exists(_ > 0L), "head carries a backoff deadline (skip window)")
+head's blocked round is counted
+[1m=> Obtained[0m
+Some(
+  value = 0
+)
+[1m=> Diff[0m ([91m- expected[0m, [92m+ obtained[0m)
+ Some(
+[91m-  value = 1[0m
+[92m+  value = 0[0m
+ )
+[90m    at [0m[90mmunit.FunSuite.assertEquals[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$5$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m315[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$5$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m309[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$5$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m309[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$5$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m308[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$5$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m308[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$5$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m307[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$5$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m307[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$5$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m306[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$5$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m306[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$5$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m305[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$5$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m305[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$5$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m304[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$5$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m304[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$5$$anonfun$1$$anonfun$1$$anonfun$1[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m303[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$5$$anonfun$1$$anonfun$1$$anonfun$1[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m303[0m[1m)[0m
+[90m    at [0m[90mblocking @ nebflow.core.delegate.MergeQueueSpec.$init$$$anonfun$12$$anonfun$2$$anonfun$2$$anonfun$2[0m[90m([0m[90mMergeQueueSpec.scala[0m:[90m477[0m[90m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$5$$anonfun$1$$anonfun$1[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m302[0m[1m)[0m
+[91m==> X [0m[91mnebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec[0m.[91mR1-上界：孤身死结连续被堵到 SoloMaxBlockedRounds ⇒ needsHuman 显式降级 + 一次 escalate + 队列停止自动授窗（不许无限重试）[0m  [90m0.112s[0m munit.FailException: src/test/scala/nebflow/core/delegate/MergeQueueHeadSkipFactCheckSpec.scala:349 a solo dead end keeps retrying through round 10 (the N-tick escalation ladder keeps its full runway)
+348:        s"a solo dead end keeps retrying through round $MaxPrecedenceRound (the N-tick escalation ladder keeps its full runway)"
+[7m349:      )[0m
+350:      assertEquals(after.map(_.blockedRounds), Some(ceiling), s"retries stop at the absolute ceiling ($ceiling): no infinite retry")
+[90m    at [0m[90mmunit.FunSuite.assert[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$6$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m349[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$6$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m344[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$6$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m344[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$6$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m343[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$6$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m343[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$6$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m342[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$6$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m342[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$6$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m341[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$6$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m341[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$6$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m340[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$6$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m340[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$6$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m339[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$6$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m339[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$6$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m338[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$6$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m338[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$6$$anonfun$1$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m337[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$6$$anonfun$1$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m337[0m[1m)[0m
+[32m  + [0m[32mR1-读数：退避指数×2、封顶上界、抖动在前两者之内（纯函数，零等待）[0m [90m0.001s[0m
+[91m==> X [0m[91mnebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec[0m.[91mR1-两道上界：正当饿死别人的死结 8 拍到顶即降级（不再挡住队尾）；同一队里的闸类成员（项目级）照旧逐拍重试、不降级[0m  [90m3.285s[0m munit.ComparisonFailException: src/test/scala/nebflow/core/delegate/MergeQueueHeadSkipFactCheckSpec.scala:404
+403:    yield
+[7m404:      assertEquals(headAfter.map(_.blockedRounds), Some(MergeQueue.MaxBlockedRounds), "the head that starves a tail stops at the short ceiling (8 rounds)")[0m
+405:      assert(headAfter.flatMap(_.needsHuman).isDefined, "and degrades to the explicit needs-human state")
+the head that starves a tail stops at the short ceiling (8 rounds)
+[1m=> Obtained[0m
+Some(
+  value = 0
+)
+[1m=> Diff[0m ([91m- expected[0m, [92m+ obtained[0m)
+ Some(
+[91m-  value = 8[0m
+[92m+  value = 0[0m
+ )
+[90m    at [0m[90mmunit.FunSuite.assertEquals[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$8$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m404[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$8$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m402[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$8$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m402[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$8$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m401[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$8$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m401[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$8$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m400[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$8$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m400[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$8$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m399[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$8$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m399[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$8$$anonfun$1$$anonfun$1$$anonfun$1[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m398[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$8$$anonfun$1$$anonfun$1$$anonfun$1[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m398[0m[1m)[0m
+[90m    at [0m[90mblocking @ nebflow.core.delegate.MergeQueueSpec.$init$$$anonfun$12$$anonfun$2$$anonfun$2$$anonfun$2[0m[90m([0m[90mMergeQueueSpec.scala[0m:[90m477[0m[90m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$8$$anonfun$1$$anonfun$1[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m397[0m[1m)[0m
+[90m    at [0m[90mblocking @ nebflow.core.delegate.MergeQueueSpec.$init$$$anonfun$12$$anonfun$2$$anonfun$2$$anonfun$2[0m[90m([0m[90mMergeQueueSpec.scala[0m:[90m477[0m[90m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$8$$anonfun$1[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m396[0m[1m)[0m
+[90m    at [0m[90mupdate @ nebflow.actor.LocalActorSystem.actorLoop[0m[90m([0m[90mActorSystem.scala[0m:[90m212[0m[90m)[0m
+[90m    at [0m[90mmap @ nebflow.actor.LocalActorSystem.spawn$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1[0m[90m([0m[90mActorSystem.scala[0m:[90m81[0m[90m)[0m
+[32m  + [0m[32mR1-自愈：降级后投递通道回来 ⇒ 复活（清退避/needsHuman）并在该拍获窗；不带新腿的重入队仍钉在 needsHuman[0m [90m0.309s[0m
+[91m==> X [0m[91mnebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec[0m.[91mR1-不让位：单人队列里被堵成员照常逐拍重试（让位是为了让别人走——没别人就不空转，既有升级阶梯零漂移）[0m  [90m0.118s[0m munit.ComparisonFailException: src/test/scala/nebflow/core/delegate/MergeQueueHeadSkipFactCheckSpec.scala:471
+470:    yield
+[7m471:      assertEquals(first.map(_.blockedRounds), Some(1))[0m
+472:      assertEquals(second.map(_.blockedRounds), Some(2), "a solo member is retried every tick — no skip window, no idling")
+values are not the same
+[1m=> Obtained[0m
+Some(
+  value = 0
+)
+[1m=> Diff[0m ([91m- expected[0m, [92m+ obtained[0m)
+ Some(
+[91m-  value = 1[0m
+[92m+  value = 0[0m
+ )
+[90m    at [0m[90mmunit.FunSuite.assertEquals[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$10$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m471[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$10$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m469[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$10$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m469[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$10$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m468[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$10$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m468[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$10$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m467[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$10$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m467[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$10$$anonfun$1$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m466[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$10$$anonfun$1$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m466[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$10$$anonfun$1$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m465[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$10$$anonfun$1$$anonfun$2[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m465[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$10$$anonfun$1[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m464[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$10$$anonfun$1[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m464[0m[1m)[0m
+[90m    at [0m[90mblocking @ nebflow.core.delegate.MergeQueueSpec.$init$$$anonfun$12$$anonfun$2$$anonfun$2$$anonfun$2[0m[90m([0m[90mMergeQueueSpec.scala[0m:[90m477[0m[90m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec.$init$$$anonfun$10[0m[1m([0m[1mMergeQueueHeadSkipFactCheckSpec.scala[0m:[1m463[0m[1m)[0m
+[90m    at [0m[90mflatMap @ munit.internal.NestingChecks$.checkNestingIO[0m[90m([0m[90minternal.scala[0m:[90m55[0m[90m)[0m
+[32mnebflow.core.delegate.MergeEnqueueWatchSpec:[0m
+[32m  + [0m[32mD1 七维真值表：全真才代办；任一维翻假都必须零动作[0m [90m0.006s[0m
+[32m  + [0m[32mD2 阈值边界：idle=999 不代办、idle=1000 代办（>= 而非 >）；缺省阈值 = Defaults.MergeEnqueueWatchIdleSec=600s[0m [90m0.001s[0m
+[32m  + [0m[32mD3 代办锚：readyAt = lastActivityMs（不是扫描时刻）+ watch-queued 通知点名漏排事实[0m [90m0.114s[0m
+[32m  + [0m[32mD3b 零猜：无 branch/baseBranch 锚的漏网候选 ⇒ 不入队、零通知（引擎绝不猜 main）[0m [90m0.087s[0m
+[32m  + [0m[32mD4 幂等：账本已有开放条目 ⇒ 同一读数扫两拍零代办、零通知（hasOpenEntry 是唯一闸）[0m [90m0.09s[0m
+[91m==> X [0m[91mnebflow.core.delegate.MergeEnqueueWatchSpec[0m.[91mD4b 幂等（真入队腿）：已代办的成员在下一拍不再被代办（hasOpenEntry 闸），零重复通知[0m  [90m0.112s[0m munit.ComparisonFailException: src/test/scala/nebflow/core/delegate/MergeEnqueueWatchSpec.scala:339
+338:    yield
+[7m339:      assertEquals(first.map(_.delegateId), List(id), "the first tick books the orphan (Idle + ahead + running row + silent long enough)")[0m
+340:      assertEquals(second, Nil, "the second tick proxies NOTHING (the ledger already holds an open entry — idempotent)")
+the first tick books the orphan (Idle + ahead + running row + silent long enough)
+[1m=> Obtained[0m
+Nil
+[1m=> Diff[0m ([91m- expected[0m, [92m+ obtained[0m)
+[91m-List([0m
+[91m-  "delegate-d4b"[0m
+[91m-)[0m
+[92m+Nil[0m
+[90m    at [0m[90mmunit.FunSuite.assertEquals[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.core.delegate.MergeEnqueueWatchSpec.$init$$$anonfun$6$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2[0m[1m([0m[1mMergeEnqueueWatchSpec.scala[0m:[1m339[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.MergeEnqueueWatchSpec.$init$$$anonfun$6$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$2[0m[1m([0m[1mMergeEnqueueWatchSpec.scala[0m:[1m337[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.delegate.MergeEnqueueWatchSpec.$init$$$anonfun$6$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$2[0m[1m([0m[1mMergeEnqueueWatchSpec.scala[0m:[1m337[0m[1m)[0m
+[90m    at [0m[90mmap @ nebflow.core.delegate.MergeEnqueueWatch$.scan$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2[0m[90m([0m[90mMergeEnqueueWatch.scala[0m:[90m269[0m[90m)[0m
+[90m    at [0m[90mblocking @ nebflow.core.delegate.MergeQueueSpec.$init$$$anonfun$12$$anonfun$2$$anonfun$2$$anonfun$2[0m[90m([0m[90mMergeQueueSpec.scala[0m:[90m477[0m[90m)[0m
+[90m    at [0m[90mhandleErrorWith @ nebflow.core.delegate.MergeEnqueueWatch$.scan$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$1[0m[90m([0m[90mMergeEnqueueWatch.scala[0m:[90m261[0m[90m)[0m
+[90m    at [0m[90mtraverse_ @ nebflow.core.delegate.MergeEnqueueWatch$.scan$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2[0m[90m([0m[90mMergeEnqueueWatch.scala[0m:[90m268[0m[90m)[0m
+[90m    at [0m[90mflatMap @ nebflow.core.delegate.MergeEnqueueWatch$.scan$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2[0m[90m([0m[90mMergeEnqueueWatch.scala[0m:[90m260[0m[90m)[0m
+[90m    at [0m[90mapply @ nebflow.core.delegate.MergeEnqueueWatch$.scan$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2[0m[90m([0m[90mMergeEnqueueWatch.scala[0m:[90m258[0m[90m)[0m
+[90m    at [0m[90mflatMap @ nebflow.core.delegate.MergeEnqueueWatch$.scan$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2[0m[90m([0m[90mMergeEnqueueWatch.scala[0m:[90m250[0m[90m)[0m
+[90m    at [0m[90mflatMap @ nebflow.core.delegate.MergeEnqueueWatch$.scan$$anonfun$1$$anonfun$1$$anonfun$2[0m[90m([0m[90mMergeEnqueueWatch.scala[0m:[90m239[0m[90m)[0m
+[90m    at [0m[90mmap @ nebflow.core.delegate.MergeEnqueueWatch$.scan$$anonfun$1$$anonfun$1[0m[90m([0m[90mMergeEnqueueWatch.scala[0m:[90m216[0m[90m)[0m
+[90m    at [0m[90mflatMap @ nebflow.core.delegate.MergeEnqueueWatch$.scan$$anonfun$1$$anonfun$1[0m[90m([0m[90mMergeEnqueueWatch.scala[0m:[90m216[0m[90m)[0m
+[90m    at [0m[90mflatMap @ nebflow.core.delegate.MergeEnqueueWatch$.scan$$anonfun$1[0m[90m([0m[90mMergeEnqueueWatch.scala[0m:[90m215[0m[90m)[0m
+[90m    at [0m[90mflatMap @ nebflow.core.delegate.MergeEnqueueWatch$.scan[0m[90m([0m[90mMergeEnqueueWatch.scala[0m:[90m214[0m[90m)[0m
+[1m    at [0m[1mmap @ nebflow.core.delegate.MergeEnqueueWatchSpec.$init$$$anonfun$6$$anonfun$2$$anonfun$1$$anonfun$1[0m[1m([0m[1mMergeEnqueueWatchSpec.scala[0m:[1m335[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.MergeEnqueueWatchSpec.$init$$$anonfun$6$$anonfun$2$$anonfun$1$$anonfun$1[0m[1m([0m[1mMergeEnqueueWatchSpec.scala[0m:[1m335[0m[1m)[0m
+[32mnebflow.core.delegate.MergeAcceptanceSpec:[0m
+[32m  + [0m[32m① a-path passes on a real --no-ff merge: two-parent HEAD, second parent = branch tip, ancestor true[0m [90m0.154s[0m
+[32m  + [0m[32m② b-path alone is NOT enough: branch merged but base HEAD advanced past it (another ref merged later) ⇒ refused[0m [90m0.222s[0m
+[32m  + [0m[32m③ unreadable anchors = fail-closed: missing branch ref / non-git base ⇒ refused with evidence[0m [90m0.106s[0m
+[32m  + [0m[32m④ verifyRecord: incomplete spawn binding ⇒ refused; None record ⇒ refused[0m [90m0.001s[0m
+[32m  + [0m[32m⑤ onCompleted integration: merge-round completed verdict over a NEVER-merged branch ⇒ completed+note (source=merge-verify), release refused[0m [90m0.594s[0m
+10:53:55.193 [33mWARN [0m nebflow.agent.merge-queue-recovery - [merge-queue-recovery] 1 open merge-ledger membership(s) survived a restart — reconciling (no merge rounds are revived)
+10:53:55.268 [36mINFO [0m nebflow.agent.merge-queue-recovery - [merge-queue-recovery] write-ahead channel compacted 1 closed mirror(s)
+10:53:55.458 [33mWARN [0m nebflow.agent.merge-queue-recovery - [merge-queue-recovery] 1 open merge-ledger membership(s) survived a restart — reconciling (no merge rounds are revived)
+10:53:55.500 [36mINFO [0m nebflow.agent.merge-queue-recovery - [merge-queue-recovery] write-ahead channel compacted 1 closed mirror(s)
+10:53:55.740 [33mWARN [0m nebflow.agent.merge-queue-recovery - [merge-queue-recovery] 1 open merge-ledger membership(s) survived a restart — reconciling (no merge rounds are revived)
+10:53:55.799 [33mWARN [0m nebflow.agent.merge-queue-recovery - [merge-queue-recovery] OWNER-GONE mq-gone: branch `delegate/mq-gone` still has 1 commit(s) ahead of `main`, but the owner session did not survive the restart — needs dispatcher handling (manual merge or re-dispatch)
+10:53:55.862 [36mINFO [0m nebflow.agent.merge-queue-recovery - [merge-queue-recovery] write-ahead channel compacted 1 closed mirror(s)
+10:53:56.150 [33mWARN [0m nebflow.agent.merge-queue-recovery - [merge-queue-recovery] 1 open merge-ledger membership(s) survived a restart — reconciling (no merge rounds are revived)
+10:53:56.181 [33mWARN [0m nebflow.agent.merge-queue-recovery - [merge-queue-recovery] PRESERVED mq-preserve: branch `delegate/mq-preserve` still has 1 commit(s) ahead of `main` and the owner session did not survive the restart — membership PRESERVED by the write-ahead channel (window returned, stays queued); continue/revive the owner session or merge the branch manually (the queue fact-checks and closes it as merged)
+10:53:56.369 [33mWARN [0m nebflow.agent.merge-queue-recovery - [merge-queue-recovery] 1 open merge-ledger membership(s) survived a restart — reconciling (no merge rounds are revived)
+10:53:56.388 [36mINFO [0m nebflow.agent.merge-queue-recovery - [merge-queue-recovery] write-ahead channel compacted 1 closed mirror(s)
+[32mnebflow.agent.MergeQueueBootSweepSpec:[0m
+[32m  + [0m[32m① already-merged member ⇒ closed merged + leftover scene cleaned under the zero-ahead guard + report; NO merge round is revived[0m [90m0.317s[0m
+[32m  + [0m[32m② missing branch ref (nothing mergeable) ⇒ closed merged with the honest note + report droppedEmpty[0m [90m0.224s[0m
+[32m  + [0m[32m③ mergeable but the owner session died with the restart ⇒ owner-gone + task row failed; NO revival channel is invoked[0m [90m0.364s[0m
+[32m  + [0m[32m④ no open members = zero-action sweep[0m [90m0.118s[0m
+[32m  + [0m[32m⑤ mergeable + owner lost BUT the write-ahead channel holds an un-closed record ⇒ PRESERVED (window returned, task row untouched) — owner-gone suppressed by the channel premise (R5)[0m [90m0.201s[0m
+[32m  + [0m[32m⑤b an already-merged member with a channel record but NO registry record ⇒ closed merged by fact-check (the channel premise never blocks the happy path)[0m [90m0.204s[0m
+[32mnebflow.agent.MergeQueueRestartReminderSpec:[0m
+[32m  + [0m[32m① terminal members are invisible to the boot sweep (closed is closed — a restart never re-opens a membership)[0m [90m0.201s[0m
+[32m  + [0m[32m② the retry vocabulary is retired: a full grant→refused lifecycle leaves no park/retry words on the ledger[0m [90m0.393s[0m
+[32m  + [0m[32m③ the ledger persists across a restart: granted facts (grantedAt / base tip / close-outs) reload from disk[0m [90m0.118s[0m
+10:53:57.120 [33mWARN [0m nebflow.agent.startup-recovery - [startup-recovery] 1 ready-to-merge row(s) with NO merge-queue membership survived a restart — settling to interrupted: delegate-nebflow-s1
+10:53:57.124 [36mINFO [0m nebflow.agent.startup-recovery - [startup-recovery] notify receipt delegate-nebflow-s1 → parent 2dee66d3-60bc-41: f2-queue
+10:53:57.127 [36mINFO [0m nebflow.agent.startup-recovery - [startup-recovery] orphan delegate-nebflow-s1 (nebflow) terminalized; parent=2dee66d3-60bc-41 exists=true partialResult=false delivery=f2-queue
+10:53:57.131 [36mINFO [0m nebflow.agent.startup-recovery - [startup-recovery] restart-interruption marked on 1 delegate record(s)
+10:53:57.132 [36mINFO [0m nebflow.delegate.ledger-reconcile - [ledger-reconcile] boot reconcile: 1 restart-interrupted row(s) to adjudicate
+10:53:57.206 [36mINFO [0m nebflow.agent.startup-recovery - [startup-recovery] 1 ready-to-merge row(s) left to the merge-queue boot reconcile: delegate-nebflow-s2
+10:53:57.212 [33mWARN [0m nebflow.agent.startup-recovery - [startup-recovery] 2 in-flight delegate task(s) survived a process restart — terminalizing + notifying parent session(s)
+10:53:57.213 [36mINFO [0m nebflow.agent.startup-recovery - [startup-recovery] notify receipt delegate-nebflow-s3a → parent 1d929423-9082-4f: f2-queue
+10:53:57.213 [36mINFO [0m nebflow.agent.startup-recovery - [startup-recovery] orphan delegate-nebflow-s3a (nebflow) terminalized; parent=1d929423-9082-4f exists=true partialResult=false delivery=f2-queue
+10:53:57.215 [36mINFO [0m nebflow.agent.startup-recovery - [startup-recovery] notify receipt delegate-nebflow-s3b → parent 1d929423-9082-4f: f2-queue
+10:53:57.216 [36mINFO [0m nebflow.agent.startup-recovery - [startup-recovery] orphan delegate-nebflow-s3b (nebflow) terminalized; parent=1d929423-9082-4f exists=true partialResult=false delivery=f2-queue
+10:53:57.216 [33mWARN [0m nebflow.agent.startup-recovery - [startup-recovery] 1 ready-to-merge row(s) with NO merge-queue membership survived a restart — settling to interrupted: delegate-nebflow-s3c
+10:53:57.216 [36mINFO [0m nebflow.agent.startup-recovery - [startup-recovery] notify receipt delegate-nebflow-s3c → parent 1d929423-9082-4f: f2-queue
+10:53:57.217 [36mINFO [0m nebflow.agent.startup-recovery - [startup-recovery] orphan delegate-nebflow-s3c (nebflow) terminalized; parent=1d929423-9082-4f exists=true partialResult=false delivery=f2-queue
+10:53:57.219 [36mINFO [0m nebflow.agent.startup-recovery - [startup-recovery] restart-interruption marked on 3 delegate record(s)
+10:53:57.220 [36mINFO [0m nebflow.delegate.ledger-reconcile - [ledger-reconcile] boot reconcile: 3 restart-interrupted row(s) to adjudicate
+[32mnebflow.agent.SessionDeathSettleSpec:[0m
+[32m  + [0m[32mS1 ready-to-merge 僵尸（无队列成员）⇒ sweep 落终态 interrupted（行+旗+父通知）[0m [90m0.035s[0m
+[32m  + [0m[32mS2 ready-to-merge 但有开放队列成员 ⇒ sweep 零触碰（合并轮在管）[0m [90m0.066s[0m
+[32m  + [0m[32mS3 不变量：sweep 后无「无队列成员的在飞行」残留（重启后无僵尸行）[0m [90m0.014s[0m
+10:53:57.630 [33mWARN [0m nebflow.core.processor.stuck - [waiting-dock-care] waiting dock orphaned: session 'd-w1' is docked waiting-merge but its actor has exited
+[32mnebflow.core.processor.WaitingDockCareSpec:[0m
+[32m  + [0m[32m① docked Waiting session whose actor died: membership closed owner-gone, task row failed, escalation reaches the live root, window released[0m [90m0.767s[0m
+[32m  + [0m[32m② LIVE docked Waiting session: zero action — no Stop, no ledger flip, queue untouched (stale lastActivityMs is NOT a criterion)[0m [90m0.435s[0m
+10:53:58.606 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] mounted scope 'delegate-general-33cc44dd' (project=-, map=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-crf-c2-10492648074337609681/.nebflow/flow-maps/delegate-general-33cc44dd, seat=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-crf-c2-10492648074337609681, root=self) — one delegate one map
+10:53:58.613 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] unmounted scope 'delegate-general-33cc44dd' — engine instance gone, on-disk state kept at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-crf-c2-10492648074337609681/.nebflow/flow-maps/delegate-general-33cc44dd (write-through)
+[32mnebflow.core.project.ChainsReadFaceSpec:[0m
+[32m  + [0m[32mC1: rows project the registry record with the live hint and the latest terminal-verdict; absent sources leave the keys out[0m [90m0.01s[0m
+[32m  + [0m[32mC1b (#566): taskStatus supply lands verbatim on the matching row — the engine terminal authority for stale-row retirement[0m [90m0.002s[0m
+[32m  + [0m[32mC5 (G1): the merge-window holder row exposes taskStatus=merging — an explicit engine-queryable state, not a frontend derivation[0m [90m0.003s[0m
+[32m  + [0m[32mC6: delegatesJson filters by project and attaches the sub-process topology payload (children for star, steps for agentflow); single rows carry no topology key[0m [90m0.057s[0m
+[32m  + [0m[32mC7 (重启对账): restart-interrupted rows carry the flag verbatim; continuedBy lands only when a later record cites them[0m [90m0.004s[0m
+[32m  + [0m[32mC2: mounted scope projects FlowMap nodes through the v3 §9 status map; unmounted probes the disk read-only; missing dir degrades to null[0m [90m0.107s[0m
+[32m  + [0m[32mC4: the active rows window drops foreign-seat (retired-instance) records; the archived window keeps them (zero deletion)[0m [90m0.011s[0m
+[32m  + [0m[32mC4b: seat scoping is canonical-path stable — a symlinked workspace alias still counts as in-world[0m [90m0.004s[0m
+10:53:58.911 [33mWARN [0m nebflow.executor.external - [terminal-result-undelivered] external delegate session 'external-claude-code-636ddfbd' (claude-code) reached its terminal state but no parent ref exists (parent session 'nebula-root' not live at spawn) — the result was NOT delivered to any session. Payload head: 
+[external-leg] resumed CLI round still in flight (CLI-side leg, ledger unaffected): poll timeout: the resumed merge round settled (task row terminal)
+[32mnebflow.core.executor.ExternalLegPrepareSpec:[0m
+[32m  + [0m[32m① external spawn prepares the SAME branch + IN-PLACE seat (zero allocation); record + spawn-row `seat` key + brief line land[0m [90m0.402s[0m
+[32m  + [0m[32m② ready-to-merge verdict enqueues the EXTERNAL channel entry; the grant-time fact-check closes an already-landed branch as merged and the close-out notice rides the continuation channel[0m [90m150.468s[0m
+[91m==> X [0m[91mnebflow.core.executor.ExternalLegPrepareSpec[0m.[91m③ MergeQueue channel units: external entry injects via send (zero actor); a channel-less entry closes owner-gone with escalation[0m  [90m0.363s[0m munit.ComparisonFailException: src/test/scala/nebflow/core/executor/ExternalLegPrepareSpec.scala:272
+271:      assertEquals(closed.map(_.state), Some(MergeQueue.State.Merged), "the merge-round terminal closes the membership merged")
+[7m272:      assertEquals(gone.map(_.state), Some(MergeQueue.State.OwnerGone), "a channel-less, premise-less member is closed owner-gone at grant time (R5 stock-ledger shape)")[0m
+273:      assert(
+a channel-less, premise-less member is closed owner-gone at grant time (R5 stock-ledger shape)
+[1m=> Obtained[0m
+Some(
+  value = "waiting"
+)
+[1m=> Diff[0m ([91m- expected[0m, [92m+ obtained[0m)
+ Some(
+[91m-  value = "owner-gone"[0m
+[92m+  value = "waiting"[0m
+ )
+[90m    at [0m[90mmunit.FunSuite.assertEquals[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.core.executor.ExternalLegPrepareSpec.$init$$$anonfun$3$$anonfun$4$$anonfun$2$$anonfun$3$$anonfun$3[0m[1m([0m[1mExternalLegPrepareSpec.scala[0m:[1m272[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.executor.ExternalLegPrepareSpec.$init$$$anonfun$3$$anonfun$4$$anonfun$2$$anonfun$3[0m[1m([0m[1mExternalLegPrepareSpec.scala[0m:[1m264[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.executor.ExternalLegPrepareSpec.$init$$$anonfun$3$$anonfun$4$$anonfun$2$$anonfun$3[0m[1m([0m[1mExternalLegPrepareSpec.scala[0m:[1m261[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.executor.ExternalLegPrepareSpec.$init$$$anonfun$3$$anonfun$4$$anonfun$2$$anonfun$3[0m[1m([0m[1mExternalLegPrepareSpec.scala[0m:[1m261[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.executor.ExternalLegPrepareSpec.$init$$$anonfun$3$$anonfun$4$$anonfun$2[0m[1m([0m[1mExternalLegPrepareSpec.scala[0m:[1m257[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.executor.ExternalLegPrepareSpec.$init$$$anonfun$3$$anonfun$4$$anonfun$2[0m[1m([0m[1mExternalLegPrepareSpec.scala[0m:[1m248[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.executor.ExternalLegPrepareSpec.$init$$$anonfun$3$$anonfun$4$$anonfun$2[0m[1m([0m[1mExternalLegPrepareSpec.scala[0m:[1m248[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.executor.ExternalLegPrepareSpec.$init$$$anonfun$3$$anonfun$4[0m[1m([0m[1mExternalLegPrepareSpec.scala[0m:[1m237[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.executor.ExternalLegPrepareSpec.$init$$$anonfun$3$$anonfun$4[0m[1m([0m[1mExternalLegPrepareSpec.scala[0m:[1m237[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.executor.ExternalLegPrepareSpec.$init$$$anonfun$3[0m[1m([0m[1mExternalLegPrepareSpec.scala[0m:[1m235[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.executor.ExternalLegPrepareSpec.$init$$$anonfun$3[0m[1m([0m[1mExternalLegPrepareSpec.scala[0m:[1m222[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.executor.ExternalLegPrepareSpec.$init$$$anonfun$3[0m[1m([0m[1mExternalLegPrepareSpec.scala[0m:[1m222[0m[1m)[0m
+[90m    at [0m[90mflatMap @ munit.internal.NestingChecks$.checkNestingIO[0m[90m([0m[90minternal.scala[0m:[90m55[0m[90m)[0m
+10:56:33.060 [33mWARN [0m nebflow.subagent-task.store - [task-status-miss] updateStatus missed: parent=nebula-root taskId=delegate-nebflow-ro status=ready-to-merge (no row matched — write was a NO-OP)
+10:56:33.314 [33mWARN [0m nebflow.subagent-task.store - [task-status-miss] updateStatus missed: parent=nebula-root taskId=delegate-nebflow-wn status=ready-to-merge (no row matched — write was a NO-OP)
+[32mnebflow.core.delegate.DelegateTerminalSpec:[0m
+[32m  + [0m[32m① matrix (2026-11-01): judge absent + no self-report ⇒ NudgeIdle (complete×idle = remind, never complete); self-report finish → completed; self-report blocked (retired) → completed + note[0m [90m0.227s[0m
+[91m==> X [0m[91mnebflow.core.delegate.DelegateTerminalSpec[0m.[91m② judge says ready-to-merge: task status becomes ready-to-merge (completedAt anchored), the entry is enqueued (FIFO), outcome = HoldForMerge, verdict line = ready-to-merge[0m  [90m0.278s[0m munit.ComparisonFailException: src/test/scala/nebflow/core/delegate/DelegateTerminalSpec.scala:281
+280:          "the empty-queue pump grants the turn immediately (notification = grant, single-flight holder)"
+[7m281:        )[0m
+282:      end for
+the empty-queue pump grants the turn immediately (notification = grant, single-flight holder)
+[1m=> Obtained[0m
+0
+[1m=> Diff[0m ([91m- expected[0m, [92m+ obtained[0m)
+[91m-1[0m
+[92m+0[0m
+[90m    at [0m[90mmunit.FunSuite.assertEquals[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.core.delegate.DelegateTerminalSpec.$init$$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2[0m[1m([0m[1mDelegateTerminalSpec.scala[0m:[1m281[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.DelegateTerminalSpec.$init$$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$2[0m[1m([0m[1mDelegateTerminalSpec.scala[0m:[1m259[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.delegate.DelegateTerminalSpec.$init$$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$2[0m[1m([0m[1mDelegateTerminalSpec.scala[0m:[1m259[0m[1m)[0m
+[90m    at [0m[90mblocking @ nebflow.core.delegate.MergeQueueSpec.$init$$$anonfun$12$$anonfun$2$$anonfun$2$$anonfun$2[0m[90m([0m[90mMergeQueueSpec.scala[0m:[90m477[0m[90m)[0m
+[90m    at [0m[90mhandleErrorWith @ nebflow.agent.SubAgentTaskStore.findByTaskId[0m[90m([0m[90mSubAgentTaskStore.scala[0m:[90m340[0m[90m)[0m
+[1m    at [0m[1mmap @ nebflow.core.delegate.DelegateTerminalSpec.$init$$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$1[0m[1m([0m[1mDelegateTerminalSpec.scala[0m:[1m257[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.DelegateTerminalSpec.$init$$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$1[0m[1m([0m[1mDelegateTerminalSpec.scala[0m:[1m257[0m[1m)[0m
+[90m    at [0m[90mblocking @ nebflow.core.delegate.MergeQueueSpec.$init$$$anonfun$12$$anonfun$2$$anonfun$2$$anonfun$2[0m[90m([0m[90mMergeQueueSpec.scala[0m:[90m477[0m[90m)[0m
+[90m    at [0m[90mmap @ nebflow.core.delegate.MergeQueue$.enqueueVerifiedIO[0m[90m([0m[90mMergeQueue.scala[0m:[90m1045[0m[90m)[0m
+[90m    at [0m[90mmap @ nebflow.core.delegate.DelegateTerminal$.holdForMerge$$anonfun$5$$anonfun$2[0m[90m([0m[90mDelegateTerminal.scala[0m:[90m1176[0m[90m)[0m
+[90m    at [0m[90mmap @ nebflow.core.delegate.DelegateTerminal$.holdForMerge$$anonfun$5$$anonfun$2[0m[90m([0m[90mDelegateTerminal.scala[0m:[90m1176[0m[90m)[0m
+[90m    at [0m[90mapply @ nebflow.agent.SubAgentTaskStore.fireWriteHook[0m[90m([0m[90mSubAgentTaskStore.scala[0m:[90m61[0m[90m)[0m
+[90m    at [0m[90mflatMap @ nebflow.agent.SubAgentTaskStore.fireWriteHook[0m[90m([0m[90mSubAgentTaskStore.scala[0m:[90m61[0m[90m)[0m
+[90m    at [0m[90mblocking @ nebflow.core.delegate.MergeQueueSpec.$init$$$anonfun$12$$anonfun$2$$anonfun$2$$anonfun$2[0m[90m([0m[90mMergeQueueSpec.scala[0m:[90m477[0m[90m)[0m
+[90m    at [0m[90mflatMap @ nebflow.agent.SubAgentTaskStore.updateStatus[0m[90m([0m[90mSubAgentTaskStore.scala[0m:[90m189[0m[90m)[0m
+[32m  + [0m[32m③ no branch to merge ⇒ ready-to-merge degrades to completed (honest terminal: nothing mergeable exists)[0m [90m0.131s[0m
+[32m  + [0m[32m⑤ (A5 步1 红验④) branch present but ZERO commits ahead ⇒ ready-to-merge degrades to completed (empty merge round prevented)[0m [90m0.2s[0m
+[32m  + [0m[32m④ cleanup: failed/cancelled terminals write the engine verdict line (verdict=failed, #566 true value) and dequeue; the completed leg does NOT double-write[0m [90m0.426s[0m
+[32m  + [0m[32m⑥ (A5 步2 红验①; #566) shared-checkout seat + zero-ahead + non-attributable base advance ⇒ completed+note, source=drift, reason carries fork/baseTip/commits[0m [90m0.288s[0m
+[32m  + [0m[32m⑦ (红验②) same drift shape but the base advance is another delegate's merge WITH a merge-queue ledger row ⇒ not penalized[0m [90m0.298s[0m
+[32m  + [0m[32m⑧ (红验③) mergeRound=true ⇒ drift exempt (the A4 merge-round re-judge stays reachable)[0m [90m0.531s[0m
+[32m  + [0m[32m⑨ (红验④) git reading unverifiable ⇒ no penalty, WARN only (fail-open, no fake block); classifier Warn branch anchored[0m [90m0.227s[0m
+[32m  + [0m[32m⑩ (红验⑤) worktree seat, same drift shape ⇒ note merged into the judge digest, no penalty[0m [90m0.278s[0m
+[32m  + [0m[32m⑪ classifier matrix (pure, zero git): penalty/note/clear/attribution rows[0m [90m0.003s[0m
+[32m  + [0m[32m⑫ legacy shapes stay Clear: no branch anchor, non-git cwd, zero-ahead with unmoved base (existing ①③⑤ regression)[0m [90m0.001s[0m
+[32m  + [0m[32m⑬ (P2-3 只读座位诚实化 × 台账 #896 交通引导员制) judged-completed seat + commits ahead ⇒ flips to ready-to-merge (auto-enqueued) for BOTH read-only and working seats; the engine never merges anything itself[0m [90m0.575s[0m
+[32m  + [0m[32m⑭ (misc②; #566) ready-to-merge without a recorded baseBranch ⇒ completed+note (refuses to guess 'main'), engine-source verdict row lands[0m [90m0.125s[0m
+10:56:34.329 [33mWARN [0m nebflow.subagent-task.store - [task-status-miss] updateStatus missed: parent=nebula-root taskId=delegate-mx-flip status=ready-to-merge (no row matched — write was a NO-OP)
+[32mnebflow.core.delegate.DelegateTerminalMatrixSpec:[0m
+[32m  + [0m[32m② matrix complete×idle: an undeclared substantive turn is reminded (NudgeIdle), never judged — and the same holds with chains in flight (dispatcher-cutoff scenario)[0m [90m0.067s[0m
+[32m  + [0m[32m③ matrix complete×merge: the merge declaration rides the existing MergeQueue FIFO (enqueued, single-flight holder, task row ready-to-merge)[0m [90m0.432s[0m
+[32m  + [0m[32m④ matrix complete×finish: the ONLY combination judged complete (judge absent ⇒ self-report-backed completed, plain honest line)[0m [90m0.123s[0m
+[32m  + [0m[32m⑤ flip preserved (author: never silently dropped): undeclared × branch ahead>0 ⇒ anti-degradation falls to the chain ⇒ queueFlip enqueues ready-to-merge[0m [90m0.251s[0m
+[32m  + [0m[32m⑥ merge-round exemption: a stale standby declaration CANNOT trap the engine-ordered merge window (chain settles; mechanical acceptance passes on a really-landed merge)[0m [90m0.399s[0m
+10:56:34.980 [33mWARN [0m nebflow.subagent-task.store - [task-status-miss] updateStatus missed: parent=nebula-root taskId=delegate-nebflow-wr1 status=ready-to-merge (no row matched — write was a NO-OP)
+10:56:35.118 [33mWARN [0m nebflow.subagent-task.store - [task-status-miss] updateStatus missed: parent=nebula-root taskId=delegate-nebflow-wr1 status=ready-to-merge (no row matched — write was a NO-OP)
+10:56:35.371 [33mWARN [0m nebflow.subagent-task.store - [task-status-miss] updateStatus missed: parent=nebula-root taskId=delegate-nebflow-wr5 status=ready-to-merge (no row matched — write was a NO-OP)
+[32mnebflow.core.delegate.DelegateFinishWorkResultSpec:[0m
+[32m  + [0m[32m① hold preserves the work-phase final text: judge ready-to-merge ⇒ workReport = the work result (first-write-wins)[0m [90m0.389s[0m
+[32m  + [0m[32m② updateReport preserve-before-overwrite: the merge-phase detail survives the finish overwrite; a preserved slot is never displaced[0m [90m0.004s[0m
+[91m==> X [0m[91mnebflow.core.delegate.DelegateFinishWorkResultSpec[0m.[91m③ merge-round release carries the work result: merge status one line + preserved work report + REPORT.md path and digest (real merge e2e)[0m  [90m0.346s[0m munit.FailException: src/test/scala/nebflow/core/delegate/DelegateFinishWorkResultSpec.scala:298
+297:        // 合并信息降为一行状态
+[7m298:        assert(suffix.contains("[delegate-finish] merge status: merged to main cleanly"), suffix)[0m
+299:        // 工作结果段（保真的工作轮终稿——作者令：内容不回传即丢失）
+
+
+[delegate-judge] verdict: completed.
+[90m    at [0m[90mmunit.FunSuite.assert[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.core.delegate.DelegateFinishWorkResultSpec.$init$$$anonfun$3$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$2[0m[1m([0m[1mDelegateFinishWorkResultSpec.scala[0m:[1m298[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.DelegateFinishWorkResultSpec.$init$$$anonfun$3$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$1[0m[1m([0m[1mDelegateFinishWorkResultSpec.scala[0m:[1m292[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.delegate.DelegateFinishWorkResultSpec.$init$$$anonfun$3$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$1[0m[1m([0m[1mDelegateFinishWorkResultSpec.scala[0m:[1m292[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.DelegateFinishWorkResultSpec.withJudgeAbsent[0m[1m([0m[1mDelegateFinishWorkResultSpec.scala[0m:[1m148[0m[1m)[0m
+[90m    at [0m[90mmap @ nebflow.core.delegate.DelegateTerminal$.verdictChain$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$4$$anonfun$4$$anonfun$4$$anonfun$3$$anonfun$4$$anonfun$3[0m[90m([0m[90mDelegateTerminal.scala[0m:[90m526[0m[90m)[0m
+[90m    at [0m[90mblocking @ nebflow.core.delegate.MergeQueueSpec.$init$$$anonfun$12$$anonfun$2$$anonfun$2$$anonfun$2[0m[90m([0m[90mMergeQueueSpec.scala[0m:[90m477[0m[90m)[0m
+[90m    at [0m[90mhandleErrorWith @ nebflow.core.delegate.DelegateTerminal$.verdictChain$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$4$$anonfun$4$$anonfun$4$$anonfun$3$$anonfun$4$$anonfun$1[0m[90m([0m[90mDelegateTerminal.scala[0m:[90m523[0m[90m)[0m
+[90m    at [0m[90mmap @ nebflow.core.delegate.DelegateTerminal$.verdictChain$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$4$$anonfun$4$$anonfun$4$$anonfun$3$$anonfun$4[0m[90m([0m[90mDelegateTerminal.scala[0m:[90m515[0m[90m)[0m
+[90m    at [0m[90mflatMap @ nebflow.core.delegate.DelegateTerminal$.verdictChain$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$4$$anonfun$4$$anonfun$4$$anonfun$3$$anonfun$4[0m[90m([0m[90mDelegateTerminal.scala[0m:[90m515[0m[90m)[0m
+[90m    at [0m[90mmap @ nebflow.core.delegate.DelegateTerminal$.verdictChain$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$4$$anonfun$4$$anonfun$4$$anonfun$3[0m[90m([0m[90mDelegateTerminal.scala[0m:[90m499[0m[90m)[0m
+[90m    at [0m[90mflatMap @ nebflow.core.delegate.DelegateTerminal$.verdictChain$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$4$$anonfun$4$$anonfun$4$$anonfun$3[0m[90m([0m[90mDelegateTerminal.scala[0m:[90m499[0m[90m)[0m
+[90m    at [0m[90mblocking @ nebflow.core.delegate.MergeQueueSpec.$init$$$anonfun$12$$anonfun$2$$anonfun$2$$anonfun$2[0m[90m([0m[90mMergeQueueSpec.scala[0m:[90m477[0m[90m)[0m
+[90m    at [0m[90mhandleErrorWith @ nebflow.core.delegate.DelegateTerminal$.verdictChain$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$4$$anonfun$4$$anonfun$4[0m[90m([0m[90mDelegateTerminal.scala[0m:[90m493[0m[90m)[0m
+[90m    at [0m[90mflatMap @ nebflow.core.delegate.DelegateTerminal$.verdictChain$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$4$$anonfun$4$$anonfun$4[0m[90m([0m[90mDelegateTerminal.scala[0m:[90m486[0m[90m)[0m
+[90m    at [0m[90mflatMap @ nebflow.core.delegate.DelegateTerminal$.verdictChain$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$4$$anonfun$4[0m[90m([0m[90mDelegateTerminal.scala[0m:[90m469[0m[90m)[0m
+[32m  + [0m[32m④ backward compat: an old-shape delegate (no preserved work text, no report files) degrades gracefully — merge-status line only; a bare record stays byte-identical legacy[0m [90m0.872s[0m
+[32m  + [0m[32m⑤ appendixFor anchors: empty record ⇒ ""; bounds honored (work text truncated at Bound.WorkChars)[0m [90m0.001s[0m
+[error] Failed: Total 107, Failed 13, Errors 0, Passed 94
+[error] Failed tests:
+[error] 	nebflow.core.executor.ExternalLegPrepareSpec
+[error] 	nebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec
+[error] 	nebflow.core.delegate.MergeQueueDeclarationGateSpec
+[error] 	nebflow.core.delegate.DelegateFinishWorkResultSpec
+[error] 	nebflow.core.delegate.MergeQueueSpec
+[error] 	nebflow.core.delegate.MergeEnqueueWatchSpec
+[error] 	nebflow.core.delegate.DelegateTerminalSpec
+[error] 	nebflow.core.delegate.MergeLaneGateSpec
+[error] (Test / testOnly) sbt.TestsFailedException: Tests unsuccessful
+[error] Total time: 196 s (0:03:16.0), completed 2026年11月5日 10:56:36
+EXIT=1

@@ -22,7 +22,7 @@ import { t } from './i18n.js';
 // msgchip-provenance 批（2026-11-01）：渠道/平台来源注记剥离单点（牌窗与气泡共用）。
 import { stripChannelProvenance } from './channelProvenance.js';
 import { sendWs, onMessage } from './ws.js';
-import { askSourceLabel, removePendingAsk } from './askPending.js';
+import { askSourceParts, removePendingAsk } from './askPending.js';
 import { renderRefBlock, normalizeTaskRef, parseTaskReturnText, buildTaskRefLine, CLOSE_X_SVG } from './reference.js';
 // quote-message 一期（spec §7）：主聊天区右键引用 —— 菜单/引用条/引用块/跳转收口在
 // msgQuote.js 单模块（chat.js 只挂点，不复制逻辑）。
@@ -3232,18 +3232,54 @@ export function renderAskUser(items, askSessionId, agentName, requestId, source,
   // Source badge. D6 批 F1 (G9): project context (project node / dispatcher ask)
   // renders "project · nodeName" so concurrent asks from several nodes stay
   // attributable; no project field → bare agentName (root self-ask / REPL).
-  const badgeLabel = askSourceLabel({ project: source && source.project, nodeName: source && source.nodeName, agentName });
+  // 归属命名批（2026-11-05 作者令「卡片要显示 delegate name / node name，不再只
+  // 显示项目名」）：段① 换成发起实体**自身名**（delegate 批次短名，引擎侧解析随
+  // 载荷 `ownerName` 下发；无 delegate 归属仍回落项目名）——两段各自成 span，
+  // 段①弱化为「父批」、段②加粗为「当前节点」，窄屏折两行也不丢段。
+  const badgeParts = askSourceParts({
+    project: source && source.project,
+    nodeName: source && source.nodeName,
+    ownerName: source && source.ownerName,
+    agentName
+  });
   // N4 (unnamed-state batch 2026-10-06): the self-ask badge mounts only when the
   // root is NAMED — single-point `isRootNamed()` (rootName.js). The retired
   // `badgeLabel !== 'Nebula'` literal was a judgement-face use of the mechanism
   // name (the exact line rootName.js's header draws): it silently dual-tracked
   // the unnamed state AND mis-hid the badge when a user literally named the
   // agent "Nebula". Project asks keep their badge regardless of named state.
-  if (badgeLabel && ((source && source.project) || isRootNamed())) {
+  // 归属命名批同上：delegate 归属（ownerName）与项目归属同权——**不因根未命名而
+  // 隐藏**（改前判据只认 project ⇒ delegate 卡的归属会整块消失）。
+  if (badgeParts && ((source && (source.project || source.ownerName)) || isRootNamed())) {
     const badge = document.createElement('div');
     badge.className = 'ask-user-source';
-    badge.textContent = badgeLabel;
-    badge.style.cssText = 'font: 600 var(--ds-fs-meta) -apple-system, sans-serif; color: var(--color-text-muted, #888); margin-bottom: var(--ds-space-2); padding: var(--ds-space-half) var(--ds-space-2); background: var(--color-surface, rgba(255,255,255,0.06)); border-radius: var(--ds-radius-chip); display: inline-block;';
+    const parentSpan = document.createElement('span');
+    parentSpan.className = 'ask-user-source-parent';
+    parentSpan.textContent = badgeParts.parent;
+    badge.appendChild(parentSpan);
+    if (badgeParts.node) {
+      const sep = document.createElement('span');
+      sep.className = 'ask-user-source-sep';
+      sep.setAttribute('aria-hidden', 'true');
+      sep.textContent = ' · ';
+      badge.appendChild(sep);
+      const nodeSpan = document.createElement('span');
+      nodeSpan.className = 'ask-user-source-node';
+      nodeSpan.textContent = badgeParts.node;
+      badge.appendChild(nodeSpan);
+    }
+    // 完整名可查（长名截断后不丢信息）：hover 全量 title；窄屏/触屏点按展开
+    // （长按同源——触屏长按会触发 title 的系统浮层，桌面悬停即读）。
+    badge.title = badgeParts.full;
+    if (badgeParts.node) {
+      badge.setAttribute('role', 'button');
+      badge.tabIndex = 0;
+      const toggle = () => badge.classList.toggle('is-expanded');
+      badge.addEventListener('click', toggle);
+      badge.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+      });
+    }
     bubble.appendChild(badge);
   }
   appendChatRow(chat, row);
@@ -3340,7 +3376,9 @@ export function renderAskUser(items, askSessionId, agentName, requestId, source,
   return {
     type: 'askUser', items, requestId,
     ...(Array.isArray(attachments) && attachments.length > 0 ? { attachments } : {}),
-    ...(source && source.project ? { project: source.project, nodeName: source.nodeName } : {})
+    ...(source && (source.project || source.ownerName)
+      ? { project: source.project, nodeName: source.nodeName, ownerName: source.ownerName }
+      : {})
   };
 }
 

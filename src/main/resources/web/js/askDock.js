@@ -1,6 +1,28 @@
 // askDock.js — Canvas 文件 ask mode（2026-10-28 实施批；同日 22:42 v2.1 简化修订；
 // 2026-10-29 三修批②：FAB 通知点改绿点未读条件显示）。
 //
+// 记事本批（作者令 2026-11-05 11:38「给 canvas 支持 ask 模式的文件，再加一个
+// 按钮，放 ask 按钮旁边，同样风格的一个 note 按钮，方便用户点击记录一些思路的
+// 一个记事本就行。不需要复杂功能，风格和 ask 的保持一致。然后也和 ask 一样点击
+// 出来一个窗口，左上角可以调整窗口大小」）：本模块同时承载 `.note-fab` 与
+// `.note-dock`——**同一组件、同一份样式、同一段尺寸状态机**，不是第二套浮窗：
+//   · 钮：class = `ask-fab note-fab` ⇒ glass.css 圆钮级浮件档成员全部继承（材质/
+//     hover/active/focus-visible/手机 48 档/`.gate-off` 闸），ask.css 只补一条
+//     落位（margin-right 让开 ask 钮一格 8px，同一行同一中线）；
+//   · 窗：class = `note-dock` ⇒ 座位/开合曲线/宽档 `--ask-dock-w`/`.closed`/
+//     `.is-resizing`/手机档全部**以选择器成员身份**复用 `.ask-dock` 的既有规则；
+//     刻意不挂 `.ask-dock` 身份类（那是既有 spec 的判据选择器，同一页第二个同身份
+//     节点会让「ask 窗现在开没开」这类 querySelector 判断失真）；
+//   · 拖柄：design-system.css `.ds-resize-handle` 原件（44 热区 / 直角弧），落位
+//     复用 ask 面板左上外挂 14px 那条规则；
+//   · 尺寸状态机：resizeLimits / applySize / bindResize **一份实现两个入参**（尺寸
+//     面 surface：panel / handle / track / footer / varW / varH / onApply）。
+// 内容 = 纯文本（无富文本/无页签/无分类），**每文件一份草稿**（与 ask 每文件一会
+// 话同律；入口钮的可见性闸本来就只在文件卡亮），localStorage write-through
+// （键 = branding 命名空间 + `note:<sid>`，sid 与 ask 同式 = sha256(absPath) 前
+// 8 hex）⇒ 刷新/切卡往返不丢，收起再开还在；私密模式/quota 静默降级（与 ask
+// 转录持久同律：体验加速面，不是正确性依赖）。
+//
 // 文档会话持久批（2026-11-01 作者令「现在文档的会话 我切文档之后会消失」）：
 // 每文档转录 localStorage write-through（键 = branding 命名空间 + ask:sess:<sid>），
 // 建账即注水（切回即现，不等回放）。动机链：会话 Map 是页内内存态，重载/重连
@@ -95,6 +117,8 @@ import { define } from './component.js';
 export const INTERNAL_CLASSES = [
   'ask-fab', 'ask-dock', 'ask-col', 'ask-colwrap', 'ask-input',
   'ask-bub', 'ask-send', 'ask-stop', 'ask-sess-dot',
+  // 记事本批（2026-11-05）：同一组件的第二对节点，同样只在本模块内建/查。
+  'note-fab', 'note-dock', 'note-body',
 ];
 
 // ── 文案（i18n 键 = key('locale')，navController tt 同源）─────────────────
@@ -138,6 +162,13 @@ const ICONS = {
   // 中断钮（输入行为包批）：与主会话 #stop-btn 同语（lucide square 族）——红圆白方停标。
   stop: () => svgNode('svg', { viewBox: '0 0 24 24', 'stroke-width': '2.4', ...STROKE },
     [svgNode('rect', { x: '6', y: '6', width: '12', height: '12', rx: '2' })]),
+  // 记事本批：便签/记事本语义（与 chat/close 同一线性图标族、同一 24 视框与
+  // stroke-width 2 —— 18px 下读得出「一页带横线的纸」，不引入第二套图标语言）。
+  note: () => svgNode('svg', { class: 'note-fab-ic', viewBox: '0 0 24 24', 'stroke-width': '2', ...STROKE },
+    [
+      svgNode('rect', { x: '4.5', y: '3.5', width: '15', height: '17', rx: '2.5' }),
+      svgNode('path', { d: 'M8.5 8.5h7M8.5 12h7M8.5 15.5h4' }),
+    ]),
 };
 
 /** @type {Map<string, {sid: string, fileName: string, msgs: Array<{role: string, text: string}>, stateSent: boolean, unread: boolean, busy?: boolean, lastFrameAt?: number}>} */
@@ -148,6 +179,10 @@ let wired = false; // 元素级监听/观察器已绑（节点复用 ⇒ 只绑�
 let turnToggle = null; // 中断状态机（createTurnToggle；建一次，单 dock 对）
 let currentFile = ''; // absPath of the active file entry ('' = 非文件卡)
 let inited = false;
+// 记事本批（2026-11-05）：当前草稿归属（absPath + 与 ask 同式的 sid）与落盘防抖拍。
+let notePath = '';
+let noteSid = '';
+let noteTimer = 0;
 
 // ── 每文档会话持久（2026-11-01 作者令批；头注「文档会话持久批」）────────────
 // 键形 = key('ask:sess:<sid>')（branding 命名空间同源）；值 = {ts, msgs:[user/ai]}。
@@ -346,33 +381,123 @@ function buildDock() {
   ]);
 }
 
+/**
+ * 记事本入口钮（记事本批 2026-11-05）：class = `ask-fab note-fab` ——
+ * **全部形态/材质/状态/手机档继承 .ask-fab**（glass.css 圆钮级浮件档成员 +
+ * ask.css 的 48×48/圆/图标档/`.gate-off`），本批只加一条落位规则让它坐在 ask
+ * 钮左邻（css/ask.css `.ask-fab.note-fab`）；DOM 顺序在 ask 钮之后（既有 spec
+ * 以 `document.querySelector('.ask-fab')` 取 ask 钮，先者不动）。
+ * 开态**不挂 `.open`**（那是 ask 钮的图标互换档）：本钮图标恒定、开态用
+ * `aria-pressed` 表达——状态类不叠加，既有 `.ask-fab.open` 判据零歧义。
+ */
+function buildNoteFab() {
+  return h('button', {
+    type: 'button',
+    class: 'ask-fab note-fab',
+    title: tt('记事本（记录思路）', 'Notes'),
+    'aria-label': tt('记事本', 'Notes'),
+    'aria-pressed': 'false',
+  }, [ICONS.note()]);
+}
+
+/**
+ * 记事本浮窗（记事本批）：class = `note-dock` + `closed`。
+ * 座位/开合曲线（锚定 100% 100% 的同一 transition）/宽档 `--ask-dock-w`/`.closed`/
+ * `.is-resizing`/`.gate-off` 闸/手机档**全部以「成员」身份复用 `.ask-dock` 的既有
+ * 规则**（ask.css 那些规则的选择器名单里加了 `.note-dock`，值仍是单源一份）；
+ * 本批新增的只有内容盒 `.note-body`（材质 = glass.css 面级浮件档成员，与本组件
+ * 输入条同源）与一个纯文本 textarea。
+ * ⚠ 这里**刻意不挂 `.ask-dock` 身份类**：`.ask-dock.closed` /
+ * `.ask-dock:not(.closed)` 是既有 15 个 spec 的判据选择器（如 ask-input-composer
+ * 的 dockClosed），同一页出现第二个 `.ask-dock` 节点会让「ask 窗现在开没开」这类
+ * querySelector 判断失真。复用走选择器成员，不走类名叠加。
+ * 拖柄与 ask 面板**同一个类、同一段落位**（`.ds-resize-handle` + 左上外挂 14px，
+ * 可见形态 = design-system.css 那一条 ::before 直角弧，单小边框批同源），区别只是
+ * data 钩子（`data-note-resize`）——ask 的 `[data-ask-resize]` 保持唯一（既有 spec
+ * 直查它，本批零触碰）。
+ */
+function buildNoteDock() {
+  const handle = h('div', {
+    class: 'ds-resize-handle',
+    'data-note-resize': true,
+    role: 'separator',
+    tabindex: '0',
+    'aria-label': tt('拖拽调整记事本大小', 'Resize note'),
+    title: tt('拖拽调整记事本大小（←→ 改宽 / ↑↓ 改高）', 'Drag to resize (←→ width / ↑↓ height)'),
+  });
+  const text = h('textarea', {
+    placeholder: tt('随手记点什么…', 'Jot something down…'),
+    'aria-label': tt('记事本', 'Notepad'),
+    spellcheck: 'false',
+  });
+  return h('div', { class: 'note-dock closed' }, [
+    handle,
+    h('div', { class: 'note-body' }, [text]),
+  ]);
+}
+
 /** 造内部 DOM + 绑元素级监听（只跑一次；节点跨宿主迁移复用）。 */
 function ensureInner() {
   if (el) return;
   const fab = buildFab();
+  const noteFab = buildNoteFab();
   const dock = buildDock();
+  const noteDock = buildNoteDock();
+  // 尺寸面（两个面板 = 同一段状态机的两个入参，见头注「记事本批」）：
+  //   ask  = 列高受控（--ask-col-maxh），底部件输入条占高；
+  //   note = 本体高受控（--note-h），无底部件。
+  /** @type {Surface} */
+  const askSurface = {
+    panel: dock,
+    handle: dock.querySelector('[data-ask-resize]'),
+    track: dock.querySelector('.ask-col'),
+    footer: dock.querySelector('.ask-input'),
+    varW: '--ask-dock-w',
+    varH: '--ask-col-maxh',
+    onApply: null,
+    lastSize: null,
+  };
+  /** @type {Surface} */
+  const noteSurface = {
+    panel: noteDock,
+    handle: noteDock.querySelector('[data-note-resize]'),
+    track: noteDock.querySelector('.note-body'),
+    footer: null,
+    varW: '--ask-dock-w',
+    varH: '--note-h',
+    onApply: null,
+    lastSize: null,
+  };
   el = {
     fab,
+    noteFab,
     dock,
+    noteDock,
     col: dock.querySelector('.ask-col'),
     colwrap: dock.querySelector('.ask-colwrap'),
     inputRow: dock.querySelector('.ask-input'),
-    resize: dock.querySelector('[data-ask-resize]'),
+    resize: askSurface.handle,
     input: dock.querySelector('textarea'),
     send: dock.querySelector('.ask-send'),
     stop: dock.querySelector('.ask-stop'),
+    noteResize: noteSurface.handle,
+    noteBody: noteSurface.track,
+    noteText: noteDock.querySelector('textarea'),
+    askSurface,
+    noteSurface,
   };
-  bindResize();
+  bindResize(el.askSurface);
+  bindResize(el.noteSurface);
   // 缩放空白批（2026-11-05 09:32）：截断线的 dock ResizeObserver 随状态机一并
   // 退役——底缘收口已是 .ask-col 的百分比 mask（与面板高无关），不再需要任何
   // 跟随实测盒的写入点（见 syncTruncLine 退役注）。
   wireElements();
 }
 
-/** 组件模板：返回**同一对节点**（frag 只是把它们搬进 fragment，不复制）。 */
+/** 组件模板：返回**同一批节点**（frag 只是把它们搬进 fragment，不复制）。 */
 function template() {
   ensureInner();
-  return frag(el.fab, el.dock);
+  return frag(el.fab, el.noteFab, el.dock, el.noteDock);
 }
 
 /**
@@ -414,26 +539,45 @@ function mountRoot() {
 // 组件化范式试点批：**本段原样保留命令式形态**（直接读写 el 与 CSS 变量，不经过
 // 渲染树）——它正是试点要验证的「组件范式与命令式几何状态机共存」那一面。
 
-/** 从面板计算样式读一个 px 令牌（缺/非数值回落 fallback）。 */
-function dsPx(name, fallback) {
-  const raw = el && el.dock ? getComputedStyle(el.dock).getPropertyValue(name) : '';
+// 记事本批（2026-11-05）：**本段是 ask 面板与记事本共用的唯一一份尺寸状态机**
+// ——「被拖的盒子」抽成尺寸面 surface（见 ensureInner 的两个入参），本段只按
+// surface 读几何/写变量，不认识任何一个具体的面板。
+
+/**
+ * 尺寸面（surface）：拖拽改尺寸的最小描述。
+ *   · panel  = 面板本体（绝对定位、右/下缘钉位 ⇒ 自由角只有左上）
+ *   · handle = 左上角拖柄（design-system.css `.ds-resize-handle` 单源）
+ *   · track  = 高度受控的可变盒（ask = 气泡列；note = 记文本体）
+ *   · footer = 面板内固定高、不可被列压住的底部件（ask = 输入条；note = 无）
+ *   · varW/varH = 落尺寸的两条 CSS 变量名（各面自己的）
+ *   · onApply = 落尺寸后的钩子（ask 截断线状态机已随缩放空白批退役 ⇒ 两面皆 null；
+ *     保留这个槽是为了下一次要写派生量时有单点落位，不必再改状态机）
+ *   · lastSize = 最近一次落下的尺寸（视口/层切换时按同一目标重夹）
+ * @typedef {{panel: any, handle: any, track: any, footer: any,
+ *   varW: string, varH: string, onApply: (() => void)|null,
+ *   lastSize: {w: number, h: number}|null}} Surface
+ */
+
+/** 读某尺寸面的一个 px 令牌（缺/非数值回落 fallback）。 */
+function dsPx(surface, name, fallback) {
+  const raw = surface && surface.panel ? getComputedStyle(surface.panel).getPropertyValue(name) : '';
   const v = parseFloat(raw);
   return Number.isFinite(v) ? v : fallback;
 }
 
-/** 现算上下限（手势每次重算；见上注三条硬约束）。 */
-function resizeLimits() {
-  const r = el.dock.getBoundingClientRect();
-  const gap = parseFloat(getComputedStyle(el.dock).rowGap) || 7; // dock 的列缝
-  const inputH = el.inputRow ? el.inputRow.getBoundingClientRect().height : 0;
-  const safe = dsPx('--ds-resize-safe', 12);
-  const topGuard = dsPx('--ds-resize-top-guard', 44);
-  const minW = dsPx('--ds-resize-min-w', 260);
-  const minH = dsPx('--ds-resize-min-h', 120);
+/** 现算上下限（手势每次重算；见上注三条硬约束）。 @param {Surface} surface */
+function resizeLimits(surface) {
+  const r = surface.panel.getBoundingClientRect();
+  const gap = parseFloat(getComputedStyle(surface.panel).rowGap) || 7; // 面板的列缝
+  const inputH = surface.footer ? surface.footer.getBoundingClientRect().height : 0;
+  const safe = dsPx(surface, '--ds-resize-safe', 12);
+  const topGuard = dsPx(surface, '--ds-resize-top-guard', 44);
+  const minW = dsPx(surface, '--ds-resize-min-w', 260);
+  const minH = dsPx(surface, '--ds-resize-min-h', 120);
   // 把手外挂量（ask.css 把它挂到面板左上角外侧 14px）：**上限必须把它算进去**，
   // 否则面板左缘贴到安全缝时把手会被顶出视口（本批实测 b2c 抓到：dock.left=12
   // 而 handle.left=−2 ⇒ 命中全丢）。外挂量从 DOM 实测，不在 JS 里复制 14。
-  const hr = el.resize ? el.resize.getBoundingClientRect() : null;
+  const hr = surface.handle ? surface.handle.getBoundingClientRect() : null;
   const overshoot = hr && hr.width > 0 ? Math.max(0, r.left - hr.left) : 0;
   // 左侧/顶侧硬界：桌面 = **#canvas-panel 的内容框**（面板 overflow:hidden +
   // 顶行 z 30 > dock 24「永不入顶行」）——拖过面板上缘会被裁剪，把手随即离开
@@ -441,7 +585,7 @@ function resizeLimits() {
   // dock 是 body 级 fixed（offsetParent = null），走视口安全缝。
   let minLeft = safe;
   let minTop = topGuard;
-  const host = /** @type {HTMLElement|null} */ (el.dock.offsetParent);
+  const host = /** @type {HTMLElement|null} */ (surface.panel.offsetParent);
   if (host && host.id === 'canvas-panel') {
     const pr = host.getBoundingClientRect();
     const inset = 8; // 面板圆角 20 的内切安全档（把手左上角落在圆角内）
@@ -452,7 +596,7 @@ function resizeLimits() {
   // 实测 b2c 抓到把手顶缘落到 44 时被 `#canvas-head-close.g2-fab` 压住 ⇒ 命中全丢。
   // 以 #canvas-content 的上缘为「内容区起点」（它就在头带之下），把手必须完整
   // 落在其下 —— 与 dock z 24 < 顶行 30「永不入顶行」同一口径。
-  const content = el.dock.offsetParent && document.getElementById('canvas-content');
+  const content = surface.panel.offsetParent && document.getElementById('canvas-content');
   if (content && content.offsetParent !== null && !document.body.classList.contains('mobile-layer')) {
     const cr = content.getBoundingClientRect();
     if (cr.height > 0) minTop = Math.max(minTop, cr.top + 4);
@@ -467,7 +611,7 @@ function resizeLimits() {
     let cap = maxHAt(minTop);
     // 把手在宽度 W 下的水平跨度（右缘钉位 ⇒ 左缘 = 右缘 − W − 外挂）。
     const hl = r.right - W - overshoot;
-    const hrr = hl + dsPx('--ds-resize-hit', 44);
+    const hrr = hl + dsPx(surface, '--ds-resize-hit', 44);
     for (const ob of headerObstacles()) {
       // 只在与浮钮**水平相交**时让位：面板没拖到那一侧就零代价，
       // 不为不存在的冲突白扣最大高度（否则窄面板会被凭空压矮一截）。
@@ -490,18 +634,20 @@ function headerObstacles() {
   return out;
 }
 
-/** 落尺寸（夹取后写两条 CSS 变量；返回实际生效值，供断言/复位用）。 */
-function applyDockSize(w, hgt) {
-  if (!el) return null;
-  const L = resizeLimits();
+/** 落尺寸（夹取后写该面两条 CSS 变量；返回实际生效值，供断言/复位用）。
+ * @param {Surface} surface @param {number} w @param {number} hgt */
+function applySize(surface, w, hgt) {
+  if (!surface || !surface.panel) return null;
+  const L = resizeLimits(surface);
   const W = Math.round(Math.min(Math.max(w, L.minW), L.maxW));
   // 高度上限依赖**落定宽度**（把手位置决定它与哪个浮钮叠压）⇒ 先定宽再夹高，
   // 一遍算清，不做「夹宽→夹高→回头再夹宽」的收敛循环。
   const H = Math.round(Math.min(Math.max(hgt, L.minH), L.maxHFor(W)));
-  el.dock.style.setProperty('--ask-dock-w', W + 'px');
-  el.dock.style.setProperty('--ask-col-maxh', H + 'px');
-  lastSize = { w: W, h: H };
-  return lastSize;
+  surface.panel.style.setProperty(surface.varW, W + 'px');
+  surface.panel.style.setProperty(surface.varH, H + 'px');
+  surface.lastSize = { w: W, h: H };
+  if (surface.onApply) surface.onApply();
+  return surface.lastSize;
 }
 
 /**
@@ -519,28 +665,28 @@ function applyDockSize(w, hgt) {
  * 刷新得更勤）。列/输入条的间距恒 = dock 的 row-gap（--ds-space-1h）。
  */
 
-let lastSize = null; // 最近一次落下的尺寸（视口变化时按同一目标重夹）
 
-/** 拖柄状态机（pointer capture + 键盘；桌面/手机同一段）。 */
-function bindResize() {
-  const handle = el.resize;
+/** 拖柄状态机（pointer capture + 键盘；桌面/手机/两个面板同一段）。
+ * @param {Surface} surface */
+function bindResize(surface) {
+  const handle = surface.handle;
   if (!handle) return;
   let active = false;
   let grabX = 0, grabY = 0, baseW = 0, baseH = 0;
 
   handle.addEventListener('pointerdown', (e) => {
     if (e.button !== undefined && e.button !== 0) return;
-    const r = el.dock.getBoundingClientRect();
+    const r = surface.panel.getBoundingClientRect();
     active = true;
     grabX = e.clientX;
     grabY = e.clientY;
     baseW = r.width;
-    // 基线高 = 列的**实测**高（内容短时 < --ask-col-maxh，用 CSS 声明值会让
-    // 第一次拖动就跳一大截）。
-    baseH = el.col.getBoundingClientRect().height;
+    // 基线高 = 可变盒的**实测**高（内容短时 < 声明档，用 CSS 声明值会让第一次
+    // 拖动就跳一大截）。
+    baseH = surface.track.getBoundingClientRect().height;
     try { handle.setPointerCapture(e.pointerId); } catch { /* 合成事件无 pointerId */ }
     handle.dataset.resizing = 'true';
-    el.dock.classList.add('is-resizing');
+    surface.panel.classList.add('is-resizing');
     e.preventDefault();
     e.stopPropagation();
   });
@@ -548,7 +694,7 @@ function bindResize() {
   handle.addEventListener('pointermove', (e) => {
     if (!active) return;
     // 右/下钉位 ⇒ 鼠标向左移（dx < 0）变宽、向上移（dy < 0）变高。
-    applyDockSize(baseW + (grabX - e.clientX), baseH + (grabY - e.clientY));
+    applySize(surface, baseW + (grabX - e.clientX), baseH + (grabY - e.clientY));
     e.preventDefault();
   });
 
@@ -559,7 +705,7 @@ function bindResize() {
       try { handle.releasePointerCapture(e.pointerId); } catch { /* 已释放 */ }
     }
     delete handle.dataset.resizing;
-    el.dock.classList.remove('is-resizing');
+    surface.panel.classList.remove('is-resizing');
   };
   handle.addEventListener('pointerup', end);
   handle.addEventListener('pointercancel', end);
@@ -567,9 +713,9 @@ function bindResize() {
   // 键盘同源（←→ 改宽 / ↑↓ 改高）：拖柄是 tabindex=0 的 separator，键盘用户
   // 拿得到的必须是**同一个**尺寸状态机，不是第二套。
   handle.addEventListener('keydown', (e) => {
-    const step = dsPx('--ds-resize-step', 16);
-    const r = el.dock.getBoundingClientRect();
-    const cur = lastSize || { w: r.width, h: el.col.getBoundingClientRect().height };
+    const step = dsPx(surface, '--ds-resize-step', 16);
+    const r = surface.panel.getBoundingClientRect();
+    const cur = surface.lastSize || { w: r.width, h: surface.track.getBoundingClientRect().height };
     let { w, h: hh } = cur;
     if (e.key === 'ArrowLeft') w += step;
     else if (e.key === 'ArrowRight') w -= step;
@@ -577,14 +723,16 @@ function bindResize() {
     else if (e.key === 'ArrowDown') hh -= step;
     else return;
     e.preventDefault();
-    applyDockSize(w, hh);
+    applySize(surface, w, hh);
   });
 }
 
 /** 视口/座位变化后按同一目标重夹（拖到极限再转屏不可把面板顶出视口）。 */
 function reclampSize() {
-  if (!el || !lastSize) return;
-  applyDockSize(lastSize.w, lastSize.h);
+  if (!el) return;
+  for (const surface of [el.askSurface, el.noteSurface]) {
+    if (surface && surface.lastSize) applySize(surface, surface.lastSize.w, surface.lastSize.h);
+  }
 }
 
 // ── 元素级监听（只绑一次：节点跨宿主迁移复用，重绑会叠双份）─────────────────
@@ -609,15 +757,32 @@ function wireElements() {
   // 键盘/IME/发送判定 = 主会话同一实现（包装配；组字期 Enter 只确认候选）。
   bindComposerKeys(el.input, { onSend: () => { submit(); } });
   el.input.addEventListener('focus', syncSeat);
+  // ── 记事本批（2026-11-05）：入口钮 / 浮窗自身的事件 ─────────────────────
+  // 开合与 ask 同律：钮再点即收；窗内点击/按下不外溢（画布空白点击的收起腿只
+  // 认 #canvas-content 本体，这里再挡一道，与 ask dock 同写法）。
+  el.noteFab.addEventListener('click', (e) => { e.stopPropagation(); toggleNote(); });
+  el.noteDock.addEventListener('click', (e) => e.stopPropagation());
+  el.noteDock.addEventListener('pointerdown', (e) => e.stopPropagation());
+  // 纯文本草稿：write-through 防抖 250ms（输入即存，切换卡/关窗/失焦都 flush）。
+  el.noteText.addEventListener('input', () => {
+    if (noteTimer) clearTimeout(noteTimer);
+    noteTimer = setTimeout(() => { noteTimer = 0; flushNote(); }, 250);
+  });
+  el.noteText.addEventListener('blur', flushNote);
 }
 
 /** 全局监听（每次连入登记；断开由基座 ctx.on 自动拆——迁移不留双份）。 */
 function wireGlobals(ctx) {
   // 收起三通路之二：Esc。（输入行为包批：组字期 Esc = 输入法取消候选——键属
   // 输入法，不收起 dock；键位契约与主会话一致——主会话 Esc 同样让渡组字键。）
+  // 记事本批：两个浮窗同一段判据，开着的那个先收——组字态取**各自**的输入面。
   ctx.on(document, 'keydown', (e) => {
-    if (el && isImeComposing(e, el.input)) return;
-    if (e.key === 'Escape' && isOpen() && isCanvasVisible()) { close(); }
+    if (!el) return;
+    const composer = isNoteOpen() ? el.noteText : el.input;
+    if (isImeComposing(e, composer)) return;
+    if (e.key !== 'Escape' || !isCanvasVisible()) return;
+    if (isNoteOpen()) { closeNote(); return; }
+    if (isOpen()) close();
   });
   ctx.on(document, 'canvas-tab-switched', onTabSwitch);
   ctx.on(document, 'canvas-tab-closed', onTabClosed);
@@ -631,7 +796,9 @@ function wireGlobals(ctx) {
   const content = document.getElementById('canvas-content');
   if (content) {
     ctx.on(content, 'click', (e) => {
-      if (e.target === content && isOpen()) close();
+      if (e.target !== content) return;
+      if (isOpen()) close();
+      if (isNoteOpen()) closeNote(); // 记事本批：同一条收起通路
     });
   }
 }
@@ -738,6 +905,10 @@ function syncGate() {
   const off = !currentFile || readerPanelOpen || !mobilePageOk;
   el.fab.classList.toggle('gate-off', off);
   el.dock.classList.toggle('gate-off', off);
+  // 记事本批：同一闸同一拍（入口钮 + 窗一起摘——非文件卡/阅读面板开/非 canvas 页
+  // 零残留；`.ask-fab.gate-off` / `.ask-dock|.note-dock.gate-off` 三条既有规则覆盖）。
+  el.noteFab.classList.toggle('gate-off', off);
+  el.noteDock.classList.toggle('gate-off', off);
 }
 
 // ── 阅读器面板让位（阅读器 P1 批，设计稿 §2.2：阅读菜单/TOC 抽屉开时 ──────
@@ -760,6 +931,7 @@ function syncToActiveTab() {
   currentFile = file;
   syncGate(); // 可见性闸每拍落位（幂等；含初始无卡态与切回文件卡复现）
   if (!switched) { syncSeat(); return; }
+  syncNoteForFile(); // 记事本批：切卡即切记事本（每文件一份草稿；旧草稿先 flush）
   syncUnreadDot(); // 通知点随 active session 的未读态落位（绿点只在有未读时显示）
   if (isOpen()) {
     if (currentFile) {
@@ -811,6 +983,10 @@ function syncSeat() {
         const fabBottom = Math.max(10, window.innerHeight - nr.top + 8);
         el.fab.style.bottom = fabBottom + 'px';
         el.dock.style.bottom = (fabBottom + 48 + 10) + 'px';
+        // 记事本批：两个入口钮同一行同一中线、两个窗同一条「fab 上一行」——
+        // 让位值一份，跟着 fab/dock 一起抬（不是第二套座位计算）。
+        el.noteFab.style.bottom = fabBottom + 'px';
+        el.noteDock.style.bottom = (fabBottom + 48 + 10) + 'px';
         return;
       }
     }
@@ -818,6 +994,8 @@ function syncSeat() {
     // fab（右缘钉位）异侧分行零交叠——簇实测让位腿退役；fab 回 css 钉位。
     el.fab.style.bottom = '';
     el.dock.style.bottom = '';
+    el.noteFab.style.bottom = '';
+    el.noteDock.style.bottom = '';
     return;
   }
   const panel = document.getElementById('canvas-panel');
@@ -871,6 +1049,7 @@ async function open() {
   // 非文件卡入口已被可见性闸摘除；可问面硬闸复核（批⑩ 同律：md/html +
   // 电子书扩展名白名单；§7-A4 冗余守卫双层防呆）。
   if (!currentFile || !isAskableFile(currentFile)) return;
+  if (isNoteOpen()) closeNote(); // 记事本批：视图排他（两个浮窗同座位，不叠压）
   const s = await ensureActiveSession();
   if (!s) return;
   s.unread = false; // 打开即读：通知点熄灭（ask 三修 2026-10-29 未读语义）
@@ -894,6 +1073,90 @@ function close() {
 function toggle() {
   if (isOpen()) close();
   else open();
+}
+
+// ── 记事本（作者令 2026-11-05 11:38；机制见头注「记事本批」）───────────────
+// 与 ask 面板的三处同律，逐条对齐而非另起一套：
+//   ① 开合 = 钮再点 / Esc / 画布空白点击（wireElements/wireGlobals 同两条腿）；
+//   ② 视图排他 = 一个座位只坐一个浮窗（open↔openNote 互相先收对方）；
+//   ③ 可见性闸 = 同一 syncGate 同一拍（非文件卡/阅读面板开/非 canvas 页一起摘）。
+// 唯一新增语义 = **每个文件一份纯文本草稿**，localStorage write-through。
+
+const NOTE_STORE_PREFIX = 'note:';
+
+/** 读某文件草稿（无/坏/私密模式 ⇒ ''；与 ask 转录持久同一降级口径）。 */
+function loadNote(sid) {
+  if (!sid) return '';
+  try { return localStorage.getItem(key(NOTE_STORE_PREFIX + sid)) || ''; } catch { return ''; }
+}
+
+/** 写某文件草稿（空文本 = 删键，不留空壳记录；quota/私密模式静默降级）。 */
+function persistNote(sid, text) {
+  if (!sid) return;
+  try {
+    if (text) localStorage.setItem(key(NOTE_STORE_PREFIX + sid), text);
+    else localStorage.removeItem(key(NOTE_STORE_PREFIX + sid));
+  } catch { /* 体验加速面，静默降级（服务端无记事本，纯本地草稿） */ }
+}
+
+/** 立即落盘（防抖拍 + 收起/切卡/失焦都走这里，单点）。 */
+function flushNote() {
+  if (noteTimer) { clearTimeout(noteTimer); noteTimer = 0; }
+  if (!el || !notePath || !noteSid) return;
+  persistNote(noteSid, el.noteText.value);
+}
+
+function isNoteOpen() { return !!el && !el.noteDock.classList.contains('closed'); }
+
+/** 打开记事本（与 ask 同一条开合曲线：摘 .closed 即入场）。 */
+async function openNote() {
+  if (!currentFile || !isAskableFile(currentFile)) return;
+  if (isOpen()) close(); // 视图排他（同座位只坐一个浮窗）
+  const path = currentFile;
+  const sid = await ensureSid(path);
+  if (!sid || currentFile !== path) return; // 派生期间切卡/关卡：让 syncNoteForFile 收口
+  notePath = path;
+  noteSid = sid;
+  el.noteText.value = loadNote(sid);
+  el.noteDock.classList.remove('closed');
+  el.noteFab.setAttribute('aria-pressed', 'true');
+  syncSeat();
+  // 自动获得焦点（作者令「点击出来一个窗口」= 直接可写；与 ask 输入条同拍，
+  // 等开合动效落定再聚，避免动效中途聚焦把首帧撑开）。
+  setTimeout(() => { try { el.noteText.focus(); } catch { /* detached */ } }, 260);
+}
+
+/** 收起记事本（内容已在 write-through 里，收起来只是摘类，不丢字）。 */
+function closeNote() {
+  if (!el) return;
+  flushNote();
+  el.noteDock.classList.add('closed');
+  el.noteFab.setAttribute('aria-pressed', 'false');
+}
+
+function toggleNote() {
+  if (isNoteOpen()) closeNote();
+  else openNote();
+}
+
+/** 切卡即切记事本（每文件一份草稿）：旧草稿先 flush，再按新文件的 sid 注水。 */
+async function syncNoteForFile() {
+  if (!el) return;
+  flushNote();
+  if (!currentFile) {
+    // 无文件卡：清空内存面（草稿本身已按文件落盘，不丢），窗一起收。
+    notePath = '';
+    noteSid = '';
+    el.noteText.value = '';
+    closeNote();
+    return;
+  }
+  const path = currentFile;
+  const sid = await ensureSid(path);
+  if (!sid || currentFile !== path) return; // 派生期间又切卡：以最新一拍为准
+  notePath = path;
+  noteSid = sid;
+  el.noteText.value = loadNote(sid);
 }
 
 // ── 渲染（弹幕式升腾 + 按龄渐隐 + 顶带渐隐由 CSS mask 承担）────────────────

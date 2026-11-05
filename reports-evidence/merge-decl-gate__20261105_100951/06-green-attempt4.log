@@ -1,0 +1,46 @@
+[sbt-gate] gate acquired after 0s
+[sbt-gate] heap cap -Xmx2600m applied via SBT_OPTS
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project delegate-merge-queue-gate-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/project
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/)
+[info] compiling 1 Scala source to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/target/scala-3.5.2/classes ...
+[info] done compiling
+[info] compiling 3 Scala sources to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/target/scala-3.5.2/test-classes ...
+[info] done compiling
+[warn] javaOptions will be ignored, fork is set to false
+[32mnebflow.core.delegate.MergeQueueDeclarationGateSpec:[0m
+[32m  + [0m[32mA: a member whose branch HAS commits but whose owner never declared 'done and mergeable' never receives a merge turn[0m [90m0.463s[0m
+[32m  + [0m[32mB: an owner-gone member (no live delivery channel) is never granted a merge turn — parked with a visible alert instead[0m [90m0.179s[0m
+[32m  + [0m[32mB2: the idle-safety watch never queues a delegate whose owner never declared — it raises a visible undeclared alert instead[0m [90m0.13s[0m
+[32m  + [0m[32mC: a declared but half-finished branch (conflict markers left in its files) is refused by the health gate with the reason[0m [90m0.17s[0m
+[32m  + [0m[32mC2: a declared branch whose build is broken (health gate says the compile fails) is refused and the reason is reported[0m [90m0.112s[0m
+[32m  + [0m[32mD: a declared member with a live owner IS granted the merge turn normally (the gate does not block healthy batches)[0m [90m0.303s[0m
+11:10:14.111 [33mWARN [0m nebflow.executor.external - [terminal-result-undelivered] external delegate session 'external-claude-code-b38a92e4' (claude-code) reached its terminal state but no parent ref exists (parent session 'nebula-root' not live at spawn) — the result was NOT delivered to any session. Payload head: 
+[external-leg] resumed CLI round still in flight (CLI-side leg, ledger unaffected): poll timeout: the resumed merge round settled (task row terminal)
+[32mnebflow.core.executor.ExternalLegPrepareSpec:[0m
+[32m  + [0m[32m① external spawn prepares the SAME branch + IN-PLACE seat (zero allocation); record + spawn-row `seat` key + brief line land[0m [90m0.51s[0m
+[32m  + [0m[32m② ready-to-merge verdict enqueues the EXTERNAL channel entry; the grant-time fact-check closes an already-landed branch as merged and the close-out notice rides the continuation channel[0m [90m150.504s[0m
+[32m  + [0m[32m③ MergeQueue channel units: external entry injects via send (zero actor); a channel-less entry closes owner-gone with escalation[0m [90m0.786s[0m
+[32mnebflow.core.delegate.MergeQueueSpec:[0m
+[32m  + [0m[32m① FIFO rank = readyAt (completion time) and cross-project parallel grants — the late-enqueued earlier-finisher is notified first[0m [90m0.687s[0m
+[32m  + [0m[32m③ cross-project: two different projectKeys are granted immediately (per-project single holder never blocks the other)[0m [90m0.624s[0m
+[32m  + [0m[32m② single holder per project: a second ready-to-merge in the SAME project stays waiting until the holder's round closes[0m [90m0.841s[0m
+[32m  + [0m[32m④ merge brief pins the direction + read-only fact-check pre-check: git -C <baseWs> merge --no-ff <branch>, conflict = resolve in place (hardened 2026-10-31)[0m [90m0.178s[0m
+[32m  + [0m[32m④b conflicted merge turn: brief hardens resolve-in-place + post-merge tests + honesty gate + Canvas counter-example[0m [90m0.107s[0m
+[32m  + [0m[32m⑤ fact-check at grant: an already-merged member closes as merged WITHOUT a merge notice (the e300e71c class is gone)[0m [90m0.269s[0m
+[32m  + [0m[32m⑥ round terminal closes the ledger: refused ⇒ failed with the reason (no retry, no park); merged ⇒ merged[0m [90m0.542s[0m
+[32m  + [0m[32m⑦ owner-gone: a turn granted to a DEAD owner session closes as owner-gone and escalates via OwnerGonePort[0m [90m0.453s[0m
+[32m  + [0m[32m⑦b roundless terminal (merge-window timeout / cancel) fact-checks first, then closes owner-gone[0m [90m0.573s[0m
+[32m  + [0m[32m⑧ ledger persistence: state survives a memory drop (restart simulation) and reloads from disk[0m [90m0.591s[0m
+[32m  + [0m[32m⑨ leftover dirt no longer blocks the grant (fail-soft): the turn is granted with a WARN, no grant-blocked, no requeue[0m [90m0.537s[0m
+[32m  + [0m[32m⑩ branch-direction gate still parks the member but MUST notify: full reason once per cause, escalation after N blocked rounds[0m [90m2.239s[0m
+[32m  + [0m[32m⑪ a refused merge round closes failed AND notifies the parent with the FULL untruncated reason[0m [90m0.391s[0m
+[32m  + [0m[32m⑤b enqueue is idempotent for open members and audited; unknown onTerminal is a no-op[0m [90m0.424s[0m
+[32m  + [0m[32m⑫ write-ahead channel + boot replay: enqueue→restart restores queue state — including a member whose ledger write never landed (the ready-killed gap)[0m [90m0.308s[0m
+[32m  + [0m[32m⑬ owner-gone premise inversion: a restarted member with an un-closed channel record is preserved on grant attempts (never owner-gone); a ledger-only member without a record still closes owner-gone[0m [90m2.607s[0m
+[32m  + [0m[32m⑭ closed memberships compact out of the write-ahead channel; open mirrors survive; the ledger keeps the audit row[0m [90m0.384s[0m
+[info] Passed: Total 26, Failed 0, Errors 0, Passed 26
+[success] Total time: 174 s (0:02:54.0), completed 2026年11月5日 11:12:57
+EXIT=0
