@@ -1053,7 +1053,7 @@ function ensureExplorerSearch() {
   input.setAttribute('aria-label', t('explorer.searchPlaceholder'));
   input.setAttribute('style', 'flex:1 1 auto;min-width:0;padding:var(--ds-space-1) var(--ds-space-2);border-radius:var(--ds-radius-input);'
     + 'border:1px solid rgba(255,255,255,0.14);background:rgba(255,255,255,0.06);'
-    + 'color:inherit;font:12.5px/1.4 inherit;');
+    + 'color:inherit;font:var(--ds-fs-hint)/1.4 inherit;');
   input.addEventListener('input', () => applyTreeFilter(input.value));
   input.addEventListener('keydown', (e) => {
     // Esc 只收自己的过滤词并收起（不吞事件给全局：层栈/壳的 Esc 契约逐字保留）
@@ -1075,7 +1075,7 @@ function ensureExplorerSearch() {
   sortBtn.title = sortModeLabel(explorerSortMode);
   sortBtn.setAttribute('aria-label', sortModeLabel(explorerSortMode));
   sortBtn.textContent = sortModeLabel(explorerSortMode);
-  sortBtn.setAttribute('style', 'flex:0 0 auto;font:11.5px/1.2 inherit;padding:3px 7px;border-radius:7px;'
+  sortBtn.setAttribute('style', 'flex:0 0 auto;font:var(--ds-fs-hint)/1.2 inherit;padding:var(--ds-space-1) var(--ds-space-2);border-radius:var(--ds-radius-input);'
     + 'border:1px solid rgba(255,255,255,0.14);background:rgba(255,255,255,0.06);color:inherit;cursor:pointer;');
   sortBtn.addEventListener('click', (e) => {
     e.stopPropagation();

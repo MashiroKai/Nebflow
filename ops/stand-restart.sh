@@ -1,5 +1,5 @@
 #!/bin/bash
-# stand-restart.sh — stand 开发实例自重启工具 v4.4（外部工具，不属于 stand 源码）
+# stand-restart.sh — stand 开发实例自重启工具 v4.6（外部工具，不属于 stand 源码）
 #   v4.4（2026-11-03 作者令 17:59）主路径 = **直接热重启**（--hot）：跳过四信号空闲守候与
 #   300s 观察窗，护栏一条不删。旧「等全部在飞工作做完再重启」路径降为显式可选。
 # 改名沿革（2026-11-03 落地，作者令 2026-10-29「这个脚本是不是也改改名为stand了」）:
@@ -92,6 +92,25 @@
 #     E --hot --dry-run 严格只读（不编译、不跑 canary、不杀、不启动），只打印将做什么。
 #   已知取舍: --hot 仍含 canary 真启动验证（数十秒~数分钟）——它是「杀了起不来」的唯一实弹
 #     证据，任务书明令不许删；省下的是原先以小时计的等待，不是这几十秒。
+# v4.6（2026-11-05 故障恢复批「重启脚本把实例弄死后没起来」——真·停机事故）:
+#   事故: 2026-11-04 23:29 作者令热重启，脚本走完 编译预检/canary/杀旧实例/端口排空，**在「起新腿」
+#     那一行崩掉**，实例从 23:30 躺到次日 08:17 作者手动拉起（8h45m）。现场
+#     ~/.stand/logs/restart-detach-20261104-232943-25813.log 末行:
+#       stand-restart.sh: line 834: PORT<乱码>: unbound variable
+#   根因（双重）:
+#     ① 直接根因: 脚本顶部 set -u + macOS 自带 bash 3.2.57（/bin/bash，不是 brew 5.x）——
+#       `$PORT` 后面紧贴全角「（」时，3.2 把「（」的 UTF-8 首字节并进变量名，去查 `PORT<byte>`，
+#       未定义 ⇒ set -u 终止。最小复现:
+#         bash -uc 'PORT=6138; echo "x $PORT（日志 y"'     ⇒ PORT<byte>: unbound variable
+#         bash -uc 'PORT=6138; echo "x ${PORT}（日志 y"'   ⇒ 正常输出
+#       这一类（$VAR 紧贴非 ASCII 字节）全脚本一律改 ${VAR}，改后同类命中数 0。
+#     ② 结构根因（更要紧）: 「杀旧实例」与「起新腿」之间无兜底，且各终态行都写在杀之前的分支里
+#       ⇒ 杀之后任何意外终止都只留一行 unbound，日志里没有「已停未起」的交代，只能靠作者发现。
+#   修法（件二，最小改动）: 窗口 LEG_WINDOW（旧树进程表验证消亡 → 新腿 spawn 完成）内任何原因的
+#     退出都走 EXIT trap → abort_guard: 复用 start_new_leg 尝试拉起（幂等: 已有 pid/监听者则不起
+#     第二个）+ 写醒目 ~/.stand/logs/restart-abort-<ts>.marker（崩溃行号/$?/时间/实例实测在跑与否）
+#     + 终态行明写「已停未起」。正常路径 spawn 完立即关窗，行为零变化。
+#     已知边界: SIGKILL/OOM 绕过 EXIT trap ⇒ 兜底不发生（只能靠外部告警，见 ops/README.md v4.6 节）。
 # v4.5（2026-11-04 内存即时缓解批 M2「修重启脚本的可观测性」——结构性缺陷，不是崩溃）:
 #   根因（已定案）: 旧版 `exec python3 stand-daemonize.py "$SELF_PATH" "$@"` 继承调用方的
 #     `| tail -30` 管道；daemonize 父进程 2ms `_exit(0)`，子进程继承**无读者管道**，
@@ -106,7 +125,7 @@
 #       不变），脱离后只写文件（不重复）。
 #     C 失败原因**可见**: 预检失败把 sbt 日志尾 5 行写进 stage 行；终态行统一
 #       `终态: 成功/失败/放弃/dry-run` 收尾 ⇒ 任何一次运行都能从日志读出结论与原因。
-#   顺带: sbt 调用收口到 $SBT_BIN（**优雅降级**：~/.stand/bin/sbt 存在就用它——那可能是
+#   顺带: sbt 调用收口到 ${SBT_BIN}（**优雅降级**：~/.stand/bin/sbt 存在就用它——那可能是
 #     本机设置层的包装垫片，也可能什么都没有；不存在就退回 PATH 里的系统 sbt。产品不假设
 #     它被安装、不检测它的语义，本脚本只是只读消费方）；新增只读模式 --preflight-only
 #     （只跑编译预检，不 canary/不杀/不起），供自检与「本机是否有可编译代码」体检；
@@ -237,6 +256,13 @@ SBT_PID=""                 # R3: spawn 的 sbt 子进程
 PID_SET=""                 # R2: 杀前进程树快照（放弃路径清扫用）
 LAST_SNAPSHOT=""
 INTERRUPTED_LIST=""        # v4.4 D: 重启前快照的在册 delegate 会话清单（成功通知/报告附带）
+# v4.6「已杀、未起」窗口标志——必须在 EXIT trap 挂载点(下方 trap 行)之前初始化：
+# trap 早于 v4.6 函数段生效，任何早退（helper 缺失 exit 1 等）都会触发 trap 读这些变量，
+# 未初始化 + set -u ⇒ 在 trap 里二次崩溃。三处都带 :- 兜底，双保险。
+LEG_WINDOW=0        # 1 = 正处于「已杀、未起」窗口
+IN_ABORT_GUARD=0    # 1 = 正在 EXIT 兜底内执行（防测试钩子重入 / 防递归）
+ABORT_MARKER=""     # 本轮兜底 marker 路径（空 = 未触发）
+ABORT_READY_WAIT=15 # 兜底 spawn 后等新腿绑定的上限（秒）；超时即如实记「未在跑」
 
 args=("$@")
 for (( i=0; i<${#args[@]}; i++ )); do
@@ -327,12 +353,20 @@ begin_action_mode() {
   echo "[watchdog] 已暂停 watchdog（touch ${PAUSE_FLAG}；脚本退出时经 trap 自动恢复）"
 }
 cleanup_on_exit() {
+  local rc="${1:-0}" line="${2:-?}"
+  # v4.6: 先跑「已杀、未起」兜底（仅窗口内动作），再恢复 watchdog 暂停旗标。
+  # 顺序刻意: 兜底 spawn 期间 watchdog 仍处暂停态，不让它插手重启的半成品状态。
+  # 健壮性: 标志与函数都可能在早退场景下尚不存在（trap 挂载点早于 v4.6 函数段）⇒ 双守卫。
+  if [[ "${LEG_WINDOW:-0}" == "1" ]] && declare -f abort_guard >/dev/null 2>&1; then
+    abort_guard "$rc" "$line"
+  fi
   if [[ -f "$PAUSE_FLAG" ]]; then
     rm -f "$PAUSE_FLAG"
     echo "[watchdog] 已恢复 watchdog（删除 ${PAUSE_FLAG}）"
   fi
 }
-trap cleanup_on_exit EXIT
+# v4.6: 透传 $?(退出码) 与 $LINENO(bash 3.2 在 EXIT trap 里给出崩溃行近似值) 给兜底记录。
+trap 'cleanup_on_exit "$?" "$LINENO"' EXIT
 trap 'echo "[signal] 收到中断信号，清理退出"; exit 130' INT TERM HUP
 
 # ---------- 四信号检测（返回 0=全空闲，1=忙；输出诊断到 stdout） ----------
@@ -741,6 +775,129 @@ ${INTERRUPTED_LIST}"
   fi
 }
 
+# ---------- v4.6「已杀、未起」窗口兜底（2026-11-05 故障恢复批） ----------
+# 事故 2026-11-04 23:29（现场 ~/.stand/logs/restart-detach-20261104-232943-25813.log）:
+#   脚本走完 编译预检 → canary → TERM 杀旧树 → 进程表验证全灭 → 严格 bind 探测全过，
+#   随后在「起新腿」那一行崩于 `PORT<全角括号首字节>: unbound variable`
+#   （macOS bash 3.2 + set -u：`$PORT` 紧贴全角「（」时 3.2 把「（」的首字节并进变量名），
+#    ⇒ 实例从 23:30 躺到次日 08:17 作者手动拉起（8h45m）。
+#   根子不在那一行，在**结构**: 「杀」与「起」之间没有任何兜底，且各终态行都写在杀之前的分支里，
+#   杀之后任何意外终止都只留一行 unbound —— 日志里没有「已停未起」的交代。
+# 修法（最小改动）: 窗口 = 旧树按进程表验证消亡之后、新腿 spawn 完成之前（LEG_WINDOW=1）。
+#   窗口内任何原因的退出（unbound / 未捕获错误 / INT·TERM·HUP 转 exit 130）都会跑 EXIT trap →
+#   abort_guard: ① 复用 start_new_leg 尝试真正拉起（不另写一套启动逻辑）；
+#               ② 无论成败写醒目落盘记录 $NF_HOME/logs/restart-abort-<ts>.marker
+#                  （崩溃行号 / $? / 时间 / 实例实测在跑与否），并在脚本自身终态行明写结论。
+# 幂等判据（正常路径绝不重复起第二个实例）: spawn 前查 ①SBT_PID 仍活 ②端口已有监听者，
+#   任一命中即视为「已在跑」⇒ 只记账不起。正常路径 spawn 完立即 LEG_WINDOW=0，trap 不再动作。
+# 已知边界（本批不覆盖，见报告）: SIGKILL / OOM / 内核 kill 绕过 EXIT trap ⇒ 兜底与 marker 都不发生。
+# 标志 LEG_WINDOW / IN_ABORT_GUARD / ABORT_MARKER 的初始化在文件上方（trap 挂载点之前）。
+
+# 唯一 spawn 点: do_restart 正常路径与 abort_guard 兜底共用，绝不各写一套。
+# 返回 0=已 spawn；非 0=起不来（调用方决定终态与退出码）。
+start_new_leg() {
+  stage "[restart] 起新腿: sbt run --port ${PORT}（日志 ${SBT_OUT}）"
+  # 测试钩子（仅演练用，默认关）: 在「新腿未起」的精确位置模拟异常终止（= 2026-11-04 崩溃点），
+  # 供 ops/test/restart-abort-guard.test.sh 在假 pid / 假端口下验证 EXIT 兜底能拉起替身并记账。
+  # 生产不设 = 零变化；兜底执行期间一律跳过（不重入）。
+  if [[ "${IN_ABORT_GUARD}" != "1" && "${STAND_RESTART_TEST_ABORT_AT:-}" == "start-leg" ]]; then
+    stage "[test] STAND_RESTART_TEST_ABORT_AT=start-leg: 模拟「起新腿」处异常终止（exit 66）"
+    exit 66
+  fi
+  cd "$NEBFLOW_DIR" || { stage "[restart] ✗ 找不到 ${NEBFLOW_DIR}"; return 1; }
+  # v4.1 A: 新实例用 setsid 独立会话承载（macOS 无 setsid 命令，stand-setsid-exec.py 等价实现，
+  # exec 后同 pid，$! 跟踪语义不变）——脚本退出/被杀后新实例继续运行，与脚本不同会话/进程组。
+  NEBFLOW_GATEWAY_PORT="$PORT" nohup python3 "$NEBFLOW_BIN_DIR/stand-setsid-exec.py" "$SBT_BIN" "run --port $PORT" > "$SBT_OUT" 2>&1 &
+  SBT_PID=$!
+  LEG_WINDOW=0   # 新腿已 spawn ⇒ 关闭窗口（trap 此后不再兜底，绝不重复起）
+  disown
+  stage "[restart] 新实例 pid=${SBT_PID}（sbt 外壳，setsid 独立会话），进入自适应就绪等待（硬上限 ${READY_HARD_CAP}s，编译活跃可续期至 ${READY_IDLE_BONUS_CAP}s）"
+  return 0
+}
+
+# 实例实测状态（兜底记录用）: 端口监听者 + API 探针，只读，不杀不启。
+# set -u 安全: 只用全局变量（trap 上下文里 do_restart 的 local 不保证在作用域）。
+probe_instance_state() {
+  local lpid code
+  lpid=$(pid_on_port "$PORT")
+  if [[ -z "$lpid" ]]; then
+    echo "未在跑（端口 ${PORT} 无监听者）"
+    return 0
+  fi
+  code=$(curl -s -o /dev/null -w "%{http_code}" -m 3 "http://localhost:${PORT}/api/sessions" 2>/dev/null)
+  echo "在跑（pid=${lpid} API=${code:-timeout}）"
+}
+
+# 醒目落盘记录。参数: 结论 兜底前 兜底后 退出码 行号
+abort_guard_write_marker() {
+  local verdict="$1" before="$2" after="$3" rc="$4" line="$5"
+  mkdir -p "$NF_HOME/logs" 2>/dev/null
+  ABORT_MARKER="$NF_HOME/logs/restart-abort-$(date +%Y%m%d-%H%M%S)-$$.marker"
+  {
+    echo "##########################################################################"
+    echo "# stand-restart 兜底记录 —— 脚本在「已杀、未起」窗口内异常退出"
+    echo "##########################################################################"
+    echo "结论      : ${verdict}"
+    echo "时间      : $(ts_str)"
+    echo "崩溃行号  : ${line}（EXIT trap 的 LINENO，bash 3.2 近似值）"
+    echo "退出码 \$? : ${rc}"
+    echo "脚本 pid  : ${SELF_PID}"
+    echo "端口      : PORT=${PORT}  KILL_PORT=${KILL_PORT:-$PORT}  数据根=${NF_HOME}"
+    echo "窗口      : 旧实例进程树已按进程表验证消亡 → 新腿 spawn 尚未完成"
+    echo "实例-兜底前: ${before}"
+    echo "实例-兜底后: ${after}"
+    echo "运行日志  : ${DETACH_LOG:-（未创建）}"
+    echo "末 5 行   :"
+    [[ -n "$DETACH_LOG" && -r "$DETACH_LOG" ]] && tail -5 "$DETACH_LOG" 2>/dev/null | while IFS= read -r l; do echo "  ${l}"; done
+    echo "##########################################################################"
+  } > "$ABORT_MARKER" 2>/dev/null || ABORT_MARKER=""
+  [[ -n "$ABORT_MARKER" ]] && printf '%s\n' "$ABORT_MARKER" > "$NF_HOME/logs/restart-abort-latest.path" 2>/dev/null
+  return 0
+}
+
+# EXIT 兜底主体（由 cleanup_on_exit 串接调用，不单独 trap——一个 EXIT trap 只允许挂一个处理器）。
+abort_guard() {
+  local rc="$1" line="$2" before after ok=0 spawned=0 i=0
+  IN_ABORT_GUARD=1
+  before=$(probe_instance_state)
+
+  # 幂等判据: 已在跑就不起第二个（正常路径走到这里时 LEG_WINDOW 早已为 0，本函数根本不会进）
+  if [[ -n "$SBT_PID" ]] && ps_alive "$SBT_PID"; then
+    ok=1
+    stage "[abort-guard] 新腿已在（pid=${SBT_PID}）——不重复启动"
+  elif [[ -n "$(pid_on_port "$PORT")" ]]; then
+    ok=1
+    stage "[abort-guard] 端口 ${PORT} 已有监听者——不重复启动"
+  else
+    stage "[abort-guard] ⚠ 检测到「已杀、未起」：脚本在窗口内退出（行 ${line}，rc=${rc}）——尝试兜底拉起新腿"
+    wait_tw_drained "$TW_WAIT_SECS" || stage "[abort-guard] ⚠ 兜底前 TIME_WAIT 未排空，仍尝试 spawn"
+    if start_new_leg; then ok=1; spawned=1; fi
+  fi
+
+  # 兜底起的是 setsid 独立进程，绑定不是瞬时——给它有限时间再实测「是否在跑」，
+  # 否则会把自己刚拉起的腿误判成「未在跑」（本批演练实测踩中）。超时即如实记未在跑。
+  if [[ "$spawned" == "1" ]]; then
+    while (( i < ABORT_READY_WAIT )) && [[ -z "$(pid_on_port "$PORT")" ]]; do
+      sleep 1; i=$((i+1))
+    done
+  fi
+
+  after=$(probe_instance_state)
+  # 结论只认**实测**（after 里端口有没有监听者），不认 spawn 的返回码：spawn 成功但新腿
+  # 立刻死掉时，返回码仍是 0，而实例其实没起来。演练实测踩中过——按返回码判会把
+  # 「已停未起」误报成「已拉起」，正是这次事故最不该重犯的那种谎。
+  case "$after" in
+    在跑*)
+      stage "终态: 成功（EXIT 兜底拉起——脚本在「已杀、未起」窗口内异常退出，新腿已由兜底启动；${after}）"
+      abort_guard_write_marker "已停未起 → 兜底已拉起（新腿在跑）" "$before" "$after" "$rc" "$line" ;;
+    *)
+      stage "终态: 失败（已停未起——脚本在「已杀、未起」窗口内异常退出且兜底未能拉起，实例当前未运行）"
+      stage "[abort-guard] ✗ 兜底失败（spawn_rc_ok=${ok}），实例仍处于「已停未起」——请立即人工拉起（stand start）"
+      abort_guard_write_marker "已停未起（兜底拉起失败，实例当前未运行）" "$before" "$after" "$rc" "$line" ;;
+  esac
+  return 0
+}
+
 # R3: 放弃路径——清扫未就绪的启动进程树（TERM→KILL 两段），绝不留孤儿。
 # 背景：旧版放弃时不清理，慢编译场景 sbt 会继续编译并在数分钟后绑 8080，
 # 与后续 watchdog Stage1 / 手动启动形成绑口竞态。
@@ -828,6 +985,10 @@ do_restart() {
     fi
     stage "[restart] ✓ 旧实例进程树已全部消亡（进程表验证，非端口验证）"
   fi
+  # v4.6: ★「已杀、未起」窗口在此打开——旧实例已按进程表验证消亡，新腿尚未 spawn。
+  # 直到 start_new_leg 内 spawn 完成才关闭（LEG_WINDOW=0）。窗口内任何原因的退出都会走
+  # EXIT trap 的 abort_guard 兜底（尝试拉起 + 写 restart-abort-*.marker + 明写终态）。
+  LEG_WINDOW=1
   # v4.1 C（kill 后必启动）: 旧树已按进程表验证消亡，此处不再「放弃退出」——端口若仍被占
   # （外来进程 / TIME_WAIT 未排空）只会让新实例自检报端口被占，绝不留下「旧实例已死、新实例
   # 永不起」的空窗；新实例由 setsid 独立进程承载，脚本即使在此后崩溃/被杀，启动仍在进行。
@@ -840,14 +1001,9 @@ do_restart() {
     echo "[restart] ⚠ 端口 $PORT 在 ${TW_WAIT_SECS}s 内未严格 bind（TIME_WAIT 未排空或外来占用）——仍进入启动分支"
   fi
 
-  stage "[restart] 起新腿: sbt run --port $PORT（日志 ${SBT_OUT}）"
-  cd "$NEBFLOW_DIR" || { stage "[restart] ✗ 找不到 $NEBFLOW_DIR"; stage "终态: 失败（repo 目录缺失）"; exit 1; }
-  # v4.1 A: 新实例用 setsid 独立会话承载（macOS 无 setsid 命令，stand-setsid-exec.py 等价实现，
-  # exec 后同 pid，$! 跟踪语义不变）——脚本退出/被杀后新实例继续运行，与脚本不同会话/进程组。
-  NEBFLOW_GATEWAY_PORT="$PORT" nohup python3 "$NEBFLOW_BIN_DIR/stand-setsid-exec.py" "$SBT_BIN" "run --port $PORT" > "$SBT_OUT" 2>&1 &
-  SBT_PID=$!
-  disown
-  stage "[restart] 新实例 pid=${SBT_PID}（sbt 外壳，setsid 独立会话），进入自适应就绪等待（硬上限 ${READY_HARD_CAP}s，编译活跃可续期至 ${READY_IDLE_BONUS_CAP}s）"
+  # 起新腿（v4.6: 收口进 start_new_leg 唯一 spawn 点——EXIT 兜底 trap 复用同一函数，
+  # 不另写一套启动逻辑；`PORT` 后面紧跟全角「（」时必须用 ${PORT}，见文件头 v4.6 注）
+  start_new_leg || { stage "终态: 失败（repo 目录缺失）"; exit 1; }
 
   # R3: 自适应等待循环——每轮三查：
   #   ① 端口+API 就绪 → 成功

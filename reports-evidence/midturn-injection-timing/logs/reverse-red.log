@@ -1,0 +1,202 @@
+[sbt-gate] gate acquired after 0s
+[sbt-gate] heap cap -Xmx2600m applied via SBT_OPTS
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project delegate-midturn-inject-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/project
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/delegate-midturn-inject/)
+[info] compiling 1 Scala source to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/scala-3.5.2/classes ...
+[info] done compiling
+[warn] javaOptions will be ignored, fork is set to false
+09:16:59.391 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=spawn detail=parent=- msgs=0
+09:16:59.431 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=start detail=msgs=0
+09:17:00.318 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=immediate-input-queued detail=textLen=14
+09:17:00.380 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash START: while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-
+09:17:01.090 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash
+  (while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-midturn-injection...) OK (832ms)
+09:17:01.103 [36mINFO [0m nebflow.tools.logger - Tools log retention: pruned files older than 2026-11-02
+09:17:01.209 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash START: while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-
+[MTIT L1] calls=2 roundCompleteBeforeBoundary2=0 inFirst=false inSecond=false secondHasBatchEcho=true
+09:17:01.590 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=spawn detail=parent=- msgs=0
+09:17:01.592 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=start detail=msgs=0
+09:17:01.624 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash START: while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-
+09:17:01.920 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=user-input-queued detail=textLen=19 pending=1
+09:17:02.576 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash
+  (while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-midturn-injection...) OK (952ms)
+09:17:02.590 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash START: while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-
+09:17:03.548 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash
+  (while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-midturn-injection...) OK (957ms)
+09:17:03.616 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=turn-complete detail=msgs=5 textLen=12 textStreamed=true thinking=0 model=-
+09:17:03.655 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=start detail=msgs=6
+09:17:03.663 [36mINFO [0m nebflow.reminders - [time] Current time: 2026-11-05 09:17 +08:00
+09:17:03.670 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=turn-complete detail=msgs=8 textLen=16 textStreamed=true thinking=0 model=-
+[MTIT L1b] callsAfterBoundary1=2 inBoundaryRequest=Some(false) callsAfterTurnEnd=4 landing=3
+09:17:04.075 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=spawn detail=parent=- msgs=0
+09:17:04.076 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=start detail=msgs=0
+09:17:04.091 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash START: while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-
+09:17:04.403 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=immediate-input-queued detail=textLen=25
+09:17:05.104 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash
+  (while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-midturn-injection...) OK (1014ms)
+09:17:05.124 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash START: while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-
+[MTIT L2] delegateInjectLive=true calls=2 inSecond=false secondHasBatchEcho=true
+09:17:05.500 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=spawn detail=parent=- msgs=0
+09:17:05.503 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=start detail=msgs=0
+09:17:05.530 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash START: while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-
+09:17:05.830 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=user-input-queued detail=textLen=30 pending=1 source=mail
+09:17:06.461 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash
+  (while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-midturn-injection...) OK (935ms)
+09:17:06.473 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash START: while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-
+[MTIT L2b] calls=2 inSecond=false
+09:17:06.790 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=spawn detail=parent=- msgs=0
+09:17:06.792 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=start detail=msgs=0
+09:17:06.808 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash START: while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-
+09:17:07.251 [33mWARN [0m nebflow.node.engine - NodeMessage: node 'n-l3' (n-l3) session cache self-healed -> midturn-l3 (cached=-, sessionRef=midturn-l3)
+09:17:07.251 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=immediate-input-queued detail=textLen=109
+09:17:07.252 [36mINFO [0m nebflow.node.engine - NodeMessage -> node 'n-l3' (n-l3) injected at turn boundary (session midturn-l3, 15 chars)
+09:17:07.915 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash
+  (while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-midturn-injection...) OK (1107ms)
+09:17:07.928 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash START: while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-
+[MTIT L3] sendNodeMessage=Right(Message delivered to running node 'n-l3' — it will) calls=2 inSecond=false
+09:17:08.208 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=spawn detail=parent=- msgs=0
+09:17:08.208 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=start detail=msgs=0
+09:17:08.216 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash START: while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-
+09:17:08.535 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=immediate-input-queued detail=textLen=19
+09:17:09.155 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash
+  (while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-midturn-injection...) OK (938ms)
+09:17:09.164 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash START: while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-
+09:17:10.028 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash
+  (while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-midturn-injection...) OK (864ms)
+09:17:10.044 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=turn-complete detail=msgs=5 textLen=12 textStreamed=true thinking=0 model=-
+[MTIT L4] calls=3 afterBoundary1=Some(0) afterBoundary2=Some(0)
+09:17:10.429 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=spawn detail=parent=- msgs=0
+09:17:10.432 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=start detail=msgs=0
+09:17:10.447 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash START: while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-
+09:17:11.407 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash
+  (while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-midturn-injection...) OK (960ms)
+09:17:11.415 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash START: while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-
+09:17:12.099 [36mINFO [0m nebflow.handlers - [32mMidTurnProbe[0m [35mMidTurnProbe[0m Tool Bash
+  (while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-midturn-injection...) OK (684ms)
+09:17:12.105 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=turn-complete detail=msgs=5 textLen=12 textStreamed=true thinking=0 model=-
+09:17:12.518 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=start detail=msgs=6
+09:17:12.527 [36mINFO [0m nebflow.reminders - [msgtoken] 消息身份牌：本条用户消息已铸牌 {{msg:9fae40a8-000004}}。向其它会话派发（Mail / Delegate / node 消息）时在文本中写入该牌，接收方会在投递前自动展开为消息全
+09:17:12.531 [36mINFO [0m nebflow.agent.lifecycle - [32mMidTurnProbe-midturn-[0m [35mMidTurnProbe/midturn-[0m event=turn-complete detail=msgs=8 textLen=16 textStreamed=true thinking=0 model=-
+[MTIT L5] roundCompleteBeforeIdle=0 calls=4 inTurnEndRound=Some(false) inNextTurn=Some(true) deliveries=0,0,0,1
+[MTIT G1] headOnlyDrained=List(A) stayed=List(B) compactionPendingDrained=0 mailPackageDrained=2 mailCompactionPendingDrained=0
+[32mnebflow.agent.MidTurnInjectionTimingSpec:[0m
+[91m==> X [0m[91mnebflow.agent.MidTurnInjectionTimingSpec[0m.[91mL1 用户腿: 工具批次在飞时投入的控制台形 ImmediateInput 必在本回合的下一次 LLM 请求里[0m  [90m2.579s[0m munit.FailException: src/test/scala/nebflow/agent/MidTurnInjectionTimingSpec.scala:253
+252:          s"L1 VIOLATED — 用户腿必须在工具边界并入本回合续轮请求（不是下一回合）。second=$second"
+[7m253:        )[0m
+254:        assertEquals(rc, 0, "L1: 边界注入不得伴随 roundComplete（回合未结束）——出现即证明落到了回合末")
+L1 VIOLATED — 用户腿必须在工具边界并入本回合续轮请求（不是下一回合）。second=run the gated batches
+object[command -> "while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-midturn-injection-timing/l1/gate1.release' ]; do sleep 0.05; done; echo batch-one-done"]
+(cwd: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject)
+batch-one-done
+[90m    at [0m[90mmunit.FunSuite.assert[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.agent.MidTurnInjectionTimingSpec.$init$$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m253[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.agent.MidTurnInjectionTimingSpec.$init$$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$2[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m242[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.agent.MidTurnInjectionTimingSpec.$init$$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$2[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m237[0m[1m)[0m
+[90m    at [0m[90mget @ nebflow.actor.LocalActorSystem.stopAll[0m[90m([0m[90mActorSystem.scala[0m:[90m110[0m[90m)[0m
+[1m    at [0m[1mmap @ nebflow.agent.MidTurnInjectionTimingSpec.$init$$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$1[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m234[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.agent.MidTurnInjectionTimingSpec.$init$$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$1[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m234[0m[1m)[0m
+[90m    at [0m[90mget @ nebflow.actor.LocalActorSystem.stopAll[0m[90m([0m[90mActorSystem.scala[0m:[90m110[0m[90m)[0m
+[1m    at [0m[1mflatMap @ nebflow.agent.MidTurnInjectionTimingSpec.$init$$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m233[0m[1m)[0m
+[90m    at [0m[90mget @ nebflow.actor.LocalActorSystem.stopAll[0m[90m([0m[90mActorSystem.scala[0m:[90m110[0m[90m)[0m
+[1m    at [0m[1mmap @ nebflow.agent.MidTurnInjectionTimingSpec.releaseAndAwaitBoundary1[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m222[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.agent.MidTurnInjectionTimingSpec.go$1[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m115[0m[1m)[0m
+[91m==> X [0m[91mnebflow.agent.MidTurnInjectionTimingSpec[0m.[91mL1b 用户腿(附件/引用承载形): typeless 帧的 UserInput 也必须在工具边界注入[0m  [90m2.551s[0m munit.FailException: src/test/scala/nebflow/agent/MidTurnInjectionTimingSpec.scala:295 L1b VIOLATED — typeless 帧（附件/引用/队列 drain）的用户输入必须在工具边界并入本回合续轮请求；实际落在 turn 之后（landingIndex=3）= 回合末 head-forward。
+294:          s"实际落在 turn 之后（landingIndex=${afterTurn.zipWithIndex.filter((t, _) => t.contains(body)).map((_, i) => i).mkString(",")}）= 回合末 head-forward。"
+[7m295:      )[0m
+296:    }
+[90m    at [0m[90mmunit.FunSuite.assert[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.agent.MidTurnInjectionTimingSpec.$init$$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$2$$anonfun$2[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m295[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.agent.MidTurnInjectionTimingSpec.$init$$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$2[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m289[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.agent.MidTurnInjectionTimingSpec.$init$$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$2[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m285[0m[1m)[0m
+[90m    at [0m[90mget @ nebflow.actor.LocalActorSystem.stopAll[0m[90m([0m[90mActorSystem.scala[0m:[90m110[0m[90m)[0m
+[1m    at [0m[1mmap @ nebflow.agent.MidTurnInjectionTimingSpec.$init$$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$1[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m284[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.agent.MidTurnInjectionTimingSpec.$init$$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$1[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m284[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.agent.MidTurnInjectionTimingSpec.$init$$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m283[0m[1m)[0m
+[90m    at [0m[90mget @ nebflow.actor.LocalActorSystem.stopAll[0m[90m([0m[90mActorSystem.scala[0m:[90m110[0m[90m)[0m
+[1m    at [0m[1mmap @ nebflow.agent.MidTurnInjectionTimingSpec.$init$$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$2$$anonfun$2[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m282[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.agent.MidTurnInjectionTimingSpec.go$1[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m115[0m[1m)[0m
+[91m==> X [0m[91mnebflow.agent.MidTurnInjectionTimingSpec[0m.[91mL2 Mail(delegate)腿: DelegateNotify.inject 的流程通知必在本回合的下一次 LLM 请求里[0m  [90m1.337s[0m munit.FailException: src/test/scala/nebflow/agent/MidTurnInjectionTimingSpec.scala:319
+318:          s"L2 VIOLATED — delegate-notify 注入必须在工具边界并入本回合续轮请求。second=$second"
+[7m319:        )[0m
+320:    }
+L2 VIOLATED — delegate-notify 注入必须在工具边界并入本回合续轮请求。second=run the gated batches
+object[command -> "while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-midturn-injection-timing/l2/gate1.release' ]; do sleep 0.05; done; echo batch-one-done"]
+(cwd: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject)
+batch-one-done
+[90m    at [0m[90mmunit.FunSuite.assert[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.agent.MidTurnInjectionTimingSpec.$init$$$anonfun$3$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$2$$anonfun$2[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m319[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.agent.MidTurnInjectionTimingSpec.$init$$$anonfun$3$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$2[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m312[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.agent.MidTurnInjectionTimingSpec.$init$$$anonfun$3$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$2[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m308[0m[1m)[0m
+[90m    at [0m[90mget @ nebflow.actor.LocalActorSystem.stopAll[0m[90m([0m[90mActorSystem.scala[0m:[90m110[0m[90m)[0m
+[1m    at [0m[1mmap @ nebflow.agent.MidTurnInjectionTimingSpec.$init$$$anonfun$3$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m306[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.agent.MidTurnInjectionTimingSpec.$init$$$anonfun$3$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m306[0m[1m)[0m
+[90m    at [0m[90mget @ nebflow.actor.LocalActorSystem.stopAll[0m[90m([0m[90mActorSystem.scala[0m:[90m110[0m[90m)[0m
+[1m    at [0m[1mmap @ nebflow.agent.MidTurnInjectionTimingSpec.releaseAndAwaitBoundary1[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m222[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.agent.MidTurnInjectionTimingSpec.go$1[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m115[0m[1m)[0m
+[91m==> X [0m[91mnebflow.agent.MidTurnInjectionTimingSpec[0m.[91mL2b Mail 补充件腿: UserInput(source=mail) 必在本回合的下一次 LLM 请求里[0m  [90m1.369s[0m munit.FailException: src/test/scala/nebflow/agent/MidTurnInjectionTimingSpec.scala:342
+341:        s"L2b VIOLATED — mail 补充件必须在工具边界并入本回合续轮请求（mail-injected-at-tools-complete 面）。second=$second"
+[7m342:      )[0m
+343:    }
+L2b VIOLATED — mail 补充件必须在工具边界并入本回合续轮请求（mail-injected-at-tools-complete 面）。second=run the gated batches
+object[command -> "while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-midturn-injection-timing/l2b/gate1.release' ]; do sleep 0.05; done; echo batch-one-done"]
+(cwd: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject)
+batch-one-done
+[90m    at [0m[90mmunit.FunSuite.assert[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.agent.MidTurnInjectionTimingSpec.$init$$$anonfun$4$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$2$$anonfun$2[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m342[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.agent.MidTurnInjectionTimingSpec.$init$$$anonfun$4$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$2[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m338[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.agent.MidTurnInjectionTimingSpec.$init$$$anonfun$4$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$2[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m338[0m[1m)[0m
+[90m    at [0m[90mget @ nebflow.actor.LocalActorSystem.stopAll[0m[90m([0m[90mActorSystem.scala[0m:[90m110[0m[90m)[0m
+[1m    at [0m[1mmap @ nebflow.agent.MidTurnInjectionTimingSpec.$init$$$anonfun$4$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m336[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.agent.MidTurnInjectionTimingSpec.$init$$$anonfun$4$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m336[0m[1m)[0m
+[90m    at [0m[90mget @ nebflow.actor.LocalActorSystem.stopAll[0m[90m([0m[90mActorSystem.scala[0m:[90m110[0m[90m)[0m
+[1m    at [0m[1mmap @ nebflow.agent.MidTurnInjectionTimingSpec.releaseAndAwaitBoundary1[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m222[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.agent.MidTurnInjectionTimingSpec.go$1[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m115[0m[1m)[0m
+[91m==> X [0m[91mnebflow.agent.MidTurnInjectionTimingSpec[0m.[91mL3 node 腿: sendNodeMessage 对 running 节点的注入必在本回合的下一次 LLM 请求里[0m  [90m1.439s[0m munit.FailException: src/test/scala/nebflow/agent/MidTurnInjectionTimingSpec.scala:389
+388:          s"L3 VIOLATED — node 消息必须在工具边界并入本回合续轮请求。second=$second"
+[7m389:        )[0m
+390:    }
+L3 VIOLATED — node 消息必须在工具边界并入本回合续轮请求。second=run the gated batches
+object[command -> "while [ ! -f '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/target/test-midturn-injection-timing/l3/gate1.release' ]; do sleep 0.05; done; echo batch-one-done"]
+(cwd: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject)
+batch-one-done
+[90m    at [0m[90mmunit.FunSuite.assert[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.agent.MidTurnInjectionTimingSpec.$init$$$anonfun$5$$anonfun$1$$anonfun$1$$anonfun$3$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$2$$anonfun$2[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m389[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.agent.MidTurnInjectionTimingSpec.$init$$$anonfun$5$$anonfun$1$$anonfun$1$$anonfun$3$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$2[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m382[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.agent.MidTurnInjectionTimingSpec.$init$$$anonfun$5$$anonfun$1$$anonfun$1$$anonfun$3$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$2[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m378[0m[1m)[0m
+[90m    at [0m[90mget @ nebflow.actor.LocalActorSystem.stopAll[0m[90m([0m[90mActorSystem.scala[0m:[90m110[0m[90m)[0m
+[1m    at [0m[1mmap @ nebflow.agent.MidTurnInjectionTimingSpec.$init$$$anonfun$5$$anonfun$1$$anonfun$1$$anonfun$3$$anonfun$1$$anonfun$2$$anonfun$1[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m376[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.agent.MidTurnInjectionTimingSpec.$init$$$anonfun$5$$anonfun$1$$anonfun$1$$anonfun$3$$anonfun$1$$anonfun$2$$anonfun$1[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m376[0m[1m)[0m
+[90m    at [0m[90mget @ nebflow.actor.LocalActorSystem.stopAll[0m[90m([0m[90mActorSystem.scala[0m:[90m110[0m[90m)[0m
+[1m    at [0m[1mmap @ nebflow.agent.MidTurnInjectionTimingSpec.releaseAndAwaitBoundary1[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m222[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.agent.MidTurnInjectionTimingSpec.go$1[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m115[0m[1m)[0m
+[91m==> X [0m[91mnebflow.agent.MidTurnInjectionTimingSpec[0m.[91mL4 幂等: 同一条消息跨连续两个工具边界只注入一次[0m  [90m2.151s[0m munit.ComparisonFailException: src/test/scala/nebflow/agent/MidTurnInjectionTimingSpec.scala:415
+414:          "L4: 第一个边界注入一次（且仅一次）"
+[7m415:        )[0m
+416:        assertEquals(
+L4: 第一个边界注入一次（且仅一次）
+[1m=> Obtained[0m
+0
+[1m=> Diff[0m ([91m- expected[0m, [92m+ obtained[0m)
+[91m-1[0m
+[92m+0[0m
+[90m    at [0m[90mmunit.FunSuite.assertEquals[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.agent.MidTurnInjectionTimingSpec.$init$$$anonfun$6$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$2$$anonfun$2[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m415[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.agent.MidTurnInjectionTimingSpec.$init$$$anonfun$6$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$2[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m408[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.agent.MidTurnInjectionTimingSpec.$init$$$anonfun$6$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$2[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m404[0m[1m)[0m
+[90m    at [0m[90mget @ nebflow.actor.LocalActorSystem.stopAll[0m[90m([0m[90mActorSystem.scala[0m:[90m110[0m[90m)[0m
+[1m    at [0m[1mmap @ nebflow.agent.MidTurnInjectionTimingSpec.$init$$$anonfun$6$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$1[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m403[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.agent.MidTurnInjectionTimingSpec.$init$$$anonfun$6$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$1[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m403[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.agent.MidTurnInjectionTimingSpec.$init$$$anonfun$6$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m402[0m[1m)[0m
+[90m    at [0m[90mget @ nebflow.actor.LocalActorSystem.stopAll[0m[90m([0m[90mActorSystem.scala[0m:[90m110[0m[90m)[0m
+[1m    at [0m[1mmap @ nebflow.agent.MidTurnInjectionTimingSpec.$init$$$anonfun$6$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m401[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.agent.MidTurnInjectionTimingSpec.go$1[0m[1m([0m[1mMidTurnInjectionTimingSpec.scala[0m:[1m115[0m[1m)[0m
+[32m  + [0m[32mL5 回落: 回合结束后到达的消息仍然送达（新回合）且只送达一次[0m [90m2.761s[0m
+[32m  + [0m[32mG1: 边界判据的两个门（compaction 挂起 / 队首一件）—— 纯函数面读数[0m [90m0.003s[0m
+[error] Failed: Total 8, Failed 6, Errors 0, Passed 2
+[error] Failed tests:
+[error] 	nebflow.agent.MidTurnInjectionTimingSpec
+[error] (Test / testOnly) sbt.TestsFailedException: Tests unsuccessful
+[error] Total time: 25 s, completed 2026年11月5日 09:17:13

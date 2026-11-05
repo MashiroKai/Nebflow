@@ -1,0 +1,103 @@
+PASS: desktop/dark: Jev 面 = 卡片列表（.cfg-card[data-face=jev] ≥ 2）
+PASS: desktop/dark: Jev 旧预填下拉 #cfg-jev-provider 已退役
+PASS: desktop/dark: Jev keyRef 输入行已退役（#cfg-jev-keyref 不存在）
+PASS: desktop/dark: Jev 明文回读行已退役（#cfg-jev-key-value 不存在）
+PASS: desktop/dark: Jev 面零「密钥引用」字眼
+PASS: desktop/dark: Jev 端点可编辑（不再钉死预填）
+PASS: desktop/dark: Jev 新增提供方入口在位
+saved /Users/kaiyu/.stand/evidence/20261103_jev-imagegen-align-llm/shots/green/jev__desktop__dark.png
+PASS: desktop/dark: 生图面 = 卡片列表（.cfg-card[data-face=imagegen] ≥ 2）
+PASS: desktop/dark: 生图 __add__ 哨兵下拉已退役
+PASS: desktop/dark: 生图面零「密钥引用」字眼
+saved /Users/kaiyu/.stand/evidence/20261103_jev-imagegen-align-llm/shots/green/imagegen__desktop__dark.png
+PASS: desktop/dark: /model 面板可打开
+PASS: desktop/dark: /model 面板渲染 Jev 分组（.mp-group[data-group=jev]）
+PASS: desktop/dark: /model 面板渲染生图分组（.mp-group[data-group=imagegen]）
+PASS: desktop/dark: Jev 分组切换器列出已配置提供方
+saved /Users/kaiyu/.stand/evidence/20261103_jev-imagegen-align-llm/shots/green/model__desktop__dark.png
+[probe] puts after switch = [{"path":"/api/config/jev","body":"{\"provider\":\"laya\",\"model\":\"laya-v2\"}"}]
+PASS: 切换 Jev 提供方 ⇒ PUT /api/config/jev（含 provider=laya）
+PASS: 设置页模型节渲染同款分组（.mp-group-list 内 .mp-group ≥ 2）
+PASS: 设置页分组为折叠式（details.mp-group）
+saved /Users/kaiyu/.stand/evidence/20261103_jev-imagegen-align-llm/shots/green/settings-model__desktop__dark.png
+console errors (desktop/dark): [
+  'Failed to load resource: the server responded with a status of 404 (Not Found)',
+  'An unknown error occurred when fetching the script.',
+  'Failed to load resource: the server responded with a status of 404 (Not Found)'
+]
+PASS: phone/dark: Jev 面 = 卡片列表（.cfg-card[data-face=jev] ≥ 2）
+PASS: phone/dark: Jev 旧预填下拉 #cfg-jev-provider 已退役
+PASS: phone/dark: Jev keyRef 输入行已退役（#cfg-jev-keyref 不存在）
+PASS: phone/dark: Jev 明文回读行已退役（#cfg-jev-key-value 不存在）
+PASS: phone/dark: Jev 面零「密钥引用」字眼
+PASS: phone/dark: Jev 端点可编辑（不再钉死预填）
+PASS: phone/dark: Jev 新增提供方入口在位
+saved /Users/kaiyu/.stand/evidence/20261103_jev-imagegen-align-llm/shots/green/jev__phone__dark.png
+PASS: phone/dark: 生图面 = 卡片列表（.cfg-card[data-face=imagegen] ≥ 2）
+PASS: phone/dark: 生图 __add__ 哨兵下拉已退役
+PASS: phone/dark: 生图面零「密钥引用」字眼
+saved /Users/kaiyu/.stand/evidence/20261103_jev-imagegen-align-llm/shots/green/imagegen__phone__dark.png
+PASS: phone/dark: /model 面板可打开
+PASS: phone/dark: /model 面板渲染 Jev 分组（.mp-group[data-group=jev]）
+PASS: phone/dark: /model 面板渲染生图分组（.mp-group[data-group=imagegen]）
+PASS: phone/dark: Jev 分组切换器列出已配置提供方
+saved /Users/kaiyu/.stand/evidence/20261103_jev-imagegen-align-llm/shots/green/model__phone__dark.png
+console errors (phone/dark): [
+  'Failed to load resource: the server responded with a status of 404 (Not Found)',
+  'An unknown error occurred when fetching the script.',
+  'Failed to load resource: the server responded with a status of 404 (Not Found)'
+]
+PASS: desktop/light: Jev 面 = 卡片列表（.cfg-card[data-face=jev] ≥ 2）
+PASS: desktop/light: Jev 旧预填下拉 #cfg-jev-provider 已退役
+PASS: desktop/light: Jev keyRef 输入行已退役（#cfg-jev-keyref 不存在）
+PASS: desktop/light: Jev 明文回读行已退役（#cfg-jev-key-value 不存在）
+PASS: desktop/light: Jev 面零「密钥引用」字眼
+PASS: desktop/light: Jev 端点可编辑（不再钉死预填）
+PASS: desktop/light: Jev 新增提供方入口在位
+saved /Users/kaiyu/.stand/evidence/20261103_jev-imagegen-align-llm/shots/green/jev__desktop__light.png
+PASS: desktop/light: 生图面 = 卡片列表（.cfg-card[data-face=imagegen] ≥ 2）
+PASS: desktop/light: 生图 __add__ 哨兵下拉已退役
+PASS: desktop/light: 生图面零「密钥引用」字眼
+saved /Users/kaiyu/.stand/evidence/20261103_jev-imagegen-align-llm/shots/green/imagegen__desktop__light.png
+PASS: desktop/light: /model 面板可打开
+PASS: desktop/light: /model 面板渲染 Jev 分组（.mp-group[data-group=jev]）
+PASS: desktop/light: /model 面板渲染生图分组（.mp-group[data-group=imagegen]）
+PASS: desktop/light: Jev 分组切换器列出已配置提供方
+saved /Users/kaiyu/.stand/evidence/20261103_jev-imagegen-align-llm/shots/green/model__desktop__light.png
+console errors (desktop/light): [
+  'Failed to load resource: the server responded with a status of 404 (Not Found)',
+  'An unknown error occurred when fetching the script.',
+  'Failed to load resource: the server responded with a status of 404 (Not Found)'
+]
+PASS: phone/light: Jev 面 = 卡片列表（.cfg-card[data-face=jev] ≥ 2）
+PASS: phone/light: Jev 旧预填下拉 #cfg-jev-provider 已退役
+PASS: phone/light: Jev keyRef 输入行已退役（#cfg-jev-keyref 不存在）
+PASS: phone/light: Jev 明文回读行已退役（#cfg-jev-key-value 不存在）
+PASS: phone/light: Jev 面零「密钥引用」字眼
+PASS: phone/light: Jev 端点可编辑（不再钉死预填）
+PASS: phone/light: Jev 新增提供方入口在位
+saved /Users/kaiyu/.stand/evidence/20261103_jev-imagegen-align-llm/shots/green/jev__phone__light.png
+PASS: phone/light: 生图面 = 卡片列表（.cfg-card[data-face=imagegen] ≥ 2）
+PASS: phone/light: 生图 __add__ 哨兵下拉已退役
+PASS: phone/light: 生图面零「密钥引用」字眼
+saved /Users/kaiyu/.stand/evidence/20261103_jev-imagegen-align-llm/shots/green/imagegen__phone__light.png
+PASS: phone/light: /model 面板可打开
+PASS: phone/light: /model 面板渲染 Jev 分组（.mp-group[data-group=jev]）
+PASS: phone/light: /model 面板渲染生图分组（.mp-group[data-group=imagegen]）
+PASS: phone/light: Jev 分组切换器列出已配置提供方
+saved /Users/kaiyu/.stand/evidence/20261103_jev-imagegen-align-llm/shots/green/model__phone__light.png
+console errors (phone/light): [
+  'Failed to load resource: the server responded with a status of 404 (Not Found)',
+  'An unknown error occurred when fetching the script.',
+  'Failed to load resource: the server responded with a status of 404 (Not Found)'
+]
+PASS: 空态: 零卡片（未配置不造假）
+PASS: 空态: provider name 空（不预填）
+PASS: 空态: 端点空（不预填 pinned endpoint）
+PASS: 空态: 模型空
+PASS: 空态: 密钥框空
+PASS: 空态: 协议下拉 = 占位项（不预选适配器）
+PASS: 空态: keyRef 行零痕迹
+saved /Users/kaiyu/.stand/evidence/20261103_jev-imagegen-align-llm/shots/green/jev-empty__desktop__dark.png
+
+[green] 66/66 assertions passed

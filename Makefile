@@ -82,7 +82,7 @@ quality-gate:
 # 但**本地**这条腿没有它 —— 断环的人跑 `make check` 看不到读数，存量环就是这么红着
 # 过夜的（CI 侧实证见批报告）。CI 那条腿照旧，这里补的是本地防回退。
 # 只跑前端门禁：`make frontend-gates`；全量静态检查：`make check`。
-FRONTEND_GATES := design-tokens msgstyle self-explaining circular fixture-secrets
+FRONTEND_GATES := design-tokens msgstyle self-explaining circular fixture-secrets freeze-state
 
 frontend-gates:
 	@command -v node >/dev/null 2>&1 || { echo "node not found — 前端门禁需要 node"; exit 2; }
@@ -94,6 +94,9 @@ frontend-gates:
 	@# `reports-evidence/` 里出现「敏感键名 ∧ 值 ≥32 字符 ∧ 字符集 ≥3 类」的字面量即红
 	@# （占位词豁免）。判据与运行期脱敏词表同族（`nebflow.shared.SecretKeys`）。
 	node scripts/check-fixture-secrets.mjs
+	@# 冻结态呈现门禁（冻结态误报批 2026-11-05）：可自动恢复的冻结不得写「已冻结」/不得
+	@# 给按钮；需人介入的冻结必须有恢复入口；恢复失败必须可见；迁移日志在场。
+	node scripts/check-freeze-state.mjs
 	@echo "Frontend static gates passed ($(FRONTEND_GATES))."
 
 # ── 视觉回归基线门禁（tests/visual/，2026-11-01 采纳批）──────────────────────
@@ -119,7 +122,20 @@ check-visual:
 	node scripts/visual-baseline.mjs --check --max-ratio $(VISUAL_MAX_RATIO)
 	@echo "Visual baseline gate passed (host-matched baselines, max-ratio $(VISUAL_MAX_RATIO))."
 
+# ── 两段式入库（2026-11-04 修陷阱批）────────────────────────────────────────
+# 改造前：`make visual-baseline`（= --update）**直接覆盖** tests/visual/baseline/，
+# 而本节的注释说「评审 .nebflow/ 评审区后再提交入库」—— 那句当时不成立：草稿没有
+# 独立落点，一跑 --update 入库基准就已经变了，"评审"只能事后 git diff 才看见。
+# 现在拆两段：
+#   make visual-baseline           → 只写评审区草稿 .nebflow/visual-baseline/<platform>/baseline-draft/
+#   make visual-baseline-promote   → 人工评审通过后，把草稿推进 tests/visual/baseline/<platform>/
+# 跑 promote 这个 target 本身即「已人眼评审」的声明（脚本对裸 CLI 调用仍强制
+# --i-reviewed）。忘了评审就 promote 的后果是入库图变了你没看过 —— 与改造前的
+# 区别是：现在它必须是**一次有名字的动作**，而不是顺手 --update 的副作用。
 visual-baseline:
 	node scripts/visual-baseline.mjs --update
-	@echo "Baselines written — 人工评审 .nebflow/visual-baseline/<platform>/ 后再提交 tests/visual/baseline/<platform>/。"
+	@echo "Draft written — 入库基准未触碰。评审 .nebflow/visual-baseline/<platform>/baseline-draft/ 后用 make visual-baseline-promote 入库。"
+
+visual-baseline-promote:
+	node scripts/visual-baseline.mjs --promote --i-reviewed
 

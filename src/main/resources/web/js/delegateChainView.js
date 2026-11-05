@@ -548,7 +548,7 @@ const STRUCT_ARCHIVE_CSS = `
 .delegate-archive-badge {
   position: absolute; top: -5px; right: -5px; min-width: 15px; height: 15px; padding: 0 var(--ds-space-1);
   border-radius: var(--ds-radius-input); background: rgb(var(--sapphire)); color: #fff;
-  font: 500 9px/15px -apple-system, BlinkMacSystemFont, sans-serif; text-align: center;
+  font: 500 var(--ds-fs-meta)/var(--ds-fs-title) -apple-system, BlinkMacSystemFont, sans-serif; text-align: center;
   font-variant-numeric: tabular-nums; pointer-events: none;
 }
 /* 自动归档到达反馈（§D：fm-fab 徽章脉冲——flowMapArchive 到达反馈同款语言）。 */
@@ -571,7 +571,7 @@ const STRUCT_ARCHIVE_CSS = `
 @keyframes delegate-drawer-in { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
 .delegate-archive-drawer-head {
   display: flex; align-items: center; gap: var(--ds-space-2); min-width: 0;
-  font: 600 12px/1.6 -apple-system, BlinkMacSystemFont, sans-serif; letter-spacing: 0.02em;
+  font: 600 var(--ds-fs-hint)/1.6 -apple-system, BlinkMacSystemFont, sans-serif; letter-spacing: 0.02em;
   color: var(--color-text); padding: 0 var(--ds-space-1) var(--ds-space-2);
 }
 .delegate-archive-drawer-close {
@@ -586,45 +586,45 @@ const STRUCT_ARCHIVE_CSS = `
 .delegate-archive-drawer[hidden] { display: none; }
 .delegate-archive-row {
   display: flex; align-items: center; gap: var(--ds-space-2); min-width: 0;
-  padding: 7px var(--ds-space-1h); border-radius: var(--ds-radius-input); border: none;
+  padding: var(--ds-space-2) var(--ds-space-1h); border-radius: var(--ds-radius-input); border: none;
   background: transparent; color: inherit; width: 100%;
 }
 .delegate-archive-row:nth-child(odd) { background: var(--color-frame-hover, rgba(128,128,128,0.06)); }
-.delegate-archive-row-main { min-width: 0; flex: 1 1 auto; display: flex; flex-direction: column; gap: 1px; }
+.delegate-archive-row-main { min-width: 0; flex: 1 1 auto; display: flex; flex-direction: column; gap: var(--ds-space-hair); }
 .delegate-archive-row-title {
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font: 400 12px/1.5 -apple-system, BlinkMacSystemFont, sans-serif; color: var(--color-text);
+  font: 400 var(--ds-fs-hint)/1.5 -apple-system, BlinkMacSystemFont, sans-serif; color: var(--color-text);
 }
 .delegate-archive-row-meta {
-  font: 500 10px/1.5 ui-monospace, SFMono-Regular, monospace;
+  font: 500 var(--ds-fs-meta)/1.5 ui-monospace, SFMono-Regular, monospace;
   color: var(--color-text-muted);
 }
 .delegate-archive-row-actions { flex-shrink: 0; display: inline-flex; gap: var(--ds-space-1); }
 .delegate-archive-act {
-  flex-shrink: 0; padding: var(--ds-space-half) var(--ds-space-2); border-radius: 7px; cursor: pointer;
-  font: 500 10.5px/1.6 -apple-system, BlinkMacSystemFont, sans-serif;
+  flex-shrink: 0; padding: var(--ds-space-half) var(--ds-space-2); border-radius: var(--ds-radius-input); cursor: pointer;
+  font: 500 var(--ds-fs-meta)/1.6 -apple-system, BlinkMacSystemFont, sans-serif;
   background: var(--glass-control-bg, transparent);
   border: 1px solid var(--glass-control-border, rgba(128,128,128,0.35));
   color: var(--color-frame-text-muted, inherit);
 }
 .delegate-archive-act:hover:not(:disabled) { background: var(--color-frame-hover, rgba(128,128,128,0.12)); color: rgb(var(--sapphire)); border-color: rgb(var(--sapphire) / 0.4); }
 .delegate-archive-act:disabled { opacity: 0.5; cursor: default; }
-.delegate-archive-empty { padding: var(--ds-space-glass-x) var(--ds-space-1h); font: 400 12px/1.5 -apple-system, BlinkMacSystemFont, sans-serif; color: var(--color-text-muted); }
+.delegate-archive-empty { padding: var(--ds-space-block-y) var(--ds-space-1h); font: 400 var(--ds-fs-hint)/1.5 -apple-system, BlinkMacSystemFont, sans-serif; color: var(--color-text-muted); }
 /* 自动归档到达 toast（§D：fm-exit 到达反馈——「#N 已完成并归档」+ 5s 撤销）。 */
 .delegate-archive-toast {
   position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%);
-  z-index: 47; display: flex; align-items: center; gap: var(--ds-space-glass-x); min-width: 0;
+  z-index: 47; display: flex; align-items: center; gap: var(--ds-space-inline-gap); min-width: 0;
   padding: var(--ds-space-2) 14px; border-radius: var(--ds-radius-xl);
   background: var(--glass-bg, var(--color-surface));
   border: 1px solid var(--color-border);
   box-shadow: 0 10px 36px rgba(0, 0, 0, 0.35);
-  font: 400 12px/1.5 -apple-system, BlinkMacSystemFont, sans-serif; color: var(--color-text);
+  font: 400 var(--ds-fs-hint)/1.5 -apple-system, BlinkMacSystemFont, sans-serif; color: var(--color-text);
   animation: delegate-drawer-in 0.18s ease;
 }
 .delegate-archive-toast[hidden] { display: none; }
 .delegate-archive-toast-undo {
-  flex-shrink: 0; padding: 1px var(--ds-space-glass-x); border-radius: var(--ds-radius-input); cursor: pointer;
-  font: 500 11px/1.7 -apple-system, BlinkMacSystemFont, sans-serif;
+  flex-shrink: 0; padding: var(--ds-space-hair) var(--ds-space-inline-x); border-radius: var(--ds-radius-input); cursor: pointer;
+  font: 500 var(--ds-fs-meta)/1.7 -apple-system, BlinkMacSystemFont, sans-serif;
   background: rgb(var(--sapphire) / 0.12); color: rgb(var(--sapphire));
   border: 1px solid rgb(var(--sapphire) / 0.35);
 }
@@ -638,7 +638,7 @@ const STRUCT_ARCHIVE_CSS = `
 }
 .delegate-card-kids svg, .delegate-card-flow svg { width: 9px; height: 9px; display: block; }
 .delegate-card-kids span, .delegate-card-flow span {
-  font: 600 9px/13px ui-monospace, SFMono-Regular, monospace;
+  font: 600 var(--ds-fs-meta)/var(--ds-fs-body) ui-monospace, SFMono-Regular, monospace;
   font-variant-numeric: tabular-nums;
 }
 `;

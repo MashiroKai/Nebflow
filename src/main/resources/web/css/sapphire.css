@@ -231,21 +231,28 @@
   --cv-hover-scale: 1.05;
   --cv-active-scale: 0.96;
   /* 尺寸档（圆钮 40 / 条内小钮 26 / 图标 18·14 / 簇槽距 48 —— 四档全站通用）
-     canvas 控件尺寸对齐批（2026-11-02 作者追加令 09:41「包括 canvas 的这些控件
-     宽度也要保持一致」）：canvas 文档 chrome（缩放条内钮 + 源码/引用/查找/刷新
-     四圆钮）单独一档 **48**，= 手机层 --mtap-lg = 手机层返回钮 = 面板吸附胶囊
-     --mcap-h —— 全站「canvas 悬浮控件」回到一个真值。`--cv-size-circle` 40 仍是
-     **面板级**圆钮档（#deck-fab 堆叠视角钮 / #canvas-head-close 关签钮 / .g2-fab
-     基准类）——它们在画布顶带、受叠卡环带批与 canvas-stack A1-5/A13-3 的 40px
-     钉位约束，不属作者指的「这条工具带上的控件」，本批零触碰（见批文档「桌面腿」）。 */
+     两条作者令冲突的显式裁定（件3 批 2026-11-05，作者逐字「然后电脑端的canvas的
+     底部的按钮的大小，应该和canvas顶部的按钮的大小样式都统一。」）：
+       · 旧令（2026-11-02 09:41「包括 canvas 的这些控件宽度也要保持一致」）= 底部
+         chrome 单独一档 48（对齐手机 --mtap-lg）。
+       · 新令（2026-11-05）= 底部跟顶部同档。**同域作者令按时间后者覆盖前者** ⇒
+         桌面档底部 chrome 收敛回顶部圆钮档：尺寸 = `--cv-size-circle`(40) /
+         圆 = 50% / 内距 0 / 图标 = `--cv-icon`(18)。
+       · 手机 375 档未获新令 ⇒ 保留 11-02 批的 48 档（`--mtap-lg`），由 split.css
+         的 `body.mobile-layer` 块逐值钉回（尺寸/图标/槽位/落位），桌面档零传染。
+       · 单一真值：`--cv-size-circle-lg` 从此**等于** `--cv-size-circle`（不再写第二份
+         字面量），簇槽距 `--cv-row-pitch-lg` = 钮 + 8 缝由 calc 派生。
+       验收 = tests/ui-seven-canvas-chrome.spec.mjs ⑦/⑧（token→实测对照表 + 逐项相等）。 */
   --cv-size-circle: 40px;
-  --cv-size-circle-lg: 48px;   /* canvas 文档 chrome 档（缩放条钮 + 圆钮簇） */
+  --cv-size-circle-lg: var(--cv-size-circle);   /* canvas 文档 chrome 档 = 顶部圆钮同档（件3） */
   --cv-size-btn: 26px;         /* 查找条内钮（.nf-findbar-btn，条内小钮语言） */
   --cv-icon: 18px;
   --cv-icon-btn: 14px;
-  --cv-icon-btn-lg: 20px;      /* 48 档钮内图标（= 手机层 --micon-sm 20px） */
-  --cv-row-pitch: 48px;        /* 面板级圆钮簇槽距（40 钮 + 8 缝） */
-  --cv-row-pitch-lg: 56px;     /* canvas chrome 簇槽距（48 钮 + 8 缝） */
+  /* 48 档钮内图标（= 手机层 --micon-sm 20px）—— 桌面档随件3 归一到 --cv-icon(18)；
+     手机 375 档在 split.css `body.mobile-layer` 块显式钉 20（--micon-sm）。 */
+  --cv-icon-btn-lg: var(--cv-icon);
+  --cv-row-pitch: calc(var(--cv-size-circle) + var(--ds-space-2));       /* 面板级圆钮簇槽距（钮 + 8 缝） */
+  --cv-row-pitch-lg: calc(var(--cv-size-circle-lg) + var(--ds-space-2)); /* canvas chrome 簇槽距（钮 + 8 缝） */
   /* 圆角档（胶囊 999 / 查找条 12 / 缩放条 10 / 胶囊内小钮 8 / 条内小钮 7） */
   --cv-radius-pill: 999px;
   --cv-radius-bar: 12px;
@@ -445,7 +452,7 @@
   background: var(--ctl-send-bg);
   border: 1px solid var(--ctl-send-border);
   border-radius: var(--ds-radius-button);
-  padding: 5px var(--ds-space-3);
+  padding: var(--ds-space-1h) var(--ds-space-3);
   font-family: inherit;
   font-weight: 500;
   cursor: pointer;
@@ -651,7 +658,7 @@ button.glass-control.fm-login-btn {
   display: block;
   width: 100%;
   box-sizing: border-box;
-  padding: var(--ds-space-glass-x) var(--ds-space-5);
+  padding: var(--ds-space-block-y) var(--ds-space-5);
   border-radius: var(--ds-radius-button);
   font-family: inherit;
   font-size: var(--ds-fs-body);
@@ -851,8 +858,8 @@ button.glass-control.fm-login-btn:disabled {
   font-weight: 500;
   letter-spacing: normal;
   text-transform: none;
-  padding: 1px var(--ds-space-2);
-  border-radius: 9999px;
+  padding: var(--ds-space-hair) var(--ds-space-2);
+  border-radius: var(--ds-radius-pill);
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
   color: var(--color-frame-text-muted, var(--color-text-muted));
@@ -874,7 +881,7 @@ button.glass-control.fm-login-btn:disabled {
    且无 opacity ⇒ 与主对话「半透明浅档」不一致）。R6 = 保持现状「浅」档。 */
 .fm-msg-time,
 .dropbox-msg-time {
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   font-family: ui-monospace, SFMono-Regular, monospace;
   font-variant-numeric: tabular-nums;
   color: var(--color-text);

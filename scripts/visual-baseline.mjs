@@ -11,7 +11,9 @@
 // 宿主实例 6138。
 //
 // 用法：
-//   node scripts/visual-baseline.mjs --update            # 采集并写基准（人工评审后入库）
+//   node scripts/visual-baseline.mjs --update            # 采集**草稿**到评审区（不碰入库基准）
+//   node scripts/visual-baseline.mjs --promote --i-reviewed
+//                                                        # 人工评审通过后，把草稿推进入库基准
 //   node scripts/visual-baseline.mjs --check             # 采集并比对基准（CI/改动后自检）
 //   node scripts/visual-baseline.mjs --check --filter canvas   # 只跑名字含 canvas 的场景
 //   node scripts/visual-baseline.mjs --check --determinism     # 同轮双拍自比对（验确定性）
@@ -21,9 +23,18 @@
 //   选项：--theme dark|light  --tolerance <0-255>  --max-ratio <0-1>  --platform <key>
 //         --web-root <dir>   # 静态根覆盖（等价 NEBFLOW_WEB_ROOT，CLI 优先）
 //
-// 产物：
-//   基准（入库）  tests/visual/baseline/<platform>/<scenario>-<theme>.png + manifest.json
-//   运行/差图     .nebflow/visual-baseline/<platform>/  （.gitignore:17-18 已忽略 .nebflow/）
+// 产物（两段式：草稿 → 评审 → 入库。2026-11-04 修「--update 直接覆盖入库基准」陷阱）：
+//   草稿（评审区）  .nebflow/visual-baseline/<platform>/baseline-draft/*.png + manifest.json
+//   入库（提交）    tests/visual/baseline/<platform>/<scenario>-<theme>.png + manifest.json
+//   运行/差图       .nebflow/visual-baseline/<platform>/  （.gitignore:17-18 已忽略 .nebflow/）
+//
+// 为什么拆两段：改造前 `--update` **直接写** tests/visual/baseline/，而 Makefile 与
+// CONTRIBUTING 都写着「评审 .nebflow/ 评审区后再入库」—— 那句在当时是假的：草稿
+// 根本没有独立落点，一跑 --update 入库基准就已经被覆盖，所谓「评审」只能事后
+// `git diff` 才发现。于是「改到绿」和「改到看不出问题」之间只差一次手滑。现在
+// --update 只写草稿；入库必须显式 --promote（且要带 --i-reviewed 表明确已人眼
+// 评过）。这条不是流程洁癖：视觉门禁的**唯一**价值是「入库图 = 我们认可的样子」，
+// 谁能一键覆盖它，谁就一键取消了这道门禁。
 //
 // 退出码：--check 通过 0；有超阈值差异 1；装置错误（无浏览器/无 playwright）2。
 
@@ -36,7 +47,12 @@ import { comparePng } from './lib/png-diff.mjs';
 const argv = process.argv.slice(2);
 const hasFlag = (f) => argv.includes(f);
 const valOf = (f, d = null) => { const i = argv.indexOf(f); return i >= 0 && argv[i + 1] ? argv[i + 1] : d; };
-const MODE = hasFlag('--update') ? 'update' : hasFlag('--list') ? 'list' : 'check';
+const MODE = hasFlag('--promote') ? 'promote'
+  : hasFlag('--update') ? 'update'
+  : hasFlag('--list') ? 'list' : 'check';
+// --promote 的确认旗标：不是「多重保险」而是本修法的核心 —— 入库基准只应在
+// **人眼评审过的**前提下变更；手滑跑一次 dry 命令不该产生任何入库 diff。
+const PROMOTE_ACK = hasFlag('--i-reviewed');
 const FILTER = valOf('--filter');
 const THEME_ONLY = valOf('--theme');
 const TOLERANCE = Number(valOf('--tolerance', '0'));
@@ -483,10 +499,55 @@ async function paneReady(page, tabId) {
 // ── 落点 ───────────────────────────────────────────────────────────────
 const BASELINE_ROOT = join(ROOT, 'tests', 'visual', 'baseline');
 const OUT_ROOT = join(ROOT, '.nebflow', 'visual-baseline');
+/** 草稿目录：--update 的唯一写入口。与入库目录**分家**是修陷阱的全部要点。 */
+const DRAFT_DIRNAME = 'baseline-draft';
 
 if (MODE === 'list') {
   for (const s of SCENARIOS) console.log(`${s.name.padEnd(24)} ${s.themes.join(',')}  — ${s.why}`);
   console.log(`\n${SCENARIOS.length} scenarios × themes = ${SCENARIOS.reduce((a, s) => a + s.themes.length, 0)} baselines`);
+  process.exit(0);
+}
+
+// ── 入库（promote）：草稿 → 入库基准 ────────────────────────────────────
+// 独立于采集：不启浏览器、不渲染，只做一次受控拷贝 + manifest 同步，因此
+// 「评审什么就入库什么」在物理上成立（中间不可能被重新采集换掉）。
+if (MODE === 'promote') {
+  // 平台键不猜：promote 不起浏览器，拿不到 browser label。显式 --platform 优先，
+  // 否则在评审区里找唯一一份草稿（多份则要求 --platform，绝不静默挑一个）。
+  const drafts = existsSync(OUT_ROOT)
+    ? readdirSync(OUT_ROOT).filter((n) => existsSync(join(OUT_ROOT, n, DRAFT_DIRNAME, 'manifest.json')))
+    : [];
+  const platform = PLATFORM_OVERRIDE || (drafts.length === 1 ? drafts[0] : null);
+  if (!platform) {
+    console.error(`promote: 无法确定平台键（评审区草稿 ${drafts.length} 份：${drafts.join(' ') || '无'}）—— 用 --platform <key> 指定。`);
+    process.exit(2);
+  }
+  const draftDir = join(OUT_ROOT, platform, DRAFT_DIRNAME);
+  const baseDir = join(BASELINE_ROOT, platform);
+  if (!existsSync(join(draftDir, 'manifest.json'))) {
+    console.error(`promote: 草稿缺失 ${relative(ROOT, draftDir)}/manifest.json —— 先跑 --update 采集草稿。`);
+    process.exit(2);
+  }
+  if (!PROMOTE_ACK) {
+    const imgs = readdirSync(draftDir).filter((n) => n.endsWith('.png'));
+    console.error(`promote: 拒绝入库 —— 缺 --i-reviewed。`);
+    console.error(`  待入库草稿：${relative(ROOT, draftDir)}/  (${imgs.length} 张)`);
+    console.error('  评审动作：逐张看草稿与入库图的差异，确认「每一处像素变化都是我要的」，再加 --i-reviewed。');
+    console.error(`  参考：git --no-pager diff --stat -- ${relative(ROOT, baseDir)}`);
+    process.exit(2);
+  }
+  mkdirSync(baseDir, { recursive: true });
+  const names = readdirSync(draftDir);
+  const pngs = names.filter((n) => n.endsWith('.png'));
+  for (const n of pngs) writeFileSync(join(baseDir, n), readFileSync(join(draftDir, n)));
+  const manifest = JSON.parse(readFileSync(join(draftDir, 'manifest.json'), 'utf8'));
+  manifest.generatedAt = new Date().toISOString();
+  manifest.promotedFrom = relative(ROOT, draftDir);
+  writeFileSync(join(baseDir, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
+  const stale = readdirSync(baseDir).filter((n) => n.endsWith('.png') && !pngs.includes(n));
+  console.log(`promote: ${pngs.length} 张 → ${relative(ROOT, baseDir)}/（manifest.json 同步）`);
+  if (stale.length) console.log(`  注意：入库目录有 ${stale.length} 张本次草稿未覆盖（场景改名/删除）：${stale.join(' ')}`);
+  console.log('  下一步：git add tests/visual/baseline && git commit（评审结论请写进提交信息）。');
   process.exit(0);
 }
 
@@ -508,12 +569,14 @@ async function captureAll() {
   const platform = PLATFORM_OVERRIDE || `${process.platform}-${label}`;
   const baseDir = join(BASELINE_ROOT, platform);
   const outDir = join(OUT_ROOT, platform);
+  // update 的唯一写入口 = 评审区草稿（入库目录只在 promote 里被碰，见文件头注）。
+  const draftDir = join(outDir, DRAFT_DIRNAME);
   mkdirSync(outDir, { recursive: true });
-  if (MODE === 'update') mkdirSync(baseDir, { recursive: true });
+  if (MODE === 'update') mkdirSync(draftDir, { recursive: true });
 
   console.log(`visual-baseline [${MODE}] playwright=${pwRes.from} browser=${label} (${version}) platform=${platform}`);
   console.log(`  web    : ${relative(ROOT, webRoot())}  (root = ${webRoot()})`);
-  console.log(`  baseline: ${relative(ROOT, baseDir)}`);
+  console.log(`  ${MODE === 'update' ? 'draft   ' : 'baseline'}: ${relative(ROOT, MODE === 'update' ? draftDir : baseDir)}`);
   console.log(`  out    : ${relative(ROOT, outDir)}\n`);
 
   const rows = [];
@@ -555,10 +618,10 @@ async function captureAll() {
       }
 
       if (MODE === 'update') {
-        const basePath = join(baseDir, `${tag}.png`);
+        const basePath = join(draftDir, `${tag}.png`);
         writeFileSync(basePath, buf);
         rows.push({ tag, scenario: sc.name, theme, bytes: buf.length, at: new Date().toISOString(), ms, mask: masks });
-        console.log(`  UPDATE ${tag.padEnd(38)} ${relative(ROOT, basePath)}  (${ms}ms) ${notes.join(' ')}`);
+        console.log(`  DRAFT  ${tag.padEnd(38)} ${relative(ROOT, basePath)}  (${ms}ms) ${notes.join(' ')}`);
         continue;
       }
 
@@ -587,7 +650,7 @@ async function captureAll() {
   await browser.close();
 
   if (MODE === 'update') {
-    writeFileSync(join(baseDir, 'manifest.json'), JSON.stringify({
+    writeFileSync(join(draftDir, 'manifest.json'), JSON.stringify({
       generatedBy: 'scripts/visual-baseline.mjs --update',
       generatedAt: new Date().toISOString(),
       platform,
@@ -597,8 +660,11 @@ async function captureAll() {
       maxRatio: MAX_RATIO,
       entries: rows,
     }, null, 2) + '\n');
-    console.log(`\nbaseline written: ${rows.length} image(s) → ${relative(ROOT, baseDir)}/ (manifest.json 同步)`);
-    console.log('人评审 diff 前请勿直接 --update 覆盖既有基准：基准只应在「确认变化是期望的」后更新。');
+    console.log(`\ndraft written: ${rows.length} image(s) → ${relative(ROOT, draftDir)}/ (manifest.json 同步)`);
+    console.log('入库基准**未被触碰**（本次只写评审区草稿）。评审：');
+    console.log(`  git --no-pager diff --stat -- ${relative(ROOT, baseDir)}   # 入库图未变即为空`);
+    console.log(`  逐张比对 ${relative(ROOT, draftDir)}/ 与 ${relative(ROOT, baseDir)}/`);
+    console.log(`  确认每处像素变化都是要的，再跑 --promote --i-reviewed（= make visual-baseline-promote）。`);
   } else {
     console.log(`\n${failures === 0 ? 'VISUAL BASELINE PASS' : `VISUAL BASELINE FAIL: ${failures} 项超阈值/缺失`}`);
     if (failures) console.log(`  阈值：单通道容差 ${TOLERANCE}，差异像素占比上限 ${(MAX_RATIO * 100).toFixed(2)}%`);
