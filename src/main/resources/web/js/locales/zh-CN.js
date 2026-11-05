@@ -934,6 +934,9 @@ export default {
   'subagents.fromFlowNode': '来自 AgentFlow 节点',
   'subagents.fromSubagent': '来自上层子代理',
   'subagents.orphanTip': '父会话已不可见 · {sid}',
+  // 野节点归置批（2026-11-05 腿③）：野节点（父不可解析的行）独立归置分组的组头词。
+  // 一个事实词（这群行没有父），不是解释句/教学句（自解释铁律 8）。
+  'subagents.orphanGroup': '无父节点',
   // 面板层级批（2026-10-31 ①）：组头折叠 caret 的无障碍/悬停文案（随折叠态翻转）。
   'subagents.collapseGroup': '收起子任务',
   'subagents.expandGroup': '展开子任务',
@@ -942,6 +945,10 @@ export default {
   // 跑的延续态徽标（琥珀词 + workflow 图标；tooltip 带链会话数）。
   'subagents.kindDispatcher': '分发器',
   'subagents.kindNode': '节点',
+  // 术语分层批（2026-11-05 作者令）：agentflow = 整个组织行为的代称（一次编排 =
+  // 一个 agentflow），只作**整体行**（delegate 组头 / 合成延续组头）的身份词；
+  // 该编排里的成员是节点（词走 subagents.kindNode 族）。zh/en 同词面。
+  'subagents.kindAgentflow': 'AgentFlow',
   'subagents.chainRunning': '链运行中',
   'subagents.chainRunningTip': '委托已交付，链仍在运行 · {n} 个会话',
   // 面板行说明批（2026-10-29 ②）：任务摘要次行无文案键（原文上屏）。

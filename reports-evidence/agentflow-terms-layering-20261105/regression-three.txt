@@ -1,0 +1,145 @@
+
+Running 13 tests using 1 worker
+
+[1/13] tests/bg-flow-chain-visibility.spec.mjs:169:1 › T1 溯源分组：作用域桶链行挂组头子行（分发器置顶 + 分发器/节点徽标 + 运行时长）＋计数含链行
+[2/13] tests/bg-flow-chain-visibility.spec.mjs:209:1 › T2 延续态（live 行终态在场）：delegate done 而链仍活 → 琥珀「链运行中」非灰化 + 子行在列
+[3/13] tests/bg-flow-chain-visibility.spec.mjs:232:1 › T3 延续态（live 行已离场）：主桶空 + 注册行镜像 → 快照恢复链行合成延续组头「链运行中」，徽标计数 > 0
+[4/13] tests/bg-flow-chain-visibility.spec.mjs:271:1 › T4 链全终态：合成组头消失、面板回空——延续徽标绝不滞留死链
+[5/13] tests/bg-flow-chain-visibility.spec.mjs:293:1 › T5 无主 Flow 行顶层直显：分发器/节点 kind 徽标 + 计数照计（C1 过滤退役）
+[6/13] tests/bg-panel-row-dedup.spec.mjs:212:1 › H1+H2 跨通路同 sessionId 收敛：作用域桶链行 + 快照行 ⇒ 同一会话只占一行
+tests/bg-panel-row-dedup.spec.mjs:212:1 › H1+H2 跨通路同 sessionId 收敛：作用域桶链行 + 快照行 ⇒ 同一会话只占一行
+[H1/H2 dump] [{"level":"head","bgKey":"delegate-dedup-a1b2c3d4","sid":"delegate-dedup-a1b2c3d4","state":"进行中","startedAt":"1793841915432"},{"level":"child","bgKey":"node-c329d28b","sid":"node-c329d28b","state":"进行中","startedAt":"1793829312688"}]
+
+[H1/H2] 同 sessionId 行数=1 data-bg-key=["node-c329d28b"]
+
+[7/13] tests/bg-panel-row-dedup.spec.mjs:264:1 › H3 计数同源：面板头 total == 实际渲染行数（五种通路组合）
+tests/bg-panel-row-dedup.spec.mjs:264:1 › H3 计数同源：面板头 total == 实际渲染行数（五种通路组合）
+[H3 combos] [{"name":"仅作用域桶","rows":3,"counts":{"header":"子智能体 · 3","badge":"3","section":"智能体 · 3","rowTotal":"3"}},{"name":"仅快照","rows":2,"counts":{"header":"子智能体 · 2","badge":"2","section":"智能体 · 2","rowTotal":"2"}},{"name":"两者同时","rows":2,"counts":{"header":"子智能体 · 2","badge":"2","section":"智能体 · 2","rowTotal":"2"}},{"name":"含链子行","rows":4,"counts":{"header":"子智能体 · 4","badge":"4","section":"智能体 · 4","rowTotal":"4"}},{"name":"含合成组头","rows":2,"counts":{"header":"子智能体 · 2","badge":"2","section":"智能体 · 2","rowTotal":"2"}}]
+
+[8/13] tests/bg-panel-row-dedup.spec.mjs:342:1 › H4 组头与子行可辨：data-bg-row-level 标识 + 缩进/强调条/字号实测差异
+tests/bg-panel-row-dedup.spec.mjs:342:1 › H4 组头与子行可辨：data-bg-row-level 标识 + 缩进/强调条/字号实测差异
+[H4 dump] [
+ {
+  "level": "head",
+  "padLeft": 12,
+  "borderLeftWidth": 0,
+  "boxShadow": "rgba(70, 99, 156, 0.35) 3px 0px 0px 0px inset",
+  "nameFontSize": "13px",
+  "nameFontWeight": "600"
+ },
+ {
+  "level": "child",
+  "padLeft": 16,
+  "borderLeftWidth": 2,
+  "boxShadow": "none",
+  "nameFontSize": "12px",
+  "nameFontWeight": "400"
+ }
+]
+
+[9/13] tests/bg-panel-row-dedup.spec.mjs:379:1 › H5 不误伤真实多节点：三个不同 sessionId 的链节点 ⇒ 三行
+tests/bg-panel-row-dedup.spec.mjs:379:1 › H5 不误伤真实多节点：三个不同 sessionId 的链节点 ⇒ 三行
+[H5] child rows=3 sids=["node-aaaa1111","node-bbbb2222","node-cccc3333"]
+
+[10/13] tests/bg-panel-row-dedup.spec.mjs:401:1 › H6 长空闲行：多条长空闲行连续两帧顺序一致（并列规则固定，不每帧变）
+tests/bg-panel-row-dedup.spec.mjs:401:1 › H6 长空闲行：多条长空闲行连续两帧顺序一致（并列规则固定，不每帧变）
+[H6 frame1] ["delegate-idle-aaaa","node-idle-bbbb","node-idle-cccc"] idle=["空闲 45 分钟，无在飞工作","空闲 45 分钟，无在飞工作","空闲 45 分钟，无在飞工作"]
+
+[H6 order] f1=["delegate-idle-aaaa","node-idle-bbbb","node-idle-cccc"] f2=["delegate-idle-aaaa","node-idle-bbbb","node-idle-cccc"] f3=["delegate-idle-aaaa","node-idle-bbbb","node-idle-cccc"]
+
+[11/13] tests/bg-panel-row-dedup.spec.mjs:443:1 › H7 可见性解耦：行集不因标签页隐藏被错误淘汰；淘汰判据只看数据
+tests/bg-panel-row-dedup.spec.mjs:443:1 › H7 可见性解耦：行集不因标签页隐藏被错误淘汰；淘汰判据只看数据
+[H7] before=2 hidden=2
+
+[H7] after=2 sids=["node-c329d28b","node-eb2a5aa3"]
+
+[H7] missMarked=2 staleEvictedLeft=0
+
+[H7] armBgUptimeTick 代码行含 visibilityState=false
+
+[12/13] tests/bg-panel-single-scroll.spec.mjs:358:3 › mobile 375 › M single scroll container: whole background page is one continuous scroll
+tests/bg-panel-single-scroll.spec.mjs:358:3 › mobile 375 › M single scroll container: whole background page is one continuous scroll
+[V1 before-scroll] scrollers=[
+ {
+  "sel": "#bg-dropdown",
+  "overflowY": "auto",
+  "overflowX": "hidden",
+  "maxHeight": "none",
+  "flex": "1 1 auto",
+  "scrollHeight": 1320,
+  "clientHeight": 686,
+  "surplus": 634
+ }
+]
+
+[V1] body={"overflowY":"auto","scrollHeight":750,"clientHeight":750,"scrollWidth":375,"clientWidth":375,"surplus":0} carrier={"overflowY":"auto","overflowX":"hidden","maxHeight":"none","flex":"1 1 auto","scrollHeight":1320,"clientHeight":686,"surplus":634,"scrollWidth":375,"clientWidth":375,"scrollTop":0,"top":64,"h":686,"overscroll":"contain","iOSMomentum":""}
+
+[V1] lists=[
+ {
+  "section": "bg-section-tasks",
+  "rows": 3,
+  "overflowY": "hidden",
+  "maxHeight": "none",
+  "flex": "0 0 auto",
+  "scrollHeight": 163,
+  "clientHeight": 163,
+  "surplus": 0,
+  "scrollHeightEqualsClient": true,
+  "h": 163
+ },
+ {
+  "section": "bg-section-agents",
+  "rows": 24,
+  "overflowY": "hidden",
+  "maxHeight": "none",
+  "flex": "0 0 auto",
+  "scrollHeight": 1056,
+  "clientHeight": 1056,
+  "surplus": 0,
+  "scrollHeightEqualsClient": true,
+  "h": 1056
+ }
+]
+
+[V2/V3] scroll={"n":1,"sel":"bg-dropdown","scrollTop":582} bottom={"dockTop":750,"minRowH":44,"rowCount":27,"carrierPadBottom":12,"vh":812,"lastRowText":"单滚批夹具：平铺第 1 条（AgentFlow 节点行）进行中节点8s","lastRowTop":687,"lastRowBottom":731,"lastRowVisible":true,"gapToDock":19,"groupTitles":["后台任务 · 3","智能体 · 24"],"sectionCount":2,"overlap":0,"overlapSample":"","carrierScrollTop":582,"carrierSurplus":582,"bodyScrollWidth":375,"bodyClientWidth":375,"carrierScrollWidth":375,"carrierClientWidth":375,"pageBodyBottom":750,"pageBodyH":750,"carrierBottom":750}
+
+[safe-area] pageBodyBottom=750 dockTop=750 gapToDock=19 carrierPadBottom=12px minRowH=44px (rows=27)
+
+[title] rest={"paneScroll":false,"rolled":false,"p":0,"titlePos":"sticky","titleTop":12,"titleH":52,"titleLayoutTop":12,"bodyScrollTop":0,"bodySurplus":0,"titleOpacity":1,"shellOpacity":0,"shellTop":12,"shellH":52,"scrollTop":0} mid={"paneScroll":true,"rolled":false,"p":0.458,"titlePos":"sticky","titleTop":14,"titleH":50,"titleLayoutTop":14,"bodyScrollTop":0,"bodySurplus":0,"titleOpacity":1,"shellOpacity":0.46,"shellTop":14,"shellH":50,"scrollTop":30} bottom={"paneScroll":true,"rolled":true,"p":1,"titlePos":"sticky","titleTop":16,"titleH":48,"titleLayoutTop":16,"bodyScrollTop":0,"bodySurplus":0,"titleOpacity":1,"shellOpacity":1,"shellTop":16,"shellH":48,"scrollTop":582}
+
+[13/13] tests/bg-panel-single-scroll.spec.mjs:456:3 › desktop 1280 › D single scroll container on wide viewport (no double scrollbar inside cards)
+tests/bg-panel-single-scroll.spec.mjs:456:3 › desktop 1280 › D single scroll container on wide viewport (no double scrollbar inside cards)
+[V6 desktop] {
+ "scrollers": [
+  {
+   "sel": "#bg-dropdown",
+   "scrollHeight": 902,
+   "clientHeight": 478,
+   "surplus": 424,
+   "maxHeight": "480px"
+  }
+ ],
+ "count": 1,
+ "panelMaxHeight": "480px",
+ "panelOverflowY": "auto",
+ "panelSurplus": 424,
+ "lists": [
+  {
+   "section": "bg-section bg-section-tasks",
+   "scrollHeight": 0,
+   "clientHeight": 0,
+   "maxHeight": "none"
+  },
+  {
+   "section": "bg-section bg-section-agents",
+   "scrollHeight": 873,
+   "clientHeight": 873,
+   "maxHeight": "none"
+  }
+ ],
+ "vw": 1280
+}
+
+[V6 desktop tail] {"lastBottom":529,"panelBottom":530,"panelTop":50,"lastTop":493}
+
+  13 passed (35.1s)
