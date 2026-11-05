@@ -1595,6 +1595,9 @@ export default {
   'chat.retry': '重试',
   // A 支 · 滚动跟随收敛：新增消息胶囊（计数 = 自离开底部以来新增的消息行数）
   'chat.newMessages': '↓ {n} 条新消息',
+  // 回到底部胶囊（四会话统一批 2026-11-05，js/scrollBackPill.js）：无未读、只是
+  // 往上翻得够远（距底 ≥ SHOW_AFTER_PX）时的文案 —— 与上面计数档同一枚胶囊。
+  'chat.backToBottom': '回到底部',
   // 搜索跳转回位胶囊（作者令 2026-11-01，searchReturnPill.js）：锚在 ⇒ 回跳转前
   // 位置；锚失 ⇒ 诚实降级回最新。
   'chat.backToPrevPosition': '回到跳转前位置',
