@@ -1,0 +1,150 @@
+### [T0] 2026-11-04 22:51:09 pre-archive readings
+$ ls -d /Users/kaiyu/.stand/teams/*/ | wc -l
+       9
+$ find /Users/kaiyu/.stand/teams -type f | wc -l
+     103
+$ du -sk /Users/kaiyu/.stand/teams
+512	/Users/kaiyu/.stand/teams
+$ ls /Users/kaiyu/.stand/sessions/*/flows.json | wc -l
+      24
+$ ls /Users/kaiyu/.stand/sessions/*/flow-tree.json | wc -l
+       0
+
+### [T1] unfreeze archive root (chmod -R u+w) — RESTORE.md §4.1 precondition
+$ chmod -R u+w /Users/kaiyu/.stand/archive/team-feature-deletion-20261104
+drwxr-xr-x@ 4 kaiyu  staff  128 11月  4 22:31 /Users/kaiyu/.stand/archive/team-feature-deletion-20261104
+
+### [T2] pre-move manifest of SOURCE (2026-11-04 22:51:39)
+$ python3 /tmp/tfd-stage4/mkmanifest.py /Users/kaiyu/.stand/teams > /tmp/tfd-stage4/pre-teams.tsv
+$ wc -l < /tmp/tfd-stage4/pre-teams.tsv
+     103
+$ awk -F"\t" "{s+=\$2} END {print s}" /tmp/tfd-stage4/pre-teams.tsv
+235687
+
+### [T3] cp -a source -> archive
+$ mkdir -p /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/teams
+$ cp -a /Users/kaiyu/.stand/teams/. /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/teams/
+$ find /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/teams -type f | wc -l
+     103
+
+### [T4] per-file sha256 DOUBLE RUN (run1=source, run2=archive), then diff
+$ (cd /Users/kaiyu/.stand/teams && find . -type f -print0 | xargs -0 shasum -a 256) | sort -k2 > /tmp/tfd-stage4/src.sha256
+$ (cd /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/teams && find . -type f -print0 | xargs -0 shasum -a 256) | sort -k2 > /tmp/tfd-stage4/arc.sha256
+$ wc -l /tmp/tfd-stage4/src.sha256 /tmp/tfd-stage4/arc.sha256
+     103 /tmp/tfd-stage4/src.sha256
+     103 /tmp/tfd-stage4/arc.sha256
+     206 total
+$ diff /tmp/tfd-stage4/src.sha256 /tmp/tfd-stage4/arc.sha256 && echo IDENTICAL
+DIFF_RESULT=IDENTICAL (0 differing lines)
+
+### [T5] independent manifest recompute on archive, diff vs pre-move manifest (bytes+sha+mtime)
+$ python3 /tmp/tfd-stage4/mkmanifest.py /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/teams > /tmp/tfd-stage4/post-copy-teams.tsv
+MANIFEST_DIFF=IDENTICAL (103/103 rows incl. mtime)
+
+### [T6] MOVE source away (mv, NOT rm) — same device 16777232 => atomic rename, no data movement
+$ stat -f "%d %N" /Users/kaiyu/.stand/teams /Users/kaiyu/.stand/archive/team-feature-deletion-20261104 ~/.Trash
+16777232 /Users/kaiyu/.stand/teams
+16777232 /Users/kaiyu/.stand/archive/team-feature-deletion-20261104
+16777232 /Users/kaiyu/.Trash
+$ mv /Users/kaiyu/.stand/teams ~/.Trash/team-feature-deletion-20261104__teams-originals
+   mv exit=0
+$ mkdir -p /Users/kaiyu/.stand/teams   # leave an EMPTY container (EntityLoader.listTeams guards !exists)
+$ ls -la /Users/kaiyu/.stand/teams
+total 0
+drwxr-xr-x@   2 kaiyu  staff    64 11月  4 22:52 .
+drwx------@ 161 kaiyu  staff  5152 11月  4 22:52 ..
+
+### [T7] POST-MOVE verification (2026-11-04 22:52:22)
+$ ls -d /Users/kaiyu/.stand/teams/*/ | wc -l
+       0
+$ find /Users/kaiyu/.stand/teams -type f | wc -l
+       0
+$ find /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/teams -type f | wc -l
+     103
+$ find /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/teams -type f -exec stat -f "%z" {} \; | awk "{s+=\$1} END {print s}"
+235687
+$ (cd /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/teams && find . -type f -print0 | xargs -0 shasum -a 256) | sort -k2 > /tmp/tfd-stage4/arc-post.sha256
+$ diff /tmp/tfd-stage4/src.sha256 /tmp/tfd-stage4/arc-post.sha256  # src.sha256 captured BEFORE the move
+POST_MOVE_DIFF=IDENTICAL (103/103)
+$ python3 /tmp/tfd-stage4/mkmanifest.py /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/teams > /tmp/tfd-stage4/post-move-teams.tsv
+POST_MOVE_MANIFEST=IDENTICAL (103/103, bytes+sha256+mtime)
+
+### [T8] MANIFEST.tsv (whole archive root; relative path / bytes / sha256 / mtime)
+$ python3 - $ARCH (see /tmp/tfd-stage4/mkmanifest.py) > /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/MANIFEST.tsv
+$ wc -l < /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/MANIFEST.tsv
+     113
+$ awk -F"\t" "NR>1 {n++; s+=\$2} END {print n\" files, \"s\" bytes\"}" /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/MANIFEST.tsv
+112 files, 253997 bytes
+$ awk -F"\t" "NR>1 {split(\$1,a,\"/\"); print a[1]}" /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/MANIFEST.tsv | sort | uniq -c
+   7 agents
+   1 RESTORE.md
+   1 sessions
+ 103 teams
+
+### [T9] regenerate MANIFEST.tsv AFTER RESTORE.md was finalized
+$ wc -l < MANIFEST.tsv
+     113
+$ data rows / bytes / per-slot
+112 files, 261365 bytes
+agents 7 files 13023 bytes
+RESTORE.md 1 files 11793 bytes
+sessions 1 files 862 bytes
+teams 103 files 235687 bytes
+
+### [T10] FREEZE: chmod -R a-w
+$ chmod -R a-w /Users/kaiyu/.stand/archive/team-feature-deletion-20261104
+$ ls -ld /Users/kaiyu/.stand/archive/team-feature-deletion-20261104 /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/teams /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/agents /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/sessions
+dr-xr-xr-x@  7 kaiyu  staff  224 11月  4 22:54 /Users/kaiyu/.stand/archive/team-feature-deletion-20261104
+dr-xr-xr-x@  4 kaiyu  staff  128 11月  4 22:54 /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/agents
+dr-xr-xr-x@  3 kaiyu  staff   96 11月  4 22:31 /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/sessions
+dr-xr-xr-x@ 12 kaiyu  staff  384  8月 31 20:00 /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/teams
+$ ls -l /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/MANIFEST.tsv /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/RESTORE.md /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/agents/JUDGE-INDEX.md
+-r--r--r--@ 1 kaiyu  staff   6981 11月  4 22:54 /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/agents/JUDGE-INDEX.md
+-r--r--r--@ 1 kaiyu  staff  15088 11月  4 22:55 /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/MANIFEST.tsv
+-r--r--r--@ 1 kaiyu  staff  11793 11月  4 22:55 /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/RESTORE.md
+$ find /Users/kaiyu/.stand/archive/team-feature-deletion-20261104 -type f -perm +222 | wc -l   # files still writable (expect 0)
+       0
+
+### [T11] post-freeze recount
+$ find /Users/kaiyu/.stand/archive/team-feature-deletion-20261104 -type f | wc -l
+     113
+$ find /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/teams -type f | wc -l
+     103
+$ ls -d /Users/kaiyu/.stand/teams/*/ | wc -l
+       0
+$ ls /Users/kaiyu/.stand/sessions/*/flows.json | wc -l
+      24
+
+### [T12] MANIFEST self-consistency (recompute archive tree, diff vs MANIFEST.tsv) — proves the RESTORE check can be trusted
+$ python3 /tmp/tfd-stage4/mkmanifest.py /Users/kaiyu/.stand/archive/team-feature-deletion-20261104 | grep -v "^MANIFEST.tsv	" | diff <(tail -n +2 /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/MANIFEST.tsv) -
+MANIFEST_SELF_CONSISTENT=YES (112/112 rows)
+
+### [T13] RESTORE dry-run proof: the manifest-derived expected sha256 list for teams/ vs the archived tree itself
+$ awk ... MANIFEST.tsv > /tmp/exp.sha ; (cd /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/teams && shasum) | diff
+RESTORE_CHECK_DRYRUN_OK (103/103)
+### [T14] THIRD-PARTY CROSS-CHECK vs reports-evidence/team-feature-deletion/boundary/teams-manifest.json
+###       (that snapshot was written by the BOUNDARY node at 22:28, i.e. BEFORE this step copied anything)
+$ python3 - <<PY  (compare path->sha256+size)
+boundary_manifest entries: 103
+my_manifest teams/ entries: 103
+only in boundary manifest: []
+only in my manifest: []
+sha/size mismatches: 0
+VERDICT: IDENTICAL on 103 common files
+
+### [T15] 2026-11-04 23:02:27 订正 RESTORE.md §8/§10 两处自指读数（113 而非 112；总字节改为 manifest 派生，不再写死）
+###      起因：RESTORE.md 把自己也计入归档树，追加阶段 4 内容后它自身的字节使旧 literal 失效
+$ chmod -R u+w /Users/kaiyu/.stand/archive/team-feature-deletion-20261104   # 解冻 -> 改 RESTORE.md -> 重出 MANIFEST -> 重新冻结
+$ find /Users/kaiyu/.stand/archive/team-feature-deletion-20261104 -type f | wc -l
+     113
+$ wc -l < /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/MANIFEST.tsv
+     113
+$ awk -F"\t" "NR>1 {s+=\$2} END {print s}" /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/MANIFEST.tsv
+261465
+$ find /Users/kaiyu/.stand/archive/team-feature-deletion-20261104 -type f -perm +222 | wc -l   # 仍冻结 (expect 0)
+       0
+$ python3 mkmanifest.py /Users/kaiyu/.stand/archive/team-feature-deletion-20261104 | grep -v "^MANIFEST.tsv" | diff <(tail -n +2 MANIFEST.tsv) -
+MANIFEST_SELF_CONSISTENT=YES
+$ find /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/teams -type f | wc -l ; 字节求和
+     103
+235687

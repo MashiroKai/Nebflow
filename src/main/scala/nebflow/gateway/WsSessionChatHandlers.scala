@@ -12,7 +12,6 @@ import nebflow.actor.{ActorSystem as RootActorSystem, *}
 import nebflow.agent.*
 import nebflow.core.*
 import nebflow.core.entity.EntityLoader
-import nebflow.core.flow.{FlowTreeActor, FlowTreeRegistry, TeamSessionRegistry}
 import nebflow.core.mcp.McpManager
 import nebflow.core.project.{CancelSource as ChainCancelSource, *}
 import nebflow.core.schedule.FreezeSchedule.given
@@ -1143,7 +1142,7 @@ private[gateway] object WsSessionChatHandlers:
           sessionTextBuffers.update(_ - sessionId) *>
             sessionThinkingBuffers.update(_ - sessionId) *>
             sessionTurnStarts.update(_ - sessionId) *>
-            stopTeamSessionActors(sessionId) *> stopChildDelegateActors(sessionId) *> removeRootAgent(
+            stopChildDelegateActors(sessionId) *> removeRootAgent(
               sessionId
             ) *> sessionService
               .deleteSession(sessionId)
@@ -1176,7 +1175,6 @@ private[gateway] object WsSessionChatHandlers:
               sessionTextBuffers.update(_ - sid) *>
                 sessionThinkingBuffers.update(_ - sid) *>
                 sessionTurnStarts.update(_ - sid) *>
-                stopTeamSessionActors(sid) *>
                 stopChildDelegateActors(sid) *>
                 removeRootAgent(sid) *>
                 sessionService.deleteSession(sid)
