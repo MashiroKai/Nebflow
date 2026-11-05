@@ -25,12 +25,13 @@ description: 全场景公共规范（铁律/嵌入路径/暗色/渲染器兼容/
 > 一件产物两用时的正解：出图落白名单 → 同批把图拷进 vault（`attachments/` 或
 > `assets/`）→ 文档里引用 vault 内副本。两节不合并、不改写。
 
-- 一律使用 `~/...` 形式的绝对路径（`~` = `C:\Users\Kai`）嵌入：`![信号对比](~/.nebflow/plots/20261004_chart.svg)`。禁止相对路径、裸文件名、`file://`。
-- 可服务面白名单（出图落这些位置，前端才能加载）：
-  - `~/.nebflow/plots/**`（默认出图位）
-  - `<ws>/.nebflow/evidence*/**`
-  - `~/.nebflow/{projects,uploads,workspace-items}/**`
-  - `~/.nebflow/docs/**` 只放人读件文档本体，作为图片源会被拒。
+- 一律使用 `~/...` 形式的绝对路径（`~` = `C:\Users\Kai`）嵌入：`![信号对比](~/.stand/plots/20261004_chart.svg)`。禁止相对路径、裸文件名、`file://`。
+- **出图落位 = 数据根下 `plots/`**：命名空间固定是 `plots`，**根随实例走**——默认数据根 = `~/.stand`（2026-10-20 数据根迁移后的口径，运行时解析点 `PathUtil.dataRoot`，见 `src/main/scala/nebflow/shared/paths.scala`）；隔离实例（`--home` / `STAND_HOME`）换根时前缀随之替换。`~/.nebflow/plots/` 是迁移前的旧根，只在老机器未迁移时才是数据根。
+- 可服务面白名单（出图落这些位置，前端才能加载）——与引擎侧 `FileRefs.DataRootServedNamespaces`（`src/main/scala/nebflow/core/tools/FileRefs.scala:135`）和 `NfFilePolicy.NfDataRootAllowlist`（`src/main/scala/nebflow/gateway/NfFilePolicy.scala:152`）是同一张清单，三处不许各写一份：
+  - `~/.stand/plots/**`（默认出图位）
+  - `<ws>/.nebflow/evidence*/**`（工程工作区的 `.nebflow` 目录名是历史事实，不随数据根改名）
+  - `~/.stand/{projects,uploads,workspace-items,voice-models}/**`
+  - `~/.stand/docs/**` 只放人读件文档本体（图不入这里，图归 `plots/` 或证据树）。
 - 路径含空格或中文时整体用 `<...>` 包裹：`![图](~/<带 空格 目录>/a.svg)`。
 - 大图集（>20 张）：正文只嵌决策相关子集（对照拼图 `cmp-*`、逐项配对 `adj-*`），全量清单进附录 MANIFEST/index。
 
@@ -101,4 +102,4 @@ body { background: var(--color-bg); color: var(--color-text); }
 - dot：`C:\Users\Kai\.nebflow\tools\graphviz\bin\dot.exe`（16.1.0，**不在 PATH**，必须全路径调用）
 - matplotlib 全局配置：`C:\Users\Kai\.nebflow\tools\mplconfig\matplotlibrc`（YaHei 已配，中文默认可读）
 - MSYS 传 Windows 路径参数：命令前加 `MSYS2_ARG_CONV_EXCL='*'`
-- 出图默认落 `~/.nebflow/plots/`
+- 出图默认落 `~/.stand/plots/`（= 数据根下 `plots/`；隔离实例换根时前缀随之替换，口径见 §2）

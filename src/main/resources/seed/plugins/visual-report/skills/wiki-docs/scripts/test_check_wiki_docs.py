@@ -355,6 +355,34 @@ class TypographyAndAbbrev(Fixture):
         self.assertEqual(1, len(hits), hits)
         self.assertIn("代码块", hits[0]["detail"])
 
+    # ── R8 盲区回归（收尾批 2026-11-05：段首两空格起行）──────────────────
+    def test_two_space_indented_paragraph_start_is_flagged(self):
+        """正例：上一行是空行 ⇒ 本行是段首，两空格起行 = 缩进不足，必须报。
+
+        修复前 `paragraph_starts()` 不看 `prev_blank`，把这类行当成「缩进续行」
+        直接吞掉（实测零报错 = 假通过），而两个半角空格在渲染器里被 HTML 折叠，
+        视觉上就是顶格——正是 R8 要报的形态。"""
+        body = ("  这一行以两个半角空格起行并且写得足够长，用来钉死段首缩进不足必须被报出来，"
+                "两个半角空格会被渲染器折叠吃掉，看起来与顶格没有区别。\n\n"
+                "See also [[index]].")
+        hits = rule_violations(self.run_case(body), "doc-indent")
+        self.assertEqual(1, len(hits), hits)
+        self.assertIn("未缩进", hits[0]["detail"])
+
+    def test_indented_continuation_and_structural_lines_are_not_flagged(self):
+        """反例（同一条判定的另一面）：续行与结构行带缩进不许被误报。
+
+        `prev_blank` 条件只该把「空行之后的段首」收进判定面——空行前的续行
+        （上一行非空）与缩进的列表/引用行豁免面必须原样保住，否则修一个盲区
+        会造出一批假报。四空格代码块陷阱由上面 `test_four_space_indent_…` 钉死。"""
+        body = ("&emsp;&emsp;这一段用实体缩进起行并且写得足够长，用来确认续行判定面真的被走到，"
+                "后文续行不以实体起行。\n"
+                "  这一行是上一段的续行（两空格起行、上一行非空），属于续行不是段首，不许误报。\n\n"
+                "  - 缩进的结构行（列表条目）不套段首缩进规则\n"
+                "  > 缩进的引用行同样豁免\n\n"
+                "See also [[index]].")
+        self.assertEqual([], rule_violations(self.run_case(body), "doc-indent"))
+
     def test_short_lines_and_structural_lines_are_exempt(self):
         body = ("## 小节标题\n\n- 列表条目不需要缩进\n| 列 | 列 |\n|---|---|\n| 值 | 值 |\n\n"
                 "> 引用块自带缩排\n\n短句。\n\nSee also [[index#fixture index]].")

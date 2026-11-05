@@ -13,6 +13,83 @@
 // 判定 → 控制台呈现」的映射，并在**旧后端缺字段**时按 reason 线值回落同一张表
 // （回落表是同一张表的退化副本：改表先改后端，再回改这里与 locales）。
 
+/**
+ * 冻结状态的**权威块**（后端 `FreezeTruth` 派生，帧 `freeze` 键 / 快照行 `freeze` 键
+ * 同契约）。冻结状态两套真相批（2026-11-05）之后，面板可操作性只读这里：
+ * `wakeable` = 「该不该给唤醒按钮」的**唯一**判据，与后端唤醒闸读同一份读数。
+ * @param {any} info
+ * @returns {null | {frozen:boolean, kind:string, needsHuman:boolean,
+ *   autoRecoverable:boolean, wakeable:boolean, reasonWire:string,
+ *   since:number|null, status:string, source:string, asOf:number}}
+ */
+export function freezeBlockOf(info) {
+  const i = info || {};
+  const b = i.freeze;
+  if (!b || typeof b !== 'object') return null;
+  return {
+    frozen: b.frozen === true,
+    kind: String(b.kind || ''),
+    needsHuman: b.needsHuman === true,
+    autoRecoverable: b.autoRecoverable === true,
+    wakeable: b.wakeable === true,
+    reasonWire: String(b.reasonWire || ''),
+    since: typeof b.since === 'number' ? b.since : null,
+    status: String(b.status || ''),
+    source: String(b.source || ''),
+    asOf: typeof b.asOf === 'number' ? b.asOf : 0,
+  };
+}
+
+/**
+ * 权威块的**定序合并**（取代旧的「快照缺席就保留本地值」单调合并）。
+ *
+ * 旧合并的代价（本轮报障）：冻结标记只增不减——一次 Mail 唤醒清掉了后端冻结槽，
+ * 但客户端没有收到任何帧，后续快照「不表态」也照旧保留 `frozen: true`，于是面板
+ * 永远显示「需唤醒」，而唤醒闸那边早已不是冻结态。现在冻结面改由**带时间戳的块**
+ * 驱动：`asOf` 更新的块胜出，**包括「不冻结」的块**（唤醒/自动恢复必须能降级）。
+ * @param {any} info 行对象（就地写）
+ * @param {any} block 权威块（后端 freeze 键；null/坏数据 = 不动）
+ * @returns {boolean} 是否应用了
+ */
+export function mergeFreeze(info, block) {
+  const b = freezeBlockOf({ freeze: block });
+  if (!b || !b.asOf) return false;
+  const prev = freezeBlockOf(info);
+  if (prev && prev.asOf > b.asOf) return false;
+  const i = info || {};
+  i.freeze = block;
+  // 旧扁平字段同步成同一份读数（渲染面与旧代码都读它们——单点派生，不许自相矛盾）。
+  i.frozen = b.frozen;
+  i.freezeKind = b.kind;
+  i.needsHuman = b.needsHuman;
+  i.autoRecoverable = b.autoRecoverable;
+  i.freezeReasonWire = b.reasonWire;
+  i.frozenSince = b.since;
+  i.frozenReason = b.reasonWire;
+  i.frozenStatus = b.status;
+  i.freezeAsOf = b.asOf;
+  if (!b.frozen) {
+    i.frozenDetail = '';
+    i.dormantHours = 0;
+    i.wakeAddress = '';
+    i.delegateFrozen = false;
+  } else {
+    i.delegateFrozen = b.reasonWire.indexOf('delegate-frozen') === 0;
+  }
+  return true;
+}
+
+/**
+ * 该行是否显示「唤醒/恢复」按钮：权威块在场 ⇒ 只认 `wakeable`；
+ * 旧后端（无块）⇒ 退回分类表（同一张表的退化副本）。
+ * @param {any} info
+ */
+export function wakeableOf(info) {
+  const b = freezeBlockOf(info);
+  if (b) return b.frozen && b.wakeable;
+  return showsRecoveryAction(freezeKindOf(info));
+}
+
 /** 冻结呈现分类（与后端 FreezeKind.wire 逐字同值）。 */
 export const FREEZE_KIND = {
   /** 系统等待（时间表工作时段）：到点自己恢复。 */
@@ -38,6 +115,8 @@ const MANUAL_REASONS = ['loop'];
  */
 export function freezeReasonWire(info) {
   const i = info || {};
+  const b = freezeBlockOf(i);
+  if (b && b.asOf) return b.reasonWire;
   const raw = i.freezeReasonWire || i.frozenReason || i.freezeReason || '';
   return String(raw || '').trim();
 }
@@ -55,6 +134,9 @@ export function isFrozenStatus(status) {
  */
 export function isFrozenFamily(info) {
   const i = info || {};
+  // 权威块在场 ⇒ 它说了算（含「不冻结」的块：唤醒/自动恢复后必须能降级）。
+  const b = freezeBlockOf(i);
+  if (b && b.asOf) return b.frozen;
   return !!i.frozen || isFrozenStatus(i.status);
 }
 
@@ -67,6 +149,17 @@ export function isFrozenFamily(info) {
  */
 export function freezeKindOf(info) {
   const i = info || {};
+  // 权威块在场 ⇒ 只认后端分类（面板与唤醒闸同一真相；不再从线值二次猜测）。
+  const b = freezeBlockOf(i);
+  if (b && b.asOf) {
+    if (!b.frozen) return '';
+    if (b.kind === FREEZE_KIND.window || b.kind === FREEZE_KIND.auto || b.kind === FREEZE_KIND.manual) {
+      return b.kind;
+    }
+    if (b.wakeable) return FREEZE_KIND.manual;
+    if (b.needsHuman) return FREEZE_KIND.manual;
+    return FREEZE_KIND.manual;
+  }
   const explicit = String(i.freezeKind || '');
   if (explicit === FREEZE_KIND.window || explicit === FREEZE_KIND.auto || explicit === FREEZE_KIND.manual) {
     return explicit;
