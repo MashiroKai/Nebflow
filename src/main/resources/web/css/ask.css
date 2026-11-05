@@ -127,8 +127,7 @@ nf-ask-dock { display: contents; }
   cursor: pointer; padding: 0;
   display: flex; align-items: center; justify-content: center;
   transition: background var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease),
-              transform var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease),
-              box-shadow var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease);
+              transform var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease);
 }
 .ask-fab svg { width: var(--cv-icon, 18px); height: var(--cv-icon, 18px); pointer-events: none; }
 .ask-fab .ask-fab-ic-close { display: none; }
@@ -378,7 +377,6 @@ body.mobile-layer .ask-dock .ds-resize-handle {
   background: var(--cv-bg, var(--glass-bg));
   -webkit-backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
   backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
-  box-shadow: var(--cv-shadow);
   color: var(--color-text);
   transition: background var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease),
               transform var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease),
@@ -389,10 +387,13 @@ body.mobile-layer .ask-dock .ds-resize-handle {
    手机档收成 44 边长 / 20 图标（mobileLayer.css `body.mobile-layer .ask-dock
    .ds-turn-btn` 换供源），桌面腿组件槽 = 18 ⇒ 与旧写法逐值同（18），零漂移。 */
 .ask-dock .ds-turn-btn svg { width: var(--ds-turn-btn-icon, var(--cv-icon, 18px)); height: var(--ds-turn-btn-icon, var(--cv-icon, 18px)); stroke-width: 2; }
-.ask-dock .ds-turn-btn:hover {
-  background: var(--cv-hover-bg, var(--glass-control-bg-hover));
-  transform: scale(var(--cv-hover-scale, 1.05));
+@media (hover: hover) {
+  .ask-dock .ds-turn-btn:hover {
+    background: var(--cv-hover-bg, var(--glass-control-bg-hover));
+    transform: scale(var(--cv-hover-scale, 1.05));
+  }
 }
+
 .ask-dock .ds-turn-btn:active { transform: scale(var(--cv-active-scale, 0.96)); }
 /* 语义色不随材质回退：发送仍读「绿」、终止仍读「红」——只是从**实底**改成
    玻璃上的**墨色**（作者令 12:52 ② 规定材质跟顶部两钮；此前 10:11 规定发送=

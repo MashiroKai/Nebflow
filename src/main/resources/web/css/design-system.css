@@ -503,47 +503,87 @@
   --ds-fade-sat: var(--g2-fade-sat);       /* backdrop 饱和倍率 */
   --ds-fade-height: var(--g2-fade-height); /* 聊天根带高（88）；面板档另由消费面声明 */
 }
-
-/* ══ 组件类层（`.ds-*`）══════════════════════════════════════════════
-   五组件 = 按钮 / 行 / 徽标 / 输入 / 卡（SKILL.md §7 固定尺寸档）。
-   所有值走 `--ds-*`；本层不覆盖任何既有类，只在 `.ds-*` 命名空间内生效
-   ⇒ 引入即用，零回归面。文档页样张 = docs/design-language/
-   design-system-token-batch/kit.html（本批 kit 段）。 */
-
-/* ① 按钮：主 = 墨族实心（2026-10-30 作者令「按钮不要绿色」），次级 = 玻璃，
-   危险 = ghost + hover 红。三档，禁第二实色族。 */
-.ds-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--ds-space-2);
-  min-height: var(--ds-hit-control);
-  padding: 0 var(--ds-space-3);
-  font-family: var(--ds-font-ui);
-  font-size: var(--ds-fs-btn);
-  font-weight: var(--ds-fw-btn);
-  line-height: var(--ds-lh-tight);
-  color: var(--ds-text);
-  background: var(--ds-control-bg);
-  border: 1px solid var(--ds-control-border);
-  border-radius: var(--ds-radius-input);
-  box-shadow: var(--ds-shadow-control);
-  cursor: pointer;
-  transition: background var(--ds-dur-hover) var(--ds-ease-std),
-              border-color var(--ds-dur-hover) var(--ds-ease-std),
-              color var(--ds-dur-hover) var(--ds-ease-std);
+@media (hover: hover) {
+  
+  /* ══ 组件类层（`.ds-*`）══════════════════════════════════════════════
+     五组件 = 按钮 / 行 / 徽标 / 输入 / 卡（SKILL.md §7 固定尺寸档）。
+     所有值走 `--ds-*`；本层不覆盖任何既有类，只在 `.ds-*` 命名空间内生效
+     ⇒ 引入即用，零回归面。文档页样张 = docs/design-language/
+     design-system-token-batch/kit.html（本批 kit 段）。 */
+  
+  /* ① 按钮：主 = 墨族实心（2026-10-30 作者令「按钮不要绿色」），次级 = 玻璃，
+     危险 = ghost + hover 红。三档，禁第二实色族。
+  
+     ── 扁平六态基类（flat-button-everywhere 批 2026-11-05；作者令「我们的按钮
+        扁平化风格要求要落实到各处 不管是hover还是点击 或者按下」）──
+     本块是「按钮六态怎么写」的**参考实现与唯一范例**：其它按钮族只需要自己的
+     配色/几何，六态行为统一引用 `--btn-*` 扁平槽（sapphire.css 按钮 token 块）
+     与 css/flatButtons.css 共享态层，不许再抄一份 hover/active/focus。
+       默认    = 底色 --ds-control-bg + 1px 描边，**零阴影**（原 --ds-shadow-control
+                 退役：扁平不靠影造厚度，可点击感由描边+底色表达）
+       hover   = 底色升一档（关在 (hover:hover) 里，触屏不粘滞）
+       按下    = 再深一档 + scale(var(--btn-press-scale))（2%，不配影、不位移）
+       键盘    = 2px outline 描边环 + 2px offset（环不占盒、不改几何）
+       禁用    = opacity 50% + not-allowed（不额外灰字：禁用 ≠ 不可读）
+       主题    = 全部 var(--btn-*/--ds-*) 双主题令牌，零裸色值、零暗自适应分叉
+     状态过渡只列扁平允许项——transition 里连 box-shadow 都不出现，属性不存在
+     就不会有人再顺手加回来。 */
+  .ds-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--ds-space-2);
+    min-height: var(--ds-hit-control);
+    padding: 0 var(--ds-space-3);
+    font-family: var(--ds-font-ui);
+    font-size: var(--ds-fs-btn);
+    font-weight: var(--ds-fw-btn);
+    line-height: var(--ds-lh-tight);
+    color: var(--ds-text);
+    background: var(--ds-control-bg);
+    border: 1px solid var(--ds-control-border);
+    border-radius: var(--ds-radius-input);
+    cursor: pointer;
+    transition: background var(--btn-dur-state) var(--ds-ease-std),
+                border-color var(--btn-dur-state) var(--ds-ease-std),
+                color var(--btn-dur-state) var(--ds-ease-std),
+                opacity var(--btn-dur-state) var(--ds-ease-std),
+                transform var(--btn-dur-press) var(--ds-ease-std);
+  }
 }
-.ds-btn:hover { background: var(--ds-control-bg-hover); }
+
 .ds-btn--primary {
   color: var(--btn-primary-ink);
   background: var(--btn-primary-bg);
   border-color: var(--btn-primary-bg-hover);
-  box-shadow: none;
 }
-.ds-btn--primary:hover { background: var(--btn-primary-bg-hover); }
-.ds-btn--danger { color: var(--ds-danger-icon); background: transparent; border-color: transparent; box-shadow: none; }
-.ds-btn--danger:hover { background: var(--ds-etched-bg); }
-.ds-btn:focus-visible { outline: 2px solid var(--ds-focus-ring); outline-offset: 2px; }
+.ds-btn--danger { color: var(--ds-danger-icon); background: transparent; border-color: transparent; }
+/* hover 两态：底色升一档（触屏无 hover ⇒ 包在媒体查询里，按下态照样可见） */
+@media (hover: hover) {
+  .ds-btn:hover { background: var(--ds-control-bg-hover); }
+  .ds-btn--primary:hover { background: var(--btn-primary-bg-hover); border-color: var(--btn-primary-bg-hover); }
+  .ds-btn--danger:hover { background: var(--ds-etched-bg); }
+}
+/* 按下：底色再深一档 + 极轻微缩放（主操作用墨族 active 档，次级用色阶跳档） */
+.ds-btn:active { transform: scale(var(--btn-press-scale)); }
+.ds-btn--primary:active { background: var(--btn-primary-bg-active); border-color: var(--btn-primary-bg-active); }
+.ds-btn--danger:active { color: var(--btn-danger-ink); border-color: var(--btn-danger-stroke); }
+/* 键盘焦点：描边环（不用 box-shadow —— 环是「线」不是「影」） */
+.ds-btn:focus-visible {
+  outline: var(--btn-ring-w) solid var(--btn-ring);
+  outline-offset: var(--btn-ring-offset);
+}
+/* 禁用：只降不透明 + not-allowed */
+.ds-btn:disabled,
+.ds-btn[aria-disabled="true"] {
+  opacity: var(--btn-disabled-opacity);
+  cursor: not-allowed;
+}
+.ds-btn:disabled:active { transform: none; }
+/* 减少动效偏好：缩放换透明度（反馈不撤销，只换通道） */
+@media (prefers-reduced-motion: reduce) {
+  .ds-btn:active { transform: none; opacity: var(--btn-press-fade); }
+}
 
 /* ①b 转回合按钮（send / stop）：**主会话与 Canvas Ask 面板同一组件**
    ── ui-unification-20261103-canvas-ask-resize（作者令「同一组件/同一 design-system
@@ -595,10 +635,13 @@
   color: var(--ds-turn-send-ink);
   border-color: var(--ds-turn-send-border);
 }
-.ds-turn-btn--send:hover {
-  background-color: var(--ds-turn-send-bg-hover);
-  border-color: var(--ds-turn-send-bg-hover);
+@media (hover: hover) {
+  .ds-turn-btn--send:hover {
+    background-color: var(--ds-turn-send-bg-hover);
+    border-color: var(--ds-turn-send-bg-hover);
+  }
 }
+
 .ds-turn-btn--send:active {
   background-color: var(--ds-turn-send-bg-active);
   border-color: var(--ds-turn-send-bg-active);
@@ -613,7 +656,10 @@
   border-color: transparent;
   display: none;
 }
-.ds-turn-btn--stop:hover { background: var(--ds-turn-stop-bg-hover); }
+@media (hover: hover) {
+  .ds-turn-btn--stop:hover { background: var(--ds-turn-stop-bg-hover); }
+}
+
 /* 禁用 / 掉线两档**不在此层**：它们是主会话输入条的状态语义（空正文闸 / 未连接），
    消费面 `#send-btn:disabled` / `#send-btn.disconnected`（input.css，ID 特异性）
    继续独占——Canvas Ask 面板的发送钮不存在这两态，把它抬到组件层等于给面板凭空
@@ -1155,12 +1201,15 @@
               color var(--ds-dur-hover) var(--ds-ease-std),
               opacity var(--ds-dur-hover) var(--ds-ease-std);
 }
-.ds-side-icon-btn:hover {
-  background: var(--ds-row-hover);
-  border-color: var(--ds-text-muted);
-  color: var(--ds-text-bright);
-  opacity: 1;
+@media (hover: hover) {
+  .ds-side-icon-btn:hover {
+    background: var(--ds-row-hover);
+    border-color: var(--ds-text-muted);
+    color: var(--ds-text-bright);
+    opacity: 1;
+  }
 }
+
 
 /* 行内危险钮（删除会话 / 删除文件夹）：静息不可见，行 hover 现身，hover 转危险色 */
 .ds-side-danger {
@@ -1226,7 +1275,10 @@
   user-select: none;
   transition: background var(--ds-dur-hover), transform var(--ds-dur-micro);
 }
-.ds-media-stack__pill:hover { background: var(--ds-media-pill-bg-hover); }
+@media (hover: hover) {
+  .ds-media-stack__pill:hover { background: var(--ds-media-pill-bg-hover); }
+}
+
 .ds-media-stack__pill:active { transform: scale(0.95); }
 /* 折叠卡脸：ONE fixed WeChat-style face — 220×280 (11:14)，一切入口无论自身
    比例都裁到同一张脸上（卡面尺度单源 = --ds-media-face-w）。 */

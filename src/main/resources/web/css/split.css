@@ -42,10 +42,13 @@
   opacity: 0.4;
   transition: opacity 0.15s, background 0.15s;
 }
-.explorer-folder-btn:hover {
-  opacity: 0.8;
-  background: var(--color-hover, rgba(128, 128, 128, 0.1));
+@media (hover: hover) {
+  .explorer-folder-btn:hover {
+    opacity: 0.8;
+    background: var(--color-hover, rgba(128, 128, 128, 0.1));
+  }
 }
+
 .explorer-actions {
   display: flex;
   gap: var(--ds-space-half);
@@ -66,10 +69,13 @@
   opacity: 0.4;
   transition: opacity 0.15s, background 0.15s;
 }
-.explorer-action-btn:hover {
-  opacity: 0.8;
-  background: var(--color-hover, rgba(128, 128, 128, 0.1));
+@media (hover: hover) {
+  .explorer-action-btn:hover {
+    opacity: 0.8;
+    background: var(--color-hover, rgba(128, 128, 128, 0.1));
+  }
 }
+
 
 /* ── Inline name input (create file/folder) ── */
 .explorer-name-input {
@@ -121,11 +127,14 @@
   border-radius: var(--ds-radius-badge);
   transition: background 0.1s;
 }
-.explorer-context-menu button:hover,
-.canvas-tab-context-menu button:hover,
-.fm-context-menu button:hover {
-  background: var(--color-hover, rgba(128,128,128,0.1));
+@media (hover: hover) {
+  .explorer-context-menu button:hover,
+  .canvas-tab-context-menu button:hover,
+  .fm-context-menu button:hover {
+    background: var(--color-hover, rgba(128,128,128,0.1));
+  }
 }
+
 /* 禁用态菜单项 — 独立窗口内容物收口批（2026-10-22）：非内容物页签的「在独立
    窗口打开」恒渲染但禁用（边界可见 + title 提示）；muted 面禁 hover 反馈。 */
 .explorer-context-menu button.disabled,
@@ -135,11 +144,14 @@
   cursor: default;
   opacity: 0.62;
 }
-.explorer-context-menu button.disabled:hover,
-.canvas-tab-context-menu button.disabled:hover,
-.fm-context-menu button.disabled:hover {
-  background: none;
+@media (hover: hover) {
+  .explorer-context-menu button.disabled:hover,
+  .canvas-tab-context-menu button.disabled:hover,
+  .fm-context-menu button.disabled:hover {
+    background: none;
+  }
 }
+
 /* 危险菜单项 — 2026-09-16 按钮批：本节原字面量红退役，改 `--btn-danger-*`
    具名 token（同语义唯一：红值集合大小 = 1）；描边走 inset 环（本节条目
    `border-width: 0` ⇒ 不引入几何漂移）。 */
@@ -147,14 +159,18 @@
 .fm-context-menu button.danger,
 .canvas-tab-context-menu button.danger {
   color: var(--btn-danger-ink);
-  box-shadow: inset 0 0 0 1px var(--btn-danger-stroke);
+  outline: 1px solid var(--btn-danger-stroke);
+  outline-offset: calc(-1 * 1px);
 }
-.explorer-context-menu button.danger:hover,
-.fm-context-menu button.danger:hover,
-.canvas-tab-context-menu button.danger:hover {
-  background: var(--btn-danger-tint);
-  color: var(--btn-danger-ink);
+@media (hover: hover) {
+  .explorer-context-menu button.danger:hover,
+  .fm-context-menu button.danger:hover,
+  .canvas-tab-context-menu button.danger:hover {
+    background: var(--btn-danger-tint);
+    color: var(--btn-danger-ink);
+  }
 }
+
 .explorer-context-menu hr {
   border: none;
   border-top: 1px solid var(--glass-border, rgba(0,0,0,0.06));
@@ -859,10 +875,13 @@ body:not(.mobile-layer) .canvas-header .canvas-close-btn {
   flex-shrink: 0;
   transition: color 0.15s, background 0.15s;
 }
-.canvas-close-btn:hover {
-  background: var(--color-border);
-  color: var(--color-text);
+@media (hover: hover) {
+  .canvas-close-btn:hover {
+    background: var(--color-border);
+    color: var(--color-text);
+  }
 }
+
 .canvas-close-btn svg {
   width: 10px;
   height: 10px;
@@ -2280,7 +2299,10 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   cursor: pointer;
   transition: background 0.15s;
 }
-.epub-menu-btn:hover { background: var(--glass-control-bg-hover); }
+@media (hover: hover) {
+  .epub-menu-btn:hover { background: var(--glass-control-bg-hover); }
+}
+
 .epub-menu-btn.on {
   border-color: rgb(var(--brand-green) / 0.5);
   background: rgb(var(--brand-green) / 0.14);
@@ -2325,7 +2347,10 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   padding: 0;
 }
 .epub-nav-btn[hidden] { display: none; }
-.epub-nav-btn:hover { background: var(--color-frame-hover); color: var(--color-text); }
+@media (hover: hover) {
+  .epub-nav-btn:hover { background: var(--color-frame-hover); color: var(--color-text); }
+}
+
 .epub-nav-btn:disabled { opacity: 0.3; cursor: default; }
 .epub-nav-info {
   flex: none;
@@ -2901,14 +2926,14 @@ body.mobile-layer #canvas-content:has(.canvas-tab-pane.active .epub-reader) > .c
   cursor: pointer;
   transition: background .15s ease, color .15s ease, transform .15s ease, border-color .15s ease;
 }
-.canvas-zoom-btn:hover {
-  background: var(--cv-hover-bg);
-  border-color: var(--cv-hover-border);
-  color: var(--color-text);
-  box-shadow:
-    inset 0 1px 0 var(--cv-hover-highlight),
-    inset 0 -1px 0 var(--cv-hover-underedge);
+@media (hover: hover) {
+  .canvas-zoom-btn:hover {
+    background: var(--cv-hover-bg);
+    border-color: var(--cv-hover-border);
+    color: var(--color-text);
+  }
 }
+
 .canvas-zoom-btn:active { transform: scale(var(--cv-active-scale, 0.96)); }
 /* 抓手开关 is-on 档 = 同 hover 材质（latch 态常亮可读，非一次性反馈）。 */
 .canvas-zoom-btn.canvas-pan-toggle.is-on {
@@ -3348,7 +3373,10 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="markdown"] .canvas-find-togg
   display: flex; align-items: center; justify-content: center;
   transition: background .15s ease, color .15s ease;
 }
-.nf-findbar-btn:hover { background: var(--cv-hover-bg); color: var(--color-text); }
+@media (hover: hover) {
+  .nf-findbar-btn:hover { background: var(--cv-hover-bg); color: var(--color-text); }
+}
+
 
 /* Find hit marks (both the app-document face and the iframe face). */
 mark.nf-find-hit { background: rgba(255, 213, 0, 0.45); color: inherit; border-radius: var(--ds-radius-thin); }
@@ -3579,7 +3607,6 @@ a.nf-term {
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  box-shadow: var(--frost-shadow);
   color: var(--color-frame-text-bright, var(--color-text));
   font-size: var(--ds-fs-btn);
   font-weight: 500;
@@ -3589,7 +3616,10 @@ a.nf-term {
   cursor: pointer;
   transition: filter 0.12s ease;
 }
-.canvas-refback-btn:hover { filter: brightness(1.06); }
+@media (hover: hover) {
+  .canvas-refback-btn:hover { filter: brightness(1.06); }
+}
+
 .canvas-refback-btn:active { filter: brightness(0.92); }
 body.mobile-layer #canvas-refback-btn {
   /* 手机层卡头通栏（mobileLayer.css §⑨ top:8 + 高 ~40px），按钮下移一行。 */
@@ -3669,7 +3699,10 @@ body.wg-side-active #panel-sessions #explorer-section { display: none; }
   border: 0; background: transparent; padding: 0; font: inherit; font-size: var(--ds-fs-hint);
   color: var(--color-frame-text-muted); cursor: pointer;
 }
-.wg-crumbs button.crumb:hover { color: var(--color-frame-text); text-decoration: underline; }
+@media (hover: hover) {
+  .wg-crumbs button.crumb:hover { color: var(--color-frame-text); text-decoration: underline; }
+}
+
 .wg-crumbs .crumb.cur { color: var(--color-frame-text); font-weight: 500; cursor: default; }
 
 /* Search + chips (shared with the mobile panebar). Material = frosted 标准
@@ -3879,7 +3912,10 @@ body:not(.mobile-layer) .canvas-header .canvas-title { flex: 1; min-width: 0; }
   cursor: pointer;
   transition: background 0.12s ease, color 0.12s ease;
 }
-.canvas-pop-btn:hover { background: var(--cv-hover-bg); color: var(--color-text); }
+@media (hover: hover) {
+  .canvas-pop-btn:hover { background: var(--cv-hover-bg); color: var(--color-text); }
+}
+
 .canvas-pop-btn:active { transform: scale(var(--cv-active-scale)); }
 .canvas-pop-btn svg { width: 13px; height: 13px; }
 .canvas-pop-btn .pop-ic-merge { display: none; }
@@ -3890,7 +3926,10 @@ body:not(.mobile-layer) .canvas-header .canvas-title { flex: 1; min-width: 0; }
   cursor: not-allowed;
   opacity: 0.35;
 }
-.canvas-pop-btn[disabled]:hover { background: transparent; color: var(--color-text-muted); }
+@media (hover: hover) {
+  .canvas-pop-btn[disabled]:hover { background: transparent; color: var(--color-text-muted); }
+}
+
 /* 原生 hidden 的 UA display:none 会被上面的 display:inline-flex 压过 ⇒ 显式钉死
    （同 .canvas-refresh-toggle[hidden] 先例）。 */
 .canvas-pop-btn[hidden] { display: none !important; }
@@ -4089,7 +4128,10 @@ body.card-window #canvas-panel .canvas-header { padding-top: var(--ds-space-1); 
   cursor: pointer;
   transition: background 0.12s ease, color 0.12s ease;
 }
-.canvas-merge-btn:hover { background: var(--cv-hover-bg); color: var(--color-text); }
+@media (hover: hover) {
+  .canvas-merge-btn:hover { background: var(--cv-hover-bg); color: var(--color-text); }
+}
+
 .canvas-merge-btn:active { transform: scale(var(--cv-active-scale, 0.96)); }
 /* 卡窗合并 out 动画（requestMergeSelf 挂类，180ms 后 close） */
 body.card-window #canvas-panel.card-win-merging { animation: nf-card-win-out 0.18s ease-in forwards; }

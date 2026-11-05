@@ -106,7 +106,10 @@
   height: 13px;
   stroke-width: 1.8;
 }
-.panel-btn:hover { background: var(--ds-row-hover); color: var(--ds-text-bright); border-color: var(--ds-text-muted); opacity: 1; }
+@media (hover: hover) {
+  .panel-btn:hover { background: var(--ds-row-hover); color: var(--ds-text-bright); border-color: var(--ds-text-muted); opacity: 1; }
+}
+
 
 #session-list {
   flex: 1;
@@ -823,14 +826,20 @@
   font-family: inherit;
   transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
-.config-actions button:hover { background: var(--color-frame-hover); color: var(--color-frame-text-bright); }
+@media (hover: hover) {
+  .config-actions button:hover { background: var(--color-frame-hover); color: var(--color-frame-text-bright); }
+}
+
 /* 设置内主保存 = 主操作语义（2026-10-30 按钮体系批 B7：蓝描边 → 墨族实心底） */
 .config-actions .btn-save {
   border-color: var(--btn-primary-bg);
   background: var(--btn-primary-bg);
   color: var(--btn-primary-ink);
 }
-.config-actions .btn-save:hover { background: var(--btn-primary-bg-hover); border-color: var(--btn-primary-bg-hover); }
+@media (hover: hover) {
+  .config-actions .btn-save:hover { background: var(--btn-primary-bg-hover); border-color: var(--btn-primary-bg-hover); }
+}
+
 /* About section */
 .about-info {
   font-size: var(--ds-fs-hint);
@@ -1259,9 +1268,12 @@
   cursor: pointer;
   font-family: inherit;
   transition: background var(--dur-2) ease, color var(--dur-2) ease,
-              border-color var(--dur-2) ease, box-shadow var(--dur-2) ease;
+              border-color var(--dur-2) ease;
 }
-.cfg-btn:hover { background: var(--ctl-neutral-bg-hover); color: var(--ctl-neutral-ink); }
+@media (hover: hover) {
+  .cfg-btn:hover { background: var(--ctl-neutral-bg-hover); color: var(--ctl-neutral-ink); }
+}
+
 .cfg-btn:active { background: var(--ctl-neutral-bg-active); }
 .cfg-btn:focus-visible { outline: 2px solid var(--btn-focus-ring); outline-offset: 2px; }
 .cfg-btn-sm { font-size: var(--ds-fs-btn); padding: var(--ds-space-1) var(--ds-space-3); border-radius: var(--ds-radius-pill); }
@@ -1272,10 +1284,12 @@
   color: var(--btn-primary-ink);
   cursor: pointer;
   font-family: inherit;
-  transition: background var(--dur-2) ease, border-color var(--dur-2) ease,
-              box-shadow var(--dur-2) ease, opacity var(--dur-2) ease;
+  transition: background var(--dur-2) ease, border-color var(--dur-2) ease, opacity var(--dur-2) ease;
 }
-.cfg-btn-primary:hover { background: var(--btn-primary-bg-hover); border-color: var(--btn-primary-bg-hover); opacity: 1; }
+@media (hover: hover) {
+  .cfg-btn-primary:hover { background: var(--btn-primary-bg-hover); border-color: var(--btn-primary-bg-hover); opacity: 1; }
+}
+
 .cfg-btn-primary:disabled { opacity: 0.5; cursor: default; }
 /* 虚线添加钮 = 幽灵档（v3：扁平族内唯一无实底者；dashed 边型 + muted 字，
    hover 微垫 —— 与 C3 实底次钮拉开「新建」语义） */
@@ -1287,7 +1301,10 @@
   color: var(--color-frame-text-muted);
   border-color: var(--color-frame-border);
 }
-.cfg-btn-add:hover { background: var(--color-frame-hover); color: var(--color-frame-text-bright); }
+@media (hover: hover) {
+  .cfg-btn-add:hover { background: var(--color-frame-hover); color: var(--color-frame-text-bright); }
+}
+
 
 /* ── Config Select / Tag List ──────────────────────────────────────────────
    设计语言批 2026-10-21：表单控件字号 13px（与正文同档，12px 判偏整改）；
@@ -1489,10 +1506,13 @@
   font-family: inherit;
   flex-shrink: 0;
 }
-.cfg-fetch-models-btn:hover:not(:disabled) {
-  border-color: rgb(var(--sapphire) / 0.45);
-  color: rgb(var(--sapphire));
+@media (hover: hover) {
+  .cfg-fetch-models-btn:hover:not(:disabled) {
+    border-color: rgb(var(--sapphire) / 0.45);
+    color: rgb(var(--sapphire));
+  }
 }
+
 .cfg-fetch-models-btn:disabled {
   opacity: 0.5;
   cursor: default;
@@ -1526,10 +1546,13 @@
   border-radius: var(--ds-radius-badge);
   line-height: 0;
 }
-.cfg-eye-btn:hover {
-  color: var(--color-frame-text);
-  background: var(--color-frame-hover);
+@media (hover: hover) {
+  .cfg-eye-btn:hover {
+    color: var(--color-frame-text);
+    background: var(--color-frame-hover);
+  }
 }
+
 .cfg-model-add:hover {
   border-color: rgb(var(--sapphire) / 0.45);
   color: rgb(var(--sapphire));
@@ -1546,13 +1569,13 @@
   border-color: rgb(var(--sapphire) / 0.35) !important;
   color: rgb(var(--sapphire)) !important;
 }
-.cfg-btn-save:hover {
-  background: rgb(var(--sapphire) / 0.12) !important;
-  border-color: rgb(var(--sapphire) / 0.55) !important;
-  box-shadow:
-    0 0 12px rgba(120, 160, 220, 0.15),
-    0 0 24px rgba(120, 160, 220, 0.08) !important;
+@media (hover: hover) {
+  .cfg-btn-save:hover {
+    background: rgb(var(--sapphire) / 0.12) !important;
+    border-color: rgb(var(--sapphire) / 0.55) !important;
+  }
 }
+
 
 /* ── Config Toast (validation errors) ─────────────────────────────── */
 /* ui-status-redesign（分叉④=A，S7 全站归一）：全站唯一违规件「实心红底白字」
@@ -1893,8 +1916,11 @@
   transition: all 0.15s;
 }
 /* v3 实现批：蓝 tint hover（rgba(91,127,191,…) 为 sapphire 玻璃结构色）退役 ——
-   控件族中性三档（--ctl-neutral-*，暗档随面板主题自动解析） */
-.agent-detail-save-btn:hover { background: var(--ctl-neutral-bg-hover); }
+   控件族中性三档（--ctl-neutral-*，暗档随面板主题自动解析）。
+   扁平化批（2026-11-05）：hover 关进 (hover: hover) —— 触屏无 hover。 */
+@media (hover: hover) {
+  .agent-detail-save-btn:hover { background: var(--ctl-neutral-bg-hover); }
+}
 
 /* System Prompt label row + render/source toggle */
 .agent-detail-label-row {
