@@ -302,11 +302,11 @@ object AgentCommand:
     delivery: Option[String] = None,
     /**
      * ② (2026-09-11, queue-direct-pass diagnosis §2 根因): real-user origin
-     * flag. The ImmediateInput leg carries NO clientMessageId by construction,
-     * which used to make a real human text fall into the
-     * `no clientMessageId ⇒ tool injection` fallback (AgentActor.idle) —
-     * rendering a bogus blue `source:"tool"` card and dropping the turn out of
-     * `isRealUserTurn` (time/task reminders degraded).
+     * flag. ⚠️ 截至 P3 磁盘邮箱批（2026-11-05）本族**已可携带** `clientMessageId`
+     * （末位加性尾参），故「ImmediateInput 恒无 cid」不再成立——本标志仍是注入
+     * 来源的显式声明面，但**不得**再被用作「cid 缺席」的推理前提。改前该缺口
+     * 使真人文字落进 `no clientMessageId ⇒ tool injection` 回落（AgentActor.idle），
+     * 渲染出蓝 `source:"tool"` 卡并使该回合掉出 `isRealUserTurn`（时/任务提醒降级）。
      *
      *   true  → WS `immediateInput` frame (user clicked send), CLI
      *           `userMessage` frame  [真人 = 客户端直接投递]
@@ -353,7 +353,22 @@ object AgentCommand:
      *   编译；两处解构点须各追加一个 `_` 槽位（否则 arity 不匹配编译失败——即
      *   「向后兼容」的机械判据：编译器保证无一处被静默漏改）。
      */
-    windowItems: Option[List[WindowItem]] = None
+    windowItems: Option[List[WindowItem]] = None,
+    /**
+     * **客户端幂等键穿线**（P3 磁盘邮箱批 2026-11-05，作者 10:46 令「#37 主腿的
+     * `clientMessageId` 显式穿线，必须在最小闭环里」）。
+     *
+     * 历史缺口（本条修的就是它）：WS 边界早已解析出 `clientMessageId`
+     * （`WebSocketRoutes:2005`），但只喂给 `UserInput` 腿；真人文字主腿
+     * `dispatchUserText` 构造的 `ImmediateInput` **没有该字段** ⇒ 幂等键在
+     * Gateway→agent 的转换处蒸发，客户端重发同一帧 = 可能双跑
+     * （`checkDuplicate` 的 `recentMessageIds` 判重面完全不覆盖本腿）。
+     *
+     * 置末理由与 `windowItems` 同款纪律：本仓存在**位置实参**构造点
+     * （`CompactionQueueStore:103`、`DeviceMailSpec:410`），插在中间会把旧实参
+     * 错位 ⇒ 置末使既有位置调用逐字保持可编译。缺席 ⇒ `None` ⇒ 行为逐字现状。
+     */
+    clientMessageId: Option[String] = None
   ) extends AgentCommand
 
   case class Interrupt() extends AgentCommand
