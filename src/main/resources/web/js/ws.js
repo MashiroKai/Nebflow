@@ -396,7 +396,10 @@ const TERMINAL_MSG_TYPES = new Set([
   //   delegateFrozen        冻结发生（徽标上线 + 详情卡原因/唤醒入口）
   //   delegateFrozenDormant 长期无人唤醒提示（dormantSweep 的 24h 提醒）
   //   delegateWakeResult    面板「唤醒」动作回执
-  'delegateFrozen', 'delegateFrozenDormant', 'delegateWakeResult',
+  //   delegateWoken         状态变更帧（冻结状态两套真相批 2026-11-05）：任何腿
+  //                         （面板/Mail/自动恢复/复活）清掉冻结后必发——面板据此
+  //                         即时收起「需唤醒」；漏进过滤集 = Mail 唤醒后不刷新（原报障）。
+  'delegateFrozen', 'delegateFrozenDormant', 'delegateWakeResult', 'delegateWoken',
   'heldReceipts', // held-receipt 投递可靠性批（2026-10-21）：父会话积压/未读计数
   // #753 速率闸熔断告警帧：{sessionId, rootSessionId, count, windowSec,
   // cooldownSec}——sessionId = 被熔断的（往往非活跃）会话。不入门面过滤集会被
@@ -420,7 +423,7 @@ const STREAM_MSG_TYPES = new Set([
   // teamTaskListUpdate 已移出（2026-09-05 10:54 裁定：旧任务区退役）——
   // 无 sessionId 帧直达分发但无订阅者 = no-op（后端照发，零触碰）。
   // Legacy flow-canvas events (flowMail/flowStarted/flowNodesAdded/
-  // flowProgress/flowCompleted/teamList/treeBranch*) removed 2026-09-05
+  // flowProgress/flowCompleted/teamList/tree-branch*) removed 2026-09-05
   // 旧 UI 退役 — the backend may still broadcast them; unknown types with no
   // registered handler are dispatched to an empty handler list (no-op), and
   // off-session frames are dropped by the entry filter above.

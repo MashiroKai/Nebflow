@@ -1,0 +1,10 @@
+
+Running 6 tests using 1 worker
+
+[1/6] tests/delegate-ui-twolayer.spec.mjs:146:1 › T1 stub schema 加宽（G1 mode/G5 队列键/G6 archivedAt）＋旧行缺键容忍＋子代理读取口
+[2/6] tests/delegate-ui-twolayer.spec.mjs:194:1 › T2 面板两级化（C2/R6）：delegate 组头徽标=row.mode（kernel）；G3 store 子行 ∪ live 子行缩进一格；C1 退役后 dispatcher/node 顶层直显（分发器/节点徽标）
+[3/6] tests/delegate-ui-twolayer.spec.mjs:261:1 › T2b 徽标归位批（2026-10-31 23:02 作者裁定）：顶层组头徽标唯一来源 = row.mode——orchestrationMode/kind 历史残留一律不上顶层；mode 缺席 = 无徽标
+[4/6] tests/delegate-ui-twolayer.spec.mjs:289:1 › T3 agentflow（R2/R6）：组头徽标=row.mode（dispatcher）；chain.nodes flow-step 面板子行 + S1 expanded flow 结构层
+[5/6] tests/delegate-ui-twolayer.spec.mjs:355:1 › T4 星型子代理链块（链结构行脸）：头行折叠默认 + 展开见逐子代理成员行（名/状态词/类型点）＋ 成员行点击跳 L1 地图
+[6/6] tests/delegate-ui-twolayer.spec.mjs:407:1 › T5 弹窗净化（§A/WF-01）：收起式摘要条（任务 chip+brief+结果词+chevron）＋ 展开态（plugins/brief/结果分区）＋ 移除件全数退役（子代理×N 标题/星型子行族/头部归档图标）
+  6 passed (41.3s)

@@ -888,6 +888,16 @@ export default {
   // 与 standby（待命·等作者）/ waitingMerge（候合并）显式区分：三者都是「停」，
   // 但只有本族是**异常停**且**必须有人唤醒才会继续**。
   'subagents.frozenBadgeWithReason': '已冻结 · {reason}',
+  // 冻结通知策略批（2026-11-05 作者令两连）：provider 故障 = **基础设施故障**，不是
+  // 任务失败 ⇒ 不向上汇报（上级多半也在同一波里挨饿），面板即状态面：标「待你处理」+
+  // 原因码 + 自动续跑次数 + 唤醒入口。
+  'subagents.frozenAwaitingYou': '已冻结 · {reason}（待你处理）',
+  'subagents.frozenAwaitingYouNoReason': '已冻结 · 待你处理',
+  'subagents.frozenInfraTip': '供应商故障（不是任务失败）：引擎自己探测恢复，恢复后自动续跑同一会话（续在检查点、已完成的不重做，有次数上限与递增间隔）；也可以现在点「唤醒」立即续跑。不向上级汇报——本面板就是它的状态面。',
+  'subagents.frozenAutoResumes': '已自动续跑 {n} 次',
+  'subagents.frozenAutoResumesSpent': '自动续跑次数已用尽——需要你：充值 / 换模型 / 取消',
+  'subagents.freezeDigestRecoverable': '{count} 条已冻结（可唤醒）',
+  'subagents.freezeDigestNeedsHuman': '{count} 条冻结待你处理',
   'subagents.frozenTip': '已冻结：引擎/上游故障导致就地停住，这不是失败判词。会话历史、工作区与未提交改动、台账行、合并队列位全部保留；点「唤醒」或 Mail 它的地址即在原会话上下文上继续（已完成的不重做）。',
   'subagents.frozenReason': '原因：{reason}',
   'subagents.frozenDormantTip': '已冻结 {hours} 小时仍无人唤醒（超保留期会归档记录，转录与工作区保留）。',
@@ -924,6 +934,9 @@ export default {
   'subagents.fromFlowNode': '来自 AgentFlow 节点',
   'subagents.fromSubagent': '来自上层子代理',
   'subagents.orphanTip': '父会话已不可见 · {sid}',
+  // 野节点归置批（2026-11-05 腿③）：野节点（父不可解析的行）独立归置分组的组头词。
+  // 一个事实词（这群行没有父），不是解释句/教学句（自解释铁律 8）。
+  'subagents.orphanGroup': '无父节点',
   // 面板层级批（2026-10-31 ①）：组头折叠 caret 的无障碍/悬停文案（随折叠态翻转）。
   'subagents.collapseGroup': '收起子任务',
   'subagents.expandGroup': '展开子任务',
@@ -932,6 +945,10 @@ export default {
   // 跑的延续态徽标（琥珀词 + workflow 图标；tooltip 带链会话数）。
   'subagents.kindDispatcher': '分发器',
   'subagents.kindNode': '节点',
+  // 术语分层批（2026-11-05 作者令）：agentflow = 整个组织行为的代称（一次编排 =
+  // 一个 agentflow），只作**整体行**（delegate 组头 / 合成延续组头）的身份词；
+  // 该编排里的成员是节点（词走 subagents.kindNode 族）。zh/en 同词面。
+  'subagents.kindAgentflow': 'AgentFlow',
   'subagents.chainRunning': '链运行中',
   'subagents.chainRunningTip': '委托已交付，链仍在运行 · {n} 个会话',
   // 面板行说明批（2026-10-29 ②）：任务摘要次行无文案键（原文上屏）。
@@ -2262,6 +2279,10 @@ export default {
   // 面板组头徽标词（bgAgents 用原始数据词，不经 i18n）。
   'task.mode.kernel': '内核',
   'task.mode.dispatcher': '分发器',
+  // base 漂移状态位（`[base-moved]` 降噪重写批 2026-11-05）：基分支自本任务派发以来
+  // 前进的次数——**只陈述状态事实**（作者令「base 动了放面板可见即可，不进消息流」），
+  // 不解释机制、不给建议。
+  'task.baseDrift': 'base 已前进 {n} 次',
   'bg.modeTitle': '执行模式：{mode}',
 
   // NebLink

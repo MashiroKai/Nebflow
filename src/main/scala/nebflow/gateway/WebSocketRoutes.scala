@@ -11,7 +11,6 @@ import nebflow.actor.{ActorSystem as RootActorSystem, *}
 import nebflow.agent.*
 import nebflow.core.*
 import nebflow.core.entity.EntityLoader
-import nebflow.core.flow.{FlowTreeActor, FlowTreeRegistry, TeamSessionRegistry}
 import nebflow.core.mcp.McpManager
 import nebflow.core.project.{CancelSource as ChainCancelSource, *}
 import nebflow.core.schedule.FreezeSchedule.given
@@ -192,7 +191,7 @@ class WebSocketRoutes(
       // ── ctxthresh 批（2026-09-15 方案 A，作者卡答「按方案A实施」）─────────────
       // 🔴 **本行是全仓唯一的阈值覆盖注入点**（口径③「仅 Nebula 窗口」的**结构性**
       // 保证，不是口号）：depth=0 的 WS 根会话 spawn 是全仓唯一的 root spawn 点，
-      // 非 root spawn（NodeRunner / MailTool / FlowTreeActor）一律不传该实参 ⇒ SessionContext.compactThresholdRatio = None
+      // 非 root spawn（`NodeRunner` / `MailTool`）一律不传该实参 ⇒ SessionContext.compactThresholdRatio = None
       // ⇒ 走 CompactThreshold 现值函数（口径②）。
       //
       // 优先级链：内存 Ref（本进程内已热更的权威值）＞ 盘上 SessionMeta（跨重启
@@ -295,11 +294,12 @@ class WebSocketRoutes(
         // 一个来源（应用级 `safety.defaultMode`，见 SharedResources）。此前每建立
         // 一次连接就用盘上 meta 值写桶的路径（2026-09-12 前）以及"内存覆盖"路径
         // （2026-09-12–09-13）都已随覆盖层删除。
-        registerRootInteraction(sessionId, recordingWsSend) *>
-        initFlowTree(sessionId, ref, pr, safetyMode)
-          .handleErrorWith(e => logger.error(s"initFlowTree failed for session $sessionId: ${e.getMessage}"))
-          .start
-          .as(ref)
+        // 团队功能删除批（team-feature-deletion-20261104）阶段 1：此处原为
+        // `initFlowTree(...)` —— 每个 root 会话 spawn 就无条件建一棵「团队树」actor
+        // 并注册进树注册表。阶段 1 断掉该无条件路径，阶段 2 摘掉惰性入口
+        // （Load 工具的 team 分支），阶段 3 把类型本体与注册表一并删除 ——
+        // 至此「连接即建树」的生产者、入口、类型三层全无。
+        registerRootInteraction(sessionId, recordingWsSend).as(ref)
     }
 
   end doSpawnRootAgent
@@ -486,40 +486,17 @@ class WebSocketRoutes(
     ConfigService.setSafetyDefaultMode(mode) *>
       wsHub.broadcast(io.circe.Json.obj("type" -> "configUpdated".asJson, "success" -> true.asJson))
 
-  /** Create and register a FlowTreeActor for a session. Fire-and-forget via .start. */
-  private def initFlowTree(
-    sessionId: String,
-    agentRef: nebflow.actor.ActorRef[AgentCommand],
-    projectRoot: String,
-    safetyMode: String = "confirm-edits"
-  ): IO[Unit] =
-    val config = FlowTreeActor.TreeConfig(
-      parentAgentRef = agentRef,
-      wsSend = Some(makeRecordingWsSend(sessionId, (json: Json) => wsHub.broadcast(json))),
-      sessionId = Some(sessionId),
-      resources = sharedResources,
-      projectRoot = projectRoot,
-      safetyMode = safetyMode
-    )
-    for
-      // ⑦ (2026-08-24): mark restore in flight BEFORE spawn so a concurrent
-      // GET /api/teams/mounted (awaitRestore) waits for restoreTeams to
-      // finish instead of fast-pathing past it and returning an empty list.
-      // The completion signal always fires (signalRestoreComplete in the
-      // actor setup, even for a zero-team home), so the wait is bounded to
-      // the restore itself — no fixed stall.
-      _ <- FlowTreeRegistry.markRestoreStarted
-      treeRef <- rootSystem.spawn(FlowTreeActor(config), s"flow-tree-$sessionId")
-      _ <- FlowTreeRegistry.register(sessionId, treeRef)
-      _ = logger.info(s"FlowTreeActor created for session $sessionId (pipelines auto-restored on startup)")
-    yield ()
-
-  end initFlowTree
+  // 团队功能删除批（team-feature-deletion-20261104）阶段 1：`initFlowTree`
+  // （原 :490-517）整段删除 —— 它是「每次 root 会话 spawn 就无条件建一棵团队树」
+  // 的唯一定义面（markRestoreStarted + spawn 树 actor + 注册进树注册表）。
+  // 阶段 2（同一批）：注释里那条「树仍可经惰性入口 getOrCreate（LoadTool 腿）按需
+  // 建立」的腿也已摘掉（Load 工具的 team 分支删除）。
+  // 阶段 3（同一批）：树 actor / 树注册表 / 树命令三套类型本体与其
+  // `unregister` 清理腿一并删除（上面的 removeRootAgent 只剩 agentRegistry 一条）。
 
   /** Stop and remove the root AgentActor for a session. */
   private def removeRootAgent(sessionId: String): IO[Unit] =
-    FlowTreeRegistry.unregister(sessionId) *>
-      sharedResources.agentRegistry.update(_ - sessionId) *>
+    sharedResources.agentRegistry.update(_ - sessionId) *>
       unregisterRootInteraction(sessionId) *>
       // 2026-09-13（permshield S1）：此处原为"清该会话的内存覆盖条目"。覆盖层删除后
       // 档位是应用级的，删除会话**不得**（也不能）改动它——故本清理点整体移除。
@@ -533,33 +510,13 @@ class WebSocketRoutes(
           case None => (agents, IO.unit)
       }.flatten
 
-  /**
-   * #38 Layer C (2026-09-01): team 成员会话删除闭环。
-   *
-   * 此前 deleteSession 只停 root agent（removeRootAgent）+ 删磁盘文件；
-   * team 成员 actor（qa-backend 等，注册于 TeamSessionRegistry.actorMap）
-   * 完全存活——state.messages 持 ~10MB，下一次活动（Mail/flow dispatch）
-   * 触发 persistIfSession 2s 防抖 → <id>.json 以 10MB 重建 → 删除复活
-   * （观测：deleteSession 后 ~12s 历史灌回）。修复：删除前停成员 actor +
-   * 清 TeamSessionRegistry 三处映射（actorMap / AgentRegistry / sessionMap）。
-   */
-  private def stopTeamSessionActors(sessionId: String): IO[Unit] =
-    for
-      actorOpt <- TeamSessionRegistry.getRunningActor(sessionId)
-      _ <- actorOpt match
-        case Some(ref) =>
-          logger.info(s"deleteSession: stopping team member actor for $sessionId")
-          // 注意：`ref ! msg` 本身返回 IO[Unit]（offer 的描述）——直接使用，
-          // 不能包 IO(...)（嵌套 IO[IO[Unit]]，内层 offer 永不执行——与 V1
-          // 级联修复同类 bug，#38 停成员 stop 曾因此静默无效）。
-          ref ! AgentCommand.Stop(s"session $sessionId deleted")
-        case None => IO.unit
-      _ <- TeamSessionRegistry.unregisterActor(sessionId, sharedResources)
-      pairOpt <- TeamSessionRegistry.instanceAndAgentOfSession(sessionId)
-      _ <- pairOpt match
-        case Some((inst, agent)) => TeamSessionRegistry.unregisterAgent(inst, agent, sessionId)
-        case None => IO.unit
-    yield ()
+  // ═══ 团队功能删除批（team-feature-deletion-20261104）阶段 3：团队成员删除闭环退役
+  // 本文件原有的 `stopTeamSessionActors`（#38 Layer C 2026-09-01）做两件事：
+  // ① 从团队会话登记表的 actorMap 取成员 actor 并 Stop；② 清该登记表的三处映射
+  // （actorMap / AgentRegistry / sessionMap）。团队会话登记表本体删除后本腿零对象
+  // （actorMap 自 P1 dual-write 起就与 agentRegistry 同源，成员 actor 的停止由
+  // `removeRootAgent` + `stopChildDelegateActors`（SessionChildCascade）覆盖），
+  // 故整段删除，`WsDispatchCtx` 的接线字段一并摘除。
 
   /**
    * V1 (2026-09-03): Delegate/SubTask/Ephemeral 子代理级联停止——实现抽在
@@ -1390,19 +1347,16 @@ class WebSocketRoutes(
                     )
                     activeMeta <- sessionStore.getActiveMeta
                     agentName = activeMeta.flatMap(_.agentName).getOrElse(RootAgentIdentity.Name)
-                    // ⑦ (2026-08-24): restore mounted teams right on WS connect — not
-                    // only on first user message. Team mount recovery lives in
-                    // FlowTreeActor startup (restoreTeams → TeamSessionRegistry), and
-                    // the actor is only created alongside the root agent. After a
-                    // restart, a client that connects but sends no message would leave
-                    // /api/teams/mounted empty → "No active teams" panel. ensureRootAgent
-                    // is idempotent (existing ref is returned) and chains initFlowTree
-                    // on first spawn, so a plain call covers both the cold start (new
-                    // agent → tree → restore) and the warm path (existing agent/tree →
-                    // no-op).
+                    // ⑦ (2026-08-24): 原为「WS connect 即恢复已挂团队」——挂在
+                    // initFlowTree → 树 actor 的 restoreTeams 上。团队功能删除批
+                    // 阶段 1 已断掉 initFlowTree（见 :490 注），此处**只保留** root
+                    // agent 的确保（ensureRootAgent 幂等，冷启 spawn / 热路径原样返回）；
+                    // 团队恢复腿随之不存在。/api/teams/mounted 在阶段 1 的中间态见
+                    // reports-evidence/team-feature-deletion/stage1/README.md §4；
+                    // 该路由本身已在阶段 2 退役（见 PresenceRoutes 同位墓碑注）。
                     _ <- activeMeta.traverse_(meta =>
                       ensureRootAgent(meta.id).void.handleErrorWith(e =>
-                        logger.warn(s"WS-connect team restore failed for session ${meta.id}: ${e.getMessage}")
+                        logger.warn(s"WS-connect root agent ensure failed for session ${meta.id}: ${e.getMessage}")
                       )
                     )
                     _ <- sessionService.sendSessionList(perConnJsonSend, agentName)
@@ -2303,7 +2257,6 @@ class WebSocketRoutes(
       applyPermissionUpgradeImpl = applyPermissionUpgrade,
       persistGlobalSafetyModeImpl = persistGlobalSafetyMode,
       removeRootAgentImpl = removeRootAgent,
-      stopTeamSessionActorsImpl = stopTeamSessionActors,
       stopChildDelegateActorsImpl = stopChildDelegateActors,
       forwardInteractionAnswerImpl = forwardInteractionAnswer,
       isRootScopeSessionImpl = isRootScopeSession,
@@ -2457,14 +2410,16 @@ class WebSocketRoutes(
     content: String,
     source: String,
     fromUser: Boolean,
-    device: Option[nebflow.bridge.ResolvedDevice] = None
+    device: Option[nebflow.bridge.ResolvedDevice] = None,
+    // P3 磁盘邮箱批：客户端幂等键透传（见 dispatchUserText 同名参数）。
+    clientMessageId: Option[String] = None
   ): IO[Unit] =
     if sessionId.nonEmpty && content.nonEmpty then
       // 输入框直通退役（2026-09-14 作者令）：输入框文本一律按普通消息投递 ——
       // 不再探 hub 的 pending AskUser 槽位，文本也不再成为卡片答案
       // （[[dispatchUserText]] = 唯一入队路径）。pending 卡保持 pending，
       // 只能在卡片上作答；headless REST (`rest-turn`) 与输入框同腿，形态不变。
-      dispatchUserText(sessionId, content, source, fromUser, device)
+      dispatchUserText(sessionId, content, source, fromUser, device, clientMessageId)
     else
       // P1 2026-08-27 (frontend c1d57710): the queue "send-now" branch emitted an
       // empty-content frame (attachments dropped), which reached this path and was
@@ -2496,7 +2451,11 @@ class WebSocketRoutes(
     content: String,
     source: String,
     fromUser: Boolean,
-    device: Option[nebflow.bridge.ResolvedDevice] = None
+    device: Option[nebflow.bridge.ResolvedDevice] = None,
+    // P3 磁盘邮箱批（作者 2026-11-05 10:46）：把 WS 边界 `:2005` 已解析出的客户端
+    // 幂等键**穿到 ImmediateInput**——改前它在 Gateway→agent 转换处蒸发，真人文字
+    // 主腿因此没有任何幂等面（重发同一帧 = 可能双跑）。加性尾参，缺席逐字现状。
+    clientMessageId: Option[String] = None
   ): IO[Unit] =
     logger.info(s"User text ($source) for session $sessionId (${content.length} chars)") *>
       // tool-card-leak-on-reload 批（2026-11-02）：回合内插话判定在**落盘这一瞬**
@@ -2517,7 +2476,9 @@ class WebSocketRoutes(
       ensureAgent(sessionId)(ref =>
         ref ! AgentCommand.ImmediateInput(
           device.fold(content)(nebflow.bridge.DeviceProvenance.compose(_, content)),
-          fromUser = fromUser
+          fromUser = fromUser,
+          // P3：客户端幂等键随件到会话本体（改前在本转换处蒸发）。
+          clientMessageId = clientMessageId
         )
       )
 
@@ -3287,21 +3248,19 @@ object WebSocketRoutes:
    *
    * Team agents are LONG-LIVED: activateAgent registers them on the first
    * Mail and they stay in the registry while idle, waiting for the next
-   * Mail. "In the registry" says nothing about running — gate them on the
-   * same busy signal /api/teams/mounted uses (markBusy/markIdle around each
-   * team turn), otherwise every browser refresh reports idle team agents
-   * back as running ghosts in the bg-agent dropdown.
+   * Mail. "In the registry" says nothing about running.
+   *
+   * 团队功能删除批（team-feature-deletion-20261104）阶段 3：原有第二条腿「Team
+   * 记录按 busyMap 过滤」随 busy 标记面整体退役（busyMap 的唯一读者就是它，而
+   * `AgentKind.Team` 记录的唯一生产者是以团队会话登记表为底座的冷激活腿 ⇒ 两侧
+   * 同时失去数据源）。呈现面因此零变化：本仓再也产生不出 Team 记录。
    *
    * Standalone (zero class deps) so it is directly unit-testable
    * (ActiveAgentsFilterSpec).
    */
   def filterActiveAgents(registry: Map[String, AgentRecord]): IO[List[AgentRecord]] =
     val taskKinds = Set(AgentKind.Delegate, AgentKind.Ephemeral, AgentKind.Flow, AgentKind.SubTask)
-    val inFlight = registry.values.toList.filter(r => taskKinds.contains(r.kind))
-    val teamAgents = registry.values.toList.filter(_.kind == AgentKind.Team)
-    teamAgents
-      .traverseFilter(rec => TeamSessionRegistry.isBusy(rec.sessionId).map(busy => if busy then Some(rec) else None))
-      .map(_ ++ inFlight)
+    IO.pure(registry.values.toList.filter(r => taskKinds.contains(r.kind)))
 
   /**
    * 显示名契约批（2026-10-22 · 子智能体面板行显示名修复）：activeAgents 快照面
@@ -3366,20 +3325,26 @@ object WebSocketRoutes:
     standbySince: Option[Long] = None, // 案A 待命批 2026-10-31（状态矩阵批收编）: delegate 待命停靠时刻（DelegateRegistry.standbySince）——快照行「待命」徽标数据源；None = 非待命（缺省，旧调用方逐字节兼容）
     frozenSince: Option[Long] = None, // 错误冻结批 2026-11-01: 冻结时刻（DelegateRegistry.frozenSince）——快照行「已冻结」徽标数据源（与 standby 的「待命」显式区分）；None = 非冻结
     frozenReason: Option[String] = None, // 错误冻结批 2026-11-01: 冻结原因线值（`delegate-frozen:<reason>`）——徽标 tooltip / 详情卡原因行
-    wakeAddress: Option[String] = None // 错误冻结批 2026-11-01: 唤醒地址（`delegate:<id>`）——详情卡「唤醒」按钮的动作载荷
+    wakeAddress: Option[String] = None, // 错误冻结批 2026-11-01: 唤醒地址（`delegate:<id>`）——详情卡「唤醒」按钮的动作载荷
+    freezeTruth: Option[nebflow.actor.FreezeTruth] = None // 冻结状态两套真相批 2026-11-05: 调用方预算的单一真相（缺省 = 本函数按 rec + 落盘槽自算，逐字节兼容旧调用方）
   ): Json =
     // 冻结态诚实呈现批（2026-11-05）：快照行的**呈现分类**随快照出帧——与线包
     // （AgentStreamEvent.Frozen）/ 工具面（AgentControl status）同判定单点
     // FreezeDisplay。刷新后控制台仍能分辨「自动重试中（无按钮）」与「需人工（给
     // 恢复按钮）」，不必从 status 字符串猜（猜错的样子就是本轮报障：一行写着
     // Frozen、没有按钮、作者不知道自己什么时候冻的）。
-    val freezeOf =
-      if rec.status == nebflow.actor.AgentStatus.Frozen then
-        Some(
-          nebflow.actor.FreezeDisplay
-            .ofWire(rec.frozenReason.getOrElse(""), frozenSince, System.currentTimeMillis())
-        )
-      else None
+    //
+    // 冻结状态两套真相批（2026-11-05 10:42 报障「显示需要我唤醒，我点了唤醒又弹
+    // frozenReason=none」）：快照行原先**同屏读两个写点**——`frozenSince/frozenReason`
+    // 来自 delegate 落盘槽，`frozenKind/needsHuman/freezeReasonWire` 来自统一注册表
+    // 记录，两者可以一个说冻结、一个说已清。本批统一走 [[nebflow.actor.FreezeTruth]]
+    // （并集派生 + 一份分类），`frozen` 块是权威面，旧扁平字段全部由同一份读数派生
+    // （保留键名只为旧前端兼容，值不再能自相矛盾）。
+    val truth: nebflow.actor.FreezeTruth =
+      freezeTruth.getOrElse(
+        nebflow.actor.FreezeTruth.of(Some(rec), frozenReason, frozenSince, System.currentTimeMillis())
+      )
+    val freezeOf = if truth.frozen then Some(nebflow.actor.FreezeDisplay.ofWire(truth.reasonWire, truth.since, System.currentTimeMillis())) else None
     Json.obj(
       "sessionId" -> rec.sessionId.asJson,
       "agentId" -> rec.sessionId.asJson,
@@ -3426,18 +3391,28 @@ object WebSocketRoutes:
       // null = 非冻结）驱动行徽标「已冻结」，`frozenReason`（线值）给徽标 tooltip /
       // 详情卡原因行，`wakeAddress` 是详情卡「唤醒」按钮的投递地址。三者缺省 None
       // ⇒ 旧调用方逐字节兼容（null = falsy，前端零徽标）。
-      "frozenSince" -> frozenSince.asJson,
-      "frozenReason" -> frozenReason.asJson,
-      "wakeAddress" -> wakeAddress.asJson,
+      //
+      // 冻结状态两套真相批（2026-11-05）：三字段一律由 `truth` 派生——**冻结就说冻结、
+      // 清掉就说清**（旧实现里 `wakeAddress` 跟着落盘槽走、`frozenKind` 跟着内存态走，
+      // 于是「面板给按钮、后端拒绝」的同屏矛盾有了土壤）。
+      "frozenSince" -> (if truth.frozen then truth.since else None).asJson,
+      "frozenReason" -> (if truth.frozen then Option(truth.reasonWire).filter(_.nonEmpty) else None).asJson,
+      // 唤醒地址 = 可操作性本身：只有「冻结且需人」才给地址（自动恢复族给地址 =
+      // 教用户去做一件引擎正在自己做的事）。
+      "wakeAddress" -> (if truth.wakeable then Some(s"delegate:${rec.sessionId}") else None).asJson,
       // 冻结态诚实呈现批（2026-11-05）：呈现分类三字段 + registry 侧冻结原因线值。
       // `frozenReasonWire` 与上面的 `frozenReason`（DelegateRegistry 冻结槽，仅
       // delegate 错误冻结族）分工：本字段是 **AgentRecord** 的原因线值（schedule /
       // loop / llm-transient / delegate-frozen:* 全族），供徽标 tooltip 与「谁停的」
       // 说明。空串 = 非冻结（falsy 契约同 project/taskId）。
-      "frozenKind" -> freezeOf.map(_.kind.wire).getOrElse("").asJson,
-      "needsHuman" -> freezeOf.exists(_.needsHuman).asJson,
-      "autoRecoverable" -> freezeOf.exists(_.autoRecoverable).asJson,
-      "freezeReasonWire" -> rec.frozenReason.getOrElse("").asJson,
+      "frozenKind" -> truth.kindWire.asJson,
+      "needsHuman" -> truth.needsHuman.asJson,
+      "autoRecoverable" -> truth.autoRecoverable.asJson,
+      "freezeReasonWire" -> truth.reasonWire.asJson,
+      // 冻结状态两套真相批（2026-11-05）：**权威面**——面板可操作性与唤醒闸读同一份
+      // 读数（`wakeable`），并按 `asOf` 定序合并（旧的「快照缺席就保留本地值」单调
+      // 合并在冻结面上会把一次唤醒永久吞掉）。
+      "freeze" -> truth.json,
       // #752 空闲细分（快照恢复路径的数据源；live 行由实时帧写 currentTool，快照
       // 字段合并时不降级实时值——前端 merge 规则）。currentTool = 在飞/最后工具名
       // （最近动作摘要）、lastActivityMs = agent 侧最近活动戳（长空闲徽标判据）。

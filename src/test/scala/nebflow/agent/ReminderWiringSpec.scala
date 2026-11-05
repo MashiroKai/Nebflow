@@ -259,79 +259,12 @@ class ReminderWiringSpec extends CatsEffectSuite:
 
     end try
 
-  /**
-   * Task redesign 2026-08-30: task injection now targets team sessions.
-   * A team-registered agent (category="team") gets the full task render on
-   * its real-user turn + the Task List Protocol section in systemStable.
-   */
-  test("③ team-registered agent gets tasks on real-user turns (task redesign)"):
-    val system = ActorSystem("reminder-wiring-team")
-    val tmp = os.temp.dir()
-    val prevRoot = PathUtil.dataRoot
-    val prevLlmLog = nebflow.core.LlmLogWriter.isEnabled
-    nebflow.core.LlmLogWriter.setEnabled(false)
-    PathUtil.setDataRoot(tmp / "data")
-    try
-      val sid = "wiring-team-member"
-      val teamName = "t-redesign"
-      // team-scoped task store key = "team:<name>"
-      FileTaskStore
-        .create(
-          nebflow.core.task.TaskStore.teamScopeKey(teamName),
-          TaskCreateInput(subject = "team task", description = "d")
-        )
-        .unsafeRunSync()
-      val program = for
-        _ <- nebflow.core.flow.TeamSessionRegistry.clear
-        _ <- nebflow.core.flow.TeamSessionRegistry.registerSession(teamName, "Backend", sid)
-        requests <- IO.ref(List.empty[LlmRequest])
-        resources <- mkResources(system, tmp, CaptureLlm(requests))
-        memberDef = AgentDef(
-          name = "Backend",
-          description = "team member under test",
-          tools = List("Read"),
-          category = "team",
-          systemPrompt = ""
-        )
-        actorRef <- system.spawn(
-          AgentActor(
-            agentDef = memberDef,
-            resources = resources,
-            wsSend = _ => IO.unit,
-            depth = 0,
-            sessionId = Some(sid),
-            sessionName = Some("reminder-wiring-team")
-          ),
-          sid
-        )
-        _ <- resources.agentRegistry.update(
-          _ + (sid -> AgentRecord(sid, actorRef, AgentKind.Team, sid, None))
-        )
-        _ <- actorRef ! AgentCommand.UserInput("hello from the user", None, Some("cmid-1"))
-        _ <- waitUntil(15.seconds)(requests.get.map(_.nonEmpty))
-        req1 <- requests.get.map(_.head)
-        sys1 = req1.systemStable.getOrElse("")
-      yield
-        assert(textOf(req1).contains("Current time"), s"real-user turn injects time:\n${textOf(req1)}")
-        assert(
-          textOf(req1).contains("## Current Tasks (1 active)"),
-          s"team member gets the full task render:\n${textOf(req1)}"
-        )
-        assert(textOf(req1).contains("team task"), s"task line present:\n${textOf(req1)}")
-        // 阶段 2d（§D.2）：order 630 Task List Protocol 段已下迁进 TeamTask 三件
-        // description——systemStable 不再携带协议段；协议经工具定义必达（wire 层）。
-        assert(!sys1.contains("## Task List Protocol"), s"order 630 section retired (2d §D.2):\n$sys1")
-        assert(
-          req1.tools.exists(_.exists(td => td.name == "TeamTaskList" && td.description.contains("auto-expire"))),
-          "protocol reaches the team member via TeamTaskList description (双轨期)"
-        )
-      program.unsafeRunSync()
-    finally
-      nebflow.core.flow.TeamSessionRegistry.clear.unsafeRunSync()
-      nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)
-      PathUtil.setDataRoot(prevRoot)
-      system.stopAll.attempt.void.unsafeRunSync()
-      os.remove.all(tmp)
-    end try
-
+  // 团队功能删除批（team-feature-deletion-20261104）阶段 3：原用例 ③
+  // 「team-registered agent gets tasks on real-user turns」整条删除 —— 它靠
+  // `TeamSessionRegistry.registerSession(team, member, sid)` 把会话登记为团队成员，
+  // 再断言 `team:<name>` 作用域任务出现在该会话的 turn 文本里。团队会话登记表本体
+  // 已删 ⇒ 团队归属**恒 None**，该注入腿结构上不可达。
+  // 删因：**团队会话归属能力已退役**（不是「跑不过」）。团队作用域任务存储
+  // （`TaskStore.teamScopeKey`）与 TeamTask* 工具**未删**（作者未裁定），只是不再
+  // 有会话能被判为团队作用域。
 end ReminderWiringSpec

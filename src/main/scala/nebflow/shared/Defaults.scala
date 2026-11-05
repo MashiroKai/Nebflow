@@ -1122,6 +1122,75 @@ object Defaults:
   def DelegateFreezeMaxRevives: Int =
     sys.props.getOrElse("nebflow.delegate.freeze.maxRevives", "3").toInt
 
+  // ── 可恢复冻结降噪批（2026-11-05 作者令逐字「然后frozen这种可恢复的，不需要通知，」）
+  //    判定与聚合规则单点 = [[nebflow.core.delegate.FreezeNotice]]；本段只放参数面，
+  //    全部现读 prop（spec 可即时翻转边界，无需重启编译面外的状态）。──────────────
+
+  /**
+   * 冻结降噪总闸：`nebflow.delegate.freeze.silence`，缺省 true。
+   *
+   * true = 按 [[nebflow.core.delegate.FreezeNotice]] 的判定表分流：**可恢复类冻结
+   * 不推任何消息**（面板就地标记 + 静默统计），**需人处理类合并成一条聚合告警**；
+   * false = 逐字节回本批前行为（每次冻结一条冻结回执直投父会话）。
+   */
+  def DelegateFreezeSilence: Boolean =
+    sys.props.getOrElse("nebflow.delegate.freeze.silence", "true").toBoolean
+
+  /**
+   * 静默统计的「同一波」时间窗（ms，缺省 10 分钟）：`frozenSince` 落在
+   * `now - window` 之后的冻结记录算同一波，面板统计行只汇总这一波（更老的冻结
+   * 仍逐条在面板行上，只是不进「本波 N 条」读数）。prop
+   * `nebflow.delegate.freeze.digestWindowMs`。
+   */
+  def DelegateFreezeDigestWindowMs: Long =
+    sys.props.getOrElse("nebflow.delegate.freeze.digestWindowMs", (10L * 60 * 1000).toString).toLong
+
+  /**
+   * 同一波聚合告警的重投冷却（ms，缺省 30 分钟）：去重键 = 父会话 + 冻结 id 集
+   * （集合变了才是新一波）；同键在冷却窗内只发一次（防 30s 扫描拍重复推送）。
+   * prop `nebflow.delegate.freeze.alertReArmMs`。
+   */
+  def DelegateFreezeAlertReArmMs: Long =
+    sys.props.getOrElse("nebflow.delegate.freeze.alertReArmMs", (30L * 60 * 1000).toString).toLong
+
+  /**
+   * **引擎自动续跑总闸**（缺省 **true**）：2026-11-05 10:36 作者令推翻了旧裁定
+   * 「引擎不自动重试」——「我们引擎要做的就行检测恢复了能接着工作」。
+   *
+   * 开：`FreezeAlertSweep` 在既有 30s 拍上按 provider 可用性（[[ProviderHealthPort]]
+   * 的既有探测结果，**零真实调用**）判定，恢复即用既有唤醒腿续跑被冻结的批（同一
+   * 会话、续在检查点、已完成的不重做），次数上限 [[DelegateFreezeAutoResumeMax]]、
+   * 间隔按 [[DelegateFreezeAutoResumeBackoffMs]] 递增。
+   * 关：引擎不再自动续跑，只由人唤醒（回旧裁定形态）。prop
+   * `nebflow.delegate.freeze.autoResume`。
+   */
+  def DelegateFreezeAutoResume: Boolean =
+    sys.props.getOrElse("nebflow.delegate.freeze.autoResume", "true").toBoolean
+
+  /**
+   * 自动续跑的首个龄阈（ms，缺省 60 秒）：冻结存活超过该龄才尝试第一次自动续跑
+   * （供应商抖动/退避窗口内不抢跑，避免「恢复一点点→又冻→又续」的抖动）。
+   * prop `nebflow.delegate.freeze.autoResumeAfterMs`。
+   */
+  def DelegateFreezeAutoResumeAfterMs: Long =
+    sys.props.getOrElse("nebflow.delegate.freeze.autoResumeAfterMs", (60L * 1000).toString).toLong
+
+  /**
+   * 单个冻结点最多自动续跑次数（缺省 3）：用尽 ⇒ 该批不再自动续跑，升级为**一条**
+   * 聚合的「需用户处理」告警（作者令「连续失败到上限才升级成一条需用户处理的告警」）。
+   * 0 = 不限（不推荐）。prop `nebflow.delegate.freeze.autoResumeMax`。
+   */
+  def DelegateFreezeAutoResumeMax: Int =
+    sys.props.getOrElse("nebflow.delegate.freeze.autoResumeMax", "3").toInt
+
+  /**
+   * 自动续跑的递增间隔基数（ms，缺省 60 秒）：第 n 次尝试不早于
+   * `冻结时刻 + afterMs + base × (2^(n-1) − 1)`（60s / 120s / 240s …递增）。
+   * prop `nebflow.delegate.freeze.autoResumeBackoffMs`。
+   */
+  def DelegateFreezeAutoResumeBackoffMs: Long =
+    sys.props.getOrElse("nebflow.delegate.freeze.autoResumeBackoffMs", (60L * 1000).toString).toLong
+
   // ── death-watch 误报修复批（2026-10-31 作者令「修」，根因 docs/20261031_owner-lost.md
   //    §4 修法清单 ①②③⑤⑥ 的参数面；全部现读 prop，spec 可即时翻转边界）──────────
 

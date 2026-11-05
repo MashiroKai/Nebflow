@@ -1,0 +1,66 @@
+{
+  "ok": true,
+  "mobile": false,
+  "paneVisible": true,
+  "vw": 1440,
+  "vh": 900,
+  "pane": {
+    "x": 879,
+    "y": 17,
+    "w": 550,
+    "h": 864,
+    "right": 1429,
+    "bottom": 881
+  },
+  "paneClass": "canvas-tab-pane active",
+  "scroller": {
+    "sh": 5468,
+    "ch": 864,
+    "st": 4604,
+    "maxScroll": 4604,
+    "padBottom": 24,
+    "padBottomRaw": "24px",
+    "scrollPadBottom": "auto",
+    "isPane": false,
+    "box": {
+      "x": 879,
+      "y": 17,
+      "w": 550,
+      "h": 864,
+      "right": 1429,
+      "bottom": 881
+    }
+  },
+  "viewer": null,
+  "chrome": [
+    {
+      "sel": ".canvas-source-toggle",
+      "visible": true,
+      "top": 825,
+      "bottom": 865,
+      "h": 40
+    },
+    {
+      "sel": ".canvas-refresh-toggle",
+      "visible": true,
+      "top": 825,
+      "bottom": 865,
+      "h": 40
+    }
+  ],
+  "chromeTop": 825,
+  "clearanceVar": "",
+  "clearanceVarPx": 0,
+  "padBottom": 24,
+  "lastBlock": {
+    "tag": "P",
+    "x": 915,
+    "y": 812.63,
+    "w": 478,
+    "h": 28.8,
+    "right": 1393,
+    "bottom": 841.42,
+    "text": "末行标记：TXT-END-OF-DOCUMENT"
+  },
+  "predicted": 68
+}

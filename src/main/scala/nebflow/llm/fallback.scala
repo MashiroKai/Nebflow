@@ -17,9 +17,16 @@ import scala.util.Random
  * case, so [[Fallback.classifyError]] maps it to Transient and the 3-attempt
  * llm-fail-retry backstop fires.
  */
-class AllProvidersDownTimeout(val waitedMs: Long)
-    extends RuntimeException(
-      s"all providers down: none recovered within ${waitedMs}ms"
+class AllProvidersDownTimeout(
+  val waitedMs: Long,
+  /**
+   * 候选处置表（缺陷批 2026-11-05）：全灭等待结束时把「谁被跳了、为什么」一并
+   * 带出——否则冻结通知只写「none recovered within 120000ms」，作者看不出链上
+   * 到底有谁。缺省 None ⇒ 老文案逐字不变（既有单测零改动）。
+   */
+  detail: Option[String] = None
+) extends RuntimeException(
+      s"all providers down: none recovered within ${waitedMs}ms" + detail.map(d => s"\n$d").getOrElse("")
     )
 
 /**

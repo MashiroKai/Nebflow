@@ -1420,9 +1420,14 @@ body.mobile-layer #bg-dropdown .bg-task-row {
   padding: var(--ds-space-1h) var(--ds-space-3);
 }
 /* 面板树批（2026-10-29 ①）：手机密度行的派生树缩进——双类锚压过上行单类密度
-   简写；缩进宽档（18px > 基线 12px）+ 左引导竖线（chat.css 桌面形 2px 原样生效）。 */
+   简写；缩进宽档（--ds-space-5 档 > 基线 --ds-space-3 档）+ 左引导竖线（chat.css
+   桌面形原样生效）。
+   层级缩进批（2026-11-05 腿②）：同一档位按真实深度累加（每深一层 +--ds-space-3
+   档；档值都是既有令牌，零新增档），手机端「每一层都是上一层的缩进」与桌面同构。
+   基座合并（2026-11-05）：main 的令牌收敛把基准档写成 var(--ds-space-5)，此处保留
+   该令牌形并在其上叠加深度项。 */
 body.mobile-layer #bg-dropdown .bg-task-row.bg-task-row-child {
-  padding-left: var(--ds-space-5);
+  padding-left: calc(var(--ds-space-5) + (var(--bg-row-depth, 1) - 1) * var(--ds-space-3));
 }
 body.mobile-layer #bg-dropdown .bg-dropdown-empty {
   padding: var(--ds-space-block-y) var(--ds-space-3);
@@ -4186,7 +4191,8 @@ body.mobile-layer #bg-dropdown .bg-task-row {
   padding: 0 var(--mpad-x);
   align-items: center;
 }
-body.mobile-layer #bg-dropdown .bg-task-row.bg-task-row-child { padding-left: calc(var(--mpad-x) + 6px); }
+/* 层级缩进批（2026-11-05 腿②）：手机合并面板的同款缩进按真实深度累加（逐层 +12px）。 */
+body.mobile-layer #bg-dropdown .bg-task-row.bg-task-row-child { padding-left: calc(var(--mpad-x) + 6px + (var(--bg-row-depth, 1) - 1) * var(--ds-space-3)); }
 body.mobile-layer #bg-dropdown .bg-task-row .bg-task-btn,
 body.mobile-layer #bg-dropdown .bg-task-row button {
   min-width: var(--mtap);
@@ -4766,12 +4772,18 @@ body.mobile-layer .mf-canvas-page:has(.canvas-ref-select) .mf-dots {
   margin-inline: auto;   /* 净带内仍居中（原居中意图保留） */
 }
 /* 底部可滚余量（md / 纯文本 / epub 三面同尺）：末行滚到控件行之上。
-   值 = 16（控件行底缝）+ 48（钮径）+ 12（呼吸）= 76。 */
+   值 = 16（控件行底缝）+ 48（钮径）+ 12（呼吸）= 76。
+   canvas 正文底部遮挡修复批（2026-11-05，桌面档补同一让位）：桌面侧改由 JS 实测
+   发布 --canvas-bottom-clearance（viewers/shared.js syncBottomClearance，split.css
+   文件尾消费）。手机档此处保留 76 作为**地板值**，并用 max() 让实测值在控件行变高
+   时接管（例：面板更窄 ⇒ html 缩放条回落第二行 ⇒ 实测 81 > 76）。两档同源：76 与
+   实测值都由「控件行底缝 + 钮径 + 呼吸」推导，手机档的 16/48 是静态 token（
+   --mf-ctrl-row + --mtap-lg），桌面档取真几何；实测缺省 0px ⇒ max() 结果不变。 */
 body.mobile-layer .canvas-md-scroll,
 body.mobile-layer .canvas-txt-scroll,
 body.mobile-layer .epub-reader-viewport {
-  padding-bottom: calc(var(--mf-ctrl-row, 64px) + 12px);
-  scroll-padding-bottom: calc(var(--mf-ctrl-row, 64px) + 12px);
+  padding-bottom: max(calc(var(--mf-ctrl-row, 64px) + 12px), var(--canvas-bottom-clearance, 0px));
+  scroll-padding-bottom: max(calc(var(--mf-ctrl-row, 64px) + 12px), var(--canvas-bottom-clearance, 0px));
 }
 
 /* ── ④ 手机端阅读面字档（本批硬约束：正文 ≥17px / 辅助字 ≥13px）──────────

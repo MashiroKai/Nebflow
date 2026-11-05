@@ -855,50 +855,11 @@ class FreezeGateSpec extends CatsEffectSuite:
     end try
   }
 
-  // ── B12: team busy 时序 ───────────────────────────────────
-
-  test("B12: frozen team agent stays busy in TeamSessionRegistry") {
-    val system = ActorSystem("freeze-b12")
-    val tmp = os.temp.dir()
-    val prevRoot = PathUtil.dataRoot
-    val prevLlmLog = nebflow.core.LlmLogWriter.isEnabled
-    nebflow.core.LlmLogWriter.setEnabled(false)
-    PathUtil.setDataRoot(tmp / "data")
-    try
-      val program = for
-        counter <- IO.ref(0)
-        requests <- IO.ref(List.empty[LlmRequest])
-        events <- IO.ref(List.empty[Json])
-        schedRef <- IO.ref(frozenConfig())
-        resources <- mkResources(system, tmp, CountingLlm(counter, requests), schedRef)
-        sid = "freeze-b12-agent"
-        ref <- system.spawn(
-          AgentActor(
-            agentDef = rootDef("Backend", category = "team"),
-            resources = resources,
-            wsSend = json => events.update(_ :+ json),
-            depth = 1,
-            sessionId = Some(sid),
-            sessionName = Some("b12")
-          ),
-          sid
-        )
-        _ <- resources.agentRegistry.update(_ + (sid -> AgentRecord(sid, ref, AgentKind.Team, sid, None)))
-        _ <- ref ! AgentCommand.UserInput("team task")
-        _ <- waitUntil(System.currentTimeMillis() + 5000)(
-          resources.agentRegistry.get.map(_.get(sid).exists(_.status == AgentStatus.Frozen))
-        )
-        busy <- nebflow.core.flow.TeamSessionRegistry.isBusy(sid)
-        _ = assert(busy, "frozen team agent must read busy (Teams panel correctness)")
-      yield ()
-      program.unsafeRunSync()
-    finally
-      nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)
-      PathUtil.setDataRoot(prevRoot)
-      system.stopAll.attempt.void.unsafeRunSync()
-      os.remove.all(tmp)
-    end try
-  }
+  // 团队功能删除批（team-feature-deletion-20261104）阶段 3：原 B12 用例
+  // 「frozen team agent stays busy in TeamSessionRegistry」整条删除 —— 它断言的
+  // `TeamSessionRegistry.isBusy` 与 `markTeamBusy/markTeamIdle` 双写随团队会话
+  // 登记表一并退役（团队 busy 面板语义无对象）。删因：**团队 busy 能力已退役**，
+  // 不是「跑不过」。其余用例（含 Frozen 状态机本体）逐字未动。
 
   // ── B7: TaskStuckWatcher 豁免（纯 registry 层测试）────────
 
@@ -1167,7 +1128,7 @@ class FreezeGateSpec extends CatsEffectSuite:
     end try
   }
 
-  test("ER-3: same-reason consecutive freezes ≥3 → escalate to parent, NOT fatal") {
+  test("ER-3: same-reason consecutive provider-family freezes ≥3 stay QUIET — still Frozen, no escalation, nothing sent to the parent") {
     val system = ActorSystem("freeze-er3")
     val tmp = os.temp.dir()
     val prevRoot = PathUtil.dataRoot
@@ -1221,34 +1182,31 @@ class FreezeGateSpec extends CatsEffectSuite:
         // 注意：waitUntil Frozen 在 CheckFreezeGate 前已满足（本就 Frozen），必须等
         // escalation 落盘（enterFrozen 的 updateRegistryEscalation 在 touch 之后）
         _ <- waitUntil(System.currentTimeMillis() + 15000)(counter.get.map(_ >= 4))
-        _ <- waitUntil(System.currentTimeMillis() + 15000)(
-          resources.agentRegistry.get.map(_.get(sid).exists(_.escalation.isDefined))
-        )
+        // 冻结通知策略批（2026-11-05 10:36 作者令）：provider 故障 = 基础设施故障 ⇒
+        // **不进升级链、不通知上级**（上级多半也在同一波里挨饿）。给它一拍沉降窗口
+        // 再断言「父什么都没收到」。
+        _ <- IO.sleep(1200.millis)
         reg <- resources.agentRegistry.get.map(_.get(sid))
-        _ = assert(reg.exists(_.escalation.isDefined), "3rd consecutive freeze must set escalation info")
         _ = assert(
-          reg.flatMap(_.escalation).exists(_.level == 1),
-          "escalation level must start at 1"
+          reg.exists(_.escalation.isEmpty),
+          s"a provider-family freeze must NOT enter the escalation chain, got ${reg.flatMap(_.escalation)}"
         )
         _ = assert(
           reg.exists(r => r.status == AgentStatus.Frozen),
-          "3rd consecutive freeze must still be Frozen (not fatal)"
+          "consecutive provider-family freezes must still be Frozen (not fatal)"
         )
-        _ <- waitUntil(System.currentTimeMillis() + 5000)(
-          parentEvents.get.map(_.exists {
-            case AgentCommand.ExternalEvent(_, eventType, _, _, _, _) => eventType == "error-escalated"
-            case _ => false
-          })
+        parentEventsNow <- parentEvents.get
+        _ = assertEquals(
+          parentEventsNow.collect {
+            case AgentCommand.ExternalEvent(_, eventType, _, _, _, _) if eventType == "error-escalated" => eventType
+          },
+          Nil,
+          s"no escalation report may reach the parent for a provider failure, got $parentEventsNow"
         )
-        parentGot <- parentEvents.get.map(_.collectFirst {
-          case AgentCommand.ExternalEvent(_, eventType, _, metadata, _, _) if eventType == "error-escalated" =>
-            metadata("reason").flatMap(_.as[String].toOption).getOrElse("")
-        })
-        _ = assertEquals(parentGot, Some("llm-transient"), "escalation event must carry the freeze reason")
         statusAfter <- resources.agentRegistry.get.map(_.get(sid).map(_.status))
         _ = assert(
           statusAfter.contains(AgentStatus.Frozen),
-          s"3rd consecutive freeze must NOT be fatal — still Frozen, got $statusAfter"
+          s"repeated provider freezes must NOT be fatal — still Frozen, got $statusAfter"
         )
       yield ()
       program.unsafeRunSync()

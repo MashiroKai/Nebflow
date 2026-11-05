@@ -932,6 +932,16 @@ export default {
   'subagents.status.frozen': 'Frozen',
   // 错误冻结批（2026-11-01）：delegate 错误冻结行面文案（徽标/原因 tooltip/唤醒）。
   'subagents.frozenBadgeWithReason': 'Frozen · {reason}',
+  // freeze-notice policy batch (2026-11-05): provider faults are INFRASTRUCTURE faults,
+  // not task failures — no upward report (the parent is starving too); the panel is the
+  // status surface: "needs you" word + reason code + auto-resume count + wake entry.
+  'subagents.frozenAwaitingYou': 'Frozen · {reason} (needs you)',
+  'subagents.frozenAwaitingYouNoReason': 'Frozen · needs you',
+  'subagents.frozenInfraTip': 'Provider fault (NOT a task failure): the engine probes for recovery and resumes the SAME session by itself once a provider is serving again (from the checkpoint, finished work is not redone, capped attempts with growing gaps); press Wake to resume it right now. Nothing is reported upward — this panel is its status surface.',
+  'subagents.frozenAutoResumes': 'auto-resumed {n} time(s)',
+  'subagents.frozenAutoResumesSpent': 'auto-resume budget spent — needs you: top up / switch model / cancel',
+  'subagents.freezeDigestRecoverable': '{count} frozen (wakeable)',
+  'subagents.freezeDigestNeedsHuman': '{count} frozen (needs you)',
   'subagents.frozenTip': 'Frozen: an engine/upstream fault stopped it in place — this is NOT a failure verdict. The session history, workspace with uncommitted changes, task-ledger row and merge-queue slot are all kept; press Wake (or mail its address) to continue in the SAME session (finished work is not redone).',
   'subagents.frozenReason': 'Reason: {reason}',
   'subagents.frozenDormantTip': 'Frozen for {hours}h with no wake (past the retention window the record is archived; transcript and workspace are kept).',
@@ -966,6 +976,10 @@ export default {
   'subagents.fromFlowNode': 'from an AgentFlow node',
   'subagents.fromSubagent': 'from a parent sub-agent',
   'subagents.orphanTip': 'Parent session no longer visible · {sid}',
+  // Orphan-placement batch (2026-11-05 leg ③): head word of the standalone group
+  // holding wild nodes (rows whose parent cannot be resolved). One fact word,
+  // no explanation / no teaching sentence (self-explaining rule 8).
+  'subagents.orphanGroup': 'No parent',
   // Panel-hierarchy batch (2026-10-31 ①): group-head collapse caret a11y/hover
   // text (flips with the collapsed state).
   'subagents.collapseGroup': 'Collapse subtasks',
@@ -977,6 +991,12 @@ export default {
   // icon; tooltip carries the live session count).
   'subagents.kindDispatcher': 'Dispatcher',
   'subagents.kindNode': 'Node',
+  // Term layering batch (2026-11-05, author order): agentflow = the name of the
+  // whole organised behaviour (one orchestration = one agentflow) and the ONE
+  // identity word of an overall row (delegate group head / synthesized
+  // continuation head); the members inside it are nodes (subagents.kindNode
+  // family). Same word face in both locales.
+  'subagents.kindAgentflow': 'AgentFlow',
   'subagents.chainRunning': 'Chain running',
   'subagents.chainRunningTip': 'Delegate delivered, chain still running · {n} session(s)',
   // Task attribution badge (2026-09-27 taskbadge batch): hover tooltip of the
@@ -2340,6 +2360,10 @@ export default {
   // (bgAgents group-head badge word uses the raw data word, not i18n).
   'task.mode.kernel': 'Kernel',
   'task.mode.dispatcher': 'Dispatcher',
+  // Base-drift state slot (`[base-moved]` noise-reduction batch 2026-11-05): how many
+  // times the base branch advanced since this task was dispatched — a STATE FACT only
+  // ("base moved" belongs on the panel, not in the message stream). No mechanism talk.
+  'task.baseDrift': 'base advanced {n}×',
   'bg.modeTitle': 'Execution mode: {mode}',
 
   // NebLink

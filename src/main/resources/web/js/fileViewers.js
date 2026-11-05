@@ -10,6 +10,10 @@
 // canvas.js (no file-extension semantics).
 
 import { t } from './i18n.js';
+// 底部浮钮让位（canvas 正文底部遮挡修复批 2026-11-05）：正文滚动面末尾安全留白的
+// 唯一接线点。shared.js 不 import 本模块（无环：本文件静态 import 是单向边，
+// viewers/* 也都已静态 import shared.js）。
+import { observeBottomClearance } from './viewers/shared.js';
 import codeViewer, { jsonViewer, csvViewer } from './viewers/monaco.js';
 import markdownViewer from './viewers/markdown.js';
 import textReaderViewer from './viewers/textReader.js';
@@ -173,5 +177,13 @@ export async function renderFile(pane, ctx) {
   } catch (err) {
     console.warn('Viewer error:', err);
     renderViewerError(pane, ctx, err);
+  }
+  // 底部浮钮让位（canvas 正文底部遮挡修复批 2026-11-05）：渲染完成后实测本 pane
+  // 底部浮钮带高度 ⇒ 写 --canvas-bottom-clearance 供滚动面末尾垫消费（含错误态
+  // 面板 —— 错误文案同样不该被浮钮压住）。单点接线：所有内置查看器都走这里。
+  try {
+    observeBottomClearance(pane);
+  } catch (err) {
+    console.warn('Bottom clearance unavailable:', err);
   }
 }

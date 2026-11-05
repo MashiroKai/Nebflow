@@ -13,14 +13,7 @@ import nebflow.actor.{
   AgentKind,
   AgentRecord
 } // W1 shim: main exported these from nebflow.agent (protocol/AgentState); the merge moved them to actor
-import nebflow.core.FileChangeTracker
-import nebflow.core.compact.HistoryArchiver
-import nebflow.core.flow.{MailQueueStore, TeamSessionRegistry}
-import nebflow.core.task.FileTaskStore
-import nebflow.core.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
-import fs2.Stream
+import nebflow.shared.PathUtil
 import scala.concurrent.duration.*
 
 /**
@@ -342,140 +335,17 @@ class MailDeliveryRetireSpec extends FunSuite:
     go(System.currentTimeMillis() + timeout.toMillis)
 
   // ============================================================
-  // 5. 端到端（真 team fixture）：queue 被拒 + 零副作用；immediate 不受影响
+  // 5. 端到端 —— 团队功能删除批（team-feature-deletion-20261104）阶段 3 删除
   // ============================================================
-
-  private class RecordingLlm extends LlmHandle[IO]:
-    val requests: Ref[IO, List[LlmRequest]] = Ref.unsafe(Nil)
-
-    def send(req: LlmRequest): IO[LlmResponse] =
-      IO.raiseError(new RuntimeException("send not expected"))
-
-    def sendStream(
-      req: LlmRequest,
-      onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
-    ): Stream[IO, StreamChunk] =
-      Stream.eval(requests.update(req :: _)) >>
-        Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
-
-  private def mkResources(
-    system: ActorSystem,
-    tmp: os.Path,
-    llm: LlmHandle[IO],
-    sessionStore: SessionStore
-  ): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = sessionStore,
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = HistoryArchiver.fileSystem(tmp / "archives"),
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = ProviderHealthMonitor(null),
-      actorSystem = system,
-      subAgentTaskStore = new SubAgentTaskStore(tmp / "subagent-tasks"),
-      voiceMutedRef = voiceMuted
-    )
-
-  private def fixtureTeam(tmp: os.Path, teamName: String): Unit =
-    val data = tmp / "data"
-    PathUtil.setDataRoot(data)
-    val teamDir = data / "teams" / teamName
-    os.makeDir.all(teamDir)
-    os.write.over(
-      teamDir / "team.json",
-      s"""{"name": "${teamName}", "description": "delivery retire fixture", "lead": "boss", "members": ["member"]}"""
-    )
-    for name <- List("boss", "member") do
-      val adir = teamDir / "agents" / name
-      os.makeDir.all(adir)
-      os.write.over(adir / "agent.json", """{"description": "fixture", "useWhen": "tests"}""")
-
-  private def ctxFor(resources: SharedResources, system: ActorSystem, senderSid: String): ToolContext =
-    ToolContext(
-      projectRoot = os.pwd.toString,
-      sessionId = Some(senderSid),
-      sharedResources = Some(resources),
-      actorSystem = Some(system)
-    )
-
-  test("端到端：team 腿 queue 被显式拒绝 —— 零队列落盘、零 queue 文件、零 turn；同 target 的 immediate 不受影响"):
-    val teamName = s"evfmtb${java.util.UUID.randomUUID().toString.take(6)}"
-    val system = ActorSystem(s"evfmtb-q-${java.util.UUID.randomUUID().toString.take(6)}")
-    val tmp = os.temp.dir(prefix = "evfmtb-q")
-    fixtureTeam(tmp, teamName)
-    val llm = new RecordingLlm
-
-    val io = for
-      sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
-      bossMeta <- sessionStore.createSession(s"$teamName/boss", agentName = Some("boss"), flowName = Some(teamName))
-      memberMeta <- sessionStore.createSession(
-        s"$teamName/member",
-        agentName = Some("member"),
-        flowName = Some(teamName)
-      )
-      _ <- TeamSessionRegistry.registerSession(teamName, "boss", bossMeta.id)
-      _ <- TeamSessionRegistry.registerSession(teamName, "member", memberMeta.id)
-      resources <- mkResources(system, tmp, llm, sessionStore)
-      // 目标活着（真 fixture：若 queue 路径被走到，它会落盘并 drain —— 红侧即此形态）
-      _ <- MailTool.activateAgent(memberMeta.id, resources, system, ctxFor(resources, system, bossMeta.id))
-      resQueue <- MailTool.call(
-        qJson("address" -> "member", "message" -> "EVFMTB_QUEUE_MARKER", "delivery" -> "queue"),
-        ctxFor(resources, system, bossMeta.id)
-      )
-      queuedItems <- MailQueueStore.load(memberMeta.id)
-      queueFileExists <- IO(os.exists(PathUtil.dataRoot / "sessions" / memberMeta.id / "mail-queue.json"))
-      reqsAfterQueue <- llm.requests.get
-      // 对照腿：同 target、同发送者，仅把 delivery 换成 immediate
-      t0 <- IO(System.currentTimeMillis())
-      resImmediate <- MailTool.call(
-        qJson("address" -> "member", "message" -> "EVFMTB_IMMEDIATE_MARKER", "delivery" -> "immediate"),
-        ctxFor(resources, system, bossMeta.id)
-      )
-      // 观测窗（本批更正，逐字登记）：原为固定 `IO.sleep(500.millis)`。本宿主当前负载下
-      // （swap 85–93% + 3–5 条他批构建在飞）实测「immediate 调用 → 首个 LLM 请求」延迟
-      // **> 500ms** ⇒ 该固定窗偶发不足（两轮红读数见交付报告）。改用本仓既有 idiom
-      // （同款私有 `waitUntil`，见 `MailDedupWiringSpec:87` 等 10+ 处）并**打印实测延迟**。
-      // 🔴 **断言实质零放宽**：immediate 仍必须到达活目标 —— 只是把「固定 500ms 窗内到没到」
-      // 换成「有界窗内必到 + 实测延迟读数」。
-      _ <- waitUntil(20.seconds)(llm.requests.get.map(_.nonEmpty))
-      latencyMs <- IO(System.currentTimeMillis() - t0)
-      _ <- IO(println(s"[immediate-latency] first LLM request ${latencyMs}ms after the immediate Mail call"))
-      reqsAfterImmediate <- llm.requests.get
-    yield (resQueue, queuedItems, queueFileExists, reqsAfterQueue, resImmediate, reqsAfterImmediate)
-
-    val (resQueue, queuedItems, queueFileExists, reqsAfterQueue, resImmediate, reqsAfterImmediate) =
-      io.unsafeRunSync()
-    // ① queue 被显式拒绝（墓碑面；红侧 = 墓碑删净后这里返回 Right("Message queued to member. …") 形态）
-    val msg = rejectedMsg(resQueue, "team 腿")
-    assert(clue(msg).contains(MailTool.ErrDeliveryQueueRetired), s"team leg must carry the retirement code, got: $msg")
-    assert(msg.contains(s"Target: 'member'"), s"must echo the target, got: $msg")
-    // ② 零投递副作用：队列层结构上不可达
-    assertEquals(queuedItems, Nil, "queue must not be written (MailQueueStore unreachable from the tool face)")
-    assert(!queueFileExists, "no mail-queue.json may be created by a rejected queue Mail")
-    assert(clue(reqsAfterQueue).isEmpty, "a rejected queue Mail must not trigger any turn")
-    // ③ 对照腿：immediate 仍在库路径上（本闸只咬 queue 一个值）
-    assert(!isRetired(resImmediate), s"immediate must not be rejected by the retirement guard, got: $resImmediate")
-    assert(
-      clue(reqsAfterImmediate).nonEmpty,
-      "immediate Mail must still be delivered to the live target (the guard must not have broken the only mode)"
-    )
-    system.stopAll.unsafeRunSync()
+  // 原「端到端（真 team fixture）：queue 被拒 + 零副作用；immediate 不受影响」
+  // 整条删除（连同其 fixture：RecordingLlm / mkResources / ctxFor / fixtureTeam）。
+  // 它发的两个地址都是**团队内置短名** `"member"`（`address -> "member"`），依赖的
+  // 是「团队会话 × 团队名 / 裸短名」那条解析腿；作者裁定 Mail 地址面三形态硬删后，
+  // 该地址在 `call()` 里落通用 `unresolvableError`（不认识的地址），端到端腿的
+  // 目标本身不存在。
+  // 删因：**团队地址面（团队名 / team/agent / 裸短名）已硬删**（不是「跑不过」）。
+  // 覆盖面交代：`delivery="queue"` 墓碑的断言仍由本文件 §1–§4（六腿拒绝面、
+  // 文案一致性、device 腿、对照腿残差）与 MailDedupWiringSpec / MailIdleGateWiringSpec
+  // / MailIdleGateSpec 各自持有，零净损失。
 
 end MailDeliveryRetireSpec

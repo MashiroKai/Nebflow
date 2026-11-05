@@ -260,9 +260,21 @@ object DelegateFreeze:
 
   /**
    * 唤醒后收口（Mail 唤醒 / 面板唤醒 / 同 id 复活三腿共用）：清冻结槽 + 审计行 +
-   * 合并队列重排（道净后本成员自动重排，无留队僵尸）。fail-soft。
+   * 合并队列重排（道净后本成员自动重排，无留队僵尸）+ **状态变更帧**。fail-soft。
+   *
+   * 冻结状态两套真相批（2026-11-05 10:42 报障「面板说要唤醒、点了说不需要」）：
+   * 本动作是**唯一**把两侧冻结槽清空的地方，因此也是唯一必须发帧的地方——旧版没有
+   * `wsSend` 参数，Mail 唤醒腿清完槽一声不响，面板那行的冻结标记（客户端单调累积）
+   * 就永久停在旧值。现在无论唤醒来自面板、Mail 还是自动恢复，唤醒瞬间都推一帧
+   * `delegateWoken`（含 sessionId / 新状态 / via / 时刻 / 冻结块），面板据此即时收起
+   * 「需唤醒」，**不需要手动刷新**。
    */
-  def onWoken(resources: AgentRuntimePort, delegateId: String, via: String): IO[Unit] =
+  def onWoken(
+    resources: AgentRuntimePort,
+    delegateId: String,
+    via: String,
+    wsSend: Option[Json => IO[Unit]] = None
+  ): IO[Unit] =
     for
       _ <- IO
         .blocking(DelegateRegistry.clearFrozen(delegateId))
@@ -312,6 +324,30 @@ object DelegateFreeze:
           )
         )
         .handleErrorWith(e => logger.warn(s"[delegate-freeze] wake audit row failed for $delegateId: ${e.getMessage}"))
+      // 状态变更帧（冻结状态两套真相批 2026-11-05）：三腿共用、**无一例外**。
+      // 面板据此把「需唤醒」即时收起（帧里带 sessionId / 新状态 / via / 时刻 /
+      // 非冻结的 freeze 块）；缺席 = 面板永远停在旧值（本轮报障的直接成因）。
+      _ <- wsSend.fold(IO.unit) { send =>
+        IO.blocking(DelegateRegistry.find(delegateId))
+          .map(_.map(_.parentSessionId).getOrElse(""))
+          .handleErrorWith(_ => IO.pure(""))
+          .flatMap { rootSid =>
+            val at = System.currentTimeMillis()
+            send(
+              Json.obj(
+                "type" -> "delegateWoken".asJson,
+                "sessionId" -> delegateId.asJson,
+                "rootSessionId" -> rootSid.asJson,
+                "via" -> via.asJson,
+                "status" -> "running".asJson,
+                "at" -> at.asJson,
+                "freeze" -> nebflow.actor.FreezeTruth.running("running", at).json
+              )
+            ).handleErrorWith(e =>
+              logger.warn(s"[delegate-freeze] delegateWoken frame failed for $delegateId: ${e.getMessage}")
+            )
+          }
+      }
       _ <- IO
         .blocking(MergeQueue.careTick())
         .handleErrorWith(e =>

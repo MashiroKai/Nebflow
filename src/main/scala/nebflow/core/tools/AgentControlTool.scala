@@ -7,7 +7,6 @@ import io.circe.syntax.*
 import nebflow.actor.*
 import nebflow.core.AgentRuntimePort
 import nebflow.core.delegate.CancelCascade
-import nebflow.core.flow.TeamSessionRegistry
 import nebflow.shared.Defaults
 
 import scala.concurrent.duration.*
@@ -48,10 +47,10 @@ object AgentControlTool extends Tool:
 Actions:
 - **list**: table of all live background agents (kind, status, stuck?, phase, uptime, idle time, retry count, task). Use this FIRST when a sub-agent is silent or you suspect it is stuck — "stuck?" marks Processing agents that either produced no agent-side event (LLM chunk / tool batch) for >10min, or have a single tool call running for >10min inside an unfinished turn (same judgement as the automatic watcher — process CPU is irrelevant to it). "phase" shows the in-flight tool call (name + elapsed), which is what tells you whether the agent is executing a tool or has gone silent.
 - **status**: full detail for one agent (pass sessionId from list): state, timings, in-flight tool phase, task prompt excerpt, retry count, last error. Also detects orphan task files (actor gone but task still marked running).
-- **cancel**: terminate an agent's current task. The parent session receives a "cancelled" notification and any wait barrier is released — nobody waits forever. Allowed kinds: Delegate, SubTask, Ephemeral, Project node/dispatcher sessions (node-*/dispatcher-*, settles via the session bridge), and Team members (permission-scoped — see Safety rules). With scope="bgTask" + jobId: cancel ONE background task inside the target session instead of the session (local shell job or remote device job) — the session and its other tasks keep running.
-- **restart**: kill the stuck turn and resume from the last persisted checkpoint (same mechanism as crash recovery — completed work is kept). Allowed kinds: Delegate (ephemeral) and SubTask (both consume the supervisor's restart budget, 2 per 5min; exceeding it fails the task), and Team members (Stop + re-activation from persisted history — no supervisor budget consumed).
+- **cancel**: terminate an agent's current task. The parent session receives a "cancelled" notification and any wait barrier is released — nobody waits forever. Allowed kinds: Delegate, SubTask, Ephemeral, Project node/dispatcher sessions (node-*/dispatcher-*, settles via the session bridge). With scope="bgTask" + jobId: cancel ONE background task inside the target session instead of the session (local shell job or remote device job) — the session and its other tasks keep running.
+- **restart**: kill the stuck turn and resume from the last persisted checkpoint (same mechanism as crash recovery — completed work is kept). Allowed kinds: Delegate (ephemeral) and SubTask (both consume the supervisor's restart budget, 2 per 5min; exceeding it fails the task).
 
-Safety rules: you cannot cancel/restart yourself, Root/plan sessions (self-preservation guard), or dag-* Flow workers (flow cancellation goes through cancelFlow / RunningFlowRegistry). Project node/dispatcher sessions (node-*/dispatcher-*) support cancel only (single-shot — no restart; cancel the dispatcher and re-dispatch via Delegate(task=..., project=<name>) — Mail dispatches nothing). Delegate/SubTask/Ephemeral sessions under your own root session are always controllable. Team members are manageable by their team's Manager (subtree scope — own team members and their sub-agents) and by Nebula (global scope); other callers are read-only for Team. Killing a team MANAGER (cancel/restart) additionally requires confirm=true plus a non-empty reason — a killed Manager leaves its members running but coordinator-less (members remain manageable by Nebula); every such kill is recorded in the audit log.
+Safety rules: you cannot cancel/restart yourself, Root/plan sessions (self-preservation guard), or dag-* Flow workers (flow cancellation goes through cancelFlow / RunningFlowRegistry). Project node/dispatcher sessions (node-*/dispatcher-*) support cancel only (single-shot — no restart; cancel the dispatcher and re-dispatch via Delegate(task=..., project=<name>) — Mail dispatches nothing). Delegate/SubTask/Ephemeral sessions under your own root session are always controllable. Team targets are not manageable at all: the team feature (team members, team Managers and their scope) was retired on 2026-11-04, so the team scope of this tool is gone with it — a `kind: Team` target is refused explicitly rather than silently downgraded.
 
 When to use:
 - A delegated task has been silent far longer than expected → list, then status the suspicious session.
@@ -104,9 +103,12 @@ When to use:
   // ── kind policy（§4 矩阵）──────────────────────────────────
 
   /**
-   * 无条件 cancelable kinds。Team 是条件放行（kindRejection Team 分支：直接父/root），
-   * 不进此白名单——WS cancelAgent handler 复用此白名单 → 管理面板对 Team 保持只读，
-   * 权限门只在工具路径。
+   * 无条件 cancelable kinds。WS cancelAgent handler 复用此白名单 ⇒ 管理面板对非
+   * 白名单 kind 保持只读，权限门只在工具路径。
+   *
+   * 团队功能删除批（team-feature-deletion-20261104）阶段 3：`Team` 原先「条件放行」
+   * （直接父 / root 桶 → 放行，并配 Manager 强确认门），该分支随 team scope 整段
+   * 删除（作者裁定）——`Team` 现由 [[kindRejection]] 显式拒绝，也不再进本白名单。
    */
   val CancelableKinds: Set[AgentKind] = Set(AgentKind.Delegate, AgentKind.SubTask, AgentKind.Ephemeral)
   private val RestartableKinds: Set[AgentKind] = Set(AgentKind.Delegate, AgentKind.SubTask)
@@ -179,17 +181,17 @@ When to use:
               "Use flow-level cancellation instead (cancelFlow(instanceId) / RunningFlowRegistry; NodeCancel for Project nodes)."
           )
       case AgentKind.Team =>
-        // v2 升级链父重启（§5.3.3）：直接父（Manager/owner）对自有 Team 成员
-        // restart/cancel 放行——升级链的决策载体。
-        // Block 2（supervision trio §C3）：root 桶调用者（Nebula）对 Team 全局
-        // cancel/restart 放行（let-it-crash 裁定第 6 条——杀 Manager 需 confirm，
-        // 在 withGuardedRecord 的强确认门）。其他调用者保持只读。
-        if callerIsDirectParent || callerIsRoot then None
-        else
-          Some(
-            "Team members are read-only for AgentControl in this version — killing one mid-collaboration breaks the team state machine. " +
-              "If a team agent is stuck, Mail its Manager or wait for the stuck watcher."
-          )
+        // 团队功能删除批（team-feature-deletion-20261104）阶段 3：本条原为「条件
+        // 放行」——直接父（团队 Manager）/ root 桶调用者放行，其余只读，并配
+        // Manager 强确认门与审计行。作者裁定 team scope **整段删除**，故条件放行
+        // 与其后的 confirm+reason 审计腿一并删除；`AgentKind.Team` 目标改为显式
+        // 拒绝（fail-closed：不留「静默变成不可管理」的模糊态，枚举值本身保留 ——
+        // 去留仍待作者裁定）。
+        Some(
+          "Team targets are not manageable: the team feature was retired on 2026-11-04 " +
+            "(team members / team Managers / team scope are gone, so no caller has a team scope any more). " +
+            "Manage background sessions (Delegate / SubTask / Ephemeral / Project node / dispatcher) instead."
+        )
       case AgentKind.Root | AgentKind.Plan =>
         Some("Root/plan sessions cannot be managed with this tool (self-preservation guard).")
       case k =>
@@ -223,22 +225,11 @@ When to use:
           case None => false
     walk(from, 0)
 
-  /**
-   * Block 1 (§B3): the manager scope anchor set — the caller itself plus
-   * every session of the team instance it leads. None = caller does not
-   * lead any instance (not a Manager, or a member of one) → no scope → no
-   * manageability.
-   */
-  private def managerAnchors(callerSid: String): IO[Option[Set[String]]] =
-    TeamSessionRegistry.teamOfSession(callerSid).flatMap {
-      case None => IO.pure(None)
-      case Some(inst) =>
-        TeamSessionRegistry.managerOf(inst).flatMap {
-          case Some(m) if m != callerSid => IO.pure(None)
-          case _ =>
-            TeamSessionRegistry.sessionIdsOf(inst).map(sids => Some((callerSid +: sids).toSet))
-        }
-    }
+  // ═══ 团队功能删除批（team-feature-deletion-20261104）阶段 3：team scope 退役
+  // `managerAnchors`（Block 1 §B3 的 Manager 作用域锚点集 = 调用者自己 + 本团队
+  // 全部 sessionId）在此删除 —— 作者裁定「AgentControl 的 team scope 整段删除，
+  // 只留 session / bgTask」。它唯一的两个调用点（cancel/restart 的子树判定、
+  // list 的可见范围）见下方各自的同位墓碑注。
 
   /**
    * Block 1 (§B3): a root-bucket caller's rootSessionId IS its own session id
@@ -372,36 +363,13 @@ When to use:
     def proceed(rec: AgentRecord, callerRoot: String, rootBucket: Boolean): IO[Either[ToolError, String]] =
       // v2 升级链父重启（§5.3.3）：直接父 = 调用者会话 == 目标记录的 parentSessionId
       // （Manager/owner 管理自有 Team 成员；Delegate/SubTask 的父同理）。
+      // 团队功能删除批阶段 3：Team 分支的「Manager 需 confirm=true + 非空 reason」
+      // 强确认门与 `auditTeamAction` 审计腿随 team scope 整段删除（作者裁定）——
+      // `AgentKind.Team` 目标现由 [[kindRejection]] 直接显式拒绝，走不到这里。
       val callerIsDirectParent = rec.parentSessionId.nonEmpty && rec.parentSessionId == callerSessionId
       kindRejection(rec, action, callerIsDirectParent, callerIsRoot = rootBucket) match
         case Some(msg) => IO.pure(Left(ToolError(msg)))
-        case None =>
-          if rec.kind == AgentKind.Team then
-            isManagerSession(rec.sessionId).flatMap {
-              case true if !confirm =>
-                IO.pure(
-                  Left(
-                    ToolError(
-                      s"'${rec.sessionId}' is a team MANAGER. Cancelling/restarting it requires confirm=true " +
-                        "AND a non-empty reason. Consequence: the Manager's members keep running but lose their " +
-                        "coordinator (they remain manageable by Nebula via AgentControl). Re-issue with " +
-                        "confirm=true and reason=\"<why>\" if this is intended."
-                    )
-                  )
-                )
-              case true if reason.isBlank =>
-                IO.pure(
-                  Left(
-                    ToolError(
-                      "confirm=true for killing a team Manager requires a non-empty reason " +
-                        "(audit trail: who killed which Manager and why). Re-issue with reason=\"<why>\"."
-                    )
-                  )
-                )
-              case _ =>
-                auditTeamAction(ctx, action, rec, confirm, reason) *> body(rec, callerRoot)
-            }
-          else body(rec, callerRoot)
+        case None => body(rec, callerRoot)
       end match
     end proceed
     for
@@ -411,9 +379,7 @@ When to use:
       result <- registry.get(sessionId) match
         case None =>
           val manageable = registry.values
-            .filter(r =>
-              CancelableKinds.contains(r.kind) || RestartableKinds.contains(r.kind) || r.kind == AgentKind.Team
-            )
+            .filter(r => CancelableKinds.contains(r.kind) || RestartableKinds.contains(r.kind))
             .map(_.sessionId)
             .toList
           val hint = if manageable.isEmpty then "(none currently)" else manageable.mkString(", ")
@@ -441,59 +407,34 @@ When to use:
               )
             else proceed(rec, callerRoot, rootBucket)
           else
-            // Block 1：非 root 调用者（Manager）——子树判定取代同桶
-            managerAnchors(callerSessionId).flatMap {
-              case Some(anchors) if anchors.contains(sessionId) || chainReaches(registry, sessionId, anchors, 8) =>
-                proceed(rec, callerRoot, rootBucket)
-              case _ =>
-                IO.pure(
-                  Left(
-                    ToolError(
-                      s"Permission denied: session '$sessionId' is outside your team subtree " +
-                        "(your own team members and their sub-agents). Root sessions and other teams' agents are not manageable by you."
-                    )
-                  )
+            // Block 1 原为「非 root 调用者（团队 Manager）→ 子树判定取代同桶」。
+            // 团队功能删除批阶段 3：team scope 整段删除后，非 root 桶调用者不再有
+            // **任何**可管理范围（唯一产生非 root 桶记录的是团队挂载）⇒ 显式拒绝，
+            // 不留「不在作用域」的模糊文案（作者裁定口径：删就要明说）。
+            IO.pure(
+              Left(
+                ToolError(
+                  s"Permission denied: '$sessionId' is outside your management scope. The team scope " +
+                    "(team Managers managing their own members) was retired with the team feature on 2026-11-04 — " +
+                    "only a root session (Nebula / project dispatcher) manages background agents now."
                 )
-            }
+              )
+            )
     yield result
     end for
   end withGuardedRecord
 
-  /**
-   * Block 2（§C3-4）：Team cancel/restart 审计行——logger `nebflow.audit`
-   * （随 stand.log 落盘）。
-   */
-  private val auditLogger = nebflow.shared.NebflowLogger.forName("nebflow.audit")
-
-  private def auditTeamAction(
-    ctx: ToolContext,
-    action: String,
-    rec: AgentRecord,
-    confirm: Boolean,
-    reason: String
-  ): IO[Unit] =
-    val callerSid = ctx.sessionId.getOrElse("-")
-    val callerAgent = ctx.agentDef.map(_.name).orElse(ctx.sessionName).getOrElse("-")
-    auditLogger.info(
-      s"AUDIT ts=${System.currentTimeMillis()} caller=$callerSid callerAgent=$callerAgent " +
-        s"action=$action target=${rec.sessionId} targetKind=Team targetAgent=${agentNameFromSessionId(rec.sessionId)} " +
-        s"confirm=$confirm reason=\"$reason\"" +
-        (if action == "restart" then " note=\"history restored; turn NOT auto-resumed\"" else "")
-    )
-
-  end auditTeamAction
+  // ═══ 团队功能删除批阶段 3：`auditLogger`（nebflow.audit）+ `auditTeamAction`
+  // （一切 Team cancel/restart 的审计行）随 team scope 整段删除 —— 唯一调用点是
+  // Manager 强确认门之后的那条腿（同上注）。**审计面本身没有损失**：它记录的是
+  // 「谁杀了哪个 Team Manager 及理由」，而 Team 目标已整体不可管理。
 
   /** 审计/通知里的调用者署名：agent 名优先（Nebula/Manager），回退 session 名。 */
   private def callerLabel(ctx: ToolContext): String =
     ctx.agentDef.map(_.name).orElse(ctx.sessionName).getOrElse("AgentControl caller")
 
-  /** 目标会话是其 team 实例的 Manager（TeamSessionRegistry 权威）。 */
-  private def isManagerSession(sid: String): IO[Boolean] =
-    TeamSessionRegistry.teamOfSession(sid).flatMap {
-      case None => IO.pure(false)
-      case Some(inst) =>
-        TeamSessionRegistry.managerOf(inst).map(_ == Some(sid))
-    }
+  // 团队功能删除批阶段 3：`isManagerSession`（目标会话是否其团队实例的 Manager，
+  // 团队会话登记表权威）随 team scope 删除 —— 唯一调用点是已删的强确认门。
 
   /**
    * Block 1（supervision trio §B4）：list 的可见面。root 桶调用者（Nebula）
@@ -509,7 +450,11 @@ When to use:
       registry <- resources.agentRegistry.get
       pred <-
         if callerIsRootBucket(registry, callerSid) then IO.pure(None)
-        else managerAnchors(callerSid)
+        else
+          // 团队功能删除批阶段 3：原为 `managerAnchors(callerSid)`（团队 Manager 的
+          // 子树锚点集）。team scope 删除后非 root 桶调用者不存在于生产路径；这里
+          // 给**空范围**（看得见 0 行）而非全局范围 —— 失败方向是收窄，不是放宽。
+          IO.pure(Some(Set.empty[String]))
     yield (registry, pred)
 
   private def doList(resources: AgentRuntimePort, ctx: ToolContext): IO[Either[ToolError, String]] =
@@ -554,13 +499,11 @@ When to use:
           val loop =
             if rec.loopStreak > 0 || rec.loopRounds > 0 then s"${rec.loopStreak}/${rec.loopRounds}"
             else "-"
-          // Block 2（§C1）：root 桶调用者（Nebula）对 Team 全局 cancel/restart——
-          // Team 行不再标 read-only；Manager 子树视图（anchorsOpt 定义）内 Team
-          // 由直接父分支放行，同样不标。其余只读 kind 照标（新 Project flow 会话
-          // node-/dispatcher- 有观察桥取消通道，不标）。
-          val teamManageable = rec.kind == AgentKind.Team && anchorsOpt.isEmpty
-          val readOnly =
-            if !cancelable(rec) && !teamManageable then " （read-only）" else ""
+          // Block 2（§C1）原为「root 桶调用者（Nebula）对 Team 全局 cancel/restart ⇒
+          // Team 行不标 read-only」。团队功能删除批阶段 3：Team 目标不可管理 ⇒ 该
+          // 放行标注删除，Team 行按普通只读 kind 呈现（rest 只读 kind 照标；新
+          // Project flow 会话 node-/dispatcher- 有观察桥取消通道，不标）。
+          val readOnly = if !cancelable(rec) then " （read-only）" else ""
           val taskLabel = (task.map(_.description).getOrElse("") + readOnly).trim
           // 会话续命名与位修正批（2026-11-03 · A 部分）：任务列显示名走**去叠加读影**
           // （[[nebflow.core.delegate.SessionResumption.stripContinuationPrefix]] 单点）
@@ -723,7 +666,7 @@ When to use:
              |          The HeldDeliveryWatchdog (60s) now nudges undelivered held receipts with exponential backoff; after
              |          ${nebflow.shared.Defaults.HeldDeliveryMaxAttempts} nudges they become unread (+u) and flush ahead of the session's next input.
              |Cancelable kinds: Delegate / SubTask / Ephemeral, and Project node/dispatcher sessions (node-*/dispatcher-*, cancel settles via the session bridge). Restartable: Delegate(ephemeral) / SubTask.
-             |Team members: the team's Manager (direct parent) or Nebula (global; killing a team MANAGER requires confirm=true + reason — audited). Legacy dag-* Flow workers and Root are read-only.$scopeNote""".stripMargin
+             |Team targets: not manageable (the team feature was retired on 2026-11-04; team scope is gone). Legacy dag-* Flow workers and Root are read-only.$scopeNote""".stripMargin
       Right(summary)
 
   private def doStatus(
@@ -736,19 +679,16 @@ When to use:
       val callerSid = ctx.sessionId.getOrElse("")
       val rootBucket = callerIsRootBucket(registry, callerSid)
       if !rootBucket then
-        managerAnchors(callerSid).flatMap {
-          case Some(anchors) if anchors.contains(sessionId) || chainReaches(registry, sessionId, anchors, 8) =>
-            doStatusBody(resources, registry, sessionId, rootBucket)
-          case _ =>
-            IO.pure(
-              Left(
-                ToolError(
-                  s"Permission denied: session '$sessionId' is outside your team subtree " +
-                    "(your own team members and their sub-agents)."
-                )
-              )
+        // 团队功能删除批阶段 3：team scope（Manager 子树）整体删除 ⇒ 非 root 桶
+        // 调用者无范围，显式拒绝（与 cancel/restart 同一口径）。
+        IO.pure(
+          Left(
+            ToolError(
+              s"Permission denied: '$sessionId' is outside your management scope. The team scope was retired " +
+                "with the team feature on 2026-11-04 — only a root session manages background agents now."
             )
-        }
+          )
+        )
       else doStatusBody(resources, registry, sessionId, rootBucket)
       end if
     }
@@ -836,17 +776,17 @@ When to use:
               )
             }
             .getOrElse(List("task record: (none — not a Delegate/SubTask task, or file pruned)"))
-          // Block 2 §C3 语义对齐：能到达 status body 的调用者只有两类——root 桶
-          // （callerIsRoot=true）或已过子树门的 Manager（callerIsRoot=false 且
-          // anchors 命中）——对 Team 目标分别对应 callerIsRoot / 直接父放行，
-          // manage 行不得再用无 caller 语境的 kindRejection 恒显 read-only。
-          val teamRestartable = rec.kind == AgentKind.Team
+          // 团队功能删除批阶段 3：原 `teamRestartable`（Team 目标在 root 桶/直接父下
+          // 可 restart）随 team scope 删除 —— Team 目标现恒 read-only，manage 行不再
+          // 需要特殊放行。
           val manage =
             kindRejection(rec, "cancel", callerIsDirectParent = !callerIsRoot, callerIsRoot = callerIsRoot) match
               case Some(_) => "manageable: no (read-only kind)"
               case None =>
                 "manageable: cancel" +
-                  (if RestartableKinds.contains(rec.kind) || teamRestartable then " / restart" else " only")
+                  // 阶段 3：`|| teamRestartable` 随 team scope 删除（Team 目标恒 read-only）；
+                  // main 侧的 freeze 展示腿（freezeLines）保留。
+                  (if RestartableKinds.contains(rec.kind) then " / restart" else " only")
           Right((lines ++ freezeLines :+ manage).mkString("\n"))
         }
       case None =>
@@ -1192,64 +1132,23 @@ When to use:
             )
 
   /**
-   * F3(b) 如实化（loop-detected 报告 §6-F3，2026-08-30）：Team 成员 restart
-   * 只重建会话（持久化 history 恢复），**turn 不自动续跑**——旧文案「resumes
-   * from the last persisted checkpoint」是误导（checkpoint 续跑是 Delegate/
-   * SubTask supervisor 分支的真实机制，Team 分支没有）。
+   * Restart a supervised session: kill the stuck turn, let the supervisor
+   * respawn it from the last persisted checkpoint.
+   *
+   * 团队功能删除批（team-feature-deletion-20261104）阶段 3：Team 成员 restart 腿
+   * 整段删除（作者裁定「team scope 整段删除」）——包含 `teamRestartSuccessText` /
+   * `teamRestartDeadText` 两条专用文案与「Stop 旧 actor → 等死 → 经
+   * `MailTool.activateAgent` 从持久化 history 重建」的执行腿。该腿在团队退役后
+   * 已无对象可指（Team 目标现由 kindRejection 显式拒绝），故不留半套。
+   * 本方法的入口判定因之直接落到 supervisor 分支（Delegate/SubTask 重启腿逐字未动）。
    */
-  private[tools] def teamRestartSuccessText(sessionId: String): String =
-    s"Restart sent for Team member '$sessionId': stopped and re-activated from persisted history " +
-      "(parent-restart). Turn NOT auto-resumed (turn 未自动续跑) — re-dispatch the task if it should continue."
-
-  private[tools] def teamRestartDeadText(sessionId: String): String =
-    s"Team member '$sessionId' did not stop within 5s — restart aborted (no respawn to avoid double-activation)."
-
   def doRestart(
     resources: AgentRuntimePort,
     ctx: ToolContext,
     rec: AgentRecord,
     reason: String
   ): IO[Either[ToolError, String]] =
-    if rec.kind == AgentKind.Team then
-      // v2 升级链父重启（§5.3.3 Team 成员分支）：Stop 旧 actor → 等死（防同名
-      // 双活）→ 复用 MailTool.activateAgent 以 history 重建（断点续跑，turn 从
-      // lastDispatch checkpoint 继续）。Team 成员无 supervisor——父就是恢复载体。
-      (ctx.actorSystem, ctx.sharedResources) match
-        case (Some(system), Some(_)) =>
-          val deadline = System.currentTimeMillis() + 5000L
-          def waitDead: IO[Boolean] =
-            system.isAlive(rec.ref.path).flatMap {
-              case false => IO.pure(true)
-              case true if System.currentTimeMillis() >= deadline => IO.pure(false)
-              case true => IO.sleep(200.millis) *> waitDead
-            }
-          for
-            _ <- rec.ref ! AgentCommand.Stop(
-              s"parent-restart${if reason.nonEmpty then s": $reason" else ""}"
-            )
-            // 父决策销账（v2 反推送风暴批）：restart 即关闭其未决升级事件。
-            _ <- clearRegistryEscalation(resources, rec.sessionId)
-            dead <- waitDead
-            refOpt <- if dead then MailTool.activateAgent(rec.sessionId, resources, system, ctx) else IO.pure(None)
-          yield
-            if !dead then Left(ToolError(teamRestartDeadText(rec.sessionId)))
-            else if refOpt.isDefined then Right(teamRestartSuccessText(rec.sessionId))
-            else
-              Left(
-                ToolError(
-                  s"Team member '${rec.sessionId}' stopped but re-activation failed (session or agent def not found)."
-                )
-              )
-          end for
-        case _ =>
-          IO.pure(
-            Left(
-              ToolError(
-                s"Team member restart requires a live actor system (missing in this tool context)."
-              )
-            )
-          )
-    else if rec.supervisorRef.isEmpty then
+    if rec.supervisorRef.isEmpty then
       // registry 是内存态、与代码同版本——Delegate/SubTask 记录恒有 supervisor；
       // 走到这里说明内部不一致，拒绝而非盲杀。
       IO.pure(

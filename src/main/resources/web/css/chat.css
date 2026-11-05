@@ -372,12 +372,32 @@
 }
 .bg-task-row-head .bg-task-name { font-weight: 600; }
 .bg-dropdown-list .bg-task-row-head:first-child { border-top: none; }
-/* 双类锚（0,2,0）压过 .bg-task-row 的 padding 简写（源序在后——单类锚必输）。 */
+/* 双类锚（0,2,0）压过 .bg-task-row 的 padding 简写（源序在后——单类锚必输）。
+   层级缩进批（2026-11-05 腿②）：缩进从「两级帽的单格」升级为**按真实深度累加**——
+   每深一层再加一格（--ds-space-3 / 12px），档值全部取自既有间距令牌（零新增档、
+   零新增色值字面量）。--bg-row-depth 由行构造器内联写入（data-bg-depth 同源）；
+   缺席时按 1 档算 = 既有单格缩进（远端投影行 / 无深度锚的行视觉零回归）。
+   depth1 = 16px（既有档），depth2 = 28px，depth3 = 40px …… 严格单调，任何层数都不裁行。 */
 .bg-task-row.bg-task-row-child {
-  padding-left: var(--ds-space-4);
+  padding-left: calc(var(--ds-space-4) + (var(--bg-row-depth, 1) - 1) * var(--ds-space-3));
   border-left: 2px solid var(--color-frame-border);
 }
 .bg-task-row-child .bg-task-name { font-size: var(--ds-fs-hint); }
+/* 野节点归置批（2026-11-05 腿③ · 作者点名「很多的野节点」）：父不可解析的行收进
+   独立归置分组——组头是**标签不是行**（不占行集、不入计数、零按钮：引擎侧没有关闭
+   判据，本批只展示、零自动处置），组内行保持 depth0 + 既有「来自 …」来源角标。
+   纯标签面：色/字阶/间距全部走既有 --ds-* 槽（零新增档、零色值字面量）。 */
+.bg-orphan-group {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  margin-top: var(--ds-space-2);
+  padding: var(--ds-space-2) var(--ds-space-3) var(--ds-space-1);
+  border-top: 1px solid var(--glass-control-border);
+  font-size: var(--ds-fs-meta);
+  font-weight: var(--ds-fw-body);
+  color: var(--ds-text-muted);
+}
 /* panel-ia 批：主名行升为行内第一读数后，meta 槽（状态词）与摘要同族 muted。 */
 .bg-task-state {
   font-size: var(--ds-fs-meta);
@@ -495,7 +515,10 @@
    单一形态规则（值全走 --ds-* 槽：字阶 --ds-fs-meta 11 / 圆角 --ds-radius-chip
    6 / 材质 --ds-control-bg/-border/--ds-text-muted），变体规则只保留各自真正的
    差异（强调色 / 截断 / 收缩率）——「不做第二套形态」由同一条声明成立。 */
+/* 术语分层批（2026-11-05）：整体行身份词 chip（.bg-task-entity = 一次编排的
+   agentflow 词）并入同一形态声明——不做第二套形态，零新增字面量。 */
 .bg-task-kind,
+.bg-task-entity,
 .bg-task-origin,
 .bg-task-mode,
 .bg-task-retries,

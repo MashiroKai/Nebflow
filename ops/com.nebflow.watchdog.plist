@@ -19,11 +19,27 @@
                                       脚本 v3 取候选里**最近 mtime 更新者**判新鲜度、全不可读则判
                                       「判据不可用」且禁判 DEAD；本键把缺省值显式钉在 plist 里，
                                       避免下次换日志路径又静默失聪（改路径 = 改这一行 + bootout/bootstrap）。
-    NEBFLOW_WD_FAIL_THRESHOLD=999999  观察态（只报不动）：脚本 v2 把升级阈值环境变量化
-                                      （nebflow-watchdog.sh:63），置到不可达 ⇒ 失败只记
-                                      「健康检查失败 #N HTTP=...」行，永不进 Stage1/Stage2。
-                                      观察期过后**改回 3**（或删该键 = 脚本缺省 3）并
-                                      `launchctl bootout` + `bootstrap` 重载，自动恢复才算开启。
+    NEBFLOW_WD_FAIL_THRESHOLD=3       **自动恢复已开启（Stage1）** —— 2026-11-05 12:29 作者裁定
+                                      「只开 Stage1（推荐）」。连续 3 次健康检查失败（StartInterval=120s
+                                      ⇒ 约 6 分钟发现窗，脚本缺省亦为 3：nebflow-watchdog.sh:83）才升级，
+                                      且升级前先过「失聪 vs 真死」鉴别（DEAF / NOJUDGE / FOREIGN / UNKNOWN
+                                      一律不动作），只有真死（DEAD）才走 Stage1 优雅重启
+                                      （$NF_HOME/bin/nebflow-restart.sh = 垫片 → stand-restart.sh
+                                      --restart-if-idle；四信号忙 ⇒ rc=3 零动作）。
+                                      历史值 999999 = 观察态（只报不动），本批改为 3。
+    NEBFLOW_WD_CLAUDE_BIN=/var/empty/claude-wd-stage2-disabled
+                                      **Stage2 锁死**（同批，作者只批 Stage1，Stage2 不得开启）：
+                                      脚本 Stage2 入口即 `[[ ! -x "$CLAUDE_BIN" ]] ⇒ 记一行 + exit 0`
+                                      （nebflow-watchdog.sh:277-280），故把本键指到**确定不存在、
+                                      且系统保证永不被创建**的绝对路径，Stage2 就只能走「不可用」分支：
+                                      只记一行日志，零 spawn、零文件写（连 wd-stage2-ts 都不落）、零重启。
+                                      选 /var/empty 的理由：macOS 系统空目录，root:sys 0755 且受 SIP 保护，
+                                      非 root 无法在其中创建任何文件 ⇒「不存在」不是约定而是系统保证
+                                      （仓内／家目录下的路径存在被后人创建的可能，故不选）。
+                                      Stage2 为何尚不可开：其 PROMPT 令 agent 跑
+                                      ~/.nebflow/bin/nebflow-restart.sh（该文件不存在）、诊断路径指旧根
+                                      ~/.nebflow、且带 --dangerously-skip-permissions 自行 --force。
+                                      要开 Stage2 须先改这三处，再把本键改回真实 claude 路径。
   StartInterval=120 取脚本自身设计节拍（nebflow-watchdog.sh 头注释「launchd 每 120s 调度」），
   不是猜的：健康探针 curl -m 10、失聪鉴别窗 600s、限速 2/h 都按该节拍推的。
 -->
@@ -45,7 +61,9 @@
 		<key>NEBFLOW_WD_LOG_CANDIDATES</key>
 		<string>/Users/kaiyu/.stand/logs/stand.log:/Users/kaiyu/.stand/logs/nebflow.log</string>
 		<key>NEBFLOW_WD_FAIL_THRESHOLD</key>
-		<string>999999</string>
+		<string>3</string>
+		<key>NEBFLOW_WD_CLAUDE_BIN</key>
+		<string>/var/empty/claude-wd-stage2-disabled</string>
 	</dict>
 	<key>RunAtLoad</key>
 	<true/>

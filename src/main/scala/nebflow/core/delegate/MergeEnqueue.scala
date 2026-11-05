@@ -47,8 +47,16 @@ object MergeEnqueue:
    * `readyAt` = 入队锚（申报点 = 申报时刻；活性守卫腿 = 会话最后活动时刻）。
    * 两锚（`branch` ∧ `baseBranch`）缺一 = None（**绝不猜 main**，同
    * [[DelegateTerminal.holdForMerge]] 的缺锚降级纪律）。
+   *
+   * `declared` = 属主完成宣告（[[MergeDeclaration]]；缺陷批 2026-11-04）——
+   * **只有申报腿给得出**。活跃守卫/判定机推断的入队腿传 None：成员照样可入账（面板
+   * 可见、FIFO 位次留着），但放行闸（[[MergeQueue.grant]] ③）不认它，不会授窗。
    */
-  def membershipOf(rec: DelegateRegistry.Record, readyAt: Long): Option[MergeQueue.Member] =
+  def membershipOf(
+    rec: DelegateRegistry.Record,
+    readyAt: Long,
+    declared: Option[MergeDeclaration.Decl] = None
+  ): Option[MergeQueue.Member] =
     for
       branch <- rec.branch
       baseBranch <- rec.baseBranch
@@ -65,7 +73,10 @@ object MergeEnqueue:
         parentSessionId = rec.parentSessionId,
         description = rec.title,
         readyAt = readyAt,
-        channelKind = "internal"
+        channelKind = "internal",
+        declaredAt = declared.map(_.at),
+        declareSource = declared.map(_.source),
+        declaredTip = declared.flatMap(_.tip)
       )
 
   /**
@@ -98,8 +109,16 @@ object MergeEnqueue:
                 )
                 .as(false)
             case Some(entry) =>
+              // 宣告闸批 2026-11-04：**这就是「属主明确宣告完成且可合」的机械落点**
+              // （`delegate_report(category="merge")`）——先写宣告账（持久事实），再把它
+              // 盖进成员快照入账。放行闸只认这份宣告。
+              val declared = MergeQueue.declareOwnership(delegateId, MergeDeclaration.Source.ReportMerge, nowMs)
               MergeQueue
-                .enqueuePendingIO(entry)
+                .enqueuePendingIO(entry.copy(
+                  declaredAt = declared.map(_.at),
+                  declareSource = declared.map(_.source),
+                  declaredTip = declared.flatMap(_.tip)
+                ))
                 .attempt
                 .map {
                   case Right(_) =>

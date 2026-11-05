@@ -131,6 +131,9 @@ class MergeQueueHeadSkipFactCheckSpec extends CatsEffectSuite:
       parentSessionId = "nebula-root",
       description = s"task for $delegateId",
       readyAt = readyAt,
+      // 宣告闸批 2026-11-04：属主宣告在案（`delegate_report(category="merge")`）——授窗前提
+      declaredAt = Some(1_000L),
+      declareSource = Some(nebflow.core.delegate.MergeDeclaration.Source.ReportMerge),
       channelKind = "internal",
       internal = None,
       external = None
@@ -158,6 +161,9 @@ class MergeQueueHeadSkipFactCheckSpec extends CatsEffectSuite:
       parentSessionId = "nebula-root",
       description = s"task for $delegateId",
       readyAt = readyAt,
+      // 宣告闸批 2026-11-04：属主宣告在案（`delegate_report(category="merge")`）——授窗前提
+      declaredAt = Some(1_000L),
+      declareSource = Some(nebflow.core.delegate.MergeDeclaration.Source.ReportMerge),
       channelKind = "internal",
       internal = Some(MergeQueue.InternalLeg(child, sup))
     )

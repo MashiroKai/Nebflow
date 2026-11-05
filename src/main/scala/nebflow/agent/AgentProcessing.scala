@@ -1060,7 +1060,6 @@ private[agent] object AgentProcessing:
             .traverse_(d => d.complete(Left("Interrupted by user")).void.handleErrorWith(_ => IO.unit))
           // Back to idle without finishing the turn — clear the busy mark so a
           // interrupted team agent isn't stuck "running" in the Teams panel.
-          _ <- markTeamIdle(agentDef, state.sessionId)
           // R2 closure (wait-timeout-fix): user cancel is the guaranteed exit
           // from WaitingForUser (AskUser/permission parks the turn fiber on a
           // deferred — no finishTurnCont runs). Without this touch the registry
@@ -1515,6 +1514,15 @@ private[agent] object AgentProcessing:
         val askProject = state.projectName
         val askNodeName =
           if state.isDispatcher then Some("dispatcher") else state.flowNodeName
+        // 归属命名批（2026-11-05 作者令「问题卡片要显示 delegate / node 的名字」）：
+        // 卡片归属首段 = 发起实体**自身名**，解析单点 = AgentActor.askOwnerNameOf
+        // （内部走 DelegateRegistry.ownerNameOf，与后台任务归属批同源同判据）：
+        //   · delegate 会话本人提问 ⇒ 自己的批次短名；
+        //   · 节点会话提问 ⇒ 所属 delegate（节点会话 rootSessionId 即委托它的
+        //     delegate——NodeEngine 自根，见 DelegateFlowHosts.mount）；
+        //   · Nebula 自问 / 项目分发器（dispatcher-*，非 delegate 会话）/ 无名旧记录
+        //     ⇒ None（载荷零键，前端回落项目名）。
+        val askOwnerName = askOwnerNameOf(state.sessionId, state.rootSessionId)
         val payload0 = buildAskUserJson(
           Some(rootSid),
           srcAgent,
@@ -1523,6 +1531,7 @@ private[agent] object AgentProcessing:
           Some(srcSession),
           askProject,
           askNodeName,
+          askOwnerName,
           askAttachments
         )
         // U3（2026-09-11 作者裁定）：内核会话的来源标注覆盖为 `subagent · <任务摘要>`
@@ -1785,7 +1794,6 @@ private[agent] object AgentProcessing:
         for
           _ <- c.log.error(s"Agent error in processing, returning to idle: ${err.getMessage}")
           _ <- emitStream(state.wsSend, AgentStreamEvent.Interrupted, isSubagent = depth > 0, state.sessionId)
-          _ <- markTeamIdle(agentDef, state.sessionId)
         yield idle(agentDef, resources, depth, parentRef, state.withStatus(AgentStatus.Idle).withInteraction(None))
   end processing
 
@@ -1944,12 +1952,9 @@ private[agent] object AgentProcessing:
     replyTo: Option[ActorRef[AgentEvent]],
     cause: DispatchCause = DispatchCause.Gated
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
-    // Turn start: mark team agent busy. Idempotent (Set), so the recursive
-    // multi-tool-call turns that re-enter pipeLlmCall are harmless.
-    // MUST run unconditionally BEFORE the freeze gate (spec 6a / B12): a frozen
-    // team agent must still read busy in the Teams panel — putting this in the
-    // dispatch branch would leave frozen team agents marked idle.
-    markTeamBusy(agentDef, state.sessionId) *>
+    // 团队功能删除批阶段 3：此处原有 turn 起手的 `markTeamBusy`（写团队 busyMap，
+    // 供 Teams 面板「运行中」呈现；「MUST run before the freeze gate」那条纪律
+    // 随该面一并退役——唯一读者已随团队会话面删除）。
       // ── Freeze gate (freeze-schedule spec ⑥, F2 single choke point) ──
       // 所有 AgentActor 层 dispatch 都经过本 shadow；AgentCore 内部递归
       // （maybeAutoCompact 等）静态解析不经此处，但只会在 gate 放行后执行。
