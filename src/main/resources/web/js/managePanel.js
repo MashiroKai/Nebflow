@@ -25,7 +25,8 @@ import { t } from './i18n.js';
 import { showToast } from './modal.js';
 import { isBgAgentId } from './utils.js';
 // 冻结态误报批（2026-11-05）：冻结行的恢复入口判据（需人介入才给按钮）。
-import { freezeNeedsHuman } from './freezeState.js';
+// 冻结状态两套真相批（2026-11-05）：改读后端权威块的 `wakeable`（单一真相）。
+import { wakeableOf } from './freezeState.js';
 
 /** Kinds the user may stop/restart (AgentControl §4 operable bucket). */
 export const OPERABLE_KINDS = new Set(['Delegate', 'SubTask', 'Ephemeral']);
@@ -61,7 +62,9 @@ export function isProcessingStatus(status) {
  *  不该变成用户的按钮）。判据单点 = freezeState.js（后端 FreezeDisplay 的呈现面）。
  *  @param {string} status  @param {any} [meta] 行/弹窗 meta（读 freezeKind / 原因线值） */
 export function isRetryableStatus(status, meta) {
-  if (status === 'frozen') return freezeNeedsHuman(meta || { frozen: true });
+  // 冻结状态两套真相批（2026-11-05）：恢复入口只认后端权威块的 `wakeable`
+  // （旧后端无块 ⇒ 退回分类表，同一张表的退化副本）。
+  if (status === 'frozen') return wakeableOf(meta || { frozen: true });
   return status === 'failed' || status === 'stuck' || status === 'stopped';
 }
 
