@@ -108,6 +108,19 @@
   display: flex; flex-direction: column; gap: var(--ds-space-half); cursor: pointer;
   height: auto; min-height: 88px;
 }
+/* 玻璃面收口（edge-render-fix 批 2026-11-05 · 作者裁定「与毛玻璃标准一致」）：
+   卡片此前吃 FLOW_CSS 的 `--glass-bg`（亮 α0.55 / 暗 α0.68）⇒ 卡下**任何**图层都会
+   以 45%/32% 的强度透上来，本次报障的黑色连线楔形正是从卡底透上来把文字压成
+   不可读的（对比度随背景而变 ⇒ 无法对卡面文字做可复核的 AA 判定）。改用
+   **不透底同色档 `--glass-bg-opaque`**（= 同一块玻璃压平在纸面上的合成色，
+   #header 同款；canvas-ask 可读性批 2026-11-05 09:32 立的令牌）：
+     · 卡面底色恒定 ⇒ 卡内每一处文字对比度可逐项实测、双主题各自有定值；
+     · 连线/背景不再能经卡片透上来 ⇒ 与「连线永不盖住节点内容」形成双保险。
+   glass-unify 批（main 874e8be1f）已合入：唯一玻璃底 = `--nf-glass-bg`（亮 #ffffffF7/
+   暗 #181c26F0，α≥0.90），旧 `--glass-bg-opaque` 现只是它的别名（sapphire.css:50）。
+   本批直接挂**唯一玻璃底令牌**，不再是第二套值；成员的类/登记表归 glass 批（见报告
+   「待对齐点」：`.solar-node.fm-node` 尚未写进 glass.css 成员登记表，值已同源）。 */
+.flowmap-card .solar-node.fm-node { background: var(--nf-glass-bg); }
 .fm-node > * { flex: 0 0 auto; }
 .fm-node:hover { filter: brightness(1.04); }
 
@@ -121,9 +134,18 @@
   font: 500 var(--ds-fs-meta)/1 -apple-system, BlinkMacSystemFont, sans-serif;
   letter-spacing: 0.02em;
 }
-.fm-st-word.completed { color: var(--status-word); }
-.fm-st-word.failed { color: var(--status-word); }
-.fm-st-word.cancelled { color: var(--status-word); }
+.fm-st-word.completed { color: var(--color-text-dim); }
+.fm-st-word.failed { color: var(--color-text-dim); }
+.fm-st-word.cancelled { color: var(--color-text-dim); }
+/* 状态词的**兜底字色**（edge-render-fix 批 2026-11-05）：上面三条只覆盖终态三值，
+   delegate 链视图新态 ready-to-merge（以及将来任何新状态）落在无规则区 ⇒ 继承
+   `.fm-node-head` 的 --color-text-muted（实测 #8b8e96 on #fafbfc = **3.16:1**，不足
+   AA）。`:not(.running):not(.blocked)` 把两条**有意**的语义色（sapphire / amber）让开，
+   其余一律回中性字 --color-text-dim（#6b6e76 = 4.72:1 ✓；glass 批把卡面底色换成
+   #ffffffF7 压平档后，原 --status-word #717379 掉到 4.38:1 不足 AA，故整族降一档到
+   既有令牌 --color-text-dim，暗档 #9ba0aa = 6.63:1）。活动态三值（running /
+   blocked / pending）见下方同款改判——**全族一个字色**，语义色只留在字形上。 */
+.flowmap-card .solar-node.fm-node .fm-st-word { color: var(--color-text-dim); }
 
 /* worktree 徽标：在 worktree 内工作的节点 */
 .fm-worktree-badge {
@@ -312,6 +334,88 @@
   background: rgb(var(--sapphire) / 0.08);
 }
 
+/* ══ 卡内文字可读性（edge-render-fix 批 2026-11-05 · 作者裁定「连文字一起修」）══
+   三个硬口径，逐条对应判据：
+   ① 对比度按 WCAG AA（正文 ≥4.5:1）**实测**达标——底色与文字色全部来自令牌，
+      不许用「加深阴影/加描边」这类副作用换对比度（作者令逐字）。
+   ② 节点名**不许截断**：两行封顶（.fm-node 高度 auto，卡片随内容增高），
+      超长名以 anywhere 断行，不再 `text-overflow: ellipsis`。
+   ③ 说明文字**不静默省略**：两行封顶 + 卡片内可见的「全文」入口（点卡即开详情窗，
+      见 fmNodeCard.js 的 .fm-desc-more）。
+   四级字阶全部取令牌（design-system.css §字号档）：名 13/600、预设·身份 12/500、
+   说明 11/400——三级主次一眼可分。
+
+   🔴 特异度说明（踩过的坑）：FLOW_CSS 由 js/flowCss.js **运行时注入 <head>**，排在本
+   文件 <link> 之后；本文件若用 (0,3,0) 级选择器，会被 FLOW_CSS 里同级的
+   `.solar-node.completed .solar-node-label{opacity:.6}` / `.solar-node.pending
+   .solar-node-label{opacity:.4}` 反过来盖掉（同特异度后者胜）。故这里一律用
+   `.flowmap-card .solar-node.fm-node` 四类前缀（0,4,0）压过它们，并把被压掉的
+   两个 opacity 档显式回到 1（**去强调不许拿对比度换**）。 */
+.flowmap-card .solar-node.fm-node .solar-node-label {
+  font: 600 var(--ds-fs-body)/1.3 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text);
+  opacity: 1;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  /* 三行封顶（不是两行）：实测最长的名字是 **root 卡的复合名**
+     `#<taskNo> <批次标题>`（作者同款数据 = 24 字，13px/1.3 下需要 3 行）；两行封顶会把它
+     裁掉——而作者令是「节点名不许截断，卡片按内容适度放宽或自动增高」。普通节点名
+     （term-indexcli / term-scmergeb / term-inventory-reconcile-2026）占 1–2 行，不变。
+     三行封顶只是给病态超长 label 一个上界（此时 title 属性仍持全文）。 */
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: clip;
+}
+.flowmap-card .solar-node.fm-node .solar-node-sub {
+  font: 500 var(--ds-fs-hint)/1.35 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text-dim);
+  opacity: 1;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 说明行：两行封顶 + 全文入口。`.fm-desc--clipped` 由 flowMapTab 的实测高趟
+   （measureNodeHeights → syncDescClipMarkers）按 scrollHeight>clientHeight 打点，
+   非启发式估长。 */
+.flowmap-card .solar-node.fm-node .fm-desc {
+  font: 400 var(--ds-fs-meta)/1.45 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--color-text);
+  background: var(--color-frame-hover);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: clip;
+  max-width: 100%;
+}
+/* running 相位行的语义色改由「权重 + 轨道动画」承担（sapphire α0.85 在灰 chip 上
+   实测不足 AA，见报告对照表）——颜色回中性令牌，句意不丢。 */
+.flowmap-card .solar-node.fm-node .fm-desc.running {
+  color: var(--color-text);
+  font-weight: 500;
+}
+.flowmap-card .solar-node.fm-node .fm-desc-more {
+  display: none;
+  margin-top: var(--ds-space-hair);
+  font: 500 var(--ds-fs-meta)/1.2 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text-dim);
+  letter-spacing: 0.02em;
+}
+.flowmap-card .solar-node.fm-node .fm-desc.fm-desc--clipped + .fm-desc-more { display: block; }
+/* head 行徽标字色（同批实测改判）：queued/merge/loop/pending 四档此前直接用高亮色相
+   写字（sky 56 189 248 实测 **2.07:1**、teal/purple/amber 同量级）——色相通道留在
+   **背景 tint + 描边**上（身份仍可辨），文字统一走 --color-text-dim（实测 4.92:1 ✓，
+   暗档 6.63:1 ✓）。`.fm-flag-verifier` 保养：它是本文件唯一按主题调过字色的一档
+   （亮 6.71:1 / 暗已上提），逐字保留不参与。 */
+.flowmap-card .solar-node.fm-node .fm-flag-badge:not(.fm-flag-verifier) { color: var(--color-text-dim); }
+.flowmap-card .solar-node.fm-node .fm-wait-note-queue { color: var(--color-text-dim); }
+
 /* blocked 节点（20260902 反馈路径设计 §4.2）：需要分发器/人动作的警示态——
    琥珀描边 + 轻琥珀底光 + result 摘要琥珀化，区别于 failed 的终结红。
    --amber 在 sapphire.css 按亮暗主题定义（亮 255 152 0 / 暗 255 168 60），双主题免适配。 */
@@ -402,6 +506,53 @@
   max-height: none;
   overflow-y: visible;
 }
+
+/* ══ 连线层基础形态（edge-render-fix 批 2026-11-05 · 作者报障「连线变成粗黑楔形」）══
+   本块是**根因修复**，不是调参：基础规则此前被整块摘除，本批按「谁真正拥有
+   emitter、谁就必须拥有这套规则」放回唯一活着的 flow-map 样式表。
+
+   根因链（逐字可核）：
+     · bbbd6aeb8（2026-10-06，#1228 两裁② 面4）从 js/flowCss.js 的 FLOW_CSS 摘除
+       「solar 卡壳/滚动壳/画布/SVG 连线族（含 flow-dash 帧）」68 行，摘除前提逐字
+       =「emitter 仅已离图的 flowMapTab」——即「没有任何活模块再吐 .flow-edge/
+       .solar-edges」。摘掉的是：`.solar-canvas{position:relative;margin:0 auto}`、
+       `.solar-edges{position:absolute;top:0;left:0;pointer-events:none;overflow:visible}`、
+       **`.flow-edge{fill:none;stroke:var(--color-border);stroke-width:1.5}`**、
+       `.flow-edge-arrow{fill:var(--color-border);opacity:.5}`、`@keyframes flow-dash`。
+     · 51372abd4（2026-10-10，tasklist-flowmap L1）**推翻该前提**：delegateFlowMap.js
+       重新 `import { renderFlowMapInto } from './flowMapTab.js'` 把 flowMapTab 当
+       delegate 链视图引擎 ⇒ emitter 回图，但基础 CSS 留在坟里。
+     · 缺席形状（HEAD 实测）：`<path class="flow-edge">` 拿不到 `fill:none` ⇒ SVG
+       默认 `fill: black`，而 edgePathD 产出的是一条**开放**贝塞尔
+       （`M x1 y1 C … x2 y2`）⇒ 隐式 closepath 把「曲线 ↔ 弦」之间的区域填黑：
+       楔形厚度 = 曲线与弦的最大距离（随两卡角度变化）⇒ 作者截屏里那些从父卡张开
+       到子卡的粗黑三角/黑条。叠加第二层放大：卡片是 α0.55 的玻璃面
+       （--glass-bg），黑楔形从卡底透上来 ⇒ 文字对比度被压到不可读（现象②③）。
+     · 连带哑火：`.inflight` 的 `animation: flow-dash` 没有 keyframes 可挂；
+       `.solar-edges` 丢掉 `position:absolute` ⇒ 连线层退化成普通流块级元素
+       （不贴左上角、还吃指针，画布拖拽/hover 命中面错位）。
+
+   规则放置理由：本文件是 flow-map 的唯一活样式表（index.html:68 <link>），且本块
+   特异度**低于**下方三态规则（.flow-edge.fm-edge.<state>，0,3,0）⇒ 只做形态兜底，
+   状态色/线型仍由三态与 loop/deps 专档决定，零双权威。图层序在此**显式钉死**：
+   连线层 z-index:0、节点层 z-index:1 ⇒「连线永不盖住节点内容」由约定升为不变量
+   （hover 强调档 .fm-hi 的 z-index:2 特异度更高，不受影响）。 */
+.flowmap-card .solar-canvas { position: relative; margin: 0 auto; }
+.flowmap-card .solar-edges {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none; /* 命中面只给路径/箭头（见下方 hover 入口块） */
+  overflow: visible;
+  z-index: 0;
+}
+/* 黑楔形的直接成因：缺 fill:none。开放路径 + 默认黑填充 = 实心色块。 */
+.flowmap-card .flow-edge { fill: none; stroke: var(--color-border); stroke-width: 1.5; }
+.flowmap-card .flow-edge-arrow { fill: var(--color-border); opacity: 0.5; }
+/* 节点层恒在连线层之上（DOM 序不再是唯一依据）。 */
+.flowmap-card .solar-node { z-index: 1; }
+/* 行军蚁帧（.flow-edge.fm-edge.inflight 引用它；随上条链一并被摘除过）。 */
+@keyframes flow-dash { to { stroke-dashoffset: -9; } }
 
 /* 边的投递语义（§2.7）。flow-run 的 .flow-edge.active 是"正在流动"的行军蚁；
    在项目图里上游 completed 意味着结果**已经**投递过去了——继续跑动画会读成
@@ -554,11 +705,16 @@
    （token 全取 flowCss/本文件既有变量）。状态色由卡根状态类（running/completed…）
    沿用节点卡着色，状态词/计数 glyph 各自着色（与 .fm-st-word / .solar-node-status 同源）。 */
 .fm-chain-card { gap: var(--ds-space-half); }
-/* 状态词活动态色（running=链色 / pending=弱化 / blocked=琥珀）：终态三色已在
-   .fm-st-word.completed/.failed/.cancelled 定义（2026-09-07 状态保真批），此处补活动态。 */
-.fm-st-word.running { color: rgb(var(--sapphire)); }
-.fm-st-word.blocked { color: var(--color-warning); }
-.fm-st-word.pending { color: var(--color-text-muted); }
+/* 状态词活动态（running / blocked / pending）：**字色一律中性档 --color-text-dim**
+   （edge-render-fix 批 2026-11-05 实测改判）。此前 running=sapphire（#5b7fbf 实测
+   3.35:1）、blocked=amber（#ff9800 实测 2.15:1）、pending=--color-text-muted
+   （#8b8e96 实测 3.16:1）三档全部低于 AA 正文 4.5:1；而 .fm-st-word 自身注释
+   （本文件 116-130 行）早已定下口径「状态词一律中性字，语义色由 statusIcon glyph
+   承载」——本批把这处漂移收回同一口径：**字的可读性优先，语义色留在 ✓/✗/⚑ 字形与
+   静环上**（零新色值、亮暗同源）。 */
+.fm-st-word.running { color: var(--color-text-dim); }
+.fm-st-word.blocked { color: var(--color-text-dim); }
+.fm-st-word.pending { color: var(--color-text-dim); }
 /* 折叠 chevron（点击展开；图标指向右 = 展开语义）。button 载体现成矩形归零。 */
 .fm-chain-chev {
   margin-left: auto; flex: 0 0 auto;
@@ -1064,12 +1220,18 @@
 .fm-md .md-error { font-style: normal; opacity: 1; color: var(--status-word); display: inline-flex; align-items: flex-start; gap: var(--ds-space-1); }
 .fm-md .md-error .st-ic { width: 12px; height: 12px; margin-top: var(--ds-space-hair); flex-shrink: 0; }
 
-/* ── v3 链未齐终态保留卡（§3.2）：opacity .78 后退一层、静态环染终态色、
-   标签降 dim；hover 回 1——一眼区分「还在跑的」与「已完成待整链归档的」── */
-.solar-node.fm-node.terminal { opacity: 0.78; }
+/* ── v3 链未齐终态保留卡（§3.2）：静环染终态色、轨道点后退、hover 抬起——
+   一眼区分「还在跑的」与「已完成待整链归档的」。
+   🔴 edge-render-fix 批（2026-11-05 作者令「连文字一起修」）**摘掉了卡级 opacity .78**：
+   卡级 alpha 是**文字**的乘性衰减（.78 × 11px 状态词 = 实测 3.06:1，不足 AA 4.5:1）。
+   去强调改由**非文字通道**承担（轨道点 .35 / 静环染色 —— 两条都在下方保留），
+   文字对比度不再被「后退一层」这个视觉意图抵押。 */
+.solar-node.fm-node.terminal { opacity: 1; }
 .solar-node.fm-node.terminal:hover { opacity: 1; }
 .solar-node.fm-node.terminal .solar-dot { opacity: 0.35; }
-.solar-node.fm-node.terminal .solar-node-label { color: var(--color-text-dim); }
+/* 终态卡的节点名保持主字色（--color-text）：名字是卡的第一信息面，去强调由
+   状态词 + 静环 + 轨道点三处承担；颜色见上方 .solar-node.fm-node .solar-node-label
+   （0,4,0）档，此处只在报告里记明「terminal 的 dim 名随本批下线」。 */
 .solar-node.fm-node.terminal.completed .solar-ring { border-color: var(--color-success); opacity: 0.55; }
 /* ui-status-redesign（盘点 #22）：失败环 = 图案载体 ✓，色值归 --status-error-icon
    （暗档随 token 提亮）。 */

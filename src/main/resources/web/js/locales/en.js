@@ -164,6 +164,10 @@ export default {
   'flowmap.cardRunning': 'Running…',
   // Node card agent retirement (node-flowmap-slim): restrained empty state when no preset
   'flowmap.presetDefault': 'Default preset',
+  // Card description overflow entry (edge-render-fix batch 2026-11-05): the description
+  // is capped at two lines, so a visible entry appears whenever it does not fit —
+  // clicking the card opens the detail panel with the full text.
+  'flowmap.descFull': 'Full text',
   'flowmap.loading': 'Loading Flow Map…',
   'flowmap.loadFail': 'Failed to load Flow Map',
   'flowmap.empty': 'No nodes yet — project idle',

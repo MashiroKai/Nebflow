@@ -1787,11 +1787,41 @@ function renderFlowMapDiff(container, baseline, fm, projectName) {
  *  （与 renderedFmByContainer 同式：DOM 即真相的旁挂缓存）。 */
 const geomByCanvas = new WeakMap();
 
-/** 逐卡实测高（getBoundingClientRect，裁定①「挂载后逐层取 max」），按项目写读数表。
- *  · 退场卡（fm-exit）不量；隐藏 pane（rect 高 0）不写读数（保留旧读数/标称高）；
- *  · 入场动画中的卡带 transform scale(0.85) ⇒ rect 被缩 15%，取未变换布局高 offsetHeight。
+/** 卡内说明行的「溢出打点」（edge-render-fix 批 2026-11-05 · 作者令「说明不许静默
+ *  省略」）：`.fm-desc` 视觉两行封顶（CSS -webkit-line-clamp），装不下时给**同一元素**
+ *  打 `.fm-desc--clipped`，兄弟位的 `.fm-desc-more`「全文」入口随之显形（点卡开详情窗
+ *  = 完整获取路径）。判据 = **实测内容高 vs 封顶后高**（怎么量见函数体：clamp 下
+ *  scrollHeight 不可用），零启发式估长。
+ *  这趟跑在 [[measureNodeHeights]] 的**最前**：入口显形会改变卡高，先打点再量高 ⇒
+ *  本帧读数已含入口行高，不会产生「量完才长高」的二次位移。 */
+function syncDescClipMarkers(container) {
+  for (const el of container.querySelectorAll('.fm-node .fm-desc')) {
+    // 🔴 判据不能读 scrollHeight：`-webkit-line-clamp` 的裁切由 clamp 承担而不是 height，
+    // Chromium 下 scrollHeight ≡ clientHeight（实测：70 字说明被两行裁掉，scrollHeight
+    // 仍等于 clientHeight ⇒ 用 scrollHeight 判「溢出」恒为假，入口永不显形）。
+    // 做法 = 临时摘掉 clamp 量真实内容高，**量完立刻原样还原**（不进 style 残留），
+    // 再与 clamp 后的 clientHeight 比 —— 实测驱动，零启发式估长。
+    const clampedH = el.clientHeight;
+    el.style.setProperty('display', 'block');
+    el.style.setProperty('-webkit-line-clamp', 'unset');
+    const fullH = el.scrollHeight;
+    el.style.removeProperty('display');
+    el.style.removeProperty('-webkit-line-clamp');
+    el.classList.toggle('fm-desc--clipped', fullH > clampedH + 1);
+  }
+}
+
+/** 逐卡实测高，按项目写读数表。
+ *  · 退场卡（fm-exit）不量；隐藏 pane（高 0）不写读数（保留旧读数/标称高）；
+ *  · 一律取 `offsetHeight`（**未变换的布局高**）：入场动画的 scale(0.85) 与**画布相机
+ *    的 transform: scale(z)** 都会进 getBoundingClientRect —— 相机缩放那一路此前只在
+ *    入场动画的注释里被点名，实际漏判：autoFit 缩到 ~0.5 时 rect 高只有世界高的一半，
+ *    读数跌破标称 NODE_H(108) ⇒ 层距退回常量、高卡压叠下一层（edge-render-fix 批
+ *    2026-11-05 实测：缩放下 14 对卡重叠，最大 392px²；改 offsetHeight 后 0 对）。
+ *    「缩放任意档下都不畸变」这条判据就落在这一行上。
  *  @returns {{changed:boolean, measured:number, visible:number}} */
 function measureNodeHeights(container, fm, projectName) {
+  syncDescClipMarkers(container); // 说明行溢出入口先打点（改变卡高 ⇒ 下面量的是终态高）
   const byId = new Map(visibleNodes(fm).map((n) => [n.id, n]));
   const heights = heightsFor(projectName);
   let changed = false;
@@ -1800,8 +1830,7 @@ function measureNodeHeights(container, fm, projectName) {
     if (el.classList.contains('fm-exit')) continue;
     const id = el.getAttribute('data-node-id');
     if (!id || !byId.has(id)) continue;
-    const h = Math.round((el.classList.contains('fm-enter')
-      ? el.offsetHeight : el.getBoundingClientRect().height) * 10) / 10;
+    const h = el.offsetHeight;
     if (!(h > 0)) continue;
     measured += 1;
     const prev = heights.get(id);
@@ -2110,6 +2139,13 @@ export function openFlowMapTab(projectName) {
  *  数据源，零派生）→ TTL 面板兜底清理 → 可见派生视图渲染。 */
 export function renderFlowMapInto(container, projectName, opts = {}) {
   if (!container) return;
+  // 🧩 样式自持（edge-render-fix 批 2026-11-05）：FLOW_CSS 此前只由**已退役**的
+  // renderFlowMapTab 调 ensureFlowCss 注入，delegate 链视图（delegateChainView:160
+  // 自行调一次）之外的任何消费者都得靠调用顺序巧合 —— 一旦漏调，`.solar-node` 的
+  // `position:absolute/width:124px` 与整套轨道/卡面语言全部缺席（实测退化成 360px
+  // 静态竖排）。emitter 自持自己的样式表：入口处单点 ensure（幂等，重复调用零成本），
+  // 与「谁吐 DOM 谁负责这套规则」同一口径（本批连线 CSS 回归同源）。
+  ensureFlowCss();
   const seq = (seqByProject.get(projectName) || 0) + 1;
   seqByProject.set(projectName, seq);
   const genAtStart = genByProject.get(projectName) || 0;
