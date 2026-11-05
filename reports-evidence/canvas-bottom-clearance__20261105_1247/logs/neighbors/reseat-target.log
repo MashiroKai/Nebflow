@@ -1,0 +1,20 @@
+(node:19198) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/delegate-canvas-bottom-clearance/src/main/resources/web/js/reseatTarget.js is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-canvas-bottom-clearance/package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ 红腿 · 旧规则把卡窗导航成整控制台（card-window 丢失） (0.4515ms)
+✔ 绿腿 · 卡窗重座后仍是卡窗（ticket + 卡窗契约都在） (0.645917ms)
+✔ 不误伤 · 主窗重座目标逐字不变 (0.589417ms)
+✔ 近路腿 · 环回/LAN 目标同样守恒（绝对串与票都保持） (0.180875ms)
+✔ 契约不完整 · 卡窗无 path 时仍不得退化成整控制台 (0.088834ms)
+✔ 不可解析目标 ⇒ 原样返回（诊断逻辑绝不拦重座） (0.070125ms)
+✔ 相对目标按基址解析 (0.185125ms)
+✔ 输入面健壮 · search 畸形不抛，判为非卡窗（现状腿） (0.075292ms)
+ℹ tests 8
+ℹ suites 0
+ℹ pass 8
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 7.029542

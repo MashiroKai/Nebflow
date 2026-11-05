@@ -64,7 +64,7 @@ class NodePluginChainSpec extends CatsEffectSuite:
     """{"name":"general","description":"general executor","tools":[],"category":"standalone"}"""
   )
   os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
-  os.write.over(tempRoot / "nebflow.json", "{}")
+  os.write.over(tempRoot / nebflow.shared.Branding.configFileName, "{}")
 
   // ── plugin fixtures（真实目录 + 审批走 PluginRegistry 单点）──────
   private val echoServerFile = tempRoot / "fixture_echo_server.py"
@@ -522,7 +522,7 @@ class NodePluginChainSpec extends CatsEffectSuite:
         res <- mkResources(system, tempRoot, new RecordingLlm(capture))
         rt <- mountProject("plc-val", ws, system, res)
         ctx = mkCtx(res, system, ws.toString)
-        _ <- IO.blocking(os.write.over(tempRoot / "nebflow.json", "{}"))
+        _ <- IO.blocking(os.write.over(tempRoot / nebflow.shared.Branding.configFileName, "{}"))
         _ <- IO(PluginRegistry.invalidateCache())
         missing <- nodeEdit(
           nodeInput(
@@ -606,7 +606,7 @@ class NodePluginChainSpec extends CatsEffectSuite:
     val system = ActorSystem(s"plc-off-${scala.util.Random.nextInt(100000)}")
     val program =
       for
-        _ <- IO.blocking(os.write.over(tempRoot / "nebflow.json", """{"plugins":{"enabled":false}}"""))
+        _ <- IO.blocking(os.write.over(tempRoot / nebflow.shared.Branding.configFileName, """{"plugins":{"enabled":false}}"""))
         res <- mkResources(system, tempRoot, new RecordingLlm(capture))
         rt <- mountProject("plc-off", ws, system, res)
         ctx = mkCtx(res, system, ws.toString)
@@ -631,7 +631,7 @@ class NodePluginChainSpec extends CatsEffectSuite:
           case None => IO.raiseError(new RuntimeException("node vanished"))
         }
         reqOpt = capture.values.headOption
-        _ <- IO.blocking(os.write.over(tempRoot / "nebflow.json", "{}"))
+        _ <- IO.blocking(os.write.over(tempRoot / nebflow.shared.Branding.configFileName, "{}"))
         _ <- system.stopAll.handleErrorWith(_ => IO.unit)
       yield (node, reqOpt)
     program.map { case (node, reqOpt) =>

@@ -64,8 +64,13 @@
   cursor: pointer;
   transition: opacity 150ms ease;
 }
-.project-link-btn:hover { opacity: 0.75; text-decoration: underline; }
-.project-link-btn:focus-visible { box-shadow: 0 0 0 2px var(--glass-control-border); border-radius: var(--ds-radius-badge); }
+@media (hover: hover) {
+  .project-link-btn:hover { opacity: 0.75; text-decoration: underline; }
+}
+
+.project-link-btn:focus-visible {
+  outline: var(--btn-ring-w) solid var(--btn-ring);
+  outline-offset: var(--btn-ring-offset); border-radius: var(--ds-radius-badge); }
 
 .project-open-btn {
   flex: 0 0 auto;
@@ -82,12 +87,15 @@
   margin-left: var(--ds-space-1);
   transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
 }
-
-.project-open-btn:hover {
-  color: rgb(var(--sapphire) / 1);
-  border-color: rgb(var(--sapphire) / 0.45);
-  background: rgb(var(--sapphire) / 0.08);
+@media (hover: hover) {
+  
+  .project-open-btn:hover {
+    color: rgb(var(--sapphire) / 1);
+    border-color: rgb(var(--sapphire) / 0.45);
+    background: rgb(var(--sapphire) / 0.08);
+  }
 }
+
 
 .project-open-btn svg { width: 15px; height: 15px; }
 
@@ -108,10 +116,12 @@
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: background 150ms ease, color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+  transition: background 150ms ease, color 150ms ease, border-color 150ms ease;
 }
 .project-unmount-btn svg { width: 15px; height: 15px; }
-.project-unmount-btn:focus-visible { box-shadow: 0 0 0 2px var(--glass-control-border); }
+.project-unmount-btn:focus-visible {
+  outline: var(--btn-ring-w) solid var(--btn-ring);
+  outline-offset: var(--btn-ring-offset); }
 
 /* ── 已卸载分组（unmount-console 面板批 2026-11-02）：卸载态项目的可见去处 ──
    列表尾部一组灰态行（名字 + 工作区 + 「重新加载」）。灰态 = 减淡（muted），
@@ -205,11 +215,14 @@
   cursor: pointer;
   transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
 }
-.flowmap-back-btn:hover {
-  color: rgb(var(--sapphire) / 1);
-  border-color: rgb(var(--sapphire) / 0.45);
-  background: rgb(var(--sapphire) / 0.08);
+@media (hover: hover) {
+  .flowmap-back-btn:hover {
+    color: rgb(var(--sapphire) / 1);
+    border-color: rgb(var(--sapphire) / 0.45);
+    background: rgb(var(--sapphire) / 0.08);
+  }
 }
+
 .flowmap-back-btn svg { width: 14px; height: 14px; flex: 0 0 auto; }
 .flowmap-back-btn .flowmap-back-name {
   min-width: 0;
@@ -382,9 +395,6 @@
   background: var(--glass-control-bg);
   backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -394,18 +404,18 @@
   transition: all 0.2s ease;
   opacity: 0.6;
 }
-.proj-create-fab:hover {
-  background: var(--glass-control-bg-hover);
-  opacity: 1;
-  transform: scale(1.05);
+@media (hover: hover) {
+  .proj-create-fab:hover {
+    background: var(--glass-control-bg-hover);
+    opacity: 1;
+    transform: scale(1.05);
+  }
 }
-/* 焦点环沿本文件既有范式（`:focus-visible` + `--glass-control-border`，见 :69）。 */
-.proj-create-fab:focus { outline: none; }
+
+
 .proj-create-fab:focus-visible {
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge),
-    0 0 0 2px var(--glass-control-border);
+  outline: var(--btn-ring-w) solid var(--btn-ring);
+  outline-offset: var(--btn-ring-offset);
   opacity: 1;
 }
 
@@ -425,9 +435,6 @@
   background: var(--glass-control-bg);
   backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -439,16 +446,17 @@
   padding: 0;
 }
 .proj-flowmap-fab svg { width: 17px; height: 17px; }
-.proj-flowmap-fab:hover {
-  background: var(--glass-control-bg-hover);
-  opacity: 1;
-  transform: scale(1.05);
+@media (hover: hover) {
+  .proj-flowmap-fab:hover {
+    background: var(--glass-control-bg-hover);
+    opacity: 1;
+    transform: scale(1.05);
+  }
 }
+
 .proj-flowmap-fab:focus-visible {
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge),
-    0 0 0 2px var(--glass-control-border);
+  outline: var(--btn-ring-w) solid var(--btn-ring);
+  outline-offset: var(--btn-ring-offset);
   opacity: 1;
 }
 
@@ -549,7 +557,6 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .delegate-chain-v
 }
 /* ②-c 地图面（per-task）同款浮层：地图无纵向滚动轴 ⇒ 只要求「初态不压」，不要求
    穿过（pan 面不是滚动面）；视图体仍吃 padding-top 让位，地图满幅从条下起笔。 */
-
 
 /* 弹层专属布局（材质/玻璃/零暗化全部继承 `.wsp-*` 与共享玻璃卡组，此处只补
    `.wsp-*` 族没有的 textarea 槽位与计数行——材质仍取 `.modal-input`，零新造）。 */
@@ -658,7 +665,10 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .delegate-chain-v
   cursor: pointer;
   transition: background 0.12s;
 }
-.dev-btn:hover { background: var(--glass-control-bg-hover); }
+@media (hover: hover) {
+  .dev-btn:hover { background: var(--glass-control-bg-hover); }
+}
+
 .dev-btn .dev-ic { display: inline-flex; width: 14px; height: 14px; color: var(--color-frame-text-muted); }
 .dev-btn .dev-ic svg { width: 100%; height: 100%; }
 .dev-btn.is-remote .dev-ic { color: rgb(var(--sapphire)); } /* 远端腿着色（设计稿 A1 远端形） */
@@ -873,12 +883,17 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .delegate-chain-v
   transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
 }
 .project-desc-edit-btn svg { width: 13px; height: 13px; }
-.project-desc-edit-btn:hover {
-  color: rgb(var(--sapphire) / 1);
-  border-color: rgb(var(--sapphire) / 0.45);
-  background: rgb(var(--sapphire) / 0.08);
+@media (hover: hover) {
+  .project-desc-edit-btn:hover {
+    color: rgb(var(--sapphire) / 1);
+    border-color: rgb(var(--sapphire) / 0.45);
+    background: rgb(var(--sapphire) / 0.08);
+  }
 }
-.project-desc-edit-btn:focus-visible { box-shadow: 0 0 0 2px var(--glass-control-border); }
+
+.project-desc-edit-btn:focus-visible {
+  outline: var(--btn-ring-w) solid var(--btn-ring);
+  outline-offset: var(--btn-ring-offset); }
 .project-desc-editor {
   display: flex;
   flex-direction: column;
@@ -930,7 +945,9 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .delegate-chain-v
      （断言 animation-duration ≤ 0.01s）。 */
   .proj-create-panel { animation-duration: 0.01s; }
   .proj-create-fab { transition-duration: 0.01s; }
-  .proj-create-fab:hover { transform: none; }
+  @media (hover: hover) {
+    .proj-create-fab:hover { transform: none; }
+  }
   /* ui-device-faces 批：创建中 spinner 停转（语义仍在——四步 chips 静态可读）。 */
   .creating-row .spin { animation: none; }
   .dev-btn, .dev-item { transition-duration: 0.01s; }

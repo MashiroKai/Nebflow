@@ -932,11 +932,23 @@ export default {
   'subagents.status.frozen': 'Frozen',
   // 错误冻结批（2026-11-01）：delegate 错误冻结行面文案（徽标/原因 tooltip/唤醒）。
   'subagents.frozenBadgeWithReason': 'Frozen · {reason}',
+  // freeze-notice policy batch (2026-11-05): provider faults are INFRASTRUCTURE faults,
+  // not task failures — no upward report (the parent is starving too); the panel is the
+  // status surface: "needs you" word + reason code + auto-resume count + wake entry.
+  'subagents.frozenAwaitingYou': 'Frozen · {reason} (needs you)',
+  'subagents.frozenAwaitingYouNoReason': 'Frozen · needs you',
+  'subagents.frozenInfraTip': 'Provider fault (NOT a task failure): the engine probes for recovery and resumes the SAME session by itself once a provider is serving again (from the checkpoint, finished work is not redone, capped attempts with growing gaps); press Wake to resume it right now. Nothing is reported upward — this panel is its status surface.',
+  'subagents.frozenAutoResumes': 'auto-resumed {n} time(s)',
+  'subagents.frozenAutoResumesSpent': 'auto-resume budget spent — needs you: top up / switch model / cancel',
+  'subagents.freezeDigestRecoverable': '{count} frozen (wakeable)',
+  'subagents.freezeDigestNeedsHuman': '{count} frozen (needs you)',
   'subagents.frozenTip': 'Frozen: an engine/upstream fault stopped it in place — this is NOT a failure verdict. The session history, workspace with uncommitted changes, task-ledger row and merge-queue slot are all kept; press Wake (or mail its address) to continue in the SAME session (finished work is not redone).',
   'subagents.frozenReason': 'Reason: {reason}',
   'subagents.frozenDormantTip': 'Frozen for {hours}h with no wake (past the retention window the record is archived; transcript and workspace are kept).',
   'subagents.wake': 'Wake',
   'subagents.wakeTip': 'Continue in the same session context (history in place, finished work is not redone)',
+  // name/address 批（2026-11-05）：地址 chip 的 tooltip 后缀（前面拼完整地址本身）。
+  'subagents.copyAddress': 'copy address',
   'subagents.wakeFailed': 'Wake failed — record and transcript are kept; retry later',
   'subagents.frozenReasonLlm': 'LLM-layer failure',
   'subagents.frozenReasonTool': 'tool-layer failure',
@@ -1478,10 +1490,6 @@ export default {
   'provider.keyRequired': 'API Key is required for new providers',
   'provider.required': 'Required',
   'provider.protocol': 'Endpoint format',
-  // The helper line under the endpoint-format select (protoface-ui batch
-  // 2026-09-22): shows the POST target the engine will actually hit for the
-  // selected face + the currently typed base URL. {target} = full URL.
-  'provider.protocolHelper': 'This provider will receive: POST {target}',
   'provider.idRequired': 'Provider ID is required',
   'provider.noSpaces': 'Provider ID cannot contain spaces',
   'provider.baseUrlRequired': 'Base URL is required',
@@ -1493,11 +1501,14 @@ export default {
   'provider.ctxExceedsCeiling': 'Model {id}: context window {value} exceeds the supported ceiling {max}',
   'provider.ctxDefaulted': 'Context window left empty for {ids}; saved with the default {def}',
   'provider.ctxClampedToMax': 'Model {id}: the default 1,000,000 exceeds the reported maximum; saved as {max}',
-  // model-schedule-unavailable batch: provider modal edit face.
+  // model-schedule-unavailable batch: provider-level ONLY (config-single-source
+  // batch, author ruling ④ 2026-11-05). Always-on copy = label + empty-state
+  // fact ("No restriction"); the explanation lives in the `?` hover hint (⑤).
   'provider.unavailableWindows': 'Unavailable windows',
-  'provider.unavailableWindowsPlaceholder': 'e.g. 14:00-18:00; comma-separate multiple; cross-midnight as 23:00-07:00; empty = no restriction',
+  'provider.unavailableWindowsHint': 'Applies to every model of this provider; cross-midnight as 23:00-07:00',
+  'provider.unavailableWindowsPlaceholder': 'HH:mm-HH:mm',
   'provider.unavailableWindowsInvalid': 'Invalid unavailable window: "{value}" (expected HH:mm-HH:mm, start ≠ end)',
-  'provider.unavailableWindowsEmpty': 'No restriction (empty = unrestricted)',
+  'provider.unavailableWindowsEmpty': 'No restriction',
   'provider.unavailableWindowsAdd': 'Add unavailable window',
   'provider.unavailableWindowsDaysReadonly': 'By weekday · hand-edited, read-only',
   'provider.unavailableWindowsDays': 'Active weekdays',
@@ -2661,6 +2672,9 @@ export default {
   // Term citation batch 2 (hover bubble + back-to-source button)
   'wiki.termSource': 'Source: ',
   'wiki.termJumpHint': 'Click to jump',
+  // Term index block (term-system-v2 term face batch 2026-11-05): the doc-foot
+  // collapsible listing each cited term and the document it lives in.
+  'wiki.termIndexCount': 'Term index ({n})',
   'wiki.backToSource': 'Back to source doc',
   // Side control face (search/chips/detail card/broken list/stats line)
   'wiki.chipAll': 'All',

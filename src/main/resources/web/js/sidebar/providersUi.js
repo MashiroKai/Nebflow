@@ -31,27 +31,17 @@ import { rangeTriggerHTML, attachTimeTriggers } from '../timeWheel.js';
 // user reads changes. The two id⇄endpoint-form pairs are the engine's own two
 // adapters: OpenAiAdapter.scala:45-47 (`{base}/chat/completions`) and
 // AnthropicAdapter.scala:30-32 (`{base}/v1/messages`).
+//
+// config-single-source 批（作者裁定⑤ 2026-11-05「解释性文字尽量减少」）：
+// 旧的 `该服务商将收到：POST {url}` 请求预告行整体退役——它是**行为教学**型
+// 说明（面板不预告引擎会做什么），且每次输入 baseUrl 就重绘一次。表单常驻
+// 文字只留字段标签与值；必须解释的内容一律收进 `?` 悬停提示（hintField）。
 const PROTOCOL_FORM_LABEL = { openai: 'chat/completions', anthropic: 'messages' };
-const PROTOCOL_ENDPOINT_PATH = { openai: '/chat/completions', anthropic: '/v1/messages' };
 
 /** Stored protocol id → the endpoint form shown to the user. An id this build
  *  does not know is shown verbatim (never silently re-labelled). */
 function protocolFormLabel(protocol) {
   return PROTOCOL_FORM_LABEL[protocol] || protocol || '';
-}
-
-/** The POST target the engine will hit for `protocol` + `baseUrl`. Same
- *  normalization as the adapters (OpenAiAdapter.scala:45-47 /
- *  AnthropicAdapter.scala:30-32): trailing slashes stripped, a base that
- *  already ends in the endpoint path kept as-is. Empty string = "no target to
- *  promise yet" — an unknown face, or a baseUrl still blank (the same rule the
- *  model-fetch status line follows at :1709-1713). */
-function protocolPostTarget(protocol, baseUrl) {
-  const path = PROTOCOL_ENDPOINT_PATH[protocol];
-  if (!path) return '';
-  const base = (baseUrl || '').trim().replace(/\/+$/, '');
-  if (!base) return '';
-  return base.endsWith(path) ? base : base + path;
 }
 
 export const eyeSvg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
@@ -351,7 +341,17 @@ function showProviderModal(existingName, existingData, onSave) {
         { value: 'openai', label: 'chat/completions' },
       ]},
       {key: 'models', label: t('provider.models'), type: 'models', value: initialModels},
-      {key: 'unavailableWindows', label: t('provider.unavailableWindows'), type: 'windows', value: uwList},
+      // 不可用时段 = **provider 级唯一一份**（config-single-source 批，作者裁定④
+      // 2026-11-05「不需要逐 model 设置，按 provider 统一设置就行，一个 provider
+      // 对应的行为是一致的」）。per-model 级编辑面已删；存量 model 级数据由引擎
+      // 在加载/落盘时向上合并到本处（不丢数据）。
+      {
+        key: 'unavailableWindows',
+        label: t('provider.unavailableWindows'),
+        type: 'windows',
+        value: uwList,
+        hint: 'provider.unavailableWindowsHint',
+      },
     ],
     onConfirm(values) {
       const name = values.name.trim();
@@ -392,17 +392,16 @@ function showProviderModal(existingName, existingData, onSave) {
         /** @type {{id:string, contextWindow:number, modelMaxContext?:number, unavailableWindows?:{from:string,to:string,days?:number[]}[]}} */
         const checked = { id: m.id, contextWindow: res.value };
         if (Number.isFinite(m.modelMaxContext) && m.modelMaxContext > 0) checked.modelMaxContext = m.modelMaxContext;
-        if (Array.isArray(m.unavailableWindows) && m.unavailableWindows.length) checked.unavailableWindows = m.unavailableWindows;
         checkedModels.push(checked);
       }
       // Vision is never written from this form (B1 裁定 2026-08-25): the
       // edit-modal checkbox snapshot polluted nebflow.json ModelConfig.vision
       // (inline outranks models.json runtime annotations). An explicit inline
       // vision set by hand rides through untouched; new models omit the key.
-      // per-model 不可用时段（model-schedule-unavailable 批，滚轮批 2026-11-03 收编）：
-      // 现在行内有编辑面 ⇒ DOM 即真相（checked.unavailableWindows 已由行内段列表
-      // 收集）；键缺席 = 该模型不设限制（models 数组整体替换，缺席即删净）。
-      // vision 仍按 id 从 p.models 回填（无编辑面，手编值保真）。
+      // per-model 不可用时段：编辑面已删（config-single-source 批，作者裁定④
+      // 2026-11-05）——一个 provider 只有一份 provider 级时段，见下方 uwIn。
+      // 模型行不再产出该键 ⇒ 保存后文件里 model 级条目随之消失（引擎侧已把它们
+      // 向上合并进 provider 级，故零信息损失）。
       const modelsOut = checkedModels.map(m => {
         const prev = (p.models || []).find(x => x.id === m.id);
         return prev && prev.vision !== undefined ? { ...m, vision: prev.vision } : m;
@@ -442,37 +441,6 @@ function showProviderModal(existingName, existingData, onSave) {
   // baseUrl/apiKey change → auto-fetch model list (dropdown); degrades to
   // manual input when the proxy endpoint is unavailable.
   wireProviderModelFetch();
-  // protocol select → live POST-target helper (render-only, zero network).
-  wireProtocolHelper();
-}
-
-/** Protocol select → helper line under it showing the POST target the engine
- *  will hit for the currently selected face + the currently typed baseUrl
- *  (protoface-ui batch 2026-09-22). Precedent for the "small muted status line
- *  inside a .cfg-form-group" shape = the model-list fetch row (:1699-1704).
- *  Live on both inputs; 🔴 pure rendering — no fetch, no send, no config write. */
-function wireProtocolHelper() {
-  const overlay = document.getElementById('cfg-modal');
-  if (!overlay) return;
-  // checkJs: querySelector returns Element; the casts pin the two element
-  // types this function reads `.value` from (no new baseline rows).
-  const select = /** @type {HTMLSelectElement|null} */ (overlay.querySelector('[data-field="protocol"]'));
-  const baseInput = /** @type {HTMLInputElement|null} */ (overlay.querySelector('[data-field="baseUrl"]'));
-  if (!select || !baseInput) return;
-
-  const line = document.createElement('div');
-  line.className = 'cfg-hint cfg-protocol-helper';
-  line.dataset.helper = 'protocol';
-  select.closest('.cfg-form-group')?.appendChild(line);
-
-  const paint = () => {
-    const target = protocolPostTarget(select.value, baseInput.value);
-    line.textContent = target ? t('provider.protocolHelper', { target }) : '';
-  };
-  select.addEventListener('change', paint);
-  // 'input' too: the target follows the baseUrl keystroke-by-keystroke.
-  baseInput.addEventListener('input', paint);
-  paint();
 }
 
 // --- Generic modal ---
@@ -537,9 +505,18 @@ function showModal({title, fields, onConfirm}) {
     const label = obj ? o.label : o;
     return `<option value="${obj ? escapeHtml(value) : value}" ${value === selected ? 'selected' : ''}>${obj ? escapeHtml(label) : label}</option>`;
   };
+  // config-single-source 批（作者裁定⑤ 2026-11-05「解释性文字尽量减少」）：
+  // 版面只留字段标签与值；**必须解释**的内容收进标签尾的 `?` 悬停提示
+  // （`f.hint` = 文案键或直文），不铺在版面上。字号/颜色沿用 .cfg-label 的
+  // muted 面，`:hover`/`:focus-visible` 都可读出（title 也给出原生 tooltip）。
+  const hintHTML = (f) => {
+    if (!f.hint) return '';
+    const text = f.hint.startsWith('provider.') || f.hint.includes('.') ? t(f.hint) : f.hint;
+    return `<span class="cfg-hintbadge" tabindex="0" role="note" aria-label="${escapeHtml(text)}" title="${escapeHtml(text)}">?</span>`;
+  };
   const renderField = (f) => `
           <div class="cfg-form-group">
-            <label class="cfg-label">${escapeHtml(f.label)}</label>
+            <label class="cfg-label">${escapeHtml(f.label)}${hintHTML(f)}</label>
             ${f.type === 'select' ? `<select class="cfg-input" data-field="${f.key}" ${f.disabled ? 'disabled' : ''}>
               ${f.options.map(o => optionHtml(o, f.value)).join('')}
             </select>` : f.type === 'textarea' ? `<textarea class="cfg-input cfg-textarea" data-field="${f.key}" placeholder="${escapeHtml(f.placeholder || '')}">${escapeHtml(f.value || '')}</textarea>` :
@@ -607,9 +584,6 @@ function showModal({title, fields, onConfirm}) {
       row.innerHTML = renderModelRowContent();
       container.insertBefore(row, btn);
       row.querySelector('.cfg-model-remove').addEventListener('click', () => row.remove());
-      // 新行的 per-model 段列表同样接同款滚轮（与既有行零差异）。
-      const newHost = /** @type {HTMLElement|null} */ (row.querySelector('[data-windows]'));
-      if (newHost) bindWindows(newHost);
       (/** @type {HTMLElement} */ (row.querySelector('.cfg-model-id'))).focus();
     });
   });
@@ -669,8 +643,9 @@ function showModal({title, fields, onConfirm}) {
       },
     });
   };
-  // provider 级 + 每个 per-model 行的段列表都接同一份绑定（同款交互）。
-  overlay.querySelectorAll('[data-field="unavailableWindows"], [data-model-windows]').forEach(bindWindows);
+  // provider 级段列表接滚轮绑定（config-single-source 批：per-model 级编辑面已删，
+  // 这是唯一一份时段交互）。
+  overlay.querySelectorAll('[data-field="unavailableWindows"]').forEach(bindWindows);
 
   const close = () => overlay.remove();
   document.getElementById('cfg-modal-cancel').addEventListener('click', close);
@@ -712,10 +687,8 @@ function showModal({title, fields, onConfirm}) {
         // tighten opportunistically).
         const maxCtx = ctxEl ? parseInt(ctxEl.dataset.modelMax || '', 10) : NaN;
         if (Number.isFinite(maxCtx) && maxCtx > 0) entry.modelMaxContext = maxCtx;
-        // per-model 不可用时段（滚轮批）：行内段列表是唯一真相；空列表 = 该模型
-        // 不设限制（保存时该键缺席，深合并对数组整体覆盖 ⇒ 等价于删净）。
-        const mwHost = /** @type {HTMLElement|null} */ (row.querySelector('[data-model-windows]'));
-        entry.unavailableWindows = mwHost ? collectWindows(mwHost) : [];
+        // per-model 不可用时段：编辑面已删（config-single-source 批，作者裁定④）——
+        // 不再收集，也不再写该键。
         values.models.push(entry);
       });
     }
@@ -739,19 +712,12 @@ function renderModelRowContent(m) {
   // output cap is an internal engine constant, not user config.
   // 连接性测试钮（fourfix 批 ②件）：行尾一枚——data-test-provider 是渲染时已知
   // 名（add 弹窗为空串），绑定面在点击时读表单 name 字段现值（getProvider）。
-  // per-model 不可用时段（时间滚轮选择器批 2026-11-03，作者令 22:20「编辑面也
-  // 采用同款的滚轮」）：弹窗里每行模型下方一段同款段列表——provider 级与
-  // per-model 级共用同一组件与同一 wire 形状 {from,to,days?}，禁止两套交互。
-  // 行布局：`.cfg-model-row` 在 timeWheel.css 里加 flex-wrap，本块 flex-basis:100%
-  // 独占整行（不动 sidebar.css 里既有的行内 flex 规则）。
+  // per-model 不可用时段行已删（config-single-source 批，作者裁定④ 2026-11-05）：
+  // 时段只在 provider 级一份，模型行回到「id + 上下文窗口 + 测试钮 + 删除」。
   return `${idField}
 <input class="cfg-input cfg-model-ctx" type="number" value="${ctx}"${maxAttr} placeholder="${t('model.contextPlaceholder')}">
 ${modelTestButtonHTML('', id)}
-<button class="cfg-model-remove" type="button" title="${t('provider.remove')}">&times;</button>
-<div class="tw-windows cfg-model-windows" data-model-windows data-windows>
-  ${windowsRowsHTML(m && Array.isArray(m.unavailableWindows) ? m.unavailableWindows : [])}
-  <button class="tw-add-row" type="button" data-window-add>${t('provider.unavailableWindowsAdd')}</button>
-</div>`;
+<button class="cfg-model-remove" type="button" title="${t('provider.remove')}">&times;</button>`;
 }
 
 function renderModelRow(m, index) {

@@ -198,6 +198,21 @@ object ExternalSessionRunner:
                 )
               }
               _ <- recordTaskTolerant(spec.resources, sessionId, spec.parentSessionId, ex.id, spec.task, spec.title)
+              // 作者裁定4「登记 AgentKind.External」（2026-11-05 09:38）：内部腿有
+              // actor + 统一注册表行，外部腿此前**两样都没有**（AgentControlTool 自陈
+              // 「外部 delegate 无 actor / agentRegistry 行」）。此处在统一注册表补一条
+              // kind=External 记录（ref=null），只为关闭「所有 agent 都能被 list /
+              // cancel / 挂终态」这条不变式——**不参与监督与恢复**（恢复走
+              // ExternalOutputStore / CLI resume），终态首胜时由 settle 摘除。
+              _ <- nebflow.actor.ExternalAgentRecord.attach(
+                spec.resources.agentRegistry,
+                nebflow.actor.ExternalAgentRecord.build(
+                  sessionId = sessionId,
+                  rootSessionId = spec.rootSessionId,
+                  parentSessionId = spec.parentSessionId,
+                  startedAt = System.currentTimeMillis()
+                )
+              )
               _ <- persistUserTurn(spec.resources, sessionId, spec.title, seatedTask)
               // ⑤A 链存储：外部腿 spawn 行（P1-2 起外部腿与内部腿同账——branch/
               // worktree/判定两键齐备；非 git 腿 binding=None，旧行字节不变）。
@@ -523,6 +538,9 @@ You will be notified when it completes via a system message. Do NOT duplicate th
       case false => IO.unit // 首个终态胜出（cancel 与自然终态竞态防重入）
       case true =>
         for
+          // 裁定4：外部腿终态首胜即从统一注册表摘下（「记录 = 活着」语义与内部腿对齐；
+          // 死行不留）。幂等——没登记过（旧腿/测试）也安全。
+          _ <- nebflow.actor.ExternalAgentRecord.detach(spec.resources.agentRegistry, sessionId)
           cancelledNow <- cancelRequested.get.map(_.contains(sessionId))
           processFailed = exitCode.exists(_ != 0) || finalFrame.exists(_.failed)
           text = finalFrame.map(_.text).map(_.trim).filter(_.nonEmpty).getOrElse("")

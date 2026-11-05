@@ -205,7 +205,14 @@ private[agent] object AgentProcessing:
           // (VPN mid-stream flap) keeps the bounded auto-retry (增量#1 验收).
           val recoverableAbortYieldsToQueued = error.isInstanceOf[RecoverableAbort] &&
             state.execution.pendingImmediateInputs.nonEmpty
-          val networkWaitable = !state.isFlowNode && Fallback.isNetworkUnreachableExhaustion(error)
+          // 5xx 归批（2026-11-05，作者令「deepseek 抖一下不能再把 agent 冻掉」）：
+          // 判据扩到**上游暂时不可用**（500/502/503/504/550，全链皆然）——它和
+          // 网络不可达是同一类「等得来」的处境：供应商此刻供不出服务，退避之后
+          // 大概率自己好。旧语义把 550 归 ProviderError ⇒ 不命中本判据 ⇒ 落到
+          // shouldErrorFreeze=false 的 fatal 分支 ⇒ delegate FROZEN
+          // reason=llm-failure（作者 2026-11-05 10:19 现场）。单点判据见
+          // Fallback.isWaitingRetryableExhaustion（网络不可达 + 5xx 两面的并集）。
+          val networkWaitable = !state.isFlowNode && Fallback.isWaitingRetryableExhaustion(error)
           if networkWaitable then
             val reason = FreezeReason.WaitingNetwork
             val waitRound = AgentActor.nextErrorFreezeCount(state, reason)

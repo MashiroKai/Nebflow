@@ -25,7 +25,7 @@ import scala.concurrent.duration.*
  *
  * 审计 20260903 根因：AskUser 挂起期间 registry 状态残留 Processing 且
  * lastActivityMs 不再刷新 → 每 30s 扫描必然命中 → 当日 116 条 taskStuck 误报
- * （root=噪声刷屏；Delegate/Ephemeral/SubTask=Stop→硬取消破坏性链，问句永久失效）。
+ * （root=噪声刷屏；Delegate/SubTask=Stop→硬取消破坏性链，问句永久失效）。
  *
  * 时间模拟手法（沿用 TaskStuckWatcherSpec 先例，零真实等待）：
  * 直接注入 lastActivityMs 回拨（now - threshold - 1000）+ 以参数化 threshold

@@ -494,6 +494,25 @@ object GatewayMain extends IOApp:
               // 目录文件缺席 ⇒ 全腿 no-op。失败不阻断启动（与上两行迁移同款纪律）。
             try nebflow.core.ModelChainMigration.migrateLegacyPresetRefs()
             catch case e: Exception => logger.warn(s"preset→chain migration failed: ${e.getMessage}")
+            // config-single-source batch (author rulings ①–④, 2026-11-05) — boot face:
+            //  · the config-file rename migration (`nebflow.json` → `stand.json`) runs
+            //    inside PathUtil.configJsonPath on first touch and logs one line;
+            //  · `llm.fallback` is seeded from the CURRENT effective chain the first
+            //    time, so the chain is visible/editable in the file (one truth);
+            //  · unresolvable refs in that section are reported as WARNINGS (never a
+            //    silent skip) and the effective candidate plan is logged once — the
+            //    observability the author asked for. Failures never block boot.
+            try nebflow.service.ConfigService.ensureConfigConvergence().unsafeRunSync()
+            catch case e: Exception => logger.warn(s"config convergence (llm.fallback / unavailable windows) failed: ${e.getMessage}")
+            try
+              val checked = Config.loadServiceConfig()
+              nebflow.shared.FallbackChain.logValidation(checked)
+              val refs = nebflow.shared.FallbackChain.refs(checked.llm.fallback)
+              logger.info(
+                s"[fallback-chain] llm.fallback = ${if refs.isEmpty then "<absent>" else refs.mkString(" → ")} " +
+                  s"(source: ${if refs.nonEmpty then nebflow.shared.FallbackChain.SectionKey else "nebula-chain/seed"})"
+              )
+            catch case e: Exception => logger.warn(s"llm.fallback boot validation failed: ${e.getMessage}")
               // personal-agent 批（2026-10-04）：Soul.md 启动一次性迁移腿
               // （agents/Nebula/memory.md → ~/.nebflow/Soul.md）。幂等：
               // Soul.md 已存在即跳过、再跑零副作用；写前经 MemorySnapshot 快照，
@@ -693,7 +712,15 @@ object GatewayMain extends IOApp:
                                 nebflow.core.tools.FileLockManager.create.flatMap { fileLockMgr =>
                                   val hooksConfig = HooksConfigLoader.load(os.pwd)
                                   val hookEngine = HookEngine(hooksConfig)
-                                  val actorSystem = nebflow.actor.ActorSystem("local")
+                                  // 刀四·监督关系落盘化（作者裁定3「整刀落盘」，2026-11-05
+                                  // 09:38）：死亡监视边落 `<dataRoot>/actor-watches.json`，
+                                  // boot 由下方 boot 链的 `actorSystem.replayWatches` 重放。
+                                  // 落盘面只是可重放快照（真源仍是内存 watchers）；盘坏只
+                                  // WARN，绝不让 boot 挂掉。
+                                  val actorSystem = nebflow.actor.ActorSystem(
+                                    "local",
+                                    nebflow.actor.WatchStore.file(PathUtil.dataRoot / "actor-watches.json")
+                                  )
                                   val voiceMutedRef: Ref[IO, Boolean] = Ref.unsafe(false)
                                   val sharedResources = SharedResources(
                                     llm = handle,
@@ -1194,7 +1221,7 @@ object GatewayMain extends IOApp:
                                   // daemonService autoStart 块（构造序：dock 依赖
                                   // DaemonService 实例）。失败只 WARN 绝不阻塞启动的
                                   // 契约由 dock 腿逐字保持。
-                                  hubSetup *> recorderSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> subagentCrashSweep *> mailboxBootSweep *> taskIndexBackfill *> seedMinimalSet *> sourcePluginHeal *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> mergeQueueBootSweep *> msgTokensBootReconcile *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> memoryRecallDaemon *> succeedPortGate(
+                                  actorSystem.replayWatches *> hubSetup *> recorderSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> subagentCrashSweep *> mailboxBootSweep *> taskIndexBackfill *> seedMinimalSet *> sourcePluginHeal *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> mergeQueueBootSweep *> msgTokensBootReconcile *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> memoryRecallDaemon *> succeedPortGate(
                                     cfg,
                                     sharedResources.healthMonitor
                                   ) *> {
@@ -2374,7 +2401,17 @@ object GatewayMain extends IOApp:
                                                               // 错误冻结批（2026-11-01）：长期无人唤醒的冻结
                                                               // delegate 兜底面（dormant 提醒帧 / 保留期归档）
                                                               // 挂在本既有拍上，零新增定时器。
-                                                              wsSend = Some(json => wsHub.broadcast(json))
+                                                              wsSend = Some(json => wsHub.broadcast(json)),
+                                                              // 冻结通知策略批（2026-11-05）：同一拍的尾部三腿
+                                                              // ——面板静默统计 / provider 恢复后的引擎自动续跑 /
+                                                              // 需人时的**一条**聚合告警。core 层只收 IO 钩子
+                                                              // （分层门禁：core 不 import agent）。
+                                                              tailSweep = Some(
+                                                                nebflow.agent.FreezeAlertSweep.run(
+                                                                  sharedResourcesWithDaemon,
+                                                                  Some(json => wsHub.broadcast(json))
+                                                                )
+                                                              )
                                                             )
                                                             .start
                                                           // --- Background: RestartingWatchdog (#692 修批 2026-10-21) ---

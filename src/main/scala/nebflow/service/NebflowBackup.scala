@@ -26,14 +26,14 @@ object NebflowBackup:
 
   /**
    * File patterns to back up (relative to the data root). The config file
-   * matches BOTH the brand name and the hardcoded legacy "nebflow.json"
-   * (L3 rebrand compat — identical names collapse to one match).
+   * matches BOTH the brand name and the historical name (single source =
+   * [[PathUtil.LegacyConfigFileName]]; identical names collapse to one match).
    */
   private val includePatterns: List[String => Boolean] = List(
     // Top-level config files
     _ == "User.md",
     _ == "Soul.md", // personal-agent 批 2026-10-04：根层 Soul 记忆进灾备清单
-    p => p == "nebflow.json" || p == nebflow.shared.Branding.configFileName,
+    p => p == PathUtil.LegacyConfigFileName || p == nebflow.shared.Branding.configFileName,
     _ == "auth.json",
     _ == "input_history.jsonl",
     // Sessions directory

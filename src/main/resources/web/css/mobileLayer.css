@@ -3097,20 +3097,25 @@ body.mobile-layer #settings-modal .cfg-btn-primary {
   color: var(--btn-primary-ink);
   border-color: transparent;
   font-weight: 500;
-  box-shadow: none;
   transition: background 0.18s ease;
 }
-body.mobile-layer #settings-modal .cfg-btn-primary:hover {
-  background: var(--btn-primary-bg-hover);
+@media (hover: hover) {
+  body.mobile-layer #settings-modal .cfg-btn-primary:hover {
+    background: var(--btn-primary-bg-hover);
+  }
 }
+
 @media (prefers-color-scheme: dark) {
   body.mobile-layer #settings-modal .cfg-btn-primary {
     background: var(--color-text);
     color: var(--color-bg);
   }
-  body.mobile-layer #settings-modal .cfg-btn-primary:hover {
-    background: var(--ds-ink-inverse);
-  }
+@media (hover: hover) {
+    body.mobile-layer #settings-modal .cfg-btn-primary:hover {
+      background: var(--ds-ink-inverse);
+    }
+}
+
 }
 
 /* ════════════════════════════════════════════════════════════════════
@@ -3221,7 +3226,12 @@ body.mobile-layer .mh-search-dock {
   min-height: 0;
   padding: var(--ds-space-2) 0 0;
 }
-body.mobile-layer .mh-search-bar {
+/* 🔴 展开态专用（作者令 2026-11-05 12:28「上滑之后变成一个搜索按钮 … 直接使用
+   一样的就行」批）：收起态 = 条本体追加 `.g2-fab`（主会话搜索钮同一个类同一个
+   CSS 块，css/glass.css），材料/几何整件交给那个块 —— 本块必须 `:not(.g2-fab)`
+   让位，否则同特异度的玻璃胶囊底/44 高/999 圆角会把 .g2-fab 的 48 圆钮压掉
+   （本文件晚于 glass.css 载入 ⇒ 同特异度后到者胜）。 */
+body.mobile-layer .mh-search-bar:not(.g2-fab) {
   display: flex;
   align-items: center;
   gap: var(--ds-space-2);
@@ -3239,8 +3249,11 @@ body.mobile-layer .mh-search-bar {
     inset 0 -1px 0 var(--glass-control-underedge),
     0 1px 3px var(--glass-control-glow);
 }
-body.mobile-layer .mh-search-bar > svg,
-body.mobile-layer .mh-search-bar > i svg {
+/* 展开态图标档（16px / muted）。收起态（.g2-fab 圆钮）图标几何与字色整件归
+   glass.css 的 `.g2-fab svg`（手机档 `body.mobile-layer .g2-fab svg` = 20px）
+   ⇒ 同一条 `:not(.g2-fab)` 让位，禁第二处尺寸/颜色声明。 */
+body.mobile-layer .mh-search-bar:not(.g2-fab) > svg,
+body.mobile-layer .mh-search-bar:not(.g2-fab) > i svg {
   width: 16px;
   height: 16px;
   flex: none;
@@ -3945,19 +3958,18 @@ body.mobile-layer #attachment-preview .att-file > .att-file-name { display: none
    chat-message 引用 chip 的 ✕ 同档），命中域外扩同步收一档。 */
 body.mobile-layer #attachment-preview .att-file .att-remove {
   /* 标准批：删除角标视觉盘 13 → 22（与 44 盒比例协调；13px 的 ✕ 已落在
-     最小档之下），命中盒由 ::after 外扩到 --mtap（44×44）。 */
-  width: 22px;
-  height: 22px;
-  top: -8px;
-  right: -8px;
+     最小档之下）。attachment-thumb-unify 批 2026-11-05：盘径改为**单点 token
+     值**——位置偏移由 calc(--att-remove-size / -2) 自动跟随（圆心恒压盒右上角，
+     不再手写 -8px），命中盒由 ::after 外扩到 --mtap（44×44）同法算。 */
+  --att-remove-size: 22px;
   font-size: var(--mfs-min);
   display: flex;
   align-items: center;
   justify-content: center;
 }
 body.mobile-layer #attachment-preview .att-file .att-remove::after {
-  /* 44 命中盒：22 视觉盘向四边各外扩 11px。 */
-  inset: -11px;
+  /* 44 命中盒：视觉盘向四边各外扩 (--mtap − 盘径)/2。 */
+  inset: calc((var(--mtap) - var(--att-remove-size)) / -2);
 }
 body.mobile-layer #attachment-preview .att-file .att-remove svg {
   width: var(--mfs-min);
@@ -3990,11 +4002,17 @@ body.mobile-layer .option-box .att-file.ask-att-file > .att-file-name {
      判据），文件名截断走可见省略号。 */
   text-overflow: ellipsis;
 }
-body.mobile-layer .option-box .att-file .ds-att-origin {
-  top: -10px;
-  font-size: var(--mfs-min);
-  line-height: 18px;
+/* 卡区图片档（attachment-thumb-unify 批 2026-11-05）：视觉**不放大** —— 与输入框
+   附件条 `.att-thumb` 逐值同盒是本批硬约束；触控热区由宿主 ::after 外扩到 --mtap
+   （44×44，外扩量 = (--mtap − 100%)/2，零魔法数字）。点击面 = 灯箱原图。 */
+body.mobile-layer .ask-attachments-wrap .ask-att-thumb::after {
+  content: '';
+  position: absolute;
+  inset: calc((var(--mtap) - 100%) / -2);
+  border-radius: var(--ds-radius-input);
 }
+/* 卡区附件条的行间余量：手机层 chip 高 --mtap(44)，8px 间距沿用桌面同值
+   （--ds-space-2）；不再有 notch 标签 ⇒ 原 padding-top 让位退场。 */
 body.mobile-layer .att-file .ask-att-reason { font-size: var(--mfs-min); }
 body.mobile-layer .att-file .ask-att-retry {
   min-height: var(--mtap);
@@ -4060,8 +4078,10 @@ body.mobile-layer .mh-search-clear svg {
   width: var(--mfs-min);
   height: var(--mfs-min);
 }
-/* 搜索栏与输入框：44 触控带（iOS 输入最小高度档）。 */
-body.mobile-layer .mh-search-bar { height: max(44px, var(--mtap)); }
+/* 搜索栏与输入框：44 触控带（iOS 输入最小高度档）。
+   🔴 收起态（.g2-fab = 主会话搜索钮同一个类）几何归 css/glass.css 的 48 圆钮，
+   本行必须让位（否则同特异度后到者胜 ⇒ 圆钮被压成 44 高的椭圆）。 */
+body.mobile-layer .mh-search-bar:not(.g2-fab) { height: max(44px, var(--mtap)); }
 
 /* 定时任务：完成圆钮 / 删除键 18-20px 图形本体 → 44 热区（圆点视觉不变）。 */
 body.mobile-layer #reminder-panel .reminder-circle,
@@ -4772,12 +4792,18 @@ body.mobile-layer .mf-canvas-page:has(.canvas-ref-select) .mf-dots {
   margin-inline: auto;   /* 净带内仍居中（原居中意图保留） */
 }
 /* 底部可滚余量（md / 纯文本 / epub 三面同尺）：末行滚到控件行之上。
-   值 = 16（控件行底缝）+ 48（钮径）+ 12（呼吸）= 76。 */
+   值 = 16（控件行底缝）+ 48（钮径）+ 12（呼吸）= 76。
+   canvas 正文底部遮挡修复批（2026-11-05，桌面档补同一让位）：桌面侧改由 JS 实测
+   发布 --canvas-bottom-clearance（viewers/shared.js syncBottomClearance，split.css
+   文件尾消费）。手机档此处保留 76 作为**地板值**，并用 max() 让实测值在控件行变高
+   时接管（例：面板更窄 ⇒ html 缩放条回落第二行 ⇒ 实测 81 > 76）。两档同源：76 与
+   实测值都由「控件行底缝 + 钮径 + 呼吸」推导，手机档的 16/48 是静态 token（
+   --mf-ctrl-row + --mtap-lg），桌面档取真几何；实测缺省 0px ⇒ max() 结果不变。 */
 body.mobile-layer .canvas-md-scroll,
 body.mobile-layer .canvas-txt-scroll,
 body.mobile-layer .epub-reader-viewport {
-  padding-bottom: calc(var(--mf-ctrl-row, 64px) + 12px);
-  scroll-padding-bottom: calc(var(--mf-ctrl-row, 64px) + 12px);
+  padding-bottom: max(calc(var(--mf-ctrl-row, 64px) + 12px), var(--canvas-bottom-clearance, 0px));
+  scroll-padding-bottom: max(calc(var(--mf-ctrl-row, 64px) + 12px), var(--canvas-bottom-clearance, 0px));
 }
 
 /* ── ④ 手机端阅读面字档（本批硬约束：正文 ≥17px / 辅助字 ≥13px）──────────

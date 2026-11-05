@@ -373,7 +373,7 @@ class CliRouterSpec extends FunSuite:
       end match
       // 被覆盖的根面（走 readPort 的真实链）
       nebflow.shared.PathUtil.setDataRoot(tmp)
-      os.write.over(tmp / "nebflow.json", s"""{"port": $cfgPort}""", createFolders = true)
+      os.write.over(tmp / nebflow.shared.Branding.configFileName, s"""{"port": $cfgPort}""", createFolders = true)
       assertEquals(GatewayClient.readPort.unsafeRunSync(), cfgPort)
     finally
       GatewayClient.resetPort()

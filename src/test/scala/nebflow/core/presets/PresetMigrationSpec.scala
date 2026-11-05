@@ -19,7 +19,7 @@ class PresetMigrationSpec extends FunSuite:
       os.remove.all(tmp)
 
   private def writeNebflow(root: os.Path, content: String): Unit =
-    os.write.over(root / "nebflow.json", content.replaceAll("\\s+", " "))
+    os.write.over(root / nebflow.shared.Branding.configFileName, content.replaceAll("\\s+", " "))
 
   private val providerX =
     """{"baseUrl":"https://x.example.com/v1","apiKey":"k","protocol":"openai",
@@ -54,7 +54,7 @@ class PresetMigrationSpec extends FunSuite:
       writeNebflow(root, """{"llm":{"providers":{}}}""")
       assertEquals(PresetStore.readSeedChain(), Nil)
       // 无 nebflow.json 同样 Nil
-      os.remove(root / "nebflow.json")
+      os.remove(root / nebflow.shared.Branding.configFileName)
       assertEquals(PresetStore.readSeedChain(), Nil)
     }
   }
@@ -86,7 +86,7 @@ class PresetMigrationSpec extends FunSuite:
       assertEquals(f.presets("general").fallbacks, List("X/m1"))
 
       // llm.model 节已剥离，providers 原样保留
-      val saved = io.circe.parser.parse(os.read(root / "nebflow.json")).toOption.get
+      val saved = io.circe.parser.parse(os.read(root / nebflow.shared.Branding.configFileName)).toOption.get
       assert(saved.hcursor.downField("llm").downField("model").focus.isEmpty)
       assert(saved.hcursor.downField("llm").downField("providers").downField("X").focus.isDefined)
     }
@@ -103,7 +103,7 @@ class PresetMigrationSpec extends FunSuite:
       assert(PresetStore.migrateGlobalModelChain())
       // 有感保护：健康 preset 文件逐字节不变（hash 断言）
       assertEquals(os.read(root / "model-presets.json"), presets)
-      val saved = io.circe.parser.parse(os.read(root / "nebflow.json")).toOption.get
+      val saved = io.circe.parser.parse(os.read(root / nebflow.shared.Branding.configFileName)).toOption.get
       assert(saved.hcursor.downField("llm").downField("model").focus.isEmpty)
     }
   }
@@ -112,11 +112,11 @@ class PresetMigrationSpec extends FunSuite:
     withRoot("mig-idem") { root =>
       writeNebflow(root, s"""{"llm":{"providers":{"X":$providerX},"model":{"default":"X/m1","fallbacks":[]}}}""")
       assert(PresetStore.migrateGlobalModelChain())
-      val afterFirst = os.read(root / "nebflow.json")
+      val afterFirst = os.read(root / nebflow.shared.Branding.configFileName)
       val presetsAfterFirst = os.read(root / "model-presets.json")
       // 第二次：无 llm.model 节 → false（无事可做），零写入
       assert(!PresetStore.migrateGlobalModelChain())
-      assertEquals(os.read(root / "nebflow.json"), afterFirst)
+      assertEquals(os.read(root / nebflow.shared.Branding.configFileName), afterFirst)
       assertEquals(os.read(root / "model-presets.json"), presetsAfterFirst)
     }
   }
@@ -127,7 +127,7 @@ class PresetMigrationSpec extends FunSuite:
       // preset → 中止剥离，字段留存（下次启动重试）
       writeNebflow(root, """{"llm":{"providers":{},"model":{"fallbacks":[]}}}""")
       assert(!PresetStore.migrateGlobalModelChain())
-      val saved = io.circe.parser.parse(os.read(root / "nebflow.json")).toOption.get
+      val saved = io.circe.parser.parse(os.read(root / nebflow.shared.Branding.configFileName)).toOption.get
       assert(saved.hcursor.downField("llm").downField("model").focus.isDefined, "llm.model 必须留存待重试")
     }
   }

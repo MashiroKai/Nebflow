@@ -145,20 +145,20 @@
   color: var(--color-frame-text-dim);
   transition: all 0.25s ease;
 }
-#modal-cancel:hover,
-#delete-cancel:hover,
-#delete-alt:hover,
-#conflict-cancel:hover,
-#conflict-keep-both:hover,
-#memory-modal-actions button:hover,
-#rules-modal-actions button:hover {
-  background: rgba(91, 127, 191, 0.08);
-  border-color: var(--sapphire-edge-strong);
-  color: var(--color-frame-text-bright);
-  box-shadow:
-    0 0 8px rgba(120, 160, 220, 0.08),
-    0 0 20px rgba(120, 160, 220, 0.04);
+@media (hover: hover) {
+  #modal-cancel:hover,
+  #delete-cancel:hover,
+  #delete-alt:hover,
+  #conflict-cancel:hover,
+  #conflict-keep-both:hover,
+  #memory-modal-actions button:hover,
+  #rules-modal-actions button:hover {
+    background: rgba(91, 127, 191, 0.08);
+    border-color: var(--sapphire-edge-strong);
+    color: var(--color-frame-text-bright);
+  }
 }
+
 /* 可选第三动作（卸载批 2026-10-29：showConfirm opts.alt——「仅停用」腿）。默认
    hidden 属性收起，零调用方 = 零形态变化；样式 = 中性族（可逆次选，danger 主选
    留给确认钮）。 */
@@ -539,9 +539,12 @@
   display: flex;
   align-items: center;
 }
-.cfg-eye-btn:hover {
-  color: var(--ds-text-bright);
+@media (hover: hover) {
+  .cfg-eye-btn:hover {
+    color: var(--ds-text-bright);
+  }
 }
+
 .cfg-eye-btn svg {
   width: 16px;
   height: 16px;
@@ -1237,12 +1240,11 @@
   padding: var(--ds-space-1) var(--ds-space-inline-x);
   border-radius: var(--ds-radius-chip);
   cursor: pointer;
-  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+  transition: background 0.15s, color 0.15s;
 }
 .mp-mode-btn.on {
   background: var(--color-surface);
   color: var(--color-text);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
 
 /* 台账 #937：/model 面板级降级面 —— 全角色读数失败（401/断连）时替下

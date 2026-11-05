@@ -205,7 +205,9 @@ class BackoffSupervisorFreezeSpec extends CatsEffectSuite:
           .loadTasks(parentSid)
           .map(_.find(_.taskId == childSid).exists(_.status == DelegateFreeze.TaskStatus))
       )
-      _ <- waitUntil(20.seconds)(mailboxEvents(parentSid).map(_.exists(_.eventType == "frozen")))
+      // 冻结通知策略批（2026-11-05 作者令）：provider 故障族**不再投父会话回执**——
+      // 这里不再等回执，改为给投递腿一个沉降窗口，随后断言「一条都没有」。
+      _ <- IO.sleep(400.millis)
       _ <- IO.sleep(300.millis) // 沉降：确认没有第二件终态悄悄落地
       events <- mailboxEvents(parentSid)
       refEvents <- parentEvents.get
@@ -229,15 +231,20 @@ class BackoffSupervisorFreezeSpec extends CatsEffectSuite:
         Nil,
         s"the legacy push chain must not carry a terminal either, got: $refEvents"
       )
-      // ② 上报：冻结回执（eventType=frozen）在父邮箱，正文四段齐备 + 唤醒地址。
+      // ② 上报：provider 故障（llm-failure）**零向上通知**（冻结通知策略批 2026-11-05：
+      // 基础设施故障不是任务失败，上级多半也在同一波里挨饿）。回执正文仍由
+      // `receiptText` 单点提供（升级/回滚路径与审计面用它），故按纯函数断言其判词诚实。
       val receipts = events.filter(e => e.eventType == "frozen" && e.source == "delegate")
-      assertEquals(receipts.size, 1, s"exactly one frozen receipt, got: ${events.map(_.eventType)}")
-      val r = receipts.head
-      assert(r.payload.contains("NOT a failure verdict"), s"honest verdict text, got: ${r.payload.take(400)}")
-      assert(r.payload.contains(s"delegate:$childSid"), "the wake address must be printed")
-      assertEquals(r.metadata("frozenReason").flatMap(_.asString), Some("llm-failure"))
-      assertEquals(r.metadata("wakeAddress").flatMap(_.asString), Some(s"delegate:$childSid"))
-      assertEquals(r.metadata("retryable").flatMap(_.asBoolean), Some(true))
+      assertEquals(receipts, Nil, s"a provider-fault freeze must NOT mail the parent, got: ${events.map(_.eventType)}")
+      val honestText = DelegateFreeze.receiptText(
+        childSid,
+        "wire up the image pipeline",
+        DelegateFreeze.Reason.LlmFailure,
+        "529 overloaded",
+        os.pwd.toString
+      )
+      assert(honestText.contains("NOT a failure verdict"), s"honest verdict text, got: ${honestText.take(400)}")
+      assert(honestText.contains(s"delegate:$childSid"), "the wake address must be printed")
       // ③ 状态保留：registry 冻结槽 + 台账行 frozen（不进 boot 收殓视野）+ 记录在册。
       assert(record.frozenSince.isDefined, "frozenSince persisted (survives restart)")
       assertEquals(record.frozenReason, Some(DelegateFreeze.wireValue(DelegateFreeze.Reason.LlmFailure)))
@@ -341,11 +348,13 @@ class BackoffSupervisorFreezeSpec extends CatsEffectSuite:
         "a quota-exhausted cancel freezes with its own reason code"
       )
       assert(quotaRec.frozenSince.isDefined)
+      // 冻结通知策略批（2026-11-05）：配额耗尽同属 provider 故障族（基础设施故障）⇒
+      // 同样**零向上通知**（由面板徽标 + 静默统计 + 引擎自愈续跑接管）。
       assert(
-        events.exists(e =>
+        !events.exists(e =>
           e.eventType == "frozen" && e.metadata("frozenReason").flatMap(_.asString).contains("cancelled-by-quota")
         ),
-        s"the quota freeze reports itself, got: ${events.map(e => e.eventType -> e.metadata("frozenReason"))}"
+        s"a quota freeze must stay silent too, got: ${events.map(e => e.eventType -> e.metadata("frozenReason"))}"
       )
       // 显式取消 ⇒ 既有 cancelled 终态（逐字不变：取消意图必须落地）。
       assertEquals(cancelRec.frozenSince, None, "an explicit cancel is never frozen (the intent must land)")

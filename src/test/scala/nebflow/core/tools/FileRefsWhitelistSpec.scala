@@ -138,7 +138,7 @@ class FileRefsWhitelistSpec extends FunSuite:
     //    inode set is empty (before the seed they were only caught by the
     //    startup inode snapshot / the now-retired namespace reach).
     assert(deny("auth.json").isDefined, "auth.json stays refused (credential-shaped basename)")
-    assert(deny("nebflow.json").isDefined, "nebflow.json stays refused (root-anchored seed)")
+    assert(deny(nebflow.shared.Branding.configFileName).isDefined, "nebflow.json stays refused (root-anchored seed)")
     assert(
       deny("secrets/x.txt").isDefined,
       "the dataRoot secrets subtree stays refused (root-anchored seed, live — no longer the namespace layer's job)"

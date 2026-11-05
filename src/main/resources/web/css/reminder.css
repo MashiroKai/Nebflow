@@ -15,18 +15,18 @@
   color: var(--color-frame-text-muted);
   position: relative;
   flex-shrink: 0;
-  transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
-#reminder-btn:hover {
-  background: var(--glass-control-bg-hover);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  border-color: var(--glass-control-border);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge);
-  color: var(--color-frame-text);
+@media (hover: hover) {
+  #reminder-btn:hover {
+    background: var(--glass-control-bg-hover);
+    -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+    backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+    border-color: var(--glass-control-border);
+    color: var(--color-frame-text);
+  }
 }
+
 #reminder-btn svg {
   width: 16px;
   height: 16px;
@@ -167,10 +167,13 @@
   transition: all 0.15s;
   opacity: 0.7;
 }
-.reminder-create-btn:hover {
-  opacity: 1;
-  background: rgba(91, 127, 191, 0.08);
+@media (hover: hover) {
+  .reminder-create-btn:hover {
+    opacity: 1;
+    background: rgba(91, 127, 191, 0.08);
+  }
 }
+
 .reminder-create-btn:active {
   opacity: 1;
   background: rgba(91, 127, 191, 0.14);
@@ -203,10 +206,13 @@
   align-items: center;
   justify-content: center;
 }
-#panel-todo .reminder-create-btn:hover {
-  opacity: 1;
-  background: rgba(91, 127, 191, 0.08);
+@media (hover: hover) {
+  #panel-todo .reminder-create-btn:hover {
+    opacity: 1;
+    background: rgba(91, 127, 191, 0.08);
+  }
 }
+
 .todo-ask-row {
   cursor: pointer;
 }
@@ -579,18 +585,18 @@
   padding: var(--ds-space-1) 0;
   border-radius: var(--ds-radius-chip);
   cursor: pointer;
-  transition: background 0.15s ease, opacity 0.15s ease, box-shadow 0.15s ease;
+  transition: background 0.15s ease, opacity 0.15s ease;
   white-space: nowrap;
 }
-.reminder-repeat-seg button:hover {
-  opacity: 0.8;
+@media (hover: hover) {
+  .reminder-repeat-seg button:hover {
+    opacity: 0.8;
+  }
 }
+
 .reminder-repeat-seg button.active {
   opacity: 1;
   background: rgb(var(--sapphire) / 0.16);
-  box-shadow:
-    inset 0 1px 0 0 rgb(var(--sapphire) / 0.25),
-    0 0 0 1px rgb(var(--sapphire) / 0.22);
 }
 .reminder-repeat-seg button:focus-visible {
   outline: 2px solid rgb(var(--sapphire) / 0.5);
@@ -911,7 +917,10 @@ nf-sched-card { display: contents; }
   cursor: pointer;
   transition: background var(--ds-dur-hover) var(--ds-ease-std);
 }
-.schedule-card-btn:hover { background: var(--glass-control-bg-hover); }
+@media (hover: hover) {
+  .schedule-card-btn:hover { background: var(--glass-control-bg-hover); }
+}
+
 .schedule-card-btn.is-primary { border-color: rgb(var(--sapphire) / 0.5); color: rgb(var(--sapphire)); }
 .schedule-card-btn.is-danger { border-color: var(--status-error-icon); color: var(--status-error-icon); }
 .schedule-card-btn:focus-visible {
@@ -989,9 +998,9 @@ nf-sched-card { display: contents; }
 
   .reminder-repeat-seg button.active {
     background: rgb(var(--sapphire) / 0.22);
-    box-shadow:
-      inset 0 1px 0 0 rgb(var(--sapphire) / 0.3),
-      0 0 0 1px rgb(var(--sapphire) / 0.28);
+    /* 扁平化批 2026-11-05：原「inset 顶缘高光 + 1px 描边影」两层退役。
+       选中态改由**底色 + 描边**表达（描边是线不是影，扁平允许项）。 */
+    border-color: rgb(var(--sapphire) / 0.28);
   }
   .reminder-repeat-badge {
     background: rgb(var(--sapphire) / 0.14);
@@ -1005,8 +1014,10 @@ nf-sched-card { display: contents; }
   .reminder-create-btn {
     opacity: 0.6;
   }
-  .reminder-create-btn:hover {
-    opacity: 1;
-    background: rgba(91, 127, 191, 0.10);
+  @media (hover: hover) {
+    .reminder-create-btn:hover {
+      opacity: 1;
+      background: rgba(91, 127, 191, 0.10);
+    }
   }
 }

@@ -2,7 +2,7 @@ package nebflow.core.delegate
 
 import cats.effect.IO
 import cats.syntax.all.*
-import nebflow.actor.AgentRecord
+import nebflow.actor.{AgentKind, AgentRecord}
 import nebflow.shared.NebflowLogger
 
 /**
@@ -147,6 +147,10 @@ object CancelCascade:
   def detectOrphans(reg: Map[String, AgentRecord], terminalParentIds: Set[String]): List[Orphan] =
     reg.values.toList
       .filter(r => r.parentSessionId.nonEmpty && r.parentSessionId != r.sessionId)
+      // 裁定4：外部腿（`AgentKind.External`，ref 恒 null）**不在孤儿处置面**——
+      // 它没有 actor 可 Stop，取消走 ExternalSessionRunner（杀进程树），终态由
+      // settle 摘除登记行。放进本表只会得到一条「无法处置」的假孤儿。
+      .filter(_.kind != AgentKind.External)
       .filter(r => terminalParentIds.contains(r.parentSessionId))
       .sortBy(_.sessionId)
       .map(r => Orphan(r, r.parentSessionId, "parent session is terminal (cancel tombstone / archived) but this child is still registered"))

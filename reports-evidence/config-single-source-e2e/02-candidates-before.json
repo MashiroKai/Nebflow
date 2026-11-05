@@ -1,0 +1,14 @@
+{
+  "source": "llm.fallback",
+  "chain": [
+    "gamma/m3",
+    "alpha/m1"
+  ],
+  "skipped": [],
+  "candidates": [
+    "gamma/m3",
+    "alpha/m1",
+    "beta/m2"
+  ],
+  "warnings": []
+}

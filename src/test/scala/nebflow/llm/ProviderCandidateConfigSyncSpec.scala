@@ -56,7 +56,7 @@ class ProviderCandidateConfigSyncSpec extends CatsEffectSuite:
     val body = providers
       .map { case (pid, ms) => s""""$pid":${providerEntry(1, ms, disabled.contains(pid))}""" }
       .mkString(",")
-    os.write.over(root / "nebflow.json", s"""{"llm":{"providers":{$body}}}""", createFolders = true)
+    os.write.over(root / nebflow.shared.Branding.configFileName, s"""{"llm":{"providers":{$body}}}""", createFolders = true)
 
   /** Nebula 的显式主链（= `/model` 面写的那份，全局默认链的锚）。 */
   private def writeNebulaChain(root: os.Path, preferred: String, fallbacks: List[String]): Unit =
@@ -144,7 +144,7 @@ class ProviderCandidateConfigSyncSpec extends CatsEffectSuite:
           )
           assertEquals(strList(after, "configProviders"), List("cmdcode", "zhipu"), "配置面应只剩 cmdcode/zhipu")
           val diskHasKimi = IO.blocking(
-            os.read(root / "nebflow.json").contains("\"kimi\"")
+            os.read(root / nebflow.shared.Branding.configFileName).contains("\"kimi\"")
           ).unsafeRunSync()
           assert(!diskHasKimi, "删除必须真的落到磁盘（否则运行期下次读又复活）")
       }
@@ -221,15 +221,15 @@ class ProviderCandidateConfigSyncSpec extends CatsEffectSuite:
         writeConfig(root, prodLike)
         writeNebulaChain(root, "zhipu/glm-5.3-flash", Nil)
       } *> mkRegistryFromDisk.flatMap { reg =>
-        val stale = os.read(root / "nebflow.json") // 旁路写者在删除**之前**读到的底稿
+        val stale = os.read(root / nebflow.shared.Branding.configFileName) // 旁路写者在删除**之前**读到的底稿
         for
           r <- ConfigService.updateConfig("""{"llm":{"providers":{"kimi":null}}}""")
           assert0 <- IO(assertEquals(r, Right(()), "正常路径删除应成功"))
-          afterDelete <- IO.blocking(os.read(root / "nebflow.json").contains("\"kimi\""))
+          afterDelete <- IO.blocking(os.read(root / nebflow.shared.Branding.configFileName).contains("\"kimi\""))
           // 旁路写者此刻回写它的旧底稿（PluginDispatchPolicy/PluginRegistry 同形态：
           // 读全量 → 改自己子树 → 原子写回，且不走 ConfigService.writeLocked）
-          _ <- IO(os.write.over(root / "nebflow.json", stale))
-          resurrected <- IO.blocking(os.read(root / "nebflow.json").contains("\"kimi\""))
+          _ <- IO(os.write.over(root / nebflow.shared.Branding.configFileName, stale))
+          resurrected <- IO.blocking(os.read(root / nebflow.shared.Branding.configFileName).contains("\"kimi\""))
           // 守卫：把"声明删除"逐名回读核对
           leftover <- IO(ConfigService.undeletedProviders(List("kimi")))
           _ <- reg.reloadConfig(None)

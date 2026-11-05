@@ -146,18 +146,18 @@
   justify-content: center;
   border-radius: var(--ds-radius-chip);
   flex-shrink: 0;
-  transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
-#header .memory-btn:hover {
-  background: var(--glass-control-bg-hover);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  border-color: var(--glass-control-border);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge);
-  color: var(--color-frame-text);
+@media (hover: hover) {
+  #header .memory-btn:hover {
+    background: var(--glass-control-bg-hover);
+    -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+    backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+    border-color: var(--glass-control-border);
+    color: var(--color-frame-text);
+  }
 }
+
 #header .memory-btn svg {
   width: 16px;
   height: 16px;
@@ -177,18 +177,18 @@
   justify-content: center;
   border-radius: var(--ds-radius-chip);
   flex-shrink: 0;
-  transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
-#header #search-btn:hover {
-  background: var(--glass-control-bg-hover);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  border-color: var(--glass-control-border);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge);
-  color: var(--color-frame-text);
+@media (hover: hover) {
+  #header #search-btn:hover {
+    background: var(--glass-control-bg-hover);
+    -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+    backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+    border-color: var(--glass-control-border);
+    color: var(--color-frame-text);
+  }
 }
+
 #header #search-btn svg {
   width: 16px;
   height: 16px;
@@ -734,6 +734,32 @@
 }
 .bg-task-wake:hover { background: rgb(var(--accent-agent-light) / 0.22); }
 .bg-task-wake:disabled { opacity: 0.5; cursor: default; }
+/* Mail 续传地址 chip（AgentControl name/address 批 2026-11-05 · 作者令「工具返回
+   name 与地址，方便投递」的面板面）：chip 族同一形态（值全走 --ds-* 槽，与
+   .bg-task-kind 族同源，不做第二套材质）；差异只在两处真实需要：
+   · 截断——行宽有限，长 id ellipsis（**全文在 title 与 data-bg-copy**，复制恒给全文，
+     截断只是版式，不是数据）；
+   · 复制手势——cursor: copy + 点击后 is-copied 一瞬强调色（复制是最轻的动作，
+     反馈不弹 toast、不占布局）。 */
+.bg-task-addr {
+  font-size: var(--ds-fs-meta);
+  font-weight: var(--ds-fw-body);
+  padding: var(--ds-space-hair) var(--ds-space-1h);
+  border-radius: var(--ds-radius-chip);
+  background: var(--ds-control-bg);
+  border: var(--ds-border-width) solid var(--ds-control-border);
+  color: var(--ds-text-muted);
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 168px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: copy;
+  user-select: all;
+}
+.bg-task-addr:hover { color: var(--ds-text); border-color: var(--ds-text-muted); }
+.bg-task-addr.is-copied { color: rgb(var(--accent-agent-light)); border-color: rgb(var(--accent-agent-light) / 0.55); }
 /* #752 空闲细分注记（在等什么）：等后台任务名+时长 / 等子代理回执 N 条 ——
    中性次行；长空闲（>10min 无在飞工作）= 琥珀提醒徽标（timer-off 图标 +
    status-warn 字色，role=alert）。 */
@@ -1006,38 +1032,15 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   color: #bbb;
   user-select: none;
 }
-/* ---------- Initial-load skeleton（audit ②27，2026-10-25）----------
-   初次进会话（历史未加载完）的渐变占位泡：官网气泡同语言（AI 左 / 用户右对齐、
-   16px 圆角族、80% 宽上限），shimmer = sapphire 弱 tint 扫过 --color-bubble-ai 底
-   （用户位 = --color-bubble-user 底 + 白光扫）。挂载/摘除单点 =
-   historyIndicators.showChatSkeleton / hideChatSkeleton（historyPage 处理器同帧
-   摘除 ⇒ 加载完成让位零跳变）；prefers-reduced-motion 降级为静态浅底。 */
-.chat-skeleton { display: flex; flex-direction: column; gap: var(--ds-space-half); padding: var(--ds-space-1h) 0; }
-.chat-sk-row { display: flex; justify-content: flex-start; animation: fadeIn 0.2s ease; }
-.chat-sk-row-me { justify-content: flex-end; }
-.chat-sk-bubble {
-  height: 38px;
-  max-width: 80%;
-  border-radius: var(--ds-radius-card-lg);
-  border-bottom-left-radius: 4px;
-  background-color: var(--glass-bub-ai-bg);
-  background-image: linear-gradient(90deg,
-    rgb(var(--sapphire) / 0.05) 25%, rgb(var(--sapphire) / 0.13) 50%, rgb(var(--sapphire) / 0.05) 75%);
-  background-size: 200% 100%;
-  animation: chat-sk-shimmer 1.4s ease-in-out infinite;
-}
-.chat-sk-row-me .chat-sk-bubble { border-bottom-left-radius: 16px; border-bottom-right-radius: 4px; background-color: var(--glass-bub-user-bg); }
-.chat-sk-w62 { width: 62%; }
-.chat-sk-w38 { width: 38%; }
-.chat-sk-w76 { width: 76%; }
-.chat-sk-w50 { width: 50%; }
-@keyframes chat-sk-shimmer {
-  from { background-position: 130% 0; }
-  to { background-position: -30% 0; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .chat-sk-bubble { animation: none; }
-}
+/* ---------- Initial-load placeholder（audit ②27，2026-10-25）→ 已整件退役
+   （作者令 2026-11-05 12:28「进来就应该是加载好的 这个占位逻辑多余了」；实拍
+   IMG_1744 = 消息流顶部 4 条大圆角占位泡，右侧那条是用户位绿泡）----------------
+   旧块 = `.chat-skeleton / .chat-sk-row(-me) / .chat-sk-bubble / .chat-sk-w*` 四个
+   规则 + 一条 shimmer 关键帧（渐变占位泡 + 蓝紫扫光）。退役理由与三档判据的
+   落在 js/main/historyIndicators.js 头注与 js/sidebar.js 挂载点：只有线程**真空**
+   时给一条既有细加载行 `.history-loader`（见上「History pagination indicators」），
+   有内容时零占位，失败/空态各有自己的面。零 CSS 残留（禁第二套占位语言）——
+   含 reduced-motion 降级档里那条占位泡动画关闭规则，一并删除。 */
 .row {
   display: flex;
   margin: var(--ds-space-1h) 0;
@@ -1185,8 +1188,15 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   cursor: pointer;
   transition: opacity 0.15s;
 }
-.bubble.injected .injected-source-label[role="button"]:hover {
-  opacity: 0.8;
+/* 扁平化批（2026-11-05）：`[role="button"]` 也是按钮面 —— hover 同样关进
+   (hover: hover)，触屏不吃 hover（触屏反馈走 :active，见下条）。 */
+@media (hover: hover) {
+  .bubble.injected .injected-source-label[role="button"]:hover {
+    opacity: 0.8;
+  }
+}
+.bubble.injected .injected-source-label[role="button"]:active {
+  opacity: 0.65;
 }
 /* 外部注入气泡「一句话摘要」行（外部注入统一通道批 2026-11-05）。
    作者诉求逐字：「我看得到是什么」——折叠态只显示来源行时，气泡说不出发生了什么，
@@ -1532,14 +1542,20 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   white-space: nowrap;
   z-index: 2;
 }
-.code-block-wrap:hover .code-copy-btn {
-  opacity: 1;
+@media (hover: hover) {
+  .code-block-wrap:hover .code-copy-btn {
+    opacity: 1;
+  }
 }
-.code-copy-btn:hover {
-  background: #fff;
-  color: #333;
-  border-color: rgba(0,0,0,0.2);
+
+@media (hover: hover) {
+  .code-copy-btn:hover {
+    background: #fff;
+    color: #333;
+    border-color: rgba(0,0,0,0.2);
+  }
 }
+
 .code-copy-btn.copied {
   color: #2e7d32;
   border-color: #2e7d32;
@@ -1868,10 +1884,12 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
     border-color: rgba(255,255,255,0.1);
     color: #7b7e88;
   }
-  .code-copy-btn:hover {
-    background: #282b33;
-    color: #b0b3ba;
-    border-color: rgba(255,255,255,0.2);
+  @media (hover: hover) {
+    .code-copy-btn:hover {
+      background: #282b33;
+      color: #b0b3ba;
+      border-color: rgba(255,255,255,0.2);
+    }
   }
   .code-copy-btn.copied {
     color: #66bb6a;
@@ -1970,14 +1988,14 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   transition: background var(--dur-2) ease, color var(--dur-2) ease,
               border-color var(--dur-2) ease, box-shadow var(--dur-2) ease;
 }
-.option-btn:hover {
-  border-color: rgba(145, 170, 210, 0.45);
-  color: rgba(91, 127, 191, 0.85);
-  background: rgba(145, 170, 210, 0.08);
-  box-shadow:
-    0 0 8px rgba(145, 170, 210, 0.06),
-    0 0 20px rgba(145, 170, 210, 0.03);
+@media (hover: hover) {
+  .option-btn:hover {
+    border-color: rgba(145, 170, 210, 0.45);
+    color: rgba(91, 127, 191, 0.85);
+    background: rgba(145, 170, 210, 0.08);
+  }
 }
+
 .option-btn.picked {
   background: var(--color-primary);
   color: #fff;
@@ -1994,10 +2012,13 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   border-color: rgb(var(--sapphire) / 0.45);
   background: rgb(var(--sapphire) / 0.08);
 }
-.option-btn.perm-upgrade-option:hover {
-  border-color: rgb(var(--sapphire) / 0.7);
-  background: rgb(var(--sapphire) / 0.14);
+@media (hover: hover) {
+  .option-btn.perm-upgrade-option:hover {
+    border-color: rgb(var(--sapphire) / 0.7);
+    background: rgb(var(--sapphire) / 0.14);
+  }
 }
+
 /* Multi-select questions (multiple: true): checkboxes stacked vertically,
    full-width rows — stays clean at narrow chat widths (~490px). */
 .option-opts.multi {
@@ -2350,8 +2371,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   margin-bottom: var(--ds-space-1h);
   font-size: var(--ds-fs-btn);
   padding: var(--ds-space-1) var(--ds-space-3);
-  transition: background 0.15s, color 0.15s, border-color 0.15s,
-              box-shadow 0.15s, opacity 0.15s;
+  transition: background 0.15s, color 0.15s, border-color 0.15s, opacity 0.15s;
 }
 @media (prefers-reduced-motion: reduce) {
   .option-box.ob-fade-in,
@@ -2360,22 +2380,79 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   }
 }
 
-/* ══ AskUser 卡附件区（ui-unification-20261103-askuser-attach 2026-11-04）════
-   作者令（IMG_1725 实拍 + 原话）：卡内附件与输入框附件「同源」；图片/视频以
-   **叠卡**形态内嵌（点击即预览）；文件卡左上角挂**来源标签**；默认只显缩略图/
-   前 N 个——卡身不再随件数线性膨胀。
+/* ══ AskUser 卡附件区（ui-unification-20261103-askuser-attach 2026-11-04；
+   attachment-thumb-unify 批 2026-11-05 12:57 改形态）════════════════════════
+   作者令（本批，逐字）：「附件这里添加的图片文件等应该用我们输入框同款的小图标/
+   缩略图」——被取代的形态 = 220px 卡语言媒体卡（竖图被放大成 220×476 的大卡，
+   卡身溢出、右侧大留白，作者实拍两图）。
    形态单源声明（本段只放「卡区宿主差异档」，零第二套形）：
-   · 媒体 = popArtifacts 标准叠卡组件（`.ds-media-stack` 族——design-system.css
-     §⑨ 形态唯一家；单件 = `.pop-media-flat` 平面卡）。卡内容宽 <「钮 32 缝 +
-     220 卡脸」时钮折行到卡脸上方（friends.css 窄宿主同法：wrap，非第二几何）。
-   · 文件 chip = chat.js `renderAttachmentFace` 单源（输入框附件条同一函数）；
-     `.att-file` 基座形在 css/input.css 单点，此处只加可点态 / 折叠收件 / 降级态。
+   · 图片 = `.att-thumb` 小缩略图（基座在 css/input.css，与输入框附件条逐值同盒：
+     28px 方盒 / --ds-radius-input 圆角 / --glass-border 描边 / object-fit:cover
+     ⇒ 3000px 宽幅、超长竖图都恒为 28×28，撑不破容器）。
+   · 其余类型 = `.att-file` 文件 chip（同一函数 `renderAttachmentFace`）：类型小
+     图标（`.fc-icon` 色族单源）+ 文件名（省略号截断）。
+   · 一条 `flex-wrap: wrap` 窄条带 ⇒ 多附件按容器宽度换行，间距全走 --ds-space-*。
    · 全部令牌走 --ds-*（check-design-tokens.mjs 计数只减不增）。 */
-/* 卡内叠卡宿主：窄卡（手机 ~302px 内容宽）装不下横排 [钮|卡脸] ⇒ 折行，
-   「展开 N」钮升到卡脸上方成一行（展开展开的自然读序：先钮后脸）。 */
-.option-box .pop-stack-area { flex-wrap: wrap; row-gap: var(--ds-space-2); width: 100%; }
-.option-box .pop-stack-area > .pill { margin-right: 0; order: -1; }
-.option-box .pop-media-flat { max-width: 100%; }
+/* 标题行（「附件 · N」+ 来源标签一处）：原 inline cssText 收编到此处 —— 内联
+   font 简写会压过手机层字阶覆盖（--mfs-min 档此前是死规则）。
+   来源标签本批从「每枚 chip 左上角 notch」收拢到这一行：28px chip 装不下 14px
+   notch（会盖住缩略图上半并被下一行叠压），信息不丢、位置从压字变同行内联。 */
+.ask-attachments-head {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-1h);
+  min-width: 0;
+  max-width: 100%;
+  margin: var(--ds-space-half) 0 var(--ds-space-1);
+  font-size: var(--ds-fs-meta);
+  font-weight: var(--ds-fw-title);
+  color: var(--ds-text-muted);
+}
+.ask-attachments-head-label { flex: none; }
+.ask-attachments-head .ds-att-origin::before {
+  /* 分隔符（视觉 only，不进口径）：标题词与来源标签之间一个中点，避免
+     「附件 · 1 AskUser · …」读成一串。 */
+  content: '·';
+  margin: 0 var(--ds-space-1h);
+  opacity: 0.7;
+}
+.ask-attachments-head .ds-att-origin {
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* 字阶/字重随标题行继承（手机层由 body.mobile-layer 的 --mfs-min 档接管 ——
+     在此钉死字阶会把手机端可读档压回 12px）。 */
+  font-weight: var(--ds-fw-body);
+  color: var(--ds-text-muted);
+  pointer-events: none;   /* 纯标注面，不吃点击 */
+}
+/* 附件条：一条 flex-wrap 窄条带（图/文件同条带同基线）。间距 = 4px 栅格 8px 档，
+   行内/行间同值 —— 单一 --ds-space-2，零魔法数字。 */
+.ask-attachments-wrap .ask-attachments-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ds-space-2);
+  min-width: 0;
+  max-width: 100%;
+}
+/* 图片档（卡区可点面）：光标 + 键盘焦点环；盒形/描边/圆角全继承 .att-thumb 基座
+   （禁在此改尺寸 —— 与输入框条同档是本批硬约束）。
+   `margin: 0` = R4 同款隔离（chat.css:1395 的 `.bubble.ai img` 给卡内**每个** img
+   塞 margin-top:4px，实测把 28px 缩略帧挤成 32px 高的 ⌀ 盒 ⇒ 与相邻 chip 基线错 4px；
+   先例 = `.option-preview .preview-img` 同法断渗漏）。 */
+.ask-attachments-wrap .ask-att-thumb { cursor: pointer; }
+.ask-attachments-wrap .ask-att-thumb .att-thumb {
+  margin: 0;
+  max-width: 100%;
+}
+.ask-attachments-wrap .ask-att-thumb:focus-visible {
+  outline: 2px solid var(--ds-focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--ds-radius-input);
+}
 /* 卡内文件 chip：可点档（role=button）光标 + 键盘焦点环；高度放 auto（降级态
    原因档/重试键要折行）。基座 28px 档仍是下限（min-height）。 */
 .option-box .att-file.ask-att-file {
@@ -2392,42 +2469,10 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   outline: 2px solid var(--ds-focus-ring);
   outline-offset: 2px;
 }
-.option-box .att-file.ask-att-file .att-file-name { max-width: 100%; }
+.option-box .att-file.ask-att-file .att-file-name { min-width: 0; }
 /* 折叠收件（>3 枚默认只显前 3）：两成特异度压过 .att-file 的 inline-flex
    基座（input.css 后载，同特异性会反压 —— 见 input.css 基座闸先例）。 */
 .ask-attachments-wrap .ask-att-folded { display: none; }
-/* 来源标签的行间余量：标签是绝对定位 notch（top 负值压在 chip 描边上），
-   列表 inline gap 8px 压不住 ⇒ 首个 chip 由 list padding-top 让位、后续 chip
-   由相邻边距补 4px（inline style gap 不可被类规则覆盖，故走 margin 而非 gap）。 */
-.ask-attachments-wrap .ask-attachments-list { padding-top: var(--ds-space-3); }
-.ask-attachments-wrap .ask-attachments-list > .att-file + .att-file { margin-top: var(--ds-space-1); }
-/* 来源标签（文件卡左上角，作者令例「AskUser · 图片缩放确认」）：错位 notch 形
-   —— 压在 chip 上描边上，底 = 卡面底色把描边「洗断」。标签比 chip 宽是常态
-   （chip 随文件名收窄，标签是来源摘要）⇒ 上限按卡内容宽给，超长走**模糊淡出**
-   （mask 渐隐，作者铁律「禁省略号」——与 .att-file-name 手机档同语言），
-   pointer-events:none ⇒ 越界部分不吃点击。
-   输入框条不传 origin ⇒ 本槽零消费（桌面输入条逐像素不动）。 */
-.att-file .ds-att-origin {
-  position: absolute;
-  top: -7px;
-  left: 6px;
-  max-width: min(260px, calc(100vw - 32px));
-  padding: 0 var(--ds-space-1h);
-  font-size: var(--ds-fs-meta);
-  line-height: 14px;
-  font-weight: var(--ds-fw-title);
-  letter-spacing: var(--ds-ls-label);
-  color: var(--ds-text-muted);
-  background: var(--ds-surface);
-  border: 1px solid var(--ds-etched-border);
-  border-radius: var(--ds-radius-badge);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: clip;
-  -webkit-mask-image: linear-gradient(90deg, black 0, black calc(100% - 10px), transparent 100%);
-  mask-image: linear-gradient(90deg, black 0, black calc(100% - 10px), transparent 100%);
-  pointer-events: none;
-}
 /* 降级态（探针不可读 / 下载链失败）：虚线描边 + 原因档 + 重试下载真动作
    （IMG_1725 ⑤a「fig3b_cabin_zoom.png · 不可用」裸奔形态退役——原因 + 动作）。 */
 .att-file.ask-att-unavailable { border-style: dashed; }
@@ -2538,8 +2583,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   margin-top: var(--ds-space-stack-gap);
 }
 .ob-actions button {
-  transition: background 0.15s, color 0.15s, border-color 0.15s,
-              box-shadow 0.15s, opacity 0.15s;
+  transition: background 0.15s, color 0.15s, border-color 0.15s, opacity 0.15s;
 }
 /* 三修批 uifix3 ③ (2026-10-06 21:36 作者令): the question card's 「跳过这一题」
    control hides until the CARD is hovered (与卡体 hover 联动) — at rest the foot
@@ -2693,14 +2737,16 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 .option-btn.opt-ghost {
   background: transparent;
-  box-shadow: none;
   color: var(--color-text-dim);
   border-color: rgba(145, 170, 210, 0.2);
 }
-.option-btn.opt-ghost:hover {
-  color: var(--color-text);
-  border-color: rgba(145, 170, 210, 0.5);
+@media (hover: hover) {
+  .option-btn.opt-ghost:hover {
+    color: var(--color-text);
+    border-color: rgba(145, 170, 210, 0.5);
+  }
 }
+
 .free-row {
   display: flex;
   gap: var(--ds-space-2);
@@ -2842,7 +2888,6 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   background: transparent;
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
-  box-shadow: none;
   color: var(--color-text);
   font-size: var(--ds-fs-row);
   text-align: left;
@@ -2852,13 +2897,15 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .ask-card .opt-row .option-btn:first-child {
   border-top: none;
 }
-.option-opts .option-btn:not(.picked):hover,
-.ask-card .opt-row .option-btn:not(.picked):hover {
-  background: transparent;
-  border-color: var(--ask-line);
-  box-shadow: none;
-  color: var(--color-text);
+@media (hover: hover) {
+  .option-opts .option-btn:not(.picked):hover,
+  .ask-card .opt-row .option-btn:not(.picked):hover {
+    background: transparent;
+    border-color: var(--ask-line);
+    color: var(--color-text);
+  }
 }
+
 /* 单选行首 radio 线稿圈（multi 行自带 .option-check 方框，radio 让位） */
 .option-opts .option-btn::before,
 .ask-card .opt-row .option-btn::before {
@@ -2883,7 +2930,10 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .option-opts .option-btn.picked::before,
 .ask-card .opt-row .option-btn.picked::before {
   border-color: var(--ask-green);
-  background: radial-gradient(circle closest-side, var(--ask-green) 82%, transparent 86%);
+  /* 扁平化批 2026-11-05：原 `radial-gradient(circle closest-side, green 82%, transparent 86%)`
+     是「圆形填充 + 一圈羽化边」，羽化边属于渐变造形（F3）⇒ 退役。
+     扁平替代 = 实心圆点（同色 token，零新色值）：形状本身已由 border-radius 承担。 */
+  background: var(--ask-green);
 }
 /* picked 行的 desc 小字跟随行面（旧白字在透明行上不可读） */
 .option-btn.picked .option-text small {
@@ -2927,17 +2977,18 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   background: transparent;
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
-  box-shadow: none;
   color: var(--color-frame-text);
   font-size: var(--ds-fs-body);
 }
 .chip-row .option-btn::before { content: none; }
-.chip-row .option-btn:not(.picked):hover {
-  border-color: var(--ask-line-strong);
-  background: transparent;
-  box-shadow: none;
-  color: var(--color-text);
+@media (hover: hover) {
+  .chip-row .option-btn:not(.picked):hover {
+    border-color: var(--ask-line-strong);
+    background: transparent;
+    color: var(--color-text);
+  }
 }
+
 
 /* 「都不是，我自己说」= 虚线自由入口（同 .opt-other 语言） */
 .ask-card .opt-row .option-btn.opt-ghost {
@@ -2948,12 +2999,14 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   color: var(--color-frame-text);
 }
 .ask-card .opt-row .option-btn.opt-ghost::before { display: none; }
-.ask-card .opt-row .option-btn.opt-ghost:not(.picked):hover {
-  border-color: var(--ask-line-strong);
-  background: transparent;
-  box-shadow: none;
-  color: var(--color-text);
+@media (hover: hover) {
+  .ask-card .opt-row .option-btn.opt-ghost:not(.picked):hover {
+    border-color: var(--ask-line-strong);
+    background: transparent;
+    color: var(--color-text);
+  }
 }
+
 
 /* ===== Top Overlays (task list + notifications) ===== */
 /* uifix-taskbar-flow (2026-10-09): absolute(top:68px) → NORMAL FLOW.
@@ -3820,25 +3873,34 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .error-restart-btn {
   color: rgb(var(--amber));
 }
-.error-restart-btn:hover {
-  background: rgb(var(--amber) / 0.12);
+@media (hover: hover) {
+  .error-restart-btn:hover {
+    background: rgb(var(--amber) / 0.12);
+  }
 }
+
 /* 取消任务 → cancelAgent（次级出口 = 中性字） */
 .error-escalation-actions .error-abandon-btn {
   color: var(--color-text-muted);
 }
-.error-escalation-actions .error-abandon-btn:hover {
-  background: var(--color-frame-hover, rgba(128, 128, 128, 0.12));
-  color: var(--color-text);
+@media (hover: hover) {
+  .error-escalation-actions .error-abandon-btn:hover {
+    background: var(--color-frame-hover, rgba(128, 128, 128, 0.12));
+    color: var(--color-text);
+  }
 }
+
 /* 继续等待 → close card（次级出口 = 中性字） */
 .error-wait-btn {
   color: var(--color-text-muted);
 }
-.error-wait-btn:hover {
-  background: var(--color-frame-hover, rgba(128, 128, 128, 0.12));
-  color: var(--color-text);
+@media (hover: hover) {
+  .error-wait-btn:hover {
+    background: var(--color-frame-hover, rgba(128, 128, 128, 0.12));
+    color: var(--color-text);
+  }
 }
+
 @media (prefers-reduced-motion: reduce) {
   .error-escalation-actions button {
     transition: none;
@@ -4126,11 +4188,14 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   color: var(--color-frame-text-dim);
   transition: all 0.25s ease;
 }
-.wsp-goto-btn:hover {
-  background: rgba(91, 127, 191, 0.08);
-  border-color: var(--sapphire-edge-strong);
-  color: var(--color-frame-text-bright);
+@media (hover: hover) {
+  .wsp-goto-btn:hover {
+    background: rgba(91, 127, 191, 0.08);
+    border-color: var(--sapphire-edge-strong);
+    color: var(--color-frame-text-bright);
+  }
 }
+
 
 /* A: the explicit truncation word (never silent) — same etched strip as the
    breadcrumb, muted ink, so it reads as a status line not an alert. Second
@@ -4234,17 +4299,26 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
   border-radius: var(--ds-radius-pill);
-  box-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
-    0 2px 8px rgba(0, 0, 0, 0.06),
-    0 8px 24px rgba(0, 0, 0, 0.08);
   cursor: pointer;
   white-space: nowrap;
   transition: transform 0.18s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.18s ease;
   animation: nf-pill-in 0.18s ease;
 }
-.scroll-new-pill:hover { transform: translateX(-50%) translateY(-1px); }
-.scroll-new-pill:active { transform: translateX(-50%) translateY(0); }
+/* 扁平六态（flat-button-everywhere 批 2026-11-05）：原 hover/按下是
+   「投影栈 + translateY(-1px)」的物理按键组合，两层退役（F1 + F5）。
+   定位锚 `translateX(-50%)` 必须留在每一态里（否则按钮横跳），故 transform
+   只保留居中位移；反馈改由底色阶承担 —— hover 升一档、按下再深一档 + 2% 缩放。
+   hover 关在 (hover:hover) 里：触屏没有 hover，只走按下。 */
+@media (hover: hover) {
+  .scroll-new-pill:hover {
+    transform: translateX(-50%);
+    background: var(--glass-control-bg-hover);
+  }
+}
+.scroll-new-pill:active {
+  transform: translateX(-50%) scale(var(--btn-press-scale));
+  background: var(--btn-press-bg);
+}
 .scroll-new-pill.hidden { display: none; }
 .scroll-new-pill:focus-visible { outline: 2px solid var(--sapphire-refraction); outline-offset: 2px; }
 
@@ -4795,7 +4869,10 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   transition: background 0.15s, color 0.15s;
   padding: 0;
 }
-.file-card:hover .fwd-btn { background: rgba(7, 193, 96, 0.1); color: var(--color-primary); }
+@media (hover: hover) {
+  .file-card:hover .fwd-btn { background: rgba(7, 193, 96, 0.1); color: var(--color-primary); }
+}
+
 .fwd-btn svg { width: 16px; height: 16px; }
 .fwd-tip {
   position: absolute; bottom: calc(100% + 9px); right: -6px;
@@ -5454,12 +5531,12 @@ body:not(.mobile-layer) #header .header-center {
      头像态零回归：.agent-avatar-img cover 铺满 100% 圆面，底色不可见。 */
   background: var(--agent-avatar-chip-bg);
   border: 1px solid var(--glass-control-border);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    0 2px 8px var(--glass-control-shadow);
   transition: transform 0.15s ease;
 }
-#agent-avatar-btn:hover { transform: scale(1.04); }
+@media (hover: hover) {
+  #agent-avatar-btn:hover { transform: scale(1.04); }
+}
+
 #agent-avatar-btn:active { transform: scale(0.95); }
 #agent-avatar-btn .agent-avatar-img {
   width: 100%;

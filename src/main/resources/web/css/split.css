@@ -42,10 +42,13 @@
   opacity: 0.4;
   transition: opacity 0.15s, background 0.15s;
 }
-.explorer-folder-btn:hover {
-  opacity: 0.8;
-  background: var(--color-hover, rgba(128, 128, 128, 0.1));
+@media (hover: hover) {
+  .explorer-folder-btn:hover {
+    opacity: 0.8;
+    background: var(--color-hover, rgba(128, 128, 128, 0.1));
+  }
 }
+
 .explorer-actions {
   display: flex;
   gap: var(--ds-space-half);
@@ -66,10 +69,13 @@
   opacity: 0.4;
   transition: opacity 0.15s, background 0.15s;
 }
-.explorer-action-btn:hover {
-  opacity: 0.8;
-  background: var(--color-hover, rgba(128, 128, 128, 0.1));
+@media (hover: hover) {
+  .explorer-action-btn:hover {
+    opacity: 0.8;
+    background: var(--color-hover, rgba(128, 128, 128, 0.1));
+  }
 }
+
 
 /* ── Inline name input (create file/folder) ── */
 .explorer-name-input {
@@ -121,11 +127,14 @@
   border-radius: var(--ds-radius-badge);
   transition: background 0.1s;
 }
-.explorer-context-menu button:hover,
-.canvas-tab-context-menu button:hover,
-.fm-context-menu button:hover {
-  background: var(--color-hover, rgba(128,128,128,0.1));
+@media (hover: hover) {
+  .explorer-context-menu button:hover,
+  .canvas-tab-context-menu button:hover,
+  .fm-context-menu button:hover {
+    background: var(--color-hover, rgba(128,128,128,0.1));
+  }
 }
+
 /* 禁用态菜单项 — 独立窗口内容物收口批（2026-10-22）：非内容物页签的「在独立
    窗口打开」恒渲染但禁用（边界可见 + title 提示）；muted 面禁 hover 反馈。 */
 .explorer-context-menu button.disabled,
@@ -135,11 +144,14 @@
   cursor: default;
   opacity: 0.62;
 }
-.explorer-context-menu button.disabled:hover,
-.canvas-tab-context-menu button.disabled:hover,
-.fm-context-menu button.disabled:hover {
-  background: none;
+@media (hover: hover) {
+  .explorer-context-menu button.disabled:hover,
+  .canvas-tab-context-menu button.disabled:hover,
+  .fm-context-menu button.disabled:hover {
+    background: none;
+  }
 }
+
 /* 危险菜单项 — 2026-09-16 按钮批：本节原字面量红退役，改 `--btn-danger-*`
    具名 token（同语义唯一：红值集合大小 = 1）；描边走 inset 环（本节条目
    `border-width: 0` ⇒ 不引入几何漂移）。 */
@@ -147,14 +159,18 @@
 .fm-context-menu button.danger,
 .canvas-tab-context-menu button.danger {
   color: var(--btn-danger-ink);
-  box-shadow: inset 0 0 0 1px var(--btn-danger-stroke);
+  outline: 1px solid var(--btn-danger-stroke);
+  outline-offset: calc(-1 * 1px);
 }
-.explorer-context-menu button.danger:hover,
-.fm-context-menu button.danger:hover,
-.canvas-tab-context-menu button.danger:hover {
-  background: var(--btn-danger-tint);
-  color: var(--btn-danger-ink);
+@media (hover: hover) {
+  .explorer-context-menu button.danger:hover,
+  .fm-context-menu button.danger:hover,
+  .canvas-tab-context-menu button.danger:hover {
+    background: var(--btn-danger-tint);
+    color: var(--btn-danger-ink);
+  }
 }
+
 .explorer-context-menu hr {
   border: none;
   border-top: 1px solid var(--glass-border, rgba(0,0,0,0.06));
@@ -859,10 +875,13 @@ body:not(.mobile-layer) .canvas-header .canvas-close-btn {
   flex-shrink: 0;
   transition: color 0.15s, background 0.15s;
 }
-.canvas-close-btn:hover {
-  background: var(--color-border);
-  color: var(--color-text);
+@media (hover: hover) {
+  .canvas-close-btn:hover {
+    background: var(--color-border);
+    color: var(--color-text);
+  }
 }
+
 .canvas-close-btn svg {
   width: 10px;
   height: 10px;
@@ -1524,6 +1543,92 @@ body.canvas-deck-narrow .canvas-title { max-width: none; }
 .cr-capsule.is-edge:active { --cr-press: 0.96; }
 /* 弧外位（|rel|≥2）：不可见不可点，保留位姿让收放有连续轨迹 */
 .cr-capsule.is-far { opacity: 0 !important; pointer-events: none !important; }
+
+/* ── 触屏常驻横向档（作者令 2026-11-05 12:10）─────────────────────────────
+   作者逐字：「参考电脑端的样式来做手机端的canvas顶部胶囊的样式，总体思路就是
+   把上下展开的改为横向展开。并且是直接展开，不需要hover。」
+
+   一套实现、一个断点：胶囊环只有 #canvas-capsule-ring 这一份 DOM/CSS/JS，
+   位姿轴按输入能力换：
+     · 细指针（鼠标/触控板）= 旧竖环腿，本块**一条都不命中**（桌面零回归，
+       逐字节不变：上下对称弧 + hover 开环 + 滚轮换选）；
+     · 粗指针（触屏）= 横排腿：JS 已按两轴写好同一批位姿变量（--cr-x/--cr-ry
+       与旧的 --cr-y/--cr-rx 并存），本块只把 transform 换成取横轴那两颗；
+       开合由 canvas.js syncCoarseRow() 常驻置位（无 hover 依赖，进页面即在）。
+   形状语言与桌面胶囊**同源**（同一批 .cr-capsule 规则：玻璃底/描边/圆角/
+   阴影/字号/图标位），横排档只改「排布轴 + 邻签深度档」两件事 —— 这就是
+   「手机端照抄电脑端样式」的实现含义：不是复制一套手机胶囊，是同一枚胶囊
+   换一种展开方向。
+   邻签深度：竖环的 rotateX 34° + blur 1.6px 配的是「绕到圆柱后面」，横排档
+   旋转角小（24°）、字要当场读得清 ⇒ blur 收到 0.6px、透明度抬到 .9（与手机层
+   `.mf-strip` 邻签「有效字号 ≥13px、可读优先」的既有裁定同规）。 */
+@media (pointer: coarse) and (hover: none) {
+  .cr-capsule {
+    /* 行宽预算（--cr-w）由 canvas.js layout() 按面板实宽逐签写：中心签宽一档、
+       邻签窄一档，三枚恒在面板内（视口硬裁半枚是作者截图里的同型毛病）。 */
+    width: var(--cr-w, var(--capsule-w, 180px));
+    transform: translate(-50%, -50%) translateX(var(--cr-x, 0px)) translateZ(var(--cr-z, 0px))
+      rotateY(var(--cr-ry, 0deg)) scale(var(--cr-press, 1));
+  }
+  .cr-capsule.is-edge {
+    opacity: 0.9;
+    filter: blur(0.6px) saturate(1.15);
+  }
+  /* 邻签朝外一侧连续化开：面板窄时邻签会探出可见区，硬裁边缘读作「破版」，
+     化开读作「环还在往两边排」—— 与手机层 `.mf-strip` 邻签渐隐同一语言
+     （作者令 2026-11-02 21:47「可以是胶囊只显示一半的那种圆环感」）。
+     内端（朝中心一侧）保持全实：那一半永远是当前签的上下文。 */
+  .cr-capsule.cr-side-l {
+    -webkit-mask-image: linear-gradient(90deg, transparent 0, black 62%, black 100%);
+    mask-image: linear-gradient(90deg, transparent 0, black 62%, black 100%);
+  }
+  .cr-capsule.cr-side-r {
+    -webkit-mask-image: linear-gradient(270deg, transparent 0, black 62%, black 100%);
+    mask-image: linear-gradient(270deg, transparent 0, black 62%, black 100%);
+  }
+  /* 标题头让位成**纯手势面**：横排档的视觉全由这一排胶囊承担 —— 标题头若还留着
+     自己的玻璃胶囊，就会出现「一条空胶囊 + 中心签窄一档」的双影（中心签宽随面板
+     收敛，与标题头 180 定宽不再等宽）。pop / close 钮是子件，材质各自保留。 */
+  #canvas-panel .canvas-header {
+    background: none;
+    border-color: transparent;
+    box-shadow: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  /* 中心签自持玻璃：竖环档它是「覆在标题胶囊上的透明覆层」（借标题头的玻璃），
+     横排档标题头已让位，故把**桌面标题胶囊自己那套 frosted 配方**原样挂回中心签
+     自身（--glass-bg + --glass-blur saturate(1.15) + --ds-border-glass + 顶缘
+     --sapphire-refraction 折射线 + --ds-shadow-float，逐项同源零新造）——
+     「照抄电脑端样式」在这里就是字面意思：同一份材质令牌。
+     邻签共用同一份配方（不另造半档），层次由 .is-edge 的透明度/模糊/缩径承担。 */
+  .cr-capsule.is-center,
+  .cr-capsule.is-edge {
+    background:
+      linear-gradient(90deg, transparent 10%, var(--sapphire-refraction) 50%, transparent 90%) center top / 80% 1px no-repeat,
+      var(--glass-bg);
+    border-color: var(--ds-border-glass);
+    border-bottom-color: transparent;
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+    backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+    box-shadow: var(--ds-shadow-float);
+  }
+  /* 标签层：可辨识前缀 + 关键尾部（「头…尾」由 canvas.js 按实时可用宽切好，
+     切法单源 = js/capsuleLabel.js）。头是唯一可缩件（min-width:0 + ellipsis
+     兜底：万一度量差半个像素，退化成「头…」而不是硬裁半个字）；点与尾恒定
+     不缩 ⇒ 扩展名/时间戳这类关键尾部任何宽度下都在。 */
+  .cr-capsule .cr-name { display: flex; align-items: center; min-width: 0; }
+  .cr-capsule .cr-name-head { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .cr-capsule .cr-name-mid,
+  .cr-capsule .cr-name-tail { flex: none; white-space: nowrap; }
+  /* 图标档（面板极窄时邻签的兜底形态）：只留类型图标，不放「插…」这种只剩
+     一字的假标签；点在它上面即成为中心签，信息零损失。 */
+  .cr-capsule.cr-icon-only .cr-name { display: none; }
+  /* 独立窗钮在粗指针档隐藏 —— 作者令 2026-11-05 件1 逐字「只在手机端隐藏这个
+     按钮」；横排窄档里它占的 32px 右内缝正是中心签最稀缺的字面宽（隐藏后
+     syncCenterInset 把 --cr-popw 同步落 0，文字盒自动回宽）。 */
+  #canvas-panel .canvas-header .canvas-pop-btn { display: none; }
+}
 /* 环开时常态标题让位（同位同容的中心胶囊接班 —— 无缝 morph；竖环回退批
    2026-10-31：文件扇批退役、本条随环交互还原恢复 —— hover 开环时标题头文字
    隐去，中心覆层胶囊同位接班，收环即回）。Canvas 改造批②：#canvas-pop-btn
@@ -2319,7 +2424,10 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   cursor: pointer;
   transition: background 0.15s;
 }
-.epub-menu-btn:hover { background: var(--glass-control-bg-hover); }
+@media (hover: hover) {
+  .epub-menu-btn:hover { background: var(--glass-control-bg-hover); }
+}
+
 .epub-menu-btn.on {
   border-color: rgb(var(--brand-green) / 0.5);
   background: rgb(var(--brand-green) / 0.14);
@@ -2364,7 +2472,10 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   padding: 0;
 }
 .epub-nav-btn[hidden] { display: none; }
-.epub-nav-btn:hover { background: var(--color-frame-hover); color: var(--color-text); }
+@media (hover: hover) {
+  .epub-nav-btn:hover { background: var(--color-frame-hover); color: var(--color-text); }
+}
+
 .epub-nav-btn:disabled { opacity: 0.3; cursor: default; }
 .epub-nav-info {
   flex: none;
@@ -2940,14 +3051,14 @@ body.mobile-layer #canvas-content:has(.canvas-tab-pane.active .epub-reader) > .c
   cursor: pointer;
   transition: background .15s ease, color .15s ease, transform .15s ease, border-color .15s ease;
 }
-.canvas-zoom-btn:hover {
-  background: var(--cv-hover-bg);
-  border-color: var(--cv-hover-border);
-  color: var(--color-text);
-  box-shadow:
-    inset 0 1px 0 var(--cv-hover-highlight),
-    inset 0 -1px 0 var(--cv-hover-underedge);
+@media (hover: hover) {
+  .canvas-zoom-btn:hover {
+    background: var(--cv-hover-bg);
+    border-color: var(--cv-hover-border);
+    color: var(--color-text);
+  }
 }
+
 .canvas-zoom-btn:active { transform: scale(var(--cv-active-scale, 0.96)); }
 /* 抓手开关 is-on 档 = 同 hover 材质（latch 态常亮可读，非一次性反馈）。 */
 .canvas-zoom-btn.canvas-pan-toggle.is-on {
@@ -3387,7 +3498,10 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="markdown"] .canvas-find-togg
   display: flex; align-items: center; justify-content: center;
   transition: background .15s ease, color .15s ease;
 }
-.nf-findbar-btn:hover { background: var(--cv-hover-bg); color: var(--color-text); }
+@media (hover: hover) {
+  .nf-findbar-btn:hover { background: var(--cv-hover-bg); color: var(--color-text); }
+}
+
 
 /* Find hit marks (both the app-document face and the iframe face). */
 mark.nf-find-hit { background: rgba(255, 213, 0, 0.45); color: inherit; border-radius: var(--ds-radius-thin); }
@@ -3577,23 +3691,93 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
   display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden;
 }
 .nf-term-tip .td { color: var(--color-frame-text-dim, var(--color-text-muted)); font-size: var(--ds-fs-meta); margin-top: var(--ds-space-1h); }
+/* 第三行（来源文档 / 跳转提示）撤掉后不占位（term-system-v2 词条视觉面批
+   2026-11-05：文档名归词条索引块，气泡只剩词条名 + 定义）。 */
+.nf-term-tip .td:empty { display: none; }
 
-/* 词条引用的视觉面（F3）：resolved 词条链接 = 点线底纹（区别于普通文档级
-   wikilink 的纯色亮面）；兜底腿的 unresolved 短形引用同纹（hover 可出泡的
-   信号），颜色随既有 unresolved 态。 */
+/* 词条引用的视觉面（term-system-v2 词条视觉面批 2026-11-05）────────────
+   作者令原话：「词条被使用的时候，应该是一个蓝色的文字，然后不需要显示文档名。
+   在目前基础上把文字变蓝色然后去掉括号里的文档就行。」
+   ① 蓝色：字色 = `--ds-link-term`（design-system.css 语义别名 → stand-tokens.css
+      蓝族 ink 双档）。亮 70 99 156 / 暗 sapphire-glow，阅读面合成底实测
+      5.76:1 / 6.52:1（tests/_term-face-harness.mjs 打印），正文门槛 4.5:1。
+      **规则里零裸色值** —— 改色改令牌，不改本块。
+   ② 可点击信号保留且仍分两档（原 F3/B5-1 的「信号 vs 提示」层级不丢，只把
+      区分从字色挪到底纹强度，因为字色已由作者统一定为蓝）：手写引用 = 底纹
+      55% 蓝（信号）；正文裸词自动链 = 底纹 30% 蓝（提示，密度高一个量级）。
+      悬停两档都收成实色 = 可点确认。
+   未解析短形引用（兜底腿 .nf-wikilink-unresolved + .nf-wikilink-term）同样取
+   蓝色：hover 能出泡就说明「这是词条」，词条面不该有两种字色。 */
 a.nf-wikilink.nf-wikilink-term {
-  text-decoration: underline dotted currentColor 1px;
+  color: var(--ds-link-term);
+  /* 底纹 = 既有 .nf-wikilink 的 border-bottom 通道（虚线改点线 + 换蓝），
+     不再叠一条 text-decoration —— 两条底纹会在词条上叠成双线。 */
+  border-bottom: 1px dotted rgb(var(--term-link-ink) / 0.55);
+  text-decoration: none;
   text-underline-offset: 3px;
 }
+a.nf-wikilink.nf-wikilink-term:hover { border-bottom-color: currentColor; filter: none; }
 
-/* 正文裸词识别（B5-1）：自动链接的词条取同一套点线底纹，但不改字色 ——
-   作者手写的引用是「信号」，自动生成的是「提示」：密度高一个量级，视觉必须
-   更轻；字色继承正文，只有底纹在标识可点。 */
+/* 正文裸词识别（B5-1）：同一枚字色（同一实体同一 token —— 两种蓝会教出两种
+   含义），底纹压到 30% 保持「提示」轻量。 */
 a.nf-term {
-  color: inherit;
-  text-decoration: underline dotted currentColor 1px;
-  text-underline-offset: 3px;
+  color: var(--ds-link-term);
+  border-bottom: 1px dotted rgb(var(--term-link-ink) / 0.3);
+  text-decoration: none;
   cursor: pointer;
+}
+a.nf-term:hover { border-bottom-color: currentColor; }
+
+/* ── 词条索引（term-system-v2 词条视觉面批 2026-11-05）─────────────────
+   作者令原话：「引用了词条之后，引擎自动在下方建立索引，就是引用的词条所在的
+   文档。也可以点击跳转。」文档名从行内词条（链接文本 / 悬停气泡）撤出后落在这
+   一块：正文尾部由 viewers/markdown.js 的 renderTermIndex 自动生成（用户不手写），
+   `<details>` 默认收起，summary = `词条索引（N）`，0 引用整块不渲染。
+   几何与 .nf-backlinks（上方 3376 行族）同族：同一条上分隔线、同一档内距；
+   条目用 flex + wrap，375 宽逐条折行不溢出。颜色全走既有 token。 */
+.canvas-md-viewer .nf-term-index {
+  margin: var(--ds-space-5) 0 var(--ds-space-half);
+  padding-top: var(--ds-space-block-y);
+  border-top: 1px solid var(--ds-border);
+  font-size: var(--ds-fs-hint);
+  color: var(--ds-text-dim);
+}
+.canvas-md-viewer .nf-term-index summary {
+  cursor: pointer;
+  user-select: none;
+  opacity: 0.85;
+}
+.canvas-md-viewer .nf-term-index summary:hover { opacity: 1; }
+.canvas-md-viewer .nf-term-index ul {
+  margin: var(--ds-space-2) 0 var(--ds-space-half) var(--ds-space-5);
+  padding: 0;
+  list-style: none;
+}
+.canvas-md-viewer .nf-term-index li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--ds-space-1h);
+  margin: var(--ds-space-1) 0;
+  min-width: 0;
+}
+/* 条目 = 词条名（可点，跳它所在的文档并落到定义段）+ 所在文档名（暗一档）。
+   条目名与正文里的词条同色（同一实体同一 token），底纹同手写引用档。 */
+.canvas-md-viewer .nf-term-index .nf-term-index-term {
+  color: var(--ds-link-term);
+  border-bottom: 1px dotted rgb(var(--term-link-ink) / 0.55);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+.canvas-md-viewer .nf-term-index .nf-term-index-term:hover {
+  border-bottom-color: currentColor;
+  filter: none;
+}
+.canvas-md-viewer .nf-term-index .nf-term-index-docname {
+  color: var(--ds-text-dim);
+  font-size: var(--ds-fs-meta);
+  opacity: 0.85;
+  overflow-wrap: anywhere;
 }
 
 /* ── 返回原文档按钮（词条引用批 batch 2, F5；作者令 2026-10-29 11:49
@@ -3618,7 +3802,6 @@ a.nf-term {
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  box-shadow: var(--frost-shadow);
   color: var(--color-frame-text-bright, var(--color-text));
   font-size: var(--ds-fs-btn);
   font-weight: 500;
@@ -3628,7 +3811,10 @@ a.nf-term {
   cursor: pointer;
   transition: filter 0.12s ease;
 }
-.canvas-refback-btn:hover { filter: brightness(1.06); }
+@media (hover: hover) {
+  .canvas-refback-btn:hover { filter: brightness(1.06); }
+}
+
 .canvas-refback-btn:active { filter: brightness(0.92); }
 body.mobile-layer #canvas-refback-btn {
   /* 手机层卡头通栏（mobileLayer.css §⑨ top:8 + 高 ~40px），按钮下移一行。 */
@@ -3708,7 +3894,10 @@ body.wg-side-active #panel-sessions #explorer-section { display: none; }
   border: 0; background: transparent; padding: 0; font: inherit; font-size: var(--ds-fs-hint);
   color: var(--color-frame-text-muted); cursor: pointer;
 }
-.wg-crumbs button.crumb:hover { color: var(--color-frame-text); text-decoration: underline; }
+@media (hover: hover) {
+  .wg-crumbs button.crumb:hover { color: var(--color-frame-text); text-decoration: underline; }
+}
+
 .wg-crumbs .crumb.cur { color: var(--color-frame-text); font-weight: 500; cursor: default; }
 
 /* Search + chips (shared with the mobile panebar). Material = frosted 标准
@@ -3918,7 +4107,10 @@ body:not(.mobile-layer) .canvas-header .canvas-title { flex: 1; min-width: 0; }
   cursor: pointer;
   transition: background 0.12s ease, color 0.12s ease;
 }
-.canvas-pop-btn:hover { background: var(--cv-hover-bg); color: var(--color-text); }
+@media (hover: hover) {
+  .canvas-pop-btn:hover { background: var(--cv-hover-bg); color: var(--color-text); }
+}
+
 .canvas-pop-btn:active { transform: scale(var(--cv-active-scale)); }
 .canvas-pop-btn svg { width: 13px; height: 13px; }
 .canvas-pop-btn .pop-ic-merge { display: none; }
@@ -3929,7 +4121,10 @@ body:not(.mobile-layer) .canvas-header .canvas-title { flex: 1; min-width: 0; }
   cursor: not-allowed;
   opacity: 0.35;
 }
-.canvas-pop-btn[disabled]:hover { background: transparent; color: var(--color-text-muted); }
+@media (hover: hover) {
+  .canvas-pop-btn[disabled]:hover { background: transparent; color: var(--color-text-muted); }
+}
+
 /* 原生 hidden 的 UA display:none 会被上面的 display:inline-flex 压过 ⇒ 显式钉死
    （同 .canvas-refresh-toggle[hidden] 先例）。 */
 .canvas-pop-btn[hidden] { display: none !important; }
@@ -4128,7 +4323,10 @@ body.card-window #canvas-panel .canvas-header { padding-top: var(--ds-space-1); 
   cursor: pointer;
   transition: background 0.12s ease, color 0.12s ease;
 }
-.canvas-merge-btn:hover { background: var(--cv-hover-bg); color: var(--color-text); }
+@media (hover: hover) {
+  .canvas-merge-btn:hover { background: var(--cv-hover-bg); color: var(--color-text); }
+}
+
 .canvas-merge-btn:active { transform: scale(var(--cv-active-scale, 0.96)); }
 /* 卡窗合并 out 动画（requestMergeSelf 挂类，180ms 后 close） */
 body.card-window #canvas-panel.card-win-merging { animation: nf-card-win-out 0.18s ease-in forwards; }
@@ -4196,4 +4394,39 @@ body.mobile-layer .canvas-viewer-safe-top {
    桌面常态保留顶垫——值同源上式（同一表达式，非第二把尺）。 */
 #canvas-content .canvas-md-scroll.canvas-viewer-safe-top {
   padding-top: calc(var(--capsule-h, 36px) + 16px);
+}
+
+/* ── 底部浮钮让位：滚动面末尾安全留白（canvas 正文底部遮挡修复批 2026-11-05）──
+   作者报障 2026-11-05 12:09（逐字）「因为我们现在canvas的文档的底部不是有按钮吗，
+   按钮会挡住底部的文字，所以要允许文档再进一步上滑，保证最底部的文字能够呈现在
+   按钮之上。不会被遮挡。」
+
+   语义（与上方顶垫块成对）：底部浮钮簇（源码 <> / 引用 / 查找 / 缩放条 + 壳层
+   刷新钮）是 absolute 浮层、不占流内位置，正文照旧铺到面板底缘 ⇒ 滚到底时末行
+   停在钮带底下（改前桌面实测 36px 重叠）。本块给**滚动面末尾**垫出 = 浮钮带实测
+   高度 + 呼吸缝的留白，滚到底时末行刚好停在钮带之上，再上滑也滑不动了（垫高即
+   可滚动余量本身，不会多出一段空）。
+
+   **值只有一个来源：JS 实测**（viewers/shared.js syncBottomClearance —— pane 上的
+   --canvas-bottom-clearance = 浮钮带顶到面板底缘 + 12 呼吸）。本块绝不写死像素：
+   钮档会变（桌面 --cv-size-circle 40 / 手机 --mtap-lg 48）、面板变窄时 html 缩放条
+   会回落第二行、刷新钮满座会下移一行 —— 任何常量都会在某个档位失真（手机档
+   2026-11-02 批的 76px 就是 16+48+12 那一个档的读数，本批把它降级为地板值，
+   见 mobileLayer.css 的 max() 形态）。变量缺省 0 ⇒ 无浮钮 / 未接线时零留白。
+
+   覆盖面 = 三个「正文自持滚动面」：md 面（.canvas-md-scroll）、纯文本面
+   （.canvas-txt-scroll）、pane 自滚族（.canvas-tab-pane.scrollable —— docx /
+   yaml / xlsx / pptx / 错误态）。opaque 说明：pdf 页流（.pdf-pages）、epub 分页面
+   （.epub-reader-viewport）、monaco 编辑面、html iframe 面不在本批（分页/编辑/
+   外来文档各有自持几何，不在本次报障面内，见批报告「未覆盖面」）。
+
+   位置纪律：本块置文件尾 —— padding-bottom 需压过 .canvas-txt-scroll 的 padding
+   简写（split.css:2543）与它 560px 断点的 padding 简写（split.css:2571），
+   同特异性下按源码序取后者。 */
+.canvas-md-scroll,
+.canvas-txt-scroll,
+.canvas-tab-pane.scrollable {
+  padding-bottom: var(--canvas-bottom-clearance, 0px);
+  /* 跳转类落点（引用跳转 / 查找命中 roll-into-view）也不许停在钮带底下。 */
+  scroll-padding-bottom: var(--canvas-bottom-clearance, 0px);
 }

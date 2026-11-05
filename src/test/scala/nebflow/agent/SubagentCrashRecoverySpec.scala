@@ -33,7 +33,7 @@ class SubagentCrashRecoverySpec extends CatsEffectSuite:
   override def beforeAll(): Unit =
     os.remove.all(tempRoot)
     os.makeDir.all(tempRoot / "agents")
-    os.write.over(tempRoot / "nebflow.json", "{}")
+    os.write.over(tempRoot / nebflow.shared.Branding.configFileName, "{}")
     nebflow.shared.PathUtil.setDataRoot(tempRoot)
 
   override def afterAll(): Unit =

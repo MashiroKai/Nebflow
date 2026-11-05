@@ -37,7 +37,7 @@ class PluginInjectionSpec extends CatsEffectSuite:
     os.remove.all(tempRoot / "plugins")
     os.remove.all(tempRoot / "logs")
     os.remove.all(tempRoot / "chains")
-    os.write.over(tempRoot / "nebflow.json", "{}", createFolders = true)
+    os.write.over(tempRoot / nebflow.shared.Branding.configFileName, "{}", createFolders = true)
     PluginAllocator.clear()
 
   override def afterEach(context: munit.AfterEach): Unit = PluginAllocator.clear()
@@ -69,7 +69,7 @@ class PluginInjectionSpec extends CatsEffectSuite:
   /** 总闸写入（nebflow.json plugins.enabled）。 */
   private def setPluginsEnabled(on: Boolean): Unit =
     os.write.over(
-      tempRoot / "nebflow.json",
+      tempRoot / nebflow.shared.Branding.configFileName,
       if on then """{"plugins":{"enabled":true}}""" else """{"plugins":{"enabled":false}}""",
       createFolders = true
     )
@@ -77,7 +77,7 @@ class PluginInjectionSpec extends CatsEffectSuite:
   /** #523：自动分配专用闸写入（plugins.autoAllocate；总闸恒开态使用）。 */
   private def setAutoAllocate(on: Boolean): Unit =
     os.write.over(
-      tempRoot / "nebflow.json",
+      tempRoot / nebflow.shared.Branding.configFileName,
       if on then """{"plugins":{"enabled":true,"autoAllocate":true}}"""
       else """{"plugins":{"enabled":true,"autoAllocate":false}}""",
       createFolders = true

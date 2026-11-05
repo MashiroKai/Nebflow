@@ -1,0 +1,87 @@
+{
+  "ok": true,
+  "mobile": false,
+  "paneVisible": true,
+  "vw": 1440,
+  "vh": 900,
+  "pane": {
+    "x": 879,
+    "y": 17,
+    "w": 550,
+    "h": 864,
+    "right": 1429,
+    "bottom": 881
+  },
+  "paneClass": "canvas-tab-pane active",
+  "scroller": {
+    "sh": 6210,
+    "ch": 864,
+    "st": 5346,
+    "maxScroll": 5346,
+    "padBottom": 72,
+    "padBottomRaw": "72px",
+    "scrollPadBottom": "72px",
+    "isPane": false,
+    "box": {
+      "x": 879,
+      "y": 17,
+      "w": 550,
+      "h": 864,
+      "right": 1429,
+      "bottom": 881
+    }
+  },
+  "viewer": {
+    "x": 879,
+    "y": -5277,
+    "w": 550,
+    "h": 6085.98,
+    "right": 1429,
+    "bottom": 808.98
+  },
+  "chrome": [
+    {
+      "sel": ".canvas-source-toggle",
+      "visible": true,
+      "top": 825,
+      "bottom": 865,
+      "h": 40
+    },
+    {
+      "sel": ".canvas-find-toggle",
+      "visible": true,
+      "top": 825,
+      "bottom": 865,
+      "h": 40
+    },
+    {
+      "sel": ".canvas-refresh-toggle",
+      "visible": true,
+      "top": 825,
+      "bottom": 865,
+      "h": 40
+    },
+    {
+      "sel": ".ask-fab",
+      "visible": true,
+      "top": 821,
+      "bottom": 869,
+      "h": 48
+    }
+  ],
+  "chromeTop": 821,
+  "clearanceVar": "72px",
+  "clearanceVarPx": 72,
+  "padBottom": 72,
+  "lastBlock": {
+    "tag": "P",
+    "x": 903,
+    "y": 767.3,
+    "w": 502,
+    "h": 21.69,
+    "right": 1405,
+    "bottom": 788.98,
+    "text": "末行标记：END-OF-DOCUMENT-末行"
+  },
+  "predicted": 72
+}

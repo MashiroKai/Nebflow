@@ -41,7 +41,7 @@ import { authHeaders } from './flowHelpers.js';
 import { preloadModelCapabilities, renderVisionBadge } from './modelCapabilities.js';
 import { renderAppearanceSection, bindAppearanceEvents } from './orbSettingsUI.js';
 // 骨架卡（audit ②27，2026-10-25）：初次进会话（历史未加载完）的 loading 占位泡。
-import { showChatSkeleton, hideChatSkeleton } from './main/historyIndicators.js';
+import { showHistoryLoader } from './main/historyIndicators.js';
 // ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
 import { withFocusKey, pushLayer, popLayer } from './focusTrap.js';
@@ -2748,10 +2748,16 @@ export function resetChatForActiveSession() {
 
     smartScroll();
   } else if (sid) {
-    // audit ②27（2026-10-25）：初次进会话（历史未加载完）且**无缓冲流内容可恢复**
-    // ⇒ 出骨架卡占位；historyPage 到场由 main.js 处理器同帧摘除（让位零跳变）。
-    // 有缓冲内容（thinking/text）的会话直渲真内容，不出骨架（占位不与真内容同帧）。
-    showChatSkeleton();
+    // 骨架占位卡整件退役（作者令 2026-11-05 12:28「我们目前的逻辑是通过一个卡片来
+    // 显示加载过程 进来就应该是加载好的 这个占位逻辑多余了」；实拍形态 = 聊天流顶部
+    // 4 条大圆角占位泡，含右侧用户位**绿泡**）。
+    // 🔴 旧形态的真 bug：本支每次重渲都挂，摘除却只发生在 historyPage 帧 ⇒ 已渲染
+    // 真消息的会话重渲后「占位与真内容同框」，且没有新 historyPage 到达时占位永不
+    // 退场。现在：线程**真的空**（一条消息都没渲染）才出一条细加载行 —— 既有
+    // `.history-loader`（spinner + 「加载中…」，与翻页加载同一个件，非卡片/非气泡
+    // 形态），historyPage 到场由 main.js 处理器同帧摘除。三档判据因此仍分开：
+    // 加载中 = 这一行；有内容 = 零占位；失败/空态各有自己的面（不吃本条）。
+    if (!pv.dom.chat.children.length) showHistoryLoader();
   }
 
   if (state.sessionPendingTools[sid]) {

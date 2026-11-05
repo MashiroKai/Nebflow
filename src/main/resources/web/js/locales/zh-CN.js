@@ -888,11 +888,23 @@ export default {
   // 与 standby（待命·等作者）/ waitingMerge（候合并）显式区分：三者都是「停」，
   // 但只有本族是**异常停**且**必须有人唤醒才会继续**。
   'subagents.frozenBadgeWithReason': '已冻结 · {reason}',
+  // 冻结通知策略批（2026-11-05 作者令两连）：provider 故障 = **基础设施故障**，不是
+  // 任务失败 ⇒ 不向上汇报（上级多半也在同一波里挨饿），面板即状态面：标「待你处理」+
+  // 原因码 + 自动续跑次数 + 唤醒入口。
+  'subagents.frozenAwaitingYou': '已冻结 · {reason}（待你处理）',
+  'subagents.frozenAwaitingYouNoReason': '已冻结 · 待你处理',
+  'subagents.frozenInfraTip': '供应商故障（不是任务失败）：引擎自己探测恢复，恢复后自动续跑同一会话（续在检查点、已完成的不重做，有次数上限与递增间隔）；也可以现在点「唤醒」立即续跑。不向上级汇报——本面板就是它的状态面。',
+  'subagents.frozenAutoResumes': '已自动续跑 {n} 次',
+  'subagents.frozenAutoResumesSpent': '自动续跑次数已用尽——需要你：充值 / 换模型 / 取消',
+  'subagents.freezeDigestRecoverable': '{count} 条已冻结（可唤醒）',
+  'subagents.freezeDigestNeedsHuman': '{count} 条冻结待你处理',
   'subagents.frozenTip': '已冻结：引擎/上游故障导致就地停住，这不是失败判词。会话历史、工作区与未提交改动、台账行、合并队列位全部保留；点「唤醒」或 Mail 它的地址即在原会话上下文上继续（已完成的不重做）。',
   'subagents.frozenReason': '原因：{reason}',
   'subagents.frozenDormantTip': '已冻结 {hours} 小时仍无人唤醒（超保留期会归档记录，转录与工作区保留）。',
   'subagents.wake': '唤醒',
   'subagents.wakeTip': '在原会话上下文上继续（同一会话、历史在场，已完成的不重做）',
+  // name/address 批（2026-11-05）：地址 chip 的 tooltip 后缀（前面拼完整地址本身）。
+  'subagents.copyAddress': '复制地址',
   'subagents.wakeFailed': '唤醒失败：记录与转录已保留，可稍后重试',
   // 冻结原因四类短名（快照恢复路径按线值 `delegate-frozen:<code>` 本地映射；与
   // DelegateFreeze.reasonLabelZh 逐字一致）。
@@ -1426,9 +1438,6 @@ export default {
   'provider.keyRequired': '新建服务商需要 API Key',
   'provider.required': '必填',
   'provider.protocol': '接口格式',
-  // 接口格式下拉下方的 helper 行（protoface-ui 批，2026-09-22）：显示当前所选
-  // 面 + 当前 baseUrl 推导出的实际 POST 目标。{target} = 完整 URL。
-  'provider.protocolHelper': '该服务商将收到：POST {target}',
   'provider.idRequired': '请填写服务商 ID',
   'provider.noSpaces': '服务商 ID 不能包含空格',
   'provider.baseUrlRequired': '请填写 Base URL',
@@ -1440,11 +1449,14 @@ export default {
   'provider.ctxExceedsCeiling': '模型 {id}：上下文窗口 {value} 超出支持的绝对上限 {max}',
   'provider.ctxDefaulted': '以下模型未填写上下文窗口，已按默认值 {def} 保存：{ids}',
   'provider.ctxClampedToMax': '模型 {id}：默认值 1,000,000 超过该模型上报的上限，已按 {max} 保存',
-  // 模型不可用时段（model-schedule-unavailable 批）：provider 弹窗编辑面。
+  // 模型不可用时段（model-schedule-unavailable 批）：**只保留 provider 级一份**
+  // （config-single-source 批，作者裁定④ 2026-11-05）。常显文字只留标签与空态
+  // 事实句（「无限制」），解释收进 `?` 悬停提示（裁定⑤）。
   'provider.unavailableWindows': '不可用时段',
-  'provider.unavailableWindowsPlaceholder': '如 14:00-18:00；多条用逗号分隔，跨午夜写 23:00-07:00；留空 = 不限制',
+  'provider.unavailableWindowsHint': '该服务商全部模型统一生效；跨午夜写 23:00-07:00',
+  'provider.unavailableWindowsPlaceholder': 'HH:mm-HH:mm',
   'provider.unavailableWindowsInvalid': '不可用时段格式错误：「{value}」（需 HH:mm-HH:mm，且开始≠结束）',
-  'provider.unavailableWindowsEmpty': '无限制（留空 = 不限制）',
+  'provider.unavailableWindowsEmpty': '无限制',
   'provider.unavailableWindowsAdd': '添加不可用时段',
   'provider.unavailableWindowsDaysReadonly': '按星期 · 手编只读',
   'provider.unavailableWindowsDays': '生效星期',
@@ -2578,6 +2590,9 @@ export default {
   // 词条引用批 batch 2（hover 气泡 + 返回原文档钮）
   'wiki.termSource': '来源：',
   'wiki.termJumpHint': '点击跳转',
+  // 词条索引块（term-system-v2 词条视觉面批 2026-11-05）：文档尾自动生成的
+  // 「本文引用的词条 + 它所在的文档」折叠小节；{n} = 词条条数。
+  'wiki.termIndexCount': '词条索引（{n}）',
   'wiki.backToSource': '返回原文档',
   // 左栏控制面（搜索/chips/详情卡/断链清单/统计行）
   'wiki.chipAll': '全部',
