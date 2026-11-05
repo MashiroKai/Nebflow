@@ -475,9 +475,10 @@ test.describe('Reply attachment rendering — image inline + lightbox, non-image
     const box = await renderAnsweredCard(page, [
       { id: 'ra1', seq: 1, name: 'photo.png', path: PHOTO, sha256: 's1', size: PHOTO_BYTES.length, mime: 'image/png', kind: 'image' },
     ]);
-    // ui-unification-20261103-askuser-attach：媒体面 = 标准平面媒体卡（.pop-media-flat）
-    // —— 卡语言组件库单点，形态与主会话逐字同款。
-    const img = box.locator('.ask-attachments-wrap .pop-media-flat img');
+    // attachment-thumb-unify 批（作者令 2026-11-05 12:57「附件这里添加的图片文件
+    // 等应该用我们输入框同款的小图标/缩略图」）：卡区媒体面 = 输入框同款 `.att-thumb`
+    // 小缩略图（旧形态 220px `.pop-media-flat` 卡已退役）。
+    const img = box.locator('.ask-attachments-wrap .ask-att-thumb img');
     await expect(img).toBeVisible();
     // 真字节解码成功 = 内联直显链路（hydrateMedia ⇒ /api/nf-file）全通。
     await expect.poll(async () => img.evaluate((i) => i.naturalWidth), { timeout: 15000 }).toBeGreaterThan(0);
@@ -491,7 +492,7 @@ test.describe('Reply attachment rendering — image inline + lightbox, non-image
     const box = await renderAnsweredCard(page, [
       { id: 'ra1', seq: 1, name: 'photo.png', path: PHOTO, sha256: 's1', size: PHOTO_BYTES.length, mime: 'image/png', kind: 'image' },
     ]);
-    const face = box.locator('.ask-attachments-wrap .pop-media-flat');
+    const face = box.locator('.ask-attachments-wrap .ask-att-thumb');
     await expect(face).toBeVisible();
     await expect.poll(async () => face.locator('img').evaluate((i) => i.naturalWidth), { timeout: 15000 }).toBeGreaterThan(0);
 

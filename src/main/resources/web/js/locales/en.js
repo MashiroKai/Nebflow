@@ -947,6 +947,8 @@ export default {
   'subagents.frozenDormantTip': 'Frozen for {hours}h with no wake (past the retention window the record is archived; transcript and workspace are kept).',
   'subagents.wake': 'Wake',
   'subagents.wakeTip': 'Continue in the same session context (history in place, finished work is not redone)',
+  // name/address 批（2026-11-05）：地址 chip 的 tooltip 后缀（前面拼完整地址本身）。
+  'subagents.copyAddress': 'copy address',
   'subagents.wakeFailed': 'Wake failed — record and transcript are kept; retry later',
   'subagents.frozenReasonLlm': 'LLM-layer failure',
   'subagents.frozenReasonTool': 'tool-layer failure',
@@ -2661,6 +2663,9 @@ export default {
   // Term citation batch 2 (hover bubble + back-to-source button)
   'wiki.termSource': 'Source: ',
   'wiki.termJumpHint': 'Click to jump',
+  // Term index block (term-system-v2 term face batch 2026-11-05): the doc-foot
+  // collapsible listing each cited term and the document it lives in.
+  'wiki.termIndexCount': 'Term index ({n})',
   'wiki.backToSource': 'Back to source doc',
   // Side control face (search/chips/detail card/broken list/stats line)
   'wiki.chipAll': 'All',

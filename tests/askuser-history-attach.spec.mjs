@@ -193,7 +193,10 @@ test.describe('改后树（fixed）— 附件行在位', () => {
     expect(r.rowPaths.every(t => t.startsWith('/tmp/nb-histatt-fixture/')), '全路径只进 dataset').toBe(true);
     expect(r.rowTitles.every(t => !t.includes('/')), '可见标签只给 basename').toBe(true);
     expect(r.clickHandlerAttached, 'chip 可点档在位').toEqual([true, true]);
-    expect(r.originTags, '每枚文件 chip 挂来源标签').toBe(2);
+    // attachment-thumb-unify 批（作者令 2026-11-05 12:57「输入框同款小图标/缩略图」）：
+    // 来源标签从「每枚 chip 左上角 notch」收拢到附件区标题行一处（28px chip 装不下
+    // 14px notch，且 notch 会盖住缩略帧上半 + 与下一行叠压）⇒ 件数=2 但标签=1。
+    expect(r.originTags, '来源标签收拢到标题行一处（不再每 chip 一枚）').toBe(1);
     expect(r.originText && r.originText.includes('AskUser'), '来源标签含 AskUser 标识').toBe(true);
     expect(r.boxHistoryReplay, '历史恢复形态锚在场').toBe(true);
     await page.screenshot({ path: path.join(SHOT_DIR, '20261002_askhistatt-1-fixed-attach-rows.png'), fullPage: true });

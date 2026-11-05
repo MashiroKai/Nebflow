@@ -243,6 +243,37 @@ html[data-theme="dark"] {
   }
 }
 
+/* ── 词条引用蓝 ink 族 --term-link-ink（term-system-v2 词条视觉面批 2026-11-05）
+   ────────────────────────────────────────────────────────────────────
+   作者令原话：「词条被使用的时候，应该是一个蓝色的文字」。消费点 =
+   split.css `a.nf-wikilink.nf-wikilink-term` / `a.nf-term`（经 design-system.css
+   的 `--ds-link-term` 语义别名），不直接在规则里写色值。
+
+   为什么亮档要单独出生一枚加深值：蓝族母色 `--sapphire`（91 127 191，
+   sapphire.css 单源）落在正文阅读面上只有 4.01:1（vs 白）—— 正文文本色的
+   可达性门槛是 4.5:1，母色直接上字就是不合格的字色（它本来只用于 tint/描边）。
+   故亮档取「同一色相加深一档」= 70 99 156（与既有 --accent-agent-light 同值：
+   这是站内早已存在的加深 sapphire，不是新发明的色相）⇒ 阅读面合成底实测
+   5.76:1（正文门槛 4.5:1）。
+
+   暗档不需要新值：蓝族提亮档 `--sapphire-glow`（120 160 220）在暗底上实测
+   6.52:1（阅读面合成底）——直接别名，
+   零重复字面量。三态解析结构同 --ctl-* / --agent-avatar-chip-* 族：
+   :root + html[data-theme=light] 亮档默认，html[data-theme=dark] 强制档，
+   无属性回退 prefers-color-scheme。 */
+:root,
+html[data-theme="light"] {
+  --term-link-ink: 70 99 156;
+}
+html[data-theme="dark"] {
+  --term-link-ink: var(--sapphire-glow);
+}
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]):not([data-theme="dark"]) {
+    --term-link-ink: var(--sapphire-glow);
+  }
+}
+
 /* ── agent 默认头像芯片 --agent-avatar-chip-*（作者令 2026-11-01 20:42）──
    agent 无自定义头像时的兜底 stand logo 芯片配色，随主题翻转：
    浅色主题 = 白底黑 logo / 深色主题 = 黑底白 logo —— 配对逐值对齐 brand

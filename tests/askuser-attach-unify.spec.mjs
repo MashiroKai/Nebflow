@@ -217,8 +217,8 @@ test.describe('AskUser 卡附件 · 同源 / 可打开 / 叠卡 / 减负', () =>
     check('a1 renderAttachmentFace 全 web/js 恰一份定义', src.faceDefs === 1, `defs=${src.faceDefs} of ${src.jsFileCount} js files`);
     check('a2 输入框附件条消费同一函数（renderAttachmentPreviewInner → renderAttachmentFace）', src.stripUsesFace);
     check('a3 AskUser 卡区消费同一函数（renderAskAttachments → renderAttachmentFace）', src.cardUsesFace);
-    check('a4 卡区媒体走卡语言标准组件（buildMediaFlat + buildMediaStack）',
-      src.cardUsesMediaFlat && src.cardUsesMediaStack, JSON.stringify({ flat: src.cardUsesMediaFlat, stack: src.cardUsesMediaStack }));
+    check('a4 卡区不再装配 220px 卡语言媒体卡（attachment-thumb-unify 2026-11-05 改判）',
+      !src.cardUsesMediaFlat && !src.cardUsesMediaStack, JSON.stringify({ flat: src.cardUsesMediaFlat, stack: src.cardUsesMediaStack }));
     check('a5 卡区预览走灯箱单点（openMediaLightbox）', src.cardUsesLightbox);
     check('a6 卡区零第二套媒体实现（无 createElement(<img>/<video>)）',
       !src.cardOwnImg && !src.cardOwnVideo, JSON.stringify({ img: src.cardOwnImg, video: src.cardOwnVideo }));
@@ -457,15 +457,21 @@ test.describe('AskUser 卡附件 · 同源 / 可打开 / 叠卡 / 减负', () =>
         const chips = list ? [...list.querySelectorAll('.att-file.ask-att-file')] : [];
         const names = chips.map((c) => c.querySelector('.att-file-name'));
         const tags = wrap ? [...wrap.querySelectorAll('.ds-att-origin')] : [];
+        const head = wrap ? wrap.querySelector('.ask-attachments-head') : null;
         const foldBtn = wrap ? wrap.querySelector('.ask-att-fold-btn') : null;
         const flat = wrap ? wrap.querySelector('.pop-media-flat') : null;
         const stack = wrap ? wrap.querySelector('.ds-media-stack') : null;
         const stackView = stack ? stack.querySelector('.ds-media-stack__view') : null;
         const stackImg = stackView ? stackView.querySelector('img') : null;
         const flatImg = flat ? flat.querySelector('img') : null;
+        const thumbs = list ? [...list.querySelectorAll('.att-thumb')] : [];
         out[id] = {
           boxH: rect(box) && rect(box).h,
           listW: list ? rect(list).w : null,
+          listX: list ? rect(list).x : null,
+          listOverflowX: list ? list.scrollWidth - list.clientWidth : null,
+          thumbCount: thumbs.length,
+          thumbBox: thumbs[0] ? rect(thumbs[0]) : null,
           chips: chips.length,
           visibleChips: chips.filter(visible).length,
           foldedChips: wrap ? wrap.querySelectorAll('.ask-att-folded').length : 0,
@@ -475,7 +481,7 @@ test.describe('AskUser 卡附件 · 同源 / 可打开 / 叠卡 / 减负', () =>
           nameMask: names[0] ? (getComputedStyle(names[0]).maskImage || getComputedStyle(names[0]).webkitMaskImage || 'none') : null,
           originTags: tags.length,
           originTexts: tags.map((t) => t.textContent),
-          originGeom: tags[0] && chips[0] ? { tag: rect(tags[0]), chip: rect(chips[0]) } : null,
+          originInHead: tags.length === 1 && !!head && head.contains(tags[0]),
           foldBtn: !!foldBtn,
           foldText: foldBtn ? foldBtn.textContent : null,
           foldAria: foldBtn ? foldBtn.getAttribute('aria-expanded') : null,
@@ -500,27 +506,26 @@ test.describe('AskUser 卡附件 · 同源 / 可打开 / 叠卡 / 减负', () =>
     const c4 = r1.c4 || {};
     const c5 = r1.c5 || {};
 
-    /* ══ b 腿：媒体缩略帧宽度 / 单件平面 / 多件叠卡 ═══════════════════ */
-    const needW = (listW) => Math.max(96, (listW || 0) * 0.2);
-    check('b1 c1 单件媒体 = 平面卡（.pop-media-flat）', c1.flat === true, JSON.stringify({ flat: c1.flat }));
-    check('b2 c1 缩略帧宽 ≥ max(内容宽×0.2, 96px)',
-      !!c1.flatImg && c1.flatImg.w >= needW(c1.listW) - 0.5,
-      `img=${c1.flatImg && c1.flatImg.w} need=${needW(c1.listW).toFixed(1)} listW=${c1.listW}`);
-    check('b3 c5 三件媒体 = 叠卡（.ds-media-stack + .ds-media-stack__pill）',
-      c5.stack === true && c5.pillCount === 1, JSON.stringify({ stack: c5.stack, pill: c5.pillCount }));
-    check('b4 c5 叠卡卡脸缩略帧宽 ≥ max(内容宽×0.2, 96px)',
-      !!c5.stackImg && c5.stackImg.w >= needW(c5.listW) - 0.5,
-      `img=${c5.stackImg && c5.stackImg.w} need=${needW(c5.listW).toFixed(1)} view=${JSON.stringify(c5.stackViewBox)}`);
+    /* ══ b 腿：卡区图片档 = 输入框同款小缩略图（attachment-thumb-unify 改判）══
+       作者令 2026-11-05 12:57「附件这里添加的图片文件等应该用我们输入框同款的小
+       图标/缩略图」⇒ 旧判据「缩略帧宽 ≥ max(内容宽×0.2, 96px)」作废：卡区图片档
+       不再是 220px 卡语言媒体卡，而是 `.att-thumb` 28px 档（与输入条逐值同盒）。 */
+    check('b1 c1 图片档 = .att-thumb 小缩略图（无 .pop-media-flat）',
+      c1.thumbCount === 1 && c1.flat === false, JSON.stringify({ thumbs: c1.thumbCount, flat: c1.flat }));
+    check('b2 c1 缩略帧 = 28px 档且不越出附件条',
+      !!c1.thumbBox && c1.thumbBox.w <= 28.5 && c1.thumbBox.h <= 28.5 && c1.thumbBox.x + c1.thumbBox.w <= (c1.listW || 0) + (c1.listX || 0) + 1,
+      JSON.stringify({ thumb: c1.thumbBox, listW: c1.listW, listX: c1.listX }));
+    check('b3 c5 三件媒体同条带（零叠卡 .ds-media-stack）',
+      c5.stack === false && c5.thumbCount >= 1, JSON.stringify({ stack: c5.stack, thumbs: c5.thumbCount }));
+    check('b4 c5 附件条零横向溢出', c5.listOverflowX <= 0, `over=${c5.listOverflowX}`);
 
-    /* ══ d 腿：文件卡来源标签 ═════════════════════════════════════════ */
-    check('d1 c1 两枚文件 chip 各挂来源标签', c1.originTags === 2, `tags=${c1.originTags}`);
+    /* ══ d 腿：来源标签（attachment-thumb-unify 改判：收拢到标题行一处）══════ */
+    check('d1 c1 来源标签一处（标题行，不再每 chip notch）', c1.originTags === 1, `tags=${c1.originTags}`);
     check('d2 来源标签文本含 AskUser 标识',
-      !!c1.originTexts && c1.originTexts.length === 2 && c1.originTexts.every((t) => /AskUser/.test(t)),
+      !!c1.originTexts && c1.originTexts.length === 1 && /AskUser/.test(c1.originTexts[0]),
       JSON.stringify(c1.originTexts));
-    check('d3 来源标签位于 chip 左上角（tag.top < chip.top+2 且 tag.left ≤ chip.left+14）',
-      !!c1.originGeom && c1.originGeom.tag.y < c1.originGeom.chip.y + 2
-      && c1.originGeom.tag.x <= c1.originGeom.chip.x + 14,
-      JSON.stringify(c1.originGeom));
+    check('d3 来源标签在附件区标题行内（不压附件 chip/缩略帧）',
+      c1.originInHead === true, JSON.stringify({ inHead: c1.originInHead }));
 
     /* ══ f 腿：卡片减负（不随件数线性膨胀）═════════════════════════════ */
     check('f1 默认只显前 3 枚（4 枚卡：可见 3 / 折叠 1）',
@@ -558,9 +563,9 @@ test.describe('AskUser 卡附件 · 同源 / 可打开 / 叠卡 / 减负', () =>
     check('h1 文件 chip 热区高 ≥44px', !!c1.chipBoxes && c1.chipBoxes.length > 0
       && c1.chipBoxes.every((b) => b.h >= 44 - 0.5), JSON.stringify(c1.chipBoxes));
     check('h2 文件名有效字号 ≥13px', !!c1.nameFontPx && c1.nameFontPx >= 13 - 0.05, `font=${c1.nameFontPx}`);
-    check('h3 长名模糊淡出（mask 渐变 + text-overflow:clip，禁省略号）',
-      !!c1.nameMask && /linear-gradient/.test(c1.nameMask) && c1.nameTextOverflow === 'clip',
-      JSON.stringify({ mask: c1.nameMask, overflow: c1.nameTextOverflow }));
+    check('h3 长名截断走可见省略号（attachment-thumb-unify：渐隐撤除，作者令 2026-11-05 09:28 同判）',
+      !!c1.nameTextOverflow && c1.nameTextOverflow === 'ellipsis',
+      JSON.stringify({ overflow: c1.nameTextOverflow, mask: c1.nameMask }));
     check('h4 来源标签可读字 ≥13px',
       await page.evaluate(() => {
         const tag = document.querySelector('.option-box[data-ask-case="c1"] .ds-att-origin');
@@ -571,18 +576,23 @@ test.describe('AskUser 卡附件 · 同源 / 可打开 / 叠卡 / 减负', () =>
       if (!tag) return null;
       const cs = getComputedStyle(tag);
       const b = tag.getBoundingClientRect();
-      const chip = tag.closest('.att-file').getBoundingClientRect();
+      const head = tag.closest('.ask-attachments-head');
       return {
         mask: cs.maskImage || cs.webkitMaskImage || 'none',
         overflow: cs.textOverflow,
         pointerEvents: cs.pointerEvents,
-        tagW: +b.width.toFixed(1), tagLeft: +b.left.toFixed(1), chipLeft: +chip.left.toFixed(1),
+        tagW: +b.width.toFixed(1),
+        inHead: !!head && head.contains(tag),
+        headBottom: head ? +head.getBoundingClientRect().bottom.toFixed(1) : null,
+        listTop: head && head.parentElement && head.parentElement.querySelector('.ask-attachments-list')
+          ? +head.parentElement.querySelector('.ask-attachments-list').getBoundingClientRect().top.toFixed(1) : null,
       };
     });
     readings.originTagStyle = tagStyle;
-    check('h5 来源标签超长走模糊淡出（mask 渐变 + clip，禁省略号）+ 不吃点击',
-      !!tagStyle && /linear-gradient/.test(tagStyle.mask) && tagStyle.overflow === 'clip'
-      && tagStyle.pointerEvents === 'none', JSON.stringify(tagStyle));
+    check('h5 来源标签在标题行（不压附件）+ 超长省略号 + 不吃点击',
+      !!tagStyle && tagStyle.inHead === true && tagStyle.overflow === 'ellipsis'
+      && tagStyle.pointerEvents === 'none' && tagStyle.headBottom <= (tagStyle.listTop ?? 1e9) + 1,
+      JSON.stringify(tagStyle));
 
     await page.screenshot({ path: join(OUT, 'cards-after.png'), fullPage: false });
     await page.evaluate(() => {
@@ -615,31 +625,31 @@ test.describe('AskUser 卡附件 · 同源 / 可打开 / 叠卡 / 减负', () =>
       await page.waitForTimeout(120);
     };
 
-    // c1 平面卡点击
+    // c1 缩略帧点击（attachment-thumb-unify：图片档 = .att-thumb 小缩略图）
     await page.evaluate(() => {
       const box = document.querySelector('.option-box[data-ask-case="c1"]');
-      const flat = box && box.querySelector('.pop-media-flat');
-      if (flat) flat.click();
+      const thumb = box && box.querySelector('.ask-att-thumb');
+      if (thumb) thumb.click();
     });
     await page.waitForTimeout(420);
     const lb1 = await lightboxState();
     readings.lightboxFlat = lb1;
-    check('c1 点击图片缩略卡 → 预览层 DOM 出现且可见（display:flex）',
+    check('c1 点击小缩略图 → 预览层 DOM 出现且可见（display:flex）',
       lb1.present === true && lb1.visible === true && /nf-lightbox--media/.test(lb1.cls || ''),
       JSON.stringify(lb1));
     await page.screenshot({ path: join(OUT, 'preview-image.png') });
     await closeLightbox();
 
-    // c5 叠卡点击
+    // c5 多件媒体档点击（第 1 枚缩略帧）
     await page.evaluate(() => {
       const box = document.querySelector('.option-box[data-ask-case="c5"]');
-      const view = box && box.querySelector('.ds-media-stack__view');
-      if (view) view.click();
+      const thumb = box && box.querySelector('.ask-att-thumb');
+      if (thumb) thumb.click();
     });
     await page.waitForTimeout(420);
     const lb2 = await lightboxState();
     readings.lightboxStack = lb2;
-    check('c2 点击叠卡卡脸 → 预览层 DOM 出现且可见', lb2.present === true && lb2.visible === true, JSON.stringify(lb2));
+    check('c2 点击多件档缩略帧 → 预览层 DOM 出现且可见', lb2.present === true && lb2.visible === true, JSON.stringify(lb2));
     await page.screenshot({ path: join(OUT, 'preview-stack.png') });
     await closeLightbox();
 

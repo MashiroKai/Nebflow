@@ -340,10 +340,24 @@
   box-sizing: border-box;
   display: block;
   position: relative;
+  /* 原图任何尺寸都不许撑破宿主（宽幅 3000px / 超长竖图同判据）：尺寸恒 28px 方盒
+     + cover 取景，max-width 再兜一道 —— 盒宽由父级 flex item 决定，永不超过容器。 */
+  max-width: 100%;
+}
+/* 缩略帧宿主（图片档的根元素，renderAttachmentFace 图片档）：✕ 角标的定位锚
+   （.att-remove 绝对定位的父）、卡区命中域扩张的锚。尺寸 = 内容盒（28px 档），
+   不参与弹性伸缩 —— 附件条多枚换行由条带 flex-wrap 承担。 */
+.att-thumb-wrap {
+  position: relative;
+  display: flex;
+  flex: none;
+  max-width: 100%;
+  min-width: 0;
 }
 .att-file {
   height: 28px;
   box-sizing: border-box;
+  position: relative;          /* ✕ 角标（.att-remove）定位锚 */
   display: inline-flex;
   align-items: center;
   gap: var(--ds-space-1h);
@@ -665,8 +679,13 @@
    白 ✕ 色 = `#fff`（既有字面量，与旧 `color:#fff` 同值，零新色值）。 */
 .att-remove,
 .fm-quote-remove {
-  width: 16px;
-  height: 16px;
+  /* 角标盘径单点：位置偏移由本值算（attachment-thumb-unify 批 2026-11-05）：
+     删除钮**圆心恒压在小盒右上角**（半叠角 = 标准角标位）——修前 top/right 各
+     -4px 使盘心落在盒内 4px，16px 盘有 3/4 面积盖在 28px 缩略图上（作者报障
+     「红色 × 压在图上的错位」）。手机层只改本值（22px），偏移/命中盒自动跟随。 */
+  --att-remove-size: 16px;
+  width: var(--att-remove-size);
+  height: var(--att-remove-size);
   padding: 0;
   border: none;
   background: var(--color-error);
@@ -678,7 +697,12 @@
   cursor: pointer;
   flex: none;
 }
-.att-remove { position: absolute; top: -4px; right: -4px; font-size: var(--ds-fs-meta); }
+.att-remove {
+  position: absolute;
+  top: calc(var(--att-remove-size) / -2);
+  right: calc(var(--att-remove-size) / -2);
+  font-size: var(--ds-fs-meta);
+}
 /* 命中域外扩到 30×30（composer-overlap 批 2026-10-18）：16px 视觉圆盘的可点域
    过小（作者批注「×删除钮可点域」）。::after 生成外扩 7px 的透明层 —— 生成盒
    隶属本元素，:hover 命中测试同样落在圆盘上，视觉零变化。 */

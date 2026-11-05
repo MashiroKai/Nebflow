@@ -3958,19 +3958,18 @@ body.mobile-layer #attachment-preview .att-file > .att-file-name { display: none
    chat-message 引用 chip 的 ✕ 同档），命中域外扩同步收一档。 */
 body.mobile-layer #attachment-preview .att-file .att-remove {
   /* 标准批：删除角标视觉盘 13 → 22（与 44 盒比例协调；13px 的 ✕ 已落在
-     最小档之下），命中盒由 ::after 外扩到 --mtap（44×44）。 */
-  width: 22px;
-  height: 22px;
-  top: -8px;
-  right: -8px;
+     最小档之下）。attachment-thumb-unify 批 2026-11-05：盘径改为**单点 token
+     值**——位置偏移由 calc(--att-remove-size / -2) 自动跟随（圆心恒压盒右上角，
+     不再手写 -8px），命中盒由 ::after 外扩到 --mtap（44×44）同法算。 */
+  --att-remove-size: 22px;
   font-size: var(--mfs-min);
   display: flex;
   align-items: center;
   justify-content: center;
 }
 body.mobile-layer #attachment-preview .att-file .att-remove::after {
-  /* 44 命中盒：22 视觉盘向四边各外扩 11px。 */
-  inset: -11px;
+  /* 44 命中盒：视觉盘向四边各外扩 (--mtap − 盘径)/2。 */
+  inset: calc((var(--mtap) - var(--att-remove-size)) / -2);
 }
 body.mobile-layer #attachment-preview .att-file .att-remove svg {
   width: var(--mfs-min);
@@ -4003,11 +4002,17 @@ body.mobile-layer .option-box .att-file.ask-att-file > .att-file-name {
      判据），文件名截断走可见省略号。 */
   text-overflow: ellipsis;
 }
-body.mobile-layer .option-box .att-file .ds-att-origin {
-  top: -10px;
-  font-size: var(--mfs-min);
-  line-height: 18px;
+/* 卡区图片档（attachment-thumb-unify 批 2026-11-05）：视觉**不放大** —— 与输入框
+   附件条 `.att-thumb` 逐值同盒是本批硬约束；触控热区由宿主 ::after 外扩到 --mtap
+   （44×44，外扩量 = (--mtap − 100%)/2，零魔法数字）。点击面 = 灯箱原图。 */
+body.mobile-layer .ask-attachments-wrap .ask-att-thumb::after {
+  content: '';
+  position: absolute;
+  inset: calc((var(--mtap) - 100%) / -2);
+  border-radius: var(--ds-radius-input);
 }
+/* 卡区附件条的行间余量：手机层 chip 高 --mtap(44)，8px 间距沿用桌面同值
+   （--ds-space-2）；不再有 notch 标签 ⇒ 原 padding-top 让位退场。 */
 body.mobile-layer .att-file .ask-att-reason { font-size: var(--mfs-min); }
 body.mobile-layer .att-file .ask-att-retry {
   min-height: var(--mtap);
