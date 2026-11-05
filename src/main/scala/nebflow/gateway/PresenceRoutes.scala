@@ -2147,32 +2147,49 @@ private[gateway] object PresenceRoutes:
 
       // ── JeV 分配通道连接性测试（settings-panel-jev-imagegen 批 2026-10-29
       // 作者令逐字「然后 Jev/生图，也要像我们LLM这样，有个按钮来测试可用性」）──
-      // 表单覆写腿优先（未保存也测）：provider/endpoint/keyRef 覆写即按表单值
-      // 探活；缺省回落存储配置。laya 走 /health metadata 面、typesafe 走极小
-      // 真实补全（JevProbe 单点）；keyRef secret 缺席 = 直接 Failed（待录入），
-      // 不发注定 401 的击。零持久化——纯诊断读数。
+      // 表单覆写腿优先（未保存也测）：provider/endpoint/**apiKey**/keyRef 覆写即按
+      // 表单值探活；缺省回落存储配置（**含选中项 provider 的 providers 条目**——
+      // jev-imagegen-align-llm 批 2026-11-02：provider/endpoint/model/keyRef 逐字段
+      // `providers[选中项] > 顶层 > 缺省`，与 JevSettings.resolve 同回落序）。
+      // token 解析三腿单点 = JevProbe.resolveToken（apiKey 覆写 > 已存 keyRef
+      // secret > 无）；旧 keyRef 腿逐字保留（JevProbeSpec.callWithKeyRef 断言照绿）。
+      // laya 走 /health metadata 面、typesafe 走极小真实补全（JevProbe 单点）；
+      // keyRef secret 缺席 = 直接 Failed（待录入），不发注定 401 的击。
+      // 🔴 日志零 key：本臂不打任何日志；apiKey 覆写值只在 process 内活到一击。
+      // 零持久化——纯诊断读数。
       case req @ POST -> Root / "jev" / "test" =>
         withAuth(req) {
           req.as[Json].flatMap { body =>
             val providerOv = body.hcursor.downField("provider").as[String].toOption.map(_.trim).filter(_.nonEmpty)
             val endpointOv = body.hcursor.downField("endpoint").as[String].toOption.map(_.trim).filter(_.nonEmpty)
             val keyRefOv = body.hcursor.downField("keyRef").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+            val apiKeyOv = body.hcursor.downField("apiKey").as[String].toOption.map(_.trim).filter(_.nonEmpty)
             if providerOv.exists(p => !DecisionProvider.AllIds.contains(p)) then
               BadRequest(Json.obj("error" -> s"unknown jev provider '${providerOv.get}'".asJson))
             else
               configRef.get.flatMap { cfg =>
                 val stored = cfg.jev
-                val provider = providerOv.getOrElse(stored.flatMap(_.provider).getOrElse(DecisionProvider.TypesafeJev))
-                val endpoint = endpointOv.orElse(stored.flatMap(_.endpoint)).getOrElse(
-                  if provider == DecisionProvider.Laya then DecisionProvider.DefaultLayaEndpoint
-                  else DecisionProvider.DefaultTypesafeEndpoint
-                )
-                val model = stored.flatMap(_.model).getOrElse(DecisionProvider.DefaultModel)
-                val keyRef = keyRefOv.orElse(stored.flatMap(_.keyRef))
+                val selected = providerOv.orElse(stored.flatMap(_.provider)).getOrElse(DecisionProvider.TypesafeJev)
+                // 选中项条目（jev.providers.<selected>）：逐字段优先于顶层。
+                val entry = stored.flatMap(_.providers).flatMap(_.get(selected))
+                val provider = selected
+                val endpoint = endpointOv
+                  .orElse(entry.flatMap(_.endpoint).map(_.trim).filter(_.nonEmpty))
+                  .orElse(stored.flatMap(_.endpoint))
+                  .getOrElse(
+                    if provider == DecisionProvider.Laya then DecisionProvider.DefaultLayaEndpoint
+                    else DecisionProvider.DefaultTypesafeEndpoint
+                  )
+                val model = entry.flatMap(_.model).map(_.trim).filter(_.nonEmpty)
+                  .orElse(stored.flatMap(_.model))
+                  .getOrElse(DecisionProvider.DefaultModel)
+                val keyRef = keyRefOv
+                  .orElse(entry.flatMap(_.keyRef).map(_.trim).filter(_.nonEmpty))
+                  .orElse(stored.flatMap(_.keyRef))
                 if !jevTestGate.tryAcquire() then
                   Conflict(Json.obj("error" -> "a test for this provider is already in flight".asJson))
                 else
-                  IO.blocking(JevProbe.callWithKeyRef(provider, endpoint, model, keyRef)).flatMap {
+                  IO.blocking(JevProbe.callWithToken(provider, endpoint, model, apiKeyOv, keyRef)).flatMap {
                     case JevProbe.Verdict.Ok(latency, reply) =>
                       Ok(Json.obj("ok" -> true.asJson, "latencyMs" -> latency.asJson, "reply" -> reply.asJson))
                     case JevProbe.Verdict.Failed(detail) =>

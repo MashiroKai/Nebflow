@@ -374,6 +374,145 @@ function restoreMentions(html, blocks) {
   });
 }
 
+// === `#` 待办引用渲染（待办结构化批, 2026-11-05 作者令「允许使用 # 来引用待办」）===
+//
+// 与 `@` 同一条渲染管线、同一套「最长名匹配」算法，只是触发符与边界判据不同：
+//   · 触发符 `#`，起始门与 `@` 一致（前置 ASCII 字母/数字不触发，行首/空白/汉字/
+//     中文标点之后触发）；
+//   · `#` 后紧跟纯数字（任务号形状：井号+数字）或 3/4/6/8 位十六进制（CSS 色值
+//     形状：井号+十六进制）**不识别**
+//     —— 与补全侧的门禁逐条对齐（同一份判据文字，两处各自实现但规则同源）；
+//   · 名字结束边界：空、非字母数字非汉字（标点/空白）—— 中文逗号句号紧跟其后
+//     也照样收，这是 `@` 那套"必须空白"判据在中文里的必然放宽；
+//   · **识别不到就原样显示**：匹配失败不吞字，扫描只跳过这一个 `#` 继续走。
+// 数据面同样走 provider（main.js 注入 todoStore.openItems 快照），本文件不 import
+// 待办 store —— 与 @ 提及保持同一个单向依赖形状。
+
+/**
+ * 一条可引用的待办（渲染侧只需要名字与详情/ id）。
+ * @typedef {{name: string, detail?: string, id?: string}} MentionTodo
+ */
+
+/** @type {null | (() => {todos: MentionTodo[], gen: number})} */
+let _todoProvider = null;
+
+/**
+ * 注入待办清单读口（main.js 启动时一次）。provider 是唯一数据路径：
+ * 本模块不取数、不缓存待办。
+ * @param {() => {todos: MentionTodo[], gen: number}} fn
+ */
+export function setTodoListProvider(fn) {
+  _todoProvider = fn;
+}
+
+/**
+ * 当前待办清单状态；安全回落 = 空清单（清单未到 ⇒ 引用按纯文本显示）。
+ * @returns {{todos: MentionTodo[], gen: number}}
+ */
+function todoListState() {
+  if (!_todoProvider) return { todos: [], gen: 0 };
+  try {
+    const s = _todoProvider();
+    if (s && Array.isArray(s.todos)) return { todos: /** @type {MentionTodo[]} */ (s.todos), gen: s.gen };
+  } catch (_) { /* provider 打嗝不能影响渲染 */ }
+  return { todos: [], gen: 0 };
+}
+
+/** `#` 之后的 token 若命中色值/任务号形状 ⇒ 不是待办引用。 */
+const TODO_DIGIT_HEAD_RE = /^\d/;
+const TODO_HEX_SHAPE_RE = /^[0-9a-f]{3}$|^[0-9a-f]{4}$|^[0-9a-f]{6}$|^[0-9a-f]{8}$/i;
+/** 名字后续字符必须是"词边界"（非字母数字非汉字）才算完整引用。 */
+const TODO_WORD_CONT_RE = /[\p{L}\p{N}_]/u;
+
+/**
+ * `#` 处的待办引用最长名匹配。
+ *
+ * @param {string} text 正在扫描的片段
+ * @param {number} at `#` 的下标
+ * @param {MentionTodo[]} todos 只读清单快照
+ * @returns {{todo: MentionTodo, len: number} | null}
+ */
+function matchTodoAt(text, at, todos) {
+  const after = text.slice(at + 1);
+  if (!after) return null;
+  // 形状门禁（与补全侧 blockDigitStart / blockHexColor 同源）：任务号与色值一律
+  // 不认作待办引用。
+  if (TODO_DIGIT_HEAD_RE.test(after)) return null;
+  const token = after.split(/[\s，。！？；：、,.!?;:)/\]】」』]/)[0];
+  if (token && TODO_HEX_SHAPE_RE.test(token)) return null;
+  /** @type {MentionTodo | null} */
+  let best = null;
+  let bestLen = 0;
+  for (const todo of todos) {
+    const name = todo && typeof todo.name === 'string' ? todo.name : '';
+    if (!name || after.length < name.length) continue;
+    if (after.slice(0, name.length).toLowerCase() !== name.toLowerCase()) continue;
+    const tail = after.slice(name.length);
+    if (tail && TODO_WORD_CONT_RE.test(tail[0])) continue;
+    if (name.length > bestLen) {
+      bestLen = name.length;
+      best = todo;
+    }
+  }
+  return best ? { todo: best, len: bestLen } : null;
+}
+
+/**
+ * 把 prose 片段里的 `#<待办名>` 换成 TODOBLOCK 占位符（收集进 `out`），
+ * marked.parse 之后再还原成可点 chip。纯函数：无命中 ⇒ 原样返回。
+ *
+ * @param {string} seg
+ * @param {Array<{todo: MentionTodo, slice: string}>} out
+ * @returns {string}
+ */
+function protectTodoRefs(seg, out) {
+  const { todos } = todoListState();
+  if (todos.length === 0) return seg;
+  let result = '';
+  let i = 0;
+  while (i < seg.length) {
+    const at = seg.indexOf('#', i);
+    if (at < 0) {
+      result += seg.slice(i);
+      break;
+    }
+    // 起始门与 `@` 逐字同源：ASCII 字母/数字之前不触发（`C#` / `a#1`）。
+    const wordStart = at === 0 || !/[a-zA-Z0-9]/.test(seg[at - 1]);
+    const hit = wordStart ? matchTodoAt(seg, at, todos) : null;
+    if (hit) {
+      out.push({ todo: hit.todo, slice: seg.slice(at + 1, at + 1 + hit.len) });
+      result += seg.slice(i, at) + 'TODOBLOCK' + (out.length - 1) + 'END';
+      i = at + 1 + hit.len;
+    } else {
+      result += seg.slice(i, at + 1);
+      i = at + 1;
+    }
+  }
+  return result;
+}
+
+/**
+ * 还原 TODOBLOCK 占位符为可点待办 chip。动态值一律 escapeHtml；落进双引号
+ * 属性的值再转义 `"`（escapeHtml 是文本节点序列化器，不转引号）。
+ *
+ * @param {string} html
+ * @param {Array<{todo: MentionTodo, slice: string}>} blocks
+ * @returns {string}
+ */
+function restoreTodoRefs(html, blocks) {
+  return html.replace(RE_TODO_RESTORE, (m, idx) => {
+    const rec = blocks[parseInt(idx, 10)];
+    if (!rec) return m;
+    const t0 = rec.todo;
+    const nameAttr = escapeHtml(t0.name).replace(/"/g, '&quot;');
+    const idAttr = escapeHtml(t0.id || '').replace(/"/g, '&quot;');
+    const detailAttr = escapeHtml(t0.detail || '').replace(/"/g, '&quot;');
+    return '<span class="todo-tag" data-todo="' + nameAttr + '" data-todo-id="' + idAttr
+      + '" data-todo-detail="' + detailAttr + '" role="button" tabindex="0">#'
+      + escapeHtml(rec.slice) + '</span>';
+  });
+}
+
 // === KaTeX math rendering - protect math blocks from Markdown processing ===
 // Bounded LRU cache for rendered markdown HTML. History restore and session
 // switching re-render identical content; caching avoids repeated
@@ -410,6 +549,7 @@ const RE_OUTPUT_RESTORE = /OUTPUTBLOCK(\d+)END/g;
 const RE_OUTPUT_PAIR = /<output>([\s\S]*?)<\/output>/g;
 const RE_OUTPUT_ANY_TAG = /<\/?output>/g;
 const RE_MENTION_RESTORE = /MENTIONBLOCK(\d+)END/g;
+const RE_TODO_RESTORE = /TODOBLOCK(\d+)END/g;
 // msgchip 批（2026-11-01 作者令「消息身份牌系统升级」）：带短名引用形态
 // {{msg:sid8-seq6|短名}} → 渲染成可点小牌 chip（牌面 = 短名；点击弹小窗看原消息）。
 // 语法与引擎侧单一实现源（scala nebflow.core.msgtokens.MsgTokenRegistry.TokenRegex）
@@ -426,6 +566,61 @@ const RE_IMG_TAG = /<img\b(?![^>]*\bclass=)/g;
 // as-is (already HTML-escaped by marked) — safe for the double-quoted
 // data-mermaid-src attribute because marked escapes `"` to `&quot;`.
 const RE_MERMAID_BLOCK = /<pre><code class="language-mermaid"[^>]*>([\s\S]*?)<\/code><\/pre>/g;
+// rich-render 批（2026-11-05 作者令 08:55「可以，试试内联svg」）：```svg 围栏走
+// 与 mermaid 同一形状的占位替换；安全审查不在这条字符串腿上做（字符串正则挡不住
+// 实体/命名空间变体），而在 js/svgFence.js 的「解析成 DOM → 白名单重建」腿做。
+const RE_SVG_BLOCK = /<pre><code class="language-svg"[^>]*>([\s\S]*?)<\/code><\/pre>/g;
+
+/** 源码面读「末尾有没有未闭合的围栏」，返回它的 info 词（小写；闭合 = 空串）。
+ *  这就是流式判据的第二条（第一条 = 调用点报的 `stream` 事实）：
+ *  CommonMark 里未闭合围栏 body 仍是代码块，我们**不改它**——图只在围栏闭合后
+ *  出现一次。与 `_humanFencesBalanced` 同一读法（开栏 = 带 info 的 ```，
+ *  关栏 = 仅反引号的 ```；开栏期间带 info 的 ``` 是字面内容不是嵌套）。 */
+function _trailingOpenFence(text) {
+  if (text.indexOf('```') === -1) return '';
+  let info = '';
+  const lines = text.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!info) {
+      const m = /^```+[ \t]*([\w+#.-]*)/.exec(line);
+      if (m && m[1]) info = m[1].toLowerCase();
+    } else if (/^```+[ \t]*$/.test(line)) {
+      info = '';
+    }
+  }
+  return info;
+}
+
+/** 属性值转义（escapeHtml 不转引号，属性面必须自己来）。 */
+function _attrEscape(/** @type {string} */ s) {
+  return escapeHtml(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/**
+ * 图围栏占位替换（mermaid / svg 共用；单一实现，不各造一套）。
+ * 末尾那个未闭合围栏保持代码块（见 _trailingOpenFence）。
+ * @param {string} html
+ * @param {RegExp} re
+ * @param {string} lang
+ * @param {string} openFence
+ * @param {string} srcAttr
+ * @param {string} cls
+ * @returns {string}
+ */
+function _swapFenceBlocks(html, re, lang, openFence, srcAttr, cls) {
+  re.lastIndex = 0;
+  let total = 0;
+  while (re.exec(html) !== null) total++;
+  if (total === 0) return html;
+  let seen = 0;
+  re.lastIndex = 0;
+  return html.replace(re, (full, code) => {
+    seen++;
+    if (seen === total && openFence === lang) return full; // 未闭合尾围栏 = 仍是代码
+    return `<div class="${cls}" ${srcAttr}="${code}"><div class="${cls}-body"><div class="${cls}-ph"></div></div></div>`;
+  });
+}
 // human-face batch (2026-10-30, 设计稿 docs/design/20261030_human-readable-
 // presentation.zh-CN.md 二期): marked v12 emits a fenced ```human block in the
 // same shape as mermaid (plain <pre>, single language class, escaped body).
@@ -434,15 +629,24 @@ const RE_HUMAN_BLOCK = /<pre><code class="language-human"[^>]*>([\s\S]*?)<\/code
 export function renderMarkdownWithMath(text, parseVoice = true, opts) {
   if (!text) return '';
   const safe = !!(opts && opts.safe);
+  // 流式快照闸（rich-render 批，作者令 2026-11-05 08:51 第 5 条）：`stream:true`
+  // ⇒ 本次渲染是「消息还没写完」的中间帧，图围栏一律**保持代码块**（产出零 SVG，
+  // 见 _renderMarkdownInternal 的 allowDiagram）。判据单点在管道里，调用点只报
+  // 事实（自己是否流式中），不做任何围栏语法判断。
+  const stream = !!(opts && opts.stream);
   // Streaming bypass (mem-diagnosis 20260907 D3): per-frame stream renders
   // re-parse the SAME growing text — every intermediate snapshot used to
   // enter this LRU and evict real entries until the hit rate hit 0. Stream
   // renderers pass { cache:false } and go straight to the parser; only
   // finish*/history renders (stable text) populate the cache.
-  if (opts && opts.cache === false) return _renderMarkdownWithMath(text, parseVoice, safe);
+  if (opts && opts.cache === false) return _renderMarkdownWithMath(text, parseVoice, safe, stream);
   // 🔴 safe 是 key 的一部分：同一段文本在两条信任档下产物不同，混键会把
   // 「agent 面可信渲染」与「外部消息安全渲染」互相串味（缓存投毒面）。
-  const key = `${parseVoice ? 1 : 0}${typeof marked !== 'undefined' ? 1 : 0}${typeof katex !== 'undefined' ? 1 : 0}${getLocale()}|${outputBlockEnabled() ? 1 : 0}${mentionListState().gen}|${safe ? 'S' : 'T'}|${text}`;
+  // stream 同理（同名文本在流式档下不产图围栏占位，终态档产）——混键会让
+  // 图片在流式中途借缓存漏出。
+  // `#` 待办引用代次（待办结构化批 2026-11-05）同理：待办清单变了，已缓存 HTML
+  // 里的 chip 就可能指向改名/删除前的旧名 ⇒ 代次进键。
+  const key = `${parseVoice ? 1 : 0}${typeof marked !== 'undefined' ? 1 : 0}${typeof katex !== 'undefined' ? 1 : 0}${getLocale()}|${outputBlockEnabled() ? 1 : 0}${mentionListState().gen}.${todoListState().gen}|${safe ? 'S' : 'T'}|${stream ? 'S' : 'F'}|${text}`;
   const hit = _mdCache.get(key);
   if (hit !== undefined) {
     _mdCache.delete(key);
@@ -456,7 +660,7 @@ export function renderMarkdownWithMath(text, parseVoice = true, opts) {
   // escapeHtml 纯文本（安全、可读、绝不整行消失，也区别于编辑态显源码）。
   let html;
   try {
-    html = _renderMarkdownWithMath(text, parseVoice, safe);
+    html = _renderMarkdownWithMath(text, parseVoice, safe, stream);
   } catch (e) {
     html = escapeHtml(text);
   }
@@ -467,7 +671,7 @@ export function renderMarkdownWithMath(text, parseVoice = true, opts) {
   return html;
 }
 
-function _renderMarkdownWithMath(text, parseVoice, safe) {
+function _renderMarkdownWithMath(text, parseVoice, safe, stream) {
   if (typeof marked === 'undefined') return escapeHtml(text);
   // safe 档（外部消息面）：渲染器形态不可用 ⇒ **整段回落转义纯文本**（fail
   // closed），绝不落到可信腿上——外部输入不接受「降级但仍可信」。
@@ -543,9 +747,9 @@ function _renderMarkdownWithMath(text, parseVoice, safe) {
       voiceBlocks.push(content.trim());
       return `VOICEBLOCK${voiceBlocks.length - 1}END`;
     });
-    return _renderMarkdownInternal(vp, voiceBlocks, false, outputBlocks, msgTokens, safe, safeRenderer);
+    return _renderMarkdownInternal(vp, voiceBlocks, false, outputBlocks, msgTokens, safe, safeRenderer, !stream);
   }
-  return _renderMarkdownInternal(text, voiceBlocks, false, outputBlocks, msgTokens, safe, safeRenderer);
+  return _renderMarkdownInternal(text, voiceBlocks, false, outputBlocks, msgTokens, safe, safeRenderer, !stream);
 }
 
 // ── <output> user-visible block (output 块语法批 2026-10-31) ────────────────
@@ -716,7 +920,7 @@ function _highlightFencedCode(html) {
 /** Post-marked transform: split the HTML on closed ```human blocks; render each
  *  fence body as a markdown card; wrap every outside chunk that carries text
  *  in a <details> drawer (whitespace-only chunks pass through untouched). */
-function _transformHumanFace(html) {
+function _transformHumanFace(html, humanStream) {
   const parts = [];
   let last = 0;
   let m;
@@ -734,7 +938,7 @@ function _transformHumanFace(html) {
     if (p.kind === 'card') {
       // Inner render with noHuman=true: a nested ```human fence inside a card
       // stays a plain code block (no unbounded recursion).
-      const inner = _renderMarkdownInternal(_decodeHumanEntities(p.code), [], true, undefined, []);
+      const inner = _renderMarkdownInternal(_decodeHumanEntities(p.code), [], true, undefined, [], false, null, humanStream);
       result += '<div class="nf-human-card">' + inner + '</div>';
     } else {
       const text = p.html.replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim();
@@ -769,8 +973,9 @@ function protectMsgTokens(seg, store) {
   });
 }
 
-function _renderMarkdownInternal(protected_, voiceBlocks, noHuman, outputBlocks, msgTokens, safe, safeRenderer) {
+function _renderMarkdownInternal(protected_, voiceBlocks, noHuman, outputBlocks, msgTokens, safe, safeRenderer, allowDiagram) {
   if (!msgTokens) msgTokens = [];
+  if (allowDiagram === undefined) allowDiagram = true;
   // human-face batch (2026-10-30): the ```human filter fence renders ONLY when
   // every fence in the source is closed (streaming gate, 设计稿 §7.5 落地口径
   // 「整段等闭合」). An unclosed fence (mid-stream snapshot) falls through to
@@ -782,6 +987,9 @@ function _renderMarkdownInternal(protected_, voiceBlocks, noHuman, outputBlocks,
   const humanOn = !noHuman && !safe && _humanFencesBalanced(protected_);
   const mathBlocks = [];
   const mentionBlocks = [];
+  // `#` 待办引用块（待办结构化批 2026-11-05）：与 @ 提及同一条保护/还原管线，
+  // 代码段已在 RE_CODE_SPLIT 里被切走 ⇒ 围栏/行内代码内的 `#` 天然 inert。
+  const todoBlocks = [];
   // Math is protected BEFORE marked.parse and restored AFTER it on the whole
   // HTML string, so the protection must be blind to code regions — otherwise
   // a `$` inside code (shell/JS snippets) is paired up and the KaTeX markup is
@@ -809,7 +1017,11 @@ function _renderMarkdownInternal(protected_, voiceBlocks, noHuman, outputBlocks,
   };
   protected_ = protected_
     .split(RE_CODE_SPLIT)
-    .map((seg, i) => (i % 2 === 1 ? seg : protectMentions(protectMath(protectMsgTokens(seg, msgTokens)), mentionBlocks)))
+    .map((seg, i) => (i % 2 === 1
+      ? seg
+      : protectTodoRefs(
+        protectMentions(protectMath(protectMsgTokens(seg, msgTokens)), mentionBlocks),
+        todoBlocks)))
     .join('');
   // safe 档：**逐次调用**注入硬化渲染器（marked.parse 的 per-call option，
   // 实测不污染后续调用 ⇒ agent 面永远走默认渲染器；禁 marked.use 全局换装，
@@ -827,8 +1039,22 @@ function _renderMarkdownInternal(protected_, voiceBlocks, noHuman, outputBlocks,
   // reserved-height body keeps layout stable while the library loads/renders,
   // and every face that shares this pipeline (canvas md viewer, wiki docs,
   // chat bubbles, flow cards, report cards) gets the same placeholder.
-  html = html.replace(RE_MERMAID_BLOCK, (m, code) =>
-    `<div class="nf-mermaid" data-mermaid-src="${code}"><div class="nf-mermaid-body"><div class="nf-mermaid-ph"></div></div></div>`);
+  //
+  // rich-render 批（2026-11-05，作者令 08:51 第 5 条 + 08:53 + 08:55）：同一
+  // 条腿现在管三件事 —— ① ```mermaid；② ```svg（白名单重建见 svgFence.js）；
+  // ③ 流式闸：**两个判据同时成立**才出占位
+  //     (a) 本次渲染不是流式快照（调用点报 opts.stream；AI 气泡本身是「整段
+  //         只渲一次」的，见 chat.js appendAiText 的注释 —— 这一条护住的是
+  //         thinking / dock / popup 这些仍然逐帧重渲的面）；
+  //     (b) 该围栏在源码里**已闭合**（_trailingOpenFence）—— 半截围栏仍是代码
+  //         块，围栏一闭合就整块出现一次。
+  //   理由：逐 token 重渲 = 每帧一次 mermaid.render + 布局抖动，且半截语法必然
+  //   报错；两条判据把「产图」钉在「这一版文本已经定稿」上。
+  if (allowDiagram) {
+    const openFence = _trailingOpenFence(protected_);
+    html = _swapFenceBlocks(html, RE_MERMAID_BLOCK, 'mermaid', openFence, 'data-mermaid-src', 'nf-mermaid');
+    html = _swapFenceBlocks(html, RE_SVG_BLOCK, 'svg', openFence, 'data-svg-src', 'nf-svg');
+  }
   // human-face pass (2026-10-30): a CLOSED ```human fence is a human-face card,
   // not code — its markdown body is rendered into `.nf-human-card`; every
   // outside chunk (before / between / after cards) collapses into a
@@ -836,7 +1062,7 @@ function _renderMarkdownInternal(protected_, voiceBlocks, noHuman, outputBlocks,
   // button pass so a card never gets code chrome. Single pipeline ⇒ all five
   // markdown faces (chat bubbles, canvas md viewer, wiki docs, flow cards,
   // report cards) pick it up at once, same as the mermaid pass above.
-  if (humanOn) html = _transformHumanFace(html);
+  if (humanOn) html = _transformHumanFace(html, allowDiagram === false);
   // 代码块语法高亮（文档渲染批 2026-11-01）：图表占位与 human 卡都已出局，
   // 此处剩下的围栏才是真正的代码。跑在复制按钮包裹之前（见 _highlightFencedCode
   // 的位置契约）。
@@ -863,26 +1089,36 @@ function _renderMarkdownInternal(protected_, voiceBlocks, noHuman, outputBlocks,
     });
   }
   // Restore math blocks as KaTeX
+  // rich-render 批（2026-11-05 作者令 08:53）：KaTeX 从「开屏就装」改为**按需
+  // 装载**（index.html 不再挂 275KB 的 defer script）。katex 缺席时这里产出
+  // 占位 span —— 占位里直接躺着**原始 LaTeX 文本**，所以「装载腿没跑到」的
+  // 形态是回退到源码而不是空白；js/mathRender.js 首次入视口时装库、渲染、
+  // 失败态可见。trust 恒 false（作者令：禁 \href/\htmlClass 一类注入面）。
   mathBlocks.forEach((block, i) => {
     const token = `MATHBLOCK${i}END`;
+    const raw = block.display ? `$$${block.math}$$` : `$${block.math}$`;
+    // 用函数形态替换：替换串里的 `$` 会被 String.replace 当特殊语法吃掉
+    // （`$$` → `$`），LaTeX 源码里 `$` 不罕见，必须绕开这条解释链。
     if (typeof katex !== 'undefined') {
       try {
         const rendered = katex.renderToString(block.math, {
           displayMode: block.display,
           throwOnError: false,
           strict: 'ignore',
-          // safe 档（外部消息面）：关掉 KaTeX 的 trust 扩展——`\href` /
-          // `\htmlClass` / `\includegraphics` 一族在 trust:true 下会产出可点
-          // 链接与原始 HTML 片段，等于把 marked 那层的白名单在数学腿里绕开。
-          trust: !safe
+          // 作者令 2026-11-05 08:53：trust 恒 false —— `\href` / `\htmlClass` /
+          // `\includegraphics` 一族在 trust:true 下会产出可点链接与原始 HTML
+          // 片段，等于把 marked 那层的白名单在数学腿里绕开。
+          trust: false
         });
-        html = html.replace(token, rendered);
+        html = html.replace(token, () => rendered);
       } catch (e) {
-        html = html.replace(token, block.display ? `$$${block.math}$$` : `$${block.math}$`);
+        html = html.replace(token, () => escapeHtml(raw));
       }
-    } else {
-      html = html.replace(token, block.display ? `$$${block.math}$$` : `$${block.math}$`);
+      return;
     }
+    html = html.replace(token, () => '<span class="nf-math" data-math-src="'
+      + _attrEscape(block.math) + '" data-math-display="' + (block.display ? '1' : '0') + '">'
+      + escapeHtml(raw) + '</span>');
   });
   // Restore voice blocks as clickable green spans
   html = html.replace(RE_VOICE_RESTORE, (m, idx) => {
@@ -892,6 +1128,9 @@ function _renderMarkdownInternal(protected_, voiceBlocks, noHuman, outputBlocks,
   });
   // Restore mention blocks as clickable blue spans (shared-list longest match).
   html = restoreMentions(html, mentionBlocks);
+  // Restore `#` 待办引用块同样式 chip（待办结构化批）：未匹配的 `#` 从未被
+  // 换进占位符，所以这里只还原真命中，其余文本原样留着（不吞字）。
+  html = restoreTodoRefs(html, todoBlocks);
   // Restore msg-token chips (msgchip 批): 带短名引用形态 → 可点小牌（牌面 = 短名）。
   // 交互面（popover/取数）单点在 js/chat/msgTokenChip.js —— 文档级事件委托，不在此绑
   // （innerHTML 重建会掉 listener；委托天然存活于流式/历史/重放全渲染腿）。
@@ -926,31 +1165,113 @@ function _renderMarkdownInternal(protected_, voiceBlocks, noHuman, outputBlocks,
  */
 export function appendTextWithMentions(parent, text) {
   const { projects } = mentionListState();
-  if (!projects.length) {
+  const { todos } = todoListState();
+  if (!projects.length && !todos.length) {
     parent.appendChild(document.createTextNode(text));
     return;
   }
   let rest = text;
   for (;;) {
-    const at = rest.indexOf('@');
-    if (at < 0) break;
+    // 两个触发符里取更靠前的那个（同一次扫描处理 @ 与 #，顺序 = 文本顺序）。
+    const atMention = projects.length ? rest.indexOf('@') : -1;
+    const atTodo = todos.length ? rest.indexOf('#') : -1;
+    /** @type {{ch: string, at: number}} */
+    let pick = { ch: '@', at: atMention };
+    if (atTodo >= 0 && (atMention < 0 || atTodo < atMention)) pick = { ch: '#', at: atTodo };
+    if (pick.at < 0) break;
+    const { ch, at } = pick;
     const wordStart = at === 0 || MENTION_WHITESPACE_RE.test(rest[at - 1]);
-    const hit = wordStart ? matchMentionAt(rest, at, projects) : null;
+    const hit = !wordStart
+      ? null
+      : (ch === '@' ? matchMentionAt(rest, at, projects) : matchTodoAt(rest, at, todos));
     if (!hit) {
-      // Keep scanning after this non-matching '@'.
+      // Keep scanning after this non-matching trigger char.
       parent.appendChild(document.createTextNode(rest.slice(0, at + 1)));
       rest = rest.slice(at + 1);
       continue;
     }
     if (at > 0) parent.appendChild(document.createTextNode(rest.slice(0, at)));
     const span = document.createElement('span');
-    span.className = 'mention-tag';
-    span.setAttribute('data-project', hit.canonical);
-    span.textContent = '@' + rest.slice(at + 1, at + 1 + hit.len);
+    if (ch === '@') {
+      const mhit = /** @type {{canonical: string, len: number}} */ (hit);
+      span.className = 'mention-tag';
+      span.setAttribute('data-project', mhit.canonical);
+      span.textContent = '@' + rest.slice(at + 1, at + 1 + mhit.len);
+      rest = rest.slice(at + 1 + mhit.len);
+    } else {
+      const thit = /** @type {{todo: MentionTodo, len: number}} */ (hit);
+      span.className = 'todo-tag';
+      span.setAttribute('data-todo', thit.todo.name);
+      span.setAttribute('data-todo-id', thit.todo.id || '');
+      span.setAttribute('data-todo-detail', thit.todo.detail || '');
+      span.setAttribute('role', 'button');
+      span.setAttribute('tabindex', '0');
+      span.textContent = '#' + rest.slice(at + 1, at + 1 + thit.len);
+      rest = rest.slice(at + 1 + thit.len);
+    }
     parent.appendChild(span);
-    rest = rest.slice(at + 1 + hit.len);
   }
   if (rest) parent.appendChild(document.createTextNode(rest));
+}
+
+// === User-message face with diagram fences (rich-render 批, 2026-11-05) ===
+//
+// 作者令 2026-11-05 08:51 第 1 条要求「至少覆盖 agent 回复与用户消息两种气泡
+// 面」。用户气泡**整体不走 markdown**（既有裁定：用户输入不得被解释成 markdown，
+// 见 appendTextWithMentions 头注），本批不推翻它——只放行**已闭合的图围栏**：
+//   · ```mermaid / ```svg 围栏 → 与共享管线同形的占位 div（同一批
+//     mermaidRenderer/svgFence 水合，不另起一套渲染）；
+//   · 围栏外的一切仍是纯文本（+ @提及 span），零 markdown 解释；
+//   · 未闭合围栏（流式中途/手误）整段按纯文本落地——内容零丢失，也不产图。
+// 落 DOM 全走 createElement/setAttribute/textContent：无 HTML 串、无注入面。
+
+/**
+ * 用户气泡富文本：已闭合的 mermaid/svg 围栏 → 图占位；其余逐字纯文本。
+ * @param {HTMLElement} parent
+ * @param {string} text
+ */
+export function appendUserTextWithFences(parent, text) {
+  const src = String(text || '');
+  // 顺序化切分：一次线性扫描，prose 与围栏交替入列。
+  /** @type {Array<{kind: 'text'|'mermaid'|'svg', text: string}>} */
+  const parts = [];
+  let prose = '';
+  const flush = () => { if (prose) { parts.push({ kind: 'text', text: prose }); prose = ''; } };
+  if (src.indexOf('```') !== -1) {
+    const lines = src.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      const open = /^```(mermaid|svg)[ \t]*$/.exec(lines[i]);
+      if (!open) { prose += (prose ? '\n' : '') + lines[i]; continue; }
+      let j = i + 1;
+      while (j < lines.length && !/^```[ \t]*$/.test(lines[j])) j++;
+      if (j >= lines.length) {
+        // 未闭合：其余全部按纯文本（内容零丢失、不产图）
+        prose += (prose ? '\n' : '') + lines.slice(i).join('\n');
+        i = lines.length;
+        break;
+      }
+      flush();
+      parts.push({ kind: open[1] === 'svg' ? 'svg' : 'mermaid', text: lines.slice(i + 1, j).join('\n') });
+      i = j;
+    }
+  } else {
+    prose = src;
+  }
+  flush();
+  for (const part of parts) {
+    if (part.kind === 'text') { appendTextWithMentions(parent, part.text); continue; }
+    const cls = part.kind === 'mermaid' ? 'nf-mermaid' : 'nf-svg';
+    const box = document.createElement('div');
+    box.className = cls;
+    box.setAttribute(part.kind === 'mermaid' ? 'data-mermaid-src' : 'data-svg-src', part.text);
+    const body = document.createElement('div');
+    body.className = cls + '-body';
+    const ph = document.createElement('div');
+    ph.className = cls + '-ph';
+    body.appendChild(ph);
+    box.appendChild(body);
+    parent.appendChild(box);
+  }
 }
 
 // === One-shot DOM enhancement after the shared list first arrives ===
@@ -969,7 +1290,8 @@ export function appendTextWithMentions(parent, text) {
  */
 export function enhanceMentionSpansInDom() {
   const { projects } = mentionListState();
-  if (!projects.length) return;
+  const { todos } = todoListState();
+  if (!projects.length && !todos.length) return;
   const bubbles = document.querySelectorAll('#chat .bubble, .flow-agent-modal .bubble');
   bubbles.forEach((bubble) => {
     const walker = document.createTreeWalker(bubble, NodeFilter.SHOW_TEXT, {
@@ -980,7 +1302,7 @@ export function enhanceMentionSpansInDom() {
       acceptNode(node) {
         const parent = node.parentElement;
         if (!parent) return NodeFilter.FILTER_REJECT;
-        if (parent.closest('pre, code, .voice-block, .mention-tag, .katex, button, svg, script, style')) {
+        if (parent.closest('pre, code, .voice-block, .mention-tag, .todo-tag, .katex, button, svg, script, style')) {
           return NodeFilter.FILTER_REJECT;
         }
         return NodeFilter.FILTER_ACCEPT;
@@ -993,42 +1315,63 @@ export function enhanceMentionSpansInDom() {
     while (node) {
       const textNode = /** @type {Text} */ (node);
       node = walker.nextNode();
-      wrapMentionsInTextNode(textNode, projects);
+      wrapMentionsInTextNode(textNode, projects, todos);
     }
   });
 }
 
 /**
- * Splice every mention hit of ONE text node into spans, right-to-left so
- * earlier hit indices stay valid while splitting.
+ * Splice every mention/todo-reference hit of ONE text node into spans,
+ * right-to-left so earlier hit indices stay valid while splitting.
  *
  * @param {Text} textNode
  * @param {MentionProject[]} projects read-only shared snapshot
+ * @param {MentionTodo[]} [todos] read-only shared snapshot（`#` 引用；缺省 = 不处理）
  */
-function wrapMentionsInTextNode(textNode, projects) {
+function wrapMentionsInTextNode(textNode, projects, todos = []) {
   const data = textNode.data;
-  /** @type {Array<{start: number, canonical: string, len: number}>} */
+  /** @type {Array<{start: number, len: number, canonical?: string, todo?: MentionTodo}>} */
   const hits = [];
   let scan = 0;
   while (scan < data.length) {
-    const idx = data.indexOf('@', scan);
+    const atMention = projects.length ? data.indexOf('@', scan) : -1;
+    const atTodo = todos.length ? data.indexOf('#', scan) : -1;
+    let idx = atMention;
+    let ch = '@';
+    if (atTodo >= 0 && (atMention < 0 || atTodo < atMention)) { idx = atTodo; ch = '#'; }
     if (idx < 0) break;
     const wordStart = idx === 0 || MENTION_WHITESPACE_RE.test(data[idx - 1]);
-    const hit = wordStart ? matchMentionAt(data, idx, projects) : null;
-    if (hit) {
-      hits.push({ start: idx, canonical: hit.canonical, len: hit.len });
-      scan = idx + 1 + hit.len;
+    const hit = !wordStart
+      ? null
+      : (ch === '@' ? matchMentionAt(data, idx, projects) : matchTodoAt(data, idx, todos));
+    if (hit && ch === '#') {
+      const thit = /** @type {{todo: MentionTodo, len: number}} */ (hit);
+      hits.push({ start: idx, len: thit.len, todo: thit.todo });
+      scan = idx + 1 + thit.len;
+    } else if (hit) {
+      const mhit = /** @type {{canonical: string, len: number}} */ (hit);
+      hits.push({ start: idx, len: mhit.len, canonical: mhit.canonical });
+      scan = idx + 1 + mhit.len;
     } else {
       scan = idx + 1;
     }
   }
   for (let h = hits.length - 1; h >= 0; h--) {
-    const { start, canonical, len } = hits[h];
+    const { start, len, canonical, todo } = hits[h];
     textNode.splitText(start + 1 + len); // tail (rest of the node) becomes a sibling
-    const mid = textNode.splitText(start); // mid = the '@<slice>' text node
+    const mid = textNode.splitText(start); // mid = the '@<slice>' / '#<slice>' text node
     const span = document.createElement('span');
-    span.className = 'mention-tag';
-    span.setAttribute('data-project', canonical);
+    if (todo) {
+      span.className = 'todo-tag';
+      span.setAttribute('data-todo', todo.name);
+      span.setAttribute('data-todo-id', todo.id || '');
+      span.setAttribute('data-todo-detail', todo.detail || '');
+      span.setAttribute('role', 'button');
+      span.setAttribute('tabindex', '0');
+    } else {
+      span.className = 'mention-tag';
+      span.setAttribute('data-project', canonical || '');
+    }
     span.textContent = mid.data;
     mid.replaceWith(span);
   }

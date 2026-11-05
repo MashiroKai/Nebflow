@@ -1,0 +1,60 @@
+
+Running 8 tests using 1 worker
+
+  ✓  1 tests/external-inject-visible.spec.mjs:128:5 › leg: liveInject › 判据 ①：每条外部注入都出一条注入气泡行（改前 5 条零行） (175ms)
+  ✘  2 tests/external-inject-visible.spec.mjs:137:5 › leg: liveInject › 判据 ②③：来源标识 + 一句话摘要 + 完整正文可展开 (164ms)
+  ✓  3 tests/external-inject-visible.spec.mjs:171:5 › leg: liveInject › 蓝而不绿：注入泡底色与用户绿泡底色不同（沿用 --sapphire tint，零新色值） (210ms)
+  ✓  4 tests/external-inject-visible.spec.mjs:193:5 › leg: liveInject › 判据 ④：刷新后（历史恢复腿）读数与 live 腿逐项相同 (187ms)
+  ✓  5 tests/external-inject-visible.spec.mjs:128:5 › leg: replayBackend › 判据 ①：每条外部注入都出一条注入气泡行（改前 5 条零行） (154ms)
+  ✘  6 tests/external-inject-visible.spec.mjs:137:5 › leg: replayBackend › 判据 ②③：来源标识 + 一句话摘要 + 完整正文可展开 (127ms)
+  ✓  7 tests/external-inject-visible.spec.mjs:171:5 › leg: replayBackend › 蓝而不绿：注入泡底色与用户绿泡底色不同（沿用 --sapphire tint，零新色值） (159ms)
+  ✓  8 tests/external-inject-visible.spec.mjs:193:5 › leg: replayBackend › 判据 ④：刷新后（历史恢复腿）读数与 live 腿逐项相同 (195ms)
+
+
+  1) tests/external-inject-visible.spec.mjs:137:5 › leg: liveInject › 判据 ②③：来源标识 + 一句话摘要 + 完整正文可展开 ─
+
+    Error: expect(received).toBe(expected) // Object.is equality
+
+    Expected: "[merge-queue] delegate \"alpha\" — its merge membership was closed as OWNER-GONE: no live delivery channel after restart."
+    Received: null
+
+      153 |       const bodies = EXT_ROWS.filter(r => r.injected).map(r => r.text);
+      154 |       c.rows.forEach((r, i) => {
+    > 155 |         expect(r.summary).toBe(firstBodyLine(bodies[i]));
+          |                           ^
+      156 |         expect(r.summaryVisible).toBe(true);
+      157 |         expect(r.summaryIsNextSibling).toBe(true);
+      158 |         expect(r.injected).toBe(true);
+        at forEach (/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-external-inject-visible/tests/external-inject-visible.spec.mjs:155:27)
+        at /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-external-inject-visible/tests/external-inject-visible.spec.mjs:154:14
+
+    Error Context: test-results/external-inject-visible-le-d9190-ct-判据-②③：来源标识-一句话摘要-完整正文可展开/error-context.md
+
+    Error Context: test-results/external-inject-visible-le-d9190-ct-判据-②③：来源标识-一句话摘要-完整正文可展开/error-context.md
+
+  2) tests/external-inject-visible.spec.mjs:137:5 › leg: replayBackend › 判据 ②③：来源标识 + 一句话摘要 + 完整正文可展开 
+
+    Error: expect(received).toBe(expected) // Object.is equality
+
+    Expected: "[merge-queue] delegate \"alpha\" — its merge membership was closed as OWNER-GONE: no live delivery channel after restart."
+    Received: null
+
+      153 |       const bodies = EXT_ROWS.filter(r => r.injected).map(r => r.text);
+      154 |       c.rows.forEach((r, i) => {
+    > 155 |         expect(r.summary).toBe(firstBodyLine(bodies[i]));
+          |                           ^
+      156 |         expect(r.summaryVisible).toBe(true);
+      157 |         expect(r.summaryIsNextSibling).toBe(true);
+      158 |         expect(r.injected).toBe(true);
+        at forEach (/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-external-inject-visible/tests/external-inject-visible.spec.mjs:155:27)
+        at /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-external-inject-visible/tests/external-inject-visible.spec.mjs:154:14
+
+    Error Context: test-results/external-inject-visible-le-7bd51-nd-判据-②③：来源标识-一句话摘要-完整正文可展开/error-context.md
+
+    Error Context: test-results/external-inject-visible-le-7bd51-nd-判据-②③：来源标识-一句话摘要-完整正文可展开/error-context.md
+
+  2 failed
+    tests/external-inject-visible.spec.mjs:137:5 › leg: liveInject › 判据 ②③：来源标识 + 一句话摘要 + 完整正文可展开 ──
+    tests/external-inject-visible.spec.mjs:137:5 › leg: replayBackend › 判据 ②③：来源标识 + 一句话摘要 + 完整正文可展开 
+  6 passed (4.3s)
+EXIT=1

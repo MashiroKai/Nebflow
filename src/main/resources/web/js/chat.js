@@ -13,7 +13,7 @@ import { voiceEnabled } from './featureFlags.js';
 // 今天仍为纯时钟（formatHm），更早按本地日历日加日期层（昨天/星期X/M月D日/跨年）。
 import { formatHm, formatFooterTime, toggleTimeFormat, bindTimeToggle } from './timeFormat.js';
 import { activeView, setActiveView, findViewBySessionId, chatViews } from './chatView.js';
-import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, buildToolDetail, buildDelegatePromptHtml, attachToolClick, mountToolCardBody, delegatePromptRaw, foldToolCardMedia, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode, createMsgCopyButton, createIconsIn, statusIcon, isNearBottom, shouldFollowBottom, NEAR_BOTTOM_PX, deviceTagHtml } from './utils.js';
+import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, appendUserTextWithFences, buildToolDetail, buildDelegatePromptHtml, attachToolClick, mountToolCardBody, delegatePromptRaw, foldToolCardMedia, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode, createMsgCopyButton, createIconsIn, statusIcon, isNearBottom, shouldFollowBottom, NEAR_BOTTOM_PX, deviceTagHtml } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
 import { t } from './i18n.js';
 // msgchip-provenance 批（2026-11-01）：渠道/平台来源注记剥离单点（牌窗与气泡共用）。
@@ -555,8 +555,9 @@ export function renderUserBubble(text, attachments, timestamp, opts) {
     const t = document.createElement('div');
     // Plain-text face with mention spans (mention-render batch): identical
     // single-text-node output when nothing matches — user text never
-    // enters markdown.
-    appendTextWithMentions(t, text);
+    // enters markdown. rich-render 批（2026-11-05 作者令第 1 条）：唯一放行的
+    // 结构是**已闭合的图围栏**（```mermaid / ```svg），其余仍逐字纯文本。
+    appendUserTextWithFences(t, text);
     bubble.appendChild(t);
     (composite || row).appendChild(bubble);
   }
@@ -928,7 +929,9 @@ export function appendAgentText(agentId, text) {
     { bubble: a.bubble, chat, snapped: view.stream.scrollSnapped },
     (target) => {
       if (!target.bubble.isConnected) return;
-      target.bubble.innerHTML = renderMarkdownWithMath(target.bubble._nfText || '', true, { cache: false }) + '<span class="cursor"></span>';
+      // stream:true — 这是逐帧重渲的流式快照：图围栏保持代码块，消息收尾腿才出图
+      // （rich-render 批判据，见 utils.js renderMarkdownWithMath 的 opts.stream）。
+      target.bubble.innerHTML = renderMarkdownWithMath(target.bubble._nfText || '', true, { cache: false, stream: true }) + '<span class="cursor"></span>';
       rafScrollChat(target);
     });
 }
@@ -3070,7 +3073,7 @@ function renderAskAttachments(box, attachments, originLabel) {
 
   const head = document.createElement('div');
   head.className = 'ask-attachments-head';
-  head.style.cssText = 'font: 600 11px -apple-system, sans-serif; color: var(--color-text-muted, #888); margin: var(--ds-space-half) 0 var(--ds-space-1);';
+  head.style.cssText = 'font: 600 var(--ds-fs-meta) -apple-system, sans-serif; color: var(--color-text-muted, #888); margin: var(--ds-space-half) 0 var(--ds-space-1);';
   // 标题词位 = 独立 span（文案读数不被折叠控件文本污染）。
   const label = document.createElement('span');
   label.className = 'ask-attachments-head-label';
@@ -3129,7 +3132,7 @@ function renderAskAttachments(box, attachments, originLabel) {
     const foldBtn = document.createElement('button');
     foldBtn.type = 'button';
     foldBtn.className = 'glass-control ask-att-fold-btn';
-    foldBtn.style.cssText = 'font-size: var(--ds-fs-meta); padding: var(--ds-space-half) var(--ds-space-glass-x);';
+    foldBtn.style.cssText = 'font-size: var(--ds-fs-meta); padding: var(--ds-space-half) var(--ds-space-inline-x);';
     foldBtn.setAttribute('aria-expanded', 'false');
     foldBtn.textContent = t('askUser.attFoldTotal', { n: String(fileEntries.length) });
     foldBtn.onclick = () => {
@@ -3224,7 +3227,7 @@ export function renderAskUser(items, askSessionId, agentName, requestId, source,
     const badge = document.createElement('div');
     badge.className = 'ask-user-source';
     badge.textContent = badgeLabel;
-    badge.style.cssText = 'font: 600 11px -apple-system, sans-serif; color: var(--color-text-muted, #888); margin-bottom: var(--ds-space-2); padding: var(--ds-space-half) var(--ds-space-2); background: var(--color-surface, rgba(255,255,255,0.06)); border-radius: var(--ds-radius-chip); display: inline-block;';
+    badge.style.cssText = 'font: 600 var(--ds-fs-meta) -apple-system, sans-serif; color: var(--color-text-muted, #888); margin-bottom: var(--ds-space-2); padding: var(--ds-space-half) var(--ds-space-2); background: var(--color-surface, rgba(255,255,255,0.06)); border-radius: var(--ds-radius-chip); display: inline-block;';
     bubble.appendChild(badge);
   }
   appendChatRow(chat, row);
@@ -3963,7 +3966,7 @@ export function appendAskAnswer(delta) {
       if (!target.bubble.isConnected) return;
       const contentEl = target.bubble.querySelector('div:not(.ask-label)');
       if (contentEl) {
-        contentEl.innerHTML = renderMarkdownWithMath(target.bubble._nfText || '', true, { cache: false }) + '<span class="cursor"></span>';
+        contentEl.innerHTML = renderMarkdownWithMath(target.bubble._nfText || '', true, { cache: false, stream: true }) + '<span class="cursor"></span>';
       }
       rafScrollChat(target);
     });
@@ -4264,18 +4267,18 @@ function streamRenderPlan(contentEl, text, parseVoice, final, mark) {
     // Not safely splittable — drop the cache and do the honest full render.
     reset();
     st.seg = seg;
-    return { mode: 'full', html: renderMarkdownWithMath(text, parseVoice, { cache: false }) };
+    return { mode: 'full', html: renderMarkdownWithMath(text, parseVoice, { cache: false, stream: true }) };
   }
   if (split < st.closedLen) reset();  // text shrank ⇒ new message
   st.seg = seg;
   if (split > st.closedLen) {
-    st.chunks.push({ len: split, html: renderMarkdownWithMath(text.slice(st.closedLen, split), parseVoice, { cache: false }) });
+    st.chunks.push({ len: split, html: renderMarkdownWithMath(text.slice(st.closedLen, split), parseVoice, { cache: false, stream: true }) });
     st.closedLen = split;
   }
   const append = [];
   for (let i = st.rendered; i < st.chunks.length; i++) append.push(st.chunks[i].html);
   st.rendered = st.chunks.length;
-  return { mode: 'incr', append, tail: renderMarkdownWithMath(text.slice(split), parseVoice, { cache: false }), st };
+  return { mode: 'incr', append, tail: renderMarkdownWithMath(text.slice(split), parseVoice, { cache: false, stream: true }), st };
 }
 
 // ── §③ 思考窗硬上限（stream-919-unify 批 · 作者 2026-10-07 10:10 澄清令）──────

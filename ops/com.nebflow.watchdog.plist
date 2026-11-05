@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.nebflow.watchdog — Tier-2 外部看门狗调度作业（2026-11-05 运维批，作者裁定「挂 launchd」）
+  权威副本: stand 仓 ops/com.nebflow.watchdog.plist → live 部署位 ~/Library/LaunchAgents/com.nebflow.watchdog.plist
+  安装:   cp ops/com.nebflow.watchdog.plist ~/Library/LaunchAgents/ && launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.nebflow.watchdog.plist
+  卸载:   launchctl bootout gui/$UID/com.nebflow.watchdog && rm ~/Library/LaunchAgents/com.nebflow.watchdog.plist
+  观测:   launchctl print gui/$UID/com.nebflow.watchdog | egrep 'state|runs|last exit'
+  日志:   脚本自写 ~/.stand/logs/watchdog.log（本作业 stdout/stderr 丢弃，与 com.nebflow.memsample 同例）
+
+  环境变量是硬前提（脚本缺省 PORT=8080 / NF_HOME=~/.nebflow —— 那是已弃用的另一套根，
+  照缺省跑会去探 8080 并调用不存在的重启脚本路径）:
+    NEBFLOW_WD_PORT=6138              stand 实例端口
+    NEBFLOW_WD_NF_HOME=~/.stand       stand 根（$NF_HOME/bin/nebflow-restart.sh 垫片 + $NF_HOME/logs/*）
+    NEBFLOW_WD_FAIL_THRESHOLD=999999  观察态（只报不动）：脚本 v2 把升级阈值环境变量化
+                                      （nebflow-watchdog.sh:63），置到不可达 ⇒ 失败只记
+                                      「健康检查失败 #N HTTP=...」行，永不进 Stage1/Stage2。
+                                      观察期过后**改回 3**（或删该键 = 脚本缺省 3）并
+                                      `launchctl bootout` + `bootstrap` 重载，自动恢复才算开启。
+  StartInterval=120 取脚本自身设计节拍（nebflow-watchdog.sh 头注释「launchd 每 120s 调度」），
+  不是猜的：健康探针 curl -m 10、失聪鉴别窗 600s、限速 2/h 都按该节拍推的。
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.nebflow.watchdog</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>/Users/kaiyu/.stand/bin/nebflow-watchdog.sh</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>NEBFLOW_WD_PORT</key>
+		<string>6138</string>
+		<key>NEBFLOW_WD_NF_HOME</key>
+		<string>/Users/kaiyu/.stand</string>
+		<key>NEBFLOW_WD_FAIL_THRESHOLD</key>
+		<string>999999</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StartInterval</key>
+	<integer>120</integer>
+	<key>WorkingDirectory</key>
+	<string>/Users/kaiyu</string>
+	<key>StandardOutPath</key>
+	<string>/dev/null</string>
+	<key>StandardErrorPath</key>
+	<string>/dev/null</string>
+</dict>
+</plist>

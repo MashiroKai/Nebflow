@@ -6,7 +6,7 @@ import io.circe.parser.parse
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.core.AtomicJson
-import nebflow.shared.{Config, ImageGenConfig, PathUtil}
+import nebflow.shared.{Config, ImageGenConfig, JevConfig, PathUtil}
 
 object ConfigService:
 
@@ -334,8 +334,12 @@ object ConfigService:
    */
   def setJevSection(values: Map[String, Json]): IO[Either[String, Unit]] =
     val unknown = values.keySet.diff(JEV_WRITABLE_KEYS.toSet)
+    val valueBearing = values.keySet.filter(jevKeyIsValueBearing)
     if unknown.nonEmpty then
       IO.pure(Left(s"jev section write refused — unknown key(s): ${unknown.toList.sorted.mkString(", ")}"))
+    else if valueBearing.nonEmpty then
+      // 🔴 本面不收凭据**值**（契约 §C.6）：值型键即便混进白名单也拒写。
+      IO.pure(Left(s"jev section write refused — value-bearing key(s) not allowed on this face: ${valueBearing.toList.sorted.mkString(", ")}"))
     else if values.isEmpty then IO.pure(Left("jev section write refused — no keys given"))
     else
       writeLocked {
@@ -369,9 +373,25 @@ object ConfigService:
    * 「本面不收凭据值」的机械表达（缺键 ⇒ 写入被拒）。
    * 🔴 零超时（2026-10-19 作者拍板）：`timeoutMs` 已移出白名单——分配链的
    * wall-clock 预算拆除后**不留配置位**，越界键 400（防超时位静默回归）。
+   * 🔴 `providers` 在册（jev-imagegen-align-llm 批 2026-11-02）：多 provider
+   * 事实源整块对象写入；`setJevSection` 逐键 merge 语义对它天然成立（本批零改）。
    */
   private val JEV_WRITABLE_KEYS: List[String] =
-    List("enabled", "provider", "endpoint", "model", "keyRef", "choiceHighBasePolicy")
+    List("enabled", "provider", "endpoint", "model", "keyRef", "choiceHighBasePolicy", "providers")
+
+  /**
+   * `jev` 节**值型凭据**键的显式黑名单（jev-imagegen-align-llm 批 2026-11-02，
+   * 契约 §C.6）——白名单之外的第二道结构护栏：即便将来有人把某个值型键误加进
+   * [[JEV_WRITABLE_KEYS]]，本闸仍拒绝它落盘。命中的键名不分大小写与前后缀
+   * 变体（`apiKey`/`key`/`token`/`value`/`secret`），比较前统一小写去分隔符。
+   */
+  private val JEV_VALUE_KEY_DENYLIST: Set[String] =
+    Set("apikey", "key", "token", "value", "secret")
+
+  /** 键名归一（小写、去 `_`/`-`）——denylist 判据的唯一实现点。 */
+  private def jevKeyIsValueBearing(key: String): Boolean =
+    JEV_VALUE_KEY_DENYLIST.contains(key.toLowerCase.replaceAll("[_\\-]", ""))
+
 
   /** 只读回程：过滤掉任何可能含凭据值的键（本面当前无此类键，作为结构性护栏）。 */
   def jevWritableKeys: List[String] = JEV_WRITABLE_KEYS
@@ -598,6 +618,59 @@ object ConfigService:
    * [[nebflow.llm.imagegen.ImageGenService.readSecret]] 的腿关判据逐字同源，
    * 面板显示与引擎判定永不漂移）。只 stat/读空判，不回传值。 */
   private def imagegenKeyConfigured(keyRef: Option[String]): Boolean =
+    keyRef.filter(_.trim.nonEmpty).exists { name =>
+      try
+        val p = PathUtil.dataRoot / "secrets" / name.trim
+        os.exists(p) && os.read(p).trim.nonEmpty
+      catch case _: Exception => false
+    }
+
+  /**
+   * JeV 设置面状态投影（`GET /api/config/jev` 的载荷；jev-imagegen-align-llm 批
+   * 2026-11-02 契约 §B.4）。与 [[imagegenStatus]] **逐字段同构**，理由同源：设置
+   * 面板今日读的是 `GET /api/config` 的打码串（`parsedConfig.jev`），拿不到
+   * **key 在位性**，撑不起卡片上的「已保存/未配置」徽标。
+   *
+   *  - `configured` = `jev` 节可解码即真（半节/空节亦真，与 `imagegen` 同口径）；
+   *  - `keyConfigured` / `providers.<name>.keyConfigured` = **只在位性**（secret
+   *    存在且非空，[[jevKeyConfigured]] 单点）；
+   *  - `keyRef` / `providers.<name>.keyRef` 是 secrets 目录里的**名**（指针，
+   *    非值），逐字回传——与 `GET /api/config` 的既有打码口径一致（指针不打码）。
+   *
+   * 🔴 凭据纪律：投影**永不回传 key 值**。本函数不读值（只 stat + 读空判），
+   * 不打任何日志——值的唯一可能位置是 secrets 文件本身。
+   */
+  def jevStatus: IO[Json] = IO.blocking {
+    val raw = if os.exists(configPath) then os.read(configPath) else "{}"
+    val cfg = parse(raw).toOption
+      .flatMap(_.hcursor.downField(JEV_SECTION).as[JevConfig].toOption)
+    val providers = cfg.flatMap(_.providers).getOrElse(Map.empty)
+    val providerJson = Json.fromFields(providers.map { case (name, pc) =>
+      name ->
+        Json.obj(
+          "type" -> pc.`type`.asJson,
+          "endpoint" -> pc.endpoint.asJson,
+          "model" -> pc.model.asJson,
+          "keyRef" -> pc.keyRef.asJson,
+          "keyConfigured" -> jevKeyConfigured(pc.keyRef).asJson
+        )
+    })
+    Json.obj(
+      "configured" -> cfg.isDefined.asJson,
+      "enabled" -> cfg.exists(_.isEnabled).asJson,
+      "provider" -> cfg.flatMap(_.provider).asJson,
+      "endpoint" -> cfg.flatMap(_.endpoint).asJson,
+      "model" -> cfg.flatMap(_.model).asJson,
+      "keyRef" -> cfg.flatMap(_.keyRef).asJson,
+      "keyConfigured" -> jevKeyConfigured(cfg.flatMap(_.keyRef)).asJson,
+      "providers" -> providerJson
+    )
+  }
+
+  /** JeV keyRef 指针的**在位性**判定（存在且非空即已配——与
+   * [[nebflow.llm.decision.JevSettings.readSecretToken]] 的腿关判据同源：缺件/
+   * 空串/不可读一律 false）。只 stat/读空判，不回传值、不打日志。 */
+  private def jevKeyConfigured(keyRef: Option[String]): Boolean =
     keyRef.filter(_.trim.nonEmpty).exists { name =>
       try
         val p = PathUtil.dataRoot / "secrets" / name.trim

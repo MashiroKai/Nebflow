@@ -22,7 +22,7 @@ if (document.documentElement.dataset.nfEmbedded === '1') {
   // Tab title follows the same uppercase brand-token rule as initBranding().
   document.title = `${brand.lowerName.toUpperCase()} (embedded)`;
   document.addEventListener('DOMContentLoaded', () => {
-    document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font:13px -apple-system,BlinkMacSystemFont,sans-serif;color:#888;padding:var(--ds-space-6);text-align:center">Stand 预览已停止——该页面试图在应用内嵌套启动（已防止无限递归）。</div>';
+    document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font:var(--ds-fs-body) -apple-system,BlinkMacSystemFont,sans-serif;color:#888;padding:var(--ds-space-6);text-align:center">Stand 预览已停止——该页面试图在应用内嵌套启动（已防止无限递归）。</div>';
   });
   throw new Error('[nf] embedded context — boot refused (anti-recursion guard)');
 }
@@ -31,17 +31,25 @@ if (document.documentElement.dataset.nfEmbedded === '1') {
 // 验证脚本只能从产品自己的模块图取到**同一实例**，否则键盘闸永远只能验源树。
 installProbeSurface();
 import { LS_SESSIONS_KEY, LS_MODEL_INFO_KEY } from './state.js';
-import { initSpinner, initMarkdown, smartScroll, renderMarkdownWithMath, isNearBottom, shouldFollowBottom, initScrollFollow, refreshScrollPill, countsAsRealMessage, setMentionListProvider, enhanceMentionSpansInDom, bgHealthNorm } from './utils.js';
+import { initSpinner, initMarkdown, smartScroll, renderMarkdownWithMath, isNearBottom, shouldFollowBottom, initScrollFollow, refreshScrollPill, countsAsRealMessage, setMentionListProvider, setTodoListProvider, enhanceMentionSpansInDom, bgHealthNorm } from './utils.js';
 // mermaid-md batch (2026-10-23): ONE global hydration point — every markdown
 // face that shares renderMarkdownWithMath gets its ```mermaid placeholders
 // hydrated by this observer (chat bubbles, flow/report cards, popups). The
 // canvas md viewer additionally hydrates explicitly in viewers/markdown.js.
 import { armMermaidAutoHydrate } from './mermaidRenderer.js';
+// rich-render 批（2026-11-05 作者令 08:53/08:55）：```svg 与按需装载的 KaTeX 走
+// 同一套围栏水合（fenceKit），同样在一处接线。
+import { armSvgFenceHydrate } from './svgFence.js';
+import { armMathHydrate } from './mathRender.js';
 // human-face batch (2026-10-30): ```human 卡内 [[词条]] 短形引用 → hover 气泡
 // （termTip.js 共享件，API 兜底腿）。同一 body 级 MutationObserver 先例。
 import { armTermCiteAutoHydrate } from './termCite.js';
 import { registerActionableProvider, notifyActionableChanged } from './actionable.js';
 import { getProjectsSnapshot, getProjectsListGen, preheatProjects, onProjectsArrival } from './mentionComplete.js';
+// 待办引用面（待办结构化批 2026-11-05）：`#` 待办引用补全 provider + 渲染侧待办
+// 清单 provider。两个模块都在这里 import 一次，引擎与渲染从此各有一份真源。
+import './todoComplete.js';
+import { todoStore } from './todoStore.js';
 import { initServiceWorker } from './swReg.js'; // console-load-perf 批：温访问秒开注册器（load 后注册，降级零影响）
 import { initHotStampWatch } from './hotStamp.js'; // 台账 #919：热更新地基——asset stamp 轮询自愈（端点缺席 = 静默空转）
 import { connect, onMessage, sendWs, onReconnect } from './ws.js';
@@ -344,6 +352,8 @@ if (typeof marked !== 'undefined') initMarkdown();
 if (typeof lottie !== 'undefined') initSpinner();
 if (typeof lucide !== 'undefined') lucide.createIcons();
 armMermaidAutoHydrate(); // mermaid-md batch: global ```mermaid placeholder hydration
+armSvgFenceHydrate(); // rich-render batch: ```svg fence hydration
+armMathHydrate(); // rich-render batch: on-demand KaTeX hydration (.nf-math)
 armTermCiteAutoHydrate(); // human-face batch: global ```human card term-cite linkify
 
 // Mention-render batch (2026-09-27): the message renderer reads the shared
@@ -355,6 +365,20 @@ armTermCiteAutoHydrate(); // human-face batch: global ```human card term-cite li
 setMentionListProvider(() => ({ projects: getProjectsSnapshot(), gen: getProjectsListGen() }));
 preheatProjects();
 onProjectsArrival(() => { enhanceMentionSpansInDom(); });
+
+// `#` 待办引用（待办结构化批 2026-11-05）：同一个渲染管线读待办清单，代次由
+// todoStore 的每次变更自增（LRU 键含代次 ⇒ 待办改名/完成/新建后不会命中旧 HTML）。
+// 首次到达时同样跑一次 DOM 补齐，让清单未到时已画成纯文本的气泡长出 chip。
+let todoRefGen = 0;
+let todoArrivalEnhanced = false;
+setTodoListProvider(() => ({ todos: todoStore.openItems(), gen: todoRefGen }));
+todoStore.subscribe(() => {
+  todoRefGen++;
+  if (!todoArrivalEnhanced && todoStore.openItems().length > 0) {
+    todoArrivalEnhanced = true;
+    enhanceMentionSpansInDom();
+  }
+});
 
 // ---------- 3. Register WS message handlers ----------
 

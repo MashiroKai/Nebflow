@@ -29,6 +29,11 @@ import {
   BASE_RECONNECT_DELAY,
   MAX_RECONNECT_DELAY,
 } from './wsBackoff.js';
+// 弹窗回跳批（2026-11-05 作者报障「老是有弹窗然后重新进控制台」）：整页重座
+// 导航目标解析——卡窗契约（`card-window=1&path&title`）在重座全程守恒，独立
+// 卡窗不被重座升级成整控制台。纯逻辑、零依赖叶子（零环），判据见
+// tests/reseat-target.test.mjs。
+import { readReseatContext, resolveReseatTarget } from './reseatTarget.js';
 
 // Long-lived token cookie name follows the brand namespace. This is one of
 // the legacy credential copies the B' hook retires (purgeLongLivedCopies
@@ -669,6 +674,21 @@ function showTicketEntry() {
 // have no relay (login-config absent) and keep the existing fall-through to
 // the login gate. Once-per-page-life guard (sessionStorage): a persistently
 // failing host must not turn this into a reload loop.
+/**
+ * 整页重座目标（弹窗回跳批 2026-11-05）：三条重进腿（自愈重座 / 环回近路 /
+ * LAN 近路）共用的单一出口。卡窗页（独立窗 popup）⇒ 补回卡窗契约；主窗 ⇒
+ * 逐字返回原 URL（零回归面）。任何异常都退回原 URL（绝不让诊断逻辑拦重座）。
+ * @param {string} target consoleUrl / 本机票 URL
+ * @returns {string}
+ */
+function reseatTarget(target) {
+  try {
+    return resolveReseatTarget(target, readReseatContext(location.search), location.href);
+  } catch (_) {
+    return target;
+  }
+}
+
 async function remintHostSessionAndReload() {
   // #522 键盘点收尾：GUARD 原 `nebflow_ws_remint_at` 裸字面随品牌迁移失效——
   // 与 #500 同族迁 `key()`（branding.js 单一真源）。sessionStorage 30s 防
@@ -706,7 +726,8 @@ async function remintHostSessionAndReload() {
     if (!mint.ok) return false;
     const consoleUrl = (await mint.json())?.consoleUrl;
     if (typeof consoleUrl !== 'string' || consoleUrl === '') return false;
-    window.location.href = consoleUrl;
+    // 弹窗回跳批：卡窗页重座后仍是卡窗（见 reseatTarget 注）。
+    window.location.href = reseatTarget(consoleUrl);
     return true;
   } catch (_) {
     return false;
@@ -1053,7 +1074,7 @@ async function attemptLoopbackNearPath() {
     seg.totalMs = stamp();
     nearPathEvent('hit', probeLeg === 'pixel' ? 'pixel' : 'fetch', port);
     noteNearPathTimings(seg);
-    window.location.href = `http://${probeHost}:${port}/?ticket=${encodeURIComponent(ticket)}`;
+    window.location.href = reseatTarget(`http://${probeHost}:${port}/?ticket=${encodeURIComponent(ticket)}`);
     return true;
   } catch (_) {
     return fail('nearpath_error');
@@ -1101,7 +1122,7 @@ async function attemptLanNearPathJump() {
     if (typeof consoleUrl !== 'string' || consoleUrl === '') return false;
     const ticket = new URL(consoleUrl, location.href).searchParams.get('ticket');
     if (!ticket) return false;
-    window.location.href = `${near.base}/?ticket=${encodeURIComponent(ticket)}`;
+    window.location.href = reseatTarget(`${near.base}/?ticket=${encodeURIComponent(ticket)}`);
     return true;
   } catch (_) {
     return false;

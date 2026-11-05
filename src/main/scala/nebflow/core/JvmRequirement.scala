@@ -7,8 +7,12 @@ package nebflow.core
  * `nebflow.*` and touches no Java 21+ API. That is the precondition for it to
  * be usable at all — it has to load and print its message on an *older* JVM,
  * i.e. exactly on the JVMs it is there to reject. Class-init must not drag in
- * the library surface (logback, http4s, pekko, …) whose class files or
+ * the library surface (logback, http4s, …) whose class files or
  * multi-release entries may themselves need a newer runtime.
+ *
+ * Note: Pekko was listed in this surface until 2026-11-05; its (never-used)
+ * dependency declaration has been removed — Pekko 依赖已于 2026-11-05 移除 —
+ * so it is no longer part of the dependency surface this gate reasons about.
  *
  * Detection order (fail-loud, never fail-open):
  *   1. `java.specification.version` — `"1.8"` → 8, `"1.N"` → N, otherwise the

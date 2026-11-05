@@ -192,7 +192,7 @@ const activate = async (page, tabId) => { await page.evaluate((id) => document.q
   ok('C2b 短标题零截断：插件 全显示（修前 6.9px/24px 自然宽）', mPlugins.truncated === false, `w=${mPlugins.w}`);
   ok('C2c 短标题零截断：文档图谱 全显示（修前 21.8px/48px 自然宽）', mGraph.truncated === false, `w=${mGraph.w}`);
 
-  ok('C4 高度跨签种一致（原「与 pop 钮解耦」：#canvas-pop-btn 随 Canvas 改造批⑤ 2026-10-31 退役，pop 条件随删；三面高度仍全等）',
+  ok('C4 高度跨签种一致（件1 回归批 2026-11-05：pop 钮以 .canvas-pop-btn 回位胶囊右座，仍是 26px 小钮档 ⇒ 与 36px 胶囊高解耦，三面高度仍全等）',
     mFile.h === mPlugins.h && mFile.h === mGraph.h,
     `file=${mFile.h} plugins=${mPlugins.h} graph=${mGraph.h}`);
 

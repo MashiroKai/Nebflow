@@ -1104,7 +1104,7 @@ body.mobile-layer .mh-tpanel .tp-hd {
   display: flex;
   align-items: center;
   gap: var(--ds-space-2);
-  padding: 11px var(--ds-space-2) 7px 13px;
+  padding: var(--ds-space-3) var(--ds-space-2) var(--ds-space-2) var(--ds-space-3);
   font-size: var(--mfs-callout);
   font-weight: 600;
   color: var(--color-frame-text-bright, var(--color-frame-text));
@@ -1145,7 +1145,7 @@ body.mobile-layer .mh-tpanel .tp-x {
 body.mobile-layer .mh-tpanel .tp-x svg { width: 13px; height: 13px; }
 body.mobile-layer .mh-tpanel .tp-bd {
   overflow-y: auto;
-  padding: 0 var(--ds-space-glass-x) var(--ds-space-3);
+  padding: 0 var(--ds-space-inline-x) var(--ds-space-3);
   display: flex;
   flex-direction: column;
   gap: var(--ds-space-1h);
@@ -1157,20 +1157,20 @@ body.mobile-layer .mh-tpanel .tp-grp {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--color-frame-text-muted);
-  padding: 7px var(--ds-space-1) 1px;
+  padding: var(--ds-space-2) var(--ds-space-1) var(--ds-space-hair);
   flex: none;
 }
 body.mobile-layer .mh-tpanel .tp-empty {
   font-size: var(--mfs-min);
   color: var(--color-frame-text-muted);
-  padding: 18px var(--ds-space-1h);
+  padding: var(--ds-space-5) var(--ds-space-1h);
   text-align: center;
 }
 body.mobile-layer .mh-tpanel .tp-card {
   background: var(--glass-control-bg);
   border: 1px solid var(--glass-control-border);
   border-radius: var(--ds-radius-xl);
-  padding: var(--ds-space-2) var(--ds-space-glass-x);
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
   flex: none;
 }
 body.mobile-layer .mh-tpanel .tp-card.tp-static { cursor: default; }
@@ -1220,7 +1220,7 @@ body.mobile-layer .mh-tpanel .tp-members {
 body.mobile-layer .mh-tpanel .tp-mem {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--ds-space-1h);
   font-size: var(--mfs-min);
   color: var(--color-text-muted);
   min-width: 0;
@@ -1350,7 +1350,7 @@ body.mobile-layer #search-modal .search-result {
   background: var(--glass-control-bg);
   border: 1px solid var(--glass-control-border);
   border-radius: var(--ds-radius-xl);
-  padding: var(--ds-space-2) var(--ds-space-glass-x);
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
   margin-bottom: var(--ds-space-1h);
 }
 /* 登录墙卡：内容面宽安全边距。 */
@@ -1364,7 +1364,7 @@ body.mobile-layer .mh-rd-grp {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--color-frame-text-muted);
-  padding: 7px var(--ds-space-1) 1px;
+  padding: var(--ds-space-2) var(--ds-space-1) var(--ds-space-hair);
   flex: none;
 }
 body.mobile-layer .reminder-row.disabled { opacity: 0.72; }
@@ -1420,10 +1420,10 @@ body.mobile-layer #bg-dropdown .bg-task-row {
 /* 面板树批（2026-10-29 ①）：手机密度行的派生树缩进——双类锚压过上行单类密度
    简写；缩进宽档（18px > 基线 12px）+ 左引导竖线（chat.css 桌面形 2px 原样生效）。 */
 body.mobile-layer #bg-dropdown .bg-task-row.bg-task-row-child {
-  padding-left: 18px;
+  padding-left: var(--ds-space-5);
 }
 body.mobile-layer #bg-dropdown .bg-dropdown-empty {
-  padding: var(--ds-space-glass-x) var(--ds-space-3);
+  padding: var(--ds-space-block-y) var(--ds-space-3);
 }
 /* 面板分区批（2026-10-29 ③ · 作者报障「后台任务和子智能体混在一起」）：手机端
    两节升格为**两张内嵌卡**——玻璃载体（morph 形变面）内各节独立卡面（边界 +
@@ -1485,7 +1485,7 @@ body.mobile-layer #memory-modal .ap-pane {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--ds-space-1) var(--ds-space-1) var(--ds-space-glass-x);
+  padding: var(--ds-space-1) var(--ds-space-1) var(--ds-space-block-y);
   scrollbar-width: none;
 }
 body.mobile-layer #memory-modal .ap-pane::-webkit-scrollbar { display: none; }
@@ -1500,7 +1500,7 @@ body.mobile-layer .mh-memory-edit {
   margin-left: auto;
   height: 26px;
   padding: 0 var(--ds-space-3);
-  border-radius: 13px;
+  border-radius: var(--ds-radius-card-md);
   border: 1px solid var(--glass-control-border);
   background: var(--glass-control-bg);
   color: var(--color-frame-text);
@@ -1513,7 +1513,7 @@ body.mobile-layer .mh-memory-cards {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--ds-space-1h) var(--ds-space-glass-x) var(--ds-space-3);
+  padding: var(--ds-space-1h) var(--ds-space-inline-x) var(--ds-space-3);
   scrollbar-width: none;
   display: flex;
   flex-direction: column;
@@ -1524,7 +1524,7 @@ body.mobile-layer .mh-memory-card {
   background: var(--glass-control-bg);
   border: 1px solid var(--glass-control-border);
   border-radius: var(--ds-radius-xl);
-  padding: 9px 11px;
+  padding: var(--ds-space-2) var(--ds-space-3);
 }
 body.mobile-layer .mh-memory-card-title {
   font-size: var(--mfs-callout);
@@ -1535,7 +1535,7 @@ body.mobile-layer .mh-memory-card-title {
   white-space: nowrap;
 }
 body.mobile-layer .mh-memory-card-excerpt {
-  margin-top: 3px;
+  margin-top: var(--ds-space-1);
   font-size: var(--mfs-sub);
   line-height: 1.5;
   color: var(--color-text-muted);
@@ -1546,7 +1546,7 @@ body.mobile-layer .mh-memory-card-excerpt {
   word-break: break-word;
 }
 body.mobile-layer .mh-memory-card-foot {
-  margin-top: 5px;
+  margin-top: var(--ds-space-1h);
   font-size: var(--mfs-min);
   color: var(--color-frame-text-muted);
   font-variant-numeric: tabular-nums;
@@ -2169,7 +2169,7 @@ body.mobile-layer .mf-stack-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: calc(16px + env(safe-area-inset-top, 0px)) var(--ds-space-4) var(--ds-space-glass-x);
+  padding: calc(16px + env(safe-area-inset-top, 0px)) var(--ds-space-4) var(--ds-space-block-y);
 }
 body.mobile-layer .mf-stack-count {
   font-size: var(--mfs-min);
@@ -2235,7 +2235,7 @@ body.mobile-layer .mf-deck-top {
   align-items: center;
   gap: var(--ds-space-2);
   height: 46px;
-  padding: 0 var(--ds-space-glass-x) 0 14px;
+  padding: 0 var(--ds-space-inline-x) 0 14px;
   border-bottom: 1px solid var(--th-border);
 }
 body.mobile-layer .mf-deck-icon {
@@ -2290,7 +2290,7 @@ body.mobile-layer .mf-deck-thumb {
   overflow: hidden;
   background: var(--color-surface);
 }
-body.mobile-layer .mf-deck-thumb .ln { height: 7px; border-radius: 3.5px; background: var(--bar-2); margin: 0 0 9px; }
+body.mobile-layer .mf-deck-thumb .ln { height: 7px; border-radius: var(--ds-radius-badge); background: var(--bar-2); margin: 0 0 var(--ds-space-2); }
 body.mobile-layer .mf-deck-thumb .ln.strong { height: 8px; background: var(--bar-1); }
 body.mobile-layer .mf-deck-thumb .ln.w30 { width: 30%; } body.mobile-layer .mf-deck-thumb .ln.w40 { width: 40%; }
 body.mobile-layer .mf-deck-thumb .ln.w55 { width: 55%; } body.mobile-layer .mf-deck-thumb .ln.w70 { width: 70%; }
@@ -2328,14 +2328,14 @@ body.mobile-layer .mf-deck-thumb .thumb-page {
 body.mobile-layer .mf-deck-thumb .thumb-page .ln { height: 6px; margin-bottom: var(--ds-space-2); }
 body.mobile-layer .mf-deck-thumb .thumb-flow { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
 body.mobile-layer .mf-deck-thumb .thumb-flow svg { width: 78%; height: 68%; color: var(--color-frame-text-muted); }
-body.mobile-layer .mf-deck-thumb .thumb-browser { position: absolute; inset: 0; padding: var(--ds-space-glass-x) var(--ds-space-3); }
+body.mobile-layer .mf-deck-thumb .thumb-browser { position: absolute; inset: 0; padding: var(--ds-space-block-y) var(--ds-space-3); }
 body.mobile-layer .mf-deck-thumb .thumb-browser .bar {
   height: 16px; border-radius: var(--ds-radius-chip); background: var(--bar-3);
-  border: 1px solid var(--th-border); margin-bottom: 9px;
-  display: flex; align-items: center; gap: 3px; padding: 0 var(--ds-space-1h);
+  border: 1px solid var(--th-border); margin-bottom: var(--ds-space-2);
+  display: flex; align-items: center; gap: var(--ds-space-half); padding: 0 var(--ds-space-1h);
 }
 body.mobile-layer .mf-deck-thumb .thumb-browser .bar i { width: 5px; height: 5px; border-radius: 50%; background: var(--bar-1); display: block; }
-body.mobile-layer .mf-deck-thumb .thumb-browser .blk { height: 18px; border-radius: var(--ds-radius-badge); background: var(--bar-2); margin-bottom: 7px; }
+body.mobile-layer .mf-deck-thumb .thumb-browser .blk { height: 18px; border-radius: var(--ds-radius-badge); background: var(--bar-2); margin-bottom: var(--ds-space-2); }
 body.mobile-layer .mf-deck-thumb .thumb-browser .blk.b2 { width: 64%; }
 /* ── 真实内容快照（作者令 2026-11-02 21:47 §三「做好各卡片的快照，让堆叠视觉
    能看到卡片内容」，并明确「不是标题占位、是真实内容的缩放」）──────────
@@ -2476,7 +2476,7 @@ body.mobile-layer .mf-hub-label {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--color-text-muted);
-  padding: var(--ds-space-1) var(--ds-space-glass-x) var(--ds-space-glass-x);
+  padding: var(--ds-space-1) var(--ds-space-inline-x) var(--ds-space-block-y);
 }
 body.mobile-layer .mf-hub-rows {
   display: flex;
@@ -2536,7 +2536,7 @@ body.mobile-layer .mf-me-entry {
   gap: var(--ds-space-3);
   margin: var(--ds-space-3) 14px 0;
   min-height: 64px;
-  padding: var(--ds-space-glass-x) var(--ds-space-4);
+  padding: var(--ds-space-block-y) var(--ds-space-4);
   border: none;
   border-radius: var(--ds-radius-card-lg);
   background: var(--color-surface);
@@ -2642,7 +2642,7 @@ body.mobile-layer .mf-me-card .mf-me-name { font-size: var(--mfs-body); }
 body.mobile-layer .mf-me-login { flex: none; }
 /* 分组标签与账号行沿用 mf-hub 家族（mf-me-grouplabel 复用 mf-hub-label 口径，
    个人主页分组与 hub 分组视觉同族）。 */
-body.mobile-layer .mf-me-grouplabel { margin: 0 14px; padding-left: var(--ds-space-glass-x); padding-right: var(--ds-space-glass-x); }
+body.mobile-layer .mf-me-grouplabel { margin: 0 14px; padding-left: var(--ds-space-inline-x); padding-right: var(--ds-space-inline-x); }
 /* 个人主页账号行卡（无 .mf-hub 容器兜边距，壳级补 14px 侧距；分组标签紧贴其上）。 */
 body.mobile-layer .mobile-page[data-page="me"] .mf-hub-rows { margin: 0 14px; }
 /* 入口行右值（当前读数，如用户名/绑定的邮箱）。 */
@@ -2723,7 +2723,7 @@ body.mobile-layer .mf-social-sealed {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
   padding: var(--ds-space-4) 14px;
 }
 body.mobile-layer .mf-social-sealed-skel {
@@ -2733,7 +2733,7 @@ body.mobile-layer .mf-social-sealed-skel {
   border: 1px solid var(--glass-control-border);
 }
 body.mobile-layer .mf-social-sealed-note {
-  margin-top: var(--ds-space-glass-x);
+  margin-top: var(--ds-space-stack-gap);
   text-align: center;
   font-size: var(--mfs-sub);
   font-weight: 600;
@@ -2962,7 +2962,7 @@ body.mobile-layer #mobile-pages .team-card.project-card {
   margin: 0;
   flex: 0 0 auto;
   border-radius: var(--ds-radius-card-lg);
-  padding: var(--ds-space-glass-x) 14px;
+  padding: var(--ds-space-block-y) 14px;
 }
 body.mobile-layer #mobile-pages .team-card.project-card .team-card-header {
   padding: var(--ds-space-half) 0 var(--ds-space-2);
@@ -2982,7 +2982,7 @@ body.mobile-layer #mobile-pages .team-card-summary {
   margin-top: var(--ds-space-1);
 }
 body.mobile-layer #mobile-pages .project-fields {
-  gap: 5px;
+  gap: var(--ds-space-1);
   margin-top: var(--ds-space-2);
   padding-top: var(--ds-space-2);
 }
@@ -3291,7 +3291,7 @@ body.mobile-layer .mobile-page[data-page="messages"] .mh-search-dock.has-query ~
 body.mobile-layer .mh-scope-row {
   display: flex;
   gap: var(--ds-space-1h);
-  padding: var(--ds-space-glass-x) var(--ds-space-4) var(--ds-space-half);
+  padding: var(--ds-space-block-y) var(--ds-space-4) var(--ds-space-half);
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -3335,7 +3335,7 @@ body.mobile-layer .mh-search-results {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--ds-space-half) var(--ds-space-glass-x) var(--ds-space-3);
+  padding: var(--ds-space-half) var(--ds-space-inline-x) var(--ds-space-3);
   display: flex;
   flex-direction: column;
   gap: var(--ds-space-half);
@@ -3346,7 +3346,7 @@ body.mobile-layer .mh-sr-group {
   font-size: var(--mfs-min);
   font-weight: 600;
   color: var(--color-frame-text-muted);
-  padding: var(--ds-space-glass-x) var(--ds-space-glass-x) var(--ds-space-half);
+  padding: var(--ds-space-block-y) var(--ds-space-inline-x) var(--ds-space-half);
   flex: none;
 }
 body.mobile-layer .mh-sr-row {
@@ -3355,7 +3355,7 @@ body.mobile-layer .mh-sr-row {
   flex-direction: column;
   gap: var(--ds-space-half);
   width: 100%;
-  padding: var(--ds-space-2) var(--ds-space-glass-x);
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
   border: none;
   border-radius: var(--ds-radius-button);
   background: transparent;
@@ -3390,7 +3390,7 @@ body.mobile-layer .mh-sr-snippet mark {
   background: rgb(var(--sapphire) / 0.30);
   color: inherit;
   border-radius: var(--ds-radius-thin);
-  padding: 0 1px;
+  padding: 0 var(--ds-space-hair);
 }
 /* 跳转定位闪烁：sapphire 底 1.6s 渐隐（消息行 reveal 缝）。 */
 @keyframes mhRevealFlash {
@@ -3412,7 +3412,7 @@ body.mobile-layer .fm-flow .fm-msg.fm-reveal-flash {
    为免同页两枚输入框并存，手机层把桌面块内输入行（.fm-search）收起，只保留
    其结果卡（.fm-result-card，in-flow 推挤下方好友列表）；桌面零改动。 */
 body.mobile-layer #mobile-pages .mobile-page[data-page="contacts"] .fm-search-block {
-  padding: var(--ds-space-glass-x) var(--ds-space-half) 0;
+  padding: var(--ds-space-block-y) var(--ds-space-half) 0;
 }
 body.mobile-layer #mobile-pages .mobile-page[data-page="contacts"] .fm-search-block > .fm-search {
   display: none;
@@ -3532,7 +3532,7 @@ body.mobile-layer .fm-context-menu {
   display: flex !important;
   flex-direction: column;
   justify-content: center;
-  gap: var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
   background: var(--color-bg);
   border: none !important;
   border-radius: 0 !important;
@@ -3551,7 +3551,7 @@ body.mobile-layer .fm-context-menu button:not(.mfs-back) {
   border: 1px solid var(--glass-control-border);
   color: var(--color-frame-text, var(--color-text));
   font-size: var(--mfs-body);
-  padding: var(--ds-space-glass-x) 14px;
+  padding: var(--ds-space-block-y) 14px;
   text-align: center;
 }
 body.mobile-layer .fm-context-menu button.danger:not(.mfs-back) {
@@ -3807,14 +3807,19 @@ body.mobile-layer #mobile-pages .mobile-page-body > #todo-page {
   height: auto;
 }
 /* ④ 项目面旧胶囊让位带收编（标题-内容间距修整批 2026-11-01 20:42）：
-   projectPanel.css 桌面规则 .canvas-tab-pane[data-type="projects"] 的
-   padding-top:56px + .team-scroll top:56px 是「桌面悬浮胶囊带」的纯定位让位
-   （原注释：absolute 列表体锚 padding box，pane padding 与 top 须同带改）。
+   projectPanel.css 桌面规则 .canvas-tab-pane[data-type="projects"] 的胶囊让位是
+   「桌面悬浮胶囊带」的纯定位让位（absolute 列表体锚 padding box ⇒ 让位只能写在
+   滚动体自身）。**件4（2026-11-05）桌面侧已换形**：pane padding-top 归零、
+   `.team-scroll` 改 top:0 + 自身 `padding-top: var(--panel-head-clear)`（穿顶带
+   机制，见 projectPanel.css「面板头穿顶带」块）—— 手机层这一对归零规则**语义不变**
+   （手机 = 页面壳大标题 + 悬浮返回钮自有让位，两支都不吃桌面胶囊带），故照旧
+   把桌面那套让位清掉。
    手机详情页大标题入流后这 56px 成为标题→首卡的纯增量空带（实测 68px vs
    全站标准 12px；B 批验收照 chromium-light-projects-expanded 在案）——手机层
    双维归零，首卡节奏交 .team-scroll 自带 padding 12px 承担（与其他面板一致）。
    桌面零感知（规则全挂 body.mobile-layer + #mobile-pages 页面体限定，桌面
-   projects pane 不在页面体子树）。 */
+   projects pane 不在页面体子树；反之件4 的穿顶带规则挂 body:not(.mobile-layer)，
+   两支互斥零交叉）。 */
 body.mobile-layer #mobile-pages .mobile-page-body > .canvas-tab-pane[data-type='projects'] {
   padding-top: 0;
 }
@@ -3969,7 +3974,7 @@ body.mobile-layer #attachment-preview .att-file .att-remove svg {
    令牌全走 --mfs-*/--mtap 桥（--ds-* 手机字号层），零新色值。 */
 body.mobile-layer .option-box .att-file.ask-att-file {
   min-height: var(--mtap);
-  padding: var(--ds-space-glass-x) var(--ds-space-3);
+  padding: var(--ds-space-block-y) var(--ds-space-3);
 }
 body.mobile-layer .option-box .att-file.ask-att-file > .att-file-name {
   flex: 0 1 210px;
@@ -4096,7 +4101,7 @@ body.mobile-layer #reminder-panel .schedule-card-ref {
   display: inline-flex;
   align-items: center;
   min-height: 32px;
-  padding: 0 var(--ds-space-glass-x);
+  padding: 0 var(--ds-space-inline-x);
 }
 body.mobile-layer #reminder-panel .schedule-card-chip::after,
 body.mobile-layer #reminder-panel .schedule-card-ref::after {
@@ -4250,7 +4255,7 @@ body.mobile-layer #mh-search-kind-row { height: auto; }
 body.mobile-layer .mh-sr-row {
   justify-content: center;
   min-height: var(--mrow);
-  padding: var(--mgap) var(--ds-space-glass-x);
+  padding: var(--mgap) var(--ds-space-inline-x);
 }
 
 /* 记忆/智能体合并面板的「编辑/完成」药丸：26 → 44。 */
@@ -4272,7 +4277,7 @@ body.mobile-layer .mf-hub-chev svg { width: var(--micon-sm); height: var(--micon
 body.mobile-layer .fm-row {
   align-items: center;
   min-height: var(--mrow);
-  padding: 0 var(--ds-space-glass-x);
+  padding: 0 var(--ds-space-inline-x);
 }
 
 /* 社交/好友请求动作钮与行内按钮族。 */
@@ -4472,9 +4477,14 @@ body.mobile-layer #usage-grid .ud-cell[data-date]::after {
        名字玻璃胶囊（绝对定位挂在头像正下方居中；空名 :empty 不渲染，头像仍
        居中）。头本体 position:absolute 悬浮在内容之上：零背景、零描边、
        pointer-events:none（只有头像/名字各自接事件），内容从其后穿过。
-     · 滚动渐隐：滚动量由 mobile/sessionHead.js 的 bindIdHeadFade **唯一实现**
-       写成 --idhead-p（0→1，行程 64px，rAF 合帧），本块消费为
-       opacity: calc(1 - var(--idhead-p))。四种会话同一驱动器，禁第二套进度。
+     · 身份头**常显**（身份头常显批 2026-11-04，作者 20:49 裁定「按你的推荐走」）：
+       11-02 同构批曾由 mobile/sessionHead.js 的 bindIdHeadFade 写 --idhead-p
+       （0→1，行程 64px），本块消费为 opacity: calc(1 - var(--idhead-p))。
+       该驱动器**整条退役**（主对话腿先摘 = 顶部身份头常显批 2026-11-04；好友/
+       群/设备三族同批摘除）：会话一打开消息流即贴底 ⇒ 进度恒满档 ⇒ 身份头
+       100% 不可见（main 实测 --idhead-p=1 / opacity=0）。作者铁律「腾空间用
+       缩高或上移，不许让元素消失」⇒ 本块不再有 opacity 进度腿，--idhead-p
+       零消费者、已删（禁死 CSS）。
      · 四种会话同形：头像尺寸（--idhead-avatar 56）、名字胶囊的字号/padding/
        圆角/背景 token 全部由**同一组声明**给出（选择器用 :is() 合并写），
        好友/群/设备 与主对话之间零样式分叉。
@@ -4498,7 +4508,6 @@ body.mobile-layer .mh-idhead {
   --idhead-avatar: 56px;
   --idhead-seat: 12px;  /* 头顶净空：12 + 56/2 = 40 = 左右 48px 钮的中心（top 16 + 24）
                            ⇒ 头像中心与两颗钮同轴，且头像视觉中心落在同一水平线 */
-  --idhead-p: 0;        /* 滚动渐隐进度（JS 写；无 JS 时恒 0 = 常显） */
   position: absolute;
   top: calc(var(--idhead-seat) + env(safe-area-inset-top, 0px));
   left: 0;
@@ -4511,7 +4520,8 @@ body.mobile-layer .mh-idhead {
   border: none;
   box-shadow: none;
   pointer-events: none;
-  opacity: calc(1 - var(--idhead-p));
+  /* 常显：本块**不设** opacity / visibility 腿（身份头常显批 2026-11-04）；
+     身份/入口类元素不许随滚动消失（作者铁律）。 */
 }
 /* ② 头像：唯一流内子节点 ⇒ 水平恒居屏幕中线（名字/副行都不参与 flex 居中，
    故「头像中心 − 屏幕中线」是结构性 0，不靠测量对齐）。四种会话同一尺寸档
@@ -4559,7 +4569,7 @@ body.mobile-layer :is(.mh-idhead-name, .mh-idhead > #session-name) {
   transform: translateX(-50%);
   max-width: min(220px, calc(100vw - 144px)); /* 左右各留 72 的双钮足印 */
   margin: 0;
-  padding: 3px 14px;
+  padding: var(--ds-space-1) 14px;
   border-radius: var(--ds-radius-pill);
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
@@ -4648,7 +4658,7 @@ body.mobile-layer #top-overlays {
      · `#settings-profile-overlay` 铺平：overlay/box 两个类名已在上面 A 族的
        选择器里，本块只补「本面自己的内边距 + 字段行触控高」。 */
 body.mobile-layer .settings-identity-card {
-  margin: var(--ds-space-1) 0 var(--ds-space-glass-x);
+  margin: var(--ds-space-1) 0 var(--ds-space-stack-gap);
 }
 body.mobile-layer .settings-avatar-entry {
   min-width: 68px;
@@ -4779,8 +4789,8 @@ body.mobile-layer .canvas-md-viewer {
   font-size: var(--mfs-body, 17px);
   line-height: 1.7;
 }
-body.mobile-layer .canvas-md-viewer h1 { font-size: 22px; line-height: 1.35; }
-body.mobile-layer .canvas-md-viewer h2 { font-size: 19px; line-height: 1.4; }
+body.mobile-layer .canvas-md-viewer h1 { font-size: var(--ds-fs-display); line-height: 1.35; }
+body.mobile-layer .canvas-md-viewer h2 { font-size: var(--ds-fs-display); line-height: 1.4; }
 body.mobile-layer .canvas-md-viewer h3,
 body.mobile-layer .canvas-md-viewer h4,
 body.mobile-layer .canvas-md-viewer h5,

@@ -673,7 +673,7 @@ async function viewHtml(pane, { content, absPath, fileName, warnings }) {
     const bar = document.createElement('div');
     bar.className = 'nf-frame-nav-bar';
     bar.dataset.nfFrameNavigated = '1';
-    bar.style.cssText = 'flex:none;display:flex;align-items:center;gap:var(--ds-space-glass-x);padding:var(--ds-space-1h) var(--ds-space-3);' +
+    bar.style.cssText = 'flex:none;display:flex;align-items:center;gap:var(--ds-space-inline-gap);padding:var(--ds-space-1h) var(--ds-space-3);' +
       'border-bottom:1px solid var(--color-border);background:var(--color-surface);' +
       'color:var(--color-text-muted);font-size:var(--ds-fs-hint);line-height:1.4';
     const text = document.createElement('span');

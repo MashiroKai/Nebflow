@@ -211,13 +211,13 @@ try {
   ok(svgBox.w1 > 40 && svgBox.h1 > 40, `R1 sequenceDiagram SVG 非零尺寸 ${Math.round(svgBox.w1)}x${Math.round(svgBox.h1)}`);
 
   // R2 语法错误块 → 错误态；点「查看源码」→ 原始源码可见（不空白不吞）
-  await page.waitForSelector(`${viewer} .nf-mermaid-error`, { timeout: 30000 });
+  await page.waitForSelector(`${viewer} .nf-fence-error`, { timeout: 30000 });
   const errState = await page.evaluate(() => {
-    const el = document.querySelector('.canvas-tab-pane.active .canvas-md-viewer .nf-mermaid-error');
+    const el = document.querySelector('.canvas-tab-pane.active .canvas-md-viewer .nf-fence-error');
     if (!el) return null;
-    const label = el.querySelector('.nf-mermaid-errlabel');
-    const btn = el.querySelector('.nf-mermaid-srcbtn');
-    const pre = el.querySelector('.nf-mermaid-src');
+    const label = el.querySelector('.nf-fence-errlabel');
+    const btn = el.querySelector('.nf-fence-srcbtn');
+    const pre = el.querySelector('.nf-fence-src');
     return {
       state: el.dataset.mermaidState,
       labelText: label && label.textContent,
@@ -229,14 +229,21 @@ try {
   ok(!!errState && errState.state === 'error', `R2 错误态落位（state=${errState && errState.state}）`);
   ok(!!errState && errState.labelText === '图表渲染失败', `R2 错误文案（${errState && errState.labelText}）`);
   ok(!!errState && errState.svgLeak === false, 'R2 错误态不残留半成品 SVG');
-  await page.locator(`${viewer} .nf-mermaid-error .nf-mermaid-srcbtn`).click();
-  const srcShown = await page.evaluate(() => {
-    const el = document.querySelector('.canvas-tab-pane.active .canvas-md-viewer .nf-mermaid-error');
-    const pre = el.querySelector('.nf-mermaid-src');
-    return { hidden: pre.hidden, text: pre.textContent };
+  // rich-render 批 2026-11-05（作者令第 6 条「回退显示原代码」）：原代码**默认可见**，
+  // 按钮是「收起」；此处先断言默认可见，再断言收起/展开双向可用。
+  const srcDefault = await page.evaluate(() => {
+    const el = document.querySelector('.canvas-tab-pane.active .canvas-md-viewer .nf-fence-error');
+    const pre = el.querySelector('.nf-fence-src');
+    return { hidden: pre ? pre.hidden : null, text: pre ? pre.textContent : '' };
   });
-  ok(srcShown.hidden === false && srcShown.text.includes('A[Unclosed ---> B[End]'),
-    `R2 源码可查看（hidden=${srcShown.hidden}，含原始行=${srcShown.text.includes('A[Unclosed ---> B[End]')}）`);
+  ok(srcDefault.hidden === false && srcDefault.text.includes('A[Unclosed ---> B[End]'),
+    `R2 回退原文默认可见（hidden=${srcDefault.hidden}，含原始行=${srcDefault.text.includes('A[Unclosed ---> B[End]')}）`);
+  await page.locator(`${viewer} .nf-fence-error .nf-fence-srcbtn`).click();
+  const srcHiddenAfter = await page.evaluate(() => {
+    const el = document.querySelector('.canvas-tab-pane.active .canvas-md-viewer .nf-fence-error');
+    return el.querySelector('.nf-fence-src').hidden;
+  });
+  ok(srcHiddenAfter === true, 'R2 收起按钮生效（源码可折叠、不吞）');
 
   // R3 普通代码块不受影响：js 围栏原样 pre>code + 复制按钮，未被占位化
   const jsBlock = await page.evaluate(() => {
