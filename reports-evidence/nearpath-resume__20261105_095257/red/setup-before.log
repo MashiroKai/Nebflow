@@ -1,0 +1,10 @@
+[setup-before] export 567d83f16
+567d83f1673886becc7197d61b1e1b4081b0c0c1
+[setup-before] ws.js sha256（改前基线；应 = 172fc7f3f6047e3cc9bc428f2fdfd17da4d4a2bd406bcb7de7b6dd15a272dd5b）
+172fc7f3f6047e3cc9bc428f2fdfd17da4d4a2bd406bcb7de7b6dd15a272dd5b  /tmp/nearpath-fire/engine-src-before/src/main/resources/web/js/ws.js
+[setup-before] 身份像素臂应为 0 命中（改前标志）
+0
+[setup-before] sbt compile + classpath export（冷启动数分钟）
+classpath written: /tmp/nearpath-fire/classpath-before.txt entries=77 appClasses=/private/tmp/nearpath-fire/engine-src-before/target/scala-3.5.2/classes
+[setup-before] done. engine-classes:
+/tmp/nearpath-fire/engine-src-before/target/scala-3.5.2/classes
