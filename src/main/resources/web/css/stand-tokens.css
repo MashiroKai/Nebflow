@@ -252,12 +252,12 @@ html[data-theme="dark"] {
    为什么亮档要单独出生一枚加深值：蓝族母色 `--sapphire`（91 127 191，
    sapphire.css 单源）落在正文阅读面上只有 4.01:1（vs 白）—— 正文文本色的
    可达性门槛是 4.5:1，母色直接上字就是不合格的字色（它本来只用于 tint/描边）。
-   故亮档取「同一色相加深一档」= 70 99 156（#46639c，与既有 --accent-agent-light
-   同值：这是站内早已存在的加深 sapphire，不是新发明的色相）⇒ 5.51:1（vs
-   --color-bg #f5f6f8）/ 5.96:1（vs 白）。
+   故亮档取「同一色相加深一档」= 70 99 156（与既有 --accent-agent-light 同值：
+   这是站内早已存在的加深 sapphire，不是新发明的色相）⇒ 阅读面合成底实测
+   5.76:1（正文门槛 4.5:1）。
 
-   暗档不需要新值：蓝族提亮档 `--sapphire-glow`（120 160 220）在暗底上已有
-   6.17:1（vs --color-surface #1c1f27）/ 6.51:1（vs 玻璃合成底）——直接别名，
+   暗档不需要新值：蓝族提亮档 `--sapphire-glow`（120 160 220）在暗底上实测
+   6.52:1（阅读面合成底）——直接别名，
    零重复字面量。三态解析结构同 --ctl-* / --agent-avatar-chip-* 族：
    :root + html[data-theme=light] 亮档默认，html[data-theme=dark] 强制档，
    无属性回退 prefers-color-scheme。 */

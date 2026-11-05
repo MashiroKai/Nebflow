@@ -56,7 +56,8 @@
      值 = 蓝族 ink 双档（stand-tokens.css 的 --term-link-ink；亮 70 99 156 /
      暗 sapphire-glow），本层只做一拍别名，零字面量。消费点 =
      split.css a.nf-wikilink.nf-wikilink-term / a.nf-term。对比度实测见
-     tests/_term-face-harness.mjs（亮 5.51:1 / 暗 6.17:1，均 ≥ 4.5）。 */
+     tests/_term-face-harness.mjs（**阅读面合成底**实测：亮 5.76:1 / 暗 6.52:1，
+     两侧均 ≥ 正文门槛 4.5:1；数字由 harness 每次跑打印，不手填）。 */
   --ds-link-term: rgb(var(--term-link-ink));
   --ds-danger-icon: var(--status-error-icon);
   --ds-warn-icon: var(--status-warn-icon);
