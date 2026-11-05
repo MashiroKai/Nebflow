@@ -393,5 +393,30 @@ test('桌面宽屏零命中（1440×900：手机层不激活 + 桌面面板几�
   // 桌面面板几何：*不许*吃到透明顶带的让位内距（改前后应逐值相同）。
   expect(st.conversations?.paddingTop, '⑤ 桌面 #fm-conversations 内距未被手机规则污染').toBe('4px');
   expect(st.contacts?.paddingTop, '⑤ 桌面 #fm-contacts-body 内距未被手机规则污染').toBe('4px');
+  // 桌面消息面板真开一张（面板 = 侧栏 .panel，入口 = 活动栏 #messages-btn）：
+  // 证明宽屏下这两页仍是桌面形态，与手机顶带无关。
+  await page.locator('#messages-btn').click();
+  await page.waitForTimeout(300);
+  const panel = await page.evaluate(() => {
+    const p = document.querySelector('#panel-messages');
+    const sc = document.querySelector('#fm-conversations');
+    const r = sc?.getBoundingClientRect();
+    const pr = p?.getBoundingClientRect();
+    return {
+      panelActive: !!p?.classList.contains('active'),
+      panelRect: pr ? { top: +pr.top.toFixed(1), height: +pr.height.toFixed(1), width: +pr.width.toFixed(1) } : null,
+      scrollerRect: r ? { top: +r.top.toFixed(1), height: +r.height.toFixed(1) } : null,
+      paddingTop: sc ? getComputedStyle(sc).paddingTop : null,
+      rowCount: sc ? sc.children.length : 0,
+    };
+  });
+  await shot(page, dir, 'desktop-1440-messages-panel');
+  if (EVID) {
+    mkdirSync(EVID, { recursive: true });
+    writeFileSync(join(EVID, LEGACY ? 'readings-before-desktop-panel.json' : 'readings-after-desktop-panel.json'),
+      JSON.stringify(panel, null, 2));
+  }
+  expect(panel.panelActive, '⑤ 1440：桌面消息面板可开（桌面形态仍在）').toBe(true);
+  expect(panel.paddingTop, '⑤ 1440：桌面消息列表内距 = 4px（未吃手机顶带让位）').toBe('4px');
   expect(errors).toEqual([]);
 });

@@ -1,0 +1,14 @@
+{
+  "panelActive": true,
+  "panelRect": {
+    "top": 17,
+    "height": 872,
+    "width": 234
+  },
+  "scrollerRect": {
+    "top": 60,
+    "height": 829
+  },
+  "paddingTop": "4px",
+  "rowCount": 30
+}
