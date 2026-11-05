@@ -427,6 +427,8 @@ test('mobile-search-flat: messages + contacts（九组判据，双页同源）',
     }, [pageId, scrollerSel, COLLAPSE_AT]);
     if (EVID) {
       await page.screenshot({ path: join(EVID, `${tag}.2-collapse-mid1.png`) });
+      // 形变中段实拍：等 ~40% 行程再拍（前两张落在 t≈8-16ms，视觉上仍接近长条）。
+      await page.waitForTimeout(110);
       await page.screenshot({ path: join(EVID, `${tag}.2-collapse-mid2.png`) });
     }
     await page.waitForFunction(() => {
