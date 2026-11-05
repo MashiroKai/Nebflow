@@ -1,0 +1,36 @@
+[sbt-gate] gate acquired after 0s
+[sbt-gate] heap cap -Xmx2600m applied via SBT_OPTS
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project delegate-midturn-inject-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-midturn-inject/project
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/delegate-midturn-inject/)
+[warn] javaOptions will be ignored, fork is set to false
+09:39:33.627 [36mINFO [0m nebflow.core.injection-channel - [injection-channel] collapsed duplicate injection (source=merge-queue eventType=failed session=delegate-ext-inject-spec) — same notice within 600000ms
+09:39:33.631 [36mINFO [0m nebflow.core.injection-channel - [injection-channel] collapsed duplicate injection (source=merge-queue eventType=failed session=delegate-ext-inject-spec) — same notice within 600000ms
+[32mnebflow.agent.ExternalInjectionChannelSpec:[0m
+[32m  + [0m[32m① 所有外部事件来源都得到可见气泡标签（改前：merge-queue/bg-lifecycle/waiting-dock-care/chain-orphan/team 恒 None）[0m [90m0.354s[0m
+[32m  + [0m[32m② 来源标签口径：delegate-frozen / background 保留专属标签，其余取原 source（前端逐值可登记）[0m [90m0.001s[0m
+[32m  + [0m[32m③ 自写行腿不重复算（scheduled-task / todo-surface 由调度器自己落卡，走本门会双泡）[0m [90m0.0s[0m
+[32m  + [0m[32m④ deliver 一调用 ⇒ 落盘一行 + 广播一帧，且正文逐字一致（判据 ①②③）[0m [90m0.774s[0m
+[32m  + [0m[32m⑤ 判据 ④ 刷新后仍在：新开一个 store 读同一目录，行仍在（落盘不是纯内存渲染）[0m [90m0.091s[0m
+[32m  + [0m[32m⑥ 同来源同状态重复投递 ⇒ 折叠（零落盘零广播）；状态变化 ⇒ 追加[0m [90m0.057s[0m
+[32m  + [0m[32m⑦ 去重键含来源与发送方：不同来源/不同成员的同文不互相吞[0m [90m0.001s[0m
+[32m  + [0m[32m⑧ 窗口可关（-Dnebflow.inject.dedup.windowMs<=0）：逐条放行 —— 变异验红面[0m [90m0.025s[0m
+[32m  + [0m[32m⑨ 非外部事件族不参与去重（Mail/skill 等改动点默认 dedup=false ⇒ 行为逐字不变）[0m [90m0.006s[0m
+[32m  + [0m[32m⑩ 调度器两条腿改走 InjectionChannel（禁再手拼 user 帧 + 各自 appendUiMessages）[0m [90m0.019s[0m
+[32m  + [0m[32m⑪ agent 侧唯一发射点走同一入口（落盘/广播单点，禁止第三条腿）[0m [90m0.012s[0m
+[32mnebflow.agent.InjectionIntakeContractSpec:[0m
+[32m  + [0m[32m① 定名 pin：收件通道取值域 = {mail}，且 ∈ 后端自定名 source 词表（前端登记面因而覆盖它）[0m [90m0.002s[0m
+[32m  + [0m[32m② 置位侧不变量：intake 在 MailTool 面零置位点（腿① project-trigger 拆除）；node 腿家族一律裸构造、零置位[0m [90m1.073s[0m
+[32m  + [0m[32m③ 透传侧：intake 随 UserInput 透传，且 `source` 与桥的计数口径逐字未动（禁动面 tripwire）[0m [90m0.01s[0m
+[32m  + [0m[32m④ 帧字段 / 落盘字段同源：发射点 deepMerge + 编码器 + 解码器 + 前端两侧读取面[0m [90m0.025s[0m
+[32m  + [0m[32m⑤ 编解码行为：置位 ⇒ 落 `intake:mail`；缺席 ⇒ 不落键且解码回落 None（向后兼容 / 负控）[0m [90m0.004s[0m
+[32m  + [0m[32m⑥ 字段中文档面：intake 不得进入任何会计/去重判据（只做呈现判别）[0m [90m0.051s[0m
+[32mnebflow.agent.InjectionSourceContractSpec:[0m
+[32m  + [0m[32m① 后端自定名集合被 pin —— 新增/删除 source 必须显式改本 spec（提醒同步前端登记面）[0m [90m0.001s[0m
+[32m  + [0m[32m② 前端登记面 ⊇ 后端自定名集合（禁首字母大写兜底）[0m [90m0.009s[0m
+[32m  + [0m[32m③ 登记表标签非空且非兜底形态（每个 key 映射到显式字符串标签）[0m [90m0.01s[0m
+[32m  + [0m[32m④ 两侧同源字段名：后端写盘字段 ⇄ 前端 live 帧读取 / 历史恢复读取[0m [90m0.004s[0m
+[info] Passed: Total 21, Failed 0, Errors 0, Passed 21
+[success] Total time: 5 s, completed 2026年11月5日 09:39:35

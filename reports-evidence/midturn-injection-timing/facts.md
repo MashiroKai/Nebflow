@@ -240,10 +240,68 @@ L4 仍断言「第二个边界的请求里该正文恰出现 1 次」。**为何
 5. **回合已结束时到达的真人 typeless 帧**：`Stage.TurnEnd` 下 `decide` 返回 `HoldForNextBoundary`
    ⇒ 留队由 `AgentFinishTurn` 的 head-forward 作为**新回合**投出（不丢消息、不改回合边界）。
 
-### 8.5 回归（`logs/post.log`）
+### 8.5 回归（`logs/post.log` · **合并 main 之前**的读数）
 
 `E:[error] Failed: Total 43, Failed 1, Errors 0, Passed 42` —— 与 §4 基线**逐条一致**，
 唯一红仍是既有 `SubAgentInboxMirrorSpec ③ -2`（静态调用点定值 14 vs 树内 16，非本批引入；
 本批 `emitInjectedUserEvent(` 调用点数未变）。**本批零新增红**，且 `BusyConsoleInputInjectionSpec`
 的 W3 负对照仍绿。
+
+> ⚠️ 本节的「既有红」在合并 main 后**已失效**：main 的 `f050d6b35` 把该条断言 re-pin 成
+> 「注入帧写者单点」判据（`"injected" -> true.asJson` 在 AgentActor 内 0 命中 ∧
+> `InjectionChannel` 内恰 1 命中），那条陈旧计数钉随批消失。合并后的实测见 §9.2 ——
+> **43/43 全绿、零红**。旧结论不得复用。
+
+### 8.6 回合生命周期零改动（作者闸未触发，逐条声明）
+
+本批**没有**改 `AgentFinishTurn` 的回合末 head-forward 逻辑：`pendingUserInputs.headOption.traverse_(msg => ctx.self ! msg)`
+（`AgentFinishTurn.scala:369`）与 `pendingUserInputs.tail` 保留逐字不变；唯一改动是把回合末
+**immediate 腿**的入口条件改为同一单点的 `hasInjectable(..., Stage.TurnEnd, ...)`
+（机械等价于原 `pendingCompaction.isEmpty && pendingImmediateInputs.nonEmpty`）。
+不提前/延后结束回合、不合并回合、不改 `Completed` 事件语义、不改 `pendingUserInputs` 的排队语义
+⇒ **不触发** `state-machine-rewrite-required`，无需作者闸停手。
+
+## 9. 合并 main（外部注入统一通道批 `f050d6b35`）后的复测（2026-11-05 09:38+）
+
+### 9.1 合并与两个单点的分工（不互相吞并）
+
+- 合并 commit `303571c47`（`git merge main`，**零文本冲突**）。
+- main 改到本批的两个文件，改动面 = **外部事件气泡的呈现级去重**（`dedup = true` 四处站点）；
+  **不涉及**工具边界的注入时机判定 ⇒ 与本批完全正交。
+- **两个单点各管一件事，未合并、未互相吞并**：
+  - `nebflow/core/InjectionChannel.deliver`（main）= 注入行**呈现/投递**面单点：去重闸 → 落盘
+    （`appendUiMessages`）→ 广播（`wsSend`）；其头注释逐字写明「不做注入时机」。
+  - `nebflow/agent/InjectionTiming.decide`（本批）= **注入时机**单点：此刻在工具边界注入还是
+    留队等下一个边界。
+- 合并后核对可见化腿：`AgentActor#emitInjectedUserEvent` 已委派 `InjectionChannel.deliver`；
+  本批的两处边界气泡发射（`AgentProcessing` 的 `immEventIO` / `mailEventIO`）与回合末回落面
+  （`AgentFinishTurn:644`）**都只经 `emitInjectedUserEvent`**，没有留下「合并前形态」的自己拼帧/
+  自己广播旧代码（`AgentProcessing` 内零 `appendUiMessages`；`wsSend` 仅剩 `roundComplete` /
+  `doneJson` 这类非注入帧）。真人 typeless 帧**不产注入气泡**（`source = None`，前端本有乐观
+  渲染）⇒ 与去重闸无交集。
+
+### 9.2 合并后实测（HEAD `303571c47`，日志名带 sha）
+
+| 套件 | 日志 | 读数 |
+|---|---|---|
+| `MidTurnInjectionTimingSpec`（连跑两次） | `logs/postmerge-green-303571c47-20261105_093807-run1.log` / `-run2.log` | **8/8 绿 ×2**；`L1b inBoundaryRequest=Some(true) landing=1,2`；`L4 afterBoundary1=Some(1) afterBoundary2=Some(1)` |
+| 邻居三套（main 新增）`ExternalInjectionChannelSpec` + `InjectionIntakeContractSpec` + `InjectionSourceContractSpec` | `logs/postmerge-neighbor-specs-303571c47-20261105_093807.log` | **21/21 全绿** |
+| 回归批 7 套（含 `SubAgentInboxMirrorSpec`、`BusyConsoleInputInjectionSpec` W3） | `logs/postmerge-regression-303571c47-20261105_093807.log` | **43/43 全绿、零红**（旧「既有红」已随 main 的 re-pin 消失，见 §8.5 注） |
+| 合并后反向验红 | `logs/postmerge-reverse-red-303571c47-20261105_094024.log` | 单点短路 ⇒ `Failed: Total 8, Failed 6, Passed 2`：**L1/L1b/L2/L2b/L3/L4 六条复红**（L1 `inSecond=false`、L1b `landing=3`、L4 `afterBoundary1=Some(0)`），L5/G1 仍绿 |
+| 复原后复跑 | `logs/postmerge-green-after-restore-303571c47-20261105_094427.log` | **8/8 绿**（复原证据：`git diff` 为空、工作树只剩证据日志） |
+
+L4 幂等（那条曾出现一次红的断言）在合并后的树上**连跑两次都是 1 次注入**，且夹具已按 §8.2-b
+清空 `<dataRoot>/sessions` ⇒ 可复现地绿。
+
+### 9.3 二次并 main（rich-render 批）与最终 HEAD 证据
+
+- main 在 §9.2 之后又前进了 `48e26998e`（rich-render / mermaid 前端批：`svgInk.js` / `svgFence.js` /
+  `mathRender.js` / `tests/rich-render.spec.mjs` 等）。已再并一次：合并 commit **`ae9afaae5`**（零冲突）。
+- 并后**判据**：`git diff --stat main HEAD -- src/main/scala src/test/scala` = **空**（本批的
+  Scala 主源码与 spec 与 main 树逐字节一致 ⇒ §9.2 的矩阵读数（含合并后反向验红）对本树仍然成立）；
+  两次合并带来的差异全在前端资源文件，与三条注入腿无关。
+- 最终 HEAD（`ae9afaae5`）上的收尾跑：
+  `logs/final-green-ae9afaae5-20261105_094943.log` = `MidTurnInjectionTimingSpec`(8) +
+  邻居三套(21) 单次 `testOnly` 合计 **`Passed: Total 29, Failed 0, Errors 0, Passed 29`**，
+  其中 `L1b inBoundaryRequest=Some(true) landing=1,2`、`L4 afterBoundary1=Some(1) afterBoundary2=Some(1)`。
 
