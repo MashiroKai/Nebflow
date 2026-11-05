@@ -1,0 +1,11 @@
+{
+  "frame": {
+    "w": 381.4,
+    "h": 678
+  },
+  "ar": 0.563,
+  "videoAR": 0.563,
+  "radius": "8px",
+  "objectFit": "contain",
+  "cover": false
+}

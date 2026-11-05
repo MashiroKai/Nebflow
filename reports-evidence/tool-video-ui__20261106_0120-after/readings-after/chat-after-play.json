@@ -1,0 +1,13 @@
+{
+  "before": {
+    "paused": true,
+    "t": 0,
+    "readyState": 4
+  },
+  "after": {
+    "cover": false,
+    "paused": false,
+    "t": 1,
+    "decoded": true
+  }
+}

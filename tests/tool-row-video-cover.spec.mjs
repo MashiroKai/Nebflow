@@ -697,6 +697,30 @@ try {
   console.log(`   portrait: frame ${portraitRead.frame.w}×${portraitRead.frame.h} ar=${portraitRead.ar} videoAR=${portraitRead.videoAR} cover=${portraitRead.cover}`);
   await shot(page, `${BEFORE ? 'before' : 'after'}-canvas-portrait.png`);
 
+  /* ── ⑤c Canvas 内嵌可播：点自研播放钮 → 真在走帧 + 封面让位 ──
+     判据不是「画布里有 <video>」，而是①不暂停②currentTime 真的增长（走帧）③封面已让位。
+     改前档（BEFORE=1）同样跑这段：那里没有封面层 ⇒ cover=false 而播放读数照旧 ——
+     这既是「断言只钉行为、不钉实现」的证据，也是本批没把播放面改坏的对照。 */
+  console.log('\n══ ⑤c Canvas 内嵌可播 ══');
+  const cvBeforePlay = await page.evaluate(() => {
+    const v = document.querySelector('.canvas-tab-pane.active video');
+    return { paused: v.paused, t: +v.currentTime.toFixed(2), readyState: v.readyState, controls: v.controls };
+  });
+  await page.evaluate(() => {
+    const btn = document.querySelector('.canvas-tab-pane.active .canvas-video-bar .canvas-video-btn');
+    if (btn) btn.click();
+    else { const v = document.querySelector('.canvas-tab-pane.active video'); if (v) v.play().catch(() => {}); }
+  });
+  await sleep(1000);
+  const cvAfterPlay = await page.evaluate(() => {
+    const pane = document.querySelector('.canvas-tab-pane.active');
+    const v = pane.querySelector('video');
+    return { paused: v.paused, t: +v.currentTime.toFixed(2), cover: !!pane.querySelector('.nf-video-cover') };
+  });
+  save('canvas-play', { before: cvBeforePlay, after: cvAfterPlay });
+  console.log(`   播放前: paused=${cvBeforePlay.paused} t=${cvBeforePlay.t} controls=${cvBeforePlay.controls} ; 播放后: paused=${cvAfterPlay.paused} t=${cvAfterPlay.t} coverPresent=${cvAfterPlay.cover}`);
+  await shot(page, `${BEFORE ? 'before' : 'after'}-canvas-video-playing.png`);
+
   /* ── ⑥ 对话框视频面 ── */
   console.log('\n══ ⑥ 对话框视频面：封面 ══');
   await page.evaluate(async ({ p }) => {
@@ -741,15 +765,25 @@ try {
   execFileSync('sips', ['--resampleWidth', '736', sChat, '--out', sChat.replace('.png', '-x3.png')], { stdio: 'pipe' });
   await shot(page, `${BEFORE ? 'before' : 'after'}-chat-video-full.png`);
 
-  console.log('\n══ ⑦ 播放后封面让位 ══');
+  console.log('\n══ ⑦ 对话框内嵌可播：点播放 → 真在走帧 + 封面让位 ══');
+  const chatBeforePlay = await page.evaluate(() => {
+    const v = document.querySelector('#cover-test-row video');
+    return { paused: v.paused, t: +v.currentTime.toFixed(2), readyState: v.readyState };
+  });
   await page.evaluate(() => { const v = document.querySelector('#cover-test-row video'); if (v) v.play().catch(() => {}); });
   await sleep(1000);
-  const afterPlay = await page.evaluate(() => ({
-    cover: !!document.querySelector('#cover-test-row .nf-video-cover'),
-    paused: document.querySelector('#cover-test-row video').paused,
-  }));
-  save('chat-after-play', afterPlay);
-  console.log(`   after play: coverPresent=${afterPlay.cover} paused=${afterPlay.paused}`);
+  const afterPlay = await page.evaluate(() => {
+    const v = document.querySelector('#cover-test-row video');
+    return {
+      cover: !!document.querySelector('#cover-test-row .nf-video-cover'),
+      paused: v.paused,
+      t: +v.currentTime.toFixed(2),
+      // 画面真的解出帧（不是「有个 video 元素」就算过）
+      decoded: v.videoWidth > 0 && v.readyState >= 2,
+    };
+  });
+  save('chat-after-play', { before: chatBeforePlay, after: afterPlay });
+  console.log(`   播放前: paused=${chatBeforePlay.paused} t=${chatBeforePlay.t} ; 播放后: paused=${afterPlay.paused} t=${afterPlay.t} decoded=${afterPlay.decoded} coverPresent=${afterPlay.cover}`);
   await shot(page, `${BEFORE ? 'before' : 'after'}-chat-video-playing.png`, chatClip);
 
   /* ── ⑧ 懒加载 ── */
@@ -894,6 +928,15 @@ try {
       `cover=${JSON.stringify(canvasProbe.coverBox)} video=${JSON.stringify(canvasProbe.videoBox)}`);
     ok('⑬ 对话框视频封面在场且有内容', chatRead.coverPresent && chatPix.variance > 100, `cover=${chatRead.coverPresent} var=${chatPix.variance}`);
     ok('⑭ 播放后封面让位', afterPlay.cover === false, JSON.stringify(afterPlay));
+    // 两处「内嵌可播」的行为判据（作者令 2026-11-05 20:18 的封面不得把播放面变成死图）：
+    // ①点下去真的不暂停 ②currentTime 真增长（走帧，不是只换了个图标）③画面已解出帧。
+    ok('⑭b 对话框内嵌可播（不暂停 + 走帧 + 已解帧）',
+      afterPlay.paused === false && afterPlay.t > chatBeforePlay.t && afterPlay.decoded === true,
+      `before=${JSON.stringify(chatBeforePlay)} after=${JSON.stringify(afterPlay)}`);
+    ok('⑲ Canvas 内嵌可播（自研播放钮 → 不暂停 + 走帧）',
+      cvAfterPlay.paused === false && cvAfterPlay.t > cvBeforePlay.t,
+      `before=${JSON.stringify(cvBeforePlay)} after=${JSON.stringify(cvAfterPlay)}`);
+    ok('⑲b Canvas 播放后封面让位', cvAfterPlay.cover === false, JSON.stringify(cvAfterPlay));
     ok('⑮ 懒加载：首屏抓帧数 ≈ 可见数且 < 总数', lazyRead.grabsBeforeScroll > 0 && lazyRead.grabsBeforeScroll < lazyRead.total, JSON.stringify(lazyRead));
     ok('⑮b 懒加载：滚到底后才继续抓（抓帧数增长）', lazyRead.grabsAfterScroll > lazyRead.grabsBeforeScroll, JSON.stringify(lazyRead));
     ok('⑮c 抓帧不动用户播放头（currentTime 全 0）', lazyRead.playheadMax === 0, String(lazyRead.playheadMax));
