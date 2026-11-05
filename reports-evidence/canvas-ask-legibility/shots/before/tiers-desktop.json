@@ -1,0 +1,86 @@
+{
+  "phase": "before",
+  "tiers": [
+    {
+      "tier": "desktop-1920",
+      "vp": {
+        "w": 1920,
+        "h": 1080
+      },
+      "dockH": 321.6,
+      "colH": 274.6,
+      "rowGap": 6,
+      "tail": 0,
+      "fadeH": "64px",
+      "inputToColBottom": -11,
+      "inputToLastBub": 8,
+      "zeroLine": 96,
+      "blankBand": 178.6,
+      "expectCol": 6,
+      "expectBub": 6,
+      "legacy": {
+        "truncH": "96px",
+        "truncFrom": "70px",
+        "overhang": "17px",
+        "inlineStyle": "--ask-trunc-h: 96px; --ask-trunc-from: 70px; --ask-col-overhang: 17px;"
+      },
+      "gapOk": false,
+      "blankOk": false,
+      "visibleOk": false
+    },
+    {
+      "tier": "desktop-1440",
+      "vp": {
+        "w": 1440,
+        "h": 900
+      },
+      "dockH": 321.6,
+      "colH": 274.6,
+      "rowGap": 6,
+      "tail": 0,
+      "fadeH": "64px",
+      "inputToColBottom": -11,
+      "inputToLastBub": 8,
+      "zeroLine": 96,
+      "blankBand": 178.6,
+      "expectCol": 6,
+      "expectBub": 6,
+      "legacy": {
+        "truncH": "96px",
+        "truncFrom": "70px",
+        "overhang": "17px",
+        "inlineStyle": "--ask-trunc-h: 96px; --ask-trunc-from: 70px; --ask-col-overhang: 17px;"
+      },
+      "gapOk": false,
+      "blankOk": false,
+      "visibleOk": false
+    },
+    {
+      "tier": "desktop-1024",
+      "vp": {
+        "w": 1024,
+        "h": 900
+      },
+      "dockH": 321.6,
+      "colH": 274.6,
+      "rowGap": 6,
+      "tail": 0,
+      "fadeH": "64px",
+      "inputToColBottom": -11,
+      "inputToLastBub": 8,
+      "zeroLine": 96,
+      "blankBand": 178.6,
+      "expectCol": 6,
+      "expectBub": 6,
+      "legacy": {
+        "truncH": "96px",
+        "truncFrom": "70px",
+        "overhang": "17px",
+        "inlineStyle": "--ask-trunc-h: 96px; --ask-trunc-from: 70px; --ask-col-overhang: 17px;"
+      },
+      "gapOk": false,
+      "blankOk": false,
+      "visibleOk": false
+    }
+  ]
+}
