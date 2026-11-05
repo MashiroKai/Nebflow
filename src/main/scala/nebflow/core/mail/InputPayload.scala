@@ -85,7 +85,7 @@ object InputPayload:
       kind = KindImmediate,
       text = imm.text,
       blocks = imm.blocks,
-      clientMessageId = None,
+      clientMessageId = imm.clientMessageId,
       chatWidth = 0,
       source = imm.source,
       eventType = imm.eventType,
@@ -138,7 +138,8 @@ object InputPayload:
             delivery = p.delivery,
             fromUser = p.fromUser,
             project = p.project,
-            windowItems = p.windowItems
+            windowItems = p.windowItems,
+            clientMessageId = p.clientMessageId
           )
         )
       case _ => None

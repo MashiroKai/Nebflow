@@ -2447,14 +2447,16 @@ class WebSocketRoutes(
     content: String,
     source: String,
     fromUser: Boolean,
-    device: Option[nebflow.bridge.ResolvedDevice] = None
+    device: Option[nebflow.bridge.ResolvedDevice] = None,
+    // P3 磁盘邮箱批：客户端幂等键透传（见 dispatchUserText 同名参数）。
+    clientMessageId: Option[String] = None
   ): IO[Unit] =
     if sessionId.nonEmpty && content.nonEmpty then
       // 输入框直通退役（2026-09-14 作者令）：输入框文本一律按普通消息投递 ——
       // 不再探 hub 的 pending AskUser 槽位，文本也不再成为卡片答案
       // （[[dispatchUserText]] = 唯一入队路径）。pending 卡保持 pending，
       // 只能在卡片上作答；headless REST (`rest-turn`) 与输入框同腿，形态不变。
-      dispatchUserText(sessionId, content, source, fromUser, device)
+      dispatchUserText(sessionId, content, source, fromUser, device, clientMessageId)
     else
       // P1 2026-08-27 (frontend c1d57710): the queue "send-now" branch emitted an
       // empty-content frame (attachments dropped), which reached this path and was
@@ -2486,7 +2488,11 @@ class WebSocketRoutes(
     content: String,
     source: String,
     fromUser: Boolean,
-    device: Option[nebflow.bridge.ResolvedDevice] = None
+    device: Option[nebflow.bridge.ResolvedDevice] = None,
+    // P3 磁盘邮箱批（作者 2026-11-05 10:46）：把 WS 边界 `:2005` 已解析出的客户端
+    // 幂等键**穿到 ImmediateInput**——改前它在 Gateway→agent 转换处蒸发，真人文字
+    // 主腿因此没有任何幂等面（重发同一帧 = 可能双跑）。加性尾参，缺席逐字现状。
+    clientMessageId: Option[String] = None
   ): IO[Unit] =
     logger.info(s"User text ($source) for session $sessionId (${content.length} chars)") *>
       // tool-card-leak-on-reload 批（2026-11-02）：回合内插话判定在**落盘这一瞬**
@@ -2507,7 +2513,9 @@ class WebSocketRoutes(
       ensureAgent(sessionId)(ref =>
         ref ! AgentCommand.ImmediateInput(
           device.fold(content)(nebflow.bridge.DeviceProvenance.compose(_, content)),
-          fromUser = fromUser
+          fromUser = fromUser,
+          // P3：客户端幂等键随件到会话本体（改前在本转换处蒸发）。
+          clientMessageId = clientMessageId
         )
       )
 

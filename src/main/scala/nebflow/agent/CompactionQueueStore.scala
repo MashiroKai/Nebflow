@@ -86,6 +86,11 @@ object CompactionQueueStore:
       // as windowItems=None (backward compatible, zero drift for every
       // non-window leg).
       .deepMerge(imm.windowItems.fold(Json.obj())(v => Json.obj("windowItems" -> v.asJson)))
+      // P3 磁盘邮箱批（节点 3）：cid 必须活过「压队 → 崩溃恢复」——改前它在这里
+      // 蒸发，队列恢复出的真人文字重投时就丢了幂等键（同一帧可能再跑一次）。
+      // 与 fromUser/windowItems 同款：只在 defined 时落键 ⇒ 旧快照解码 None，
+      // 逐字向后兼容。
+      .deepMerge(imm.clientMessageId.fold(Json.obj())(v => Json.obj("clientMessageId" -> v.asJson)))
   }
 
   given Decoder[AgentCommand.ImmediateInput] = Decoder.instance { c =>
@@ -103,6 +108,8 @@ object CompactionQueueStore:
       // snapshot → None ⇒ the recovered carrier expands identically to a plain
       // input (1→1); the merged `text` still carries every section (no loss).
       windowItems <- c.downField("windowItems").as[Option[List[AgentCommand.WindowItem]]]
+      // P3 磁盘邮箱批（节点 3）：缺键（旧快照）⇒ None ⇒ 与改前逐字同路。
+      clientMessageId <- c.downField("clientMessageId").as[Option[String]]
     yield AgentCommand.ImmediateInput(
       text,
       blocks,
@@ -116,7 +123,8 @@ object CompactionQueueStore:
       // kept verbatim (`project` was, and remains, not persisted — this batch
       // does not touch that face); the new field travels as a NAMED argument ⇒
       // zero positional drift.
-      windowItems = windowItems
+      windowItems = windowItems,
+      clientMessageId = clientMessageId
     )
   }
 

@@ -132,7 +132,12 @@ object InputMailbox:
         lock.synchronized {
           try
             val alreadyPending = scanDir(pendingDir(sid)).exists(_.identity == identity)
-            if alreadyPending then InputMailResult.AlreadyPresent
+            // 🔴 也要查 taken-input：条目在 turn 执行期间驻留该目录（D3：turn 成功后才
+            // unlink）。若只查 pending + 墓碑，则「turn 在飞时客户端重发同 cid」会造出
+            // 第二份副本 → 双跑（本批验收「同 cid 重发 ⇒ 执行计数=1」正是挡这个）。
+            // 重放腿直接读 taken-input（不经本函数），故本判定不妨碍崩溃重投。
+            val alreadyTaken = scanDir(takenDir(sid)).exists(_.identity == identity)
+            if alreadyPending || alreadyTaken then InputMailResult.AlreadyPresent
             else if deliveredContainsSync(sid, Set(identity)).nonEmpty then
               // 已执行过：再投同 key 不得产生第二次执行（I-IDEM）
               InputMailResult.AlreadyPresent
