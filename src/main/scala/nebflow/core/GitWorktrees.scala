@@ -353,6 +353,44 @@ object GitWorktrees:
       .map(_.trim)
       .filter(_.nonEmpty)
 
+  /**
+   * 三段合并冲突面（`git merge-tree --write-tree --no-messages --name-only <ours>
+   * <theirs>`）：输出首行 = 结果树 oid，其后每行 = **冲突文件路径**（`--no-messages`
+   * 已滤掉本地化的过程说明，故路径列表可直接机读）。无冲突 = Nil。
+   *
+   * base-drift 降噪批（2026-11-05）：这是「base 前进会不会真的撞上我」的**唯一**
+   * 可算判据——实测证明任何单侧 diff（`merge-base..branch` 或 `base..branch`）都会
+   * 把「分支早就并过的旧 main 改动」或「base 自己走在我前面的部分」算成我的改动，
+   * 于是「文件交集」判据对今天 25 个在飞分支里 25 个全报冲突（含 CONTRIBUTING.md
+   * 这类从没碰过的文件）——纯噪音。三段合并实况把假阳性压到 2/25。
+   *
+   * fail-soft：git 不支持 `--write-tree` / 非 repo / 任何失败 = Nil——**不可确证 ≠
+   * 有冲突**，宁默不作声（通知的默认态是静默）。
+   *
+   * 🔴 退出码语义（实测钉死，别猜）：**0 = 干净合并，1 = 有冲突**，≥2 = 用法/仓库
+   * 错误。冲突时输出仍是「首行树 oid + 冲突路径」两段，故 1 走解析腿、其余走空腿。
+   */
+  def mergeTreeConflicts(ws: os.Path, ours: String, theirs: String): List[String] =
+    Try {
+      val res = os
+        .proc(
+          "git",
+          "-C",
+          ws.toString,
+          "merge-tree",
+          "--write-tree",
+          "--no-messages",
+          "--name-only",
+          ours,
+          theirs
+        )
+        .call(cwd = ws, check = false, mergeErrIntoOut = true)
+      res.exitCode match
+        case 1 =>
+          res.out.text().linesIterator.map(_.trim).filter(_.nonEmpty).toList.drop(1)
+        case _ => Nil
+    }.getOrElse(Nil)
+
   /** Merge-base of two refs (full sha)，任一 ref 不可读 = None（fail-soft 同上）。 */
   def mergeBase(ws: os.Path, a: String, b: String): Option[String] =
     Try(git(ws, "merge-base", a, b)).toOption

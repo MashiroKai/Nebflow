@@ -2262,6 +2262,10 @@ export default {
   // 面板组头徽标词（bgAgents 用原始数据词，不经 i18n）。
   'task.mode.kernel': '内核',
   'task.mode.dispatcher': '分发器',
+  // base 漂移状态位（`[base-moved]` 降噪重写批 2026-11-05）：基分支自本任务派发以来
+  // 前进的次数——**只陈述状态事实**（作者令「base 动了放面板可见即可，不进消息流」），
+  // 不解释机制、不给建议。
+  'task.baseDrift': 'base 已前进 {n} 次',
   'bg.modeTitle': '执行模式：{mode}',
 
   // NebLink

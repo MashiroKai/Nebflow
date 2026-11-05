@@ -15,7 +15,6 @@ import nebflow.actor.{
 import nebflow.agent.*
 import nebflow.core.FileChangeTracker
 import nebflow.core.compact.HistoryArchiver
-import nebflow.core.flow.TeamSessionRegistry
 import nebflow.core.task.FileTaskStore
 import nebflow.core.{
   RateLimiter,
@@ -57,7 +56,9 @@ import scala.concurrent.duration.*
  * Every assertion reads ONLY the model-visible face or observable behaviour (description
  * text, schema, `call`'s `Either`, the real LLM request body) - no implementation-detail
  * snapshots; the face-(5) end-to-end fixture reuses the `MailDeliveryRetireSpec` technique
- * (real ActorSystem + real team fixture + RecordingLlm), zero network, zero real delivery.
+ * (real ActorSystem + real session fixtures), zero network, zero real delivery.
+ * 团队功能删除批阶段 3 起，face-(5) 的投递目标是 `Nebula`（delegate → root 同机腿）+
+ * 接受方 actor 实收命令的正文——原「团队内置短名 + LLM 请求体」夹具随团队地址面退休。
  */
 class MailAttachSpec extends FunSuite:
 
@@ -356,21 +357,16 @@ class MailAttachSpec extends FunSuite:
   // ============================================================
 
   // ============================================================
-  // ⑤ A3：同机腿附注端到端（真 team fixture + RecordingLlm）
+  // ⑤ A3：同机腿附注端到端
   // ============================================================
-
-  private class RecordingLlm extends LlmHandle[IO]:
-    val requests: Ref[IO, List[LlmRequest]] = Ref.unsafe(Nil)
-
-    def send(req: LlmRequest): IO[LlmResponse] =
-      IO.raiseError(new RuntimeException("send not expected"))
-
-    def sendStream(
-      req: LlmRequest,
-      onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
-    ): Stream[IO, StreamChunk] =
-      Stream.eval(requests.update(req :: _)) >>
-        Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
+  // 团队功能删除批（team-feature-deletion-20261104）阶段 3 改写：原夹具走
+  // 「团队内置短名 `address -> "member"` + MailTool.activateAgent 冷激活」——
+  // 那条地址解析腿已随团队地址面硬删。附注本体的**单点**（`call()` 内的
+  // `withAttachmentsNote`，先于一切路由副作用）不变，因此改钉**仍然可寻址**的那条
+  // 同机腿：`address="Nebula"`（delegate 会话 → root 议会话，`deliverToRootAgent`
+  // → `sendMail`）。判据面从「接受方 LLM 请求文本」改为「接受方 actor 实收的
+  // `AgentCommand.ImmediateInput` 正文」——两者都是「附注真实到达接受方会话」，
+  // 但后者不依赖 team def / LLM 回路（更窄、更直接）。
 
   private def mkResources(
     system: ActorSystem,
@@ -407,56 +403,60 @@ class MailAttachSpec extends FunSuite:
       voiceMutedRef = voiceMuted
     )
 
-  private def fixtureTeam(tmp: os.Path, teamName: String): Unit =
-    val data = tmp / "data"
-    PathUtil.setDataRoot(data)
-    val teamDir = data / "teams" / teamName
-    os.makeDir.all(teamDir)
-    os.write.over(
-      teamDir / "team.json",
-      s"""{"name": "${teamName}", "description": "mailattach fixture", "lead": "boss", "members": ["member"]}"""
-    )
-    for name <- List("boss", "member") do
-      val adir = teamDir / "agents" / name
-      os.makeDir.all(adir)
-      os.write.over(adir / "agent.json", """{"description": "fixture", "useWhen": "tests"}""")
+  /** 接受方 root actor：记录收到的所有命令（ImmediateInput 的正文即判据面）。 */
+  private def mkRootFixture(
+    system: ActorSystem,
+    resources: SharedResources,
+    sessionStore: SessionStore
+  ): IO[Ref[IO, List[AgentCommand]]] =
+    for
+      received <- Ref.of[IO, List[AgentCommand]](Nil)
+      rootMeta <- sessionStore.createSession("nebula-root", agentName = Some("Nebula"))
+      rootRef <- system.spawn(
+        {
+          def loop: nebflow.actor.Behavior[AgentCommand] =
+            nebflow.actor.Behaviors.receiveMessage[AgentCommand](cmd => received.update(_ :+ cmd).as(loop))
+          loop
+        },
+        rootMeta.id
+      )
+      _ <- resources.agentRegistry.update(
+        _ + (rootMeta.id -> AgentRecord(rootMeta.id, rootRef, AgentKind.Root, rootMeta.id))
+      )
+    yield received
 
-  private def ctxFor(resources: SharedResources, system: ActorSystem, senderSid: String): ToolContext =
+  /** 有界等待接受方收到命令（空集即判据无效，禁假绿）。 */
+  private def awaitCommands(
+    received: Ref[IO, List[AgentCommand]],
+    deadlineMs: Long
+  ): IO[List[AgentCommand]] =
+    IO.defer {
+      received.get.flatMap { cs =>
+        if cs.nonEmpty || System.currentTimeMillis() >= deadlineMs then IO.pure(cs)
+        else IO.sleep(100.millis) *> awaitCommands(received, deadlineMs)
+      }
+    }
+
+  /** 收件人实收正文（ImmediateInput.text + blocks 里的 Text 块）。 */
+  private def deliveredText(cs: List[AgentCommand]): String =
+    cs.collect { case ii: AgentCommand.ImmediateInput =>
+      (ii.text :: ii.blocks.toList.flatten.collect { case ContentBlock.Text(t) => t }).mkString("\n")
+    }.mkString("\n")
+
+  private def delegateCtx(resources: SharedResources, system: ActorSystem): ToolContext =
     ToolContext(
       projectRoot = os.pwd.toString,
-      sessionId = Some(senderSid),
+      // delegate 会话身份（roleOf ⇒ SenderRole.Delegate，Nebula 腿对 delegate 开放）
+      sessionId = Some(s"delegate-${java.util.UUID.randomUUID().toString.take(8)}"),
+      agentDef = Some(AgentDef(name = "Tester", description = "attach e2e sender", tools = Nil)),
       sharedResources = Some(resources),
       actorSystem = Some(system)
     )
 
-  /** LLM 请求体全量文本（接受方会话实际看到的内容 = 附注真实到达的判据面）。 */
-  private def reqText(r: LlmRequest): String =
-    r.messages
-      .map { m =>
-        m.content match
-          case Left(s) => s
-          case Right(blocks) => blocks.collect { case ContentBlock.Text(t) => t }.mkString("\n")
-      }
-      .mkString("\n")
-
-  /**
-   * 轮询等待接受方 turn 落定（**有界等待**，不用固定 sleep：固定睡眠在连续 JVM 负载下会假红，
-   * 而「等到了才断言」同时堵住负控的空集假绿 —— 空结果由调用方显式判红）。
-   */
-  private def awaitRequests(llm: RecordingLlm, deadlineMs: Long): IO[List[LlmRequest]] =
-    IO.defer {
-      llm.requests.get.flatMap { rs =>
-        if rs.nonEmpty || System.currentTimeMillis() >= deadlineMs then IO.pure(rs)
-        else IO.sleep(150.millis) *> awaitRequests(llm, deadlineMs)
-      }
-    }
-
   test("⑤ A3 端到端：同机腿 `attachments` ⇒ 附注（绝对路径 + 字节数 + sha256）真实到达接受方会话；🔴 零搬字节"):
-    val teamName = s"mailattach${java.util.UUID.randomUUID().toString.take(6)}"
     val system = ActorSystem(s"mailattach-e2e-${java.util.UUID.randomUUID().toString.take(6)}")
     val tmp = os.temp.dir(prefix = "mailattach-e2e")
-    fixtureTeam(tmp, teamName)
-    val llm = new RecordingLlm
+    PathUtil.setDataRoot(tmp / "data")
     // 附件夹具：放在**非** worktree 的临时目录（路径即取件，不依赖仓内相对位置）
     val file = tmp / "report.bin"
     os.write(file, Array[Byte](7, 7, 7, 7, 7))
@@ -465,29 +465,21 @@ class MailAttachSpec extends FunSuite:
 
     val io = for
       sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
-      bossMeta <- sessionStore.createSession(s"$teamName/boss", agentName = Some("boss"), flowName = Some(teamName))
-      memberMeta <- sessionStore.createSession(
-        s"$teamName/member",
-        agentName = Some("member"),
-        flowName = Some(teamName)
-      )
-      _ <- TeamSessionRegistry.registerSession(teamName, "boss", bossMeta.id)
-      _ <- TeamSessionRegistry.registerSession(teamName, "member", memberMeta.id)
-      resources <- mkResources(system, tmp, llm, sessionStore)
-      _ <- MailTool.activateAgent(memberMeta.id, resources, system, ctxFor(resources, system, bossMeta.id))
+      resources <- mkResources(system, tmp, null, sessionStore)
+      received <- mkRootFixture(system, resources, sessionStore)
       res <- MailTool.call(
-        withArr(qIn("address" -> "member", "message" -> "MAILATTACH_NOTE_MARKER"), "attachments", file.toString),
-        ctxFor(resources, system, bossMeta.id)
+        withArr(qIn("address" -> "Nebula", "message" -> "MAILATTACH_NOTE_MARKER"), "attachments", file.toString),
+        delegateCtx(resources, system)
       )
-      reqs <- awaitRequests(llm, System.currentTimeMillis() + 8000)
+      cmds <- awaitCommands(received, System.currentTimeMillis() + 8000)
       // 🔴 零搬字节：源件内容在投递后逐字节不变（附件只以「路径 + 读数」形式进文本）
       bytesAfter <- IO(os.read.bytes(file))
-    yield (res, reqs, bytesAfter)
+    yield (res, cmds, bytesAfter)
 
-    val (res, reqs, bytesAfter) = io.unsafeRunSync()
+    val (res, cmds, bytesAfter) = io.unsafeRunSync()
     assert(res.isRight, s"同机腿带 attachments 必须成功（附注模式，零搬运）: $res")
-    assert(reqs.nonEmpty, "🔴 判据前提：接受方 turn 必须落定（空集即判据无效，禁假绿）")
-    val all = reqs.map(reqText).mkString("\n")
+    assert(cmds.nonEmpty, "🔴 判据前提：接受方必须收到命令（空集即判据无效，禁假绿）")
+    val all = deliveredText(cmds)
     assert(all.contains("MAILATTACH_NOTE_MARKER"), s"邮件正文必须到达接受方会话: ${all.take(400)}")
     assert(all.contains(file.toString), "🔴 附注必须带**绝对路径**（接受方按路径 Read 取件）")
     assert(all.contains(s"$expectedSize B"), s"附注必须带字节数读数（期望 $expectedSize B）")
@@ -495,39 +487,31 @@ class MailAttachSpec extends FunSuite:
     assert(all.contains("[Mail 附件]"), "附注必须自陈「通用附件」形态（与图片附注同族词表）")
     assertEquals(bytesAfter.toList, List[Byte](7, 7, 7, 7, 7), "🔴 同机腿零搬字节：源件内容不得被改动")
     assertEquals(os.size(file), expectedSize, "🔴 源件大小不变")
+    system.stopAll.unsafeRunSync()
 
   test("⑤ A3 对照：同机腿**不带** attachments ⇒ 正文不含附注（字节级零漂移）"):
-    val teamName = s"mailattach${java.util.UUID.randomUUID().toString.take(6)}"
     val system = ActorSystem(s"mailattach-none-${java.util.UUID.randomUUID().toString.take(6)}")
     val tmp = os.temp.dir(prefix = "mailattach-none")
-    fixtureTeam(tmp, teamName)
-    val llm = new RecordingLlm
+    PathUtil.setDataRoot(tmp / "data")
 
     val io = for
       sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
-      bossMeta <- sessionStore.createSession(s"$teamName/boss", agentName = Some("boss"), flowName = Some(teamName))
-      memberMeta <- sessionStore.createSession(
-        s"$teamName/member",
-        agentName = Some("member"),
-        flowName = Some(teamName)
-      )
-      _ <- TeamSessionRegistry.registerSession(teamName, "boss", bossMeta.id)
-      _ <- TeamSessionRegistry.registerSession(teamName, "member", memberMeta.id)
-      resources <- mkResources(system, tmp, llm, sessionStore)
-      _ <- MailTool.activateAgent(memberMeta.id, resources, system, ctxFor(resources, system, bossMeta.id))
+      resources <- mkResources(system, tmp, null, sessionStore)
+      received <- mkRootFixture(system, resources, sessionStore)
       res <- MailTool.call(
-        qIn("address" -> "member", "message" -> "MAILATTACH_PLAIN_MARKER"),
-        ctxFor(resources, system, bossMeta.id)
+        qIn("address" -> "Nebula", "message" -> "MAILATTACH_PLAIN_MARKER"),
+        delegateCtx(resources, system)
       )
-      reqs <- awaitRequests(llm, System.currentTimeMillis() + 8000)
-    yield (res, reqs)
+      cmds <- awaitCommands(received, System.currentTimeMillis() + 8000)
+    yield (res, cmds)
 
-    val (res, reqs) = io.unsafeRunSync()
+    val (res, cmds) = io.unsafeRunSync()
     assert(res.isRight, s"无附件时既有路径必须照常: $res")
     // 🔴 负控必须有内容才判「不含附注」——空集下的 `!contains` 是假绿。
-    assert(reqs.nonEmpty, "🔴 判据前提：接受方 turn 必须落定（空集即负控无效，禁假绿）")
-    val all = reqs.map(reqText).mkString("\n")
+    assert(cmds.nonEmpty, "🔴 判据前提：接受方必须收到命令（空集即负控无效，禁假绿）")
+    val all = deliveredText(cmds)
     assert(all.contains("MAILATTACH_PLAIN_MARKER"), s"正文必须到达: ${all.take(400)}")
     assert(!all.contains("[Mail 附件]"), "未请求附件时不得出现附注（字节级零改动）")
+    system.stopAll.unsafeRunSync()
 
 end MailAttachSpec

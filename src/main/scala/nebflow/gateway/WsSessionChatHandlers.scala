@@ -12,7 +12,6 @@ import nebflow.actor.{ActorSystem as RootActorSystem, *}
 import nebflow.agent.*
 import nebflow.core.*
 import nebflow.core.entity.EntityLoader
-import nebflow.core.flow.{FlowTreeActor, FlowTreeRegistry, TeamSessionRegistry}
 import nebflow.core.mcp.McpManager
 import nebflow.core.project.{CancelSource as ChainCancelSource, *}
 import nebflow.core.schedule.FreezeSchedule.given
@@ -964,12 +963,14 @@ private[gateway] object WsSessionChatHandlers:
     val immJson = parsedJson(text)
     val immSessionId = immJson.hcursor.downField("sessionId").as[String].getOrElse("")
     val immContent = immJson.hcursor.downField("content").as[String].getOrElse("")
+    // P3 磁盘邮箱批：客户端幂等键穿线（改前本帧的 cid 从不被读取 ⇒ 真人主腿零幂等面）
+    val immCmid = immJson.hcursor.downField("clientMessageId").as[Option[String]].getOrElse(None)
     admitWorkOrRefuse(wsSend)(
       // 真人：用户在客户端点发送（队列条「立即发送」/输入框直投）
       // device-provenance 批：帧 `device` 键 → 来源设备读数（缺席 ⇒ None ⇒
       // 下方 handleUserText 全 face 逐字节现状）。
       deviceProvenance(immJson).flatMap(device =>
-        handleUserText(immSessionId, immContent, source = "immediateInput", fromUser = true, device)
+        handleUserText(immSessionId, immContent, source = "immediateInput", fromUser = true, device, immCmid)
       )
     )
 
@@ -993,10 +994,12 @@ private[gateway] object WsSessionChatHandlers:
     val umJson = parsedJson(text)
     val umSessionId = umJson.hcursor.downField("sessionId").as[String].getOrElse("")
     val umContent = umJson.hcursor.downField("content").as[String].getOrElse("")
+    // P3 磁盘邮箱批：CLI/客户端幂等键穿线（缺席 ⇒ None ⇒ 逐字现状）
+    val umCmid = umJson.hcursor.downField("clientMessageId").as[Option[String]].getOrElse(None)
     admitWorkOrRefuse(wsSend)(
       // 真人：CLI (ChatSend) 是人在终端里敲的字——实测本帧确实走
       // handleUserText → dispatchUserText（与 immediateInput 同一腿）。
-      handleUserText(umSessionId, umContent, source = "userMessage", fromUser = true)
+      handleUserText(umSessionId, umContent, source = "userMessage", fromUser = true, clientMessageId = umCmid)
     )
   end handleUserMessage
 
@@ -1140,7 +1143,7 @@ private[gateway] object WsSessionChatHandlers:
           sessionTextBuffers.update(_ - sessionId) *>
             sessionThinkingBuffers.update(_ - sessionId) *>
             sessionTurnStarts.update(_ - sessionId) *>
-            stopTeamSessionActors(sessionId) *> stopChildDelegateActors(sessionId) *> removeRootAgent(
+            stopChildDelegateActors(sessionId) *> removeRootAgent(
               sessionId
             ) *> sessionService
               .deleteSession(sessionId)
@@ -1173,7 +1176,6 @@ private[gateway] object WsSessionChatHandlers:
               sessionTextBuffers.update(_ - sid) *>
                 sessionThinkingBuffers.update(_ - sid) *>
                 sessionTurnStarts.update(_ - sid) *>
-                stopTeamSessionActors(sid) *>
                 stopChildDelegateActors(sid) *>
                 removeRootAgent(sid) *>
                 sessionService.deleteSession(sid)

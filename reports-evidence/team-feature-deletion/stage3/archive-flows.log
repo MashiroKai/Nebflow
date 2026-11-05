@@ -1,0 +1,33 @@
+# flows.json 归档读数 —— team-feature-deletion-20261104 / 阶段 3
+
+$ date
+2026-11-05 10:26:50 +0800
+
+$ ls /Users/kaiyu/.stand/sessions/*/flows.json | wc -l        # 归档前
+24
+$ ls /Users/kaiyu/.stand/sessions/*/flows.json | wc -l        # 归档后
+       0
+$ ls /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/sessions/*/flows.json | wc -l
+      24
+
+$ 逐件 sha256（源 → cp 副本 比对后 mv）与 MANIFEST 复核
+manifest data rows: 136
+verified OK: 136   problems: 0
+flows.json rows: 24  bytes total: 10020
+
+$ 冻结权限抽样
+dr-xr-xr-x@  7 kaiyu  staff    224 11月  4 22:54 /Users/kaiyu/.stand/archive/team-feature-deletion-20261104
+-r--r--r--@  1 kaiyu  staff  18271 11月  5 10:26 /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/MANIFEST.tsv
+-r--r--r--@  1 kaiyu  staff  20321 11月  5 09:33 /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/RESTORE.md
+dr-xr-xr-x@ 27 kaiyu  staff    864 11月  5 09:32 /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/sessions
+dr-xr-xr-x@ 3 kaiyu  staff  96 11月  5 09:32 /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/sessions/ask-0023e0a8
+-r--r--r--@ 1 kaiyu  staff  441 11月  1 13:29 /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/sessions/ask-0023e0a8/flows.json
+
+$ 24 个归档件逐件 sha256（前 5 + 后 2）
+05c4a72cbbb4f25dbe74a1b6d2fcb0b63f9463c202638b098fe0e434ec5e20ed  /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/sessions/5cc7590a-6dcb-4dba-8979-0ce5eb0a14fe/flows.json
+1d745da1f49b62eba7a08180705bdc2f2c1fadd4943b29f4aa091c9e6b57e796  /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/sessions/61160b68-9d1d-46b7-bba7-4aabb2d5c440/flows.json
+05c4a72cbbb4f25dbe74a1b6d2fcb0b63f9463c202638b098fe0e434ec5e20ed  /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/sessions/771d76fc-2347-4a08-bb52-67eada3936ac/flows.json
+29f000a929a2ef0266372f123c50773b2e6fc28dabc67360e5f62160edaf2f66  /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/sessions/857a2723-1bd8-4033-a88b-33d0b3b25f26/flows.json
+c49f43fb2ae3c3b6d73df8f50c65d9465d23dfb1a84d57297bd1df3fdf4e1ae6  /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/sessions/9f3c4826-47aa-4fd5-967f-b9de85898b35/flows.json
+c49f43fb2ae3c3b6d73df8f50c65d9465d23dfb1a84d57297bd1df3fdf4e1ae6  /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/sessions/e7facbfa-d6b1-4f44-b475-6575d39ccdd5/flows.json
+c49f43fb2ae3c3b6d73df8f50c65d9465d23dfb1a84d57297bd1df3fdf4e1ae6  /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/sessions/ec8ae43f-88bf-4e87-b1ab-a1acea5d3935/flows.json

@@ -20,7 +20,7 @@ Nebflow 是单 JVM 自托管的 AI agent 编排平台：`nebflow start` 起一�
 | CLI | `scala/nebflow/cli`（29 文件） | start/stop、CliRouter 子命令、pid 文件、单实例守卫（pid + 端口双重）、热重启后继 `--succeed` | `Main.scala`、`SingleInstanceGuard`、`ProcessManager` |
 | Gateway | `scala/nebflow/gateway`（49 文件） | HTTP+WS 服务：WsHub/WsDispatch 主通道、REST 路由群、静态资源（web / web-dist）、PatAuth、STT/TTS、健康检查 | `GatewayMain.scala`、`WsHub.scala`、`StaticRoutes.scala` |
 | 编排引擎 | `scala/nebflow/core/project`（40 文件） | 项目级调度：ProjectActor 拆 DAG、NodeEngine 依赖门控 / 循环预算 / 取消、FlowMap 存储与事件日志、ChainLedger 台账、TaskBoard 看板、崩溃恢复 | `ProjectActor.scala`、`NodeEngine.scala`、`FlowMapStore.scala`、`ChainLedgerStore.scala` |
-| 节点邮箱 | `scala/nebflow/core/flow`（13 文件） | 节点间消息：FlowTreeActor 路由、邮箱队列持久化、空闲门、投递去重 | `FlowTreeActor.scala`、`MailQueueStore.scala`、`MailDeliveryDedup.scala` |
+| 节点邮箱 | `scala/nebflow/core/flow` | 节点间消息：邮箱队列持久化、空闲门、投递去重 | `MailQueueStore.scala`、`MailDeliveryDedup.scala` |
 | 节点执行 | `scala/nebflow/core/node` | 节点执行入口，经 AgentRuntimePort 端口进入 Agent 运行时 | `NodeRunner.scala` |
 | Actor 系统 | `scala/nebflow/actor`（12 文件） | 自研 Actor：ActorSystem / Behavior / 信封 / 状态 | `ActorSystem.scala`、`Behavior.scala` |
 | Agent 运行时 | `scala/nebflow/agent`（32 文件） | AgentActor 状态机（Idle/Processing/Frozen）、会话执行、子代理 SubAgentTaskStore、InteractionHub、流式管线 | `AgentActor.scala`、`AgentSession.scala`、`InteractionHub.scala` |

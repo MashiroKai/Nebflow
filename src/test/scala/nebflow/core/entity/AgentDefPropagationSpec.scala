@@ -10,7 +10,7 @@ import nebflow.shared.PathUtil
  * 2026-08-15 FlowTrigger outage regression guard.
  *
  * Root cause: the AgentEntry → AgentDef conversion existed as SIX hand-copied
- * field maps at spawn sites (WebSocketRoutes / MailTool ×2 / FlowTreeActor /
+ * field maps at spawn sites (WebSocketRoutes / MailTool ×2 / team-tree actor /
  * FlowDagExecutor / EntityLoader.findAgentByName), and only two of them
  * (ContextRefresher, EntityLoader) carried `flows`/`skills`. Agents whose
  * actor-startup snapshot came from one of the four lossy maps advertised

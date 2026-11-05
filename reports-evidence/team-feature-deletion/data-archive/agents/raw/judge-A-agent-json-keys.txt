@@ -1,0 +1,16 @@
+# J-A  agent.json schema (source of truth) — top-level keys of every agent.json* under ~/.stand/agents
+$ find /Users/kaiyu/.stand/agents -type f \( -name "agent.json" -o -name "agent.json.*" \) | sort
+/Users/kaiyu/.stand/agents/Coder/agent.json.archived
+/Users/kaiyu/.stand/agents/design-engineer/agent.json.archived
+/Users/kaiyu/.stand/agents/Explorer/agent.json.archived
+/Users/kaiyu/.stand/agents/Nebula/agent.json
+/Users/kaiyu/.stand/agents/Nebula/agent.json.bak-20261030-cmdcode
+/Users/kaiyu/.stand/agents/project-dispatcher/agent.json
+
+$ for f in ...; do python3 -c "json keys"; done
+Coder/agent.json.archived :: ['avatar', 'category', 'description', 'displayName', 'name', 'tools']
+design-engineer/agent.json.archived :: ['category', 'description', 'displayName', 'name', 'preset', 'skills', 'tools', 'useWhen']
+Explorer/agent.json.archived :: ['category', 'description', 'name', 'skills', 'tools']
+Nebula/agent.json :: ['displayName', 'identityUpdatedAt', 'model', 'name']
+Nebula/agent.json.bak-20261030-cmdcode :: ['displayName', 'identityUpdatedAt', 'model', 'name']
+project-dispatcher/agent.json :: ['description', 'name', 'skills']
