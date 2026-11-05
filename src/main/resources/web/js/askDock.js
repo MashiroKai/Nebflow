@@ -564,6 +564,9 @@ function mountRoot() {
 
 /**
  * 尺寸面（surface）：拖拽改尺寸的最小描述。
+ *   · name   = 该面的持久化身份（`'ask'` | `'note'`，见 sizeKeyOf ⇒ 键
+ *     `dock:size:<name>`；缺省按 'ask' 兜底）。**运行时真值，不是注解字段**：
+ *     两个面板共用同一段尺寸状态机，唯一区分就是它。
  *   · panel  = 面板本体（绝对定位、右/下缘钉位 ⇒ 自由角只有左上）
  *   · handle = 左上角拖柄（design-system.css `.ds-resize-handle` 单源）
  *   · track  = 高度受控的可变盒（ask = 气泡列；note = 记文本体）
@@ -572,7 +575,7 @@ function mountRoot() {
  *   · onApply = 落尺寸后的钩子（ask 截断线状态机已随缩放空白批退役 ⇒ 两面皆 null；
  *     保留这个槽是为了下一次要写派生量时有单点落位，不必再改状态机）
  *   · lastSize = 最近一次落下的尺寸（视口/层切换时按同一目标重夹）
- * @typedef {{panel: any, handle: any, track: any, footer: any,
+ * @typedef {{name: string, panel: any, handle: any, track: any, footer: any,
  *   varW: string, varH: string, onApply: (() => void)|null,
  *   lastSize: {w: number, h: number}|null}} Surface
  */
