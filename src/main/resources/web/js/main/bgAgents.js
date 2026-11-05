@@ -334,17 +334,110 @@ export function armBgUptimeTick(view) {
 // （isBgRowVisible 单点）；其余未被认领的行（ephemeral/dag/team 等）按原序缀后照 render。
 //
 // 面板层级批（2026-10-31 ① · 作者令）：父行可折叠——组头行首 caret，点击收起/展开
-// 其子行树（用户偏好记在 bgHeadCollapsePref，重渲染不丢）；**默认展开进行中父**
+// 其子行树（用户偏好记在折叠偏好表，重渲染不丢）；**默认展开进行中父**
 // （非终态组头默认展开），终态组头默认收起（完成态灰化照旧，计数不变——签与
 // 列表同走 visibleBgAgentEntries，折叠只影响子行渲染）。
+//
+// 层级缩进批（2026-11-05 腿② · 作者令「节点也分很多层，每一层都应该是上一层的缩进」）：
+// 层级从「两级帽」放宽到**任意层**——深度按真实父子链接算（bgRowTree 四源），行上出
+// data-bg-depth + 逐层累加的缩进；**任意有子行的行**都有 caret，收起即隐藏整棵子树；
+// 折叠偏好按行定位键持久化到 localStorage（刷新后保持）。铁律不变：元素不许为了腾
+// 地方而消失——只有用户主动折叠才隐藏，深度本身绝不裁行。
 
-/** 组头折叠用户偏好：delegate sid → true=收起（undefined = 走默认规——终态收起）。 */
-const bgHeadCollapsePref = new Map();
+/** 折叠用户偏好：**行定位键**（bgRowLocatorKey，与 data-bg-key / data-bg-caret 同一条
+ *  缝）→ true=收起（undefined = 走默认规——终态收起）。
+ *  层级缩进批（2026-11-05 腿②）：面板层级批①的内存 Map 升级为 **localStorage 持久表**——
+ *  折叠是用户主动行为，主动行为该跨刷新记住；折叠粒度从「组头」放宽到**任意有子行的行**
+ *  （作者令 2026-11-05 08:47「节点也分很多层，每一层都应该是上一层的缩进」）。
+ *  模块内**只此一处**碰 localStorage：读 = bgCollapseTable（JSON 容错），写 = bgCollapseSet。 */
+const BG_COLLAPSE_STORAGE_KEY = 'nebflow.bgAgents.collapsed.v1';
+/** @type {Record<string, boolean>|null} */
+let bgCollapseCache = null;
 
-/** 默认折叠规（面板层级批 ①）：终态（done/error）组头默认收起，进行中父默认展开。 */
+/**
+ * 折叠偏好表（惰性装载；**单点读口**）：命名空间键 + JSON 容错——坏 JSON / 非对象 /
+ * 数组 / 非布尔值一律丢弃（绝不因一条脏数据让面板抛错，也绝不整表清空用户偏好）。
+ * @returns {Record<string, boolean>}
+ */
+function bgCollapseTable() {
+  if (bgCollapseCache) return bgCollapseCache;
+  /** @type {Record<string, boolean>} */
+  const table = {};
+  try {
+    const raw = localStorage.getItem(BG_COLLAPSE_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      for (const k of Object.keys(parsed)) {
+        if (parsed[k] === true || parsed[k] === false) table[k] = parsed[k] === true;
+      }
+    }
+  } catch (_) {
+    // 坏值 ⇒ 空表（内存表仍可用），零抛错零 console 噪音。
+  }
+  bgCollapseCache = table;
+  return table;
+}
+
+/**
+ * 某行的折叠偏好（单点读口）：undefined = 用户没表态 ⇒ 调用方走默认规。
+ * @param {string} key 行定位键
+ * @returns {boolean|undefined}
+ */
+function bgCollapseGet(key) {
+  const k = String(key || '');
+  if (!k) return undefined;
+  const table = bgCollapseTable();
+  return Object.prototype.hasOwnProperty.call(table, k) ? table[k] === true : undefined;
+}
+
+/**
+ * 写某行的折叠偏好（单点写口）：内存 + localStorage 同写；存储不可用（隐私模式 /
+ * 配额满）⇒ 会话内仍生效，绝不让点击行为丢在半路。
+ * @param {string} key 行定位键
+ * @param {boolean} collapsed
+ */
+function bgCollapseSet(key, collapsed) {
+  const k = String(key || '');
+  if (!k) return;
+  const table = bgCollapseTable();
+  table[k] = !!collapsed;
+  try {
+    localStorage.setItem(BG_COLLAPSE_STORAGE_KEY, JSON.stringify(table));
+  } catch (_) {
+    // 存储不可用 ⇒ 内存表已生效（刷新后回默认规）。
+  }
+}
+
+/** 默认折叠规（面板层级批 ① · 层级缩进批沿用）：终态（done/error）默认收起，进行中
+ *  父默认展开；活链延续组头的默认展开在 bgRowCollapseDefault 里另行前置。 */
 function bgHeadDefaultCollapsed(info) {
   const st = bgRowState(info);
   return st === 'done' || st === 'error';
+}
+
+/** 行默认折叠态（层级缩进批 2026-11-05 腿②）：任一有子行的行共用同一套默认规——
+ *  · 整体行：活链延续组头 ⇒ 展开（既有规：活链可见即该批目的）；否则走终态收起；
+ *  · 成员行：终态（done/error、store completed/failed、flow completed/failed/cancelled）
+ *    ⇒ 收起；进行中 ⇒ 展开。
+ *  @param {any} row 行计划项 @returns {boolean} */
+function bgRowCollapseDefault(row) {
+  const r = row && typeof row === 'object' ? row : {};
+  if (r.level === 'head') {
+    const g = r.group || {};
+    if (g.chainLive) return false;
+    return bgHeadDefaultCollapsed(g.info || {});
+  }
+  if (r.level !== 'child') return false;
+  const c = r.child || {};
+  if (c.type === 'store') {
+    const st = bgStoreChildState(String((c.child && c.child.status) || ''));
+    return st === 'done' || st === 'error';
+  }
+  if (c.type === 'flow') {
+    const st = String((c.node && c.node.status) || '');
+    return st === 'completed' || st === 'failed' || st === 'cancelled';
+  }
+  return bgRowTerminal(r.info || {});
 }
 
 /** 徽标归位批（2026-10-31 23:02 作者令 + 实拍截图）：**顶层 delegate 组头行只标一个
@@ -799,12 +892,96 @@ function bgRowOrderCmp(a, b) {
 }
 
 /**
+ * 行树（层级缩进批 2026-11-05 腿② · 作者令「节点也分很多层，每一层都应该是上一层的
+ * 缩进」）：**深度 / 子树 / 树序**三合一单点——渲染面与回归 dump 只读这一份，绝不在
+ * 第二个地方重新推算深度（两套深度口径 = 层级与折叠打架的温床）。
+ *
+ * 深度按**真实父子链接**算，不按渲染顺序猜。父链接来源沿用既有四源（与 bgDelegateGroups
+ * 同一批源，不另立口径）：
+ *   ① live / 快照行 `info.parentSessionId`（各 spawn 路由单点注入 + 快照出帧）；
+ *   ② G3 child owner（store 子条目自带 parentSessionId；缺失 ⇒ 所属整体行）；
+ *   ③ 作用域桶链行（同①：`routeSubagentWsSend` 注入的 parentSessionId 原样在 info 上）；
+ *   ④ flow 结构投影（chain.nodes flow-step：bgDelegateGroups 既有归属 = 整体行——
+ *      `deps` 是 DAG 依赖边不是父子链接，不据此加层）。
+ *
+ * 规约：整体行 depth=0；成员行 depth = 父行 depth+1，**任意层数都成立**；父不在行集 /
+ * 跨组父 / 自指 / 环 ⇒ 回落「所属整体行下一格」（行绝不因为父缺席而消失——铁律：
+ * 元素不许为了腾地方而消失）。成树只在**同一整体行内**（跨组父链接是组间关系，
+ * 不是该组内的层）。
+ *
+ * @param {Array<any>} rows 行计划项（bgRowPlan 基座序）
+ * @returns {{order: Array<any>, roots: Array<any>, parentOf: Map<any, any>, kids: Map<any, Array<any>>, depth: Map<any, number>}}
+ */
+function bgRowTree(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  /** 定位键 → 行（键收敛后本应唯一；重键只取首个，零丢失靠下面的兜底序）。 */
+  const byKey = new Map();
+  for (const row of list) {
+    const k = bgRowSessionKey(row);
+    if (k && !byKey.has(k)) byKey.set(k, row);
+  }
+  /** 父行表（null = 根）。 */
+  const parentOf = new Map();
+  for (const row of list) {
+    parentOf.set(row, null);
+    if (!row || row.level !== 'child') continue;
+    const self = bgRowSessionKey(row);
+    const info = row.info || {};
+    const c = row.child || {};
+    const groupKey = bgRowLocatorKey({ id: row.group && row.group.id, info: row.group && row.group.info });
+    // ①②③：真实父链接（store 子条目无 info，父链接落在 G3 条目自身上）。
+    let pk = String(info.parentSessionId || '').replace(/^team-/, '');
+    if (!pk && c.type === 'store') pk = String((c.child && c.child.parentSessionId) || '').replace(/^team-/, '');
+    // ④：无父链接的成员行（flow 结构投影等）挂所属整体行。
+    if (!pk) pk = groupKey;
+    const cand = (pk && pk !== self) ? byKey.get(pk) : null;
+    if (cand && cand !== row && cand.group === row.group) { parentOf.set(row, cand); continue; }
+    // 回落：所属整体行下一格（父不在行集 / 跨组父 / 自指）。
+    const head = groupKey ? byKey.get(groupKey) : null;
+    if (head && head !== row && head.group === row.group) parentOf.set(row, head);
+  }
+  /** 深度（沿父链走，seen 防环；父链断在根 ⇒ 0）。 */
+  const depth = new Map();
+  for (const row of list) {
+    let d = 0;
+    let cur = parentOf.get(row) || null;
+    const seen = new Set([row]);
+    while (cur && !seen.has(cur)) { seen.add(cur); d += 1; cur = parentOf.get(cur) || null; }
+    depth.set(row, d);
+  }
+  /** 子树索引（兄弟序 = 基座序）。 */
+  const kids = new Map();
+  const roots = [];
+  for (const row of list) {
+    const p = parentOf.get(row) || null;
+    if (p) {
+      const arr = kids.get(p) || [];
+      arr.push(row);
+      kids.set(p, arr);
+    } else roots.push(row);
+  }
+  /** 树序（前序：父行后紧跟其整棵子树）——同父兄弟保持基座序，无层级的行序零变化。 */
+  const order = [];
+  const placed = new Set();
+  const walk = (row) => {
+    if (!row || placed.has(row)) return;
+    placed.add(row);
+    order.push(row);
+    for (const k of kids.get(row) || []) walk(k);
+  };
+  for (const r of roots) walk(r);
+  // 环/异常父链防御：树外的行按基座序兜底出镜（绝不因结构算不清而丢行）。
+  for (const row of list) if (!placed.has(row)) walk(row);
+  return { order, roots, parentOf, kids, depth };
+}
+
+/**
  * 跨通路行集组装（收敛批第一律 + 第三律）：把二级结构的对位行与顶层 leftover
  * 合成一个**有序、按 sessionId 唯一**的渲染计划。渲染面与计数面只读本函数产出——
  * 「签与列表永不打架」自此是结构事实，而不是两次独立计算碰巧相等。
  *
  * @param {{groups: Array<Object>, leftovers: Array<Array<any>>, orphanBy: Map<string, any>}} model
- * @returns {{items: Array<Object>, total: number}}
+ * @returns {{items: Array<Object>, total: number, tree: {order: Array<any>, roots: Array<any>, parentOf: Map<any, any>, kids: Map<any, Array<any>>, depth: Map<any, number>}}}
  */
 function bgRowPlan(model) {
   const groups = (model && model.groups) || [];
@@ -862,7 +1039,11 @@ function bgRowPlan(model) {
   items.push(...topRows);
   for (const r of topRows) placed.add(r);
   for (const r of kept) if (!placed.has(r)) items.push(r);
-  return { items, total: items.length };
+  // ④ 层级缩进批（2026-11-05 腿②）：基座序 → **树序**（父行后紧跟整棵子树，同父兄弟
+  // 保持基座序；无嵌套时与基座序逐位相同——既有行序零回归）。深度/子树同点产出，
+  // 渲染面（折叠剪枝）与回归 dump（data-bg-depth）共用这一份。
+  const tree = bgRowTree(items);
+  return { items: tree.order, total: tree.order.length, tree };
 }
 
 /**
@@ -870,9 +1051,10 @@ function bgRowPlan(model) {
  * badge 计数 / 头部计数 / 空态 / 行集四个消费面共读此一处——「签与列表永不打架」
  * 的口径随模型延续。`total` = 收敛后的行集长度（`bgRowPlan().items.length`）：
  * 同一 sessionId 无论从哪条通路进来只计一次，行数与计数由**同一份行集**派生。
+ * 层级缩进批（2026-11-05 腿②）：`rows` 已是树序、`tree` 带深度/子树（折叠剪枝用）。
  *
  * @param {string} bucketSid 主会话桶 id（视图 sessionId）
- * @returns {{bgAgents: Object, entries: Array<[string, any]>, groups: Array<Object>, leftovers: Array<Array<any>>, orphanBy: Map<string, any>, rows: Array<Object>, total: number}}
+ * @returns {{bgAgents: Object, entries: Array<[string, any]>, groups: Array<Object>, leftovers: Array<Array<any>>, orphanBy: Map<string, any>, rows: Array<Object>, total: number, tree: any}}
  */
 function bgPanelModel(bucketSid) {
   const bgAgents = (bucketSid && state.sessionBgAgents[bucketSid]) || {};
@@ -883,6 +1065,7 @@ function bgPanelModel(bucketSid) {
     bgAgents, entries, groups, leftovers, orphanBy,
     rows: plan.items,
     total: plan.total,
+    tree: plan.tree,
   };
 }
 
@@ -931,6 +1114,42 @@ function bgOrphanChipHtml(orphan, bucketSid) {
 }
 
 /**
+ * 行深度锚（层级缩进批 2026-11-05 腿②）：机器可读 `data-bg-depth` + 视觉缩进变量
+ * `--bg-row-depth`（缩进档在 chat.css：子行 padding-left = 既有间距令牌按深度累加，
+ * 每深一层再加一格；零新增色值、零新增档位）。depth=0（整体行/顶层行）不带属性，
+ * 视觉与改动前逐位相同。
+ * @param {number} [depth] @returns {string}
+ */
+function bgDepthAttrs(depth) {
+  const d = Math.max(0, Math.floor(Number(depth) || 0));
+  return ' data-bg-depth="' + d + '"' + (d > 0 ? ' style="--bg-row-depth:' + d + '"' : '');
+}
+
+/**
+ * 折叠态锚（层级缩进批）：只有**有子行的行**带 `data-bg-collapsed`（"true"/"false"）——
+ * 机器读点（回归 dump / 读屏 / 刷新后状态核对）；无子行的行不带此属性（零噪声）。
+ * @param {number} [childCount] @param {boolean} [collapsed] @returns {string}
+ */
+function bgCollapseAttrs(childCount, collapsed) {
+  if (!(Number(childCount) > 0)) return '';
+  return ' data-bg-collapsed="' + (collapsed ? 'true' : 'false') + '"';
+}
+
+/**
+ * 行首 caret 折叠锚（面板层级批 2026-10-31 ① 形态原样沿用：muted 小图标 + 停冒泡
+ * 点击热区 + aria/title 随折叠态翻转）。层级缩进批：从「只有组头」放宽到**任意有
+ * 子行的行**（作者令「每一层都应该是上一层的缩进」⇒ 每一层都该能收起自己那棵子树）。
+ * @param {string} key 行定位键（data-bg-caret 值 = 折叠偏好的持久化键，同一把缝）
+ * @param {boolean} collapsed @returns {string}
+ */
+function bgCaretHtml(key, collapsed) {
+  const word = collapsed ? t('subagents.expandGroup') : t('subagents.collapseGroup');
+  return '<span class="bg-task-caret' + (collapsed ? ' is-collapsed' : '') + '" data-bg-caret="' +
+    escapeHtml(String(key || '')) + '" role="button" aria-label="' + escapeHtml(word) + '" title="' +
+    escapeHtml(word) + '">' + statusIcon(collapsed ? 'chevron-right' : 'chevron-down', 11) + '</span>';
+}
+
+/**
  * 面板行 HTML（原 renderBgAgentDropdown map 体原样抽出——行渲染语义零改动；新增
  * opts.childLevel/headLevel 两级锚与 opts.badgeWord 徽标覆写两个纯呈现参数）。
  * 显示名契约批（2026-10-22）：delegate 组头行（opts.headLevel）新增
@@ -954,7 +1173,11 @@ function bgOrphanChipHtml(orphan, bucketSid) {
  * 普通终态样式（既有 done 灰化/点形）。
  * 术语分层批（2026-11-05）：opts.agentflowKey——成员行的归属锚（所属整体行定位键，
  * 与 data-bg-key / bgRowLocatorKey 同口径）；整体行由 opts.headLevel 自动带实体锚。
- * @param {string} id @param {any} info @param {{childLevel?: boolean, headLevel?: boolean, badgeWord?: string, agentflowKey?: string, rowTitle?: string, shortName?: string, childCount?: number, collapsed?: boolean, orphanFrom?: string, orphanTitle?: string, bucketSid?: string, chainContinued?: boolean, chainCount?: number}} [opts]
+ * 层级缩进批（2026-11-05 腿②）：opts.depth——**真实父子链接**算出的深度（整体行 0、
+ * 成员行 = 父行 +1，任意层数）；输出 data-bg-depth + --bg-row-depth 视觉缩进。
+ * opts.childCount/opts.collapsed 随之从「组头专属」放宽到**任意有子行的行**（caret 形态
+ * 与热区照旧），收起即隐藏整棵子树（剪枝在渲染循环里做，行集合/计数不受影响）。
+ * @param {string} id @param {any} info @param {{childLevel?: boolean, headLevel?: boolean, badgeWord?: string, agentflowKey?: string, depth?: number, rowTitle?: string, shortName?: string, childCount?: number, collapsed?: boolean, orphanFrom?: string, orphanTitle?: string, bucketSid?: string, chainContinued?: boolean, chainCount?: number}} [opts]
  * @returns {string}
  */
 function bgTaskRowHtml(id, info, opts = {}) {
@@ -1216,19 +1439,14 @@ function bgTaskRowHtml(id, info, opts = {}) {
   const agentflowAttr = (opts.childLevel && opts.agentflowKey)
     ? ' data-bg-agentflow="' + escapeHtml(String(opts.agentflowKey)) + '"'
     : '';
-  // 面板层级批（2026-10-31 ①）：组头折叠 caret——有子行的组头行首渲染（中性
-  // muted、行体点击开详情不变；caret 自带停冒泡点击收起/展开子行树）。aria/title
-  // 随折叠态翻转（屏幕阅读器与悬停同知）。
+  // 面板层级批（2026-10-31 ①）：组头折叠 caret——有子行的行首渲染（中性 muted、行体
+  // 点击开详情不变；caret 自带停冒泡点击收起/展开子行树）。aria/title 随折叠态翻转
+  // （屏幕阅读器与悬停同知）。层级缩进批（2026-11-05 腿②）：**任意有子行的行**都带
+  // caret（每一层都能收起自己那棵子树），key = 行定位键（折叠偏好持久化的同一把缝）。
   const childCount = Number(opts.childCount) || 0;
-  const collapsedNow = !!(opts.headLevel && childCount > 0 && opts.collapsed);
-  const caretWord = collapsedNow ? t('subagents.expandGroup') : t('subagents.collapseGroup');
-  const caretPart = (opts.headLevel && childCount > 0)
-    ? '<span class="bg-task-caret' + (collapsedNow ? ' is-collapsed' : '') + '" data-bg-caret="' +
-      escapeHtml(sid) + '" role="button" aria-label="' + escapeHtml(caretWord) + '" title="' +
-      escapeHtml(caretWord) + '">' +
-      statusIcon(collapsedNow ? 'chevron-right' : 'chevron-down', 11) + '</span>'
-    : '';
-  return '<div class="bg-task-row' + (rawState === 'done' && !chainContinued ? ' done' : '') + levelCls + '"' + levelAttr + agentflowAttr + ' role="listitem" tabindex="0" ' + clickAttr + '>' +
+  const collapsedNow = !!(childCount > 0 && opts.collapsed);
+  const caretPart = childCount > 0 ? bgCaretHtml(sid || id, collapsedNow) : '';
+  return '<div class="bg-task-row' + (rawState === 'done' && !chainContinued ? ' done' : '') + levelCls + '"' + levelAttr + agentflowAttr + bgDepthAttrs(Number(opts.depth) || 0) + bgCollapseAttrs(childCount, collapsedNow) + ' role="listitem" tabindex="0" ' + clickAttr + '>' +
     caretPart +
     '<span class="bg-task-status ' + dotClass + '" aria-hidden="true"></span>' +
     '<div class="bg-task-info">' +
@@ -1273,8 +1491,9 @@ function bgTaskRowHtml(id, info, opts = {}) {
  *  摘要首行；实名行附摘要次行。
  *  术语分层批（2026-11-05）：徽标词走成员单词点 bgMemberKindWord（成员位不落整体词）；
  *  agentflowKey = 所属整体行定位键（归属靠结构的机器可读锚，不写解释句）。
- *  @param {any} child @param {string} [agentflowKey] */
-function bgStoreChildHtml(child, agentflowKey) {
+ *  @param {any} child @param {string} [agentflowKey]
+ *  @param {{depth?: number, childCount?: number, collapsed?: boolean}} [opts] */
+function bgStoreChildHtml(child, agentflowKey, opts = {}) {
   const c = child && typeof child === 'object' ? child : {};
   const sid = String(c.taskId || '');
   const state = bgStoreChildState(String(c.status || ''));
@@ -1297,7 +1516,11 @@ function bgStoreChildHtml(child, agentflowKey) {
   const retriesPart = retries > 0
     ? '<span class="bg-task-retries" title="' + escapeHtml(t('manage.retry')) + ' ×' + retries + '">×' + retries + '</span>'
     : '';
-  return '<div class="bg-task-row bg-task-row-child" data-bg-row-level="child" data-bg-agentflow="' + escapeHtml(String(agentflowKey || '')) + '" role="listitem" tabindex="0" data-child-session="' + escapeHtml(sid) + '">' +
+  const childCount = Number(opts.childCount) || 0;
+  const collapsedNow = !!(childCount > 0 && opts.collapsed);
+  const caretPart = childCount > 0 ? bgCaretHtml(sid, collapsedNow) : '';
+  return '<div class="bg-task-row bg-task-row-child" data-bg-row-level="child" data-bg-agentflow="' + escapeHtml(String(agentflowKey || '')) + '"' + bgDepthAttrs(opts.depth) + bgCollapseAttrs(childCount, collapsedNow) + ' role="listitem" tabindex="0" data-child-session="' + escapeHtml(sid) + '">' +
+    caretPart +
     '<span class="bg-task-status ' + dotClass + '" aria-hidden="true"></span>' +
     '<div class="bg-task-info">' +
       // panel-ia 批：主名在前（与 bgTaskRowHtml 同一批层级序）。
@@ -1317,8 +1540,11 @@ function bgStoreChildHtml(child, agentflowKey) {
  *  （bgMemberKindWord：flow-step 是这次编排里的**节点**——术语分层批 2026-11-05 退役了
  *  此处硬编码的整体词 AgentFlow，那个词此后只作整体行身份词）。
  *  点击 = S10 per-task 链视图（flow 节点详情 = 卡面即详情，「零新增弹层」纪律）。
- *  @param {any} node @param {string} [delegateKey] @param {string} [agentflowKey] */
-function bgFlowChildHtml(node, delegateKey, agentflowKey) {
+ *  层级缩进批（2026-11-05 腿②）：opts.depth/childCount/collapsed——flow 结构投影行也走
+ *  同一套深度锚与折叠锚（投影归属 = 整体行，见 bgRowTree 源④）。
+ *  @param {any} node @param {string} [delegateKey] @param {string} [agentflowKey]
+ *  @param {{depth?: number, childCount?: number, collapsed?: boolean}} [opts] */
+function bgFlowChildHtml(node, delegateKey, agentflowKey, opts = {}) {
   const n = node && typeof node === 'object' ? node : {};
   const label = String(n.label || n.id || '');
   const st = String(n.status || 'pending');
@@ -1332,7 +1558,11 @@ function bgFlowChildHtml(node, delegateKey, agentflowKey) {
   const depPart = deps.length
     ? '<span class="bg-task-project" title="deps: ' + escapeHtml(deps.join(',')) + '">← ' + escapeHtml(deps.join(',')) + '</span>'
     : '';
-  return '<div class="bg-task-row bg-task-row-child" data-bg-row-level="child" data-bg-agentflow="' + escapeHtml(String(agentflowKey || '')) + '" role="listitem" tabindex="0" data-flow-delegate-key="' + escapeHtml(String(delegateKey || '')) + '" title="' + escapeHtml(label) + '">' +
+  const childCount = Number(opts.childCount) || 0;
+  const collapsedNow = !!(childCount > 0 && opts.collapsed);
+  const caretPart = childCount > 0 ? bgCaretHtml(String(n.id || ''), collapsedNow) : '';
+  return '<div class="bg-task-row bg-task-row-child" data-bg-row-level="child" data-bg-agentflow="' + escapeHtml(String(agentflowKey || '')) + '"' + bgDepthAttrs(opts.depth) + bgCollapseAttrs(childCount, collapsedNow) + ' role="listitem" tabindex="0" data-flow-delegate-key="' + escapeHtml(String(delegateKey || '')) + '" title="' + escapeHtml(label) + '">' +
+    caretPart +
     '<span class="bg-task-status ' + dotClass + '" aria-hidden="true"></span>' +
     '<div class="bg-task-info">' +
       '<div class="bg-task-line bg-task-main">' +
@@ -1399,24 +1629,35 @@ export function renderBgAgentDropdown() {
   // 链子行信息表（作用域桶行不在主桶 bgAgents——点击详情经此表解析，同 store 子行
   // 的 storeChildBySid 形制）。
   const chainBySid = new Map();
-  // 组头折叠态（渲染计划里的子行是否出镜的唯一判据）。
-  const headCollapsed = new Map();
+  // 层级缩进批（2026-11-05 腿② · 作者令「每一层都应该是上一层的缩进」）：
+  // 深度 / 子树 / 树序全部读模型单点（model.tree，bgRowTree 一次算完）——本函数只做
+  // **折叠剪枝**：收起某行 = 它的整棵子树本轮不出镜（hidden 沿父链下传，天然覆盖任意层），
+  // 行集合与计数（model.total）不受影响（既有「折叠不改计数」口径）。
+  const tree = model.tree || bgRowTree(model.rows);
+  const hidden = new Set(); // 祖先被收起 ⇒ 本行及其子树整棵不出镜
   for (const g of groups) {
-    const childCount = g.children.length;
-    const pref = bgHeadCollapsePref.get(g.sid);
-    headCollapsed.set(g, childCount > 0 &&
-      (pref !== undefined ? pref : (g.chainLive ? false : bgHeadDefaultCollapsed(g.info))));
     // 合成延续组头的行体点击 = delegate 详情弹窗（历史恢复）——info 不在主桶，
     // 经 chainBySid 兜底解析（与链子行同一缝）。
     if (g.synthesized) chainBySid.set(g.sid, g.info);
   }
-  for (const row of model.rows) {
+  for (const row of tree.order) {
+    const parentRow = tree.parentOf.get(row) || null;
+    if (parentRow && hidden.has(parentRow)) { hidden.add(row); continue; }
+    const depth = tree.depth.get(row) || 0;
+    const kids = tree.kids.get(row) || [];
+    const childCount = kids.length;
+    // 折叠态 = 用户偏好（持久表）> 默认规（终态收起 / 进行中展开 / 活链延续组头展开）。
+    const pref = childCount > 0 ? bgCollapseGet(bgRowSessionKey(row)) : undefined;
+    const collapsed = childCount > 0 && (pref !== undefined ? pref : bgRowCollapseDefault(row));
+    if (collapsed) hidden.add(row);
+    // 深度/子树/折叠三锚（成员行与顶层行共用同一入参形；标签页与层级无关）。
+    const rowOpts = { depth, childCount, collapsed };
     if (row.level === 'head') {
       const g = row.group;
       const continued = !!(g.chainLive && (bgRowState(g.info) === 'done' || bgRowState(g.info) === 'error'));
-      const collapsed = !!headCollapsed.get(g);
       htmlParts.push(bgTaskRowHtml(g.id, g.info, {
         headLevel: true,
+        depth,
         badgeWord: bgDelegateBadgeWord(g.info, g.row),
         // 显示名契约批（2026-10-22）：组头注册行标题（DelegateRegistry.Record.title
         // 的 provider 镜像——跨重启存活，存量记录自带）透传为主名第一源。
@@ -1424,7 +1665,7 @@ export function renderBgAgentDropdown() {
         // 面板命名批（2026-10-31 ②）：批次短名第一源 = 注册行镜像（spawn 落盘），
         // 快照/live 帧 delegateName 殿后（存量记录回填前 live 行即时可用）。
         shortName: (g.row && g.row.name) || g.info.delegateName || '',
-        childCount: g.children.length,
+        childCount,
         collapsed,
         chainContinued: continued,
         chainCount: g.children.filter((c) => c.type === 'chain').length,
@@ -1432,25 +1673,24 @@ export function renderBgAgentDropdown() {
       continue;
     }
     if (row.level === 'child') {
-      // 收起组头的子行不出镜（面板层级批既有语义——计数不受影响）。
-      if (headCollapsed.get(row.group)) continue;
       const c = row.child || {};
       // 术语分层批（2026-11-05）：成员行的归属锚 = **所属整体行（组头）的定位键**
       // （bgRowLocatorKey 同一条缝——判等与渲染共用一个键，不留第二套口径）。
       const agentflowKey = bgRowLocatorKey({ id: row.group && row.group.id, info: row.group && row.group.info });
-      if (c.type === 'live') htmlParts.push(bgTaskRowHtml(c.id, c.info, { childLevel: true, agentflowKey }));
-      else if (c.type === 'store') htmlParts.push(bgStoreChildHtml(c.child, agentflowKey));
+      if (c.type === 'live') htmlParts.push(bgTaskRowHtml(c.id, c.info, { childLevel: true, agentflowKey, ...rowOpts }));
+      else if (c.type === 'store') htmlParts.push(bgStoreChildHtml(c.child, agentflowKey, rowOpts));
       else if (c.type === 'chain') {
         chainBySid.set(c.sid, c.info);
-        htmlParts.push(bgTaskRowHtml(c.id, c.info, { childLevel: true, agentflowKey }));
+        htmlParts.push(bgTaskRowHtml(c.id, c.info, { childLevel: true, agentflowKey, ...rowOpts }));
       }
-      else htmlParts.push(bgFlowChildHtml(c.node, row.group && row.group.key, agentflowKey));
+      else htmlParts.push(bgFlowChildHtml(c.node, row.group && row.group.key, agentflowKey, rowOpts));
       continue;
     }
-    // 顶层行（未被认领的 leftover / 收敛落点）：孤儿来源角标随行。
+    // 顶层行（未被认领的 leftover / 收敛落点）：孤儿来源角标随行（depth=0——顶层行是
+    // 未成树的行，层级语义与既有形态一致）。
     htmlParts.push(bgTaskRowHtml(row.id, row.info, row.orphan
-      ? { orphanFrom: row.orphan.parentSid, orphanTitle: row.orphan.parentTitle, bucketSid: sid }
-      : {}));
+      ? { orphanFrom: row.orphan.parentSid, orphanTitle: row.orphan.parentTitle, bucketSid: sid, ...rowOpts }
+      : rowOpts));
   }
   // 台账 #929：远端投影行缀尾（本地行为主的合并语义——本地空时本组独立成面）。
   // 行集收敛批：远端行是**跨会话集**（不入 per-session 计数，见 main.js 红线注），
@@ -1502,14 +1742,15 @@ export function renderBgAgentDropdown() {
     });
   });
 
-  // 面板层级批（2026-10-31 ①）：组头 caret 点击 = 收起/展开子行树（停冒泡——行体
-  // 点击开详情的语义不变）；偏好落 bgHeadCollapsePref，重渲染后保持。
+  // 面板层级批（2026-10-31 ①）：caret 点击 = 收起/展开**整棵子树**（停冒泡——行体
+  // 点击开详情的语义不变）；偏好落 bgCollapseSet（行定位键 → localStorage 持久表，
+  // 重渲染与刷新后都保持——层级缩进批 2026-11-05 腿②改口径）。
   listEl.querySelectorAll('[data-bg-caret]').forEach(caret => {
     caret.addEventListener('click', (e) => {
       e.stopPropagation();
-      const headSid = caret.getAttribute('data-bg-caret');
-      if (!headSid) return;
-      bgHeadCollapsePref.set(headSid, !caret.classList.contains('is-collapsed'));
+      const caretKey = caret.getAttribute('data-bg-caret');
+      if (!caretKey) return;
+      bgCollapseSet(caretKey, !caret.classList.contains('is-collapsed'));
       renderBgAgentDropdown();
     });
   });

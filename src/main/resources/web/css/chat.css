@@ -351,9 +351,14 @@
 }
 .bg-task-row-head .bg-task-name { font-weight: 600; }
 .bg-dropdown-list .bg-task-row-head:first-child { border-top: none; }
-/* 双类锚（0,2,0）压过 .bg-task-row 的 padding 简写（源序在后——单类锚必输）。 */
+/* 双类锚（0,2,0）压过 .bg-task-row 的 padding 简写（源序在后——单类锚必输）。
+   层级缩进批（2026-11-05 腿②）：缩进从「两级帽的单格」升级为**按真实深度累加**——
+   每深一层再加一格（--ds-space-3 / 12px），档值全部取自既有间距令牌（零新增档、
+   零新增色值字面量）。--bg-row-depth 由行构造器内联写入（data-bg-depth 同源）；
+   缺席时按 1 档算 = 既有单格缩进（远端投影行 / 无深度锚的行视觉零回归）。
+   depth1 = 16px（既有档），depth2 = 28px，depth3 = 40px …… 严格单调，任何层数都不裁行。 */
 .bg-task-row.bg-task-row-child {
-  padding-left: var(--ds-space-4);
+  padding-left: calc(var(--ds-space-4) + (var(--bg-row-depth, 1) - 1) * var(--ds-space-3));
   border-left: 2px solid var(--color-frame-border);
 }
 .bg-task-row-child .bg-task-name { font-size: var(--ds-fs-hint); }

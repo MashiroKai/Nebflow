@@ -1418,9 +1418,11 @@ body.mobile-layer #bg-dropdown .bg-task-row {
   padding: var(--ds-space-1h) var(--ds-space-3);
 }
 /* 面板树批（2026-10-29 ①）：手机密度行的派生树缩进——双类锚压过上行单类密度
-   简写；缩进宽档（18px > 基线 12px）+ 左引导竖线（chat.css 桌面形 2px 原样生效）。 */
+   简写；缩进宽档（18px > 基线 12px）+ 左引导竖线（chat.css 桌面形 2px 原样生效）。
+   层级缩进批（2026-11-05 腿②）：同一档位按真实深度累加（每深一层 +12px；档值都是
+   既有值，零新增档），手机端「每一层都是上一层的缩进」与桌面同构。 */
 body.mobile-layer #bg-dropdown .bg-task-row.bg-task-row-child {
-  padding-left: 18px;
+  padding-left: calc(18px + (var(--bg-row-depth, 1) - 1) * var(--ds-space-3));
 }
 body.mobile-layer #bg-dropdown .bg-dropdown-empty {
   padding: var(--ds-space-glass-x) var(--ds-space-3);
@@ -4181,7 +4183,8 @@ body.mobile-layer #bg-dropdown .bg-task-row {
   padding: 0 var(--mpad-x);
   align-items: center;
 }
-body.mobile-layer #bg-dropdown .bg-task-row.bg-task-row-child { padding-left: calc(var(--mpad-x) + 6px); }
+/* 层级缩进批（2026-11-05 腿②）：手机合并面板的同款缩进按真实深度累加（逐层 +12px）。 */
+body.mobile-layer #bg-dropdown .bg-task-row.bg-task-row-child { padding-left: calc(var(--mpad-x) + 6px + (var(--bg-row-depth, 1) - 1) * var(--ds-space-3)); }
 body.mobile-layer #bg-dropdown .bg-task-row .bg-task-btn,
 body.mobile-layer #bg-dropdown .bg-task-row button {
   min-width: var(--mtap);
