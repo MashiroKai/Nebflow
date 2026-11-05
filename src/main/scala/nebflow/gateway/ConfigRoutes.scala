@@ -184,6 +184,24 @@ private[gateway] object ConfigRoutes:
           ConfigService.revealProviderApiKeys.flatMap(Ok(_))
         }
 
+      // GET /api/config/candidates —— 候选集与配置一致性自查面
+      // （provider-config-vs-runtime-mismatch 批，2026-11-05 作者令
+      // 「作者要能自查是不是漏了/多了」）。
+      //
+      // 与**请求路径同一个**取链函数（ProviderRegistry.getCandidatesForAgentUnfiltered）
+      // 的有序投影，逐项标注 origin=chain|reserve；同时给出：
+      //   · chainRefsDropped —— 链里写了但配置里没有（运行期被跳过）；
+      //   · configProviders / disabledProviders —— 运行期实际持有的配置面；
+      //   · drift —— 盘上 nebflow.json 与内存 configRef 的差集
+      //     （inSync=false + onlyOnDisk 名单 = 「删了还在被调」/「加了还没生效」）。
+      // 只读、零副作用；owner 鉴权与设置写同门槛（withAuth）。载荷零密钥。
+      case req @ GET -> Root / "config" / "candidates" =>
+        withAuth(req) {
+          sharedResources.providerRegistry
+            .candidateReport(nebflow.core.SchemePolicy.NebulaName, None)
+            .flatMap(json => Ok(json))
+        }
+
       // GET /api/config/jev —— JeV 设置面状态投影（jev-imagegen-align-llm 批
       // 2026-11-02 契约 §B.4）：与 GET /api/config/imagegen **逐字段同构**
       // （ConfigService.jevStatus 单点：配置热读 + keyRef **在位性**，永不回传

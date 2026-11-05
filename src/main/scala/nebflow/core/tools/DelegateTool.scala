@@ -1286,6 +1286,12 @@ You will be notified when it completes via a system message. Do NOT duplicate th
           )
         )
         .handleErrorWith(e => logger.warn(s"DelegateRegistry.put failed: ${e.getMessage}").void)
+      // 派发期基线快照（`[base-moved]` 降噪重写批 2026-11-05，作者令第三条「派发时
+      // 就该考虑并行不冲突」）：spawn 当场记下基分支 tip，后续判「这次 base 前进有
+      // 没有动到我改过的文件」用这个快照比对——不靠逐条弹通知在事后打扰人。
+      // 幂等 + fail-soft（非 git / 读不到 = 零动作，扫描拍首次见自动补基线）。
+      _ <- nebflow.core.delegate.BaseDriftWatch
+        .noteDispatch(subagentId, binding.map(_.baseWs), binding.flatMap(_.baseBranch))
       // ⑤A 链存储：spawn 行（branch/worktree/cwd/基分支——N1 与 #1228 的数据源）；
       // #1226 增分配摘要字段（plugins 集 + 三态模式词——结构帧可查，零新建存储）。
       _ <- IO

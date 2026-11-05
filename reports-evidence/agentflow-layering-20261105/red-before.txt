@@ -1,0 +1,113 @@
+
+Running 4 tests using 1 worker
+
+[1/4] tests/bg-agentflow-layering.spec.mjs:223:1 › ① ② 三层深度：depth(A) = depth(整体行)+1，depth(A 的子) = depth(A)+1
+tests/bg-agentflow-layering.spec.mjs:223:1 › ① ② 三层深度：depth(A) = depth(整体行)+1，depth(A 的子) = depth(A)+1
+[①② dump] [{"level":"head","sid":"delegate-layer-a1b2c3d4","depth":null,"padLeft":12,"name":"层级批"},{"level":"child","sid":"node-layer-11112222","depth":null,"padLeft":16,"name":"节点A"},{"level":"child","sid":"node-layer-33334444","depth":null,"padLeft":16,"name":"A的子"}]
+
+  1) tests/bg-agentflow-layering.spec.mjs:223:1 › ① ② 三层深度：depth(A) = depth(整体行)+1，depth(A 的子) = depth(A)+1 
+
+    Error: expect(received).toBe(expected) // Object.is equality
+
+    Expected: 1
+    Received: 0
+
+      240 |   // ① 整体行 depth=0，一级节点 = 整体行 + 1。
+      241 |   expect(flow.depthNum).toBe(0);
+    > 242 |   expect(a.depthNum).toBe(flow.depthNum + 1);
+          |                      ^
+      243 |   // ② A 的子 = A + 1（父链接 = A 的 sessionId，不是行序）。
+      244 |   expect(kid.depthNum).toBe(a.depthNum + 1);
+      245 |   expect(kid.depthNum).toBe(2);
+        at /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-agentflow-layering/tests/bg-agentflow-layering.spec.mjs:242:22
+
+    Error Context: test-results/bg-agentflow-layering-①-②--65f01--整体行-1，depth-A-的子-depth-A-1/error-context.md
+
+
+[2/4] tests/bg-agentflow-layering.spec.mjs:255:1 › ⑤ 反向门：不折叠时三层行全在（不裁行）+ padding-left 严格递增 + 深行可读
+tests/bg-agentflow-layering.spec.mjs:255:1 › ⑤ 反向门：不折叠时三层行全在（不裁行）+ padding-left 严格递增 + 深行可读
+[⑤ dump] [{"sid":"delegate-layer-a1b2c3d4","depth":null,"padLeft":12,"scrollHeight":54,"name":"层级批","nameWidth":39},{"sid":"node-layer-11112222","depth":null,"padLeft":16,"scrollHeight":56,"name":"节点A","nameWidth":32},{"sid":"node-layer-33334444","depth":null,"padLeft":16,"scrollHeight":56,"name":"A的子","nameWidth":32}]
+
+[⑤] domRows=3 data-bg-row-total=3
+
+[⑤] pads=[[0,12],[0,16],[0,16]]
+
+  2) tests/bg-agentflow-layering.spec.mjs:255:1 › ⑤ 反向门：不折叠时三层行全在（不裁行）+ padding-left 严格递增 + 深行可读 ───
+
+    Error: expect(received).toEqual(expected) // deep equality
+
+    - Expected  - 2
+    + Received  + 2
+
+      Array [
+        0,
+    -   1,
+    -   2,
+    +   0,
+    +   0,
+      ]
+
+      283 |     }
+      284 |   }
+    > 285 |   expect(byDepth.map((r) => r.depthNum)).toEqual([0, 1, 2]);
+          |                                          ^
+      286 |
+      287 |   // depth≥2 的行主名非空且可见（不因层级深被压成不可读）。
+      288 |   const deep = rows.filter((r) => r.depthNum >= 2);
+        at /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-agentflow-layering/tests/bg-agentflow-layering.spec.mjs:285:42
+
+    Error Context: test-results/bg-agentflow-layering-⑤-反向-72a46-不裁行）-padding-left-严格递增-深行可读/error-context.md
+
+
+[3/4] tests/bg-agentflow-layering.spec.mjs:299:1 › ③ 折叠 A ⇒ A 子树整行数 = 0，整体行与 A 行仍在
+tests/bg-agentflow-layering.spec.mjs:299:1 › ③ 折叠 A ⇒ A 子树整行数 = 0，整体行与 A 行仍在
+[③ before] [{"sid":"delegate-layer-a1b2c3d4","depth":null,"collapsed":null},{"sid":"node-layer-11112222","depth":null,"collapsed":null},{"sid":"node-layer-33334444","depth":null,"collapsed":null}]
+
+  3) tests/bg-agentflow-layering.spec.mjs:299:1 › ③ 折叠 A ⇒ A 子树整行数 = 0，整体行与 A 行仍在 ──────────────────
+
+    Test timeout of 180000ms exceeded.
+
+    Error: page.click: Test timeout of 180000ms exceeded.
+    Call log:
+      - waiting for locator('[data-bg-caret="node-layer-11112222"]')
+
+
+      309 |
+      310 |   // 点 A 的 caret（A 有子行 ⇒ 任意层都可折叠）——沿用既有 caret 形态与热区。
+    > 311 |   await page.click(`[data-bg-caret="${NODE_A}"]`);
+          |              ^
+      312 |   await page.waitForTimeout(150);
+      313 |   const after = await dumpRows(page);
+      314 |   console.log('[③ after] ' + JSON.stringify(after.map((r) => ({ sid: r.sid, depth: r.depth, collapsed: r.collapsed, caretCollapsed: r.caretCollapsed }))));
+        at /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-agentflow-layering/tests/bg-agentflow-layering.spec.mjs:311:14
+
+    Error Context: test-results/bg-agentflow-layering-③-折叠-A-⇒-A-子树整行数-0，整体行与-A-行仍在/error-context.md
+
+
+[4/4] tests/bg-agentflow-layering.spec.mjs:328:1 › ④ reload + 同 fixture 重种 ⇒ 折叠状态仍在（不需要重新点）
+  4) tests/bg-agentflow-layering.spec.mjs:328:1 › ④ reload + 同 fixture 重种 ⇒ 折叠状态仍在（不需要重新点） ─────────
+
+    Test timeout of 180000ms exceeded.
+
+    Error: page.click: Test timeout of 180000ms exceeded.
+    Call log:
+      - waiting for locator('[data-bg-caret="node-layer-11112222"]')
+
+
+      331 |   await seedTree(page);
+      332 |   await openPanel(page);
+    > 333 |   await page.click(`[data-bg-caret="${NODE_A}"]`);
+          |              ^
+      334 |   await page.waitForTimeout(150);
+      335 |   const collapsedBefore = await dumpRows(page);
+      336 |
+        at /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-agentflow-layering/tests/bg-agentflow-layering.spec.mjs:333:14
+
+    Error Context: test-results/bg-agentflow-layering-④-reload-同-fixture-重种-⇒-折叠状态仍在（不需要重新点）/error-context.md
+
+
+  4 failed
+    tests/bg-agentflow-layering.spec.mjs:223:1 › ① ② 三层深度：depth(A) = depth(整体行)+1，depth(A 的子) = depth(A)+1 
+    tests/bg-agentflow-layering.spec.mjs:255:1 › ⑤ 反向门：不折叠时三层行全在（不裁行）+ padding-left 严格递增 + 深行可读 ────
+    tests/bg-agentflow-layering.spec.mjs:299:1 › ③ 折叠 A ⇒ A 子树整行数 = 0，整体行与 A 行仍在 ───────────────────
+    tests/bg-agentflow-layering.spec.mjs:328:1 › ④ reload + 同 fixture 重种 ⇒ 折叠状态仍在（不需要重新点） ──────────

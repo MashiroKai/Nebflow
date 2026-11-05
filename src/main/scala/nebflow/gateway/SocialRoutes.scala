@@ -320,13 +320,39 @@ private[gateway] object SocialRoutes:
        * `messages.js:560 catch { /* keep last known */ }` 吞掉 ⇒「消息」面板
        * 渲染 `messages.empty`「暂无会话」。此处逐字恢复原件（作者令：不删数据、
        * 只修读面）。
+       *
+       * 🔴 empty-state-must-not-lie（2026-11-05 第二刀）：本 case 原先把
+       * `fs.refreshConversations()` 的**折叠版**接在出参上 —— 上游失败被折成
+       * `Nil` ⇒ 恒 200 + `[]`，前端无从区分「确实没有会话」与「拿不到答复」。
+       * 现在走 `fs.listConversations`（REST 直通版，保留 `Left`）并按好友域既有
+       * **单一**判据 `friendErr` 应答：
+       *   · `Not logged in` 且已配置 ⇒ **401** + `code=neblink_not_logged_in`
+       *     （既有语义，`friendErr` 原文分态，不改鉴权面）；
+       *   · 其余上游失败 ⇒ **502** + `code=neblink_upstream_failed`（本 case 加性
+       *     补的机器可读原因键 —— **只**在本 case，`friendErr` 其余调用方的响应体
+       *     逐字不变）。前端据此进错误态而非空态。
+       * 200 + `[]` 自此**只**表示「服务端明确答复没有会话」。
        */
       case req @ GET -> Root / "conversations" =>
         withAuth(req) {
           sharedResources.friendService match
             case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
             case Some(fs) =>
-              fs.refreshConversations().flatMap(convs => Ok(convs.asJson))
+              fs.listConversations.flatMap {
+                case Right(convs) => Ok(convs.asJson)
+                case Left(err) =>
+                  // 502 = 上游失败（`friendErr` 的其余分支不动：401 未登录 / 404 未启用）。
+                  friendErr(err).map { resp =>
+                    if resp.status == Status.BadGateway then
+                      resp.withEntity(
+                        Json.obj(
+                          "error" -> err.asJson,
+                          "code" -> "neblink_upstream_failed".asJson
+                        )
+                      )
+                    else resp
+                  }
+              }
         }
 
       /**
@@ -1080,6 +1106,23 @@ private[gateway] object SocialRoutes:
        */
       case req @ POST -> Root / "groups" / groupId / "members" / userId / "kick" =>
         groupProxy(req, "POST", s"/api/groups/${encSeg(groupId)}/members/${encSeg(userId)}/kick")
+
+      /**
+       * PUT .../members/{userId}/role —— 群成员角色变更（owner only）。
+       * body `{role}` ∈ `{admin, member}`，**幂等**；上游 `200 {ok, role, selfUserId}`
+       * / 404 `group_not_found` / 403 `group_disbanded` / 403 `not_group_admin` /
+       * 403 `not_member` / 404 `member_not_found` / 422 `invalid_role`。
+       *
+       * 🔴 补路由（empty-state-must-not-lie 批 · 2026-11-05）：前端
+       * `friendsApi.setGroupMemberRole`（`friendsApi.js:1550`，消费点
+       * `friendGroups.js:713` 的群成员管理面）一直在调本路径，而网关**从未**注册它
+       * —— 症状与同日 `GET /api/conversations` 事故同族（前端调了、后端没有），
+       * 由本批新增的 `scripts/check-api-routes.mjs` 哨兵首次报出。形态逐字镜像
+       * 上面的 `kick`（纯透传：判定全在上游，本层零复制）；判据序与错误码逐字
+       * 来自客户端侧正典（`friendsApi.js:1536-1549`）。
+       */
+      case req @ PUT -> Root / "groups" / groupId / "members" / userId / "role" =>
+        groupProxy(req, "PUT", s"/api/groups/${encSeg(groupId)}/members/${encSeg(userId)}/role")
 
       /**
        * POST /api/groups/{groupId}/messages —— **冻结群发契约**（`groups.rs:403-524`）。

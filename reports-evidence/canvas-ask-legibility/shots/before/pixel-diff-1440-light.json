@@ -1,0 +1,19 @@
+{
+  "phase": "before",
+  "ldiffs": [
+    {
+      "w": 335,
+      "h": 57,
+      "pixels": 19095,
+      "maxDiff": 252,
+      "over": 19095
+    },
+    {
+      "w": 344,
+      "h": 30,
+      "pixels": 10320,
+      "maxDiff": 59,
+      "over": 10061
+    }
+  ]
+}

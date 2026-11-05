@@ -146,6 +146,7 @@ import { nfCacheInvalidatePath, noteHistoryFingerprint } from './nfFileCache.js'
 import { registerCanvasPanelButton } from './canvas.js';
 import { openProjectsTab } from './projectTab.js';
 import { initScheduledTask, refreshScheduledTasks } from './scheduled-task.js';
+import { initScheduleApi } from './scheduleApi.js';
 import { initDaemons } from './daemons.js';
 import { initPerception } from './perception.js';
 import { initChatSearch } from './chatSearch.js';
@@ -1631,6 +1632,12 @@ onMessage('roundComplete', (msg, view) => {
 });
 
 onMessage('error', (msg, view) => {
+  // schedule-created-card 批（2026-11-05）：定时任务/待办卡片的**局部写失败**
+  // （卡片内联编辑/取消被引擎拒绝）不是回合错误 —— 它既不清 busy、也不 failTurn、
+  // 更不落错误气泡（错误已在卡片上就地显示 + 用户输入保留，js/scheduleCard.js）。
+  // 本批实测（隔离实例真浏览器）：不拦的话，卡上一次失败的保存会顺手把正在跑的
+  // 回合标成失败、并在消息流里多冒一条与卡内错误重复的红行。
+  if (msg.msgType === 'updateScheduledTask' || msg.msgType === 'deleteScheduledTask') return;
   clearBusyFor(msg);
   const sid = msg.sessionId || state.activeSessionId;
   delete state.sessionPendingTools[sid];
@@ -4601,6 +4608,10 @@ restoreTabs().then((restored) => {
 });
 // Auto-restore is triggered from sessionList handler (needs activeSessionId)
 initScheduledTask();
+// schedule-created-card 批（2026-11-05）：消息内嵌定时任务/待办卡片的入站帧单点
+// （scheduledTaskUpdated / Deleted / Completed / error / List）——挂在启动期一次，
+// 卡片本体（js/scheduleCard.js）只调 js/scheduleApi.js 的方法面。
+initScheduleApi();
 initDaemons();
 initPerception();
 initChatSearch();
