@@ -48,24 +48,28 @@ const sha = (p) => createHash('sha256').update(readFileSync(p)).digest('hex');
 const seedText = readFileSync(SEED, 'utf8');
 const scriptText = readFileSync(SEED_SCRIPT, 'utf8');
 
-// ── C1 条款⑤ 卡片面：关键图行必须在围栏外 ────────────────────────────
+// ── C1 条款⑤ 卡片面：关键图行在卡片**里**（卡片出图批 2026-11-05 反转）──
 ok(/Card face — a fenced/.test(seedText), 'C1 条款⑤ 卡片面在位（Mandatory clauses #5）');
 ok(/结论 → 关键数字 → 图 →/.test(seedText), 'C1 卡片四段式（结论 → 关键数字 → 图 → 待你决定的事）');
-ok(/the chart LINE itself goes \*\*immediately after the closing fence\*\*/.test(seedText),
-  'C1 条款⑤ 明写「关键图行紧贴围栏之后」');
+ok(/the chart LINE itself goes \*\*inside the card\*\*/.test(seedText),
+  'C1 条款⑤ 明写「关键图行写在卡片体里」（首屏可见）');
+ok(/only the card body is on[\s\S]{0,60}first screen/.test(seedText),
+  'C1 条款⑤ 给出理由：只有卡片体在首屏（围栏外折进抽屉）');
 ok(/!\[\[assets\/<batch>\/key-chart\.png\]\]/.test(seedText),
   'C1 模板的关键图写成 vault 相对含批次子目录');
 ok(!/^!\[\[key-chart\.png\]\]/m.test(seedText),
-  'C1 模板里不再有围栏内的裸名嵌入（旧契约把图写死在 fence 内）');
+  'C1 模板里不许有裸名嵌入（裸名 = 位置依赖）');
 
 // ── C2 条款⑥ 两个渲染器绑定点 ───────────────────────────────────────
 ok(/The renderer's\s+`imageCandidates\(\)`/.test(seedText) || /imageCandidates\(\)/.test(seedText),
   'C2 条款⑥ 绑定点⑤：渲染器候选表（不递归子目录）在位');
-ok(/Never put an image embed inside a ```human fence/.test(seedText)
-   || /No image embed inside a human fence/.test(seedText),
-  'C2 条款⑥ 绑定点⑥：禁止围栏内嵌图在位');
-ok(/bare-name-embed/.test(seedText) && /image-in-human-fence/.test(seedText),
-  'C2 两个规则名（bare-name-embed / image-in-human-fence）写进纪律');
+ok(/Figure lines go INSIDE the ```human card/.test(seedText),
+  'C2 条款⑥ 绑定点⑥：图行写进卡片体（vault 相对路径）在位');
+ok(!/Never put an image embed inside a ```human fence/.test(seedText)
+   && !/No image embed inside a human fence/.test(seedText),
+  'C2 旧禁令（围栏内禁图）已撤下——两条规则不再打架');
+ok(/bare-name-embed/.test(seedText) && /fence-embed-vault-relative/.test(seedText),
+  'C2 两个规则名（bare-name-embed / fence-embed-vault-relative）写进纪律');
 
 // ── C3 条款⑬ 以图为主 ────────────────────────────────────────────────
 ok(/Figures are the document; words annotate them/.test(seedText),
@@ -84,7 +88,10 @@ ok(/FIGURE_STAMP\s*=\s*"20261105_212400"/.test(scriptText),
   'C4 R19/R20 生效界常量在位');
 ok(/STACKED_RUN_MIN\s*=\s*12/.test(scriptText), 'C4 R20 阈值逐字 = 12 连续行');
 ok(/"R17", "bare-name-embed"/.test(scriptText), 'C4 RULES 表登记 R17 bare-name-embed');
-ok(/"R18", "image-in-human-fence"/.test(scriptText), 'C4 RULES 表登记 R18 image-in-human-fence');
+ok(/"R18", "fence-embed-vault-relative"/.test(scriptText),
+  'C4 RULES 表登记 R18 fence-embed-vault-relative');
+ok(/def fence_embed_path_ok\(/.test(scriptText),
+  'C4 R18 的路径形态判据函数在位（vault 相对 = 含目录）');
 ok(/"R19", "image-required"/.test(scriptText), 'C4 RULES 表登记 R19 image-required');
 ok(/"R20", "stacked-detail"/.test(scriptText), 'C4 RULES 表登记 R20 stacked-detail');
 ok(/def renderer_candidates\(/.test(scriptText) && /def renderer_hit\(/.test(scriptText),

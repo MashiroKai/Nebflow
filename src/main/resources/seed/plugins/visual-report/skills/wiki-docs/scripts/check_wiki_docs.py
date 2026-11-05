@@ -86,12 +86,19 @@ wiki-docs SKILL.md 强制条款的机器面（条款与检查一一对应，见 
                               给出**应写路径**（唯一命中一条 / 多处同名列候选）。
                               R6 判 ok（图确实在库里）与 R17 判违规并不矛盾：
                               R6 管「图在不在库内」，R17 管「渲染器找不找得到」。
-  R18 image-in-human-fence → 图片嵌入写在 ```human 摘要围栏内。前端
-                              `expandImageEmbeds()` 明确不展开围栏内嵌入，
-                              human 卡片正文再走一遍 markdown 也不展开 ⇒ 路径
-                              再对也只显示字面量。图移到围栏外即可。
+  R18 fence-embed-vault-relative
+                           → 围栏内嵌图**放行**（作者裁定 2026-11-05 23:40「以图
+                              为主」：卡片体也走图片嵌入展开，`expandImageEmbeds()`
+                              现已展开**已闭合 ```human 围栏正文**里的嵌入），但
+                              路径必须是 vault 相对（含至少一级目录，如
+                              `attachments/x.png` / `assets/<batch>/x.png`）：
+                              裸文件名只在六格里的四格（文档同目录 + attachments/
+                              assets/）成立，文档一挪就落空；vault 相对路径走第②格
+                              「vault 根 + 引用」，与文档位置无关。
+                              [2026-11-05 上一版本条禁令的原文保留在 git 历史]
   两条的生效面沿用 v2 的两档制（时间块 ≥ `--image-since` 硬查，更早的存量只打
-  advisory；`--strict-style` 全库硬判）。
+  advisory；`--strict-style` 全库硬判）。两条**互斥不重叠**：围栏内的行只归
+  R18（R17 让位），围栏外的行只归 R17 —— 一行只报一条，修完重跑看下一处。
 
 段落锚（引用语法，与 R2 校验同源）：`[[doc#^块锚]]` 精确到单个段落（名词解释
 场景主形态，词表条目即块锚段落），`[[doc#标题]]` 精确到整节。--graph 导出
@@ -212,7 +219,7 @@ RULES = (
     # 「图不显示」批（2026-11-05 作者报障）：两条堵的是渲染器确定性断点，
     # 不是风格偏好——命中即「页面必然不出图」。条款原文见 SKILL.md ⑥ 的两个绑定点。
     ("R17", "bare-name-embed", "图片引用必须是**渲染器能解析的路径**：正文写裸文件名 `![[x.png]]`（或 `![](x.png)` / `<img src=\"x.png\">`）时，前端只找六格——文档同目录 / vault 根 / `<vault>/attachments/` / `<vault>/assets/` / `<docdir>/attachments/` / `<docdir>/assets/`，**不递归子目录**；图真身在 `assets/<batch>/x.png` 这类二级目录而引用是裸名 ⇒ 一律报，并给出应写路径（唯一命中给一条；多处同名列候选）。R6 只管「图在不在库内」，本条管「渲染器找不找得到」"),
-    ("R18", "image-in-human-fence", "图片嵌入禁止写进 ```human 摘要围栏：前端 `expandImageEmbeds()` 不展开围栏内嵌入（围栏是代码面，`![[…]]` 是字面量），human 卡片正文再走一遍 markdown 时也不会展开 ⇒ 路径再对也不出图。图写在围栏外（图注紧挨着它），围栏摘要里只放文字与 `[[文档]]` 引用"),
+    ("R18", "fence-embed-vault-relative", "```human 卡片体里的图片嵌入**允许**（前端自卡片出图批 2026-11-05 起展开已闭合围栏正文里的 `![[…]]`：围栏是卡片体不是代码面），但路径必须是 **vault 相对路径**——带目录分量，如 `attachments/x.png` / `assets/<batch>/x.png`。裸文件名 `![[x.png]]` 只在渲染器六格里的四格成立（文档同目录 + `<vault>/attachments|assets`），文档一挪就落空；vault 相对路径走第②格「vault 根 + 引用」，与文档位置无关 ⇒ 卡片体（整篇文档的门面）里写裸名 = 违规，并给出应写路径。与 R17 按位置分片：围栏内归本条、围栏外归 `bare-name-embed`，一行只报一条"),
 
     # 以图为主批（作者令 2026-11-05 21:24「一定要以图为主……文字要尽量少……
     # 不得不补充的细节，就放在可点击展开的块里」）：条款原文见 SKILL.md ⑬。
@@ -301,16 +308,24 @@ VOLATILE_PATH_RE = re.compile(
 #     判定：渲染器候选表解析不到、但同名文件在 vault 内确实存在 ⇒ 违规，并把
 #     **应写路径**直接打出来（唯一命中给一条，多处同名给候选清单让作者选）。
 #
-#   R18 image-in-human-fence  ｜ 同一个文件的 `expandImageEmbeds()` **明确不展开
-#     围栏内的嵌入**（围栏是代码，代码块里的 `![[…]]` 是样张不是图）。而 human
-#     卡片（`.nf-human-card`）的正文是围栏内文本再走一遍 markdown —— 到这一步
-#     嵌入已经是字面量，路径再对也不出图。⇒ 图片嵌入写进 ```human 围栏 = 死图，
-#     图必须写在围栏外（CJK 摘要里只留文字与 `[[文档]]` 引用）。
+#   R18 fence-embed-vault-relative  ｜ **围栏内嵌图本身已放行**（作者裁定
+#     2026-11-05 23:40「卡片体也走图片嵌入展开」：`expandImageEmbeds()` 现在展开
+#     **已闭合 ```human 围栏正文**里的嵌入 —— 围栏不是代码面，是人面卡片体；
+#     见 `humanCardBodyLines()`）。放开位置之后剩下的那条真断点是**路径形态**：
+#     卡片体里的嵌入必须是 vault 相对路径（含目录，`attachments/x.png` /
+#     `assets/<batch>/x.png`），因为它走渲染器第②格「vault 根 + 引用」，与文档
+#     所在目录无关；裸文件名只在六格里的四格成立（文档同目录 +
+#     `<vault>/attachments|assets`），文档换目录就落空 —— 而卡片体正是「整篇
+#     文档的门面」，最不该有一条位置依赖的引用。⇒ 围栏内裸名 = 违规，给出
+#     vault 相对路径的应写形态。与 R17 **按位置分片**：围栏内的行只归 R18，
+#     围栏外的行只归 R17，一行只报一条。
 #
 # 生效面沿用 R10-R12 的两档制：时间块 ≥ IMAGE_EMBED_STAMP 的阶段件硬查（进违规、
 # 动退出码），更早的存量只打 advisory（fix what you touch；`--strict-style` 全库
 # 整改时一并硬判）。理由同 v2：本制之前写下的文档不知道有这两条断点，硬判它们
 # 等于凭空造违规；但读数必须打出来——存量命中多少、分布在哪，是作者的整改清单。
+# 注：R18 的语义在 2026-11-05 卡片出图批**反转**过一次（原为「围栏内嵌图 = 违规」），
+# 时间界沿用 IMAGE_EMBED_STAMP 不变——同一批文档同一批作者，只是规则方向换了。
 
 IMAGE_EMBED_STAMP = "20261105_130000"
 
@@ -1793,7 +1808,7 @@ def classify_absolute_image(path, raw, vault_abs):
             + volatile_hint(raw))
 
 
-# ── R17 裸名嵌入 / R18 human 围栏内嵌图：渲染器镜像 ────────────────────
+# ── R17 裸名嵌入 / R18 围栏内嵌图的路径形态：渲染器镜像 ─────────────────
 
 def renderer_candidates(rel, ref):
     """镜像 `web/js/viewers/markdown.js` 的 `imageCandidates()` → vault 相对候选表。
@@ -1840,44 +1855,82 @@ def embed_syntax_hint(syntax, path):
     return tpl.format(path=path)
 
 
+def fence_embed_path_ok(target):
+    """R18 的路径形态判据：这条引用是不是**vault 相对路径**（含目录）。
+
+    合规 = 有目录分量（`attachments/x.png` / `assets/<batch>/x.png`）——
+    渲染器第②格「vault 根 + 引用」对任何文档目录都成立；裸文件名（`x.png`）
+    只在六格里的四格成立（文档同目录 + `<vault>/attachments|assets`），文档一
+    挪就落空。`./x.png` 与裸名同档（显式文档相对，不带 vault 语义）。
+    """
+    src = unquote(str(target or "").split("#", 1)[0].split("?", 1)[0])
+    src = src.strip().replace("\\", "/")
+    if not src:
+        return False
+    if src.startswith("./"):
+        src = src[2:]
+    return "/" in src
+
+
 def collect_image_embed_issues(rel, doc, vault_files, by_base, vault_abs):
     """R17 / R18 判定面 → [{rule, line, target, detail}]。
 
-    两条的靶都是**渲染期确定性失败**，不是位置合规（位置合规由 R6 管）：
+    两条的靶都是**渲染期确定性失败**，按**位置**分片，一行只归一条——
+    互不重叠、互不复述：
 
-    · R18 先判：行号落在 ```human 围栏内 ⇒ 围栏内嵌图，无论路径对错都不出图。
-    · R17 后判：R6 判 ok（图确实在库里）但渲染器候选表解析不到 ⇒ 裸名/路径写歪。
-      R6 已经报过的（死引用 / 绝对路径 / 外链 / 越界）不再由 R17 复述——一处只报一次，
-      修完重跑看下一处。行内豁免 `<!-- wiki-img-exempt: 理由 -->` 对 R17 同样生效
-      （历史存量的位置豁免），但**不豁免 R18**：围栏内嵌图是纯版式失误，把那一行搬
-      出去就能修，没有「外部依赖」可豁免。"""
+    · 围栏**内**（```human 摘要围栏 / 卡片体）⇒ 归 R18：嵌图**放行**
+      （`expandImageEmbeds()` 自 card-image 批 2026-11-05 起展开已闭合围栏内的
+      嵌入），但路径必须是 **vault 相对**（见 `fence_embed_path_ok`）。裸名 +
+      图在子目录 ⇒ 照样「图片加载失败」，与围栏外同一个断点。
+    · 围栏**外** ⇒ 归 R17：R6 判 ok（图确实在库里）但渲染器候选表解析不到 ⇒
+      裸名/路径写歪。
+    R6 已经报过的（死引用 / 绝对路径 / 外链 / 越界）两条都不复述——一处只报
+    一次，修完重跑看下一处。行内豁免 `<!-- wiki-img-exempt: 理由 -->` 对两条都
+    生效（历史存量的位置豁免）。"""
     issues = []
     for ref in doc.image_refs:
         target = ref["target"]
         line = ref["line"]
         syntax = ref["syntax"]
-        if line in doc.human_lines:
-            issues.append({
-                "rule": "image-in-human-fence", "line": line, "target": target,
-                "detail": (f"图片嵌入在 ```human 摘要围栏内（第 {line} 行）——渲染器的 "
-                           "`expandImageEmbeds()` 不展开围栏内嵌入（围栏是代码面），卡片里"
-                           f"只剩字面量 `![[{target}]]`，路径再对也不出图；"
-                           + "把这一行移到围栏**外**（图注紧跟它），围栏内只留文字与 `[[文档]]` 引用"),
-            })
+        in_fence = line in doc.human_lines
         if ref["exempt"]:
             continue
         status, _detail = classify_image_ref(rel, target, syntax, vault_files,
-                                             by_base, vault_abs)
+                                            by_base, vault_abs)
         if status != "ok":
-            continue          # 位置面已经由 R6 报过，R17 不复述
-        if renderer_hit(rel, target, vault_files):
-            continue          # 渲染器解析得到 ⇒ 合规
-        base = posixpath.basename(
-            unquote(target).split("#", 1)[0].split("?", 1)[0]).lower()
+            continue          # 位置面已经由 R6 报过，R17/R18 不复述
+        implied = unquote(target).split("#", 1)[0].split("?", 1)[0].strip()
+        base = posixpath.basename(implied).lower()
         hits = sorted(by_base.get(base) or [])
+        better = [h for h in hits if "/" in h]
+        if in_fence:
+            # R18：围栏内嵌图已放行，只判「路径形态」= 有目录分量的 vault 相对。
+            if fence_embed_path_ok(target) or not better:
+                continue
+            resolved = renderer_hit(rel, target, vault_files)
+            why = ("这条路径**能**解析（裸名命中六格之一），但成不成立取决于文档"
+                   "放在哪个目录；换一篇文档指同一张图就落空")
+            if not resolved:
+                why = ("渲染器六格全落空 ⇒ 卡片里落「图片加载失败」占位（与围栏外"
+                       "的裸名同一个断点）")
+            if len(better) == 1:
+                fix = f"应写：`{embed_syntax_hint(syntax, better[0])}`"
+            else:
+                shown = " / ".join(f"`{embed_syntax_hint(syntax, h)}`" for h in better[:4])
+                more = f" 等 {len(better)} 处" if len(better) > 4 else ""
+                fix = f"库内同名 {len(better)} 处{more}，选实际那张：{shown}"
+            issues.append({
+                "rule": "fence-embed-vault-relative", "line": line, "target": target,
+                "detail": (f"```human 卡片体里的图片嵌入（第 {line} 行）必须是 "
+                           f"**vault 相对路径**（含目录，如 `attachments/x.png` / "
+                           f"`assets/<batch>/x.png`）；`{target}` 是裸名——{why}；{fix}"),
+            })
+            continue
+        # R17（围栏外）：渲染器解析得到 ⇒ 合规。
+        if renderer_hit(rel, target, vault_files):
+            continue
         if not hits:
             continue
-        implied = unquote(target).split("#", 1)[0].split("?", 1)[0].strip()
         if "/" in implied.replace("\\", "/"):
             why = ("引用带了目录，但渲染器候选表不含该位置"
                    "（只找文档同目录 / vault 根 / attachments / assets 六个格位）")
@@ -2783,7 +2836,7 @@ def main():
                     help="R7-R12/R16 与 R17-R18 全库硬查（存量整改批次用：所有文档都按新制判，不再记 advisory）")
     ap.add_argument("--skip-style", action="store_true",
                     help="跳过 R7 彩色 / R8 缩进 / R9 缩写 / R10 禁用词 / R11 结构 / R12 图注 / R16 折叠"
-                         " / R17 裸名嵌入 / R18 围栏内嵌图（历史批次对照用）")
+                         " / R17 裸名嵌入 / R18 围栏内嵌图路径（历史批次对照用）")
     ap.add_argument("--allowlist", default=None,
                     help="R9 缩写允许清单文件（缺省 = 本 skill 的 SKILL.md 标记块）")
     ap.add_argument("--allowlist-extra", action="append", default=[],
@@ -3047,9 +3100,10 @@ def print_style_readout(stats, advisories, indent="", since=STYLE_CONTRACT_STAMP
     img_hard = stats.get("img_hard", 0)
     img_legacy = stats.get("img_legacy", 0)
     print(f"{indent}图能不能显示（R17-R18，时间界 {IMAGE_EMBED_STAMP}）："
-          f"裸名嵌入 {stats.get('img_bare', 0)} 处 · 围栏内嵌图 {stats.get('img_fence', 0)} 处"
+          f"裸名嵌入 {stats.get('img_bare', 0)} 处 · 围栏内裸名（R18） "
+          f"{stats.get('img_fence', 0)} 处"
           f" —— 硬查 {img_hard} 条 · 存量 advisory {img_legacy} 条"
-          "（渲染器候选表 / 围栏展开面都是确定性断点：命中即页面不出图，不是风格问题）")
+          "（围栏内嵌图自卡片出图批起已放行；命中即页面不出图或引用位置依赖，不是风格问题）")
     fig_hard = stats.get("fig_hard", 0)
     fig_legacy = stats.get("fig_legacy", 0)
     print(f"{indent}以图为主（R19-R20，时间界 {FIGURE_STAMP}）：无图文档 "
