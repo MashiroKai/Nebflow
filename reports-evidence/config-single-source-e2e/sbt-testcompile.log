@@ -1,0 +1,15 @@
+[sbt-gate] waiting for /Users/kaiyu/.stand/run/sbt.lock (another sbt holds the heavy-work gate; bypass: SBT_GATE=off sbt …)
+[sbt-gate] acquired after 91s
+[sbt-gate] gate acquired after 91s
+[sbt-gate] heap cap -Xmx2600m applied via SBT_OPTS
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project delegate-config-single-source-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-config-single-source/project
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/delegate-config-single-source/)
+[error] Not a valid command: testCompile
+[error] Not a valid project ID: testCompile
+[error] Expected ':'
+[error] Not a valid key: testCompile (similar: compile, previousCompile, testFilter)
+[error] testCompile
+[error]            ^

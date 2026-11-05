@@ -60,7 +60,7 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
       """{"name":"general","description":"general executor","tools":[],"category":"standalone"}"""
     )
     os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
-    os.write.over(tempRoot / "nebflow.json", "{}")
+    os.write.over(tempRoot / nebflow.shared.Branding.configFileName, "{}")
     // 20260907 修复（历史注记，panelscheme 批后 E2E 已不再传 preset 参数）：当年
     // E2E 用 preset "qa" 但夹具未 seed model-presets.json → §E.3 解析失败 → 节点
     // failed。preset 表 fixture 保留（默认链 health 兜底 +qa 链留作其它断言用）

@@ -189,7 +189,7 @@ class DecisionProviderSpec extends CatsEffectSuite:
     val tmp = os.temp.dir(prefix = "nb-jev-partial-")
     PathUtil.setDataRoot(tmp)
     try
-      os.write(tmp / "nebflow.json", """{"jev":{"enabled":true}}""")
+      os.write(tmp / nebflow.shared.Branding.configFileName, """{"jev":{"enabled":true}}""")
       val cfg = nebflow.shared.Config.loadServiceConfig()
       assertEquals(cfg.jev.map(_.isEnabled), Some(true))
       assertEquals(cfg.jev.flatMap(_.provider), None)
@@ -202,7 +202,7 @@ class DecisionProviderSpec extends CatsEffectSuite:
     val tmp = os.temp.dir(prefix = "nb-jev-absent-")
     PathUtil.setDataRoot(tmp)
     try
-      os.write(tmp / "nebflow.json", """{"llm":{"providers":{}}}""")
+      os.write(tmp / nebflow.shared.Branding.configFileName, """{"llm":{"providers":{}}}""")
       val cfg = nebflow.shared.Config.loadServiceConfig()
       assertEquals(cfg.jev, None)
       assertEquals(JevSettings.resolve(cfg.jev, None), None, "no block => face off")
@@ -304,7 +304,7 @@ class DecisionProviderSpec extends CatsEffectSuite:
     val tmp = os.temp.dir(prefix = "nb-jev-write-")
     PathUtil.setDataRoot(tmp)
     try
-      val path = tmp / "nebflow.json"
+      val path = tmp / nebflow.shared.Branding.configFileName
       os.write(
         path,
         """{"llm":{"providers":{"p":{"baseUrl":"u","apiKey":"SECRET-KEY","protocol":"openai"}}},"plugins":{"enabled":true}}"""

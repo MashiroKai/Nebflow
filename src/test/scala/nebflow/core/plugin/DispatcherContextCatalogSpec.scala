@@ -67,7 +67,7 @@ class DispatcherContextCatalogSpec extends CatsEffectSuite:
    */
   private def setFlagMerged(enabled: Boolean): IO[Unit] =
     IO.blocking {
-      val p = tempRoot / "nebflow.json"
+      val p = tempRoot / nebflow.shared.Branding.configFileName
       val root =
         if os.exists(p) then
           io.circe.parser.parse(os.read(p)).toOption.flatMap(_.asObject).getOrElse(io.circe.JsonObject.empty)

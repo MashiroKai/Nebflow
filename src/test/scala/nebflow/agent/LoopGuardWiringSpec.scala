@@ -96,7 +96,7 @@ class LoopGuardWiringSpec extends CatsEffectSuite:
   private def seedLoopConfig(tmp: os.Path): Unit =
     os.makeDir.all(tmp / "data")
     os.write.over(
-      tmp / "data" / "nebflow.json",
+      tmp / "data" / nebflow.shared.Branding.configFileName,
       """{"supervision":{"loopGuard":{"enabled":true,"identicalFailureSoft":1,
         |"identicalFailureHard":3,"identicalCallHard":10,"identicalTextHard":10,"crossTurnFailureTurns":3,
         |"exemptTools":[]}}}""".stripMargin.replaceAll("\n", "")

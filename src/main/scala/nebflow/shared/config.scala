@@ -3,7 +3,7 @@ package nebflow.shared
 import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
 import io.circe.parser.parse
 import io.circe.syntax.*
-import io.circe.{Decoder, Json}
+import io.circe.{Decoder, Json, JsonObject}
 import nebflow.shared.{Defaults, PathUtil}
 
 /**
@@ -101,12 +101,15 @@ case class ModelConfig(
   /**
    * 模型不可用时段规则（model-schedule-unavailable 批，2026-10-29）：模型粒度
    * 时段闸——见 [[UnavailableWindow]]。缺省 None = 无限制（零行为变化）。
+   * 🔴 config-single-source 批（作者裁定④ 2026-11-05）起**已收敛到 provider 级**：
+   *   · 面板只有 provider 级一份编辑面（一个 provider 的行为是一致的）；
+   *   · 存量 model 级数据在加载/落盘时**向上合并**进 provider 级（
+   *     `Config.mergeModelWindowsIntoProvider`，不丢数据），此后该键在文件里消失；
+   *   · 读取面仍接受本键（union，向后兼容），但新写入路径不再产生它。
    * 生效窗口 = 本层 ∪ provider 层（判定单点 = [[ModelAvailability]]）。
    * 🔴 形状纪律：deriveDecoder **不认 case class 默认值**（ensureLlmDefaults
    * 批实测教训）——缺省字段必须 Option 形（本文件全部缺省字段同律），否则
    * 存量 nebflow.json 解码即抛 Missing required field。
-   * 🔴 前端契约：provider 编辑弹窗保存整体重建 `models` 数组 ⇒ 本字段必须由
-   * 保存路径按 id 原样携带（providersUi.js），否则每次保存都会静默抹掉。
    */
   unavailableWindows: Option[List[UnavailableWindow]] = None
 )
@@ -568,6 +571,18 @@ case class ServiceLlmConfig(
    * schema 仅容忍存量文件的 llm.model 节（可解析但被忽略）。
    */
   model: Option[ModelChainConfig] = None,
+  /**
+   * **fallback 链单一源**（config-single-source 批，作者裁定①③ 2026-11-05）：
+   * `llm.fallback = {"preferred": "<provider>/<model>", "fallbacks": [...]}` ——
+   * 与 agent.json 的 `model` 键同一词汇，写进本文件后即**唯一真相**：
+   *   · 有至少一个 ref ⇒ 全局候选链就是它（顺序 = 文件顺序），不再由代码常量
+   *     或侧车文件决定（见 [[nebflow.llm.ProviderRegistry.getCandidatesUnfiltered]]）；
+   *   · 缺省（None）⇒ 零行为变化：仍走 Nebula 侧车 / provider 推导种子链；
+   *   · 引用不存在的 provider/model ⇒ 启动时 WARN（[[FallbackChain.validate]]），
+   *     不静默跳过。
+   * 形状纪律：Option 形（deriveDecoder 不认 case class 默认值）。
+   */
+  fallback: Option[AgentModelConfig] = None,
   streamTimeouts: Option[StreamTimeoutsConfig] = None,
   /**
    * LLM provider 自适应并发限流器（429 反应式并发闸批，作者令 2026-10-29 21:32）
@@ -838,7 +853,7 @@ object Config:
     // llm 节、或 llm 无 providers）缺省注入，使解码成功而非抛
     // "Missing required field '.llm'"——否则 GatewayMain 走 crash-recovery 用
     // 冷启动期的 {} 快照打回 nebflow.json，信任表被抹掉。
-    val normalized = ensureLlmDefaults(resolvedJson)
+    val normalized = normalizeConfigJson(resolvedJson)
 
     normalized.as[NebflowServiceConfig] match
       case Right(cfg) => cfg
@@ -874,6 +889,75 @@ object Config:
                 Json.fromJsonObject(llmObj.add("providers", Json.obj()))
               case _ => l // 已含 providers 或非对象 → 原样
         Json.fromJsonObject(obj.add("llm", llmNorm))
+
+  /**
+   * Full load-time normalization (single entry for every JSON→config decode).
+   *
+   * = [[ensureLlmDefaults]] (cold-start intermediate states) + the
+   * unavailable-window convergence of the config-single-source batch (author
+   * ruling ④ 2026-11-05): model-level `unavailableWindows` are merged UP into
+   * the provider level and dropped from the model entries — "one provider, one
+   * behaviour". Nothing is discarded: the union is written to the provider.
+   *
+   * Applied on READ (so the runtime already sees the converged shape even before
+   * the file is rewritten) and on WRITE ([[nebflow.service.ConfigService]]
+   * persists the converged shape, so `stand.json` becomes the single place the
+   * setting lives in).
+   */
+  private[nebflow] def normalizeConfigJson(json: Json): Json =
+    mergeModelWindowsIntoProvider(ensureLlmDefaults(json))
+
+  /**
+   * Move every `llm.providers.<id>.models[].unavailableWindows` entry up to
+   * `llm.providers.<id>.unavailableWindows` (dedup by from/to/days, provider
+   * entries first, order preserved) and remove the model-level key.
+   *
+   * Idempotent: a file with no model-level windows comes back byte-equivalent
+   * (only re-serialized). Providers that declare no windows anywhere are left
+   * untouched (no empty array is written — an absent key means "no restriction").
+   */
+  private[nebflow] def mergeModelWindowsIntoProvider(json: Json): Json =
+    def windowsOf(node: Json): List[Json] =
+      node.hcursor.downField("unavailableWindows").as[Option[List[Json]]].toOption.flatten.getOrElse(Nil)
+
+    def dedupe(list: List[Json]): List[Json] =
+      list.distinctBy { w =>
+        (
+          w.hcursor.downField("from").as[Option[String]].toOption.flatten,
+          w.hcursor.downField("to").as[Option[String]].toOption.flatten,
+          w.hcursor.downField("days").as[Option[List[Int]]].toOption.flatten
+        )
+      }
+
+    (for
+      root <- json.asObject
+      llm <- root("llm").flatMap(_.asObject)
+      providers <- llm("providers").flatMap(_.asObject)
+    yield
+      val rewritten = providers.toList.map { case (pid, pJson) =>
+        pJson.asObject match
+          case None => pid -> pJson
+          case Some(p) =>
+            val modelWindows = p("models").flatMap(_.asArray).toList.flatten.flatMap(windowsOf)
+            if modelWindows.isEmpty then pid -> pJson
+            else
+              val merged = dedupe(windowsOf(pJson) ++ modelWindows)
+              val strippedModels = p("models").flatMap(_.asArray).map { arr =>
+                Json.fromValues(arr.map { m =>
+                  m.asObject.map(mo => Json.fromJsonObject(mo.remove("unavailableWindows"))).getOrElse(m)
+                })
+              }
+              val withModels = strippedModels.fold(p)(ms => p.add("models", ms))
+              pid -> Json.fromJsonObject(withModels.add("unavailableWindows", Json.fromValues(merged)))
+      }
+      Json.fromJsonObject(
+        root.add(
+          "llm",
+          Json.fromJsonObject(llm.add("providers", Json.fromJsonObject(JsonObject.fromIterable(rewritten))))
+        )
+      )
+    ).getOrElse(json)
+  end mergeModelWindowsIntoProvider
 
   /** Minimal default config used when no config file exists. */
   private lazy val defaultServiceConfig: NebflowServiceConfig =

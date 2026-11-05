@@ -485,7 +485,7 @@ object DoctorCommand extends CliCommand:
                 // Check it's a valid object (not array or primitive)
                 if json.isObject then (true, s"Valid JSON ($configPath)", "")
                 else if fix then
-                  val backupPath = configDir / "nebflow.json.bak"
+                  val backupPath = configDir / (configPath.last + nebflow.shared.PathUtil.configMigrationBackupSuffix)
                   os.move.over(configPath, backupPath)
                   os.write.over(configPath, "{}")
                   fixes += s"Invalid JSON (was ${json.name}) — backed up to $backupPath, reset to {}"
@@ -503,14 +503,14 @@ object DoctorCommand extends CliCommand:
                         (true, s"Restored from snapshot: ${snap.last}", "")
                       catch
                         case e: Exception =>
-                          val backupPath = configDir / "nebflow.json.bak"
+                          val backupPath = configDir / (configPath.last + nebflow.shared.PathUtil.configMigrationBackupSuffix)
                           try os.move.over(configPath, backupPath)
                           catch case _ => ()
                           os.write.over(configPath, "{}")
                           fixes += s"Corrupt config (parse error at ${err.message}) — backed up, reset to {}"
                           (true, "Reset to empty", "")
                     case None =>
-                      val backupPath = configDir / "nebflow.json.bak"
+                      val backupPath = configDir / (configPath.last + nebflow.shared.PathUtil.configMigrationBackupSuffix)
                       try os.move.over(configPath, backupPath)
                       catch case _ => ()
                       os.write.over(configPath, "{}")

@@ -102,7 +102,7 @@ class DeviceHmacSpec extends CatsEffectSuite:
     PathUtil.setDataRoot(savedRoot)
     os.remove.all(tmp)
 
-  private def writeConfig(json: String): Unit = os.write.over(tmp / "nebflow.json", json)
+  private def writeConfig(json: String): Unit = os.write.over(tmp / nebflow.shared.Branding.configFileName, json)
 
   test("DeviceAuthMode.read: absent config = off (byte-identical default)") {
     assertEquals(DeviceAuthMode.read, DeviceAuthMode.Off)

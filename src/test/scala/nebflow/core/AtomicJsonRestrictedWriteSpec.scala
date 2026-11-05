@@ -43,7 +43,7 @@ class AtomicJsonRestrictedWriteSpec extends CatsEffectSuite:
     posixOnly()
     for
       dir <- IO(os.temp.dir())
-      f = dir / "nebflow.json"
+      f = dir / nebflow.shared.Branding.configFileName
       _ <- IO(AtomicJson.writeSyncRestricted(f, """{"llm":{"providers":{}}}"""))
       mode <- IO(perms(f))
       content <- IO(os.read(f))
@@ -58,7 +58,7 @@ class AtomicJsonRestrictedWriteSpec extends CatsEffectSuite:
     posixOnly()
     for
       dir <- IO(os.temp.dir())
-      f = dir / "nebflow.json"
+      f = dir / nebflow.shared.Branding.configFileName
       // 模拟遗留安装：明文文件以 0644 在盘上
       _ <- IO { os.write.over(f, """{"apiKey":"sk-old"}"""); os.perms.set(f, "rw-r--r--") }
       before <- IO(perms(f))
@@ -110,7 +110,7 @@ class AtomicJsonRestrictedWriteSpec extends CatsEffectSuite:
     posixOnly()
     IO {
       val dir = os.temp.dir()
-      val f = dir / "nebflow.json"
+      val f = dir / nebflow.shared.Branding.configFileName
       os.write.over(f, """{"apiKey":"sk-keep"}""")
       os.perms.set(f, "rw-------")
       // 目录置为不可写 → tmp 的 createFile 必败（AccessDenied），走 catch 清理

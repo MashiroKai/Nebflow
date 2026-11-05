@@ -34,7 +34,7 @@ class ReloadStaleSessionModelSpec extends CatsEffectSuite:
 
   private def writeConfig(root: os.Path, providers: Map[String, Int]): Unit =
     val body = providers.map { case (id, port) => s""""$id":${providerJson(port)}""" }.mkString(",")
-    os.write.over(root / "nebflow.json", s"""{"llm":{"providers":{$body}}}""")
+    os.write.over(root / nebflow.shared.Branding.configFileName, s"""{"llm":{"providers":{$body}}}""")
 
   /**
    * Redirect the global dataRoot to a temp dir for the duration of `f`

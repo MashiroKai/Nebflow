@@ -538,7 +538,7 @@ class NodeDeclarationGateSpec extends CatsEffectSuite:
   }
 
   test("④ P2a: a plugins declaration while the plugins flag is OFF must WARN in the receipt (never silently dropped)") {
-    val flagFile = tempRoot / "nebflow.json"
+    val flagFile = tempRoot / nebflow.shared.Branding.configFileName
     os.write.over(flagFile, """{"plugins":{"enabled":false}}""")
     // 🔴 夹具存续期必须覆盖**效果**存续期：try/finally 在 by-name body 求值（= 构建 IO）
     // 时就执行 finally ⇒ 文件在 IO 真正跑之前已被删 ⇒ PluginsConfig.enabled 读不到 ⇒ 回落

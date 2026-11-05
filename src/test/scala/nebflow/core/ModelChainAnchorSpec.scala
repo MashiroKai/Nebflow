@@ -68,7 +68,7 @@ class ModelChainAnchorSpec extends FunSuite:
     // chain: if runtime resolution consults a fixed/default chain instead of
     // the /model anchor, this fixture exposes it as a wrong candidate prefix.
     os.write.over(
-      root / "nebflow.json",
+      root / nebflow.shared.Branding.configFileName,
       """{"llm":{"providers":{
         |"legacy":{"baseUrl":"http://127.0.0.1:1","apiKey":"k","protocol":"openai","models":[{"id":"first-model","contextWindow":8192}]},
         |"zhipu":{"baseUrl":"http://127.0.0.1:2","apiKey":"k","protocol":"openai","models":[{"id":"glm-primary","contextWindow":8192},{"id":"glm-fallback","contextWindow":8192}]},
