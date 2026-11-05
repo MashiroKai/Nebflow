@@ -200,4 +200,56 @@ class AskUserBuildJsonSpec extends FunSuite:
     assertEquals(frame(items).noSpaces, expected)
   }
 
+  // ---- 归属命名批（作者令 2026-11-05 10:07）：ownerName 归属字段契约 ----
+
+  test("ON1: ownerName 在场 ⇒ 顶层落键（delegate 发起的 ask，段①=批次短名）") {
+    val items = List(AskItem("合并窗口到了吗？", List(AskOption("等"), AskOption("现在合"))))
+    val json = AgentActor.buildAskUserJson(
+      Some("root-1"),
+      "general",
+      items,
+      Some("general"),
+      Some("delegate-general-1a2b3c4d"),
+      project = None,
+      nodeName = None,
+      ownerName = Some("ask-card-naming")
+    )
+    assertEquals(json.hcursor.downField("ownerName").as[String], Right("ask-card-naming"))
+    assertEquals(json.hcursor.downField("project").focus, None)
+    assertEquals(json.hcursor.downField("nodeName").focus, None)
+  }
+
+  test("ON2: 节点提问 ⇒ ownerName + nodeName 同帧（卡片渲染 delegate name · node name）") {
+    val items = List(AskItem("两段式归属按哪种折行？", List(AskOption("A"), AskOption("B"))))
+    val json = AgentActor.buildAskUserJson(
+      Some("root-1"),
+      "general",
+      items,
+      Some("general"),
+      Some("node-9f8e7d6c"),
+      project = Some("stand"),
+      nodeName = Some("改归属两段"),
+      ownerName = Some("ask-card-naming")
+    )
+    assertEquals(json.hcursor.downField("ownerName").as[String], Right("ask-card-naming"))
+    assertEquals(json.hcursor.downField("nodeName").as[String], Right("改归属两段"))
+    assertEquals(json.hcursor.downField("project").as[String], Right("stand"))
+  }
+
+  test("ON3(零回归): ownerName 缺席/空串 ⇒ 不落键，载荷逐字节等于既有形态") {
+    val items = List(AskItem("Continue?", List(AskOption("yes"), AskOption("no"))))
+    val expected =
+      """{"type":"askUser","sessionId":"root-1","agentName":"Backend","sourceAgent":"Backend",""" +
+        """"sourceSession":"team-abc","items":[{"question":"Continue?","options":[{"label":"yes"},{"label":"no"}],""" +
+        """"allowOther":true}]}"""
+    assertEquals(frame(items).noSpaces, expected, "默认态（None）必须逐字节等于既有形态")
+    assertEquals(
+      AgentActor
+        .buildAskUserJson(Some("root-1"), "Backend", items, Some("Backend"), Some("team-abc"), ownerName = Some("   "))
+        .noSpaces,
+      expected,
+      "空白串视同缺席（前端不渲染空段）"
+    )
+  }
+
 end AskUserBuildJsonSpec

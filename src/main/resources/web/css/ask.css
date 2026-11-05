@@ -454,3 +454,68 @@ body.mobile-layer .ask-bub.ai td { min-width: 4em; }
 body.mobile-layer .ask-bub.ai th:first-child,
 body.mobile-layer .ask-bub.ai td:first-child { white-space: nowrap; }
 body.mobile-layer .ask-input textarea { font-size: var(--ds-fs-mobile-sub); } /* iOS 聚焦不缩放（输入行为包批：input→textarea 同律；15px = --ds-fs-mobile-sub 逐值同档） */
+
+/* ============================================================================
+ * AskUser 卡归属标注（`chat.js renderAskUser` 的 `.ask-user-source`）
+ * 归属命名批 · 作者令 2026-11-05 10:07（逐字）：「现在的后台agent的问题卡片还是
+ * 只会显示stand，delegate现在不都是有name吗，node也有name，那么可以显示
+ * delegate name，node就是 delegate name · node name」。
+ *
+ * 形态：两段式胶囊 `段① · 段②`（段① = 父批/delegate 批次短名或项目名，段② =
+ * 当前节点名）。主次靠字重与色档，不靠字号（窄屏字号一动，行高与卡面节奏全变）：
+ *   · 段① parent：500 / --color-text-muted（弱 = 父批）
+ *   · 段② node  ：700 / --color-text      （强 = 当前节点）
+ * 截断阈值（em 计量，11px 档下 1em ≈ 1 个中文字）：段① ≤ 14em、段② ≤ 18em，
+ * 各自 `text-overflow: ellipsis`；两段 min-width 各留 6em/5em —— 长批名只会被
+ * 截短，不会被压成两三个字，也不会把卡片撑破（胶囊 `max-width: 100%`）。
+ * 完整名：胶囊 `title` 恒为全量（桌面 hover / 触屏长按即读）；点按（或 Enter/
+ * Space）切 `.is-expanded` 展全文（触屏无 hover 的读取路）。
+ * 窄屏（手机层 / ≤520px 视口）：允许折成两行，**两段都不丢**（各自 max-width
+ * 100% + 可换行），分隔符留在行尾当续行锚。
+ * 材质零字面量：底色/文本/圆角/间距全走 --ds-* 与 --color-*（本文件既有纪律）。
+ * ========================================================================== */
+.ask-user-source {
+  display: inline-flex;
+  align-items: baseline;
+  max-width: 100%;
+  min-width: 0;
+  margin-bottom: var(--ds-space-2);
+  padding: var(--ds-space-half) var(--ds-space-2);
+  font: 600 var(--ds-fs-meta) -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text-muted);
+  background: var(--color-surface);
+  border-radius: var(--ds-radius-chip);
+  white-space: nowrap;
+}
+.ask-user-source-parent,
+.ask-user-source-node {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ask-user-source-parent { max-width: 14em; min-width: 6em; font-weight: 500; }
+.ask-user-source-node   { max-width: 18em; min-width: 5em; font-weight: 700; color: var(--color-text); }
+.ask-user-source-sep    { flex: 0 0 auto; opacity: 0.7; }
+/* 展开态（点按 / Enter / Space）：撤掉一切截断，全文可读并允许换行。 */
+.ask-user-source.is-expanded { white-space: normal; }
+.ask-user-source.is-expanded .ask-user-source-parent,
+.ask-user-source.is-expanded .ask-user-source-node {
+  max-width: 100%;
+  min-width: 0;
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+/* 可点（仅两段时挂 role=button）——键盘可达性靠 tabIndex，焦点框沿用既有平台默认。 */
+.ask-user-source[role="button"] { cursor: pointer; }
+.ask-user-source[role="button"]:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+/* 窄屏折行：两段各自独占行宽，段①②都完整可见（不丢段、不撑破卡片）。 */
+@media (max-width: 520px) {
+  .ask-user-source { flex-wrap: wrap; white-space: normal; }
+  .ask-user-source-parent { max-width: 100%; flex: 1 1 auto; }
+  .ask-user-source-node { max-width: 100%; flex: 1 1 auto; }
+}
+body.mobile-layer .ask-user-source { flex-wrap: wrap; white-space: normal; max-width: 100%; }
+body.mobile-layer .ask-user-source-parent,
+body.mobile-layer .ask-user-source-node { max-width: 100%; flex: 1 1 auto; }
