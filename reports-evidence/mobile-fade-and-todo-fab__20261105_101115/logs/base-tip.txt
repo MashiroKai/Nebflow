@@ -1,2 +1,6 @@
-5709ba000 (main tip at verification; +0 behind)
-58cc9facd
+main@127dd81a7 (final rebase target)
+HEAD=260f6f515  behind-main=0
+
+Gates/HIG/spec readings were taken on the same web/scripts/tests tree:
+`git diff --stat 80ef991aa 127dd81a7 -- src/main/resources/web scripts tests` = EMPTY
+(i.e. main 80ef991aa -> 127dd81a7 touched only reports-evidence/).
