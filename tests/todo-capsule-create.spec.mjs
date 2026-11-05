@@ -497,9 +497,20 @@ test('⑦ 动画护栏：展开仍走 spring 几何通道（内联 height 逐帧
 
   expect(await page.evaluate(() => window.__morphSeen)).toBe(true);
   expect(await page.evaluate(() => window.__morphFrames)).toBeGreaterThan(3); // 多帧 = 真 spring，不是单跳
-  // 落地后内联几何清空（生长收尾契约：height 与 transform 都无残留）
-  expect(await page.evaluate(() => document.querySelector('.tfl-card').style.height)).toBe('');
-  expect(await page.evaluate(() => document.querySelector('.tfl-card').style.transform)).toBe('');
+  // 落地后的几何收尾契约（灵动岛批 2026-11-05 改写）：旧契约是「内联 height 清空、
+  // 回到 natural 高」——岛改成单一变形元素后，**岛显式持有终态尺寸**（width/height
+  // 逐帧写、落地保持在内容自然尺寸，由 ResizeObserver 跟随面板高度），所以判据从
+  // 「清空」改成「落定值 == 面板自然尺寸」，transform 仍必须零内联残留（岛只写
+  // 尺寸三通道，位移靠 CSS 静态 translateX(-50%)）。
+  const settled = await page.evaluate(() => {
+    const card = document.querySelector('.tfl-card');
+    const panel = document.querySelector('.tfl-panel');
+    return { h: card.style.height, w: card.style.width, t: card.style.transform,
+      panelH: panel.offsetHeight, panelW: panel.offsetWidth };
+  });
+  expect(settled.t).toBe('');
+  expect(Math.abs(parseFloat(settled.h) - settled.panelH)).toBeLessThanOrEqual(1);
+  expect(Math.abs(parseFloat(settled.w) - settled.panelW)).toBeLessThanOrEqual(1);
 
   // 计数翻牌：完成一条 ⇒ 计数变化那一拍 tfl-count-flip 落在计数宿主上
   await page.locator('.tfl-row').first().locator('.tfl-complete').click();

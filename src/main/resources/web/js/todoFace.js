@@ -58,13 +58,27 @@ function springK(response, damping) {
 /**
  * 多通道弹簧动画（半隐式欧拉，dt 上限 1/30 防标签页切走后跳变）。
  * channels = [{ from, to, set(value) } ...]；返回 cancel()。
+ *
+ * `settle` = 收口阈值（2026-11-05 灵动岛批）：`{pos, vel}`，缺省 0.35px / 6px·s⁻¹。
+ * **为什么需要它**：作者要「极轻微的过冲」，而岛形变的超调量级只有 2–4px；
+ * 缺省阈值会在越过目标前的最后一小段就把值钉死（|x−to|<0.35 且 |v|<6 命中），
+ * 超调**整条被吃掉**、量出来恒为 0 —— 那就不是弹簧了。形变通道给更严的收口
+ * 阈值（0.05px / 1.5px·s⁻¹），让曲线真的翻过目标再落回，过冲可测可证。
+ *
+ * @param {Array<{from:number, to:number, set:(v:number)=>void}>} channels
+ * @param {{response:number, damping:number, settle?:{pos?:number, vel?:number}}} opts
+ * @param {() => void} [onDone]
+ * @returns {() => void} cancel
  */
-function springAnimate(channels, { response, damping }, onDone) {
+function springAnimate(channels, opts, onDone) {
+  const { response, damping, settle } = opts;
   if (REDUCED_MOTION) {
     for (const ch of channels) ch.set(ch.to);
     if (onDone) onDone();
     return () => {};
   }
+  const posTol = settle && settle.pos != null ? settle.pos : 0.35;
+  const velTol = settle && settle.vel != null ? settle.vel : 6;
   const { k, c } = springK(response, damping);
   const st = channels.map((ch) => ({
     ch, x: ch.from, v: 0,
@@ -75,15 +89,22 @@ function springAnimate(channels, { response, damping }, onDone) {
   let stopped = false;
   const tick = (now) => {
     if (stopped) return;
-    const dt = Math.min((now - last) / 1000, 1 / 30);
+    const frame = Math.min((now - last) / 1000, 1 / 30);
     last = now;
+    // 定步长子步进（≤1/240s）：显式积分在大步长下会**吃掉振幅**（60Hz 一帧一步
+    // 时 ω·dt≈0.28，实测把 1.1% 的理论超调磨成 0.02% ⇒ 「弹簧」读不出来）。
+    // 子步进后曲线与解析解逐帧同量级，帧率无关（60/120/144Hz 过冲读数一致）。
+    const steps = Math.max(1, Math.ceil(frame / (1 / 240)));
+    const dt = frame / steps;
     let all = true;
     for (const s of st) {
       if (s.done) continue;
-      const a = -k * (s.x - s.ch.to) - c * s.v;
-      s.v += a * dt;
-      s.x += s.v * dt;
-      if (Math.abs(s.x - s.ch.to) < 0.35 && Math.abs(s.v) < 6) {
+      for (let i = 0; i < steps; i++) {
+        const a = -k * (s.x - s.ch.to) - c * s.v;
+        s.v += a * dt;
+        s.x += s.v * dt;
+      }
+      if (Math.abs(s.x - s.ch.to) < posTol && Math.abs(s.v) < velTol) {
         s.x = s.ch.to; s.done = true;
       } else all = false;
       s.ch.set(s.x);
@@ -103,9 +124,16 @@ function springAnimate(channels, { response, damping }, onDone) {
 const SPRING = {
   open:   { response: 0.42, damping: 0.8 },
   close:  { response: 0.45, damping: 1.0 },
-  // 展开几何生长（件5 2026-11-05）：**临界阻尼**（damping 1.0）—— 高度通道全程
-  // 单调不越过目标值。展开动画从「满尺寸面板 scale 缩放」改成「载体自身长高」后，
-  // 过阻尼/欠阻尼的越顶回弹会读成「弹了一下」，与作者要的「胶囊变大」不符。
+  // 岛形变（灵动岛批 2026-11-05）：**唯一一条几何弹簧**，四条通道（宽/高/两段
+  // 圆角）同拍。作者令「处处运用弹簧物理效果，仅有极轻微的过冲（overshoot）」：
+  //   ω = 2π/response，k = ω²（mass 1），c = 2ζω；
+  //   response 0.38 ⇒ ω ≈ 16.53 rad/s、k ≈ 273.4、c ≈ 28.4；
+  //   ζ = 0.82 ⇒ 理论超调 e^(−πζ/√(1−ζ²)) ≈ 1.1%（实测见批文档 readings.json）；
+  //   settle 收口阈值收紧（0.05px / 1.5px·s⁻¹）⇒ 超调不被阈值吃掉、可测可证。
+  // 禁用项对照：不出现 bouncy/back/elastic 类越界缓动（ζ 恒 ≥ 0.8 的「收得住」
+  // 区间，超调量级 2–4px，收口半周期内落定）。
+  morph:  { response: 0.38, damping: 0.82, settle: { pos: 0.05, vel: 1.5 } },
+  // 展开几何生长的历史档（件5 临界阻尼）随灵动岛批退役：几何现在全走 morph。
   grow:   { response: 0.34, damping: 1.0 },
   pop:    { response: 0.45, damping: 0.45 },
   row:    { response: 0.3,  damping: 0.8 },
@@ -334,6 +362,15 @@ class TodoFace {
     this.tagPopover = null;
     this.outsideBound = false;
     this.cancelMorph = null;
+    // 灵动岛批 2026-11-05：岛盒缓存 + 形变闸 + 面板尺寸守望
+    //   capBox = 收起态岛的实测盒（展开前拍，收起时作弹簧终点）；
+    //   morphing = 形变在飞（面板 ResizeObserver 此时不抢方向盘）；
+    //   islandW/H = 展开态岛的当前目标尺寸（内容变化后重新贴合用）。
+    this.capBox = null;
+    this.morphing = false;
+    this.islandW = 0;
+    this.islandH = 0;
+    this.islandRo = null;
     this.enteredIds = new Set();
     this.unsub = todoStore.subscribe(() => this.onStoreChange());
     this.buildDom();
@@ -376,11 +413,12 @@ class TodoFace {
       if (this.expanded) this.collapse(); else this.expand();
     });
 
-    // 面板容器 = 展开态面板（`.tfl-card`）。静默态 display:none（零占位）；
-    // 开态 = 挂载槽内的流内块，排在胶囊**之前** ⇒ 面板出现在胶囊上方、自胶囊
-    // 位置向上生长（#input-area 是 bottom 锚定的绝对层 ⇒ 高度只向上长，
-    // 输入框自身位置不动；聊天让位读 #input-area.offsetHeight，零 JS 改动）。
+    // 岛容器（`.tfl-card`）= **唯一变形元素**（灵动岛批 2026-11-05）：收起态它本身
+    // 就是胶囊（宽 max-content = 内容层撑盒、高 --tfl-cap-h、圆角 999），展开态仍是
+    // 它 —— 由本文件 morphOpen/morphClose 逐帧写 width/height/圆角。全生命周期同一
+    // 引用（id `todo-island`，从不重建）；内容层（胶囊 / 面板）在它内部切换。
     this.card = el('div', 'tfl-card');
+    this.card.id = 'todo-island';
     this.card.dataset.state = this.expanded ? 'open' : 'capsule';
     if (this.mobile) this.card.classList.add('tfl-mobile');
 
@@ -404,12 +442,12 @@ class TodoFace {
     this.buildUndoBar();
     this.footer = el('div', 'tfl-footer');
     this.panel.append(this.header, this.filterWrap, this.listWrap, this.footer);
+    // 岛 = 骨架；两个内容层（胶囊 / 面板）都在它内部 —— 骨架是唯一的形状载体。
     this.card.appendChild(this.panel);
+    this.card.appendChild(this.capsule);
     // 空白区建（作者令 2026-11-04 ②）：列表空白 / footer 空白点击 ⇒ 行内新建
     this.bindBlankCreate();
-    // DOM 顺序 = 面板在前、胶囊在后（面板排在胶囊上方；声明顺序即视觉顺序）
     this.mount.appendChild(this.card);
-    this.mount.appendChild(this.capsule);
     this.root = this.mount;
     if (this.mobile) {
       // 手机 = 页面即展开态：挂载槽即页面体，卡容器回退为流内块（CSS .tfl-mobile）
@@ -708,6 +746,9 @@ class TodoFace {
     this.faceOverdue.setAttribute('aria-hidden', String(!overdue));
     this.capsule.setAttribute('aria-label',
       overdue ? t('todoface.overdue', { n: String(od) }) : t('todoface.capsuleCount', { n: String(n) }));
+    // 收起态：读数一变，岛的**自然宽**也变（两态叠层取最大自然宽）⇒ 重拍盒缓存，
+    // 下一次收起的弹簧终点就是这颗胶囊的真实尺寸（不是旧读数留下的宽度）。
+    if (!this.expanded) this.captureCapsuleBox();
   }
 
   renderHeader() {
@@ -1336,103 +1377,111 @@ class TodoFace {
 
   expand() {
     if (this.expanded || this.destroyed) return;
-    // L1 起点 = **展开前的胶囊盒**（先量后翻态，搬家后不可测）。
-    const capRect = this.capsuleRectNow();
+    // 起点 = **展开前的岛盒**（= 胶囊盒本身；先量后翻态，计数节点搬走后不可测）。
+    const r0 = this.captureCapsuleBox();
     this.expanded = true;
     this.card.dataset.state = 'open';
     this.mount.classList.add('is-open');
     this.capsule.setAttribute('aria-expanded', 'true');
     if (this.cancelMorph) this.cancelMorph();
-    // 胶囊盒钉住（宽度不再随计数节点搬走而变 ⇒ 原点不动；收起时清除）。
-    if (capRect) this.capsule.style.minWidth = `${capRect.width.toFixed(2)}px`;
-    // L2 计数节点先左移成面板标题（同一个 DOM 节点搬家，不是两处文案）。
+    // 计数节点先左移成面板标题（同一个 DOM 节点搬家，不是两处文案）。
     this.moveCountInto(true);
     this.panel.classList.add('tfl-panel-in');
     this.renderAll();
-    if (this.mobile) {
-      this.panel.classList.add('tfl-panel-open');
-      return;
-    }
     this.panel.classList.add('tfl-panel-open');
-    this.growOpen(capRect, SPRING.grow, () => {
-      this.card.style.height = '';
-      this.card.style.borderTopLeftRadius = '';
-      this.card.style.borderTopRightRadius = '';
+    if (this.mobile) return;
+    // 目标盒：宽 = 面板宽（min(420px, 100vw-32px)）、高 = 面板自然高。
+    // 面板是绝对定位的定宽层 ⇒ 量 reader 不改它，行内文字全程零重排。
+    const W = this.panel.offsetWidth || 0;
+    const H = this.panel.offsetHeight || 0;
+    if (!W || !H) { if (r0) this.writeIsland(r0.width, r0.height, 13, 13); return; }
+    this.morphing = true;
+    this.morphIsland(r0, { w: W, h: H, rt: 24, rb: 19 }, SPRING.morph, () => {
+      this.morphing = false;
+      this.islandW = W; this.islandH = H;
       this.panel.classList.remove('tfl-panel-in');
+      this.observePanel();
       this.measurePanel();
       this.refocusList(); // 列表持有焦点，↑↓/Return 立即可用（复刻 onAppear）
       this.bindOutsideClose();
     });
   }
 
-  /** 胶囊当帧几何（收起态可见；展开态原地不动、仍可量 ⇒ 可复用）。 */
-  capsuleRectNow() {
+  /** 岛当帧盒（收起态 = 胶囊盒；展开态自然宽不再可用 ⇒ 只作起点快照）。 */
+  islandRectNow() {
     if (this.mobile) return null;
-    const r = this.capsule.getBoundingClientRect();
+    const r = this.card.getBoundingClientRect();
     if (!r.width || !r.height) return null;
     return { left: r.left, top: r.top, width: r.width, height: r.height };
   }
 
   /**
-   * L1 生长：载体在胶囊下缘**原位长高**（真几何，两个通道 = 高度 / 顶圆角）。
-   *   起点高 = 胶囊高（同一枚胶囊的横截面）、起点顶圆角 = 胶囊半径；
-   *   终点 = 载体自然高（内容真高，先量后写）。
-   * 通道写面只有 inline height + 两条顶圆角 —— **不写 transform**，所以载体
-   * rect.left / rect.top 全程恒定（件5 A1），底缘只向下（A1 尾句）。
-   * 高度通道做单调夹紧（min 到目标、max 到上一帧）：临界阻尼 + 夹紧 ⇒ 序列
-   * 单调不减，不会出现越顶回弹（件5 A2 的「单调不减」判据）。
+   * 胶囊盒快照（= 收起态岛的几何）。**只在收起态成立**：展开态里胶囊层仍以自然
+   * 宽居中（CSS `.is-open .tfl-capsule`），但计数节点已被搬进面板头 ⇒ 母盒只剩
+   * 圆点，量出来不是「有计数的胶囊宽」。故：收起态随时量、展开前必量，结果缓存
+   * 在 `capBox`（tab 等宽数字 ⇒ 位数不变时逐像素精确；位数变化的极端档在收起末帧
+   * 归位到 CSS max-content，见 collapse 注）。
+   * @returns {{left:number,top:number,width:number,height:number}|null}
    */
-  growOpen(capRect, spring, done) {
-    const card = this.card;
-    card.style.height = '';                 // 先取自然高（此刻 height 为 auto）
-    const H = card.offsetHeight;
-    const h0 = capRect ? capRect.height : 0;
-    if (REDUCED_MOTION || !H || H <= h0 + 1) {
-      card.style.height = '';
-      if (done) done();
-      return;
-    }
-    const r0 = Math.min(h0 / 2, 13);        // 胶囊半径（26 高 ⇒ 13）
-    const r1 = 24;                          // 面板顶圆角（.tfl-card 静态值）
-    const m = { h: h0, r: r0 };
-    const write = () => {
-      card.style.height = `${m.h.toFixed(2)}px`;
-      card.style.borderTopLeftRadius = `${m.r.toFixed(1)}px`;
-      card.style.borderTopRightRadius = `${m.r.toFixed(1)}px`;
-    };
-    write();
-    this.cancelMorph = springAnimate([
-      { from: h0, to: H, set: (v) => { m.h = Math.max(m.h, Math.min(v, H)); write(); } },
-      { from: r0, to: r1, set: (v) => { m.r = v; write(); } },
-    ], spring, done);
+  captureCapsuleBox() {
+    if (this.mobile) return null;
+    const r = this.card.getBoundingClientRect();
+    if (r.width && r.height) this.capBox = { left: r.left, top: r.top, width: r.width, height: r.height };
+    return this.capBox;
   }
 
-  /** L4 收起：同一条几何路径反向（高度从自然高收缩回胶囊高，圆角回到胶囊半径）。
-   *  同一元素、同一原点 —— 收起的末帧就是胶囊的横截面，随后 data-state 翻回
-   *  capsule（display:none）与计数节点回胶囊。 */
-  growClose(capRect, spring, done) {
-    const card = this.card;
-    const H = card.offsetHeight;
-    const h0 = capRect ? capRect.height : 0;
-    if (REDUCED_MOTION || !H) {
-      card.style.height = '';
+  /** 写岛的三条几何通道（宽 / 高 / 两段圆角）。**唯一写面**：颜色由 CSS 过渡承担。 */
+  writeIsland(w, h, rt, rb) {
+    const s = this.card.style;
+    s.width = `${w.toFixed(2)}px`;
+    s.height = `${h.toFixed(2)}px`;
+    s.borderRadius = `${rt.toFixed(2)}px ${rt.toFixed(2)}px ${rb.toFixed(2)}px ${rb.toFixed(2)}px`;
+  }
+
+  /**
+   * 岛形变（灵动岛批 2026-11-05）：**同一个节点**（`#todo-island`）从 from 盒
+   * 弹簧过渡到 to 盒 —— 四条通道（宽 / 高 / 顶圆角 / 底圆角）同拍、同一组弹簧
+   * 参数（SPRING.morph = response 0.38 / damping 0.86 / mass 1，见参数表）。
+   *   · 过冲：ζ=0.86 ⇒ 理论超调 e^(−πζ/√(1−ζ²)) ≈ 0.5%，实测读数见批文档
+   *     （`readings.json` 的 overshootPct）—— 作者要的「极轻微的过冲」，收得住；
+   *   · 不夹紧、不改道：所有通道都允许越过目标值再落回（这就是弹簧），但量级
+   *     在 1–3px 内，读不出「弹了一下」；
+   *   · reduced-motion：首帧即落终值（无中间帧、无模糊 —— CSS 同媒体查询关过渡）。
+   */
+  morphIsland(from, to, spring, done) {
+    const w0 = from ? from.width : to.w;
+    const h0 = from ? from.height : to.h;
+    const r0t = Math.min(h0 / 2, 13);   // 胶囊半径（26 高 ⇒ 13）
+    const m = { w: w0, h: h0, rt: r0t, rb: r0t };
+    const write = () => this.writeIsland(m.w, m.h, m.rt, m.rb);
+    write();
+    if (REDUCED_MOTION) {
+      m.w = to.w; m.h = to.h; m.rt = to.rt; m.rb = to.rb;
+      write();
       if (done) done();
       return;
     }
-    const r0 = 24;
-    const r1 = Math.min(h0 / 2, 13);
-    const m = { h: H, r: r0 };
-    const write = () => {
-      card.style.height = `${m.h.toFixed(2)}px`;
-      card.style.borderTopLeftRadius = `${m.r.toFixed(1)}px`;
-      card.style.borderTopRightRadius = `${m.r.toFixed(1)}px`;
-    };
-    write();
     this.cancelMorph = springAnimate([
-      { from: H, to: h0, set: (v) => { m.h = Math.min(m.h, Math.max(v, h0)); write(); } },
-      { from: r0, to: r1, set: (v) => { m.r = v; write(); } },
-    ], spring, done);
+      { from: w0, to: to.w, set: (v) => { m.w = v; write(); } },
+      { from: h0, to: to.h, set: (v) => { m.h = v; write(); } },
+      { from: r0t, to: to.rt, set: (v) => { m.rt = v; write(); } },
+      { from: r0t, to: to.rb, set: (v) => { m.rb = v; write(); } },
+    ], spring, () => { write(); if (done) done(); });
   }
+
+  /** 展开态内容高度跟随（面板 resize ⇒ 岛重新贴合；动画期间不抢方向盘）。 */
+  observePanel() {
+    if (this.islandRo || this.mobile || typeof ResizeObserver !== 'function') return;
+    this.islandRo = new ResizeObserver(() => {
+      if (!this.expanded || this.morphing || this.destroyed) return;
+      const H = this.panel.offsetHeight;
+      if (!H || Math.abs(H - this.islandH) < 0.5) return;
+      this.islandH = H;
+      this.card.style.height = `${H.toFixed(2)}px`;
+    });
+    this.islandRo.observe(this.panel);
+  }
+
 
   /**
    * L2 单一计数节点：胶囊里的 `.tfl-cap-faces`（todo/overdue 两面 + 计数文本）
@@ -1481,21 +1530,25 @@ class TodoFace {
     if (this.cancelMorph) this.cancelMorph();
     this.panel.classList.remove('tfl-panel-open');
     this.panel.classList.add('tfl-panel-out');
-    const capRect = this.capsuleRectNow();
-    // 收起动画期间卡容器保持 display:flex（data-state 在动画落地后才翻），
-    // 否则一翻类就 display:none、无退场可看，胶囊侧也观察不到「从面板收成胶囊」。
+    // 目标盒 = 缓存里的胶囊盒（展开前实测；tab 等宽数字 ⇒ 位数不变时逐像素精确）。
+    // 末帧 data-state 翻回 capsule + 清掉 inline 尺寸 ⇒ 岛回到 CSS 自然宽
+    // （max-content），计数节点也同时搬回胶囊 —— 两件事同帧完成，视觉零跳；
+    // 唯一残差 = 展开期间计数位数变化（9→10），末帧一次归位，仍在 1 帧内收口。
+    const box = this.capBox;
     const done = () => {
+      this.morphing = false;
+      this.card.style.width = '';
       this.card.style.height = '';
-      this.card.style.borderTopLeftRadius = '';
-      this.card.style.borderTopRightRadius = '';
+      this.card.style.borderRadius = '';
       this.card.dataset.state = 'capsule';
+      this.islandW = 0; this.islandH = 0;
       this.panel.classList.remove('tfl-panel-in', 'tfl-panel-out');
       this.moveCountInto(false); // 计数节点回胶囊（同一节点，末帧位置≈胶囊位）
-      this.capsule.style.minWidth = ''; // 胶囊盒归还内容宽（两态等宽口径不变）
       this.refocusList();
     };
-    if (REDUCED_MOTION) { done(); return; }
-    this.growClose(capRect, SPRING.close, done);
+    if (REDUCED_MOTION || !box) { done(); return; }
+    this.morphing = true;
+    this.morphIsland(null, { w: box.width, h: box.height, rt: 13, rb: 13 }, SPRING.morph, done);
   }
 
   /** 面板/胶囊实测（取证与回归断言用；几何已由 CSS 决定，此处只读不写）。 */
@@ -1886,6 +1939,7 @@ class TodoFace {
     this.unsub();
     this.unbindOutsideClose();
     if (this.cancelMorph) this.cancelMorph();
+    if (this.islandRo) { this.islandRo.disconnect(); this.islandRo = null; }
     if (this.tagPopover) this.tagPopover.remove();
     if (this.root && this.root.isConnected) this.root.remove();
   }

@@ -52,7 +52,7 @@ export function itemFixture() {
  * @param {import('@playwright/test').Page} page
  * @param {{tags?: any[], items?: any[]}} [opts]
  */
-export async function bootTodoFace(page, { tags = TAG_FIXTURE, items = itemFixture() } = {}) {
+export async function bootTodoFace(page, { tags = TAG_FIXTURE, items = itemFixture(), mobile = false } = {}) {
   await page.addInitScript(() => {
     localStorage.setItem('nebflow_token', 'e2e-token');
     localStorage.setItem('nebflow_locale', 'zh-CN');
@@ -117,7 +117,9 @@ export async function bootTodoFace(page, { tags = TAG_FIXTURE, items = itemFixtu
     face.renderTodoTaskList(sid);
   }, { sid: SID, tags, items });
 
-  await page.waitForSelector('#task-list.has-tasks .tfl-capsule', { timeout: 15000 });
+  // 手机腿（灵动岛批 2026-11-05）：手机层 `#task-list` 整条 display:none（端区分批
+  // 口径：手机入口 = 左上圆钮，桌面才是胶囊/岛）⇒ 只等节点在场，不等可见。
+  await page.waitForSelector('#task-list.has-tasks .tfl-capsule', { state: mobile ? 'attached' : 'visible', timeout: 15000 });
   await page.waitForTimeout(300);
 }
 
