@@ -54,7 +54,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px var(--ds-space-4) var(--ds-space-glass-x);
+  padding: 14px var(--ds-space-4) var(--ds-space-block-y);
   flex-shrink: 0;
 }
 .todo-page-title {
@@ -125,7 +125,7 @@
   letter-spacing: 0.01em;
   color: var(--color-frame-text-muted);
   opacity: 0.75;
-  padding: var(--ds-space-glass-x) var(--ds-space-1h) var(--ds-space-1);
+  padding: var(--ds-space-block-y) var(--ds-space-1h) var(--ds-space-1);
   display: flex;
   align-items: baseline;
   gap: var(--ds-space-1h);
@@ -139,9 +139,9 @@
 .todo-perm-chip {
   flex-shrink: 0;
   display: inline-block;
-  padding: 0 5px;
+  padding: 0 var(--ds-space-1h);
   border-radius: var(--ds-radius-chip);
-  font-size: 9px;
+  font-size: var(--ds-fs-meta);
   font-weight: 600;
   line-height: 14px;
   letter-spacing: 0.02em;
@@ -182,8 +182,8 @@
   font-size: var(--ds-fs-meta);
   font-weight: 500;
   line-height: 18px;
-  padding: 0 9px;
-  border-radius: 9999px;
+  padding: 0 var(--ds-space-2);
+  border-radius: var(--ds-radius-pill);
   cursor: pointer;
   transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
@@ -201,9 +201,9 @@
 .reminder-proj-tag {
   flex-shrink: 0;
   display: inline-block;
-  padding: 0 5px;
+  padding: 0 var(--ds-space-1h);
   border-radius: var(--ds-radius-chip);
-  font-size: 9px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   line-height: 14px;
   letter-spacing: 0.02em;
@@ -231,8 +231,8 @@
 .reminder-inline-project {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: var(--ds-space-1) var(--ds-space-glass-x) var(--ds-space-glass-x) 38px;
+  gap: var(--ds-space-1h);
+  padding: var(--ds-space-1) var(--ds-space-inline-x) var(--ds-space-block-y) 38px;
   color: var(--color-frame-text-muted);
 }
 .reminder-inline-project svg {

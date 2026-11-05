@@ -60,7 +60,7 @@ if (typeof document !== 'undefined' && !document.getElementById('bgagent-delegat
 }
 .bgagent-strip-toggle:hover .bgagent-strip-briefline { color: var(--color-text, inherit); }
 .bgagent-strip-chip {
-  flex-shrink: 0; padding: 1px var(--ds-space-2); border-radius: var(--ds-radius-input);
+  flex-shrink: 0; padding: var(--ds-space-hair) var(--ds-space-2); border-radius: var(--ds-radius-input);
   font-size: var(--ds-fs-meta); font-weight: var(--ds-fw-title);
   letter-spacing: var(--ds-ls-body);
   color: var(--ds-text-muted);
@@ -84,7 +84,7 @@ if (typeof document !== 'undefined' && !document.getElementById('bgagent-delegat
 .bgagent-strip-body {
   margin-top: var(--ds-space-2); padding-top: var(--ds-space-2); border-top: var(--ds-border-width) dashed var(--ds-border-hairline);
   max-height: 38vh; overflow-y: auto;
-  display: flex; flex-direction: column; gap: 3px;
+  display: flex; flex-direction: column; gap: var(--ds-space-half);
 }
 .bgagent-strip-body[hidden] { display: none; }
 .bgagent-strip-plugins {
@@ -92,7 +92,7 @@ if (typeof document !== 'undefined' && !document.getElementById('bgagent-delegat
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .bgagent-strip-sec {
-  display: flex; flex-direction: column; gap: 3px; min-width: 0;
+  display: flex; flex-direction: column; gap: var(--ds-space-half); min-width: 0;
 }
 /* hidden 属性守卫（修订批截图期发现）：author display 规则会压过 UA 的
    [hidden]{display:none}——结果区（在飞无判词）收起时以空壳区透出。零空区

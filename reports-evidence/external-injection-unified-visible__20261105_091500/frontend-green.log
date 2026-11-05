@@ -1,0 +1,14 @@
+
+Running 8 tests using 1 worker
+
+  ✓  1 tests/external-inject-visible.spec.mjs:128:5 › leg: liveInject › 判据 ①：每条外部注入都出一条注入气泡行（改前 5 条零行） (319ms)
+  ✓  2 tests/external-inject-visible.spec.mjs:137:5 › leg: liveInject › 判据 ②③：来源标识 + 一句话摘要 + 完整正文可展开 (267ms)
+  ✓  3 tests/external-inject-visible.spec.mjs:171:5 › leg: liveInject › 蓝而不绿：注入泡底色与用户绿泡底色不同（沿用 --sapphire tint，零新色值） (233ms)
+  ✓  4 tests/external-inject-visible.spec.mjs:193:5 › leg: liveInject › 判据 ④：刷新后（历史恢复腿）读数与 live 腿逐项相同 (261ms)
+  ✓  5 tests/external-inject-visible.spec.mjs:128:5 › leg: replayBackend › 判据 ①：每条外部注入都出一条注入气泡行（改前 5 条零行） (274ms)
+  ✓  6 tests/external-inject-visible.spec.mjs:137:5 › leg: replayBackend › 判据 ②③：来源标识 + 一句话摘要 + 完整正文可展开 (261ms)
+  ✓  7 tests/external-inject-visible.spec.mjs:171:5 › leg: replayBackend › 蓝而不绿：注入泡底色与用户绿泡底色不同（沿用 --sapphire tint，零新色值） (205ms)
+  ✓  8 tests/external-inject-visible.spec.mjs:193:5 › leg: replayBackend › 判据 ④：刷新后（历史恢复腿）读数与 live 腿逐项相同 (202ms)
+
+  8 passed (4.4s)
+EXIT=0

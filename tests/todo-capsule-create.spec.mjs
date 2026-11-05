@@ -460,20 +460,26 @@ test('⑥ 完成 / 撤回（取消完成）/ 删除 ⇒ completeTodo / uncomplet
 });
 
 // ── ⑦ 动画护栏 ─────────────────────────────────────────────────────────
-test('⑦ 动画护栏：展开仍走 spring 形变路径（内联 scale 逐帧写入→落地清空）；计数翻牌与逾期翻面仍在', async ({ page }) => {
+// 2026-11-05 件5 改写（探针跟随实现换通道，**声明不变**：展开必须是「同一个元素
+// 多帧真 spring」而不是单跳换态）：展开几何从「满尺寸面板 scale 缩放」改成
+// 「载体自身长高」（作者原话「要在同一行展开。有一种胶囊变大的感觉。」⇒ 载体
+// rect.left 不许横移，scale 通道已被件5 判据 A1 禁掉）。故探针从「内联 transform
+// 里出现 scale(」改成「内联 height 逐帧写入」，其余三条断言原样：
+//   多帧写入(>3) / 落地清空 / 计数翻牌与逾期翻面仍在。
+test('⑦ 动画护栏：展开仍走 spring 几何通道（内联 height 逐帧写入→落地清空）；计数翻牌与逾期翻面仍在', async ({ page }) => {
   const { errors } = await bootApp(page);
   // 逾期夹具 ⇒ 胶囊翻面态（红字「N 逾期」）
   await expect(page.locator('.tfl-capsule.is-overdue')).toHaveCount(1);
   await expect(page.locator('.tfl-capsule')).toContainText('逾期');
 
-  // 形变探针：观察 .tfl-card 内联 transform 的逐帧写入（morphFrom 的 spring 通道）
+  // 生长探针：观察 .tfl-card 内联 height 的逐帧写入（growOpen 的 spring 通道）
   await page.evaluate(() => {
     window.__morphFrames = 0;
     window.__morphSeen = false;
     const card = document.querySelector('.tfl-card');
     new MutationObserver(() => {
-      const tr = card.style.transform || '';
-      if (/scale\(/.test(tr)) { window.__morphSeen = true; window.__morphFrames += 1; }
+      const h = card.style.height || '';
+      if (/^\d+(\.\d+)?px$/.test(h)) { window.__morphSeen = true; window.__morphFrames += 1; }
     }).observe(card, { attributes: true, attributeFilter: ['style'] });
     // 计数翻牌探针：计数宿主（展开后 = .tfl-header-count）的类变化
     window.__countFlipSeen = false;
@@ -489,7 +495,8 @@ test('⑦ 动画护栏：展开仍走 spring 形变路径（内联 scale 逐帧�
 
   expect(await page.evaluate(() => window.__morphSeen)).toBe(true);
   expect(await page.evaluate(() => window.__morphFrames)).toBeGreaterThan(3); // 多帧 = 真 spring，不是单跳
-  // 落地后内联 transform 清空（morph 收尾契约）
+  // 落地后内联几何清空（生长收尾契约：height 与 transform 都无残留）
+  expect(await page.evaluate(() => document.querySelector('.tfl-card').style.height)).toBe('');
   expect(await page.evaluate(() => document.querySelector('.tfl-card').style.transform)).toBe('');
 
   // 计数翻牌：完成一条 ⇒ 计数变化那一拍 tfl-count-flip 落在计数宿主上

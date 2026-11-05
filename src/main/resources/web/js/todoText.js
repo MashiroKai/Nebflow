@@ -62,18 +62,31 @@ export function splitTodoText(text) {
 
 /**
  * 行的两段投影（唯一入口；store 与渲染层都只认它）。
- * 新形态（后端带 detail 键）直接用 name/detail，旧形态走 splitTodoText。
  *
- * @param {{name?: any, detail?: any, content?: any}} row
+ * 三个来源形状，一支一支判（判据是**有没有 content 键**，不是猜）：
+ *   ① 后端新行：有 content + 有 detail 键 ⇒ name/detail 直接用（name 空则退回首句）；
+ *   ② 后端旧行：有 content、没有 detail 键 ⇒ splitTodoText(content) 无损投影
+ *      （此时 `name` 是 upsert 键、不是标题，**不读**）；
+ *   ③ 本地行 / 夹具行：没有 content 键 ⇒ 已经是两段形状，`title`/`notes` 是同义
+ *      别名（件6 的两段叫 title/notes，本批正名 name/detail）。
+ *
+ * @param {{name?: any, detail?: any, content?: any, title?: any, notes?: any}} row
  * @returns {{name: string, detail: string, legacy: boolean}}
  */
 export function projectTodoText(row) {
-  const name = typeof row?.name === 'string' ? row.name.trim() : '';
-  const hasDetail = typeof row?.detail === 'string';
-  if (hasDetail) {
-    const split = splitTodoText(row?.content == null ? '' : row.content);
-    return { name: name || split.name, detail: /** @type {string} */ (row.detail).trim(), legacy: false };
+  const str = (v) => (typeof v === 'string' ? v : null);
+  const content = str(row?.content);
+  if (content !== null) {
+    const name = (str(row?.name) || '').trim();
+    const detail = str(row?.detail);
+    if (detail !== null) {
+      const split = splitTodoText(content);
+      return { name: name || split.name, detail: detail.trim(), legacy: false };
+    }
+    const split = splitTodoText(content);
+    return { name: split.name, detail: split.detail, legacy: true };
   }
-  const split = splitTodoText(row?.content);
-  return { name: split.name, detail: split.detail, legacy: true };
+  const name = ((str(row?.name) ?? str(row?.title)) || '').trim();
+  const detail = ((str(row?.detail) ?? str(row?.notes)) || '').trim();
+  return { name, detail, legacy: false };
 }

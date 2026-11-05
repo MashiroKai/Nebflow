@@ -1,0 +1,4219 @@
+{
+  "stats": {
+    "perValue": {
+      "14px": 52,
+      "10px": 126,
+      "9px": 39,
+      "12px": 60,
+      "12.5px": 33,
+      "11.5px": 36,
+      "9.5px": 8,
+      "8.5px": 5,
+      "10.5px": 22,
+      "7px": 1,
+      "8px": 3,
+      "11px": 91,
+      "18px": 6,
+      "13px": 24,
+      "16px": 4,
+      "22px": 5,
+      "19px": 1,
+      "15.5px": 2,
+      "15px": 2,
+      "20px": 1,
+      "26px": 1
+    },
+    "perToken": {
+      "--ds-fs-subtitle": 52,
+      "--ds-fs-meta": 289,
+      "--ds-fs-hint": 117,
+      "--ds-fs-btn": 12,
+      "--ds-fs-glyph": 6,
+      "--ds-fs-display": 13,
+      "--ds-fs-body": 24,
+      "--ds-fs-callout": 4,
+      "--ds-fs-title": 4,
+      "--ds-fs-title-lg": 1
+    },
+    "total": 522,
+    "shorthand": 322
+  },
+  "changes": [
+    {
+      "file": "css/chat.css",
+      "line": 60,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": "#header"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 853,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".bg-task-id"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 858,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".bg-task-duration"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 1054,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".copy-failed-live"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 1158,
+      "prop": "font-size",
+      "from": "9px",
+      "to": "--ds-fs-meta",
+      "selector": ".delivery-badge"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 1486,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": ".bubble.ai h3, .bubble.injected h3, .ask-bub.ai h3"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 1534,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".duration-badge-time"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 1599,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".pop-rainbow-name"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 2412,
+      "prop": "font-size",
+      "from": "12.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".ob-flow-skip-wrap .ob-flow-skip"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 2640,
+      "prop": "font-size",
+      "from": "12.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".option-input.mono"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 2670,
+      "prop": "font-size",
+      "from": "11.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".option-hint"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 2675,
+      "prop": "font-size",
+      "from": "12.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".write-lines"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 2963,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".notif-icon"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 3001,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": ".notif-close"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 3170,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".thinking-label"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 3372,
+      "prop": "font-size",
+      "from": "9px",
+      "to": "--ds-fs-meta",
+      "selector": ".row.tool.neblink-row .tool-card .label::before"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 3393,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".ask-label"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 3412,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": "#ask-indicator"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 3427,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": "#ask-indicator-cancel"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 3447,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": "#skill-indicator"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 3469,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": "#skill-indicator-cancel"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 3489,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": "#compact-indicator"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 3504,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": "#compact-indicator-cancel"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 3720,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-btn",
+      "selector": ".error-escalation-actions button"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 3789,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": ".ws-pick-title"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 3792,
+      "prop": "font-size",
+      "from": "11.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".ws-pick-hint"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 3794,
+      "prop": "font-size",
+      "from": "12.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".ws-pick-echo"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 3950,
+      "prop": "font-size",
+      "from": "11.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".wsp-cur"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 4142,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".scroll-new-pill"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 4378,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": ".nf-wl-chk::before"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 4685,
+      "prop": "font-size",
+      "from": "9.5px",
+      "to": "--ds-fs-meta",
+      "selector": ".fc-icon"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 5017,
+      "prop": "font-size",
+      "from": "8.5px",
+      "to": "--ds-fs-glyph",
+      "selector": ".fm-msg.out .fm-att-list .file-card .fc-icon"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 5022,
+      "prop": "font-size",
+      "from": "12.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".fm-msg.out .fm-att-list .fc-name"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 5026,
+      "prop": "font-size",
+      "from": "10.5px",
+      "to": "--ds-fs-meta",
+      "selector": ".fm-msg.out .fm-att-list .fc-sub"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 5115,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".search-media-ext"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 5129,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".search-media-source"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 5138,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".search-media-time"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 5219,
+      "prop": "font-size",
+      "from": "7px",
+      "to": "--ds-fs-glyph",
+      "selector": ".nf-qicon.fc-icon"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 5298,
+      "prop": "font-size",
+      "from": "9px",
+      "to": "--ds-fs-glyph",
+      "selector": ".msg-quote-att-file-icon"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 5634,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".msg-token-pop-foot"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 28,
+      "prop": "font",
+      "from": "11.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".dvp-stats"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 40,
+      "prop": "font",
+      "from": "11.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".dvp-pill"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 56,
+      "prop": "font",
+      "from": "10.5px",
+      "to": "--ds-fs-meta",
+      "selector": ".dvp-entry"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 65,
+      "prop": "font",
+      "from": "9.5px",
+      "to": "--ds-fs-meta",
+      "selector": ".dvp-entry kbd"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 103,
+      "prop": "font",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": ".dvp-band-name"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 105,
+      "prop": "font",
+      "from": "10.5px",
+      "to": "--ds-fs-meta",
+      "selector": ".dvp-band-ws"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 118,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".dvp-cnt"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 133,
+      "prop": "font",
+      "from": "10.5px",
+      "to": "--ds-fs-meta",
+      "selector": ".dvp-band-n"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 161,
+      "prop": "font",
+      "from": "9px",
+      "to": "--ds-fs-meta",
+      "selector": ".dvp-rb-word"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 180,
+      "prop": "font",
+      "from": "9.5px",
+      "to": "--ds-fs-meta",
+      "selector": ".dvp-lane-label"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 204,
+      "prop": "font",
+      "from": "9px",
+      "to": "--ds-fs-meta",
+      "selector": ".dvp-zone-tag"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 222,
+      "prop": "font",
+      "from": "9.5px",
+      "to": "--ds-fs-meta",
+      "selector": ".dvp-zone-toggle"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 287,
+      "prop": "font",
+      "from": "8.5px",
+      "to": "--ds-fs-meta",
+      "selector": ".dvp-exec"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 292,
+      "prop": "font-size",
+      "from": "8px",
+      "to": "--ds-fs-glyph",
+      "selector": ".dvp-exec-sm"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 294,
+      "prop": "font",
+      "from": "12.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".dvp-title"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 308,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".dvp-st-word"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 313,
+      "prop": "font",
+      "from": "9px",
+      "to": "--ds-fs-meta",
+      "selector": ".dvp-chip"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 330,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".dvp-report"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 346,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".dvp-task-title"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 355,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".dvp-sink-name"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 359,
+      "prop": "font",
+      "from": "9px",
+      "to": "--ds-fs-meta",
+      "selector": ".dvp-sink-sub"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 365,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".dvp-sub-title"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 381,
+      "prop": "font",
+      "from": "8.5px",
+      "to": "--ds-fs-meta",
+      "selector": ".dvp-sub-num"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 398,
+      "prop": "font",
+      "from": "9.5px",
+      "to": "--ds-fs-meta",
+      "selector": ".dvp-qbadge"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 511,
+      "prop": "font",
+      "from": "9px",
+      "to": "--ds-fs-meta",
+      "selector": ".dvp-e-chip"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 528,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".dvp-done-block"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 538,
+      "prop": "font",
+      "from": "12.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".dvp-empty"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 559,
+      "prop": "font",
+      "from": "9.5px",
+      "to": "--ds-fs-meta",
+      "selector": ".dvp-lg-h"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 568,
+      "prop": "font",
+      "from": "10.5px",
+      "to": "--ds-fs-meta",
+      "selector": ".dvp-lg-item"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 577,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".dvp-lg-glyph"
+    },
+    {
+      "file": "css/diffView.css",
+      "line": 70,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".nf-fc-badge"
+    },
+    {
+      "file": "css/diffView.css",
+      "line": 91,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".nf-fc-src"
+    },
+    {
+      "file": "css/diffView.css",
+      "line": 337,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".nf-rcpt-pill"
+    },
+    {
+      "file": "css/diffView.css",
+      "line": 358,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".nf-rcpt-name"
+    },
+    {
+      "file": "css/diffView.css",
+      "line": 369,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".nf-rcpt-badge"
+    },
+    {
+      "file": "css/diffView.css",
+      "line": 381,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".nf-rcpt-pipe"
+    },
+    {
+      "file": "css/dropbox.css",
+      "line": 25,
+      "prop": "font-size",
+      "from": "18px",
+      "to": "--ds-fs-display",
+      "selector": ".dropbox-close"
+    },
+    {
+      "file": "css/dropbox.css",
+      "line": 227,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": ".dropbox-file-badge"
+    },
+    {
+      "file": "css/executors.css",
+      "line": 107,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".executor-card-badge"
+    },
+    {
+      "file": "css/executors.css",
+      "line": 124,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".executor-card-detect"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 19,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".flowmap-summary"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 38,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".flowmap-view-filter-label"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 52,
+      "prop": "font",
+      "from": "13px",
+      "to": "--ds-fs-body",
+      "selector": ".flowmap-loading"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 121,
+      "prop": "font",
+      "from": "9px",
+      "to": "--ds-fs-meta",
+      "selector": ".fm-st-word"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 130,
+      "prop": "font",
+      "from": "9px",
+      "to": "--ds-fs-meta",
+      "selector": ".fm-worktree-badge"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 150,
+      "prop": "font",
+      "from": "9px",
+      "to": "--ds-fs-meta",
+      "selector": ".fm-flag-badge"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 207,
+      "prop": "font-size",
+      "from": "8.5px",
+      "to": "--ds-fs-meta",
+      "selector": ".fm-flag-queue"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 235,
+      "prop": "font",
+      "from": "9px",
+      "to": "--ds-fs-meta",
+      "selector": ".fm-cfg-badge"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 260,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".flow-node-cfg"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 266,
+      "prop": "font",
+      "from": "9px",
+      "to": "--ds-fs-meta",
+      "selector": ".flow-node-cfg-key"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 278,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".fm-ttl"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 286,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".fm-barrier-hint"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 294,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".fm-desc"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 339,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".flow-blocked-badge"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 346,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".flow-blocked-category"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 354,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".flow-blocked-count"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 361,
+      "prop": "font",
+      "from": "9px",
+      "to": "--ds-fs-meta",
+      "selector": ".flow-blocked-label"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 370,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".flow-blocked-text"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 379,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".flow-blocked-raw > summary"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 457,
+      "prop": "font",
+      "from": "8.5px",
+      "to": "--ds-fs-meta",
+      "selector": ".fm-edge-loop-gate"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 601,
+      "prop": "font",
+      "from": "9px",
+      "to": "--ds-fs-meta",
+      "selector": ".fm-chain-counts"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 669,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".fm-wait-note"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 689,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".flowmap-legend"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 766,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".fm-archive-badge"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 799,
+      "prop": "font",
+      "from": "13px",
+      "to": "--ds-fs-body",
+      "selector": ".fm-panel-title"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 800,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".fm-panel-count"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 803,
+      "prop": "font",
+      "from": "16px",
+      "to": "--ds-fs-callout",
+      "selector": ".fm-panel-close"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 815,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".fm-panel-empty"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 824,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".fm-panel-guide"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 856,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".fm-entry-stw"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 863,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".fm-entry-name"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 867,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".fm-entry-nodes"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 872,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".fm-entry-time"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 877,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".fm-entry-ttl"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 887,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".fm-entry-preview"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 904,
+      "prop": "font",
+      "from": "11.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".fm-member-name"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 910,
+      "prop": "font",
+      "from": "10.5px",
+      "to": "--ds-fs-meta",
+      "selector": ".fm-member-meta"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 914,
+      "prop": "font",
+      "from": "10.5px",
+      "to": "--ds-fs-meta",
+      "selector": ".fm-member-time"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 920,
+      "prop": "font",
+      "from": "10.5px",
+      "to": "--ds-fs-meta",
+      "selector": ".fm-member-preview"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 963,
+      "prop": "font",
+      "from": "13px",
+      "to": "--ds-fs-body",
+      "selector": ".fm-detail-title"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 968,
+      "prop": "font",
+      "from": "16px",
+      "to": "--ds-fs-callout",
+      "selector": ".fm-detail-close"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 985,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".fm-detail-meta"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 991,
+      "prop": "font",
+      "from": "11.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".fm-detail-desc"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 1005,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".fm-detail-kv-label"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 1009,
+      "prop": "font",
+      "from": "11.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".fm-detail-kv-val"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 1014,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".fm-detail-sec"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 1018,
+      "prop": "font",
+      "from": "11.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".fm-detail-task"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 1032,
+      "prop": "font",
+      "from": "11.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".fm-detail-result"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 1057,
+      "prop": "font-size",
+      "from": "12.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".fm-md h3, .fm-md h4"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 1059,
+      "prop": "font-size",
+      "from": "11.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".fm-md table"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 18,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".activity-badge"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 52,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": "body.mobile-layer .fm-conv-summary"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 92,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": ".fm-avatar-36"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 164,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".fm-row-badge"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 2026,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".fm-group-tag"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 2090,
+      "prop": "font-size",
+      "from": "12.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".fm-member-name"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 2098,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".fm-role-tag"
+    },
+    {
+      "file": "css/glass.css",
+      "line": 413,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": "body.mobile-layer .g2-pill"
+    },
+    {
+      "file": "css/humanFace.css",
+      "line": 45,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".nf-human-details > summary::before"
+    },
+    {
+      "file": "css/input.css",
+      "line": 107,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-btn",
+      "selector": ".error-abandon-btn"
+    },
+    {
+      "file": "css/input.css",
+      "line": 614,
+      "prop": "font-size",
+      "from": "8px",
+      "to": "--ds-fs-glyph",
+      "selector": ".att-ref .att-ref-icon .nf-qicon.fc-icon"
+    },
+    {
+      "file": "css/input.css",
+      "line": 669,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".att-remove"
+    },
+    {
+      "file": "css/input.css",
+      "line": 1053,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": ".voice-text"
+    },
+    {
+      "file": "css/input.css",
+      "line": 1162,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".slash-badge"
+    },
+    {
+      "file": "css/input.css",
+      "line": 1342,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": ".queue-item-grip"
+    },
+    {
+      "file": "css/input.css",
+      "line": 1386,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".queue-item-att-file"
+    },
+    {
+      "file": "css/input.css",
+      "line": 1397,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".queue-item-att-more"
+    },
+    {
+      "file": "css/keyboard.css",
+      "line": 137,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": "#nf-quickinput-host .quick-input-box input"
+    },
+    {
+      "file": "css/keyboard.css",
+      "line": 194,
+      "prop": "font-size",
+      "from": "9.5px",
+      "to": "--ds-fs-meta",
+      "selector": "#nf-quickinput-host .quick-input-list .quick-input-list-sepa"
+    },
+    {
+      "file": "css/mobileLayer.css",
+      "line": 4787,
+      "prop": "font-size",
+      "from": "22px",
+      "to": "--ds-fs-display",
+      "selector": "body.mobile-layer .canvas-md-viewer h1"
+    },
+    {
+      "file": "css/mobileLayer.css",
+      "line": 4788,
+      "prop": "font-size",
+      "from": "19px",
+      "to": "--ds-fs-display",
+      "selector": "body.mobile-layer .canvas-md-viewer h2"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 237,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": "#modal-confirm"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 278,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": "#modal-input"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 290,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": "#modal-cancel"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 306,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": "#delete-msg"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 319,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": "#delete-cancel"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 324,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": "#delete-confirm"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 340,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": "#conflict-msg"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 356,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": "#conflict-replace"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 823,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".cal-weekdays span"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 936,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".search-result-type"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 1118,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": ".nebflow-toast-icon"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 1166,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": ".onboarding-sub"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 1236,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-btn",
+      "selector": ".mp-mode-btn"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 1262,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": ".mp-load-error-title"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 1276,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".mp-banner-text"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 1347,
+      "prop": "font",
+      "from": "13px",
+      "to": "--ds-fs-body",
+      "selector": ".mp-role-name"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 1358,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".mp-head-preview"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 1366,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".mp-status"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 1389,
+      "prop": "font",
+      "from": "11.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".mp-note"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 1415,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".mp-window"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 1420,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".mp-prov"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 1428,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".mp-model"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 1437,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".mp-pos"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 1456,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".mp-add-select"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 1467,
+      "prop": "font",
+      "from": "11.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".mp-inline-err"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 1503,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".mp-group-head"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 1519,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".mp-group-cur"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 1528,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".mp-group-hint"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 1532,
+      "prop": "font",
+      "from": "11.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".mp-group-empty"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 1542,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".mp-group-switch"
+    },
+    {
+      "file": "css/nav.css",
+      "line": 67,
+      "prop": "font-size",
+      "from": "18px",
+      "to": "--ds-fs-display",
+      "selector": ".nav-agent-icon"
+    },
+    {
+      "file": "css/nav.css",
+      "line": 86,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".agent-letter-icon"
+    },
+    {
+      "file": "css/nav.css",
+      "line": 92,
+      "prop": "font-size",
+      "from": "9px",
+      "to": "--ds-fs-meta",
+      "selector": ".nav-agent-label"
+    },
+    {
+      "file": "css/nav.css",
+      "line": 240,
+      "prop": "font",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": ".activity-avatar-letter"
+    },
+    {
+      "file": "css/neblink.css",
+      "line": 28,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": ".neblink-login-btn"
+    },
+    {
+      "file": "css/neblink.css",
+      "line": 36,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": ".neblink-pairing-status"
+    },
+    {
+      "file": "css/neblink.css",
+      "line": 70,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": ".neblink-paircode-input"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 154,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": ".pp-setup-h"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 155,
+      "prop": "font-size",
+      "from": "12.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".pp-setup-p"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 164,
+      "prop": "font-size",
+      "from": "11.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".pp-quiet-line"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 215,
+      "prop": "font-size",
+      "from": "12.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".pp-field input"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 222,
+      "prop": "font-size",
+      "from": "11.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".pp-auto-note"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 228,
+      "prop": "font-size",
+      "from": "11.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".pp-adv summary"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 236,
+      "prop": "font-size",
+      "from": "11.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".pp-cfg-result"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 253,
+      "prop": "font-size",
+      "from": "22px",
+      "to": "--ds-fs-display",
+      "selector": ".otp-chip .code"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 257,
+      "prop": "font-size",
+      "from": "11.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".otp-chip .from"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 268,
+      "prop": "font-size",
+      "from": "11.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".pdraft-mlabel"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 269,
+      "prop": "font-size",
+      "from": "12.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".pdraft-mval"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 272,
+      "prop": "font-size",
+      "from": "12.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".pdraft-body"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 296,
+      "prop": "font-size",
+      "from": "12.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".mailcompose .clabel"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 300,
+      "prop": "font-size",
+      "from": "12.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".to-chip"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 310,
+      "prop": "font-size",
+      "from": "12.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".to-input"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 312,
+      "prop": "font-size",
+      "from": "11.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".cc-toggle"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 318,
+      "prop": "font-size",
+      "from": "15.5px",
+      "to": "--ds-fs-title",
+      "selector": ".subject-input"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 355,
+      "prop": "font-size",
+      "from": "12.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".mail-quote"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 357,
+      "prop": "font-size",
+      "from": "11.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".mail-quote .pq-head"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 367,
+      "prop": "font-size",
+      "from": "10.5px",
+      "to": "--ds-fs-meta",
+      "selector": ".att-chip .sz"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 380,
+      "prop": "font-size",
+      "from": "11.5px",
+      "to": "--ds-fs-btn",
+      "selector": ".mail-send-note"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 25,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".project-field-label"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 30,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".project-field-value"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 62,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-btn",
+      "selector": ".project-link-btn"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 135,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".project-unm-title"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 150,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".project-unm-name"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 171,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".project-unm-remount"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 203,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-btn",
+      "selector": ".flowmap-back-btn"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 258,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".project-empty-tag"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 513,
+      "prop": "font-size",
+      "from": "11.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".proj-create-error"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 519,
+      "prop": "font-size",
+      "from": "11.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".proj-create-count"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 546,
+      "prop": "font",
+      "from": "12.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".proj-create-pick"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 587,
+      "prop": "font",
+      "from": "12.5px",
+      "to": "--ds-fs-btn",
+      "selector": ".dev-btn"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 598,
+      "prop": "font-size",
+      "from": "11.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".dev-note"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 661,
+      "prop": "font-size",
+      "from": "12.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".dev-item"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 673,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".dev-item .sub"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 684,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".dev-item .off-tag"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 694,
+      "prop": "font-size",
+      "from": "10.5px",
+      "to": "--ds-fs-meta",
+      "selector": ".dev-menu-foot"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 704,
+      "prop": "font-size",
+      "from": "11.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".dev-hintline"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 719,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".path-chip"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 725,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".proj-create-error .err-code"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 733,
+      "prop": "font",
+      "from": "11.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".proj-create-error .err-act"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 752,
+      "prop": "font",
+      "from": "9px",
+      "to": "--ds-fs-meta",
+      "selector": ".creating-row .step-n"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 769,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".dev-badge"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 820,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".project-desc-input"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 835,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".project-desc-cancel"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 892,
+      "prop": "font",
+      "from": "13px",
+      "to": "--ds-fs-body",
+      "selector": ".delegate-chain-failsoft"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 907,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".delegate-chain-mono"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 940,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".delegate-chain-frame"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 947,
+      "prop": "font",
+      "from": "15px",
+      "to": "--ds-fs-title",
+      "selector": ".delegate-structure-head"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 961,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".delegate-structure-label"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 987,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".delegate-lane-pos"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 1027,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".delegate-chain-steps"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 1040,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".delegate-card-rank"
+    },
+    {
+      "file": "css/reminder.css",
+      "line": 46,
+      "prop": "font-size",
+      "from": "8px",
+      "to": "--ds-fs-glyph",
+      "selector": ".reminder-badge"
+    },
+    {
+      "file": "css/reminder.css",
+      "line": 126,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".reminder-panel-count"
+    },
+    {
+      "file": "css/reminder.css",
+      "line": 218,
+      "prop": "font-size",
+      "from": "9px",
+      "to": "--ds-fs-meta",
+      "selector": ".todo-ask-chip"
+    },
+    {
+      "file": "css/reminder.css",
+      "line": 391,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".reminder-row-last"
+    },
+    {
+      "file": "css/reminder.css",
+      "line": 401,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".reminder-miss-suggest"
+    },
+    {
+      "file": "css/reminder.css",
+      "line": 421,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": ".reminder-cancel"
+    },
+    {
+      "file": "css/reminder.css",
+      "line": 447,
+      "prop": "font-size",
+      "from": "9px",
+      "to": "--ds-fs-meta",
+      "selector": ".reminder-overdue-tag"
+    },
+    {
+      "file": "css/reminder.css",
+      "line": 613,
+      "prop": "font-size",
+      "from": "9px",
+      "to": "--ds-fs-meta",
+      "selector": ".reminder-repeat-badge"
+    },
+    {
+      "file": "css/reminder.css",
+      "line": 677,
+      "prop": "font-size",
+      "from": "10.5px",
+      "to": "--ds-fs-meta",
+      "selector": ".schedule-card-chip"
+    },
+    {
+      "file": "css/reminder.css",
+      "line": 700,
+      "prop": "font-size",
+      "from": "9px",
+      "to": "--ds-fs-meta",
+      "selector": ".schedule-card-repeat"
+    },
+    {
+      "file": "css/sapphire.css",
+      "line": 877,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".dropbox-msg-time"
+    },
+    {
+      "file": "css/secrets.css",
+      "line": 371,
+      "prop": "font",
+      "from": "13px",
+      "to": "--ds-fs-body",
+      "selector": ".secrets-input"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 637,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".st-badge"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 712,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".count-pill"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1121,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".cfg-model-name"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1133,
+      "prop": "font",
+      "from": "9.5px",
+      "to": "--ds-fs-meta",
+      "selector": ".vision-badge"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1157,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".cfg-card-badge"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1211,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".mchain-chip"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1230,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".mchain-chip .mchip-window"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1234,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".mchain-arrow"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1237,
+      "prop": "font",
+      "from": "11.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".mchain-empty"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1387,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": ".cfg-modal-title"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1451,
+      "prop": "font-size",
+      "from": "18px",
+      "to": "--ds-fs-display",
+      "selector": ".cfg-model-remove"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1587,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".agent-mgr-empty"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1596,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".agent-mgr-group-header"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1604,
+      "prop": "font",
+      "from": "9px",
+      "to": "--ds-fs-meta",
+      "selector": ".agent-mgr-standalone-badge"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1622,
+      "prop": "font",
+      "from": "9px",
+      "to": "--ds-fs-meta",
+      "selector": ".agent-mgr-orchestrator-badge"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1648,
+      "prop": "font",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": ".agent-mgr-avatar"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1657,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".agent-mgr-card .agent-mgr-name"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1663,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".agent-mgr-card .agent-mgr-desc"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1671,
+      "prop": "font",
+      "from": "9px",
+      "to": "--ds-fs-meta",
+      "selector": ".agent-mgr-model-pill"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1705,
+      "prop": "font",
+      "from": "13px",
+      "to": "--ds-fs-body",
+      "selector": ".agent-detail-loading"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1718,
+      "prop": "font",
+      "from": "22px",
+      "to": "--ds-fs-display",
+      "selector": ".agent-detail-avatar"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1744,
+      "prop": "font",
+      "from": "20px",
+      "to": "--ds-fs-display",
+      "selector": ".agent-detail-name"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1750,
+      "prop": "font",
+      "from": "13px",
+      "to": "--ds-fs-body",
+      "selector": ".agent-detail-desc"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1755,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".agent-detail-extends"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1774,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".agent-detail-label"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1799,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".agent-detail-model-name"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1805,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": ".agent-detail-grip"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1809,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".agent-detail-model-pos"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1826,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".agent-detail-model-add select"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1835,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".agent-detail-model-current"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1859,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": ".agent-detail-model-remove"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1870,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".agent-detail-prompt-edit"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1886,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-btn",
+      "selector": ".agent-detail-save-btn"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1928,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".agent-detail-face-tab"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1944,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".agent-detail-face-hint"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1962,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".agent-detail-scheme-note"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2066,
+      "prop": "font-size",
+      "from": "12.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".orb-state-map-title"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2077,
+      "prop": "font-size",
+      "from": "12.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".orb-state-row .orb-state-name"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2143,
+      "prop": "font-size",
+      "from": "11.5px",
+      "to": "--ds-fs-btn",
+      "selector": ".orb-theme-btn"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2188,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".plugins-loading"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2200,
+      "prop": "font",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": ".plugins-title"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2210,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".plugins-stats"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2218,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".plugins-section-title"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2226,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".plugins-section-hint"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2231,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".plugins-none"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2330,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".plugins-card-name"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2336,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".plugins-card-meta"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2356,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".plugins-item-summary"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2399,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".plugins-item-uninstall"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2436,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".plugins-item-doc"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2457,
+      "prop": "font",
+      "from": "9px",
+      "to": "--ds-fs-meta",
+      "selector": ".plugins-state-pill"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2480,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".plugins-card-desc"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2500,
+      "prop": "font",
+      "from": "9px",
+      "to": "--ds-fs-meta",
+      "selector": ".plugins-comp"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2514,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".plugins-card-hint"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2546,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".plugins-dispatch-label"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2552,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".plugins-dispatch-note"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2560,
+      "prop": "font",
+      "from": "9px",
+      "to": "--ds-fs-meta",
+      "selector": ".plugins-rejected-pill"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2590,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".plugins-skill-capsule"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2733,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".cfg-model-test-result"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2762,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".cfg-test-result-line"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2811,
+      "prop": "font-size",
+      "from": "12.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".imagegen-notcompiled"
+    },
+    {
+      "file": "css/social.css",
+      "line": 194,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".social-input"
+    },
+    {
+      "file": "css/social.css",
+      "line": 205,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".social-secret-state"
+    },
+    {
+      "file": "css/social.css",
+      "line": 217,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".social-save-state"
+    },
+    {
+      "file": "css/split.css",
+      "line": 394,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".dev-chip"
+    },
+    {
+      "file": "css/split.css",
+      "line": 439,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": "button.dev-chip"
+    },
+    {
+      "file": "css/split.css",
+      "line": 480,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".explorer-error .retry"
+    },
+    {
+      "file": "css/split.css",
+      "line": 490,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".explorer-item .pickup-tag"
+    },
+    {
+      "file": "css/split.css",
+      "line": 545,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".explorer-pickup-bar .bar-act"
+    },
+    {
+      "file": "css/split.css",
+      "line": 564,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".explorer-pickup-bar .pickup-speed"
+    },
+    {
+      "file": "css/split.css",
+      "line": 1686,
+      "prop": "font-size",
+      "from": "12.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".deck-card .n-text"
+    },
+    {
+      "file": "css/split.css",
+      "line": 1695,
+      "prop": "font-size",
+      "from": "10.5px",
+      "to": "--ds-fs-meta",
+      "selector": ".deck-card .n-sub"
+    },
+    {
+      "file": "css/split.css",
+      "line": 2053,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": ".canvas-md-viewer"
+    },
+    {
+      "file": "css/split.css",
+      "line": 2070,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": ".canvas-md-viewer h3"
+    },
+    {
+      "file": "css/split.css",
+      "line": 2173,
+      "prop": "font-size",
+      "from": "22px",
+      "to": "--ds-fs-display",
+      "selector": ".epub-reader-content h1"
+    },
+    {
+      "file": "css/split.css",
+      "line": 2174,
+      "prop": "font-size",
+      "from": "18px",
+      "to": "--ds-fs-display",
+      "selector": ".epub-reader-content h2"
+    },
+    {
+      "file": "css/split.css",
+      "line": 2298,
+      "prop": "font-size",
+      "from": "18px",
+      "to": "--ds-fs-display",
+      "selector": ".epub-nav-btn"
+    },
+    {
+      "file": "css/split.css",
+      "line": 2380,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".epub-progress-tip"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3322,
+      "prop": "font-size",
+      "from": "12.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".canvas-md-viewer .nf-backlinks"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3601,
+      "prop": "font-size",
+      "from": "12.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".wg-switch-select"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3609,
+      "prop": "font-size",
+      "from": "11.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".wg-crumbs"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3611,
+      "prop": "font-size",
+      "from": "11.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".wg-crumbs .crumb"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3634,
+      "prop": "font-size",
+      "from": "12.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".wg-search-input"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3670,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": ".wg-detail-body h2"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3674,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": ".wg-detail-body .close"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3679,
+      "prop": "font-size",
+      "from": "10.5px",
+      "to": "--ds-fs-meta",
+      "selector": ".wg-detail-body .badge"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3684,
+      "prop": "font-size",
+      "from": "10.5px",
+      "to": "--ds-fs-meta",
+      "selector": ".wg-detail-body h3"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3691,
+      "prop": "font-size",
+      "from": "10.5px",
+      "to": "--ds-fs-meta",
+      "selector": ".wg-detail-body .ref-anchor"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3701,
+      "prop": "font",
+      "from": "10.5px",
+      "to": "--ds-fs-meta",
+      "selector": ".wg-detail-body .path"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3709,
+      "prop": "font-size",
+      "from": "12.5px",
+      "to": "--ds-fs-btn",
+      "selector": ".wg-detail-body .openbtn"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3723,
+      "prop": "font-size",
+      "from": "10.5px",
+      "to": "--ds-fs-meta",
+      "selector": ".wg-broken h3"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3740,
+      "prop": "font-size",
+      "from": "11.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".wg-stats"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3748,
+      "prop": "font-size",
+      "from": "10.5px",
+      "to": "--ds-fs-meta",
+      "selector": ".wg-hint"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3757,
+      "prop": "font-size",
+      "from": "11.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".wg-detail-body .summary"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3758,
+      "prop": "font-size",
+      "from": "10.5px",
+      "to": "--ds-fs-meta",
+      "selector": ".wg-broken .row"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3863,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".deck-card[data-independent] .card-top::after"
+    },
+    {
+      "file": "css/taskList.css",
+      "line": 241,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".task-node-meta"
+    },
+    {
+      "file": "css/taskList.css",
+      "line": 268,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".task-node-time"
+    },
+    {
+      "file": "css/taskList.css",
+      "line": 279,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".task-node-group-header"
+    },
+    {
+      "file": "css/taskList.css",
+      "line": 298,
+      "prop": "font-size",
+      "from": "9px",
+      "to": "--ds-fs-meta",
+      "selector": ".task-delegate-badge"
+    },
+    {
+      "file": "css/taskList.css",
+      "line": 353,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".task-chain-folded-word"
+    },
+    {
+      "file": "css/taskList.css",
+      "line": 479,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".task-chain-meta"
+    },
+    {
+      "file": "css/taskList.css",
+      "line": 506,
+      "prop": "font-size",
+      "from": "9px",
+      "to": "--ds-fs-meta",
+      "selector": ".task-chain-depth"
+    },
+    {
+      "file": "css/taskList.css",
+      "line": 536,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".task-chain-member-time"
+    },
+    {
+      "file": "css/taskList.css",
+      "line": 660,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".task-delegate-rank"
+    },
+    {
+      "file": "css/todo-face.css",
+      "line": 138,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".tfl-capsule"
+    },
+    {
+      "file": "css/todo-face.css",
+      "line": 312,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".tfl-header-count"
+    },
+    {
+      "file": "css/todo-face.css",
+      "line": 400,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".tfl-chip"
+    },
+    {
+      "file": "css/todo-face.css",
+      "line": 589,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".tfl-tag-name"
+    },
+    {
+      "file": "css/todo-face.css",
+      "line": 691,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".tfl-row-title"
+    },
+    {
+      "file": "css/todo-face.css",
+      "line": 699,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".tfl-row-notes"
+    },
+    {
+      "file": "css/todo-face.css",
+      "line": 709,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".tfl-row-due"
+    },
+    {
+      "file": "css/todo-face.css",
+      "line": 721,
+      "prop": "font",
+      "from": "9px",
+      "to": "--ds-fs-meta",
+      "selector": ".tfl-row-badge"
+    },
+    {
+      "file": "css/todo-face.css",
+      "line": 810,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".tfl-edit-notes"
+    },
+    {
+      "file": "css/todo-face.css",
+      "line": 825,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".tfl-edit-prio-btn"
+    },
+    {
+      "file": "css/todo-face.css",
+      "line": 845,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".tfl-switch-label"
+    },
+    {
+      "file": "css/todo-face.css",
+      "line": 887,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".tfl-row-title-input"
+    },
+    {
+      "file": "css/todo-face.css",
+      "line": 914,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".tfl-empty"
+    },
+    {
+      "file": "css/todo-face.css",
+      "line": 939,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".tfl-add-btn"
+    },
+    {
+      "file": "css/todo-face.css",
+      "line": 1029,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".tfl-undo"
+    },
+    {
+      "file": "css/todo-face.css",
+      "line": 1038,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".tfl-undo-btn"
+    },
+    {
+      "file": "css/todo-page.css",
+      "line": 144,
+      "prop": "font-size",
+      "from": "9px",
+      "to": "--ds-fs-meta",
+      "selector": ".todo-perm-chip"
+    },
+    {
+      "file": "css/todo-page.css",
+      "line": 206,
+      "prop": "font-size",
+      "from": "9px",
+      "to": "--ds-fs-meta",
+      "selector": ".reminder-proj-tag"
+    },
+    {
+      "file": "css/usage.css",
+      "line": 103,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".ud-card-sub"
+    },
+    {
+      "file": "css/usage.css",
+      "line": 264,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": "#usage-months"
+    },
+    {
+      "file": "css/usage.css",
+      "line": 339,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".ud-legend-label"
+    },
+    {
+      "file": "css/usage.css",
+      "line": 352,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": ".ud-empty-title"
+    },
+    {
+      "file": "css/usage.css",
+      "line": 386,
+      "prop": "font-size",
+      "from": "9px",
+      "to": "--ds-fs-meta",
+      "selector": ".ud-curve-axis"
+    },
+    {
+      "file": "css/usage.css",
+      "line": 391,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".ud-curve-peak-label"
+    },
+    {
+      "file": "js/activityBar.js",
+      "line": 628,
+      "prop": "font-size",
+      "from": "18px",
+      "to": "--ds-fs-display",
+      "selector": ".login-modal-close"
+    },
+    {
+      "file": "js/activityBar.js",
+      "line": 636,
+      "prop": "font-size",
+      "from": "26px",
+      "to": "--ds-fs-title-lg",
+      "selector": ".login-user-code"
+    },
+    {
+      "file": "js/activityBar.js",
+      "line": 647,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": ".login-success"
+    },
+    {
+      "file": "js/activityBar.js",
+      "line": 667,
+      "prop": "font-size",
+      "from": "15.5px",
+      "to": "--ds-fs-title",
+      "selector": ".login-card-title"
+    },
+    {
+      "file": "js/activityBar.js",
+      "line": 683,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": ".nebflow-login-modal .login-primary-btn"
+    },
+    {
+      "file": "js/agentFileViewer.js",
+      "line": 26,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": "<p style=\"font:400 11px -apple-system;color:var(--color-text"
+    },
+    {
+      "file": "js/askAttachments.js",
+      "line": 169,
+      "prop": "font-size",
+      "from": "10.5px",
+      "to": "--ds-fs-meta",
+      "selector": "if (isImage)"
+    },
+    {
+      "file": "js/askAttachments.js",
+      "line": 344,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": "const ctx ="
+    },
+    {
+      "file": "js/askAttachments.js",
+      "line": 400,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": "ctx.els ="
+    },
+    {
+      "file": "js/askAttachments.js",
+      "line": 507,
+      "prop": "font-size",
+      "from": "10.5px",
+      "to": "--ds-fs-meta",
+      "selector": "badge.textContent = t('askUser.attachCountBadge',"
+    },
+    {
+      "file": "js/bgAgentWorkStrip.js",
+      "line": 34,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".bgws"
+    },
+    {
+      "file": "js/bgTaskOutputPopup.js",
+      "line": 124,
+      "prop": "font",
+      "from": "13px",
+      "to": "--ds-fs-body",
+      "selector": ".bgt-title"
+    },
+    {
+      "file": "js/bgTaskOutputPopup.js",
+      "line": 130,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".bgt-subtitle"
+    },
+    {
+      "file": "js/bgTaskOutputPopup.js",
+      "line": 139,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".bgt-state-chip"
+    },
+    {
+      "file": "js/bgTaskOutputPopup.js",
+      "line": 172,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".bgt-error"
+    },
+    {
+      "file": "js/bgTaskOutputPopup.js",
+      "line": 207,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".bgt-output"
+    },
+    {
+      "file": "js/bgTaskOutputPopup.js",
+      "line": 223,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".bgt-placeholder"
+    },
+    {
+      "file": "js/bgTaskOutputPopup.js",
+      "line": 253,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".bgt-meta"
+    },
+    {
+      "file": "js/bgTaskOutputPopup.js",
+      "line": 280,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".bgt-truncated"
+    },
+    {
+      "file": "js/canvas.js",
+      "line": 1046,
+      "prop": "font",
+      "from": "12.5px",
+      "to": "--ds-fs-hint",
+      "selector": "function showExternalConflict(entry)"
+    },
+    {
+      "file": "js/canvas.js",
+      "line": 1417,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": "function renderFilePlaceholder(paneEl, errorMsg, absPath)"
+    },
+    {
+      "file": "js/canvas.js",
+      "line": 4814,
+      "prop": "font",
+      "from": "13px",
+      "to": "--ds-fs-body",
+      "selector": "function cardWindowBootFace(fileName)"
+    },
+    {
+      "file": "js/cardwinDirect.js",
+      "line": 192,
+      "prop": "font",
+      "from": "13px",
+      "to": "--ds-fs-body",
+      "selector": "if (!win.closed)"
+    },
+    {
+      "file": "js/cardwinDirect.js",
+      "line": 193,
+      "prop": "font-size",
+      "from": "22px",
+      "to": "--ds-fs-display",
+      "selector": "if (!win.closed)"
+    },
+    {
+      "file": "js/chat.js",
+      "line": 3073,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": "function renderAskAttachments(box, attachments, originLabel)"
+    },
+    {
+      "file": "js/chat.js",
+      "line": 3227,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": "if (badgeLabel && ((source && source.project) || isRootNamed"
+    },
+    {
+      "file": "js/daemonPanel.js",
+      "line": 63,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": ".daemon-config-title"
+    },
+    {
+      "file": "js/daemons.js",
+      "line": 222,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".daemon-btn"
+    },
+    {
+      "file": "js/delegateChainView.js",
+      "line": 551,
+      "prop": "font",
+      "from": "9px",
+      "to": "--ds-fs-meta",
+      "selector": ".delegate-archive-badge"
+    },
+    {
+      "file": "js/delegateChainView.js",
+      "line": 574,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".delegate-archive-drawer-head"
+    },
+    {
+      "file": "js/delegateChainView.js",
+      "line": 596,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".delegate-archive-row-title"
+    },
+    {
+      "file": "js/delegateChainView.js",
+      "line": 599,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".delegate-archive-row-meta"
+    },
+    {
+      "file": "js/delegateChainView.js",
+      "line": 605,
+      "prop": "font",
+      "from": "10.5px",
+      "to": "--ds-fs-meta",
+      "selector": ".delegate-archive-act"
+    },
+    {
+      "file": "js/delegateChainView.js",
+      "line": 612,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".delegate-archive-empty"
+    },
+    {
+      "file": "js/delegateChainView.js",
+      "line": 621,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".delegate-archive-toast"
+    },
+    {
+      "file": "js/delegateChainView.js",
+      "line": 627,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".delegate-archive-toast-undo"
+    },
+    {
+      "file": "js/delegateChainView.js",
+      "line": 641,
+      "prop": "font",
+      "from": "9px",
+      "to": "--ds-fs-meta",
+      "selector": ".delegate-card-kids span, .delegate-card-flow span"
+    },
+    {
+      "file": "js/explorer.js",
+      "line": 1056,
+      "prop": "font",
+      "from": "12.5px",
+      "to": "--ds-fs-hint",
+      "selector": "// 注意：光设 `hidden` 属性**打不过**内联 display（UA 的 [hidden]"
+    },
+    {
+      "file": "js/explorer.js",
+      "line": 1078,
+      "prop": "font",
+      "from": "11.5px",
+      "to": "--ds-fs-hint",
+      "selector": "if (e.key === 'Enter')"
+    },
+    {
+      "file": "js/fleetUpdate.js",
+      "line": 75,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": ".fleet-title"
+    },
+    {
+      "file": "js/fleetUpdate.js",
+      "line": 105,
+      "prop": "font-size",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".fleet-badge"
+    },
+    {
+      "file": "js/flowAgentPopup.js",
+      "line": 280,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".flow-agent-footer .fa-phase"
+    },
+    {
+      "file": "js/flowAgentPopup.js",
+      "line": 291,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".flow-agent-footer .fa-task"
+    },
+    {
+      "file": "js/flowAgentPopup.js",
+      "line": 320,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".flow-agent-footer .fa-retries"
+    },
+    {
+      "file": "js/flowAgentPopup.js",
+      "line": 325,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".flow-agent-footer .fa-uptime"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 41,
+      "prop": "font",
+      "from": "13px",
+      "to": "--ds-fs-body",
+      "selector": ".team-card-title"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 52,
+      "prop": "font",
+      "from": "13px",
+      "to": "--ds-fs-body",
+      "selector": ".team-act-btn"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 60,
+      "prop": "font",
+      "from": "9px",
+      "to": "--ds-fs-meta",
+      "selector": ".team-mail-badge"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 74,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".team-card-summary"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 95,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".team-flow-tag"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 101,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".team-tile-name"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 102,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".team-tile-role"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 105,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".team-empty .hint"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 113,
+      "prop": "font",
+      "from": "12.5px",
+      "to": "--ds-fs-btn",
+      "selector": ".team-empty .team-empty-cta"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 118,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".dag-empty .hint"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 129,
+      "prop": "font",
+      "from": "13px",
+      "to": "--ds-fs-body",
+      "selector": ".dag-card-title"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 130,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".dag-card-status"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 141,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".dag-card-cancel"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 150,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".dag-card-close"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 156,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".dag-card-desc"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 169,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".dag-node-id"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 170,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".dag-node-agent"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 171,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".dag-node-output"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 173,
+      "prop": "font",
+      "from": "9px",
+      "to": "--ds-fs-meta",
+      "selector": ".dag-edge-label"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 180,
+      "prop": "font",
+      "from": "13px",
+      "to": "--ds-fs-body",
+      "selector": ".flow-viewer-title"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 187,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".flow-viewer-save"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 190,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".flow-viewer-status"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 193,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".flow-mail-empty"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 197,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".flow-mail-meta"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 202,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".flow-mail-time"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 203,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".flow-mail-expand"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 206,
+      "prop": "font",
+      "from": "12.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".flow-mail-content"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 207,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".flow-mail-no-body"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 217,
+      "prop": "font-size",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": ".flow-mail-content h1"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 228,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".flow-mail-section-title"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 236,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".flow-mail-queue-tag"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 238,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".flow-mail-cancel"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 248,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".flow-def-section h3"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 249,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".flow-def-meta"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 252,
+      "prop": "font",
+      "from": "13px",
+      "to": "--ds-fs-body",
+      "selector": ".flow-agent-block-name"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 254,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".flow-agent-block-badge"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 255,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".flow-agent-block-ext"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 257,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".flow-agent-block-label"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 258,
+      "prop": "font",
+      "from": "12.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".flow-agent-block-text"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 263,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".flow-agent-block-duty"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 264,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".flow-agent-block-tools"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 266,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".flow-def-edit"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 270,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".flow-def-tool"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 272,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".flow-def-source"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 273,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".flow-agent-block-readonly"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 275,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".flow-def-tab"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 290,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".team-flows-header"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 313,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".team-flow-label"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 330,
+      "prop": "font-size",
+      "from": "9px",
+      "to": "--ds-fs-meta",
+      "selector": ".team-flow-chevron"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 362,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".dag-inline-id"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 363,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".dag-inline-agent"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 367,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".flow-agent-model-current"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 370,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".flow-agent-model-note"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 372,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".flow-agent-model-fb"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 375,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".flow-agent-model-badge"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 494,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".solar-node-status"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 503,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".solar-node-label"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 508,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".solar-node-sub"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 518,
+      "prop": "font",
+      "from": "13px",
+      "to": "--ds-fs-body",
+      "selector": ".flow-list-title"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 519,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".flow-list-count"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 540,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".flow-def-card-icon"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 542,
+      "prop": "font",
+      "from": "13px",
+      "to": "--ds-fs-body",
+      "selector": ".flow-def-card-name"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 543,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".flow-def-card-meta"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 545,
+      "prop": "font",
+      "from": "11.5px",
+      "to": "--ds-fs-hint",
+      "selector": ".flow-def-card-desc"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 551,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".flow-def-view-btn"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 558,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".flow-def-entry-tag"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 581,
+      "prop": "font",
+      "from": "15px",
+      "to": "--ds-fs-title",
+      "selector": ".stellar-title"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 582,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".stellar-status"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 586,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": ".stellar-desc"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 600,
+      "prop": "font",
+      "from": "9px",
+      "to": "--ds-fs-meta",
+      "selector": ".flow-orbit-agent"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 601,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".flow-orbit-nodeid"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 602,
+      "prop": "font",
+      "from": "16px",
+      "to": "--ds-fs-callout",
+      "selector": ".flow-orbit-status"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 640,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".flow-defs-header"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 648,
+      "prop": "font",
+      "from": "13px",
+      "to": "--ds-fs-body",
+      "selector": ".flow-def-name"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 649,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".flow-def-desc"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 650,
+      "prop": "font",
+      "from": "10px",
+      "to": "--ds-fs-meta",
+      "selector": ".flow-def-meta"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 652,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": ".flow-def-view-btn"
+    },
+    {
+      "file": "js/flowViewers.js",
+      "line": 164,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": "<p style=\"font: 400 11px -apple-system; color: var(--color-t"
+    },
+    {
+      "file": "js/main.js",
+      "line": 25,
+      "prop": "font",
+      "from": "13px",
+      "to": "--ds-fs-body",
+      "selector": "document.addEventListener('DOMContentLoaded', () =>"
+    },
+    {
+      "file": "js/monacoEditor.js",
+      "line": 321,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": "if (!blockedNotice)"
+    },
+    {
+      "file": "js/projectTab.js",
+      "line": 765,
+      "prop": "font",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": "<div style=\"font:600 14px -apple-system;color:var(--color-te"
+    },
+    {
+      "file": "js/projectTab.js",
+      "line": 963,
+      "prop": "font",
+      "from": "14px",
+      "to": "--ds-fs-subtitle",
+      "selector": "<div style=\"font:600 14px -apple-system;color:var(--color-te"
+    },
+    {
+      "file": "js/sessionGate.js",
+      "line": 156,
+      "prop": "font",
+      "from": "13px",
+      "to": "--ds-fs-body",
+      "selector": "function showBanner(source)"
+    },
+    {
+      "file": "js/staleTabHint.js",
+      "line": 29,
+      "prop": "font",
+      "from": "13px",
+      "to": "--ds-fs-body",
+      "selector": "if (document.getElementById('stale-tab-hint'))"
+    },
+    {
+      "file": "js/staleTabHint.js",
+      "line": 44,
+      "prop": "font",
+      "from": "13px",
+      "to": "--ds-fs-body",
+      "selector": "if (document.getElementById('stale-tab-hint'))"
+    },
+    {
+      "file": "js/staleTabHint.js",
+      "line": 54,
+      "prop": "font",
+      "from": "16px",
+      "to": "--ds-fs-callout",
+      "selector": "if (document.getElementById('stale-tab-hint'))"
+    },
+    {
+      "file": "js/viewers/largeText.js",
+      "line": 63,
+      "prop": "font",
+      "from": "11px",
+      "to": "--ds-fs-meta",
+      "selector": "'.lt-badge"
+    },
+    {
+      "file": "js/viewers/largeText.js",
+      "line": 64,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": "'.lt-meta"
+    },
+    {
+      "file": "js/viewers/largeText.js",
+      "line": 65,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": "'.lt-search"
+    },
+    {
+      "file": "js/viewers/largeText.js",
+      "line": 66,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": "'.lt-jump"
+    },
+    {
+      "file": "js/viewers/largeText.js",
+      "line": 67,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-btn",
+      "selector": "'.lt-btn"
+    },
+    {
+      "file": "js/viewers/largeText.js",
+      "line": 68,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": "'.lt-status"
+    },
+    {
+      "file": "js/viewers/largeText.js",
+      "line": 73,
+      "prop": "font",
+      "from": "12px",
+      "to": "--ds-fs-hint",
+      "selector": "'.lt-num"
+    },
+    {
+      "file": "js/viewers/largeText.js",
+      "line": 77,
+      "prop": "font",
+      "from": "13px",
+      "to": "--ds-fs-body",
+      "selector": "'.lt-row"
+    }
+  ]
+}

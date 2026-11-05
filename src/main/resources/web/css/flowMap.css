@@ -9,14 +9,14 @@
   align-items: center;
   justify-content: flex-end;
   gap: var(--ds-space-3);
-  padding: var(--ds-space-3) 18px;
+  padding: var(--ds-space-3) var(--ds-space-5);
   padding-right: 56px; /* §5.8b 2026-09-04 修订：让出右上悬浮钮（16+40）+ 徽章区，摘要尾字不再被遮 */
   border-bottom: 1px solid var(--color-border);
   flex: 0 0 auto;
 }
 
 .flowmap-summary {
-  font: 400 12px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font: 400 var(--ds-fs-hint)/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: var(--color-text-muted);
   white-space: nowrap;
   overflow: hidden;      /* D3 让位 + 窄 host 收缩：摘要截断不溢出，防撑出 host 横向滚动（A20.2） */
@@ -35,7 +35,7 @@
   white-space: nowrap;
 }
 .flowmap-view-filter-label {
-  font: 400 12px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font: 400 var(--ds-fs-hint)/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: var(--color-text-muted);
 }
 /* 窄窗让位两级兜底：① ≤479px 先藏文字标签只留 34px 开关本体（nav-bar 360px 窄窗
@@ -49,7 +49,7 @@
 .flowmap-loading {
   padding: var(--ds-space-12) var(--ds-space-6);
   text-align: center;
-  font: 400 13px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font: 400 var(--ds-fs-body)/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: var(--color-text-muted);
 }
 
@@ -105,7 +105,7 @@
    选择器写成 .solar-node.fm-node：FLOW_CSS 是运行时注入 head 的 <style>，排在
    本文件的 <link> 之后，同特异度下后者胜——单靠 .fm-node 压不住 height:88px。 */
 .solar-node.fm-node {
-  display: flex; flex-direction: column; gap: 3px; cursor: pointer;
+  display: flex; flex-direction: column; gap: var(--ds-space-half); cursor: pointer;
   height: auto; min-height: 88px;
 }
 .fm-node > * { flex: 0 0 auto; }
@@ -118,7 +118,7 @@
    ui-status-redesign（S4 / 盘点 #19）：状态词一律中性字（对齐 cancelled 档），
    语义色由既有 statusIcon glyph 承载（形状编码冗余——✓/✗/− 单凭形状可辨）。 */
 .fm-st-word {
-  font: 500 9px/1 -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 500 var(--ds-fs-meta)/1 -apple-system, BlinkMacSystemFont, sans-serif;
   letter-spacing: 0.02em;
 }
 .fm-st-word.completed { color: var(--status-word); }
@@ -127,9 +127,9 @@
 
 /* worktree 徽标：在 worktree 内工作的节点 */
 .fm-worktree-badge {
-  font: 600 9px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font: 600 var(--ds-fs-meta)/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   letter-spacing: 0.02em;
-  padding: var(--ds-space-half) 5px;
+  padding: var(--ds-space-half) var(--ds-space-1h);
   border-radius: var(--ds-radius-badge);
   background: rgb(var(--sapphire) / 0.15);
   color: rgb(var(--sapphire) / 1);
@@ -147,9 +147,9 @@
    普通节点零徽标（head 行维持原样）。--amber 三元组由 sapphire.css 按亮暗主题
    定义，此处带兜底值与 flowCss.js 同式。 */
 .fm-flag-badge {
-  font: 600 9px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font: 600 var(--ds-fs-meta)/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   letter-spacing: 0.02em;
-  padding: var(--ds-space-half) 5px;
+  padding: var(--ds-space-half) var(--ds-space-1h);
   border-radius: var(--ds-radius-badge);
   border: 1px solid;
   white-space: nowrap;
@@ -204,15 +204,15 @@
      故本类单列一套度量：8.5px / letter-spacing 0 / padding 2px 3px，实测 ≈ 98px 放得下，
      数字与「个」全可见（读数见 .nebflow/evidence/20260914_mergequeue-pos/）。文案形态
      与家族一致（仅尺寸略小），配色通道唯一。 */
-  font-size: 8.5px;
+  font-size: var(--ds-fs-meta);
   letter-spacing: 0;
-  padding: var(--ds-space-half) 3px;
+  padding: var(--ds-space-half) var(--ds-space-1);
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 /* head 行排队变体：允许换行（默认 nowrap 单行）+ 行间距；徽标可收缩（其余徽标不收缩）。 */
-.fm-node-head.fm-head-queued { flex-wrap: wrap; row-gap: 3px; max-width: 100%; }
+.fm-node-head.fm-head-queued { flex-wrap: wrap; row-gap: var(--ds-space-half); max-width: 100%; }
 .fm-node-head.fm-head-queued > .fm-flag-queue { flex: 0 1 auto; min-width: 0; }
 /* 排队脚注（与既有 .fm-wait-note 同盒，仅配色区分成因）：卡片内不溢出由既有
    .fm-wait-note-text 的 ellipsis 口径承担（本类只做颜色区分，不改几何）。 */
@@ -224,16 +224,16 @@
 .fm-cfg-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 3px;
-  margin-top: 1px;
+  gap: var(--ds-space-half);
+  margin-top: var(--ds-space-hair);
 }
 .fm-cfg-badge {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: var(--ds-space-half);
   max-width: 100%;
-  font: 500 9px/1.2 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  padding: 1.5px 5px;
+  font: 500 var(--ds-fs-meta)/1.2 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  padding: var(--ds-space-half) var(--ds-space-1h);
   border-radius: var(--ds-radius-badge);
   border: 1px solid;
   white-space: nowrap;
@@ -257,16 +257,16 @@
   opacity: 1;
 }
 .flow-node-cfg {
-  font: 500 11px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font: 500 var(--ds-fs-meta)/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: var(--color-text);
   word-break: break-all;
 }
 .flow-node-cfg-key {
   display: inline-block;
-  font: 600 9px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font: 600 var(--ds-fs-meta)/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   text-transform: uppercase;
   letter-spacing: 0.03em;
-  padding: 1px 5px;
+  padding: var(--ds-space-hair) var(--ds-space-1h);
   margin-right: var(--ds-space-1);
   border-radius: var(--ds-radius-badge);
   background: var(--color-frame-hover);
@@ -275,7 +275,7 @@
 
 /* TTL 倒计时（终态节点显示） */
 .fm-ttl {
-  font: 400 10px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font: 400 var(--ds-fs-meta)/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   font-variant-numeric: tabular-nums;
   color: var(--color-text-muted);
   margin-left: var(--ds-space-1);
@@ -283,7 +283,7 @@
 
 /* barrier 提示（多入边合并节点） */
 .fm-barrier-hint {
-  font: 400 10px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font: 400 var(--ds-fs-meta)/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: rgb(var(--sapphire) / 0.9);
 }
 
@@ -291,11 +291,11 @@
    .fm-result-summary 为旧类名兼容保留）——新出现时轻微淡入 */
 .fm-result-summary,
 .fm-desc {
-  font: 400 10px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font: 400 var(--ds-fs-meta)/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: var(--color-text-muted);
   margin-top: var(--ds-space-half);
-  padding: 3px var(--ds-space-1h);
-  border-radius: 5px;
+  padding: var(--ds-space-1) var(--ds-space-1h);
+  border-radius: var(--ds-radius-chip);
   background: var(--color-frame-hover);
   white-space: nowrap;
   overflow: hidden;
@@ -331,52 +331,52 @@
   border: 1px solid rgb(var(--amber) / 0.4);
   background: rgb(var(--amber) / 0.07);
   border-radius: var(--ds-radius-button);
-  padding: var(--ds-space-glass-x) var(--ds-space-3);
-  margin: var(--ds-space-glass-x) 0;
+  padding: var(--ds-space-block-y) var(--ds-space-3);
+  margin: var(--ds-space-stack-gap) 0;
 }
 .flow-blocked-head { display: flex; align-items: center; gap: var(--ds-space-2); flex-wrap: wrap; }
 .flow-blocked-badge {
-  font: 700 11px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font: 700 var(--ds-fs-meta)/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: rgb(var(--amber));
   letter-spacing: 0.02em;
   display: inline-flex; align-items: center; gap: var(--ds-space-1); /* 内联 SVG 旗（2026-09-06 禁 ⚑ 字符） */
 }
 .flow-blocked-badge .flow-blocked-flag { width: 11px; height: 11px; flex: 0 0 auto; }
 .flow-blocked-category {
-  font: 600 10px/1.4 ui-monospace, SFMono-Regular, monospace;
-  padding: var(--ds-space-half) 7px;
+  font: 600 var(--ds-fs-meta)/1.4 ui-monospace, SFMono-Regular, monospace;
+  padding: var(--ds-space-half) var(--ds-space-2);
   border-radius: var(--ds-radius-pill);
   border: 1px solid rgb(var(--amber) / 0.5);
   background: rgb(var(--amber) / 0.14);
   color: rgb(var(--amber));
 }
 .flow-blocked-count {
-  font: 500 11px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font: 500 var(--ds-fs-meta)/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: var(--color-text-muted);
   margin-left: auto;
 }
 .flow-blocked-row { margin-top: var(--ds-space-2); }
 .flow-blocked-label {
   display: inline-block;
-  font: 600 9px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font: 600 var(--ds-fs-meta)/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   text-transform: uppercase;
   letter-spacing: 0.03em;
-  padding: 1px 5px;
+  padding: var(--ds-space-hair) var(--ds-space-1h);
   border-radius: var(--ds-radius-badge);
   background: rgb(var(--amber) / 0.14);
   color: rgb(var(--amber));
 }
 .flow-blocked-text {
-  font: 400 12px/1.55 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font: 400 var(--ds-fs-hint)/1.55 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: var(--color-text);
   white-space: pre-wrap;
   word-break: break-word;
-  margin-top: 3px;
+  margin-top: var(--ds-space-1);
 }
-.flow-blocked-raw { margin-top: var(--ds-space-glass-x); }
+.flow-blocked-raw { margin-top: var(--ds-space-stack-gap); }
 .flow-blocked-raw > summary {
   cursor: pointer;
-  font: 500 11px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font: 500 var(--ds-fs-meta)/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: var(--color-text-muted);
   user-select: none;
 }
@@ -392,7 +392,7 @@
   white-space: pre-wrap;
   border: 1px solid var(--color-border);
   border-radius: var(--ds-radius-input);
-  padding: var(--ds-space-2) var(--ds-space-glass-x);
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
 }
 /* 本卡内该区的区内滚动清零（2026-09-11 滚动一体化批）：`.flow-blocked-raw` 不止本卡用
    （flowViewers.js:117 的 agent 结果查看器同款结构）⇒ 上面那条全局规则原样保留，只在
@@ -454,7 +454,7 @@
 /* 弧顶门标签：文字通道 = 门集原文（`(fail)`），带 --color-bg 描边光晕压在弧线之上
    （paint-order: stroke ⇒ 先描边后填充），弧线穿过字形也可读。 */
 .fm-edge-loop-gate {
-  font: 600 8.5px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font: 600 var(--ds-fs-meta)/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   letter-spacing: 0.02em;
   fill: rgb(190 24 93);
   paint-order: stroke;
@@ -573,7 +573,7 @@
 /* 展开态控件（链入口成员卡 head 行右端）：chevron 转 90° 朝下 = 「已展开，点击折起」，
    与归档条目 .fm-entry.expanded .fm-entry-chev 同一语义语言。 */
 .fm-chain-chev-open svg { transform: rotate(90deg); }
-.fm-chain-chev-open { width: 14px; height: 14px; margin-top: 1px; }
+.fm-chain-chev-open { width: 14px; height: 14px; margin-top: var(--ds-space-hair); }
 /* 链级取消控件（R2，chaincancel 批 2026-09-17）：与 `.fm-chain-chev` 同款体量与
    hover/focus 语言（同一 head 行、同一"克制"基调），但语义是**危险动作**——故常态
    用 `--color-error` 色相（既有点位：`.fm-chain-count.failed` 同 token），零新色值。
@@ -597,8 +597,8 @@
 /* 分状态计数行（spec §3.3「✓n · 跑n · ✗n」；零计数桶不渲染，故恒 ≤5 项）。
    复用节点卡 glyph 色板类（.solar-node-status.ok/.err/.warn），running 用链色圆点。 */
 .fm-chain-counts {
-  display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-top: 1px;
-  font: 500 9px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  display: flex; align-items: center; gap: var(--ds-space-1h); flex-wrap: wrap; margin-top: var(--ds-space-hair);
+  font: 500 var(--ds-fs-meta)/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   font-variant-numeric: tabular-nums;
 }
 /* 分状态计数行（spec §3.3「✓n · 跑n · ✗n」；零计数桶不渲染，故恒 ≤5 项）。
@@ -664,9 +664,9 @@
   align-self: stretch;
   align-items: center;
   justify-content: center;
-  gap: 3px;
+  gap: var(--ds-space-half);
   margin-top: var(--ds-space-1);
-  font: 400 10px ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 400 var(--ds-fs-meta) ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--color-text-muted);
   min-width: 0;
 }
@@ -686,7 +686,7 @@
   flex-wrap: wrap;
   align-items: center;
   padding: var(--ds-space-2) var(--ds-space-1) var(--ds-space-half);
-  font: 400 11px -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 400 var(--ds-fs-meta) -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text-muted);
 }
 .fm-legend-item { display: inline-flex; align-items: center; gap: var(--ds-space-1h); }
@@ -763,7 +763,7 @@
   position: absolute; top: -5px; right: -5px;
   min-width: 16px; height: 16px; padding: 0 var(--ds-space-1); border-radius: var(--ds-radius-input);
   background: rgb(var(--sapphire)); color: #fff;
-  font: 500 10px/16px -apple-system, BlinkMacSystemFont, sans-serif; text-align: center;
+  font: 500 var(--ds-fs-meta)/var(--ds-fs-callout) -apple-system, BlinkMacSystemFont, sans-serif; text-align: center;
   box-shadow: 0 0 0 2px var(--color-bg); pointer-events: none;
   font-variant-numeric: tabular-nums;
 }
@@ -794,13 +794,13 @@
 .fm-archive-panel.closing { transition-duration: 0.16s; transition-timing-function: ease; }
 .fm-panel-head {
   display: flex; align-items: center; gap: var(--ds-space-2); flex: 0 0 auto;
-  padding: 11px 14px; border-bottom: 1px solid var(--color-border);
+  padding: var(--ds-space-3) 14px; border-bottom: 1px solid var(--color-border);
 }
-.fm-panel-title { font: 600 13px/1.3 -apple-system, BlinkMacSystemFont, sans-serif; }
-.fm-panel-count { font: 400 11px/1.3 -apple-system, BlinkMacSystemFont, sans-serif; color: var(--color-text-muted); }
+.fm-panel-title { font: 600 var(--ds-fs-body)/1.3 -apple-system, BlinkMacSystemFont, sans-serif; }
+.fm-panel-count { font: 400 var(--ds-fs-meta)/1.3 -apple-system, BlinkMacSystemFont, sans-serif; color: var(--color-text-muted); }
 .fm-panel-close {
   margin-left: auto; border: none; background: transparent; cursor: pointer;
-  font: 400 16px/1 -apple-system, BlinkMacSystemFont, sans-serif; color: var(--color-text-muted);
+  font: 400 var(--ds-fs-callout)/1 -apple-system, BlinkMacSystemFont, sans-serif; color: var(--color-text-muted);
   opacity: 0.5; padding: var(--ds-space-half) var(--ds-space-1); transition: opacity 0.15s;
   display: inline-flex; align-items: center; /* 内联 SVG 叉（2026-09-06 禁 ✕ 字符） */
 }
@@ -812,7 +812,7 @@
   scrollbar-width: thin; scrollbar-color: var(--color-frame-border) transparent;
 }
 .fm-panel-empty {
-  text-align: center; padding: 40px 0; font: 400 12px/1.5 -apple-system, BlinkMacSystemFont, sans-serif;
+  text-align: center; padding: 40px 0; font: 400 var(--ds-fs-hint)/1.5 -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text-muted); opacity: 0.65;
 }
 /* 读取指引脚注（全降级列表态批 2026-09-16）：链完成横幅不再是 root 会话的投递面
@@ -821,14 +821,14 @@
    用语零新色值（`--color-text-muted` + `--color-border` 同 panel-head 分隔线）。 */
 .fm-panel-guide {
   flex: 0 0 auto; padding: var(--ds-space-2) 14px; border-top: 1px solid var(--color-border);
-  font: 400 11px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 400 var(--ds-fs-meta)/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text-muted); opacity: 0.8;
 }
 
 /* 链条目（§5.3：flow-mail-row 构型；条目 = 链）*/
 .fm-entry {
   border: 1px solid rgba(128, 128, 128, 0.12); border-radius: var(--ds-radius-input);
-  background: rgba(128, 128, 128, 0.06); margin-bottom: var(--ds-space-2); padding: var(--ds-space-glass-x) var(--ds-space-3);
+  background: rgba(128, 128, 128, 0.06); margin-bottom: var(--ds-space-2); padding: var(--ds-space-block-y) var(--ds-space-3);
   cursor: pointer; user-select: none; -webkit-user-select: none;
   transition: background 0.15s, border-color 0.15s;
 }
@@ -853,28 +853,28 @@
    （S4 同规 / 盘点 #21）：词一律中性字（completed/failed/cancelled 对齐），
    语义由左侧 glyph 承载。 */
 .fm-entry-stw {
-  flex: 0 0 auto; font: 500 10px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
+  flex: 0 0 auto; font: 500 var(--ds-fs-meta)/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
 }
 .fm-entry-stw.completed { color: var(--status-word); }
 .fm-entry-stw.failed { color: var(--status-word); }
 .fm-entry-stw.cancelled { color: var(--status-word); }
 .fm-entry-stw.active { color: rgb(var(--sapphire)); }
 .fm-entry-name {
-  flex: 0 1 auto; min-width: 0; font: 500 12px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
+  flex: 0 1 auto; min-width: 0; font: 500 var(--ds-fs-hint)/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .fm-entry-nodes {
-  flex: 0 0 auto; font: 500 10px/1 -apple-system, BlinkMacSystemFont, sans-serif;
+  flex: 0 0 auto; font: 500 var(--ds-fs-meta)/1 -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text-muted); border: 1px solid rgba(128, 128, 128, 0.18);
-  border-radius: var(--ds-radius-chip); padding: var(--ds-space-half) 5px; font-variant-numeric: tabular-nums;
+  border-radius: var(--ds-radius-chip); padding: var(--ds-space-half) var(--ds-space-1h); font-variant-numeric: tabular-nums;
 }
 .fm-entry-time {
-  flex: 0 0 auto; margin-left: auto; font: 400 11px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
+  flex: 0 0 auto; margin-left: auto; font: 400 var(--ds-fs-meta)/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text-muted); font-variant-numeric: tabular-nums;
 }
 /* TTL 即将过期标签（§5.9：剩余 <60min 才显示，克制）*/
 .fm-entry-ttl {
-  flex: 0 0 auto; font: 400 10px/1 -apple-system, BlinkMacSystemFont, sans-serif;
+  flex: 0 0 auto; font: 400 var(--ds-fs-meta)/1 -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-warning); opacity: 0.85;
 }
 .fm-entry-chev {
@@ -884,7 +884,7 @@
 .fm-entry-chev svg { width: 10px; height: 10px; display: block; }
 .fm-entry.expanded .fm-entry-chev { transform: rotate(90deg); }
 .fm-entry-preview {
-  margin-top: 3px; font: 400 11px/1.45 -apple-system, BlinkMacSystemFont, sans-serif;
+  margin-top: var(--ds-space-1); font: 400 var(--ds-fs-meta)/1.45 -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 /* 链内成员列表（§5.5：展开后逐节点条目，点击 → 右侧详情）*/
@@ -892,8 +892,8 @@
 .fm-entry.expanded .fm-entry-members { display: block; }
 .fm-member {
   display: block; width: 100%; text-align: left;
-  border: 1px solid rgba(128, 128, 128, 0.1); border-radius: 7px;
-  background: rgba(128, 128, 128, 0.03); margin-bottom: var(--ds-space-1h); padding: 7px 9px;
+  border: 1px solid rgba(128, 128, 128, 0.1); border-radius: var(--ds-radius-input);
+  background: rgba(128, 128, 128, 0.03); margin-bottom: var(--ds-space-1h); padding: var(--ds-space-2) var(--ds-space-2);
   cursor: pointer; transition: background 0.15s, border-color 0.15s;
 }
 .fm-member:last-child { margin-bottom: 0; }
@@ -901,23 +901,23 @@
 .fm-member:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.55); }
 .fm-member-row { display: flex; align-items: center; gap: var(--ds-space-1h); min-width: 0; }
 .fm-member-name {
-  flex: 0 1 auto; min-width: 0; font: 500 11.5px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
+  flex: 0 1 auto; min-width: 0; font: 500 var(--ds-fs-hint)/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 /* Agent 退役（node-flowmap-slim）：原 .fm-member-agent 槽位改显节点元数据
    （preset 常显 + plugins 并列），仅改类名——规则原样保留。 */
 .fm-member-meta {
-  flex: 1 1 auto; min-width: 20px; font: 400 10.5px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
+  flex: 1 1 auto; min-width: 20px; font: 400 var(--ds-fs-meta)/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right;
 }
 .fm-member-time {
-  flex: 0 0 auto; font: 400 10.5px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
+  flex: 0 0 auto; font: 400 var(--ds-fs-meta)/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text-muted); font-variant-numeric: tabular-nums;
 }
 .fm-member-go { flex: 0 0 auto; display: inline-flex; color: var(--color-text-muted); opacity: 0.55; }
 .fm-member-go svg { width: 10px; height: 10px; display: block; }
 .fm-member-preview {
-  margin-top: var(--ds-space-half); font: 400 10.5px/1.45 -apple-system, BlinkMacSystemFont, sans-serif;
+  margin-top: var(--ds-space-half); font: 400 var(--ds-fs-meta)/1.45 -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
@@ -949,7 +949,7 @@
 .fm-detail.dock-left { right: 404px; }
 .fm-detail-head {
   display: flex; align-items: center; gap: var(--ds-space-2); flex: 0 0 auto;
-  padding: 11px 14px; border-bottom: 1px solid var(--color-border); min-width: 0;
+  padding: var(--ds-space-3) 14px; border-bottom: 1px solid var(--color-border); min-width: 0;
 }
 .fm-detail-st { flex: 0 0 auto; display: inline-flex; }
 .fm-detail-st svg { width: 12px; height: 12px; display: block; }
@@ -960,12 +960,12 @@
 .fm-detail-st.cancelled { color: var(--color-text-muted); }
 .fm-detail-st.active { color: rgb(var(--sapphire)); }
 .fm-detail-title {
-  flex: 0 1 auto; min-width: 0; font: 600 13px/1.3 -apple-system, BlinkMacSystemFont, sans-serif;
+  flex: 0 1 auto; min-width: 0; font: 600 var(--ds-fs-body)/1.3 -apple-system, BlinkMacSystemFont, sans-serif;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .fm-detail-close {
   margin-left: auto; flex: 0 0 auto; border: none; background: transparent; cursor: pointer;
-  font: 400 16px/1 -apple-system, BlinkMacSystemFont, sans-serif; color: var(--color-text-muted);
+  font: 400 var(--ds-fs-callout)/1 -apple-system, BlinkMacSystemFont, sans-serif; color: var(--color-text-muted);
   opacity: 0.5; padding: var(--ds-space-half) var(--ds-space-1); transition: opacity 0.15s;
   display: inline-flex; align-items: center; /* 内联 SVG 叉（2026-09-06 禁 ✕ 字符） */
 }
@@ -982,16 +982,16 @@
    一体化批：旧注释里「结果区 .fm-detail-result 例外」的 flex 自增口径已退役）。 */
 .fm-detail-body > * { flex: 0 0 auto; }
 .fm-detail-meta {
-  font: 400 11px/1.7 -apple-system, BlinkMacSystemFont, sans-serif;
-  color: var(--color-text-muted); margin-bottom: var(--ds-space-glass-x); word-break: break-all;
+  font: 400 var(--ds-fs-meta)/1.7 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text-muted); margin-bottom: var(--ds-space-stack-gap); word-break: break-all;
 }
 .fm-detail-meta b { font-weight: 500; color: var(--color-text-dim); }
 /* 描述区块（2026-09-06 显示优化批）：元数据区之后、结果区之前，左边线引用式 */
 .fm-detail-desc {
-  font: 400 11.5px/1.55 -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 400 var(--ds-fs-hint)/1.55 -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text);
   border-left: 2px solid rgb(var(--sapphire) / 0.45);
-  padding: var(--ds-space-half) 0 var(--ds-space-half) var(--ds-space-2); margin: -4px 0 var(--ds-space-glass-x);
+  padding: var(--ds-space-half) 0 var(--ds-space-half) var(--ds-space-2); margin: -4px 0 var(--ds-space-stack-gap);
   white-space: pre-wrap; word-break: break-word;
 }
 /* ── 详情完整配置 KV 栅格（2026-09-07 节点详情完整配置批）：label 列 auto 自适应
@@ -999,26 +999,26 @@
    字号/配色复用 fm-detail-meta 语言，零新 token ── */
 .fm-detail-kv {
   display: grid; grid-template-columns: auto minmax(0, 1fr);
-  column-gap: var(--ds-space-glass-x); row-gap: 3px; margin: 0 0 var(--ds-space-half);
+  column-gap: var(--ds-space-inline-gap); row-gap: var(--ds-space-half); margin: 0 0 var(--ds-space-half);
 }
 .fm-detail-kv-label {
-  font: 400 11px/1.6 -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 400 var(--ds-fs-meta)/1.6 -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text-muted); white-space: nowrap;
 }
 .fm-detail-kv-val {
-  font: 400 11.5px/1.6 -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 400 var(--ds-fs-hint)/1.6 -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text); word-break: break-word; min-width: 0;
 }
 .fm-detail-kv-val.muted { color: var(--color-text-muted); }
 .fm-detail-sec {
-  font: 600 11px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
-  color: var(--color-text-dim); margin: var(--ds-space-glass-x) 0 var(--ds-space-1);
+  font: 600 var(--ds-fs-meta)/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text-dim); margin: var(--ds-space-stack-gap) 0 var(--ds-space-1);
 }
 .fm-detail-task {
-  font: 400 11.5px/1.55 -apple-system, BlinkMacSystemFont, sans-serif; color: var(--color-text-muted);
+  font: 400 var(--ds-fs-hint)/1.55 -apple-system, BlinkMacSystemFont, sans-serif; color: var(--color-text-muted);
   white-space: pre-wrap; word-break: break-word;
   border: 1px solid rgba(128, 128, 128, 0.12); border-radius: var(--ds-radius-input); background: rgba(128, 128, 128, 0.05);
-  padding: var(--ds-space-2) var(--ds-space-glass-x);
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
   /* 2026-09-11 滚动一体化批：原 max-height:140px + overflow-y:auto（区内滚动）已删
      ——任务全文随整卡同一滚动容器铺开。 */
 }
@@ -1029,17 +1029,17 @@
    flex:1 1 auto + min-height:96px「结果区独占剩余高度并区内滚动」已整体退役）。
    全文仍由既有按需通道（fetchNodeResult → applyFullResult）换装，本块只改布局职责。 */
 .fm-detail-result {
-  font: 400 11.5px/1.55 -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 400 var(--ds-fs-hint)/1.55 -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text); word-break: break-word; overflow-wrap: anywhere;
 }
 /* markdown 正文（flow-mail-content 同语言）*/
 .fm-md p { margin: var(--ds-space-1) 0; }
 .fm-md p:first-child { margin-top: 0; }
 .fm-md p:last-child { margin-bottom: 0; }
-.fm-md ul, .fm-md ol { margin: var(--ds-space-1) 0 var(--ds-space-1) 18px; }
+.fm-md ul, .fm-md ol { margin: var(--ds-space-1) 0 var(--ds-space-1) var(--ds-space-5); }
 .fm-md li { margin: var(--ds-space-half) 0; }
 .fm-md code {
-  background: var(--color-frame-hover); padding: 1px var(--ds-space-1); border-radius: 3px;
+  background: var(--color-frame-hover); padding: var(--ds-space-hair) var(--ds-space-1); border-radius: var(--ds-radius-badge);
   font: 400 0.9em ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all;
 }
 .fm-md pre { background: var(--color-frame-hover); padding: var(--ds-space-2) var(--ds-space-3); border-radius: var(--ds-radius-input); overflow-x: auto; margin: var(--ds-space-1h) 0; }
@@ -1052,12 +1052,12 @@
    零新视觉样式族。 */
 .fm-md .code-block-wrap { position: relative; margin: var(--ds-space-1h) 0; }
 .fm-md pre code { background: none; padding: 0; word-break: normal; }
-.fm-md blockquote { border-left: 3px solid var(--color-border); margin: var(--ds-space-1h) 0; padding-left: var(--ds-space-glass-x); color: var(--color-text-muted); }
+.fm-md blockquote { border-left: 3px solid var(--color-border); margin: var(--ds-space-1h) 0; padding-left: var(--ds-space-inline-x); color: var(--color-text-muted); }
 .fm-md h1, .fm-md h2, .fm-md h3, .fm-md h4, .fm-md h5, .fm-md h6 { margin: var(--ds-space-2) 0 var(--ds-space-1); font-weight: 600; }
-.fm-md h3, .fm-md h4 { font-size: 12.5px; }
+.fm-md h3, .fm-md h4 { font-size: var(--ds-fs-hint); }
 .fm-md h5, .fm-md h6 { font-size: var(--ds-fs-hint); }
-.fm-md table { display: block; overflow-x: auto; border-collapse: collapse; margin: var(--ds-space-1h) 0; font-size: 11.5px; }
-.fm-md th, .fm-md td { border: 1px solid var(--color-border); padding: 3px 7px; }
+.fm-md table { display: block; overflow-x: auto; border-collapse: collapse; margin: var(--ds-space-1h) 0; font-size: var(--ds-fs-hint); }
+.fm-md th, .fm-md td { border: 1px solid var(--color-border); padding: var(--ds-space-1) var(--ds-space-2); }
 .fm-md th { background: var(--color-frame-hover); }
 .fm-md a { color: rgb(var(--sapphire)); }
 .fm-md hr { border: none; border-top: 1px solid var(--color-border); margin: var(--ds-space-2) 0; }
@@ -1065,8 +1065,8 @@
 .fm-md .md-empty { font-style: italic; color: var(--color-text-muted); opacity: 0.7; }
 /* 错误态（ui-status-redesign 盘点 #25，收编 flowMapArchive.js 原 inline 覆盖）：
    中性正文 + 行首 circle-x 红图标（红只上图标）。 */
-.fm-md .md-error { font-style: normal; opacity: 1; color: var(--status-word); display: inline-flex; align-items: flex-start; gap: 5px; }
-.fm-md .md-error .st-ic { width: 12px; height: 12px; margin-top: 1px; flex-shrink: 0; }
+.fm-md .md-error { font-style: normal; opacity: 1; color: var(--status-word); display: inline-flex; align-items: flex-start; gap: var(--ds-space-1); }
+.fm-md .md-error .st-ic { width: 12px; height: 12px; margin-top: var(--ds-space-hair); flex-shrink: 0; }
 
 /* ── v3 链未齐终态保留卡（§3.2）：opacity .78 后退一层、静态环染终态色、
    标签降 dim；hover 回 1——一眼区分「还在跑的」与「已完成待整链归档的」── */
@@ -1124,7 +1124,7 @@
 /* 图例：链未齐终态保留卡项（v3 取代锚点图例；A2 反向断言：无任何锚点项）*/
 .fm-legend-swatch.terminal {
   width: 14px; height: 10px; border-top: none;
-  border: 1px solid var(--color-success); border-radius: 3px; opacity: 0.8;
+  border: 1px solid var(--color-success); border-radius: var(--ds-radius-badge); opacity: 0.8;
 }
 
 /* ── 降级（§6.4：prefers-reduced-motion → opacity-only ≤10ms，脉冲/闪烁禁用）── */

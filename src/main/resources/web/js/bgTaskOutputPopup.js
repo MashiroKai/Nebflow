@@ -101,7 +101,7 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
 /* Header：同 .flow-agent-header（顶缘折射线 + 底部 hairline）。 */
 .bgt-header {
   display: flex; align-items: center; gap: var(--ds-space-1h);
-  padding: var(--ds-space-glass-x) var(--ds-space-4);
+  padding: var(--ds-space-block-y) var(--ds-space-4);
   border-bottom: 1px solid var(--glass-border);
   flex-shrink: 0;
   position: relative;
@@ -119,24 +119,24 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
   pointer-events: none;
   z-index: 1;
 }
-.bgt-title-wrap { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 1px; }
+.bgt-title-wrap { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: var(--ds-space-hair); }
 .bgt-title {
-  font: 600 13px -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 600 var(--ds-fs-body) -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   max-width: 100%;
 }
 .bgt-subtitle {
-  font: 400 11px -apple-system, sans-serif;
+  font: 400 var(--ds-fs-meta) -apple-system, sans-serif;
   color: var(--color-text-muted);
   font-family: ui-monospace, SFMono-Regular, monospace;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   max-width: 100%;
 }
 .bgt-state-chip {
-  display: inline-flex; align-items: center; gap: 5px;
+  display: inline-flex; align-items: center; gap: var(--ds-space-1);
   flex-shrink: 0;
-  font: 400 11px -apple-system, sans-serif;
+  font: 400 var(--ds-fs-meta) -apple-system, sans-serif;
   color: var(--color-frame-text-muted);
 }
 /* Unified panel spec §3.1：状态词 400 让位主名；终态分色同行面板
@@ -147,7 +147,7 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
 .bgt-state-label--failed { color: var(--status-word); }
 .bgt-state-chip .st-ic { width: 11px; height: 11px; }
 .bgt-close {
-  cursor: pointer; font-size: var(--ds-fs-mobile-callout); line-height: 1;
+  cursor: pointer; font-size: var(--ds-fs-callout); line-height: 1;
   opacity: 0.7; transition: opacity 0.15s;
   padding: var(--ds-space-half) var(--ds-space-1); color: var(--color-text);
   border-radius: var(--ds-radius-badge);
@@ -169,13 +169,13 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
   flex-shrink: 0;
   display: flex; align-items: flex-start; gap: var(--ds-space-1h);
   padding: var(--ds-space-1h) var(--ds-space-4);
-  font: 400 11px -apple-system, sans-serif;
+  font: 400 var(--ds-fs-meta) -apple-system, sans-serif;
   color: var(--status-word);
   border-bottom: 1px solid var(--glass-border);
   border-left: 2px solid var(--status-error-icon);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.bgt-error .st-ic { width: 12px; height: 12px; margin-top: 1px; flex-shrink: 0; }
+.bgt-error .st-ic { width: 12px; height: 12px; margin-top: var(--ds-space-hair); flex-shrink: 0; }
 
 /* 输出区（2026-09-10 作者指令：终端化内芯）：后台任务输出是终端任务——
    内芯 = 跟随主题的深/浅终端底（light #f5f5f5 / dark #111419，与代码块
@@ -184,7 +184,7 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
    复制：.bgt-body 复用代码块 .code-block-wrap 容器 class——.code-copy-btn
    的 hover 浮现（chat.css）与玻璃主题（sapphire.css Pattern B / dark 档）
    零复制生效；padding-top 抬高给右上角浮层按钮留位（28px = 按钮高+余量）。 */
-.bgt-body { flex: 1; min-height: 0; display: flex; position: relative; padding: 0 var(--ds-space-3) var(--ds-space-glass-x); }
+.bgt-body { flex: 1; min-height: 0; display: flex; position: relative; padding: 0 var(--ds-space-3) var(--ds-space-block-y); }
 /* 复制按钮落进输出框内（2026-09-12 作者令：「复制按钮需要在输出框内」）。
    公共定位（chat.css:1043-1046 .code-copy-btn）为 absolute top:4px/right:4px，
    定位祖先是最近的 position:relative 容器 .bgt-body（padding: 0 12px 10px）
@@ -204,7 +204,7 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
   background: #f5f5f5;
   border: 1px solid var(--color-frame-border);
   border-radius: var(--ds-radius-input);
-  font: 400 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 400 var(--ds-fs-hint)/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--color-text);
   white-space: pre-wrap;
   word-break: break-word;
@@ -220,7 +220,7 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
   position: absolute; inset: 0;
   display: flex; align-items: center; justify-content: center;
   padding: var(--ds-space-4);
-  font: 400 12px -apple-system, sans-serif;
+  font: 400 var(--ds-fs-hint) -apple-system, sans-serif;
   color: var(--color-text-muted);
   text-align: center;
 }
@@ -250,7 +250,7 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
   z-index: 1;
 }
 .bgt-meta {
-  font: 400 11px ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 400 var(--ds-fs-meta) ui-monospace, SFMono-Regular, Menlo, monospace;
   font-variant-numeric: tabular-nums;
   color: var(--color-text-muted);
   min-width: 0;
@@ -270,14 +270,14 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
   content: '';
   display: inline-block;
   width: 5px; height: 12px;
-  margin-left: 1px;
+  margin-left: var(--ds-space-hair);
   background: var(--color-primary);
   vertical-align: text-bottom;
   animation: blink 1s steps(2) infinite;
 }
 .bgt-prompt { opacity: 0.7; flex-shrink: 0; }
 .bgt-truncated {
-  font: 500 11px -apple-system, sans-serif;
+  font: 500 var(--ds-fs-meta) -apple-system, sans-serif;
   color: var(--status-warn-icon);
   flex-shrink: 0;
 }

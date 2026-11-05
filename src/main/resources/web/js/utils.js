@@ -566,6 +566,61 @@ const RE_IMG_TAG = /<img\b(?![^>]*\bclass=)/g;
 // as-is (already HTML-escaped by marked) — safe for the double-quoted
 // data-mermaid-src attribute because marked escapes `"` to `&quot;`.
 const RE_MERMAID_BLOCK = /<pre><code class="language-mermaid"[^>]*>([\s\S]*?)<\/code><\/pre>/g;
+// rich-render 批（2026-11-05 作者令 08:55「可以，试试内联svg」）：```svg 围栏走
+// 与 mermaid 同一形状的占位替换；安全审查不在这条字符串腿上做（字符串正则挡不住
+// 实体/命名空间变体），而在 js/svgFence.js 的「解析成 DOM → 白名单重建」腿做。
+const RE_SVG_BLOCK = /<pre><code class="language-svg"[^>]*>([\s\S]*?)<\/code><\/pre>/g;
+
+/** 源码面读「末尾有没有未闭合的围栏」，返回它的 info 词（小写；闭合 = 空串）。
+ *  这就是流式判据的第二条（第一条 = 调用点报的 `stream` 事实）：
+ *  CommonMark 里未闭合围栏 body 仍是代码块，我们**不改它**——图只在围栏闭合后
+ *  出现一次。与 `_humanFencesBalanced` 同一读法（开栏 = 带 info 的 ```，
+ *  关栏 = 仅反引号的 ```；开栏期间带 info 的 ``` 是字面内容不是嵌套）。 */
+function _trailingOpenFence(text) {
+  if (text.indexOf('```') === -1) return '';
+  let info = '';
+  const lines = text.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!info) {
+      const m = /^```+[ \t]*([\w+#.-]*)/.exec(line);
+      if (m && m[1]) info = m[1].toLowerCase();
+    } else if (/^```+[ \t]*$/.test(line)) {
+      info = '';
+    }
+  }
+  return info;
+}
+
+/** 属性值转义（escapeHtml 不转引号，属性面必须自己来）。 */
+function _attrEscape(/** @type {string} */ s) {
+  return escapeHtml(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/**
+ * 图围栏占位替换（mermaid / svg 共用；单一实现，不各造一套）。
+ * 末尾那个未闭合围栏保持代码块（见 _trailingOpenFence）。
+ * @param {string} html
+ * @param {RegExp} re
+ * @param {string} lang
+ * @param {string} openFence
+ * @param {string} srcAttr
+ * @param {string} cls
+ * @returns {string}
+ */
+function _swapFenceBlocks(html, re, lang, openFence, srcAttr, cls) {
+  re.lastIndex = 0;
+  let total = 0;
+  while (re.exec(html) !== null) total++;
+  if (total === 0) return html;
+  let seen = 0;
+  re.lastIndex = 0;
+  return html.replace(re, (full, code) => {
+    seen++;
+    if (seen === total && openFence === lang) return full; // 未闭合尾围栏 = 仍是代码
+    return `<div class="${cls}" ${srcAttr}="${code}"><div class="${cls}-body"><div class="${cls}-ph"></div></div></div>`;
+  });
+}
 // human-face batch (2026-10-30, 设计稿 docs/design/20261030_human-readable-
 // presentation.zh-CN.md 二期): marked v12 emits a fenced ```human block in the
 // same shape as mermaid (plain <pre>, single language class, escaped body).
@@ -574,15 +629,24 @@ const RE_HUMAN_BLOCK = /<pre><code class="language-human"[^>]*>([\s\S]*?)<\/code
 export function renderMarkdownWithMath(text, parseVoice = true, opts) {
   if (!text) return '';
   const safe = !!(opts && opts.safe);
+  // 流式快照闸（rich-render 批，作者令 2026-11-05 08:51 第 5 条）：`stream:true`
+  // ⇒ 本次渲染是「消息还没写完」的中间帧，图围栏一律**保持代码块**（产出零 SVG，
+  // 见 _renderMarkdownInternal 的 allowDiagram）。判据单点在管道里，调用点只报
+  // 事实（自己是否流式中），不做任何围栏语法判断。
+  const stream = !!(opts && opts.stream);
   // Streaming bypass (mem-diagnosis 20260907 D3): per-frame stream renders
   // re-parse the SAME growing text — every intermediate snapshot used to
   // enter this LRU and evict real entries until the hit rate hit 0. Stream
   // renderers pass { cache:false } and go straight to the parser; only
   // finish*/history renders (stable text) populate the cache.
-  if (opts && opts.cache === false) return _renderMarkdownWithMath(text, parseVoice, safe);
+  if (opts && opts.cache === false) return _renderMarkdownWithMath(text, parseVoice, safe, stream);
   // 🔴 safe 是 key 的一部分：同一段文本在两条信任档下产物不同，混键会把
   // 「agent 面可信渲染」与「外部消息安全渲染」互相串味（缓存投毒面）。
-  const key = `${parseVoice ? 1 : 0}${typeof marked !== 'undefined' ? 1 : 0}${typeof katex !== 'undefined' ? 1 : 0}${getLocale()}|${outputBlockEnabled() ? 1 : 0}${mentionListState().gen}.${todoListState().gen}|${safe ? 'S' : 'T'}|${text}`;
+  // stream 同理（同名文本在流式档下不产图围栏占位，终态档产）——混键会让
+  // 图片在流式中途借缓存漏出。
+  // `#` 待办引用代次（待办结构化批 2026-11-05）同理：待办清单变了，已缓存 HTML
+  // 里的 chip 就可能指向改名/删除前的旧名 ⇒ 代次进键。
+  const key = `${parseVoice ? 1 : 0}${typeof marked !== 'undefined' ? 1 : 0}${typeof katex !== 'undefined' ? 1 : 0}${getLocale()}|${outputBlockEnabled() ? 1 : 0}${mentionListState().gen}.${todoListState().gen}|${safe ? 'S' : 'T'}|${stream ? 'S' : 'F'}|${text}`;
   const hit = _mdCache.get(key);
   if (hit !== undefined) {
     _mdCache.delete(key);
@@ -596,7 +660,7 @@ export function renderMarkdownWithMath(text, parseVoice = true, opts) {
   // escapeHtml 纯文本（安全、可读、绝不整行消失，也区别于编辑态显源码）。
   let html;
   try {
-    html = _renderMarkdownWithMath(text, parseVoice, safe);
+    html = _renderMarkdownWithMath(text, parseVoice, safe, stream);
   } catch (e) {
     html = escapeHtml(text);
   }
@@ -607,7 +671,7 @@ export function renderMarkdownWithMath(text, parseVoice = true, opts) {
   return html;
 }
 
-function _renderMarkdownWithMath(text, parseVoice, safe) {
+function _renderMarkdownWithMath(text, parseVoice, safe, stream) {
   if (typeof marked === 'undefined') return escapeHtml(text);
   // safe 档（外部消息面）：渲染器形态不可用 ⇒ **整段回落转义纯文本**（fail
   // closed），绝不落到可信腿上——外部输入不接受「降级但仍可信」。
@@ -683,9 +747,9 @@ function _renderMarkdownWithMath(text, parseVoice, safe) {
       voiceBlocks.push(content.trim());
       return `VOICEBLOCK${voiceBlocks.length - 1}END`;
     });
-    return _renderMarkdownInternal(vp, voiceBlocks, false, outputBlocks, msgTokens, safe, safeRenderer);
+    return _renderMarkdownInternal(vp, voiceBlocks, false, outputBlocks, msgTokens, safe, safeRenderer, !stream);
   }
-  return _renderMarkdownInternal(text, voiceBlocks, false, outputBlocks, msgTokens, safe, safeRenderer);
+  return _renderMarkdownInternal(text, voiceBlocks, false, outputBlocks, msgTokens, safe, safeRenderer, !stream);
 }
 
 // ── <output> user-visible block (output 块语法批 2026-10-31) ────────────────
@@ -856,7 +920,7 @@ function _highlightFencedCode(html) {
 /** Post-marked transform: split the HTML on closed ```human blocks; render each
  *  fence body as a markdown card; wrap every outside chunk that carries text
  *  in a <details> drawer (whitespace-only chunks pass through untouched). */
-function _transformHumanFace(html) {
+function _transformHumanFace(html, humanStream) {
   const parts = [];
   let last = 0;
   let m;
@@ -874,7 +938,7 @@ function _transformHumanFace(html) {
     if (p.kind === 'card') {
       // Inner render with noHuman=true: a nested ```human fence inside a card
       // stays a plain code block (no unbounded recursion).
-      const inner = _renderMarkdownInternal(_decodeHumanEntities(p.code), [], true, undefined, []);
+      const inner = _renderMarkdownInternal(_decodeHumanEntities(p.code), [], true, undefined, [], false, null, humanStream);
       result += '<div class="nf-human-card">' + inner + '</div>';
     } else {
       const text = p.html.replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim();
@@ -909,8 +973,9 @@ function protectMsgTokens(seg, store) {
   });
 }
 
-function _renderMarkdownInternal(protected_, voiceBlocks, noHuman, outputBlocks, msgTokens, safe, safeRenderer) {
+function _renderMarkdownInternal(protected_, voiceBlocks, noHuman, outputBlocks, msgTokens, safe, safeRenderer, allowDiagram) {
   if (!msgTokens) msgTokens = [];
+  if (allowDiagram === undefined) allowDiagram = true;
   // human-face batch (2026-10-30): the ```human filter fence renders ONLY when
   // every fence in the source is closed (streaming gate, 设计稿 §7.5 落地口径
   // 「整段等闭合」). An unclosed fence (mid-stream snapshot) falls through to
@@ -974,8 +1039,22 @@ function _renderMarkdownInternal(protected_, voiceBlocks, noHuman, outputBlocks,
   // reserved-height body keeps layout stable while the library loads/renders,
   // and every face that shares this pipeline (canvas md viewer, wiki docs,
   // chat bubbles, flow cards, report cards) gets the same placeholder.
-  html = html.replace(RE_MERMAID_BLOCK, (m, code) =>
-    `<div class="nf-mermaid" data-mermaid-src="${code}"><div class="nf-mermaid-body"><div class="nf-mermaid-ph"></div></div></div>`);
+  //
+  // rich-render 批（2026-11-05，作者令 08:51 第 5 条 + 08:53 + 08:55）：同一
+  // 条腿现在管三件事 —— ① ```mermaid；② ```svg（白名单重建见 svgFence.js）；
+  // ③ 流式闸：**两个判据同时成立**才出占位
+  //     (a) 本次渲染不是流式快照（调用点报 opts.stream；AI 气泡本身是「整段
+  //         只渲一次」的，见 chat.js appendAiText 的注释 —— 这一条护住的是
+  //         thinking / dock / popup 这些仍然逐帧重渲的面）；
+  //     (b) 该围栏在源码里**已闭合**（_trailingOpenFence）—— 半截围栏仍是代码
+  //         块，围栏一闭合就整块出现一次。
+  //   理由：逐 token 重渲 = 每帧一次 mermaid.render + 布局抖动，且半截语法必然
+  //   报错；两条判据把「产图」钉在「这一版文本已经定稿」上。
+  if (allowDiagram) {
+    const openFence = _trailingOpenFence(protected_);
+    html = _swapFenceBlocks(html, RE_MERMAID_BLOCK, 'mermaid', openFence, 'data-mermaid-src', 'nf-mermaid');
+    html = _swapFenceBlocks(html, RE_SVG_BLOCK, 'svg', openFence, 'data-svg-src', 'nf-svg');
+  }
   // human-face pass (2026-10-30): a CLOSED ```human fence is a human-face card,
   // not code — its markdown body is rendered into `.nf-human-card`; every
   // outside chunk (before / between / after cards) collapses into a
@@ -983,7 +1062,7 @@ function _renderMarkdownInternal(protected_, voiceBlocks, noHuman, outputBlocks,
   // button pass so a card never gets code chrome. Single pipeline ⇒ all five
   // markdown faces (chat bubbles, canvas md viewer, wiki docs, flow cards,
   // report cards) pick it up at once, same as the mermaid pass above.
-  if (humanOn) html = _transformHumanFace(html);
+  if (humanOn) html = _transformHumanFace(html, allowDiagram === false);
   // 代码块语法高亮（文档渲染批 2026-11-01）：图表占位与 human 卡都已出局，
   // 此处剩下的围栏才是真正的代码。跑在复制按钮包裹之前（见 _highlightFencedCode
   // 的位置契约）。
@@ -1010,26 +1089,36 @@ function _renderMarkdownInternal(protected_, voiceBlocks, noHuman, outputBlocks,
     });
   }
   // Restore math blocks as KaTeX
+  // rich-render 批（2026-11-05 作者令 08:53）：KaTeX 从「开屏就装」改为**按需
+  // 装载**（index.html 不再挂 275KB 的 defer script）。katex 缺席时这里产出
+  // 占位 span —— 占位里直接躺着**原始 LaTeX 文本**，所以「装载腿没跑到」的
+  // 形态是回退到源码而不是空白；js/mathRender.js 首次入视口时装库、渲染、
+  // 失败态可见。trust 恒 false（作者令：禁 \href/\htmlClass 一类注入面）。
   mathBlocks.forEach((block, i) => {
     const token = `MATHBLOCK${i}END`;
+    const raw = block.display ? `$$${block.math}$$` : `$${block.math}$`;
+    // 用函数形态替换：替换串里的 `$` 会被 String.replace 当特殊语法吃掉
+    // （`$$` → `$`），LaTeX 源码里 `$` 不罕见，必须绕开这条解释链。
     if (typeof katex !== 'undefined') {
       try {
         const rendered = katex.renderToString(block.math, {
           displayMode: block.display,
           throwOnError: false,
           strict: 'ignore',
-          // safe 档（外部消息面）：关掉 KaTeX 的 trust 扩展——`\href` /
-          // `\htmlClass` / `\includegraphics` 一族在 trust:true 下会产出可点
-          // 链接与原始 HTML 片段，等于把 marked 那层的白名单在数学腿里绕开。
-          trust: !safe
+          // 作者令 2026-11-05 08:53：trust 恒 false —— `\href` / `\htmlClass` /
+          // `\includegraphics` 一族在 trust:true 下会产出可点链接与原始 HTML
+          // 片段，等于把 marked 那层的白名单在数学腿里绕开。
+          trust: false
         });
-        html = html.replace(token, rendered);
+        html = html.replace(token, () => rendered);
       } catch (e) {
-        html = html.replace(token, block.display ? `$$${block.math}$$` : `$${block.math}$`);
+        html = html.replace(token, () => escapeHtml(raw));
       }
-    } else {
-      html = html.replace(token, block.display ? `$$${block.math}$$` : `$${block.math}$`);
+      return;
     }
+    html = html.replace(token, () => '<span class="nf-math" data-math-src="'
+      + _attrEscape(block.math) + '" data-math-display="' + (block.display ? '1' : '0') + '">'
+      + escapeHtml(raw) + '</span>');
   });
   // Restore voice blocks as clickable green spans
   html = html.replace(RE_VOICE_RESTORE, (m, idx) => {
@@ -1123,6 +1212,66 @@ export function appendTextWithMentions(parent, text) {
     parent.appendChild(span);
   }
   if (rest) parent.appendChild(document.createTextNode(rest));
+}
+
+// === User-message face with diagram fences (rich-render 批, 2026-11-05) ===
+//
+// 作者令 2026-11-05 08:51 第 1 条要求「至少覆盖 agent 回复与用户消息两种气泡
+// 面」。用户气泡**整体不走 markdown**（既有裁定：用户输入不得被解释成 markdown，
+// 见 appendTextWithMentions 头注），本批不推翻它——只放行**已闭合的图围栏**：
+//   · ```mermaid / ```svg 围栏 → 与共享管线同形的占位 div（同一批
+//     mermaidRenderer/svgFence 水合，不另起一套渲染）；
+//   · 围栏外的一切仍是纯文本（+ @提及 span），零 markdown 解释；
+//   · 未闭合围栏（流式中途/手误）整段按纯文本落地——内容零丢失，也不产图。
+// 落 DOM 全走 createElement/setAttribute/textContent：无 HTML 串、无注入面。
+
+/**
+ * 用户气泡富文本：已闭合的 mermaid/svg 围栏 → 图占位；其余逐字纯文本。
+ * @param {HTMLElement} parent
+ * @param {string} text
+ */
+export function appendUserTextWithFences(parent, text) {
+  const src = String(text || '');
+  // 顺序化切分：一次线性扫描，prose 与围栏交替入列。
+  /** @type {Array<{kind: 'text'|'mermaid'|'svg', text: string}>} */
+  const parts = [];
+  let prose = '';
+  const flush = () => { if (prose) { parts.push({ kind: 'text', text: prose }); prose = ''; } };
+  if (src.indexOf('```') !== -1) {
+    const lines = src.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      const open = /^```(mermaid|svg)[ \t]*$/.exec(lines[i]);
+      if (!open) { prose += (prose ? '\n' : '') + lines[i]; continue; }
+      let j = i + 1;
+      while (j < lines.length && !/^```[ \t]*$/.test(lines[j])) j++;
+      if (j >= lines.length) {
+        // 未闭合：其余全部按纯文本（内容零丢失、不产图）
+        prose += (prose ? '\n' : '') + lines.slice(i).join('\n');
+        i = lines.length;
+        break;
+      }
+      flush();
+      parts.push({ kind: open[1] === 'svg' ? 'svg' : 'mermaid', text: lines.slice(i + 1, j).join('\n') });
+      i = j;
+    }
+  } else {
+    prose = src;
+  }
+  flush();
+  for (const part of parts) {
+    if (part.kind === 'text') { appendTextWithMentions(parent, part.text); continue; }
+    const cls = part.kind === 'mermaid' ? 'nf-mermaid' : 'nf-svg';
+    const box = document.createElement('div');
+    box.className = cls;
+    box.setAttribute(part.kind === 'mermaid' ? 'data-mermaid-src' : 'data-svg-src', part.text);
+    const body = document.createElement('div');
+    body.className = cls + '-body';
+    const ph = document.createElement('div');
+    ph.className = cls + '-ph';
+    body.appendChild(ph);
+    box.appendChild(body);
+    parent.appendChild(box);
+  }
 }
 
 // === One-shot DOM enhancement after the shared list first arrives ===

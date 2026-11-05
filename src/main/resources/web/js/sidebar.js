@@ -1486,7 +1486,7 @@ export function renderSettings() {
         <div style="margin-top:var(--ds-space-1);font-size:var(--mfs-min, 12px);color:var(--color-text-secondary)">${t('settings.connection')}: ${state.connected
           ? statusIcon('circle-check', 14, 'st-ok') + ' <span style="color:var(--status-word)">' + t('settings.connected') + '</span>'
           : statusIcon('wifi-off', 14, 'st-err') + ' <span style="color:var(--status-word)">' + t('settings.disconnected') + '</span>'}</div>
-        <div style="margin-top:var(--ds-space-glass-x);display:flex;align-items:center;gap:var(--ds-space-2)">
+        <div style="margin-top:var(--ds-space-stack-gap);display:flex;align-items:center;gap:var(--ds-space-2)">
           <button class="cfg-btn cfg-btn-sm" id="btn-restart-gateway">${t('settings.restart')}</button>
           <span id="restart-status" role="status" style="font-size:var(--mfs-min, 12px);line-height:18px;min-height:18px;flex:1;min-width:0;color:var(--color-text-muted)"></span>
         </div>
@@ -2737,7 +2737,7 @@ export function resetChatForActiveSession() {
       row.className = 'row ai';
       pv.stream.currentAiBubble = document.createElement('div');
       pv.stream.currentAiBubble.className = 'bubble ai';
-      pv.stream.currentAiBubble.innerHTML = renderMarkdownWithMath(pv.stream.aiText, true, { cache: !isStreaming }) + (isStreaming ? '<span class="cursor"></span>' : '');
+      pv.stream.currentAiBubble.innerHTML = renderMarkdownWithMath(pv.stream.aiText, true, { cache: !isStreaming, stream: isStreaming }) + (isStreaming ? '<span class="cursor"></span>' : '');
       row.appendChild(pv.stream.currentAiBubble);
       chat.appendChild(row);
       if (!isStreaming) {
