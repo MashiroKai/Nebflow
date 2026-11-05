@@ -69,25 +69,25 @@ const FLEET_CSS = `
   pointer-events: none;
 }
 .fleet-head {
-  padding: 14px var(--ds-space-4) var(--ds-space-glass-x); border-bottom: 1px solid var(--color-frame-border-light);
+  padding: 14px var(--ds-space-4) var(--ds-space-block-y); border-bottom: 1px solid var(--color-frame-border-light);
   display: flex; align-items: center; gap: var(--ds-space-2);
 }
-.fleet-title { font-size: 14px; font-weight: 600; color: var(--color-frame-text); flex: 1; }
+.fleet-title { font-size: var(--ds-fs-subtitle); font-weight: 600; color: var(--color-frame-text); flex: 1; }
 .fleet-close {
   background: none; border: none; cursor: pointer; padding: var(--ds-space-1); border-radius: var(--ds-radius-chip);
   color: var(--color-frame-text-muted); display: flex; align-items: center;
 }
 .fleet-close:hover { background: var(--glass-control-bg-hover); color: var(--color-frame-text); }
 .fleet-body { padding: var(--ds-space-3) var(--ds-space-4); overflow-y: auto; flex: 1; }
-.fleet-sub { font-size: var(--ds-fs-hint); color: var(--color-frame-text-muted); margin-bottom: var(--ds-space-glass-x); line-height: 1.5; }
+.fleet-sub { font-size: var(--ds-fs-hint); color: var(--color-frame-text-muted); margin-bottom: var(--ds-space-stack-gap); line-height: 1.5; }
 .fleet-blocking {
-  font-size: var(--ds-fs-hint); color: var(--color-frame-text); padding: var(--ds-space-2) var(--ds-space-glass-x); margin-bottom: var(--ds-space-glass-x);
+  font-size: var(--ds-fs-hint); color: var(--color-frame-text); padding: var(--ds-space-2) var(--ds-space-inline-x); margin-bottom: var(--ds-space-stack-gap);
   border-radius: var(--ds-radius-button); background: var(--glass-control-bg);
   border: 1px solid var(--glass-control-border); line-height: 1.5;
 }
 .fleet-row {
   border: 1px solid var(--color-frame-border-light); border-radius: var(--ds-radius-button);
-  padding: var(--ds-space-2) var(--ds-space-glass-x); margin-bottom: var(--ds-space-2); cursor: pointer;
+  padding: var(--ds-space-2) var(--ds-space-inline-x); margin-bottom: var(--ds-space-2); cursor: pointer;
 }
 .fleet-row:hover { background: var(--glass-control-bg-hover); }
 .fleet-row-main { display: flex; align-items: center; gap: var(--ds-space-2); font-size: var(--ds-fs-body); }
@@ -102,11 +102,11 @@ const FLEET_CSS = `
 .fleet-bar { height: 3px; border-radius: var(--ds-radius-thin); background: var(--glass-control-bg); margin-top: var(--ds-space-1h); overflow: hidden; }
 .fleet-bar > i { display: block; height: 100%; background: var(--color-frame-text-dim); width: 0; transition: width 0.3s; }
 .fleet-badge {
-  font-size: 10px; padding: 1px var(--ds-space-1h); border-radius: var(--ds-radius-chip); flex-shrink: 0;
+  font-size: var(--ds-fs-meta); padding: var(--ds-space-hair) var(--ds-space-1h); border-radius: var(--ds-radius-chip); flex-shrink: 0;
   border: 1px solid var(--glass-control-border); color: var(--color-frame-text-muted);
 }
-.fleet-summary { font-size: var(--ds-fs-hint); color: var(--color-frame-text); line-height: 1.6; margin: var(--ds-space-glass-x) 0 var(--ds-space-1); }
-.fleet-foot { padding: var(--ds-space-glass-x) var(--ds-space-4) 14px; display: flex; gap: var(--ds-space-2); justify-content: flex-end; }
+.fleet-summary { font-size: var(--ds-fs-hint); color: var(--color-frame-text); line-height: 1.6; margin: var(--ds-space-stack-gap) 0 var(--ds-space-1); }
+.fleet-foot { padding: var(--ds-space-block-y) var(--ds-space-4) 14px; display: flex; gap: var(--ds-space-2); justify-content: flex-end; }
 .fleet-btn {
   font-size: var(--ds-fs-hint); padding: var(--ds-space-1h) var(--ds-space-3); border-radius: var(--ds-radius-button); cursor: pointer;
   border: 1px solid var(--glass-control-border); background: var(--glass-control-bg);

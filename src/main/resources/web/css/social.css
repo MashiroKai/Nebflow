@@ -71,7 +71,7 @@
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: var(--ds-space-4);
   min-width: 0;
 }
 
@@ -98,11 +98,11 @@
 /* weixin-scanbind (2026-10-03, 极简 pass): the rhythm loosens one step — the
    list breathes at 10px, the cards carry 14px air — all values stay in the
    existing token/length family (no new colour, radius or breakpoint). */
-.social-card-list { display: flex; flex-direction: column; gap: var(--ds-space-glass-x); min-width: 0; }
+.social-card-list { display: flex; flex-direction: column; gap: var(--ds-space-inline-gap); min-width: 0; }
 .social-card {
   display: flex;
   flex-direction: column;
-  gap: var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
   padding: 14px var(--ds-space-4);
   border-radius: var(--ds-radius-card-md);
   border: 1px solid var(--glass-border);
@@ -166,7 +166,7 @@
 }
 /* 危险 pill 词前图标（S13）：11px，与词距 3px，红由图标、字归中性。 */
 .social-status-pill[data-status="configInvalid"] .st-ic,
-.social-status-pill[data-status="failed"] .st-ic { width: 11px; height: 11px; margin-right: 3px; }
+.social-status-pill[data-status="failed"] .st-ic { width: 11px; height: 11px; margin-right: var(--ds-space-1); }
 
 .social-card-desc {
   font-size: var(--ds-fs-meta);
@@ -191,7 +191,7 @@
   min-width: 0;
   box-sizing: border-box;
   padding: var(--ds-space-1h) var(--ds-space-2);
-  font: 400 12px -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 400 var(--ds-fs-hint) -apple-system, BlinkMacSystemFont, sans-serif;
   border-radius: var(--ds-radius-input);
   border: 1px solid var(--glass-border);
   background: var(--glass-etched-bg);
@@ -202,7 +202,7 @@
   border-color: rgb(var(--sapphire) / 0.4);
   box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.12);
 }
-.social-secret-state { font-size: 10px; color: var(--color-frame-text-dim); }
+.social-secret-state { font-size: var(--ds-fs-meta); color: var(--color-frame-text-dim); }
 
 /* Wrong configuration hint (W9) — ui-status-redesign：11px 通知句转中性字，
    语义红由句首 triangle-alert 图标承载（.social-card-hint .st-ic）。 */
@@ -214,7 +214,7 @@
 }
 .social-card-hint .st-ic { width: 12px; height: 12px; margin-right: var(--ds-space-1); vertical-align: -2px; }
 .social-card-actions { display: flex; align-items: center; gap: var(--ds-space-2); flex-wrap: wrap; }
-.social-save-state { font-size: 10px; color: var(--color-frame-text-muted); }
+.social-save-state { font-size: var(--ds-fs-meta); color: var(--color-frame-text-muted); }
 
 /* ── feishu-panel: two-face scanBind card ───────────────────────────────────
    Live-app block (C1), archive (C5), bindings + default session (C3/C4), and
@@ -225,7 +225,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--ds-space-1);
-  padding: var(--ds-space-2) var(--ds-space-glass-x);
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
   border: 1px solid var(--glass-border);
   border-radius: var(--ds-radius-input);
   background: var(--glass-etched-bg);
@@ -247,7 +247,7 @@
    危险文字项字转常规色，危险语义由行首 unplug 图标（红）承载；hover 时刻整键
    （字＋图标）转红 = 交互红保留（铁律三）。 */
 .social-btn-danger { color: var(--color-frame-text); }
-.social-btn-danger .st-ic { color: var(--status-error-icon); margin-right: 5px; }
+.social-btn-danger .st-ic { color: var(--status-error-icon); margin-right: var(--ds-space-1h); }
 .social-btn-danger:hover, .social-btn-danger:hover .st-ic { color: var(--btn-danger-ink); }
 /* 🔴 socpanel-min wave-2: `.social-archive-hint` REMOVED — 0 emitters. The
    hint's permanent line went away and its copy (social.feishu.archive.hint)
@@ -264,7 +264,7 @@
 
 /* ── Remote-access section (令②): an independent section, NOT a channel card.
    This batch renders it inert on purpose — no link, no QR, no address. ──── */
-.social-remote-card { gap: var(--ds-space-glass-x); }
+.social-remote-card { gap: var(--ds-space-inline-gap); }
 .social-remote-note {
   font-size: var(--ds-fs-meta);
   line-height: 1.5;
