@@ -261,8 +261,11 @@
   box-shadow:
     inset 0 1px 0 0 rgba(255, 255, 255, 0.15),
     0 4px 16px rgba(0, 0, 0, 0.05);
-  /* 过渡起源点 = 胶囊中心（浮层**顶**缘中点 − 8px 呼吸缝）—— JS 的 scale 弹簧
-     与 CSS 共用这个原点 ⇒ 形变「从胶囊长出来」。 */
+  /* 展开动画（件5 2026-11-05）：**几何驱动**，只由 JS 逐帧写 inline height
+     （起点 = 胶囊高、终点 = 内容自然高）+ 两条顶圆角；此处不留 transform 形变
+     通道 ⇒ 载体的 rect.left / rect.top 全程不动，只有底缘向下长（作者原话
+     「要在同一行展开。有一种胶囊变大的感觉。」）。`transform: translateX(-50%)`
+     只承担「与胶囊同一水平中线」的静态定位，动画期间不变。 */
   transform-origin: 50% calc(0% - 8px);
   overflow: hidden;
 }
@@ -286,6 +289,10 @@
 .tfl-panel {
   display: flex;
   flex-direction: column;
+  /* 件5（2026-11-05）：展开几何由载体 `.tfl-card` 的 height 逐帧驱动，载体在动画
+     期间被裁到 < 内容高。本件**不参与收缩**（flex-shrink 0）——否则高度一缩，面板
+     会跟着被 flex 压扁，行/文字逐帧位移（件5 A3 判据要的是「行零位移」）。 */
+  flex: 0 0 auto;
   min-height: 0;
   opacity: 0;
   pointer-events: none;

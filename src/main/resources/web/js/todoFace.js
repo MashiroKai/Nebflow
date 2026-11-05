@@ -103,6 +103,10 @@ function springAnimate(channels, { response, damping }, onDone) {
 const SPRING = {
   open:   { response: 0.42, damping: 0.8 },
   close:  { response: 0.45, damping: 1.0 },
+  // 展开几何生长（件5 2026-11-05）：**临界阻尼**（damping 1.0）—— 高度通道全程
+  // 单调不越过目标值。展开动画从「满尺寸面板 scale 缩放」改成「载体自身长高」后，
+  // 过阻尼/欠阻尼的越顶回弹会读成「弹了一下」，与作者要的「胶囊变大」不符。
+  grow:   { response: 0.34, damping: 1.0 },
   pop:    { response: 0.45, damping: 0.45 },
   row:    { response: 0.3,  damping: 0.8 },
   check:  { response: 0.2,  damping: 0.6 },
@@ -1212,26 +1216,39 @@ class TodoFace {
     else this.collapse();
   }
 
-  // ── 展开 / 收起（重做批：面板 = 胶囊上方的流内块，自胶囊位置向上生长）──────
+  // ── 展开 / 收起（件5 2026-11-05：**同一行内胶囊变大**）────────────────────
   //
-  // 形变语言保留（scale + 原点），几何从「卡容器高度弹簧」换成「面板块 + 原点
-  // 在底缘中点」：
-  //   · 面板开态 display:flex 排在胶囊之前（CSS），#input-area bottom 锚定 ⇒
-  //     高度只向上长、输入框位置不动、聊天让位自动跟随（main.js 读 offsetHeight）。
-  //   · 过渡起源点 = `transform-origin: 50% calc(0% - 8px)`（面板**顶**缘中点 −
-  //     8px 呼吸缝 = 胶囊正下方；2026-11-03 10:11 ① 挪位后方向翻转，原 50% 100%
-  //     是「面板在输入框上方、向上下长」时代的底缘原点）
-  //     + scale 0.94→1 / 高度弹簧取消（面板高度由内容决定，弹簧只做 scale）。
+  // 作者原话（2026-11-05 ui-seven 件5）：「然后待办的展开动画，要在同一行展开。
+  // 有一种胶囊变大的感觉。」
+  //
+  // 几何口径（本块是展开几何的单源）：
+  //   · 载体 = `.tfl-card` 本身，**真几何驱动**：动画只写 height（+ 顶圆角），
+  //     不写 transform ⇒ rect.left / rect.top 从点击到终态恒定不动，只有**底缘**
+  //     向下走。旧实现（2026-11-03 以前）把满尺寸面板 scale 到胶囊形状再放回去：
+  //     载体 rect.left 会在动画中横移半个宽差（1440 桌面实测 174.41px / 375 手机
+  //     135.9px），读成「横跳」——件5 判据 A1 直接禁掉这条路径。
+  //   · 起点高 = 胶囊高、起点顶圆角 = 胶囊半径 ⇒ 首帧是**同一枚胶囊的横截面**
+  //     （420×26 的全圆角胶囊），随后在原点不动的前提下向下长成面板：读作这一枚
+  //     胶囊自身变大，而不是「插一个面板把邻居挤走再动画」。
+  //   · 内容不缩放、不位移：`.tfl-panel` 保自然高（flex:0 0 auto），载体 overflow
+  //     hidden 按高度裁切 ⇒ 行/文字逐帧零位移（件5 判据 A3）。
+  //   · 胶囊本体**不消失**（件5 判据 A4）：不再置 visibility:hidden，改以
+  //     `.tfl-mount.is-open` 的 0.55 压暗态留在原地当「原点」与收起入口（CSS 本就有
+  //     这条规则，此前被 visibility:hidden 掩盖成死规则）；宽度用 inline min-width
+  //     钉在展开前的宽（计数节点搬去面板头后胶囊只剩圆点，否则会缩成小点、left 横移）。
+  //   · prefers-reduced-motion：整段直切（springAnimate 首帧即落终值），无中间帧。
 
   expand() {
     if (this.expanded || this.destroyed) return;
-    // L1 起点 = **展开前的胶囊盒**（先量后翻态，隐藏后不可测）。
+    // L1 起点 = **展开前的胶囊盒**（先量后翻态，搬家后不可测）。
     const capRect = this.capsuleRectNow();
     this.expanded = true;
     this.card.dataset.state = 'open';
     this.mount.classList.add('is-open');
     this.capsule.setAttribute('aria-expanded', 'true');
     if (this.cancelMorph) this.cancelMorph();
+    // 胶囊盒钉住（宽度不再随计数节点搬走而变 ⇒ 原点不动；收起时清除）。
+    if (capRect) this.capsule.style.minWidth = `${capRect.width.toFixed(2)}px`;
     // L2 计数节点先左移成面板标题（同一个 DOM 节点搬家，不是两处文案）。
     this.moveCountInto(true);
     this.panel.classList.add('tfl-panel-in');
@@ -1240,13 +1257,11 @@ class TodoFace {
       this.panel.classList.add('tfl-panel-open');
       return;
     }
-    // 胶囊让位：形态本体由面板接管（visibility 而非 display ⇒ 收起时仍可量）。
-    this.capsule.style.visibility = 'hidden';
     this.panel.classList.add('tfl-panel-open');
-    this.morphFrom(capRect, SPRING.open, () => {
-      this.card.style.transform = '';
-      this.card.style.borderRadius = '';
-      this.card.style.transformOrigin = '';
+    this.growOpen(capRect, SPRING.grow, () => {
+      this.card.style.height = '';
+      this.card.style.borderTopLeftRadius = '';
+      this.card.style.borderTopRightRadius = '';
       this.panel.classList.remove('tfl-panel-in');
       this.measurePanel();
       this.refocusList(); // 列表持有焦点，↑↓/Return 立即可用（复刻 onAppear）
@@ -1254,7 +1269,7 @@ class TodoFace {
     });
   }
 
-  /** 胶囊当帧几何（收起态可见；展开态 visibility:hidden 仍可量 ⇒ 可复用）。 */
+  /** 胶囊当帧几何（收起态可见；展开态原地不动、仍可量 ⇒ 可复用）。 */
   capsuleRectNow() {
     if (this.mobile) return null;
     const r = this.capsule.getBoundingClientRect();
@@ -1263,71 +1278,63 @@ class TodoFace {
   }
 
   /**
-   * L1 生长形变：面板**从胶囊矩形长成自己的矩形** —— 同一个 .tfl-card 元素在
-   * 变形（不是「关胶囊 + 开面板」两节点交叉淡入）。五个通道（中心位移 tx/ty、
-   * 双轴缩放 sx/sy、圆角 r）逐帧写一条 transform + border-radius：
-   *   起点 = 精确的胶囊盒（含胶囊端圆角），终点 = identity（= 面板自身盒）。
-   * 锚点用 50% 50% 而不是 CSS 的 50% calc(0% − 8px)：几何映射要的是「面板盒 ↔
-   * 胶囊盒」的精确中心对应，顶缘原点会把起点算歪（胶囊不在面板顶缘正中）。
+   * L1 生长：载体在胶囊下缘**原位长高**（真几何，两个通道 = 高度 / 顶圆角）。
+   *   起点高 = 胶囊高（同一枚胶囊的横截面）、起点顶圆角 = 胶囊半径；
+   *   终点 = 载体自然高（内容真高，先量后写）。
+   * 通道写面只有 inline height + 两条顶圆角 —— **不写 transform**，所以载体
+   * rect.left / rect.top 全程恒定（件5 A1），底缘只向下（A1 尾句）。
+   * 高度通道做单调夹紧（min 到目标、max 到上一帧）：临界阻尼 + 夹紧 ⇒ 序列
+   * 单调不减，不会出现越顶回弹（件5 A2 的「单调不减」判据）。
    */
-  morphFrom(capRect, spring, done) {
-    const pan = this.card.getBoundingClientRect();
-    if (!capRect || REDUCED_MOTION || !pan.width || !pan.height) {
-      // L5 降级：整条形变退役，直接换态（状态读数不变）
-      this.card.style.transform = '';
+  growOpen(capRect, spring, done) {
+    const card = this.card;
+    card.style.height = '';                 // 先取自然高（此刻 height 为 auto）
+    const H = card.offsetHeight;
+    const h0 = capRect ? capRect.height : 0;
+    if (REDUCED_MOTION || !H || H <= h0 + 1) {
+      card.style.height = '';
       if (done) done();
       return;
     }
-    const sx = capRect.width / pan.width;
-    const sy = capRect.height / pan.height;
-    const tx = (capRect.left + capRect.width / 2) - (pan.left + pan.width / 2);
-    const ty = (capRect.top + capRect.height / 2) - (pan.top + pan.height / 2);
-    const r0 = Math.min(capRect.height / 2, 14);   // 胶囊端圆角
-    const r1 = 24;                                 // 面板顶圆角（.tfl-card）
-    const m = { x: tx, y: ty, a: sx, b: sy, r: r0 };
+    const r0 = Math.min(h0 / 2, 13);        // 胶囊半径（26 高 ⇒ 13）
+    const r1 = 24;                          // 面板顶圆角（.tfl-card 静态值）
+    const m = { h: h0, r: r0 };
     const write = () => {
-      this.card.style.transform =
-        `translateX(-50%) translate(${m.x.toFixed(2)}px, ${m.y.toFixed(2)}px) scale(${m.a.toFixed(4)}, ${m.b.toFixed(4)})`;
-      this.card.style.borderRadius = `${m.r.toFixed(1)}px`;
+      card.style.height = `${m.h.toFixed(2)}px`;
+      card.style.borderTopLeftRadius = `${m.r.toFixed(1)}px`;
+      card.style.borderTopRightRadius = `${m.r.toFixed(1)}px`;
     };
-    this.card.style.transformOrigin = '50% 50%';
     write();
     this.cancelMorph = springAnimate([
-      { from: tx, to: 0, set: (v) => { m.x = v; write(); } },
-      { from: ty, to: 0, set: (v) => { m.y = v; write(); } },
-      { from: sx, to: 1, set: (v) => { m.a = v; write(); } },
-      { from: sy, to: 1, set: (v) => { m.b = v; write(); } },
+      { from: h0, to: H, set: (v) => { m.h = Math.max(m.h, Math.min(v, H)); write(); } },
       { from: r0, to: r1, set: (v) => { m.r = v; write(); } },
     ], spring, done);
   }
 
-  /** L4 收起形变：面板矩形原路长回胶囊（同一元素、同一路径、几何连续）。 */
-  morphTo(capRect, spring, done) {
-    const pan = this.card.getBoundingClientRect();
-    if (!capRect || REDUCED_MOTION || !pan.width || !pan.height) {
-      this.card.style.transform = '';
+  /** L4 收起：同一条几何路径反向（高度从自然高收缩回胶囊高，圆角回到胶囊半径）。
+   *  同一元素、同一原点 —— 收起的末帧就是胶囊的横截面，随后 data-state 翻回
+   *  capsule（display:none）与计数节点回胶囊。 */
+  growClose(capRect, spring, done) {
+    const card = this.card;
+    const H = card.offsetHeight;
+    const h0 = capRect ? capRect.height : 0;
+    if (REDUCED_MOTION || !H) {
+      card.style.height = '';
       if (done) done();
       return;
     }
-    const sx = capRect.width / pan.width;
-    const sy = capRect.height / pan.height;
-    const tx = (capRect.left + capRect.width / 2) - (pan.left + pan.width / 2);
-    const ty = (capRect.top + capRect.height / 2) - (pan.top + pan.height / 2);
-    const m = { x: 0, y: 0, a: 1, b: 1, r: 24 };
-    const r1 = Math.min(capRect.height / 2, 14);
+    const r0 = 24;
+    const r1 = Math.min(h0 / 2, 13);
+    const m = { h: H, r: r0 };
     const write = () => {
-      this.card.style.transform =
-        `translateX(-50%) translate(${m.x.toFixed(2)}px, ${m.y.toFixed(2)}px) scale(${m.a.toFixed(4)}, ${m.b.toFixed(4)})`;
-      this.card.style.borderRadius = `${m.r.toFixed(1)}px`;
+      card.style.height = `${m.h.toFixed(2)}px`;
+      card.style.borderTopLeftRadius = `${m.r.toFixed(1)}px`;
+      card.style.borderTopRightRadius = `${m.r.toFixed(1)}px`;
     };
-    this.card.style.transformOrigin = '50% 50%';
     write();
     this.cancelMorph = springAnimate([
-      { from: 0, to: tx, set: (v) => { m.x = v; write(); } },
-      { from: 0, to: ty, set: (v) => { m.y = v; write(); } },
-      { from: 1, to: sx, set: (v) => { m.a = v; write(); } },
-      { from: 1, to: sy, set: (v) => { m.b = v; write(); } },
-      { from: 24, to: r1, set: (v) => { m.r = v; write(); } },
+      { from: H, to: h0, set: (v) => { m.h = Math.min(m.h, Math.max(v, h0)); write(); } },
+      { from: r0, to: r1, set: (v) => { m.r = v; write(); } },
     ], spring, done);
   }
 
@@ -1382,17 +1389,17 @@ class TodoFace {
     // 收起动画期间卡容器保持 display:flex（data-state 在动画落地后才翻），
     // 否则一翻类就 display:none、无退场可看，胶囊侧也观察不到「从面板收成胶囊」。
     const done = () => {
-      this.card.style.transform = '';
-      this.card.style.borderRadius = '';
-      this.card.style.transformOrigin = '';
+      this.card.style.height = '';
+      this.card.style.borderTopLeftRadius = '';
+      this.card.style.borderTopRightRadius = '';
       this.card.dataset.state = 'capsule';
       this.panel.classList.remove('tfl-panel-in', 'tfl-panel-out');
       this.moveCountInto(false); // 计数节点回胶囊（同一节点，末帧位置≈胶囊位）
-      this.capsule.style.visibility = '';
+      this.capsule.style.minWidth = ''; // 胶囊盒归还内容宽（两态等宽口径不变）
       this.refocusList();
     };
     if (REDUCED_MOTION) { done(); return; }
-    this.morphTo(capRect, SPRING.close, done);
+    this.growClose(capRect, SPRING.close, done);
   }
 
   /** 面板/胶囊实测（取证与回归断言用；几何已由 CSS 决定，此处只读不写）。 */
