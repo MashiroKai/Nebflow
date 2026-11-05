@@ -1,6 +1,6 @@
-main@127dd81a7 (final rebase target)
-HEAD=260f6f515  behind-main=0
+main@b983727e2 (final rebase target)
+HEAD=d29ec0bbc  behind-main=0
 
-Gates/HIG/spec readings were taken on the same web/scripts/tests tree:
-`git diff --stat 80ef991aa 127dd81a7 -- src/main/resources/web scripts tests` = EMPTY
-(i.e. main 80ef991aa -> 127dd81a7 touched only reports-evidence/).
+Gate readings taken at main@4d07c83de; 4d07c83de -> b983727e2 touched ops/ only
+(`git diff --stat 4d07c83de b983727e2 -- src/main/resources/web tests scripts Makefile` = EMPTY or ops-only).
+Inherited red (main side, not this batch): js/ws.js [baseline-color] 10 -> 12 (from main commit 63c309fc9, baseline not updated).
