@@ -22,6 +22,17 @@ import { ensureMergeQueueStatus, mergeQueueEntryFor } from '../mergeQueueStatus.
 // 「挂在谁下面」标注读上层 delegate 名字（bgSourceChain 单点解析；解析不到回退
 // 既有类型词）。
 import { upperChainOf, chainNameOf, chainLabel } from '../bgSourceChain.js';
+// 冻结态误报批（2026-11-05）：冻结行的呈现分类（自动恢复中 vs 需人工）单点判定。
+// 纯函数叶子模块，零 DOM 零 import（scripts/check-freeze-state.mjs 直接跑它）。
+import {
+  FREEZE_KIND,
+  isFrozenFamily,
+  freezeKindOf,
+  freezeReasonWire,
+  showsRecoveryAction,
+  freezeBadgeKey,
+  freezeReasonLabelKey,
+} from '../freezeState.js';
 
 // --- Multi-agent events ---
 // Background sub-agent activity shows a header indicator (like Bash background tasks).
@@ -184,7 +195,11 @@ function bgRowState(info) {
   // 错误冻结批（2026-11-01）：**错误冻结**优先于 waiting/idle——冻结 = 就地停住
   // 等唤醒，落成「候合并/待命/空闲」会误导成自愿停靠语义。判据 = info.frozen
   // （delegateFrozen 帧 / 快照 frozenSince 复原）。
-  if (info.frozen) return 'frozen';
+  // 冻结态误报批（2026-11-05）：判据补 `status === 'Frozen'`——actor 级冻结族
+  // （循环检测 L2 / 错误退避 / 时间表）只写 registry 状态，盘上没有 delegate 冻结
+  // 槽，刷新后 info.frozen 不在场；只看 frozen 会把冻结行画成「进行中」（作者报障
+  // 时说「它显示已冻结」与面板/工具面读数打架的根因之一）。
+  if (isFrozenFamily(info)) return 'frozen';
   if (info.waiting || info.status === 'Waiting') return 'waiting';
   if (isFailedSnapshotStatus(info.status)) return 'error';
   const st = info.status || '';
@@ -927,9 +942,15 @@ function bgTaskRowHtml(id, info, opts = {}) {
   const chainContinued = !!(opts.chainContinued && (rawState === 'done' || rawState === 'error'));
   const rowState = chainContinued ? 'active' : rawState; // 展示态：点形/词档按活链走
   const terminal = !chainContinued && (rawState === 'done' || rawState === 'error');
+  // 冻结态误报批（2026-11-05）：冻结族的**行首状态词按呈现分类给**——自动恢复族
+  // （时间表/退避/探测）不写「已冻结」，只在需要人时写；状态点同款分色（自动恢复族
+  // 用既有的 waiting 点，需人介入保持 frozen 点）。
+  const freezeKind = rowState === 'frozen' ? freezeKindOf(info) : '';
   const statusLabel = chainContinued
     ? t('subagents.chainRunning')
-    : t('subagents.status.' + (rowState === 'active' ? 'running' : rowState));
+    : rowState === 'frozen'
+      ? t(freezeBadgeKey(freezeKind))
+      : t('subagents.status.' + (rowState === 'active' ? 'running' : rowState));
   const chainTip = chainContinued
     ? t('subagents.chainRunningTip', { n: Number(opts.chainCount) || 0 })
     : '';
@@ -940,6 +961,7 @@ function bgTaskRowHtml(id, info, opts = {}) {
       error: 'bg-status-error', frozen: 'bg-status-frozen', done: 'bg-status-done',
       waiting: 'bg-status-waiting',
     }[rowState];
+  const dotClassFinal = freezeKind && freezeKind !== FREEZE_KIND.manual ? 'bg-status-waiting' : dotClass;
   // 修订批九点②补漏：快照 kind（AgentKind.SubTask）同走显示词归一（数据面不动）。
   // Flow 会话可见性批（2026-11-01）：dispatcher-*/node-* 行 kind 词走 bgFlowKindWord
   // （分发器/节点——引擎协议 kind 一律 "Flow" 无区分度）；其余前缀走既有链。
@@ -1104,12 +1126,35 @@ function bgTaskRowHtml(id, info, opts = {}) {
   //     actor（同 session 续跑）/ 不 live 腿同 id 复活；绝不新建会话。
   // 数据源 = info.frozen / frozenReason / frozenReasonLabel / frozenDetail /
   // dormantHours（delegateFrozen / delegateFrozenDormant 帧与快照 frozenSince）。
+  //
+  // 冻结态误报批（2026-11-05）：上面这一整段只对**需人介入**的冻结成立。分类
+  // 判定走 freezeState.js（后端 FreezeDisplay 的呈现面）：
+  //   · 自动恢复族（时间表出窗 / LLM/网络退避 / 供应商探测 / 断点续跑）⇒ 徽标 =
+  //     「自动恢复中 · 原因」（无「已冻结」措辞）、**不给按钮**（引擎正在自己做的事
+  //     不该教用户去做）；tooltip 说明「到期自动续跑，无需操作」；
+  //   · 需人介入族（循环检测 L2 / delegate 错误冻结 / 已升级到人）⇒ 既有「已冻结 ·
+  //     原因」徽标 + 「唤醒」按钮 + 三个真实出口的 tooltip。
   const frozenPart = (rowState === 'frozen')
     ? (() => {
-      const why = info.frozenReasonLabel || '';
+      const kind = freezeKindOf(info);
+      const whyKey = freezeReasonLabelKey(freezeReasonWire(info));
+      const why = info.frozenReasonLabel || (whyKey ? t(whyKey) : '');
       const detail = String(info.frozenDetail || '');
       const hours = Number(info.dormantHours) || 0;
       const tipLines = [];
+      if (!showsRecoveryAction(kind)) {
+        // 自动恢复族：说清「在等什么 + 会不会自己好」。
+        tipLines.push(t(kind === FREEZE_KIND.window ? 'subagents.freezeWindowTip' : 'subagents.freezeAutoTip'));
+        if (why) tipLines.push(t('subagents.frozenReason', { reason: why }));
+        if (detail) tipLines.push(detail);
+        return '<span class="bg-task-waiting" role="status" title="'
+          + escapeHtml(tipLines.join('\n')) + '">'
+          + statusIcon('snowflake', 11, 'st-warn')
+          + escapeHtml(why ? t('subagents.freezeBadgeWithReason', {
+            word: t(freezeBadgeKey(kind)), reason: why,
+          }) : t(freezeBadgeKey(kind)))
+          + '</span>';
+      }
       tipLines.push(t('subagents.frozenTip'));
       if (why) tipLines.push(t('subagents.frozenReason', { reason: why }));
       if (detail) tipLines.push(detail);
@@ -1178,7 +1223,7 @@ function bgTaskRowHtml(id, info, opts = {}) {
     : '';
   return '<div class="bg-task-row' + (rawState === 'done' && !chainContinued ? ' done' : '') + levelCls + '"' + levelAttr + ' role="listitem" tabindex="0" ' + clickAttr + '>' +
     caretPart +
-    '<span class="bg-task-status ' + dotClass + '" aria-hidden="true"></span>' +
+    '<span class="bg-task-status ' + dotClassFinal + '" aria-hidden="true"></span>' +
     '<div class="bg-task-info">' +
       // Single-line row (2026-09-27 badge-inline batch, author order: task
       // badge joins the uptime line): state / kind / project / name / badge
