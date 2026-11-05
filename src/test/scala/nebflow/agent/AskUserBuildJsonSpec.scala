@@ -252,4 +252,41 @@ class AskUserBuildJsonSpec extends FunSuite:
     )
   }
 
+  // ---- 归属命名批：ownerName 的解析单点（AgentActor.askOwnerNameOf）----
+
+  /** 假注册表：`delegate-*` 会话才有名字（与 DelegateRegistry.ownerNameOf 同判据面）。 */
+  private val fakeRegistry: Map[String, String] = Map(
+    "delegate-general-1a2b3c4d" -> "ask-card-naming"
+  )
+  private def fakeLookup(sid: Option[String]): Option[String] =
+    sid.flatMap(fakeRegistry.get)
+
+  test("ON4: delegate 会话本人提问 ⇒ 取自己的批次短名") {
+    assertEquals(
+      AgentActor.askOwnerNameOf(Some("delegate-general-1a2b3c4d"), "delegate-general-1a2b3c4d", fakeLookup),
+      Some("ask-card-naming")
+    )
+  }
+
+  test("ON5: 节点会话提问 ⇒ 取委托它的 delegate（rootSessionId 自根）") {
+    // node-* 会话自身不注册 delegate 名；rootSessionId = 委托它的 delegate
+    assertEquals(
+      AgentActor.askOwnerNameOf(Some("node-9f8e7d6c"), "delegate-general-1a2b3c4d", fakeLookup),
+      Some("ask-card-naming")
+    )
+  }
+
+  test("ON6: Nebula 自问 / 项目分发器 / 无名旧记录 ⇒ None（前端回落项目名）") {
+    assertEquals(AgentActor.askOwnerNameOf(Some("root-1"), "root-1", fakeLookup), None)
+    assertEquals(AgentActor.askOwnerNameOf(Some("dispatcher-4f3e2d1c"), "root-1", fakeLookup), None)
+    assertEquals(AgentActor.askOwnerNameOf(None, "", fakeLookup), None, "空 rootSessionId 不查表、不落空键")
+  }
+
+  test("ON7: 名字含首尾空白/纯空白 ⇒ trim；纯空白视同无名（不落键）") {
+    val padded: Option[String] => Option[String] = _ => Some("  ask-card-naming  ")
+    assertEquals(AgentActor.askOwnerNameOf(Some("delegate-x"), "delegate-x", padded), Some("ask-card-naming"))
+    val blank: Option[String] => Option[String] = _ => Some("   ")
+    assertEquals(AgentActor.askOwnerNameOf(Some("delegate-x"), "delegate-x", blank), None)
+  }
+
 end AskUserBuildJsonSpec

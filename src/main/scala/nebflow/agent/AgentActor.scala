@@ -1163,6 +1163,29 @@ object AgentActor extends AgentCore with AgentSession:
     BgTaskRegistry.reclaimSession(state.sessionId, state.wsSend, state.rootSessionId)
 
   /**
+   * 归属命名批（2026-11-05 作者令「问题卡片要显示 delegate / node 的名字」）：
+   * askUser 载荷 `ownerName` 的**解析单点**（纯函数，lookup 可注入 ⇒ 面 spec 可钉）。
+   *
+   *   · delegate 会话本人提问 ⇒ 自己的批次短名（`lookup(自身 sessionId)`）；
+   *   · 节点会话提问 ⇒ 委托它的 delegate（节点会话 `rootSessionId` 即该 delegate——
+   *     NodeEngine 自根，见 `DelegateFlowHosts.mount`）；
+   *   · Nebula 自问 / 项目分发器（`dispatcher-*` 非 delegate 会话）/ 无名旧记录 ⇒ None
+   *     （载荷零键 ⇒ 前端回落项目名，零空白零 `undefined`）。
+   *
+   * `lookup` 缺省 = `DelegateRegistry.ownerNameOf`（与后台任务归属批同源同判据，
+   * 不新造名字读面）。
+   */
+  private[agent] def askOwnerNameOf(
+    sessionId: Option[String],
+    rootSessionId: String,
+    lookup: Option[String] => Option[String] = nebflow.core.delegate.DelegateRegistry.ownerNameOf
+  ): Option[String] =
+    lookup(sessionId)
+      .orElse(lookup(Option(rootSessionId).filter(_.nonEmpty)))
+      .map(_.trim)
+      .filter(_.nonEmpty)
+
+  /**
    * Build the "askUser" WS payload for the frontend. When the question comes
    * from a sub-agent (ForwardAskUser), agentName is set to the source agent
    * for attribution and sourceAgent/sourceSession carry the origin info.

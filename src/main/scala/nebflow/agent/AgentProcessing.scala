@@ -1516,17 +1516,14 @@ private[agent] object AgentProcessing:
         val askNodeName =
           if state.isDispatcher then Some("dispatcher") else state.flowNodeName
         // 归属命名批（2026-11-05 作者令「问题卡片要显示 delegate / node 的名字」）：
-        // 卡片归属首段 = 发起实体**自身名**，解析单点 = DelegateRegistry.ownerNameOf
-        // （与后台任务归属批同源同判据，不新造名字读面）：
+        // 卡片归属首段 = 发起实体**自身名**，解析单点 = AgentActor.askOwnerNameOf
+        // （内部走 DelegateRegistry.ownerNameOf，与后台任务归属批同源同判据）：
         //   · delegate 会话本人提问 ⇒ 自己的批次短名；
         //   · 节点会话提问 ⇒ 所属 delegate（节点会话 rootSessionId 即委托它的
         //     delegate——NodeEngine 自根，见 DelegateFlowHosts.mount）；
         //   · Nebula 自问 / 项目分发器（dispatcher-*，非 delegate 会话）/ 无名旧记录
         //     ⇒ None（载荷零键，前端回落项目名）。
-        val askOwnerName =
-          nebflow.core.delegate.DelegateRegistry
-            .ownerNameOf(state.sessionId)
-            .orElse(nebflow.core.delegate.DelegateRegistry.ownerNameOf(Some(state.rootSessionId)))
+        val askOwnerName = askOwnerNameOf(state.sessionId, state.rootSessionId)
         val payload0 = buildAskUserJson(
           Some(rootSid),
           srcAgent,
