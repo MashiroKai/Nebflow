@@ -12,7 +12,10 @@ wiki-docs SKILL.md 强制条款的机器面（条款与检查一一对应，见 
                             同一术语在多篇非词表文档各自定义 ⇒ 重复定义清单
   R4 词条注册表面         → 词条声明块结构合法（词表锚段落 / ^term-* 块必须能按
                             「名 — 定义」分隔约定抽出词条名）；同一文档内词条名
-                            不得重复。`[[名]]` 短形引用在文档与词条注册表均未
+                            不得重复；词条标签（v2）缺失 ⇒ term-tag-missing
+                            （必须恰好一个 #proj/<slug>、至少一个 #topic/<slug>，
+                            其余 #facet/value 入 extra；标签必须写在定义文字之后、
+                            ^块锚之前）。`[[名]]` 短形引用在文档与词条注册表均未
                             命中 ⇒ R2 断链（引用词条已注册由 R2 断链检查承担）
   R5 文档命名制           → 阶段件文件名 = `<topic>__<YYYYMMDD>_<HHMMSS>[__<chainId>].md`：
                             主题打头、时间块后置（时间打头 = 旧制 = 违规）；topic 不得
@@ -42,6 +45,10 @@ workspace 内 docs/ 的存量 vault 照旧可校验）。
   python3 check_wiki_docs.py --root docs                 # 显式根覆盖（向后兼容）
   python3 check_wiki_docs.py --json                      # 校验，机器读 JSON
   python3 check_wiki_docs.py --graph out.json --project stand
+  python3 check_wiki_docs.py --root <vault> --dump-terms --json
+                                                         # 词条 + 短形引用的机器出口
+                                                         # （下游 CLI / 索引引擎的
+                                                         # 唯一抽取入口，形状见下）
   python3 check_wiki_docs.py --include-subvaults
                                                          # 子项目图谱批（#744-B）：
                                                          # 发现 <sub>/docs 子 vault 后
@@ -50,6 +57,29 @@ workspace 内 docs/ 的存量 vault 照旧可校验）。
   python3 check_wiki_docs.py --rules                     # 打印规则与检查的对照表
 
 退出码：0 = 无违规；1 = 有违规；2 = 用法/环境错误。仅依赖 Python 3 标准库。
+
+词条标签（v2）声明语法（写死，见 SKILL.md「Term tags」）：
+
+  - 词条名（别名1，别名2） — 一句话定义。 #proj/<slug> #topic/<slug> #facet/<value> ^term-<slug>
+
+  · 恰好一个 `#proj/<slug>`；至少一个 `#topic/<slug>`；其余 `#facet/value` 入 extra。
+  · 标签必须写在定义文字之后、该段落的 `^块锚` 之前（`^块锚` 必须在行末——写在
+    块锚之后的标签不被识别，等价于缺标签）。
+  · 行内代码 / 围栏里的 `#x` 不是标签（围栏行本就不入段落，行内代码 span 先剔除）。
+  · 缺 project 或缺 topic ⇒ 违规 `term-tag-missing`；行内豁免
+    `<!-- wiki-term-exempt: 理由 -->`（同行或紧邻上一行、理由非空）单独计数，
+    不接受整文件豁免。
+
+机器出口 `--dump-terms`（下游 CLI / 索引引擎的唯一抽取入口；纯导出、不跑校验、
+exit 0）：按 rel,line 排序，形状固定
+
+  {"root":…, "generated_at":…,
+   "terms":[{"name","aliases","rel","anchor","line","end_line","definition",
+             "source","tags":{"project":[…],"topic":[…],"extra":[…]}}],
+   "refs": [{"name_key","from_rel","line","raw","resolved"}]}
+
+`refs` = 所有 `[[名]]` 短形引用（无锚、无路径分隔）；`resolved` = 词条注册表唯一
+命中（与 R2 第三优先级回退同一判据），供下游建 term_refs 表。
 
 链接解析语义（与 nebflow.core.wiki.WikiIndex 一致）：先精确 vault 相对路径，再大小写
 不敏感精确匹配，再全库唯一 basename 匹配，最后（词条引用批）词条注册表第三优先级
@@ -64,6 +94,7 @@ import json
 import os
 import re
 import sys
+from datetime import datetime
 from pathlib import Path
 
 # ── 与 WikiIndex.scala 同语义的解析正则 ──────────────────────────────
@@ -85,7 +116,7 @@ RULES = (
     ("R1", "obsidian-format", "所有文档一律 Obsidian 格式产出：front-matter（type/status）+ [[wiki-link]] 引用 + vault 目录约定（vault 根 = 项目注册目录 .stand/docs、attachments/ 附件）"),
     ("R2", "citation-graph", "文档之间建立论文式引用关系：断链（目标/标题锚/块锚不存在，含引用词条未注册）即缺陷；零出链且零入链的孤儿文档即缺陷（index/glossary 豁免）"),
     ("R3", "concept-first-use", "名词概念第一次出现必须就地解释，或 [[引用]] 已解释它的文档；多篇文档不得各自发明同一概念的定义（词表 = 唯一定义源）"),
-    ("R4", "term-registry", "词条注册表面：词表锚段落与 ^term-* 声明块必须按「名 — 定义」分隔约定抽出词条名（词条块结构合法）；同一文档内词条名不得重复；`[[名]]` 短形引用经词条注册表消解（词表命中优先，未注册 = R2 断链）"),
+    ("R4", "term-registry", "词条注册表面：词表锚段落与 ^term-* 声明块必须按「名 — 定义」分隔约定抽出词条名（词条块结构合法）；同一文档内词条名不得重复；词条标签 v2 = 恰好一个 #proj/<slug> + 至少一个 #topic/<slug> + 其余 #facet/value，写在定义文字之后、^块锚之前，缺 project 或 topic 即 term-tag-missing；`[[名]]` 短形引用经词条注册表消解（词表命中优先，未注册 = R2 断链）"),
     ("R5", "doc-naming", "文档命名制：阶段件文件名 = `<topic>__<YYYYMMDD>_<HHMMSS>[__<chainId>].md`（topic 前置、时间块后置，`__` 分主题与时间、时间块内用 `_`）；时间打头（`^YYYYMMDD_...`）即旧制即违规；topic 不得是 report/doc/notes 空词单独成题。校验面 = `.md` 文档，无时间块的活文档合法，非 `.md` 资产不在本制范围"),
 )
 
@@ -314,6 +345,33 @@ def _para_text(raw):
     return cleaned
 
 
+def block_groups(doc):
+    """块段落分组：连续非空、非标题行的行组（空行 / 标题 / 围栏缺口断组）。
+
+    与 WikiIndex.contentRuns 同构，且是**唯一**的分组定义——段落索引
+    （build_paragraphs）与词条标签解析（tag_window）都从这一份拿边界，
+    杜绝两处各写一套导致标签窗口与词条段落错位。"""
+    groups = []
+    cur = []
+    prev_no = None
+    for line_no, line in doc.body_lines:
+        content = bool(line.strip()) and not HEADING_RE.match(line)
+        if content and cur and prev_no is not None and line_no == prev_no + 1:
+            cur.append((line_no, line))
+        elif content:
+            if cur:
+                groups.append(cur)
+            cur = [(line_no, line)]
+        else:
+            if cur:
+                groups.append(cur)
+            cur = []
+        prev_no = line_no
+    if cur:
+        groups.append(cur)
+    return groups
+
+
 def build_paragraphs(doc):
     """→ [{anchor, kind, title, line, endLine, text}]（anchor 与 edge 同形，
     带 # 前缀：块锚 '#^id'、标题 '#标题'）。行号 = 全文件坐标（含 front-matter）。
@@ -323,31 +381,7 @@ def build_paragraphs(doc):
         return []
     paras = []
     # 块锚段落：连续非空行组（body_lines 已剔 fence 行——围栏缺口天然断组）。
-    run = []
-    runs = []
-
-    def flush_run():
-        if not run:
-            return
-        runs.append(list(run))
-        run.clear()
-
-    prev_no = None
-    for line_no, line in doc.body_lines:
-        is_boundary = bool(HEADING_RE.match(line)) or (
-            prev_no is not None and line_no != prev_no + 1) or not line.strip()
-        if is_boundary:
-            flush_run()
-        if line.strip() and not HEADING_RE.match(line):
-            if prev_no is not None and line_no == prev_no + 1 and run:
-                run.append((line_no, line))
-            else:
-                run = [(line_no, line)]
-        else:
-            run = []
-        prev_no = line_no
-    flush_run()
-    for group in runs:
+    for group in block_groups(doc):
         bm = BLOCKID_RE.match(group[-1][1])
         if not bm:
             continue
@@ -420,8 +454,142 @@ def term_alias_keys(name):
     return []
 
 
+# ── 词条标签 v2（term-system v2；与 WikiIndex.termTagsOf 同口径） ───────
+# 语法（派发侧定死，本脚本只是执行面）：
+#   - 词条名（别名1，别名2） — 一句话定义。 #proj/stand #topic/term-index ^term-<slug>
+# · 恰好一个 `#proj/<slug>`、至少一个 `#topic/<slug>`，其余 `#facet/value` 入 extra；
+# · 标签窗口 = 定义文字之后 → 该段落的 `^块锚` 之前（块锚必须在行末：写在块锚
+#   之后的标签不被识别，等价于缺标签 ⇒ term-tag-missing）；
+# · 行内代码 span / 围栏里的 `#x` 不是标签（围栏行本就不进 body_lines）；
+# · 缺 project 或缺 topic ⇒ 违规 term-tag-missing；行内豁免
+#   `<!-- wiki-term-exempt: 理由 -->`（同行或紧邻上一行、理由非空）单独计数。
+
+TERM_TAG_NAMESPACES = {"proj": "project", "topic": "topic"}
+TERM_TAG_RE = re.compile(r"#([A-Za-z0-9_\u4e00-\u9fa5.-]+)/([A-Za-z0-9_\u4e00-\u9fa5.-]+)")
+INLINE_CODE_SPAN_RE = re.compile(r"`[^`\n]*`")
+TERM_EXEMPT_RE = re.compile(r"<!--\s*wiki-term-exempt\s*:\s*(.*?)\s*-->")
+# 块锚之后还有内容的行（块锚不在行末）——Obsidian 不认这种锚，词条标签也不认。
+ANCHOR_MIDLINE_RE = re.compile(r"^(.*\S)\s+\^([A-Za-z0-9][A-Za-z0-9-]*)\s+(\S.*)$")
+
+
+def empty_term_tags():
+    """词条标签的唯一固定形状（三桶；桶内去重 + 排序，跨语言同序）。"""
+    return {"project": [], "topic": [], "extra": []}
+
+
+def parse_term_tags(window):
+    """标签窗口 → {"project": […], "topic": […], "extra": […]}
+
+    · `#proj/<slug>` → project；`#topic/<slug>` → topic；
+      其余 `#<facet>/<value>` → extra（原样 "facet/value"，不带 `#`）。
+    · 行内代码 span 先整段剔除——示例里的 `#proj/x` 不是标签。
+    · 窗口之外的 `#x` 不是标签（调用方负责给窗口：定义文字之后、块锚之前）。"""
+    tags = empty_term_tags()
+    text = INLINE_CODE_SPAN_RE.sub(" ", window or "")
+    for m in TERM_TAG_RE.finditer(text):
+        namespace, value = m.group(1), m.group(2)
+        bucket = TERM_TAG_NAMESPACES.get(namespace)
+        if bucket:
+            tags[bucket].append(value)
+        else:
+            tags["extra"].append(f"{namespace}/{value}")
+    for key in tags:
+        tags[key] = sorted(set(tags[key]))
+    return tags
+
+
+def block_group_index(doc):
+    """{(首行号, 尾行号): 行组} —— 只收尾行带 `^块锚` 的组（词条候选段落）。"""
+    idx = {}
+    for group in block_groups(doc):
+        if BLOCKID_RE.match(group[-1][1]):
+            idx[(group[0][0], group[-1][0])] = group
+    return idx
+
+
+def tag_window(group):
+    """词条标签窗口（原文行，**不**剥行内标记——清洗过的段落文本会丢反引号，
+    行内代码里的 `#x` 就分不出来了，且定义超 280 字符时尾部标签会被截断）。
+
+    窗口 = 组内全部原文（尾行的 `^块锚` 先剥掉）里的第一处「名 —/：」分隔符之后
+    到组尾。块锚之后的内容不进窗口（AnchorMidline 另行报位置错）。"""
+    if not group:
+        return ""
+    parts = []
+    for i, (_line_no, text) in enumerate(group):
+        if i == len(group) - 1:
+            bm = BLOCKID_RE.match(text)
+            if bm:
+                text = bm.group(1)
+        parts.append(text)
+    window = " ".join(parts)
+    m = TERM_NAME_SEP_RE.search(window)
+    return window[m.end():] if m else ""
+
+
+def term_tag_problem(tags):
+    """标签合规判据 → None（合规）或人话原因（说明缺哪个 facet）。"""
+    reasons = []
+    project, topic = tags["project"], tags["topic"]
+    if not project:
+        reasons.append("缺 #proj/<slug>（必须恰好一个项目标签）")
+    elif len(project) > 1:
+        reasons.append("`#proj/` 多于一个（%s）——必须恰好一个"
+                       % "、".join("#proj/" + p for p in project))
+    if not topic:
+        reasons.append("缺 #topic/<slug>（至少一个主题标签）")
+    return "；".join(reasons) if reasons else None
+
+
+def doc_line_text(doc, line_no):
+    """全文件行号 → 原文行（缺返回 None）。doc.body_lines 不含围栏行。"""
+    if not hasattr(doc, "_line_cache"):
+        doc._line_cache = {no: text for no, text in doc.body_lines}
+    return doc._line_cache.get(line_no)
+
+
+def term_exemption(doc, *line_nos):
+    """行内豁免：给定行及其紧邻上一行里的 `<!-- wiki-term-exempt: 理由 -->`。
+    理由为空 = 无效豁免（不接受整文件豁免——豁免只挂在具体声明行）。"""
+    seen = set()
+    for line_no in line_nos:
+        for probe in (line_no, line_no - 1):
+            if probe in seen:
+                continue
+            seen.add(probe)
+            text = doc_line_text(doc, probe)
+            if not text:
+                continue
+            m = TERM_EXEMPT_RE.search(text)
+            if m and m.group(1).strip():
+                return m.group(1).strip()
+    return None
+
+
+def misplaced_term_tags(doc, rel, glossary):
+    """块锚写在行中（`^id` 后还有内容，通常是标签）的词条声明行。
+
+    这类行的 `^id` 在 Obsidian 里根本不是块锚 ⇒ 该段落抽不出词条、标签也一律
+    不认（规范：标签必须在 `^块锚` 之前）。返回 [(行号, 块 id, 原文)]。"""
+    out = []
+    for line_no, text in doc.body_lines:
+        m = ANCHOR_MIDLINE_RE.match(text)
+        if not m:
+            continue
+        block_id, rest = m.group(2), m.group(3)
+        if not (glossary or block_id.startswith("term-")):
+            continue
+        if not TERM_TAG_RE.search(INLINE_CODE_SPAN_RE.sub(" ", rest)):
+            continue
+        if not TERM_NAME_SEP_RE.search(m.group(1)):
+            continue  # 无「名 —/：定义」分隔 ⇒ 本就不是词条声明行
+        out.append((line_no, block_id, text.strip()))
+    return out
+
+
 def terms_of(rel, doc):
     glossary = is_glossary_rel(rel)
+    groups = block_group_index(doc)
     out = []
     for p in doc_paragraphs(doc):
         if p["kind"] != "block" or not p["anchor"].startswith("#^"):
@@ -434,6 +602,7 @@ def terms_of(rel, doc):
         name = p["text"][:m.start()].strip()
         if not name:
             continue
+        group = groups.get((p["line"], p["endLine"]), [])
         out.append({
             "name": name,
             "aliases": term_alias_keys(name),
@@ -442,6 +611,7 @@ def terms_of(rel, doc):
             "anchor": p["anchor"],
             "line": p["line"], "endLine": p["endLine"],
             "definition": p["text"],
+            "tags": parse_term_tags(tag_window(group)),
         })
     return out
 
@@ -564,7 +734,8 @@ def first_occurrence(doc, regex):
     return None
 
 
-def check(root, docs, resolve, glossary_rel, exclude_glossary_check, terms_by_rel=None, resolve_term=None):
+def check(root, docs, resolve, glossary_rel, exclude_glossary_check, terms_by_rel=None, resolve_term=None,
+          exempt_sink=None):
     violations = []
 
     def add(rule, file, line, detail):
@@ -572,6 +743,7 @@ def check(root, docs, resolve, glossary_rel, exclude_glossary_check, terms_by_re
 
     if terms_by_rel is None:
         terms_by_rel = {}
+    exempts = exempt_sink if exempt_sink is not None else []
 
     # R1 — front-matter 在位
     for rel, doc in sorted(docs.items()):
@@ -667,6 +839,33 @@ def check(root, docs, resolve, glossary_rel, exclude_glossary_check, terms_by_re
             if len(where) > 1:
                 add("duplicate-definition", glossary_rel, 1,
                     f"概念「{term}」在多篇文档各自定义（{', '.join(where)}）——定义唯一化：词表定义，其余引用")
+
+    # R4 — 词条标签 v2：恰好一个 #proj/<slug> + 至少一个 #topic/<slug>，缺一个即
+    # term-tag-missing。豁免只认行内 `<!-- wiki-term-exempt: 理由 -->`（同行或紧邻
+    # 上一行、理由非空），单独计入 exempts 显形——不接受整文件豁免。
+    for rel, doc in sorted(docs.items()):
+        if rel.lower().endswith(".html"):
+            continue
+        for t in terms_by_rel.get(rel, []):
+            problem = term_tag_problem(t["tags"])
+            if not problem:
+                continue
+            raw = (doc_line_text(doc, t["line"]) or "").strip()
+            reason = term_exemption(doc, t["line"], t["endLine"])
+            if reason:
+                exempts.append({"file": rel, "line": t["line"], "reason": reason, "text": raw})
+                continue
+            add("term-tag-missing", rel, t["line"], f"{raw} → 词条「{t['name']}」{problem}")
+        # 标签写在 ^块锚 之后 ⇒ 标签不被识别（等价缺标签）。单独判据：这类行的
+        # ^id 在 Obsidian 里根本不是块锚，段落抽不出词条，上面那圈看不到它。
+        for line_no, block_id, raw in misplaced_term_tags(doc, rel, is_glossary_rel(rel)):
+            reason = term_exemption(doc, line_no)
+            if reason:
+                exempts.append({"file": rel, "line": line_no, "reason": reason, "text": raw})
+                continue
+            add("term-tag-missing", rel, line_no,
+                f"{raw} → 词条标签写在 ^{block_id} 之后，不被识别（等价缺标签）——"
+                f"标签必须在定义文字之后、^块锚 之前，且 ^块锚 独占行末")
 
     # R4 — 词条注册表面：词条块结构合法（合格块必须抽得出词条名）+ 同档词条名唯一
     for rel, doc in sorted(docs.items()):
@@ -867,6 +1066,75 @@ def resolve_cross_vault(resolver_by_vault, target):
     return None
 
 
+# ── 词条机器出口（--dump-terms；下游 CLI / 索引引擎的唯一抽取入口） ─────
+
+TERM_DUMP_KEYS = ("name", "aliases", "rel", "anchor", "line", "end_line",
+                  "definition", "source", "tags")
+TERM_REF_DUMP_KEYS = ("name_key", "from_rel", "line", "raw", "resolved")
+
+
+def dump_terms(docs, terms_by_rel, resolve_term=None, root=None):
+    """纯导出：词条注册表 + `[[名]]` 短形引用（不跑校验、不影响退出码）。
+
+    顺序确定：terms 按 (rel, line, name)，refs 按 (from_rel, line, raw)——同一
+    vault 同一份代码两次导出除 generated_at 外逐字节相同。tags 三桶桶内已排序去重。
+    `refs.resolved` = 词条注册表唯一命中（与 R2 第三优先级回退同一判据）。"""
+    terms = []
+    for rel in sorted(terms_by_rel):
+        for t in terms_by_rel[rel]:
+            tags = t.get("tags") or empty_term_tags()
+            terms.append({
+                "name": t["name"],
+                "aliases": list(t.get("aliases") or []),
+                "rel": t["rel"],
+                "anchor": t["anchor"],
+                "line": t["line"],
+                "end_line": t["endLine"],
+                "definition": t["definition"],
+                "source": t["source"],
+                "tags": {"project": list(tags["project"]),
+                         "topic": list(tags["topic"]),
+                         "extra": list(tags["extra"])},
+            })
+    terms.sort(key=lambda t: (t["rel"], t["line"], t["name"]))
+
+    refs = []
+    for rel in sorted(docs):
+        for target, anchor, _kind, line_no in docs[rel].links:
+            if anchor is not None:
+                continue  # 带锚引用不回退词条（与引擎同）
+            raw = target.strip()
+            if not raw or "/" in raw.replace("\\", "/"):
+                continue  # 短形引用：无锚、无路径分隔
+            hit = resolve_term(raw) if resolve_term else None
+            refs.append({
+                "name_key": term_target_key(normalize_target(raw)).strip().lower(),
+                "from_rel": rel,
+                "line": line_no,
+                "raw": raw,
+                "resolved": bool(hit),
+            })
+    refs.sort(key=lambda r: (r["from_rel"], r["line"], r["raw"]))
+
+    return {
+        "root": str(root) if root is not None else "",
+        "generated_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
+        "terms": terms,
+        "refs": refs,
+    }
+
+
+def print_exempts(exempts):
+    """行内豁免单独显形（不计违规）：豁免不是沉默，必须看得见理由。"""
+    if not exempts:
+        return
+    print(f"── 词条标签豁免（{len(exempts)} 条，不计违规）──")
+    for e in exempts:
+        where = f"{e['vault']}/{e['file']}" if e.get("vault") else e["file"]
+        print(f"  {where}:{e['line']}  理由：{e['reason']}")
+    print()
+
+
 def main():
     ap = argparse.ArgumentParser(description="wiki-docs 文档纪律校验器 + 图谱数据导出")
     ap.add_argument("--root", default=None,
@@ -878,6 +1146,10 @@ def main():
                     help="项目名（--graph 输出的 project 名；缺省 --root 时同时是文档根的解析键）")
     ap.add_argument("--json", action="store_true", help="违规清单以 JSON 输出")
     ap.add_argument("--graph", metavar="OUT", default=None, help="导出图谱数据 JSON 到 OUT")
+    ap.add_argument("--dump-terms", action="store_true",
+                    help="词条机器出口：导出词条注册表 + [[名]] 短形引用（JSON，形状见脚本 "
+                         "docstring）。纯导出——不跑校验、不影响退出码（恒 0）；顺序确定：" 
+                         "terms 按 (rel, line)、refs 按 (from_rel, line, raw)")
     ap.add_argument("--exclude", action="append", default=[],
                     help="排除 glob（vault 相对，可多次；默认排除 assets/**）")
     ap.add_argument("--rules", action="store_true", help="打印规则与检查对照表后退出")
@@ -921,6 +1193,12 @@ def main():
     if not docs:
         print(f"ERROR: {root} 下未发现任何文档", file=sys.stderr)
         return 2
+
+    # 纯导出先于一切校验分流：--dump-terms 不跑 check、恒 0 退出、不掺违规。
+    if args.dump_terms:
+        print(json.dumps(dump_terms(docs, terms_by_rel, resolve_term=resolve_term, root=root),
+                         ensure_ascii=False, indent=1))
+        return 0
 
     if args.graph:
         data = build_graph(docs, resolve, args.project, terms_by_rel, resolve_term)
