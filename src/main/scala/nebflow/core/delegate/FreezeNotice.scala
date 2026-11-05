@@ -48,6 +48,7 @@ object FreezeNotice:
   enum Tier:
     /** 静默：零向上消息（面板可见；引擎自己探测恢复后续跑）。 */
     case Silent
+
     /** 升级：同一波**一条**聚合告警（需人处置的确定性缺陷，或自动续跑次数用尽）。 */
     case Escalate
 
@@ -65,10 +66,15 @@ object FreezeNotice:
    *
    *   | 原因码 | FreezeDisplay | 是否向上通知 |
    *   |---|---|---|
-   *   | `llm-failure`        | 待你处理 · 可自动恢复 | **否**（续跑次数用尽 ⇒ 一条告警）|
+   *   | `llm-failure`        | 待你处理 · 可自动恢复 | **否**（本轮冻结超过 30 分钟时限 ⇒ 一条摘要告警）|
    *   | `cancelled-by-quota` | 待你处理 · 可自动恢复 | **否**（同上）|
-   *   | `tool-failure`       | 需唤醒                | 是（一条聚合告警）|
-   *   | `engine-fault`       | 需唤醒                | 是（一条聚合告警）|
+   *   | `tool-failure`       | 需唤醒                | 是（一条聚合告警，立即）|
+   *   | `engine-fault`       | 需唤醒                | 是（一条聚合告警，立即）|
+   *
+   * 注：`llm-failure` 现在是 provider 侧可恢复故障的**收容码**（鉴权/订阅 403、
+   * 配额余额、上游 5xx 含 550、连接失败/超时、格式层拒绝含 `Input too long` 全归
+   * 这里；判据表见 [[ProviderFault]]）——所以这一族的静默覆盖面正是作者报障的那
+   * 一屏。
    */
   def tierOfReason(r: DelegateFreeze.Reason, detail: String = ""): Tier =
     val fd = FreezeDisplay.ofWire(s"${DelegateFreeze.WirePrefix}:${DelegateFreeze.wire(r)}")
@@ -86,8 +92,7 @@ object FreezeNotice:
   def infraFamily(line: String): Boolean =
     val w = Option(line).getOrElse("")
     if !w.startsWith(DelegateFreeze.WirePrefix) then false
-    else
-      FreezeDisplay.isInfraReasonCode(w.stripPrefix(DelegateFreeze.WirePrefix).stripPrefix(":"))
+    else FreezeDisplay.isInfraReasonCode(w.stripPrefix(DelegateFreeze.WirePrefix).stripPrefix(":"))
 
   /** 是否静默（provider 故障族 = 零向上通知）。 */
   def silent(line: String, detail: String = ""): Boolean = tierOfLine(line, detail) == Tier.Silent
@@ -95,62 +100,16 @@ object FreezeNotice:
   // ── provider / 基础设施故障标记（通知面与 flow-notify 面共用同一把尺）──────
 
   /**
-   * 基础设施故障标记词表：命中即认定这次失败**不是任务失败**，而是供应商/网络/额度
-   * 这类外部世界的故障——不该向上汇报，也不该扣任务的重试预算。
-   */
-  private val InfraMarkers: List[String] = List(
-    "provider",
-    "all candidates",
-    "candidates exhausted",
-    "no available",
-    "llm",
-    "429",
-    "500",
-    "502",
-    "503",
-    "504",
-    "529",
-    "overloaded",
-    "rate limit",
-    "ratelimit",
-    "timeout",
-    "timed out",
-    "econnreset",
-    "connection reset",
-    "socket hang up",
-    "network",
-    "unavailable",
-    "401",
-    "403",
-    "unauthorized",
-    "invalid api key",
-    "invalid_api_key",
-    "authentication",
-    "no subscription",
-    "subscription",
-    "forbidden",
-    "insufficient_quota",
-    "quota",
-    "billing",
-    "payment required",
-    "balance",
-    "budget exhausted",
-    "模型层",
-    "供应商",
-    "余额",
-    "欠费",
-    "额度",
-    "无订阅",
-    "鉴权"
-  )
-
-  /**
-   * 这段失败正文是否属**基础设施故障**（provider / 网络 / 额度 / 鉴权）。
+   * 这段失败正文是否属**基础设施故障**（provider / 网络 / 额度 / 鉴权 / 格式退回）。
    * flow-notify 闸（`DispatchNotify`）与冻结面共用本判据——单一尺子。
+   *
+   * provider 故障降噪批（2026-11-05 17:18 作者令）后，词表真源搬到
+   * [[ProviderFault.Table]]（可测的判据表，逐族带裁定），本方法只做投影：**命中
+   * 可恢复族且不属确定性缺陷**即「不是任务失败」。旧的本类私有词表一并删除——
+   * 两套词表就是两套真相的发源地（旧表漏了 `550` 与 `Input too long`，正是
+   * 作者报障那一屏里被当失败逐条通知的两类）。
    */
-  def infraFault(detail: String): Boolean =
-    val d = Option(detail).getOrElse("").toLowerCase
-    d.nonEmpty && InfraMarkers.exists(m => d.contains(m))
+  def infraFault(detail: String): Boolean = ProviderFault.silent(detail)
 
   // ── ② 一波统计（静默面：面板就地看，零消息）──────────────────────────────
 
@@ -171,6 +130,8 @@ object FreezeNotice:
   ):
     /** 面板统计行用的「已冻结（可唤醒）」判据。 */
     def wakeable: Boolean = true
+
+  end Item
 
   /** 一波冻结的静默统计（面板统计行数据源）。 */
   final case class Digest(now: Long, windowMs: Long, items: List[Item]):
@@ -252,34 +213,81 @@ object FreezeNotice:
 
   // ── ③ 自动续跑预算（provider 故障族的引擎自愈台账）──────────────────────
 
-  /** 一个冻结点的自动续跑台账（键 = `delegateId@frozenSince`：再冻一次 = 新预算）。 */
+  /** 一个冻结点的自动续跑台账（键 = `delegateId#episodeStart`：同一轮冻结 = 同一预算）。 */
   final case class AutoResume(attempts: Int, lastAt: Long)
 
   private val autoResumes = new ConcurrentHashMap[String, AutoResume]()
 
-  private def autoKey(delegateId: String, frozenSince: Long): String = s"$delegateId@$frozenSince"
+  /**
+   * 冻结**轮次（episode）台账**：`delegateId → 本轮冻结起点`（provider 故障降噪批
+   * 2026-11-05）。
+   *
+   * 为什么不是 `frozenSince`：自动续跑会唤醒会话，若 provider 其实还没好，子会话会
+   * 很快再冻一次 ⇒ `frozenSince` 刷新 ⇒ 计数与时限**双双归零**，「30 分钟才升级」
+   * 永远到不了、退避也永远从 60s 重新开始（这正是「无限重试」形状）。轮次台账把
+   * 一串「冻→续→又冻」当**同一轮**：起点只认第一次，直到该 delegate 不再处于冻结
+   * 态才清账（[[endEpisodes]]，由扫描拍按当前冻结集收口）。
+   */
+  private val episodes = new ConcurrentHashMap[String, java.lang.Long]()
+
+  /** 本轮冻结起点（首次见到该 delegate 冻结的时刻；幂等）。 */
+  def episodeOf(delegateId: String, frozenSince: Long): Long =
+    episodes.computeIfAbsent(delegateId, _ => java.lang.Long.valueOf(frozenSince)).longValue()
+
+  /** 本轮冻结已持续多久（ms）——「长时间仍不可恢复」的判据材料。 */
+  def episodeAgeMs(delegateId: String, frozenSince: Long, now: Long): Long =
+    math.max(0L, now - episodeOf(delegateId, frozenSince))
+
+  /**
+   * 轮次收口：不再处于冻结态的 delegate 清账（恢复/唤醒后下一次冻结算新的轮次）。
+   * 由 `FreezeAlertSweep` 每拍调用，fail-soft（台账只增不减会误伤后来的冻结）。
+   */
+  def endEpisodes(activeIds: Set[String]): Unit =
+    episodes.keySet().removeIf(id => !activeIds.contains(id))
+
+  private def autoKey(delegateId: String, frozenSince: Long): String =
+    s"$delegateId#${episodeOf(delegateId, frozenSince)}"
 
   def autoResumesOf(delegateId: String, frozenSince: Long): Int =
     Option(autoResumes.get(autoKey(delegateId, frozenSince))).map(_.attempts).getOrElse(0)
 
   /**
-   * 次数是否用尽（缺省 [[Defaults.DelegateFreezeAutoResumeMax]] = 3）：用尽 ⇒ 该批
-   * 不再自动续跑，升级为一条「需用户处理」聚合告警。
+   * 次数是否达到「面板读数」意义上的上限（缺省 [[Defaults.DelegateFreezeAutoResumeMax]]）：
+   * **只作面板读数与告警文案**，不再是续跑闸——续跑一直按封顶间隔进行到恢复或升级
+   * 时限（provider 故障降噪批：把「3 次即停」改成「时间到了才升级」）。
    */
   def autoResumesExhausted(delegateId: String, frozenSince: Long): Boolean =
     val max = Defaults.DelegateFreezeAutoResumeMax
     max > 0 && autoResumesOf(delegateId, frozenSince) >= max
 
   /**
+   * 是否到「升级」时限（纯函数）：本轮冻结（[[episodeAgeMs]]，跨「冻→续→又冻」累计）
+   * 超过 [[Defaults.DelegateFreezeEscalateAfterMs]]（缺省 30 分钟）⇒ 才允许把这一族
+   * 升级成一条摘要通知。作者令：「如果长时间（给出你选的上限，例如 30 分钟）仍不可
+   * 恢复，才升级为一条摘要式通知」。
+   */
+  def escalateDue(delegateId: String, frozenSince: Long, now: Long): Boolean =
+    val horizon = Defaults.DelegateFreezeEscalateAfterMs
+    horizon <= 0L || episodeAgeMs(delegateId, frozenSince, now) >= horizon
+
+  /**
    * 自动续跑是否到期（纯函数）：已试 `attempts` 次后，下一次尝试的最早时刻 =
-   * `frozenSince + afterMs + base × 2^(attempts-1)`（attempts=0 ⇒ 只等 afterMs；
-   * 之后每多一次尝试间隔翻倍：60s → 120s → 240s …）。间隔从 `frozenSince` 起算
-   * （不是从上次尝试起算）——同一份台账即可判定，不需要额外存上次时刻。
+   * `frozenSince + afterMs + min(base × 2^(attempts-1), backoffMax)`（attempts=0 ⇒
+   * 只等 afterMs；之后每次翻倍，**到 [[Defaults.DelegateFreezeAutoResumeBackoffMaxMs]]
+   * 封顶**，此后恒按封顶间隔）。间隔从冻结起点起算（不是从上次尝试起算）——同一份
+   * 台账即可判定，不需要额外存上次时刻。
+   *
+   * 退避曲线（缺省 after=60s、base=60s、cap=300s）的实际尝试时刻：
+   * `+60s → +120s → +180s → +300s → +360s → +420s → …`（每次 +5min 封顶）——
+   * 指数起步、迅速封顶，**不是固定间隔死循环**（固定间隔会让 provider 恢复瞬间
+   * 撞上一串同时唤醒；指数退避把压力摊平）。
    */
   def autoResumeDue(frozenSince: Long, now: Long, attempts: Int): Boolean =
     val after = Defaults.DelegateFreezeAutoResumeAfterMs
     val base = Defaults.DelegateFreezeAutoResumeBackoffMs
-    val gap = if attempts <= 0 then after else after + base * (1L << math.min(attempts - 1, 16))
+    val cap = Defaults.DelegateFreezeAutoResumeBackoffMaxMs
+    val grow = if attempts <= 0 then 0L else base * (1L << math.min(attempts - 1, 16))
+    val gap = after + (if cap > 0L then math.min(grow, cap) else grow)
     now - frozenSince >= gap
 
   /** 记一次自动续跑尝试（返回累计次数）。 */
@@ -304,14 +312,19 @@ object FreezeNotice:
 
   /**
    * 告警计划（纯函数）：一波里
-   *   - `tool-failure` / `engine-fault`（Tier.Escalate）⇒ 立即进告警；
-   *   - provider 故障族（Tier.Silent）⇒ **只有**自动续跑次数用尽才进告警
-   *     （作者令「连续失败到上限才升级成一条需用户处理的告警」）。
+   *   - `tool-failure` / `engine-fault`（Tier.Escalate，确定性缺陷）⇒ **立即**进告警；
+   *   - provider 故障族（Tier.Silent）⇒ **只有**本轮冻结超过升级时限
+   *     （[[escalateDue]]，缺省 30 分钟）才进告警——作者令「长时间仍不可恢复，才升级
+   *     为一条摘要式通知」。此前的判据是「自动续跑次数用尽」（3 次 ≈ 8 分钟），
+   *     等于把一次正常的上游抖动直接变成作者的事，本批按作者令改为时间判据。
    * 按父会话分组 ⇒ 同一波**一条**。
    */
   def planAlerts(d: Digest): List[Alert] =
     d.items
-      .filter(i => i.tier == Tier.Escalate || i.autoResumesExhausted)
+      .filter { i =>
+        if i.tier == Tier.Escalate then true
+        else escalateDue(i.delegateId, i.frozenSince, d.now)
+      }
       .groupBy(_.parentSessionId)
       .toList
       .sortBy(_._1)
@@ -322,6 +335,7 @@ object FreezeNotice:
     val n = alert.items.size
     val defects = alert.items.filter(_.tier == Tier.Escalate)
     val exhausted = alert.items.filter(_.autoResumesExhausted)
+    val horizonMin = Defaults.DelegateFreezeEscalateAfterMs / 60000L
     val causeLine = alert.items
       .groupBy(i => (i.reason, i.tier))
       .toList
@@ -329,7 +343,9 @@ object FreezeNotice:
       .map { case ((reason, tier), items) =>
         val ids = items.map(_.delegateId).mkString(", ")
         val sample = items.headOption.map(_.detail).getOrElse("")
-        s"- ${tierWire(tier)} `${reason}` ×${items.size} ($ids)${if sample.nonEmpty then s": ${DelegateFreeze.compactDetail(sample, 160)}" else ""}"
+        val tries = items.headOption.map(i => i.autoResumes).getOrElse(0)
+        s"- ${tierWire(tier)} `${reason}` ×${items.size} ($ids, 自动续跑 $tries 次)" +
+          s"${if sample.nonEmpty then s": ${DelegateFreeze.compactDetail(sample, 160)}" else ""}"
       }
       .mkString("\n")
     val head =
@@ -337,7 +353,7 @@ object FreezeNotice:
         s"$n frozen delegate(s) need you: ${defects.size} on a deterministic defect, ${exhausted.size} whose automatic resume budget is spent"
       else if defects.nonEmpty then s"$defects.size frozen delegate(s) stopped on a deterministic defect"
       else
-        s"${exhausted.size} frozen delegate(s) used up their automatic resume budget (${Defaults.DelegateFreezeAutoResumeMax} tries) " +
+        s"${exhausted.size} frozen delegate(s) are still frozen after the ${horizonMin}-minute auto-resume horizon " +
           "— the provider is still not serving, so this needs you (top-up / switch model / cancel)"
     val wake = alert.items.take(6).map(i => s"`delegate:${i.delegateId}`").mkString(" / ")
     val more = if n > 6 then s" (+${n - 6} more on the panel)" else ""
@@ -345,9 +361,11 @@ object FreezeNotice:
        |$causeLine
        |
        |Wake one: $wake$more — the 唤醒 button on the background-agents panel, or mail the address (it continues in the SAME session; finished work is not redone, and waking never spends the supervisor restart budget).
-       |Quiet by design: provider-failure freezes no longer mail you anything — the engine probes availability and resumes them by itself; you only see this single aggregated alert when the budget is spent. Reason codes: `${DelegateFreeze.WirePrefix}:<llm-failure|cancelled-by-quota|tool-failure|engine-fault>`.
+       |Quiet by design: provider-failure freezes mail you nothing while the engine is retrying them by itself (exponential backoff, capped gap, resuming the SAME session). This single aggregated alert is the only message — it appears once a freeze has stayed unrecoverable past the ${Defaults.DelegateFreezeEscalateAfterMs / 60000L}-minute horizon, or immediately for a deterministic defect. Reason codes: `${DelegateFreeze.WirePrefix}:<llm-failure|cancelled-by-quota|tool-failure|engine-fault>`.
        |
-       |【冻结聚合告警】$n 条 delegate 冻结：${defects.size} 条是确定性缺陷，${exhausted.size} 条已用完自动续跑次数（供应商仍未恢复，需要你：充值/换模型/取消）。原因：$causeLine。唤醒：面板「唤醒」按钮或给上列地址发一条 Mail（在原会话上下文上继续，已完成的不重做，且不消耗重启预算）。provider 故障冻结不再逐条通知——只此一条聚合告警 + 面板徽标。""".stripMargin
+       |【冻结聚合告警】$n 条 delegate 冻结：${defects.size} 条是确定性缺陷，${exhausted.size} 条在自动续跑时限（$horizonMin 分钟）后仍未恢复（供应商仍未服务，需要你：充值/换模型/取消）。原因：$causeLine。唤醒：面板「唤醒」按钮或给上列地址发一条 Mail（在原会话上下文上继续，已完成的不重做，且不消耗重启预算）。provider 故障冻结在时限内不逐条通知——只此一条聚合告警 + 面板徽标。""".stripMargin
+
+  end alertText
 
   /** 聚合告警事件（入父会话持久邮箱；`eventType=freeze-alert`，不是终态）。 */
   def alertEvent(alert: Alert): AgentCommand.ExternalEvent =
@@ -384,9 +402,10 @@ object FreezeNotice:
       alertLedger.put(key, now)
       true
 
-  /** 测试/复盘复位（进程内两份台账）。 */
+  /** 测试/复盘复位（进程内三份台账）。 */
   def resetLedger(): Unit =
     alertLedger.clear()
     autoResumes.clear()
+    episodes.clear()
 
 end FreezeNotice
