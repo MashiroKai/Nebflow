@@ -29,6 +29,23 @@ case class ScheduledTask(
    */
   name: Option[String] = None,
   /**
+   * 待办两段化的第二段（待办结构化批 2026-11-05 作者令「待办要求用 name 和
+   * detail 这样的架构」）：`name` = 短标题（列表行显示面、`#` 引用键、同名
+   * upsert 键），`detail` = 具体内容（可长，列表行折叠显示）。
+   *
+   * 🔴 兼容矩阵（逐条申报，不许假装"已迁移"）：
+   *   · **存量行**（本批之前写入）没有 detail 键 ⇒ 解码 None。前端
+   *     `todoText.projectTodoText` 在**读时**把 content 投影成 {name, detail}
+   *     （首句 / 前 24 字作 name，其余留 detail；只丢首尾空白，不丢内容字符），
+   *     **不写回、不删改文件** ⇒ 零丢失是结构性的，投影规则变更可重算。
+   *   · **新行**：创建时带 detail ⇒ 前端直接用 name/detail，不再投影。
+   *   · `content` 仍是必填的**注入文本**（每日摘要、done/cancel 回执、Schedule
+   *     list 都读它）——两段化不改它对既有读者的语义，只把"给人看的标题"从
+   *     content 里分出来。只传 content 的旧调用方行为逐字不变。
+   *   · `kind="task"` 面**零改动**：detail 恒 None（定时任务没有两段语义）。
+   */
+  detail: Option[String] = None,
+  /**
    * 双面化 kind（2026-10-24 作者令「Schedule 定时工具双面化」）：None /
    * Some("task") = 定时任务（现状，triggerAt 到点触发一次或按 repeat 续期）；
    * Some("todo") = 待办——无固定触发时间，triggerAt 复用为**下次浮出时间**
@@ -162,9 +179,14 @@ object ScheduledTask:
     project: Option[String] = None,
     /** 重要度 0..3（越界钳位，见 [[ScheduledTask.clampPriority]]）；kind=todo 的
      *  唯一创建点即此处，定时任务面调用方不传 = 0（逐字节现状）。 */
-    priority: Int = 0
+    priority: Int = 0,
+    /** 待办第二段 detail（两段化批 2026-11-05）：**只对待办面生效**——定时任务面
+     *  一律归 None（不看入参，杜绝"任务也长出一段 detail"的隐性行为变化）。
+     *  末位默认参数 ⇒ 全部既有位置/命名调用零改动。 */
+    detail: Option[String] = None
   ): ScheduledTask =
     val normalizedKind = kind.map(_.trim.toLowerCase).filter(_.nonEmpty)
+    val isTodo = normalizedKind.contains(KindTodo)
     ScheduledTask(
       id = UUID.randomUUID().toString.take(8),
       sessionId = sessionId,
@@ -174,8 +196,10 @@ object ScheduledTask:
       createdAt = System.currentTimeMillis(),
       referencePath = referencePath,
       // 待办无 repeat 语义（浮出周期是引擎侧固定策略：每日 09:00）。
-      repeat = if normalizedKind.contains(KindTodo) then None else repeat,
+      repeat = if isTodo then None else repeat,
       name = name.map(_.trim).filter(_.nonEmpty),
+      // 只对待办面收 detail；空白串归一为 None（不留"空的第二段"）。
+      detail = if isTodo then detail.map(_.trim).filter(_.nonEmpty) else None,
       kind = normalizedKind.filter(_ == KindTodo), // 非 "todo" 值一律归定时任务面
       condition = condition.map(_.trim).filter(_.nonEmpty),
       project = project.map(_.trim).filter(_.nonEmpty),
