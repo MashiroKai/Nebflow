@@ -230,6 +230,26 @@ body.mobile-layer .fm-req-time { font-size: var(--ds-fs-hint); }
   padding: var(--ds-space-8) var(--ds-space-3);
 }
 
+/* ── 会话列表取数失败态（empty-state-must-not-lie 批 2026-11-05）─────────
+   形态与 `.fm-login-empty` 同族（居中一列：事实一句 + 动作一枚），**不与
+   `.fm-empty`（空态）共用类名** —— 两者外观相近但语义相反，共用会让「失败
+   伪装成空」重新长出来（本批修的正是这个）。 */
+.fm-list-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--ds-space-3);
+  padding: var(--ds-space-6) var(--ds-space-3);
+}
+
+.fm-list-error-text {
+  font-size: var(--ds-fs-hint);
+  /* 取色走 token，**不**带 hex 兜底：设计 token 门禁只许基线下降（禁新字面量）。 */
+  color: var(--color-text-muted);
+  text-align: center;
+  line-height: 1.6;
+}
+
 .fm-login-text {
   font-size: var(--ds-fs-hint);
   color: var(--color-text-muted, #888);
@@ -1463,22 +1483,25 @@ button.fm-req-decline:focus-visible {
    30×12 ⇒ 手机档**全部不达 44**；同一 footer 族在**主对话面**早已补齐
    （css/mobileLayer.css:4789-4805 `body.mobile-layer :is(.duration-badge .msg-copy,
    .duration-badge-time)`），消息面这条生产线漏了同一档 —— 本段把它补齐，**解法逐字
-   同源**（不另造第二套）：
-     · 本体加宽到 --mhit（44px 见方宽度）—— 列向 flex 行天然容纳，纵向布局零位移；
-     · ::after 只**纵向**垫高命中区（width 100% = 本体宽、height ≥ 44）—— 横向零越界。
-   为什么不是 44px 横向外扩盘（同 .tfl-icon-btn 解法）：模式 pill 的 `gap` 仅 6px <
-   盘半径伸出量 ⇒ 邻键外扩盘互盖、点击被邻键劫持（mobileLayer.css:4785-4786 有实证
-   登记）；而「本体抬到 44 见方」会把 footer 行高 +27px 顶走整条聊天流（同注 :4780-4784）。
-   视觉本体尺寸零放大：图标仍 11px、时间仍 10px，加宽的只是透明命中盒。
+   同源**（不另造第二套）。
+   ⚠ 同源解法已随作者令 2026-11-05 09:29 换代（「手机端的消息的footer…跟电脑端不
+   一致，间距拉的很开」）：主对话面把 footer 键**横向回自然宽 + 半个键缝外扩**、
+   键缝抬到 --ds-space-3（12px）；本段的「本体加宽到 44」是旧档，会把好友会话的
+   模式 pill 撑成与主对话面**不同**的间距 ⇒ 同步换代，保持两端同一套语义：
+     · 本体回自然宽（= 桌面同款，图标仍 11px、时间仍 12px，视觉零放大）；
+     · ::after 横向 = 本体宽 + 一个键缝（左右各半缝，与邻键命中盒相邻不重叠）；
+     · ::after 纵向 = max(100%, 44) ⇒ 一排横键真正需要的纵轴仍是 44；
+     · 键缝 = --ds-space-3（12px）⇒ 相邻键中心距 25px ≥ 24（WCAG 2.5.8 间距例外）。
+   完整推导与主对话面的实测对照见 css/mobileLayer.css 的 .duration-badge 块头。
    🔴 本段挂 `body.mobile-layer`（与 mobileLayer.css 同开关）：桌面档零影响；
    本文件是消息面样式所有权面，手机覆盖不落 mobileLayer.css（另一腿所有）。 */
+body.mobile-layer .fm-msg-meta { gap: var(--ds-space-3); }
 body.mobile-layer .fm-msg-time,
 body.mobile-layer .fm-msg-act {
   position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: var(--mhit, 44px);
 }
 body.mobile-layer .fm-msg-time::after,
 body.mobile-layer .fm-msg-act::after {
@@ -1486,7 +1509,7 @@ body.mobile-layer .fm-msg-act::after {
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 100%;
+  width: calc(100% + var(--ds-space-3));
   height: max(100%, var(--mhit, 44px));
   transform: translate(-50%, -50%);
   border-radius: var(--ds-radius-button);

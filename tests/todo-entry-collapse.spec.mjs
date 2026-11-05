@@ -1,6 +1,12 @@
 // todo-entry-collapse.spec.mjs — 待办入口收敛批（2026-11-04 作者令）前端验收。
 //
-// 口径：待办入口**收敛到胶囊一处**（顶带 #task-list 的 .tfl-capsule，双端同现）。
+// 口径（2026-11-05 09:28 作者令**按端反转**后的现行口径）：
+//   · 桌面 = 顶带待办胶囊 #task-list .tfl-capsule 唯一入口（原口径原样保留）；
+//   · 手机 = 聊天根**左上悬浮「任务」圆钮**（#mobile-fab-layer 的
+//     [data-chrome="tasks"]）→ pushPage('tasks') → #mobile-task-panel；
+//     胶囊在手机层 display:none（端区分，不是同一组件两套皮）。
+// 沿革：本 spec 出生时（入口收敛批 2026-11-04）两条腿都是「双端胶囊」；
+// 作者 2026-11-05 09:28 要求手机端回到旧悬浮圆钮 ⇒ 手机腿的选择器断言整体反转。
 // 本 spec = 选择器级断言（不比对像素）：
 //   ① 消息列表顶部「待办事项」入口行退役：`.fm-todo-entry` 双端零命中；
 //   ② 手机左上角任务圆钮 / 任务页面板退役：`[data-chrome="tasks"]`、
@@ -261,123 +267,70 @@ test('①③④ 桌面 1280×800：入口行退役、胶囊唯一入口且可展
   expect(errors).toEqual([]);
 });
 
-test('②③④⑤ 手机 375×812：任务圆钮/任务页退役，胶囊是唯一入口且可展开，信息不丢', async ({ page }) => {
+test('②③④⑤ 手机 375×812：待办入口 = 左上悬浮圆钮（端区分），胶囊退场，信息不丢', async ({ page }) => {
   const errors = watchErrors(page);
   await bootApp(page, { viewport: { width: 375, height: 812 } });
 
   // 手机层激活。
   await expect(page.locator('body.mobile-layer')).toHaveCount(1);
 
-  // ── ② 左上角任务圆钮 / 任务页面板退役 ──
-  await expect(page.locator('[data-chrome="tasks"]')).toHaveCount(0);
-  await expect(page.locator('#mobile-fab-layer .mh-chrome-btn[data-chrome="tasks"]')).toHaveCount(0);
-  await expect(page.locator('#mobile-task-panel')).toHaveCount(0);
-  // 悬浮钮层仍在（只余右上搜索键）——不是把整层一起撤了。
+  // ── ② 左上角任务圆钮**恢复**（作者令 2026-11-05 09:28，逐字：「手机端的待办…
+  //    跟电脑端的区分开，电脑端是一个胶囊，手机端还是需要是之前那个左上角的一个
+  //    悬浮的待办按钮」）。本腿在原「收敛到胶囊一处」批上**反转**，断言面：
+  //    圆钮在、在左上、48 档、徽标读数跟上、右上搜索钮原样。
+  const taskBtn = page.locator('#mobile-fab-layer .mh-chrome-btn[data-chrome="tasks"]');
+  await expect(taskBtn).toHaveCount(1);
+  await expect(taskBtn).toBeVisible();
   await expect(page.locator('#mobile-fab-layer .mh-chrome-btn[data-chrome="search"]')).toHaveCount(1);
-  // 聊天头左槽（原任务位）空出：该几何位置无按钮。
-  expect(await page.evaluate(() => {
-    const b = [...document.querySelectorAll('#mobile-fab-layer .mh-chrome-btn')]
-      .map((n) => n.getBoundingClientRect())
-      .filter((r) => r.left < 120 && r.top < 200);
-    return b.length;
-  })).toBe(0);
+  const bb = await taskBtn.boundingBox();
+  expect(bb).not.toBeNull();
+  expect(bb.x).toBeLessThan(24);                       // 左缘（--mchrome-top 16）
+  expect(bb.y).toBeLessThan(48);                       // 顶缘（16 + safe）
+  expect(bb.width).toBeGreaterThanOrEqual(44);         // 触控档（48 g2-fab）
+  expect(bb.height).toBeGreaterThanOrEqual(44);
+  await expect(taskBtn.locator('.mh-chrome-badge')).toHaveText('4');   // = 未完成 4
 
-  // ── ① 入口行在手机消息页同样缺席 ──
-  //     （顺序说明：胶囊的可见性/命中先测 —— 它住在聊天根顶带；dock 页
-  //      #mobile-pages z=156 是全屏页，按设计盖住顶带（退役前左上圆钮 z=30
-  //      同样被盖），见批报告「入口可达面」条目。）
-  await expect(page.locator('.fm-todo-entry')).toHaveCount(0);
-  await expect(page.locator('#fm-conversations [data-todo-entry]')).toHaveCount(0);
-
-  // ── ⑤ #todo-page 不再自消息列表可达（DOM 保留但无开合路径）──
-  await expect(page.locator('#todo-page')).toHaveCount(1); // DOM 保留（整面退役≠删节点）
-  await expect(page.locator('#todo-page')).not.toHaveClass(/open/);
-  // 消息页里点遍所有入口行/行元素也不会把它开出来（无入口行可点即证）；
-  // 再直接打导航缝：'todo' 页已从 PAGES 撤除 ⇒ pushPage 是 no-op。
-  const pushed = await page.evaluate(async () => {
-    const nav = await import('/js/mobile/navController.js');
-    nav.pushPage('todo');
-    nav.pushPage('tasks');
-    await new Promise((r) => setTimeout(r, 300));
-    return {
-      todoPage: document.querySelectorAll('.mobile-page[data-page="todo"]').length,
-      tasksPage: document.querySelectorAll('.mobile-page[data-page="tasks"]').length,
-      todoOpen: document.querySelector('#todo-page')?.classList.contains('open') || false,
-      taskPanel: document.querySelectorAll('#mobile-task-panel').length,
-    };
-  });
-  expect(pushed).toEqual({ todoPage: 0, tasksPage: 0, todoOpen: false, taskPanel: 0 });
-  await expect(page.locator('#todo-page')).not.toHaveClass(/open/);
-
-  // ── ③ 胶囊在手机顶上、是唯一待办入口，且可展开 ──
-  const capsule = page.locator('#task-list .tfl-capsule');
-  await expect(capsule).toBeVisible();
-  const box = await capsule.boundingBox();
-  expect(box).not.toBeNull();
-  // 落在顶带（身份头之下）：距窗口顶 96+safe ≈ 96 上下（容差 24，含 26px 胶囊高）。
-  expect(box.y).toBeGreaterThan(60);
-  expect(box.y).toBeLessThan(140);
-  // 水平居中（胶囊行 = 居中一行）。
-  expect(Math.abs((box.x + box.width / 2) - 375 / 2)).toBeLessThan(3);
-  // 层级/遮挡复核（分发器补充 2026-11-04 18:08）：胶囊不被 #chat 内容/输入框盖住
-  // —— 判定「胶囊中心点命中测试」落在胶囊自身或其后代，而不是别层。
+  // ── ③ 胶囊在手机层**退场**（端区分的另一半：桌面才有胶囊）──
+  expect(await page.evaluate(() => getComputedStyle(document.getElementById('task-list')).display)).toBe('none');
+  await expect(page.locator('#task-list .tfl-capsule')).not.toBeVisible();
+  // 顶带不再为胶囊预留一行：胶囊槽自身零盒，顶带高度回落到其余子件（8px 呼吸位），
+  // 远小于胶囊带的 38px（26 胶囊 + 12 呼吸位）。
   expect(await page.evaluate(() => {
-    const cap = document.querySelector('#task-list .tfl-capsule');
-    const r = cap.getBoundingClientRect();
-    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
-    return !!(hit && (hit === cap || cap.contains(hit)));
-  })).toBe(true);
-  // 身份头不压胶囊（同一 z 带内的相邻两层：.g2-chat-head z26 / #top-overlays z25
-  // —— 身份头 pointer-events:none 且几何在带上缘之上，两者互不侵占）。
-  expect(await page.evaluate(() => {
-    const headEl = document.querySelector('.g2-chat-head');
-    const cap = document.querySelector('#task-list .tfl-capsule');
-    if (!headEl || !cap) return { ok: true, skipped: true };
-    const h = headEl.getBoundingClientRect();
-    const c = cap.getBoundingClientRect();
-    return { ok: h.bottom <= c.top + 1, headBottom: Math.round(h.bottom), capTop: Math.round(c.top) };
-  })).toMatchObject({ ok: true });
-  // #chat 顶让位把胶囊带让出来（band 底缘 ≤ padding-top）。
-  expect(await page.evaluate(() => {
+    const slot = document.getElementById('task-list').getBoundingClientRect();
     const band = document.getElementById('top-overlays').getBoundingClientRect();
-    const pad = parseFloat(getComputedStyle(document.getElementById('chat')).paddingTop) || 0;
-    return { ok: pad + 1 >= band.bottom, bandBottom: Math.round(band.bottom), chatPad: Math.round(pad) };
-  })).toMatchObject({ ok: true });
-  await page.screenshot({ path: join(SHOT_DIR, 'mobile-375-capsule.png') });
+    return { slot: Math.round(slot.height), band: Math.round(band.height) };
+  })).toMatchObject({ slot: 0 });
+  expect(await page.evaluate(() => Math.round(document.getElementById('top-overlays').getBoundingClientRect().height))).toBeLessThan(20);
 
-  // ── ④ 展开面板：计数 + 逾期读数（信息不丢，与桌面同源同读数）──
-  await expect(page.locator('#task-list .tfl-capsule-count')).toHaveText('4 待办');
-  await expect(capsule).toHaveClass(/is-overdue/);
-  await expect(page.locator('#task-list .tfl-capsule-overdue')).toHaveText('1 逾期');
-  await capsule.click();
-  const card = page.locator('#task-list .tfl-card');
-  await expect(card).toHaveAttribute('data-state', 'open');
-  await expect(card).toBeVisible();
-  await expect(page.locator('#task-list .tfl-header-count .tfl-capsule-count')).toHaveText('4 待办');
-  await expect(page.locator('#task-list .tfl-header-count .tfl-capsule-overdue')).toHaveText('1 逾期');
-  await expect(page.locator('#task-list .tfl-row')).toHaveCount(4);
+  // ── ⑤ #todo-page 仍不可达（DOM 保留但无开合路径）；'tasks' 页与面板恢复 ──
+  await expect(page.locator('#todo-page')).toHaveCount(1);
+  await expect(page.locator('#todo-page')).not.toHaveClass(/open/);
+  await expect(page.locator('.fm-todo-entry')).toHaveCount(0);
 
-  // 展开面板不压输入框：面板底缘在输入区顶缘之上（让位链复核点）。
-  expect(await page.evaluate(() => {
-    const cardEl = document.querySelector('#task-list .tfl-card');
-    const input = document.querySelector('#input-area');
-    if (!cardEl || !input) return { ok: true, skipped: true };
-    const c = cardEl.getBoundingClientRect();
-    const i = input.getBoundingClientRect();
-    return { ok: c.bottom <= i.top + 1, cardBottom: Math.round(c.bottom), inputTop: Math.round(i.top) };
-  })).toMatchObject({ ok: true });
+  // ── ④ 点圆钮 = push 任务页，面板承载计数/逾期/四签/分组（信息不丢）──
+  await taskBtn.click();
+  await expect(page.locator('.mobile-page[data-page="tasks"].live')).toHaveCount(1);
+  await expect(page.locator('#mobile-task-panel')).toHaveCount(1);
+  await expect(page.locator('#mobile-task-panel')).toBeVisible();
+  await expect(page.locator('#mobile-task-panel .tp-stats')).toHaveText('4 待办');
+  await expect(page.locator('#mobile-task-panel .tfl-row')).toHaveCount(4);
+  await expect(page.locator('#mobile-task-panel .tfl-capsule-overdue').first()).toHaveText('1 逾期');
+  await page.locator('#mobile-task-panel .tfl-filter-toggle').click();
+  await expect(page.locator('#mobile-task-panel .tfl-prio-row .tfl-chip-prio')).toHaveCount(4);
+  await expect(page.locator('#mobile-task-panel .tfl-chip-tag')).toHaveCount(2);
+  // 返回钮（页面壳左上）在安全区内且可点：整页不压刘海
+  const back = page.locator('.mobile-page[data-page="tasks"] .mobile-back-btn');
+  await expect(back).toHaveCount(1);
+  const bkb = await back.boundingBox();
+  expect(bkb.y).toBeGreaterThanOrEqual(0);
+  await page.screenshot({ path: join(SHOT_DIR, 'mobile-375-tasks-fab.png') });
 
-  // 手机上也具备四签与分组（同一面板实现，非第二套）。
-  await page.locator('#task-list .tfl-filter-toggle').click();
-  await expect(page.locator('#task-list .tfl-prio-row .tfl-chip-prio')).toHaveCount(4);
-  await expect(page.locator('#task-list .tfl-chip-tag')).toHaveCount(2);
-  await page.screenshot({ path: join(SHOT_DIR, 'mobile-375-capsule-expanded.png') });
+  // 出页：面板随出栈收口（closeTaskPanel 腿恢复）
+  await back.click();
+  await expect(page.locator('.mobile-page[data-page="tasks"].live')).toHaveCount(0);
+  expect(await page.evaluate(() => !!document.getElementById('mobile-task-panel')?.hidden)).toBe(true);
 
-  // ── ① 收尾：手机消息页无入口行（列表 = 纯会话名册）──
-  //     dock 页 = #mobile-pages 全屏页（z156）按设计盖住顶带 —— 与退役前左上
-  //     圆钮（z30）同一可达面：待办入口只在聊天根页可点，回聊天根一次 dock 键。
-  await page.locator('#task-list .tfl-collapse-btn').click(); // 收起（展开态胶囊让位）
-  await expect(page.locator('#task-list .tfl-card')).toHaveAttribute('data-state', 'capsule');
+  // ── ① 收尾：手机消息页仍无入口行（列表 = 纯会话名册）──
   await page.locator('#mobile-dock .dock-key[data-dock="messages"]').click();
   await expect(page.locator('.mobile-page[data-page="messages"].live')).toHaveCount(1);
   await expect(page.locator('.mobile-page[data-page="messages"] .fm-todo-entry')).toHaveCount(0);

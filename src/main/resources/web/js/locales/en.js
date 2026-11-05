@@ -398,6 +398,14 @@ export default {
   'contacts.blockTitle': 'Block',
   'contacts.blockConfirm': 'You will no longer receive messages or friend requests from {name}.',
   'messages.empty': 'No conversations',
+  // Conversation-list **fetch failure** face (empty-state-must-not-lie batch,
+  // 2026-11-05). 🔴 Distinct fact from the empty key above, never interchangeable:
+  // `messages.empty` renders only when the server ANSWERED that there are no
+  // conversations (200 + `[]`); any failed fetch (non-2xx / timeout / parse
+  // error) renders this key with a retry control. Self-explaining rule 8: the
+  // fact only — the retry control carries the next step.
+  'messages.listLoadFailed': "Couldn't load conversations",
+  'messages.retry': 'Retry',
   // 🔴 `systemNowFriends` belongs to the **friend-acceptance** context (its only
   // legal consumer = the `friend_accepted` branch of `onFriendEvent` in
   // messages.js) ⇒ the two group keys below are the **key split** product
@@ -3299,4 +3307,41 @@ export default {
   'perception.toPh': 'Recipient address, Enter to add',
   'perception.addrPh': 'Type an address, Enter to add',
   'perception.ccBcc': 'Cc / Bcc',
+  // === schedule-created-card batch (2026-11-05): in-message schedule/todo card ===
+  'schedCard.kindTask': 'Scheduled task',
+  'schedCard.kindTodo': 'Todo',
+  'schedCard.statusActive': 'Active',
+  'schedCard.statusWriting': 'Saving',
+  'schedCard.statusPaused': 'PAUSED',
+  'schedCard.statusDone': 'Done',
+  'schedCard.statusCancelled': 'Cancelled',
+  'schedCard.statusGone': 'Not in list',
+  'schedCard.createdAt': 'created {at}',
+  'schedCard.repeatOnce': 'One-shot',
+  'schedCard.repeat.hourly': 'Hourly',
+  'schedCard.repeat.daily': 'Daily',
+  'schedCard.repeat.weekly': 'Weekly',
+  'schedCard.expand': 'Expand',
+  'schedCard.collapse': 'Collapse',
+  'schedCard.edit': 'Edit',
+  'schedCard.cancel': 'Cancel',
+  'schedCard.save': 'Save',
+  'schedCard.saving': 'Saving',
+  'schedCard.discard': 'Discard',
+  'schedCard.fieldContent': 'Content',
+  'schedCard.fieldProject': 'Project',
+  'schedCard.fieldTriggerAt': 'Trigger at',
+  'schedCard.fieldRepeat': 'Repeat',
+  'schedCard.projectPlaceholder': 'Project label (empty = ungrouped)',
+  'schedCard.confirmCancelAsk': 'Cancelled entries never fire again.',
+  'schedCard.confirmCancel': 'Cancel it',
+  'schedCard.cancelling': 'Cancelling',
+  'schedCard.keep': 'Keep',
+  'schedCard.noChange': 'Nothing changed',
+  'schedCard.readFailed': 'Engine state not read back',
+  'schedCard.errOffline': 'Not connected to the engine — change not submitted',
+  'schedCard.errTimeout': 'No engine receipt — change unconfirmed',
+  'schedCard.errGone': 'Entry no longer exists — change not saved',
+  'schedCard.errEngine': 'Engine rejected: {detail}',
+  'schedCard.errGeneric': 'Write failed — change not saved',
 };
