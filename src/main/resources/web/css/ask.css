@@ -462,7 +462,7 @@ body.mobile-layer .note-dock .ds-resize-handle {
 
 /* ═══ 作者令 2026-11-04 12:52 ① + ②：画布底部两钮向顶部两钮看齐 ═══
    顶部两钮（#canvas-head-close / #deck-fab）实测：40×40 / radius 50% / 图标 18 /
-   内距 0 / 材质 = glass.css 圆钮级浮件档（--glass-bg + blur(24px) saturate(1.15)
+   内距 0 / 材质 = glass.css 圆钮级浮件档（--glass-bg + blur(40px) saturate(1.4)
    + --glass-border + --cv-shadow，hover 抬亮 1.05、active 按 0.96）。
    底部两钮（本面板输入条的发送/终止）此前是主会话的实底回合钮（36 / 实心绿）⇒
    同一面板里两套按钮语言。本批把它们切成**同一个组件类的画布 chrome 档**：

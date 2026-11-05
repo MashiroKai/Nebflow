@@ -42,11 +42,13 @@
   --glass-bg: var(--nf-glass-bg);
   --glass-blur: var(--nf-glass-blur);
 
-  /* ── 不透明毛玻璃档（历史名，glass-unify 批后与 --glass-bg 同值）─────────
+  /* ── 历史名（glass-unify 批后与 --glass-bg 同值）─────────────────────────
      glass-unify 批之前：--glass-bg = α.55 半透、--glass-bg-opaque = 压平 α=1，
      两个档正是作者实拍「图1 半透明 / 图2 不透明」的分裂来源。现两者同指
-     `--nf-glass-bg`（α .97）：**全站只有一个玻璃底**，不再有「半透档」可选。
-     保留旧名只为存量消费者（.ask-input / .ask-bub / .note-body 等）零改动。 */
+     `--nf-glass-bg`（glass-recalibrate 批 2026-11-05 18:13 重定标后 = 亮 α .55 /
+     暗 α .68，参照物主会话输入框逐值）：**全站只有一个玻璃底**，不再有
+     「不透明档」可选——内容隐身由 blur(40px) 负责，不靠 α（见 stand-tokens.css
+     玻璃段注的参数网格读数）。保留旧名只为存量消费者零改动。 */
   --glass-bg-opaque: var(--nf-glass-bg);
 
   /* 顶缘折射线层（#header 背景的第一层，作者令「Header 同款」直接提成 token：
@@ -65,7 +67,7 @@
 
   /* ── Frosted 标准 shadow token（2026-10-22 作者令「全站一套毛玻璃」）──
      backdrop blur 参数/材质 token 与 chat header 现实现同源（--glass-bg /
-     --glass-blur saturate(1.15) / --glass-border + 本 token 阴影栈）。
+     --glass-blur saturate(1.4) / --glass-border + 本 token 阴影栈）。
      消费方 = #header、.canvas-header 胶囊、wiki 左栏控制面控件——禁止各画
      各的。字面量与 chat.css #header 亮/暗档逐字同源（单源判据：改一处即全
      站生效）。 */
@@ -234,13 +236,13 @@
    面阴影取 #input-bar 现值（顶缘 inset 高光 + 两档外投影 —— 与主对话输入框
    同款；修前取 #header inset-only 档，控件条在内容面上「飘不住」）。 */
 :root {
-  /* 模糊配方（= chat #header：--glass-bg + blur 24 saturate 1.15） */
+  /* 模糊配方（= 全站唯一毛玻璃配方：--glass-bg + blur 40 saturate 1.4） */
   --cv-bg: var(--glass-bg);
-  /* 不透明档（同族，只差 α）：消费方 = canvas Ask 面（ask 可读性批 2026-11-05）
-     —— 那一面背后是文档正文，拿不到 #chat 的内容 mask，必须靠 α=1 收口。 */
+  /* 历史“不透明档”名：glass-recalibrate 批 2026-11-05 18:13 起与 --glass-bg 同值
+     （全站不再有第二个 α；canvas Ask 面的内容隐身由 blur 40 负责）。 */
   --cv-bg-opaque: var(--glass-bg-opaque);
   --cv-blur: var(--glass-blur);
-  --cv-saturate: 1.15;
+  --cv-saturate: var(--nf-glass-saturate);
   /* 边框（= chat #header） */
   --cv-border: var(--glass-border);
   /* 面阴影（冷启动批 2026-10-30 作者令「查看器顶栏/控件条玻璃对齐主对话

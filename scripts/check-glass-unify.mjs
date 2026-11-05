@@ -12,21 +12,35 @@
 // 在哪个文件里长成什么样，取决于写那一面的人当天的手感。手工审查抓不住 128 处，
 // 所以把「配方只有一处」变成机器判据。
 //
-// ── 五条判据 ────────────────────────────────────────────────────────────
+// ── 六条判据 ────────────────────────────────────────────────────────────
 //  G1 双源背衬：**css/glass.css 之外**任何文件出现非 `none` 的 backdrop-filter /
 //     -webkit-backdrop-filter ⇒ 红。`none` 放行：那不是第二套毛玻璃，是**摘除**
 //     毛玻璃（降级档 @supports / 无 backdrop 引擎回落实底），性质相反不算违规。
 //  G2 配方走样：glass.css 内部，每条非 none 的 backdrop-filter 值必须是
 //     `var(--nf-glass-filter)`（幕布类 .nf-glass-scrim 允许 `var(--nf-glass-scrim-blur)`）
 //     ⇒ 否则红。数字重新长回文件里 = 配方又开始分裂。
-//  G3 标准被稀释：stand-tokens.css 的 `--nf-glass-bg` 解析出的 **α 必须 ≥ 0.90**
-//     （亮/暗/媒体查询三档都查）。这是本批真正的核心判据：把 α 从 .97 调回 .55
-//     就能让「图1」平静地复活，而其它四条都不会红。
+//  G3 标准跑出区间（**glass-recalibrate 批 2026-11-05 18:13 重写**）：玻璃底
+//     `--nf-glass-bg` / `-hover` 解析出的 **α 必须落在 [0.45, 0.75] 区间内**，
+//     亮/暗/媒体查询三档全查。这条判据现在是**双边闸**，两端都是死路：
+//       · α > 0.75 ⇒ 死白（作者 18:13 否掉的正是 α .973：实测红底色度只剩 6.9，
+//         背景颜色进不来 = 「毛玻璃效果还是不是我想要的那种」的读数）；
+//       · α < 0.45 ⇒ 内容透底（底下的正文大字看得出来 = 作者说的「脏」）。
+//     上一版这里钉的是「α ≥ 0.90 单边下限」，把死白写成了合格线 —— 判据本身
+//     就是错的，本批连判据一起重定标。
 //  G4 令牌双源：`--nf-glass-*` 只许在 css/stand-tokens.css 里**定义**（`x: 字面量`）；
 //     其它文件出现 `--nf-glass-*: <字面量>` ⇒ 红（引用 `var(--nf-glass-*)` 不限）。
 //  G5 绕过工具类：canvas ask 的气泡与输入条必须挂 `.nf-glass`
 //     （作者令 2026-11-05 16:50「这三处全部吃唯一毛玻璃标准，不许为 ask 气泡
 //      另造一套等效样式」）⇒ js/askDock.js 里造这两个节点时缺类即红。
+//  G6 配方被降档（本批新增）：`--nf-glass-blur` ≥ 32px 且 `--nf-glass-saturate`
+//     ≥ 1.3，且 `--nf-glass-filter` 必须同时含 `blur(` 与 `saturate(`。理由 =
+//     参数网格实测的两条定律（蓝本见 stand-tokens.css 玻璃段注）：
+//       · 色彩承接 C_out ≈ (1−α)·saturate·C_bg —— 只有 α 与 saturate 能救它；
+//       · 内容残留 sd_out ≈ (1−α)·g(blur) —— **只有 blur 能救它，且 blur 不花色彩**。
+//     把 blur 从 40 调回 24 是「用色彩换不到任何东西」的白丢：α .55 时正文墙的
+//     亮度标准差 1.43→2.81（内容回来一倍），而红底色度 90.4→90.4（一格没变）。
+//     故 blur 半径与 saturate 是标准本体的一部分，必须进闸 —— 只钉 α 挡不住
+//     「α 对、半径退回去」这种看起来合规的降档。
 //
 // 判据与术语的**规范侧**（人读条文、例外登记）在
 //   src/main/resources/seed/plugins/design-language/skills/design-language/
@@ -64,8 +78,14 @@ const ALLOWED_FILTER_VALUES = new Set([
   'var(--nf-glass-scrim-blur)',
 ]);
 
-/** G3：玻璃底不透明度下限。低于它 = 作者实拍「图1」那种能看见底色的形态。 */
-const MIN_GLASS_ALPHA = 0.9;
+/** G3：玻璃底不透明度的**合格区间**（双边）。低于下限 = 内容透底；
+ *  高于上限 = 死白（背景颜色进不来，作者 2026-11-05 18:13 否掉的那一端）。 */
+const GLASS_ALPHA_MIN = 0.45;
+const GLASS_ALPHA_MAX = 0.75;
+
+/** G6：模糊半径与饱和度下限（见文件头「内容残留/色彩承接」两条定律）。 */
+const MIN_GLASS_BLUR_PX = 32;
+const MIN_GLASS_SATURATE = 1.3;
 
 const rel = (p) => relative(ROOT, p);
 
@@ -256,18 +276,26 @@ for (const dir of [JS_DIR, WEB]) {
   }
 }
 
-// G3 —— 标准本体不许被稀释
+// G3 —— 标准本体不许跑出区间（双边：低了内容透底，高了死白）
 const tokenSrc = readFileSync(TOKENS, 'utf8');
 const bgDecls = [];
+const blurDecls = [];
+const satDecls = [];
+const filterDecls = [];
 for (const rule of walkRules(tokenSrc)) {
   for (const d of rule.decls) {
-    if (d.prop !== '--nf-glass-bg') continue;
-    const value = d.value.trim();
-    if (/^var\(/.test(value)) continue; // 别名（同一个值，非第二份定义）
-    bgDecls.push({ value, line: d.line, atStack: rule.atStack, selector: rule.selector });
+    if (d.prop === '--nf-glass-bg' || d.prop === '--nf-glass-bg-hover') {
+      const value = d.value.trim();
+      if (/^var\(/.test(value)) continue; // 别名（同一个值，非第二份定义）
+      bgDecls.push({ prop: d.prop, value, line: d.line, atStack: rule.atStack, selector: rule.selector });
+    }
+    if (d.prop === '--nf-glass-blur') blurDecls.push({ value: d.value.trim(), line: d.line, selector: rule.selector });
+    if (d.prop === '--nf-glass-saturate') satDecls.push({ value: d.value.trim(), line: d.line, selector: rule.selector });
+    if (d.prop === '--nf-glass-filter') filterDecls.push({ value: d.value.trim(), line: d.line, selector: rule.selector });
   }
 }
-if (!bgDecls.length) {
+const glassBg = bgDecls.filter((d) => d.prop === '--nf-glass-bg');
+if (!glassBg.length) {
   add({
     rule: 'G3',
     file: rel(TOKENS),
@@ -285,19 +313,63 @@ for (const d of bgDecls) {
       file: rel(TOKENS),
       line: d.line,
       selector: d.selector,
-      detail: `--nf-glass-bg: ${d.value}`,
+      detail: `${d.prop}: ${d.value}`,
       why: '无法解析不透明度（请用 #rrggbbaa 或 rgba()）',
     });
     continue;
   }
-  if (a < MIN_GLASS_ALPHA) {
+  if (a < GLASS_ALPHA_MIN || a > GLASS_ALPHA_MAX) {
+    const which = a > GLASS_ALPHA_MAX ? '高于上限（死白：背景颜色一点透不上来 = 作者 18:13 否掉的形态）'
+      : '低于下限（内容透底：底下的字看得出来 = 作者说的「脏」）';
     add({
       rule: 'G3',
       file: rel(TOKENS),
       line: d.line,
       selector: d.selector,
-      detail: `--nf-glass-bg: ${d.value}  ⇒ α=${a.toFixed(3)} < ${MIN_GLASS_ALPHA}`,
-      why: '标准被稀释成半透明（= 作者实拍图1 那种能看见底色的形态）',
+      detail: `${d.prop}: ${d.value}  ⇒ α=${a.toFixed(3)} 跑出 [${GLASS_ALPHA_MIN}, ${GLASS_ALPHA_MAX}]`,
+      why: `标准失效：${which}`,
+    });
+  }
+}
+
+// G6 —— 配方不许被降档（blur/saturate 是标准本体，不只是 α）
+for (const d of blurDecls) {
+  const m = d.value.match(/^([\d.]+)px$/i);
+  if (!m) {
+    add({ rule: 'G6', file: rel(TOKENS), line: d.line, selector: d.selector, detail: `--nf-glass-blur: ${d.value}`, why: '无法解析半径（请用 <n>px 字面量）' });
+    continue;
+  }
+  if (parseFloat(m[1]) < MIN_GLASS_BLUR_PX) {
+    add({
+      rule: 'G6', file: rel(TOKENS), line: d.line, selector: d.selector,
+      detail: `--nf-glass-blur: ${d.value} < ${MIN_GLASS_BLUR_PX}px`,
+      why: '内容残留回来了：blur 是唯一不花色彩的降内容手段，半径退回 = 用色彩换了个寂寞',
+    });
+  }
+}
+for (const d of satDecls) {
+  const v = parseFloat(d.value);
+  if (!Number.isFinite(v)) {
+    add({ rule: 'G6', file: rel(TOKENS), line: d.line, selector: d.selector, detail: `--nf-glass-saturate: ${d.value}`, why: '无法解析饱和度' });
+    continue;
+  }
+  if (v < MIN_GLASS_SATURATE) {
+    add({
+      rule: 'G6', file: rel(TOKENS), line: d.line, selector: d.selector,
+      detail: `--nf-glass-saturate: ${d.value} < ${MIN_GLASS_SATURATE}`,
+      why: '色彩承接被稀释：C_out ≈ (1−α)·saturate·C_bg，压饱和度等于把背景颜色调灰',
+    });
+  }
+}
+if (!blurDecls.length || !satDecls.length) {
+  add({ rule: 'G6', file: rel(TOKENS), line: 0, selector: ':root', detail: '--nf-glass-blur / --nf-glass-saturate 缺失', why: '标准本体缺失：配方无法机检' });
+}
+for (const d of filterDecls) {
+  if (!/blur\(/.test(d.value) || !/saturate\(/.test(d.value)) {
+    add({
+      rule: 'G6', file: rel(TOKENS), line: d.line, selector: d.selector,
+      detail: `--nf-glass-filter: ${d.value}`,
+      why: '配方链不完整：必须是 blur(...) + saturate(...) 两件',
     });
   }
 }
@@ -372,7 +444,9 @@ if (argv.has('--json')) {
     ok: violations.length === 0,
     singleSource: rel(SINGLE_SOURCE),
     tokenSource: rel(TOKENS),
-    minGlassAlpha: MIN_GLASS_ALPHA,
+    glassAlphaBand: [GLASS_ALPHA_MIN, GLASS_ALPHA_MAX],
+    minGlassBlurPx: MIN_GLASS_BLUR_PX,
+    minGlassSaturate: MIN_GLASS_SATURATE,
     blocksWithBackdrop: stats.blocks,
     noneOptOuts: stats.noneOptOuts,
     ruleBlocksInSingleSource: members,
@@ -399,13 +473,15 @@ if (violations.length) {
     console.error(`      ${v.why}`);
   }
   console.error('\n处置：把这一面改成 .nf-glass（或加进 css/glass.css 的成员登记表）、');
-  console.error(`        配方值只准 var(--nf-glass-filter)、玻璃底 α ≥ ${MIN_GLASS_ALPHA}。`);
+  console.error(`        配方值只准 var(--nf-glass-filter)、玻璃底 α 落进 [${GLASS_ALPHA_MIN}, ${GLASS_ALPHA_MAX}]、`);
+  console.error(`        blur ≥ ${MIN_GLASS_BLUR_PX}px、saturate ≥ ${MIN_GLASS_SATURATE}。`);
   console.error('        规范条文与例外登记：design-language/references/glass-spec.md');
   process.exit(1);
 }
 
 console.log(
   `✓ glass-unify gate passed — 配方块 ${stats.blocks} 全部在单一源（${members} 条规则）、` +
-  `none 摘除档 ${stats.noneOptOuts}、玻璃底 α ≥ ${MIN_GLASS_ALPHA}、ask 面走 .nf-glass`,
+  `none 摘除档 ${stats.noneOptOuts}、玻璃底 α ∈ [${GLASS_ALPHA_MIN}, ${GLASS_ALPHA_MAX}]、` +
+  `blur ≥ ${MIN_GLASS_BLUR_PX}px、saturate ≥ ${MIN_GLASS_SATURATE}、ask 面走 .nf-glass`,
 );
 process.exit(0);

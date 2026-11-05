@@ -40,8 +40,11 @@
   --dl-border-light: #eeeff1;     /* 行分隔 */
 
   /* ── ① 配色 · 玻璃 ── */
-  --dl-glass-bg: rgba(255, 255, 255, 0.55);   /* 面板底 + blur(24px) saturate(1.15) */
-  --dl-glass-blur: 24px;
+  /* 玻璃 = 全站唯一毛玻璃标准（不透明但承接背景色；见 SKILL.md §1.5）。
+     α 决定透多少色、blur 决定剩多少内容 —— 内容隐身靠 blur，不要靠加 α。 */
+  --dl-glass-bg: rgba(255, 255, 255, 0.55);   /* 面板底（α .55 = 全站唯一玻璃底亮档） */
+  --dl-glass-blur: 40px;                      /* 唯一模糊半径（机检下限 32px） */
+  --dl-glass-saturate: 1.4;                   /* 唯一饱和度（机检下限 1.3） */
   --dl-etched-bg: rgba(0, 0, 0, 0.025);       /* 输入/嵌入面 */
   --dl-etched-border: rgba(91, 127, 191, 0.10);
   --dl-overlay: transparent;                  /* 弹窗背层恒透明。反例：暗化/模糊背层 */

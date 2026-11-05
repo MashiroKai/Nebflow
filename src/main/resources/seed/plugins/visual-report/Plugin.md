@@ -8,6 +8,16 @@ visual-report 是可视化报告包：节点按场景出图与人读报告。共
 
 - **选场景**：先查 §5 总目录表 ＋ §6 决策树（拿到任务先做出口判定，不为图而图）。
 - **公共规范**：`skills/core/SKILL.md`（场景 skill 必读；通用规则的唯一来源）。
+- **毛玻璃（术语）**：本包任何产物里出现「毛玻璃 / 玻璃质感 / glassmorphism」，
+  指的是 Stand 产品**唯一那一份**毛玻璃标准 —— **不透明，但承接背景色**：
+  看不到背景的**内容**（文字/图形），但看得到背景的**颜色**。取值 = 中等不透明
+  白底（亮 α .55 / 暗 α .68）+ `blur(40px) saturate(1.4)` + 1px 细边 + 顶缘内高光；
+  **两端都判死**：死白（α ≥ .90，颜色进不来，作者 2026-11-05 18:13 否掉）与
+  内容透底（α < .45 且 blur 小，底下的正文看得出来 = 脏）。唯一落点 =
+  令牌 `css/stand-tokens.css` 的 `--nf-glass-*` + 类 `css/glass.css` 的 `.nf-glass`
+  + 机检 `scripts/check-glass-unify.mjs` + 规范
+  `.../design-language/references/glass-spec.md`。为 Stand 出**界面截图/UI 图**
+  时必须按这一档画，不许自拟第二档。
 - **样张与验收基准**：`skills/core/references/demos/`（场景示例落此）。
 - **文档批纪律**：凡交付属于项目知识库的 markdown/HTML 文档（报告/设计稿/复盘），必读 `skills/wiki-docs/SKILL.md` 的「Mandatory clauses」节（强制条款清单与原文以该文件为准，本文件不重复条款数与条文），交付前跑 `skills/wiki-docs/scripts/check_wiki_docs.py` 校验。
 - **冲突裁决**：图表生成层各场景表述不一致时以 `skills/core/SKILL.md` 为准；人读交付体例以既有 visual-report skill 为准。
