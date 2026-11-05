@@ -190,6 +190,19 @@ for (const scheme of ['light', 'dark']) {
         return [...mi.matchAll(/(transparent|currentcolor|rgba?\([^)]*\)|white|black)[^,)]*?(?<![a-z])(\d+(?:\.\d+)?)px/gi)].map((x) => ({ color: x[1], px: parseFloat(x[2]) }));
       })(),
       lastBubBottom: lastBub ? +lastBub.getBoundingClientRect().bottom.toFixed(1) : null,
+      // C4 新判据（2026-11-05 09:32）所需读数：mask 末停是否 100%（锚列盒）、
+      // 列底到输入条的实测间距、dock 的 row-gap token 值。
+      colMaskEndsAt100: /100%\)\s*$/.test(String(cols ? (getComputedStyle(cols).maskImage || getComputedStyle(cols).webkitMaskImage) : '').trim()),
+      colToInputGap: (cols && dock)
+        ? +((dock.querySelector('.ask-input') || { getBoundingClientRect: () => ({ top: 0 }) }).getBoundingClientRect().top - cols.getBoundingClientRect().bottom).toFixed(2)
+        : null,
+      dockRowGap: dock ? parseFloat(getComputedStyle(dock).rowGap) || 0 : 0,
+      colwrapRect: (() => {
+        const w = dock && dock.querySelector('.ask-colwrap');
+        const b = w ? w.getBoundingClientRect() : null;
+        const c = cols ? cols.getBoundingClientRect() : null;
+        return b && c ? { wrapH: +b.height.toFixed(1), colH: +c.height.toFixed(1), wrapBottom: +b.bottom.toFixed(1), colBottom: +c.bottom.toFixed(1), dockH: dock ? +dock.getBoundingClientRect().height.toFixed(1) : null } : null;
+      })(),
       hitHeight: hit,
       armBorder: hb ? { top: hb.borderTopWidth, left: hb.borderLeftWidth, right: hb.borderRightWidth, bottom: hb.borderBottomWidth, radius: hb.borderTopLeftRadius } : null,
       rowMask: rowCs.maskImage || rowCs.webkitMaskImage,
@@ -217,10 +230,24 @@ for (const scheme of ['light', 'dark']) {
       !!m.bubMat && m.bubMat.bf === m.top1Mat.bf && m.bubMat.bf !== 'none',
       JSON.stringify({ bub: m.bubMat && m.bubMat.bf, top: m.top1Mat && m.top1Mat.bf }));
     const lastStop = (m.maskStops || []).slice(-1)[0];
-    ok('C4 截断线 = 面板高度 × 50%（±2px）且列内容不被硬裁（colwrap overflow:visible + mask 终停在该线）',
-      !!m.dock && Math.abs(m.truncPx - m.dock.h / 2) <= 2 && m.colOverflow === 'visible'
-      && !!lastStop && Math.abs(lastStop.px - m.dock.h / 2) <= 2,
-      JSON.stringify({ truncPx: m.truncPx, half: m.dock && m.dock.h / 2, overflow: m.colOverflow, lastStop, mask: m.colMask && String(m.colMask).slice(0, 120) }));
+    // C4 改判（作者令 2026-11-05 09:32「调整窗口大小会导致对话框和内容直接有一大段
+    // 空白」）：12:52 令的「中线截断（--ask-trunc-h = 面板高 × 50%）」退役——那条线
+    // 画在列上、基准却是面板高（列 + 缝 + 输入条），列的下半段恒被 alpha 0 遮掉。
+    // 新法 = 底缘收口锚在列自己的盒上（mask 末停 100%，尾部渐出 --ask-col-tail 落
+    // 在列 padding-bottom 之内）⇒ 判据换成三件：① 列内 mask 末停 = 100%（锚列盒，
+    // 不是中途某个 px）；② colwrap 仍 overflow:visible；③ 列底与输入条的间距 = dock
+    // 的 row-gap（几何上真的贴住，不留空白带）。
+    // 几何腿只在列**真的被布局出来**时才算数：本夹具的亮档里 canvas 面是 0×0
+    // （C1 的 send/top 读数同为 0 ⇒ 该档整体不可测），这时「列底贴 row-gap」拿
+    // 不到数据。旧 C4 在这种状态下是 0 对 0 的**空过**（Math.abs(0−0)≤2），本批
+    // 顺手把这个空过点掉：不可测就明说，不用真空比较冒充绿。
+    // 几何判据本身由专门 spec 在五档视口实测：tests/canvas-ask-legibility.spec.mjs
+    // （L6a 桌面三档 / L6h 手机两档）。
+    const geomMeasurable = !!(m.colwrapRect && m.colwrapRect.colH > 0);
+    const gapOk = !geomMeasurable || Math.abs(m.colToInputGap - m.dockRowGap) <= 0.6;
+    ok('C4 底缘收口锚在列自身的盒（mask 末停 100%）+ colwrap overflow:visible + 列底贴输入条 row-gap（12:52「中线截断」已由 11-05 令退役；几何腿不可测时只判 CSS 形）',
+      m.colMaskEndsAt100 && m.colOverflow === 'visible' && gapOk,
+      JSON.stringify({ maskEnd100: m.colMaskEndsAt100, overflow: m.colOverflow, gap: m.colToInputGap, rowGap: m.dockRowGap, geomMeasurable, wrap: m.colwrapRect, mask: m.colMask && String(m.colMask).slice(0, 130), lastStop }));
     ok('C5 截断由内容 mask 承担、零可见遮罩条（dock 内无 .ds-edge-fade / .ask-veil 元素）',
       await page.evaluate(() => document.querySelectorAll('.ask-dock .ds-edge-fade, .ask-dock .ask-veil').length === 0),
       'verdict=veil 计数');

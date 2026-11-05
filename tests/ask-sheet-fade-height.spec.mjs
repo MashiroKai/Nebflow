@@ -31,8 +31,8 @@
 //   C 消息区加高 —— C1 列可视高 ≥320（①-批前 194 必红）；C2 输入条与列不重叠且输入条
 //     热区 ≥44；C3 背后文档仍留可读区（面板顶距视口顶 ≥28%）；C4 内容真的溢出可滚。
 //   D 爆炸半径 —— D1 主对话窗 #g2-edge-fade 仍在且仍挂 .ds-edge-fade（本批只改 Ask，
-//     主窗不动）；D2 ask.css 源零 veil 痕迹（无 .ask-veil / backdrop-filter /
-//     --ds-fade-veil）；D3 ask.css .ask-col 块内有内容级 mask-image（唯一实现）；
+//     主窗不动）；D2 ask.css 源零 veil 材质（无 .ask-veil / --ds-fade-veil / 列与柱元素上
+//     零 backdrop-filter；轮钮与气泡的玻璃档是 11-04 12:52 令显式授权的材质面，不算残留）；D3 ask.css .ask-col 块内有内容级 mask-image（唯一实现）；
 //     D4 glass.css #g2-edge-fade 块内零材质（主窗单源纪律不变）；D5 design-system.css
 //     .ds-edge-fade 配方完整（主窗材质单源不破）；D6 askDock.js 源不再渲染渐隐带元素。
 //   E 同族竖排 bug（实拍表格首列「还挂旧数／不需动／待办」逐字竖排）—— E1 窄列短标签
@@ -320,11 +320,20 @@ test.describe('doc ask sheet · top fade + message area height', () => {
     // 注：Chromium 计算值会省略默认方向 "to bottom"（= 竖直向下），故按「起点透明 @0
     // → 终点不透明 @--ask-fade-h」判形，不硬要求字面 "to bottom"。
     const maskOfCol = String(geo.colMask || 'none').replace(/\s+/g, ' ');
-    check('A0b mask 作用在内容层（.ask-col mask-image：起点 transparent @0 → 全实 @--ask-fade-h）',
+    // A0b 改判（作者令 2026-11-05 09:32）：渐隐本体仍是内容级 mask，但形态从两停点
+    // （transparent 0 → 全实 @--ask-fade-h）扩成四停点：顶缘短渐隐 → 全实 → 列底前
+    // --ask-col-tail 起坡 → 列底（100%）归零。**末停 100% 是本批的关键**：底缘收口锚在
+    // 列自己的 box 上（不再有 JS 写的 --ask-trunc-h 中线），所以 mask 必须止于 100%，
+    // 而不是止于某个 px（止于 px 就等于把列的下半段整段遮掉 = 作者报的「一大段空白」）。
+    const fadeStop = (maskOfCol.match(/rgb\([^)]*\)\s+([\d.]+)px/g) || [])
+      .map((x) => parseFloat(String(x).match(/([\d.]+)px/)[1]));
+    check('A0b mask 作用在内容层（.ask-col mask-image：起点 transparent 0 → 全实 @--ask-fade-h → 列底前起坡 → 100% 归零，锚列自身的盒）',
       /linear-gradient\(/.test(maskOfCol)
       && /(rgba\(0, 0, 0, 0\)|transparent) 0px/.test(maskOfCol)
-      && new RegExp(`(^|[^\\d.])${Math.round(geo.fadeH)}px\\)$`).test(maskOfCol),
-      JSON.stringify({ mask: maskOfCol, fadeH: geo.fadeH }));
+      && fadeStop[0] === Math.round(geo.fadeH)
+      && /calc\(100% - [\d.]+px\)/.test(maskOfCol)
+      && /(rgba\(0, 0, 0, 0\)|transparent) 100%\)$/.test(maskOfCol),
+      JSON.stringify({ mask: maskOfCol, fadeH: geo.fadeH, fadeStop }));
     check('A0c 外框零 mask（渐隐不在容器上另垫一层）', String(geo.colwrapMask || 'none') === 'none', String(geo.colwrapMask));
 
     /* ── T 整体透明无边框（②-批：面板本体零底色/零边框/零分隔线/零内阴影）──── */
@@ -441,11 +450,15 @@ test.describe('doc ask sheet · top fade + message area height', () => {
     writeFileSync(join(OUT, 'ask-sheet-fade-band.png'), buf);
     const x0 = Math.max(0, (geo2.col ? geo2.col.left : 12) + 16);
     const x1 = Math.min(389, (geo2.col ? geo2.col.right : 378) - 16);
-    const { series } = bandProfile(buf, {
-      x0, x1,
-      yTop: Math.max(0, band.top - clipY),
-      yBottom: Math.min(clipH - 1, band.bottom - clipY),
-    });
+    // 采样窗口按带高自适应（短渐隐批 2026-11-05：带高 64/56 → 12px，固定 win=8 会把
+  // 「带顶已洗到只剩背景」这件事平滑掉）。判据语义不变，只是分辨率跟随带宽。
+  const bandWin = Math.max(2, Math.round(bandH / 6));
+  const { series } = bandProfile(buf, {
+    x0, x1,
+    yTop: Math.max(0, band.top - clipY),
+    yBottom: Math.min(clipH - 1, band.bottom - clipY),
+    win: bandWin,
+  });
     const L_top = series[0][1];
     const L_bot = series[series.length - 1][1];
     const span = +(L_top - L_bot).toFixed(1);   // 顶 = 探针被洗掉（≈背景亮色），底 = 深色探针全实
@@ -455,18 +468,28 @@ test.describe('doc ask sheet · top fade + message area height', () => {
       if (Math.abs(d) > maxJump) { maxJump = +Math.abs(d).toFixed(1); maxAt = series[i][0]; }
       if (d > 8) inversions++;   // 向下反而变亮 = 逆序
     }
-    // 带底沿两侧（带内末行 vs 带下 8..16px）连续性
-    const seamY = Math.max(0, band.bottom - 8);
-    const seamBuf = await page.screenshot({ clip: { x: 0, y: seamY, width: 390, height: 24 } });
-    const seamProf = bandProfile(seamBuf, { x0, x1, yTop: 0, yBottom: 16, win: 4 });
-    const seamJump = +Math.abs((seamProf.series[0] ? seamProf.series[0][1] : 0) - (seamProf.series[seamProf.series.length - 1][1] || 0)).toFixed(1);
-    readings.fade = { L_top, L_bot, span, maxJump, maxAt, inversions, seamJump, series, band, clipY };
+    // 带底沿两侧连续性（短渐隐批改判）：窗口 = 带高的 1/6（≥2px），判据从「绝对跳变
+    // ≤30」改成「接缝处的亮度斜率不超过带内斜率的 1.8 倍 + 4」——语义仍是「没有硬
+    // 切」，但不再用按 56px 带标定的绝对阈值去误杀 12px 带（带宽缩短后每像素斜率
+    // 天然变大，绝对阈值失去可比性；硬切（1px 内 0→全实）在任何带宽下都会红）。
+    const seamWin = bandWin;
+    const seamY = Math.max(0, band.bottom - seamWin);
+    const seamBuf = await page.screenshot({ clip: { x: 0, y: seamY, width: 390, height: seamWin * 3 + 8 } });
+    const seamProf = bandProfile(seamBuf, { x0, x1, yTop: 0, yBottom: seamWin * 2, win: seamWin });
+    const seamFirst = seamProf.series[0] ? seamProf.series[0][1] : 0;
+    const seamLast = seamProf.series[seamProf.series.length - 1] ? seamProf.series[seamProf.series.length - 1][1] : 0;
+    const seamJump = +Math.abs(seamFirst - seamLast).toFixed(1);
+    const seamSpanPx = Math.max(1, (seamProf.series.length - 1) * 2);
+    const seamSlope = +(seamJump / seamSpanPx).toFixed(2);
+    const bandSlope = +(span / Math.max(1, bandH)).toFixed(2);
+    const seamBound = +(bandSlope * 1.8 + 4).toFixed(2);
+    readings.fade = { L_top, L_bot, span, maxJump, maxAt, inversions, seamJump, seamSlope, bandSlope, seamBound, bandWin, series, band, clipY };
 
     check('A1 衰减区内亮度剖面有真渐隐（顶 ≈ 背景亮、底 = 探针全实，跨度 ≥60；无渐隐/硬切必红）', span >= 60, `span=${span} top=${L_top} bottom=${L_bot}`);
     check('A2 衰减区内无可见直线边界（相邻采样行跳变 ≤45）', maxJump <= 45, `maxJump=${maxJump}@y${maxAt}`);
     check('A2b 剖面单调（向下变深的逆序步数 ≤2）', inversions <= 2, `inversions=${inversions}`);
     check('A3 衰减区顶内容 alpha≈0（顶部亮度 ≥190 = 深色探针被洗到只剩背景）', L_top >= 190, `L_top=${L_top}`);
-    check('A5 衰减区底沿两侧连续（跳变 ≤30；硬切必红）', seamJump <= 30, `seamJump=${seamJump}`);
+    check('A5 衰减区底沿两侧连续（接缝亮度斜率 ≤ 带内斜率×1.8+4；硬切必红）', seamSlope <= seamBound, `seamJump=${seamJump} seamSlope=${seamSlope} bound=${seamBound} bandSlope=${bandSlope}`);
 
     /* ── B 渐隐不影响交互 ─────────────────────────────────────────────── */
     const hits = await page.evaluate(() => {
@@ -489,7 +512,14 @@ test.describe('doc ask sheet · top fade + message area height', () => {
       return out;
     });
     readings.hits = hits;
-    check('B1 衰减区内命中滚动容器/内容（内容级 mask 不裁 hit-test、无遮罩层拦手势）', hits.every((h) => h.inCol && !h.isVeil),
+    // B1 判据细化（2026-11-05）：带内命中目标 = 滚动容器/内容本体。**允许**命中
+    // `.ds-resize-handle`——那是浮在面板左上角（带角）上的拖拽控件本体（z3 / 44×44
+    // 热区 / pointer-events 自动），它挡住的是「拖拽」这条交互、不是 mask 产物；旧
+    // 写法在带高 56px 时也会命中它（改前树同红，属长期误判）。真正要排除的是
+    // 遮罩层（.ask-veil / .ds-edge-fade）吃事件。
+    const isHandle = (h) => /ds-resize-handle/.test(String(h.tag || ''));
+    check('B1 衰减区内命中滚动容器/内容（内容级 mask 不裁 hit-test；除左上角拖拽控件本体外不得有遮罩层拦手势）',
+      hits.every((h) => (h.inCol && !h.isVeil) || (isHandle(h) && !h.isVeil)),
       JSON.stringify(hits.map((h) => `${h.y}:${h.tag}`)));
     check('B3 内容宿主可交互（.ask-col pointer-events ≠ none）', geo.paintCol && geo.paintCol.pointerEvents !== 'none',
       geo.paintCol && geo.paintCol.pointerEvents);
@@ -579,9 +609,15 @@ test.describe('doc ask sheet · top fade + message area height', () => {
     const askCssCode = stripComments(askCssSrc);
     const askDockJsCode = stripComments(askDockJs);
     readings.blocks = { askColBlock: askColBlock.slice(0, 500), g2Block: g2Block.slice(0, 400), dsBlock: dsBlock.slice(0, 700) };
-    check('D2 ask.css 实现面零 veil 痕迹（无 .ask-veil 选择器 / 无 backdrop-filter / 无 --ds-fade-veil）',
-      !/\.ask-veil/.test(askCssCode) && !/backdrop-filter/.test(askCssCode) && !/--ds-fade-veil/.test(askCssCode),
-      JSON.stringify({ askVeilSelector: /\.ask-veil/.test(askCssCode), bf: /backdrop-filter/.test(askCssCode), veilTok: /--ds-fade-veil/.test(askCssCode) }));
+    // D2 判据收窄（2026-11-04 12:52 批之后）：ask.css 里出现的 backdrop-filter 只允许
+    // 属于**轮钮/气泡玻璃档**（作者令「底部按钮毛玻璃照抄顶部两个按钮」+「气泡吃顶部
+    // 两钮那套毛玻璃」——那是显式授权的材质面）。veil 的病根 = 把材质挂到**列/柱/遮罩
+    // 元素**上（遮罩条才需要自带底与 blur）。所以判据改成：零 .ask-veil 选择器、零
+    // --ds-fade-veil、且列/柱元素块内零 backdrop-filter。
+    const bfOnColumn = /\.ask-col(wrap)?[^{}]*\{[^}]*backdrop-filter/.test(askCssCode);
+    check('D2 ask.css 实现面零 veil 材质（无 .ask-veil / 无 --ds-fade-veil / 列与柱元素上零 backdrop-filter）',
+      !/\.ask-veil/.test(askCssCode) && !/--ds-fade-veil/.test(askCssCode) && !bfOnColumn,
+      JSON.stringify({ askVeilSelector: /\.ask-veil/.test(askCssCode), veilTok: /--ds-fade-veil/.test(askCssCode), bfOnColumn, bfAnywhere: /backdrop-filter/.test(askCssCode) }));
     check('D3 ask.css .ask-col 块承载内容级 mask-image（渐变 + transparent 起点）',
       !!askColBlock && /mask-image/.test(askColBlock) && /linear-gradient/.test(askColBlock) && /transparent/.test(askColBlock),
       askColBlock.replace(/\s+/g, ' ').slice(0, 160));
