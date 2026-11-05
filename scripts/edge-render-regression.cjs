@@ -185,10 +185,17 @@ async function serveApp(page) {
     localStorage.setItem('nebflow_locale', 'zh-CN');
     localStorage.setItem('stand_sw', '0');
   });
+  // 真跑隔离实例（--url）：静态资源由实例本体供给（真 HTTP、真 jar），只有数据面
+  // `/api/*` 用夹具应答——「真实例 + 单一数据缝」是对 instance 类证据最省的诚实形态。
+  if (URL_ARG) {
+    await page.route('**/api/**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }));
+    await page.route('**/agents/**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }));
+  }
   await page.route('**/*', (route) => {
     const url = new URL(route.request().url());
     let p = decodeURIComponent(url.pathname);
     if (p === '/') p = '/index.html';
+    if (URL_ARG) return route.fallback(); // 实例态：除上面两条数据缝外全部放行到真实例
     if (baselineBytes[p]) {
       return route.fulfill({ status: 200, contentType: MIME[extname(p)] || 'application/octet-stream', body: baselineBytes[p] });
     }

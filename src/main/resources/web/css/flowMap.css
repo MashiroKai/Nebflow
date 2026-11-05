@@ -116,9 +116,11 @@
    #header 同款；canvas-ask 可读性批 2026-11-05 09:32 立的令牌）：
      · 卡面底色恒定 ⇒ 卡内每一处文字对比度可逐项实测、双主题各自有定值；
      · 连线/背景不再能经卡片透上来 ⇒ 与「连线永不盖住节点内容」形成双保险。
-   待对齐点（报告「待裁」节已记）：全站唯一玻璃类 `.nf-glass` 尚未立批合入，本批
-   先按上面这个**同一不透底形态**实现，该类落地时此条改挂 `.nf-glass` 即可（值不变）。 */
-.flowmap-card .solar-node.fm-node { background: var(--glass-bg-opaque); }
+   glass-unify 批（main 874e8be1f）已合入：唯一玻璃底 = `--nf-glass-bg`（亮 #ffffffF7/
+   暗 #181c26F0，α≥0.90），旧 `--glass-bg-opaque` 现只是它的别名（sapphire.css:50）。
+   本批直接挂**唯一玻璃底令牌**，不再是第二套值；成员的类/登记表归 glass 批（见报告
+   「待对齐点」：`.solar-node.fm-node` 尚未写进 glass.css 成员登记表，值已同源）。 */
+.flowmap-card .solar-node.fm-node { background: var(--nf-glass-bg); }
 .fm-node > * { flex: 0 0 auto; }
 .fm-node:hover { filter: brightness(1.04); }
 
