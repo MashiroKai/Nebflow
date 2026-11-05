@@ -30,10 +30,11 @@ import { makeReference, renderRefBlock } from './reference.js';
 import { appendRefToActiveView } from './input.js';
 import { showPopupMenu, isPopupMenuOpen } from './contextMenu.js';
 // 会话页头同构批（件二+件三，作者令 2026-11-02）：好友/群/设备会话页的**悬浮身份头**
-// 组件与**滚动渐隐驱动器**的唯一属主 = `mobile/sessionHead.js`（与主对话
-// `chatChrome.js` 消费同一实现、同一 CSS 块 —— 差异只来自数据）。桌面零感知：
-// 本模块只在手机层分支调用它，桌面窗头行逐字不变。
-import { createSessionIdentityHead, bindIdHeadFade } from './mobile/sessionHead.js';
+// 组件唯一属主 = `mobile/sessionHead.js`（与主对话 `chatChrome.js` 消费同一工厂、
+// 同一 CSS 块 —— 差异只来自数据；身份头常显，本模块不接任何滚动显示/隐藏腿，
+// 见身份头常显批 2026-11-04）。桌面零感知：本模块只在手机层分支调用它，桌面窗头行
+// 逐字不变。
+import { createSessionIdentityHead } from './mobile/sessionHead.js';
 // ⑥ 信任好友封存（作者裁定 2026-09-12）：静态常量，非配置读取、不过 latch。
 import { TRUST_SEALED } from './featureFlags.js';
 // 认知二期产品批②角标可行动判据（设计稿 §5 P6）：messages 徽标只报「需要
@@ -790,9 +791,8 @@ export function closeChat() {
   // 必须同拍收敛（引擎是全局单例，不关会往已销毁的输入框里继续写字）。
   // fmStopVoice 幂等（未录音 = no-op），且须在 modalEls 清零**之前**调用。
   if (modalEls && modalEls.stopVoice) modalEls.stopVoice();
-  // 会话页头同构批：身份头滚动渐隐监听随窗同拍注销（跨窗残留 = 上个会话的
-  // 滚动回调写进已摘节点的样式；解绑幂等）。
-  if (modalEls && modalEls.unbindFade) { try { modalEls.unbindFade(); } catch { /* 解绑失败不阻断关窗 */ } }
+  // 会话页头同构批：身份头滚动渐隐监听已随身份头常显批（2026-11-04）整条退役 ⇒
+  // 关窗不再有渐隐解绑腿（`modalEls.unbindFade` 一并删除，见 modalEls 字面量）。
   if (modalEls) {
     // 进场落底武装窗同拍拆：容器即将脱离文档，窗口期内不许再有写入（幂等拆除）。
     cancelSettleBottom(modalEls.flow);
@@ -1369,7 +1369,7 @@ function renderChatModal(conv) {
   //   · 右上三点 = `sessionHead.createSessionIdentityHead` 返回的 `.mh-sess-more`；
   //   · 中间身份头 = `.mh-idhead.mh-sess-head`（圆头像 + 名字玻璃胶囊在下居中），
   //     与主对话 `chatChrome.js` 的 `.g2-chat-head.mh-idhead.mh-agent-head` **共用
-  //     同一 CSS 块与同一渐隐驱动器**（mobileLayer.css 文件尾 / sessionHead.js）。
+  //     同一 CSS 块**（mobileLayer.css 文件尾 / sessionHead.js）。
   // 🔴 节点迁移非复制：头像槽 `.fm-modal-avatar` 与名字 `.fm-modal-name` **整节点**
   // 迁入身份头（既有断言面 `.fm-modal-name` 文本、群名热区、`refreshOpenGroupHeaderAvatar`
   // 的 `.fm-modal-avatar` 查询全部照旧命中），禁第二份文本/第二枚头像。
@@ -1377,8 +1377,6 @@ function renderChatModal(conv) {
   const isMobileLayer = document.body.classList.contains('mobile-layer');
   /** @type {HTMLElement|null} 悬浮身份头（手机层才有）。 */
   let idHead = null;
-  /** @type {(() => void)|null} 滚动渐隐解绑（关窗同拍注销）。 */
-  let unbindFade = null;
   if (isMobileLayer) {
     // 头像槽缺失（理论不可达：三面都建槽）⇒ 用空槽兜底，保持结构同形。
     const avatarHost = headAvatarSlot || el('span', 'fm-modal-avatar');
@@ -1449,21 +1447,16 @@ function renderChatModal(conv) {
   const flow = el('div', 'fm-flow');
   modal.appendChild(flow);
 
-  // 会话页头同构批：滚动渐隐接线（**唯一驱动器** = sessionHead.bindIdHeadFade）。
-  // 滚动源两处都可能持轴：`.fm-flow`（消息流内滚，常态）与页面体（`.mobile-page-body`，
-  // 收编面/输入卡挤压时外滚）—— 驱动器取最大 scrollTop 作进度，单一口径。
-  // 🔴 绑定时机：本函数执行时窗体还在 `#fm-chat-overlay` 里（浮层载体），
-  // navController.watchChatModal 的 MutationObserver 在**随后的微任务**里把
-  // `.fm-modal` re-parent 进 `.mobile-page-body` ⇒ 页面体滚轴此刻还不存在。
-  // 故首绑只挂 `.fm-flow`，收编落定后的下一帧（rAF）再解旧重绑（挂上页面体）。
-  if (idHead) {
-    const bindHeadFade = () => {
-      if (unbindFade) { try { unbindFade(); } catch { /* 解绑失败不阻断重绑 */ } }
-      unbindFade = bindIdHeadFade(idHead, flow, modal.closest('.mobile-page-body'));
-    };
-    bindHeadFade();
-    requestAnimationFrame(bindHeadFade);
-  }
+  // 会话页头同构批：身份头**不接滚动显示/隐藏**（身份头常显批，作者 2026-11-04
+  // 20:49 裁定「按你的推荐走」）。原先此处接 sessionHead.bindIdHeadFade，把
+  // `.fm-flow` 与 `.mobile-page-body` 的最大 scrollTop 映射成 `--idhead-p`，
+  // CSS 消费 `opacity: calc(1 - var(--idhead-p))`、p≥1 另置 visibility:hidden ——
+  // 而好友/群/设备会话**一打开消息流就贴底**（任何超一屏会话 scrollTop 恒 ≫64）
+  // ⇒ 身份头 100% 不可见（main 上实测 scrollTop=2137 ⇒ --idhead-p=1 ⇒ opacity=0），
+  // 连带头像的 pointer-events 一起退场 = profile 面入口不可达（功能损失，不只是
+  // 视觉）。与主对话腿（同日「顶部头像常显批」已摘）同一口径：身份头是身份/入口
+  // 类元素，作者铁律「腾空间用缩高或上移，不许让元素消失」⇒ 常显。
+  // 驱动器与 --idhead-p 已零消费者 ⇒ 整条清掉，本处不留绑定、关窗也不留解绑。
 
   // ── 贴底跟随 + 「↓ N 条新消息」回底胶囊（follow 批 2026-10-08，主人反馈）────────
   // 目标（与主窗 agent 面同语义，A-branch 2026-09-11 / B4 2026-10-04 的本面对应）：
@@ -1561,11 +1554,8 @@ function renderChatModal(conv) {
   overlay.appendChild(modal);
   document.body.appendChild(overlay);
   modalEls = { overlay, modal, flow, input, sendBtn, toast, offline, conv, quoteStrip, selectBar, selectCount, selectForward, selectForwardEach, selectForwardMerge, stopVoice: composer.stopVoice, idHead };
-  // 🔴 渐隐解绑器恒读本作用域的**当前**一份（首绑 + rAF 重绑会换解绑函数）：
-  // 用一层代理挂到 `modalEls`（`closeChat()` 只认 `modalEls.unbindFade`）。
-  // 🔴 断言面：`modalEls` 是本模块的对象字面量类型（checkJs 会精确收窄），
-  // `unbindFade` 不在首建字面量里 ⇒ 显式 any 断言（与 closeChat 的读法成对）。
-  /** @type {any} */ (modalEls).unbindFade = () => { if (unbindFade) unbindFade(); };
+  // （渐隐解绑器 `unbindFade` 已随身份头常显批 2026-11-04 删除 —— 身份头不再有
+  // 滚动监听，故 modalEls 无需解绑字段，closeChat 也没有对应的解绑腿。）
   // Fresh modal → reset history-window state (a stale older conversation's
   // tail must never leak into this one).
   chatMsgs = [];

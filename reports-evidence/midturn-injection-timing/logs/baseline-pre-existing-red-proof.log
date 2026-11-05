@@ -1,0 +1,44 @@
+# 基线唯一红的既有性证明（SubAgentInboxMirrorSpec ③ -2）
+
+采集时间：2026-11-05 08:52–08:54 CST · 工作树：.nebflow/worktrees/delegate-midturn-inject · 分支 delegate/delegate-midturn-inject · HEAD 2af513702
+
+## 1. 红的是什么
+
+baseline.log 里唯一失败：
+
+    ==> X nebflow.agent.SubAgentInboxMirrorSpec.③ -2 单点收口：注入行唯一发射点仍在，12 处调用点零改（含 idle 窗载体腿），镜像腿挂在发射点内
+    munit.ComparisonFailException: src/test/scala/nebflow/agent/SubAgentInboxMirrorSpec.scala:381
+    `emitInjectedUserEvent(` occurrence-count drift (expected 13 call sites + 1 def, ...)
+    => Obtained  16
+    => Diff (- expected, + obtained)  -14  +16
+
+该断言是**静态计数钉**：把 5 个主源码文件里 `emitInjectedUserEvent(` 的出现次数求和，钉死 14。
+
+## 2. 为什么不是本批引入
+
+本批对主源码零改动——`git status --porcelain`（采于本批全部产出后）：
+
+    ?? reports-evidence/midturn-injection-timing/
+    ?? src/test/scala/nebflow/agent/MidTurnInjectionTimingSpec.scala
+
+    $ git diff --stat HEAD -- src/main
+    (空输出)
+
+## 3. 计数在用 HEAD 未改动的树上就已经是 16
+
+    $ for f in AgentActor AgentFinishTurn AgentFrozen AgentIdle AgentProcessing; do
+        printf "%s=" $f; git show HEAD:src/main/scala/nebflow/agent/$f.scala | grep -c "emitInjectedUserEvent("; done
+    AgentActor=3
+    AgentFinishTurn=3
+    AgentFrozen=1
+    AgentIdle=4
+    AgentProcessing=5
+    ⇒ 合计 16 ≠ 钉值 14
+
+即：在**未被我触碰**的 HEAD 树上，该计数已是 16；钉值 14 自 #939（2026-10-26 Mail 工具边界注入批，AgentProcessing +1）及后续并批起就未重同步。该 spec 自己的注释也记录过两轮同类重钉史（13→15→14），本次属同一形态的第三次漂移。
+
+## 4. 结论
+
+- 基线读数：**43 条测试 / 42 绿 / 1 红**；唯一红 = 与注入时机无关的静态计数钉漂移，**既有红**。
+- **本批零新增红**（本批只新增一个测试文件，不可能影响主源码计数）。
+- 该红不构成本批阻断；是否重钉（14→16）留给后续批的裁定方，本批不擅改（不抬 baseline）。

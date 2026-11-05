@@ -452,7 +452,7 @@
   background: var(--ctl-send-bg);
   border: 1px solid var(--ctl-send-border);
   border-radius: var(--ds-radius-button);
-  padding: 5px var(--ds-space-3);
+  padding: var(--ds-space-1h) var(--ds-space-3);
   font-family: inherit;
   font-weight: 500;
   cursor: pointer;
@@ -658,7 +658,7 @@ button.glass-control.fm-login-btn {
   display: block;
   width: 100%;
   box-sizing: border-box;
-  padding: var(--ds-space-glass-x) var(--ds-space-5);
+  padding: var(--ds-space-block-y) var(--ds-space-5);
   border-radius: var(--ds-radius-button);
   font-family: inherit;
   font-size: var(--ds-fs-body);
@@ -858,8 +858,8 @@ button.glass-control.fm-login-btn:disabled {
   font-weight: 500;
   letter-spacing: normal;
   text-transform: none;
-  padding: 1px var(--ds-space-2);
-  border-radius: 9999px;
+  padding: var(--ds-space-hair) var(--ds-space-2);
+  border-radius: var(--ds-radius-pill);
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
   color: var(--color-frame-text-muted, var(--color-text-muted));
@@ -881,7 +881,7 @@ button.glass-control.fm-login-btn:disabled {
    且无 opacity ⇒ 与主对话「半透明浅档」不一致）。R6 = 保持现状「浅」档。 */
 .fm-msg-time,
 .dropbox-msg-time {
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   font-family: ui-monospace, SFMono-Regular, monospace;
   font-variant-numeric: tabular-nums;
   color: var(--color-text);

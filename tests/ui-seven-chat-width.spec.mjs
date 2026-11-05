@@ -72,7 +72,9 @@ const probe = (page) => page.evaluate(() => {
     dock: rect('#mobile-dock'),
     sendBtn: rect('#send-btn'),
     attachBtn: rect('#attach-btn'),
-    gutterToken: px('--chat-gutter-x'),
+    // 收口裁定（作者 2026-11-05 09:40）：gutter 与栅格档同档 ⇒ 不保留 --chat-gutter-x
+    // 别名，两消费点（#header 外距 / #input-area 内距）直接用 --ds-space-4。
+    gutterToken: px('--ds-space-4'),
     space4: px('--ds-space-4'),
     dockInset: px('--dock-inset-x'),
     hScroll: { scrollWidth: se.scrollWidth, clientWidth: se.clientWidth },

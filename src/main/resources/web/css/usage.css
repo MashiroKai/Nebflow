@@ -22,7 +22,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--ds-space-3);
-  padding: var(--ds-space-4) 18px 18px;
+  padding: var(--ds-space-4) var(--ds-space-5) var(--ds-space-5);
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
@@ -78,7 +78,7 @@
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
   border-radius: var(--ds-radius-input);
-  padding: var(--ds-space-2) var(--ds-space-glass-x);
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
   min-width: 0;
 }
 .ud-card-label {
@@ -100,12 +100,12 @@
   margin-top: var(--ds-space-half);
 }
 .ud-card-sub {
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted);
   font-variant-numeric: tabular-nums;
   line-height: 1.35;
   overflow-wrap: break-word;
-  margin-top: 1px;
+  margin-top: var(--ds-space-hair);
 }
 .ud-card-sub .ud-sub-tag { white-space: nowrap; }
 .ud-trend { color: rgb(var(--sapphire) / 0.9); }
@@ -133,7 +133,7 @@
   font-size: var(--ds-fs-hint);
   font-weight: 500;
   color: var(--color-text-muted);
-  padding: 3px var(--ds-space-glass-x);
+  padding: var(--ds-space-1) var(--ds-space-inline-x);
   border-radius: var(--ds-radius-chip);
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease;
@@ -165,7 +165,7 @@
   font-size: var(--ds-fs-hint);
   font-weight: 500;
   color: var(--color-text-muted);
-  padding: 3px var(--ds-space-glass-x);
+  padding: var(--ds-space-1) var(--ds-space-inline-x);
   border-radius: var(--ds-radius-chip);
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease;
@@ -193,7 +193,7 @@
   font-size: var(--ds-fs-hint);
   font-weight: 500;
   color: var(--color-text);
-  padding: var(--ds-space-1) 22px var(--ds-space-1) var(--ds-space-glass-x);
+  padding: var(--ds-space-1) 22px var(--ds-space-1) var(--ds-space-inline-x);
   border-radius: var(--ds-radius-input);
   max-width: 140px;
   background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
@@ -215,7 +215,7 @@
   font-size: var(--ds-fs-hint);
   font-weight: 500;
   color: var(--color-text-muted);
-  padding: 3px var(--ds-space-glass-x);
+  padding: var(--ds-space-1) var(--ds-space-inline-x);
   border-radius: var(--ds-radius-chip);
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease;
@@ -238,7 +238,7 @@
 #usage-heatwrap {
   --ud-cell: 11px;
   display: flex;
-  gap: var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
   align-items: flex-start;
   flex-shrink: 0;
   animation: ud-fade 0.15s ease-out;
@@ -261,7 +261,7 @@
   grid-auto-flow: column;
   grid-auto-columns: calc(var(--ud-cell, 11px) + 2px);
   gap: 0 var(--ds-space-half);
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted);
   margin-bottom: var(--ds-space-1);
   height: 12px;
@@ -329,14 +329,14 @@
   flex-shrink: 0;
   padding-top: var(--ds-space-4);
 }
-.ud-legend-row { display: flex; align-items: center; gap: 3px; }
+.ud-legend-row { display: flex; align-items: center; gap: var(--ds-space-half); }
 .ud-legend-swatch {
   width: 10px;
   height: 10px;
   border-radius: var(--ds-radius-thin);
 }
 .ud-legend-label {
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -349,13 +349,13 @@
   color: var(--color-text-muted);
 }
 .ud-empty[hidden] { display: none; }
-.ud-empty-title { font-size: 14px; font-weight: 600; color: var(--color-text); margin-bottom: var(--ds-space-1); }
+.ud-empty-title { font-size: var(--ds-fs-subtitle); font-weight: 600; color: var(--color-text); margin-bottom: var(--ds-space-1); }
 .ud-empty-hint { font-size: var(--ds-fs-hint); }
 
 /* ── Intraday curve (v1.3, ruling ③) ──────────────────────────────── */
 .ud-curve {
   border-top: 1px solid var(--color-border);
-  padding-top: var(--ds-space-glass-x);
+  padding-top: var(--ds-space-block-y);
   animation: ud-curve-in 0.2s ease-out;
   flex-shrink: 0;
 }
@@ -376,19 +376,19 @@
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
   border-radius: var(--ds-radius-input);
-  padding: var(--ds-space-2) var(--ds-space-glass-x);
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
 }
 .ud-curve-svg { display: block; width: 100%; height: 132px; }
 .ud-curve-bar { fill: rgb(var(--sapphire) / 0.55); }
 .ud-curve-bar:hover { fill: rgb(var(--sapphire) / 0.85); }
 .ud-curve-bar.ud-curve-peak { fill: rgb(var(--sapphire) / 0.85); }
 .ud-curve-axis {
-  font-size: 9px;
+  font-size: var(--ds-fs-meta);
   fill: var(--color-text-muted);
   font-variant-numeric: tabular-nums;
 }
 .ud-curve-peak-label {
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   font-weight: 600;
   fill: var(--color-text);
   font-variant-numeric: tabular-nums;
@@ -403,7 +403,7 @@
 /* ── Drilldown drawer (v1.3 secondary panel) ─────────────────────── */
 .ud-drill {
   border-top: 1px solid var(--color-border);
-  padding-top: var(--ds-space-glass-x);
+  padding-top: var(--ds-space-block-y);
   animation: ud-slide 0.2s ease-out;
   flex-shrink: 0;
 }
@@ -425,8 +425,8 @@
 }
 #usage-drill-title { font-size: var(--ds-fs-body); font-weight: 600; color: var(--color-text); }
 .ud-drill-dims { margin-left: auto; }
-#usage-rank { display: flex; flex-direction: column; gap: var(--ds-space-1h); margin-bottom: var(--ds-space-glass-x); }
-.ud-rank-group-title { font-size: var(--ds-fs-meta); font-weight: 500; color: var(--color-text-muted); margin-bottom: 3px; }
+#usage-rank { display: flex; flex-direction: column; gap: var(--ds-space-1h); margin-bottom: var(--ds-space-stack-gap); }
+.ud-rank-group-title { font-size: var(--ds-fs-meta); font-weight: 500; color: var(--color-text-muted); margin-bottom: var(--ds-space-1); }
 .ud-rank-row {
   display: grid;
   grid-template-columns: minmax(60px, 140px) 1fr 52px;
@@ -438,11 +438,11 @@
 .ud-rank-key { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ud-rank-bar {
   height: 6px;
-  border-radius: 3px;
+  border-radius: var(--ds-radius-badge);
   background: var(--glass-etched-bg);
   overflow: hidden;
 }
-.ud-rank-bar-fill { height: 100%; background: rgb(var(--sapphire) / 0.55); border-radius: 3px; }
+.ud-rank-bar-fill { height: 100%; background: rgb(var(--sapphire) / 0.55); border-radius: var(--ds-radius-badge); }
 .ud-rank-val { font-variant-numeric: tabular-nums; text-align: right; color: var(--color-text-muted); }
 
 .ud-table {
@@ -489,7 +489,7 @@
   border: 1px solid var(--glass-control-border);
   border-radius: var(--ds-radius-input);
   box-shadow: 0 2px 12px var(--glass-control-glow);
-  padding: var(--ds-space-1h) var(--ds-space-glass-x);
+  padding: var(--ds-space-1h) var(--ds-space-inline-x);
   font-size: var(--ds-fs-meta);
   color: var(--color-text);
   font-variant-numeric: tabular-nums;

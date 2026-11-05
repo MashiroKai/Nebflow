@@ -1,0 +1,5225 @@
+{
+  "class": "space",
+  "applied": false,
+  "totalMigrated": 11,
+  "perToken": {
+    "--ds-space-2": 7,
+    "--ds-space-glass-x": 3,
+    "--ds-space-1h": 2
+  },
+  "perFile": {
+    "css/modal.css": 7,
+    "css/sidebar.css": 2,
+    "css/todo-face.css": 2
+  },
+  "needsRuling": [
+    {
+      "file": "css/ask.css",
+      "line": 157,
+      "prop": "gap",
+      "value": "7px",
+      "decl": "7px",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/ask.css",
+      "line": 224,
+      "prop": "gap",
+      "value": "7px",
+      "decl": "7px",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/ask.css",
+      "line": 251,
+      "prop": "padding",
+      "value": "9px 13px",
+      "decl": "9px 13px",
+      "why": "间距档外值 9px/13px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/ask.css",
+      "line": 270,
+      "prop": "margin",
+      "value": "3px 1px",
+      "decl": "3px 1px 0",
+      "why": "间距档外值 3px/1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/ask.css",
+      "line": 272,
+      "prop": "padding",
+      "value": "15px",
+      "decl": "var(--ds-space-3) 15px",
+      "why": "间距档外值 15px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/ask.css",
+      "line": 287,
+      "prop": "padding",
+      "value": "7px 7px 7px",
+      "decl": "7px 7px 7px var(--ds-space-1h)",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/base.css",
+      "line": 429,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-3) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/cards.css",
+      "line": 158,
+      "prop": "padding",
+      "value": "18px",
+      "decl": "0 18px",
+      "why": "间距档外值 18px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 30,
+      "prop": "padding",
+      "value": "36px",
+      "decl": "var(--ds-space-2) 0 36px",
+      "why": "间距档外值 36px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 189,
+      "prop": "gap",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 194,
+      "prop": "padding",
+      "value": "9px",
+      "decl": "var(--ds-space-half) 9px",
+      "why": "间距档外值 9px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 220,
+      "prop": "gap",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 228,
+      "prop": "padding",
+      "value": "9px",
+      "decl": "var(--ds-space-half) 9px",
+      "why": "间距档外值 9px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 461,
+      "prop": "margin-right",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 469,
+      "prop": "margin-right",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 485,
+      "prop": "padding",
+      "value": "1px",
+      "decl": "1px var(--ds-space-1h)",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 628,
+      "prop": "margin-right",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 651,
+      "prop": "margin-right",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 737,
+      "prop": "padding-left",
+      "value": "18px",
+      "decl": "18px",
+      "why": "间距档外值 18px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 903,
+      "prop": "padding-left",
+      "value": "22px",
+      "decl": "22px",
+      "why": "间距档外值 22px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 910,
+      "prop": "margin-top",
+      "value": "-4px",
+      "decl": "-4px",
+      "why": "间距档外值 -4px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 1035,
+      "prop": "padding",
+      "value": "1px",
+      "decl": "1px",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 1064,
+      "prop": "padding",
+      "value": "1px",
+      "decl": "1px",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 1076,
+      "prop": "padding",
+      "value": "1px",
+      "decl": "1px",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 1091,
+      "prop": "padding",
+      "value": "1px",
+      "decl": "1px",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 1156,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "0 5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 1180,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px var(--ds-space-2)",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 1270,
+      "prop": "gap",
+      "value": "11px",
+      "decl": "11px",
+      "why": "间距档外值 11px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 1273,
+      "prop": "padding",
+      "value": "11px 13px",
+      "decl": "11px 13px",
+      "why": "间距档外值 11px/13px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 1287,
+      "prop": "margin-top",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 1306,
+      "prop": "padding",
+      "value": "1px",
+      "decl": "1px 0",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 1377,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px var(--ds-space-2)",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 1394,
+      "prop": "margin",
+      "value": "18px",
+      "decl": "var(--ds-space-1) 0 var(--ds-space-1) 18px",
+      "why": "间距档外值 18px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 1434,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px var(--ds-space-2)",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 1467,
+      "prop": "padding",
+      "value": "1px",
+      "decl": "1px var(--ds-space-1)",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 1662,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-2) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 1674,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-2) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 1693,
+      "prop": "padding",
+      "value": "7px 14px",
+      "decl": "7px 14px",
+      "why": "间距档外值 7px/14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 1874,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "5px var(--ds-space-3)",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 1926,
+      "prop": "padding",
+      "value": "7px",
+      "decl": "7px var(--ds-space-3)",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 2562,
+      "prop": "padding",
+      "value": "13px 14px",
+      "decl": "13px 14px",
+      "why": "间距档外值 13px/14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 2598,
+      "prop": "margin-top",
+      "value": "1px",
+      "decl": "1px",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 2726,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-block-y) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 2751,
+      "prop": "padding",
+      "value": "9px",
+      "decl": "9px var(--ds-space-1h)",
+      "why": "间距档外值 9px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 2837,
+      "prop": "padding",
+      "value": "5px 14px",
+      "decl": "5px 14px",
+      "why": "间距档外值 5px/14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 2928,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "5px var(--ds-space-inline-x)",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 3036,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "5px var(--ds-space-inline-x)",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 3068,
+      "prop": "padding",
+      "value": "1px 7px",
+      "decl": "1px 7px",
+      "why": "间距档外值 1px/7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 3097,
+      "prop": "gap",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 3101,
+      "prop": "padding",
+      "value": "9px",
+      "decl": "var(--ds-space-half) 9px",
+      "why": "间距档外值 9px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 3118,
+      "prop": "gap",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 3122,
+      "prop": "padding",
+      "value": "9px",
+      "decl": "var(--ds-space-half) 9px",
+      "why": "间距档外值 9px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 3260,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px var(--ds-space-3)",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 3354,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-1h) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 3377,
+      "prop": "padding",
+      "value": "1px 5px",
+      "decl": "1px 5px",
+      "why": "间距档外值 1px/5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 3628,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px var(--ds-space-inline-x)",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 3667,
+      "prop": "margin",
+      "value": "14px 14px",
+      "decl": "var(--ds-space-stack-gap) 14px var(--ds-space-1) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 3768,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "14px var(--ds-space-4)",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 3796,
+      "prop": "margin",
+      "value": "-2px",
+      "decl": "-2px 0 var(--ds-space-2)",
+      "why": "间距档外值 -2px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 3945,
+      "prop": "margin-top",
+      "value": "14px",
+      "decl": "14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 4033,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-1h) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 4055,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "5px var(--ds-space-inline-x)",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 4075,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "5px var(--ds-space-inline-x)",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 4082,
+      "prop": "margin-top",
+      "value": "1px",
+      "decl": "1px",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 4101,
+      "prop": "gap",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 4225,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px var(--ds-space-3)",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 4318,
+      "prop": "margin-left",
+      "value": "-4px",
+      "decl": "-4px",
+      "why": "间距档外值 -4px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 4351,
+      "prop": "gap",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 4621,
+      "prop": "margin",
+      "value": "-27px -27px",
+      "decl": "-27px 0 0 -27px",
+      "why": "间距档外值 -27px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 4636,
+      "prop": "padding",
+      "value": "7px",
+      "decl": "var(--ds-space-half) 7px",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 4672,
+      "prop": "gap",
+      "value": "11px",
+      "decl": "11px",
+      "why": "间距档外值 11px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 4675,
+      "prop": "padding",
+      "value": "11px 13px",
+      "decl": "11px 13px",
+      "why": "间距档外值 11px/13px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 4701,
+      "prop": "margin-top",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 4717,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "5px var(--ds-space-inline-x)",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 4732,
+      "prop": "padding",
+      "value": "9px",
+      "decl": "var(--ds-space-1) 9px",
+      "why": "间距档外值 9px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 4839,
+      "prop": "padding",
+      "value": "7px 14px",
+      "decl": "7px 14px",
+      "why": "间距档外值 7px/14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 5006,
+      "prop": "gap",
+      "value": "9px",
+      "decl": "9px",
+      "why": "间距档外值 9px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 5007,
+      "prop": "padding",
+      "value": "7px 7px 7px",
+      "decl": "7px var(--ds-space-inline-x) 7px 7px",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 5062,
+      "prop": "margin",
+      "value": "14px",
+      "decl": "14px var(--ds-space-half) var(--ds-space-2)",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 5113,
+      "prop": "padding",
+      "value": "7px",
+      "decl": "0 7px",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 5128,
+      "prop": "padding",
+      "value": "7px",
+      "decl": "var(--ds-space-half) 7px",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 5193,
+      "prop": "gap",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 5280,
+      "prop": "padding",
+      "value": "3px 3px",
+      "decl": "3px var(--ds-space-2) 3px var(--ds-space-1)",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 5292,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "0 3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 5526,
+      "prop": "padding",
+      "value": "1px",
+      "decl": "1px var(--ds-space-2)",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 5527,
+      "prop": "margin",
+      "value": "1px",
+      "decl": "0 1px",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 5564,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-3) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 24,
+      "prop": "gap",
+      "value": "14px",
+      "decl": "14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 55,
+      "prop": "gap",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 58,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "5px var(--ds-space-inline-x)",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 67,
+      "prop": "padding",
+      "value": "1px 5px",
+      "decl": "1px 5px",
+      "why": "间距档外值 1px/5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 77,
+      "prop": "gap",
+      "value": "18px",
+      "decl": "18px",
+      "why": "间距档外值 18px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 91,
+      "prop": "padding",
+      "value": "13px 18px 11px",
+      "decl": "13px 18px 11px",
+      "why": "间距档外值 13px/18px/11px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 107,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px var(--ds-space-2)",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 116,
+      "prop": "gap",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 120,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px var(--ds-space-2)",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 159,
+      "prop": "margin",
+      "value": "3px",
+      "decl": "0 3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 207,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px var(--ds-space-2)",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 242,
+      "prop": "gap",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 268,
+      "prop": "gap",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 315,
+      "prop": "padding",
+      "value": "2.5px",
+      "decl": "2.5px var(--ds-space-1h)",
+      "why": "间距档外值 2.5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 336,
+      "prop": "padding",
+      "value": "7px",
+      "decl": "var(--ds-space-1) 7px",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 361,
+      "prop": "margin-top",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 512,
+      "prop": "padding",
+      "value": "2.5px 7px",
+      "decl": "2.5px 7px",
+      "why": "间距档外值 2.5px/7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 550,
+      "prop": "padding",
+      "value": "11px 18px",
+      "decl": "11px 18px",
+      "why": "间距档外值 11px/18px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 557,
+      "prop": "gap",
+      "value": "9px",
+      "decl": "9px",
+      "why": "间距档外值 9px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 567,
+      "prop": "gap",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/design-system.css",
+      "line": 725,
+      "prop": "padding",
+      "value": "1px 7px",
+      "decl": "1px 7px",
+      "why": "间距档外值 1px/7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/design-system.css",
+      "line": 816,
+      "prop": "margin-top",
+      "value": "1px",
+      "decl": "1px",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/design-system.css",
+      "line": 991,
+      "prop": "margin",
+      "value": "18px",
+      "decl": "var(--ds-space-1) 0 var(--ds-space-1) 18px",
+      "why": "间距档外值 18px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/design-system.css",
+      "line": 995,
+      "prop": "padding",
+      "value": "1px",
+      "decl": "1px var(--ds-space-1)",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/design-system.css",
+      "line": 1029,
+      "prop": "margin",
+      "value": "1px",
+      "decl": "1px 0",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/design-system.css",
+      "line": 1030,
+      "prop": "padding",
+      "value": "1px",
+      "decl": "1px var(--ds-space-2)",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/diffView.css",
+      "line": 33,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "5px var(--ds-space-2)",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/diffView.css",
+      "line": 71,
+      "prop": "padding",
+      "value": "1px",
+      "decl": "1px var(--ds-space-1h)",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/diffView.css",
+      "line": 95,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "0 5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/diffView.css",
+      "line": 141,
+      "prop": "margin",
+      "value": "3px",
+      "decl": "3px 0",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/diffView.css",
+      "line": 169,
+      "prop": "padding",
+      "value": "56px",
+      "decl": "56px 0 var(--ds-space-3)",
+      "why": "间距档外值 56px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/diffView.css",
+      "line": 310,
+      "prop": "margin",
+      "value": "-2px -6px",
+      "decl": "-2px -6px",
+      "why": "间距档外值 -2px/-6px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/diffView.css",
+      "line": 332,
+      "prop": "gap",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/diffView.css",
+      "line": 339,
+      "prop": "padding",
+      "value": "1px 9px",
+      "decl": "1px 9px",
+      "why": "间距档外值 1px/9px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/diffView.css",
+      "line": 428,
+      "prop": "padding",
+      "value": "1px 9px",
+      "decl": "1px 9px",
+      "why": "间距档外值 1px/9px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/dropbox.css",
+      "line": 50,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-1h) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/dropbox.css",
+      "line": 59,
+      "prop": "margin-bottom",
+      "value": "-1px",
+      "decl": "-1px",
+      "why": "间距档外值 -1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/dropbox.css",
+      "line": 183,
+      "prop": "padding",
+      "value": "1px",
+      "decl": "1px",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/dropbox.css",
+      "line": 207,
+      "prop": "gap",
+      "value": "1px",
+      "decl": "1px",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/dropbox.css",
+      "line": 274,
+      "prop": "margin-top",
+      "value": "1px",
+      "decl": "1px",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/dropbox.css",
+      "line": 299,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "0 var(--ds-space-4) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/executors.css",
+      "line": 36,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-3) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/executors.css",
+      "line": 90,
+      "prop": "margin-top",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/executors.css",
+      "line": 99,
+      "prop": "margin-top",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/executors.css",
+      "line": 105,
+      "prop": "padding",
+      "value": "7px",
+      "decl": "0 7px",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/executors.css",
+      "line": 138,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "5px var(--ds-space-3)",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 12,
+      "prop": "padding",
+      "value": "18px",
+      "decl": "var(--ds-space-3) 18px",
+      "why": "间距档外值 18px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 13,
+      "prop": "padding-right",
+      "value": "56px",
+      "decl": "56px",
+      "why": "间距档外值 56px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 108,
+      "prop": "gap",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 132,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "var(--ds-space-half) 5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 152,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "var(--ds-space-half) 5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 209,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "var(--ds-space-half) 3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 215,
+      "prop": "row-gap",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 227,
+      "prop": "gap",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 228,
+      "prop": "margin-top",
+      "value": "1px",
+      "decl": "1px",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 233,
+      "prop": "gap",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 236,
+      "prop": "padding",
+      "value": "1.5px 5px",
+      "decl": "1.5px 5px",
+      "why": "间距档外值 1.5px/5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 269,
+      "prop": "padding",
+      "value": "1px 5px",
+      "decl": "1px 5px",
+      "why": "间距档外值 1px/5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 297,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px var(--ds-space-1h)",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 347,
+      "prop": "padding",
+      "value": "7px",
+      "decl": "var(--ds-space-half) 7px",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 364,
+      "prop": "padding",
+      "value": "1px 5px",
+      "decl": "1px 5px",
+      "why": "间距档外值 1px/5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 374,
+      "prop": "margin-top",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 576,
+      "prop": "margin-top",
+      "value": "1px",
+      "decl": "1px",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 600,
+      "prop": "gap",
+      "value": "7px",
+      "decl": "7px",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 600,
+      "prop": "margin-top",
+      "value": "1px",
+      "decl": "1px",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 667,
+      "prop": "gap",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 684,
+      "prop": "gap",
+      "value": "14px",
+      "decl": "14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 797,
+      "prop": "padding",
+      "value": "11px 14px",
+      "decl": "11px 14px",
+      "why": "间距档外值 11px/14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 811,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-3) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 815,
+      "prop": "padding",
+      "value": "40px",
+      "decl": "40px 0",
+      "why": "间距档外值 40px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 823,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-2) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 869,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "var(--ds-space-half) 5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 887,
+      "prop": "margin-top",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 896,
+      "prop": "padding",
+      "value": "7px 9px",
+      "decl": "7px 9px",
+      "why": "间距档外值 7px/9px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 952,
+      "prop": "padding",
+      "value": "11px 14px",
+      "decl": "11px 14px",
+      "why": "间距档外值 11px/14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 976,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-3) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 994,
+      "prop": "margin",
+      "value": "-4px",
+      "decl": "-4px 0 var(--ds-space-stack-gap)",
+      "why": "间距档外值 -4px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 1002,
+      "prop": "row-gap",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 1039,
+      "prop": "margin",
+      "value": "18px",
+      "decl": "var(--ds-space-1) 0 var(--ds-space-1) 18px",
+      "why": "间距档外值 18px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 1042,
+      "prop": "padding",
+      "value": "1px",
+      "decl": "1px var(--ds-space-1)",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 1060,
+      "prop": "padding",
+      "value": "3px 7px",
+      "decl": "3px 7px",
+      "why": "间距档外值 3px/7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 1068,
+      "prop": "gap",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 1069,
+      "prop": "margin-top",
+      "value": "1px",
+      "decl": "1px",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 14,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "0 5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 44,
+      "prop": "padding",
+      "value": "9px",
+      "decl": "9px var(--ds-space-inline-x)",
+      "why": "间距档外值 9px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 60,
+      "prop": "padding",
+      "value": "7px",
+      "decl": "7px var(--ds-space-inline-x)",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 377,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "14px var(--ds-space-3)",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 378,
+      "prop": "margin",
+      "value": "-6px",
+      "decl": "-6px var(--ds-space-3) var(--ds-space-half)",
+      "why": "间距档外值 -6px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 385,
+      "prop": "gap",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 400,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "5px var(--ds-space-3)",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 420,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "5px var(--ds-space-inline-x)",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 429,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "5px var(--ds-space-3)",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 485,
+      "prop": "padding",
+      "value": "7px",
+      "decl": "7px var(--ds-space-inline-x)",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 695,
+      "prop": "margin",
+      "value": "-4px -8px",
+      "decl": "-4px -8px",
+      "why": "间距档外值 -4px/-8px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 804,
+      "prop": "padding",
+      "value": "3px 3px",
+      "decl": "3px var(--ds-space-2) 3px var(--ds-space-2)",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 871,
+      "prop": "gap",
+      "value": "1px",
+      "decl": "1px",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 911,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-3) var(--ds-space-4) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 942,
+      "prop": "padding",
+      "value": "3px 9px",
+      "decl": "3px 9px",
+      "why": "间距档外值 3px/9px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 969,
+      "prop": "padding",
+      "value": "5px 14px",
+      "decl": "5px 14px",
+      "why": "间距档外值 5px/14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 1177,
+      "prop": "padding",
+      "value": "1px",
+      "decl": "1px var(--ds-space-2)",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 1222,
+      "prop": "margin",
+      "value": "18px",
+      "decl": "var(--ds-space-1) 0 var(--ds-space-1) 18px",
+      "why": "间距档外值 18px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 1307,
+      "prop": "padding",
+      "value": "1px",
+      "decl": "1px var(--ds-space-1)",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 1387,
+      "prop": "padding",
+      "value": "1px",
+      "decl": "1px var(--ds-space-2)",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 1430,
+      "prop": "padding",
+      "value": "1px",
+      "decl": "1px",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 1551,
+      "prop": "margin-top",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 1662,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "0 5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 1675,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "5px var(--ds-space-3)",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 1682,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-half) var(--ds-space-4) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 1775,
+      "prop": "padding-left",
+      "value": "30px",
+      "decl": "30px",
+      "why": "间距档外值 30px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 1830,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-2) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 1847,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-block-y) var(--ds-space-4) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 1905,
+      "prop": "padding",
+      "value": "5px 14px",
+      "decl": "5px 14px",
+      "why": "间距档外值 5px/14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 1920,
+      "prop": "margin",
+      "value": "-16px",
+      "decl": "-16px var(--ds-space-3) var(--ds-space-3)",
+      "why": "间距档外值 -16px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 1965,
+      "prop": "gap",
+      "value": "1.5px",
+      "decl": "1.5px",
+      "why": "间距档外值 1.5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 1979,
+      "prop": "gap",
+      "value": "1.5px",
+      "decl": "1.5px",
+      "why": "间距档外值 1.5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 2028,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "var(--ds-space-half) 5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 2055,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-block-y) 14px var(--ds-space-3)",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 2072,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "5px var(--ds-space-2)",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 2074,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "5px var(--ds-space-3)",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 2099,
+      "prop": "padding",
+      "value": "1px 5px",
+      "decl": "1px 5px",
+      "why": "间距档外值 1px/5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 2109,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "5px var(--ds-space-3)",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 2113,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "5px var(--ds-space-3)",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 2119,
+      "prop": "margin-right",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 2177,
+      "prop": "padding",
+      "value": "1px",
+      "decl": "1px var(--ds-space-2)",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 2246,
+      "prop": "padding",
+      "value": "7px",
+      "decl": "7px var(--ds-space-inline-x)",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 2276,
+      "prop": "padding",
+      "value": "26px",
+      "decl": "26px var(--ds-space-4)",
+      "why": "间距档外值 26px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 2405,
+      "prop": "padding",
+      "value": "3px 9px",
+      "decl": "3px 9px",
+      "why": "间距档外值 3px/9px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 2455,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px var(--ds-space-3)",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/glass.css",
+      "line": 412,
+      "prop": "padding",
+      "value": "26px",
+      "decl": "0 26px",
+      "why": "间距档外值 26px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/humanFace.css",
+      "line": 13,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-block-y) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/input.css",
+      "line": 109,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px var(--ds-space-inline-x)",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/input.css",
+      "line": 197,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px var(--ds-space-2)",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/input.css",
+      "line": 308,
+      "prop": "padding",
+      "value": "7px",
+      "decl": "0 7px",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/input.css",
+      "line": 453,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "5px var(--ds-space-1h)",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/input.css",
+      "line": 508,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "5px var(--ds-space-2)",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/input.css",
+      "line": 515,
+      "prop": "gap",
+      "value": "1px",
+      "decl": "1px",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/input.css",
+      "line": 632,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px var(--ds-space-inline-x)",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/input.css",
+      "line": 689,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-1h) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/input.css",
+      "line": 1015,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-block-y) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/input.css",
+      "line": 1166,
+      "prop": "padding",
+      "value": "1px",
+      "decl": "1px var(--ds-space-1h)",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/input.css",
+      "line": 1400,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "var(--ds-space-half) 5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/input.css",
+      "line": 1412,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px var(--ds-space-inline-x)",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/input.css",
+      "line": 1430,
+      "prop": "padding",
+      "value": "3px 7px",
+      "decl": "3px 7px",
+      "why": "间距档外值 3px/7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/input.css",
+      "line": 1444,
+      "prop": "padding",
+      "value": "3px 7px",
+      "decl": "3px 7px",
+      "why": "间距档外值 3px/7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/input.css",
+      "line": 1475,
+      "prop": "gap",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/mobileLayer.css",
+      "line": 1107,
+      "prop": "padding",
+      "value": "11px 7px 13px",
+      "decl": "11px var(--ds-space-2) 7px 13px",
+      "why": "间距档外值 11px/7px/13px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/mobileLayer.css",
+      "line": 1160,
+      "prop": "padding",
+      "value": "7px 1px",
+      "decl": "7px var(--ds-space-1) 1px",
+      "why": "间距档外值 7px/1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/mobileLayer.css",
+      "line": 1166,
+      "prop": "padding",
+      "value": "18px",
+      "decl": "18px var(--ds-space-1h)",
+      "why": "间距档外值 18px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/mobileLayer.css",
+      "line": 1223,
+      "prop": "gap",
+      "value": "7px",
+      "decl": "7px",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/mobileLayer.css",
+      "line": 1265,
+      "prop": "padding-left",
+      "value": "19px",
+      "decl": "19px",
+      "why": "间距档外值 19px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/mobileLayer.css",
+      "line": 1342,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-2) 14px calc(8px + env(safe-area-inset-bottom, 0px))",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/mobileLayer.css",
+      "line": 1367,
+      "prop": "padding",
+      "value": "7px 1px",
+      "decl": "7px var(--ds-space-1) 1px",
+      "why": "间距档外值 7px/1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/mobileLayer.css",
+      "line": 1397,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-2) 14px calc(8px + env(safe-area-inset-bottom, 0px))",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/mobileLayer.css",
+      "line": 1423,
+      "prop": "padding-left",
+      "value": "18px",
+      "decl": "18px",
+      "why": "间距档外值 18px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/mobileLayer.css",
+      "line": 1527,
+      "prop": "padding",
+      "value": "9px 11px",
+      "decl": "9px 11px",
+      "why": "间距档外值 9px/11px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/mobileLayer.css",
+      "line": 1538,
+      "prop": "margin-top",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/mobileLayer.css",
+      "line": 1549,
+      "prop": "margin-top",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/mobileLayer.css",
+      "line": 1985,
+      "prop": "margin",
+      "value": "-1px",
+      "decl": "-1px",
+      "why": "间距档外值 -1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/mobileLayer.css",
+      "line": 2238,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "0 var(--ds-space-inline-x) 0 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/mobileLayer.css",
+      "line": 2272,
+      "prop": "margin-right",
+      "value": "-8px",
+      "decl": "-8px",
+      "why": "间距档外值 -8px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/mobileLayer.css",
+      "line": 2293,
+      "prop": "margin",
+      "value": "9px",
+      "decl": "0 0 9px",
+      "why": "间距档外值 9px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/mobileLayer.css",
+      "line": 2325,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-3) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/mobileLayer.css",
+      "line": 2334,
+      "prop": "margin-bottom",
+      "value": "9px",
+      "decl": "9px",
+      "why": "间距档外值 9px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/mobileLayer.css",
+      "line": 2335,
+      "prop": "gap",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/mobileLayer.css",
+      "line": 2338,
+      "prop": "margin-bottom",
+      "value": "7px",
+      "decl": "7px",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/mobileLayer.css",
+      "line": 2472,
+      "prop": "padding",
+      "value": "14px 14px",
+      "decl": "14px 14px var(--ds-space-2)",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/mobileLayer.css",
+      "line": 2537,
+      "prop": "margin",
+      "value": "14px",
+      "decl": "var(--ds-space-3) 14px 0",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/mobileLayer.css",
+      "line": 2623,
+      "prop": "margin",
+      "value": "14px",
+      "decl": "var(--ds-space-3) 14px 0",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/mobileLayer.css",
+      "line": 2645,
+      "prop": "margin",
+      "value": "14px",
+      "decl": "0 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/mobileLayer.css",
+      "line": 2647,
+      "prop": "margin",
+      "value": "14px",
+      "decl": "0 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/mobileLayer.css",
+      "line": 2659,
+      "prop": "margin",
+      "value": "14px",
+      "decl": "var(--ds-space-3) 14px 0",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/mobileLayer.css",
+      "line": 2693,
+      "prop": "padding",
+      "value": "36px 28px",
+      "decl": "36px 0 28px",
+      "why": "间距档外值 36px/28px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/mobileLayer.css",
+      "line": 2702,
+      "prop": "margin",
+      "value": "14px",
+      "decl": "var(--ds-space-3) 14px 0",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/mobileLayer.css",
+      "line": 2727,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-4) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/mobileLayer.css",
+      "line": 2899,
+      "prop": "margin",
+      "value": "-8px",
+      "decl": "-8px 0",
+      "why": "间距档外值 -8px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/mobileLayer.css",
+      "line": 2965,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-block-y) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/mobileLayer.css",
+      "line": 2985,
+      "prop": "gap",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/mobileLayer.css",
+      "line": 3044,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-3) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/mobileLayer.css",
+      "line": 3224,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "0 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/mobileLayer.css",
+      "line": 3393,
+      "prop": "padding",
+      "value": "1px",
+      "decl": "0 1px",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/mobileLayer.css",
+      "line": 3554,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-block-y) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/mobileLayer.css",
+      "line": 3632,
+      "prop": "padding",
+      "value": "28px",
+      "decl": "var(--ds-space-8) var(--ds-space-6) 28px",
+      "why": "间距档外值 28px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/mobileLayer.css",
+      "line": 3647,
+      "prop": "margin-top",
+      "value": "28px",
+      "decl": "28px",
+      "why": "间距档外值 28px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/mobileLayer.css",
+      "line": 4567,
+      "prop": "padding",
+      "value": "3px 14px",
+      "decl": "3px 14px",
+      "why": "间距档外值 3px/14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 232,
+      "prop": "padding",
+      "value": "18px",
+      "decl": "var(--ds-space-2) 18px",
+      "why": "间距档外值 18px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 277,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-block-y) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 288,
+      "prop": "padding",
+      "value": "18px",
+      "decl": "var(--ds-space-2) 18px",
+      "why": "间距档外值 18px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 317,
+      "prop": "padding",
+      "value": "18px",
+      "decl": "var(--ds-space-2) 18px",
+      "why": "间距档外值 18px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 322,
+      "prop": "padding",
+      "value": "18px",
+      "decl": "var(--ds-space-2) 18px",
+      "why": "间距档外值 18px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 354,
+      "prop": "padding",
+      "value": "18px",
+      "decl": "var(--ds-space-2) 18px",
+      "why": "间距档外值 18px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 412,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-1h) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 422,
+      "prop": "margin-bottom",
+      "value": "-1px",
+      "decl": "-1px",
+      "why": "间距档外值 -1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 445,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-1h) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 454,
+      "prop": "margin-bottom",
+      "value": "-1px",
+      "decl": "-1px",
+      "why": "间距档外值 -1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 471,
+      "prop": "margin-top",
+      "value": "14px",
+      "decl": "14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 496,
+      "prop": "margin-top",
+      "value": "14px",
+      "decl": "14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 924,
+      "prop": "margin-bottom",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 943,
+      "prop": "padding",
+      "value": "1px",
+      "decl": "1px var(--ds-space-1h)",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 970,
+      "prop": "margin-left",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 988,
+      "prop": "padding",
+      "value": "1px",
+      "decl": "0 1px",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 1038,
+      "prop": "margin",
+      "value": "1px",
+      "decl": "1px var(--ds-space-1h) 0 0",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 1132,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px var(--ds-space-inline-x)",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 1155,
+      "prop": "padding",
+      "value": "28px",
+      "decl": "var(--ds-space-8) 28px var(--ds-space-6)",
+      "why": "间距档外值 28px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 1214,
+      "prop": "padding",
+      "value": "14px 14px",
+      "decl": "14px 14px var(--ds-space-3) var(--ds-space-5)",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 1258,
+      "prop": "padding",
+      "value": "56px",
+      "decl": "56px var(--ds-space-6)",
+      "why": "间距档外值 56px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 1311,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-3) 14px var(--ds-space-3) var(--ds-space-5)",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 1370,
+      "prop": "padding",
+      "value": "1px 5px",
+      "decl": "1px 5px",
+      "why": "间距档外值 1px/5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 1424,
+      "prop": "padding",
+      "value": "1px",
+      "decl": "1px var(--ds-space-1h)",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/neblink.css",
+      "line": 65,
+      "prop": "padding",
+      "value": "9px",
+      "decl": "9px var(--ds-space-inline-x)",
+      "why": "间距档外值 9px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/neblink.css",
+      "line": 81,
+      "prop": "padding",
+      "value": "9px 14px",
+      "decl": "9px 14px",
+      "why": "间距档外值 9px/14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/neblink.css",
+      "line": 108,
+      "prop": "margin-top",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/neblink.css",
+      "line": 125,
+      "prop": "gap",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/neblink.css",
+      "line": 256,
+      "prop": "margin-right",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 74,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "14px var(--ds-space-4) var(--ds-space-2)",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 115,
+      "prop": "margin-top",
+      "value": "1px",
+      "decl": "1px",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 125,
+      "prop": "padding",
+      "value": "9px",
+      "decl": "9px var(--ds-space-4)",
+      "why": "间距档外值 9px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 152,
+      "prop": "padding",
+      "value": "18px 14px",
+      "decl": "18px var(--ds-space-2) 14px",
+      "why": "间距档外值 18px/14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 154,
+      "prop": "margin-bottom",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 155,
+      "prop": "margin-bottom",
+      "value": "14px",
+      "decl": "14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 165,
+      "prop": "margin-top",
+      "value": "1.5px",
+      "decl": "1.5px",
+      "why": "间距档外值 1.5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 184,
+      "prop": "margin-top",
+      "value": "1px",
+      "decl": "1px",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 191,
+      "prop": "margin-top",
+      "value": "9px",
+      "decl": "9px",
+      "why": "间距档外值 9px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 209,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "14px var(--ds-space-4) var(--ds-space-1)",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 222,
+      "prop": "gap",
+      "value": "7px",
+      "decl": "7px",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 226,
+      "prop": "margin-top",
+      "value": "1.5px",
+      "decl": "1.5px",
+      "why": "间距档外值 1.5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 228,
+      "prop": "gap",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 228,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px 0",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 258,
+      "prop": "margin-top",
+      "value": "1px",
+      "decl": "1px",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 266,
+      "prop": "padding",
+      "value": "6.5px",
+      "decl": "6.5px 0",
+      "why": "间距档外值 6.5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 276,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "5px var(--ds-space-2)",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 279,
+      "prop": "margin-top",
+      "value": "9px",
+      "decl": "9px",
+      "why": "间距档外值 9px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 283,
+      "prop": "padding",
+      "value": "5px 9px",
+      "decl": "5px 9px",
+      "why": "间距档外值 5px/9px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 293,
+      "prop": "padding",
+      "value": "30px 30px",
+      "decl": "0 30px 30px",
+      "why": "间距档外值 30px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 294,
+      "prop": "padding",
+      "value": "9px",
+      "decl": "9px var(--ds-space-half)",
+      "why": "间距档外值 9px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 298,
+      "prop": "gap",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 300,
+      "prop": "gap",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 300,
+      "prop": "padding",
+      "value": "3.5px 3.5px",
+      "decl": "3.5px var(--ds-space-1h) 3.5px var(--ds-space-inline-x)",
+      "why": "间距档外值 3.5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 339,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "14px var(--ds-space-half) var(--ds-space-1h)",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 357,
+      "prop": "margin-bottom",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 363,
+      "prop": "gap",
+      "value": "7px",
+      "decl": "7px",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 363,
+      "prop": "padding",
+      "value": "5px 5px",
+      "decl": "5px var(--ds-space-2) 5px var(--ds-space-inline-x)",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 8,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-block-y) 14px var(--ds-space-3)",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 122,
+      "prop": "margin",
+      "value": "14px",
+      "decl": "14px var(--ds-space-half) var(--ds-space-1)",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 188,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-block-y) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 343,
+      "prop": "margin",
+      "value": "-1px",
+      "decl": "-1px",
+      "why": "间距档外值 -1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 356,
+      "prop": "margin",
+      "value": "-1px",
+      "decl": "-1px",
+      "why": "间距档外值 -1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 465,
+      "prop": "padding-bottom",
+      "value": "72px",
+      "decl": "72px",
+      "why": "间距档外值 72px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 481,
+      "prop": "padding-top",
+      "value": "56px",
+      "decl": "56px",
+      "why": "间距档外值 56px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 512,
+      "prop": "gap",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 516,
+      "prop": "margin-top",
+      "value": "1px",
+      "decl": "1px",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 526,
+      "prop": "margin-right",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 542,
+      "prop": "margin-bottom",
+      "value": "14px",
+      "decl": "14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 548,
+      "prop": "padding",
+      "value": "7px 14px",
+      "decl": "7px 14px",
+      "why": "间距档外值 7px/14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 576,
+      "prop": "margin-bottom",
+      "value": "14px",
+      "decl": "14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 581,
+      "prop": "gap",
+      "value": "7px",
+      "decl": "7px",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 582,
+      "prop": "padding",
+      "value": "7px",
+      "decl": "7px var(--ds-space-3)",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 656,
+      "prop": "padding",
+      "value": "7px",
+      "decl": "7px var(--ds-space-inline-x)",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 703,
+      "prop": "margin",
+      "value": "-4px 14px",
+      "decl": "-4px 0 14px",
+      "why": "间距档外值 -4px/14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 765,
+      "prop": "padding",
+      "value": "7px",
+      "decl": "var(--ds-space-half) 7px",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 830,
+      "prop": "padding",
+      "value": "5px 14px",
+      "decl": "5px 14px",
+      "why": "间距档外值 5px/14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 834,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "5px var(--ds-space-2)",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 877,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 880,
+      "prop": "gap",
+      "value": "14px",
+      "decl": "14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 887,
+      "prop": "padding",
+      "value": "26px",
+      "decl": "26px var(--ds-space-4)",
+      "why": "间距档外值 26px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 1006,
+      "prop": "gap",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 1026,
+      "prop": "margin-left",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/reminder.css",
+      "line": 51,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "0 3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/reminder.css",
+      "line": 111,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-3) 14px var(--ds-space-1h)",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/reminder.css",
+      "line": 216,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "0 5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/reminder.css",
+      "line": 235,
+      "prop": "padding",
+      "value": "40px 36px",
+      "decl": "40px var(--ds-space-4) 36px",
+      "why": "间距档外值 40px/36px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/reminder.css",
+      "line": 264,
+      "prop": "padding",
+      "value": "9px",
+      "decl": "9px var(--ds-space-inline-x)",
+      "why": "间距档外值 9px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/reminder.css",
+      "line": 266,
+      "prop": "margin",
+      "value": "1px",
+      "decl": "1px 0",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/reminder.css",
+      "line": 363,
+      "prop": "gap",
+      "value": "1px",
+      "decl": "1px",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/reminder.css",
+      "line": 383,
+      "prop": "gap",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/reminder.css",
+      "line": 452,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "0 5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/reminder.css",
+      "line": 456,
+      "prop": "margin-left",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/reminder.css",
+      "line": 512,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px 0",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/reminder.css",
+      "line": 524,
+      "prop": "padding-left",
+      "value": "28px",
+      "decl": "28px",
+      "why": "间距档外值 28px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/reminder.css",
+      "line": 579,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px 0",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/reminder.css",
+      "line": 619,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "0 5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/reminder.css",
+      "line": 638,
+      "prop": "padding",
+      "value": "11px 14px",
+      "decl": "11px 14px var(--ds-space-block-y)",
+      "why": "间距档外值 11px/14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/reminder.css",
+      "line": 681,
+      "prop": "padding",
+      "value": "7px",
+      "decl": "0 7px",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/reminder.css",
+      "line": 706,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "0 5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/reminder.css",
+      "line": 722,
+      "prop": "margin",
+      "value": "18px",
+      "decl": "var(--ds-space-1) 0 var(--ds-space-1) 18px",
+      "why": "间距档外值 18px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/reminder.css",
+      "line": 736,
+      "prop": "gap",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/reminder.css",
+      "line": 741,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "5px var(--ds-space-2)",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sapphire.css",
+      "line": 448,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "5px var(--ds-space-3)",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sapphire.css",
+      "line": 854,
+      "prop": "padding",
+      "value": "1px",
+      "decl": "1px var(--ds-space-2)",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/secrets.css",
+      "line": 256,
+      "prop": "gap",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/secrets.css",
+      "line": 474,
+      "prop": "padding",
+      "value": "14px 14px",
+      "decl": "var(--ds-space-3) 14px 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 307,
+      "prop": "margin-right",
+      "value": "7px",
+      "decl": "7px",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 539,
+      "prop": "margin",
+      "value": "40px",
+      "decl": "40px 0 0",
+      "why": "间距档外值 40px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 564,
+      "prop": "margin",
+      "value": "-33px",
+      "decl": "-33px 0 var(--ds-space-3)",
+      "why": "间距档外值 -33px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 569,
+      "prop": "margin",
+      "value": "14px",
+      "decl": "14px 0 var(--ds-space-1h)",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 611,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "0 14px var(--ds-space-block-y)",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 611,
+      "prop": "margin-top",
+      "value": "-4px",
+      "decl": "-4px",
+      "why": "间距档外值 -4px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 617,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-block-y) 14px var(--ds-space-3)",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 687,
+      "prop": "padding",
+      "value": "11px 14px",
+      "decl": "11px 14px",
+      "why": "间距档外值 11px/14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 713,
+      "prop": "padding",
+      "value": "1px 7px",
+      "decl": "1px 7px",
+      "why": "间距档外值 1px/7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 777,
+      "prop": "padding",
+      "value": "1px",
+      "decl": "1px var(--ds-space-2)",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1009,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "14px var(--ds-space-4) var(--ds-space-block-y)",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1069,
+      "prop": "padding",
+      "value": "7px",
+      "decl": "7px 0",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1094,
+      "prop": "padding-bottom",
+      "value": "14px",
+      "decl": "14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1117,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "5px var(--ds-space-inline-x)",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1125,
+      "prop": "padding-top",
+      "value": "1px",
+      "decl": "1px",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1134,
+      "prop": "padding",
+      "value": "1px",
+      "decl": "1px var(--ds-space-2)",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1158,
+      "prop": "padding",
+      "value": "1px",
+      "decl": "1px var(--ds-space-1h)",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1269,
+      "prop": "padding",
+      "value": "18px",
+      "decl": "var(--ds-space-1h) 18px",
+      "why": "间距档外值 18px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1390,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "14px var(--ds-space-4) var(--ds-space-block-y)",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1395,
+      "prop": "margin-bottom",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1486,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px var(--ds-space-inline-x)",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1541,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-block-y) var(--ds-space-4) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1580,
+      "prop": "margin-top",
+      "value": "1px",
+      "decl": "1px",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1605,
+      "prop": "padding",
+      "value": "1px 5px",
+      "decl": "1px 5px",
+      "why": "间距档外值 1px/5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1617,
+      "prop": "gap",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1623,
+      "prop": "padding",
+      "value": "1px 5px",
+      "decl": "1px 5px",
+      "why": "间距档外值 1px/5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1654,
+      "prop": "gap",
+      "value": "1px",
+      "decl": "1px",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1674,
+      "prop": "padding",
+      "value": "1px",
+      "decl": "1px var(--ds-space-1h)",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1700,
+      "prop": "padding",
+      "value": "28px",
+      "decl": "var(--ds-space-6) 28px",
+      "why": "间距档外值 28px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1707,
+      "prop": "padding",
+      "value": "40px",
+      "decl": "40px",
+      "why": "间距档外值 40px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1710,
+      "prop": "gap",
+      "value": "14px",
+      "decl": "14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1727,
+      "prop": "padding",
+      "value": "1px",
+      "decl": "1px var(--ds-space-2)",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1887,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "5px var(--ds-space-4)",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1929,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px var(--ds-space-3)",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2073,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px 0",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2086,
+      "prop": "gap",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2113,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px 0",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2130,
+      "prop": "padding",
+      "value": "1px 3px",
+      "decl": "1px 0 3px var(--ds-space-2)",
+      "why": "间距档外值 1px/3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2216,
+      "prop": "margin-bottom",
+      "value": "18px",
+      "decl": "18px",
+      "why": "间距档外值 18px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2283,
+      "prop": "row-gap",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2290,
+      "prop": "margin",
+      "value": "-2px -4px",
+      "decl": "-2px -4px",
+      "why": "间距档外值 -2px/-4px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2398,
+      "prop": "gap",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2400,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px var(--ds-space-inline-x)",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2437,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px var(--ds-space-inline-x)",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2458,
+      "prop": "padding",
+      "value": "1px 7px",
+      "decl": "1px 7px",
+      "why": "间距档外值 1px/7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2478,
+      "prop": "margin-right",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2501,
+      "prop": "padding",
+      "value": "1px 7px",
+      "decl": "1px 7px",
+      "why": "间距档外值 1px/7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2517,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "5px var(--ds-space-2)",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2561,
+      "prop": "padding",
+      "value": "1px 7px",
+      "decl": "1px 7px",
+      "why": "间距档外值 1px/7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2595,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px var(--ds-space-inline-x)",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2732,
+      "prop": "gap",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/social.css",
+      "line": 59,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "14px var(--ds-space-5) var(--ds-space-3) var(--ds-space-5)",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/social.css",
+      "line": 74,
+      "prop": "gap",
+      "value": "18px",
+      "decl": "18px",
+      "why": "间距档外值 18px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/social.css",
+      "line": 106,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "14px var(--ds-space-4)",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/social.css",
+      "line": 169,
+      "prop": "margin-right",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/social.css",
+      "line": 250,
+      "prop": "margin-right",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/social.css",
+      "line": 285,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-3) 14px var(--ds-space-4)",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/social.css",
+      "line": 285,
+      "prop": "gap",
+      "value": "14px",
+      "decl": "14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 11,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-block-y) 14px var(--ds-space-1)",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 114,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "5px var(--ds-space-inline-x)",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 195,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px var(--ds-space-2)",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 229,
+      "prop": "padding",
+      "value": "5px 5px",
+      "decl": "5px var(--ds-space-1h) 5px var(--ds-space-3)",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 255,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px var(--ds-space-3)",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 265,
+      "prop": "margin-right",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 389,
+      "prop": "margin-left",
+      "value": "7px",
+      "decl": "7px",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 390,
+      "prop": "padding",
+      "value": "7px",
+      "decl": "var(--ds-space-half) 7px",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 421,
+      "prop": "margin-left",
+      "value": "7px",
+      "decl": "7px",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 438,
+      "prop": "padding",
+      "value": "7px",
+      "decl": "var(--ds-space-half) 7px",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 467,
+      "prop": "margin-right",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 473,
+      "prop": "gap",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 474,
+      "prop": "margin-top",
+      "value": "1.5px",
+      "decl": "1.5px",
+      "why": "间距档外值 1.5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 479,
+      "prop": "margin-left",
+      "value": "7px",
+      "decl": "7px",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 544,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px var(--ds-space-inline-x)",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 1324,
+      "prop": "gap",
+      "value": "7px",
+      "decl": "7px",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 1342,
+      "prop": "gap",
+      "value": "7px",
+      "decl": "7px",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 1496,
+      "prop": "gap",
+      "value": "7px",
+      "decl": "7px",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 1671,
+      "prop": "gap",
+      "value": "7px",
+      "decl": "7px",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 1673,
+      "prop": "padding",
+      "value": "34px",
+      "decl": "0 34px 0 var(--ds-space-3)",
+      "why": "间距档外值 34px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 1772,
+      "prop": "margin",
+      "value": "7px",
+      "decl": "0 0 7px",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 1815,
+      "prop": "gap",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 1815,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "0 5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 2062,
+      "prop": "margin",
+      "value": "18px",
+      "decl": "var(--ds-space-1) 0 var(--ds-space-1) 18px",
+      "why": "间距档外值 18px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 2078,
+      "prop": "padding-top",
+      "value": "30px",
+      "decl": "30px",
+      "why": "间距档外值 30px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 2097,
+      "prop": "padding",
+      "value": "1px",
+      "decl": "1px var(--ds-space-1)",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 2151,
+      "prop": "padding",
+      "value": "36px",
+      "decl": "var(--ds-space-6) 36px",
+      "why": "间距档外值 36px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 2371,
+      "prop": "margin-left",
+      "value": "-1px",
+      "decl": "-1px",
+      "why": "间距档外值 -1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 2473,
+      "prop": "padding-left",
+      "value": "26px",
+      "decl": "26px",
+      "why": "间距档外值 26px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 2474,
+      "prop": "padding-left",
+      "value": "42px",
+      "decl": "42px",
+      "why": "间距档外值 42px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 2475,
+      "prop": "padding-left",
+      "value": "58px",
+      "decl": "58px",
+      "why": "间距档外值 58px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 2527,
+      "prop": "padding",
+      "value": "36px",
+      "decl": "var(--ds-space-6) 36px",
+      "why": "间距档外值 36px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 2551,
+      "prop": "padding",
+      "value": "18px",
+      "decl": "var(--ds-space-4) 18px",
+      "why": "间距档外值 18px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 2564,
+      "prop": "padding",
+      "value": "1px",
+      "decl": "0 1px",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 2743,
+      "prop": "margin",
+      "value": "-1px",
+      "decl": "-1px",
+      "why": "间距档外值 -1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 2998,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px var(--ds-space-2)",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3022,
+      "prop": "padding-top",
+      "value": "56px",
+      "decl": "56px",
+      "why": "间距档外值 56px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3067,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-1) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3319,
+      "prop": "margin",
+      "value": "22px",
+      "decl": "22px 0 var(--ds-space-half)",
+      "why": "间距档外值 22px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3332,
+      "prop": "margin",
+      "value": "18px",
+      "decl": "var(--ds-space-2) 0 var(--ds-space-half) 18px",
+      "why": "间距档外值 18px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3426,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-block-y) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3431,
+      "prop": "margin-bottom",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3436,
+      "prop": "margin-top",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3468,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-block-y) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3475,
+      "prop": "margin-bottom",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3482,
+      "prop": "margin-top",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3602,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "5px var(--ds-space-2)",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3627,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "5px var(--ds-space-inline-x)",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3647,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px var(--ds-space-inline-x)",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3677,
+      "prop": "gap",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3677,
+      "prop": "margin",
+      "value": "9px",
+      "decl": "var(--ds-space-1h) 0 9px",
+      "why": "间距档外值 9px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3680,
+      "prop": "padding",
+      "value": "1px",
+      "decl": "1px var(--ds-space-2)",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3685,
+      "prop": "margin",
+      "value": "5px",
+      "decl": "var(--ds-space-3) 0 5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3688,
+      "prop": "margin",
+      "value": "3px",
+      "decl": "3px 0",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3703,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "5px var(--ds-space-2)",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3706,
+      "prop": "padding",
+      "value": "7px",
+      "decl": "7px 0",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3724,
+      "prop": "margin",
+      "value": "5px",
+      "decl": "0 0 5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3729,
+      "prop": "margin",
+      "value": "3px",
+      "decl": "3px 0",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3843,
+      "prop": "padding",
+      "value": "3px 9px",
+      "decl": "3px 9px",
+      "why": "间距档外值 3px/9px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3860,
+      "prop": "margin-right",
+      "value": "30px",
+      "decl": "30px",
+      "why": "间距档外值 30px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3861,
+      "prop": "padding",
+      "value": "1px 7px",
+      "decl": "1px 7px",
+      "why": "间距档外值 1px/7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/taskList.css",
+      "line": 165,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px 0",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/taskList.css",
+      "line": 186,
+      "prop": "margin-top",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/taskList.css",
+      "line": 223,
+      "prop": "gap",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/taskList.css",
+      "line": 240,
+      "prop": "margin-top",
+      "value": "1px",
+      "decl": "1px",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/taskList.css",
+      "line": 296,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "0 5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/taskList.css",
+      "line": 331,
+      "prop": "margin",
+      "value": "1px 1px 18px",
+      "decl": "1px 0 1px 18px",
+      "why": "间距档外值 1px/18px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/taskList.css",
+      "line": 447,
+      "prop": "margin-top",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/taskList.css",
+      "line": 463,
+      "prop": "margin-top",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/taskList.css",
+      "line": 623,
+      "prop": "margin-top",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/taskList.css",
+      "line": 657,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "0 5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/timeWheel.css",
+      "line": 52,
+      "prop": "padding",
+      "value": "1px",
+      "decl": "0 1px",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/timeWheel.css",
+      "line": 77,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-block-y) 14px var(--ds-space-3)",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/timeWheel.css",
+      "line": 225,
+      "prop": "margin-top",
+      "value": "-20px",
+      "decl": "-20px",
+      "why": "间距档外值 -20px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/timeWheel.css",
+      "line": 252,
+      "prop": "padding",
+      "value": "9px",
+      "decl": "0 9px",
+      "why": "间距档外值 9px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/timeWheel.css",
+      "line": 427,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "0 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/todo-face.css",
+      "line": 394,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px var(--ds-space-1h)",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/todo-face.css",
+      "line": 508,
+      "prop": "gap",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/todo-face.css",
+      "line": 655,
+      "prop": "gap",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/todo-face.css",
+      "line": 656,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px var(--ds-space-1h)",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/todo-face.css",
+      "line": 679,
+      "prop": "gap",
+      "value": "1px",
+      "decl": "1px",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/todo-face.css",
+      "line": 708,
+      "prop": "gap",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/todo-face.css",
+      "line": 723,
+      "prop": "padding",
+      "value": "1.5px",
+      "decl": "1.5px var(--ds-space-1)",
+      "why": "间距档外值 1.5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/todo-face.css",
+      "line": 809,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px var(--ds-space-1h)",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/todo-face.css",
+      "line": 814,
+      "prop": "gap",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/todo-face.css",
+      "line": 818,
+      "prop": "gap",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/todo-face.css",
+      "line": 819,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px var(--ds-space-1h)",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/todo-face.css",
+      "line": 834,
+      "prop": "gap",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/todo-face.css",
+      "line": 838,
+      "prop": "gap",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/todo-face.css",
+      "line": 904,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px var(--ds-space-1h)",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/todo-face.css",
+      "line": 912,
+      "prop": "padding",
+      "value": "40px 36px",
+      "decl": "40px 0 36px",
+      "why": "间距档外值 40px/36px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/todo-page.css",
+      "line": 57,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "14px var(--ds-space-4) var(--ds-space-block-y)",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/todo-page.css",
+      "line": 142,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "0 5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/todo-page.css",
+      "line": 185,
+      "prop": "padding",
+      "value": "9px",
+      "decl": "0 9px",
+      "why": "间距档外值 9px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/todo-page.css",
+      "line": 204,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "0 5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/todo-page.css",
+      "line": 234,
+      "prop": "gap",
+      "value": "7px",
+      "decl": "7px",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/todo-page.css",
+      "line": 235,
+      "prop": "padding",
+      "value": "38px",
+      "decl": "var(--ds-space-1) var(--ds-space-inline-x) var(--ds-space-block-y) 38px",
+      "why": "间距档外值 38px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/usage.css",
+      "line": 25,
+      "prop": "padding",
+      "value": "18px 18px",
+      "decl": "var(--ds-space-4) 18px 18px",
+      "why": "间距档外值 18px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/usage.css",
+      "line": 108,
+      "prop": "margin-top",
+      "value": "1px",
+      "decl": "1px",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/usage.css",
+      "line": 136,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px var(--ds-space-inline-x)",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/usage.css",
+      "line": 168,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px var(--ds-space-inline-x)",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/usage.css",
+      "line": 196,
+      "prop": "padding",
+      "value": "22px",
+      "decl": "var(--ds-space-1) 22px var(--ds-space-1) var(--ds-space-inline-x)",
+      "why": "间距档外值 22px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/usage.css",
+      "line": 218,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px var(--ds-space-inline-x)",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/usage.css",
+      "line": 332,
+      "prop": "gap",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/usage.css",
+      "line": 429,
+      "prop": "margin-bottom",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/voiceMode.css",
+      "line": 80,
+      "prop": "padding",
+      "value": "22px 14px",
+      "decl": "22px 14px var(--ds-space-2)",
+      "why": "间距档外值 22px/14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "css/voiceMode.css",
+      "line": 209,
+      "prop": "gap",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/activityBar.js",
+      "line": 633,
+      "prop": "margin-bottom",
+      "value": "14px",
+      "decl": "14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/activityBar.js",
+      "line": 640,
+      "prop": "margin-bottom",
+      "value": "14px",
+      "decl": "14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/activityBar.js",
+      "line": 650,
+      "prop": "margin-bottom",
+      "value": "14px",
+      "decl": "14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/activityBar.js",
+      "line": 657,
+      "prop": "gap",
+      "value": "7px",
+      "decl": "7px",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/activityBar.js",
+      "line": 664,
+      "prop": "padding",
+      "value": "22px",
+      "decl": "var(--ds-space-6) 22px var(--ds-space-5)",
+      "why": "间距档外值 22px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/askAttachments.js",
+      "line": 140,
+      "prop": "gap",
+      "value": "9px",
+      "decl": "9px",
+      "why": "间距档外值 9px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/askAttachments.js",
+      "line": 169,
+      "prop": "margin-top",
+      "value": "1px",
+      "decl": "1px",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/askAttachments.js",
+      "line": 223,
+      "prop": "gap",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/askAttachments.js",
+      "line": 363,
+      "prop": "gap",
+      "value": "7px",
+      "decl": "7px",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/askAttachments.js",
+      "line": 363,
+      "prop": "padding",
+      "value": "9px",
+      "decl": "9px var(--ds-space-3)",
+      "why": "间距档外值 9px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/askAttachments.js",
+      "line": 507,
+      "prop": "padding",
+      "value": "9px",
+      "decl": "var(--ds-space-half) 9px",
+      "why": "间距档外值 9px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/bgAgentPopup.js",
+      "line": 63,
+      "prop": "padding",
+      "value": "1px",
+      "decl": "1px var(--ds-space-2)",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/bgAgentPopup.js",
+      "line": 87,
+      "prop": "gap",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/bgAgentPopup.js",
+      "line": 95,
+      "prop": "gap",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/bgAgentWorkStrip.js",
+      "line": 47,
+      "prop": "margin-right",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/bgAgentWorkStrip.js",
+      "line": 52,
+      "prop": "padding",
+      "value": "1px",
+      "decl": "1px var(--ds-space-1)",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/bgAgentWorkStrip.js",
+      "line": 53,
+      "prop": "margin-left",
+      "value": "-4px",
+      "decl": "-4px",
+      "why": "间距档外值 -4px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/bgTaskOutputPopup.js",
+      "line": 122,
+      "prop": "gap",
+      "value": "1px",
+      "decl": "1px",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/bgTaskOutputPopup.js",
+      "line": 137,
+      "prop": "gap",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/bgTaskOutputPopup.js",
+      "line": 178,
+      "prop": "margin-top",
+      "value": "1px",
+      "decl": "1px",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/bgTaskOutputPopup.js",
+      "line": 202,
+      "prop": "padding",
+      "value": "28px 14px",
+      "decl": "28px 14px var(--ds-space-3)",
+      "why": "间距档外值 28px/14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/bgTaskOutputPopup.js",
+      "line": 273,
+      "prop": "margin-left",
+      "value": "1px",
+      "decl": "1px",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/canvas.js",
+      "line": 1057,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px var(--ds-space-inline-x)",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/canvas.js",
+      "line": 1062,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px var(--ds-space-inline-x)",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/canvas.js",
+      "line": 4811,
+      "prop": "padding",
+      "value": "22px 30px",
+      "decl": "22px 30px",
+      "why": "间距档外值 22px/30px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/canvas.js",
+      "line": 4832,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "5px var(--ds-space-4)",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/daemonPanel.js",
+      "line": 60,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-3) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/daemonPanel.js",
+      "line": 76,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/daemonPanel.js",
+      "line": 77,
+      "prop": "gap",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/daemonPanel.js",
+      "line": 80,
+      "prop": "padding",
+      "value": "7px 9px",
+      "decl": "7px 9px",
+      "why": "间距档外值 7px/9px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/daemonPanel.js",
+      "line": 87,
+      "prop": "gap",
+      "value": "7px",
+      "decl": "7px",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/daemonPanel.js",
+      "line": 91,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-3) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/daemonPanel.js",
+      "line": 95,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-1h) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/daemons.js",
+      "line": 90,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-3) 14px var(--ds-space-1h)",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/daemons.js",
+      "line": 135,
+      "prop": "padding",
+      "value": "40px 36px",
+      "decl": "40px var(--ds-space-4) 36px",
+      "why": "间距档外值 40px/36px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/daemons.js",
+      "line": 143,
+      "prop": "padding",
+      "value": "9px",
+      "decl": "9px var(--ds-space-inline-x)",
+      "why": "间距档外值 9px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/daemons.js",
+      "line": 144,
+      "prop": "margin",
+      "value": "1px",
+      "decl": "1px 0",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/daemons.js",
+      "line": 159,
+      "prop": "margin-top",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/daemons.js",
+      "line": 173,
+      "prop": "gap",
+      "value": "1px",
+      "decl": "1px",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/daemons.js",
+      "line": 174,
+      "prop": "gap",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/delegateChainView.js",
+      "line": 517,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/delegateChainView.js",
+      "line": 589,
+      "prop": "padding",
+      "value": "7px",
+      "decl": "7px var(--ds-space-1h)",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/delegateChainView.js",
+      "line": 593,
+      "prop": "gap",
+      "value": "1px",
+      "decl": "1px",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/delegateChainView.js",
+      "line": 617,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-2) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/delegateChainView.js",
+      "line": 626,
+      "prop": "padding",
+      "value": "1px",
+      "decl": "1px var(--ds-space-inline-x)",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/explorer.js",
+      "line": 1078,
+      "prop": "padding",
+      "value": "3px 7px",
+      "decl": "3px 7px",
+      "why": "间距档外值 3px/7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/fleetUpdate.js",
+      "line": 72,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "14px var(--ds-space-4) var(--ds-space-block-y)",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/fleetUpdate.js",
+      "line": 105,
+      "prop": "padding",
+      "value": "1px",
+      "decl": "1px var(--ds-space-1h)",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/fleetUpdate.js",
+      "line": 109,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-block-y) var(--ds-space-4) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowAgentPopup.js",
+      "line": 337,
+      "prop": "margin-right",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 19,
+      "prop": "padding",
+      "value": "14px 14px",
+      "decl": "14px 14px var(--ds-space-6)",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 20,
+      "prop": "gap",
+      "value": "14px",
+      "decl": "14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 34,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-3) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 75,
+      "prop": "gap",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 81,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 93,
+      "prop": "padding",
+      "value": "14px 14px",
+      "decl": "0 14px 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 96,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px var(--ds-space-inline-x)",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 128,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-3) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 130,
+      "prop": "gap",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 140,
+      "prop": "margin",
+      "value": "14px 14px",
+      "decl": "0 14px 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 143,
+      "prop": "padding",
+      "value": "5px 14px",
+      "decl": "5px 14px",
+      "why": "间距档外值 5px/14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 149,
+      "prop": "margin",
+      "value": "14px 14px",
+      "decl": "0 14px 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 152,
+      "prop": "padding",
+      "value": "5px 14px",
+      "decl": "5px 14px",
+      "why": "间距档外值 5px/14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 156,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-block-y) 14px 0",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 157,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 173,
+      "prop": "padding",
+      "value": "1px 5px",
+      "decl": "1px 5px",
+      "why": "间距档外值 1px/5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 179,
+      "prop": "padding",
+      "value": "11px",
+      "decl": "11px var(--ds-space-4)",
+      "why": "间距档外值 11px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 185,
+      "prop": "padding",
+      "value": "14px 18px",
+      "decl": "14px 18px",
+      "why": "间距档外值 14px/18px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 193,
+      "prop": "padding",
+      "value": "40px",
+      "decl": "40px 0",
+      "why": "间距档外值 40px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 194,
+      "prop": "gap",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 194,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-3) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 203,
+      "prop": "gap",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 211,
+      "prop": "margin",
+      "value": "18px",
+      "decl": "var(--ds-space-1) 0 var(--ds-space-1) 18px",
+      "why": "间距档外值 18px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 212,
+      "prop": "padding",
+      "value": "1px",
+      "decl": "1px var(--ds-space-1)",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 225,
+      "prop": "margin-bottom",
+      "value": "14px",
+      "decl": "14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 236,
+      "prop": "padding",
+      "value": "1px",
+      "decl": "1px var(--ds-space-1h)",
+      "why": "间距档外值 1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 250,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "14px var(--ds-space-4)",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 254,
+      "prop": "padding",
+      "value": "1px 5px",
+      "decl": "1px 5px",
+      "why": "间距档外值 1px/5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 257,
+      "prop": "margin-bottom",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 260,
+      "prop": "padding",
+      "value": "1px 5px",
+      "decl": "1px 5px",
+      "why": "间距档外值 1px/5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 265,
+      "prop": "padding",
+      "value": "1px 5px",
+      "decl": "1px 5px",
+      "why": "间距档外值 1px/5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 265,
+      "prop": "margin-right",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 269,
+      "prop": "gap",
+      "value": "5px",
+      "decl": "5px",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 270,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px var(--ds-space-2)",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 272,
+      "prop": "margin-bottom",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 274,
+      "prop": "margin",
+      "value": "-14px -18px",
+      "decl": "-14px -18px var(--ds-space-3)",
+      "why": "间距档外值 -14px/-18px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 275,
+      "prop": "margin-bottom",
+      "value": "-1px",
+      "decl": "-1px",
+      "why": "间距档外值 -1px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 286,
+      "prop": "margin",
+      "value": "14px",
+      "decl": "0 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 288,
+      "prop": "padding",
+      "value": "14px 14px",
+      "decl": "0 14px 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 339,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-half) 0 var(--ds-space-1h) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 341,
+      "prop": "gap",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 347,
+      "prop": "gap",
+      "value": "7px",
+      "decl": "7px",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 505,
+      "prop": "margin-top",
+      "value": "3px",
+      "decl": "3px",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 530,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-3) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 546,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-block-y) 14px var(--ds-space-1)",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 549,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-block-y) 14px var(--ds-space-3)",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 553,
+      "prop": "padding",
+      "value": "5px",
+      "decl": "5px var(--ds-space-3)",
+      "why": "间距档外值 5px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 559,
+      "prop": "padding",
+      "value": "7px",
+      "decl": "var(--ds-space-half) 7px",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 565,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 578,
+      "prop": "padding",
+      "value": "14px 18px",
+      "decl": "14px 18px",
+      "why": "间距档外值 14px/18px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 586,
+      "prop": "padding",
+      "value": "18px",
+      "decl": "var(--ds-space-2) 18px",
+      "why": "间距档外值 18px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 646,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/perception.js",
+      "line": 852,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-1) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/sidebar.js",
+      "line": 459,
+      "prop": "margin-top",
+      "value": "-2px",
+      "decl": "-2px",
+      "why": "间距档外值 -2px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/sidebar.js",
+      "line": 1345,
+      "prop": "margin-top",
+      "value": "-4px",
+      "decl": "-4px",
+      "why": "间距档外值 -4px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/staleTabHint.js",
+      "line": 27,
+      "prop": "padding",
+      "value": "9px 9px",
+      "decl": "9px var(--ds-space-3) 9px var(--ds-space-4)",
+      "why": "间距档外值 9px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/staleTabHint.js",
+      "line": 43,
+      "prop": "padding",
+      "value": "14px",
+      "decl": "var(--ds-space-1h) 14px",
+      "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/viewers/largeText.js",
+      "line": 63,
+      "prop": "padding",
+      "value": "7px",
+      "decl": "var(--ds-space-half) 7px",
+      "why": "间距档外值 7px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/viewers/largeText.js",
+      "line": 67,
+      "prop": "padding",
+      "value": "3px",
+      "decl": "3px var(--ds-space-2)",
+      "why": "间距档外值 3px（4px 栅格 + 两例外档均无同值令牌）"
+    }
+  ]
+}

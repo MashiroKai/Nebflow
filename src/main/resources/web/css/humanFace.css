@@ -10,7 +10,7 @@
    玻璃质感引用 sapphire token 单源；亮暗双主题随 CSS 变量自动翻转。 */
 .nf-human-card {
   margin: var(--ds-space-2) 0;
-  padding: var(--ds-space-glass-x) 14px;
+  padding: var(--ds-space-block-y) 14px;
   border-radius: var(--ds-radius-card-sm);
   background: var(--sapphire-edge, var(--color-frame-hover));
   border: 1px solid var(--color-frame-border-light, var(--color-frame-border));
@@ -42,7 +42,7 @@
   content: "▸";
   display: inline-block;
   margin-right: var(--ds-space-1h);
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   transition: transform 0.12s ease;
 }
 
@@ -59,7 +59,7 @@
 .nf-output { display: block; }
 .bubble .nf-output-raw-pre {
   margin: 0;
-  padding: var(--ds-space-2) var(--ds-space-glass-x);
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: var(--ds-fs-hint);
   line-height: 1.55;

@@ -275,10 +275,18 @@ private[agent] object AgentProcessing:
             // （stream 层禁 provider 拼接），fatal 会连队列一起丢且 UI 报错，
             // 「恢复」退化成「失败」（round-5 隔离冒烟实证：kick 后零恢复请求、
             // agent 直接 idle、队列滞留）。
-            val (immInputs, remainingImmAfterAbort) = TurnBoundaryDrains.drainHeadExpanded(
+            // 注入时机判定单点（midturn-injection-timing 批）：中断恢复面走**同一个**
+            // [[InjectionTiming.decide]]（stage=AbortRecovery）——immediate 腿照旧在
+            // 恢复轮注入，真人 typeless 帧在恢复面同样不丢（留队，由后续边界/回合末
+            // head-forward 送达）。
+            val abortPlan = InjectionTiming.planBoundary(
               state.execution.pendingImmediateInputs,
-              compactionPending = false
-            )(expandRootNotify)
+              state.execution.pendingUserInputs,
+              stage = InjectionTiming.Stage.AbortRecovery,
+              compactionPending = false,
+              expand = expandRootNotify
+            )
+            val (immInputs, remainingImmAfterAbort) = (abortPlan.immediate, abortPlan.remainingImmediate)
             val immMessages = immInputs.map(imm =>
               (imm.blocks match
                 case Some(blocks) if blocks.nonEmpty => Message(MessageRole.User, Right(blocks))
@@ -691,15 +699,26 @@ private[agent] object AgentProcessing:
               s"events=${events.size} remaining=${remainingEvents.size} mailbox=${mailboxTaken.size} mailboxHeld=${mailboxHeld}"
             )
             List(buildEventReminder(events))
+        // ── 注入时机判定**单点**（midturn-injection-timing 批 2026-11-05）─────────
+        // 三条注入腿（用户输入 / Mail delegate / dispatcher→node）在本工具边界
+        // 「即注入」还是「留队等下一个边界」，**唯一**由
+        // [[InjectionTiming.planBoundary]] → [[InjectionTiming.decide]] 决定。
+        // 本处不再各写一份谓词：旧的三份（immediate 队首一件 / mail 豁免整包 /
+        // 真人 typeless 帧落回合末）已收敛进那个纯函数点，此处只消费它的计划。
+        // 预算与守卫（compaction 挂起零消费、每边界一件 immediate、windowItems
+        // 展开、mail 整包）逐字保留在单点内 ⇒ 既有语义零漂移。
+        val boundaryPlan = InjectionTiming.planBoundary(
+          state.execution.pendingImmediateInputs,
+          state.execution.pendingUserInputs,
+          stage = InjectionTiming.Stage.ToolBoundary,
+          compactionPending = state.pendingCompaction.isDefined,
+          expand = expandRootNotify
+        )
         // 排队消息逐条注入（2026-09-15 ub 缺陷批）：本边界只消费队首**一件**
         // immediate input（原缺陷⑥ 合批 = 整队塞进同一次续轮，已按 root 裁定删除）。
         // While compaction is in progress, keep inputs queued — injecting mid-compaction
         // risks the input being lost in the summary. CompactionComplete drains them.
-        val (immInputs, remainingImmInputs) =
-          TurnBoundaryDrains.drainHeadExpanded(
-            state.execution.pendingImmediateInputs,
-            state.pendingCompaction.isDefined
-          )(expandRootNotify)
+        val (immInputs, remainingImmInputs) = (boundaryPlan.immediate, boundaryPlan.remainingImmediate)
         val immediateMessages = immInputs match
           case Nil => Nil
           case inputs =>
@@ -745,21 +764,21 @@ private[agent] object AgentProcessing:
         // Mail(delegate:<id>) 对 Processing 会话投的 UserInput（replyTo=supervisor）
         // 旧路径在本边界**一律不消费**（2026-09-15 真人消息「逐条独立 turn」裁定面
         // ——原 Q1-A2′ 合批退役），只在 turn 末 head-forward 给 idle ⇒ 小时级长回合
-        // 的补充指令干等整个回合。本批按作者令收窄出**第二个显式豁免**（与
+        // 的补充指令干等整个回合。#939 按作者令收窄出**第二个显式豁免**（与
         // 2026-09-23 windowItems 先例同构）：mail 来源件（fromUser=false +
-        // source="mail"，判据单点 TurnBoundaryDrains.isMailSupplement）在本边界
-        // **整包合并注入**——多件合一包（批头 + 逐件分节，到达顺序保持）、一次性
-        // 并入续轮请求；单件即 idle 等价形（零内容漂移）。真人消息与其余 replyTo 件
-        // （SkillActivate/AskQuestion/非 mail UserInput）逐字不变（留队 head-forward）。
+        // source="mail"）在本边界**整包合并注入**——多件合一包（批头 + 逐件分节，
+        // 到达顺序保持）、一次性并入续轮请求；单件即 idle 等价形（零内容漂移）。
         // replyTo 结算不搁浅：各件 replyTo 并入 owedCompletion（完成债既有通道——
         // turn 末 completionTargets = replyTo ++ owedCompletion，含在飞子代理时的
-        // 停靠重放），delegate 结果仍走 source="delegate" 回投链。compaction 挂起
-        // ⇒ 不消费（与 imm 同款守卫——注入进将被 summary 替换的历史 = 消费即丢失）。
-        val (mailInputs, userInputsAfterMail) =
-          TurnBoundaryDrains.drainMailPackage(
-            state.execution.pendingUserInputs,
-            compactionPending = state.pendingCompaction.isDefined
-          )
+        // 停靠重放），delegate 结果仍走 source="delegate" 回投链。
+        // 🔴 判据/摘取已并入上面的 [[InjectionTiming.planBoundary]] 单点（本批）：
+        // 这里只取计划的两个字段，不再自带 drainMailPackage 谓词。
+        val (mailInputs, userInputsAfterMail) = (boundaryPlan.mails, boundaryPlan.remainingUser)
+        // 腿①′用户 typeless 帧（附件 / 引用 / 引言 / queue drain 承载形）：与上面两条
+        // 腿同一个判定点产出（`Leg.UserFrame`）；此前它两个边界消费器都不收、整个
+        // 工具循环零消费、直到回合末 head-forward ⇒ 作者报障的那条。本边界注入后
+        // 即出队（幂等），身份（clientMessageId）在下方 updatedState 同拍登记。
+        val humanFrameInputs = boundaryPlan.humanFrames
         val mailPackage = TurnBoundaryDrains.mergeMailPackage(mailInputs)
         val mailMessages = mailInputs match
           case Nil => Nil
@@ -804,6 +823,27 @@ private[agent] object AgentProcessing:
             )
           )
         }.sequence_
+        // 腿①′真人 typeless 帧的续轮消息（与 imm/mail 同拍；`source = None`——真人
+        // 输入不产注入气泡，前端本就有乐观渲染的用户气泡，身份/顺序零变化）。
+        val humanFrameMessages = humanFrameInputs match
+          case Nil => Nil
+          case frames =>
+            logAgentEvent(
+              agentDef,
+              depth,
+              state.sessionId,
+              state.sessionName,
+              "human-frame-injected-at-tools-complete",
+              s"batch=${frames.size} blocks=${frames.count(_.blocks.exists(_.nonEmpty))} " +
+                s"texts=${frames.map(_.text.take(40)).mkString(" | ").take(200)} " +
+                s"remainingUserInputs=${userInputsAfterMail.size}"
+            )
+            frames.map(ui =>
+              (ui.blocks match
+                case Some(blocks) if blocks.nonEmpty => Message(MessageRole.User, Right(blocks))
+                case _ => Message(MessageRole.User, Left(ui.text))
+              ).copy(source = injectionSourceFor(ui.fromUser, ui.source))
+            )
         // Block 3 循环检测器 L0（supervision trio §D3）：LoopGuard Warn 提醒以
         // user system-reminder 追加在工具结果之后（同系统 reminder 形态）
         // ——零成本给模型自纠机会；不阻断轮次。
@@ -814,7 +854,8 @@ private[agent] object AgentProcessing:
           baseMessages ++ List(
             assistantMsg,
             resultMsg
-          ) ++ imageMsgs ++ eventMessages ++ immediateMessages ++ mailMessages ++ loopReminderMsgs
+          ) ++ imageMsgs ++ eventMessages ++ immediateMessages ++ mailMessages ++
+            humanFrameMessages ++ loopReminderMsgs
         // Increment delegate count for Delegate/SubTask calls
         val delegateIncrement = toolCalls.count(c => c.name == "Delegate" || c.name == "SubTask")
         val newDelegateCount = state.delegateCount + delegateIncrement
@@ -869,9 +910,17 @@ private[agent] object AgentProcessing:
           )
         // Block 3：LoopGuard 计数器快照写回（pipeToolExecutions 异步 IO 内计算、
         // 经消息携带——S1/S2 跨轮 + S3 跨 turn 持久化的唯一载体）。
+        // 幂等面（midturn-injection-timing 批）：边界注入的真人 typeless 帧已出队，
+        // 其 `clientMessageId` 在**同拍**登记进 `recentMessageIds` —— 重连补发的同一
+        // id 重复帧仍会被 `AgentProcessing` 的入队查重丢弃（该处查而不记的纪律不变：
+        // 登记点只此一处与 idle 直投的 `checkDuplicate` 两处）。
+        val promotedIds = humanFrameInputs.flatMap(_.clientMessageId)
+        val updatedStateWithIds =
+          if promotedIds.isEmpty then updatedState0
+          else updatedState0.withRecentMessageIds((state.recentMessageIds ++ promotedIds).takeRight(100))
         val updatedState = tc.loopCounters match
-          case Some(cnt) => updatedState0.withLoopCounters(cnt)
-          case None => updatedState0
+          case Some(cnt) => updatedStateWithIds.withLoopCounters(cnt)
+          case None => updatedStateWithIds
         tc.freezeAfter match
           case Some(detail) =>
             // Block 3 L2（supervision trio §D3）：消息组装/持久化/计数器写回后
@@ -983,7 +1032,9 @@ private[agent] object AgentProcessing:
                           Some(e.eventType),
                           e.metadata("agentName").flatMap(_.asString),
                           fileChanges = e.metadata("fileChanges"),
-                          sessionProject = state.projectName
+                          sessionProject = state.projectName,
+                          // 外部注入统一通道批（2026-11-05）：外部事件气泡的呈现级去重。
+                          dedup = true
                         )
                       case None => IO.unit
                   )
@@ -1426,7 +1477,9 @@ private[agent] object AgentProcessing:
                     // file-diff → 委托结果行（bug #58 修）：delegate 终态事件 metadata
                     // 携带的改动文件 diff 载荷，随注入行落盘/下发（缺席 = 旧行为逐字）。
                     fileChanges = metadata("fileChanges"),
-                    sessionProject = state.projectName
+                    sessionProject = state.projectName,
+                    // 外部注入统一通道批（2026-11-05）：外部事件气泡的呈现级去重。
+                    dedup = true
                   )
                 case None => IO.unit
               bubbleIO *>

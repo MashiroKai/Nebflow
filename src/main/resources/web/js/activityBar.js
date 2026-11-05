@@ -625,7 +625,7 @@ function injectLoginModalStyles() {
 .login-modal-header h3 { font-size: var(--ds-fs-title); margin: 0; color: var(--color-text); font-weight: 600; letter-spacing: -0.01em; }
 .login-modal-close {
   background: none; border: none; color: var(--color-text-muted);
-  font-size: 18px; cursor: pointer; padding: 0 var(--ds-space-1); line-height: 1;
+  font-size: var(--ds-fs-display); cursor: pointer; padding: 0 var(--ds-space-1); line-height: 1;
   opacity: 0.5; transition: opacity 0.15s;
 }
 .login-modal-close:hover { opacity: 1; }
@@ -633,7 +633,7 @@ function injectLoginModalStyles() {
 .login-hint { font-size: var(--ds-fs-body); color: var(--color-text-muted); margin-bottom: 14px; line-height: 1.55; }
 .login-user-code {
   font-family: 'SF Mono', 'Fira Code', monospace;
-  font-size: 26px; font-weight: 600; letter-spacing: 2px;
+  font-size: var(--ds-fs-title-lg); font-weight: 600; letter-spacing: 2px;
   color: var(--color-primary); margin-bottom: var(--ds-space-1);
   font-variant-numeric: tabular-nums;
 }
@@ -644,7 +644,7 @@ function injectLoginModalStyles() {
    family block (single source) — this block only stacks the keys. */
 .login-actions { display: flex; flex-direction: column; gap: var(--ds-space-2); }
 .login-waiting { margin-top: var(--ds-space-3); font-size: var(--ds-fs-hint); color: var(--color-text-muted); }
-.login-success { font-size: 14px; color: var(--color-primary); padding: var(--ds-space-3) 0; }
+.login-success { font-size: var(--ds-fs-subtitle); color: var(--color-primary); padding: var(--ds-space-3) 0; }
 /* ui-status-redesign（S11 / 盘点 G3）：全盘点对比度最差件（#e57373 白底 2.8:1 ✗）
    → 中性正文（回到 ~10:1 级）＋行首 octagon-alert 红图标（activityBar.js 注入）。 */
 .login-error-msg { font-size: var(--ds-fs-body); color: var(--status-word); margin-bottom: 14px; line-height: 1.5; display: flex; align-items: flex-start; gap: var(--ds-space-2); }
@@ -654,17 +654,17 @@ function injectLoginModalStyles() {
    登录键族块 owns geometry/material — primary green solid tier, the
    "显眼位" ask), this block only stands the inline brand mark next to the
    label. Same one-family discipline as the keys above. */
-.login-social-btn { display: flex; align-items: center; justify-content: center; gap: 7px; }
+.login-social-btn { display: flex; align-items: center; justify-content: center; gap: var(--ds-space-1h); }
 .login-social-btn svg { width: 16px; height: 16px; flex-shrink: 0; }
 /* v3 登录卡（mobile-mockup-375 v3④）：单键制 + 官方横排 lockup。idle 面无头栏
    （lockup 即卡头；关闭 = Esc / 点外，既有链）；面板材质沿用上方 .nebflow-login-modal
    玻璃族（blur24 与 glass-control 同族色值域，键族 token 在 sapphire.css 登录键族块）。 */
 .nebflow-login-modal.login-idle { width: 300px; }
 .nebflow-login-modal.login-idle .login-modal-header { display: none; }
-.nebflow-login-modal.login-idle .login-modal-body { padding: var(--ds-space-6) 22px var(--ds-space-5); display: flex; flex-direction: column; align-items: center; gap: var(--ds-space-glass-x); }
+.nebflow-login-modal.login-idle .login-modal-body { padding: var(--ds-space-6) 22px var(--ds-space-5); display: flex; flex-direction: column; align-items: center; gap: var(--ds-space-inline-gap); }
 .login-lockup { color: var(--color-text); display: block; margin-bottom: var(--ds-space-half); }
 .login-lockup .stand-lockup { width: 136px; height: 25px; display: block; }
-.login-card-title { font-size: 15.5px; font-weight: 600; color: var(--color-text); margin: 0; letter-spacing: -0.01em; }
+.login-card-title { font-size: var(--ds-fs-title); font-weight: 600; color: var(--color-text); margin: 0; letter-spacing: -0.01em; }
 .login-sub2 { font-size: var(--ds-fs-meta); color: var(--color-text-muted); line-height: 1.55; }
 .login-idle .login-hint b { color: var(--color-text); font-weight: 500; }
 /* 主键 = 官网登录卡同款（mystand.space/login 的 .auth 主键，作者补充令）：
@@ -679,8 +679,8 @@ function injectLoginModalStyles() {
   justify-content: center;
   border: none;
   border-radius: var(--ds-radius-input);
-  padding: var(--ds-space-glass-x) var(--ds-space-4);
-  font-size: 14px;
+  padding: var(--ds-space-block-y) var(--ds-space-4);
+  font-size: var(--ds-fs-subtitle);
   font-weight: 500;
   background: #111827;
   color: #fff;

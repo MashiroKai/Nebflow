@@ -61,6 +61,22 @@ const INJECTED_SOURCE_LABELS = {
   // （「来自 <from_device> 的 Nebula」，sender 携带 from_device），故不改本表——
   // 契约门 InjectionSourceContractSpec 的显式分支集合同样认它。
   system: 'System', background: 'Background',
+  // 外部注入统一通道批（2026-11-05）：此前**恒不可见**的一族外部事件（只以
+  // `<system-reminder>` 进 LLM 上下文、前端零气泡 = 作者 08:44 报障
+  // 「我又被触发了但看不到是什么」）。引擎侧 `AgentActor#visibleExternalEventSource`
+  // 改判为「除自写行腿外一律可见」后这些 source 真的会到达本表 ⇒ 逐值显式登记
+  // （禁首字母大写兜底；契约门 InjectionSourceContractSpec ② 同源对账
+  // `InjectionAttribution.BackendNamedSources`）。
+  //   merge-queue       放行/阻塞/属主失联通知（SharedResources / MergeQueue）
+  //   bg-lifecycle      后台任务生命周期催办（BgLifecycleReconciler）
+  //   waiting-dock-care 等待坞超时升级（TaskStuckWatcher）
+  //   chain-orphan      孤儿链回收通报（ProjectCrashRecovery）
+  //   team              团队错误升级链（AgentActor.notifyEscalation）
+  'merge-queue': 'MergeQueue',
+  'bg-lifecycle': 'BgLifecycle',
+  'waiting-dock-care': 'DockCare',
+  'chain-orphan': 'ChainOrphan',
+  team: 'Team',
   // b64 批（2026-09-13）：链级摘要投根通道（NodeEngine.deliverChainSummary，
   // source="chain"，`FlowMapStore.ChainSummarySource`）。后端自定名 ⇒ 必须显式登记
   // （禁首字母大写兜底，契约门 InjectionSourceContractSpec）。
@@ -183,6 +199,31 @@ function delegateReceiptSummary(text, merged) {
     .map((l) => l.trim())
     .find((l) => l && !l.startsWith('[delegate-judge]') && !l.startsWith('[delegate-finish]'));
   return { text: first || '', hash: '' };
+}
+
+/** 通用注入泡的**一句话摘要**（外部注入统一通道批 2026-11-05，作者 08:44 报障
+ *  逐字：「所有的外部注入消息应该有统一的途径和蓝色气泡通知，我刚刚看到你好多条
+ *  消息触发你，我都看不到是什么」）。
+ *
+ *  判据 = **正文本身的首条有效行**（不造新话、不改写、不截断语义）：
+ *    · 跳过空行与 `<system-reminder>` / `</system-reminder>` 包裹行（注入正文常整段
+ *      包在 reminder 里，那两行不是内容）；
+ *    · 取第一条其余非空行，剥掉行首 `- ` / `1. ` 这类列表前缀；
+ *    · 超过 SUMMARY_MAX 字符截断并加省略号（纯显示层省略，展开后是完整正文）。
+ *  取不到（正文为空）⇒ ''（调用点不挂摘要行，气泡形态与改前逐字节相同）。
+ *  纯函数，绝不抛。 */
+const INJECT_SUMMARY_MAX = 160;
+function injectSummaryLine(text) {
+  const lines = String(text || '').split('\n');
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (line === '<system-reminder>' || line === '</system-reminder>') continue;
+    const body = line.replace(/^(?:[-*+]\s+|\d+[.)]\s+)/, '').trim();
+    if (!body) continue;
+    return body.length > INJECT_SUMMARY_MAX ? `${body.slice(0, INJECT_SUMMARY_MAX)}…` : body;
+  }
+  return '';
 }
 
 /** Build the source label text, optionally combining with sender and eventType.
@@ -629,6 +670,19 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
     label.appendChild(document.createTextNode(renderedLabel));
     appendDeliveryBadge(label, delivery);
     bubble.appendChild(label);
+    // 外部注入统一通道批（2026-11-05）：折叠态也要「看得到是什么」。
+    // 来源行下追加**一句话摘要**（正文首条有效行，逐字取自注入内容）；
+    // 展开后让位给正文（CSS 由 label 的 aria-expanded 驱动，防首行重复）。
+    // 摘要恒为 label 的**紧邻兄弟**（选择器依赖），故挂位固定在本块末尾。
+    if (collapsible) {
+      const summaryText = injectSummaryLine(trimmed);
+      if (summaryText) {
+        const summaryEl = document.createElement('div');
+        summaryEl.className = 'nf-inject-summary';
+        summaryEl.textContent = summaryText;
+        bubble.appendChild(summaryEl);
+      }
+    }
   }
   if (collapsible) {
     bindCollapsibleToggle(source === 'delegate' ? receiptTop : label, () => content);

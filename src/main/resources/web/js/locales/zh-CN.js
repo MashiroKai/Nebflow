@@ -1140,32 +1140,51 @@ export default {
   'settings.save': '保存',
   'settings.saved': '已保存 ✓',
   'settings.saveFailed': '保存失败',
+  // jev-imagegen-align-llm 批（2026-11-02，契约 §D.1）：配置提供方卡片共用组
+  // —— LLM / Jev / 生图三面同一份文案，组件单源 = js/cfgProviderCard.js。
+  'settings.cfgCard.addProvider': '＋ 新增提供方',
+  'settings.cfgCard.delete': '删除此提供方',
+  'settings.cfgCard.deleteConfirm': '再点一次确认删除',
+  'settings.cfgCard.deleted': '提供方已删除',
+  'settings.cfgCard.inUse': '当前使用',
+  'settings.cfgCard.keyConfigured': '已保存',
+  'settings.cfgCard.keyMissing': '未配置',
+  'settings.cfgCard.models': '{n} 个模型',
+  'settings.cfgCard.emptyHint': '尚未配置提供方——填写下方表单并保存。',
   'settings.jev': 'Jev（插件分配）',
   'settings.jevEnabled': '用 Jev 分配插件',
   'settings.jevProvider': '提供方',
   'settings.jevEndpoint': '端点',
-  'settings.jevKeyRef': 'API 密钥引用',
-  // secrets-ui-redesign（2026-10-08 设计稿落定）：hint 只留安全关键句一行；
-  // 健康行三态词补齐（此前四键缺失，t() 未命中回退键名 → 裸键名当文案的 bug）。
-  'settings.jevHint': 'keyRef 是 ~/.nebflow/secrets/ 下的密钥名（指针），永远不是密钥值。',
   'settings.jevHealth': '分配通道',
   'settings.jevHealthUp': '正常',
   'settings.jevHealthDown': '异常',
   'settings.jevHealthUnconfigured': '未配置',
-  'settings.jevKeyRefShow': '显示密钥引用',
-  'settings.jevKeyRefHide': '隐藏密钥引用',
-  // jev-panel-threefix（2026-10-09 用户反馈三点）：行体开合 title / 钉死端点
-  // 解释 / 回退态徽标词（如实反映「Jev 不可用 → 已回退 llm」）。
+  // jev-panel-threefix（2026-10-09 用户反馈三点）：行体开合 title / 回退态徽标词
+  // （如实反映「Jev 不可用 → 已回退 llm」）。
   'settings.jevToggleDetails': '展开或收起分配设置',
-  'settings.jevEndpointFixed': 'Jev 版端点固定，无需填写',
   'settings.jevHealthFallback': 'Jev 不可用 → 已回退 llm',
-  // settings-panel-jev-imagegen 批（2026-10-28）：JeV key 值明文直显
-  // （作者令①——默认可见，eye 仅可选遮蔽）。
-  'settings.jevKeyValue': 'key 值',
-  'settings.jevKeyValuePlaceholder': '从 secrets 读取…',
-  'settings.jevKeyValueNoRef': '先填写 keyRef',
-  'settings.jevKeyValueMissing': 'secrets 下不存在——待录入',
-  'settings.jevKeyValueError': '读取失败（{code}）',
+  // jev-imagegen-align-llm 批（2026-11-02，契约 §D.2）：Jev 配置面 20 键 ——
+  // 提供方名/协议适配/模型/单一 key 框（UI 层零密钥引用字眼）。
+  'settings.jev.name': '提供方名称',
+  'settings.jev.namePlaceholder': '如 typesafe-jev',
+  'settings.jev.type': '协议适配',
+  'settings.jev.typeTypesafe': 'Typesafe JeV（官方托管）',
+  'settings.jev.typeLaya': 'LAYA（自托管）',
+  'settings.jev.model': '模型',
+  'settings.jev.modelPlaceholder': '模型名',
+  'settings.jev.keyEntry': 'API Key',
+  'settings.jev.keyPlaceholder': '输入 key 值…',
+  'settings.jev.keyReentryPlaceholder': '已配置——重新输入即覆盖',
+  'settings.jev.keyShow': '显示 key 值',
+  'settings.jev.keyHide': '隐藏 key 值',
+  'settings.jev.keySaved': '密钥已保存',
+  'settings.jev.keySaveFailed': '密钥保存失败（{code}）',
+  'settings.jev.keyEmpty': 'key 值为空',
+  'settings.jev.nameRequired': '先填写提供方名称',
+  'settings.jev.nameInvalid': '提供方名称只允许字母/数字/._-',
+  'settings.jev.typeRequired': '先选择协议适配',
+  'settings.jev.modelRequired': '模型不能为空',
+  'settings.jev.detailHint': '填入 API Key 并保存即可；未配 key 时 Jev 腿自动关闭。',
   // settings-panel 批 D 件（2026-10-28）：STT 总开关（缺席=开，存量行为
   // 逐字不变；关=STT 整体停用，入口与快捷键全收）。
   'settings.sttEnabled': '启用语音识别',
@@ -1188,7 +1207,10 @@ export default {
   // 移除——面板只认「填 API Key 值、保存」；指针名对用户不可见。
   'settings.imagegenShortHint': '填入 API Key 并保存即可；未配 key 时生图停用。',
   'settings.imagegenProvider': '提供方',
-  'settings.imagegenAddProvider': '＋ 新增提供方…',
+  // jev-imagegen-align-llm 批（2026-11-02，契约 §D.3）：生图提供方名/空态提示 3 键。
+  'settings.imagegen.name': '提供方名称',
+  'settings.imagegen.namePlaceholder': '如 zhipu',
+  'settings.imagegen.emptyHint': '尚未配置提供方——填写下方表单并保存。',
   'settings.imagegenProviderNamePlaceholder': '新提供方名称（字母/数字/._-）',
   'settings.imagegenType': '协议适配',
   'settings.imagegenTypePlaceholder': '选择协议适配',
@@ -1196,8 +1218,6 @@ export default {
   'settings.imagegenModelPlaceholder': '模型 ID',
   'settings.imagegenBaseUrl': '自定义端点（可选）',
   'settings.imagegenBaseUrlPlaceholder': '留空 = 适配器缺省端点',
-  'settings.imagegenKeyConfigured': '已配置',
-  'settings.imagegenKeyMissing': '待录入',
   'settings.imagegenKeyEntry': 'API Key',
   'settings.imagegenKeyPlaceholder': '输入 key 值…',
   'settings.imagegenKeyReentryPlaceholder': '已配置——重新输入即覆盖',
@@ -1210,9 +1230,6 @@ export default {
   'settings.imagegenTypeRequired': '先选择协议适配',
   'settings.imagegenNameRequired': '先填写提供方名称',
   'settings.imagegenNameInvalid': '提供方名称只允许字母/数字/._-',
-  'settings.imagegenDelete': '删除此提供方',
-  'settings.imagegenDeleteConfirm': '再点一次确认删除',
-  'settings.imagegenDeleted': '提供方已删除',
   // settings-panel-jev-imagegen 批（2026-10-29 作者令「然后 Jev/生图，也要像我们
   // LLM 这样，有个按钮来测试可用性」）：JeV 一枚测试钮（同 LLM 测试钮口径）；
   // 生图两级（轻探活 + 实跑一次最小生成）。
@@ -1306,6 +1323,12 @@ export default {
   'model.roleGeneral': '节点',
   'model.viaSlash': '用 /model 命令编辑',
   'model.currentRun': '当前运行',
+  // jev-imagegen-align-llm 批（2026-11-02，契约 §D.4）：/model 里 Jev / 生图
+  // 两个新分组 = 「该配置节当前使用哪个提供方」的指针切换器（不是 agent 模型链）。
+  'model.groupJev': 'Jev（插件分配）',
+  'model.groupImagegen': '生图',
+  'model.groupSwitch': '切换',
+  'model.groupSwitched': '已切换到 {name}',
   'settings.advanced': '高级',
   'settings.editRawJson': '编辑原始 JSON',
   'settings.reload': '重新加载',
