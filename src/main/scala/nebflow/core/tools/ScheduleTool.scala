@@ -5,6 +5,7 @@ import cats.syntax.foldable.toFoldableOps
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.core.scheduler.{DoneRecord, ScheduledTask, ScheduledTaskService, ScheduledTaskStore}
+import nebflow.shared.TimeAnchor
 
 import java.time.*
 
@@ -619,8 +620,13 @@ Your context does NOT show the current date/time — never invent an absolute da
           IO.pure(
             Left(
               ToolError(
-                s"triggerAt must be in the future (given $triggerAt = ${formatTime(triggerAt)}, " +
-                  s"current ${formatTime(now)} = $now ms, zone ${ZoneId.systemDefault().getId})."
+                // 时间串单源（时间感知修复批 2026-11-05）：改前此处自带
+                // `formatTime` + 「ms + zone」两段自拼格式，与每回合时间锚的格式
+                // 不同源（同一时刻在提示词里两种写法 = 模型要做二次解释）。现统一走
+                // [[nebflow.shared.TimeAnchor]]：`stamp` 已含本地时间 + 偏移 + 时区名 +
+                // 星期 + epoch_ms，故「= $now ms, zone …」冗余段一并去掉。
+                s"triggerAt must be in the future (given ${TimeAnchor.stamp(TimeAnchor.at(triggerAt))}, " +
+                  s"current ${TimeAnchor.stamp(TimeAnchor.at(now))})."
               )
             )
           )
@@ -821,7 +827,8 @@ Your context does NOT show the current date/time — never invent an absolute da
             s"Cannot parse triggerAt: \"$raw\". Use epoch ms, ISO 8601 (e.g. 2026-08-16T21:00:00+08:00), " +
               s"or natural language (\"tomorrow at 21:00\", \"in 2 hours\", \"21:30\", \"7pm\", " +
               s"\"friday 21:00\", \"周一\", \"明天下午3点\"). " +
-              s"Current time: ${formatTime(now)} (${now} ms, zone ${zone.getId})."
+              // 时间串单源（时间感知修复批 2026-11-05）：与每回合时间锚同源同格式。
+              s"${TimeAnchor.line(TimeAnchor.at(now, zone))}"
           )
       end match
 
@@ -1065,10 +1072,8 @@ Your context does NOT show the current date/time — never invent an absolute da
       case _ => None
 
   private def formatTime(epochMs: Long): String =
-    val instant = java.time.Instant.ofEpochMilli(epochMs)
-    val formatter = java.time.format.DateTimeFormatter
-      .ofPattern("yyyy-MM-dd HH:mm")
-      .withZone(java.time.ZoneId.systemDefault())
-    formatter.format(instant)
+    // 格式单源（时间感知修复批 2026-11-05）：本工具不再自带 `ofPattern`，
+    // 行内时刻一律走 [[nebflow.shared.TimeAnchor.compact]]（与每回合时间锚同源）。
+    TimeAnchor.compact(epochMs)
 
 end ScheduleTool

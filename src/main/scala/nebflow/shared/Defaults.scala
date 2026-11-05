@@ -206,6 +206,19 @@ object Defaults:
       |When your reply answers the author's (user's) message(s), cite each quoted message with its card plus a short name — do NOT restate the original text in full. Form: `{{msg:<sid8>-<seq>|<short-name>}}` (a `|` + short name right after the card face). The short name is the replyer's compact functional label for that message (2-12 chars ideal; no `{` `}` `|` or newlines), e.g. 输入统一令 / 迁移三裁定. One card per answered message: a reply that corresponds to several messages cites each one separately. Say the POINT in your own words next to the card; the full text already lives behind the card (click the chip in the chat to see it). Cards without a short name keep their plain form; delivery resolution strips short names — never add one in Mail/delegate/node dispatch text.""".stripMargin
 
   /**
+   * 时间纪律节（时间感知修复批，作者指令 2026-11-05 18:48「修复你的时间感知问题」）：
+   * 模型面的时间纪律单点。段体 = 本常量；注入面 = `PromptSections` order-379
+   * **always 段**（所有 agent 会话——相对时间误判不分角色，同 order-377/378 的收窄
+   * 判据）。静态体落 systemStable（生命周期节点重建时携带）。
+   *
+   * 分工：**锚**由引擎发（[[TimeAnchor]]：每请求 `systemDynamic` 现取 + 每回合起始轮
+   * 持久化 `Current time:` 行），**用法**由本段规定（换算，不许计算；没锚不许说绝对
+   * 日期）。两者同批落地，缺一即为半修：只有锚没有纪律 = 模型照旧按印象推算；
+   * 只有纪律没有锚 = 纪律要求它读一条不存在的时间。
+   */
+  val TimeDisciplineRule: String = PromptCatalog.Shared.TimeDisciplineRule
+
+  /**
    * A 段（等待屏障）开关：delegate 会话结束回合时存在未结等待型后台作业 ⇒
    * 不终态化（hold + 完成通知唤醒 + 复检），对齐 Project node 完成闸语义。
    * 默认 **true**（作者令本体行为）；现读 prop `nebflow.delegate.bgWaitHold.enabled`

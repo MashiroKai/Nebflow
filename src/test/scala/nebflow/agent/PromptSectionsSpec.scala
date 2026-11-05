@@ -340,13 +340,15 @@ class PromptSectionsSpec extends munit.FunSuite:
   /** 隔离数据根 + 写 `outputBlock.enabled`（OB-G3 同款形态）。 */
   private def withIsolatedDataRootWithGate[A](enabled: Boolean)(body: => A): A =
     withIsolatedDataRoot {
-      val cfg  = PathUtil.configJsonReadPath(PathUtil.dataRoot)
+      val cfg = PathUtil.configJsonReadPath(PathUtil.dataRoot)
       val json = s"""{"outputBlock":{"enabled":$enabled}}"""
       if os.exists(cfg) then os.write.over(cfg, json) else os.write(cfg, json)
       body
     }
 
-  test("Output block discipline section injected for root agent when the gate is ON (order 375, verbatim OutputBlockRule)"):
+  test(
+    "Output block discipline section injected for root agent when the gate is ON (order 375, verbatim OutputBlockRule)"
+  ):
     withIsolatedDataRootWithGate(enabled = true) {
       val ctx = PromptContext(isRootAgent = true)
       val blocks = buildConditionalBlocks(ctx)
@@ -369,8 +371,10 @@ class PromptSectionsSpec extends munit.FunSuite:
         !blocks.contains(nebflow.shared.Defaults.OutputBlockRule),
         "gate off = the whole order-375 section stays out of the assembly"
       )
-      assert(!blocks.contains("── Output discipline ──") && !blocks.contains("<output>"),
-        "no output-block instruction text may leak via any other section")
+      assert(
+        !blocks.contains("── Output discipline ──") && !blocks.contains("<output>"),
+        "no output-block instruction text may leak via any other section"
+      )
       // 邻段零波及
       assert(blocks.contains("## Routing discipline (root agent)"), "order-370 routing section unaffected")
     }
@@ -394,7 +398,10 @@ class PromptSectionsSpec extends munit.FunSuite:
     withIsolatedDataRoot {
       val base = nebflow.core.entity.BuiltinAgents.entry("Nebula").map(_.systemPrompt).getOrElse("")
       val joined = PromptSections.assembleSystemPrompt(base, buildConditionalBlocks(PromptContext(isRootAgent = true)))
-      assert(!joined.contains("<output>"), s"no literal tag teaching anywhere: ${joined.linesIterator.filter(_.contains("output")).mkString("\n")}")
+      assert(
+        !joined.contains("<output>"),
+        s"no literal tag teaching anywhere: ${joined.linesIterator.filter(_.contains("output")).mkString("\n")}"
+      )
       assert(!joined.contains("Output discipline"), "no output discipline header anywhere")
       assert(!joined.contains("wrap everything"), "Voice bullet stripped from the base prompt")
     }
@@ -437,7 +444,9 @@ class PromptSectionsSpec extends munit.FunSuite:
 
   // ── 台账 #913 ②：设备标注行形（renderLinesWithDevice）──────────────
 
-  test("MountedProjectList.renderLinesWithDevice: cross-device rows carry (on device X); local rows keep the plain shape"):
+  test(
+    "MountedProjectList.renderLinesWithDevice: cross-device rows carry (on device X); local rows keep the plain shape"
+  ):
     val lines = MountedProjectList.renderLinesWithDevice(
       List(
         ("stand-kai", "KAI", Some("主仓")),
@@ -522,7 +531,10 @@ class PromptSectionsSpec extends munit.FunSuite:
     assertEquals(s377.size, 1, "registry carries exactly one order-377 section")
     val sec = s377.head
     assert(sec.shouldInclude(PromptContext()), "always: included on the minimal context")
-    assert(sec.shouldInclude(PromptContext(isRootAgent = true, voiceEnabled = false)), "always: included on any context")
+    assert(
+      sec.shouldInclude(PromptContext(isRootAgent = true, voiceEnabled = false)),
+      "always: included on any context"
+    )
     assertEquals(sec.render(PromptContext()), nebflow.shared.Defaults.SecretsRule, "static body = the constant")
 
   // ============================================================
@@ -561,6 +573,50 @@ class PromptSectionsSpec extends munit.FunSuite:
     val sec = s378.head
     assert(sec.shouldInclude(PromptContext()), "always: included on the minimal context")
     assertEquals(sec.render(PromptContext()), nebflow.shared.Defaults.MsgQuoteRule, "static body = the constant")
+
+  // ============================================================
+  // 时间纪律（时间感知修复批，作者指令 2026-11-05 18:48「修复你的时间感知问题」）：
+  // order-379 **always** 段，逐字承载 Defaults.TimeDisciplineRule。
+  // 与 order-377/378 同判据（相对时间误判不分角色）；静态体落 systemStable，
+  // 而**锚**（「现在」的值）绝不进 stable（写进去 = 时间冻结）。
+  // ============================================================
+
+  test("Time discipline section injected for EVERY agent session (order 379, always, verbatim TimeDisciplineRule)"):
+    withIsolatedDataRoot {
+      val root = buildConditionalBlocks(PromptContext(isRootAgent = true))
+      val dispatcher = buildConditionalBlocks(PromptContext(isRootAgent = false))
+      val worker = buildConditionalBlocks(PromptContext(isSubTaskWorker = true, depth = 1))
+      for (who, blocks) <- Seq("root" -> root, "dispatcher" -> dispatcher, "subtask-worker" -> worker) do
+        assert(
+          blocks.contains(nebflow.shared.Defaults.TimeDisciplineRule),
+          s"$who session systemStable must carry the time discipline section"
+        )
+        assert(blocks.contains("── Time discipline (iron rule) ──"), s"$who: section body is the rule text")
+      // 段序钉：紧跟 order-378 引牌段之后
+      assert(
+        root.indexOf("── Quote with message cards") < root.indexOf("── Time discipline (iron rule) ──"),
+        "time discipline section must follow the msg quote section (order 379 > 378)"
+      )
+      // 「禁止无依据的日期推断」+「允许引用时间锚」两条都在段体里（规则原文面）
+      val body = nebflow.shared.Defaults.TimeDisciplineRule
+      assert(body.contains("MUST be derived from that anchor"), body)
+      assert(body.contains("Never from memory, never from feeling, never from a training prior"), body)
+      assert(body.contains("you may NOT state an absolute date"), body)
+      assert(body.contains("epoch_ms"), "让模型用精确底座换算，而不是凭印象")
+    }
+
+  test("Time discipline section is a static always-on section carrying NO timestamp (stable-prefix reading)"):
+    val s379 = PromptSections.all.filter(_.order == 379)
+    assertEquals(s379.size, 1, "registry carries exactly one order-379 section")
+    val sec = s379.head
+    assert(sec.shouldInclude(PromptContext()), "always: included on the minimal context")
+    val rendered = sec.render(PromptContext())
+    assertEquals(rendered, nebflow.shared.Defaults.TimeDisciplineRule, "static body = the constant")
+    // 🔴 反面：纪律是静态文本，任何真实时间戳都不许出现在段体里（冻结面剥离）
+    assert(
+      raw"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} [+-]\d{2}:\d{2}".r.findFirstIn(rendered).isEmpty,
+      s"the stable time-discipline section must not embed a timestamp: $rendered"
+    )
 
   // ============================================================
   // 文档溯源规范（order 350，always 段；作者 2026-09-11 裁定 / 方案 #165）

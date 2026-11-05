@@ -453,15 +453,22 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
   // ============================================================
 
   /**
-   * Min gap between two time reminders on system-event turns (user ruling:
-   * 「每小时通知一次。轮次的第一个 user turn 注入等」). Real-user turns
-   * always inject. Initialized to construction time: a fresh actor (spawn /
-   * restart) stays quiet on system events for the first hour — real user
-   * input is the orientation trigger, not background noise.
+   * 时间锚注入闸（时间感知修复批，作者指令 2026-11-05 18:48「修复你的时间感知问题」）。
+   *
+   * 旧形态 = `TimeReminderMinGapMs`（1 小时）+ `lastTimeReminderMs`：只有**真人轮**
+   * 无条件注入，system-event 轮（Mail / 节点消息 / 定时任务 / 外部事件 / 后台作业通知）
+   * 最多每小时一次 ⇒ 交给模型的新输入可能**完全不带「现在」**，或带一个最多 59 分钟前
+   * 的旧锚。这正是「10 天前的提交被说成两年」那类系统性误判的入口：模型没有可信锚就
+   * 只能猜。
+   *
+   * 现行判据 = **每一个起始轮（isUserTurn）都注入**（[[SystemReminders.collectAllIO]]
+   * 内的 `isUserTurn` 闸），不再有 gap 计时器——**全仓不再持有任何「上次注入时刻」
+   * 状态**（那本身也是一份会被长生命周期对象冻住的「现在」）。
+   *
+   * 长回合中途（工具往返轮，`!isUserTurn`）的新鲜度由**请求级**锚负责：
+   * `LlmRequest.systemDynamic = TimeAnchor.block()`，每次请求现取现发。两条腿同源
+   * （[[nebflow.shared.TimeAnchor]]），不同粒度。
    */
-  private val TimeReminderMinGapMs = 60 * 60 * 1000L
-
-  @volatile private var lastTimeReminderMs: Long = System.currentTimeMillis()
 
   /**
    * Previous turn's task lines (id -> "#id [status] subject") for delta
@@ -718,8 +725,8 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
           identitySelfText <-
             if stateForLlm.isSubTaskWorker then IO.pure("")
             else nebflow.core.entity.AgentIdentityStore.readSelfSection(freshDef.name, freshDef.displayName)
-          nowMs = System.currentTimeMillis()
-          injectTime = isUserTurn && (isRealUserTurn || nowMs - lastTimeReminderMs >= TimeReminderMinGapMs)
+          // 时间锚闸（时间感知修复批 2026-11-05）：见 `TimeAnchorInjection` 头注——
+          // 起始轮一律注入，不再有 1 小时 gap；工具往返轮靠请求级 systemDynamic 锚。
           // Plugin surface live convergence (plugins-live 批 2026-09-12). The Plugin
           // Catalog enters the session ONLY via its first message
           // (ProjectActor.pluginCatalogText → newTaskPrompt/newPrompt), so an
@@ -849,7 +856,6 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             taskListText = taskListText,
             language = changeLanguage,
             isRootAgent = isRootAgent,
-            injectTime = injectTime,
             mountedProjectsDelta = changeProjects,
             pluginSurfaceChange = pluginSurfaceChange,
             identityDelta = identityDeltaText,
@@ -903,10 +909,6 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
           timeMsg =
             if isCompactTurn || isAskTurn || timeReminders.isEmpty then Nil
             else List(Message(MessageRole.User, Left(SystemReminder.renderAll(timeReminders))))
-          // Reminder refactor (2026-08-20): stamp the injection time only when
-          // a time reminder actually fires — the ≥1h system-event gap is
-          // measured from the last REAL injection, not the last turn.
-          _ = if timeMsg.nonEmpty then lastTimeReminderMs = System.currentTimeMillis()
           pluginSurfaceMsg =
             if isCompactTurn || isAskTurn || pluginSurfaceReminders.isEmpty then Nil
             else List(Message(MessageRole.User, Left(SystemReminder.renderAll(pluginSurfaceReminders))))
@@ -922,7 +924,14 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
               val withPluginSurface =
                 if pluginSurfaceMsg.isEmpty then stateForLlm.messages
                 else SystemReminders.prunePluginSurfaceReminders(stateForLlm.messages ++ pluginSurfaceMsg)
-              stateForLlm.withMessages(SystemReminders.pruneTimeReminders(withPluginSurface ++ timeMsg))
+              // 时间锚插在**触发输入之前**（时间感知修复批 2026-11-05）：语义上「先有时刻、
+              // 后有此轮输入」，并且保住既有不变量「最后一条 user 消息 = 本轮输入」——
+              // 注入源归因（`QueueDirectPassSourceSpec` ②③ 的 lastUserSource）与任何
+              // 「谁叫醒的这一轮」的读法都靠它；锚若追加在尾部，那条不变量就被一条
+              // source=None 的系统提醒顶掉（本批实测打挂两条既有用例）。
+              stateForLlm.withMessages(
+                SystemReminders.pruneTimeReminders(SystemReminders.insertAnchor(withPluginSurface, timeMsg))
+              )
           // Cache v2: persist the rebuilt systemStable + snapshot in state at
           // lifecycle nodes (next turns reuse it). Non-lifecycle turns keep the
           // existing cache untouched — except the per-axis baselines that advance
@@ -1051,6 +1060,14 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             tools = freshTools,
             thinking = Some(askThinkingJson),
             systemStable = Some(systemStable),
+            // 每请求时间锚（时间感知修复批，作者指令 2026-11-05 18:48）：
+            // `systemDynamic` 是**稳定前缀（含 cache breakpoint）之后的动态段**
+            // （AnthropicAdapter.buildSystemBlocks / OpenAiAdapter.buildSystemMessage）——
+            // 故此处现取「现在」既不破坏前缀缓存，又保证**每一次 LLM 请求**（含长回合
+            // 中途的每一次工具往返、压缩轮、ask 轮、子代理轮）都带一条当刻的时间锚。
+            // 🔴 不得改成 systemStable/任何缓存字段：那份字符串只在生命周期节点重建，
+            // 固化进去 = 时间冻结（本批要修的正是这一类）。
+            systemDynamic = Some(TimeAnchor.block()),
             agentModel = freshDef.model,
             // WebSearch P0: housekeeping turns (compact/ask) opt out of
             // provider-native search injection — a server-side search tool
@@ -2521,8 +2538,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     val kernelFace = delegateSession && delegateMode.contains(nebflow.core.delegate.DualModeConfig.ModeKernel)
     val dispatcherFace = delegateSession && delegateMode.contains(nebflow.core.delegate.DualModeConfig.ModeDispatcher)
     val modeTruncated =
-      if kernelFace then
-        withDelegateReport - "Subagent" - "AgentFlow" - nebflow.core.tools.NodeReportToolDef.Name
+      if kernelFace then withDelegateReport - "Subagent" - "AgentFlow" - nebflow.core.tools.NodeReportToolDef.Name
       else if dispatcherFace then withDelegateReport - "Subagent"
       else withDelegateReport
     // N1 刀2（v3 §10.1 A4 授能）：delegate 会话的四件 Node 工具面挂载——
