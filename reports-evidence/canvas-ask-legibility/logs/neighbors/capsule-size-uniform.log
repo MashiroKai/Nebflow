@@ -1,0 +1,33 @@
+PASS  C0 前置：三面标题在位  — short.md/插件/文档图谱
+PASS  C1a 跨面板同高（文件卡 vs 插件面板）  — file=36 plugins=36
+PASS  C1b 跨面板同高（文件卡 vs 图谱面板）  — file=36 graph=36
+PASS  C1c 面板页签不再小一圈：高度回到文件卡档 36px  — plugins=36 graph=36 file=36
+PASS  C2a 短标题零截断：short.md 全显示  — short.md w=180
+PASS  C2b 短标题零截断：插件 全显示（修前 6.9px/24px 自然宽）  — w=180
+PASS  C2c 短标题零截断：文档图谱 全显示（修前 21.8px/48px 自然宽）  — w=180
+PASS  C4 高度跨签种一致（件1 回归批 2026-11-05：pop 钮以 .canvas-pop-btn 回位胶囊右座，仍是 26px 小钮档 ⇒ 与 36px 胶囊高解耦，三面高度仍全等）  — file=36 plugins=36 graph=36
+PASS  C3a 长文件名截断受面板 cap 约束（省略号 = 设计兜底）  — w=180 cap=220.0
+PASS  C3b 长文件名胶囊不溢出面板（右缘 ≤ 面板右缘）  — hdrRight=1244.0 panelRight=1430.0
+PASS  C3c 长名可见宽高于修前（62% 循环钳退役）：固定盒 180px（修前 102.4px）  — w=180
+PASS  F1 跨面板同宽（文件卡 vs 插件 vs 图谱）= --capsule-w 180px  — file=180 plugins=180 graph=180
+PASS  F2 胶囊盒不随内容变（short 52px 文本 vs 长名 250px 文本同盒）  — short=180.0x36.0 long=180.0x36.0
+PASS  F3a 超长标题（223 字符）盒恒定 180×36 不变形  — w=180 h=36
+PASS  F3b 超长标题 ellipsis 生效（clientWidth < scrollWidth）  — client=180
+PASS  F3c 超长标题右缘不出面板（绝不溢出）  — hdrRight=1244.0 panelRight=1430.0
+PASS  F3d 超长标题全文保留在 DOM（截断是视觉层，非数据丢失）  — len=223
+PASS  C6 环开态高度不变（面板页签胶囊 hover 态 = 常态 36px）  — open=true h=36
+PASS  F4a 环开且胶囊挂载（前置）  — n=5
+PASS  F4b 环全胶囊固定 180×36（中心+缘位同 token 档）  — 180x36 180x36 180x36 180x36 180x36
+PASS  F4c 中心环胶囊与标题头胶囊同盒（同位同尺寸无缝 morph 承诺）  — hdr=180x36
+PASS  C-R0 主文档零 JS 错误
+PASS  C5a 卡窗胶囊同高 36px（修前 40px 形态）  — h=36
+PASS  C5b 卡窗标题全显示  — text=short.md
+PASS  F5 卡窗固定几何 180×36（与主窗同 token 档）  — 180x36
+PASS  C-R0b 卡窗零 JS 错误
+PASS  F3-亮 超长标题亮色主题同盒 180×36（几何跨主题恒定）  — 180x36
+PASS  R0c 亮色腿零 JS 错误
+PASS  F6a --capsule-h/--capsule-w 声明唯一（sapphire.css 各恰 1 处）  — h=1 w=1
+PASS  F6b 两胶囊脸消费 token（split.css：var(--capsule-w) 3 处〔标题头 width + .cr-capsule width/max-width 护栏〕+ var(--capsule-h) 4 处〔标题头 height / 环胶囊 height / 卡窗胶囊 height / md 面常驻顶垫〕——竖环回退批 2026-10-31：环胶囊 height 消费随还原 +1〔扇卡期 220px 卡面为有意字面量，F6b 扇代锚 5 处作废〕；透传悬浮批 ui-unification-20261103-mobile-canvas-topbar：手机档顶垫换源 --mchrome-clear（−1）；hover 零布局批 2026-11-03：`.capsule-ring-open ⇒ padding-top` 联动整条退役（hover 不许改布局，那张图跟着图片动）⇒ 再 −1，无第二字面量档）  — w-ref=3 h-ref=4
+PASS  F6c 标题头固定宽不再有 fit-content 桌面档（body:not(.mobile-layer) 规则内）  — desktop rule clean
+
+capsule-size-uniform: 31 PASS / 0 FAIL
