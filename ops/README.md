@@ -21,6 +21,7 @@
 | `release/install.sh` `release/install.ps1` | release 出包路径 | release 安装器：`stand` 主命令 + `nebflow` legacy 转发垫片（与本目录 CLI 的隔离契约分工见 REBRAND「双命令并存」） |
 | `ops/test/stand-lifecycle.test.sh` | —（不入 live） | 守卫的纯 bash 断言测试（沙箱化，零真实 daemon；覆盖 stand+nebflow 两品牌隔离、`restart --dry-run` 假点火、`restart --help` 三面口径、`stand-restart.sh`/`stand-autostart.sh` 弃用垫片的零副作用面） |
 | `ops/memsample.sh` | `~/.stand/bin/memsample.sh` | 60s 内存环形采样器（M4，2026-11-04）：宿主端口**从运行实例解析**（`.pid` → `lsof`；不再写死 8080），列追加 `hostPid,hostPort,compressedMB,totalMemMB`（压缩内存此前完全不在任何 RSS 里）。launchd 作业 `com.nebflow.memsample`（StartInterval=60） |
+| `ops/com.nebflow.watchdog.plist` | `~/Library/LaunchAgents/com.nebflow.watchdog.plist` | **launchd 作业正源（2026-11-05 运维批，作者裁定「挂 launchd」）**：`com.nebflow.watchdog`，`StartInterval=120`（取脚本自身设计节拍 `nebflow-watchdog.sh` 头注释），`EnvironmentVariables` 带全 `NEBFLOW_WD_PORT=6138` / `NEBFLOW_WD_NF_HOME=/Users/kaiyu/.stand`。**首装为观察态**（`NEBFLOW_WD_FAIL_THRESHOLD=999999` ⇒ 只记失败行、永不升级 Stage1/Stage2）；开启自动恢复 = 该键改回 `3` 并 `launchctl bootout` + `bootstrap` 重载。注意被调脚本 `~/.stand/bin/nebflow-watchdog.sh` **无仓内正源（孤儿脚本，门禁覆盖不到）** |
 | `ops/test/release-pipeline.test.sh` | —（不入 live） | release.sh 的纯 bash 断言测试（沙箱化：假构建/假冒烟/假 java + fixture git 仓） |
 
 ## 本机构建预算（**不在本仓** · 指针）
@@ -415,6 +416,19 @@ sh/bash/zsh shebang 的入库脚本（`ops/bin/*`、`tools/*`、`scripts/nebflow
 `~/.stand/logs/watchdog/` 下的 `stuck-detected` 事件属**进程内** TaskStuckWatcher，
 按设计只管「agent 楔死但 HTTP 正常」，与「进程已死」正交，不可能救这次。
 详见 vault 报告 `restart-script-abort-and-watchdog-gap__*.md`。
+
+**调度已恢复（2026-11-05 运维批，作者裁定「挂 launchd」）**：plist 正源入库
+`ops/com.nebflow.watchdog.plist`（此前 launchd 侧零正源——全部 `com.nebflow.*` 作业 plist 都只存在于
+`~/Library/LaunchAgents/`），装载为 `com.nebflow.watchdog`，`StartInterval=120` 取脚本自身设计节拍，
+环境变量按硬前提带全（缺省会去探 8080 并调用不存在的重启脚本路径）。**首装跑观察态**（阈值键
+`NEBFLOW_WD_FAIL_THRESHOLD=999999`），自动恢复未开启。开启前必须先修脚本的两处生产失配：
+① 失聪鉴别探 `$NF_HOME/logs/nebflow.log`，而实例现在写 `~/.stand/logs/stand.log` ⇒ 该文件 mtime
+冻结在 2026-10-18，`DEAF` 判据恒不命中，「活着但 HTTP 不可达」会被判 `DEAD` 直接进 Stage1；
+② Stage2 会 spawn `claude -p … --dangerously-skip-permissions` 并令其 `--force` 重启。
+另实测：每轮先跑的 `bin/nebflow-log-sentinel.sh` 全量 `find ~/.stand`（未 prune `tmp/history/
+search-index/general/sessions`）在首轮耗时 **>4 分钟**（`DEADLINE_SEC=45` 只约束判据①循环，不约束
+find 阶段），健康探针排在其后 ⇒ 每 30min 一次的长扫描会推迟当轮的宕机发现。详见 vault 报告
+`watchdog-launchd-restored__*.md`。
 
 ## 版本纪律
 
