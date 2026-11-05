@@ -361,6 +361,40 @@ jobs:
         shell: bash
         run: sbt compile
 
+  api-routes-live:
+    # 路由存在性哨兵 · 运行期腿（empty-state-must-not-lie 批 · 件三②，2026-11-05）。
+    # 静态腿（上面 `API route existence (frontend calls x gateway route registry)`）判
+    # 「源码里注册了没」；这一条判「启动后真的答不答」——后者才是 2026-11-05 事故的
+    # 现场判据：`GET /api/conversations` 的 case 被误删后，前端拿到 404、面板渲染成
+    # 「暂无会话」，而当时所有静态门禁与测试全绿。
+    # 判据：沙箱实例起来后逐条打前端调用面（清单由 `check-api-routes.mjs --emit-paths`
+    # 单一真源给出），任一路径全 method 404 ⇒ 红。
+    # 隔离：数据根 mktemp（--home + STAND_HOME + NEBFLOW_HOME 三重注入）、端口 8097，
+    # 拒绝 6138/8080/<1024；端口已占用则拒绝复用；只 kill 自己 spawn 的进程组。
+    # Linux-only（脚本的端口复核用 lsof）：Windows runner 走静态腿已足够。
+    name: API route existence (live)
+    timeout-minutes: 40
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 23
+          cache: sbt
+      - name: Setup sbt
+        shell: bash
+        run: |
+          curl -fL "https://maven.aliyun.com/repository/central/org/scala-sbt/sbt-launch/1.10.10/sbt-launch-1.10.10.jar" -o /tmp/sbt-launch.jar
+          mkdir -p /tmp/sbt-bin
+          printf '#!/bin/bash\nexec java $SBT_OPTS -XX:+UseParallelGC -XX:+ExitOnOutOfMemoryError -jar /tmp/sbt-launch.jar "$@"\n' > /tmp/sbt-bin/sbt
+          chmod +x /tmp/sbt-bin/sbt
+          echo "/tmp/sbt-bin" >> $GITHUB_PATH
+      - name: Boot sandbox instance and probe every frontend-called route
+        shell: bash
+        # Same logic locally: node scripts/check-api-routes-live.mjs (or `make api-routes-live`)
+        run: node scripts/check-api-routes-live.mjs --port 8097 --timeout 1200
+
   test:
     name: Test
     # 首轮实测（scratch run 40051038872）：GitHub 4 核 ubuntu 冷缓存全量 >45min

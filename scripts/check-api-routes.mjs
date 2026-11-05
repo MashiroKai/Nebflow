@@ -399,9 +399,20 @@ if (process.argv.includes('--emit-paths')) {
       }
       return {
         path,
-        probes: [...probes.entries()]
-          .map(([p, ms]) => ({ path: p, methods: [...ms].sort() }))
-          .sort((a, b) => a.path.localeCompare(b.path)),
+        probes: probes.size
+          ? [...probes.entries()]
+              .map(([p, ms]) => ({ path: p, methods: [...ms].sort() }))
+              .sort((a, b) => a.path.localeCompare(b.path))
+          : // 静态面判「没有承接」时，运行期腿**仍然要自己打一遍**，不能因为
+            // 「静态面已经红了」就跳过探测 —— 两个哨兵必须各自独立成立：运行期这条
+            // 的读数是「实例上真的 404」，而不是对静态结论的复述。模板位一律填
+            // `probe-id`，method 放开到全部方法族（不知道是哪个 method ⇒ 都试）。
+            [
+              {
+                path: concretize(path, path),
+                methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+              },
+            ],
       };
     });
 
