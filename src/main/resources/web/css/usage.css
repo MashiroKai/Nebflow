@@ -224,9 +224,10 @@
   color: var(--color-text);
   font-weight: 600;
 }
+/* .ud-select（<select>，usageDashboard.js:184）的焦点态已收编 css/inputFocus.css
+   （input-focus-ring 批 2026-11-05）；下列按键/开关仍走自己的描边环。 */
 .ud-srange:focus-visible, .ud-hdim:focus-visible,
-.ud-cm:focus-visible, .ud-dim:focus-visible,
-.ud-select:focus-visible {
+.ud-cm:focus-visible, .ud-dim:focus-visible {
   outline: 2px solid var(--glass-etched-border-focus);
   outline-offset: 1px;
 }

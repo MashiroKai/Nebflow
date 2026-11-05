@@ -334,7 +334,7 @@ function renderAgentDetail(pane, name, detail, model) {
         </div>
         ${faceTabsHtml}
         <div class="agent-detail-prompt-render canvas-md-viewer" id="agent-detail-prompt-render"></div>
-        ${builtin ? '' : `<textarea class="agent-detail-prompt-edit" data-agent="${esc(name)}" style="display:none">${esc(prompt)}</textarea>
+        ${builtin ? '' : `<textarea class="agent-detail-prompt-edit" data-agent="${esc(name)}" spellcheck="false" autocapitalize="off" autocorrect="off" style="display:none">${esc(prompt)}</textarea>
         <button class="agent-detail-save-btn" id="agent-detail-save-prompt" style="display:none">${t('agentManager.save')}</button>`}
       </div>
     </div>`;

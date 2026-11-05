@@ -102,28 +102,10 @@
   font-family: inherit;
 }
 
-/* Sapphire focus glow */
-.modal-input:focus,
-#modal-input:focus,
-#memory-content-input:focus,
-#rules-input:focus {
-  border-color: rgba(91, 127, 191, 0.5) !important;
-  box-shadow:
-    0 0 0 2px rgba(91, 127, 191, 0.08),
-    0 0 0 4px rgba(91, 127, 191, 0.04);
-  outline: none;
-}
-@media (prefers-color-scheme: dark) {
-  .modal-input:focus,
-  #modal-input:focus,
-  #memory-content-input:focus,
-  #rules-input:focus {
-    border-color: rgba(91, 127, 191, 0.4) !important;
-    box-shadow:
-      0 0 0 2px rgba(91, 127, 191, 0.12),
-      0 0 0 4px rgba(91, 127, 191, 0.06);
-  }
-}
+/* 焦点态：.modal-input / #modal-input / #memory-content-input / #rules-input
+   已收编 css/inputFocus.css（input-focus-ring 批 2026-11-05）。原块外面叠
+   2px + 4px 两圈蓝外发光（还带 !important 抢 border-color）—— 本批整体摘除，
+   外部环不再存在；.cfg-input 面同一套。 */
 
 /* ── Shared Button Styles ──────────────────────────────────────────────── */
 
@@ -509,20 +491,7 @@
               box-shadow var(--ds-dur-hover) var(--ds-ease-std);
   box-sizing: border-box;
 }
-.cfg-input:focus {
-  border-color: rgb(var(--sapphire) / 0.5);
-  box-shadow:
-    0 0 0 2px rgb(var(--sapphire) / 0.08),
-    0 0 0 4px rgb(var(--sapphire) / 0.04);
-}
-@media (prefers-color-scheme: dark) {
-  .cfg-input:focus {
-    border-color: rgb(var(--sapphire) / 0.4);
-    box-shadow:
-      0 0 0 2px rgb(var(--sapphire) / 0.12),
-      0 0 0 4px rgb(var(--sapphire) / 0.06);
-  }
-}
+/* 焦点态：.cfg-input / .cfg-select 已收编 css/inputFocus.css（2026-11-05）。 */
 .cfg-eye-btn {
   background: none;
   border: none;
@@ -628,12 +597,7 @@
   box-sizing: border-box;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
-#search-keyword:focus {
-  border-color: rgba(91, 127, 191, 0.5);
-  box-shadow:
-    0 0 0 2px rgba(91, 127, 191, 0.08),
-    0 0 0 4px rgba(91, 127, 191, 0.04);
-}
+/* 焦点态：#search-keyword 已收编 css/inputFocus.css（2026-11-05）。 */
 .search-filters {
   display: flex;
   align-items: center;
@@ -1455,7 +1419,7 @@
   outline: none;
   transition: border-color 0.15s;
 }
-.mp-add-select:focus { border-color: rgb(var(--sapphire) / 0.4); }
+/* 焦点态：.mp-add-select 已收编 css/inputFocus.css（2026-11-05）。 */
 /* ui-status-redesign（盘点 #38，S9 同族）：11.5px 红字 → 中性正文 + 行首
    circle-alert 红图标（modelPanel.js 注入）。 */
 .mp-inline-err {

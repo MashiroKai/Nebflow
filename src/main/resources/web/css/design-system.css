@@ -807,11 +807,7 @@
               box-shadow var(--ds-dur-hover) var(--ds-ease-std);
 }
 .ds-input::placeholder { color: var(--ds-text-muted); }
-.ds-input:focus {
-  outline: none;
-  border-color: var(--ds-border);
-  box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.10);
-}
+/* 焦点态：.ds-input 已收编 css/inputFocus.css（input-focus-ring 批 2026-11-05）。 */
 
 /* ⑤ 卡：平面族面板内卡（radius 14，无影，hairline 边）。 */
 .ds-card {

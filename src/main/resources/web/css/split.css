@@ -4092,7 +4092,7 @@ body.wg-side-active #panel-sessions #explorer-section { display: none; }
   border-radius: var(--ds-radius-button); padding: var(--ds-space-1h) var(--ds-space-2); outline: none; cursor: pointer;
   appearance: none;
 }
-.wg-switch-select:focus-visible { border-color: var(--glass-etched-border-focus, var(--color-frame-active)); }
+/* 焦点态：.wg-switch-select 已收编 css/inputFocus.css（2026-11-05）。 */
 .wg-switch-select option { color: var(--color-frame-text); background: var(--color-surface, #fff); }
 
 /* Breadcrumb row (#744-B drill-in views): X › sub › …, last crumb static. */

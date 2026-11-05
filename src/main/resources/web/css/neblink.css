@@ -74,10 +74,7 @@
   letter-spacing: 3px;
   text-align: center;
 }
-.neblink-paircode-input:focus {
-  outline: none;
-  border-color: var(--color-primary);
-}
+/* 焦点态：.neblink-paircode-input 已收编 css/inputFocus.css（2026-11-05）。 */
 .neblink-paircode-btn {
   flex: 0 0 auto;
   width: auto;

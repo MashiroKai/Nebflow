@@ -950,10 +950,8 @@ nf-sched-card { display: contents; }
   line-height: var(--ds-lh-body);
   resize: vertical;
 }
-.schedule-card-input:focus-visible {
-  outline: var(--ds-focus-width) solid var(--btn-focus-ring);
-  outline-offset: var(--ds-border-width);
-}
+/* 焦点态：.schedule-card-input 已收编 css/inputFocus.css（2026-11-05；
+   原 2px 外描边环随批摘除）。 */
 
 /* ── Dark Theme ───────────────────────────────────────────────────────── */
 @media (prefers-color-scheme: dark) {

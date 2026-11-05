@@ -216,7 +216,7 @@ html[data-theme="dark"] #perception-panel {
   background: var(--st-etched-bg); border: 1px solid var(--st-etched-border); border-radius: var(--ds-radius-input);
   padding: var(--ds-space-2) var(--ds-space-inline-x); outline: none; transition: border-color .15s;
 }
-.pp-field input:focus { border-color: rgb(var(--st-sapphire) / .35); }
+/* 焦点态：.pp-field input 已收编 css/inputFocus.css（2026-11-05）。 */
 .pp-field .hint { font-size: var(--ds-fs-meta); color: var(--st-text-dim); margin-top: var(--ds-space-1); line-height: 1.45; }
 .pp-auto-note {
   display: flex; align-items: flex-start; gap: var(--ds-space-1h); font-size: var(--ds-fs-hint); color: var(--st-text-muted);

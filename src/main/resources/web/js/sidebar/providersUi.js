@@ -514,12 +514,17 @@ function showModal({title, fields, onConfirm}) {
     const text = f.hint.startsWith('provider.') || f.hint.includes('.') ? t(f.hint) : f.hint;
     return `<span class="cfg-hintbadge" tabindex="0" role="note" aria-label="${escapeHtml(text)}" title="${escapeHtml(text)}">?</span>`;
   };
+  // spellcheck 纪律（input-focus-ring 批 2026-11-05，作者令「红波浪线一并处理」）：
+  // 服务商表单里**每一个**字段都是机器取值（id / URL / key / 模型名 / 数字），
+  // 没有一处自由散文 ⇒ 整脸关拼写检查，同时关掉移动端自动大写/自动更正
+  // （否则 iOS 会把 key 首字母大写、把 URL 当单词改）。
+  const NO_SPELL = 'spellcheck="false" autocapitalize="off" autocorrect="off"';
   const renderField = (f) => `
           <div class="cfg-form-group">
             <label class="cfg-label">${escapeHtml(f.label)}${hintHTML(f)}</label>
             ${f.type === 'select' ? `<select class="cfg-input" data-field="${f.key}" ${f.disabled ? 'disabled' : ''}>
               ${f.options.map(o => optionHtml(o, f.value)).join('')}
-            </select>` : f.type === 'textarea' ? `<textarea class="cfg-input cfg-textarea" data-field="${f.key}" placeholder="${escapeHtml(f.placeholder || '')}">${escapeHtml(f.value || '')}</textarea>` :
+            </select>` : f.type === 'textarea' ? `<textarea class="cfg-input cfg-textarea" data-field="${f.key}" placeholder="${escapeHtml(f.placeholder || '')}" ${NO_SPELL}>${escapeHtml(f.value || '')}</textarea>` :
             f.type === 'models' ? `<div class="cfg-models-container" data-field="${f.key}">
               ${f.value.map((m, i) => renderModelRow(m, i)).join('')}
               <button class="cfg-model-add" type="button">${t('model.add')}</button>
@@ -528,9 +533,9 @@ function showModal({title, fields, onConfirm}) {
               ${windowsRowsHTML(f.value)}
               <button class="tw-add-row" type="button" data-window-add>${t('provider.unavailableWindowsAdd')}</button>
             </div>` :
-            f.password ? `<div class="cfg-password-wrap"><input class="cfg-input" type="text" data-field="${f.key}" value="${escapeHtml(f.value || '')}" placeholder="${escapeHtml(f.placeholder || '')}" autocomplete="off" ${f.disabled ? 'disabled' : ''}><button class="cfg-eye-btn" type="button" tabindex="-1" aria-label="Toggle visibility">${eyeOffSvg}</button></div>` :
-            f.type === 'number' ? `<input class="cfg-input" type="number" data-field="${f.key}" value="${escapeHtml(f.value || '')}" placeholder="${escapeHtml(f.placeholder || '')}" ${f.min != null ? `min="${f.min}"` : ''} ${f.disabled ? 'disabled' : ''}>` :
-            `<input class="cfg-input" type="text" data-field="${f.key}" value="${escapeHtml(f.value || '')}" placeholder="${escapeHtml(f.placeholder || '')}" ${f.disabled ? 'disabled' : ''}>`}
+            f.password ? `<div class="cfg-password-wrap"><input class="cfg-input" type="text" data-field="${f.key}" value="${escapeHtml(f.value || '')}" placeholder="${escapeHtml(f.placeholder || '')}" autocomplete="off" ${NO_SPELL} ${f.disabled ? 'disabled' : ''}><button class="cfg-eye-btn" type="button" tabindex="-1" aria-label="Toggle visibility">${eyeOffSvg}</button></div>` :
+            f.type === 'number' ? `<input class="cfg-input" type="number" data-field="${f.key}" value="${escapeHtml(f.value || '')}" placeholder="${escapeHtml(f.placeholder || '')}" ${NO_SPELL} ${f.min != null ? `min="${f.min}"` : ''} ${f.disabled ? 'disabled' : ''}>` :
+            `<input class="cfg-input" type="text" data-field="${f.key}" value="${escapeHtml(f.value || '')}" placeholder="${escapeHtml(f.placeholder || '')}" ${NO_SPELL} ${f.disabled ? 'disabled' : ''}>`}
           </div>`;
 
   const overlay = document.createElement('div');
@@ -705,7 +710,7 @@ function renderModelRowContent(m) {
   const maxAttr = m && Number.isFinite(m.modelMaxContext) ? ` data-model-max="${m.modelMaxContext}"` : '';
   const idField = providerModelChoices && providerModelChoices.length > 0
     ? renderModelIdSelect(id)
-    : `<input class="cfg-input cfg-model-id" type="text" value="${escapeHtml(id)}" placeholder="${t('model.idPlaceholder')}">`;
+    : `<input class="cfg-input cfg-model-id" type="text" value="${escapeHtml(id)}" placeholder="${t('model.idPlaceholder')}" spellcheck="false" autocapitalize="off" autocorrect="off">`;
   // Vision is auto-detected at runtime (B3) and shown as a read-only badge on
   // provider cards — no per-model control in this form (B1 裁定 2026-08-25).
   // maxTokens control removed (maxcfg batch 2026-09-16, author ruling): the
@@ -715,7 +720,7 @@ function renderModelRowContent(m) {
   // per-model 不可用时段行已删（config-single-source 批，作者裁定④ 2026-11-05）：
   // 时段只在 provider 级一份，模型行回到「id + 上下文窗口 + 测试钮 + 删除」。
   return `${idField}
-<input class="cfg-input cfg-model-ctx" type="number" value="${ctx}"${maxAttr} placeholder="${t('model.contextPlaceholder')}">
+<input class="cfg-input cfg-model-ctx" type="number" value="${ctx}"${maxAttr} placeholder="${t('model.contextPlaceholder')}" spellcheck="false">
 ${modelTestButtonHTML('', id)}
 <button class="cfg-model-remove" type="button" title="${t('provider.remove')}">&times;</button>`;
 }

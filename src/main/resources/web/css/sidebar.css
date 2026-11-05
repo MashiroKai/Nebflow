@@ -494,7 +494,7 @@
   outline: none;
   min-width: 0;
 }
-.folder-new-input:focus { border-color: var(--ds-text-muted); }
+/* 焦点态：.folder-new-input 已收编 css/inputFocus.css（2026-11-05）。 */
 
 /* Creation path indicator — shown above inline inputs when creating inside a folder */
 .creation-path {
@@ -1351,12 +1351,8 @@
   box-sizing: border-box;
   transition: border-color var(--dur-2) ease, box-shadow var(--dur-2) ease;
 }
-.cfg-select:focus {
-  border-color: var(--color-frame-text-muted);
-  box-shadow:
-    0 0 0 2px var(--ds-focus-seam),
-    0 0 0 4px rgb(var(--sapphire) / 0.04);
-}
+/* 焦点态：.cfg-select 已收编 css/inputFocus.css（input-focus-ring 批
+   2026-11-05；原「2px + 4px 两圈外发光」随批摘除）。 */
 
 /* ── Config Modal ────────────────────────────────────────────────────────── */
 .cfg-modal-overlay {
@@ -1435,20 +1431,8 @@
   box-sizing: border-box;
   transition: border-color var(--dur-2) ease, box-shadow var(--dur-2) ease;
 }
-.cfg-input:focus {
-  border-color: var(--color-frame-text-muted);
-  box-shadow:
-    0 0 0 2px var(--ds-focus-seam),
-    0 0 0 4px rgb(var(--sapphire) / 0.04);
-}
-@media (prefers-color-scheme: dark) {
-  .cfg-input:focus {
-    border-color: var(--color-frame-text-muted);
-    box-shadow:
-      0 0 0 2px var(--ds-focus-seam-strong),
-      0 0 0 4px rgb(var(--sapphire) / 0.06);
-  }
-}
+/* 焦点态：.cfg-input 已收编 css/inputFocus.css（input-focus-ring 批
+   2026-11-05；原「2px seam + 4px 外发光」+ 暗档另一份随批摘除）。 */
 .cfg-input:disabled { opacity: 0.5; cursor: not-allowed; }
 .cfg-textarea {
   min-height: 64px;
@@ -2074,10 +2058,7 @@
   box-sizing: border-box;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
-.time-input:focus {
-  border-color: rgb(var(--sapphire) / 0.6);
-  box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.12);
-}
+/* 焦点态：.time-input 已收编 css/inputFocus.css（2026-11-05）。 */
 .seg-remove {
   background: none;
   border: none;

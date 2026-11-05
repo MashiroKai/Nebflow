@@ -433,7 +433,7 @@ function openConfigCard(existing) {
         </div>
         <div class="pp-field">
           <label for="pp-cfg-code">${esc(t('perception.cfgAuthCode'))}</label>
-          <input id="pp-cfg-code" type="password" autocomplete="new-password" placeholder="· · · · · · · ·">
+          <input id="pp-cfg-code" type="password" autocomplete="new-password" spellcheck="false" autocapitalize="off" autocorrect="off" placeholder="· · · · · · · ·">
           <div class="hint">${esc(t('perception.cfgAuthCodeHint'))}</div>
         </div>
         <div class="pp-auto-note">
@@ -447,15 +447,15 @@ function openConfigCard(existing) {
           </summary>
           <div class="pp-adv-body">
             <div class="pp-field-grid">
-              <div class="pp-field"><label for="pp-cfg-imap">${esc(t('perception.cfgImapHost'))}</label><input id="pp-cfg-imap" placeholder="imap.qq.com"></div>
-              <div class="pp-field"><label for="pp-cfg-imapport">${esc(t('perception.cfgPort'))}</label><input id="pp-cfg-imapport" placeholder="993"></div>
+              <div class="pp-field"><label for="pp-cfg-imap">${esc(t('perception.cfgImapHost'))}</label><input id="pp-cfg-imap" placeholder="imap.qq.com" spellcheck="false" autocapitalize="off" autocorrect="off"></div>
+              <div class="pp-field"><label for="pp-cfg-imapport">${esc(t('perception.cfgPort'))}</label><input id="pp-cfg-imapport" placeholder="993" spellcheck="false" inputmode="numeric"></div>
             </div>
             <div class="pp-field-grid">
-              <div class="pp-field"><label for="pp-cfg-smtp">${esc(t('perception.cfgSmtpHost'))}</label><input id="pp-cfg-smtp" placeholder="smtp.qq.com"></div>
-              <div class="pp-field"><label for="pp-cfg-smtpport">${esc(t('perception.cfgPort'))}</label><input id="pp-cfg-smtpport" placeholder="465"></div>
+              <div class="pp-field"><label for="pp-cfg-smtp">${esc(t('perception.cfgSmtpHost'))}</label><input id="pp-cfg-smtp" placeholder="smtp.qq.com" spellcheck="false" autocapitalize="off" autocorrect="off"></div>
+              <div class="pp-field"><label for="pp-cfg-smtpport">${esc(t('perception.cfgPort'))}</label><input id="pp-cfg-smtpport" placeholder="465" spellcheck="false" inputmode="numeric"></div>
             </div>
             <div class="pp-field"><label for="pp-cfg-name">${esc(t('perception.cfgDisplayName'))}</label><input id="pp-cfg-name" placeholder="${esc(t('perception.cfgDisplayNamePh'))}"></div>
-            <div class="pp-field"><label for="pp-cfg-trusted">${esc(t('perception.cfgTrusted'))}</label><input id="pp-cfg-trusted" placeholder="${esc(t('perception.cfgTrustedPh'))}"><div class="hint">${esc(t('perception.cfgTrustedHint'))}</div></div>
+            <div class="pp-field"><label for="pp-cfg-trusted">${esc(t('perception.cfgTrusted'))}</label><input id="pp-cfg-trusted" placeholder="${esc(t('perception.cfgTrustedPh'))}" spellcheck="false" autocapitalize="off" autocorrect="off"><div class="hint">${esc(t('perception.cfgTrustedHint'))}</div></div>
           </div>
         </details>
       </div>

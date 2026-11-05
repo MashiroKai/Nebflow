@@ -718,7 +718,9 @@ function renderSttSection() {
         <label class="cfg-label" for="stt-apikey">${t('settings.sttApiKey')}
           ${configured ? `<span class="stt-key-configured">${t('settings.sttKeyConfigured')}</span>` : ''}
         </label>
-        <input class="cfg-input" id="stt-apikey" type="password" value="" placeholder="${t(configured ? 'settings.sttApiKeyConfiguredPlaceholder' : 'settings.sttApiKeyPlaceholder')}" autocomplete="off" ${enabled ? '' : 'disabled'}>
+        <!-- 密钥字段关拼写检查（input-focus-ring 批 2026-11-05）：浏览器会把 key 当
+             单词画红波浪线，且部分实现会把值送拼写服务 ⇒ 一并关自动大写/自动更正。 -->
+        <input class="cfg-input" id="stt-apikey" type="password" value="" placeholder="${t(configured ? 'settings.sttApiKeyConfiguredPlaceholder' : 'settings.sttApiKeyPlaceholder')}" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" ${enabled ? '' : 'disabled'}>
         <div class="cfg-hint">${t('settings.sttHint')}</div>
         <div style="display:flex;gap:var(--ds-space-2);margin-top:var(--ds-space-2)">
           <button class="cfg-btn cfg-btn-primary" id="btn-save-stt">${t('settings.sttSave')}</button>

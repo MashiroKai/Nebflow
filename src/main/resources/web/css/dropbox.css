@@ -96,9 +96,7 @@
   outline: none;
   transition: border-color 0.2s;
 }
-.dropbox-desc-textarea:focus {
-  border-color: var(--color-primary);
-}
+/* 焦点态：.dropbox-desc-textarea 已收编 css/inputFocus.css（2026-11-05）。 */
 .dropbox-desc-actions {
   display: flex;
   justify-content: flex-end;

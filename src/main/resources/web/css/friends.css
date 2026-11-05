@@ -294,7 +294,7 @@ body.mobile-layer .fm-req-time { font-size: var(--ds-fs-hint); }
   transition: border-color 0.15s ease;
 }
 
-.fm-search-input:focus-visible { border-color: rgb(var(--sapphire) / 0.5); }
+/* 焦点态：.fm-search-input 已收编 css/inputFocus.css（2026-11-05）。 */
 
 /* ── ④ 控件面：搜索键 / 同意 / 拒绝（2026-09-12 波2）──────────────────────
    材质全部落既有 token（--glass-send-* 中性灰族 + --color-text + 亮档

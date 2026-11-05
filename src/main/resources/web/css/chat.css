@@ -2076,10 +2076,8 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   background: transparent;
   color: var(--color-text);
 }
-.option-custom-input:focus {
-  border-color: var(--ask-green);
-  box-shadow: var(--ask-ring);
-}
+/* 焦点态：已收编 css/inputFocus.css（input-focus-ring 批 2026-11-05，
+   单一令牌 --nf-field-focus-*；原「绿环 + 外发光」是本批要去的那类外部环）。 */
 
 /* ── AskUser 密钥请求行（设计语言批 2026-10-21 整改落地）─────────────────
    askuser-secret 批（规格 §1/§3）的实现原是 chat.js 内联样式 + 「显示」文字
@@ -2114,10 +2112,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   box-sizing: border-box;
   transition: border-color var(--dur-2) ease, box-shadow var(--dur-2) ease;
 }
-.option-secret-input:focus {
-  border-color: var(--ask-green);
-  box-shadow: var(--ask-ring);
-}
+/* 焦点态：已收编 css/inputFocus.css（input-focus-ring 批 2026-11-05）。 */
 .option-secret-eye {
   flex-shrink: 0;
   width: 24px;
@@ -2757,10 +2752,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   background: transparent;
   color: var(--color-text);
 }
-.option-input:focus {
-  border-color: var(--ask-green);
-  box-shadow: var(--ask-ring);
-}
+/* 焦点态：已收编 css/inputFocus.css（input-focus-ring 批 2026-11-05）。 */
 .option-input.mono {
   font-family: ui-monospace, 'SF Mono', Menlo, monospace;
   font-size: var(--ds-fs-hint);
@@ -4042,12 +4034,8 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   outline: none;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
-.wsp-mkdir-input:focus {
-  border-color: rgba(91, 127, 191, 0.5);
-  box-shadow:
-    0 0 0 2px rgba(91, 127, 191, 0.08),
-    0 0 0 4px rgba(91, 127, 191, 0.04);
-}
+/* 焦点态：已收编 css/inputFocus.css（input-focus-ring 批 2026-11-05；
+   原「2px + 4px 两圈外发光」正是作者要去的「外部蓝框」）。 */
 .wsp-mkdir-ok {
   font-size: var(--ds-fs-hint);
   padding: var(--ds-space-1) var(--ds-space-3);
@@ -4160,10 +4148,8 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   outline: none;
   transition: border-color 0.15s ease;
 }
-.wsp-goto-input:focus,
-.wsp-search-input:focus {
-  border-color: rgba(91, 127, 191, 0.5);
-}
+/* 焦点态：.wsp-goto-input / .wsp-search-input 已收编 css/inputFocus.css
+   （input-focus-ring 批 2026-11-05）。 */
 .wsp-goto-btn {
   font-size: var(--ds-fs-btn);
   padding: var(--ds-space-1h) 14px;
@@ -5676,9 +5662,7 @@ body:not(.mobile-layer) #agent-avatar-btn .agent-avatar-logo-img {
   font-size: var(--ds-fs-body);
   outline: none;
 }
-.ap-pane .ap-name-input:focus {
-  border-color: var(--glass-etched-border-focus, rgba(91, 127, 191, 0.35));
-}
+/* 焦点态：.ap-pane .ap-name-input 已收编 css/inputFocus.css（2026-11-05）。 */
 .ap-pane .ap-note {
   font-size: var(--ds-fs-meta);
   color: var(--color-frame-text-muted, #98a2b3);
