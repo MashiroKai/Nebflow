@@ -474,7 +474,10 @@
    单一形态规则（值全走 --ds-* 槽：字阶 --ds-fs-meta 11 / 圆角 --ds-radius-chip
    6 / 材质 --ds-control-bg/-border/--ds-text-muted），变体规则只保留各自真正的
    差异（强调色 / 截断 / 收缩率）——「不做第二套形态」由同一条声明成立。 */
+/* 术语分层批（2026-11-05）：整体行身份词 chip（.bg-task-entity = 一次编排的
+   agentflow 词）并入同一形态声明——不做第二套形态，零新增字面量。 */
 .bg-task-kind,
+.bg-task-entity,
 .bg-task-origin,
 .bg-task-mode,
 .bg-task-retries,

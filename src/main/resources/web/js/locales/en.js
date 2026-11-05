@@ -948,6 +948,12 @@ export default {
   // icon; tooltip carries the live session count).
   'subagents.kindDispatcher': 'Dispatcher',
   'subagents.kindNode': 'Node',
+  // Term layering batch (2026-11-05, author order): agentflow = the name of the
+  // whole organised behaviour (one orchestration = one agentflow) and the ONE
+  // identity word of an overall row (delegate group head / synthesized
+  // continuation head); the members inside it are nodes (subagents.kindNode
+  // family). Same word face in both locales.
+  'subagents.kindAgentflow': 'AgentFlow',
   'subagents.chainRunning': 'Chain running',
   'subagents.chainRunningTip': 'Delegate delivered, chain still running · {n} session(s)',
   // Task attribution badge (2026-09-27 taskbadge batch): hover tooltip of the

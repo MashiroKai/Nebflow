@@ -359,7 +359,9 @@ function bgHeadDefaultCollapsed(info) {
  *  「同层混排」乱象（有的 kernel、有的 Delegate、有的 Subagent）。
  *  行级判定锚 = **层级**（不是历史类型残留）：顶层 ⇒ 只认 row.mode；mode 缺席
  *  （总闸关/旧盘）⇒ **无徽标**（绝不回退残留词——无信息胜过错信息；子级 kind 词
- *  的显示词归一仍走 bgKindDisplayWord / bgChildKindWord，渲染点不动数据面）。 */
+ *  的显示词归一仍走 bgMemberKindWord，渲染点不动数据面）。
+ *  术语分层批（2026-11-05）：本函数产出的是**执行形态词**，与整体行身份词
+ *  （bgAgentflowWord）同行并存——两者不是同一个词位，也不许互相顶替。 */
 function bgDelegateBadgeWord(info, row) {
   const execMode = String((row && row.mode) || '');
   if (execMode === 'kernel' || execMode === 'dispatcher') return execMode;
@@ -404,7 +406,7 @@ function bgRemoteRowHtml(info, device) {
     active: 'bg-status-active', waiting: 'bg-status-waiting',
     done: 'bg-status-done', error: 'bg-status-error',
   }[rowState] || 'bg-status-active';
-  const kindWord = bgChildKindWord(String(info.source || ''));
+  const kindWord = bgMemberKindWord({ source: String(info.source || ''), sessionId: String(info.sessionId || '') });
   const kindPart = kindWord ? '<span class="bg-task-kind">' + escapeHtml(kindWord) + '</span>' : '';
   // 设备角标（「跑在哪」轴）+ 离线角标（保留最后态，不消失不假装死亡——在线性
   // 由引擎发送时刻现算；离线行 = 最后态 + 琥珀「设备离线」）。
@@ -474,17 +476,49 @@ function bgKindDisplayWord(kind) {
   return k;
 }
 
-/** Flow 会话 kind 显示词（Flow 会话可见性批 2026-11-01）：`dispatcher-*` →
- *  「分发器」、`node-*` → 「节点」（引擎协议 kind 一律 "Flow"，无区分度——显示词
- *  按会话 id 前缀单点判读，与 isDispatcherSession/NodeEngine.SessionPrefix 同源
- *  契约）。其余前缀 → ''（走既有 kind 链：快照 kind → bgAgentKindFromSession）。
- *  徽标归位批铁律不冲突：顶层摘除的是 Delegate/Subagent 历史残留词；分发器/节点
- *  是本批要求的正向 kind 徽标（顶层与子行都渲染）。 */
-function bgFlowKindWord(info, id) {
-  const sid = String((info && info.sessionId) || id || '').replace(/^team-/, '');
+/** 术语分层批（2026-11-05 · 作者令「agentflow = 整个组织行为的代称（一次编排 = 一个
+ *  agentflow），节点 = agentflow 里的成员，成员分层」）：**整体行身份词单点**。
+ *  取值只来自 locale 键 `subagents.kindAgentflow`（zh/en 同词面）——唯一渲染点是
+ *  bgTaskRowHtml 的 headLevel 分支（组头行 / 合成延续组头行）；别的 web 模块不得再写
+ *  这个词面（回归 spec bg-agentflow-terms H5 静态钉）。与两个作者术语的分工：
+ *  kernel / dispatcher 是**执行形态词**（row.mode，逐字保留、不改名、不翻译），本词是
+ *  **层级词**（这一行代表一次编排）。成员行绝不用本词——成员是节点，见 bgMemberKindWord。
+ * @returns {string}
+ */
+function bgAgentflowWord() {
+  return t('subagents.kindAgentflow');
+}
+
+/**
+ * 成员行身份词单点（术语分层批 2026-11-05）：一次编排（agentflow）里的节点是谁——三源
+ * （会话 id 前缀 / store 条目 source / 快照 kind）**只在这一处**收敛成词，三个渲染点
+ * （live·chain 子行 / store 子行 / flow 结构子行）只许调本函数，不许各写一套词表。
+ * 考古（术语审计 §② 混用举证）：旧形态是 bgFlowKindWord / bgChildKindWord /
+ * bgKindDisplayWord / bgAgentKindFromSession 在三个构造器里各排一次链，flow 结构行更把
+ * **整体词**硬编码成了成员徽标——同一个 flow 节点有两条互斥画法（「节点」/「AgentFlow」）。
+ *
+ * **成员位不落整体词**：引擎 kind `Flow` / `AgentFlow` / `flow-step` 在成员层统一读作
+ * 节点词（节点 = 成员；`node-` / `dag-` / `workflow-` 前缀同判）。数据面原值一律不动
+ * （bgAgentKindFromSession 供 main.js 的 info.kind 记账，返回的协议词保留）。
+ * @param {{source?: string, info?: any, sessionId?: string, id?: string}} [member]
+ * @returns {string}
+ */
+function bgMemberKindWord(member) {
+  const m = member && typeof member === 'object' ? member : {};
+  const info = m.info && typeof m.info === 'object' ? m.info : {};
+  const sid = String(m.sessionId || (info && info.sessionId) || m.id || '').replace(/^team-/, '');
+  // 分发器 / 节点是前缀判读的正向 kind 徽标（与 isDispatcherSession / 引擎会话前缀同源
+  // 契约）；两者都从 locale 取词，成员位只有这一个字面量表。
   if (isDispatcherSession(sid)) return t('subagents.kindDispatcher');
-  if (sid.startsWith('node-')) return t('subagents.kindNode');
-  return '';
+  const nodeWord = t('subagents.kindNode');
+  if (sid.startsWith('node-')) return nodeWord;
+  const source = String(m.source || '');
+  const word = source
+    ? bgChildKindWord(source)
+    : (bgKindDisplayWord(String(info.kind || '')) || bgAgentKindFromSession(sid));
+  // 整体词面在成员层归并为节点词（flow 结构行 / dag-* / workflow-* 同一判据）。
+  if (word === 'Flow' || word === 'AgentFlow' || word === 'flow-step') return nodeWord;
+  return word;
 }
 
 /**
@@ -918,7 +952,9 @@ function bgOrphanChipHtml(orphan, bucketSid) {
  * 图标 + status-warn token，tooltip 带链会话数），状态点改 active 绿脉冲（活链
  * ≠ 死行），行不加 .done 灰化（链活着）；链全终态后覆写入参自然缺席 → 行回
  * 普通终态样式（既有 done 灰化/点形）。
- * @param {string} id @param {any} info @param {{childLevel?: boolean, headLevel?: boolean, badgeWord?: string, rowTitle?: string, shortName?: string, childCount?: number, collapsed?: boolean, orphanFrom?: string, orphanTitle?: string, bucketSid?: string, chainContinued?: boolean, chainCount?: number}} [opts]
+ * 术语分层批（2026-11-05）：opts.agentflowKey——成员行的归属锚（所属整体行定位键，
+ * 与 data-bg-key / bgRowLocatorKey 同口径）；整体行由 opts.headLevel 自动带实体锚。
+ * @param {string} id @param {any} info @param {{childLevel?: boolean, headLevel?: boolean, badgeWord?: string, agentflowKey?: string, rowTitle?: string, shortName?: string, childCount?: number, collapsed?: boolean, orphanFrom?: string, orphanTitle?: string, bucketSid?: string, chainContinued?: boolean, chainCount?: number}} [opts]
  * @returns {string}
  */
 function bgTaskRowHtml(id, info, opts = {}) {
@@ -940,17 +976,27 @@ function bgTaskRowHtml(id, info, opts = {}) {
       error: 'bg-status-error', frozen: 'bg-status-frozen', done: 'bg-status-done',
       waiting: 'bg-status-waiting',
     }[rowState];
+  // 术语分层批（2026-11-05 作者令「整体行 vs 成员行」）：身份词分两个显示位，各由一个
+  // 函数定词，没有一个构造器自带词表——
+  //   · 整体行（opts.headLevel：一次编排 = 一个 agentflow）⇒ 形态词 .bg-task-kind
+  //     （bgDelegateBadgeWord：kernel / dispatcher，作者术语逐字保留）＋ 整体词
+  //     .bg-task-entity（bgAgentflowWord）；
+  //   · 成员行（编排里的节点）⇒ bgMemberKindWord（成员位绝不落整体词）。
   // 修订批九点②补漏：快照 kind（AgentKind.SubTask）同走显示词归一（数据面不动）。
-  // Flow 会话可见性批（2026-11-01）：dispatcher-*/node-* 行 kind 词走 bgFlowKindWord
-  // （分发器/节点——引擎协议 kind 一律 "Flow" 无区分度）；其余前缀走既有链。
-  let kind = (opts && opts.badgeWord) || bgFlowKindWord(info, info.sessionId || id) ||
-    bgKindDisplayWord(info.kind) || bgAgentKindFromSession(info.sessionId || id);
+  const kind = opts.headLevel
+    ? String((opts && opts.badgeWord) || '')
+    : bgMemberKindWord({ info, sessionId: info.sessionId || id, id });
   // 徽标归位批（2026-10-31 23:02 作者裁定）：**顶层行**（组头 + 未被认领的 leftover/
   //  孤儿行，即一切非 childLevel 行）不渲染 Delegate/Subagent 字样——层级锚不是历史
   //  类型残留。组头徽标只认 row.mode（bgDelegateBadgeWord，mode 缺席即无徽标）；此处
   //  兜底摘掉 leftover 行的 kind 残留词（「来自 …」孤儿角标/任务归属徽标不受影响）。
-  if (!opts.childLevel && (kind === 'Delegate' || kind === 'Subagent')) kind = '';
-  const kindPart = kind ? '<span class="bg-task-kind">' + escapeHtml(kind) + '</span>' : '';
+  const kindWord = (!opts.childLevel && (kind === 'Delegate' || kind === 'Subagent')) ? '' : kind;
+  const kindPart = kindWord ? '<span class="bg-task-kind">' + escapeHtml(kindWord) + '</span>' : '';
+  // 整体行实体词（术语分层批）：一次编排的身份词——只出现在整体行；成员行永不出现
+  // （反向门：整体行也不出现节点词，两词位互斥）。
+  const entityPart = opts.headLevel
+    ? '<span class="bg-task-entity">' + escapeHtml(bgAgentflowWord()) + '</span>'
+    : '';
   // Project attribution (2026-09-06 author ruling): Flow rows carry the
   // owning project's name next to the kind chip — muted plain text,
   // visually subordinate to the chip, never competing with the node name.
@@ -1162,8 +1208,14 @@ function bgTaskRowHtml(id, info, opts = {}) {
   // 子行 child / 顶层 top 三档（CSS 视觉档随 .bg-task-row-head/-child 两级类；
   // 本属性 = 回归 dump 与读屏之外的第③个可辨锚，class 之外的机器可读面）。
   const levelAttr = opts.headLevel
-    ? ' data-bg-row-level="head"'
+    ? ' data-bg-row-level="head" data-bg-entity="agentflow"'
     : opts.childLevel ? ' data-bg-row-level="child"' : ' data-bg-row-level="top"';
+  // 归属锚（术语分层批 2026-11-05 · 铁律 8「归属靠结构，不写解释句」）：成员行带**所属
+  // 整体行的定位键**（与 data-bg-key / bgRowLocatorKey 同一条缝），整体行带实体锚
+  // data-bg-entity="agentflow"。归属是结构事实，渲染面不写任何一句术语关系说明。
+  const agentflowAttr = (opts.childLevel && opts.agentflowKey)
+    ? ' data-bg-agentflow="' + escapeHtml(String(opts.agentflowKey)) + '"'
+    : '';
   // 面板层级批（2026-10-31 ①）：组头折叠 caret——有子行的组头行首渲染（中性
   // muted、行体点击开详情不变；caret 自带停冒泡点击收起/展开子行树）。aria/title
   // 随折叠态翻转（屏幕阅读器与悬停同知）。
@@ -1176,7 +1228,7 @@ function bgTaskRowHtml(id, info, opts = {}) {
       escapeHtml(caretWord) + '">' +
       statusIcon(collapsedNow ? 'chevron-right' : 'chevron-down', 11) + '</span>'
     : '';
-  return '<div class="bg-task-row' + (rawState === 'done' && !chainContinued ? ' done' : '') + levelCls + '"' + levelAttr + ' role="listitem" tabindex="0" ' + clickAttr + '>' +
+  return '<div class="bg-task-row' + (rawState === 'done' && !chainContinued ? ' done' : '') + levelCls + '"' + levelAttr + agentflowAttr + ' role="listitem" tabindex="0" ' + clickAttr + '>' +
     caretPart +
     '<span class="bg-task-status ' + dotClass + '" aria-hidden="true"></span>' +
     '<div class="bg-task-info">' +
@@ -1202,7 +1254,7 @@ function bgTaskRowHtml(id, info, opts = {}) {
             : rowState === 'error' ? statusIcon('circle-x', 11, 'st-err')
             : '') +
           escapeHtml(statusLabel) + '</span>' +
-        kindPart + projectPart + orphanPart + taskPart + retriesPart + uptimePart +
+        entityPart + kindPart + projectPart + orphanPart + taskPart + retriesPart + uptimePart +
       '</div>' +
       // 任务摘要次行（面板行说明批 2026-10-29 ②）：实名行的任务摘要上屏位——
       // 单行截断 + tooltip 全文；无摘要/已并入主名时零渲染（行高不膨胀）。
@@ -1218,14 +1270,17 @@ function bgTaskRowHtml(id, info, opts = {}) {
 /** Store 子条目轻行（不在注册表的终态子——结构可见、状态由 store 条目承载；词复用
  *  面板状态词既有键）。点击 = 与 live 子行同一详情承载（bgAgentPopup 历史恢复）。
  *  面板行说明批（2026-10-29 ②）：与 live 行同契约——泛名（def 名）主名让位任务
- *  摘要首行；实名行附摘要次行。 */
-function bgStoreChildHtml(child) {
+ *  摘要首行；实名行附摘要次行。
+ *  术语分层批（2026-11-05）：徽标词走成员单词点 bgMemberKindWord（成员位不落整体词）；
+ *  agentflowKey = 所属整体行定位键（归属靠结构的机器可读锚，不写解释句）。
+ *  @param {any} child @param {string} [agentflowKey] */
+function bgStoreChildHtml(child, agentflowKey) {
   const c = child && typeof child === 'object' ? child : {};
   const sid = String(c.taskId || '');
   const state = bgStoreChildState(String(c.status || ''));
   const statusLabel = t('subagents.status.' + (state === 'active' ? 'running' : state));
   const dotClass = { active: 'bg-status-active', done: 'bg-status-done', error: 'bg-status-error' }[state] || 'bg-status-idle';
-  const kindWord = bgChildKindWord(String(c.source || ''));
+  const kindWord = bgMemberKindWord({ source: String(c.source || ''), sessionId: sid });
   const rawName = String(c.agentName || '') || sid;
   const desc = String(c.description || c.prompt || '');
   const descLine = bgFirstLine(desc);
@@ -1242,7 +1297,7 @@ function bgStoreChildHtml(child) {
   const retriesPart = retries > 0
     ? '<span class="bg-task-retries" title="' + escapeHtml(t('manage.retry')) + ' ×' + retries + '">×' + retries + '</span>'
     : '';
-  return '<div class="bg-task-row bg-task-row-child" data-bg-row-level="child" role="listitem" tabindex="0" data-child-session="' + escapeHtml(sid) + '">' +
+  return '<div class="bg-task-row bg-task-row-child" data-bg-row-level="child" data-bg-agentflow="' + escapeHtml(String(agentflowKey || '')) + '" role="listitem" tabindex="0" data-child-session="' + escapeHtml(sid) + '">' +
     '<span class="bg-task-status ' + dotClass + '" aria-hidden="true"></span>' +
     '<div class="bg-task-info">' +
       // panel-ia 批：主名在前（与 bgTaskRowHtml 同一批层级序）。
@@ -1258,13 +1313,17 @@ function bgStoreChildHtml(child) {
   '</div>';
 }
 
-/** agentflow flow 结构行（chain.nodes 的 flow-step 投影；徽标 = 自身 kind AgentFlow）。
- *  点击 = S10 per-task 链视图（flow 节点详情 = 卡面即详情，「零新增弹层」纪律）。 */
-function bgFlowChildHtml(node, delegateKey) {
+/** agentflow flow 结构行（chain.nodes 的 flow-step 投影）。徽标 = 成员词
+ *  （bgMemberKindWord：flow-step 是这次编排里的**节点**——术语分层批 2026-11-05 退役了
+ *  此处硬编码的整体词 AgentFlow，那个词此后只作整体行身份词）。
+ *  点击 = S10 per-task 链视图（flow 节点详情 = 卡面即详情，「零新增弹层」纪律）。
+ *  @param {any} node @param {string} [delegateKey] @param {string} [agentflowKey] */
+function bgFlowChildHtml(node, delegateKey, agentflowKey) {
   const n = node && typeof node === 'object' ? node : {};
   const label = String(n.label || n.id || '');
   const st = String(n.status || 'pending');
   const wordKey = BG_FLOW_WORD_KEY[st] || '';
+  const kindWord = bgMemberKindWord({ info: { kind: String(n.kind || 'flow-step') }, sessionId: String(n.id || '') });
   const dotClass = {
     pending: 'bg-status-idle', running: 'bg-status-active', completed: 'bg-status-done',
     failed: 'bg-status-error', cancelled: 'bg-status-done', blocked: 'bg-status-stuck',
@@ -1273,13 +1332,13 @@ function bgFlowChildHtml(node, delegateKey) {
   const depPart = deps.length
     ? '<span class="bg-task-project" title="deps: ' + escapeHtml(deps.join(',')) + '">← ' + escapeHtml(deps.join(',')) + '</span>'
     : '';
-  return '<div class="bg-task-row bg-task-row-child" data-bg-row-level="child" role="listitem" tabindex="0" data-flow-delegate-key="' + escapeHtml(String(delegateKey || '')) + '" title="' + escapeHtml(label) + '">' +
+  return '<div class="bg-task-row bg-task-row-child" data-bg-row-level="child" data-bg-agentflow="' + escapeHtml(String(agentflowKey || '')) + '" role="listitem" tabindex="0" data-flow-delegate-key="' + escapeHtml(String(delegateKey || '')) + '" title="' + escapeHtml(label) + '">' +
     '<span class="bg-task-status ' + dotClass + '" aria-hidden="true"></span>' +
     '<div class="bg-task-info">' +
       '<div class="bg-task-line bg-task-main">' +
         '<span class="bg-task-name">' + escapeHtml(label) + '</span>' +
         '<span class="bg-task-state">' + escapeHtml(wordKey ? t(wordKey) : st) + '</span>' +
-        '<span class="bg-task-kind">AgentFlow</span>' +
+        '<span class="bg-task-kind">' + escapeHtml(kindWord) + '</span>' +
         depPart +
       '</div>' +
     '</div>' +
@@ -1376,13 +1435,16 @@ export function renderBgAgentDropdown() {
       // 收起组头的子行不出镜（面板层级批既有语义——计数不受影响）。
       if (headCollapsed.get(row.group)) continue;
       const c = row.child || {};
-      if (c.type === 'live') htmlParts.push(bgTaskRowHtml(c.id, c.info, { childLevel: true }));
-      else if (c.type === 'store') htmlParts.push(bgStoreChildHtml(c.child));
+      // 术语分层批（2026-11-05）：成员行的归属锚 = **所属整体行（组头）的定位键**
+      // （bgRowLocatorKey 同一条缝——判等与渲染共用一个键，不留第二套口径）。
+      const agentflowKey = bgRowLocatorKey({ id: row.group && row.group.id, info: row.group && row.group.info });
+      if (c.type === 'live') htmlParts.push(bgTaskRowHtml(c.id, c.info, { childLevel: true, agentflowKey }));
+      else if (c.type === 'store') htmlParts.push(bgStoreChildHtml(c.child, agentflowKey));
       else if (c.type === 'chain') {
         chainBySid.set(c.sid, c.info);
-        htmlParts.push(bgTaskRowHtml(c.id, c.info, { childLevel: true }));
+        htmlParts.push(bgTaskRowHtml(c.id, c.info, { childLevel: true, agentflowKey }));
       }
-      else htmlParts.push(bgFlowChildHtml(c.node, row.group && row.group.key));
+      else htmlParts.push(bgFlowChildHtml(c.node, row.group && row.group.key, agentflowKey));
       continue;
     }
     // 顶层行（未被认领的 leftover / 收敛落点）：孤儿来源角标随行。
