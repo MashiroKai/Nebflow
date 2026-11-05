@@ -785,6 +785,10 @@ export default {
   // the popup's no-match state and its ARIA label only.
   'mention.title': 'Projects',
   'mention.noMatch': 'No matching projects',
+  // `#` todo-reference completion (todo name+detail batch, 2026-11-05).
+  'todoComplete.title': 'Todos',
+  'todoComplete.noMatch': 'No matching todos',
+  'todoComplete.detailUnavailable': 'This todo is not in the current list',
   'modal.newSession': 'New Session',
   'modal.sessionName': 'Session name',
   'modal.cancel': 'Cancel',
@@ -930,6 +934,23 @@ export default {
   'subagents.frozenReasonTool': 'tool-layer failure',
   'subagents.frozenReasonEngine': 'engine fault',
   'subagents.frozenReasonQuota': 'quota-exhausted cancel',
+  // Frozen-state honesty batch (2026-11-05): two presentation families —
+  // auto-recovering (window / backoff / provider probe / checkpoint resume) says
+  // what it is waiting for and gets NO button; needs-human (loop guard / error
+  // freeze / escalated) says "Frozen" and carries the recovery entry.
+  'subagents.freezeBadge': 'Frozen',
+  'subagents.freezeBadgeWithReason': '{word} · {reason}',
+  'subagents.freezeWindow': 'Waiting for the work window',
+  'subagents.freezeAuto': 'Auto-recovering',
+  'subagents.freezeWindowTip': 'Parked outside the work window: it resumes on its own when the window opens.',
+  'subagents.freezeAutoTip': 'The engine is backing off / waiting for an external condition to clear: it resumes on its own; only a cancel stops it.',
+  'subagents.freezeReasonLoop': 'loop guard',
+  'subagents.freezeReasonLlmTransient': 'LLM-layer failure',
+  'subagents.freezeReasonNetwork': 'network blip',
+  'subagents.freezeReasonProviderDown': 'providers unavailable',
+  'subagents.freezeReasonRestartRecovery': 'checkpoint resume',
+  'subagents.freezeReasonWaitingNetwork': 'waiting for the network',
+  'subagents.freezeReasonSchedule': 'work window',
   'subagents.status.done': 'Done',
   // Panel-tree batch (2026-10-29 ①): orphan-row origin chips (parent invisible,
   // row promoted top-level — "from …" attribution).
@@ -1643,6 +1664,10 @@ export default {
   'chat.other': 'Other...',
   'chat.frozenNoTime': 'Frozen · waiting to resume',
   'chat.frozenShort': 'Frozen · {time} resume',
+  // Frozen-state honesty batch (2026-11-05): auto-recovering footer wording —
+  // "Frozen" is the needs-a-human label, a backoff/window wait is not it.
+  'chat.freezeAutoTile': 'Retrying · {reason}',
+  'chat.freezeWindowTile': 'Waiting for the work window',
   'chat.frozenPlaceholder': 'Frozen · resumes {time}',
   'chat.frozenPlaceholderNoTime': 'Frozen · waiting to resume',
   'chat.skipFreeze': 'Skip this freeze',
@@ -3169,6 +3194,9 @@ export default {
   'todoface.done': 'Done',
   'todoface.titlePh': 'Title',
   'todoface.notesPh': 'Notes (optional)',
+  // Two-field split (todo name+detail batch, 2026-11-05).
+  'todoface.detailToggle': 'Show details',
+  'todoface.detailFieldLabel': 'Details',
   'todoface.prioNone': 'None',
   'todoface.prioLow': 'Low',
   'todoface.prioMed': 'Med',
