@@ -446,7 +446,6 @@ private[agent] object AgentFrozen:
             .traverse_(d => d.complete(Left("Interrupted by user")).void.handleErrorWith(_ => IO.unit))
           // Back to idle without resuming — clear the team busy mark so a
           // frozen-then-interrupted team agent isn't stuck "running".
-          _ <- markTeamIdle(agentDef, state.sessionId)
           // frozen 专属：registry 退回 Idle——否则 FreezeScheduler 会持续 ping
           // 一个已回 idle 的 agent（无害但浪费，且面板显示错误）。
           _ <- touchRegistryActivity(resources, state.sessionId, AgentStatus.Idle)

@@ -252,10 +252,11 @@ class DeviceFaceHardeningRoutesSpec extends FunSuite:
     ("PUT /api/agents/:name/preset", put("/agents/Nebula/preset"))
   )
 
+  // 团队功能删除批（team-feature-deletion-20261104）阶段 3：`GET /api/teams/mailbox/:sid/:flow`、
+  // `GET /api/teams/def/:flow`、`GET /api/team/rules/:name` 三条**团队面路由**已随本阶段
+  // 删除（作者裁定「7 条 teams REST 路由随本阶段一并删」）⇒ 它们从「必须仍活着的邻座」
+  // 名单里移出，改由 teams 路由的退役清单举证，不再构成本用例的 collateral 判据。
   private val stillServed: List[(String, Request[IO])] = List(
-    ("GET /api/teams/mailbox/:sid/:flow", get("/teams/mailbox/test-session/research")),
-    ("GET /api/teams/def/:flow", get("/teams/def/research")),
-    ("GET /api/team/rules/:name", get("/team/rules/research")),
     ("GET /api/agents/:name", get("/agents/Nebula")),
     ("GET /api/agents/:name/model", get("/agents/Nebula/model")),
     ("GET /api/plugins", get("/plugins")),

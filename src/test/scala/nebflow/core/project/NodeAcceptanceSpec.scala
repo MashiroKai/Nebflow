@@ -11,7 +11,6 @@ import nebflow.actor.{AgentCommand, AgentKind, AgentRecord}
 import nebflow.agent.{AgentLibrary, SharedResources, SpecResources}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, MailTool, NodeEditTool, NodeListTool, ToolContext}
-import nebflow.core.flow.TeamSessionRegistry
 import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.llm.ModelCandidate
 import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
@@ -162,7 +161,6 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
 
   override def beforeEach(context: munit.BeforeEach): Unit =
     ProjectRuntimeRegistry.clear
-    TeamSessionRegistry.clear.unsafeRunSync()
 
   override def afterEach(context: munit.AfterEach): Unit = ProjectRuntimeRegistry.clear
 
@@ -1011,7 +1009,10 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
           .get,
         ctx
       )
-      // 未挂载名字 → 不命中项目分类（探测未命中），落既有 team-only 瀑布（D-6：legacy 面不随批收口）
+      // 未挂载名字 → 不命中项目分类（探测未命中），落**通用「不认识的地址」**错误。
+      // 团队功能删除批（team-feature-deletion-20261104）阶段 3：原落点是 legacy
+      // 「team-only 瀑布」（D-6 的 `TEAM names only` 文案 + 团队短名解析）——
+      // 该瀑布随团队地址面整体退役，裸名的未命中落点因此收敛为通用错误。
       r2 <- MailTool.call(
         Json
           .obj(
@@ -1029,10 +1030,14 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
         r.left.exists(_.message.contains("MAIL_PROJECT_TRIGGER_UNSUPPORTED")),
         s"must hit the demolition refusal (zero trigger, zero task creation), got: $r"
       )
-      assert(r2.isLeft, s"unknown bare name must fall to the legacy waterfall, got: $r2")
+      assert(r2.isLeft, s"unknown bare name must be explicitly refused, got: $r2")
       assert(
-        r2.left.exists(_.message.contains("TEAM names only")),
-        s"unmounted bare name keeps the legacy team-only face (D-6), got: $r2"
+        r2.left.exists(_.message.contains("not a recognizable target")),
+        s"unmounted bare name must land the generic unrecognized-address error, got: $r2"
+      )
+      assert(
+        !r2.left.exists(_.message.contains("TEAM names only")),
+        s"the retired team-only wording must not resurface, got: $r2"
       )
       assert(
         !r2.left.exists(_.message.contains("MAIL_PROJECT_TRIGGER_UNSUPPORTED")),
@@ -1365,12 +1370,18 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       assert(r.left.exists(_.message.contains("Delegate")), s"error must point at Delegate, got: $r")
   }
 
-  test("Task③（拆除后）: same-name collision — Mail(project:) refused vs Mail→team (channels still distinct)") {
+  test("Task③（拆除后）: same-name collision — Mail(project:) 一律显式拒绝（不因同名团队而翻转）") {
+    // 团队功能删除批（team-feature-deletion-20261104）阶段 3：原用例的两条腿是
+    // 「Mail(project:) 拒绝」对照「Mail→同名团队优先命中（findTeamAgent 解析到
+    // lead）」。团队地址面（团队名 / team/agent / 裸短名）已硬删 ⇒ 后半腿无对象，
+    // 连 fixture 的 teams/<name>/team.json 都不再参与路由判定。
+    // 删因：**团队名路由已硬删**（不是「跑不过」）。保留的断言面 = 同名 fixture
+    // 在场时 project: 地址仍恒为拆除拒绝、零触发、不点名团队。
     writeDispatcherAgent()
     val ws = tempRoot / "ws-task3"
     os.makeDir.all(ws)
     val system = ActorSystem(s"acc-task3-${scala.util.Random.nextInt(100000)}")
-    // 同名团队 fixture（slideblocks 场景：团队与新 project 同名，渠道区分零歧义）
+    // 同名团队 fixture（slideblocks 场景的历史形态：团队与新 project 同名）
     val teamDir = tempRoot / "teams" / "slideblocks"
     os.makeDir.all(teamDir)
     os.write.over(
@@ -1382,11 +1393,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       rt0 <- mountProject("slideblocks", ws, system, res)
       ref <- spawnProjectActor(rt0, system, res, "proj-slide")
       _ <- ProjectRuntimeRegistry.register(rt0.copy(actorRef = Some(ref)))
-      _ <- TeamSessionRegistry.registerSession("slideblocks", "boss", "boss-sid")
-      // project-trigger 拆除批：Mail(project:) = 显式拒绝（零触发——旧形态在此会
-      // 触发分发器）；裸名路径的「团队优先」事实保持不变。
       rootCtx = mkRootCtx(res, system, ws.toString, sid = "root-sid")
-      teamCtx = mkCtx(res, system, ws.toString).copy(sessionId = Some("root-sid"))
       // Mail(address="project:slideblocks") ⇒ 拆除拒绝（零触发）
       rTask <- MailTool.call(
         Json
@@ -1395,24 +1402,16 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
           .get,
         rootCtx
       )
-      // Mail(→slideblocks) → team（Mail 保持团队优先不翻转——immediate 全链）
-      rMail <- MailTool.call(
-        Json.obj("address" -> Json.fromString("slideblocks"), "message" -> Json.fromString("hi")).asObject.get,
-        teamCtx
-      )
-      leadSid <- TeamSessionRegistry.findTeamAgent("slideblocks", "boss")
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(
         rTask.left.exists(_.message.contains(nebflow.core.tools.MailTool.ErrProjectTriggerUnsupported)),
         s"Mail(project:) must be refused with the demolition word, got: $rTask"
       )
-      // Mail 路由事实：同名团队命中（lead 可解析）→ 团队路由优先，完全不碰 project 分支
-      assertEquals(leadSid, Some("boss-sid"), "same-named team lead must resolve (team routing premise)")
-      assert(!rMail.exists(_.contains("dispatcher triggered")), s"Mail must NOT hit project dispatcher, got: $rMail")
+      assert(rTask.left.exists(_.message.contains("Delegate")), s"the refusal must point at Delegate, got: $rTask")
       assert(
-        !rMail.exists(_.contains(nebflow.core.tools.MailTool.ErrProjectTriggerUnsupported)),
-        s"same-named TEAM routing must not surface the project refusal, got: $rMail"
+        !rTask.exists(_.contains("team")),
+        s"the refusal must not carry any team routing wording any more, got: $rTask"
       )
     end for
   }

@@ -7,12 +7,11 @@ import io.circe.Json
 import io.circe.syntax.*
 import nebflow.actor.*
 import nebflow.core.*
-import nebflow.core.flow.TeamSessionRegistry
 import nebflow.shared.{NebflowLogger, *}
 
 /**
  * turn 收尾族:原 object AgentActor 内 handleLlmCompleteBranch / finishTurn /
- * finishTurnCont / markTeamBusy / markTeamIdle / fullyIdle / emitDequeuedWs
+ * finishTurnCont / fullyIdle / emitDequeuedWs
  * 的实现整体迁入本件(方法体逐字未动)。AgentActor 侧保留同名委托 def(签名与
  * 默认参数原样),全部调用点零改动;pipeLlmCall / pipeToolExecutions 留守
  * AgentActor,经 import AgentActor.* 引用。
@@ -352,7 +351,6 @@ private[agent] object AgentFinishTurn:
         // Turn fully finished (no pending events / immediate inputs) — back to
         // idle, so clear the team busy mark. The two earlier branches re-enter
         // pipeLlmCall which re-marks busy, so they must NOT clear here.
-        _ <- markTeamIdle(agentDef, state.sessionId)
         // P0 阶段 3：turn 完成回 idle——registry 状态快照置 Idle 并 touch。
         // Idle 是合法状态（run_in_background 后台命令等待期），TaskStuckWatcher
         // 只判 Processing——此标记是防误杀铁律的落地。
@@ -816,24 +814,13 @@ private[agent] object AgentFinishTurn:
     end if
   end finishTurnCont
 
-  /**
-   * Team busy signal (busyMap). Consumers: `filterActiveAgents` in
-   * WebSocketRoutes (bg-agent dropdown) — the GET /api/teams/mounted status
-   * fallback that this comment used to name was retired in the
-   * team-feature-deletion stage 2, but the busy marking stays: it is what
-   * keeps idle long-lived team agents out of the "running" list.
-   * The frontend prefers realtime agentStart/agentDone events, but on page
-   * load / event loss it falls back to the mounted status field — which stays
-   * idle forever unless something writes the busyMap. Only team agents
-   * (category inferred from `teams/` path by loadAgentFromDir) are shown as
-   * team tiles, so only they need marking.
-   *
-   * Errors are swallowed: a failed status record must never break the turn.
-   */
-  private[agent] def markTeamBusy(agentDef: AgentDef, sid: Option[String]): IO[Unit] =
-    if agentDef.category == "team" then
-      sid.fold(IO.unit)(s => TeamSessionRegistry.markBusy(s).handleErrorWith(_ => IO.unit))
-    else IO.unit
+  // ═══ 团队 busy 标记面（团队功能删除批阶段 3：整体退役）══════════════
+  // 原 `markTeamBusy` / `markTeamIdle` 写「团队会话登记表」的 busyMap，唯一读者是
+  // WebSocketRoutes.filterActiveAgents 的 `AgentKind.Team` 过滤腿。活体终局：
+  // `AgentKind.Team` 记录的唯一生产者是以团队会话登记表为底座的冷激活腿（团队退役
+  // 后在生产路径上零调用方）⇒ busyMap 两侧（写方 gated on `agentDef.category ==
+  // "team"`、读方过滤 Team 记录）同时失去数据源，该面整体删除，`activeAgents`
+  // 的呈现因此零变化（无记录可过滤）。
 
   // ═══ 回合尾后台任务栅栏门（修复批 2026-10-24，spec ①/③ 接线单点）══════════
   // 结束回合时对照 BgTaskRegistry 在飞账本（本会话**自有**等待型任务；子代理
@@ -882,10 +869,7 @@ private[agent] object AgentFinishTurn:
         }
     }
 
-  private[agent] def markTeamIdle(agentDef: AgentDef, sid: Option[String]): IO[Unit] =
-    if agentDef.category == "team" then
-      sid.fold(IO.unit)(s => TeamSessionRegistry.markIdle(s).handleErrorWith(_ => IO.unit))
-    else IO.unit
+  // `markTeamIdle` 同上（随 busy 面一并删除）。
 
   /**
    * #407: queue Mail 空闲 gate —— 目标 agent 连同子树（root 发送者→整个 team）

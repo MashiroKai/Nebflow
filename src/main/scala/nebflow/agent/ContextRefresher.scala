@@ -509,9 +509,10 @@ object ContextRefresher:
     for
       // Detect team membership once — used for both the def refresh source
       // and the memory block below.
-      teamNameOpt <- state.sessionId match
-        case Some(sid) => nebflow.core.flow.TeamSessionRegistry.teamOfSession(sid)
-        case None => IO.pure(None)
+      // 团队功能删除批（team-feature-deletion-20261104）阶段 3：团队会话登记表本体
+      // 删除 ⇒ 团队归属**恒 None**（团队 agent 的 per-turn def 重载与团队 memory
+      // 分档因此不再可达；全局 agents 路径与 memory 判据零变化）。
+      teamNameOpt <- IO.pure(Option.empty[String])
       freshDefOpt <- loadCurrentDef(teamNameOpt, resources, agentDef)
       globalDef = freshDefOpt.getOrElse(agentDef)
       // SubTask workers are leaf task-execution pipelines: strip all team /
@@ -616,9 +617,11 @@ object ContextRefresher:
    */
   private def buildTeamCatalogForSession(sessionId: Option[String]): IO[String] =
     sessionId match
-      case Some(sid) =>
+      case Some(_) =>
         for
-          teamNameOpt <- nebflow.core.flow.TeamSessionRegistry.teamOfSession(sid)
+          // 团队功能删除批阶段 3：团队归属恒 None（表本体已删）⇒ 本目录的团队分支
+          // 结构上不可达，只剩「无团队 ⇒ 空串」一条（global 目录停注见下）。
+          teamNameOpt <- IO.pure(Option.empty[String])
           result <- teamNameOpt match
             case Some(teamName) =>
               // Team agent: show team-specific catalog. The agents map MUST

@@ -1090,7 +1090,7 @@ private[gateway] object WsSessionChatHandlers:
           sessionTextBuffers.update(_ - sessionId) *>
             sessionThinkingBuffers.update(_ - sessionId) *>
             sessionTurnStarts.update(_ - sessionId) *>
-            stopTeamSessionActors(sessionId) *> stopChildDelegateActors(sessionId) *> removeRootAgent(
+            stopChildDelegateActors(sessionId) *> removeRootAgent(
               sessionId
             ) *> sessionService
               .deleteSession(sessionId)
@@ -1123,7 +1123,6 @@ private[gateway] object WsSessionChatHandlers:
               sessionTextBuffers.update(_ - sid) *>
                 sessionThinkingBuffers.update(_ - sid) *>
                 sessionTurnStarts.update(_ - sid) *>
-                stopTeamSessionActors(sid) *>
                 stopChildDelegateActors(sid) *>
                 removeRootAgent(sid) *>
                 sessionService.deleteSession(sid)

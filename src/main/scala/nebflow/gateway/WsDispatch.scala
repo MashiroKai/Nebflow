@@ -96,7 +96,6 @@ final class WsDispatchCtx(
   applyPermissionUpgradeImpl: (String, nebflow.core.SafetyMode) => IO[Unit],
   persistGlobalSafetyModeImpl: String => IO[Unit],
   removeRootAgentImpl: String => IO[Unit],
-  stopTeamSessionActorsImpl: String => IO[Unit],
   stopChildDelegateActorsImpl: String => IO[Unit],
   forwardInteractionAnswerImpl: (String, String, io.circe.Json) => IO[Unit],
   isRootScopeSessionImpl: String => IO[Boolean],
@@ -162,7 +161,6 @@ final class WsDispatchCtx(
     applyPermissionUpgradeImpl(sessionId, mode)
   def persistGlobalSafetyMode(mode: String): IO[Unit] = persistGlobalSafetyModeImpl(mode)
   def removeRootAgent(sessionId: String): IO[Unit] = removeRootAgentImpl(sessionId)
-  def stopTeamSessionActors(sessionId: String): IO[Unit] = stopTeamSessionActorsImpl(sessionId)
   def stopChildDelegateActors(sessionId: String): IO[Unit] = stopChildDelegateActorsImpl(sessionId)
 
   def forwardInteractionAnswer(

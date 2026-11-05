@@ -9,7 +9,6 @@ import nebflow.actor.AgentCommand.*
 import nebflow.core.*
 import nebflow.core.ask.AskService
 import nebflow.core.compact.*
-import nebflow.core.flow.TeamSessionRegistry
 import nebflow.core.mail.SessionMailbox
 import nebflow.core.project.NotificationHeader
 import nebflow.core.tools.{AskUserQuestionTool, BgTaskRegistry}
@@ -1356,11 +1355,13 @@ object AgentActor extends AgentCore with AgentSession:
   ): IO[AgentState] = AgentProcessing.restartStateFor(level, state, resources)
 
   // turn 收尾族已整体迁至 agent/AgentFinishTurn.scala(行为保持重构,2026-09-25):
-  // handleLlmCompleteBranch / finishTurn / finishTurnCont / markTeamBusy /
-  // markTeamIdle / fullyIdle / emitDequeuedWs 的实现都在那边(方法体逐字未动);
+  // handleLlmCompleteBranch / finishTurn / finishTurnCont /
+  // fullyIdle / emitDequeuedWs 的实现都在那边(方法体逐字未动);
   // 此处保留同名委托 def(签名与默认参数原样),调用点零改动。pipeLlmCall /
   // pipeToolExecutions 后随 processing 域迁至 agent/AgentProcessing.scala(同日,
   // 见上方 processing 委托处注释)。
+  // 团队功能删除批阶段 3：团队 busy 标记面（markTeamBusy / markTeamIdle）已整体
+  // 退役（退役登记见 AgentFinishTurn 同位注释），本文件的委托 def 一并删除。
   private[agent] def handleLlmCompleteBranch(
     agentDef: AgentDef,
     resources: SharedResources,
@@ -1430,12 +1431,6 @@ object AgentActor extends AgentCore with AgentSession:
       textStreamed,
       isSubagent
     )
-
-  private[agent] def markTeamBusy(agentDef: AgentDef, sid: Option[String]): IO[Unit] =
-    AgentFinishTurn.markTeamBusy(agentDef, sid)
-
-  private[agent] def markTeamIdle(agentDef: AgentDef, sid: Option[String]): IO[Unit] =
-    AgentFinishTurn.markTeamIdle(agentDef, sid)
 
   private[agent] def fullyIdle(
     sid: String,
@@ -1937,8 +1932,7 @@ object AgentActor extends AgentCore with AgentSession:
           pipeToolExecutions(agentDef, resources, depth, parentRef, state.withEscalation(None), cr, None)
         case _ =>
           // No checkpoint — go to idle
-          markTeamIdle(agentDef, state.sessionId) *>
-            IO.pure(idle(agentDef, resources, depth, parentRef, state.withEscalation(None).resetForInterrupt)))
+          IO.pure(idle(agentDef, resources, depth, parentRef, state.withEscalation(None).resetForInterrupt)))
   end retryFromCheckpoint
 
   /**

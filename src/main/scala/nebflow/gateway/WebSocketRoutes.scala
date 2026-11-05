@@ -11,7 +11,6 @@ import nebflow.actor.{ActorSystem as RootActorSystem, *}
 import nebflow.agent.*
 import nebflow.core.*
 import nebflow.core.entity.EntityLoader
-import nebflow.core.flow.TeamSessionRegistry
 import nebflow.core.mcp.McpManager
 import nebflow.core.project.{CancelSource as ChainCancelSource, *}
 import nebflow.core.schedule.FreezeSchedule.given
@@ -511,33 +510,13 @@ class WebSocketRoutes(
           case None => (agents, IO.unit)
       }.flatten
 
-  /**
-   * #38 Layer C (2026-09-01): team 成员会话删除闭环。
-   *
-   * 此前 deleteSession 只停 root agent（removeRootAgent）+ 删磁盘文件；
-   * team 成员 actor（qa-backend 等，注册于 TeamSessionRegistry.actorMap）
-   * 完全存活——state.messages 持 ~10MB，下一次活动（Mail/flow dispatch）
-   * 触发 persistIfSession 2s 防抖 → <id>.json 以 10MB 重建 → 删除复活
-   * （观测：deleteSession 后 ~12s 历史灌回）。修复：删除前停成员 actor +
-   * 清 TeamSessionRegistry 三处映射（actorMap / AgentRegistry / sessionMap）。
-   */
-  private def stopTeamSessionActors(sessionId: String): IO[Unit] =
-    for
-      actorOpt <- TeamSessionRegistry.getRunningActor(sessionId)
-      _ <- actorOpt match
-        case Some(ref) =>
-          logger.info(s"deleteSession: stopping team member actor for $sessionId")
-          // 注意：`ref ! msg` 本身返回 IO[Unit]（offer 的描述）——直接使用，
-          // 不能包 IO(...)（嵌套 IO[IO[Unit]]，内层 offer 永不执行——与 V1
-          // 级联修复同类 bug，#38 停成员 stop 曾因此静默无效）。
-          ref ! AgentCommand.Stop(s"session $sessionId deleted")
-        case None => IO.unit
-      _ <- TeamSessionRegistry.unregisterActor(sessionId, sharedResources)
-      pairOpt <- TeamSessionRegistry.instanceAndAgentOfSession(sessionId)
-      _ <- pairOpt match
-        case Some((inst, agent)) => TeamSessionRegistry.unregisterAgent(inst, agent, sessionId)
-        case None => IO.unit
-    yield ()
+  // ═══ 团队功能删除批（team-feature-deletion-20261104）阶段 3：团队成员删除闭环退役
+  // 本文件原有的 `stopTeamSessionActors`（#38 Layer C 2026-09-01）做两件事：
+  // ① 从团队会话登记表的 actorMap 取成员 actor 并 Stop；② 清该登记表的三处映射
+  // （actorMap / AgentRegistry / sessionMap）。团队会话登记表本体删除后本腿零对象
+  // （actorMap 自 P1 dual-write 起就与 agentRegistry 同源，成员 actor 的停止由
+  // `removeRootAgent` + `stopChildDelegateActors`（SessionChildCascade）覆盖），
+  // 故整段删除，`WsDispatchCtx` 的接线字段一并摘除。
 
   /**
    * V1 (2026-09-03): Delegate/SubTask/Ephemeral 子代理级联停止——实现抽在
@@ -2268,7 +2247,6 @@ class WebSocketRoutes(
       applyPermissionUpgradeImpl = applyPermissionUpgrade,
       persistGlobalSafetyModeImpl = persistGlobalSafetyMode,
       removeRootAgentImpl = removeRootAgent,
-      stopTeamSessionActorsImpl = stopTeamSessionActors,
       stopChildDelegateActorsImpl = stopChildDelegateActors,
       forwardInteractionAnswerImpl = forwardInteractionAnswer,
       isRootScopeSessionImpl = isRootScopeSession,
@@ -3252,22 +3230,19 @@ object WebSocketRoutes:
    *
    * Team agents are LONG-LIVED: activateAgent registers them on the first
    * Mail and they stay in the registry while idle, waiting for the next
-   * Mail. "In the registry" says nothing about running — gate them on the
-   * same busy signal the (team-feature-deletion stage 2 retired)
-   * /api/teams/mounted used (markBusy/markIdle around each
-   * team turn), otherwise every browser refresh reports idle team agents
-   * back as running ghosts in the bg-agent dropdown.
+   * Mail. "In the registry" says nothing about running.
+   *
+   * 团队功能删除批（team-feature-deletion-20261104）阶段 3：原有第二条腿「Team
+   * 记录按 busyMap 过滤」随 busy 标记面整体退役（busyMap 的唯一读者就是它，而
+   * `AgentKind.Team` 记录的唯一生产者是以团队会话登记表为底座的冷激活腿 ⇒ 两侧
+   * 同时失去数据源）。呈现面因此零变化：本仓再也产生不出 Team 记录。
    *
    * Standalone (zero class deps) so it is directly unit-testable
    * (ActiveAgentsFilterSpec).
    */
   def filterActiveAgents(registry: Map[String, AgentRecord]): IO[List[AgentRecord]] =
     val taskKinds = Set(AgentKind.Delegate, AgentKind.Ephemeral, AgentKind.Flow, AgentKind.SubTask)
-    val inFlight = registry.values.toList.filter(r => taskKinds.contains(r.kind))
-    val teamAgents = registry.values.toList.filter(_.kind == AgentKind.Team)
-    teamAgents
-      .traverseFilter(rec => TeamSessionRegistry.isBusy(rec.sessionId).map(busy => if busy then Some(rec) else None))
-      .map(_ ++ inFlight)
+    IO.pure(registry.values.toList.filter(r => taskKinds.contains(r.kind)))
 
   /**
    * 显示名契约批（2026-10-22 · 子智能体面板行显示名修复）：activeAgents 快照面

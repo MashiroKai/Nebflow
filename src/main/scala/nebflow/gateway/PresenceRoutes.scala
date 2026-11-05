@@ -607,54 +607,6 @@ private[gateway] object PresenceRoutes:
       // /team/rules/*) are untouched. (/teams/mounted left this list in the
       // team-feature-deletion stage 2 — see the tombstone above.)
 
-      // GET /teams/mailbox/:sessionId/:teamName — mail history for a team
-      case req @ GET -> Root / "teams" / "mailbox" / sessionId / flowName =>
-        withAuth(req) {
-          if sessionId.isEmpty || !sessionId.matches("^[a-zA-Z0-9._-]{1,64}$") then
-            BadRequest(Json.obj("error" -> "Invalid sessionId".asJson))
-          else
-            for
-              records <- nebflow.core.flow.FlowMailStore.load(sessionId, flowName)
-              result <- Ok(Json.obj("records" -> records.asJson))
-            yield result
-        }
-
-      // DELETE /teams/mailbox/:sessionId/:teamName — clear mail history
-      case req @ DELETE -> Root / "teams" / "mailbox" / sessionId / flowName =>
-        withAuth(req) {
-          if sessionId.isEmpty || !sessionId.matches("^[a-zA-Z0-9._-]{1,64}$") then
-            BadRequest(Json.obj("error" -> "Invalid sessionId".asJson))
-          else
-            for
-              _ <- nebflow.core.flow.FlowMailStore.clear(sessionId, flowName)
-              result <- Ok(Json.obj("cleared" -> true.asJson))
-            yield result
-        }
-
-      // GET /teams/mail-queue/:sessionId — pending queue mails
-      case req @ GET -> Root / "teams" / "mail-queue" / sessionId =>
-        withAuth(req) {
-          if sessionId.isEmpty || !sessionId.matches("^[a-zA-Z0-9._-]{1,64}$") then
-            BadRequest(Json.obj("error" -> "Invalid sessionId".asJson))
-          else
-            for
-              items <- nebflow.core.flow.MailQueueStore.load(sessionId)
-              result <- Ok(Json.obj("items" -> items.asJson))
-            yield result
-        }
-
-      // DELETE /teams/mail-queue/:sessionId/:itemId — cancel a pending queue mail
-      case req @ DELETE -> Root / "teams" / "mail-queue" / sessionId / itemId =>
-        withAuth(req) {
-          if sessionId.isEmpty || !sessionId.matches("^[a-zA-Z0-9._-]{1,64}$") then
-            BadRequest(Json.obj("error" -> "Invalid sessionId".asJson))
-          else
-            for
-              remaining <- nebflow.core.flow.MailQueueStore.removeById(sessionId, itemId)
-              result <- Ok(Json.obj("items" -> remaining.asJson))
-            yield result
-        }
-
       // GET /api/chains — per-task delegate 链**行投影**（N1 刀3 · A8 读面上半：
       // #1228 stub §四.3 唯一硬依赖 + §四.4 活性提示位 = agentRegistry 快照同面携带；
       // 真源 = DelegateRegistry 持久记录 × live × terminal-verdict 判词行——投影语义
@@ -776,40 +728,6 @@ private[gateway] object PresenceRoutes:
         }
 
       // ===== Flow Editor APIs =====
-
-      // GET /teams/def/:name — return team definition for the editor
-      case req @ GET -> Root / "teams" / "def" / flowName =>
-        withAuth(req) {
-          if !isValidFlowName(flowName) then BadRequest(Json.obj("error" -> "Invalid name".asJson))
-          else
-            for
-              teamOpt <- EntityLoader.loadTeam(flowName)
-              agents <- EntityLoader.listAgents()
-              result <- teamOpt match
-                case None => NotFound(Json.obj("error" -> s"Team '$flowName' not found".asJson))
-                case Some(team) =>
-                  val leadEntry = agents.get(team.lead)
-                  val memberEntries = team.members.flatMap(agents.get)
-                  val allEntries = (leadEntry.toList ++ memberEntries)
-                  val agentsJson = allEntries.map { entry =>
-                    Json.obj(
-                      "name" -> entry.name.asJson,
-                      "description" -> entry.description.asJson,
-                      "tools" -> entry.tools.asJson,
-                      "systemPrompt" -> entry.systemPrompt.asJson
-                    )
-                  }
-                  Ok(
-                    Json.obj(
-                      "name" -> team.name.asJson,
-                      "manager" -> team.lead.asJson,
-                      "description" -> team.description.asJson,
-                      "agents" -> agentsJson.asJson,
-                      "type" -> "team".asJson
-                    )
-                  )
-            yield result
-        }
 
       // GET /bg-tasks/:jobId/output?offset=N — background task output view
       // (2026-09-09 author request: the bg-tasks panel rows open a detail card).
@@ -2095,44 +2013,17 @@ private[gateway] object PresenceRoutes:
       // (team detail) was RETIRED here — 仓内零调用点 in the classify pass. The
       // /team/rules/:name pair below is the live face (FE caller).
 
-      // GET /team/rules/:name — read team rules.md
-      case req @ GET -> Root / "team" / "rules" / teamName =>
-        withAuth(req) {
-          if !isValidAgentName(teamName) then BadRequest(Json.obj("error" -> "Invalid team name".asJson))
-          else
-            for
-              rules <- EntityLoader.loadTeamRules(teamName)
-              result <- Ok(Json.obj("content" -> rules.asJson))
-            yield result
-        }
-
-      // POST /team/rules/:name — save team rules.md + trigger reload
-      case req @ POST -> Root / "team" / "rules" / teamName =>
-        withAuth(req) {
-          if !isValidAgentName(teamName) then BadRequest(Json.obj("error" -> "Invalid team name".asJson))
-          else
-            for
-              body <- req.as[Json]
-              content = body.hcursor.downField("content").as[String].getOrElse("")
-              rulesDir = PathUtil.dataRoot / "teams" / teamName
-              _ <- IO.blocking {
-                os.makeDir.all(rulesDir)
-                val tmp = rulesDir / ".rules.md.tmp"
-                os.write(tmp, content)
-                os.move.over(tmp, rulesDir / "rules.md")
-              }
-              // (团队功能删除批 team-feature-deletion-20261104 阶段 2) 此处原有
-              // 「写后热重载」腿：遍历树注册表，向每棵团队树发
-              // ReloadDefinition(teamName) 以让 rules.md 改动对下次激活
-              // 立即生效。该腿已删 —— 它是团队挂载树的最后一条只写消费者，阶段 1
-              // 之后既无树可发也无帧回传。**端点本身保留**（判定见
-              // reports-evidence/team-feature-deletion/stage2/README.md §C）：
-              // rules.md 是盘上真配置文件，仍有非树读面（ContextRefresher:638 /
-              // MailTool:2299 / 本文件的 GET /team/rules），且前端
-              // web/js/flowViewers.js:174 是活的写调用方。
-              result <- Ok(Json.obj("saved" -> true.asJson))
-            yield result
-        }
+      // 团队功能删除批（team-feature-deletion-20261104）阶段 3：GET/POST
+      // /api/team/rules/:name 两条路由在此 RETIRED。
+      //  · 阶段 2 曾判「端点保留」，理由是 rules.md 是盘上真配置文件、仍有非树读面
+      //    （ContextRefresher 的团队目录注入 / Mail 的跨团队开关）与「活的前端写
+      //    调用方 flowViewers.js:174」。阶段 3 现场复核推翻了后两条：跨团队 Mail
+      //    开关随团队寻址面整体退役（`allow-cross-team-mail` 判据已删），团队目录
+      //    注入随团队会话面删除（ContextRefresher 的团队归属恒 None），而
+      //    flowViewers.js 的 `openRules` 在 `web/` 内**零调用点**（孤儿函数，随同批
+      //    删除）⇒ 两条路由已零消费者，整体退役。
+      //  · `EntityLoader.loadTeamRules` 本体保留（实体层通用读面，作者未裁定去留；
+      //    本阶段只摘消费者）。
 
       // (2026-09-20 device-face hardening batch) 11-route takedown: GET /entity-agents
       // was RETIRED here — 仓内零调用点 in the classify pass. Live agent faces are
@@ -2701,8 +2592,8 @@ private[gateway] object PresenceRoutes:
   // (团队功能删除批 team-feature-deletion-20261104 阶段 2) `buildMountedTeamsJson`
   // 曾在此（原 :2701-2745）：为 GET /api/teams/mounted 拼「已挂团队 + agent 磁贴
   // 状态 + 团队任务」的响应体。路由与它的唯一调用方一并删除，故整段移除；
-  // 它读的 TeamSessionRegistry.listMountedTeams / isBusy 本体不动（阶段 3 才处置
-  // 该类型本体），此时只是失去本消费者。判定见
+  // 它读的团队会话登记表（listMountedTeams / isBusy）本体已在阶段 3 随团队面删除，
+  // 故此处只是失去本消费者。判定见
   // reports-evidence/team-feature-deletion/stage2/README.md §B。
 
   // ── Flow editor helpers ──────────────────────────────────
