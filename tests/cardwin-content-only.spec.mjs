@@ -175,12 +175,14 @@ async function waitCardContent(popup, needle) {
   await openFileCard(page);
 
   const popState = await page.evaluate(() => {
-    // 批⑤：#canvas-pop-btn 退役——入口断言迁移到卡头右键菜单「在独立窗口打开」项
+    // 件1 回归批（2026-11-05 作者令）：#canvas-pop-btn 回位到标题胶囊右座（文件卡 =
+    // 可用态）；右键菜单入口同时保留（两入口同一行为腿 toggleCardWindow）。
     const hdr = document.querySelector('#canvas-panel .canvas-header');
-    return { hasHeader: !!hdr };
+    const pop = hdr ? hdr.querySelector('.canvas-pop-btn') : null;
+    return { hasHeader: !!hdr, popIn: !!pop && !pop.disabled };
   });
-  ok('C1-0 文件卡入口在挂：卡头在挂（独立窗出口 = 卡头右键菜单，批⑤ 后 #canvas-pop-btn 已退役）',
-    !!popState && popState.hasHeader === true, JSON.stringify(popState));
+  ok('C1-0 文件卡入口在挂：卡头在挂 + 胶囊右座 .canvas-pop-btn 可用（件1 回归；右键菜单入口同时保留）',
+    !!popState && popState.hasHeader === true && popState.popIn === true, JSON.stringify(popState));
 
   const popupP = ctx.waitForEvent('page', { timeout: 8000 });
   await popoutViaHeaderMenu(page);
@@ -241,12 +243,23 @@ async function waitCardContent(popup, needle) {
   await page.waitForSelector('.canvas-tab-pane[data-tab-id="plugins"]', { timeout: 10000, state: 'attached' });
   await sleep(400);
 
+  /* 件1 回归批改写（2026-11-05 作者令「电脑端要放在胶囊的右侧」）：批⑤「pop 钮退役」
+     这条断言随入口回位作废 —— **判据本体不降**：作者令「非内容物页签取禁用态 + 提示、
+     点击不得开窗」照旧钉死，只把陈述对象从「按钮不存在」换成「按钮存在但禁用 + 提示 =
+     canvas.cardwinContentOnly」（同一批内容物收口判据的可见形态）。
+     理由：入口回到卡头后，边界必须**可见**（禁用态 + 提示）而不是靠入口缺席静默。 */
   const panelEntry = await page.evaluate(() => {
-    // 批⑤：pop 钮退役——面板页签禁独立语义改断言右键菜单的禁用项（toast 提示）
-    return { popBtnGone: !document.getElementById('canvas-pop-btn') };
+    const pop = document.querySelector('#canvas-panel .canvas-header .canvas-pop-btn');
+    return {
+      popIn: !!pop,
+      disabled: !!(pop && pop.disabled),
+      hint: pop ? (pop.getAttribute('title') || '') : '',
+      label: pop ? (pop.getAttribute('aria-label') || '') : '',
+    };
   });
-  ok('P1-1 面板页签：#canvas-pop-btn 已退役（批⑤ 去「独立窗口」钮——入口 = 右键菜单禁用项）',
-    panelEntry.popBtnGone === true, JSON.stringify(panelEntry));
+  ok('P1-1 面板页签：胶囊右座 .canvas-pop-btn 在挂但**禁用** + title/aria-label = 内容物收口提示（判据不降）',
+    panelEntry.popIn === true && panelEntry.disabled === true &&
+    panelEntry.hint.length > 0 && panelEntry.hint === panelEntry.label, JSON.stringify(panelEntry));
 
   // 环卡（deck 开）：面板环卡不建 pop 钮
   await page.click('#deck-fab');
