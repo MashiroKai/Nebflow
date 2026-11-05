@@ -740,6 +740,10 @@ export default {
   // GET /api/projects（与项目面板同源），文案仅浮层无匹配态与 ARIA 标签。
   'mention.title': '项目',
   'mention.noMatch': '无匹配项目',
+  // `#` 待办引用补全（待办结构化批 2026-11-05）：文案只写状态事实，不写操作教学。
+  'todoComplete.title': '待办',
+  'todoComplete.noMatch': '无匹配待办',
+  'todoComplete.detailUnavailable': '这条待办不在当前列表里',
   'slash.title': '斜杠命令',
   'modal.newSession': '新建会话',
   'modal.sessionName': '会话名称',
@@ -1745,6 +1749,15 @@ export default {
   'chat.copy': '复制',
   'human.details': '细节',
   // 认知二期产品批①选档器（§6.2 五档参数表产品化；档名/档价值观/覆盖参数）
+  // rich-render 批（2026-11-05）：图围栏 / SVG 围栏 / 公式共用的失败态与读数。
+  'fence.renderFailed': '图表渲染失败',
+  'fence.showSource': '展开源码',
+  'fence.hideSource': '收起源码',
+  'fence.sanitized': '已移除 {n} 项不安全内容',
+  'fence.svgParseFailed': 'SVG 语法错误',
+  'fence.svgRootRequired': '根元素不是 svg',
+  'fence.svgNothingLeft': '无可绘制内容',
+  'fence.mathFailed': '公式渲染失败',
   'mermaid.showSource': '查看源码',
   'mermaid.hideSource': '收起源码',
   'chat.copyFailed': '复制失败',
@@ -3091,6 +3104,9 @@ export default {
   'todoface.done': '完成',
   'todoface.titlePh': '标题',
   'todoface.notesPh': '备注（可选）',
+  // 两段化（待办结构化批 2026-11-05）：detail 折叠钮与编辑面字段名的可读标签。
+  'todoface.detailToggle': '展开详情',
+  'todoface.detailFieldLabel': '详情',
   'todoface.prioNone': '无',
   'todoface.prioLow': '低',
   'todoface.prioMed': '中',

@@ -785,6 +785,10 @@ export default {
   // the popup's no-match state and its ARIA label only.
   'mention.title': 'Projects',
   'mention.noMatch': 'No matching projects',
+  // `#` todo-reference completion (todo name+detail batch, 2026-11-05).
+  'todoComplete.title': 'Todos',
+  'todoComplete.noMatch': 'No matching todos',
+  'todoComplete.detailUnavailable': 'This todo is not in the current list',
   'modal.newSession': 'New Session',
   'modal.sessionName': 'Session name',
   'modal.cancel': 'Cancel',
@@ -1805,6 +1809,16 @@ export default {
   'chat.skillLabel': 'skill: {skill}',
   'human.details': 'Details',
   'mermaid.renderFailed': 'Diagram failed to render',
+  // rich-render batch (2026-11-05): shared failure states for diagram / svg /
+  // math fences.
+  'fence.renderFailed': 'Diagram failed to render',
+  'fence.showSource': 'Show source',
+  'fence.hideSource': 'Hide source',
+  'fence.sanitized': 'Removed {n} unsafe item(s)',
+  'fence.svgParseFailed': 'SVG syntax error',
+  'fence.svgRootRequired': 'Root element is not svg',
+  'fence.svgNothingLeft': 'Nothing drawable left',
+  'fence.mathFailed': 'Formula failed to render',
   'mermaid.showSource': 'Show source',
   'mermaid.hideSource': 'Hide source',
   'chat.copyFailed': 'Copy failed',
@@ -3180,6 +3194,9 @@ export default {
   'todoface.done': 'Done',
   'todoface.titlePh': 'Title',
   'todoface.notesPh': 'Notes (optional)',
+  // Two-field split (todo name+detail batch, 2026-11-05).
+  'todoface.detailToggle': 'Show details',
+  'todoface.detailFieldLabel': 'Details',
   'todoface.prioNone': 'None',
   'todoface.prioLow': 'Low',
   'todoface.prioMed': 'Med',

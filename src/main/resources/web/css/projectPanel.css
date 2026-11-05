@@ -464,22 +464,92 @@
    特异度 (0,3,0) > `.team-scroll` (0,1,0) ⇒ 按特异度胜出，与样式表顺序无关。 */
 .canvas-tab-pane[data-type="projects"] .team-scroll { padding-bottom: 72px; }
 
-/* ── 顶行让位带（2026-10-22 作者追加令「胶囊与标题文字/相邻控件零重叠」）────
-   作者截图：「项目」卡头胶囊（.canvas-header，浮层 absolute top10/left14
-   z-30，实测高 36 ⇒ 底缘 46）叠压住本面板「委托全景」标题与列表卡标题
-   （.team-card-title[data-open-flowmap] 即卡片唯一交互件）——遮查看又遮点击，
-   且 projcreate 两 spec 的点击被胶囊 subtree 拦截超时（基点 5 败实证）。
-   布局层解法 = 面板顶预留 56px 胶囊带（胶囊底缘 46；deck fab fixed top10+40
-   高底缘 50 ⇒ 56 = 全清出 + 4px 基数；手机层卡头通栏底缘 ≈40-46 同带覆盖）：
-   ① in-flow 面（.flowmap-nav-bar 返回钮/链标题/摘要、delegate 视图体）——
-   pane padding-top 直接生效；
-   ② 列表滚动体 .team-scroll 是 **absolute top:0**（flowCss.js 注入的共用壳，
-   锚 padding box ⇒ pane padding 对它无效）——须同带改 `top: 56px`，列表首行
-   卡标题才真正离开胶囊命中区（elementFromPoint/click 双证钉死）。
-   纯定位让位——不改胶囊定位、不动视图结构、零 sticky 面；绝对定位子级
-   （proj-create-fab bottom/right 座、fm-fab 右缘座）不随带移位。 */
-.canvas-tab-pane[data-type="projects"] { padding-top: 56px; }
-.canvas-tab-pane[data-type="projects"] .team-scroll { top: 56px; }
+/* ══ 面板头「穿顶」带（件4 · 2026-11-05 作者令）══════════════════════════
+   作者原话：「canvas 顶部的这种内容一开始不允许在按钮下，但是滑动后可以从按钮下
+   穿过的这种设计要落实到其他的面板……这样式和 Canvas 的统一。」
+   两条铁律：**元素不许为了腾地方而消失**；**两态都要成立** = 初始不遮挡/不重叠，
+   滚动后才允许从按钮/胶囊下穿过。
+
+   机制单源 = canvas 标题胶囊三件（实测活变量，spec REF 腿钉死）：
+     ① 胶囊 = **滚动容器之外的绝对浮层**：`.canvas-header` position:absolute /
+        top 10 / z-index 30 + 玻璃本体 backdrop-filter（split.css:723-760，
+        sapphire.css:264-267 的 --cv-head-* 几何档）；
+     ② 让位 = **滚动容器自身的 padding-top**（md 面 52px，split.css:4052-4054）：
+        padding 是滚动内容的一部分 ⇒ 初态首内容起笔在胶囊下缘之下，滚动后 padding
+        随内容滚走 ⇒ 内容从胶囊底下真穿过；
+     ③ **不是遮罩**：桌面 canvas 的裙边渐隐已退役（scrollUnderGlass.css:76-78
+        display:none，作者 2026-10-22 裁定「不允许任何渐变蒙层盖在内容上」），
+        穿过读作 = z 序 + 玻璃本体本身；排他是布局性的（行占位 + 下方起算），
+        非 z-index 遮掩（split.css:713-720）。
+
+   token 单源纪律：几何只有一份（sapphire.css 的 --cv-* 声明），本块只给面板族
+   语义别名 —— 禁各面板另抄一套魔数（值 = band 46px / clear 56px）。
+   ─────────────────────────────────────────────────────────────────── */
+:root {
+  --panel-head-top: var(--cv-head-top);
+  --panel-head-h: var(--cv-head-h);
+  --panel-head-band: var(--cv-head-band);
+  --panel-head-clear: var(--cv-head-clear);
+  /* 呼吸缝（= --cv-head-clear 扣掉行带的那 10px，不另立数值）+ 双行让位：
+     面板自带返回条排在 canvas 标题胶囊那一行**之下**（胶囊 10..46 / 自带条
+     56..92），故双行面（有自带返回条的面板）的让位 = 胶囊行 + 呼吸缝 + 自带条高
+     = 56 + 36 + 10 = 102（首内容起笔读数）。 */
+  --panel-head-seam: calc(var(--panel-head-clear) - var(--panel-head-band));
+  --panel-head-2row: calc(var(--panel-head-clear) + var(--panel-head-h) + var(--panel-head-seam));
+}
+
+/* ① 项目列表面板（.team-scroll = 卡片列表滚动体）
+   旧实现（2026-10-22 顶行让位带）把整个滚动体下移 `top: 56px` —— 首卡确实离开了
+   胶囊命中区，代价是滚动体顶缘钉死 56：46..56 成一条死带、56 处一条硬切线，「穿过」
+   态不成立（件4 改前实测 B1 裁剪感知可见顶 73 ≥ 胶囊底 63、B2 带内命中 pane 底）。
+   本批改回 canvas 机制：滚动体顶缘留在 pane 顶（top 0，绝对定位锚 padding box ⇒
+   pane padding 对它无效，故让位必须写在滚动体自身），让位交给它自己的 padding-top
+   ⇒ 首卡仍起笔 56（胶囊底 46 + 10 呼吸缝，读数不变），滚动后首卡从胶囊底下穿过
+   （首卡滚动到 pane 顶缘，内容真正经过胶囊背后）。
+   桌面限定：手机层项目页是页面壳（大标题 + 悬浮返回钮自有让位），见 mobileLayer.css
+   「项目面旧胶囊让位带收编」块。 */
+body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] {
+  padding-top: 0;
+}
+body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .team-scroll {
+  top: 0;
+  padding-top: var(--panel-head-clear);
+}
+
+/* ② Flow-Map 族就地视图（项目全景 / 委托链视图）：返回条升为**浮层玻璃胶囊**。
+   与 canvas 标题胶囊同高（--panel-head-h 36）/ 同材质（--glass-bg + blur 24 +
+   saturate 1.15 + 玻璃描边、底缘描边透明化 = 内容从条底下穿过时不衬横线）/
+   同圆角（pill），实测材质逐项 = 胶囊档。
+   🔴 行序（本块第一版踩过的坑，留档防复发）：返回条**不得**占 canvas 标题胶囊
+   那一行（top: --panel-head-top）——两件都是 z 30 浮层，会正面叠印、把页签胶囊盖掉
+   （=「元素为了腾地方而消失」，作者铁律①）。故返回条排第二行 = top: --panel-head-clear
+   （胶囊行下缘 46 + 10 呼吸缝 = 56），视图体让位 = 双行档 --panel-head-2row（102）。
+   视图体（.delegate-chain-view-body）自带 padding-top 让位 ⇒ 初态首内容在条下，
+   滚动后从条底下穿过（滚动体顶缘留在 pane 顶 = 真穿过，不是被裁在条下）。
+   pane 型页（委托链 per-task = pan/zoom 地图面，无纵向滚动轴）同一套几何：
+   只要求「初态不压」（穿过腿对 pan 面无意义，见 spec B1 N/A 注）。 */
+body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .flowmap-nav-bar {
+  position: absolute;
+  top: var(--panel-head-clear);
+  left: 14px;
+  right: 14px;
+  z-index: 30;
+  box-sizing: border-box;
+  height: var(--panel-head-h);
+  padding: 0 var(--ds-space-3);
+  border: var(--ds-border-width, 1px) solid var(--ds-border-glass);
+  border-bottom-color: transparent;
+  border-radius: var(--ds-radius-pill);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+}
+body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .delegate-chain-view-body {
+  padding-top: var(--panel-head-2row);
+}
+/* ②-c 地图面（per-task）同款浮层：地图无纵向滚动轴 ⇒ 只要求「初态不压」，不要求
+   穿过（pan 面不是滚动面）；视图体仍吃 padding-top 让位，地图满幅从条下起笔。 */
+
 
 /* 弹层专属布局（材质/玻璃/零暗化全部继承 `.wsp-*` 与共享玻璃卡组，此处只补
    `.wsp-*` 族没有的 textarea 槽位与计数行——材质仍取 `.modal-input`，零新造）。 */

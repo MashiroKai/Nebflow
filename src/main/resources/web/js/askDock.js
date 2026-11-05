@@ -832,10 +832,17 @@ function syncSeat() {
   const panel = document.getElementById('canvas-panel');
   if (!panel) return;
   const panelRect = panel.getBoundingClientRect();
-  // 基准 24px = 与左锚文档工具簇行共中线（canvas 控件尺寸对齐批 2026-11-02：
-  // 簇纽 48 ⇒ 面板系中线 48px − fab 半高 24；与 ask.css --ask-fab-bottom 同值，
-  // 本腿写内联变量会覆盖 CSS 缺省，两处必须同步）。
-  const FAB_BOTTOM_BASE = 24;
+  // 基准 = 与左锚文档工具簇行共中线。件3 批（2026-11-05）：中线改**实测派生**——
+  // 簇钮档从 48 收敛回顶部圆钮档 40（--cv-size-circle-lg）后「面板系中线 48 − fab
+  // 半高 24 = 24」这条写死的中线数学会漂 4px（T1f 共中线判据 ≤2.5px 实测 dy=4 变红）。
+  // 现口径：中线 = 面板底 → 簇钮盒中线（实测），fab 底距 = 中线 − fab 半高 ⇒ 尺寸档
+  // 再改也不会漂；簇钮缺席（无活动内容页签）时按 token 兜底 壳底垫 8 + 行底距 16 + 半钮高。
+  const fabH = (el.fab && el.fab.getBoundingClientRect().height) || 48;
+  const rowBtn = panel.querySelector('.canvas-source-toggle, .canvas-ref-select, .canvas-find-toggle, .canvas-refresh-toggle');
+  const rowR = rowBtn ? rowBtn.getBoundingClientRect() : null;
+  const tokenSize = parseFloat(getComputedStyle(panel).getPropertyValue('--cv-size-circle-lg')) || 40;
+  const rowMid = rowR && rowR.height > 0 ? panelRect.bottom - (rowR.top + rowR.height / 2) : (24 + tokenSize / 2);
+  const FAB_BOTTOM_BASE = Math.max(8, Math.round(rowMid - fabH / 2));
   let bottomPx = FAB_BOTTOM_BASE;
   // 通栏底栏（可见者取最上沿）：电子书阅读器底栏——批⑩ 2026-10-31：epub/mobi/
   // azw3 可问面 fab 上阅读器页（底栏 ⋯ 钮在右端，fab 不抬必拦截其命中，

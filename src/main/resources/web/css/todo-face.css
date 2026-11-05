@@ -261,8 +261,11 @@
   box-shadow:
     inset 0 1px 0 0 rgba(255, 255, 255, 0.15),
     0 4px 16px rgba(0, 0, 0, 0.05);
-  /* 过渡起源点 = 胶囊中心（浮层**顶**缘中点 − 8px 呼吸缝）—— JS 的 scale 弹簧
-     与 CSS 共用这个原点 ⇒ 形变「从胶囊长出来」。 */
+  /* 展开动画（件5 2026-11-05）：**几何驱动**，只由 JS 逐帧写 inline height
+     （起点 = 胶囊高、终点 = 内容自然高）+ 两条顶圆角；此处不留 transform 形变
+     通道 ⇒ 载体的 rect.left / rect.top 全程不动，只有底缘向下长（作者原话
+     「要在同一行展开。有一种胶囊变大的感觉。」）。`transform: translateX(-50%)`
+     只承担「与胶囊同一水平中线」的静态定位，动画期间不变。 */
   transform-origin: 50% calc(0% - 8px);
   overflow: hidden;
 }
@@ -286,6 +289,10 @@
 .tfl-panel {
   display: flex;
   flex-direction: column;
+  /* 件5（2026-11-05）：展开几何由载体 `.tfl-card` 的 height 逐帧驱动，载体在动画
+     期间被裁到 < 内容高。本件**不参与收缩**（flex-shrink 0）——否则高度一缩，面板
+     会跟着被 flex 压扁，行/文字逐帧位移（件5 A3 判据要的是「行零位移」）。 */
+  flex: 0 0 auto;
   min-height: 0;
   opacity: 0;
   pointer-events: none;
@@ -685,15 +692,18 @@
   gap: var(--ds-space-1);
   min-width: 0;
 }
+/* 行内名称（件6 2026-11-05 作者令「事项名应该简单」）：**单行** + ellipsis。
+   改前是 2 行 -webkit-line-clamp（长名换行、视觉上把行撑高，且 text-overflow
+   读作 clip ⇒ 没有截断语义）；改后一行到底，超长读作「…」，完整值仍在
+   title 提示与编辑面板的名输入框里（值 = 全文）。 */
 .tfl-row-title {
   flex: 1 1 auto;
   min-width: 0;
   font: 500 var(--ds-fs-hint)/1.35 ui-monospace, SFMono-Regular, monospace;
   color: var(--color-text, #000);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .tfl-row-notes {
   font: 400 var(--ds-fs-meta)/1.35 ui-monospace, SFMono-Regular, monospace;
@@ -781,6 +791,11 @@
 .tfl-row.tfl-row-enter { animation: tfl-row-enter 0.3s cubic-bezier(0.16, 1, 0.3, 1) backwards; }
 
 /* ── 行内编辑面板（grid 0fr→1fr 高度过渡 = move(edge:.top)+opacity 近似）─ */
+/* 编辑态行换行（件6 2026-11-05）：编辑面板整块落到行头**下方**、占满整行宽
+   （`flex-wrap: wrap` + 面板 `flex: 1 1 100%`）。改前本行不换行，面板被挤到行头
+   右侧、与名/备注并排（实测：面板 left 547.7 而行头 left 399 / 面板 top 156 高于
+   行头底 221 —— 既不是「在下方展开」，也没法分成上下两层输入面）。 */
+.tfl-row-editing { flex-wrap: wrap; }
 .tfl-edit-wrap {
   display: grid;
   grid-template-rows: 0fr;
@@ -801,6 +816,24 @@
   border-radius: var(--ds-radius-badge);
   background: color-mix(in srgb, var(--color-text, #000) 5%, transparent);
 }
+/* 事项名输入面（件6）：与内容输入面同**视觉厚度**（同一盒高/内距/背景），
+   但字重与色阶略强（名 = 条目主键）。单行 + 失焦读作截断（ellipsis），
+   输入框 value 仍是全文（上限由 maxlength 与 JS 夹紧，见 js/todoFace.js NAME_MAX）。
+   选择器带面板前缀 ⇒ 稳胜过 `.tfl-row-title-input` 的字档。 */
+.tfl-edit-panel .tfl-edit-name {
+  border: none;
+  outline: none;
+  border-radius: var(--ds-radius-badge);
+  background: color-mix(in srgb, var(--color-text) 6%, transparent);
+  padding: 3px var(--ds-space-1h);
+  min-width: 0;
+  font: 500 11px/1.35 ui-monospace, SFMono-Regular, monospace;
+  color: color-mix(in srgb, var(--color-text) 88%, transparent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tfl-edit-panel .tfl-edit-name::placeholder { color: color-mix(in srgb, var(--color-text) 32%, transparent); }
 .tfl-edit-notes {
   border: none;
   outline: none;
@@ -811,6 +844,45 @@
   color: color-mix(in srgb, var(--color-text, #000) 70%, transparent);
 }
 .tfl-edit-notes::placeholder { color: color-mix(in srgb, var(--color-text, #000) 35%, transparent); }
+/* detail 文本域（两段化批 2026-11-05）：编辑面第二段是可含换行的长文本，
+   单行 input 会吞掉换行 ⇒ 文本域；空内容时按内容高（单行，与名输入同厚度），
+   有内容时随内容长到上限后自身滚动，纵向可手拉。 */
+.tfl-edit-detail {
+  box-sizing: border-box;
+  field-sizing: content;
+  min-height: 0;
+  max-height: 96px;
+  resize: vertical;
+  line-height: 1.4;
+  font-family: inherit;
+}
+/* 行内 detail 折叠（两段化批）：列表行默认**只显 name**；折角钮展开后整段
+   以次级墨色多行显示（视觉层级低于标题，不动版式高度基准）。 */
+.tfl-row-fold {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: var(--ds-radius-badge);
+  background: transparent;
+  color: color-mix(in srgb, var(--color-text) 40%, transparent);
+  cursor: pointer;
+}
+.tfl-row-fold:hover { color: color-mix(in srgb, var(--color-text) 70%, transparent); }
+.tfl-row-fold svg { width: 9px; height: 9px; transition: transform 0.16s ease; }
+.tfl-row-open .tfl-row-fold svg { transform: rotate(180deg); }
+.tfl-row-detail {
+  font: 400 var(--ds-fs-meta)/var(--ds-lh-std) ui-monospace, SFMono-Regular, monospace;
+  color: color-mix(in srgb, var(--color-text) 58%, transparent);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding-top: var(--ds-space-half);
+}
+.tfl-row-detail[hidden] { display: none; }
 .tfl-edit-prio { display: flex; align-items: center; gap: var(--ds-space-half); flex-wrap: wrap; }
 .tfl-edit-prio-btn {
   display: inline-flex;

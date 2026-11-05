@@ -215,7 +215,8 @@ const openFile = (page, p) => page.evaluate((pp) => {
     headCloseTitle: document.getElementById('canvas-head-close')?.getAttribute('title') || '',
   }));
   probes.noGraphToggle = await page.evaluate(() => !document.querySelector('.canvas-tab-pane.active .canvas-graph-toggle') && !document.querySelector('.canvas-graph-toggle'));
-  probes.noPopChip = await page.evaluate(() => !document.getElementById('canvas-pop-btn'));
+  // 件1 回归批（2026-11-05）：独立窗钮回位胶囊右座 ⇒ probe 由「无 chip」翻为「在挂」
+  probes.hasPopChip = await page.evaluate(() => !!document.getElementById('canvas-pop-btn'));
 
   // ⑤堆叠态顶计数
   await page.click('#deck-fab');
