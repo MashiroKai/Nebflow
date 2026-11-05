@@ -895,6 +895,9 @@ export default {
   'subagents.fromFlowNode': '来自 AgentFlow 节点',
   'subagents.fromSubagent': '来自上层子代理',
   'subagents.orphanTip': '父会话已不可见 · {sid}',
+  // 野节点归置批（2026-11-05 腿③）：野节点（父不可解析的行）独立归置分组的组头词。
+  // 一个事实词（这群行没有父），不是解释句/教学句（自解释铁律 8）。
+  'subagents.orphanGroup': '无父节点',
   // 面板层级批（2026-10-31 ①）：组头折叠 caret 的无障碍/悬停文案（随折叠态翻转）。
   'subagents.collapseGroup': '收起子任务',
   'subagents.expandGroup': '展开子任务',

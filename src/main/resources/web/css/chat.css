@@ -362,6 +362,21 @@
   border-left: 2px solid var(--color-frame-border);
 }
 .bg-task-row-child .bg-task-name { font-size: var(--ds-fs-hint); }
+/* 野节点归置批（2026-11-05 腿③ · 作者点名「很多的野节点」）：父不可解析的行收进
+   独立归置分组——组头是**标签不是行**（不占行集、不入计数、零按钮：引擎侧没有关闭
+   判据，本批只展示、零自动处置），组内行保持 depth0 + 既有「来自 …」来源角标。
+   纯标签面：色/字阶/间距全部走既有 --ds-* 槽（零新增档、零色值字面量）。 */
+.bg-orphan-group {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  margin-top: var(--ds-space-2);
+  padding: var(--ds-space-2) var(--ds-space-3) var(--ds-space-1);
+  border-top: 1px solid var(--glass-control-border);
+  font-size: var(--ds-fs-meta);
+  font-weight: var(--ds-fw-body);
+  color: var(--ds-text-muted);
+}
 /* panel-ia 批：主名行升为行内第一读数后，meta 槽（状态词）与摘要同族 muted。 */
 .bg-task-state {
   font-size: var(--ds-fs-meta);

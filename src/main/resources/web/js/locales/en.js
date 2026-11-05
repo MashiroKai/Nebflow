@@ -937,6 +937,10 @@ export default {
   'subagents.fromFlowNode': 'from an AgentFlow node',
   'subagents.fromSubagent': 'from a parent sub-agent',
   'subagents.orphanTip': 'Parent session no longer visible · {sid}',
+  // Orphan-placement batch (2026-11-05 leg ③): head word of the standalone group
+  // holding wild nodes (rows whose parent cannot be resolved). One fact word,
+  // no explanation / no teaching sentence (self-explaining rule 8).
+  'subagents.orphanGroup': 'No parent',
   // Panel-hierarchy batch (2026-10-31 ①): group-head collapse caret a11y/hover
   // text (flips with the collapsed state).
   'subagents.collapseGroup': 'Collapse subtasks',
