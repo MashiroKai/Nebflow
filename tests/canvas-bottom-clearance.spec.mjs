@@ -111,6 +111,17 @@ const PROBE = `(() => {
     const b = box(refresh);
     chrome.push({ sel: '.canvas-refresh-toggle', visible: !!b && vis(refresh), top: b ? b.y : null, bottom: b ? b.bottom : null, h: b ? b.h : null });
   }
+  // 同带全局浮钮（ask 会话钮 / 记事本钮）：产品侧让位带把它们算进同一条带
+  // （手机层「底部控件浮层带批」已把 ask 圆钮与文档圆钮族对齐成同一行），
+  // 故独立复算也必须同口径 —— 判据 = 横向与 pane 相交 ∧ 落在 pane 竖向范围内。
+  const paneRect = pane.getBoundingClientRect();
+  for (const el of document.querySelectorAll('.ask-fab, .note-fab')) {
+    const b = box(el);
+    if (!b || !vis(el)) continue;
+    if (b.y < paneRect.top - 1 || b.y >= paneRect.bottom) continue;
+    if (b.right <= paneRect.left || b.x >= paneRect.right) continue;
+    chrome.push({ sel: el.classList.contains('note-fab') ? '.note-fab' : '.ask-fab', visible: true, top: b.y, bottom: b.bottom, h: b.h });
+  }
   const shown = chrome.filter((c) => c.visible && typeof c.top === 'number');
   const paneBox = box(pane);
   const chromeTop = shown.length ? Math.min(...shown.map((c) => c.top)) : null;
@@ -276,6 +287,8 @@ const noChrome = await desk.page.evaluate(() => {
   const shell = pane.parentElement;
   const refresh = shell.querySelector(':scope > .canvas-refresh-toggle');
   if (refresh) els.push(refresh);
+  // 同带全局浮钮（ask / 记事本）也是「底部按钮」—— 一并隐藏才是「无按钮场景」。
+  for (const el of document.querySelectorAll('.ask-fab, .note-fab')) els.push(el);
   for (const el of els) el.style.display = 'none';
   return els.length;
 });
@@ -287,7 +300,7 @@ record('A7', '桌面 1440 · 底部浮钮全部隐藏：留白归零（不留多
   noChrome > 0 && N.clearanceVarPx === 0 && N.padBottom === 0,
   `隐藏 ${noChrome} 颗浮钮 → 变量=${N.clearanceVar || '(空)'}；计算后 padding-bottom=${N.padBottom}px（阈值 0）`);
 await desk.page.evaluate(() => {
-  document.querySelectorAll('.canvas-tab-pane.active .canvas-source-toggle, .canvas-tab-pane.active .canvas-ref-select, .canvas-tab-pane.active .canvas-find-toggle, .canvas-tab-pane.active .canvas-zoom-bar, #canvas-content > .canvas-refresh-toggle').forEach((el) => { el.style.display = ''; });
+  document.querySelectorAll('.canvas-tab-pane.active .canvas-source-toggle, .canvas-tab-pane.active .canvas-ref-select, .canvas-tab-pane.active .canvas-find-toggle, .canvas-tab-pane.active .canvas-zoom-bar, #canvas-content > .canvas-refresh-toggle, .ask-fab, .note-fab').forEach((el) => { el.style.display = ''; });
 });
 await settleChrome(desk.page);
 await settleChrome(desk.page);
@@ -307,9 +320,9 @@ const H = await probe(desk.page);
 writeFileSync(join(OUT, 'probe-desktop-tallchrome.json'), JSON.stringify(H, null, 2));
 writeFileSync(join(SHOTS, 'desktop-tallchrome.png'), await shoot(desk.page, { selector: '#canvas-panel' }));
 record('A8', '桌面 1440 · 浮钮变高 40→64：留白跟随实测（ResizeObserver 腿）',
-  Math.abs(H.clearanceVarPx - (D.clearanceVarPx + 24)) <= 1 && Math.abs(H.clearanceVarPx - (H.predicted ?? -999)) <= 0.5,
-  `改前变量=${D.clearanceVar} → 钮高 64 后变量=${H.clearanceVar}（应 +24 = ${r2(D.clearanceVarPx + 24)}）；` +
-  `独立算得 ${H.predicted}px；padding-bottom=${H.padBottom}px`);
+  Math.abs(H.clearanceVarPx - (H.predicted ?? -999)) <= 0.5 && H.clearanceVarPx > D.clearanceVarPx,
+  `改前变量=${D.clearanceVar} → 钮高 64 后变量=${H.clearanceVar}（涨 ${r2(H.clearanceVarPx - D.clearanceVarPx)}px：` +
+  `钮顶抬高 24 后成为整条带最高点之一，取整条带最高者）+ 独立算得 ${H.predicted}px；padding-bottom=${H.padBottom}px`);
 await desk.page.evaluate(() => {
   const btn = document.querySelector('.canvas-tab-pane.active .canvas-source-toggle');
   if (btn) btn.style.height = btn.dataset.nfH0 || '';

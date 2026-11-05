@@ -964,15 +964,23 @@ export function addRefreshButton(pane, opts) {
 // （不改任何 DOM 结构、不触发被观测元素的尺寸），故无自激环。
 /** 底部浮钮簇成员（与 split.css 的底部浮钮块同一族；缩放条是非圆钮成员）。 */
 const BOTTOM_CHROME_SEL = '.canvas-source-toggle, .canvas-ref-select, .canvas-find-toggle, .canvas-zoom-bar';
+/** 同一条带上、但不由本面板 pane 持有的浮钮：ask 会话钮与记事本钮（askDock.js，
+ *  桌面宿主 #canvas-panel / 手机宿主页面壳）。手机层「底部控件浮层带批」已把
+ *  ask 圆钮与文档圆钮族**逐值对齐成同一行**（mobileLayer.css 簇几何块，三钮中心
+ *  极差 0px）—— 故让位带必须按同一行算，只算 pane 内三颗会漏掉右端那颗。
+ *  几何过滤（横向相交 + 落在 pane 竖向范围内）保证「别处的 fur 钮」不会被误计。 */
+const BOTTOM_CHROME_GLOBAL_SEL = '.ask-fab, .note-fab';
 /** 末行与浮钮带顶之间的呼吸缝（与手机档 76 = 16 + 48 + 12 的 12 同一把尺）。 */
 export const BOTTOM_CLEARANCE_GAP = 12;
 
-/** 该 pane 当下的底部浮钮候选（含壳层 #canvas-content 上的刷新钮单例）。 */
+/** 该 pane 当下的底部浮钮候选（pane 内簇 + 壳层刷新钮单例 + 同带全局 fab）。 */
 function _bottomChromeCandidates(pane) {
   const out = [...pane.querySelectorAll(BOTTOM_CHROME_SEL)];
   const shell = pane.parentElement;
   const refresh = shell ? shell.querySelector(':scope > .canvas-refresh-toggle') : null;
   if (refresh) out.push(refresh);
+  const panel = pane.closest('#canvas-panel') || document;
+  for (const el of panel.querySelectorAll(BOTTOM_CHROME_GLOBAL_SEL)) out.push(el);
   return out;
 }
 
