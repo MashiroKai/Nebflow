@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>扁平 Toggle 方案对照 · 五组</title>
+<link rel="stylesheet" href="toggle.css">
+<script src="page.js" defer></script>
+</head>
+<!--
+  隔离静态页（file:// 直接打开即可）：五组扁平 Toggle 的总对照。
+  浅色 / 深色两栏并排，每栏五行（A..E），每行三态（off / on / 过渡中）。
+  本页不接入产品，不被 web/index.html 引用，不改任何既有开关。
+-->
+<body class="togpage">
+
+<header class="hd">
+  <h1>扁平 Toggle · 五组方案对照</h1>
+  <p><strong>本页是方案展示页，未接入全局</strong> —— 现役开关（<em>.nb-toggle</em>，36×20）一字未改。</p>
+  <p>每行一个方案：左 = 方案名 + 几何/过渡摘要，右 = 三态并排。三态的第三格是
+    <em>真实过渡暂停在 50% 的帧</em>（Web Animations API 定格，不是手画的中间值）。</p>
+  <p>扁平口径：零 box-shadow（含 inset 高光）、零渐变、零发光、零 translateY 位移；只允许纯色填充 / 描边 / 圆角 / 位移与透明度过渡。</p>
+</header>
+
+<main class="panes">
+
+  <section class="pane" data-theme="light" aria-label="浅色主题">
+    <h2>light · 浅色</h2>
+    <div data-render-host data-theme="light" data-mode="compare"></div>
+  </section>
+
+  <section class="pane" data-theme="dark" aria-label="深色主题">
+    <h2>dark · 深色</h2>
+    <div data-render-host data-theme="dark" data-mode="compare"></div>
+  </section>
+
+</main>
+
+</body>
+</html>
