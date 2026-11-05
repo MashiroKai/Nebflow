@@ -207,8 +207,10 @@ async function bootApp(page, { viewport, rows = inboxFixture() } = {}) {
     const s = (await import('/js/state.js')).default;
     return s.activeSessionId === rootSid && s.ws && s.ws.readyState === 1;
   }, SID, { timeout: 15000 });
-  // 胶囊 = 会话渲染链末端产物（sidebar 切会话后挂 #task-list）
-  await page.waitForSelector('#task-list.has-tasks .tfl-capsule', { timeout: 15000 });
+  // 胶囊 = 会话渲染链末端产物（sidebar 切会话后挂 #task-list）。
+  // 端区分批 2026-11-05：手机层 #task-list 整槽 display:none（胶囊只在桌面可见）
+  // ⇒ 等待条件从「可见」放宽到「已挂载」（DOM 仍在、渲染链照跑）。
+  await page.waitForSelector('#task-list.has-tasks .tfl-capsule', { timeout: 15000, state: 'attached' });
   await page.waitForTimeout(200);
   return { captured, errors };
 }
@@ -509,37 +511,43 @@ test('⑦ 动画护栏：展开仍走 spring 几何通道（内联 height 逐帧
   expect(errors).toEqual([]);
 });
 
-// ── ⑧ 手机 375 视口 ─────────────────────────────────────────────────────
-test('⑧ 手机 375：body.mobile-layer 下胶囊可见、可展开，加号 44px 触摸档', async ({ page }) => {
+// ── ⑧ 手机 375 视口（端区分批 2026-11-05：胶囊退场 / 左上圆钮入口）───────────
+// 作者令 2026-11-05 09:28：「电脑端是一个胶囊，手机端还是需要是之前那个左上角的
+// 一个悬浮的待办按钮」⇒ 本腿由「手机胶囊可见可展开」反转为「手机无胶囊、圆钮
+// 开面板」；面板内的触摸档断言（加号 44 / 行尾删除常显）原样保留。
+test('⑧ 手机 375：端区分——胶囊退场、左上任务圆钮开面板，加号 44px 触摸档', async ({ page }) => {
   mkdirSync(SHOT_DIR, { recursive: true });
   const { errors } = await bootApp(page, { viewport: { width: 375, height: 812 } });
   await page.waitForFunction(() => document.body.classList.contains('mobile-layer'), null, { timeout: 10000 });
 
-  // 手机层胶囊不再被 display:none 压死
-  const display = await page.locator('#task-list').evaluate((el) => getComputedStyle(el).display);
-  expect(display).toBe('block');
-  await expect(page.locator('#task-list .tfl-capsule')).toBeVisible();
-  await page.screenshot({ path: join(SHOT_DIR, '04_mobile_capsule.png') });
+  // 端区分的桌面侧（胶囊）在手机层退场
+  expect(await page.locator('#task-list').evaluate((el) => getComputedStyle(el).display)).toBe('none');
+  await expect(page.locator('#task-list .tfl-capsule')).not.toBeVisible();
 
-  // 胶囊在视口内（顶带一行）
-  const capBox = await page.locator('.tfl-capsule').boundingBox();
-  expect(capBox.y).toBeGreaterThanOrEqual(0);
-  expect(capBox.y).toBeLessThan(812);
+  // 入口 = 聊天根左上悬浮「任务」圆钮（48 档，避安全区）
+  const fab = page.locator('#mobile-fab-layer .mh-chrome-btn[data-chrome="tasks"]');
+  await expect(fab).toBeVisible();
+  const fabBox = await fab.boundingBox();
+  expect(fabBox.x).toBeLessThan(24);
+  expect(fabBox.y).toBeLessThan(48);
+  expect(Math.round(fabBox.width)).toBe(48);
+  expect(Math.round(fabBox.height)).toBe(48);
+  await page.screenshot({ path: join(SHOT_DIR, '04_mobile_todo_fab.png') });
 
-  // 点击 ⇒ 面板展开（同一张 .tfl-card，宽 ≤ 375−32）
-  await page.locator('.tfl-capsule').click();
-  await expect(page.locator('.tfl-card[data-state="open"]')).toHaveCount(1);
-  await page.waitForTimeout(900);
-  const cardBox = await page.locator('.tfl-card').boundingBox();
-  expect(cardBox.width).toBeLessThanOrEqual(343);
-  await expect(page.locator('.tfl-list')).toBeVisible();
+  // 点击 ⇒ push 任务页，面板体（同一张 .tfl-card，.tfl-mobile 档）展开
+  await fab.click();
+  await expect(page.locator('.mobile-page[data-page="tasks"].live')).toHaveCount(1);
+  await expect(page.locator('#mobile-task-panel')).toBeVisible();
+  const cardBox = await page.locator('#mobile-task-panel .tfl-card').boundingBox();
+  expect(cardBox.width).toBeLessThanOrEqual(375);
+  await expect(page.locator('#mobile-task-panel .tfl-list')).toBeVisible();
   await page.screenshot({ path: join(SHOT_DIR, '05_mobile_panel_open.png') });
 
   // 手机档尺寸：加号 44px；行尾删除常显
-  const fabBox = await page.locator('.tfl-fab-add').boundingBox();
-  expect(Math.round(fabBox.width)).toBe(44);
-  expect(Math.round(fabBox.height)).toBe(44);
-  const delOpacity = await page.locator('.tfl-del').first().evaluate((el) => getComputedStyle(el).opacity);
+  const addBox = await page.locator('#mobile-task-panel .tfl-fab-add').boundingBox();
+  expect(Math.round(addBox.width)).toBe(44);
+  expect(Math.round(addBox.height)).toBe(44);
+  const delOpacity = await page.locator('#mobile-task-panel .tfl-del').first().evaluate((el) => getComputedStyle(el).opacity);
   expect(Number(delOpacity)).toBe(1);
 
   expect(errors).toEqual([]);
