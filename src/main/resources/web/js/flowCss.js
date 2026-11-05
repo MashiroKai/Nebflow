@@ -34,8 +34,6 @@ export const FLOW_CSS = `
   display: flex; align-items: center; gap: var(--ds-space-2); padding: var(--ds-space-3) 14px;
   border-bottom: 1px solid var(--glass-border);
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
 }
 .team-card-title {
   font: 600 var(--ds-fs-body) -apple-system, sans-serif; color: var(--color-text);
@@ -62,8 +60,6 @@ export const FLOW_CSS = `
 }
 .team-act-btn:hover {
   background: var(--glass-control-bg-hover);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   border-color: var(--glass-control-border);
   box-shadow:
     inset 0 1px 0 var(--glass-control-highlight),
@@ -125,7 +121,7 @@ export const FLOW_CSS = `
   box-shadow: 0 2px 8px rgba(0,0,0,0.05), 0 4px 16px rgba(0,0,0,0.03);
   overflow: hidden; display: flex; flex-direction: column;
 }
-.dag-card-header { display: flex; align-items: center; gap: var(--ds-space-2); padding: var(--ds-space-3) 14px; border-bottom: 1px solid var(--glass-border); background: var(--glass-bg); -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15); backdrop-filter: blur(var(--glass-blur)) saturate(1.15); }
+.dag-card-header { display: flex; align-items: center; gap: var(--ds-space-2); padding: var(--ds-space-3) 14px; border-bottom: 1px solid var(--glass-border); background: var(--glass-bg); }
 .dag-card-title { font: 600 var(--ds-fs-body) -apple-system, sans-serif; color: var(--color-text); }
 .dag-card-status { font: 500 var(--ds-fs-meta) -apple-system, sans-serif; color: var(--color-text-muted); margin-left: auto; display: flex; align-items: center; gap: var(--ds-space-1); }
 .dag-card-status .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--color-text-muted); opacity: 0.4; }
@@ -175,7 +171,7 @@ export const FLOW_CSS = `
 /* Overlay viewer — fixed within pane, centered, ignores scroll */
 .flow-viewer-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 60; pointer-events: auto; animation: flow-viewer-fade 0.18s ease; }
 @keyframes flow-viewer-fade { from { opacity: 0; } to { opacity: 1; } }
-.flow-viewer { position: relative; width: calc(100% - 48px); max-height: calc(100% - 48px); display: flex; flex-direction: column; background: var(--glass-bg); -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15); backdrop-filter: blur(var(--glass-blur)) saturate(1.15); border: 1px solid var(--glass-border); border-radius: var(--ds-radius-2xl); overflow: hidden; box-shadow: 0px 8px 32px rgba(0,0,0,0.16); }
+.flow-viewer { position: relative; width: calc(100% - 48px); max-height: calc(100% - 48px); display: flex; flex-direction: column; background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: var(--ds-radius-2xl); overflow: hidden; box-shadow: 0px 8px 32px rgba(0,0,0,0.16); }
 .flow-viewer-header { display: flex; align-items: center; gap: var(--ds-space-2); padding: var(--ds-space-3) var(--ds-space-4); border-bottom: 1px solid var(--glass-border); flex-shrink: 0; }
 .flow-viewer-title { font: 600 var(--ds-fs-body) -apple-system, sans-serif; color: var(--color-text); }
 .flow-viewer-close { margin-left: auto; cursor: pointer; font-size: var(--ds-fs-callout); line-height: 1; opacity: 0.5; transition: opacity 0.15s; padding: 0 var(--ds-space-1); color: var(--color-text-muted); z-index: 10; display: inline-flex; align-items: center; }
@@ -271,7 +267,7 @@ export const FLOW_CSS = `
 .flow-def-tool.checked { border-color: rgba(91, 127, 191, 0.5); color: rgb(91, 127, 191); background: rgba(91, 127, 191, 0.08); }
 .flow-def-source { font: 400 var(--ds-fs-meta) -apple-system, sans-serif; color: var(--color-text-muted); opacity: 0.6; margin-bottom: var(--ds-space-1); }
 .flow-agent-block-readonly { font: 400 var(--ds-fs-hint) -apple-system, sans-serif; color: var(--color-text); line-height: 1.5; background: var(--glass-etched-bg, rgba(0,0,0,0.025)); border: 1px solid var(--glass-etched-border, var(--glass-border)); border-radius: var(--ds-radius-input); padding: var(--ds-space-2) var(--ds-space-inline-x); }
-.flow-def-tabs { display: flex; gap: var(--ds-space-half); position: sticky; top: 0; background: var(--glass-bg); -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15); backdrop-filter: blur(var(--glass-blur)) saturate(1.15); border-bottom: 1px solid var(--glass-border); padding: var(--ds-space-1h) var(--ds-space-half) 0; margin: -14px -18px var(--ds-space-3); z-index: 2; }
+.flow-def-tabs { display: flex; gap: var(--ds-space-half); position: sticky; top: 0; background: var(--glass-bg); border-bottom: 1px solid var(--glass-border); padding: var(--ds-space-1h) var(--ds-space-half) 0; margin: -14px -18px var(--ds-space-3); z-index: 2; }
 .flow-def-tab { padding: var(--ds-space-1h) var(--ds-space-3); font: 500 var(--ds-fs-hint) -apple-system, sans-serif; color: var(--color-text-muted); background: none; border: none; border-bottom: 2px solid transparent; border-radius: 0; cursor: pointer; font-family: inherit; margin-bottom: -1px; transition: color 0.2s, border-color 0.2s; display: inline-flex; align-items: center; gap: var(--ds-space-1); }
 .flow-def-tab:hover { color: var(--color-text); }
 .flow-def-tab.active { color: rgb(91, 127, 191); border-bottom-color: rgb(91, 127, 191); }
@@ -388,9 +384,7 @@ export const FLOW_CSS = `
 .solar-node {
   position: absolute; width: 124px; height: 88px;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  background: var(--glass-bg, rgba(255,255,255,0.08));
-  -webkit-backdrop-filter: blur(var(--glass-blur, 10px)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur, 10px)) saturate(1.15);
+  background: var(--nf-glass-bg);
   border: 1px solid var(--glass-border, rgba(255,255,255,0.12));
   border-radius: var(--ds-radius-card-md);
   padding: var(--ds-space-2) var(--ds-space-inline-x);
@@ -530,8 +524,6 @@ export const FLOW_CSS = `
   display: flex; align-items: center; gap: var(--ds-space-2); padding: var(--ds-space-3) 14px;
   border-bottom: 1px solid var(--glass-border);
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
 }
 .flow-def-card-icon {
   width: 22px; height: 22px; border-radius: var(--ds-radius-input); flex-shrink: 0;

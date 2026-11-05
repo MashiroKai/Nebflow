@@ -14,8 +14,6 @@
   border-radius: var(--ds-radius-shell);
   overflow: hidden;
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: var(--ds-border-width) solid var(--glass-border);
   box-shadow: var(--ds-shadow-float);
 }
@@ -168,8 +166,6 @@
   border-radius: var(--ds-radius-button);
   border: 2px dashed color-mix(in srgb, var(--ds-danger-icon) 35%, transparent);
   background: color-mix(in srgb, var(--ds-danger-icon) 6%, transparent);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
   color: color-mix(in srgb, var(--ds-danger-icon) 70%, transparent);
   font-size: var(--ds-fs-btn);
   font-weight: var(--ds-fw-btn);
@@ -286,8 +282,6 @@
   position: fixed;
   z-index: 1000;
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: var(--ds-border-width) solid var(--glass-border);
   border-radius: var(--ds-radius-card-md);
   padding: var(--ds-space-1) 0;
@@ -1379,8 +1373,6 @@
 .cfg-modal {
   position: relative;
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
   border-radius: var(--ds-radius-shell);
   width: 400px;
@@ -1608,8 +1600,6 @@
   font-size: var(--ds-fs-body); line-height: 1.4;
   display: flex; align-items: flex-start; gap: var(--ds-space-2);
   background: var(--glass-control-bg);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   border: 1px solid var(--glass-control-border);
   box-shadow:
     inset 0 1px 0 var(--glass-control-highlight),
@@ -1727,7 +1717,11 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--ds-space-4) var(--ds-space-5);
+  /* 顶垫同 #plugins-content：归 .canvas-safe-top 统一安全区（split.css），
+     本处零顶值（只写左右 longhand，不写 padding 简写 —— 简写的 top 槽 = 第二把尺）。
+     canvas-overlap-fix 批 2026-11-05；修前 `padding: var(--ds-space-4) …` = 16。 */
+  padding-right: var(--ds-space-5);
+  padding-left: var(--ds-space-5);
   scrollbar-color: var(--color-frame-border) transparent;
 }
 #agents-content .agent-mgr-group {
@@ -2221,7 +2215,16 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--ds-space-4) var(--ds-space-5) var(--ds-space-6);
+  /* 顶部间隙**不在此处**：canvas 顶行是浮层胶囊（header 悬于面板顶），面板正文
+     必须让到统一安全区之下 —— 故顶垫由 .canvas-safe-top（split.css「统一布局
+     层」块，值 = sapphire.css --cv-safe-top）单点给出。此处**只写左右/底三个
+     longhand，绝不写 padding 简写**：简写里那个 top 槽会把本面板重新变回「自己
+     拥有一份顶垫」的第二把尺，且 id 特异性会压过布局层类（本批第一稿踩过）。
+     canvas-overlap-fix 批 2026-11-05 前此处是 `padding: var(--ds-space-4) …`
+     = 16px 顶垫，面板首块整条压进胶囊带（实测遮挡 30px，作者附图同形）。 */
+  padding-right: var(--ds-space-5);
+  padding-left: var(--ds-space-5);
+  padding-bottom: var(--ds-space-6);
   scrollbar-color: var(--color-frame-border) transparent;
 }
 #plugins-content > .plugins-section,
@@ -2287,8 +2290,6 @@
 }
 .plugins-card {
   background: var(--glass-control-bg);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   border: 1px solid var(--glass-control-border);
   border-radius: var(--ds-radius-card-sm);
   box-shadow:
@@ -2691,8 +2692,6 @@
   flex-shrink: 0;
   cursor: pointer;
   background: var(--glass-control-bg);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   border: 1px solid var(--glass-control-border);
   box-shadow:
     inset 0 1px 0 var(--glass-control-highlight),

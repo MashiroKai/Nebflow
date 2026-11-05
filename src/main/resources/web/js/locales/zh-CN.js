@@ -151,6 +151,9 @@ export default {
   'flowmap.cardRunning': '运行中…',
   // 节点卡 Agent 退役（node-flowmap-slim）：preset 未配置的克制空态文案
   'flowmap.presetDefault': '默认预设',
+  // 卡内说明行溢出入口（edge-render-fix 批 2026-11-05 作者令「说明不许静默省略」）：
+  // 说明两行封顶后，只要能装下的更少，卡内就出现本入口 —— 点卡打开详情窗读全文。
+  'flowmap.descFull': '全文',
   'flowmap.loading': '加载 Flow Map…',
   'flowmap.loadFail': 'Flow Map 加载失败',
   'flowmap.empty': '暂无节点，项目空闲',

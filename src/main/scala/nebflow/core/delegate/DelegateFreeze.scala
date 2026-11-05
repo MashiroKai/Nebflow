@@ -74,10 +74,13 @@ object DelegateFreeze:
   enum Reason:
     /** LLM 层故障（provider 报错 / 全候选耗尽 / 鉴权/格式错误等）。 */
     case LlmFailure
+
     /** 工具层不可恢复错误（工具管道异常、工具侧硬失败）。 */
     case ToolFailure
+
     /** 引擎侧异常（监督耗尽 / respawn 链中途失败 / 空烧预算耗尽 / 进程级故障）。 */
     case EngineFault
+
     /** 配额/预算类取消（额度耗尽触发的 cancel）。 */
     case CancelledByQuota
 
@@ -117,22 +120,37 @@ object DelegateFreeze:
    * 错误 → 原因的机器判读（纯函数，spec 判红锚）。输入 = 失败事件的
    * `errorType` 线值（`AgentErrorType.toString`）与消息正文。
    *
-   *   - `cancelled-by-quota`：消息含 quota / 额度 / insufficient_quota 一类标记；
-   *   - `llm-failure`：`LlmFailed`（LLM 调用层失败，含 provider 全耗尽）；
-   *   - `tool-failure`：`ToolFailed` 或消息含工具管道标记；
-   *   - `engine-fault`：其余（Timeout / Interrupted / DepthExceeded / Unknown）。
+   * 判定顺序（provider 故障降噪批 2026-11-05：分类真源 = [[ProviderFault]] 判据表，
+   * 本方法只是一个「表 → 四类原因码」的投影，**不再自己写散落 if**）：
+   *
+   *   1. `cancelled-by-quota`：消息命中配额/余额族（额度耗尽属 provider 侧可恢复，
+   *      线值 `cancelled-by-quota` 本身就在 `FreezeDisplay.InfraReasonCodes` 里）；
+   *   2. `tool-failure`：`ToolFailed` 或消息含工具管道标记 —— **确定性缺陷优先**，
+   *      工具侧 bug 哪怕正文带着网络字样也照常通知；
+   *   3. `llm-failure`：消息命中 [[ProviderFault.Table]] 的任一**可恢复族**
+   *      （鉴权/订阅 403、配额余额、上游 5xx 含 550、连接失败/超时、格式层拒绝含
+   *      context 超长 / `Input too long`、频率闸）——这是本批最关键的一条：这类
+   *      失败以前落到 `engine-fault`（= 需人处理 ⇒ 逐条通知作者），现在归
+   *      `llm-failure`（= provider 故障族 ⇒ 零通知 + 自动续跑）；
+   *   4. `LlmFailed` ⇒ `llm-failure`（LLM 调用层失败，含 provider 全耗尽）；
+   *   5. 其余（Timeout / Interrupted / DepthExceeded / Unknown）⇒ `engine-fault`。
    */
   def classify(errorType: String, message: String): Reason =
-    val m = Option(message).getOrElse("").toLowerCase
+    val m = Option(message).getOrElse("")
+    val ml = m.toLowerCase
     val t = Option(errorType).getOrElse("")
-    if m.contains("quota") || m.contains("额度") || m.contains("insufficient_quota") then Reason.CancelledByQuota
-    else
-      t match
-        case "LlmFailed" => Reason.LlmFailure
-        case "ToolFailed" => Reason.ToolFailure
-        case _ =>
-          if m.contains("toolpipeline") || m.contains("tool pipeline") then Reason.ToolFailure
-          else Reason.EngineFault
+    if ml.contains("quota") || ml.contains("额度") || ml.contains("insufficient_quota") then Reason.CancelledByQuota
+    else if t == "ToolFailed" || ml.contains("toolpipeline") || ml.contains("tool pipeline") then Reason.ToolFailure
+    else if ProviderFault.isRecoverable(m) && !ProviderFault.isRealFailure(m) then Reason.LlmFailure
+    else if t == "LlmFailed" then Reason.LlmFailure
+    else Reason.EngineFault
+
+  /**
+   * 该冻结原因是否属 provider 侧可恢复族（本批裁定：静默 + 自动续跑，零通知）。
+   * 单一真源 = [[ProviderFault]] × `FreezeDisplay.InfraReasonCodes`。
+   */
+  def isProviderRecoverable(r: Reason): Boolean =
+    nebflow.actor.FreezeDisplay.isInfraReasonCode(wire(r))
 
   /** 监督者内部触发器 → 原因（未知 = None ⇒ 走 [[classify]]）。 */
   def reasonForTrigger(trigger: String): Option[Reason] =
@@ -179,14 +197,22 @@ object DelegateFreeze:
   ): String =
     val why = compactDetail(detail)
     val ws = if workspace.trim.isEmpty then "(unknown)" else workspace
-    s"""[delegate-frozen] "$description" (delegate #$delegateId) hit **${reasonLabelEn(reason)}** and was FROZEN — this is NOT a failure verdict.
+    s"""[delegate-frozen] "$description" (delegate #$delegateId) hit **${reasonLabelEn(
+        reason
+      )}** and was FROZEN — this is NOT a failure verdict.
        |
-       |WHO: the engine froze delegate #$delegateId (reason code `${wire(reason)}`). Nothing was judged about the work itself.
+       |WHO: the engine froze delegate #$delegateId (reason code `${wire(
+        reason
+      )}`). Nothing was judged about the work itself.
        |WHY: $why
        |WHAT IS KEPT (persisted; survives an engine restart): the full session transcript, the workspace/worktree $ws including uncommitted changes, the task-ledger row (status=frozen), the merge-queue membership (never closed as owner-gone), and this reason/context.
        |HOW TO WAKE IT (continues in the SAME session — history in place, finished work is not redone): mail the continuation address `delegate:$delegateId` with one instruction line, or click 唤醒 / Wake on the background-agents panel. The engine does NOT retry on its own — freezing is where it stops; the wake is the retry.
        |
-       |【冻结回执】delegate #$delegateId（$description）因${reasonLabelZh(reason)}被**冻结**——这不是失败判词。原因码 `${wire(reason)}`，详情：$why。保留：完整会话历史、工作区/worktree $ws 与未提交改动、台账行（status=frozen）、合并队列成员资格、失败原因与最后错误上下文。唤醒 = 给 `delegate:$delegateId` 发一条 Mail（或面板点「唤醒」）——**在原会话上下文上继续**，已完成的不重做；引擎不自动重试。""".stripMargin
+       |【冻结回执】delegate #$delegateId（$description）因${reasonLabelZh(reason)}被**冻结**——这不是失败判词。原因码 `${wire(
+        reason
+      )}`，详情：$why。保留：完整会话历史、工作区/worktree $ws 与未提交改动、台账行（status=frozen）、合并队列成员资格、失败原因与最后错误上下文。唤醒 = 给 `delegate:$delegateId` 发一条 Mail（或面板点「唤醒」）——**在原会话上下文上继续**，已完成的不重做；引擎不自动重试。""".stripMargin
+
+  end receiptText
 
   /**
    * 唤醒横幅（注入被唤醒会话的首条 UserInput 前缀）：说明「你在冻结点被唤醒、
@@ -197,9 +223,13 @@ object DelegateFreeze:
     val whyZh = reason.map(reasonLabelZh).getOrElse(if reasonLine.trim.isEmpty then "未知" else reasonLine)
     val whyEn = reason.map(reasonLabelEn).getOrElse(if reasonLine.trim.isEmpty then "unknown" else reasonLine)
     val d = compactDetail(detail, 200)
-    s"""[frozen-wake] You were FROZEN at this point (delegate #$delegateId, reason: $whyEn${if d.nonEmpty then s" — $d" else ""}) and have just been woken.
+    s"""[frozen-wake] You were FROZEN at this point (delegate #$delegateId, reason: $whyEn${
+        if d.nonEmpty then s" — $d" else ""
+      }) and have just been woken.
        |Your full history is in place: continue from the freeze point — do NOT redo what is already done, and do NOT re-plan from scratch.
-       |【冻结唤醒】你在冻结点被唤醒（delegate #$delegateId，原因：$whyZh${if d.nonEmpty then s"——$d" else ""}）。完整历史在场：从冻结点继续，已完成的不重做。""".stripMargin
+       |【冻结唤醒】你在冻结点被唤醒（delegate #$delegateId，原因：$whyZh${
+        if d.nonEmpty then s"——$d" else ""
+      }）。完整历史在场：从冻结点继续，已完成的不重做。""".stripMargin
 
   // ── 冻结落盘（单写点）────────────────────────────────────────────────
 
@@ -239,8 +269,12 @@ object DelegateFreeze:
             TaskStatus,
             lastError = Some(s"[frozen:${wire(reason)}] $d")
           )
-          .handleErrorWith(e => logger.warn(s"[delegate-freeze] task row write failed for $delegateId: ${e.getMessage}"))
+          .handleErrorWith(e =>
+            logger.warn(s"[delegate-freeze] task row write failed for $delegateId: ${e.getMessage}")
+          )
     registryWrite <* rowWrite
+
+  end park
 
   /**
    * 冻结期合并队列处置（任务书「合并队列里批次冻结时的处置明确规则」）：
@@ -387,8 +421,10 @@ object DelegateFreeze:
   enum Stage:
     /** 冻结中，未到提示窗。 */
     case Active
+
     /** 长期无人唤醒——面板提示（保留期未到）。 */
     case Dormant
+
     /** 超保留期——归档 registry 记录（历史窗仍可查），台账行留痕。 */
     case Expired
 
@@ -460,7 +496,8 @@ object DelegateFreeze:
                     s"[delegate-freeze] frozen delegate '${rec.id}' exceeded the ${Defaults.DelegateFreezeRetentionDays}-day retention " +
                       s"(frozen ${ageD}d, reason=${rec.frozenReason.getOrElse("?")}) — archiving the registry record " +
                       "(transcript/worktree/task row are untouched and stay queryable via archived=1)"
-                  ) *> IO.blocking(DelegateRegistry.archive(rec.id))
+                  ) *> IO
+                    .blocking(DelegateRegistry.archive(rec.id))
                     .attempt
                     .flatMap {
                       case Right(_) => IO.unit
@@ -476,6 +513,7 @@ object DelegateFreeze:
                     )
                     .handleErrorWith(_ => IO.unit)
                 else IO.unit
+            end match
           }
       }
 

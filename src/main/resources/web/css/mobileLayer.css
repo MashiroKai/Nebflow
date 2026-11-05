@@ -367,6 +367,16 @@ body.mobile-layer {
   --mchrome-breathe: var(--ds-space-2);  /* 8 —— 同上（簇顶/呼吸两字面量随批归 --ds-* 桥） */
   --mchrome-clear: calc(var(--mchrome-top) + var(--mchrome-btn) + var(--mchrome-breathe));
   --mchrome-inset: var(--mchrome-clear);
+  /* canvas 正文顶部安全区（canvas-overlap-fix 批 2026-11-05）：**手机档唯一覆写点**。
+     桌面值在 sapphire.css 出生（= --cv-head-clear 56）；手机层顶栏是 48 圆钮簇 +
+     环标签带（.mf-strip 高 72），安全区随之换尺为 --mchrome-clear（16+48+8=72）。
+     消费面不变（split.css「统一布局层」块：.canvas-viewer-safe-top / .canvas-safe-top），
+     手机档规则零改值、零第二套让位机制。 */
+  --cv-safe-top: var(--mchrome-clear);
+  /* 两行档让位同源换尺（同上批）：自定义属性的 var() 在**声明处**求值，故
+     :root 上那条 --cv-head-2row（= 56 + 36 + 8 = 100）不会跟着手机档的
+     --cv-safe-top 变，必须在手机档显式重算 = 72 + 36 + 8 = 116。 */
+  --cv-head-2row: calc(var(--cv-safe-top) + var(--cv-head-h) + var(--cv-head-row-gap));
   /* ── 会话身份头几何（同一行批 2026-11-02 作者令「头像与左右双钮必须始终同一行」）──
      单源：头像外径 + 组内上内距 + 由此推出的**组顶锚**。锚 = 让「头像垂直中心
      恒等双钮垂直中心」的那个组顶值，纯派生、零字面量：
@@ -583,8 +593,6 @@ body.mobile-layer #mobile-dock {
   align-items: stretch;
   border-radius: var(--ds-radius-pill);
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
-  backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
   border: 1px solid var(--glass-border);
   box-shadow: var(--cv-shadow);
 }
@@ -938,8 +946,6 @@ body.mobile-layer .mobile-page-title::before {
   inset: 0;
   border-radius: inherit;
   background: var(--cv-bg, var(--glass-bg));
-  -webkit-backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
-  backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
   border: 1px solid var(--cv-border, var(--glass-border));
   box-shadow: var(--cv-shadow);
   opacity: var(--mtitle-p);
@@ -1679,7 +1685,7 @@ body.mobile-layer .mf-strip.fade {
 }
 body.mobile-layer .mf-strip[hidden] { display: none; }
 /* chip = 电脑端胶囊（.canvas-header）同族小档：材质 = --glass-bg 底 +
-   --glass-blur saturate(1.15) + --glass-border（底缘透明化同胶囊）+
+   --glass-blur saturate(1.4) + --glass-border（底缘透明化同胶囊）+
    --sapphire-refraction 顶缘折射线 + --cv-shadow（frosted 标准一份，逐项同源
    零新造）；圆角 999；字 = 中性 muted 档。位姿四值 = 环变量（见条注释）。
    尺寸：基准宽 68px（两侧签），中签另档 max-width 112px —— **只有宽度不同**，
@@ -1812,8 +1818,6 @@ body.mobile-layer .mf-strip-chip::after {
 }
 /* 中签玻璃层 = 完整毛玻璃档（毛玻璃 blur 只在无 mask 的层上安全 —— 见上）。 */
 body.mobile-layer .mf-strip-chip.on::after {
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
 }
 /* 环外（|k| > 露出半径）：位姿仍算（换签轨迹连续），命中与可见双关。 */
 body.mobile-layer .mf-strip-chip.is-far { pointer-events: none; }
@@ -2037,8 +2041,6 @@ body.mobile-layer .mf-dots {
   border-radius: var(--ds-radius-pill);
   border: 1px solid var(--glass-border);
   background: var(--ds-wash-16);
-  -webkit-backdrop-filter: blur(10px) saturate(1.2);
-  backdrop-filter: blur(10px) saturate(1.2);
   box-shadow: var(--ds-shadow-dots);
   touch-action: none;
   cursor: grab;
@@ -2132,8 +2134,6 @@ body.mobile-layer .mf-swipe-ring {
   border-radius: 50%;
   border: 2px solid var(--glass-border);
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(8px) saturate(1.3);
-  backdrop-filter: blur(8px) saturate(1.3);
   box-shadow: var(--cv-shadow, none);
   pointer-events: none;
   opacity: 0;
@@ -2158,8 +2158,6 @@ body.mobile-layer .mf-stack-view {
   /* 背景重度模糊（参考图的桌面 blur 档）：玻璃底 + 18px→26px 上移一档，
      saturate 加强避免糊成灰板；阅读面在背后化开但不消失（空间感）。 */
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(26px) saturate(1.6);
-  backdrop-filter: blur(26px) saturate(1.6);
   /* 开合两段：浮面整体淡入（.open）+ 卡列自落位升起（:not(.open) 初始态；
      收面 .closing 清零递延不拖尾）。 */
   opacity: 0;
@@ -2222,8 +2220,6 @@ body.mobile-layer .mf-deck-card {
   border: 1px solid var(--card-border);
   border-radius: var(--ds-radius-shell);
   background: var(--card-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.2);
   color: var(--color-frame-text);
   box-shadow: var(--ds-shadow-deck-card);
   /* 位姿：横移（--dtx，卡列）+ 纵坠（--dty，跟手预览）+ 缩径（--dsc）。
@@ -3045,7 +3041,14 @@ body.mobile-layer #mobile-pages .wx-zoom {
 
 /* ── P10 插件：插件卡全宽单列 + 封禁整卡降透明 ────────────────────────── */
 body.mobile-layer #mobile-pages #plugins-content {
-  padding: var(--ds-space-3) var(--ds-space-3) calc(24px + env(safe-area-inset-bottom, 0px));
+  /* 手机档只缩左右与底（12 / 安全区底垫）——**顶部让位不在这里写**：canvas 正文
+     顶垫统一归 .canvas-safe-top（split.css「统一布局层」块，手机档值 = 
+     --cv-safe-top = --mchrome-clear 72）。canvas-overlap-fix 批 2026-11-05 前
+     此处写 `var(--ds-space-3)` = 12px 顶垫，首块整条压在环标签带（0..72）底下，
+     与本批报障的桌面形态同一个病（各面板各写裸顶垫）。 */
+  padding-right: var(--ds-space-3);
+  padding-left: var(--ds-space-3);
+  padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
 }
 body.mobile-layer #mobile-pages .plugins-card-list {
   display: flex;
@@ -3252,8 +3255,6 @@ body.mobile-layer .mh-search-bar:not(.g2-fab) {
   border-radius: var(--ds-radius-pill);
   background: var(--glass-control-bg);
   border: 1px solid var(--glass-control-border);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   box-shadow:
     inset 0 1px 0 var(--glass-control-highlight),
     inset 0 -1px 0 var(--glass-control-underedge),
@@ -4608,8 +4609,6 @@ body.mobile-layer :is(.mh-idhead-name, .mh-idhead > #session-name) {
   padding: var(--ds-space-1) 14px;
   border-radius: var(--ds-radius-pill);
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
-  backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
   font-size: var(--ds-fs-mobile-sub);
   font-weight: 600;
   line-height: 1.2;

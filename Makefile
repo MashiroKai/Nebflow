@@ -1,6 +1,6 @@
 .PHONY: compile run assembly clean install \
   lint fmt fix fmt-check check quality-gate check-visual visual-baseline frontend-gates component-contract \
-  flat-buttons \
+  flat-buttons glass \
   plugin-seed-parity
 
 # Auto-detect fastest Maven mirror (Aliyun for China, Maven Central otherwise)
@@ -103,7 +103,7 @@ quality-gate:
 # = 后端把 `GET /api/conversations` 的 case 误删，前端 404 被吞成「暂无会话」，
 # **没有任何断言发现「前端调了但后端没有」**。本闸静态对照两侧（前端 /api 字面量
 # 集合 × 网关路由注册面），前端调了后端没有 ⇒ 红。
-FRONTEND_GATES := design-tokens msgstyle self-explaining circular fixture-secrets api-routes freeze-state freeze-silence flat-buttons
+FRONTEND_GATES := design-tokens msgstyle self-explaining circular fixture-secrets api-routes freeze-state freeze-silence flat-buttons glass
 
 frontend-gates:
 	@command -v node >/dev/null 2>&1 || { echo "node not found — 前端门禁需要 node"; exit 2; }
@@ -127,6 +127,17 @@ frontend-gates:
 	@# web/.../design-language/references/flat-button-spec.md（不在脚本里）。
 	@# 盘点模式：node scripts/check-flat-buttons.mjs --inventory；机器读：--json。
 	node scripts/check-flat-buttons.mjs
+	@# 毛玻璃唯一性门禁（glass-unify 批 2026-11-05 立判据；glass-recalibrate 批
+	@# 2026-11-05 18:13 重定标 —— 作者原话「我要的是主会话的输入框的这种，不透明，
+	@# 但是能反映背景内容颜色的」）：除 css/glass.css 外任何文件出现非 none 的
+	@# backdrop-filter ⇒ 红；glass.css 内的值必须是 var(--nf-glass-filter)；
+	@# --nf-glass-bg 的 α 必须落在 [0.45, 0.75]（低了内容透底、高了死白，两端都红）；
+	@# --nf-glass-blur ≥ 32px 且 --nf-glass-saturate ≥ 1.3（配方不许被降档）；
+	@# --nf-glass-* 只许在 stand-tokens.css 定义；canvas ask 的气泡/输入条必须挂 .nf-glass。
+	@# 规范正文与例外登记：web/.../design-language/references/glass-spec.md。
+	@# A/B 证据装置：node scripts/capture-glass-ab.mjs --root <web> --tag <before|after>。
+	@# 盘点模式：node scripts/check-glass-unify.mjs --inventory；机器读：--json。
+	node scripts/check-glass-unify.mjs
 	@# 冻结通知策略门禁（冻结通知策略批 2026-11-05）：provider 故障 = 基础设施故障 ⇒
 	@# delegate/flow 两条向上通知腿零产出、面板显形（统计 + 待你处理 + 唤醒按钮）、
 	@# 引擎自动续跑走既有唤醒腿（不花重启预算，有上限 + 递增间隔）、同波一条聚合告警。
@@ -136,6 +147,10 @@ frontend-gates:
 # ── 按钮扁平化：单闸入口（CI 同名 step 调的就是它，单一真源别在 CI 里另抄一遍）──
 flat-buttons:
 	node scripts/check-flat-buttons.mjs
+
+# ── 毛玻璃：单闸入口（与 flat-buttons 同形；CI 同名 step 调的就是它）──────────
+glass:
+	node scripts/check-glass-unify.mjs
 
 # ── 路由存在性：运行期腿（empty-state-must-not-lie 批 · 件三②，2026-11-05）──────
 # 静态腿判「源码里注册了没」，运行期腿判「启动后真的答不答」——后者才是事故的

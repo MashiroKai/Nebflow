@@ -34,21 +34,22 @@
   --accent-agent-light: 70 99 156;
 
   /* Glass surface — light: transparent, deep frost */
-  --glass-bg: rgba(255, 255, 255, 0.55);
-  --glass-blur: 24px;
+  /* ── glass-unify 批 2026-11-05（作者令「只允许一个毛玻璃效果」）──
+     **本族全部降级为别名**：值只在 stand-tokens.css 的 `--nf-glass-*` 段定义
+     一次（设计令牌单一源），这里一个色值都不留。历史名（--glass-* / --cv-*）
+     继续可用是为了存量消费面不改名即换材质，但它们已不是值的出生地——改配方
+     请改 stand-tokens.css，改这里等于什么都不改（被判据钉死，见下方注释）。 */
+  --glass-bg: var(--nf-glass-bg);
+  --glass-blur: var(--nf-glass-blur);
 
-  /* ── 不透明毛玻璃档（Canvas Ask 可读性批 2026-11-05 09:32）──────────────
-     作者逐字：「我说了要用毛玻璃背景，采用我们主会话的 Header 的同款，那个是
-     不透明的。」值 = --glass-bg **压平在不透明纸面 --color-bg 上的合成结果**
-     （0.55×255 + 0.45×245 = 250.50 → 250；g 通道 0.55×255+0.45×246 = 250.95
-     → 251；b 通道 0.55×255+0.45×248 = 251.85 → 252 ⇒ #fafbfc，逐通道取整）。
-     所以它与 Header 那块玻璃**同一个色**，只是 α 收到 1 —— 系统里零新色相。
-     为什么必须 α=1：#header 之所以读起来不透明，靠的不是 α（它也是 .55/.68），
-     而是 #chat 用 mask 把 Header 之下那一段内容洗成 α0（chat.css
-     --chat-top-clip）。Ask 面板背后是**别人的图层**（canvas 文档正文），面板
-     拿不到别人滚动层的 mask ⇒ 同一块玻璃在这里必须靠 α=1 收口，否则文档字会
-     以 45%/32% 的强度透上来，就是作者截屏里那层「双层重影」。 */
-  --glass-bg-opaque: #fafbfc;
+  /* ── 历史名（glass-unify 批后与 --glass-bg 同值）─────────────────────────
+     glass-unify 批之前：--glass-bg = α.55 半透、--glass-bg-opaque = 压平 α=1，
+     两个档正是作者实拍「图1 半透明 / 图2 不透明」的分裂来源。现两者同指
+     `--nf-glass-bg`（glass-recalibrate 批 2026-11-05 18:13 重定标后 = 亮 α .55 /
+     暗 α .68，参照物主会话输入框逐值）：**全站只有一个玻璃底**，不再有
+     「不透明档」可选——内容隐身由 blur(40px) 负责，不靠 α（见 stand-tokens.css
+     玻璃段注的参数网格读数）。保留旧名只为存量消费者零改动。 */
+  --glass-bg-opaque: var(--nf-glass-bg);
 
   /* 顶缘折射线层（#header 背景的第一层，作者令「Header 同款」直接提成 token：
      面级浮件要复用它时零抄值）。两个消费形态都合法、都有既有先例：
@@ -61,12 +62,12 @@
     linear-gradient(90deg, transparent 10%, var(--sapphire-refraction) 50%, transparent 90%);
 
   /* Glass border — whisper edge, feels like real glass */
-  --glass-border: rgba(255, 255, 255, 0.35);
+  --glass-border: var(--nf-glass-border-color);
   --glass-border-dark: rgba(91, 127, 191, 0.06);
 
   /* ── Frosted 标准 shadow token（2026-10-22 作者令「全站一套毛玻璃」）──
      backdrop blur 参数/材质 token 与 chat header 现实现同源（--glass-bg /
-     --glass-blur saturate(1.15) / --glass-border + 本 token 阴影栈）。
+     --glass-blur saturate(1.4) / --glass-border + 本 token 阴影栈）。
      消费方 = #header、.canvas-header 胶囊、wiki 左栏控制面控件——禁止各画
      各的。字面量与 chat.css #header 亮/暗档逐字同源（单源判据：改一处即全
      站生效）。 */
@@ -119,11 +120,11 @@
     --amber-glow: 255 190 120;
     --amber-dark: 255 168 60;
 
-    --glass-bg: rgba(24, 28, 38, 0.68);
-    /* 不透明毛玻璃档暗值（同式合成）：0.68×(24,28,38) + 0.32×(19,22,28)
-       = (22.40, 26.08, 34.80) ⇒ #161a23（--color-bg 暗档 = #13161c）。 */
-    --glass-bg-opaque: #161a23;
-    --glass-border: rgba(255, 255, 255, 0.06);
+    --glass-bg: var(--nf-glass-bg);
+    /* 不透明毛玻璃档暗值 = 同一个 --nf-glass-bg（glass-unify 批：暗档不再
+       单独拥有一份 α，见 :root 段注释）。 */
+    --glass-bg-opaque: var(--nf-glass-bg);
+    --glass-border: var(--nf-glass-border-color);
     --glass-border-dark: rgba(255, 255, 255, 0.04);
 
     /* Frosted 标准 shadow 暗档（与 chat.css #header 暗档逐字同源）。 */
@@ -144,8 +145,6 @@
 /* ── Glass Surface ─────────────────────────────────────────────────────── */
 .glass {
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
 }
 
@@ -178,9 +177,14 @@
    prefers-color-scheme（本文件历史结构；--g2-* 新族已走 html[data-theme]
    三态，勿把此裂缝复制给新族）。 */
 :root {
-  --glass-control-bg: rgba(255, 255, 255, 0.60);
-  --glass-control-bg-hover: rgba(255, 255, 255, 0.74);
-  --glass-control-border: rgba(255, 255, 255, 0.90);
+  /* glass-unify 批 2026-11-05：本族底色/模糊/描边**降级为别名**（值在
+     stand-tokens.css --nf-glass-* 单源）。控件玻璃不再有自己更淡的一档 ——
+     作者令「只允许一个毛玻璃效果」把「面级 .55 / 控件级 .60」这两档合并成
+     一档（图2 的形态在圆钮上也是同一个白度）。高光/浮雕类 token 保留名位，
+     但扁平契约下已无消费者描厚度。 */
+  --glass-control-bg: var(--nf-glass-bg);
+  --glass-control-bg-hover: var(--nf-glass-bg-hover);
+  --glass-control-border: var(--nf-glass-border-color);
   --glass-control-highlight: rgba(255, 255, 255, 0.95);
   --glass-control-highlight-hover: rgba(255, 255, 255, 0.95);
   /* 上半镜面高光层（设计稿 --g2-fab-specular 同值；折射层本体在 liquid-glass.css） */
@@ -190,15 +194,18 @@
   --glass-control-glow-hover: rgba(0, 0, 0, 0.12);
   --glass-control-shadow: rgba(0, 0, 0, 0.12);
   --glass-control-shadow-hover: rgba(0, 0, 0, 0.12);
-  --glass-control-blur: 16px;
-  --glass-control-sat: 1.8;
+  --glass-control-blur: var(--nf-glass-blur);
+  --glass-control-sat: var(--nf-glass-saturate);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --glass-control-bg: rgba(255, 255, 255, 0.14);
-    --glass-control-bg-hover: rgba(255, 255, 255, 0.20);
-    --glass-control-border: rgba(255, 255, 255, 0.32);
+    /* glass-unify 批：底色/描边随 --nf-glass-* 自动翻面，此处不再另立一档
+       （原先暗档控件底是 rgba(255,255,255,.14) 的白色洗色 —— 那是「半透明
+       玻璃」在暗色下的另一张脸，正是被本批取消的形态）。 */
+    --glass-control-bg: var(--nf-glass-bg);
+    --glass-control-bg-hover: var(--nf-glass-bg-hover);
+    --glass-control-border: var(--nf-glass-border-color);
     --glass-control-highlight: rgba(255, 255, 255, 0.35);
     --glass-control-highlight-hover: rgba(255, 255, 255, 0.35);
     --glass-control-specular: rgba(255, 255, 255, 0.28);
@@ -210,18 +217,12 @@
   }
 }
 
-.glass-control {
-  background-color: var(--glass-control-bg);
-  background-image: linear-gradient(to bottom, var(--glass-control-specular) 0%, transparent 46%);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(var(--glass-control-sat));
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(var(--glass-control-sat));
-  border: 1px solid var(--glass-control-border);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -2px 5px var(--glass-control-underedge),
-    0 1px 3px var(--glass-control-glow),
-    0 8px 24px var(--glass-control-shadow);
-}
+/* 历史类名 `.glass-control`（登录面/面板键的旧挂载点）——glass-unify 批后
+   它**不再拥有自己的配方**：材质由 glass.css 的 `.nf-glass, .glass, .glass-control`
+   同一条声明供给（同一份 token、同一条 backdrop-filter）。本块此前那套
+   「上半镜面渐变 + 顶缘 inset 高光 + 底缘暗边 + 双层浮影」是**第二套等效
+   毛玻璃**（也是先于本批被判死的厚度道具），整段退役，只留一个注记说明它为何
+   是空的 —— 留空块比删干净更危险，故直接删块、改为在 glass.css 登记。 */
 
 /* ── 悬浮控件玻璃 token（2026-10-28 canvas 三件 UI/UX 修 · 件三立族；2026-11-01
    统一按钮玻璃批按设计稿 §2.4 收编升格 = **全站悬浮控件单源**）─────────
@@ -235,13 +236,13 @@
    面阴影取 #input-bar 现值（顶缘 inset 高光 + 两档外投影 —— 与主对话输入框
    同款；修前取 #header inset-only 档，控件条在内容面上「飘不住」）。 */
 :root {
-  /* 模糊配方（= chat #header：--glass-bg + blur 24 saturate 1.15） */
+  /* 模糊配方（= 全站唯一毛玻璃配方：--glass-bg + blur 40 saturate 1.4） */
   --cv-bg: var(--glass-bg);
-  /* 不透明档（同族，只差 α）：消费方 = canvas Ask 面（ask 可读性批 2026-11-05）
-     —— 那一面背后是文档正文，拿不到 #chat 的内容 mask，必须靠 α=1 收口。 */
+  /* 历史“不透明档”名：glass-recalibrate 批 2026-11-05 18:13 起与 --glass-bg 同值
+     （全站不再有第二个 α；canvas Ask 面的内容隐身由 blur 40 负责）。 */
   --cv-bg-opaque: var(--glass-bg-opaque);
   --cv-blur: var(--glass-blur);
-  --cv-saturate: 1.15;
+  --cv-saturate: var(--nf-glass-saturate);
   /* 边框（= chat #header） */
   --cv-border: var(--glass-border);
   /* 面阴影（冷启动批 2026-10-30 作者令「查看器顶栏/控件条玻璃对齐主对话
@@ -301,6 +302,43 @@
   --cv-head-h: var(--capsule-h, 36px);
   --cv-head-band: calc(var(--cv-head-top) + var(--cv-head-h));
   --cv-head-clear: calc(var(--cv-head-band) + 10px);
+  /* ── canvas 正文顶部安全区（canvas-overlap-fix 批 2026-11-05，作者报障
+     「插件面板顶部内容被胶囊压住」）──
+     语义：**Canvas 面板正文首个内容块起笔不得高于本值**。它是唯一来源，
+     面板/查看器一律消费它，禁止各自写裸顶垫（修前 `#plugins-content` /
+     `#agents-content` 各写 `var(--ds-space-4)`=16px，首行整条压进胶囊带
+     27..63，实测遮挡 30px）。
+     值 = header 行下缘（--cv-head-band 46）+ 10 呼吸缝 = 56，与项目面板族
+     `--panel-head-clear` 同源（projectPanel.css :499 即本 token 的别名）。
+     手机层不存在第二个值：`--cv-safe-top` 在 mobileLayer.css 的顶部悬浮
+     chrome 簇几何块里覆写为 `--mchrome-clear`（簇顶 16 + 钮 48 + 呼吸 8 = 72）。
+     消费面 = split.css 文件尾「Canvas 正文顶部安全区（统一布局层）」块 +
+     侧边栏插件/agent 面板根节点（.canvas-safe-top 类，JS 挂）。 */
+  --cv-safe-top: var(--cv-head-clear);
+  /* ── canvas 顶行浮钮列几何（同批：返回原文档钮 ↔ 关签钮重叠修复）──
+     顶行 = 一条按序排布的浮钮列：
+       [关签钮 #canvas-head-close] →8 缝→ [返回原文档钮] …(弹性)… [居中标题
+       胶囊] …(弹性)… [堆叠钮 #deck-fab]
+     三把尺全部在此出生，split.css 只消费：
+       · --cv-head-inset-x   顶行左右缘落位（关签钮 left / 堆叠钮 right 同一值，
+         JS syncDeckBox 落笔同值，改这里只是把 CSS 缺省与 JS 对齐）；
+       · --cv-head-row-2nd   第二座（返回钮）左缘 = 首座右缘（inset + 40 圆钮）
+         + 一档缝 = 60；
+       · --cv-head-capsule-w 居中胶囊实宽（与 split.css 胶囊 max-width 同一
+         表达式，含窄面板 220 地板 —— 引用而非另算，防两把尺）；
+       · --cv-refback-w-max  返回钮可用宽上限 = 顶行左侧净档（胶囊左缘左移量）
+         扣掉自己的左缘与一档缝 ⇒ 任何面板宽度下都压不到居中胶囊。 */
+  --cv-head-inset-x: var(--ds-space-3);            /* 12 */
+  --cv-head-row-gap: var(--ds-space-2);            /* 8 */
+  --cv-head-row-2nd: calc(var(--cv-head-inset-x) + var(--cv-size-circle) + var(--cv-head-row-gap));
+  --cv-head-capsule-w: min(76%, max(220px, calc(100% - 368px)));
+  --cv-refback-w-max: calc((100% - var(--cv-head-capsule-w)) / 2 - var(--cv-head-row-2nd) - var(--cv-head-row-gap));
+  /* 两行档让位（同上批）：返回钮落**第二行**（窄面板 / 手机层）时，正文让出
+     两行的净空 = 安全区 56 + 一行钮高 36 + 一档缝 8 = 100（与项目面板族
+     --panel-head-2row = 102 同构：那边多一道 10 呼吸，此处缝已含在安全区里）。
+     只在该钮**真在场**时生效（body.has-refback，syncRefBackButton 挂），
+     不垫白洞。 */
+  --cv-head-2row: calc(var(--cv-safe-top) + var(--cv-head-h) + var(--cv-head-row-gap));
 }
 
 @media (prefers-color-scheme: dark) {
@@ -357,8 +395,6 @@
   .agent-detail-prompt-toggle:hover,
   .project-unmount-btn:hover {
     background-color: var(--glass-control-bg-hover);
-    -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(var(--glass-control-sat));
-    backdrop-filter: blur(var(--glass-control-blur)) saturate(var(--glass-control-sat));
     border-color: var(--glass-control-border);
   }
 }

@@ -5,8 +5,10 @@
  * （液态玻璃 v2/v3 悬浮族 F1 配方整体退役，设计稿 §4 遗产处置表）。
  *
  * 配方（基准件 B/C 逐字，全站唯一悬浮/面板玻璃语言）：
- *   · 材质   --glass-bg + blur(var(--glass-blur)) saturate(var(--cv-saturate))
- *            = blur(24px) saturate(1.15)，-webkit- 双写（iOS Safari/旧内核）
+ *   · 材质   --glass-bg + blur(var(--glass-blur)) saturate(var(--nf-glass-saturate))
+ *            = blur(40px) saturate(1.4)，-webkit- 双写（iOS Safari/旧内核）
+ *            （glass-recalibrate 批 2026-11-05 18:13：24px/1.15 → 40px/1.4，
+ *             依据 = 参照物实测 + 参数网格反推，见 stand-tokens.css 玻璃段注）
  *   · 阴影   --cv-shadow 三档栈（顶缘 inset 高光 + 两档外投影；暗档另值，
  *            sapphire.css 单源）
  *   · 折射线 面级浮件 ::before 顶缘 sapphire 渐变细线（80%×1px）；
@@ -33,6 +35,213 @@
  * 件 B）零触碰。
  * ═══════════════════════════════════════════════════════════════════════ */
 
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * ⓪ 毛玻璃（glass）—— 全站唯一标准 · 唯一工具类 · 唯一配方组装点
+ *    （glass-unify 批 2026-11-05 立术语；glass-recalibrate 批 2026-11-05 18:13
+ *      重定标 —— 作者原话：「我要的是主会话的输入框的这种，不透明，但是能反映
+ *      背景内容颜色的。」）
+ *
+ * 术语 → 唯一落点（说「毛玻璃」三个字就是这里，不是 CSS 片段）：
+ *   ① 值       = css/stand-tokens.css 的 `--nf-glass-*` 段（设计令牌单一源）
+ *   ② 类/配方  = 本文件 `.nf-glass` + 下方「成员登记表」（前端唯一工具类）
+ *   ③ 机检     = scripts/check-glass-unify.mjs（门禁成员）
+ *   ④ 词条     = design-language 插件 flat-button-spec 同族的 glass-spec.md
+ *                （插件侧术语条目，新人只看文档也能找到同一份标准）
+ *
+ * 唯一形态 = **不透明，但承接背景色**（参照物 = 主会话输入框）：
+ *   中等不透明白底（亮 α .55 / 暗 α .68，与参照物逐值相同）
+ *   + 强模糊 blur(40px)（把背景的**内容**洗掉）
+ *   + 提饱和 saturate(1.4)（把背景的**颜色**留下并放大）
+ *   + 细边 + 内高光 + 可选的顶缘折射线。
+ *   读法：颜色是低频、文字图形是高频 —— blur 是低通，所以「透色不透内容」不是
+ *   折中，是 blur 半径与 α 分工的必然结果（读数与定律见 stand-tokens.css 玻璃段注）。
+ *
+ * 已判死刑的两端：
+ *   · 死白（α ≥ .90，本轮被作者否掉）：红底上的色度只剩 6.9 —— 背景颜色进不来；
+ *   · 内容透底（α < .45 且 blur 小）：底下的正文大字看得出来 = 作者说的「脏」。
+ *
+ * 用法（新面一律这样写，别处不许再写 backdrop-filter）：
+ *   <div class="nf-glass">…</div>
+ *   纯 CSS 面不便改标记时，把选择器加进下方「成员登记表」。
+ *
+ * 历史名 `.glass` / `.glass-control` 在本规则里与 `.nf-glass` **同一条声明**
+ * ——它们不是第二套样式，是同一个配方的别名（零自有值）。新代码一律用
+ * `.nf-glass`。
+ * ═══════════════════════════════════════════════════════════════════════════ */
+.nf-glass,
+.glass,
+.glass-control {
+  background: var(--nf-glass-bg);
+  -webkit-backdrop-filter: var(--nf-glass-filter);
+  backdrop-filter: var(--nf-glass-filter);
+  border: var(--nf-glass-border);
+  box-shadow: var(--nf-glass-shadow);
+}
+
+/* 毛玻璃的 hover 档（只提不透，不改形态/不改模糊——形态只有一种） */
+@media (hover: hover) {
+  .nf-glass:hover {
+    background: var(--nf-glass-bg-hover);
+  }
+}
+
+/* 幕布档（scrim）——把背景压下去的遮罩层，**不是**毛玻璃面：无玻璃底、
+   无描边、无内高光。它只借模糊能力，值在 --nf-glass-scrim* 单源。 */
+.nf-glass-scrim {
+  background: var(--nf-glass-scrim);
+  -webkit-backdrop-filter: var(--nf-glass-filter);
+  backdrop-filter: var(--nf-glass-filter);
+}
+
+/* ── 成员登记表（M1..Mn）─────────────────────────────────────────────────
+   本表 = 「哪些面是毛玻璃」的**唯一账本**。每条成员只拿到配方，几何/落位仍留在
+   各自文件（split.css / modal.css / sidebar.css …）——那里已经没有任何
+   backdrop-filter 字样，改配方不必再碰它们。
+   新增一处毛玻璃 = 往本表加一个选择器（或给元素挂 .nf-glass 类）；
+   不许在别的文件里重写 backdrop-filter —— scripts/check-glass-unify.mjs 会红。 */
+
+/* 桌面面级成员（86 条独立选择器） */
+.ask-dock .ds-turn-btn,
+.bypass-toggle:hover,
+.header-dropdown-menu,
+.global-perm-toast,
+#header,
+#bg-dropdown,
+.notif-item,
+.ask-pending-row, .ask-pending-next,
+.ws-pick-target,
+.scroll-new-pill,
+.dvp-nd,
+.ds-edge-fade,
+.fcv-headpill,
+.fm-fab,
+.fm-archive-panel,
+.fm-detail,
+.voice-overlay,
+#nf-quickinput-host .quick-input-widget,
+.nf-lightbox,
+#conn-banner,
+body.mobile-layer #mobile-dock,
+body.mobile-layer .mobile-page-title::before,
+body.mobile-layer .mf-strip-chip.on::after,
+body.mobile-layer .mf-dots,
+body.mobile-layer .mf-swipe-ring,
+body.mobile-layer .mf-stack-view,
+body.mobile-layer .mf-deck-card,
+body.mobile-layer .mh-search-bar:not(.g2-fab),
+body.mobile-layer :is(.mh-idhead-name, .mh-idhead > #session-name),
+#delete-box.confirm-neutral #delete-confirm,
+#modal-overlay.takeover-blur,
+#search-date-popover,
+.cal-pill-listbox,
+.nebflow-toast,
+.nav-agent:hover,
+.nav-item:hover,
+#activity-bar,
+#perception-panel,
+.pp-btn,
+.pp-cfg,
+.proj-create-fab,
+.proj-flowmap-fab,
+body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .flowmap-nav-bar,
+.dev-menu,
+#reminder-panel,
+.bubble.schedule-card,
+.scroll-under-glass::after,
+#secrets-modal,
+#sidebar,
+.delete-drop-zone,
+.session-ctx-menu,
+.cfg-modal,
+.cfg-toast,
+.plugins-card,
+.nb-toggle,
+#social-modal,
+.explorer-context-menu, .canvas-tab-context-menu, .fm-context-menu,
+.explorer-selection-bar,
+.explorer-pickup-bar,
+#canvas-panel,
+.canvas-header,
+.canvas-tab.active,
+.cr-capsule,
+.deck-card,
+.epub-reader-menu,
+.epub-bar-menu,
+.epub-toc,
+.epub-anno-bar,
+.canvas-zoom-bar,
+.nf-findbar,
+.wg-tip,
+.nf-term-tip,
+.canvas-refback-btn,
+.wg-switch-select,
+.wg-search,
+.wg-chip,
+.task-card,
+.tw-panel,
+.tfl-card,
+.tfl-tag-popover,
+.tfl-fab-add,
+#todo-page,
+#usage-dashboard,
+.ud-tooltip,
+.voice-toggle:hover,
+#voice-mode-overlay {
+  -webkit-backdrop-filter: var(--nf-glass-filter);
+  backdrop-filter: var(--nf-glass-filter);
+}
+
+/* hover 成员（只在 (hover:hover) 生效；触屏无 hover ⇒ 零命中） */
+@media (hover: hover) {
+  .panel-toggle-btn:hover,
+  #header .memory-btn:hover,
+  #header #search-btn:hover,
+  .icon-btn:hover,
+  .activity-btn:hover,
+  #perception-btn:hover,
+  .pp-icon-btn:hover,
+  #reminder-btn:hover,
+  .panel-btn:hover, .activity-avatar:hover, .session-delete:hover, .folder-delete:hover, .explorer-folder-btn:hover, .explorer-action-btn:hover, .canvas-close-btn:hover, .reminder-create-btn:hover, .cfg-eye-btn:hover, .agent-detail-prompt-toggle:hover, .project-unmount-btn:hover {
+    -webkit-backdrop-filter: var(--nf-glass-filter);
+    backdrop-filter: var(--nf-glass-filter);
+  }
+}
+
+/* 粗指针（触屏桌面壳）成员 */
+@media (pointer: coarse) and (hover: none) {
+  .cr-capsule.is-center, .cr-capsule.is-edge {
+    -webkit-backdrop-filter: var(--nf-glass-filter);
+    backdrop-filter: var(--nf-glass-filter);
+  }
+}
+
+/* JS 注入面的成员（js/*.js 里 document.createElement('style') 的 CSS 串）——
+   那些样式表**在本文件之后**注入（动态 <style> 追加在 head 末尾），它们的
+   几何/底色照旧胜出；这里只补它们被摘掉的毛玻璃配方。`#fleet-update-card`
+   （fleetUpdate.js，选择器是 `#${CARD_ID}` 模板串，写不进 CSS 选择器）走的
+   是 `.nf-glass` 类，故不在此列。 */
+#daemon-btn:hover,
+#daemon-config-overlay,
+#daemon-panel,
+.bgt-modal,
+.daemon-btn,
+.daemon-btn-icon:hover,
+.daemon-close-btn:hover,
+.dag-card-header,
+.flow-agent-modal,
+.flow-def-card-header,
+.flow-def-tabs,
+.flow-viewer,
+.nebflow-login-modal,
+.solar-node,
+.team-act-btn:hover,
+.team-card-header,
+#fleet-update-card {
+  -webkit-backdrop-filter: var(--nf-glass-filter);
+  backdrop-filter: var(--nf-glass-filter);
+}
+
 /* ── ① 气泡半透明实底档（气泡禁独立 backdrop-filter）────────────────────
    聊天气泡全族（主会话 .bubble.* + canvas ask 列 .ask-bub.*）消费本档：
    实底以 color-mix 从既有单源色 token 出 α（零新色值、双主题自适应——
@@ -41,8 +250,8 @@
    --glass-bub-active-bg = canvas 活性语言用户侧变体（sapphire tint 复合层
    压在半透明实底上——tint 无 blur 时直接裸铺会漏底纹，复合保证可读）。 */
 :root {
-  --glass-bub-user-bg: color-mix(in srgb, var(--color-bubble-user) 90%, transparent);
-  --glass-bub-ai-bg: color-mix(in srgb, var(--color-bubble-ai) 92%, transparent);
+  --glass-bub-user-bg: color-mix(in srgb, var(--color-bubble-user) 97%, transparent);
+  --glass-bub-ai-bg: color-mix(in srgb, var(--color-bubble-ai) 97%, transparent);
   --glass-bub-ai-border: rgba(0, 0, 0, 0.04);
   --glass-bub-ai-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
   --glass-bub-active-bg:
@@ -92,8 +301,8 @@ html[data-theme="light"] {
    过渡留在 input.css，frozen/disconnected/voice 高特异态不受影响） */
 #input-bar {
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
-  backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
+  -webkit-backdrop-filter: var(--nf-glass-filter);
+  backdrop-filter: var(--nf-glass-filter);
   border: 1px solid var(--glass-border);
   box-shadow: var(--cv-shadow);
 }
@@ -117,8 +326,8 @@ html[data-theme="light"] {
 /* 队列条（镜像 #input-bar 材质；几何在 input.css） */
 #queue-bar.visible {
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
-  backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
+  -webkit-backdrop-filter: var(--nf-glass-filter);
+  backdrop-filter: var(--nf-glass-filter);
   border: 1px solid var(--glass-border);
   box-shadow: var(--cv-shadow);
 }
@@ -151,65 +360,62 @@ html[data-theme="light"] {
 .model-panel,
 .wsp-panel {
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
-  backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
+  -webkit-backdrop-filter: var(--nf-glass-filter);
+  backdrop-filter: var(--nf-glass-filter);
   border: 1px solid var(--glass-border);
   box-shadow: var(--cv-shadow);
 }
 
 /* canvas ask 输入条（ask.css 保留几何与 focus-within 活性描边）
-   ── 不透明毛玻璃档（ask 可读性批 2026-11-05 09:32）──
-   作者令「采用我们主会话的 Header 的同款，那个是不透明的」：本档 = #header 的
-   逐层同一套 —— ① 顶缘折射线层（--glass-refraction-layer，#header 背景第一层
-   的 token 化）+ ② 底（--glass-bg-opaque，= Header 玻璃压平在纸面上的 α=1
-   等价色）+ ③ 同 blur/saturate 参数（--cv-blur / --cv-saturate）+ ④ 同描边
-   （--cv-border）+ ⑤ 同阴影栈（--cv-shadow 已含 Header 的顶缘 inset 高光）。
-   与 #header 的唯一差别 = 底的 α（1 vs .55/.68）——因为这一面背后是 canvas
-   文档正文，拿不到 #chat 那层内容 mask（成因见 sapphire.css --glass-bg-opaque
-   令牌注）。blur 照留：它是本档配方的一半，且本面气泡只有 ~3 屏，成本受控
-   （作者 2026-11-04 12:52 已授予气泡独立 backdrop-filter 的例外）。
-   ── 记事本批（2026-11-05）──
-   `.note-body`（canvas 记事本内容盒）以**成员**身份进本档：它与输入条是同一块
-   配方（同底/同 blur/同描边/同阴影/同顶缘折射线），改配方两个面一起变——本文件
-   不复制第二份 .note-* 材质声明。 */
+   ── 回归唯一标准（glass-recalibrate 批 2026-11-05 18:13）──
+   09:32 那版曾为「这一面背后是 canvas 文档正文、拿不到 #chat 那层内容 mask」
+   单开过一档 α=1 的不透明底（--glass-bg-opaque）。18:13 作者把参照物定成主会话
+   输入框（「不透明，但能反映背景内容颜色」）之后，**第二个 α 就是第二个标准**，
+   故本档回归全站唯一配方：底 = --glass-bg（亮 .55 / 暗 .68）+ 同一
+   blur(40px) saturate(1.4) + 同描边 --cv-border + 同阴影栈 --cv-shadow。
+   内容隐身改由**模糊半径**负责而不是靠提 α：参数网格实测（同一块面、同一张
+   正文墙）α .55 时亮度标准差 blur 24→40 为 2.81→1.43（腰斩），同时红底上的
+   色度 90.4→90.4（一格不掉）——「用 blur 换内容，不拿 α 换内容」。
+   `.note-body`（canvas 记事本内容盒）以**成员**身份同档：改配方两面一起变，
+   本文件不复制第二份 .note-* 材质声明。 */
 .ask-input,
 .note-body {
-  /* 底 = 不透明档（α=1）；顶缘折射线走伪元素（形态同 #input-bar::before，
-     见下方共用块）——不用背景层，是为了让「面板内零渐变背景」这条结构判据
-     （tests/ask-sheet-fade-height A0d：不许出现任何过渡条/色块层）保持可读：
-     1px 折射线与「渐变色块」在计算样式里无法区分，所以按既有先例落到伪元素。 */
-  background: var(--cv-bg-opaque, var(--glass-bg));
-  -webkit-backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
-  backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
+  /* 底 = 全站唯一玻璃底（--cv-bg-opaque 已与 --glass-bg 同值，历史名先退役）；
+     顶缘折射线走伪元素（形态同 #input-bar::before，见下方共用块）——不用背景层，
+     是为了让「面板内零渐变背景」这条结构判据（tests/ask-sheet-fade-height A0d：
+     不许出现任何过渡条/色块层）保持可读：1px 折射线与「渐变色块」在计算样式里
+     无法区分，所以按既有先例落到伪元素。 */
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--nf-glass-filter);
+  backdrop-filter: var(--nf-glass-filter);
   border: 1px solid var(--cv-border, var(--glass-border));
   box-shadow: var(--cv-shadow);
 }
 
-/* canvas ask 气泡（ask 可读性批 2026-11-05）：材质与上面的输入条**逐项同档**
-   （同一条不透明毛玻璃档，含顶缘折射线）。作者 2026-11-04 12:52 曾把气泡材质
-   定成 --cv-bg 半透档；09:32 令「看不清楚 / 要 Header 同款不透明」后本档改判，
-   半透档只留给「背后是自家内容、且已被 mask 洗掉」的面（主会话 #header）。
+/* canvas ask 气泡：材质与上面的输入条**逐项同档**（含顶缘折射线）。09:32 那版
+   为「看不清」单开的 α=1 档随本轮统一退役；用户侧气泡保留 sapphire 18% tint
+   复合层（tint 比例不变，只换底）。
    特异性 = .ask-dock .ask-bub（2 类）：glass.css 后载的同性度规则不会把它冲掉，
    而 ask.css 已把这一块材质整段移交本文件（那里只留几何/年龄渐隐）。 */
 .ask-dock .ask-bub {
   /* position:relative 只为承载 ::before 折射线（气泡内无绝对定位子件，
      改前改后几何逐像素不变）。 */
   position: relative;
-  background: var(--cv-bg-opaque, var(--glass-bg));
-  -webkit-backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
-  backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--nf-glass-filter);
+  backdrop-filter: var(--nf-glass-filter);
   border: var(--ds-border-width) solid var(--cv-border, var(--glass-border));
   box-shadow: var(--cv-shadow);
 }
-/* 用户侧气泡 = 同一不透明底 + sapphire tint 复合层（= 既有 --glass-bub-active-bg
-   的复合结构，只是把半透底换成不透明档；tint 比例不变）。 */
+/* 用户侧气泡 = 同一玻璃底 + sapphire tint 复合层（= 既有 --glass-bub-active-bg
+   的复合结构，tint 比例不变）。 */
 .ask-dock .ask-bub.user {
   background:
     linear-gradient(rgb(var(--sapphire) / 0.18), rgb(var(--sapphire) / 0.18)),
-    var(--cv-bg-opaque, var(--glass-bg));
+    var(--glass-bg);
   border-color: rgb(var(--sapphire) / 0.35);
 }
-/* 顶缘折射线（不透明毛玻璃档的第三件）：几何与 #input-bar::before 逐值相同
+/* 顶缘折射线（面级浮件的第三件）：几何与 #input-bar::before 逐值相同
    （top:0 / 左右各 10% / 高 1px / border-radius inherit），色值 = 同一个
    --glass-refraction-line token（= #header 背景第一层的那个渐变）。
    记事本批：`.note-dock .note-body` 同在这一组（成员，非副本）——两条选择器都是
@@ -237,8 +443,8 @@ html[data-theme="light"] {
 #mention-dropdown,
 .dev-menu.explorer-dev-menu {
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
-  backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
+  -webkit-backdrop-filter: var(--nf-glass-filter);
+  backdrop-filter: var(--nf-glass-filter);
   border: 1px solid var(--glass-border);
   box-shadow: var(--cv-shadow);
 }
@@ -259,8 +465,8 @@ html[data-theme="light"] {
 #canvas-head-close,
 .g2-fab {
   background: var(--cv-bg, var(--glass-bg));
-  -webkit-backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
-  backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
+  -webkit-backdrop-filter: var(--nf-glass-filter);
+  backdrop-filter: var(--nf-glass-filter);
   border: 1px solid var(--cv-border, var(--glass-border));
   /* 圆钮族零投影（扁平化批 2026-11-05）：原 `box-shadow: var(--cv-shadow)` 退役。
      圆钮的"浮"由 backdrop 玻璃采样 + 1px 描边表达，不靠投影造厚度。 */
@@ -394,8 +600,8 @@ html[data-theme="light"] {
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
   background: var(--cv-bg, var(--glass-bg));
-  -webkit-backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
-  backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
+  -webkit-backdrop-filter: var(--nf-glass-filter);
+  backdrop-filter: var(--nf-glass-filter);
   border: 1px solid var(--cv-border, var(--glass-border));
   /* 零投影：厚度道具在此族结构上不存在（见文件头契约） */
   transition:

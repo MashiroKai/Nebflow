@@ -55,9 +55,12 @@ const SEEK_STEP = 5;
 /** pane → 本查看器的资源回收闭包（幂等；见文件尾 dispose 注）。 */
 const CLEANUP = new WeakMap();
 
-/** 当前活动页签里的视频元素（无则 null）。所有「作用于视频的键」的唯一取件口。 */
+/** 当前活动页签里的视频元素（无则 null）。所有「作用于视频的键」的唯一取件口。
+ *  @returns {HTMLVideoElement|null} 选择器已钉死 `video.canvas-video`；此处类型注
+ *  只补 checkJs 的收窄（querySelector 的静态返回是 Element|null），零行为改动。 */
 function activeVideo() {
-  return document.querySelector('.canvas-tab-pane.active video.canvas-video');
+  return /** @type {HTMLVideoElement|null} */ (
+    document.querySelector('.canvas-tab-pane.active video.canvas-video'));
 }
 
 // 键盘层的上下文键（keyboard-first 三期口径）：keyRules.js 的 when 消费它们。

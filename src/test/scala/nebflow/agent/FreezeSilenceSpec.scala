@@ -5,7 +5,17 @@ import cats.effect.std.Dispatcher
 import cats.syntax.all.*
 import fs2.Stream
 import munit.CatsEffectSuite
-import nebflow.actor.{ActorSystem, AgentCommand, AgentError, AgentErrorType, AgentEvent, AgentKind, AgentRecord, Behavior, Behaviors}
+import nebflow.actor.{
+  ActorSystem,
+  AgentCommand,
+  AgentError,
+  AgentErrorType,
+  AgentEvent,
+  AgentKind,
+  AgentRecord,
+  Behavior,
+  Behaviors
+}
 import nebflow.core.FileChangeTracker
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.delegate.{DelegateFreeze, DelegateJudge, DelegateRegistry, FreezeNotice}
@@ -32,10 +42,15 @@ import scala.concurrent.duration.*
  *      面板判定 = 「待你处理 + 可自动恢复」，唤醒入口仍在（kind=manual ⇒ 行上给按钮）；
  *   ② 同一波 6 条 provider 冻结 ⇒ 通知 **0** 条，静默统计读出 6；
  *   ③ 需人处理的确定性缺陷 ⇒ **一条**聚合告警（同一波 3 条仍是 1 条，重复拍不重发）；
- *   ④ provider 未服务 ⇒ 不续跑；服务恢复 ⇒ 自动续跑走 **UserInput**（带幂等键，
- *      **不是** RestartAgent，不花 supervisor 重启预算），通知仍为 0；续跑次数上限 +
- *      递增间隔是纯函数，用尽才升级成一条告警；
- *   ⑤ flow-notify 闸：基础设施故障文本 ⇒ 不向上汇报（纯函数判据）。
+ *   ④ provider 未服务 ⇒ 不抢跑；服务恢复 ⇒ 自动续跑走 **UserInput**（带幂等键，
+ *      **不是** RestartAgent，不花 supervisor 重启预算），通知仍为 0；退避为
+ *      **指数 + 封顶**（三个连续重试时刻给读数），升级判据是**本轮冻结超过 30 分钟
+ *      时限**（不是尝试次数用尽）；健康表只许**延迟**续跑、不许无限期否决
+ *      （fallback 那条旧缺陷的正解）；
+ *   ⑤ flow-notify 闸：基础设施故障文本 ⇒ 不向上汇报（纯函数判据），确定性缺陷
+ *      （AssertionError / NPE / 校验和 / 越权 / 业务失败）仍照常通知。
+ *   ⑥ **判据表**（`ProviderFault.Table`）：鉴权订阅 403 / 配额余额 / 上游 5xx 含 550 /
+ *      连接失败超时 / 格式层拒绝含 `Input too long` 逐族可恢复；代码缺陷族照常通知。
  */
 class FreezeSilenceSpec extends CatsEffectSuite:
 
@@ -60,6 +75,9 @@ class FreezeSilenceSpec extends CatsEffectSuite:
     "nebflow.delegate.freeze.autoResumeAfterMs",
     "nebflow.delegate.freeze.autoResumeMax",
     "nebflow.delegate.freeze.autoResumeBackoffMs",
+    "nebflow.delegate.freeze.autoResumeBackoffMaxMs",
+    "nebflow.delegate.freeze.autoResumeForceAfterMs",
+    "nebflow.delegate.freeze.escalateAfterMs",
     "nebflow.delegate.freeze.digestWindowMs",
     "nebflow.delegate.freeze.alertReArmMs"
   )
@@ -216,7 +234,9 @@ class FreezeSilenceSpec extends CatsEffectSuite:
 
   // ── ① provider 全败 ⇒ 零向上通知 ─────────────────────────────────────────
 
-  test("provider failure freeze: ZERO upward notification (parent mailbox + parent ref), panel says needs-you-but-auto-recoverable, wake entry stays") {
+  test(
+    "provider failure freeze: ZERO upward notification (parent mailbox + parent ref), panel says needs-you-but-auto-recoverable, wake entry stays"
+  ) {
     val system = ActorSystem(s"fsz-1-${scala.util.Random.nextInt(100000)}")
     val tmp = os.temp.dir(prefix = "nb-fsz1-")
     val parentSid = "fsz-parent-1"
@@ -269,6 +289,7 @@ class FreezeSilenceSpec extends CatsEffectSuite:
         !cmds.exists { case _: AgentCommand.UserInput => true; case _ => false },
         "freezing must not inject a retry nudge by itself"
       )
+    end for
   }
 
   // ── ② 同一波 6 条 ⇒ 通知 0，统计 6 ───────────────────────────────────────
@@ -306,11 +327,14 @@ class FreezeSilenceSpec extends CatsEffectSuite:
       assertEquals(digest.infraCount, 6)
       assertEquals(digest.silentCount, 6)
       assertEquals(FreezeNotice.planAlerts(digest), Nil, "no alert is planned for a recoverable wave")
+    end for
   }
 
   // ── ③ 需人处理 ⇒ 一条聚合告警 ────────────────────────────────────────────
 
-  test("deterministic-defect freezes produce exactly ONE aggregated alert for the whole wave (and no repeat on the next tick)") {
+  test(
+    "deterministic-defect freezes produce exactly ONE aggregated alert for the whole wave (and no repeat on the next tick)"
+  ) {
     val system = ActorSystem(s"fsz-3-${scala.util.Random.nextInt(100000)}")
     val tmp = os.temp.dir(prefix = "nb-fsz3-")
     val parentSid = "fsz-parent-3"
@@ -348,15 +372,21 @@ class FreezeSilenceSpec extends CatsEffectSuite:
       val alerts = afterFirst.filter(_.eventType == "freeze-alert")
       assertEquals(alerts.size, 1, s"exactly ONE aggregated alert for 3 freezes, got ${afterFirst.map(_.eventType)}")
       val a = alerts.head
-      assert(a.metadata("count").exists(j => j.asNumber.flatMap(_.toInt).contains(3)), s"the alert carries the wave size: ${a.metadata}")
+      assert(
+        a.metadata("count").exists(j => j.asNumber.flatMap(_.toInt).contains(3)),
+        s"the alert carries the wave size: ${a.metadata}"
+      )
       assert(a.payload.contains("delegate:delegate-fsz-def-1"), s"wake addresses listed: ${a.payload.take(300)}")
       assert(a.payload.contains("aggregated alert"), "the text tells the reader it is ONE aggregated alert")
       assertEquals(afterSecond.count(_.eventType == "freeze-alert"), 1, "the next tick must not repeat it")
+    end for
   }
 
   // ── ④ 自动续跑：探测 → 续跑（不花预算）→ 上限 → 一条告警 ────────────────
 
-  test("auto-resume: waits while no provider serves, then resumes the SAME session via UserInput (never RestartAgent) with zero notification") {
+  test(
+    "auto-resume: waits while no provider serves, then resumes the SAME session via UserInput (never RestartAgent) with zero notification"
+  ) {
     val system = ActorSystem(s"fsz-4-${scala.util.Random.nextInt(100000)}")
     val tmp = os.temp.dir(prefix = "nb-fsz4-")
     val parentSid = "fsz-parent-4"
@@ -411,6 +441,7 @@ class FreezeSilenceSpec extends CatsEffectSuite:
       )
       // 续跑成功/失败都不发通知。
       assertEquals(events.map(_.eventType), Nil, s"auto-resume is silent, got ${events.map(_.eventType)}")
+    end for
   }
 
   test("auto-resume budget: capped attempts with growing gaps, and only an exhausted budget escalates to ONE alert") {
@@ -445,7 +476,7 @@ class FreezeSilenceSpec extends CatsEffectSuite:
         childCmds,
         parentRef
       )
-      // 让续跑腿不必真跑：直接记账（同一份进程内台账），验证「上限 ⇒ 才升级」。
+      // 让续跑腿不必真跑：直接记账（同一份进程内台账）。
       since <- FreezeNotice
         .itemsOf(DelegateRegistry.list(), System.currentTimeMillis(), 0L)
         .headOption
@@ -456,17 +487,271 @@ class FreezeSilenceSpec extends CatsEffectSuite:
       attempts = FreezeNotice.autoResumesOf(childSid, since)
       exhausted = FreezeNotice.autoResumesExhausted(childSid, since)
       digest = FreezeNotice.digestOf(DelegateRegistry.list(), System.currentTimeMillis())
+      // provider 故障降噪批 2026-11-05：次数用尽**不再是升级判据**（次数只作面板读数），
+      // 升级改由「本轮冻结超过 30 分钟」判定 ⇒ 此处必须**没有**告警计划。
       planned = FreezeNotice.planAlerts(digest)
+      _ <- FreezeAlertSweep.alertTick(resources)
+      events <- mailboxEvents(parentSid)
+      until = System.currentTimeMillis()
+      escalateNow = FreezeNotice.escalateDue(childSid, since, until)
+      escalateLater = FreezeNotice.escalateDue(childSid, since, since + Defaults.DelegateFreezeEscalateAfterMs + 1)
+      _ <- system.stopAll
+    yield
+      assertEquals(attempts, 2, "the ledger records the attempts")
+      assert(exhausted, "the attempt counter reaches the panel-readout cap")
+      assertEquals(planned, Nil, "a spent count no longer escalates — the horizon does")
+      assertEquals(events.map(_.eventType), Nil, s"no message inside the horizon, got ${events.map(_.eventType)}")
+      assert(!escalateNow, "fresh freeze ⇒ inside the 30-minute horizon")
+      assert(escalateLater, "past the horizon ⇒ escalation is due")
+    end for
+  }
+
+  test("auto-resume backoff: exponential with a CAP, and the retry schedule is never a fixed short loop") {
+    // 任务书验收③：给实际参数 + 三个连续重试的时间点（证明指数退避不是死循环）。
+    sys.props("nebflow.delegate.freeze.autoResumeAfterMs") = "0"
+    sys.props("nebflow.delegate.freeze.autoResumeBackoffMs") = "60000"
+    sys.props("nebflow.delegate.freeze.autoResumeBackoffMaxMs") = "300000"
+    val t0 = 1_000_000L
+    assert(FreezeNotice.autoResumeDue(t0, t0, attempts = 0), "the first attempt is due right away")
+    assert(!FreezeNotice.autoResumeDue(t0, t0 + 30_000L, attempts = 1), "attempt #2 waits one backoff gap")
+    assert(FreezeNotice.autoResumeDue(t0, t0 + 60_000L, attempts = 1))
+    assert(!FreezeNotice.autoResumeDue(t0, t0 + 60_000L, attempts = 2), "attempt #3 waits two gaps")
+    assert(FreezeNotice.autoResumeDue(t0, t0 + 120_000L, attempts = 2))
+    // 封顶：第 4 次起间隔不再翻倍（120s ⇒ 300s 封顶），恒按 300s。
+    assert(FreezeNotice.autoResumeDue(t0, t0 + 240_000L, attempts = 3))
+    assert(!FreezeNotice.autoResumeDue(t0, t0 + 240_000L, attempts = 4), "capped at 300s, not 480s")
+    assert(FreezeNotice.autoResumeDue(t0, t0 + 300_000L, attempts = 4))
+    assert(!FreezeNotice.autoResumeDue(t0, t0 + 299_999L, attempts = 12), "the cap holds for every later try")
+    assert(FreezeNotice.autoResumeDue(t0, t0 + 300_000L, attempts = 12))
+
+    // 三个连续重试时刻（实际参数 after=60s / base=60s / cap=300s，冻结时刻 t0）：
+    //   #1 t0+60s · #2 t0+120s · #3 t0+180s · #4 t0+300s · #5 t0+360s（此后每 300s）
+    sys.props("nebflow.delegate.freeze.autoResumeAfterMs") = "60000"
+    // 退避曲线读数：第 n 次尝试的最早时刻（从冻结时刻起算）。
+    def firstDueAt(attempts: Int): Long =
+      (0 to 1200).map(_.toLong * 1000L).find(ms => FreezeNotice.autoResumeDue(t0, t0 + ms, attempts)).getOrElse(-1L)
+    // 实际参数 after=60s / base=60s / cap=300s 下的三个连续重试时刻（任务书验收③）：
+    //   #1 t0+60s · #2 t0+120s · #3 t0+180s —— 指数段；#4 t0+300s · #5 起封顶 t0+360s。
+    val timeline: Vector[Long] = (0 until 5).map(firstDueAt).toVector
+    assertEquals(
+      timeline.map(_ / 1000L),
+      Vector(60L, 120L, 180L, 300L, 360L),
+      s"exponential until the 300s cap, then flat: ${timeline.map(_ / 1000L)}"
+    )
+    assert(
+      timeline.forall(_ >= 60_000L),
+      s"no fixed 5s-style hammering: every gap is >= 60s, got ${timeline.map(_ / 1000L)}s"
+    )
+    // 指数证据：首两次重试相隔 60s，之后增长量翻倍（+60s → +120s → 封顶 +300s）。
+    val steps = (1 until timeline.size).map(i => timeline(i) - timeline(i - 1)).toVector
+    assertEquals(steps.map(_ / 1000L), Vector(60L, 60L, 120L, 60L), s"exponential growth of the gaps: $steps")
+    assert(firstDueAt(4) == firstDueAt(5), "past the cap every attempt is at the same schedule")
+  }
+
+  test(
+    "escalation horizon: a provider freeze inside 30 minutes stays silent even after many resumes; past it, ONE digest alert"
+  ) {
+    val system = ActorSystem(s"fsz-6-${scala.util.Random.nextInt(100000)}")
+    val tmp = os.temp.dir(prefix = "nb-fsz6-")
+    val parentSid = "fsz-parent-6"
+    val childSid = "delegate-fsz-horizon-1"
+    sys.props("nebflow.delegate.freeze.autoResumeAfterMs") = "0"
+    sys.props("nebflow.delegate.freeze.autoResumeMax") = "2"
+    for
+      resources <- mkResources(system, tmp)
+      _ <- resources.sessionStore.getOrCreateSession(parentSid, "freeze silence parent", agentName = Some("Nebula"))
+      childCmds <- Ref.of[IO, List[AgentCommand]](Nil)
+      parentRef <- Ref.of[IO, List[AgentCommand]](Nil)
+      _ <- freezeDelegate(
+        resources,
+        system,
+        parentSid,
+        childSid,
+        AgentErrorType.LlmFailed,
+        "cmdcode/deepseek-flash: 550 — upstream returned an empty body",
+        childCmds,
+        parentRef
+      )
+      since <- FreezeNotice
+        .itemsOf(DelegateRegistry.list(), System.currentTimeMillis(), 0L)
+        .headOption
+        .map(_.frozenSince)
+        .liftTo[IO](new AssertionError("the frozen record must be visible to the digest"))
+      // 次数早已超过 autoResumeMax：时限内仍然不许升级。
+      _ <- IO((1 to 6).foreach(_ => FreezeNotice.recordAutoResume(childSid, since, System.currentTimeMillis())))
+      inside = FreezeNotice.planAlerts(FreezeNotice.digestOf(DelegateRegistry.list(), System.currentTimeMillis()))
+      _ <- FreezeAlertSweep.alertTick(resources)
+      eventsInside <- mailboxEvents(parentSid)
+      // 时限到（把时限压到 1ms，等价于「本轮冻结已超 30 分钟」）⇒ 才有一条摘要。
+      _ <- IO(sys.props("nebflow.delegate.freeze.escalateAfterMs") = "1")
+      _ <- IO(Thread.sleep(5))
+      outside = FreezeNotice.planAlerts(FreezeNotice.digestOf(DelegateRegistry.list(), System.currentTimeMillis()))
+      _ <- FreezeAlertSweep.alertTick(resources)
+      eventsOutside <- mailboxEvents(parentSid)
+      _ <- system.stopAll
+    yield
+      assertEquals(inside, Nil, "inside the horizon a provider freeze is never escalated, no matter how many resumes")
+      assertEquals(
+        eventsInside.map(_.eventType),
+        Nil,
+        s"inside the horizon: zero messages, got ${eventsInside.map(_.eventType)}"
+      )
+      assertEquals(outside.size, 1, "past the escalation horizon it becomes ONE digest alert")
+      val alerts = eventsOutside.filter(_.eventType == "freeze-alert")
+      assertEquals(
+        alerts.size,
+        1,
+        s"exactly one aggregated alert past the horizon, got ${eventsOutside.map(_.eventType)}"
+      )
+      assert(
+        alerts.head.payload.contains("horizon") || alerts.head.payload.contains("时限"),
+        s"the alert states the horizon: ${alerts.head.payload.take(300)}"
+      )
+    end for
+  }
+
+  test("provider-fault table: every recoverable family is silent, every deterministic defect still notifies") {
+    import nebflow.core.delegate.ProviderFault
+    // 任务书验收①：可恢复族逐类（作者报障那一屏的四类都在里面，另加 5xx/连接/频率）。
+    val recoverable = List(
+      "kimi/k3: HTTP 403 no subscription for this account",
+      "flysin: insufficient balance — top up to continue",
+      "cmdcode/deepseek-flash: statusCode: 550, response:",
+      "zhipu/glm: 429 {\"error\":{\"code\":\"1308\"}} 已达到 5 小时的使用上限",
+      "anthropic: 529 overloaded",
+      "ConnectException: Connection refused",
+      "java.net.SocketTimeoutException: connect timed out",
+      "cmdcode/deepseek-flash: 400 invalid request — Input too long",
+      "request rejected: maximum context length exceeded (context_length_exceeded)"
+    )
+    recoverable.foreach { d =>
+      assert(ProviderFault.isRecoverable(d), s"recoverable family missed: $d")
+      assert(FreezeNotice.infraFault(d), s"infraFault must agree (single ruler): $d")
+      assertEquals(
+        DelegateFreeze.classify("Unknown", d),
+        DelegateFreeze.Reason.LlmFailure,
+        s"a provider fault must land on the silent llm-failure code, not engine-fault: $d"
+      )
+      assert(FreezeNotice.silent(DelegateFreeze.wireValue(DelegateFreeze.Reason.LlmFailure)))
+    }
+    // 真失败：确定性缺陷（代码 bug / 越权 / 数据损坏 / 业务失败）⇒ 照常通知。
+    val real = List(
+      "AssertionError: expected 1 but got 2",
+      "java.lang.NullPointerException: Cannot invoke cwd() because rec is null",
+      "compile error: value foo is not a member of bar",
+      "tool pipeline crashed: checksum mismatch on artifact",
+      "越权：not allowed to write outside the workspace",
+      "显式业务失败：explicit business failure — the report was rejected by the gate"
+    )
+    real.foreach { d =>
+      assert(ProviderFault.isRealFailure(d), s"deterministic defect missed: $d")
+      assert(!FreezeNotice.infraFault(d), s"a real defect must never be silenced: $d")
+      assert(
+        !FreezeNotice.silent(DelegateFreeze.wireValue(DelegateFreeze.classify("Unknown", d))),
+        s"a real defect must escalate: $d"
+      )
+    }
+    // 判定优先级：同一段正文里既有 provider 字样又有代码缺陷字样 ⇒ 按真失败处置。
+    assert(!FreezeNotice.infraFault("provider 503 but the tool pipeline threw a NullPointerException"))
+    // 未命中任何族的正文不许静音（宁可照常通知）。
+    assert(!FreezeNotice.infraFault("no such file or directory: build.sbt"))
+  }
+
+  test("fallback chain: a Down model elsewhere never blocks the resume (there IS a usable model in the queue)") {
+    // 旧缺陷（delegate/delegate-fallback-chain-fix）：「fallback 队列里明明有可用模型，
+    // 却报所有模型不可用并冻结 agent」。真实盘面 = 健康表里**只有被判过死的候选**
+    // （探针只探 Down 的），健康的候选往往没有条目；旧判据「表里一条 Down 都没有」
+    // 因此永假 ⇒ 冻结批永远等不到自动续跑。本批的正解 = 健康表只许延迟，不许否决。
+    val system = ActorSystem(s"fsz-7-${scala.util.Random.nextInt(100000)}")
+    val tmp = os.temp.dir(prefix = "nb-fsz7-")
+    val parentSid = "fsz-parent-7"
+    val childSid = "delegate-fsz-chain-1"
+    sys.props("nebflow.delegate.freeze.autoResumeAfterMs") = "0"
+    for
+      resources <- mkResources(system, tmp)
+      _ <- resources.sessionStore.getOrCreateSession(parentSid, "freeze silence parent", agentName = Some("Nebula"))
+      childCmds <- Ref.of[IO, List[AgentCommand]](Nil)
+      parentRef <- Ref.of[IO, List[AgentCommand]](Nil)
+      _ <- freezeDelegate(
+        resources,
+        system,
+        parentSid,
+        childSid,
+        AgentErrorType.LlmFailed,
+        "kimi/k3: 403 no subscription (all candidates exhausted)",
+        childCmds,
+        parentRef
+      )
+      // 真实盘面：只有 kimi 被判过死；cmdcode 从未被探过（健康表里根本没有它的条目）。
+      _ <- resources.healthMonitor.markDown("kimi", "k3", "403 no subscription")
+      serving <- FreezeAlertSweep.providerServing(resources)
+      // 判据函数本身（纯函数，缺省容忍窗 10 分钟）：窗内延迟、窗外放行。
+      deferredInsideWindow = !FreezeAlertSweep.shouldAttemptResume(serving = false, episodeAgeMs = 60_000L)
+      allowedPastWindow = FreezeAlertSweep.shouldAttemptResume(serving = false, episodeAgeMs = 11L * 60_000L)
+      allowedWhenServing = FreezeAlertSweep.shouldAttemptResume(serving = true, episodeAgeMs = 0L)
+      // 健康表说「没恢复」，但容忍窗过期 ⇒ 必须照常尝试续跑（不许被一个 Down 压死）。
+      _ <- IO(sys.props("nebflow.delegate.freeze.autoResumeForceAfterMs") = "0")
+      _ <- FreezeAlertSweep.autoResumeTick(resources, None)
+      cmds <- childCmds.get
+      events <- mailboxEvents(parentSid)
+      // 唤醒落地判据：冻结槽被 `onWoken` 清空（live 腿注入 UserInput / 不 live 腿同 id 复活，
+      // 两条腿都清槽）。old code 下这里会仍然是冻结态（续跑根本不发生）。
+      stillFrozen <- IO(DelegateRegistry.find(childSid).flatMap(_.frozenSince).isDefined)
+      _ <- system.stopAll
+    yield
+      assert(!serving, "one Down entry and no other probe result ⇒ the health table says 'not serving'")
+      assert(deferredInsideWindow, "inside the tolerance window the health table still delays the resume")
+      assert(allowedPastWindow, "past the window a stale Down entry never blocks the resume")
+      assert(allowedWhenServing, "a healthy provider resumes immediately")
+      assert(
+        !stillFrozen,
+        "the frozen delegate must be woken by the sweep even though another model is Down (frozen slot cleared)"
+      )
+      assert(
+        !cmds.exists { case _: AgentCommand.RestartAgent => true; case _ => false },
+        "resuming never spends the supervisor restart budget"
+      )
+      assertEquals(events.map(_.eventType), Nil, s"resuming stays silent, got ${events.map(_.eventType)}")
+    end for
+  }
+
+  test("real failures still notify: a deterministic defect freezes AND reaches the author as one alert") {
+    val system = ActorSystem(s"fsz-8-${scala.util.Random.nextInt(100000)}")
+    val tmp = os.temp.dir(prefix = "nb-fsz8-")
+    val parentSid = "fsz-parent-8"
+    val childSid = "delegate-fsz-real-1"
+    for
+      resources <- mkResources(system, tmp)
+      _ <- resources.sessionStore.getOrCreateSession(parentSid, "freeze silence parent", agentName = Some("Nebula"))
+      childCmds <- Ref.of[IO, List[AgentCommand]](Nil)
+      parentRef <- Ref.of[IO, List[AgentCommand]](Nil)
+      _ <- freezeDelegate(
+        resources,
+        system,
+        parentSid,
+        childSid,
+        AgentErrorType.Unknown,
+        "AssertionError: expected 1 but got 2 (the judge layer rejected the branch)",
+        childCmds,
+        parentRef
+      )
+      reason = DelegateRegistry.find(childSid).flatMap(_.frozenReason).getOrElse("")
       _ <- FreezeAlertSweep.alertTick(resources)
       events <- mailboxEvents(parentSid)
       _ <- system.stopAll
     yield
-      assertEquals(attempts, 2, "the ledger records the attempts")
-      assert(exhausted, "the budget is spent once the cap is reached")
-      assertEquals(planned.size, 1, "a spent budget enters the alert plan")
+      assertEquals(
+        reason,
+        "delegate-frozen:engine-fault",
+        "a deterministic defect must NOT be filed under the provider-fault code"
+      )
       val alerts = events.filter(_.eventType == "freeze-alert")
-      assertEquals(alerts.size, 1, s"a spent budget escalates to exactly ONE alert, got ${events.map(_.eventType)}")
-      assert(alerts.head.payload.contains("自动续跑"), s"the alert says the budget is spent: ${alerts.head.payload.take(300)}")
+      assertEquals(alerts.size, 1, s"a real failure still notifies (one alert), got ${events.map(_.eventType)}")
+      assert(
+        alerts.head.payload.contains("deterministic defect"),
+        s"the alert says it is a defect, not a provider fault: ${alerts.head.payload.take(300)}"
+      )
+    end for
   }
 
   // ── ⑤ flow-notify 闸（纯函数判据）────────────────────────────────────────
@@ -482,7 +767,8 @@ class FreezeSilenceSpec extends CatsEffectSuite:
         createdAt = System.currentTimeMillis()
       )
     assert(
-      DispatchNotify.suppressFailedNotifyForInfraFault(node("provider cmdcode/deepseek: 503 all candidates exhausted"), true),
+      DispatchNotify
+        .suppressFailedNotifyForInfraFault(node("provider cmdcode/deepseek: 503 all candidates exhausted"), true),
       "provider failures are infrastructure faults ⇒ no upward report"
     )
     assert(

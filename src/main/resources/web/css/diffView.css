@@ -176,7 +176,7 @@
      只负责 justify-content: center 把胶囊定中 + sticky 钉住。pointer-events
      none 让位（胶囊两侧的 diff 文本照常可选中），胶囊本体 pointer-events auto。
    · .fcv-headpill —— 居中玻璃胶囊，材质 = sapphire.css 单源全量 frosted
-     token（--glass-bg / blur(--glass-blur) saturate(1.15) / --glass-border /
+     token（--glass-bg / blur(--glass-blur) saturate(1.4) / --glass-border /
      --frost-shadow + 顶缘折射线 --sapphire-refraction），与 .canvas-header
      同式（split.css §⑨）；#header 的底缘零边界豁免先例不适用，本胶囊走全量。
 
@@ -219,8 +219,6 @@
   background:
     linear-gradient(90deg, transparent 10%, var(--sapphire-refraction) 50%, transparent 90%) center top / 80% 1px no-repeat,
     var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   box-shadow: var(--frost-shadow);
   color: var(--color-text-muted, rgba(128, 128, 128, 0.9));
   pointer-events: auto;

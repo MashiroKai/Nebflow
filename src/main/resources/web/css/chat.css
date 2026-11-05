@@ -41,17 +41,20 @@
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, transparent var(--chat-top-clip), #000 calc(var(--chat-top-clip) + 2px));
   mask-image: linear-gradient(to bottom, transparent 0, transparent var(--chat-top-clip), #000 calc(var(--chat-top-clip) + 2px));
 }
-/* ── 顶栏 / 输入条共用水平 gutter（作者令：「主会话的输入框，应该和顶部的
-   Header 宽度一致。」）───────────────────────────────────────────────
+/* ── 顶栏 / 输入条共用水平边缘槽（header-input-width-align 批 2026-11-05，
+   作者令逐字：「我让统一的意思是跟Header的宽度保持一致，现在反而把Header缩短了，
+   翻git历史，找到以前正常的宽度。」）─────────────────────────────────────
+   口径：**Header 是锚，不许为迁就任何人被改窄**。历史正常宽度 = 玻璃盒铺满
+   #main 全宽（水平外距 0、水平内距 16px；该形态自 2026-07-24 436651a57 起沿用
+   到 2026-11-04，考古链见 vault 报告）。上一轮「宽度对齐(件2)」把 16px 内距搬到
+   外距 ⇒ 玻璃盒两侧各缩 16px（合计 32px），方向做反。本批还原内距、外距归零。
    本槽 = 主会话面「顶栏外盒与输入条外盒」的**唯一**水平边距来源：
    #header 以 margin 水平消费、#input-area 以 padding 水平消费（消费点见
    css/input.css 同名注释）。两盒的 border-box 左右缘因此逐像素重合，
-   改边距只改本槽一行。值 = 栅格档 --ds-space-4（16px）——**直接用档位令牌**，
-   不新造别名、不出现字面量（收口裁定 2026-11-05 09:40：与既有档同档即用既有档，
-   新增间距一律落在七档之内）。
+   改边距只改令牌 --ds-main-col-edge-x 一行（design-system.css 出生行）。
    手机层：输入卡改由 --dock-inset-x 供给（12px，与 dock 胶囊同轴，规则在
-   mobileLayer.css），且 #header 在手机层整体不渲染（同文件 display:none 档）
-   ⇒ 本槽只在桌面档生效，无手机分叉。 */
+   mobileLayer.css 覆盖同名 padding-left/right），且 #header 在手机层整体不渲染
+   （同文件 display:none 档）⇒ 本槽只在桌面档生效，无手机分叉。 */
 #header {
   /* 折射线层提成 token（--glass-refraction-line，sapphire.css 出生行）：
      值与改前逐字相同（同一 gradient + center top / 80% 1px no-repeat），
@@ -60,8 +63,6 @@
     var(--glass-refraction-line,
       linear-gradient(90deg, transparent 10%, var(--sapphire-refraction) 50%, transparent 90%)) center top / 80% 1px no-repeat,
     var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
   /* Header 底缘零边界批（2026-10-22 作者追加令「Header 下面有一个边缘…要移除」）：
      消息气泡上滑穿入 Header 下时，底缘 1px border 在泡上衬出一条横向灰线。
@@ -69,14 +70,14 @@
      折射细线不动（作者只裁底缘）。 */
   border-bottom-color: transparent;
   color: var(--color-frame-text-bright);
-  /* 宽度对齐批（作者令：输入框宽度 = 顶栏宽度）：水平内距归零、同一栅格档
-     （--ds-space-4，16px）改由水平外距承担——`left:0; right:0` 的绝对盒因此
-     内缩同一 token，border-box 与 #input-bar 重合。内距归零而外距同值 ⇒
-     内容盒起点/宽度逐像素不变（改前左内距 16、内容起于 #main 左缘 +16；
-     改后左外距 16、内距 0，内容仍在同一像素），顶栏内件布局零位移。
-     垂直内距走 main 侧档位 --ds-space-block-y（收敛批定档），本批不动它。 */
-  padding: var(--ds-space-block-y) 0;
-  margin: var(--ds-space-4) var(--ds-space-4) 0;
+  /* 宽度还原批（header-input-width-align 2026-11-05）：水平内距回到 16px 栅格档、
+     水平外距归零 —— 玻璃盒铺满 #main 全宽（= 历史正常宽度，作者令「找到以前正常
+     的宽度」）。两轴分工与上一轮逐值相反，正是本批的实质改动。
+     内容盒起点不变（改前：外距 16 + 内距 0；改后：外距 0 + 内距 16 ⇒ 顶栏内件
+     仍在 #main 左缘 +16px 那一像素上），故顶栏内件（标题/搜索/按钮簇）零位移。
+     垂直内距走 main 侧档位 --ds-space-block-y，本批不动它。 */
+  padding: var(--ds-space-block-y) var(--ds-space-4);
+  margin: var(--ds-space-4) var(--ds-main-col-edge-x) 0;
   border-radius: var(--ds-radius-shell);
   font-size: var(--ds-fs-subtitle);
   font-weight: 500;
@@ -151,8 +152,6 @@
 @media (hover: hover) {
   #header .memory-btn:hover {
     background: var(--glass-control-bg-hover);
-    -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-    backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
     border-color: var(--glass-control-border);
     color: var(--color-frame-text);
   }
@@ -182,8 +181,6 @@
 @media (hover: hover) {
   #header #search-btn:hover {
     background: var(--glass-control-bg-hover);
-    -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-    backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
     border-color: var(--glass-control-border);
     color: var(--color-frame-text);
   }
@@ -823,8 +820,6 @@
   top: 50px;
   right: 24px;
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: var(--ds-border-width) solid var(--ds-border-glass);
   border-radius: var(--ds-radius-card-md);
   min-width: 280px;
@@ -3069,8 +3064,6 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   font-size: var(--ds-fs-body);
   line-height: 1.4;
   background: var(--glass-control-bg);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   box-shadow:
     inset 0 1px 0 var(--glass-control-highlight),
     inset 0 -1px 0 var(--glass-control-underedge),
@@ -3178,8 +3171,6 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   line-height: 1.4;
   text-align: left;
   background: var(--glass-control-bg);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   box-shadow:
     inset 0 1px 0 var(--glass-control-highlight),
     inset 0 -1px 0 var(--glass-control-underedge),
@@ -3917,8 +3908,6 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   border: 1px solid rgb(var(--sapphire) / 0.35);
   border-radius: var(--ds-radius-xl);
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   color: var(--color-text);
   cursor: pointer;
   text-align: left;
@@ -4293,8 +4282,6 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   letter-spacing: 0;
   color: var(--color-text);
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
   border-radius: var(--ds-radius-pill);
   cursor: pointer;
@@ -5319,7 +5306,9 @@ object.search-media-thumb { object-fit: initial; }
   margin: 0 0 var(--ds-space-1h);
   padding: var(--ds-space-1h) var(--ds-space-inline-x);
   border-radius: var(--ds-radius-button);
-  background: rgba(0, 0, 0, 0.035);
+  /* glass-unify 批 2026-11-05：原 rgba(0,0,0,.035) 是「人肉半透明」——背后的
+     正文整段透上来（作者实拍图1 的引用牌就是它）。材质改由 .nf-glass 单源供给
+     （msgQuote.js 挂类），本文件只留几何。 */
   box-shadow: none;
   font-size: var(--ds-fs-hint);
   line-height: 1.45;
@@ -5385,9 +5374,8 @@ object.search-media-thumb { object-fit: initial; }
 @media (prefers-color-scheme: dark) {
   .nf-qicon.is-thumb { background: rgba(255, 255, 255, 0.09); }
 }
-@media (prefers-color-scheme: dark) {
-  .msg-quote-block { background: rgba(255, 255, 255, 0.055); }
-}
+/* glass-unify 批：引用块暗档的半透明洗色（rgba(255,255,255,.055)）随材质归一
+   到 .nf-glass 退役 —— 暗档形态由 --nf-glass-bg 的暗值单源给出。 */
 /* 引用块宽度约束（2026-10-20）：复合盒仅由「引用块 + 文本气泡同时在场」的两条
    渲染腿（chat.js renderUserBubble / persistence.js restoreFromBackendHistory）
    包裹 —— 本征宽纯由气泡贡献（引用块 width:0 ⇒ max-content 贡献归零；
@@ -5428,6 +5416,29 @@ object.search-media-thumb { object-fit: initial; }
   background: rgba(0, 0, 0, 0.06);
 }
 .msg-quote-att-media[role="button"] { cursor: pointer; }
+/* ── 引用牌 · 多图叠卡（2026-11-05 作者令逐字「引用多张图片的时候，也走叠卡」）──
+   被引消息的媒体组 ≥2 件 ⇒ 整组走**既有叠卡组件**（渲染腿 = popArtifacts.js
+   buildMediaStack，与 Pop 多图交付卡 / 用户媒体行 / 好友三窗是同一条实现：
+   前卡 + 露边层、拖划·横滑翻页、「展开 N」摊平、整面点开进 Canvas/灯箱）。
+   本节只做**宿主尺度收口**，零第二套形态：
+     · 卡面尺度单源 --ds-media-face-w 收到 96×122（11:14 预览档）：引用牌宽度 =
+       气泡宽，主会话 220 档在窄引用块里会顶出去；展开列宽度跟随折叠卡脸
+       （组件内 refitExpanded），故叠卡态与展开态同宽。
+     · 行内允许换行（窄引用块时「展开 N」落到下一行，不横向溢出、不压摘要行）；
+     · 不新增任何厚度道具 —— 卡影/留黑底/圆角/扇形变换全部来自既有
+       .ds-media-card / .media-layer.layer-* 规则，本节零 box-shadow 零渐变。 */
+.msg-quote-atts--stack { align-items: flex-start; }
+.msg-quote-atts--stack .pop-stack-area {
+  /* min(96px, 100%)：文字很短的引用牌（引用块宽 = 气泡宽，实测可窄到 90 余 px）
+     里卡脸跟着收，绝不横向顶出引用块；常规宽度下即 96×122（11:14）一档 ——
+     引用牌是**预览**位（原形态 48px 缩略），卡脸不再按主会话 220 档铺开。
+     width:100% 是这条百分比的解析基准 —— 叠卡区在 .msg-quote-atts 里是 flex
+     子项，不撑满就退化成 max-content（实测卡脸被压到 90px）。 */
+  --ds-media-face-w: min(96px, 100%);
+  width: 100%;
+  gap: var(--ds-space-2);
+  flex-wrap: wrap;
+}
 .msg-quote-att-img {
   width: 100%;
   height: 100%;

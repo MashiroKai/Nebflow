@@ -42,8 +42,6 @@ const PANEL_CSS = `
   max-height: min(620px, 78vh);
   display: none; flex-direction: column;
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border-radius: var(--ds-radius-card-lg); border: 1px solid var(--sapphire-edge);
   box-shadow:
     inset 0 -1px 0 0 rgba(91, 127, 191, 0.025),

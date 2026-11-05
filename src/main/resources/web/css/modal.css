@@ -211,8 +211,6 @@
   border: 1px solid var(--glass-control-border) !important;
   color: var(--color-text) !important;
   background: var(--glass-control-bg) !important;
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   transition: all 0.25s ease;
 }
 #delete-box.confirm-neutral #delete-confirm:hover {
@@ -375,8 +373,6 @@
    Safari 可动画）。 */
 #modal-overlay.takeover-blur {
   background: rgba(15, 18, 24, 0.14);
-  -webkit-backdrop-filter: blur(var(--cv-blur)) saturate(var(--cv-saturate));
-  backdrop-filter: blur(var(--cv-blur)) saturate(var(--cv-saturate));
   transition: background 0.25s ease, backdrop-filter 0.25s ease;
 }
 
@@ -727,9 +723,11 @@
      veil. The blur stays (it still frosts the card-overlap half, and
      msg-search-v3-smoke B5 pins it); the tint is deepened so bleed-through
      text is illegible (light: white .88, macOS-popover frost range). */
-  background: rgba(255, 255, 255, 0.88);
-  -webkit-backdrop-filter: blur(24px) saturate(1.15);
-  backdrop-filter: blur(24px) saturate(1.15);
+  /* glass-unify 批 2026-11-05：本面原来自带一档 α=.88（暗档 α=.92）——
+     这正是作者否掉的「各面各写半透明白」：同一个毛玻璃在不同文件里有四种
+     白度（.55/.60/.72/.88），谁透谁不透全凭当次手感。全站唯一标准只有一档
+     ⇒ 改用 --nf-glass-bg（α=.97），手感问题由标准本体解决，不由本面解决。 */
+  background: var(--nf-glass-bg);
   border: 1px solid var(--glass-border);
   border-radius: var(--ds-radius-xl);
   padding: var(--ds-space-3);
@@ -741,7 +739,7 @@
 }
 @media (prefers-color-scheme: dark) {
   #search-date-popover {
-    background: rgba(24, 28, 38, 0.92);  /* dark --glass-bg family, deepened same way */
+    background: var(--nf-glass-bg);  /* glass-unify 批：同唯一标准（原来这里另写了一份 α=.92 暗档） */
     box-shadow:
       inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
       0px 2px 8px rgba(0, 0, 0, 0.20),
@@ -792,8 +790,6 @@
   overflow-y: auto;
   min-width: 72px;
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(24px) saturate(1.15);
-  backdrop-filter: blur(24px) saturate(1.15);
   border: 1px solid var(--glass-border);
   border-radius: var(--ds-radius-button);
   padding: var(--ds-space-1);
@@ -1097,8 +1093,6 @@
   transform: translateY(10px);
   transition: opacity 0.25s, transform 0.25s;
   background: var(--glass-control-bg);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   border: 1px solid var(--glass-control-border);
   box-shadow:
     inset 0 1px 0 var(--glass-control-highlight),

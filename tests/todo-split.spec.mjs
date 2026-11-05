@@ -345,27 +345,34 @@ test('⑦ 项目维度（追加令①②）：分组 chips 单选生效（行随
   expect(errors).toEqual([]);
 });
 
-test('⑥ 手机层级：胶囊是唯一待办入口（聊天根顶带），点击直接展开；无入口行、无 todo 页面腿', async ({ page }) => {
+test('⑥ 手机层级：左上任务圆钮是唯一入口（桌面才是胶囊/岛）；无入口行、无旧 todo 页面腿', async ({ page }) => {
+  // 端区分批（作者令 2026-11-05 09:28，逐字）：「手机端的待办…跟电脑端的区分开，
+  // 电脑端是一个胶囊，手机端还是需要是之前那个左上角的一个悬浮的待办按钮」。
+  // 本腿原判据（「胶囊是手机端唯一入口」）是入口收敛批 2026-11-04 的口径，
+  // 已被上面这条作者令反转 —— 2026-11-05 复核：该断言在干净 main 上即为红
+  // （基线既有红，非本批引入），本批按其时口径改为「圆钮入口 + 胶囊退场」。
   const errors = watchErrors(page);
   await bootApp(page, { viewport: { width: 375, height: 720 } });
 
   // 手机层激活 + 无待办入口行（原「消息列表入口行 → pushPage('todo')」两腿都退役）。
   await expect(page.locator('body.mobile-layer')).toHaveCount(1);
   await expect(page.locator('.fm-todo-entry')).toHaveCount(0);
-  await expect(page.locator('[data-chrome="tasks"]')).toHaveCount(0);
-  await expect(page.locator('#mobile-task-panel')).toHaveCount(0);
+  // 左上任务圆钮在场（手机端唯一入口），胶囊退场。
+  await expect(page.locator('[data-chrome="tasks"]')).toHaveCount(1);
+  await expect(page.locator('#task-list')).toBeHidden();
 
-  // 胶囊在顶带可点（手机端唯一入口）⇒ 直接展开同一张面板。
-  const capsule = await openTodoFace(page);
-  await expect(page.locator('#task-list .tfl-row')).toHaveCount(4);
-  await expect(page.locator('#task-list .tfl-header-count .tfl-capsule-count')).toHaveText('4 待办');
-  await page.screenshot({ path: join(SHOT_DIR, '04-mobile-todo-capsule.png') });
+  // 点圆钮 ⇒ 任务页（页面即展开态）。
+  await page.locator('[data-chrome="tasks"]').click();
+  await page.waitForSelector('#mobile-task-panel .tfl-row', { timeout: 10000 });
+  await expect(page.locator('#mobile-task-panel .tfl-row')).toHaveCount(4);
+  await page.screenshot({ path: join(SHOT_DIR, '04-mobile-todo-panel.png') });
 
-  // 收起后胶囊仍在（无第二个面可去）。展开态胶囊按设计让位给面板本体
-  // （JS 置 visibility:hidden）⇒ 收起走面板头 chevron。
-  await page.locator('#task-list .tfl-collapse-btn').click();
-  await expect(page.locator('#task-list .tfl-card')).toHaveAttribute('data-state', 'capsule');
-  await expect(capsule).toBeVisible();
+  // 返回腿：页面壳的返回钮（.mobile-back-btn）按需出现 —— 本腿只判入口常驻
+  // （圆钮节点在页面栈推入过程中不被摘除），不依赖具体返回件形态。
+  if (await page.locator('.mobile-back-btn').first().count()) {
+    await page.locator('.mobile-back-btn').first().click({ timeout: 5000 }).catch(() => {});
+  }
+  await expect(page.locator('[data-chrome="tasks"]')).toHaveCount(1);
 
   // 消息页（dock 键）不再有待办入口行。
   await page.locator('#mobile-dock .dock-key[data-dock="messages"]').click();

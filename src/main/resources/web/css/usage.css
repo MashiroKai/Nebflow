@@ -24,8 +24,6 @@
   gap: var(--ds-space-3);
   padding: var(--ds-space-4) var(--ds-space-5) var(--ds-space-5);
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
   border-radius: var(--ds-radius-xl);
   box-shadow: 0 4px 24px var(--glass-control-glow);
@@ -484,8 +482,6 @@
   z-index: 70;
   pointer-events: none;
   background: var(--glass-control-bg);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.15);
   border: 1px solid var(--glass-control-border);
   border-radius: var(--ds-radius-input);
   box-shadow: 0 2px 12px var(--glass-control-glow);

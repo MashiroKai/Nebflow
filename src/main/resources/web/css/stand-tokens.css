@@ -40,23 +40,23 @@
   --st-toggle-off-border: #1b1e2626;
 
   /* 亮档：玻璃面（官网 --nfd-glass-* 同值） */
-  --st-glass-bg: #ffffff8c;         /* rgba(255,255,255,.55) */
-  --st-glass-blur: 24px;
-  --st-glass-border: #ffffff59;     /* rgba(255,255,255,.35) */
+  --st-glass-bg: var(--nf-glass-bg);   /* glass-unify 批：别名 → --nf-glass-bg（唯一玻璃底） */
+  --st-glass-blur: var(--nf-glass-blur);
+  --st-glass-border: var(--nf-glass-border-color); /* glass-unify 批：别名 */
   --st-refraction: rgb(91 127 191 / .45);
   --st-header-refraction: #ffffff73;
   --st-etched-bg: #00000006;
   --st-etched-border: #5b7fbf1a;
 
   /* 亮档：玻璃控件（按钮/胶囊/工具条材质） */
-  --st-control-bg: #ffffff73;
-  --st-control-bg-hover: #ffffffa6;
-  --st-control-border: #fff6;
+  --st-control-bg: var(--nf-glass-bg);          /* glass-unify 批：别名 */
+  --st-control-bg-hover: var(--nf-glass-bg-hover);
+  --st-control-border: var(--nf-glass-border-color);
   --st-control-highlight: #ffffff80;
   --st-control-underedge: #00000014;
   --st-control-glow: #0000000f;
   --st-control-shadow: #0000000a;
-  --st-control-blur: 10px;
+  --st-control-blur: var(--nf-glass-blur);
 }
 
 html[data-theme="dark"] {
@@ -72,22 +72,22 @@ html[data-theme="dark"] {
   --st-frame-text-muted: #81838a;
   --st-toggle-off-border: #ffffff14;
 
-  --st-glass-bg: #181c26ad;
-  --st-glass-blur: 24px;
-  --st-glass-border: #ffffff0f;
+  --st-glass-bg: var(--nf-glass-bg);
+  --st-glass-blur: var(--nf-glass-blur);
+  --st-glass-border: var(--nf-glass-border-color);
   --st-refraction: rgb(91 127 191 / .22);
   --st-header-refraction: #5b7fbf0f;
   --st-etched-bg: #ffffff0a;
   --st-etched-border: #5b7fbf14;
 
-  --st-control-bg: #ffffff0d;
-  --st-control-bg-hover: #ffffff1a;
-  --st-control-border: #ffffff14;
+  --st-control-bg: var(--nf-glass-bg);
+  --st-control-bg-hover: var(--nf-glass-bg-hover);
+  --st-control-border: var(--nf-glass-border-color);
   --st-control-highlight: #ffffff14;
   --st-control-underedge: #00000040;
   --st-control-glow: #0003;
   --st-control-shadow: #00000026;
-  --st-control-blur: 10px;
+  --st-control-blur: var(--nf-glass-blur);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -104,16 +104,16 @@ html[data-theme="dark"] {
     --st-frame-text-muted: #81838a;
     --st-toggle-off-border: #ffffff14;
 
-    --st-glass-bg: #181c26ad;
-    --st-glass-border: #ffffff0f;
+    --st-glass-bg: var(--nf-glass-bg);
+    --st-glass-border: var(--nf-glass-border-color);
     --st-refraction: rgb(91 127 191 / .22);
     --st-header-refraction: #5b7fbf0f;
     --st-etched-bg: #ffffff0a;
     --st-etched-border: #5b7fbf14;
 
-    --st-control-bg: #ffffff0d;
-    --st-control-bg-hover: #ffffff1a;
-    --st-control-border: #ffffff14;
+    --st-control-bg: var(--nf-glass-bg);
+    --st-control-bg-hover: var(--nf-glass-bg-hover);
+    --st-control-border: var(--nf-glass-border-color);
     --st-control-highlight: #ffffff14;
     --st-control-underedge: #00000040;
     --st-control-glow: #0003;
@@ -333,4 +333,103 @@ html[data-theme="dark"] {
   --st-row-pad: 8px 10px;
   --st-btn-pad: 7px 14px;
   --st-row-gap: 10px;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 毛玻璃（glass）—— 全站唯一术语 · 唯一标准 · 唯一定义（glass-unify 批
+ * 2026-11-05 起立；**glass-recalibrate 批 2026-11-05 18:13 重定标**）
+ *
+ * ── 两次作者令，一次纠偏 ───────────────────────────────────────────────────
+ *   16:46（立术语）：「我们stand只允许一个毛玻璃效果……把毛玻璃效果作为一个唯一的
+ *     标准和术语，放到插件和前端组件。」—— 这一条把「一份」钉住了，但把「哪一种」
+ *     钉错了：当时按实拍图2 定为「高不透明白底 α ≥ .90」，结果是 α .97 的**死白**。
+ *   18:13（纠偏，逐字）：「我觉得毛玻璃效果还是不是我想要的那种，我要的是主会话的
+ *     输入框的这种，不透明，但是能反映背景内容颜色的。」—— 判据从「白到什么程度」
+ *     改成了两条可读数的性质：
+ *       ① 背景**内容**（文字/图形）看不到 —— 所以叫「不透明」；
+ *       ② 背景**颜色**（色调/冷暖）透得上来 —— 所以叫「反映背景内容颜色」。
+ *
+ * ── 唯一形态（重定标后）────────────────────────────────────────────────────
+ *   中等不透明白底（亮 α .55 / 暗 α .68，**与参照物主会话输入框逐值相同**）
+ *   + 强模糊（blur 40px）+ 提饱和（saturate 1.4）+ 细边 + 顶缘折射线。
+ *   已判死刑的**两端**：死白（α ≥ .90，颜色一点透不上来 = 本次被作者否掉的形态）
+ *   与可见内容透底（α < .45，底下的字/图看得出来）。
+ *
+ * ── 为什么是这三个数（不是抄一处，是反推）─────────────────────────────────
+ *   参照物 = 主会话输入框 `#input-bar`，在跑实例上实测（scripts/capture-glass-ab.mjs
+ *   --tag ref，读数见 reports 与 vault 报告）：
+ *     background-color rgba(255,255,255,.55) / backdrop-filter blur(24px) saturate(1.15)
+ *     border 1px solid rgba(255,255,255,.35) / radius 20px / 三层阴影 / 叠在 body #f5f6f8 上
+ *   实测给出两条**互相独立**的定律（扫 α × blur × saturate 参数网格，真像素读数）：
+ *     · 色彩承接：C_out ≈ (1 − α) · saturate · C_bg      —— 只由 α 与 saturate 决定，
+ *       **blur 半径对它零影响**（颜色是低频：α .55 时红底的色度在 blur 24/40/64 下
+ *       恒为 90.4）。α =.973 时这一项塌到 6.9（红底的色度），这就是「死白」的读数。
+ *     · 内容残留：sd_out ≈ (1 − α) · g(blur)             —— 结构（＝能不能看出内容）
+ *       只由 blur 压得下来：α .55 时 blur 24→40 让正文墙的亮度标准差 2.81→1.43
+ *       （腰斩），而上面那条色彩承接**一个点都没掉**。
+ *   ⇒ 分工是清楚的：**α 决定透多少色，blur 决定剩多少内容**。想让内容更隐就加
+ *     blur（不花色彩），不该加 α（花色彩）。参照物的 α 与 saturate 是作者认可的那一档，
+ *     故 α 逐值照收；blur 从 24 提到 40（内容残留腰斩）、saturate 从 1.15 提到 1.4
+ *     （色彩承接 +13%），两项都在作者要的方向上加码 —— 这是**收紧**参照物，不是偏离。
+ *
+ * ── 三层职责（改配方只改这里）──────────────────────────────────────────────
+ *   ① 定义点 = 本文件本段（设计令牌单一源）。这是**唯一**允许出现玻璃色值、
+ *      blur 半径、边框色的地方。
+ *   ② 消费点 = css/glass.css 的 `.nf-glass`（前端唯一毛玻璃工具类）+ 其成员
+ *      登记表。任何面要毛玻璃 = 挂 `.nf-glass`（或在该登记表里加成员），
+ *      **不许**自己写 backdrop-filter。
+ *   ③ 机检点 = scripts/check-glass-unify.mjs（现状门禁成员）。它做五件事：
+ *      · 除 glass.css 外任何文件出现非 none 的 backdrop-filter ⇒ 红；
+ *      · glass.css 里任何非 `var(--nf-glass-filter)` 的 backdrop-filter 值 ⇒ 红；
+ *      · 本段 `--nf-glass-bg*` 解析出的 α 跑出 [0.45, 0.75] 区间 ⇒ 红
+ *        （高了 = 死白，低了 = 内容透底；两端都要挡）；
+ *      · `--nf-glass-blur` < 32px 或 `--nf-glass-saturate` < 1.3 ⇒ 红
+ *        （内容残留/色彩承接两个方向同时被稀释）。
+ * ══════════════════════════════════════════════════════════════════════════ */
+:root {
+  --nf-glass-bg: #ffffff8C;          /* 唯一玻璃底（亮档）α=.549 = 参照物 rgba(255,255,255,.55) */
+  --nf-glass-bg-hover: #ffffff9E;    /* hover 升一档 α=.620（只提不透、不改形态） */
+  --nf-glass-blur: 40px;                             /* 唯一模糊半径（内容残留腰斩点） */
+  --nf-glass-saturate: 1.4;                          /* 唯一饱和度（色彩承接 +13% vs 参照物） */
+  /* 唯一模糊配方：glass.css 之外**任何** backdrop-filter 都必须是这个值 */
+  --nf-glass-filter: blur(var(--nf-glass-blur)) saturate(var(--nf-glass-saturate));
+  --nf-glass-border-color: #ffffff59;      /* 细边 = 参照物白光细边 rgba(255,255,255,.35) */
+  --nf-glass-border: 1px solid var(--nf-glass-border-color);
+  --nf-glass-refraction: linear-gradient(90deg, transparent 10%, #ffffff73 50%, transparent 90%);
+  /* 单行书写是**枚举判据的要求**：check-design-tokens 的「令牌出生行不算消费」
+     只跳过以 `--x:` 起头的行，多行值里的续行会被当成裸色值计数（本批实测：写成
+     三行 → 一次 +3 色值，四处主题档合计 +12）。 */
+  --nf-glass-shadow: inset 0 1px 0 0 #ffffff40, 0 2px 8px #0000000a, 0 8px 24px #0000000f;
+  /* 幕布（纯模糊遮罩层，无玻璃面：takeover 背景/灯箱底/语音遮罩）——
+     它不是毛玻璃形态，是「把背景压下去」的工具，故单列 token 且不参与
+     .nf-glass。值恒为深色低 α，不随亮暗翻面。 */
+  --nf-glass-scrim: #0f121824;
+  --nf-glass-scrim-blur: 8px;
+}
+
+html[data-theme="dark"] {
+  --nf-glass-bg: #181c26AD;          /* 暗档 α=.678 = 参照物 rgba(24,28,38,.68) */
+  --nf-glass-bg-hover: #181c26B8;    /* 暗档 hover α=.722 */
+  --nf-glass-border-color: #ffffff0F;      /* 参照物暗档细边 rgba(255,255,255,.06) */
+  --nf-glass-refraction: linear-gradient(90deg, transparent 10%, #5b7fbf59 50%, transparent 90%);
+  --nf-glass-shadow: inset 0 1px 0 0 #ffffff0a, 0 2px 8px #00000033, 0 8px 24px #00000059;
+}
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]):not([data-theme="dark"]) {
+    --nf-glass-bg: #181c26AD;
+    --nf-glass-bg-hover: #181c26B8;
+    --nf-glass-border-color: #ffffff0F;
+    --nf-glass-refraction: linear-gradient(90deg, transparent 10%, #5b7fbf59 50%, transparent 90%);
+    --nf-glass-shadow: inset 0 1px 0 0 #ffffff0a, 0 2px 8px #00000033, 0 8px 24px #00000059;
+  }
+}
+html[data-theme="light"] {
+  --nf-glass-bg: #ffffff8C;
+  --nf-glass-bg-hover: #ffffff9E;
+  --nf-glass-border-color: #ffffff59;
+  --nf-glass-refraction: linear-gradient(90deg, transparent 10%, #ffffff73 50%, transparent 90%);
+  /* 单行书写是**枚举判据的要求**：check-design-tokens 的「令牌出生行不算消费」
+     只跳过以 `--x:` 起头的行，多行值里的续行会被当成裸色值计数（本批实测：写成
+     三行 → 一次 +3 色值，四处主题档合计 +12）。 */
+  --nf-glass-shadow: inset 0 1px 0 0 #ffffff40, 0 2px 8px #0000000a, 0 8px 24px #0000000f;
 }

@@ -1,0 +1,498 @@
+{
+  "light.messages.rest": {
+    "pageTop": 0,
+    "band": {
+      "top": 0,
+      "bottom": 60,
+      "left": 0,
+      "right": 375,
+      "width": 375,
+      "height": 60
+    },
+    "dock": {
+      "position": "static",
+      "background": "rgba(0, 0, 0, 0)",
+      "backgroundImage": "none",
+      "backdropFilter": "none",
+      "opacity": "1",
+      "pointerEvents": "auto",
+      "zIndex": "auto",
+      "dockClass": "mh-search-dock"
+    },
+    "bar": {
+      "rect": {
+        "top": 8,
+        "bottom": 52,
+        "left": 16,
+        "right": 359,
+        "width": 343,
+        "height": 44
+      },
+      "borderRadius": "8px",
+      "borderRadiusValue": "8px",
+      "background": "rgba(128, 128, 128, 0.16)",
+      "backdropFilter": "none",
+      "collapsed": false,
+      "paddingLeft": "12px"
+    },
+    "icon": {
+      "top": 22,
+      "bottom": 38,
+      "left": 29,
+      "right": 45,
+      "width": 16,
+      "height": 16
+    },
+    "scroller": {
+      "rect": {
+        "top": 60,
+        "bottom": 750,
+        "left": 0,
+        "right": 375,
+        "width": 375,
+        "height": 690
+      },
+      "clientHeight": 690,
+      "scrollHeight": 1334,
+      "scrollTop": 0,
+      "paddingTop": "4px",
+      "overflowY": "auto",
+      "position": "static",
+      "zIndex": "auto"
+    },
+    "rowCount": 30,
+    "firstRow": {
+      "top": 64,
+      "bottom": 108,
+      "left": 8,
+      "right": 367,
+      "width": 359,
+      "height": 44
+    },
+    "straddle": null,
+    "hitInBand": {
+      "tag": "INPUT",
+      "cls": "mh-search-input",
+      "inScroller": false,
+      "inDock": true
+    }
+  },
+  "light.messages.scrolled": {
+    "pageTop": 0,
+    "band": {
+      "top": 0,
+      "bottom": 60,
+      "left": 0,
+      "right": 375,
+      "width": 375,
+      "height": 60
+    },
+    "dock": {
+      "position": "static",
+      "background": "rgba(0, 0, 0, 0)",
+      "backgroundImage": "none",
+      "backdropFilter": "none",
+      "opacity": "1",
+      "pointerEvents": "auto",
+      "zIndex": "auto",
+      "dockClass": "mh-search-dock mh-search-collapsed"
+    },
+    "bar": {
+      "rect": {
+        "top": 6,
+        "bottom": 54,
+        "left": 311,
+        "right": 359,
+        "width": 48,
+        "height": 48
+      },
+      "borderRadius": "50%",
+      "borderRadiusValue": "50%",
+      "background": "rgba(255, 255, 255, 0.97)",
+      "backdropFilter": "blur(24px) saturate(1.15)",
+      "collapsed": true,
+      "paddingLeft": "0px"
+    },
+    "icon": {
+      "top": 20,
+      "bottom": 40,
+      "left": 325,
+      "right": 345,
+      "width": 20,
+      "height": 20
+    },
+    "scroller": {
+      "rect": {
+        "top": 60,
+        "bottom": 750,
+        "left": 0,
+        "right": 375,
+        "width": 375,
+        "height": 690
+      },
+      "clientHeight": 690,
+      "scrollHeight": 1334,
+      "scrollTop": 156,
+      "paddingTop": "4px",
+      "overflowY": "auto",
+      "position": "static",
+      "zIndex": "auto"
+    },
+    "rowCount": 30,
+    "firstRow": {
+      "top": -92,
+      "bottom": -48,
+      "left": 8,
+      "right": 367,
+      "width": 359,
+      "height": 44
+    },
+    "straddle": {
+      "top": 40,
+      "bottom": 84,
+      "left": 8,
+      "right": 367,
+      "width": 359,
+      "height": 44
+    },
+    "hitInBand": {
+      "tag": "DIV",
+      "cls": "mh-search-dock mh-search-collapsed",
+      "inScroller": false,
+      "inDock": true
+    }
+  },
+  "light.messages.straddle": {
+    "pageTop": 0,
+    "band": {
+      "top": 0,
+      "bottom": 60,
+      "left": 0,
+      "right": 375,
+      "width": 375,
+      "height": 60
+    },
+    "dock": {
+      "position": "static",
+      "background": "rgba(0, 0, 0, 0)",
+      "backgroundImage": "none",
+      "backdropFilter": "none",
+      "opacity": "1",
+      "pointerEvents": "auto",
+      "zIndex": "auto",
+      "dockClass": "mh-search-dock mh-search-collapsed"
+    },
+    "bar": {
+      "rect": {
+        "top": 6,
+        "bottom": 54,
+        "left": 311,
+        "right": 359,
+        "width": 48,
+        "height": 48
+      },
+      "borderRadius": "50%",
+      "borderRadiusValue": "50%",
+      "background": "rgba(255, 255, 255, 0.97)",
+      "backdropFilter": "blur(24px) saturate(1.15)",
+      "collapsed": true,
+      "paddingLeft": "0px"
+    },
+    "icon": {
+      "top": 20,
+      "bottom": 40,
+      "left": 325,
+      "right": 345,
+      "width": 20,
+      "height": 20
+    },
+    "scroller": {
+      "rect": {
+        "top": 60,
+        "bottom": 750,
+        "left": 0,
+        "right": 375,
+        "width": 375,
+        "height": 690
+      },
+      "clientHeight": 690,
+      "scrollHeight": 1334,
+      "scrollTop": 112,
+      "paddingTop": "4px",
+      "overflowY": "auto",
+      "position": "static",
+      "zIndex": "auto"
+    },
+    "rowCount": 30,
+    "firstRow": {
+      "top": -48,
+      "bottom": -4,
+      "left": 8,
+      "right": 367,
+      "width": 359,
+      "height": 44
+    },
+    "straddle": {
+      "top": 40,
+      "bottom": 84,
+      "left": 8,
+      "right": 367,
+      "width": 359,
+      "height": 44
+    },
+    "hitInBand": {
+      "tag": "DIV",
+      "cls": "mh-search-dock mh-search-collapsed",
+      "inScroller": false,
+      "inDock": true
+    }
+  },
+  "light.contacts.rest": {
+    "pageTop": 0,
+    "band": {
+      "top": 0,
+      "bottom": 60,
+      "left": 0,
+      "right": 375,
+      "width": 375,
+      "height": 60
+    },
+    "dock": {
+      "position": "static",
+      "background": "rgba(0, 0, 0, 0)",
+      "backgroundImage": "none",
+      "backdropFilter": "none",
+      "opacity": "1",
+      "pointerEvents": "auto",
+      "zIndex": "auto",
+      "dockClass": "mh-search-dock"
+    },
+    "bar": {
+      "rect": {
+        "top": 8,
+        "bottom": 52,
+        "left": 16,
+        "right": 359,
+        "width": 343,
+        "height": 44
+      },
+      "borderRadius": "8px",
+      "borderRadiusValue": "8px",
+      "background": "rgba(128, 128, 128, 0.16)",
+      "backdropFilter": "none",
+      "collapsed": false,
+      "paddingLeft": "12px"
+    },
+    "icon": {
+      "top": 22,
+      "bottom": 38,
+      "left": 29,
+      "right": 45,
+      "width": 16,
+      "height": 16
+    },
+    "scroller": {
+      "rect": {
+        "top": 60,
+        "bottom": 750,
+        "left": 0,
+        "right": 375,
+        "width": 375,
+        "height": 690
+      },
+      "clientHeight": 690,
+      "scrollHeight": 1502,
+      "scrollTop": 0,
+      "paddingTop": "4px",
+      "overflowY": "auto",
+      "position": "static",
+      "zIndex": "auto"
+    },
+    "rowCount": 30,
+    "firstRow": {
+      "top": 232,
+      "bottom": 276,
+      "left": 8,
+      "right": 367,
+      "width": 359,
+      "height": 44
+    },
+    "straddle": null,
+    "hitInBand": {
+      "tag": "INPUT",
+      "cls": "mh-search-input",
+      "inScroller": false,
+      "inDock": true
+    }
+  },
+  "light.contacts.scrolled": {
+    "pageTop": 0,
+    "band": {
+      "top": 0,
+      "bottom": 60,
+      "left": 0,
+      "right": 375,
+      "width": 375,
+      "height": 60
+    },
+    "dock": {
+      "position": "static",
+      "background": "rgba(0, 0, 0, 0)",
+      "backgroundImage": "none",
+      "backdropFilter": "none",
+      "opacity": "1",
+      "pointerEvents": "auto",
+      "zIndex": "auto",
+      "dockClass": "mh-search-dock mh-search-collapsed"
+    },
+    "bar": {
+      "rect": {
+        "top": 6,
+        "bottom": 54,
+        "left": 311,
+        "right": 359,
+        "width": 48,
+        "height": 48
+      },
+      "borderRadius": "50%",
+      "borderRadiusValue": "50%",
+      "background": "rgba(255, 255, 255, 0.97)",
+      "backdropFilter": "blur(24px) saturate(1.15)",
+      "collapsed": true,
+      "paddingLeft": "0px"
+    },
+    "icon": {
+      "top": 20,
+      "bottom": 40,
+      "left": 325,
+      "right": 345,
+      "width": 20,
+      "height": 20
+    },
+    "scroller": {
+      "rect": {
+        "top": 60,
+        "bottom": 750,
+        "left": 0,
+        "right": 375,
+        "width": 375,
+        "height": 690
+      },
+      "clientHeight": 690,
+      "scrollHeight": 1502,
+      "scrollTop": 324,
+      "paddingTop": "4px",
+      "overflowY": "auto",
+      "position": "static",
+      "zIndex": "auto"
+    },
+    "rowCount": 30,
+    "firstRow": {
+      "top": -92,
+      "bottom": -48,
+      "left": 8,
+      "right": 367,
+      "width": 359,
+      "height": 44
+    },
+    "straddle": {
+      "top": 40,
+      "bottom": 84,
+      "left": 8,
+      "right": 367,
+      "width": 359,
+      "height": 44
+    },
+    "hitInBand": {
+      "tag": "DIV",
+      "cls": "mh-search-dock mh-search-collapsed",
+      "inScroller": false,
+      "inDock": true
+    }
+  },
+  "light.contacts.straddle": {
+    "pageTop": 0,
+    "band": {
+      "top": 0,
+      "bottom": 60,
+      "left": 0,
+      "right": 375,
+      "width": 375,
+      "height": 60
+    },
+    "dock": {
+      "position": "static",
+      "background": "rgba(0, 0, 0, 0)",
+      "backgroundImage": "none",
+      "backdropFilter": "none",
+      "opacity": "1",
+      "pointerEvents": "auto",
+      "zIndex": "auto",
+      "dockClass": "mh-search-dock mh-search-collapsed"
+    },
+    "bar": {
+      "rect": {
+        "top": 6,
+        "bottom": 54,
+        "left": 311,
+        "right": 359,
+        "width": 48,
+        "height": 48
+      },
+      "borderRadius": "50%",
+      "borderRadiusValue": "50%",
+      "background": "rgba(255, 255, 255, 0.97)",
+      "backdropFilter": "blur(24px) saturate(1.15)",
+      "collapsed": true,
+      "paddingLeft": "0px"
+    },
+    "icon": {
+      "top": 20,
+      "bottom": 40,
+      "left": 325,
+      "right": 345,
+      "width": 20,
+      "height": 20
+    },
+    "scroller": {
+      "rect": {
+        "top": 60,
+        "bottom": 750,
+        "left": 0,
+        "right": 375,
+        "width": 375,
+        "height": 690
+      },
+      "clientHeight": 690,
+      "scrollHeight": 1502,
+      "scrollTop": 280,
+      "paddingTop": "4px",
+      "overflowY": "auto",
+      "position": "static",
+      "zIndex": "auto"
+    },
+    "rowCount": 30,
+    "firstRow": {
+      "top": -48,
+      "bottom": -4,
+      "left": 8,
+      "right": 367,
+      "width": 359,
+      "height": 44
+    },
+    "straddle": {
+      "top": 40,
+      "bottom": 84,
+      "left": 8,
+      "right": 367,
+      "width": 359,
+      "height": 44
+    },
+    "hitInBand": {
+      "tag": "DIV",
+      "cls": "mh-search-dock mh-search-collapsed",
+      "inScroller": false,
+      "inDock": true
+    }
+  }
+}

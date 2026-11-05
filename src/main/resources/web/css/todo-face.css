@@ -91,14 +91,19 @@
 /* 居中行（胶囊的几何母体）：内容 inline-flex + 水平居中 —— 胶囊宽度由内容
    决定（不横跨容器），胶囊中心恒等于本行中心恒等于顶带中线（同一盒模型）。 */
 .tfl-mount {
-  /* 同 #task-list：保持 static —— 展开面板（absolute）的包含块必须是 #task-list
-     槽位本身（2026-11-03 挪位后：面板锚在胶囊行下缘向下生长；若在此建定位祖先，
-     锚点会漂到别的盒子）。 */
-  position: static;
+  /* 灵动岛批 2026-11-05：槽位改为**岛的定位祖先 + 定高占位**。
+     · 岛（`.tfl-card`）脱离流（absolute）⇒ 生长/回缩不推动任何邻居；
+     · 槽位自身高度钉死为胶囊高（--tfl-cap-h）⇒ 顶带让位读数（main.js 的
+       bandBottom 读 #top-overlays 实测盒）与本批前「胶囊在流内撑高」逐像素等价；
+     · 岛的水平中轴 = 槽位中线（left:50% + 静态 translateX(-50%)）。
+     ⚠ 与挪位批的差异：彼时靠 static 让 `.tfl-card` 的包含块落到 #task-list；
+     本批岛只做**原地变形**（不再锚到槽位下缘向下生长），包含块改由本层承担即可。 */
+  position: relative;
   display: flex;
   justify-content: center;
   align-items: center;
   width: 100%;
+  height: var(--tfl-cap-h);
   pointer-events: none;
   /* 呼吸位由 #task-list 的 padding 承担；框内零额外高度。 */
   padding: 0;
@@ -151,10 +156,20 @@
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }
-/* 开态：胶囊仍留在浮层下方（继续作「收起」入口）；仅在展开时压暗一档做层级
-   区分（不再 display:none —— 否则面板一开胶囊消失，作者要求的「点击展开/
-   收起」双向手势就断了）。 */
-.tfl-mount.is-open .tfl-capsule { opacity: 0.55; }
+/* 内容层切换（灵动岛批 2026-11-05）：展开后胶囊层**不消失、只退成内容层** ——
+   同一节点仍在岛内（judge：`#todo-island` 恒为同一引用），淡出 + 失焦模糊，
+   不吃事件（岛的点击面交给面板层）。字体/尺寸零改：它不再决定外框尺寸，
+   外框由 JS 弹簧逐帧写（见下方岛容器块）。 */
+.tfl-mount.is-open .tfl-capsule {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  filter: blur(6px);
+  pointer-events: none;
+  transition: opacity 0.16s ease, filter 0.16s ease;
+}
 
 .tfl-capsule-dot {
   flex-shrink: 0;
@@ -225,82 +240,127 @@
   to   { opacity: 1; transform: none; }
 }
 
-/* ── 卡容器 = 展开态面板（`.tfl-card`）────────────────────────────────────
-   静默态 `display:none`（零占位：面板 DOM 常驻但完全不参与布局，避免旧的
-   「30px 卡里塞 11px 胶囊」几何纠缠）；开态 = **绝对定位浮层**，锚在
-   #task-list 槽位下缘之下 8px（包含块 = #task-list（position:relative），
-   见上方槽位块）：
+/* ── 岛容器（`.tfl-card`）= **唯一变形元素**（灵动岛批 2026-11-05）─────────
+   作者原话（2026-11-05 17:02，逐字）：「整体就像 apple 的灵动岛一样……单一形状，
+   全程无剪辑：每个状态都是同一个元素在变形（改变尺寸、圆角和颜色），同时内容
+   切换时伴有短暂的模糊效果。……处处运用弹簧（spring）物理效果，仅有极轻微的
+   过冲（overshoot）。」
 
-   · 向下生长（top 锚，2026-11-03 10:11 ① 挪位后翻转；原向上生长的 bottom 锚
-     属于「面板在输入框上方」时代）⇒ 视觉上「自胶囊向下长出」，顶栏位置不会
-     整块长出屏幕外；
-   · 不占输入区高度 ⇒ 展开/收起时输入框位置一动不动（不与输入区打架），
-     也不触发聊天体让位重排；
-   · #task-list relative、#top-overlays / #main 无裁剪 ⇒ 浮层可以完整溢出到
-     聊天体之上；
-   · 层级：#top-overlays 自身 z-index 25（自成堆叠上下文）已高于 #chat，
-     浮层在同层之上；全局模态（z-index ≥100）仍在其上。
-   · 宽度 `min(420px, calc(100vw - 32px))` 与胶囊同一水平中线（left:50% +
-     自身 translateX(-50%)），中心 = 顶带中线。 */
+   形态契约（本块是岛几何的**单源**；此前「胶囊（流内）+ 浮卡（absolute）」两个
+   节点代表两种状态——本批整条退役，判「另一个 DOM 节点冒充过渡态」即失败）：
+   · 岛 = 本节点（JS 建层时挂 id `todo-island`，全生命周期同一引用、从不重建）。
+     收起态它**本身就是胶囊**：宽 max-content（内容层 `.tfl-capsule` 在流内撑盒）、
+     高 --tfl-cap-h、圆角 999、底 = 扁平控件族 --ctl-neutral-bg。
+   · 展开态仍是它：JS 弹簧逐帧写 inline width / height / 两段圆角（起 = 胶囊盒，
+     终 = 内容盒），背景与描边走同拍的 240ms 过渡（非越界缓动，见 SPRING.morph）。
+   · 内容切换只在**内容层**发生：胶囊层淡出 + blur(6px)，面板层由 blur(8px) 转清。
+     骨架（本节点）全程连续、零换节点、零剪辑。
+   · 定位：脱离流（absolute）在槽位（`.tfl-mount`，定高占位）内水平居中 ——
+     left:50% + 静态 translateX(-50%) ⇒ 宽度变化时**向两侧对称生长**（灵动岛语义，
+     中轴零位移），生长/回缩不推动任何邻居（面板浮在聊天体之上，不占输入区）。
+   · 层级：#top-overlays 自身 z-index 25（自成堆叠上下文）高于 #chat，岛在同层之上；
+     全局模态（z-index ≥100）仍在其上。
+   · 玻璃面：`.nf-glass` 令牌尚未合入本树（grep 零命中）⇒ 本批沿用**同一唯一
+     来源的 token 面**（--glass-bg / --glass-border / --glass-blur），不写裸
+     backdrop-filter 数值；`.nf-glass` 落地后换类、值零改（对齐点见批文档）。
+   · 描边用 inset ring（box-shadow）而非 border：border 会把盒模型撑 2px，
+     弹簧写死尺寸后内容层会被挤 1px；ring 零布局影响、可同拍过渡。 */
 .tfl-card {
-  display: none;
   position: absolute;
+  /* 槽位定高占位（.tfl-mount height = --tfl-cap-h）⇒ 岛顶端贴槽位顶缘 */
+  top: 0;
   left: 50%;
-  /* 2026-11-03 10:11 ①：自胶囊向下生长（原 bottom:calc(100% + 8px) 向上）。 */
-  top: calc(100% + 8px);
   transform: translateX(-50%);
-  width: min(420px, calc(100vw - 32px));
+  /* 收起态 = 胶囊自身：宽度由内容层（.tfl-capsule）自然撑开（两态等宽口径零改）、
+     高度 = 胶囊高。展开态由 JS 写 inline width/height 覆盖（起止都在胶囊盒上，
+     首帧不跳）。 */
+  display: block;
+  width: max-content;
+  height: var(--tfl-cap-h);
   flex-direction: column;
-  /* 圆角语言镜像：靠近胶囊的一条边（现在是顶边）承 24 的大圆角，
-     远端（底边）19 —— 与原「贴胶囊的底边 24 / 远端顶边 19」同一读法。 */
-  border-radius: 24px 24px 19px 19px;
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  border: 1px solid var(--glass-border);
-  box-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.15),
-    0 4px 16px rgba(0, 0, 0, 0.05);
-  /* 展开动画（件5 2026-11-05）：**几何驱动**，只由 JS 逐帧写 inline height
-     （起点 = 胶囊高、终点 = 内容自然高）+ 两条顶圆角；此处不留 transform 形变
-     通道 ⇒ 载体的 rect.left / rect.top 全程不动，只有底缘向下长（作者原话
-     「要在同一行展开。有一种胶囊变大的感觉。」）。`transform: translateX(-50%)`
-     只承担「与胶囊同一水平中线」的静态定位，动画期间不变。 */
-  transform-origin: 50% calc(0% - 8px);
+  /* 收起态外观（灵动岛批 2026-11-05 17:02 起）：扁平淡底胶囊 ——
+     底 = 扁平控件族 --ctl-neutral-bg（不是玻璃档），圆角 = 胶囊 token，
+     无模糊。玻璃档只在 open 态生效（见 .tfl-card[data-state="open"]）。
+     圆角语言镜像（件5 保留）：靠近胶囊的一条边在展开态承 24 的大圆角、
+     远端 19 —— 与原「贴胶囊的底边 24 / 远端顶边 19」同一读法，
+     终值在 open 态以 --tfl-rt: 24 / --tfl-rb: 19 落地（JS 末帧逐值相等）。 */
+  border-radius: var(--tfl-cap-radius);
+  background: var(--ctl-neutral-bg);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  /* 描边用 inset ring（box-shadow）而非 border：border 会把盒模型撑 2px，
+     弹簧写死尺寸后内容层会被挤 1px（件5 起的口径，沿用）。 */
+  box-shadow: inset 0 0 0 1px transparent;
+  /* 颜色/描边只做「同一元素变色」：240ms、无越界缓动（禁用项：bouncy/back/
+     elastic 一律不进本文件），与几何弹簧（SPRING.morph，response 0.38 /
+     damping 0.82）同拍收口。
+     ⚠ backdrop-filter **不进过渡列表**：它是合成器层属性，逐帧插值会整屏重算
+     背景模糊（录屏实测形变那一拍整屏糊成一片且掉帧）。玻璃档在状态切换的那一
+     帧直接生效 —— 与 240ms 的背景色过渡同拍读，零额外渲染成本。
+     ⚠ 几何通道：灵动岛批起形变**只走 width / height / 两段圆角**四条弹簧，
+     transform 仅承担 translateX(-50%) 静态居中 ⇒ 不再需要 transform-origin
+     形变通道（件5 的「只向下长」读法由本批的「中轴恒定、向两侧对称生长」
+     取代，作者令 2026-11-05 17:02）。 */
+  transition:
+    background-color 0.24s cubic-bezier(0.22, 0.8, 0.28, 1),
+    box-shadow 0.24s cubic-bezier(0.22, 0.8, 0.28, 1);
   overflow: hidden;
 }
 .tfl-card[data-state="open"] {
-  display: flex;
+  /* 宽度/高度由 JS 弹簧逐帧写；本态只负责「变色」与两段圆角的静态终值
+     （JS 在动画期间也会写 inline borderRadius，末帧与这里逐值相等）。 */
   --tfl-rt: 24px;
   --tfl-rb: 19px;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  box-shadow:
+    inset 0 0 0 1px var(--glass-border),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.15),
+    0 4px 16px rgba(0, 0, 0, 0.05);
 }
-/* 收起退场：卡容器仍 display:flex 直到弹簧落地（JS 落地后才翻 data-state），
+/* 收起退场：岛保持 open 形态直到弹簧落地（JS 落地后才翻 data-state），
    内容随 tfl-panel-out 淡出 —— 视觉上「从面板收回胶囊」。 */
 .tfl-panel.tfl-panel-out { opacity: 0; pointer-events: none; }
 @media (prefers-color-scheme: dark) {
-  .tfl-card {
+  .tfl-card[data-state="open"] {
     box-shadow:
+      inset 0 0 0 1px var(--glass-border),
       inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
       0 4px 16px rgba(0, 0, 0, 0.2);
   }
 }
 
-/* ── 面板（展开态）─────────────────────────────────────────────────────── */
+/* ── 面板层（岛的第二内容层）─────────────────────────────────────────────
+   桌面腿 = 绝对定位、宽度恒为终态宽（岛宽动画不改它 ⇒ 行内文字**零重排**，
+   岛只是像开窗一样把它露出来；居中锚 = 岛中线，与岛对称生长同轴）。
+   高度 = 内容自然高（岛按它逐帧裁切），岛自身尺寸由 JS 写 ⇒ 本层不参与收缩。 */
+.tfl-card:not(.tfl-mobile) .tfl-panel {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(420px, calc(100vw - 32px));
+}
 .tfl-panel {
   display: flex;
   flex-direction: column;
-  /* 件5（2026-11-05）：展开几何由载体 `.tfl-card` 的 height 逐帧驱动，载体在动画
-     期间被裁到 < 内容高。本件**不参与收缩**（flex-shrink 0）——否则高度一缩，面板
-     会跟着被 flex 压扁，行/文字逐帧位移（件5 A3 判据要的是「行零位移」）。 */
+  /* 件5（2026-11-05）：展开几何由载体的 height 逐帧驱动，载体在动画期间被裁到
+     < 内容高。本件**不参与收缩**（flex-shrink 0）——否则高度一缩，面板会跟着被
+     flex 压扁，行/文字逐帧位移。 */
   flex: 0 0 auto;
   min-height: 0;
   opacity: 0;
+  filter: blur(8px);
   pointer-events: none;
-  transition: opacity 0.28s ease; /* 内容淡入随形变（spring 开合的 CSS 近似拍）*/
+  /* 内容切换的「短暂模糊」（作者令「内容切换时伴有短暂的模糊效果」）：
+     进入 = 失焦 → 清晰；退出 = 反向。与骨架弹簧同拍、无越界缓动。 */
+  transition: opacity 0.22s cubic-bezier(0.22, 0.8, 0.28, 1), filter 0.22s cubic-bezier(0.22, 0.8, 0.28, 1);
 }
 .tfl-panel.tfl-panel-in,
 .tfl-panel.tfl-panel-open {
   opacity: 1;
+  filter: none;
   pointer-events: auto;
 }
 
@@ -580,8 +640,6 @@
   padding: var(--ds-space-inset);
   border-radius: var(--ds-radius-input);
   background: var(--tfl-pop-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 0.6px solid color-mix(in srgb, var(--color-text, #fff) 20%, transparent);
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
   opacity: 0;
@@ -772,7 +830,7 @@
   justify-content: center;
   opacity: 0;
   transform: scale(0.4);
-  transition: transform 0.3s cubic-bezier(0.34, 1.3, 0.64, 1), opacity 0.2s ease;
+  transition: transform 0.3s cubic-bezier(0.22, 0.8, 0.28, 1), opacity 0.2s ease;
 }
 .tfl-complete.filling .tfl-complete-fill { opacity: 1; transform: scale(1); }
 .tfl-complete-fill svg {
@@ -781,7 +839,7 @@
   color: rgba(255, 255, 255, 0.95);
   transform: scale(0.4);
   opacity: 0;
-  transition: transform 0.2s cubic-bezier(0.34, 1.3, 0.64, 1), opacity 0.15s ease;
+  transition: transform 0.2s cubic-bezier(0.22, 0.8, 0.28, 1), opacity 0.15s ease;
 }
 .tfl-complete.checked .tfl-complete-fill svg { transform: scale(1); opacity: 1; }
 .tfl-row-removing { opacity: 0; transform: translateY(-10px); }
@@ -1046,8 +1104,6 @@
   border: 0.5px solid color-mix(in srgb, var(--color-text) 12%, transparent);
   border-radius: 999px;
   background: color-mix(in srgb, var(--color-text) 8%, transparent);
-  -webkit-backdrop-filter: blur(10px);
-  backdrop-filter: blur(10px);
   color: color-mix(in srgb, var(--color-text) 60%, transparent);
   cursor: pointer;
   transition: background 0.15s, color 0.15s, transform 0.15s;
@@ -1123,10 +1179,32 @@
 }
 
 
+/* ── 图标描边单源（灵动岛批 2026-11-05）────────────────────────────────────
+   作者禁用项：「不统一的图标描边」。本面此前各处手写 stroke-width（1.5 / 1.8 /
+   2 / 2.2 / 2.4，且散在 JS 字符串与 CSS 里），在 9–16px 的显示尺寸下渲染出来是
+   0.75–1.33px 的参差 —— 同一张面板里肉眼可辨。本块立**一条光学阶梯**：
+   渲染尺寸越小、用户单位描边越粗，落到屏幕上统一在 1.0–1.3 设备像素区间；
+   全部图标（含 JS 内联字符串画的自绘字形）一处归档，JS 里的旧属性值随本块失效
+   （CSS 规则覆盖表现属性，特异性 0 档不动）。
+     · 14–16px 档（lucide 主图标、十六进制自绘 glyph）：2     → ≈1.3px
+     · 12–13px 档（行尾删除 ×、行首勾）：2.2                → ≈1.1px
+     · 8–9px 档（完成钮内勾、截止时刻表盘）：2.6             → ≈1.0px  */
+#todo-island svg { stroke-width: 2; }
+/* 子元素一律继承父 svg 的档位（自绘字形常在内联 path 上写了 stroke-width ——
+   表现属性优先级低于任何选择器规则，本行即把「随手值」收编到阶梯上）。 */
+#todo-island svg * { stroke-width: inherit; }
+#todo-island .tfl-complete-ring svg { stroke-width: 2.2; }
+#todo-island .tfl-del svg { stroke-width: 1.4; }
+#todo-island .tfl-complete-fill svg { stroke-width: 2; }
+#todo-island .tfl-row-due svg { stroke-width: 2.6; }
+#todo-island .tfl-chip-arrow svg { stroke-width: 2.6; }
+
 /* ── 手机变体（页面即展开态：无胶囊、高度随页面体）──────────────────────
    重做批：桌面胶囊/浮层两条规则（.tfl-capsule 小件、.tfl-card absolute 浮层）
-   一律不得带崩手机 —— 手机腿在此整条回退成流内块。 */
-.tfl-mount-mobile { pointer-events: auto; display: block; }
+   一律不得带崩手机 —— 手机腿在此整条回退成流内块。
+   灵动岛批（2026-11-05）：桌面岛改成 absolute + 定宽写死尺寸后，本块的
+   复位项补两条（height/position 归零继承），否则页面体被钉成胶囊高。 */
+.tfl-mount-mobile { pointer-events: auto; display: block; position: static; height: auto; }
 .tfl-mobile,
 .tfl-mount-mobile .tfl-card {
   display: flex;
