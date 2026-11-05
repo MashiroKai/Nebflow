@@ -1162,6 +1162,29 @@ object AgentActor extends AgentCore with AgentSession:
     BgTaskRegistry.reclaimSession(state.sessionId, state.wsSend, state.rootSessionId)
 
   /**
+   * 归属命名批（2026-11-05 作者令「问题卡片要显示 delegate / node 的名字」）：
+   * askUser 载荷 `ownerName` 的**解析单点**（纯函数，lookup 可注入 ⇒ 面 spec 可钉）。
+   *
+   *   · delegate 会话本人提问 ⇒ 自己的批次短名（`lookup(自身 sessionId)`）；
+   *   · 节点会话提问 ⇒ 委托它的 delegate（节点会话 `rootSessionId` 即该 delegate——
+   *     NodeEngine 自根，见 `DelegateFlowHosts.mount`）；
+   *   · Nebula 自问 / 项目分发器（`dispatcher-*` 非 delegate 会话）/ 无名旧记录 ⇒ None
+   *     （载荷零键 ⇒ 前端回落项目名，零空白零 `undefined`）。
+   *
+   * `lookup` 缺省 = `DelegateRegistry.ownerNameOf`（与后台任务归属批同源同判据，
+   * 不新造名字读面）。
+   */
+  private[agent] def askOwnerNameOf(
+    sessionId: Option[String],
+    rootSessionId: String,
+    lookup: Option[String] => Option[String] = nebflow.core.delegate.DelegateRegistry.ownerNameOf
+  ): Option[String] =
+    lookup(sessionId)
+      .orElse(lookup(Option(rootSessionId).filter(_.nonEmpty)))
+      .map(_.trim)
+      .filter(_.nonEmpty)
+
+  /**
    * Build the "askUser" WS payload for the frontend. When the question comes
    * from a sub-agent (ForwardAskUser), agentName is set to the source agent
    * for attribution and sourceAgent/sourceSession carry the origin info.
@@ -1207,6 +1230,19 @@ object AgentActor extends AgentCore with AgentSession:
     project: Option[String] = None,
     nodeName: Option[String] = None,
     /**
+     * 归属实体名（归属命名批 2026-11-05 作者令「问题卡片要显示 delegate / node 的
+     * 名字，不再只显示项目名」）：发起会话所属 **delegate 批次短名**
+     * （`DelegateRegistry.Record.name`，解析单点 = `DelegateRegistry.ownerNameOf`，
+     * 与后台任务归属批 `ownerName` 同源同判据）。三段取值：
+     *   · delegate 会话本人提问 ⇒ 自己的批次名（`ownerNameOf(自己的 sessionId)`）；
+     *   · 项目/委托节点提问 ⇒ 所属 delegate（节点会话的 `rootSessionId` 即委托它的
+     *     delegate——NodeEngine 自根，见 `DelegateFlowHosts.mount`）；
+     *   · Nebula 自问 / 项目分发器 / 无名旧记录 ⇒ None（**缺省不落键**，前端回落
+     *     项目名——零空白、零 `undefined`）。
+     * 缺席即不落键 ⇒ 非 delegate 载荷与既有形态**逐字节相等**（V11b 字节契约同款）。
+     */
+    ownerName: Option[String] = None,
+    /**
      * 附件引用（本批：AskUser 顶层可选参数 `attachments`）。与 `canvas`（下方
      * `:899`）同款纪律 = **仅在场发**：为空时**不落键** ⇒ 缺席载荷与既有形态
      * **逐字节相等**（`AskUserBuildJsonSpec` 的字节契约不受影响）。
@@ -1222,6 +1258,8 @@ object AgentActor extends AgentCore with AgentSession:
     sourceSession.foreach(ss => fields += "sourceSession" -> ss.asJson)
     project.foreach(p => fields += "project" -> p.asJson)
     nodeName.foreach(nn => fields += "nodeName" -> nn.asJson)
+    // 归属命名批：发起实体自身名（delegate 批次短名）——只在场发，空串视同缺席。
+    ownerName.map(_.trim).filter(_.nonEmpty).foreach(on => fields += "ownerName" -> on.asJson)
     // attachments emitted only when non-empty — pre-attachment payloads stay byte-identical
     if attachments.nonEmpty then fields += "attachments" -> attachments.asJson
     fields += "items" -> Json.fromValues(items.map { item =>
