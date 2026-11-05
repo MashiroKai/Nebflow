@@ -186,6 +186,27 @@ for (const theme of THEMES) {
     return out;
   });
   writeFileSync(join(OUT, `${TAG}-${theme}-settings-full.png`), await shoot(s.page));
+
+  // ②-b 种类矩阵：设置面里折叠/滚出视口的控件能证明「同一套」，但**架子**证明的是
+  // 元素种类 —— 这里用真 CSS 造一组同结构夹具（不动产品 DOM、测完即摘），把
+  // 6 种 input type + textarea + select 逐个真点聚焦读同一组读数。
+  result.kindMatrix = {};
+  const kinds = await s.page.evaluate(() => {
+    const host = document.createElement('div');
+    host.id = 'nf-kind-matrix';
+    host.style.cssText = 'position:fixed;left:16px;bottom:16px;z-index:2147483646;display:flex;flex-direction:column;gap:6px;padding:8px;background:var(--color-bg,#fff);border-radius:8px';
+    const specs = [['text', 'cfg-input'], ['password', 'cfg-input'], ['number', 'cfg-input'], ['email', 'cfg-input'], ['search', 'cfg-input'], ['url', 'cfg-input']];
+    host.innerHTML = specs.map(([t, c], i) => `<input type="${t}" class="${c}" data-probe="kind${i}" value="sample">`).join('')
+      + '<textarea class="cfg-input cfg-textarea" data-probe="kind6" rows="1">sample</textarea>'
+      + '<select class="cfg-input" data-probe="kind7"><option>sample</option></select>';
+    document.body.appendChild(host);
+    return [...host.querySelectorAll('input,textarea,select')].map((el, i) => ({ probe: `kind${i}`, kind: el.tagName.toLowerCase() + (el.getAttribute('type') ? ':' + el.getAttribute('type') : '') }));
+  });
+  for (const k of kinds) {
+    const m = await measureSubject(s, k.probe, theme, { keyboard: 'none' });
+    result.kindMatrix[k.kind] = { probe: k.probe, hitTest: m.hitTest, rest: m.rest, mouse: m.mouse };
+  }
+  await s.page.evaluate(() => { const h = document.getElementById('nf-kind-matrix'); if (h) h.remove(); });
   const pageMarks = await s.page.evaluate(() => {
     const out = {};
     const pick = (k, sel) => {
