@@ -1,4 +1,4 @@
 legacy (nebflow.json.bak) vs stand.json
-merged-up leaves (model-level windows → provider-level): 0
-value diffs: 1
-  llm.providers.alpha.models: [{"id":"m1","contextWindow":1000,"unavailableWindows":[{"from":"01:00","to":"02:00"}]}] → [{"id":"m1","contextWindow":1000}]
+value diffs (unavailableWindows stripped): 0
+
+model-level windows carried up to provider level: 1/1

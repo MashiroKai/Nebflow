@@ -79,15 +79,13 @@ class FallbackChainCandidateSpec extends CatsEffectSuite:
 
   test("C-4: 链里残留已删 provider 的 ref ⇒ 该 ref 被跳过（绝不真实调用）") {
     val staleChain = Some(AgentModelConfig(Some("ghost/m1"), List("a/m1")))
-    for
-      cs <- mkRegistry(cfg(staleChain, "a" -> provider("m1"))).flatMap(_.getCandidatesForAgentUnfiltered(None))
+    for cs <- mkRegistry(cfg(staleChain, "a" -> provider("m1"))).flatMap(_.getCandidatesForAgentUnfiltered(None))
     yield assertEquals(refs(cs), List("a/m1"), s"不可解析的链引用必须跳过且不留空位，实际 = ${refs(cs)}")
   }
 
   test("C-5: 候选集只来自配置实存的 provider/model（不凭空造；储备层只追加）") {
     val chain = Some(AgentModelConfig(Some("a/m1"), Nil))
-    for
-      cs <- mkRegistry(cfg(chain, "a" -> provider("m1"), "b" -> provider("m2")))
+    for cs <- mkRegistry(cfg(chain, "a" -> provider("m1"), "b" -> provider("m2")))
         .flatMap(_.getCandidatesForAgentUnfiltered(None))
     yield assertEquals(refs(cs), List("a/m1", "b/m2"), "链顺序在前，储备层按 providerId 字典序追加")
   }
@@ -115,8 +113,7 @@ class FallbackChainCandidateSpec extends CatsEffectSuite:
   test("C-8: disabled:true 的 provider 一律不进候选集（fail-closed 不回退）") {
     val disabled = provider("m3").copy(disabled = Some(true))
     val chain = Some(AgentModelConfig(Some("a/m1"), Nil))
-    for
-      cs <- mkRegistry(cfg(chain, "a" -> provider("m1"), "c" -> disabled))
+    for cs <- mkRegistry(cfg(chain, "a" -> provider("m1"), "c" -> disabled))
         .flatMap(_.getCandidatesForAgentUnfiltered(None))
     yield assert(!refs(cs).exists(_.startsWith("c/")), s"disabled provider 不得被选，实际 = ${refs(cs)}")
   }

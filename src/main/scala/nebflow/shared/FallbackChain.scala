@@ -20,7 +20,7 @@ package nebflow.shared
  *      [[nebflow.llm.ProviderRegistry.getCandidatesUnfiltered]] reads it first
  *      and only falls back to the Nebula sidecar / seed when it is absent;
  *   2. every ref must resolve against a provider that actually exists in
- *      `llm.providers`. Unresolvable refs are NOT silently skipped — 
+ *      `llm.providers`. Unresolvable refs are NOT silently skipped —
  *      [[validate]] returns a readable warning per bad ref and the gateway logs
  *      them at boot ([[logValidation]]);
  *   3. the code-side seeds are at most a FIRST-GENERATION template: once the
@@ -64,7 +64,9 @@ object FallbackChain:
                     s"(known: ${config.llm.providers.keys.toList.sorted.mkString(", ")} — the ref will be skipped, not called)"
                 )
               case Some(p) if p.disabled.getOrElse(false) =>
-                List(s"$SectionKey: '$ref' references provider '$providerId' which is marked disabled:true — it cannot be called")
+                List(
+                  s"$SectionKey: '$ref' references provider '$providerId' which is marked disabled:true — it cannot be called"
+                )
               case Some(p) if !p.models.exists(_.id == modelId) =>
                 List(
                   s"$SectionKey: '$ref' references model '$modelId' which provider '$providerId' does not declare " +
@@ -75,6 +77,10 @@ object FallbackChain:
             List(s"$SectionKey: '$ref' is not a 'provider/model' ref")
       }
       perRef ++ dupes.map(r => s"$SectionKey: duplicate ref '$r' (it would be tried twice)")
+
+    end if
+
+  end validate
 
   /** Log [[validate]] at WARN level (boot face; no-op when healthy). */
   def logValidation(config: NebflowServiceConfig): Unit =
@@ -96,7 +102,8 @@ object FallbackChain:
       ref.split("/", 2) match
         case Array(providerId, modelId) =>
           config.llm.providers.get(providerId) match
-            case Some(p) if !p.disabled.getOrElse(false) && p.models.exists(_.id == modelId) => Some((providerId, modelId))
+            case Some(p) if !p.disabled.getOrElse(false) && p.models.exists(_.id == modelId) =>
+              Some((providerId, modelId))
             case _ => None
         case _ => None
     }
