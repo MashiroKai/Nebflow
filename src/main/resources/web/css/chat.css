@@ -1240,6 +1240,17 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .mention-tag:hover {
   text-decoration: underline;
 }
+/* `#` 待办引用 chip（待办结构化批 2026-11-05）：与 @ 提及同一蓝色系（同
+   rgb(var(--sapphire))），用一条虚线底标区分「引的是待办而非项目」——不新增
+   色值、不动字号，hover 由虚线转实线。 */
+.todo-tag {
+  color: rgb(var(--sapphire));
+  cursor: pointer;
+  border-bottom: 1px dashed color-mix(in srgb, rgb(var(--sapphire)) 55%, transparent);
+}
+.todo-tag:hover {
+  border-bottom-style: solid;
+}
 /* #303 §4: message ref card — a block-level card (not an inline tag) using the
    glass-etched surface, no new color tokens, visual-style font weights. */
 .bubble.user.att-bubble.att-ref-bubble {
