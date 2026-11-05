@@ -100,8 +100,9 @@ class MergeQueueHeadSkipFactCheckSpec extends CatsEffectSuite:
   private def sink(system: ActorSystem, name: String): IO[ActorRef[AgentCommand]] =
     // P1 投递身份化：投递只认收件身份 + 落盘邮箱，spec 直接在端口上收走 brief
     // （不再探 actor 信箱）；Sink actor 保留仅为既有 ref 形参。
-    nebflow.core.delegate.MergeQueueTestPorts.recording(s => grants += s.brief)
-    system.spawn(new Sink(grants), name)
+    system.spawn(new Sink(grants), name).flatTap { child =>
+      deadSup(system, s"$name-sup").map(sup => nebflow.core.delegate.MergeQueueTestPorts.toActor(child, sup))
+    }
 
   private def deadSup(system: ActorSystem, name: String): IO[ActorRef[AgentEvent]] =
     system.spawn(

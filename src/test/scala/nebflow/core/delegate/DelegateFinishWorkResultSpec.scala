@@ -40,6 +40,8 @@ class DelegateFinishWorkResultSpec extends CatsEffectSuite:
 
   override def beforeEach(context: munit.BeforeEach): Unit =
     MergeQueue.reset()
+    // P1 投递身份化：身份投递端口（生产实现 = 磁盘邮箱；此处 = 记录型，投递恒成功）。
+    nebflow.core.delegate.MergeQueueTestPorts.install()
     nebflow.ForceRemove.removeAll(tempRoot / "chains")
     nebflow.ForceRemove.removeAll(tempRoot / "delegates")
     nebflow.ForceRemove.removeAll(tempRoot / "subagent-tasks")

@@ -118,8 +118,8 @@ class MergeQueueDeclarationGateSpec extends CatsEffectSuite:
         s"sup-${m.delegateId}-${scala.util.Random.nextInt(100000)}"
       )
     yield
-      // P1 投递身份化：brief 直接进 records（投递端口即投递面）。
-      nebflow.core.delegate.MergeQueueTestPorts.recording(s => records += s.brief)
+      // P1 投递身份化：端口转发到同一个 Sink（真实投递路径）。
+      nebflow.core.delegate.MergeQueueTestPorts.toActor(child, sup)
       m.copy(ownerSessionId = m.delegateId)
 
   private def installAlertPort(): Unit =

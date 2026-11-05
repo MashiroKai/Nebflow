@@ -126,8 +126,8 @@ class MergeLaneGateSpec extends CatsEffectSuite:
         s"sup-$delegateId"
       )
     yield
-      // P1 投递身份化：brief 走投递端口（不再探 actor 信箱）；alive 腿 = 在场读数。
-      nebflow.core.delegate.MergeQueueTestPorts.recording(s => records += s.brief, presentOwner = alive)
+      // P1 投递身份化：端口转发到同一个 Sink；alive 腿 = 在场读数。
+      nebflow.core.delegate.MergeQueueTestPorts.toActor(child, sup, presentOwner = alive)
       MergeQueue.Member(
         delegateId = delegateId,
         branch = s"delegate/$delegateId",

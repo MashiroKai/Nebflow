@@ -35,6 +35,35 @@ object MergeQueueTestPorts:
       def present(ownerSessionId: String): IO[Boolean] = IO.pure(presentOwner)
     )
 
+  /**
+   * 把端口投递**转发到既有 Sink actor**（`AgentCommand.UserInput`，replyTo = 传入的
+   * supervisor ref）。
+   *
+   * 用途：P1 把「投递」从 actor ref 换成身份后，绝大多数存量 spec 的断言形状
+   * （`records` 里的 `(text, replyTo)`、`grants` 里的 brief 文本）仍然是正确的
+   * **观测口径**——它们关心的是「投了什么、replyTo 是谁、投了几次」，不关心中间
+   * 有没有 ref 闭包。用本方法把端口接到同一个 Sink，既有断言零改动继续有效，
+   * 且验的是**真实投递路径**（队列 → 端口 → 收件人）。
+   */
+  def toActor(
+    child: nebflow.actor.ActorRef[nebflow.actor.AgentCommand],
+    supervisor: nebflow.actor.ActorRef[nebflow.actor.AgentEvent],
+    presentOwner: Boolean = true
+  ): Unit =
+    MergeQueue.OwnerDeliveryPort.install(new MergeQueue.OwnerDeliveryPort.Face:
+      def deliver(ownerSessionId: String, kind: String, brief: String, identity: String): IO[Either[String, Unit]] =
+        (child ! nebflow.actor.AgentCommand.UserInput(
+          text = brief,
+          replyTo = Some(supervisor),
+          source = Some("merge-queue"),
+          eventType = Some(kind)
+        )).attempt.map {
+          case Right(_)  => Right(())
+          case Left(err) => Left(Option(err.getMessage).getOrElse(err.toString))
+        }
+      def present(ownerSessionId: String): IO[Boolean] = IO.pure(presentOwner)
+    )
+
   /** 复位（afterEach）。 */
   def clear(): Unit = MergeQueue.OwnerDeliveryPort.clear()
 end MergeQueueTestPorts

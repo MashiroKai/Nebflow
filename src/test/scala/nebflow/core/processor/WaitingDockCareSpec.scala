@@ -127,6 +127,8 @@ class WaitingDockCareSpec extends CatsEffectSuite:
     sup: ActorRef[AgentEvent],
     baseWs: os.Path
   ): MergeQueue.Member =
+    // P1 投递身份化：端口把 brief 转发到同一个记录 actor（旧断言 received.size 零改动）。
+    nebflow.core.delegate.MergeQueueTestPorts.toActor(child, sup)
     MergeQueue.Member(
       delegateId = delegateId,
       branch = s"delegate/$delegateId",

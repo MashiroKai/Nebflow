@@ -127,8 +127,9 @@ class MergeQueueSpec extends CatsEffectSuite:
         s"sup-$delegateId"
       )
     yield
-      // P1 投递身份化：brief 走投递端口（不再探 actor 信箱）；replyTo 恒 None（无 ref 概念）。
-      MergeQueueTestPorts.recording(s => records += ((s.brief, None)))
+      // P1 投递身份化：端口把 brief 转发到同一个 Sink（replyTo = sup），旧断言形状零改动，
+      // 验的仍是真实投递路径（队列 → 端口 → 收件人）。
+      MergeQueueTestPorts.toActor(child, sup)
       sups(delegateId) = sup
       MergeQueue.Member(
         delegateId = delegateId,
