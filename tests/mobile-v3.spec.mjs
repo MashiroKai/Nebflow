@@ -228,46 +228,38 @@ test('T1 five-tab dock: author-order keys, icon+label structure, switching, acti
   expect(pageErrors).toEqual([]);
 });
 
-test('T2 tasks entry retired: chrome tasks key / tasks page / task panel all absent; capsule (top band) is the sole to-do entry', async ({ page }) => {
+test('T2 to-do entry per-end: mobile top-left tasks key opens the tasks page, capsule slot hidden', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(e.message));
   await seedTasks(page);
 
-  // ⛔ 入口收敛批 todo-unify-entry-collapse 2026-11-04（改写说明，不删测试）：
-  // 原 T2 钉「聊天头任务键徽标 → push 任务页收编 #mobile-task-panel → 组长卡
-  // 分组序/六级卡/X 关闭对账」。该面的入口（聊天头左上任务圆钮）与页面
-  // （'tasks' 导航页 + #mobile-task-panel）已整面退役，待办唯一入口 = 顶带
-  // 待办胶囊 ⇒ 原断言对象全部消失，本测试转为**退役护栏**（防回退）+ 入口
-  // 接班断言。旧卡渲染核代码仍在 js/mobile/taskPanel.js（注释退役、零删除）。
-
-  // ① 任务键/任务面板零命中（含徽标腿）。
-  await expect(page.locator('.mh-chrome-btn[data-chrome="tasks"]')).toHaveCount(0);
-  await expect(page.locator('#mobile-task-panel')).toHaveCount(0);
-  await expect(page.locator('.tp-card')).toHaveCount(0);
-  // 悬浮钮层仍在，只剩右上搜索键（不是把整层撤了）。
-  await expect(page.locator('#mobile-fab-layer .mh-chrome-btn')).toHaveCount(1);
+  // 端区分批（作者令 2026-11-05 09:28）反转入口岸：手机 = 左上悬浮「任务」圆钮
+  // （入口收敛批 2026-11-04 曾撤除，本批按端区分恢复），桌面 = 顶带胶囊。
+  // 旧钉「圆钮/tasks 页/任务面板三者皆缺席」随之反写，意图保留：
+  // 手机端待办入口唯一，两条腿不并存。
+  const taskBtn = page.locator('.mh-chrome-btn[data-chrome="tasks"]');
+  await expect(taskBtn).toHaveCount(1);
+  await expect(taskBtn).toBeVisible();
+  await expect(taskBtn.locator('.mh-chrome-badge')).toHaveCount(1);
+  // 悬浮钮层 = 双键（左任务 / 右搜索）
+  await expect(page.locator('#mobile-fab-layer .mh-chrome-btn')).toHaveCount(2);
   await expect(page.locator('.mh-chrome-btn[data-chrome="search"]')).toBeVisible();
+  // 手机层胶囊退场（display:none 的整槽）
+  expect(await page.locator('#task-list').evaluate((el) => getComputedStyle(el).display)).toBe('none');
 
-  // ② 导航缝：'tasks' / 'todo' 页已从 PAGES 撤除 ⇒ pushPage 是 no-op（零页面、
-  //    零面板），栈顶仍为聊天根。
+  // 导航缝：'tasks' 页恢复可达；'todo' 页仍无（PAGES 无该项）。
   const pushed = await page.evaluate(async () => {
     const nav = await import('/js/mobile/navController.js');
     nav.pushPage('tasks');
     nav.pushPage('todo');
     await new Promise((r) => setTimeout(r, 300));
     return {
-      top: window.__nfMobileNav?.top,
       tasksPage: document.querySelectorAll('.mobile-page[data-page="tasks"]').length,
       todoPage: document.querySelectorAll('.mobile-page[data-page="todo"]').length,
       panel: document.querySelectorAll('#mobile-task-panel').length,
     };
   });
-  expect(pushed).toMatchObject({ top: 'chat', tasksPage: 0, todoPage: 0, panel: 0 });
-
-  // ③ 待办入口接班 = 顶带胶囊槽（#top-overlays > #task-list；空态则整条不显示，
-  //    本夹具无待办数据 ⇒ 只钉挂载点与零残留，不钉可见）。
-  await expect(page.locator('#top-overlays > #task-list')).toHaveCount(1);
-  await expect(page.locator('#task-list .tfl-capsule')).toHaveCount(1);
+  expect(pushed).toMatchObject({ tasksPage: 1, todoPage: 0, panel: 1 });
 
   expect(pageErrors).toEqual([]);
 });
@@ -375,10 +367,11 @@ test('T5 header retired on mobile (liquid-glass v2 2026-10-31); top edge = fade 
   await expect(fade).toBeVisible();
   expect(await fade.evaluate((el) => getComputedStyle(el).pointerEvents)).toBe('none');
   expect(await fade.evaluate((el) => getComputedStyle(el).height)).toBe('88px');
-  // 悬浮圆钮层：入口收敛批 2026-11-04 后只剩右上「搜索」键（48px v2 液体玻璃
-  // 正圆）；左上「任务」键已随待办入口收敛退役（待办入口 = 顶带待办胶囊）。
-  await expect(page.locator('#mobile-fab-layer .mh-chrome-btn')).toHaveCount(1);
-  await expect(page.locator('.mh-chrome-btn[data-chrome="tasks"]')).toHaveCount(0);
+  // 悬浮圆钮层：顶缘双键（左「任务」+ 右「搜索」，均 48px v2 液体玻璃正圆）。
+  // 端区分批 2026-11-05 09:28 恢复了左上任务键（手机端待办入口），
+  // 「入口收敛批 2026-11-04 只剩搜索键」的计数随之由 1 → 2。
+  await expect(page.locator('#mobile-fab-layer .mh-chrome-btn')).toHaveCount(2);
+  await expect(page.locator('.mh-chrome-btn[data-chrome="tasks"]')).toBeVisible();
   await expect(page.locator('.mh-chrome-btn[data-chrome="search"]')).toBeVisible();
   // 页标题入流：头像 + 会话名迁入 .g2-chat-head（首位、可见）。
   // 会话页头同构批（件二+件三，2026-11-02）取代「单行三段式批」的 fixed 真顶栏：
@@ -401,10 +394,10 @@ test('T6 gutter retired: content full-width, desktop shells gone, task-list auto
   for (const sel of ['#activity-bar', '#sidebar', '.edge-bar-right', '#sidebar-toggle', '#canvas-toggle-btn']) {
     await expect(page.locator(sel)).toBeHidden();
   }
-  // r4 任务自动浮条（旧 delegate 卡自动带）退役 —— 现行语义（胶囊面交互批
-  // 2026-11-04 ⑤ + 入口收敛批 todo-unify-entry-collapse 2026-11-04）：
-  // #task-list 槽位在手机层**现役**，承载待办胶囊（.tfl-capsule）；本夹具零待办
-  // ⇒ 槽内无胶囊行、槽本身零高（不带旧 .task-chain-block 自动浮条）。
+  // r4 任务自动浮条（旧 delegate 卡自动带）退役 —— 现行语义（端区分批
+  // 2026-11-05 09:28）：#task-list 槽位在手机层**整槽 display:none**（胶囊只在
+  // 桌面呈现；手机待办入口 = 左上任务圆钮），槽内不得出现旧 .task-chain-block
+  // 自动浮条；本夹具零待办，断言面 = 零残留节点。
   await expect(page.locator('#task-list .task-chain-block')).toHaveCount(0);
   // 附件条 in-flow：不再是 fixed 让位带（首行入流）。
   const att = page.locator('#attachment-preview');
