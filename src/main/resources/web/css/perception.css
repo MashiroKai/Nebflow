@@ -165,16 +165,11 @@ html[data-theme="dark"] #perception-panel {
 .pp-mailrow .srv { font-size: var(--st-fs-meta); color: var(--st-text-muted); }
 .pp-quiet-line { font-size: var(--ds-fs-hint); color: var(--st-text-muted); padding: var(--ds-space-half) var(--ds-space-half) 0; display: flex; gap: var(--ds-space-1h); align-items: flex-start; }
 .pp-quiet-line svg { width: 13px; height: 13px; stroke: var(--st-mail-success-icon); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; margin-top: var(--ds-space-half); }
-.pp-toggle {
-  position: relative; width: 38px; height: 22px; border-radius: var(--ds-radius-xl); background: var(--st-etched-bg);
-  border: 1px solid var(--st-border); cursor: pointer; transition: all .18s; flex-shrink: 0; padding: 0;
-}
-.pp-toggle::after {
-  content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
-  background: var(--st-surface); box-shadow: 0 1px 3px rgba(0, 0, 0, .25); transition: transform .18s;
-}
-.pp-toggle.on { background: var(--st-primary); border-color: var(--st-primary); }
-.pp-toggle.on::after { transform: translateX(16px); }
+/* toggle-unify 批 2026-11-05：`.pp-toggle` 一族（38×22 自画轨道 + 带投影的
+   16px 圆钮 + 自有 .on 翻转）整族删除 —— 邮件开关改用全站唯一开关组件
+   `js/toggle.js` 的 `.nb-toggle`（css/sidebar.css，几何/色/动效走 --nf-toggle-* 令牌）。
+   顺带补上原实现缺的两件：`role="switch"` 与 `aria-checked`（原来只是一枚带
+   aria-label 的无状态按钮，读屏用户读不出发/关）。 */
 .pp-paused-banner {
   display: none; align-items: center; gap: var(--ds-space-2); padding: var(--ds-space-2) var(--ds-space-inline-x); border-radius: var(--ds-radius-button); margin-bottom: var(--ds-space-2);
   background: rgb(var(--st-amber) / .08); border: 1px solid rgb(var(--st-amber) / .28); font-size: var(--ds-fs-hint); color: var(--st-text);

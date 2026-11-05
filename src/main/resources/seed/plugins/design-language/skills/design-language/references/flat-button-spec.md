@@ -18,6 +18,25 @@ status: active
 扁平 = **不靠阴影 / 浮雕 / 高光营造厚度**。按钮的"可点击感"来自颜色与形状的
 状态变化，而不是"它看起来浮在页面上面"。
 
+### 1.0 判据覆盖哪些控件（按钮面 = 可点击件，不是容器）
+
+机检的「按钮面选择器」按名字段机械判定（切分口径 `-` / `_`），命中即整块进扫描
+范围：
+
+| 段 | 归属 | 说明 |
+|---|---|---|
+| `btn` / `btns` / `button` / `buttons` | 硬标记（无歧义） | `.cfg-btn` / `button.fm-send-btn` / `button` 类型选择器 |
+| `toggle` / `toggles` / `switch` / `switches` | **硬标记（2026-11-05 toggle-unify 批补）** | 开关是真实 `<button role="switch">`（`js/toggle.js`），与按钮同属可点击件 —— 厚度道具对它一视同仁 |
+| `pill` / `fab` | 软标记 | 其后所有段都是修饰词才算按钮（`.g2-pill-primary` 算，`.cal-pill-listbox` 不算） |
+
+> **补盲的由来（2026-11-05）**：判据段此前只有 `btn/button`，`.nb-toggle` 整族落在
+> 扫描面之外 —— `sidebar.css` 组件节那两条 `inset` 内高光从 09-05 一直长到 11-05，
+> 全站门禁读数是 0 命中。把 `toggle/switch` 补进段后，同一份脚本立刻在 6 个文件里
+> 抓到 6 条命中（`.nb-toggle`、`.bypass-toggle:hover`、`.voice-toggle:hover`、
+> `.dvp-zone-toggle:focus-visible`、`.pp-toggle::after`、`.wg-switch-select`），
+> 其中三族是**自画的第二套开关**（`.tfl-switch` / `.daemon-autostart` / `.pp-toggle`）
+> —— 已全部收编到唯一组件，据此可见「判据不认 = 约定不成立」。
+
 ### 1.1 禁止项（命中即红）
 
 | 编号 | 禁止项 | 为什么 |
@@ -95,6 +114,7 @@ status: active
 
 | 批次 | 按钮族 | 落点 | 六态 | 备注 |
 |---|---|---|---|---|
+| toggle-unify（2026-11-05） | `.nb-toggle`（**全站唯一开关族**） | `web/css/sidebar.css` 组件节（唯一造型）+ `web/css/stand-tokens.css` 的 `--nf-toggle-*` 段（唯一数值）+ `web/js/toggle.js`（唯一行为：`toggleHTML` / `createToggle` / `bindToggle` / `setToggleState` / `setToggleBusy`） | 默认（OFF：中性底 + 1px 描边）/ hover（OFF 档描边递进一档，ON 档保绿）/ ON（实心品牌绿轨道 + 圆钮走满行程 18px）/ `:focus-visible`（`2px outline` + `2px offset`，不用影子）/ `:disabled`（`opacity .5` + `not-allowed`）/ 不确定（`aria-busy="true"` 虚线描边 + 圆钮 `.55`）/ 减少动态（`prefers-reduced-motion` ⇒ 0.01ms 瞬间落位） | 几何 = 作者裁定「A 胶囊滑块」：桌面 40×22 轨道 + 16 圆钮（方案页 `design/toggle-options/` 实测档），手机层仍走独立 iOS 档（`body.mobile-layer`，51×31）。本批收编了最后三族自画开关（`.tfl-switch` / `.daemon-autostart` / `.pp-toggle`），全仓零第二套。**未申请任何例外**：轨道/圆钮零阴影、零渐变、位移只走 translateX。 |
 | canvas-video-player（2026-11-05） | `.canvas-video-btn` | `web/css/split.css`（几何/配色）+ `web/css/flatButtons.css` 共享态层（六态）+ `web/js/viewers/video.js`（DOM/行为） | 默认（透明底 + 无边框）/ hover（`--btn-hover-bg`，关在 `(hover:hover)`）/ 按下（`--btn-press-bg` + `scale(--btn-press-scale)`）/ `:focus-visible`（2px 描边环 + 2px offset）/ `:disabled`（画中画在不支持的浏览器上）/ 触屏档（`--btn-press-scale-touch` + 更深底色） | 画布视频自研控件族（播放/静音/画中画/全屏）。进度条与音量条是 `role="slider"` 的滑轨件（不是按钮），零厚度道具走同一口径；本族随 `check-flat-buttons.mjs` 判据全绿，未申请任何例外。 |
 
 ## 例外清单

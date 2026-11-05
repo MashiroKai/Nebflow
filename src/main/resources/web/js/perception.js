@@ -22,6 +22,7 @@ import { removePendingAsk } from './askPending.js';
 // 鉴权拒绝伞（sessionGate 零静态依赖，本导入无环）。感知面板是控制台最后一个
 // 未接伞的 REST 面——修前 401/403 只会把服务端错误体原样印进卡片死底。
 import { noteAuthRejected } from './sessionGate.js';
+import { toggleHTML, setToggleState, setToggleBusy } from './toggle.js';
 
 // ── api ─────────────────────────────────────────────────────────────────
 
@@ -376,7 +377,12 @@ function renderEntryDetail(entryEl) {
         <div class="addr">${esc(addr)}</div>
         <div class="srv">${esc(provider)}</div>
       </div>
-      <button class="pp-toggle ${en.enabled ? 'on' : ''}" data-act="toggle" title="${esc(t('perception.toggleTitle'))}" aria-label="${esc(t('perception.toggleTitle'))}"></button>
+      ${toggleHTML({
+        on: !!en.enabled,
+        label: t('perception.toggleTitle'),
+        title: t('perception.toggleTitle'),
+        attrs: 'data-act="toggle"',
+      })}
     </div>
     <div style="height:8px"></div>
     <div class="pp-quiet-line">
@@ -387,11 +393,21 @@ function renderEntryDetail(entryEl) {
       <button class="pp-btn" data-act="config">${esc(t('perception.configBtn'))}</button>
     </div>`;
   detail.innerHTML = html;
-  detail.querySelector('[data-act="toggle"]').addEventListener('click', async (e) => {
-    const on = !e.currentTarget.classList.contains('on');
-    e.currentTarget.classList.toggle('on', on);
-    await api('POST', '/api/perception/mail/toggle', { id, enabled: on });
-  });
+  // 共享开关组件（js/toggle.js）：乐观翻面 + 后端写；失败回滚（不留假态）。
+  // toggle-unify 批 2026-11-05 前这里是 `.pp-toggle` 自画开关（38×22 轨道 +
+  // 带投影的 16px 圆钮，无 role/aria-checked —— 对读屏是一枚无状态按钮）。
+  const mailSwitch = /** @type {HTMLButtonElement|null} */ (detail.querySelector('.nb-toggle[data-act="toggle"]'));
+  if (mailSwitch) {
+    mailSwitch.addEventListener('click', async () => {
+      const on = !mailSwitch.classList.contains('on');
+      setToggleState(mailSwitch, on);
+      // aria-busy 而不是 disabled：停用一个正在被键盘操作的开关会丢焦点（同 daemons）
+      setToggleBusy(mailSwitch, true);
+      const ok = await api('POST', '/api/perception/mail/toggle', { id, enabled: on });
+      setToggleBusy(mailSwitch, false);
+      if (!ok || ok.ok !== true) setToggleState(mailSwitch, !on);
+    });
+  }
   detail.querySelector('[data-act="config"]').addEventListener('click', () => openConfigCard(en));
   const reconn = detail.querySelector('[data-act="reconnect"]');
   if (reconn) reconn.addEventListener('click', () => openConfigCard(en));

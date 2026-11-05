@@ -1391,7 +1391,7 @@ body.mobile-layer #daemon-panel .daemon-info {
   flex: 1 1 calc(100% - 92px);
   min-width: 0;
 }
-body.mobile-layer #daemon-panel .daemon-autostart {
+body.mobile-layer #daemon-panel .nb-toggle {
   order: 2;
   margin-left: auto;
 }

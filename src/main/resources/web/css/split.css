@@ -4087,7 +4087,8 @@ body.wg-side-active #panel-sessions #explorer-section { display: none; }
 .wg-switch-select {
   width: 100%;
   border: 1px solid var(--glass-border); background: var(--glass-bg);
-  box-shadow: var(--frost-shadow);
+  /* 扁平契约：`--frost-shadow`（外投影 = 厚度）撤掉；可点击感由玻璃底 + 1px 描边
+     + 原生下拉箭头承担（与 .wg-search 同一族材质，零影）。 */
   color: var(--color-frame-text); font: inherit; font-size: var(--ds-fs-hint);
   border-radius: var(--ds-radius-button); padding: var(--ds-space-1h) var(--ds-space-2); outline: none; cursor: pointer;
   appearance: none;

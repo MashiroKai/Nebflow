@@ -2666,66 +2666,111 @@
   text-overflow: ellipsis;
 }
 
-/* ── nb-toggle — shared switch component (js/toggle.js) ──────────────────
-   2026-09-05 插件面板体验批。One class for every panel that renders a
-   switch: the Plugins page adopts it now; the Settings page adopts it in
-   the sidebar-restructure batch (replacing the legacy .toggle / .cfg-toggle
-   pair). Contract: markup from toggleHTML(options) — a real <button> with
-   role="switch", so Space/Enter click is native; knob drawn by ::after.
-   TOKEN DISCIPLINE: track = glass-control material, accent = brand green
-   (--brand-green triplet, sapphire.css — author-ruled 2026-09-06; was
-   sapphire; 2026-11-01 author order reverted the 10-30 B9 ink-tint detour,
-   original recipe restored), motion = the app-wide 0.15s control-transition convention,
-   enter/exit = the shared --panel-ease curve. Zero hand-made color values;
-   both themes auto-adapt (sapphire.css / base.css dark blocks).
-   GEOMETRY (2026-09-06): border-box track 36×20 with 1px border → padding
-   box 34×18; knob 16×16 at top:1px/left:2px, ON translateX(14px). Knob
-   center sits on the track axis in both states (vertical gaps 2px/2px
-   incl. border), side gaps mirror (OFF left 3px == ON right 3px) — no
-   edge-hugging, no overflow. */
+/* ── nb-toggle — 全站唯一开关（skin = 方案 A 胶囊滑块）─────────────────────
+   来历：2026-09-05 插件面板体验批立类（唯一类，收编插件面板/设置页）；
+   2026-11-05 toggle-unify 批按作者裁定（19:55「A 胶囊滑块」）**换肤为方案 A**
+   并收编全站残余自画开关（todo 面 `.tfl-switch`、守护进程 `.daemon-autostart`、
+   感知面板 `.pp-toggle` 三族全部并入本类，其自有 CSS/JS 已删除）。
+   规格出处 = `design/toggle-options/toggle.css` 的 `button.togA` 块（方案页实测）。
+
+   契约：markup 一律由 `js/toggle.js` 的 `toggleHTML()` / `createToggle()` 产出 ——
+   真实 `<button type="button" role="switch" aria-checked>`，所以 Space/Enter 走原生
+   click（键盘可达是构造出来的，不是补出来的）；圆钮 = `::after`，命中盒 = `::before`。
+   **零子节点元素**：一条 CSS 规则就是全部形态，别处不许复写。
+
+   GEOMETRY（A 组）：border-box 轨道 40×22 + 1px 描边 → padding box 38×20；
+   圆钮 16×16 at top:2px/left:2px（含自身 1px 描边，border-box），ON
+   translateX(var(--nf-toggle-travel) = 18px)。垂直缝 2/2、水平缝 2/2 镜像
+   （OFF 左缝 2px == ON 右缝 2px），零贴边、零溢出。
+   FLAT：本类**零 box-shadow**（旧版那两条 inset 内高光已按扁平契约撤掉 ——
+   `check-flat-buttons.mjs` 的 toggle/switch 判据段现在会抓它）。
+   MOTION：180ms + cubic-bezier(0.2,0,0,1)（两侧 y 控制点 0/1 ⇒ 单调不过冲，
+   没有回弹段）；`prefers-reduced-motion: reduce` 压到 0.01ms 瞬间落位。
+   A11Y：焦点环是 outline 线（不是影子）；`aria-busy="true"` = 不确定态（虚线描边 +
+   圆钮 0.55）；`:disabled` = 不透明度 0.5 + not-allowed。
+   全部数值走 `stand-tokens.css` 的 `--nf-toggle-*` 段（唯一数值出生地）。 */
 .nb-toggle {
   position: relative;
-  width: 36px;
-  height: 20px;
+  box-sizing: border-box;
+  width: var(--nf-toggle-w);
+  height: var(--nf-toggle-h);
+  margin: 0;
   padding: 0;
-  border-radius: var(--ds-radius-button);
   flex-shrink: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  border: var(--nf-toggle-border) solid var(--nf-toggle-stroke);
+  border-radius: var(--nf-toggle-radius);
+  background: var(--nf-toggle-track-off);
+  color: inherit;
+  font: inherit;
   cursor: pointer;
-  background: var(--glass-control-bg);
-  border: 1px solid var(--glass-control-border);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge);
-  transition: background 0.15s, border-color 0.15s;
+  -webkit-tap-highlight-color: transparent;
+  transition-property: background-color, border-color;
+  transition-duration: var(--nf-toggle-dur);
+  transition-timing-function: var(--nf-toggle-ease);
 }
+/* 命中盒：视觉本体不变（不放大不位移），只在四周补一层隐形可点面（44×44）。
+   与手机层 `.nb-toggle::before` 同一手法；居中用双参 translate，不是 y 轴位移。 */
+.nb-toggle::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: max(100%, var(--nf-toggle-hit));
+  height: max(100%, var(--nf-toggle-hit));
+  transform: translate(-50%, -50%);
+  border-radius: inherit;
+}
+/* 圆钮（唯一的形态子部件，伪元素，零元素节点） */
 .nb-toggle::after {
   content: '';
   position: absolute;
-  top: 1px;
-  left: 2px;
-  width: 16px;
-  height: 16px;
+  box-sizing: border-box;
+  top: var(--nf-toggle-inset);
+  left: var(--nf-toggle-inset);
+  width: var(--nf-toggle-knob);
+  height: var(--nf-toggle-knob);
+  border: var(--nf-toggle-border) solid var(--nf-toggle-knob-stroke);
   border-radius: 50%;
-  background: var(--color-frame-text-muted);
-  transition: transform 0.15s ease, background 0.15s;
+  background: var(--nf-toggle-knob-bg);
+  transition-property: transform;
+  transition-duration: var(--nf-toggle-dur);
+  transition-timing-function: var(--nf-toggle-ease);
 }
 .nb-toggle.on {
-  /* 开关 ON 档回归品牌绿（2026-11-01 作者令「toggle 重新回到绿色」：撤销
-     2026-10-30 按钮体系批 B9 的墨族改写，恢复 09-06 作者裁定的原配方——
-     轨道 brand-green 35% tint + 描边 50%，圆钮实心 brand-green；几何不动） */
-  background: rgb(var(--brand-green) / 0.35);
-  border-color: rgb(var(--brand-green) / 0.5);
+  /* ON 档 = 实心品牌绿轨道 + 圆钮走完整行程（状态第一通道 = 位移，
+     颜色是冗余通道；对比度取舍见 stand-tokens.css 的 toggle 段注）。 */
+  background: var(--nf-toggle-accent);
+  border-color: var(--nf-toggle-accent);
 }
-.nb-toggle.on::after {
-  transform: translateX(14px);
-  /* 圆钮实心品牌绿（--brand-green = #07c160，亮暗主题单值，09-06 原设计） */
-  background: rgb(var(--brand-green));
-}
+.nb-toggle.on::after { transform: translateX(var(--nf-toggle-travel)); }
+/* hover：OFF 档描边递进一档（ON 档保持绿描边，不被 hover 洗回中性） */
+.nb-toggle:not(.on):hover { border-color: var(--nf-toggle-stroke-hover); }
+/* 焦点环：线，不是影子（flat-button-spec §1.2） */
 .nb-toggle:focus-visible {
-  outline: 2px solid rgb(var(--brand-green) / 0.5);
-  outline-offset: 1px;
+  outline: var(--nf-toggle-ring-w) solid var(--nf-toggle-ring);
+  outline-offset: var(--nf-toggle-ring-offset);
 }
-.nb-toggle:disabled { opacity: 0.5; cursor: default; }
+/* 禁用：只降不透明 + not-allowed，过渡关闭（不假装还能动） */
+.nb-toggle:disabled,
+.nb-toggle.disabled {
+  opacity: var(--nf-toggle-disabled-opacity);
+  cursor: not-allowed;
+}
+.nb-toggle:disabled::after,
+.nb-toggle.disabled::after { transition: none; }
+/* 不确定 / 进行中：虚线描边 = 「状态还没定」的纯线语言（不发光、不脉冲、无阴影） */
+.nb-toggle[aria-busy="true"] {
+  border-style: dashed;
+  cursor: progress;
+}
+.nb-toggle[aria-busy="true"]::after { opacity: var(--nf-toggle-busy-opacity); }
+/* 减少动态：状态瞬间落位（0.01ms 而不是 0 —— 保留 transitionend 语义） */
+@media (prefers-reduced-motion: reduce) {
+  .nb-toggle,
+  .nb-toggle::after { transition-duration: 0.01ms; }
+}
 
 /* New plugin card entering the list via live registry sync (plugins.js
    poller) — short slide+fade on the shared panel ease; the class is removed

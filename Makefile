@@ -1,6 +1,6 @@
 .PHONY: compile run assembly clean install \
   lint fmt fix fmt-check check quality-gate check-visual visual-baseline frontend-gates component-contract \
-  flat-buttons glass \
+  flat-buttons glass toggle \
   plugin-seed-parity
 
 # Auto-detect fastest Maven mirror (Aliyun for China, Maven Central otherwise)
@@ -142,6 +142,14 @@ frontend-gates:
 	@# delegate/flow 两条向上通知腿零产出、面板显形（统计 + 待你处理 + 唤醒按钮）、
 	@# 引擎自动续跑走既有唤醒腿（不花重启预算，有上限 + 递增间隔）、同波一条聚合告警。
 	node scripts/check-freeze-silence.mjs
+	@# 开关唯一性门禁（toggle-unify 批 2026-11-05，作者裁定 19:55「A 胶囊滑块」）：
+	@# 行为单点 = js/toggle.js（`role="switch"` 只许在这里出现）、造型单点 =
+	@# css/sidebar.css 的 `.nb-toggle`（其它文件不许再画开关头像：圆钮 ::after +
+	@# border-radius:50% / 滑行 translateX / :checked+translateX 三条签名）、
+	@# 数值单点 = stand-tokens.css 的 `--nf-toggle-*`（40×22 / 16 圆钮 / 999 圆角 /
+	@# 18 行程 / 180ms 曲线，组件节不许写死几何）。
+	@# 盘点：node scripts/check-toggle-unify.mjs --inventory；机器读：--json。
+	node scripts/check-toggle-unify.mjs
 	@echo "Frontend static gates passed ($(FRONTEND_GATES))."
 
 # ── 按钮扁平化：单闸入口（CI 同名 step 调的就是它，单一真源别在 CI 里另抄一遍）──
@@ -151,6 +159,10 @@ flat-buttons:
 # ── 毛玻璃：单闸入口（与 flat-buttons 同形；CI 同名 step 调的就是它）──────────
 glass:
 	node scripts/check-glass-unify.mjs
+
+# ── 开关唯一性：单闸入口（与 flat-buttons / glass 同形）──────────────────────
+toggle:
+	node scripts/check-toggle-unify.mjs
 
 # ── 路由存在性：运行期腿（empty-state-must-not-lie 批 · 件三②，2026-11-05）──────
 # 静态腿判「源码里注册了没」，运行期腿判「启动后真的答不答」——后者才是事故的

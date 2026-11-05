@@ -307,14 +307,14 @@ body.sidebar-collapsed #sidebar {
   background: transparent;
   color: var(--color-frame-text-muted);
   cursor: pointer;
-  transition: background 0.15s ease, color 0.2s ease, border-color 0.15s, box-shadow 0.15s;
+  transition: background 0.15s ease, color 0.2s ease, border-color 0.15s;
 }
 .bypass-toggle:hover {
+  /* 扁平契约（check-flat-buttons 的 toggle/switch 判据段 2026-11-05 补盲后抓出）：
+     原先这里是两条 inset 内高光（上白下黑 = 浮雕厚度）。撤掉后 hover 反馈只走
+     背景升一档 + 描边，与全站扁平按钮同一口径。 */
   background: var(--glass-control-bg-hover);
   border-color: var(--glass-control-border);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge);
 }
 /* Shield icon color changes with safety mode */
 .bypass-toggle[data-mode="confirm-edits"] {

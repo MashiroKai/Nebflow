@@ -152,6 +152,19 @@ jobs:
         # flat-button-spec.md ("## 例外清单"). A missing spec is itself RED.
         # Same logic locally: node scripts/check-flat-buttons.mjs (or `make frontend-gates`)
         run: node scripts/check-flat-buttons.mjs
+      - name: Toggle single source (one switch implementation site-wide)
+        # toggle-unify gate (author ruling 2026-11-05 19:55 verbatim: "A 胶囊滑块",
+        # i.e. the option page's group A = 40x22 capsule + 16px knob, state read by
+        # knob position). Trigger = the site carried FOUR hand-drawn switches
+        # (.nb-toggle / .tfl-switch / .daemon-autostart / .pp-toggle), each with its
+        # own track, knob, colors and transition - and .pp-toggle had no
+        # role/aria-checked at all. Three criteria: T1 behavior = role="switch" may
+        # only appear in js/toggle.js; T2 skin = no other file may draw a switch
+        # avatar (knob ::after + border-radius:50% / sliding translateX /
+        # :checked+translateX); T3 tokens = geometry/motion only from the
+        # --nf-toggle-* block in stand-tokens.css, component must consume them.
+        # Same logic locally: node scripts/check-toggle-unify.mjs (or `make frontend-gates`)
+        run: node scripts/check-toggle-unify.mjs
       - name: Design spec scale sync (spec table <-> token source)
         # design-scale gate (author order 2026-11-04: "把我们对圆角 边距 文字离边缘
         # 的距离 各文字的大小 写进spec和前端开发包"): the four scales (radius /

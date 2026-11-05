@@ -1326,26 +1326,15 @@ button.glass-control.fm-req-accept:active {
   outline-offset: 2px;
 }
 
-/* 开关本体（`.nb-toggle`，js/toggle.js）在方向 A 下的口径：
-   · 形态**保持**既有开关语言（轨道填充 + 圆钮）—— 铁律 2 与「开关不是按钮」的
-     设计系统既有排除条款（本文件 :170-172）优先，本批**不改其填充/几何**；
-   · 只补两件：① 状态反馈（hover 描边递进，与次操作同一族语言）；② 显式墨色
-     （`color` 此前落 UA 默认，暗档 = 1.38:1 —— 无文本控件仍按可读性口径给值，
-     避免「读数为黑却是继承而来」的隐性缺陷）。
-   注：轨道填充值 = `--btn-secondary-fill`（既有 `--glass-control-bg`），ON 档 =
-   品牌绿 35% tint + 描边 50%（2026-11-01 作者令「toggle 重新回到绿色」恢复
-   09-06 原配方，撤销 2026-10-30 按钮体系批 B9 的墨 tint 改写；「绿降级为身份/
-   状态色」的总裁定不含开关这一豁免点，开关 ON 档以本口径为准）。
-   hover 描边递进以 `:not(.on)` 限定在 OFF 档——ON 档悬停保持绿描边（原配方
-   行为），否则同特异性后者（本文件最后加载）会把绿描边洗回玻璃描边。
-   ⇒ 分类仍只依赖 token。 */
-.nb-toggle {
-  color: var(--btn-secondary-ink);
-  border-color: var(--btn-secondary-fill-stroke); /* 具名化（值 = 既有 --glass-control-border，零视觉变化） */
-  transition: background 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s;
-}
-.nb-toggle:not(.on):hover { border-color: var(--btn-secondary-stroke-hover); }
-.nb-toggle.on { color: var(--btn-secondary-ink); }
+/* 开关本体 `.nb-toggle`（js/toggle.js）—— **本文件不再参与其造型**（toggle-unify 批
+   2026-11-05）：全站唯一开关的样式单点 = `css/sidebar.css` 的
+   「nb-toggle — shared switch component」组件节，数值单点 = `stand-tokens.css`
+   的 `--nf-toggle-*` 段。此处原有一组覆盖（`color` / `border-color` /
+   0.15s transition / OFF 档 hover 描边递进）已**整组撤除**：它们与组件节抢同一批
+   属性，导致「同一个开关在不同加载顺序下长得不一样」——多一处覆盖 = 多一套皮肤。
+   hover 递进改由组件节自己用 `--nf-toggle-stroke-hover`（值 = 本文件既有的
+   `--btn-secondary-stroke-hover`）表达，视觉意图不变、属主收回。
+   分类结论不变：开关的每个色值仍只依赖 token。 */
 
 /* ── 禁用 / 掉线档（R2′/J3：具名 token `--glass-send-bg-disabled` + not-allowed；
    声明在最后 ⇒ 与 `:hover` 同档时以禁用胜出）────────────────────────── */
