@@ -282,7 +282,10 @@ html.mobile-html-layer {
      --msw-h           31px 轨道高
      --msw-knob        27px 圆钮直径（轨道高 − 2×2px 内衬）
      --msw-inset       2px  圆钮内衬（轨道与钮的四边等距）
-     --msw-travel      22px 圆钮行程（轨道宽 − 钮径 − 2×内衬）
+     --msw-travel      20px 圆钮行程（= 轨道宽 − 钮径 − 2×内衬；**由 calc 算出**，
+                       见下方 --msw-travel 定义。三点入口批 2026-11-05 修正：旧值 22px
+                       与本行公式不符 ⇒ ON 态圆钮右缘越过轨道右缘 2px（OFF 左缝 2px、
+                       ON 右缝 0px 的不对称）。
    颜色沿用回绿后的既有 token（--glass-control-* 材质 + rgb(var(--brand-green)))
    ——本块只定几何与字阶，零新色值。
    ═══════════════════════════════════════════════════════════════════════ */
@@ -398,7 +401,9 @@ body.mobile-layer {
   --msw-h: 31px;
   --msw-knob: 27px;
   --msw-inset: 2px;
-  --msw-travel: 22px;
+  /* 行程恒按公式算出（禁手抄数值）：51 − 27 − 2×2 = 20px ⇒ OFF 左缝 2px == ON 右缝 2px。
+     旧值 22px 是手抄错值（ON 态圆钮右出 2px，实测见 batch 报告 C4 节）。 */
+  --msw-travel: calc(var(--msw-w) - var(--msw-knob) - var(--msw-inset) * 2);
 }
 
 /* ── 手机端开关 = iOS 尺寸语言（作者令 2026-11-02「toggle 改成 iOS 尺寸语言」）
@@ -1338,15 +1343,15 @@ body.mobile-layer #mh-search-kind {
   font-size: var(--mfs-min);
   border-radius: var(--ds-radius-input);
 }
-/* 说明/空态脚注（面板底缘；11px muted，安全区兜底）。 */
-body.mobile-layer .mh-search-foot {
-  flex: none;
-  padding: var(--ds-space-2) 14px calc(8px + env(safe-area-inset-bottom, 0px));
-  border-top: 1px solid var(--glass-border);
-  font-size: var(--mfs-min);
-  line-height: 1.5;
-  color: var(--color-frame-text-muted);
-}
+/* 🔴 三点入口批（2026-11-05 作者令「把搜索和搜索聊天记录结合，把胶囊的内容改为
+   搜索聊天记录……下面的文字不要」）：页面名胶囊（`.mobile-page-title` = 「搜索聊天
+   记录」）是本页**唯一**标题 ⇒ 面板头那枚重复标题整块退场。
+   隐藏面 = 整个 `.search-modal-header`（标题 + 关闭钮 + 头图标）：关闭钮本就已被
+   「重复返回钮清查」块 display:none，头图标随本批退役（searchFace.js 不再建）。
+   桌面零命中：判据严格挂在 `body.mobile-layer`。 */
+body.mobile-layer #search-modal .search-modal-header { display: none; }
+/* 说明/空态脚注退役（同批作者令「底下的说明文字不要」）：DOM 由 searchFace.js
+   整件删除，这里只留退役注记（无规则 = 无死样式）。下方结果行卡面化规则原样保留。 */
 /* 结果行卡面化。 */
 body.mobile-layer #search-modal .search-result {
   background: var(--glass-control-bg);

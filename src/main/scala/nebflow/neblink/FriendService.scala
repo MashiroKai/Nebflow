@@ -216,6 +216,49 @@ final class FriendService(
       convs.map(c => c.copy(friend = applyFriendBio(c.friend, d.friendBio)))
     }
 
+  // ===== 会话级本地偏好（三点入口批 2026-11-05：免打扰 / 顶置）=====
+
+  /**
+   * 会话偏好覆盖（**唯一合并点**）：`muted` / `pinned` 是**纯本地真源** ⇒ 恒取本地
+   * 映射（与 `applyGroupDescriptions` 的群 `remark` 同档：上游值不得穿透；本仓无该
+   * 键 ⇒ `None`，前端按 null = 关）。
+   *
+   * 存储形态只存 `true`（关闭 = 删键，与 `setRemark` 的「空即清除」同族）⇒ 两个
+   * 映射里不可能出现 `false` 值，前端零容错第二种形态。
+   */
+  private def applyFriendPrefs(f: FriendSummary, d: ProfileDescriptions): FriendSummary =
+    f.copy(
+      muted = d.friendMuted.get(f.userId).filter(identity),
+      pinned = d.friendPinned.get(f.userId).filter(identity)
+    )
+
+  /** 好友列表出站口的偏好注入（与 [[applyRemarks]] / [[applyFriendBios]] 同一处收口）。 */
+  private def applyFriendPrefsToResp(resp: FriendListResponse): IO[FriendListResponse] =
+    descriptionsRef.get.map { d =>
+      resp.copy(friends = resp.friends.map(f => applyFriendPrefs(f, d)))
+    }
+
+  /** 会话内嵌 `friend` 档案同样注入偏好（同一收口，禁各调用点自行 map）。 */
+  private def applyFriendPrefsToConvs(convs: List[ConversationSummary]): IO[List[ConversationSummary]] =
+    descriptionsRef.get.map { d =>
+      convs.map(c => c.copy(friend = applyFriendPrefs(c.friend, d)))
+    }
+
+  /**
+   * 消息免打扰写入（纯本地态，零上游往返 ⇒ 无 502 面）。
+   * `true` = 存键；`false` = **删键**（清除），与既有两个本地写面同族。
+   */
+  def setFriendMuted(friendUserId: String, muted: Boolean): IO[Unit] =
+    putDescription { d =>
+      d.copy(friendMuted = if muted then d.friendMuted + (friendUserId -> true) else d.friendMuted - friendUserId)
+    }.void
+
+  /** 顶置写入（同上：`true` = 存键，`false` = 删键）。 */
+  def setFriendPinned(friendUserId: String, pinned: Boolean): IO[Unit] =
+    putDescription { d =>
+      d.copy(friendPinned = if pinned then d.friendPinned + (friendUserId -> true) else d.friendPinned - friendUserId)
+    }.void
+
   /**
    * 群行描述注入（群列表出站口唯一合并点）：`description` 与 `remark` **互不影响**
    * （两个独立键、两个独立写面，改其一回读只变其一）。
@@ -634,6 +677,7 @@ final class FriendService(
         // —— 与 `GET /api/friends` 同一出口口径（禁各调用点自行 map）。
         applyRemarksToConvs(convs)
           .flatMap(applyFriendBiosToConvs)
+          .flatMap(applyFriendPrefsToConvs)
           .flatMap(_.traverse(c => guard.mergeUnread(c).map(_ => c)))
           .flatTap(cs => logger.debug(s"Refreshed ${cs.size} conversations"))
           .map(Right(_): Either[String, List[ConversationSummary]])
@@ -1053,7 +1097,7 @@ final class FriendService(
   def refreshFriends(): IO[FriendListResponse] =
     withClient(_.listFriends).flatMap {
       case Left(err) => logger.warn(s"listFriends failed: $err").as(FriendListResponse(Nil))
-      case Right(resp) => applyRemarks(resp).flatMap(applyFriendBios)
+      case Right(resp) => applyRemarks(resp).flatMap(applyFriendBios).flatMap(applyFriendPrefsToResp)
     }
 
   /**
@@ -1065,8 +1109,10 @@ final class FriendService(
   def listFriends: IO[Either[String, FriendListResponse]] =
     withClient(_.listFriends).flatMap {
       // 件一（2026-11-02）：两个本地描述在**同一出口**合并（备注 + bio，两次 map
-      // 串联而非各调用点各写一套）。
-      case Right(resp) => applyRemarks(resp).flatMap(applyFriendBios).map(Right(_))
+      // 串联而非各调用点各写一套）。三点入口批（2026-11-05）：会话偏好
+      // （muted / pinned）在同一出口再串一次，禁各调用点自行 map。
+      case Right(resp) =>
+        applyRemarks(resp).flatMap(applyFriendBios).flatMap(applyFriendPrefsToResp).map(Right(_))
       case Left(err) => IO.pure(Left(err))
     }
 

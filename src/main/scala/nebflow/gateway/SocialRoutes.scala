@@ -310,6 +310,45 @@ private[gateway] object SocialRoutes:
         }
 
       /**
+       * 消息免打扰 / 顶置（三点入口批 2026-11-05，作者令「消息免打扰的 toggle，
+       * 然后就是顶置的 toggle」）。body `{muted:true|false}` 或 `{pinned:...}` →
+       * 200 `{ok:true}`。
+       *
+       * 语义边界（与上面 `remark` / `bio` 两个写面的关系）：
+       *  - 二者是**会话级本地偏好、纯本地真源**（上游 neblink-server 无该字段，
+       *    且语义上不外发）⇒ 落 `profile-descriptions.json` 的 `friendMuted` /
+       *    `friendPinned`（键 = userId，**只存 true**；`false` = 删键），与
+       *    `setRemark` 的「空即清除」同族。
+       *  - 零上游往返 ⇒ **无 502 面**（唯一失败面 = 400 缺参 / 类型不对；未认证 =
+       *    `withAuth` 403）。回显恒 `{ok:true}`：真值由 `GET /api/friends` 的
+       *    `muted` / `pinned` 键回读（`FriendService.applyFriendPrefs` 单一出口）。
+       *  - 键缺席 / null / 非布尔 = 缺参 400（**不用** null 表达「关」，用 `false`）。
+       */
+      case req @ PUT -> Root / "friends" / friendUserId / "muted" =>
+        withAuth(req) {
+          sharedResources.friendService match
+            case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+            case Some(fs) =>
+              req.as[Json].flatMap { body =>
+                body.hcursor.downField("muted").as[Boolean].toOption match
+                  case Some(muted) => fs.setFriendMuted(friendUserId, muted) *> Ok(ApiJson.ok)
+                  case None => BadRequest(Json.obj("error" -> "Missing muted".asJson))
+              }
+        }
+
+      case req @ PUT -> Root / "friends" / friendUserId / "pinned" =>
+        withAuth(req) {
+          sharedResources.friendService match
+            case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+            case Some(fs) =>
+              req.as[Json].flatMap { body =>
+                body.hcursor.downField("pinned").as[Boolean].toOption match
+                  case Some(pinned) => fs.setFriendPinned(friendUserId, pinned) *> Ok(ApiJson.ok)
+                  case None => BadRequest(Json.obj("error" -> "Missing pinned".asJson))
+              }
+        }
+
+      /**
        * 会话列表（按 last_message_id 倒序，含 unreadCount）。
        *
        * ⚠️ 恢复（2026-11-05 紧急诊断批）：本 case 于 `6c1feea6d`（件一 Profile

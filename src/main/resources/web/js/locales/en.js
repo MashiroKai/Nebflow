@@ -377,11 +377,15 @@ export default {
   'contacts.remarkHint': 'Enter saves · Esc cancels · empty clears the remark',
   // ── Batch 1 (2026-11-02): friend/group profile with two descriptions ─────
   'profile.open': 'View profile',
-  'profile.friendTitle': 'Friend profile',
+  'profile.friendTitle': 'Friend info',
   'profile.groupTitle': 'Group profile',
   'profile.close': 'Close',
   'profile.save': 'Save',
   'profile.saved': 'Saved',
+  // Three-dot entry batch (2026-11-05): the three new rows.
+  'profile.searchMessages': 'Search messages',
+  'profile.muteLabel': 'Mute notifications',
+  'profile.pinLabel': 'Pin to top',
   'profile.friendRemarkLabel': 'My remark',
   'profile.friendRemarkPlaceholder': 'Remark you gave this friend (empty clears)',
   'profile.friendBioLabel': 'Self-introduction',
@@ -2541,7 +2545,6 @@ export default {
   'search.scopeCurrent': 'Current session',
   'search.scopeAll': 'All sessions',
   'search.scopeMain': 'Main session',
-  'search.mobileScopeNote': 'Main session only · type/date/source filters stack · empty: {empty} — {hint}',
   // === Messages/contacts expanding search (FAB unification + search batch, order 10-31 16:03) ===
   'mhsearch.aria': 'Search',
   'mhsearch.placeholder': 'Search chat history',

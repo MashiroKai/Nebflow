@@ -465,14 +465,16 @@ test.describe('三种会话页头同构 + 悬浮身份头（375×812）', () => 
     expect(bandsDevice.bands, '设备会话（含描述面板展开态）：无横贯顶栏带').toEqual([]);
     await closeConv(page);
 
-    // 好友三点菜单单入口 + Profile 面（件一同一函数）
+    // 好友三点 = **直达好友信息面**（三点入口批 2026-11-05 作者令：「点击右上角那个
+    // 三个点的按钮。进去应该直接就是好友信息的界面。不需要多点击一次」）⇒ 旧断言
+    // 「好友三点菜单 = ['查看资料'] 且再点一次进面」整组换代：
+    //   · 点一次三点后**不得**出现 `.fm-context-menu`；
+    //   · 好友信息面**当场打开**（面本体仍是 `profileFace.openFriendProfile` 同一函数）；
+    //   · 群/设备保留菜单（各有第二个目的地：群设置 / 设备描述）。
     await openFriend(page);
     await page.locator(`${CONV_PAGE} .mh-sess-more`).click();
-    await page.waitForSelector('.fm-context-menu', { timeout: 5000 });
-    const friendMenu = await page.$$eval('.fm-context-menu button:not(.mfs-back)', (els) => els.map((e) => e.textContent.trim()));
-    expect(friendMenu, '好友三点菜单 = 查看资料').toEqual(['查看资料']);
-    await page.locator('.fm-context-menu button').filter({ hasText: '查看资料' }).first().click();
     await page.waitForSelector('#profile-face-overlay:not([hidden]) .pf-modal', { timeout: 5000 });
+    expect(await page.locator('.fm-context-menu').count(), '好友三点不再弹单条菜单（直达，零第二跳）').toBe(0);
     await page.locator('#profile-face-close').click();
     await expect(page.locator('#profile-face-overlay')).toBeHidden();
 

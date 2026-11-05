@@ -1349,7 +1349,11 @@ object FriendCodecs:
       "remark" -> f.remark.asJson,
       // 件一（2026-11-02）：对方自我介绍，**键恒在**（未设置 ⇒ null，同 remark 口径
       // ——前端不必容错「键缺席」与「键为 null」两态）。
-      "bio" -> f.bio.asJson
+      "bio" -> f.bio.asJson,
+      // 三点入口批（2026-11-05）：会话级本地偏好，**键恒在**（未设置 ⇒ null =
+      // 该偏好为关；前端只判 truthy，不必容错第二形态）。
+      "muted" -> f.muted.asJson,
+      "pinned" -> f.pinned.asJson
     )
   }
   given Encoder[FriendRequestSummary] = deriveEncoder
