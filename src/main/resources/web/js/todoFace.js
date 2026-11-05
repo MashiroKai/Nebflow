@@ -119,6 +119,53 @@ const SPRING = {
  *  8px = 手指抖动余量；与 tests/todo-capsule-create.spec.mjs ③ 同值。 */
 const BLANK_DRAG_PX = 8;
 
+/** 事项名单行化上限（件6 2026-11-05，作者令「事项名应该简单」）= 120 字符。
+ *  取值理由（可复核）：
+ *   · 面板内容宽 ≈ 380px、12px 等宽体中文一字 ≈ 12px ⇒ 一行 ≈ 30 字；120 字
+ *     ≈ 4 行容量，再长的名字在任何行宽下都必然读作截断（行内 `.tfl-row-title`
+ *     单行 ellipsis），用户不会误以为「没存全」；
+ *   · 120 字已远超一行可读量，足够区分条目；细节归备注（备注仍无上限）——
+ *     两层分工正是本件要的「名与具体内容分开」；
+ *   · 定值 → 代码常量与 `maxlength` 属性、门禁断言三处同一读数，可机械判。 */
+const NAME_MAX = 120;
+
+/** 事项名输入面（编辑面板与创建行的**唯一**构造点；件6 2026-11-05）。
+ *  单行 = `input[type=text]`（永不 textarea）；`maxlength` 属性给浏览器原生夹紧，
+ *  `input` 事件里再夹一次（粘贴、程序赋值、拖放都收敛到上限），并把换行剥离
+ *  （粘贴含换行的文本折叠成单行）。IME 组字期不动值（组字中的候选串会被打断）。 */
+function nameInputEl(cls, value = '') {
+  const input = el('input', cls);
+  input.type = 'text';
+  input.maxLength = NAME_MAX;
+  input.value = value;
+  input.addEventListener('input', (e) => {
+    if (e.isComposing) return;
+    const flat = input.value.replace(/[\r\n]+/g, '').slice(0, NAME_MAX);
+    if (flat === input.value) return;
+    const at = input.selectionStart == null ? flat.length : input.selectionStart;
+    input.value = flat;
+    const pos = Math.min(at, flat.length);
+    try { input.setSelectionRange(pos, pos); } catch { /* 非文本态忽略 */ }
+  });
+  // 真粘贴：剪贴板里的多行文本在单行输入面上会被浏览器转成空格（Chromium）
+  // 或直接吞掉换行——两种都不是「折叠成单行」的确定语义。含换行时自己接管，
+  // 剥掉换行后按单行插入；无换行时交回浏览器原生粘贴（保留 undo 栈）。
+  input.addEventListener('paste', (e) => {
+    const data = e.clipboardData ? e.clipboardData.getData('text') : '';
+    if (!data || !/[\r\n]/.test(data)) return;
+    e.preventDefault();
+    const clean = data.replace(/[\r\n]+/g, '');
+    const start = input.selectionStart == null ? input.value.length : input.selectionStart;
+    const end = input.selectionEnd == null ? start : input.selectionEnd;
+    const next = (input.value.slice(0, start) + clean + input.value.slice(end)).slice(0, NAME_MAX);
+    input.value = next;
+    const pos = Math.min(start + clean.length, NAME_MAX);
+    try { input.setSelectionRange(pos, pos); } catch { /* 非文本态忽略 */ }
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  return input;
+}
+
 // ── 小件 ────────────────────────────────────────────────────────────────
 
 function el(tag, cls, text) {
@@ -826,29 +873,20 @@ class TodoFace {
 
     const main = el('div', 'tfl-row-main');
     const titleline = el('div', 'tfl-row-titleline');
-    if (editing) {
-      this.titleInput = el('input', 'tfl-row-title-input');
-      this.titleInput.type = 'text';
-      this.titleInput.value = item.title;
-      this.titleInput.placeholder = t('todoface.titlePh');
-      this.titleInput.setAttribute('aria-label', t('todoface.titlePh'));
-      this.titleInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !isImeComposing(e, this.titleInput)) { e.preventDefault(); e.stopPropagation(); this.saveEditing(); }
-      });
-      titleline.appendChild(this.titleInput);
-    } else {
-      const title = el('span', 'tfl-row-title', item.title);
-      title.title = item.title;
-      titleline.appendChild(title);
-      // 标签徽标（总条目视图；行尾右对齐与标题同行，标题优先截断——复刻）
-      if (todoStore.isAllView()) {
-        const tag = todoStore.tagById(item.tagId);
-        if (tag) {
-          const badge = el('span', 'tfl-row-badge', tag.name);
-          badge.title = tag.name;
-          badge.style.setProperty('--tag-color', tag.color);
-          titleline.appendChild(badge);
-        }
+    // 行内只读名称面（件6 2026-11-05）：编辑态与常态同一元素 —— 编辑中输入面搬到
+    // 下方编辑面板里（名与内容两个独立输入面，DOM 序名在前），行头保留单行
+    // ellipsis 的静态名，条目身份随手可读、不出现「空行头」。
+    const title = el('span', 'tfl-row-title', item.title);
+    title.title = item.title;
+    titleline.appendChild(title);
+    // 标签徽标（总条目视图；行尾右对齐与标题同行，标题优先截断——复刻）
+    if (todoStore.isAllView()) {
+      const tag = todoStore.tagById(item.tagId);
+      if (tag) {
+        const badge = el('span', 'tfl-row-badge', tag.name);
+        badge.title = tag.name;
+        badge.style.setProperty('--tag-color', tag.color);
+        titleline.appendChild(badge);
       }
     }
     main.appendChild(titleline);
@@ -952,7 +990,19 @@ class TodoFace {
 
   buildEditPanel(item) {
     const panel = el('div', 'tfl-edit-panel');
-    // 备注（单行，回车保存——复刻「多行 Return=换行永不 onSubmit」教训）
+    // ① 事项名（件6 2026-11-05）：**单行**轻量输入面（input，非 textarea）+
+    //    长度上限 + 换行剥离，构造点 = nameInputEl（唯一）。占面板第一行，
+    //    回车即保存（与备注同口径）；`tfl-row-title-input` 类保留给既有选择器。
+    const name = nameInputEl('tfl-edit-name tfl-row-title-input', item.title);
+    name.placeholder = t('todoface.titlePh');
+    name.setAttribute('aria-label', t('todoface.titlePh'));
+    name.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !isImeComposing(e, name)) { e.preventDefault(); e.stopPropagation(); this.saveEditing(); }
+    });
+    panel.appendChild(name);
+    this.titleInput = name;
+    // ② 具体内容（备注，独立输入面；单行，回车保存——复刻「多行 Return=换行永不
+    //    onSubmit」教训）。名与内容是两个不同元素 ⇒ 各自获焦、各自成值。
     const notes = el('input', 'tfl-edit-notes');
     notes.type = 'text';
     notes.value = item.notes || '';
@@ -1011,8 +1061,7 @@ class TodoFace {
     const dot = el('span', 'tfl-row-dot');
     dot.style.background = PRIORITY_COLORS[0];
     const head = el('div', 'tfl-create-head');
-    this.createTitle = el('input', 'tfl-row-title-input');
-    this.createTitle.type = 'text';
+    this.createTitle = nameInputEl('tfl-row-title-input');
     this.createTitle.placeholder = t('todoface.titlePh');
     this.createTitle.setAttribute('aria-label', t('todoface.titlePh'));
     this.createTitle.addEventListener('keydown', (e) => {
