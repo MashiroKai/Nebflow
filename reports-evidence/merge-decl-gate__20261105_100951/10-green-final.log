@@ -1,0 +1,181 @@
+[sbt-gate] waiting for /Users/kaiyu/.stand/run/sbt.lock (another sbt holds the heavy-work gate; bypass: SBT_GATE=off sbt …)
+[sbt-gate] acquired after 113s
+[sbt-gate] gate acquired after 113s
+[sbt-gate] heap cap -Xmx2600m applied via SBT_OPTS
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project delegate-merge-queue-gate-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/project
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/)
+[info] compiling 3 Scala sources to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/target/scala-3.5.2/test-classes ...
+[info] done compiling
+[warn] javaOptions will be ignored, fork is set to false
+[32mnebflow.core.delegate.MergeQueueDeclarationGateSpec:[0m
+[32m  + [0m[32mA: a member whose branch HAS commits but whose owner never declared 'done and mergeable' never receives a merge turn[0m [90m0.371s[0m
+[32m  + [0m[32mB: an owner-gone member (no live delivery channel) is never granted a merge turn — parked with a visible alert instead[0m [90m0.176s[0m
+[32m  + [0m[32mB2: the idle-safety watch never queues a delegate whose owner never declared — it raises a visible undeclared alert instead[0m [90m0.177s[0m
+[32m  + [0m[32mC: a declared but half-finished branch (conflict markers left in its files) is refused by the health gate with the reason[0m [90m0.208s[0m
+[32m  + [0m[32mC2: a declared branch whose build is broken (health gate says the compile fails) is refused and the reason is reported[0m [90m0.15s[0m
+[32m  + [0m[32mD: a declared member with a live owner IS granted the merge turn normally (the gate does not block healthy batches)[0m [90m0.283s[0m
+[32mnebflow.core.delegate.MergeQueueSpec:[0m
+[32m  + [0m[32m① FIFO rank = readyAt (completion time) and cross-project parallel grants — the late-enqueued earlier-finisher is notified first[0m [90m0.593s[0m
+[32m  + [0m[32m③ cross-project: two different projectKeys are granted immediately (per-project single holder never blocks the other)[0m [90m0.522s[0m
+[32m  + [0m[32m② single holder per project: a second ready-to-merge in the SAME project stays waiting until the holder's round closes[0m [90m0.613s[0m
+[32m  + [0m[32m④ merge brief pins the direction + read-only fact-check pre-check: git -C <baseWs> merge --no-ff <branch>, conflict = resolve in place (hardened 2026-10-31)[0m [90m0.092s[0m
+[32m  + [0m[32m④b conflicted merge turn: brief hardens resolve-in-place + post-merge tests + honesty gate + Canvas counter-example[0m [90m0.097s[0m
+[32m  + [0m[32m⑤ fact-check at grant: an already-merged member closes as merged WITHOUT a merge notice (the e300e71c class is gone)[0m [90m0.262s[0m
+[32m  + [0m[32m⑥ round terminal closes the ledger: refused ⇒ failed with the reason (no retry, no park); merged ⇒ merged[0m [90m0.406s[0m
+[32m  + [0m[32m⑦ owner-gone: a turn granted to a DEAD owner session closes as owner-gone and escalates via OwnerGonePort[0m [90m0.381s[0m
+[32m  + [0m[32m⑦b roundless terminal (merge-window timeout / cancel) fact-checks first, then closes owner-gone[0m [90m0.434s[0m
+[32m  + [0m[32m⑧ ledger persistence: state survives a memory drop (restart simulation) and reloads from disk[0m [90m0.375s[0m
+[32m  + [0m[32m⑨ leftover dirt no longer blocks the grant (fail-soft): the turn is granted with a WARN, no grant-blocked, no requeue[0m [90m0.436s[0m
+[32m  + [0m[32m⑩ branch-direction gate still parks the member but MUST notify: full reason once per cause, escalation after N blocked rounds[0m [90m2.386s[0m
+[32m  + [0m[32m⑪ a refused merge round closes failed AND notifies the parent with the FULL untruncated reason[0m [90m0.378s[0m
+[32m  + [0m[32m⑤b enqueue is idempotent for open members and audited; unknown onTerminal is a no-op[0m [90m0.368s[0m
+[32m  + [0m[32m⑫ write-ahead channel + boot replay: enqueue→restart restores queue state — including a member whose ledger write never landed (the ready-killed gap)[0m [90m0.308s[0m
+[32m  + [0m[32m⑬ owner-gone premise inversion: a restarted member with an un-closed channel record is preserved on grant attempts (never owner-gone); a ledger-only member without a record still closes owner-gone[0m [90m3.013s[0m
+[32m  + [0m[32m⑭ closed memberships compact out of the write-ahead channel; open mirrors survive; the ledger keeps the audit row[0m [90m0.509s[0m
+[32mnebflow.core.delegate.MergeLaneGateSpec:[0m
+[32m  + [0m[32m① classifyLane: the five verdicts by MERGE_HEAD presence × owner liveness (pure decision face)[0m [90m0.002s[0m
+[32m  + [0m[32m② grant-side lane gate: a foreign in-progress merge blocks the grant with a notice; clearing the lane re-grants[0m [90m0.66s[0m
+[32m  + [0m[32m③ requeueForLane keeps the membership: turn-granted → waiting, grantedAt cleared, reason recorded, audit line rides[0m [90m0.11s[0m
+[32m  + [0m[32m④ owner-gone with the member's own leftover MERGE_HEAD aborts the orphan merge (recovery, not an engine merge)[0m [90m0.24s[0m
+[32m  + [0m[32m⑤ a MERGE_HEAD belonging to another branch is NEVER aborted on owner-gone (human manual merge protection)[0m [90m0.228s[0m
+[32m  + [0m[32m⑥ care-tick fact-check releases the window as soon as the merge commit lands (the owner never reports back)[0m [90m0.151s[0m
+[32m  + [0m[32m⑦ the merge brief teaches the OWN-leftover recovery (abort your own MERGE_HEAD and retry once in-round)[0m [90m0.118s[0m
+11:34:22.750 [33mWARN [0m nebflow.core.delegate.merge-enqueue - [merge-enqueue] no registry record for 'delegate-a2-ghost' — merge membership not pre-booked
+11:34:22.751 [33mWARN [0m nebflow.core.delegate.merge-enqueue - [merge-enqueue] 'delegate-a2-nobase' has no branch/baseBranch anchor (branch=delegate/delegate-a2-nobase, baseBranch=-) — merge target unknown, membership NOT pre-booked (the engine never guesses 'main')
+11:34:22.752 [33mWARN [0m nebflow.core.delegate.merge-enqueue - [merge-enqueue] 'delegate-a2-nobranch' has no branch/baseBranch anchor (branch=-, baseBranch=main) — merge target unknown, membership NOT pre-booked (the engine never guesses 'main')
+[32mnebflow.core.delegate.MergeQueueFifoNotifySpec:[0m
+[32m  + [0m[32mA1 申报点预记账：delegate_report(merge) 落槽即入队（终态腿没跑成也不会有零台账行）+ 回执显式 CONFIRMED[0m [90m0.174s[0m
+[32m  + [0m[32mA2 零猜：ensurePending 只认 branch ∧ baseBranch 两锚（缺锚 = false，绝不猜 main；无记录 = false）[0m [90m0.449s[0m
+[32m  + [0m[32mA3 核实入队的失败腿：账本核不到开放条目 ⇒ 返回 false + enqueue-failed 必通知，绝不抛[0m [90m0.156s[0m
+[32m  + [0m[32mA4 核实入队的好腿：开放条目核到 ⇒ 返回 true 且零通知[0m [90m0.321s[0m
+[32m  + [0m[32mB1 排空序：readyAt 300/100/200 反序注入 ⇒ 放行序必须 100 → 200 → 300（FIFO = 完成时间序，不是入队序）[0m [90m0.943s[0m
+[32m  + [0m[32mC1 merged 必通知：队列侧异步关账（放行前账实核对命中已并）⇒ BlockNotifyPort kind=merged（落地也是状态变化）[0m [90m0.26s[0m
+[32m  + [0m[32mC2 不许双通知：属主合并轮终态（onTerminal Merged）⇒ 队列侧零通知（父通知由属主自己的 Release 承担）[0m [90m0.47s[0m
+[32m  + [0m[32mC3 failed 必通知：合并轮被拒 ⇒ kind=failed 且原因原文逐字随行（无重试无 park）[0m [90m0.483s[0m
+[32mnebflow.core.delegate.MergeQueueHeadSkipFactCheckSpec:[0m
+[32m  + [0m[32mR2-红：旧语义（只核持窗成员）下，队头堵着 + 队尾分支已在 base 上 ⇒ N 拍零变化，永远开不了账[0m [90m1.39s[0m
+[32m  + [0m[32mR2-绿：同一夹具 + 一拍 careTick（生产路径）⇒ 只读核对命中，队尾成员按 merged 关账（不占合并窗）[0m [90m0.599s[0m
+[32m  + [0m[32mR2-红线：核对读数不可得（base 工作区不是 git 仓/不可读）⇒ fail-soft，绝不关账[0m [90m0.091s[0m
+[32m  + [0m[32mR1-红：旧语义（headSkip=false）下，无投递通道的队头占窗 N 拍，健康队尾零获窗（饿死）[0m [90m1.425s[0m
+[32m  + [0m[32mR1-绿：同一夹具 + 一次 pump（生产路径）⇒ 队头让位退避，同一拍内队尾获窗[0m [90m0.765s[0m
+[32m  + [0m[32mR1-上界：孤身死结连续被堵到 SoloMaxBlockedRounds ⇒ needsHuman 显式降级 + 一次 escalate + 队列停止自动授窗（不许无限重试）[0m [90m5.308s[0m
+[32m  + [0m[32mR1-读数：退避指数×2、封顶上界、抖动在前两者之内（纯函数，零等待）[0m [90m0.001s[0m
+[32m  + [0m[32mR1-两道上界：正当饿死别人的死结 8 拍到顶即降级（不再挡住队尾）；同一队里的闸类成员（项目级）照旧逐拍重试、不降级[0m [90m4.538s[0m
+[32m  + [0m[32mR1-自愈：降级后投递通道回来 ⇒ 复活（清退避/needsHuman）并在该拍获窗；不带新腿的重入队仍钉在 needsHuman[0m [90m5.624s[0m
+[32m  + [0m[32mR1-不让位：单人队列里被堵成员照常逐拍重试（让位是为了让别人走——没别人就不空转，既有升级阶梯零漂移）[0m [90m0.464s[0m
+[32mnebflow.core.delegate.MergeEnqueueWatchSpec:[0m
+[32m  + [0m[32mD1 七维真值表：全真才代办；任一维翻假都必须零动作[0m [90m0.002s[0m
+[32m  + [0m[32mD1b 宣告维（第八维）：属主未宣告 ⇒ 绝不代办入队；同一候选改发 undeclared-not-queued 告警[0m [90m0.001s[0m
+[32m  + [0m[32mD2 阈值边界：idle=999 不代办、idle=1000 代办（>= 而非 >）；缺省阈值 = Defaults.MergeEnqueueWatchIdleSec=600s[0m [90m0.001s[0m
+[32m  + [0m[32mD3 代办锚：readyAt = lastActivityMs（不是扫描时刻）+ watch-queued 通知点名漏排事实[0m [90m0.107s[0m
+[32m  + [0m[32mD3b 零猜：无 branch/baseBranch 锚的漏网候选 ⇒ 不入队、零通知（引擎绝不猜 main）[0m [90m0.085s[0m
+[32m  + [0m[32mD4 幂等：账本已有开放条目 ⇒ 同一读数扫两拍零代办、零通知（hasOpenEntry 是唯一闸）[0m [90m0.098s[0m
+[32m  + [0m[32mD4b 幂等（真入队腿）：已代办的成员在下一拍不再被代办（hasOpenEntry 闸），零重复通知[0m [90m0.109s[0m
+[32mnebflow.core.delegate.MergeAcceptanceSpec:[0m
+[32m  + [0m[32m① a-path passes on a real --no-ff merge: two-parent HEAD, second parent = branch tip, ancestor true[0m [90m0.206s[0m
+[32m  + [0m[32m② b-path alone is NOT enough: branch merged but base HEAD advanced past it (another ref merged later) ⇒ refused[0m [90m0.374s[0m
+[32m  + [0m[32m③ unreadable anchors = fail-closed: missing branch ref / non-git base ⇒ refused with evidence[0m [90m0.186s[0m
+[32m  + [0m[32m④ verifyRecord: incomplete spawn binding ⇒ refused; None record ⇒ refused[0m [90m0.001s[0m
+[32m  + [0m[32m⑤ onCompleted integration: merge-round completed verdict over a NEVER-merged branch ⇒ completed+note (source=merge-verify), release refused[0m [90m0.757s[0m
+11:34:48.338 [33mWARN [0m nebflow.agent.merge-queue-recovery - [merge-queue-recovery] 1 open merge-ledger membership(s) survived a restart — reconciling (no merge rounds are revived)
+11:34:48.414 [36mINFO [0m nebflow.agent.merge-queue-recovery - [merge-queue-recovery] write-ahead channel compacted 1 closed mirror(s)
+11:34:48.587 [33mWARN [0m nebflow.agent.merge-queue-recovery - [merge-queue-recovery] 1 open merge-ledger membership(s) survived a restart — reconciling (no merge rounds are revived)
+11:34:48.623 [36mINFO [0m nebflow.agent.merge-queue-recovery - [merge-queue-recovery] write-ahead channel compacted 1 closed mirror(s)
+11:34:48.774 [33mWARN [0m nebflow.agent.merge-queue-recovery - [merge-queue-recovery] 1 open merge-ledger membership(s) survived a restart — reconciling (no merge rounds are revived)
+11:34:48.806 [33mWARN [0m nebflow.agent.merge-queue-recovery - [merge-queue-recovery] OWNER-GONE mq-gone: branch `delegate/mq-gone` still has 1 commit(s) ahead of `main`, but the owner session did not survive the restart — needs dispatcher handling (manual merge or re-dispatch)
+11:34:48.836 [36mINFO [0m nebflow.agent.merge-queue-recovery - [merge-queue-recovery] write-ahead channel compacted 1 closed mirror(s)
+11:34:49.047 [33mWARN [0m nebflow.agent.merge-queue-recovery - [merge-queue-recovery] 1 open merge-ledger membership(s) survived a restart — reconciling (no merge rounds are revived)
+11:34:49.077 [33mWARN [0m nebflow.agent.merge-queue-recovery - [merge-queue-recovery] PRESERVED mq-preserve: branch `delegate/mq-preserve` still has 1 commit(s) ahead of `main` and the owner session did not survive the restart — membership PRESERVED by the write-ahead channel (window returned, stays queued); continue/revive the owner session or merge the branch manually (the queue fact-checks and closes it as merged)
+11:34:49.317 [33mWARN [0m nebflow.agent.merge-queue-recovery - [merge-queue-recovery] 1 open merge-ledger membership(s) survived a restart — reconciling (no merge rounds are revived)
+11:34:49.335 [36mINFO [0m nebflow.agent.merge-queue-recovery - [merge-queue-recovery] write-ahead channel compacted 1 closed mirror(s)
+[32mnebflow.agent.MergeQueueBootSweepSpec:[0m
+[32m  + [0m[32m① already-merged member ⇒ closed merged + leftover scene cleaned under the zero-ahead guard + report; NO merge round is revived[0m [90m0.401s[0m
+[32m  + [0m[32m② missing branch ref (nothing mergeable) ⇒ closed merged with the honest note + report droppedEmpty[0m [90m0.201s[0m
+[32m  + [0m[32m③ mergeable but the owner session died with the restart ⇒ owner-gone + task row failed; NO revival channel is invoked[0m [90m0.214s[0m
+[32m  + [0m[32m④ no open members = zero-action sweep[0m [90m0.059s[0m
+[32m  + [0m[32m⑤ mergeable + owner lost BUT the write-ahead channel holds an un-closed record ⇒ PRESERVED (window returned, task row untouched) — owner-gone suppressed by the channel premise (R5)[0m [90m0.183s[0m
+[32m  + [0m[32m⑤b an already-merged member with a channel record but NO registry record ⇒ closed merged by fact-check (the channel premise never blocks the happy path)[0m [90m0.255s[0m
+[32mnebflow.agent.MergeQueueRestartReminderSpec:[0m
+[32m  + [0m[32m① terminal members are invisible to the boot sweep (closed is closed — a restart never re-opens a membership)[0m [90m0.192s[0m
+[32m  + [0m[32m② the retry vocabulary is retired: a full grant→refused lifecycle leaves no park/retry words on the ledger[0m [90m0.365s[0m
+[32m  + [0m[32m③ the ledger persists across a restart: granted facts (grantedAt / base tip / close-outs) reload from disk[0m [90m0.095s[0m
+11:34:50.020 [33mWARN [0m nebflow.agent.startup-recovery - [startup-recovery] 1 ready-to-merge row(s) with NO merge-queue membership survived a restart — settling to interrupted: delegate-nebflow-s1
+11:34:50.024 [36mINFO [0m nebflow.agent.startup-recovery - [startup-recovery] notify receipt delegate-nebflow-s1 → parent b676331a-06d2-46: f2-queue
+11:34:50.026 [36mINFO [0m nebflow.agent.startup-recovery - [startup-recovery] orphan delegate-nebflow-s1 (nebflow) terminalized; parent=b676331a-06d2-46 exists=true partialResult=false delivery=f2-queue
+11:34:50.029 [36mINFO [0m nebflow.agent.startup-recovery - [startup-recovery] restart-interruption marked on 1 delegate record(s)
+11:34:50.030 [36mINFO [0m nebflow.delegate.ledger-reconcile - [ledger-reconcile] boot reconcile: 1 restart-interrupted row(s) to adjudicate
+11:34:50.093 [36mINFO [0m nebflow.agent.startup-recovery - [startup-recovery] 1 ready-to-merge row(s) left to the merge-queue boot reconcile: delegate-nebflow-s2
+11:34:50.098 [33mWARN [0m nebflow.agent.startup-recovery - [startup-recovery] 2 in-flight delegate task(s) survived a process restart — terminalizing + notifying parent session(s)
+11:34:50.098 [36mINFO [0m nebflow.agent.startup-recovery - [startup-recovery] notify receipt delegate-nebflow-s3a → parent 5e442f87-0945-4a: f2-queue
+11:34:50.099 [36mINFO [0m nebflow.agent.startup-recovery - [startup-recovery] orphan delegate-nebflow-s3a (nebflow) terminalized; parent=5e442f87-0945-4a exists=true partialResult=false delivery=f2-queue
+11:34:50.101 [36mINFO [0m nebflow.agent.startup-recovery - [startup-recovery] notify receipt delegate-nebflow-s3b → parent 5e442f87-0945-4a: f2-queue
+11:34:50.102 [36mINFO [0m nebflow.agent.startup-recovery - [startup-recovery] orphan delegate-nebflow-s3b (nebflow) terminalized; parent=5e442f87-0945-4a exists=true partialResult=false delivery=f2-queue
+11:34:50.102 [33mWARN [0m nebflow.agent.startup-recovery - [startup-recovery] 1 ready-to-merge row(s) with NO merge-queue membership survived a restart — settling to interrupted: delegate-nebflow-s3c
+11:34:50.102 [36mINFO [0m nebflow.agent.startup-recovery - [startup-recovery] notify receipt delegate-nebflow-s3c → parent 5e442f87-0945-4a: f2-queue
+11:34:50.103 [36mINFO [0m nebflow.agent.startup-recovery - [startup-recovery] orphan delegate-nebflow-s3c (nebflow) terminalized; parent=5e442f87-0945-4a exists=true partialResult=false delivery=f2-queue
+11:34:50.104 [36mINFO [0m nebflow.agent.startup-recovery - [startup-recovery] restart-interruption marked on 3 delegate record(s)
+11:34:50.104 [36mINFO [0m nebflow.delegate.ledger-reconcile - [ledger-reconcile] boot reconcile: 3 restart-interrupted row(s) to adjudicate
+[32mnebflow.agent.SessionDeathSettleSpec:[0m
+[32m  + [0m[32mS1 ready-to-merge 僵尸（无队列成员）⇒ sweep 落终态 interrupted（行+旗+父通知）[0m [90m0.03s[0m
+[32m  + [0m[32mS2 ready-to-merge 但有开放队列成员 ⇒ sweep 零触碰（合并轮在管）[0m [90m0.056s[0m
+[32m  + [0m[32mS3 不变量：sweep 后无「无队列成员的在飞行」残留（重启后无僵尸行）[0m [90m0.011s[0m
+11:34:50.482 [33mWARN [0m nebflow.core.processor.stuck - [waiting-dock-care] waiting dock orphaned: session 'd-w1' is docked waiting-merge but its actor has exited
+[32mnebflow.core.processor.WaitingDockCareSpec:[0m
+[32m  + [0m[32m① docked Waiting session whose actor died: membership closed owner-gone, task row failed, escalation reaches the live root, window released[0m [90m0.678s[0m
+[32m  + [0m[32m② LIVE docked Waiting session: zero action — no Stop, no ledger flip, queue untouched (stale lastActivityMs is NOT a criterion)[0m [90m0.417s[0m
+11:34:51.405 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] mounted scope 'delegate-general-33cc44dd' (project=-, map=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-crf-c2-14149137525889494819/.nebflow/flow-maps/delegate-general-33cc44dd, seat=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-crf-c2-14149137525889494819, root=self) — one delegate one map
+11:34:51.414 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] unmounted scope 'delegate-general-33cc44dd' — engine instance gone, on-disk state kept at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-crf-c2-14149137525889494819/.nebflow/flow-maps/delegate-general-33cc44dd (write-through)
+[32mnebflow.core.project.ChainsReadFaceSpec:[0m
+[32m  + [0m[32mC1: rows project the registry record with the live hint and the latest terminal-verdict; absent sources leave the keys out[0m [90m0.011s[0m
+[32m  + [0m[32mC1b (#566): taskStatus supply lands verbatim on the matching row — the engine terminal authority for stale-row retirement[0m [90m0.002s[0m
+[32m  + [0m[32mC5 (G1): the merge-window holder row exposes taskStatus=merging — an explicit engine-queryable state, not a frontend derivation[0m [90m0.003s[0m
+[32m  + [0m[32mC6: delegatesJson filters by project and attaches the sub-process topology payload (children for star, steps for agentflow); single rows carry no topology key[0m [90m0.064s[0m
+[32m  + [0m[32mC7 (重启对账): restart-interrupted rows carry the flag verbatim; continuedBy lands only when a later record cites them[0m [90m0.005s[0m
+[32m  + [0m[32mC2: mounted scope projects FlowMap nodes through the v3 §9 status map; unmounted probes the disk read-only; missing dir degrades to null[0m [90m0.112s[0m
+[32m  + [0m[32mC4: the active rows window drops foreign-seat (retired-instance) records; the archived window keeps them (zero deletion)[0m [90m0.012s[0m
+[32m  + [0m[32mC4b: seat scoping is canonical-path stable — a symlinked workspace alias still counts as in-world[0m [90m0.004s[0m
+11:34:51.729 [33mWARN [0m nebflow.executor.external - [terminal-result-undelivered] external delegate session 'external-claude-code-d04a66c6' (claude-code) reached its terminal state but no parent ref exists (parent session 'nebula-root' not live at spawn) — the result was NOT delivered to any session. Payload head: 
+[external-leg] resumed CLI round still in flight (CLI-side leg, ledger unaffected): poll timeout: the resumed merge round settled (task row terminal)
+[32mnebflow.core.executor.ExternalLegPrepareSpec:[0m
+[32m  + [0m[32m① external spawn prepares the SAME branch + IN-PLACE seat (zero allocation); record + spawn-row `seat` key + brief line land[0m [90m0.402s[0m
+[32m  + [0m[32m② ready-to-merge verdict enqueues the EXTERNAL channel entry; the grant-time fact-check closes an already-landed branch as merged and the close-out notice rides the continuation channel[0m [90m150.51s[0m
+[32m  + [0m[32m③ MergeQueue channel units: external entry injects via send (zero actor); a channel-less entry closes owner-gone with escalation[0m [90m0.794s[0m
+11:37:26.964 [33mWARN [0m nebflow.subagent-task.store - [task-status-miss] updateStatus missed: parent=nebula-root taskId=delegate-nebflow-ro status=ready-to-merge (no row matched — write was a NO-OP)
+11:37:27.157 [33mWARN [0m nebflow.subagent-task.store - [task-status-miss] updateStatus missed: parent=nebula-root taskId=delegate-nebflow-wn status=ready-to-merge (no row matched — write was a NO-OP)
+[32mnebflow.core.delegate.DelegateTerminalSpec:[0m
+[32m  + [0m[32m① matrix (2026-11-01): judge absent + no self-report ⇒ NudgeIdle (complete×idle = remind, never complete); self-report finish → completed; self-report blocked (retired) → completed + note[0m [90m0.28s[0m
+[32m  + [0m[32m② judge says ready-to-merge: task status becomes ready-to-merge (completedAt anchored), the entry is enqueued (FIFO), outcome = HoldForMerge, verdict line = ready-to-merge[0m [90m0.459s[0m
+[32m  + [0m[32m③ no branch to merge ⇒ ready-to-merge degrades to completed (honest terminal: nothing mergeable exists)[0m [90m0.214s[0m
+[32m  + [0m[32m⑤ (A5 步1 红验④) branch present but ZERO commits ahead ⇒ ready-to-merge degrades to completed (empty merge round prevented)[0m [90m0.34s[0m
+[32m  + [0m[32m④ cleanup: failed/cancelled terminals write the engine verdict line (verdict=failed, #566 true value) and dequeue; the completed leg does NOT double-write[0m [90m0.525s[0m
+[32m  + [0m[32m⑥ (A5 步2 红验①; #566) shared-checkout seat + zero-ahead + non-attributable base advance ⇒ completed+note, source=drift, reason carries fork/baseTip/commits[0m [90m0.258s[0m
+[32m  + [0m[32m⑦ (红验②) same drift shape but the base advance is another delegate's merge WITH a merge-queue ledger row ⇒ not penalized[0m [90m0.308s[0m
+[32m  + [0m[32m⑧ (红验③) mergeRound=true ⇒ drift exempt (the A4 merge-round re-judge stays reachable)[0m [90m0.542s[0m
+[32m  + [0m[32m⑨ (红验④) git reading unverifiable ⇒ no penalty, WARN only (fail-open, no fake block); classifier Warn branch anchored[0m [90m0.236s[0m
+[32m  + [0m[32m⑩ (红验⑤) worktree seat, same drift shape ⇒ note merged into the judge digest, no penalty[0m [90m0.307s[0m
+[32m  + [0m[32m⑪ classifier matrix (pure, zero git): penalty/note/clear/attribution rows[0m [90m0.003s[0m
+[32m  + [0m[32m⑫ legacy shapes stay Clear: no branch anchor, non-git cwd, zero-ahead with unmoved base (existing ①③⑤ regression)[0m [90m0.001s[0m
+[32m  + [0m[32m⑬ (P2-3 只读座位诚实化 × 台账 #896 交通引导员制) judged-completed seat + commits ahead ⇒ flips to ready-to-merge (auto-enqueued) for BOTH read-only and working seats; the engine never merges anything itself[0m [90m0.48s[0m
+[32m  + [0m[32m⑭ (misc②; #566) ready-to-merge without a recorded baseBranch ⇒ completed+note (refuses to guess 'main'), engine-source verdict row lands[0m [90m0.174s[0m
+11:37:28.549 [33mWARN [0m nebflow.subagent-task.store - [task-status-miss] updateStatus missed: parent=nebula-root taskId=delegate-mx-flip status=ready-to-merge (no row matched — write was a NO-OP)
+[32mnebflow.core.delegate.DelegateTerminalMatrixSpec:[0m
+[32m  + [0m[32m② matrix complete×idle: an undeclared substantive turn is reminded (NudgeIdle), never judged — and the same holds with chains in flight (dispatcher-cutoff scenario)[0m [90m0.124s[0m
+[32m  + [0m[32m③ matrix complete×merge: the merge declaration rides the existing MergeQueue FIFO (enqueued, single-flight holder, task row ready-to-merge)[0m [90m0.636s[0m
+[32m  + [0m[32m④ matrix complete×finish: the ONLY combination judged complete (judge absent ⇒ self-report-backed completed, plain honest line)[0m [90m0.127s[0m
+[32m  + [0m[32m⑤ flip preserved (author: never silently dropped): undeclared × branch ahead>0 ⇒ anti-degradation falls to the chain ⇒ queueFlip enqueues ready-to-merge[0m [90m0.275s[0m
+[32m  + [0m[32m⑥ merge-round exemption: a stale standby declaration CANNOT trap the engine-ordered merge window (chain settles; mechanical acceptance passes on a really-landed merge)[0m [90m0.458s[0m
+11:37:29.299 [33mWARN [0m nebflow.subagent-task.store - [task-status-miss] updateStatus missed: parent=nebula-root taskId=delegate-nebflow-wr1 status=ready-to-merge (no row matched — write was a NO-OP)
+11:37:29.442 [33mWARN [0m nebflow.subagent-task.store - [task-status-miss] updateStatus missed: parent=nebula-root taskId=delegate-nebflow-wr1 status=ready-to-merge (no row matched — write was a NO-OP)
+11:37:29.707 [33mWARN [0m nebflow.subagent-task.store - [task-status-miss] updateStatus missed: parent=nebula-root taskId=delegate-nebflow-wr5 status=ready-to-merge (no row matched — write was a NO-OP)
+[32mnebflow.core.delegate.DelegateFinishWorkResultSpec:[0m
+[32m  + [0m[32m① hold preserves the work-phase final text: judge ready-to-merge ⇒ workReport = the work result (first-write-wins)[0m [90m0.406s[0m
+[32m  + [0m[32m② updateReport preserve-before-overwrite: the merge-phase detail survives the finish overwrite; a preserved slot is never displaced[0m [90m0.004s[0m
+[32m  + [0m[32m③ merge-round release carries the work result: merge status one line + preserved work report + REPORT.md path and digest (real merge e2e)[0m [90m0.577s[0m
+[32m  + [0m[32m④ backward compat: an old-shape delegate (no preserved work text, no report files) degrades gracefully — merge-status line only; a bare record stays byte-identical legacy[0m [90m0.897s[0m
+[32m  + [0m[32m⑤ appendixFor anchors: empty record ⇒ ""; bounds honored (work text truncated at Bound.WorkChars)[0m [90m0.002s[0m
+[info] Passed: Total 109, Failed 0, Errors 0, Passed 109
+[success] Total time: 212 s (0:03:32.0), completed 2026年11月5日 11:37:30
+EXIT_TESTS=0
