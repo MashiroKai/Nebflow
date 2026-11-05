@@ -90,13 +90,15 @@ class DelegateToolSpec extends CatsEffectSuite:
 
   // ---------- 1. schema 面 ----------
 
-  test("schema: exactly task/name/project/executor/worktree/force/mode — legacy parameters stay gone"):
+  test("schema: exactly task/name/project/executor/worktree/force/mode/attachments — legacy parameters stay gone"):
     // external-executors 批 #1225（S14 运行时半）：`executor` 入场。
     // 面板命名批（2026-10-31）：`name` 入场（≤12 字，maxLength 钉死）。
     // worktree-reuse-selection 批（2026-11-02）：`worktree` / `force` 入场。
     // delegate-param-decisions 批（2026-11-04）：`mode` 值域收敛为 kernel|dispatcher，
     // `worktree` 语义改为「worktree 的 name（不填 = 零分配的就地只读通道）」。
-    assertEquals(props, Set("task", "name", "project", "executor", "worktree", "force", "mode"))
+    // 附件传输批（2026-11-05）：`attachments` 入场（判据与六例见
+    // [[DelegateAttachmentsSpec]]）。
+    assertEquals(props, Set("task", "name", "project", "executor", "worktree", "force", "mode", "attachments"))
     assertEquals(required, List("task"))
     val nameMaxLen: Option[Int] = io.circe.Json
       .fromJsonObject(DelegateTool.inputSchema)
@@ -150,7 +152,10 @@ class DelegateToolSpec extends CatsEffectSuite:
     assert(wtDesc.contains("MUST pass it"), wtDesc)
     assert(wtDesc.contains("read-only"), wtDesc)
     val toolDesc = DelegateTool.description
-    assert(!toolDesc.contains("mode allocator decides"), "the model-visible tool description must not carry the removed allocator copy")
+    assert(
+      !toolDesc.contains("mode allocator decides"),
+      "the model-visible tool description must not carry the removed allocator copy"
+    )
     assert(!toolDesc.contains("creates a fresh worktree exactly as before"), toolDesc)
     assert(toolDesc.contains("Omit it ONLY for read-only tasks"), toolDesc)
     assert(toolDesc.contains("IN PLACE in the project workspace"), toolDesc)
