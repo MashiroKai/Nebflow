@@ -3,9 +3,11 @@ package nebflow.llm
 import cats.effect.unsafe.implicits.global
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
-import nebflow.shared.*
 import munit.CatsEffectSuite
+import nebflow.db.{Db, DbConfig, DbHandle}
+import nebflow.shared.*
 
+import java.nio.file.Files
 import scala.concurrent.duration.*
 
 class HealthMonitorSpec extends CatsEffectSuite:
@@ -14,7 +16,26 @@ class HealthMonitorSpec extends CatsEffectSuite:
   private def candidate(pid: String, model: String) =
     ModelCandidate(pid, ProviderConfig("http://localhost", "k", LlmProtocol.OpenAI), model)
 
-  private def newMonitor = ProviderHealthMonitor(null) // registry not needed for state tests
+  // ── B2 隔离注入（回归修复 2026-11-05：9 红的「真实库泄进单测」根因堵口）────
+  // B2 后 monitor 落盘面经 `db.orElse(DbHost.peek(PathUtil.dataRoot))` 兜底——测试
+  // JVM 里他套件的生产接线（TaskStuckWatcherSpec 装配链等）会把真实根 memoize 进
+  // DbHost ⇒ peek 命中 ⇒ 单测读写真实库（markDown/softAvoid 写穿真实
+  // guard/provider-avoid.json；后续测试水合回填 ⇒ reason 覆写/预避让跳过）。本
+  // spec 全部构造位显式注入测试域临时根句柄：`db` 为 Some ⇒ peek 兜底永不被求
+  // 值；每 monitor 独立临时根 ⇒ 写穿不跨测试串档（共享根 = 复刻真实库污染形态）。
+  private val openedDbs = scala.collection.mutable.ListBuffer[DbHandle]()
+
+  override def afterAll(): Unit = openedDbs.foreach(h =>
+    try h.close()
+    catch case _: Throwable => ()
+  )
+
+  private def tempDb(): DbHandle =
+    val h = Db.open(DbConfig(Files.createTempDirectory("hm-spec-db"))).unsafeRunSync()
+    openedDbs += h
+    h
+
+  private def newMonitor = ProviderHealthMonitor(null, db = Some(tempDb())) // registry not needed for state tests
 
   // ============================================================
   // markDown / filterCandidates
@@ -257,22 +278,28 @@ class HealthMonitorSpec extends CatsEffectSuite:
     hangAfter: Boolean = false,
     err: Option[Throwable] = None
   ) extends ProviderAdapter[IO]:
+
     def sendMessage(params: SendMessageParams): IO[AdapterResponse] =
       IO.raiseError(new RuntimeException("probe must use the streaming face (修 2026-10-21)"))
+
     def sendMessageStream(params: SendMessageParams): fs2.Stream[IO, StreamChunk] =
       err match
         case Some(e) => fs2.Stream.raiseError[IO](e)
         case None =>
           val head: fs2.Stream[IO, StreamChunk] =
-            if delayBeforeMs > 0 then
-              fs2.Stream.eval(IO.sleep(delayBeforeMs.millis)) >> fs2.Stream.emits(chunks.toList)
+            if delayBeforeMs > 0 then fs2.Stream.eval(IO.sleep(delayBeforeMs.millis)) >> fs2.Stream.emits(chunks.toList)
             else fs2.Stream.emits(chunks.toList)
           if hangAfter then head ++ fs2.Stream.never[IO] else head
+
+  end FakeStreamAdapter
 
   private class FakeRegistry(adapter: ProviderAdapter[IO]) extends ProviderRegistry(null, null):
     // probe 走 getAdapterRaw（不过闸裸视图，429 反应式并发闸批）——fake 同步覆写。
     override def getAdapter(providerId: String): IO[ProviderAdapter[IO]] = IO.pure(adapter)
     override def getAdapterRaw(providerId: String): IO[ProviderAdapter[IO]] = IO.pure(adapter)
+    // B2 ensureGuards→hydrateGuards 会调 getCandidates()（真体走 configRef.get——
+    // null 桩即 NPE，7 红根因）；桩返回空链 = 零 guard 键面，与 B2 前形态一致。
+    override def getCandidates(): IO[List[ModelCandidate]] = IO.pure(Nil)
 
   /**
    * Registry that resolves a whitelist of model refs (simulates a config with
@@ -282,6 +309,8 @@ class HealthMonitorSpec extends CatsEffectSuite:
   private class FakeRegistry2(adapter: ProviderAdapter[IO], known: Set[String]) extends ProviderRegistry(null, null):
     override def getAdapter(providerId: String): IO[ProviderAdapter[IO]] = IO.pure(adapter)
     override def getAdapterRaw(providerId: String): IO[ProviderAdapter[IO]] = IO.pure(adapter)
+    // 同 FakeRegistry：hydrateGuards 的 getCandidates() 桩腿（绕开 null configRef）。
+    override def getCandidates(): IO[List[ModelCandidate]] = IO.pure(Nil)
 
     override def getCandidateForRef(ref: String): IO[Option[ModelCandidate]] =
       if known.contains(ref) then
@@ -297,7 +326,7 @@ class HealthMonitorSpec extends CatsEffectSuite:
     // cycle → DOWN forever → the panel never turned green. The probe must
     // clear at the thinking event and must NOT wait for the stream to end.
     val adapter = FakeStreamAdapter(chunks = Seq(StreamChunk.ThinkingDelta("reasoning…")), hangAfter = true)
-    val monitor = ProviderHealthMonitor(FakeRegistry(adapter))
+    val monitor = ProviderHealthMonitor(FakeRegistry(adapter), db = Some(tempDb()))
     val c = candidate("glm", "glm-5-107")
 
     for
@@ -315,7 +344,7 @@ class HealthMonitorSpec extends CatsEffectSuite:
 
   test("probe keeps Down when the stream errors before any serving event") {
     val adapter = FakeStreamAdapter(err = Some(new RuntimeException("probe error")))
-    val monitor = ProviderHealthMonitor(FakeRegistry(adapter))
+    val monitor = ProviderHealthMonitor(FakeRegistry(adapter), db = Some(tempDb()))
     val c = candidate("glm", "glm-5-107")
 
     for
@@ -331,7 +360,7 @@ class HealthMonitorSpec extends CatsEffectSuite:
     // Mirror of the streaming path's "Stream completed with no content" raise:
     // a provider that answers Done without any content chunk is not serving.
     val adapter = FakeStreamAdapter(chunks = Seq(StreamChunk.Done(None, None)))
-    val monitor = ProviderHealthMonitor(FakeRegistry(adapter))
+    val monitor = ProviderHealthMonitor(FakeRegistry(adapter), db = Some(tempDb()))
     val c = candidate("glm", "glm-5-107")
 
     for
@@ -349,7 +378,7 @@ class HealthMonitorSpec extends CatsEffectSuite:
     // the probe first (IO.sleep cancellation is the deterministic park; a
     // bare never-emitting pull is not what the budget is about).
     val adapter = FakeStreamAdapter(chunks = Seq(StreamChunk.TextDelta("late")), delayBeforeMs = 10_000)
-    val monitor = ProviderHealthMonitor(FakeRegistry(adapter))
+    val monitor = ProviderHealthMonitor(FakeRegistry(adapter), db = Some(tempDb()))
     val c = candidate("glm", "glm-5-107")
 
     // set/restore INSIDE the IO: an eager try/finally only brackets the
@@ -381,7 +410,7 @@ class HealthMonitorSpec extends CatsEffectSuite:
     // 现读源（PresenceRoutes /model 读面），getStates 是 /api/health `providers`
     // 的现读源——后端清除即刻反映，零缓存、零额外定时器。
     val adapter = FakeStreamAdapter(chunks = Seq(StreamChunk.TextDelta("pong")))
-    val monitor = ProviderHealthMonitor(FakeRegistry(adapter))
+    val monitor = ProviderHealthMonitor(FakeRegistry(adapter), db = Some(tempDb()))
     val cs = List(candidate("glm", "glm-5"), candidate("kimi", "moonshot-v1"))
 
     for
@@ -403,7 +432,7 @@ class HealthMonitorSpec extends CatsEffectSuite:
   test("downCandidates includes Down candidates outside the default chain (kimi fix)") {
     val adapter = FakeStreamAdapter(chunks = Seq(StreamChunk.TextDelta("pong")))
     // kimi/k3-256k is NOT in the default (general) chain — only in Vision preset
-    val monitor = ProviderHealthMonitor(FakeRegistry2(adapter, Set("kimi/k3-256k")))
+    val monitor = ProviderHealthMonitor(FakeRegistry2(adapter, Set("kimi/k3-256k")), db = Some(tempDb()))
 
     for
       _ <- monitor.markDown("kimi", "k3-256k", "timeout")
@@ -419,7 +448,8 @@ class HealthMonitorSpec extends CatsEffectSuite:
 
   test("downCandidates skips refs whose provider was removed from config") {
     val monitor = ProviderHealthMonitor(
-      FakeRegistry2(FakeStreamAdapter(chunks = Seq(StreamChunk.TextDelta("pong"))), Set.empty)
+      FakeRegistry2(FakeStreamAdapter(chunks = Seq(StreamChunk.TextDelta("pong"))), Set.empty),
+      db = Some(tempDb())
     )
 
     for
