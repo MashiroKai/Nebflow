@@ -18,6 +18,25 @@ wiki-docs SKILL.md 强制条款的机器面（条款与检查一一对应，见 
                             主题打头、时间块后置（时间打头 = 旧制 = 违规）；topic 不得
                             是 report/doc/notes 这类空词单独成题。校验面 = `.md` 文档；
                             无时间块的活文档（`<topic>.md`）合法；非 `.md` 资产不在本制范围
+  R6 图随文档走           → 文档引用的每张图片（md `![]()`、wikilink 内嵌 `![[…]]`、
+                            HTML `<img src>`）必须是 vault 内的**真实文件**，且用
+                            vault 相对路径引用：绝对路径 / `file://` / `~` 家目录 /
+                            `../` 越出 vault / http(s) 外链图床 / vault 内不存在
+                            ⇒ 一类违规 `image-outside-vault`（理由逐条区分）。
+                            行内豁免 `<!-- wiki-img-exempt: 理由 -->`（同行或上一行），
+                            单条计数并在输出里显形——无整文件豁免
+
+  ── 文档排版与缩写批（作者裁定 2026-11-05 11:09 / 11:11）─────────────
+  R7 彩色克制             → 内联 HTML 着色（`<span style="color:…">`）一篇 ≤4 处
+                            （建议 ≤3）、只准固定语义色（蓝 #5e6ad2 判定 / 红 #d0342c
+                            风险 / 绿 #12874a 通过）、单处着色不覆盖整段（>120 字符）
+  R8 正文缩进             → 正文段落首行以 `&emsp;&emsp;` 起行；半角空格缩进在 Markdown
+                            渲染器里塌掉（2 空格）或变代码块（4 空格）；标题 / 列表 /
+                            表格 / 引用 / 围栏 / 图片行 / 短行（<40 字符）豁免
+  R9 缩写铁律             → 全大写 2-6 字母 token 与带点专有缩写（`E.C.`）在文档**首次
+                            出现处**必须给出全称（括注 / 破折线式）或挂词条链接
+                            `[[缩写]]`；允许清单（单位 / 通用技术词）写在
+                            `../SKILL.md` 的标记块里，脚本只读不藏
 
 段落锚（引用语法，与 R2 校验同源）：`[[doc#^块锚]]` 精确到单个段落（名词解释
 场景主形态，词表条目即块锚段落），`[[doc#标题]]` 精确到整节。--graph 导出
@@ -62,9 +81,11 @@ import argparse
 import fnmatch
 import json
 import os
+import posixpath
 import re
 import sys
 from pathlib import Path
+from urllib.parse import unquote
 
 # ── 与 WikiIndex.scala 同语义的解析正则 ──────────────────────────────
 
@@ -87,6 +108,10 @@ RULES = (
     ("R3", "concept-first-use", "名词概念第一次出现必须就地解释，或 [[引用]] 已解释它的文档；多篇文档不得各自发明同一概念的定义（词表 = 唯一定义源）"),
     ("R4", "term-registry", "词条注册表面：词表锚段落与 ^term-* 声明块必须按「名 — 定义」分隔约定抽出词条名（词条块结构合法）；同一文档内词条名不得重复；`[[名]]` 短形引用经词条注册表消解（词表命中优先，未注册 = R2 断链）"),
     ("R5", "doc-naming", "文档命名制：阶段件文件名 = `<topic>__<YYYYMMDD>_<HHMMSS>[__<chainId>].md`（topic 前置、时间块后置，`__` 分主题与时间、时间块内用 `_`）；时间打头（`^YYYYMMDD_...`）即旧制即违规；topic 不得是 report/doc/notes 空词单独成题。校验面 = `.md` 文档，无时间块的活文档合法，非 `.md` 资产不在本制范围"),
+    ("R6", "image-outside-vault", "图随文档走：文档引用的图片（`![](…)` / `![[…]]` / `<img src>`）必须是与文档同住 vault 的真实文件，用 vault 相对路径引用；绝对路径 / `file://` / `~` / `../` 越出 vault / http(s) 外链图床 / vault 内不存在 = 违规（禁止 reports-evidence、worktree、`/tmp`、`~/.stand/uploads|evidence` 这类会消失的位置）。行内豁免 `<!-- wiki-img-exempt: 理由 -->` 单条计数并显形，无整文件豁免"),
+    ("R7", "doc-color", "彩色克制（作者裁定 2026-11-05 11:09「适当使用彩色字体」）：内联 HTML 着色 `<span style=\"color:…\">` 一篇 ≤4 处（建议 ≤3），只准三个固定语义色——蓝 #5e6ad2 = 结论/判定、红 #d0342c = 风险/警告、绿 #12874a = 已验证/通过；单处着色不得覆盖整段（>120 字符）；一般强调用加粗，不许满篇彩色"),
+    ("R8", "doc-indent", "正文缩进（作者裁定 2026-11-05 11:09「以及缩进」）：正文段落首行以 `&emsp;&emsp;` 起行（`&emsp;` 是 HTML 实体，Obsidian 与 marked 两渲染面都稳定生效；两个半角空格会被折叠、四个半角空格变代码块）。标题 / 列表 / 表格 / 引用 / 围栏 / 图片行 / HTML 块豁免；可视长度 <40 字符的短行豁免"),
+    ("R9", "abbrev-expansion", "缩写铁律（作者裁定 2026-11-05 11:11「GCR、ICRP 这种缩写、机构缩写也要用词条解释」）：全大写 2-6 字母 token 与带点专有缩写（E.C. / U.S.）在**文档首次出现处**必须给出全称（前后括注或破折线式）或挂词条链接 `[[缩写]]`；单位与通用技术词按 SKILL.md 的允许清单标记块豁免；围栏代码块（含 Mermaid / HTML / SVG 样张）、行内代码、HTML 标签属性、URL、human 围栏内不扫"),
 )
 
 # ── R5 文档命名制（作者令 2026-11-04 18:12；条款原文见 wiki-docs SKILL.md
@@ -107,6 +132,116 @@ DOC_NAMING_OK_RE = re.compile(
 )
 DOC_NAMING_OLD_RE = re.compile(r"^\d{8}(?:_|\b)")
 DOC_NAMING_BLAND_TOPICS = {"report", "doc", "docs", "note", "notes", "tmp", "temp", "untitled", "draft", "stage", "output"}
+
+
+# ── R6 图随文档走（图片物理位置；作者令 2026-11-05 09:24「文档相关的图片要放
+# 文档里」；条款原文见 wiki-docs SKILL.md 强制条款 ⑥）───────────────────
+#
+# 抓取三种图片引用形态：markdown `![alt](path)`、wikilink 内嵌 `![[path]]`、
+# HTML `<img src="path">`。断言四条：
+#   ① vault 相对路径（非绝对、非 `~`、非 `file://`、非 http(s)）；
+#   ② 解析后落在 vault 内（`../` 不得逃出 docs/）；
+#   ③ 文件真实存在（引用即断链 = 违规）；
+#   ④ 自包含 `data:` 内联算通过（字节就在文档里，无外链）。
+# 解析语义两制并行：wikilink 内嵌按 Obsidian 语义（vault 相对 / 全库唯一 basename），
+# markdown / HTML 按文档所在目录相对（再回退 vault 相对 / 唯一 basename），
+# 与别处链接解析同一套宽严。
+#
+# 行内豁免：`<!-- wiki-img-exempt: 理由 -->`，与本条图片引用同行或紧邻上一行，
+# 理由非空才生效；逐条计数并在输出里显形（悬空标注——标了但该行无图片引用——
+# 同样打出，杜绝「整文件豁免」的错觉）。
+
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".bmp", ".avif", ".ico", ".tif", ".tiff"}
+MDIMAGE_RE = re.compile(r"!\[([^\]]*)\]\(\s*([^)\s]+)(?:\s+[\"'][^\"']*[\"'])?\s*\)")
+IMG_TAG_SRC_RE = re.compile(r"<img\b[^>]*?\bsrc\s*=\s*([\"']?)([^\"'\s>]+)\1", re.IGNORECASE)
+IMG_EXEMPT_RE = re.compile(r"<!--\s*wiki-img-exempt\s*:\s*(.*?)\s*-->")
+IMAGE_SCHEME_RE = re.compile(r"^([A-Za-z][A-Za-z0-9+.\-]*):(?://)?")
+IMAGE_DATA_URI_RE = re.compile(r"^data:", re.IGNORECASE)
+
+# 行内代码 `…` 里的图片语法是「语法样张」，不渲染成图 ⇒ 不算图片引用
+# （链接面保持历史语义不变：prose 里的裸 [[…]] 仍按真链接解析）。
+INLINE_CODE_RE = re.compile(r"(`+)(.+?)\1", re.DOTALL)
+
+# 易失位置提示（命中只在违规理由里点名，帮助整改时认位置）
+VOLATILE_IMAGE_HINTS = (
+    ("reports-evidence/", "仓内 reports-evidence/（随仓库/工作树清理消失）"),
+    (".nebflow/worktrees/", "worktree 路径（工作树一收就断）"),
+    ("/tmp/", "/tmp 临时目录（重启即失）"),
+    (".stand/uploads/", "~/.stand/uploads（上传缓存，会被清理）"),
+    (".stand/evidence/", "~/.stand/evidence（证据区，会被清理）"),
+)
+
+# 图外挂提示（info 面，不计违规）：正文/围栏里点名 vault 外证据树的路径。
+# 这类文档「图跟着仓库走」的风险最高——本批只提示，不改文档。
+VOLATILE_PATH_RE = re.compile(
+    r"(?:reports-evidence/|\.nebflow/worktrees/|\.stand/uploads/|\.stand/evidence/)"
+    r"[^\s`\"'()<>|，。、：；（）【】「」《》]*"
+)
+
+
+# ── R7 彩色 / R8 缩进 / R9 缩写（文档排版与缩写批；作者裁定 2026-11-05
+# 11:09「适当使用彩色字体，以及缩进」与 11:11「补充词条包含的范围，GCR、
+# ICRP 这种缩写，机构缩写，也需要用词条解释」；条款原文见 wiki-docs
+# SKILL.md 强制条款 ⑦（排版）与 ⑧（缩写铁律））──────────────────────
+#
+# 三件事的机器面：
+#   R7 彩色  —— 居中/额度：一篇 ≤4 处（建议 ≤3），只准三个语义色，单处不覆盖整段。
+#                颜色语义钉死，是因为颜色一旦自由发散就变成噪音：读者要在
+#                「红色 = 出事了」上形成条件反射，就不能有第二种红。
+#   R8 缩进  —— 段首 `&emsp;&emsp;`。渲染器实测（引擎自带 marked v12.0.2）：
+#                两个半角空格 → `<p>  文本</p>`，HTML 折叠空白 ⇒ 视觉上塌掉；
+#                四个半角空格 ⇒ `<pre><code>` 代码块（经典陷阱）；
+#                `&emsp;&emsp;` ⇒ 实体原样留在 `<p>` 里，全角两格缩进稳定生效，
+#                Obsidian（同为 HTML 实体解码）同理。
+#   R9 缩写  —— 全大写 2-6 字母 token + 带点专有缩写（`E.C.` / `U.S.`；`e.g.` /
+#                `i.e.` 全小写天然不匹配）在文档首次出现处必须展开或挂词条。
+#                允许清单不藏脚本里：从 `../SKILL.md` 的标记块读取（见
+#                ALLOWLIST_* 常量），脚本只做解析与报数。
+#
+# 生效面（存量过渡）：R7-R9 是 2026-11-05 之后的新制，全库 400 篇存量文档
+# 不可能同批整改。判定分两档——
+#   · 硬查（计入 violations、影响退出码）：阶段件文件名时间块 ≥
+#     STYLE_CONTRACT_STAMP、或 frontmatter 显式声明 `style:`（作者/新文档主动
+#     入制）、或 --strict-style（全库整改时用）。
+#   · advisory（打印但不计违规、不影响退出码）：其余存量文档。改到哪篇，
+#     哪篇入制——「fix what you touch」。
+
+STYLE_CONTRACT_STAMP = "20261105_111100"
+
+# 固定语义色（三色都实测过亮/暗两主题对比度，见 SKILL.md 条款 ⑦）
+DOC_COLOR_PALETTE = {
+    "#5e6ad2": "结论/判定（蓝，插件主强调色，白底 4.70:1 / 暗底 3.85:1）",
+    "#d0342c": "风险/警告（红，白底 4.99:1 / 暗底 3.62:1）",
+    "#12874a": "已验证/通过（绿，白底 4.57:1 / 暗底 3.95:1）",
+}
+DOC_COLOR_BUDGET = 4          # 硬顶（建议 ≤3）
+DOC_COLOR_SPAN_MAX = 120      # 单处着色覆盖的字符上限（超了就是整段刷色）
+COLOR_STYLE_ATTR_RE = re.compile(r"""style\s*=\s*(["'])(.*?)\1""", re.IGNORECASE | re.DOTALL)
+COLOR_VALUE_RE = re.compile(r"(?<![-\w])color\s*:\s*([^;\s\"'!]+)", re.IGNORECASE)
+HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+INDENT_MARKER = "&emsp;&emsp;"
+INDENT_RE = re.compile(r"^(?:&emsp;){2,}|^\u3000{2,}")
+INDENT_MIN_CHARS = 40         # 短于这个可视长度的行不当「正文段落」（标签行/清单行）
+INDENT_BARE_SPACES_RE = re.compile(r"^ {4,}\S")   # 四空格 = markdown 代码块的陷阱
+INDENT_EXEMPT_START_RE = re.compile(
+    r"^\s*(?:#{1,6}\s|[-*+]\s|\d+[.)]\s|>|\||<|!\[|\[\[|\$\$|-{3,}\s*$|\*{3,}\s*$|<!--)"
+)
+
+# 缩写 token：全大写 2-6 字母（不吃 `SiPM`/`MeV` 这类大小写混排，也不用为它们
+# 维护清单）；带点专有缩写 `E.C.` / `U.S.` / `R.B.E.`（`e.g.`/`i.e.` 是小写，不匹配）。
+ABBREV_CAPS_RE = re.compile(r"(?<![A-Za-z0-9_])([A-Z][A-Z]{1,5})(?![A-Za-z0-9_])")
+ABBREV_DOTTED_RE = re.compile(r"(?<![A-Za-z0-9_.])((?:[A-Z]\.){2,5})(?![A-Za-z0-9_])")
+URL_RE = re.compile(r"(?:https?|ftp)://\S+|www\.\S+", re.IGNORECASE)
+FILE_EXT_TAIL = ("md", "markdown", "json", "jsonl", "py", "js", "mjs", "ts", "html",
+                 "htm", "svg", "png", "jpg", "jpeg", "gif", "txt", "yml", "yaml",
+                 "sh", "scala", "java", "css", "csv", "pdf", "toml")
+
+# 允许清单：写在规范文件本身（`../SKILL.md` 的标记块），脚本只负责读。
+ALLOWLIST_START = "<!-- wiki-abbrev-allowlist:start -->"
+ALLOWLIST_END = "<!-- wiki-abbrev-allowlist:end -->"
+ALLOWLIST_DEFAULT_DOC = Path(__file__).resolve().parent.parent / "SKILL.md"
+ALLOWLIST_TOKEN_RE = re.compile(r"^[A-Za-z][A-Za-z0-9.]*$")
 
 
 # ── 落位解析：项目名 → 文档根（作者令 2026-11-03 20:02，单源）────────────
@@ -161,6 +296,14 @@ class Doc:
         self.links = []                   # [(target, anchor|None, kind, line)]
         self.body_lines = []              # [(line_no, text)]（front-matter 之后、fence 屏蔽后的行）
         self.glossary_entries = []        # 仅词表文档使用：[(term, block_id, line)]
+        self.image_refs = []              # R6：[{target, syntax, line, exempt|None}]
+        self.image_exemptions = []        # R6：全部豁免标注 [(line, reason)]（含悬空标注）
+        self.volatile_mentions = []       # R6 info 面：vault 外证据树路径点名 [(line, path)]
+        self.human_lines = set()          # 行号集合：```human 围栏内的行（人面子 = 内容面）
+        self.color_spans = []             # R7：[{line, color, text}]
+        self.abbrev_occ = []              # R9：[{line, col, token, cited, expanded, hit}]
+        self.lower_words = set()          # R9：本档出现过小写形态的词（全大写 = 强调，不是缩写）
+        self.para_starts = []             # R8：正文段落首行 [(line, text)]
 
 
 def path_of(root, rel):
@@ -207,6 +350,32 @@ def fenced_mask(lines):
             mask[i] = True
             continue
         mask[i] = opened or bool(m)
+    return mask
+
+
+def human_fence_mask(lines):
+    """` ```human ` 围栏内的行（人面子是内容面，不是代码面）。
+
+    R6 用它把围栏屏蔽「开个口」：报告头的关键图（条款 ⑤ 要求 ≥1 张，且必须写在
+    human 围栏里）正是最该被查位置的图——一律当代码样张跳过就等于漏掉主图。
+    其它围栏（```markdown / ```bash / 无语言）仍是代码样张面，不产生图片引用。"""
+    mask = [False] * len(lines)
+    state = ""          # "" 行外 | "human" 人面子围栏内 | "other" 其它围栏内
+    marker = ""
+    for i, line in enumerate(lines):
+        m = FENCE_RE.match(line)
+        if not state:
+            if m:
+                info = line.strip()[len(m.group(1)):].strip().lower()
+                state = "human" if info.startswith("human") else "other"
+                marker = m.group(1)[:3]
+            continue
+        if m and m.group(1).startswith(marker):
+            state = ""
+            marker = ""
+            continue
+        if state == "human":
+            mask[i] = True
     return mask
 
 
@@ -265,7 +434,296 @@ def parse_doc(rel, text):
                 dest = dest[:hash_idx]
             doc.links.append((dest.strip(), anchor, "link", line_no))
     doc.title = title
+    human = human_fence_mask(lines)
+    doc.human_lines = {i + 1 for i, flag in enumerate(human) if flag}
+    collect_image_refs(doc, lines, mask, body_start)
+    markdown = rel.lower().endswith((".md", ".markdown"))
+    if markdown:
+        doc.lower_words = collect_lower_words(text)
+        collect_color_spans(doc, lines, mask)
+        doc.para_starts = paragraph_starts(doc)
+        collect_abbrev_occurrences(doc, lines, mask)
     return doc
+
+
+def collect_lower_words(text):
+    """本档里以「含小写字母」形态出现过的词（大写归一）→ {TOKEN}。
+
+    用途：`ALL` / `PASS` / `HEAD` / `SKILL` 这类全大写只是强调或文件名残片，同一份
+    文档里往往同时有小写形态（all / pass / head / skill）——那是英语单词，不是缩写，
+    不能要求它「首次出现给全称」。判定只看同档自证，不引入外部词典。"""
+    words = set()
+    for m in re.finditer(r"(?<![A-Za-z0-9_])([A-Za-z][A-Za-z']{1,5})(?![A-Za-z0-9_])", text):
+        word = m.group(1)
+        if word != word.upper():
+            words.add(word.upper())
+    return words
+
+
+def collect_image_refs(doc, lines, mask, body_start):
+    """R6：抓文档里的图片引用（md `![]()` / wikilink 内嵌 `![[…]]` / `<img src>`）。
+
+    fence 屏蔽：代码围栏里的示例不算引用（语法样张不是真图）。
+    豁免标注 `<!-- wiki-img-exempt: 理由 -->` 同行或紧邻上一行生效（理由非空）；
+    全部标注都登记进 doc.image_exemptions，悬空标注在输出里单列。"""
+    exempt_by_line = {}
+    human = human_fence_mask(lines)
+
+    def content_line(i):
+        """R6 的扫描面：非围栏行，或 human 围栏内的行（人面子是内容面）。"""
+        return (not mask[i]) or human[i]
+
+    for i in range(body_start, len(lines)):
+        if not content_line(i):
+            continue
+        for m in IMG_EXEMPT_RE.finditer(lines[i]):
+            reason = m.group(1).strip()
+            if reason:
+                exempt_by_line[i + 1] = reason
+                doc.image_exemptions.append((i + 1, reason))
+    for i in range(body_start, len(lines)):
+        if not content_line(i):
+            continue
+        line = lines[i]
+        line_no = i + 1
+        scan = INLINE_CODE_RE.sub(lambda m: " " * len(m.group(0)), line)  # 行内代码样张不算引用
+        found = []
+        for m in WIKILINK_RE.finditer(scan):
+            if m.group(1) != "!":
+                continue
+            target = m.group(2).split("|")[0].split("#")[0].strip()
+            if Path(target).suffix.lower() in IMAGE_EXTENSIONS:
+                found.append((target, "wikilink"))
+        for m in MDIMAGE_RE.finditer(scan):
+            found.append((m.group(2).strip(), "markdown"))
+        for m in IMG_TAG_SRC_RE.finditer(scan):
+            found.append((m.group(2).strip(), "html"))
+        for target, syntax in found:
+            exempt = exempt_by_line.get(line_no) or exempt_by_line.get(line_no - 1)
+            doc.image_refs.append({"target": target, "syntax": syntax,
+                                   "line": line_no, "exempt": exempt})
+    # info 面（不计违规）：正文与围栏里的 vault 外证据树路径（取证入口常写进代码块）
+    for i in range(body_start, len(lines)):
+        for m in VOLATILE_PATH_RE.finditer(lines[i]):
+            doc.volatile_mentions.append((i + 1, m.group(0)))
+
+
+# ── R7 彩色 / R8 缩进 / R9 缩写：解析面采集 ──────────────────────────
+
+def visible_len(text):
+    """段落可视长度：去掉缩进实体与行内标记，CJK 按 1 字符计。"""
+    t = INDENT_RE.sub("", text)
+    t = WIKILINK_RE.sub(lambda m: m.group(2).split("|")[-1], t)
+    t = MDIMAGE_RE.sub("", t)
+    t = HTML_TAG_RE.sub("", t)
+    t = t.replace("`", "")
+    t = re.sub(r"[*_]", "", t)
+    t = re.sub(r"\s+", " ", t)
+    return len(t.strip())
+
+
+def paragraph_starts(doc):
+    """正文段落首行（R8 判定面）→ [(line_no, text)]。
+
+    段落首行 = 非空、非结构性行（标题 / 列表 / 表格 / 引用 / 围栏 / 图片 / HTML /
+    分隔线）、且不是上一行的续行。人面子（```human 围栏）自带卡片版式，不套段首缩进。
+    四空格起行的行单独作为「段落」收进来——它会被渲染成代码块，正是要报的形态。"""
+    starts = []
+    prev_no = None
+    prev_open = False       # 上一行是否让本行成为「续行」
+    prev_blank = True
+    for line_no, text in doc.body_lines:
+        stripped = text.strip()
+        contiguous = prev_open and prev_no is not None and line_no == prev_no + 1
+        prev_no = line_no
+        if not stripped:
+            prev_open, prev_blank = False, True
+            continue
+        if line_no in doc.human_lines:
+            prev_open, prev_blank = False, False
+            continue
+        if HEADING_RE.match(text) or INDENT_EXEMPT_START_RE.match(text):
+            prev_open, prev_blank = False, False
+            continue
+        bare_spaces = bool(INDENT_BARE_SPACES_RE.match(text))
+        if text[:1].isspace() and not bare_spaces:
+            prev_open, prev_blank = True, False      # 列表续行 / 缩进续行
+            continue
+        if contiguous and not bare_spaces:
+            prev_open, prev_blank = True, False      # 段落续行
+            continue
+        if bare_spaces and not prev_blank:
+            prev_open, prev_blank = True, False      # 列表项内的四空格续行
+            continue
+        starts.append((line_no, text))
+        prev_open, prev_blank = True, False
+    return starts
+
+
+def collect_color_spans(doc, lines, mask):
+    """R7：抓内联 HTML 着色（`style="…color:…"`）→ [{line, color, text}]。
+
+    围栏里的示例不扫（语法样张），但 human 围栏算内容面（结论/风险着色正写在里面）。
+    行内代码里的样式样张同样跳过。"""
+    for i in range(len(lines)):
+        if mask[i] and (i + 1) not in doc.human_lines:
+            continue
+        scan = INLINE_CODE_RE.sub(lambda m: " " * len(m.group(0)), lines[i])
+        for attr in COLOR_STYLE_ATTR_RE.finditer(scan):
+            for cm in COLOR_VALUE_RE.finditer(attr.group(2)):
+                rest = scan[attr.end():]
+                close = rest.find("</span>")
+                span_text = rest[:close] if close >= 0 else rest
+                doc.color_spans.append({
+                    "line": i + 1,
+                    "color": cm.group(1).strip(),
+                    "text": strip_inline_markup(HTML_TAG_RE.sub("", span_text)),
+                })
+
+
+def list_abbrev_tokens(part):
+    """片段里的缩写 token（大写归一、带点缩写去尾点）。"""
+    out = []
+    for regex in (ABBREV_CAPS_RE, ABBREV_DOTTED_RE):
+        for m in regex.finditer(part):
+            out.append(m.group(1).upper().rstrip("."))
+    return out
+
+
+def mask_line_for_abbrev(text):
+    """→ (扫描面文本, {token: 首次列})。
+
+    扫描面 = 原文把 wikilink / 行内代码 / HTML 标签 / URL 全部打成等长空格——
+    这几类的字符是语法或地址，不是「读者要理解的概念」。
+    wikilink 里的 token 单列进 cited（`[[GCR]]` 就是挂词条链接，不是裸用）。"""
+    cited = {}
+
+    def blank_wikilink(m):
+        inner = m.group(2)
+        target, _sep, display = inner.partition("|")
+        for part in (target, display):
+            for tok in list_abbrev_tokens(part):
+                cited.setdefault(tok, m.start())
+        return " " * len(m.group(0))
+
+    masked = WIKILINK_RE.sub(blank_wikilink, text)
+    masked = INLINE_CODE_RE.sub(lambda m: " " * len(m.group(0)), masked)
+    masked = HTML_TAG_RE.sub(lambda m: " " * len(m.group(0)), masked)
+    masked = URL_RE.sub(lambda m: " " * len(m.group(0)), masked)
+    return masked, cited
+
+
+def abbrev_is_noise(masked, start, end):
+    """文件名 / 路径段 / 复合标识符 / 全大写短语里的 token 不算缩写使用处。
+
+    「全大写短语」（`IRON RULES`、`KEY NUMBERS`、`OPEN ITEMS`）是强调式的标题词，
+    拆开要求展开反而错；真正的缩写几乎不会成对连写出场。"""
+    if masked[end:end + 1] == ".":
+        tail = masked[end + 1:end + 8].strip().lower()
+        for ext in FILE_EXT_TAIL:
+            if tail.startswith(ext) and (len(tail) == len(ext) or not tail[len(ext)].isalnum()):
+                return True
+    prev = masked[start - 1:start] if start else ""
+    if prev in ("/", "\\", "-", "_", "."):
+        return True
+    if masked[end:end + 1] in ("/", "\\"):
+        return True
+    if re.search(r"(?<![A-Za-z0-9_])[A-Z][A-Z]{1,5}\s+$", masked[:start]):
+        return True
+    if re.match(r"^\s+[A-Z][A-Z]{1,5}(?![A-Za-z0-9_])", masked[end:]):
+        return True
+    return False
+
+
+def abbrev_expanded(line, start, end):
+    """首现处是否给了全称：右括注 / 右破折线式 / 左多词括注（`Galactic Cosmic Rays（GCR）`）。"""
+    tail = line[end:]
+    if re.match(r"^\s*[（(][^（()）]{2,}[）)]", tail):
+        return True
+    if re.match(r"^\s*(?:[—–]{1,2}|[:：])\s*\S{2,}", tail):
+        return True
+    head = line[:start]
+    if re.search(r"[A-Za-z][A-Za-z0-9.\-]*(?:\s+[A-Za-z0-9.\-]+)+\s*[（(]\s*$", head):
+        return True                      # 拉丁全称（≥2 词）+ 括注
+    if re.search(r"[\u4e00-\u9fff]{4,30}\s*[（(]\s*$", head):
+        return True                      # 中文全称（≥4 字）+ 括注
+    return False
+
+
+def collect_abbrev_occurrences(doc, lines, mask):
+    """R9：抓全部缩写出现（裸用与 wikilink 引用都算出现，取首次出现判定）。"""
+    for line_no, text in doc.body_lines:
+        if line_no in doc.human_lines:
+            continue                     # 人面子另有术语禁令（条款 ⑤），R9 不叠罚
+        if HEADING_RE.match(text):
+            continue                     # 标题不是「使用处」（同 R3 口径）
+        masked, cited = mask_line_for_abbrev(text)
+        occ = []
+        for regex in (ABBREV_CAPS_RE, ABBREV_DOTTED_RE):
+            for m in regex.finditer(masked):
+                if abbrev_is_noise(masked, m.start(), m.end()):
+                    continue
+                token = m.group(1).upper().rstrip(".")
+                occ.append((m.start(), token, token in cited,
+                            abbrev_expanded(masked, m.start(), m.end())))
+        for token, pos in cited.items():
+            occ.append((pos, token, True, False))
+        for pos, token, is_cited, expanded in sorted(occ, key=lambda t: t[0]):
+            doc.abbrev_occ.append({"line": line_no, "col": pos, "token": token,
+                                   "cited": is_cited, "expanded": expanded})
+
+
+# ── 允许清单（写在 SKILL.md，脚本只读）与生效面判定 ─────────────────
+
+def load_abbrev_allowlist(doc_path=None, extra=()):
+    """从规范文件的标记块读缩写允许清单 → {TOKEN: 分组标签}。
+
+    清单是**规范文件的一部分**（作者要求：允许清单写进规范、不藏在脚本里），
+    脚本缺文件或缺标记块时打 WARN 到 stderr 并以空清单继续（失败要响，不静默）。"""
+    path = Path(doc_path) if doc_path else ALLOWLIST_DEFAULT_DOC
+    allow = {}
+    if not path.is_file():
+        print(f"WARN: 缩写允许清单文件不存在：{path}（R9 按空清单判定）", file=sys.stderr)
+    else:
+        text = read_text(path) or ""
+        block = re.search(re.escape(ALLOWLIST_START) + r"(.*?)" + re.escape(ALLOWLIST_END),
+                          text, re.DOTALL)
+        if not block:
+            print(f"WARN: {path} 缺缩写允许清单标记块（{ALLOWLIST_START} … "
+                  f"{ALLOWLIST_END}），R9 按空清单判定", file=sys.stderr)
+        else:
+            group = "未分组"
+            for raw in block.group(1).splitlines():
+                line = raw.strip()
+                if not line or line.startswith("```"):
+                    continue
+                if line.startswith("#"):
+                    group = line.lstrip("#").strip()
+                    continue
+                for tok in re.split(r"[\s,，、;；]+", line):
+                    tok = tok.strip()
+                    if tok and ALLOWLIST_TOKEN_RE.match(tok):
+                        allow[tok.upper()] = group
+    for tok in extra or ():
+        tok = str(tok).strip()
+        if tok and ALLOWLIST_TOKEN_RE.match(tok):
+            allow[tok.upper()] = "命令行追加"
+    return allow
+
+
+def style_scoped(rel, doc, since=STYLE_CONTRACT_STAMP, strict=False):
+    """R7-R9 的硬查面：新制文档入硬查，存量文档先记 advisory。
+
+    入制条件（任一）：--strict-style 全库整改；frontmatter 显式 `style:`（主动入制）；
+    阶段件文件名时间块 ≥ 契约时刻（`<topic>__20261105_111100__x.md` 起）。"""
+    if strict:
+        return True
+    if "style" in doc.frontmatter:
+        return True
+    m = DOC_NAMING_TIME_RE.search(rel.rsplit("/", 1)[-1])
+    if not m:
+        return False
+    return f"{m.group(1)}_{m.group(2)}" >= since
 
 
 def parse_glossary(doc):
@@ -543,6 +1001,119 @@ def make_resolver(doc_rels):
     return resolve
 
 
+# ── R6 图片位置判定 ──────────────────────────────────────────────────
+
+def vault_file_index(root):
+    """vault 内全部文件的索引 → (文件集合, {小写 basename: [rel…]})。
+    只做存在性判定，不读内容（图片可能很大，只 stat）。"""
+    files = set()
+    by_base = {}
+    base = Path(root)
+    for path in base.rglob("*"):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(base).as_posix()
+        files.add(rel)
+        by_base.setdefault(posixpath.basename(rel).lower(), []).append(rel)
+    return files, by_base
+
+
+def image_candidates(rel, target, syntax):
+    """引用 → 候选 vault 相对路径（按解析制排序）。
+    wikilink 内嵌 = Obsidian 语义：先 vault 相对，再文档同目录；
+    markdown / HTML = 文档所在目录相对，再 vault 相对。`%20` 等百分号编码先解码。"""
+    t = unquote(target.strip())
+    t = t.split("#", 1)[0].split("?", 1)[0].strip()
+    doc_dir = posixpath.dirname(rel)
+    if syntax == "wikilink":
+        order = [t, posixpath.join(doc_dir, t)]
+    else:
+        order = [posixpath.join(doc_dir, t), t]
+    out = []
+    for cand in order:
+        norm = posixpath.normpath(cand)
+        if norm in (".", ""):
+            continue
+        if norm not in out:
+            out.append(norm)
+    return t, out
+
+
+def volatile_hint(target):
+    """命中已知易失位置时给一句点名（整改时知道该搬哪儿）。"""
+    low = target.lower()
+    for needle, why in VOLATILE_IMAGE_HINTS:
+        if needle in low:
+            return f"（命中易失位置：{why}）"
+    return ""
+
+
+def classify_image_ref(rel, target, syntax, vault_files, by_base, vault_abs):
+    """→ (verdict, detail)；verdict = "ok" | "violation"。
+    违规 detail 就是输出里的「失败原因」，逐类区分（绝对路径 / 越出 vault /
+    外链 / 家目录 / 协议 / 不存在）。"""
+    raw = target.strip()
+    if not raw:
+        return ("violation", "空图片引用（引用目标为空）")
+    low = raw.lower()
+    if IMAGE_DATA_URI_RE.match(raw):
+        return ("ok", "data: 内联图（字节随文档，自包含）")
+    if low.startswith(("http://", "https://")) or raw.startswith("//"):
+        return ("violation",
+                "外链图床/CDN 引用（离线优先不可依赖）——先把图落一份进 vault，正文只引 vault 内副本并注明来源"
+                + volatile_hint(raw))
+    scheme = IMAGE_SCHEME_RE.match(raw)
+    if scheme and scheme.group(1).lower() != "file":
+        return ("violation", f"非本地协议 `{scheme.group(1)}:` 的图片引用——图片必须是 vault 内的本地文件")
+    if scheme:  # file:// —— 按绝对路径判定（它一定是绝对路径）
+        return classify_absolute_image(raw[len("file:"):], raw, vault_abs)
+    if raw.startswith("~"):
+        return ("violation",
+                "`~` 家目录路径（换机器/换用户即断链）——图片必须落进 vault，用 vault 相对路径引用"
+                + volatile_hint(raw))
+    if raw.startswith("/") or re.match(r"^[A-Za-z]:[\\/]", raw):
+        return classify_absolute_image(raw, raw, vault_abs)
+    _t, cands = image_candidates(rel, raw, syntax)
+    for cand in cands:
+        if cand.startswith("../") or cand == "..":
+            continue
+        if cand in vault_files:
+            return ("ok", cand)
+    if cands and all(c.startswith("../") or c == ".." for c in cands):
+        return ("violation",
+                "相对路径 `../` 越出 vault——图必须放在 `<vault>/attachments/` 或 `<vault>/assets/` 里，"
+                "用 vault 相对路径引用" + volatile_hint(raw))
+    base = posixpath.basename(cands[0] if cands else raw).lower()
+    hits = by_base.get(base) or []
+    if hits:
+        return ("ok", hits[0])  # 全库唯一/多处 basename 命中都算在 vault 内（够判定「图在不在库里」）
+    return ("violation",
+            "vault 内不存在该图片文件（死引用：换机器/清工作树后必然断链）——先把图落进 vault 再引用"
+            + volatile_hint(raw))
+
+
+def classify_absolute_image(path, raw, vault_abs):
+    """绝对路径：即便恰好落在本 vault 也不合规（换机器/换 dataRoot 即断链）。"""
+    try:
+        resolved = Path(path).expanduser().resolve()
+    except (OSError, RuntimeError):
+        resolved = None
+    inside = False
+    if resolved is not None:
+        try:
+            resolved.relative_to(vault_abs)
+            inside = True
+        except ValueError:
+            inside = False
+    if inside:
+        return ("violation",
+                "绝对路径（虽落在本 vault，换机器/换 dataRoot 即断链）——改用 vault 相对路径"
+                + volatile_hint(raw))
+    return ("violation",
+            "绝对路径且落在 vault 外——图片必须搬进 vault，正文用 vault 相对路径引用"
+            + volatile_hint(raw))
+
+
 # ── 校验 ─────────────────────────────────────────────────────────────
 
 def term_regex(term):
@@ -564,7 +1135,8 @@ def first_occurrence(doc, regex):
     return None
 
 
-def check(root, docs, resolve, glossary_rel, exclude_glossary_check, terms_by_rel=None, resolve_term=None):
+def check(root, docs, resolve, glossary_rel, exclude_glossary_check, terms_by_rel=None,
+          resolve_term=None, style_opts=None, advisories=None):
     violations = []
 
     def add(rule, file, line, detail):
@@ -711,6 +1283,90 @@ def check(root, docs, resolve, glossary_rel, exclude_glossary_check, terms_by_re
                 add("doc-naming", rel, 1,
                     f"topic「{m.group('topic')}」是空词，不构成主题——用一句话说清这份文档是什么"
                     "（小写 kebab 或原样中文），空词不得单独成题")
+    # R6 — 图随文档走：图片必须是 vault 内真实文件，且用 vault 相对路径引用
+    vault_files, by_base = vault_file_index(root)
+    vault_abs = Path(root).resolve()
+    for rel, doc in sorted(docs.items()):
+        for ref in doc.image_refs:
+            if ref["exempt"]:
+                continue  # 行内豁免：单独计数、输出里显形（不是静默跳过）
+            status, detail = classify_image_ref(rel, ref["target"], ref["syntax"],
+                                                vault_files, by_base, vault_abs)
+            if status != "ok":
+                add("image-outside-vault", rel, ref["line"],
+                    f"`{ref['target']}` → {detail}")
+
+    # R7 彩色 / R8 缩进 / R9 缩写（排版与缩写批）——新制文档硬查，存量先记 advisory
+    style_opts = style_opts or {}
+    if style_opts.get("enabled", True):
+        since = style_opts.get("since") or STYLE_CONTRACT_STAMP
+        strict = bool(style_opts.get("strict"))
+        allow = style_opts.get("allow") or {}
+        stats = style_opts.setdefault("stats", {})
+        for key in ("color", "paragraph", "abbrev", "exempt", "wordform", "docs_hard", "docs_legacy"):
+            stats.setdefault(key, 0)
+        for rel, doc in sorted(docs.items()):
+            if not rel.lower().endswith((".md", ".markdown")):
+                continue          # html 自带 CSS，nbsp 缩进制不适用
+            scoped = style_scoped(rel, doc, since, strict)
+            stats["docs_hard" if scoped else "docs_legacy"] += 1
+
+            def emit(rule, line, detail, _scoped=scoped, _rel=rel):
+                if _scoped:
+                    add(rule, _rel, line, detail)
+                elif advisories is not None:
+                    advisories.append({"rule": rule, "file": _rel, "line": line,
+                                       "detail": detail, "scope": "legacy"})
+
+            # R7 — 彩色：额度 / 语义色 / 跨度
+            spans = doc.color_spans
+            stats["color"] += len(spans)
+            for sp in spans:
+                value = sp["color"].strip().lower()
+                if value not in DOC_COLOR_PALETTE:
+                    emit("doc-color", sp["line"],
+                         f"非语义色 `{sp['color']}`——彩色语义固定：蓝 #5e6ad2 结论/判定、"
+                         "红 #d0342c 风险/警告、绿 #12874a 已验证/通过；一般强调用加粗")
+                elif len(sp["text"]) > DOC_COLOR_SPAN_MAX:
+                    emit("doc-color", sp["line"],
+                         f"着色覆盖 {len(sp['text'])} 字符（上限 {DOC_COLOR_SPAN_MAX}）——彩色只给"
+                         "关键词句，整段强调用加粗")
+            if len(spans) > DOC_COLOR_BUDGET:
+                emit("doc-color", spans[DOC_COLOR_BUDGET]["line"],
+                     f"彩色 {len(spans)} 处，超出预算（建议 ≤3，硬顶 {DOC_COLOR_BUDGET}）——"
+                     "多出来的收成加粗，颜色留给真正要读者停一下的结论与风险")
+
+            # R8 — 正文段落首行缩进
+            stats["paragraph"] += len(doc.para_starts)
+            for line_no, text in doc.para_starts:
+                if INDENT_RE.match(text) or visible_len(text) < INDENT_MIN_CHARS:
+                    continue
+                if INDENT_BARE_SPACES_RE.match(text):
+                    emit("doc-indent", line_no,
+                         "四空格起行会被渲染成**代码块**（不是缩进）——段首改用 `&emsp;&emsp;`")
+                else:
+                    emit("doc-indent", line_no,
+                         "正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，"
+                         "四个变代码块）")
+
+            # R9 — 缩写首现必须展开或挂词条
+            first = {}
+            for occ in sorted(doc.abbrev_occ, key=lambda o: (o["line"], o["col"])):
+                first.setdefault(occ["token"], occ)
+            stats["abbrev"] += len(first)
+            for token, occ in first.items():
+                if token in allow:
+                    stats["exempt"] += 1
+                    continue
+                if token in doc.lower_words:
+                    stats["wordform"] = stats.get("wordform", 0) + 1
+                    continue
+                if occ["expanded"] or occ["cited"]:
+                    continue
+                emit("abbrev-expansion", occ["line"],
+                     f"缩写「{token}」首现既无全称也无词条链接——写成 `全称（{token}）` / "
+                     f"`{token}（全称）` / `[[{token}]]（全称）`；跨文档通用的词请注册成词条，"
+                     "通用词（单位/技术词）才进 SKILL.md 允许清单")
     return violations
 
 
@@ -885,6 +1541,16 @@ def main():
     ap.add_argument("--include-subvaults", action="store_true",
                     help="#744-B：发现 <sub>/docs 子 vault 并逐 vault 独立校验（R1-R3 各自跑；"
                          "跨 vault 引用记 cross-vault-link 提示，不计违规、不影响退出码）")
+    ap.add_argument("--style-since", default=STYLE_CONTRACT_STAMP,
+                    help=f"R7-R9 硬查的时间界（文件名时间块 ≥ 此值即入硬查；缺省 {STYLE_CONTRACT_STAMP}）")
+    ap.add_argument("--strict-style", action="store_true",
+                    help="R7-R9 全库硬查（存量整改批次用：所有文档都按新制判，不再记 advisory）")
+    ap.add_argument("--skip-style", action="store_true",
+                    help="跳过 R7 彩色 / R8 缩进 / R9 缩写（历史批次对照用）")
+    ap.add_argument("--allowlist", default=None,
+                    help="R9 缩写允许清单文件（缺省 = 本 skill 的 SKILL.md 标记块）")
+    ap.add_argument("--allowlist-extra", action="append", default=[],
+                    help="命令行追加允许 token（可多次；逗号/空白分隔）")
     args = ap.parse_args()
 
     if args.rules:
@@ -938,11 +1604,27 @@ def main():
 
     per_vault = []
     cross_links = []
+    image_readouts = {}
+    image_docs = {}
+    style_readouts = {}
+    abbrev_allow = {} if args.skip_style else load_abbrev_allowlist(
+        args.allowlist, [t for chunk in args.allowlist_extra
+                         for t in re.split(r"[\s,，、;；]+", chunk) if t.strip()])
     for rel, vpath, vdocs, vgloss, vresolve, vatts, vterms, vterm_res in vault_results:
+        stats = {}
+        advisories = []
         violations = check(vpath, vdocs, vresolve, vgloss, exclude_glossary_check=args.skip_concepts,
-                           terms_by_rel=vterms, resolve_term=vterm_res)
+                           terms_by_rel=vterms, resolve_term=vterm_res,
+                           style_opts={"enabled": not args.skip_style, "since": args.style_since,
+                                       "strict": args.strict_style, "allow": abbrev_allow,
+                                       "stats": stats},
+                           advisories=advisories)
         per_vault.append({"vault": rel, "docs": len(vdocs), "violations": violations,
-                          "counts": summarise(violations)})
+                          "counts": summarise(violations), "advisories": advisories,
+                          "style": stats})
+        image_readouts[rel] = image_readout(vdocs)
+        image_docs[rel] = vdocs
+        style_readouts[rel] = stats
         # 跨 vault 引用（info）：本 vault 未解析、但能在其它 vault 解析的链接。
         if len(vault_results) > 1:
             others = {orel: ores for orel, _op, _od, _og, ores, _oa, _t, _tr in vault_results if orel != rel}
@@ -959,9 +1641,15 @@ def main():
 
     if args.json:
         if len(per_vault) == 1:
-            # 无 --include-subvaults：--json 形状与历史逐字节同（机读契约不破）。
-            print(json.dumps({"root": str(root), "violations": per_vault[0]["violations"],
-                              "counts": per_vault[0]["counts"]}, ensure_ascii=False, indent=1))
+            # 无 --include-subvaults：--json 形状与历史逐字节同（机读契约不破）；
+            # 新批的可选面（advisories / style）只在有内容时追加，绿盘输出零变化。
+            payload = {"root": str(root), "violations": per_vault[0]["violations"],
+                       "counts": per_vault[0]["counts"]}
+            if per_vault[0]["advisories"]:
+                payload["advisories"] = per_vault[0]["advisories"]
+            if style_readouts.get("docs"):
+                payload["style"] = style_readouts["docs"]
+            print(json.dumps(payload, ensure_ascii=False, indent=1))
         else:
             print(json.dumps({"root": str(root), "vaults": per_vault,
                               "crossVaultLinks": cross_links,
@@ -993,6 +1681,10 @@ def main():
                 print()
         else:
             print(f"wiki-docs 校验：通过（{root}，{len(docs)} 篇文档，零违规）")
+        print()
+        print_image_readout(violations, image_readouts["docs"], docs=image_docs["docs"])
+        print_style_readout(style_readouts["docs"], per_vault[0]["advisories"],
+                            since=args.style_since, strict=args.strict_style)
         if not glossary_rel:
             print("提示：未发现词表（glossary）——R3 概念首现检查未启用。建 vault 词表：<vault>/glossary.md")
     else:
@@ -1002,6 +1694,10 @@ def main():
             print(head)
             for v in r["violations"]:
                 print(f"  {v['rule']}  {v['file']}:{v['line']}  {v['detail']}")
+            print_image_readout(r["violations"], image_readouts[r["vault"]],
+                                indent="  ", docs=image_docs.get(r["vault"]))
+            print_style_readout(style_readouts.get(r["vault"], {}), r["advisories"],
+                                indent="  ", since=args.style_since, strict=args.strict_style)
             print()
         if cross_links:
             print(f"── 跨 vault 引用（info，{len(cross_links)} 条，不计违规）──")
@@ -1017,6 +1713,98 @@ def summarise(violations):
     for v in violations:
         counts[v["rule"]] = counts.get(v["rule"], 0) + 1
     return counts
+
+
+def image_readout(docs):
+    """R6 读数（人读输出面）→ (图片引用总数, 生效豁免[(rel,line,target,理由)], 悬空标注[(rel,line,理由)])。
+
+    豁免必须逐条显形：作者看得到「跳过了哪几张、为什么」，就不会有整文件豁免的错觉。
+    悬空标注（标了但那行/下一行没有图片引用）单列——标注写错位置就是没豁免。"""
+    total = 0
+    exempt = []
+    orphans = []
+    for rel, doc in sorted(docs.items()):
+        total += len(doc.image_refs)
+        applied = set()
+        for ref in doc.image_refs:
+            if not ref["exempt"]:
+                continue
+            exempt.append((rel, ref["line"], ref["target"], ref["exempt"]))
+            applied.add(ref["line"])
+        for line, reason in doc.image_exemptions:
+            if line in applied or (line + 1) in applied:
+                continue
+            orphans.append((rel, line, reason))
+    return total, exempt, orphans
+
+
+EVIDENCE_HINT_MAX = 20
+
+
+def evidence_hint_lines(docs):
+    """info 面：点名 vault 外证据树路径的文档（「图跟着仓库走」的存量风险面）。
+    不计违规——取证入口写在代码块里本身合法，本批只提示、不动文档。"""
+    hits = []
+    for rel, doc in sorted(docs.items()):
+        if doc.volatile_mentions:
+            hits.append((rel, doc.volatile_mentions))
+    return hits
+
+
+IMAGE_ADVISORY_PRINT_MAX = 20
+STYLE_ADVISORY_PRINT_MAX = 15
+
+
+def print_style_readout(stats, advisories, indent="", since=STYLE_CONTRACT_STAMP, strict=False):
+    """R7/R8/R9 读数（人读输出面）。
+
+    两段：① 扫描面计数（彩色几处 / 段落几段 / 缩写几个 / 允许清单豁免几个 / 硬查几篇）；
+    ② 存量 advisory 明细——**打印但不在违规清单里**，因为新制自 2026-11-05 起生效，
+    全库存量文档不可能同批整改；改到哪篇哪篇入制（fix what you touch），
+    `--strict-style` 是全库整改时的开关。"""
+    if not stats:
+        return
+    hard = stats.get("docs_hard", 0)
+    legacy = stats.get("docs_legacy", 0)
+    scope = "全库硬查（--strict-style）" if strict else f"硬查 {hard} 篇 · 存量 {legacy} 篇"
+    print(f"{indent}排版与缩写（R7-R9）：{scope} · 彩色 {stats.get('color', 0)} 处 · "
+          f"正文段落 {stats.get('paragraph', 0)} 段 · 缩写 {stats.get('abbrev', 0)} 个"
+          f"（允许清单豁免 {stats.get('exempt', 0)} · 同档小写词形 {stats.get('wordform', 0)}）")
+    if not advisories:
+        return
+    by_rule = summarise(advisories)
+    detail = " · ".join(f"{name} {n}" for name, n in sorted(by_rule.items()))
+    print(f"{indent}  存量样式/缩写（advisory，不计违规，时间界 {since}）：{len(advisories)} 条 —— {detail}")
+    for adv in advisories[:STYLE_ADVISORY_PRINT_MAX]:
+        print(f"{indent}    {adv['file']}:{adv['line']}  【{adv['rule']}】{adv['detail']}")
+    if len(advisories) > STYLE_ADVISORY_PRINT_MAX:
+        print(f"{indent}    …（余 {len(advisories) - STYLE_ADVISORY_PRINT_MAX} 条；"
+              f"`--strict-style` 可把存量一并按违规判）")
+
+
+def print_image_readout(violations, readout, indent="", docs=None):
+    total, exempt, orphans = readout
+    n_img = sum(1 for v in violations if v["rule"] == "image-outside-vault")
+    print(f"{indent}图片纪律（R6 image-outside-vault）：图片引用 {total} 处 · 违规 {n_img} 条 · 行内豁免 {len(exempt)} 条")
+    for rel, line, target, reason in exempt:
+        print(f"{indent}  豁免 {rel}:{line}  {target}  ← {reason}")
+    for rel, line, reason in orphans:
+        print(f"{indent}  悬空豁免标注 {rel}:{line}  ← {reason}（该行及下一行无图片引用 ⇒ 未生效）")
+    if docs is None:
+        return
+    hits = evidence_hint_lines(docs)
+    if not hits:
+        return
+    print(f"{indent}  图外挂提示（info，不计违规）：{len(hits)} 篇文档点名 vault 外证据树路径")
+    shown = 0
+    for rel, mentions in hits:
+        if shown >= EVIDENCE_HINT_MAX:
+            print(f"{indent}    …（余 {len(hits) - shown} 篇，见 --json 违规清单外的存量盘点报告）")
+            break
+        line, path = mentions[0]
+        extra = f" 等 {len(mentions)} 处" if len(mentions) > 1 else ""
+        print(f"{indent}    {rel}:{line}  {path}{extra}")
+        shown += 1
 
 
 if __name__ == "__main__":
