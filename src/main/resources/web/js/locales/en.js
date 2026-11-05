@@ -2167,6 +2167,18 @@ export default {
   'canvas.pan': 'Pan (or hold Space)',
   'canvas.a11yZoomLevel': 'Zoom %d%', // mobile gesture batch: mobile-layer image viewer aria-live zoom level (spec §2.8)
   'canvas.imgFailed': 'Failed',
+  // canvas-video-player batch (2026-11-05): accessible names for the custom player
+  // controls (aria-label/title only — the control strip carries no visible copy).
+  'canvas.videoControls': 'Video controls',
+  'canvas.videoPlay': 'Play',
+  'canvas.videoPause': 'Pause',
+  'canvas.videoMute': 'Mute',
+  'canvas.videoUnmute': 'Unmute',
+  'canvas.videoProgress': 'Progress',
+  'canvas.videoVolume': 'Volume',
+  'canvas.videoPip': 'Picture in picture',
+  'canvas.videoFullscreen': 'Fullscreen',
+  'canvas.videoExitFullscreen': 'Exit fullscreen',
   // image-in-doc batch (author report 2026-11-05 "the document only shows paths"):
   // a missing image gets an explicit placeholder (reason + original path).
   'canvas.imgFailTitle': 'Image failed to load',
