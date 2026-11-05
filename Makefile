@@ -82,7 +82,7 @@ quality-gate:
 # 但**本地**这条腿没有它 —— 断环的人跑 `make check` 看不到读数，存量环就是这么红着
 # 过夜的（CI 侧实证见批报告）。CI 那条腿照旧，这里补的是本地防回退。
 # 只跑前端门禁：`make frontend-gates`；全量静态检查：`make check`。
-FRONTEND_GATES := design-tokens msgstyle self-explaining circular fixture-secrets
+FRONTEND_GATES := design-tokens msgstyle self-explaining circular fixture-secrets freeze-state
 
 frontend-gates:
 	@command -v node >/dev/null 2>&1 || { echo "node not found — 前端门禁需要 node"; exit 2; }
@@ -94,6 +94,9 @@ frontend-gates:
 	@# `reports-evidence/` 里出现「敏感键名 ∧ 值 ≥32 字符 ∧ 字符集 ≥3 类」的字面量即红
 	@# （占位词豁免）。判据与运行期脱敏词表同族（`nebflow.shared.SecretKeys`）。
 	node scripts/check-fixture-secrets.mjs
+	@# 冻结态呈现门禁（冻结态误报批 2026-11-05）：可自动恢复的冻结不得写「已冻结」/不得
+	@# 给按钮；需人介入的冻结必须有恢复入口；恢复失败必须可见；迁移日志在场。
+	node scripts/check-freeze-state.mjs
 	@echo "Frontend static gates passed ($(FRONTEND_GATES))."
 
 # ── 视觉回归基线门禁（tests/visual/，2026-11-01 采纳批）──────────────────────
