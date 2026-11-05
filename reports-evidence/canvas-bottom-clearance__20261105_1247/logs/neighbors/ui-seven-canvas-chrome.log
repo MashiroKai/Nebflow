@@ -1,0 +1,84 @@
+PASS  桌面-dark ①a 胶囊右座有 .canvas-pop-btn 且在挂可见  — 26×26 display=flex
+PASS  桌面-dark ①b rect 完全落在胶囊 padding 盒内 + 右缘贴齐内容盒（右差 ≤1）  — pop.right=1236 contentRight=1236 胶囊=180×36
+PASS  桌面-dark ①c 竖直中心 = 胶囊中心（|差| ≤1）  — pop.cy=45 hdr.cy=45
+PASS  桌面-dark ①d DOM 序 = .canvas-title 的同级后继（右座单件，非浮动）  — title.nextElementSibling=canvas-pop-btn
+PASS  桌面-dark ② 文件卡页签：点击独立窗入口 → window.open 恰 1 次（stub 计数路径）  — window.open=1
+PASS  桌面-dark ⑤a 前置：环真开（ring-open + ≥2 环胶囊 + --cr-popw = 32px）  — open=true caps=3 --cr-popw=32px
+PASS  桌面-dark ⑤b #926 无重排：中心覆层文字盒宽 = 常态 .t-name 盒宽 ±1  — ring=107 rest=107
+PASS  桌面-dark ⑥ 长标题（42 字符）单行 + ellipsis + 胶囊宽 ≤ max-width  — t-name 107×17 scroll=450/client=107 ellipsis=ellipsis 胶囊=180 maxW=min(76%, max(220px, 100% - 368px))
+PASS  桌面-dark ⑦ 底部钮 ↔ 顶部钮 尺寸/圆角/内距/图标逐项相等（7 底 × 2 顶）  — .canvas-source-toggle=40×40/r20/pad0/svg18 .canvas-ref-select=40×40/r20/pad0/svg18 .canvas-find-toggle=40×40/r20/pad0/svg18 .canvas-refresh-toggle=40×40/r20/pad0/svg18 .canvas-zoom-btn[0]=40×40/r20/pad0/svg18 .canvas-zoom-btn[1]=40×40/r20/pad0/svg18 .canvas-zoom-btn[2]=40×40/r20/pad0/svg18
+PASS  桌面-dark ⑧a 每颗 chrome 钮计算尺寸 = token（--cv-size-circle-lg=40px / --cv-icon=18px；--cv-size-circle=40px）  — .canvas-source-toggle→40×40 .canvas-ref-select→40×40 .canvas-find-toggle→40×40 .canvas-refresh-toggle→40×40 .canvas-zoom-btn[0]→40×40 .canvas-zoom-btn[1]→40×40 .canvas-zoom-btn[2]→40×40
+PASS  桌面-dark ⑧b 源码零第二份字面量尺寸（宽高声明一律纯 token var(--…)）  — clean
+PASS  桌面-dark ⑩a 正方/正圆（高 = 宽 ±1，7 件）  — all square
+PASS  桌面-dark ⑩b 条内相邻缝一致（8 两两差 ≤1 且 ≥7）  — [8]
+PASS  桌面-dark ⑩c 渲染盒零相交（条/四圆钮两两不相交 + 条内钮与顶层盒全落 pane 内）  — clean
+PASS  桌面-dark ③a 非内容物页签：按钮禁用 + 提示文案 = canvas.cardwinContentOnly（plugins）  — disabled=true title="仅文档、文件等内容物可独立窗口打开，功能面板不支持。" label="仅文档、文件等内容物可独立窗口打开，功能面板不支持。" hint="仅文档、文件等内容物可独立窗口打开，功能面板不支持。"
+PASS  桌面-dark ③b 非内容物页签点击 → window.open 计数 = 0（内容物收口判据不推翻）  — window.open=0
+PASS  桌面-dark 零 pageerror
+PASS  桌面-light ①a 胶囊右座有 .canvas-pop-btn 且在挂可见  — 26×26 display=flex
+PASS  桌面-light ①b rect 完全落在胶囊 padding 盒内 + 右缘贴齐内容盒（右差 ≤1）  — pop.right=1236 contentRight=1236 胶囊=180×36
+PASS  桌面-light ①c 竖直中心 = 胶囊中心（|差| ≤1）  — pop.cy=45 hdr.cy=45
+PASS  桌面-light ①d DOM 序 = .canvas-title 的同级后继（右座单件，非浮动）  — title.nextElementSibling=canvas-pop-btn
+PASS  桌面-light ② 文件卡页签：点击独立窗入口 → window.open 恰 1 次（stub 计数路径）  — window.open=1
+PASS  桌面-light ⑤a 前置：环真开（ring-open + ≥2 环胶囊 + --cr-popw = 32px）  — open=true caps=3 --cr-popw=32px
+PASS  桌面-light ⑤b #926 无重排：中心覆层文字盒宽 = 常态 .t-name 盒宽 ±1  — ring=107 rest=107
+PASS  桌面-light ⑥ 长标题（42 字符）单行 + ellipsis + 胶囊宽 ≤ max-width  — t-name 107×17 scroll=450/client=107 ellipsis=ellipsis 胶囊=180 maxW=min(76%, max(220px, 100% - 368px))
+PASS  桌面-light ⑦ 底部钮 ↔ 顶部钮 尺寸/圆角/内距/图标逐项相等（7 底 × 2 顶）  — .canvas-source-toggle=40×40/r20/pad0/svg18 .canvas-ref-select=40×40/r20/pad0/svg18 .canvas-find-toggle=40×40/r20/pad0/svg18 .canvas-refresh-toggle=40×40/r20/pad0/svg18 .canvas-zoom-btn[0]=40×40/r20/pad0/svg18 .canvas-zoom-btn[1]=40×40/r20/pad0/svg18 .canvas-zoom-btn[2]=40×40/r20/pad0/svg18
+PASS  桌面-light ⑧a 每颗 chrome 钮计算尺寸 = token（--cv-size-circle-lg=40px / --cv-icon=18px；--cv-size-circle=40px）  — .canvas-source-toggle→40×40 .canvas-ref-select→40×40 .canvas-find-toggle→40×40 .canvas-refresh-toggle→40×40 .canvas-zoom-btn[0]→40×40 .canvas-zoom-btn[1]→40×40 .canvas-zoom-btn[2]→40×40
+PASS  桌面-light ⑩a 正方/正圆（高 = 宽 ±1，7 件）  — all square
+PASS  桌面-light ⑩b 条内相邻缝一致（8 两两差 ≤1 且 ≥7）  — [8]
+PASS  桌面-light ⑩c 渲染盒零相交（条/四圆钮两两不相交 + 条内钮与顶层盒全落 pane 内）  — clean
+PASS  桌面-light ③a 非内容物页签：按钮禁用 + 提示文案 = canvas.cardwinContentOnly（plugins）  — disabled=true title="仅文档、文件等内容物可独立窗口打开，功能面板不支持。" label="仅文档、文件等内容物可独立窗口打开，功能面板不支持。" hint="仅文档、文件等内容物可独立窗口打开，功能面板不支持。"
+PASS  桌面-light ③b 非内容物页签点击 → window.open 计数 = 0（内容物收口判据不推翻）  — window.open=0
+PASS  桌面-light 零 pageerror
+PASS  手机-375 ④a body.mobile-layer：.canvas-pop-btn display:none / 零盒  — display=none 0×0
+PASS  手机-375 ④b 胶囊盒与改前相等 ±1（手机档零位移；改前 = 0×0）  — 0×0
+PASS  手机-375 ⑨a 手机档钮面读数 = 改前基线（source/ref/find/refresh/条 逐值相等 ±1）  — source=48×48@16 ref=48×48@72 find=48×48@128 refresh=0×0@0 bar=222×58@16
+PASS  手机-375 ⑨b 手机档条内钮 = 改前（48×48 / svg 20 / r=7px）  — 48×48/svg20/r7px 48×48/svg20/r7px 48×48/svg20/r7px
+PASS  手机-375 ⑩d 手机腿正方/正圆（高 = 宽 ±1，6 件）  — all square
+PASS  手机-375 ⑩e 手机腿条内相邻缝一致（8 两两差 ≤1 且 ≥7）  — [8]
+PASS  手机-375 ⑩f 手机腿渲染盒零相交（条/钮 vs 环带签/小点/左右浮钮/ask）  — clean
+PASS  手机-375 零 pageerror
+PASS  桌面-dark ①a 胶囊右座有 .canvas-pop-btn 且在挂可见  — 26×26 display=flex
+PASS  桌面-dark ①b rect 完全落在胶囊 padding 盒内 + 右缘贴齐内容盒（右差 ≤1）  — pop.right=1236 contentRight=1236 胶囊=180×36
+PASS  桌面-dark ①c 竖直中心 = 胶囊中心（|差| ≤1）  — pop.cy=45 hdr.cy=45
+PASS  桌面-dark ①d DOM 序 = .canvas-title 的同级后继（右座单件，非浮动）  — title.nextElementSibling=canvas-pop-btn
+PASS  桌面-dark ② 文件卡页签：点击独立窗入口 → window.open 恰 1 次（stub 计数路径）  — window.open=1
+PASS  桌面-dark ⑤a 前置：环真开（ring-open + ≥2 环胶囊 + --cr-popw = 32px）  — open=true caps=3 --cr-popw=32px
+PASS  桌面-dark ⑤b #926 无重排：中心覆层文字盒宽 = 常态 .t-name 盒宽 ±1  — ring=107 rest=107
+PASS  桌面-dark ⑥ 长标题（42 字符）单行 + ellipsis + 胶囊宽 ≤ max-width  — t-name 107×17 scroll=450/client=107 ellipsis=ellipsis 胶囊=180 maxW=min(76%, max(220px, 100% - 368px))
+PASS  桌面-dark ⑦ 底部钮 ↔ 顶部钮 尺寸/圆角/内距/图标逐项相等（7 底 × 2 顶）  — .canvas-source-toggle=40×40/r20/pad0/svg18 .canvas-ref-select=40×40/r20/pad0/svg18 .canvas-find-toggle=40×40/r20/pad0/svg18 .canvas-refresh-toggle=40×40/r20/pad0/svg18 .canvas-zoom-btn[0]=40×40/r20/pad0/svg18 .canvas-zoom-btn[1]=40×40/r20/pad0/svg18 .canvas-zoom-btn[2]=40×40/r20/pad0/svg18
+PASS  桌面-dark ⑧a 每颗 chrome 钮计算尺寸 = token（--cv-size-circle-lg=40px / --cv-icon=18px；--cv-size-circle=40px）  — .canvas-source-toggle→40×40 .canvas-ref-select→40×40 .canvas-find-toggle→40×40 .canvas-refresh-toggle→40×40 .canvas-zoom-btn[0]→40×40 .canvas-zoom-btn[1]→40×40 .canvas-zoom-btn[2]→40×40
+PASS  桌面-dark ⑧b 源码零第二份字面量尺寸（宽高声明一律纯 token var(--…)）  — clean
+PASS  桌面-dark ⑩a 正方/正圆（高 = 宽 ±1，7 件）  — all square
+PASS  桌面-dark ⑩b 条内相邻缝一致（8 两两差 ≤1 且 ≥7）  — [8]
+PASS  桌面-dark ⑩c 渲染盒零相交（条/四圆钮两两不相交 + 条内钮与顶层盒全落 pane 内）  — clean
+PASS  桌面-dark ③a 非内容物页签：按钮禁用 + 提示文案 = canvas.cardwinContentOnly（plugins）  — disabled=true title="仅文档、文件等内容物可独立窗口打开，功能面板不支持。" label="仅文档、文件等内容物可独立窗口打开，功能面板不支持。" hint="仅文档、文件等内容物可独立窗口打开，功能面板不支持。"
+PASS  桌面-dark ③b 非内容物页签点击 → window.open 计数 = 0（内容物收口判据不推翻）  — window.open=0
+PASS  桌面-dark 零 pageerror
+PASS  桌面-light ①a 胶囊右座有 .canvas-pop-btn 且在挂可见  — 26×26 display=flex
+PASS  桌面-light ①b rect 完全落在胶囊 padding 盒内 + 右缘贴齐内容盒（右差 ≤1）  — pop.right=1236 contentRight=1236 胶囊=180×36
+PASS  桌面-light ①c 竖直中心 = 胶囊中心（|差| ≤1）  — pop.cy=45 hdr.cy=45
+PASS  桌面-light ①d DOM 序 = .canvas-title 的同级后继（右座单件，非浮动）  — title.nextElementSibling=canvas-pop-btn
+PASS  桌面-light ② 文件卡页签：点击独立窗入口 → window.open 恰 1 次（stub 计数路径）  — window.open=1
+PASS  桌面-light ⑤a 前置：环真开（ring-open + ≥2 环胶囊 + --cr-popw = 32px）  — open=true caps=3 --cr-popw=32px
+PASS  桌面-light ⑤b #926 无重排：中心覆层文字盒宽 = 常态 .t-name 盒宽 ±1  — ring=107 rest=107
+PASS  桌面-light ⑥ 长标题（42 字符）单行 + ellipsis + 胶囊宽 ≤ max-width  — t-name 107×17 scroll=450/client=107 ellipsis=ellipsis 胶囊=180 maxW=min(76%, max(220px, 100% - 368px))
+PASS  桌面-light ⑦ 底部钮 ↔ 顶部钮 尺寸/圆角/内距/图标逐项相等（7 底 × 2 顶）  — .canvas-source-toggle=40×40/r20/pad0/svg18 .canvas-ref-select=40×40/r20/pad0/svg18 .canvas-find-toggle=40×40/r20/pad0/svg18 .canvas-refresh-toggle=40×40/r20/pad0/svg18 .canvas-zoom-btn[0]=40×40/r20/pad0/svg18 .canvas-zoom-btn[1]=40×40/r20/pad0/svg18 .canvas-zoom-btn[2]=40×40/r20/pad0/svg18
+PASS  桌面-light ⑧a 每颗 chrome 钮计算尺寸 = token（--cv-size-circle-lg=40px / --cv-icon=18px；--cv-size-circle=40px）  — .canvas-source-toggle→40×40 .canvas-ref-select→40×40 .canvas-find-toggle→40×40 .canvas-refresh-toggle→40×40 .canvas-zoom-btn[0]→40×40 .canvas-zoom-btn[1]→40×40 .canvas-zoom-btn[2]→40×40
+PASS  桌面-light ⑩a 正方/正圆（高 = 宽 ±1，7 件）  — all square
+PASS  桌面-light ⑩b 条内相邻缝一致（8 两两差 ≤1 且 ≥7）  — [8]
+PASS  桌面-light ⑩c 渲染盒零相交（条/四圆钮两两不相交 + 条内钮与顶层盒全落 pane 内）  — clean
+PASS  桌面-light ③a 非内容物页签：按钮禁用 + 提示文案 = canvas.cardwinContentOnly（plugins）  — disabled=true title="仅文档、文件等内容物可独立窗口打开，功能面板不支持。" label="仅文档、文件等内容物可独立窗口打开，功能面板不支持。" hint="仅文档、文件等内容物可独立窗口打开，功能面板不支持。"
+PASS  桌面-light ③b 非内容物页签点击 → window.open 计数 = 0（内容物收口判据不推翻）  — window.open=0
+PASS  桌面-light 零 pageerror
+PASS  手机-375 ④a body.mobile-layer：.canvas-pop-btn display:none / 零盒  — display=none 0×0
+PASS  手机-375 ④b 胶囊盒与改前相等 ±1（手机档零位移；改前 = 0×0）  — 0×0
+PASS  手机-375 ⑨a 手机档钮面读数 = 改前基线（source/ref/find/refresh/条 逐值相等 ±1）  — source=48×48@16 ref=48×48@72 find=48×48@128 refresh=0×0@0 bar=222×58@16
+PASS  手机-375 ⑨b 手机档条内钮 = 改前（48×48 / svg 20 / r=7px）  — 48×48/svg20/r7px 48×48/svg20/r7px 48×48/svg20/r7px
+PASS  手机-375 ⑩d 手机腿正方/正圆（高 = 宽 ±1，6 件）  — all square
+PASS  手机-375 ⑩e 手机腿条内相邻缝一致（8 两两差 ≤1 且 ≥7）  — [8]
+PASS  手机-375 ⑩f 手机腿渲染盒零相交（条/钮 vs 环带签/小点/左右浮钮/ask）  — clean
+PASS  手机-375 零 pageerror
+
+═══ ui-seven-canvas-chrome: 41 PASS / 0 FAIL ═══
