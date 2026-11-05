@@ -166,9 +166,88 @@ find /Users/kaiyu/.stand/teams -type f | wc -l        # 期望 103
 
 | 未动对象 | 读数（本步实测） | 理由 |
 |---|---|---|
-| `~/.stand/sessions/*/flows.json` | **24 个，全部原地** | 活数据，`MountedFlowStore` 仍在读写；**团队 ≠ 挂载记录** |
+| `~/.stand/sessions/*/flows.json` | **24 个 → 阶段 3 已归档（见 §12）** | 活数据，`MountedFlowStore` 仍在读写；**团队 ≠ 挂载记录** |
 | `~/.stand/sessions/*/flow-tree.json` | **0 个残留**（阶段 1 已归档，源目录只剩空壳） | 双端已死，见 §2 |
 | `~/.stand/agents/**` | 99 文件，**一个字节没动** | 零命中 ⇒ 无团队声明可搬 |
 | `~/.stand/projects/*`、`~/.stand/chain*`、`~/.stand/flowmap*` | 全部未动 | 不在本批范围 |
 | `~/.stand/archives/26d25e9d/flow-creator/team.json` | 未动（263 B，2026-08-15） | 是会话历史归档里的旧快照，不是活团队；已在他处归档，见 `agents/JUDGE-INDEX.md` §5 |
 | 生产实例 PID 78176（端口 6138） | 未重启、未 signal、未用 `stand` CLI 改其状态 | 本步纯文件系统操作 |
+
+## 12. 阶段 3 追加：24 个 `flows.json`（MountedFlowStore 投影数据）
+
+归档时间：2026-11-05（阶段 3：作者裁定「`MountedFlowStore` + 24 个 flows.json 一并归档清掉」）
+归档手法：与阶段 4 同一套 —— `cp -a` → 逐文件 sha256 比对（全等才继续）→ `mv`（同盘 rename）
+→ `chmod a-w` 冻结。**全程零 `rm`**。归档相对路径保留原层级（`sessions/<sid>/flows.json`）。
+
+- 源目录：`/Users/kaiyu/.stand/sessions/<sid>/flows.json` × **24**（实测 24 → 0；归档侧 24）
+- 总字节：96K（24876 B 文件体）
+- 冻结后权限：文件 `-r--r--r--`（0444）；`sessions/` 下各 sid 目录 `dr-xr-xr-x`（0555）
+- 校验：`MANIFEST.tsv` **137 行 = 1 表头 + 136 数据行**，逐行 `sha256sum` 复核 **0 不符**
+
+| # | 归档相对路径 | 原绝对路径 | 字节 | sha256 | mtime |
+|---|--------------|-----------|------|--------|-------|
+| 1 | `sessions/5cc7590a-6dcb-4dba-8979-0ce5eb0a14fe/flows.json` | `/Users/kaiyu/.stand/sessions/5cc7590a-6dcb-4dba-8979-0ce5eb0a14fe/flows.json` | 497 | `05c4a72cbbb4f25dbe74a1b6d2fcb0b63f9463c202638b098fe0e434ec5e20ed` | 2026-08-18 13:01:12 |
+| 2 | `sessions/61160b68-9d1d-46b7-bba7-4aabb2d5c440/flows.json` | `/Users/kaiyu/.stand/sessions/61160b68-9d1d-46b7-bba7-4aabb2d5c440/flows.json` | 67 | `1d745da1f49b62eba7a08180705bdc2f2c1fadd4943b29f4aa091c9e6b57e796` | 2026-08-02 22:04:26 |
+| 3 | `sessions/771d76fc-2347-4a08-bb52-67eada3936ac/flows.json` | `/Users/kaiyu/.stand/sessions/771d76fc-2347-4a08-bb52-67eada3936ac/flows.json` | 497 | `05c4a72cbbb4f25dbe74a1b6d2fcb0b63f9463c202638b098fe0e434ec5e20ed` | 2026-08-27 18:56:20 |
+| 4 | `sessions/857a2723-1bd8-4033-a88b-33d0b3b25f26/flows.json` | `/Users/kaiyu/.stand/sessions/857a2723-1bd8-4033-a88b-33d0b3b25f26/flows.json` | 345 | `29f000a929a2ef0266372f123c50773b2e6fc28dabc67360e5f62160edaf2f66` | 2026-08-09 21:56:58 |
+| 5 | `sessions/9f3c4826-47aa-4fd5-967f-b9de85898b35/flows.json` | `/Users/kaiyu/.stand/sessions/9f3c4826-47aa-4fd5-967f-b9de85898b35/flows.json` | 441 | `c49f43fb2ae3c3b6d73df8f50c65d9465d23dfb1a84d57297bd1df3fdf4e1ae6` | 2026-09-06 09:00:50 |
+| 6 | `sessions/a5120141-d8f9-48e9-9de9-4b33090431e1/flows.json` | `/Users/kaiyu/.stand/sessions/a5120141-d8f9-48e9-9de9-4b33090431e1/flows.json` | 389 | `c6a9a01eaf6ef846ddbc5725d973b86cce6ee692222619353c9560cc8d3201a6` | 2026-08-10 17:34:25 |
+| 7 | `sessions/aac1c33a-c2d1-4b13-9ecd-3d5c4dc37f88/flows.json` | `/Users/kaiyu/.stand/sessions/aac1c33a-c2d1-4b13-9ecd-3d5c4dc37f88/flows.json` | 389 | `c6a9a01eaf6ef846ddbc5725d973b86cce6ee692222619353c9560cc8d3201a6` | 2026-08-10 17:42:34 |
+| 8 | `sessions/ask-0023e0a8/flows.json` | `/Users/kaiyu/.stand/sessions/ask-0023e0a8/flows.json` | 441 | `c49f43fb2ae3c3b6d73df8f50c65d9465d23dfb1a84d57297bd1df3fdf4e1ae6` | 2026-11-01 13:29:38 |
+| 9 | `sessions/ask-12accd68/flows.json` | `/Users/kaiyu/.stand/sessions/ask-12accd68/flows.json` | 441 | `c49f43fb2ae3c3b6d73df8f50c65d9465d23dfb1a84d57297bd1df3fdf4e1ae6` | 2026-11-01 19:41:30 |
+| 10 | `sessions/ask-3247adca/flows.json` | `/Users/kaiyu/.stand/sessions/ask-3247adca/flows.json` | 441 | `c49f43fb2ae3c3b6d73df8f50c65d9465d23dfb1a84d57297bd1df3fdf4e1ae6` | 2026-11-01 16:14:45 |
+| 11 | `sessions/ask-37c189d1/flows.json` | `/Users/kaiyu/.stand/sessions/ask-37c189d1/flows.json` | 441 | `c49f43fb2ae3c3b6d73df8f50c65d9465d23dfb1a84d57297bd1df3fdf4e1ae6` | 2026-10-31 10:36:16 |
+| 12 | `sessions/ask-3a9b062c/flows.json` | `/Users/kaiyu/.stand/sessions/ask-3a9b062c/flows.json` | 441 | `c49f43fb2ae3c3b6d73df8f50c65d9465d23dfb1a84d57297bd1df3fdf4e1ae6` | 2026-11-04 09:21:42 |
+| 13 | `sessions/ask-6c7e4d40/flows.json` | `/Users/kaiyu/.stand/sessions/ask-6c7e4d40/flows.json` | 441 | `c49f43fb2ae3c3b6d73df8f50c65d9465d23dfb1a84d57297bd1df3fdf4e1ae6` | 2026-11-01 09:24:29 |
+| 14 | `sessions/ask-7c42c298/flows.json` | `/Users/kaiyu/.stand/sessions/ask-7c42c298/flows.json` | 441 | `c49f43fb2ae3c3b6d73df8f50c65d9465d23dfb1a84d57297bd1df3fdf4e1ae6` | 2026-10-31 13:37:14 |
+| 15 | `sessions/ask-bdc2ec5d/flows.json` | `/Users/kaiyu/.stand/sessions/ask-bdc2ec5d/flows.json` | 441 | `c49f43fb2ae3c3b6d73df8f50c65d9465d23dfb1a84d57297bd1df3fdf4e1ae6` | 2026-11-03 16:28:07 |
+| 16 | `sessions/ask-e5294458/flows.json` | `/Users/kaiyu/.stand/sessions/ask-e5294458/flows.json` | 441 | `c49f43fb2ae3c3b6d73df8f50c65d9465d23dfb1a84d57297bd1df3fdf4e1ae6` | 2026-11-02 10:34:43 |
+| 17 | `sessions/ask-e8e30cee/flows.json` | `/Users/kaiyu/.stand/sessions/ask-e8e30cee/flows.json` | 441 | `c49f43fb2ae3c3b6d73df8f50c65d9465d23dfb1a84d57297bd1df3fdf4e1ae6` | 2026-11-03 16:28:07 |
+| 18 | `sessions/ask-fa062a13/flows.json` | `/Users/kaiyu/.stand/sessions/ask-fa062a13/flows.json` | 441 | `c49f43fb2ae3c3b6d73df8f50c65d9465d23dfb1a84d57297bd1df3fdf4e1ae6` | 2026-11-03 12:02:28 |
+| 19 | `sessions/ask-fbc8b5b8/flows.json` | `/Users/kaiyu/.stand/sessions/ask-fbc8b5b8/flows.json` | 441 | `c49f43fb2ae3c3b6d73df8f50c65d9465d23dfb1a84d57297bd1df3fdf4e1ae6` | 2026-11-01 18:20:08 |
+| 20 | `sessions/ask-fd69c219/flows.json` | `/Users/kaiyu/.stand/sessions/ask-fd69c219/flows.json` | 441 | `c49f43fb2ae3c3b6d73df8f50c65d9465d23dfb1a84d57297bd1df3fdf4e1ae6` | 2026-11-02 18:05:24 |
+| 21 | `sessions/d7c3cb54-dd90-4f3f-bbf6-e7898c425cff/flows.json` | `/Users/kaiyu/.stand/sessions/d7c3cb54-dd90-4f3f-bbf6-e7898c425cff/flows.json` | 441 | `c49f43fb2ae3c3b6d73df8f50c65d9465d23dfb1a84d57297bd1df3fdf4e1ae6` | 2026-10-10 10:53:13 |
+| 22 | `sessions/dag-git-merge-scanner-405090/flows.json` | `/Users/kaiyu/.stand/sessions/dag-git-merge-scanner-405090/flows.json` | 339 | `48ea8e24fc6ce31a523817cf29dacb5d9737467c2ead2501f2c3c1f43208f5fc` | 2026-08-09 22:57:38 |
+| 23 | `sessions/e7facbfa-d6b1-4f44-b475-6575d39ccdd5/flows.json` | `/Users/kaiyu/.stand/sessions/e7facbfa-d6b1-4f44-b475-6575d39ccdd5/flows.json` | 441 | `c49f43fb2ae3c3b6d73df8f50c65d9465d23dfb1a84d57297bd1df3fdf4e1ae6` | 2026-10-15 18:13:17 |
+| 24 | `sessions/ec8ae43f-88bf-4e87-b1ab-a1acea5d3935/flows.json` | `/Users/kaiyu/.stand/sessions/ec8ae43f-88bf-4e87-b1ab-a1acea5d3935/flows.json` | 441 | `c49f43fb2ae3c3b6d73df8f50c65d9465d23dfb1a84d57297bd1df3fdf4e1ae6` | 2026-10-15 18:13:47 |
+
+校验命令（应打印上表同一 sha256，示例第 1 行）：
+
+```bash
+shasum -a 256 "/Users/kaiyu/.stand/archive/team-feature-deletion-20261104/sessions/5cc7590a-6dcb-4dba-8979-0ce5eb0a14fe/flows.json"
+# 05c4a72cbbb4f25dbe74a1b6d2fcb0b63f9463c202638b098fe0e434ec5e20ed
+```
+
+### 为什么它们是死的
+
+- **写端已死**：`MountedFlowStore.scala` 随本阶段删除（`git rm`），`git grep -n "MountedFlowStore" src/`
+  归零；项目挂载入口（`Load(type:"flow")` / `MountFlow` / `mountMountedFlow`）已在**阶段 2** 摘除，
+  再无任何代码路径调用 `save`。
+- **读端已死**：唯一读者是 `MountedFlowStore.load`（同文件），以及 `GET /api/teams/mounted`
+  的 `buildMountedTeamsJson`（阶段 2 已退役）。`src/` 内 `flows.json` 仅剩本文件自述字符串（0 代码引用）。
+- 数据形态：每文件是一条「会话挂载过哪些 flow 实例」的名字表（`name` / `flowName`），
+  不含运行态；重启即重置的设计注记见 `MountedFlowStore` 头部（已随删除一并归档进 git 历史）。
+
+### 还原
+
+```bash
+chmod -R u+w "/Users/kaiyu/.stand/archive/team-feature-deletion-20261104"
+for f in "/Users/kaiyu/.stand/archive/team-feature-deletion-20261104"/sessions/*/flows.json; do
+  sid=$(basename "$(dirname "$f")")
+  mkdir -p "/Users/kaiyu/.stand/sessions/$sid"
+  cp -a "$f" "/Users/kaiyu/.stand/sessions/$sid/flows.json"
+done
+chmod -R a-w "/Users/kaiyu/.stand/archive/team-feature-deletion-20261104"
+```
+
+**注意**：还原只拿回字节，**不恢复功能** —— `MountedFlowStore` 类已在阶段 3 删除，
+`/api/teams/mounted` 路由已在阶段 2 删除。
+
+### 本步明确没有动的东西（阶段 3 追加面）
+
+| 未动对象 | 读数（本步实测） | 理由 |
+|---|---|---|
+| `~/.stand/sessions/*/` 各 sid **目录本体** | 24 个目录保留（`flows.json` 取走后可能为空壳） | 会话本体 / `_index.json` 记录属另一件事，删目录不在本批范围 |
+| `~/.stand/sessions/*/flow-tree.json` | 0 个（阶段 1 已归档） | 见 §2 |
+| `~/.stand/teams/**` | 阶段 4 已归档（103 文件） | 见 §9 |
+| 生产实例进程 | 未重启、未 signal | 本步纯文件系统操作 |
