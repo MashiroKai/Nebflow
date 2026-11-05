@@ -886,6 +886,8 @@ export default {
   'subagents.frozenDormantTip': '已冻结 {hours} 小时仍无人唤醒（超保留期会归档记录，转录与工作区保留）。',
   'subagents.wake': '唤醒',
   'subagents.wakeTip': '在原会话上下文上继续（同一会话、历史在场，已完成的不重做）',
+  // name/address 批（2026-11-05）：地址 chip 的 tooltip 后缀（前面拼完整地址本身）。
+  'subagents.copyAddress': '复制地址',
   'subagents.wakeFailed': '唤醒失败：记录与转录已保留，可稍后重试',
   // 冻结原因四类短名（快照恢复路径按线值 `delegate-frozen:<code>` 本地映射；与
   // DelegateFreeze.reasonLabelZh 逐字一致）。

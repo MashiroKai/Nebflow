@@ -1324,7 +1324,12 @@ private[gateway] object WsSessionChatHandlers:
                           standbySince = standbySince,
                           frozenSince = frozenSince,
                           frozenReason = frozenReason,
-                          wakeAddress = frozenSince.map(_ => s"delegate:${rec.sessionId}")
+                          wakeAddress = frozenSince.map(_ => s"delegate:${rec.sessionId}"),
+                          // name/address 批（2026-11-05）：Mail 续传地址随快照出帧
+                          // ——推导单点 = MailAddress（与 AgentControl list/status 同源，
+                          // 前端面板只读不算）。纯函数，零额外 IO。
+                          mailAddress = nebflow.core.delegate.MailAddress
+                            .of(rec.kind, rec.sessionId, rec.displayName)
                         )
                       }
                       }
