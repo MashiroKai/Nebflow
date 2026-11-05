@@ -1504,7 +1504,6 @@ body.canvas-deck-narrow .canvas-title { max-width: none; }
      140 同一 2px 偏差，此前无人发现）。补 border-width 后左右内缝与标题胶囊
      逐像素同源（左 12 / 右 = 7 + --cr-popw(32) 均落在同一内容盒基准上）。 */
   border: var(--ds-border-width) solid transparent;
->>>>>>> delegate/delegate-ui-seven
   padding: var(--ds-space-1) calc(7px + var(--cr-popw, 0px)) var(--ds-space-1) var(--ds-space-3);
   background: transparent;
   border-color: transparent;
