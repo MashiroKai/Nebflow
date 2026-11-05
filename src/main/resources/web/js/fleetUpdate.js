@@ -57,8 +57,6 @@ const FLEET_CSS = `
   position: relative; width: min(560px, 94vw); max-height: 86vh;
   display: flex; flex-direction: column;
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border); border-radius: var(--ds-radius-shell);
   box-shadow: 0px 2px 8px rgba(0, 0, 0, 0.04), 0px 8px 24px rgba(0, 0, 0, 0.06);
   overflow: hidden;
@@ -297,7 +295,7 @@ function renderCard() {
   const canRetry = summaryJob && !running &&
     Array.isArray(summaryJob.failed) && summaryJob.failed.some((f) => f && f.failure !== 'switch-rolled-back');
 
-  overlay.innerHTML = `<div id="${CARD_ID}" role="dialog" aria-modal="true">
+  overlay.innerHTML = `<div id="${CARD_ID}" class="nf-glass" role="dialog" aria-modal="true">
     <div class="fleet-head">
       <span class="fleet-title">${escapeHtml(t('fleet.title'))}</span>
       <button class="fleet-close" data-fleet-close="1" title="${escapeHtml(t('fleet.close'))}"><i data-lucide="x"></i></button>

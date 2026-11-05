@@ -1,0 +1,64 @@
+{
+  "leg": "after",
+  "webRoot": "(repo)",
+  "shots": [
+    {
+      "viewport": {
+        "w": 1440,
+        "h": 900
+      },
+      "mobileLayer": false,
+      "three": {
+        "blockH": 173.5,
+        "blockW": 331.08,
+        "viewportSharePct": 19.3,
+        "thumbH": 0,
+        "thumbRows": 0,
+        "stackPresent": true,
+        "faceW": 96,
+        "faceH": 122.17,
+        "pillText": "展开 3"
+      },
+      "six": {
+        "blockH": 173.5,
+        "blockW": 331.08,
+        "viewportSharePct": 19.3,
+        "thumbH": 0,
+        "thumbRows": 0,
+        "stackPresent": true,
+        "faceW": 96,
+        "faceH": 122.17,
+        "pillText": "展开 6"
+      }
+    },
+    {
+      "viewport": {
+        "w": 375,
+        "h": 812
+      },
+      "mobileLayer": true,
+      "three": {
+        "blockH": 173.5,
+        "blockW": 274.39,
+        "viewportSharePct": 21.4,
+        "thumbH": 0,
+        "thumbRows": 0,
+        "stackPresent": true,
+        "faceW": 96,
+        "faceH": 122.17,
+        "pillText": "展开 3"
+      },
+      "six": {
+        "blockH": 173.5,
+        "blockW": 274.39,
+        "viewportSharePct": 21.4,
+        "thumbH": 0,
+        "thumbRows": 0,
+        "stackPresent": true,
+        "faceW": 96,
+        "faceH": 122.17,
+        "pillText": "展开 6"
+      }
+    }
+  ]
+}

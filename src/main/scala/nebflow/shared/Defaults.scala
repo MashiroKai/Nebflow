@@ -1191,6 +1191,44 @@ object Defaults:
   def DelegateFreezeAutoResumeBackoffMs: Long =
     sys.props.getOrElse("nebflow.delegate.freeze.autoResumeBackoffMs", (60L * 1000).toString).toLong
 
+  /**
+   * 自动续跑间隔的**上限**（ms，缺省 5 分钟）：指数递增到该值即封顶，此后每次尝试
+   * 恒按此间隔（provider 故障降噪批 2026-11-05：作者令「按退避（指数退避 + 上限，
+   * 别用固定 5 秒死循环）自动重试/唤醒」）。缺了上限，`base × 2^(n-1)` 会在十几次
+   * 尝试后长成一整天，等于让冻结件自生自灭。prop
+   * `nebflow.delegate.freeze.autoResumeBackoffMaxMs`。
+   */
+  def DelegateFreezeAutoResumeBackoffMaxMs: Long =
+    sys.props.getOrElse("nebflow.delegate.freeze.autoResumeBackoffMaxMs", (300L * 1000).toString).toLong
+
+  /**
+   * **升级为摘要通知的时限**（ms，缺省 30 分钟）：provider 故障族的冻结只在
+   * 「长时间仍不可恢复」（自该 delegate 本轮冻结起点算起超过本时限）时，才升级成
+   * 一条**摘要式**通知（作者令「如果长时间（给出你选的上限，例如 30 分钟）仍不可
+   * 恢复，才升级为一条摘要式通知」）。此前按「尝试次数用尽」升级，3 次尝试 8 分钟
+   * 就报，等于把一次正常的上游抖动变成作者的事。确定性缺陷不受本时限约束
+   * （立即进聚合告警）。prop `nebflow.delegate.freeze.escalateAfterMs`。
+   */
+  def DelegateFreezeEscalateAfterMs: Long =
+    sys.props.getOrElse("nebflow.delegate.freeze.escalateAfterMs", (30L * 60 * 1000).toString).toLong
+
+  /**
+   * **健康表容忍窗**（ms，缺省 10 分钟）：健康表只能**延迟**自动续跑，不许无限期
+   * 压住它。本轮冻结超过本窗后，即使健康表上还有 Down 项也照常按封顶退避尝试续跑
+   * （provider 故障降噪批 2026-11-05 — fallback 那条旧缺陷的正解）。
+   *
+   * 为什么需要：健康表只装**被判过死的**候选，健康的候选往往**根本没有条目**（探针
+   * 只探 Down 的）。于是「kimi 403 被 markDown、cmdcode 从未被探过」的真实盘面
+   * 表现为 `{kimi/k3: Down}`——旧判据「表里一条 Down 都没有」永假 ⇒ 冻结批永远等
+   * 不到续跑，作者面正是「fallback 队列里明明有可用模型，却报所有模型不可用并冻
+   * 结」。容忍窗到期即强制走一次续跑（唤醒腿把活交给 `Fallback`，那里才看得见完整
+   * 候选链）；真全灭时子会话很快再冻一次，被轮次台账归进同一轮，退避与升级时限都
+   * 不重置。0 = 不等（立刻强制续跑）。prop
+   * `nebflow.delegate.freeze.autoResumeForceAfterMs`。
+   */
+  def DelegateFreezeAutoResumeForceAfterMs: Long =
+    sys.props.getOrElse("nebflow.delegate.freeze.autoResumeForceAfterMs", (10L * 60 * 1000).toString).toLong
+
   // ── death-watch 误报修复批（2026-10-31 作者令「修」，根因 docs/20261031_owner-lost.md
   //    §4 修法清单 ①②③⑤⑥ 的参数面；全部现读 prop，spec 可即时翻转边界）──────────
 

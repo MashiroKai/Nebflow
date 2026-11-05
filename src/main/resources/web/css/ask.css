@@ -49,7 +49,16 @@
    * 随之重算：圆钮行（pane 内 bottom:16、48 高、pane 底 = 面板底 −8）中线在面板
    * 系 48px ⇒ fab bottom = 48 − 24 = **24**（原 44 钮 → 22）。手机层原本 48，
    * 本批只补桌面档（mobileLayer.css .ask-fab 48 覆盖不变）。 */
-  --ask-fab-size: 48px;          /* 入口钮（命中盒=视觉径） */
+  /* ── canvas 按钮同尺寸批（glass-unify 批 2026-11-05，作者令逐字：「canvas
+   *    的按钮都保持一个大小，现在 note 和 ask 还是比其他的按钮看着大」）──
+   * 病根：本 token 写死 48px，而 canvas 工具簇四圆钮 #deck-fab / #canvas-head-close
+   * 走的是 --cv-size-circle-lg → --cv-size-circle = **40px**（2026-11-05 件3 批
+   * 已把「底部跟顶部同档」落到 40）。于是同一行浮钮里 ask/note 48、其余 40，
+   * 差 8px —— 肉眼就是「note 和 ask 明显更大」。
+   * 处置：ask/note 不再有自己的一档，直接吃同一个尺寸 token；这样「主按钮更大」
+   * 之类意图将来也只能由**同一个 token** 表达，不许出现第二个尺寸档。
+   * 手机档（body.mobile-layer）两边同为 --mtap-lg 48，本来就一致，不动。 */
+  --ask-fab-size: var(--cv-size-circle, 40px);   /* 入口钮（命中盒=视觉径） */
   --ask-fab-gap: 14px;           /* 钮距画布右缘 */
   /* 单行排布批（2026-11-01 作者令 16:18）：与左锚文档工具簇行共中线——
    * 簇在 pane 内 bottom:16、pane 底=面板底上 8px（壳 padding-bottom）→ 面板系
@@ -323,6 +332,17 @@ body.mobile-layer .note-dock .ds-resize-handle {
   position: relative; width: 100%;
   max-height: var(--ask-col-maxh);
   display: flex; flex-direction: column; justify-content: flex-end;
+  /* ── 气泡穿入输入条批（作者令 2026-11-05 16:50 逐字：「我要求气泡消息要能从
+   *    输入框底下穿过，截止位置为输入框中间部分」）────────────────────────
+   * 几何：气泡列的盒底 = 输入条的**垂直中线**。
+   *   · 变量 --ask-under 由 askDock.js 的 ResizeObserver 实测输入条高度的一半
+   *     写入（textarea 会长高、手机档按钮更大 ⇒ 写死 px 必错）；
+   *   · dock 是 flex column 且 gap = --ds-space-1h，负 margin 与 gap 相加才是
+   *     真实间距 ⇒ 取 `-(中线 + gap)` 使列底正好压到中线；
+   *   · z 序 1 < 输入条 2 ⇒ 气泡钻到输入条**下面**被它盖住，绝不压在输入条上。
+   * 于是「穿过 + 截止到中线 + 不压输入框」三条由几何而非目测保证。 */
+  z-index: 1;
+  margin-bottom: calc(-1 * (var(--ask-under, 29px) + var(--ds-space-1h)));
 }
 .ask-col {
   /* 列可视高 = 总档（衰减区净空在滚动容器之内，见上 —— 不再从列高里扣）。 */
@@ -392,8 +412,15 @@ body.mobile-layer .note-dock .ds-resize-handle {
 .ask-bub.typing i:nth-child(3) { animation-delay: 0.3s; }
 @keyframes askTp { 0%, 60%, 100% { opacity: 0.35; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-3px); } }
 
-/* 弹幕感：越靠上（越旧）越透明（样张按龄渐隐同律；JS 写 --ask-age-alpha） */
-.ask-bub[data-age] { opacity: var(--ask-age-alpha, 1); }
+/* ── 「按龄渐隐」退役（glass-unify 批 2026-11-05）────────────────────────
+   原规则：`.ask-bub[data-age] { opacity: var(--ask-age-alpha, 1); }`，JS 为每条
+   历史气泡写 α = max(.3, 1 − 距底条数 × .13)。作者实拍报障「只有最新一条能看清，
+   其他前面的消息又是半透明的了」的**根因就是这一条**：α 直接压在本体 opacity 上，
+   毛玻璃底随之一起变透，底下的文档正文透上来。
+   与「毛玻璃一律不透底」（作者 2026-11-05 16:46 令）正面冲突 ⇒ 整条规则删除，
+   气泡本体的 opacity 恒为 1。**顶缘 12px 内容级 mask 渐隐保留**（作者 2026-11-04
+   09:22 明令要的「消息自身 alpha 渐到 0」，是位置渐隐、只作用于滚出列顶的内容），
+   两者不是一回事：前者让整条历史消息发虚且可读性塌，后者只在滚出边界处淡出。 */
 
 /* 输入框（作者令②：点击入口弹出的就是它；v2.1 减法 = 输入 + 右侧唯一发送钮）
  * 三修③：条材质 = canvas 查找条 .nf-findbar 同款（--cv-* 单源 + --cv-radius-bar）；
@@ -402,6 +429,10 @@ body.mobile-layer .note-dock .ds-resize-handle {
 .ask-input {
   width: 100%; border-radius: var(--cv-radius-bar, 12px); position: relative;
   display: flex; align-items: center; gap: var(--ds-space-1h); padding: var(--ds-space-2) var(--ds-space-2) var(--ds-space-2) var(--ds-space-1h);
+  /* 气泡穿入批（2026-11-05）：输入条必须画在气泡列之上（.ask-colwrap z:1）。
+     材质本身归 .nf-glass（stand-tokens --nf-glass-* 单源 + glass.css 配方），
+     本文件不写任何毛玻璃值 —— 作者令「输入框也要是毛玻璃效果」由类供给。 */
+  z-index: 2;
 }
 .ask-input:focus-within { border-color: rgb(var(--sapphire) / 0.45); }
 /* 输入行为包批（2026-11-02 作者令）：input → textarea（rows=1）——Shift+Enter
@@ -449,8 +480,6 @@ body.mobile-layer .note-dock .ds-resize-handle {
   padding: 0;
   border: var(--ds-border-width) solid var(--cv-border, var(--glass-border));
   background: var(--cv-bg, var(--glass-bg));
-  -webkit-backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
-  backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
   color: var(--color-text);
   transition: background var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease),
               transform var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease),

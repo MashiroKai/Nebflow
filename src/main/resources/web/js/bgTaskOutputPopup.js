@@ -88,8 +88,6 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
   height: min(560px, calc(100vh - 96px));
   display: flex; flex-direction: column;
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
   border-radius: var(--ds-radius-shell);
   overflow: hidden;

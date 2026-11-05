@@ -219,8 +219,6 @@
   background:
     linear-gradient(90deg, transparent 10%, var(--sapphire-refraction) 50%, transparent 90%) center top / 80% 1px no-repeat,
     var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   box-shadow: var(--frost-shadow);
   color: var(--color-text-muted, rgba(128, 128, 128, 0.9));
   pointer-events: auto;
