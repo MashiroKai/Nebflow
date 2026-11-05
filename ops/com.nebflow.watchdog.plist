@@ -12,6 +12,13 @@
   照缺省跑会去探 8080 并调用不存在的重启脚本路径）:
     NEBFLOW_WD_PORT=6138              stand 实例端口
     NEBFLOW_WD_NF_HOME=~/.stand       stand 根（$NF_HOME/bin/nebflow-restart.sh 垫片 + $NF_HOME/logs/*）
+    NEBFLOW_WD_LOG_CANDIDATES=...     失聪鉴别用的日志候选（冒号分隔，2026-11-05 运维修复批 ①）：
+                                      2026-10-18 起实例实际写 logs/stand.log（`lsof -p <pid>` 实测），
+                                      旧脚本硬编码 logs/nebflow.log（mtime 冻结在 10-18）⇒ DEAF 恒不命中
+                                      ⇒ 「活着但 HTTP 不可达」被判 DEAD 进 Stage1（误杀）。
+                                      脚本 v3 取候选里**最近 mtime 更新者**判新鲜度、全不可读则判
+                                      「判据不可用」且禁判 DEAD；本键把缺省值显式钉在 plist 里，
+                                      避免下次换日志路径又静默失聪（改路径 = 改这一行 + bootout/bootstrap）。
     NEBFLOW_WD_FAIL_THRESHOLD=999999  观察态（只报不动）：脚本 v2 把升级阈值环境变量化
                                       （nebflow-watchdog.sh:63），置到不可达 ⇒ 失败只记
                                       「健康检查失败 #N HTTP=...」行，永不进 Stage1/Stage2。
@@ -35,6 +42,8 @@
 		<string>6138</string>
 		<key>NEBFLOW_WD_NF_HOME</key>
 		<string>/Users/kaiyu/.stand</string>
+		<key>NEBFLOW_WD_LOG_CANDIDATES</key>
+		<string>/Users/kaiyu/.stand/logs/stand.log:/Users/kaiyu/.stand/logs/nebflow.log</string>
 		<key>NEBFLOW_WD_FAIL_THRESHOLD</key>
 		<string>999999</string>
 	</dict>

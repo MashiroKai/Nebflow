@@ -8,9 +8,11 @@
 // `.note-dock`——**同一组件、同一份样式、同一段尺寸状态机**，不是第二套浮窗：
 //   · 钮：class = `ask-fab note-fab` ⇒ glass.css 圆钮级浮件档成员全部继承（材质/
 //     hover/active/focus-visible/手机 48 档/`.gate-off` 闸），ask.css 只补一条
-//     落位（让开 ask 钮一格 8px，同一行同一中线）；
-//   · 窗：class = `ask-dock note-dock` ⇒ 座位/开合曲线/宽档 `--ask-dock-w`/
-//     `.is-resizing`/手机档全部继承，ask.css 只在既有规则的选择器名单里加成员；
+//     落位（margin-right 让开 ask 钮一格 8px，同一行同一中线）；
+//   · 窗：class = `note-dock` ⇒ 座位/开合曲线/宽档 `--ask-dock-w`/`.closed`/
+//     `.is-resizing`/手机档全部**以选择器成员身份**复用 `.ask-dock` 的既有规则；
+//     刻意不挂 `.ask-dock` 身份类（那是既有 spec 的判据选择器，同一页第二个同身份
+//     节点会让「ask 窗现在开没开」这类 querySelector 判断失真）；
 //   · 拖柄：design-system.css `.ds-resize-handle` 原件（44 热区 / 直角弧），落位
 //     复用 ask 面板左上外挂 14px 那条规则；
 //   · 尺寸状态机：resizeLimits / applySize / bindResize **一份实现两个入参**（尺寸
@@ -338,6 +340,13 @@ function buildFab() {
  *   <button class="ask-stop ds-turn-btn ds-turn-btn--stop">
  */
 function buildDock() {
+  // ── 单小边框批（作者令 2026-11-05 09:32「左上角那个拖动按钮，只要一个小边框
+  //    就行，不要那个叠起来的正方形」）──
+  // 旧 DOM 在把手内挂了一枚 `.ds-resize-grip`，内里三枚 `<i>` 各画一条 L 形
+  // 描边（translate 2/4/6px、opacity .55/.35/.2）⇒ 与 ::before 的直角弧在同一
+  // 角上共四条线，叠成「两层方块」。整族退役：**可见描边只剩 ::before 那一条
+  // 直角弧**（形态单源 = design-system.css .ds-resize-handle::before），把手本体
+  // 仍是 44×44 透明热区（HIG 下限不缩）。
   const handle = h('div', {
     class: 'ds-resize-handle',
     'data-ask-resize': true,
@@ -345,9 +354,7 @@ function buildDock() {
     tabindex: '0',
     'aria-label': tt('拖拽调整面板大小', 'Resize panel'),
     title: tt('拖拽调整面板大小（←→ 改宽 / ↑↓ 改高）', 'Drag to resize (←→ width / ↑↓ height)'),
-  }, [
-    h('span', { class: 'ds-resize-grip', 'aria-hidden': 'true' }, [h('i'), h('i'), h('i')]),
-  ]);
+  });
 
   const input = h('textarea', {
     rows: '1',
@@ -400,13 +407,14 @@ function buildNoteFab() {
  * 规则**（ask.css 那些规则的选择器名单里加了 `.note-dock`，值仍是单源一份）；
  * 本批新增的只有内容盒 `.note-body`（材质 = glass.css 面级浮件档成员，与本组件
  * 输入条同源）与一个纯文本 textarea。
- * ⚠ 这里**刻意不挂 `.ask-dock` 身份类**：`.ask-dock.closed` / `.ask-dock:not(.closed)`
- * 是既有 15 个 spec 的判据选择器（如 ask-input-composer 的 dockClosed），同一页
- * 出现第二个 `.ask-dock` 节点会让「ask 窗现在开没开」这类 querySelector 判断失真。
- * 复用走选择器成员，不走类名叠加。
- * 拖柄与 ask 面板**同一个类、同一段落位**（`.ds-resize-handle` + 左上外挂 14px），
- * 区别只是 data 钩子（`data-note-resize`）——ask 的 `[data-ask-resize]` 保持唯一
- * （既有 spec 直查它，本批零触碰）。
+ * ⚠ 这里**刻意不挂 `.ask-dock` 身份类**：`.ask-dock.closed` /
+ * `.ask-dock:not(.closed)` 是既有 15 个 spec 的判据选择器（如 ask-input-composer
+ * 的 dockClosed），同一页出现第二个 `.ask-dock` 节点会让「ask 窗现在开没开」这类
+ * querySelector 判断失真。复用走选择器成员，不走类名叠加。
+ * 拖柄与 ask 面板**同一个类、同一段落位**（`.ds-resize-handle` + 左上外挂 14px，
+ * 可见形态 = design-system.css 那一条 ::before 直角弧，单小边框批同源），区别只是
+ * data 钩子（`data-note-resize`）——ask 的 `[data-ask-resize]` 保持唯一（既有 spec
+ * 直查它，本批零触碰）。
  */
 function buildNoteDock() {
   const handle = h('div', {
@@ -416,9 +424,7 @@ function buildNoteDock() {
     tabindex: '0',
     'aria-label': tt('拖拽调整记事本大小', 'Resize note'),
     title: tt('拖拽调整记事本大小（←→ 改宽 / ↑↓ 改高）', 'Drag to resize (←→ width / ↑↓ height)'),
-  }, [
-    h('span', { class: 'ds-resize-grip', 'aria-hidden': 'true' }, [h('i'), h('i'), h('i')]),
-  ]);
+  });
   const text = h('textarea', {
     placeholder: tt('随手记点什么…', 'Jot something down…'),
     'aria-label': tt('记事本', 'Notepad'),
@@ -438,8 +444,8 @@ function ensureInner() {
   const dock = buildDock();
   const noteDock = buildNoteDock();
   // 尺寸面（两个面板 = 同一段状态机的两个入参，见头注「记事本批」）：
-  //   ask  = 列高受控（--ask-col-maxh），底部件输入条占高，落尺寸后要同步截断线；
-  //   note = 本体高受控（--note-h），无底部件、无截断线钩子。
+  //   ask  = 列高受控（--ask-col-maxh），底部件输入条占高；
+  //   note = 本体高受控（--note-h），无底部件。
   /** @type {Surface} */
   const askSurface = {
     panel: dock,
@@ -448,7 +454,7 @@ function ensureInner() {
     footer: dock.querySelector('.ask-input'),
     varW: '--ask-dock-w',
     varH: '--ask-col-maxh',
-    onApply: syncTruncLine,
+    onApply: null,
     lastSize: null,
   };
   /** @type {Surface} */
@@ -482,11 +488,9 @@ function ensureInner() {
   };
   bindResize(el.askSurface);
   bindResize(el.noteSurface);
-  // 截断线跟着**实测盒**走：面板高随内容/拖拽变化（不是一次性写死）。
-  if (typeof ResizeObserver === 'function') {
-    truncObserver = new ResizeObserver(() => syncTruncLine());
-    truncObserver.observe(dock);
-  }
+  // 缩放空白批（2026-11-05 09:32）：截断线的 dock ResizeObserver 随状态机一并
+  // 退役——底缘收口已是 .ask-col 的百分比 mask（与面板高无关），不再需要任何
+  // 跟随实测盒的写入点（见 syncTruncLine 退役注）。
   wireElements();
 }
 
@@ -546,7 +550,8 @@ function mountRoot() {
  *   · track  = 高度受控的可变盒（ask = 气泡列；note = 记文本体）
  *   · footer = 面板内固定高、不可被列压住的底部件（ask = 输入条；note = 无）
  *   · varW/varH = 落尺寸的两条 CSS 变量名（各面自己的）
- *   · onApply = 落尺寸后的钩子（ask 同步截断线/下越量；note 无）
+ *   · onApply = 落尺寸后的钩子（ask 截断线状态机已随缩放空白批退役 ⇒ 两面皆 null；
+ *     保留这个槽是为了下一次要写派生量时有单点落位，不必再改状态机）
  *   · lastSize = 最近一次落下的尺寸（视口/层切换时按同一目标重夹）
  * @typedef {{panel: any, handle: any, track: any, footer: any,
  *   varW: string, varH: string, onApply: (() => void)|null,
@@ -564,7 +569,7 @@ function dsPx(surface, name, fallback) {
 function resizeLimits(surface) {
   const r = surface.panel.getBoundingClientRect();
   const gap = parseFloat(getComputedStyle(surface.panel).rowGap) || 7; // 面板的列缝
-  const footerH = surface.footer ? surface.footer.getBoundingClientRect().height : 0;
+  const inputH = surface.footer ? surface.footer.getBoundingClientRect().height : 0;
   const safe = dsPx(surface, '--ds-resize-safe', 12);
   const topGuard = dsPx(surface, '--ds-resize-top-guard', 44);
   const minW = dsPx(surface, '--ds-resize-min-w', 260);
@@ -598,9 +603,9 @@ function resizeLimits(surface) {
   }
   // 宽：右缘是钉位 ⇒ 左缘（含把手外挂）只需不越过左侧硬界。
   const maxW = Math.max(minW, Math.floor(r.right - (minLeft + overshoot)));
-  // 高：底缘是钉位 ⇒ 列高上限 = 底缘 − 顶侧硬界 − 底部件 − 列缝
+  // 高：底缘是钉位 ⇒ 列高上限 = 底缘 − 顶侧硬界 − 输入条 − 列缝
   //（顶侧硬界 44 > 把手外挂 14 ⇒ 把手顶缘恒完整在界内）。
-  const maxHAt = (topLimit) => Math.max(minH, Math.floor(r.bottom - (topLimit + overshoot) - footerH - gap));
+  const maxHAt = (topLimit) => Math.max(minH, Math.floor(r.bottom - (topLimit + overshoot) - inputH - gap));
   /** 给定落定宽度 W 的高度上限：除上述顶侧硬界外，再让开与之叠压的头带浮钮。 */
   const maxHFor = (W) => {
     let cap = maxHAt(minTop);
@@ -646,28 +651,20 @@ function applySize(surface, w, hgt) {
 }
 
 /**
- * 作者令 2026-11-04 12:52 ③：文字**穿过**对话框底缘、在**对话框高度的中部**截断。
- * 截断线不是常量——它随面板高变（拖拽改高后仍恒在中线），所以由尺寸状态机写：
- *   · `--ask-trunc-h` = 面板高的一半（mask alpha = 0 的那条线 = 对话框 50%）；
- *   · `--ask-col-overhang` = 列盒向下越过面板底缘的量（文字真的画到边界之外，
- *     边界上没有硬切口）。
- * 纯几何量、零字面量（读当帧实测盒；两个兜底值只防首帧未定尺寸）。
+ * 缩放空白批（作者令 2026-11-05 09:32「现在调整窗口大小会导致对话框和内容直接
+ * 有一大段空白」）：**截断线状态机整体退役**。
+ * 退役面 = `syncTruncLine()` 与它写的三条变量（--ask-trunc-h / --ask-trunc-from
+ * / --ask-col-overhang）+ 只服务于它的 dock ResizeObserver。
+ * 病根（本批改前实测，见批报告）：截断线 = 面板高 × 50%，却画在**列**上；
+ * 面板高含输入条与列缝 ⇒ 列底那一截恒被 alpha 0 遮掉，而最新气泡锚在列底
+ * （flex-end）⇒ 内容与输入条之间恒有一大段空白（默认档 208px）；且它是首帧/
+ * RO 触发的缓存 px，窗口尺寸变了要等下一次 RO 才改写（实测：三次 resize 里
+ * 有两次仍读 108px 旧值）。
+ * 现态：底缘收口 = .ask-col 自己的百分比 mask 停点（ask.css 注释），与面板高
+ * 彻底解耦 ⇒ 本函数无存在必要，删掉等于消灭这一类 bug 的产生面（不是把缓存
+ * 刷新得更勤）。列/输入条的间距恒 = dock 的 row-gap（--ds-space-1h）。
  */
-let truncObserver = null;
 
-function syncTruncLine() {
-  if (!el || !el.dock) return;
-  const d = el.dock.getBoundingClientRect();
-  if (!d.height) return;
-  // 中线 = 面板高 × 50%（作者令的**定义**，不改写成「至少多少」）。
-  const mid = Math.round(d.height / 2);
-  const fade = parseFloat(getComputedStyle(el.dock).getPropertyValue('--ask-fade-h')) || 64;
-  el.dock.style.setProperty('--ask-trunc-h', mid + 'px');
-  // 渐出起坡 = 中线 − 26px，且必须落在顶缘衰减区**之后**（否则渐变会倒着写、
-  // 出现「先实后虚再实」的错序）。两个值都由 JS 算，CSS 只消费。
-  el.dock.style.setProperty('--ask-trunc-from', Math.max(fade, mid - 26) + 'px');
-  el.dock.style.setProperty('--ask-col-overhang', Math.round(mid * 0.18) + 'px');
-}
 
 /** 拖柄状态机（pointer capture + 键盘；桌面/手机/两个面板同一段）。
  * @param {Surface} surface */
@@ -777,8 +774,8 @@ function wireElements() {
 /** 全局监听（每次连入登记；断开由基座 ctx.on 自动拆——迁移不留双份）。 */
 function wireGlobals(ctx) {
   // 收起三通路之二：Esc。（输入行为包批：组字期 Esc = 输入法取消候选——键属
-  // 输入法，不收起浮窗；键位契约与主会话一致——主会话 Esc 同样让渡组字键。
-  // 记事本批：两个浮窗同一段判据，开着的那个先收——组字态取**各自**的输入面。）
+  // 输入法，不收起 dock；键位契约与主会话一致——主会话 Esc 同样让渡组字键。）
+  // 记事本批：两个浮窗同一段判据，开着的那个先收——组字态取**各自**的输入面。
   ctx.on(document, 'keydown', (e) => {
     if (!el) return;
     const composer = isNoteOpen() ? el.noteText : el.input;
@@ -795,13 +792,13 @@ function wireGlobals(ctx) {
   // 批⑩：阅读器底栏挂载完成 → 座位重算（底栏入角落浮件占用集，见 syncSeat）。
   ctx.on(document, 'nf-reader-mounted', () => syncSeat());
   // 收起三通路之一：点击画布空白（#canvas-content 本体 = 无浮层处；卡片内
-  // 点击/文本选择不受扰——panes/浮件自有 target）。记事本批：两个浮窗同一条腿。
+  // 点击/文本选择不受扰——panes/浮件自有 target）。
   const content = document.getElementById('canvas-content');
   if (content) {
     ctx.on(content, 'click', (e) => {
       if (e.target !== content) return;
       if (isOpen()) close();
-      if (isNoteOpen()) closeNote();
+      if (isNoteOpen()) closeNote(); // 记事本批：同一条收起通路
     });
   }
 }
@@ -873,8 +870,6 @@ function onMount(host, ctx) {
   reclampSize();
   if (isOpen()) {
     render();
-    syncTruncLine();
-    requestAnimationFrame(() => syncTruncLine());
   }
   if (turnToggle) {
     const s = activeSession();
@@ -911,7 +906,7 @@ function syncGate() {
   el.fab.classList.toggle('gate-off', off);
   el.dock.classList.toggle('gate-off', off);
   // 记事本批：同一闸同一拍（入口钮 + 窗一起摘——非文件卡/阅读面板开/非 canvas 页
-  // 零残留；`.ask-fab.gate-off` / `.ask-dock.gate-off` 两条既有规则照旧覆盖）。
+  // 零残留；`.ask-fab.gate-off` / `.ask-dock|.note-dock.gate-off` 三条既有规则覆盖）。
   el.noteFab.classList.toggle('gate-off', off);
   el.noteDock.classList.toggle('gate-off', off);
 }
@@ -1062,10 +1057,6 @@ async function open() {
   el.fab.classList.add('open');
   el.fab.classList.remove('pulse');
   render();
-  // 截断线/下越量按**开态首帧的实测盒**重算（open 之前 dock 还 closed，高度是
-  // 收起档 ⇒ 必须等布局落定再写，否则 --ask-trunc-h 会锁在首帧的矮值上）。
-  syncTruncLine();
-  requestAnimationFrame(() => syncTruncLine());
   askOpen(s);
   syncSeat();
   setTimeout(() => { try { el.input.focus(); } catch { /* detached */ } }, 260);
