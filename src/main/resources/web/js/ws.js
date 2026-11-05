@@ -339,6 +339,16 @@ const GLOBAL_MSG_TYPES = new Set([
   // 把用户正在看的视图抢走。消费点 = main.js（applyPendingAskSnapshot，零
   // view 依赖）。
   'pendingAsksSnapshot',
+  // schedule-created-card 批（2026-11-05）：定时任务/待办面四帧进 GLOBAL。
+  // 为什么必须：这些帧的 sessionId = **条目所属会话**，而待办收件箱与消息内嵌
+  // 卡片的回执面是**跨会话**的（卡片可能是历史会话里的条目，收件箱聚合 scope:all
+  // 天然跨会话）。不入 GLOBAL ⇒ 下方入口过滤器把「sessionId ≠ 当前会话」的帧整帧
+  // 丢弃，于是卡片/收件箱永远等不到 scheduledTaskUpdated/Deleted 回执，只能超时
+  // ——本批实测（隔离实例 + 真浏览器）：卡上保存后引擎已写库，卡片却停在「提交中」。
+  // 入 GLOBAL 只改**路由**（不切视图 + 不被会话过滤丢弃），消费面 = scheduled-task.js
+  // 与 js/scheduleApi.js，两者都是按 id 幂等收敛，跨会话多收一帧无副作用。
+  'scheduledTaskCreated', 'scheduledTaskUpdated', 'scheduledTaskDeleted',
+  'scheduledTaskCompleted', 'scheduledTaskList',
   // 控制台单实例批（2026-10-27）：接管独占两帧——均无 sessionId 的**本连接**直回/
   // 定向帧。🔴 必须入 GLOBAL（remoteAgents 同律）：否则会被下方视图路由当会话内
   // 事件 ⇒ setActiveView(primary) 抢走正在看的视图。
