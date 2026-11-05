@@ -43,10 +43,10 @@
    它们不是输入件，各有自己的焦点环，见文末「未收编」）。
    因此**新加的输入件天然被收编**，不需要谁记得加类；覆盖清单见批文档 §4。
 
-   同批摘除的重复实现（20 处组件自写输入件焦点规则，全站只剩本文件一处）：
-   chat.css（5）· modal.css（4）· sidebar.css（4）· social.css · secrets.css ·
+   同批摘除的重复实现（24 处组件自写输入件焦点规则，全站只剩本文件一处）：
+   chat.css（6）· modal.css（4）· sidebar.css（4）· social.css · secrets.css ·
    design-system.css · dropbox.css · neblink.css · perception.css · reminder.css ·
-   split.css · friends.css · usage.css（后 5 处各 1）。
+   split.css · friends.css · usage.css（后 10 处各 1）。
    ═══════════════════════════════════════════════════════════════════════════ */
 
 :root {
