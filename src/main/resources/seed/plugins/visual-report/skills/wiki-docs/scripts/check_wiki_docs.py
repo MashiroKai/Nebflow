@@ -78,6 +78,21 @@ wiki-docs SKILL.md 强制条款的机器面（条款与检查一一对应，见 
 显形（含「标了但该行无违规」的悬空标注），不接受整文件豁免；③ 汇总段出按类计数
 小表；④ 有违规即非零退出。
 
+  ── 「图不显示」批（作者报障 2026-11-05；两条渲染器确定性断点）─────────
+  R17 bare-name-embed      → 裸名嵌入：正文写 `![[x.png]]` 而图真身在
+                              `assets/<batch>/x.png` 这类**子目录**里。前端
+                              `imageCandidates()` 只找六个格位、不递归子目录，
+                              六格全落空 ⇒ 页面渲染「图片加载失败」占位。违规并
+                              给出**应写路径**（唯一命中一条 / 多处同名列候选）。
+                              R6 判 ok（图确实在库里）与 R17 判违规并不矛盾：
+                              R6 管「图在不在库内」，R17 管「渲染器找不找得到」。
+  R18 image-in-human-fence → 图片嵌入写在 ```human 摘要围栏内。前端
+                              `expandImageEmbeds()` 明确不展开围栏内嵌入，
+                              human 卡片正文再走一遍 markdown 也不展开 ⇒ 路径
+                              再对也只显示字面量。图移到围栏外即可。
+  两条的生效面沿用 v2 的两档制（时间块 ≥ `--image-since` 硬查，更早的存量只打
+  advisory；`--strict-style` 全库硬判）。
+
 段落锚（引用语法，与 R2 校验同源）：`[[doc#^块锚]]` 精确到单个段落（名词解释
 场景主形态，词表条目即块锚段落），`[[doc#标题]]` 精确到整节。--graph 导出
 为每篇文档内嵌段落索引 paragraphs（与 WikiIndex.scala 逐字段同构，设计稿
@@ -193,6 +208,16 @@ RULES = (
     # 让号到表尾 R16（最大号之后）。同一条款「细节放在点击展开后的内容」的两个
     # 独立断言从此各占一个号：R11 = 章节首行加粗结论，R16 = 敞开细节必须折叠。
     ("R16", "detail-fold", "细节折叠（同批「具体的论证细节，放在点击展开后的内容」）：一个 `##` 章节里敞开的正文超过阈值（缺省 600 可视字符，`--fold-threshold` 可调）却没有任何 `<details>` 折叠块 ⇒ 报；表格 / 列表 / 代码块 / 图注不算「敞开的长论证」，只算敞开的句子"),
+
+    # 「图不显示」批（2026-11-05 作者报障）：两条堵的是渲染器确定性断点，
+    # 不是风格偏好——命中即「页面必然不出图」。条款原文见 SKILL.md ⑥ 的两个绑定点。
+    ("R17", "bare-name-embed", "图片引用必须是**渲染器能解析的路径**：正文写裸文件名 `![[x.png]]`（或 `![](x.png)` / `<img src=\"x.png\">`）时，前端只找六格——文档同目录 / vault 根 / `<vault>/attachments/` / `<vault>/assets/` / `<docdir>/attachments/` / `<docdir>/assets/`，**不递归子目录**；图真身在 `assets/<batch>/x.png` 这类二级目录而引用是裸名 ⇒ 一律报，并给出应写路径（唯一命中给一条；多处同名列候选）。R6 只管「图在不在库内」，本条管「渲染器找不找得到」"),
+    ("R18", "image-in-human-fence", "图片嵌入禁止写进 ```human 摘要围栏：前端 `expandImageEmbeds()` 不展开围栏内嵌入（围栏是代码面，`![[…]]` 是字面量），human 卡片正文再走一遍 markdown 时也不会展开 ⇒ 路径再对也不出图。图写在围栏外（图注紧挨着它），围栏摘要里只放文字与 `[[文档]]` 引用"),
+
+    # 以图为主批（作者令 2026-11-05 21:24「一定要以图为主……文字要尽量少……
+    # 不得不补充的细节，就放在可点击展开的块里」）：条款原文见 SKILL.md ⑬。
+    ("R19", "image-required", "以图为主：一篇文档至少要有一张图——图片引用（`![[…]]` / `![](…)` / `<img src>`）或 ```mermaid 围栏块，两种形态都算。一张图都没有的文档读者拿不到「图里一眼看懂」的那一层，只剩散文 ⇒ 违规。例外必须写在文档里：`<!-- wiki-figure-exempt: 理由 -->`（理由非空，对应条款 ⑬(d)「允许例外但必须显式声明为什么」）"),
+    ("R20", "stacked-detail", "逐条细节不得敞在正文：一个 `##` 章节里连续 ≥12 行「逐条细节」（列表项 / 代码围栏内的行；```mermaid 与表格不算——前者是图、后者是压缩形态）且该节没有 `<details>` 折叠块 ⇒ 违规，提示移入 `<details><summary>过程</summary>`。已被折叠包住的行不判；一节只报最长那一段（缺省 12 行，`--fold-run` 可调）"),
 )
 
 # ── R5 文档命名制（作者令 2026-11-04 18:12；条款原文见 wiki-docs SKILL.md
@@ -258,6 +283,86 @@ VOLATILE_PATH_RE = re.compile(
     r"(?:reports-evidence/|\.nebflow/worktrees/|\.stand/uploads/|\.stand/evidence/)"
     r"[^\s`\"'()<>|，。、：；（）【】「」《》]*"
 )
+
+
+# ── R17 裸名嵌入 / R18 human 围栏内嵌图（「图不显示」批；作者报障
+# 2026-11-05，样本《agent-panel-three-row__20261105_201500.md》）─────────
+#
+# 这两条堵的不是风格问题，是**渲染器的确定性断点**：文档写对了、图也在库里，
+# 页面照样出「图片加载失败」占位或一行字面量。根因在两处前端代码：
+#
+#   R17 bare-name-embed  ｜ `web/js/viewers/markdown.js` 的 `imageCandidates()`
+#     候选表只有固定几格 —— ①文档同目录 ②vault 根 ③`<vault>/attachments/<ref>`
+#     ④`<vault>/assets/<ref>` ⑤`<docdir>/attachments/<ref>` ⑥`<docdir>/assets/<ref>`
+#     —— **一律不递归子目录**。正文写裸文件名 `![[x.png]]` 而图真身在
+#     `assets/<batch>/x.png` 时六格全落空 ⇒ 占位失败。R6 对这种情况判 **ok**
+#     （全库 basename 唯一命中 = 「图确实在库里」），这正是「检查全绿、图不显示」
+#     的那条缝：R6 管「图在不在库内」，R17 管「渲染器找不找得到」。
+#     判定：渲染器候选表解析不到、但同名文件在 vault 内确实存在 ⇒ 违规，并把
+#     **应写路径**直接打出来（唯一命中给一条，多处同名给候选清单让作者选）。
+#
+#   R18 image-in-human-fence  ｜ 同一个文件的 `expandImageEmbeds()` **明确不展开
+#     围栏内的嵌入**（围栏是代码，代码块里的 `![[…]]` 是样张不是图）。而 human
+#     卡片（`.nf-human-card`）的正文是围栏内文本再走一遍 markdown —— 到这一步
+#     嵌入已经是字面量，路径再对也不出图。⇒ 图片嵌入写进 ```human 围栏 = 死图，
+#     图必须写在围栏外（CJK 摘要里只留文字与 `[[文档]]` 引用）。
+#
+# 生效面沿用 R10-R12 的两档制：时间块 ≥ IMAGE_EMBED_STAMP 的阶段件硬查（进违规、
+# 动退出码），更早的存量只打 advisory（fix what you touch；`--strict-style` 全库
+# 整改时一并硬判）。理由同 v2：本制之前写下的文档不知道有这两条断点，硬判它们
+# 等于凭空造违规；但读数必须打出来——存量命中多少、分布在哪，是作者的整改清单。
+
+IMAGE_EMBED_STAMP = "20261105_130000"
+
+# 前端 imageCandidates() 的候选表（vault 相对形态，顺序与优先级一一对应）。
+# 只镜像**路径语义**，不镜像 HTTP 铸票/级联——本脚本判「能否命中」，不判「怎么取字节」。
+RENDERER_VAULT_ATTACH_DIRS = ("attachments", "assets")
+RENDERER_DOC_SUBDIRS = ("attachments", "assets")
+
+# 图片引用按语法决定的「应写形态」模板（修正建议直接可粘贴）
+IMAGE_EMBED_SYNTAX_TPL = {
+    "wikilink": "![[{path}]]",
+    "markdown": "![]({path})",
+    "html": '<img src="{path}">',
+}
+
+
+# ── R19 必须有图 / R20 逐条细节未折叠（以图为主批；作者令 2026-11-05 21:24）──
+#
+# 作者原话：「一定要以图为主，我们 visual report 很多内容都是关于如何使用专业的
+# 工具画出更好的图。文字要尽量少，只说关键内容，然后不得不补充的细节，就放在
+# 可点击展开的块里。」
+#
+# 两条机器面各管一头——「有没有图」与「文字有没有超载」：
+#
+#   R19 image-required  ｜ 文档一篇图都没有 ⇒ 违规。图的判据两种形态都算：
+#     ① 图片引用（`![[…]]` / `![](…)` / `<img src>`，与 R6/R17/R18 同一抓取面）；
+#     ② ```mermaid 围栏块（图也可以是代码画的图）。豁免必须写在文档里：
+#     `<!-- wiki-figure-exempt: 理由 -->`（理由非空），对应条款 ⑬(d)
+#     「允许例外，但必须在文档里显式声明为什么例外」。
+#
+#   R20 stacked-detail  ｜ 一个 `##` 章节里出现**连续 ≥ STACKED_RUN_MIN 行**的
+#     「逐条细节」却没有 `<details>` 折叠块 ⇒ 违规，提示移入折叠块。逐条细节的
+#     判据收得很窄（宁可漏报也不误伤）：
+#       · 列表项（`- ` / `* ` / `+ ` / `1. `）——逐条清单 / 步骤堆叠；
+#       · 代码围栏内的行（```bash 的命令清单、日志读数；```mermaid 除外——它是图）。
+#     表格**不算**：表格是压缩形态（R16 同一口径），一屏能扫完的读数表不算铺散文。
+#     已被 `<details>` 包住的行不算（已经折了）。阈值/判据写在此处，报告里逐字
+#     照抄，作者可复核；`--fold-run` 可调。
+#
+# 生效面：R19/R20 有自己的时间界 FIGURE_STAMP（= 本条裁定的时刻），比它早的
+# 存量只打 advisory（fix what you touch）；`--strict-style` 全库硬判。
+
+FIGURE_STAMP = "20261105_212400"
+STACKED_RUN_MIN = 12
+FIGURE_EXEMPT_RE = re.compile(r"<!--\s*wiki-figure-exempt\s*:\s*(.*?)\s*-->")
+FOLD_EXEMPT_RE = re.compile(r"<!--\s*wiki-fold-exempt\s*:\s*(.*?)\s*-->")
+MERMAID_FENCE_RE = re.compile(r"^\s*(?:```+|~~~+)\s*mermaid\b", re.IGNORECASE)
+SECTION_HEADING_RE = re.compile(r"^##\s+\S")
+STACKED_LIST_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+\S")
+# 「结构性文档」不判 R19：目录 / 词表 / README 是导航与词条面，本来就不是图文报告
+# （与孤儿文档豁免同一份理由表，见 R2 段的 index/glossary/readme）。
+STRUCTURAL_DOC_STEMS = {"index", "readme", "glossary"}
 
 
 # ── R7 彩色 / R8 缩进 / R9 缩写（文档排版与缩写批；作者裁定 2026-11-05
@@ -1688,6 +1793,195 @@ def classify_absolute_image(path, raw, vault_abs):
             + volatile_hint(raw))
 
 
+# ── R17 裸名嵌入 / R18 human 围栏内嵌图：渲染器镜像 ────────────────────
+
+def renderer_candidates(rel, ref):
+    """镜像 `web/js/viewers/markdown.js` 的 `imageCandidates()` → vault 相对候选表。
+
+    前端那六格（文档同目录 / vault 根 / `<vault>/attachments|assets` /
+    `<docdir>/attachments|assets`）的**路径语义**原样搬过来；`%20` 等百分号编码先
+    解码（marked 会 percent-encode，前端 decodeRef 同一口径）。不镜像铸票与
+    onerror 级联——本函数只回答「渲染器会不会去找这个文件」。"""
+    src = unquote(str(ref or "").split("#", 1)[0].split("?", 1)[0]).strip()
+    if not src:
+        return []
+    if src.startswith("./"):
+        src = src[2:]
+    doc_dir = posixpath.dirname(rel)
+    out = []
+
+    def push(path):
+        norm = posixpath.normpath(path)
+        if norm and norm != "." and not norm.startswith("../") and norm not in out:
+            out.append(norm)
+
+    if doc_dir:
+        push(doc_dir + "/" + src)
+    push(src)
+    for sub in RENDERER_VAULT_ATTACH_DIRS:
+        push(sub + "/" + src)
+    if doc_dir:
+        for sub in RENDERER_DOC_SUBDIRS:
+            push(doc_dir + "/" + sub + "/" + src)
+    return out
+
+
+def renderer_hit(rel, ref, vault_files):
+    """该引用在渲染器候选表里命中的 vault 相对路径；解析不到 → None。"""
+    for cand in renderer_candidates(rel, ref):
+        if cand in vault_files:
+            return cand
+    return None
+
+
+def embed_syntax_hint(syntax, path):
+    """按原语法给可粘贴的应写形态。"""
+    tpl = IMAGE_EMBED_SYNTAX_TPL.get(syntax) or IMAGE_EMBED_SYNTAX_TPL["wikilink"]
+    return tpl.format(path=path)
+
+
+def collect_image_embed_issues(rel, doc, vault_files, by_base, vault_abs):
+    """R17 / R18 判定面 → [{rule, line, target, detail}]。
+
+    两条的靶都是**渲染期确定性失败**，不是位置合规（位置合规由 R6 管）：
+
+    · R18 先判：行号落在 ```human 围栏内 ⇒ 围栏内嵌图，无论路径对错都不出图。
+    · R17 后判：R6 判 ok（图确实在库里）但渲染器候选表解析不到 ⇒ 裸名/路径写歪。
+      R6 已经报过的（死引用 / 绝对路径 / 外链 / 越界）不再由 R17 复述——一处只报一次，
+      修完重跑看下一处。行内豁免 `<!-- wiki-img-exempt: 理由 -->` 对 R17 同样生效
+      （历史存量的位置豁免），但**不豁免 R18**：围栏内嵌图是纯版式失误，把那一行搬
+      出去就能修，没有「外部依赖」可豁免。"""
+    issues = []
+    for ref in doc.image_refs:
+        target = ref["target"]
+        line = ref["line"]
+        syntax = ref["syntax"]
+        if line in doc.human_lines:
+            issues.append({
+                "rule": "image-in-human-fence", "line": line, "target": target,
+                "detail": (f"图片嵌入在 ```human 摘要围栏内（第 {line} 行）——渲染器的 "
+                           "`expandImageEmbeds()` 不展开围栏内嵌入（围栏是代码面），卡片里"
+                           f"只剩字面量 `![[{target}]]`，路径再对也不出图；"
+                           + "把这一行移到围栏**外**（图注紧跟它），围栏内只留文字与 `[[文档]]` 引用"),
+            })
+        if ref["exempt"]:
+            continue
+        status, _detail = classify_image_ref(rel, target, syntax, vault_files,
+                                             by_base, vault_abs)
+        if status != "ok":
+            continue          # 位置面已经由 R6 报过，R17 不复述
+        if renderer_hit(rel, target, vault_files):
+            continue          # 渲染器解析得到 ⇒ 合规
+        base = posixpath.basename(
+            unquote(target).split("#", 1)[0].split("?", 1)[0]).lower()
+        hits = sorted(by_base.get(base) or [])
+        if not hits:
+            continue
+        implied = unquote(target).split("#", 1)[0].split("?", 1)[0].strip()
+        if "/" in implied.replace("\\", "/"):
+            why = ("引用带了目录，但渲染器候选表不含该位置"
+                   "（只找文档同目录 / vault 根 / attachments / assets 六个格位）")
+        else:
+            why = ("正文是裸文件名，图真身却在子目录里——前端 `imageCandidates()` "
+                   "只找六个格位、**不递归子目录**，六格全落空即「图片加载失败」占位")
+        if len(hits) == 1:
+            fix = f"应写：`{embed_syntax_hint(syntax, hits[0])}`"
+        else:
+            shown = " / ".join(f"`{embed_syntax_hint(syntax, h)}`" for h in hits[:4])
+            more = f" 等 {len(hits)} 处" if len(hits) > 4 else ""
+            fix = f"库内同名 {len(hits)} 处{more}，选文档实际用的那张：{shown}"
+        issues.append({
+            "rule": "bare-name-embed", "line": line, "target": target,
+            "detail": f"`{target}` → {why}；{fix}",
+        })
+    return issues
+
+
+# ── R19 必须有图 / R20 逐条细节未折叠：判定面 ──────────────────────────
+
+def doc_has_figure(doc):
+    """一篇文档「有图」的两条判据：图片引用（R6/R17 同一抓取面）或 ```mermaid 块。"""
+    if doc.image_refs:
+        return True
+    return any(MERMAID_FENCE_RE.match(line) for line in doc.raw_lines)
+
+
+def declared_reason(regex, text):
+    """文档内的豁免声明理由（`<!-- wiki-figure-exempt: 理由 -->`）；空理由 = 没声明。"""
+    m = regex.search(text or "")
+    return m.group(1).strip() if m else ""
+
+
+def stacked_detail_runs(doc):
+    """R20：每个 `##` 章节里「连续逐条细节」的最长段 → [{line, section, run}]。
+
+    逐条细节 = 列表项 或 代码围栏内的行（```mermaid 除外，那是图）；表格不算
+    （压缩形态，与 R16 同口径）。已被 `<details>` 包住的行不算（已经折了）。
+    一节只报最长那一段——一处修完重跑会看到下一段。"""
+    out = []
+    section = ""
+    section_line = 0
+    run_start = None
+    run = 0
+    best = (0, 0)          # (run, start_line)
+    has_details = False
+    details_depth = 0
+    in_mermaid = False
+
+    def close_section():
+        if section and not has_details and best[0] >= STACKED_RUN_MIN:
+            out.append({"line": best[1], "section": section, "run": best[0]})
+
+    for i in range(doc.body_start, len(doc.raw_lines)):
+        line = doc.raw_lines[i]
+        line_no = i + 1
+        stripped = line.strip()
+        if SECTION_HEADING_RE.match(line):
+            close_section()
+            section, section_line = stripped, line_no
+            run, best, has_details, details_depth, in_mermaid = 0, (0, 0), False, 0, False
+            run_start = None
+            continue
+        if not section:
+            continue
+        if DETAILS_CLOSE_RE.search(line):
+            details_depth = max(0, details_depth - 1)
+            run, run_start = 0, None
+            continue
+        if DETAILS_OPEN_RE.search(line):
+            has_details = True
+            details_depth += 1
+            run, run_start = 0, None
+            continue
+        if details_depth:
+            continue                      # 已折叠的行不参与判定
+        if MERMAID_FENCE_RE.match(line):
+            in_mermaid = True
+            run, run_start = 0, None
+            continue
+        if FENCE_RE.match(line):
+            if in_mermaid:
+                in_mermaid = False        # mermaid 的收尾围栏
+            run, run_start = 0, None      # 围栏标记行本身不计
+            continue
+        if in_mermaid:
+            continue                      # 图的内容行不计量
+        if not stripped:
+            run, run_start = 0, None
+            continue
+        is_detail = bool(STACKED_LIST_RE.match(line)) or bool(doc.fence_mask[i])
+        if is_detail:
+            if run == 0:
+                run_start = line_no
+            run += 1
+            if run > best[0]:
+                best = (run, run_start)
+        else:
+            run, run_start = 0, None
+    close_section()
+    return out
+
+
 # ── 校验 ─────────────────────────────────────────────────────────────
 
 def term_regex(term):
@@ -1996,12 +2290,16 @@ def check(root, docs, resolve, glossary_rel, exclude_glossary_check, terms_by_re
     if style_opts.get("enabled", True):
         since = style_opts.get("since") or STYLE_CONTRACT_STAMP
         since_v2 = style_opts.get("since_v2") or STYLE_V2_STAMP
+        since_img = style_opts.get("since_img") or IMAGE_EMBED_STAMP
+        since_fig = style_opts.get("since_fig") or FIGURE_STAMP
         strict = bool(style_opts.get("strict"))
         allow = style_opts.get("allow") or {}
         stats = style_opts.setdefault("stats", {})
         for key in ("color", "paragraph", "abbrev", "exempt", "wordform",
                     "docs_hard", "docs_legacy", "plain", "sections", "unfolded",
-                    "images", "nocaption", "caplong"):
+                    "images", "nocaption", "caplong",
+                    "img_hard", "img_legacy", "img_bare", "img_fence",
+                    "fig_nomap", "fig_stacked", "fig_hard", "fig_legacy"):
             stats.setdefault(key, 0)
         for rel, doc in sorted(docs.items()):
             if not rel.lower().endswith((".md", ".markdown")):
@@ -2026,6 +2324,63 @@ def check(root, docs, resolve, glossary_rel, exclude_glossary_check, terms_by_re
                 elif advisories is not None:
                     advisories.append({"rule": rule, "file": _rel, "line": line,
                                        "detail": detail, "scope": "legacy"})
+
+            # R17 — 裸名嵌入 / R18 — human 围栏内嵌图：渲染器断点（「图不显示」批）
+            embed_issues = collect_image_embed_issues(rel, doc, vault_files, by_base, vault_abs)
+            if embed_issues:
+                scoped_img = style_scoped_v2(rel, doc, since_img, strict)
+                stats["img_hard" if scoped_img else "img_legacy"] += len(embed_issues)
+                for iss in embed_issues:
+                    if iss["rule"] == "bare-name-embed":
+                        stats["img_bare"] += 1
+                    else:
+                        stats["img_fence"] += 1
+                    if scoped_img:
+                        add(iss["rule"], rel, iss["line"], iss["detail"])
+                    elif advisories is not None:
+                        advisories.append({"rule": iss["rule"], "file": rel,
+                                           "line": iss["line"], "detail": iss["detail"],
+                                           "scope": "legacy"})
+
+            # R19 — 必须有图 / R20 — 逐条细节未折叠（以图为主批，作者令 21:24）
+            fig_issues = []
+            full_text = "\n".join(doc.raw_lines)
+            structural = Path(rel).stem.lower() in STRUCTURAL_DOC_STEMS
+            if not structural and not doc_has_figure(doc):
+                if not declared_reason(FIGURE_EXEMPT_RE, full_text):
+                    fig_issues.append({
+                        "rule": "image-required", "line": 1,
+                        "detail": ("一篇图都没有（图片嵌入与 ```mermaid 块都没有）——"
+                                   "visual report 以图为主：正文的主体是图，文字只做注解与结论；"
+                                   "补一张图（截图 / 数据图表 / ```mermaid），"
+                                   "或若本文确实不该有图，写 `<!-- wiki-figure-exempt: 理由 -->` 明说为什么"),
+                    })
+            runs = stacked_detail_runs(doc)
+            if runs and declared_reason(FOLD_EXEMPT_RE, full_text):
+                runs = []
+            for run in runs:
+                fig_issues.append({
+                    "rule": "stacked-detail", "line": run["line"],
+                    "detail": (f"章节「{run['section']}」连续 {run['run']} 行逐条细节敞在正文"
+                               f"（第 {run['line']} 行起），该节没有折叠块——把这段移进 "
+                               "`<details><summary>过程</summary>` + 空行 + 正文 + 空行 + "
+                               "`</details>`（标题用「过程 / 取证读数 / 复现步骤」这类短标签）；"
+                               "正文只留结论、决策与读数"),
+                })
+            if fig_issues:
+                scoped_fig = style_scoped_v2(rel, doc, since_fig, strict)
+                stats["fig_hard" if scoped_fig else "fig_legacy"] += len(fig_issues)
+                for iss in fig_issues:
+                    if iss["rule"] == "image-required":
+                        stats["fig_nomap"] += 1
+                    else:
+                        stats["fig_stacked"] += 1
+                    if scoped_fig:
+                        add(iss["rule"], rel, iss["line"], iss["detail"])
+                    elif advisories is not None:
+                        advisories.append({"rule": iss["rule"], "file": rel,
+                                           "line": iss["line"], "detail": iss["detail"],
+                                           "scope": "legacy"})
 
             # R7 — 彩色：额度 / 语义色 / 跨度
             spans = doc.color_spans
@@ -2392,6 +2747,7 @@ def print_rule_counts(violations, exempts=None):
 
 
 def main():
+    global STACKED_RUN_MIN
     ap = argparse.ArgumentParser(description="wiki-docs 文档纪律校验器 + 图谱数据导出")
     ap.add_argument("--root", default=None,
                     help="vault 根目录（显式覆盖，向后兼容）。缺省 = 按 --project 解析："
@@ -2417,11 +2773,17 @@ def main():
                     help=f"R7-R9 硬查的时间界（文件名时间块 ≥ 此值即入硬查；缺省 {STYLE_CONTRACT_STAMP}）")
     ap.add_argument("--style-since-v2", default=STYLE_V2_STAMP,
                     help=f"R10-R12/R16 硬查的时间界（写作风格批 v2 自己的生效界；缺省 {STYLE_V2_STAMP}）")
+    ap.add_argument("--image-since", default=IMAGE_EMBED_STAMP,
+                    help=f"R17-R18 硬查的时间界（「图不显示」批自己的生效界；缺省 {IMAGE_EMBED_STAMP}）")
+    ap.add_argument("--figure-since", default=FIGURE_STAMP,
+                    help=f"R19-R20 硬查的时间界（「以图为主」批自己的生效界；缺省 {FIGURE_STAMP}）")
+    ap.add_argument("--fold-run", type=int, default=STACKED_RUN_MIN,
+                    help=f"R20 逐条细节连续行数阈值（缺省 {STACKED_RUN_MIN}）")
     ap.add_argument("--strict-style", action="store_true",
-                    help="R7-R12/R16 全库硬查（存量整改批次用：所有文档都按新制判，不再记 advisory）")
+                    help="R7-R12/R16 与 R17-R18 全库硬查（存量整改批次用：所有文档都按新制判，不再记 advisory）")
     ap.add_argument("--skip-style", action="store_true",
                     help="跳过 R7 彩色 / R8 缩进 / R9 缩写 / R10 禁用词 / R11 结构 / R12 图注 / R16 折叠"
-                         "（历史批次对照用）")
+                         " / R17 裸名嵌入 / R18 围栏内嵌图（历史批次对照用）")
     ap.add_argument("--allowlist", default=None,
                     help="R9 缩写允许清单文件（缺省 = 本 skill 的 SKILL.md 标记块）")
     ap.add_argument("--allowlist-extra", action="append", default=[],
@@ -2433,6 +2795,9 @@ def main():
     ap.add_argument("--fold-threshold", type=int, default=DETAIL_FOLD_THRESHOLD,
                     help=f"R16 细节折叠的敞开正文阈值（可视字符；缺省 {DETAIL_FOLD_THRESHOLD}）")
     args = ap.parse_args()
+
+    if args.fold_run and args.fold_run > 0:
+        STACKED_RUN_MIN = args.fold_run
 
     if args.rules:
         for rid, name, text in RULES:
@@ -2508,6 +2873,8 @@ def main():
                            terms_by_rel=vterms, resolve_term=vterm_res,
                            style_opts={"enabled": not args.skip_style, "since": args.style_since,
                                        "since_v2": args.style_since_v2,
+                                       "since_img": args.image_since,
+                                       "since_fig": args.figure_since,
                                        "strict": args.strict_style, "allow": abbrev_allow,
                                        "plainwords": plain_block,
                                        "fold_threshold": args.fold_threshold,
@@ -2677,6 +3044,17 @@ def print_style_readout(stats, advisories, indent="", since=STYLE_CONTRACT_STAMP
           f"未折叠细节 {stats.get('unfolded', 0)} 处 · 图 {stats.get('images', 0)} 张"
           f"（缺图注 {stats.get('nocaption', 0)} · 图注过长 {stats.get('caplong', 0)}）· "
           f"禁用词 {stats.get('plain', 0)} 处")
+    img_hard = stats.get("img_hard", 0)
+    img_legacy = stats.get("img_legacy", 0)
+    print(f"{indent}图能不能显示（R17-R18，时间界 {IMAGE_EMBED_STAMP}）："
+          f"裸名嵌入 {stats.get('img_bare', 0)} 处 · 围栏内嵌图 {stats.get('img_fence', 0)} 处"
+          f" —— 硬查 {img_hard} 条 · 存量 advisory {img_legacy} 条"
+          "（渲染器候选表 / 围栏展开面都是确定性断点：命中即页面不出图，不是风格问题）")
+    fig_hard = stats.get("fig_hard", 0)
+    fig_legacy = stats.get("fig_legacy", 0)
+    print(f"{indent}以图为主（R19-R20，时间界 {FIGURE_STAMP}）：无图文档 "
+          f"{stats.get('fig_nomap', 0)} 篇 · 逐条堆叠 {stats.get('fig_stacked', 0)} 节"
+          f"（阈值 {STACKED_RUN_MIN} 行）—— 硬查 {fig_hard} 条 · 存量 advisory {fig_legacy} 条")
     if not advisories:
         return
     graph = [a for a in advisories if a.get("scope") == "graph"]

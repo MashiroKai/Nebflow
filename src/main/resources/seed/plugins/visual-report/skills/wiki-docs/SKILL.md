@@ -28,12 +28,14 @@ and nothing on the term face was touched.
 
 ## Mandatory clauses (checkable — a violation is a rework)
 
-The twelve clauses below are author mandates (2026-10-21; ④ added 2026-10-29,
+The thirteen clauses below are author mandates (2026-10-21; ④ added 2026-10-29,
 term-citation batch; ⑤ added 2026-10-30, card-face batch; ⑥ added 2026-11-05,
-images-live-with-the-doc batch; ⑦⑧ added 2026-11-05, typography-and-abbreviations
+images-live-with-the-doc batch — re-cut the same day with binding points ⑤⑥,
+"figures do not show" batch; ⑦⑧ added 2026-11-05, typography-and-abbreviations
 batch — author rulings 11:09 and 11:11; ⑨⑩⑪ added 2026-11-05, writing-style-v2
-batch — author order 12:09; ⑫ added 2026-11-05, cite-terms-only batch), not style
-advice. All twelve are machine-checkable
+batch — author order 12:09; ⑫ added 2026-11-05, cite-terms-only batch; ⑬ added
+2026-11-05 21:24, figure-first batch), not style
+advice. All thirteen are machine-checkable
 by the validator in `scripts/check_wiki_docs.py` (Python 3 stdlib only, zero
 deps) — except clause ⑤'s fence existence, which stays convention-enforced
 (skill + dispatch briefs) until the validator grows its existence rule
@@ -86,8 +88,14 @@ machine-checked:
    opening card carries four parts in plain words: **结论 → 关键数字 → 图 →
    待你决定的事** (no English heading, no jargon: "Impression" and its Chinese
    equivalents are on the blocklist, clause ⑨). Inside it: the conclusion in
-   ≤3 lines, 3-7 key numbers, ≥1 key chart (`![[key-chart.png]]`, caption =
-   the conclusion sentence). Agent jargon (spec pass counts, merge-queue
+   ≤3 lines, 3-7 key numbers, and **the caption sentence of the key chart** —
+   the chart LINE itself goes **immediately after the closing fence**, never
+   inside it (`![[assets/<batch>/key-chart.png]]`, caption = the conclusion
+   sentence). A `![[…]]` written inside a fence is **not an image at all**: the
+   renderer's `expandImageEmbeds()` skips fenced lines by design (a fence is
+   code, and a `![[…]]` in code is a sample), so the card would show the
+   literal text and the figure would be invisible (clause ⑥ binding point ⑤,
+   rule `image-in-human-fence`). Agent jargon (spec pass counts, merge-queue
    speak, worktree, commit hashes, session/chain internals) stays OUT of the
    card — plain wording, or a registered-term short form `[[Name]]` for terms
    that must stay (hover gloss via the term registry). Content outside the
@@ -106,9 +114,35 @@ machine-checked:
    EXIST. Rationale: the vault travels (other machines, fresh clones, cleaned
    worktrees), the repo evidence tree / worktree / cache does not — a document
    whose figures live elsewhere is a page of dead references the moment it
-   moves. → check rule `image-outside-vault`; per-occurrence escape hatch is
-   the inline marker `<!-- wiki-img-exempt: reason -->` (see "Images live with
-   the document" below).
+   moves. Two more binding points were added by the "figures do not show" batch
+   (author report 2026-11-05, sample
+   `agent-panel-three-row__20261105_201500.md`) — both are **renderer
+   certainties**, not preferences: a document that breaks them shows a
+   "image failed to load" placeholder or a line of literal text, no matter how
+   correct the file location is.
+   5. **The reference must be the path the renderer actually builds.** Write
+   the path **including the batch sub-directory**:
+   `![[assets/20261105_agent-panel-rows/after-states-dark.png]]`, never the
+   bare file name `![[after-states-dark.png]]`. The renderer's
+   `imageCandidates()` (`src/main/resources/web/js/viewers/markdown.js:965`)
+   builds a FIXED candidate list — document directory, vault root,
+   `<vault>/attachments/`, `<vault>/assets/`, `<docdir>/attachments/`,
+   `<docdir>/assets/` — and **never recurses into sub-directories**. A bare
+   name for a figure stored in `assets/<batch>/x.png` misses all six.
+   → check rule `bare-name-embed` (R17): the violation prints the path you
+   should have written.
+   6. **Never put an image embed inside a ```human fence.** `expandImageEmbeds()`
+   (`same file:920`) deliberately does **not** expand embeds inside fenced
+   lines (a fence is code; a `![[…]]` in code is a sample, not a figure), and
+   the card body is re-rendered as markdown from that same fenced text — so an
+   embed written in the card survives only as the literal characters. Put the
+   figure line **immediately after the closing fence**, caption underneath; the
+   card keeps the wording (结论 / 关键数字 / 图注文字 / 待你决定的事). → check
+   rule `image-in-human-fence` (R18).
+   → check rules `image-outside-vault` (R6), `bare-name-embed` (R17),
+   `image-in-human-fence` (R18); per-occurrence escape hatch is the inline
+   marker `<!-- wiki-img-exempt: reason -->` (see "Images live with the
+   document" below).
 7. **Typography: paragraph indent + restrained colour (排版批, author ruling
    2026-11-05 11:09)** — every body paragraph starts with `&emsp;&emsp;`
    (two HTML entities = a two-character first-line indent; plain spaces either
@@ -181,6 +215,32 @@ machine-checked:
    R9 `abbrev-expansion`, landed earlier and already in force) and moved up to
    R13–R15 — the judgement logic is unchanged, only the numbers.
 
+13. **Figures are the document; words annotate them (以图为主, author ruling
+   2026-11-05 21:24)** — a visual report is a **figure-led** document: the body
+   IS the figures (Mermaid / data charts / screenshots) and prose exists only
+   to annotate and conclude. Author wording: 「一定要以图为主……文字要尽量少，
+   只说关键内容，然后不得不补充的细节，就放在可点击展开的块里」. Four binding
+   points:
+   (a) **Figure order = narrative order** — a reader scrolling the figures gets
+   the whole argument without reading a paragraph.
+   (b) **Words carry conclusions, decisions and readouts only** — process,
+   derivation and item-by-item enumerations do not sit in the body.
+   (c) **Whatever detail must stay goes into a collapsed block**, in the one
+   compliant form `<details><summary>过程</summary>` + blank line + body + blank
+   line + `</details>`; the summary is a short label with information in it
+   (「过程」「取证读数」「复现步骤」), never a whole sentence.
+   (d) **Exceptions are declared in the document**, never taken silently — a
+   step-by-step derivation document states why it is unfigured / unfolded, with
+   the marker `<!-- wiki-figure-exempt: 理由 -->` (reason non-empty) or
+   `<!-- wiki-fold-exempt: 理由 -->`.
+   Anti-patterns, spelled out because they are what this clause was written
+   against: a wall of explanatory prose; a tutorial on "how to drive the tool
+   that draws the chart"; evidence pasted line by line into the body; a caption
+   that restates what the figure already says. → check rules `image-required`
+   (R19: a document with no figure at all) and `stacked-detail` (R20: a run of
+   item-by-item readout / step lines outside any `<details>`); the whole
+   discipline and its thresholds are in "Figure first, words annotate" below.
+
 Run before delivering any document batch:
 
 ```
@@ -198,7 +258,12 @@ python3 ${SKILL_DIR}/scripts/check_wiki_docs.py --project <project> --glossary g
   suggestion, blocked word inside inline code ⇒ silent, section without a
   bold conclusion ⇒ flags, open prose over the fold threshold ⇒ flags, folded
   prose ⇒ passes, image without a caption ⇒ flags, over-long caption ⇒
-  advisory only, orphan document ⇒ advisory only). Run it in the same breath
+  advisory only, orphan document ⇒ advisory only; and the two later batches:
+  bare-name embed ⇒ flags **with the path to write**, in-vault sub-directory
+  path ⇒ passes, embed inside a human fence ⇒ flags, embed outside it ⇒
+  passes; document with no figure ⇒ flags, declared `wiki-figure-exempt` ⇒
+  passes, 12+ un-folded detail lines ⇒ flags, the same lines inside
+  `<details>` ⇒ passes). Run it in the same breath
   as any validator change:
   `cd scripts && python3 -m unittest test_check_wiki_docs -v`.
 - **Scope of clauses ⑦⑧⑨⑩⑪⑫ (stock transition).** R7–R12, R16 and the cite-terms
@@ -216,6 +281,15 @@ python3 ${SKILL_DIR}/scripts/check_wiki_docs.py --project <project> --glossary g
   `--style-since-v2 <YYYYMMDD_HHMMSS>` (R10–R12 and R16 take effect from their own
   stamp — `20261105_130000`, this batch's delivery; the `style:` frontmatter
   opt-in belongs to R7–R9 and does not retro-apply).
+- **Scope of clauses ⑥ ⑤⑥ and ⑬ (same stock transition, own stamps).**
+  R17 `bare-name-embed` / R18 `image-in-human-fence` are hard from
+  `--image-since`, default `20261105_130000` (same reasoning as v2: documents
+  written before the rule existed cannot be judged by it, so they print as
+  advisory); R19 `image-required` / R20 `stacked-detail` are hard from
+  `--figure-since`, default `20261105_212400` (the figure-first ruling's own
+  moment). All four go hard for every document under `--strict-style`. The
+  readout line `图能不能显示（R17-R18 …）` always prints both tiers, so a stock
+  hit is visible even when it does not fail the run.
 - The vault root defaults to `<data_root>/projects/<project>/.stand/docs/`
   (`STAND_HOME` / `NEBFLOW_HOME` override the data root); `--project` defaults
   to `stand`. `--root <path>` still overrides explicitly — use it to validate a
@@ -341,6 +415,39 @@ Four binding points, all machine-checked as `image-outside-vault`:
    icon/image services are violations; if the only source is remote, download
    one local copy into the vault, reference that copy, and name the origin in
    the caption or the surrounding text.
+5. **The path must be the one the renderer builds (write the sub-directory).**
+   Batch figures live in `<vault>/assets/<batch>/`; the reference must say so:
+   `![[assets/20261105_agent-panel-rows/after-states-dark.png]]`. The renderer
+   (`web/js/viewers/markdown.js:965 imageCandidates()`) builds a **fixed**
+   candidate list — document directory, vault root, `<vault>/attachments/`,
+   `<vault>/assets/`, `<docdir>/attachments/`, `<docdir>/assets/` — and never
+   recurses. A bare `![[after-states-dark.png]]` misses all six, and the page
+   shows the "image failed to load" placeholder even though the file is sitting
+   in the vault. → check rule `bare-name-embed` (R17); the violation message
+   prints the exact path to write. Note the division of labour with R6: R6 asks
+   "is the figure in the vault", R17 asks "can the renderer find it" — a
+   document can pass R6 and still show a broken image, and that gap is exactly
+   what R17 was added for.
+6. **No image embed inside a human fence.** `expandImageEmbeds()`
+   (`same file:920`) skips fenced lines by design — a fence is code, and a
+   `![[…]]` inside code is a syntax sample, not a figure. The card body is
+   re-rendered from that same fenced text, so the embed stays literal
+   characters. Write the image line **immediately after the closing fence**,
+   caption under it. → check rule `image-in-human-fence` (R18).
+
+The counter-example that started this batch (both defects at once — never
+renders for two independent reasons):
+
+````markdown
+```human
+图：
+![[after-states-dark.png]]
+```
+````
+
+Two fixes, both required: write the path including `assets/<batch>/` (R17), and
+move the image line below the closing fence (R18). The card keeps the caption
+sentence; the figure line lives outside.
 
 Correct (compliant):
 
@@ -391,10 +498,85 @@ violation):
 Scan scope per document: markdown `![alt](path)`, wikilink embeds `![[path]]`
 with an image extension, and HTML `<img src="…">`. Code fences and inline-code
 spans are syntax samples, not references (they do not render as images) and are
-skipped — **except the `human` fence**: it is a content face (clause ⑤'s key
-chart lives inside it), so its images are checked like body content. `data:`
+skipped — **except the `human` fence**: it is a content face, so its images are
+checked like body content (checked by R6/R17 for location and resolvability —
+but note that an embed *inside* a human fence can never render, which is R18's
+whole point: the checker still sees it, the renderer never draws it). `data:`
 inline images are self-contained and pass. Migration of existing stock is the
 author's call — the validator reports, it never moves or rewrites documents.
+
+## Figure first, words annotate (以图为主, clause ⑬)
+
+Author ruling 2026-11-05 21:24, verbatim: 「一定要以图为主，我们 visual report
+很多内容都是关于如何使用专业的工具画出更好的图。文字要尽量少，只说关键内容，
+然后不得不补充的细节，就放在可点击展开的块里。」
+
+### The four binding points
+
+1. **The document IS the figures.** Mermaid diagrams, data charts, screenshots —
+   that is the body. Text annotates and concludes; it does not narrate. Read
+   the figures top to bottom and you have the argument.
+2. **Words: conclusions, decisions, readouts only.** Process, derivation, and
+   item-by-item enumeration do not sit open in the body. If a sentence exists
+   because "the reader might want to know how we got here", it belongs in a
+   fold.
+3. **Detail that must stay gets folded.** One compliant form:
+
+   ````markdown
+   <details><summary>过程</summary>
+
+   …细节…
+
+   </details>
+   ````
+
+   The summary is a **short label with information in it** — 「过程」「取证读数」
+   「复现步骤」「七条判据读数」 — never a whole sentence, never a bare 「详情」.
+   The blank lines around the body are required: without them the body stays raw
+   text and markdown inside the fold stops working.
+4. **Exceptions are declared in the document.** A derivation-heavy document,
+   or one that genuinely needs no figure, says so inline —
+   `<!-- wiki-figure-exempt: 推导型文档，公式逐步变形无法成图 -->` or
+   `<!-- wiki-fold-exempt: 结论本身就是 12 行逐条读数，已是最简形态 -->`. The
+   reason must be non-empty. A silent exception is a violation with a comment.
+
+### The anti-pattern list (what this clause was written against)
+
+- A wall of explanatory prose where a figure would have said it in one glance.
+- A tutorial on "how to drive the tool that draws the chart" — the tool recipe
+  belongs in a fold, or in the tool's own skill, not in the body.
+- Evidence pasted line by line into the body (dozens of assertion lines, log
+  excerpts, per-file diff lists).
+- A caption that restates what the figure already says — the caption states the
+  conclusion the figure proves, nothing more.
+
+### Annotations are small: figure, caption, one sentence
+
+````markdown
+![[assets/<batch>/after-states-dark.png]]
+
+图 1 八个状态同屏：状态位只剩图标，第三行是各自的当前动作。
+
+&emsp;&emsp;**状态被画了四遍时，名字就该看不见了**——收成单表后一行只留一个图标。
+````
+
+### Machine checks and their thresholds (verbatim, so they can be reviewed)
+
+| Rule | Criterion (exact) | Remedy the message gives |
+|---|---|---|
+| `image-required` (R19) | A `.md` document with **zero figures**: no image reference (`![[…]]` / `![](…)` / `<img src>`) and no ```` ```mermaid ```` fenced block | 补一张图（截图 / 数据图表 / mermaid），或写 `<!-- wiki-figure-exempt: 理由 -->` 明说为什么 |
+| `stacked-detail` (R20) | Inside one `##` section with **no `<details>` block**, the longest **contiguous run of ≥12 "detail lines"**; a detail line = a list item (`- ` / `* ` / `+ ` / `1. `) or a line inside a code fence (```` ```mermaid ```` excluded — that is a figure; **table rows excluded** — a table is a compression form, same judgement as R16); lines already inside `<details>` are not counted; one report per section (the longest run) | 把这 N 行移进 `<details><summary>过程</summary>` + 空行 + 正文 + 空行 + `</details>`；正文只留结论、决策与读数 |
+| `detail-fold` (R16, earlier) | Inside one `##` section, **>600 visible characters of open prose** (sentences, not tables/lists/code/captions) and no `<details>` | 把论证细节包进折叠块 |
+
+R16 and R20 are complements, not duplicates: R16 counts un-folded **prose
+volume**, R20 counts un-folded **enumerations** (a section made only of 40
+bullet lines has almost no prose and would pass R16 alone). A section can trip
+both; fix both by folding once.
+
+Thresholds are flags: `--fold-run <n>` (R20 run length, default 12),
+`--fold-threshold <chars>` (R16 prose volume, default 600). Both are hard from
+`--figure-since 20261105_212400` (this ruling's own moment) and advisory for
+older stock; `--strict-style` makes them hard for every document in the vault.
 
 ## Figures — minimal style, the caption says it (clause ⑪)
 
@@ -763,8 +945,11 @@ further part of the document gets its own card** (author order 2026-11-05
 act; ≤3 lines>
 
 **关键数字**：<files changed · assertions green · time · scale, 3-7>
-![[key-chart.png]]   <!-- ≥1 chart; the caption IS the conclusion sentence -->
 ```
+
+![[assets/<batch>/key-chart.png]]
+
+图 1 <the caption IS the conclusion sentence — one line, ≤120 chars>
 
 ```human
 ## 一、<part 1>
@@ -801,9 +986,14 @@ act; ≤3 lines>
   from the existing tokens.
 - **Title line of a card**: `## <part name>` — a noun that names the part
   ("结论", "一、配色", "要你决定的事"), never a sentence and never jargon.
-- **Inside a card**: the conclusion and the 3-7 key numbers only. The argument
-  goes into the `<details>` block right after it (layer ③), so the card stays
-  readable at a glance.
+- **Inside a card**: the conclusion and the 3-7 key numbers only. **The key
+  chart's line goes immediately after the closing fence**, with its caption
+  right under it — a `![[…]]` written inside the fence never becomes an image
+  (`expandImageEmbeds()` skips fenced lines by design), so a chart placed "in
+  the card" is a chart nobody sees (clause ⑥ binding point ⑥, rule
+  `image-in-human-fence`). The card keeps the chart's *caption sentence*, not
+  the chart's line. The argument goes into the `<details>` block right after
+  it (layer ③), so the card stays readable at a glance.
 - One document may carry as many ```human fences as it has parts; they render
   in order as cards. Content left outside every fence folds into one
   "details (N lines)" drawer — with per-part cards plus `<details>`, that
