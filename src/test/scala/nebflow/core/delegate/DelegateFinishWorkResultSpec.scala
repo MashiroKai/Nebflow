@@ -168,6 +168,9 @@ class DelegateFinishWorkResultSpec extends CatsEffectSuite:
         parentSessionId = "nebula-root",
         description = "t",
         readyAt = 1L,
+        // 宣告闸批 2026-11-04：属主宣告在案（`delegate_report(category="merge")`）——授窗前提
+        declaredAt = Some(1_000L),
+        declareSource = Some(nebflow.core.delegate.MergeDeclaration.Source.ReportMerge),
         channelKind = "internal",
         internal = Some(MergeQueue.InternalLeg(child, sup))
       )
@@ -256,6 +259,8 @@ class DelegateFinishWorkResultSpec extends CatsEffectSuite:
         res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
         (child, sup) <- noopRefs(system)
         _ = seedRecord("delegate-nebflow-wr5", Some("85"), Some("delegate/delegate-nebflow-wr5"), repo)
+        // 宣告闸批 2026-11-04：合并轮成立的前提 = 属主已宣告（`delegate_report(category="merge")`）。
+        _ <- IO(MergeDeclaration.write("delegate-nebflow-wr5", MergeDeclaration.Source.ReportMerge))
         // 工作轮终态：judge ready-to-merge ⇒ 停靠 + 保真（根因①）
         _ <- withJudge(DelegateJudge.Verdict.ReadyToMerge) {
           DelegateTerminal.onCompleted(

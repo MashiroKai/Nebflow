@@ -1,0 +1,2093 @@
+[sbt-gate] gate acquired after 0s
+[sbt-gate] heap cap -Xmx2600m applied via SBT_OPTS
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project delegate-merge-queue-gate-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/project
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/)
+[info] Running scalafix on 752 Scala sources
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/Main.scala
+[error] +++ <expected fix>
+[error] @@ -4,7 +4,7 @@
+[error]  import cats.syntax.all.*
+[error]  import nebflow.cli.*
+[error]  import nebflow.gateway.GatewayConfig
+[error] -import nebflow.shared.{Branding, Config, Defaults, PathUtil}
+[error] +import nebflow.shared.*
+[error]  
+[error]  import scala.util.Try
+[error]  
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/SoulMigration.scala
+[error] +++ <expected fix>
+[error] @@ -1,6 +1,6 @@
+[error]  package nebflow.core
+[error]  
+[error] -import nebflow.shared.{MemorySnapshot, MemoryStore, NebflowLogger, PathUtil}
+[error] +import nebflow.shared.*
+[error]  
+[error]  /**
+[error]   * `Soul.md` 启动一次性迁移腿（personal-agent 批 2026-10-04，方案 §2.1 / 裁定①）。
+[error] /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/AtomicJson.scala:424:32: error: [DisableSyntax.return] return should be avoided, consider using if/else instead
+[error]           case _: Exception => return Nil
+[error]                                ^^^^^^
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/InjectionChannel.scala
+[error] +++ <expected fix>
+[error] @@ -1,12 +1,13 @@
+[error]  package nebflow.core
+[error]  
+[error]  import cats.effect.IO
+[error] -import io.circe.{Json, JsonObject}
+[error]  import io.circe.syntax.*
+[error] +import io.circe.{Json, JsonObject}
+[error]  import nebflow.shared.{NebflowLogger, UiMessage}
+[error]  
+[error]  import java.nio.charset.StandardCharsets
+[error]  import java.security.MessageDigest
+[error] +
+[error]  import scala.collection.mutable
+[error]  
+[error]  /**
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/ModelChainMigration.scala
+[error] +++ <expected fix>
+[error] @@ -2,9 +2,8 @@
+[error]  
+[error]  import io.circe.Json
+[error]  import io.circe.syntax.*
+[error] -import nebflow.shared.AgentModelConfig
+[error]  import nebflow.core.presets.{ModelChainRegistry, ModelPreset}
+[error] -import nebflow.shared.{NebflowLogger, PathUtil}
+[error] +import nebflow.shared.{AgentModelConfig, NebflowLogger, PathUtil}
+[error]  
+[error]  /**
+[error]   * One-time migration from named model presets to per-role model chains.
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/errors.scala
+[error] +++ <expected fix>
+[error] @@ -1,7 +1,6 @@
+[error]  package nebflow.core
+[error]  
+[error] -import nebflow.shared.{FallbackAttempt, FallbackExhaustedError}
+[error] -import nebflow.shared.ImageCapabilityRejection
+[error] +import nebflow.shared.{FallbackAttempt, FallbackExhaustedError, ImageCapabilityRejection}
+[error]  
+[error]  enum NebflowError:
+[error]    case ToolFailed(toolName: String, message: String)
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/SchemePolicy.scala
+[error] +++ <expected fix>
+[error] @@ -1,7 +1,6 @@
+[error]  package nebflow.core
+[error]  
+[error] -import nebflow.shared.AgentModelConfig
+[error] -import nebflow.shared.PathUtil
+[error] +import nebflow.shared.{AgentModelConfig, PathUtil}
+[error]  
+[error]  /**
+[error]   * Name-aware model-chain resolution policy (single source of truth for "which
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/FileChangeLedger.scala
+[error] +++ <expected fix>
+[error] @@ -1,7 +1,6 @@
+[error]  package nebflow.core
+[error]  
+[error] -import cats.effect.IO
+[error] -import cats.effect.Ref
+[error] +import cats.effect.{IO, Ref}
+[error]  import nebflow.core.tools.DiffUtil
+[error]  
+[error]  /** How an agent-visible file changed (mirrors the delivery contract keys). */
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/bridge/AskAnswerReceipt.scala
+[error] +++ <expected fix>
+[error] @@ -1,7 +1,6 @@
+[error]  package nebflow.bridge
+[error]  
+[error] -import cats.effect.IO
+[error] -import cats.effect.Ref
+[error] +import cats.effect.{IO, Ref}
+[error]  import cats.syntax.all.*
+[error]  import nebflow.shared.NebflowLogger
+[error]  
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/neblink/NeblinkPresenceService.scala
+[error] +++ <expected fix>
+[error] @@ -1,13 +1,13 @@
+[error]  package nebflow.neblink
+[error]  
+[error] -import cats.effect.{Deferred, IO, Ref}
+[error]  import cats.effect.std.Dispatcher
+[error] +import cats.effect.{Deferred, IO, Ref}
+[error]  import cats.syntax.all.*
+[error]  import io.circe.Json
+[error]  import io.circe.parser.decode
+[error]  import io.circe.syntax.*
+[error]  import nebflow.core.PresenceServicePort
+[error] -import nebflow.core.tools.{DirectRoute, P2pPathDecision, P2pProbePolicy, P2pReachability, RoutePlan}
+[error] +import nebflow.core.tools.*
+[error]  import nebflow.shared.{NebflowLogger, PeerInfo, TransportLog}
+[error]  
+[error]  import java.net.URI
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/neblink/NeblinkUpdateConvergence.scala
+[error] +++ <expected fix>
+[error] @@ -5,7 +5,7 @@
+[error]  import cats.syntax.all.*
+[error]  import io.circe.Json
+[error]  import io.circe.syntax.*
+[error] -import nebflow.core.hotupdate.{UpdateChannel, UpdateRequest, UpdateSource, UpdateOrchestrator, VersionCheck}
+[error] +import nebflow.core.hotupdate.*
+[error]  import nebflow.shared.NebflowLogger
+[error]  
+[error]  /**
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/neblink/AgentSessionSync.scala
+[error] +++ <expected fix>
+[error] @@ -2,8 +2,8 @@
+[error]  
+[error]  import cats.effect.IO
+[error]  import cats.syntax.all.*
+[error] +import io.circe.*
+[error]  import io.circe.syntax.*
+[error] -import io.circe.{Decoder, Encoder, Json, JsonObject}
+[error]  import nebflow.agent.SubAgentTaskStore
+[error]  import nebflow.core.device.{DeviceHmac, DeviceRegistry}
+[error]  import nebflow.shared.{NebflowLogger, SubAgentTask, TransportLog}
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/neblink/AvatarProxy.scala
+[error] +++ <expected fix>
+[error] @@ -6,6 +6,7 @@
+[error]  import java.net.URI
+[error]  import java.net.http.{HttpRequest, HttpResponse}
+[error]  import java.time.Duration
+[error] +
+[error]  import scala.annotation.tailrec
+[error]  
+[error]  /**
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/neblink/PresenceDialPool.scala
+[error] +++ <expected fix>
+[error] @@ -2,14 +2,8 @@
+[error]  
+[error]  import cats.effect.IO
+[error]  
+[error] +import java.util.concurrent.*
+[error]  import java.util.concurrent.atomic.{AtomicLong, AtomicReference}
+[error] -import java.util.concurrent.{
+[error] -  CompletableFuture,
+[error] -  SynchronousQueue,
+[error] -  ThreadFactory,
+[error] -  ThreadPoolExecutor,
+[error] -  TimeUnit
+[error] -}
+[error]  
+[error]  /**
+[error]   * presence 拨号专用阻塞池（presence-dial-overhaul 批 2026-11-04，作者 13:05 批「可以派」）。
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/neblink/PortalTunnelBridge.scala
+[error] +++ <expected fix>
+[error] @@ -5,22 +5,14 @@
+[error]  import cats.effect.unsafe.implicits.global
+[error]  import cats.syntax.all.*
+[error]  import fs2.{Chunk, Stream}
+[error] -import nebflow.shared.NebflowLogger
+[error] -import nebflow.shared.TunnelOriginMark
+[error] -import org.http4s.{Header, Headers, HttpApp, Method, Request, Response, Uri}
+[error] +import nebflow.shared.{NebflowLogger, TunnelOriginMark}
+[error] +import org.http4s.*
+[error]  import org.typelevel.ci.CIString
+[error]  
+[error]  import java.net.URI
+[error]  import java.net.http.{HttpClient, WebSocket, WebSocketHandshakeException}
+[error]  import java.nio.charset.StandardCharsets.UTF_8
+[error] -import java.util.concurrent.{
+[error] -  CompletableFuture,
+[error] -  ConcurrentHashMap,
+[error] -  CompletionStage,
+[error] -  ExecutionException,
+[error] -  TimeoutException,
+[error] -  TimeUnit
+[error] -}
+[error] +import java.util.concurrent.*
+[error]  
+[error]  /**
+[error]   * Portal frame bridge for ONE relay WebSocket connection (phase 3a design
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/neblink/PortalWireCodec.scala
+[error] +++ <expected fix>
+[error] @@ -1,8 +1,8 @@
+[error]  package nebflow.neblink
+[error]  
+[error] -import io.circe.{Json, JsonObject}
+[error]  import io.circe.parser.parse
+[error]  import io.circe.syntax.*
+[error] +import io.circe.{Json, JsonObject}
+[error]  
+[error]  import java.util.Base64
+[error]  
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/neblink/ProfileDescriptions.scala
+[error] +++ <expected fix>
+[error] @@ -1,9 +1,9 @@
+[error]  package nebflow.neblink
+[error]  
+[error]  import cats.effect.IO
+[error] -import io.circe.{Decoder, Encoder, Json}
+[error]  import io.circe.parser.decode
+[error]  import io.circe.syntax.*
+[error] +import io.circe.{Decoder, Encoder, Json}
+[error]  import nebflow.shared.PathUtil
+[error]  
+[error]  /**
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/neblink/LogtoPasswordFlow.scala
+[error] +++ <expected fix>
+[error] @@ -4,13 +4,13 @@
+[error]  import cats.syntax.all.*
+[error]  import io.circe.syntax.*
+[error]  import io.circe.{Json, parser}
+[error] +import nebflow.neblink.LogtoTransport.Request
+[error]  
+[error]  import java.net.http.{HttpRequest, HttpResponse}
+[error]  import java.net.{URI, URLDecoder}
+[error] +
+[error]  import scala.jdk.CollectionConverters.*
+[error]  
+[error] -import LogtoTransport.Request
+[error] -
+[error]  /**
+[error]   * Headless FIRST-PARTY password login against the deployed Logto tenant —
+[error]   * 统一登录路径②（台账 #924，作者裁定 2026-10-26：「无头登录场景，通过 cli 用账号
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/neblink/CredentialDiagnostics.scala
+[error] +++ <expected fix>
+[error] @@ -2,7 +2,6 @@
+[error]  
+[error]  import io.circe.Json
+[error]  import io.circe.syntax.*
+[error] -
+[error]  import nebflow.shared.Branding
+[error]  
+[error]  /**
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/agent/RevivalCheckpoint.scala
+[error] +++ <expected fix>
+[error] @@ -1,7 +1,7 @@
+[error]  package nebflow.agent
+[error]  
+[error]  import cats.effect.IO
+[error] -import nebflow.shared.{ContentBlock, Message, MessageRole, NebflowLogger, PathUtil}
+[error] +import nebflow.shared.*
+[error]  
+[error]  /**
+[error]   * RevivalCheckpoint —— 复活断点台账（9.19 版中断恢复批 · 2026-11-04 · 审计 D6 的机械封口）。
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/agent/DelegateRevival.scala
+[error] +++ <expected fix>
+[error] @@ -1,13 +1,11 @@
+[error]  package nebflow.agent
+[error]  
+[error] -import cats.effect.IO
+[error]  import cats.effect.std.Semaphore
+[error] -import cats.effect.Ref
+[error] +import cats.effect.{IO, Ref}
+[error]  import cats.syntax.all.*
+[error] -import io.circe.Json
+[error] -import io.circe.JsonObject
+[error]  import io.circe.syntax.*
+[error] -import nebflow.actor.{ActorRef, ActorSystem, AgentCommand, AgentDef, AgentEvent, AgentKind}
+[error] +import io.circe.{Json, JsonObject}
+[error] +import nebflow.actor.*
+[error]  import nebflow.core.SessionStore
+[error]  import nebflow.core.delegate.{ChainStore, DelegateRegistry}
+[error]  import nebflow.core.executor.ExecutorRegistry
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/agent/AgentFrozen.scala
+[error] +++ <expected fix>
+[error] @@ -3,8 +3,8 @@
+[error]  
+[error]  import cats.effect.IO
+[error]  import cats.syntax.all.*
+[error] -import io.circe.syntax.*
+[error]  import io.circe.Json
+[error] +import io.circe.syntax.*
+[error]  import nebflow.actor.*
+[error]  import nebflow.core.*
+[error]  import nebflow.core.ask.AskService
+[error] /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/agent/AgentSessionExecution.scala:2340:24: error: [DisableSyntax.return] return should be avoided, consider using if/else instead
+[error]     if askSession then return nebflow.core.ask.AskSessions.AllowedTools
+[error]                        ^^^^^^
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/agent/MergeQueueBootSweep.scala
+[error] +++ <expected fix>
+[error] @@ -5,9 +5,8 @@
+[error]  import io.circe.Json
+[error]  import io.circe.syntax.*
+[error]  import nebflow.actor.AgentCommand
+[error] -import nebflow.core.AgentRuntimePort
+[error] -import nebflow.core.GitWorktrees
+[error] -import nebflow.core.delegate.{DelegateRegistry, MergeQueue, MergeQueueChannel, PostMergeCleanup}
+[error] +import nebflow.core.delegate.*
+[error] +import nebflow.core.{AgentRuntimePort, GitWorktrees}
+[error]  import nebflow.shared.NebflowLogger
+[error]  
+[error]  import scala.util.Try
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/agent/RestartLossLedger.scala
+[error] +++ <expected fix>
+[error] @@ -2,7 +2,7 @@
+[error]  
+[error]  import cats.effect.IO
+[error]  import io.circe.Json
+[error] -import nebflow.shared.{Message, MessageRole, NebflowLogger, PathUtil}
+[error] +import nebflow.shared.*
+[error]  
+[error]  /**
+[error]   * RestartLossLedger —— 收殓（restart-loss）通知的**持久提醒账**（中断恢复批 2026-11-04 ·
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/agent/AskUserAnswerBridge.scala
+[error] +++ <expected fix>
+[error] @@ -6,7 +6,7 @@
+[error]  import io.circe.syntax.*
+[error]  import nebflow.actor.*
+[error]  import nebflow.core.tools.{AskUserQuestionTool, ImageInject, ToolContext}
+[error] -import nebflow.shared.{AskItem, AskUserAnswerAttachments, AskUserDispatch, ContentBlock, NebflowLogger}
+[error] +import nebflow.shared.*
+[error]  
+[error]  import scala.concurrent.duration.*
+[error]  
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/agent/SubagentCrashRecovery.scala
+[error] +++ <expected fix>
+[error] @@ -3,7 +3,7 @@
+[error]  import cats.effect.IO
+[error]  import cats.syntax.all.*
+[error]  import nebflow.actor.AgentCommand
+[error] -import nebflow.shared.{Message, ContentBlock, MessageRole, NebflowLogger}
+[error] +import nebflow.shared.*
+[error]  
+[error]  /**
+[error]   * 子代理等待三缺口批（2026-10-25，缺口②）：**checkpoint 恢复的在飞工具调用终结面**。
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/agent/PendingAskLedger.scala
+[error] +++ <expected fix>
+[error] @@ -2,12 +2,13 @@
+[error]  
+[error]  import cats.effect.IO
+[error]  import cats.syntax.all.*
+[error] -import io.circe.syntax.*
+[error]  import io.circe.Json
+[error] +import io.circe.syntax.*
+[error]  import nebflow.actor.InteractionRequest
+[error]  import nebflow.shared.{NebflowLogger, UiMessage}
+[error]  
+[error]  import java.nio.file.{Files, StandardCopyOption}
+[error] +
+[error]  import scala.util.Try
+[error]  
+[error]  /**
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/shared/Defaults.scala
+[error] +++ <expected fix>
+[error] @@ -1,8 +1,9 @@
+[error]  package nebflow.shared
+[error]  
+[error] -import scala.concurrent.duration.*
+[error]  import nebflow.prompts.PromptCatalog
+[error]  
+[error] +import scala.concurrent.duration.*
+[error] +
+[error]  /**
+[error]   * Default configuration values used across the codebase.
+[error]   * Centralized here to avoid magic numbers scattered in multiple files.
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/shared/TransportLog.scala
+[error] +++ <expected fix>
+[error] @@ -1,7 +1,8 @@
+[error]  package nebflow.shared
+[error]  
+[error] -import java.util.concurrent.{Executors, ScheduledExecutorService, ThreadFactory, TimeUnit}
+[error] +import java.util.concurrent.*
+[error]  import java.util.concurrent.atomic.{AtomicLong, AtomicReference}
+[error] +
+[error]  import scala.collection.mutable
+[error]  
+[error]  /**
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/shared/ThinkingMode.scala
+[error] +++ <expected fix>
+[error] @@ -1,8 +1,7 @@
+[error]  package nebflow.shared
+[error]  
+[error] -import io.circe.Encoder
+[error] +import io.circe.*
+[error]  import io.circe.syntax.*
+[error] -import io.circe.{Decoder, HCursor, Json}
+[error]  
+[error]  /**
+[error]   * 思考模式能力域类型（thinking-config 实施批，2026-10-28；设计
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/cli/DetachedApply.scala
+[error] +++ <expected fix>
+[error] @@ -7,6 +7,7 @@
+[error]  
+[error]  import java.nio.charset.StandardCharsets
+[error]  import java.nio.file.Files
+[error] +
+[error]  import scala.util.control.NonFatal
+[error]  
+[error]  /**
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/cli/SecretsCommand.scala
+[error] +++ <expected fix>
+[error] @@ -5,8 +5,8 @@
+[error]  import io.circe.syntax.*
+[error]  import nebflow.shared.PathUtil
+[error]  
+[error] -import java.time.{Instant, ZoneId}
+[error]  import java.time.format.DateTimeFormatter
+[error] +import java.time.{Instant, ZoneId}
+[error]  
+[error]  /**
+[error]   * 密钥 CLI（密钥能力三件套批 A 件，作者令 2026-11-01：`stand secrets list` =
+[error] /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/cli/DaemonSpawn.scala:141:29: error: [DisableSyntax.return] return should be avoided, consider using if/else instead
+[error]       if !childAlive() then return Left(ChildDied)
+[error]                             ^^^^^^
+[error] /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/cli/DaemonSpawn.scala:142:23: error: [DisableSyntax.return] return should be avoided, consider using if/else instead
+[error]       if probe() then return Right(())
+[error]                       ^^^^^^
+[error] /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/cli/DaemonSpawn.scala:143:54: error: [DisableSyntax.return] return should be avoided, consider using if/else instead
+[error]       if System.currentTimeMillis() >= deadline then return Left(TimedOut)
+[error]                                                      ^^^^^^
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/cli/SingleInstanceGuard.scala
+[error] +++ <expected fix>
+[error] @@ -1,8 +1,8 @@
+[error]  package nebflow.cli
+[error]  
+[error]  import cats.effect.IO
+[error] -import nebflow.shared.Branding
+[error]  import io.circe.parser.parse
+[error] +import nebflow.shared.Branding
+[error]  
+[error]  import java.net.*
+[error]  
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/cli/UpdateStage.scala
+[error] +++ <expected fix>
+[error] @@ -4,9 +4,9 @@
+[error]  import nebflow.core.hotrestart.InstallPointer
+[error]  import nebflow.shared.Branding
+[error]  
+[error] -import java.nio.file.Files
+[error] -import java.nio.file.StandardCopyOption
+[error] +import java.nio.file.{Files, StandardCopyOption}
+[error]  import java.security.MessageDigest
+[error] +
+[error]  import scala.util.control.NonFatal
+[error]  
+[error]  /**
+[error] /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/cli/ProcessManager.scala:368:7: error: [DisableSyntax.return] return should be avoided, consider using if/else instead
+[error]       return StopOutcome.Refused(
+[error]       ^^^^^^
+[error] /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/cli/ProcessManager.scala:386:7: error: [DisableSyntax.return] return should be avoided, consider using if/else instead
+[error]       return StopOutcome.Refused(s"refusing to stop pid $pid: $hint")
+[error]       ^^^^^^
+[error] /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/cli/ProcessManager.scala:401:37: error: [DisableSyntax.return] return should be avoided, consider using if/else instead
+[error]         if deps.isRunning(pid) then return StopOutcome.Failed(s"process $pid did not exit after TERM/KILL")
+[error]                                     ^^^^^^
+[error] /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/cli/ProcessManager.scala:413:33: error: [DisableSyntax.return] return should be avoided, consider using if/else instead
+[error]           if busy.nonEmpty then return StopOutcome.Failed(s"ports still served after stop: ${busy.mkString(", ")}")
+[error]                                 ^^^^^^
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/social/FeishuAskCard.scala
+[error] +++ <expected fix>
+[error] @@ -1,9 +1,8 @@
+[error]  package nebflow.social
+[error]  
+[error]  import io.circe.Json
+[error] +import nebflow.social.outbound.*
+[error]  
+[error] -import nebflow.social.outbound.{PromptAction, PromptView, PromptOption, AskPromptCodec}
+[error] -
+[error]  /**
+[error]   * Feishu card face for AskUser prompts (askuser batch, 2026-10-01).
+[error]   *
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/social/WeixinOutboundAdapter.scala
+[error] +++ <expected fix>
+[error] @@ -7,10 +7,11 @@
+[error]  import nebflow.shared.{NebflowLogger, SharedBackend}
+[error]  import sttp.client4.*
+[error]  
+[error] -import java.nio.file.{Files, StandardOpenOption}
+[error]  import java.nio.file.attribute.PosixFilePermissions
+[error] +import java.nio.file.{Files, StandardOpenOption}
+[error]  import java.security.SecureRandom
+[error]  import java.util.Base64
+[error] +
+[error]  import scala.concurrent.duration.*
+[error]  
+[error]  /**
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/social/FeishuChannel.scala
+[error] +++ <expected fix>
+[error] @@ -4,12 +4,7 @@
+[error]  import com.lark.oapi.core.enums.BaseUrlEnum
+[error]  import com.lark.oapi.event.EventDispatcher
+[error]  import com.lark.oapi.event.cardcallback.P2CardActionTriggerHandler
+[error] -import com.lark.oapi.event.cardcallback.model.{
+[error] -  CallBackCard,
+[error] -  CallBackToast,
+[error] -  P2CardActionTrigger,
+[error] -  P2CardActionTriggerResponse
+[error] -}
+[error] +import com.lark.oapi.event.cardcallback.model.*
+[error]  import com.lark.oapi.service.im.ImService
+[error]  import com.lark.oapi.service.im.v1.model.{CreateMessageReq, CreateMessageReqBody, P2MessageReceiveV1}
+[error]  import com.lark.oapi.ws.Client as WsClient
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/social/FeishuScanBind.scala
+[error] +++ <expected fix>
+[error] @@ -1,24 +1,15 @@
+[error]  package nebflow.social
+[error]  
+[error] -import cats.effect.{IO, Ref}
+[error]  import cats.effect.kernel.Fiber
+[error]  import cats.effect.unsafe.implicits.global
+[error] -import com.lark.oapi.scene.registration.{
+[error] -  AccessDeniedException,
+[error] -  AppPreset,
+[error] -  ExpiredException,
+[error] -  QRCodeInfo,
+[error] -  RegisterApp,
+[error] -  RegisterAppException,
+[error] -  RegisterAppOptions,
+[error] -  RegisterAppResult,
+[error] -  StatusChangeInfo
+[error] -}
+[error] +import cats.effect.{IO, Ref}
+[error] +import com.lark.oapi.scene.registration.*
+[error]  import io.circe.Json
+[error]  import io.circe.syntax.*
+[error]  import nebflow.shared.NebflowLogger
+[error]  
+[error]  import java.util.UUID
+[error] +
+[error]  import scala.collection.immutable.ListMap
+[error]  
+[error]  /**
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/social/FeishuBridgePlugin.scala
+[error] +++ <expected fix>
+[error] @@ -5,22 +5,12 @@
+[error]  import cats.syntax.all.*
+[error]  import io.circe.Json
+[error]  import io.circe.syntax.*
+[error] -import nebflow.bridge.{AskAnswerReceipt, BridgeContext, BridgeManager, BridgePlugin}
+[error] -import nebflow.social.outbound.{
+[error] -  AskPromptCodec,
+[error] -  OutputBlock,
+[error] -  PromptAction,
+[error] -  PromptFallback,
+[error] -  PromptView,
+[error] -  RichCall,
+[error] -  RichFeishuAdapter,
+[error] -  RichKind,
+[error] -  RichProduct
+[error] -}
+[error] -import nebflow.shared.NebflowLogger
+[error] -import nebflow.shared.SessionMeta
+[error] +import nebflow.bridge.*
+[error] +import nebflow.shared.{NebflowLogger, SessionMeta}
+[error] +import nebflow.social.outbound.*
+[error]  
+[error]  import java.util.concurrent.atomic.AtomicBoolean
+[error] +
+[error]  import scala.util.Try
+[error]  
+[error]  /**
+[error] /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/social/WeixinIlinkScanBind.scala:390:27: error: [DisableSyntax.return] return should be avoided, consider using if/else instead
+[error]           case Some(c) => return LoginResult.Done(c)
+[error]                           ^^^^^^
+[error] /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/social/WeixinIlinkScanBind.scala:391:24: error: [DisableSyntax.return] return should be avoided, consider using if/else instead
+[error]           case None => return LoginResult.Failed("done-without-credentials")
+[error]                        ^^^^^^
+[error] /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/social/WeixinIlinkScanBind.scala:393:9: error: [DisableSyntax.return] return should be avoided, consider using if/else instead
+[error]         return LoginResult.Failed(strField(st, "error").filter(_.nonEmpty).getOrElse("login_failed"))
+[error]         ^^^^^^
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/social/WeixinIlinkScanBind.scala
+[error] +++ <expected fix>
+[error] @@ -1,13 +1,14 @@
+[error]  package nebflow.social
+[error]  
+[error] -import cats.effect.{IO, Ref}
+[error]  import cats.effect.kernel.Fiber
+[error]  import cats.effect.unsafe.implicits.global
+[error] +import cats.effect.{IO, Ref}
+[error]  import io.circe.Json
+[error]  import io.circe.syntax.*
+[error]  import nebflow.shared.NebflowLogger
+[error]  
+[error]  import java.util.UUID
+[error] +
+[error]  import scala.collection.immutable.ListMap
+[error]  
+[error]  /**
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/social/WeixinIlinkBridgePlugin.scala
+[error] +++ <expected fix>
+[error] @@ -5,21 +5,12 @@
+[error]  import cats.syntax.all.*
+[error]  import io.circe.Json
+[error]  import io.circe.syntax.*
+[error] -import nebflow.bridge.{AskAnswerReceipt, BridgeContext, BridgeManager, BridgePlugin}
+[error] +import nebflow.bridge.*
+[error]  import nebflow.shared.NebflowLogger
+[error] -import nebflow.social.outbound.{
+[error] -  AskPromptCodec,
+[error] -  FileLeg,
+[error] -  FileLongShot,
+[error] -  OutputBlock,
+[error] -  PromptAction,
+[error] -  PromptView,
+[error] -  RichDegrade,
+[error] -  RichKind,
+[error] -  RichProduct
+[error] -}
+[error] +import nebflow.social.outbound.*
+[error]  
+[error]  import java.util.concurrent.atomic.AtomicBoolean
+[error] +
+[error]  import scala.concurrent.duration.*
+[error]  import scala.util.Try
+[error]  
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/social/FeishuOutboundAdapter.scala
+[error] +++ <expected fix>
+[error] @@ -4,8 +4,8 @@
+[error]  import cats.syntax.all.*
+[error]  import io.circe.Json
+[error]  import nebflow.gateway.NfFilePolicy
+[error] -import nebflow.social.outbound.*
+[error]  import nebflow.shared.{AttachContract, NebflowLogger}
+[error] +import nebflow.social.outbound.*
+[error]  
+[error]  /**
+[error]   * Feishu implementation of the channel-agnostic outbound layer (socoutbound
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/perception/PerceptionClient.scala
+[error] +++ <expected fix>
+[error] @@ -1,7 +1,6 @@
+[error]  package nebflow.perception
+[error]  
+[error] -import cats.effect.IO
+[error] -import cats.effect.Ref
+[error] +import cats.effect.{IO, Ref}
+[error]  import cats.syntax.all.*
+[error]  import io.circe.Json
+[error]  import io.circe.syntax.*
+[error] @@ -10,6 +9,7 @@
+[error]  import java.net.URI
+[error]  import java.net.http.{HttpClient, HttpRequest, HttpResponse}
+[error]  import java.time.Duration
+[error] +
+[error]  import scala.concurrent.duration.*
+[error]  
+[error]  /**
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/perception/PerceptionEngineLeg.scala
+[error] +++ <expected fix>
+[error] @@ -4,12 +4,13 @@
+[error]  import cats.syntax.all.*
+[error]  import io.circe.Json
+[error]  import io.circe.syntax.*
+[error] +import nebflow.perception.PerceptionModel.*
+[error]  import nebflow.shared.NebflowLogger
+[error] -import PerceptionModel.*
+[error]  
+[error]  import java.net.URI
+[error]  import java.net.http.{HttpClient, HttpRequest, HttpResponse}
+[error]  import java.time.Duration
+[error] +
+[error]  import scala.concurrent.duration.*
+[error]  
+[error]  /**
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/perception/MailClient.scala
+[error] +++ <expected fix>
+[error] @@ -1,13 +1,14 @@
+[error]  package nebflow.perception
+[error]  
+[error] -import PerceptionModel.IncomingMail
+[error] +import nebflow.perception.PerceptionModel.IncomingMail
+[error]  
+[error] -import java.io.{BufferedReader, BufferedInputStream, InputStreamReader, OutputStream}
+[error] +import java.io.*
+[error]  import java.net.{InetSocketAddress, Socket}
+[error]  import java.nio.charset.StandardCharsets
+[error]  import java.security.SecureRandom
+[error]  import java.util.Base64
+[error] -import javax.net.ssl.{SSLSocket, SSLSocketFactory, SSLContext, TrustManagerFactory}
+[error] +import javax.net.ssl.*
+[error] +
+[error]  import scala.util.matching.Regex
+[error]  
+[error]  /**
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/perception/PerceptionStore.scala
+[error] +++ <expected fix>
+[error] @@ -1,15 +1,16 @@
+[error]  package nebflow.perception
+[error]  
+[error] +import io.circe.generic.semiauto.*
+[error]  import io.circe.parser
+[error]  import io.circe.syntax.*
+[error] -import io.circe.generic.semiauto.*
+[error] +import nebflow.perception.PerceptionModel.*
+[error]  import nebflow.shared.PathUtil
+[error]  import os.Path
+[error] -import PerceptionModel.*
+[error]  
+[error]  import java.nio.charset.StandardCharsets
+[error]  import java.nio.file.attribute.{PosixFilePermission, PosixFilePermissions}
+[error]  import java.nio.file.{Files, Path as JPath, StandardOpenOption}
+[error] +
+[error]  import scala.jdk.CollectionConverters.*
+[error]  
+[error]  /**
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/perception/PerceptionDaemonRoutes.scala
+[error] +++ <expected fix>
+[error] @@ -1,11 +1,11 @@
+[error]  package nebflow.perception
+[error]  
+[error] -import cats.effect.IO
+[error]  import cats.data.OptionT
+[error] +import cats.effect.IO
+[error]  import cats.syntax.all.*
+[error] -import io.circe.{Encoder, Decoder, Json}
+[error] -import io.circe.syntax.*
+[error]  import io.circe.generic.semiauto.*
+[error] +import io.circe.syntax.*
+[error] +import io.circe.{Decoder, Encoder, Json}
+[error]  import org.http4s.*
+[error]  import org.http4s.circe.CirceEntityCodec.*
+[error]  import org.http4s.dsl.io.*
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/perception/MailImportanceJudge.scala
+[error] +++ <expected fix>
+[error] @@ -1,8 +1,8 @@
+[error]  package nebflow.perception
+[error]  
+[error] -import PerceptionModel.*
+[error]  import cats.effect.IO
+[error]  import io.circe.syntax.*
+[error] +import nebflow.perception.PerceptionModel.*
+[error]  import nebflow.shared.{LlmRequest, Message, MessageRole}
+[error]  
+[error]  import scala.concurrent.duration.*
+[error] /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/perception/PerceptionService.scala:1211:95: error: `;` expected but `else` found
+[error]       val size = if exists then try java.nio.file.Files.size(f) catch case _: Throwable => 0L else 0L
+[error]                                                                                               ^^^^
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/service/ConfigService.scala
+[error] +++ <expected fix>
+[error] @@ -6,7 +6,7 @@
+[error]  import io.circe.syntax.*
+[error]  import io.circe.{Json, JsonObject}
+[error]  import nebflow.core.AtomicJson
+[error] -import nebflow.shared.{Config, ImageGenConfig, JevConfig, PathUtil}
+[error] +import nebflow.shared.*
+[error]  
+[error]  object ConfigService:
+[error]  
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/gateway/PerceptionIngestRoutes.scala
+[error] +++ <expected fix>
+[error] @@ -4,8 +4,8 @@
+[error]  import cats.syntax.all.*
+[error]  import io.circe.Json
+[error]  import io.circe.syntax.*
+[error] +import nebflow.perception.PerceptionModel.*
+[error]  import nebflow.perception.{MailImportanceJudge, PerceptionModel}
+[error] -import PerceptionModel.*
+[error]  import org.http4s.*
+[error]  import org.http4s.circe.CirceEntityCodec.*
+[error]  import org.http4s.dsl.io.*
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/gateway/StaleProcessGuard.scala
+[error] +++ <expected fix>
+[error] @@ -1,9 +1,9 @@
+[error]  package nebflow.gateway
+[error]  
+[error] -import scala.collection.mutable.ListBuffer
+[error] -
+[error]  import nebflow.shared.Branding
+[error]  
+[error] +import scala.collection.mutable.ListBuffer
+[error] +
+[error]  /**
+[error]   * P0 2026-09-06 (09:07 host-kill incident) — identity check BEFORE any kill.
+[error]   *
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/gateway/LanAddresses.scala
+[error] +++ <expected fix>
+[error] @@ -1,6 +1,7 @@
+[error]  package nebflow.gateway
+[error]  
+[error]  import java.net.{Inet4Address, InetAddress, NetworkInterface}
+[error] +
+[error]  import scala.jdk.CollectionConverters.*
+[error]  
+[error]  /**
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/gateway/BindConfirmStore.scala
+[error] +++ <expected fix>
+[error] @@ -1,7 +1,6 @@
+[error]  package nebflow.gateway
+[error]  
+[error] -import cats.effect.IO
+[error] -import cats.effect.Ref
+[error] +import cats.effect.{IO, Ref}
+[error]  
+[error]  import java.security.SecureRandom
+[error]  
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/gateway/LocalConsoleUrl.scala
+[error] +++ <expected fix>
+[error] @@ -4,8 +4,9 @@
+[error]  import io.circe.parser.parse
+[error]  import nebflow.cli.GatewayClient
+[error]  
+[error] -import java.net.{HttpURLConnection, Proxy, URI, URLEncoder}
+[error] +import java.net.*
+[error]  import java.nio.charset.StandardCharsets
+[error] +
+[error]  import scala.util.Using
+[error]  
+[error]  /** Establish a browser session using the existing local credential, without
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/gateway/AskUserAttachmentRoutes.scala
+[error] +++ <expected fix>
+[error] @@ -25,17 +25,16 @@
+[error]   */
+[error]  package nebflow.gateway
+[error]  
+[error] -import cats.effect.IO
+[error] -import cats.effect.Resource
+[error] +import cats.effect.{IO, Resource}
+[error]  import cats.syntax.all.*
+[error]  import io.circe.Json
+[error]  import io.circe.syntax.*
+[error] +import nebflow.actor.InteractionHubCommand
+[error] +import nebflow.shared.{AttachContract, NebflowLogger, PathUtil}
+[error]  import org.http4s.*
+[error]  import org.http4s.circe.CirceEntityCodec.*
+[error]  import org.http4s.dsl.io.*
+[error]  import org.http4s.multipart.{Multipart, Part}
+[error] -import nebflow.actor.InteractionHubCommand
+[error] -import nebflow.shared.{AttachContract, NebflowLogger, PathUtil}
+[error]  
+[error]  import java.security.MessageDigest
+[error]  
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/gateway/AskUserCancelRoutes.scala
+[error] +++ <expected fix>
+[error] @@ -14,13 +14,13 @@
+[error]  import cats.syntax.all.*
+[error]  import io.circe.Json
+[error]  import io.circe.syntax.*
+[error] -import org.http4s.*
+[error] -import org.http4s.circe.CirceEntityCodec.*
+[error] -import org.http4s.dsl.io.*
+[error]  import nebflow.actor.InteractionHubCommand
+[error]  import nebflow.agent.SharedResources
+[error]  import nebflow.core.SessionStore
+[error]  import nebflow.core.tools.ProjectTool
+[error] +import org.http4s.*
+[error] +import org.http4s.circe.CirceEntityCodec.*
+[error] +import org.http4s.dsl.io.*
+[error]  
+[error]  private[gateway] object AskUserCancelRoutes:
+[error]  
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/gateway/NfOfficeRoutes.scala
+[error] +++ <expected fix>
+[error] @@ -46,6 +46,7 @@
+[error]  
+[error]  import java.security.MessageDigest
+[error]  import java.util.concurrent.atomic.AtomicReference
+[error] +
+[error]  import scala.concurrent.duration.*
+[error]  
+[error]  object NfOfficeRoutes:
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/gateway/PresenceRoutes.scala
+[error] +++ <expected fix>
+[error] @@ -1,9 +1,9 @@
+[error]  /* 从 RestApiRoutes 迁出(行为保持重构,2026-09-24)。 */
+[error]  package nebflow.gateway
+[error]  
+[error] -import cats.effect.{IO, Ref}
+[error]  import cats.effect.std.Queue
+[error]  import cats.effect.unsafe.implicits.global
+[error] +import cats.effect.{IO, Ref}
+[error]  import cats.syntax.all.*
+[error]  import fs2.{Pipe, Stream}
+[error]  import io.circe.syntax.*
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/gateway/OpenAiChatShim.scala
+[error] +++ <expected fix>
+[error] @@ -2,16 +2,7 @@
+[error]  
+[error]  import io.circe.Json
+[error]  import io.circe.syntax.*
+[error] -import nebflow.shared.{
+[error] -  AgentModelConfig,
+[error] -  ContentBlock,
+[error] -  LlmRequest,
+[error] -  LlmResponse,
+[error] -  Message,
+[error] -  MessageRole,
+[error] -  ToolCall,
+[error] -  TokenUsage
+[error] -}
+[error] +import nebflow.shared.*
+[error]  
+[error]  /**
+[error]   * OpenAI wire-format shim for the EXISTING inbound chat face (batch B2,
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/gateway/ImageGenRoutes.scala
+[error] +++ <expected fix>
+[error] @@ -4,8 +4,8 @@
+[error]  import cats.effect.IO
+[error]  import io.circe.Json
+[error]  import io.circe.syntax.*
+[error] -import nebflow.llm.imagegen.{ImageGenJobs, ImageGenService}
+[error]  import nebflow.llm.imagegen.ImageGenTypes.ImageGenRequest
+[error] +import nebflow.llm.imagegen.{ImageGenJobs, ImageGenService}
+[error]  import org.http4s.*
+[error]  import org.http4s.circe.CirceEntityCodec.*
+[error]  import org.http4s.dsl.io.*
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/gateway/GatewaySessionStore.scala
+[error] +++ <expected fix>
+[error] @@ -1,16 +1,15 @@
+[error]  package nebflow.gateway
+[error]  
+[error] -import cats.effect.{IO, Ref}
+[error]  import cats.effect.unsafe.implicits.global
+[error] +import cats.effect.{IO, Ref}
+[error]  import cats.syntax.all.*
+[error]  import nebflow.shared.Branding
+[error]  import org.http4s.{ResponseCookie, SameSite}
+[error]  
+[error]  import java.security.SecureRandom
+[error]  import java.util.Base64
+[error] -import java.util.concurrent.ScheduledThreadPoolExecutor
+[error] -import java.util.concurrent.TimeUnit
+[error]  import java.util.concurrent.atomic.AtomicBoolean
+[error] +import java.util.concurrent.{ScheduledThreadPoolExecutor, TimeUnit}
+[error]  
+[error]  /**
+[error]   * One console session record: the value of the HttpOnly session cookie the
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/gateway/AskAnswerPlacement.scala
+[error] +++ <expected fix>
+[error] @@ -52,8 +52,8 @@
+[error]  import cats.effect.IO
+[error]  import cats.syntax.all.*
+[error]  import io.circe.Json
+[error] -import nebflow.agent.SharedResources
+[error]  import nebflow.actor.{AskOrigin, InteractionHubCommand}
+[error] +import nebflow.agent.SharedResources
+[error]  import nebflow.shared.{NebflowLogger, UiMessage}
+[error]  
+[error]  private[gateway] object AskAnswerPlacement:
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/gateway/NearPathStats.scala
+[error] +++ <expected fix>
+[error] @@ -3,11 +3,13 @@
+[error]  import cats.effect.IO
+[error]  import io.circe.Json
+[error]  import io.circe.syntax.*
+[error] -import java.util.concurrent.ConcurrentHashMap
+[error] -import java.util.concurrent.atomic.AtomicLong
+[error]  import nebflow.shared.NebflowLogger
+[error]  import org.http4s.*
+[error]  import org.http4s.dsl.io.*
+[error] +
+[error] +import java.util.concurrent.ConcurrentHashMap
+[error] +import java.util.concurrent.atomic.AtomicLong
+[error] +
+[error]  import scala.jdk.CollectionConverters.*
+[error]  
+[error]  /**
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/gateway/PerceptionDaemonDock.scala
+[error] +++ <expected fix>
+[error] @@ -8,6 +8,7 @@
+[error]  
+[error]  import java.nio.file.attribute.PosixFilePermissions
+[error]  import java.security.SecureRandom
+[error] +
+[error]  import scala.concurrent.duration.*
+[error]  
+[error]  /**
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/llm/providers/AnthropicAdapter.scala
+[error] +++ <expected fix>
+[error] @@ -7,8 +7,8 @@
+[error]  import io.circe.parser.parse
+[error]  import io.circe.syntax.*
+[error]  import io.circe.{Json, JsonObject}
+[error] -import nebflow.llm.{AdapterResponse, ProviderAdapter, ResolvedThinking, SendMessageParams}
+[error]  import nebflow.core.compact.TokenEstimator
+[error] +import nebflow.llm.*
+[error]  import nebflow.shared.*
+[error]  import sttp.capabilities.fs2.Fs2Streams
+[error]  import sttp.client4.*
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/llm/decision/JevWireCodec.scala
+[error] +++ <expected fix>
+[error] @@ -1,7 +1,7 @@
+[error]  package nebflow.llm.decision
+[error]  
+[error] -import io.circe.{Json, JsonObject}
+[error]  import io.circe.syntax.*
+[error] +import io.circe.{Json, JsonObject}
+[error]  
+[error]  /**
+[error]   * JeV wire codec (Face A / P1-A1 adaptation layer).
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/llm/decision/PluginAllocatorMachine.scala
+[error] +++ <expected fix>
+[error] @@ -2,7 +2,7 @@
+[error]  
+[error]  import cats.effect.IO
+[error]  import cats.syntax.all.*
+[error] -import nebflow.core.jev.{CatalogEntry, JevAllocation, JevConfigReader, JevFallbackKind, JevGateOutcome, PluginAllocator}
+[error] +import nebflow.core.jev.*
+[error]  import nebflow.llm.ProviderRegistry
+[error]  import nebflow.shared.NebflowLogger
+[error]  
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/llm/decision/JevAllocator.scala
+[error] +++ <expected fix>
+[error] @@ -2,9 +2,9 @@
+[error]  
+[error]  import cats.effect.IO
+[error]  import cats.syntax.all.*
+[error] -import nebflow.core.jev.{CatalogEntry, JevAllocation, JevAllocatorPort, JevFallback, JevFallbackKind}
+[error] -import nebflow.shared.NebflowLogger
+[error] +import nebflow.core.jev.*
+[error]  import nebflow.prompts.PromptCatalog
+[error] +import nebflow.shared.NebflowLogger
+[error]  
+[error]  /**
+[error]   * JeV allocator: task text + capability catalog -> capability set
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/llm/decision/DecisionProvider.scala
+[error] +++ <expected fix>
+[error] @@ -1,8 +1,8 @@
+[error]  package nebflow.llm.decision
+[error]  
+[error]  import cats.effect.IO
+[error] -import io.circe.{Json, JsonObject}
+[error]  import io.circe.syntax.*
+[error] +import io.circe.{Json, JsonObject}
+[error]  
+[error]  /**
+[error]   * Decision-provider face (JeV integration, Face A / P1-A1).
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/llm/decision/LlmAllocator.scala
+[error] +++ <expected fix>
+[error] @@ -3,9 +3,9 @@
+[error]  import cats.effect.IO
+[error]  import cats.syntax.all.*
+[error]  import io.circe.Json
+[error] -import nebflow.core.jev.{CatalogEntry, JevAllocation, JevFallback, JevFallbackKind}
+[error] +import nebflow.core.jev.*
+[error]  import nebflow.llm.{ModelCandidate, ProviderRegistry, SendMessageParams}
+[error] -import nebflow.shared.{Defaults, Message, MessageRole, NebflowLogger}
+[error] +import nebflow.shared.*
+[error]  
+[error]  /**
+[error]   * LlmAllocator —— **LLM 兜底分配腿**（jev-plugins 批 #1226；原文「未配 Jev → 新
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/llm/decision/JevSettings.scala
+[error] +++ <expected fix>
+[error] @@ -1,6 +1,6 @@
+[error]  package nebflow.llm.decision
+[error]  
+[error] -import nebflow.shared.{Config, JevConfig, NebflowLogger, PathUtil}
+[error] +import nebflow.shared.*
+[error]  
+[error]  /**
+[error]   * Resolved, ready-to-call decision settings (Face A / P1-A2 + A3 consumption).
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/llm/decision/DelegateJudgeMachine.scala
+[error] +++ <expected fix>
+[error] @@ -6,7 +6,7 @@
+[error]  import nebflow.core.delegate.DelegateJudge
+[error]  import nebflow.core.delegate.DelegateJudge.{DelegateJudgePort, TerminalInput, Verdict}
+[error]  import nebflow.llm.{ProviderRegistry, SendMessageParams}
+[error] -import nebflow.shared.{Config, Defaults, Message, MessageRole, NebflowLogger}
+[error] +import nebflow.shared.*
+[error]  
+[error]  import scala.concurrent.duration.*
+[error]  
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/llm/imagegen/ImageGenProbe.scala
+[error] +++ <expected fix>
+[error] @@ -29,6 +29,7 @@
+[error]  import sttp.client4.*
+[error]  
+[error]  import java.util.Base64
+[error] +
+[error]  import scala.concurrent.duration.*
+[error]  
+[error]  object ImageGenProbe:
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/llm/imagegen/ImageGenService.scala
+[error] +++ <expected fix>
+[error] @@ -4,10 +4,11 @@
+[error]  import io.circe.parser.parse
+[error]  import nebflow.llm.imagegen.ImageGenTypes.*
+[error]  import nebflow.llm.imagegen.ImageGenTypes.ImageGenError as E
+[error] -import nebflow.shared.{Config, NebflowLogger, PathUtil, SharedBackend}
+[error] +import nebflow.shared.*
+[error]  import sttp.client4.*
+[error]  
+[error]  import java.util.Base64
+[error] +
+[error]  import scala.concurrent.duration.*
+[error]  import scala.jdk.CollectionConverters.*
+[error]  
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/llm/imagegen/ImageGenJobs.scala
+[error] +++ <expected fix>
+[error] @@ -1,6 +1,7 @@
+[error]  package nebflow.llm.imagegen
+[error]  
+[error]  import java.util.concurrent.ConcurrentHashMap
+[error] +
+[error]  import scala.jdk.CollectionConverters.*
+[error]  
+[error]  /**
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/compact/CompactService.scala
+[error] +++ <expected fix>
+[error] @@ -3,8 +3,8 @@
+[error]  import cats.effect.IO
+[error]  import cats.syntax.all.*
+[error]  import nebflow.core.hooks.*
+[error] -import nebflow.shared.{NebflowLogger, *}
+[error]  import nebflow.prompts.PromptCatalog
+[error] +import nebflow.shared.{NebflowLogger, *}
+[error]  
+[error]  /**
+[error]   * Inline context compaction — reuses the agent's own LLM call with cached
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/compact/FullCompact.scala
+[error] +++ <expected fix>
+[error] @@ -2,9 +2,9 @@
+[error]  
+[error]  import cats.effect.IO
+[error]  import io.circe.syntax.*
+[error] +import nebflow.prompts.PromptCatalog
+[error]  import nebflow.shared.given
+[error]  import nebflow.shared.{NebflowLogger, ReadTracker, *}
+[error] -import nebflow.prompts.PromptCatalog
+[error]  
+[error]  import java.nio.file.{Files, Paths}
+[error]  
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/tools/DelegateTool.scala
+[error] +++ <expected fix>
+[error] @@ -6,11 +6,11 @@
+[error]  import nebflow.actor.*
+[error]  import nebflow.agent.*
+[error]  import nebflow.core.AgentRuntimePort
+[error] -import nebflow.core.delegate.{ChainStore, DelegateRegistry, DelegateWorkspace, DualModeConfig, ModeDecision, WorktreeCandidates}
+[error] +import nebflow.core.delegate.*
+[error]  import nebflow.core.executor.ExecutorRegistry
+[error]  import nebflow.core.node.NodeRunner
+[error]  import nebflow.core.project.*
+[error] -import nebflow.shared.{Defaults, NebflowLogger, PathUtil, PeerInfo, SubAgentTask}
+[error] +import nebflow.shared.*
+[error]  
+[error]  /**
+[error]   * DelegateTool —— Nebula 唯一的派发入口（unified-delegate 批 2026-10-03）。
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/tools/MemoryDirectWriteGuard.scala
+[error] +++ <expected fix>
+[error] @@ -1,14 +1,11 @@
+[error]  package nebflow.core.tools
+[error]  
+[error] -import nebflow.shared.MemoryBudget
+[error] -import nebflow.shared.MemoryPaths
+[error] -import nebflow.shared.MemoryWriteGate
+[error] +import nebflow.shared.{MemoryBudget, MemoryPaths, MemoryWriteGate}
+[error]  
+[error]  import java.nio.charset.StandardCharsets
+[error] -import java.nio.file.Files
+[error] -import java.nio.file.Path
+[error] -import java.nio.file.Paths
+[error] +import java.nio.file.{Files, Path, Paths}
+[error]  import java.util.concurrent.ConcurrentHashMap
+[error] +
+[error]  import scala.util.Try
+[error]  
+[error]  /**
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/tools/ScheduleTool.scala
+[error] +++ <expected fix>
+[error] @@ -4,7 +4,7 @@
+[error]  import cats.syntax.foldable.toFoldableOps
+[error]  import io.circe.syntax.*
+[error]  import io.circe.{Json, JsonObject}
+[error] -import nebflow.core.scheduler.{DoneRecord, ScheduledTask, ScheduledTaskService, ScheduledTaskStore}
+[error] +import nebflow.core.scheduler.*
+[error]  
+[error]  import java.time.*
+[error]  
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/tools/FileOpenCache.scala
+[error] +++ <expected fix>
+[error] @@ -1,16 +1,15 @@
+[error]  package nebflow.core.tools
+[error]  
+[error] -import java.util.concurrent.atomic.AtomicLong
+[error] -
+[error] -import scala.collection.mutable
+[error] -import scala.util.Try
+[error] -
+[error]  import io.circe.Json
+[error]  import io.circe.parser.decode
+[error]  import io.circe.syntax.*
+[error] -
+[error]  import nebflow.shared.{NebflowLogger, PathUtil}
+[error]  
+[error] +import java.util.concurrent.atomic.AtomicLong
+[error] +
+[error] +import scala.collection.mutable
+[error] +import scala.util.Try
+[error] +
+[error]  /** 索引条目（持久层账面；`last` 变量字段供 LRU touch 原地更新）。 */
+[error]  private[tools] final case class FileOpenCacheMeta(
+[error]      key: String,
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/tools/BrowseGetCursor.scala
+[error] +++ <expected fix>
+[error] @@ -9,6 +9,7 @@
+[error]  import java.util.Base64
+[error]  import java.util.concurrent.ConcurrentHashMap
+[error]  import java.util.concurrent.atomic.AtomicBoolean
+[error] +
+[error]  import scala.concurrent.duration.*
+[error]  
+[error]  /**
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/tools/BgTaskOutputDisk.scala
+[error] +++ <expected fix>
+[error] @@ -7,6 +7,7 @@
+[error]  import java.io.BufferedWriter
+[error]  import java.nio.charset.StandardCharsets
+[error]  import java.nio.file.{Files, Paths, StandardOpenOption}
+[error] +
+[error]  import scala.util.Using
+[error]  
+[error]  /**
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/tools/GenerateImageTool.scala
+[error] +++ <expected fix>
+[error] @@ -1,11 +1,10 @@
+[error]  package nebflow.core.tools
+[error]  
+[error]  import cats.effect.IO
+[error] -import io.circe.Json
+[error]  import io.circe.syntax.*
+[error] -import io.circe.JsonObject
+[error] -import nebflow.llm.imagegen.{ImageGenJobs, ImageGenService}
+[error] +import io.circe.{Json, JsonObject}
+[error]  import nebflow.llm.imagegen.ImageGenTypes.ImageGenRequest
+[error] +import nebflow.llm.imagegen.{ImageGenJobs, ImageGenService}
+[error]  import nebflow.shared.NebflowLogger
+[error]  
+[error]  import java.nio.file.Files
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/tools/TaskTool.scala
+[error] +++ <expected fix>
+[error] @@ -1,11 +1,10 @@
+[error]  package nebflow.core.tools
+[error]  
+[error]  import cats.effect.IO
+[error] -import io.circe.{Json, JsonObject}
+[error]  import io.circe.syntax.*
+[error] -
+[error] -import nebflow.shared.PathUtil
+[error] +import io.circe.{Json, JsonObject}
+[error]  import nebflow.core.project.{TaskLedgerHistory, TaskLedgerRenderer, TaskLedgerStore}
+[error] +import nebflow.shared.PathUtil
+[error]  
+[error]  /**
+[error]   * The `Task` tool -- the **single write face of the unified ledger** (Nebula-exclusive;
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/tools/DirectRoute.scala
+[error] +++ <expected fix>
+[error] @@ -1,8 +1,8 @@
+[error]  package nebflow.core.tools
+[error]  
+[error]  import cats.effect.IO
+[error] -import io.circe.parser.parse as parseJson
+[error]  import io.circe.Json
+[error] +import io.circe.parser.parse as parseJson
+[error]  import nebflow.neblink.EndpointPreference
+[error]  import nebflow.shared.NebflowLogger
+[error]  
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/tools/RemoteExecutor.scala
+[error] +++ <expected fix>
+[error] @@ -1,7 +1,7 @@
+[error]  package nebflow.core.tools
+[error]  
+[error] +import cats.effect.*
+[error]  import cats.effect.std.Dispatcher
+[error] -import cats.effect.{Deferred, Fiber, IO, Ref}
+[error]  import io.circe.parser.decode
+[error]  import io.circe.syntax.*
+[error]  import io.circe.{Json, JsonObject}
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/tools/types.scala
+[error] +++ <expected fix>
+[error] @@ -4,9 +4,9 @@
+[error]  import cats.effect.{IO, Ref}
+[error]  import io.circe.{Json, JsonObject}
+[error]  import nebflow.actor.*
+[error] +import nebflow.core.*
+[error]  import nebflow.core.hooks.*
+[error]  import nebflow.core.task.TaskStore
+[error] -import nebflow.core.{AgentLibraryView, AgentRuntimePort, FileChangeLedger, FileChangeTracker}
+[error]  import nebflow.shared.*
+[error]  
+[error]  // 字段类型窄化,agent 定位器类型退出 core
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/tools/AskTools.scala
+[error] +++ <expected fix>
+[error] @@ -8,9 +8,8 @@
+[error]  import nebflow.core.ask.{AskGatewayServices, AskSessions}
+[error]  import nebflow.shared.PathUtil
+[error]  
+[error] -import scala.concurrent.duration.DurationLong
+[error] -
+[error]  import scala.collection.concurrent.TrieMap
+[error] +import scala.concurrent.duration.DurationLong
+[error]  import scala.util.control.NonFatal
+[error]  
+[error]  /* ═══════════════════════════════════════════════════════════════════════════
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/tools/ProjectTool.scala
+[error] +++ <expected fix>
+[error] @@ -15,7 +15,7 @@
+[error]  import io.circe.{Json, JsonObject}
+[error]  import nebflow.actor.{ActorRef, AgentCommand}
+[error]  import nebflow.core.project.*
+[error] -import nebflow.shared.{AskItem, AskUserCancelled, AskUserDispatch, InteractionRequestId, PathUtil}
+[error] +import nebflow.shared.*
+[error]  
+[error]  import scala.util.Try
+[error]  
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/tools/ChainWriteTool.scala
+[error] +++ <expected fix>
+[error] @@ -2,10 +2,8 @@
+[error]  
+[error]  import cats.effect.IO
+[error]  import cats.syntax.all.*
+[error] -import io.circe.JsonObject
+[error]  import io.circe.syntax.*
+[error] -import io.circe.Json
+[error] -
+[error] +import io.circe.{Json, JsonObject}
+[error]  import nebflow.core.entity.BuiltinAgents
+[error]  import nebflow.core.project.*
+[error]  
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/ask/AskSessions.scala
+[error] +++ <expected fix>
+[error] @@ -8,6 +8,7 @@
+[error]  import nebflow.shared.{NebflowLogger, PathUtil}
+[error]  
+[error]  import java.security.MessageDigest
+[error] +
+[error]  import scala.util.control.NonFatal
+[error]  
+[error]  /* ═══════════════════════════════════════════════════════════════════════════
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/entity/AgentIdentityStore.scala
+[error] +++ <expected fix>
+[error] @@ -2,8 +2,8 @@
+[error]  
+[error]  import cats.effect.IO
+[error]  import cats.syntax.all.*
+[error] -import io.circe.syntax.*
+[error]  import io.circe.Json
+[error] +import io.circe.syntax.*
+[error]  import nebflow.core.AtomicJson
+[error]  import nebflow.shared.{MemoryStore, NebflowLogger, PathUtil}
+[error]  
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/entity/BuiltinAgents.scala
+[error] +++ <expected fix>
+[error] @@ -1,7 +1,7 @@
+[error]  package nebflow.core.entity
+[error]  
+[error] -import nebflow.shared.{Config, PathUtil}
+[error]  import nebflow.prompts.PromptCatalog
+[error] +import nebflow.shared.{Config, PathUtil}
+[error]  
+[error]  /**
+[error]   * BuiltinAgents —— 四个收敛 agent 的**代码级唯一定义源**（builtin-def batch
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/secrets/SecretsStore.scala
+[error] +++ <expected fix>
+[error] @@ -5,12 +5,12 @@
+[error]  import io.circe.{Json, JsonObject}
+[error]  import nebflow.core.CredentialFileAcl
+[error]  import nebflow.shared.{Branding, PathUtil}
+[error] -
+[error]  import nebflow.social.SocialChannels
+[error]  
+[error]  import java.nio.charset.StandardCharsets
+[error]  import java.nio.file.attribute.{PosixFilePermission, PosixFilePermissions}
+[error]  import java.nio.file.{Files, Path, StandardOpenOption}
+[error] +
+[error]  import scala.jdk.CollectionConverters.*
+[error]  
+[error]  /**
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/secrets/AskUserSecretSink.scala
+[error] +++ <expected fix>
+[error] @@ -7,8 +7,9 @@
+[error]  import nebflow.shared.Branding
+[error]  
+[error]  import java.nio.charset.StandardCharsets
+[error] +import java.nio.file.*
+[error]  import java.nio.file.attribute.{PosixFilePermission, PosixFilePermissions}
+[error] -import java.nio.file.{Files, Path, StandardCopyOption, StandardOpenOption}
+[error] +
+[error]  import scala.jdk.CollectionConverters.*
+[error]  
+[error]  /** secret 型 AskUser 的落库Sink（askuser-secret 批，2026-10-08 · 设计规格 §2/§4.4）。
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/secrets/SecretsCatalog.scala
+[error] +++ <expected fix>
+[error] @@ -1,14 +1,14 @@
+[error]  package nebflow.core.secrets
+[error]  
+[error] -import io.circe.{Json, JsonObject}
+[error]  import io.circe.syntax.*
+[error] +import io.circe.{Json, JsonObject}
+[error]  import nebflow.core.CredentialFileAcl
+[error]  import nebflow.shared.Branding
+[error]  
+[error]  import java.nio.charset.StandardCharsets
+[error]  import java.nio.file.{Files, StandardCopyOption}
+[error] -import java.time.{Instant, ZoneId}
+[error]  import java.time.format.DateTimeFormatter
+[error] +import java.time.{Instant, ZoneId}
+[error]  import java.util.UUID
+[error]  
+[error]  /**
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/processor/BgLifecycleReconciler.scala
+[error] +++ <expected fix>
+[error] @@ -5,8 +5,8 @@
+[error]  import io.circe.JsonObject
+[error]  import io.circe.syntax.*
+[error]  import nebflow.actor.AgentCommand
+[error] +import nebflow.core.tools.*
+[error]  import nebflow.core.{AgentRuntimePort, EventSink}
+[error] -import nebflow.core.tools.{BgHealth, BgNotifyDelivery, BgTaskLedger, BgTaskOutputStore, BgTaskReaper, BgTaskRegistry}
+[error]  import nebflow.shared.{Defaults, NebflowLogger}
+[error]  
+[error]  import scala.concurrent.duration.FiniteDuration
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/plugin/PluginSourceSync.scala
+[error] +++ <expected fix>
+[error] @@ -4,8 +4,8 @@
+[error]  import cats.effect.unsafe.implicits.global
+[error]  import io.circe.syntax.*
+[error]  import io.circe.{Json, JsonObject}
+[error] +import nebflow.core.plugin.PluginSourceLedger.{Kind, Pin, Via}
+[error]  import nebflow.shared.{NebflowLogger, PathUtil}
+[error] -import PluginSourceLedger.{Kind, Pin, Via}
+[error]  
+[error]  import scala.util.control.NonFatal
+[error]  
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/plugin/PluginRemovePolicy.scala
+[error] +++ <expected fix>
+[error] @@ -1,8 +1,8 @@
+[error]  package nebflow.core.plugin
+[error]  
+[error]  import cats.effect.IO
+[error] -import io.circe.syntax.*
+[error]  import io.circe.Json
+[error] +import io.circe.syntax.*
+[error]  import nebflow.shared.{NebflowLogger, PathUtil}
+[error]  
+[error]  /**
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/plugin/PluginSourceLedger.scala
+[error] +++ <expected fix>
+[error] @@ -1,7 +1,7 @@
+[error]  package nebflow.core.plugin
+[error]  
+[error] -import io.circe.{Json, JsonObject}
+[error]  import io.circe.syntax.*
+[error] +import io.circe.{Json, JsonObject}
+[error]  import nebflow.core.AtomicJson
+[error]  import nebflow.shared.{NebflowLogger, PathUtil}
+[error]  
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/plugin/PluginSourceInstall.scala
+[error] +++ <expected fix>
+[error] @@ -1,8 +1,8 @@
+[error]  package nebflow.core.plugin
+[error]  
+[error]  import cats.effect.IO
+[error] +import nebflow.core.plugin.PluginSourceLedger.{Kind, Pin, Via}
+[error]  import nebflow.shared.{NebflowLogger, PathUtil}
+[error] -import PluginSourceLedger.{Kind, Pin, Via}
+[error]  
+[error]  import java.security.MessageDigest
+[error]  
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/hotupdate/FleetUpdate.scala
+[error] +++ <expected fix>
+[error] @@ -1,8 +1,8 @@
+[error]  package nebflow.core.hotupdate
+[error]  
+[error]  import cats.syntax.all.*
+[error] -import io.circe.{Decoder, Encoder, Json}
+[error]  import io.circe.syntax.*
+[error] +import io.circe.{Decoder, Encoder, Json}
+[error]  
+[error]  /**
+[error]   * 全设备统一更新（fleet update）——**纯逻辑层**：能力门槛表 + 分发决策树 + 计划形状。
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/hotupdate/FleetUpdateCoordinator.scala
+[error] +++ <expected fix>
+[error] @@ -2,11 +2,12 @@
+[error]  
+[error]  import cats.effect.{Fiber, IO, Ref}
+[error]  import cats.syntax.all.*
+[error] -import io.circe.{Json, parser}
+[error]  import io.circe.syntax.*
+[error] +import io.circe.{Json, parser}
+[error]  import nebflow.shared.{NebflowLogger, PathUtil}
+[error]  
+[error]  import java.util.concurrent.atomic.AtomicReference
+[error] +
+[error]  import scala.concurrent.duration.*
+[error]  
+[error]  /**
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/hotrestart/HealthProbe.scala
+[error] +++ <expected fix>
+[error] @@ -6,8 +6,7 @@
+[error]  import io.circe.Json
+[error]  import io.circe.syntax.*
+[error]  import nebflow.core.ProviderHealthPort
+[error] -import nebflow.shared.Branding
+[error] -import nebflow.shared.NebflowLogger
+[error] +import nebflow.shared.{Branding, NebflowLogger}
+[error]  
+[error]  import java.net.*
+[error]  import java.nio.charset.StandardCharsets
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/hotrestart/InstallPointer.scala
+[error] +++ <expected fix>
+[error] @@ -2,8 +2,7 @@
+[error]  
+[error]  import cats.effect.IO
+[error]  import cats.syntax.all.*
+[error] -import nebflow.shared.Branding
+[error] -import nebflow.shared.NebflowLogger
+[error] +import nebflow.shared.{Branding, NebflowLogger}
+[error]  
+[error]  /**
+[error]   * 安装目录的**版本留存 + 指针**布局（hotupdate 批 2 G4 · 设计 §6②）。
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/scheduler/ScheduledTaskActor.scala
+[error] +++ <expected fix>
+[error] @@ -3,9 +3,8 @@
+[error]  import cats.effect.std.Dispatcher
+[error]  import cats.effect.{IO, Ref}
+[error]  import cats.syntax.all.*
+[error] -import io.circe.Json
+[error]  import io.circe.syntax.*
+[error] -import io.circe.JsonObject
+[error] +import io.circe.{Json, JsonObject}
+[error]  import nebflow.actor.AgentCommand
+[error]  import nebflow.core.{InjectionChannel, SessionStorePort}
+[error]  import nebflow.shared.{NebflowLogger, UiMessage}
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/scheduler/WeeklyReport.scala
+[error] +++ <expected fix>
+[error] @@ -1,15 +1,15 @@
+[error]  package nebflow.core.scheduler
+[error]  
+[error]  import cats.effect.IO
+[error] +import io.circe.Json
+[error]  import io.circe.parser.parse as jsonParse
+[error]  import io.circe.syntax.*
+[error] -import io.circe.Json
+[error]  import nebflow.shared.NebflowLogger
+[error]  
+[error]  import java.nio.charset.StandardCharsets
+[error]  import java.nio.file.{Files, Path as JPath, StandardOpenOption}
+[error] +import java.time.*
+[error]  import java.time.format.DateTimeFormatter
+[error] -import java.time.{DayOfWeek, Instant, ZoneId, ZonedDateTime}
+[error]  
+[error]  /**
+[error]   * 周报生成器（认知二期产品批·设计稿 §6.5 第 5 段 + §9-12 裁定：引擎生成＋
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/scheduler/SessionToolActivity.scala
+[error] +++ <expected fix>
+[error] @@ -1,7 +1,6 @@
+[error]  package nebflow.core.scheduler
+[error]  
+[error] -import cats.effect.IO
+[error] -import cats.effect.Ref
+[error] +import cats.effect.{IO, Ref}
+[error]  
+[error]  /**
+[error]   * 会话工具活动时钟（2026-10-29 例程自检降频批）：记录每个会话最近一次工具
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/wiki/TermIndex.scala
+[error] +++ <expected fix>
+[error] @@ -3,6 +3,7 @@
+[error]  import cats.effect.IO
+[error]  
+[error]  import java.util.concurrent.atomic.AtomicReference
+[error] +
+[error]  import scala.collection.mutable.ListBuffer
+[error]  
+[error]  /**
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/delegate/MergeArtifactCare.scala
+[error] +++ <expected fix>
+[error] @@ -1,8 +1,8 @@
+[error]  package nebflow.core.delegate
+[error]  
+[error] +import io.circe.syntax.*
+[error]  import nebflow.shared.NebflowLogger
+[error]  
+[error] -import io.circe.syntax.*
+[error]  import scala.collection.mutable.ListBuffer
+[error]  import scala.util.Try
+[error]  
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/delegate/BaseDriftWatch.scala
+[error] +++ <expected fix>
+[error] @@ -2,8 +2,7 @@
+[error]  
+[error]  import cats.effect.IO
+[error]  import cats.syntax.all.*
+[error] -import nebflow.core.AgentRuntimePort
+[error] -import nebflow.core.GitWorktrees
+[error] +import nebflow.core.{AgentRuntimePort, GitWorktrees}
+[error]  import nebflow.shared.{NebflowLogger, PathUtil}
+[error]  
+[error]  /**
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/delegate/DelegateFlowMapLifecycle.scala
+[error] +++ <expected fix>
+[error] @@ -2,7 +2,7 @@
+[error]  
+[error]  import cats.effect.IO
+[error]  import cats.syntax.all.*
+[error] -import nebflow.core.project.{CancelSource, ChainLedger, DelegateFlowHosts, FlowMapEventLog, FlowMapStore, NodeLifecycle}
+[error] +import nebflow.core.project.*
+[error]  import nebflow.shared.{NebflowLogger, PathUtil}
+[error]  
+[error]  import scala.concurrent.duration.*
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/delegate/WorktreeCandidates.scala
+[error] +++ <expected fix>
+[error] @@ -5,6 +5,7 @@
+[error]  import nebflow.shared.NebflowLogger
+[error]  
+[error]  import java.util.concurrent.atomic.AtomicReference
+[error] +
+[error]  import scala.util.Try
+[error]  
+[error]  /**
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/delegate/DeviceDelegate.scala
+[error] +++ <expected fix>
+[error] @@ -2,9 +2,8 @@
+[error]  
+[error]  import cats.effect.IO
+[error]  import cats.syntax.all.*
+[error] -import io.circe.Json
+[error]  import io.circe.syntax.*
+[error] -import io.circe.JsonObject
+[error] +import io.circe.{Json, JsonObject}
+[error]  import nebflow.actor.*
+[error]  import nebflow.core.AgentRuntimePort
+[error]  import nebflow.core.device.{DeviceHmac, DeviceRegistry, NonceCache}
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/delegate/DelegateStandbyCare.scala
+[error] +++ <expected fix>
+[error] @@ -1,7 +1,7 @@
+[error]  package nebflow.core.delegate
+[error]  
+[error]  import cats.effect.IO
+[error] -import nebflow.actor.{ActorRef, AgentCommand, AgentEvent, AgentStatus}
+[error] +import nebflow.actor.*
+[error]  import nebflow.core.AgentRuntimePort
+[error]  import nebflow.shared.{Defaults, NebflowLogger}
+[error]  
+[error] /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/delegate/MergeQueue.scala:1226:9: error: [DisableSyntax.return] return should be avoided, consider using if/else instead
+[error]         return
+[error]         ^^^^^^
+[error] /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/delegate/MergeQueue.scala:1239:9: error: [DisableSyntax.return] return should be avoided, consider using if/else instead
+[error]         return
+[error]         ^^^^^^
+[error] /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/delegate/MergeQueue.scala:1247:9: error: [DisableSyntax.return] return should be avoided, consider using if/else instead
+[error]         return
+[error]         ^^^^^^
+[error] /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/delegate/MergeQueue.scala:1258:7: error: [DisableSyntax.return] return should be avoided, consider using if/else instead
+[error]       return
+[error]       ^^^^^^
+[error] /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/delegate/MergeQueue.scala:1263:9: error: [DisableSyntax.return] return should be avoided, consider using if/else instead
+[error]         return
+[error]         ^^^^^^
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/delegate/MergeQueue.scala
+[error] +++ <expected fix>
+[error] @@ -8,6 +8,7 @@
+[error]  import nebflow.actor.{ActorRef, AgentCommand, AgentEvent}
+[error]  import nebflow.core.GitWorktrees
+[error]  import nebflow.shared.{NebflowLogger, PathUtil}
+[error] +
+[error]  import scala.util.Try
+[error]  
+[error]  /**
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/delegate/SessionResumption.scala
+[error] +++ <expected fix>
+[error] @@ -2,10 +2,9 @@
+[error]  
+[error]  import cats.effect.IO
+[error]  import cats.syntax.all.*
+[error] -import io.circe.Json
+[error] -import io.circe.JsonObject
+[error]  import io.circe.syntax.*
+[error] -import nebflow.actor.{ActorRef, ActorSystem, AgentCommand, AgentEvent, AgentKind}
+[error] +import io.circe.{Json, JsonObject}
+[error] +import nebflow.actor.*
+[error]  import nebflow.core.executor.ExecutorRegistry
+[error]  import nebflow.core.node.NodeRunner
+[error]  import nebflow.core.project.DelegateFlowHosts
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/delegate/ChildOrphanWatch.scala
+[error] +++ <expected fix>
+[error] @@ -4,7 +4,7 @@
+[error]  import cats.syntax.all.*
+[error]  import io.circe.Json
+[error]  import io.circe.syntax.*
+[error] -import nebflow.actor.{AgentCommand, AgentEvent, AgentKind, AgentRecord}
+[error] +import nebflow.actor.*
+[error]  import nebflow.core.AgentRuntimePort
+[error]  import nebflow.shared.NebflowLogger
+[error]  
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/delegate/DelegateTerminal.scala
+[error] +++ <expected fix>
+[error] @@ -4,8 +4,7 @@
+[error]  import cats.syntax.all.*
+[error]  import io.circe.Json
+[error]  import nebflow.actor.{ActorRef, AgentCommand, AgentEvent}
+[error] -import nebflow.core.AgentRuntimePort
+[error] -import nebflow.core.GitWorktrees
+[error] +import nebflow.core.{AgentRuntimePort, GitWorktrees}
+[error]  import nebflow.shared.NebflowLogger
+[error]  
+[error]  import scala.util.Try
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/delegate/DelegateDeliveryReceipts.scala
+[error] +++ <expected fix>
+[error] @@ -5,9 +5,8 @@
+[error]  import io.circe.JsonObject
+[error]  import io.circe.syntax.*
+[error]  import nebflow.actor.AgentCommand
+[error] -import nebflow.core.AgentRuntimePort
+[error] -import nebflow.core.AtomicJson
+[error]  import nebflow.core.tools.BgNotifyDelivery
+[error] +import nebflow.core.{AgentRuntimePort, AtomicJson}
+[error]  import nebflow.shared.{Defaults, NebflowLogger, PathUtil}
+[error]  
+[error]  /**
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/delegate/DelegateNotify.scala
+[error] +++ <expected fix>
+[error] @@ -1,7 +1,7 @@
+[error]  package nebflow.core.delegate
+[error]  
+[error]  import cats.effect.IO
+[error] -import nebflow.actor.{ActorRef, AgentCommand, AgentKind, AgentRecord}
+[error] +import nebflow.actor.*
+[error]  import nebflow.shared.NebflowLogger
+[error]  
+[error]  /**
+[error] /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/project/ChainLedgerStore.scala:284:11: error: [DisableSyntax.return] return should be avoided, consider using if/else instead
+[error]           return None
+[error]           ^^^^^^
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/project/FileChangeReport.scala
+[error] +++ <expected fix>
+[error] @@ -4,12 +4,8 @@
+[error]  import cats.syntax.all.*
+[error]  import io.circe.syntax.*
+[error]  import io.circe.{Json, JsonObject}
+[error] -import nebflow.core.AtomicJson
+[error] -import nebflow.core.FileChangeEvent
+[error] -import nebflow.core.FileChangeLedger
+[error] -import nebflow.core.FileChangeType
+[error] -import nebflow.shared.NebflowLogger
+[error] -import nebflow.shared.PathUtil
+[error] +import nebflow.core.*
+[error] +import nebflow.shared.{NebflowLogger, PathUtil}
+[error]  
+[error]  import java.nio.charset.StandardCharsets
+[error]  import java.nio.file.{Files, Paths}
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/project/ProjectCreateService.scala
+[error] +++ <expected fix>
+[error] @@ -4,8 +4,8 @@
+[error]  import io.circe.Json
+[error]  import nebflow.actor.ActorSystem
+[error]  import nebflow.core.AgentRuntimePort
+[error] -import nebflow.shared.PathUtil
+[error]  import nebflow.core.tools.{RemoteExecutor, ToolError}
+[error] +import nebflow.shared.PathUtil
+[error]  
+[error]  import scala.util.Try
+[error]  
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/project/TaskLedgerHistory.scala
+[error] +++ <expected fix>
+[error] @@ -1,14 +1,13 @@
+[error]  package nebflow.core.project
+[error]  
+[error]  import io.circe.Codec
+[error] -import io.circe.syntax.*
+[error]  import io.circe.derivation.{Configuration, ConfiguredCodec}
+[error]  import io.circe.parser.decode
+[error] +import io.circe.syntax.*
+[error] +import nebflow.shared.{NebflowLogger, PathUtil}
+[error]  
+[error]  import java.time.Instant
+[error]  
+[error] -import nebflow.shared.{NebflowLogger, PathUtil}
+[error] -
+[error]  /**
+[error]   * TaskLedgerHistory -- the change history of the unified ledger (taskunify batch,
+[error]   * 2026-09-24).
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/project/TaskLedgerStore.scala
+[error] +++ <expected fix>
+[error] @@ -1,18 +1,17 @@
+[error]  package nebflow.core.project
+[error]  
+[error]  import io.circe.Codec
+[error] -import io.circe.syntax.*
+[error]  import io.circe.derivation.{Configuration, ConfiguredCodec}
+[error]  import io.circe.parser.decode
+[error] +import io.circe.syntax.*
+[error] +import nebflow.core.AtomicJson
+[error] +import nebflow.core.tools.ToolError
+[error] +import nebflow.shared.{NebflowLogger, PathUtil}
+[error]  
+[error]  import java.time.Instant
+[error]  
+[error]  import scala.collection.mutable
+[error]  
+[error] -import nebflow.core.AtomicJson
+[error] -import nebflow.shared.{NebflowLogger, PathUtil}
+[error] -import nebflow.core.tools.ToolError
+[error] -
+[error]  /**
+[error]   * A unified-ledger entry (wire schema, three states).
+[error]   *
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/project/PluginInjection.scala
+[error] +++ <expected fix>
+[error] @@ -7,14 +7,7 @@
+[error]  import cats.syntax.all.*
+[error]  import io.circe.syntax.*
+[error]  import nebflow.core.delegate.ChainStore
+[error] -import nebflow.core.jev.{
+[error] -  JevAllocation,
+[error] -  JevDeclarationDuty,
+[error] -  JevFallback,
+[error] -  JevFallbackKind,
+[error] -  PluginAllocator,
+[error] -  PluginCatalog
+[error] -}
+[error] +import nebflow.core.jev.*
+[error]  import nebflow.core.plugin.{PluginRegistry, PluginsConfig}
+[error]  import nebflow.shared.{NebflowLogger, PathUtil}
+[error]  
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/daemon/DaemonPanelStore.scala
+[error] +++ <expected fix>
+[error] @@ -7,6 +7,7 @@
+[error]  
+[error]  import java.nio.file.attribute.PosixFilePermission
+[error]  import java.nio.file.{Files, Path, Paths}
+[error] +
+[error]  import scala.jdk.CollectionConverters.*
+[error]  
+[error]  /**
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/root/RootLayout.scala
+[error] +++ <expected fix>
+[error] @@ -2,14 +2,15 @@
+[error]  
+[error]  import io.circe.Json
+[error]  import io.circe.syntax.*
+[error] -import java.time.format.DateTimeFormatter
+[error] -import java.time.{Instant, LocalDateTime}
+[error] -import scala.collection.mutable
+[error] -
+[error]  import nebflow.Version
+[error]  import nebflow.core.AtomicJson
+[error]  import nebflow.shared.NebflowLogger
+[error]  
+[error] +import java.time.format.DateTimeFormatter
+[error] +import java.time.{Instant, LocalDateTime}
+[error] +
+[error] +import scala.collection.mutable
+[error] +
+[error]  /**
+[error]   * 三层数据根 · 平铺根迁入账号布局 / 退回（B1，契约
+[error]   * `reports-evidence/20261104_b1-dataroot/design-api.md` §4）。
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/root/Guards.scala
+[error] +++ <expected fix>
+[error] @@ -1,7 +1,6 @@
+[error]  package nebflow.core.root
+[error]  
+[error]  import cats.effect.IO
+[error] -
+[error]  import nebflow.cli.SingleInstanceGuard
+[error]  import nebflow.gateway.GatewayConfig
+[error]  import nebflow.shared.{Defaults, PathUtil}
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/root/AccountRoot.scala
+[error] +++ <expected fix>
+[error] @@ -3,12 +3,12 @@
+[error]  import io.circe.Json
+[error]  import io.circe.parser.parse
+[error]  import io.circe.syntax.*
+[error] -import java.nio.charset.StandardCharsets
+[error] -import java.security.MessageDigest
+[error] -
+[error]  import nebflow.core.{AtomicJson, CredentialFileAcl}
+[error]  import nebflow.shared.NebflowLogger
+[error]  
+[error] +import java.nio.charset.StandardCharsets
+[error] +import java.security.MessageDigest
+[error] +
+[error]  /**
+[error]   * 三层数据根 · 账号层本体（B1，契约 `reports-evidence/20261104_b1-dataroot/design-api.md` §3）。
+[error]   *
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/index/EmbeddingService.scala
+[error] +++ <expected fix>
+[error] @@ -2,10 +2,9 @@
+[error]  
+[error]  import cats.effect.IO
+[error]  import cats.syntax.all.*
+[error] -import io.circe.Json
+[error] -import io.circe.parser
+[error]  import io.circe.syntax.*
+[error] -import nebflow.shared.{Config, NebflowLogger, PathUtil, SharedBackend}
+[error] +import io.circe.{Json, parser}
+[error] +import nebflow.shared.*
+[error]  import sttp.client4.*
+[error]  
+[error]  import scala.concurrent.duration.*
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/index/TaskSearchRerank.scala
+[error] +++ <expected fix>
+[error] @@ -1,6 +1,7 @@
+[error]  package nebflow.core.index
+[error]  
+[error]  import cats.effect.IO
+[error] +
+[error]  import java.util.concurrent.atomic.AtomicReference
+[error]  
+[error]  /**
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/index/TaskSearchIndex.scala
+[error] +++ <expected fix>
+[error] @@ -2,8 +2,8 @@
+[error]  
+[error]  import cats.effect.IO
+[error]  import cats.syntax.all.*
+[error] -import nebflow.core.project.{TaskLedgerHistory, TaskLedgerStore}
+[error]  import nebflow.core.delegate.DelegateRegistry
+[error] +import nebflow.core.project.{TaskLedgerHistory, TaskLedgerStore}
+[error]  import nebflow.shared.NebflowLogger
+[error]  
+[error]  import java.security.MessageDigest
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/executor/ExternalOutputStore.scala
+[error] +++ <expected fix>
+[error] @@ -1,15 +1,13 @@
+[error]  package nebflow.core.executor
+[error]  
+[error] -import cats.effect.IO
+[error] -import cats.effect.Ref
+[error] +import cats.effect.{IO, Ref}
+[error]  import cats.syntax.all.*
+[error] +import nebflow.core.tools.BgTaskOutputBuffer
+[error]  
+[error]  import java.lang.Process
+[error]  
+[error]  import scala.collection.immutable.Queue
+[error]  
+[error] -import nebflow.core.tools.BgTaskOutputBuffer
+[error] -
+[error]  /**
+[error]   * ExternalOutputStore —— 外部执行器进度缓冲 ＋ 活体注册表 ＋ mailbox
+[error]   * （external-executors 批 #1225，2026-10-06）。
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/executor/ExternalSessionRunner.scala
+[error] +++ <expected fix>
+[error] @@ -1,29 +1,14 @@
+[error]  package nebflow.core.executor
+[error]  
+[error] -import cats.effect.IO
+[error] -import cats.effect.Ref
+[error]  import cats.effect.unsafe.implicits.global
+[error] +import cats.effect.{IO, Ref}
+[error]  import cats.syntax.all.*
+[error]  import io.circe.Json
+[error]  import io.circe.syntax.*
+[error] -import nebflow.actor.AgentCommand
+[error] -import nebflow.actor.ActorRef
+[error] -import nebflow.core.AgentRuntimePort
+[error] -import nebflow.core.GitWorktrees
+[error] -import nebflow.core.delegate.ChainStore
+[error] -import nebflow.core.delegate.DelegateRegistry
+[error] -import nebflow.core.delegate.DelegateWorkReport
+[error] -import nebflow.core.delegate.DelegateWorkspace
+[error] -import nebflow.core.delegate.ExternalJudgeHook
+[error] -import nebflow.core.delegate.MergeAcceptance
+[error] -import nebflow.core.delegate.MergeQueue
+[error] -import nebflow.core.delegate.MergeDeclaration
+[error] -import nebflow.core.delegate.DelegateTerminal
+[error] -import nebflow.core.delegate.PostMergeCleanup
+[error] -import nebflow.shared.Message
+[error] -import nebflow.shared.MessageRole
+[error] -import nebflow.shared.NebflowLogger
+[error] -import nebflow.shared.SubAgentTask
+[error] +import nebflow.actor.{ActorRef, AgentCommand}
+[error] +import nebflow.core.delegate.*
+[error] +import nebflow.core.{AgentRuntimePort, GitWorktrees}
+[error] +import nebflow.shared.*
+[error]  
+[error]  import scala.collection.immutable.Queue
+[error]  import scala.util.Try
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/executor/ExecutorRegistry.scala
+[error] +++ <expected fix>
+[error] @@ -1,8 +1,8 @@
+[error]  package nebflow.core.executor
+[error]  
+[error] -import io.circe.{Encoder, Json}
+[error]  import io.circe.generic.semiauto.deriveEncoder
+[error]  import io.circe.syntax.*
+[error] +import io.circe.{Encoder, Json}
+[error]  import nebflow.shared.PathUtil
+[error]  
+[error]  import java.io.File
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/presets/ModelChainRegistry.scala
+[error] +++ <expected fix>
+[error] @@ -1,7 +1,7 @@
+[error]  package nebflow.core.presets
+[error]  
+[error] -import io.circe.syntax.*
+[error]  import io.circe.Json
+[error] +import io.circe.syntax.*
+[error]  import nebflow.core.AtomicJson
+[error]  import nebflow.shared.*
+[error]  
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/core/msgtokens/MsgTokenRegistry.scala
+[error] +++ <expected fix>
+[error] @@ -24,13 +24,14 @@
+[error]  package nebflow.core.msgtokens
+[error]  
+[error]  import cats.effect.IO
+[error] -import io.circe.{Decoder, Encoder}
+[error]  import io.circe.parser.decode
+[error]  import io.circe.syntax.*
+[error] +import io.circe.{Decoder, Encoder}
+[error]  import nebflow.shared.{NebflowLogger, PathUtil, SystemReminder}
+[error]  
+[error]  import java.security.MessageDigest
+[error]  import java.util.concurrent.locks.ReentrantLock
+[error] +
+[error]  import scala.collection.concurrent.TrieMap
+[error]  import scala.util.matching.Regex
+[error]  
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/social/outbound/FileLongShot.scala
+[error] +++ <expected fix>
+[error] @@ -3,6 +3,7 @@
+[error]  import cats.effect.IO
+[error]  
+[error]  import java.nio.file.Files
+[error] +
+[error]  import scala.util.Try
+[error]  
+[error]  /**
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/social/outbound/AskPrompt.scala
+[error] +++ <expected fix>
+[error] @@ -1,7 +1,6 @@
+[error]  package nebflow.social.outbound
+[error]  
+[error]  import io.circe.Json
+[error] -
+[error]  import nebflow.shared.AskItem
+[error]  
+[error]  /**
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/social/outbound/SegmentPacer.scala
+[error] +++ <expected fix>
+[error] @@ -1,7 +1,6 @@
+[error]  package nebflow.social.outbound
+[error]  
+[error] -import cats.effect.{Deferred, IO}
+[error] -import cats.effect.Ref
+[error] +import cats.effect.{Deferred, IO, Ref}
+[error]  
+[error]  import scala.concurrent.duration.*
+[error]  
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/social/outbound/RichFeishuAdapter.scala
+[error] +++ <expected fix>
+[error] @@ -2,14 +2,7 @@
+[error]  
+[error]  import cats.effect.IO
+[error]  import com.lark.oapi.Client as LarkClient
+[error] -import com.lark.oapi.service.im.v1.model.{
+[error] -  CreateFileReq,
+[error] -  CreateFileReqBody,
+[error] -  CreateImageReq,
+[error] -  CreateImageReqBody,
+[error] -  CreateMessageReq,
+[error] -  CreateMessageReqBody
+[error] -}
+[error] +import com.lark.oapi.service.im.v1.model.*
+[error]  import nebflow.shared.{AttachContract, NebflowLogger, PathUtil}
+[error]  import nebflow.social.{FeishuChannel, FeishuCredentials}
+[error]  
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/social/outbound/RichRenderer.scala
+[error] +++ <expected fix>
+[error] @@ -5,6 +5,7 @@
+[error]  
+[error]  import java.nio.file.{Files, Path}
+[error]  import java.util.concurrent.TimeUnit
+[error] +
+[error]  import scala.jdk.CollectionConverters.*
+[error]  
+[error]  /**
+[error] --- /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-merge-queue-gate/src/main/scala/nebflow/social/outbound/WebPageShot.scala
+[error] +++ <expected fix>
+[error] @@ -5,6 +5,7 @@
+[error]  
+[error]  import java.nio.file.Files
+[error]  import java.util.concurrent.TimeUnit
+[error] +
+[error]  import scala.jdk.CollectionConverters.*
+[error]  import scala.util.Try
+[error]  
+[error] (Compile / scalafix) scalafix.sbt.ScalafixFailed: ParseError TestError LinterError
+[error] Total time: 11 s, completed 2026年11月5日 11:37:45
+EXIT_SCALAFIX=1

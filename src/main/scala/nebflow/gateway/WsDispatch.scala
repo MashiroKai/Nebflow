@@ -129,7 +129,7 @@ final class WsDispatchCtx(
   browseEntryCapImpl: Int,
   resolveExplorerBaseRootImpl: (String, Option[String]) => IO[String],
   admitWorkOrRefuseImpl: (io.circe.Json => IO[Unit]) => IO[Unit] => IO[Unit],
-  handleUserTextImpl: (String, String, String, Boolean, Option[nebflow.bridge.ResolvedDevice]) => IO[Unit],
+  handleUserTextImpl: (String, String, String, Boolean, Option[nebflow.bridge.ResolvedDevice], Option[String]) => IO[Unit],
   /** device-provenance 批：帧 `device` 键 → 花名册解析读数（缺席 ⇒ None ⇒ 不标注）。 */
   deviceProvenanceImpl: io.circe.Json => IO[Option[nebflow.bridge.ResolvedDevice]],
   skipCurrentFreezeWindowImpl: () => IO[Unit],
@@ -246,9 +246,12 @@ final class WsDispatchCtx(
     content: String,
     source: String,
     fromUser: Boolean,
-    device: Option[nebflow.bridge.ResolvedDevice] = None
+    device: Option[nebflow.bridge.ResolvedDevice] = None,
+    // P3 磁盘邮箱批（作者 2026-11-05 10:46）：客户端幂等键（cid）加性尾参——
+    // `userMessage` 腿原本在网关处把 cid 蒸发掉，主腿因此没有幂等面。
+    clientMessageId: Option[String] = None
   ): IO[Unit] =
-    handleUserTextImpl(sessionId, content, source, fromUser, device)
+    handleUserTextImpl(sessionId, content, source, fromUser, device, clientMessageId)
 
   /** device-provenance 批：帧 `device` 键的来源设备解析（见 WebSocketRoutes.deviceProvenanceOf）。 */
   def deviceProvenance(json: io.circe.Json): IO[Option[nebflow.bridge.ResolvedDevice]] =

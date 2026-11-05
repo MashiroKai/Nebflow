@@ -225,6 +225,9 @@ class ExternalLegPrepareSpec extends CatsEffectSuite:
             delegateId = "delegate-ext-chan", branch = "delegate/delegate-ext-chan", baseWs = chanRepo.toString,
             baseBranch = "main", worktree = false, projectKey = "p-chan", taskId = Some("71"),
             parentSessionId = "nebula-root", description = "t", readyAt = 1L,
+            // 宣告闸批 2026-11-04：属主宣告在案（`delegate_report(category="merge")`）——授窗前提
+            declaredAt = Some(1_000L),
+            declareSource = Some(nebflow.core.delegate.MergeDeclaration.Source.ReportMerge),
             channelKind = "external",
             external = Some(MergeQueue.ExternalLeg(msg => IO { sent.add(msg); Right(()) }))
           )
@@ -248,6 +251,10 @@ class ExternalLegPrepareSpec extends CatsEffectSuite:
             delegateId = "delegate-nochan", branch = "delegate/delegate-nochan", baseWs = chanRepo.toString,
             baseBranch = "main", worktree = false, projectKey = "p-nochan", taskId = Some("72"),
             parentSessionId = "nebula-root", description = "t", readyAt = 1L,
+            // 宣告闸批 2026-11-04：本腿测的是「通道丢失」面 ⇒ 属主宣告必须在案，
+            // 否则放行闸 ② 先以 undeclared park（那是另一条判据）。
+            declaredAt = Some(1_000L),
+            declareSource = Some(nebflow.core.delegate.MergeDeclaration.Source.ReportMerge),
             channelKind = "external" // 通道闭包不持久——重启回载后 external/internal 皆 None
           )
         )
