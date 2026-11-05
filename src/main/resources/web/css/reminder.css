@@ -797,6 +797,161 @@
   }
 }
 
+/* ═══════════════════════════════════════════════════════════════════════
+   schedule-created-card 批（2026-11-05 作者令 09:03）——
+   **创建/编辑成功后**落进消息流的同一张卡（同一 .bubble.injected.schedule-card
+   家族、同一 chip/name/body/time 结构），只增三样面：状态词、元信息条（项目/
+   时间·重复/id）、原地编辑/取消面。
+
+   复用纪律：卡体、头行、chip、name、body、时间行的样式**全部来自上面那一块**
+   ——本块一个重复声明都不写，只补新节点；图标走 createIconsIn 单点。
+   令牌纪律：本块零设计字面量（颜色/字号/圆角/间距全部 --ds-* / 玻璃族令牌），
+   scripts/check-design-tokens.mjs 对本文件走「只降不增」基线。
+   响应式：卡宽沿用家族 `min(440px, 82%)` ⇒ 390 档不横向溢出；编辑控件
+   width:100% + box-sizing，**无 position:fixed/sticky**（键盘弹起时不被顶飞：
+   控件随消息流走，输入面贴着打字位），与 ime-guard 纪律同向。
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* 组件壳：display:contents ⇒ 卡体直接参与 .row 的 flex 布局（家族卡宽不改语境） */
+nf-sched-card { display: contents; }
+
+/* 状态词（事实句）：进行中 / 提交中 / PAUSED / 已完成 / 已取消 / 已不在列表 */
+.schedule-card-status {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: var(--ds-fs-meta);
+  letter-spacing: var(--ds-ls-body);
+  color: var(--color-frame-text-muted);
+}
+.schedule-card-status.is-active { color: rgb(var(--sapphire)); }
+.schedule-card-status.is-done { color: var(--status-success-icon); }
+.schedule-card-status.is-cancelled,
+.schedule-card-status.is-gone { color: var(--status-error-icon); }
+
+/* 正文长文折叠（3 行 + 展开）；展开态交还全量 */
+.schedule-card-body {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.schedule-card-body.is-open {
+  display: block;
+  -webkit-line-clamp: none;
+  overflow: visible;
+}
+.schedule-card-toggle {
+  align-self: flex-start;
+  min-height: var(--ds-hit-control);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: rgb(var(--sapphire));
+  opacity: 0.8;
+  font-family: inherit;
+  font-size: var(--ds-fs-meta);
+  cursor: pointer;
+}
+.schedule-card-toggle:hover { opacity: 1; }
+
+/* 元信息条：项目标签 / 触发时间·重复（待办 = 创建日期）/ id（弱化但不隐藏） */
+.schedule-card-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-1h);
+  flex-wrap: wrap;
+  font-size: var(--ds-fs-meta);
+  color: var(--color-frame-text-muted);
+}
+.schedule-card-chip-item {
+  padding: 0 var(--ds-space-1h);
+  border: 1px solid var(--glass-etched-border);
+  border-radius: var(--ds-radius-badge);
+  background: var(--glass-etched-bg);
+  overflow-wrap: anywhere;
+}
+.schedule-card-id {
+  margin-left: auto;
+  font-family: var(--ds-font-mono);
+  font-size: var(--ds-fs-meta);
+  color: var(--color-frame-text-dim);
+}
+
+/* 失败面（失败必须可见；输入保留在编辑态里，不回滚成旧值） */
+.schedule-card-fail {
+  padding: var(--ds-space-1) var(--ds-space-2);
+  border: 1px solid var(--status-error-icon);
+  border-radius: var(--ds-radius-input);
+  color: var(--status-error-icon);
+  font-size: var(--ds-fs-hint);
+  overflow-wrap: anywhere;
+}
+.schedule-card-note {
+  color: var(--color-frame-text-muted);
+  font-size: var(--ds-fs-hint);
+  overflow-wrap: anywhere;
+}
+
+/* 动作行（终态整行不渲染 ⇒ 无假按钮） */
+.schedule-card-actions {
+  display: flex;
+  gap: var(--ds-space-1h);
+  flex-wrap: wrap;
+}
+.schedule-card-btn {
+  min-height: var(--ds-hit-control);
+  padding: 0 var(--ds-space-3);
+  border: 1px solid var(--glass-etched-border);
+  border-radius: var(--ds-radius-button);
+  background: var(--glass-control-bg);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: var(--ds-fs-btn);
+  font-weight: var(--ds-fw-btn);
+  cursor: pointer;
+  transition: background var(--ds-dur-hover) var(--ds-ease-std);
+}
+.schedule-card-btn:hover { background: var(--glass-control-bg-hover); }
+.schedule-card-btn.is-primary { border-color: rgb(var(--sapphire) / 0.5); color: rgb(var(--sapphire)); }
+.schedule-card-btn.is-danger { border-color: var(--status-error-icon); color: var(--status-error-icon); }
+.schedule-card-btn:focus-visible {
+  outline: var(--ds-focus-width) solid var(--btn-focus-ring);
+  outline-offset: var(--ds-border-width);
+}
+
+/* 原地编辑 / 取消确认（不跳页、不开模态） */
+.schedule-card-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-2);
+  padding-top: var(--ds-space-1h);
+  border-top: 1px solid var(--glass-etched-border);
+}
+.schedule-card-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-half);
+  font-size: var(--ds-fs-meta);
+  color: var(--color-frame-text-muted);
+}
+.schedule-card-input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: var(--ds-input-pad-lg);
+  border: 1px solid var(--glass-etched-border);
+  border-radius: var(--ds-radius-input);
+  background: var(--glass-etched-bg);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: var(--ds-fs-body);
+  line-height: var(--ds-lh-body);
+  resize: vertical;
+}
+.schedule-card-input:focus-visible {
+  outline: var(--ds-focus-width) solid var(--btn-focus-ring);
+  outline-offset: var(--ds-border-width);
+}
+
 /* ── Dark Theme ───────────────────────────────────────────────────────── */
 @media (prefers-color-scheme: dark) {
   #reminder-btn svg {

@@ -21,6 +21,9 @@ import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, smartScroll
 // 平衡 <output> 对 ⇒ 正常态只渲染块内，角标展开回原文（turnGroup toggle）。
 import { applyOutputFace, hasOutputBlock } from './outputTag.js';
 import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
+// schedule-created-card 批（2026-11-05）：历史重放两腿与 live renderTool 共用
+// 同一个卡片行 builder（零第二套判据）。
+import { scheduleCardRowForTool } from './scheduleCard.js';
 import { createDurationBadgeElement, createMsgFooterBadge, buildInjectedRow, bindCollapsibleToggle, renderAskUserHistory, buildCompactCardRow, sameAskCards, applyThinkingWindowCap } from './chat.js';
 // pop-upgrade 批(2026-10-03):Pop 工件载荷面(叠卡/文件卡片)单一真源——live
 // (chat.js renderTool)与两条历史重放路共用本模块;popArtifacts 不 import chat.js
@@ -885,6 +888,15 @@ export function restoreFromStorage(opts = {}) {
         row.appendChild(card);
         chat.appendChild(row);
         if (hasBody) attachToolClick(card);
+        // Schedule 卡片（schedule-created-card 批 2026-11-05）：重放腿与 live
+        // renderTool 同形 —— 进程行 + 卡片行两行制，同一个 builder（零第二套判据）。
+        const schedRow = scheduleCardRowForTool({
+          label: m.label, inputJson: m.input, content: m.content, isError: m.isError, sessionId: ownerSessionId,
+        });
+        if (schedRow) {
+          schedRow.dataset.msgId = historyMsgId(i) + '-sched';
+          chat.appendChild(schedRow);
+        }
       }
     } else if (m.type === 'askUser') {
       // Same card component + lock state as the live path (see
@@ -1358,6 +1370,15 @@ function buildHistoryRow(m, i, ctx) {
         row.appendChild(card);
         fragment.appendChild(row);
         if (hasBody) attachToolClick(card);
+        // Schedule 卡片（schedule-created-card 批 2026-11-05）：与 storage 腿逐字
+        // 同形（进程行 + 卡片行；同一 builder、同一行 id 后缀）。
+        const schedRow = scheduleCardRowForTool({
+          label: m.label, inputJson: m.input, content: m.content, isError: m.isError, sessionId: ownerSessionId,
+        });
+        if (schedRow) {
+          schedRow.dataset.msgId = historyMsgId(i) + '-sched';
+          fragment.appendChild(schedRow);
+        }
         }
       }
     } else if (m.type === 'askUser') {

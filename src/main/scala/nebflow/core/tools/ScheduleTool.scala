@@ -164,7 +164,10 @@ Your context does NOT show the current date/time — never invent an absolute da
   message); the digest rides the same ExternalEvent channel, so it also lands on the next
   idle turn. Todo persistence equals scheduled-task persistence (same engine storage)."""
 
-  private val validRepeat = Set("hourly", "daily", "weekly")
+  /** 重复档白名单（单源）。schedule-created-card 批（2026-11-05）起对 gateway 的
+   *  `updateScheduledTask` 帧公开 —— 卡片内联编辑的 repeat 校验必须命中**同一份**
+   *  白名单，复制一份字符串集合 = 两条校验路必然漂移。 */
+  val validRepeat = Set("hourly", "daily", "weekly")
   private val validActions = Set("create", "list", "cancel", "done", "edit")
 
   val inputSchema = JsonObject.fromIterable(

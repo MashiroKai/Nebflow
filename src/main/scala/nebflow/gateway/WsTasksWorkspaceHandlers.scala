@@ -17,7 +17,7 @@ import nebflow.core.mcp.McpManager
 import nebflow.core.project.{CancelSource as ChainCancelSource, *}
 import nebflow.core.schedule.FreezeSchedule.given
 import nebflow.core.skill.SkillService
-import nebflow.core.tools.{ToolContext, ToolRegistry}
+import nebflow.core.tools.{ScheduleTool, ToolContext, ToolRegistry}
 import nebflow.gateway.NfFilePolicy.*
 import nebflow.gateway.WsDispatch.{inboundEnvelope, parsedJson}
 import nebflow.llm.*
@@ -632,13 +632,97 @@ private[gateway] object WsTasksWorkspaceHandlers:
     // priority 提供即生效（钳位 0..3；0 = 清空重要度）；缺席不改。
     val priorityOpt: Option[Int] = json.hcursor.downField("priority").as[Int].toOption
       .map(nebflow.core.scheduler.ScheduledTask.clampPriority)
-    if upId.nonEmpty && (contentOpt.isDefined || projectOpt.isDefined || priorityOpt.isDefined) then
+    // schedule-created-card 批（2026-11-05 作者令「卡片上能原地改、能取消」）：
+    // 定时任务面的**时间维度**进 patch —— triggerAt（触发时间）与 repeat（重复）。
+    // 为什么加在这里而不是新开帧：见本方法头「扩 patch 面 = 零新增副作用路径」。
+    //   · triggerAt：只收**已解析的绝对值**（epoch-ms 数字 / 纯数字串）。自然语言
+    //     解析器（parseTriggerAt/parseTimeString）的单点在 ScheduleTool —— 在这里
+    //     复刻一份 = 两条解析路必然漂移。收 "" / null = 不提供（缺席）。非数字 ⇒
+    //     错误帧（自愈提示），绝不静默忽略。
+    //   · repeat："" = 改回一次性（clear）；其余必须命中 ScheduleTool.validRepeat
+    //     同一白名单（单源引用，不复制字符串）。
+    val triggerAtRaw: Option[String] =
+      json.hcursor.downField("triggerAt").as[BigDecimal].toOption.map(_.toBigInt.toString)
+        .orElse(json.hcursor.downField("triggerAt").as[String].toOption.map(_.trim))
+        .filter(_.nonEmpty)
+    val triggerAtOpt: Either[String, Option[Long]] = triggerAtRaw match
+      case None => Right(None)
+      case Some(raw) => raw.toLongOption match
+        case Some(ms) => Right(Some(ms))
+        case None => Left(s"triggerAt must be an epoch-ms integer (got \"$raw\") — send the absolute time in ms.")
+    // repeat 提供即生效；"" = 一次性（clear）；缺席不改。
+    val repeatOpt: Either[String, Option[Option[String]]] =
+      json.hcursor.downField("repeat").as[String].toOption match
+        case None => Right(None)
+        case Some(raw) =>
+          val v = raw.trim.toLowerCase
+          if v.isEmpty then Right(Some(None))
+          else if ScheduleTool.validRepeat.contains(v) then Right(Some(Some(v)))
+          else
+            Left(
+              s"repeat must be one of ${ScheduleTool.validRepeat.toList.sorted.mkString("/")}, or \"\" for one-shot (got \"$raw\")"
+            )
+    // 自愈错误帧单点（卡片据此就地显示错误态并保留用户输入，不渲染成已保存）。
+    val failUpdate: String => IO[Unit] = msg =>
+      wsSend(
+        io.circe.Json.obj(
+          "type" -> "error".asJson,
+          "msgType" -> "updateScheduledTask".asJson,
+          "id" -> upId.asJson,
+          "message" -> msg.asJson
+        )
+      )
+    if upId.isEmpty then
+      failUpdate("updateScheduledTask requires id — call listScheduledTasks first, then pass the entry's id.")
+    else
+      triggerAtOpt match
+        case Left(msg) => failUpdate(msg)
+        case Right(ta) =>
+          repeatOpt match
+            case Left(msg) => failUpdate(msg)
+            case Right(rp) =>
+              applyUpdate(
+                sharedResources, upId, upSessionId, contentOpt, projectOpt, priorityOpt, ta, rp, failUpdate, wsSend
+              )
+    end if
+  end handleUpdateScheduledTask
+
+  /** `updateScheduledTask` 的应用半步（单点：校验 → 寻址 → patch → 通知 → 广播）。
+   *  校验失败一律走 failUpdate 错误帧 —— 调用方零重复。 */
+  private def applyUpdate(
+    sharedResources: SharedResources,
+    upId: String,
+    upSessionId: String,
+    contentOpt: Option[String],
+    projectOpt: Option[Option[String]],
+    priorityOpt: Option[Int],
+    triggerAtOpt: Option[Long],
+    repeatOpt: Option[Option[String]],
+    failUpdate: String => IO[Unit],
+    wsSend: io.circe.Json => IO[Unit]
+  ): IO[Unit] =
+    val now = System.currentTimeMillis()
+    val noFields = contentOpt.isEmpty && projectOpt.isEmpty && priorityOpt.isEmpty &&
+      triggerAtOpt.isEmpty && repeatOpt.isEmpty
+    if noFields then
+      failUpdate(
+        "updateScheduledTask requires at least one field to change: content / project / priority / triggerAt / repeat."
+      )
+    else if triggerAtOpt.exists(_ <= now) then
+      failUpdate(
+        s"triggerAt must be in the future (got ${triggerAtOpt.getOrElse(now)}) — pick a later time."
+      )
+    else
       sharedResources.scheduledTaskStore.findTaskById(upId).flatMap {
         case Some(t) =>
           val updated = t.copy(
             content = contentOpt.getOrElse(t.content),
             project = projectOpt.getOrElse(t.project),
-            priority = if t.isTodo then priorityOpt.getOrElse(t.priority) else t.priority
+            priority = if t.isTodo then priorityOpt.getOrElse(t.priority) else t.priority,
+            // 时间维度只对定时任务面生效（待办无固定触发时间：triggerAt 是「下次
+            // 浮出」的内部值，repeat 无待办语义）——待办面收到这两键 = 零改动。
+            triggerAt = if t.isTodo then t.triggerAt else triggerAtOpt.getOrElse(t.triggerAt),
+            repeat = if t.isTodo then t.repeat else repeatOpt.getOrElse(t.repeat)
           )
           sharedResources.scheduledTaskStore.updateTask(t.sessionId, upId)(_ => updated).flatMap { changed =>
             if !changed then IO.unit
@@ -657,17 +741,20 @@ private[gateway] object WsTasksWorkspaceHandlers:
               yield ()
           }
         case None =>
-          // 幂等宽容：行已不在 ⇒ 回 deleted 帧让 UI 收敛到同态。
+          // 幂等宽容：行已不在 ⇒ 回 deleted 帧让 UI 收敛到同态；**同时**回错误帧
+          // （schedule-created-card 批）：卡片必须就地说「条目已不存在」，不许把
+          // 这次编辑渲染成「已保存」（失败可见 = 本批验收第 5 条）。
           wsSend(
             io.circe.Json.obj(
               "type" -> "scheduledTaskDeleted".asJson,
               "id" -> upId.asJson,
               "sessionId" -> upSessionId.asJson
             )
+          ) *> failUpdate(
+            s"No entry with id \"$upId\" — it was cancelled or completed elsewhere; nothing was saved."
           )
       }
-    else IO.unit
-  end handleUpdateScheduledTask
+  end applyUpdate
 
   /**
    * `completeTodo` — 打卡 UI 销账腿（认知二期产品批③）：与 delete 的区别 =
