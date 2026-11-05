@@ -73,13 +73,14 @@ object ToolRegistry:
       // 执行件，目标恒为 `kernel` def（无 agent 目标参数）；persistent 模式已退役。
       "Delegate" -> DelegateTool,
       // builtin-merge 批（2026-10-03）：Subagent = 只读侦察子入口（阻塞，结果即
-      // 返回值）。N1 复名批（v2 ①/v3 §5）：Workflow → **AgentFlow**（同参数：
-      // steps = [{id, task, deps}], description）＝内联 DAG 便捷面，非阻塞薄壳化
-      // （steps → ChainWrite.registerChain 同闸同底座）。授权面 =
-      // AgentCore.NebflowFixedTools（执行 agent 机制面）；RootExclusiveTools
-      // 防声明逃逸。
+      // 返回值）。授权面 = AgentCore.NebflowFixedTools（执行 agent 机制面）；
+      // RootExclusiveTools 防声明逃逸。
+      // 🔴 tool-face-agentflow-retire 批（2026-11-05，作者裁定二）：`AgentFlow` 名
+      // **不再注册**（AgentFlow 工具整文件删除，能力原样留在 ChainWrite 一个入口）。
+      // 注册面没有该名 ⇒ `executeToolInner` 的 `case None` 命中
+      // `AgentCore.RetiredToolGuides("AgentFlow")`，给出「agentflow 只是模式名；改用
+      // ChainWrite 一次写全链」的可诊断错误（绝不是静默 no-op，也不是别名转发）。
       "Subagent" -> SubagentTool,
-      "AgentFlow" -> AgentFlowTool,
       // ChainWrite（N1 刀2 新注册项，v3 §5 S4）：delegate 会话专属整链登记件——
       // 一次调用登记节点＋deps＋任务＋描述整链进调用 delegate 自己的作用域图，
       // 校验过 → 原子落盘 → 入口放行（链齐才跑）。授权面 = buildAllowedToolSet

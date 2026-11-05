@@ -33,9 +33,11 @@ class DeletedToolGuardSpec extends FunSuite:
 
   /**
    * N1 复名批（v2 §3.3 镜像义务，2026-10-06）rename-retired 集：名字退役产生的新
-   * 墓碑——`Workflow` 名已随复名让位给 AgentFlow（注册面删除、guide 在场），打旧名
-   * 的调用落迁移指引。与 R2 集的差异 = 断言点：guide 指向**复名后的新工具名**
-   * （含 "AgentFlow"），不是 Mail/Task。
+   * 墓碑——`Workflow` 名已随复名让位（注册面删除、guide 在场），打旧名的调用落迁移
+   * 指引。与 R2 集的差异 = 断言点：guide 指向**当前唯一的现役入口**。
+   * 🔴 tool-face-agentflow-retire 批（2026-11-05，作者裁定二）：中转站 `AgentFlow`
+   * 工具整体退役 ⇒ 本集 guide 的指路目标从 AgentFlow 改为 `ChainWrite`，且
+   * `AgentFlow` 自己成为本表的新墓碑条目（反向先例，见下方用例）。
    */
   private val renameRetiredNames = List("Workflow")
 
@@ -109,22 +111,62 @@ class DeletedToolGuardSpec extends FunSuite:
       "no tombstone entry may exist for the live name \"Task\" (registered ⇒ unreachable dead text)"
     )
 
-  test("rename-retired (N1): Workflow is unregistered, its guide is present and names AgentFlow"):
+  test("rename-retired (N1): Workflow is unregistered, and its guide now points at ChainWrite (the live entry)"):
     renameRetiredNames.foreach { g =>
-      assert(!ToolRegistry.TOOL_MAP.contains(g), s"$g must be unregistered (renamed to AgentFlow, N1 2026-10-06)")
+      assert(!ToolRegistry.TOOL_MAP.contains(g), s"$g must be unregistered (its DAG face is gone)")
       assert(
         nebflow.agent.AgentCore.RetiredToolGuides.contains(g),
         s"$g must carry a rename migration guide (a diagnosable error, not a compatibility shell)"
       )
       val guide = nebflow.agent.AgentCore.RetiredToolGuides(g)
-      assert(guide.contains("AgentFlow"), s"$g guide must point at the renamed AgentFlow, got: ${guide.take(140)}")
+      // tool-face-agentflow-retire 批（2026-11-05，作者裁定二）：中转站 AgentFlow 也退役
+      // ⇒ 旧墓碑不得再指这个死名（那会把调用再送一次空跑），只认唯一现役入口。
+      assert(
+        guide.contains("ChainWrite"),
+        s"$g guide must point at the live entry ChainWrite, got: ${guide.take(160)}"
+      )
+      assert(
+        !guide.contains("Resubmit as AgentFlow"),
+        "the guide must never send a caller back to the retired name (dead-end pointer)"
+      )
     }
-    // 名字复用教义：AgentFlow 已注册 ⇒ 旧 "AgentFlow" 墓碑条目必须已删（留条目 =
-    // 表对该名永不可达的死文本，违表零膨胀纪律）。
-    assert(ToolRegistry.TOOL_MAP.contains("AgentFlow"), "AgentFlow must be registered (the renamed face)")
+    // 名字生命周期教义：AgentFlow 现在**不可达**（工具整体退役）⇒ 必须在墓碑表里，
+    // 且不许静默消失（B5-c 可诊断退役）；同名反向先例见 N1 复名批（Workflow→AgentFlow）。
+    assert(!ToolRegistry.TOOL_MAP.contains("AgentFlow"), "AgentFlow must be unregistered (the tool is retired)")
     assert(
-      !nebflow.agent.AgentCore.RetiredToolGuides.contains("AgentFlow"),
-      "the old AgentFlow tombstone entry must be deleted (the name is re-registered; a surviving entry is unreachable dead text)"
+      nebflow.agent.AgentCore.RetiredToolGuides.contains("AgentFlow"),
+      "AgentFlow must carry a retirement guide — an old session calling it gets a diagnosable error, not a silent no-op"
+    )
+    val afGuide = nebflow.agent.AgentCore.RetiredToolGuides("AgentFlow")
+    assert(afGuide.contains("ChainWrite"), s"the guide must point at ChainWrite, got: ${afGuide.take(160)}")
+    assert(
+      afGuide.contains("MODE") || afGuide.contains("mode"),
+      s"the guide must state that 'agentflow' is only a mode name, not a tool: ${afGuide.take(200)}"
+    )
+
+  test("no surviving tool description advertises the retired AgentFlow tool"):
+    // 描述面广告 = 模型会照着调一个不存在的工具（本批最贵的缺陷形态）。
+    val offenders = ToolRegistry.TOOL_MAP.toSeq.collect {
+      case (name, tool) if tool.description.contains("AgentFlow") => name
+    }
+    assertEquals(offenders, Nil, s"surviving tool descriptions still advertise AgentFlow: $offenders")
+
+  test("旧会话调用 AgentFlow 的实际回执文本（engine 单点拼接：Tool '<name>' is not available. <guide>）"):
+    // 回执由 AgentSessionExecution 的注册表未命中分支拼成（`case None` —— 见该方法
+    // 内 `val msg = AgentCore.RetiredToolGuides.get(call.name) match ...` 一处）：
+    //   s"Tool '${call.name}' is not available. $guide"
+    // 本用例按**同一模板**渲染并断言：文案必须点名「已退役」、指向 ChainWrite（唯一
+    // 现役入口）并说清 agentflow 只是模式名——三件缺一件，模型只能瞎猜。
+    val receipt = nebflow.agent.AgentCore.RetiredToolGuides.get("AgentFlow") match
+      case Some(guide) => s"Tool 'AgentFlow' is not available. $guide"
+      case None        => fail("AgentFlow must carry a retirement guide")
+    println(s"[TOMBSTONE-RECEIPT] $receipt")
+    assert(receipt.startsWith("Tool 'AgentFlow' is not available."), receipt)
+    assert(receipt.contains("retired"), s"the receipt must say the tool is retired: $receipt")
+    assert(receipt.contains("ChainWrite"), s"the receipt must point at the only live entry (ChainWrite): $receipt")
+    assert(
+      receipt.contains("MODE"),
+      s"the receipt must separate the MODE name from the retired tool: $receipt"
     )
 
   test("registry face is unchanged by the R2 retirement — Mail is registered, ghost names are not"):

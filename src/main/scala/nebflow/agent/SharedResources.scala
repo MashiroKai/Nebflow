@@ -310,8 +310,15 @@ case class SharedResources(
       // `parentRef → registry → 父会话身份` 的 kernel 双重证据（mode 记录 ∪
       // `delegate-kernel-` 前缀），见 core.delegate.KernelChildSpawnGate。
       // 零行为变化：无父/未解析/非 kernel 身份一律放行（dispatcher 是本闸之后
-      // 唯一被允许派生的 delegate 形态）。
-      _ <- nebflow.core.delegate.KernelChildSpawnGate.check(agentRegistry, p.parentRef, p.sessionId)
+      // 唯一被允许派生的 delegate 形态）；kernel 身份下**唯一**放行面 = 只读侦察腿
+      // （子 agent def = `subagent`，tool-face-agentflow-retire 批 2026-11-05 作者
+      // 裁定「改 R-3a，只放行只读 subagent」），第三个实参即该判据的输入。
+      _ <- nebflow.core.delegate.KernelChildSpawnGate.check(
+        agentRegistry,
+        p.parentRef,
+        p.sessionId,
+        p.agentDef.name
+      )
       readTracker <- ReadTracker.create
       fileHistory <- FileHistory.create()
       ref <- system.spawn(

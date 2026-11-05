@@ -2524,9 +2524,13 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     // ── 双模式批（2026-10-28 · 设计 §4.2/§5.1）：模式面单点分叉 ──────────────
     // delegateMode = None（总闸关/未判定）⇒ 本段全部分叉失效，现状逐字节。
     // kernel 腿（极简内核执行器）：编排面整体退场——node 四件（ChainWrite/
-    //   NodeEdit/NodeList/NodeCancel）在追加前截断 + 显式减去 Subagent/AgentFlow
-    //   （NebflowFixedTools 是执行 agent 全局机制面——摘除只在 delegateSession
-    //   判据内，root 等非 delegate 会话不受影响）。
+    //   NodeEdit/NodeList/NodeCancel）在追加前截断。
+    //   tool-face-agentflow-retire 批（2026-11-05）：`- "AgentFlow"` 减法**删除**——
+    //   该名已不在任何固定面里（工具整体退役、注册表无此名），Set 减法恒为空操作。
+    //   `- "Subagent"` 减法**同时删除**（作者裁定一：kernel 腿补只读侦察件）——
+    //   kernel 现在**有** Subagent（只读五件，无写/无 shell/无消息），与之配套的是
+    //   不变量 R-3a 的收窄（core.delegate.KernelChildSpawnGate 只放行
+    //   def='subagent' 的子 actor 生成，其余照旧拒）。
     //   node_report 摘除（作者裁定 2026-10-29 逐字「node_report工具对极简内核应该
     //   不需要吧，那不是agentflow的节点使用的工具吗？」）：显式减法钉语义——现状
     //   事实源 node_report 本就不达 delegate 面（RootExclusiveTools 防声明逃逸剥
@@ -2538,7 +2542,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     val kernelFace = delegateSession && delegateMode.contains(nebflow.core.delegate.DualModeConfig.ModeKernel)
     val dispatcherFace = delegateSession && delegateMode.contains(nebflow.core.delegate.DualModeConfig.ModeDispatcher)
     val modeTruncated =
-      if kernelFace then withDelegateReport - "Subagent" - "AgentFlow" - nebflow.core.tools.NodeReportToolDef.Name
+      if kernelFace then withDelegateReport - nebflow.core.tools.NodeReportToolDef.Name
       else if dispatcherFace then withDelegateReport - "Subagent"
       else withDelegateReport
     // N1 刀2（v3 §10.1 A4 授能）：delegate 会话的四件 Node 工具面挂载——

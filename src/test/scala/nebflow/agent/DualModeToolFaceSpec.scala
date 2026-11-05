@@ -8,19 +8,21 @@ import io.circe.syntax.*
 import munit.FunSuite
 import nebflow.actor.AgentDef
 import nebflow.core.delegate.{DelegateRegistry, DualModeConfig}
-import nebflow.core.tools.{AgentFlowTool, SubagentTool, ToolContext}
+import nebflow.core.tools.{SubagentTool, ToolContext}
 import nebflow.shared.{PathUtil, SubAgentTask}
 
 /**
  * 双模式批（2026-10-28 · 设计 §4.2/§5.1）工具面分叉 spec：
  *
  *  - F1-F4 **挂载面单点分叉**（buildAllowedToolSet 尾段 delegateSession 腿）：
- *    kernel = 编排面整体退场（Subagent/AgentFlow/node 四件全摘——极简内核执行器）；
- *    dispatcher = Subagent 摘除、node 四件保留（编排本体）；`delegateMode=None`
- *    （闸关/未判定）与 `delegateSession=false` ⇒ 本段全部分叉失效（现状逐字节）。
- *  - F5/F6 **工具内第二保险**（防 schema 注入/显式调用逃逸）：kernel/dispatcher
- *    会话显式拒（DUAL_MODE_FACE_REMOVED）；闸关 = 现行为腿（参数校验错误，绝不
- *    出双模式文案）。
+ *    kernel = 编排面整体退场（node 四件全摘）**但携带 Subagent**（只读侦察腿，
+ *    tool-face-agentflow-retire 批 2026-11-05 作者裁定一）；dispatcher = Subagent
+ *    摘除、node 四件保留（编排本体）；`delegateMode=None`（闸关/未判定）与
+ *    `delegateSession=false` ⇒ 本段全部分叉失效（现状逐字节）。
+ *  - 同批裁定二：`AgentFlow` **工具整体退役** ⇒ 任何面都不再携带该名（F1/F2/F3 各钉一条）。
+ *  - F5 **工具内第二保险**（防 schema 注入/显式调用逃逸）：dispatcher 会话显式拒
+ *    （DUAL_MODE_FACE_REMOVED）、**kernel 会话放行**；闸关 = 现行为腿（参数校验错误，
+ *    绝不出双模式文案）。
  *  - F7 mode 参数声明面：DelegateTool schema 携 mode enum（kernel|dispatcher）。
  *  - F8 mode 字段落任务行：SubAgentTask 手写 decoder 缺键容忍（旧盘面照读）。
  */
@@ -61,19 +63,39 @@ class DualModeToolFaceSpec extends FunSuite:
   private val probeDef = AgentDef(name = "nebflow", description = "", tools = Nil, systemPrompt = "")
 
   private val NodeFace = Set("NodeEdit", "NodeList", "NodeCancel", "ChainWrite")
-  private val KernelStripped = Set("Subagent", "AgentFlow") ++ NodeFace
+
+  /**
+   * 内核腿期望面（**11 件**）= `NebflowFixedTools` 九件（文件/壳六件 + BgWait +
+   * AskUserQuestion + Subagent）+ `delegate_report` + `Mail`。tool-face-agentflow-retire
+   * 批（2026-11-05）：AgentFlow 随工具退役从固定面消失（十 → 九），kernel 按裁定一
+   * **拿到** Subagent（只读侦察腿）。Node 四件与 node_report 不在本腿。
+   */
+  private val ExpectedKernelFace =
+    nebflow.agent.AgentCore.NebflowFixedTools + nebflow.core.tools.DelegateReportTool.Name + "Mail"
+
+  /** 分发器腿期望面（**14 件**）= 内核腿 − Subagent ＋ node 四件。 */
+  private val ExpectedDispatcherFace: Set[String] = (ExpectedKernelFace - "Subagent") ++ NodeFace
 
   // ── 挂载面 ──────────────────────────────────────────────────────────────────
 
-  test("F1 kernel 腿：编排面整体退场（Subagent/AgentFlow/node 四件全摘 + node_report 摘除），Mail/delegate_report 保留") {
+  test("F1 kernel 腿：**有** Subagent（只读侦察）+ 编排面退场（node 四件全摘、node_report 摘除、AgentFlow 已退役）—— 恰 11 件") {
     val set = CoreProbe.allowedWithDelegateMode(
       probeDef,
       delegateSession = true,
       delegateMode = Some(DualModeConfig.ModeKernel)
     )
-    KernelStripped.foreach { t =>
-      assert(!set.contains(t), s"kernel face must strip the orchestration face: $t (got: ${set.toList.sorted})")
+    // 编排面整体退场（node 四件 = 编排本体，kernel 无编排诉求）
+    NodeFace.foreach { t =>
+      assert(!set.contains(t), s"kernel face must strip the node face: $t (got: ${set.toList.sorted})")
     }
+    // 🔴 反转点（作者裁定一 2026-11-05「给 kernel 腿补 Subagent（用只读版）」）：
+    // kernel 现在**必须**含 Subagent——只读五件、无写/无 shell/无消息。与之配套的
+    // 是不变量 R-3a 的收窄（KernelChildSpawnGate 只放行 def='subagent' 的子 actor），
+    // 两条断言分开钉在 KernelChildSpawnGateSpec K1a/K1b。
+    assert(
+      set.contains("Subagent"),
+      s"kernel face MUST carry Subagent (read-only recon leg, author ruling 2026-11-05; got: ${set.toList.sorted})"
+    )
     // node_report 摘除（作者裁定 2026-10-29：「那不是agentflow的节点使用的工具吗」）
     // ——现状事实源：RootExclusiveTools 防声明逃逸剥离 + flowNodeSession 尾段专属
     // 挂载，本就不达 delegate 面；kernel 腿的显式减法是未来挂载面变动下的保险销。
@@ -81,12 +103,22 @@ class DualModeToolFaceSpec extends FunSuite:
       !set.contains(nebflow.core.tools.NodeReportToolDef.Name),
       "kernel face must not carry node_report (flow-node-only tool — dual insurance: mount face + in-tool identity rejection)"
     )
+    // 🔴 裁定二：AgentFlow 工具整体退役 ⇒ 任何固定面都不许再出现这个名字。
+    assert(
+      !set.contains("AgentFlow"),
+      s"the AgentFlow tool is retired — no face may carry the name (got: ${set.toList.sorted})"
+    )
+    assert(!nebflow.core.tools.ToolRegistry.TOOL_MAP.contains("AgentFlow"), "AgentFlow must be unregistered")
     assert(set.contains("Mail"), "kernel delegate keeps Mail (node:<id> continuation leg)")
     assert(set.contains(nebflow.core.tools.DelegateReportTool.Name), "kernel delegate keeps delegate_report")
     assert(set.contains("Read") && set.contains("Bash"), "kernel delegate keeps the executor base face")
+    // 读数：面值恰 11 件（不照抄任务书，按本读数核）
+    println(s"[FACE-KERNEL] n=${set.size} => ${set.toList.sorted.mkString(", ")}")
+    assertEquals(set, ExpectedKernelFace, s"kernel face reading = 11 pieces, got: ${set.toList.sorted}")
+    assertEquals(set.size, 11, s"kernel face must be exactly 11 pieces, got: ${set.toList.sorted}")
   }
 
-  test("F2 dispatcher 腿：Subagent 摘除，AgentFlow + node 四件保留（编排本体）；node_report 现状事实源不达（flow 节点专属）") {
+  test("F2 dispatcher 腿：Subagent 摘除、**无 AgentFlow**（工具退役）、node 四件保留（编排本体）—— 恰 14 件") {
     val set = CoreProbe.allowedWithDelegateMode(
       probeDef,
       delegateSession = true,
@@ -96,7 +128,11 @@ class DualModeToolFaceSpec extends FunSuite:
       !set.contains("Subagent"),
       "dispatcher face strips Subagent (Q2: recon subagent is not an orchestration face)"
     )
-    assert(set.contains("AgentFlow"), "dispatcher keeps AgentFlow (inline DAG convenience face)")
+    // 裁定二：AgentFlow 工具退役 ⇒ dispatcher 面同样没有它（编排 = ChainWrite）。
+    assert(
+      !set.contains("AgentFlow"),
+      s"dispatcher must not carry AgentFlow — the tool is retired, orchestration goes through ChainWrite (got: ${set.toList.sorted})"
+    )
     NodeFace.foreach { t =>
       assert(set.contains(t), s"dispatcher keeps the node face: $t (got: ${set.toList.sorted})")
     }
@@ -106,13 +142,20 @@ class DualModeToolFaceSpec extends FunSuite:
       !set.contains(nebflow.core.tools.NodeReportToolDef.Name),
       "node_report stays flow-node-only (unchanged by this batch; the dispatcher leg does no node_report work)"
     )
+    println(s"[FACE-DISPATCHER] n=${set.size} => ${set.toList.sorted.mkString(", ")}")
+    assertEquals(set, ExpectedDispatcherFace, s"dispatcher face reading = 14 pieces, got: ${set.toList.sorted}")
+    assertEquals(set.size, 14, s"dispatcher face must be exactly 14 pieces, got: ${set.toList.sorted}")
   }
 
-  test("F3 闸关（mode=None）⇒ 全量面逐字节：Subagent/AgentFlow/node 四件俱在") {
+  test("F3 闸关（mode=None）⇒ 全量面逐字节：Subagent + node 四件俱在（AgentFlow 已不存在于任何面）") {
     val withMode = CoreProbe.allowedWithDelegateMode(probeDef, delegateSession = true, delegateMode = None)
-    KernelStripped.foreach { t =>
+    (Set("Subagent") ++ NodeFace).foreach { t =>
       assert(withMode.contains(t), s"gate-off face must equal the current face: $t (got: ${withMode.toList.sorted})")
     }
+    assert(
+      !withMode.contains("AgentFlow"),
+      "the retired name is gone from every config path — the registry has no such tool at all"
+    )
   }
 
   test("F4 非 delegate 会话 + mode=dispatcher ⇒ 零分叉（挂载面判据 = delegateSession ∧ mode 两条件）") {
@@ -122,10 +165,8 @@ class DualModeToolFaceSpec extends FunSuite:
       delegateMode = Some(DualModeConfig.ModeDispatcher)
     )
     // 非 delegate 基线面本就无 node 四件（那是 delegateSession 尾段）——本条钉的是
-    // Subagent/AgentFlow 不因 mode 参数而被摘（挂载面分叉需要两条件同时成立）。
-    Set("Subagent", "AgentFlow").foreach { t =>
-      assert(set.contains(t), s"non-delegate sessions never fork on mode: $t")
-    }
+    // Subagent 不因 mode 参数而被摘（挂载面分叉需要两条件同时成立）。
+    assert(set.contains("Subagent"), "non-delegate sessions never fork on mode: Subagent")
     assert(!set.contains("ChainWrite"), "the node face remains delegateSession-tail-only (unchanged baseline)")
   }
 
@@ -134,39 +175,25 @@ class DualModeToolFaceSpec extends FunSuite:
   private def faceCtx(sessionId: Option[String]): ToolContext =
     ToolContext(projectRoot = tmp.toString, sessionId = sessionId)
 
-  test("F5 SubagentTool：kernel/dispatcher 会话显式拒（DUAL_MODE_FACE_REMOVED）；闸关 = 现行为腿") {
+  test("F5 SubagentTool：**kernel 放行**、dispatcher 显式拒（DUAL_MODE_FACE_REMOVED）；闸关 = 现行为腿") {
     mkModeRecord("delegate-nebflow-f5k", DualModeConfig.ModeKernel)
     mkModeRecord("delegate-nebflow-f5d", DualModeConfig.ModeDispatcher)
-    val kernel = SubagentTool
-      .call(JsonObject("prompt" -> "look around".asJson), faceCtx(Some("delegate-nebflow-f5k")))
-      .unsafeRunSync()
-    assert(kernel.left.exists(_.message.contains("DUAL_MODE_FACE_REMOVED")), kernel.toString)
+    // ① kernel：身份闸**放行**——用空输入证明「过了身份闸、落到参数校验」（真 spawn 的
+    //    端到端面由 BlockingSubagentEndToEndSpec 与 KernelChildSpawnGateSpec K1a 承担）。
+    val kernel = SubagentTool.call(JsonObject.empty, faceCtx(Some("delegate-nebflow-f5k"))).unsafeRunSync()
+    assert(kernel.left.exists(_.message.contains("Missing required parameter")), kernel.toString)
+    assert(
+      !kernel.left.exists(_.message.contains("DUAL_MODE_FACE_REMOVED")),
+      s"kernel must NOT be refused anymore (author ruling 2026-11-05), got: $kernel"
+    )
+    // ② dispatcher：工具内第二保险仍然拒（挂载面已摘 + 本闸双保险）
     val dispatcher = SubagentTool
       .call(JsonObject("prompt" -> "look around".asJson), faceCtx(Some("delegate-nebflow-f5d")))
       .unsafeRunSync()
     assert(dispatcher.left.exists(_.message.contains("DUAL_MODE_FACE_REMOVED")), dispatcher.toString)
-    // 闸关：同一会话形态（无记录 ⇒ mode=None）= 现行为（缺参校验错误，绝不出双模式文案）。
+    // ③ 闸关：同一会话形态（无记录 ⇒ mode=None）= 现行为（缺参校验错误，绝不出双模式文案）。
     val gateOff = SubagentTool.call(JsonObject.empty, faceCtx(Some("delegate-nebflow-f5x"))).unsafeRunSync()
     assert(gateOff.left.exists(_.message.contains("Missing required parameter")), gateOff.toString)
-    assert(
-      !gateOff.left.exists(_.message.contains("DUAL_MODE_FACE_REMOVED")),
-      "gate-off must never produce the dual-mode error"
-    )
-  }
-
-  test("F6 AgentFlowTool：kernel 会话显式拒（DUAL_MODE_FACE_REMOVED）；闸关 = 非 kernel 错误路径") {
-    mkModeRecord("delegate-nebflow-f6k", DualModeConfig.ModeKernel)
-    val valid = JsonObject(
-      "steps" -> io.circe.Json.arr(
-        io.circe.Json.obj("id" -> "a".asJson, "task" -> "t".asJson)
-      )
-    )
-    val kernel = AgentFlowTool.call(valid, faceCtx(Some("delegate-nebflow-f6k"))).unsafeRunSync()
-    assert(kernel.left.exists(_.message.contains("DUAL_MODE_FACE_REMOVED")), kernel.toString)
-    // 闸关：无记录 ⇒ mode=None ⇒ 走既有路径（delegate 会话无宿主 = scope 不可用，
-    // 亦非 kernel 文案——双模式批零痕迹）。
-    val gateOff = AgentFlowTool.call(valid, faceCtx(Some("delegate-nebflow-f6x"))).unsafeRunSync()
-    assert(gateOff.isLeft, gateOff.toString)
     assert(
       !gateOff.left.exists(_.message.contains("DUAL_MODE_FACE_REMOVED")),
       "gate-off must never produce the dual-mode error"

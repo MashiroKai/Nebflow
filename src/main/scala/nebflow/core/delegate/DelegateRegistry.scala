@@ -103,10 +103,14 @@ object DelegateRegistry:
      * 编排模式（delegate-ui 批 2026-10-08 · G1）：本 delegate 实际呈现的编排形态
      * ——`single`（纯本体，缺省初值）/ `subagent-star`（星型：已在 SubAgentTaskStore
      * 域记账过子代理——Subagent/Subtask/嵌套 Delegate 任一 spawn 记账点惰性升级）/
-     * `agentflow`（flow 结构：AgentFlow 链登记成功惰性升级，值域顶——升级只上不下，
+     * `agentflow`（flow 结构：**链登记成功**惰性升级，值域顶——升级只上不下，
      * 两形态混用时 flow 胜出）。**写点两处**：spawn 初值（[[nebflow.core.tools.DelegateTool]]
      * 内置腿 + [[nebflow.core.executor.ExternalSessionRunner]] 外部腿——外部执行器
      * 零平台工具，恒 single）＋ 惰性升级（记账点单写 [[upgradeOrchestrationMode]]）。
+     * 🔴 tool-face-agentflow-retire 批（2026-11-05，作者裁定二）：`agentflow` 的升级
+     * 调用点原先长在已删的 AgentFlow 工具里，现**唯一**在
+     * `ChainWriteTool.upgradeOrchestrationModeOnRegister`（链登记成功回执路径）。
+     * 注意它只是**模式名**：同名工具已退役，两者不要再混用。
      * 缺省 None：旧盘面记录 = 前端过渡启发（面板 kind 前缀判）兜底——**禁在读面把
      * None 折叠成 single**（会剥夺存量行的启发兜底）。
      */
@@ -455,7 +459,11 @@ object DelegateRegistry:
   /** 星型：SubAgentTaskStore 域记过账（Subagent/Subtask/嵌套 Delegate 子代理）。 */
   val ModeSubagentStar = "subagent-star"
 
-  /** flow 结构：AgentFlow 链登记成功。值域顶（与星型混用时胜出）。 */
+  /**
+   * flow 结构：**链登记成功**（`ChainWriteTool.registerChain` 的回执路径）。值域顶
+   * （与星型混用时胜出）。tool-face-agentflow-retire 批（2026-11-05）：本章名**不是**
+   * 工具名——同名工具已整体退役，读它就是读「这个 delegate 按节点编排在干活」。
+   */
   val ModeAgentflow = "agentflow"
 
   /** 升级序（只上不下）：single(0) < subagent-star(1) < agentflow(2)。未知值 = 0（保守底）。 */
