@@ -1,8 +1,8 @@
 package nebflow.core.delegate
 
 import cats.effect.IO
-import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
 import nebflow.core.tools.ToolError
 import nebflow.shared.{AttachContract, NebflowLogger, PathUtil}
 
@@ -82,6 +82,8 @@ object DelegateAttachments:
     /** 单图超过 Read 的视觉上限 ⇒ 清单必须逐件告知（否则「假装看过」）。 */
     def overVisionCap: Boolean =
       isImage && sizeBytes > nebflow.core.tools.ReadTool.MAX_IMAGE_BYTES
+
+  end Entry
 
   /** 一次派发的附件计划（空 = 本次未带附件，全链路逐字节零改动）。 */
   final case class Plan(entries: List[Entry], copyDir: String):
@@ -208,6 +210,9 @@ object DelegateAttachments:
                     )
                   )
                 case Right(_) => Right(paths)
+            end if
+          end if
+        end if
       }
 
   // ============================================================
@@ -220,7 +225,8 @@ object DelegateAttachments:
 
   /** 座位树副本目录：`<worktree>/.nebflow/attachments/<id>/`。 */
   def seatDirFor(worktree: String, dispatchId: String): Path =
-    SeatDirSegments.foldLeft(java.nio.file.Paths.get(worktree))((acc, seg) => acc.resolve(seg))
+    SeatDirSegments
+      .foldLeft(java.nio.file.Paths.get(worktree))((acc, seg) => acc.resolve(seg))
       .resolve(safeSegment(dispatchId))
 
   /**
@@ -244,7 +250,13 @@ object DelegateAttachments:
           case Left(err) => Left(err)
           case Right(entries) => Right(Plan(entries, dir.toString))
       }.handleErrorWith(e =>
-        IO.pure(Left(ToolError(s"Delegate: attachment staging FAILED (${e.getClass.getSimpleName}): ${e.getMessage}. Nothing was dispatched.")))
+        IO.pure(
+          Left(
+            ToolError(
+              s"Delegate: attachment staging FAILED (${e.getClass.getSimpleName}): ${e.getMessage}. Nothing was dispatched."
+            )
+          )
+        )
       )
 
   private def makeEntry(original: String, idx: Int, dir: Path): Either[ToolError, Entry] =
@@ -281,6 +293,7 @@ object DelegateAttachments:
             isImage = isImageName(name)
           )
         )
+      end if
     catch
       case e: Exception =>
         Left(
@@ -289,6 +302,8 @@ object DelegateAttachments:
               "Nothing was dispatched."
           )
         )
+    end try
+  end makeEntry
 
   // ============================================================
   // 4) 座位树镜像（fail-soft：座位树是短命的，长期锚是 dataRoot 副本）
@@ -305,8 +320,8 @@ object DelegateAttachments:
    */
   def mirrorToSeat(plan: Plan, worktree: Option[String]): IO[Plan] =
     (worktree, plan.isEmpty) match
-      case (_, true)        => IO.pure(plan)
-      case (None, false)    => IO.pure(plan)
+      case (_, true) => IO.pure(plan)
+      case (None, false) => IO.pure(plan)
       case (Some(wt), false) =>
         IO.blocking {
           val dir = seatDirFor(wt, fileNameOf(plan.copyDir))
@@ -320,7 +335,9 @@ object DelegateAttachments:
           plan.copy(entries = entries)
         }.handleErrorWith { e =>
           logger
-            .warn(s"DelegateAttachments.mirrorToSeat failed (seat copies skipped, stable copies still authoritative): ${e.getMessage}")
+            .warn(
+              s"DelegateAttachments.mirrorToSeat failed (seat copies skipped, stable copies still authoritative): ${e.getMessage}"
+            )
             .as(plan)
         }
 
@@ -409,7 +426,7 @@ $discipline"""
     val cleaned = id.map(c => if c.isLetterOrDigit || c == '-' || c == '_' || c == '.' then c else '-').mkString
     cleaned.trim match
       case "" => "dispatch"
-      case s  => if s.length > 96 then s.take(96) else s
+      case s => if s.length > 96 then s.take(96) else s
 
   /** 能否真开一次流（权限位可能骗人：ACL/只读卷）。 */
   private def canOpen(p: Path): Boolean =
@@ -446,23 +463,24 @@ $discipline"""
       val dot = lower.lastIndexOf('.')
       val ext = if dot >= 0 then lower.substring(dot + 1) else ""
       ext match
-        case "txt"                 => "text/plain"
-        case "md"                  => "text/markdown"
-        case "json"                => "application/json"
-        case "csv"                 => "text/csv"
-        case "pdf"                 => "application/pdf"
-        case "html" | "htm"        => "text/html"
-        case "xml"                 => "application/xml"
-        case "yaml" | "yml"        => "application/yaml"
-        case "zip"                 => "application/zip"
-        case "gz" | "tgz"          => "application/gzip"
-        case "mp4"                 => "video/mp4"
-        case "mov"                 => "video/quicktime"
-        case "mp3"                 => "audio/mpeg"
-        case "wav"                 => "audio/wav"
+        case "txt" => "text/plain"
+        case "md" => "text/markdown"
+        case "json" => "application/json"
+        case "csv" => "text/csv"
+        case "pdf" => "application/pdf"
+        case "html" | "htm" => "text/html"
+        case "xml" => "application/xml"
+        case "yaml" | "yml" => "application/yaml"
+        case "zip" => "application/zip"
+        case "gz" | "tgz" => "application/gzip"
+        case "mp4" => "video/mp4"
+        case "mov" => "video/quicktime"
+        case "mp3" => "audio/mpeg"
+        case "wav" => "audio/wav"
         case "log" | "scala" | "java" | "py" | "js" | "ts" | "sh" | "css" | "conf" =>
           "text/plain"
         case _ => "application/octet-stream"
+      end match
     }
 
 end DelegateAttachments

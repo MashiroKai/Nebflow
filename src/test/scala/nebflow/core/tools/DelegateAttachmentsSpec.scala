@@ -57,7 +57,10 @@ class DelegateAttachmentsSpec extends CatsEffectSuite:
 
   /** 清掉夹具目录（含内容）；失败只忽略——测试断言的绿不靠清理。 */
   private def rm(dirs: Path*): Unit =
-    dirs.foreach(d => try os.remove.all(os.Path(d)) catch case _: Exception => ())
+    dirs.foreach(d =>
+      try os.remove.all(os.Path(d))
+      catch case _: Exception => ()
+    )
 
   private def ctx: ToolContext = ToolContext(projectRoot = "")
 
@@ -126,6 +129,7 @@ class DelegateAttachmentsSpec extends CatsEffectSuite:
       assertEquals(seated.entries.head.readPath, seated.entries.head.seatCopy.get)
 
       rm(src, dataRoot, worktree)
+    end for
 
   // ---------- ② 路径不存在 ----------
 
@@ -199,6 +203,7 @@ class DelegateAttachmentsSpec extends CatsEffectSuite:
       assert(desc.contains("image/png"), desc)
 
       rm(src, dataRoot, worktree)
+    end for
 
   // ---------- ⑥ 无 worktree ⇒ dataRoot 分支 ----------
 
@@ -225,6 +230,7 @@ class DelegateAttachmentsSpec extends CatsEffectSuite:
       assert(read.isRight, s"the copy must be readable: ${read.left.map(_.message)}")
       assert(read.toOption.exists(_.contains("read-only brief ⑥")), read.toString)
       rm(src, dataRoot)
+    end for
 
   // ---------- 面钉：brief 末尾清单段 ----------
 
@@ -285,3 +291,4 @@ class DelegateAttachmentsSpec extends CatsEffectSuite:
     assert(doc.contains("delegate-attachments"), doc)
     assert(doc.contains("sha256"), doc)
     assert(doc.contains("NEVER") || doc.contains("never moved or deleted"), doc)
+end DelegateAttachmentsSpec

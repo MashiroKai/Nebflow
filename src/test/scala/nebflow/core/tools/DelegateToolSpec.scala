@@ -152,7 +152,10 @@ class DelegateToolSpec extends CatsEffectSuite:
     assert(wtDesc.contains("MUST pass it"), wtDesc)
     assert(wtDesc.contains("read-only"), wtDesc)
     val toolDesc = DelegateTool.description
-    assert(!toolDesc.contains("mode allocator decides"), "the model-visible tool description must not carry the removed allocator copy")
+    assert(
+      !toolDesc.contains("mode allocator decides"),
+      "the model-visible tool description must not carry the removed allocator copy"
+    )
     assert(!toolDesc.contains("creates a fresh worktree exactly as before"), toolDesc)
     assert(toolDesc.contains("Omit it ONLY for read-only tasks"), toolDesc)
     assert(toolDesc.contains("IN PLACE in the project workspace"), toolDesc)
