@@ -41,6 +41,17 @@
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, transparent var(--chat-top-clip), #000 calc(var(--chat-top-clip) + 2px));
   mask-image: linear-gradient(to bottom, transparent 0, transparent var(--chat-top-clip), #000 calc(var(--chat-top-clip) + 2px));
 }
+/* ── 顶栏 / 输入条共用水平 gutter（作者令：「主会话的输入框，应该和顶部的
+   Header 宽度一致。」）───────────────────────────────────────────────
+   本槽 = 主会话面「顶栏外盒与输入条外盒」的**唯一**水平边距来源：
+   #header 以 margin 水平消费、#input-area 以 padding 水平消费（消费点见
+   css/input.css 同名注释）。两盒的 border-box 左右缘因此逐像素重合，
+   改边距只改本槽一行。值 = 栅格档 --ds-space-4（16px）——**直接用档位令牌**，
+   不新造别名、不出现字面量（收口裁定 2026-11-05 09:40：与既有档同档即用既有档，
+   新增间距一律落在七档之内）。
+   手机层：输入卡改由 --dock-inset-x 供给（12px，与 dock 胶囊同轴，规则在
+   mobileLayer.css），且 #header 在手机层整体不渲染（同文件 display:none 档）
+   ⇒ 本槽只在桌面档生效，无手机分叉。 */
 #header {
   background:
     linear-gradient(90deg, transparent 10%, var(--sapphire-refraction) 50%, transparent 90%) center top / 80% 1px no-repeat,
@@ -54,8 +65,14 @@
      折射细线不动（作者只裁底缘）。 */
   border-bottom-color: transparent;
   color: var(--color-frame-text-bright);
-  padding: var(--ds-space-block-y) var(--ds-space-4);
-  margin: var(--ds-space-4) 0 0 0;
+  /* 宽度对齐批（作者令：输入框宽度 = 顶栏宽度）：水平内距归零、同一栅格档
+     （--ds-space-4，16px）改由水平外距承担——`left:0; right:0` 的绝对盒因此
+     内缩同一 token，border-box 与 #input-bar 重合。内距归零而外距同值 ⇒
+     内容盒起点/宽度逐像素不变（改前左内距 16、内容起于 #main 左缘 +16；
+     改后左外距 16、内距 0，内容仍在同一像素），顶栏内件布局零位移。
+     垂直内距走 main 侧档位 --ds-space-block-y（收敛批定档），本批不动它。 */
+  padding: var(--ds-space-block-y) 0;
+  margin: var(--ds-space-4) var(--ds-space-4) 0;
   border-radius: var(--ds-radius-shell);
   font-size: var(--ds-fs-subtitle);
   font-weight: 500;
