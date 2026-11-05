@@ -1,0 +1,78 @@
+wiki-docs 校验：24 条违规（/Users/kaiyu/.stand/projects/stand/.stand/docs）
+
+── R3 concept-first-use（2）──
+  term-v2-inventory__20261105_122137.md:224  概念「概念首现」首现未解释且未引用——就地一句话解释，或 [[glossary#^concept-first-use]]
+  term-v2-recon__20261105_110513.md:49  概念「文档库（vault）」首现未解释且未引用——就地一句话解释，或 [[glossary#^vault]]
+
+── R8 doc-indent（13）──
+  term-v2-inventory__20261105_122137.md:8  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+  term-v2-inventory__20261105_122137.md:10  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+  term-v2-inventory__20261105_122137.md:24  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+  term-v2-inventory__20261105_122137.md:41  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+  term-v2-inventory__20261105_122137.md:43  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+  term-v2-inventory__20261105_122137.md:67  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+  term-v2-inventory__20261105_122137.md:103  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+  term-v2-inventory__20261105_122137.md:109  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+  term-v2-inventory__20261105_122137.md:126  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+  term-v2-inventory__20261105_122137.md:163  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+  term-v2-inventory__20261105_122137.md:165  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+  term-v2-inventory__20261105_122137.md:180  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+  term-v2-inventory__20261105_122137.md:240  正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+
+── R9 abbrev-expansion（2）──
+  term-v2-inventory__20261105_122137.md:67  缩写「README」首现既无全称也无词条链接——写成 `全称（README）` / `README（全称）` / `[[README]]（全称）`；跨文档通用的词请注册成词条，通用词（单位/技术词）才进 SKILL.md 允许清单
+  term-v2-inventory__20261105_122137.md:163  缩写「TOP」首现既无全称也无词条链接——写成 `全称（TOP）` / `TOP（全称）` / `[[TOP]]（全称）`；跨文档通用的词请注册成词条，通用词（单位/技术词）才进 SKILL.md 允许清单
+
+── broken-link（7）──
+  canvas-ask-legibility-and-layout__20261105_103500.md:176  引用目标不存在：[[canvas-ask-legibility-and-layout]]（既非文档也非已注册词条——补词条声明块或改引文档）
+  term-v2-inventory__20261105_122137.md:43  引用目标不存在：[[名]]（既非文档也非已注册词条——补词条声明块或改引文档）
+  term-v2-inventory__20261105_122137.md:91  引用目标不存在：[[名]]（既非文档也非已注册词条——补词条声明块或改引文档）
+  term-v2-recon__20261105_110513.md:49  引用目标不存在：[[人面子]]（既非文档也非已注册词条——补词条声明块或改引文档）
+  term-v2-recon__20261105_110513.md:94  引用目标不存在：[[doc__时间戳]]（既非文档也非已注册词条——补词条声明块或改引文档）
+  term-v2-recon__20261105_110513.md:102  引用目标不存在：[[GCR]]（既非文档也非已注册词条——补词条声明块或改引文档）
+  term-v2-recon__20261105_110513.md:107  引用目标不存在：[[名]]（既非文档也非已注册词条——补词条声明块或改引文档）
+
+
+图片纪律（R6 image-outside-vault）：图片引用 47 处 · 违规 0 条 · 行内豁免 0 条
+  图外挂提示（info，不计违规）：111 篇文档点名 vault 外证据树路径
+    Jev与生图配置面板对齐LLM__20261105_091500__delegate-nebflow-79bb6698.md:87  .stand/evidence/20261103_jev-imagegen-align-llm/shots/{red,green}/
+    actor-as-agent-framework-creation-paths-and-invariants__20261104_214436__delegate-nebflow-f3849ed1.md:552  reports-evidence/
+    agent-panel-row-dedup__20261102_223000__delegate-nebflow-4e1fad0a.md:25  .nebflow/worktrees/delegate-nebflow-4e1fad0a/src/main/resources/web/js/main/bgAgents.js
+    agentflow-node-terms-and-layering__20261105_105256.md:21  reports-evidence/agentflow-panel-terms-20261105_091134/terminology-audit.md 等 2 处
+    askuser-attach__20261104_104000__ui-unification-20261103-supp5.md:11  .stand/evidence/ui-unification-20261103/askuser-attach/
+    attachments-history-loss__20261105_083911.md:120  .stand/uploads/ 等 2 处
+    b1-dataroot-impl__20261104_124800.md:10  reports-evidence/b1-dataroot__20261104_110844/design-api.md 等 5 处
+    base-moved-notification-noise__20261105_110354.md:303  reports-evidence/nearpath-resume__…/ 等 2 处
+    bash-tool-overhaul__20261104_194409__bash-overhaul-20261104-v3.md:13  reports-evidence/bash-overhaul__20261104_133316/e2e/NUMBERS.md 等 9 处
+    canvas-ask-legibility-and-layout__20261105_103500.md:171  reports-evidence/ 等 4 处
+    canvas-ask-resize-supps__20261104_121000__delegate-nebflow-bb1a8bbb.md:67  .stand/evidence/ui-unification-20261103/{canvas-ask-resize,thinking-timer-proximity,rcpt-diffchip-hit}/{before,after}/
+    canvas-bottom-button-clearance__20261105_132309.md:120  reports-evidence/canvas-bottom-clearance__20261105_1247/before/shots/desktop-long-bottom.png 等 7 处
+    canvas-capsule-mobile-horizontal__20261105_133000.md:80  reports-evidence/canvas-capsule-touch-row__20261105_131500/{before,after} 等 3 处
+    canvas-hover-zero-layout__20261103_215500__delegate-nebflow-bb1a8bbb.md:54  .stand/evidence/ui-unification-20261103/hover-layout/
+    canvas-note-button__20261105_122526.md:72  .stand/evidence/canvas-note-button/{readings.json,readings-mobile.json,note-open.png,note-resized.png,note-mobile.png} 等 3 处
+    canvas-stack-view__20261104_093201__ui-unification-20261103-supp4.md:10  .stand/evidence/ui-unification-20261103/canvas-stack-view/
+    canvas-top-tabs-swipe__20261104_142800__ui-final-four.md:75  .stand/evidence/ui-unification-20261103/ui-final-four/{before,after}/swipe/
+    config-single-source__20261105_124500.md:70  reports-evidence/config-single-source-e2e/01-migration-diff.txt
+    console-ask-grow__20261104_132000__delegate-nebflow-bb1a8bbb.md:36  .stand/evidence/ui-unification-20261103/console-ask-grow/{before,after}/ 等 2 处
+    conversation-heads-always-visible__20261105_084500__delegate-nebflow-fec6393b.md:83  reports-evidence/conversation-heads-always-visible__20261104_213000__delegate-nebflow-fec6393b/
+    …（余 91 篇，见 --json 违规清单外的存量盘点报告）
+排版与缩写（R7-R9）：硬查 22 篇 · 存量 400 篇 · 彩色 3 处 · 正文段落 6399 段 · 缩写 3113 个（允许清单豁免 1318 · 同档小写词形 476）
+结构与图注（R10-R12）：章节 3207 节 · 未折叠细节 182 处 · 图 44 张（缺图注 34 · 图注过长 0）· 禁用词 196 处
+图谱连线（advisory，不计违规）：1 篇零出链且零入链——图谱面建议，词条面不靠它
+  存量样式/缩写/图注（advisory，不计违规，时间界 20261105_111100）：7121 条 —— abbrev-expansion 1077 · detail-fold 182 · doc-indent 4306 · doc-structure 1326 · image-caption 34 · plain-language 196
+    Jev与生图配置面板对齐LLM__20261105_091500__delegate-nebflow-79bb6698.md:12  【doc-indent】正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+    Jev与生图配置面板对齐LLM__20261105_091500__delegate-nebflow-79bb6698.md:17  【doc-indent】正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+    Jev与生图配置面板对齐LLM__20261105_091500__delegate-nebflow-79bb6698.md:34  【doc-indent】正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+    Jev与生图配置面板对齐LLM__20261105_091500__delegate-nebflow-79bb6698.md:67  【doc-indent】正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+    Jev与生图配置面板对齐LLM__20261105_091500__delegate-nebflow-79bb6698.md:81  【doc-indent】正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+    Jev与生图配置面板对齐LLM__20261105_091500__delegate-nebflow-79bb6698.md:87  【doc-indent】正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+    Jev与生图配置面板对齐LLM__20261105_091500__delegate-nebflow-79bb6698.md:102  【doc-indent】正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+    Jev与生图配置面板对齐LLM__20261105_091500__delegate-nebflow-79bb6698.md:21  【abbrev-expansion】缩写「DOM」首现既无全称也无词条链接——写成 `全称（DOM）` / `DOM（全称）` / `[[DOM]]（全称）`；跨文档通用的词请注册成词条，通用词（单位/技术词）才进 SKILL.md 允许清单
+    Jev与生图配置面板对齐LLM__20261105_091500__delegate-nebflow-79bb6698.md:10  【plain-language】「对齐」是禁用/避用词（读者要二次解码）——建议：改成一致（写清哪两处改成一致）；能用平实动词+名词说清的，不用抽象名词包裹
+    Jev与生图配置面板对齐LLM__20261105_091500__delegate-nebflow-79bb6698.md:34  【doc-structure】章节「法医取证（链断在哪）」开头缺分点结论句——首行写一句加粗结论（`**一句话结论。**`），论证细节往下放进折叠块
+    Jev与生图配置面板对齐LLM__20261105_091500__delegate-nebflow-79bb6698.md:93  【doc-structure】章节「未做 / 开放项」开头缺分点结论句——首行写一句加粗结论（`**一句话结论。**`），论证细节往下放进折叠块
+    actor-as-agent-framework-creation-paths-and-invariants__20261104_214436__delegate-nebflow-f3849ed1.md:14  【doc-indent】正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+    actor-as-agent-framework-creation-paths-and-invariants__20261104_214436__delegate-nebflow-f3849ed1.md:16  【doc-indent】正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+    actor-as-agent-framework-creation-paths-and-invariants__20261104_214436__delegate-nebflow-f3849ed1.md:33  【doc-indent】正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+    actor-as-agent-framework-creation-paths-and-invariants__20261104_214436__delegate-nebflow-f3849ed1.md:39  【doc-indent】正文段落未缩进——段首以 `&emsp;&emsp;` 起行（两个半角空格被 HTML 折叠吃掉，四个变代码块）
+    …（余 7106 条；`--strict-style` 可把存量一并按违规判）

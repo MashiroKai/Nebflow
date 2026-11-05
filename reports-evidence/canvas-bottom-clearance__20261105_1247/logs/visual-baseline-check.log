@@ -8,10 +8,10 @@ visual-baseline [check] playwright=playwright browser=chromium-151 (151.0.7922.3
   DIFF   chat-messages-dark                     diff=168662px (13.014%) bbox={"x0":87,"y0":16,"x1":1417,"y1":899}  → .nebflow/visual-baseline/darwin-chromium-151/chat-messages-dark-diff.png 
   DIFF   chat-messages-light                    diff=168744px (13.020%) bbox={"x0":87,"y0":16,"x1":1416,"y1":899}  → .nebflow/visual-baseline/darwin-chromium-151/chat-messages-light-diff.png 
   DIFF   settings-llm-empty-dark                diff=109898px (8.480%) bbox={"x0":87,"y0":16,"x1":1417,"y1":899}  → .nebflow/visual-baseline/darwin-chromium-151/settings-llm-empty-dark-diff.png 
-  DIFF   settings-llm-empty-light               diff=114848px (8.862%) bbox={"x0":87,"y0":16,"x1":1416,"y1":899}  → .nebflow/visual-baseline/darwin-chromium-151/settings-llm-empty-light-diff.png 
+  DIFF   settings-llm-empty-light               diff=114821px (8.860%) bbox={"x0":87,"y0":16,"x1":1416,"y1":899}  → .nebflow/visual-baseline/darwin-chromium-151/settings-llm-empty-light-diff.png 
   DIFF   bgtask-panel-dark                      diff=-1px (100.000%) bbox=null 尺寸不一致 base=378x146 cur=314x149  
   DIFF   bgtask-panel-light                     diff=-1px (100.000%) bbox=null 尺寸不一致 base=378x146 cur=314x149  
-  DIFF   canvas-markdown-tab-dark               diff=28440px (5.895%) bbox={"x0":0,"y0":24,"x1":550,"y1":872}  → .nebflow/visual-baseline/darwin-chromium-151/canvas-markdown-tab-dark-diff.png 
+  DIFF   canvas-markdown-tab-dark               diff=28434px (5.894%) bbox={"x0":0,"y0":24,"x1":550,"y1":872}  → .nebflow/visual-baseline/darwin-chromium-151/canvas-markdown-tab-dark-diff.png 
   DIFF   canvas-markdown-tab-light              diff=26261px (5.443%) bbox={"x0":2,"y0":24,"x1":550,"y1":872}  → .nebflow/visual-baseline/darwin-chromium-151/canvas-markdown-tab-light-diff.png 
   MISS   canvas-markdown-code-tab-dark          无基准图 → 先跑 --update 并人工评审 .nebflow/visual-baseline/darwin-chromium-151/canvas-markdown-code-tab-dark.png
   MISS   canvas-markdown-code-tab-light         无基准图 → 先跑 --update 并人工评审 .nebflow/visual-baseline/darwin-chromium-151/canvas-markdown-code-tab-light.png
