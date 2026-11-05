@@ -33,7 +33,7 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, '..');
-const WEB = join(REPO, 'src', 'main', 'resources', 'web');
+const WEB = process.env.NOTE_PERSIST_WEB_ROOT || join(REPO, 'src', 'main', 'resources', 'web');
 const OUT = process.env.NOTE_PERSIST_EVIDENCE_DIR
   || '/Users/kaiyu/.stand/evidence/canvas-note-persist';
 mkdirSync(OUT, { recursive: true });
@@ -249,6 +249,29 @@ const noteKeys = (page) => page.evaluate(() => {
   return out;
 });
 
+/** 两端帧名静态对齐腿：本 spec 的 WS 夹具是自己实现的，帧名打错两边也不会报错，
+ *  所以必须静态对照真实前后端源码；顺带钉住落点/上限/sid 闸的位置。 */
+function sourceLegs() {
+  const read = (p) => { try { return readFileSync(join(REPO, p), 'utf8'); } catch { return ''; } };
+  const js = read('src/main/resources/web/js/askDock.js');
+  const ws = read('src/main/scala/nebflow/gateway/WsAskHandlers.scala');
+  const store = read('src/main/scala/nebflow/core/ask/AskNotes.scala');
+  return {
+    jsSendsGet: /type:\s*'askNoteGet'/.test(js),
+    jsSendsPut: /type:\s*'askNotePut'/.test(js),
+    jsHandlesState: /msg\.type === 'askNoteState'/.test(js),
+    jsHandlesAck: /msg\.type === 'askNoteAck'/.test(js),
+    beRegistersGet: /"askNoteGet"\s*->\s*handleAskNoteGet/.test(ws),
+    beRegistersPut: /"askNotePut"\s*->\s*handleAskNotePut/.test(ws),
+    beSendsState: /"askNoteState"\.asJson/.test(ws),
+    beSendsAck: /"askNoteAck"\.asJson/.test(ws),
+    storePath: /dataRoot \/ "ask" \/ "notes"/.test(store),
+    storeCap: /MaxBytes:\s*Int\s*=\s*256 \* 1024/.test(store),
+    storeSidGuard: /\^ask-\[0-9a-f\]\{8\}\$/.test(store),
+    storeAtomic: /AtomicJson\.writeSync\(p, body\)/.test(store),
+  };
+}
+
 async function dragNote(page, dx, dy) {
   await page.evaluate(({ dx, dy }) => {
     const h = document.querySelector('.note-dock [data-note-resize]');
@@ -289,6 +312,17 @@ test('canvas note persistence matrix', async ({ browser }) => {
 
   const store = makeStore();
   const TLS = '第一行：记事本内容必须在刷新/重启/换设备后都还在。\n第二行：换行也要原样保留。';
+
+  /* ── P12 两端帧名静态对齐（不依赖浏览器，先跑）── */
+  const src = sourceLegs();
+  readings.source = src;
+  check('P12a 前端两帧 / 后端两帧逐名对齐（askNoteGet、askNotePut；出站 askNoteState、askNoteAck）',
+    src.jsSendsGet && src.jsSendsPut && src.beRegistersGet && src.beRegistersPut
+    && src.jsHandlesState && src.jsHandlesAck && src.beSendsState && src.beSendsAck,
+    JSON.stringify(src));
+  check('P12b 落盘单点：<dataRoot>/ask/notes/<sid>.md + 256 KiB 上限 + sid 硬闸 + 原子写',
+    src.storePath && src.storeCap && src.storeSidGuard && src.storeAtomic,
+    JSON.stringify({ p: src.storePath, c: src.storeCap, g: src.storeSidGuard, a: src.storeAtomic }));
 
   /* ── 主客户端 ── */
   const c1 = await newClient(browser, store);
