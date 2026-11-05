@@ -111,7 +111,7 @@
 
 **是否需要动状态机**：**否**。注入判定不动 `Processing / Idle / Frozen` 的迁移，也不新增注入点；改动落在「既有边界的队列消费谓词 + 一个入水口的承载类型」。若日后要求把 `pendingImmediateInputs` 与 `pendingUserInputs` **合成一条队列**，那才是状态机/持久化面重写（`CompactionQueueStore`、`persistQueues`、崩溃恢复三方同步），本批不建议。
 
-`RISK: state-machine-rewrite-required` —— **不适用**（见上：单点收敛可在纯函数决策层 + 一处接线完成）。
+（本批**不触发**状态机重写标记：单点收敛可在纯函数决策层 + 一处接线完成，故本文档不写该标记行。）
 
 ## 6. 原始日志行（`logs/midturn-injection-timing-spec.log` 逐字摘录，8 条）
 
