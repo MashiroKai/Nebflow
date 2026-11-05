@@ -69,7 +69,9 @@ export default {
   'project.unmountConfirmGo': '取消加载',
   'project.unmountFail': '取消加载「{name}」失败：{detail}',
   'project.unmountedGroup': '已卸载',
-  'project.unmountedGroupHint': '项目已从上下文卸载，本地文件原样保留；重新加载即可恢复。',
+  // 作者令 2026-11-05 08:26：分组头的灰字解释句已删（铁律 8 重复说明 + 行为教学，
+  // 标题已表达状态、「重新加载」钮已表达出路）。键 `project.unmountedGroupHint`
+  // 随之成为孤儿键，整键摘除，不留死键。
   'project.unmountedRowTitle': '「{name}」卸载于 {at}（本地文件保留）',
   'project.remountBtn': '重新加载',
   'project.remounting': '正在重新加载…',

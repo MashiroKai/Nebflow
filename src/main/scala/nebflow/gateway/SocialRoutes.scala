@@ -310,6 +310,26 @@ private[gateway] object SocialRoutes:
         }
 
       /**
+       * 会话列表（按 last_message_id 倒序，含 unreadCount）。
+       *
+       * ⚠️ 恢复（2026-11-05 紧急诊断批）：本 case 于 `6c1feea6d`（件一 Profile
+       * 双描述批，2026-11-02 13:06）被**误删** —— 该提交在同一锚点上把本 case 的
+       * 两行头替换成了 `PUT /friends/{id}/bio` 的文档注释 + case 头，导致
+       * `GET /api/conversations` 从路由表消失（实测网关回 404，与不存在的路径
+       * 同码）。前端 `friendsApi.getConversations()` 取数失败被
+       * `messages.js:560 catch { /* keep last known */ }` 吞掉 ⇒「消息」面板
+       * 渲染 `messages.empty`「暂无会话」。此处逐字恢复原件（作者令：不删数据、
+       * 只修读面）。
+       */
+      case req @ GET -> Root / "conversations" =>
+        withAuth(req) {
+          sharedResources.friendService match
+            case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+            case Some(fs) =>
+              fs.refreshConversations().flatMap(convs => Ok(convs.asJson))
+        }
+
+      /**
        * 好友自我介绍 `bio` 的**本地缓存**写入（件一，2026-11-02「双描述」）。
        * body `{bio}` → 200 `{ok:true}`。
        *
