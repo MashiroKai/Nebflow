@@ -1717,7 +1717,11 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--ds-space-4) var(--ds-space-5);
+  /* 顶垫同 #plugins-content：归 .canvas-safe-top 统一安全区（split.css），
+     本处零顶值（只写左右 longhand，不写 padding 简写 —— 简写的 top 槽 = 第二把尺）。
+     canvas-overlap-fix 批 2026-11-05；修前 `padding: var(--ds-space-4) …` = 16。 */
+  padding-right: var(--ds-space-5);
+  padding-left: var(--ds-space-5);
   scrollbar-color: var(--color-frame-border) transparent;
 }
 #agents-content .agent-mgr-group {
@@ -2211,7 +2215,16 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--ds-space-4) var(--ds-space-5) var(--ds-space-6);
+  /* 顶部间隙**不在此处**：canvas 顶行是浮层胶囊（header 悬于面板顶），面板正文
+     必须让到统一安全区之下 —— 故顶垫由 .canvas-safe-top（split.css「统一布局
+     层」块，值 = sapphire.css --cv-safe-top）单点给出。此处**只写左右/底三个
+     longhand，绝不写 padding 简写**：简写里那个 top 槽会把本面板重新变回「自己
+     拥有一份顶垫」的第二把尺，且 id 特异性会压过布局层类（本批第一稿踩过）。
+     canvas-overlap-fix 批 2026-11-05 前此处是 `padding: var(--ds-space-4) …`
+     = 16px 顶垫，面板首块整条压进胶囊带（实测遮挡 30px，作者附图同形）。 */
+  padding-right: var(--ds-space-5);
+  padding-left: var(--ds-space-5);
+  padding-bottom: var(--ds-space-6);
   scrollbar-color: var(--color-frame-border) transparent;
 }
 #plugins-content > .plugins-section,

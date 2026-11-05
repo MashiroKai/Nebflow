@@ -300,6 +300,43 @@
   --cv-head-h: var(--capsule-h, 36px);
   --cv-head-band: calc(var(--cv-head-top) + var(--cv-head-h));
   --cv-head-clear: calc(var(--cv-head-band) + 10px);
+  /* ── canvas 正文顶部安全区（canvas-overlap-fix 批 2026-11-05，作者报障
+     「插件面板顶部内容被胶囊压住」）──
+     语义：**Canvas 面板正文首个内容块起笔不得高于本值**。它是唯一来源，
+     面板/查看器一律消费它，禁止各自写裸顶垫（修前 `#plugins-content` /
+     `#agents-content` 各写 `var(--ds-space-4)`=16px，首行整条压进胶囊带
+     27..63，实测遮挡 30px）。
+     值 = header 行下缘（--cv-head-band 46）+ 10 呼吸缝 = 56，与项目面板族
+     `--panel-head-clear` 同源（projectPanel.css :499 即本 token 的别名）。
+     手机层不存在第二个值：`--cv-safe-top` 在 mobileLayer.css 的顶部悬浮
+     chrome 簇几何块里覆写为 `--mchrome-clear`（簇顶 16 + 钮 48 + 呼吸 8 = 72）。
+     消费面 = split.css 文件尾「Canvas 正文顶部安全区（统一布局层）」块 +
+     侧边栏插件/agent 面板根节点（.canvas-safe-top 类，JS 挂）。 */
+  --cv-safe-top: var(--cv-head-clear);
+  /* ── canvas 顶行浮钮列几何（同批：返回原文档钮 ↔ 关签钮重叠修复）──
+     顶行 = 一条按序排布的浮钮列：
+       [关签钮 #canvas-head-close] →8 缝→ [返回原文档钮] …(弹性)… [居中标题
+       胶囊] …(弹性)… [堆叠钮 #deck-fab]
+     三把尺全部在此出生，split.css 只消费：
+       · --cv-head-inset-x   顶行左右缘落位（关签钮 left / 堆叠钮 right 同一值，
+         JS syncDeckBox 落笔同值，改这里只是把 CSS 缺省与 JS 对齐）；
+       · --cv-head-row-2nd   第二座（返回钮）左缘 = 首座右缘（inset + 40 圆钮）
+         + 一档缝 = 60；
+       · --cv-head-capsule-w 居中胶囊实宽（与 split.css 胶囊 max-width 同一
+         表达式，含窄面板 220 地板 —— 引用而非另算，防两把尺）；
+       · --cv-refback-w-max  返回钮可用宽上限 = 顶行左侧净档（胶囊左缘左移量）
+         扣掉自己的左缘与一档缝 ⇒ 任何面板宽度下都压不到居中胶囊。 */
+  --cv-head-inset-x: var(--ds-space-3);            /* 12 */
+  --cv-head-row-gap: var(--ds-space-2);            /* 8 */
+  --cv-head-row-2nd: calc(var(--cv-head-inset-x) + var(--cv-size-circle) + var(--cv-head-row-gap));
+  --cv-head-capsule-w: min(76%, max(220px, calc(100% - 368px)));
+  --cv-refback-w-max: calc((100% - var(--cv-head-capsule-w)) / 2 - var(--cv-head-row-2nd) - var(--cv-head-row-gap));
+  /* 两行档让位（同上批）：返回钮落**第二行**（窄面板 / 手机层）时，正文让出
+     两行的净空 = 安全区 56 + 一行钮高 36 + 一档缝 8 = 100（与项目面板族
+     --panel-head-2row = 102 同构：那边多一道 10 呼吸，此处缝已含在安全区里）。
+     只在该钮**真在场**时生效（body.has-refback，syncRefBackButton 挂），
+     不垫白洞。 */
+  --cv-head-2row: calc(var(--cv-safe-top) + var(--cv-head-h) + var(--cv-head-row-gap));
 }
 
 @media (prefers-color-scheme: dark) {

@@ -128,6 +128,9 @@ function agentsContentEl() {
   if (!content) {
     content = document.createElement('div');
     content.id = 'agents-content';
+    // 统一安全区（canvas-overlap-fix 批 2026-11-05）：canvas 顶行胶囊是浮层，
+    // 面板正文首块让到 --cv-safe-top 之下；类定义在 split.css「统一布局层」块。
+    content.className = 'canvas-safe-top';
     pane.appendChild(content);
   }
   return content;

@@ -367,6 +367,16 @@ body.mobile-layer {
   --mchrome-breathe: var(--ds-space-2);  /* 8 —— 同上（簇顶/呼吸两字面量随批归 --ds-* 桥） */
   --mchrome-clear: calc(var(--mchrome-top) + var(--mchrome-btn) + var(--mchrome-breathe));
   --mchrome-inset: var(--mchrome-clear);
+  /* canvas 正文顶部安全区（canvas-overlap-fix 批 2026-11-05）：**手机档唯一覆写点**。
+     桌面值在 sapphire.css 出生（= --cv-head-clear 56）；手机层顶栏是 48 圆钮簇 +
+     环标签带（.mf-strip 高 72），安全区随之换尺为 --mchrome-clear（16+48+8=72）。
+     消费面不变（split.css「统一布局层」块：.canvas-viewer-safe-top / .canvas-safe-top），
+     手机档规则零改值、零第二套让位机制。 */
+  --cv-safe-top: var(--mchrome-clear);
+  /* 两行档让位同源换尺（同上批）：自定义属性的 var() 在**声明处**求值，故
+     :root 上那条 --cv-head-2row（= 56 + 36 + 8 = 100）不会跟着手机档的
+     --cv-safe-top 变，必须在手机档显式重算 = 72 + 36 + 8 = 116。 */
+  --cv-head-2row: calc(var(--cv-safe-top) + var(--cv-head-h) + var(--cv-head-row-gap));
   /* ── 会话身份头几何（同一行批 2026-11-02 作者令「头像与左右双钮必须始终同一行」）──
      单源：头像外径 + 组内上内距 + 由此推出的**组顶锚**。锚 = 让「头像垂直中心
      恒等双钮垂直中心」的那个组顶值，纯派生、零字面量：
@@ -3021,7 +3031,14 @@ body.mobile-layer #mobile-pages .wx-zoom {
 
 /* ── P10 插件：插件卡全宽单列 + 封禁整卡降透明 ────────────────────────── */
 body.mobile-layer #mobile-pages #plugins-content {
-  padding: var(--ds-space-3) var(--ds-space-3) calc(24px + env(safe-area-inset-bottom, 0px));
+  /* 手机档只缩左右与底（12 / 安全区底垫）——**顶部让位不在这里写**：canvas 正文
+     顶垫统一归 .canvas-safe-top（split.css「统一布局层」块，手机档值 = 
+     --cv-safe-top = --mchrome-clear 72）。canvas-overlap-fix 批 2026-11-05 前
+     此处写 `var(--ds-space-3)` = 12px 顶垫，首块整条压在环标签带（0..72）底下，
+     与本批报障的桌面形态同一个病（各面板各写裸顶垫）。 */
+  padding-right: var(--ds-space-3);
+  padding-left: var(--ds-space-3);
+  padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
 }
 body.mobile-layer #mobile-pages .plugins-card-list {
   display: flex;

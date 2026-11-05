@@ -296,16 +296,29 @@ const hasLayoutTransition = (s) => {
   ok('H5c .canvas-viewer-safe-top 基类块内零 transition 声明（顶垫恒静态）',
     !safeTransitionBlock, safeTransitionBlock ? 'padding-top transition still declared' : 'clean');
 
-  /* ── md 面回归：常驻垫 52px，hover 前后不变 ── */
+  /* ── md 面回归：常驻垫 = 统一安全区 token，hover 前后不变 ──
+     canvas-overlap-fix 批 2026-11-05：原先钉死字面量 52（= --capsule-h 36 + 16），
+     与统一安全区 --cv-safe-top（= --cv-head-clear 56）差一档 —— 正文首行贴胶囊
+     下沿的档差来源。本批 md 面改消费 token，断言随之改成「等于消费点解析值」，
+     比钉死数字更强：token 换尺（手机/窄档）时本断言不会假绿。 */
   await activateTab(page, 'file:' + MD_DISK);
   await sleep(600);
   const mdRest = await snap(page);
   await hoverCapsule(page);
   const mdHov = await snap(page);
   await unhover(page);
-  ok('H6 md 面回归：常驻顶垫 52px（截图 md 首行让胶囊带语义保留）且 hover 前后相等',
-    mdRest.padMd === 52 && mdHov.padMd === 52,
-    `rest=${mdRest.padMd} hover=${mdHov.padMd}`);
+  const safeTopPx = await page.evaluate(() => {
+    // token 的 computed 值保留 calc() 链 ⇒ 在真实消费点（md 滚动面）取解析值。
+    const el = document.createElement('div');
+    el.style.paddingTop = 'var(--cv-safe-top)';
+    document.body.appendChild(el);
+    const v = parseFloat(getComputedStyle(el).paddingTop);
+    el.remove();
+    return Number.isFinite(v) ? v : null;
+  });
+  ok('H6 md 面回归：常驻顶垫 = --cv-safe-top 解析值（截图 md 首行让胶囊带语义保留）且 hover 前后相等',
+    safeTopPx !== null && mdRest.padMd === safeTopPx && mdHov.padMd === safeTopPx,
+    `token=${safeTopPx} rest=${mdRest.padMd} hover=${mdHov.padMd}`);
 
   ok('H9 桌面腿零 JS 错误', errors.length === 0, errors.slice(0, 2).join(' | '));
   readings.desktop = { rest, hover: hov, back };
