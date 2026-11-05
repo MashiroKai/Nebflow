@@ -712,7 +712,15 @@ object GatewayMain extends IOApp:
                                 nebflow.core.tools.FileLockManager.create.flatMap { fileLockMgr =>
                                   val hooksConfig = HooksConfigLoader.load(os.pwd)
                                   val hookEngine = HookEngine(hooksConfig)
-                                  val actorSystem = nebflow.actor.ActorSystem("local")
+                                  // 刀四·监督关系落盘化（作者裁定3「整刀落盘」，2026-11-05
+                                  // 09:38）：死亡监视边落 `<dataRoot>/actor-watches.json`，
+                                  // boot 由下方 boot 链的 `actorSystem.replayWatches` 重放。
+                                  // 落盘面只是可重放快照（真源仍是内存 watchers）；盘坏只
+                                  // WARN，绝不让 boot 挂掉。
+                                  val actorSystem = nebflow.actor.ActorSystem(
+                                    "local",
+                                    nebflow.actor.WatchStore.file(PathUtil.dataRoot / "actor-watches.json")
+                                  )
                                   val voiceMutedRef: Ref[IO, Boolean] = Ref.unsafe(false)
                                   val sharedResources = SharedResources(
                                     llm = handle,
@@ -1213,7 +1221,7 @@ object GatewayMain extends IOApp:
                                   // daemonService autoStart 块（构造序：dock 依赖
                                   // DaemonService 实例）。失败只 WARN 绝不阻塞启动的
                                   // 契约由 dock 腿逐字保持。
-                                  hubSetup *> recorderSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> subagentCrashSweep *> mailboxBootSweep *> taskIndexBackfill *> seedMinimalSet *> sourcePluginHeal *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> mergeQueueBootSweep *> msgTokensBootReconcile *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> memoryRecallDaemon *> succeedPortGate(
+                                  actorSystem.replayWatches *> hubSetup *> recorderSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> subagentCrashSweep *> mailboxBootSweep *> taskIndexBackfill *> seedMinimalSet *> sourcePluginHeal *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> mergeQueueBootSweep *> msgTokensBootReconcile *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> memoryRecallDaemon *> succeedPortGate(
                                     cfg,
                                     sharedResources.healthMonitor
                                   ) *> {

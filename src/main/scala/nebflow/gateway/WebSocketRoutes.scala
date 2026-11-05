@@ -316,7 +316,7 @@ class WebSocketRoutes(
    * 家族分派：
    *   - registry 行已活（判活→激活竞态合拢）⇒ 直接投该会话（新鲜 ref）；
    *   - 会话已删（SessionStore 无行）⇒ `UnknownSession`（不落盘、不激活、审计收口）；
-   *   - Delegate/SubTask/Ephemeral/Plan ⇒ `Deferred`（复活归监督者 respawn /
+   *   - Delegate/SubTask ⇒ `Deferred`（复活归监督者 respawn /
    *     boot sweep 既有恢复腿所有，不越权重挂——持久标记等自然复活重放补投）；
    *   - Root/Team/Flow ⇒ 先把标记写进**目标会话**注入队（correlationId 幂等，
    *     BgInboxBackstop 会话存在守卫双保险），再走恢复 spawn ⇒ 重放交付。
@@ -348,7 +348,7 @@ class WebSocketRoutes(
     pendingEvent: AgentCommand.ExternalEvent
   ): IO[BgSessionActivator.ActivationResult] =
     kind match
-      case AgentKind.Delegate | AgentKind.SubTask | AgentKind.Ephemeral | AgentKind.Plan =>
+      case AgentKind.Delegate | AgentKind.SubTask =>
         IO.pure(
           BgSessionActivator.Deferred(
             s"session family $kind revival is owned by its supervisor respawn / boot-sweep legs"
@@ -3242,7 +3242,7 @@ object WebSocketRoutes:
   /**
    * Which AgentRegistry entries getActiveAgents should report as running.
    *
-   * Task-lifecycle kinds (Delegate/Ephemeral/Flow/SubTask) are reported
+   * Task-lifecycle kinds (Delegate/Flow/SubTask) are reported
    * as-is: their presence in the registry means the task is in flight
    * (they unregister on completion).
    *
@@ -3259,7 +3259,7 @@ object WebSocketRoutes:
    * (ActiveAgentsFilterSpec).
    */
   def filterActiveAgents(registry: Map[String, AgentRecord]): IO[List[AgentRecord]] =
-    val taskKinds = Set(AgentKind.Delegate, AgentKind.Ephemeral, AgentKind.Flow, AgentKind.SubTask)
+    val taskKinds = Set(AgentKind.Delegate, AgentKind.Flow, AgentKind.SubTask)
     IO.pure(registry.values.toList.filter(r => taskKinds.contains(r.kind)))
 
   /**

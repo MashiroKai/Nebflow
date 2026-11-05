@@ -35,6 +35,33 @@ import scala.io.Source
 /** 会话与聊天域(sessions/chat):会话 CRUD、输入/命令、智能体回合控制与历史。 */
 private[gateway] object WsSessionChatHandlers:
 
+  /**
+   * 历史分页单页上限（**刀三·爆炸保护，不是流量控制**）。
+   *
+   * 理由（为何夹在 500）：单页历史远超一屏可视条数即无意义——`limit` 由客户端
+   * 传入，一个形如 `100000` 的荒谬值只会让整段历史被一次性序列化进**单个 WS
+   * 文本帧**（服务端读盘 + JSON 编码 + 帧传输 + 前端解析四处同时被拉爆）。500
+   * = 可视区（约 20 条）的 25 倍，对「翻页定位」绰绰有余，对爆炸毫无让步。
+   *
+   * 口径边界：**默认值 50 不变**（常规前端行为逐字节不变），只夹**上界**；
+   * `≤0` / 非数一律回落默认 50（客户端传坏值不惩罚，也不放大）。这是单帧
+   * 载荷大小的硬上界，不涉及任何 TTL / 丢弃 / 常态限流。
+   */
+  private[gateway] val MaxHistoryPage = 500
+
+  /** 历史分页默认单页条数（今日行为，未改动）。 */
+  private[gateway] val DefaultHistoryPage = 50
+
+  /**
+   * `limit` 入参归一：`None`/坏值/`≤0` → [[DefaultHistoryPage]]；超上界 → [[MaxHistoryPage]]。
+   * 纯函数（无 IO、无状态），入口级验红可直接钉 [[MaxHistoryPage]] 这条边。
+   */
+  private[gateway] def clampHistoryLimit(raw: Option[Int]): Int =
+    raw match
+      case None => DefaultHistoryPage
+      case Some(n) if n <= 0 => DefaultHistoryPage
+      case Some(n) => math.min(n, MaxHistoryPage)
+
   private[gateway] val handlers: Map[String, WsDispatch.WsHandler] = Map(
     "askUserAnswer" -> handleAskUserAnswer,
     "askUserCancel" -> handleAskUserCancel,
@@ -607,7 +634,7 @@ private[gateway] object WsSessionChatHandlers:
             case Some(rec) if !nebflow.core.tools.AgentControlTool.cancelable(rec) =>
               cancelReply(
                 ok = false,
-                "error" -> s"Kind ${rec.kind} is read-only (cancelable: Delegate / SubTask / Ephemeral / Project node-dispatcher sessions)".asJson
+                "error" -> s"Kind ${rec.kind} is read-only (cancelable: Delegate / SubTask / Project node-dispatcher sessions)".asJson
               )
             case Some(rec) =>
               val reason = if cReason.nonEmpty then cReason else "cancelled from panel"
@@ -1483,7 +1510,9 @@ private[gateway] object WsSessionChatHandlers:
     import ctx.*
     val json = parsedJson(text)
     val sessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
-    val limit = json.hcursor.downField("limit").as[Int].getOrElse(50)
+    // 刀三·爆炸保护（不是流量控制）：limit 只夹**上界** MaxHistoryPage；缺省/坏值/
+    // ≤0 回落默认 50（今日行为逐字节不变），无 TTL、无丢弃、无常态限流。
+    val limit = clampHistoryLimit(json.hcursor.downField("limit").as[Int].toOption)
     val beforeIndex = json.hcursor.downField("beforeIndex").as[Option[Int]].getOrElse(None)
     if sessionId.nonEmpty then
       (sharedResources.sessionStore

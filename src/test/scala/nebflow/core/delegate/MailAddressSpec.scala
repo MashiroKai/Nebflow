@@ -40,12 +40,13 @@ class MailAddressSpec extends FunSuite:
     assertEquals(MailAddress.of(AgentKind.Flow, "node-819", Some("   ")), None)
   }
 
-  test("kinds without a Mail face → None (Root / Team / Ephemeral / SubTask / legacy dag- )") {
+  test("kinds without a Mail face → None (Root / Team / External / SubTask / legacy dag- )") {
+    // 裁定5 删除死枚举 Ephemeral / Plan 后，此处改挂裁定4 新增的 External
+    // （外部 CLI 腿：Mail 续传走 delegate:<id> 面，`external-*` 本身无 Mail 地址）。
     List(
       AgentKind.Root,
       AgentKind.Team,
-      AgentKind.Ephemeral,
-      AgentKind.Plan
+      AgentKind.External
     ).foreach { k =>
       assertEquals(MailAddress.of(k, k.toString.toLowerCase + "-1"), None, s"kind $k")
     }

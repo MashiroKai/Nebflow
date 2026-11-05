@@ -18,7 +18,7 @@ import scala.concurrent.duration.{FiniteDuration, *}
  * 时介入，卡死（活着但不动）永不触发。本扫描器补上"Processing 态 + turn 活动
  * 长时间为零"的识别与恢复。
  *
- * 判定（只对 taskKinds = {Delegate, Ephemeral, Flow, SubTask}，与
+ * 判定（只对 taskKinds = {Delegate, Flow, SubTask}，与
  * WebSocketRoutes.filterActiveAgents 同集合）：
  *   - AgentRecord.status == Processing 且 now - lastActivityMs > threshold
  *   - idle 态永不判卡死（run_in_background 时 agent 回 Idle 为合法状态）——
@@ -86,7 +86,7 @@ object TaskStuckWatcher:
   val LoopFreezeReasonWire: String = "loop"
 
   /** 与 WebSocketRoutes.filterActiveAgents 相同的 task 集合（保持单一事实源意识）。 */
-  private val taskKinds = Set(AgentKind.Delegate, AgentKind.Ephemeral, AgentKind.Flow, AgentKind.SubTask)
+  private val taskKinds = Set(AgentKind.Delegate, AgentKind.Flow, AgentKind.SubTask)
 
   /**
    * 2026-09-10 卡死判据换轴（唯一判据事实源）：本 watcher 的扫描 + AgentControlTool

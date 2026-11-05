@@ -72,7 +72,7 @@ object ChildOrphanWatch:
             resources.agentRegistry.update(_ - rec.sessionId) *> (rec.ref ! AgentCommand.Stop(reason))
         )
     def settleTaskRow(rec: AgentRecord, reason: String) =
-      if rec.kind != AgentKind.Ephemeral && rec.parentSessionId.nonEmpty then
+      if rec.parentSessionId.nonEmpty then
         resources.subAgentTaskStore
           .updateStatus(
             rec.parentSessionId,
