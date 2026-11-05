@@ -32,15 +32,20 @@ object AskSessions:
   val Prefix = "ask-"
 
   /**
-   * ask 专属工具封闭枚举（ask 原生两件，机制稿 §5/§7）——**仅供 ask 会话持有**
-   * 的两件：其余身份（含 agent.json 声明 / "*"）经 buildAllowedToolSet 尾段
-   * `askStripped` 按本集反剥（the tool name IS the permission boundary，
-   * TeamTaskTools 先例）。反剥集 ≠ AllowedTools：AllowedTools 还含通用只读五件
-   * （Read/Glob/Grep/WebSearch/WebFetch 是全员注册工具，决不能进反剥集——进了
-   * 会把主会话的读面一并剥掉）。
+   * ask 专属工具封闭枚举（ask 原生两件 + gitquery 批的只读 git 查询，机制稿
+   * §5/§7）——**仅供 ask 会话持有**：其余身份（含 agent.json 声明 / "*"）经
+   * buildAllowedToolSet 尾段 `askStripped` 按本集反剥（the tool name IS the
+   * permission boundary，TeamTaskTools 先例）。反剥集 ≠ AllowedTools：
+   * AllowedTools 还含通用只读五件（Read/Glob/Grep/WebSearch/WebFetch 是全员注册
+   * 工具，决不能进反剥集——进了会把主会话的读面一并剥掉）。
+   *
+   * GitQuery（gitquery 批 2026-11-05）进本集的判据：它是**注册面工具**（必须在
+   * ToolRegistry 在册才解析得出 schema），而注册即意味着 `agent.json` 声明 `"*"`
+   * 的身份会拿到名字——本集是唯一能把它从非 ask 身份摘掉的面。进集 = 名字封闭
+   * （`askStripped` 注释与语义同批更新）+ 工具内 `isAskSession` 身份闸 = 双保险。
    */
   val AskExclusiveTools: Set[String] =
-    Set("message_record_search", "send_message_to_main_chat")
+    Set("message_record_search", "send_message_to_main_chat", "GitQuery")
 
   /**
    * 白名单封闭枚举（机制稿 §5 + 2026-10-31 换装批，作者 12:25 裁定）：ask 会话
@@ -49,6 +54,8 @@ object AskSessions:
    * 单点，改面两侧同步）。buildAllowedToolSet 早退集与工具注册名同源。
    *   - message_record_search —— 消息检索 CLI 封装（只读）；
    *   - send_message_to_main_chat —— 单向信使（§7 转交）；
+   *   - GitQuery —— 只读 git 查询（gitquery 批 2026-11-05；log / show / diff /
+   *     merge-base 四件封闭枚举，零自由 argv），对账审计文末的提交号与可复跑命令；
    *   - Read / Glob / Grep / WebSearch / WebFetch —— 只读侦察五件（2026-10-31
    *     换装批取代 10-31 上午批的 read_file_content 单件路线——Read 的范围从
    *     「仅绑定文件」放宽为「绑定文件及其相关文件」：同目录 / glob / grep 可达

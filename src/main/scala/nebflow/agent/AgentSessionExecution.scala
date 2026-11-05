@@ -2561,10 +2561,14 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     // 纪律不受扰——本授能只对 delegateSession 身份生效，Subagent/AgentFlow 步会话
     // 不经此腿。
     val withDelegateMail = if delegateSession then withDelegateFace + "Mail" else withDelegateFace
-    // ask 工具反剥（ask 早退的对偶防线）：ask 专属两件只对 ask 会话授能——其余
-    // 身份即便 agent.json 声明 "*" 也不得获得（the tool name IS the permission
-    // boundary，TeamTaskTools 剥离先例）。**反剥集 = AskExclusiveTools（只两件）**：
-    // AllowedTools 里的只读五件是全员注册工具，进反剥集会连主会话读面一起剥掉。
+    // ask 工具反剥（ask 早退的对偶防线）：ask 专属三件（message_record_search /
+    // send_message_to_main_chat / GitQuery，gitquery 批 2026-11-05 增第三件）只对
+    // ask 会话授能——其余身份即便 agent.json 声明 "*" 也不得获得（the tool name
+    // IS the permission boundary，TeamTaskTools 剥离先例）。**反剥集 =
+    // AskExclusiveTools（只这三件）**：AllowedTools 里的只读五件是全员注册工具，
+    // 进反剥集会连主会话读面一起剥掉。GitQuery 进反剥集的理由 = 它必须在
+    // ToolRegistry 在册才解析得出 schema，而在册即意味着 "*" 声明会拿到名字——
+    // 本集是唯一能把名字从非 ask 身份摘掉的面（工具内 isAskSession 闸为第二保险）。
     val askStripped = withDelegateMail -- nebflow.core.ask.AskSessions.AskExclusiveTools
     if flowNodeSession then askStripped + nebflow.core.tools.NodeReportToolDef.Name else askStripped
 

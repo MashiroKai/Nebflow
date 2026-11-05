@@ -197,7 +197,15 @@ object ToolRegistry:
       // 插件白名单与 remoteableTools 均不含 ask 专属两件。工具内侧再用
       // ctx.sessionId 同判据拒绝（AskTools 双保险，DelegateReportTool 先例）。
       "message_record_search" -> MessageRecordSearchTool,
-      "send_message_to_main_chat" -> SendMessageToMainChatTool
+      "send_message_to_main_chat" -> SendMessageToMainChatTool,
+      // GitQuery（gitquery 批 2026-11-05，作者令「ask 会话新增只读 GitQuery
+      // 工具」）：ask 会话的**只读 git 查询**面（log / show / diff / merge-base
+      // 四件，零自由 argv），动因 = 分身对账审计文末的提交号/可复跑命令时只能
+      // 转述文件里写死的值。授权面同 ask 专属两件——AskSessions.AskExclusiveTools
+      // 反剥集单点（非 ask 身份即便声明 "*" 也不得挂名，the tool name IS the
+      // permission boundary）+ 工具内 ctx.sessionId 身份拒绝（GITQUERY_FORBIDDEN）
+      // 双保险；插件白名单与 remoteableTools 均不含本件（v1 只跑本机）。
+      "GitQuery" -> GitQueryTool
     )
     // imagegen 双层批（2026-10-24）+ 功能开放批（2026-10-30 作者令「直接开放
     // 出来」，缺省编入）：编译期 seal 门控保留为应急开关——显式 `STAND_IMAGEGEN=0`
