@@ -1494,6 +1494,14 @@ body.canvas-deck-narrow .canvas-title { max-width: none; }
 .cr-capsule.is-center {
   z-index: 3;
   gap: 7px;
+  /* 件1 批（2026-11-05）：描边框归位 1px（border-color 仍透明）—— 标题胶囊是
+     border-box 180 宽、内含 2×1px 描边；覆层此前 `border: 1px solid
+     var(--g2-input-border)` 因该 token 已随液体玻璃批退役而整条失效（computed
+     border-width = 0），内容盒比标题胶囊宽 2px（108 vs 106）—— pop 钮回位后
+     #926「hover 不改文字布局」的 106px 档实测差 2px（改前无 pop 钮 ⇒ 138 vs
+     140 同一 2px 偏差，此前无人发现）。补 border-width 后左右内缝与标题胶囊
+     逐像素同源（左 12 / 右 = 7 + --cr-popw(32) 均落在同一内容盒基准上）。 */
+  border: var(--ds-border-width) solid transparent;
   padding: var(--ds-space-1) calc(7px + var(--cr-popw, 0px)) var(--ds-space-1) var(--ds-space-3);
   background: transparent;
   border-color: transparent;
@@ -1895,8 +1903,8 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   position: absolute;
   bottom: 16px;
   left: 16px;
-  width: var(--cv-size-circle-lg, 48px);
-  height: var(--cv-size-circle-lg, 48px);
+  width: var(--cv-size-circle-lg);
+  height: var(--cv-size-circle-lg);
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -1932,9 +1940,11 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
 .canvas-ref-select {
   position: absolute;
   bottom: 16px;
-  left: 72px;
-  width: var(--cv-size-circle-lg, 48px);
-  height: var(--cv-size-circle-lg, 48px);
+  /* 槽位由尺寸 token 派生（件3）：槽距 = 钮 + 8 缝 ⇒ 引用钮 = 边 16 + 1×槽距
+     （48 档时代 = 72，40 档 = 64 —— 修前是字面量 72，随档改写死过一次档）。 */
+  left: calc(var(--ds-space-4) + var(--cv-row-pitch-lg));
+  width: var(--cv-size-circle-lg);
+  height: var(--cv-size-circle-lg);
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -1973,8 +1983,8 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
    同一真值；槽距 48 → 56 由 shared.js 的 REFRESH_ROW_PITCH 同步。 */
 .canvas-refresh-toggle {
   position: absolute;
-  width: var(--cv-size-circle-lg, 48px);
-  height: var(--cv-size-circle-lg, 48px);
+  width: var(--cv-size-circle-lg);
+  height: var(--cv-size-circle-lg);
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -2857,17 +2867,15 @@ body.mobile-layer #canvas-content:has(.canvas-tab-pane.active .epub-reader) > .c
   pointer-events: none;
 }
 .canvas-zoom-btn {
-  /* canvas 控件尺寸对齐批（2026-11-02 作者追加令 09:41「包括 canvas 的这些控件
-     宽度也要保持一致」）：条内钮 26（--cv-size-btn 条内小钮档）→ **48**
-     （--cv-size-circle-lg = canvas chrome 档 = 手机层 --mtap-lg = 手机层返回钮
-     = 面板吸附胶囊 --mcap-h）。全站「canvas 悬浮控件」回到**一个**尺寸真值：
-     作者实拍里同一条带上有的钮 26（缩放条）、旁边独立刷新圆钮 40，正是
-     「大小不一」的现场 —— 两者本批一并 48，同排四圆钮（源码/引用/查找/刷新）
-     也随 --cv-size-circle-lg 同步 48。
-     圆角维持 --cv-radius-btn-sm 7px（条内小钮的既有圆角语义不变 —— 作者令只
-     要求尺寸档，不要求改成全圆；48 档下 7px 仍是「条内方钮」而不是圆钮）。 */
-  width: var(--cv-size-circle-lg, 48px);
-  height: var(--cv-size-circle-lg, 48px);
+  /* 件3 批（2026-11-05 作者令「底部的按钮的大小，应该和canvas顶部的按钮的大小
+     样式都统一」）：尺寸档从 48 收敛回顶部圆钮档（--cv-size-circle-lg = 40）+
+     圆角由条内方钮 7px 改回全圆 50% + 图标 --cv-icon(18) —— 与顶部 .g2-fab
+     （圆钮 / 内距 0 / 图标 18 / 玻璃状态档）逐项同源，「大小样式统一」按最严
+     读法落成同 token。条内距 4 与缝 8 不变（--cv-pad-bar-sm / --ds-space-2），
+     条高随内容 = 40 + 2×4 + 2×1 = 50；条中线锚 = 圆钮行中线（16 + 20 = 36）
+     ⇒ 底锚 11 不变。手机 375 档由文件尾 `body.mobile-layer` 块钉回 48/20/7px。 */
+  width: var(--cv-size-circle-lg);
+  height: var(--cv-size-circle-lg);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2877,7 +2885,7 @@ body.mobile-layer #canvas-content:has(.canvas-tab-pane.active .epub-reader) > .c
      实证「hover 按钮直接消失」）。rest 态 1px 透明边框占位，hover 换色
      零布局位移。 */
   border: 1px solid transparent;
-  border-radius: var(--cv-radius-btn-sm, 7px);
+  border-radius: 50%;
   background: transparent;
   color: var(--color-text-muted);
   cursor: pointer;
@@ -2898,7 +2906,7 @@ body.mobile-layer #canvas-content:has(.canvas-tab-pane.active .epub-reader) > .c
   border-color: var(--cv-hover-border);
   color: var(--color-text);
 }
-.canvas-zoom-btn svg { width: var(--cv-icon-btn-lg, 20px); height: var(--cv-icon-btn-lg, 20px); }
+.canvas-zoom-btn svg { width: var(--cv-icon); height: var(--cv-icon); }
 .canvas-zoom-pct {
   min-width: 44px;
   text-align: center;
@@ -2923,26 +2931,52 @@ body.mobile-layer #canvas-content:has(.canvas-tab-pane.active .epub-reader) > .c
    (screenshot 2026-10-19). 160 keeps the 8px gap after the find circle
    (ends at 152).
    单行排布批（2026-11-01）：左锚镜像（右 160 → 左 160），槽值原样。
-   canvas 控件尺寸对齐批（2026-11-02）：槽值 160 → **184** = 查找钮 128 + 48 +
-   8 缝（同排四钮 40→48 后整行右移 24px，缝 8px 与「48px 槽距节奏」语义不变，
-   节奏值本身 48→56）；条内钮 26→48 后条宽 138→222（三钮）——沿用容器查询
-   回落：窄面板（< 415px）装不下 184 + 222 + 8 ⇒ 条升到圆钮行上方第二行，
-   回落阈值 355 → 414、行距锚 64 → 72（= 圆钮行顶 16+48 + 8 缝），套用同一条
-   「圆钮行 / 条行」竖向节距。 */
+   件3 批（2026-11-05）：钮档回 40 后槽位全部由尺寸 token 派生（槽距 =
+   --cv-row-pitch-lg = 钮 + 8 缝）：source 16 · ref-select calc(16 + 1×槽距 = 64)
+   · find calc(16 + 2×槽距 = 112，见 .canvas-find-toggle 派生块) · zoom bar
+   calc(16 + 3×槽距 = 160)。回落阈值随之重算：160（槽）+ 198（条宽：3 钮 = 8 +
+   2 + 120 + 24 + 44）+ 8（右让位）= 366 ⇒ 容器查询 366 起回落；第二行底锚
+   = 圆钮行顶（16 + 40）+ 8 = 64。 */
 .canvas-tab-pane[data-type="html"] .canvas-zoom-bar {
   top: auto;
-  left: 184px;
+  left: calc(var(--ds-space-4) + 3 * var(--cv-row-pitch-lg));
   bottom: 11px;
 }
-/* 窄面板（< 415px 装不下 184 槽 + 222 条宽，拖拽下限 320）：条升到圆钮行上方
+/* 窄面板（< 367px 装不下 160 槽 + 198 条宽，拖拽下限 320）：条升到圆钮行上方
    第二行（左 16 槽、行距 8px），与圆钮簇零交叠、完整落在 pane 内。
-   阈值推导：184 + 222（条宽）+ 8（右让位）= 414 ⇒ max-width 414 起回落；
-   第二行底锚 72 = 圆钮行顶（16 + 48）+ 8 缝。 */
-@container nfpane (max-width: 414px) {
+   阈值推导：160 + 198（条宽）+ 8（右让位）= 366 ⇒ max-width 366 起回落；
+   第二行底锚 64 = 圆钮行顶（16 + 40）+ 8 缝。 */
+@container nfpane (max-width: 366px) {
   .canvas-tab-pane[data-type="html"] .canvas-zoom-bar {
-    left: 16px;
+    left: var(--ds-space-4);
+    bottom: 64px;
+  }
+}
+/* 手机 375 档（未获新令，48 档尺）：阈值/行距按 48 档重算——184 槽 + 222 条宽
+   + 8 = 414 起回落，行距锚 = 16 + 48 + 8 = 72（= 11-02 批原值，逐值钉回，
+   375 pane 恒命中 ⇒ 与改前同落位）。 */
+@container nfpane (max-width: 414px) {
+  body.mobile-layer .canvas-tab-pane[data-type="html"] .canvas-zoom-bar {
+    left: var(--ds-space-4);
     bottom: 72px;
   }
+}
+
+/* ── 件3 手机 375 档逐值钉回（2026-11-05）：桌面档收敛到顶部圆钮档后，手机档
+   **未获新令** ⇒ 尺寸/圆角/图标/槽位全按 11-02 批的 48 档尺（= --mtap-lg）原值
+   保留，桌面档零传染（对照表见 tests/ui-seven-canvas-chrome.spec.mjs §BEFORE ⑨）。 */
+body.mobile-layer .canvas-zoom-btn {
+  width: var(--mtap-lg, 48px);
+  height: var(--mtap-lg, 48px);
+  border-radius: var(--cv-radius-btn-sm, 7px);   /* 手机条内方钮语义不变 */
+}
+body.mobile-layer .canvas-zoom-btn svg {
+  width: var(--micon-sm, 20px);
+  height: var(--micon-sm, 20px);
+}
+/* 引用钮槽位（手机 48 档 = 边 16 + 1×槽距(48+8) = 72；桌面档由 token 派生 = 64） */
+body.mobile-layer .canvas-ref-select {
+  left: calc(var(--ds-space-4) + var(--mtap-lg, 48px) + var(--ds-space-2));
 }
 
 /* ── XLSX viewer ── */
@@ -3233,7 +3267,7 @@ body.col-resizing #canvas-panel { transition: none; }
    72 = 源码钮 16 + 48 + 8；monaco.js 16 不变 —— 源码态无簇，单钮独坐）。 */
 .canvas-find-toggle {
   position: absolute; bottom: 16px;
-  width: var(--cv-size-circle-lg, 48px); height: var(--cv-size-circle-lg, 48px); border-radius: 50%;
+  width: var(--cv-size-circle-lg); height: var(--cv-size-circle-lg); border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
   cursor: pointer; z-index: 10; color: var(--color-text);
   /* hover 零布局批（2026-11-03）：`transition: all` → 显式白名单（同族档）。 */
@@ -3244,6 +3278,20 @@ body.col-resizing #canvas-panel { transition: none; }
     box-shadow 0.18s ease,
     transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1);
   /* 材质/状态档迁 glass.css 圆钮级浮件档（D4；图谱钮已退役不在成员面）。 */
+}
+/* 件3 槽位重派生（2026-11-05）：查找钮的 left 由调用方**内联**写入 48 档字面量
+   （html.js:720 = 128 / markdown.js:1129 = 72 / monaco.js:47 = 16）——js/viewers
+   不在本节点归属，故此处按尺寸 token 重派生同一槽位语义（槽距 = 钮 + 8 缝）：
+     html 页 = 边 16 + 2×槽距（源码 → 引用 → 查找）= 112；
+     markdown 页 = 边 16 + 1×槽距（源码 → 查找）= 64；
+     monaco/源码态 = 16（无簇，单钮独坐，内联值与派生值同值，无需覆盖）。
+   内联样式优先 ⇒ 必须 !important（后续批把 js/viewers 三处字面量改读 token 后可删）。
+   手机 375 档未获新令 ⇒ 本组限定 `body:not(.mobile-layer)`，手机仍是 48 档槽位。 */
+body:not(.mobile-layer) .canvas-tab-pane[data-type="html"] .canvas-find-toggle {
+  left: calc(var(--ds-space-4) + 2 * var(--cv-row-pitch-lg)) !important;
+}
+body:not(.mobile-layer) .canvas-tab-pane[data-type="markdown"] .canvas-find-toggle {
+  left: calc(var(--ds-space-4) + var(--cv-row-pitch-lg)) !important;
 }
 
 /* ── Glass find bar (fileSearch.js) ───────────────────────────────
@@ -3791,6 +3839,54 @@ body:not(.mobile-layer) .canvas-header .canvas-title { flex: 1; min-width: 0; }
   color: var(--color-text-muted);
 }
 .canvas-title .t-count:empty { display: none; }
+
+/* ── 件1 回归批（作者令 2026-11-05 逐字「我们的canvas优化之后，独立窗口打开的
+   按钮现在没了。只在手机端隐藏这个按钮。电脑端要放在胶囊的右侧。」）──────────
+   桌面标题胶囊**右座** = `.canvas-pop-btn`（卡头独立窗 / 合并回主窗 toggle）：
+   · 座位：胶囊子件末位 + `.canvas-title` 的 DOM 后继（canvas.js syncHeaderActions
+     按 title.nextSibling 插入）+ 父级 `justify-content: space-between` + title
+     flex:1 ⇒ 钮右缘贴齐内容盒右缘（胶囊右 − 描边 1 − 内距 7），竖直由
+     align-items:center + 26 高（内容盒 36−2−8=26）⇒ 中心 = 胶囊中心，零手工偏移。
+   · 档位：26px / 圆角 8（--cv-size-btn / --cv-radius-btn，= 卡窗 .canvas-merge-btn
+     同档）；图标 13（卡头小钮语义，与 .deck-card-pop 同 SVG 常量 CARD_POP_SVG）。
+   · 材质：ghost 静默 + hover 抬亮玻璃（聊天控件语言；选中/独立态 sapphire 字）。
+   · 状态：内容物页签 = 可用（独立窗口打开 / 合并回主窗 换形换字）；非内容物页签
+     = disabled + 提示（判据单源 cardCanPop，提示键 canvas.cardwinContentOnly）；
+     无活动页签 = [hidden] 离场（此时 --cr-popw 同步落 0，见 canvas.js syncCenterInset）。
+   · 手机层：display:none（手机自有 .mobile-card-pop 卡头入口，navController 建）。 */
+.canvas-pop-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--cv-size-btn);
+  height: var(--cv-size-btn);
+  padding: 0;
+  border: none;
+  border-radius: var(--cv-radius-btn);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.canvas-pop-btn:hover { background: var(--cv-hover-bg); color: var(--color-text); }
+.canvas-pop-btn:active { transform: scale(var(--cv-active-scale)); }
+.canvas-pop-btn svg { width: 13px; height: 13px; }
+.canvas-pop-btn .pop-ic-merge { display: none; }
+.canvas-pop-btn.is-independent { color: rgb(var(--sapphire)); }
+.canvas-pop-btn.is-independent .pop-ic-pop { display: none; }
+.canvas-pop-btn.is-independent .pop-ic-merge { display: block; }
+.canvas-pop-btn[disabled] {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+.canvas-pop-btn[disabled]:hover { background: transparent; color: var(--color-text-muted); }
+/* 原生 hidden 的 UA display:none 会被上面的 display:inline-flex 压过 ⇒ 显式钉死
+   （同 .canvas-refresh-toggle[hidden] 先例）。 */
+.canvas-pop-btn[hidden] { display: none !important; }
+/* 手机端隐藏（作者令「只在手机端隐藏这个按钮」）：手机卡头另有 .mobile-card-pop，
+   本钮在手机层恒离场（零占位零位移）。 */
+body.mobile-layer .canvas-pop-btn { display: none !important; }
 
 /* ── 环卡卡头「在独立窗口打开」钮（批⑤后独立窗唯一可见卡头入口；标题头
    #canvas-pop-btn 同批退役）────────────────────────────────────────── */

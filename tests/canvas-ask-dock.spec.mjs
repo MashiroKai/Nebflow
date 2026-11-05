@@ -11,8 +11,8 @@
 //       最靠右、z 序 25 = ask-dock
 //       24+1 < 顶行胶囊 30（排他 z 序）、dock 宽 372（E-2 桌面档）；
 //       单行排布批（2026-11-01 作者令 16:18）：功能钮簇左锚 / fab 独右一行两端
-//       对齐（T1f 共中线）、对话框钉按钮行上一行（T1g）、座位基准 24（T1c；
-//       fab 48 ⇒ 中线 48 − 半高 24）
+//       对齐（T1f 共中线）、对话框钉按钮行上一行（T1g）、座位基准 = 实测簇中线 −
+//       fab 半高（T1c；件3 批：簇钮 40 ⇒ 中线 44 ⇒ 基准 20，判据由实测派生）
 //   T2  开合三通路（§8-1）：入口钮再点 / Esc / 画布空白点击；开 = .closed 摘除
 //       + fab.open + 输入聚焦；输入条在按钮上方（transform-origin 100% 100% 锚定）
 //   T3  提问 → 气泡流式回答（§8-1）：askOpen 帧先于 askQuestion 帧、sessionId =
@@ -295,9 +295,9 @@ try {
   ok('T1b 右下角最靠右（右缘距面板右缘 ~14px）', !!g1.fab && Math.abs(g1.panel.right - g1.fab.right - 14) < 3, `gap=${g1.panel.right - (g1.fab ? g1.fab.right : 0)}`);
   // T1c 座位契约（单行排布批 2026-11-01 作者令 16:18「功能钮靠左、ask 单独
   // 靠右，一行两端对齐」）：基准 = 与左锚文档工具簇行共中线。簇在 pane 内
-  // bottom:16、48px 高 ⇒ 面板系行带 [24..72]、中线 48 − fab 半高 24 = **24**
-  // （canvas 控件尺寸对齐批 2026-11-02：簇/钮 40 → 48、fab 44 → 48 后同式中线
-  // 数学，原 22 是 44 钮时代的配平）；左锚簇与右缘 fab 异侧不再让位，实测让位
+  // bottom:16、钮高 = --cv-size-circle-lg（件3 批后 40）⇒ 中线 = 面板底 − (16 + 8 + 半钮高)
+  // = 44、fab 48 半高 24 ⇒ 底距 **20**；本 spec 由实测簇中线派生（不再写死 24，
+  // 48 档时代的常量）—— 簇/钮档再改，判据自动跟随；左锚簇与右缘 fab 异侧不再让位，实测让位
   // 只剩通栏底栏（epub reader nav，上沿+12）。本环境无 epub → 基准。
   const seatExpect = await page.evaluate(() => {
     const panel = document.getElementById('canvas-panel');
@@ -311,9 +311,17 @@ try {
       if (r.width === 0 && r.height === 0) return;
       occupied = Math.max(occupied, pr.bottom - r.top);
     });
-    return occupied > 0 ? occupied + 12 : 24;
+    if (occupied > 0) return occupied + 12;
+    // 件3 批（2026-11-05）：基准由**实测簇行中线**派生（簇钮档 = --cv-size-circle-lg，
+    // 40 档 ⇒ 中线 44、fab 48 ⇒ 底距 20）；不再写死 24（48 档时代的常量，改档即漂 4px）。
+    const rowBtn = panel.querySelector('.canvas-source-toggle, .canvas-ref-select, .canvas-find-toggle');
+    const rb = rowBtn ? rowBtn.getBoundingClientRect() : null;
+    const fabEl = document.querySelector('.ask-fab');
+    const fabH = fabEl ? fabEl.getBoundingClientRect().height : 48;
+    const mid = rb && rb.height > 0 ? pr.bottom - (rb.top + rb.height / 2) : 48;
+    return Math.max(8, Math.round(mid - fabH / 2));
   });
-  ok('T1c 座位：基准 24px（= 中线 48 − fab 半高 24，与左锚工具簇共中线），通栏底栏在场时实测让位（上沿+12）', !!g1.fab && Math.abs(g1.panel.bottom - g1.fab.bottom - seatExpect) < 3, `gap=${g1.panel.bottom - (g1.fab ? g1.fab.bottom : 0)} expected=${seatExpect}`);
+  ok('T1c 座位：基准 = 实测簇中线 − fab 半高（件3 批：簇钮 40 ⇒ 中线 44 ⇒ 基准 20；与左锚工具簇共中线），通栏底栏在场时实测让位（上沿+12）', !!g1.fab && Math.abs(g1.panel.bottom - g1.fab.bottom - seatExpect) < 3, `gap=${g1.panel.bottom - (g1.fab ? g1.fab.bottom : 0)} expected=${seatExpect}`);
   // 单行排布批：一行两端对齐——文档工具簇贴 pane 左缘、fab 独守右缘、同带共中线。
   const rowAlign = await page.evaluate(() => {
     const pane = document.querySelector('.canvas-tab-pane.active');
