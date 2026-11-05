@@ -947,6 +947,8 @@ export default {
   'subagents.frozenDormantTip': 'Frozen for {hours}h with no wake (past the retention window the record is archived; transcript and workspace are kept).',
   'subagents.wake': 'Wake',
   'subagents.wakeTip': 'Continue in the same session context (history in place, finished work is not redone)',
+  // name/address 批（2026-11-05）：地址 chip 的 tooltip 后缀（前面拼完整地址本身）。
+  'subagents.copyAddress': 'copy address',
   'subagents.wakeFailed': 'Wake failed — record and transcript are kept; retry later',
   'subagents.frozenReasonLlm': 'LLM-layer failure',
   'subagents.frozenReasonTool': 'tool-layer failure',
