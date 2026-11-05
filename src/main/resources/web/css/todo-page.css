@@ -90,11 +90,14 @@
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
 }
-.todo-create-btn:hover,
-.todo-close-btn:hover {
-  background: var(--glass-control-bg-hover);
-  color: var(--color-frame-text);
+@media (hover: hover) {
+  .todo-create-btn:hover,
+  .todo-close-btn:hover {
+    background: var(--glass-control-bg-hover);
+    color: var(--color-frame-text);
+  }
 }
+
 .todo-create-btn svg,
 .todo-close-btn svg {
   width: 14px;

@@ -3097,20 +3097,25 @@ body.mobile-layer #settings-modal .cfg-btn-primary {
   color: var(--btn-primary-ink);
   border-color: transparent;
   font-weight: 500;
-  box-shadow: none;
   transition: background 0.18s ease;
 }
-body.mobile-layer #settings-modal .cfg-btn-primary:hover {
-  background: var(--btn-primary-bg-hover);
+@media (hover: hover) {
+  body.mobile-layer #settings-modal .cfg-btn-primary:hover {
+    background: var(--btn-primary-bg-hover);
+  }
 }
+
 @media (prefers-color-scheme: dark) {
   body.mobile-layer #settings-modal .cfg-btn-primary {
     background: var(--color-text);
     color: var(--color-bg);
   }
-  body.mobile-layer #settings-modal .cfg-btn-primary:hover {
-    background: var(--ds-ink-inverse);
-  }
+@media (hover: hover) {
+    body.mobile-layer #settings-modal .cfg-btn-primary:hover {
+      background: var(--ds-ink-inverse);
+    }
+}
+
 }
 
 /* ════════════════════════════════════════════════════════════════════

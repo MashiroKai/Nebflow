@@ -340,33 +340,29 @@
 .agent-detail-prompt-toggle,
 .project-unmount-btn {
   border: 1px solid transparent;
-  transition: background 0.15s, color 0.15s, border-color 0.15s,
-              box-shadow 0.15s, opacity 0.15s, transform 0.1s;
+  transition: background 0.15s, color 0.15s, border-color 0.15s, opacity 0.15s, transform 0.1s;
 }
-/* Pattern A — hover（liquid-glass-v2 批：材质换代 = .glass-control 同配方 +
-   镜面高光层；按压 spring 回弹 = 投影收短 + 高光收敛，形变档随 v2 规范） */
-.panel-btn:hover,
-.activity-avatar:hover,
-.session-delete:hover,
-.folder-delete:hover,
-.explorer-folder-btn:hover,
-.explorer-action-btn:hover,
-.canvas-close-btn:hover,
-.reminder-create-btn:hover,
-.cfg-eye-btn:hover,
-.agent-detail-prompt-toggle:hover,
-.project-unmount-btn:hover {
-  background-color: var(--glass-control-bg-hover);
-  background-image: linear-gradient(to bottom, var(--glass-control-specular) 0%, transparent 46%);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(var(--glass-control-sat));
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(var(--glass-control-sat));
-  border-color: var(--glass-control-border);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight-hover),
-    inset 0 -2px 5px var(--glass-control-underedge),
-    0 1px 3px var(--glass-control-glow-hover),
-    0 8px 24px var(--glass-control-shadow-hover);
+@media (hover: hover) {
+  /* Pattern A — hover（liquid-glass-v2 批：材质换代 = .glass-control 同配方 +
+     镜面高光层；按压 spring 回弹 = 投影收短 + 高光收敛，形变档随 v2 规范） */
+  .panel-btn:hover,
+  .activity-avatar:hover,
+  .session-delete:hover,
+  .folder-delete:hover,
+  .explorer-folder-btn:hover,
+  .explorer-action-btn:hover,
+  .canvas-close-btn:hover,
+  .reminder-create-btn:hover,
+  .cfg-eye-btn:hover,
+  .agent-detail-prompt-toggle:hover,
+  .project-unmount-btn:hover {
+    background-color: var(--glass-control-bg-hover);
+    -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(var(--glass-control-sat));
+    backdrop-filter: blur(var(--glass-control-blur)) saturate(var(--glass-control-sat));
+    border-color: var(--glass-control-border);
+  }
 }
+
 
 /* Pattern B — base（v3 实现批 2026-10-31 材质换代：玻璃底材 → 控件族 C3 中性
    扁平实底（--ctl-neutral-*，stand-tokens 单源；纯色 / 无边 / 无高光 / 无模糊 /
@@ -387,26 +383,27 @@
 #rules-modal-actions button {
   background-color: var(--ctl-neutral-bg);
   border-color: transparent;
-  box-shadow: none;
-  transition: background-color 0.15s ease, color 0.15s, border-color 0.15s,
-              box-shadow 0.15s ease, opacity 0.15s;
+  transition: background-color 0.15s ease, color 0.15s, border-color 0.15s, opacity 0.15s;
 }
-/* Pattern B — hover（中性 hover 档；picked/copied 态除外：accent 由各自更高
-   特异档承担） */
-.cfg-btn:not(.cfg-btn-primary):not(.cfg-btn-add):hover,
-.config-actions button:hover,
-.agent-detail-save-btn:hover,
-.option-btn:not(.picked):hover,
-.neblink-peer-update-btn:hover,
-.neblink-ch-btn:hover,
-.epub-nav-btn:hover,
-.code-copy-btn:not(.copied):hover,
-#modal-cancel:hover,
-#delete-cancel:hover,
-#memory-modal-actions button:hover,
-#rules-modal-actions button:hover {
-  background-color: var(--ctl-neutral-bg-hover);
+@media (hover: hover) {
+  /* Pattern B — hover（中性 hover 档；picked/copied 态除外：accent 由各自更高
+     特异档承担） */
+  .cfg-btn:not(.cfg-btn-primary):not(.cfg-btn-add):hover,
+  .config-actions button:hover,
+  .agent-detail-save-btn:hover,
+  .option-btn:not(.picked):hover,
+  .neblink-peer-update-btn:hover,
+  .neblink-ch-btn:hover,
+  .epub-nav-btn:hover,
+  .code-copy-btn:not(.copied):hover,
+  #modal-cancel:hover,
+  #delete-cancel:hover,
+  #memory-modal-actions button:hover,
+  #rules-modal-actions button:hover {
+    background-color: var(--ctl-neutral-bg-hover);
+  }
 }
+
 /* Pattern B — active（v3 §D：扁平按压 = 色深一档，无玻璃式弹缩 —— transform
    形变与投影随本批退役） */
 .cfg-btn:not(.cfg-btn-primary):not(.cfg-btn-add):active,
@@ -567,7 +564,6 @@
   border-color: var(--glass-send-border-disabled);
   color: color-mix(in srgb, var(--color-text) 50%, transparent);
   cursor: not-allowed;
-  box-shadow: var(--glass-send-stack);
   opacity: 1;
 }
 
@@ -581,7 +577,6 @@
   border-color: var(--glass-send-border-active);
   color: var(--color-text-muted);
   cursor: not-allowed;
-  box-shadow: var(--glass-send-stack);
 }
 
 /* ── 登录键族 — 面板侧未登录入口 / 登录面板动作键（2026-09-16 作者令 + 同日 11:55
@@ -680,10 +675,7 @@ button.glass-control.fm-login-btn {
 :is(.fm-login-btn, .login-modal-btn),
 button.glass-control.fm-login-btn {
   background: var(--btn-primary-bg);
-  border: 1px solid var(--btn-primary-bg-hover);
-  box-shadow:
-    inset 0 1px 0 var(--ig-highlight),
-    var(--ig-shadow); /* 统一玻璃批：墨面浮影归 --ig-* 包档 */
+  border: 1px solid var(--btn-primary-bg-hover); /* 统一玻璃批：墨面浮影归 --ig-* 包档 */
   display: block;
   width: 100%;
   box-sizing: border-box;
@@ -708,9 +700,6 @@ button.glass-control.fm-login-btn:hover {
 :is(.fm-login-btn, .login-modal-btn):active,
 button.glass-control.fm-login-btn:active {
   border-color: var(--glass-send-border-active);
-  box-shadow:
-    inset 0 1px 0 var(--ig-highlight),
-    var(--ig-shadow-press);
 }
 :is(.fm-login-btn, .login-modal-btn):disabled,
 button.glass-control.fm-login-btn:disabled {
@@ -718,7 +707,6 @@ button.glass-control.fm-login-btn:disabled {
   border-color: var(--glass-send-border-disabled);
   color: color-mix(in srgb, var(--color-text) 50%, transparent);
   cursor: not-allowed;
-  box-shadow: var(--glass-send-stack);
   opacity: 1;
 }
 
@@ -732,20 +720,20 @@ button.glass-control.fm-login-btn:disabled {
 .login-modal-btn.login-modal-btn-secondary:hover {
   background: var(--glass-control-bg);
   border-color: var(--glass-control-border);
-  box-shadow: var(--glass-send-stack);
   color: var(--color-text);
 }
-.login-modal-btn.login-modal-btn-secondary:hover { background: var(--glass-control-bg-hover); }
+@media (hover: hover) {
+  .login-modal-btn.login-modal-btn-secondary:hover { background: var(--glass-control-bg-hover); }
+}
+
 .login-modal-btn.login-modal-btn-secondary:active {
   border-color: var(--glass-send-border-active);
-  box-shadow: var(--glass-send-stack), var(--glass-send-shadow-active);
 }
 .login-modal-btn.login-modal-btn-secondary:disabled {
   background: var(--glass-send-bg-disabled);
   border-color: var(--glass-send-border-disabled);
   color: color-mix(in srgb, var(--color-text) 50%, transparent);
   cursor: not-allowed;
-  box-shadow: var(--glass-send-stack);
   opacity: 1;
 }
 
@@ -1025,6 +1013,28 @@ button.glass-control.fm-login-btn:disabled {
   --btn-disabled-ink: var(--color-text-muted);
   --btn-unavailable-bg: var(--glass-send-bg-active);
   --btn-unavailable-stroke: var(--glass-send-border-active);
+
+  /* ── 扁平六态槽（flat-button-everywhere 批 2026-11-05）──────────────
+     作者令逐字：「我们的按钮扁平化风格要求要落实到各处 不管是hover还是点击
+     或者按下。」→ 扁平 = **不靠阴影/浮雕/高光营造厚度**，可点击感只由
+     底色阶 / 描边 / 字色 / 透明度 / 极轻微缩放承担。
+     本族是「六态里与厚度无关的那一半」的单源槽：按下幅度、焦点环、禁用档、
+     hover / 触屏隔离口径。**厚度道具（投影、inset 浮雕、渐变、drop-shadow）
+     在这族里结构上没有槽位**——不是遗漏，是契约：要给按钮加影，必须先在规范
+     文件 `seed/plugins/design-language/.../flat-button-spec.md` 的「例外清单」
+     写明理由，否则 `scripts/check-flat-buttons.mjs` 直接红。
+     六态定义与允许项正文见同规范文件 §2；本处只落可执行值。 */
+  --btn-press-scale: 0.98;        /* 按下幅度（桌面档；2% 触感，不配阴影） */
+  --btn-press-scale-touch: 0.97;  /* 触屏档（无 hover 面：反馈只走按下） */
+  --btn-press-fade: 0.92;         /* prefers-reduced-motion 兜底：禁位移，改用透明度 */
+  --btn-ring-w: 2px;              /* 焦点描边环宽（键盘导航可见，WCAG 2.4.7） */
+  --btn-ring-offset: 2px;         /* 环与本体间隙（不侵入邻钮） */
+  --btn-ring: var(--btn-focus-ring);
+  --btn-disabled-opacity: 0.5;    /* 禁用档：只降不透明 + not-allowed，不灰到不可读 */
+  --btn-hover-bg: var(--glass-control-bg-hover);   /* hover 底色阶（仅 (hover:hover) 生效） */
+  --btn-press-bg: color-mix(in srgb, var(--glass-control-bg-hover) 88%, var(--color-text) 12%); /* 按下底色阶 = 比 hover 再深一档 */
+  --btn-dur-state: 120ms;         /* 状态过渡（背景/描边/透明度） */
+  --btn-dur-press: 90ms;          /* 按下过渡（比 hover 快一档，手感更"实"） */
 }
 
 /* 幽灵墨色暗档：亮档用 `--color-frame-text`（弱于次操作 `--color-text` 的一档），
@@ -1059,7 +1069,6 @@ button.glass-control.fm-login-btn:disabled {
   background: var(--btn-ghost-bg);
   border-color: transparent;
   color: var(--btn-ghost-ink);
-  box-shadow: none;
   cursor: pointer;
 }
 :is(.fm-row, .fm-nf-entry, .fm-pick-row, .fm-invite-row,
@@ -1068,40 +1077,20 @@ button.glass-control.fm-login-btn:disabled {
     .settings-avatar-entry, .settings-collapse-toggle,
     .fm-context-menu button:not(.danger)):hover {
   color: var(--btn-ghost-ink-hover);
+  /* 扁平化批 2026-11-05：亮档原来靠 `inset 0 0 0 1px 描边影 + 0 2px 7px 投影`
+     给反馈（暗档只有底色）。两者退役后，那 1px 环改写成**真描边**（线不是影），
+     并把底色档提到双主题通用（原来只有暗档有，亮档靠影子撑）——
+     现在两档同构：hover = 描边档 + 底升一档，active = 更强描边 + 更深底。 */
+  border-color: var(--btn-secondary-stroke-hover);
+  background: var(--btn-secondary-fill-hover);
 }
-@media (prefers-color-scheme: light) {
-  :is(.fm-row, .fm-nf-entry, .fm-pick-row, .fm-invite-row,
-      .neblink-peer.fm-device-row, .fm-msg-act, .fm-msg-time.time-toggle,
-      .fm-modal-title-btn, .fm-modal-close, .fm-gs-open, .panel-btn,
-      .settings-avatar-entry, .settings-collapse-toggle,
-      .fm-context-menu button:not(.danger)):hover {
-    box-shadow: inset 0 0 0 1px var(--btn-secondary-stroke-hover),
-                0 2px 7px var(--glass-send-shadow-hover);
-  }
-  :is(.fm-row, .fm-nf-entry, .fm-pick-row, .fm-invite-row,
-      .neblink-peer.fm-device-row, .fm-msg-act, .fm-msg-time.time-toggle,
-      .fm-modal-title-btn, .fm-modal-close, .fm-gs-open, .panel-btn,
-      .settings-avatar-entry, .settings-collapse-toggle,
-      .fm-context-menu button:not(.danger)):active {
-    box-shadow: inset 0 0 0 1px var(--btn-secondary-stroke),
-                var(--glass-send-shadow-active);
-  }
-}
-@media (prefers-color-scheme: dark) {
-  :is(.fm-row, .fm-nf-entry, .fm-pick-row, .fm-invite-row,
-      .neblink-peer.fm-device-row, .fm-msg-act, .fm-msg-time.time-toggle,
-      .fm-modal-title-btn, .fm-modal-close, .fm-gs-open, .panel-btn,
-      .settings-avatar-entry, .settings-collapse-toggle,
-      .fm-context-menu button:not(.danger)):hover {
-    background: var(--btn-secondary-fill-hover);
-  }
-  :is(.fm-row, .fm-nf-entry, .fm-pick-row, .fm-invite-row,
-      .neblink-peer.fm-device-row, .fm-msg-act, .fm-msg-time.time-toggle,
-      .fm-modal-title-btn, .fm-modal-close, .fm-gs-open, .panel-btn,
-      .settings-avatar-entry, .settings-collapse-toggle,
-      .fm-context-menu button:not(.danger)):active {
-    background: var(--btn-unavailable-bg);
-  }
+:is(.fm-row, .fm-nf-entry, .fm-pick-row, .fm-invite-row,
+    .neblink-peer.fm-device-row, .fm-msg-act, .fm-msg-time.time-toggle,
+    .fm-modal-title-btn, .fm-modal-close, .fm-gs-open, .panel-btn,
+    .settings-avatar-entry, .settings-collapse-toggle,
+    .fm-context-menu button:not(.danger)):active {
+  border-color: var(--btn-secondary-stroke);
+  background: var(--btn-unavailable-bg);
 }
 
 /* ── 图标幽灵面（附件小键等，与文字幽灵同档）──────────────────────────────
@@ -1112,17 +1101,20 @@ button.glass-control.fm-login-btn:disabled {
   background: var(--btn-ghost-bg);
   border-color: transparent;
   color: var(--btn-ghost-ink);
-  box-shadow: none;
   cursor: pointer;
 }
-.fm-attach-btn:hover { color: var(--btn-ghost-ink-hover); }
-@media (prefers-color-scheme: light) {
-  .fm-attach-btn:hover { box-shadow: inset 0 0 0 1px var(--btn-secondary-stroke-hover), 0 2px 7px var(--glass-send-shadow-hover); }
-  .fm-attach-btn:active { box-shadow: inset 0 0 0 1px var(--btn-secondary-stroke), var(--glass-send-shadow-active); }
+@media (hover: hover) {
+  /* 同幽灵族口径（扁平化批 2026-11-05）：hover/active 双主题同构，不再按主题分叉。 */
+  .fm-attach-btn:hover {
+    color: var(--btn-ghost-ink-hover);
+    border-color: var(--btn-secondary-stroke-hover);
+    background: var(--btn-secondary-fill-hover);
+  }
 }
-@media (prefers-color-scheme: dark) {
-  .fm-attach-btn:hover { background: var(--btn-secondary-fill-hover); }
-  .fm-attach-btn:active { background: var(--btn-unavailable-bg); }
+
+.fm-attach-btn:active {
+  border-color: var(--btn-secondary-stroke);
+  background: var(--btn-unavailable-bg);
 }
 .fm-attach-btn:disabled {
   background: var(--btn-disabled-bg);
@@ -1142,18 +1134,20 @@ button.glass-control,
   background: var(--btn-secondary-bg);
   border-color: var(--btn-secondary-stroke);
   color: var(--btn-secondary-ink);
-  box-shadow: var(--glass-send-stack);
   cursor: pointer;
 }
-button.glass-control:hover,
-.cfg-btn:not(.cfg-btn-primary):hover,
-.fm-msg-btn:hover,
-.fm-search-btn:hover,
-.fm-device-desc-btn:hover,
-.neblink-switch-btn.neblink-switch-btn:hover {
-  border-color: var(--btn-secondary-stroke-hover);
-  color: var(--btn-secondary-ink);
+@media (hover: hover) {
+  button.glass-control:hover,
+  .cfg-btn:not(.cfg-btn-primary):hover,
+  .fm-msg-btn:hover,
+  .fm-search-btn:hover,
+  .fm-device-desc-btn:hover,
+  .neblink-switch-btn.neblink-switch-btn:hover {
+    border-color: var(--btn-secondary-stroke-hover);
+    color: var(--btn-secondary-ink);
+  }
 }
+
 button.glass-control:active,
 .cfg-btn:not(.cfg-btn-primary):active,
 .fm-msg-btn:active,
@@ -1163,33 +1157,19 @@ button.glass-control:active,
   border-color: var(--btn-secondary-stroke-hover);
   background: var(--btn-secondary-bg);
 }
-@media (prefers-color-scheme: light) {
-  button.glass-control:hover,
-  .cfg-btn:not(.cfg-btn-primary):hover,
-  .fm-msg-btn:hover,
-  .fm-search-btn:hover,
-  .fm-device-desc-btn:hover,
-  .neblink-switch-btn.neblink-switch-btn:hover {
-    box-shadow: var(--glass-send-stack), var(--glass-send-shadow-hover);
-  }
-  button.glass-control:active,
-  .cfg-btn:not(.cfg-btn-primary):active,
-  .fm-msg-btn:active,
-  .fm-search-btn:active,
-  .fm-device-desc-btn:active,
-  .neblink-switch-btn.neblink-switch-btn:active {
-    box-shadow: var(--glass-send-stack), var(--glass-send-shadow-active);
-  }
-}
+
 @media (prefers-color-scheme: dark) {
-  button.glass-control:hover,
-  .cfg-btn:not(.cfg-btn-primary):hover,
-  .fm-msg-btn:hover,
-  .fm-search-btn:hover,
-  .fm-device-desc-btn:hover,
-  .neblink-switch-btn.neblink-switch-btn:hover {
-    background: var(--btn-secondary-fill-hover);
-  }
+@media (hover: hover) {
+    button.glass-control:hover,
+    .cfg-btn:not(.cfg-btn-primary):hover,
+    .fm-msg-btn:hover,
+    .fm-search-btn:hover,
+    .fm-device-desc-btn:hover,
+    .neblink-switch-btn.neblink-switch-btn:hover {
+      background: var(--btn-secondary-fill-hover);
+    }
+}
+
   button.glass-control:active,
   .cfg-btn:not(.cfg-btn-primary):active,
   .fm-msg-btn:active,
@@ -1209,7 +1189,6 @@ button.fm-req-decline {
   background: var(--btn-danger-bg);
   border-color: var(--btn-danger-stroke);
   color: var(--btn-danger-ink);
-  box-shadow: var(--glass-send-stack);
   cursor: pointer;
 }
 .fm-context-menu button.danger,
@@ -1217,20 +1196,24 @@ button.fm-req-decline {
 .canvas-tab-context-menu button.danger {
   background: var(--btn-danger-bg);
   color: var(--btn-danger-ink);
-  box-shadow: inset 0 0 0 1px var(--btn-danger-stroke);
+  outline: 1px solid var(--btn-danger-stroke);
+  outline-offset: calc(-1 * 1px);
   cursor: pointer;
 }
-button.glass-control.fm-gs-kick:hover,
-button.glass-control.fm-gs-danger:hover,
-button.glass-control.fm-gs-action.fm-gs-danger:hover,
-button.fm-req-decline:hover,
-.fm-context-menu button.danger:hover,
-.explorer-context-menu button.danger:hover,
-.canvas-tab-context-menu button.danger:hover {
-  border-color: var(--btn-danger-ink);
-  color: var(--btn-danger-ink);
-  background: var(--btn-danger-tint);
+@media (hover: hover) {
+  button.glass-control.fm-gs-kick:hover,
+  button.glass-control.fm-gs-danger:hover,
+  button.glass-control.fm-gs-action.fm-gs-danger:hover,
+  button.fm-req-decline:hover,
+  .fm-context-menu button.danger:hover,
+  .explorer-context-menu button.danger:hover,
+  .canvas-tab-context-menu button.danger:hover {
+    border-color: var(--btn-danger-ink);
+    color: var(--btn-danger-ink);
+    background: var(--btn-danger-tint);
+  }
 }
+
 button.glass-control.fm-gs-kick:active,
 button.glass-control.fm-gs-danger:active,
 button.glass-control.fm-gs-action.fm-gs-danger:active,
@@ -1240,7 +1223,8 @@ button.fm-req-decline:active,
 .canvas-tab-context-menu button.danger:active {
   border-color: var(--btn-danger-stroke);
   background: var(--btn-danger-tint);
-  box-shadow: inset 0 0 0 1px var(--btn-danger-stroke);
+  outline: 1px solid var(--btn-danger-stroke);
+  outline-offset: calc(-1 * 1px);
 }
 
 /* ── 主操作 — 墨族实心（声明在四类之后 ⇒ 同名元素归属以本节胜出：族内
@@ -1261,25 +1245,25 @@ button.glass-control.fm-req-accept {
   background: var(--btn-primary-bg);
   border-color: var(--btn-primary-bg-hover);
   color: var(--btn-primary-ink);
-  box-shadow:
-    inset 0 1px 0 var(--ig-highlight),
-    var(--ig-shadow);
   cursor: pointer;
   opacity: 1;
 }
-#dropbox-send-btn:hover,
-.cfg-btn.cfg-btn-primary:hover,
-button.fm-send-btn:hover,
-button.fm-verify-send:hover,
-button.fm-send-chip:hover,
-button.fm-create-submit:hover,
-button.glass-control.fm-gs-save:hover,
-button.glass-control.fm-req-accept:hover {
-  background: var(--btn-primary-bg-hover);
-  border-color: var(--btn-primary-bg-hover);
-  color: var(--btn-primary-ink);
-  opacity: 1;
+@media (hover: hover) {
+  #dropbox-send-btn:hover,
+  .cfg-btn.cfg-btn-primary:hover,
+  button.fm-send-btn:hover,
+  button.fm-verify-send:hover,
+  button.fm-send-chip:hover,
+  button.fm-create-submit:hover,
+  button.glass-control.fm-gs-save:hover,
+  button.glass-control.fm-req-accept:hover {
+    background: var(--btn-primary-bg-hover);
+    border-color: var(--btn-primary-bg-hover);
+    color: var(--btn-primary-ink);
+    opacity: 1;
+  }
 }
+
 #dropbox-send-btn:active,
 .cfg-btn.cfg-btn-primary:active,
 button.fm-send-btn:active,
@@ -1289,21 +1273,6 @@ button.fm-create-submit:active,
 button.glass-control.fm-gs-save:active,
 button.glass-control.fm-req-accept:active {
   border-color: var(--glass-send-border-active);
-  box-shadow:
-    inset 0 1px 0 var(--ig-highlight),
-    var(--ig-shadow-press);
-}
-@media (prefers-color-scheme: light) {
-  #dropbox-send-btn:active,
-  .cfg-btn.cfg-btn-primary:active,
-  button.fm-send-btn:active,
-  button.fm-verify-send:active,
-  button.fm-send-chip:active,
-  button.fm-create-submit:active,
-  button.glass-control.fm-gs-save:active,
-  button.glass-control.fm-req-accept:active {
-    box-shadow: var(--glass-send-stack), var(--glass-send-shadow-active);
-  }
 }
 
 /* ── 焦点态（2026-10-30 按钮体系批，设计稿 §3：全主操作统一蓝环）────────────
@@ -1371,7 +1340,6 @@ button.glass-control.fm-req-accept:active {
   background: var(--btn-disabled-bg);
   border-color: var(--btn-disabled-stroke);
   color: var(--btn-disabled-ink);
-  box-shadow: var(--glass-send-stack);
   cursor: not-allowed;
   opacity: 1;
 }

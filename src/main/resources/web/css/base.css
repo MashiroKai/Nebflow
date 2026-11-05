@@ -222,18 +222,18 @@ body.sidebar-collapsed #sidebar {
   margin-right: var(--ds-space-1h);
   flex-shrink: 0;
   padding: 0;
-  transition: color 0.15s, background 0.15s, border-color 0.15s, box-shadow 0.15s;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
 }
-.panel-toggle-btn:hover {
-  color: var(--color-frame-text-bright);
-  background: var(--glass-control-bg-hover);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  border-color: var(--glass-control-border);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge);
+@media (hover: hover) {
+  .panel-toggle-btn:hover {
+    color: var(--color-frame-text-bright);
+    background: var(--glass-control-bg-hover);
+    -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+    backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+    border-color: var(--glass-control-border);
+  }
 }
+
 
 /* ── Scrollbar: fixed slim width ── */
 /* Fixed 6px width everywhere. Previous auto-slim toggled between 6px/10px,
@@ -391,9 +391,12 @@ body.sidebar-collapsed #sidebar {
   text-align: left;
   transition: background 0.12s;
 }
-.header-dropdown-menu button:hover {
-  background: var(--color-surface);
+@media (hover: hover) {
+  .header-dropdown-menu button:hover {
+    background: var(--color-surface);
+  }
 }
+
 .header-dropdown-menu button.active {
   color: var(--color-primary);
   font-weight: 500;

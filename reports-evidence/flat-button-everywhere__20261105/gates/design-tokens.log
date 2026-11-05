@@ -1,0 +1,66 @@
+design-tokens：128 文件 / 2064 处颜色字面量 / 133 个基线条目
+  ℹ css/glass.css: 语义关键字（不计档外） radius×2(inherit)
+  ℹ css/mobileLayer.css: 语义关键字（不计档外） radius×4(inherit)
+  ℹ css/split.css: 语义关键字（不计档外） radius×1(inherit)
+  ↑ css/base.css: radiusOff 2 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ css/chat.css: color 342 → 281（改善，建议下次 --update-baseline 收紧）
+  ↑ css/chat.css: fsSmall 34 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ css/chat.css: radiusOff 25 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ css/delegatePanorama.css: fsSmall 1 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ css/delegatePanorama.css: radiusOff 6 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ css/diffView.css: fsSmall 6 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ css/dropbox.css: radiusOff 3 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ css/executors.css: fsSmall 2 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ css/executors.css: radiusOff 1 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ css/flowMap.css: fsSmall 1 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ css/flowMap.css: radiusOff 6 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ css/friends.css: fsSmall 4 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ css/friends.css: radiusOff 16 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ css/humanFace.css: fsSmall 1 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ css/input.css: color 104 → 102（改善，建议下次 --update-baseline 收紧）
+  ↑ css/input.css: fsSmall 5 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ css/input.css: radiusOff 1 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ css/mobileLayer.css: color 135 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ css/mobileLayer.css: radiusOff 13 → 2（改善，建议下次 --update-baseline 收紧）
+  ↑ css/modal.css: color 49 → 44（改善，建议下次 --update-baseline 收紧）
+  ↑ css/modal.css: fsSmall 2 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ css/modal.css: radiusOff 8 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ css/nav.css: color 15 → 11（改善，建议下次 --update-baseline 收紧）
+  ↑ css/nav.css: fsSmall 2 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ css/nav.css: radiusOff 2 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ css/perception.css: fsSmall 1 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ css/perception.css: radiusOff 5 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ css/projectPanel.css: fsSmall 1 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ css/projectPanel.css: radiusOff 6 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ css/reminder.css: color 55 → 49（改善，建议下次 --update-baseline 收紧）
+  ↑ css/reminder.css: fsSmall 9 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ css/reminder.css: radiusOff 5 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ css/sapphire.css: fsSmall 1 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ css/sapphire.css: radiusOff 2 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ css/sidebar.css: color 116 → 50（改善，建议下次 --update-baseline 收紧）
+  ↑ css/sidebar.css: transitionAll 7 → 3（改善，建议下次 --update-baseline 收紧）
+  ↑ css/sidebar.css: fsSmall 6 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ css/sidebar.css: radiusOff 8 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ css/social.css: fsSmall 2 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ css/split.css: color 253 → 225（改善，建议下次 --update-baseline 收紧）
+  ↑ css/split.css: transitionAll 5 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ css/split.css: fsSmall 10 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ css/split.css: radiusOff 27 → 1（改善，建议下次 --update-baseline 收紧）
+  ↑ css/taskList.css: fsSmall 8 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ css/taskList.css: radiusOff 1 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ css/todo-face.css: color 73 → 72（改善，建议下次 --update-baseline 收紧）
+  ↑ css/todo-face.css: radiusOff 6 → 1（改善，建议下次 --update-baseline 收紧）
+  ↑ css/todo-page.css: fsSmall 2 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ css/todo-page.css: radiusOff 1 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ css/usage.css: fsSmall 5 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ css/usage.css: radiusOff 5 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ js/bgAgentPopup.js: color 18 → 9（改善，建议下次 --update-baseline 收紧）
+  ↑ js/bgTaskOutputPopup.js: color 15 → 6（改善，建议下次 --update-baseline 收紧）
+  ↑ js/chat.js: color 31 → 24（改善，建议下次 --update-baseline 收紧）
+  ↑ js/flowAgentPopup.js: color 21 → 5（改善，建议下次 --update-baseline 收紧）
+  ↑ js/mobile/sessionHead.js: color 3 → 1（改善，建议下次 --update-baseline 收紧）
+  ↑ js/persistence.js: color 27 → 22（改善，建议下次 --update-baseline 收紧）
+  ↑ js/reference.js: color 6 → 5（改善，建议下次 --update-baseline 收紧）
+
+FAIL 1 项：
+  js/ws.js:0  [baseline-color] 颜色字面量 从基线 10 增到 12（只许减不许增）
