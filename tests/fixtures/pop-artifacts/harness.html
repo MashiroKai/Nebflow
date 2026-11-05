@@ -22,6 +22,13 @@
   <title>pop-artifacts harness</title>
   <link rel="stylesheet" href="/src/main/resources/web/css/base.css">
   <link rel="stylesheet" href="/src/main/resources/web/css/chat.css">
+  <!-- design-system.css：叠卡卡族（.ds-media-stack / .ds-media-card）的**形唯一家**
+       —— ui-unification-20261103-canvas-overlay 批把卡面尺度单源 --ds-media-face-w
+       与卡脸盒从 chat.css 上收到本文件后，本夹具只链 base+chat 两条腿 ⇒
+       `width: var(--ds-media-face-w)` 解析失效（`width:auto`，卡脸实测 680 = 列宽），
+       AC-F1 系列 8 项从那时起一直是红（存量红，与卡片逻辑无关）。载入顺序对齐
+       index.html：chat.css(54) → design-system.css(110)。 -->
+  <link rel="stylesheet" href="/src/main/resources/web/css/design-system.css">
   <style>
     /* Minimal stand-in for the app shell: give #chat the column width the real
        layout gives it, everything else comes from the real CSS. */

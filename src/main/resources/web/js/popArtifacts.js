@@ -686,6 +686,19 @@ function buildMediaStack(items, opts) {
   expandView.className = 'pop-expand-view ds-media-stack__expand';
   area.append(pill, view, expandView);
 
+  /** 展开行宽度上限 = **本节点折叠卡脸宽度**（卡面尺度单源；宿主可把卡面收小）：
+   *  主会话/好友窗卡脸 220 ⇒ min(220, EXPAND_MAX.w) = EXPAND_MAX.w，逐字不变；
+   *  宿主收小卡面（引用牌 96 档，chat.css「引用牌 · 多图叠卡」）时展开行跟着收，
+   *  不横向顶出宿主。读 view.offsetWidth（尚未布局时回落 EXPAND_MAX.w）。
+   *  两条写入腿（load 回调的首次 fit / 展开动作前的 refit）**同一取值口**——
+   *  只收在一条腿上会被另一条覆盖（实测：load 晚于展开时旧值 220 反写回来）。 */
+  let faceWSeen = 0;   // 最近一次**可见**的卡脸宽度（展开后 view 被 display:none，offsetWidth 为 0）
+  const expandMaxW = () => {
+    const w = view.offsetWidth;
+    if (w > 0) faceWSeen = w;
+    return Math.min(faceWSeen || EXPAND_MAX.w, EXPAND_MAX.w);
+  };
+
   let front = 0;
   let expanded = false;
   // 2026-10-30 fan order: the collapsed stack is ONE fixed 220×280 card face
@@ -716,7 +729,7 @@ function buildMediaStack(items, opts) {
     const layer = document.createElement('div');
     layer.className = 'media-layer ds-media-card';
     layer.appendChild(mediaFace(item, 'expanded', (w, h) => {
-      fitLayer(layer, w, h, EXPAND_MAX.w, EXPAND_MAX.h);
+      fitLayer(layer, w, h, expandMaxW(), EXPAND_MAX.h);
       if (expanded) settleExpandHeight();
     }));
     // 复验令 (2026-10-06 16:47 作者核查令; amends the 三修-era "expanded keeps
@@ -805,6 +818,32 @@ function buildMediaStack(items, opts) {
     openItem(items[front], front);
   });
 
+  // 键盘腿（引用多图叠卡批 2026-11-05 · 作者令「桌面要能点击/键盘切换」）：
+  // 折叠卡脸可聚焦，聚焦时 ArrowLeft/ArrowRight（纵向箭头同义）翻页、
+  // Home/End 首末张、Enter/Space 开当前张。键位与 CLI 叠卡 deck 的 next/prev
+  // 同族（keyRules.js deck.next/prev），而 deck 的 Arrow* 绑定有 `deckOpen &&
+  // !deckCardFocus` 闸、探险器的 Arrow* 有 `explorerTreeFocus` 闸 —— 聊天流里
+  // 焦点在卡脸上时两条规则都不成立，**零键位冲突**（先查 keymap 的结论）。
+  // 只处理本脸自身持有焦点的事件（e.target === view）：卡内 pill 的 Enter/Space
+  // 归 pill 自己（原生按钮语义），不在此重复消费。
+  view.tabIndex = 0;
+  view.addEventListener('keydown', (e) => {
+    if (e.target !== view) return;
+    const n = layers.length;
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') front = (front + 1) % n;
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') front = (front - 1 + n) % n;
+    else if (e.key === 'Home') front = 0;
+    else if (e.key === 'End') front = n - 1;
+    else if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!stack.suppressClick) openItem(items[front], front);
+      return;
+    } else return;
+    e.preventDefault();
+    applyLayers();
+  });
+
   /** The expanded column's natural height: the sum of its layers plus the
    *  column gap. Every layer has a definite height (its own ratio × the column
    *  width) even while its bytes are still loading, so the value is stable. */
@@ -812,6 +851,21 @@ function buildMediaStack(items, opts) {
     const el = /** @type {HTMLElement} */ (c);
     return s + el.offsetHeight;
   }, 0) + 20 * (expandView.children.length - 1);
+
+  /** 展开列宽度 = **折叠卡脸宽度**（卡面尺度单源）：主会话/好友窗的卡脸是 220
+   *  ⇒ 与 EXPAND_MAX.w 同值、逐字不变；宿主把卡面尺度收小（引用牌 96 档，
+   *  chat.css「引用牌 · 多图叠卡」）时展开行跟着收，不横向顶出宿主。
+   *  展开行宽是 fitLayer 写在每个 layer 上的**内联 px**（首次由 load 腿按
+   *  220 上限写入），故展开动作前按 dataset.nfRatio 重算一次 —— 几何算术仍只在
+   *  组件内（零宿主参数、零 !important）。 */
+  const refitExpanded = () => {
+    expandLayers.forEach((layer) => {
+      const r = String(layer.dataset.nfRatio || '').split('x').map(Number);
+      if (r.length === 2 && r[0] > 0 && r[1] > 0) {
+        fitLayer(layer, r[0], r[1], expandMaxW(), EXPAND_MAX.h);
+      }
+    });
+  };
 
   /** zcode-484 D4: a media that reports its ratio AFTER the expand animation
    *  started would grow the column mid-flight (the old code summed a lazy
@@ -829,6 +883,8 @@ function buildMediaStack(items, opts) {
     if (expanded === v) return;
     expanded = v;
     pill.textContent = v ? t('chat.popCollapse') : t('chat.popExpand', { n: items.length });
+    // 展开前把展开行宽度对到本节点的卡脸宽度（见 refitExpanded 头注）。
+    if (v) refitExpanded();
     if (!motionEnabled()) {
       // UI-G static window: no height transition and NO settle timer — the
       // two faces swap in one frame and the element keeps its natural height.

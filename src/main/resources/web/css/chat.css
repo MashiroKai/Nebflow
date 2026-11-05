@@ -5428,6 +5428,29 @@ object.search-media-thumb { object-fit: initial; }
   background: rgba(0, 0, 0, 0.06);
 }
 .msg-quote-att-media[role="button"] { cursor: pointer; }
+/* ── 引用牌 · 多图叠卡（2026-11-05 作者令逐字「引用多张图片的时候，也走叠卡」）──
+   被引消息的媒体组 ≥2 件 ⇒ 整组走**既有叠卡组件**（渲染腿 = popArtifacts.js
+   buildMediaStack，与 Pop 多图交付卡 / 用户媒体行 / 好友三窗是同一条实现：
+   前卡 + 露边层、拖划·横滑翻页、「展开 N」摊平、整面点开进 Canvas/灯箱）。
+   本节只做**宿主尺度收口**，零第二套形态：
+     · 卡面尺度单源 --ds-media-face-w 收到 96×122（11:14 预览档）：引用牌宽度 =
+       气泡宽，主会话 220 档在窄引用块里会顶出去；展开列宽度跟随折叠卡脸
+       （组件内 refitExpanded），故叠卡态与展开态同宽。
+     · 行内允许换行（窄引用块时「展开 N」落到下一行，不横向溢出、不压摘要行）；
+     · 不新增任何厚度道具 —— 卡影/留黑底/圆角/扇形变换全部来自既有
+       .ds-media-card / .media-layer.layer-* 规则，本节零 box-shadow 零渐变。 */
+.msg-quote-atts--stack { align-items: flex-start; }
+.msg-quote-atts--stack .pop-stack-area {
+  /* min(96px, 100%)：文字很短的引用牌（引用块宽 = 气泡宽，实测可窄到 90 余 px）
+     里卡脸跟着收，绝不横向顶出引用块；常规宽度下即 96×122（11:14）一档 ——
+     引用牌是**预览**位（原形态 48px 缩略），卡脸不再按主会话 220 档铺开。
+     width:100% 是这条百分比的解析基准 —— 叠卡区在 .msg-quote-atts 里是 flex
+     子项，不撑满就退化成 max-content（实测卡脸被压到 90px）。 */
+  --ds-media-face-w: min(96px, 100%);
+  width: 100%;
+  gap: var(--ds-space-2);
+  flex-wrap: wrap;
+}
 .msg-quote-att-img {
   width: 100%;
   height: 100%;
