@@ -3326,6 +3326,11 @@ object WebSocketRoutes:
     frozenSince: Option[Long] = None, // 错误冻结批 2026-11-01: 冻结时刻（DelegateRegistry.frozenSince）——快照行「已冻结」徽标数据源（与 standby 的「待命」显式区分）；None = 非冻结
     frozenReason: Option[String] = None, // 错误冻结批 2026-11-01: 冻结原因线值（`delegate-frozen:<reason>`）——徽标 tooltip / 详情卡原因行
     wakeAddress: Option[String] = None, // 错误冻结批 2026-11-01: 唤醒地址（`delegate:<id>`）——详情卡「唤醒」按钮的动作载荷
+    // name/address 批（2026-11-05）：本行的 Mail 续传地址——MailAddress 单点推导
+    // （delegate:<id> / kernel:<id> / node:<节点名>），与 AgentControl list/status 同源。
+    // 面板行的地址 chip 只**读**它（前端零推导：地址是「可原样粘进 Mail」的令牌，
+    // 两个推导点就是两种形态的温床）。None = 本 kind 无 Mail 面 ⇒ 空串（falsy 契约）。
+    mailAddress: Option[String] = None,
     freezeTruth: Option[nebflow.actor.FreezeTruth] = None // 冻结状态两套真相批 2026-11-05: 调用方预算的单一真相（缺省 = 本函数按 rec + 落盘槽自算，逐字节兼容旧调用方）
   ): Json =
     // 冻结态诚实呈现批（2026-11-05）：快照行的**呈现分类**随快照出帧——与线包
@@ -3372,6 +3377,10 @@ object WebSocketRoutes:
       // routeWsSend 在 agentStart 同键注入）——前端行首扫读名数据源；空串 = 无名
       // 旧数据（前端回落既有截断式标题显示，falsy 契约同 project/taskId）。
       "delegateName" -> delegateName.getOrElse("").asJson,
+      // name/address 批（2026-11-05）：Mail 续传地址随快照出帧（与 AgentControl
+      // list/status 同一推导点 MailAddress）——后台代理面板行渲染地址 chip。
+      // 空串 = 本 kind 无 Mail 面（falsy 契约同 project/taskId）。
+      "mailAddress" -> mailAddress.getOrElse("").asJson,
       "kind" -> rec.kind.toString.asJson,
       "task" -> meta.map(_.name).getOrElse("").asJson,
       // 2026-08-22 缺口 2：快照自带可刷新恢复三字段（向后兼容——旧字段不动，
