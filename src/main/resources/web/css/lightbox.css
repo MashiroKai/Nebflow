@@ -15,8 +15,6 @@
   align-items: center;
   justify-content: center;
   background: var(--nf-lightbox-backdrop);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
   cursor: zoom-out;
 }
 .nf-lightbox.on { display: flex; }

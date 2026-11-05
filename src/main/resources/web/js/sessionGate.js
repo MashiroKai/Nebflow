@@ -154,8 +154,11 @@ function showBanner(source) {
     'display:flex;align-items:center;gap:var(--ds-space-2);max-width:92vw;padding:var(--ds-space-block-y) var(--ds-space-4);' +
     'border-radius:var(--ds-radius-xl);background:rgba(28,30,38,0.92);color:#f4f5f7;' +
     "font:var(--ds-fs-body)/1.5 -apple-system,'Segoe UI',sans-serif;" +
-    'box-shadow:0 6px 24px rgba(0,0,0,0.28);border:1px solid rgba(255,255,255,0.12);' +
-    'backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);';
+    'box-shadow:0 6px 24px rgba(0,0,0,0.28);border:1px solid rgba(255,255,255,0.12);';
+  // glass-unify 批 2026-11-05：此处原有一条 blur(8px) —— 底已是 α.92 的近实心
+  // 深色 toast，8px 模糊在 8% 的透光里根本不可见，属「挂着毛玻璃却不像毛玻璃」
+  // 的第二处 backdrop-filter。按「全站只有一处毛玻璃」摘除（零视觉变化），
+  // 不改成 .nf-glass：这是深色提示条，不是玻璃面。
   const glyph = document.createElement('span');
   glyph.setAttribute('aria-hidden', 'true');
   glyph.style.cssText =

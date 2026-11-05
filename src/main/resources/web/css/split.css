@@ -102,9 +102,7 @@
 .fm-context-menu {
   position: fixed;
   z-index: 5000;
-  background: var(--glass-bg, rgba(255,255,255,0.92));
-  -webkit-backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.2);
+  background: var(--nf-glass-bg);
   border: 1px solid var(--glass-border, rgba(0,0,0,0.08));
   border-radius: var(--ds-radius-input);
   box-shadow: 0 4px 16px rgba(0,0,0,0.12);
@@ -243,9 +241,7 @@
   align-items: center;
   gap: var(--ds-space-2);
   padding: var(--ds-space-1h) var(--ds-space-1h) var(--ds-space-1h) var(--ds-space-3);
-  background: var(--glass-bg, rgba(255, 255, 255, 0.92));
-  -webkit-backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.2);
+  background: var(--nf-glass-bg);
   border: 1px solid var(--glass-border, var(--color-frame-border));
   border-radius: var(--ds-radius-button);
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.20), 0 0 0 1px rgba(255, 255, 255, 0.04) inset;
@@ -286,7 +282,7 @@
 .explorer-selection-delete:hover .st-ic { color: var(--color-surface); }
 @media (prefers-color-scheme: dark) {
   .explorer-selection-bar {
-    background: var(--glass-bg, rgba(28, 31, 39, 0.85));
+    background: var(--nf-glass-bg);
   }
   .explorer-selection-delete:hover {
     color: var(--color-text);
@@ -528,9 +524,7 @@ button.dev-chip {
   align-items: center;
   gap: var(--ds-space-2);
   padding: var(--ds-space-1h) var(--ds-space-2) var(--ds-space-1h) var(--ds-space-inline-x);
-  background: var(--glass-bg, rgba(255, 255, 255, 0.92));
-  -webkit-backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.2);
+  background: var(--nf-glass-bg);
   border: 1px solid var(--glass-border, var(--color-frame-border));
   border-radius: var(--ds-radius-button);
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.20), 0 0 0 1px rgba(255, 255, 255, 0.04) inset;
@@ -542,7 +536,7 @@ button.dev-chip {
   to   { opacity: 1; transform: none; }
 }
 @media (prefers-color-scheme: dark) {
-  .explorer-pickup-bar { background: var(--glass-bg, rgba(28, 31, 39, 0.85)); }
+  .explorer-pickup-bar { background: var(--nf-glass-bg); }
 }
 .explorer-pickup-bar .bar-ic { display: inline-flex; flex: 0 0 auto; }
 .explorer-pickup-bar .bar-ic svg { width: 12px; height: 12px; color: var(--status-error-icon); }
@@ -614,8 +608,6 @@ button.dev-chip {
   min-width: 0;
   position: relative;
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: var(--ds-border-width) solid var(--ds-border-glass);
   border-radius: var(--ds-radius-shell);
   opacity: 0;
@@ -763,8 +755,6 @@ body.canvas-open.canvas-overlay #canvas-panel {
   background:
     linear-gradient(90deg, transparent 10%, var(--sapphire-refraction) 50%, transparent 90%) center top / 80% 1px no-repeat,
     var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   color: var(--color-frame-text-bright);
   font-size: var(--ds-fs-subtitle);
   font-weight: var(--ds-fw-btn);
@@ -981,8 +971,6 @@ body:not(.mobile-layer) .canvas-header .canvas-close-btn {
   max-width: 180px;
   background:
     linear-gradient(180deg, var(--ds-tab-active-hi), var(--ds-tab-active-hi-soft));
-  -webkit-backdrop-filter: blur(12px) saturate(1.4);
-  backdrop-filter: blur(12px) saturate(1.4);
   color: var(--color-text);
   border-radius: var(--ds-radius-chip);
   border: var(--ds-border-width) solid var(--ds-tab-active-border);
@@ -1445,8 +1433,6 @@ body.canvas-deck-narrow .canvas-title { max-width: none; }
      CR2-5 存量红，HEAD 实证同败）。中心覆层（.is-center）背景/滤镜自覆写，
      本条只作用于缘位可见药丸。 */
   background: var(--g2-input-bg);
-  -webkit-backdrop-filter: blur(24px) saturate(1.6);
-  backdrop-filter: blur(24px) saturate(1.6);
   box-shadow:
     inset 0 1px 0 var(--g2-input-specular),
     0 8px 24px var(--g2-input-shadow);
@@ -1609,8 +1595,6 @@ body.canvas-deck-narrow .canvas-title { max-width: none; }
       var(--glass-bg);
     border-color: var(--ds-border-glass);
     border-bottom-color: transparent;
-    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-    backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
     box-shadow: var(--ds-shadow-float);
   }
   /* 标签层：可辨识前缀 + 关键尾部（「头…尾」由 canvas.js 按实时可用宽切好，
@@ -1739,8 +1723,6 @@ body.mobile-layer #canvas-head-close { display: none !important; }
   flex-direction: column;
   border-radius: var(--ds-radius-card-md);
   background: var(--card-bg);
-  -webkit-backdrop-filter: blur(14px) saturate(1.1);
-  backdrop-filter: blur(14px) saturate(1.1);
   /* UI 批 ⑤：1px 硬描边退役（透明占位保布局盒不变），边缘读感交给投影羽化；
      顶部一条内嵌高光保留玻璃体量（内高光不是描边，不产生硬边感） */
   border: var(--ds-border-width) solid transparent;
@@ -2384,8 +2366,6 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   border-radius: var(--ds-radius-xl);
   border: 1px solid var(--glass-border);
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   box-shadow: var(--frost-shadow);
   font-size: var(--ds-fs-body);
 }
@@ -2572,8 +2552,6 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   border-radius: var(--ds-radius-xl);
   border: 1px solid var(--glass-border);
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   box-shadow: var(--frost-shadow);
   font-size: var(--ds-fs-body);
 }
@@ -2605,8 +2583,6 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   border-right: 1px solid var(--glass-border);
   border-radius: 0 12px 12px 0;
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   box-shadow: var(--frost-shadow);
   font-size: var(--ds-fs-body);
   box-sizing: border-box;
@@ -2761,8 +2737,6 @@ mark.nf-anno[data-anno-stale] {
   border-radius: var(--ds-radius-button);
   border: 1px solid var(--glass-border);
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   box-shadow: var(--frost-shadow);
 }
 .epub-anno-bar[hidden] { display: none; }
@@ -3207,8 +3181,6 @@ body.mobile-layer .cvv-time {
   padding: var(--cv-pad-bar-sm, 4px);
   border-radius: var(--cv-radius-bar-sm, 10px);
   background: var(--cv-bg, var(--glass-bg));
-  backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
-  -webkit-backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
   border: 1px solid var(--cv-border, var(--glass-border));
   box-shadow: var(--cv-shadow);
 }
@@ -3675,8 +3647,6 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="markdown"] .canvas-find-togg
   border-radius: var(--cv-radius-bar, 12px);
   border: 1px solid var(--cv-border, var(--glass-border));
   background: var(--cv-bg, var(--glass-bg));
-  -webkit-backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
-  backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
   box-shadow: var(--cv-shadow);
   animation: nfFindbarIn .16s ease;
 }
@@ -3835,8 +3805,6 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
 .wg-tip {
   position: absolute; z-index: 30; display: none; max-width: 320px;
   background: var(--glass-bg, var(--wg-card));
-  -webkit-backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.15);
   border: 1px solid var(--glass-border, var(--wg-border));
   border-radius: var(--ds-radius-xl); padding: var(--ds-space-block-y) 14px;
   box-shadow: var(--frost-shadow, 0 8px 28px rgba(0, 0, 0, 0.10));
@@ -3875,9 +3843,7 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
   z-index: 900;
   display: none;
   max-width: 340px;
-  background: var(--glass-bg, rgba(255, 255, 255, 0.55));
-  -webkit-backdrop-filter: blur(var(--glass-blur, 24px)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur, 24px)) saturate(1.15);
+  background: var(--nf-glass-bg);
   border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.35));
   border-radius: var(--ds-radius-xl);
   padding: var(--ds-space-block-y) 14px;
@@ -4004,8 +3970,6 @@ a.nf-term:hover { border-bottom-color: currentColor; }
   border: 1px solid var(--glass-border);
   border-radius: var(--ds-radius-pill);
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   color: var(--color-frame-text-bright, var(--color-text));
   font-size: var(--ds-fs-btn);
   font-weight: 500;
@@ -4082,8 +4046,6 @@ body.wg-side-active #panel-sessions #explorer-section { display: none; }
 .wg-switch-select {
   width: 100%;
   border: 1px solid var(--glass-border); background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   box-shadow: var(--frost-shadow);
   color: var(--color-frame-text); font: inherit; font-size: var(--ds-fs-hint);
   border-radius: var(--ds-radius-button); padding: var(--ds-space-1h) var(--ds-space-2); outline: none; cursor: pointer;
@@ -4111,8 +4073,6 @@ body.wg-side-active #panel-sessions #explorer-section { display: none; }
   flex: none;
   display: flex; align-items: center; gap: var(--ds-space-2);
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
   border-radius: var(--ds-radius-button); padding: var(--ds-space-1h) var(--ds-space-inline-x);
   box-shadow: var(--frost-shadow);
@@ -4131,8 +4091,6 @@ body.wg-side-active #panel-sessions #explorer-section { display: none; }
    （小控件不挂折射线）。`.on` = 选中态 accent 材质，不在本契约内。 */
 .wg-chip {
   border: 1px solid var(--glass-border); background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   box-shadow: var(--frost-shadow);
   color: var(--color-frame-text-muted); border-radius: var(--ds-radius-pill); padding: var(--ds-space-1) var(--ds-space-inline-x);
   font: inherit; font-size: var(--ds-fs-hint); cursor: pointer; outline: none;

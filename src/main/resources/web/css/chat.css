@@ -63,8 +63,6 @@
     var(--glass-refraction-line,
       linear-gradient(90deg, transparent 10%, var(--sapphire-refraction) 50%, transparent 90%)) center top / 80% 1px no-repeat,
     var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
   /* Header 底缘零边界批（2026-10-22 作者追加令「Header 下面有一个边缘…要移除」）：
      消息气泡上滑穿入 Header 下时，底缘 1px border 在泡上衬出一条横向灰线。
@@ -154,8 +152,6 @@
 @media (hover: hover) {
   #header .memory-btn:hover {
     background: var(--glass-control-bg-hover);
-    -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-    backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
     border-color: var(--glass-control-border);
     color: var(--color-frame-text);
   }
@@ -185,8 +181,6 @@
 @media (hover: hover) {
   #header #search-btn:hover {
     background: var(--glass-control-bg-hover);
-    -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-    backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
     border-color: var(--glass-control-border);
     color: var(--color-frame-text);
   }
@@ -826,8 +820,6 @@
   top: 50px;
   right: 24px;
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: var(--ds-border-width) solid var(--ds-border-glass);
   border-radius: var(--ds-radius-card-md);
   min-width: 280px;
@@ -3072,8 +3064,6 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   font-size: var(--ds-fs-body);
   line-height: 1.4;
   background: var(--glass-control-bg);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   box-shadow:
     inset 0 1px 0 var(--glass-control-highlight),
     inset 0 -1px 0 var(--glass-control-underedge),
@@ -3181,8 +3171,6 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   line-height: 1.4;
   text-align: left;
   background: var(--glass-control-bg);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   box-shadow:
     inset 0 1px 0 var(--glass-control-highlight),
     inset 0 -1px 0 var(--glass-control-underedge),
@@ -3920,8 +3908,6 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   border: 1px solid rgb(var(--sapphire) / 0.35);
   border-radius: var(--ds-radius-xl);
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   color: var(--color-text);
   cursor: pointer;
   text-align: left;
@@ -4296,8 +4282,6 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   letter-spacing: 0;
   color: var(--color-text);
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
   border-radius: var(--ds-radius-pill);
   cursor: pointer;
@@ -5322,7 +5306,9 @@ object.search-media-thumb { object-fit: initial; }
   margin: 0 0 var(--ds-space-1h);
   padding: var(--ds-space-1h) var(--ds-space-inline-x);
   border-radius: var(--ds-radius-button);
-  background: rgba(0, 0, 0, 0.035);
+  /* glass-unify 批 2026-11-05：原 rgba(0,0,0,.035) 是「人肉半透明」——背后的
+     正文整段透上来（作者实拍图1 的引用牌就是它）。材质改由 .nf-glass 单源供给
+     （msgQuote.js 挂类），本文件只留几何。 */
   box-shadow: none;
   font-size: var(--ds-fs-hint);
   line-height: 1.45;
@@ -5388,9 +5374,8 @@ object.search-media-thumb { object-fit: initial; }
 @media (prefers-color-scheme: dark) {
   .nf-qicon.is-thumb { background: rgba(255, 255, 255, 0.09); }
 }
-@media (prefers-color-scheme: dark) {
-  .msg-quote-block { background: rgba(255, 255, 255, 0.055); }
-}
+/* glass-unify 批：引用块暗档的半透明洗色（rgba(255,255,255,.055)）随材质归一
+   到 .nf-glass 退役 —— 暗档形态由 --nf-glass-bg 的暗值单源给出。 */
 /* 引用块宽度约束（2026-10-20）：复合盒仅由「引用块 + 文本气泡同时在场」的两条
    渲染腿（chat.js renderUserBubble / persistence.js restoreFromBackendHistory）
    包裹 —— 本征宽纯由气泡贡献（引用块 width:0 ⇒ max-content 贡献归零；

@@ -24,8 +24,6 @@
   flex-direction: column;
   min-height: 0;
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
   border-radius: var(--ds-radius-card-md);
   padding: var(--ds-space-2) var(--ds-space-3) var(--ds-space-1h);

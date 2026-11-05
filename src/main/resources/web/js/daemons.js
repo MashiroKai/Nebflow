@@ -28,8 +28,6 @@ const DAEMON_CSS = `
 }
 #daemon-btn:hover {
   background: var(--glass-control-bg-hover);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   border-color: var(--glass-control-border);
   box-shadow:
     inset 0 1px 0 var(--glass-control-highlight),
@@ -45,8 +43,6 @@ const DAEMON_CSS = `
   position: absolute; top: 56px; right: 16px; width: 400px;
   max-height: min(540px, 70vh);
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border-radius: var(--ds-radius-card-lg); border: 1px solid var(--sapphire-edge);
   box-shadow:
     inset 0 -1px 0 0 rgba(91, 127, 191, 0.025),
@@ -105,8 +101,6 @@ const DAEMON_CSS = `
 .daemon-close-btn:hover {
   opacity: 1;
   background: var(--glass-control-bg-hover);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   border-color: var(--glass-control-border);
   box-shadow:
     inset 0 1px 0 var(--glass-control-highlight),
@@ -222,8 +216,6 @@ const DAEMON_CSS = `
   font: 500 var(--ds-fs-meta) -apple-system, sans-serif; padding: var(--ds-space-1) var(--ds-space-inline-x);
   border-radius: var(--ds-radius-input); border: 1px solid transparent;
   background: var(--glass-control-bg);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   box-shadow:
     inset 0 1px 0 var(--glass-control-highlight),
     inset 0 -1px 0 var(--glass-control-underedge);
@@ -241,8 +233,6 @@ const DAEMON_CSS = `
 }
 .daemon-btn-icon:hover {
   background: var(--glass-control-bg-hover);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   border-color: var(--glass-control-border);
   box-shadow:
     inset 0 1px 0 var(--glass-control-highlight),

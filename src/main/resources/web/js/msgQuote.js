@@ -584,7 +584,9 @@ function renderQuoteAttStrip(atts) {
 export function renderQuoteBlock(quote) {
   const q = quoteViewOf(quote);
   const box = document.createElement('div');
-  box.className = 'msg-quote-block';
+  // glass-unify 批 2026-11-05：引用卡/胶囊挂唯一毛玻璃工具类（作者令「所有需要
+  // 毛玻璃的面板/浮层/卡片/胶囊一律用它」；实拍图1 那张半透明引用牌就是这里）。
+  box.className = 'msg-quote-block nf-glass';
   if (!q || (!q.excerpt && !q.refMessageId)) {
     box.dataset.quoteJump = 'none';
     const note = document.createElement('div');

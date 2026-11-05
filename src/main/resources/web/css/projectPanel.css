@@ -393,8 +393,6 @@
   border-radius: 50%;
   border: 1px solid var(--glass-control-border);
   background: var(--glass-control-bg);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -433,8 +431,6 @@
   border-radius: 50%;
   border: 1px solid var(--glass-control-border);
   background: var(--glass-control-bg);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -549,8 +545,6 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .flowmap-nav-bar 
   border-bottom-color: transparent;
   border-radius: var(--ds-radius-pill);
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
 }
 body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .delegate-chain-view-body {
   padding-top: var(--panel-head-2row);
@@ -696,8 +690,6 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .delegate-chain-v
   flex-direction: column;
   gap: var(--ds-space-half);
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
   border-radius: var(--ds-radius-button);
   box-shadow:
