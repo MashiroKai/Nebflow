@@ -354,6 +354,10 @@ export const KEYS = {
   cardWindow: 'cardWindow',
   /** 命令面板是否打开（由命令面板自己维护） */
   paletteOpen: 'paletteOpen',
+  /** 当前活动页签是不是视频面（派生：viewers/video.js 注册 provider） */
+  canvasVideoOpen: 'canvasVideoOpen',
+  /** 焦点是否落在画布视频控件面内（派生：viewers/video.js 注册 provider） */
+  canvasVideoFocus: 'canvasVideoFocus',
 };
 
 /**

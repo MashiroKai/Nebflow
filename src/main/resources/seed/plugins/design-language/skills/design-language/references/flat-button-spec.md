@@ -91,6 +91,12 @@ status: active
 见本批交付报告（`<dataRoot>/projects/stand/.stand/docs/flat-button-everywhere__*.md`
 §②）的盘点表：46 个登记族的六态现状、处置与证据。族表以那份表为准并随批追加。
 
+### 4.1 随批追加的族
+
+| 批次 | 按钮族 | 落点 | 六态 | 备注 |
+|---|---|---|---|---|
+| canvas-video-player（2026-11-05） | `.canvas-video-btn` | `web/css/split.css`（几何/配色）+ `web/css/flatButtons.css` 共享态层（六态）+ `web/js/viewers/video.js`（DOM/行为） | 默认（透明底 + 无边框）/ hover（`--btn-hover-bg`，关在 `(hover:hover)`）/ 按下（`--btn-press-bg` + `scale(--btn-press-scale)`）/ `:focus-visible`（2px 描边环 + 2px offset）/ `:disabled`（画中画在不支持的浏览器上）/ 触屏档（`--btn-press-scale-touch` + 更深底色） | 画布视频自研控件族（播放/静音/画中画/全屏）。进度条与音量条是 `role="slider"` 的滑轨件（不是按钮），零厚度道具走同一口径；本族随 `check-flat-buttons.mjs` 判据全绿，未申请任何例外。 |
+
 ## 例外清单
 
 格式：`| 选择器片段 | 禁项号 | 理由 |`。选择器片段按**包含匹配**（写 `.g2-pill` 即覆
