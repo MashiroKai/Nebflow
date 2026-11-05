@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>放大 · 单组方案</title>
+<link rel="stylesheet" href="toggle.css">
+<script src="page.js" defer></script>
+<style>
+  /* 放大页：整页按 2.6 倍布局缩放（zoom = 布局缩放，1px 描边与 11px 字重新光栅化，
+     不会像 transform: scale 那样把细线拉毛）。浅/深两栏并排，各显示五态。 */
+  body.togpage { padding: 16px; }
+  main { max-width: 1200px; margin: 0 auto; }
+  /* 1200px 父宽 ÷ zoom 2.0 = 600px 布局宽：104px 方案名列 + 5 态各 ~91px。
+     控件在图上被放到 2.0 倍（虚线描边、1px 环、11px 字都看得清），一行 5 态 +
+     浅深两栏一次看完。 */
+  .zoombox { zoom: 2; max-width: 1600px; margin: 0 auto 18px; }
+  .zoombox .zrow { grid-template-columns: 104px repeat(5, 1fr); gap: 8px; }
+  .zoombox .zrow .zcell { min-width: 0; }
+  .zoombox > h2 {
+    margin: 0 0 10px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--tog-ink-muted);
+  }
+  .zoombox.pane { display: block; }
+</style>
+</head>
+<!--
+  放大页：一页只出**一组**方案（?option=A|B|C|D|E），五态并排 ×（浅/深两栏）。
+  用途 = 判据里「每方案一张放大图」。与 index.html 共用 toggle.css + page.js 单源。
+-->
+<body class="togpage">
+
+<main>
+  <section class="pane zoombox" data-theme="light" aria-label="浅色主题放大">
+    <h2>light · 浅色 · 放大 2.0×</h2>
+    <div data-render-host data-theme="light" data-mode="zoom"></div>
+  </section>
+
+  <section class="pane zoombox" data-theme="dark" aria-label="深色主题放大">
+    <h2>dark · 深色 · 放大 2.0×</h2>
+    <div data-render-host data-theme="dark" data-mode="zoom"></div>
+  </section>
+</main>
+
+</body>
+</html>
