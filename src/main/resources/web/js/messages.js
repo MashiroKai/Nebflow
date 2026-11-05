@@ -143,6 +143,15 @@ import { buildMediaFlat, buildMediaStack, buildFileCard, extOf, fitMediaBox, mar
 let conversations = [];
 let friendsCache = [];          // accepted friends — source of truth for §3.3 gate
 let friendsFetchedAt = 0;       // ⑨ L1 新鲜度锚：好友列表最后一次成功拉取时刻
+// ── 会话列表**取数失败态**（empty-state-must-not-lie 批 2026-11-05）────────────
+// `null` = 上一次会话列表取数**成功**（或尚未取过）；否则 = `errKind()` 读数
+// （'auth' / 'neblinkOff' / 'retryable' / 'terminal'）。
+// 🔴 它存在的唯一理由：**失败绝不许渲染成空态**。「取数失败」与「服务端明确答复
+// 没有会话」是两个不同事实，混成一句「暂无会话」= 把故障伪装成正常空列表 ——
+// 2026-11-05 事故现场：`GET /api/conversations` 被误删（6c1feea6d），前端 404 被
+// 吞掉 ⇒ 面板渲染「暂无会话」，一天无人发现。渲染判据链（`renderListInner`）
+// 因此固定为：未登录 → 取数失败态 → 真空态 → 列表，逐级只认前一档。
+let convListError = null;
 let openConvId = null;          // conversation shown in the chat modal
 let modalEls = null;            // {overlay, flow, input, sendBtn, toast}
 let triggeringRow = null;       // for focus return (A18)
@@ -515,50 +524,72 @@ async function refreshConversations({ friends = 'reuse' } = {}) {
     || friendsCache.length === 0
     || (Date.now() - friendsFetchedAt) > CACHE_TTL_MS;
   let friendsRefreshed = false; // ③ 本拍是否真的换上了新快照（补判的判据，见函数尾）
+  let devices = [];
   try {
-    const [convs, fr, grp] = await Promise.all([
-      api.getConversations(),
-      wantFriends ? api.getFriends() : Promise.resolve(null),
+    // 会话列表腿**独立**取数（empty-state-must-not-lie 批）：旧形态三项同挂一个
+    // `Promise.all` ⇒ 任一项 reject 就让会话列表整批丢弃，且外层 `catch` 静默 ⇒
+    // 列表落到 `conversations = []`，渲染成「暂无会话」。现在会话列表的失败只落
+    // `convListError`（→ 错误态），**不**牵连同拍的好友/群腿，也**不**清空既有行。
+    const [convRes, fr, grp] = await Promise.all([
+      api.getConversations().then(
+        rows => ({ rows, err: null }),
+        err => ({ rows: null, err })),
+      wantFriends
+        // 好友腿失败 ⇒ null（= keep-last-known 既有的第三态），**不**让它拖垮会话
+        // 列表这一腿（旧形态共用一个 `Promise.all`：好友 5xx 会把已到手的会话行
+        // 一起丢掉，同属「失败伪装成空」的同一族）。
+        ? api.getFriends().catch(() => null)
+        : Promise.resolve(null),
       // 群取数独立兜底（禁拖垮单聊刷新）：失败/不可用按 refreshGroups 三态
       // 语义落（null = keep-last-known；404 = 空集 + fail-closed 翻面）。
       refreshGroups(),
     ]);
-    const direct = convs || [];
+    // 失败态与成功态**互斥落位**：成功一次即清零（错误态不得粘滞到下次成功）。
+    convListError = convRes.err ? api.errKind(convRes.err) : null;
+    const direct = convRes.err ? null : (convRes.rows || []);
     // 设备会话行（设备会话统一批 MVP-1 · 卡 A3 合并点）：**本账号自有设备** ⇒
     // 与好友行/群行同列同排序（排序键 = lastMessage.createdAt 不变）。
     // MVP-2：服务端 `kind:'device'` 行优先（未读/预览权威），peers 派生行只补空缺
     // （归并见 `deviceConvs`）。🔴 服务端设备行**本来就会**出现在 `direct` 里
     // （网关透传 `kind`/`deviceId`）⇒ 必须先从 `direct` 剔除再并入，否则同一设备
     // 出两行（一行无设备档案、一行派生）。
-    const serverDeviceRows = direct.filter(c => c && c.kind === 'device');
-    const directNonDevice = direct.filter(c => !(c && c.kind === 'device'));
-    const devices = deviceConvs(serverDeviceRows);
-    if (grp) {
-      // pendingInvites 的消费方是 contacts 面的群邀请区（它自己调 refreshGroups，
-      // 与面板独立刷新同构）；messages 面只消费 groups。
-      conversations = directNonDevice.concat(grp.groups || []).concat(devices);
-    } else {
-      // keep-last-known：群面取数失败（auth/网络/5xx）⇒ 既有群行原样保留，
-      // 只刷新单聊行（与好友域「失败≠空」同口径，禁闪空列表）。
-      const prevGroups = conversations.filter(c => c && c.kind === 'group');
-      conversations = directNonDevice.concat(prevGroups).concat(devices);
+    if (direct) {
+      const serverDeviceRows = direct.filter(c => c && c.kind === 'device');
+      const directNonDevice = direct.filter(c => !(c && c.kind === 'device'));
+      devices = deviceConvs(serverDeviceRows);
+      if (grp) {
+        // pendingInvites 的消费方是 contacts 面的群邀请区（它自己调 refreshGroups，
+        // 与面板独立刷新同构）；messages 面只消费 groups。
+        conversations = directNonDevice.concat(grp.groups || []).concat(devices);
+      } else {
+        // keep-last-known：群面取数失败（auth/网络/5xx）⇒ 既有群行原样保留，
+        // 只刷新单聊行（与好友域「失败≠空」同口径，禁闪空列表）。
+        const prevGroups = conversations.filter(c => c && c.kind === 'group');
+        conversations = directNonDevice.concat(prevGroups).concat(devices);
+      }
+      conversations = conversations.sort((a, b) =>
+        (toEpochMs(b.lastMessage?.createdAt) || 0) - (toEpochMs(a.lastMessage?.createdAt) || 0));
+      // 契约加性 viewer 字段腿：群行行内 selfUserId（§1.1 #2）+ 邀请信封面
+      // （refreshGroups 出口，§1.1 #3）—— 在场则直接学习；缺席 ⇒ 无操作，
+      // groupSelfUserId 继续走发送关联自证。
+      learnSelfFromGroupRows(conversations);
+      if (grp && grp.selfUserId) learnSelfUserId(grp.selfUserId);
     }
-    conversations = conversations.sort((a, b) =>
-      (toEpochMs(b.lastMessage?.createdAt) || 0) - (toEpochMs(a.lastMessage?.createdAt) || 0));
-    // 契约加性 viewer 字段腿：群行行内 selfUserId（§1.1 #2）+ 邀请信封面
-    // （refreshGroups 出口，§1.1 #3）—— 在场则直接学习；缺席 ⇒ 无操作，
-    // groupSelfUserId 继续走发送关联自证。
-    learnSelfFromGroupRows(conversations);
-    if (grp && grp.selfUserId) learnSelfUserId(grp.selfUserId);
+    // direct 为 null（会话列表取数失败）⇒ **keep last known**：既有行一个不动，
+    // 也不写名册快照（失败读数不得成为下一次首帧的「真值」）。
     if (fr) { friendsCache = fr.friends || []; friendsFetchedAt = Date.now(); friendsRefreshed = true; }
     // 写路径（本地层唯一写入口）：合并后的**最终快照**落盘 ⇒ 下一次面板首帧零网络。
     if (isLocalStoreEnabled()) {
-      writeRoster('conversations', conversations);
+      // 会话/设备快照只在**本次取数成功**时刷新（`direct` 非 null）——失败读数不落盘，
+      // 下一次首帧读的仍是上一次的真实快照（失败不得成为「真值」）。
+      if (direct) {
+        writeRoster('conversations', conversations);
+        if (devices.length) writeRoster('devices', devices);
+      }
       if (fr) writeRoster('friends', friendsCache);
       if (grp && Array.isArray(grp.groups)) writeRoster('groups', grp.groups);
-      if (devices.length) writeRoster('devices', devices);
     }
-  } catch { /* keep last known */ }
+  } catch { /* keep last known（末级兜底；会话列表腿的失败已在上面的 convListError 落位） */ }
   // 签名相同 ⇒ **零 DOM 操作**（卡 §4②）：内容没变时不做 innerHTML 全量重建
   // （重建会把每行头像 `<img>` 全部销毁重造，正是「每次进面板都闪一下」的机制）。
   renderListIfChanged();
@@ -595,7 +626,10 @@ async function refreshConversations({ friends = 'reuse' } = {}) {
 let renderedListSig = null;
 
 /** 会话列表内容签名（判定字段 = 卡 §4② 口径；`openConvId` 决定 aria-selected，
- *  属渲染输入 ⇒ 一并入签名，避免「跳过的重建其实该改选中态」）。 */
+ *  属渲染输入 ⇒ 一并入签名，避免「跳过的重建其实该改选中态」）。
+ *  🔴 取数失败态同样是**渲染输入**（empty-state-must-not-lie 批）：不进签名的话
+ *  「行没变、错误态翻转」会被零 DOM 闸跳过 ⇒ 错误态永远画不出来（签名闸当初就是
+ *  为「内容没变不重建」而生，错误态恰恰是内容没变而形态必须变的那一档）。 */
 function rosterSignature(list) {
   const parts = [];
   for (const c of list || []) {
@@ -608,6 +642,7 @@ function rosterSignature(list) {
     );
   }
   parts.push(`open:${openConvId || ''}`);
+  parts.push(`err:${convListError || ''}`);
   return signatureOf(parts);
 }
 
@@ -650,9 +685,9 @@ function renderListInner() {
   // 待销账数 = 胶囊计数节点（.tfl-cap-faces，展开时同节点搬进面板头），
   // 最早一条摘录 = 展开面板列表首行。旧渲染核保留于 scheduled-task.js。
   // box.appendChild(buildTodoEntryRow());
-  // 本拍 DOM 与内容指纹对齐（下一次可比对 ⇒ 相同则零重建）。三条出口（登录空态 /
-  // 列表空态 / 全量重建）都在此落位 —— `#fm-conversations` 是 index.html 的静态
-  // 节点 ⇒ 上面 `!box` 一支只在极早期（HTML 未挂载）可达，不参与指纹。
+  // 本拍 DOM 与内容指纹对齐（下一次可比对 ⇒ 相同则零重建）。四条出口（登录空态 /
+  // 取数失败态 / 列表空态 / 全量重建）都在此落位 —— `#fm-conversations` 是
+  // index.html 的静态节点 ⇒ 上面 `!box` 一支只在极早期（HTML 未挂载）可达，不参与指纹。
   const sig = rosterSignature(conversations);
 
   if (!loggedIn()) {
@@ -662,6 +697,39 @@ function renderListInner() {
     btn.addEventListener('click', () => openLoginModal());
     empty.appendChild(btn);
     box.appendChild(empty);
+    renderedListSig = sig;
+    return;
+  }
+  // 🔴 失败 ≠ 空（empty-state-must-not-lie 批 2026-11-05）：取数失败先于空态判定，
+  // 且**绝不**落到下面那条「暂无会话」。理由 = 两个事实不同：「服务端明确答复没有
+  // 会话」（可以这么说）vs「我压根没拿到答复」（说成空列表 = 把故障伪装成正常态）。
+  // 文案纪律（自解释铁律 8）：只写状态事实 + 下一步动作，一行收口；不给路径指引、
+  // 不教用户怎么排查网络。
+  if (convListError) {
+    // auth = NebLink 会话失效（网关 401 `neblink_not_logged_in`）：动作是重新登录，
+    // 重试恒无效 ⇒ 复用既有登录引导面（同一条链 openLoginModal，零新文案）。
+    if (convListError === 'auth') {
+      const relogin = el('div', 'fm-login-empty fm-list-auth');
+      relogin.appendChild(el('div', 'fm-login-text', t('messages.loginRequired')));
+      const btn = el('button', 'glass-control fm-login-btn', t('messages.login'));
+      btn.addEventListener('click', () => openLoginModal());
+      relogin.appendChild(btn);
+      box.appendChild(relogin);
+      renderedListSig = sig;
+      return;
+    }
+    const errBox = el('div', 'fm-list-error');
+    errBox.dataset.listError = convListError; // QA 断言面：可机械定位错误态与其分态
+    errBox.appendChild(el('div', 'fm-list-error-text', t('messages.listLoadFailed')));
+    const retry = el('button', 'glass-control fm-list-retry', t('messages.retry'));
+    retry.addEventListener('click', () => {
+      // 清零后立刻重取（错误态不得粘滞：成功一次会自动回到列表/空态）。
+      convListError = null;
+      renderListIfChanged();
+      void refreshConversations({ friends: 'force' });
+    });
+    errBox.appendChild(retry);
+    box.appendChild(errBox);
     renderedListSig = sig;
     return;
   }
