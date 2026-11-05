@@ -1,39 +1,67 @@
 ---
 name: wiki-docs
-description: Project wiki delivery conventions. Obsidian-compatible document vaults, cross-document references, and paper-style concept hygiene for every markdown/HTML report written inside a project workspace. Use whenever a deliverable is a document that belongs to a project's knowledge base.
+description: Project document-vault conventions. Obsidian-compatible markup kept for what the terms need (wikilinks, block anchors, word entries), plus the reading face of every document — plain words, answer first, details folded, cards per section, captioned minimal figures. Use whenever a deliverable is a document that belongs to a project's knowledge base.
 ---
 
 # Wiki Docs — project document vault conventions
 
 Every markdown/HTML document written as a project deliverable (report, review,
-design note, investigation record) is part of the project's knowledge graph.
-Write it into the vault, wire it into the graph, and keep it readable as a
-standalone paper. The graph face (nebflow wiki graph view) indexes everything
-below automatically.
+design note, investigation record) belongs to the project's document vault:
+write it into the vault, keep its terms citable vault-wide, and keep it
+readable as a standalone paper.
+
+Two faces must both hold, and they are NOT the same thing:
+
+- **The term face** (词条) — the part this standard protects hardest. A word
+  entry is a block-anchored definition the whole vault can cite by name;
+  wikilinks, block anchors, first-use citation and abbreviation expansion all
+  exist to serve it. Those requirements are kept in full.
+- **The reading face** — a person has to get the answer in ten seconds. Plain
+  words, the answer first, the argument folded away behind one click, one card
+  per part, figures that show rather than explain. This is the writing-style-v2
+  discipline (clauses ⑨⑩⑪⑫ below).
+
+The nebflow wiki graph view still indexes the vault, but the graph is no longer
+a product we build towards (author order 2026-11-05 12:09): graph-shape rules
+that served nothing but link density were dropped or downgraded in this batch,
+and nothing on the term face was touched.
 
 ## Mandatory clauses (checkable — a violation is a rework)
 
-The eight clauses below are author mandates (2026-10-21; ④ added 2026-10-29,
-term-citation batch; ⑤ added 2026-10-30, human-face batch; ⑥ added 2026-11-05,
+The twelve clauses below are author mandates (2026-10-21; ④ added 2026-10-29,
+term-citation batch; ⑤ added 2026-10-30, card-face batch; ⑥ added 2026-11-05,
 images-live-with-the-doc batch; ⑦⑧ added 2026-11-05, typography-and-abbreviations
-batch — author rulings 11:09 and 11:11), not style advice. All eight are
-machine-checkable by the validator in `scripts/check_wiki_docs.py` (Python 3
-stdlib only, zero deps) — except clause ⑤'s fence existence, which stays
-convention-enforced (skill + dispatch briefs) until the validator grows its
-existence rule (design §7.4, still open):
-
-1. **Obsidian format, every document** — written inside the vault
+batch — author rulings 11:09 and 11:11; ⑨⑩⑪ added 2026-11-05, writing-style-v2
+batch — author order 12:09; ⑫ added 2026-11-05, cite-terms-only batch), not style
+advice. All twelve are machine-checkable
+by the validator in `scripts/check_wiki_docs.py` (Python 3 stdlib only, zero
+deps) — except clause ⑤'s fence existence, which stays convention-enforced
+(skill + dispatch briefs) until the validator grows its existence rule
+(design §7.4, still open), and ⑪'s figure *style* (colours, widths, text
+budget), which a validator cannot judge — only its caption requirement is
+machine-checked:
+1. **Vault format, every document (Obsidian-compatible, kept for the terms)** —
+   written inside the vault
    `<data_root>/projects/<project>/.stand/docs/` (the project's REGISTRATION
    dir, next to its `project.json` — NOT the project workspace repo; author
    ruling 2026-11-03), with a frontmatter block (`type:` / `status:`),
-   references as wikilinks, attachments under `attachments/`.
+   references as wikilinks, attachments under `attachments/`. The
+   Obsidian-compatible part is not decoration: `[[wikilink]]` + `#heading` +
+   `^block-id` is the *only* syntax the term registry and the citation
+   resolution read — drop it and 词条 stops working.
    → check rule `obsidian-format`.
-2. **Paper-style citation graph** — when document B builds on document A, B
-   cites A at the point of use. Broken references (missing target, missing
-   `#heading` anchor, missing `^block-id`, an unregistered term short form)
-   are defects; so is an orphan document with zero outgoing and zero incoming
-   links (index/glossary exempt). → check rules `broken-link` / `broken-anchor`
-   / `broken-block` / `orphan-doc`.
+2. **Cite what you build on (断链即缺陷；连线密度只是建议)** — when document B
+   builds on document A, B cites A at the point of use. Broken references
+   (missing target, missing `#heading` anchor, missing `^block-id`, an
+   unregistered term short form) are defects. An orphan document with zero
+   outgoing and zero incoming links is NOT a defect any more (writing-style-v2
+   batch, author order 2026-11-05 12:09): that rule only ever served graph
+   link-density, and the graph is no longer built. It is printed as an
+   advisory instead. → check rules `broken-link` / `broken-anchor` /
+   `broken-block`; `orphan-doc` is advisory. Also downgraded / removed in the
+   same batch: the "A gains a See-also link back to B" reciprocity rule (gone),
+   the "wire every new document to glossary **or index.md**" requirement (the
+   glossary half survives — it is the term face; the index half is gone).
 3. **Every concept: explained or cited at first occurrence** — at a term's
    first mention there must be an inline one-sentence definition (dash /
    colon / parenthesis form), or a `[[glossary#^block-id]]` citation to the
@@ -50,21 +78,23 @@ existence rule (design §7.4, still open):
    (glossary hit wins over doc-intro hits); a short form that is neither a
    document nor a registered term is a broken link. → check rules
    `term-format` / `term-duplicate` (R4; the citation face is R2 `broken-link`).
-5. **Human face (人面子, human-face batch 2026-10-30)** — every report
-   opens with a human-face header inside a fenced ```human block, four
-   parts: **Impression → key numbers → Findings pointer → open items**
-   (template in the "Human face" section below). Inside the fence:
-   BLUF conclusion ≤3 lines, 3-7 key numbers, ≥1 key chart
-   (`![[key-chart.png]]`, caption = the conclusion sentence). Agent
-   jargon (spec pass counts, merge-queue speak, worktree, commit
-   hashes, session/chain internals) stays OUT of the human face —
-   plain wording, or a registered-term short form `[[Name]]` for the
-   terms that must stay (hover gloss via the term registry). Content
-   outside the fence is the machine face: full detail, code anchors,
-   acceptance readouts — written as fully as ever, presented folded
-   (the product renders the fence as a card and folds the rest into a
-   details drawer; plain-text channels degrade to one marker line).
-   → no validator rule yet — existence check deferred with the design
+5. **Card face — a fenced ```human block is one card (card-face batch
+   2026-10-30, re-cut 2026-11-05)** — the product renders every ```human
+   fence as ONE bordered card (`.nf-human-card`) and folds everything outside
+   the fences into a collapsed drawer (`.nf-human-details`). That is the whole
+   card mechanism; there is no second one (see "Card face" below). The
+   opening card carries four parts in plain words: **结论 → 关键数字 → 图 →
+   待你决定的事** (no English heading, no jargon: "Impression" and its Chinese
+   equivalents are on the blocklist, clause ⑨). Inside it: the conclusion in
+   ≤3 lines, 3-7 key numbers, ≥1 key chart (`![[key-chart.png]]`, caption =
+   the conclusion sentence). Agent jargon (spec pass counts, merge-queue
+   speak, worktree, commit hashes, session/chain internals) stays OUT of the
+   card — plain wording, or a registered-term short form `[[Name]]` for terms
+   that must stay (hover gloss via the term registry). Content outside the
+   fences is the machine face: full detail, code anchors, acceptance readouts
+   — written as fully as ever, presented folded. One document uses as many
+   cards as it has parts (clause ⑩).
+   → no validator rule for fence existence — deferred with the design
    (§7.4 另议); enforced by this skill + dispatch briefs until then.
 6. **Images live with the document (图随文档走, images-live-with-the-doc
    batch, author order 2026-11-05 09:24)** — an image a document shows is a
@@ -96,6 +126,60 @@ existence rule (design §7.4, still open):
    (`[[GCR]]（full name）`). Units and universal technical marks are exempt
    through the allowlist **written into this file** (not hidden in the
    script). → check rule `abbrev-expansion`; see "Abbreviations" below.
+9. **Plain words (平实语言, writing-style-v2 batch, author order 2026-11-05
+   12:09)** — write so the reader never has to decode a word twice. Blocked:
+   abstract-noun wrappers and personified jargon (the list is the marker block
+   in "Plain language" below — `人面子`, `印象`, `抓手`, `赋能`, `闭环` …). The
+   test is mechanical: **if a plain verb + noun can say it, an abstract noun
+   must not wrap it**. Say "先写结论，再写细节", not "采用结论先行的叙事结构".
+   Abbreviations still get expanded (clause ⑧); the two rules are different:
+   ⑧ is about tokens, ⑨ is about words that are already Chinese and still
+   opaque. → check rule `plain-language` (file:line + the suggested
+   replacement from the blocklist).
+10. **Answer first, details folded (结构三层, same batch)** — every document
+   has three layers, in this order: **① the overall conclusion** (one
+   paragraph at the top — the answer, not the background); **② a conclusion
+   sentence at the head of each section** (one bold line); **③ the argument
+   itself, inside a collapsed block** (`<details><summary>…</summary>`), so a
+   reader who trusts layer ② never sees layer ③ unless they click. → check
+   rules `doc-structure` (section head is not a bold one-line conclusion) and
+   `detail-fold` (a section's open prose over 600 visible characters with no
+   `<details>` block; threshold via `--fold-threshold`); templates in
+   "Document skeleton" below.
+11. **Figures show, captions speak (图简约 + 图注, same batch)** — a figure
+   carries the shape of the data, not the explanation of it. Minimal style:
+   one accent colour at most, grey ramp plus dash patterns for series, no
+   grid, no in-figure paragraphs, legend labels ≤ one short line. Everything
+   the figure cannot say in three words goes into the **caption** (`图 N …`,
+   one sentence stating the conclusion) and the body text. Every figure has a
+   caption; a caption over 120 characters is a body paragraph wearing a
+   caption's clothes. → check rule `image-caption` (missing) and the advisory
+   `image-caption-long`; parameters, positive example and the DOSTEL baseline
+   in "Figures in a document" below.
+
+12. **Cite terms only (只许引用词条, cite-terms-only batch 2026-11-05)** — a
+   reference points at a **term**, never at a document, never at a bare file
+   path. Author wording: 「以后我们就只允许引用词条，不允许引用文档」「不允许
+   引用文档和图片路径，文档就用词条，图片要么直接嵌入，要么就可以点击跳转」.
+   Allowed forms: registered-term short form `[[词条名]]` /
+   `[[词条名|显示名]]`; positional references `[[doc#^term-slug]]` /
+   `[[doc#Heading]]`; image **directly embedded** (`![[a.png]]`, `![](…)`,
+   `<img src=…>`); image **clickable** (`[说明](attachments/a.png)`,
+   `[[attachments/a.png|说明]]`). Defects: a bare `.md` path in prose
+   (`见 design/foo.md`), a markdown link to a document (`[x](foo.md)`,
+   `[x](foo.md#sec)`), a no-anchor `[[X]]` that resolves to a document but
+   not to a registered term, a plain-text image path (`attachments/a.png`,
+   `../a.jpg`, `/abs/a.png`), and a no-anchor `[[Name]]` that resolves to
+   neither a document nor a registered term. Inline code and fenced code are
+   exempt (a documented syntax example is not a citation). An inline
+   `<!-- wiki-term-exempt: 理由 -->` (same line or the line directly above,
+   non-empty reason) exempts that line — it never fails the run, but it is
+   always printed as a count, and so is a stale marker on a clean line.
+   → check rules `doc-reference` (R13) / `bare-image-path` (R14) /
+   `dangling-term` (R15). The cite-terms batch first took R7/R8/R9; it yielded
+   those numbers to the typography rules (R7 `doc-color` / R8 `doc-indent` /
+   R9 `abbrev-expansion`, landed earlier and already in force) and moved up to
+   R13–R15 — the judgement logic is unchanged, only the numbers.
 
 Run before delivering any document batch:
 
@@ -104,13 +188,21 @@ python3 ${SKILL_DIR}/scripts/check_wiki_docs.py --project <project> --glossary g
 ```
 
 - The validator has a regression fixture — `scripts/test_check_wiki_docs.py`
-  (stdlib `unittest`, builds throwaway vaults, covers rules R1–R9 and the
+  (stdlib `unittest`, builds throwaway vaults, covers rules R1–R12 + R16 (the
+  renumbered `detail-fold`), the
+  cite-terms-only trio R13–R15 and the
   red→green exit codes, including the typography/abbreviation cases: not
   expanded ⇒ flags, expanded ⇒ passes, unit allowlisted ⇒ passes, inside a
   code fence ⇒ not scanned, colour over budget ⇒ flags, missing indent ⇒
-  flags). Run it in the same breath as any validator change:
+  flags; and the writing-style-v2 cases: blocked word ⇒ flags with a
+  suggestion, blocked word inside inline code ⇒ silent, section without a
+  bold conclusion ⇒ flags, open prose over the fold threshold ⇒ flags, folded
+  prose ⇒ passes, image without a caption ⇒ flags, over-long caption ⇒
+  advisory only, orphan document ⇒ advisory only). Run it in the same breath
+  as any validator change:
   `cd scripts && python3 -m unittest test_check_wiki_docs -v`.
-- **Scope of clauses ⑦/⑧ (stock transition).** R7/R8/R9 are enforced as
+- **Scope of clauses ⑦⑧⑨⑩⑪⑫ (stock transition).** R7–R12, R16 and the cite-terms
+  trio R13–R15 are enforced as
   violations for **new-format documents**: a stage document whose filename
   time block is ≥ `20261105_111100`, or any document that declares `style:`
   in its frontmatter (opt-in), or any document at all under
@@ -119,7 +211,11 @@ python3 ${SKILL_DIR}/scripts/check_wiki_docs.py --project <project> --glossary g
   the violation list and the exit code — because 400 existing documents cannot
   be re-laid-out in one batch. Touch a legacy document and it comes into
   scope: fix what you touch. Flags: `--style-since <YYYYMMDD_HHMMSS>`,
-  `--strict-style`, `--skip-style`, `--allowlist`, `--allowlist-extra`.
+  `--strict-style`, `--skip-style`, `--allowlist`, `--allowlist-extra`,
+  `--plainwords`, `--plainwords-extra`, `--fold-threshold <chars>`,
+  `--style-since-v2 <YYYYMMDD_HHMMSS>` (R10–R12 and R16 take effect from their own
+  stamp — `20261105_130000`, this batch's delivery; the `style:` frontmatter
+  opt-in belongs to R7–R9 and does not retro-apply).
 - The vault root defaults to `<data_root>/projects/<project>/.stand/docs/`
   (`STAND_HOME` / `NEBFLOW_HOME` override the data root); `--project` defaults
   to `stand`. `--root <path>` still overrides explicitly — use it to validate a
@@ -127,15 +223,15 @@ python3 ${SKILL_DIR}/scripts/check_wiki_docs.py --project <project> --glossary g
 - Deliverables must pass with zero NEW violations (exit 0). Pre-existing
   legacy violations in the vault are not a pass for this batch — fix what you
   touch.
-- `--graph out.json` exports a WikiIndex-semantics `{nodes, edges}` JSON
-  (graph samples / offline analysis); each doc node embeds its paragraph
-  index (`paragraphs`: edge-form anchor / line range / ≤280-char excerpt —
-  the wiki-graph hover-snapshot surface) and its declared terms
-  (`terms`: name / aliases / source `glossary|doc` / rel / anchor / line
-  range / ≤280-char definition — isomorphic with WikiIndex.scala, the
-  `GET /api/wiki/term` + `nodeJson.terms[]` consumption face);
-  `--json` machine-reads the violation list; exit codes: 0 clean,
-  1 violations, 2 usage error.
+- `--graph out.json` (optional, no document-side requirement) exports the same
+  data the wiki index builds — `{nodes, edges}` — for offline analysis or a
+  one-off visualisation; each doc node embeds its paragraph index
+  (`paragraphs`: edge-form anchor / line range / ≤280-char excerpt) and its
+  declared terms (`terms`: name / aliases / source `glossary|doc` / rel /
+  anchor / line range / ≤280-char definition — isomorphic with
+  WikiIndex.scala, the `GET /api/wiki/term` + `nodeJson.terms[]` consumption
+  face, which is the term face and stays); `--json` machine-reads the
+  violation list; exit codes: 0 clean, 1 violations, 2 usage error.
 - Paragraph-level references use the two in-vault anchor forms (validated by
   the same broken-anchor/broken-block checks): `[[doc#^block-id]]` addresses
   ONE paragraph (the glossary-entry face — noun explanations), `[[doc#heading]]`
@@ -175,24 +271,25 @@ python3 ${SKILL_DIR}/scripts/check_wiki_docs.py --project <project> --glossary g
   tests, specs and configs are out of scope. Existing documents keep their
   names — no rename, no move, no retro-edit (the date-first form survives only
   on that existing stock).
-- **Sub-project vaults (multi-project graph, #744-B)**: any `<sub>/docs/`
-  directory inside the vault is its own sub-graph — a sub-project keeps the
-  same vault convention one level down (`docs/<sub>/docs/`). Sub-vault
-  documents are ISOLATED per vault (the parent graph shows them as one
-  aggregate node that drills into the child graph), so:
-  - keep each sub-vault self-contained (its own glossary/index when it grows
-    past a handful of documents);
-  - cite across vaults by the path form the target vault uses
-    (`[[<sub>/docs/topic.md]]`) — cross-vault references are counted as
-    cross-vault links, never silently broken.
+- **Sub-project vaults (#744-B, layout only)**: any `<sub>/docs/` directory
+  inside the vault is its own level — a sub-project keeps the same vault
+  convention one level down (`docs/<sub>/docs/`), so its own glossary and its
+  own term names do not collide with the parent's. Cross-level citations use
+  the target level's path form (`[[<sub>/docs/topic.md]]`) and are counted as
+  cross-level links, never silently broken. The graph view used to render a
+  parent node drilling into a child graph; that rendering is no longer a
+  requirement — the layout rule and the per-level validation stay, because a
+  term registry needs one definition source **per level**.
   Validate every level independently:
   `python3 ${SKILL_DIR}/scripts/check_wiki_docs.py --project <project> --include-subvaults`
 
 ## Document form (paper style)
 
-- The document title is the first `# H1` heading. The graph uses it as the
-  node label.
-- Structure: conclusion first, then evidence and reasoning, then appendix.
+- The document title is the first `# H1` heading. It is the document's name to
+  the reader and the label any index or listing shows.
+- Structure: the overall conclusion first (one paragraph), then one conclusion
+  sentence per section with its argument folded underneath (clause ⑩), then the
+  appendix.
 - Every new concept must be understandable at first mention: either define it
   inline in one or two sentences at the point of first use, or link the
   definition to the document/section that defines it (see references below).
@@ -298,6 +395,80 @@ skipped — **except the `human` fence**: it is a content face (clause ⑤'s key
 chart lives inside it), so its images are checked like body content. `data:`
 inline images are self-contained and pass. Migration of existing stock is the
 author's call — the validator reports, it never moves or rewrites documents.
+
+## Figures — minimal style, the caption says it (clause ⑪)
+
+Author order 2026-11-05 12:09: *"对产出的学术类的图谱，要采用我们最近画的 dostel
+的那几张图的风格，简约，突出重点，然后图里尽量少文字解释，文字解释放到文档里，
+比如图的 caption"*.
+
+### Baseline — the DOSTEL figures this clause is measured against
+
+Repo `DOSTEL` (`/Users/kaiyu/Claude code/DOSTEL`), batch written 2026-11-03 (the
+most recently produced academic figures):
+
+| Role | Path (repo-relative) |
+|---|---|
+| spectrum (raw input) | `figures/20261103_cabin_neutron_energy_weight_flux/fig2_cabin_shidi_spectrum.png` · `.svg` |
+| weighted contribution | `figures/20261103_cabin_neutron_energy_weight_flux/fig4_dose_contribution_differential.png` · `.svg` |
+| cumulative share (the answer) | `figures/20261103_cabin_neutron_energy_weight_flux/fig5_dose_contribution_cumulative.png` · `.svg` |
+| before/after column mapping | `figures/20261103_gcr_col_mapping/fig_col30_neutron_before_after.png` · `.svg` |
+| style source of truth | `figures/20261103_neutron_energy_weight_flux/scripts/fig_style.py` (imported by the later batch through `fig_style_bridge.py`, so one file defines the look) |
+
+### Measured style parameters (read from `fig_style.py`, not from memory)
+
+| Knob | Value |
+|---|---|
+| font | DejaVu Sans — axis label 14 pt, ticks 12 pt, legend 11 pt |
+| figure | 9.4 × 6.2 in at 330 dpi = 3102 px wide (the batch rule is ≥3000 px) |
+| spines | all four visible, black, 1.2 pt |
+| ticks | inward, on **all four** sides; major 5.5 pt / minor 3.0 pt; widths 1.0 / 0.8 |
+| grid | **none** |
+| in-figure title | **none** |
+| colour | grey ramp only — `#000000` `#3F3F3F` `#6E6E6E` `#9A9A9A` `#C4C4C4`; series additionally differ by dash (`-` `--` `:` `-.`) so the figure survives greyscale printing |
+| line width | 1.4–1.8 pt |
+| legend | frameless, upper left, inside the axes |
+| axes | one explicit axis spec per quantity family (ranges and ticks written out, never auto-generated) |
+| white space | white background, no panel fill, no shadow, no 3-D |
+
+### The three text rules this batch adds (the baseline had not won these yet)
+
+Honest reading of the baseline: `fig2` / `fig4` / `fig5` still carry multi-line
+legend entries and a grey explanatory footnote inside the axes. Borrow their
+visual grammar — and tighten the text:
+
+1. **No explanatory sentence inside the image.** Inside the frame: axis labels,
+   tick labels, short legend labels, at most one short reference-line label.
+   Everything else goes into the caption or the body.
+2. **One short line per legend entry** (≈30 characters). A label that needs two
+   lines is naming a *condition*, not a series — move the condition into the
+   caption (`图 X：黑线实测，灰线为 15 / 25 g/cm² 铝壳仿真`) and keep the legend
+   as `实测` / `仿真 15` / `仿真 25`.
+3. **The caption states the conclusion, not the contents.** 「图 1 危害贡献的主体
+   在 1–10 MeV 段」— not 「图 1 三条曲线的对比图」.
+
+### How a figure is placed in a document (the standard block)
+
+````markdown
+![舱内中子谱：仿真比实测软](assets/cabin-neutron-spectrum.png)
+
+图 1 舱内中子能谱的三条曲线，危害贡献的主体都落在 1–10 MeV 段。
+
+&emsp;&emsp;正文在这里引用它：**1–10 MeV 段贡献了大部分剂量**（图 1），
+低于 1 MeV 的部分可以忽略。
+````
+
+- **Caption sits directly under the image line** — `图 N …`, one sentence, ≤120
+  visible characters (`--fold-threshold` is unrelated; the caption limit is
+  `CAPTION_MAX_CHARS = 120`). Longer ⇒ advisory `image-caption-long`: the
+  caption is a conclusion, the explanation belongs in the body.
+- **The body cites the figure by number**（图 1），never by path — a bare path
+  string is not a reference.
+- **Alt text ≠ caption.** Alt text describes the image for a reader who cannot
+  see it; the caption states what the figure proves. Both, not either.
+- **The image lives in the vault** (`assets/` or `attachments/`, clause ⑥) and
+  the copy is named by the document topic, not by the evidence folder.
+- **One figure = one conclusion.** Two conclusions ⇒ two figures, or a table.
 
 ## Document typography — indent + colour (clause ⑦)
 
@@ -456,106 +627,271 @@ Prefer expansion over allowlisting whenever a reader outside the field could
 stall on the token; the list is for the handful of marks that are universal
 already.
 
-## Human face (报告头, human-face batch 2026-10-30)
+## Plain language — say it in words the reader does not decode twice (clause ⑨)
 
-Batch / investigation reports open with the four-part human-face header
-inside a ```` ```human ```` fence (设计稿: docs/design/20261030_human-readable-
-presentation.zh-CN.md, 附录 A; author ruling 2026-10-30: the human face is
-MANDATORY — an agent that forgets the fence has not delivered):
+Author order 2026-11-05 12:09: *"我们的写作要求和词汇要求，不要用晦涩难懂的
+词汇，比如人面子，印象"*. One test, applied sentence by sentence:
+
+- **Could a plain verb + noun say it?** Then no abstract noun may wrap it.
+  「先写结论，再写细节」 beats 「采用结论先行的叙事结构」 — same content, half
+  the decoding work.
+- **Does the reader have to translate the word back into an everyday act
+  before acting on it?** Then it is blocked, however fashionable it sounds.
+- **Personified or metaphor-only wording is blocked** too: it reads as insight
+  and delivers none.
+
+| Written | What the reader must do first | Write instead |
+|---|---|---|
+| `人面子` | guess which "face" this is | 报告开头的卡片 |
+| `印象` | guess whether it's a feeling | 结论摘要 |
+| 采用结论先行的叙事结构 | unpack three abstract nouns | 先写结论，再写细节 |
+| 对口径做一次对齐 | translate into an action | 把两处数字改成一致 |
+| 赋能下游 | guess who gave what to whom | 给下游提供 X |
+| 形成闭环 | guess where the loop closes | 走完一轮，回到第一步 |
+
+### The blocklist (living in this file, never in the script)
+
+`词 => 建议替换`, one per line, `#` starts a group comment. The validator
+reads this block (`--plainwords <path>` overrides it, `--plainwords-extra 词`
+adds a word for a single run) and reports the **first** hit per word per
+document with file:line plus the suggested replacement. Editing the list IS
+editing the standard.
+
+```text
+<!-- wiki-plainwords:start -->
+# 甲类 · 作者点名的词（字面就是反例）
+人面子 => 报告开头的卡片（或直接说「结论卡」）
+印象 => 结论摘要（或直接说「先看这里」）
+# 乙类 · 抽象名词包裹（用动词+名词说清）
+抓手 => 具体做法（写清谁做什么）
+赋能 => 提供 …（写清提供了什么）
+闭环 => 走完一轮（写清从哪回到哪）
+颗粒度 => 细到什么程度
+叙事 => 写法（或直接说「怎么说」）
+心智 => 理解（或直接说「看法」）
+布道 => 推广
+沉淀 => 存下来（写清存成了什么）
+对齐 => 改成一致（写清哪两处改成一致）
+<!-- wiki-plainwords:end -->
+```
+
+Scope of the scan: body lines and card (`human`) lines; fenced code blocks and
+inline code spans are NOT scanned — quoting a blocked word in backticks to
+discuss the blocklist is exactly the legitimate use, and this section itself
+does it.
+
+## Document skeleton — answer first, details folded (clause ⑩)
+
+Author order 2026-11-05 12:09: *"整体文档先有总体结论，然后再是各分点的结论，
+具体的论证细节，放在点击展开后的内容"*. Three layers, in this order:
+
+1. **Overall conclusion** — one paragraph right under the title: the answer,
+   the scope, the precondition. Not "本文分三部分", not the background.
+2. **Per-section conclusion** — the first line of every `##` section is one
+   bold sentence (`**…**`, ≤80 visible characters).
+3. **The argument** — inside a collapsed block, one click away. A reader who
+   trusts layer ② never sees layer ③; a skeptical reader opens it and gets
+   everything (data, code anchors, counter-examples).
+
+### Rendering measurement (2026-11-05, engine's vendored marked v12.0.2)
+
+| Form | Rendered | Verdict |
+|---|---|---|
+| `<details><summary>论证细节</summary>` + blank line + markdown body | raw HTML passes through verbatim, body still parsed (`<p>&emsp;&emsp;…</p>`) | **the only compliant fold** |
+| `> [!note]- 论证细节` (Obsidian callout fold) | `<blockquote><p>[!note]- 论证细节…</p>` — the marker renders as literal text, nothing folds | rejected: Obsidian-only, degrades to a quote elsewhere |
+| `<details><summary>…</summary>` with no blank line before the body | body lines stay raw text, markdown inside the fold stops working | blank line required |
+
+`<details>` is the one form both faces render: Obsidian renders raw HTML
+natively, and the engine's pipeline passes it through untouched (`utils.js`
+`renderMarkdownWithMath` → marked, same vendor bundle).
+
+### Template (copy this)
+
+````markdown
+# <topic>
+
+&emsp;&emsp;**总体结论：一句话给出答案。** 第二句补范围与前提，总长 ≤3 句。
+
+## 一、<part 1>
+
+&emsp;&emsp;**<这一节的一句话结论>**
+
+<details>
+<summary>论证细节（点击展开）</summary>
+
+&emsp;&emsp;推导 / 数据 / 代码锚点 / 反例。
+
+</details>
+
+## 二、<part 2>
+
+&emsp;&emsp;**<这一节的一句话结论>**
+
+<details>
+<summary>论证细节（点击展开）</summary>
+
+&emsp;&emsp;…
+
+</details>
+````
+
+Machine checks: `doc-structure` (a `##` section whose first prose line is not
+a bold one-liner, or is a bold paragraph over 80 characters) and `detail-fold`
+(a section holding more than **600 visible characters** of open prose and no
+`<details>` block — `--fold-threshold` retunes it). Tables, lists, code blocks
+and caption lines are compression forms and are not counted as open prose.
+
+**Exempt sections** (structure, not argument — they start with lists or
+tables and have no conclusion to state): 词条 / 附录 / 参考文献 / 变更记录 /
+目录 / glossary / references / index.
+
+## Card face — one card per part (clause ⑤, re-cut in writing-style-v2)
+
+Batch / investigation reports open with the four-part card inside a
+```` ```human ```` fence (设计稿: docs/design/20261030_human-readable-
+presentation.zh-CN.md, 附录 A; author ruling 2026-10-30: the card face is
+MANDATORY — an agent that forgets the fence has not delivered), and **every
+further part of the document gets its own card** (author order 2026-11-05
+12:09: *"每部分内容可以像目前印象一样，渲染卡片分隔开"*).
 
 ````markdown
 # <batch / investigation> report
 
 ```human
-## Impression
-<one-sentence conclusion: what was done + outcome + whether the author
-must act; ≤3 lines>
+## 结论
+<one-sentence answer: what was done + outcome + whether the author must
+act; ≤3 lines>
 
-**Key numbers**: <files changed · assertions green · time · scale, 3-7>
+**关键数字**：<files changed · assertions green · time · scale, 3-7>
 ![[key-chart.png]]   <!-- ≥1 chart; the caption IS the conclusion sentence -->
 ```
 
-## Findings
-<machine face: full detail, code anchors, acceptance readouts — written
-in full; presented folded since the human-face batch>
+```human
+## 一、<part 1>
+**<这一节的一句话结论>**
+```
 
-## Open items & deviations
-<open items, deviation declarations>
+<details>
+<summary>一、论证细节（点击展开）</summary>
+
+&emsp;&emsp;推导、数据、代码锚点。
+
+</details>
+
+```human
+## 二、<part 2>
+**<这一节的一句话结论>**
+```
+
+<details>
+<summary>二、论证细节（点击展开）</summary>
+
+&emsp;&emsp;…
+
+</details>
 ````
 
-- Impression = the human face (BLUF, zero jargon, ≤3 lines). Findings =
-  the machine face (complete detail, jargon fine). Key numbers = the
-  hinge between the two layers: 3-7 quantified readouts (files changed,
-  assertions green, wall time, scale) — the author's basis for deciding
-  whether to open the drawer.
-- One document may carry several ```human fences (a conclusion card, a
-  chart card); they render in order as cards and everything outside
-  folds into a "details (N lines)" drawer. The fence is the agent's
-  anchor for "what is written for humans" — without it the discipline
-  has no landing point.
-- Jargon ban (human face only): spec pass counts → "all tests pass" +
-  one key-numbers line; merge / merge queue → "merged into main
-  (queued)"; worktree → "working copy" or omit; chain / node / delegate
-  session → "subtask"; commit hashes stay in the machine face. Retained
-  terms that genuinely must stay are written as registered-term short
-  forms `[[Name]]` — hover gloss via the term registry (section "Terms
-  and short-form citations" above).
-- The key-chart obligation is a HUMAN-FACE obligation (Tufte: one chart,
-  one conclusion): ≥1 chart inside the fence, its caption stating the
-  conclusion, the asset under `attachments/`. Findings tables stay
-  chart-free — the chart duty does not propagate into the machine face.
+- **Which renderer this reuses (do not invent a second one).** `humanFace.css`
+  (`.nf-human-card` = bordered content card; `.nf-human-details` = collapsed
+  drawer) plus `utils.js _transformHumanFace` (utils.js:920-956): every closed
+  ```human fence becomes `<div class="nf-human-card">` with its body rendered by
+  the same markdown pipeline, and everything outside the fences is wrapped in
+  `<details class="nf-human-details">`. Cards therefore cost nothing new — the
+  fence is the card. The bordered box, radius, spacing and dark-theme flip come
+  from the existing tokens.
+- **Title line of a card**: `## <part name>` — a noun that names the part
+  ("结论", "一、配色", "要你决定的事"), never a sentence and never jargon.
+- **Inside a card**: the conclusion and the 3-7 key numbers only. The argument
+  goes into the `<details>` block right after it (layer ③), so the card stays
+  readable at a glance.
+- One document may carry as many ```human fences as it has parts; they render
+  in order as cards. Content left outside every fence folds into one
+  "details (N lines)" drawer — with per-part cards plus `<details>`, that
+  drawer is normally empty, which is the goal.
+- Jargon ban (cards only): spec pass counts → "all tests pass" + one key-number
+  line; merge / merge queue → "merged into main (queued)"; worktree →
+  "working copy" or omit; chain / node / delegate session → "subtask"; commit
+  hashes stay in the machine face. Retained terms that genuinely must stay are
+  written as registered-term short forms `[[Name]]` — hover gloss via the term
+  registry (section "Terms and short-form citations" below).
+- The key-chart obligation is a CARD obligation (Tufte: one chart, one
+  conclusion): ≥1 chart in the opening card, its caption stating the
+  conclusion, the asset under `attachments/` or `assets/`. Tables stay
+  chart-free — the chart duty does not propagate into the detail blocks.
 - Product face (already shipped, all markdown faces share one pipeline):
-  `utils.js renderMarkdownWithMath` renders the fence into
-  `.nf-human-card` and wraps outside content in `<details
-  class="nf-human-details">`; chat bubbles, canvas md viewer, wiki
-  docs, flow cards and report cards all present the same way. Streaming
-  safety: the transform engages only after every fence is closed —
-  mid-stream snapshots render as plain code blocks, nothing crashes.
-- Profile system retired (author order 2026-10-31 16:13, output-block
-  batch; design doc §6 marked deprecated): the five presentation tiers
-  and the seven per-tier parameters are gone from product AND storage —
-  figure density and length are decided by the report content itself
-  plus the long-term user profile, not by parameters. This human-face
-  template is the surviving discipline and stays mandatory.
-- `<output>…</output>` paired tags (same batch, revised to tag form at
-  16:16 to avoid markdown-syntax collision) mark user-visible content
-  in chat-facing deliverables: the product shows ONLY tagged content by
-  default — everything outside (reasoning, tool narration) is stripped
-  until the user expands the badge, and the expanded view shows the raw
-  full text with the tags verbatim; untagged legacy content renders
-  fully as before. Write tagged content WeChat-style (short direct
-  paragraphs, conclusion first); tone/length follow the user's
-  communication-style profile (`~/.stand/User.md`), defaulting to
-  concise direct Chinese. In vault documents the pipeline renders the
-  tags transparently (content shown, tags invisible). Spec: design doc
-  §11 (docs/design/20261030_human-readable-presentation.zh-CN.md).
+  `utils.js renderMarkdownWithMath` renders the fence into `.nf-human-card` and
+  wraps outside content in `<details class="nf-human-details">`; chat bubbles,
+  canvas md viewer, wiki docs, flow cards and report cards all present the same
+  way. Streaming safety: the transform engages only after every fence is
+  closed — mid-stream snapshots render as plain code blocks, nothing crashes.
+- Profile system retired (author order 2026-10-31 16:13, output-block batch;
+  design doc §6 marked deprecated): the five presentation tiers and the seven
+  per-tier parameters are gone from product AND storage — figure density and
+  length are decided by the report content itself plus the long-term user
+  profile, not by parameters. This card template is the surviving discipline
+  and stays mandatory.
+- `<output>…</output>` paired tags (same batch, revised to tag form at 16:16 to
+  avoid markdown-syntax collision) mark user-visible content in chat-facing
+  deliverables: the product shows ONLY tagged content by default — everything
+  outside (reasoning, tool narration) is stripped until the user expands the
+  badge, and the expanded view shows the raw full text with the tags verbatim;
+  untagged legacy content renders fully as before. Write tagged content
+  WeChat-style (short direct paragraphs, conclusion first); tone/length follow
+  the user's communication-style profile (`~/.stand/User.md`), defaulting to
+  concise direct Chinese. In vault documents the pipeline renders the tags
+  transparently (content shown, tags invisible). Spec: design doc §11
+  (docs/design/20261030_human-readable-presentation.zh-CN.md).
 
-## References (the graph's edges)
+```markdown
+# legacy heading kept for the record
+## Human face (报告头, 2026-10-30 batch)
+```
 
-Use Obsidian wikilinks. They render as clickable references and build the
-relationship graph:
+The section you are reading replaces that heading; documents written before
+2026-11-05 keep their `Impression` heading and are not retro-edited.
 
-- `[[auth-flow-review]]` — cite a whole document.
-- `[[auth-flow-review#Token lifetime]]` — cite a section.
+## References (citations — the term face, not a graph quota)
+
+Use Obsidian wikilinks. They render as clickable references, they resolve into
+the term registry, and they are how a reader jumps from a claim to its source:
+
+Since the cite-terms-only batch (clause ⑫, 2026-11-05) a reference must
+point at a **term** — not at a document, not at a bare path:
+
+- `[[词条名]]` / `[[词条名|显示名]]` — cite a registered term by name
+  (the only whole-target form that is still legal without an anchor).
 - `[[glossary#^retry-storm]]` — cite a concept definition block (preferred for
   concepts: the reader jumps to the exact definition and the target paragraph
   is highlighted).
+- `[[auth-flow-review#Token lifetime]]` — positional reference into a section.
+  Positional references stay legal because they resolve to a *place*, not to a
+  document identity.
 - `![[architecture.svg]]` — embed an attachment from `attachments/`.
-- Standard markdown links to vault files (`[text](topic.md)`) are also graph
-  edges; use them when portability outside Obsidian matters.
+- Not citations any more (rules R13/R14): `[text](topic.md)` (a
+  markdown link to a document), a document short form `[[some-doc]]`,
+  a bare path in prose (`见 design/foo.md`) and a plain-text image path
+  (`attachments/a.png`). Cite the term, embed the image, or link it.
 
-Citation discipline:
+Citation discipline (what survived the graph cut, 2026-11-05):
 
-- A document with zero outgoing links and zero incoming links is a defect
-  unless it is the first document in a new domain — wire new documents to at
-  least the glossary or the project's index document (`index.md` at the vault
-  root).
-- When document B builds on document A, B cites A at the point of use, and A
-  gains a "See also" link back to B when A is revised next. The pair of edges
-  is what makes the graph navigable in both directions.
+- **A source you build on is cited at the point of use.** That is all a
+  citation owes the reader — the reader can reach the source. It does NOT owe
+  the graph a link pair.
+- **A document with zero outgoing and zero incoming links** is printed as an
+  advisory, not a defect: the link-density rule only ever served the graph,
+  and a self-contained note is a perfectly good document. If the note does
+  introduce terms, register them (clause ④) — that is the face that matters.
+- **Glossary or bust:** concepts that other documents will cite belong in the
+  glossary, not in one document's body. (The old "or wire it to `index.md`"
+  requirement is gone with the graph; an index is a convenience, not a quota.)
+- **A "See also" link back** from A to B is a nice courtesy — no longer
+  required, and never retro-edited into existing documents.
 - Anchors must exist: `#heading` must match a heading in the target document;
   `^block-id` must match a block id. A reference that resolves to nothing is
   the document-level equivalent of a broken build.
+- Need to point at something that has no term yet? Declare the term
+  (`^term-<slug>` block) and cite the name — do not fall back to a document
+  link or a path.
 
 ## Concept-reference format (agent-authored reports)
 
@@ -572,8 +908,8 @@ companion markdown documents in the vault.
 ## Terms and short-form citations (词条, term-citation batch 2026-10-29)
 
 A term is a named, block-anchored definition the whole vault can cite by
-name. Two declaration faces, both derived from the block-anchor paragraphs
-the graph already indexes — never declared in frontmatter (a `terms:`
+name. Two declaration faces, both derived from the block-anchor paragraphs the
+term registry indexes — never declared in frontmatter (a `terms:`
 frontmatter list would be a second source of truth that drifts from the
 body anchors):
 
@@ -588,9 +924,9 @@ body anchors):
   ```
   ## 词条
 
-  - DCL（DOMContentLoaded 事件） — the browser's first interactive moment. ^term-dcl
+  - DCL（DOMContentLoaded 事件） — the browser's first interactive moment. #proj/stand #topic/term-index ^term-dcl
 
-  - 归因结论 — this incident was caused by config drift, not code. ^term-attribution
+  - 归因结论 — this incident was caused by config drift, not code. #proj/stand #topic/incident ^term-attribution
   ```
 
 Declaration shape (machine-checked, rule `term-format`):
@@ -606,42 +942,153 @@ Declaration shape (machine-checked, rule `term-format`):
   document self-introduces) — but `[[Name]]` then stays unresolved: the
   engine never guesses between same-tier hits.
 
+### Term tags (词条标签, term-system v2)
+
+Every term declaration carries a tag tail so the index can group terms by
+project and topic without a second source of truth. **One line, fixed order:**
+
+```
+- 词条名（别名1，别名2） — 一句话定义。 #proj/<project> #topic/<topic> [更多 #topic/…] [更多 #<facet>/<value>] ^term-<slug>
+```
+
+- **Exactly one** `#proj/<project-slug>` and **at least one**
+  `#topic/<topic-slug>`. Every other `#<facet>/<value>` is an extra facet and
+  is free-form (`#ctx/browser`, `#level/deep`, …). Facets are `facet/value`
+  pairs — one slash; `#ctx/a/b` only registers `ctx/a`.
+- **Position**: the tags sit AFTER the definition text and BEFORE the
+  `^term-<slug>` block id. The block id must be the last thing on its line.
+  The tag window is exactly "after the ` —`/`：` separator → before the block
+  id", so a tag written before the separator, or after the block id, is not
+  read at all.
+- Tags are **decoration, never identity**: they add no aliases and change no
+  citation resolution. `[[Name]]` still resolves by name/alias only.
+- `` `#x` `` inside an inline-code span is documentation, not a tag (write
+  examples backticked); fenced code never enters a paragraph at all.
+- Buckets are deduplicated and sorted by the engine, so the same declaration
+  always yields the same `{project, topic, extra}` JSON in every consumer.
+
+Valid (both buckets present, tags before the block id):
+
+```
+- DCL（DOMContentLoaded 事件） — 浏览器首次可交互的时间点。 #proj/stand #topic/term-index ^term-dcl
+
+- 归因结论 — 本批缺陷由配置漂移引入，不是代码回归。 #proj/stand #topic/incident #ctx/release ^term-attribution
+```
+
+**Invalid** — each one fails the check with the reason marked:
+
+```
+- GCR — 银河宇宙线通量。 #topic/cosmology ^gcr
+```
+✗ **missing `#proj/<slug>`** — only a topic tag was written; a term with no
+project facet is unfilterable ⇒ `term-tag-missing`.
+
+```
+- 重试风暴 — 短时高频重试打满下游配额。 #proj/stand ^term-retry-storm
+```
+✗ **missing `#topic/<slug>`** — the project tag never satisfies the topic
+requirement (`#topic/` is at least one, `#proj/` exactly one) ⇒ `term-tag-missing`.
+
+```
+- 举证窗口 — 规则允许补证的时长。 ^term-evidence-window #proj/stand #topic/compliance
+```
+✗ **tags after the block id** — `^term-evidence-window` is no longer at line end,
+so Obsidian does not treat it as a block anchor, the paragraph is not a term,
+and the tags are invisible ⇒ `term-tag-missing`.
+
+Violation code `term-tag-missing` (R4): a term declaration whose tag set has
+no `#proj/<slug>` or no `#topic/<slug>` — including the "tags after the block
+id" form, which silently loses both. Fix the declaration line; the only escape
+hatch is an inline exemption `<!-- wiki-term-exempt: 理由 -->` on the same or
+the immediately preceding line with a non-empty reason (counted separately in
+the report, never a whole-file waiver).
+
 Citation resolution for `[[Name]]` (no anchor) — fixed priority:
 
 1. exact vault-relative path → 2. unique basename document →
 3. **term registry** (a unique glossary hit beats doc-intro hits) →
-4. still ambiguous/unhit = unresolved (a broken link in R2's report).
+4. still ambiguous/unhit = unresolved (a dangling term in R15's report; a hit
+on step 1/2 with no term behind it is an R13 doc-reference).
 
 Practical discipline: cite `[[Name]]` when the name is unique vault-wide or
 glossary-defined; when you mean a SPECIFIC document's term (its plan, its
 attribution), cite `[[doc#^term-slug]]` explicitly. `[[Name|display]]`
-aliases and `![[Name]]` embeds ride the same resolution.
+aliases ride the same resolution.
 
 Engine faces that consume the registry (no extra work for the writer):
 `GET /api/wiki/term?name=…&project=…` (single lookup:
 `{found, resolved, term}` / `{resolved:false, ambiguous, candidates}` /
-404 unregistered), and each graph node's `terms[]` projection (hover
-preview + deep links). Scope v1: term definitions are a markdown face —
+404 unregistered), and each document node's `terms[]` projection (hover
+preview + deep links) — this is the term face's engine side, and it is
+untouched by the graph cut. Scope v1: term definitions are a markdown face —
 html documents get reference jumps with a document-level summary fallback,
 no html definition blocks.
 
 ## What not to do
 
-- Do not write reports outside the vault (chat-only delivery loses the graph).
-- Do not bury the conclusion in the middle of a report — the human-face
-  header (clause ⑤) is the presentation default; Findings detail never
-  precedes it.
+- Do not write reports outside the vault (chat-only delivery leaves the terms
+  unciteable).
+- Do not bury the answer — the opening card (clause ⑤) states it, every
+  section head states its own (clause ⑩); argument never precedes answers.
+- Do not write a section whose first line is a paragraph — one bold sentence
+  first, argument folded underneath.
+- Do not explain inside a figure — the frame holds labels; the caption holds
+  the conclusion; the body holds the reasoning.
+- Do not reach for an abstract noun when a verb is available (`对口径做一次
+  对齐` → `把两处数字改成一致`).
 - Do not duplicate a concept's definition in several documents — define once,
   reference everywhere else.
-- Do not use bare file paths as references; the link IS the graph edge, a
-  plain path string is not.
+- Do not use bare file paths as references; a link or a term citation is the
+  reference, a plain path string is not.
+- Do not cite a **document**: no `[[some-doc]]` short form, no
+  `[text](some-doc.md)`, no bare path in prose. Cite the term instead
+  (clause ⑫, rules R13/R15).
+- Do not write an **image path as text**: no `attachments/a.png` in prose, no
+  `../x.jpg`, no absolute path. Embed the image (`![[a.png]]`) or make it
+  clickable (`[说明](attachments/a.png)`); rule R14.
 - Do not rename documents that are already cited; fix the citing links in the
   same change instead.
 
+### Cite terms, not documents — the hard rule with examples
+
+The rule (author, 2026-11-05): 「以后我们就只允许引用词条，不允许引用文档」
+「不允许引用文档和图片路径，文档就用词条，图片要么直接嵌入，要么就可以点击跳转」.
+Every line below is checked by R13/R14/R15; inline code and fenced code are the
+only places where a path-looking string is documentation rather than a
+citation.
+
+**OK — a term, a positional reference, an embed or a clickable image:**
+
+```
+缓存击穿（cache stampede） — 同一热点键过期瞬间被并发打穿。 #proj/stand #topic/cache ^term-stampede
+见 [[缓存击穿]]；实现细节见 [[缓存设计__20261105_101500#^term-stampede]]。
+键表看 [[缓存设计__20261105_101500#Key table]]（整节定位）。
+![[stampede-chart.png]] 是这次事故的尖峰曲线。
+[stampede-chart.png](attachments/stampede-chart.png) 可点击打开原图。
+语法示例写在反引号里：`见 design/foo.md`。
+```
+
+**Not OK — each line fails, with the reason:**
+
+```
+见 design/foo.md。                          → R13 doc-reference（正文裸 .md 路径）
+细节见 [缓存设计](cache-design.md)。          → R13 doc-reference（markdown 链接指向文档）
+参考 [[cache-design]]。                      → R13 doc-reference（无锚短形解析到文档而非词条）
+截图在 attachments/stampede-chart.png 里。   → R14 bare-image-path（图片路径是纯文本）
+见 [[尚未注册的词条名]]。                     → R15 dangling-term（文档与词条双双解析不到）
+```
+
+Fixing them: declare the term (`^term-<slug>`) and cite its name; point at a
+place with `[[doc#^term-slug]]` / `[[doc#Heading]]`; embed or link the image.
+While a legacy document is being migrated in another batch, put
+`<!-- wiki-term-exempt: 理由 -->` on the offending line (or the line directly
+above) — the run stays green, but the exemption is always printed as a counted
+line in the report, and a marker on a clean line shows up as a dangling
+annotation. There is no whole-file waiver.
+
 ## Frontmatter (scenario metadata)
 
-Every vault document starts with a tiny frontmatter block — the graph reads it
-for its type/status filters:
+Every vault document starts with a tiny frontmatter block:
 
 ```
 ---
@@ -650,10 +1097,13 @@ status: open
 ---
 ```
 
-- `type` names the document's role in the scenario pack (below).
-- `status` tracks where it stands. Statuses that mark finished work
-  (`solved` / `done` / `accepted` / `mastered` / `published`) get a ✓ ring in
-  the graph, so "what is already resolved" reads at a glance.
+- `type` names the document's role in the scenario pack (below); readers and
+  tooling filter by it.
+- `status` says where the document stands. The statuses that mark finished work
+  (`solved` / `done` / `accepted` / `mastered` / `published`) read as "already
+  resolved" at a glance when a listing shows them. (The graph used to draw a ✓
+  ring on them; the field is unchanged and still worth filling — it is the only
+  machine-readable progress signal a document carries.)
 
 ## Scenario packs
 
@@ -667,7 +1117,7 @@ roles carry the line:
 
 - `research-log` (`status: open` while active): dated entries. Each entry links
   what it produced that day — experiments, notes, decisions — with wikilinks,
-  so the log is the spine of the graph.
+  so the log stays the reading order for the work.
 - `problem` documents: one open question each (`status: open`). When it is
   resolved, flip to `status: solved` and link the evidence (result document,
   experiment, literature note) at the resolution point. A solved problem that
@@ -682,16 +1132,16 @@ roles carry the line:
 - `conclusion` documents: one settled finding each, citing the problem
   documents and literature notes that support it.
 
-Progress readout = the graph filtered by status: open problems, solved
-problems (✓), conclusions.
+Progress readout = the `status` fields: open problems, solved problems,
+conclusions.
 
 ### Learning (学习)
 
 - `learning-map`: the index document — one section per knowledge area, each
-  knowledge point a wikilink to its own document. The map is the spine.
+  knowledge point a wikilink to its own document. The map is the reading order.
 - Knowledge-point documents: one concept each; link prerequisite points
-  (`Prerequisites: [[point-a]], [[point-b]]`) so the graph shows the
-  dependency structure.
+  (`Prerequisites: [[point-a]], [[point-b]]`) so a reader can walk the
+  dependency order.
 - Study materials (course PDFs, slides, screenshots) go to `attachments/` and
   are cited from the point they belong to — same download-and-link discipline
   as research literature.
@@ -718,8 +1168,8 @@ problems (✓), conclusions.
 
 ## Attachments are first-class references
 
-The graph indexes every canvas-openable attachment (PDF, Office, image,
-media) as a node, and a wikilink or embed pointing at it
-(`[[paper.pdf]]`, `![[figure.png]]`) opens it directly in canvas. Cite the
-attachment, never a bare path string: the link IS the edge that puts the
-literature on the graph.
+A wikilink or embed pointing at a canvas-openable attachment (PDF, Office,
+image, media) — `[[paper.pdf]]`, `![[figure.png]]` — opens it directly in
+canvas. Cite the attachment, never a bare path string: the link is what makes
+it reachable, and it also gives the term registry something to resolve against.
+The graph view listing attachments as nodes is a side effect, not a goal.
