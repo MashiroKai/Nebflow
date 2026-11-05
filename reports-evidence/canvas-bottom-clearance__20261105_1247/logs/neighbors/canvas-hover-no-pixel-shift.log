@@ -1,0 +1,19 @@
+PASS  H0 前置：图片面就位（img + viewport + viewer 齐备，桌面非手机层）  — img=x895 y295.13 518×323.75 vp=x895 y33 518×848 caps=0
+PASS  H1 前置：hover 真开环（ring-open + ≥2 环胶囊）—— 防假绿  — ringOpen=true caps=2 cls=
+PASS  H1b 祛耦合：环开不再给 #canvas-content 挂 .capsule-ring-open（浮层不占位）  — cls=""
+PASS  H2 图片零位移（作者报障本体）：<img> 四边 ≤0.5px（hover 前后同帧实测）  — Δ=0px  rest[x895 y295.13 518×323.75] → hover[x895 y295.13 518×323.75] transform=translate(0px, 262.125px) scale(0.539583)
+PASS  H2b 图片容器零位移：.canvas-image-viewport 四边 ≤0.5px  — Δ=0px  rest[x895 y33 518×848] → hover[x895 y33 518×848]
+PASS  H2c 查看面外壳零位移：.canvas-image-viewer 四边 ≤0.5px  — Δ=0px  rest[x879 y17 550×864] → hover[x879 y17 550×864]
+PASS  H3 查看面顶垫零变化（hover 不许改 padding —— 布局属性归静态档位）  — padTop 16px → 16px（基类 16px 档）
+PASS  H4 .canvas-viewer-safe-top 无布局过渡（transition 属性白名单不含 padding/margin/尺寸）  — prop=all dur=0s (canvas-md-scroll canvas-viewer-safe-top)
+PASS  H2d 收环后回归原位（图片 rect 回到 hover 前值 ≤0.5px）  — Δ=0px ringOpen=false
+PASS  H5 split.css 零 `transition: all`（作者判定要点②：显式属性白名单）  — remaining=0
+PASS  H5b 零「.capsule-ring-open ⇒ padding」联动规则（环开 = 纯浮层，不占位）  — clean
+PASS  H5c .canvas-viewer-safe-top 基类块内零 transition 声明（顶垫恒静态）  — clean
+PASS  H6 md 面回归：常驻顶垫 52px（截图 md 首行让胶囊带语义保留）且 hover 前后相等  — rest=52 hover=52
+PASS  H9 桌面腿零 JS 错误
+PASS  H7 手机层前置：图片查看面在场 + 顶垫 = --mchrome-clear（≥52，A9 口径）  — padTop=72 cls=canvas-image-viewer canvas-viewer-safe-top
+PASS  H7b 手机端 hover 标题：不挂 .capsule-ring-open + 图片零位移 + 顶垫不变  — padTop 72→72 Δ=0px cls=
+PASS  H8 手机层腿零 JS 错误
+
+canvas-hover-no-pixel-shift: 17 PASS / 0 FAIL

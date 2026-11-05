@@ -888,6 +888,16 @@ export default {
   // 与 standby（待命·等作者）/ waitingMerge（候合并）显式区分：三者都是「停」，
   // 但只有本族是**异常停**且**必须有人唤醒才会继续**。
   'subagents.frozenBadgeWithReason': '已冻结 · {reason}',
+  // 冻结通知策略批（2026-11-05 作者令两连）：provider 故障 = **基础设施故障**，不是
+  // 任务失败 ⇒ 不向上汇报（上级多半也在同一波里挨饿），面板即状态面：标「待你处理」+
+  // 原因码 + 自动续跑次数 + 唤醒入口。
+  'subagents.frozenAwaitingYou': '已冻结 · {reason}（待你处理）',
+  'subagents.frozenAwaitingYouNoReason': '已冻结 · 待你处理',
+  'subagents.frozenInfraTip': '供应商故障（不是任务失败）：引擎自己探测恢复，恢复后自动续跑同一会话（续在检查点、已完成的不重做，有次数上限与递增间隔）；也可以现在点「唤醒」立即续跑。不向上级汇报——本面板就是它的状态面。',
+  'subagents.frozenAutoResumes': '已自动续跑 {n} 次',
+  'subagents.frozenAutoResumesSpent': '自动续跑次数已用尽——需要你：充值 / 换模型 / 取消',
+  'subagents.freezeDigestRecoverable': '{count} 条已冻结（可唤醒）',
+  'subagents.freezeDigestNeedsHuman': '{count} 条冻结待你处理',
   'subagents.frozenTip': '已冻结：引擎/上游故障导致就地停住，这不是失败判词。会话历史、工作区与未提交改动、台账行、合并队列位全部保留；点「唤醒」或 Mail 它的地址即在原会话上下文上继续（已完成的不重做）。',
   'subagents.frozenReason': '原因：{reason}',
   'subagents.frozenDormantTip': '已冻结 {hours} 小时仍无人唤醒（超保留期会归档记录，转录与工作区保留）。',

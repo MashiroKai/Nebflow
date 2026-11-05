@@ -36,11 +36,17 @@ object FreezeScheduler:
    * ——长期无人唤醒的冻结 delegate 在此得面板提示（`delegateFrozenDormant`，缺省
    * 24h 起）/ 超保留期归档（缺省 14 天），零新增定时器（本拍即兜底拍）。
    * `wsSend` 缺省 None ⇒ 只写 WARN（静默面不丢，只是没有实时帧）。
+   *
+   * 冻结通知策略批（2026-11-05）：`tailSweep` = 调用方装配的额外一拍（装配点 =
+   * `GatewayMain`，注入 `nebflow.agent.FreezeAlertSweep.run`——面板统计 + 引擎自愈
+   * 续跑 + 聚合告警三腿）。**分层纪律**：core 层只收一个 `IO[Unit]` 钩子，不 import
+   * agent 层；扫描器仍只有这一个 30s 定时器（零新增拍）。
    */
   def run(
     resources: AgentRuntimePort,
     interval: FiniteDuration,
-    wsSend: Option[io.circe.Json => IO[Unit]] = None
+    wsSend: Option[io.circe.Json => IO[Unit]] = None,
+    tailSweep: Option[IO[Unit]] = None
   ): IO[Unit] =
     def loop: IO[Unit] =
       scan(resources).handleErrorWith(e =>
@@ -49,6 +55,9 @@ object FreezeScheduler:
         nebflow.core.delegate.DelegateFreeze
           .dormantSweep(resources, wsSend)
           .handleErrorWith(e => logger.warn(s"FreezeScheduler dormant sweep failed: ${e.getMessage}")) *>
+        tailSweep.getOrElse(IO.unit).handleErrorWith(e =>
+          logger.warn(s"FreezeScheduler tail sweep failed: ${e.getMessage}")
+        ) *>
         IO.sleep(interval) >> loop
     loop
 

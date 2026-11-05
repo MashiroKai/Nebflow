@@ -133,7 +133,16 @@ private[agent] object AgentFrozen:
       // 「父干预」出口（作者令：等网络恢复或作者取消；作者面前的取消按钮就是出口，
       // 面板 waiting-network 状态即监测面）。计数照常累计（等待退避阶梯的轮次驱动），
       // 只是到阈值不升级、不通知父。
-      if isErrorFamily && reason != FreezeReason.WaitingNetwork && count >= ErrorFreezeEscalationThreshold && state.escalation.isEmpty
+      //
+      // 冻结通知策略批（2026-11-05 10:36 作者令逐字「由于provider 故障，都不需要向上
+      // 通知…所以不需要向上汇报。因为provider 故障上级也基本死了，汇报给上级没用」）：
+      // **凡呈现面判为「可自动恢复」的冻结族**（llm-transient / network / provider-down /
+      // restart-recovery / waiting-network——判据单点 = [[FreezeDisplay.of]]）一律**不进
+      // 升级链、不向上通知**：provider 故障 = 基础设施故障，不是任务失败，上级多半也在同
+      // 一波里挨饿。它们由面板显形 + `FreezeAlertSweep` 的自动续跑接管（provider 恢复即
+      // 续跑同一会话）。仍是「确定性死循环」的 `loop` 保留原升级链（那是人的事）。
+      val providerFamily = FreezeDisplay.of(reason).autoRecoverable
+      if isErrorFamily && !providerFamily && count >= ErrorFreezeEscalationThreshold && state.escalation.isEmpty
       then
         val now = System.currentTimeMillis()
         val esc = EscalationInfo(
