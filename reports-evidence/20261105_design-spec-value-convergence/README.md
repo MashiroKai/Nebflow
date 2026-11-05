@@ -84,3 +84,34 @@ make frontend-gates        EXIT 0   Frontend static gates passed
 
 `check-design-tokens` 的「令牌引用全部有定义」一句是本层的关键静态网：13 处桌面 16px
 与 3 处 14px 的改指若写错名字（→ 未定义 var），该闸直接红，不必等某个面板被点开。
+
+---
+
+## 合并 main 后的最终读数（HEAD=5e61ec462，main=87f4e1bec）
+
+三层 `--verify` 重跑（main 侧新增改动没有把旧名/档外值带回来）：
+
+```
+layer1-naming-debt --verify   旧名残余 0 / 拒猜 0                    EXIT 0
+layer2-font-tiers  --verify   [7,26]px 档外值 0                       EXIT 0
+layer3-exceptions  --verify   单值例外 0（组合/负数/组件尺寸/14px 见 EXCEPTIONS.md）  EXIT 0
+```
+
+八道静态门禁全 EXIT 0（check-design-tokens / check-design-spec-sync / check-component-contract /
+check-msgstyle-single-source / check-circular / check-self-explaining / check-process-artifacts /
+make frontend-gates）。
+
+`make check-visual` = **FAIL 28 项**（12 DIFF + 16 MISS + 0 SAME），本批不许抬基准 ⇒ 这是
+预期状态，不是回归判定：入库图仍是改造前渲染。
+DIFF：chat-messages-light 161,189px · chat-messages-dark 160,988 · settings-llm-empty-light
+112,616 · settings-llm-empty-dark 107,546 · app-empty-dark 40,559 · app-empty-light 39,716 ·
+canvas-markdown-tab-dark 9,071 · canvas-markdown-tab-light 9,029 · canvas-code-tab-dark 902 ·
+canvas-code-tab-light 862 · bgtask-panel-{dark,light} −1px（高度差，内容逐像素相同）。
+MISS（16）：canvas-txt/html/image、explorer-tree、deck-cards、modal-confirm、settings-panel
+各 2 主题 —— 这 8 个场景在 darwin 入库集里从来就没有基准图（上一批等值令牌化时同一份清单即 MISS），
+本批未新增场景、未删基准。
+
+`tests/visual/baseline/**` 零变更；刷新稿全在 `.nebflow/visual-baseline/darwin-chromium-151/`
+（gitignore）。作者评审后用 `make visual-baseline-promote` 一条命令入库。
+
+未合并到 main：`git merge-base --is-ancestor delegate/delegate-spec-value-converge main` = 非 0。
