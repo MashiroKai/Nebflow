@@ -3,7 +3,8 @@
 //
 // 判据九组（消息页 + 联系人页各跑一遍 = ⑨ 两页同源）：
 //   ① 展开态几何与扁平场：.mh-search-bar 44×343 @ left16/right359；圆角 = 我方圆角
-//      档 --ds-radius-input（8px）；底 = --ds-wash-16（浅灰，显式 token 解析值）；
+//      档 --ds-radius-xl（12px；2026-11-05 17:37 作者令「圆角幅度再大一点」由
+//      --ds-radius-input 8px 抬档）；底 = --ds-wash-16（浅灰，显式 token 解析值）；
 //      无描边/无投影/无毛玻璃；doc/搜索带高 = 60（两页同值）。
 //   ② 上滚过阈值（真实滚动容器 scrollTop > 24）⇒ 条**同一节点**形变为右上角圆钮：
 //      48×48 / right 359 / radius 50% / 挂 .g2-fab；材料逐值 = 主会话搜索钮
@@ -403,9 +404,9 @@ test('mobile-search-flat: messages + contacts（九组判据，双页同源）',
     expect(Math.round(s0.bar.right), '① bar 右缘 359').toBe(359);
     expect(Math.round(s0.bar.top), '① bar 顶 8（带高 60 内垂直居中：(60-44)/2）').toBe(8);
     expect(s0.dockH, `① 搜索带高 = ${BAND_H}`).toBe(BAND_H);
-    // 扁平场：无毛玻璃 / 圆角 = 我方圆角档 8px / 无投影 / 无描边。
+    // 扁平场：无毛玻璃 / 圆角 = 我方圆角档 12px（条状容器档 --ds-radius-xl）/ 无投影 / 无描边。
     expect(s0.barStyle.backdropFilter, '① backdrop-filter none').toBe('none');
-    expect(s0.barStyle.borderRadius, '① 圆角 = --ds-radius-input 8px').toBe('8px');
+    expect(s0.barStyle.borderRadius, '① 圆角 = --ds-radius-xl 12px').toBe('12px');
     expect(s0.barStyle.borderTopColor, '① 无描边（transparent）').toBe('rgba(0, 0, 0, 0)');
     expect(s0.barStyle.boxShadow, '① 无投影').toBe('none');
     // 浅灰底 = --ds-wash-16 暗档解析值（rgb(128 128 128 / 0.16) ⇒ 透明灰）：

@@ -8,8 +8,9 @@
    ── 本文件 = 该件的样式单源。三个形态判据 ───────────────────────────────
    ① 展开 = 扁平长条（微信形态，值全取我方令牌）：**同一个元素**
       `.mh-search-bar`，浅灰底 `--ds-wash-16`、无描边、无投影、无毛玻璃、
-      圆角 `--ds-radius-input`（= 8px，我方「输入/下拉」档；微信截图只借形态
-      不借数值）、左右内距 16、居左图标（lucide search 16px）+ 占位文字。
+      圆角 `--ds-radius-xl`（= 12px，我方「条状容器」档；2026-11-05 17:37 作者令
+      「没收缩之前的圆角幅度再大一点」前为 `--ds-radius-input` 8px；微信截图只借
+      形态不借数值）、左右内距 16、居左图标（lucide search 16px）+ 占位文字。
    ② 收起 = 右上角圆钮：**同一元素**追加 `.g2-fab` 类 ⇒ 视觉整件由
       css/glass.css 的 `.g2-fab` 块供给（`body.mobile-layer .g2-fab` = 48×48 /
       `--cv-bg` 玻璃底 / `--cv-border` 描边 / `--cv-shadow` 浮影 /
@@ -21,6 +22,24 @@
    ③ 形变 = 一段连续过渡（宽度 / 圆角 / 位移 / 图标尺寸 / 文字淡出同曲线），
       不是「闪一下换一个元素」：整条只有 `.mh-search-bar` 一个 DOM 节点，
       收起/展开都是**同一个节点上的类切换**（JS 单点 setCollapsed）。
+
+   ── 透明顶带批（作者令 2026-11-05 17:34 逐字：「联系人和消息的这搜索 缩小成一个
+      按钮之后，应该顶部那部分的透明的，能显示内容，现在是直接被截断了」）────────
+   改前结构（截断根因）：条住在页面体**流内**（mobileLayer.css `flex: none` + 本文件
+   带高 60）⇒ 收编滚区 `#fm-conversations` / `#fm-contacts-body` 的顶边被顶到带底
+   y=60，滚区自身的 `overflow-y: auto`（friends.css:618 / 261）就在 y=60 处裁断内容；
+   带内一个像素内容都没有，透出 `.mobile-page` 的 `background: var(--color-bg)`
+   （mobileLayer.css:792）⇒ 观感 = 「一条水平线把内容切平 / 被不透明块盖住」。
+   改后结构（本文件「透明顶带」块）：
+   · 带**脱离文档流**贴页顶（`position: absolute`，包含块 = `.mobile-page` 的
+     padding box ⇒ 真机安全区顶距仍由页面壳 `.mobile-page-nohead` 垫，零重复）；
+   · 带本体零底色、零毛玻璃、`pointer-events: none`（手势穿透到下方内容），
+     只有条本体 `pointer-events: auto`（它是唯一可点面）；
+   · 收编滚区吃满页体全高，内容用**自身内距**让出首行位（padding-top = 带高 +
+     原有 4px）—— 内距随内容滚走 ⇒ 静止时首行仍在带下，滚动时内容从带内**连续
+     穿过**，只在页顶缘离场（不再有第二条裁切线）。
+   · 几何恒等式保持（bug① 结构解不破）：非查询态带**永不占流** ⇒ 收/展全程滚动
+     容器 clientHeight / scrollHeight 零变化。
 
    ── 三个 bug 的结构性拆除（本文件承担几何面）──────────────────────────────
    · bug①「上滑后动不了」：旧实现收/展写 `dock.style.height` 实测像素 ⇒ 滚动容器
@@ -39,17 +58,56 @@
    · bug③「过渡动画缺失」：见 ③。
 
    门禁红线：本文件色值字面量必须为 0（check-design-tokens new-file-literals）；
-   圆角只落 `var(--ds-radius-input)` / `50%`；无 font-size 字面量。 */
+   圆角只落 `var(--ds-radius-xl)` / `var(--ds-radius-input)` / `50%`；
+   无 font-size 字面量。 */
 
 /* ── 形变算术单源（时长/曲线/带高）────────────────────────────────────── */
+/* 带高常量：48（--ds-hit-tap-lg，g2-fab 手机档圆钮 = 主会话按钮同档）+ 12。
+   声明在两页**页面体**上而不是带上：带（.mh-search-dock）与收编滚区
+   （#fm-conversations / #fm-contacts-body）是兄弟，只在带上声明则滚区取不到；
+   页面体是两者共同祖先 ⇒ 一处定义、两处 var() 引用（透明顶带的让位内距就用它）。 */
+body.mobile-layer .mobile-page[data-page="messages"] .mobile-page-body,
+body.mobile-layer .mobile-page[data-page="contacts"] .mobile-page-body {
+  --mhsc-band: calc(var(--ds-hit-tap-lg, 48px) + var(--ds-space-3, 12px));
+}
 body.mobile-layer .mh-search-dock {
   --mhsc-dur: 280ms;
   --mhsc-ease: cubic-bezier(0.4, 0, 0.2, 1);
-  /* 带高常量：48（--ds-hit-tap-lg，g2-fab 手机档圆钮 = 主会话按钮同档）+ 12。 */
-  --mhsc-band: calc(var(--ds-hit-tap-lg, 48px) + var(--ds-space-3, 12px));
   height: var(--mhsc-band);
   padding: 0;
   justify-content: center;
+}
+/* ── 透明顶带（作者令 2026-11-05 17:34；结构说明见文件头「透明顶带批」段）────
+   非查询态：带**脱离文档流**贴页顶 —— 收编滚区拿回页体全高，内容自带的让位内距
+   随滚动滚走 ⇒ 内容从带内连续穿过。带本体零底色/零毛玻璃/手势穿透，
+   只有条本体（长条或圆钮）接事件。
+   查询态（.has-query）恢复流内形态：那时带要吃满余量装结果流，与列表互斥。 */
+body.mobile-layer .mh-search-dock:not(.has-query) {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--mhsc-band);
+  z-index: 2;
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  pointer-events: none; /* 带不吃手势：带下方的列表照常滚动/点按 */
+}
+body.mobile-layer .mh-search-dock:not(.has-query) .mh-search-bar {
+  pointer-events: auto; /* 唯一可点面 = 条本体（收起态即圆钮） */
+}
+/* 收编滚区吃满页体全高：首行让位一条带高（+ 原有 4px 顶呼吸缝）。这条内距住在
+   滚区**内部** ⇒ 随内容一起滚走：静止时首行在带下，上滚后穿进带内（透明可见），
+   只在页顶缘离场 —— 截断根因（滚区顶边被顶到带底）就此消失。 */
+body.mobile-layer .mobile-page[data-page="messages"] .mobile-page-body > #fm-conversations,
+body.mobile-layer .mobile-page[data-page="contacts"] .mobile-page-body > #fm-contacts-body {
+  padding-top: calc(var(--mhsc-band) + var(--ds-space-1));
+}
+/* 查询态带回到流内（占位）⇒ 让位内距撤销，列表按原有 4px 顶缝起排。 */
+body.mobile-layer .mh-search-dock.has-query ~ #fm-conversations,
+body.mobile-layer .mh-search-dock.has-query ~ #fm-contacts-body {
+  padding-top: var(--ds-space-1);
 }
 /* 有查询 = 条吃满余量（既有语义：结果区自滚、列表让位；此时不收起，JS 同判据）。 */
 body.mobile-layer .mh-search-dock.has-query {
@@ -65,12 +123,19 @@ body.mobile-layer .mh-search-dock:not(.has-query) .mh-search-results {
 }
 
 /* ── ① 展开态：扁平长条（微信形态 + 我方圆角档）────────────────────────── */
+/* 圆角加大批（作者令 2026-11-05 17:37 逐字「然后就是搜索框，没收缩之前的圆角幅度
+   再大一点」）：`--ds-radius-input`（8）⇒ `--ds-radius-xl`（12，我方圆角阶梯里
+   **条状容器档**，语义正对「搜索条」；阶梯 4/6/8/10/12/14/16/18/20/999 的下一档，
+   不需要新造令牌）。不取 16（--ds-radius-card-lg，聊天浮层卡档）：条与圆钮
+   （50%）的形态差靠圆角档位差承载体，跳到卡档会把「长条 → 圆钮」的区分压平。
+   内距同步 12 → 16（--ds-space-4）：12px 圆角下 12 的图标内距正好落在弧线上、
+   观感贴边，16 让图标与弧线脱开，并向右缘留同一份呼吸。 */
 body.mobile-layer .mh-search-dock:not(.mh-search-collapsed) .mh-search-bar {
   width: calc(100% - var(--ds-space-4) * 2);
   height: 44px;
   margin: 0 var(--ds-space-4);
-  padding: 0 var(--ds-space-3);
-  border-radius: var(--ds-radius-input);
+  padding: 0 var(--ds-space-4);
+  border-radius: var(--ds-radius-xl);
   background: var(--ds-wash-16);
   border: 1px solid transparent;
   box-shadow: none;
@@ -112,8 +177,9 @@ body.mobile-layer .mh-search-dock .mh-search-input {
 
 /* ── ② 收起态：右上角圆钮（视觉整件 = .g2-fab，本块只补落位）─────────────
    落位判据（作者「挂在右上角，不得压住列表内容的关键列」）：条住在页面体内
-   常驻搜索带里（带高常量 60、列表从其下方起排）⇒ 圆钮右缘 = 屏宽 − 16，
-   与主会话搜索钮同一右上角内距，但**不再盖在列表行上**（旧实现压住时间列）。 */
+   常驻搜索带里（带高常量 60）⇒ 圆钮右缘 = 屏宽 − 16，与主会话搜索钮同一右上角
+   内距。静止时列表首行仍在带下（滚区自带让位内距）；上滚后内容从**透明**带内
+   穿过（本批：带不再占流、也不再给内容加裁切线），圆钮是唯一浮在内容上的件。 */
 body.mobile-layer .mh-search-dock.mh-search-collapsed .mh-search-bar {
   margin-left: calc(100% - var(--ds-space-4) - var(--ds-hit-tap-lg, 48px));
   margin-right: var(--ds-space-4);
@@ -145,9 +211,17 @@ body.mobile-layer .mh-search-dock.mh-search-collapsed .mh-scope-row {
   }
 }
 
-/* ── 验收读数归档（实测值见 reports-evidence/mobile-search-collapse/readings 归档）：
-   展开 = bar 44×343 @ left16/right359、radius 8px、底 rgba(128,128,128,0.16)
-   （--ds-wash-16 亮档）、无描边/无投影/无毛玻璃；dock 高 60（两页同值）。
+/* ── 验收读数归档（实测值见 reports-evidence/search-band-transparent__<批次时间戳>/
+   与 reports-evidence/mobile-search-flat__20261105_135329/readings.json）：
+   展开 = bar 44×343 @ left16/right359、radius 12px（--ds-radius-xl）、底
+   rgba(128,128,128,0.16)（--ds-wash-16 亮档）、无描边/无投影/无毛玻璃、
+   内距 16（图标距条左缘 17 = 16 + 1px 描边）；dock 高 60（两页同值）。
    收起 = bar 48×48 @ right359、radius 50%、玻璃底与浮影逐档同主会话钮
    （.g2-fab）、图标 20px；dock 高仍 60（滚动容器几何零变化）；输入行
-   opacity 0 / max-width 0。回顶 = bar 与初始逐值相同。 */
+   opacity 0 / max-width 0。回顶 = bar 与初始逐值相同。
+   透明顶带（2026-11-05 17:34 批）实测（375×812）：dock position absolute /
+   background rgba(0,0,0,0) / backdrop-filter none / pointer-events none /
+   z-index 2；滚动容器顶边 = 0（改前 60）、clientHeight 750（改前 690）/
+   scrollHeight 1394 / padding-top 64（= 60 + 4，住在滚区内部）/
+   overflow-y auto；带底 60 处 elementFromPoint 命中 span.fm-row-name（改前命中
+   .mh-search-dock 本身）；跨带行 top 40 / bottom 84 —— 内容从带内连续穿过。 */

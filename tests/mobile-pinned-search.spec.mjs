@@ -271,9 +271,10 @@ function expectPinnedGeometry(st, pageId) {
   expect(st.bar.left, `${pageId}: left 16`).toBe(16);
   expect(st.bar.right, `${pageId}: right 359`).toBe(359);
   // 材质换代（件八 2026-11-05 12:28 作者令「参考微信的扁平化 圆角用我们的就行」）：
-  // 扁平场判据 = 浅灰底 --ds-wash-16 单源 / 圆角 --ds-radius-input 8px / 无毛玻璃 /
+  // 扁平场判据 = 浅灰底 --ds-wash-16 单源 / 圆角 --ds-radius-xl 12px（圆角加大批
+  // 2026-11-05 17:37 由 --ds-radius-input 8px 抬档）/ 无毛玻璃 /
   // 无投影。判据面单源 = tests/mobile-search-flat.spec.mjs（本 spec 只留同口径对偶）。
-  expect(st.radius, `${pageId}: 圆角 = --ds-radius-input 8px`).toBe('8px');
+  expect(st.radius, `${pageId}: 圆角 = --ds-radius-xl 12px`).toBe('12px');
   // 贴页面顶（dock 顶 padding 8px，允许 0-12 摆动）。
   expect(st.bar.top - st.pageTop, `${pageId}: 贴页面顶`).toBeLessThanOrEqual(12);
   expect(st.bar.top - st.pageTop).toBeGreaterThanOrEqual(0);
