@@ -912,6 +912,9 @@ private[gateway] object WsSessionChatHandlers:
                 (l.ref ! AgentCommand.UserInput(
                   text = body,
                   replyTo = l.supervisorRef,
+                  // 幂等键（冻结通知策略批 2026-11-05，与引擎自愈腿 `DelegateWakeLeg`
+                  // 同键）：同一次冻结只认一次唤醒——面板连点 / 自愈与人工撞车 ⇒ 单回合。
+                  clientMessageId = Some(s"frozen-wake:$wid:${recordOpt.flatMap(_.frozenSince).getOrElse(0L)}"),
                   source = Some("delegate-wake"),
                   sender = Some("panel"),
                   eventType = Some("info"),
