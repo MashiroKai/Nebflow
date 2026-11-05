@@ -150,26 +150,6 @@ async function main() {
       await openCanvas(s.page);
       await settle(s.page, 300);
       await shootTo(s, 'canvas-bar', theme);
-      // 缩放条只在图片/PDF 页签出现 ⇒ 再开一个图片页签量 .canvas-zoom-btn。
-      await s.page.evaluate(() => {
-        window.dispatchEvent(new CustomEvent('workspace-open-item', {
-          detail: {
-            id: 'file:/tmp/glass-unify-shot.svg', itemType: 'image', title: 'glass-unify-shot.svg',
-            content: '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400"><rect width="600" height="400" fill="#c9d6ea"/><circle cx="300" cy="200" r="120" fill="#5b7fbf"/></svg>',
-            absPath: '/tmp/glass-unify-shot.svg', size: 200, mtimeMs: 1757000000000,
-          },
-        }));
-      });
-      await s.page.waitForTimeout(900);
-      await settle(s.page, 300);
-      await shootTo(s, 'canvas-image-tab', theme);
-      await record(s.page, 'canvasBar', () => {
-        const bar = document.querySelector('.canvas-zoom-bar');
-        const r = (el) => (el ? el.getBoundingClientRect() : null);
-        return {
-          zoomBar: bar ? { w: +r(bar).width.toFixed(1), h: +r(bar).height.toFixed(1), radius: getComputedStyle(bar).borderRadius, bg: getComputedStyle(bar).backgroundColor, backdrop: getComputedStyle(bar).backdropFilter } : null,
-        };
-      });
       await record(s.page, 'buttons', () => {
         const box = (sel) => {
           const el = document.querySelector(sel);
@@ -195,6 +175,26 @@ async function main() {
           '.canvas-source-toggle', '.canvas-ref-select', '.canvas-find-toggle', '.canvas-refresh-toggle',
           '.canvas-zoom-btn', '.ask-fab', '.note-fab',
         ].map(box);
+      });
+      // 缩放条只在图片/PDF 页签出现 ⇒ 再开一个图片页签量 .canvas-zoom-btn。
+      await s.page.evaluate(() => {
+        window.dispatchEvent(new CustomEvent('workspace-open-item', {
+          detail: {
+            id: 'file:/tmp/glass-unify-shot.svg', itemType: 'image', title: 'glass-unify-shot.svg',
+            content: '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400"><rect width="600" height="400" fill="#c9d6ea"/><circle cx="300" cy="200" r="120" fill="#5b7fbf"/></svg>',
+            absPath: '/tmp/glass-unify-shot.svg', size: 200, mtimeMs: 1757000000000,
+          },
+        }));
+      });
+      await s.page.waitForTimeout(900);
+      await settle(s.page, 300);
+      await shootTo(s, 'canvas-image-tab', theme);
+      await record(s.page, 'canvasBar', () => {
+        const bar = document.querySelector('.canvas-zoom-bar');
+        const r = (el) => (el ? el.getBoundingClientRect() : null);
+        return {
+          zoomBar: bar ? { w: +r(bar).width.toFixed(1), h: +r(bar).height.toFixed(1), radius: getComputedStyle(bar).borderRadius, bg: getComputedStyle(bar).backgroundColor, backdrop: getComputedStyle(bar).backdropFilter } : null,
+        };
       });
       allErrors.push(...s.errors);
       await s.close();
