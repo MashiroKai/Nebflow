@@ -86,7 +86,7 @@ class Phase2dSkillCatalogSpec extends CatsEffectSuite:
       |# body""".stripMargin
   )
 
-  os.write.over(tempRoot / "nebflow.json", "{}")
+  os.write.over(tempRoot / nebflow.shared.Branding.configFileName, "{}")
 
   override def afterAll(): Unit =
     PathUtil.setDataRoot(originalRoot)

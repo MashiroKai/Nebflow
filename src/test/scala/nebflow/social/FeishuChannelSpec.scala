@@ -214,7 +214,7 @@ class FeishuChannelSpec extends FunSuite:
     // credential, the legacy file is still half-written, and resolution must
     // fail loudly rather than fabricate a credential out of either.
     os.write(
-      root / "nebflow.json",
+      root / nebflow.shared.Branding.configFileName,
       """{"socialChannels":{"channels":{"feishu":{"fields":{"app_id":"cli_fromschema0000000000"}}}}}"""
     )
     assert(FeishuCredentials.resolve(root).isLeft)
@@ -236,7 +236,7 @@ class FeishuChannelSpec extends FunSuite:
       perms = posixPerms()
     )
     os.write(
-      root / "nebflow.json",
+      root / nebflow.shared.Branding.configFileName,
       """{"socialChannels":{"channels":{"feishu":{"fields":{"app_id":"cli_schemawins0000001",""" +
         """"app_secret_ref":"~/.nebflow/secrets/social-feishu-app-secret"}}}}}"""
     )
@@ -271,7 +271,7 @@ class FeishuChannelSpec extends FunSuite:
     // only) holds no credential information — the legacy fallback may speak.
     val root = tmpRoot()
     os.write(
-      root / "nebflow.json",
+      root / nebflow.shared.Branding.configFileName,
       """{"socialChannels":{"channels":{"feishu":{"enabled":true,"fields":{"region":"feishu"}}}}}"""
     )
     os.write(
@@ -294,7 +294,7 @@ class FeishuChannelSpec extends FunSuite:
       perms = posixPerms()
     )
     os.write(
-      root / "nebflow.json",
+      root / nebflow.shared.Branding.configFileName,
       s"""{"socialChannels":{"channels":{"feishu":{"fields":{"app_id":"cli_fromschema0000000000",""" +
         """"app_secret_ref":"~/.nebflow/secrets/social-feishu-app-secret"}}}}}"""
     )

@@ -315,7 +315,7 @@ class SecretsRoutesSpec extends FunSuite:
       // An isolated (non-default) root renders its ABSOLUTE path in stored
       // refs — write the fixture ref the way SocialChannels.persist would.
       os.write.over(
-        root / "nebflow.json",
+        root / nebflow.shared.Branding.configFileName,
         s"""{"socialChannels":{"channels":{"feishu":{"enabled":true,"fields":
            |{"app_secret_ref":"$root/secrets/feishu-app-cred"}}}}}""".stripMargin
       )

@@ -33,7 +33,7 @@ class ModeParamSpec extends FunSuite:
     os.remove.all(tmp)
 
   private def writeConfig(json: String): Unit =
-    val p = tmp / "nebflow.json"
+    val p = tmp / nebflow.shared.Branding.configFileName
     os.write.over(p, json)
 
   test("P1 纯函数形态：resolve 返回 Either（无 IO / 无端口）——零模型调用是类型级保证") {

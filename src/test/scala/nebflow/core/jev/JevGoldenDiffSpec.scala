@@ -82,7 +82,7 @@ class JevGoldenDiffSpec extends CatsEffectSuite:
     withTempDataRoot { tmp =>
       IO {
         def load(json: String) =
-          os.write.over(tmp / "nebflow.json", json)
+          os.write.over(tmp / nebflow.shared.Branding.configFileName, json)
           nebflow.shared.Config.loadServiceConfig()
         val a = load(baselineNoJev)
         val b = load(withJevOff)
@@ -108,7 +108,7 @@ class JevGoldenDiffSpec extends CatsEffectSuite:
     withTempDataRoot { tmp =>
       IO {
         def render(json: String) =
-          os.write.over(tmp / "nebflow.json", json)
+          os.write.over(tmp / nebflow.shared.Branding.configFileName, json)
           nebflow.core.plugin.PluginRegistry.renderCatalog().unsafeRunSync()
         val a = render(baselineNoJev)
         val b = render(withJevOff)
@@ -168,7 +168,7 @@ class JevGoldenDiffSpec extends CatsEffectSuite:
     // confirming no token is produced and no provider is reached for.
     withTempDataRoot { tmp =>
       IO {
-        os.write.over(tmp / "nebflow.json", withJevOff)
+        os.write.over(tmp / nebflow.shared.Branding.configFileName, withJevOff)
         assertEquals(JevConfigReader.outcome.unsafeRunSync(), JevGateOutcome.Off(JevGateReason.ToggleOff))
         // The allocator is only built when the face is on; off => None.
         assertEquals(nebflow.llm.decision.JevAllocator.fromConfig(None), None)

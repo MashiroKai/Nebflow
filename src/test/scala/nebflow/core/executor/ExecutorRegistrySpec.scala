@@ -98,7 +98,7 @@ class ExecutorRegistrySpec extends CatsEffectSuite:
   test("readSettings: partial and malformed blocks degrade without throwing") {
     withTempDataRoot { tmp =>
       IO {
-        os.write(tmp / "nebflow.json", "not-an-object")
+        os.write(tmp / nebflow.shared.Branding.configFileName, "not-an-object")
         assertEquals(ExecutorRegistry.readSettings, ExecutorRegistry.Settings(None, Nil))
       }
     }.unsafeRunSync()
@@ -108,7 +108,7 @@ class ExecutorRegistrySpec extends CatsEffectSuite:
     withTempDataRoot { tmp =>
       IO {
         os.write(
-          tmp / "nebflow.json",
+          tmp / nebflow.shared.Branding.configFileName,
           """{"executor": {"default": "codex", "disabled": ["hermes"]}}"""
         )
         assertEquals(ExecutorRegistry.readSettings, ExecutorRegistry.Settings(Some("codex"), List("hermes")))

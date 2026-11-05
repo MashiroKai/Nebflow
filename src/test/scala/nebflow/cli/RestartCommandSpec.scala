@@ -27,7 +27,7 @@ class RestartCommandSpec extends FunSuite:
     val tmp = os.temp.dir(prefix = "restart-spec-")
     try
       PathUtil.setDataRoot(tmp)
-      os.write.over(tmp / "nebflow.json", s"""{"port": $TempRootPort}""", createFolders = true)
+      os.write.over(tmp / nebflow.shared.Branding.configFileName, s"""{"port": $TempRootPort}""", createFolders = true)
       f
     finally
       PathUtil.setDataRoot(original)

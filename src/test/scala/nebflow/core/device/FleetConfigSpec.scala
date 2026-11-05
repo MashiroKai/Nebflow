@@ -22,7 +22,7 @@ class FleetConfigSpec extends FunSuite:
   os.makeDir.all(tempRoot)
 
   private def writeConfig(json: String): Unit =
-    os.write.over(tempRoot / "nebflow.json", json, createFolders = true)
+    os.write.over(tempRoot / nebflow.shared.Branding.configFileName, json, createFolders = true)
 
   // ── readSettings 四态 ─────────────────────────────────────────────
 

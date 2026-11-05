@@ -1,0 +1,4 @@
+legacy (nebflow.json.bak) vs stand.json
+value diffs (unavailableWindows stripped): 0
+
+model-level windows carried up to provider level: 1/1

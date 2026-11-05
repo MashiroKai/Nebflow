@@ -131,7 +131,7 @@ class PluginViewerContributionSpec extends CatsEffectSuite:
   writeViewers(blockable, viewerDecl("demo3", "srt").noSpaces)
 
   // 隔离 nebflow.json（封禁表读写落临时根）
-  os.write.over(tempRoot / "nebflow.json", "{}")
+  os.write.over(tempRoot / nebflow.shared.Branding.configFileName, "{}")
 
   override def afterAll(): Unit =
     PathUtil.setDataRoot(originalRoot)
