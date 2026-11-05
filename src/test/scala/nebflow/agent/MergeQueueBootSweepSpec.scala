@@ -121,7 +121,7 @@ class MergeQueueBootSweepSpec extends FunSuite:
         parentSessionId = "nebula-root",
         description = "survivor",
         readyAt = readyAt,
-        channelKind = "internal",
+        channelKind = "identity",
         // 宣告闸批 2026-11-04：属主宣告在案——授窗前提
         declaredAt = Some(1_000L),
         declareSource = Some(nebflow.core.delegate.MergeDeclaration.Source.ReportMerge)
@@ -258,7 +258,7 @@ class MergeQueueBootSweepSpec extends FunSuite:
       parentSessionId = "nebula-root",
       description = "survivor",
       readyAt = 555L,
-      channelKind = "internal",
+      channelKind = "identity",
       // 宣告闸批 2026-11-04：属主宣告在案——授窗前提
       declaredAt = Some(1_000L),
       declareSource = Some(nebflow.core.delegate.MergeDeclaration.Source.ReportMerge)
@@ -297,7 +297,7 @@ class MergeQueueBootSweepSpec extends FunSuite:
       parentSessionId = "nebula-root",
       description = "orphan merged",
       readyAt = 666L,
-      channelKind = "internal",
+      channelKind = "identity",
       // 宣告闸批 2026-11-04：属主宣告在案——授窗前提
       declaredAt = Some(1_000L),
       declareSource = Some(nebflow.core.delegate.MergeDeclaration.Source.ReportMerge)

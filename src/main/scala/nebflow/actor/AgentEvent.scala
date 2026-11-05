@@ -117,6 +117,21 @@ object AgentEvent:
    */
   case class Cancelled(sessionId: String, reason: String) extends AgentEvent
 
+  /**
+   * 刀一（合并队列重构批 P0）**等待态定时消息**：`ActorContext.scheduleOnce` 到点
+   * 自投的 Tick——等待屏障的兜底计时器由此消息驱动，**不再用 `IO.sleep` 小拍轮询**。
+   *
+   *   - `sessionId`：本监督者辖下的子会话（防错投：处理器只认自己那一个）。
+   *   - `heldSinceMs`：本等待期的起点（墙钟总额腿的判据锚）。
+   *   - `arm`：**臂号**（世代号）。只有等于当前臂号的 Tick 才算数——等待期结束/重臂
+   *     后旧 Tick 变陈旧，处理器直接忽略（`scheduleOnce` 无法撤销，臂号是唯一
+   *     可靠的去陈旧手段）。
+   *   - `snapshot`：武装时刻的 transcript 快照（兜底强制终判时的回落 payload；
+   *     到点仍会先尝试重载最新 transcript）。
+   */
+  case class BgWaitCapTick(sessionId: String, heldSinceMs: Long, arm: Long, snapshot: List[Message] = Nil)
+      extends AgentEvent
+
 /**
  * 冻结原因（v2 冻结式错误恢复，§3.1）：统一「暂停在 dispatch 边界」的语义，
  * reason 决定恢复条件与前端两族视觉（schedule=sapphire 冷色 / 错误族=amber 暖色）。

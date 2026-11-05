@@ -167,18 +167,17 @@ object MergeQueue:
      */
     needsHuman: Option[String] = None,
     /**
-     * 内部腿通道（进程内运行态，闭包/ref **不持久**——R5 起成员资格的数据面由
-     * write-ahead 通道 [[MergeQueueChannel]] 持久，闭包本身仍随进程消亡）：child =
-     * 注入目标 actor，supervisor = 合并轮终态回路的 replyTo。持久账本回载后为
-     * None——重启后的开放成员凭通道镜像保留成员资格（owner-gone 不再凭内存缺席
-     * 判定，见对象头注），放行重试时按通道前提留队或关账。
+     * **投递身份**（P1 投递身份化批 2026-11-05，作者裁定「投递不再靠进程内闭包」）：
+     * 合并指令的收件会话 id = 本分支的属主会话（缺省 = `delegateId` 本身）。
+     *
+     * 反面前身：`internal: Option[InternalLeg]`（actor ref 闭包）+ `external:
+     * Option[ExternalLeg]`（`send(brief)` 闭包）——两者都是**进程内运行态**，重启
+     * 即蒸发，于是「重启后属主明明还在，队列却投不出去」（Deferred / owner-gone
+     * 一整类误判）。本批把它们整体删掉：投递只认 `ownerSessionId` + 落盘邮箱
+     * （MailboxProducer → 会话磁盘邮箱 = 真源），因此**重启后可以直接向持窗者
+     * 投递**（身份是持久数据，不是闭包）。
      */
-    internal: Option[InternalLeg] = None,
-    /**
-     * 外部腿通道（进程内闭包，闭包**不持久**，同上由通道镜像兜成员资格）：
-     * `send(brief)` = 续聊通道注入（mailbox / CLI resume）。`Left` = 通道失败。
-     */
-    external: Option[ExternalLeg] = None,
+    ownerSessionId: String = "",
     /**
      * 属主宣告快照（[[MergeDeclaration]] 的账本投影；None = **从未宣告**）。
      *
@@ -192,21 +191,15 @@ object MergeQueue:
     declareSource: Option[String] = None,
     /** 宣告**当时**的分支 tip（可回溯记录：分支后来长没长，对账可判）。 */
     declaredTip: Option[String] = None,
-    /** 授窗时的属主在场读数（true = 有达属主的通道；false = 失联——审计回溯用）。 */
+    /** 授窗时的属主在场读数（true = 投递身份可征询；false = 失联——审计回溯用）。 */
     ownerPresentAtGrant: Option[Boolean] = None
   ):
     def open: Boolean = State.Open.contains(state)
+
+    /** 投递收件会话（身份缺省 = 属主会话本身，即本成员的分支持有者）。 */
+    def ownerSession: String = if ownerSessionId.trim.isEmpty then delegateId else ownerSessionId
   end Member
 
-  /** 内部腿通道（actor 注入单点）。 */
-  final case class InternalLeg(childRef: ActorRef[AgentCommand], supervisorRef: ActorRef[AgentEvent])
-
-  /**
-   * 外部腿通道：`send(brief)` = 把合并指令送进外部 delegate 的续聊通道
-   * （live → mailbox 排队；终态 → CLI resume）。`Right(())` = 送进成功；
-   * `Left` = 通道失败（owner-gone，绝不楔死队列）。
-   */
-  final case class ExternalLeg(send: String => IO[Either[String, Unit]])
 
   // ── 进程内态 + 持久账本 ───────────────────────────────────────────────
 
@@ -230,6 +223,8 @@ object MergeQueue:
     "description" -> m.description.asJson,
     "readyAt" -> m.readyAt.asJson,
     "channelKind" -> m.channelKind.asJson,
+    // P1 投递身份化：收件身份是**持久数据**（重启后照样投得出去）。
+    "ownerSessionId" -> m.ownerSessionId.asJson,
     "state" -> m.state.asJson,
     "grantedAt" -> m.grantedAt.asJson,
     "grantedBaseTip" -> m.grantedBaseTip.asJson,
@@ -267,6 +262,9 @@ object MergeQueue:
       description = c.get[String]("description").toOption.getOrElse(""),
       readyAt = readyAt,
       channelKind = c.get[String]("channelKind").toOption.getOrElse("internal"),
+      // P1 投递身份化：旧账本缺键 = 空 ⇒ `ownerSession` 回落 delegateId（保守方向：
+      // 属主 = 分支持有者本身，投递永不因为「老行没有新字段」而失效）。
+      ownerSessionId = c.get[String]("ownerSessionId").toOption.getOrElse(""),
       state = c.get[String]("state").toOption.filter(State.All.contains).getOrElse(State.Waiting),
       grantedAt = c.get[Option[Long]]("grantedAt").toOption.flatten,
       grantedBaseTip = c.get[Option[String]]("grantedBaseTip").toOption.flatten,
@@ -342,7 +340,7 @@ object MergeQueue:
                 (lm.open && State.isTerminal(cm.state)) ||
                   (lm.state == State.Waiting && cm.state == State.TurnGranted)
               if lm.open && channelAhead then
-                val merged = cm.copy(internal = lm.internal, external = lm.external)
+                val merged = cm.copy(ownerSessionId = if lm.ownerSessionId.nonEmpty then lm.ownerSessionId else cm.ownerSessionId)
                 members = members.updated(cm.delegateId, merged)
                 persistLocked()
                 record(
@@ -382,16 +380,14 @@ object MergeQueue:
   def isMergeRound(delegateId: String): Boolean =
     find(delegateId).exists(_.state == State.TurnGranted)
 
-  /** 活性探针（注入前探测属主 actor 是否活——不盲投死 ref）。生产 boot 装配；未装配 = 恒活。 */
-  private val livenessProbe: java.util.concurrent.atomic.AtomicReference[ActorRef[?] => IO[Boolean]] =
-    new java.util.concurrent.atomic.AtomicReference(_ => IO.pure(true))
-
-  def installLivenessProbe(probe: ActorRef[?] => IO[Boolean]): Unit = livenessProbe.set(probe)
-
-  /** 探针求值（fail-open：探针自身故障 = 不判死）。 */
-  private def childAlive(ref: ActorRef[?]): Boolean =
-    try livenessProbe.get.apply(ref).unsafeRunSync()
-    catch case _: Throwable => true
+  /**
+   * 活性读数（**P1 投递身份化**后的唯一在场判据）：属主会话能不能被征询——由
+   * [[OwnerDeliveryPort]] 的身份探针回答（端口未装配 = `None`，**不判**，绝不凭空
+   * 判死）。旧的 actor-ref 探针（`installLivenessProbe` / `childAlive`）随内部腿
+   * 通道一起删除：队列不再持有任何 ref，也就无从探一个 ref 的死活。
+   */
+  private def childAlive(m: Member): Boolean =
+    OwnerDeliveryPort.presentOf(m.ownerSession).getOrElse(true)
 
   /**
    * 冻结豁免（错误冻结批 2026-11-01 · 任务书「合并队列里批次冻结时的处置写明」）：
@@ -484,6 +480,56 @@ object MergeQueue:
               "(production boot installs this at SharedResources construction)"
           )
   end BlockNotifyPort
+
+  /**
+   * 属主投递端口（**P1 投递身份化批 2026-11-05**）。
+   *
+   * 形态 = M2 注册器（与 [[BlockNotifyPort]] / [[OwnerGonePort]] 同款：core 只见
+   * 接口、agent 侧装配实现——core 不 import agent，分层纪律不变）。生产实现落
+   * `SharedResources`：`MailboxProducer.deliver` → **会话磁盘邮箱**（真源）+ 门铃
+   * （actor 消息只是门铃，见 SessionMailbox 语义反转）。
+   *
+   * 两个方法的分工（身份化的全部内容）：
+   *   - `deliver(ownerSessionId, kind, brief, identity)`：把合并指令写进属主会话的
+   *     落盘邮箱。`Right(())` = 条目已在盘上（必达成立）；`Left(reason)` = 投不
+   *     出去（会话已删 / 写失败）⇒ 调用方判 owner-gone。**没有任何进程内闭包参与**
+   *     ——重启后同一份身份照样投得出去。
+   *   - `present(ownerSessionId)`：属主**此刻能否被征询**（会话行存在 = 邮件照样
+   *     收得下，随任何唤醒点被消费）。端口未装配 = `None`（**不判**，绝不凭空判死）。
+   */
+  object OwnerDeliveryPort:
+
+    trait Face:
+      def deliver(ownerSessionId: String, kind: String, brief: String, identity: String): IO[Either[String, Unit]]
+      def present(ownerSessionId: String): IO[Boolean]
+    end Face
+
+    private val face = new java.util.concurrent.atomic.AtomicReference[Option[Face]](None)
+
+    def install(f: Face): Unit = face.set(Some(f))
+    def clear(): Unit = face.set(None)
+    def installed: Boolean = face.get.isDefined
+
+    /**
+     * 同步投递（账本腿是同步的——与 [[BlockNotifyPort]] 同款 `unsafeRunSync` 收口）。
+     * identity 固定为 `merge-queue-<kind>-<delegateId>`：同成员同 kind 在待消费期间
+     * 幂等（`mailOnce` 语义），消费掉之后下一次提醒可再入一条。
+     */
+    def deliverSync(m: Member, brief: String, kind: String): Either[String, Unit] =
+      face.get match
+        case Some(f) =>
+          try f.deliver(m.ownerSession, kind, brief, s"merge-queue-$kind-${m.delegateId}").unsafeRunSync()
+          catch case e: Throwable => Left(Option(e.getMessage).getOrElse(e.toString).take(200))
+        case None =>
+          Left("owner delivery port not installed (production boot installs it at SharedResources construction)")
+
+    /** 属主可征询读数：`None` = 端口未装配（不判）；探针故障 = fail-open 视为在场。 */
+    def presentOf(ownerSessionId: String): Option[Boolean] =
+      face.get.map { f =>
+        try f.present(ownerSessionId).unsafeRunSync()
+        catch case _: Throwable => true
+      }
+  end OwnerDeliveryPort
 
   /**
    * 同因连续 N 拍仍堵 ⇒ 升级通知作者（拍 = 放行尝试/扫描拍；零 wall-clock——
@@ -718,7 +764,7 @@ object MergeQueue:
         ensureLoadedLocked()
         members.values.find(mm => mm.open && mm.delegateId != m.delegateId && branchTipIs(ws, mm.branch, head))
       }.map { occupier =>
-        val alive = occupier.internal.exists(leg => childAlive(leg.childRef))
+        val alive = ownerPresent(occupier)
         (occupier.delegateId, alive)
       }
     }
@@ -867,7 +913,7 @@ object MergeQueue:
    * 「这批可以合」——今天的事故正是反过来的（失联的被抑制关账后继续被放行）。
    */
   private[delegate] def ownerPresent(m: Member): Boolean =
-    m.external.isDefined || m.internal.exists(leg => childAlive(leg.childRef))
+    OwnerDeliveryPort.presentOf(m.ownerSession).getOrElse(false)
 
   /**
    * 授窗前**硬 park**（三闸共用出口）：窗让回 waiting + `needsHuman`（= 队列停止对该
@@ -929,8 +975,8 @@ object MergeQueue:
    */
   private def mergeOnReenqueue(existing: Member, entry: Member): Member =
     existing.copy(
-      internal = entry.internal.orElse(existing.internal),
-      external = entry.external.orElse(existing.external),
+      // P1 投递身份化：新的收件身份优先（续活/重派后身份可能变），旧的保留兜底。
+      ownerSessionId = if entry.ownerSessionId.trim.nonEmpty then entry.ownerSessionId else existing.ownerSessionId,
       declaredAt = existing.declaredAt.orElse(entry.declaredAt),
       declareSource = existing.declareSource.orElse(entry.declareSource),
       declaredTip = existing.declaredTip.orElse(entry.declaredTip)
@@ -947,10 +993,12 @@ object MergeQueue:
         ensureLoadedLocked()
         members.get(entry.delegateId) match
           case Some(existing) if existing.open =>
-            // 幂等：已在账的开放成员不重复入账（重复完成/钩子重放），只刷新通道。
+            // 幂等：已在账的开放成员不重复入账（重复完成/钩子重放），只刷新投递身份。
             val channelMerged = mergeOnReenqueue(existing, entry)
-            // R1 自愈腿：通道重新出现 ⇒ 清退避窗/needsHuman 降级（复活后本拍即可授窗）。
-            val (refreshed, revived) = reviveOnChannelLocked(existing, channelMerged)
+            // R1 自愈腿：P1 身份化后**不存在「通道缺席」**（身份恒有——缺省 = 属主
+            // 会话本身；投递走落盘邮箱），所以「通道重新出现」退化为「属主又发生了
+            // 一次入队事实」= 条件已变的硬信号。降级/park 的解除仍由宣告闸把守。
+            val (refreshed, revived) = reviveOnChannelLocked(existing, channelMerged, channelRestored = true)
             members = members.updated(entry.delegateId, refreshed)
             if revived then
               MergeQueueChannel.sync(refreshed.delegateId, refreshed.state, memberJson(refreshed))
@@ -991,8 +1039,8 @@ object MergeQueue:
       members.get(entry.delegateId) match
         case Some(existing) if existing.open =>
           val channelMerged = mergeOnReenqueue(existing, entry)
-          // R1 自愈腿（见 reviveOnChannelLocked）：申报腿带来的新通道腿 = 条件已变。
-          val (refreshed, revived) = reviveOnChannelLocked(existing, channelMerged)
+          // R1 自愈腿（见 reviveOnChannelLocked）：申报腿带来一次新的入队事实 = 条件已变。
+          val (refreshed, revived) = reviveOnChannelLocked(existing, channelMerged, channelRestored = true)
           members = members.updated(entry.delegateId, refreshed)
           if revived then
             MergeQueueChannel.sync(refreshed.delegateId, refreshed.state, memberJson(refreshed))
@@ -1128,19 +1176,16 @@ object MergeQueue:
    *
    * @return 该成员是否被复活（调用方据此落审计行/写盘）。
    */
-  private def reviveOnChannelLocked(previous: Member, merged: Member): (Member, Boolean) =
-    val gainedLeg =
-      previous.internal.isEmpty && merged.internal.isDefined ||
-        previous.external.isEmpty && merged.external.isDefined
+  private def reviveOnChannelLocked(previous: Member, merged: Member, channelRestored: Boolean): (Member, Boolean) =
     val degraded = previous.needsHuman.isDefined || previous.skipUntilMs.isDefined || previous.blockedRounds > 0
     // 宣告闸批（2026-11-04）：**没有属主宣告的成员，通道复活不解 park**——「没宣告」
     // 是判据不成立（重试无意义），不是通道问题；只有新宣告（[[declareOwnership]]）
-    // 或人工处置能解。否则一条重入队带来的 leg 就会把 undeclared/health 的 park
+    // 或人工处置能解。否则一条重入队带来的通道就会把 undeclared/health 的 park
     // 一键清掉，等于把闸绕过去。
-    if !gainedLeg || !degraded || !hasDeclarationLocked(previous) then (merged, false)
+    if !channelRestored || !degraded || !hasDeclarationLocked(previous) then (merged, false)
     else
       clearBackoffMemosLocked(previous.delegateId)
-      // 以**合并后**的成员为底（新通道腿必须留在账上——复活后的第一拍就要用它投递）。
+      // 以**合并后**的成员为底（新投递身份必须留在账上——复活后的第一拍就要用它投递）。
       (merged.copy(blockedRounds = 0, skipUntilMs = None, needsHuman = None), true)
 
 
@@ -1178,32 +1223,28 @@ object MergeQueue:
           .filter(_.state == State.Waiting)
           .find(m => !attempted.contains(m.delegateId) && (!headSkip || grantEligibleLocked(m, now)))
           .map { head =>
-            // 占窗前先取**通道前提**（R5）：本次占窗自己会写镜像，前提必须在自写之前
-            // 判读——占窗前镜像已在盘 = 成员资格先于本进程存在（重启幸存者/直写盘面）；
-            // 占窗前无镜像 = 本批前存量账面，通道丢失照旧关账（前提成立）。
-            val channelPremised = MergeQueueChannel.hasOpenRecord(head.delegateId, State.Open)
             // 先占窗（占位即迁移）——通知在锁外，绝不双授。
+            // P1 身份化：**没有「通道前提」要读了**——投递走落盘邮箱 + 持久身份，
+            // 不再有「占窗前镜像在不在盘」这一层判断（R5 前提反转面随闭包一起退役）。
             val reserved = head.copy(state = State.TurnGranted, grantedAt = Some(System.currentTimeMillis()))
-            MergeQueueChannel.sync(reserved.delegateId, reserved.state, memberJson(reserved)) // write-ahead（R5）
+            MergeQueueChannel.sync(reserved.delegateId, reserved.state, memberJson(reserved)) // write-ahead
             members = members.updated(head.delegateId, reserved)
             persistLocked()
-            (reserved, channelPremised)
+            reserved
           }
     }
-    candidate.foreach((reserved, premised) =>
-      grant(reserved, premised, headSkip, depth, attempted + reserved.delegateId)
-    )
+    candidate.foreach(reserved => grant(reserved, headSkip, depth, attempted + reserved.delegateId))
 
   /**
    * 已占窗成员的放行腿：账实核对 → 净空闸 → 通知（任一关账腿释放窗并续放下一位）。
-   * `channelPremised` = 占窗前的通道前提读数（R5，pump 捕获——占窗自写镜像之前）：
-   * true = 成员资格有先于本进程的通道镜像（重启幸存面），通道闭包缺席不判死。
    * `depth` = R1 本拍内改授链深度（`headSkip` 生效时被堵成员让位，同一拍把窗交给
    * 下一个可放行者；[[MaxGrantChainDepth]] 封顶）；`attempted` = 本拍已试成员。
+   *
+   * P1 身份化：原 `channelPremised`（占窗前的通道前提读数）参数**已删除**——它存在的
+   * 前提是「投递靠进程内闭包」，闭包没了就没有「前提」可读。
    */
   private def grant(
     reserved: Member,
-    channelPremised: Boolean,
     headSkip: Boolean = true,
     depth: Int = 0,
     attempted: Set[String] = Set.empty
@@ -1264,7 +1305,7 @@ object MergeQueue:
       case Right(baseTip) => ()
     end match
     // ⑥ 放行 = 通知（属主自己执行合并并回报）。
-    notifyTurn(reserved, channelPremised) match
+    notifyTurn(reserved) match
       case NotifyResult.Delivered =>
         val tip = baseTipOf(reserved)
         lock.synchronized {
@@ -1310,10 +1351,6 @@ object MergeQueue:
         logger.info(
           s"[merge-queue] turn granted to '${reserved.delegateId}' (branch '${reserved.branch}' → '${reserved.baseBranch}', window holder = single)"
         )
-      case NotifyResult.Deferred(reason) =>
-        // 通道闭包缺席但成员资格在盘（R5 前提反转）——留队，绝不 owner-gone。
-        // R1：**无投递通道不再占队头**——让位 + 退避（79c40e17 那 220 拍自锁的自愈面）。
-        requeueBlocked(reserved, reason, BlockClass.NoChannel, headSkip, depth, attempted)
       case NotifyResult.Failed(err) =>
         markOwnerGone(reserved.delegateId, s"merge-turn notification undeliverable: ${err.take(200)}")
         pump(reserved.projectKey)
@@ -1391,7 +1428,9 @@ object MergeQueue:
   /** 阻塞类别（R1 面板/审计分类；**语义边界**：两类都是「机制挂起」，与
     * delegate 自己申报的 standby（等作者裁定）毫无关系）。 */
   object BlockClass:
-    /** 无投递通道（`Deferred`：闭包缺席而成员资格在盘——属主回合未收尾）。 */
+    /** 无投递通道——**P1 投递身份化后不再产生**（身份投递没有「无通道」形态：
+     * 身份恒在，投不出去就是会话真没了 ⇒ owner-gone）。保留分类名只为让存量审计行/
+     * 面板历史值仍可解释，新代码不得再用它发起阻塞。 */
     val NoChannel: String = "no-channel"
     /** 闸未过（道忙 / 净空 / 方向闸）——放行条件暂不满足。 */
     val Gate: String = "gate"
@@ -1498,15 +1537,12 @@ object MergeQueue:
       pumpWith(reserved.projectKey, headSkip, depth + 1, attempted)
   end requeueBlocked
 
-  /** 放行通知三态（R5 前提反转引入 Deferred）：Delivered = 已送达属主；
-    * Deferred = 通道闭包缺席但 write-ahead 通道仍有未关账镜像——成员资格在盘上，
-    * **不构成 owner-gone**，留队等下拍（requeueBlocked 同面：原因 + 通知 + N 拍
-    * 升级）；Failed = 通道真失败（探测/投递错误，或通道无未关账镜像——前提成立）
-    * ⇒ owner-gone。 */
+  /** 放行通知两态（P1 身份化：`Deferred` 随通道闭包一起退役——身份投递不存在
+    * 「闭包缺席」这一形态）。Delivered = 指令已写进属主会话磁盘邮箱（条目在盘 =
+    * 必达，重启后照样成立）；Failed = 投不出去（会话已删/写失败）⇒ owner-gone。 */
   private sealed trait NotifyResult
   private object NotifyResult:
     case object Delivered extends NotifyResult
-    final case class Deferred(reason: String) extends NotifyResult
     final case class Failed(reason: String) extends NotifyResult
   end NotifyResult
 
@@ -1514,40 +1550,23 @@ object MergeQueue:
    * 放行通知（按通道分派；三态见 [[NotifyResult]]）。`channelPremised` = 占窗前
    * 通道已有未关账镜像（pump 预读，R5 前提本体——占窗自写镜像会让事后读数恒真）。
    */
-  private def notifyTurn(m: Member, channelPremised: Boolean): NotifyResult =
+  /**
+   * 放行通知（**P1 投递身份化**：身份 → 落盘邮箱，三态见 [[NotifyResult]]）。
+   *
+   * 两条腿的旧语义映射（逐条对照，绝不改判据强度）：
+   *   - `Delivered`：指令已写进属主会话的磁盘邮箱（条目在盘 = 必达，随任何唤醒点
+   *     被消费；**重启后照样成立**——这正是本批要的）。
+   *   - `Failed`：投不出去（会话已删 / 邮箱写失败）⇒ 调用方判 owner-gone。
+   *   - `Deferred`（R5 前提反转面）**已废除**：它的存在理由是「投递靠进程内闭包，
+   *     重启后闭包没了但成员资格还在盘上」——身份化之后没有任何「闭包缺席」这回事，
+   *     投得出去就 Delivered、投不出去就是会话真没了（Failed）。留一个永不可达的
+   *     第三态只会让面板出现没人能解释的状态值。
+   */
+  private def notifyTurn(m: Member): NotifyResult =
     val brief = mergeBriefFor(m)
-    m.external match
-      case Some(ext) =>
-        try ext.send(brief).attempt.unsafeRunSync() match
-          case Right(r) =>
-            r match
-              case Right(()) => NotifyResult.Delivered
-              case Left(e)   => NotifyResult.Failed(e)
-          case Left(e) => NotifyResult.Failed(Option(e.getMessage).getOrElse(e.toString))
-        catch case e: Throwable => NotifyResult.Failed(Option(e.getMessage).getOrElse(e.toString))
-      case None =>
-        m.internal match
-          case Some(leg) if childAlive(leg.childRef) =>
-            try
-              (leg.childRef ! AgentCommand.UserInput(
-                text = brief,
-                replyTo = Some(leg.supervisorRef),
-                source = Some(Source),
-                eventType = Some("merge-turn")
-              )).unsafeRunSync()
-              NotifyResult.Delivered
-            catch case e: Throwable => NotifyResult.Failed(Option(e.getMessage).getOrElse(e.toString))
-          case Some(_) => NotifyResult.Failed("owner session is no longer live at grant time")
-          case None =>
-            // 通道闭包缺席（重启回载的常态）——按**占窗前的通道前提**判（R5 前提
-            // 反转：不再凭进程内存缺席判 owner-gone）。前提成立（占窗前镜像已在盘
-            // = 成员资格在盘上）：留队缓一拍（Deferred），等属主续活/人工处置；
-            // 无镜像（本批前存量账面/直写账本）= 前提成立反转面，照旧 owner-gone。
-            if channelPremised then
-              NotifyResult.Deferred(
-                "no live delivery channel after restart, but the write-ahead merge-channel held an un-closed record for this member before this grant — membership preserved (owner-gone suppressed); continue/revive the owner session or merge the branch manually (the queue fact-checks and closes it as merged)"
-              )
-            else NotifyResult.Failed("no delivery channel on record (channel lost across restart)")
+    OwnerDeliveryPort.deliverSync(m, brief, "merge-turn") match
+      case Right(()) => NotifyResult.Delivered
+      case Left(err) => NotifyResult.Failed(err)
   end notifyTurn
 
   /**
@@ -1557,26 +1576,7 @@ object MergeQueue:
    */
   private def notifyAlreadyLanded(m: Member): Unit =
     val brief = alreadyLandedBrief(m)
-    val deliver: Either[String, Unit] = m.external match
-      case Some(ext) =>
-        try ext.send(brief).attempt.unsafeRunSync() match
-          case Right(r) => r
-          case Left(e) => Left(Option(e.getMessage).getOrElse(e.toString))
-        catch case e: Throwable => Left(Option(e.getMessage).getOrElse(e.toString))
-      case None =>
-        m.internal match
-          case Some(leg) if childAlive(leg.childRef) =>
-            try
-              (leg.childRef ! AgentCommand.UserInput(
-                text = brief,
-                replyTo = Some(leg.supervisorRef),
-                source = Some(Source),
-                eventType = Some("merge-turn")
-              )).unsafeRunSync()
-              Right(())
-            catch case e: Throwable => Left(Option(e.getMessage).getOrElse(e.toString))
-          case _ => Right(()) // 会话已死 = 无可通知，账已关，零动作
-    deliver match
+    OwnerDeliveryPort.deliverSync(m, brief, "already-landed") match
       case Right(()) => record(m, "already-landed-notice", Json.obj())
       case Left(err) => logger.warn(s"[merge-queue] already-landed notice failed for '${m.delegateId}': ${err.take(200)}")
   end notifyAlreadyLanded
@@ -1903,14 +1903,11 @@ object MergeQueue:
         // **绝不**判 owner-gone（冻结待唤醒≠死灭；唤醒后 careTick 自然重排）。
         requeueForLane(m.delegateId, "delegate frozen while holding the merge window — slot returned, membership kept (awaiting wake)")
       else
-        m.internal match
-          case Some(leg) if !childAlive(leg.childRef) =>
-            // 冻结豁免二次闸：actor 已停但记录带冻结线值（监督者自停的冻结形态）
-            // ⇒ 同样不关账（childAlive 判据只认 actor 存活，冻结是故意的停）。
-            if frozenAwaitingWake(m.delegateId) then
-              requeueForLane(m.delegateId, "delegate frozen (supervisor stopped) while holding the merge window — membership kept (awaiting wake)")
-            else
-              markOwnerGone(delegateId = m.delegateId, reason = "merge-round holder session is no longer live — needs dispatcher handling")
+        // P1 身份化：在场判据只有一条 = 属主会话**还能不能收邮件**（端口未装配 = 不判
+        // ⇒ 保持「无依据不关账」的既有纪律，绝不凭读不到就判死）。
+        OwnerDeliveryPort.presentOf(m.ownerSession) match
+          case Some(false) =>
+            markOwnerGone(delegateId = m.delegateId, reason = "merge-round holder session no longer exists (identity delivery has nowhere to land) — needs dispatcher handling")
           case _ => ()
     }
     // R2：全部开放成员（waiting 也在内）只读账实核对——「别人已经帮它并进去了」
@@ -1969,39 +1966,38 @@ object MergeQueue:
   /** IO 包装（扫描腿是 IO 上下文）。 */
   def careTickIO: IO[Unit] = IO.blocking(careTick())
 
-  // ── 崩溃重启换绑（监督者 respawn 换新子 actor——事件驱动） ────────────
+  // ── 崩溃重启换绑（监督者 respawn——事件驱动的「复活」信号） ────────────
 
   /**
-   * delegate 会话崩溃经监督者 respawn 换新子 actor：开放成员的内部腿通道原地换绑
-   * （进程内运行态；账本数据面零变化）。已关账/查无 = no-op。
+   * delegate 会话崩溃经监督者 respawn：P1 身份化后队列**不再持有任何 actor ref**
+   * （投递只认 `ownerSessionId` + 落盘邮箱），因此本方法退化为「复活信号」——
+   * 解除退避/降级（宣告闸仍然把守），并落审计行。已关账/查无 = no-op。
    */
-  def reattach(delegateId: String, newChildRef: ActorRef[AgentCommand]): Unit =
+  def reattach(delegateId: String): Unit =
     lock.synchronized {
       ensureLoadedLocked()
       members.get(delegateId).filter(_.open) match
         case None => ()
         case Some(m) =>
-          val rebound = m.copy(internal = m.internal.map(_.copy(childRef = newChildRef)))
-          // R1 自愈腿：respawn 换绑 = 通道重新可用 ⇒ 清退避窗/needsHuman（否则降级过的
-          // 成员会被自己的上界永久钉死，见 reviveOnChannelLocked）。
+          // P1 身份化：投递不再持有任何 actor ref，所以「换绑」退化为**一次复活信号**
+          // （属主会话被监督者重新拉起来了 = 条件已变）。降级解除仍由宣告闸把守。
           val degraded = m.needsHuman.isDefined || m.skipUntilMs.isDefined || m.blockedRounds > 0
           val refreshed =
             if degraded then
               clearBackoffMemosLocked(delegateId)
-              rebound.copy(blockedRounds = 0, skipUntilMs = None, needsHuman = None)
-            else rebound
+              m.copy(blockedRounds = 0, skipUntilMs = None, needsHuman = None)
+            else m
           members = members.updated(delegateId, refreshed)
           if degraded then
             MergeQueueChannel.sync(refreshed.delegateId, refreshed.state, memberJson(refreshed))
             persistLocked()
             record(refreshed, "channel-restored-revive", Json.obj("phase" -> "respawn-reattach".asJson))
-          // 通道闭包不落盘（进程内运行态）——只落审计行。
+          // 投递身份是持久数据（不再有进程内闭包）——只落审计行。
           record(refreshed, "session-reattached", Json.obj("phase" -> "respawn-reattach".asJson))
     }
 
   /** IO 包装（BackoffSupervisor respawn 路径是 IO 上下文）。 */
-  def reattachIO(delegateId: String, newChildRef: ActorRef[AgentCommand]): IO[Unit] =
-    IO.blocking(reattach(delegateId, newChildRef))
+  def reattachIO(delegateId: String): IO[Unit] = IO.blocking(reattach(delegateId))
 
   /**
    * 重启对账**保留面**（R5 owner-gone 前提反转的落账腿；调用方 = MergeQueueBootSweep，

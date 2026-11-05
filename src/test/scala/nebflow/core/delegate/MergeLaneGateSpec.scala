@@ -51,7 +51,7 @@ class MergeLaneGateSpec extends CatsEffectSuite:
 
   override def afterEach(context: munit.AfterEach): Unit =
     MergeQueue.reset()
-    MergeQueue.installLivenessProbe(_ => IO.pure(true))
+    nebflow.core.delegate.MergeQueueTestPorts.install()
     MergeQueue.OwnerGonePort.clear()
     MergeQueue.BlockNotifyPort.clear()
 
@@ -126,7 +126,8 @@ class MergeLaneGateSpec extends CatsEffectSuite:
         s"sup-$delegateId"
       )
     yield
-      if !alive then MergeQueue.installLivenessProbe(ref => IO.pure(false))
+      // P1 投递身份化：brief 走投递端口（不再探 actor 信箱）；alive 腿 = 在场读数。
+      nebflow.core.delegate.MergeQueueTestPorts.recording(s => records += s.brief, presentOwner = alive)
       MergeQueue.Member(
         delegateId = delegateId,
         branch = s"delegate/$delegateId",
@@ -141,8 +142,7 @@ class MergeLaneGateSpec extends CatsEffectSuite:
         // 宣告闸批 2026-11-04：属主宣告在案（`delegate_report(category="merge")`）——授窗前提
         declaredAt = Some(1_000L),
         declareSource = Some(nebflow.core.delegate.MergeDeclaration.Source.ReportMerge),
-        channelKind = "internal",
-        internal = Some(MergeQueue.InternalLeg(child, sup))
+        channelKind = "identity",
       )
 
   private def chainLines(action: String): List[ChainStore.Entry] =
@@ -260,7 +260,7 @@ class MergeLaneGateSpec extends CatsEffectSuite:
     val records = ListBuffer.empty[String]
     val repo = mkRepo(tempRoot / "mlg4-repo", branch = "delegate/d-orphan")
     val mh = startConflictedMerge(repo, "delegate/d-orphan") // 死属主自己的未收场合并
-    MergeQueue.installLivenessProbe(ref => IO.pure(false)) // 属主已死
+    nebflow.core.delegate.MergeQueueTestPorts.install(presentOwner = false) // 属主已死
     for
       a <- member(system, records, "d-orphan", repo, readyAt = 1L)
       _ <- IO { MergeQueue.seedMemberForTest(a.copy(projectKey = "lane-4", state = MergeQueue.State.TurnGranted, grantedAt = Some(9L))) }
@@ -308,7 +308,7 @@ class MergeLaneGateSpec extends CatsEffectSuite:
       _ <- IO {
         // 属主死后窗仍持（病灶③形态：合并 commit 已落、属主未报/已死）
         MergeQueue.seedMemberForTest(
-          a.copy(projectKey = "lane-6", state = MergeQueue.State.TurnGranted, grantedAt = Some(7L), internal = None)
+          a.copy(projectKey = "lane-6", state = MergeQueue.State.TurnGranted, grantedAt = Some(7L))
         )
       }
       holderBefore = MergeQueue.find("d-landed").map(_.state)

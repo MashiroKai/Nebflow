@@ -52,7 +52,7 @@ class MergeQueueDeclarationGateSpec extends CatsEffectSuite:
     MergeQueue.reset()
     MergeDeclaration.reset()
     MergeHealthGate.clear()
-    MergeQueue.installLivenessProbe(_ => IO.pure(true))
+    nebflow.core.delegate.MergeQueueTestPorts.install()
     MergeQueue.OwnerGonePort.clear()
     MergeQueue.BlockNotifyPort.clear()
     MergeQueue.clearDeclarationLookup()
@@ -100,7 +100,7 @@ class MergeQueueDeclarationGateSpec extends CatsEffectSuite:
       parentSessionId = "nebula-root",
       description = s"task for $delegateId",
       readyAt = readyAt,
-      channelKind = "internal"
+      channelKind = "identity"
     )
 
   /** 活体属主腿（内部 actor 注入通道可用）。 */
@@ -117,7 +117,10 @@ class MergeQueueDeclarationGateSpec extends CatsEffectSuite:
             IO.pure(this),
         s"sup-${m.delegateId}-${scala.util.Random.nextInt(100000)}"
       )
-    yield m.copy(internal = Some(MergeQueue.InternalLeg(child, sup)))
+    yield
+      // P1 投递身份化：brief 直接进 records（投递端口即投递面）。
+      nebflow.core.delegate.MergeQueueTestPorts.recording(s => records += s.brief)
+      m.copy(ownerSessionId = m.delegateId)
 
   private def installAlertPort(): Unit =
     MergeQueue.BlockNotifyPort.install(new MergeQueue.BlockNotifyPort.Face:

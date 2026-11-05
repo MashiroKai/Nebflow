@@ -667,8 +667,48 @@ case class SharedResources(
       }
   }
 
-  // D3-②（steward 批 2026-10-23）：MergeQueue 合并提醒注入的活性探针——放行前
-  // 探测属主 childRef 是否活（actor 注册表已退出 = 死 ⇒ 不盲投，成员 owner-gone
-  // 关账，绝不盲投死 ref）。未注册（无 SharedResources 场）= 恒活，测试行为零变化。
-  nebflow.core.delegate.MergeQueue.installLivenessProbe(ref => actorSystem.isAlive(ref.path))
+  // ── P1 投递身份化（2026-11-05）：合并指令的投递端口 ──────────────────────
+  // 队列侧只见身份（`ownerSessionId`），不见 actor ref / 闭包。本端口是**唯一**的
+  // 落地实现：MailboxProducer.deliver → 属主会话的**磁盘邮箱**（真源，重启后照样
+  // 投得出去）+ 门铃（尽力而为）。
+  nebflow.core.delegate.MergeQueue.OwnerDeliveryPort.install {
+    new nebflow.core.delegate.MergeQueue.OwnerDeliveryPort.Face:
+      private val loggerMc = nebflow.shared.NebflowLogger.forName("nebflow.merge-queue")
+
+      def deliver(ownerSessionId: String, kind: String, brief: String, identity: String): IO[Either[String, Unit]] =
+        val event = nebflow.actor.AgentCommand.ExternalEvent(
+          source = "merge-queue",
+          // agent 面把 `merge-turn` 这类外部事件渲染成可行动的回合输入（与既有
+          // 外部腿的注入形态同源：同一个 source 名、同一种 eventType 语义）。
+          eventType = kind,
+          payload = brief,
+          metadata = io.circe.JsonObject(
+            "kind" -> io.circe.Json.fromString(kind),
+            "deliveredBy" -> io.circe.Json.fromString("merge-queue")
+          ),
+          correlationId = Some(identity)
+        )
+        nebflow.agent.MailboxProducer
+          .deliver(
+            SharedResources.this,
+            ownerSessionId,
+            event,
+            identity = identity,
+            kind = kind,
+            producer = "merge-queue"
+          )
+          .map {
+            case nebflow.core.mail.SessionMailbox.MailResult.Failed(cause) => Left(cause)
+            case _                                                        => Right(())
+          }
+
+      /** 属主能不能被征询 = 会话行还在（邮件在盘，随任何唤醒点被消费）。 */
+      def present(ownerSessionId: String): IO[Boolean] =
+        SharedResources.this.sessionStore.listSessions
+          .map(_.exists(_.id == ownerSessionId))
+          .handleErrorWith(_ => IO.pure(true)) // fail-open：读数失败不判死
+  }
+
+  // D3-②（steward 批 2026-10-23）的 `installLivenessProbe` 已随 P1 投递身份化删除：
+  // 队列不再持有任何 actor ref，在场判据统一走上面的身份探针。
 end SharedResources

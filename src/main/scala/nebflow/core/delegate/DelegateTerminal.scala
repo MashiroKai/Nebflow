@@ -1149,8 +1149,9 @@ object DelegateTerminal:
           parentSessionId = parentSessionId,
           description = rec.title,
           readyAt = now,
-          channelKind = "internal",
-          internal = Some(MergeQueue.InternalLeg(childRef, supervisorRef)),
+          channelKind = "identity",
+          // P1 投递身份化：收件身份 = 本 delegate 会话（投递走落盘邮箱，重启后照样投得出去）。
+          ownerSessionId = delegateId,
           declaredAt = declared.map(_.at),
           declareSource = declared.map(_.source),
           declaredTip = declared.flatMap(_.tip)

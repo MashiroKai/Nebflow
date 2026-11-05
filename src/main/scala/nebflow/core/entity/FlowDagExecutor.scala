@@ -1197,6 +1197,9 @@ object FlowDagExecutor:
       bridgeRef <- actorSystem.spawn(
         Behaviors.receive[AgentEvent] { (_, event) =>
           event match
+            // 刀一等待态计时消息只对武装它的那个 actor 有语义；本桥不接（恒等行为，
+            // 绝不用「停 actor / 完成 deferred」去消化一条与自己无关的 Tick）。
+            case _: AgentEvent.BgWaitCapTick => IO.pure(Behaviors.ignore)
             case AgentEvent.Completed(_, messages) =>
               resultDeferred.complete(Right(messages)).void.as(Behaviors.stopped)
             case AgentEvent.Failed(_, err) =>

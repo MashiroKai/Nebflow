@@ -60,7 +60,7 @@ class MergeQueueFifoNotifySpec extends CatsEffectSuite:
 
   override def afterEach(context: munit.AfterEach): Unit =
     MergeQueue.reset()
-    MergeQueue.installLivenessProbe(_ => IO.pure(true))
+    nebflow.core.delegate.MergeQueueTestPorts.install()
     MergeQueue.OwnerGonePort.clear()
     MergeQueue.BlockNotifyPort.clear()
 
@@ -94,6 +94,9 @@ class MergeQueueFifoNotifySpec extends CatsEffectSuite:
         case _ => IO.pure(this)
 
   private def sink(system: ActorSystem, name: String): IO[ActorRef[AgentCommand]] =
+    // P1 投递身份化：投递只认收件身份 + 落盘邮箱，spec 直接在端口上收走 brief
+    // （不再探 actor 信箱）；Sink actor 保留仅为既有 ref 形参。
+    nebflow.core.delegate.MergeQueueTestPorts.recording(s => grants += s.brief)
     system.spawn(new Sink(grants), name)
 
   /** 全量放行注入文本（B1 的排空序读数）。 */
@@ -134,8 +137,7 @@ class MergeQueueFifoNotifySpec extends CatsEffectSuite:
       // 宣告闸批 2026-11-04：属主宣告在案（`delegate_report(category="merge")`）——授窗前提
       declaredAt = Some(1_000L),
       declareSource = Some(nebflow.core.delegate.MergeDeclaration.Source.ReportMerge),
-      channelKind = "internal",
-      internal = Some(MergeQueue.InternalLeg(child, sup))
+      channelKind = "identity",
     )
 
   private def chainLines(action: String): List[ChainStore.Entry] =

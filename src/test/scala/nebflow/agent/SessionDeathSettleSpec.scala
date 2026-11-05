@@ -118,7 +118,6 @@ class SessionDeathSettleSpec extends FunSuite:
         declaredAt = Some(1_000L),
         declareSource = Some(nebflow.core.delegate.MergeDeclaration.Source.ReportMerge),
         channelKind = "external",
-        external = Some(MergeQueue.ExternalLeg(_ => IO.pure(Right(()))))
       )
     )
     val report = SubAgentStartupRecovery.sweep(store, sessionStore, None).unsafeRunSync()

@@ -45,7 +45,7 @@ class ExternalLegPrepareSpec extends CatsEffectSuite:
   override def afterEach(context: munit.AfterEach): Unit =
     DelegateJudge.DelegateJudgePort.clear()
     MergeQueue.reset()
-    MergeQueue.installLivenessProbe(_ => IO.pure(true))
+    nebflow.core.delegate.MergeQueueTestPorts.install()
     MergeQueue.OwnerGonePort.clear()
 
   private def mkRepo(dir: os.Path): os.Path =
@@ -229,7 +229,6 @@ class ExternalLegPrepareSpec extends CatsEffectSuite:
             declaredAt = Some(1_000L),
             declareSource = Some(nebflow.core.delegate.MergeDeclaration.Source.ReportMerge),
             channelKind = "external",
-            external = Some(MergeQueue.ExternalLeg(msg => IO { sent.add(msg); Right(()) }))
           )
         )
       }

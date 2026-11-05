@@ -697,17 +697,6 @@ You will be notified when it completes via a system message. Do NOT duplicate th
               rec.filter(r => r.branch.isDefined && r.baseBranch.isDefined) match
                 case Some(r) =>
                   val baseWs = r.projectWorkspace.getOrElse(r.cwd)
-                  val channel = MergeQueue.ExternalLeg { msg =>
-                    noteMergeRound(sessionId) *>
-                      continueExternal(
-                        r,
-                        msg,
-                        parentRef = spec.parentRef,
-                        wsSend = spec.wsSend,
-                        resources = spec.resources
-                      )
-                        .map(_.map(_ => ()))
-                  }
                   MergeQueue.enqueueVerifiedIO(
                     MergeQueue.Member(
                       delegateId = sessionId,
@@ -720,8 +709,11 @@ You will be notified when it completes via a system message. Do NOT duplicate th
                       parentSessionId = r.parentSessionId,
                       description = r.title,
                       readyAt = System.currentTimeMillis(),
-                      channelKind = "external",
-                      external = Some(channel),
+                      // P1 投递身份化：外部 leg 的注入闭包（continueExternal + CLI resume）
+                      // 已删除——投递统一走「收件身份 + 落盘邮箱」。⚠ 未核项：外部（CLI
+                      // 续聊）会话被邮箱门铃唤醒的链路需要实测（见本批报告「未核项」）。
+                      channelKind = "identity",
+                      ownerSessionId = sessionId,
                       // 宣告闸批 2026-11-04：外部腿的 ready-to-merge 是**判定/判词**
                       // 产出，不是属主宣告——只有属主自己用 `delegate_report(category="merge")`
                       // 申报过（宣告账在案）的成员才带宣告入队；否则入账但不授窗。
