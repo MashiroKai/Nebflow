@@ -535,12 +535,14 @@ class WritingStyleV2(Fixture):
 
 
 class FigureRenderBreakpoints(Fixture):
-    """R17 bare-name-embed / R18 image-in-human-fence（「图不显示」批 2026-11-05）。
+    """R17 bare-name-embed / R18 fence-embed-vault-relative（「图不显示」批 2026-11-05，
+    卡片出图批同日反转 R18 方向）。
 
     真报障：`![[after-states-dark.png]]` 写在 ```human 围栏里，图实际在
-    `assets/<batch>/after-states-dark.png`。前端 `imageCandidates()` 不递归子目录
-    （R17），`expandImageEmbeds()` 不展开围栏内嵌入（R18）——两个断点各自独立地
-    保证「图不显示」，所以两条都要有独立断言。"""
+    `assets/<batch>/after-states-dark.png`。当时两个断点：`imageCandidates()` 不递归
+    子目录（R17），`expandImageEmbeds()` 不展开围栏内嵌入（R18 原义）。
+    卡片出图批之后：围栏内嵌图**已放行**（前端展开已闭合围栏正文），R18 改判
+    「路径形态」= 必须 vault 相对；两条按位置分片，一行只报一条。"""
 
     def test_bare_name_for_subdir_file_is_flagged_with_the_path_to_write(self):
         body = ("![[after-states-dark.png]]\n\n"
@@ -585,21 +587,74 @@ class FigureRenderBreakpoints(Fixture):
         self.assertIn("![](assets/batchA/pic.png)", details)
         self.assertIn('<img src="assets/batchA/pic.png">', details)
 
-    def test_image_inside_human_fence_is_flagged(self):
+    def test_image_inside_human_fence_with_vault_relative_path_passes(self):
+        """卡片出图批（2026-11-05）：围栏内嵌图**放行**，路径 vault 相对即合规。"""
         body = ("```human\n## 结论\n结论一句话。\n\n图：\n"
                 "![[assets/batch01/pic.png]]\n```\n\n"
                 "See also [[index#fixture index]].")
         violations = self.run_case(body, extra=[("assets/batch01/pic.png", "", True)])
-        hits = rule_violations(violations, "image-in-human-fence")
+        self.assertEqual([], rule_violations(violations, "fence-embed-vault-relative"), violations)
+        self.assertEqual([], rule_violations(violations, "bare-name-embed"), violations)
+
+    def test_image_inside_human_fence_with_bare_name_is_flagged(self):
+        """围栏内**裸名**仍违规：卡片体必须写 vault 相对路径（位置无关的形态）。"""
+        body = ("```human\n## 结论\n结论一句话。\n\n图：\n"
+                "![[pic.png]]\n```\n\n"
+                "See also [[index#fixture index]].")
+        violations = self.run_case(body, extra=[("assets/batch01/pic.png", "", True)])
+        hits = rule_violations(violations, "fence-embed-vault-relative")
         self.assertEqual(1, len(hits), violations)
-        self.assertIn("围栏", hits[0]["detail"])
+        self.assertIn("vault 相对路径", hits[0]["detail"])
+        self.assertIn("![[assets/batch01/pic.png]]", hits[0]["detail"], "必须给出应写路径")
+        self.assertEqual([], rule_violations(violations, "bare-name-embed"),
+                         "围栏内的行只归 R18，R17 不得复述（两条按位置分片）")
+
+    def test_image_inside_human_fence_bare_name_that_resolves_is_still_flagged(self):
+        """裸名恰好能解析（图在 `<vault>/assets/`）也要报：卡片体不吃位置依赖。"""
+        body = ("```human\n## 结论\n结论一句话。\n\n图：\n"
+                "![[pic.png]]\n```\n\n"
+                "See also [[index#fixture index]].")
+        violations = self.run_case(body, extra=[("assets/pic.png", "", True)])
+        hits = rule_violations(violations, "fence-embed-vault-relative")
+        self.assertEqual(1, len(hits), violations)
+        self.assertIn("能", hits[0]["detail"])
+        self.assertIn("![[assets/pic.png]]", hits[0]["detail"])
+
+    def test_image_inside_human_fence_at_vault_root_passes(self):
+        """图就在 vault 根、没有更好的目录形态可写 ⇒ 不报（规则不空转）。"""
+        body = ("```human\n## 结论\n结论一句话。\n\n图：\n"
+                "![[pic.png]]\n```\n\n"
+                "See also [[index#fixture index]].")
+        violations = self.run_case(body, extra=[("pic.png", "", True)])
+        self.assertEqual([], rule_violations(violations, "fence-embed-vault-relative"), violations)
 
     def test_image_after_the_fence_passes(self):
         body = ("```human\n## 结论\n结论一句话。\n```\n\n"
                 "![[assets/batch01/pic.png]]\n\n图 1 一张图。\n\n"
                 "See also [[index#fixture index]].")
         violations = self.run_case(body, extra=[("assets/batch01/pic.png", "", True)])
-        self.assertEqual([], rule_violations(violations, "image-in-human-fence"), violations)
+        self.assertEqual([], rule_violations(violations, "fence-embed-vault-relative"), violations)
+
+    def test_fence_and_outside_bare_names_never_double_report(self):
+        """同行只归一条：围栏内 → R18，围栏外 → R17（两条不打架）。"""
+        body = ("```human\n## 结论\n图 A：\n![[pic.png]]\n```\n\n"
+                "![[pic.png]]\n\n图 1 围栏外同一张图。\n\n"
+                "See also [[index#fixture index]].")
+        violations = self.run_case(body, extra=[("assets/batch01/pic.png", "", True)])
+        fence_hits = rule_violations(violations, "fence-embed-vault-relative")
+        bare_hits = rule_violations(violations, "bare-name-embed")
+        self.assertEqual(1, len(fence_hits), violations)
+        self.assertEqual(1, len(bare_hits), violations)
+        self.assertNotEqual(fence_hits[0]["line"], bare_hits[0]["line"])
+        self.assertLess(fence_hits[0]["line"], bare_hits[0]["line"], "围栏内那条在前面")
+
+    def test_dead_reference_inside_fence_is_reported_once_by_r6_only(self):
+        body = ("```human\n## 结论\n图：\n![[nope.png]]\n```\n\n"
+                "See also [[index#fixture index]].")
+        violations = self.run_case(body)
+        self.assertEqual(1, len(image_violations(violations)), violations)
+        self.assertEqual([], rule_violations(violations, "bare-name-embed"), violations)
+        self.assertEqual([], rule_violations(violations, "fence-embed-vault-relative"), violations)
 
     def test_dead_reference_is_reported_once_by_r6_only(self):
         """R6 已经报的死引用，R17 不复述（一处只报一次，修完重跑看下一处）。"""

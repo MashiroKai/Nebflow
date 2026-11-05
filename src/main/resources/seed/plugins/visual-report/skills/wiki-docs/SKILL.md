@@ -89,13 +89,16 @@ machine-checked:
    待你决定的事** (no English heading, no jargon: "Impression" and its Chinese
    equivalents are on the blocklist, clause ⑨). Inside it: the conclusion in
    ≤3 lines, 3-7 key numbers, and **the caption sentence of the key chart** —
-   the chart LINE itself goes **immediately after the closing fence**, never
-   inside it (`![[assets/<batch>/key-chart.png]]`, caption = the conclusion
-   sentence). A `![[…]]` written inside a fence is **not an image at all**: the
-   renderer's `expandImageEmbeds()` skips fenced lines by design (a fence is
-   code, and a `![[…]]` in code is a sample), so the card would show the
-   literal text and the figure would be invisible (clause ⑥ binding point ⑤,
-   rule `image-in-human-fence`). Agent jargon (spec pass counts, merge-queue
+   the chart LINE itself goes **inside the card** — only the card body is on
+   the first screen, everything outside the fences is folded into a collapsed
+   drawer (`![[assets/<batch>/key-chart.png]]`, caption = the conclusion
+   sentence, path **vault-relative with its directory**, never a bare file
+   name). The renderer expands image embeds inside a closed ```human fence as
+   of the card-image batch (2026-11-05): the fence is not code, it is the card
+   body, and `utils.js _transformHumanFace` re-renders that body as markdown —
+   so a figure written in the card is a real figure on the first screen, while
+   a figure written outside the fence is folded away (clause ⑥ binding point
+   ⑥, rule `fence-embed-vault-relative`). Agent jargon (spec pass counts, merge-queue
    speak, worktree, commit hashes, session/chain internals) stays OUT of the
    card — plain wording, or a registered-term short form `[[Name]]` for terms
    that must stay (hover gloss via the term registry). Content outside the
@@ -131,16 +134,21 @@ machine-checked:
    name for a figure stored in `assets/<batch>/x.png` misses all six.
    → check rule `bare-name-embed` (R17): the violation prints the path you
    should have written.
-   6. **Never put an image embed inside a ```human fence.** `expandImageEmbeds()`
-   (`same file:920`) deliberately does **not** expand embeds inside fenced
-   lines (a fence is code; a `![[…]]` in code is a sample, not a figure), and
-   the card body is re-rendered as markdown from that same fenced text — so an
-   embed written in the card survives only as the literal characters. Put the
-   figure line **immediately after the closing fence**, caption underneath; the
-   card keeps the wording (结论 / 关键数字 / 图注文字 / 待你决定的事). → check
-   rule `image-in-human-fence` (R18).
+   6. **Figure lines go INSIDE the ```human card, with a vault-relative path.**
+   The card mechanism renders a closed fence body as markdown and folds
+   everything **outside** the fences into a collapsed drawer — so a figure
+   written outside the card is folded away (first screen shows none of it),
+   while a figure written in the card body is on the first screen. As of the
+   card-image batch (2026-11-05) `expandImageEmbeds()` expands embeds inside a
+   closed ```human fence too (`same file`, `humanCardBodyLines()`): the fence
+   is the card body, not code. The path in there must be **vault-relative with
+   its directory** (`assets/<batch>/x.png`, `attachments/x.png`): that form
+   resolves through the renderer's vault-root slot from ANY document
+   directory, while a bare name only resolves from four of the six slots. → check
+   rule `fence-embed-vault-relative` (R18). Generic code fences (```js and
+   friends) still keep `![[…]]` literal — code is code.
    → check rules `image-outside-vault` (R6), `bare-name-embed` (R17),
-   `image-in-human-fence` (R18); per-occurrence escape hatch is the inline
+   `fence-embed-vault-relative` (R18); per-occurrence escape hatch is the inline
    marker `<!-- wiki-img-exempt: reason -->` (see "Images live with the
    document" below).
 7. **Typography: paragraph indent + restrained colour (排版批, author ruling
@@ -282,7 +290,7 @@ python3 ${SKILL_DIR}/scripts/check_wiki_docs.py --project <project> --glossary g
   stamp — `20261105_130000`, this batch's delivery; the `style:` frontmatter
   opt-in belongs to R7–R9 and does not retro-apply).
 - **Scope of clauses ⑥ ⑤⑥ and ⑬ (same stock transition, own stamps).**
-  R17 `bare-name-embed` / R18 `image-in-human-fence` are hard from
+  R17 `bare-name-embed` / R18 `fence-embed-vault-relative` are hard from
   `--image-since`, default `20261105_130000` (same reasoning as v2: documents
   written before the rule existed cannot be judged by it, so they print as
   advisory); R19 `image-required` / R20 `stacked-detail` are hard from
@@ -428,15 +436,19 @@ Four binding points, all machine-checked as `image-outside-vault`:
    "is the figure in the vault", R17 asks "can the renderer find it" — a
    document can pass R6 and still show a broken image, and that gap is exactly
    what R17 was added for.
-6. **No image embed inside a human fence.** `expandImageEmbeds()`
-   (`same file:920`) skips fenced lines by design — a fence is code, and a
-   `![[…]]` inside code is a syntax sample, not a figure. The card body is
-   re-rendered from that same fenced text, so the embed stays literal
-   characters. Write the image line **immediately after the closing fence**,
-   caption under it. → check rule `image-in-human-fence` (R18).
+6. **Figure lines go inside the human card, not outside it.** The card
+   mechanism renders the fence body as markdown and folds everything outside
+   the fences into a collapsed drawer; a figure written outside is folded away
+   (first screen: none of it), a figure written inside is on the first screen.
+   `expandImageEmbeds()` expands embeds inside a closed ```human fence as of the
+   card-image batch (2026-11-05) — the fence is the card body, not code.
+   Write the image line **inside the card** with a **vault-relative path that
+   includes the directory** (`assets/<batch>/x.png`). → check rule
+   `fence-embed-vault-relative` (R18). Generic code fences keep `![[…]]`
+   literal — that part is unchanged.
 
-The counter-example that started this batch (both defects at once — never
-renders for two independent reasons):
+The sample that started this batch (one defect left after the card-image batch,
+where it used to be two):
 
 ````markdown
 ```human
@@ -445,9 +457,11 @@ renders for two independent reasons):
 ```
 ````
 
-Two fixes, both required: write the path including `assets/<batch>/` (R17), and
-move the image line below the closing fence (R18). The card keeps the caption
-sentence; the figure line lives outside.
+Today it renders — but only as a bare-name lookup, which fails whenever the
+figure sits in a sub-directory. One fix: write the path including
+`assets/<batch>/` (R17 outside a fence, R18 inside it). The card keeps the
+figure AND the caption sentence; moving the line below the closing fence would
+now hide it in the drawer instead of fixing it.
 
 Correct (compliant):
 
@@ -986,14 +1000,14 @@ act; ≤3 lines>
   from the existing tokens.
 - **Title line of a card**: `## <part name>` — a noun that names the part
   ("结论", "一、配色", "要你决定的事"), never a sentence and never jargon.
-- **Inside a card**: the conclusion and the 3-7 key numbers only. **The key
-  chart's line goes immediately after the closing fence**, with its caption
-  right under it — a `![[…]]` written inside the fence never becomes an image
-  (`expandImageEmbeds()` skips fenced lines by design), so a chart placed "in
-  the card" is a chart nobody sees (clause ⑥ binding point ⑥, rule
-  `image-in-human-fence`). The card keeps the chart's *caption sentence*, not
-  the chart's line. The argument goes into the `<details>` block right after
-  it (layer ③), so the card stays readable at a glance.
+- **Inside a card**: the conclusion, the 3-7 key numbers, and **the key
+  chart's own line** — the figure lives in the card body, on the first screen,
+  with a vault-relative path (`![[assets/<batch>/key-chart.png]]`) and its
+  caption sentence right under it. A figure line left OUTSIDE the fences is
+  folded into the collapsed drawer: it exists, but nobody sees it on the first
+  screen (clause ⑥ binding point ⑥, rule `fence-embed-vault-relative`). The
+  argument goes into the `<details>` block right after the card (layer ③), so
+  the card stays readable at a glance.
 - One document may carry as many ```human fences as it has parts; they render
   in order as cards. Content left outside every fence folds into one
   "details (N lines)" drawer — with per-part cards plus `<details>`, that

@@ -7,6 +7,9 @@
 //      在 `assets/<batch>/x.png` ⇒ 六格全落空。
 //   ② R18 围栏内嵌图：`expandImageEmbeds()`（同文件:920）**不展开围栏内嵌入**
 //      （围栏是代码面）⇒ 图写在 ```human 摘要围栏里，路径再对也只显示字面量。
+//      **2026-11-05 卡片出图批已反转这一条**：围栏是卡片体不是代码面，围栏内
+//      嵌入现在同样展开（见 `humanCardBodyLines()`）；本装置的 C2 随新口径改判
+//      「路径对 + 围栏内 ⇒ 出图」，围栏内**裸名**仍归 R17/R18 判失败面。
 //
 // 本装置证明的是「前端真的这么干」，不是「正则看着像」：
 //   · 真渲染器：动态 `import('/js/viewers/markdown.js')`，调它的 **default.render**
@@ -19,10 +22,10 @@
 //
 // 判据（EXIT 0 = 全绿）：
 //   A 改后真文档（vault 里那一篇）：9 张图全部 naturalWidth>0，0 块「图片加载失败」
-//   B 改前真文档（同内容副本）：只有 3 个 <img>（围栏内那张根本没成图）、
-//     3 块失败占位；围栏内那张以**字面量** `![[…]]` 留在卡片里
-//   C 隔离样例：路径对 + 围栏外 ⇒ 出图；路径对 + 围栏内 ⇒ 不出图（只留字面量）；
-//     裸名 + 围栏外 ⇒ 失败占位（复现 R17）
+//   B 改前真文档（同内容副本，给了 WIKI_IMG_BEFORE_MD 才跑）：围栏内那张出图，
+//     三处裸名仍是 3 块失败占位
+//   C 隔离样例：路径对 + 围栏外 ⇒ 出图；路径对 + 围栏内 ⇒ 出图（卡片体，2026-11-05
+//     卡片出图批起；原判据「不出图」已作废）；裸名 + 围栏外 ⇒ 失败占位（复现 R17）
 //
 // 跑法：node tests/_wiki-img-embed-harness.mjs
 //   可选环境变量：WIKI_IMG_WEB_ROOT / WIKI_IMG_VAULT / WIKI_IMG_OUT / PLAYWRIGHT_ENTRY
@@ -315,16 +318,15 @@ async function main() {
     const b = await renderCase(page, { content: beforeMd, absPath: docAbs, fileName: DOC_REL });
     await shot('before-doc-rendered');
     const bLoaded = b.imgs.filter((i) => i.naturalWidth > 0).length;
-    // 实测形态：三处裸名候选在**铸票面**就被全部驳回（六格全不存在）⇒ 连一个
-    // `<img>` 都不发，页面直接落三块「图片加载失败」占位；围栏内那张更早一步
-    // 就没成图（死链锚）。四张引用 ⇒ 0 个 <img>。
-    assert('B 改前文档：四张引用一个 <img> 都没成', b.imgs.length === 0 && bLoaded === 0,
+    // 实报障文档的三处裸名候选在**铸票面**就被全部驳回（六格全不存在）⇒ 落三块
+    // 「图片加载失败」占位；围栏内那张（路径正确、写在 ```human 里）自 2026-11-05
+    // 卡片出图批起**出图**。四张引用 ⇒ 1 个 <img>（卡内）+ 3 块占位。
+    assert('B 改前文档：围栏内那张出图，三处裸名仍是失败占位',
+      b.imgs.length === 1 && bLoaded === 1 && b.fails.length === 3
+      && b.danglingImgAnchors.length === 0,
       `img=${b.imgs.length} 出图=${bLoaded} 失败占位=${b.fails.length} 死链锚=${b.danglingImgAnchors.length}`);
     assert('B 改前文档：三块失败占位（R17 裸名）', b.fails.length === 3,
       b.fails.map((f) => f.path).join(' | '));
-    assert('B 改前文档：围栏内那张变成死链锚（R18）',
-      b.danglingImgAnchors.length === 1 && b.danglingImgAnchors[0].target === 'after-states-dark.png',
-      b.danglingImgAnchors.map((x) => x.target).join(' | '));
   }
 
   // ── C 隔离样例（一条一条证明断点）──────────────────────────────────
@@ -336,9 +338,13 @@ async function main() {
 
   const c2 = await renderCase(page, { content: isolated.inFence, absPath: docAbs, fileName: 'iso-fence.md' });
   await shot('iso-path-inside-fence');
-  assert('C2 路径对 + 围栏内 ⇒ 不出图（只留死链锚）',
-    c2.imgs.length === 0 && c2.danglingImgAnchors.length === 1 && c2.fails.length === 0,
-    `img=${c2.imgs.length} 死链锚=${c2.danglingImgAnchors.map((x) => x.target).join('|')}`);
+  // 2026-11-05 卡片出图批：围栏内嵌图**放行**（围栏=卡片体），路径对就出图，
+  // 而且出在卡片里（首屏可见）。原判据「不出图、只留死链锚」已作废。
+  assert('C2 路径对 + 围栏内 ⇒ 出图（卡片体里，首屏可见）',
+    c2.imgs.length === 1 && c2.imgs[0].naturalWidth > 0 && c2.danglingImgAnchors.length === 0
+    && c2.fails.length === 0,
+    `img=${c2.imgs.length} nw=${c2.imgs[0] && c2.imgs[0].naturalWidth}`
+    + ` 死链锚=${c2.danglingImgAnchors.length} 失败占位=${c2.fails.length}`);
 
   const c3 = await renderCase(page, { content: isolated.bareName, absPath: docAbs, fileName: 'iso-bare.md' });
   await shot('iso-bare-name');

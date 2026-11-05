@@ -908,19 +908,56 @@ function escapeAttr(s) {
     .replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+/** ```human 摘要围栏的**卡片体行号集合**（human-card-image-expand 批 2026-11-05）。
+ *
+ *  口径必须与 utils.js 的卡片 pass 逐字一致，否则会出现「展开进了一个不会
+ *  变成卡片的围栏」：那边 `_humanFencesBalanced()`（utils.js:847）只认**第 0 列
+ *  起写的** ```human（`/^```human[ \t]*$/`，带别的 info 或带缩进都不算卡片），
+ *  关栏 `_transformHumanFace()`（utils.js:924）只认裸 ``` 行；未闭合的围栏在那
+ *  边不变换、照旧当代码块显示 ⇒ 这边也必须**不展开**（否则代码块里会露出一串
+ *  字面 `<img src=…>`）。
+ *
+ *  返回的是「**已闭合** 的 ```human 围栏内部行」——本次放开的正是这一段：
+ *  卡片体也要出图（作者裁定「以图为主」，见下方 expandImageEmbeds 头注）。
+ *  @param {string[]} lines
+ *  @returns {Set<number>} 行下标（0 基） */
+function humanCardBodyLines(lines) {
+  const out = new Set();
+  let open = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (open < 0) {
+      if (/^```human[ \t]*$/.test(lines[i])) open = i;
+    } else if (/^```[ \t]*$/.test(lines[i])) {
+      for (let j = open + 1; j < i; j++) out.add(j);
+      open = -1;
+    }
+  }
+  return out;
+}
+
 /**
  * 把 `![[a.png]]` 展开成 `<img src="a.png" alt="…">`（**行数不变** —— 源码行
  * 映射 data-src-line / 块锚 ^id 全部照旧成立）。
  *
  * 只展开**图片扩展名**的目标；`![[doc.md]]` / `[[词条]]` 原样留给
- * renderWikilinks 的既有引用腿（零回归）。围栏内（``` / ~~~）与行内代码（`…`）
- * 里的 `![[…]]` 保持字面 —— 代码块是代码，不是图。
+ * renderWikilinks 的既有引用腿（零回归）。**通用**代码围栏内（``` / ~~~）与
+ * 行内代码（`…`）里的 `![[…]]` 保持字面 —— 代码块是代码，不是图。
+ *
+ * 例外（human-card-image-expand 批，作者裁定「以图为主」）：```human 摘要围栏
+ * **不是代码块，是人面卡片体**（utils.js `_transformHumanFace` 把围栏正文重新
+ * 当 markdown 渲进 `.nf-human-card`），而卡片机制把围栏**外**的一切折进默认收起
+ * 的 `<details>` 抽屉 ⇒ 图写在围栏外，读者首屏看不见。所以围栏内嵌图**同样
+ * 展开**：卡片体走一条正常的图片腿（候选表 → 铸票 → 账本 → 失败占位），
+ * 「路径对 + 在卡片里」从此出图，不再只剩字面量。
+ * 判定面不变：裸名/失效路径照旧落失败占位（见 imageCandidates / showMdImageFailure），
+ * 放开的是**位置**，不是**路径正确性**。
  * @param {string} md
  * @returns {string}
  */
 function expandImageEmbeds(md) {
   if (!md || md.indexOf('![[', 1) < 0) return md;
   const lines = md.split('\n');
+  const cardLines = humanCardBodyLines(lines);
   let inFence = false;
   let fenceMarker = '';
   for (let i = 0; i < lines.length; i++) {
@@ -931,7 +968,8 @@ function expandImageEmbeds(md) {
       else if (fenceMatch[1].startsWith(fenceMarker)) { inFence = false; fenceMarker = ''; }
       continue;
     }
-    if (inFence || line.indexOf('![[', 0) < 0) continue;
+    // 围栏内默认不展开；只有「已闭合的 ```human 卡片体」这一种围栏例外。
+    if ((inFence && !cardLines.has(i)) || line.indexOf('![[', 0) < 0) continue;
     // 行内代码段（反引号对）不参与：'a `![[x.png]]` b' 里的嵌入是引用示例。
     lines[i] = line.split(/(`+[^`]*`+)/)
       .map((seg, k) => (k % 2 ? seg : seg.replace(/!\[\[([^\[\]]+?)\]\]/g, (m, inner) => {
@@ -1127,7 +1165,11 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
   // ⑤onerror 级联（vault 根腿）→ ⑥终局 = 明确失败占位（绝不留白）。
   if (absPath) {
     const IMG_SCAN_RE = /<img\s+[^>]*src="([^"]+)"/g;
-    const IMG_REWRITE_RE = /(<img\s+[^>]*src=")([^"]+)(")/g;
+    // 匹配**整枚标签**（到 `>` 为止），不是「只到 src 的收尾引号」——失败面是
+    // 一块整块替换（mdImageFailHtml 返回一个 div），只吃 `src="…"` 会把后面的
+    // ` alt="…" data-nf-md-embed="…">` 原样留在正文里当字面量（human-card-img-
+    // expand 批 2026-11-05 截图实证：失败占位下面拖着一行 `alt="…"` 残渣）。
+    const IMG_REWRITE_RE = /(<img\s+[^>]*src=")([^"]+)("[^>]*>)/g;
     /** 原始 src → 已解码引用（marked 会 percent-encode：`assets/截屏 1.png` 与
      *  `<assets/x 2.png>` 都到这里变成 `assets/%E6%88%AA…%201.png`。先解码，
      *  否则下面再转义一次、端点去找一个字面 `%E6…` 的文件。非法转义（名字里
@@ -1192,12 +1234,16 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
       //   data-nf-md-alt  = 剩余候选（vault 根腿）→ onerror 级联
       //   data-nf-md-src  = 文档里写的原路径原文（失败占位要原样给人看）
       //   data-nf-md-err  = 渲染期已知的 HTTP 状态（有则不必再探）
-      return `${prefix}__NF_MD_IMG_${i}__${suffix}`
+      // 位置：**src 收尾引号之后、标签原有其余属性之前**（`suffix` 以那枚引号
+      // 开头，`slice(1)` 才是剩下的 ` alt="…">`）——写成「整枚标签后缀」以后
+      // 忘了这一步，属性就会掉到 `>` 外面，变成一段裸文字。
+      return `${prefix}__NF_MD_IMG_${i}__"`
         + ` data-nf-md-fb="__NF_MD_FB_${i}__"`
         + ` data-nf-md-alt="${escapeAttr(encodeURIComponent(JSON.stringify(urls.slice(1))))}"`
         + ` data-nf-md-src="${escapeAttr(ref)}"`
         + ` data-nf-md-path="${escapeAttr(usable[0])}"`
-        + ` data-nf-md-err="__NF_MD_ERR_${i}__"`;
+        + ` data-nf-md-err="__NF_MD_ERR_${i}__"`
+        + suffix.slice(1);
     });
     // Hydration — every rewritten image resolves its final src through the
     // ledger single point (`nfViewerUrl`): `nf:<path>` hit = blob URL (ZERO
