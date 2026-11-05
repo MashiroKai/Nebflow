@@ -271,13 +271,15 @@ object FreezeNotice:
     max > 0 && autoResumesOf(delegateId, frozenSince) >= max
 
   /**
-   * 自动续跑是否到期（纯函数）：第 n 次（n = 已试次数）尝试的最早时刻 =
-   * `frozenSince + afterMs + base × (2^(n-1) − 1)`（n=1 ⇒ +afterMs，n=2 ⇒ +after+base…）。
+   * 自动续跑是否到期（纯函数）：已试 `attempts` 次后，下一次尝试的最早时刻 =
+   * `frozenSince + afterMs + base × 2^(attempts-1)`（attempts=0 ⇒ 只等 afterMs；
+   * 之后每多一次尝试间隔翻倍：60s → 120s → 240s …）。间隔从 `frozenSince` 起算
+   * （不是从上次尝试起算）——同一份台账即可判定，不需要额外存上次时刻。
    */
   def autoResumeDue(frozenSince: Long, now: Long, attempts: Int): Boolean =
     val after = Defaults.DelegateFreezeAutoResumeAfterMs
     val base = Defaults.DelegateFreezeAutoResumeBackoffMs
-    val gap = if attempts <= 0 then after else after + base * ((1L << math.min(attempts - 1, 16)) - 1L)
+    val gap = if attempts <= 0 then after else after + base * (1L << math.min(attempts - 1, 16))
     now - frozenSince >= gap
 
   /** 记一次自动续跑尝试（返回累计次数）。 */

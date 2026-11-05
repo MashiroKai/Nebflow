@@ -78,6 +78,10 @@ class FreezeSilenceSpec extends CatsEffectSuite:
     props.foreach(p => sys.props.remove(p))
     FreezeNotice.resetLedger()
     FreezeAlertSweep.resetForTest()
+    // registry 是 `<dataRoot>/delegates` 下的持久目录：不清理的话上一用例的冻结记录
+    // 会漏进下一用例的全量统计（digest.total 7 ≠ 6）。
+    try os.remove.all(PathUtil.dataRoot / "delegates")
+    catch case _: Throwable => ()
 
   override def afterEach(context: munit.AfterEach): Unit =
     props.foreach(p => sys.props.remove(p))
@@ -228,7 +232,7 @@ class FreezeSilenceSpec extends CatsEffectSuite:
         parentSid,
         childSid,
         AgentErrorType.LlmFailed,
-        "All providers failed (2 attempts; families: auth): [auth] kimi/k3: 403 no subscription; deepseek: insufficient_quota",
+        "All providers failed (2 attempts; families: auth): [auth] kimi/k3: 403 no subscription; deepseek: 403 forbidden",
         childCmds,
         parentRef
       )
