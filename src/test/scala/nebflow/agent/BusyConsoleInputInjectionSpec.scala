@@ -36,6 +36,22 @@ import scala.concurrent.duration.*
  * 引擎实现**零改动**（既有行为，本 spec 是它的端到端红线）；queue 旧轨
  * （默认用户帧 → UserInput → pendingUserInputs → turn 末 head-forward 逐条独立
  * turn，2026-09-15 ub 裁定面）负对照不许被改坏。
+ * ※ 上句是**改前（2026-09-15 口径）的表述**，按代码实测**已被下条按语修正**：
+ *   默认用户帧只要带正文就带 `ContentBlock.Text` 块（`WebSocketRoutes.scala:2044`）⇒
+ *   今天在**工具边界注入**、不是 turn 末 head-forward。负对照真实覆盖形 = 零块
+ *   `UserInput`（协议残余形），见下。
+ *
+ * ⚠️ **W3 负对照的覆盖面按语（midturn-injection-timing 批 2026-11-05 修订）**：W3 钉的
+ * 是**零块 `UserInput`**（`content` 空 ∧ 无 attachments/refs）这一**协议残余形**——
+ * 网关准入谓词 `content.nonEmpty || attachments.nonEmpty` 会拒收它，**WS 前端从不产生
+ * 该形**（`WebSocketRoutes.scala:2044` 对任何带正文的帧都加一块 `ContentBlock.Text`）。
+ * 因此 **W3 的绿只证明「引擎侧零块 UserInput 仍不进边界」这一协议层事实，不覆盖生产
+ * 面的 queue 路径**：queue 模式 drain 腿（`input.js:1345` → `:1430` 默认用户帧）带正文
+ * ⇒ 必带块 ⇒ 与附件/引用帧同形，已在**工具边界注入**（生产形由既有
+ * `MidTurnInjectionTimingSpec` **L1b** 钉住：夹具 `:283-289` 投
+ * `Some(List(ContentBlock.Text(body)))` 纯文本块、`[MTIT L1b] inBoundaryRequest=true`；
+ * 本轮未新增 L1c 之类用例，L1b 已覆盖同一形）。政策收窄面见
+ * `reports-evidence/midturn-injection-timing/facts.md` §8.4①②（**待作者裁定**）。
  *
  * 真会话层（real AgentActor + 脚本化 LLM + 门文件 Bash，MailBoundaryInjectionSpec
  * 同款夹具，零 spawn 零端口零 :8080 接触）：
@@ -282,8 +298,16 @@ class BusyConsoleInputInjectionSpec extends CatsEffectSuite:
     )
 
   // ═══════════════════ W3：queue 旧轨负对照（真人 UserInput 不进边界包体） ═══════════════════
+  // ⚠️ 本用例投入的是**零块 UserInput**（无 blocks）＝ 协议残余形，WS 前端不产生该形：
+  //    生产面的默认用户帧只要带正文就带 `ContentBlock.Text`（WebSocketRoutes.scala:2044），
+  //    queue 模式 drain 腿（input.js:1345 → :1430）与直投帧同形 ⇒ 那类件今天**在工具边界
+  //    注入**（生产形由既有 MidTurnInjectionTimingSpec L1b 钉住：夹具 :283-289 投纯文本块
+  //    `Some(List(ContentBlock.Text(body)))`、`[MTIT L1b] inBoundaryRequest=true`）。
+  //    本绿**不覆盖 queue 路径**，
+  //    只钉「引擎对零块 UserInput 仍守 2026-09-15 逐条独立 turn 语义」。详见类头按语与
+  //    facts.md §8.4①②（政策面待作者裁定）。
 
-  test("W3: busy 会话的真人 UserInput（queue 旧轨引擎承载形）不进工具边界续轮——旧排队语义逐字不变"):
+  test("W3: busy 会话的零块 UserInput（协议残余形，WS 前端不产生）不进工具边界续轮——引擎侧旧排队语义逐字不变"):
     withToolBatchInFlight("w3") { (agent, gate, llm) =>
       for
         // queue 旧轨：客户端「立即发送」以外的一切 busy 投放形 = 默认用户帧 → UserInput

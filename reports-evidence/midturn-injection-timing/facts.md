@@ -5,6 +5,7 @@
 ## 0. 结论先行（三句话）
 
 1. **用户腿今天有两套承载形，只有一套是工具边界注入的**：纯文本帧 → `ImmediateInput` → **工具边界**（绿）；带附件 / 引用 / 引言 / 排队条 drain 的帧 → `UserInput` → `pendingUserInputs` → **回合末 head-forward**（红）。作者报障命中的是后者。
+   （**本句是「改前」基线口径**；收敛后的现状见 §8.1–§8.4：**块承载形（含 queue 模式的纯文本件）一律工具边界注入**，2026-09-15 裁定的**残余面只剩零块 `UserInput`（WS 前端不产生）** —— §8.4①② 为重写后的口径。）
 2. **Mail delegate 腿已经是工具边界注入**（两条承载形都绿）：`DelegateNotify.inject` 走 `ImmediateInput`，`MailTool` 续聊腿走 `UserInput(source="mail")` 但被 `TurnBoundaryDrains.drainMailPackage` 显式豁免、整包在边界注入。
 3. **node 腿已经是工具边界注入**（绿）：`NodeDelivery.injectRunning` 投 `ImmediateInput(source="system")`。
 
@@ -25,7 +26,7 @@
 
 | 列 | 读数 |
 |---|---|
-| 注入点 | `C:src/main/scala/nebflow/gateway/WebSocketRoutes.scala:2232-2241` `ensureAgent(msgSessionId)(ref => ref ! AgentCommand.UserInput(content, None, clientMessageId, Some(blocksList), chatWidth))`（`WsDispatch.handlers` 无 `type` 登记 ⇒ 落 typeless 腿）。前端来源：`C:src/main/resources/web/js/input.js:139-150` 默认用户帧（带附件/引用/引言）、`:1428` queue 模式 drain 腿 |
+| 注入点 | `C:src/main/scala/nebflow/gateway/WebSocketRoutes.scala:2232-2241` `ensureAgent(msgSessionId)(ref => ref ! AgentCommand.UserInput(content, None, clientMessageId, Some(blocksList), chatWidth))`（`WsDispatch.handlers` 无 `type` 登记 ⇒ 落 typeless 腿）。前端来源：`C:src/main/resources/web/js/input.js:139-148` 默认用户帧（无 `type` 键；带附件/引用/引言）、`:1430` queue 模式 drain 腿（`dispatchQueuedItemNow` 无 `opts.wire` ⇒ 同样落本帧）。⚠️ `:1428` 的 `immediateInput` 帧只属「排队条立即发送」（`:429` 带 `wire:'immediate'`）那条腿，**不是**本行来源；`:1430` 是 drained 纯文本件真正走的腿（见图表注 §8.4①） |
 | 判定条件 | `C:AgentProcessing.scala:1594` → 入 `pendingUserInputs`；工具边界的两个消费器都**不收它**：`immediate-input` 只读 `pendingImmediateInputs`，`drainMailPackage` 只收 `TurnBoundaryDrains.isMailSupplement`（`C:TurnBoundaryDrains.scala:161-182` = `fromUser=false && source=="mail"`）。规范面 = 2026-09-15 root 裁定「排队消息逐条独立 turn」（`C:AgentProcessing.scala:738-743` 注释） |
 | 实际投递时机 | **回合末**。`E:[MTIT L1b] callsAfterBoundary1=2 inBoundaryRequest=Some(false) callsAfterTurnEnd=4 landing=3` —— 边界续轮请求里没有它，回合走完（两个边界 + 回合末轮）之后才以**新回合**出现（`C:AgentFinishTurn.scala:369` `pendingUserInputs.headOption.traverse_(msg => ctx.self ! msg)` = head-forward 给 idle） |
 | 失败回落 | 无回落概念——它本身就是回落路径（idle 直投本回合立即开 turn，只是永远等不到「本回合」） |
@@ -95,6 +96,7 @@
 2. 每边界预算：现状「一件 imm + 一件整包 mail」→ 统一为「每边界至多 K 件、保序」；`K=1` 即逐字节等价于今天（除腿 2 变绿）。
 3. 腿 2 变绿的最小改法（**推荐**，纯接线不改语义）：typeless 腿改投 `ImmediateInput`（它自带 `blocks` 字段），把 `clientMessageId` 随行带到 `ImmediateInput`（需在 `AgentCommand.ImmediateInput` 追加**默认值字段** `clientMessageId: Option[String] = None`，位置参数构造点用命名参数或置末以免错位），`AgentProcessing.scala:1641` 的 dedup 复用 `recentMessageIds` 判据（与 `:1595` 同一套）。
    - 关键取舍：这是**与 2026-09-15「排队消息逐条独立 turn」裁定的正面冲突面**——那条裁定管的是「排队队列」，而 2026-10-28 queuedirect 裁定已把纯文本改成 `immediateInput` 直通；本改法把剩下的「带附件/引用的真人消息」也归到同一通道，等价于把那条裁定的适用范围收窄到「显式 queue 模式」。**这是政策裁定，不是技术风险，需作者点头**（备选：保留 queue 模式语义，只在 `inputMode='direct'` 的 typeless 帧上生效）。
+   - ⚠️ **2026-11-05 更正（本节为规划期口径，以 §8.4①② 的重写版为准）**：「收窄到显式 queue 模式」按代码实测**不成立**——`WebSocketRoutes.scala:2044` 给任何带正文的 typeless 帧都加 `ContentBlock.Text`，queue 模式 drain 腿（`input.js:1345` → `:1430` 默认用户帧）与直投帧同形 ⇒ **queue 模式的纯文本件同样带块、同样边界注入**；真正残余面 = 零块 `UserInput`（WS 前端不产生）。「只在 `inputMode='direct'` 生效」这一备选在**引擎侧不可实现**（帧无该字段），须前端加显式标记（`queued: true` 类）。
 
 **预计改哪些文件**
 
@@ -163,7 +165,7 @@ sbt -mem 2600 "testOnly nebflow.agent.BusyConsoleInputInjectionSpec nebflow.agen
 | ③node（`NodeDelivery.injectRunning` → `ImmediateInput(source=system)`） | 同上一条调用点（`immediate` 字段） | `InjectNow` |
 | 回落面（中断恢复 / 回合末） | `AgentProcessing.scala:282`（`Stage.AbortRecovery`）、`AgentFinishTurn.scala:573`+`:578`（`Stage.TurnEnd`） | 同判据、不同 stage 口径 |
 
-判据子句也只剩一份：`isMailSupplement`（`:101`）与 `isHumanFrame`（`:124`）都在该 object，
+判据子句也只剩一份：`isMailSupplement`（`:101`）与 `isHumanFrame`（`:135`）都在该 object，
 `TurnBoundaryDrains.isMailSupplement` / `drainMailPackage` 改为**转发**（`TurnBoundaryDrains.scala:167` / `:187`）。
 
 ### 8.2 五条断言 + L1b 的实测（`logs/green-5efbc90c6-20261105_092120-run1.log` / `-run2.log`）
@@ -224,14 +226,46 @@ L4 仍断言「第二个边界的请求里该正文恰出现 1 次」。**为何
 
 ### 8.4 结构性**无法**统一的腿与回落口径（如实记）
 
-1. **纯文本真人 `UserInput`（无 blocks / `fromUser=true`）仍落回合末。** 这是 `BusyConsoleInputInjectionSpec`
-   W3 的负对照面（2026-09-15「排队消息逐条独立 turn」裁定）。它**不是**本轮要修的承载形：
-   纯文本真人件在前端已走 `immediateInput` 帧（腿①，边界注入），仍走 `UserInput` 的那份是
-   显式 queue 旧轨。本批**刻意**不统一它 —— 统一它会直接推翻 Pinned 裁定，且没有作者点头。
-2. **前端 queue 模式 drain 腿带附件时与直投帧逐字节同形** ⇒ 引擎侧不可区分 ⇒ 该形现在也走
-   边界注入，等价于把 2026-09-15 裁定收窄为「显式 queue 模式的纯文本件」。**这是政策收窄、
-   非技术不确定**，代码注释与本节都在此如实留痕，待作者裁定；若作者要求保留 queue 模式语义，
-   需要前端在帧上加可判别标记（协议增量，本轮未做）。
+> **本节 ①② 于 2026-11-05 按代码实测重写（验证节点指出旧表述与代码相反后改正；旧表述作废，
+> 不静默抹掉：旧文曾称「收窄为『显式 queue 模式的纯文本件』」「带附件时与直投帧同形」，
+> 两句都不成立 —— 见下）。**
+
+1. **2026-09-15 裁定的残余面 = 零块 `UserInput`（WS 前端不产生该形）。** 判据
+   `InjectionTiming.isHumanFrame`（`src/main/scala/nebflow/agent/InjectionTiming.scala:135-136`；
+   口径注释 `:104-134`）
+   = `clientMessageId.isDefined ∧ blocks.nonEmpty ∧ replyTo.isEmpty`。**「有块」不等于「有附件/引用」**：
+   `src/main/scala/nebflow/gateway/WebSocketRoutes.scala:2044` 对**任何带正文**的 typeless 帧
+   都加一块 `ContentBlock.Text(content)`，`:2234-2240` 投
+   `UserInput(content, None, clientMessageId, Some(blocksList).filter(_.nonEmpty), chatWidth)`，
+   而 `WsDispatch.handlers.get(msgType)`（`WebSocketRoutes.scala:1997`）对无 `type` 键的默认用户帧
+   查表不中 ⇒ 回退 typeless 腿（准入谓词 `:2009` `content.nonEmpty || attachments.nonEmpty`）。
+   ⇒ 生产面上**一切走 typeless 帧的真人件都带块**，**包括 queue 模式的纯文本件**：前端 drain 腿
+   `src/main/resources/web/js/input.js:1345` 调 `dispatchQueuedItemNow(sessionId, item)`（无 `opts`）
+   → `:1427` `wire === 'immediate'` 分支不成立 → `:1430` `dispatchUserMessageFrames(...)`
+   （`buildFrame` `:139-149` 无 `type` 键）；只有「排队条立即发送」（`input.js:429`
+   带 `wire: 'immediate'` 的那一条）的纯文本才走 `immediateInput` 帧。
+   因此**今天真正被 2026-09-15「排队消息逐条独立 turn」裁定保留下来的只有「零块 `UserInput`」**
+   —— `content` 空 ∧ 无附件/引用，这种帧被上述准入谓词直接拒收，**WS 前端从不产生**，
+   仅协议层可手工构造。`BusyConsoleInputInjectionSpec` W3 的绿钉的
+   正是这个协议残余形（用例 `BusyConsoleInputInjectionSpec.scala:310`、夹具 `:314`
+   `UserInput("旧轨真人消息", clientMessageId = Some("legacy-1"), fromUser = true)`，零块），
+   **不覆盖 queue 路径** —— 已在 W3 夹具加按语（该类头与用例头两处）。
+   生产形本身由**既有**的 `MidTurnInjectionTimingSpec` **L1b** 钉住、且**已是绿**：
+   L1b 夹具（`MidTurnInjectionTimingSpec.scala:283-289`）投的正是
+   `UserInput(body, None, Some("mtit-l1b-cm1"), Some(List(ContentBlock.Text(body))), 900)`
+   —— **纯文本块（`ContentBlock.Text`）、无任何附件/引用块**，与 queue drain 帧的引擎承载形逐字段同形；
+   `[MTIT L1b]` 读数 `inBoundaryRequest=true` 即证明「queue 模式的纯文本件已在工具边界注入」。
+   ⇒ **不变量（本批沉淀，不得再以模糊措辞盖过）**：*凡带正文的 typeless 真人帧（含 queue 模式
+   纯文本件）必带 `ContentBlock.Text` 块 ⇒ 必被 `isHumanFrame` 命中 ⇒ 必在工具边界注入本回合续轮请求。*
+   本轮**未新增** L1c 之类用例（L1b 已覆盖同一形，不重复计绿）。
+2. **政策面（报作者，不自作主张）**：本批实质上是把「排队消息逐条独立 turn」的适用范围退到
+   「零块 `UserInput`」这一 WS 前端不产生的形态 —— 生产面上 **queue 模式的纯文本件也已改为
+   工具边界注入**。这**不是**技术不确定而是**政策收窄**：若要保留 queue 模式的逐条独立 turn 语义，
+   需要前端在默认用户帧上加可判别标记（如 `queued: true`）并在 `AgentCommand.UserInput` 承载，
+   判据改为**显式标记**而非「有块」（协议增量，本轮未做；代码注释
+   `InjectionTiming.scala:104-134` 与 `BusyConsoleInputInjectionSpec.scala:39-54`/`:300-309`
+   同文留痕，**待作者裁定**）。不这么做之前，**不得声称
+   「queue 模式纯文本件保留逐条独立 turn」**。
 3. **compaction 挂起期间三腿一律留队（零消费）**：注入进将被 summary 替换的历史 = 消费即丢失；
    回落 = `CompactionComplete` 再排空。判据在同一单点（`decide` 的首个守卫）。
 4. **`AgentActor.drainQueuesAfterCompaction`（压缩窗全量 flush 面）未纳入本单点**：它是压缩完成
