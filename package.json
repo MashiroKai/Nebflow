@@ -13,5 +13,39 @@
     "esbuild": "0.25.9",
     "typescript": "5.5.4",
     "ws": "8.22.0"
+  },
+  "vendorAssets": {
+    "_comment": "web/vendor 下随包分发的浏览器库台账（本地优先：运行期零 CDN 请求）。rich-render 批 2026-11-05 首次建账：新增/改动的围栏渲染依赖必须先在本表登记来源与锁定版本，再进 git；sha256 用 `shasum -a 256 <file>` 复核。",
+    "policy": "vendored-and-pinned: 版本锁定 + sha256 入表；运行期只从 /vendor/ 同源路径装载，禁 CDN、禁运行期拉 npm。",
+    "assets": {
+      "vendor/mermaid/mermaid.min.js": {
+        "package": "mermaid",
+        "version": "12.2.0",
+        "source": "https://registry.npmjs.org/mermaid/-/mermaid-12.2.0.tgz",
+        "license": "MIT",
+        "sha256": "a8a6a6f805b074a8261a2825c86f99c8054acb3b35f50bb7e24a4f9f2c3c3b9f",
+        "bytes": 5494801,
+        "loadedBy": "js/mermaidRenderer.js（首个 ```mermaid 围栏进视口时注入 script，单飞）"
+      },
+      "vendor/katex.min.js": {
+        "package": "katex",
+        "version": "0.16.11",
+        "source": "https://registry.npmjs.org/katex/-/katex-0.16.11.tgz",
+        "license": "MIT",
+        "sha256": "e6bfe5deebd4c7ccd272055bab63bd3ab2c73b907b6e6a22d352740a81381fd4",
+        "bytes": 275414,
+        "loadedBy": "js/mathRender.js（首个 .nf-math 占位渲染时注入 script；此前是 index.html 的 defer script，开屏必装）"
+      },
+      "vendor/katex.min.css": {
+        "package": "katex",
+        "version": "0.16.11",
+        "source": "https://registry.npmjs.org/katex/-/katex-0.16.11.tgz",
+        "license": "MIT",
+        "sha256": "717bc9ae7853b61f0f76455dddf0ecd4f527a783f42de2ac24684899c1c46258",
+        "bytes": 23335,
+        "loadedBy": "js/mathRender.js（与 katex.min.js 同一次注入 <link data-nf-katex>）"
+      }
+    },
+    "noNewBareDependencies": "```svg 围栏（js/svgFence.js）零第三方依赖：解析与白名单重建用浏览器原生 DOMParser + createElementNS。"
   }
 }

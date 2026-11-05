@@ -1407,9 +1407,23 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    ul/ol indentation, which drops list markers OUTSIDE the bubble's left
    padding, and an unstyled pre overflows the bubble horizontally. */
 .bubble.ai p, .bubble.injected p, .ask-bub.ai p { margin: var(--ds-space-1) 0; }
+/* 段落首行缩进（rich-render 批 2026-11-05，作者令 09:13「对段落内容，要有缩进」）。
+   口径 = **只对纯正文段落**：选择器是气泡的**直接子** p —— 列表项内 / 引用块内 /
+   表格单元格内 / 卡片内 / output 块内的段落都不是直接子，天然不缩进（不加
+   例外清单，避免「排除清单漏一条就歪一片」）。值走 --ds-text-indent（2em 中文
+   两字），禁裸数值。 */
+.bubble.ai > p, .bubble.injected > p, .ask-bub.ai > p { text-indent: var(--ds-text-indent); }
 .bubble.ai p:first-child, .bubble.injected p:first-child, .ask-bub.ai p:first-child { margin-top: 0; }
 .bubble.ai p:last-child, .bubble.injected p:last-child, .ask-bub.ai p:last-child { margin-bottom: 0; }
-.bubble.ai ul, .bubble.ai ol, .bubble.injected ul, .bubble.injected ol, .ask-bub.ai ul, .ask-bub.ai ol { margin: var(--ds-space-1) 0 var(--ds-space-1) var(--ds-space-5); padding: 0; }
+/* 列表缩进走 token（原 18px / --ds-space-5 裸值退役，取 --ds-list-indent）：每级
+   1.6em > 一档字号 ⇒ ol/ul 二三级可辨；嵌套按级累加。窄屏收一档
+   （--ds-list-indent-narrow），不吃可用宽度。 */
+.bubble.ai ul, .bubble.ai ol, .bubble.injected ul, .bubble.injected ol, .ask-bub.ai ul, .ask-bub.ai ol { margin: var(--ds-space-1) 0 var(--ds-space-1) var(--ds-list-indent); padding: 0; }
+@media (max-width: 390px) {
+  .bubble.ai ul, .bubble.ai ol, .bubble.injected ul, .bubble.injected ol, .ask-bub.ai ul, .ask-bub.ai ol {
+    margin-left: var(--ds-list-indent-narrow);
+  }
+}
 .bubble.ai li, .bubble.injected li, .ask-bub.ai li { margin: var(--ds-space-half) 0; }
 .bubble.ai pre, .bubble.injected pre, .ask-bub.ai pre {
   background: #f5f5f5;
