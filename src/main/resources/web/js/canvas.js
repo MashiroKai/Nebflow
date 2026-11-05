@@ -20,6 +20,9 @@ import { makeReference } from './reference.js';
 import { initCanvasDrop } from './canvasDrop.js';
 import { authHeaders } from './flowHelpers.js'; // Bearer token for REST withAuth (/api/canvas-tabs)
 import { setSideBarCollapsed, isMobileViewport } from './activityBar.js';
+// 胶囊标签截断（作者令 2026-11-05 12:10 第④条「可辨识前缀 + 关键尾部」）：
+// 切法单源在 capsuleLabel.js（桌面/触屏腿与手机层腿共用一份），本模块只消费。
+import { splitCapsuleLabel, createTextMeasurer, capsuleTextAvail, CAPSULE_ELLIPSIS } from './capsuleLabel.js';
 // keyboard-first 三期：叠卡/胶囊环/卡窗的键位搬进规则表（keyRules.js），本模块
 // 提供三件事——① 状态 → 上下文键（派生，无推送）② 动作函数（deckKeyAction 等）
 // ③ 不再持有任何 document 级 keydown 监听。
@@ -2162,6 +2165,9 @@ function renderCanvasHeader() {
   deckTitleEl.classList.toggle('is-dirty', !!(entry && isTabDirty(entry)));
   syncHeaderActions();
   syncRefBackButton();   // F5 返回原文档：随激活页签重sync可见性/座位
+  // 触屏常驻横向档同步（作者令 2026-11-05 12:10）：本函数是「页签集 / 激活签 /
+  // 脏标记」三处变化的公共出口 ⇒ 横排胶囊环在这里对齐新状态（桌面腿 no-op）。
+  if (ringSyncFn) ringSyncFn();
 }
 
 /* ── Canvas 改造批②⑤（2026-10-31 作者令「顶栏换代：左叉号右堆叠视角钮」；
@@ -3479,6 +3485,15 @@ function deckRequestClose(id) {
 let ringCloseFn = null;
 
 /**
+ * 触屏常驻横向档的同步句柄（作者令 2026-11-05 12:10）：`syncCoarseRow` 同样活在
+ * initCapsuleRing 的闭包里，而「页签集/激活签变了」这件事的公共出口是
+ * `renderCanvasHeader()`（openTab / setActiveTab / closeTab / deck 四处都过它）
+ * —— 用登记位接过去，比在每处调点撒一遍稳。桌面腿恒 no-op。
+ * @type {(() => void)|null}
+ */
+let ringSyncFn = null;
+
+/**
  * 叠卡/环的键位动作（三期：**唯一的键盘入口**，由 keyRules.js 的 deck.* /
  * canvas.* 规则按 when 条件转发进来）。
  *
@@ -4075,6 +4090,36 @@ function initCapsuleRing() {
   const isMobileLayer = () => document.body.classList.contains('mobile-layer');
   const panelEl = /** @type {HTMLElement} */ (hdr.closest('#canvas-panel'));
 
+  /* ── 触屏常驻横向档（作者令 2026-11-05 12:10）─────────────────────────────
+   * 作者逐字：「参考电脑端的样式来做手机端的canvas顶部胶囊的样式，总体思路就是
+   * 把上下展开的改为横向展开。并且是直接展开，不需要hover。」
+   *
+   * 病根（改前实证，见批文档 §①）：手机**横屏**（视口宽 > 768px）落不进手机交互
+   * 层（mobile/bootstrap.js MOBILE_MQ = max-width:768px），走的是桌面腿 ⇒ 手机
+   * 上看到的是 `.canvas-header` + `#canvas-capsule-ring` 那套**hover 才展开的竖
+   * 向胶囊环**：触屏没有 hover，邻签要么永远看不见、要么在按下瞬间「上下展开」
+   * 然后立刻收掉 —— 作者截图 (`20261103_215300_ca...` + 上下两条邻居名) 正是
+   * 这个态。同一视口下手机层（≤768）的 `.mf-strip` 早已是横向常驻展开，所以
+   * 漂的是「触屏 + 桌面腿」这一段，不是两套组件各错一半。
+   *
+   * 修法 = **同一套实现 + 能力断点**（不新起第二套）：胶囊环仍是 #canvas-capsule-
+   * ring 这一份 DOM/CSS/JS，只按输入能力换位姿：
+   *   · 细指针（鼠标/触控板）= 旧腿逐字节不变（hover 开环 + 上下对称弧 + 滚轮换选）；
+   *   · 粗指针（触屏/@media (pointer: coarse)）= 本档：**常驻展开**（不进 hover 竞态、
+   *     不需要任何前置手势）+ **横向排布**（--cr-x / --cr-ry 位姿，中心签居中、
+   *     左右邻签各一枚）。
+   * 位姿变量同名不同轴：JS 两档都写，CSS 按 `@media (pointer: coarse)` 取用
+   * —— 断点只存在于 CSS 一处，桌面上这些规则一条都不命中（零回归）。
+   * 「不遮挡」（作者第⑤条）：竖环档上缘位**必须**越过面板顶缘（RING_TOP_OUT 那
+   * 套克制越出），读作「胶囊压住了上面的文件名行」；横向档整排与标题头同高带，
+   * 零上越 —— 遮挡根因随位姿换轴消失，不需要额外让位几何。
+   */
+  /* 判据 = (pointer: coarse) **且** (hover: none)：纯触屏（手机/平板）才换档。
+     只写 coarse 会把「带触摸屏的笔记本」（主指针仍是触控板/鼠标、只是能摸）也
+     卷进来 —— 那类机器 hover 语义完好，桌面竖环腿照旧才对。 */
+  const COARSE_MQ = window.matchMedia('(pointer: coarse) and (hover: none)');
+  const coarsePointer = () => COARSE_MQ.matches;
+
   let acc = 0;                                     // 横滑游标累加器（deltaX 刻度）
   let accY = 0;                                    // 纵滚游标累加器（deltaY 刻度，整数步进零浮点）
   let wheelLockUntil = 0;                          // 滚轮切换冷却截止（performance.now() ms，触控板手感批）
@@ -4105,8 +4150,15 @@ function initCapsuleRing() {
       b.className = 'cr-capsule' + (isTabDirty(entry) ? ' is-dirty' : '');
       b.setAttribute('role', 'button');
       b.dataset.tabId = id;
+      const title = entry.title || entry.id;
       b.innerHTML = '<span class="cr-icon">' + deckIconOf(deckTypeFamily(entry)) + '</span>' +
-        '<span class="cr-dot"></span><span class="cr-name">' + escapeDeckText(entry.title || entry.id) + '</span>';
+        '<span class="cr-dot"></span><span class="cr-name"></span>';
+      /* 标签文字：细指针腿与改前逐字一致（纯文本 + CSS ellipsis 尾切，桌面零变化）；
+         粗指针腿留空，由 layout() 末尾 fillCapsuleNames() 按**实时可用宽**切成
+         「可辨识前缀 … 关键尾部」（作者令 2026-11-05 第④条，切法单源 =
+         capsuleLabel.js）。textContent 赋值天然转义，等价于旧 escapeDeckText。 */
+      const nameEl = /** @type {HTMLElement|null} */ (b.querySelector('.cr-name'));
+      if (nameEl && !coarsePointer()) nameEl.textContent = title;
       // 中心位让 pointer 事件穿透标题头（按压触感/竖滑换卡/横滑关卡手势照旧，
       // 作者令③「按住=交互按钮」）；缘位胶囊 = 纯按钮（不进手势链）。
       b.addEventListener('pointerdown', (e) => { if (ringState && ringState.ids[ringState.cursor] !== id) e.stopPropagation(); });
@@ -4183,13 +4235,118 @@ function initCapsuleRing() {
       k.classList.toggle('is-edge', ar === 1);
       k.classList.toggle('is-far', ar > 1);
       const side = rel < 0 ? -1 : 1;
-      const y = rel === 0 ? 0 : side * (ar === 1 ? edgeY : edgeY * 2);
-      k.style.setProperty('--cr-y', y.toFixed(1) + 'px');
-      k.style.setProperty('--cr-z', (ar === 0 ? 0 : ar === 1 ? -110 : -230) + 'px');
-      /* rotateX(+θ) = 顶边远离视者（CSS y 轴向下 ⇒ 顶部 y<0 ⇒ z' = y·sinθ < 0）：
-         上缘位（侧 −1）取 +34°（顶边后仰 = 竖圆柱外侧曲率），下缘位取 −34°
-         （底边后仰）—— 反号等幅，双缘同读作「圆柱外侧」。 */
-      k.style.setProperty('--cr-rx', String(rel === 0 ? 0 : -side * (ar === 1 ? 34 : 44)) + 'deg');
+      /* ── 位姿两档（作者令 2026-11-05 12:10：上下展开 → 横向展开）────────────
+       * 细指针 = 竖环（旧腿逐字不变）：--cr-y / --cr-rx / 弧深 edgeY。
+       * 粗指针 = 横排（触屏腿）：--cr-x / --cr-ry，纵向恒 0 —— 整排与标题头
+       *   同一条水平带（与手机层 `.mf-strip` 的「全组纸签严格同一水平线」同规），
+       *   相邻签的中心距 = stepX（= 胶囊宽 + 件缝，受视口宽钳制：极窄横屏
+       *   （768 宽）时 stepX 收到 120，保证 3 枚 180 胶囊不出视口）。
+       * rotateY 反号等幅 = 横圆柱同侧曲率（左邻右缘退后、右邻对称），与竖环的
+       * rotateX 反号同构；透视仍由 .capsule-ring 自身 perspective 提供。
+       * --cr-z 横排档只留 −40/−90（竖环的 −110/−230 配 rotateX 34° 的深度语言，
+       * 横排放大后会把邻签压得过小，字读不清 —— 与手机层「邻签有效字号 ≥13px」
+       * 的同一条可读性下限对齐）。 */
+      if (coarsePointer()) {
+        /* 横排档的**行宽预算**（按面板实宽，不是视口宽 —— 面板常与聊天列分屏，
+           844 横屏下实测只剩 ~315px）。三级降级（作者第④条「宽度不够时的降级
+           策略写明」，与标签截断降级同向）：
+             ① 理想档：中心签 180（= 桌面胶囊原寸）+ 邻签 0.72 × 中心 = 130；
+             ② 面板不够 ⇒ 先压**邻签**（下限 56 = 够放图标 + 2 字），中心签不动
+                —— 中心签是辨识主体（与手机层「中签大、邻签小」同比例语义）；
+             ③ 仍不够 ⇒ 再压中心签（下限 120），保证整排落在面板内。
+           落到面板缘外的邻签段由 CSS 横排档的**方向渐隐**（cr-side-l/r）化开，
+           读作「环还在往两边排」而不是被硬裁 —— 与手机层 `.mf-strip` 邻签
+           「朝外一侧连续化开」的既有语言同源（作者令 2026-11-02 21:47）。
+           中心签永不越出面板，故「当前文档名」这一枚在任何宽度下都完整可点。 */
+        const panelW = panelEl.clientWidth || window.innerWidth;
+        const GAP = 8;                                        // 胶囊件缝
+        const ICON_CHIP = 40;                                 // 图标档邻签宽（14 图标 + 内衬）
+        const TEXT_EDGE = 72;                                 // 文字档邻签下限（够放图标 + 3 字）
+        /* 行宽只吃「面板左右浮钮带之间」的净空（✕ / 堆叠钮各 40 + 边距 12 + 呼吸 6
+           = 单侧 58）：横排档与桌面浮钮同处一条顶带，压上去就是作者第⑤条说的那种
+           「叠在一起」。 */
+        const band = Math.max(96, Math.min(panelW - 2 * 58, panelW - 24));
+        let centerW = 180;
+        let edgeW = 0;
+        let iconOnly = false;
+        if (band >= 180 + 2 * TEXT_EDGE + 2 * GAP) {
+          // ① 理想档：中心签 = 桌面原寸 180，邻签文字档（收在剩余净空内）
+          edgeW = Math.min(Math.round(centerW * 0.72), Math.round((band - centerW) / 2 - GAP));
+        } else {
+          // ② 图标档：净空只够塞两枚图标签 ⇒ 邻签转图标，中心签吃满余量（≥96）
+          iconOnly = true;
+          edgeW = ICON_CHIP;
+          centerW = Math.max(96, Math.min(180, Math.round(band - 2 * edgeW - 2 * GAP)));
+          // ③ 兜底档：净空连「中心签 96 + 两枚图标签」都不够 ⇒ 只留中心签
+          if (band < 96 + 2 * ICON_CHIP + 2 * GAP) { edgeW = 0; centerW = Math.min(180, band); }
+        }
+        const stepX = centerW / 2 + edgeW / 2 + GAP;
+        const w = ar === 0 ? centerW : edgeW;
+        k.style.setProperty('--cr-w', w + 'px');
+        k.classList.toggle('cr-icon-only', ar === 1 && (iconOnly || edgeW < TEXT_EDGE));
+        k.classList.toggle('cr-side-l', ar === 1 && side < 0);
+        k.classList.toggle('cr-side-r', ar === 1 && side > 0);
+        const x = rel === 0 ? 0 : side * (ar === 1 ? stepX : stepX * 2);
+        k.style.setProperty('--cr-x', x.toFixed(1) + 'px');
+        k.style.setProperty('--cr-y', '0px');
+        k.style.setProperty('--cr-rx', '0deg');
+        k.style.setProperty('--cr-ry', String(rel === 0 ? 0 : -side * (ar === 1 ? 24 : 38)) + 'deg');
+        k.style.setProperty('--cr-z', (ar === 0 ? 0 : ar === 1 ? -40 : -90) + 'px');
+      } else {
+        k.style.removeProperty('--cr-w');
+        k.classList.remove('cr-side-l', 'cr-side-r', 'cr-icon-only');
+        const y = rel === 0 ? 0 : side * (ar === 1 ? edgeY : edgeY * 2);
+        k.style.setProperty('--cr-x', '0px');
+        k.style.setProperty('--cr-y', y.toFixed(1) + 'px');
+        k.style.setProperty('--cr-z', (ar === 0 ? 0 : ar === 1 ? -110 : -230) + 'px');
+        /* rotateX(+θ) = 顶边远离视者（CSS y 轴向下 ⇒ 顶部 y<0 ⇒ z' = y·sinθ < 0）：
+           上缘位（侧 −1）取 +34°（顶边后仰 = 竖圆柱外侧曲率），下缘位取 −34°
+           （底边后仰）—— 反号等幅，双缘同读作「圆柱外侧」。 */
+        k.style.setProperty('--cr-rx', String(rel === 0 ? 0 : -side * (ar === 1 ? 34 : 44)) + 'deg');
+        k.style.setProperty('--cr-ry', '0deg');
+      }
+    }
+    fillCapsuleNames();
+  };
+
+  /** 粗指针腿的标签填充：按**实时可用宽**切「头 … 尾」（切法单源 = capsuleLabel.js）。
+   *  幂等 + 零抖动：同一 (可用宽, 全名) 只写一次（dataset.sig 比对），换签/旋转屏
+   *  才会重切。DOM 上保留 `title` 与 role=button 的可读全名（读屏/长按提示不降级），
+   *  截断只压**绘制文本**。 */
+  const fillCapsuleNames = () => {
+    if (!coarsePointer()) return;
+    for (const k of root.children) {
+      const el = /** @type {HTMLElement} */ (k);
+      const nameEl = /** @type {HTMLElement|null} */ (el.querySelector('.cr-name'));
+      const entry = tabs.get(el.dataset.tabId || '');
+      if (!nameEl || !entry || !el.clientWidth) continue;
+      const full = entry.title || entry.id;
+      const avail = capsuleTextAvail(el);
+      const sig = avail.toFixed(1) + '|' + full;
+      if (nameEl.dataset.sig === sig) continue;
+      const measure = createTextMeasurer(nameEl);
+      const cut = splitCapsuleLabel(full, avail, measure);
+      measure.dispose?.();
+      nameEl.textContent = '';
+      if (!cut.ellipsis) {
+        nameEl.textContent = cut.head;
+      } else {
+        const head = document.createElement('span');
+        head.className = 'cr-name-head';
+        head.textContent = cut.head;
+        const mid = document.createElement('span');
+        mid.className = 'cr-name-mid';
+        mid.textContent = CAPSULE_ELLIPSIS;
+        nameEl.append(head, mid);
+        if (cut.tail) {
+          const tail = document.createElement('span');
+          tail.className = 'cr-name-tail';
+          tail.textContent = cut.tail;
+          nameEl.append(tail);
+        }
+      }
+      nameEl.dataset.sig = sig;
+      el.setAttribute('title', full);      // 全名兜底（与手机层 chip.title 同规）
     }
   };
 
@@ -4230,6 +4387,7 @@ function initCapsuleRing() {
   };
   const evaluateLeave = () => {
     if (!ringState) return;
+    if (coarsePointer()) return;   // 触屏常驻档：无 hover 语义，永不走收环腿
     if (!lastPtr || inHoverZone(lastPtr.x, lastPtr.y)) {
       if (leaveTimer) { clearTimeout(leaveTimer); leaveTimer = 0; }
     } else if (!leaveTimer) {
@@ -4245,6 +4403,7 @@ function initCapsuleRing() {
    *  惯性末段不连跳，冷却后重新累积。 */
   const onDocWheel = (e) => {
     if (!ringState || isMobileLayer()) return;
+    if (coarsePointer()) return;              // 触屏常驻档：滚轮不在本档语义内（不消费）
     if (deck.open) { closeRing(); return; }   // deck 态不开环（叠卡有自己的滚轮语义；开环态下 deck 开启即让位）
     if (!inHoverZone(e.clientX, e.clientY)) return;   // ④区外零响应：不消费，页面滚动照旧
     e.preventDefault();
@@ -4311,6 +4470,14 @@ function initCapsuleRing() {
     root.hidden = false;
     anchor();
     layout();
+    /* 触屏常驻档不挂 hover 收环链（pointermove/wheel/pointerleave 三监听是
+       "指针离区即收"的载体 —— 触屏腿没有这个概念，挂着反而会被文档滚动/滑动手势
+       误判收环）。细指针腿逐字不变。 */
+    if (coarsePointer()) {
+      root.classList.add('steady');   // 常驻档无「展开中指针掠过」竞态 ⇒ 缘位立即可点
+      if (steadyTimer) { clearTimeout(steadyTimer); steadyTimer = 0; }
+      return;
+    }
     document.addEventListener('pointermove', onDocPointerMove);
     document.addEventListener('wheel', onDocWheel, { capture: true, passive: false });
     document.addEventListener('pointerleave', onDocPointerLeft);
@@ -4335,7 +4502,46 @@ function initCapsuleRing() {
     if (leaveTimer) { clearTimeout(leaveTimer); leaveTimer = 0; }
   };
   // 三期：登记给规则表（canvas.ring.close → deckKeyAction('closeRing')）。
-  ringCloseFn = closeRing;
+  // 触屏常驻档下 Esc 收环不收（常驻展开 = 本档的**形态**，不是一次交互）——
+  // 收了也没有 hover 能把它再打开，等于把多签入口锁死。
+  ringCloseFn = () => { if (coarsePointer()) return; closeRing(); };
+
+  /** 触屏常驻横向档同步（作者令 2026-11-05 12:10：「直接展开，不需要 hover」）：
+   *  进入条件全部满足才驻留 —— 粗指针 ∧ 非手机层 ∧ 非卡窗 ∧ 面板开着 ∧
+   *  非叠卡态 ∧ ≥2 页签。任一条件破了就收环（例如关到只剩 1 签、开堆叠视图）。
+   *  每次同步都重算「当前签居中 + 左右邻签」位姿；页签集合变了才重建 DOM。
+   *  ⚠ 本函数是**竖环档的旁观者**：细指针下它必须整体 no-op（连 closeRing 都不许
+   *  调）—— 它挂在 renderCanvasHeader() 出口上，hover 环开着时换签/重绘会走到这里，
+   *  若在此收环就把「换签不断链」契约（CR4/CR4b）打断了。故用 coarseRowOn 记账：
+   *  只收自己开的那一轮。 */
+  let coarseRowOn = false;
+  const syncCoarseRow = () => {
+    const want = coarsePointer() && !isMobileLayer() && !cardWindowMode
+      && !deck.open && tabs.size >= 2 && isCanvasOpen();
+    if (!want) {
+      if (coarseRowOn && ringState) closeRing();
+      coarseRowOn = false;
+      return;
+    }
+    coarseRowOn = true;
+    if (!ringState) {
+      openRing(null);
+      if (!ringState) return;
+    }
+    const ids = [...tabs.keys()];
+    if (ringState.ids.join('|') !== ids.join('|')) {
+      build();
+    } else {
+      ringState.ids = ids;
+    }
+    ringState.cursor = Math.max(0, ids.indexOf(activeTabId));
+    root.classList.add('steady');
+    anchor();
+    layout();
+  };
+  // 供 renderCanvasHeader（页签集/激活签/脏标记三处共用出口）回调 —— 桌面腿
+  // 恒为 no-op（coarsePointer false），零回归。
+  ringSyncFn = syncCoarseRow;
 
   hdr.addEventListener('pointerenter', (e) => {
     if (isMobileLayer() || e.pointerType === 'touch') return;
@@ -4359,6 +4565,7 @@ function initCapsuleRing() {
   // 清零、回锚重排），滚动零断链；指针已离区（他处换签）= 照旧收环。deck 态
   // / 单页签态不开环照旧（deck 叠卡有自己的滚轮语义，双环互搏防回归）。
   document.addEventListener('canvas-tab-switched', () => {
+    if (coarsePointer()) { syncCoarseRow(); return; }   // 触屏常驻档：换签 = 游标跳新签（不收环）
     if (!ringState) return;
     const pt = lastPtr || openPt;
     if (pt && !deck.open && tabs.size >= 2 && inHoverZone(pt.x, pt.y)) {
@@ -4373,6 +4580,7 @@ function initCapsuleRing() {
     closeRing();
   });
   document.addEventListener('canvas-tab-closed', () => {
+    if (coarsePointer()) { setTimeout(syncCoarseRow, 0); return; }   // 触屏常驻档：延一拍读删后状态
     if (!ringState) return;
     /* teardownTab 在 tabs.delete 之前派发本事件（事件序先于删除）——同步重建
      * 会读到删除前状态：ids 含已关页签（死胶囊残留）、且 tabs.size 永远 ≥2
@@ -4390,6 +4598,24 @@ function initCapsuleRing() {
       steadyTimer = setTimeout(() => { root.classList.add('steady'); steadyTimer = 0; }, RING_STEADY_MS);
     }, 0);
   });
+
+  /* 触屏常驻横向档的三类触发（作者令 2026-11-05 12:10）：
+     ① 首屏 / 页签集变化 —— renderCanvasHeader 出口回调（ringSyncFn）；
+     ② 视口变化（旋转屏、拉窗、外接键鼠）—— resize / orientationchange / 能力
+        断点自身变化（pointer:coarse ⇄ fine 切换要立刻换档，否则会停在错的位姿）；
+     ③ 叠卡态进出 —— 面板 `.stacked` 类（deck 开启时环必须让位，双环互搏的
+        既有裁定照旧）。三处都走同一个 syncCoarseRow，桌面腿恒 no-op。 */
+  const onViewportChange = () => syncCoarseRow();
+  window.addEventListener('resize', onViewportChange);
+  window.addEventListener('orientationchange', onViewportChange);
+  if (typeof COARSE_MQ.addEventListener === 'function') COARSE_MQ.addEventListener('change', onViewportChange);
+  else if (typeof COARSE_MQ.addListener === 'function') COARSE_MQ.addListener(onViewportChange);
+  if (typeof MutationObserver === 'function') {
+    const mo = new MutationObserver(() => syncCoarseRow());
+    mo.observe(panelEl, { attributes: true, attributeFilter: ['class'] });
+  }
+  // 首屏一次：页签若已恢复则立即驻留；否则等 canvas-tab-switched / renderCanvasHeader。
+  syncCoarseRow();
 }
 
 /** 手机长按引用通路（navController 卡头长按钮消费）：引用当前活动卡片进聊天，

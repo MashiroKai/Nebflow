@@ -1524,6 +1524,92 @@ body.canvas-deck-narrow .canvas-title { max-width: none; }
 .cr-capsule.is-edge:active { --cr-press: 0.96; }
 /* 弧外位（|rel|≥2）：不可见不可点，保留位姿让收放有连续轨迹 */
 .cr-capsule.is-far { opacity: 0 !important; pointer-events: none !important; }
+
+/* ── 触屏常驻横向档（作者令 2026-11-05 12:10）─────────────────────────────
+   作者逐字：「参考电脑端的样式来做手机端的canvas顶部胶囊的样式，总体思路就是
+   把上下展开的改为横向展开。并且是直接展开，不需要hover。」
+
+   一套实现、一个断点：胶囊环只有 #canvas-capsule-ring 这一份 DOM/CSS/JS，
+   位姿轴按输入能力换：
+     · 细指针（鼠标/触控板）= 旧竖环腿，本块**一条都不命中**（桌面零回归，
+       逐字节不变：上下对称弧 + hover 开环 + 滚轮换选）；
+     · 粗指针（触屏）= 横排腿：JS 已按两轴写好同一批位姿变量（--cr-x/--cr-ry
+       与旧的 --cr-y/--cr-rx 并存），本块只把 transform 换成取横轴那两颗；
+       开合由 canvas.js syncCoarseRow() 常驻置位（无 hover 依赖，进页面即在）。
+   形状语言与桌面胶囊**同源**（同一批 .cr-capsule 规则：玻璃底/描边/圆角/
+   阴影/字号/图标位），横排档只改「排布轴 + 邻签深度档」两件事 —— 这就是
+   「手机端照抄电脑端样式」的实现含义：不是复制一套手机胶囊，是同一枚胶囊
+   换一种展开方向。
+   邻签深度：竖环的 rotateX 34° + blur 1.6px 配的是「绕到圆柱后面」，横排档
+   旋转角小（24°）、字要当场读得清 ⇒ blur 收到 0.6px、透明度抬到 .9（与手机层
+   `.mf-strip` 邻签「有效字号 ≥13px、可读优先」的既有裁定同规）。 */
+@media (pointer: coarse) and (hover: none) {
+  .cr-capsule {
+    /* 行宽预算（--cr-w）由 canvas.js layout() 按面板实宽逐签写：中心签宽一档、
+       邻签窄一档，三枚恒在面板内（视口硬裁半枚是作者截图里的同型毛病）。 */
+    width: var(--cr-w, var(--capsule-w, 180px));
+    transform: translate(-50%, -50%) translateX(var(--cr-x, 0px)) translateZ(var(--cr-z, 0px))
+      rotateY(var(--cr-ry, 0deg)) scale(var(--cr-press, 1));
+  }
+  .cr-capsule.is-edge {
+    opacity: 0.9;
+    filter: blur(0.6px) saturate(1.15);
+  }
+  /* 邻签朝外一侧连续化开：面板窄时邻签会探出可见区，硬裁边缘读作「破版」，
+     化开读作「环还在往两边排」—— 与手机层 `.mf-strip` 邻签渐隐同一语言
+     （作者令 2026-11-02 21:47「可以是胶囊只显示一半的那种圆环感」）。
+     内端（朝中心一侧）保持全实：那一半永远是当前签的上下文。 */
+  .cr-capsule.cr-side-l {
+    -webkit-mask-image: linear-gradient(90deg, transparent 0, black 62%, black 100%);
+    mask-image: linear-gradient(90deg, transparent 0, black 62%, black 100%);
+  }
+  .cr-capsule.cr-side-r {
+    -webkit-mask-image: linear-gradient(270deg, transparent 0, black 62%, black 100%);
+    mask-image: linear-gradient(270deg, transparent 0, black 62%, black 100%);
+  }
+  /* 标题头让位成**纯手势面**：横排档的视觉全由这一排胶囊承担 —— 标题头若还留着
+     自己的玻璃胶囊，就会出现「一条空胶囊 + 中心签窄一档」的双影（中心签宽随面板
+     收敛，与标题头 180 定宽不再等宽）。pop / close 钮是子件，材质各自保留。 */
+  #canvas-panel .canvas-header {
+    background: none;
+    border-color: transparent;
+    box-shadow: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  /* 中心签自持玻璃：竖环档它是「覆在标题胶囊上的透明覆层」（借标题头的玻璃），
+     横排档标题头已让位，故把**桌面标题胶囊自己那套 frosted 配方**原样挂回中心签
+     自身（--glass-bg + --glass-blur saturate(1.15) + --ds-border-glass + 顶缘
+     --sapphire-refraction 折射线 + --ds-shadow-float，逐项同源零新造）——
+     「照抄电脑端样式」在这里就是字面意思：同一份材质令牌。
+     邻签共用同一份配方（不另造半档），层次由 .is-edge 的透明度/模糊/缩径承担。 */
+  .cr-capsule.is-center,
+  .cr-capsule.is-edge {
+    background:
+      linear-gradient(90deg, transparent 10%, var(--sapphire-refraction) 50%, transparent 90%) center top / 80% 1px no-repeat,
+      var(--glass-bg);
+    border-color: var(--ds-border-glass);
+    border-bottom-color: transparent;
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+    backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+    box-shadow: var(--ds-shadow-float);
+  }
+  /* 标签层：可辨识前缀 + 关键尾部（「头…尾」由 canvas.js 按实时可用宽切好，
+     切法单源 = js/capsuleLabel.js）。头是唯一可缩件（min-width:0 + ellipsis
+     兜底：万一度量差半个像素，退化成「头…」而不是硬裁半个字）；点与尾恒定
+     不缩 ⇒ 扩展名/时间戳这类关键尾部任何宽度下都在。 */
+  .cr-capsule .cr-name { display: flex; align-items: center; min-width: 0; }
+  .cr-capsule .cr-name-head { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .cr-capsule .cr-name-mid,
+  .cr-capsule .cr-name-tail { flex: none; white-space: nowrap; }
+  /* 图标档（面板极窄时邻签的兜底形态）：只留类型图标，不放「插…」这种只剩
+     一字的假标签；点在它上面即成为中心签，信息零损失。 */
+  .cr-capsule.cr-icon-only .cr-name { display: none; }
+  /* 独立窗钮在粗指针档隐藏 —— 作者令 2026-11-05 件1 逐字「只在手机端隐藏这个
+     按钮」；横排窄档里它占的 32px 右内缝正是中心签最稀缺的字面宽（隐藏后
+     syncCenterInset 把 --cr-popw 同步落 0，文字盒自动回宽）。 */
+  #canvas-panel .canvas-header .canvas-pop-btn { display: none; }
+}
 /* 环开时常态标题让位（同位同容的中心胶囊接班 —— 无缝 morph；竖环回退批
    2026-10-31：文件扇批退役、本条随环交互还原恢复 —— hover 开环时标题头文字
    隐去，中心覆层胶囊同位接班，收环即回）。Canvas 改造批②：#canvas-pop-btn
