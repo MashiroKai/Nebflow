@@ -1508,7 +1508,7 @@ You will be notified when it completes via a system message. Do NOT duplicate th
       // 进入子会话前展开为消息全文（映射缺失 = 显式报错行注入）。装配侧单点——
       // assembleBrief 本体（spec 判红锚）逐字节不动；initialPrompt 与首条 UserInput
       // 同吃消解后文本。机制关 = 原样透传。
-      resolvedBrief <- resources.msgTokens.resolve(brief)
+      resolvedBrief <- resources.msgTokens.resolveForAgent(brief)
       subagentRef <- NodeRunner.spawnAgentActor(system, params)
       adapterRef <- NodeRunner.spawnSupervisedAdapter(
         system = system,
