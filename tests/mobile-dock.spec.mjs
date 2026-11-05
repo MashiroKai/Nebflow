@@ -414,25 +414,30 @@ test('D4 canvas page: empty state on entry, doc cards via openTab (chips/stepper
   expect(errors).toEqual([]);
 });
 
-test('D7 tasks entry retired (入口收敛批 2026-11-04): chrome tasks key + tasks page + task panel all absent; capsule slot is the to-do entry', async ({ page }) => {
+test('D7 to-do entry is per-end (作者令 2026-11-05 09:28): mobile = top-left floating tasks key, capsule slot hidden', async ({ page }) => {
   const errors = watchErrors(page);
-  // 原 D7 钉「聊天头任务键 → tasks 页 live、面板收编、返回钮弹栈」。入口收敛批
-  // 把该入口（左上任务圆钮）与 tasks 导航页整面退役 ⇒ 原断言对象消失，本测试
-  // 转为退役护栏（防回退），意图保留：手机端不得再出现第二套待办入口。
-  await expect(page.locator('[data-chrome="tasks"]')).toHaveCount(0);
-  await expect(page.locator('.mobile-page[data-page="tasks"]')).toHaveCount(0);
-  await expect(page.locator('#mobile-task-panel')).toHaveCount(0);
-  // 直接打导航缝也不再建页（PAGES 已撤除 'tasks' / 'todo'）。
+  // 端区分批（2026-11-05 09:28）反转了入口收敛批（2026-11-04）的手机侧口径：
+  // 手机端待办入口 = 聊天根左上悬浮「任务」圆钮（→ pushPage('tasks') →
+  // #mobile-task-panel），桌面端才是顶带胶囊。原 D7 的「圆钮/tasks 页/任务面板
+  // 三者皆缺席」断言整体反过来，意图不变：手机端**只有一个**待办入口，且两份
+  // 实现不同端不并存。
+  const taskBtn = page.locator('#mobile-fab-layer .mh-chrome-btn[data-chrome="tasks"]');
+  await expect(taskBtn).toHaveCount(1);
+  await expect(taskBtn).toBeVisible();
+  // 桌面侧载体（顶带胶囊槽）在手机层整槽退场。
+  expect(await page.locator('#task-list').evaluate((el) => getComputedStyle(el).display)).toBe('none');
+  // 直接打导航缝：'tasks' 页恢复（push 即建页），'todo' 页仍无权杖（PAGES 仍无）。
   const nav = await page.evaluate(async () => {
     const m = await import('/js/mobile/navController.js');
     m.pushPage('tasks');
-    m.pushPage('todo');
-    await new Promise((r) => setTimeout(r, 250));
-    return { top: window.__nfMobileNav?.top, pages: document.querySelectorAll('.mobile-page[data-page="tasks"], .mobile-page[data-page="todo"]').length };
+    await new Promise((r) => setTimeout(r, 300));
+    return {
+      tasksPage: document.querySelectorAll('.mobile-page[data-page="tasks"]').length,
+      todoPages: document.querySelectorAll('.mobile-page[data-page="todo"]').length,
+      panel: document.querySelectorAll('#mobile-task-panel').length,
+    };
   });
-  expect(nav).toMatchObject({ top: 'chat', pages: 0 });
-  // 待办入口接班 = 顶带胶囊槽（#top-overlays 内，双端同现）。
-  await expect(page.locator('#top-overlays > #task-list')).toHaveCount(1);
+  expect(nav).toMatchObject({ tasksPage: 1, todoPages: 0, panel: 1 });
   expect(errors).toEqual([]);
 });
 

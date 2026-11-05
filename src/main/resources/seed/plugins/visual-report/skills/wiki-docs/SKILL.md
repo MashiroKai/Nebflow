@@ -13,10 +13,12 @@ below automatically.
 
 ## Mandatory clauses (checkable — a violation is a rework)
 
-The five clauses below are author mandates (2026-10-21; ④ added 2026-10-29,
-term-citation batch; ⑤ added 2026-10-30, human-face batch), not style advice.
-Clauses ①–④ are machine-checkable by the validator in
-`scripts/check_wiki_docs.py` (Python 3 stdlib only, zero deps); clause ⑤ is
+The eight clauses below are author mandates (2026-10-21; ④ added 2026-10-29,
+term-citation batch; ⑤ added 2026-10-30, human-face batch; ⑥ added 2026-11-05,
+images-live-with-the-doc batch; ⑦⑧ added 2026-11-05, typography-and-abbreviations
+batch — author rulings 11:09 and 11:11), not style advice. All eight are
+machine-checkable by the validator in `scripts/check_wiki_docs.py` (Python 3
+stdlib only, zero deps) — except clause ⑤'s fence existence, which stays
 convention-enforced (skill + dispatch briefs) until the validator grows its
 existence rule (design §7.4, still open):
 
@@ -64,6 +66,36 @@ existence rule (design §7.4, still open):
    details drawer; plain-text channels degrade to one marker line).
    → no validator rule yet — existence check deferred with the design
    (§7.4 另议); enforced by this skill + dispatch briefs until then.
+6. **Images live with the document (图随文档走, images-live-with-the-doc
+   batch, author order 2026-11-05 09:24)** — an image a document shows is a
+   real file INSIDE the same vault (`<vault>/attachments/` or `<vault>/assets/`,
+   i.e. under `<dataRoot>/projects/<project>/.stand/docs/`), referenced by a
+   vault-relative path — `![[key-chart.png]]` or `![](assets/key-chart.png)`.
+   Never an absolute path, a `~` home path, a `file://` URL, a `../` path that
+   escapes the vault, or an http(s) image host / CDN. The referenced file must
+   EXIST. Rationale: the vault travels (other machines, fresh clones, cleaned
+   worktrees), the repo evidence tree / worktree / cache does not — a document
+   whose figures live elsewhere is a page of dead references the moment it
+   moves. → check rule `image-outside-vault`; per-occurrence escape hatch is
+   the inline marker `<!-- wiki-img-exempt: reason -->` (see "Images live with
+   the document" below).
+7. **Typography: paragraph indent + restrained colour (排版批, author ruling
+   2026-11-05 11:09)** — every body paragraph starts with `&emsp;&emsp;`
+   (two HTML entities = a two-character first-line indent; plain spaces either
+   collapse to nothing or turn the line into a code block), and colour — which
+   Markdown cannot produce, only inline HTML can — is capped at **4 spots per
+   document** (3 recommended), only on **key conclusions and risk/warnings**,
+   using exactly three fixed semantic values. Emphasis in general means
+   **bold**, never colour. → check rules `doc-indent` / `doc-color`; full
+   table, positive and negative examples in "Document typography" below.
+8. **Every abbreviation expanded at first use (缩写批, author ruling
+   2026-11-05 11:11)** — domain abbreviations (GCR / SCD / DPC / MC / NIEL…)
+   and organisation abbreviations (ICRP / IAEA / CERN / NIST…) must carry
+   their full name at the **document's first occurrence**, either inline
+   (`full name（GCR）`, `GCR（full name）`) or through a term link
+   (`[[GCR]]（full name）`). Units and universal technical marks are exempt
+   through the allowlist **written into this file** (not hidden in the
+   script). → check rule `abbrev-expansion`; see "Abbreviations" below.
 
 Run before delivering any document batch:
 
@@ -71,11 +103,27 @@ Run before delivering any document batch:
 python3 ${SKILL_DIR}/scripts/check_wiki_docs.py --project <project> --glossary glossary.md
 ```
 
+- The validator has a regression fixture — `scripts/test_check_wiki_docs.py`
+  (stdlib `unittest`, builds throwaway vaults, covers rules R1–R9 and the
+  red→green exit codes, including the typography/abbreviation cases: not
+  expanded ⇒ flags, expanded ⇒ passes, unit allowlisted ⇒ passes, inside a
+  code fence ⇒ not scanned, colour over budget ⇒ flags, missing indent ⇒
+  flags). Run it in the same breath as any validator change:
+  `cd scripts && python3 -m unittest test_check_wiki_docs -v`.
+- **Scope of clauses ⑦/⑧ (stock transition).** R7/R8/R9 are enforced as
+  violations for **new-format documents**: a stage document whose filename
+  time block is ≥ `20261105_111100`, or any document that declares `style:`
+  in its frontmatter (opt-in), or any document at all under
+  `--strict-style` (the full-vault remediation sweep). Older stock is
+  reported as **advisory** — printed with file:line and counted, but outside
+  the violation list and the exit code — because 400 existing documents cannot
+  be re-laid-out in one batch. Touch a legacy document and it comes into
+  scope: fix what you touch. Flags: `--style-since <YYYYMMDD_HHMMSS>`,
+  `--strict-style`, `--skip-style`, `--allowlist`, `--allowlist-extra`.
 - The vault root defaults to `<data_root>/projects/<project>/.stand/docs/`
   (`STAND_HOME` / `NEBFLOW_HOME` override the data root); `--project` defaults
   to `stand`. `--root <path>` still overrides explicitly — use it to validate a
   not-yet-migrated workspace `docs/` vault.
-
 - Deliverables must pass with zero NEW violations (exit 0). Pre-existing
   legacy violations in the vault are not a pass for this batch — fix what you
   touch.
@@ -103,9 +151,11 @@ python3 ${SKILL_DIR}/scripts/check_wiki_docs.py --project <project> --glossary g
   creation (idempotent); fall back to the workspace `docs/` only for a
   not-yet-migrated project (read-side compatibility, never for new writes).
 - Attachments (images, exports, data files referenced by documents):
-  `<vault>/attachments/`. Never scatter attachments next to documents
-  or in ad-hoc folders — every asset referenced by a document lives under
-  `attachments/` and is referenced by its vault-relative path.
+  `<vault>/attachments/`, or `<vault>/assets/` (the newer batch convention —
+  both are in-vault and both are acceptable). Never scatter attachments next
+  to documents or in ad-hoc folders, and never point at a file outside the
+  vault: every asset referenced by a document lives inside the vault and is
+  referenced by its vault-relative path (clause ⑥).
 - One document = one topic. The file name is the document identity; prefer
   short kebab-case names (`auth-flow-review.md`), because other documents cite
   the file name.
@@ -156,6 +206,255 @@ python3 ${SKILL_DIR}/scripts/check_wiki_docs.py --project <project> --glossary g
   Retry storm — a feedback loop where failures trigger retries that multiply
   load and produce more failures. ^retry-storm
   ```
+
+## Images live with the document (图随文档走, clause ⑥)
+
+Author order 2026-11-05 09:24: *"对 visual report 做要求，就是文档相关的图片要
+放文档里"*. The rule governs the PHYSICAL LOCATION of figures only — the
+explain-at-first-occurrence discipline (clause ③) stays exactly as it was.
+
+**Scope (surface split, do not mix):** this clause governs images inside VAULT
+DOCUMENTS (the `.stand/docs/` markdown/HTML knowledge base, rendered by the
+vault's own resolver). Chart embedding in delivery text / chat cards is a
+different surface with a different resolver — there `skills/core/SKILL.md` §2
+(absolute `~/...` paths inside the served whitelist) still applies. One
+artifact can serve both: generate into the whitelist, then copy the figure
+into the vault and reference the copy relatively from the document.
+
+Four binding points, all machine-checked as `image-outside-vault`:
+
+1. **The file lives in the vault.** Any image a document shows sits under
+   `<dataRoot>/projects/<project>/.stand/docs/` — by convention
+   `<vault>/attachments/` or `<vault>/assets/`; generated figures are copied
+   into the vault in the same batch that writes the document.
+2. **The reference is vault-relative.** `![[key-chart.png]]`,
+   `![](assets/key-chart.png)`, `![](../assets/key-chart.png)` (from a
+   sub-directory) — or `<img src="assets/key-chart.png">` in HTML. NOT
+   absolute paths, NOT `~` home paths, NOT `file://` URLs (an absolute path
+   breaks the moment the data root moves, even when it happens to point
+   inside today's vault).
+3. **Never a volatile location.** No `reports-evidence/`, no worktree path
+   (`.nebflow/worktrees/<w>/…`), no `/tmp`, no `~/.stand/uploads/`, no
+   `~/.stand/evidence/` — these get cleaned, archived or moved, and the
+   document then holds a dead reference. Copy the figure into the vault
+   FIRST, then reference the copy. (Naming note: the same three rules apply
+   to naming — the copy is named by the document-topic convention, not by
+   the evidence folder it came from.)
+4. **Offline first — no remote image hosts.** http(s) images, CDNs and remote
+   icon/image services are violations; if the only source is remote, download
+   one local copy into the vault, reference that copy, and name the origin in
+   the caption or the surrounding text.
+
+Correct (compliant):
+
+```markdown
+![Layer-2 · chat 1440 · 差异 9,762px（0.75%）](assets/20261105_design-spec-layer2-chat-1440.png)
+```
+
+Wrong (the 2026-11-05 counter-example, sanitised): a design-spec document in
+the vault whose 24 screenshots were left in the repository evidence tree and
+referenced from outside it —
+
+```markdown
+![](../../reports-evidence/20261105_design-spec-value-convergence/shots-layer2-post/chat-1440-dark.png)
+![[reports-evidence/20261105_design-spec-value-convergence/shots-layer2-post/chat-1440-dark.png]]
+```
+
+Both forms are `image-outside-vault`. The document travels with the vault; the
+screenshots die with the worktree — the reader gets four broken images where
+the evidence should be. The fix is one copy step in the writing batch
+(`cp -R reports-evidence/<batch>/shots <vault>/assets/<batch>/`), not a
+document rewrite.
+
+**Per-occurrence exemption (legacy stock only).** A historical document that
+genuinely cannot be migrated yet may carry an inline marker on the same line as
+the reference (or on the line immediately above it):
+
+```markdown
+<!-- wiki-img-exempt: 历史取证件仍在仓内证据树，待作者批准迁移 -->
+![[reports-evidence/old-batch/flow.png]]
+```
+
+Rules of the escape hatch: the reason must be non-empty (an empty reason grants
+nothing), it covers exactly that one occurrence (there is no whole-file and no
+whole-vault waiver), and every exemption is counted and printed by the
+validator — `图片纪律（R6 …）：图片引用 N 处 · 违规 M 条 · 行内豁免 K 条`,
+followed by one line per exemption. Markers placed where no image reference
+follows are printed as dangling (`悬空豁免标注`) so a mis-placed marker never
+silently waives anything.
+
+**Validator readout** (`scripts/check_wiki_docs.py`, rule R6, exit code 1 on a
+violation):
+
+```
+── R6 image-outside-vault（1）──
+  design/foo.html:256  `file:///Users/…/.stand/uploads/x.jpg` → 绝对路径且落在 vault 外——图片必须搬进 vault，正文用 vault 相对路径引用（命中易失位置：~/.stand/uploads（上传缓存，会被清理））
+```
+
+Scan scope per document: markdown `![alt](path)`, wikilink embeds `![[path]]`
+with an image extension, and HTML `<img src="…">`. Code fences and inline-code
+spans are syntax samples, not references (they do not render as images) and are
+skipped — **except the `human` fence**: it is a content face (clause ⑤'s key
+chart lives inside it), so its images are checked like body content. `data:`
+inline images are self-contained and pass. Migration of existing stock is the
+author's call — the validator reports, it never moves or rewrites documents.
+
+## Document typography — indent + colour (clause ⑦)
+
+Author ruling 2026-11-05 11:09: *"对 visual report 产出的文档也是，适当使用彩色
+字体，以及缩进"*. Two mechanical requirements, one section, because they fail
+for the same reason: markdown has no layout and no colour, so both must be
+expressed as inline HTML — and only a few of those forms survive a real
+renderer.
+
+### Indent — `&emsp;&emsp;`, and nothing else
+
+Measured on this deployment's renderer (marked v12.0.2, the engine's own
+`src/main/resources/web/vendor/marked.min.js`; Obsidian decodes the same HTML
+entities, so one form serves both faces):
+
+| Form | Rendered | Verdict |
+|---|---|---|
+| `&emsp;&emsp;正文` | `<p>&emsp;&emsp;正文</p>` — two full-width spaces stay | **the only compliant form** |
+| `  正文` (two spaces) | `<p>  正文</p>` — HTML collapses the whitespace | collapsed, no indent (violation) |
+| `    正文` (four spaces) | `<pre><code>正文</code></pre>` — becomes a **code block** | not an indent at all (violation) |
+| `> 正文` | blockquote — left bar, semantic "quotation" | only when you really quote |
+
+Rules:
+
+- **Paragraph first line only.** Continuation lines are never indented — the
+  indent marks paragraph starts, not every line.
+- **Exempt:** headings, list items, table rows, blockquotes, fenced code or
+  diagrams, image-only lines, HTML blocks, and anything shorter than **40
+  visible characters** (label lines, one-line conclusions, checklist items).
+- **Exempt:** everything inside a ```` ```human ```` fence — the human face is
+  a card with its own layout.
+
+Correct:
+
+```markdown
+&emsp;&emsp;词条是块锚段落里的一条显式声明，全库可以按名引用。
+
+&emsp;&emsp;缩写第一次出现时不给全称，读者到第二段就跟丢了。
+```
+
+Wrong:
+
+```markdown
+    四空格起行的正文（渲染成代码块，读者看到等宽字体和灰底）
+
+  两个半角空格的正文（渲染前被折叠，视觉上毫无缩进）
+```
+
+### Colour — three semantic values, ≤4 spots
+
+Markdown has no colour; the only channel is inline HTML. Free colour turns
+into noise, so the semantics are fixed and the budget is small:
+
+| Colour | Meaning | Value (light / dark contrast) |
+|---|---|---|
+| Blue | **conclusion / verdict** | `#5e6ad2` (4.70:1 · 3.85:1) |
+| Red | **risk / warning / failure** | `#d0342c` (4.99:1 · 3.62:1) |
+| Green | **verified / passed / gain** | `#12874a` (4.57:1 · 3.95:1) |
+
+Hard constraints:
+
+1. **≤4 coloured spots per document** (3 recommended). The 5th is a defect.
+2. **Only key conclusions and risk/warnings.** Ordinary emphasis is `**bold**`.
+   Colour that decorates is colour nobody notices when it matters.
+3. **One spot ≤120 characters.** Wrapping a whole paragraph in `<span>` is
+   both too much colour and no emphasis at all.
+
+Correct:
+
+```markdown
+&emsp;&emsp;结论：<span style="color:#5e6ad2">缩进由独立兜底状态承载，不再挂节点</span>。
+
+&emsp;&emsp;<span style="color:#d0342c">风险</span>：存量文档仍用四空格缩进，重排后会被渲染成代码块。
+```
+
+Wrong:
+
+```markdown
+&emsp;&emsp;<span style="color:#ff0000">红色</span>用来强调，<span style="color:#00b050">绿色</span>表示通过，
+<span style="color:#7030a0">紫色</span>表示补充，<span style="color:#ffc000">黄色</span>表示待定，
+<span style="color:#1f9ed4">蓝色</span>表示结论——一段话五处颜色，读者一个都记不住。
+
+&emsp;&emsp;<span style="color:#d0342c">这一整段都被刷成了红色，于是整段等于没有重点，
+而且它占了预算里的全部额度。</span>
+```
+
+HTML deliverables (`.md`-sibling `.html` report pages) carry their own CSS and
+are out of these two checks (R7/R8 scan markdown only).
+
+## Abbreviations — expanded at first use (clause ⑧)
+
+Author ruling 2026-11-05 11:11: *"然后补充词条包含的范围，GCR，ICRP 这种缩写，
+机构缩写，也需要用词条解释"*. The glossary used to cover concept nouns only; it
+now covers **abbreviations**, and an abbreviation is exactly the thing a reader
+cannot decode from context.
+
+Mandate: at a document's **first occurrence** of an abbreviation, satisfy one of
+
+1. **Inline full name** — `全球宇宙线（GCR）` · `GCR（Galactic Cosmic Rays，银河宇宙线）` ·
+   `Galactic Cosmic Rays（GCR）` · `GCR — Galactic Cosmic Rays`;
+2. **Term link** — `[[GCR]]（Galactic Cosmic Rays，银河宇宙线）` (the wikilink
+   renders as the abbreviation itself, so the sentence still reads naturally),
+   or a citation of the document that defines it (`[[glossary#^gcr]]`).
+
+Scope — what the validator scans:
+
+- **All-caps tokens of 2–6 letters**: `GCR` `ICRP` `IAEA` `CERN` `NIST` `SCD`
+  `DPC` `MC` `NIEL` `TID` `RBE` `LET` `HZE` `DOSTEL` `PTC` `USTC` … — domain
+  and organisation abbreviations are the main target.
+- **Dotted proper abbreviations**: `E.C.` `U.S.` `R.B.E.` (all-lowercase
+  `e.g.` / `i.e.` never match — they are not abbreviations of a name).
+- Mixed-case technical forms (`MeV` `keV` `SiPM` `GHz` `mSv`) never match the
+  all-caps pattern, so units need no special case in the rule itself.
+- **Not scanned:** fenced code blocks (Mermaid / HTML / SVG samples included),
+  inline code spans, HTML tag attributes, URLs, file names (`SKILL.md`,
+  `README.md`), heading lines, and the content of ```` ```human ```` fences
+  (the human face has its own jargon ban).
+- **Not scanned:** a token that also appears in the same document in a
+  lowercase form (`ALL`/`all`, `PASS`/`pass`, `SKILL`/`skill`) is an English
+  word used for emphasis, not an abbreviation.
+
+### The allowlist (living in this file, never in the script)
+
+The allowlist is the fenced block below, between the two markers. The
+validator parses it out of this file (`--allowlist <path>` overrides,
+`--allowlist-extra TOKEN` adds one token for a single run). Editing the list IS
+editing the standard.
+
+Admission rule — only three families, and nothing else:
+
+- **甲 units and quantities** readers never expand;
+- **乙 format / protocol / platform names** (a document that writes `JSON`
+  needs no `JavaScript Object Notation`);
+- **丙 process marks** (log levels, acceptance readouts, HTTP verbs) — they are
+  marks, not concepts; expanding `OK` makes the text worse.
+
+**Never admitted: domain abbreviations, organisation abbreviations, or a
+project's own coinages** — `GCR`, `ICRP`, `IAEA`, `CERN`, `NIST`, `SCD`,
+`DPC`, `MC`, `NIEL` must be expanded or registered as terms. Putting one of
+those in the allowlist deletes the rule; that is the abuse this section exists
+to prevent.
+
+```text
+<!-- wiki-abbrev-allowlist:start -->
+# 甲类 · 单位与量纲（读者无需展开）
+MB KB GB TB PB DPI PPI FPS PX HZ KHZ MHZ GHZ
+# 乙类 · 格式 / 协议 / 平台名（跨领域无歧义）
+API URL URI HTTP HTTPS TCP UDP TLS SSH IP DNS JSON JSONL YAML XML HTML CSS JS SVG
+PNG JPG JPEG GIF PDF CSV TSV SQL UUID ASCII UTF SHA CDN CI UI UX
+# 丙类 · 流程记号（日志级别 / 验收读数 / HTTP 动词）
+PASS FAIL WARN ERROR INFO DEBUG EXIT SKIP OK TODO FIXME GET POST PUT PATCH DELETE HEAD
+<!-- wiki-abbrev-allowlist:end -->
+```
+
+Prefer expansion over allowlisting whenever a reader outside the field could
+stall on the token; the list is for the handful of marks that are universal
+already.
 
 ## Human face (报告头, human-face batch 2026-10-30)
 

@@ -1,5 +1,6 @@
 .PHONY: compile run assembly clean install \
-  lint fmt fix fmt-check check quality-gate check-visual visual-baseline frontend-gates component-contract
+  lint fmt fix fmt-check check quality-gate check-visual visual-baseline frontend-gates component-contract \
+  plugin-seed-parity
 
 # Auto-detect fastest Maven mirror (Aliyun for China, Maven Central otherwise)
 # Respects user-set COURSIER_REPOSITORIES; only runs detection if unset
@@ -55,9 +56,24 @@ fix:
 fmt-check:
 	sbt scalafmtCheckAll
 
-check: compile fmt-check lint frontend-gates
+check: compile fmt-check lint frontend-gates plugin-seed-parity
 	node scripts/check-component-contract.mjs
 	@echo "All automated checks passed."
+
+# 插件种子对账门禁（seed-parity 批 2026-11-05）
+# 动机（实测）：visual-report 的 ⑥⑦⑧ 条款 + R6/R7/R8/R9 + 允许清单块 + 49 例回归夹具
+# 全部只落在运行实例，仓库种子停在五条款时代。种子是 fresh home 的安装源
+# （SeedService.seedPlugin 整目录复制），旧种子 = 新装实例自带旧标准；实例一旦被
+# re-approve，digest 仲裁还会把种子覆盖回实例。「记得同步」不是机制，这条腿是。
+# 两条腿：腿 A 自检种子自带批准形态（CI 同此形态，不需要实例）；腿 B 逐文件比对
+# 实例 ↔ 种子在规范/脚本/测试三类别上的漂移，未登记的漂移即红（登记面 =
+# tools/plugin-seed-parity-known-drift.json，条目必须仍在漂移，否则判陈旧）。
+# 只读：本 target 从不改写任何一侧；方向永远是「批准的那一侧 → 另一侧」。
+plugin-seed-parity:
+	@command -v python3 >/dev/null 2>&1 || { echo "python3 not found — 种子对账门禁需要 python3"; exit 2; }
+	python3 tools/plugin-seed-parity --self-check
+	python3 tools/plugin-seed-parity --parity
+	@echo "Plugin seed parity gate passed (self-check + drift leg)."
 
 # 前端组件契约门禁（单独一条腿，不依赖 sbt）
 component-contract:
@@ -82,7 +98,11 @@ quality-gate:
 # 但**本地**这条腿没有它 —— 断环的人跑 `make check` 看不到读数，存量环就是这么红着
 # 过夜的（CI 侧实证见批报告）。CI 那条腿照旧，这里补的是本地防回退。
 # 只跑前端门禁：`make frontend-gates`；全量静态检查：`make check`。
-FRONTEND_GATES := design-tokens msgstyle self-explaining circular fixture-secrets freeze-state
+# api-routes 入列（empty-state-must-not-lie 批 · 件三，2026-11-05）：2026-11-05 事故
+# = 后端把 `GET /api/conversations` 的 case 误删，前端 404 被吞成「暂无会话」，
+# **没有任何断言发现「前端调了但后端没有」**。本闸静态对照两侧（前端 /api 字面量
+# 集合 × 网关路由注册面），前端调了后端没有 ⇒ 红。
+FRONTEND_GATES := design-tokens msgstyle self-explaining circular fixture-secrets api-routes freeze-state
 
 frontend-gates:
 	@command -v node >/dev/null 2>&1 || { echo "node not found — 前端门禁需要 node"; exit 2; }
@@ -94,10 +114,27 @@ frontend-gates:
 	@# `reports-evidence/` 里出现「敏感键名 ∧ 值 ≥32 字符 ∧ 字符集 ≥3 类」的字面量即红
 	@# （占位词豁免）。判据与运行期脱敏词表同族（`nebflow.shared.SecretKeys`）。
 	node scripts/check-fixture-secrets.mjs
+	@# 路由存在性哨兵（empty-state-must-not-lie 批 · 件三）：前端 `/api/` 调用面 ×
+	@# 网关 `*Routes.scala` 注册面静态对照，前端调了但后端没注册 ⇒ 红。
+	node scripts/check-api-routes.mjs
 	@# 冻结态呈现门禁（冻结态误报批 2026-11-05）：可自动恢复的冻结不得写「已冻结」/不得
 	@# 给按钮；需人介入的冻结必须有恢复入口；恢复失败必须可见；迁移日志在场。
 	node scripts/check-freeze-state.mjs
 	@echo "Frontend static gates passed ($(FRONTEND_GATES))."
+
+# ── 路由存在性：运行期腿（empty-state-must-not-lie 批 · 件三②，2026-11-05）──────
+# 静态腿判「源码里注册了没」，运行期腿判「启动后真的答不答」——后者才是事故的
+# 现场判据：今天 `GET /api/conversations` 被误删时前端拿到 404，面板渲染成
+# 「暂无会话」，**没有任何断言**发现「前端在调、实例上没有」。
+# 判据：沙箱实例起来后，逐条打前端调用面的每条路径（清单由
+# `check-api-routes.mjs --emit-paths` 单一真源给出），**任一路径全 method 404 ⇒ 红**。
+# 隔离：数据根 mktemp -d（--home + STAND_HOME + NEBFLOW_HOME 三重注入）、端口 8097，
+# 拒绝 6138/8080/<1024，端口已占用则拒绝复用；结束只 kill 自己 spawn 的进程组。
+# 为什么不塞进 frontend-gates：它需要「先编译再起实例」（分钟级 + 端口），
+# 混进每次编辑都会跑的静态腿里会被绕开；CI 侧作为独立 step 跑（见 .github/workflows/ci.yml）。
+api-routes-live:
+	@command -v node >/dev/null 2>&1 || { echo "node not found — 运行期哨兵需要 node"; exit 2; }
+	node scripts/check-api-routes-live.mjs
 
 # ── 视觉回归基线门禁（tests/visual/，2026-11-01 采纳批）──────────────────────
 # 按**宿主平台键**取基准图目录 tests/visual/baseline/<platform>/（platform 由脚本
