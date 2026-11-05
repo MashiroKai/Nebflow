@@ -12,7 +12,6 @@ import nebflow.actor.{ActorSystem as RootActorSystem, AgentCommand, status}
 import nebflow.agent.*
 import nebflow.core.*
 import nebflow.core.entity.EntityLoader
-import nebflow.core.flow.{FlowTreeActor, FlowTreeRegistry, TeamSessionRegistry}
 import nebflow.core.mcp.McpManager
 import nebflow.core.project.{CancelSource as ChainCancelSource, *}
 import nebflow.core.schedule.FreezeSchedule.given
@@ -315,14 +314,16 @@ private[gateway] object WsSystemHandlers:
       nebflow.core.flow.RunningFlowRegistry.cancel(instanceId) *>
         logger.info(s"Cancel DAG flow '$instanceId' requested by user via WS")
     else if flowName.nonEmpty && cfSessionId.nonEmpty then
-      // Cancel a team pipeline flow via FlowTreeActor
-      nebflow.core.flow.FlowTreeRegistry.get(cfSessionId).flatMap {
-        case Some(treeRef) =>
-          treeRef ! nebflow.core.flow.TreeCommand.CancelPipeline(flowName)
-          logger.info(s"Cancel flow '$flowName' requested by user via WS")
-        case None =>
-          logger.warn(s"Cannot cancel flow '$flowName': no FlowTreeActor for session")
-      }
+      // 团队功能删除批（team-feature-deletion-20261104）阶段 2：此处原有「按会话找
+      // 团队树 actor 并发 CancelPipeline(flowName)」的团队 pipeline
+      // 取消腿，已随团队挂载面一并删除（详见
+      // reports-evidence/team-feature-deletion/stage2/README.md §D）。
+      // **帧本身保留**：上面的 instanceId 分支服务 flow-map/DAG 实例取消
+      // （RunningFlowRegistry），与本批无关，仍是活语义。
+      // 走到这里 = 调用方只给了 name+sessionId（团队形状）⇒ 明确拒绝而非静默吞掉。
+      logger.warn(
+        s"Cannot cancel flow '$flowName': team-pipeline cancellation was retired (session $cfSessionId) — no pipeline of that shape exists any more"
+      )
     else IO.unit
   end handleCancelFlow
 

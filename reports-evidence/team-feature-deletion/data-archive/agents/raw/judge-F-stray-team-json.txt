@@ -1,0 +1,4 @@
+# J-F  stray team.json anywhere under <dataRoot>, excluding the archive root
+$ find /Users/kaiyu/.stand -maxdepth 4 -name "team.json*" -not -path "*/archive/*"
+/Users/kaiyu/.stand/archives/26d25e9d/flow-creator/team.json
+(see above)

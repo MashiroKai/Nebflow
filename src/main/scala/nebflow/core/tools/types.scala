@@ -68,7 +68,7 @@ case class ToolContext(
   /**
    * Team Manager task tools: the team name of a team-agent
    * session, injected at spawn (AgentActor derives it from
-   * TeamSessionRegistry). None for non-team contexts — TeamTaskCreate/Update
+   * the retired team session registry). None for non-team contexts — TeamTaskCreate/Update
    * hard-reject (no cross-team write surface); TeamTaskList falls back to the
    * `team` parameter for Nebula's read-only oversight.
    */
