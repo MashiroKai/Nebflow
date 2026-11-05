@@ -1189,6 +1189,13 @@
   font-size: var(--ds-fs-hint);
   padding: 8px 0;
 }
+/* 配置提供方卡片 · 三面共用态（jev-imagegen-align-llm 批 · card 件，契约 §A.3）：
+   追加到 Config Cards 段尾，零新字面量 ——
+   · 选中态高亮复用本文件既有写法 rgb(var(--sapphire) / …)（同 :1110 hover 一条）；
+   · 操作行几何为 sidebar.js 既有内联值（display:flex; gap:8px; margin-top:8px），
+     提成 class 只为让 LLM / Jev / 生图三面共用一份，不引入新数值。 */
+.cfg-card[data-active="1"] { border-color: rgb(var(--sapphire) / 0.55); }
+.cfg-card-action-row { display: flex; gap: 8px; margin-top: 8px; align-items: center; flex-wrap: wrap; }
 
 /* ── Model chain chips (shared: /model panel, agent detail, flow viewers) ── */
 .mchain {

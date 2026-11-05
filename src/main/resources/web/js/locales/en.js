@@ -1172,34 +1172,53 @@ export default {
   'settings.save': 'Save',
   'settings.saved': 'Saved ✓',
   'settings.saveFailed': 'Save failed',
+  // jev-imagegen-align-llm batch (2026-11-02, contract §D.1): shared config
+  // provider card keys — one copy for the LLM / Jev / imagegen faces; the
+  // rendering single source is js/cfgProviderCard.js.
+  'settings.cfgCard.addProvider': '＋ Add provider',
+  'settings.cfgCard.delete': 'Delete this provider',
+  'settings.cfgCard.deleteConfirm': 'Click again to confirm',
+  'settings.cfgCard.deleted': 'Provider deleted',
+  'settings.cfgCard.inUse': 'In use',
+  'settings.cfgCard.keyConfigured': 'Saved',
+  'settings.cfgCard.keyMissing': 'Not configured',
+  'settings.cfgCard.models': '{n} models',
+  'settings.cfgCard.emptyHint': 'No provider yet — fill in the form below and save.',
   'settings.jev': 'Jev (plugin allocation)',
   'settings.jevEnabled': 'Use Jev to allocate plugins',
   'settings.jevProvider': 'Provider',
   'settings.jevEndpoint': 'Endpoint',
-  'settings.jevKeyRef': 'API key reference',
-  // secrets-ui-redesign (2026-10-08 design handoff): the hint keeps only the
-  // safety-critical line; the health-row tri-state words fill the four keys
-  // that were missing (t() miss fell back to the key itself → bare key names
-  // rendered as copy).
-  'settings.jevHint': 'keyRef is a secret NAME under ~/.nebflow/secrets/ — a pointer, never the value.',
   'settings.jevHealth': 'Allocation channel',
   'settings.jevHealthUp': 'Up',
   'settings.jevHealthDown': 'Down',
   'settings.jevHealthUnconfigured': 'Not configured',
-  'settings.jevKeyRefShow': 'Show key reference',
-  'settings.jevKeyRefHide': 'Hide key reference',
   // jev-panel-threefix (2026-10-09 user feedback, three points): head-row
-  // toggle title / pinned-endpoint explanation / fallback badge word.
+  // toggle title / fallback badge word.
   'settings.jevToggleDetails': 'Expand or collapse allocation settings',
-  'settings.jevEndpointFixed': 'Endpoint is fixed for the Jev edition — no entry needed',
   'settings.jevHealthFallback': 'Jev unavailable → fell back to llm',
-  // settings-panel-jev-imagegen batch (2026-10-28): JeV key VALUE plaintext
-  // display (author order #1 — visible by default, eye = optional masking).
-  'settings.jevKeyValue': 'Key value',
-  'settings.jevKeyValuePlaceholder': 'Read from secrets…',
-  'settings.jevKeyValueNoRef': 'Enter a keyRef first',
-  'settings.jevKeyValueMissing': 'Not found under secrets — entry pending',
-  'settings.jevKeyValueError': 'Read failed ({code})',
+  // jev-imagegen-align-llm batch (2026-11-02, contract §D.2): Jev config face,
+  // 20 keys — provider name / protocol adapter / model / one single key box
+  // (zero pointer wording on the UI layer).
+  'settings.jev.name': 'Provider name',
+  'settings.jev.namePlaceholder': 'e.g. typesafe-jev',
+  'settings.jev.type': 'Protocol adapter',
+  'settings.jev.typeTypesafe': 'Typesafe JeV (hosted)',
+  'settings.jev.typeLaya': 'LAYA (self-hosted)',
+  'settings.jev.model': 'Model',
+  'settings.jev.modelPlaceholder': 'Model name',
+  'settings.jev.keyEntry': 'API Key',
+  'settings.jev.keyPlaceholder': 'Enter the key value…',
+  'settings.jev.keyReentryPlaceholder': 'Configured — re-enter to overwrite',
+  'settings.jev.keyShow': 'Show key value',
+  'settings.jev.keyHide': 'Hide key value',
+  'settings.jev.keySaved': 'Key saved',
+  'settings.jev.keySaveFailed': 'Key save failed ({code})',
+  'settings.jev.keyEmpty': 'Key value is empty',
+  'settings.jev.nameRequired': 'Enter a provider name first',
+  'settings.jev.nameInvalid': 'Provider name allows letters/digits/._- only',
+  'settings.jev.typeRequired': 'Pick a protocol adapter first',
+  'settings.jev.modelRequired': 'Model must not be empty',
+  'settings.jev.detailHint': 'Enter the API key and save; without a key the Jev leg stays closed.',
   // settings-panel batch D (2026-10-28): STT master switch (absent = on —
   // existing behavior untouched; off = the whole STT face collected).
   'settings.sttEnabled': 'Enable speech-to-text',
@@ -1223,7 +1242,11 @@ export default {
   // face is a plain "type API key, save" flow; the pointer name is invisible.
   'settings.imagegenShortHint': 'Enter the API key and save; without a key, image generation stays off.',
   'settings.imagegenProvider': 'Provider',
-  'settings.imagegenAddProvider': '＋ Add provider…',
+  // jev-imagegen-align-llm batch (2026-11-02, contract §D.3): imagegen provider
+  // name / empty-state hint — 3 keys.
+  'settings.imagegen.name': 'Provider name',
+  'settings.imagegen.namePlaceholder': 'e.g. zhipu',
+  'settings.imagegen.emptyHint': 'No provider yet — fill in the form below and save.',
   'settings.imagegenProviderNamePlaceholder': 'New provider name (letters/digits/._-)',
   'settings.imagegenType': 'Adapter type',
   'settings.imagegenTypePlaceholder': 'Choose an adapter type',
@@ -1231,8 +1254,6 @@ export default {
   'settings.imagegenModelPlaceholder': 'Model ID',
   'settings.imagegenBaseUrl': 'Custom endpoint (optional)',
   'settings.imagegenBaseUrlPlaceholder': 'Empty = adapter default endpoint',
-  'settings.imagegenKeyConfigured': 'Configured',
-  'settings.imagegenKeyMissing': 'Pending entry',
   'settings.imagegenKeyEntry': 'API Key',
   'settings.imagegenKeyPlaceholder': 'Enter the API key…',
   'settings.imagegenKeyReentryPlaceholder': 'Configured — typing overwrites',
@@ -1245,9 +1266,6 @@ export default {
   'settings.imagegenTypeRequired': 'Choose an adapter type first',
   'settings.imagegenNameRequired': 'Enter a provider name first',
   'settings.imagegenNameInvalid': 'Provider name allows letters/digits/._- only',
-  'settings.imagegenDelete': 'Delete this provider',
-  'settings.imagegenDeleteConfirm': 'Click again to confirm',
-  'settings.imagegenDeleted': 'Provider deleted',
   // settings-panel-jev-imagegen batch (2026-10-29, author order: give JeV and
   // imagegen the same test-availability button the LLM face has). JeV = one
   // button; imagegen = two levels (light probe + one minimal real generation).
@@ -1343,6 +1361,15 @@ export default {
   'model.roleGeneral': 'Node',
   'model.viaSlash': 'Edit with the /model command',
   'model.currentRun': 'Running',
+  // jev-imagegen-align-llm batch (2026-11-02, contract §D.4): two new /model
+  // groups = pointer switchers ("which provider this config section uses"),
+  // NOT agent model chains.
+  'model.groupJev': 'Jev (plugin allocation)',
+  'model.groupImagegen': 'Image generation',
+  'model.groupJevHint': 'The model and provider Jev uses are set in Settings → Jev.',
+  'model.groupImagegenHint': 'The model and provider image generation uses are set in Settings → Image generation.',
+  'model.groupSwitch': 'Switch',
+  'model.groupSwitched': 'Switched to {name}',
   'settings.advanced': 'Advanced',
   'settings.editRawJson': 'Edit Raw JSON',
   'settings.reload': 'Reload',

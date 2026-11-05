@@ -44,30 +44,50 @@ object JevSettings:
    * provider 白烧一次调用。热读口径下补上 secret 件即**自动恢复**（下一次
    * resolve 现读在位性，无需重启）。keyRef 未配置（None/空白）= 不期望凭据的
    * 形态，腿照常开启（既有语义不变）。
+   *
+   * 多 provider（jev-imagegen-align-llm 批 2026-11-02）：顶层 `provider` 是
+   * 「当前选中项指针」，`jev.providers.<name>` 是该选中项的字段表。取值口径 =
+   * **逐字段三级回落** `providers[选中项].X > 顶层 X > 缺省`——`providers` 缺席
+   * 或选中项不在表内即退化为本批之前的纯顶层读法（零迁移、逐字不变）。
    */
   def resolve(cfg: Option[JevConfig], health: Option[DecisionHealthPort]): Option[JevSettings] =
     cfg.flatMap { c =>
       if !c.isEnabled then None
       else
-        val provider = c.provider.filter(_.nonEmpty).getOrElse(DecisionProvider.TypesafeJev)
+        // ── 选中项解析（jev-imagegen-align-llm 批 2026-11-02）──────────────
+        // `jev.providers`（可缺席的新事实源）一旦存在，选中项（顶层 `provider`
+        // 指针所指那一条）逐字段优先；缺席/该字段缺位时回落顶层 5 键，再回落
+        // 缺省。三级回落 = providers[name].X > c.X > 缺省 —— 旧配置（无
+        // providers）走第二、三级，行为逐字不变（零迁移）。
+        val entry: Option[nebflow.shared.JevProviderConfig] =
+          for
+            name <- c.provider.map(_.trim).filter(_.nonEmpty)
+            provs <- c.providers
+            e <- provs.get(name)
+          yield e
+        /** 三级回落取值器：选中项字段 > 顶层字段 > None（缺省由调用点给）。
+          * 判据与顶层旧读法逐字同源（`filter(_.nonEmpty)`，不改写值本身）。 */
+        def pick(fromEntry: nebflow.shared.JevProviderConfig => Option[String], top: Option[String]): Option[String] =
+          entry.flatMap(fromEntry).filter(_.nonEmpty).orElse(top.filter(_.nonEmpty))
+        val provider = pick(e => Some(e.`type`), c.provider).getOrElse(DecisionProvider.TypesafeJev)
         if !DecisionProvider.AllIds.contains(provider) then
           logger.warnSync(s"jev.provider '$provider' is not a known decision provider — decision face skipped")
           None
         else
-          val endpoint = c.endpoint
-            .filter(_.nonEmpty)
+          val endpoint = pick(_.endpoint, c.endpoint)
             .getOrElse(
               if provider == DecisionProvider.Laya then DecisionProvider.DefaultLayaEndpoint
               else DecisionProvider.DefaultTypesafeEndpoint
             )
-          val model = c.model.filter(_.nonEmpty).getOrElse(DecisionProvider.DefaultModel)
-          val token = readSecretToken(c.keyRef)
-          val keyRefExpected = c.keyRef.map(_.trim).exists(_.nonEmpty)
+          val model = pick(_.model, c.model).getOrElse(DecisionProvider.DefaultModel)
+          val keyRef = pick(_.keyRef, c.keyRef)
+          val token = readSecretToken(keyRef)
+          val keyRefExpected = keyRef.exists(_.trim.nonEmpty)
           if keyRefExpected && token.isEmpty then
             // 四修③：凭据在位性不满足 ⇒ 腿自动关闭（细节 WARN 已由
             // readSecretToken 落；此处落「腿级」关闭行——审计可查腿开/腿关）。
             logger.warnSync(
-              s"jev.keyRef '${c.keyRef.get.trim}' secret absent — decision leg CLOSED (fallback leg takes over); restoring the secret re-opens the leg on the next call (hot read)"
+              s"jev.keyRef '${keyRef.get.trim}' secret absent — decision leg CLOSED (fallback leg takes over); restoring the secret re-opens the leg on the next call (hot read)"
             )
             None
           else
