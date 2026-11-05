@@ -207,10 +207,14 @@ carried by the `wiki-docs` skill of this plugin. Concretely:
 - Title = first H1; the document cites the documents it builds on with
   wikilinks (`[[doc]]`, `[[doc#Heading]]`, `[[glossary#^concept-id]]`).
 - Every new concept is explained at first mention, or referenced to the
-  document/section that explains it — the reference is the graph edge.
-- These vault documents are indexed by the wiki graph view; links between
-  them are the relationship map, so a report with zero links to its sources
-  is an incomplete deliverable.
+  document/section that explains it — the citation is what lets a reader
+  reach the source, and what the term registry resolves.
+- Write it as people read: plain words (no `人面子` / `印象` / `赋能` style
+  abstraction), the overall answer in one paragraph at the top, one bold
+  conclusion line per section, the argument inside `<details>` folds, one
+  ```human card per part, captioned figures with minimal in-image text
+  (wiki-docs clauses ⑨⑩⑪). Zero links to sources is an incomplete
+  deliverable; zero graph density is not a problem.
 
 Full conventions (vault layout, citation discipline, glossary block ids):
 `skills/wiki-docs/SKILL.md` in this plugin.
@@ -329,3 +333,21 @@ $$
 `skills/wiki-docs/SKILL.md` 条款 ⑦⑧ 与「Document typography」「Abbreviations」两节）。
 新制文档（文件名时间块 ≥ `20261105_111100` 或在 frontmatter 声明 `style:`）按违规
 判，存量文档先记 advisory。
+
+**⑤ 写作风格（写作风格批 v2，作者令 2026-11-05 12:09）。** 四件事在每一份文档上
+都要成立，条款原文与模板见 `skills/wiki-docs/SKILL.md` 条款 ⑨⑩⑪ 与「Plain
+language」「Document skeleton」「Card face」「Figures in a document」四节：
+
+- **平实语言**：能用平实动词+名词说清的，不用抽象名词包裹；禁用词表（`人面子` /
+  `印象` / `抓手` / `赋能` / `闭环` …）住在 wiki-docs 的标记块里，命中即报 `文件:行`。
+- **结论先行 + 细节折叠**：开头一段总体结论；每个 `##` 章节首行一句加粗结论；论证
+  细节放进 `<details><summary>…</summary>`（两台渲染器都认的唯一形态）。
+- **卡片分区**：每部分一张 ```` ```human ```` 卡（= 产品现成的 `.nf-human-card`），
+  卡里只放结论与关键数字，论证进紧随其后的折叠块。
+- **图的简约风格与图注**：图内只留轴标签、刻度、短图例（每条一行）；灰阶配色 +
+  虚实线区分，无网格、无图内标题；解释放图注（`图 N …` 一句结论，≤120 字符）与
+  正文。基准 = DOSTEL `figures/20261103_cabin_neutron_energy_weight_flux/` 那批，
+  参数单源 `figures/20261103_neutron_energy_weight_flux/scripts/fig_style.py`。
+
+机器面：R10 `plain-language` / R11 `doc-structure` + `detail-fold` / R12
+`image-caption`（`--style-since-v2` 是 v2 自己的生效界，缺省 `20261105_130000`）。
