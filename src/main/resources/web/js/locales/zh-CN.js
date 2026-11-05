@@ -1412,9 +1412,6 @@ export default {
   'provider.keyRequired': '新建服务商需要 API Key',
   'provider.required': '必填',
   'provider.protocol': '接口格式',
-  // 接口格式下拉下方的 helper 行（protoface-ui 批，2026-09-22）：显示当前所选
-  // 面 + 当前 baseUrl 推导出的实际 POST 目标。{target} = 完整 URL。
-  'provider.protocolHelper': '该服务商将收到：POST {target}',
   'provider.idRequired': '请填写服务商 ID',
   'provider.noSpaces': '服务商 ID 不能包含空格',
   'provider.baseUrlRequired': '请填写 Base URL',
@@ -1426,11 +1423,14 @@ export default {
   'provider.ctxExceedsCeiling': '模型 {id}：上下文窗口 {value} 超出支持的绝对上限 {max}',
   'provider.ctxDefaulted': '以下模型未填写上下文窗口，已按默认值 {def} 保存：{ids}',
   'provider.ctxClampedToMax': '模型 {id}：默认值 1,000,000 超过该模型上报的上限，已按 {max} 保存',
-  // 模型不可用时段（model-schedule-unavailable 批）：provider 弹窗编辑面。
+  // 模型不可用时段（model-schedule-unavailable 批）：**只保留 provider 级一份**
+  // （config-single-source 批，作者裁定④ 2026-11-05）。常显文字只留标签与空态
+  // 事实句（「无限制」），解释收进 `?` 悬停提示（裁定⑤）。
   'provider.unavailableWindows': '不可用时段',
-  'provider.unavailableWindowsPlaceholder': '如 14:00-18:00；多条用逗号分隔，跨午夜写 23:00-07:00；留空 = 不限制',
+  'provider.unavailableWindowsHint': '该服务商全部模型统一生效；跨午夜写 23:00-07:00',
+  'provider.unavailableWindowsPlaceholder': 'HH:mm-HH:mm',
   'provider.unavailableWindowsInvalid': '不可用时段格式错误：「{value}」（需 HH:mm-HH:mm，且开始≠结束）',
-  'provider.unavailableWindowsEmpty': '无限制（留空 = 不限制）',
+  'provider.unavailableWindowsEmpty': '无限制',
   'provider.unavailableWindowsAdd': '添加不可用时段',
   'provider.unavailableWindowsDaysReadonly': '按星期 · 手编只读',
   'provider.unavailableWindowsDays': '生效星期',

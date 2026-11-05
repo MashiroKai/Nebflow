@@ -494,6 +494,25 @@ object GatewayMain extends IOApp:
               // 目录文件缺席 ⇒ 全腿 no-op。失败不阻断启动（与上两行迁移同款纪律）。
             try nebflow.core.ModelChainMigration.migrateLegacyPresetRefs()
             catch case e: Exception => logger.warn(s"preset→chain migration failed: ${e.getMessage}")
+            // config-single-source batch (author rulings ①–④, 2026-11-05) — boot face:
+            //  · the config-file rename migration (`nebflow.json` → `stand.json`) runs
+            //    inside PathUtil.configJsonPath on first touch and logs one line;
+            //  · `llm.fallback` is seeded from the CURRENT effective chain the first
+            //    time, so the chain is visible/editable in the file (one truth);
+            //  · unresolvable refs in that section are reported as WARNINGS (never a
+            //    silent skip) and the effective candidate plan is logged once — the
+            //    observability the author asked for. Failures never block boot.
+            try nebflow.service.ConfigService.ensureConfigConvergence().unsafeRunSync()
+            catch case e: Exception => logger.warn(s"config convergence (llm.fallback / unavailable windows) failed: ${e.getMessage}")
+            try
+              val checked = Config.loadServiceConfig()
+              nebflow.shared.FallbackChain.logValidation(checked)
+              val refs = nebflow.shared.FallbackChain.refs(checked.llm.fallback)
+              logger.info(
+                s"[fallback-chain] llm.fallback = ${if refs.isEmpty then "<absent>" else refs.mkString(" → ")} " +
+                  s"(source: ${if refs.nonEmpty then nebflow.shared.FallbackChain.SectionKey else "nebula-chain/seed"})"
+              )
+            catch case e: Exception => logger.warn(s"llm.fallback boot validation failed: ${e.getMessage}")
               // personal-agent 批（2026-10-04）：Soul.md 启动一次性迁移腿
               // （agents/Nebula/memory.md → ~/.nebflow/Soul.md）。幂等：
               // Soul.md 已存在即跳过、再跑零副作用；写前经 MemorySnapshot 快照，

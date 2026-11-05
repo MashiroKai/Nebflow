@@ -151,25 +151,21 @@ class ProviderRegistry(
     * model-chain anchor 批）——请求路径专用（LlmInterface 时段闸输入）。 */
   def getCandidatesUnfiltered(): IO[List[ModelCandidate]] =
     configRef.get.map { config =>
-      // Global chain source = the /model primary chain: Nebula's own stored
-      // chain, degrading to the seed chain (first provider's first model in
-      // `nebflow.json` field order; a legacy `llm.model` chain still wins while
-      // it exists) when Nebula carries none. Read fresh per call (small file) —
-      // /model edits apply on the next call.
-      //
-      // 🔴 model-chain anchor batch (2026-10-29): this leg MUST pass Nebula's
-      // own chain as the resolution input. Calling
-      // `resolveModel(NebulaName, None)` short-circuits to the seed chain
-      // ("Nebula has no one to follow"), which silently dropped the /model
-      // setting on every request that carries no `agentModel` (the allocator /
-      // utility-model legs and this global fallback) — the fallback anchor then
-      // came from a fixed config seed instead of /model. Requests that carry
-      // `agentModel` build their chain per ref ([[getCandidateForRef]]).
+      // 🔴 config-single-source batch (author rulings ①③ 2026-11-05): the
+      // config file's `llm.fallback` section is THE chain when it carries at
+      // least one ref — the panel, the file and the runtime are one truth
+      // ([[FallbackChain]]). Only when the section is absent do we fall back to
+      // Nebula's sidecar chain, then to the provider-derived seed. Reading the
+      // decoded config (not the raw file) keeps this on the hot-reload path:
+      // an `updateConfig` swaps configRef ⇒ the next call uses the new order.
       val chain =
         try
-          val policy = nebflow.core.SchemePolicy
-          val (am, _) = policy.resolveModel(policy.NebulaName, policy.nebulaChain())
-          am.preferred.toList ++ am.fallbacks
+          val fromConfig = nebflow.shared.FallbackChain.configured(config)
+          if fromConfig.nonEmpty then fromConfig
+          else
+            val policy = nebflow.core.SchemePolicy
+            val (am, _) = policy.resolveModel(policy.NebulaName, policy.nebulaChain())
+            am.preferred.toList ++ am.fallbacks
         catch case _: Exception => Nil
       val fromChain = chain.flatMap { ref =>
         // Gracefully skip invalid refs instead of throwing
@@ -233,6 +229,47 @@ class ProviderRegistry(
       // 模型不可用时段闸在此**不**过滤（本出口 = 未滤；过滤在 [[getCandidates]]
       // 读面出口与 LlmInterface.applyScheduleGate 请求闸两处单点）。
       fromChainOrFallback
+    }
+
+  // ============================================================
+  // 候选集可观测面（config-single-source 批，作者裁定③ 2026-11-05）
+  // ============================================================
+
+  /**
+   * "What would THIS call try, in what order?" — the readable candidate plan.
+   *
+   * Exposed as `GET /models/candidates` (the panel/log face the author asked
+   * for): `source` names the chain's origin (`llm.fallback` = the config file,
+   * `nebula-chain` / `seed` = legacy legs), `chain` is the configured ref order,
+   * `skipped` lists refs the config can no longer resolve (they are NOT called —
+   * and each one also yields a boot-time warning), `candidates` is the effective
+   * ordered try-list (chain + reserve tier).
+   */
+  def candidatePlan(): IO[io.circe.Json] =
+    import io.circe.syntax.*
+    configRef.get.flatMap { config =>
+      getCandidatesForAgentUnfiltered(None).map { cs =>
+        val fromConfig = nebflow.shared.FallbackChain.configured(config)
+        val (source, chainRefs) =
+          if fromConfig.nonEmpty then ("llm.fallback", fromConfig)
+          else
+            val policy = nebflow.core.SchemePolicy
+            val (am, src) = policy.resolveModel(policy.NebulaName, policy.nebulaChain())
+            (src, am.preferred.toList ++ am.fallbacks)
+        def resolves(ref: String): Boolean =
+          ref.split("/", 2) match
+            case Array(pid, mid) =>
+              config.llm.providers.get(pid).exists(p => !isDisabled(p) && p.models.exists(_.id == mid))
+            case _ => false
+        val candidates = cs.map(c => s"${c.providerId}/${c.model}")
+        io.circe.Json.obj(
+          "source" -> source.asJson,
+          "chain" -> chainRefs.asJson,
+          "skipped" -> chainRefs.filterNot(resolves).asJson,
+          "candidates" -> candidates.asJson,
+          "warnings" -> nebflow.shared.FallbackChain.validate(config).asJson
+        )
+      }
     }
 
   // ============================================================

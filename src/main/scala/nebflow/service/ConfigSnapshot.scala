@@ -17,11 +17,13 @@ object ConfigSnapshot:
   private val MaxSnapshots = 5
 
   /**
-   * Snapshot file prefix — matches BOTH the brand config name and the
-   * hardcoded legacy "nebflow.json." so pre-rename snapshots stay
-   * restorable (L3 rebrand compat; identical names collapse to one).
+   * Snapshot file prefix — matches the brand config name and the historical
+   * name (pre-rename snapshots stay restorable). The legacy spelling comes from
+   * the single source [[nebflow.shared.PathUtil.LegacyConfigFileName]], never a
+   * literal at a new call site (config-single-source batch 2026-11-05).
    */
-  private def snapshotPrefixes: List[String] = List(Branding.configFileName + ".", "nebflow.json.")
+  private def snapshotPrefixes: List[String] =
+    List(Branding.configFileName + ".", nebflow.shared.PathUtil.LegacyConfigFileName + ".")
 
   /** Save current config as a timestamped snapshot. */
   def save(): IO[Unit] = IO.blocking {

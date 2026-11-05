@@ -1310,7 +1310,28 @@ private[gateway] object PresenceRoutes:
                               val persistedLeg =
                                 if sessionStore == null then IO.unit
                                 else droppedIds.traverse_(id => sessionStore.updateSessionModel(id, None))
-                              persistedLeg *> Ok(
+                              // config-single-source batch (2026-11-05): the Nebula
+                              // primary chain IS the global chain, and its single
+                              // source is `llm.fallback` in the config file. Mirror the
+                              // write there so the panel edit is visible/editable in
+                              // `stand.json` and the engine (which reads the file
+                              // first) never serves a stale order. Failure is loud but
+                              // non-fatal for the sidecar write that already landed.
+                              val configLeg =
+                                if agentName != nebflow.core.SchemePolicy.NebulaName then IO.unit
+                                else
+                                  nebflow.service.ConfigService.setFallbackChain(own).attempt.flatMap {
+                                    case Right(_) => IO.unit
+                                    case Left(e) =>
+                                      IO.delay(
+                                        nebflow.shared.NebflowLogger
+                                          .forName("nebflow.config.fallback")
+                                          .warnSync(
+                                            s"[fallback-chain] mirroring the Nebula chain into llm.fallback failed: ${e.getMessage}"
+                                          )
+                                      )
+                                  }
+                              configLeg *> persistedLeg *> Ok(
                                 Json.obj(
                                   "updated" -> true.asJson,
                                   "mode" -> mode.asJson,

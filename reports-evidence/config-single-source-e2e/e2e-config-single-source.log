@@ -1,0 +1,30 @@
+[fixture] /tmp/nf-cfg-single-source-1793852825855 (legacy nebflow.json only, fake apiKeys)
+  | 12:27:06.570 [36mINFO [0m nebflow.config.migrate - [config-migration] nebflow.json → stand.json (backup kept as nebflow.json.bak; values unchanged, 1045 bytes)
+PASS  ① 隔离实例启动（独立 home + 独立端口，未触碰宿主 6138）  [http://127.0.0.1:8799]
+PASS  ①a stand.json 自动生成
+PASS  ①b 旧文件保留为 nebflow.json.bak（不删除）
+PASS  ①c 旧名 nebflow.json 已改名（不留两个真相）
+FAIL  ①d 配置值一一相等（逐叶子 diff，model 级时段按合并核销）  [1 diff]
+PASS  ①e 启动日志出现一次性迁移行
+PASS  ④a model 级不可用时段已合并到 provider 级  [[{"from":"01:00","to":"02:00"}]]
+PASS  ④b 文件中不再残留 model 级 unavailableWindows
+PASS  ②a stand.json 内可见 llm.fallback 小节  [{"preferred":"gamma/m3","fallbacks":["alpha/m1"]}]
+PASS  ②b 候选顺序 = llm.fallback 顺序（首选 gamma 在前）  [gamma/m3 → alpha/m1 → beta/m2]
+PASS  ②c 配置写面接受链顺序改动（PATCH /api/config）  [http 200]
+PASS  ②d 改顺序 ⇒ 运行期候选顺序随之改变（热生效，零重启）  [before: gamma/m3 → alpha/m1 → beta/m2 | after: alpha/m1 → gamma/m3 → beta/m2]
+PASS  ②e 改动落在 stand.json（不是内存私货）  [{"preferred":"alpha/m1","fallbacks":["gamma/m3"]}]
+  | stand started (pid 785) — https://mystand.space/portal?device=4f0c0fba-cde7-548d-a090-93546d728414
+PASS  ③a 删除 provider gamma（面板删除同路径）  [http 200]
+PASS  ③b 删掉 ⇒ 候选集不再含 gamma（正）  [alpha/m1 → beta/m2]
+PASS  ③c 删掉 ⇒ llm.fallback 内的 gamma 引用被 prune（文件不再承诺打不通的候选）  [{"preferred":"alpha/m1","fallbacks":[]}]
+PASS  ③d 加回 provider gamma  [http 200]
+PASS  ③e 加回 ⇒ 立刻含 gamma（反）  [alpha/m1 → gamma/m3 → beta/m2]
+PASS  ④c 面板只有一处 provider 级「添加不可用时段」  [provider-hosts=1 add-buttons=1]
+PASS  ④d 不再有 model 级不可用时段编辑面  [model-hosts=0]
+PASS  ⑤a 页面无括号式解释（「（留空 = 不限制）」）
+PASS  ⑤b 页面无请求预告（「POST http…」）
+PASS  ⑤c 解释已移入 `?` 悬停提示  [["该服务商全部模型统一生效；跨午夜写 23:00-07:00"]]
+PASS  ④e 面板收集到的时段形状 = wire 契约（{from,to}）  [[{"from":"01:00","to":"02:00"},{"from":"14:00","to":"18:00"}]]
+PASS  ④f 保存 payload 的 model 条目不再携带 unavailableWindows  [[{"id":"m1","contextWindow":1000}]]
+PASS  ④g 时段值写入 stand.json 的 provider 小节（面板 payload 形状）  [http 200 · [{"from":"01:00","to":"02:00"},{"from":"14:00","to":"18:00"}]]
+PASS  ④h 写入后 model 小节仍无 unavailableWindows（单一落点）

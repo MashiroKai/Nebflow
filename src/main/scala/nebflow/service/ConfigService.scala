@@ -215,17 +215,25 @@ object ConfigService:
             IO
               .blocking {
                 val merged0 = mergeConfig(existing, incoming)
+                // config-single-source batch (2026-11-05): every persisted config
+                // ① converges model-level unavailable windows UP to the provider
+                //   (author ruling ④ — one provider, one behaviour) and
+                // ② prunes `llm.fallback` refs of providers that were just deleted
+                //   (the file must not promise a candidate the runtime cannot build).
+                val mergedNorm = parse(merged0).toOption match
+                  case Some(j) => pruneChainRefs(nebflow.shared.Config.normalizeConfigJson(j), pureDeletes).spaces2
+                  case None => merged0
                 val merged =
-                  if runtimeOverrides.isEmpty then merged0
+                  if runtimeOverrides.isEmpty then mergedNorm
                   else
-                    parse(merged0).toOption match
+                    parse(mergedNorm).toOption match
                       case Some(j) =>
                         // Runtime-authoritative keys win over the incoming snapshot.
                         val overridden = runtimeOverrides.foldLeft(j) { (acc, kv) =>
                           acc.mapObject(_.add(kv._1, kv._2))
                         }
                         overridden.spaces2
-                      case None => merged0
+                      case None => mergedNorm
                 // Write path: always the brand config name — the first
                 // read-modify-write after a rename completes the file
                 // migration (existing was read through the legacy fallback).
@@ -250,6 +258,159 @@ object ConfigService:
       }
     }
   end updateConfig
+
+  // ============================================================
+  // fallback 链单一源维护（config-single-source 批，作者裁定①③ 2026-11-05）
+  // ============================================================
+
+  private val fallbackLog = nebflow.shared.NebflowLogger.forName("nebflow.config.fallback")
+
+  /** @deprecated 语义已并入 [[ensureConfigConvergence]]；保留别名以免调用点漂移。 */
+  def ensureFallbackSection(): IO[Unit] = ensureConfigConvergence()
+
+  /**
+   * Boot convergence of the config file (config-single-source batch, author
+   * rulings ③④ 2026-11-05) — ONE read-modify-write, logged, idempotent:
+   *
+   *  1. **unavailable-window convergence**: model-level
+   *     `llm.providers.<id>.models[].unavailableWindows` are merged UP into
+   *     `llm.providers.<id>.unavailableWindows` and removed from the model
+   *     entries ("one provider, one behaviour"). Without this boot write the
+   *     runtime already saw the converged shape (read-side normalization) but
+   *     the FILE still carried two sources — i.e. the exact drift this batch
+   *     removes.
+   *  2. **`llm.fallback` seed**: when the section carries no ref, the CURRENT
+   *     effective chain (Nebula primary chain / provider-derived seed) is written
+   *     into it, so the chain is visible and editable where every other provider
+   *     setting lives. A hand-edited section is never rewritten.
+   *
+   * Failures are the caller's to log (boot continues: a read-only data root must
+   * never brick the engine).
+   */
+  def ensureConfigConvergence(): IO[Unit] =
+    writeLocked {
+      IO.blocking {
+        val existing = if os.exists(configPath) then os.read(configPath) else "{}"
+        parse(existing) match
+          case Left(_) => ()
+          case Right(json) =>
+            val converged = nebflow.shared.Config.normalizeConfigJson(json)
+            val windowsChanged = converged.noSpaces != json.noSpaces
+            if windowsChanged then
+              fallbackLog.infoSync(
+                "[config-convergence] model-level unavailable windows merged into the provider level " +
+                  "(single source: llm.providers.<id>.unavailableWindows)"
+              )
+            val currentRefs =
+              converged.hcursor
+                .downField("llm")
+                .downField("fallback")
+                .as[Option[nebflow.shared.AgentModelConfig]]
+                .toOption
+                .flatten
+                .map(c => nebflow.shared.FallbackChain.refs(Some(c)))
+                .getOrElse(Nil)
+            val withFallback =
+              if currentRefs.nonEmpty then (converged, false)
+              else
+                val policy = nebflow.core.SchemePolicy
+                val (chain, source) = policy.resolveModel(policy.NebulaName, policy.nebulaChain())
+                val refs = nebflow.shared.FallbackChain.refs(Some(chain))
+                if refs.isEmpty then (converged, false)
+                else
+                  val section = Json.obj(
+                    "preferred" -> Json.fromString(refs.head),
+                    "fallbacks" -> Json.arr(refs.tail.map(Json.fromString)*)
+                  )
+                  val updated = converged.mapObject { root =>
+                    val llm = root("llm").flatMap(_.asObject).getOrElse(JsonObject.empty)
+                    root.add("llm", Json.fromJsonObject(llm.add("fallback", section)))
+                  }
+                  fallbackLog.infoSync(
+                    s"[fallback-chain] seeded llm.fallback from ${source}: ${refs.mkString(" → ")} " +
+                      "(the config file is now the single source of the chain)"
+                  )
+                  (updated, true)
+            if windowsChanged || withFallback._2 then
+              AtomicJson.writeSyncRestricted(PathUtil.configJsonWritePath(PathUtil.dataRoot), withFallback._1.spaces2)
+      }
+    }
+
+  /**
+   * Mirror a chain write into `llm.fallback` (the `/model` panel write face).
+   *
+   * Single-source discipline: `PUT /agents/Nebula/model` still owns the Nebula
+   * sidecar (per-turn reload), but the SAME chain must be visible in the config
+   * file — otherwise editing the panel would silently stop affecting the
+   * runtime, which is exactly the class of drift this batch removes. A `None`
+   * chain removes the section (back to the sidecar/seed legs).
+   */
+  def setFallbackChain(chain: Option[nebflow.shared.AgentModelConfig]): IO[Unit] =
+    writeLocked {
+      IO.blocking {
+        val existing = if os.exists(configPath) then os.read(configPath) else "{}"
+        val json = parse(existing).getOrElse(Json.obj())
+        val refs = nebflow.shared.FallbackChain.refs(chain)
+        val updated = json.mapObject { root =>
+          val llm = root("llm").flatMap(_.asObject).getOrElse(JsonObject.empty)
+          val nextLlm =
+            if refs.isEmpty then llm.remove("fallback")
+            else
+              llm.add(
+                "fallback",
+                Json.obj(
+                  "preferred" -> Json.fromString(refs.head),
+                  "fallbacks" -> Json.arr(refs.tail.map(Json.fromString)*)
+                )
+              )
+          root.add("llm", Json.fromJsonObject(nextLlm))
+        }
+        AtomicJson.writeSyncRestricted(PathUtil.configJsonWritePath(PathUtil.dataRoot), updated.spaces2)
+        fallbackLog.infoSync(
+          if refs.isEmpty then "[fallback-chain] llm.fallback removed (chain follows the sidecar/seed legs again)"
+          else s"[fallback-chain] llm.fallback written: ${refs.mkString(" → ")}"
+        )
+      }
+    }
+
+  /**
+   * Provider-delete chain hygiene: refs of a provider that just disappeared are
+   * pruned from `llm.fallback` (with a log line) — the file must never promise a
+   * candidate the runtime cannot build. Surviving order is preserved; when the
+   * preferred ref dies, the first surviving fallback takes its place.
+   */
+  private[service] def pruneChainRefs(json: Json, deletedProviders: List[String]): Json =
+    if deletedProviders.isEmpty then json
+    else
+      val gone = deletedProviders.toSet
+      (for
+        root <- json.asObject
+        llm <- root("llm").flatMap(_.asObject)
+        section <- llm("fallback").flatMap(_.asObject)
+      yield
+        val refs = nebflow.shared.FallbackChain.refs(
+          Json.fromJsonObject(section).as[nebflow.shared.AgentModelConfig].toOption
+        )
+        val kept = refs.filterNot(r => gone.contains(r.takeWhile(_ != '/')))
+        val dropped = refs.filter(r => gone.contains(r.takeWhile(_ != '/')))
+        if dropped.isEmpty then json
+        else
+          fallbackLog.warnSync(
+            s"[fallback-chain] pruned ${dropped.mkString(", ")} from llm.fallback " +
+              s"(provider deleted from llm.providers; kept: ${if kept.isEmpty then "<empty>" else kept.mkString(" → ")})"
+          )
+          val nextLlm =
+            if kept.isEmpty then llm.remove("fallback")
+            else
+              llm.add(
+                "fallback",
+                Json.obj(
+                  "preferred" -> Json.fromString(kept.head),
+                  "fallbacks" -> Json.arr(kept.tail.map(Json.fromString)*)
+                )
+              )
+          Json.fromJsonObject(root.add("llm", Json.fromJsonObject(nextLlm)))
+      ).getOrElse(json)
 
   /**
    * 定向写 `safety.defaultMode`（= 应用的权限模式，全局唯一持久权威源）。
