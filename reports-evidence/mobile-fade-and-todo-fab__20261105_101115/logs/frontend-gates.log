@@ -1,5 +1,5 @@
 node scripts/check-design-tokens.mjs
-design-tokens：128 文件 / 2078 处颜色字面量 / 133 个基线条目
+design-tokens：128 文件 / 2080 处颜色字面量 / 133 个基线条目
   ℹ css/glass.css: 语义关键字（不计档外） radius×1(inherit)
   ℹ css/mobileLayer.css: 语义关键字（不计档外） radius×4(inherit)
   ℹ css/split.css: 语义关键字（不计档外） radius×1(inherit)
@@ -62,22 +62,7 @@ design-tokens：128 文件 / 2078 处颜色字面量 / 133 个基线条目
   ↑ js/mobile/sessionHead.js: color 3 → 1（改善，建议下次 --update-baseline 收紧）
   ↑ js/persistence.js: color 27 → 22（改善，建议下次 --update-baseline 收紧）
   ↑ js/reference.js: color 6 → 5（改善，建议下次 --update-baseline 收紧）
-PASS: 无新增设计字面量；严格面（设置页结构面 + 设计体系层）零跑偏，令牌引用全部有定义。
-node scripts/check-msgstyle-single-source.mjs
-  ok  A1 出向气泡底色（③A1）  [sapphire.css×1]
-  ok  A3 气泡 max-width 同 token（③A3）  [sapphire.css×1]
-  ok  A3 面内不得再写死 78%（③A3）  [0 命中]
-  ok  A5 文件卡单一类名（③A5）  [sapphire.css×1]
-  ok  A5 文件卡旧类名零残留（③A5）  [0 命中]
-  ok  A1/A2 气泡方向尾角 4px（②A1）  [chat.css×5, sapphire.css×1]
-  ok  A2/A4 元信息 pill 戒指阴影（②A3）  [sapphire.css×1]
-msgstyle-single-source: 7 rules, 41 css files scanned.
-PASS: 消息面同值字面量全部单源（共享层 = css/sapphire.css）。
-node scripts/check-self-explaining.mjs
-self-explaining：2 个语言包 + index.html，27 命中（behavior-teaching×3 path-guidance×17 capability-claim×7）；基线 27 条
-PASS: 页面文案零新增教学句；留存命中全部落在铁律 8 保留清单（状态事实/失败收口/动作标签/空态下一步/tooltip 事实句）。
-node scripts/check-circular.mjs
-circular-deps PASS: 242 files, static import graph is acyclic.
-node scripts/check-fixture-secrets.mjs
-[fixture-secrets] 923 files scanned under tests/fixtures, reports-evidence — no high-entropy long token literals  [OK]
-Frontend static gates passed (design-tokens msgstyle self-explaining circular fixture-secrets).
+
+FAIL 1 项：
+  js/ws.js:0  [baseline-color] 颜色字面量 从基线 10 增到 12（只许减不许增）
+make: *** [frontend-gates] Error 1
