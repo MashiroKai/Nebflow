@@ -87,11 +87,20 @@ object MergeEnqueueWatch:
     /** 会话最后一次 agent 侧活动时刻（代办入队的 readyAt 锚）。 */
     lastActivityMs: Long,
     /** 任务行状态（None = 无任务行）。 */
-    taskRow: Option[String]
+    taskRow: Option[String],
+    /**
+     * **属主完成宣告**在案（[[MergeDeclaration]]；宣告闸批 2026-11-04 第八维）。
+     * 缺省 false = 保守方向：没有宣告的成员，本守卫**绝不代办入队**，只发可见告警。
+     */
+    declared: Boolean = false
   )
 
-  /** 纯判据（spec 判红锚）：七维全真才代办。 */
-  def shouldProxy(c: Candidate, thresholdMs: Long): Boolean =
+  /**
+   * 七维「看起来就该在队列里」判据（**不含宣告维**）。判据语义逐字沿用：idle +
+   * 没冻结 + 没取消/归档 + 分支有领先提交 + 账本没开放条目 + 静默够久 + 任务行
+   * running/restarting。
+   */
+  def looksOrphaned(c: Candidate, thresholdMs: Long): Boolean =
     c.status.contains(AgentStatus.Idle) &&
       !c.frozen &&
       !c.cancelledOrArchived &&
@@ -99,6 +108,22 @@ object MergeEnqueueWatch:
       !c.hasOpenEntry &&
       c.idleMs >= thresholdMs &&
       c.taskRow.exists(s => s == "running" || s == "restarting")
+
+  /**
+   * 纯判据（spec 判红锚）：`looksOrphaned ∧ 属主已宣告`才代办。
+   *
+   * **宣告维是硬闸**（缺陷批 2026-11-04 · 作者令 1「不许把『有提交』当『已完成』」）：
+   * 本守卫原来的七维里，`aheadOfBase > 0` + `taskRow == running/restarting` 恰恰是
+   * 「批还在跑、只有部分提交」的形态——把它代办入队，等于**用「有提交」代替
+   * 「owner 宣告完成」**，半成品分支从此排队、拿窗、被合进主干。现在：没有宣告一律
+   * 不入队（[[shouldAlertUndeclared]] 走告警腿）。
+   */
+  def shouldProxy(c: Candidate, thresholdMs: Long): Boolean =
+    looksOrphaned(c, thresholdMs) && c.declared
+
+  /** 未宣告但有提交的漏网形态：**不代办入队**（作者令 1），改发可见告警（作者令 2）。 */
+  def shouldAlertUndeclared(c: Candidate, thresholdMs: Long): Boolean =
+    looksOrphaned(c, thresholdMs) && !c.declared
 
   /** 端口（生产 = [[fromResources]]；测试 = 假端口驱动纯矩阵，不碰真注册表/账本）。 */
   trait Port:
@@ -123,7 +148,7 @@ object MergeEnqueueWatch:
    * 本件自己也收口）。
    */
   def queueNow(rec: DelegateRegistry.Record, c: Candidate, live: Option[AgentRecord]): IO[Unit] =
-    MergeEnqueue.membershipOf(rec, c.lastActivityMs) match
+    MergeEnqueue.membershipOf(rec, c.lastActivityMs, MergeDeclaration.find(rec.id)) match
       case None =>
         IO(
           logger.warn(
@@ -204,11 +229,13 @@ object MergeEnqueueWatch:
             hasOpenEntry = port.hasOpenEntry(rec.id),
             idleMs = Math.max(0L, nowMs - lastActivity),
             lastActivityMs = lastActivity,
-            taskRow = rec.taskId.flatMap(rows.get)
+            taskRow = rec.taskId.flatMap(rows.get),
+            declared = Try(MergeDeclaration.hasOwnerDeclaration(rec.id)).getOrElse(false)
           )
         )
       }
       proxied = pairs.filter((_, _, c) => shouldProxy(c, thresholdMs))
+      undeclared = pairs.filter((_, _, c) => shouldAlertUndeclared(c, thresholdMs))
       _ <-
         if proxied.isEmpty then IO.unit
         else
@@ -220,6 +247,25 @@ object MergeEnqueueWatch:
                   .mkString(", ")
             )
           )
+      _ <-
+        if undeclared.isEmpty then IO.unit
+        else
+          IO(
+            logger.warn(
+              s"[merge-enqueue-watch] ${undeclared.size} delegate(s) have commits ahead of the base branch but NO owner " +
+                "declaration of 'done and mergeable' — NOT queued (the queue never treats 'it has commits' as 'the batch is finished'): " +
+                undeclared.map((_, _, c) => c.delegateId).mkString(", ")
+            )
+          )
+      _ <- undeclared.traverse_ { (rec, lr, c) =>
+        alertUndeclared(rec, c, lr).handleErrorWith(e =>
+          IO(
+            logger.warn(
+              s"[merge-enqueue-watch] undeclared alert failed for ${c.delegateId}: ${Option(e.getMessage).getOrElse(e.toString).take(200)}"
+            )
+          )
+        )
+      }
       _ <- proxied.traverse_ { (rec, lr, c) =>
         port
           .queue(rec, c, lr)
@@ -232,6 +278,28 @@ object MergeEnqueueWatch:
           )
       }
     yield proxied.map((_, _, c) => c)
+
+  /** 告警 kind（[[MergeQueue.BlockNotifyPort]] 文案分支锚）：有提交但无属主宣告。 */
+  val UndeclaredNotifyKind: String = "undeclared-not-queued"
+
+  /**
+   * 「有提交但没人宣告完成」的告警腿（宣告闸批 2026-11-04 · 作者令 1/2）：**不入队**，
+   * 只把可行动事实摆到父/根会话面前——分支有 N 个未并提交、任务行还在跑、属主从未
+   * 宣告 ready-to-merge；处置 = 让属主显式申报（`delegate_report(category="merge")`）
+   * 或人工合并。幂等由「不入队」天然保证（没有账本行，告警每拍一条；同因去重由
+   * BlockNotifyPort 的调用方面承担——此处一成员一拍一条，成本可忽略）。
+   */
+  private def alertUndeclared(rec: DelegateRegistry.Record, c: Candidate, live: Option[AgentRecord]): IO[Unit] =
+    MergeEnqueue.membershipOf(rec, c.lastActivityMs) match
+      case None => IO.unit // 缺锚：连合并目标都不知道，告警无意义（既有缺锚纪律）
+      case Some(base) =>
+        val member = base.copy(internal = live.flatMap(r => r.supervisorRef.map(sup => MergeQueue.InternalLeg(r.ref, sup))))
+        val reason =
+          s"'${rec.id}' has ${c.aheadOfBase.getOrElse(0)} commit(s) ahead of the base branch and its task row is " +
+            s"'${c.taskRow.getOrElse("-")}', but the OWNER NEVER DECLARED it ready-to-merge — the merge queue does NOT " +
+            "queue it (a branch that merely has commits is not a finished batch). Action: have the owner declare " +
+            "delegate_report(category=\"merge\"), or merge the branch by hand."
+        IO.blocking(MergeQueue.BlockNotifyPort.deliver(member, UndeclaredNotifyKind, reason))
 
   /** 生产入口（挂 [[nebflow.core.processor.TaskStuckWatcher.scan]] 拍尾；fail-soft）。 */
   def scan(resources: AgentRuntimePort): IO[List[Candidate]] =

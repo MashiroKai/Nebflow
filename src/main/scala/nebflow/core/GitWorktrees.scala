@@ -324,6 +324,13 @@ object GitWorktrees:
       .getOrElse(Nil)
 
   /**
+   * 某 revision 下的文件内容（`git show <ref>:<path>`）——合并前健康闸的冲突标记扫描
+   * 读面（只读 blob，不碰工作区）。文件在该 rev 不存在 / 二进制 / 不可读 = None。
+   */
+  def fileAtRef(ws: os.Path, ref: String, path: String): Option[String] =
+    Try(git(ws, "show", s"$ref:$path")).toOption.flatMap(_.toOption)
+
+  /**
    * Count of branch commits not reachable from `baseBranch`（`git log --oneline
    * <base>..<branch>` 行数）—— ready-to-merge 资格的确定性读数（空分支不得进
    * 合并轮：`git merge --no-ff` 对祖先分支只会 Already up-to-date，空轮无产物）。

@@ -525,7 +525,16 @@ object DelegateTerminal:
       _ = logVerdict(delegateId, taskId, finalVerdict, unjudged)
       outcome <- finalVerdict match
         case DelegateJudge.Verdict.ReadyToMerge =>
-          holdForMerge(resources, record, delegateId, parentSessionId, childRef, supervisorRef, resultText)
+          holdForMerge(
+            resources,
+            record,
+            delegateId,
+            parentSessionId,
+            childRef,
+            supervisorRef,
+            resultText,
+            ownerDeclared = selfReport.exists(_._1 == "merge")
+          )
         case DelegateJudge.Verdict.Completed =>
           // P2-4 合并后清理：机械验收通过的合并 Release 前回收现场（守卫在
           // [[PostMergeCleanup.run]]——零领先 + 祖先真 + 绝不 force；失败仅 WARN
@@ -1065,7 +1074,8 @@ object DelegateTerminal:
     parentSessionId: String,
     childRef: ActorRef[AgentCommand],
     supervisorRef: ActorRef[AgentEvent],
-    resultText: String
+    resultText: String,
+    ownerDeclared: Boolean = false
   ): IO[Outcome] =
     val rec = record.getOrElse(
       DelegateRegistry.Record(
@@ -1111,6 +1121,23 @@ object DelegateTerminal:
             )
           )
       case Some(resolvedBaseBranch) =>
+        // 宣告闸批 2026-11-04（缺陷批：「半成品分支被自动合进 main」）：本腿入队的成员
+        // 必须携带**属主完成宣告**才能拿到合并窗。两个来源：
+        //   ① 属主自申报 merge（`ownerDeclared`）——落一条宣告账（来源 = terminal-self-report）；
+        //   ② 属主先前已用 `delegate_report(category="merge")` 申报过（[[MergeEnqueue]] 已落账）。
+        // **判定机 / 漂移闸 / precheck / queueFlip 推断出的 ready-to-merge 不算宣告**：
+        // 那时 `decl = None`，成员照样入账（面板可见、FIFO 位次留着），但放行闸不认它。
+        val declared = if ownerDeclared then
+          MergeDeclaration.write(
+            delegateId,
+            MergeDeclaration.Source.TerminalSelfReport,
+            Some(rec.branch.getOrElse(s"delegate/$delegateId")),
+            Some(resolvedBaseBranch),
+            Try(os.Path(baseWs)).toOption.flatMap(ws =>
+              GitWorktrees.resolveRef(ws, rec.branch.getOrElse(s"delegate/$delegateId"))
+            )
+          )
+        else MergeDeclaration.find(delegateId)
         val entry = MergeQueue.Member(
           delegateId = delegateId,
           branch = rec.branch.getOrElse(s"delegate/$delegateId"),
@@ -1123,7 +1150,10 @@ object DelegateTerminal:
           description = rec.title,
           readyAt = now,
           channelKind = "internal",
-          internal = Some(MergeQueue.InternalLeg(childRef, supervisorRef))
+          internal = Some(MergeQueue.InternalLeg(childRef, supervisorRef)),
+          declaredAt = declared.map(_.at),
+          declareSource = declared.map(_.source),
+          declaredTip = declared.flatMap(_.tip)
         )
         for
           // 工作结果保真（修复批 2026-10-25，根因①——见上注）。查无记录 = 非本次
