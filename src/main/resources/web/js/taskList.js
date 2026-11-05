@@ -645,6 +645,21 @@ function buildChainHeaderRow(block) {
     row.appendChild(rankEl);
   }
 
+  // Base-drift slot（`[base-moved]` 降噪重写批 2026-11-05）：基分支自派发以来前进
+  // 的次数——**引擎载荷原样透传**（`r.baseDrift.moves`，🔴 前端零派生），只在
+  // moves > 0 时出场。这一格的存在本身就是作者令「base 动了放面板可见即可，不进
+  // 消息流」的落点：消息腿只在可行动时聚合发一条。
+  // 悬停标题只放原始数据（基线 sha → 当前 sha），不写机制说明（铁律 8）。
+  if (r && r.baseDrift && typeof r.baseDrift.moves === 'number' && r.baseDrift.moves > 0) {
+    const bd = r.baseDrift;
+    const driftEl = document.createElement('span');
+    driftEl.className = 'task-delegate-drift' + (bd.actionable ? ' is-actionable' : '');
+    driftEl.setAttribute('aria-hidden', 'true');
+    driftEl.textContent = t('task.baseDrift', { n: bd.moves });
+    driftEl.title = `${bd.baselineTip || ''} → ${bd.lastSeenTip || ''}`;
+    row.appendChild(driftEl);
+  }
+
   const createdAt = typeof r.createdAt === 'number' ? r.createdAt : Date.parse(String(r.createdAt || ''));
   appendTimeSlot(row, createdAt);
 
