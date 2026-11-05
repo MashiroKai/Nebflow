@@ -51,3 +51,23 @@ check-js-types                     EXIT 2 · 环境缺 node_modules/typescript�
 keyboard-check                     101/109；8 条红与 HEAD 归档树逐条同文（存量红）
 tests/canvas-video-viewer.spec.mjs 13/13（原生 controls 断言已改为「controls 退役 ∧ 自研条在位」）
 tests/canvas-video-stage.spec.mjs  41/41
+
+五、merge main 后复跑（2026-11-05 17:1x，merge commit 5039c976d）
+--------------------------------------------------------------
+冲突只在 locale 两处（en.js / zh-CN.js）：HEAD 的 canvas.video* 10 键 vs main 的
+canvas.imgFail* 9 键 ⇒ 两侧全留（union）。键集对称性与 main 基线同值（enOnly 1 /
+zhOnly 8，未引入新不对称；canvas.video* 与 canvas.imgFail* 各 10/9 键双侧齐）。
+
+复跑读数（merge 后同一口径）：
+check-flat-buttons        PASS（563 块 / 0 违规 / 0 例外）
+check-component-contract  PASS（js/viewers/video.js 全部归零）
+check-circular            PASS（252 文件，无环）
+check-self-explaining     PASS（27 命中 = 基线 27）
+check-design-tokens       FAIL 1 项 = js/ws.js 颜色 10→12（main 存量红，本批未触碰该文件）
+keyboard-check            8 条红：6 条搜索面板行为 + ⑬ design-system.css .ds-input:focus
+                          + 「业务面裸 keydown now=129」。最后一条经核**来自 main**：
+                          按同一口径统计 main 树 = 129、merge 后树 = 129、逐文件零差异
+                          （本批 video.js 不含任何 addEventListener('keydown')，键位全走
+                          keyRules 唯一表）。其余红项本批未触碰对应文件。
+tests/canvas-video-stage.spec.mjs  41/41（重跑，夹具重生成，读数一致）
+tests/canvas-video-viewer.spec.mjs 13/13
