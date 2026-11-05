@@ -1199,6 +1199,11 @@ class WebSocketRoutes(
                     )(
                       _.evalMap {
                         case WebSocketFrame.Text(text, _) =>
+                          // 控制台在用判据（2026-11-05）：页面上有任何交互流量 ⇒ 作者
+                          // 此刻就在用控制台（比「连接还在」更硬——僵尸连接不算在用）。
+                          // 节流写（最密 5s 一次），绝不失败、绝不拦帧。
+                          ConsoleActivity.touch("ws-frame") *>
+                          {
                           // 控制台单实例批：retake 帧前置拦截——连接身份（connId→session）
                           // 只在本管上有（WsDispatchCtx 不携带），故不走 WsDispatch 注册表。
                           // 总闸关闭时 isRetakeFrame 恒 false 侧不成立，故显式以
@@ -1226,6 +1231,7 @@ class WebSocketRoutes(
                           handled.handleErrorWith { e =>
                             logger.error(s"WebSocket message handler error: ${e.getMessage}", e)
                             IO.unit
+                          }
                           }
                         case _ => IO.unit
                       }.onFinalize(
@@ -1269,6 +1275,10 @@ class WebSocketRoutes(
                         )
                     )
                     _ <- logger.info("WebSocket client connected")
+                    // 控制台在用判据（工作过程中开新标签页批 2026-11-05）：连接建立
+                    // = 「控制台真的在用」的服务端事实之一，落一笔标记件（节流写，
+                    // 绝不失败）——boot/focus 两条开门腿据此抑制自动开门。
+                    _ <- ConsoleActivity.touch("ws-connect")
                     thinkingCfg <- sharedResources.thinkingConfigRef.get
                     workScheduleCfg <- sharedResources.freezeScheduleRef.get
                     skipUntil <- sharedResources.freezeSkipUntilRef.get
