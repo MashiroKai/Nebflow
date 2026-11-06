@@ -231,7 +231,10 @@ object DelegateRevival:
               s == nebflow.core.tools.DelegateReportTool.MergeValue
           )
           evidenceIo.flatMap { evidenceOpt =>
-            sessionStore.listSessions.map(_.exists(_.id == task.parentSessionId)).map { parentExists =>
+            // 父会话在场判据 = [[SessionLiveness]] 记录面（索引 ∪ 盘上会话记录）。
+            // 改前只读会话索引 ⇒ 父会话是 delegate 等后台会话时恒判「已不存在」，
+            // 孤儿 delegate 被错误地拒绝复活（OWNER-GONE 误判修复批 2026-11-06 同因）。
+            SessionLiveness.recordAlive(sessionStore, task.parentSessionId).map { parentExists =>
               if rec.executor != ExecutorRegistry.DefaultId then
                 Some(
                   s"external executor '${rec.executor}' (boot revival is internal-executor only; use the Mail continuation leg)"

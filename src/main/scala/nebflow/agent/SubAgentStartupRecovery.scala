@@ -463,7 +463,11 @@ object SubAgentStartupRecovery:
           correlationId = Some(t.taskId)
         )
         for
-          parentExists <- sessionStore.listSessions.map(_.exists(_.id == t.parentSessionId)).handleErrorWith(_ =>
+          // 父会话在场判据 = [[SessionLiveness]]（活体 actor ∪ 索引/盘上记录）。改前读
+          // `sessionStore.listSessions`（只读索引）⇒ delegate 父会话恒判「已删」，
+          // 收殓回执被静默跳过（OWNER-GONE 误判修复批 2026-11-06；2026-11-06 07:38
+          // 日志实证 `parent=delegate-nebflow exists=false` 的正是这条腿）。
+          parentExists <- SessionLiveness.alive(resources, t.parentSessionId).handleErrorWith(_ =>
             IO.pure(false)
           )
           delivered <-
@@ -596,7 +600,11 @@ object SubAgentStartupRecovery:
         .loadMessagesForSession(task.taskId)
         .map(extractLastAssistant)
         .handleErrorWith(_ => IO.pure(None))
-      parentExists <- sessionStore.listSessions.map(_.exists(_.id == task.parentSessionId))
+      // 父会话在场判据 = [[SessionLiveness]]（见上游 parentExists 注释）：有 resources
+      // 时用「活体 actor ∪ 记录」双源，legacy 无载体场退回记录面（索引 ∪ 盘上）。
+      parentExists <- resources match
+        case Some(rs) => SessionLiveness.alive(rs, task.parentSessionId)
+        case None     => SessionLiveness.recordAlive(sessionStore, task.parentSessionId)
       payload =
         partial match
           case Some(text) =>
