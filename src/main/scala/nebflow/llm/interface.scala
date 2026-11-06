@@ -789,7 +789,8 @@ object LlmInterface extends LlmRuntime:
                   req.sessionId,
                   result.usedCandidate.providerId,
                   result.usedCandidate.model,
-                  result.data.usage
+                  result.data.usage,
+                  requestId = req.requestId
                 )
 
                 IO.pure(
@@ -1215,7 +1216,8 @@ object LlmInterface extends LlmRuntime:
                                                 req.sessionId,
                                                 candidate.providerId,
                                                 candidate.model,
-                                                done.usage
+                                                done.usage,
+                                                requestId = req.requestId
                                               )
                                               // visionfix (甲): the oscillation-fix bookkeeping
                                               // (`resetOnSuccess` with `hadImage`) is gone with the

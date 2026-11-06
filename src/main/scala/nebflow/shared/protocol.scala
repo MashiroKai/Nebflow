@@ -136,7 +136,9 @@ case class LlmRequest(
    * 拼在历史尾部保持前缀），语义与 [[systemDynamic]] 同族但保持提醒的
    * 消息边界（两发送面、两协议、流/非流一致）。缺省 Nil = 既有构造点逐字零改动。
    */
-  requestOnlyContext: List[Message] = Nil
+  requestOnlyContext: List[Message] = Nil,
+  /** Internal observation id; provider adapters do not serialize this field. */
+  requestId: Option[String] = None
 )
 
 case class TokenUsage(

@@ -110,7 +110,8 @@ private[agent] object AgentProcessing:
                       inputTokens = u.inputTokens,
                       outputTokens = u.outputTokens,
                       cacheReadTokens = u.cacheReadTokens.getOrElse(0),
-                      cacheWriteTokens = u.cacheWriteTokens.getOrElse(0)
+                      cacheWriteTokens = u.cacheWriteTokens.getOrElse(0),
+                      requestId = result.requestId
                     )
                   )
                   .handleErrorWith(e =>

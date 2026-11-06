@@ -98,7 +98,8 @@ object CacheAttribution:
     detail: String,
     inputTokens: Long,
     cacheReadTokens: Long,
-    atMs: Long
+    atMs: Long,
+    requestId: Option[String] = None
   )
 
   /** token 账目（总率口径 = sum(read)/sum(input)）。 */
@@ -239,20 +240,26 @@ object CacheAttribution:
     model: String,
     usage: Option[TokenUsage],
     kind: String = "business",
-    nowMs: Long = System.currentTimeMillis()
+    nowMs: Long = System.currentTimeMillis(),
+    requestId: Option[String] = None
   ): Option[MissRecord] =
     val record: Option[MissRecord] = synchronized {
       val prevAndCur = recentByDomain.get(domainKey(sessionId, providerId, model))
       usage match
         case None =>
           if kind == "business" then
-            Some(bump(MissRecord(UsageMissing, sessionId, providerId, model, None, "usage absent (failed request)", 0, 0, nowMs)))
+            Some(
+              bump(
+                MissRecord(UsageMissing, sessionId, providerId, model, None, "usage absent (failed request)", 0, 0, nowMs)
+                  .copy(requestId = requestId)
+              )
+            )
           else None
         case Some(u) if kind == "warmup" => None // 保温账目只记账不归因（无业务前缀连续性）
         case Some(u) =>
           val ratio = if u.inputTokens <= 0 then 1.0 else u.cacheReadTokens.getOrElse(0).toDouble / u.inputTokens
           if ratio >= MissThreshold then None // 正常命中带
-          else Some(classify(prevAndCur, sessionId, providerId, model, u, nowMs))
+          else Some(classify(prevAndCur, sessionId, providerId, model, u, nowMs).copy(requestId = requestId))
     }
     usage.foreach { u =>
       synchronized {
@@ -268,7 +275,8 @@ object CacheAttribution:
       // so discarding it silently suppressed every attribution event in production logs.
       attributionLogSink(
         s"cache-attribution: category=${r.category.name} session=${r.sessionId} domain=$providerId/$model " +
-          s"firstDiff=${r.firstDiffIdx.getOrElse("-")} input=${r.inputTokens} read=${r.cacheReadTokens} detail=${r.detail}"
+          s"request_id=${requestId.getOrElse("-")} firstDiff=${r.firstDiffIdx.getOrElse("-")} " +
+          s"input=${r.inputTokens} read=${r.cacheReadTokens} detail=${r.detail}"
       )
     }
     record
