@@ -393,4 +393,49 @@ class ConfigServiceSpec extends FunSuite:
     assertEquals(cfg.hcursor.downField("llm").downField("providers").downField("z2").as[Json].isRight, true)
   }
 
+  // ── providerTypes 投影（provider-add-tabs 批 2026-11-06）─────────────────
+  // 类型枚举唯一出生地在后端：投影的 domains 必须与 ProviderDomains.All 一一
+  // 对应（前端只消费，不拼写——静态闸 check-provider-panel.mjs P5 同钉）。
+
+  test("providerTypes: domains mirror ProviderDomains.All one-to-one, in order") {
+    val json    = ConfigService.providerTypes.unsafeRunSync()
+    val domains = json.hcursor.downField("domains")
+    val ids = domains.values
+      .map(_.toList.map(d => d.hcursor.downField("id").as[String].getOrElse("<unreadable>")))
+      .getOrElse(fail("domains[] missing"))
+    assertEquals(ids, nebflow.shared.ProviderDomains.All)
+    // 每个 domain 都声明 enabledSwitch 布尔（imagegen/jev = true，llm = false）。
+    val switches = domains.values.map(_.toList.map { d =>
+      val id = d.hcursor.downField("id").as[String].getOrElse("<unreadable>")
+      id -> d.hcursor
+        .downField("enabledSwitch")
+        .as[Boolean]
+        .getOrElse(!nebflow.shared.ProviderDomains.hasEnabledSwitch(id))
+    })
+    assertEquals(
+      switches,
+      Some(nebflow.shared.ProviderDomains.All.map(d => d -> nebflow.shared.ProviderDomains.hasEnabledSwitch(d)))
+    )
+  }
+
+  test("providerTypes: adapters come from the engine enums, zero literal duplication") {
+    val json     = ConfigService.providerTypes.unsafeRunSync()
+    val adapters = json.hcursor.downField("adapters")
+    def strs(key: String): List[String] =
+      adapters.downField(key).values.map(_.toList.flatMap(_.as[String].toOption)).getOrElse(fail(s"adapters.$key missing"))
+    val llm      = strs("llm")
+    val imagegen = strs("imagegen")
+    val jev      = strs("jev")
+    // LLM 协议 = LlmProtocol 枚举（anthropic/openai）。
+    assertEquals(llm.sortBy(identity), List("anthropic", "openai").sortBy(identity))
+    // 生图适配器 = ImageGenAdapters.All 的 type 投影（单源比对）。
+    assertEquals(imagegen.sortBy(identity), nebflow.llm.imagegen.ImageGenAdapters.All.map(_.`type`).sortBy(identity))
+    // JeV 适配器 = DecisionProvider.AllIds 投影。
+    assertEquals(jev.sortBy(identity), nebflow.llm.decision.DecisionProvider.AllIds.sortBy(identity))
+    // 载荷零配置值、零密钥——只有枚举与布尔。
+    val rendered = json.noSpaces
+    assert(!rendered.contains("apiKey"), s"payload must not carry apiKey: $rendered")
+    assert(!rendered.contains("baseUrl"), s"payload must not carry config values: $rendered")
+  }
+
 end ConfigServiceSpec

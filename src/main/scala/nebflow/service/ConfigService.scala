@@ -861,6 +861,43 @@ object ConfigService:
     }
 
   /**
+   * 服务商面板的**类型域 + 协议适配器**枚举投影（`GET /api/config/provider-types`
+   * 的载荷；provider-add-tabs 批 2026-11-06）。
+   *
+   * 为什么必须有这个端点：设置页的「服务商」面板按类型切换字段套（LLM / 生图 /
+   * JeV），面板里的类型标签与各类型的协议下拉都必须是**后端枚举的投影**，而不是
+   * 前端再拼一份字面量表（旧面正是如此：`PROVIDER_TYPES = ['cogview', …]` 与
+   * `JEV_PROVIDER_TYPES = ['typesafe-jev', 'laya']` 两处前端硬编码，与后端
+   * `ImageGenAdapters.All` / `DecisionProvider.AllIds` 是同一事实的两份拷贝）。
+   *
+   * 单源三处，本函数只做汇编，零新字面量：
+   *   · `domains`            ← [[nebflow.shared.ProviderDomains.All]]
+   *   · `adapters.llm`       ← [[nebflow.shared.LlmProtocol]]（anthropic / openai）
+   *   · `adapters.imagegen`  ← `ImageGenAdapters.All.map(_.type)`
+   *   · `adapters.jev`       ← `DecisionProvider.AllIds`
+   * 载荷零配置值、零密钥——纯枚举（与其它 config GET 同 owner 门槛）。
+   */
+  def providerTypes: IO[Json] = IO.blocking {
+    Json.obj(
+      "domains" -> Json.fromValues(
+        nebflow.shared.ProviderDomains.All.map { d =>
+          Json.obj(
+            "id" -> d.asJson,
+            "enabledSwitch" -> nebflow.shared.ProviderDomains.hasEnabledSwitch(d).asJson
+          )
+        }
+      ),
+      "adapters" -> Json.obj(
+        "llm" -> Json.fromValues(
+          List(nebflow.shared.LlmProtocol.Anthropic, nebflow.shared.LlmProtocol.OpenAI).map(p => p.name.asJson)
+        ),
+        "imagegen" -> Json.fromValues(nebflow.llm.imagegen.ImageGenAdapters.All.map(a => a.`type`.asJson)),
+        "jev" -> Json.fromValues(nebflow.llm.decision.DecisionProvider.AllIds.map(_.asJson))
+      )
+    )
+  }
+
+  /**
    * Deep-merge incoming config into existing file.
    *
    * Merge rules:

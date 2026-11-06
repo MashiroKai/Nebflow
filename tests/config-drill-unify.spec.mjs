@@ -1,10 +1,11 @@
 // config-drill-unify.spec.mjs — 配置面风格统一批（作者令 2026-10-31 21:40，两件）
 // 桌面端守卫 spec。
 //
-// ① JeV/生图配置面层级下钻（与 LLM 配置同款族：桌面浮层玻璃面板 +
-//    手机层级子页——手机 legs 在 mobile-popup-retire.spec T4 末尾）：
-//    U1  生图入口行 → 浮层收编 #imagegen-advance-body（内容/绑定随节点走），
-//        ×/点空白/Esc 归还隐藏；JeV 同链路由 jev-panel-threefix R1b 守。
+// 🔴 provider-add-tabs 批（2026-11-06 作者令「添加服务商统一成标签切换类型 +
+// 单一服务商面板」）：① 的 JeV/生图层级下钻（U1）随旧节**整件退役**——服务商面
+// 只剩一个统一面板，configDrill.js 模块本身零调用方已删除；U1 判据由
+// jev-panel-threefix.spec.mjs R1'（面板统一 + 旧入口零复活）承接。U2–U5（模型
+// 选择顺序节）不受影响，原样保留。
 // ② 设置页「模型选择顺序」节（/model 顺序调整页原样再放一份）：
 //    U2  显式链：行渲染 = 链内容（拖拽排序行族 .mp-row 同源）、加模型 ⇒
 //        PUT /api/agents/Nebula/model {model:{preferred,fallbacks}}。
@@ -170,50 +171,6 @@ function sectionRowRefs(page) {
   return page.evaluate(() =>
     [...document.querySelectorAll('#model-chain-section-body .mp-row')].map(r => r.textContent.trim()));
 }
-
-// ── ① 生图层级下钻浮层（JeV 同链路由 jev-panel-threefix R1b 守）───────────
-test('U1 imagegen entry row drills into a glass overlay (adopts the body); close restores it hidden', async ({ page }) => {
-  const errors = watchErrors(page);
-  await bootPage(page);
-  await openSettings(page);
-
-  // 入口行在场：标题 + 右转 chevron；内容面隐藏未收编。
-  const entry = await page.evaluate(() => {
-    const head = document.getElementById('imagegen-advance-toggle');
-    const body = document.getElementById('imagegen-advance-body');
-    return {
-      label: head?.querySelector('.settings-label')?.textContent.trim() || '',
-      chev: head ? getComputedStyle(head.querySelector('.settings-collapse-chevron')).transform : null,
-      bodyHidden: !!body && body.hidden === true,
-      adopted: !!body?.closest('.config-drill-overlay'),
-    };
-  });
-  expect(entry.label, 'entry row carries the section name').toBe('生图');
-  expect(entry.chev, 'chevron points right (层级导航 affordance)').toContain('matrix');
-  expect(entry.bodyHidden, 'content face hidden in the settings page').toBe(true);
-  expect(entry.adopted, 'not adopted before drill-in').toBe(false);
-
-  // 点入口行 → 浮层收编整节点（imagegenSection 渲染面随节点走、即时可用）。
-  await page.click('#imagegen-advance-toggle');
-  await page.waitForFunction(() => {
-    const body = document.getElementById('imagegen-advance-body');
-    return body && !body.hidden && !!body.closest('.config-drill-overlay');
-  });
-  const overlay = page.locator('.config-drill-overlay');
-  await expect(overlay).toBeVisible();
-  await expect(page.locator('.config-drill-overlay .config-drill-title')).toHaveText('生图');
-  await expect(page.locator('.config-drill-overlay #imagegen-section-wrap .cfg-form-group')).toBeVisible();
-  await expect(page.locator('.config-drill-overlay #cfg-imagegen-model')).toHaveValue('cogview-3-flash');
-
-  // 点空白处关闭 → 节点归还设置页、恢复 hidden；设置页内无残留浮层。
-  await page.mouse.click(10, 400);
-  await page.waitForFunction(() => {
-    const body = document.getElementById('imagegen-advance-body');
-    return body?.hidden === true && !body.closest('.config-drill-overlay')
-      && !document.querySelector('.config-drill-overlay');
-  });
-  expect(errors).toEqual([]);
-});
 
 // ── ②-U2 回退链节：显式链渲染 + 加模型保存形状 ────────────────────────────
 test('U2 chain section renders the explicit chain (same .mp-row face as /model) and add-model saves via PUT', async ({ page }) => {

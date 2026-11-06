@@ -798,6 +798,9 @@ function buildSwitchGroup(face, opts = {}) {
   const title = document.createElement('span');
   title.className = 'mp-group-title';
   title.textContent = t(face.titleKey);
+  // provider-add-tabs 批（溢出零容忍断言）：组名窄框省略号收尾（css 四件套），
+  // title 全文 = 豁免第四件 + 窄屏可悬停读全名。
+  title.title = t(face.titleKey);
   head.appendChild(title);
   if (current) {
     const cur = document.createElement('span');

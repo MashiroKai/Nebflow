@@ -1,3 +1,6 @@
+// 🔴 provider-add-tabs 批（2026-11-06）换代注：JeV/生图层级下钻浮层与层级子页
+// 随统一服务商面板整件退役（configDrill.js 已删除）——本脚本的下钻截图腿改为
+// 统一面板的类型标签态截图；文件保留（回退链节 / /model 对照腿不受影响）。
 // config-drill-shots.mjs — 配置面风格统一批（作者令 2026-10-31 21:40，两件）
 // 双端双主题截图取证。
 //
@@ -157,34 +160,24 @@ async function openSettings(page) {
 async function desktopLeg(colorScheme) {
   const { ctx, page } = await boot({ width: 1440, height: 900 }, colorScheme);
   await openSettings(page);
-  // 等生图面装配（层级下钻面：内容隐藏在场，attached 判据）+ 回退链节渲染。
-  await page.waitForSelector('#imagegen-section-wrap .imagegen-face', { state: 'attached', timeout: 10000 });
+  // 等统一服务商面板装配（provider-add-tabs 批：类型标签 + 列表）+ 回退链节渲染。
+  await page.waitForSelector('#provider-panel-host .nf-provider-panel', { timeout: 10000 });
   await page.waitForFunction(() => document.querySelectorAll('#model-chain-section-body .mp-row').length === 2, null, { timeout: 5000 });
   await sleep(400);
   await shot(page, `settings-desktop-${colorScheme}.png`);
 
-  // JeV 层级下钻浮层。
-  await page.click('#jev-advance-toggle');
-  await page.waitForFunction(() => !!document.getElementById('jev-advance-body')?.closest('.config-drill-overlay'));
+  // 统一面板 Jev 标签态（原 JeV 下钻浮层腿的换代）。
+  await page.evaluate(() => document.querySelector('.nf-ptab[data-provider-type="jev"]')?.click());
+  await page.waitForSelector('.nf-provider-panel[data-type="jev"]', { timeout: 5000 });
   await sleep(300);
-  await shot(page, `jev-overlay-desktop-${colorScheme}.png`);
-  const jevGeo = await page.evaluate(() => {
-    const box = document.querySelector('.config-drill-modal');
-    const r = box.getBoundingClientRect();
-    return { w: Math.round(r.width), rad: getComputedStyle(box).borderRadius };
-  });
-  ok(`jev overlay desktop ${colorScheme}: 居中玻璃盒（<600px、圆角保留）`, jevGeo.w < 600 && jevGeo.rad === '20px', JSON.stringify(jevGeo));
-  // × 关闭浮层（Esc 会连带关设置页壳——壳自身有 Esc 监听，此处只关浮层）。
-  await page.click('.config-drill-overlay .config-drill-close');
-  await page.waitForFunction(() => !document.querySelector('.config-drill-overlay'));
+  await shot(page, `provider-panel-jev-desktop-${colorScheme}.png`);
+  ok(`provider panel jev tab desktop ${colorScheme}`, true);
 
-  // 生图层级下钻浮层。
-  await page.click('#imagegen-advance-toggle');
-  await page.waitForFunction(() => !!document.getElementById('imagegen-advance-body')?.closest('.config-drill-overlay'));
+  // 统一面板 Image generation 标签态（原生图下钻浮层腿的换代）。
+  await page.evaluate(() => document.querySelector('.nf-ptab[data-provider-type="imagegen"]')?.click());
+  await page.waitForSelector('.nf-provider-panel[data-type="imagegen"]', { timeout: 5000 });
   await sleep(300);
-  await shot(page, `imagegen-overlay-desktop-${colorScheme}.png`);
-  await page.click('.config-drill-overlay .config-drill-close');
-  await page.waitForFunction(() => !document.querySelector('.config-drill-overlay'));
+  await shot(page, `provider-panel-imagegen-desktop-${colorScheme}.png`);
 
   // 回退链节（②：设置页原样再放一份）+ /model 原面板对照。
   const chain = page.locator('#model-chain-section');
@@ -208,20 +201,15 @@ async function mobileLeg(colorScheme) {
   await dockTo(page, 'workbench');
   await page.locator('.mobile-page[data-page="workbench"] .mf-hub-row[data-hub-page="settings"]').click();
   await page.waitForFunction(() => document.querySelector('.mobile-page[data-page="settings"]')?.classList.contains('live'));
-  await page.waitForSelector('#imagegen-section-wrap .imagegen-face', { state: 'attached', timeout: 10000 });
+  await page.waitForSelector('.mobile-page[data-page="settings"] .nf-provider-panel', { timeout: 10000 });
   await sleep(400);
   await shot(page, `settings-mobile-${colorScheme}.png`);
 
-  // 生图层级子页（配置面风格统一批：第四枚 settings-sub 路由）。
-  await page.locator('#imagegen-advance-toggle').click();
-  await page.waitForFunction(() => document.querySelector('.mobile-page[data-page="settings-imagegen"]')?.classList.contains('live'));
-  await page.waitForFunction(() => {
-    const sub = document.querySelector('.mobile-page[data-page="settings-imagegen"]');
-    const body = sub && sub.querySelector('.mobile-page-body #imagegen-advance-body');
-    return !!body && !body.hidden;
-  });
+  // 统一面板 Image generation 标签态（原生图层级子页腿的换代）。
+  await page.evaluate(() => document.querySelector('.mobile-page[data-page="settings"] .nf-ptab[data-provider-type="imagegen"]')?.click());
+  await page.waitForSelector('.mobile-page[data-page="settings"] .nf-provider-panel[data-type="imagegen"]', { timeout: 5000 });
   await sleep(400);
-  await shot(page, `imagegen-sub-mobile-${colorScheme}.png`);
+  await shot(page, `provider-panel-imagegen-mobile-${colorScheme}.png`);
   const subGeo = await page.evaluate(() => {
     const rect = (sel) => {
       const el = document.querySelector(sel);

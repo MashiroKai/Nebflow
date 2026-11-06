@@ -112,6 +112,17 @@ jobs:
         # a gate nobody runs is not a gate).
         # Same logic locally: node scripts/check-design-tokens.mjs (or `make frontend-gates`)
         run: node scripts/check-design-tokens.mjs
+      - name: Provider panel singleton (provider-add-tabs)
+        # Gate: provider-add-tabs batch (2026-11-06, author directive "把添加服务商
+        # 统一成标签切换类型 + 单一服务商面板 … 这里一定要加断言，保证所有文字都
+        # 不能溢出"). Static face P1-P6: retired entries must not reappear; the
+        # provider panel / type tabs stay single-implementation; provider-type
+        # enum is consumed from the backend projection only (no frontend literal
+        # tables); the panel family's overflow disposition is wrap-or-ellipsis+title.
+        # The zero-tolerance *rendered* assertion lives in
+        # tests/provider-panel-overflow.spec.mjs (320/375/1440 × light/dark).
+        # Same logic locally: node scripts/check-provider-panel.mjs
+        run: node scripts/check-provider-panel.mjs
       - name: Self-explaining copy (rule 8 — no teaching sentences in UI text)
         # Copy self-explanation gate (author ruling 2026-11-04 12:46 "好的前端设计
         # 应该是自解释的"; rule text = plugins/stand-dev references/frontend/

@@ -103,9 +103,8 @@ quality-gate:
 # = 后端把 `GET /api/conversations` 的 case 误删，前端 404 被吞成「暂无会话」，
 # **没有任何断言发现「前端调了但后端没有」**。本闸静态对照两侧（前端 /api 字面量
 # 集合 × 网关路由注册面），前端调了后端没有 ⇒ 红。
-# （Makefile 热点区口径：合并两边门禁并列保留——mobile-canvas-strip / badge-words
-#  / settings-ios-rows 来自 main 侧各批，panel-unify 来自本批。）
-FRONTEND_GATES := design-tokens msgstyle bubble-side self-explaining circular fixture-secrets api-routes freeze-state freeze-silence flat-buttons glass canvas-hint toggle scroll-pill input-surface mobile-canvas-strip badge-words settings-ios-rows panel-unify
+# （Makefile 热点区口径：合并两边门禁并列保留——mobile-canvas-strip / badge-words / settings-ios-rows / panel-unify 来自 main 侧批次，provider-panel 来自 provider-add-tabs 批。）
+FRONTEND_GATES := design-tokens msgstyle bubble-side self-explaining circular fixture-secrets api-routes freeze-state freeze-silence flat-buttons glass canvas-hint toggle scroll-pill input-surface mobile-canvas-strip badge-words settings-ios-rows panel-unify provider-panel
 
 frontend-gates:
 	@command -v node >/dev/null 2>&1 || { echo "node not found — 前端门禁需要 node"; exit 2; }
@@ -129,6 +128,9 @@ frontend-gates:
 	@# 路由存在性哨兵（empty-state-must-not-lie 批 · 件三）：前端 `/api/` 调用面 ×
 	@# 网关 `*Routes.scala` 注册面静态对照，前端调了但后端没注册 ⇒ 红。
 	node scripts/check-api-routes.mjs
+	@# 服务商面板唯一性哨兵（provider-add-tabs 批 2026-11-06）：旧入口零回潮 / 面板与
+	@# 类型标签唯一 / 前后端枚举单源 / 面板家族溢出处置合规（判据 P1–P6 见脚本头注）。
+	node scripts/check-provider-panel.mjs
 	@# 冻结态呈现门禁（冻结态误报批 2026-11-05）：可自动恢复的冻结不得写「已冻结」/不得
 	@# 给按钮；需人介入的冻结必须有恢复入口；恢复失败必须可见；迁移日志在场。
 	node scripts/check-freeze-state.mjs

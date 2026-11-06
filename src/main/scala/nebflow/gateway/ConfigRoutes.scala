@@ -202,6 +202,17 @@ private[gateway] object ConfigRoutes:
             .flatMap(json => Ok(json))
         }
 
+      // GET /api/config/provider-types —— 服务商面板的类型域 / 协议适配器枚举
+      // 投影（provider-add-tabs 批 2026-11-06，作者令「添加服务商统一成标签
+      // 切换类型 + 单一服务商面板」）。类型枚举的**唯一出生地**在后端
+      // （ProviderDomains / LlmProtocol / ImageGenAdapters / DecisionProvider），
+      // 前端只消费不拼写——这是本批退役前端两份硬编码适配器表后的取数面。
+      // 载荷纯枚举（零配置值、零密钥），owner 鉴权与其它 config GET 同门槛。
+      case req @ GET -> Root / "config" / "provider-types" =>
+        withAuth(req) {
+          ConfigService.providerTypes.flatMap(Ok(_))
+        }
+
       // GET /api/config/jev —— JeV 设置面状态投影（jev-imagegen-align-llm 批
       // 2026-11-02 契约 §B.4）：与 GET /api/config/imagegen **逐字段同构**
       // （ConfigService.jevStatus 单点：配置热读 + keyRef **在位性**，永不回传

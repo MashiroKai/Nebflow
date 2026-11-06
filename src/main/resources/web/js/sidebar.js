@@ -14,14 +14,6 @@ import { finishAgent, setStatus, renderToolPending, cancelThinkingRAF, bindColla
 import { restoreFromStorage, loadMsgs } from './persistence.js';
 import { renderTodoTaskList } from './todoFace.js';
 import { clearMemoryCache } from './memory.js';
-// eyeSvg/eyeOffSvg（provider 密码域可见性切换图标）单源 = sidebar/providersUi.js（FE 拆分后
-// 迁入；jev-imagegen-align-llm 批 2026-11-02 起 Jev 面唯一掩码输入框 #cfg-jev-key 的
-// eye 也从本模块取，禁第二份字面量）。
-import { eyeSvg, eyeOffSvg } from './sidebar/providersUi.js';
-// JeV「测试可用性」钮（settings-panel-jev-imagegen 批 2026-10-29 作者令「然后
-// Jev/生图，也要像我们LLM这样，有个按钮来测试可用性」）：钮 + 结果块 + 绑定面
-// 全在 sidebar/jevTestButton.js（与 LLM 测试钮同组件同口径）。
-import { jevTestButtonHTML, jevTestResultsHTML, bindJevTestButton } from './sidebar/jevTestButton.js';
 import { chatViews, setActiveView, activeView } from './chatView.js';
 import { cleanupCardIframes, resetCardAccumulator } from './cardRegistry.js';
 import { t, getLocale, setLocale, getAvailableLocales } from './i18n.js';
@@ -67,18 +59,13 @@ import { nfCacheStats, nfCacheReset } from './nfFileCache.js';
 // 本文件保持单向 import(子模块不得反向 import
 // sidebar.js),公共导出面(批次前 41 符号)经下方 `export ... from` 显式转发,
 // 外部 import 方零改动。
-import { protocolFormLabel, escapeHtml, flushConfigToServer, showProviderModal, saveNewProvider, revealProviderApiKeys } from './sidebar/providersUi.js';
-// 配置提供方卡片单源（jev-imagegen-align-llm 批 · card 件，契约 §A.1/§A.4）：
-// 卡片 DOM 与两个交互绑定抽到 js/cfgProviderCard.js，LLM 面 = 第一个消费方
-// （下方 renderProviderCard 退化为薄壳，调用点与产出逐字不变）；Jev / 生图面
-// 各自节点只读该件。本文件对它的依赖是单向的（该件不回指 sidebar.js）。
-import { providerCardHTML, addProviderButtonHTML, bindCardRemove, bindCardSelect } from './cfgProviderCard.js';
-// 生图设置节（settings-panel 批 ②③件）与每模型连接性测试钮（B 件）——渲染/
-// 绑定单点在各自子模块，本文件只挂壳 + 转发调用（子模块不回指本文件）。
-import { bindImagegenSection } from './sidebar/imagegenSection.js';
-// 配置面风格统一批（2026-10-31 作者令）：JeV/生图层级下钻的桌面浮层半
-// （手机层级子页半在 mobile/settingsSub.js——同一内容节点、body class 互斥）。
-import { registerConfigDrill, syncConfigDrills } from './configDrill.js';
+import { escapeHtml, revealProviderApiKeys } from './sidebar/providersUi.js';
+// 服务商面板（provider-add-tabs 批 2026-11-06 作者令「添加服务商统一成标签切换
+// 类型 + 单一服务商面板」）：LLM / 生图 / JeV 三类服务商从此只有**一个面** ——
+// 类型标签 + 一张列表 + 一套表单骨架全部在 sidebar/providerPanel.js（本文件只
+// 挂宿主节点 + 调一次 bindProviderPanel）。旧的 Jev / 生图两节与本文件内联的
+// LLM 列表/新增绑定整件退役（零空壳、零并存）。
+import { bindProviderPanel, PROVIDER_PANEL_HOST_ID } from './sidebar/providerPanel.js';
 // 同批②：设置页「模型回退链」节——/model 面板的回退链编辑器原样再放一份，
 // 内容面/状态/保存通道与面板同源（modelPanel.js 单点实现）。
 import { mountModelChainSection } from './modelPanel.js';
@@ -840,473 +827,9 @@ function effortFromConfig() {
 // 7 个 i18n 键一并移除；`PUT /api/safety/mode` 的前端调用点随之归零（REST 端点
 // 由后端保留，供外部/脚本使用）。档位的**唯一 UI 入口 = 顶栏盾牌**
 // （`web/js/main.js` `initSafetyToggle`，写的是同一条全局持久路径）。
-// ── Jev 面板全面对齐 LLM 配置面（jev-imagegen-align-llm 批 · jevpanel 件，2026-11-02
-// 作者令逐字：「设置页 Jev 配置面按 LLM 配置面全面对齐——空态起步无预填、无任何
-//『密钥名/内部指针』类字眼、已配置以卡片列表呈现可并存可单删、密钥直接录入走
-// secrets」）。契约：reports/20261102_jev-imagegen-align-llm/contract.md §B.1（
-// jev.providers 形状）/ §C（密钥面）/ §E.2（DOM 钩子表）。
-//
-// 本批整体退役的三处旧面（旧锚一删即不再渲染；id 清单见契约 §E.2「退役 id」行）：
-//   · 写死的两选项提供方下拉 → 卡片列表 + `#cfg-jev-name` 文本名；
-//   · 凭据名输入框 + 明文回读只读行（及其 `GET /api/secrets/<名>/value` 拉取
-//     路径、eye 换标）→ 唯一掩码输入框 `#cfg-jev-key`；
-//   · 「typesafe-jev 端点钉死 disabled」预填（钉死端点常量与提供方切换联动）→
-//     `#cfg-jev-endpoint` 永不禁用、空态空、不再预填。
-//
-// 数据源 = GET /api/config/jev（ConfigService.jevStatus 单点投影：配置热读 + key
-// 在位性；永不回传 key 值）。凭据面无感化（作者令「前端永远不出现引用类字眼与
-// 解释文案」）：面板只认「API Key 值」——内部 secret 名按提供方名派生
-// （`jev-<小写名>-key`，SecretsStore.NamePattern 只认小写），对用户不可见、不可
-// 编辑；值只进输入框与请求体（secrets 面 0600 落盘），保存后清空 ⇒ 不进 value
-// 属性 / data-* / localStorage / console / DOM 文本。
-// 空态铁律：无配置 ⇒ 0 张卡片 + 表单五字段全空 + 协议下拉无预选 + 端点不预填。
-
-/** 协议适配枚举（= 后端 DecisionProvider.AllIds；前端无后端常量导入面，此处唯一拼写点）。 */
-const JEV_PROVIDER_TYPES = ['typesafe-jev', 'laya'];
-
-/** 提供方名合法性（允许大写输入，派生 secret 名时转小写——§C.2）。 */
-const JEV_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$/;
-
-/** GET /api/config/jev 最近一次载荷（null = 尚未拉到 ⇒ 空态面）。 */
-/** @type {any} */
-let lastJevStatus = null;
-
-/** 正在编辑的提供方名（'' = 空态/新增面：表单全空）。 */
-let activeJevProvider = '';
-
-/** 两段式删除已武装的提供方名（'' = 未武装）。 */
-let jevDeleteArmed = '';
-
-/**
- * 拉取 Jev 状态投影（GET /api/config/jev）。任何失败 → null：面板保持空态，
- * 绝不造假数据（生图法面同款）。
- * @returns {Promise<any|null>}
- */
-async function fetchJevStatus() {
-  try {
-    const resp = await fetch('/api/config/jev', { headers: authHeaders() });
-    if (!resp.ok) return null;
-    return await resp.json();
-  } catch {
-    return null;
-  }
-}
-
-/**
- * 内部 secret 名派生（契约 §C.2 单点）：`jev-<小写提供方名>-key`，截到 64 字符
- * （SecretsStore.MaxLen；NamePattern 只认小写，故必须小写化）。
- * 🔴 该名**永不出渲染文本 / 属性 / 日志**——只作请求路径与配置里的 secret 名字段。
- * @param {string} name 提供方名
- * @returns {string}
- */
-function jevSecretName(name) {
-  return `jev-${String(name || '').toLowerCase()}-key`.slice(0, 64);
-}
-
-/**
- * 投影里的某个提供方条目（缺席 = null）。
- * @param {string} name
- * @returns {any}
- */
-function jevProviderEntry(name) {
-  if (!name) return null;
-  const providers = /** @type {Record<string, any>} */ ((lastJevStatus && lastJevStatus.providers) || {});
-  return providers[name] || null;
-}
-
-/**
- * 投影里的提供方名清单（顺序 = 配置顺序）。
- * @returns {string[]}
- */
-function jevProviderNames() {
-  return Object.keys(/** @type {Record<string, any>} */ ((lastJevStatus && lastJevStatus.providers) || {}));
-}
-
-/**
- * 协议适配徽标文案（卡片 .cfg-card-badge）；未知类型不出徽标（§A.2）。
- * @param {string} type
- * @returns {string}
- */
-function jevTypeLabel(type) {
-  if (type === 'typesafe-jev') return t('settings.jev.typeTypesafe');
-  if (type === 'laya') return t('settings.jev.typeLaya');
-  return '';
-}
-
-/**
- * 卡片右侧 key 状态徽标（已保存 / 未配置）——只报在位性，永不回显值。
- * @param {boolean} configured
- * @returns {string}
- */
-function jevKeyBadge(configured) {
-  return configured
-    ? `<span class="st-badge" data-tone="ok">${escapeHtml(t('settings.cfgCard.keyConfigured'))}</span>`
-    : `<span class="st-badge" data-tone="warn">${escapeHtml(t('settings.cfgCard.keyMissing'))}</span>`;
-}
-
-/**
- * 一张 Jev 提供方卡片（共用卡片组件 · 契约 §A.1/§A.2/§E.2：face='jev'，一卡 =
- * 一个提供方 + 它的主模型，DOM 与 LLM 卡片逐字同构）。
- * @param {string} name
- * @param {any} p 投影条目
- * @param {boolean} active 当前正在编辑
- * @returns {string}
- */
-function jevCardHTML(name, p, active) {
-  const model = String((p && p.model) || '').trim();
-  return providerCardHTML({
-    name,
-    face: 'jev',
-    protocolBadge: jevTypeLabel(String((p && p.type) || '')),
-    models: model ? [model] : [],
-    metaExtra: jevKeyBadge(!!(p && p.keyConfigured)),
-    active,
-  });
-}
-
-/**
- * 卡片列表 + 空态引导（空态 = 0 张 .cfg-card，只剩一句「尚未配置」提示）。
- * @returns {string}
- */
-function jevProviderListHTML() {
-  const providers = /** @type {Record<string, any>} */ ((lastJevStatus && lastJevStatus.providers) || {});
-  const names = Object.keys(providers);
-  const cards = names.map((n) => jevCardHTML(n, providers[n], n === activeJevProvider)).join('');
-  const empty = names.length ? '' : `<div class="cfg-hint">${escapeHtml(t('settings.cfgCard.emptyHint'))}</div>`;
-  return `<div id="jev-provider-list">${cards}${empty}</div>`;
-}
-
-/**
- * 编辑表单（契约 §E.2 的 id 表逐字）。空态 = 五字段全空 + 协议占位不预选 +
- * 端点不预填（空态铁律）；选中卡片 = 该提供方现值，key 框**永不带值**（只按
- * key 在位性换 placeholder）。
- * @returns {string}
- */
-function jevProviderFormHTML() {
-  const names = jevProviderNames();
-  const active = names.includes(activeJevProvider) ? activeJevProvider : '';
-  const p = active ? jevProviderEntry(active) : null;
-  const type = String((p && p.type) || '');
-  const keyConfigured = !!(p && p.keyConfigured);
-  const keyPlaceholder = keyConfigured ? t('settings.jev.keyReentryPlaceholder') : t('settings.jev.keyPlaceholder');
-  // 协议下拉：空态 = 占位项选中（不预选任何真实适配器）；既有值不在枚举内时补一项。
-  const typeList = type && !JEV_PROVIDER_TYPES.includes(type) ? [...JEV_PROVIDER_TYPES, type] : JEV_PROVIDER_TYPES;
-  const typeOpts = [
-    `<option value="" disabled${type ? '' : ' selected'}>${escapeHtml(t('settings.imagegenTypePlaceholder'))}</option>`,
-    ...typeList.map((tp) => `<option value="${escapeHtml(tp)}"${tp === type ? ' selected' : ''}>${escapeHtml(jevTypeLabel(tp) || tp)}</option>`),
-  ].join('');
-  const armed = !!active && jevDeleteArmed === active;
-  return `
-    <div class="cfg-form-group" id="jev-provider-form">
-      <label class="cfg-label" for="cfg-jev-name">${t('settings.jev.name')}</label>
-      <input class="cfg-input" id="cfg-jev-name" type="text" value="${escapeHtml(active)}" placeholder="${escapeHtml(t('settings.jev.namePlaceholder'))}" autocomplete="off" spellcheck="false">
-      <label class="cfg-label" for="cfg-jev-type">${t('settings.jev.type')}</label>
-      <select class="cfg-input" id="cfg-jev-type">${typeOpts}</select>
-      <label class="cfg-label" for="cfg-jev-endpoint">${t('settings.jevEndpoint')}</label>
-      <input class="cfg-input" id="cfg-jev-endpoint" type="text" value="${escapeHtml(String((p && p.endpoint) || ''))}" autocomplete="off" spellcheck="false">
-      <label class="cfg-label" for="cfg-jev-model">${t('settings.jev.model')}</label>
-      <input class="cfg-input" id="cfg-jev-model" type="text" value="${escapeHtml(String((p && p.model) || ''))}" placeholder="${escapeHtml(t('settings.jev.modelPlaceholder'))}" autocomplete="off" spellcheck="false">
-      <label class="cfg-label" for="cfg-jev-key">${t('settings.jev.keyEntry')}</label>
-      <div class="cfg-password-wrap">
-        <input class="cfg-input" id="cfg-jev-key" type="text" value="" placeholder="${escapeHtml(keyPlaceholder)}" autocomplete="off" spellcheck="false" style="-webkit-text-security:disc">
-        <button type="button" class="cfg-eye-btn" id="jev-key-eye" tabindex="-1" aria-label="${escapeHtml(t('settings.jev.keyShow'))}" aria-pressed="false" title="${escapeHtml(t('settings.jev.keyShow'))}">${eyeSvg}</button>
-      </div>
-      <div class="cfg-hint">${escapeHtml(t('settings.jev.detailHint'))}</div>
-      <div class="cfg-card-action-row">
-        <button class="cfg-btn cfg-btn-primary" id="btn-save-jev">${t('settings.save')}</button>
-        ${jevTestButtonHTML()}
-        <button class="cfg-btn" id="btn-delete-jev" type="button" data-armed="${armed ? '1' : '0'}"${active ? '' : ' disabled'}>${escapeHtml(armed ? t('settings.cfgCard.deleteConfirm') : t('settings.cfgCard.delete'))}</button>
-        <span class="inline-state" id="jev-save-state" role="status" aria-live="polite"></span>
-      </div>
-    </div>
-    ${jevTestResultsHTML()}`;
-}
-
-/**
- * 整节内容（`#jev-section-wrap` 的唯一绘制点）：列表 + 新增钮 + 表单 + 测试结果块。
- * @returns {string}
- */
-function jevSectionHTML() {
-  return `${jevProviderListHTML()}${addProviderButtonHTML({ id: 'btn-add-jev-provider', face: 'jev' })}${jevProviderFormHTML()}`;
-}
-
-/** 原地重画（选中/新增/保存/删除后都走这里，零第二份状态副本）。 */
-function paintJevSection() {
-  const wrap = document.getElementById('jev-section-wrap');
-  if (!wrap) return;
-  wrap.innerHTML = jevSectionHTML();
-}
-
-/**
- * 保存结果就地反馈（既有 inline-state 惯例：1.5s 自清，role=status 播报）。
- * @param {boolean} ok
- */
-function setJevSaveState(ok) {
-  const stateEl = document.getElementById('jev-save-state');
-  if (!stateEl) return;
-  stateEl.innerHTML = ok
-    ? statusIcon('circle-check', 11, 'st-ok') + escapeHtml(t('settings.saved'))
-    : statusIcon('circle-alert', 11, 'st-err') + escapeHtml(t('settings.saveFailed'));
-  setTimeout(() => { if (stateEl.isConnected) stateEl.innerHTML = ''; }, 1500);
-}
-
-/**
- * 表单字段现值（trim）。@param {string} id @returns {string}
- */
-function jevFieldValue(id) {
-  const el = /** @type {HTMLInputElement|HTMLSelectElement|null} */ (document.getElementById(id));
-  return el && typeof el.value === 'string' ? el.value.trim() : '';
-}
-
-/**
- * 写入一枚 secret（契约 §C.3，与生图 writeSecret 同口径）：POST 先建；
- * 409（同名已存在）⇒ PUT 覆写；其余非 2xx ⇒ toast 带 code。值只出现在请求体里。
- * @param {string} name 派生 secret 名（对用户不可见）
- * @param {string} value 输入的 key 值
- * @returns {Promise<boolean>}
- */
-async function writeJevSecret(name, value) {
-  try {
-    let resp = await fetch(`/api/secrets/${encodeURIComponent(name)}`, {
-      method: 'POST',
-      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ value }),
-    });
-    if (resp.status === 409) {
-      resp = await fetch(`/api/secrets/${encodeURIComponent(name)}`, {
-        method: 'PUT',
-        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ value }),
-      });
-    }
-    if (!resp.ok) window.__showToast?.(t('settings.jev.keySaveFailed', { code: String(resp.status) }), 'error');
-    return resp.ok;
-  } catch {
-    window.__showToast?.(t('settings.jev.keySaveFailed', { code: 'io' }), 'error');
-    return false;
-  }
-}
-
-/**
- * 保存流（契约 §C.4 / §B.1）：读五字段 → key 非空先落 secret → 整块 PUT
- * `/api/config/jev`。providers 从 GET 投影**现读合并**（绝不丢别的提供方）；
- * key 留空 = 只写配置不改凭据（keyRef 原样带走）。成功后输入框清空、面板停在
- * 刚保存的提供方。
- * @returns {Promise<void>}
- */
-async function saveJevProvider() {
-  const name = jevFieldValue('cfg-jev-name');
-  const type = jevFieldValue('cfg-jev-type');
-  const endpoint = jevFieldValue('cfg-jev-endpoint');
-  const model = jevFieldValue('cfg-jev-model');
-  const keyInput = /** @type {HTMLInputElement|null} */ (document.getElementById('cfg-jev-key'));
-  const key = keyInput ? keyInput.value.trim() : '';
-  if (!name) { window.__showToast?.(t('settings.jev.nameRequired'), 'error'); return; }
-  if (!JEV_NAME_PATTERN.test(name)) { window.__showToast?.(t('settings.jev.nameInvalid'), 'error'); return; }
-  if (!type) { window.__showToast?.(t('settings.jev.typeRequired'), 'error'); return; }
-  if (!model) { window.__showToast?.(t('settings.jev.modelRequired'), 'error'); return; }
-
-  // ① 凭据腿：有输入的 key 才写（留空 = 不动已存凭据）。
-  if (key) {
-    const written = await writeJevSecret(jevSecretName(name), key);
-    if (!written) return; // 凭据没落盘 ⇒ 不动配置（避免半更新）
-  }
-
-  // ② 配置腿：其余提供方逐条原样带走（改名即旧名让位），本条落 {type,$endpoint,$model,keyRef}。
-  const existing = /** @type {Record<string, any>} */ ((lastJevStatus && lastJevStatus.providers) || {});
-  const prev = existing[name] || (activeJevProvider ? existing[activeJevProvider] : null) || null;
-  /** @type {Record<string, Record<string, string>>} */
-  const providers = {};
-  for (const n of Object.keys(existing)) {
-    if (n === activeJevProvider && n !== name) continue; // 改名：旧条目让位
-    const e = existing[n] || {};
-    /** @type {Record<string, string>} */
-    const row = { type: String(e.type || '') };
-    if (e.endpoint) row.endpoint = String(e.endpoint);
-    if (e.model) row.model = String(e.model);
-    if (e.keyRef) row.keyRef = String(e.keyRef);
-    providers[n] = row;
-  }
-  /** @type {Record<string, string>} */
-  const row = { type };
-  if (endpoint) row.endpoint = endpoint;
-  row.model = model;
-  const keyRef = key ? jevSecretName(name) : String((prev && prev.keyRef) || '');
-  if (keyRef) row.keyRef = keyRef;
-  providers[name] = row;
-
-  const enabled = document.getElementById('toggle-jev')?.classList.contains('on') || false;
-  let ok = false;
-  try {
-    const resp = await fetch('/api/config/jev', {
-      method: 'PUT',
-      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled, provider: name, providers }),
-    });
-    ok = resp.ok;
-    if (!resp.ok) {
-      const data = await resp.json().catch(() => null);
-      const err = data && /** @type {any} */ (data).error;
-      if (typeof err === 'string' && err) window.__showToast?.(err, 'error');
-    }
-  } catch { ok = false; }
-  if (!ok) { setJevSaveState(false); return; }
-
-  // ③ 落定：清空 key 输入框（明文零驻留）→ 现读回投影（key 徽标即刻到位）→ 停在刚保存的提供方。
-  if (keyInput) keyInput.value = '';
-  activeJevProvider = name;
-  jevDeleteArmed = '';
-  const fresh = await fetchJevStatus();
-  if (fresh) lastJevStatus = fresh;
-  paintJevSection();
-  bindJevSectionEvents();
-  setJevSaveState(true);
-}
-
-/**
- * 两段式删除（契约 §E.2 `#btn-delete-jev` 的 `data-armed` 中间态）：首击武装
- * （标签换「再点一次确认删除」），二击才真删（整块 PUT，其余提供方原样保留；
- * 凭据文件不动——删配置 ≠ 删凭据）。
- * @param {string} name
- * @returns {Promise<void>}
- */
-async function armOrDeleteJevProvider(name) {
-  if (!name || !jevProviderEntry(name)) return;
-  if (jevDeleteArmed !== name) {
-    jevDeleteArmed = name;
-    activeJevProvider = name;
-    paintJevSection();
-    bindJevSectionEvents();
-    return;
-  }
-  const existing = /** @type {Record<string, any>} */ ((lastJevStatus && lastJevStatus.providers) || {});
-  /** @type {Record<string, Record<string, string>>} */
-  const providers = {};
-  for (const n of Object.keys(existing)) {
-    if (n === name) continue;
-    const e = existing[n] || {};
-    /** @type {Record<string, string>} */
-    const row = { type: String(e.type || '') };
-    if (e.endpoint) row.endpoint = String(e.endpoint);
-    if (e.model) row.model = String(e.model);
-    if (e.keyRef) row.keyRef = String(e.keyRef);
-    providers[n] = row;
-  }
-  const remaining = Object.keys(providers);
-  const enabled = document.getElementById('toggle-jev')?.classList.contains('on') || false;
-  let ok = false;
-  try {
-    const resp = await fetch('/api/config/jev', {
-      method: 'PUT',
-      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled, provider: remaining[0] || '', providers }),
-    });
-    ok = resp.ok;
-  } catch { ok = false; }
-  if (!ok) { window.__showToast?.(t('settings.saveFailed'), 'error'); return; }
-  jevDeleteArmed = '';
-  activeJevProvider = remaining[0] || '';
-  const fresh = await fetchJevStatus();
-  if (fresh) lastJevStatus = fresh;
-  paintJevSection();
-  bindJevSectionEvents();
-  window.__showToast?.(t('settings.cfgCard.deleted'), 'success');
-}
-
-/**
- * 「测试可用性」钮的表单读取（点击时现读——未保存的改动照样测）。provider =
- * 表单里的提供方名（= DecisionProvider id）；keyRef = 配置里已存的凭据名优先，
- * 否则按名派生（保存后即真名；未落盘 ⇒ 引擎按「待录入」失败，不造假值）。
- * @returns {{provider: string, endpoint: string, keyRef: string}}
- */
-function jevTestForm() {
-  const provider = jevFieldValue('cfg-jev-name') || jevFieldValue('cfg-jev-type');
-  const entry = jevProviderEntry(provider);
-  return {
-    provider,
-    endpoint: jevFieldValue('cfg-jev-endpoint'),
-    keyRef: entry && entry.keyRef ? String(entry.keyRef) : (provider ? jevSecretName(provider) : ''),
-  };
-}
-
-/**
- * 绑定整节交互（每次重画后重绑：元素随 innerHTML 重建，监听器随元素蒸发；
- * 卡片两条走容器级委托 + 幂等哨兵）。
- */
-function bindJevSectionEvents() {
-  const wrap = document.getElementById('jev-section-wrap');
-  if (!wrap) return;
-  const list = document.getElementById('jev-provider-list');
-  if (list) {
-    bindCardSelect(list, (name) => {
-      if (!name || name === activeJevProvider) return;
-      activeJevProvider = name;
-      jevDeleteArmed = '';
-      paintJevSection();
-      bindJevSectionEvents();
-    });
-    bindCardRemove(list, (name) => { void armOrDeleteJevProvider(name); });
-  }
-  document.getElementById('btn-add-jev-provider')?.addEventListener('click', () => {
-    activeJevProvider = '';
-    jevDeleteArmed = '';
-    paintJevSection();
-    bindJevSectionEvents();
-    (/** @type {HTMLInputElement|null} */ (document.getElementById('cfg-jev-name')))?.focus();
-  });
-  // key 输入框掩码切换（判掩码只认内联 -webkit-text-security:disc；生图面同款读法）。
-  // 值只进本输入框，切换不读写任何存储。
-  document.getElementById('jev-key-eye')?.addEventListener('click', () => {
-    const input = /** @type {HTMLInputElement|null} */ (document.getElementById('cfg-jev-key'));
-    const eye = document.getElementById('jev-key-eye');
-    if (!input || !eye) return;
-    const style = /** @type {any} */ (input.style);
-    const isMasked = style.webkitTextSecurity === 'disc';
-    style.webkitTextSecurity = isMasked ? 'none' : 'disc';
-    eye.replaceChildren();
-    eye.insertAdjacentHTML('afterbegin', isMasked ? eyeOffSvg : eyeSvg);
-    const label = t(isMasked ? 'settings.jev.keyHide' : 'settings.jev.keyShow');
-    eye.setAttribute('aria-label', label);
-    eye.title = label;
-    eye.setAttribute('aria-pressed', isMasked ? 'true' : 'false');
-  });
-  document.getElementById('btn-save-jev')?.addEventListener('click', () => { void saveJevProvider(); });
-  document.getElementById('btn-delete-jev')?.addEventListener('click', () => { void armOrDeleteJevProvider(activeJevProvider); });
-  bindJevTestButton(wrap, { getForm: jevTestForm });
-}
-
-/**
- * 整节装配（renderSettings 尾调用）：先按手上的状态画（首次 = 空态：0 卡 +
- * 五字段全空），再拉 GET /api/config/jev 现读重画——拉取失败保持空态，不造假数据。
- * @returns {Promise<void>}
- */
-async function bindJevSection() {
-  if (!document.getElementById('jev-section-wrap')) return;
-  const firstLoad = lastJevStatus === null;
-  paintJevSection();
-  bindJevSectionEvents();
-  const fresh = await fetchJevStatus();
-  if (!document.getElementById('jev-section-wrap')) return; // 面板已关 / 重渲换了节点
-  if (!fresh) return;
-  lastJevStatus = fresh;
-  const sw = document.getElementById('toggle-jev');
-  if (sw) setToggleState(sw, !!fresh.enabled);
-  // 首载且当前选中项指向已配置的提供方 ⇒ 面板停在该提供方（空态则保持全空，不预填）。
-  if (firstLoad) {
-    const names = jevProviderNames();
-    const pointer = String(fresh.provider || '');
-    activeJevProvider = names.includes(pointer) ? pointer : '';
-  }
-  paintJevSection();
-  bindJevSectionEvents();
-}
-
 export function renderSettings() {
   const content = document.getElementById('settings-content');
   const cfg = state.parsedConfig || {};
-  const llm = cfg.llm || {};
-  const providers = llm.providers || {};
-  const providerNames = Object.keys(providers);
   // Build language selector options
   const locales = getAvailableLocales();
   const localeLabels = { 'zh-CN': '中文', en: 'English' };
@@ -1366,11 +889,14 @@ export function renderSettings() {
         })
       )}` })}
     ${ORB_SETTINGS_VISIBLE ? setCard({ title: t('settings.appearance'), body: renderAppearanceSection() }) : ''}
-    ${setCard({ title: t('settings.providers'), body: `
-      <div id="provider-list">
-        ${providerNames.map(name => renderProviderCard(name, providers[name])).join('')}
-      </div>
-      <button class="cfg-btn cfg-btn-add set-btn set-btn-block" id="btn-add-provider">${t('settings.addProvider')}</button>` })}
+    ${setCard({ title: t('settings.providers'), id: 'provider-section', body: `
+      <!-- 服务商面板（provider-add-tabs 批 2026-11-06 作者令：「在『添加服务商』
+           顶部加几个标签，支持选择添加比如生图模型的服务商等…我们添加的模型都会
+           集中显示在同一个面板里（即现在的 LLM 服务商 / LLM Provider 面板）」）。
+           本节 = 全站**唯一**的服务商面：类型标签（LLM / Image generation /
+           Jev）+ 一张统一列表（每行带类型徽标）+ 一套表单骨架。LLM / JeV / 生图
+           三套旧入口整件退役，零空壳。唯一绘制点 = sidebar/providerPanel.js。 -->
+      <div id="${PROVIDER_PANEL_HOST_ID}"></div>` })}
     <div class="set-row-hint" id="model-chain-hint">${t('settings.modelChainHint')}</div>
     ${setCard({ title: t('settings.modelChainTitle'), id: 'model-chain-section', body: `
       <!-- 模型回退链节（配置面风格统一批②，2026-10-31 作者令：/model 里的回退
@@ -1380,67 +906,11 @@ export function renderSettings() {
            /model 原入口保留不动（上方 model-chain-hint 照旧指路）。 -->
       <div class="set-row-hint">${t('settings.modelChainSectionHint')}</div>
       <div id="model-chain-section-body"></div>` })}
-    ${setCard({ title: t('settings.jev'), body: `
-      <!-- Jev allocation section — 风格统一重排（settings-panel 批 C 件，
-           2026-10-28 作者令：「JeV 插件分配那部分的风格，与『STT 高级设置』区的
-           风格保持一致——以 STT 高级设置的风格为基准（布局/间距/控件形态/分组
-           样式逐项对齐）」）。组件族与 STT 高级设置逐项同源：
-           · 头行 = settings-ios-rows 批后的唯一可点进行 setNavRow（图标位 + 标题 +
-             健康徽标 + chevron）；
-           · 折叠体 .set-collapse-body（层级下钻的收编内容面）；
-           · 开关行 setRow + toggleHTML（启用 JeV）；
-           · 字段组 .cfg-form-group 纵排 label+input；
-           · 保存行 显式保存 + inline-state（#334 语义不变）。
-           功能零删减：分配通道健康 legs 分腿徽标（三改③）、PUT /api/config/jev
-           保存全保留。
-           🔴 jev-imagegen-align-llm 批（2026-11-02 作者令）推翻了本节三处旧面：
-           提供方下拉→卡片列表、keyRef 行 + 明文回读行→唯一掩码 key 输入框、
-           typesafe-jev 端点钉死预填→端点永不禁用且空态空。详见模块区
-           「Jev 面板全面对齐 LLM 配置面」段（jevSecretName / saveJevProvider /
-           bindJevSection）。-->
-      <!-- 配置面风格统一批（2026-10-31 作者令）：本节改层级下钻——头行 =
-           下钻入口（chevron 右转），点按桌面开浮层玻璃面板（js/configDrill.js）
-           /手机 push 层级子页（mobile/settingsSub.js）；同一 #jev-advance-body
-           节点两端收编，内容面/绑定零副本。「展开式配置」退役后端内联不渲染。-->
-      ${setNavRow({
-        icon: statusIcon('sparkles', 16),
-        title: t('settings.jev'),
-        id: 'jev-advance-toggle',
-        attrs: 'aria-haspopup="dialog" aria-controls="jev-advance-body"',
-        extra: `<span class="cfg-hint stt-status" id="jev-status-hint"><span class="st-badge" data-tone="mut" id="settings-jev-health">…</span></span>`,
-      })}
-      <div class="set-collapse-body" id="jev-advance-body" hidden>
-        ${setRow({
-          title: t('settings.jevEnabled'),
-          control: toggleHTML({ on: !!(cfg.jev && cfg.jev.enabled), id: 'toggle-jev', label: t('settings.jevEnabled') }),
-        })}
-        <!-- 内容面（jev-imagegen-align-llm 批 · jevpanel 件，2026-11-02 作者令）：
-             已配置以卡片列表呈现（可并存/可单删）、空态起步零预填、密钥直接录入走
-             secrets。唯一绘制点 = jevSectionHTML()，数据源 = GET /api/config/jev
-             （bindJevSection 拉取后原位重画——首帧即空态，零造假数据）。 -->
-        <div id="jev-section-wrap">${jevSectionHTML()}</div>
-      </div>` })}
-    ${setCard({ title: t('settings.imagegenTitle'), body: `
-      <!-- 生图（imagegen）设置节（settings-panel 批 ②③件，2026-10-28 作者令；
-           功能开放批 2026-10-30：正式开放、调试中徽标退役）。
-           两形态由 sidebar/imagegenSection.js 单点渲染：seal=OFF（显式剔除构建）
-           → 「未编入（release 构建零痕迹）」提示位；seal=ON（缺省）→ 正常配置面
-           （enabled 开关 / provider/model 编辑 / key 状态与录入）。数据与绑定全
-           在该模块（renderSettings 尾部 bindImagegenSection 拉取装配）。
-           配置面风格统一批（2026-10-31 作者令）：本节与 JeV 节同款层级下钻——
-           头行 = 下钻入口（#imagegen-advance-toggle，chevron 右转），点按桌面开
-           浮层玻璃面板（js/configDrill.js）/手机 push 层级子页（mobile/
-           settingsSub.js settings-imagegen 路由）；同一 #imagegen-advance-body
-           节点两端收编，模块渲染面 #imagegen-section-wrap 住在其中随节点走。-->
-      ${setNavRow({
-        icon: statusIcon('image', 16),
-        title: t('settings.imagegenTitle'),
-        id: 'imagegen-advance-toggle',
-        attrs: 'aria-haspopup="dialog" aria-controls="imagegen-advance-body"',
-      })}
-      <div class="set-collapse-body" id="imagegen-advance-body" hidden>
-        <div id="imagegen-section-wrap"><div class="cfg-hint">${t('settings.imagegenLoading')}</div></div>
-      </div>` })}
+      <!-- 🔴 provider-add-tabs 批（2026-11-06 作者令）：原 Jev 卡（setNavRow
+           #jev-advance-toggle + #jev-advance-body）与生图卡（#imagegen-advance-toggle
+           + #imagegen-section-wrap）两节随三入口统一整件退役——JeV/生图全部
+           收进上方唯一服务商面板（sidebar/providerPanel.js 类型标签），
+           settings-jev-health 徽标由面板内 paintJevHealth 承载。 -->
     ${setCard({ title: t('settings.secrets'), body: `
       <!-- Secrets entry (secrets-frontend batch, 2026-09-27, author ruling
            2026-09-27 19:20): one row only — the list itself lives in the
@@ -1496,25 +966,15 @@ export function renderSettings() {
   // Secrets entry count pill (secrets-ui-redesign, 2026-10-08): read/cached
   // module-side, repainted on every render and on `secrets-changed`.
   refreshSecretsEntryCount();
-  // 生图设置节（settings-panel 批 ②③件）：异步拉 GET /api/config/imagegen 后
-  // 原位绘制两形态之一（seal OFF 提示位 / ON 配置面）。失败 = 错误提示行，
-  // 不造假数据。
-  void bindImagegenSection();
-  // 配置面风格统一批（2026-10-31 作者令）：JeV/生图层级下钻注册（幂等；
-  // 桌面浮层委托在 configDrill.js，手机层级子页委托在 settingsSub.js）+
-  // 重渲后的浮层收编同步（开着的浮层内容节点被重渲换掉 ⇒ 按 id 重收编）。
-  registerConfigDrill({ toggleSel: '#jev-advance-toggle', bodyId: 'jev-advance-body', titleKey: 'settings.jev' });
-  registerConfigDrill({ toggleSel: '#imagegen-advance-toggle', bodyId: 'imagegen-advance-body', titleKey: 'settings.imagegenTitle' });
-  syncConfigDrills();
+  // 服务商面板装配（provider-add-tabs 批 2026-11-06）：先按手上的配置画首帧
+  // （LLM 面即时可用），再并行拉类型枚举投影 + 生图/JeV 状态投影重画。三份投影
+  // 任一失败 ⇒ 面板顶部显式一行错误，不造假数据、不吞类型。
+  void bindProviderPanel();
   // 模型回退链节：挂载/重挂（与 /model 面板共享状态/保存通道，modelPanel.js
   // 单点；先卸上一任监听再挂，重渲不叠订阅）。
   modelChainUnmount?.();
   modelChainUnmount = mountModelChainSection(
     document.getElementById('model-chain-section-body'));
-  // Jev 配置面装配（jev-imagegen-align-llm 批 · jevpanel 件）：先画空态，再拉
-  // GET /api/config/jev 现读重画（卡片列表 + 表单 + key 在位性徽标；拉取失败保持
-  // 空态）。旧的 key 值明文回读（GET /api/secrets/<keyRef>/value）整链已退役。
-  void bindJevSection();
   // 设置页 apikey 明文回读预取（作者令 2026-10-27「设置里配置的 apikey 直接
   // 显示」）：进页即拉已存 provider key 真值（owner 鉴权单点
   // GET /api/config/provider-keys；providersUi 模块内 60s 缓存 + 单飞），编辑
@@ -1586,24 +1046,6 @@ export function renderSettings() {
     }
     refreshNeblink();
   }, 3000);
-}
-
-// 配置提供方卡片 = 共用组件薄壳（jev-imagegen-align-llm 批 · card 件，契约 §A.3）。
-// 结构与层级已抽到 js/cfgProviderCard.js —— 本函数只剩「LLM 面实参装配」：
-// 调用点（:934 providerNames.map）、class 族、DOM 顺序、文案逐字不变
-// （metaExtra 仍传既有 "N model(s)" 串；模型行 ref/vision 徽标由组件同款生成）。
-function renderProviderCard(name, p) {
-  // Deleted providers are stored as null — render nothing instead of crashing
-  // the settings re-render (remove flow calls renderSettings synchronously).
-  if (!p) return '';
-  const modelCount = (p.models || []).length;
-  return providerCardHTML({
-    name,
-    face: 'llm',
-    protocolBadge: protocolFormLabel(p.protocol),
-    models: (p.models || []).map(m => m.id),
-    metaExtra: `${modelCount} model${modelCount !== 1 ? 's' : ''}`,
-  });
 }
 
 // ── Settings avatar section — 已迁入 settingsIdentity.js（件四，作者令 2026-11-02）──
@@ -1745,68 +1187,6 @@ function bindSettingsEvents(content, cfg) {
   // settings 默认执行器 row, the panel-entry button and the /agents command
   // left with their locale keys; ExecutorRegistry/detect (scala) untouched.
 
-  // ── Jev section: 开关只作用法闸（三改①，2026-10-09）——不联动展开/收起。
-  // 配置面风格统一批（2026-10-31）：开合入口退役——#jev-advance-toggle 改
-  // 层级下钻入口（桌面浮层/手机子页收编），点按绑定在 js/configDrill.js +
-  // mobile/settingsSub.js 的 document 委托。
-  // 🔴 jev-imagegen-align-llm 批（2026-11-02 作者令）后，本节的字段/保存/删除/
-  // 测试/掩码切换绑定**全部**迁到模块区的 bindJevSectionEvents（每次重画后重绑，
-  // 元素随 #jev-section-wrap 的 innerHTML 重建）——此处只留这枚不随重画重建的开关。
-  // 旧的提供方下拉切换联动端点钉死（三改②）随端点解禁整体退役。
-  document.getElementById('toggle-jev')?.addEventListener('click', function() {
-    setToggleState(this, !this.classList.contains('on'));
-  });
-
-  // ── Jev section: allocation-decision health (jev-plugins batch, 2026-10-07;
-  // secrets-ui-redesign 2026-10-08: the bare word becomes a tri-state
-  // .st-badge — activity(st-ok)=up · octagon-alert(st-err)=down + reason
-  // (truncated inside the pill, full text on title) · circle-dashed(muted)=not
-  // configured. Same reading as the (retired 2026-11-01) secrets-mode-badge: the
-  // ICON carries the colour, the word stays neutral (--status-word). A fetch failure keeps the
-  // muted "…" placeholder — the unchanged silent-catch convention.)
-  // Read-only probe = GET /api/decision/health (DecisionHealthMonitor; the
-  // write legs are the plugin-allocation calls themselves).
-  // 三改③（2026-10-09 用户反馈③）：legs 分腿载荷——jev 腿 down 而通道 up
-  // （llm 接管产出）→ warn 徽标「Jev 不可用 → 已回退 llm」+ jev 腿 reason
-  // 尾巴（title 全文）；两腿全挂 → err「异常」+ title 双腿 reason。无 legs
-  // 的旧载荷走既有三态，零回归。零新色值：warn 档用既有 --status-warn-icon
-  // token（base.css 既有，暗亮两态随 token）。
-  {
-    const slot = document.getElementById('settings-jev-health');
-    if (slot) {
-      fetch('/api/decision/health', { headers: authHeaders() })
-        .then(r => (r.ok ? r.json() : null))
-        .then(data => {
-          const d = data && data.decision;
-          if (!d || !slot.isConnected) return;
-          const up = d.status === 'up';
-          const down = d.status === 'down';
-          const legs = d.legs || null;
-          const jevLeg = legs && legs.jev;
-          // 回退态：通道有产出（up）但 jev 腿 down —— llm 兜底腿接管。
-          const fellBack = !!(up && jevLeg && jevLeg.status === 'down');
-          const icon = fellBack ? 'triangle-alert'
-            : up ? 'activity' : down ? 'octagon-alert' : 'circle-dashed';
-          const cls = fellBack ? 'st-warn' : up ? 'st-ok' : down ? 'st-err' : '';
-          const tone = fellBack ? 'warn' : up ? 'ok' : down ? 'err' : 'mut';
-          const word = fellBack ? t('settings.jevHealthFallback')
-            : up ? t('settings.jevHealthUp')
-            : down ? t('settings.jevHealthDown')
-            : t('settings.jevHealthUnconfigured');
-          const jevReason = jevLeg && jevLeg.status === 'down' && jevLeg.reason ? String(jevLeg.reason) : '';
-          const reason = fellBack ? jevReason : (down && d.reason ? String(d.reason) : '');
-          // title 全文：双腿如实并陈（回退后 llm 腿再挂 = jev + llm 两条都在）。
-          const llmReason = down && d.reason ? String(d.reason) : '';
-          const fullTitle = [jevReason, llmReason].filter(Boolean).join(' | ') || word;
-          slot.dataset.tone = tone;
-          slot.title = fullTitle;
-          slot.innerHTML = statusIcon(icon, 10, cls) + escapeHtml(word)
-            + (reason ? `<span class="badge-reason">— ${escapeHtml(reason)}</span>` : '');
-        })
-        .catch(() => {});
-    }
-  }
-
   // ── Work schedule (freeze) — spec §3.2 sidebar.js ──────────────────────
   // 作者裁定（2026-08-30, toggle 即时保存）：开关类设置变更即保存——toggle 不再
   // 需要显示的保存按钮，更改就是保存（覆盖 #334 对 toggle 的适用；非 toggle 的
@@ -1938,45 +1318,11 @@ function bindSettingsEvents(content, cfg) {
   // with CLI-side `nebflow autostart enable/disable`).
   sendWs({ type: 'autostartStatus' });
 
-  // --- Provider add/edit/remove ---
-  document.getElementById('btn-add-provider')?.addEventListener('click', () => {
-    showProviderModal(null, null, (name, data) => {
-      saveNewProvider(name, data);
-    });
-  });
-
-  content.querySelectorAll('.cfg-card[data-provider]').forEach(card => {
-    const name = card.dataset.provider;
-    card.querySelector('.cfg-card-remove')?.addEventListener('click', (e) => {
-      e.stopPropagation();
-      window.__showConfirm?.('Remove Provider', t('provider.removeConfirm', { name }), () => {
-        state.parsedConfig.llm.providers[name] = null;
-        // Provider removal only rewrites the providers map: model chains are
-        // per-agent (agent.json `model` key, /model panel) and the engine
-        // filters chain refs of removed providers at resolution time.
-        state.configDirty = true;
-        flushConfigToServer();
-        renderSettings();
-      });
-    });
-    card.addEventListener('click', () => {
-      const p = state.parsedConfig.llm.providers[name];
-      // 明文直显（作者令 2026-10-27）：开弹窗前等一次回读落地——进页已预取，
-      // 这里只兜「进页即点」的竞态；回读失败也照常开弹窗（退回空态语义，
-      // 见 providersUi.js revealProviderApiKeys）。
-      Promise.resolve(revealProviderApiKeys()).catch(() => {}).then(() => {
-        showProviderModal(name, p, (newName, data) => {
-          if (newName !== name) {
-            // Use null to signal explicit deletion of old name
-            state.parsedConfig.llm.providers[name] = null;
-          }
-          state.parsedConfig.llm.providers[newName] = data;
-          state.configDirty = true;
-          flushConfigToServer();
-        });
-      });
-    });
-  });
+  // --- 服务商：新增/编辑/删除 ---
+  // provider-add-tabs 批（2026-11-06）：这三条交互的**唯一实现**在
+  // sidebar/providerPanel.js（类型标签 + 统一列表 + 单一表单骨架 + 一条保存腿），
+  // 本函数不再绑任何 provider 面（旧的内联列表/新增/卡片点击/删除已整件退役）。
+  // 面板由 renderSettings 尾部的 bindProviderPanel() 装配。
 
   // --- Advanced JSON editor ---
   document.getElementById('btn-toggle-json')?.addEventListener('click', () => {

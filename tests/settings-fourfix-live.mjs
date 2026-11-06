@@ -40,9 +40,11 @@ await page.goto(`${BASE}/?ticket=${encodeURIComponent(ticket)}`);
 await page.waitForSelector('#settings-btn', { timeout: 20000 });
 await page.click('#settings-btn');
 await page.waitForFunction(() => document.querySelectorAll('#provider-list .cfg-card').length > 0, null, { timeout: 30000 });
-// 配置面风格统一批（2026-10-31）：生图为层级下钻面——点入口行进浮层再断言。
-await page.click('#imagegen-advance-toggle');
-await page.waitForSelector('.config-drill-overlay #imagegen-advance-body #imagegen-section-wrap .imagegen-face', { timeout: 15000 });
+// provider-add-tabs 批（2026-11-06）：生图 = 统一服务商面板类型标签——切标签后断言。
+await page.waitForSelector('#provider-panel-host .nf-provider-panel', { timeout: 15000 });
+await page.waitForTimeout(600);
+await page.evaluate(() => document.querySelector('.nf-ptab[data-provider-type="imagegen"]')?.click());
+await page.waitForSelector('.nf-provider-panel[data-type="imagegen"]', { timeout: 15000 });
 await page.waitForTimeout(1200);
 
 // ① 模型行面（收归全局后）：零思考下拉/徽标/测试钮。

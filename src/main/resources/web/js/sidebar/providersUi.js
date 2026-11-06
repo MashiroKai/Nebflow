@@ -330,7 +330,7 @@ function showProviderModal(existingName, existingData, onSave) {
   // 保持不变）。保存逻辑不变：字段里的明文原样进 payload，留空回 "***"。
   const apiKeyFace = p.apiKey && p.apiKey !== '***' ? p.apiKey : revealedApiKeyFor(existingName);
 
-  showModal({
+  showProviderForm({
     title: isEdit ? t('provider.edit', { name: existingName }) : t('provider.add'),
     fields: [
       {key: 'name', label: t('provider.id'), type: 'text', value: existingName || '', placeholder: t('provider.idPlaceholder'), disabled: isEdit},
@@ -516,7 +516,23 @@ function collectWindows(host) {
   return out;
 }
 
-function showModal({title, fields, onConfirm}) {
+/**
+ * 服务商表单骨架 —— **全类型唯一一套**（provider-add-tabs 批 2026-11-06 作者令
+ * 「配置与显示流程统一：新增/编辑表单共用一套骨架，字段按类型切换（同一表单、
+ * 同一校验、同一保存腿），不许每类型一套表单实现」）。
+ *
+ * 本函数只管「怎么画怎么取值」：字段描述数组进、`values` 对象出。它**不含任何
+ * 类型知识**——类型只是字段数组的差异（LLM 的 models/时段、生图的 model/type、
+ * JeV 的 endpoint/type），校验与保存腿由调用方（llm = showProviderModal 的
+ * onConfirm；imagegen/jev = providerPanel.js 的单点校验 + 单点保存）在同一入口
+ * 收口。渲染器按字段类型（text / number / select / password / textarea /
+ * models / windows）单点实现，加一个类型只加一套字段描述，不改渲染。
+ *
+ * @param {{title:string, fields:Array<any>, onConfirm:(values:any)=>void,
+ *          onCancel?:()=>void, extraActionsHTML?:string,
+ *          bindExtra?:((overlay:HTMLElement)=>void)|null}} spec
+ */
+export function showProviderForm({title, fields, onCancel, onConfirm, extraActionsHTML = '', bindExtra = null}) {
   // Remove existing modal
   document.getElementById('cfg-modal')?.remove();
 
@@ -561,7 +577,7 @@ function showModal({title, fields, onConfirm}) {
             </div>` :
             f.password ? `<div class="cfg-password-wrap"><input class="cfg-input" type="text" data-field="${f.key}" value="${escapeHtml(f.value || '')}" placeholder="${escapeHtml(f.placeholder || '')}" autocomplete="off" ${NO_SPELL} ${f.disabled ? 'disabled' : ''}><button class="cfg-eye-btn" type="button" tabindex="-1" aria-label="Toggle visibility">${eyeOffSvg}</button></div>` :
             f.type === 'number' ? `<input class="cfg-input" type="number" data-field="${f.key}" value="${escapeHtml(f.value || '')}" placeholder="${escapeHtml(f.placeholder || '')}" ${NO_SPELL} ${f.min != null ? `min="${f.min}"` : ''} ${f.disabled ? 'disabled' : ''}>` :
-            `<input class="cfg-input" type="text" data-field="${f.key}" value="${escapeHtml(f.value || '')}" placeholder="${escapeHtml(f.placeholder || '')}" ${NO_SPELL} ${f.disabled ? 'disabled' : ''}>`}
+            `<input class="cfg-input" type="text" data-field="${f.key}" value="${escapeHtml(f.value || '')}" placeholder="${escapeHtml(f.placeholder || '')}" ${NO_SPELL} ${f.disabled ? 'disabled' : ''} ${f.title ? `title="${escapeHtml(f.title)}"` : ''}>`}
           </div>`;
 
   const overlay = document.createElement('div');
@@ -575,6 +591,7 @@ function showModal({title, fields, onConfirm}) {
       </div>
       <div class="cfg-modal-actions">
         <button class="cfg-btn cfg-btn-cancel" id="cfg-modal-cancel">${t('modal.cancel')}</button>
+        ${extraActionsHTML}
         <button class="cfg-btn cfg-btn-save" id="cfg-modal-save">${t('settings.save')}</button>
       </div>
     </div>`;
@@ -678,7 +695,14 @@ function showModal({title, fields, onConfirm}) {
   // 这是唯一一份时段交互）。
   overlay.querySelectorAll('[data-field="unavailableWindows"]').forEach(bindWindows);
 
-  const close = () => overlay.remove();
+  // provider-add-tabs 批（2026-11-06）：「单一表单骨架」的类型级附加面
+  // （生图/JeV 的探活与实跑钮）。骨架本身零类型知识——调用方经 bindExtra
+  // 把附加交互挂到已建好的 DOM 上，表单渲染/取值/校验/保存腿全在本函数单点。
+  if (typeof bindExtra === 'function') {
+    try { bindExtra(overlay); } catch (err) { console.warn('provider form extra bind failed', err); }
+  }
+
+  const close = () => { overlay.remove(); if (typeof onCancel === 'function') onCancel(); };
   document.getElementById('cfg-modal-cancel').addEventListener('click', close);
   overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
   document.getElementById('cfg-modal-save').addEventListener('click', () => {
