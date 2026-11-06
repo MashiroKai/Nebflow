@@ -1956,6 +1956,13 @@ export default {
   'bgws.noData': 'no status data (snapshot not covering)',
   'bgws.noBgTasks': 'no background tasks for this session',
   'bgws.moreTasks': '{count} more background tasks (see the main window panel)',
+  // Mobile bg-agent dialog simplification (2026-11-06): ⋯ details sheet meta labels.
+  'bgagent.more': 'Task details',
+  'bgagent.detail.source': 'Source',
+  'bgagent.detail.created': 'Created',
+  'bgagent.detail.worktree': 'Worktree',
+  'bgagent.detail.plugins': 'Plugins',
+  'bgagent.detail.noWorktree': 'In place (no worktree)',
   'bg.sectionAgents': 'Sub-agents',
   'bg.empty': 'No background tasks running',
   // 设备同级批（作者令 2026-11-01「本地/远程这组徽标整对退役」）：bg.kind.local /

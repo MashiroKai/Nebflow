@@ -1894,6 +1894,13 @@ export default {
   'bgws.noData': '暂无状态数据（快照未覆盖）',
   'bgws.noBgTasks': '本会话无后台任务',
   'bgws.moreTasks': '还有 {count} 个后台任务（主窗口面板查看）',
+  // 手机端后台 agent 对话框简化批（2026-11-06）：⋯ 详情浮层的 meta 行标签。
+  'bgagent.more': '任务详情',
+  'bgagent.detail.source': '来源',
+  'bgagent.detail.created': '创建',
+  'bgagent.detail.worktree': '工作树',
+  'bgagent.detail.plugins': '插件',
+  'bgagent.detail.noWorktree': '就地（未分配工作树）',
   'bg.sectionAgents': '智能体',
   'bg.empty': '当前无运行中的后台任务',
   // 设备同级批（作者令 2026-11-01「本地/远程这组徽标整对退役」）：bg.kind.local /
