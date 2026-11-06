@@ -1,6 +1,6 @@
 .PHONY: compile run assembly clean install \
   lint fmt fix fmt-check check quality-gate check-visual visual-baseline frontend-gates component-contract \
-  flat-buttons glass toggle scroll-pill \
+  flat-buttons glass toggle toggle-geometry scroll-pill \
   plugin-seed-parity
 
 # Auto-detect fastest Maven mirror (Aliyun for China, Maven Central otherwise)
@@ -193,8 +193,19 @@ canvas-hint-geometry:
 	node tests/canvas-hint-safe-area.spec.mjs
 
 # ── 开关唯一性：单闸入口（与 flat-buttons / glass 同形）──────────────────────
+# 静态腿（本 target）= 行为/造型/数值唯一性 + 「居中三式必须是推导式」（禁手填）。
 toggle:
 	node scripts/check-toggle-unify.mjs
+
+# ── 开关居中：真几何腿（像素级）───────────────────────────────────────────────
+# toggle-center 批 2026-11-06（作者原话：「中间的按钮相对于边框都没有居中」）。
+# 判据：|上距−下距| ≤ 0.5px、|左距(关)−右距(开)| ≤ 0.5px；覆盖桌面档（40×22）
+# + 手机档（body.mobile-layer，51×31）× 亮/暗两主题；读数两路互校（浏览器布局盒
+# 经 CDP 取伪元素 border box + DSF=4 哨兵色像素包围盒）。
+# 需 playwright（与 canvas-hint-geometry 同一编排口径：不在默认 check 里跑）。
+# 验红：--mutate=prev-mobile-inset|travel-ignores-inset（判据必须转红，否则 exit 3）。
+toggle-geometry:
+	node scripts/check-toggle-geometry.mjs
 
 # ── 路由存在性：运行期腿（empty-state-must-not-lie 批 · 件三②，2026-11-05）──────
 # 静态腿判「源码里注册了没」，运行期腿判「启动后真的答不答」——后者才是事故的
