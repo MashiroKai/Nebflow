@@ -1468,25 +1468,15 @@ export default {
   // removed with the auth-trim batch (2026-10-20 author ruling): the settings-page
   // update feature is retired; unified update detection moves to the website later.
 
-  // Phase text for the existing restart progress frame (`restartStatus`, consumed by
-  // the settings "Restart Service" status line).
-  'restart.phase.quiesce': 'Waiting for in-flight work to finish',
-  'restart.phase.draining': 'Freezing and flushing to disk',
-  'restart.phase.spawning': 'Launching the successor process',
-  'restart.phase.handing-over': 'Handing over — the old process is about to exit',
-  'restart.phase.completed': 'Restart completed',
-  'restart.phase.failed': 'Restart aborted',
-
-  // Settings-page restart trigger (hotupdate batch 3 · G6 second half) — reuses the
-  // existing 'restart' WS command; the UI confirms in two steps (2nd click = confirm bit).
-  'settings.restart': 'Restart Service',
-  'settings.restartConfirm': 'Confirm restart?',
+  // The whole "Restart Service" copy chain was removed with the settings-ios-rows
+  // batch (2026-11-06 author ruling): restart.phase.* and the four settings.restart*
+  // keys have zero consumers left (the sole consumer, the #restart-status line, was
+  // removed in the same batch). The backend WS `restart` command stays (other
+  // consumers remain); the frontend has no emit face for it.
   'settings.fileCache': 'File cache',
   'settings.fileCacheClear': 'Clear file cache',
   'settings.fileCacheClearConfirm': 'Confirm clear?',
   'settings.fileCacheEntries': 'items',
-  'settings.restartAccepted': 'Restart admitted — the UI reconnects automatically once it is up',
-  'settings.restartFailed': 'Restart not admitted: {error}',
 
   // Provider card fields
   'provider.baseUrl': 'Base URL',

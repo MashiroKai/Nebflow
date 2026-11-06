@@ -3691,12 +3691,12 @@ body.mobile-layer .nf-lightbox { z-index: 320; }
    mf-hub-row 同 affordance）；折叠体在设置页内一律不渲染（display:none），
    子页收编节点不在 #settings-modal 子树 ⇒ 天然可见。桌面零变化。
    ═══════════════════════════════════════════════════════════════════════ */
-body.mobile-layer #settings-modal .settings-collapse-body { display: none !important; }
-/* 入口行 chevron：下旋 90° 指右（层级导航 affordance；::after 字形同族不动）。 */
-body.mobile-layer #settings-modal .settings-collapse-chevron { transform: rotate(-90deg); }
+body.mobile-layer #settings-modal .set-collapse-body { display: none !important; }
+/* 入口行 chevron：设置页唯一 affordance 已统一为 iOS 右箭头（.set-nav-chev，
+   settings-ios-rows 批 2026-11-06）—— 手机层下钻语义天然同向，零旋转规则。 */
 /* 收编进子页的折叠体：页体已带 72px 顶让位，补侧距与底距即可
    （节点不在 #settings-modal 子树 ⇒ 上方的 display:none 不命中，零 important）。 */
-body.mobile-layer .mobile-page-body > .settings-collapse-body {
+body.mobile-layer .mobile-page-body > .set-collapse-body {
   padding: var(--ds-space-1) var(--ds-space-4) calc(20px + env(safe-area-inset-bottom, 0px));
 }
 /* 接管模态在场：注入返回钮隐藏（强制二选一，无取消语义可挂）。 */
@@ -3927,13 +3927,25 @@ body.mobile-layer #mobile-pages .mobile-page-body > .canvas-tab-pane[data-type='
    daemon/reminder/todo 面头均有可见异名题行/计数钮属功能件保留）——手机档整头
    摘除，首卡间距 = 标题 pb10 + #settings-content pt16 = 16px，与全站 sweep 档
    一致。桌面零感知（规则挂 body.mobile-layer 页面体链）。 */
+/* settings-ios-rows 批（2026-11-06 作者令「顺手修标题错位」）复核：整头摘除口径
+   **维持**（壳层两段式大标题「设置」由页面壳供给，面内头保留只会出一截空带）；
+   实拍里「标题被截 + 上下压字」的根因不在头容器，而在**分组题负外边距逃逸**——
+   旧 .settings-section-title margin-top:-33px 把「密钥/高级/关于」组题上拉出滚动
+   容器顶缘，被壳层大标题压住/截断。修法 = 手机档把 .set-card-title 的负上边距
+   钳回 0（组题回到正常流内：标题在上、卡在下，见下方 settings-ios-rows 块）。 */
 body.mobile-layer #mobile-pages .mobile-page-body > #settings-modal .settings-modal-header {
   display: none;
 }
-/* 首分组节顶距归零（同批⑤续）：settings-section 首节自带 mt24（节间距节奏
-   的首节份），叠在 content pt16 上 = 标题下 40px 空带；首节归零后 = 16px。
-   节间 mt40 节奏不动，桌面零感知。 */
-body.mobile-layer #mobile-pages .mobile-page-body > #settings-modal #settings-content .settings-section:first-child {
+/* 首分组节顶距归零（2026-11-01 批⑤续；settings-ios-rows 批改指 .set-card）：
+   首卡自带组间留白（--set-group-gap 24），叠在 content pt16 上 = 标题下 40px
+   空带；首卡归零后 = 16px。卡间 --set-group-gap 节奏不动，桌面零感知。 */
+body.mobile-layer #mobile-pages .mobile-page-body > #settings-modal #settings-content .set-card:first-child {
+  margin-top: 0;
+}
+/* settings-ios-rows 批：分组题负外边距（桌面 = 标题坐进组间留白的 iOS 语言）在
+   手机档钳回 0 —— 负边距会把组题上拉出滚动容器顶缘，被壳层大标题压住/截断
+   （作者实拍 IMG_1764 顶栏「设置」上下压字的根因）。 */
+body.mobile-layer #mobile-pages .mobile-page-body > #settings-modal #settings-content .set-card-title {
   margin-top: 0;
 }
 body.mobile-layer .mobile-page-body .todo-page-title,
@@ -4965,7 +4977,7 @@ body.mobile-layer :is(
      css/todo-face.css:944 的 .tfl-empty 是唯一载体，.tfl-empty-all 是同件修饰类） */
   .tfl-empty, .tfl-empty-all,
   /* 设置面 */
-  .cfg-label, .cfg-hint, .settings-section-title, .entry-sub, .count-pill, .st-badge,
+  .cfg-label, .cfg-hint, .entry-sub, .st-badge, .set-card-title, .set-row-hint,
   .neblink-logged-out-hint, .mchain-empty, .mp-note,
   /* 插件面 */
   .plugins-stats-item, .plugins-section-hint, .plugins-section-title,
@@ -5014,7 +5026,7 @@ body.mobile-layer :is(.bubble pre, .bubble pre code, .bubble .md code, .bubble .
        不动，::after 外扩命中盒到 --mhit（既有解法，单点不另造）。 */
 body.mobile-layer :is(
   .mh-search-input, .wg-search-input, #search-keyword, .ap-name-input, .cfg-input,
-  .secrets-entry, .team-empty-cta, .wg-switch-select, .plugins-card-head,
+  .team-empty-cta, .wg-switch-select, .plugins-card-head,
   .merged-tab, .mf-me-login, .cfg-btn, .cfg-eye-btn
 ) {
   min-height: var(--mtap);

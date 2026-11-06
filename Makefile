@@ -103,7 +103,9 @@ quality-gate:
 # = 后端把 `GET /api/conversations` 的 case 误删，前端 404 被吞成「暂无会话」，
 # **没有任何断言发现「前端调了但后端没有」**。本闸静态对照两侧（前端 /api 字面量
 # 集合 × 网关路由注册面），前端调了后端没有 ⇒ 红。
-FRONTEND_GATES := design-tokens msgstyle bubble-side self-explaining circular fixture-secrets api-routes freeze-state freeze-silence flat-buttons glass canvas-hint toggle scroll-pill input-surface mobile-canvas-strip badge-words
+# （Makefile 热点区口径：合并两边门禁并列保留——mobile-canvas-strip / badge-words
+#  来自 main 侧两批，settings-ios-rows 来自本批。）
+FRONTEND_GATES := design-tokens msgstyle bubble-side self-explaining circular fixture-secrets api-routes freeze-state freeze-silence flat-buttons glass canvas-hint toggle scroll-pill input-surface mobile-canvas-strip badge-words settings-ios-rows
 
 frontend-gates:
 	@command -v node >/dev/null 2>&1 || { echo "node not found — 前端门禁需要 node"; exit 2; }
@@ -211,6 +213,13 @@ frontend-gates:
 	@# 改前/改后同一份脚本：node scripts/check-mobile-canvas-strip.mjs --root=<改前树>；
 	@# 机器读：--json。真渲染读数（375/1440 × 亮暗）另跑 scripts/capture-mobile-canvas-tabs.mjs。
 	node scripts/check-mobile-canvas-strip.mjs
+	@# 设置页 iOS 行族门禁（settings-ios-rows 批 2026-11-06，作者令「能点击下一个面板的
+	@# 样式都统一成苹果的这种样式 … 底部的重启服务去掉 … 可点击的按钮 布局规整一点」）：
+	@# R1 重启服务零痕 / R2 可点进行唯一样式（setNavRow 单源 + chevron 单点）/
+	@# R3 行内右侧不重复同一数值 / R4 动作钮走 --set-* 令牌。
+	@# 盘点模式：node scripts/check-settings-ios-rows.mjs --json；
+	@# 改前红证据：--web-root <另一棵 web 树>。
+	node scripts/check-settings-ios-rows.mjs
 	@echo "Frontend static gates passed ($(FRONTEND_GATES))."
 
 # ── 身份/类型徽标词单源：单闸入口（术语统一批 2026-11-06）────────────────────
