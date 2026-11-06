@@ -13,7 +13,7 @@
 set -uo pipefail
 
 WT="/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-70e8d8ab"
-EVID="$WT/reports-evidence/20261104_interrupt-recovery"
+EVID="$WT/reports-evidence/interrupt-recovery__20261104_114731"
 SPEC="nebflow.core.project.InterruptRecoveryLegsSpec"
 LEG="${1:-}"
 OUT="${2:-red}"   # 第二参 = 输出子目录（red = 改动前红证；green = 修复后绿证）

@@ -1,0 +1,54 @@
+=== [V1] IR_LEG=V1 sbt "testOnly nebflow.core.project.InterruptRecoveryLegsSpec" ===
+[sbt-gate] gate acquired after 0s
+[sbt-gate] heap cap not injected: SBT_OPTS already carries -Xmx (explicit wins)
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project delegate-nebflow-70e8d8ab-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-70e8d8ab/project
+[info] compiling 1 Scala source to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-70e8d8ab/project/target/scala-2.12/sbt-1.0/classes ...
+[info] done compiling
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/delegate-nebflow-70e8d8ab/)
+[info] compiling 196 Scala sources to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-70e8d8ab/target/scala-3.5.2/classes ...
+[info] done compiling
+[info] compiling 225 Scala sources to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-70e8d8ab/target/scala-3.5.2/classes ...
+[info] done compiling
+[info] compiling 1104 Scala sources to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-70e8d8ab/target/scala-3.5.2/test-classes ...
+[info] done compiling
+[warn] javaOptions will be ignored, fork is set to false
+16:18:25.335 [36mINFO [0m nebflow.agent.startup-recovery - [delegate-revival] 1 eligible orphan(s) queued for revival: delegate-nebflow-v1-control(rev=0)
+16:18:25.397 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35mir-leg-delegate-nebflow-v1-control/delegate[0m event=spawn detail=parent=- msgs=2
+16:18:25.417 [36mINFO [0m nebflow.agent.supervisor - BackoffSupervisor: watching delegate-nebflow-v1-control for crash recovery (maxRestarts=2)
+16:18:25.497 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] mounted scope 'delegate-nebflow-v1-control' (project=-, map=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/ir-seat-v1-control251671084853344294/.nebflow/flow-maps/delegate-nebflow-v1-control, seat=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/ir-seat-v1-control251671084853344294, root=self) — one delegate one map
+16:18:25.503 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35mir-leg-delegate-nebflow-v1-control/delegate[0m event=start detail=msgs=2
+16:18:25.504 [36mINFO [0m nebflow.agent.delegate-revival - [delegate-revival] revived delegate-nebflow-v1-control (agent=nebflow, revival #1, seat=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/ir-seat-v1-control251671084853344294, transcript=2 msgs, parentLive=false) — supervision chain rebuilt (BackoffSupervisor watching again)
+[LEG V1/control] report: terminalized=0 revived=1 (delegate-nebflow-v1-control) revivalSkipped=0
+[LEG V1/control] revivalSkipped: List()
+16:18:25.687 [36mINFO [0m nebflow.reminders - [time] Current time: 2026-11-06 16:18:25 +08:00 | Asia/Shanghai | Friday 周五 | epoch_ms 1793953105680
+16:18:25.807 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35mir-leg-delegate-nebflow-v1-control/delegate[0m event=turn-complete detail=msgs=4 textLen=31 textStreamed=true thinking=0 model=-
+16:18:25.966 [36mINFO [0m nebflow.agent.startup-recovery - [delegate-revival] 1 eligible orphan(s) queued for revival: delegate-nebflow-v1-bb1(rev=0)
+16:18:25.969 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35mir-leg-delegate-nebflow-v1-bb1/delegate[0m event=spawn detail=parent=- msgs=2
+16:18:25.970 [36mINFO [0m nebflow.agent.supervisor - BackoffSupervisor: watching delegate-nebflow-v1-bb1 for crash recovery (maxRestarts=2)
+16:18:25.974 [33mWARN [0m nebflow.flowmap - flow-map.json corrupt: DecodingFailure at .project: Missing required field — starting empty
+16:18:25.975 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] mounted scope 'delegate-nebflow-v1-bb1' (project=-, map=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/ir-seat-v1-bb110678490885797680401/.nebflow/flow-maps/delegate-nebflow-v1-bb1, seat=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/ir-seat-v1-bb110678490885797680401, root=self) — one delegate one map
+16:18:25.976 [36mINFO [0m nebflow.agent.delegate-revival - [delegate-revival] revived delegate-nebflow-v1-bb1 (agent=nebflow, revival #1, seat=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/ir-seat-v1-bb110678490885797680401, transcript=2 msgs, parentLive=false) — supervision chain rebuilt (BackoffSupervisor watching again)
+16:18:25.976 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35mir-leg-delegate-nebflow-v1-bb1/delegate[0m event=start detail=msgs=2
+[LEG V1/bb1] scope open non-terminal nodes = 1 (BB1 形态: 链上还有活)
+[LEG V1/bb1] report: terminalized=0 revived=1 (delegate-nebflow-v1-bb1) revivalSkipped=0
+[LEG V1/bb1] revivalSkipped: List()
+[LEG V1/bb1] task row status after restart = running (作者要的是 running/Processing)
+[LEG V1/bb1] live actor registered = true
+[LEG V1/bb1] next turn started (LLM requests) = 0
+[LEG V1/bb1] parent mailbox events for child = 0
+[LEG V1/bb1] today: standby 闸判死 → 收殓 failed（recoverOne 写 [task lost: crash]），无活体、零 turn
+16:18:25.986 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35mir-leg-delegate-nebflow-v1-bb1/delegate[0m event=turn-complete detail=msgs=4 textLen=31 textStreamed=true thinking=0 model=-
+16:18:26.005 [36mINFO [0m nebflow.agent.supervisor - BackoffSupervisor: delegate delegate-nebflow-v1-bb1 ended its turn WITHOUT a delegate_report (matrix complete×idle: chainsInFlight=false, emptyTurn=false) — reminder armed, NO terminal verdict, parent NOT notified
+[32mnebflow.core.project.InterruptRecoveryLegsSpec:[0m
+[32m  + [0m[32mV1 自动复活（无人工 Mail）: 跑到一半（standby 等自家链节点）的 delegate 重启后必须原位复活并继续干活 —— 现状停在 failed[0m [90m1.211s[0m
+[33m==> s [0m[33mnebflow.core.project.InterruptRecoveryLegsSpec[0m.[33mV2 墓碑: 人工 cancel 过的 delegate 重启后不得复活（boot sweep / 原位续命判定 / 二次 boot 三条腿都守住墓碑）[0m[33m skipped[0m [90m0.004s[0m
+[33m==> s [0m[33mnebflow.core.project.InterruptRecoveryLegsSpec[0m.[33mV3 节点消息: node 消息投递成功即可重启重放（已落盘的确实重放；fire-and-forget 窗口必须补持久化）[0m[33m skipped[0m [90m0.0s[0m
+[33m==> s [0m[33mnebflow.core.project.InterruptRecoveryLegsSpec[0m.[33mV4 幂等: 复活后已完成 turn 数不变，且必须存在机器可读的已完成步骤断点（现状无断点台账）[0m[33m skipped[0m [90m0.001s[0m
+[33m==> s [0m[33mnebflow.core.project.InterruptRecoveryLegsSpec[0m.[33mV5 收尾: 干完只缺报告的会话（workReport 在 / reportStatus 缺）重启后必须自动收尾并通知父会话[0m[33m skipped[0m [90m0.0s[0m
+[33m==> s [0m[33mnebflow.core.project.InterruptRecoveryLegsSpec[0m.[33mV5 反向: 没干完（在飞 running 行）的会话仍走复活腿， 收尾腿不得误吞、不得投已完成通知[0m[33m skipped[0m [90m0.0s[0m
+[info] Passed: Total 6, Failed 0, Errors 0, Passed 1, Skipped 5
+[success] Total time: 143 s (0:02:23.0), completed 2026年11月6日 16:18:26
+=== [V1] exit=0 (日志: reports-evidence/20261104_interrupt-recovery/regression-20261106/V1.log) ===
