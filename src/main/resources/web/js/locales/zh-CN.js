@@ -957,6 +957,11 @@ export default {
   // 野节点归置批（2026-11-05 腿③）：野节点（父不可解析的行）独立归置分组的组头词。
   // 一个事实词（这群行没有父），不是解释句/教学句（自解释铁律 8）。
   'subagents.orphanGroup': '无父节点',
+  // 面板三代层级批（2026-11-06）：root 锚（树 depth 0 基座标签）+ 判定表②「父不在场」
+  // 标——都是事实词（这一层是根 / 父会话当前不在面板），非解释句。
+  'subagents.rootAnchor': '根会话',
+  'subagents.parentAbsent': '父不在场',
+  'subagents.parentAbsentTip': '父会话当前不在面板 · {sid}',
   // 面板层级批（2026-10-31 ①）：组头折叠 caret 的无障碍/悬停文案（随折叠态翻转）。
   'subagents.collapseGroup': '收起子任务',
   'subagents.expandGroup': '展开子任务',

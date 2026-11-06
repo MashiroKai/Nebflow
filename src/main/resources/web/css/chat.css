@@ -357,9 +357,16 @@
    每深一层再加一格（--ds-space-3 / 12px），档值全部取自既有间距令牌（零新增档、
    零新增色值字面量）。--bg-row-depth 由行构造器内联写入（data-bg-depth 同源）；
    缺席时按 1 档算 = 既有单格缩进（远端投影行 / 无深度锚的行视觉零回归）。
-   depth1 = 16px（既有档），depth2 = 28px，depth3 = 40px …… 严格单调，任何层数都不裁行。 */
-.bg-task-row.bg-task-row-child {
+   depth1 = 16px（既有档），depth2 = 28px，depth3 = 40px …… 严格单调，任何层数都不裁行。
+   面板三代层级批（2026-11-06）：缩进面从 child 类扩为「任意带深度锚的行」——
+   dispatcher 行（depth1）/ node 行（depth2）是顶层行不是 child 类，同一公式逐字
+   不动（选择器并集：带 data-bg-depth 且非 0 的行 = 带 --bg-row-depth 内联变量的行）。
+   引导竖线仍跟 child 类走不变（dispatcher/node 顶层行不加左条——design 残差④）。 */
+.bg-task-row.bg-task-row-child,
+.bg-task-row[data-bg-depth]:not([data-bg-depth="0"]) {
   padding-left: calc(var(--ds-space-4) + (var(--bg-row-depth, 1) - 1) * var(--ds-space-3));
+}
+.bg-task-row.bg-task-row-child {
   border-left: 2px solid var(--color-frame-border);
 }
 .bg-task-row-child .bg-task-name { font-size: var(--ds-fs-hint); }
@@ -377,6 +384,25 @@
   font-size: var(--ds-fs-meta);
   font-weight: var(--ds-fw-body);
   color: var(--ds-text-muted);
+}
+/* root 锚（面板三代层级批 2026-11-06）：树 depth 0 基座的标签面行——「标签不是行」
+   纪律同野组头（不占行集、不入计数、data-bg-row-total 不含它）。caret 形态/热区与
+   行首同款（.bg-task-caret 原样生效）。纯标签面：色/字阶/间距全走既有 --ds-* 槽
+   （零新增档、零色值字面量、零新几何常量）。 */
+.bg-root-anchor {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-2) var(--ds-space-3) var(--ds-space-half);
+  font-size: var(--ds-fs-meta);
+  font-weight: var(--ds-fw-body);
+  color: var(--ds-text-muted);
+}
+.bg-root-anchor-name {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 /* panel-ia 批：主名行升为行内第一读数后，meta 槽（状态词）与摘要同族 muted。 */
 .bg-task-state {

@@ -980,6 +980,14 @@ function bgRowTree(rows) {
     const k = bgRowSessionKey(row);
     if (k && !byKey.has(k)) byKey.set(k, row);
   }
+  // root 锚（三代层级批）：锚在行集里至多一条（bgRowPlan 合成守卫）——判定表②
+  // 「父应在位置」的挂接基座。其定位键 = 桶根会话键（锚条款的 bucketKey 入参）。
+  let rootAnchor = null;
+  for (const row of list) {
+    if (row && row.level === 'root') { rootAnchor = row; break; }
+  }
+  const anchorKey = rootAnchor ? bgRowSessionKey(rootAnchor) : '';
+  const regBySid = bgRegistryRowsBySid();
   /** 父行表（null = 根）。 */
   const parentOf = new Map();
   for (const row of list) {
@@ -1002,8 +1010,17 @@ function bgRowTree(rows) {
       // 成员行（delegate 域）：同组约束原样（design 残差②/⑨——delegate 域零回归）。
       if (cand.group === row.group) { parentOf.set(row, cand); continue; }
     }
+    // 三代层级批·判定表②（有父但不在场 → 父应在位置）：父键非空而父行缺席的三代
+    // 链行挂 root 锚（父的槽位 = 锚直下 depth1）——绝不落野组、绝不伪造 depth2。
+    // 判定读单点（bgTopRowParentStateOf）；锚缺席（异常直调）⇒ 走既有兜底留根位。
+    if (row.level === 'top' && pk && !cand && rootAnchor && rootAnchor !== row
+        && bgTopRowParentStateOf(row, byKey, anchorKey, regBySid) === 'absent-parent') {
+      parentOf.set(row, rootAnchor);
+      continue;
+    }
     // 回落：所属整体行下一格（成员行：父不在行集 / 跨组父 / 自指——既有兜底原样；
-    // 顶层行无组 ⇒ head 恒空，父缺席 = 留在根位，不伪造深度）。
+    // 顶层行无组 ⇒ head 恒空：判定表③ wild 行留待野组归置，registered-absent 行
+    // 留根位（既有口径），不伪造深度）。
     const g = row.group;
     const groupKey = bgRowLocatorKey({ id: g && g.id, info: g && g.info });
     const head = groupKey ? byKey.get(groupKey) : null;
@@ -1116,6 +1133,90 @@ function bgRowParentKeyOf(row) {
   return bgTreeParentKeyOf(row) || '';
 }
 
+/** 三代链行判定（面板三代层级批 2026-11-06）：这行是不是「root → dispatcher → node」
+ *  三代链上的行——父态判定表（bgTopRowParentStateOf）②态的**作用域判据**。判据 =
+ *  行自身会话键前缀（dispatcher- = 分发器代 / node- = 节点代；两代的 parentSessionId
+ *  由后端 spawn 注册单点写入——ProjectActor.spawnDispatcher / NodeStarter /
+ *  NodeLoopRunner）。delegate-/subagent-/旧盘前缀不进本批作用域（既有野组归置口径
+ *  零回归——bg-agentflow-orphans 契约不动）。
+ *  @param {string} sid @returns {boolean} */
+function bgThreeGenRowSid(sid) {
+  const s = String(sid || '');
+  return s.startsWith('dispatcher-') || s.startsWith('node-');
+}
+
+/** 注册行镜像索引（按 delegate id；同 bgDelegateGroups 的 rowByDelegate 形制）。
+ *  @returns {Map<string, any>} */
+function bgRegistryRowsBySid() {
+  const m = new Map();
+  for (const r of listDelegateRows()) {
+    const d = String((r && r.delegateId) || '').replace(/^team-/, '');
+    if (d) m.set(d, r);
+  }
+  return m;
+}
+
+/** 父会话在册可解析（判定式③条款单点——自野判定式原文收编，语义零改动）：
+ *  注册行镜像（DelegateRegistry.Record，spawn 落盘、跨重启存活）命中**且**其链可解析
+ *  （getChainByTask 有 nodes，或该 delegate 的作用域桶里有链行）——此时 bgDelegateGroups
+ *  第⑤/⑥组源会为它产出整体行，父键迟早可定位（跨帧竞态不算野）。
+ *  @param {string} pk @param {Map<string, any>=} regBySid 预建镜像索引（缺席则现建）
+ *  @returns {boolean} */
+function bgRegistryResolvable(pk, regBySid) {
+  const key = String(pk || '').replace(/^team-/, '');
+  if (!key) return false;
+  const reg = (regBySid || bgRegistryRowsBySid()).get(key);
+  if (!reg) return false;
+  const chain = getChainByTask(String(reg.taskNo || key));
+  if (chain && Array.isArray(chain.nodes) && chain.nodes.length) return true;
+  return bgDelegateScopeChainRows(key).length > 0;
+}
+
+/**
+ * 顶层行父态判定单点（面板三代层级批 2026-11-06 · 单点函数 + 判定表）。
+ *
+ * **野节点三态判定表**（作者令「有父且在册→真子行 / 有父但不在场→父应在位置+「父不在场」
+ * 标，不进归置组 / 无父→既有归置组」；作用域 = level='top' 顶层行——head/child/root
+ * 结构性有根，不进本表；正序短路）：
+ *
+ *   态①（attached）        条件：pk 非空 ∧ 父在场（父行在本轮行集，含 pk=桶根 ⇒ root 锚恒在条款）
+ *                           落位：真子行——挂父行（bgRowTree 属主边），depth 沿父链 0/1/2
+ *                           标：无——父可见，「来自 …」来源标即撒谎，不带
+ *   态②（absent-parent）   条件：pk 非空 ∧ 父不在行集 ∧ 三代链行（dispatcher-/node- 前缀）
+ *                                ∧ 父不在册可解析
+ *                           落位：父应在位置——挂 root 锚直下（父的槽位 depth1，**不伪造
+ *                                depth2**；锚缺席由 bgRowPlan 按需合成）——**不进归置组**
+ *                           标：「父不在场」标（tooltip=父 sid），不进野组
+ *   态③（wild）            条件：pk 空 / 自指；或不可解析且非三代链行（subagent-/dd-/
+ *                                legacy uuid …）
+ *                           落位：既有野组 data-bg-orphan-group（2026-11-05 腿③口径逐字不变）
+ *                           标：既有「来自 …」来源角标（逐字不变）
+ *
+ * 附（非三态的第四出口）：pk 非空 ∧ 父不在行集 ∧ **在册可解析**（bgRegistryResolvable
+ * 命中——delegate 域跨帧竞态，父的归属结构迟早成行）＝既有「非野顶层行」口径原样
+ * （`registered-absent`：不挂锚、不加标、不进野组——delegate 域零回归）。
+ *
+ * **为什么必须是一个函数**：三态若散在渲染分支里，会出现「同一行在两个通路两个态」
+ * ——树挂接（bgRowTree）、锚合成（bgRowPlan）、野判定（野判定式单点）三处消费面
+ * 只读本函数结论，判定点唯一。
+ * @param {any} row 行计划项（level='top'）
+ * @param {Map<string, any>} byKey 本轮行集索引（bgRowSessionKey → row）
+ * @param {string} [bucketKey] 桶根会话键（root 锚条款；空 = 无桶根信息）
+ * @param {Map<string, any>=} [regBySid] 预建注册镜像索引（性能位，缺席现建）
+ * @returns {'attached'|'absent-parent'|'registered-absent'|'wild'}
+ */
+function bgTopRowParentStateOf(row, byKey, bucketKey, regBySid) {
+  const self = bgRowSessionKey(row);
+  const pk = bgRowParentKeyOf(row);                         // 输入面单点（字符串形：'' = 无父）
+  if (!pk || pk === self) return 'wild';                    // 态③：无父字段 / 自指（父键不可用作事实）
+  const bk = String(bucketKey || '').replace(/^team-/, '');
+  if (bk && pk === bk) return 'attached';                   // 态①：属主=桶根（root 锚恒在）
+  if (byKey && byKey.has(pk)) return 'attached';            // 态①：父行在本轮行集（整体行/顶层行/成员行/锚）
+  if (bgRegistryResolvable(pk, regBySid)) return 'registered-absent'; // 既有③条款：在册+链可解析 ⇒ 跨帧竞态不算野
+  if (bgThreeGenRowSid(self)) return 'absent-parent';       // 态②：三代链行·父不在场（父应在位置，不进野组）
+  return 'wild';                                            // 态③：其余不可解析（既有野组口径）
+}
+
 /**
  * ***野节点判定单点***（野节点归置批 2026-11-05 腿③ · 作者点名「很多的野节点」）。
  *
@@ -1152,28 +1253,17 @@ export function bgOrphanRowKeys(rows, bucketSid) {
   // 三代层级批（2026-11-06）：桶根键（root 锚 = 树 depth 0 基座，恒在——见 bgRowPlan
   // 锚合成）。属主 = 桶根的行（dispatcher 行等）永不野。
   const bucketKey = String(bucketSid || '').replace(/^team-/, '');
-  // ③ 的在册面：注册行镜像按 delegate id 索引（同 bgDelegateGroups 的 rowByDelegate）。
-  const regBySid = new Map();
-  for (const r of listDelegateRows()) {
-    const d = String((r && r.delegateId) || '').replace(/^team-/, '');
-    if (d) regBySid.set(d, r);
-  }
-  const resolvable = (pk, self) => {
-    if (!pk || pk === self) return false;   // 自指 / 无父字段 ⇒ 不可解析
-    if (bucketKey && pk === bucketKey) return true; // root 锚恒在：属主=桶根 ⇒ 可解析
-    if (byKey.has(pk)) return true;         // ① ②：父行在本轮行集里（整体行或成员行）
-    const reg = regBySid.get(pk);           // ③：父会话在册
-    if (!reg) return false;
-    const chain = getChainByTask(String(reg.taskNo || pk));
-    if (chain && Array.isArray(chain.nodes) && chain.nodes.length) return true;
-    return bgDelegateScopeChainRows(pk).length > 0;
-  };
+  // ③ 的在册面：注册行镜像按 delegate id 索引（预建一次随判定下传）。
+  const regBySid = bgRegistryRowsBySid();
   const wild = new Set();
   for (const row of list) {
     if (!row || row.level === 'head' || row.level === 'root') continue; // 整体行 / root 锚是根，永非野
     if (row.level === 'child') continue;        // 成员行的父 = 所属整体行（在行集里）
+    // 三代层级批：野 ⇔ 父态判定表③（判定单点 bgTopRowParentStateOf——②态「父不在场」
+    // 的三代链行在此**不算野**：它们的归置面 = 父应在位置（root 锚直下），不进野组；
+    // ①态真子行与在册可解析（registered-absent）同样非野——条款原文见判定表注释）。
+    if (bgTopRowParentStateOf(row, byKey, bucketKey, regBySid) !== 'wild') continue;
     const self = bgRowSessionKey(row);
-    if (resolvable(bgRowParentKeyOf(row), self)) continue;
     if (self) wild.add(self);
   }
   return wild;
@@ -1188,7 +1278,8 @@ export function bgOrphanRowKeys(rows, bucketSid) {
  * 行（野行照旧计入、一行不丢），`orphanCount` 只计其中换面出镜的那部分。
  * 面板三代层级批（2026-11-06 · 作者令「root → dispatcher → node 三级真缩进」）：
  * root 锚合成（design 残差①）——桶根会话（顶层会话）作树的 **depth 0 基座**。判定 =
- * 行集中确有属主边指向桶根的**顶层行**（bgTreeParentKeyOf === bucketSid）才出锚
+ * 行集中确有属主边指向桶根的**顶层行**（bgTreeParentKeyOf === bucketSid），或确有
+ * 「父不在场」的三代链行（判定表②——父应在位置 = 锚直下，锚是它们的挂接基座）才出锚
  * （锚有子树才出镜——空树不出空锚，既有形态零回归）。锚是**标签面行**：不入行集
  * 计数（total 排除 level='root'）、不占 data-bg-row-total、不入头部计数（先例 =
  * 野分组头 bgOrphanGroupHeadHtml 的「组头不是行」纪律）；锚有子树 ⇒ caret 合法。
@@ -1254,12 +1345,20 @@ function bgRowPlan(model, bucketSid) {
   items.push(...topRows);
   for (const r of topRows) placed.add(r);
   // ⑥ root 锚合成（面板三代层级批 2026-11-06，见函数头注）：锚先行入列（树序 =
-  // 锚子树打头——渲染循环前出镜），已入 placed 防止尾兜底重排。
+  // 锚子树打头——渲染循环前出镜），已入 placed 防止尾兜底重排。出锚判据两条：
+  // 有属主边指向桶根的顶层行（既有），**或**有「父不在场」的三代链行（判定表②——
+  // 它们的「父应在位置」= 锚直下，锚是它们的挂接基座）。
   const bucketKey = String(bucketSid || '').replace(/^team-/, '');
+  const keptByKey = new Map();
+  for (const r of kept) {
+    const k = bgRowSessionKey(r);
+    if (k && !keptByKey.has(k)) keptByKey.set(k, r);
+  }
   let anchorRow = null;
   if (bucketKey) {
     const hasRootChildren = kept.some((r) => r.level === 'top'
-      && bgTreeParentKeyOf(r) === bucketKey);
+      && (bgTreeParentKeyOf(r) === bucketKey
+        || bgTopRowParentStateOf(r, keptByKey, bucketKey) === 'absent-parent'));
     const keyTaken = kept.some((r) => bgRowSessionKey(r) === bucketKey);
     if (hasRootChildren && !keyTaken) {
       anchorRow = {
@@ -1281,9 +1380,23 @@ function bgRowPlan(model, bucketSid) {
   // ⑤ 野节点归置批（2026-11-05 腿③）：判定式单点（bgOrphanRowKeys）在**收敛+树序之后**
   // 跑一次，结论写到 row.wild——渲染面只读这个布尔，不在渲染分支里自算野性。行集与
   // 计数（total）**不因归置而变**：野行照旧计入（一行不丢），只是换一个归置面出镜。
-  // 三代层级批：bucketSid 随参下传（桶根条款——属主=桶根的行永不野，root 锚恒在）。
+  // 三代层级批：bucketSid 随参下传（桶根条款——属主=桶根的行永不野，root 锚恒在）；
+  // row.parentState = 判定表单点结论（仅顶层行），渲染面据此带「父不在场」标 /
+  // 抑制「来自 …」标（父可见时不撒谎）；row.absentParent = ②态的父键（chip tooltip 面）。
   const wildKeys = bgOrphanRowKeys(tree.order, bucketSid);
-  for (const row of tree.order) row.wild = wildKeys.has(bgRowSessionKey(row));
+  const treeByKey = new Map();
+  for (const row of tree.order) {
+    const k = bgRowSessionKey(row);
+    if (k && !treeByKey.has(k)) treeByKey.set(k, row);
+  }
+  for (const row of tree.order) {
+    row.wild = wildKeys.has(bgRowSessionKey(row));
+    row.parentState = (row && row.level === 'top')
+      ? bgTopRowParentStateOf(row, treeByKey, bucketKey) : null;
+    if (row.parentState === 'absent-parent') {
+      row.absentParent = { parentSid: String(bgTreeParentKeyOf(row) || '') };
+    }
+  }
   // total = 行集长度，root 锚除外（锚是标签面行，不是行——「签 == 实际 .bg-task-row
   // 行数」口径不破；锚子树里的行照常计入）。
   let total = 0;
@@ -1360,6 +1473,22 @@ function bgOrphanChipHtml(orphan, bucketSid) {
   return '<span class="bg-task-origin bg-task-orphan" title="' +
     escapeHtml(t('subagents.orphanTip', { sid: parentSid }) +
       (chainText ? ' · ' + chainText : '')) + '">' + escapeHtml(label) + '</span>';
+}
+
+/**
+ * 「父不在场」标（面板三代层级批 2026-11-06 · 判定表②）：有父而父行不在场的行的诚实
+ * 标注——判定表①的真子行不带本标（父可见，「来自 …」即撒谎）；③态野行走既有来源角标。
+ * 版式 = 中性 muted chip 族（.bg-task-origin 同款——零新 CSS 零新令牌），文案 = locale
+ * 单点（zh「父不在场」/ en 同键），tooltip 承载父会话 id（「父在哪」的事实不丢）。
+ * 机器锚：`data-bg-absent-parent="1"`（chip 自身）+ 行级 `data-bg-parent-absent="1"`
+ * （bgTaskRowHtml 写点）。
+ * @param {string} parentSid 父会话 id @returns {string}
+ */
+function bgAbsentParentChipHtml(parentSid) {
+  const sid = String(parentSid || '').replace(/^team-/, '');
+  return '<span class="bg-task-origin bg-task-absent-parent" data-bg-absent-parent="1" title="' +
+    escapeHtml(t('subagents.parentAbsentTip', { sid })) + '">' +
+    escapeHtml(t('subagents.parentAbsent')) + '</span>';
 }
 
 /**
@@ -1506,7 +1635,7 @@ function bgOrphanRowHtml(row, bucketSid) {
  * 与热区照旧），收起即隐藏整棵子树（剪枝在渲染循环里做，行集合/计数不受影响）。
  * 野节点归置批（2026-11-05 腿③）：opts.wild——野节点行（父不可解析）的归置锚
  * `data-bg-orphan="1"`（判定式单点见 bgOrphanRowKeys；行构造器只负责把结论上锚）。
- * @param {string} id @param {any} info @param {{childLevel?: boolean, headLevel?: boolean, registryRow?: any, agentflowKey?: string, depth?: number, rowTitle?: string, shortName?: string, childCount?: number, collapsed?: boolean, wild?: boolean, orphanFrom?: string, orphanTitle?: string, bucketSid?: string, chainContinued?: boolean, chainCount?: number}} [opts]
+ * @param {string} id @param {any} info @param {{childLevel?: boolean, headLevel?: boolean, registryRow?: any, agentflowKey?: string, depth?: number, rowTitle?: string, shortName?: string, childCount?: number, collapsed?: boolean, wild?: boolean, orphanFrom?: string, orphanTitle?: string, absentParent?: {parentSid: string}, bucketSid?: string, chainContinued?: boolean, chainCount?: number}} [opts]
  * @returns {string}
  */
 /** Mail 续传地址 chip（AgentControl name/address 批 2026-11-05 · 作者令「agentcontrol
@@ -1605,6 +1734,10 @@ function bgTaskRowHtml(id, info, opts = {}) {
   // 孤儿来源角标（面板树批 2026-10-29 ①）：父不可见行提升顶层后仍标注来源。
   // 来源链批（2026-11-01 19:23）：桶键随 opts 下传——角标名字链解析的父判据输入。
   const orphanPart = (opts && opts.orphanFrom) ? bgOrphanChipHtml(opts, opts.bucketSid) : '';
+  // 「父不在场」标（三代层级批·判定表②）：有父而父行不在场的诚实标注——与「来自 …」
+  // 互斥（②态走本标，父会话 id 在 tooltip；③态走既有来源角标）。
+  const absentPart = (opts && opts.absentParent && opts.absentParent.parentSid)
+    ? bgAbsentParentChipHtml(opts.absentParent.parentSid) : '';
   // ── 显示名契约（2026-10-22 · 作者「先长名后收缩成 sessionId」批）────────────
   // 症状根因：恢复脸（activeAgents 快照）对 delegate 会话 meta/displayName 恒缺席
   // ⇒ agentName 回落 sessionId；live 脸 agentId == sessionId，同 key 合并「快照为准」
@@ -1866,6 +1999,9 @@ function bgTaskRowHtml(id, info, opts = {}) {
   // （over 锚面：这一行在独立归置分组里）。野行**不带** data-bg-agentflow（归属锚是
   // 「我属于哪次编排」的事实，野行的父不可解析 ⇒ 没有这个事实，不许凭空编一个）。
   const wildAttr = opts.wild ? ' data-bg-orphan="1"' : '';
+  // 三代层级批·判定表②：父不在场行的机器锚（真子行无此锚；野行走野组锚面 data-bg-orphan）。
+  const absentAttr = (opts && opts.absentParent && opts.absentParent.parentSid)
+    ? ' data-bg-parent-absent="1"' : '';
   // 归属锚（术语分层批 2026-11-05 · 铁律 8「归属靠结构，不写解释句」）：成员行带**所属
   // 整体行的定位键**（与 data-bg-key / bgRowLocatorKey 同一条缝）；整体行的实体锚
   // data-bg-entity="agentflow" 见上（来源条件，非层级恒真）。归属是结构事实，渲染面
@@ -1898,7 +2034,7 @@ function bgTaskRowHtml(id, info, opts = {}) {
   const line3 = (actionPart || summaryPart)
     ? '<div class="bg-task-line bg-task-row-line3 bg-task-subline">' + actionPart + summaryPart + '</div>'
     : '';
-  return '<div class="bg-task-row' + (rawState === 'done' && !chainContinued ? ' done' : '') + levelCls + '"' + levelAttr + wildAttr + agentflowAttr + bgDepthAttrs(Number(opts.depth) || 0) + bgCollapseAttrs(childCount, collapsedNow) + ' role="listitem" tabindex="0" ' + clickAttr + '>' +
+  return '<div class="bg-task-row' + (rawState === 'done' && !chainContinued ? ' done' : '') + levelCls + '"' + levelAttr + wildAttr + absentAttr + agentflowAttr + bgDepthAttrs(Number(opts.depth) || 0) + bgCollapseAttrs(childCount, collapsedNow) + ' role="listitem" tabindex="0" ' + clickAttr + '>' +
     caretPart +
     '<div class="bg-task-info">' +
       '<div class="bg-task-line bg-task-main bg-task-row-line1">' +
@@ -1907,7 +2043,7 @@ function bgTaskRowHtml(id, info, opts = {}) {
         uptimePart +
       '</div>' +
       '<div class="bg-task-line bg-task-row-line2 bg-task-badges">' +
-        entityPart + kindPart + bgAddrPart(info) + projectPart + orphanPart + taskPart + retriesPart +
+        entityPart + kindPart + bgAddrPart(info) + projectPart + orphanPart + absentPart + taskPart + retriesPart +
       '</div>' +
       line3 +
     '</div>' +
@@ -2138,13 +2274,25 @@ export function renderBgAgentDropdown() {
       else htmlParts.push(bgFlowChildHtml(c.node, row.group && row.group.key, agentflowKey, rowOpts));
       continue;
     }
-    // 顶层行（未被认领的 leftover / 收敛落点）：孤儿来源角标随行（depth=0——顶层行是
-    // 未成树的行，层级语义与既有形态一致）。
-    // 野节点归置批（2026-11-05 腿③）：判定式结论（row.wild，由 bgOrphanRowKeys 单点
-    // 算出）为真的行**不进正常树面**——它们没有可解析父，混在顶层行里等于假装自己
+    // root 锚（三代层级批）：标签面行——bgRootAnchorHtml 出镜（不带 .bg-task-row，
+    // 不进行集/计数）；caret/折叠走同一把缝（键 = 桶根会话 id），收起 = 根下整棵子树隐藏。
+    if (row.level === 'root') {
+      htmlParts.push(bgRootAnchorHtml(bgRowSessionKey(row), childCount, collapsed));
+      continue;
+    }
+    // 顶层行（未被认领的 leftover / 收敛落点）：层级随树走（判定表①②带真实深度锚）。
+    // 野节点归置批（2026-11-05 腿③）：判定式结论（row.wild，由野判定式单点算出）为真
+    // 的行**不进正常树面**——它们没有可解析父，混在顶层行里等于假装自己
     // 是「游离但正常」的行；收进独立归置分组（循环后统一出镜，一行不丢）。
     if (row.wild) { wildRows.push(row); continue; }
-    htmlParts.push(bgTaskRowHtml(row.id, row.info, row.orphan
+    // 三代层级批·判定表：①态（父在场）不带「来自 …」来源标（父可见，标即撒谎）；
+    // ②态（父不在场）带「父不在场」标（tooltip = 父会话 id）——两态都不进野组；
+    // registered-absent（在册可解析的跨帧竞态行）保持既有孤儿角标随行（零回归）。
+    if (row.parentState === 'absent-parent') {
+      htmlParts.push(bgTaskRowHtml(row.id, row.info, { ...rowOpts, absentParent: row.absentParent || null }));
+      continue;
+    }
+    htmlParts.push(bgTaskRowHtml(row.id, row.info, (row.orphan && row.parentState !== 'attached')
       ? { orphanFrom: row.orphan.parentSid, orphanTitle: row.orphan.parentTitle, bucketSid: sid, ...rowOpts }
       : rowOpts));
   }
