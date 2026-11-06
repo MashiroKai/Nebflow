@@ -339,10 +339,13 @@ class DelegateFreezeSpec extends CatsEffectSuite:
     assertEquals(DelegateFreeze.staleDormant(now - 100 * retain, now, remind, 0L), DelegateFreeze.Stage.Dormant)
   }
 
-  test("defaults: freeze gate on, 24h dormant prompt, 14d retention") {
+  test("defaults: freeze gate on, 24h dormant prompt, 7d retention (= the unified terminal TTL single source)") {
     assert(Defaults.DelegateFreezeEnabled, "the freeze leg ships enabled")
     assertEquals(Defaults.DelegateFreezeDormantRemindMs, 24L * 3600 * 1000)
-    assertEquals(Defaults.DelegateFreezeRetentionDays, 14L)
-    assertEquals(DelegateFreeze.retentionMs, 14L * 24 * 3600 * 1000)
+    // 终态 7 天 TTL 批（2026-11-06 · 作者令）：冻结保留期并入统一 TTL 单源
+    // （`Defaults.DelegateTerminalTtlMs`）——保存态不能无限堆积，7 天一并清理。
+    assertEquals(Defaults.DelegateTerminalTtlMs, 7L * 24 * 3600 * 1000)
+    assertEquals(Defaults.DelegateFreezeRetentionDays, 7L)
+    assertEquals(DelegateFreeze.retentionMs, 7L * 24 * 3600 * 1000)
   }
 end DelegateFreezeSpec

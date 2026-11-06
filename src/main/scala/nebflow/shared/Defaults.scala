@@ -1113,14 +1113,11 @@ object Defaults:
   def DelegateFreezeEnabled: Boolean =
     sys.props.getOrElse("nebflow.delegate.freeze.enabled", "true").toBoolean
 
-  /**
-   * 冻结保留期（天，缺省 14）：长期无人唤醒的冻结记录超此期后归档 registry
-   * 记录（`archivedAt` 旗，历史窗仍可查；转录/worktree/台账行原样留存）＋
-   * 面板留痕——**绝不静默删除**。0 = 关闭归档（永久保留，只做提示）。
-   * prop `nebflow.delegate.freeze.retentionDays`。
-   */
-  def DelegateFreezeRetentionDays: Long =
-    sys.props.getOrElse("nebflow.delegate.freeze.retentionDays", "14").toLong
+  /** Delegate terminal and saved-state TTL (7 days), shared by every cleanup surface. */
+  val DelegateTerminalTtlMs: Long = 7L * 24L * 3600L * 1000L
+
+  /** Compatibility accessor: freeze retention now uses the single terminal TTL. */
+  def DelegateFreezeRetentionDays: Long = DelegateTerminalTtlMs / (24L * 3600L * 1000L)
 
   /**
    * 长期无人唤醒的首次面板提示窗（ms，缺省 24h）：冻结超此龄 ⇒

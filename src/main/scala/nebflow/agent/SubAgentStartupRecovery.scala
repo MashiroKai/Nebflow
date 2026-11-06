@@ -6,7 +6,7 @@ import io.circe.JsonObject
 import io.circe.syntax.*
 import nebflow.actor.AgentCommand
 import nebflow.core.SessionStore
-import nebflow.core.delegate.{ChainStore, DelegateRegistry}
+import nebflow.core.delegate.{ChainStore, DelegateRegistry, DelegateTerminalTtl}
 import nebflow.core.tools.DelegateReportTool
 import nebflow.shared.*
 
@@ -337,7 +337,14 @@ object SubAgentStartupRecovery:
       .map { all =>
         val inFlight =
           all.filter(t => InFlightStatuses.contains(t.status) || t.status == "ready-to-merge" || t.status == FrozenStatus)
-        if includeRestartLost then inFlight ++ all.filter(isRestartLostRow) else inFlight
+        // TTL 静默闸（终态 7 天 TTL 批 2026-11-06 · 通知源永久沉默）：超期死亡行
+        // （终态时刻 ≥ Defaults.DelegateTerminalTtlMs 前）绝不进复活/收殓视野——
+        // 重启收殓不再把远古死会话翻出来报 FAILED；在飞行（非终态）永不受此闸。
+        val restartLost =
+          if includeRestartLost then
+            all.filter(isRestartLostRow).filterNot(t => DelegateTerminalTtl.rowExpired(t, System.currentTimeMillis()))
+          else Nil
+        inFlight ++ restartLost
       }
       .handleErrorWith(e => logger.warn(s"[startup-recovery] in-flight scan failed: ${e.getMessage}").as(Nil))
 
@@ -421,7 +428,12 @@ object SubAgentStartupRecovery:
       case None => IO.pure(Nil)
       case Some(rs) =>
         store.findAllTasks()
-          .map(_.filter(t => t.status == "completed" && t.source != "subtask"))
+          .map { rows =>
+            // TTL 静默闸（终态 7 天 TTL 批 2026-11-06）：超期 completed 行（终态时刻
+            // ≥ 7 天前）不再被自动收尾——远古收尾报告绝不重投；7 天内的收尾照旧。
+            val now = System.currentTimeMillis()
+            rows.filter(t => t.status == "completed" && t.source != "subtask" && !DelegateTerminalTtl.rowExpired(t, now))
+          }
           .handleErrorWith(e => logger.warn(s"[startup-recovery] completed-row scan failed: ${e.getMessage}").as(Nil))
           .flatMap(_.traverseFilter(t => finalizeOne(sessionStore, rs, t)))
           .flatMap { ids =>
