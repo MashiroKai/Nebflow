@@ -1130,6 +1130,22 @@ body.mobile-layer #fm-chat-overlay {
 }
 /* 会话窗（.fm-modal）：窗头收缩进页头之下（页面壳已有返回/标题），窗体吃满。
    输入行贴页面底缘（dock 让位由页面底缘承担）。 */
+/* ── 桌面「窗头悬浮 + 无边缘」批在手机层的落点（contact-panel-unify 链 2026-11-06）──
+   桌面档两件事在手机层必须改写，否则会「带过来一个错位的让位」：
+     ① 桌面的窗头让位 `.fm-flow{padding-top:--fm-head-clear}` 在这里**不成立** ——
+        手机层的 `.fm-modal-header` 是零高占位（见下方 ⑥，身份头改由 `.mh-idhead`
+        悬浮承担），页体顶让位由 `.mobile-page-body` 的 `--mtitle-lead` 负责 ⇒
+        这里把它压回一档普通呼吸，禁双份让位（否则首条消息凭空下移 72px）。
+     ② 输入条在桌面上已改「悬浮毛玻璃条」（材质/圆角/内距全在 css/friends.css，
+        `.nf-glass` 由 js/messages/fmComposer.js 挂类）—— 手机层只补**落位**：
+        左右 12（与 dock 胶囊同轴）+ 底 12（页面壳已让 safe-area 与 dock 足迹），
+        宽度不溢出 375。材质与圆角**不在这里重写**（禁第二套读数）。 */
+body.mobile-layer .mobile-page[data-page='conversation'] .fm-flow {
+  padding-top: var(--ds-space-2);
+}
+body.mobile-layer .mobile-page[data-page='conversation'] .fm-input-bar {
+  margin-bottom: var(--ds-space-3);
+}
 
 /* ── 任务页面板（taskPanel.js 数据/卡渲染同源；浮层几何退役）────────── */
 body.mobile-layer .mh-tpanel[hidden] { display: none; }

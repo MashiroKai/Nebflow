@@ -197,6 +197,7 @@ status: active
 | T19 | 手机 canvas 工具带 | `.mf-cv-toolbar` | 零画 | 同上，子件是 `.g2-fab` 圆钮 |
 | T20 | 手机图谱 pane 条 | `.wg-panebar` | 零画 | 同上，子件是 `.wg-search`/`.wg-chip`（成员表在册） |
 | T21 | 手机 canvas 玻璃带 | `.mf-strip::before` | 毛玻璃 | 方案 C 的 64px 顶栏玻璃面（成员表在册）：正文滚进带里只剩色块，滚出 64px 交给 28px 渐隐带化开（厚度与单源另由 `scripts/check-mobile-canvas-strip.mjs` 的 S1/S4 钉死） |
+| T22 | 会话窗顶栏（好友/群/设备） | `.fm-modal-header` | 毛玻璃 | 悬浮覆盖在滚动区之上（`position:absolute`），内容从底下穿过；材质与 `#header` **同一条共享声明**（css/glass.css「顶部悬浮头」块），令牌 = `--nf-head-*`（contact-panel-unify 收编批 2026-11-06；rebase 时原 T21 号位与手机 canvas 玻璃带撞号，两边并列保留、本条顺延 T22） |
 
 ### 7.3 零画带（为什么 α = 0 不算违规）
 

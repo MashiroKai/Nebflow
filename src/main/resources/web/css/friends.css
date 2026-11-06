@@ -648,6 +648,17 @@ button.fm-req-decline:focus-visible {
   padding: 0;
   overflow: hidden;
   position: relative;
+  /* ── 窗头让位的两个派生量（contact-panel-unify 链「顶栏与输入框仿照主会话」）──
+     窗头 = **离流悬浮覆盖**（`.fm-modal-header` position:absolute，见下），所以
+     滚动区必须自己让出窗头的可视足迹，否则首条消息被压在窗头底下：
+       --fm-head-h     = 窗头实测高（= 令牌公式 2×内距 + 头像行 + 2×描边）
+       --fm-head-clear = 窗头高 + 净空（`--nf-head-gap`，替代被摘除的那条分隔线）
+     两个值都从 stand-tokens.css 的 `--nf-head-*` 派生 ⇒ 令牌一改，两面同步，
+     不存在「窗头改了高、让位忘了跟」的第二次手写。（判据：窗头 abs 覆盖 +
+     滚动容器 padding-top 让位；另一条路「flow 负向顶入窗头高」不用 —— 负边距
+     会把滚动条的贴底判定与 anchor 读数一起带偏。） */
+  --fm-head-h: var(--nf-head-h-avatar);
+  --fm-head-clear: calc(var(--fm-head-h) + var(--nf-head-gap));
 }
 
 /* ── 修正③（作者 2026-09-19 04:22）：「对话框样式参考主窗口（弹窗面板 = 毛玻璃
@@ -668,11 +679,31 @@ button.fm-req-decline:focus-visible {
        `.fm-select-bar` 三处同族），本批不动（改它须同步 4 处断言，收益 ≠ 0 但风险无关本令）。
      · 🔴 **有据偏离 2**：`.fm-modal` 宽度 560px / 高度 70vh 保持 —— 主窗口弹窗宽度
        由内容定（400/640px 等），无「弹窗宽度」单一语言项。 */
+/* ── 窗头 = 悬浮玻璃条（contact-panel-unify 链 · 作者令 2026-11-06「顶栏做成完全
+   悬浮且无边缘的样式，内容可以从下方穿过」+「仿照主会话」）──────────────────
+   上面那段「有据偏离 1」的两条前提**已被本令取代**（逐条对账，不是悄悄改）：
+     · 它当年靠 `.fm-flow` 的 border-top 假装分隔线 → 本令要「无边缘」，那条线
+       已摘除（见 `.fm-flow`），分隔改由**留白**承担（净空 = `--nf-head-gap`）；
+     · 它当年让窗头「沾在流里、与弹窗标题带对齐」→ 本令要「完全悬浮」，窗头改为
+       `position:absolute` 覆盖在滚动区之上，与主会话 `#header` 同一套材质与令牌。
+   材质/内距/圆角/零下边缘 = css/glass.css「顶部悬浮头」共享声明（两面同一条），
+   令牌 = css/stand-tokens.css 的 `--nf-head-*`。本块只写**落位与高度**：
+     · position:absolute 的包含块 = `.fm-modal`（position:relative，既有）⇒
+       窗头不随消息滚动、也不吃 `.fm-flow` 的裁剪；
+     · height 走派生量 `--fm-head-h`（内容盒恰好 = 头像行 40：62 − 2×1 描边 − 2×10
+       内距 = 40）⇒ 头像槽零挤压、行基线不变；
+     · z-index 2：压在滚动区之上（滚动区无 z-index ⇒ 同级后声明即可，显式写死
+       防将来有人给流加定位后窗头被穿到下面）。 */
 .fm-modal-header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 2;
+  height: var(--fm-head-h);
   display: flex;
   align-items: center;
   gap: var(--ds-space-inline-gap);
-  padding: var(--ds-space-3) var(--ds-space-4) var(--ds-space-3) var(--ds-space-5);
 }
 
 /* 会话窗头头像槽（40px 档；**窗头头像槽**，三类全挂（作者 2026-09-21 16:54 令
@@ -1001,8 +1032,16 @@ button.fm-req-decline:focus-visible {
   display: flex;
   flex-direction: column;
   gap: var(--ds-space-inline-gap);
-  padding: var(--ds-space-2) var(--ds-space-4) var(--ds-space-block-y);
-  border-top: 1px solid var(--glass-etched-border);
+  /* 窗头让位 = 令牌派生量（不是又一个手写数）：
+       padding-top = --fm-head-clear（窗头高 + 净空）
+     滚动起来以后内容照样从窗头底下过 —— 这是滚动容器的 padding-top 的本义：
+     它属于**滚动内容**，滚上去就会钻到 padding 区里（= 窗头背后），静止贴顶时
+     首条消息恰好落在窗头下缘之外。
+     🔴 `border-top` 已摘除（作者令「无边缘」）：那条 1px etched 线是「顶栏有边缘 /
+     内容被切断」的直接成因之一。分隔职责改由留白承担（净空 = --nf-head-gap，写入
+     --fm-head-clear 一档）；窗内其余两处（.fm-select-bar / .fm-device-desc）本来就
+     靠间距分开，无第二条线依赖它。 */
+  padding: var(--fm-head-clear) var(--ds-space-4) var(--ds-space-block-y);
 }
 
 /* ⑩ 消息流状态行（作者 2026-09-14 17:21 令「不要空白」）：消息区**永不为空** ——
@@ -1928,12 +1967,25 @@ body > .fm-context-menu { z-index: 10001; }
 .fm-select-act:focus-visible,
 .fm-select-exit:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: 0; }
 
-/* Input bar */
+/* Input bar ── 悬浮毛玻璃条（contact-panel-unify 链 · 作者令 2026-11-06：
+   「输入框：同样采用悬浮、毛玻璃半透明、带大圆角的设计」）─────────────────────
+   与主会话 `#input-bar` **同一套**（逐项对齐，不是另造第二种输入面）：
+     · 材质 = `.nf-glass`（DOM 上挂着，js/messages/fmComposer.js）⇒ 玻璃底/模糊/
+       细边/三档影全走唯一毛玻璃标准；本文件零 backdrop-filter、零自写色值；
+     · 圆角 = `--ds-radius-shell`（20px，= #input-bar 外壳档；大圆角判据 ≥16px）；
+     · 内距 = `--nf-field-pad-y/-x`（6/12，= #input-bar 的内距档，取自输入面令牌段）；
+     · 内件 = `input.cfg-input.fm-input.nf-field--bare`（裸件档：外壳已给材质，
+       内件只留字与 caret —— 与主会话 `#input` 同档，禁「框里套框」）；
+     · 落位 = 流内悬浮：左右/下各留一档间距，四边不贴窗体边（作者说的「悬浮」）。
+   🔴 原 `border-top: 1px solid var(--glass-etched-border)` 与 `padding: 10/16/14`
+   一并摘除 —— 那条线是「输入条有边缘」的直接成因，与本令的「无边缘+悬浮」相反。 */
 .fm-input-bar {
   display: flex;
+  align-items: center;
   gap: var(--ds-space-2);
-  padding: var(--ds-space-block-y) var(--ds-space-4) 14px;
-  border-top: 1px solid var(--glass-etched-border);
+  margin: 0 var(--ds-space-3) var(--ds-space-3);
+  padding: var(--nf-field-pad-y) var(--nf-field-pad-x);
+  border-radius: var(--ds-radius-shell);
 }
 
 .fm-input { flex: 1; min-width: 0; }
@@ -2515,6 +2567,12 @@ body > .fm-context-menu { z-index: 10001; }
 }
 /* devrow 收起态：面板不在场 ⇒ 本行零子节点 ⇒ 整条不占位（不留 6px 尾距）。 */
 .fm-device-desc:empty { display: none; }
+/* 窗头悬浮批（contact-panel-unify 链）：窗头离流以后，**设备窗描述面板行**成了
+   滚动区之前唯一还会落在窗体顶缘的流内件 ⇒ 展开时它必须自己让出窗头的可视足迹，
+   否则抽屉直接压在窗头玻璃下面。让位量同样取令牌派生量（= 窗头高），并让紧随其后
+   的 `.fm-flow` 只剩净空一档（用 `:has()` 精确判定，不给别窗加规则）。 */
+.fm-modal > .fm-device-desc:not(:empty) { margin-top: var(--fm-head-clear); }
+.fm-modal:has(> .fm-device-desc:not(:empty)) > .fm-flow { padding-top: var(--nf-head-gap); }
 .fm-device-desc-btn {
   display: inline-flex;
   align-items: center;

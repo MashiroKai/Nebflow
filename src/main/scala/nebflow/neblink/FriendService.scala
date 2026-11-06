@@ -129,6 +129,11 @@ final class FriendService(
 ) extends FriendServicePort: // 严格DAG第⑥步第二批裁定(2026-09-27,R11):原地混入 core 窄口(searchUser/sendAsAgent/refreshFriends/listGroups/sendGroupAsAgent/listFriends,签名镜像,行为保持)
   private val logger = NebflowLogger.forName("nebflow.neblink.friends")
 
+  // profile-sync 批（2026-11-06）：本实例是描述面的**唯一写者**，跨设备同步通道必须
+  // 与它共用同一个 Ref（远端收敛改磁盘却漏改内存 Ref ⇒ 下次本地写把远端值覆盖回去）。
+  // 自注册先例 = `NeblinkWiring` 的 LlmRuntimePort / DeviceMailAck 自注册段。
+  ProfileSync.attachDescriptions(descriptionsRef)
+
   // ===== 本地好友备注（2026-09-12 好友消息改造批 ⑦）=====
 
   /**
@@ -249,13 +254,13 @@ final class FriendService(
    * `true` = 存键；`false` = **删键**（清除），与既有两个本地写面同族。
    */
   def setFriendMuted(friendUserId: String, muted: Boolean): IO[Unit] =
-    putDescription { d =>
+    putDescription(Nil) { d =>
       d.copy(friendMuted = if muted then d.friendMuted + (friendUserId -> true) else d.friendMuted - friendUserId)
     }.void
 
   /** 顶置写入（同上：`true` = 存键，`false` = 删键）。 */
   def setFriendPinned(friendUserId: String, pinned: Boolean): IO[Unit] =
-    putDescription { d =>
+    putDescription(Nil) { d =>
       d.copy(friendPinned = if pinned then d.friendPinned + (friendUserId -> true) else d.friendPinned - friendUserId)
     }.void
 
@@ -268,7 +273,9 @@ final class FriendService(
   private def applyGroupDescriptions(gs: List[GroupSummary]): IO[List[GroupSummary]] =
     descriptionsRef.get.map { d =>
       gs.map { g =>
-        val desc = g.description.map(_.trim).filter(_.nonEmpty)
+        val desc = g.description
+          .map(_.trim)
+          .filter(_.nonEmpty)
           .orElse(d.groupDescription.get(g.groupId).filter(_.nonEmpty))
         val remark = d.groupRemark.get(g.groupId).filter(_.nonEmpty)
         g.copy(description = desc, remark = remark)
@@ -278,14 +285,30 @@ final class FriendService(
   /** 双描述全量快照（四个字段一次读；写面唯一入口是下面四个 setter）。 */
   def descriptions: IO[ProfileDescriptions] = descriptionsRef.get
 
-  /** 单字段写入的公共形（trim → 空串删键 → 改 Ref → 落盘，`setRemark` 逐行同形）。 */
-  private def putDescription(f: ProfileDescriptions => ProfileDescriptions): IO[ProfileDescriptions] =
+  /**
+   * 单字段写入的公共形（trim → 空串删键 → 改 Ref → 落盘，`setRemark` 逐行同形）。
+   *
+   * profile-sync 批（2026-11-06，作者令「描述信息需要支持云同步」）：`touched` = 本次
+   * **真正改动**的同步键（`ProfileSync.keyOf` 命名空间：`friendBio:<userId>` /
+   * `groupRemark:<groupId>` / `groupDescription:<groupId>` / `selfBio`）。落盘成功后
+   * 在同一点打戳（网关时钟 ms + 本机设备 id）并 fire-and-forget 外推——**写面仍是
+   * 唯一写者**，跨设备同步只是它的尾巴（本批没有第二个写入口）。
+   * `touched = Nil` = 不同步的设备本地偏好（`friendMuted` / `friendPinned`）。
+   */
+  private def putDescription(touched: List[String])(
+    f: ProfileDescriptions => ProfileDescriptions
+  ): IO[ProfileDescriptions] =
     descriptionsRef
       .modify { cur =>
         val next = f(cur)
         (next, next)
       }
       .flatTap(ProfileDescriptionStore.save)
+      .flatTap { _ =>
+        // fire-and-forget：`.start` 起 fiber 即返回（不自起第二个 runtime），打戳/外推
+        // 的失败绝不回灌写路径（错误已在 ProfileSync 内收敛成 WARN）。
+        ProfileSync.afterLocalWrite(touched).handleError(_ => ()).start.void
+      }
 
   /**
    * 好友 `bio` 的**本地缓存**写入（语义真源在上游，本仓只缓存/回显 ⇒ UI 必须标
@@ -294,14 +317,14 @@ final class FriendService(
    */
   def setFriendBio(friendUserId: String, bio: String): IO[Unit] =
     val v = bio.trim
-    putDescription { d =>
+    putDescription(List(ProfileSync.keyOf(ProfileSync.KindFriendBio, friendUserId))) { d =>
       d.copy(friendBio = if v.isEmpty then d.friendBio - friendUserId else d.friendBio + (friendUserId -> v))
     }.void
 
   /** 我的群备注（纯本地真源）。trim 后空串 = 清除。 */
   def setGroupRemark(groupId: String, remark: String): IO[Unit] =
     val v = remark.trim
-    putDescription { d =>
+    putDescription(List(ProfileSync.keyOf(ProfileSync.KindGroupRemark, groupId))) { d =>
       d.copy(groupRemark = if v.isEmpty then d.groupRemark - groupId else d.groupRemark + (groupId -> v))
     }.void
 
@@ -311,16 +334,15 @@ final class FriendService(
    */
   def setGroupDescription(groupId: String, description: String): IO[Unit] =
     val v = description.trim
-    putDescription { d =>
+    putDescription(List(ProfileSync.keyOf(ProfileSync.KindGroupDescription, groupId))) { d =>
       d.copy(
-        groupDescription =
-          if v.isEmpty then d.groupDescription - groupId else d.groupDescription + (groupId -> v)
+        groupDescription = if v.isEmpty then d.groupDescription - groupId else d.groupDescription + (groupId -> v)
       )
     }.void
 
   /** 我给自己写的介绍（本地真源，无 key：单值）。trim 后空串 = 清除。 */
   def setSelfBio(bio: String): IO[Unit] =
-    putDescription(d => d.copy(selfBio = bio.trim)).void
+    putDescription(List(ProfileSync.KindSelfBio))(d => d.copy(selfBio = bio.trim)).void
 
   /**
    * F1: resolve the authoritative live client per call. None (logged out /

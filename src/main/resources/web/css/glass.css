@@ -106,7 +106,11 @@
 .bypass-toggle:hover,
 .header-dropdown-menu,
 .global-perm-toast,
+/* 顶部悬浮头两面成对入册（contact-panel-unify 收编批 2026-11-06）：材质在本文件
+   上方的「顶部悬浮头」共享声明里成套给出（玻璃底/描边/内高光/零下边缘），此处
+   成对登记保证**任何一面被单独摘掉时账本立刻可见**，并为 G7b 的 T1/T22 提供成员面。 */
 #header,
+.fm-modal-header,
 #bg-dropdown,
 .notif-item,
 .ask-pending-row, .ask-pending-next,
@@ -331,6 +335,35 @@ html[data-theme="light"] {
 .ask-bub { background: var(--glass-bg); }
 
 /* ── ② 面级浮件档（材质三件套 + 顶缘折射线）──────────────────────────── */
+
+/* ── 顶部悬浮头（top overlay header）· 共享声明 · 收编批 2026-11-06 ────────
+   作者令（contact-panel-unify 链）：「顶栏做成完全悬浮且无边缘的样式，内容可以
+   从下方穿过」+「仿照主会话」。此前是**两套**实现：#header 的材质写在 chat.css、
+   会话窗窗头的「材质」根本不存在（只有一句 padding，靠 `.fm-flow` 的 border-top
+   假装分隔线）。现在两面共用**这一条声明**：
+     · 消费者 ①  `#header`          主会话顶栏（参照物）——几何/内部件留 css/chat.css
+     · 消费者 ②  `.fm-modal-header` 好友/群/设备会话窗顶栏——几何/内部件留 css/friends.css
+     · 令牌  = css/stand-tokens.css 的 `--nf-head-*` 段（高度/内距/圆角/玻璃底单源）
+     · 规范  = design-language 插件 glass-spec.md §7.2 登记面 T1 / T22（原稿 T21
+       号位在 rebase 时被手机 canvas 玻璃带占用，两边并列保留、本面顺延 T22）
+   收编文件清单（改这四面之一都要回到本块对账）：css/chat.css、css/friends.css、
+   css/stand-tokens.css、css/glass.css（本块）。
+   🔴 零下边缘：底缘**不画任何东西** —— 无 border-bottom（1px 透明化只保盒尺寸，
+   布局零移）、无外投影、无洗色遮罩带。内容（消息）从窗头下方穿过，靠玻璃底 +
+   强模糊把穿过的内容洗成颜色而不是字形（= 唯一毛玻璃标准「透色不透内容」）。 */
+#header,
+.fm-modal-header {
+  background: var(--nf-head-bg);
+  -webkit-backdrop-filter: var(--nf-glass-filter);
+  backdrop-filter: var(--nf-glass-filter);
+  border: var(--nf-head-border-w) solid var(--nf-glass-border-color);
+  border-bottom-color: transparent;
+  box-shadow: var(--nf-head-shadow);
+  border-radius: var(--nf-head-radius);
+  padding: var(--nf-head-pad-y) var(--nf-head-pad-x);
+  box-sizing: border-box;
+  color: var(--color-frame-text-bright);
+}
 
 /* 主会话输入框（基准件 C 原配方回归 = v2 改皮撤销，设计稿 D10；几何/状态
    过渡留在 input.css，frozen/disconnected/voice 高特异态不受影响） */
