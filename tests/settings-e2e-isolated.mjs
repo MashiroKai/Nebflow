@@ -29,28 +29,36 @@ await page.click('#settings-btn');
 // provider 卡来自 state.parsedConfig（WS serverConfig 送达后 renderSettings
 // 才有内容；面板先开，再等数据到位——renderSettings 会在 echo 后重绘）
 await page.waitForFunction(() => document.querySelectorAll('#provider-list .cfg-card').length > 0, null, { timeout: 20000 });
-// 配置面风格统一批（2026-10-31）：生图/JeV 为层级下钻面——点入口行进浮层，
-// 内容节点收编进 .config-drill-overlay 后可见可交互。
-await page.click('#imagegen-advance-toggle');
-await page.waitForSelector('.config-drill-overlay #imagegen-advance-body', { timeout: 15000 });
-await page.waitForSelector('#imagegen-section-wrap .cfg-form-group, #imagegen-section-wrap .imagegen-notcompiled', { timeout: 15000 });
-await page.waitForTimeout(1000);
+// provider-add-tabs 批（2026-11-06 作者令「添加服务商统一成标签切换类型 +
+// 单一服务商面板」）：生图/JeV = 统一服务商面板的类型标签——点 Image generation
+// 标签后列表/新增/表单都在面板内（不再有层级下钻浮层）。
+await page.waitForSelector('#provider-panel-host .nf-provider-panel', { timeout: 15000 });
+await page.waitForTimeout(600); // 投影（provider-types/imagegen/jev）落地重绘
+await page.evaluate(() => document.querySelector('.nf-ptab[data-provider-type="imagegen"]')?.click());
+await page.waitForSelector('.nf-provider-panel[data-type="imagegen"]', { timeout: 15000 });
+await page.waitForTimeout(800);
 
 const check = (name, ok, extra = '') => {
   console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${extra ? ' — ' + extra : ''}`);
   if (!ok) process.exitCode = 1;
 };
 
-// ① JeV key 明文可见（eye 缺省明文；等回读链完成）
-await page.waitForFunction(() => (document.getElementById('cfg-jev-key-value')?.value || '').length > 0, null, { timeout: 10000 })
-  .catch(() => {});
-const jevVal = await page.inputValue('#cfg-jev-key-value').catch(() => '');
-check('① jev key 明文在场', jevVal.trim().length > 0, `len=${jevVal.trim().length}, head=${jevVal.slice(0, 6)}***`);
-const eyePressed = await page.getAttribute('#jev-key-eye', 'aria-pressed');
-check('① eye 缺省=明文态', eyePressed === 'false', `aria-pressed=${eyePressed}`);
-// JeV 分配区收合态（C 件同款 STT 高级设置折叠）——展开后截图
-await page.click('#jev-advance-toggle');
-await page.locator('.cfg-form-group:has(#cfg-jev-key-value)').first().screenshot({ path: `${SHOT}/S1-jev-key-plaintext.png` });
+// ① JeV key 字段面（provider-add-tabs 批换代：统一表单值不回显——存量值回读
+// 面随旧表单退役；语义 = 空态 + 覆写占位词，值只进写入腿）
+await page.evaluate(() => document.querySelector('.nf-ptab[data-provider-type="jev"]')?.click());
+await page.waitForSelector('.nf-provider-panel[data-type="jev"]', { timeout: 15000 });
+await page.evaluate(() => document.querySelector('#provider-list .cfg-card .cfg-card-title')?.click());
+await page.waitForSelector('#cfg-modal [data-field="apiKey"]', { timeout: 15000 });
+const jevFace = await page.evaluate(() => {
+  const f = document.querySelector('#cfg-modal [data-field="apiKey"]');
+  return { value: f ? f.value : null, placeholder: f ? f.placeholder : '', modalOpen: !!document.getElementById('cfg-modal') };
+});
+check('① jev key 字段空态（值不回显）', jevFace.modalOpen && jevFace.value === '', `placeholder=${jevFace.placeholder}`);
+check('① 占位词 = 覆写提示', String(jevFace.placeholder).includes('覆盖'), `placeholder=${jevFace.placeholder}`);
+await page.locator('#cfg-modal').screenshot({ path: `${SHOT}/S1-jev-key-field.png` });
+await page.evaluate(() => document.getElementById('cfg-modal')?.remove());
+await page.evaluate(() => document.querySelector('.nf-ptab[data-provider-type="imagegen"]')?.click());
+await page.waitForSelector('.nf-provider-panel[data-type="imagegen"]', { timeout: 15000 });
 
 // ③ 调试徽标（功能开放批 2026-10-30：正式开放，徽标退役——必须零渲染）
 const badge = await page.locator('.imagegen-badge').count();
@@ -58,18 +66,24 @@ check('③ 调试徽标退役（零渲染）', badge === 0, `count=${badge}`);
 
 // ② 缺 key 形态（warn 徽标 待录入）→ 录入 → 已配置（ok）
 const badgeDump = await page.evaluate(() =>
-  Array.from(document.querySelectorAll('.st-badge')).map((b) => ({
+  Array.from(document.querySelectorAll('#provider-panel-host .st-badge')).map((b) => ({
     tone: b.dataset.tone, text: (b.textContent || '').trim(),
-    inImagegen: !!b.closest('#imagegen-section-wrap'),
   })));
 console.log('  [diag badges]', JSON.stringify(badgeDump));
-const warnText = (await page.locator('#imagegen-section-wrap .st-badge[data-tone="warn"]').first().textContent().catch(() => '')) || '';
-check('② 缺 key=待录入(warn)', warnText.length > 0, `text=${warnText}`);
-const wrap = page.locator('#imagegen-section-wrap');
+const warnText = (await page.locator('#provider-panel-host .cfg-card .st-badge[data-tone="warn"]').first().textContent().catch(() => '')) || '';
+check('② 缺 key=未配置(warn 徽标在场)', warnText.length > 0, `text=${warnText}`);
+const wrap = page.locator('#provider-panel-host');
 await wrap.screenshot({ path: `${SHOT}/S2-imagegen-missing-key.png` });
 
-await page.fill('#cfg-imagegen-key', 'sk-e2e-imagegen-0000-verify');
-await page.click('#btn-save-imagegen-key');
+// 打开 zhipu 卡的统一表单录入 key（provider-add-tabs 批：保存腿 = 表单骨架）
+await page.evaluate(() => {
+  const card = [...document.querySelectorAll('#provider-list .cfg-card')]
+    .find((c) => c.querySelector('.cfg-card-title')?.textContent.trim() === 'zhipu');
+  card?.querySelector('.cfg-card-title')?.click();
+});
+await page.waitForSelector('#cfg-modal [data-field="apiKey"]', { timeout: 15000 });
+await page.fill('#cfg-modal [data-field="apiKey"]', 'sk-e2e-imagegen-0000-verify');
+await page.click('#cfg-modal-save');
 let proj = null;
 for (let i = 0; i < 30; i++) {
   proj = await page.evaluate(async (t) => {
@@ -80,7 +94,7 @@ for (let i = 0; i < 30; i++) {
   await page.waitForTimeout(500);
 }
 check('② 录入后 keyConfigured=true', proj?.providers?.zhipu?.keyConfigured === true, JSON.stringify(proj?.providers?.zhipu?.keyConfigured));
-const okText = (await page.locator('#imagegen-section-wrap .st-badge[data-tone="ok"]').first().textContent().catch(() => '')) || '';
+const okText = (await page.locator('#provider-panel-host .cfg-card .st-badge[data-tone="ok"]').first().textContent().catch(() => '')) || '';
 check('② 已配置(ok 徽标)', okText.length > 0, `text=${okText}`);
 await wrap.screenshot({ path: `${SHOT}/S3-imagegen-key-configured.png` });
 

@@ -1056,6 +1056,81 @@
 .cfg-card[data-active="1"] { border-color: rgb(var(--sapphire) / 0.55); }
 .cfg-card-action-row { display: flex; gap: 8px; margin-top: 8px; align-items: center; flex-wrap: wrap; }
 
+/* ── 服务商面板（provider-add-tabs 批 2026-11-06）──────────────────────────
+   作者令：「在『添加服务商』顶部加几个标签，支持选择添加比如生图模型的服务商等，
+   样式保持一致」+「我们添加的模型都会集中显示在同一个面板里」。
+   本段 = 服务商面板的**唯一造型单点**：类型标签（分段控件）+ 卡片类型徽标。
+   尺寸/选中态/底材与配置按钮族同一档（--ds-fs-btn 字号、--ds-radius-pill 圆角、
+   --ctl-neutral-bg / --ctl-primary-bg 实底），不新造第二套控件语言。
+
+   🔴 溢出零容忍（同批作者令「一定要加断言，保证所有文字都不能溢出」）：
+   面板里所有文字件的最外容器都允许换行或（徽标/单行件）尾部省略 + title 全文；
+   禁裸 white-space:nowrap（除已配 text-overflow:ellipsis 的徽标槽）。
+   判据 = tests/provider-panel-overflow.spec.mjs（320/375/1440 × 亮暗，真渲染）。 */
+.nf-provider-panel { display: flex; flex-direction: column; gap: var(--ds-space-2); min-width: 0; }
+.nf-provider-face-error { color: var(--ds-warn-icon); }
+/* 类型标签 = 分段控件：一条胶囊轨道，选中项落墨族实底（与主钮同一材质）。 */
+.nf-ptabs {
+  display: flex;
+  gap: var(--ds-space-half);
+  padding: var(--ds-space-half);
+  border-radius: var(--ds-radius-pill);
+  background: var(--ctl-neutral-bg);
+  min-width: 0;
+}
+.nf-ptab {
+  flex: 1 1 0;
+  min-width: 0;
+  border: 0;
+  background: none;
+  color: var(--ctl-neutral-ink);
+  font-family: var(--ds-font-ui);
+  font-size: var(--ds-fs-btn);
+  font-weight: var(--ds-fw-btn);
+  line-height: var(--ds-lh-tight);
+  padding: var(--ds-space-1h) var(--ds-space-1h);
+  border-radius: var(--ds-radius-pill);
+  cursor: pointer;
+  text-align: center;
+  /* 词面换行而不是撑宽（320 极窄档：「Image generation」必须落两行，不许把
+     轨道撑出面板）。 */
+  white-space: normal;
+  overflow-wrap: anywhere;
+  transition: background var(--dur-2) ease, color var(--dur-2) ease;
+}
+.nf-ptab[aria-selected="true"] { background: var(--ctl-primary-bg); color: var(--ctl-primary-ink); }
+.nf-ptab:focus-visible { outline: 2px solid var(--btn-focus-ring); outline-offset: 2px; }
+@media (hover: hover) {
+  .nf-ptab[aria-selected="false"]:hover { background: var(--ctl-neutral-bg-hover); }
+}
+/* 卡片类型徽标（每行自报类型；词面 = locales 的 settings.providerType.*）：
+   单行件 → 尾部省略号 + title 全文（组件已带 title）。 */
+.cfg-card-type {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 48%;
+  font-size: var(--ds-fs-meta);
+  font-weight: var(--ds-fw-title);
+  letter-spacing: 0.02em;
+  padding: 0 var(--ds-space-1h);
+  border-radius: var(--ds-radius-badge);
+  background: var(--ds-etched-bg);
+  border: 1px solid var(--ds-etched-border);
+  color: var(--color-frame-text-muted);
+  line-height: var(--ds-lh-tight);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 统一面板里的长文本件：一律允许折行（卡名 / 副标 / 模型 id 都不许顶宽）。 */
+.cfg-card-title { min-width: 0; overflow-wrap: anywhere; }
+.cfg-card-sub { min-width: 0; overflow-wrap: anywhere; }
+/* 模型 id 行（provider-add-tabs 批溢出零容忍）：原 flex-shrink:0 + min-width:80px
+   是「长模型 id 顶出卡片」的直接成因（max-content 不缩 ⇒ 面板横向可滚）。
+   改为可缩 + anywhere 折行：id 在行内折行，vision 徽标仍靠右。 */
+.cfg-model-name { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.cfg-model-row { min-width: 0; }
+
 /* ── Model chain chips (shared: /model panel, agent detail, flow viewers) ── */
 .mchain {
   display: flex;
@@ -1305,8 +1380,11 @@
   flex: 1;
   min-width: 0;
 }
-.cfg-model-row .cfg-model-id { flex: 2; }
-.cfg-model-row .cfg-model-ctx { flex: 1; }
+.cfg-model-row .cfg-model-id { flex: 2; min-width: 0; }
+/* provider-add-tabs 批（溢出零容忍断言 320px 弹窗腿）：ctx 输入框要能缩——
+   数字输入框的固有宽度（size 默认 ~20ch）在 320px 弹窗四件一行时顶出裁剪；
+   flex-basis 120px + min-width:0 让它参与收缩，值域滚动由输入框内滚承担。 */
+.cfg-model-row .cfg-model-ctx { flex: 1 1 120px; min-width: 0; }
 .cfg-model-remove {
   background: none;
   border: 1px solid transparent;

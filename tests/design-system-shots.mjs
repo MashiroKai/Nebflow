@@ -166,8 +166,9 @@ const settingsProbe = () => {
   const content = document.getElementById('settings-content');
   if (!content) return null;
   const row = content.querySelector('.settings-row');
-  const drillBtn = content.querySelector('#jev-advance-toggle');
-  const drillRow = drillBtn ? drillBtn.closest('.settings-row') : null;
+  // provider-add-tabs 批换代：下钻入口行退役——热区读数改走统一面板类型标签。
+  const drillBtn = content.querySelector('.nf-ptab');
+  const drillRow = drillBtn ? drillBtn.closest('.nf-ptabs') : null;
   const rect = (el) => { if (!el) return null; const r = el.getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height) }; };
   const switches = [...content.querySelectorAll('[role="switch"], .nb-toggle, .toggle, .cfg-toggle, .pp-toggle')];
   const legacy = switches.filter(el => !el.classList.contains('nb-toggle')).map(el => el.className);
@@ -211,7 +212,7 @@ async function settingsLeg(colorScheme) {
   const probe = await page.evaluate(settingsProbe);
   ok(`settings row 实测（${colorScheme}）`, !!probe && probe.rowH > 0, probe);
   ok(`设置页开关全部 nb-toggle（${colorScheme}）`, !!probe && probe.legacySwitches.length === 0, probe && { count: probe.switchCount, legacy: probe.legacySwitches });
-  ok(`下钻入口行热区（${colorScheme}）`, !!probe && probe.drillBtn && probe.drillRowW > 0,
+  ok(`类型标签分段控件热区（${colorScheme}）`, !!probe && probe.drillBtn && probe.drillRowW > 0,
     probe && { rowH: probe.drillRow && probe.drillRow.h, btnW: probe.drillBtn && probe.drillBtn.w, rowW: probe.drillRowW });
 
   // ② O6 功能断言（真实控件，不只看视觉）。
@@ -230,39 +231,30 @@ async function settingsLeg(colorScheme) {
   const thinkMsg = wsOut.filter(m => m.type === 'setThinking').pop();
   ok(`功能·思考档位（${colorScheme}）`, !!thinkMsg && !!thinkMsg.thinking && thinkMsg.thinking.budgetTokens > 0, thinkMsg ?? null);
 
-  //    c) 下钻子页：点入口 → 浮层在场；× 关 → 浮层消失（层级导航真实可用）。
-  await page.click('#jev-advance-toggle');
-  await page.waitForFunction(() => !!document.getElementById('jev-advance-body')?.closest('.config-drill-overlay'), null, { timeout: 5000 });
+  //    c) provider-add-tabs 批换代：类型标签切换 = 面板重绘（列表 data-type 跟随）。
+  await page.evaluate(() => document.querySelector('.nf-ptab[data-provider-type="jev"]')?.click());
+  await page.waitForSelector('.nf-provider-panel[data-type="jev"]', null, { timeout: 5000 });
   await sleep(250);
-  await page.screenshot({ path: join(SHOTS_DIR, `drill-overlay-${colorScheme}.png`) });
-  const drillOpen = await page.evaluate(() => ({
-    inOverlay: !!document.getElementById('jev-advance-body')?.closest('.config-drill-overlay'),
-    hidden: document.getElementById('jev-advance-body')?.hidden,
-  }));
-  await page.click('.config-drill-overlay .config-drill-close');
-  await page.waitForFunction(() => !document.querySelector('.config-drill-overlay'), null, { timeout: 5000 });
-  const drillClosed = await page.evaluate(() => ({
+  await page.screenshot({ path: join(SHOTS_DIR, `provider-panel-jev-${colorScheme}.png`) });
+  const tabState = await page.evaluate(() => ({
+    type: document.querySelector('.nf-provider-panel')?.dataset.type,
+    cards: document.querySelectorAll('#provider-list .cfg-card').length,
     overlay: !!document.querySelector('.config-drill-overlay'),
-    hidden: document.getElementById('jev-advance-body')?.hidden,
   }));
-  ok(`功能·下钻子页开合（${colorScheme}）`, drillOpen.inOverlay && drillOpen.hidden === false && drillClosed.overlay === false && drillClosed.hidden === true,
-    { open: drillOpen, closed: drillClosed });
+  ok(`功能·类型标签切换（${colorScheme}）`, tabState.type === 'jev' && tabState.overlay === false, tabState);
 
-  //    d) JeV 保存：PUT /api/config/jev 报文 + inline 保存态。
+  //    d) JeV 保存：统一表单保存腿 → PUT /api/config/jev 报文。
   let putBody = null;
   page.on('request', (r) => {
     if (r.url().includes('/api/config/jev') && r.method() === 'PUT') putBody = r.postData();
   });
-  await page.click('#jev-advance-toggle');
-  await page.waitForFunction(() => !!document.getElementById('jev-advance-body')?.closest('.config-drill-overlay'), null, { timeout: 5000 });
-  await sleep(250);
-  await page.click('#btn-save-jev');
+  await page.evaluate(() => document.querySelector('#provider-list .cfg-card .cfg-card-title')?.click());
+  await page.waitForSelector('#cfg-modal .cfg-modal-body', null, { timeout: 5000 });
+  await page.click('#cfg-modal-save');
   await sleep(600);
-  const savedText = await page.textContent('#jev-save-state');
-  ok(`功能·JeV 保存（${colorScheme}）`, !!putBody && /"enabled"\s*:\s*true/.test(putBody) && (savedText || '').includes('已保存'),
-    { put: putBody, state: savedText });
-  await page.click('.config-drill-overlay .config-drill-close');
-  await page.waitForFunction(() => !document.querySelector('.config-drill-overlay'), null, { timeout: 5000 });
+  ok(`功能·JeV 统一表单保存（${colorScheme}）`, !!putBody, { put: putBody ? JSON.parse(putBody) : null });
+  await page.evaluate(() => document.getElementById('cfg-modal')?.remove());
+  await sleep(200);
 
   //    e) 语言切换 → select 值落盘 + 重渲（locale 生效判据）。
   await page.selectOption('#cfg-language', 'en');

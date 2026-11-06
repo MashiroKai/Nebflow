@@ -114,8 +114,12 @@ if (chevronEmitters.length !== 1 || chevronEmitters[0] !== rel(ROWS_MODULE)) {
   add('R2', ROWS_MODULE, `chevron 发射点应唯一 = ${rel(ROWS_MODULE)}，实得 [${chevronEmitters.join(', ')}]`);
 }
 // 每个可点进行都必须走构造器（不得手拼 button.set-nav）。
+// provider-add-tabs 批（2026-11-06 作者令）：JeV / 生图两入口随三入口统一整件
+// 退役（收编为唯一服务商面板的类型标签，面板家族自检见
+// scripts/check-provider-panel.mjs P2/P3）——可点进行余 3（密钥/STT/TTL），
+// 底线 4 → 3。
 const navCount = (sidebar.match(/setNavRow\(/g) || []).length;
-if (navCount < 4) add('R2', SIDEBAR, `可点进行调用数 ${navCount} < 4（密钥/JeV/生图/STT/TTL 这些入口必须走同一构造器）`);
+if (navCount < 3) add('R2', SIDEBAR, `可点进行调用数 ${navCount} < 3（密钥/STT/TTL 这些入口必须走同一构造器）`);
 if (/class="set-nav/.test(sidebar)) add('R2', SIDEBAR, '出现手拼 .set-nav 行（绕过 setNavRow 单源）');
 
 // ── R3 行内右侧不重复同一数值 ──────────────────────────────────────────

@@ -1288,8 +1288,6 @@ export default {
   'settings.jev.model': 'Model',
   'settings.jev.modelPlaceholder': 'Model name',
   'settings.jev.keyEntry': 'API Key',
-  'settings.jev.keyPlaceholder': 'Enter the key value…',
-  'settings.jev.keyReentryPlaceholder': 'Configured — re-enter to overwrite',
   'settings.jev.keyShow': 'Show key value',
   'settings.jev.keyHide': 'Hide key value',
   'settings.jev.keySaved': 'Key saved',
@@ -1336,8 +1334,6 @@ export default {
   'settings.imagegenBaseUrl': 'Custom endpoint (optional)',
   'settings.imagegenBaseUrlPlaceholder': 'Empty = adapter default endpoint',
   'settings.imagegenKeyEntry': 'API Key',
-  'settings.imagegenKeyPlaceholder': 'Enter the API key…',
-  'settings.imagegenKeyReentryPlaceholder': 'Configured — typing overwrites',
   'settings.imagegenKeyShow': 'Show key value',
   'settings.imagegenKeyHide': 'Hide key value',
   'settings.imagegenKeySaved': 'Key saved',
@@ -1378,7 +1374,20 @@ export default {
   // byte-identical duplicate of the pair above — removed 2026-10-03 so the
   // locale object is duplicate-key clean; JS keeps the LAST value, and both
   // copies were identical, so this is behaviour-preserving.)
-  'settings.providers': 'LLM Providers',
+  'settings.providers': 'Providers',
+  // Provider type labels (provider-add-tabs batch, 2026-11-06): English originals
+  // by the terminology-unification ruling — identical value in both locales.
+  'settings.providerType.llm': 'LLM',
+  'settings.providerType.imagegen': 'Image generation',
+  'settings.providerType.jev': 'Jev',
+  'settings.providerTypesError': 'Could not load provider types',
+  'settings.providerTypesDrift': 'A provider type is not wired into the panel',
+  'settings.jevHealthTitle': 'Allocation channel',
+  'settings.jevEndpointPinned': 'Endpoint is fixed (the typesafe-jev channel is engine-defined, not editable)',
+  'settings.enabled': 'Enabled',
+  'settings.cfgCard.saved': 'Saved',
+  'settings.cfgCard.keyReentryPlaceholder': 'Configured — re-entering overwrites',
+  'settings.cfgCard.keyPlaceholder': 'Enter the key value…',
   // secrets-frontend (2026-09-27): the settings-page entry row opens the
   // standalone secrets dialog (js/secretsPanel.js) — one key for title + button.
   'settings.secrets': 'Secrets',

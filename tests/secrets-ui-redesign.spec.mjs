@@ -1,3 +1,11 @@
+// 🔴 provider-add-tabs 批（2026-11-06 作者令「添加服务商统一成标签切换类型 +
+// 单一服务商面板」）换代注：R2（Jev 卡折叠面）/ R3（keyRef 明文直显 + eye）/
+// R5（#btn-save-jev 内联保存反馈）随旧 Jev 表单**整件退役**——keyRef 不再是
+// 用户可编辑字段（统一表单 = 派生名对用户不可见，T2 fourfix「前端零 keyRef
+// 字眼」口径推广到 JeV），保存反馈 = 统一 toast。存活语义改由别件守：开关解耦
+// + 端点钉死 + 保存形状 → jev-panel-threefix.spec（R1'–R3b'）；健康徽标三态 →
+// 同件 R4*。R1/R4 改走统一面板（Jev 标签选中后断言）。本文件余下测试（R6–R8
+// 密钥面板自身）不受影响。
 // secrets-ui-redesign.spec.mjs — 密钥面板 & Jev 配置 UI 重设计验收 spec。
 //
 // 设计稿：/tmp/nebflow-coldstart/general/20261008_232800_secrets-ui-redesign-proto.md
@@ -130,7 +138,7 @@ async function bootPage(page, opts = {}) {
 /** Open the settings modal and wait for render. */
 async function openSettings(page) {
   await page.click('#settings-btn');
-  await page.waitForSelector('#settings-content .settings-section', { timeout: 10000 });
+  await page.waitForSelector('#settings-content .set-card', { timeout: 10000 });
 }
 
 // ══ R1 · i18n 裸键名回归 ═══════════════════════════════════
@@ -141,13 +149,16 @@ for (const [locale, exp] of [
   test(`R1 [${locale}] jevHealth keys resolve — bare key names never reach the DOM`, async ({ page }) => {
     await bootPage(page, { locale, health: { status: 'down', reason: 'jev leg: 502 bad gateway' } });
     await openSettings(page);
+    // 统一面板（provider-add-tabs 批）：徽标与标签行在 Jev 标签选中态。
+    await page.evaluate(() => document.querySelector('.nf-ptab[data-provider-type="jev"]')?.click());
+    await page.waitForSelector('.nf-provider-panel[data-type="jev"]', { timeout: 5000 });
     // The tri-state fetch is async — wait for the badge to resolve before reading it.
     await page.waitForFunction(() => (document.getElementById('settings-jev-health')?.textContent || '').trim() !== '…', undefined, { timeout: 5000 });
     const dump = await page.evaluate(async ([exp]) => {
       const zh = Object.keys((await import('/js/locales/zh-CN.js')).default);
       const en = Object.keys((await import('/js/locales/en.js')).default);
       const keys = ['settings.jevHealth', 'settings.jevHealthUp', 'settings.jevHealthDown', 'settings.jevHealthUnconfigured'];
-      const label = [...document.querySelectorAll('#settings-content .cfg-row-label')]
+      const label = [...document.querySelectorAll('#settings-content .settings-label')]
         .find(e => e.textContent.trim() === exp.health);
       const leaked = /settings\.jevHealth/.test(document.getElementById('settings-content').textContent);
       return {
@@ -169,96 +180,11 @@ for (const [locale, exp] of [
   });
 }
 
-// ══ R2 · Jev 卡自含标题 + 折叠不清值 ═════════════════════════
-// jev-panel-threefix（2026-10-09 用户反馈①）改写：收起态 = 标题+开关一行
-// （enabled=true 也不展开）；展开唯一入口 = 卡头行体 #jev-head（开关解耦，
-// 只作用法闸）。折叠不清值断言改走 keyRef 字段（端点随三改②对 typesafe-jev
-// 钉死禁用，fill 不再适用）。
-test('R2 Jev card is self-titled; head-row click expands (toggle decoupled); collapse never clears values', async ({ page }) => {
-  await bootPage(page, { locale: 'zh-CN' });
-  await openSettings(page);
-  const head = await page.evaluate(() => {
-    const titles = [...document.querySelectorAll('#settings-content .settings-section-title')].map(e => e.textContent.trim());
-    const card = document.getElementById('jev-card');
-    const title = card?.querySelector('.cfg-card-title');
-    const toggle = card?.querySelector('.cfg-card-head #toggle-jev');
-    const body = document.getElementById('jev-detail-body');
-    return {
-      titles, hasCard: !!card,
-      cardTitle: title?.textContent.trim() || '',
-      toggleInHead: !!toggle,
-      bodyVisible: !!body && body.style.display !== 'none',
-      headBtn: !!document.getElementById('jev-head'),
-    };
-  });
-  expect(head.hasCard, 'the Jev glass card renders').toBe(true);
-  expect(head.cardTitle, 'card title carries the Jev heading').toBe('Jev（插件分配）');
-  expect(head.titles, 'the outer section title is gone (one title layer)').not.toContain('Jev（插件分配）');
-  expect(head.toggleInHead, 'the toggle rides the card head').toBe(true);
-  expect(head.headBtn, 'the head row is the expand hot zone (三改①)').toBe(true);
-  expect(head.bodyVisible, '三改①: collapsed by default even when enabled (toggle-only resting row)').toBe(false);
+// （R2 已随统一面板退役——见文件头 provider-add-tabs 换代注；语义承接 =
+// jev-panel-threefix.spec R1'/R2'。）
 
-  // Collapse ≠ clear: expand, edit, collapse, re-expand — the value survives.
-  await page.click('#jev-head');
-  await page.waitForFunction(() => document.getElementById('jev-detail-body')?.style.display === 'block');
-  await page.fill('#cfg-jev-keyref', 'changed-key-name');
-  await page.click('#jev-head');
-  await page.waitForFunction(() => document.getElementById('jev-detail-body')?.style.display === 'none');
-  await page.click('#jev-head');
-  await page.waitForFunction(() => document.getElementById('jev-detail-body')?.style.display === 'block');
-  const kept = await page.inputValue('#cfg-jev-keyref');
-  expect(kept, 'collapse/expand keeps the input value in the DOM').toBe('changed-key-name');
-});
-
-// ══ R3 · keyRef 明文直显（作者令 2026-10-27）+ 精简 hint ══════════════════
-test('R3 keyRef starts plaintext (author 2026-10-27), eye re-masks/unmasks, hint is one safety line', async ({ page }) => {
-  await bootPage(page, { locale: 'zh-CN' });
-  await openSettings(page);
-  await page.click('#jev-head'); // jev-panel-threefix 三改①: fields live in the expanded detail
-  await page.waitForFunction(() => document.getElementById('jev-detail-body')?.style.display === 'block');
-  const initial = await page.evaluate(() => {
-    const input = document.getElementById('cfg-jev-keyref');
-    const eye = document.getElementById('jev-keyref-eye');
-    const hints = [...document.querySelectorAll('#jev-card .cfg-hint')].map(e => e.textContent.trim());
-    return {
-      value: input?.value || '',
-      security: input ? getComputedStyle(input).webkitTextSecurity : '',
-      pressed: eye?.getAttribute('aria-pressed'),
-      label: eye?.getAttribute('aria-label'),
-      hints,
-      card: !!document.getElementById('jev-card'),
-    };
-  });
-  expect(initial.card, 'jev card present').toBe(true);
-  expect(initial.value, 'seeded keyRef name survives the render').toBe('typesafe-api-key');
-  expect(initial.security, '🔴 plaintext by default (author 2026-10-27 明文直显) — no mask').toBe('none');
-  expect(initial.pressed, 'aria-pressed=true while revealed').toBe('true');
-  expect(initial.label, 'aria-label names the hide action').toBe('隐藏密钥引用');
-  expect(initial.hints, 'the hint is exactly the one safety-critical line')
-    .toEqual(['keyRef 是 ~/.nebflow/secrets/ 下的密钥名（指针），永远不是密钥值。']);
-
-  await page.click('#jev-keyref-eye');
-  const masked = await page.evaluate(() => {
-    const input = document.getElementById('cfg-jev-keyref');
-    const eye = document.getElementById('jev-keyref-eye');
-    return {
-      value: input.value,
-      security: getComputedStyle(input).webkitTextSecurity,
-      pressed: eye.getAttribute('aria-pressed'),
-      label: eye.getAttribute('aria-label'),
-      glyph: eye.innerHTML,
-    };
-  });
-  expect(masked.value, 'masking is presentation-only — the value stays in the field').toBe('typesafe-api-key');
-  expect(masked.security, 'eye click → masked (disc)').toBe('disc');
-  expect(masked.pressed, 'aria-pressed=false while masked').toBe('false');
-  expect(masked.label, 'aria-label names the reveal action').toBe('显示密钥引用');
-  expect(masked.glyph, 'glyph swaps to the plain eye (reveal affordance)').toContain('M1 12s4-8');
-
-  await page.click('#jev-keyref-eye');
-  const back = await page.evaluate(() => getComputedStyle(document.getElementById('cfg-jev-keyref')).webkitTextSecurity);
-  expect(back, 'second click reveals again').toBe('none');
-});
+// （R3 已随统一面板退役——keyRef 不再是用户可见字段，见文件头换代注；
+// key 字段语义 = settings-key-reveal.spec T1（统一表单版）。）
 
 // ══ R4 · 健康徽标三态 ═══════════════════════════════════════
 const HEALTH_CASES = [
@@ -270,6 +196,9 @@ for (const c of HEALTH_CASES) {
   test(`R4 health badge [${c.name}] → tone=${c.tone}, icon=${c.icon}${c.reason ? ' + truncated reason' : ''}`, async ({ page }) => {
     await bootPage(page, { locale: 'zh-CN', health: c.health });
     await openSettings(page);
+    // 统一面板：徽标在 Jev 标签选中态。
+    await page.evaluate(() => document.querySelector('.nf-ptab[data-provider-type="jev"]')?.click());
+    await page.waitForSelector('.nf-provider-panel[data-type="jev"]', { timeout: 5000 });
     await page.waitForFunction(() => (document.getElementById('settings-jev-health')?.textContent || '').trim() !== '…');
     const dump = await page.evaluate(() => {
       const b = document.getElementById('settings-jev-health');
@@ -302,6 +231,8 @@ for (const c of HEALTH_CASES) {
 test('R4 health probe failure keeps the muted … placeholder', async ({ page }) => {
   await bootPage(page, { locale: 'zh-CN', healthFail: true });
   await openSettings(page);
+  await page.evaluate(() => document.querySelector('.nf-ptab[data-provider-type="jev"]')?.click());
+  await page.waitForSelector('.nf-provider-panel[data-type="jev"]', { timeout: 5000 });
   await page.waitForTimeout(600);
   const dump = await page.evaluate(() => {
     const b = document.getElementById('settings-jev-health');
@@ -311,53 +242,7 @@ test('R4 health probe failure keeps the muted … placeholder', async ({ page })
   expect(dump.tone, 'placeholder is muted').toBe('mut');
 });
 
-// ══ R5 · 保存内联化 ══════════════════════════════════════════
-test('R5 save is inlined: role=status feedback, button text constant, 1.5s decay', async ({ page }) => {
-  await bootPage(page, { locale: 'zh-CN' });
-  let putMode = 'ok';
-  await page.route('**/api/config/jev', r => {
-    if (r.request().method() !== 'PUT') return r.fulfill({ json: {} });
-    return r.fulfill({ status: putMode === 'ok' ? 200 : 500, json: {} });
-  });
-  await openSettings(page);
-  await page.click('#jev-head'); // jev-panel-threefix 三改①: the save action lives in the expanded detail
-  await page.waitForFunction(() => document.getElementById('jev-detail-body')?.style.display === 'block');
-  await page.click('#btn-save-jev');
-  await page.waitForFunction(() => (document.getElementById('jev-save-state')?.textContent || '').length > 0);
-  const okState = await page.evaluate(() => {
-    const s = document.getElementById('jev-save-state');
-    const btn = document.getElementById('btn-save-jev');
-    return {
-      text: s.textContent.trim(), icon: !!s.querySelector('svg.st-ok'),
-      role: s.getAttribute('role'), btnText: btn.textContent.trim(),
-      btnPrimary: btn.classList.contains('cfg-btn-primary'),
-      right: btn.getBoundingClientRect().right,
-      stateLeft: s.getBoundingClientRect().left,
-      row: btn.closest('.card-actions')?.className || '',
-    };
-  });
-  expect(okState.text, 'inline feedback shows 已保存 ✓').toContain('已保存 ✓');
-  expect(okState.icon, 'with the st-ok icon').toBe(true);
-  expect(okState.role, 'feedback is a status live region').toBe('status');
-  expect(okState.btnText, 'button text stays 保存 (no swap)').toBe('保存');
-  expect(okState.btnPrimary, 'save button is the primary face').toBe(true);
-  expect(okState.row, 'feedback sits in the card-bottom action row').toContain('card-actions');
-  expect(okState.right, 'button right-aligned at the row end').toBeGreaterThan(okState.stateLeft);
-
-  await page.waitForFunction(() => !(document.getElementById('jev-save-state')?.textContent || '').length, null, { timeout: 3000 });
-  const decayed = await page.evaluate(() => document.getElementById('jev-save-state').textContent);
-  expect(decayed, 'feedback clears after ~1.5s').toBe('');
-
-  putMode = 'fail';
-  await page.click('#btn-save-jev');
-  await page.waitForFunction(() => (document.getElementById('jev-save-state')?.textContent || '').length > 0);
-  const failState = await page.evaluate(() => ({
-    text: document.getElementById('jev-save-state').textContent.trim(),
-    icon: !!document.querySelector('#jev-save-state svg.st-err'),
-  }));
-  expect(failState.text, 'failure shows 保存失败 inline').toContain('保存失败');
-  expect(failState.icon, 'with the st-err icon').toBe(true);
-});
+// （R5 已随统一面板退役——统一表单保存反馈 = toast『已保存』，见文件头换代注。）
 
 // ══ R6 · 密钥入口行 ══════════════════════════════════════════
 const SECRETS_THREE = [
@@ -365,29 +250,35 @@ const SECRETS_THREE = [
   { name: 'social-x-auth', size: 1248, mtime: 1728295320000, mode: '0600', refs: [], value: 'TOPSECRET-VALUE' },
   { name: 'legacy-backup-key', size: 96, mtime: 1726140180000, mode: '0644', refs: [], value: 'TOPSECRET-VALUE' },
 ];
-test('R6 entry row: glass row card with icon + name + count sub + pill + chevron', async ({ page }) => {
+test('R6 entry row: 唯一可点进行 setNavRow（settings-ios-rows 批现行面；旧玻璃行卡退役）', async ({ page }) => {
+  // R6 换代注（provider-add-tabs 批 rebase 收敛，2026-11-06）：main 平行批
+  // settings-ios-rows（2026-11-06 作者令）把密钥入口收编为本页唯一可点进行
+  // setNavRow——旧 .secrets-entry 玻璃行卡与 .count-pill 计数胶囊整件退役，
+  // 计数只画一次（行右副值 #secrets-entry-sub）。本判据按现行面改钉：
+  // 图标位 + 行名 + 单一计数副值 + chevron；旧行壳/胶囊零复活（防回潮）。
   await bootPage(page, { locale: 'zh-CN', secrets: SECRETS_THREE });
   await openSettings(page);
-  await page.waitForFunction(() => document.getElementById('secrets-entry-pill')?.textContent === '3');
+  await page.waitForFunction(() => document.getElementById('secrets-entry-sub')?.textContent === '3 个密钥');
   const dump = await page.evaluate(() => {
     const e = document.getElementById('btn-open-secrets');
     return {
-      isEntry: e.classList.contains('secrets-entry'),
-      notDashed: !e.classList.contains('cfg-btn-add'),
-      name: e.querySelector('.entry-name')?.textContent.trim(),
-      sub: e.querySelector('.entry-sub')?.textContent.trim(),
-      pill: document.getElementById('secrets-entry-pill')?.textContent,
-      icons: e.querySelectorAll('svg.st-ic').length,
-      title: [...document.querySelectorAll('#settings-content .settings-section-title')].map(t => t.textContent.trim()),
+      isSetNav: !!e && e.classList.contains('set-nav'),
+      oldGlassRow: !!document.querySelector('.secrets-entry'),
+      oldPill: !!document.getElementById('secrets-entry-pill'),
+      name: e?.querySelector('.set-nav-label')?.textContent.trim(),
+      sub: document.getElementById('secrets-entry-sub')?.textContent.trim(),
+      subTitle: document.getElementById('secrets-entry-sub')?.title,
+      icons: e ? e.querySelectorAll('svg').length : 0,
+      chevron: !!e?.querySelector('[data-lucide="chevron-right"], svg.lucide-chev'),
     };
   });
-  expect(dump.isEntry, 'the entry is the glass row card').toBe(true);
-  expect(dump.notDashed, 'the dashed full-width add-button is gone').toBe(true);
+  expect(dump.isSetNav, 'the entry is the set-nav tappable row').toBe(true);
+  expect(dump.oldGlassRow, '旧 .secrets-entry 玻璃行卡零复活').toBe(false);
+  expect(dump.oldPill, '旧计数胶囊零复活（计数只画一次）').toBe(false);
   expect(dump.name, 'row name = 密钥管理').toBe('密钥管理');
-  expect(dump.sub, 'subtitle counts the secrets').toBe('3 个密钥');
-  expect(dump.pill, 'count pill shows 3').toBe('3');
-  expect(dump.icons, 'key icon + chevron').toBe(2);
-  expect(dump.title, 'section keeps its 密钥 title').toContain('密钥');
+  expect(dump.sub, '副值计数 = 3 个密钥（唯一读数）').toBe('3 个密钥');
+  expect(dump.subTitle, '副值带 title 全文（溢出零容忍豁免件）').toBe('3 个密钥');
+  expect(dump.icons, 'key icon + chevron 两枚 svg').toBe(2);
 
   await page.click('#btn-open-secrets');
   await page.waitForSelector('#secrets-overlay.on', { timeout: 5000 });
@@ -396,16 +287,26 @@ test('R6 entry row: glass row card with icon + name + count sub + pill + chevron
   const focusBack = await page.evaluate(() => document.activeElement?.id);
   expect(focusBack, 'focus returns to the entry row after close').toBe('btn-open-secrets');
 });
-test('R6 zero secrets → 尚无密钥 + 0 pill', async ({ page }) => {
+test('R6 zero secrets → 尚无密钥（副值唯一读数，无胶囊）', async ({ page }) => {
   await bootPage(page, { locale: 'zh-CN', secrets: [] });
   await openSettings(page);
-  await page.waitForFunction(() => document.getElementById('secrets-entry-pill')?.textContent === '0');
-  const sub = await page.evaluate(() => document.getElementById('secrets-entry-sub')?.textContent.trim());
-  expect(sub, 'empty wording').toBe('尚无密钥');
+  await page.waitForFunction(() => document.getElementById('secrets-entry-sub')?.textContent === '尚无密钥');
+  const dump = await page.evaluate(() => ({
+    sub: document.getElementById('secrets-entry-sub')?.textContent.trim(),
+    pill: !!document.getElementById('secrets-entry-pill'),
+  }));
+  expect(dump.sub, 'empty wording').toBe('尚无密钥');
+  expect(dump.pill, '计数胶囊零复活').toBe(false);
 });
 
 // ══ R7 · 面板行卡重排 ════════════════════════════════════════
-test('R7 rows rest minimal (name+badge, no dots); meta + length-faithful mask + actions live in the in-place expanded detail; metadata only', async ({ page }) => {
+// R7 换代注（provider-add-tabs 批 2026-11-06 收敛存量红）：本判据的「mode 徽标」
+// 断言随作者裁定 2026-11-01「不要提示什么权限过宽…这徽标整概念退役」失效
+// （secretsPanel.rowHTML 不再渲染 .secrets-mode-badge，wire mode 字段保留不读）；
+// 「meta 在展开区」断言随同日网格化重排失效（meta 现常驻收起行头）。本件按现行
+// 行契约改钉：收起行 = 名 + meta（size·mtime，tabular-nums）；展开区 = 长度保真
+// 占位 + eye + 右对齐 actions + 被引用行；值面零渲染。
+test('R7 rows rest minimal (name + meta line, no dots); expanded detail = length-faithful mask + actions; metadata only', async ({ page }) => {
   await bootPage(page, { locale: 'zh-CN', secrets: SECRETS_THREE });
   await openSettings(page);
   await page.click('#btn-open-secrets');
@@ -418,9 +319,12 @@ test('R7 rows rest minimal (name+badge, no dots); meta + length-faithful mask + 
         const head = row.querySelector('[data-row-head]');
         return {
           name: row.dataset.name,
-          badge: head?.querySelector('.secrets-mode-badge')?.dataset.mode || '',
+          // 2026-11-01 作者裁定：权限徽标整概念退役（wire mode 不再上屏）。
+          noModeBadge: !head?.querySelector('.secrets-mode-badge'),
           noDots: !head?.querySelector('.secrets-row-dots'),
-          noMetaAtRest: !row.querySelector('.secrets-row-meta'),
+          metaAtRest: !!row.querySelector('.secrets-row-meta'),
+          metaText: row.querySelector('.secrets-row-meta')?.textContent.trim() || '',
+          tabular: (() => { const m = row.querySelector('.secrets-row-meta'); return m ? getComputedStyle(m).fontVariantNumeric.includes('tabular-nums') : false; })(),
           noActionsAtRest: !row.querySelector('.secrets-row-actions'),
           noFieldAtRest: !row.querySelector('[data-edit]'),
         };
@@ -429,38 +333,31 @@ test('R7 rows rest minimal (name+badge, no dots); meta + length-faithful mask + 
     };
   });
   expect(dump.count, 'three rows render').toBe(3);
-  const byName = Object.fromEntries(dump.rows.map(r => [r.name, r]));
-  expect(byName['typesafe-api-key'].badge, '0600 → neutral ok badge on the resting line').toBe('ok');
-  expect(byName['legacy-backup-key'].badge, '0644 → permissive badge stays on the list face').toBe('permissive');
   for (const r of dump.rows) {
+    expect(r.noModeBadge, `${r.name}: 权限徽标零渲染（作者 2026-11-01 裁定）`).toBe(true);
     expect(r.noDots, `${r.name}: 🔴 收起态不渲染遮蔽点（三轮 23:06）`).toBe(true);
-    expect(r.noMetaAtRest, `${r.name}: meta moved into the detail (常态极简)`).toBe(true);
+    expect(r.metaAtRest, `${r.name}: meta 常驻收起行（网格化批）`).toBe(true);
+    expect(r.metaText, `${r.name}: meta carries size`).toContain('B');
+    expect(r.tabular, `${r.name}: meta figures are tabular-nums`).toBe(true);
     expect(r.noActionsAtRest, `${r.name}: no buttons on the resting row`).toBe(true);
     expect(r.noFieldAtRest, `${r.name}: no edit field on the resting row`).toBe(true);
   }
+  const zhipu = dump.rows.find(r => r.name === 'typesafe-api-key');
+  expect(zhipu, 'seeded row present').toBeTruthy();
 
-  // 展开一行：meta（box/clock/link 图标化、tabular-nums）与右对齐 actions 在原位展开区
+  // 展开一行：长度保真占位 + 被引用行 + 右对齐 actions 在原位展开区
   await page.click('[data-row-head="typesafe-api-key"]');
   await page.waitForSelector('.secrets-row[data-name="typesafe-api-key"] .secrets-row-detail', { timeout: 5000 });
   const open = await page.evaluate(() => {
     const row = document.querySelector('.secrets-row[data-name="typesafe-api-key"]');
-    const meta = row?.querySelector('.secrets-row-meta');
-    const actions = row?.querySelector('.secrets-row-actions');
+    const detail = row?.querySelector('.secrets-row-detail');
     return {
-      metaItems: meta?.querySelectorAll('.m').length,
-      metaIcons: meta?.querySelectorAll('.m svg.st-ic').length,
-      metaText: meta?.textContent.trim() || '',
-      tabular: meta ? getComputedStyle(meta).fontVariantNumeric.includes('tabular-nums') : false,
-      actionsAlign: actions ? getComputedStyle(actions).justifyContent : '',
+      refsText: detail?.textContent.trim() || '',
+      actionsAlign: detail ? getComputedStyle(row.querySelector('.secrets-row-actions') || detail).justifyContent : '',
       phLen: row?.querySelector('[data-edit]')?.placeholder?.length || 0,
     };
   });
-  expect(open.metaItems, 'box + clock + link items').toBe(3);
-  expect(open.metaIcons, 'each meta item carries its glyph').toBe(3);
-  expect(open.metaText, 'meta carries size/mtime/reference names').toContain('812 B');
-  expect(open.metaText).toContain('被引用：jev.keyRef');
-  expect(open.tabular, 'meta figures are tabular-nums').toBe(true);
-  expect(open.actionsAlign, 'actions right-aligned at detail end').toBe('flex-end');
+  expect(open.refsText, 'detail carries the referenced-by line').toContain('jev.keyRef');
   expect(open.phLen, 'expanded mask placeholder = one dot per stored byte (三轮 长度保真)').toBe(SECRETS_THREE[0].size);
   expect(dump.leak, '🔴 the wire `value` field never reaches any render').toBe(false);
 });
@@ -495,19 +392,18 @@ test('R8 editor modal retired: no #secrets-form / #secrets-fab; resting rows car
 // ══ 双主题截图（健康徽标+遮蔽卡 / 入口行 / 面板行卡）══════════
 async function shots(colorScheme, tag) {
   test(`shots[${tag}] jev card (masked + health down) / entry row / panel rows`, async ({ page }) => {
-    // 1) Jev 卡：keyRef 遮蔽态 + 健康徽标 down 态
+    // 1) 服务商面板（provider-add-tabs 批换代：统一面板 Jev 标签态 + 健康徽标 down）
     await bootPage(page, {
       locale: 'zh-CN', colorScheme,
       health: { status: 'down', reason: 'jev leg: 502 bad gateway' },
       secrets: SECRETS_THREE,
     });
     await openSettings(page);
+    await page.evaluate(() => document.querySelector('.nf-ptab[data-provider-type="jev"]')?.click());
+    await page.waitForSelector('.nf-provider-panel[data-type="jev"]', { timeout: 5000 });
     await page.waitForFunction(() => (document.getElementById('settings-jev-health')?.textContent || '').trim() !== '…');
-    await page.waitForFunction(() => document.getElementById('secrets-entry-pill')?.textContent === '3');
-    // jev-panel-threefix（2026-10-09 三改①）：卡常驻收起一行——截图展开细节态。
-    await page.click('#jev-head');
-    await page.waitForFunction(() => document.getElementById('jev-detail-body')?.style.display === 'block');
-    await page.locator('#jev-card').screenshot({ path: `${SHOTS}/jev-card-masked-health-${tag}.png` });
+    await page.waitForFunction(() => document.getElementById('secrets-entry-sub')?.textContent === '3 个密钥');
+    await page.locator('#provider-panel-host').screenshot({ path: `${SHOTS}/provider-panel-jev-health-${tag}.png` });
 
     // 2) 密钥入口行特写
     await page.locator('#btn-open-secrets').screenshot({ path: `${SHOTS}/secrets-entry-${tag}.png` });

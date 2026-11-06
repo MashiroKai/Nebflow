@@ -284,27 +284,24 @@ test('T4 设置页 STT/TTL 入口行点击 push 层级子页（折叠体收编�
   await expect(page.locator('.mobile-page[data-page="settings-ttl"]')).toHaveClass(/live/);
   await expect(page.locator('.mobile-page[data-page="settings-ttl"] #ttl-advance-body')).toBeVisible();
 
-  // 生图入口行同下钻（配置面风格统一批 2026-10-31：第四枚层级子页
-  // settings-imagegen——与 JeV 同款的收编/归还链路）。
+  // 🔴 provider-add-tabs 批（2026-11-06 作者令「添加服务商统一成标签切换类型 +
+  // 单一服务商面板」）：生图层级子页（settings-imagegen 路由）随旧节整件退役——
+  // 手机层设置页里服务商只剩统一面板（类型标签内联在页内；新增/编辑表单走既有
+  // 弹窗腿）。T4 末段改钉「旧路由零复活 + 统一面板在手机壳内呈现」。
   await page.locator('.mobile-page[data-page="settings-ttl"] .mobile-back-btn').click();
   await expect(page.locator('.mobile-page[data-page="settings"]')).toHaveClass(/live/);
-  await page.locator('#imagegen-advance-toggle').click();
-  await expect(page.locator('.mobile-page[data-page="settings-imagegen"]')).toHaveClass(/live/);
-  await expect(page.locator('.mobile-page[data-page="settings-imagegen"] #imagegen-advance-body')).toBeVisible();
-  const imagegenAdopted = await page.evaluate(() => {
-    const sub = document.querySelector('.mobile-page[data-page="settings-imagegen"]');
-    const body = sub && sub.querySelector('.mobile-page-body #imagegen-advance-body');
-    return !!body && !body.hidden && getComputedStyle(body).display !== 'none';
-  });
-  expect(imagegenAdopted).toBe(true);
-  // 页壳「<」返回 → 设置页，折叠体归还隐藏。
-  await page.locator('.mobile-page[data-page="settings-imagegen"] .mobile-back-btn').click();
-  await expect(page.locator('.mobile-page[data-page="settings"]')).toHaveClass(/live/);
-  const restored = await page.evaluate(() => {
-    const body = document.getElementById('imagegen-advance-body');
-    return !!body && body.hidden === true;
-  });
-  expect(restored).toBe(true);
+  const retired = await page.evaluate(() => ({
+    oldToggle: !!document.getElementById('imagegen-advance-toggle'),
+    oldBody: !!document.getElementById('imagegen-advance-body'),
+    oldSubPage: !!document.querySelector('.mobile-page[data-page="settings-imagegen"]'),
+    panel: !!document.querySelector('.mobile-page[data-page="settings"] .nf-provider-panel'),
+    tabs: [...document.querySelectorAll('.mobile-page[data-page="settings"] .nf-ptab')].map(b => b.textContent.trim()),
+  }));
+  expect(retired.oldToggle, 'imagegen drill entry row is gone from mobile settings').toBe(false);
+  expect(retired.oldBody, 'imagegen drill body is gone').toBe(false);
+  expect(retired.oldSubPage, 'settings-imagegen sub-page route is retired').toBe(false);
+  expect(retired.panel, 'unified provider panel lives inline in mobile settings').toBe(true);
+  expect(retired.tabs, 'type tabs render in the mobile shell (含 Image generation)').toContain('Image generation');
   expect(errors).toEqual([]);
 });
 

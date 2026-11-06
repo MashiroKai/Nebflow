@@ -23,6 +23,17 @@ const standaloneScripts = readdirSync('tests')
   .filter((f) => f.endsWith('.spec.mjs'))
   .filter((f) => !runnerImport.test(readFileSync(join('tests', f), 'utf8')));
 
+// ② 补丁名单：借 `import { chromium } from '@playwright/test'` 只拿浏览器驱动的
+// 独立 runner（模块顶层自起浏览器、process.exit 收尾）。import 形态判定会把它们
+// 误收进收集面——收集期 import 即全跑并杀掉整轮 playwright 进程（provider-add-tabs
+// 批 2026-11-06 实证：PW_SELFCONTAINED_ONLY 全量「51s 假绿收场」，整份输出 =
+// mobile-chat harness 一家；--list 同样被劫持）。点名排除，node 直跑不受影响。
+standaloneScripts.push(
+  'mobile-chat-initial-scroll.spec.mjs',
+  'mobile-touch-target.spec.mjs',
+  'toggle-green-revert.spec.mjs',
+);
+
 // instance-backed spec：驱动真实服务器（BASE_URL/NEBFLOW_URL + token）。
 // 由 frontend-smoke 在拉起 CI 实例、桥接 ~/.stand/auth.json 后点名跑；
 // 自足套件任务用 PW_SELFCONTAINED_ONLY=1 整体排除它们。

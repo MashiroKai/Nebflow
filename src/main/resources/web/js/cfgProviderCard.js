@@ -32,10 +32,11 @@ import { renderVisionBadge } from './modelCapabilities.js';
  * @param {{
  *   name: string,
  *   protocolBadge?: string,
+ *   typeBadge?: string,
  *   models?: Array<string>,
  *   metaExtra?: string,
  *   active?: boolean,
- *   face: 'llm'|'jev'|'imagegen'
+ *   face: 'llm'|'jev'|'imagegen'|'provider'
  * }} spec
  * @returns {string}
  */
@@ -45,6 +46,12 @@ export function providerCardHTML(spec) {
   const models = Array.isArray(spec.models) ? spec.models : [];
   const badge = spec.protocolBadge
     ? `<span class="cfg-card-badge">${escapeHtml(spec.protocolBadge)}</span>`
+    : '';
+  // 类型徽标（provider-add-tabs 批 2026-11-06）：统一服务商面板里一张卡可能属于
+  // 任一类型（LLM / Image generation / Jev），卡头必须自报类型——词面由调用方
+  // 给（英文原词，locales 单源），本组件只负责位置与形态（.cfg-card-type）。
+  const typeBadge = spec.typeBadge
+    ? `<span class="cfg-card-type" title="${escapeHtml(spec.typeBadge)}">${escapeHtml(spec.typeBadge)}</span>`
     : '';
   // metaExtra = 徽标右侧附加 HTML（如 key 状态徽标）；缺席则退回「N 个模型」。
   // 原样插入 —— 调用方负责自行转义，这样 LLM 面能逐字保住既有 "N models" 文案。
@@ -64,6 +71,7 @@ export function providerCardHTML(spec) {
   return `
     <div class="cfg-card" data-provider="${escapeHtml(name)}" data-component="cfg-provider-card" data-face="${escapeHtml(face)}" data-active="${spec.active ? '1' : '0'}">
       <div class="cfg-card-header">
+        ${typeBadge}
         <span class="cfg-card-title">${escapeHtml(name)}</span>
         <button class="cfg-card-remove" data-provider="${escapeHtml(name)}" title="${escapeHtml(t('provider.remove'))}">×</button>
       </div>

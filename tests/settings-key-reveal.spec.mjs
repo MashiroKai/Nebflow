@@ -18,13 +18,17 @@
 // 127.0.0.1:8237 + route mock API + routeWebSocket mock WS，零真实后端。
 // Run: node node_modules/@playwright/test/cli.js test tests/settings-key-reveal.spec.mjs --workers=1 --reporter=line
 //
-// ── 存量红清欠 + 配置面风格统一批判据换代（2026-10-31）───────────────────
-// T1/T4 旧锚（#jev-head / #jev-detail-body / #jev-keyref-eye）随 2026-10-28
-// settings-panel C 批重排已死（现树零命中，main 上即红）。换代：JeV 节为层级
-// 下钻面（configDrill.js 浮层收编 #jev-advance-body）——T1/T4 改走
-// 「点 #jev-advance-toggle 进浮层」路径；eye 锚 = 现树 #jev-key-eye
-// （key 值只读行，作者令 2026-10-28 21:30 明文直显面），并补 key 值回读路由
-// _mock（GET /api/secrets/<keyRef>/value）把「值明文直显」一起钉住。
+// ── 存量红清欠 + 判据换代史 ──────────────────────────────────────────────
+// 2026-10-31：T1/T4 旧锚（#jev-head / #jev-detail-body / #jev-keyref-eye）随
+// settings-panel C 批重排换代为层级下钻面。
+//
+// 🔴 provider-add-tabs 批（2026-11-06 作者令「添加服务商统一成标签切换类型 +
+// 单一服务商面板」）再换代：JeV 面并入统一服务商面板的统一表单骨架。JeV 的
+// **存量密钥明文回读面**（GET /api/secrets/<keyRef>/value → 只读直显行 +
+// #jev-key-eye）随旧表单退役——统一骨架的 key 字段语义 = 掩码输入 + typed-value
+// eye + 「已配置——重新输入即覆盖」占位词（LLM 的 provider-keys 明文回读面不受
+// 影响，T2/T3/T5 原样保留）。T1 改钉新语义：值不回显、回读零调用、eye 只动
+// 表现；T4 的 JeV 半改钉统一表单空态。
 
 import { test, expect } from '@playwright/test';
 import { createServer } from 'node:http';
@@ -115,6 +119,19 @@ async function bootPage(page, opts = {}) {
     if (revealStatus !== 200) return r.fulfill({ status: revealStatus, body: 'boom' });
     return r.fulfill({ json: { providers: { ...store, ...revealProviders } } });
   });
+  // 统一服务商面板投影（provider-add-tabs 批：JeV/生图读 GET 面；secret 存量值
+  // 回读零调用于新面——T1 断言 count）。
+  const secretValue = { count: 0 };
+  await page.route('**/api/secrets/*/value', (r) => { secretValue.count += 1; return r.fulfill({ json: { value: JEV_KEY_VALUE } }); });
+  await page.route('**/api/config/provider-types', (r) => r.fulfill({ json: {
+    domains: [{ id: 'llm', enabledSwitch: false }, { id: 'imagegen', enabledSwitch: true }, { id: 'jev', enabledSwitch: true }],
+    adapters: { llm: ['anthropic', 'openai'], imagegen: ['cogview'], jev: ['typesafe-jev'] },
+  } }));
+  await page.route('**/api/config/imagegen', (r) => r.fulfill({ json: { compiledIn: true, enabled: true, providers: {} } }));
+  await page.route('**/api/config/jev', (r) => r.fulfill({ json: {
+    enabled: true, provider: 'typesafe-jev',
+    providers: { 'typesafe-jev': { type: 'typesafe-jev', endpoint: PINNED, model: 'jev', keyConfigured: withJevKeyRef } },
+  } }));
 
   await page.routeWebSocket(/\/ws/, (ws) => {
     ws.onMessage((raw) => {
@@ -133,14 +150,14 @@ async function bootPage(page, opts = {}) {
   await page.goto(base + '/index.html');
   await page.waitForSelector('#activity-bar', { timeout: 15000 });
   return {
-    reveal, wsFrames, store,
+    reveal, secretValue, wsFrames, store,
     updateConfigFrames: () => wsFrames.filter((f) => f.type === 'updateConfig'),
   };
 }
 
 async function openSettings(page) {
   await page.click('#settings-btn');
-  await page.waitForSelector('#settings-content .settings-section', { timeout: 10000 });
+  await page.waitForSelector('#settings-content .set-card', { timeout: 10000 });
 }
 /** kimi 编辑弹窗打开（卡点点击自带回读兜底 ⇒ 弹窗出现即回读已落地）。 */
 async function openKimiModal(page) {
@@ -164,47 +181,31 @@ async function keyFieldState(page) {
 // 配置面风格统一批判据换代（2026-10-31）：JeV 节为层级下钻面——点入口行开
 // 浮层收编 #jev-advance-body（旧 #jev-head/#jev-detail-body 锚随 10-28 C 批
 // 重排已死，本换代一并修红）；eye 锚 = 现树 #jev-key-eye（key 值只读行）。
-test('T1 jev key shows plaintext on entry; the eye masks then reveals without touching the value', async ({ page }) => {
-  await bootPage(page);
-  // key 值回读面（owner 鉴权单读）——比 catch-all 更具体的路由后注册优先。
-  await page.route('**/api/secrets/*/value', (r) => r.fulfill({ json: { value: JEV_KEY_VALUE } }));
+test('T1 jev key face (unified form): stored value NEVER echoes; eye masks typed text only; readback stays uncalled', async ({ page }) => {
+  const h = await bootPage(page);
   await openSettings(page);
-  await page.click('#jev-advance-toggle');
-  await page.waitForFunction(() => !!document.getElementById('jev-advance-body')?.closest('.config-drill-overlay'));
+  // 统一面板：Jev 标签 → 既有 provider 卡 → 表单。
+  await page.evaluate(() => document.querySelector('.nf-ptab[data-provider-type="jev"]')?.click());
+  await page.waitForSelector('.nf-provider-panel[data-type="jev"]', { timeout: 5000 });
+  await page.evaluate(() => document.querySelector('#provider-list .cfg-card .cfg-card-title')?.click());
+  await page.waitForSelector('#cfg-modal [data-field="apiKey"]', { timeout: 5000 });
 
-  const initial = await page.evaluate(() => {
-    const keyRef = document.getElementById('cfg-jev-keyref');
-    const value = document.getElementById('cfg-jev-key-value');
-    const eye = document.getElementById('jev-key-eye');
-    return {
-      keyRefValue: keyRef?.value || '',
-      keyRefSecurity: keyRef ? getComputedStyle(keyRef).webkitTextSecurity : '',
-      valueReadonly: value?.readOnly === true,
-      valueFace: value?.value || '',
-      valueSecurity: value ? (value.style.webkitTextSecurity || 'none') : '',
-      pressed: eye?.getAttribute('aria-pressed'),
-      label: eye?.getAttribute('aria-label'),
-    };
-  });
-  expect(initial.keyRefValue, '🔴 已配置的 keyRef 进页即明文（不再是掩码）').toBe(JEV_KEYREF);
-  expect(initial.keyRefSecurity, 'keyRef 字段面 = 明文').toBe('none');
-  expect(initial.valueReadonly, 'key 值行 = 只读直显行').toBe(true);
-  expect(initial.valueFace, '🔴 key 值回读真值明文直显').toBe(JEV_KEY_VALUE);
-  expect(initial.valueSecurity, '🔴 default face = plaintext (none), not disc').toBe('none');
-  expect(initial.pressed, 'eye starts on the revealed face').toBe('false');
-  expect(initial.label, 'eye label names the hide action').toBe('隐藏密钥引用');
+  const initial = await keyFieldState(page);
+  expect(initial.value, '🔴 存量 key 值不回显（统一骨架：值只进写入腿，永不上屏）').toBe('');
+  expect(initial.placeholder, '已配置态占位词 = 重新输入即覆盖（不伪造值）').toContain('覆盖');
+  expect(initial.security, '空态 = 明文面（非掩码假态）').toBe('none');
+  expect(h.secretValue.count, '🔴 存量值回读端点零调用（旧 /value 明文直显面已退役）').toBe(0);
 
-  await page.click('#jev-key-eye');
-  const masked = await page.evaluate(() => ({
-    v: document.getElementById('cfg-jev-key-value').value,
-    s: document.getElementById('cfg-jev-key-value').style.webkitTextSecurity,
-  }));
-  expect(masked.s, 'first eye click masks (disc)').toBe('disc');
-  expect(masked.v, 'masking is presentation-only — the value stays').toBe(JEV_KEY_VALUE);
-
-  await page.click('#jev-key-eye');
-  const back = await page.evaluate(() => document.getElementById('cfg-jev-key-value').style.webkitTextSecurity);
-  expect(back, 'second eye click reveals again').toBe('none');
+  // eye 只动表现：typed 值上掩码/再揭示，不动值、不发请求。
+  await page.fill('#cfg-modal [data-field="apiKey"]', 'ts-typed-value');
+  await page.click('#cfg-modal .cfg-eye-btn');
+  const masked = await keyFieldState(page);
+  expect(masked.security, 'first eye click masks (disc)').toBe('disc');
+  expect(masked.value, 'masking is presentation-only — the typed value stays').toBe('ts-typed-value');
+  await page.click('#cfg-modal .cfg-eye-btn');
+  const back = await keyFieldState(page);
+  expect(back.security, 'second eye click reveals again').toBe('none');
+  expect(h.secretValue.count, 'eye switching never touches the readback endpoint').toBe(0);
 });
 
 // ══ T2 · LLM API 配置节：弹窗字段 = 回读真值明文；未编辑直存 = 明文进 payload ═
@@ -270,21 +271,19 @@ test('T4 unconfigured faces show the EMPTY state, not a mask: keyless provider �
   expect(anon.security, 'empty state is the plaintext face').toBe('none');
   await page.evaluate(() => document.getElementById('cfg-modal')?.remove());
 
-  // JeV 侧（配置面风格统一批：层级下钻浮层里断言——缺 keyRef = 空态非掩码）。
-  await page.click('#jev-advance-toggle');
-  await page.waitForFunction(() => !!document.getElementById('jev-advance-body')?.closest('.config-drill-overlay'));
-  const jev = await page.evaluate(() => ({
-    kr: document.getElementById('cfg-jev-keyref')?.value || '',
-    krS: getComputedStyle(document.getElementById('cfg-jev-keyref')).webkitTextSecurity,
-    kv: document.getElementById('cfg-jev-key-value')?.value || '',
-    kvPh: document.getElementById('cfg-jev-key-value')?.placeholder || '',
-    kvS: document.getElementById('cfg-jev-key-value')?.style.webkitTextSecurity || 'none',
-  }));
-  expect(jev.kr, 'missing jev keyRef → blank (empty state)').toBe('');
-  expect(jev.krS, 'blank state is not a mask').toBe('none');
-  expect(jev.kv, 'no keyRef ⇒ no value readback — stays blank').toBe('');
-  expect(jev.kvS, 'key value blank state is not a mask either').toBe('none');
-  expect(jev.kvPh.length, 'placeholder carries the no-ref explanation').toBeGreaterThan(0);
+  // JeV 侧（provider-add-tabs 批：统一表单里断言——未配置 = 空态非掩码）。
+  await page.evaluate(() => {
+    document.getElementById('cfg-modal')?.remove();
+    document.querySelector('.nf-ptab[data-provider-type="jev"]')?.click();
+  });
+  await page.waitForSelector('.nf-provider-panel[data-type="jev"]', { timeout: 5000 });
+  await page.evaluate(() => document.querySelector('#provider-list .cfg-card .cfg-card-title')?.click());
+  await page.waitForSelector('#cfg-modal [data-field="apiKey"]', { timeout: 5000 });
+  const jev = await keyFieldState(page);
+  expect(jev.value, 'missing jev key → blank (empty state, never a mask)').toBe('');
+  expect(jev.security, 'blank state is not a mask').toBe('none');
+  expect(jev.placeholder, 'placeholder carries the input hint (not a fake value)').toContain('key');
+  expect(jev.placeholder, 'unconfigured placeholder = 输入提示（非覆写提示）').not.toContain('覆盖');
 });
 
 // ══ T5 · 回读被拒（403）→ 弹窗退回空态（不伪造、不崩）════════════════════

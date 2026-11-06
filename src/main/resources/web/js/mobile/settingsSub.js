@@ -1,8 +1,13 @@
 // mobile/settingsSub.js — 弹窗退场批③（2026-10-31 作者令「不再有展开式配置：
 // 苹果层级导航——点配置项进下一层级铺满屏配置、左上返回」，meFace 四级层级
-// 为先例）：手机层设置页的 chevron 折叠体（STT 高级 / 旧工具结果清理 /
-// Jev 插件分配 / 生图——末者随配置面风格统一批入册）从「点行 → 同页展开」
-// 换代为「点行 → push 下一层级全屏页」。
+// 为先例）：手机层设置页的 chevron 折叠体（STT 高级 / 旧工具结果清理）从
+// 「点行 → 同页展开」换代为「点行 → push 下一层级全屏页」。
+//
+// 🔴 provider-add-tabs 批（2026-11-06 作者令「添加服务商统一成标签切换类型 +
+// 单一服务商面板」）：原两条服务商路由（settings-jev / settings-imagegen）随
+// Jev / 生图两节整件退役——服务商面只剩**一个**面板（sidebar/providerPanel.js），
+// 手机层直接在设置页内呈现（类型标签 + 列表 + 表单弹窗走既有 popSheet 铺满屏腿），
+// 不再有独立层级子页。
 //
 // 机制（与 navController 的 overlay 收编 adoptOverlayFace 同一锚点惯例）：
 //   · 折叠体节点（#stt-advance-body 等）在子页入栈时 re-parent 进页面体，
@@ -14,9 +19,6 @@
 //     手机层命中 → stopPropagation（桌面展开监听因此不跑）+ push 子页；
 //     桌面层不拦截，行为逐字不变。
 //
-// 桌面浮层半：JeV/生图两面的桌面下钻浮层在 js/configDrill.js（同选择器、
-// 同 body 节点，body.mobile-layer 互斥分工——配置面风格统一批 2026-10-31）。
-//
 // 模块纪律：不 import navController（push 由 navController 注入，meFace 同款）；
 // 叶子面 = 无回边。
 
@@ -26,12 +28,6 @@ export const SETTINGS_SUB = [
     zh: 'STT 高级设置', en: 'STT advanced settings' },
   { id: 'settings-ttl', bodyId: 'ttl-advance-body', toggleSel: '#ttl-advance-toggle',
     zh: '旧工具结果清理', en: 'Tool result cleanup' },
-  { id: 'settings-jev', bodyId: 'jev-advance-body', toggleSel: '#jev-advance-toggle',
-    zh: 'Jev（插件分配）', en: 'Jev (plugin allocation)' },
-  // 配置面风格统一批（2026-10-31 作者令）：生图节同改层级子页（桌面浮层半
-  // 在 js/configDrill.js——同一 #imagegen-advance-body 节点两端收编）。
-  { id: 'settings-imagegen', bodyId: 'imagegen-advance-body', toggleSel: '#imagegen-advance-toggle',
-    zh: '生图', en: 'Image generation' },
 ];
 
 const SUB_BY_ID = new Map(SETTINGS_SUB.map((d) => [d.id, d]));

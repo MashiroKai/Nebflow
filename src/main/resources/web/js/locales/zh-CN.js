@@ -1247,8 +1247,6 @@ export default {
   'settings.jev.model': '模型',
   'settings.jev.modelPlaceholder': '模型名',
   'settings.jev.keyEntry': 'API Key',
-  'settings.jev.keyPlaceholder': '输入 key 值…',
-  'settings.jev.keyReentryPlaceholder': '已配置——重新输入即覆盖',
   'settings.jev.keyShow': '显示 key 值',
   'settings.jev.keyHide': '隐藏 key 值',
   'settings.jev.keySaved': '密钥已保存',
@@ -1293,8 +1291,6 @@ export default {
   'settings.imagegenBaseUrl': '自定义端点（可选）',
   'settings.imagegenBaseUrlPlaceholder': '留空 = 适配器缺省端点',
   'settings.imagegenKeyEntry': 'API Key',
-  'settings.imagegenKeyPlaceholder': '输入 key 值…',
-  'settings.imagegenKeyReentryPlaceholder': '已配置——重新输入即覆盖',
   'settings.imagegenKeyShow': '显示 key 值',
   'settings.imagegenKeyHide': '隐藏 key 值',
   'settings.imagegenKeySaved': '密钥已保存',
@@ -1334,7 +1330,21 @@ export default {
   // （此处原重复的 'settings.save' / 'settings.saved' 与上方同名键逐字相同，已于
   // 2026-10-03 移除，使本地化对象不再有重复键；JS 取最后一个值，两副本完全相同，
   // 故行为不变。）
-  'settings.providers': 'LLM 服务商',
+  'settings.providers': '服务商',
+  // 服务商类型（provider-add-tabs 批 2026-11-06）：面板顶部类型标签的词面。
+  // 按「术语按英文统一」批的口径走英文原词，两语言同值（不是漏翻译）。
+  'settings.providerType.llm': 'LLM',
+  'settings.providerType.imagegen': 'Image generation',
+  'settings.providerType.jev': 'Jev',
+  // 类型枚举投影读取失败 / 与面板行为绑定不一致（都是失败闭合态，不指路）。
+  'settings.providerTypesError': '服务商类型清单读取失败',
+  'settings.providerTypesDrift': '有服务商类型未接入面板',
+  'settings.jevHealthTitle': '分配通道',
+  'settings.jevEndpointPinned': '端点固定（typesafe-jev 分配通道由引擎约定，不可编辑）',
+  'settings.enabled': '启用',
+  'settings.cfgCard.saved': '已保存',
+  'settings.cfgCard.keyReentryPlaceholder': '已配置——重新输入即覆盖',
+  'settings.cfgCard.keyPlaceholder': '输入 key 值…',
   // secrets-frontend（2026-09-27）：设置页入口行，打开独立密钥弹窗
   // （js/secretsPanel.js）——标题与按钮共用一个键。
   'settings.secrets': '密钥',
