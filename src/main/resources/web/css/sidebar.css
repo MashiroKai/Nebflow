@@ -2704,9 +2704,12 @@
    **零子节点元素**：一条 CSS 规则就是全部形态，别处不许复写。
 
    GEOMETRY（A 组）：border-box 轨道 40×22 + 1px 描边 → padding box 38×20；
-   圆钮 16×16 at top:2px/left:2px（含自身 1px 描边，border-box），ON
-   translateX(var(--nf-toggle-travel) = 18px)。垂直缝 2/2、水平缝 2/2 镜像
-   （OFF 左缝 2px == ON 右缝 2px），零贴边、零溢出。
+   圆钮 16×16（含自身 1px 描边，border-box）at `--nf-toggle-offset` = 内衬 − 描边
+   = 3 − 1 = 2px（**padding box 坐标**），ON translateX(var(--nf-toggle-travel) = 18px)
+   ⇒ 外缘四向缝恒为 3/3/3/3（上/下/左关/右开），由令牌推导、不是手填。
+   居中纪律（toggle-center 批 2026-11-06）：`top/left` 只准取 `--nf-toggle-offset`，
+   行程只准取 `--nf-toggle-travel`；像素门禁 `scripts/check-toggle-geometry.mjs`
+   判 |上−下| ≤ 0.5、|左(关)−右(开)| ≤ 0.5（桌面 + 手机 × 亮/暗）。
    FLAT：本类**零 box-shadow**（旧版那两条 inset 内高光已按扁平契约撤掉 ——
    `check-flat-buttons.mjs` 的 toggle/switch 判据段现在会抓它）。
    MOTION：180ms + cubic-bezier(0.2,0,0,1)（两侧 y 控制点 0/1 ⇒ 单调不过冲，
@@ -2747,17 +2750,20 @@
   transform: translate(-50%, -50%);
   border-radius: inherit;
 }
-/* 圆钮（唯一的形态子部件，伪元素，零元素节点） */
+/* 圆钮（唯一的形态子部件，伪元素，零元素节点）
+   top/left 取 `--nf-toggle-offset`（= 外缘缝 − 描边）：absolute 子件的百分比/长度
+   是相对 padding box 的，直接写「缝」会把 1px 描边算漏一次 —— 那正是上一批
+   手机档 3/1 偏心的机理。 */
 .nb-toggle::after {
   content: '';
   position: absolute;
   box-sizing: border-box;
-  top: var(--nf-toggle-inset);
-  left: var(--nf-toggle-inset);
+  top: var(--nf-toggle-offset);
+  left: var(--nf-toggle-offset);
   width: var(--nf-toggle-knob);
   height: var(--nf-toggle-knob);
   border: var(--nf-toggle-border) solid var(--nf-toggle-knob-stroke);
-  border-radius: 50%;
+  border-radius: var(--nf-toggle-knob-radius);
   background: var(--nf-toggle-knob-bg);
   transition-property: transform;
   transition-duration: var(--nf-toggle-dur);

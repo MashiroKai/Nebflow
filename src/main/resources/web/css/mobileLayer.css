@@ -280,12 +280,15 @@ html.mobile-html-layer {
    ── 开关（iOS 尺寸语言）────────────────────────────────────────────
      --msw-w           51px 轨道宽（iOS 开关标准宽）
      --msw-h           31px 轨道高
-     --msw-knob        27px 圆钮直径（轨道高 − 2×2px 内衬）
-     --msw-inset       2px  圆钮内衬（轨道与钮的四边等距）
-     --msw-travel      20px 圆钮行程（= 轨道宽 − 钮径 − 2×内衬；**由 calc 算出**，
-                       见下方 --msw-travel 定义。三点入口批 2026-11-05 修正：旧值 22px
-                       与本行公式不符 ⇒ ON 态圆钮右缘越过轨道右缘 2px（OFF 左缝 2px、
-                       ON 右缝 0px 的不对称）。
+     --msw-knob        27px 圆钮直径（轨道高 − 2×2px 外缘缝）
+     --msw-inset       2px  圆钮到**轨道外缘**的四向缝 = (轨高 − 钮径)/2（calc 推导，
+                       四向同值才叫居中；toggle-center 批 2026-11-06）
+     --msw-offset      1px  圆钮 top/left 的实取值 = 缝 − 轨道描边（absolute 子件
+                      相对 padding box 定位，描边不在坐标系里）
+     --msw-travel      20px 圆钮行程 = 轨道宽 − 钮径 − 2×缝（**由 calc 算出**）。
+                       2026-11-05 修正过手抄 22px；2026-11-06 本批把「缝」改写为
+                       外缘尺并补 --msw-offset —— 旧写法（缝直接当 padding box 内距）
+                       在 31×31 档上实渲染 上3/下1、开档右缝1 ⇒ 2px 偏心。
    颜色沿用回绿后的既有 token（--glass-control-* 材质 + rgb(var(--brand-green)))
    ——本块只定几何与字阶，零新色值。
    ═══════════════════════════════════════════════════════════════════════ */
@@ -416,20 +419,27 @@ body.mobile-layer {
   --micon: 22px;
   --micon-sm: 20px;
   --micon-lg: 24px;
-  /* 开关几何 */
+  /* 开关几何（与桌面档同一套推导，见 stand-tokens.css 的「居中 = 几何推导」注） */
   --msw-w: 51px;
   --msw-h: 31px;
   --msw-knob: 27px;
-  --msw-inset: 2px;
-  /* 行程恒按公式算出（禁手抄数值）：51 − 27 − 2×2 = 20px ⇒ OFF 左缝 2px == ON 右缝 2px。
-     旧值 22px 是手抄错值（ON 态圆钮右出 2px，实测见 batch 报告 C4 节）。 */
-  --msw-travel: calc(var(--msw-w) - var(--msw-knob) - var(--msw-inset) * 2);
+  /* 圆钮到轨道**外缘**的四向缝 —— 居中即四向同值：(31 − 27)/2 = 2px。
+     旧值写死 2px 又被 `top/left`（相对 padding box）当内距用 ⇒ 屏幕上
+     上 3 / 下 1、开档右缝 1（关档左缝 3）：2px 偏心（toggle-center 批实测）。 */
+  --msw-inset: calc((var(--msw-h) - var(--msw-knob)) / 2);
+  /* absolute 子件的 top/left 相对 padding box ⇒ 减掉轨道描边：2 − 1 = 1px */
+  --msw-offset: calc(var(--msw-inset) - var(--nf-toggle-border));
+  /* 行程恒按公式算出（禁手抄数值）：51 − 2×2(缝) − 27(钮) = 20px
+     ⇒ 关档左缝 2 == 开档右缝 2（外缘尺，与桌面档同构）。 */
+  --msw-travel: calc(var(--msw-w) - var(--msw-inset) * 2 - var(--msw-knob));
 }
 
 /* ── 手机端开关 = iOS 尺寸语言（作者令 2026-11-02「toggle 改成 iOS 尺寸语言」）
-   `.nb-toggle` 基座（sidebar.css，36×20 桌面档）在手机层整族换几何：轨道
-   51×31、圆钮 27、内衬 2、行程 22 —— 全部取自上方 token 单源，颜色沿用回绿
-   后的既有配方（--glass-control-* 材质 + rgb(var(--brand-green))) 零新色值。
+   `.nb-toggle` 基座（sidebar.css，40×22 桌面档）在手机层整族换几何：轨道
+   51×31、圆钮 27、外缘缝 2（= (31−27)/2）、行程 20 —— 全部取自上方 token 单源，
+   颜色沿用回绿后的既有配方（--glass-control-* 材质 + rgb(var(--brand-green)))
+   零新色值。圆钮落位取 `--msw-offset`（缝 − 描边），四向缝实测 2/2/2/2
+   （toggle-center 批 2026-11-06：旧版 3/1/3/1 偏心 2px）。
    热区：本体 51×31 已达 --mtap 高度的一档但**宽高均需 ≥44**——31px 高不足，
    故 ::before 外扩命中盒补到 --mhit（44×44），视觉形态不变、触控达 Apple 档。
    桌面（>768px 非手机层）逐字节不变：全部规则挂 body.mobile-layer。 */
@@ -440,8 +450,8 @@ body.mobile-layer .nb-toggle {
   border-radius: calc(var(--msw-h) / 2);
 }
 body.mobile-layer .nb-toggle::after {
-  top: var(--msw-inset);
-  left: var(--msw-inset);
+  top: var(--msw-offset);
+  left: var(--msw-offset);
   width: var(--msw-knob);
   height: var(--msw-knob);
 }
