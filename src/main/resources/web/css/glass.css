@@ -112,6 +112,11 @@
 .ask-pending-row, .ask-pending-next,
 .ws-pick-target,
 .scroll-new-pill,
+/* 顶部悬浮批（glass-top-overlays 2026-11-06）：聊天气泡流上方的 sticky 等待条
+   —— 作者令「所有悬浮在顶部 可以透出背景的 都用毛玻璃效果」。本表只供 blur；
+   玻璃底 / 描边 / 内高光与 15% warning 语义洗色层在 chat.css 的 `.retry-status`
+   块里合成（复合背景，合成后 α ≈ .617，落进玻璃带）。 */
+.retry-status,
 .dvp-nd,
 .ds-edge-fade,
 .fcv-headpill,

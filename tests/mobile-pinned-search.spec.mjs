@@ -204,6 +204,23 @@ async function readPinnedBar(page, pageId) {
     document.body.appendChild(probe3);
     const tokenWash = getComputedStyle(probe3).backgroundColor;
     probe3.remove();
+    // 材质换代（glass-top-overlays 2026-11-06）：条浮在滚动列表之上 ⇒ 走唯一
+    // 毛玻璃标准。判据仍取「计算样式 == token 解析值」的单源对偶形式，token 面
+    // 换成 --nf-glass-*（底 / 配方 / 浮影三探针）。
+    const probeGlass = document.createElement('span');
+    probeGlass.style.cssText = 'position:absolute;left:-9999px;background:var(--nf-glass-bg);'
+      + 'border-top:1px solid var(--nf-glass-border-color);box-shadow:var(--nf-glass-shadow);';
+    document.body.appendChild(probeGlass);
+    const gs = getComputedStyle(probeGlass);
+    const tokenGlassBg = gs.backgroundColor;
+    const tokenGlassBorder = gs.borderTopColor;
+    const tokenGlassShadow = gs.boxShadow;
+    probeGlass.remove();
+    const probeFilter = document.createElement('span');
+    probeFilter.style.cssText = 'position:absolute;left:-9999px;backdrop-filter:var(--nf-glass-filter);';
+    document.body.appendChild(probeFilter);
+    const tokenGlassFilter = getComputedStyle(probeFilter).backdropFilter || 'none';
+    probeFilter.remove();
 
     const dock = body?.querySelector(':scope > .mh-search-dock') || null;
     const bar = dock?.querySelector('.mh-search-bar') || null;
@@ -222,6 +239,12 @@ async function readPinnedBar(page, pageId) {
       tokenBg,
       tokenSurface,
       tokenWash,
+      tokenGlassBg,
+      tokenGlassBorder,
+      tokenGlassShadow,
+      tokenGlassFilter,
+      borderTopColor: cs?.borderTopColor ?? null,
+      hasGlassClass: !!bar?.classList.contains('nf-glass'),
       radius: cs?.borderRadius ?? null,
       shadow: cs?.boxShadow ?? null,
       backdrop: cs ? (cs.webkitBackdropFilter || cs.backdropFilter || 'none') : null,
@@ -270,17 +293,21 @@ function expectPinnedGeometry(st, pageId) {
   expect(st.bar.h, `${pageId}: 44px`).toBe(44);
   expect(st.bar.left, `${pageId}: left 16`).toBe(16);
   expect(st.bar.right, `${pageId}: right 359`).toBe(359);
-  // 材质换代（件八 2026-11-05 12:28 作者令「参考微信的扁平化 圆角用我们的就行」）：
-  // 扁平场判据 = 浅灰底 --ds-wash-16 单源 / 圆角 --ds-radius-xl 12px（圆角加大批
-  // 2026-11-05 17:37 由 --ds-radius-input 8px 抬档）/ 无毛玻璃 /
-  // 无投影。判据面单源 = tests/mobile-search-flat.spec.mjs（本 spec 只留同口径对偶）。
+  // 材质换代（glass-top-overlays 2026-11-06 作者令「所有悬浮在顶部 可以透出背景的
+  // 都用毛玻璃效果 比如消息和联系人的手机端的搜索框」）：条 = `.nf-glass` 唯一
+  // 毛玻璃标准 —— 玻璃底 / 细边 / 内高光浮影 / blur(40px) saturate(1.4) 四项
+  // 逐值 == --nf-glass-* 解析值。几何（44 高 / 圆角 12 / 左右 16 / 常驻不位移）
+  // 与「浮钮退役」语义零改。判据面单源 = tests/mobile-search-flat.spec.mjs。
   expect(st.radius, `${pageId}: 圆角 = --ds-radius-xl 12px`).toBe('12px');
   // 贴页面顶（dock 顶 padding 8px，允许 0-12 摆动）。
   expect(st.bar.top - st.pageTop, `${pageId}: 贴页面顶`).toBeLessThanOrEqual(12);
   expect(st.bar.top - st.pageTop).toBeGreaterThanOrEqual(0);
-  expect(st.bg, `${pageId}: 扁平场底 = --ds-wash-16 单源`).toBe(st.tokenWash);
-  expect(st.backdrop, `${pageId}: 无毛玻璃（backdrop-filter none）`).toBe('none');
-  expect(st.shadow, `${pageId}: 无投影`).toBe('none');
+  expect(st.hasGlassClass, `${pageId}: 条挂 .nf-glass（唯一工具类）`).toBe(true);
+  expect(st.bg, `${pageId}: 玻璃底 = --nf-glass-bg 单源`).toBe(st.tokenGlassBg);
+  expect(st.borderTopColor, `${pageId}: 细边 = --nf-glass-border-color 单源`).toBe(st.tokenGlassBorder);
+  expect(st.backdrop, `${pageId}: 毛玻璃配方 = --nf-glass-filter 单源`).toBe(st.tokenGlassFilter);
+  expect(st.backdrop, `${pageId}: 配方含 blur(40px) saturate(1.4)`).toMatch(/blur\(40px\)\s+saturate\(1\.4\)/);
+  expect(st.shadow, `${pageId}: 浮影 = --nf-glass-shadow 单源（面级浮件档）`).toBe(st.tokenGlassShadow);
   expect(st.transform, `${pageId}: 无 transform（常驻不位移）`).toBe('none');
   // 旧浮钮语汇在这两页退役。
   expect(st.fabCount, `${pageId}: 右上搜索浮钮退役`).toBe(0);
@@ -520,29 +547,31 @@ test.describe('light scheme material', () => {
 
   // 件七（2026-11-04 扁平化）：材质判据从玻璃包改扁平场（--color-surface 亮档
   // #ffffff）——判据仍是「条底 == token 解析值」的单源对偶，只换 token 面。
-  test('P10 light: pinned bar fill = --ds-wash-16 单源（浅灰底）', async ({ page }) => {
+  // 换代表 2026-11-06（glass-top-overlays）：token 面换成 --nf-glass-bg（条是
+  // 顶部悬浮可透出面 ⇒ 毛玻璃）；亮/暗两档各自解析，判据形式不变。
+  test('P10 light: pinned bar fill = --nf-glass-bg 单源（亮档玻璃底）', async ({ page }) => {
     const errors = watchErrors(page);
     await bootApp(page, { friends: true });
     await dockTo(page, 'messages');
     const st = await readPinnedBar(page, 'messages');
-    expect(st.tokenWash).toBe('rgba(128, 128, 128, 0.16)');
-    expect(st.bg).toBe(st.tokenWash);
+    expect(st.bg).toBe(st.tokenGlassBg);
+    expect(st.tokenGlassBg, '亮档玻璃底 α 落进 [0.45, 0.75]').toMatch(/rgba\(255, 255, 255, 0\.5[0-9]+\)/);
     await dockTo(page, 'contacts');
     const ct = await readPinnedBar(page, 'contacts');
-    expect(ct.bg).toBe(ct.tokenWash);
+    expect(ct.bg).toBe(ct.tokenGlassBg);
     expect(errors).toEqual([]);
   });
 });
 
-test('P10b dark: pinned bar fill = --ds-wash-16 单源（浅灰底，双主题同值）', async ({ page }) => {
+test('P10b dark: pinned bar fill = --nf-glass-bg 单源（暗档玻璃底）', async ({ page }) => {
   const errors = watchErrors(page);
   await bootApp(page, { friends: true });
   await dockTo(page, 'messages');
   const st = await readPinnedBar(page, 'messages');
-  expect(st.tokenWash).toBe('rgba(128, 128, 128, 0.16)');
-  expect(st.bg).toBe(st.tokenWash);
+  expect(st.bg).toBe(st.tokenGlassBg);
+  expect(st.tokenGlassBg, '暗档玻璃底 α 落进 [0.45, 0.75]').toMatch(/rgba\(24, 28, 38, 0\.6[0-9]+\)/);
   await dockTo(page, 'contacts');
   const ct = await readPinnedBar(page, 'contacts');
-  expect(ct.bg).toBe(ct.tokenWash);
+  expect(ct.bg).toBe(ct.tokenGlassBg);
   expect(errors).toEqual([]);
 });

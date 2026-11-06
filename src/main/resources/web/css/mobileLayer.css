@@ -3268,12 +3268,11 @@ body.mobile-layer .mh-search-bar:not(.g2-fab) {
   height: 44px;
   flex: none;
   border-radius: var(--ds-radius-pill);
-  background: var(--glass-control-bg);
-  border: 1px solid var(--glass-control-border);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge),
-    0 1px 3px var(--glass-control-glow);
+  /* 材质（底 / 描边 / 投影 / 模糊）**不在这里写**：
+     glass-top-overlays 批 2026-11-06 起整件由唯一工具类 `.nf-glass` 供给
+     （css/glass.css；DOM 侧 socialSearch.js 建条时挂类）。本块只留几何。
+     改前这里的 --glass-control-bg + 三段 inset 高光/暗边 + 外发光是「玻璃控制档」
+     自造厚度的写法，与玻璃单源和扁平纪律都冲突，随批退役。 */
 }
 /* 展开态图标档（16px / muted）。收起态（.g2-fab 圆钮）图标几何与字色整件归
    glass.css 的 `.g2-fab svg`（手机档 `body.mobile-layer .g2-fab svg` = 20px）
