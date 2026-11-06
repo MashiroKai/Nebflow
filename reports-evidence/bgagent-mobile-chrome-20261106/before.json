@@ -1,0 +1,207 @@
+{
+  "tag": "before",
+  "webRoot": "/tmp/bgagent-before/src/main/resources/web",
+  "browser": "chromium-151",
+  "runs": [
+    {
+      "viewport": "375",
+      "theme": "light",
+      "measure": {
+        "mobileLayer": true,
+        "overlayPresent": true,
+        "closeX": {
+          "count": 1,
+          "visible": true
+        },
+        "back": {
+          "present": true,
+          "visible": true,
+          "rect": {
+            "x": 16,
+            "y": 16,
+            "width": 48,
+            "height": 48,
+            "top": 16,
+            "right": 64,
+            "bottom": 64,
+            "left": 16
+          }
+        },
+        "pill": null,
+        "more": null,
+        "stopFab": null,
+        "footer": {
+          "visible": true,
+          "display": "flex"
+        },
+        "faTaskVisible": true,
+        "sheet": null,
+        "stripInModal": 1,
+        "wsInModal": 1,
+        "sessionPresent": true
+      },
+      "sheetToggle": null,
+      "stopClick": null,
+      "backClick": {
+        "overlayClosedAfterClick": true
+      }
+    },
+    {
+      "viewport": "375",
+      "theme": "dark",
+      "measure": {
+        "mobileLayer": true,
+        "overlayPresent": true,
+        "closeX": {
+          "count": 1,
+          "visible": true
+        },
+        "back": {
+          "present": true,
+          "visible": true,
+          "rect": {
+            "x": 16,
+            "y": 16,
+            "width": 48,
+            "height": 48,
+            "top": 16,
+            "right": 64,
+            "bottom": 64,
+            "left": 16
+          }
+        },
+        "pill": null,
+        "more": null,
+        "stopFab": null,
+        "footer": {
+          "visible": true,
+          "display": "flex"
+        },
+        "faTaskVisible": true,
+        "sheet": null,
+        "stripInModal": 1,
+        "wsInModal": 1,
+        "sessionPresent": true
+      },
+      "sheetToggle": null,
+      "stopClick": null,
+      "backClick": {
+        "overlayClosedAfterClick": true
+      }
+    },
+    {
+      "viewport": "1440",
+      "theme": "light",
+      "measure": {
+        "mobileLayer": false,
+        "overlayPresent": true,
+        "closeX": {
+          "count": 1,
+          "visible": true
+        },
+        "back": {
+          "present": false
+        },
+        "pill": null,
+        "more": null,
+        "stopFab": null,
+        "footer": {
+          "visible": true,
+          "display": "flex"
+        },
+        "faTaskVisible": true,
+        "sheet": null,
+        "stripInModal": 1,
+        "wsInModal": 1,
+        "sessionPresent": true
+      },
+      "sheetToggle": null,
+      "stopClick": null,
+      "backClick": null
+    },
+    {
+      "viewport": "1440",
+      "theme": "dark",
+      "measure": {
+        "mobileLayer": false,
+        "overlayPresent": true,
+        "closeX": {
+          "count": 1,
+          "visible": true
+        },
+        "back": {
+          "present": false
+        },
+        "pill": null,
+        "more": null,
+        "stopFab": null,
+        "footer": {
+          "visible": true,
+          "display": "flex"
+        },
+        "faTaskVisible": true,
+        "sheet": null,
+        "stripInModal": 1,
+        "wsInModal": 1,
+        "sessionPresent": true
+      },
+      "sheetToggle": null,
+      "stopClick": null,
+      "backClick": null
+    }
+  ],
+  "shots": [
+    "reports-evidence/bgagent-mobile-chrome-20261106/before-375-light-main.png",
+    "reports-evidence/bgagent-mobile-chrome-20261106/before-375-dark-main.png",
+    "reports-evidence/bgagent-mobile-chrome-20261106/before-1440-light-main.png",
+    "reports-evidence/bgagent-mobile-chrome-20261106/before-1440-dark-main.png"
+  ],
+  "checks": [
+    {
+      "id": "M1",
+      "name": "顶栏无重复关闭件（✕=0，返回钮在场且可关）",
+      "ok": false,
+      "reading": "closeX=1(vis=true) back=true(vis=true) 点击关闭=true"
+    },
+    {
+      "id": "M2",
+      "name": "状态胶囊 = 状态词面 + 时长，不含任务标题（顶带内）",
+      "ok": false,
+      "reading": "text=\"-\" y=- h=-"
+    },
+    {
+      "id": "M3",
+      "name": "终止钮走悬浮圆钮类且命中盒 ≥40（右下离边、玻璃、危险档、图标已转换）",
+      "ok": false,
+      "reading": "classes=\"-\" hit=- color=- danger=- icon=- right=- bottom=- bf=-"
+    },
+    {
+      "id": "M4",
+      "name": "⋯ 详情浮层可开合且含插件/工作树/任务内容三字段（毛玻璃卡）",
+      "ok": false,
+      "reading": "meta=[-] taskFilled=- scrimClosed=- glass=-"
+    },
+    {
+      "id": "M5",
+      "name": "底部简化：footer 不可见、任务标题不在可见面、灰行只在详情内",
+      "ok": false,
+      "reading": "footerVis=true faTaskVis=true wsInModal=1 wsInSheet=- stripInModal=1"
+    },
+    {
+      "id": "M6",
+      "name": "真点击悬浮终止钮 → 发 cancelAgent 终止帧",
+      "ok": false,
+      "reading": "cancelAgent 增量=-（改前形态：行内小方块，无悬浮钮）"
+    },
+    {
+      "id": "D1",
+      "name": "桌面零变化：✕ 在场、胶囊/⋯/悬浮钮/浮层全缺、footer 在场、条在原位",
+      "ok": true,
+      "reading": "closeX=1 pill=false more=false stopFab=false sheet=false footerVis=true stripInModal=1 wsInModal=1"
+    }
+  ],
+  "failures": 6,
+  "desktopSha": {
+    "before": "f0e03dffaa4c141f"
+  }
+}
