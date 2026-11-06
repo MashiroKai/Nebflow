@@ -570,15 +570,30 @@ object FeishuChannel:
   def imageErrorReading(status: Int, body: Array[Byte]): (Int, String) =
     io.circe.parser.parse(new String(body, java.nio.charset.StandardCharsets.UTF_8)).toOption
       .flatMap { j =>
-        val code = j.hcursor
+        val cursor = j.hcursor
+        val rawCode = cursor.downField("code").focus
+        val rawMsg = cursor.downField("msg").focus
+        val code = cursor
           .downField("code")
           .as[Long]
           .toOption
           .map(_.toInt)
-          .orElse(j.hcursor.downField("code").as[String].toOption.flatMap(s => scala.util.Try(s.toInt).toOption))
-        code.map(c => (c, j.hcursor.downField("msg").as[String].toOption.getOrElse("")))
+          .orElse(cursor.downField("code").as[String].toOption.flatMap(s => scala.util.Try(s.toInt).toOption))
+        code.map { c =>
+          val msg = cursor.downField("msg").as[String].toOption.getOrElse("")
+          (c, s"Feishu image API refused (http=$status endpoint=im/v1/images/:image_key fields=code:${rawCode.isDefined},msg:${rawMsg.isDefined}; code=$c msg=$msg)")
+        }
       }
-      .getOrElse((status, s"HTTP $status with a non-JSON body (${body.length}B)"))
+      .getOrElse((status, s"Feishu image API refused (http=$status endpoint=im/v1/images/:image_key fields=code:false,msg:false; non-JSON body ${body.length}B)"))
+
+  /** Encode arbitrary input as one RFC 3986 path segment, never as URL syntax. */
+  private def encodePathSegment(value: String): String =
+    val hex = "0123456789ABCDEF"
+    value.getBytes(java.nio.charset.StandardCharsets.UTF_8).iterator.map { b =>
+      val c = b & 0xff
+      if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || "-._~".contains(c.toChar) then c.toChar.toString
+      else s"%${hex.charAt(c >>> 4)}${hex.charAt(c & 0x0f)}"
+    }.mkString
 
   /**
    * `im/v1/images/:image_key` — download one message image by its key
@@ -609,15 +624,16 @@ object FeishuChannel:
     tenantToken(appId, appSecret, base, http) match
       case Left(reason) => ImageResult(ok = false, None, -1, reason)
       case Right(token) =>
-        http(s"$base/open-apis/im/v1/images/$imageKey", Map("Authorization" -> s"Bearer $token"), None) match
-          case Left(err) => ImageResult(ok = false, None, -1, s"image GET failed: $err")
+        http(s"$base/open-apis/im/v1/images/${encodePathSegment(imageKey)}", Map("Authorization" -> s"Bearer $token"), None) match
+          case Left(_) => ImageResult(ok = false, None, -1, "image GET transport failed (endpoint=im/v1/images/:image_key)")
           case Right((status, bytes)) =>
             if status >= 200 && status < 300 then
               if bytes.nonEmpty then ImageResult(ok = true, Some(bytes), status, "ok")
               else ImageResult(ok = false, None, status, "download succeeded but returned no bytes")
             else
               val (code, msg) = imageErrorReading(status, bytes)
-              ImageResult(ok = false, None, code, msg)
+              val safeMsg = if imageKey.nonEmpty then msg.replace(imageKey, "[redacted-image-key]") else msg
+              ImageResult(ok = false, None, code, safeMsg)
 
   end getImageVia
 
