@@ -295,10 +295,7 @@ private[agent] object AgentProcessing:
             )
             val (immInputs, remainingImmAfterAbort) = (abortPlan.immediate, abortPlan.remainingImmediate)
             val immMessages = immInputs.map(imm =>
-              (imm.blocks match
-                case Some(blocks) if blocks.nonEmpty => Message(MessageRole.User, Right(blocks))
-                case _ => Message(MessageRole.User, Left(imm.text))
-              ).copy(source = injectionSourceFor(imm.fromUser, imm.source))
+              immInputToMessage(imm)
             )
             logAgentEvent(
               agentDef,
@@ -738,10 +735,7 @@ private[agent] object AgentProcessing:
               s"batch=${inputs.size} texts=${inputs.map(_.text.take(40)).mkString(" | ").take(200)} remaining=${remainingImmInputs.size}"
             )
             inputs.map(imm =>
-              (imm.blocks match
-                case Some(blocks) if blocks.nonEmpty => Message(MessageRole.User, Right(blocks))
-                case _ => Message(MessageRole.User, Left(imm.text))
-              ).copy(source = injectionSourceFor(imm.fromUser, imm.source))
+              immInputToMessage(imm)
             )
         // ② (2026-09-11): 真人输入不产注入气泡（fromUser 优先于 source）。
         val immEventIO = immInputs.flatMap { imm =>
@@ -846,10 +840,7 @@ private[agent] object AgentProcessing:
                 s"remainingUserInputs=${userInputsAfterMail.size}"
             )
             frames.map(ui =>
-              (ui.blocks match
-                case Some(blocks) if blocks.nonEmpty => Message(MessageRole.User, Right(blocks))
-                case _ => Message(MessageRole.User, Left(ui.text))
-              ).copy(source = injectionSourceFor(ui.fromUser, ui.source))
+              userCmdToMessage(ui)
             )
         // Block 3 循环检测器 L0（supervision trio §D3）：LoopGuard Warn 提醒以
         // user system-reminder 追加在工具结果之后（同系统 reminder 形态）

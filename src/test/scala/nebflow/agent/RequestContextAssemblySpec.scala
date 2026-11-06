@@ -31,7 +31,8 @@ import scala.concurrent.duration.*
  *      `requestOnlyContext`（适配器再排在持久历史断点之后）。
  *   C-CHAIN-2 持久历史不变量保持：最后一条 user 消息 = 本轮输入（既有
  *      lastUserSource 语义）、上一轮输入在本轮 messages 里（历史只追加）。
- *   C-CHAIN-3 请求级时间锚（systemDynamic）照常非空。
+ *   C-CHAIN-3 时钟零残留（时钟简化批 2026-11-06）：systemDynamic / requestOnlyContext
+ *      均不带时钟（动态段时钟退役「永不主动注入」；真用户轮时钟随消息持久化）。
  *
  * 缺陷史：修复前这族提醒直接拼进 messages（尾断点落提醒上 ⇒ 缓存写到
  * H+R ⇒ 下一轮必 miss）；变异红线 = 把拼接改回 messages ⇒ 本规格当场红。
@@ -117,6 +118,15 @@ class RequestContextAssemblySpec extends CatsEffectSuite:
   private def lastUserText(req: LlmRequest): String =
     req.messages.filter(_.role == nebflow.shared.MessageRole.User).lastOption.map(_.textContent).getOrElse("")
 
+  /** 时钟简化批（2026-11-06）：真用户输入消息 = 前置单行极简时钟 + 原文。剥钟后比对。 */
+  private def stripClock(text: String): String =
+    text.replaceAll("""(?s)^<system-reminder>Now: [^<]*</system-reminder>\n""", "")
+
+  /** 恰一条极简时钟行（`Now: … 周X | epoch_ms …`，无旧裸块的推导段）。 */
+  private def clockLineCount(text: String): Int =
+    raw"<system-reminder>Now: \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} [+-]\d{2}:\d{2} 周[一二三四五六日] \| epoch_ms \d+</system-reminder>".r
+      .findAllIn(text).size
+
   /** 种一个真实 pending 定时任务 ⇒ 真用户轮 `collectAllIO` 产 schedule 类提醒。 */
   private def seedPendingSchedule(resources: SharedResources, sid: String): IO[Unit] =
     resources.scheduledTaskStore.addTask(
@@ -185,12 +195,25 @@ class RequestContextAssemblySpec extends CatsEffectSuite:
           req2.requestOnlyContext.map(_.textContent).mkString("\n").contains("Pending schedules"),
           "turn2: per-turn reminder must be re-emitted in requestOnlyContext (still pending)"
         )
-        // C-CHAIN-2: 持久历史不变量——最后一条 user = 本轮输入；上一轮输入仍在
-        assertEquals(lastUserText(req1), "first turn", "turn1: last user message must be the trigger input")
-        assertEquals(lastUserText(req2), "second turn", "turn2: last user message must be the trigger input")
-        assert(textOf(req2).contains("first turn"), "turn2: persisted history must retain turn1 input")
-        // C-CHAIN-3: 请求级时间锚照常
-        assert(req1.systemDynamic.exists(_.contains("epoch_ms")), "turn1: request-level clock anchor must be present")
+        // C-CHAIN-2: 持久历史不变量——最后一条 user = 前置时钟行 + 本轮输入
+        // （时钟简化批：时钟随用户消息持久化，append-only）；上一轮输入仍在。
+        assertEquals(stripClock(lastUserText(req1)), "first turn", "turn1: last user message must be the trigger input (modulo clock line)")
+        assertEquals(stripClock(lastUserText(req2)), "second turn", "turn2: last user message must be the trigger input (modulo clock line)")
+        assertEquals(clockLineCount(lastUserText(req1)), 1, "turn1: exactly ONE minimal clock line rides the real-user input")
+        assertEquals(clockLineCount(lastUserText(req2)), 1, "turn2: exactly ONE minimal clock line rides the real-user input")
+        assert(!lastUserText(req1).contains("── Clock"), "旧裸块（── Clock 分隔块）必须零残留")
+        assert(!lastUserText(req1).contains("Derive every relative date"), "旧裸块推导段必须零残留")
+        assert(stripClock(textOf(req2)).contains("first turn"), "turn2: persisted history must retain turn1 input")
+        // C-CHAIN-3: 时钟简化批（2026-11-06）——动态段时钟退役：systemDynamic /
+        // requestOnlyContext 零时钟（「永不主动注入」）；真用户轮时钟改走持久化消息。
+        assert(
+          !req1.systemDynamic.exists(_.contains("epoch_ms")),
+          "turn1: systemDynamic must carry NO clock (retired, never proactively injected)"
+        )
+        assert(
+          !req1.requestOnlyContext.exists(m => m.textContent.contains("epoch_ms") || m.textContent.contains("Current time")),
+          "turn1: requestOnlyContext must carry NO clock"
+        )
       program.unsafeRunSync()
     finally
       nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)

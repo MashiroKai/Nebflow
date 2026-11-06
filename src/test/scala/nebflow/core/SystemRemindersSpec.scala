@@ -6,47 +6,27 @@ import nebflow.core.scheduler.ScheduledTaskStore
 import nebflow.shared.{Message, MessageRole}
 
 /**
- * SystemReminders — 每回合时间锚契约。
+ * SystemReminders — 时钟注入契约。
  *
- * 原契约（任务 O）= `Current time: yyyy-MM-dd HH:mm +08:00`（只有偏移、无星期、
- * 无时区名）。时间感知修复批（作者指令 2026-11-05 18:48）把格式收到
- * [[nebflow.shared.TimeAnchor]] 单源并**加宽**为
- * `Current time: yyyy-MM-dd HH:mm:ss +08:00 | Asia/Shanghai | Monday 周一 | epoch_ms …`；
- * 本 spec 的 pattern 随之加宽（**断言未放松**：仍是全串锚定匹配，只是锚的内容更多）。
- * 保留面：time 只在起始轮注入 + 持久化提醒的裁剪（最近 N 条）。
+ * 沿革：原契约（任务 O）= `Current time: yyyy-MM-dd HH:mm +08:00`；时间感知修复批
+ * （2026-11-05）加宽为全字段锚；**时钟简化批（作者令 2026-11-06 22:26/22:29）改写
+ * 现契约**：
+ *  - 时钟**只随真用户轮**（source=None 的真人输入）注入——Mail / 节点消息 / 定时
+ *    任务 / 外部事件驱动的 system-event 轮与工具往返轮**零时钟**（「永不主动注入」，
+ *    空转轮被每请求时钟反复叫醒、无法收轮是本批病根）；
+ *  - 内容 = 极简形 `Now: yyyy-MM-dd HH:mm:ss +08:00 周一 | epoch_ms <ms>`
+ *    （TimeAnchor.userLine，无推导文案——行为纪律由 systemStable 时间纪律段承担）；
+ *  - 持久化 = **append-only**：新形态不被 isTimeReminderMessage 识别 ⇒ 永不裁剪；
+ *    旧 `Current time:` 形态的识别/裁剪契约保留（管旧会话历史）。
  */
 class SystemRemindersSpec extends FunSuite:
 
   private val timePattern =
-    raw"Current time: \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} (Z|[+-]\d{2}:\d{2}) \| \S+ \| [A-Z][a-z]+ 周[一二三四五六日] \| epoch_ms \d+".r
+    raw"Now: \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} (Z|[+-]\d{2}:\d{2}) 周[一二三四五六日] \| epoch_ms \d+".r
 
-  test("time reminder is injected on user turns only"):
-    val on = SystemReminders.collectAll(isUserTurn = true)
-    val off = SystemReminders.collectAll(isUserTurn = false)
-    assertEquals(on.size, 1)
-    assertEquals(on.head.category, "time")
-    assertEquals(off.size, 0)
+  test("clock generation is absent from reminder collection (input conversion owns it)"):
+    assertEquals(SystemReminders.collectAll(), Nil)
 
-  test("time format is the single-source anchor: offset + zone name + weekday + epoch_ms"):
-    val on = SystemReminders.collectAll(isUserTurn = true)
-    val content = on.head.content
-    assert(
-      timePattern.matches(content),
-      s"expected 'Current time: yyyy-MM-dd HH:mm:ss +HH:MM | <Zone> | <Weekday 周X> | epoch_ms <ms>' but got: $content"
-    )
-    // Offset must match the JVM default zone's offset (e.g. +08:00 for China)
-    val now = java.time.ZonedDateTime.now()
-    val offset = now.getOffset.toString
-    assert(content.contains(s" $offset "), s"offset $offset not present in: $content")
-    // Zone NAME (not just the offset) and the weekday must both be present
-    assert(content.contains(now.getZone.getId), s"zone name ${now.getZone.getId} missing: $content")
-    assert(
-      content.contains(
-        now.getDayOfWeek.getDisplayName(java.time.format.TextStyle.FULL, java.util.Locale.ENGLISH)
-      ),
-      s"weekday missing: $content"
-    )
-    assert(content.contains(s"epoch_ms ${now.toInstant.toEpochMilli}") || content.contains("epoch_ms"), content)
 
   test("insertAnchor puts the anchor BEFORE the triggering input (last-user-input invariant kept)"):
     val input = Message(MessageRole.User, Left("hello"), source = None)
@@ -69,27 +49,26 @@ class SystemRemindersSpec extends FunSuite:
     )
     assertEquals(SystemReminders.insertAnchor(List(toolTurn), List(anchor)).last, anchor)
 
-  test("collectAllIO injects the anchor on EVERY input turn (the 1h system-event gap is retired)"):
-    // 时间感知修复批：system-event 轮（Mail / 节点消息 / 定时事件 / 外部事件）也必须
-    // 拿到当刻锚——旧行为是「最多每小时一次」，会留下一个最多 59 分钟前的旧锚甚至
-    // 完全没有锚。这里钉的是「有输入 ⇒ 有锚」。
+  test("reminder collection never creates a clock for any turn"):
     val taskStore = new ScheduledTaskStore(os.temp.dir() / "scheduled-tasks")
     val reminders = SystemReminders
       .collectAllIO(isUserTurn = true, taskStore = taskStore, sessionId = None)
       .unsafeRunSync()
-    assertEquals(reminders.count(_.category == "time"), 1, s"每一次输入轮都恰一条时间锚: $reminders")
-    // 工具往返轮（!isUserTurn）不注入持久化锚（新鲜度由请求级 systemDynamic 锚负责）
-    val toolTurn = SystemReminders
-      .collectAllIO(isUserTurn = false, taskStore = taskStore, sessionId = None)
-      .unsafeRunSync()
-    assertEquals(toolTurn.count(_.category == "time"), 0, s"工具往返轮不注入持久化锚: $toolTurn")
+    assert(!reminders.exists(_.category == "time"), s"clock is attached only during real input conversion: $reminders")
 
-  test("isTimeReminderMessage matches persisted time-reminder format"):
+  test("isTimeReminderMessage matches persisted time-reminder format (legacy face)"):
     val reminder =
       Message(MessageRole.User, Left("<system-reminder>\nCurrent time: 2026-08-11 17:00 +08:00\n</system-reminder>"))
     assert(SystemReminders.isTimeReminderMessage(reminder))
     assert(!SystemReminders.isTimeReminderMessage(Message(MessageRole.User, Left("hello"))))
     assert(!SystemReminders.isTimeReminderMessage(Message(MessageRole.Assistant, Left("Current time: x"))))
+    // 时钟简化批：新极简形态**不被识别** ⇒ append-only 永不裁剪
+    assert(
+      !SystemReminders.isTimeReminderMessage(
+        Message(MessageRole.User, Left("<system-reminder>\nNow: 2026-11-06 22:29:36 +08:00 周五 | epoch_ms 1793975376978\n</system-reminder>"))
+      ),
+      "新形态不得进旧裁剪闸"
+    )
 
   test("pruneTimeReminders keeps only the most recent N time reminders, preserving order"):
     val before = (0 until 25).map { i =>

@@ -108,11 +108,32 @@ class ReminderWiringSpec extends CatsEffectSuite:
       }
     go(System.currentTimeMillis() + timeout.toMillis)
 
+  private val clockRe = raw"Now: \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} (?:Z|[+-]\d{2}:\d{2}) 周[一二三四五六日] \| epoch_ms \d+".r
+
   private def textOf(req: LlmRequest): String =
     req.messages.map(_.textContent).mkString("\n")
 
+  test("input conversion clocks only explicit humans; preserves attachments and injected inputs"):
+    import nebflow.shared.{Message, MessageRole, ContentBlock}
+    val original = Message(MessageRole.User, Left("brief"), source = Some("delegate"))
+    assertEquals(AgentActor.withUserClock(original, realUser = false), original)
+    val human = AgentActor.userCmdToMessage(AgentCommand.UserInput("hello", None, Some("id")))
+    assert(human.textContent.matches("(?s)<system-reminder>Now: .*epoch_ms \\d+</system-reminder>\\nhello"))
+    assertEquals(clockRe.findAllIn(human.textContent).size, 1)
+    val injected = AgentActor.userCmdToMessage(AgentCommand.UserInput("brief", None, source = Some("delegate")))
+    assert(!injected.textContent.contains("epoch_ms"))
+    val blocks = List(ContentBlock.Text("attachment caption"))
+    val attached = AgentActor.withUserClock(Message(MessageRole.User, Right(blocks)), realUser = true)
+    assertEquals(attached.content.toOption.get.tail, blocks)
+    val continuation = AgentActor.immInputToMessage(AgentCommand.ImmediateInput("human", fromUser = true))
+    assertEquals(clockRe.findAllIn(continuation.textContent).size, 1)
+    List("mail", "reminder", "supplement", "delegate").foreach { src =>
+      val msg = AgentActor.immInputToMessage(AgentCommand.ImmediateInput("injected", source = Some(src)))
+      assert(!msg.textContent.contains("epoch_ms"), src)
+    }
+
   test(
-    "① every input turn (system-event included) carries the time anchor; real-user turn injects time but Nebula gets NO tasks (task redesign)"
+    "① clock rides REAL user turns only (system-event = zero clock, 时钟简化批 2026-11-06); real-user turn injects time but Nebula gets NO tasks (task redesign)"
   ):
     val system = ActorSystem("reminder-wiring")
     val tmp = os.temp.dir()
@@ -165,12 +186,17 @@ class ReminderWiringSpec extends CatsEffectSuite:
         _ <- waitUntil(15.seconds)(requests.get.map(_.size >= 3))
         req3 <- requests.get.map(_.apply(2))
       yield
-        // ① system-event turn (ExternalEvent injection)：时间感知修复批（2026-11-05）
-        // **改为必须带锚**——旧契约「system-event 轮不注入时间」正是病根：交给模型的
-        // 新输入可以完全没有「现在」，于是相对时间靠猜。tasks 仍为 0（团队面语义未变）。
+        // ① system-event turn (ExternalEvent injection)：时钟简化批（作者令
+        // 2026-11-06 22:26「时钟应该是只放进用户输入的消息 随用户消息注入 永不主动
+        // 注入」）——system-event 轮**零时钟**（2026-11-05 批的「每个起始轮都带锚」
+        // 契约作废）。tasks 仍为 0（团队面语义未变）。
         assert(
-          textOf(req1).contains("Current time"),
-          s"system-event turn MUST now carry the time anchor:\n${textOf(req1)}"
+          !textOf(req1).contains("Current time"),
+          s"system-event turn must NOT carry a clock (never proactively injected):\n${textOf(req1)}"
+        )
+        assert(
+          clockRe.findFirstIn(textOf(req1)).isEmpty,
+          s"system-event turn must NOT carry a Now: clock line:\n${textOf(req1)}"
         )
         assert(!textOf(req1).contains("Current Tasks"), s"system-event turn must not inject tasks:\n${textOf(req1)}")
         assert(!textOf(req1).contains("Tasks unchanged"), s"system-event turn must not inject tasks:\n${textOf(req1)}")
@@ -182,10 +208,14 @@ class ReminderWiringSpec extends CatsEffectSuite:
             s"Nebula systemStable must not carry the protocol section (team-only):\n$s"
           )
         }
-        // ② real-user turn: time injected, but NO tasks for Nebula — task
+        // ② real-user turn: clock injected (persisted with the message), but NO
+        // tasks for Nebula — task
         // injection moved to team-registered sessions; Nebula has no task
         // tools and its session is not team-scoped
-        assert(textOf(req2).contains("Current time"), s"real-user turn must inject time:\n${textOf(req2)}")
+        assert(
+          clockRe.findFirstIn(textOf(req2)).isDefined,
+          s"real-user turn must carry the minimal clock line:\n${textOf(req2)}"
+        )
         assert(
           !textOf(req2).contains("## Current Tasks"),
           s"task redesign: Nebula no longer gets the task reminder:\n${textOf(req2)}"
@@ -194,27 +224,28 @@ class ReminderWiringSpec extends CatsEffectSuite:
           !textOf(req2).contains("wiring task"),
           s"task redesign: Nebula must not see task lines:\n${textOf(req2)}"
         )
-        // ③ next real-user turn: still no tasks
-        assert(textOf(req3).contains("Current time"), s"real-user turn must inject time:\n${textOf(req3)}")
+        // ③ next real-user turn: still no tasks; fresh clock line rides the message
+        assert(
+          clockRe.findFirstIn(textOf(req3)).isDefined,
+          s"real-user turn must carry the minimal clock line:\n${textOf(req3)}"
+        )
         assert(
           !textOf(req3).contains("## Current Tasks"),
           s"task redesign: Nebula no longer gets the task reminder:\n${textOf(req3)}"
         )
-        // ④ 每请求时间锚（时间感知修复批 2026-11-05）：三个请求（含 system-event 轮）
-        // 的 systemDynamic 都必须带当刻锚，且 **systemStable 里绝不许出现任何时间戳**
-        // ——写进稳定前缀 = 时间冻结（它只在生命周期节点重建）。同一条 spec 同时钉
-        // 正面（动态段有锚）与反面（stable 段无时刻）。
+        // ④ 时钟简化批（作者令 2026-11-06 22:26/22:29）：**动态段时钟零残留**——
+        // 三个请求（含 system-event 轮）的 systemDynamic 一律不带任何时钟（「永不
+        // 主动注入」）；真用户轮的时钟在**消息历史**里（随消息持久化，append-only）；
+        // 且 **systemStable 里绝不许出现任何时间戳**——写进稳定前缀 = 时间冻结
+        // （它只在生命周期节点重建）。
         val stampRe = raw"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} [+-]\d{2}:\d{2}".r
         List(req1, req2, req3).zipWithIndex.foreach { case (req, i) =>
-          val dyn = req.systemDynamic.getOrElse("")
-          assert(
-            dyn.contains("Clock (authoritative; re-read on every request)") && stampRe.findFirstIn(dyn).isDefined,
-            s"request #${i + 1}: every request must carry a fresh clock line in systemDynamic, got: $dyn"
-          )
-          assert(
-            dyn.contains("epoch_ms"),
-            s"request #${i + 1}: the anchor must expose epoch_ms (arithmetic base): $dyn"
-          )
+          req.systemDynamic.foreach { dyn =>
+            assert(
+              !dyn.contains("epoch_ms") && !dyn.contains("Current time") && clockRe.findFirstIn(dyn).isEmpty,
+              s"request #${i + 1}: systemDynamic must carry NO clock (retired, never proactively injected): $dyn"
+            )
+          }
           req.systemStable.foreach { st =>
             assert(
               stampRe.findFirstIn(st).isEmpty,
@@ -275,8 +306,8 @@ class ReminderWiringSpec extends CatsEffectSuite:
         sys1 = req1.systemStable.getOrElse("")
       yield
         assert(
-          textOf(req1).contains("Current time"),
-          s"real-user turn still injects time for team agents:\n${textOf(req1)}"
+          clockRe.findFirstIn(textOf(req1)).isDefined,
+          s"real-user turn carries the minimal clock on its persisted message for team agents:\n${textOf(req1)}"
         )
         assert(!textOf(req1).contains("Current Tasks"), s"Manager must not get the tasks reminder:\n${textOf(req1)}")
         assert(!textOf(req1).contains("mgr task"), s"Manager must not see task lines:\n${textOf(req1)}")

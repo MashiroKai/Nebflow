@@ -194,6 +194,16 @@ object AgentActor extends AgentCore with AgentSession:
   private[agent] def injectionSourceFor(fromUser: Boolean, source: Option[String]): Option[String] =
     if fromUser then None else source
 
+  /** Only input conversion may attach a clock; retries/events/tool results never call this. */
+  private[agent] def withUserClock(message: Message, realUser: Boolean): Message =
+    if !realUser then message
+    else
+      val clock = s"<system-reminder>${TimeAnchor.userLine()}</system-reminder>"
+      message.copy(content = message.content match
+        case Left(text) => Left(s"$clock\n$text")
+        case Right(blocks) => Right(ContentBlock.Text(clock) :: blocks)
+      )
+
   /**
    * issue #31 Fix D (2026-08-20)：把自身 barrier 状态快照进 agentRegistry，
    * 供 AgentControl list/status 展示——phantom slot（成员 hang / 停止失败时
@@ -551,19 +561,24 @@ object AgentActor extends AgentCore with AgentSession:
     exec: ExecutionContext
   )
 
-  /** ImmediateInput → User message (blocks preferred, text fallback). */
-  private def immInputToMessage(imm: AgentCommand.ImmediateInput): Message =
-    (imm.blocks match
-      case Some(blocks) if blocks.nonEmpty => Message(MessageRole.User, Right(blocks))
-      case _ => Message(MessageRole.User, Left(imm.text))
-    ).copy(source = injectionSourceFor(imm.fromUser, imm.source))
+  /** Shared input conversion: only explicitly human inputs receive a clock. */
+  private[agent] def immInputToMessage(imm: AgentCommand.ImmediateInput): Message =
+    withUserClock(
+      (imm.blocks match
+        case Some(blocks) if blocks.nonEmpty => Message(MessageRole.User, Right(blocks))
+        case _ => Message(MessageRole.User, Left(imm.text))
+      ).copy(source = injectionSourceFor(imm.fromUser, imm.source)),
+      imm.fromUser
+    )
 
-  /** UserInput (AgentCommand) → User message for inline continuation injection. */
-  private def userCmdToMessage(ui: AgentCommand.UserInput): Message =
-    (ui.blocks match
-      case Some(blocks) if blocks.nonEmpty => Message(MessageRole.User, Right(blocks))
-      case _ => Message(MessageRole.User, Left(ui.text))
-    ).copy(source = injectionSourceFor(ui.fromUser, ui.source))
+  private[agent] def userCmdToMessage(ui: AgentCommand.UserInput): Message =
+    withUserClock(
+      (ui.blocks match
+        case Some(blocks) if blocks.nonEmpty => Message(MessageRole.User, Right(blocks))
+        case _ => Message(MessageRole.User, Left(ui.text))
+      ).copy(source = injectionSourceFor(ui.fromUser, ui.source)),
+      ui.fromUser || ui.clientMessageId.isDefined
+    )
 
   /**
    * 消息身份牌铸牌（msgtokens 批 2026-10-31）：真人输入（`fromUser=true`、纯文本——

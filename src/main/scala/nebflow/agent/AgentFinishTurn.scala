@@ -683,10 +683,7 @@ private[agent] object AgentFinishTurn:
           )
         else IO.unit
       val immMessages = immInputs.map(imm =>
-        (imm.blocks match
-          case Some(blocks) if blocks.nonEmpty => Message(MessageRole.User, Right(blocks))
-          case _ => Message(MessageRole.User, Left(imm.text))
-        ).copy(source = injectionSourceFor(imm.fromUser, imm.source))
+        immInputToMessage(imm)
       )
       val messagesWithImmediate = newMessages ++ immMessages
       val updatedState = state
