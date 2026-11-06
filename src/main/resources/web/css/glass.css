@@ -129,6 +129,12 @@
 #conn-banner,
 body.mobile-layer #mobile-dock,
 body.mobile-layer .mobile-page-title::before,
+/* 手机 canvas 顶部环带（mobile-canvas-tabs-c 批 2026-11-06，方案 C 落地）：
+   玻璃带层 `.mf-strip::before` = 整条 64px 顶栏一枚玻璃面（正文从底下滚过、
+   被「化掉」的第一档）；主胶囊 `.mf-strip-chip.on::after` = 三签里唯一带材质的
+   那一枚（作者令「主胶囊要采用毛玻璃底」）。两侧签同批改零材质（「背景的文字
+   不使用胶囊」）⇒ 不再进本表，深度只留环邻位模糊（--ds-ring-blur）。 */
+body.mobile-layer .mf-strip::before,
 body.mobile-layer .mf-strip-chip.on::after,
 body.mobile-layer .mf-dots,
 body.mobile-layer .mf-swipe-ring,

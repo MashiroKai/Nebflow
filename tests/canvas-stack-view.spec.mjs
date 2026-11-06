@@ -409,7 +409,14 @@ test.describe('canvas stack view · 三处机械断言', () => {
     readings.landscape = rLand.readImg;
     const vpWl = rLand.readImg.vp ? rLand.readImg.vp.w : 0;
     const imgWl = rLand.readImg.img ? rLand.readImg.img.w : 0;
-    check('①b2-after container change (landscape) image refits ≥vp×0.9', vpWl > 0 && imgWl >= vpWl * 0.9 - 0.5, `img=${imgWl} vp=${vpWl} ratio=${vpWl ? (imgWl / vpWl).toFixed(3) : 'n/a'}`);
+    // 门槛 0.9 → 0.8（方案 C 落地批 2026-11-06，实测标定，不是感觉）：
+    // 顶栏从 72 长到 92（玻璃带 64 + 下缘渐隐 28），正文首行必须让到渐隐带**下沿**
+    // 之外（让 64 会让首行整块落在 veil 里）。横屏 700×390 下正文面少 20px ⇒
+    // 高度受限的阅读图按 aspect-fit 同比缩：让 64 实测 ratio=0.941、让 92 实测
+    // ratio=0.841。本判据的语义是「换向后面真的重新贴合容器了（不是停在小块）」，
+    // 0.8 仍能把「没 refit」的旧退化（<0.5）挡住，故按实测重定标。
+    check('①b2-after container change (landscape) image refits ≥vp×0.8 (顶栏 92 后实测 0.841)',
+      vpWl > 0 && imgWl >= vpWl * 0.8 - 0.5, `img=${imgWl} vp=${vpWl} ratio=${vpWl ? (imgWl / vpWl).toFixed(3) : 'n/a'}`);
     await page.screenshot({ path: join(OUT, 'after-reading-landscape.png'), fullPage: false });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.waitForTimeout(700);

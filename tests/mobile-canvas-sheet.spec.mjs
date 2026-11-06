@@ -335,7 +335,10 @@ test('T3b 堆叠卡视图（作者令 2026-11-02 §四；21:47 §三 iOS app swi
   for (const s of sides) expect(s.h).toBeLessThan(center.h);
   expect(sides.some((s) => s.x < 0 || s.x + s.w > deck.stageW)).toBe(true);
   expect(deck.cardRadius).toBe('20px');                // 卡族圆角（iOS 卡面档）
-  expect(deck.viewBlur).toContain('blur(26px)');       // 背景重度模糊
+  // 背景重度模糊 = **全站唯一毛玻璃配方**（--nf-glass-filter：blur 40px / saturate 1.4）。
+  // 旧档 26px 是 glass 统一批（2026-11-05/06）之前的面私拟值，已随 `--nf-glass-*` 收敛退役；
+  // 本条断言在基线上就是红的（存量红），此处随之改正到统一配方，避免旧档把配方带回 26px。
+  expect(deck.viewBlur).toContain('blur(40px)');
   // 点「邻卡露出的那一段」（app switcher 读感）= 换入中央，卡叠不退出。
   // 取 |k|=1 的邻卡（本环序活动=丙 ⇒ 乙在左邻；甲已绕到 |k|=2 = .is-far 零命中）。
   // 邻卡中心在屏幕外（app switcher 的必然：只露一截）⇒ 点**露出的那条边**。
@@ -501,7 +504,7 @@ test('T7 chip 胶囊同族 + 横向圆环几何（居中 / 缩径 / 连续减淡
         rdx: c.style.getPropertyValue('--rdx').trim(),
         rdy: c.style.getPropertyValue('--rdy').trim(),
         rsc: c.style.getPropertyValue('--rsc').trim(),
-        rbl: c.style.getPropertyValue('--rbl').trim(),
+        rblf: c.style.getPropertyValue('--rblf').trim(),
         hitsBtn: inter(r, closeB) || inter(r, stackB),
       };
     });
@@ -515,7 +518,8 @@ test('T7 chip 胶囊同族 + 横向圆环几何（居中 / 缩径 / 连续减淡
       hostBorder: cs.borderTopWidth,
       hostBlur: cs.backdropFilter || cs.webkitBackdropFilter || 'none',
       stripH: Math.round(stripR.height),
-      mask: `${getComputedStyle(strip).maskImage}${getComputedStyle(strip).webkitMaskImage || ''}`,
+      // 水平渐隐整族退役（方案 C 落地批）：只读标准属性，两前缀拼接会读成 'nonenone'。
+      mask: getComputedStyle(strip).maskImage,
       closeCy: Math.round(closeB.y + closeB.height / 2),
       stackCy: Math.round(stackB.y + stackB.height / 2),
       chips,
@@ -535,8 +539,10 @@ test('T7 chip 胶囊同族 + 横向圆环几何（居中 / 缩径 / 连续减淡
   // 环曲线按「两侧标签清晰可读（有效字号 ≥13px / 对比度 ≥4.5:1）+ 切换带旋转
   // 感」重定 —— 中签 1.10、邻签 0.87 / op 0.901 / blur 0.40px / 步距 93.5px、
   // 侧签宽档 66px。本块断言值同步换代（旧 1.14 / 0.80 / 0.66 / 0.70 / 95 / 68）。
-  expect(m.stripH).toBe(72);
-  expect(m.mask).toContain('linear-gradient');
+  // 方案 C 落地批（mobile-canvas-tabs-c 2026-11-06）：带高 = 玻璃带 64 + 下缘渐隐 28
+  // = 92（旧 72 「零底带」档退役）；水平渐隐整族退役 ⇒ 带子 mask 恒 none。
+  expect(m.stripH).toBe(92);
+  expect(m.mask).toBe('none');
   // 当前签 = 环心：居中（cx = 375/2 附近）、零偏移、全不透明、无模糊。
   const on = m.chips.find((c) => c.on);
   expect(on.cx).toBeGreaterThan(178);
@@ -547,14 +553,16 @@ test('T7 chip 胶囊同族 + 横向圆环几何（居中 / 缩径 / 连续减淡
   expect(on.rdy).toBe('');
   expect(on.rsc).toBe('1.100');
   expect(on.op).toBe(1);
-  expect(on.rbl).toBe('0.00px');
+  expect(on.rblf).toBe('0.00');
   // 邻位（|k|=1）：外移一步、缩径、**近全不透明**（0.901 —— 可读字批，旧 0.66）、
   // 极轻模糊（0.40px —— 旧 0.70 糊字半边）；两侧对称；**不下沉**。
   const nb = m.chips.filter((c) => !c.on).sort((a, b) => a.cx - b.cx);
   expect(nb.map((c) => c.rdx)).toEqual(['-93.5px', '93.5px']);
   expect(nb.map((c) => c.rsc)).toEqual(['0.870', '0.870']);
   expect(nb.map((c) => c.op)).toEqual([0.9, 0.9]);   // = --rop 0.90（可读字批）
-  expect(nb.map((c) => c.rbl)).toEqual(['0.40px', '0.40px']);
+  // 环邻位模糊系数（方案 C 落地批）：|k|=1 恰拿满一档 = 桌面 hover 上下选项那一档
+  // （半径 = 令牌 --ds-ring-blur 1.6px；旧档 --rbl 0.40px 由 JS 自拟，已退役）。
+  expect(nb.map((c) => c.rblf)).toEqual(['1.00', '1.00']);
   // 垂直中心 = 两颗悬浮钮中心（同一悬浮带栅格）；命中盒永不压钮。
   expect(Math.abs(on.cy - m.closeCy)).toBeLessThanOrEqual(2);
   expect(Math.abs(on.cy - m.stackCy)).toBeLessThanOrEqual(2);
@@ -572,7 +580,7 @@ test('T9 环外签（|k|≥2）：零透明零命中（位姿仍算 —— 换�
     id: c.dataset.tabId, on: c.classList.contains('on'), far: c.classList.contains('is-far'),
     op: +getComputedStyle(c).opacity, pe: getComputedStyle(c).pointerEvents,
     tabIndex: c.tabIndex, rdx: c.style.getPropertyValue('--rdx').trim(),
-    rsc: c.style.getPropertyValue('--rsc').trim(), rbl: c.style.getPropertyValue('--rbl').trim(),
+    rsc: c.style.getPropertyValue('--rsc').trim(), rblf: c.style.getPropertyValue('--rblf').trim(),
   })));
   // 环序 [1,2,3,4,5]，活动 = 5 ⇒ k = [1,2,-2,-1,0]（最近环绕）。
   expect(st.map((c) => c.id)).toEqual(['r1', 'r2', 'r3', 'r4', 'r5']);
@@ -583,7 +591,7 @@ test('T9 环外签（|k|≥2）：零透明零命中（位姿仍算 —— 换�
   expect(st[1].tabIndex).toBe(-1);
   // 曲线在环外触底（scale 触底、blur 封顶）而不归零 —— 换签轨迹连续。
   expect(st[1].rsc).toBe('0.600');
-  expect(st[1].rbl).toBe('2.40px');
+  expect(st[1].rblf).toBe('2.00');
   expect(st[4].on).toBe(true);
   expect(errors).toEqual([]);
 });
@@ -729,25 +737,28 @@ test('T13 对齐修正批五条 + 中签两端零虚化渐隐批六条机械断�
     expect(on.h).toBeGreaterThan(side.h);
     ratios.push({ n, onW: +on.w.toFixed(1), sideW: +side.w.toFixed(1), wRatio: +(on.w / side.w).toFixed(3), hRatio: +(on.h / side.h).toFixed(3) });
 
-    // ── ⑥ 中签与两侧签的视觉语言逐项一致（只允许尺寸 / 透明度 / 模糊 / 渐隐不同）
-    // 渐隐热区修复批特例：'glass'（backdrop-filter）单键豁免 —— blur 只在中签
-    // 的 ::after（无 mask 层）；邻签 ::after 带 mask，headless 软渲染下同元素
-    // mask × backdrop-filter 会把描边/玻璃面按未裁剪输出（mask 架空，最小复现
-    // 见 mobileLayer.css ::after 注）。材质其余 11 键仍逐项相等。
-    const VISUAL_KEYS = ['radius', 'bgImage', 'bgColor', 'borderTop', 'borderBottom', 'borderWidth',
-      'shadow', 'weight', 'size', 'family', 'color'];
-    for (const k of VISUAL_KEYS) {
+    // ── ⑥ 同一套「文字语言」+ 材质分层（mobile-canvas-tabs-c 批 2026-11-06 换代）
+    // 旧档（2026-11-02 09:00「样式应该要是和两边的统一」）判的是**材质逐项相等**
+    // —— 中签 = 同一枚签放大。方案 C 落地批按作者 08:33 逐字裁定改写：
+    //   「主胶囊要采用毛玻璃底 然后背景的文字不使用胶囊」
+    // 于是「同源」的落点从「材质相等」换成**文字语言相等 + 材质分层有据**：
+    // 圆角/字重/字号/字族/字色五键仍逐项相等（一套文字语言），材质四件套只在中签。
+    const TEXT_KEYS = ['radius', 'weight', 'size', 'family', 'color'];
+    for (const k of TEXT_KEYS) {
       expect({ n, key: k, on: on[k] }).toEqual({ n, key: k, on: side[k] });
     }
-    // glass 单键例外记账：中签 = blur 档、邻签 = none（分层而非缺材质）。
+    // 材质分层记账（机械钉死，防某一批悄悄把胶囊还给两侧签）：
     expect({ n, onGlass: on.glass }).toEqual({ n, onGlass: expect.stringContaining('blur') });
     expect({ n, sideGlass: side.glass }).toEqual({ n, sideGlass: 'none' });
-    // 12 项之外**唯一**的视觉差异 = 有无两端渐隐（本批作者令）；逐项记账成对拍死，
-    // 防后续批悄悄多出第二个差异项（glass 已在上一行单独豁免并记账）。
-    expect({ n, diff: ['radius', 'bgImage', 'bgColor', 'borderTop', 'borderBottom', 'borderWidth',
-      'shadow', 'weight', 'size', 'family', 'color'].filter((k) => on[k] !== side[k]) })
-      .toEqual({ n, diff: [] });
-    expect(on.labelMask).not.toBe(side.labelMask);
+    expect({ n, sideBg: side.bgColor }).toEqual({ n, sideBg: 'rgba(0, 0, 0, 0)' });
+    expect({ n, sideBorder: side.borderWidth }).toEqual({ n, sideBorder: '0px' });
+    expect({ n, sideShadow: side.shadow }).toEqual({ n, sideShadow: 'none' });
+    expect({ n, onBgIsGlass: on.bgColor === 'rgba(0, 0, 0, 0)' }).toEqual({ n, onBgIsGlass: false });
+    // 水平渐隐整族退役（作者令「文字两边不要渐隐」）：label 与 ::after 双双无 mask。
+    expect({ n, onMask: on.labelMask, sideMask: side.labelMask })
+      .toEqual({ n, onMask: 'none', sideMask: 'none' });
+    expect({ n, onAfter: on.afterMask, sideAfter: side.afterMask })
+      .toEqual({ n, onAfter: 'none', sideAfter: 'none' });
     // 渐隐热区修复批（::after 迁移）三钉：宿主全组零视觉底 / 零 mask / 零描边，
     // 视觉层方向渐隐只落邻签（中签无）—— 任何一项回到宿主，渐隐区的 hit-test
     // 立即随行被裁（两端渐隐点不到的病根复发面）。
@@ -788,17 +799,18 @@ test('T13 对齐修正批五条 + 中签两端零虚化渐隐批六条机械断�
     expect(ramp.inkFrom).toBeLessThanOrEqual(3);
     expect(ramp.inkTo).toBeGreaterThanOrEqual(ramp.width - 4);
 
-    // ── ② 两侧邻签渐隐与模糊原样保留（作者上一批「越到边缘越模糊」不撤）
+    // ── ② 两侧邻签：水平渐隐退役后的新判据（方案 C 落地批）
+    // 旧档（2026-11-02 21:47「靠近中间胶囊的部分要能清晰显示」）靠方向 mask 化开；
+    // 作者 2026-11-06 逐字「文字两边不要渐隐」把这条整族撤掉 ⇒ 邻签的新判据变成
+    // **反向三条**：label 无 mask、::after 无 mask、且没有材质（背景的文字不使用胶囊）。
     const nbs = p.chips.filter((c) => !c.on && c.op > 0.01);
     expect(nbs.length).toBeGreaterThanOrEqual(1);
     for (const c of nbs) {
-      expect({ n, nb: c.id, mask: c.labelMask }).toEqual({
-        n, nb: c.id, mask: expect.stringContaining('linear-gradient'),
-      });
-      // ::after 视觉层的方向渐隐（与 label 同向）：玻璃层在中签无 mask、邻签有。
-      expect({ n, nb: c.id, afterMask: c.afterMask }).toEqual({
-        n, nb: c.id, afterMask: expect.stringContaining('linear-gradient'),
-      });
+      expect({ n, nb: c.id, mask: c.labelMask }).toEqual({ n, nb: c.id, mask: 'none' });
+      expect({ n, nb: c.id, afterMask: c.afterMask }).toEqual({ n, nb: c.id, afterMask: 'none' });
+      expect({ n, nb: c.id, bg: c.bgColor }).toEqual({ n, nb: c.id, bg: 'rgba(0, 0, 0, 0)' });
+      expect({ n, nb: c.id, border: c.borderWidth }).toEqual({ n, nb: c.id, border: '0px' });
+      expect({ n, nb: c.id, shadow: c.shadow }).toEqual({ n, nb: c.id, shadow: 'none' });
     }
     // 单调性：越靠边（离中签越远）opacity 更低、blur 更大 —— 沿用上一批断言。
     // 左右同环次（同一 |k|）读数必须**相等**（环对称）；不同环次必须严格单调。
@@ -834,10 +846,11 @@ test('T13 对齐修正批五条 + 中签两端零虚化渐隐批六条机械断�
       expect(c.x + c.w).toBeLessThanOrEqual(stackL);
     }
 
-    // 环带几何本身：高 72 + 双侧 mask 保留（与邻签淡化曲线叠加，作者令「别打架」）
-    expect(p.strip.h).toBe(72);
-    expect(p.strip.fade).toBe(true);
-    expect(p.strip.mask).toContain('linear-gradient');
+    // 环带几何本身（方案 C 落地批）：高 92 = 玻璃 64 + 渐隐 28；水平 mask 恒 none，
+    // `.fade` 门控随族退役（不再挂类）。
+    expect(p.strip.h).toBe(92);
+    expect(p.strip.fade).toBe(false);
+    expect(p.strip.mask).toBe('none');
   }
 
   // ── ⑤ 超长页名（≥10 汉字）实测：整字收束，不溢出 / 不硬裁 / 无省略号；
