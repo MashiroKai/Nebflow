@@ -1,5 +1,7 @@
 package nebflow.neblink
 
+import nebflow.neblink.misc.*
+
 import cats.effect.{Fiber, IO}
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*

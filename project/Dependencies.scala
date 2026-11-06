@@ -3,6 +3,7 @@ import sbt._
 object Dependencies {
   // Versions
   val CatsEffectVer = "3.6.1"
+  val CatsCoreVer = "2.13.0"
   val Fs2Ver = "3.11.0"
   val CirceVer = "0.14.12"
   val Http4sVer = "0.23.30"
@@ -29,6 +30,10 @@ object Dependencies {
 
   // Effect
   val catsEffect = "org.typelevel" %% "cats-effect" % CatsEffectVer
+  // cats-core 被大量源文件直接使用（cats.syntax / cats.data / cats.kernel），
+  // 但此前只经 cats-effect 的传递边带入 —— 显式声明后，cats-effect 升级
+  // 不再能悄悄改掉我们的 cats 版本。2.13.0 = cats-effect 3.6.1 现解析版本。
+  val catsCore = "org.typelevel" %% "cats-core" % CatsCoreVer
 
   // JSON
   val circeCore = "io.circe" %% "circe-core" % CirceVer

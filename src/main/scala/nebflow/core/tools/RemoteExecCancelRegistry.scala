@@ -1,5 +1,7 @@
 package nebflow.core.tools
 
+import nebflow.neblink.misc.*
+
 import cats.effect.IO
 import nebflow.core.util.ProcessTree
 
@@ -18,7 +20,7 @@ import java.util.concurrent.ConcurrentHashMap
  * host 在下发参数里带 `bgJobId`（派发时生成、全局唯一），对端
  * `ShellSession.runProcess` 见 `execKey` 即把进程登记进本表；host 取消时经
  * `bg-cancel` 动作（remote-exec 通道的扩展动作，与 FileTransfer/Notify 同表
- * 同安全面）携 jobId 下发，对端 [[nebflow.neblink.BgCancelAction]] 查表杀树。
+ * 同安全面）携 jobId 下发，对端 [[nebflow.neblink.misc.BgCancelAction]] 查表杀树。
  *
  * == 语义 ==
  *

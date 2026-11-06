@@ -1,5 +1,7 @@
 package nebflow.service
 
+import nebflow.neblink.core.*
+
 import cats.effect.unsafe.implicits.global
 import io.circe.parser.parse
 import io.circe.syntax.*

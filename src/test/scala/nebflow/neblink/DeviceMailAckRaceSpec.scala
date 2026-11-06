@@ -1,5 +1,7 @@
 package nebflow.neblink
 
+import nebflow.neblink.social.*
+
 import cats.effect.IO
 import cats.effect.unsafe.IORuntime
 import cats.effect.unsafe.implicits.global

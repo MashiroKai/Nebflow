@@ -1,5 +1,7 @@
 package nebflow.shared
 
+import nebflow.neblink.portal.*
+
 import org.http4s.Request
 
 import java.security.SecureRandom
@@ -12,7 +14,7 @@ import java.util.concurrent.atomic.AtomicReference
  *
  * Why a mark is needed at all — the two tunnel transports look different:
  *  - HTTP: the tunnel bridge calls the lifted app IN PROCESS
- *    ([[nebflow.neblink.PortalTunnelBridge]] builds the `Request[IO]` itself),
+ *    ([[nebflow.neblink.portal.PortalTunnelBridge]] builds the `Request[IO]` itself),
  *    so `req.remote` is None — already a mechanical signal a direct client
  *    cannot produce (a server-accepted request always carries one);
  *  - WebSocket: the bridge dials a REAL loopback socket

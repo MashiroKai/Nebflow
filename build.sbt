@@ -91,6 +91,7 @@ lazy val root = (project in file("."))
       fs2Core,
       // Effect
       catsEffect,
+      catsCore,
       // JSON
       circeCore,
       circeParser,

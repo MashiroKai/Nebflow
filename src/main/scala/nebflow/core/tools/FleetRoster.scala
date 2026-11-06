@@ -1,5 +1,7 @@
 package nebflow.core.tools
 
+import nebflow.neblink.core.*
+
 import io.circe.syntax.*
 import nebflow.core.device.{DeviceEntry, DeviceRegistry}
 import nebflow.shared.PeerInfo

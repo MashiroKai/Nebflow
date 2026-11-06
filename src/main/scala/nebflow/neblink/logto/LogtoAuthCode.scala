@@ -1,0 +1,363 @@
+package nebflow.neblink.logto
+
+import nebflow.neblink.core.*
+
+import cats.effect.IO
+import io.circe.syntax.*
+import io.circe.{Json, parser}
+import nebflow.neblink.core.Protocol
+
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
+import java.util.Base64
+
+/**
+ * Authorization Code + PKCE (RFC 7636/6749) client for the external OIDC
+ * provider (Logto) — Stage 2 of the Logto migration (2026-08-28). Replaces
+ * the copy-a-user-code device flow with a browser round-trip: the gateway
+ * builds the authorize URL, the user logs in on the hosted page, and Logto
+ * redirects to the gateway's loopback callback (`/auth/callback`, RFC 8252
+ * — the registered port-less loopback URI accepts ANY local port, verified
+ * against the deployed Logto 2026-08-28).
+ *
+ * Pure builders (URL/form/parse) are total functions; the network steps are
+ * transport-injected (`Send` = `LogtoTransport.Send`) and unit-tested
+ * without network, mirroring `LogtoTransport`.
+ *
+ * Production note (Q1, 2026-08-28): the PKCE flow uses a SEPARATE Native
+ * app (`nebflow-desktop-pkce`) because the legacy `nebflow-desktop` app was
+ * pinned to the device-code grant by its `isDeviceFlow` metadata (and that
+ * field is not PATCHable via the Management API). `LogtoConfig.pkceClientId`
+ * carries the AC app id. (台账 #924, 2026-10-26: the device flow is retired —
+ * the headless path reuses THIS AC app headlessly via [[LogtoPasswordFlow]].)
+ */
+object LogtoAuthCode:
+
+  /** The shared first-party transport shape and its production instance. */
+  type Send = LogtoTransport.Send
+
+  /**
+   * OAuth error redirect payload (Logto redirects errors back to the
+   * callback: `?error=...&error_description=...`).
+   */
+  final case class CallbackError(error: String, description: Option[String])
+
+  /**
+   * Token endpoint result: the access token for registration plus an
+   * OPTIONAL refresh token. O5 (2026-09-11, refresh-revoke plan): the client
+   * no longer requests `offline_access` (see [[authorizeUrl]]) and the
+   * deployed PKCE app carries `alwaysIssueRefreshToken=false`, so a NEW
+   * login is issued no refresh token at all — the field is `None` there and
+   * is only populated for a credential whose grant was minted BEFORE the
+   * scope change (an old grant still rotates). Logto rotates refresh tokens
+   * — always persist the latest value whenever one is present.
+   * `picture` (2026-09-01 login-chain fix, C2): parsed from the id_token's
+   * `picture` claim when the grant carried the `profile` scope — the
+   * client-side avatar source for Logto users (Logto picture → device
+   * identity → activity bar).
+   * `idToken` (RP-logout fix, 2026-09-06): the raw JWT, persisted so the
+   * end-session handoff can carry it as `id_token_hint` (skips Logto's
+   * logout confirmation page for a one-shot sign-out).
+   */
+  final case class TokenResult(
+    accessToken: String,
+    refreshToken: Option[String],
+    picture: Option[String] = None,
+    idToken: Option[String] = None
+  )
+
+  // ── PKCE primitives (pure) ──────────────────────────────────────────────
+
+  /** RFC 7636 §4.1: high-entropy random string, 43-128 chars, base64url. */
+  def generateVerifier: IO[String] =
+    IO.delay {
+      val bytes = new Array[Byte](32) // 32 bytes -> 43 base64url chars
+      new java.security.SecureRandom().nextBytes(bytes)
+      base64Url(bytes)
+    }
+
+  /** RFC 7636 §4.2: BASE64URL-ENCODE(SHA256(ASCII(code_verifier))). */
+  def challengeS256(verifier: String): String =
+    base64Url(MessageDigest.getInstance("SHA-256").digest(verifier.getBytes(StandardCharsets.US_ASCII)))
+
+  /** Opaque state for CSRF protection (RFC 6749 §10.12). */
+  def generateState: IO[String] =
+    IO.delay {
+      val bytes = new Array[Byte](16)
+      new java.security.SecureRandom().nextBytes(bytes)
+      base64Url(bytes)
+    }
+
+  private def base64Url(bytes: Array[Byte]): String =
+    Base64.getUrlEncoder.withoutPadding.encodeToString(bytes)
+
+  // ── URL / request builders (pure) ───────────────────────────────────────
+
+  /**
+   * The hosted authorize URL the browser opens. Loopback redirect (RFC
+   * 8252 §7.3): the port is added at request time and accepted by the
+   * provider against the registered port-less URI.
+   *
+   * O5 (2026-09-11, refresh-revoke plan §2/§3④): the scope list is
+   * `openid email profile` — the client does NOT request `offline_access`
+   * any more, so the provider issues no refresh_token for this grant. That
+   * is the issuance-side convergence: no L1 (Logto) refresh credential is
+   * minted for a new login, hence none can survive logout / re-login /
+   * switch-account / device-unbind. Cost (accepted by the plan): the silent
+   * re-login chain loses its token source — see [[refreshTokenRequest]] and
+   * `LogtoSilentRelogin` for the explicit degradation.
+   *
+   * `prompt` is retained UNCHANGED (default "consent"; the switch-account
+   * entry passes "login consent"). The historical rationale for `consent`
+   * is now MOOT — it used to be required because this Logto build silently
+   * dropped `offline_access` from a grant whose authorize request omitted it
+   * (real-chain probe, qa e2e 2026-08-28, 5 controlled experiments: baseline,
+   * `alwaysIssueRefreshToken=true` and a zero-history fresh account all
+   * granted "openid" only; with prompt=consent the grant became
+   * "openid offline_access" + refresh_token). `offline_access` is gone, so
+   * there is no refresh-token invariant left for the prompt to protect. It
+   * stays because (a) O5's change surface is the scope list only — editing
+   * the prompt list is a separate UX decision with its own regression risk,
+   * and (b) the shipped UX depends on it: `consent` on the low-frequency
+   * browser login path, and `login` forces the hosted sign-in page even when
+   * the browser's Logto SSO session is alive (switch-account form). Both
+   * values are legal space-separated OIDC prompt lists (RFC 6749-bis /
+   * Core §3.1.2.1). Do NOT read `prompt=consent` as a refresh-token guard.
+   *
+   * `uiLocales` (BYUI handoff, 2026-09-09): optional OIDC standard
+   * `ui_locales` hint so the hosted page renders in the CLIENT's UI
+   * language ("zh" / "en", single tag per the handoff). Harmless pre-BYUI —
+   * the stock hosted page just picks the sign-in language; active once the
+   * BYUI SPA ships (its resolveLocale reads ui_locales first). Empty
+   * (default) omits the param entirely: the URL is byte-identical to the
+   * pre-BYUI shape and the page falls back to navigator.language. Gating
+   * note: NO feature flag here (handoff ① ruling) — the rollback lever is
+   * server-side (Logto Console custom-UI upload/removal), and a release
+   * strip would defeat the point (release builds are the ones that log in).
+   *
+   * `directSignIn` (social one-click leg, 2026-10-15 login-card batch): the
+   * provider's `direct_sign_in` parameter, verbatim ("social:github" /
+   * "social:google"). Non-empty ⇒ core 303s STRAIGHT into the social
+   * connector (`/direct/social/<p>?...&fallback=sign-in` — the BYUI shell's
+   * direct-sign-in path channel picks it up; a failed direct leg degrades to
+   * the sign-in page via `fallback=sign-in`, never a dead end). Probed on the
+   * deployed tenant against the CONSOLE PKCE client (csxh16cas0x03bgk6w7ej,
+   * loopback redirect) before wiring: both `social:github` and `social:google`
+   * were honored with the shipped `prompt="login consent"` combo (GET-only
+   * probes, 303 → /direct/social/<p>). Empty (default) omits the param — the
+   * URL is byte-identical to the pre-social shape, so the plain mail chain
+   * and the switch-account landing continuation are untouched. Guardrail
+   * (website face precedent, route.ts 2026-09-15 + fix-plan §7.3): quick
+   * social entries always pair direct_sign_in with prompt "login consent"
+   * (forced fresh IdP auth — the automaticAccountLinking silent-merge
+   * guardrail); the pairing is the CALLER's contract — the first-party JS
+   * passes forceLogin=true alongside every social provider ([[beginPkceLogin]]
+   * derives `prompt` from `forceLogin` alone; nothing is implied server-side
+   * here).
+   */
+  def authorizeUrl(
+    endpoint: String,
+    clientId: String,
+    redirectUri: String,
+    codeChallenge: String,
+    state: String,
+    prompt: String = "consent",
+    uiLocales: String = "",
+    directSignIn: String = ""
+  ): String =
+    s"${endpoint.stripSuffix("/")}${Protocol.LogtoOidc.authorize}?" +
+      LogtoTransport.formEncode(
+        (
+          Seq(
+            "client_id" -> clientId,
+            "redirect_uri" -> redirectUri,
+            "response_type" -> "code",
+            "scope" -> "openid email profile",
+            "prompt" -> prompt,
+            "code_challenge" -> codeChallenge,
+            "code_challenge_method" -> "S256",
+            "state" -> state
+          ) ++ (if uiLocales.nonEmpty then Seq("ui_locales" -> uiLocales) else Seq.empty)
+            ++ (if directSignIn.nonEmpty then Seq("direct_sign_in" -> directSignIn) else Seq.empty)
+        )*
+      )
+
+  /**
+   * RP-initiated logout (OIDC Session Management §5, RP-logout fix
+   * 2026-09-06): the URL the browser is navigated to, terminating the
+   * PROVIDER session — without it a fresh authorize redirects silently
+   * back into the original account (no account choice).
+   *
+   * `idTokenHint`: the raw id_token persisted at login. A VALID hint lets
+   * the provider skip the "Do you want to sign out?" confirmation; a
+   * malformed/fabricated one is REJECTED with 400 (probed on the deployed
+   * Logto 2026-09-06) — so only pass a stored-hint through verbatim, and
+   * omit it entirely when none is stored (session-cookie logout still
+   * works, one confirmation screen). Never synthesize a hint.
+   *
+   * `postLogoutRedirectUri`: optional return target. The provider ONLY
+   * redirects to a uri allow-listed on the Logto application's post-logout
+   * list; an unlisted uri makes the provider REJECT the whole end-session
+   * request (invalid_request JSON page — probed on both tenant apps), so a
+   * target must never be passed until its exact value is allow-listed.
+   */
+  def endSessionUrl(
+    endpoint: String,
+    idTokenHint: Option[String],
+    postLogoutRedirectUri: Option[String]
+  ): String =
+    val params =
+      idTokenHint.map("id_token_hint" -> _).toSeq ++
+        postLogoutRedirectUri.map("post_logout_redirect_uri" -> _).toSeq
+    val base = s"${endpoint.stripSuffix("/")}${Protocol.LogtoOidc.endSession}"
+    if params.isEmpty then base
+    else base + "?" + LogtoTransport.formEncode(params*)
+
+  /** Exchange the authorization code (+ verifier) for tokens. */
+  def tokenRequest(
+    endpoint: String,
+    clientId: String,
+    redirectUri: String,
+    code: String,
+    verifier: String
+  ): LogtoTransport.Request =
+    LogtoTransport.Request(
+      url = s"${endpoint.stripSuffix("/")}${Protocol.LogtoOidc.token}",
+      contentType = "application/x-www-form-urlencoded",
+      body = LogtoTransport.formEncode(
+        "grant_type" -> "authorization_code",
+        "code" -> code,
+        "redirect_uri" -> redirectUri,
+        "client_id" -> clientId,
+        "code_verifier" -> verifier
+      )
+    )
+
+  /**
+   * Silent re-login: rotate the refresh token for a fresh access token.
+   * The response carries a NEW refresh token (Logto rotation) — callers
+   * must persist it.
+   *
+   * O5 degradation (2026-09-11) — THIS PATH HAS NO LEGAL TOKEN SOURCE ANY
+   * MORE: [[authorizeUrl]] no longer requests `offline_access` and the
+   * deployed PKCE app has `alwaysIssueRefreshToken=false`, so a new login
+   * receives no refresh_token and nothing new can ever be passed in here.
+   * The only caller is `LogtoSilentRelogin.startRefresh` (sole call site),
+   * which passes the token persisted BEFORE the scope change.
+   *
+   * Why it is kept rather than deleted or re-signatured: for a pre-O5
+   * enrollment the rotation still works until that stored token is
+   * consumed / expires / is revoked, which is exactly the graceful path the
+   * plan accepted (evidence: nothing has ever issued a fresh one since the
+   * change, so the path is self-limiting, not a leak). Deleting it would
+   * silently remove the only remaining fallback for existing installs, and
+   * changing the signature would force an unrelated edit in
+   * `LogtoSilentRelogin`'s contract. The degradation is NOT silent: the
+   * caller logs the entry (INFO) and the unavailable branch (INFO/WARN)
+   * with the O5 reason — see `LogtoSilentRelogin.startRefresh`.
+   *
+   * Callers must never call this with an absent token expecting an empty
+   * request: the token is a required argument and there is no default.
+   *
+   * Scope: this request carries the post-O5 list (`openid email profile`).
+   * RFC 6749 §6 forbids a refresh request from ADDING a scope the original
+   * grant never carried, so keeping `offline_access` here (as it was
+   * pre-O5) would contradict the authorize change; a subset is legal.
+   */
+  def refreshTokenRequest(endpoint: String, clientId: String, refreshToken: String): LogtoTransport.Request =
+    LogtoTransport.Request(
+      url = s"${endpoint.stripSuffix("/")}${Protocol.LogtoOidc.token}",
+      contentType = "application/x-www-form-urlencoded",
+      body = LogtoTransport.formEncode(
+        "grant_type" -> "refresh_token",
+        "refresh_token" -> refreshToken,
+        "client_id" -> clientId,
+        "scope" -> "openid email profile"
+      )
+    )
+
+  // ── response mapping (pure) ─────────────────────────────────────────────
+
+  /**
+   * Parse a token-endpoint success body. Missing refresh_token is legal
+   * (provider choice) but logged/flagged by callers. `picture` is extracted
+   * from the id_token's `picture` claim when present (C2, 2026-09-01).
+   */
+  def parseTokenResponse(body: String): Either[String, TokenResult] =
+    for
+      json <- parser.parse(body).left.map(_.message)
+      c = json.hcursor
+      accessToken <- c.downField("access_token").as[String].left.map(_.message)
+      refreshToken = c.downField("refresh_token").as[Option[String]].toOption.flatten
+      idToken = c.downField("id_token").as[Option[String]].toOption.flatten
+      picture = idToken.flatMap(decodeIdTokenPicture)
+    yield TokenResult(accessToken, refreshToken, picture, idToken)
+
+  /**
+   * Decode the given string claims from a JWT payload (base64url, no
+   * signature check — the token response arrives over TLS from the
+   * provider's token endpoint (or was persisted verbatim from such a
+   * response), and callers only READ claims, never act on the token).
+   * Missing / non-string / empty claims are omitted; malformed input
+   * yields an empty map — never throws.
+   *
+   * Consumers: `picture` (C2, 2026-09-01), `email` + `name` (switch-account
+   * account memory, 2026-09-10 — the persisted id_token is the ONLY
+   * account-identity source reachable by the web client; the claims are
+   * surfaced read-only via /api/neblink/status and the client persists
+   * just those two display strings, never any credential).
+   */
+  def decodeIdTokenClaims(idToken: String, names: Seq[String]): Map[String, String] =
+    idToken.split("\\.") match
+      case parts if parts.length >= 2 =>
+        try
+          val payload = new String(
+            Base64.getUrlDecoder.decode(parts(1)),
+            StandardCharsets.UTF_8
+          )
+          val cur = parser
+            .parse(payload)
+            .toOption
+            .map(_.hcursor)
+            .getOrElse(io.circe.Json.obj().hcursor)
+          names.flatMap { n =>
+            cur
+              .downField(n)
+              .as[Option[String]]
+              .toOption
+              .flatten
+              .filter(_.nonEmpty)
+              .map(n -> _)
+          }.toMap
+        catch case _: IllegalArgumentException => Map.empty
+      case _ => Map.empty
+
+  /** Decode the `picture` claim from a JWT payload. Pure, testable. */
+  def decodeIdTokenPicture(idToken: String): Option[String] =
+    decodeIdTokenClaims(idToken, Seq("picture")).get("picture")
+
+  /** Parse an OAuth error redirect (callback query params). */
+  def parseCallbackError(query: Map[String, String]): Option[CallbackError] =
+    query.get("error").filter(_.nonEmpty).map(CallbackError(_, query.get("error_description")))
+
+  // ── flow steps (IO, transport-injected) ─────────────────────────────────
+
+  /** Run a token request (code exchange or refresh) and parse the outcome. */
+  def tokenCall(send: Send)(req: LogtoTransport.Request): IO[Either[String, TokenResult]] =
+    send(req).flatMap { case (status, body) =>
+      IO.pure(
+        if status == 200 then parseTokenResponse(body)
+        else Left(extractError(status, body))
+      )
+    }
+
+  private def extractError(status: Int, body: String): String =
+    if status == 0 then body // transport failure: body carries the message
+    else
+      parser
+        .parse(body)
+        .toOption
+        .flatMap(_.hcursor.downField("error").as[String].toOption)
+        .getOrElse(s"HTTP $status")
+
+end LogtoAuthCode

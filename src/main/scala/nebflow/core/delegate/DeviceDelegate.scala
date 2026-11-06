@@ -1,5 +1,8 @@
 package nebflow.core.delegate
 
+import nebflow.neblink.core.*
+import nebflow.neblink.social.*
+
 import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.Json
@@ -258,7 +261,7 @@ object DeviceDelegate:
   /** 本机 deviceId（同步只读探测；设备身份文件缺席 = 空串，显示面退化可接受）。 */
   private def neblinkDeviceId(): String =
     try
-      nebflow.neblink.DeviceIdentity.readDeviceIdOnly.getOrElse("")
+      nebflow.neblink.core.DeviceIdentity.readDeviceIdOnly.getOrElse("")
     catch case _: Throwable => ""
 
   /**

@@ -1,6 +1,11 @@
 /* 从 RestApiRoutes 迁出(行为保持重构,2026-09-24)。 */
 package nebflow.gateway
 
+import nebflow.neblink.core.*
+import nebflow.neblink.misc.*
+import nebflow.neblink.relay.*
+import nebflow.neblink.sync.*
+
 import cats.effect.{IO, Ref}
 import cats.effect.std.Queue
 import cats.effect.unsafe.implicits.global
@@ -24,8 +29,7 @@ import nebflow.llm.*
 import nebflow.llm.decision.DecisionProvider
 import nebflow.llm.imagegen.{ImageGenAdapters, ImageGenProbe}
 import nebflow.llm.providers.ModelListFaces
-import nebflow.neblink.*
-import nebflow.neblink.FriendCodecs.given
+import nebflow.neblink.core.FriendCodecs.given
 import nebflow.service.ConfigService
 import nebflow.shared.{LlmProtocol, NebflowServiceConfig, PathUtil}
 import org.http4s.*
@@ -134,7 +138,7 @@ private[gateway] object PresenceRoutes:
    *     拍上 —— 零新增 wall-clock 轮询（红线：不新增独立计时面）。
    *   - `deadAfter`：连续无入站帧判死阈值。生产默认 30s = 3 × tick：容忍连续
    *     两拍 pong 丢失（网络抖动），第三拍仍无任何入站帧才判死。所有本端点的
-   *     合法对端（nebflow 引擎互联，[[nebflow.neblink.NeblinkPresenceService]]
+   *     合法对端（nebflow 引擎互联，[[nebflow.neblink.relay.NeblinkPresenceService]]
    *     监听器）对服务端 ping 必回 pong ⇒ 健康连接入站帧间隔 ≤ tick，永不误杀。
    */
   def PresenceWsLiveness(tick: FiniteDuration = 10.seconds, deadAfter: FiniteDuration = 30.seconds): WsZombieGuard.Liveness =
@@ -524,7 +528,7 @@ private[gateway] object PresenceRoutes:
                         .getOrElse(nebflow.shared.Defaults.brandDefaultPort)
                       val capsStr = req.params.getOrElse("capabilities", "{}")
                       val capabilities = parser.decode[Map[String, String]](capsStr).getOrElse(Map.empty)
-                      val info = nebflow.neblink.DeviceDiscoveryInfo(
+                      val info = nebflow.neblink.core.DeviceDiscoveryInfo(
                         peerDeviceId,
                         peerDeviceName,
                         peerPlatform,
@@ -1466,7 +1470,7 @@ private[gateway] object PresenceRoutes:
             }.flatMap {
               case None => NotFound(Json.obj("error" -> "no custom avatar".asJson))
               case Some(bytes) =>
-                val sha = nebflow.neblink.AvatarProxy.sha256Hex(bytes)
+                val sha = nebflow.neblink.misc.AvatarProxy.sha256Hex(bytes)
                 val etag = "\"" + sha + "\""
                 val inm = req.headers.get(CIString("If-None-Match")).map(_.head.value.trim).getOrElse("")
                 if inm.nonEmpty && inm.contains(sha) then
@@ -2697,7 +2701,7 @@ private[gateway] object PresenceRoutes:
    * fire-and-forget（响应不等它；失败只留元数据日志，头像字节不入日志）。
    */
   private def fireIdentityWriteTail(agentName: String): IO[Unit] =
-    IO(nebflow.neblink.AgentIdentitySync.afterLocalWrite(agentName).unsafeRunAndForget())
+    IO(nebflow.neblink.sync.AgentIdentitySync.afterLocalWrite(agentName).unsafeRunAndForget())
 
   /**
    * 令 1 派发开关的 REST 实现单点（`/plugins/:name/enable|disable`）。写 `plugins

@@ -1,5 +1,7 @@
 package nebflow.agent
 
+import nebflow.neblink.social.*
+
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.syntax.*
@@ -433,7 +435,7 @@ object AgentCore:
     "SendMessage",
     // ListFriends（好友消息改造批 ⑩，2026-09-12）：SendMessage 的**只读**前置——
     // 名册取代「靠报错反推」。与 SendMessage 同组（通信）、同一好友数据面与词表
-    // （`nebflow.neblink.FriendRoster`），但零写面/零权限档/零限速（一次读）。
+    // （`nebflow.neblink.social.FriendRoster`），但零写面/零权限档/零限速（一次读）。
     // 归属面 = 本集单点 + NebulaExclusiveTools 防声明逃逸（方案 §4.5 归属面 A 案）。
     "ListFriends",
     // 文件面——读件（Read）+ 搜索件（Glob/Grep）+ 写手三件（Bash/Write/Edit）。

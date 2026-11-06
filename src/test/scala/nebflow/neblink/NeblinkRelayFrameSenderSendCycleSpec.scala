@@ -1,5 +1,8 @@
 package nebflow.neblink
 
+import nebflow.neblink.portal.*
+import nebflow.neblink.relay.*
+
 import cats.effect.{FiberIO, IO, Outcome}
 import cats.syntax.all.*
 import munit.CatsEffectSuite

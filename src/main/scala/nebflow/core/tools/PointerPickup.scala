@@ -1,5 +1,7 @@
 package nebflow.core.tools
 
+import nebflow.neblink.core.*
+
 import cats.effect.IO
 import nebflow.shared.{NebflowLogger, PathUtil}
 

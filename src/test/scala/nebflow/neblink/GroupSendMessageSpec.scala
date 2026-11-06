@@ -1,5 +1,8 @@
 package nebflow.neblink
 
+import nebflow.neblink.core.*
+import nebflow.neblink.social.*
+
 import cats.effect.std.Dispatcher
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
@@ -21,7 +24,7 @@ import nebflow.core.tools.*
 import nebflow.core.{FileChangeTracker, RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
 import nebflow.shared.*
-import nebflow.neblink.FriendCodecs.given
+import nebflow.neblink.core.FriendCodecs.given
 
 import scala.concurrent.duration.*
 

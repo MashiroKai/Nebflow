@@ -1,5 +1,12 @@
 package nebflow.gateway
 
+import nebflow.neblink.core.*
+import nebflow.neblink.identity.*
+import nebflow.neblink.portal.*
+import nebflow.neblink.relay.*
+import nebflow.neblink.social.*
+import nebflow.neblink.sync.*
+
 import cats.effect.*
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
@@ -19,7 +26,7 @@ import nebflow.core.skill.SkillService
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.*
 import nebflow.llm.*
-import nebflow.neblink.*
+import nebflow.neblink.logto.*
 import nebflow.service.{ConfigSnapshot, *}
 import nebflow.shared.{NebflowLogger, *}
 import org.http4s.ember.server.EmberServerBuilder
@@ -351,7 +358,7 @@ object GatewayMain extends IOApp:
    * Returns the fiber so the caller can cancel/restart it.
    */
   private def startHeartbeatLoop(
-    discovery: nebflow.neblink.NeblinkDiscovery
+    discovery: nebflow.neblink.relay.NeblinkDiscovery
   ): IO[cats.effect.Fiber[IO, Throwable, Unit]] =
     def loop: IO[Unit] =
       for
@@ -1072,7 +1079,7 @@ object GatewayMain extends IOApp:
                                   // 调用；状态经 updateState 帧 + serverConfig 快照 +
                                   // /api/health `update` 键可见。
                                   val updateConvergence =
-                                    new nebflow.neblink.NeblinkUpdateConvergence(
+                                    new nebflow.neblink.core.NeblinkUpdateConvergence(
                                       Some(updateOrchestrator),
                                       wsHub.broadcast
                                     )
@@ -1212,7 +1219,7 @@ object GatewayMain extends IOApp:
                                       neblinkServiceF.flatMap { neblinkService =>
                                         // Presence WS service — maintains real-time online/offline via persistent WebSocket connections
                                         val presenceService =
-                                          new nebflow.neblink.NeblinkPresenceService(neblinkService, cfg.port.value)(
+                                          new nebflow.neblink.relay.NeblinkPresenceService(neblinkService, cfg.port.value)(
                                             dispatcher
                                           )
                                         // Late-bound discovery holder for the silent re-login hook: the
@@ -1220,7 +1227,7 @@ object GatewayMain extends IOApp:
                                         // the hook resolves the hot-swap target at call time.
                                         val neblinkDiscoveryHolder =
                                           new java.util.concurrent.atomic.AtomicReference[Option[
-                                            nebflow.neblink.NeblinkDiscovery
+                                            nebflow.neblink.relay.NeblinkDiscovery
                                           ]](None)
                                         // Check if NebLink Server is configured; if so, create client for NebLink-based discovery
                                         val neblinkConfigAtBoot = neblinkService.neblinkConfig.unsafeRunSync()
@@ -1243,16 +1250,16 @@ object GatewayMain extends IOApp:
                                         // EnrollGuard 的 explicitUserAction（案 C）。
                                         val bootEnrollRefusal: Option[String] =
                                           neblinkConfigAtBoot.neblinkServer
-                                            .flatMap(s => nebflow.neblink.EnrollGuard.enrollRefusal(s.url))
-                                        val neblinkClient: Option[nebflow.neblink.NeblinkClient] =
+                                            .flatMap(s => nebflow.neblink.identity.EnrollGuard.enrollRefusal(s.url))
+                                        val neblinkClient: Option[nebflow.neblink.core.NeblinkClient] =
                                           neblinkConfigAtBoot match
                                             case nc if nc.neblinkServer.isDefined && bootEnrollRefusal.isEmpty =>
                                               Some(
-                                                new nebflow.neblink.NeblinkClient(
+                                                new nebflow.neblink.core.NeblinkClient(
                                                   nc.neblinkServer.get,
                                                   cfg.port.value,
                                                   onDeviceTokenRejected = Some(
-                                                    nebflow.neblink.LogtoSilentRelogin.make(
+                                                    nebflow.neblink.logto.LogtoSilentRelogin.make(
                                                       neblinkService,
                                                       IO(neblinkDiscoveryHolder.get),
                                                       cfg.port.value,
@@ -1269,7 +1276,7 @@ object GatewayMain extends IOApp:
                                                         _.neblinkServer
                                                           .map(_.url)
                                                           .orElse(
-                                                            nebflow.neblink.EnrollGuard.prodDefaultTarget
+                                                            nebflow.neblink.identity.EnrollGuard.prodDefaultTarget
                                                           )
                                                       )
                                                     )
@@ -1310,7 +1317,7 @@ object GatewayMain extends IOApp:
                                         // constructor-time client: after a UI re-login/账号切换 the
                                         // server's one-live-session policy kicked that client's session
                                         // and FriendService 403'd until process restart (search → 502).
-                                        val tsDiscovery = new nebflow.neblink.NeblinkDiscovery(
+                                        val tsDiscovery = new nebflow.neblink.relay.NeblinkDiscovery(
                                           neblinkService,
                                           cfg.port.value,
                                           presenceService,
@@ -1320,7 +1327,7 @@ object GatewayMain extends IOApp:
                                           // 打断名册同步）。收敛组件在编排器装配点已建
                                           // （sharedResourcesWithRestart 更新于其前）。
                                           onUpdateTarget = sharedResourcesWithRestart.updateConvergence.map(c =>
-                                            (t: nebflow.neblink.NeblinkUpdateTarget) => c.onHeartbeatTarget(t)
+                                            (t: nebflow.neblink.core.NeblinkUpdateTarget) => c.onHeartbeatTarget(t)
                                           )
                                         )
                                         neblinkDiscoveryHolder.set(Some(tsDiscovery))
@@ -1348,14 +1355,14 @@ object GatewayMain extends IOApp:
                                         // 允许它把整条 boot 装配链掀翻（GatewayMain 这段是 val 求值，
                                         // 未捕获的 IO 失败 = 启动崩）。
                                         val friendRemarks =
-                                          nebflow.neblink.FriendRemarkStore.load
+                                          nebflow.neblink.core.FriendRemarkStore.load
                                             .handleErrorWith { e =>
                                               logger.warn(
                                                 s"friend-remarks load failed (falling back to empty): ${e.getMessage}"
                                               ) *> IO.pure(Map.empty[String, String])
                                             }
                                             .unsafeRunSync()
-                                        val friendService = nebflow.neblink.NeblinkWiring.friendService(
+                                        val friendService = nebflow.neblink.core.NeblinkWiring.friendService(
                                           tsDiscovery.currentClient,
                                           amConfig,
                                           // #147 接线段（2026-09-12）：ask 档确认链的装配缝接线。
@@ -1383,7 +1390,7 @@ object GatewayMain extends IOApp:
                                             // 的「字段袋」高一层（真值在 ev.payload.payload），
                                             // 前端因此恒读不到 conversationId（L3）。纯函数实现
                                             // 使帧形状可单测；此处只做广播。
-                                            wsHub.broadcast(nebflow.neblink.FriendEvent.frontendFrame(ev))
+                                            wsHub.broadcast(nebflow.neblink.social.FriendEvent.frontendFrame(ev))
                                           },
                                           remarks = friendRemarks,
                                           // D-B（2026-09-13）：送达确证（ack）生产者接线。
@@ -1405,7 +1412,7 @@ object GatewayMain extends IOApp:
                                           // `NeblinkRelayTunnel.sendAck` 与
                                           // `FriendService.ackProcessed`。
                                           ackSender = Some { eventId =>
-                                            nebflow.neblink.NeblinkRelayTunnel.sendAckLive(
+                                            nebflow.neblink.relay.NeblinkRelayTunnel.sendAckLive(
                                               neblinkService.relayTunnelOpt,
                                               eventId
                                             )
@@ -1430,8 +1437,8 @@ object GatewayMain extends IOApp:
                                         // 它们在本方法更深处 withHttpWebSocketApp 装配完成时
                                         // bind（见「Phase 3a lifted slice」注释）；隧道先建、
                                         // faces 后填，与 wsRoutesHolder 同款晚绑定形态。
-                                        val portalHostFaces = new nebflow.neblink.PortalHostFaces(cfg.port.value)
-                                        val relayTunnel = new nebflow.neblink.NeblinkRelayTunnel(
+                                        val portalHostFaces = new nebflow.neblink.portal.PortalHostFaces(cfg.port.value)
+                                        val relayTunnel = new nebflow.neblink.relay.NeblinkRelayTunnel(
                                           neblinkService,
                                           // F1: read the authoritative client live on each reconnect —
                                           // a constructor-time closure kept returning a kicked session.
@@ -1486,7 +1493,7 @@ object GatewayMain extends IOApp:
                                             presenceService.sendData(deviceId, channel, payload)
                                           ) *>
                                           // Trigger an immediate discovery cycle now that the hook is wired.
-                                          neblinkService.sendSync(nebflow.neblink.SyncCommand.PeerDiscovered) *>
+                                          neblinkService.sendSync(nebflow.neblink.core.SyncCommand.PeerDiscovered) *>
                                           // Start NebLink Server heartbeat loop (if configured) — maintains
                                           // session liveness and updates peer list every 30 seconds.
                                           // 2026-09-11 注释校正（复核 R2-d）：这里 `.void` 丢弃了 fiber，
@@ -1503,7 +1510,7 @@ object GatewayMain extends IOApp:
                                                   neblinkService = Some(neblinkService),
                                                   // 2026-09-11 boot 快照修复：slot 恒 Some（装配缝里
                                                   // 明确记录「boot 快照不再参与存在性判据」）。
-                                                  friendService = nebflow.neblink.NeblinkWiring
+                                                  friendService = nebflow.neblink.core.NeblinkWiring
                                                     .sharedResourcesSlot(neblinkClient, friendService),
                                                   dropboxService = Some(dropboxService)
                                                 )
@@ -1551,7 +1558,7 @@ object GatewayMain extends IOApp:
                                               // SharedResources（root 会话解析单点）与前端广播口。
                                               // 与 FriendMessageTool/RemoteExecutor 同款单例缝；
                                               // 未接线 ⇒ 注入路径显式失败（不静默）。
-                                              nebflow.neblink.DeviceMailInbox.initialize(
+                                              nebflow.neblink.social.DeviceMailInbox.initialize(
                                                 sharedResourcesFinal,
                                                 sharedResourcesFinal.neblinkService,
                                                 (json: io.circe.Json) => wsHub.broadcast(json),
@@ -1565,7 +1572,7 @@ object GatewayMain extends IOApp:
                                                 // 放大因）。现在如实返回 `AckOutcome`
                                                 // （F5 据此分支记账）。
                                                 Some { eventId =>
-                                                  nebflow.neblink.NeblinkRelayTunnel.sendAckLive(
+                                                  nebflow.neblink.relay.NeblinkRelayTunnel.sendAckLive(
                                                     neblinkService.relayTunnelOpt,
                                                     eventId
                                                   )
@@ -1585,7 +1592,7 @@ object GatewayMain extends IOApp:
                                               // peer 变化对账推。与 DeviceDelegate 同缝同序；
                                               // 未接线（NebLink 未配置）⇒ initialize 内显式
                                               // WARN + 跳过（单机形态零行为）。
-                                              nebflow.neblink.AgentIdentitySync.initialize(
+                                              nebflow.neblink.sync.AgentIdentitySync.initialize(
                                                 Some(neblinkService),
                                                 (json: io.circe.Json) => wsHub.broadcast(json)
                                               )
@@ -1596,7 +1603,7 @@ object GatewayMain extends IOApp:
                                               // peer 变化对账推/在线角标重播。与 AgentIdentitySync
                                               // 同缝同序；未接线（NebLink 未配置）⇒ initialize 内
                                               // 显式 WARN + 跳过（单机形态零行为，写钩不装）。
-                                              nebflow.neblink.AgentSessionSync.initialize(
+                                              nebflow.neblink.sync.AgentSessionSync.initialize(
                                                 Some(neblinkService),
                                                 sharedResourcesFinal.subAgentTaskStore,
                                                 (json: io.circe.Json) => wsHub.broadcast(json)
@@ -1840,7 +1847,7 @@ object GatewayMain extends IOApp:
                                                         ).orNotFound
                                                         portalHostFaces.bindHttpApp(gatewayApp)
                                                         portalHostFaces.bindTunnelGuard(
-                                                          nebflow.neblink.PortalHostFaces.TunnelGuard(
+                                                          nebflow.neblink.portal.PortalHostFaces.TunnelGuard(
                                                             ip => connGuard.observeTunnelRequest(ip),
                                                             ip => connGuard.checkTunnel(ip)
                                                           )
@@ -1990,7 +1997,7 @@ object GatewayMain extends IOApp:
                                                                               )
                                                                             ) *>
                                                                               logger.error(
-                                                                                s"[hotupd] ROLLBACK outcome: ${outcome.fold(identity, o => s"${o.fromVersion} -> ${o.toVersion}")} — this process exits so the previous version can take the port"
+                                                                                s"[hotupd] ROLLBACK outcome: ${outcome.fold(x => x, o => s"${o.fromVersion} -> ${o.toVersion}")} — this process exits so the previous version can take the port"
                                                                               ) *>
                                                                               IO.raiseError(
                                                                                 new IllegalStateException(

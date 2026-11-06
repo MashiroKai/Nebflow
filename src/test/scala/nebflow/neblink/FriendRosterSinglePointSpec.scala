@@ -1,5 +1,8 @@
 package nebflow.neblink
 
+import nebflow.neblink.core.*
+import nebflow.neblink.social.*
+
 import munit.FunSuite
 
 /**
@@ -9,7 +12,7 @@ import munit.FunSuite
  * 存在理由：好友面历史上出现过**两份独立实现**（`FriendMessageTool` 的
  * `displayName (username)` 与 `TransferFileTool` 的 `displayName [username …]`，
  * 方案 §7.2 M-8 登记的既成分叉）。⑩ 把好友消息支收归到
- * `nebflow.neblink.FriendRoster` 单点；⑦ 又在其上加了 L0 备注层与候选行备注渲染
+ * `nebflow.neblink.social.FriendRoster` 单点；⑦ 又在其上加了 L0 备注层与候选行备注渲染
  * ⇒ 若将来有人再复制一份候选文案，模型会学到**第二套词表**（同一个 query 两条
  * 失败路径给不同候选），而这是**代码评审看不出来、只有机制能拦**的漂移。
  *
@@ -89,7 +92,7 @@ class FriendRosterSinglePointSpec extends FunSuite:
       assert(
         offenders.isEmpty,
         s"新增候选文案实现点（第二个分叉！）：${offenders.toList.sorted.mkString(", ")} —— " +
-          s"候选文案/解析必须收归 nebflow.neblink.FriendRoster（命中原样见下）\n" +
+          s"候选文案/解析必须收归 nebflow.neblink.social.FriendRoster（命中原样见下）\n" +
           found.map((f, l) => s"  $f:$l").mkString("\n")
       )
     }
@@ -104,7 +107,7 @@ class FriendRosterSinglePointSpec extends FunSuite:
     val code = stripComments(src)
     assert(
       // 严格DAG第⑥步第二批(2026-09-27):委托面改经 core.FriendRosterPort 注册器(实现仍单点
-      // nebflow.neblink.FriendRoster,经 NeblinkWiring boot 段落注册)——钉死文本随之同步,判据语义不变。
+      // nebflow.neblink.social.FriendRoster,经 NeblinkWiring boot 段落注册)——钉死文本随之同步,判据语义不变。
       code.contains("FriendRosterPort.resolve"),
       "FriendMessageTool 不再委托 FriendRosterPort.resolve(FriendRoster 单点的注册器投影) —— 好友面出现第二实现，请回改实现并同步本登记"
     )

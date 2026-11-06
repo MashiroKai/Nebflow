@@ -1,5 +1,7 @@
 package nebflow.gateway
 
+import nebflow.neblink.portal.*
+
 import cats.effect.{IO, Ref}
 import io.circe.parser
 import io.circe.syntax.*

@@ -1,5 +1,7 @@
 package nebflow.agent
 
+import nebflow.neblink.social.*
+
 import munit.FunSuite
 
 import scala.io.Source

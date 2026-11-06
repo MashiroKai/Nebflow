@@ -1,5 +1,7 @@
 package nebflow.agent
 
+import nebflow.neblink.core.*
+
 import io.circe.{Json, parser}
 import nebflow.actor.*
 import nebflow.shared.PathUtil

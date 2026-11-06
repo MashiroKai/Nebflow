@@ -1,5 +1,8 @@
 package nebflow.neblink
 
+import nebflow.neblink.relay.*
+import nebflow.neblink.social.*
+
 import cats.effect.{IO, Ref}
 import cats.effect.unsafe.implicits.global
 import ch.qos.logback.classic.Level
@@ -174,7 +177,7 @@ class DeviceMailDedupSpec extends FunSuite:
     parse(
       """{"type":"agent_mail","from_device":"KAI-MBP","from_device_id":"dev-a","to_nebula":true,"text":"hello B"}"""
     )
-      .fold(e => fail(s"contract literal must parse: ${e.getMessage}"), identity)
+      .fold(e => fail(s"contract literal must parse: ${e.getMessage}"), x => x)
 
   /** v2.1 收件入场信封（帧根 `eventId`；服务端投递实证形态）。 */
   private def envelope(eventId: String, payload: Json = contractPayload): Json =

@@ -1,5 +1,7 @@
 package nebflow.agent
 
+import nebflow.neblink.core.*
+
 import nebflow.agent.PromptSections.*
 import nebflow.shared.PathUtil
 

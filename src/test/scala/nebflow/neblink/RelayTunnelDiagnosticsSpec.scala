@@ -1,5 +1,7 @@
 package nebflow.neblink
 
+import nebflow.neblink.relay.*
+
 import io.circe.Json
 import munit.FunSuite
 

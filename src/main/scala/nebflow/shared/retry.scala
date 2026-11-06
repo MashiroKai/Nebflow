@@ -1,6 +1,9 @@
 /* Phase 3 去重(行为保持重构,2026-09-25)。 */
 package nebflow.shared
 
+import nebflow.neblink.relay.*
+import nebflow.neblink.social.*
+
 import cats.effect.IO
 
 import scala.concurrent.duration.*

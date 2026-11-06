@@ -1,6 +1,8 @@
 /* 从 WebSocketRoutes 迁出(行为保持重构,2026-09-24)。 */
 package nebflow.gateway
 
+import nebflow.neblink.core.*
+
 import cats.effect.std.{Dispatcher, Queue}
 import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.all.*
@@ -540,7 +542,7 @@ private[gateway] object WsSystemHandlers:
       io.circe.Json.obj(all*)
 
     def tryRelayUpdate(
-      ns: nebflow.neblink.NeblinkService,
+      ns: nebflow.neblink.core.NeblinkService,
       peer: nebflow.shared.PeerInfo,
       beta: Boolean,
       p2pError: String

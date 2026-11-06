@@ -1,5 +1,8 @@
 package nebflow.neblink
 
+import nebflow.neblink.core.*
+import nebflow.neblink.relay.*
+
 import munit.FunSuite
 import scala.concurrent.duration.*
 

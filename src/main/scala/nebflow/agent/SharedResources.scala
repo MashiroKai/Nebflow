@@ -1,5 +1,9 @@
 package nebflow.agent
 
+import nebflow.neblink.attachment.*
+import nebflow.neblink.core.*
+import nebflow.neblink.social.*
+
 import cats.effect.std.Dispatcher
 import cats.effect.{Deferred, IO, Ref}
 import io.circe.{Json, JsonObject}
@@ -16,7 +20,9 @@ import nebflow.core.workspace.KnowledgeStore
 import nebflow.core.{RateLimiter, SessionStore, *}
 import nebflow.dropbox.DropboxService
 import nebflow.llm.*
-import nebflow.neblink.{AttachUploadRegistry, FriendService, NeblinkService}
+import nebflow.neblink.attachment.AttachUploadRegistry
+import nebflow.neblink.social.FriendService
+import nebflow.neblink.core.NeblinkService
 import nebflow.shared.{FileHistory, ReadTracker, *}
 
 // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-A/R-C):本类原地混入 core 窄视图 AgentRuntimePort
@@ -71,7 +77,7 @@ case class SharedResources(
   friendService: Option[FriendService] = None,
   /**
    * attachcl 批（2026-09-16）：在飞附件上传的**取消位**登记表（网页腿「整件一次
-   * 请求 → 网关分块」的上传可取消；见 [[nebflow.neblink.AttachUploadRegistry]]）。
+   * 请求 → 网关分块」的上传可取消；见 [[nebflow.neblink.attachment.AttachUploadRegistry]]）。
    * 缺省 = 本实例独立空表（`Ref.unsafe`，同本类既有先例）⇒ 既有构造点零改动。
    */
   attachUploads: AttachUploadRegistry = AttachUploadRegistry.unsafe,
@@ -191,7 +197,7 @@ case class SharedResources(
    * 交上面的 [[updateOrchestrator]] 执行；状态经 `updateState` 帧 + serverConfig 快照
    * （WebSocketRoutes）+ /api/health `update` 键（HealthRoutes）可见，零定时器。
    */
-  updateConvergence: Option[nebflow.neblink.NeblinkUpdateConvergence] = None,
+  updateConvergence: Option[nebflow.neblink.core.NeblinkUpdateConvergence] = None,
   /**
    * **会话级压缩阈值比例覆盖**（ctxthresh 批，2026-09-15 方案 A）：键 = **root
    * sessionId**，值 = 比例 `r`（`15% < r ≤ 90%`，见

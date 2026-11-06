@@ -1,5 +1,8 @@
 package nebflow.core.tools
 
+import nebflow.neblink.core.*
+import nebflow.neblink.social.*
+
 import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}

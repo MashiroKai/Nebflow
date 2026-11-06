@@ -1,6 +1,9 @@
 /* 从 WebSocketRoutes 迁出(行为保持重构,2026-09-24)。 */
 package nebflow.gateway
 
+import nebflow.neblink.core.*
+import nebflow.neblink.sync.*
+
 import cats.effect.std.{Dispatcher, Queue}
 import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.all.*
@@ -1141,7 +1144,7 @@ private[gateway] object WsSessionChatHandlers:
               ) *>
                 // 台账 #929（后台子智能体跨设备透明）：远端投影行搭本连接快照回复
                 // 同拍直发（刷新/重连恢复路径——前端零新请求型；投影仓空 = 零帧）。
-                nebflow.neblink.AgentSessionSync.pushRemoteRowsTo(wsSend)
+                nebflow.neblink.sync.AgentSessionSync.pushRemoteRowsTo(wsSend)
             }
           }
       }

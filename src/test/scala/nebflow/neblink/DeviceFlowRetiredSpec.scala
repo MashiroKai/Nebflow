@@ -1,5 +1,8 @@
 package nebflow.neblink
 
+import nebflow.neblink.core.*
+import nebflow.neblink.logto.*
+
 import munit.FunSuite
 
 import java.nio.charset.StandardCharsets
@@ -71,11 +74,11 @@ class DeviceFlowRetiredSpec extends FunSuite:
 
   test("neblink 包：设备流客户端与 RFC 8628 词汇已退役") {
     assertRetiredAbsent(
-      "src/main/scala/nebflow/neblink/LogtoTransport.scala",
+      "src/main/scala/nebflow/neblink/logto/LogtoTransport.scala",
       List("PollOutcome", "startRequest", "pollRequest", "classifyPoll", "parseStartResponse", "/oidc/device/auth")
     )
     assertRetiredAbsent(
-      "src/main/scala/nebflow/neblink/Protocol.scala",
+      "src/main/scala/nebflow/neblink/core/Protocol.scala",
       List("deviceAuth", "/oidc/device/auth", "/api/device/code", "/api/device/token")
     )
     assert(!Files.exists(repoRoot.resolve("src/main/scala/nebflow/neblink/LogtoDeviceFlow.scala")), "LogtoDeviceFlow.scala 必须删除")

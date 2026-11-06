@@ -1,5 +1,7 @@
 package nebflow.core
 
+import nebflow.neblink.identity.*
+
 import java.nio.file.*
 import java.nio.file.attribute.*
 import java.util.EnumSet
@@ -137,7 +139,7 @@ object CredentialFileAcl:
    * Windows deny that open outright, so the ACE locks the OWNER out of the
    * very file it has just written: `~/.nebflow/neblink/device.json` became
    * unreadable AND unwritable to the Nebflow process itself, which then broke
-   * every [[nebflow.neblink.DeviceCredential.load]] — enrollment persist,
+   * every [[nebflow.neblink.identity.DeviceCredential.load]] — enrollment persist,
    * silent re-login, and `GET /api/neblink/status` (HTTP 500) all failed with
    * `AccessDeniedException`. Measured on Windows 11 / JDK 21: the six rights
    * alone ⇒ open denied; + the two EA bits ⇒ open allowed.

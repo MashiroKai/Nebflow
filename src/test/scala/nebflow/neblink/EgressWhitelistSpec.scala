@@ -1,5 +1,7 @@
 package nebflow.neblink
 
+import nebflow.neblink.core.*
+
 import munit.CatsEffectSuite
 import nebflow.shared.PathUtil
 

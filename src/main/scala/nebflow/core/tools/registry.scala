@@ -1,5 +1,8 @@
 package nebflow.core.tools
 
+import nebflow.neblink.core.*
+import nebflow.neblink.misc.*
+
 import nebflow.shared.ToolDefinition
 
 import java.util.concurrent.ConcurrentHashMap

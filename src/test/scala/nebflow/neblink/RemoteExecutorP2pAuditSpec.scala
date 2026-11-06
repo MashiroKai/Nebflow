@@ -1,5 +1,7 @@
 package nebflow.neblink
 
+import nebflow.neblink.core.*
+
 import cats.effect.IO
 import cats.effect.std.Dispatcher
 import cats.effect.unsafe.implicits.global
@@ -152,7 +154,7 @@ class RemoteExecutorP2pAuditSpec extends CatsEffectSuite:
         val (probeReq, bizReq) = (reqs(0), reqs(1))
         // —— 再断言接线点产出：恰 2 行（探针 kind=probe 1 行 + 业务 1 行）、字段合契约 ——
         assertEquals(lines.length, 2, s"探针 1 行 + 业务 1 行，恰 2 行审计: $lines")
-        val rows = lines.map(l => parse(l).fold(e => fail(s"invalid JSONL: $e"), identity).hcursor)
+        val rows = lines.map(l => parse(l).fold(e => fail(s"invalid JSONL: $e"), x => x).hcursor)
         val probeRows = rows.filter(_.downField("kind").as[String].toOption.contains("probe"))
         val bizRows = rows.filterNot(_.downField("kind").as[String].toOption.contains("probe"))
         assertEquals(probeRows.length, 1, "探针行恰 1（重试/审计语义与业务下发同源）")
@@ -212,7 +214,7 @@ class RemoteExecutorP2pAuditSpec extends CatsEffectSuite:
         assert(elapsed >= 5.seconds, s"重试必须真的发生（退避 1+2+3s）: elapsed=$elapsed")
         // xdev 批：2 行 = 探针（kind=probe，失败也记）+ 业务（失败也记）；重试均不重复记行。
         assertEquals(lines.length, 2, s"探针 + 业务各恰 1 行审计: $lines")
-        val rows = lines.map(l => parse(l).fold(e => fail(s"invalid JSONL: $e"), identity).hcursor)
+        val rows = lines.map(l => parse(l).fold(e => fail(s"invalid JSONL: $e"), x => x).hcursor)
         val bizRows = rows.filterNot(_.downField("kind").as[String].toOption.contains("probe"))
         assertEquals(bizRows.length, 1, "业务行恰 1（探针行另有 kind=probe 标记）")
         val c = bizRows.head

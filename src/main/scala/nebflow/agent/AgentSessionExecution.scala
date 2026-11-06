@@ -1,6 +1,8 @@
 /* 从 AgentCore.scala 迁出(行为保持重构,2026-09-25)。 */
 package nebflow.agent
 
+import nebflow.neblink.core.*
+
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.syntax.*

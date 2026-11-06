@@ -1,12 +1,15 @@
 /* 从 RestApiRoutes 迁出(行为保持重构,2026-09-24)。 */
 package nebflow.gateway
 
+import nebflow.neblink.attachment.*
+import nebflow.neblink.core.*
+import nebflow.neblink.social.*
+
 import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, parser}
-import nebflow.neblink.*
-import nebflow.neblink.FriendCodecs.given
+import nebflow.neblink.core.FriendCodecs.given
 import nebflow.shared.AttachContract
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
@@ -389,16 +392,16 @@ private[gateway] object SocialRoutes:
        * 上传形态（A1 = ②）：**网页整件一次请求 → 网关 → 复用桌面分块驱动**。
        * 浏览器把整件放进请求体（`fetch(..., {body: file})`，Chromium 自带流式发送），
        * 本路由把请求体**流式**落临时件（`streamToFileWithHashBounded`，上限 1 GiB 在
-       * **读的过程中**生效），然后把临时件交给 [[nebflow.neblink.AttachUpload.pushFile]]
+       * **读的过程中**生效），然后把临时件交给 [[nebflow.neblink.attachment.AttachUpload.pushFile]]
        * —— **与桌面腿同一份** E1+E2×n 链（块大小仍是 `AttachContract.plan` 的 4 MiB，
        * 单块峰值内存与文件大小无关）。
        *
        * 🔴 **硬钉①（禁整件缓冲）机械判据**：本方法体里**不出现** `req.as[Array[Byte]]` /
        * `bodyText.compile.string` / `req.as[String]` / `req.as[Json]` —— 请求体只以
        * `req.body`（`Stream[IO, Byte]`）形态被消费一次；单块字节的 `Array[Byte]` 只出现在
-       * [[nebflow.neblink.AttachUpload.pushChunks]] 的 4 MiB `readRange` 里。
+       * [[nebflow.neblink.attachment.AttachUpload.pushChunks]] 的 4 MiB `readRange` 里。
        *
-       * 🔴 **硬钉②（禁假进度 / 失败可见）**：进度只由 [[nebflow.neblink.AttachUpload.Hooks.onChunk]]
+       * 🔴 **硬钉②（禁假进度 / 失败可见）**：进度只由 [[nebflow.neblink.attachment.AttachUpload.Hooks.onChunk]]
        * 在**服务端确认一块之后**广播（WS 帧 `attach-upload-progress`），因此不存在
        * 「到点 100%」；成败**一律**落在本次响应的 `ok` 上（失败 ⇒ 非 2xx + 可判读
        * `code`/`error`，取消 ⇒ `409` + `code:"cancelled"`）——绝不把拒绝塞进 2xx。
@@ -423,7 +426,7 @@ private[gateway] object SocialRoutes:
               val rawUploadId = req.params.getOrElse("uploadId", "")
               // 🔴 **形态闸（attachid 批）**：`uploadId` 是**客户端可控**的查询参数，且会被当作
               // **单个路径段**消费（`FriendService.uploadStream` 拼临时件路径）⇒ 非空时先过
-              // **唯一**判定点 [[nebflow.neblink.AttachUploadId]]。判定在**任何路径拼接 / 登记 /
+              // **唯一**判定点 [[nebflow.neblink.attachment.AttachUploadId]]。判定在**任何路径拼接 / 登记 /
               // 读请求体之前** ⇒ 非法 id 零落盘 / 零上游调用 / 零临时件（复核位 A1 的原始缺陷：
               // 含 `/` 的 id ⇒ 500 + 空体）。
               // 🔴 **缺席 / 空白仍是合法语义**（本次上传不可取消、服务端自造 `anon-…`）⇒ 只在
@@ -497,8 +500,8 @@ private[gateway] object SocialRoutes:
                     val uploadId = checked.getOrElse(s"anon-${java.util.UUID.randomUUID().toString}")
                     val cancellable = checked.isDefined
                     val registry = sharedResources.attachUploads
-                    val hooks = nebflow.neblink.AttachUpload.Hooks(
-                      onChunk = (pr: nebflow.neblink.AttachUpload.Progress) =>
+                    val hooks = nebflow.neblink.attachment.AttachUpload.Hooks(
+                      onChunk = (pr: nebflow.neblink.attachment.AttachUpload.Progress) =>
                         wsHub.broadcast(
                           // 🔴 帧形状与同族 `dropbox-file-progress` 逐字同构（`type` + 会话键 +
                           // **嵌套 `msg`**）：载荷在 `msg` 下，前端读点 = `msg.uploadId` 等。
@@ -537,7 +540,7 @@ private[gateway] object SocialRoutes:
                         hooks,
                         st.map(_.preview),
                         st.map(_.sendDialectId)
-                          .getOrElse(nebflow.neblink.AttachmentPreviewContract.DefaultSendDialectId)
+                          .getOrElse(nebflow.neblink.attachment.AttachmentPreviewContract.DefaultSendDialectId)
                       )
                     })
                       .guarantee(if cancellable then registry.release(uploadId) else IO.unit)
@@ -609,8 +612,8 @@ private[gateway] object SocialRoutes:
        *
        * 浏览器在整件上传**之前**先 POST 本路由（同 `conversationId` / `name` / `uploadId` 参数
        * + JSON 体 = **某一版方言**的预览对象）。本层只做四件事：**形态闸**（`uploadId` 复用
-       * [[nebflow.neblink.AttachUploadId]] 唯一判定，与上传/取消路由同一把键同一道闸）、
-       * **方言识别 + 契约判定**（体 = [[nebflow.neblink.AttachmentPreviewContract.parsePreview]]
+       * [[nebflow.neblink.attachment.AttachUploadId]] 唯一判定，与上传/取消路由同一把键同一道闸）、
+       * **方言识别 + 契约判定**（体 = [[nebflow.neblink.attachment.AttachmentPreviewContract.parsePreview]]
        * 的唯一解析口径：按**方言登记表逐条试**，`{mime,w,h,size,b64}` 与 `{fmt,w,h,bytes,sha256,b64}`
        * **都认**；几何 / 体积 / b64 长度自洽 / 摘要拼写逐条同判 —— 任一方言都不认 ⇒ `400`
        * 并**列出已登记方言**，**零暂存**）、**暂存**（`AttachUploadRegistry.stagePreview`，有界；
@@ -705,8 +708,8 @@ private[gateway] object SocialRoutes:
 
       /**
        * **取消在飞上传**（attachcl 批）：把取消位翻起来 ⇒
-       * [[nebflow.neblink.AttachUpload.pushChunks]] 在**下一块发出前**读到它、停止后续
-       * 分块，并以 [[nebflow.neblink.AttachUpload.Failure.Cancelled]] 收尾（**不报完成**）。
+       * [[nebflow.neblink.attachment.AttachUpload.pushChunks]] 在**下一块发出前**读到它、停止后续
+       * 分块，并以 [[nebflow.neblink.attachment.AttachUpload.Failure.Cancelled]] 收尾（**不报完成**）。
        *
        * 未登记过的 `uploadId` ⇒ `200 {cancelled:false}`（不新造位、不谎报成功：客户端
        * 据此如实显示「已结束/无法取消」而不是假的「已取消」）。已登记 ⇒ `{cancelled:true}`
@@ -715,7 +718,7 @@ private[gateway] object SocialRoutes:
       case req @ POST -> Root / "attachments" / uploadId / "cancel" =>
         withAuth(req) {
           // 🔴 **同一道形态闸**（attachid 批）：取消键与上传键是**同一名字空间**，非法形态在任何
-          // 消费点都必须被**同一个**判定拒掉 ⇒ 这里复用 [[nebflow.neblink.AttachUploadId]]，
+          // 消费点都必须被**同一个**判定拒掉 ⇒ 这里复用 [[nebflow.neblink.attachment.AttachUploadId]]，
           // **不**各写一份（禁多点漂移）。判定不触盘、不触上游：非法 id 的读数恒为
           // 4xx + 非空体、零落盘、零上游调用、零临时件。
           AttachUploadId.validate(uploadId) match

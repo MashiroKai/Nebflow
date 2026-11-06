@@ -1,5 +1,8 @@
 package nebflow.neblink
 
+import nebflow.neblink.core.*
+import nebflow.neblink.relay.*
+
 import cats.effect.IO
 import cats.effect.std.Dispatcher
 import cats.effect.unsafe.implicits.global
@@ -133,7 +136,7 @@ class RemoteExecutorAuditSpec extends CatsEffectSuite:
             //   按**既有**负证据机制合理跳过 P2P 直走 relay（A 批「唯一旁路 = 真实
             //   失败证据」语义的正确联动，非静默）。
             // 这与方案 §4.3 反控-2「回退必须可观测」的期望形态一致：回退有行。
-            val vias = lines.map(l => parse(l).fold(e => fail(s"invalid JSONL: $e"), identity).hcursor)
+            val vias = lines.map(l => parse(l).fold(e => fail(s"invalid JSONL: $e"), x => x).hcursor)
             assertEquals(
               vias.map(_.downField("via").as[String].toOption),
               List(Some("p2p"), Some("relay"), Some("relay")),
@@ -150,7 +153,7 @@ class RemoteExecutorAuditSpec extends CatsEffectSuite:
               "三行指向同一对端（探针 + 业务同一次首触）"
             )
             // 成功那一行（业务的 relay）的字段与脱敏契约不变
-            val c = parse(lines.last).fold(e => fail(s"invalid JSONL: $e"), identity).hcursor
+            val c = parse(lines.last).fold(e => fail(s"invalid JSONL: $e"), x => x).hcursor
             assertEquals(
               c.downField("deviceId").as[String].toOption,
               Some(srcId),

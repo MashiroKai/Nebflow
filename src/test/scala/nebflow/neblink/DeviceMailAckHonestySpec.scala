@@ -1,5 +1,9 @@
 package nebflow.neblink
 
+import nebflow.neblink.core.*
+import nebflow.neblink.relay.*
+import nebflow.neblink.social.*
+
 import cats.effect.{IO, Ref, Resource}
 import cats.effect.std.Dispatcher
 import cats.effect.unsafe.implicits.global
@@ -221,7 +225,7 @@ class DeviceMailAckHonestySpec extends CatsEffectSuite:
     parse(
       """{"type":"agent_mail","from_device":"KAI-MBP","from_device_id":"dev-a","to_nebula":true,"text":"hello B"}"""
     )
-      .fold(e => fail(s"contract literal must parse: ${e.getMessage}"), identity)
+      .fold(e => fail(s"contract literal must parse: ${e.getMessage}"), x => x)
 
   private def envelope(eventId: String): Json =
     Json.obj(

@@ -1,6 +1,8 @@
 /* 从 RestApiRoutes 迁出(行为保持重构,2026-09-24)。 */
 package nebflow.gateway
 
+import nebflow.neblink.core.*
+
 import cats.effect.IO
 import cats.syntax.all.*
 import fs2.Stream
@@ -196,7 +198,7 @@ private[gateway] object HealthRoutes:
   private def nearPathProbePayload(req: Request[IO], base: Json): IO[Json] =
     if !LoopbackLeg.isLoopback(req) then IO.pure(base)
     else
-      IO.blocking(nebflow.neblink.DeviceIdentity.readDeviceIdOnly).flatMap {
+      IO.blocking(nebflow.neblink.core.DeviceIdentity.readDeviceIdOnly).flatMap {
         case None => IO.pure(base)
         case Some(id) => IO.pure(base.deepMerge(Json.obj("deviceId" -> id.asJson)))
       }

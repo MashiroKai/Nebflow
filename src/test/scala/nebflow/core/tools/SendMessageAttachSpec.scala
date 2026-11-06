@@ -1,5 +1,7 @@
 package nebflow.core.tools
 
+import nebflow.neblink.core.*
+
 import cats.effect.IO
 import cats.effect.std.Dispatcher
 import io.circe.{Json, JsonObject}
@@ -8,7 +10,7 @@ import nebflow.actor.AgentDef
 import nebflow.agent.AgentCore
 import nebflow.dropbox.DropboxService
 import nebflow.gateway.WsHub
-import nebflow.neblink.NeblinkService
+import nebflow.neblink.core.NeblinkService
 import nebflow.shared.{AttachContract, PathUtil, PeerInfo}
 
 import scala.concurrent.duration.*
