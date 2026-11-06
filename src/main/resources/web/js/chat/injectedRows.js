@@ -72,6 +72,10 @@ const INJECTED_SOURCE_LABELS = {
   //   waiting-dock-care 等待坞超时升级（TaskStuckWatcher）
   //   chain-orphan      孤儿链回收通报（ProjectCrashRecovery）
   //   team              团队错误升级链（AgentActor.notifyEscalation）
+  // 修复批 2026-11-06（作者原话「llm 不稳定 不需要向上通知…现在还是在给你报障」）：
+  // 解冻轮把静默族冻结回执合成一条状态行（引擎 `FreezeNotice.collapseSilentReceipts`）
+  // ⇒ 独立来源名，渲染为「等待恢复中」而不是冻结回执。
+  'frozen-waiting': 'FrozenWaiting',
   'merge-queue': 'MergeQueue',
   'bg-lifecycle': 'BgLifecycle',
   'waiting-dock-care': 'DockCare',

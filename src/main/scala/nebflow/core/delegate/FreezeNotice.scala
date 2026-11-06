@@ -1,6 +1,6 @@
 package nebflow.core.delegate
 
-import io.circe.Json
+import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
 import nebflow.actor.{AgentCommand, FreezeDisplay, FreezeKind}
 import nebflow.shared.{Defaults, NebflowLogger}
@@ -134,6 +134,121 @@ object FreezeNotice:
 
   /** 是否静默（provider 故障族 = 零向上通知）。 */
   def silent(line: String, detail: String = ""): Boolean = tierOfLine(line, detail) == Tier.Silent
+
+  // ── 解冻重放面：静默回执不许随解冻重放冒泡（修复批 2026-11-06）────────────
+  //
+  // 作者原话逐字（2026-11-06 09:43）：「不是说了 llm 不稳定 不需要向上通知吗 原地等待
+  // 恢复就行了 搜一下我之前的要求吧 现在还是在给你报障」。
+  //
+  // 现场取证：作者看到的「一刷 15 条」不是投递腿造的，是**冻结窗期间累积在邮箱里**的
+  // 回执在每次解冻时被原样重放——`MailboxDrain.resumeSweep` 把 taken 残差与 pending
+  // 全取并注入，每条 `delegate/frozen` 都过 `visibleExternalEventSource` 变成一格
+  // `delegate-frozen` 气泡、正文整段进父会话上下文（日志 `mailbox-drained-at-unfreeze
+  // events=15 replayed=15` 即此）。静默总闸只关得住**投递**，关不住**重放**。
+  //
+  // 本段把重放面并入静默族：同一父会话同一错误族只留**一条**「等待恢复中」状态行，
+  // 其余只落 INFO 计数（同因去重）。判据不另写一份——原因从回执首行
+  // `hit **<Reason>**` 投影回 [[DelegateFreeze.Reason]]，分类走 [[tierOfReason]]。
+
+  /** 冻结回执载荷标记（`DelegateFreeze.receiptText` 首行；重放面据此认件）。 */
+  val ReceiptMarker: String = "[delegate-frozen]"
+
+  /** 回执 payload → 原因（读首行 `hit **<Reason>**`；非回执 / 旧盘面 ⇒ None，零误判）。 */
+  def receiptReasonOf(payload: String): Option[DelegateFreeze.Reason] =
+    val head = Option(payload).getOrElse("").linesIterator.find(_.contains(ReceiptMarker)).getOrElse("")
+    if head.isEmpty then None
+    else DelegateFreeze.All.find(r => head.contains(s"**${DelegateFreeze.reasonLabelEn(r)}**"))
+
+  /** 回执正文里 `WHY:` 之后的摘要（族判定读真实故障形状，不只读原因码）。 */
+  private def receiptWhy(payload: String): String =
+    Option(payload).toList.flatMap(_.split('\n')).find(_.startsWith("WHY:")).getOrElse("").take(400)
+
+  /** 回执 payload → 错误类型族（与合并窗口同一个归并键；非回执 ⇒ None）。 */
+  def receiptFamilyOf(payload: String): Option[String] =
+    receiptReasonOf(payload).map { r =>
+      val d = receiptWhy(payload)
+      ProviderFault.familyOf(d) match
+        case Some(f) => ProviderFault.familyWire(f)
+        case None =>
+          if tierOfReason(r, d) == Tier.Escalate then DeterministicFamily
+          else if r == DelegateFreeze.Reason.CancelledByQuota then
+            ProviderFault.familyWire(ProviderFault.Family.QuotaBalance)
+          else UnclassifiedProviderFamily
+    }
+
+  /** 该回执是否静默族（provider 故障族 = 解开也不许向作者冒泡）。 */
+  def receiptSilent(payload: String): Boolean =
+    receiptReasonOf(payload).exists(r => tierOfReason(r, receiptWhy(payload)) == Tier.Silent)
+
+  /** 静默回执的「原因人话」（状态行用）。 */
+  def receiptReasonZh(payload: String): String =
+    receiptReasonOf(payload).map(DelegateFreeze.reasonLabelZh).getOrElse("")
+
+  /** 重放面认件：delegate × frozen × 静默族回执。 */
+  def isSilentReceipt(e: AgentCommand.ExternalEvent): Boolean =
+    e.source == "delegate" && e.eventType == "frozen" && receiptSilent(e.payload)
+
+  /** 返回 (保留集, 被合并掉的静默回执数)。 */
+  def collapseSilentReceipts(
+    events: List[AgentCommand.ExternalEvent]
+  ): (List[AgentCommand.ExternalEvent], Int) =
+    val quietIdxs = events.zipWithIndex.collect { case (e, i) if isSilentReceipt(e) => i }
+    if quietIdxs.isEmpty then (events, 0)
+    else
+      val quiet = quietIdxs.map(events(_))
+      val gone = quietIdxs.toSet
+      val groups: List[(String, List[AgentCommand.ExternalEvent])] =
+        quiet.zipWithIndex
+          .groupBy { case (e, _) => receiptFamilyOf(e.payload).getOrElse(UnclassifiedProviderFamily) }
+          .toList
+          .map { case (f, es) => (f, es.sortBy(_._2).map(_._1)) }
+          .sortBy { case (_, es) => quiet.indexOf(es.head) }
+      // 每个族一条状态行，落回该族**最后**一条的位置之后（相对序不乱）。
+      val insertAfter: Map[Int, AgentCommand.ExternalEvent] = groups.flatMap { case (f, es) =>
+        val at = quietIdxs(quiet.indexOf(es.head))
+        Some(at -> collapsedReceipt(f, es))
+      }.toMap
+      val out = events.zipWithIndex.flatMap { case (e, i) =>
+        val kept = if gone.contains(i) then Nil else List(e)
+        insertAfter.get(i) match
+          case Some(c) => List(c) ++ kept
+          case None => kept
+      }
+      (out, quiet.size - groups.size)
+  end collapseSilentReceipts
+
+  /** 静默族回执的合并件：改派为 `frozen-waiting`（呈现面据此不逐个冒泡，视觉走「等待恢复中」）。 */
+  private def collapsedReceipt(family: String, es: List[AgentCommand.ExternalEvent]): AgentCommand.ExternalEvent =
+    val first = es.head
+    val ids = es.flatMap(_.metadata("frozenDelegateId").flatMap(_.asString)).distinct
+    val parents = es.flatMap(_.metadata("parentSessionId").flatMap(_.asString)).distinct
+    first.copy(
+      eventType = "frozen-waiting",
+      payload = quietReceiptText(family, es),
+      metadata = first.metadata
+        .add("quietReceipt", Json.fromBoolean(true))
+        .add("quietFamily", Json.fromString(family))
+        .add("quietCount", Json.fromInt(es.size))
+        .add("quietDelegateIds", Json.fromValues(ids.map(Json.fromString)))
+        .deepMerge(if parents.isEmpty then JsonObject.empty else JsonObject("parentSessionId" -> parents.head.asJson)),
+      correlationId = Some(s"frozen-waiting-$family-${ids.hashCode.abs}")
+    )
+
+  /**
+   * 静默回执的状态行正文：一条说完「在等什么 / 谁 / 会不会自己好」。
+   *
+   * 措辞纪律（作者口径）：这是**状态**不是待办——不给唤醒地址、不要求动作；能自己恢复
+   * 的事引擎自己做（退避重试 / 换供应商 / 恢复后续跑同一会话）。
+   */
+  def quietReceiptText(family: String, es: List[AgentCommand.ExternalEvent]): String =
+    val zhs = es.map(e => receiptReasonZh(e.payload)).filter(_.nonEmpty).distinct
+    val ids = es.flatMap(_.metadata("frozenDelegateId").flatMap(_.asString)).distinct
+    val names = es.flatMap(_.metadata("description").flatMap(_.asString)).distinct.take(3)
+    val label = if zhs.isEmpty then family else zhs.mkString(" / ")
+    s"[frozen-waiting] ${es.size} 个委托等待恢复（$label · `$family`）：这不是失败，也不影响你——引擎会退避重试，" +
+      s"供应商恢复后在原会话上接着跑（已完成的不重做）。涉及 ${ids.take(6).mkString(", ")}" +
+      s"${if ids.size > 6 then s" 等 ${ids.size} 个" else ""}" +
+      s"${if names.nonEmpty then s"（${names.mkString("；")}）" else ""}。同因只报这一条，状态见后台智能体面板。"
 
   // ── provider / 基础设施故障标记（通知面与 flow-notify 面共用同一把尺）──────
 

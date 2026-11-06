@@ -1413,6 +1413,8 @@ function bgTaskRowHtml(id, info, opts = {}) {
   // BG_STATUS_VISUAL 单表（状态 → 图标/色调/文案键），本行只给「状态键」与可选的
   // 色调覆写——冻结态误报批的「自动恢复族走 waiting 色」覆写在此保留为唯一一处。
   const statusState = chainContinued ? 'chain' : rowState;
+  // 修复批 2026-11-06：可恢复冻结（等待恢复中 / 自动恢复中 / 时段等待）一律走
+  // waiting 色，只有真失败（manual）才是 frozen 色。
   const statusTone = (freezeKind && freezeKind !== FREEZE_KIND.manual) ? 'frozen-auto' : '';
   // 术语分层批（2026-11-05 作者令「整体行 vs 成员行」）：身份词分两个显示位，各由一个
   // 函数定词，没有一个构造器自带词表——
@@ -1623,15 +1625,20 @@ function bgTaskRowHtml(id, info, opts = {}) {
         const hours = Number(info.dormantHours) || 0;
         const tries = Number(info.autoResumes) || 0;
         const tip = [];
-        tip.push(t(infra ? 'subagents.frozenInfraTip' : 'subagents.frozenTip'));
+        // 修复批 2026-11-06：可恢复 ↔ 真失败在**词**上就不许同形。
+        //   · infra（可恢复：llm-failure / 额度）⇒「等待恢复中」+ 自愈说明，无「待你处理」；
+        //   · tool-failure / engine-fault（真失败）⇒「已冻结 … 待你处理」+ 唤醒按钮。
+        tip.push(t(infra ? 'subagents.freezeRecoveringTip' : 'subagents.frozenTip'));
         if (why) tip.push(t('subagents.frozenReason', { reason: why }));
         if (detail) tip.push(detail);
         if (tries > 0) tip.push(t('subagents.frozenAutoResumes', { n: String(tries) }));
         if (info.autoResumesExhausted) tip.push(t('subagents.frozenAutoResumesSpent'));
         if (hours > 0) tip.push(t('subagents.frozenDormantTip', { hours: String(hours) }));
-        const label = why
-          ? t('subagents.frozenAwaitingYou', { reason: why })
-          : t('subagents.frozenAwaitingYouNoReason');
+        const label = infra
+          ? (why ? t('subagents.freezeRecoveringReason', { reason: why }) : t('subagents.freezeRecovering'))
+          : (why
+            ? t('subagents.frozenAwaitingYou', { reason: why })
+            : t('subagents.frozenAwaitingYouNoReason'));
         return '<span class="bg-task-frozen" role="status" title="' + escapeHtml(tip.join('\n')) + '">'
           + statusIcon('snowflake', 11, 'st-warn')
           + escapeHtml(label)

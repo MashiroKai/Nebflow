@@ -273,7 +273,9 @@ private[agent] object MailboxDrain:
       for
         replayed <- replayTakenEvents(sid)
         drained <- drainIdleFace(sid)
-        result <- injectIdleTurn(agentDef, resources, depth, parentRef, baseState, replayed ++ drained)
+        // 同一处去重（修复批 2026-11-06）：W1 spawn 恢复面与 W4 解冻面共用判据。
+        (events, _) = nebflow.core.delegate.FreezeNotice.collapseSilentReceipts(replayed ++ drained)
+        result <- injectIdleTurn(agentDef, resources, depth, parentRef, baseState, events)
       yield result
     }
 
@@ -291,7 +293,12 @@ private[agent] object MailboxDrain:
       for
         replayed <- replayTakenEvents(sid)
         drained <- drainIdleFace(sid)
-        events = replayed ++ drained
+        raw = replayed ++ drained
+        // 解冻重放面（修复批 2026-11-06）：静默族冻结回执（provider 故障 / 额度）
+        // **同因只留一条**状态行，其余只落 INFO 计数——冻结窗期间累积的 N 条回执
+        // 不许在解冻时逐个冒泡（作者报障「一刷 15 条」的机械来源，见
+        // `FreezeNotice.collapseSilentReceipts` 头注）。真失败回执逐条保留。
+        (events, collapsed) = nebflow.core.delegate.FreezeNotice.collapseSilentReceipts(raw)
         _ <- IO.whenA(events.nonEmpty)(
           IO(
             logAgentEvent(
@@ -300,7 +307,7 @@ private[agent] object MailboxDrain:
               state.sessionId,
               state.sessionName,
               "mailbox-drained-at-unfreeze",
-              s"events=${events.size} replayed=${replayed.size}"
+              s"events=${events.size} replayed=${replayed.size} suppressedQuietReceipts=$collapsed"
             )
           )
         )

@@ -247,6 +247,11 @@ object AgentActor extends AgentCore with AgentSession:
     // "delegate" 会让冻结回执长得像一份委托完成报告）。判据与
     // `TurnBoundaryDrains.isFreezeReceipt` 同源同形（source=delegate × type=frozen）。
     else if source == "delegate" && eventType == "frozen" then Some("delegate-frozen")
+    // 解冻重放面合并件（修复批 2026-11-06）：静默族（provider 故障 / 额度）回执在
+    // 解冻轮已被 `FreezeNotice.collapseSilentReceipts` 合成**一条**状态行——单独成
+    // 一格 `frozen-waiting`，前端渲染「等待恢复中」而不是「已冻结」（与真失败在
+    // 视觉与文案上必须分开）。
+    else if source == "delegate" && eventType == "frozen-waiting" then Some("frozen-waiting")
     else if source == "background-task" then Some("background")
     else if SelfEmittingSources.contains(source) then None
     else Some(source)
