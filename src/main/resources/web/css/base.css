@@ -34,6 +34,12 @@
      #2e7d32 / #66bb6a / #f26b6b / #ffa83c = sapphire --amber-dark 暗档值）。
      --color-error / --color-danger 保留现值不迁移：改版后正文字不再消费红
      token，红 token 转供图标/描边/底纹（危险按钮族仍走 --btn-danger-*）。 */
+  /* 定时任务蓝（schedule-todo-unify 批 2026-11-06 单源）：值逐字取自
+     reminder.css 既有字面量 rgb(91, 127, 191)（触发时刻/已完成打卡圆，本批只做
+     「字面量 → token」搬迁，集合差 = ∅）。语义 = 定时/计划类信息蓝 —— 定时任务
+     页与待办页（tfl 完成打卡 / swipe 保留图标）按作者令「以定时任务为准」同
+     消费本 token，不许各留一套。 */
+  --color-info: rgb(91, 127, 191);
   --status-error-icon: #d64545;   /* 图标档：亮 4.4:1（图形 ≥3:1 ✓） */
   --status-warn-icon: #b45309;    /* 图标档：亮 5.0:1 ✓（全案唯一新值） */
   --status-success-icon: #2e7d32; /* 图标档：亮 5.1:1 ✓（仓内已有值） */

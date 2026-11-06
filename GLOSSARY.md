@@ -371,3 +371,19 @@ lightbox 与 toast。**归类例外**：`socialPanel.js` 的入口按钮在活�
 **分隔线句**：「本两枚为**两面分野**词条——Linux `capabilities(7)` 在本线**被拆成两面**：**判据面看需求、持有面看账本**；与既有『一物一名』纪律相容（**两面＝两物**）。」
 
 **依据**：《`docs/fact/裁定-十六轮-2026-10-09.md`》§B（设计约束令）＋§C-1（连带裁定）；来源＝作者 2026-10-09 提问「尽可能的使用Linux的权限控制概念以及能力供给方式」＋确认句「确认。」。
+
+## 21. 动效语言（liquid-morph 批，2026-11-06 落地）
+
+> **批次说明（2026-11-06）**：作者令「把这种效果起个名 我们以后都用这种效果」的命名落地批。
+> 语言本体（一句话定义 / 两端几何可插值原则 / 禁止项 / 复用清单 / reduced-motion 口径）=
+> `design/liquid-morph__20261106/DESIGN.md`；机制的完整解释在规范与落点处，本表只管名字。
+>
+> **撞名核查（2026-11-06）**：本表此前无「液态 / liquid / morph / 形变」条目；`design/` 下无同名文档。
+> 仓内既有用法（`js/mobile/taskPanel.js` 的「液态形变任务浮层」形态说明、`tests/*morph*` 的
+> `mh-morph-anim` 类名族、「液态下拉」用例描述）是**同一族效果的实例与历史叫法**，不是竞争词条 ⇒ 沿用该名。
+
+| 术语 | English / 代码拼写 | 定义 | 权威落点 |
+|---|---|---|---|
+| **液态形变** | Liquid Morph / `liquidMorph` | **同一个 DOM 节点在两端几何之间连续插值**（长条 ⇄ 圆钮、列表行 ⇄ 互动框、条目 ⇄ 面板）的一段过渡：一条曲线 `cubic-bezier(0.4, 0, 0.2, 1)`、一个基准时长 280ms、一份可插值属性白名单、reduced-motion 降级 1ms；禁止第二套缓动、禁止 JS 定时器逐帧、禁止给不可插值属性做过渡。原型 = 手机搜索「扁平长条 ⇄ 右上角圆钮」。 | `src/main/resources/web/js/motion/liquidMorph.js`（JS 单源）；`src/main/resources/web/css/design-system.css` 的 `--lm-*` 组（CSS 单源）；规范 `design/liquid-morph__20261106/DESIGN.md`；原型 `css/mobileSearchFlat.css` |
+
+^liquid-morph

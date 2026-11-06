@@ -2028,8 +2028,8 @@ export default {
   // Task panel = pure Flow Map node view (2026-09-05 10:54 ruling): the old
   // task area is retired; sectionProgress/pendingShort/globalSource keys
   // removed with their retired paths. Node-view keys kept.
-  'task.expand': 'Expand',
-  'task.collapse': 'Collapse',
+  'task.expand': 'Show details',
+  'task.collapse': 'Hide details',
   // progressEmpty: empty-state fallback key (builder kept, not wired into
   // the main path — the panel collapses when there are no nodes)
   'task.progressEmpty': 'No active tasks',
@@ -2338,7 +2338,13 @@ export default {
   'task.sheetTitle': 'New scheduled task',
   'task.sheetCancel': 'Cancel',
   'task.sheetDone': 'Create',
-  'task.inputPlaceholder': 'Enter task...',
+  // schedule-todo-unify 2026-11-06: name + description split (content line 1 = name).
+  'task.inputPlaceholder': 'Task name',
+  'task.descPlaceholder': 'Description (optional)',
+  'task.editTitle': 'Edit scheduled task',
+  'task.nameRequired': 'Name cannot be empty',
+  'task.detailTitle': 'Details',
+  'task.detailEmpty': 'No description',
   'task.triggerTime': 'Trigger time',
   'task.triggered': 'Triggered',
   'task.triggerTitle': 'Scheduled Task Triggered',

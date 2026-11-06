@@ -1965,8 +1965,8 @@ export default {
   // sectionProgress/pendingShort/globalSource 键随退役路径一并清除；节点视图
   // 键（nodePending/nodeBlocked/inProgressShort/statsProgress/expand/
   // collapse/justNow/progressEmpty）保留。
-  'task.expand': '展开',
-  'task.collapse': '收起',
+  'task.expand': '展开详情',
+  'task.collapse': '收起详情',
   // progressEmpty：空态兜底键（builder 保留未接主路径，无节点时面板收起）
   'task.progressEmpty': '暂无任务',
   'task.justNow': '刚刚',
@@ -2265,7 +2265,14 @@ export default {
   'task.sheetTitle': '新建定时任务',
   'task.sheetCancel': '取消',
   'task.sheetDone': '创建',
-  'task.inputPlaceholder': '输入任务内容...',
+  // schedule-todo-unify 批 2026-11-06：新建/编辑面拆 name + description 两段
+  // （数据面约定 = content 首行 name、其余行 description，见 scheduled-task.js nameOf/descriptionOf）。
+  'task.inputPlaceholder': '任务名称',
+  'task.descPlaceholder': '描述（可选）',
+  'task.editTitle': '编辑定时任务',
+  'task.nameRequired': '名称不能为空',
+  'task.detailTitle': '详情',
+  'task.detailEmpty': '无描述',
   'task.triggerTime': '触发时间',
   'task.triggered': '已触发',
   'task.triggerTitle': '定时任务已触发',

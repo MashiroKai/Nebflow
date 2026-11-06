@@ -1,0 +1,270 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   schedule-todo.css — 「定时任务页 ⇄ 待办页」两页共用的**单一面语言**（单源）
+   （schedule-todo-unify 批 · 作者令 2026-11-06 09:43）
+
+   作者原话（逐字，六条）：「然后定时任务这里也是的 首先让我们的待办的配色风格和
+   定时任务统一 以定时任务为准 然后他们确认按钮的位置都统一到右边 还有就是定时
+   任务这个标题不要重复了 然后定时任务也要按 name description来添加 点击展开可以
+   查看细节 展开要用液态形变 把液态形变的设计要求写进我们的前端开发插件 然后按钮
+   的样式要扁平 同时大小要合适」
+
+   为什么两页共用一份而不是各写一份：本批的核心约束是「每样只有一套实现」（配色
+   令牌 / 条目行结构 / 表单按钮规格 / 展开动效）。两页的条目行同源于
+   js/scheduled-task.js 的 buildRow（`.reminder-row` 族，见 css/reminder.css），
+   两页的表单同源于 `.reminder-inline-create` + `.reminder-form-actions`。本文件只
+   声明**两页共享的那套尺寸/间距/按钮规格**；两页各自的「面」级差异（页头、分组签、
+   列表容器的内距）仍归各自文件，不在这里分叉。
+
+   基准 = 定时任务页（作者原话「以定时任务为准」）：下列取值全部抄自定时任务页的
+   既有读数（页面内距 --mpad-x 16 / 行内距 --ds-space-1h 6 / 行高 --mrow 44 /
+   主色字 --color-primary / 中性墨 55% / 圆角 --ds-radius-pill / 命中盒
+   --ds-hit-box-min 48），零新造数值。
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── ① 条目行：name 单行 + 右缘徽标族；点行 = 展开详情 ─────────────────────
+   结构（JS 建）： .reminder-row
+                    ├ .reminder-circle            打卡/取消圆钮
+                    ├ .reminder-row-content
+                    │   ├ .reminder-row-title     name（.reminder-row-text）+ .reminder-row-badges
+                    │   └ .lm-collapse-clip       > .reminder-row-detail（description + facts）
+                    ├ .reminder-edit / .reminder-cancel（行尾键）
+                    └ .reminder-expand-btn        显式展开键（键盘/读屏可达）
+   name 单行省略；徽标族贴在行右缘、与名同一水平线（族内不换行，项目标签可挤掉）。 */
+.reminder-row {
+  align-items: flex-start;
+}
+.reminder-row .reminder-circle {
+  /* 名字基线对齐圆钮中心（行首内距 = 行内距，与两页既有读数同档）。 */
+  margin-top: 2px;
+}
+.reminder-row-title {
+  flex-wrap: nowrap;
+}
+.reminder-row-badges {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-1h);
+  flex: none;
+  min-width: 0;
+  max-width: 62%;
+}
+.reminder-row-badges > .reminder-proj-tag { min-width: 0; }
+
+/* ── ② 详情体（收起态零占位；展开态液态形变缩放进场）─────────────────────
+   遮罩 `.lm-collapse-clip` 的两端 = width 0 / 100%，过渡串由
+   js/motion/collapse.js 的 morphTransition() 单源写入（属性全在
+   js/motion/liquidMorph.js 的 PROPERTY_WHITELIST 内）。本文件**不写** transition
+   —— 写第二份就是第二套时长/曲线（纪律①）。 */
+.lm-collapse-clip {
+  display: block;
+  width: 0;
+  overflow: hidden;
+  /* 收缩到 0 宽时内部文字不换行重排（换行会让高度在两帧之间跳，触发抖动）。 */
+  white-space: nowrap;
+}
+.lm-collapse-clip.is-open {
+  width: 100%;
+  white-space: normal;
+}
+.lm-collapse-inner {
+  width: 100%;
+  transform-origin: left top;
+  transform: scaleX(0.92);
+  opacity: 0;
+}
+.lm-collapse-clip.is-open > .lm-collapse-inner {
+  transform: scaleX(1);
+  opacity: 1;
+}
+.reminder-row-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-1h);
+  padding-top: var(--ds-space-2);
+  min-width: 0;
+}
+.reminder-row-desc {
+  font-size: var(--ds-fs-body);
+  line-height: 1.45;
+  color: var(--color-text);
+  opacity: 0.78;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  letter-spacing: -0.01em;
+}
+.reminder-row-desc:empty { display: none; }
+.reminder-row-facts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-half);
+}
+.reminder-row-fact {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-1h);
+  min-height: 22px;
+  font-size: var(--ds-fs-meta);
+  letter-spacing: -0.01em;
+}
+.reminder-row-fact > i[data-lucide] {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  opacity: 0.45;
+}
+.reminder-row-fact-label {
+  color: var(--color-text);
+  opacity: 0.45;
+  flex: none;
+}
+.reminder-row-fact-value {
+  color: var(--color-text);
+  opacity: 0.78;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 展开态宿主：同框加内距 + 升一档底色（平底、零投影 —— 扁平契约）。
+   两态之间只有 padding / background-color / border-radius 三个几何材质事实，
+   全部在白名单内，过渡串由 motion/collapse.js 写。 */
+.reminder-row.is-expanded {
+  padding-top: var(--ds-space-2);
+  padding-bottom: var(--ds-space-2);
+  border-radius: var(--ds-radius-card-md);
+  background: color-mix(in srgb, var(--color-text) 4%, transparent);
+}
+
+/* 行尾展开键：圆钮档视觉（44 视觉 = --ds-hit-row），命中盒补到 --ds-hit-box-min。 */
+.reminder-expand-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--ds-hit-row);
+  height: var(--ds-hit-row);
+  margin: calc((var(--ds-hit-row) - var(--mrow)) / -2) calc(var(--ds-space-1h) * -1)
+    calc((var(--ds-hit-row) - var(--mrow)) / -2) 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: color-mix(in srgb, var(--color-text) 45%, transparent);
+  cursor: pointer;
+  border-radius: var(--ds-radius-pill);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  position: relative;
+}
+.reminder-expand-btn::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: max(100%, var(--ds-hit-box-min));
+  height: max(100%, var(--ds-hit-box-min));
+  transform: translate(-50%, -50%);
+}
+.reminder-expand-btn svg {
+  width: 16px;
+  height: 16px;
+  transition: transform var(--lm-dur-fast) var(--lm-ease);
+}
+.reminder-row.is-expanded .reminder-expand-btn svg {
+  transform: rotate(180deg);
+}
+@media (hover: hover) {
+  .reminder-expand-btn:hover { color: color-mix(in srgb, var(--color-text) 80%, transparent); }
+}
+
+/* ── ③ 表单：name + description 两段 + 确认类按钮右对齐（两页同一规格）──────
+   .reminder-inline-desc-row = 描述输入行（图标 + textarea，裸件：无底无边无环，
+   归 css/inputSurface.css 的裸件成员表同口径）。 */
+.reminder-inline-desc-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ds-space-1h);
+  margin-top: var(--ds-space-1);
+  padding-left: 26px;      /* 与 .reminder-inline-detail 的左缩进同档（圆钮 18 + 间距） */
+}
+.reminder-inline-desc-row > i[data-lucide] {
+  width: 12px;
+  height: 12px;
+  margin-top: 6px;
+  flex: none;
+  opacity: 0.35;
+}
+.reminder-inline-desc {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--ds-fs-body);
+  line-height: 1.45;
+  color: var(--color-text);
+  font-family: inherit;
+  padding: var(--ds-space-1) 0;
+  letter-spacing: -0.01em;
+  resize: none;
+  overflow-y: auto;
+  max-height: 88px;
+}
+.reminder-inline-desc::placeholder {
+  color: var(--color-text);
+  opacity: 0.25;
+}
+
+/* 确认类按钮行：**统一右下**（作者原话「确认按钮的位置都统一到右边」）。
+   尺寸 = 定时任务页抽屉两键的既有档（视觉高 ≥ --ds-hit-row 44、内距 0 12、
+   圆角 pill、字号 --ds-fs-body、字重 600 主键）；扁平契约：零投影 / 零渐变 /
+   零厚度位移（scripts/check-flat-buttons.mjs 判据）。 */
+.reminder-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--ds-space-1h);
+  margin-top: var(--ds-space-2);
+}
+.reminder-form-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--ds-hit-row);
+  min-height: var(--ds-hit-row);
+  padding: 0 var(--ds-space-2);
+  border: none;
+  background: transparent;
+  border-radius: var(--ds-radius-pill);
+  font-size: var(--ds-fs-body);
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  position: relative;
+}
+.reminder-form-btn::after {
+  /* 命中盒 ≥ 最小可点尺寸令牌（视觉 44 已达标；外扩恒 ≥ 48 兜底，零视觉变化）。 */
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: max(100%, var(--ds-hit-box-min));
+  height: max(100%, var(--ds-hit-box-min));
+  transform: translate(-50%, -50%);
+}
+.reminder-form-btn-primary {
+  color: var(--color-primary);
+  font-weight: 600;
+  background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+}
+.reminder-form-btn:active { opacity: 0.65; }
+/* 手机层收敛（单实现原则）：手机页面态的两面表单都挂在抽屉里，确认/取消 =
+   抽屉头最右两键（.mf-drawer-cancel-btn / .mf-drawer-done-btn —— 两面同一
+   实现、done 恒最右），正文里这行桌面腿的按钮行退场，不出现第二排确认键。 */
+body.mobile-layer .reminder-form-actions { display: none; }
+@media (hover: hover) {
+  .reminder-form-btn:hover { color: color-mix(in srgb, var(--color-text) 80%, transparent); }
+  .reminder-form-btn-primary:hover {
+    color: var(--color-primary);
+    background: color-mix(in srgb, var(--color-primary) 16%, transparent);
+  }
+}

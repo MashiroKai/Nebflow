@@ -18,6 +18,12 @@ import state from './state.js';
 import { key } from './branding.js';
 import { sendWs, onMessage, onReconnect } from './ws.js';
 import { t } from './i18n.js';
+// name/description 两段投影（schedule-todo-unify 批 2026-11-06）：**引用**待办面
+// 已立的同一条规则（todoText.js，零复制 —— 单实现原则）。
+import { splitTodoText } from './todoText.js';
+// 液态形变（Liquid Morph）展开/收起腿（单源 = js/motion/liquidMorph.js；本文件只
+// 引用 motion/collapse.js 这一层「属性子集 + 一次性过渡」，不写第二份时长/曲线）。
+import { wrapCollapseDetail, setCollapse, resetCollapse } from './motion/collapse.js';
 import { statusIcon } from './utils.js'; // escapeHtml = 本文件既有本地实现（107 行）
 import { addNotification } from './notificationBanner.js';
 import { createIconsIn } from './utils.js';
@@ -139,6 +145,72 @@ function isOverdue(t) {
 
 function isTodoTask(t) {
   return t.kind === 'todo';
+}
+
+/**
+ * name / description（description = **分隔描述**）两段读取（schedule-todo-unify 批
+ * 2026-11-06 作者令「定时任务也要按 name description 来添加 点击展开可以查看细节」）。
+ *
+ * 数据面：后端 `detail` = description（第二段，真源字段）；`content` 仍是注入文本
+ * （首行名，无 detail 的存量行用它投影）。**存量行零迁移**——读时投影、不写回：
+ *   · 有 detail ⇒ name = content 首行，description = detail；
+ *   · 无 detail ⇒ 套 todoText.splitTodoText（首句/24 字窗口，全站同一条投影规则）。
+ * 同一条规则已在 `todoText.js` 落地（待办面两段化批 2026-11-05）——本文件只**引用**
+ * 不复制（单实现原则）。
+ */
+function nameOf(t) {
+  const split = splitTodoText(nameSourceOf(t));
+  return split.name;
+}
+
+function descriptionOf(t) {
+  if (typeof t.detail === 'string' && t.detail.trim()) return t.detail.trim();
+  return splitTodoText(nameSourceOf(t)).detail;
+}
+
+/** 首行之外的 content（有 detail 时 description 只读 detail，content 余下不再展示）。 */
+function nameSourceOf(t) {
+  const raw = String(t.content || '');
+  const nl = raw.indexOf('\n');
+  return (nl === -1 ? raw : raw.slice(0, nl)).trim();
+}
+
+/** 由两段拼回 content（提交/乐观行唯一写口；空 description = 只写 name）。 */
+function composeContent(name, description) {
+  const n = String(name || '').trim();
+  const d = String(description || '').trim();
+  return d ? `${n}\n${d}` : n;
+}
+
+/**
+ * 组好的两行 content ⇒ description（提交/乐观行的读口；与 composeContent 成对 ——
+ * descriptionOf/`nameSourceOf` 是**任务对象**的投影（有 detail 读 detail、无
+ * detail 才投影），不能用来反解刚拼好的两行串（那会把描述裁丢）。
+ */
+function descriptionFromComposed(content) {
+  const raw = String(content || '');
+  const nl = raw.indexOf('\n');
+  return nl === -1 ? '' : raw.slice(nl + 1).trim();
+}
+
+/** 当前展开的那条（一次一个；点另一条即换位，点自己即收起）。 */
+let expandedTaskId = null;
+
+/** 编辑态的定时任务本体（null = 新建）。编辑入口 = 行尾 ✎（待办面已有同形入口）。 */
+let editingTask = null;
+
+/** textarea 随内容长高（1–4 行封顶；再长就内部滚 —— 不把抽屉顶爆）。 */
+function updateDescAutosize(el) {
+  el.style.height = 'auto';
+  const line = parseFloat(getComputedStyle(el).lineHeight) || 18;
+  el.style.height = Math.min(el.scrollHeight, line * 4 + 8) + 'px';
+}
+function bindDescAutosize(el) {
+  const fit = () => updateDescAutosize(el);
+  el.addEventListener('input', fit);
+  // 组字期间不重排（中文输入法组合态下 scrollHeight 会抖）。
+  el.addEventListener('compositionupdate', fit);
+  requestAnimationFrame(fit);
 }
 
 /**
@@ -310,6 +382,7 @@ function renderReminderPanel() {
   if (mobileLayerOn()) {
     const sheet = ensureMobileChrome(body.parentElement);
     if (mDrawerBody) mDrawerBody.replaceChildren();
+    if (mDrawerTitle) mDrawerTitle.textContent = editingTask ? t('task.editTitle') : t('task.sheetTitle');
     if (sheet) {
       if (isCreating && mDrawerBody) {
         mDrawerBody.appendChild(buildInlineCreate());
@@ -334,6 +407,12 @@ function renderReminderPanel() {
   if (isCreating) {
     const host = mobileLayerOn() ? mDrawerBody : body;
     const input = host ? /** @type {HTMLInputElement|null} */ (host.querySelector('.reminder-inline-input')) : null;
+    // 编辑态：每次重建后重新预填两段（表单重建 = 值随重建走，单一预填出口）。
+    if (editingTask && host) {
+      if (input) input.value = nameOf(editingTask);
+      const desc = /** @type {HTMLTextAreaElement|null} */ (host.querySelector('.reminder-inline-desc'));
+      if (desc) { desc.value = descriptionOf(editingTask); updateDescAutosize(desc); }
+    }
     if (input) requestAnimationFrame(() => input.focus());
   }
 }
@@ -546,6 +625,15 @@ function buildPermTodoRow(r) {
   return row;
 }
 
+/**
+ * 列表行（schedule-todo-unify 批 2026-11-06 作者令「定时任务也要按 name description
+ * 来添加 点击展开可以查看细节 展开要用液态形变」）：
+ *   · **默认行只显 name**（单行省略：文字 trunkate，右侧徽标族 = 项目标签 / 周期 /
+ *     时间**贴在行右缘**，同一水平线 —— CSS `.reminder-row-badges`）；
+ *   · 点行（或行尾的展开键）= 液态形变展开：宿主同框加内距 + 详情体（description /
+ *     触发时间 / 上次触发 / 周期 / 缺卡建议）从宽度 0 缩放进场；再点收起。
+ *   打卡圆钮 / ✎ 编辑 / × 取消 的点击各自 stopPropagation，不会误触展开。
+ */
 function buildRow(r, isTriggered) {
   const row = document.createElement('div');
   row.className = 'reminder-row' + (isTriggered ? ' triggered' : '');
@@ -579,36 +667,36 @@ function buildRow(r, isTriggered) {
     });
   }
 
-  // Content area
+  // ── 首行：name（唯一常显文本）+ 右缘徽标族（项目 / 周期 / 时间 / 逾期）────────
   const content = document.createElement('div');
   content.className = 'reminder-row-content';
 
-  // Title line: task text (ellipsis) + repeat badge for recurring tasks.
-  // One-shot tasks get no badge (restraint; the repeat field is the signal).
   const titleRow = document.createElement('div');
   titleRow.className = 'reminder-row-title';
   const textSpan = document.createElement('span');
   textSpan.className = 'reminder-row-text';
-  textSpan.textContent = r.content;
+  textSpan.textContent = nameOf(r) || t('task.detailEmpty');
   titleRow.appendChild(textSpan);
+
+  const badges = document.createElement('div');
+  badges.className = 'reminder-row-badges';
   // 项目标签（追加令①）：行内淡色标签（与 repeat badge 同位语言）。
   if (r.project) {
     const proj = document.createElement('span');
     proj.className = 'reminder-proj-tag';
     proj.textContent = String(r.project);
-    titleRow.appendChild(proj);
+    badges.appendChild(proj);
   }
+  // 周期徽标（循环任务才渲染；一次性 = 无徽标 = 克制）。
   const badgeLabel = repeatLabel(r.repeat);
   if (badgeLabel) {
     const badge = document.createElement('span');
     badge.className = 'reminder-repeat-badge';
     badge.dataset.repeat = r.repeat;
     badge.textContent = badgeLabel;
-    titleRow.appendChild(badge);
+    badges.appendChild(badge);
   }
-  content.appendChild(titleRow);
-
-  // Time info: show next trigger + last triggered when available
+  // 触发时间（右缘小字；逾期行换红 clock-alert 图案 + 中性等宽时间）。
   const timeSpan = document.createElement('span');
   timeSpan.className = 'reminder-row-time';
   if (isTriggered) {
@@ -616,8 +704,6 @@ function buildRow(r, isTriggered) {
   } else {
     const nextTime = r.nextTrigger || r.triggerAt;
     const overdue = isOverdue({ triggered: false, triggerAt: nextTime });
-    // ui-status-redesign（S12 / 盘点 #39）：逾期行 = 行首 clock-alert 红图标 +
-    // 中性等宽时间；「逾期」tag 转图案（红边淡红底）+ 中性字。
     timeSpan.innerHTML = (overdue ? statusIcon('clock-alert', 11, 'st-err') : '')
       + '<span>' + escapeHtml(formatTriggerTime(nextTime)) + '</span>';
     if (overdue) {
@@ -627,16 +713,39 @@ function buildRow(r, isTriggered) {
       timeSpan.appendChild(tag);
     }
   }
+  badges.appendChild(timeSpan);
+  titleRow.appendChild(badges);
+  content.appendChild(titleRow);
 
-  content.appendChild(timeSpan);
+  // ── 详情体（收起态不占行；展开态 = 液态形变缩放进场）─────────────────────────
+  const detail = document.createElement('div');
+  detail.className = 'reminder-row-detail';
+  const desc = descriptionOf(r);
+  const descEl = document.createElement('div');
+  descEl.className = 'reminder-row-desc';
+  descEl.textContent = desc;
+  detail.appendChild(descEl);
 
-  // Last triggered sub-text (if available)
-  if (r.lastTriggered) {
-    const lastEl = document.createElement('div');
-    lastEl.className = 'reminder-row-last';
-    lastEl.textContent = t('task.lastTriggered') + ' ' + formatTriggerTime(r.lastTriggered);
-    content.appendChild(lastEl);
-  }
+  const facts = document.createElement('div');
+  facts.className = 'reminder-row-facts';
+  const addFact = (iconName, label, value) => {
+    const f = document.createElement('div');
+    f.className = 'reminder-row-fact';
+    f.appendChild(lucideIconEl(iconName));
+    const lab = document.createElement('span');
+    lab.className = 'reminder-row-fact-label';
+    lab.textContent = label;
+    const val = document.createElement('span');
+    val.className = 'reminder-row-fact-value';
+    val.textContent = value;
+    f.append(lab, val);
+    facts.appendChild(f);
+  };
+  if (isTriggered) addFact('check-check', t('task.triggered'), formatTriggerTime(r.triggerAt));
+  else addFact('clock', t('task.triggerTime'), formatTriggerTime(r.nextTrigger || r.triggerAt));
+  if (r.lastTriggered) addFact('history', t('task.lastTriggered'), formatTriggerTime(r.lastTriggered));
+  if (badgeLabel) addFact('repeat', t('task.repeat'), badgeLabel);
+  detail.appendChild(facts);
 
   // 认知二期产品批③缺卡调整流：连续浮出未销账达阈值的待办，行内附调整建议
   // （不指责，只给默认建议呈作者确认——注意力伦理，不擅自改计划）。
@@ -644,8 +753,19 @@ function buildRow(r, isTriggered) {
     const missEl = document.createElement('div');
     missEl.className = 'reminder-miss-suggest';
     missEl.textContent = t('task.missSuggest', { n: r.missCount });
-    content.appendChild(missEl);
+    detail.appendChild(missEl);
   }
+  content.appendChild(detail);   // 先入父节点（wrapCollapseDetail 就地包一层缩放遮罩）
+  const clip = wrapCollapseDetail(detail);
+
+  // 展开键（行尾；圆钮档=44 视觉 / 命中盒 --ds-hit-box-min）：键盘/读屏可达的
+  // 显式开关；鼠标/触屏点整行同样开合。
+  const expandBtn = document.createElement('button');
+  expandBtn.type = 'button';
+  expandBtn.className = 'reminder-expand-btn';
+  expandBtn.setAttribute('aria-label', t('task.expand'));
+  expandBtn.title = t('task.expand');
+  expandBtn.appendChild(lucideIconEl('chevron-down'));
 
   row.appendChild(circle);
   row.appendChild(content);
@@ -659,7 +779,7 @@ function buildRow(r, isTriggered) {
     editBtn.title = t('todo.edit');
     editBtn.dataset.action = 'edit';
     editBtn.dataset.id = r.id;
-    editBtn.innerHTML = '<i data-lucide="pencil"></i>';
+    editBtn.appendChild(lucideIconEl('pencil'));
     editBtn.setAttribute('aria-label', t('todo.edit'));
     editBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -677,10 +797,65 @@ function buildRow(r, isTriggered) {
     });
     row.appendChild(cancel);
   }
+  // 定时任务行尾 ✎（schedule-todo-unify 批：「按 name description 来添加」的另一半
+  // = 能改；与待办面 ✎ 同一位置同一形态，零第二套编辑入口）。
+  if (!isTriggered && !isTodoTask(r)) {
+    const editBtn = document.createElement('button');
+    editBtn.className = 'reminder-cancel reminder-edit';
+    editBtn.type = 'button';
+    editBtn.title = t('todo.edit');
+    editBtn.dataset.action = 'edit';
+    editBtn.dataset.id = r.id;
+    editBtn.appendChild(lucideIconEl('pencil'));
+    editBtn.setAttribute('aria-label', t('todo.edit'));
+    editBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      startTaskEdit(r);
+    });
+    row.appendChild(editBtn);
+  }
+  row.appendChild(expandBtn);
+
+  // ── 开合接线（单源 = motion/collapse.js；本处只喂元素与闭合值）───────────────
+  const open = expandedTaskId === r.id;
+  const toggle = () => {
+    expandedTaskId = expandedTaskId === r.id ? null : r.id;
+    // 面板内同时只有一条展开：先收起其余已展开行（逐行 setCollapse 同一段过渡）。
+    for (const other of document.querySelectorAll('.reminder-row.is-expanded')) {
+      if (other === row) continue;
+      const otherClip = other.querySelector('.lm-collapse-clip');
+      if (otherClip) setCollapse({ host: /** @type {HTMLElement} */ (other), clip: /** @type {HTMLElement} */ (otherClip), open: false });
+    }
+    setCollapse({ host: row, clip, open: expandedTaskId === r.id });
+    expandBtn.setAttribute('aria-label', expandedTaskId === r.id ? t('task.collapse') : t('task.expand'));
+    expandBtn.title = expandedTaskId === r.id ? t('task.collapse') : t('task.expand');
+  };
+  expandBtn.addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
+  row.addEventListener('click', (e) => {
+    // 行内按钮/输入件的点击不触发展开（它们各自 stopPropagation，这里再兜一层）。
+    if (/** @type {HTMLElement} */ (e.target).closest('button, input, textarea, a, .tw-trigger, .lm-collapse-clip')) return;
+    toggle();
+  });
+  row.style.cursor = 'pointer';
+  row.setAttribute('role', 'button');
+  row.tabIndex = 0;
+  row.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    if (/** @type {HTMLElement} */ (e.target) !== row) return;
+    e.preventDefault();
+    toggle();
+  });
+  if (open) {
+    // 重渲后保持展开（例如创建/删除别条后 renderList 重建）：直接落终态，不重播。
+    expandedTaskId = r.id;
+    setCollapse({ host: row, clip, open: true });
+    resetCollapse({ host: row, clip });
+  } else {
+    resetCollapse({ host: row, clip });
+  }
 
   return row;
 }
-
 
 function buildInlineCreate() {
   const wrap = document.createElement('div');
@@ -690,11 +865,19 @@ function buildInlineCreate() {
   const dtStr = toLocalDatetimeString(defaultTriggerAt());
   const [dtDate, dtTime] = dtStr.split('T');
 
+  // 两段表单（schedule-todo-unify 批 2026-11-06）：name（标题，必填）+ description
+  // （描述，可空，textarea 一行起）；确认类按钮（取消 / 保存）统一右对齐（见文末
+  // .reminder-form-actions）。编辑态预填两段。
   wrap.innerHTML = `
     <div class="reminder-inline-main">
       <span class="reminder-circle ghost"></span>
       <input type="text" class="reminder-inline-input" id="reminder-inline-input"
         placeholder="${t('task.inputPlaceholder')}" autocomplete="off">
+    </div>
+    <div class="reminder-inline-desc-row">
+      <i data-lucide="align-left"></i>
+      <textarea class="reminder-inline-desc" rows="1"
+        placeholder="${t('task.descPlaceholder')}"></textarea>
     </div>
     <div class="reminder-inline-detail">
       <div class="reminder-time-row">
@@ -711,11 +894,30 @@ function buildInlineCreate() {
           <button type="button" data-repeat="weekly" role="radio" aria-checked="false">${t('task.repeatWeekly')}</button>
         </div>
       </div>
+    </div>
+    <div class="reminder-form-actions">
+      <button type="button" class="reminder-form-btn" data-role="cancel">${t('task.sheetCancel')}</button>
+      <button type="button" class="reminder-form-btn reminder-form-btn-primary" data-role="confirm">${editingTask ? t('task.save') : t('task.sheetDone')}</button>
     </div>`;
 
   // Bind events
   const input = /** @type {HTMLInputElement|null} */ (wrap.querySelector('#reminder-inline-input'));
+  // 描述框用**类选择器**取（组件契约 R2 只许降：不再新开一个 #reminder- id 直查）。
+  // 编辑态的 description 预填由 updateDescAutosize() 在填入后调一次（同一元素同一
+  // id 两处口径会分叉 —— 预填与自动长高合成一个出口）。
+  const descInput = /** @type {HTMLTextAreaElement|null} */ (wrap.querySelector('.reminder-inline-desc'));
   const timeInput = /** @type {HTMLInputElement|null} */ (wrap.querySelector('#reminder-time-input'));
+  if (input && editingTask) input.value = nameOf(editingTask);
+  if (descInput && editingTask) descInput.value = descriptionOf(editingTask);
+  if (descInput) bindDescAutosize(descInput);
+  wrap.querySelector('[data-role="cancel"]')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    cancelInlineCreate();
+  });
+  wrap.querySelector('[data-role="confirm"]')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    saveInlineTask();
+  });
   const repeatSeg = wrap.querySelector('#reminder-repeat-seg');
   // Repeat segmented control — the active pill is currentRepeat; values match
   // ScheduleTool schema ("hourly"|"daily"|"weekly"; "once" omits repeat).
@@ -794,8 +996,21 @@ function buildTodoInlineCreate() {
       <input type="text" id="todo-inline-project"
         placeholder="${t('todo.projectPlaceholder')}" autocomplete="off"
         value="${escapeHtml(projectPrefill)}">
+    </div>
+    <div class="reminder-form-actions">
+      <button type="button" class="reminder-form-btn" data-role="cancel">${t('task.sheetCancel')}</button>
+      <button type="button" class="reminder-form-btn reminder-form-btn-primary" data-role="confirm">${editing ? t('task.save') : t('task.sheetDone')}</button>
     </div>`;
 
+  // 确认类按钮统一右对齐（schedule-todo-unify 批：与定时任务面同一组按钮规格）。
+  wrap.querySelector('[data-role="cancel"]')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    cancelTodoInlineCreate();
+  });
+  wrap.querySelector('[data-role="confirm"]')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    editing ? saveTodoEdit() : saveTodoInline();
+  });
   const input = /** @type {HTMLInputElement | null} */ (wrap.querySelector('#todo-inline-input'));
   const projectInput = /** @type {HTMLInputElement | null} */ (wrap.querySelector('#todo-inline-project'));
   if (input) {
@@ -923,6 +1138,7 @@ function toggleTodoPage() {
 function startInlineCreate() {
   if (isCreating) return;
   isCreating = true;
+  editingTask = null;       // 新建 = 清编辑态（否则抽屉标题/预填会带着上一条）
   currentRepeat = 'once';   // fresh form → one-shot by default
   renderList();
 }
@@ -944,6 +1160,15 @@ function startTodoEdit(r) {
 
 function cancelInlineCreate() {
   isCreating = false;
+  editingTask = null;
+  renderList();
+}
+
+/** 行尾 ✎：编辑定时任务的 name/description（表单复用 buildInlineCreate，预填两段）。 */
+function startTaskEdit(r) {
+  editingTask = r;
+  isCreating = true;
+  currentRepeat = r.repeat || 'once';
   renderList();
 }
 
@@ -968,6 +1193,8 @@ let mDrawer = null;
 let mDrawerBody = null;
 /** @type {HTMLElement|null} */
 let mFab = null;
+/** @type {HTMLElement|null} */
+let mDrawerTitle = null;
 
 /** `<i data-lucide>` 图标件（与站内 lucide 装配口径一致；纯建节点，不渲）。 */
 function lucideIconEl(name) {
@@ -1012,6 +1239,7 @@ function ensureMobileChrome(panel) {
   head.className = 'mf-drawer-head';
   const name = document.createElement('span');
   name.className = 'mf-drawer-title';
+  // 标题随形态（新建 / 编辑）——同一个抽屉，不加第二个抽屉。
   name.textContent = t('task.sheetTitle');
   const cancel = document.createElement('button');
   cancel.type = 'button';
@@ -1024,6 +1252,7 @@ function ensureMobileChrome(panel) {
   done.textContent = t('task.sheetDone');
   done.addEventListener('click', () => saveInlineTask());
   head.append(name, cancel, done);
+  mDrawerTitle = name;
 
   mDrawerBody = document.createElement('div');
   mDrawerBody.className = 'mf-drawer-body';
@@ -1054,19 +1283,24 @@ function saveTodoEdit() {
   if (!content) { cancelTodoInlineCreate(); return; }
 
   const sid = target.sessionId || state.activeSessionId;
+  const description = descriptionOf({ content });
   if (wsReady()) {
     sendWs({
       type: 'updateScheduledTask',
       sessionId: sid,
       id: target.id,
       content,
-      project // "" = 清空归属（未分组）；帧处理器字段级 patch
+      // 两段化（schedule-todo-unify 批）：description 走真源字段 detail；
+      // project "" = 清空归属（未分组）——帧处理器字段级 patch。
+      detail: description,
+      project
     });
   } else {
     addNotification('task', t('task.queuedOffline'), { dismissAfter: 15000 });
   }
   // 乐观收敛（WS 未就绪也改本地——回执帧/重连 re-list 会纠正）。
   target.content = content;
+  target.detail = description || null;
   target.project = project || undefined;
   saveCachedInbox(inboxTodos);
   editingTodo = null;
@@ -1091,6 +1325,14 @@ function submitCreate(content, triggerAt, repeat, kind, project) {
   // "once" = one-shot = omit repeat (ScheduleTool schema: optional field);
   // hourly/daily/weekly are sent verbatim.
   if (repeat && repeat !== 'once') payload.repeat = repeat;
+  // 定时任务面两段化（schedule-todo-unify 批 2026-11-06）：description → 真源
+  // detail 字段；content 仍是「首行名 + 描述」的注入文本（agent 面读同一句）。
+  // 面语义由调用点的 kind 决定：kind=todo → 本来就是两段面（旧口径）；其余
+  //（定时任务面 / 离线重放）一律带 detail（两段面已是本仓默认）。kind 缺省 = 面分支。
+  {
+    const desc = descriptionFromComposed(content);
+    if (desc) payload.detail = desc;
+  }
   if (kind === 'todo') {
     payload.kind = 'todo';
     // 服务端 kind=todo 分支不校验客户端时间（重算浮出时刻）；占位一个未来值仅供
@@ -1113,6 +1355,7 @@ function submitCreate(content, triggerAt, repeat, kind, project) {
     referencePath: null,
     repeat: (kind === 'todo') ? undefined : (repeat && repeat !== 'once' ? repeat : undefined),
     kind: kind === 'todo' ? 'todo' : undefined,
+    detail: descriptionFromComposed(content) || null,
     sessionId: state.activeSessionId,
     project: (kind === 'todo' && project) ? project : undefined
   };
@@ -1148,15 +1391,47 @@ function flushPendingCreates() {
 
 function saveInlineTask() {
   const input = /** @type {HTMLInputElement|null} */ (document.querySelector('#reminder-inline-input'));
+  // 描述框取当前宿主里的那一件（表单挂在两处宿主之一：桌面 = 列表尾部、手机 =
+  // 抽屉体；按可见的那件取值 —— 与上面 name 输入同一读面，不跨面直查 id）。
+  const descInput = /** @type {HTMLTextAreaElement|null} */ (
+    input?.closest('.reminder-inline-create')?.querySelector('.reminder-inline-desc') || null
+  );
   const timeInput = /** @type {HTMLInputElement|null} */ (document.querySelector('#reminder-time-input'));
-  if (!input || !timeInput) return;
 
-  const content = input.value.trim();
-  if (!content) {
-    cancelInlineCreate();
+  const name = input ? input.value.trim() : '';
+  const description = descInput ? descInput.value.trim() : '';
+  if (!name) {
+    // 名称必填（description 可空）：就地提示 + 焦点回名称框，不关表单（不丢用户输入）。
+    addNotification('task', t('task.nameRequired'), { dismissAfter: 4000 });
+    input?.focus();
+    return;
+  }
+  const content = composeContent(name, description);
+
+  // 编辑态（行尾 ✎ 进入）：只改 name/description 两段（updateScheduledTask 字段级
+  // patch：content = 首行名 + detail = description）。时间/周期不在此面改。
+  if (editingTask) {
+    const target = editingTask;
+    if (wsReady()) {
+      sendWs({
+        type: 'updateScheduledTask',
+        sessionId: target.sessionId || state.activeSessionId,
+        id: target.id,
+        content,
+        detail: description,
+      });
+    } else {
+      addNotification('task', t('task.queuedOffline'), { dismissAfter: 15000 });
+    }
+    target.content = content;
+    target.detail = description || null;
+    editingTask = null;
+    isCreating = false;
+    renderList();
     return;
   }
 
+  if (!timeInput) return;
   const triggerAt = new Date(timeInput.value).getTime();
   if (!triggerAt || isNaN(triggerAt)) {
     // 触发时刻已由滚轮面维护（值恒合法）；兜底把焦点交给那颗触发钮，
@@ -1176,7 +1451,7 @@ function saveInlineTask() {
   if (!wsReady()) {
     // WS down (reconnect backoff, half-open socket, server restart) or no
     // active session yet — queue instead of lying with an optimistic row.
-    pendingCreates.push({ content: content, triggerAt: effectiveTriggerAt, repeat: currentRepeat });
+    pendingCreates.push({ content: content, description: description, triggerAt: effectiveTriggerAt, repeat: currentRepeat });
     addNotification('task', t('task.queuedOffline'), { dismissAfter: 15000 });
     isCreating = false;
     renderList();
