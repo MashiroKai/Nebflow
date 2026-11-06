@@ -27,8 +27,9 @@ import scala.collection.mutable
  *   · 归因类别（MissCategory）：NewSession / DomainSwitched（跨供应商或凭据域）/
  *     ConfigChanged（tools/system/thinking 指纹变化，标首个变化轴）/
  *     HistoryChanged（历史内容或顺序变化，标首个差异块位）/ CompactionRebuild
- *     （前部重建：首块变且变短）/ EphemeralMarked（断点落点超出持久区——旧装配
- *     缺陷签名）/ Unknown（指纹全同仍 miss ⇒ 供应商侧，只标记不断言）。
+ *     （前部重建：首块变且变短）/ EphemeralMarkerMisplaced（marker 落入临时段）/
+ *     PersistentBreakpointMissing（非空持久历史无 marker）/ PersistentBreakpointMisplaced
+ *     （持久 marker 不在尾块）/ Unknown（指纹全同仍 miss ⇒ 供应商侧，只标记不断言）。
  *
  * 运行入口：`sbt "Test/testOnly nebflow.llm.CacheAttributionSpec"`
  * 归属 CI：既有 `sbt test` 家族。
@@ -84,7 +85,9 @@ object CacheAttribution:
   case object ConfigChanged     extends MissCategory { val name = "config-changed" }
   case object HistoryChanged    extends MissCategory { val name = "history-changed" }
   case object CompactionRebuild extends MissCategory { val name = "compaction-rebuild" }
-  case object EphemeralMarked   extends MissCategory { val name = "ephemeral-marked" }
+  case object EphemeralMarkerMisplaced      extends MissCategory { val name = "ephemeral-marker-misplaced" }
+  case object PersistentBreakpointMissing   extends MissCategory { val name = "persistent-breakpoint-missing" }
+  case object PersistentBreakpointMisplaced extends MissCategory { val name = "persistent-breakpoint-misplaced" }
   case object UsageMissing      extends MissCategory { val name = "usage-missing" }
   case object Unknown           extends MissCategory { val name = "unknown" }
 
@@ -304,13 +307,18 @@ object CacheAttribution:
           if switched then "same session, different provider/model domain" else "no prior fingerprint in this cache domain",
           inTok, readTok, nowMs))
       case Some((p, cur)) =>
-        // ① 历史缺陷签名：marker 漏进临时段（旧装配「断点钉在 H+R 的 R 上」直接证据），
-        //    或持久历史非空却无断点（marker 丢失）。空历史（0 块）不判（新会话首轮前无历史可钉）。
-        if cur.ephemeralMarked ||
-          (cur.historyBlocks > 0 && (cur.breakpointIdx < 0 || cur.breakpointIdx != cur.historyBlocks - 1))
-        then
-          bump(MissRecord(EphemeralMarked, sessionId, providerId, model, Some(cur.breakpointIdx),
-            s"breakpoint misplaced: persistedIdx=${cur.breakpointIdx} blocks=${cur.historyBlocks} ephemeralMarked=${cur.ephemeralMarked}",
+        // ① 分开报告线上的三个不同形状；空历史（0 块）不判（首轮前无历史可钉）。
+        if cur.ephemeralMarked then
+          bump(MissRecord(EphemeralMarkerMisplaced, sessionId, providerId, model, Some(cur.breakpointIdx),
+            s"cache marker present in ephemeral blocks: persistedIdx=${cur.breakpointIdx} blocks=${cur.historyBlocks}",
+            inTok, readTok, nowMs))
+        else if cur.historyBlocks > 0 && cur.breakpointIdx < 0 then
+          bump(MissRecord(PersistentBreakpointMissing, sessionId, providerId, model, Some(cur.breakpointIdx),
+            s"persistent history has no cache marker: persistedIdx=${cur.breakpointIdx} blocks=${cur.historyBlocks}",
+            inTok, readTok, nowMs))
+        else if cur.historyBlocks > 0 && cur.breakpointIdx != cur.historyBlocks - 1 then
+          bump(MissRecord(PersistentBreakpointMisplaced, sessionId, providerId, model, Some(cur.breakpointIdx),
+            s"persistent cache marker is not at history tail: persistedIdx=${cur.breakpointIdx} blocks=${cur.historyBlocks}",
             inTok, readTok, nowMs))
         // ② 配置面变化（tools/system/thinking 任一轴——首个变化轴即报）
         else if cur.toolsFp != p.toolsFp || cur.toolsCount != p.toolsCount then
