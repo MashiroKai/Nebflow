@@ -36,7 +36,7 @@ import * as api from './friendsApi.js';
 import { personLabel } from './messages.js';
 import { avatarNodeFor } from './avatarRender.js';
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
-import { mobileSheetBack } from './mobile/popSheet.js';
+import { mobileSheetBack, isMobileLayer } from './mobile/popSheet.js';
 import { createToggle, setToggleState, setToggleBusy } from './toggle.js';
 // 🔴 搜索面板（`js/chatSearch.js`）**不静态引**：它是全仓最重的一张面（chat / card
 // registry / 媒体索引…），且本仓静态环闸要求 Profile 面不得新增静态边 ⇒ 点击时
@@ -269,14 +269,22 @@ function renderBody() {
 
   const titleBar = el('div', 'cfg-modal-title');
   titleBar.appendChild(el('span', null, label));
-  const closeBtn = document.createElement('button');
-  closeBtn.type = 'button';
-  closeBtn.className = 'pf-close';
-  closeBtn.id = 'profile-face-close';
-  closeBtn.setAttribute('aria-label', t('profile.close'));
-  closeBtn.appendChild(h('i', { 'data-lucide': 'x' }));
-  closeBtn.addEventListener('click', () => closeProfile());
-  titleBar.appendChild(closeBtn);
+  // 3(d) 按钮去重（panel-language 批 2026-11-06）：手机层返回键在（afterMount 的
+  // mobileSheetBack 注入 .mfs-back）⇒ X 键**不建**（作者令逐字「已经有返回键了，
+  // 就不要再放叉号键（X）」）；桌面层无返回键 ⇒ X 键保留（Esc / 点外关闭路径不变）。
+  // renderBody 每次 open 重建 ⇒ 守卫逐次评估，视口跨档重开也对账。
+  // 🔴 守卫与创建必须相邻（机检 P2 = scripts/check-panel-unify.mjs，锚行 3 行窗内
+  //    必须见 isMobileLayer 守卫；判定单源 = popSheet.isMobileLayer，禁自写）。
+  if (!isMobileLayer()) {
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'pf-close';
+    closeBtn.id = 'profile-face-close';
+    closeBtn.setAttribute('aria-label', t('profile.close'));
+    closeBtn.appendChild(h('i', { 'data-lucide': 'x' }));
+    closeBtn.addEventListener('click', () => closeProfile());
+    titleBar.appendChild(closeBtn);
+  }
   modal.appendChild(titleBar);
 
   // 英雄区（三点入口批 2026-11-05 扁平化）：居中列 → **左对齐单行**（头像 + 名字/

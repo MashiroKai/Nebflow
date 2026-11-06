@@ -228,7 +228,11 @@ async function readFields(page) {
 }
 
 async function closeProfile(page) {
-  await page.locator('#profile-face-close').click();
+  // panel-language 批（2026-11-06）：手机层 X 键退役（3(d)「有返回键就不放 X」，
+  // DOM 级不建）⇒ 关闭分档：手机层点返回键 .mfs-back（唯一出口），桌面层点 X。
+  const mobile = await page.evaluate(() => document.body.classList.contains('mobile-layer'));
+  if (mobile) await page.locator('#profile-face-overlay .mfs-back').click();
+  else await page.locator('#profile-face-close').click();
   await expect(page.locator('#profile-face-overlay')).toBeHidden();
 }
 

@@ -26,6 +26,18 @@ function tt(zh, en) {
 }
 
 /**
+ * 手机层判定（面板按钮去重批 2026-11-06 · 判定单源）：面板族建「关闭 X 键」前
+ * 统一经本函数分档——手机层返回键在（mobileSheetBack 会注入 .mfs-back）⇒ X 键
+ * 不建（作者令 3(d)「已经有返回键了，就不要再放叉号键（X）」）；桌面层无返回键
+ * ⇒ X 键保留。🔴 判定只有这一份：禁各面板再自写 body.classList 检查（判定散了
+ * = scripts/check-panel-unify.mjs 的 P2 相邻守卫就管不住第二处）。
+ * @returns {boolean} 当前是否手机层（body.mobile-layer）
+ */
+export function isMobileLayer() {
+  return document.body.classList.contains('mobile-layer');
+}
+
+/**
  * 给一枚弹层注入左上角「<」返回钮（幂等；重复调用只更新 onBack）。
  * 按钮带 .mfs-back 标记类——mobileLayer.css 按它挂手机层几何与桌面隐藏。
  * @param {HTMLElement} overlay 弹层载体（positioned 元素——桌面模态族全部满足）

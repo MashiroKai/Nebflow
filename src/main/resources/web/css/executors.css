@@ -67,7 +67,9 @@
 
 .executor-card-name {
   font-size: var(--ds-fs-body);
-  font-weight: 600;
+  /* panel-language 批 2026-11-06：卡名行字重收编令牌（值不变 600 = --ds-fw-title），
+     机检 P1 登记槽（check-panel-unify.mjs）：裸字面量即红。 */
+  font-weight: var(--ds-fw-title);
   display: flex;
   align-items: center;
   gap: var(--ds-space-2);

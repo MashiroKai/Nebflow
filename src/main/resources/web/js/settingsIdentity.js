@@ -46,7 +46,7 @@ import { searchUser } from './friendsApi.js';
 import { escapeHtml, createIconsIn } from './utils.js';
 import { t } from './i18n.js';
 import { brand } from './brand.js';
-import { mobileSheetBack } from './mobile/popSheet.js';
+import { mobileSheetBack, isMobileLayer } from './mobile/popSheet.js';
 
 // ── 自身身份读数（用户名 / userId）─────────────────────────────────────────
 // 缓存键 = 当前账号 email（登录态改变或 email 改变才重探）。结论只有两种：
@@ -341,8 +341,8 @@ function ensureProfileFace() {
       aria-label="${escapeHtml(t('settings.profileSelf'))}">
       <div class="cfg-modal-title">
         <span>${escapeHtml(t('settings.profileSelf'))}</span>
-        <button class="settings-profile-close" id="settings-profile-close" type="button"
-          aria-label="${escapeHtml(t('settings.profileClose'))}"><i data-lucide="x"></i></button>
+        ${isMobileLayer() ? '' : `<button class="settings-profile-close" id="settings-profile-close" type="button"
+          aria-label="${escapeHtml(t('settings.profileClose'))}"><i data-lucide="x"></i></button>`}
       </div>
       <div class="sp-hero">
         <span class="sp-avatar-frame">
@@ -437,6 +437,11 @@ function paintProfileFace() {
 export function openProfileFace() {
   const overlay = ensureProfileFace();
   overlay.hidden = false;
+  // 3(d) 开面对账（panel-language 批 2026-11-06）：壳只建一次（ensureProfileFace 幂等），
+  // 视口跨档（桌面建壳 → 缩进手机层重开）时 X 会残留 ⇒ 每次打开对账一次：
+  // 手机层返回键在（mobileSheetBack 注入 .mfs-back）⇒ X 摘除（判定与建壳 ternary 同源
+  // = popSheet.isMobileLayer）。同一行守卫+选择器相邻（机检 P2 = check-panel-unify.mjs）。
+  if (isMobileLayer()) overlay.querySelector('#settings-profile-close')?.remove();
   paintProfileFace();
   subscribeOnce();
   ensureSelfProbe();

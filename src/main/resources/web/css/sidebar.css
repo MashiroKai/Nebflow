@@ -1259,8 +1259,14 @@
   }
 }
 .cfg-modal-title {
-  font-size: var(--ds-fs-subtitle);
-  font-weight: 600;
+  /* 面板标题条唯一版式（panel-language 批 2026-11-06，作者令 3(e)「顶部文字大小等
+     面板设计……统一整理出一套面板的设计语言」）：cfg-modal 族所有面板头统一
+     15px/600/1.4 三令牌（--ds-panel-title-*，design-system.css §⑲；
+     机检 = scripts/check-panel-unify.mjs P1，规范 = design-language panel-spec.md）。
+     改前 = --ds-fs-subtitle(14px)/600 裸字重，同族各面各写。 */
+  font-size: var(--ds-panel-title-fs);
+  font-weight: var(--ds-panel-title-fw);
+  line-height: var(--ds-panel-title-lh);
   color: var(--color-frame-text);
   padding: 14px var(--ds-space-4) var(--ds-space-block-y);
   border-bottom: 1px solid var(--color-frame-border-light);

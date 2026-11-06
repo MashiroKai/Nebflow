@@ -1648,7 +1648,27 @@ body > .fm-context-menu { z-index: 10001; }
    壳 = 既有 `.cfg-modal-overlay` + `.cfg-modal`（modal.css），此处只补本面自己的
    字段/英雄区样式。零裸 hex：全部走 var(--color-*) / var(--glass-*)（sapphire 单源）。 */
 #profile-face-overlay[hidden] { display: none; }
-.pf-modal { width: 420px; }
+/* ── 3(c) 面板全宽（panel-language 批 2026-11-06，作者令逐字「面板宽度与形态：
+   不要做成弹窗，要运用整个面板的宽度」）────────────────────────────────────
+   .pf-modal 不再是 420px 居中窄卡。所在表面 = 覆层本身（fixed inset 0、底
+   --overlay-bg 全透明 ⇒ 无压暗遮罩、无「遮罩 + 居中卡」弹窗形态）：
+   · 桌面（body:not(.mobile-layer)）：覆层 align/justify 改 stretch、面板 100%×100%
+     撑满所在表面全宽（1440 视口实测读数 = 1440/1440，见 tests/panel-language.spec.mjs）；
+   · 手机层：mobileLayer.css「A 族」既有铺平规则接管（375 读数 = 375/375，同一实现）。
+   宽度纪律 = 规范 panel-spec.md §5；覆盖 .cfg-modal 的 400px/92vw/85vh/圆角壳用
+   id 前缀选择器（特异度 1,1,0 > 0,1,0，不依赖文件序）；border-radius: 0 = 圆角
+   8 档阶梯档内（check-design-tokens 不计档内值）。 */
+body:not(.mobile-layer) #profile-face-overlay {
+  align-items: stretch;
+  justify-content: stretch;
+}
+#profile-face-overlay .pf-modal {
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  max-height: none;
+  border-radius: 0;
+}
 .pf-close {
   float: right;
   display: inline-flex;
@@ -1674,7 +1694,7 @@ body > .fm-context-menu { z-index: 10001; }
   display: flex;
   align-items: center;
   gap: var(--ds-space-inline-gap);
-  padding: var(--ds-space-block-y) var(--ds-space-4) var(--ds-space-2);
+  padding: var(--ds-space-block-y) var(--ds-panel-pad-x) var(--ds-space-2);
 }
 .pf-hero-id {
   display: flex;
@@ -1685,7 +1705,7 @@ body > .fm-context-menu { z-index: 10001; }
 }
 .pf-hero-name {
   font-size: var(--ds-fs-title);
-  font-weight: 600;
+  font-weight: var(--ds-fw-title);
   color: var(--color-text);
   text-align: left;
   max-width: 100%;
@@ -1707,8 +1727,10 @@ body > .fm-context-menu { z-index: 10001; }
 .pf-fields {
   display: flex;
   flex-direction: column;
-  gap: var(--ds-space-3);
-  padding: var(--ds-space-2) var(--ds-space-4) var(--ds-space-2);
+  /* 3(e) 分组间距单源（panel-language 批）：扁平分组流一档 = --ds-panel-group-gap
+     16px（design-system.css §⑲；改前 = --ds-space-3 12px，同值族见规范 §4）。 */
+  gap: var(--ds-panel-group-gap);
+  padding: var(--ds-space-2) var(--ds-panel-pad-x) var(--ds-space-2);
 }
 .pf-field {
   display: flex;
@@ -1765,7 +1787,8 @@ body > .fm-context-menu { z-index: 10001; }
   display: flex;
   align-items: center;
   gap: var(--ds-space-2);
-  min-height: var(--ds-hit-tap-lg, 48px);
+  /* 点面行高节奏单源（panel-language 批）：--ds-panel-row-h = --ds-hit-tap-lg 48 档。 */
+  min-height: var(--ds-panel-row-h);
   padding: 0;
   background: none;
   border: none;
@@ -1806,7 +1829,7 @@ body > .fm-context-menu { z-index: 10001; }
 }
 .pf-note {
   margin: 0;
-  padding: var(--ds-space-half) var(--ds-space-4) 14px;
+  padding: var(--ds-space-half) var(--ds-panel-pad-x) 14px;
   font-size: var(--ds-fs-hint);
   line-height: 17px;
   color: var(--color-text-muted);

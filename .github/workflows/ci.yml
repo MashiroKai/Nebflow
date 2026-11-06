@@ -225,6 +225,26 @@ jobs:
         # live in scripts/capture-mobile-canvas-tabs.mjs and the paired spec.
         # Same logic locally: node scripts/check-mobile-canvas-strip.mjs (or `make frontend-gates`)
         run: node scripts/check-mobile-canvas-strip.mjs
+      - name: Panel design language (title tokens / back-or-X dedup / exception hygiene)
+        # panel-language gate (contact-panel-unify chain, author order 2026-11-06 verbatim:
+        #   (c) "面板宽度与形态：不要做成弹窗，要运用整个面板的宽度"
+        #   (d) "按钮去重：不要保留功能重复的按钮，比如已经有返回键了，就不要再放叉号键（X）"
+        #   (e) "规范统一：顶部文字大小等面板设计，可以参考项目面板，统一整理出一套面板的设计语言").
+        # Registry-driven, the registries live in the spec (panel-spec.md), not in this
+        # script - change the spec first:
+        #   P1 same-class panel titles may only use the mandated tokens
+        #     (--ds-panel-title-* family; a bare 15px/600 literal or a borrowed token = RED),
+        #   P2 a panel that renders a mobile back button must NOT also build an X close
+        #     button: the creation anchor must sit within 3 lines of an isMobileLayer()
+        #     guard (single source: popSheet.isMobileLayer); panels inherited from the
+        #     2026-10-30 dedup batch keep a css-hide drift check instead,
+        #   P3 exception-table hygiene: empty/stale reasons are RED,
+        #   P4 every registered token must be declared in some css file.
+        # Before/after with the SAME script: node scripts/check-panel-unify.mjs
+        # --root=<pre-change-tree> (this batch: 7 red before -> 0 after). Real-render
+        # readings: tests/panel-language.spec.mjs.
+        # Same logic locally: node scripts/check-panel-unify.mjs (or `make frontend-gates`)
+        run: node scripts/check-panel-unify.mjs
       - name: Design spec scale sync (spec table <-> token source)
         # design-scale gate (author order 2026-11-04: "把我们对圆角 边距 文字离边缘
         # 的距离 各文字的大小 写进spec和前端开发包"): the four scales (radius /

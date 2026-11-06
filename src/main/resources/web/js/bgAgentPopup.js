@@ -30,7 +30,7 @@ import { verdictToStatus } from './delegateChainStub.js';
 // 点击行 = 输出详情卡）。挂载/卸载与 openStepPopup/closeStepPopup 成对。
 import { mountSessionWorkStrip, unmountSessionWorkStrip } from './bgAgentWorkStrip.js';
 // 弹窗退场批（作者令 2026-10-31②）：手机层查看器铺满屏 + 左上返回（桌面零变化）。
-import { mobileSheetBack } from './mobile/popSheet.js';
+import { mobileSheetBack, isMobileLayer } from './mobile/popSheet.js';
 // 手机端简化批（作者令 2026-11-06 10:00/12:03）：手机层 chrome 化——顶带状态胶囊
 // / ⋯ 详情浮层 / 右下悬浮终止钮 / 标题行 ✕ 退役；摘要条与「会话在做什么」条迁入
 // ⋯ 详情（六条口径见 bgAgentMobileChrome.js 文件头）。桌面零变化（模块首闸
@@ -511,12 +511,17 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
   // 退役头部副本后（任务全文单源 = 页脚），头部在窄屏不再把名字挤成逐字竖排
   // （.flow-agent-name 抗压缩契约见 POPUP_CSS 同批注释）。功能零删：页脚与摘要条
   // 两承载面原样保留。
+  // 3(d) 按钮去重（panel-language 批 2026-11-06）：手机层返回键在（下方
+  // mobileSheetBack 注入 .mfs-back）⇒ 头部 ✕ 不建（作者令「已经有返回键了，就不要
+  // 再放叉号键（X）」）；桌面层无返回键 ⇒ ✕ 保留（点外关闭路径不变）。模板每次
+  // open 重建 ⇒ 守卫逐次评估。🔴 守卫与 ✕ 同行相邻（机检 P2 = scripts/
+  // check-panel-unify.mjs；判定单源 = popSheet.isMobileLayer，禁自写）。
   popupOverlay.innerHTML = `
     <div class="flow-agent-modal">
       <div class="flow-agent-header">
         <span class="flow-agent-name">${esc(agentName || entry.meta.agentName || 'Sub-agent')}</span>
         <span class="flow-agent-model" id="bgagent-model"></span>
-        <div class="flow-agent-close" id="bgagent-close">✕</div>
+        ${isMobileLayer() ? '' : '<div class="flow-agent-close" id="bgagent-close">✕</div>'}
       </div>
       <div class="flow-agent-footer" id="bgagent-footer">
         <span class="fa-status-dot"></span>

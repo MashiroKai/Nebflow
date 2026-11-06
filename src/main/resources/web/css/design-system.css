@@ -505,6 +505,26 @@
   --ds-resize-top-guard: 44px;       /* 顶缘保险带：面板顶距视口顶不得小于此值（= 热区边长，
                                         保证拖柄本体永远完整可点、不被顶行胶囊压住） */
   --ds-resize-step: 16px;            /* 键盘步进（←→ 改宽 / ↑↓ 改高；4px 栅格的 4 倍档） */
+
+  /* ── ⑲ 面板设计语言槽（panel-language 批 2026-11-06，作者令 3(c)(d)(e)）──
+     面板族唯一版式令牌。规范单点 = seed/plugins/design-language/skills/design-language/
+     references/panel-spec.md（与 glass-spec.md 并列）；机检 = scripts/check-panel-unify.mjs
+     （make panel-unify / FRONTEND_GATES）。纪律：**本段只做面板语义命名，值全部 =
+     既有刻度的别名或既有读数**（唯一新数值 = --ds-panel-title-lh 1.4，作者令逐字
+     「15px/600/1.4 档」，按 --ds-fs-bubble 14.5 具名例外槽先例出生）——
+     消费面 = 好友/群信息面板（friends.css pf-*）、cfg-modal 族标题条（sidebar.css）、
+     执行器卡名（executors.css）。 */
+  --ds-panel-title-fs: var(--ds-fs-title);        /* 面板标题条字号 15px（--ds-fs-title 槽语义 = 面板标题） */
+  --ds-panel-title-fw: var(--ds-fw-title);        /* 面板标题条字重 600（禁 700，--ds-fw-title 同规） */
+  --ds-panel-title-lh: 1.4;                       /* 面板标题条行高（作者令 1.4 档；面板族具名例外槽） */
+  --ds-panel-row-h: var(--ds-hit-tap-lg, 48px);   /* 点面行高节奏 48px（导航/开关整行可点档） */
+  --ds-panel-row-gap: var(--ds-space-3);          /* 同组行距 12px（扁平行的留白分隔） */
+  --ds-panel-group-gap: var(--ds-space-4);        /* 分组间距 16px（组与组之间，4px 栅格） */
+  --ds-panel-pad-x: var(--ds-space-4);            /* 面板左右内距 16px（行起笔/收笔离面板缘） */
+  --ds-panel-sep: var(--color-frame-border-light);/* 分隔线色 1px（默认无分隔线的面零消费；密排行列表才用） */
+  --ds-panel-danger-fg: var(--color-danger);      /* 危险项字/图标（红单源 = --color-danger，base.css；与 --btn-danger-ink 同族） */
+  --ds-panel-head-clear: var(--panel-head-clear); /* 吸顶让位单行档（画布族头带，projectPanel.css 语义别名单源） */
+  --ds-panel-head-2row: var(--panel-head-2row);   /* 吸顶让位双行档（自带返回条的面板） */
 }
 
 /* 浮层阴影暗档（令牌层单点解析：消费面不再各写一份 prefers-color-scheme）。 */

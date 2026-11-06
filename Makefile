@@ -104,8 +104,8 @@ quality-gate:
 # **没有任何断言发现「前端调了但后端没有」**。本闸静态对照两侧（前端 /api 字面量
 # 集合 × 网关路由注册面），前端调了后端没有 ⇒ 红。
 # （Makefile 热点区口径：合并两边门禁并列保留——mobile-canvas-strip / badge-words
-#  来自 main 侧两批，settings-ios-rows 来自本批。）
-FRONTEND_GATES := design-tokens msgstyle bubble-side self-explaining circular fixture-secrets api-routes freeze-state freeze-silence flat-buttons glass canvas-hint toggle scroll-pill input-surface mobile-canvas-strip badge-words settings-ios-rows
+#  / settings-ios-rows 来自 main 侧各批，panel-unify 来自本批。）
+FRONTEND_GATES := design-tokens msgstyle bubble-side self-explaining circular fixture-secrets api-routes freeze-state freeze-silence flat-buttons glass canvas-hint toggle scroll-pill input-surface mobile-canvas-strip badge-words settings-ios-rows panel-unify
 
 frontend-gates:
 	@command -v node >/dev/null 2>&1 || { echo "node not found — 前端门禁需要 node"; exit 2; }
@@ -213,6 +213,19 @@ frontend-gates:
 	@# 改前/改后同一份脚本：node scripts/check-mobile-canvas-strip.mjs --root=<改前树>；
 	@# 机器读：--json。真渲染读数（375/1440 × 亮暗）另跑 scripts/capture-mobile-canvas-tabs.mjs。
 	node scripts/check-mobile-canvas-strip.mjs
+	@# 面板设计语言唯一性门禁（panel-language 批 2026-11-06，作者令 3(c)(d)(e)）：
+	@# (c)「面板宽度与形态：不要做成弹窗，要运用整个面板的宽度」/(d)「按钮去重：
+	@# 不要保留功能重复的按钮，比如已经有返回键了，就不要再放叉号键（X）」/(e)「规范
+	@# 统一：顶部文字大小等面板设计……统一整理出一套面板的设计语言」。判据：P1 同类
+	@# 面板标题只能取规定令牌（--ds-panel-title-* 等，裸字面量即红）；P2 有返回键的面
+	@# 不许同时有 X 键（dom-guard 档：锚形 ±3 行内必须见 popSheet.isMobileLayer 守卫；
+	@# css-hide 档：2026-10-30 清查批隐藏规则必须在场）；P3 例外表卫生（空理由/陈旧
+	@# 例外 = 红）；P4 登记令牌必须在场。登记表与例外都在规范文件
+	@# web/.../design-language/references/panel-spec.md（不在脚本里，改判据先改规范）。
+	@# 改前/改后同一份脚本：node scripts/check-panel-unify.mjs --root=<改前树>
+	@# （本批改前 7 红 → 改后 0）。真渲染读数：tests/panel-language.spec.mjs。
+	@# 盘点模式：node scripts/check-panel-unify.mjs --inventory；机器读：--json。
+	node scripts/check-panel-unify.mjs
 	@# 设置页 iOS 行族门禁（settings-ios-rows 批 2026-11-06，作者令「能点击下一个面板的
 	@# 样式都统一成苹果的这种样式 … 底部的重启服务去掉 … 可点击的按钮 布局规整一点」）：
 	@# R1 重启服务零痕 / R2 可点进行唯一样式（setNavRow 单源 + chevron 单点）/
@@ -236,6 +249,10 @@ flat-buttons:
 # ── 毛玻璃：单闸入口（与 flat-buttons 同形；CI 同名 step 调的就是它）──────────
 glass:
 	node scripts/check-glass-unify.mjs
+
+# ── 面板设计语言：单闸入口（与 flat-buttons / glass 同形；CI 同名 step 调的就是它）──
+panel-unify:
+	node scripts/check-panel-unify.mjs
 
 # ── 会话面胶囊居中：单闸入口（与 flat-buttons / glass 同形）────────────────────
 scroll-pill:

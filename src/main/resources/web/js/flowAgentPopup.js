@@ -23,7 +23,7 @@ import { isErrorReason, errorTileText, errorIcon } from './errorRecovery.js';
 import { truncateMiddle, shouldFollowBottom, initScrollFollow, statusIcon } from './utils.js';
 import { cleanupCardIframes } from './cardRegistry.js';
 // 弹窗退场批（作者令 2026-10-31②）：手机层查看器铺满屏 + 左上返回（桌面零变化）。
-import { mobileSheetBack } from './mobile/popSheet.js';
+import { mobileSheetBack, isMobileLayer } from './mobile/popSheet.js';
 
 // ── Per-agent state ───────────────────────────────────────
 // nodeSessionId → { view: ChatView, container: div, meta: {}, historyLoaded: bool }
@@ -516,7 +516,7 @@ export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessio
         <span class="flow-agent-name">${esc(agentDisplayName(agentName || entry.meta.agentName || ''))}</span>
         <span class="flow-agent-subtitle">${esc(flowName || '')}</span>
         <span class="flow-agent-model" id="flow-agent-model"></span>
-        <div class="flow-agent-close" id="flow-agent-close">✕</div>
+        ${isMobileLayer() ? '' : '<div class="flow-agent-close" id="flow-agent-close">✕</div>'}
       </div>
       <div class="flow-agent-footer" id="flow-agent-footer">
         <span class="fa-status-dot"></span>
@@ -526,6 +526,11 @@ export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessio
       </div>
     </div>
   `;
+  // 3(d) 按钮去重（panel-language 批 2026-11-06）：头部 ✕ 建不建由上一行模板内联
+  // 守卫分档 —— 手机层返回键在（下方 mobileSheetBack 注入 .mfs-back）⇒ ✕ 不建
+  // （作者令「已经有返回键了，就不要再放叉号键（X）」）；桌面层无返回键 ⇒ ✕ 保留。
+  // 模板每次 open 重建 ⇒ 守卫逐次评估。🔴 判定单源 = popSheet.isMobileLayer（禁自写
+  // body.classList），守卫与 ✕ 同行相邻（机检 P2 = scripts/check-panel-unify.mjs）。
 
   // Async-fetch agent model info for header badge
   if (agentName) {

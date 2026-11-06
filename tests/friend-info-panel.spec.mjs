@@ -211,7 +211,9 @@ test('P1–P5 三点直达好友信息 + 扁平形态 + 两个真开关', async 
   expect(row).toEqual({ muted: true, pinned: true });
 
   // 关面重进：状态仍在（真值回读，不是纯前端暂态）
-  await page.locator('#profile-face-close').click();
+  // panel-language 批（2026-11-06）：手机层 X 键退役（3(d)「有返回键就不放 X」，
+  // DOM 级不建）⇒ 本文件 375 视口的关闭路径 = 返回键 .mfs-back（唯一出口）。
+  await page.locator('#profile-face-overlay .mfs-back').click();
   await page.waitForTimeout(300);
   await page.locator(`${CONV} .mh-sess-more`).click();
   await page.waitForSelector('#profile-face-overlay:not([hidden]) .pf-modal', { timeout: 6000 });
