@@ -94,12 +94,18 @@ class GatewaySessionStore private (
   persistenceFile: Option[os.Path]
 ):
   private val log = org.slf4j.LoggerFactory.getLogger(classOf[GatewaySessionStore])
+
   /** Sliding-touch dirtiness — the daemon's flush signal (write amplification guard). */
   private val dirty = new AtomicBoolean(false)
+
   /** One daemon thread per persistent store; no-op (None) for in-memory assemblies. */
   private val flusher: Option[ScheduledThreadPoolExecutor] = persistenceFile.map { _ =>
-    val ex = new ScheduledThreadPoolExecutor(1, r =>
-      new Thread(r, "gateway-session-snapshot") { setDaemon(true) })
+    val ex = new ScheduledThreadPoolExecutor(
+      1,
+      r =>
+        new Thread(r, "gateway-session-snapshot"):
+          setDaemon(true)
+    )
     ex.setRemoveOnCancelPolicy(true)
     ex.scheduleWithFixedDelay(() => flushIfDirty(), 60, 60, TimeUnit.SECONDS)
     ex
@@ -123,8 +129,8 @@ class GatewaySessionStore private (
         val tmp = f / os.up / os.RelPath(f.last + ".tmp")
         os.write.over(tmp, io.circe.syntax.EncoderOps(rows.toVector).asJson.noSpaces, createFolders = true)
         if !scala.util.Properties.isWin then
-          java.nio.file.Files.setPosixFilePermissions(
-            tmp.toNIO, java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"))
+          java.nio.file.Files
+            .setPosixFilePermissions(tmp.toNIO, java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"))
         os.move(tmp, f, replaceExisting = true, atomicMove = true)
       catch
         case e: Throwable =>
@@ -177,27 +183,41 @@ class GatewaySessionStore private (
    * snapshot dirty (the 60s daemon flushes it).
    */
   def verifyAndTouch(sessionId: String): IO[Option[SessionRecord]] =
-    IO.realTime.map(_.toMillis).flatMap { now =>
-      sessionsRef.modify { current =>
-        current.get(sessionId) match
-          case None =>
-            (current, None)
-          case Some(r) if !isLive(r, now) =>
-            (current - sessionId, None)
-          case Some(r) =>
-            val touched = r.copy(
-              lastSeenAt = now,
-              slidingExpiresAt = math.min(r.absoluteExpiresAt, now + idleTimeoutSeconds * 1000L)
-            )
-            (current.updated(sessionId, touched), Some(touched))
+    IO.realTime
+      .map(_.toMillis)
+      .flatMap { now =>
+        sessionsRef.modify { current =>
+          current.get(sessionId) match
+            case None =>
+              (current, None)
+            case Some(r) if !isLive(r, now) =>
+              (current - sessionId, None)
+            case Some(r) =>
+              val touched = r.copy(
+                lastSeenAt = now,
+                slidingExpiresAt = math.min(r.absoluteExpiresAt, now + idleTimeoutSeconds * 1000L)
+              )
+              (current.updated(sessionId, touched), Some(touched))
+        }
       }
-    }.flatTap(hit => IO(markDirty()).whenA(hit.isDefined && persistenceFile.isDefined))
+      .flatTap(hit => IO(markDirty()).whenA(hit.isDefined && persistenceFile.isDefined))
 
   /** Live sessions, masked-id views (CLI / endpoint enumeration face). */
   def list: IO[List[SessionView]] =
     sessionsRef.get.map { current =>
       current.values.toList
-        .map(r => SessionView(r.sessionId.take(8), r.accountSub, r.origin, r.boundNetworkId, r.createdAt, r.absoluteExpiresAt, r.lastSeenAt, r.slidingExpiresAt))
+        .map(r =>
+          SessionView(
+            r.sessionId.take(8),
+            r.accountSub,
+            r.origin,
+            r.boundNetworkId,
+            r.createdAt,
+            r.absoluteExpiresAt,
+            r.lastSeenAt,
+            r.slidingExpiresAt
+          )
+        )
         .sortBy(_.createdAt)
     }
 
@@ -205,10 +225,12 @@ class GatewaySessionStore private (
   def revokeByMaskedId(prefix: String): IO[Int] =
     if prefix.isEmpty then IO.pure(0)
     else
-      sessionsRef.modify { current =>
-        val (hit, rest) = current.partition { case (sid, _) => sid.startsWith(prefix) }
-        (rest, hit.size)
-      }.flatTap(n => persistNow.whenA(n > 0))
+      sessionsRef
+        .modify { current =>
+          val (hit, rest) = current.partition { case (sid, _) => sid.startsWith(prefix) }
+          (rest, hit.size)
+        }
+        .flatTap(n => persistNow.whenA(n > 0))
 
   /** Revoke EVERY session (`sessions revoke --all`, the local emergency face). */
   def revokeAll(): IO[Int] =
@@ -223,10 +245,36 @@ class GatewaySessionStore private (
    * Bearer only), so "local survives" buys nothing to an attacker.
    */
   def revokeRelayMinted(): IO[Int] =
-    sessionsRef.modify { current =>
-      val (hit, rest) = current.partition { case (_, r) => r.origin == GatewaySessionStore.OriginRelayMint }
-      (rest, hit.size)
-    }.flatTap(n => persistNow.whenA(n > 0))
+    sessionsRef
+      .modify { current =>
+        val (hit, rest) = current.partition { case (_, r) => r.origin == GatewaySessionStore.OriginRelayMint }
+        (rest, hit.size)
+      }
+      .flatTap(n => persistNow.whenA(n > 0))
+
+  /**
+   * Revoke EVERY session of ONE account — the logout face (登出收尾批
+   * logout-fin；设计 §3.5.2 ⑥「gateway-sessions.json 按账号删行」/ §8.3(c)
+   * GREEN「A 的 console cookie 调控制台 API ⇒ 401（按账号吊销）」）.
+   *
+   * Keyed on the `accountSub` the row ALREADY carries
+   * ([[SessionRecord.accountSub]]) — 同一套会话簿，零第二账本. Unlike
+   * [[revokeRelayMinted]] there is NO origin carve-out: the local-ticket
+   * break-glass exception belongs to BINDING revocation (it protects the
+   * machine's emergency face, v3 :290); an account that LEFT the machine
+   * keeps nothing — 登出只删凭据与指针，账号数据保留，控制台会话不保留
+   * (设计 §3.5). An empty key is a no-op (no account identity ⇒ never
+   * degenerate into "revoke everything").
+   */
+  def revokeByAccount(accountSub: String): IO[Int] =
+    if accountSub.isEmpty then IO.pure(0)
+    else
+      sessionsRef
+        .modify { current =>
+          val (hit, rest) = current.partition { case (_, r) => r.accountSub == accountSub }
+          (rest, hit.size)
+        }
+        .flatTap(n => persistNow.whenA(n > 0))
 
   /** Live session count (diagnostics / tests). */
   def size: IO[Int] = sessionsRef.get.map(_.size)
@@ -339,6 +387,8 @@ object GatewaySessionStore:
       persistenceFile
     )
 
+  end unsafeCreate
+
   /**
    * Boot-time snapshot load: parse the file, keep ONLY rows still live right
    * now (both windows) — a session that died quietly from disuse must not be
@@ -356,11 +406,14 @@ object GatewaySessionStore:
             Map.empty
           case Right(rows) =>
             val now = System.currentTimeMillis()
-            val live = rows.collect { case r if r.absoluteExpiresAt > now && r.slidingExpiresAt > now => r.sessionId -> r }.toMap
+            val live = rows.collect {
+              case r if r.absoluteExpiresAt > now && r.slidingExpiresAt > now => r.sessionId -> r
+            }.toMap
             if live.nonEmpty then log.info("gateway sessions: restored {} session(s) from {}", live.size, f)
             live
-      catch case e: Throwable =>
-        log.warn("gateway session snapshot load failed (starting empty): {}", e.toString)
-        Map.empty
+      catch
+        case e: Throwable =>
+          log.warn("gateway session snapshot load failed (starting empty): {}", e.toString)
+          Map.empty
 
 end GatewaySessionStore

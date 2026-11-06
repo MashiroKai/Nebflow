@@ -8,7 +8,9 @@ import cats.effect.IO
 import cats.syntax.all.*
 import fs2.Stream
 import nebflow.neblink.logto.*
-import nebflow.shared.Branding
+import nebflow.core.root.{AccountRoot, ActiveAccount}
+import nebflow.neblink.*
+import nebflow.shared.{Branding, NebflowLogger, PathUtil}
 import org.http4s.*
 import org.http4s.dsl.io.*
 import org.http4s.headers.{Location, `Content-Type`}
@@ -231,19 +233,18 @@ private[gateway] object AuthRoutes:
       // 1. Notify the NebLink Server: DELETE /api/device/logout lets the
       //    server clear the device session + relay tunnel immediately
       //    instead of waiting for the 90s TTL purge. Best-effort — logout
-      //    must ALWAYS succeed locally, so any failure (network
-      //    unreachable, server down) is swallowed. Uses the discovery's
-      //    live client: enrollment hot-swap replaces it without updating
-      //    ms.relayClientOpt, which may hold a stale instance.
-      _ <- neblinkDiscovery.fold(IO.unit)(d =>
-        d.currentClient.flatMap {
-          case Some(client) =>
-            client.logout.handleErrorWith(e =>
-              logger.debug(s"NebLink server logout notify failed (continuing local logout): ${e.getMessage}")
-            )
-          case None => IO.unit
-        }
-      )
+      //    must ALWAYS succeed locally. Uses the discovery's live client:
+      //    enrollment hot-swap replaces it without updating ms.relayClientOpt,
+      //    which may hold a stale instance.
+      //    登出收尾批（logout-fin）：`NeblinkClient.logout` 现在回报送达真值
+      //    （true = server 已确认 / 本无会话可撤；false = 传输失败未送达）——
+      //    该真值喂给第 11 步的上行排队点（设计 §3.5.2 ⑤「离线也记账」），
+      //    传输失败不再被静默当成「已通知」。
+      liveClient <- neblinkDiscovery.fold(IO.pure(Option.empty[NeblinkClient]))(_.currentClient)
+      serverAcked <- liveClient.fold(IO.pure(true))(_.logout)
+      notifyWhy =
+        if liveClient.isEmpty then LogoutNotifyOutbox.ReasonNoLiveClient
+        else LogoutNotifyOutbox.ReasonLiveNotifyFailed
       // 2. Stop the relay tunnel — drops the local WS so no reconnect
       //    loop keeps the device visible server-side after logout.
       _ <- ms.relayTunnelOpt.fold(IO.unit)(t => t.stop().handleErrorWith(_ => IO.unit))
@@ -269,11 +270,76 @@ private[gateway] object AuthRoutes:
       _ <- ms.updateDeviceInfo(avatarUrl = Some(""), githubLogin = Some(""))
       // 8. Clear all discovered peers.
       _ <- ms.clearPeers
+      // 9+10. 账号面拆除（登出收尾批 logout-fin，T3；单点 = [[clearAccountSurface]]，
+      //    两条登出路由 POST /neblink/logout 与 POST /neblink/auth/end-session 共用）：
+      //    清机器层 active-account 指针 + 按账号吊销控制台会话。账号目录一律保留
+      //    （登出 ≠ 删数据，设计 §3.5）；「Always completes locally」纪律由 seam 兜底。
+      clearedAccount <- clearAccountSurface(sessions, PathUtil.machineRoot)
+      // 11. 上行排队点（设计 §3.5.2 ⑤「离线也记账」）：第 1 步的活通知未证实送达
+      //     ⇒ 机器层落一条账号域待发记录（LogoutNotifyOutbox —— stand 侧发送接口
+      //     + 排队点；传输面在中继仓，跨仓对接点见该对象的头注）。指针缺失 ⇒
+      //     无账号域身份可记（身份单源 = 指针），no-op。
+      _ <- IO.unlessA(serverAcked)(clearedAccount match
+        case Some(acct) => LogoutNotifyOutbox.enqueue(acct.accountSub, acct.email, notifyWhy)
+        case None => IO.unit)
     yield ()
 
     end for
 
   end performLocalLogout
+
+  /**
+   * 账号面拆除单点（登出收尾批 logout-fin，T3）—— `performLocalLogout` 的
+   * 第 9+10 步，两条登出路由共用这一份实现：
+   *
+   *   1. **先读**机器层 `active-account` 指针（被吊销的身份必须在指针文件消失
+   *      **之前**读出 —— 会话吊销按这个 `accountSub` 定键）；
+   *   2. `AccountRoot.clearPointer`（登出即清指针；**绝不**动账号目录 —— 登出
+   *      ≠ 删数据，设计 §3.5；`clearPointer` 本体仍是 AccountRoot 单点，本处
+   *      只是登出面调用点）；
+   *   3. `GatewaySessionStore.revokeByAccount` 按该账号吊销控制台会话 —— 同一套
+   *      会话簿（会话面单源，零第二账本；设计 §8.3(c) GREEN「gateway-sessions.json
+   *      无该账号行」）。
+   *
+   * 返回被清掉的指针（上行排队点用它带账号域身份）。`None` = 本来就没有指针 /
+   * 读数坏档 ⇒ 没有可指的账号，会话面零动作（身份单源是指针：指针不在就没有
+   * 「该账号」可言）。显式参数（`sessions` / `machineRoot`）= spec 直测面，
+   * 不必装配整只 RestApiCtx。
+   *
+   * 拆除纪律「Always completes locally」：任何异常只 WARN，绝不冒泡 —— 登出必须
+   * 本地完成（八步的既有契约原样覆盖本步）。
+   */
+  private[gateway] def clearAccountSurface(
+    sessions: GatewaySessionStore,
+    machineRoot: os.Path
+  ): IO[Option[ActiveAccount]] =
+    val log = NebflowLogger.forName("nebflow.gateway.logout")
+    IO.blocking {
+      val pointer = AccountRoot.readPointer(machineRoot)
+      AccountRoot.clearPointer(machineRoot)
+      pointer
+    }.flatMap {
+      case Some(acct) =>
+        sessions
+          .revokeByAccount(acct.accountSub)
+          .flatMap(n =>
+            log.info(
+              s"logout account surface cleared: active-account pointer removed, " +
+                s"$n console session(s) revoked for '${acct.accountSub}'"
+            )
+          )
+          .as(Some(acct))
+      case None => IO.pure(None)
+    }.handleErrorWith(e =>
+      log
+        .warn(
+          "logout account-surface teardown failed (continuing local logout): " +
+            s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}"
+        )
+        .as(None)
+    )
+
+  end clearAccountSurface
 
   private def handleAuthCallback(query: Map[String, String])(using ctx: RestApiCtx): IO[org.http4s.Response[IO]] =
     import ctx.*
