@@ -160,4 +160,53 @@ class CandidateDispositionSpec extends FunSuite:
     assert(s.contains("b/m1(health-down)"), s)
     assert(s.contains("SILENT-EXCLUSION=c/m1"), s)
   }
+
+  // ---------------------------------------------------------------
+  // 派发钉链剔除（缺陷批 2026-11-06，provider-concurrency 批移交）：
+  // 现网实证 `UTSC/glm-5.3-flash SILENTLY EXCLUDED` 反复出现——provider 在派发
+  // 时刻满载、候选被链首扫描剔出本 actor 的链，却没有任何原因入账 ⇒ 作者面只剩
+  // 一句「无原因剔除」。收口判据：剔除必须带 `provider-full (N of M …)` 原因，
+  // 有原因即不算静默排除。
+  // ---------------------------------------------------------------
+
+  test("D12: provider-full（派发钉链剔除）——wire/describe 可读，进表是 skipped 不是静默") {
+    val pf = CandidateSkipCause.ProviderFull(10, 10)
+    assertEquals(pf.wire, "provider-full")
+    assert(pf.describe.contains("10 of 10"), pf.describe)
+    assert(pf.describe.contains("dispatch"), pf.describe)
+    val d = CandidateDisposition(
+      chain = List("zai/glm-5.3-flash"),
+      tried = List("zai/glm-5.3-flash"),
+      skipped = List("utsc/glm-5.3-flash" -> pf),
+      expected = List("utsc/glm-5.3-flash", "zai/glm-5.3-flash")
+    )
+    assertEquals(d.silentExclusions, Nil, "有原因的钉链剔除不是静默排除")
+    val table = d.render()
+    assert(
+      table.contains("[skipped] utsc/glm-5.3-flash — provider-full (10 of 10 actor slots in use at dispatch"),
+      table
+    )
+    assert(!table.contains("SILENTLY EXCLUDED"), table)
+  }
+
+  test("D13: 全 skip（含钉链剔除）⇒ all-skipped，逐候选原因一条不丢（作者令「全 skip 给逐候选原因汇总」）") {
+    val d = CandidateDisposition(
+      chain = Nil,
+      tried = Nil,
+      skipped = List(
+        "qwen/qwen3.8-flash" -> CandidateSkipCause.SoftAvoid(250_000L, "quota exhausted"),
+        "deepseek/deepseek-flash" -> hd,
+        "utsc/glm-5.3-flash" -> CandidateSkipCause.ProviderFull(3, 3)
+      ),
+      expected = List("qwen/qwen3.8-flash", "deepseek/deepseek-flash", "utsc/glm-5.3-flash")
+    )
+    assertEquals(d.reasonCode, "all-skipped")
+    assert(!d.headline(0, "").contains("All providers failed"), d.headline(0, ""))
+    val table = d.render()
+    assert(table.contains("chain 0: tried 0, skipped 3"), table)
+    List("qwen", "deepseek", "utsc").foreach { r =>
+      assert(table.contains(s"[skipped] $r"), s"$r 的跳过原因必须进表:\n$table")
+    }
+    assert(!table.contains("SILENTLY EXCLUDED"), table)
+  }
 end CandidateDispositionSpec

@@ -1,0 +1,81 @@
+[info] welcome to sbt 1.10.10 (Homebrew Java 23.0.2)
+[info] loading settings for project delegate-fallback-chain-fix-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-fallback-chain-fix/project
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/delegate-fallback-chain-fix/)
+[info] compiling 120 Scala sources to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-fallback-chain-fix/target/scala-3.5.2/classes ...
+[info] done compiling
+[info] compiling 153 Scala sources to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-fallback-chain-fix/target/scala-3.5.2/classes ...
+[info] done compiling
+[info] compiling 19 Scala sources to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-fallback-chain-fix/target/scala-3.5.2/classes ...
+[info] done compiling
+[info] compiling 544 Scala sources to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-fallback-chain-fix/target/scala-3.5.2/test-classes ...
+[error] -- Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-fallback-chain-fix/src/test/scala/nebflow/llm/FallbackEligibleProvidersSpec.scala:128:15 
+[error] 128 |      pinSkips = pinSkips
+[error]     |      ^^^^^^^^^^^^^^^^^^^
+[error]     |method apply in object LlmRequest: (messages: List[nebflow.shared.Message], sessionId: String, agentId: String,
+[error]     |  tools: Option[List[nebflow.shared.ToolDefinition]],
+[error]     |  thinking: Option[io.circe.Json], systemStable: Option[String],
+[error]     |  systemDynamic: Option[String],
+[error]     |  agentModel: Option[nebflow.shared.AgentModelConfig], searchAllowed: Boolean):
+[error]     |  nebflow.shared.LlmRequest does not have a parameter pinSkips
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-fallback-chain-fix/src/test/scala/nebflow/llm/FallbackEligibleProvidersSpec.scala:344:56 
+[error] 344 |          pinSkips = List("p1/m1" -> CandidateSkipCause.ProviderFull(10, 10))
+[error]     |                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[error]     |value ProviderFull is not a member of object nebflow.shared.CandidateSkipCause
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-fallback-chain-fix/src/test/scala/nebflow/llm/ProviderConcurrencyFallbackSpec.scala:588:28 
+[error] 588 |      assertEquals(p1.map(_.preExcluded), Some(Nil), "链首本身无剔除")
+[error]     |                          ^^^^^^^^^^^^^
+[error]     |          value preExcluded is not a member of nebflow.llm.PinnedChain
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-fallback-chain-fix/src/test/scala/nebflow/llm/ProviderConcurrencyFallbackSpec.scala:591:17 
+[error] 591 |        p2.map(_.preExcluded),
+[error]     |               ^^^^^^^^^^^^^
+[error]     |          value preExcluded is not a member of nebflow.llm.PinnedChain
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-fallback-chain-fix/src/test/scala/nebflow/llm/ProviderConcurrencyFallbackSpec.scala:592:47 
+[error] 592 |        Some(List("a/m1" -> CandidateSkipCause.ProviderFull(1, 1))),
+[error]     |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[error]     |value ProviderFull is not a member of object nebflow.shared.CandidateSkipCause
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-fallback-chain-fix/src/test/scala/nebflow/llm/ProviderConcurrencyFallbackSpec.scala:619:22 
+[error] 619 |        p2Again.map(_.preExcluded),
+[error]     |                    ^^^^^^^^^^^^^
+[error]     |          value preExcluded is not a member of nebflow.llm.PinnedChain
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-fallback-chain-fix/src/test/scala/nebflow/llm/ProviderConcurrencyFallbackSpec.scala:620:47 
+[error] 620 |        Some(List("a/m1" -> CandidateSkipCause.ProviderFull(1, 1))),
+[error]     |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[error]     |value ProviderFull is not a member of object nebflow.shared.CandidateSkipCause
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-fallback-chain-fix/src/test/scala/nebflow/llm/ProviderConcurrencyFallbackSpec.scala:645:22 
+[error] 645 |      assert(withBoth.pinExclusions.contains("actor-2"), "actor-2 被剔时必须入账")
+[error]     |             ^^^^^^^^^^^^^^^^^^^^^^
+[error]     |value pinExclusions is not a member of nebflow.llm.ProviderConcurrency.Counts
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-fallback-chain-fix/src/test/scala/nebflow/llm/ProviderConcurrencyFallbackSpec.scala:647:21 
+[error] 647 |        afterRelease.pinExclusions.get("actor-2"),
+[error]     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+[error]     |value pinExclusions is not a member of nebflow.llm.ProviderConcurrency.Counts
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-fallback-chain-fix/src/test/scala/nebflow/llm/ProviderConcurrencyFallbackSpec.scala:651:32 
+[error] 651 |      assertEquals(afterRelease.pinExclusions.get("actor-1"), Some(Nil), "actor-1 无剔除 ⇒ 账为空表但保留")
+[error]     |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^
+[error]     |value pinExclusions is not a member of nebflow.llm.ProviderConcurrency.Counts
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-fallback-chain-fix/src/test/scala/nebflow/llm/ProviderConcurrencyFallbackSpec.scala:653:23 
+[error] 653 |        afterReconcile.pinExclusions.keySet,
+[error]     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[error]     |value pinExclusions is not a member of nebflow.llm.ProviderConcurrency.Counts
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-fallback-chain-fix/src/test/scala/nebflow/llm/ProviderConcurrencyFallbackSpec.scala:681:32 
+[error] 681 |      assertEquals(p2.flatMap(_.preExcluded.headOption.map(_._1)), Some("a/m1"), "actor-2 的剔除账 = a/m1")
+[error]     |                              ^^^^^^^^^^^^^
+[error]     |          value preExcluded is not a member of nebflow.llm.PinnedChain
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-fallback-chain-fix/src/test/scala/nebflow/llm/ProviderConcurrencyFallbackSpec.scala:683:21 
+[error] 683 |      assertEquals(c.pinExclusions.get("actor-3"), None, "不钉的 actor 不得留剔除账")
+[error]     |                   ^^^^^^^^^^^^^^^
+[error]     |value pinExclusions is not a member of nebflow.llm.ProviderConcurrency.Counts
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-fallback-chain-fix/src/test/scala/nebflow/shared/CandidateDispositionSpec.scala:173:32 
+[error] 173 |    val pf = CandidateSkipCause.ProviderFull(10, 10)
+[error]     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[error]     |value ProviderFull is not a member of object nebflow.shared.CandidateSkipCause
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-fallback-chain-fix/src/test/scala/nebflow/shared/CandidateDispositionSpec.scala:199:51 
+[error] 199 |        "utsc/glm-5.3-flash" -> CandidateSkipCause.ProviderFull(3, 3)
+[error]     |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[error]     |value ProviderFull is not a member of object nebflow.shared.CandidateSkipCause
+[error] 15 errors found
+[error] (Test / compileIncremental) Compilation failed
+[error] Total time: 81 s (0:01:21.0), completed 2026年11月6日 19:37:22
+COMPILE_EXIT=1
