@@ -34,7 +34,7 @@ object CacheStats:
   /** 每 N 个请求至少落一条聚合行（与时间窗双闸，先到先触发）。 */
   private[llm] val EmitEveryRequests = 200L
 
-  /** 空闲兜底窗：距上一条聚合行超过此时长且有新请求即落行（默认 15 分钟）。 */
+  /** 空闲兜底窗：距上一条聚合行（或首单——冷启动锚）超过此时长且有新请求即落行（默认 15 分钟）。 */
   private[llm] val EmitWindowMs = 15L * 60 * 1000L
 
   /** 单域/总量的不可变快照（`hitPct` 即命中率读数，供测试与聚合行复用）。 */
@@ -58,6 +58,9 @@ object CacheStats:
   private var lastEmittedRequests: Long = 0L
   private var windowCheckpoint: DomainSnapshot = DomainSnapshot(0L, 0L, 0L, 0L)
 
+  /** 时钟注入点（spec 模拟时间窗专用；生产路径恒 = 系统时钟。范围只许这一处。） */
+  private[llm] var clockMs: () => Long = () => System.currentTimeMillis()
+
   /** usage 定格点调用（两协议 adapter 各自的最终 usage 解析处）。无 usage 的失败请求不入分母。 */
   def record(providerId: String, model: String, usage: Option[TokenUsage]): Unit = usage match
     case None => ()
@@ -79,8 +82,14 @@ object CacheStats:
    * 单）即落一条 INFO 行。`force = true` 供测试/手动打点，绕过双闸。
    */
   def maybeEmit(force: Boolean = false): Unit = lock.synchronized {
-    val now = System.currentTimeMillis()
+    val now = clockMs()
     val n   = total.requests.get()
+    // 冷启动锚（2026-11-06 小修批）：lastEmitAtMs 初始 0L 时时间窗腿带
+    // `lastEmitAtMs > 0L` 前置 ⇒ 首次发射前永不激活 → 实例生命周期内总请求
+    // <200（低峰期/刚重启）一条聚合行都不发，可观测面自哑。修法：首单落账时
+    // 把窗口锚在当下（窗口从首单起算），时间窗腿冷启动期即可触发——语义 =
+    // 「实例有流量后 15 分钟内必见第一条聚合行」。200 单腿与快照/域分列不变。
+    if lastEmitAtMs == 0L && n > 0L then lastEmitAtMs = now
     val due =
       force || n - lastEmittedRequests >= EmitEveryRequests ||
         (lastEmitAtMs > 0L && n > lastEmittedRequests && now - lastEmitAtMs >= EmitWindowMs)
