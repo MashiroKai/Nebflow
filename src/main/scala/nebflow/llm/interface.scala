@@ -625,10 +625,11 @@ object LlmInterface extends LlmRuntime:
                 // 终局判定需要完整受限清单——链出口先滤会把受限信息丢成「空链」，
                 // 流面就会落进 120s 全灭闸等待而非带原因快失败。
                 regCandidates <- registry.getCandidatesForAgentUnfiltered(req.agentModel)
-                candidates = overrides.get(req.sessionId).toList ++ regCandidates
-                  .filterNot(c =>
-                    overrides.get(req.sessionId).exists(o => o.providerId == c.providerId && o.model == c.model)
-                  )
+                authorizedOverride = overrides.get(req.sessionId).filter(o =>
+                  regCandidates.exists(c => c.providerId == o.providerId && c.model == o.model)
+                ).toList
+                candidates = authorizedOverride ++ regCandidates
+                  .filterNot(c => authorizedOverride.exists(o => o.providerId == c.providerId && o.model == c.model))
                 // #33: drop stale session overrides whose provider was removed
                 // by a config hot-reload — graceful skip, never "Unknown provider".
                 // 缺陷批 2026-11-05：带原因版本——被剔候选进账本（不静默消失）。
@@ -639,12 +640,15 @@ object LlmInterface extends LlmRuntime:
                 schedRes <- applyScheduleGateDetailed(filtered, registry)
                 (schedAvailable, schedSkips) = schedRes
                 configSkips <- registry.configLevelExclusions()
+                requestConfig <- registry.currentConfig
+                chainRefs = requestConfig.llm.fallback.toList.flatMap(c => c.preferred.toList ++ c.fallbacks)
+                globalAllowlistSkips <- registry.allowlistExclusionsFor(chainRefs, req.agentModel)
                 expected <- registry.expectedCandidateRefs()
                 // 派发钉链剔除账本（缺陷批 2026-11-06）：`req.pinSkips` = spawn 时因
                 // provider 满载被链首扫描剔出的候选（`PinnedChain.preExcluded`，本就是
                 // 请求前的事实）——并入 seeded 层。没有它，这些候选既不在链上也没有
                 // 原因 ⇒ SILENTLY EXCLUDED（现网实证 UTSC/glm-5.3-flash）。
-                seededSkips = droppedKnown ++ schedSkips ++ configSkips ++ req.pinSkips
+                seededSkips = droppedKnown ++ schedSkips ++ configSkips ++ globalAllowlistSkips ++ req.pinSkips
                 healthSkipped <- healthMonitor.filterCandidatesDetailed(schedAvailable)
                 (up, healthSkips) = healthSkipped
                 allSkips = mergeSkips(
@@ -834,10 +838,11 @@ object LlmInterface extends LlmRuntime:
                         // 全受限终局判定需要完整受限清单——链出口先滤会把受限信息
                         // 丢成「空链」，流面就会落进 120s 全灭闸等待而非带原因快失败。
                         regCandidates <- registry.getCandidatesForAgentUnfiltered(req.agentModel)
-                        candidates = overrides.get(req.sessionId).toList ++ regCandidates
-                          .filterNot(c =>
-                            overrides.get(req.sessionId).exists(o => o.providerId == c.providerId && o.model == c.model)
-                          )
+                        authorizedOverride = overrides.get(req.sessionId).filter(o =>
+                          regCandidates.exists(c => c.providerId == o.providerId && c.model == o.model)
+                        ).toList
+                        candidates = authorizedOverride ++ regCandidates
+                          .filterNot(c => authorizedOverride.exists(o => o.providerId == c.providerId && o.model == c.model))
                         // #33: same graceful skip as the non-streaming path.
                         // 缺陷批 2026-11-05：带原因版本（进候选账本）。
                         knownRes <- registry.filterKnownProvidersDetailed(candidates)

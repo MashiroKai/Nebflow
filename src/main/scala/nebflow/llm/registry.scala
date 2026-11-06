@@ -163,8 +163,10 @@ class ProviderRegistry(
     }
 
   /**
-   * 未过滤全局链（/model 主链为锚，缺省降级 seed 链 + 首 provider 兜底——见
-   * model-chain anchor 批）——请求路径专用（LlmInterface 时段闸输入）。
+   * 未过滤全局链（`llm.fallback` 为锚，缺省降级 Nebula 显式存储链）——请求路径
+   * 专用（LlmInterface 时段闸输入）。模型资格语义（本批）：provider 配置 ≠ 派发
+   * 授权——链为空或全解不出 ⇒ **fail-closed 空链**，绝不从 provider inventory
+   * 编造候选（原 seed 兜底腿已废）。
    */
   def getCandidatesUnfiltered(): IO[List[ModelCandidate]] =
     configRef.get.map { config =>
@@ -172,17 +174,18 @@ class ProviderRegistry(
       // config file's `llm.fallback` section is THE chain when it carries at
       // least one ref — the panel, the file and the runtime are one truth
       // ([[FallbackChain]]). Only when the section is absent do we fall back to
-      // Nebula's sidecar chain, then to the provider-derived seed. Reading the
-      // decoded config (not the raw file) keeps this on the hot-reload path:
-      // an `updateConfig` swaps configRef ⇒ the next call uses the new order.
+      // Nebula's explicitly stored sidecar chain (never the provider inventory).
+      // Reading the decoded config (not the raw file) keeps this on the
+      // hot-reload path: an `updateConfig` swaps configRef ⇒ the next call uses
+      // the new order.
       val chain =
         try
           val fromConfig = nebflow.shared.FallbackChain.configured(config)
           if fromConfig.nonEmpty then fromConfig
           else
-            val policy = nebflow.core.SchemePolicy
-            val (am, _) = policy.resolveModel(policy.NebulaName, policy.nebulaChain())
-            am.preferred.toList ++ am.fallbacks
+            // A missing configured fallback may inherit Nebula's explicitly stored
+            // chain, but never synthesize a model from provider inventory (seed).
+            nebflow.core.SchemePolicy.nebulaChain().toList.flatMap(am => am.preferred.toList ++ am.fallbacks)
         catch case _: Exception => Nil
       val fromChain = chain.flatMap { ref =>
         // Gracefully skip invalid refs instead of throwing
@@ -215,37 +218,11 @@ class ProviderRegistry(
           end match
         catch case _: Exception => None // Skip malformed ref
       }
-      // Fallback: if model chain resolves to nothing (e.g. default points to a
-      // non-existent provider after initial setup), use the first available model
-      // across all providers so the system works out of the box.
-      // 摘除标记守卫（reserveTier 语义修复批）：seed 兜底同样跳过 disabled provider。
-      val fromChainOrFallback =
-        if fromChain.nonEmpty then fromChain
-        else
-          config.llm.providers
-            .find { case (_, p) => !isDisabled(p) && p.models.nonEmpty }
-            .map { case (providerId, provider) =>
-              provider.models.headOption.map { mc =>
-                val caps = resolveCapabilities(providerId, mc.id, Some(mc))
-                // 案② B2 同点（**第三处构造点**，与上面两处同形；卡文只列了 :72/:122，
-                // 本处一并收口以免留下「绕过 clamp」的形状——见报告「偏离登记」）：
-                ModelCandidate(
-                  providerId,
-                  provider,
-                  mc.id,
-                  effectiveContextWindow(mc.contextWindow, mc.modelMaxContext),
-                  caps,
-                  mc.modelMaxContext,
-                  mc.thinking,
-                  mc.thinkingKind
-                )
-              }
-            }
-            .flatten
-            .toList
+      // Fail closed when the configured global chain is empty or entirely
+      // unresolved. Provider configuration alone is not permission to dispatch.
       // 模型不可用时段闸在此**不**过滤（本出口 = 未滤；过滤在 [[getCandidates]]
       // 读面出口与 LlmInterface.applyScheduleGate 请求闸两处单点）。
-      fromChainOrFallback
+      fromChain
     }
 
   // ============================================================
@@ -260,7 +237,8 @@ class ProviderRegistry(
    * `nebula-chain` / `seed` = legacy legs), `chain` is the configured ref order,
    * `skipped` lists refs the config can no longer resolve (they are NOT called —
    * and each one also yields a boot-time warning), `candidates` is the effective
-   * ordered try-list (chain + reserve tier).
+   * ordered try-list (explicit chain only); configured models outside it are listed in
+   * `excluded` with a reason and are never dispatch candidates.
    */
   def candidatePlan(): IO[io.circe.Json] =
     import io.circe.syntax.*
@@ -270,19 +248,24 @@ class ProviderRegistry(
         val (source, chainRefs) =
           if fromConfig.nonEmpty then ("llm.fallback", fromConfig)
           else
-            val policy = nebflow.core.SchemePolicy
-            val (am, src) = policy.resolveModel(policy.NebulaName, policy.nebulaChain())
-            (src, am.preferred.toList ++ am.fallbacks)
+            val stored = nebflow.core.SchemePolicy.nebulaChain()
+            (if stored.isDefined then "nebula-chain" else "empty", stored.toList.flatMap(am => am.preferred.toList ++ am.fallbacks))
         def resolves(ref: String): Boolean =
           ref.split("/", 2) match
             case Array(pid, mid) =>
               config.llm.providers.get(pid).exists(p => !isDisabled(p) && p.models.exists(_.id == mid))
             case _ => false
         val candidates = cs.map(c => s"${c.providerId}/${c.model}")
+        val excluded = config.llm.providers.toList.flatMap { case (pid, p) =>
+          if isDisabled(p) then Nil
+          else p.models.map(m => s"$pid/${m.id}").filterNot(chainRefs.contains)
+        }.sorted
         io.circe.Json.obj(
           "source" -> source.asJson,
           "chain" -> chainRefs.asJson,
           "skipped" -> chainRefs.filterNot(resolves).asJson,
+          "excluded" -> excluded.asJson,
+          "exclusionReasons" -> excluded.map(ref => ref -> "not in selected chain (provider config is not authorization)").toMap.asJson,
           "candidates" -> candidates.asJson,
           "warnings" -> nebflow.shared.FallbackChain.validate(config).asJson
         )
@@ -445,18 +428,15 @@ class ProviderRegistry(
   /**
    * Get candidate list customized for an agent's model configuration.
    *
-   * The agent declares a `preferred` primary and an ordered `fallbacks` list.
-   * We build the candidate chain as `[preferred, ...fallbacks]`, resolving each
-   * ref gracefully (invalid/unknown refs are skipped). If every ref fails to
-   * resolve, we fall back to the global candidate list so the agent still has
-   * something to use. No capability filtering is performed — the user picks the
-   * models, and fallback stays within that user-chosen set.
+   * 模型资格语义（model-eligibility 批，2026-11-06 作者实测申诉）：agent 显式链
+   * （agent.json `model`）是**授权边界**——只有链上列出的 provider/model 可被
+   * 派发；provider 配置存在 ≠ 该 agent 可用。非法/未解析 ref 优雅跳过；全解不出
+   * ⇒ **fail-closed 空链**（不再回退全局链、不再由储备层扩权）。无显式链的
+   * agent 沿全局默认链（同 fail-closed 语义）。
    *
-   * 链尾再追加**储备层**（[[reserveTier]]）——配置里已存在但 preset 未引用的
-   * provider/model。动因（事故教训，档位细节不录）：候选链曾在故障日退化为单点
-   * ⇒「有效链深 1」；储备层使该形态在结构上不可达。
-   * 链序语义不变：储备层只是**追加**，不会插到 preferred/fallbacks 之前
-   * （REST 的「当前模型」显示取 healthy.head，故主用模型面零改）。
+   * 原储备层（[[reserveTier]] 追加配置里未引用 provider/model 到链尾）与本批
+   * 「未列入 agent 可用集合绝不被派发」冲突，已从候选构造摘除；保留为
+   * private[llm] 供既有 disabled 守卫 spec 直调（不再是派发路径的输入）。
    */
   def getCandidatesForAgent(agentModel: Option[nebflow.shared.AgentModelConfig]): IO[List[ModelCandidate]] =
     // 模型不可用时段闸（model-schedule-unavailable 批，2026-10-29）：读面出口
@@ -472,23 +452,18 @@ class ProviderRegistry(
 
   end getCandidatesForAgent
 
-  /** 未过滤 agent 链（含储备层）——请求路径专用（LlmInterface 时段闸的单点输入）。 */
+  /** 未过滤 agent 链——请求路径专用（LlmInterface 时段闸的单点输入）。 */
   def getCandidatesForAgentUnfiltered(agentModel: Option[nebflow.shared.AgentModelConfig]): IO[List[ModelCandidate]] =
     val base = agentModel match
       case None | Some(nebflow.shared.AgentModelConfig(None, Nil)) =>
         getCandidatesUnfiltered() // no config → global list
       case Some(cfg) =>
-        // Build agent chain: [preferred, ...fallbacks]
+        // An explicit per-agent model chain is an authorization boundary. An
+        // unresolved explicit chain fails closed; it must not fall back to the
+        // global chain or add configured-but-unlisted models via reserveTier.
         val agentChain = cfg.preferred.toList ++ cfg.fallbacks
-        for
-          resolved <- agentChain.traverse(ref => getCandidateForRef(ref))
-          agentCandidates = resolved.flatten
-          b <- if agentCandidates.nonEmpty then IO.pure(agentCandidates) else getCandidatesUnfiltered()
-        yield b
-    for
-      candidates <- base
-      config <- configRef.get
-    yield reserveTier(config, candidates)
+        agentChain.traverse(ref => getCandidateForRef(ref)).map(_.flatten)
+    base
 
   end getCandidatesForAgentUnfiltered
 
@@ -682,6 +657,26 @@ class ProviderRegistry(
       }
     }
 
+  /** Explain configured models excluded by the selected chain authorization. */
+  def allowlistExclusionsFor(
+    selectedChain: List[String],
+    agentModel: Option[AgentModelConfig]
+  ): IO[List[(String, CandidateSkipCause)]] =
+    configRef.get.map { config =>
+      val allowed = agentModel match
+        case Some(agent) if agent.preferred.isDefined || agent.fallbacks.nonEmpty =>
+          agent.preferred.toList ++ agent.fallbacks
+        case _ => selectedChain
+      val allowedSet = allowed.toSet
+      config.llm.providers.toList.sortBy(_._1).flatMap { case (providerId, provider) =>
+        if isDisabled(provider) then Nil
+        else provider.models.sortBy(_.id).flatMap { model =>
+          val ref = s"$providerId/${model.id}"
+          Option.when(!allowedSet.contains(ref))(ref -> CandidateSkipCause.NotConfigured("not in selected chain"))
+        }
+      }
+    }
+
   // ============================================================
   // 候选集可观测面（provider-config-vs-runtime-mismatch 批，2026-11-05 作者令）
   // ============================================================
@@ -717,9 +712,8 @@ class ProviderRegistry(
    * 「作者要能自查是不是漏了/多了」）。
    *
    * 输出 = 与请求路径**同一个**取链函数（[[getCandidatesForAgentUnfiltered]]）
-   * 的有序结果，逐项标注来源：
-   *   - `chain`  —— 显式链（agent.json `model` / Nebula 主链 / seed 兜底）里写的；
-   *   - `reserve` —— 链未引用、但**配置里存在**而被 [[reserveTier]] 追加的。
+   * 的有序结果；显式链引用如因未配置/disabled 被跳过，显示在 `chainRefsDropped`；
+   * provider/model 仅配置存在但链未授权则只留配置面，不进入实际候选。
    *
    * 另外三块是判据面（本批核心）：
    *   - `chainRefsDropped`：链里写了、但配置里没有（或被 `disabled: true` 摘除）
@@ -757,14 +751,19 @@ class ProviderRegistry(
         case None => io.circe.Json.obj("known" -> false.asJson)
         case Some(d) =>
           val active = runtimeRefs.filterNot(r => d.disabled.contains(r.takeWhile(_ != '/')))
+          val selectedRefs =
+            val configured = nebflow.shared.FallbackChain.configured(config)
+            if configured.nonEmpty then configured
+            else nebflow.core.SchemePolicy.nebulaChain().toList.flatMap(a => a.preferred.toList ++ a.fallbacks)
+          val authorizedRefs = selectedRefs.filterNot(ref => dropped.contains(ref) && chainRefs.contains(ref)).toSet
           val runtimeProviders = config.llm.providers.keySet
           io.circe.Json.obj(
             "known" -> true.asJson,
-            "inSync" -> ((d.activeRefs == active) && (d.providers == runtimeProviders)).asJson,
+            "inSync" -> ((authorizedRefs == active) && (d.providers == runtimeProviders)).asJson,
             "onlyInRuntime" -> (runtimeProviders -- d.providers).toList.sorted.asJson,
             "onlyOnDisk" -> (d.providers -- runtimeProviders).toList.sorted.asJson,
-            "refsOnlyInRuntime" -> (active -- d.activeRefs).toList.sorted.asJson,
-            "refsOnlyOnDisk" -> (d.activeRefs -- active).toList.sorted.asJson
+            "refsOnlyInRuntime" -> (active -- authorizedRefs).toList.sorted.asJson,
+            "refsOnlyOnDisk" -> (authorizedRefs -- active).toList.sorted.asJson
           )
       io.circe.Json.obj(
         "agent" -> agentName.asJson,

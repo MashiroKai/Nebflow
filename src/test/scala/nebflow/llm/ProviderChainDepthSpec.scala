@@ -64,7 +64,7 @@ class ProviderChainDepthSpec extends CatsEffectSuite:
   private def refs(cs: List[ModelCandidate]): List[String] =
     cs.map(c => s"${c.providerId}/${c.model}")
 
-  test("T1: 未引用的三根 provider/model 进链 ⇒ 链深 ≥3（单点在结构上不可达）") {
+  test("T1: agent 显式链外的配置模型不得被 reserveTier 扩权") {
     for
       reg <- mkRegistry(liveLikeConfig)
       cs <- reg.getCandidatesForAgent(Some(generalChain))
@@ -72,26 +72,22 @@ class ProviderChainDepthSpec extends CatsEffectSuite:
       val r = refs(cs)
       // 预设链前缀原样、不插队（REST「当前模型」显示取 healthy.head）
       assertEquals(r.take(3), presetRefs, s"预设链前缀必须原样保留，实际链 = $r")
-      // 改前读数：链 = 恰 3 条 preset ⇒ 下面三条全部缺
+      // 只有 general preset 明确列出的三条属于该 agent；储备/provider inventory 不得扩权。
       unreferencedRefs.foreach { u =>
-        assert(r.contains(u), s"$u 必须进候选链（改前读数 = 链深 3 且缺此三条），实际链 = $r")
+        assert(!r.contains(u), s"$u 未列入 agent allowlist，不得进候选链，实际链 = $r")
       }
-      assert(r.size >= 3, s"链深必须 ≥3，实际 ${r.size}: $r")
+      assertEquals(r, presetRefs, s"候选只能由明确链授权，实际 ${r.size}: $r")
       assertEquals(r.size, r.distinct.size, s"候选链不得出现重复项: $r")
   }
 
-  test("T2: 储备层追加在链尾、且不重复链上已有项（含其它未引用 model）") {
+  test("T2: 未引用配置项不得追加到 agent 链尾") {
     for
       reg <- mkRegistry(liveLikeConfig)
       cs <- reg.getCandidatesForAgent(Some(generalChain))
     yield
       val r = refs(cs)
       val tail = r.drop(presetRefs.size)
-      presetRefs.foreach { p =>
-        assert(!tail.contains(p), s"已引用的 $p 不得再进储备层尾部，实际尾部 = $tail")
-      }
-      // 同一「未被引用」规则也覆盖 zhipu/GLM-5.3（nebflow.json 已存在、三 preset 未引用）
-      assert(tail.contains("zhipu/GLM-5.3"), s"未引用项 zhipu/GLM-5.3 应一并纳入储备层，实际尾部 = $tail")
+      assertEquals(tail, Nil, s"未明确列入的模型不得作为储备链，实际尾部 = $tail")
   }
 
   test("T3: 配置实存 model 少于 3 根时链深不虚增（储备层只取配置实存项，禁编造）") {
@@ -101,7 +97,7 @@ class ProviderChainDepthSpec extends CatsEffectSuite:
     yield assertEquals(refs(cs), List("solo/m1"), "配置只有一根时链深 = 1，不得凭空造候选")
   }
 
-  test("T4: 储备层顺序确定（providerId → model 字典序），同配置两次调用链序一致") {
+  test("T4: agent 链顺序确定且不受 provider inventory 排序影响") {
     for
       reg <- mkRegistry(liveLikeConfig)
       a <- reg.getCandidatesForAgent(Some(generalChain))
@@ -109,7 +105,6 @@ class ProviderChainDepthSpec extends CatsEffectSuite:
     yield
       val r = refs(a)
       assertEquals(refs(b), r, s"同配置下链序必须可复现（Map 迭代序不保证），实际 $r")
-      val tail = r.drop(presetRefs.size)
-      assertEquals(tail, tail.sorted, s"储备层须按 providerId → model 字典序，实际尾部 = $tail")
+      assertEquals(r, presetRefs, s"provider inventory 不得更改已授权链序，实际 $r")
   }
 end ProviderChainDepthSpec

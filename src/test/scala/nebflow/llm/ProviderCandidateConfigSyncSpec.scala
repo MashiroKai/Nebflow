@@ -17,14 +17,13 @@ import scala.concurrent.duration.*
  *
  * 本 spec 只钉**候选集 ↔ 配置**这一条线（候选完整性/单候选失败不终止整链由
  * fallback 批负责，不在此重复）。四条机械断言（工件报告 §⑤ 逐条对应）：
- *   A1 删掉 provider A ⇒ 运行期候选集不含 A（**仅该 provider 也不能留储备副本**）；
- *   A2 加回 A ⇒ 候选集立刻含 A（热生效，不重启）；
+ *   A1 显式 agent 链所列模型 provider 被删除 ⇒ 运行期候选集立即不含它；
+ *   A2 仅加回 provider 配置仍不授权（候选资格须由 agent 链明确授予）；
  *   A3 盘上配置与内存快照不一致 ⇒ 报告面 `drift.inSync=false` 且名单点名（可见、不静默）；
  *   A4 配置里只剩 1 个可用 provider ⇒ 候选集恰为那一个。
  *
  * 另加两条**根因**断言（本批实测查明的两条复活/漂移通道）：
- *   R1 `reserveTier`：配置里存在但链未引用的 provider 会被追加进候选集
- *      ⇒ 「我只在 /model 链里删了它」不等于删掉，唯一出口是删 provider 条目；
+ *   R1 显式链外模型由配置残留但不进入该 agent 候选；
  *   R2 旁路写者的 lost update：`nebflow.json` 的多名无锁手术式写者
  *      （PluginRegistry / PluginDispatchPolicy / PluginBlockPolicy / SocialChannels …）
  *      与 `updateConfig` 交叉时能把刚删掉的 provider 整块写回 ⇒
@@ -98,8 +97,8 @@ class ProviderCandidateConfigSyncSpec extends CatsEffectSuite:
       "cmdcode" -> List("deepseek/deepseek-v4.1-flash")
     )
 
-  // ── R1：reserveTier —— 「链里删了」不等于「删了」──────────────
-  test("R1 配置里存在但链未引用的 provider 仍进候选集（reserve），origin 可区分") {
+  // ── R1：配置存在但 agent 链未授权 ⇒ 不得进入候选 ──────────────
+  test("R1 配置里存在但链未引用的 provider 不进 agent 候选集") {
     withTempRoot { root =>
       IO {
         writeConfig(root, prodLike)
@@ -108,11 +107,8 @@ class ProviderCandidateConfigSyncSpec extends CatsEffectSuite:
         reg.candidateReport().map { j =>
           val refs = reportRefs(j)
           assertEquals(refs.head, "zhipu/glm-5.3-flash", s"链头必须排第一，实际 $refs")
-          assert(
-            refs.contains("kimi/kimi-for-coding"),
-            s"配置里存在的 kimi 即使没被链引用也会被 reserveTier 追加，实际 $refs"
-          )
-          assertEquals(originOf(j, "kimi/kimi-for-coding"), Some("reserve"), "kimi 的来源应标 reserve")
+          assert(!refs.contains("kimi/kimi-for-coding"), s"未列入当前 agent 链的 kimi 不得进入候选集，实际 $refs")
+          assertEquals(originOf(j, "kimi/kimi-for-coding"), None, "未授权模型不得有候选来源")
           assertEquals(originOf(j, "zhipu/glm-5.3-flash"), Some("chain"), "链头来源应标 chain")
         }
       }
@@ -132,7 +128,7 @@ class ProviderCandidateConfigSyncSpec extends CatsEffectSuite:
           _ <- reg.reloadConfig(None)
           after <- reg.candidateReport()
         yield
-          assert(reportRefs(before).exists(_.startsWith("kimi/")), "删除前 kimi 必须在候选集里（前置条件）")
+          assert(reportRefs(before).exists(_.startsWith("kimi/")), "删除前 agent.json 明确列入 kimi，应在候选集")
           val refs = reportRefs(after)
           assert(!refs.exists(_.startsWith("kimi/")), s"删除后候选集不得含 kimi，实际 $refs")
           // 删除腿连带 scrub 掉 agent.json 里的 kimi 链引用（ConfigService.scrubAgentModelRefs）
@@ -165,7 +161,7 @@ class ProviderCandidateConfigSyncSpec extends CatsEffectSuite:
           after <- reg.candidateReport()
         yield
           assert(!reportRefs(before).exists(_.startsWith("kimi/")), "加回前不得有 kimi（前置条件）")
-          assert(reportRefs(after).contains("kimi/kimi-for-coding"), s"加回后必须立刻进候选集，实际 ${reportRefs(after)}")
+          assert(!reportRefs(after).contains("kimi/kimi-for-coding"), s"仅加 provider 配置不能授权候选，实际 ${reportRefs(after)}")
       }
     }
   }
@@ -238,7 +234,7 @@ class ProviderCandidateConfigSyncSpec extends CatsEffectSuite:
           assert(!afterDelete, "删除当时必须真的不在盘上")
           assert(resurrected, "旁路旧底稿回写后 kimi 必须复活（本通道的实证）")
           assertEquals(leftover, List("kimi"), "守卫必须点名未落地的 kimi ⇒ 调用方上浮失败，禁止静默")
-          assert(reportRefs(report).exists(_.startsWith("kimi/")), "复活后的配置会重新进入候选集（这就是今天的病症）")
+          assert(!reportRefs(report).exists(_.startsWith("kimi/")), "仅配置复活不构成当前 agent 的授权")
       }
     }
   }

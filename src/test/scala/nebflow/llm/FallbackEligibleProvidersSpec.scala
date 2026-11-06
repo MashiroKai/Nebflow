@@ -181,6 +181,19 @@ class FallbackEligibleProvidersSpec extends CatsEffectSuite:
     }
   }
 
+  test("configured but unlisted provider receives no request") {
+    val spec = List("allowed" -> "ok", "configured-only" -> "ok")
+    val chain = AgentModelConfig(preferred = Some("allowed/m1"), fallbacks = Nil)
+    withFarm(spec) { (ports, hits) =>
+      runOnce(mkConfig(ports), req("eligibility-no-request", Some(chain))).map { case (res, refs) =>
+        assertEquals(refs, List("allowed/m1"))
+        assert(res.isRight, s"allowed model should complete: $res")
+        assertEquals(hits("allowed").get(), 1)
+        assertEquals(hits("configured-only").get(), 0, "provider config is not dispatch authorization")
+      }
+    }
+  }
+
   // =====================================================================
   // 验收 2：1 个 auth 403 + 3 正常 ⇒ 成功（auth 不许终止整链）
   // =====================================================================
@@ -326,12 +339,8 @@ class FallbackEligibleProvidersSpec extends CatsEffectSuite:
   }
 
   // =====================================================================
-  // A7（派发钉链剔除，缺陷批 2026-11-06）：provider-concurrency 批移交的
-  // `UTSC/glm-5.3-flash SILENTLY EXCLUDED（无原因剔除）` 家族——派发时刻因满载
-  // 被链首扫描剔出的候选必须带 provider-full 原因进终局账本，不许静默消失。
-  // 语义边界（如实钉死）：pin 剔的是**链首优先级**——reserveTier 会把被剔 ref
-  // 追加回链尾当最后手段；账本记的是「派发那一刻它被跳过」这个事实（seeded
-  // 层 first-wins：同一 ref 即使后来又被健康面挡住，原因仍 = provider-full）。
+  // A7（派发钉链剔除）：pin 路径记录的候选若不在该 agent 的授权链中，
+  // 仅保留排除原因，不可通过储备层回补为请求候选。
   // =====================================================================
   test("A7(派发钉链): 满载被剔的候选带 provider-full 原因进终局账本——不再 SILENTLY EXCLUDED") {
     val spec = List("p1" -> "ok", "p2" -> "fail404", "p3" -> "fail404")
@@ -347,13 +356,9 @@ class FallbackEligibleProvidersSpec extends CatsEffectSuite:
           pinSkips = List("p1/m1" -> CandidateSkipCause.ProviderFull(10, 10))
         ),
         // p1/p3 健康面判死 ⇒ 三根里只有 p2 被真实尝试且败（partially-tried 形态）
-        preDown = List("p1" -> "m1", "p3" -> "m1")
+        preDown = List("p3" -> "m1")
       ).map { case (res, chainRefs) =>
-        assertEquals(
-          chainRefs,
-          List("p2/m1", "p3/m1", "p1/m1"),
-          "链 = 钉链物化形态 + 储备层回补（pin 剔的是优先级，不是资格）"
-        )
+        assertEquals(chainRefs, List("p2/m1", "p3/m1"), "pin 剔除模型不在授权链中，不可由 reserveTier 回补")
         val err = res.left.getOrElse(fail("A7 必须失败（p2 必败 + p1/p3 health-down）"))
         val msg = err.getMessage
         assert(
@@ -362,18 +367,16 @@ class FallbackEligibleProvidersSpec extends CatsEffectSuite:
         )
         assert(msg.contains("reason: partially-tried"), s"试 1 跳 2 ⇒ partially-tried:\n$msg")
         assert(
-          msg.contains("[skipped] p1/m1 — provider-full (10 of 10 actor slots in use at dispatch"),
-          s"派发钉链剔除必须带原因进表（UTSC 形态根治判据）；且 seeded 层 first-wins，" +
-            s"不被后来的 health-down 改写:\n$msg"
+          msg.contains("[skipped] p1/m1 — not-configured (not in selected chain)"),
+          s"未授权的 pin-skipped 模型须以 allowlist 原因入账，不得借 pin 回补:\n$msg"
         )
-        assert(!msg.contains("[skipped] p1/m1 — health-down"), s"first-wins：p1 的原因必须是 provider-full:\n$msg")
         assert(
           msg.contains("[skipped] p3/m1 — health-down (simulated 429"),
           s"健康面剔除带原因（半开试探倒数随时刻浮动，断言稳定前缀）:\n$msg"
         )
         assert(msg.contains("[tried]   p2/m1"), s"试过的候选进 tried 表:\n$msg")
-        assert(msg.contains("chain 3: tried 1, skipped 2"), s"处置表计数必须如实:\n$msg")
-        assert(msg.contains("expected from config: 3 ref(s) — none silently excluded"), s"三根全有账，无一静默:\n$msg")
+        assert(msg.contains("chain 2: tried 1, skipped 2"), s"处置表计数必须如实:\n$msg")
+        assert(msg.contains("expected from config: 3 ref(s)"), s"配置全集计数必须如实:\n$msg")
         assert(!msg.contains("SILENTLY EXCLUDED"), s"有原因的剔除不得误报成静默排除:\n$msg")
         assertEquals(hits("p1").get(), 0, "被健康面跳过的 p1 不该收到请求（尽管它在链尾）")
         assertEquals(hits("p3").get(), 0, "被健康面跳过的 p3 不该收到请求")
@@ -383,10 +386,9 @@ class FallbackEligibleProvidersSpec extends CatsEffectSuite:
   }
 
   // =====================================================================
-  // A8（钉链语义边界·正向）：pin 剔的是链首优先级——满载 provider 的候选经
-  // reserveTier 回补链尾，前面的根全败时它仍被真实尝试并承接（最后手段）。
+  // A8：provider 满载导致其不在 agent 授权链，后续故障不得让它成为隐式 fallback。
   // =====================================================================
-  test("A8(钉链回补): 派发时满载被剔的候选回补链尾——前面的根全败时它仍被真实尝试") {
+  test("A8(钉链不授权): 派发时剔除的候选不通过隐式 fallback 真实调用") {
     val spec = List("p1" -> "ok", "p2" -> "fail404", "p3" -> "fail404")
     val pinnedChain = AgentModelConfig(preferred = Some("p2/m1"), fallbacks = List("p3/m1"))
     withFarm(spec) { (ports, hits) =>
@@ -397,10 +399,10 @@ class FallbackEligibleProvidersSpec extends CatsEffectSuite:
           Some(pinnedChain),
           pinSkips = List("p1/m1" -> CandidateSkipCause.ProviderFull(10, 10))
         )
-      ).map { case (res, _) =>
-        val resp = res.getOrElse(fail(s"A8 必须成功（p1 经储备层回补承接），实际 = ${res.left.map(_.getMessage)}"))
-        assertEquals(resp.meta.providerId, "p1", "p2/p3 全败后必须由链尾回补的 p1 承接")
-        assertEquals(hits("p1").get(), 1, "p1 必须被真实尝试恰 1 次")
+      ).map { case (res, chainRefs) =>
+        assertEquals(chainRefs, List("p2/m1", "p3/m1"))
+        assert(res.isLeft, "授权链用尽应失败，不能隐式回补 p1")
+        assertEquals(hits("p1").get(), 0, "未授权的 p1 不得被真实尝试")
         assertEquals(hits("p2").get(), 1, "链首 p2 先试")
         assertEquals(hits("p3").get(), 1, "尾链 p3 次之")
       }
