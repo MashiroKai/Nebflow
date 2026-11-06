@@ -721,6 +721,8 @@ export default {
   // (contract = main card case-1 interface list + A-4).
   'contacts.createGroup': 'New Group',
   'contacts.createGroupTitle': 'Start a group chat',
+  // Unified-panel batch (2026-11-06): label for the top-left back round button.
+  'contacts.back': 'Back',
   'contacts.createGroupName': 'Group name',
   // Create-group panel skeleton, 4 sections (2026-09-16 visual rework): input
   // placeholder example / list section label / empty-state guidance. Landed in

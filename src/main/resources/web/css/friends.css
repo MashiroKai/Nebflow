@@ -2236,12 +2236,13 @@ body > .fm-context-menu { z-index: 10001; }
 }
 
 /* ══ 建群对话框（fm-modal 骨架复用；好友多选名册）════════════════════════════
-   2026-09-16 视觉重做（作者 07:46 令：「至少群聊面板很丑」）。本段 = 该面板
-   **唯一 CSS 落点**；骨架四段 = ① 标题区（`.fm-modal-header`，既有骨架）→
-   ② 输入区 / ③ 列表区（`.fm-pick-body` 内的两个 `.fm-gs-section`）→
-   ④ 操作区（`.fm-pick-foot`）。②③ 的章节标签 / 输入行取**群设置抽屉同族**类名
-   （`.fm-gs-section` / `.fm-gs-title` / `.fm-gs-title-row` / `.fm-gs-rename` /
-   `.fm-gs-rename-input`）⇒ 两面板层次同源（禁另起一套间距 / 字号档）。
+   2026-09-16 视觉重做（作者 07:46 令：「至少群聊面板很丑」）；**2026-11-06 统一
+   面板批**（作者 08:48 令）改三段 = ① 顶栏（`.fm-modal-header` + 左上返回圆钮
+   `.fm-pick-back` + 标题一次）→ ② 主体（`.fm-pick-body` 内的两个
+   `.fm-gs-section`）→ ③ 右下悬浮加号（`.fm-pick-fab`）。原 ④ 底部操作区
+   （`.fm-pick-foot` + `button.fm-create-submit`）整件退役。②的章节标签 / 输入行取
+   **群设置抽屉同族**类名（`.fm-gs-section` / `.fm-gs-title` / `.fm-gs-title-row` /
+   `.fm-gs-rename` / `.fm-gs-rename-input`）⇒ 两面板层次同源（禁另起一套间距 / 字号档）。
    🔴 零新增色值字面量：本段新增声明全部引用既有 token（`--sapphire-tint-*` /
    `--sapphire-edge-*` / `--glass-*` / `--color-*`），无十六进制、无函数式色值。
    🔴 作用域收窄（禁回归）：`.fm-pick-list` / `.fm-pick-row` / `.fm-pick-tick` 同时
@@ -2362,27 +2363,52 @@ body > .fm-context-menu { z-index: 10001; }
 .fm-pick-modal .fm-pick-row.on .fm-pick-tick svg { opacity: 1; }
 /* 空态引导（0 人可邀）：可读引导文案（i18n `contacts.createGroupEmpty`） */
 .fm-pick-modal .fm-pick-list .fm-empty { padding: 26px var(--ds-space-4); }
-/* 创建键尺寸档：材质与四态（rest / hover / active / disabled）由 `sapphire.css`
-   的 Glass 主键 `:is()` 族**单源**承载（与发送键族同一条规则 ⇒ 禁用语义零复制）。
-   本行只给本面字号 = 12px（= 抽屉动作键 `.fm-gs-action` 既有字号档），几何沿用
-   族的 10px 圆角 + 5px 12px 内距 ⇒ 零新增几何档、零状态声明。
-   登记偏离（1 条，机械读数见本批报告 §⑥）：本键**不带 `.cfg-btn`**（它不是表单
-   `.cfg-btn` 家族的表单键，family 成员里也只有 ③ 带该类），故 hover / active 态
-   的 `color` 恒为 `cfg-btn-primary` 白墨；带 `.cfg-btn` 的族成员会在这两态被
-   legacy `.cfg-btn:hover { color: var(--color-frame-text-bright) }`（sidebar.css）
-   改成 near-black —— 既有行为，本批**不复制**（复制 = 把绿底上的深墨带进新面板）。
-   ⇒ §⑥ 四态逐值对照里只有 hover/active 的 `color` 一项刻意不等；
-   disabled / rest / 掉线 三档**逐值全等**（含 `color`）。 */
-.fm-create-submit { font-size: var(--ds-fs-btn); }
-/* 操作区：主键右贴边 + 与主体分段的分隔线（与抽屉各段同族的「段」语义） */
-.fm-pick-foot {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
+/* ══ 统一面板批（2026-11-06 作者令 08:48）════════════════════════════════════
+   形态三条 → 本块三条（只承载**落位与尺寸档**）：
+     · 顶栏 = 左上返回圆钮 + 标题（标题全局面只此一处，字阶取项目面板同一套）
+     · 关闭件 = 右上 X 退役（原 `.fm-modal-close` 不再发射）
+     · 主操作 = 右下悬浮圆形加号（原 `.fm-pick-foot` 底部文本键「创建」整件退役）
+   两条圆钮**零自有材质**：底色/模糊/描边/hover/active/disabled/focus-visible 全部
+   归 css/glass.css「圆钮级浮件档」的 `.g2-fab` 成员（与 #deck-fab / .ask-fab /
+   页面壳返回钮同一条规则），毛玻璃底归 `.nf-glass` 单源 —— 本文件不复制一份。 */
+.fm-pick-header {
   gap: var(--ds-space-2);
-  padding: var(--ds-space-3) var(--ds-space-4);
-  border-top: 1px solid var(--glass-etched-border);
+  /* 20 → 12：圆钮左缘与 canvas 浮钮同缘（--cv-head-inset-x 12），钮外不再多一档 8px 空垫 */
+  padding-left: var(--ds-space-3);
+}
+/* 左上返回圆钮：几何 = `.g2-fab` 基准（40px 圆 / 图标 --cv-icon 18px），本类只做
+   flex 收口。手机 48 档（= 页面壳 `.mobile-back-btn` 同档）在 mobileLayer.css 统一块。 */
+.fm-pick-back {
+  flex-shrink: 0;
+  align-self: center;
+}
+/* 右下悬浮加号：尺寸/圆角/图标 = `.g2-fab`（--cv-size-circle 40 / --cv-icon 18）；
+   离边距 = **消费**既有 Canvas 右下悬浮圆钮的两条落位令牌（.ask-fab 的
+   --ask-fab-gap 14 / --ask-fab-bottom 24，那边改这边跟手，禁写第二份字面量）；
+   层级 = 本卡片内最高一层（包含块 = `.cfg-modal` 的 relative，正文与滚动容器均在
+   其下；与 body 级 250 不同层带，故取本层 2 —— 同一语义「压在内容之上」）。
+   🔴 圆钮族零投影（flat-button 批 2026-11-05）：`.nf-glass` 自带的 --nf-glass-shadow
+   在本枚圆钮上显式退役，否则同一族里会长出「有影的第二种圆钮」。 */
+.fm-pick-fab {
+  position: absolute;
+  right: var(--ask-fab-gap, 14px);
+  bottom: calc(var(--ask-fab-bottom, 24px) + env(safe-area-inset-bottom, 0px));
+  z-index: 2;
+}
+/* 圆钮族零投影（flat-button 批 2026-11-05）：`.nf-glass` 是**面级**浮件的玻璃工具类，
+   它自带 `--nf-glass-shadow` 三档栈；同一族里的圆钮（#deck-fab / .ask-fab /
+   .mobile-back-btn）实测 box-shadow = none。本面两枚圆钮因此显式摘影 —— 不摘就会在
+   「同一份毛玻璃」里长出**有影的第二种圆钮**（正是作者判死的那种分裂）。
+   特异性 (0,2,0) > `.nf-glass` (0,1,0)：friends.css 在 glass.css 之前加载
+   （index.html:69 vs :117），故必须压过它，不能靠文件序。 */
+.fm-pick-modal .fm-pick-back,
+.fm-pick-modal .fm-pick-fab {
+  box-shadow: none;
+}
+/* 主体底部让位：加号压在列表右下角之上 ⇒ 末行不得落进它的命中盒
+   （让位 = 钮下离距 + 钮径 + 一档缝）。 */
+.fm-pick-modal .fm-pick-body {
+  padding-bottom: calc(var(--ask-fab-bottom, 24px) + var(--cv-size-circle, 40px) + var(--ds-space-3));
 }
 
 /* 群邀请区（联系人面板；行结构复用 fm-req-row，标题复用 fm-req-group） */
