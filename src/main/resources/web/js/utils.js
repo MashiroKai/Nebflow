@@ -10,8 +10,10 @@ import { voiceEnabled } from './featureFlags.js';
 // outputBlockEnabled 读 nebflow.json `outputBlock.enabled`（缺席 = 关），
 // 与渠道剥离面同一键。同模块、无导入环。
 import { outputBlockEnabled } from './featureFlags.js';
-// 四会话统一批 2026-11-05：回到底部胶囊 = 组件唯一实现（好友/群/设备会话窗同一枚）。
-import { createScrollBackPill } from './scrollBackPill.js';
+// 胶囊单实现批 2026-11-06（作者令「回到底部的按钮不要自己造，要跟新消息通知/
+// 搜索聊天记录跳转使用同一套」）：↓N / 回到底部 / 搜索回跳 = 同一工厂、同一类名
+// `.scroll-new-pill`、同一形态声明（css/chat.css）。
+import { createScrollPill } from './scrollPill.js';
 
 // ── Exported protocol typedefs (P2-3 core contracts) ──────────────────────
 
@@ -2117,10 +2119,11 @@ function ensureScrollPill(view) {
   const host = pillHost(view);
   if (!host) return null;
   const chat = viewChat(view) || view.dom.chat;
-  // 四会话统一批（2026-11-05）：胶囊本体 = `js/scrollBackPill.js` 唯一组件
-  // （好友/群/设备会话窗同一个）。本文件只保留 view 级**状态**（count 计数 /
-  // 贴底 latch），几何与显隐口径全在组件里 —— 改一处四处同时改。
-  rec.pill = createScrollBackPill({
+  // 胶囊单实现批（2026-11-06）：本体 = `js/scrollPill.js` 唯一工厂，与
+  // 好友/群/设备会话窗（messages.js）、搜索回跳（searchReturnPill.js）同一枚
+  // `.scroll-new-pill`（同一形态声明 css/chat.css）。本文件只保留 view 级**状态**
+  // （count 计数 / 贴底 latch），几何与显隐口径全在组件里 —— 改一处四处同时改。
+  rec.pill = createScrollPill({
     host,
     scrollEl: chat,
     // 底部参照件：主窗 = #input-area（多行输入会长高，组件每次落位现算）；
@@ -2138,8 +2141,8 @@ function ensureScrollPill(view) {
 }
 
 /** Park the pill just above whatever sits at the bottom of the view.
- *  四会话统一批：落位公式已上抬组件（`scrollBackPill.park`，视口矩形反算，
- *  手机层收编窗与桌面窗同一式）——本文件不再保留第二份 offset 算术。 */
+ *  单实现批：落位公式只在组件里（`scrollPill.park`，视口矩形反算，手机层收编窗
+ *  与桌面窗同一式）——本文件不再保留第二份 offset 算术。 */
 function positionScrollPill(view, el) {
   const rec = pillRecord(view);
   if (rec.pill) rec.pill.refresh();
@@ -2218,11 +2221,11 @@ export function syncScrollPill(view, atBottom) {
   rec.atBottom = atBottom;
   if (atBottom) rec.count = 0; // reached the bottom (any cause) → nothing unseen
   // 显隐口径单源在组件：无未读但距底 ≥ SHOW_AFTER_PX ⇒ 「回到底部」；
-  // 有未读 ⇒ 「↓ N 条新消息」（作者令 2026-11-05 18:11）。
+  // 有未读 ⇒ 「↓ N 条新消息」——同一枚胶囊的两个文案档（单实现批 2026-11-06）。
   pill.sync({ count: rec.count, atBottom });
 }
 
-/** Pill click 腿已上抬组件（`scrollBackPill.js` 的 `scrollToBottom`：平滑贴底 +
+/** Pill click 腿已上抬组件（`scrollPill.js` 的 `scrollToBottom`：平滑贴底 +
  *  计数清零 + 尊重 reduced-motion）——本文件不再留第二份点击实现。 */
 
 /**

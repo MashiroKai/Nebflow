@@ -69,9 +69,10 @@ import { formatHm, formatFooterTime, bindTimeToggle, TIME_FORMAT_CHANGED } from 
 // follow 批（2026-10-08）：贴底判定 `isAtBottom`（AT_BOTTOM_PX 单源）也从这一份
 // 实现出 —— 到达跟随、锚点补偿、回底胶囊三处共用同一判据，本面内禁第二个数。
 import { preserveScrollAnchor, isAtBottom } from './msgScrollAnchor.js';
-// 回到底部胶囊（四会话统一批 2026-11-05）：主会话 / 好友 / 群 / 设备**同一实现**
-// （`js/scrollBackPill.js`）。本模块只持「未读计数」宿主状态，几何/显隐全在组件。
-import { createScrollBackPill } from './scrollBackPill.js';
+// 会话面胶囊（单实现批 2026-11-06）：主会话 / 好友 / 群 / 设备**同一实现**
+// （`js/scrollPill.js`）——与「↓ N 条新消息」「搜索回跳」同一枚 `.scroll-new-pill`。
+// 本模块只持「未读计数」宿主状态，几何/显隐/形态全在组件与 chat.css 单源。
+import { createScrollPill } from './scrollPill.js';
 // 进场落底「武装窗」（手机端进场落顶修复批 · 2026-11-02）：一次性同步钉底对
 // **容器搬家/异步撑高**两类时序都只能赢一次 —— 本模块的会话窗在手机层会被
 // `navController.watchChatModal` re-parent 进页面体（迁移即把 scrollTop 归零），
@@ -1568,14 +1569,15 @@ function renderChatModal(conv) {
   // 本窗滚动判定点**只有这一处**监听：每次滚动重读贴底态并同步胶囊（回底即清零）；
   // 只读几何 + 胶囊态，**不写滚动位**（锚点补偿仍归 preserveScrollAnchor 单点）。
   flow.addEventListener('scroll', () => fmSyncFollowPill(), { passive: true });
-  // 胶囊 = **四处共用的唯一组件**（四会话统一批 2026-11-05，作者令「主会话/群/
-  // 设备/好友……应该有一个胶囊按钮 点击可回到底部。正好我们这批要做的就是他们
-  // 三者的统一」）：本体/显隐口径/落位/平滑贴底全在 `js/scrollBackPill.js`，
-  // 主会话面（utils.js `syncScrollPill`）走**同一个** `createScrollBackPill`。
+  // 胶囊 = **唯一组件**（单实现批 2026-11-06，作者令「回到底部的按钮不要自己造，
+  // 要跟新消息通知 搜索聊天记录跳转 使用同一套」）：本体/显隐口径/落位/平滑贴底
+  // 全在 `js/scrollPill.js`，主会话面（utils.js `syncScrollPill`）与搜索回跳
+  // （searchReturnPill.js）走**同一个** `createScrollPill`、同一类名
+  // `.scroll-new-pill`、同一形态声明（css/chat.css）。
   // 本窗只保留「未读计数」这一项宿主状态（`fmUnseenCount`），几何零算术。
   // 落位参照 = 本窗输入条 `.fm-input-bar` 顶缘（引用条/多选条/输入条三档高度
   // 变化都由它现算，零重叠，读数见批文档断言表）。
-  const fmPillNew = createScrollBackPill({
+  const fmPillNew = createScrollPill({
     host: modal,
     scrollEl: flow,
     anchor: () => modal.querySelector('.fm-input-bar'),
@@ -3757,10 +3759,10 @@ function prependMessages(older) {
 // 归零重挂，`closeChat` 随 overlay.remove() 一起弃置（胶囊是 modal 子节点）。
 // 计数语义与 agent 面 `syncScrollPill` 对齐：只数「离开贴底区后到达的消息条目」；
 // 本机所发不计数（本机发送即回底，计数同拍归零）。
-// 🔴 四会话统一批：胶囊本体/显隐口径/落位/平滑贴底全部上抬 `scrollBackPill.js`
-//    （与主会话面同一个 `createScrollBackPill`）；本文件只剩「未读计数」一项宿主状态。
+// 🔴 单实现批：胶囊本体/显隐口径/落位/平滑贴底全部上抬 `scrollPill.js`
+//    （与主会话面 / 搜索回跳同一个 `createScrollPill`）；本文件只剩「未读计数」一项宿主状态。
 let fmUnseenCount = 0;
-/** @type {ReturnType<typeof createScrollBackPill>|null} */
+/** @type {ReturnType<typeof createScrollPill>|null} */
 let fmPill = null;
 
 /** 胶囊唯一同步点（滚动监听 / 到达计数 / 回底腿都汇到这里；幂等、自愈）：

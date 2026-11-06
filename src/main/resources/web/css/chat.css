@@ -4373,11 +4373,18 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
      values); both themes follow the global variables automatically. */
 }
 
-/* ---------- "↓ N new messages" pill (A-branch, 2026-09-11) ----------
-   Raised when message rows arrive while the user is reading history (see
-   utils.js syncScrollPill for the row-level counter). One element per
-   ChatView, positioned absolutely in #main (primary) or .flow-agent-modal
-   (agent popups) and parked just above the input bar / footer by JS.
+/* ---------- 会话面浮条胶囊 = 全族唯一一枚（本段 = 唯一形态声明）----------
+   作者令 2026-11-06 07:39 逐字：「我们消息框的回到底部的按钮不要自己造 要跟
+   新消息通知 搜索聊天记录跳转 使用同一套」。
+   ⇒ 三种消费 = 同一枚胶囊，只有文案与点击行为不同：
+     ① 新消息通知「↓ N 条新消息」 utils.js syncScrollPill（主窗 + 每个 agent 弹窗）
+     ② 回到底部「回到底部」        同一处（无未读、距底 ≥ 320px 时）+ 好友/群/设备
+                                   messages.js fmSyncFollowPill
+     ③ 搜索回跳「回到跳转前位置」  searchReturnPill.js
+   本体 = js/scrollPill.js 的 createScrollPill（**唯一实现**，三处 import 同一工厂）；
+   落位 = 组件按视口矩形反算的 bottom（宿主底缘 − 输入区顶缘 + 12）。
+   本段以外的第二份胶囊形态（曾有的 .scroll-back-pill）已整件退役 ——
+   改形态只改这里，三消费同时生效。
    Zero new colors: the pill is the existing glass material + text tokens. */
 .scroll-new-pill {
   position: absolute;
@@ -4428,59 +4435,12 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   .scroll-new-pill:hover, .scroll-new-pill:active { transform: translateX(-50%); }
 }
 
-/* ---------- 「回到底部」胶囊（四会话统一批 2026-11-05）----------
-   作者令逐字：「主会话/群/设备/好友的消息 往上放太多了之后，应该有一个胶囊按钮
-   点击可回到底部。正好我们这批要做的就是他们三者的统一」。
-   · 唯一实现 = js/scrollBackPill.js（四处消费：主会话 + 好友/群/设备会话窗）；
-     本块是它的**唯一形态声明**，消费面零样式分叉。
-   · 落位 = 消息区**右下**、输入区之上（`right:16` + JS 反算 `bottom`），
-     与上面横居中的 `.scroll-new-pill`（搜索返回胶囊专用）锚点不同 ⇒ 分家。
-   · 材质 = 扁平：`--color-surface` 实底 + 1px `--glass-border` 发丝环。
-     **零 box-shadow / 零渐变 / 零 backdrop-filter**（check-flat-buttons F1/F3 的
-     正面形态；作者令「胶囊扁平风；若需要毛玻璃只许用唯一 .nf-glass」——本件不需要
-     毛玻璃：它浮在消息流之上，实底比玻璃更易读且滚动零合成成本）。
-   · 尺寸走既有令牌：高 28 / 内距 12 / 圆角 --ds-radius-pill / 字档 --ds-fs-hint
-     （与 `.scroll-new-pill` 同一档，两枚胶囊视觉体重一致）。 */
-.scroll-back-pill {
-  position: absolute;
-  right: 16px;
-  z-index: 25; /* 同族：在 #chat / .fm-flow 之上，在输入条（20）之下 */
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--ds-space-1);
-  height: 28px;
-  padding: 0 var(--ds-space-3);
-  font: 500 var(--ds-fs-hint)/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  letter-spacing: 0;
-  color: var(--color-text);
-  background: var(--color-surface);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--ds-radius-pill);
-  cursor: pointer;
-  white-space: nowrap;
-  animation: nf-sbp-in 0.18s ease;
-}
-/* 扁平三态（F1/F5 正面形态）：反馈只改底色阶，不位移、不投影。 */
-@media (hover: hover) {
-  .scroll-back-pill:hover { background: var(--glass-control-bg-hover); }
-}
-.scroll-back-pill:active {
-  background: var(--btn-press-bg);
-  transform: scale(var(--btn-press-scale));
-}
-.scroll-back-pill.hidden { display: none; }
-.scroll-back-pill:focus-visible { outline: 2px solid var(--sapphire-refraction); outline-offset: 2px; }
-
-@keyframes nf-sbp-in {
-  from { opacity: 0; }
-  to   { opacity: 1; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .scroll-back-pill { animation: none; transition: none; }
-  .scroll-back-pill:active { transform: none; }
-}
+/* 已收编（单实现批 2026-11-06）：四会话统一批 2026-11-05 新造的 `.scroll-back-pill`
+   段（右下定位 / --color-surface 实底 / nf-sbp-in / 无 transition / reduced-motion
+   三行）**整段删除**——它是第四套胶囊，作者令「回到底部的按钮不要自己造 要跟新消息
+   通知 搜索聊天记录跳转 使用同一套」。现在「回到底部」= 上面 `.scroll-new-pill`
+   那枚的第二个文案档（同一工厂 js/scrollPill.js、同一类名、同一动效），
+   本文件不再有第二段胶囊形态。 */
 
 /* ---------- the turn line (stream-ux redesign, 2026-10-03) ----------
    ONE single-line stage that plays the running turn's process: tool running =

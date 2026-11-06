@@ -4,12 +4,13 @@
 // 后半句：跳转落地后出现一颗胶囊，点击平滑滚回跳转前正在读的位置（作者口中
 // 的「回到开头」= 回到你刚才读到的地方）。
 //
-// ── 样式逐字复用 ─────────────────────────────────────────────────────────
-// 胶囊 = 现役「↓ N 条新消息」胶囊同一颗家族（utils.js ensureScrollPill 创建的
-// `.scroll-new-pill`，chat.css 同名段）——本模块零新 CSS、零新色：直接挂同一
-// class，落位公式同 utils.js positionScrollPill（#input-area 高 + 12px），仅
-// 多挂 `data-nf-search-return="1"` 作 QA 断言面与「本胶囊 ≠ 新消息胶囊」的
-// 查询区分符（↓N 在场时本胶囊再上抬 40px，避免同槽玻璃叠影）。
+// ── 形态 = 全族唯一一套（单实现批 2026-11-06）────────────────────────────
+// 胶囊 = 「↓ N 条新消息」「回到底部」的**同一枚**：同一工厂 `js/scrollPill.js`
+// 的 `createScrollPill`、同一类名 `.scroll-new-pill`、同一形态声明
+// （css/chat.css 同名段）、同一落位公式与 nf-pill-in 进场。本模块零新 CSS、
+// 零新色、零自有几何；只多挂 `data-nf-search-return="1"` 作 QA 断言面与
+// 「本胶囊 ≠ 计数胶囊」的查询区分符（↓N 在场时本胶囊按组件 stackLift 上抬
+// 一格 STACK_STEP，避免同槽叠影）。
 //
 // ── 锚点契约（真锚，不假装）───────────────────────────────────────────────
 // 跳转前位置 = 视口顶缘穿越行（msgScrollAnchor.firstVisibleMessage 同语义）中
@@ -45,6 +46,8 @@
 import state from './state.js';
 import { t } from './i18n.js';
 import { chatViews } from './chatView.js';
+// 胶囊本体/落位/进场 = 全族唯一工厂（新消息通知 / 回到底部 / 搜索回跳同一套）。
+import { createScrollPill } from './scrollPill.js';
 
 /** @typedef {{ msgId: string, ts: string, session: string, offsetFromChatTop: number }} ReturnAnchor */
 /** @typedef {ReturnAnchor & { pendingTop: number, shownAt: number, arrived: boolean }} ArmedAnchor */
@@ -54,6 +57,9 @@ let captured = /** @type {ReturnAnchor | null} */ (null);
 
 /** 当前在挂胶囊的冻结快照（armReturnPill 时定格；后续捕获不回写它）。 */
 let activeAnchor = /** @type {ArmedAnchor | null} */ (null);
+
+/** @type {{el: HTMLElement, show: () => void, hide: () => void, label: () => void}|null} */
+let pillObj = null;
 
 /** @type {HTMLElement | null} 胶囊节点（懒建，驻 #main，跨跳转复用）。 */
 let pillEl = null;
@@ -128,36 +134,37 @@ export function captureReturnAnchor(res) {
 }
 
 // ── 胶囊本体 ─────────────────────────────────────────────────────────────
+// 本体 = `js/scrollPill.js` 的唯一工厂（单实现批 2026-11-06）：与「↓ N 条新消息」
+// 与「回到底部」同一枚 `.scroll-new-pill`、同一形态声明（css/chat.css）、同一落位
+// 公式与进场动画。本模块只自带**搜索回跳专有**的三件事：锚身份（data-msg-id /
+// data-ts）、两档文案（回到跳转前位置 / 回到最新）、点击回位行为（onActivate）。
+// 堆叠：同宿主另有 ↓N 胶囊在场时本枚上抬一格（组件内 stackLift，两侧同一函数）。
+
+const PILL = {
+  host: () => document.getElementById('main'),
+  scrollEl: () => chatViews.primary?.dom?.chat || null,
+  anchor: () => document.getElementById('input-area'),
+};
 
 function ensurePill() {
-  if (pillEl && pillEl.isConnected) return pillEl;
-  const host = document.getElementById('main');
-  if (!host) return null;
-  const el = document.createElement('button');
-  el.type = 'button';
-  el.className = 'scroll-new-pill hidden'; // 现役新消息胶囊同类（chat.css 同名段）
-  el.setAttribute(RETURN_ATTR, '1');
-  el.setAttribute('aria-live', 'polite');
-  el.dataset.state = 'anchor';
-  el.addEventListener('click', onPillClick);
-  host.appendChild(el);
-  pillEl = el;
-  return el;
-}
-
-/** 落位：#input-area 上缘 + 12px（= utils.js positionScrollPill 同式）；↓N
- *  胶囊在场时再上抬 40px，两颗玻璃胶囊不同槽。 */
-function positionPill(el) {
-  const msgPillVisible = !!document.querySelector(
-    `#main .scroll-new-pill:not(.hidden):not([${RETURN_ATTR}])`);
-  const inputArea = document.getElementById('input-area');
-  el.style.bottom = `${(inputArea ? inputArea.offsetHeight : 54) + 12 + (msgPillVisible ? 40 : 0)}px`;
-}
-
-function setLabel(el) {
-  const degraded = el.dataset.state === 'latest';
-  const label = degraded ? t('chat.backToLatest') : t('chat.backToPrevPosition');
-  if (el.textContent !== label) el.textContent = label;
+  if (pillObj && pillObj.el.isConnected) return pillObj.el;
+  const host = PILL.host();
+  const scrollEl = PILL.scrollEl();
+  if (!host || !scrollEl) return null;
+  pillObj = createScrollPill({
+    host,
+    scrollEl,
+    anchor: PILL.anchor,
+    stack: 'above',
+    attrs: { [RETURN_ATTR]: '1' },
+    labelFor: ({ state }) => (state === 'latest'
+      ? t('chat.backToLatest')
+      : t('chat.backToPrevPosition')),
+    onActivate: () => onPillClick(),
+  });
+  pillObj.el.dataset.state = 'anchor';
+  pillEl = pillObj.el;
+  return pillEl;
 }
 
 /**
@@ -177,9 +184,7 @@ export function armReturnPill(pendingTop) {
   // 「真锚」＝该身份在 #chat 里解析得到一行。
   if (snap.msgId) el.dataset.msgId = snap.msgId; else delete el.dataset.msgId;
   if (snap.ts) el.dataset.ts = snap.ts; else delete el.dataset.ts;
-  setLabel(el);
-  positionPill(el);
-  el.classList.remove('hidden');
+  pillObj.show();   // 组件统一进出场：文案（labelFor）+ 落位 + 摘 .hidden
   attachWhileVisible(el);
 }
 
@@ -187,7 +192,8 @@ export function armReturnPill(pendingTop) {
 export function hideReturnPill() {
   activeAnchor = null;
   if (detachVisible) { detachVisible(); detachVisible = null; }
-  if (pillEl) pillEl.classList.add('hidden');
+  if (pillObj) pillObj.hide();
+  else if (pillEl) pillEl.classList.add('hidden');
 }
 
 // ── 点击回位 ─────────────────────────────────────────────────────────────
@@ -241,7 +247,7 @@ function attachWhileVisible(el) {
   };
   const onUserScrollGesture = () => hideReturnPill();
   const onKey = (e) => { if (NAV_KEYS.has(e.key)) hideReturnPill(); };
-  const onLocale = () => { if (activeAnchor) setLabel(el); };
+  const onLocale = () => { if (activeAnchor && pillObj) pillObj.label(); };
 
   // 降级换挡：流重建逐出锚行 ⇒ 文案当场换「回到最新」（不点击后才改口）。
   let recheckQueued = false;
@@ -250,9 +256,9 @@ function attachWhileVisible(el) {
     recheckQueued = true;
     queueMicrotask(() => {
       recheckQueued = false;
-      if (!activeAnchor) return;
+      if (!activeAnchor || !pillObj) return;
       el.dataset.state = anchorLive(activeAnchor) ? 'anchor' : 'latest';
-      setLabel(el);
+      pillObj.label();
     });
   });
   mo.observe(chat, { childList: true });

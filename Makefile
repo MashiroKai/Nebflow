@@ -1,6 +1,6 @@
 .PHONY: compile run assembly clean install \
   lint fmt fix fmt-check check quality-gate check-visual visual-baseline frontend-gates component-contract \
-  flat-buttons glass toggle \
+  flat-buttons glass toggle scroll-pill \
   plugin-seed-parity
 
 # Auto-detect fastest Maven mirror (Aliyun for China, Maven Central otherwise)
@@ -103,7 +103,7 @@ quality-gate:
 # = 后端把 `GET /api/conversations` 的 case 误删，前端 404 被吞成「暂无会话」，
 # **没有任何断言发现「前端调了但后端没有」**。本闸静态对照两侧（前端 /api 字面量
 # 集合 × 网关路由注册面），前端调了后端没有 ⇒ 红。
-FRONTEND_GATES := design-tokens msgstyle self-explaining circular fixture-secrets api-routes freeze-state freeze-silence flat-buttons glass canvas-hint toggle
+FRONTEND_GATES := design-tokens msgstyle self-explaining circular fixture-secrets api-routes freeze-state freeze-silence flat-buttons glass canvas-hint toggle scroll-pill
 
 frontend-gates:
 	@command -v node >/dev/null 2>&1 || { echo "node not found — 前端门禁需要 node"; exit 2; }
@@ -160,6 +160,14 @@ frontend-gates:
 	@# 18 行程 / 180ms 曲线，组件节不许写死几何）。
 	@# 盘点：node scripts/check-toggle-unify.mjs --inventory；机器读：--json。
 	node scripts/check-toggle-unify.mjs
+	@# 会话面胶囊居中几何门禁（作者令 2026-11-06 08:05「不要靠边 就保持之前的居中」）：
+	@# 一族三消费（新消息通知 / 回到底部 / 搜索回跳）共用 .scroll-new-pill，形态单源
+	@# = chat.css 该段；缺 left:50% + translateX(-50%)、任一态丢居中位移、出现
+	@# right:/justify-self:end 之类右靠边手法、或冒出第二套 scroll-*-pill 形态类 ⇒ 红。
+	@# 几何真值（水平中心偏差 ≤0.5px）由 tests/scroll-pill-family.spec.mjs 的
+	@# S1/S2/S4/S5 四条实测腿给出（需浏览器，不在静态门禁里跑）。
+	@# 盘点：node scripts/check-scroll-pill-center.mjs --json。
+	node scripts/check-scroll-pill-center.mjs
 	@echo "Frontend static gates passed ($(FRONTEND_GATES))."
 
 # ── 按钮扁平化：单闸入口（CI 同名 step 调的就是它，单一真源别在 CI 里另抄一遍）──
@@ -169,6 +177,10 @@ flat-buttons:
 # ── 毛玻璃：单闸入口（与 flat-buttons 同形；CI 同名 step 调的就是它）──────────
 glass:
 	node scripts/check-glass-unify.mjs
+
+# ── 会话面胶囊居中：单闸入口（与 flat-buttons / glass 同形）────────────────────
+scroll-pill:
+	node scripts/check-scroll-pill-center.mjs
 
 # ── Canvas 提示文字：单闸入口（静态腿）+ 真几何腿 ────────────────────────────
 # 静态腿 = 令牌唯一性（零依赖零端口）；几何腿 = 逐面 getBoundingClientRect 零交叠
