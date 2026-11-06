@@ -29,6 +29,25 @@ class ArtifactCapacityTest(unittest.TestCase):
             self.assertEqual(rows[0]["status"], "inventory-only")
             self.assertEqual(target.read_bytes(), before)
 
+    def test_plan_protects_user_and_active_data_and_duplicate_hash_is_not_authority(self):
+        entries = [
+            {"path": "tmp/old.bin", "sizeBytes": 9, "ageSeconds": 40 * 86400, "sha256": "same"},
+            {"path": "projects/p/.nebflow/worktrees/active/a", "sizeBytes": 9, "ageSeconds": 40 * 86400, "sha256": "same"},
+            {"path": "reports-evidence/bgagent-mobile-chrome-20261106/x", "sizeBytes": 5, "ageSeconds": 90 * 86400, "sha256": "e"},
+            {"path": "uploads/delivered.pdf", "sizeBytes": 5, "ageSeconds": 90 * 86400, "sha256": "u"},
+            {"path": "docs/official.md", "sizeBytes": 5, "ageSeconds": 90 * 86400, "sha256": "d"},
+        ]
+        plan = capacity.prune_plan(entries)
+        self.assertEqual(plan["mode"], "read-only-plan")
+        self.assertEqual(plan["defaultAction"], "none")
+        self.assertEqual(plan["entries"][0]["reason"], "review-required-reference-and-open-state-unknown")
+        self.assertTrue(all(row["decision"] == "never-auto-delete" for row in plan["entries"]))
+        self.assertEqual(plan["entries"][1]["reason"], "protected-by-policy")
+        self.assertEqual(plan["entries"][2]["reason"], "protected-by-policy")
+        self.assertEqual(plan["entries"][3]["reason"], "protected-by-policy")
+        self.assertEqual(plan["entries"][4]["reason"], "protected-by-policy")
+        self.assertEqual(plan["duplicateContentEvidenceOnly"][0]["copies"], 2)
+
     def test_symlink_targets_and_nonregular_files_are_not_followed(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
