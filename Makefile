@@ -1,6 +1,6 @@
 .PHONY: compile run assembly clean install \
   lint fmt fix fmt-check check quality-gate check-visual visual-baseline frontend-gates component-contract \
-  flat-buttons glass toggle toggle-geometry scroll-pill input-surface mobile-canvas-strip \
+  flat-buttons glass toggle toggle-geometry scroll-pill input-surface mobile-canvas-strip badge-words \
   plugin-seed-parity
 
 # Auto-detect fastest Maven mirror (Aliyun for China, Maven Central otherwise)
@@ -103,7 +103,7 @@ quality-gate:
 # = 后端把 `GET /api/conversations` 的 case 误删，前端 404 被吞成「暂无会话」，
 # **没有任何断言发现「前端调了但后端没有」**。本闸静态对照两侧（前端 /api 字面量
 # 集合 × 网关路由注册面），前端调了后端没有 ⇒ 红。
-FRONTEND_GATES := design-tokens msgstyle bubble-side self-explaining circular fixture-secrets api-routes freeze-state freeze-silence flat-buttons glass canvas-hint toggle scroll-pill input-surface mobile-canvas-strip
+FRONTEND_GATES := design-tokens msgstyle bubble-side self-explaining circular fixture-secrets api-routes freeze-state freeze-silence flat-buttons glass canvas-hint toggle scroll-pill input-surface mobile-canvas-strip badge-words
 
 frontend-gates:
 	@command -v node >/dev/null 2>&1 || { echo "node not found — 前端门禁需要 node"; exit 2; }
@@ -115,6 +115,10 @@ frontend-gates:
 	@# 在气泡面上零命中；单点 = css/glass.css 单块 + js/bubbleSide.js 单函数。
 	node scripts/check-bubble-side.mjs
 	node scripts/check-self-explaining.mjs
+	@# 徽标词单源门禁（术语统一批 2026-11-06 作者令「统一 根据英文」）：身份/类型徽标
+	@# 词（kernel / dispatcher / node / subagent / delegate / AgentFlow）只准从
+	@# js/termWords.js 取；徽标槽写死词面、语言包译名、同一概念第二词面即红。
+	node scripts/check-badge-words.mjs
 	node scripts/check-circular.mjs
 	@# 证据/夹具是高熵长令牌的落点（2026-11-04 两小件批 · 件三）：`tests/fixtures/` 与
 	@# `reports-evidence/` 里出现「敏感键名 ∧ 值 ≥32 字符 ∧ 字符集 ≥3 类」的字面量即红
@@ -203,6 +207,13 @@ frontend-gates:
 	@# 机器读：--json。真渲染读数（375/1440 × 亮暗）另跑 scripts/capture-mobile-canvas-tabs.mjs。
 	node scripts/check-mobile-canvas-strip.mjs
 	@echo "Frontend static gates passed ($(FRONTEND_GATES))."
+
+# ── 身份/类型徽标词单源：单闸入口（术语统一批 2026-11-06）────────────────────
+# 判据 = 徽标词只来自 js/termWords.js 一张表（A）+ 徽标渲染槽零字面量（B）+ 产词
+# 函数收敛（C）+ 语言包译名退役（D）+ 同一概念单一词面（E）。真渲染腿 =
+# tests/term-unify-badge-words.spec.mjs（W1-W5，桌面三层 + 手机层）。
+badge-words:
+	node scripts/check-badge-words.mjs
 
 # ── 按钮扁平化：单闸入口（CI 同名 step 调的就是它，单一真源别在 CI 里另抄一遍）──
 flat-buttons:

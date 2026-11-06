@@ -5,9 +5,9 @@
 // 作者语义（任务书逐字）：agentflow = 整个组织行为的代称（一次编排 = 一个 agentflow）；
 // 节点 = agentflow 里的成员，成员分层。既有 kernel / dispatcher 两个词是作者术语，
 // **逐字保留、不许改名**。本 spec 只收口「节点 vs agentflow」这一层：
-//   整体行（代表一次编排：delegate 组头 / 合成延续组头）= agentflow 词（locale 键
-//     subagents.kindAgentflow，zh/en 同词面）；
-//   成员行（该编排里的节点）= 成员自身 kind（分发器 / 节点 / Subagent / Delegate …）；
+//   整体行（代表一次编排：delegate 组头 / 合成延续组头）= agentflow 词（单源词表
+//     js/termWords.js 的 BADGE_WORDS.agentflow → 逐字 AgentFlow，语言面同串）；
+//   成员行（该编排里的节点）= 成员自身 kind（dispatcher / node / subagent / delegate …）；
 //     机械禁令：成员行徽标不出现 agentflow / AgentFlow / Flow 字样；
 //   反向门：整体行徽标不出现 节点 / Node 字样；
 //   归属靠结构：成员行 data-bg-agentflow="<所属整体行定位键>"（与 data-bg-key /
@@ -169,14 +169,16 @@ function dumpRows(page) {
   }, LIST);
 }
 
-/** 页面侧 locale 词（词源 = subagents.* 键族，与渲染面同一条 t()）。 */
+/** 页面侧徽标词（词源 = 单源词表 js/termWords.js；术语统一批 2026-11-06 起 kind 词
+ *  不再走 locale —— 断言读的就是渲染面同一张表）。 */
 function localeWords(page) {
   return page.evaluate(async () => {
     const i18n = await import('/js/i18n.js');
+    const { BADGE_WORDS } = await import('/js/termWords.js');
     return {
-      agentflow: i18n.t('subagents.kindAgentflow'),
-      node: i18n.t('subagents.kindNode'),
-      dispatcher: i18n.t('subagents.kindDispatcher'),
+      agentflow: BADGE_WORDS.agentflow,
+      node: BADGE_WORDS.node,
+      dispatcher: BADGE_WORDS.dispatcher,
       locale: i18n.getLocale(),
     };
   });
@@ -251,7 +253,7 @@ test('H1 整体行（en）：data-bg-entity=agentflow 且显示词 = agentflow �
   expect(heads).toHaveLength(1);
   expect(heads[0].entity).toBe('agentflow');
   expect(words.locale).toBe('en');
-  expect(words.node).toBe('Node');
+  expect(words.node).toBe('node');
   expect(heads[0].entityText).toBe(words.agentflow);
   expect(heads[0].entityText).toBe('AgentFlow');
   expect(errors).toEqual([]);
@@ -315,13 +317,13 @@ test('H2 成员行：data-bg-agentflow 全部 == 整体行 key，且成员徽标
   // 成员词 = 自身 kind（真实 kind，非整体词）。
   const wordOf = Object.fromEntries(kids.map((r) => [r.nodeSid, r.kindText]));
   console.log('[H2 words] ' + JSON.stringify(wordOf));
-  expect(wordOf[DISPATCHER_SID]).toBe('分发器');
-  expect(wordOf[NODE_SID]).toBe('节点');
-  expect(wordOf['node-bbbb2222']).toBe('节点');
-  expect(wordOf[SUBAGENT_SID]).toBe('Subagent');
-  expect(wordOf[SUBTASK_SID]).toBe('Delegate');
-  expect(wordOf[DAG_SID]).toBe('节点');
-  expect(wordOf['subagent-store-7f8e9d0c']).toBe('Subagent');
+  expect(wordOf[DISPATCHER_SID]).toBe('dispatcher');
+  expect(wordOf[NODE_SID]).toBe('node');
+  expect(wordOf['node-bbbb2222']).toBe('node');
+  expect(wordOf[SUBAGENT_SID]).toBe('subagent');
+  expect(wordOf[SUBTASK_SID]).toBe('delegate');
+  expect(wordOf[DAG_SID]).toBe('node');
+  expect(wordOf['subagent-store-7f8e9d0c']).toBe('subagent');
   // 机械禁令：成员徽标里不得出现 agentflow / AgentFlow / Flow 字样。
   for (const k of kids) {
     expect(/agentflow/i.test(k.kindText)).toBe(false);
@@ -529,11 +531,11 @@ test('H8 行类型 → 徽标对照表：只有 dispatcher 派生的整体行带
   // ③ 成员行：各自 kind，零 agentflow。
   expect(badges('dispatcher-h8aaaa')).toEqual([words.dispatcher]);
   expect(badges('node-h8bbbb')).toEqual([words.node]);
-  expect(badges('subagent-h8cccc')).toEqual(['Subagent']);
-  expect(badges('subtask-h8dddd')).toEqual(['Delegate']);
-  expect(badges('store-subagent-h8')).toEqual(['Subagent']);
-  expect(badges('store-subtask-h8')).toEqual(['Delegate']);
-  expect(badges('store-delegate-h8')).toEqual(['Delegate']);
+  expect(badges('subagent-h8cccc')).toEqual(['subagent']);
+  expect(badges('subtask-h8dddd')).toEqual(['delegate']);
+  expect(badges('store-subagent-h8')).toEqual(['subagent']);
+  expect(badges('store-subtask-h8')).toEqual(['delegate']);
+  expect(badges('store-delegate-h8')).toEqual(['delegate']);
   // ④ 全表机械禁令：除 dispatcher 整体行外，任何行都不得出现 agentflow 词。
   for (const r of rows) {
     if (r.level === 'head' && r.nodeSid === D) continue;
@@ -543,29 +545,38 @@ test('H8 行类型 → 徽标对照表：只有 dispatcher 派生的整体行带
   expect(errors).toEqual([]);
 });
 
-test('H5 词源单点：两个显示词只在 bgAgents.js 一处消费，其它 web 模块不硬编码同批词', async () => {
+test('H5 词源单点：徽标词只从单源表取（termWords.js），locale 键族已退役，其它 web 模块不硬编码同批词', async () => {
   const read = (p) => readFileSync(p, 'utf8');
   const bgSrc = read(join(WEB, 'js', 'main', 'bgAgents.js'));
+  const term = read(join(WEB, 'js', 'termWords.js'));
   const zh = read(join(WEB, 'js', 'locales', 'zh-CN.js'));
   const en = read(join(WEB, 'js', 'locales', 'en.js'));
 
-  // ① 单点判定函数在场；旧的多词源函数退役。
+  // ① 单点判定函数在场；旧的多词源函数退役（本地转换表随后也整块退役）。
   expect(/function bgAgentflowWord\s*\(/.test(bgSrc)).toBe(true);
   expect(/function bgMemberKindWord\s*\(/.test(bgSrc)).toBe(true);
   expect(/function bgFlowKindWord\s*\(/.test(bgSrc)).toBe(false);
+  expect(/function bgChildKindWord\s*\(/.test(bgSrc)).toBe(false);
+  expect(/function bgKindDisplayWord\s*\(/.test(bgSrc)).toBe(false);
 
-  // ② 两个显示词各自只有一个 locale 键消费点（一次 t() 调用）。
+  // ② 单源表 = termWords.js（唯一一处定义），两个产词函数只从它取词。
   //    判面 = **代码行**（注释里叙旧提到键名不算词源；块注释与行注释先剔）。
   const codeOnly = (src) => src
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .split('\n').map((l) => l.replace(/\/\/.*$/, '')).join('\n');
   const bgCode = codeOnly(bgSrc);
   const count = (src, needle) => src.split(needle).length - 1;
-  console.log('[H5 counts] kindAgentflow=' + count(bgCode, 'subagents.kindAgentflow')
+  console.log('[H5 counts] badgeWord=' + count(bgCode, 'badgeWord(')
+    + ' badgeFaceOfKind=' + count(bgCode, 'badgeFaceOfKind(')
+    + ' kindAgentflow=' + count(bgCode, 'subagents.kindAgentflow')
     + ' kindNode=' + count(bgCode, 'subagents.kindNode')
     + ' kindDispatcher=' + count(bgCode, 'subagents.kindDispatcher'));
-  expect(count(bgCode, 'subagents.kindAgentflow')).toBe(1);
-  expect(count(bgCode, 'subagents.kindNode')).toBe(1);
+  expect(count(bgCode, 'subagents.kindAgentflow')).toBe(0);
+  expect(count(bgCode, 'subagents.kindNode')).toBe(0);
+  expect(count(bgCode, 'subagents.kindDispatcher')).toBe(0);
+  expect(count(bgCode, 'badgeWord(')).toBeGreaterThanOrEqual(3);
+  expect(count(bgCode, 'badgeFaceOfKind(')).toBe(1);
+  expect(/export const BADGE_WORDS = Object\.freeze\(\{/.test(term)).toBe(true);
 
   // ③ 行构造器里不得有 agentflow 词的字面量徽标（词只能来自 locale）。
   const sliceOf = (name, endName) => bgSrc.slice(bgSrc.indexOf('function ' + name), bgSrc.indexOf('function ' + endName));
@@ -601,13 +612,11 @@ test('H5 词源单点：两个显示词只在 bgAgents.js 一处消费，其它 
   console.log('[H5 offenders] ' + JSON.stringify(offenders));
   expect(offenders).toEqual([]);
 
-  // ⑤ locale 双版同键同词面（zh/en 各一个键，值 = AgentFlow）。
+  // ⑤ 语言包侧：kind 键族**整族退役**（词面只在 termWords.js，语言面不得有第二张表）。
   for (const [name, src] of [['zh-CN.js', zh], ['en.js', en]]) {
-    const m = src.match(/'subagents\.kindAgentflow':\s*'([^']*)'/);
-    console.log('[H5 locale ' + name + '] ' + (m ? m[1] : '<missing>'));
-    expect(m).toBeTruthy();
-    expect(m[1]).toBe('AgentFlow');
-    expect(/'subagents\.kindNode':\s*'[^']+'/.test(src)).toBe(true);
+    const m = src.match(/'subagents\.kind(Agentflow|Node|Dispatcher)':/);
+    console.log('[H5 locale ' + name + '] kindKey=' + (m ? m[0] : '<retired>'));
+    expect(m).toBeNull();
   }
 });
 

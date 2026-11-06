@@ -226,10 +226,10 @@ test('T2 面板两级化（C2/R6）：delegate 组头徽标=row.mode（kernel）
   // "Flow" 无区分度，显示词按前缀单点判读）。
   await expect(dispRow).not.toHaveClass(/bg-task-row-head/);
   await expect(dispRow).not.toHaveClass(/bg-task-row-child/);
-  await expect(dispRow.locator('.bg-task-kind')).toHaveText('分发器');
+  await expect(dispRow.locator('.bg-task-kind')).toHaveText('dispatcher');
   await expect(nodeRow).not.toHaveClass(/bg-task-row-head/);
   await expect(nodeRow).not.toHaveClass(/bg-task-row-child/);
-  await expect(nodeRow.locator('.bg-task-kind')).toHaveText('节点');
+  await expect(nodeRow.locator('.bg-task-kind')).toHaveText('node');
 
   // 一级 = delegate 组头：bg-task-row-head + 徽标 = delegate 执行形态 row.mode
   // （徽标归位批 2026-10-31 23:02 作者裁定：顶层只标 kernel/dispatcher，编排模式
@@ -247,7 +247,7 @@ test('T2 面板两级化（C2/R6）：delegate 组头徽标=row.mode（kernel）
   const storeChild = page.locator('#bg-dropdown .bg-section-agents .bg-dropdown-list .bg-task-row.bg-task-row-child[data-child-session="subtask-done2"]');
   await expect(storeChild).toHaveCount(1);
   // 修订批九点②（2026-10-09）：「SubTask」UI 标注更名 delegate 语义（显示词 Delegate）。
-  await expect(storeChild.locator('.bg-task-kind')).toHaveText('Delegate');
+  await expect(storeChild.locator('.bg-task-kind')).toHaveText('delegate');
   await expect(storeChild.locator('.bg-task-state')).toHaveText('已完成');
 
   // 徽标计数（行集收敛批 2026-11-02 改口径）：total = 收敛后行集长度（渲染半边
@@ -304,7 +304,7 @@ test('T3 agentflow（R2/R6）：组头徽标=row.mode（dispatcher）；chain.no
   // 术语分层批（2026-11-05 作者令「agentflow = 整次编排的代号，节点 = 它的成员」）：
   // flow 结构行的徽标词从硬编码的整体词退役为**成员词**（flow-step 是这次编排里的
   // 节点）——断言锚随术语收口 1:1 平移，行/缩进/结构语义逐字不变。
-  await expect(flowRows.nth(0).locator('.bg-task-kind')).toHaveText('节点');
+  await expect(flowRows.nth(0).locator('.bg-task-kind')).toHaveText('node');
   await expect(flowRows.nth(1).locator('.bg-task-state')).toHaveText('待处理');
   await expect(flowRows.nth(1).locator('.bg-task-project')).toHaveText('← s1');
   // 适配层单 delegate 回退节点（kind=delegate）不入子行层。

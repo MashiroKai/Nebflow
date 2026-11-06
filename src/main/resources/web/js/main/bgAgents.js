@@ -7,6 +7,11 @@
 import state from '../state.js';
 import { sendWs } from '../ws.js';
 import { t } from '../i18n.js';
+// 术语统一批（2026-11-06 作者令逐字「统一 根据英文」）：身份/类型徽标词**只**从单源
+// 词表取（js/termWords.js）——本文件的三个产词函数（bgDelegateBadgeWord /
+// bgAgentflowWord / bgMemberKindWord）不再自带词表、也不再走 locale 键族
+// （subagents.kind* 已整族退役）。协议/来源数据词经 badgeFaceOfKind 单点归一。
+import { badgeWord, badgeFaceOfKind, isMemberOnlyBadge } from '../termWords.js';
 import { escapeHtml, isBgAgentId, createIconsIn, statusIcon, bgHealthNorm } from '../utils.js';
 // 三行结构批（2026-11-05）：状态位的唯一发射点（图标 + 色调 + 无障碍文案单表）。
 import { bgStatusHtml } from '../bgRowStatus.js';
@@ -489,11 +494,13 @@ function bgDelegateExecMode(row) {
  *  的显示词归一仍走 bgMemberKindWord，渲染点不动数据面）。
  *  术语分层批（2026-11-05）：本函数产出的是**执行形态词**，与整体行身份词
  *  （bgAgentflowWord）同行并存——两者不是同一个词位，也不许互相顶替。
+ *  术语统一批（2026-11-06 作者令「统一 根据英文」）：词面 = 单源词表（termWords.js
+ *  的 badgeWord），中文面同串（不再有「内核 / 分发器」这套译名）。
  *  @param {string} execMode [[bgDelegateExecMode]] 的读数
  *  @returns {string} */
 function bgDelegateBadgeWord(execMode) {
   const mode = String(execMode || '');
-  if (mode === 'kernel' || mode === 'dispatcher') return mode;
+  if (mode === 'kernel' || mode === 'dispatcher') return badgeWord(mode);
   return '';
 }
 
@@ -581,32 +588,14 @@ function bgRemoteRowsHtml() {
   return parts.join('');
 }
 
-/** Store 子条目 kind 词（source 数据词：subagent/subtask/delegate；大写形态与面板
- *  既有 kind 词族对齐——数据非文案，零 locale 键）。修订批九点②（2026-10-09）：
- *  「subtask」显示词更名 delegate 语义（SubTask→Delegate；数据原文保留在
- *  source 字段与 title，不丢真源）。 */
-function bgChildKindWord(source) {
-  if (source === 'subagent') return 'Subagent';
-  if (source === 'subtask' || source === 'delegate') return 'Delegate';
-  return String(source || '');
-}
-
-/** 快照/帧 kind 值 → 面板显示词（修订批九点②补漏 · 2026-10-09）：activeAgents
- *  快照与 taskStuck 帧携带引擎协议 kind 值（AgentKind.SubTask = "SubTask"）——
- *  显示面统一更名 delegate 语义（SubTask→Delegate）；权限矩阵消费的协议值
- *  （managePanel.OPERABLE_KINDS 'SubTask'）不受影响——本函数只在**渲染点**用，
- *  不改写 info.kind 数据面（真源原样保留）。 */
-function bgKindDisplayWord(kind) {
-  const k = String(kind || '');
-  if (k === 'SubTask' || k === 'subtask') return 'Delegate';
-  return k;
-}
-
 /** 术语分层批（2026-11-05 · 作者令「agentflow = 整个组织行为的代称（一次编排 = 一个
  *  agentflow），节点 = agentflow 里的成员，成员分层」）：**整体行身份词单点**。
- *  取值只来自 locale 键 `subagents.kindAgentflow`（zh/en 同词面）——唯一渲染点是
- *  bgTaskRowHtml 的 headLevel 分支（组头行 / 合成延续组头行）；别的 web 模块不得再写
- *  这个词面（回归 spec bg-agentflow-terms H5 静态钉）。
+ *  取值只来自单源徽标词表（js/termWords.js 的 badgeWord('agentflow') → 逐字
+ *  `AgentFlow`）——唯一渲染点是 bgTaskRowHtml 的 headLevel 分支（组头行 / 合成延续
+ *  组头行）；别的 web 模块不得再写这个词面（回归 spec bg-agentflow-terms H5 静态钉）。
+ *  术语统一批（2026-11-06 作者令「统一 根据英文」）：本词原走 locale 键
+ *  `subagents.kindAgentflow`（zh/en 同词面），本批整族退役 —— 词面统一从 termWords.js
+ *  取，语言面不再有第二条路径。
  *
  *  agentflow 错标修复批（2026-11-06 · 作者令逐字「kernel 被标记 agentflow？agentflow
  *  是用来标记 dispatcher 派生出来的节点的」）：**本词 = dispatcher 派生的编排身份词**，
@@ -637,7 +626,7 @@ function bgAgentflowWord(row) {
   // ① 再钉一道：两条来源都指向「dispatcher 派生的编排」才落词。
   const execMode = bgDelegateExecMode(row);
   const orchestrationMode = String((row && row.orchestrationMode) || '');
-  if (execMode === 'dispatcher' && orchestrationMode === 'agentflow') return t('subagents.kindAgentflow');
+  if (execMode === 'dispatcher' && orchestrationMode === 'agentflow') return badgeWord('agentflow');
   return '';
 }
 
@@ -651,7 +640,14 @@ function bgAgentflowWord(row) {
  *
  * **成员位不落整体词**：引擎 kind `Flow` / `AgentFlow` / `flow-step` 在成员层统一读作
  * 节点词（节点 = 成员；`node-` / `dag-` / `workflow-` 前缀同判）。数据面原值一律不动
- * （bgAgentKindFromSession 供 main.js 的 info.kind 记账，返回的协议词保留）。
+ * （bgAgentKindFromSession 供 main.js 的 info.kind 记账，返回的协议词保留——那是
+ * **记账词/协议词**，不是上屏的徽标词面）。
+ *
+ * 术语统一批（2026-11-06 作者令「统一 根据英文」）：词面**只从单源表取**
+ * （js/termWords.js）。三源（会话 id 前缀 / store 条目 source / 快照 kind）落成的
+ * 数据词一律经 badgeFaceOfKind 归一（`SubTask`/`subtask` → delegate、`Flow` /
+ * `AgentFlow` / `flow-step` → node）；本函数不再自带词表，也不再走 locale 键族
+ * （`subagents.kindDispatcher` / `subagents.kindNode` 已于本批整族退役）。
  * @param {{source?: string, info?: any, sessionId?: string, id?: string}} [member]
  * @returns {string}
  */
@@ -660,17 +656,12 @@ function bgMemberKindWord(member) {
   const info = m.info && typeof m.info === 'object' ? m.info : {};
   const sid = String(m.sessionId || (info && info.sessionId) || m.id || '').replace(/^team-/, '');
   // 分发器 / 节点是前缀判读的正向 kind 徽标（与 isDispatcherSession / 引擎会话前缀同源
-  // 契约）；两者都从 locale 取词，成员位只有这一个字面量表。
-  if (isDispatcherSession(sid)) return t('subagents.kindDispatcher');
-  const nodeWord = t('subagents.kindNode');
-  if (sid.startsWith('node-')) return nodeWord;
+  // 契约）——词面同样来自单源表。
+  if (isDispatcherSession(sid)) return badgeWord('dispatcher');
+  if (sid.startsWith('node-')) return badgeWord('node');
   const source = String(m.source || '');
-  const word = source
-    ? bgChildKindWord(source)
-    : (bgKindDisplayWord(String(info.kind || '')) || bgAgentKindFromSession(sid));
-  // 整体词面在成员层归并为节点词（flow 结构行 / dag-* / workflow-* 同一判据）。
-  if (word === 'Flow' || word === 'AgentFlow' || word === 'flow-step') return nodeWord;
-  return word;
+  const word = source || String(info.kind || '') || bgAgentKindFromSession(sid);
+  return badgeFaceOfKind(word);
 }
 
 /**
@@ -1441,7 +1432,9 @@ function bgTaskRowHtml(id, info, opts = {}) {
   //  孤儿行，即一切非 childLevel 行）不渲染 Delegate/Subagent 字样——层级锚不是历史
   //  类型残留。组头徽标只认 row.mode（bgDelegateBadgeWord，mode 缺席即无徽标）；此处
   //  兜底摘掉 leftover 行的 kind 残留词（「来自 …」孤儿角标/任务归属徽标不受影响）。
-  const kindWord = (!opts.childLevel && (kind === 'Delegate' || kind === 'Subagent')) ? '' : kind;
+  //  术语统一批（2026-11-06）：判据读单源表（isMemberOnlyBadge），不再写死词面字面量
+  //  ——词面换了（Subagent→subagent、Delegate→delegate）摘词行为逐位不变。
+  const kindWord = (!opts.childLevel && isMemberOnlyBadge(kind)) ? '' : kind;
   const kindPart = kindWord ? '<span class="bg-task-kind">' + escapeHtml(kindWord) + '</span>' : '';
   // 整体行实体词（术语分层批 + agentflow 错标修复批）：**只有 dispatcher 派生的编排**
   // 才带本词（bgAgentflowWord 的两轴来源判定）；kernel 行 / 未登记链的行 / mode 缺席行

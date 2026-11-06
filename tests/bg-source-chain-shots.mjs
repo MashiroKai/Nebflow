@@ -254,7 +254,7 @@ async function shootDelegateView(browser, engine, colorScheme) {
     JSON.stringify(audit.own?.origins?.map((o) => o.text)) === JSON.stringify(['模型链面板精简']) &&
     audit.own?.origins?.[0]?.cls.includes('bg-origin-delegate'), JSON.stringify(audit.own?.origins));
   ok(`own device+mode intact (${tag})`,
-    audit.own?.devices?.[0] === 'Mashiros-MacBook-Pro' && audit.own?.modes?.[0] === '内核',
+    audit.own?.devices?.[0] === 'Mashiros-MacBook-Pro' && audit.own?.modes?.[0] === 'kernel',
     JSON.stringify({ d: audit.own?.devices, m: audit.own?.modes }));
   // ② 子代理件：链 = 「模型链面板精简 · 资料搜集」（归属 chip 样式），tooltip 全链。
   ok(`sub chain = [模型链面板精简 · 资料搜集] (${tag})`,
@@ -350,7 +350,7 @@ async function shootRootView(browser, engine, colorScheme) {
     JSON.stringify(tasks.plain?.origins?.map((o) => o.text)) === JSON.stringify(['Spider']), JSON.stringify(tasks.plain?.origins));
   ok(`delegate own chip = [模型链面板精简] 单段 (${tag})`,
     JSON.stringify(tasks.own?.origins?.map((o) => o.text)) === JSON.stringify(['模型链面板精简']) &&
-    tasks.own?.devices?.[0] === 'Mashiros-MacBook-Pro' && tasks.own?.modes?.[0] === '内核',
+    tasks.own?.devices?.[0] === 'Mashiros-MacBook-Pro' && tasks.own?.modes?.[0] === 'kernel',
     JSON.stringify(tasks.own));
 
   // 智能体节（Flow 会话行）：组头短名 + 节点/分发器 kind 徽标（type 契约不动）。
@@ -377,8 +377,8 @@ async function shootRootView(browser, engine, colorScheme) {
   ok(`agent rows ≥3 (${tag})`, agents.rows >= 3, JSON.stringify({ rows: agents.rows }));
   ok(`delegate head short name + mode badge (${tag})`, agents.head === true && agents.headMode === 'kernel',
     JSON.stringify({ head: agents.head, mode: agents.headMode }));
-  ok(`node row kind = 节点（type 契约不动） (${tag})`, agents.nodeKind === '节点', agents.nodeKind);
-  ok(`dispatcher row kind = 分发器 (${tag})`, agents.dispKind === '分发器', agents.dispKind);
+  ok(`node row kind = 节点（type 契约不动） (${tag})`, agents.nodeKind === 'node', agents.nodeKind);
+  ok(`dispatcher row kind = 分发器 (${tag})`, agents.dispKind === 'dispatcher', agents.dispKind);
   // 孤儿角标 = 父名字链（链上逝者）——不再是「来自已结束的委托」类型词。
   ok(`orphan chip = 父名字链 (${tag})`, agents.orphanChip === '链上逝者', agents.orphanChip);
 
