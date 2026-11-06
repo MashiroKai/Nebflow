@@ -1,4 +1,6 @@
-package nebflow.gateway
+package nebflow.gateway.rest
+
+import nebflow.gateway.*
 
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
@@ -137,7 +139,11 @@ class SearchScopeRoutesSpec extends CatsEffectSuite:
 
   override def afterAll(): Unit =
     SearchIndexService.unsafeResetForTests()
-    os.remove.all(tempRoot)
+    // Windows：SQLite 句柄可能仍持有 chat.db（reset 只清内存态，不保证关连接）⇒
+    // 删除按 best-effort，失败不判红；mac/CI 上照常删净，残留由下次 setUp 的
+    // remove.all 在进程退出后兜底（本条与 USTC 侧原实现的行为差异仅限 teardown）。
+    try os.remove.all(tempRoot)
+    catch case _: Exception => ()
 
   private def req(path: String): Request[IO] =
     Request[IO](Method.GET, Uri.unsafeFromString(path))

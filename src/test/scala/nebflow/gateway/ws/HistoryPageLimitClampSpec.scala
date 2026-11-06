@@ -1,4 +1,6 @@
-package nebflow.gateway
+package nebflow.gateway.ws
+
+import nebflow.gateway.*
 
 import cats.effect.{IO, Ref}
 import munit.CatsEffectSuite

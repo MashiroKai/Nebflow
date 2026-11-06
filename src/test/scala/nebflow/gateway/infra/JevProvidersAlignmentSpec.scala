@@ -1,4 +1,6 @@
-package nebflow.gateway
+package nebflow.gateway.infra
+
+import nebflow.gateway.*
 
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global

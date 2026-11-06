@@ -1,4 +1,6 @@
-package nebflow.gateway
+package nebflow.gateway.console
+
+import nebflow.gateway.*
 
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*

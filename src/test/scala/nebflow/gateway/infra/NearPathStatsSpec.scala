@@ -1,4 +1,6 @@
-package nebflow.gateway
+package nebflow.gateway.infra
+
+import nebflow.gateway.*
 
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
@@ -275,7 +277,10 @@ class NearPathStatsSpec extends FunSuite:
     ))
     assertEquals(lan.status, Status.Ok)
     val lanKeys = bodyJson(lan).asObject.map(_.keys.toSet).getOrElse(Set.empty)
-    assertEquals(lanKeys, Set("product", "status", "version", "providers", "search"),
+    // 基线：base 五键 + providerConcurrency（provider-concurrency 批 · 2026-11-06，
+    // spawn 侧钉定的模型链快照读数，随 1198 提交合并进入本线；本测试的爆炸半径
+    // 仍是「nearpath 键不得上车」，故把该键计入基线而不放宽其余断言）
+    assertEquals(lanKeys, Set("product", "status", "version", "providers", "search", "providerConcurrency"),
       "the LAN/relay payload must stay exactly the baseline payload (no new keys from this batch)")
     // 环回腿只允许多 deviceId 一个键（本地加速批 ② 既有语义）；本批零新增键
     val loop = serve(SpecRequests.withRemote(

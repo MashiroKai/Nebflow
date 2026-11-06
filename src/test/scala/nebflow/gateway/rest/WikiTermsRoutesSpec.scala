@@ -1,4 +1,6 @@
-package nebflow.gateway
+package nebflow.gateway.rest
+
+import nebflow.gateway.*
 
 import cats.effect.IO
 import io.circe.Json
