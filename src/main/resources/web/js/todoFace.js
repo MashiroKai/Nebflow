@@ -24,7 +24,9 @@
 //
 // 动画换算（SwiftUI spring(response:dampingFraction:) → 显式欧拉积分弹簧，
 // ω=2π/response，k=ω²，c=2·ζ·ω，质量 1；逐条对应见 docs 对照表）：
-//   open  spring(0.42, 0.8) / close spring(0.45, 1.0) / pop spring(0.45, 0.45)
+//   open  spring(0.42, 0.8) / close spring(0.45, 1.0)
+//   胶囊位移·计数FLIP·pop弹跳 cap spring(0.45, 0.8)（胶囊减弹批 2026-11-06：
+//   原用 pop 0.45/0.45 ≈20% 超调，作者令「平滑移动、轻微弹性就行」≤2% ⇒ 0.8）
 //   行展开·创建行·行保存收起 spring(0.3, 0.8) / 完成钮 spring(0.3, 0.7) +
 //   对勾 spring(0.2, 0.6) / 筛选栏·视图切换 spring(0.25, 0.8) /
 //   重排 spring(0.3, 0.8) / 循环箭头 easeInOut 0.5 往复。
@@ -149,6 +151,16 @@ const SPRING = {
   view:   { response: 0.25, damping: 0.8 },
   hover:  { response: 0.3,  damping: 0.65 },
   hintIn: { response: 0.3,  damping: 0.85 },
+  // 胶囊减弹档（作者令 2026-11-06 12:19，逐字「这个待办胶囊不要有弹性效果，
+  // 就直接平滑的移动，轻微弹性就行」）：主体平滑移动、末段只许**极轻微**回弹
+  // （overshoot ≤2%）。与 pop（ζ0.45 ⇒ 理论超调 ≈20%，明弹）的差异只在阻尼：
+  //   ζ 0.8 ⇒ 超调 e^(−πζ/√(1−ζ²)) ≈ 1.5%（response 0.45 与 pop 同速）；
+  // 消费点 = moveCountInto 的计数节点 FLIP 收场 + pop() 的 scale 弹跳 —— 两处
+  // 都是「● 0 待办」胶囊本体的位移动画。岛形变腿（SPRING.morph，ζ0.82 ≈
+  // 1.1%）与 CSS 翻面 keyframes（ease-out / 单向 cubic，零回弹）天生达标，
+  // 不在本令范围。liquidMorph 单源全局参数不动（本表是 todoFace 的 JS 弹簧
+  // 积分器，与 CSS 过渡单源是两条管线）。
+  cap:    { response: 0.45, damping: 0.8 },
 };
 
 /** 空白区建：pointerdown → click 位移超过此值即判为拖动/滑屏（不建）。
@@ -2262,7 +2274,7 @@ class TodoFace {
       { from: dx, to: 0, set: (v) => { m.x = v; paint(); } },
       { from: dy, to: 0, set: (v) => { m.y = v; paint(); } },
       { from: sc, to: 1, set: (v) => { m.s = v; paint(); } },
-    ], SPRING.pop, () => { this.capsuleFaces.style.transform = ''; });
+    ], SPRING.cap, () => { this.capsuleFaces.style.transform = ''; });
   }
 
   collapse() {
@@ -2312,12 +2324,14 @@ class TodoFace {
   pop() {
     if (this.expanded || this.mobile || this.destroyed) return;
     if (this.cancelMorph) this.cancelMorph();
+    // 胶囊减弹档（作者令 2026-11-06）：scale 弹跳同速（response 0.45）、阻尼
+    // 0.45→0.8 —— 末段回弹从 ≈20% 收到 ≈1.5%，视觉为平滑归位 + 极轻微余韵。
     this.cancelMorph = springAnimate([
       { from: 1, to: 1.08, set: (v) => { this.capsule.style.scale = String(v); } },
-    ], SPRING.pop, () => {
+    ], SPRING.cap, () => {
       this.cancelMorph = springAnimate([
         { from: 1.08, to: 1, set: (v) => { this.capsule.style.scale = String(v); } },
-      ], SPRING.pop, () => { this.capsule.style.scale = ''; });
+      ], SPRING.cap, () => { this.capsule.style.scale = ''; });
     });
   }
 
