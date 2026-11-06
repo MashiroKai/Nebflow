@@ -703,9 +703,12 @@ function reseatTarget(target) {
 }
 
 async function remintHostSessionAndReload() {
-  // #522 键盘点收尾：GUARD 原 `nebflow_ws_remint_at` 裸字面随品牌迁移失效——
-  // 与 #500 同族迁 `key()`（branding.js 单一真源）。sessionStorage 30s 防
+  // 台账 522 键盘点收尾：GUARD 原 `nebflow_ws_remint_at` 裸字面随品牌迁移失效——
+  // 与台账 500 同族迁 `key()`（branding.js 单一真源）。sessionStorage 30s 防
   // 重载闸，语义不变；旧拼写值弃置无害（最坏多一次 remint 尝试）。
+  // 🔴 注：编号不带井号前缀——check-design-tokens 的 JS 行注释不清扫会把
+  // 「井号 + 3 位数字」形态的台账号误计成「颜色字面量」（恰为 3 位 hex），
+  // 曾致基线 10→12 假红（panel-language 批 2026-11-06 顺带面，仅注释改写、零语义）。
   const GUARD = key('ws_remint_at');
   let last = 0;
   try { last = Number(sessionStorage.getItem(GUARD)) || 0; } catch (_) {}
