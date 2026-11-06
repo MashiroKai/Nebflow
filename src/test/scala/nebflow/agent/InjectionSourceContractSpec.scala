@@ -131,7 +131,11 @@ class InjectionSourceContractSpec extends FunSuite:
         "bg-lifecycle",
         "waiting-dock-care",
         "chain-orphan",
-        "team"
+        "team",
+        // 冻结重放静默批（2026-11-06，作者原话「llm 不稳定 不需要向上通知…现在还是
+        // 在给你报障」）：解冻轮把静默族冻结回执合成**一条**「等待恢复中」状态行，
+        // 来源单独定名（呈现面按它渲染「等待恢复中」而不是「已冻结」）。
+        "frozen-waiting"
       ),
       "BackendNamedSources 变更 ⇒ 同步检查 web/js/chat.js#INJECTED_SOURCE_LABELS 并更新本 pin"
     )

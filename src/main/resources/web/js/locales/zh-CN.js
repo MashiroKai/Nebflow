@@ -905,6 +905,12 @@ export default {
   // 原因码 + 自动续跑次数 + 唤醒入口。
   'subagents.frozenAwaitingYou': '已冻结 · {reason}（待你处理）',
   'subagents.frozenAwaitingYouNoReason': '已冻结 · 待你处理',
+  // 修复批 2026-11-06（作者原话「llm 不稳定 不需要向上通知…原地等待恢复就行」）：
+  // 可恢复冻结（llm-failure / 额度）**不再是你的待办**——词从「待你处理」改成
+  // 「等待恢复中」，与真失败（tool-failure / engine-fault）在视觉与文案上分开。
+  'subagents.freezeRecovering': '等待恢复中',
+  'subagents.freezeRecoveringReason': '等待恢复中 · {reason}',
+  'subagents.freezeRecoveringTip': '供应商暂时不可用（不是任务失败，也不需要你做什么）：引擎正在退避重试 / 换可用的供应商，恢复后在原会话上接着跑——已完成的不重做。不向上汇报，也不需要唤醒。',
   'subagents.frozenInfraTip': '供应商故障（不是任务失败）：引擎自己探测恢复，恢复后自动续跑同一会话（续在检查点、已完成的不重做，有次数上限与递增间隔）；也可以现在点「唤醒」立即续跑。不向上级汇报——本面板就是它的状态面。',
   'subagents.frozenAutoResumes': '已自动续跑 {n} 次',
   'subagents.frozenAutoResumesSpent': '自动续跑次数已用尽——需要你：充值 / 换模型 / 取消',

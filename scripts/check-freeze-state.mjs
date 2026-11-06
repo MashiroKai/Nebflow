@@ -148,13 +148,23 @@ check('② needs-human（后端字段在场）⇒ manual + 恢复按钮', () => 
   return 'kind=needs-human, button=shown';
 });
 
-check('② 回落表：reason=loop / delegate-frozen:* ⇒ manual + 恢复按钮', () => {
-  for (const wire of ['loop', 'delegate-frozen:llm-failure', 'delegate-frozen:engine-fault']) {
+check('② 回落表：loop / 真失败 delegate 冻结 ⇒ manual + 恢复按钮；可恢复 ⇒ 等待恢复中', () => {
+  // 修复批 2026-11-06（作者原话「llm 不稳定 不需要向上通知…原地等待恢复就行了」）：
+  // `delegate-frozen:*` 一族旧实现一律落 manual（「待你处理」）——provider 故障与真失败
+  // 在面板上分不开。可恢复族（llm-failure / cancelled-by-quota）改判 waiting-recovery
+  // 且**不给恢复按钮**（引擎自己续跑，按钮等于教用户做一件引擎正在做的事）；
+  // 真失败（engine-fault / tool-failure）与 loop 仍是 manual + 按钮。
+  for (const wire of ['loop', 'delegate-frozen:engine-fault', 'delegate-frozen:tool-failure']) {
     const kind = mod.freezeKindOf({ freezeReasonWire: wire });
     assert(kind === FREEZE_KIND.manual, `${wire} ⇒ ${kind}`);
     assert(mod.showsRecoveryAction(kind) === true, `${wire} 必须给按钮`);
   }
-  return 'loop + 2 类 delegate 错误冻结 ⇒ manual';
+  for (const wire of ['delegate-frozen:llm-failure', 'delegate-frozen:cancelled-by-quota', 'llm-failure']) {
+    const kind = mod.freezeKindOf({ freezeReasonWire: wire });
+    assert(kind === FREEZE_KIND.recovering, `${wire} ⇒ ${kind}`);
+    assert(mod.showsRecoveryAction(kind) === false, `${wire} 不该给「唤醒」按钮（引擎自愈）`);
+  }
+  return 'loop + 真失败 ⇒ manual；可恢复 ⇒ waiting-recovery（词色分开）';
 });
 
 check('② 未知/空原因不承诺自动恢复（诚实默认 = manual）', () => {

@@ -947,6 +947,11 @@ export default {
   // status surface: "needs you" word + reason code + auto-resume count + wake entry.
   'subagents.frozenAwaitingYou': 'Frozen · {reason} (needs you)',
   'subagents.frozenAwaitingYouNoReason': 'Frozen · needs you',
+  // Fix batch 2026-11-06: recoverable freezes (llm-failure / quota) are NOT your todo —
+  // their word is "Recovering", kept visually distinct from real failures (needs you).
+  'subagents.freezeRecovering': 'Recovering',
+  'subagents.freezeRecoveringReason': 'Recovering · {reason}',
+  'subagents.freezeRecoveringTip': 'The provider is temporarily unavailable (not a task failure, and nothing for you to do): the engine keeps retrying with backoff and switches to a usable provider, then resumes in the same session — finished work is not redone. Nothing is reported upward and no wake is needed.',
   'subagents.frozenInfraTip': 'Provider fault (NOT a task failure): the engine probes for recovery and resumes the SAME session by itself once a provider is serving again (from the checkpoint, finished work is not redone, capped attempts with growing gaps); press Wake to resume it right now. Nothing is reported upward — this panel is its status surface.',
   'subagents.frozenAutoResumes': 'auto-resumed {n} time(s)',
   'subagents.frozenAutoResumesSpent': 'auto-resume budget spent — needs you: top up / switch model / cancel',
