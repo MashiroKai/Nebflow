@@ -435,6 +435,65 @@ html[data-theme="light"] {
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
+ * Input field（输入面）—— 全站唯一输入造型的令牌段
+ *   （input-surface-unify 批 2026-11-06；作者裁定逐字：
+ *    「这个蓝色输入框怎么到处在显示 我不是说去掉吗 就采用我们主对话窗口这种
+ *      灰色圆角阴影」+「输入框的这个样式也要成为统一标准 不可以出现第二种」）
+ *
+ * 参照物 = 主会话输入框 `#input-bar`（标准，不是被改对象）。逐项对齐关系：
+ *   · 背景  = `--nf-glass-bg`（与 #input-bar 同一个玻璃底；逐值同源不是我抄的值）
+ *   · 圆角  = `--nf-field-radius`（--ds-radius-xl 12px；#input-bar 是外壳 20px，
+ *             本档取「条状容器」档 —— 20px 落在 32px 高的单行输入上会读成胶囊，
+ *             尺寸不匹配的圆角不是「同一形态」，故按下表档位取值，读数见规范 §1）
+ *   · 阴影  = `--nf-field-shadow`（= 参照物 --nf-glass-shadow 三档栈逐字）
+ *   · 边框  = 中性灰（参照物的细边是白光边，落在面板上不可见；按作者「灰调」要求
+ *             换成正文色 14% 混色，两主题自适应，且**永不是品牌蓝**）
+ *   · 内距  = 6px / 12px（与 #input-bar 的 --ds-space-1h / --ds-space-3 逐值同）
+ *   · 字号  = --ds-fs-row 13.5px（与 #input-bar 内层 #input 同档）
+ *
+ * ── 三层职责（改输入面只改这三处）──────────────────────────────────────────
+ *   ① 令牌 = 本段（造型数值的唯一出生地；别的文件出现 --nf-field-* 定义 ⇒ 门禁红）
+ *   ② 类/规则 = `css/inputSurface.css`（`.nf-field` / `--bare` / `--select` 三个
+ *      声明过的变体 + 元素级兜底；**全站唯一**允许写输入面造型的文件）
+ *   ③ 机检 = `scripts/check-input-surface.mjs`（I1 令牌单源 / I2 造型单源 /
+ *      I3 数值单源 / I4 蓝不进输入面 / I5 JS 注入面 / I6 豁免清单在规范里）
+ * 规范正文 = `seed/plugins/design-language/skills/design-language/references/
+ *   input-surface-spec.md`（与 flat-button-spec / glass-spec 同族）。
+ * ══════════════════════════════════════════════════════════════════════════ */
+:root {
+  --nf-field-bg: var(--nf-glass-bg);                  /* = #input-bar 玻璃底 */
+  --nf-field-bg-hover: var(--nf-glass-bg-hover);
+  /* 边框：中性灰（正文色 14%）——作者要的「灰调」，两主题自适应，零品牌蓝 */
+  --nf-field-border-color: color-mix(in srgb, var(--color-text) 14%, transparent);
+  --nf-field-border: 1px solid var(--nf-field-border-color);
+  /* 聚焦（指针态）：同一根灰线压深一档 + 阴影略抬，形态不变 */
+  --nf-field-border-focus: color-mix(in srgb, var(--color-text) 26%, transparent);
+  --nf-field-radius: var(--ds-radius-xl);             /* 12px 条状容器档 */
+  --nf-field-shadow: var(--nf-glass-shadow);          /* = #input-bar 三档栈 */
+  --nf-field-pad-y: var(--ds-space-1h);               /* 6px  = #input-bar */
+  --nf-field-pad-x: var(--ds-space-3);                /* 12px = #input-bar */
+  --nf-field-fs: var(--ds-fs-row);                    /* 13.5px = #input 同档 */
+  --nf-field-line: 1.4;
+  /* 裸件（嵌在已成形的容器里，如主会话输入条 / 记事本 / 搜索胶囊）：
+     背景/边框/阴影全让位给外壳，只保留字与色 */
+  --nf-field-bare-bg: transparent;
+  /* 键盘可见焦点环：唯一允许出现「蓝」的地方 —— 且是压灰的蓝族混色
+     （品牌蓝 45% + 正文色），不是整块品牌蓝框；对比度见规范 §3 */
+  --nf-field-ring: color-mix(in srgb, var(--btn-focus-ring) 45%, var(--color-text));
+  --nf-field-ring-w: 2px;
+  --nf-field-ring-offset: -1px;                       /* 内缩：压在框体自己的边上 */
+  /* 输入条外壳档（.ask-input 等「装着输入件的条」）：与 #input-bar 同族圆角 */
+  --nf-field-shell-radius: var(--ds-radius-xl);
+  /* 错误态边（同一种形态的状态档，不是第二套形态） */
+  --nf-field-border-invalid: var(--color-error);
+  /* 原生下拉箭头（.nf-field--select）：只由 currentColor 组成，不引入第二色 */
+  --nf-field-caret: linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  --nf-field-caret-pos: calc(100% - 12px) 55%, calc(100% - 8px) 55%;
+  --nf-field-caret-size: 4px 4px;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
  * Toggle（开关）—— 全站唯一开关形态的令牌段
  *   （toggle-unify 批 2026-11-05；作者裁定 2026-11-05 19:55「A 胶囊滑块」）
  *

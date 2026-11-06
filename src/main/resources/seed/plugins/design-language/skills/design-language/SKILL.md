@@ -82,6 +82,29 @@ last_verified: 2026-10-21
 `css/glass.css` 之外任何地方出现非 `none` 的 `backdrop-filter` 都会被
 `make frontend-gates` 判红 —— 这一条是「只有一个毛玻璃」的机械保证。
 
+### 1.6 输入面（input surface —— 全站唯一输入框造型）
+
+> **词条「输入框」= 本节 + `references/input-surface-spec.md`**（作者裁定 2026-11-06
+> 「采用我们主对话窗口这种 灰色圆角阴影」+「输入框的这个样式也要成为统一标准
+> 不可以出现第二种」）。听到/看到「输入框」，答案只有这一份。
+
+**唯一形态：灰调玻璃底 + 中性灰细边 + 12px 圆角 + 三档柔影**（参照物 = 主会话输入框
+`#input-bar`，底/影/内距/字号逐值同源，边框按「灰调」要求换中性灰、圆角下调一档）。
+焦点只有两个通道：**指针态零环**（灰线压深一档），**键盘可见焦点 = 2px 内缩压灰环**
+（唯一保留蓝的位置，永不成块）。
+
+| 维度 | 唯一落点 | 说明 |
+|---|---|---|
+| 值（令牌） | `css/stand-tokens.css` 的 `--nf-field-*` 段 | 全站**唯一出生地** |
+| 类/规则（组件） | `css/inputSurface.css` | `.nf-field` / `.nf-field--bare` / `.nf-field--select` + 元素级兜底（新增输入件天然被收编） |
+| 输入嫌体 | `js/focusModality.js` | `html[data-nf-modality]`（pointer / keyboard），纯 CSS 做不到「点进去无环、Tab 有环」 |
+| 机检 | `scripts/check-input-surface.mjs` | 六条判据 I1–I6，见规范正文 §4 |
+| 规范 | `references/input-surface-spec.md` | 形态、变体、焦点通道、判据、例外登记 |
+
+**反例（出现即红）**：组件自写输入件的底/边/圆角/影（46 处已收编）、输入件的焦点
+描边用蓝族令牌（7 处已摘）、容器 `:focus-within` 把整条输入壳刷成蓝边、JS 内联给
+输入件写造型。`make frontend-gates` 的 `input-surface` 一条会把它们全部判红。
+
 ## 2. 字体
 
 - **字族**：UI = `-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif`（官网同栈）；等宽 = `ui-monospace, SFMono-Regular, Menlo, Consolas, monospace`（密钥值、代码、路径）。装饰 eyebrow 场景可用 JetBrains Mono（官网 hero 先例），客户端暂无消费面。

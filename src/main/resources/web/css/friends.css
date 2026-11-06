@@ -286,13 +286,9 @@ body.mobile-layer .fm-req-time { font-size: var(--ds-fs-hint); }
   min-width: 0;
   padding: var(--ds-space-1h) var(--ds-space-inline-x);
   font-size: var(--ds-fs-body);
-  border-radius: var(--ds-radius-input);
-  border: 1px solid var(--glass-etched-border);
-  background: var(--glass-etched-bg);
   color: var(--color-text, #000);
-  outline: none;
-  transition: border-color 0.15s ease;
 }
+/* 造型 + 焦点态：归 css/inputSurface.css（输入面唯一标准批 2026-11-06）。 */
 
 /* 焦点态：.fm-search-input 已收编 css/inputFocus.css（2026-11-05）。 */
 
@@ -441,12 +437,9 @@ button.fm-search-btn:focus-visible {
   min-width: 0;
   padding: var(--ds-space-1h) var(--ds-space-inline-x);
   font-size: var(--ds-fs-hint);
-  border-radius: var(--ds-radius-input);
-  border: 1px solid var(--glass-etched-border);
-  background: var(--glass-bg);
   color: var(--color-text, #000);
-  outline: none;
 }
+/* 造型 + 焦点态：归 css/inputSurface.css（输入面唯一标准批 2026-11-06）。 */
 
 .fm-verify-box .glass-control { flex-shrink: 0; font-size: var(--ds-fs-hint); padding: var(--ds-space-1h) var(--ds-space-3); }
 

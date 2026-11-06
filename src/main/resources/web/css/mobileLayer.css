@@ -3289,13 +3289,12 @@ body.mobile-layer .mh-search-bar:not(.g2-fab) > i svg {
 body.mobile-layer .mh-search-input {
   flex: 1;
   min-width: 0;
-  border: none;
-  outline: none;
-  background: transparent;
   color: var(--color-frame-text);
   font-size: var(--mfs-callout);
   font-family: inherit;
 }
+/* 裸件（无底/无边/无环）：归 css/inputSurface.css 的裸件成员表（输入面唯一
+   标准批 2026-11-06）—— 手机层与桌面同一份形态，不另写一套。 */
 body.mobile-layer .mh-search-input::placeholder { color: var(--color-frame-text-muted); }
 body.mobile-layer .mh-search-clear {
   flex: none;

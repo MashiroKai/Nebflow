@@ -208,10 +208,9 @@ html[data-theme="dark"] #perception-panel {
 .pp-field label { display: block; font-size: var(--ds-fs-hint); color: var(--st-text); margin-bottom: var(--ds-space-1); font-weight: 500; }
 .pp-field input {
   width: 100%; font: inherit; font-size: var(--ds-fs-hint); color: var(--st-text);
-  background: var(--st-etched-bg); border: 1px solid var(--st-etched-border); border-radius: var(--ds-radius-input);
-  padding: var(--ds-space-2) var(--ds-space-inline-x); outline: none; transition: border-color .15s;
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
 }
-/* 焦点态：.pp-field input 已收编 css/inputFocus.css（2026-11-05）。 */
+/* 造型 + 焦点态：归 css/inputSurface.css（输入面唯一标准批 2026-11-06）。 */
 .pp-field .hint { font-size: var(--ds-fs-meta); color: var(--st-text-dim); margin-top: var(--ds-space-1); line-height: 1.45; }
 .pp-auto-note {
   display: flex; align-items: flex-start; gap: var(--ds-space-1h); font-size: var(--ds-fs-hint); color: var(--st-text-muted);
@@ -302,14 +301,14 @@ html[data-theme="dark"] #perception-panel {
 }
 .to-chip .x:hover { background: var(--st-control-bg-hover); color: var(--st-text); }
 .to-chip .x svg { width: 10px; height: 10px; stroke: currentColor; fill: none; stroke-width: 2.2; stroke-linecap: round; }
-.to-input { flex: 1; min-width: 130px; border: none; background: transparent; outline: none; font: inherit; font-size: var(--ds-fs-hint); color: var(--st-text); padding: var(--ds-space-1) var(--ds-space-half); }
+.to-input { flex: 1; min-width: 130px; font: inherit; font-size: var(--ds-fs-hint); color: var(--st-text); padding: var(--ds-space-1) var(--ds-space-half); }
 .to-input::placeholder { color: var(--st-text-dim); }
 .cc-toggle { border: none; background: transparent; font: inherit; font-size: var(--ds-fs-hint); color: var(--st-text-muted); cursor: pointer; padding: var(--ds-space-1) var(--ds-space-2); border-radius: var(--ds-radius-chip); align-self: center; flex-shrink: 0; }
 .cc-toggle:hover { background: var(--st-control-bg-hover); color: var(--st-text); }
 .cc-row { display: none; }
 .cc-row.show { display: flex; }
 .subject-input {
-  width: 100%; border: none; background: transparent; outline: none; font: inherit;
+  width: 100%; font: inherit;
   font-size: var(--ds-fs-title); font-weight: 500; color: var(--st-text); padding: var(--ds-space-2) var(--ds-space-half); letter-spacing: -0.01em;
 }
 .subject-input::placeholder { color: var(--st-text-dim); font-weight: 400; }

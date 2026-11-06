@@ -442,17 +442,19 @@ body.mobile-layer .note-dock .ds-resize-handle {
 
 /* 输入框（作者令②：点击入口弹出的就是它；v2.1 减法 = 输入 + 右侧唯一发送钮）
  * 三修③：条材质 = canvas 查找条 .nf-findbar 同款（--cv-* 单源 + --cv-radius-bar）；
- * 聚焦描边 = 活性蓝既有词汇（sapphire 0.45，#input-bar.frozen 同值档）。
+ * 输入面唯一标准批（2026-11-06）：圆角与焦点态归 css/inputSurface.css（.ask-input
+ * 是「输入条外壳」成员，圆角取 --nf-field-shell-radius）；原 `:focus-within`
+ * 活性蓝描边（sapphire .45 = 作者要去的「蓝框」的一处）随批摘除 —— 焦点可见性由
+ * 内层裸件在标准里拿键盘环承担，外壳不再变色。
  * 统一按钮玻璃批 2026-11-01：材质迁 glass.css 面级浮件档，本文件只留几何。 */
 .ask-input {
-  width: 100%; border-radius: var(--cv-radius-bar, 12px); position: relative;
+  width: 100%; position: relative;
   display: flex; align-items: center; gap: var(--ds-space-1h); padding: var(--ds-space-2) var(--ds-space-2) var(--ds-space-2) var(--ds-space-1h);
   /* 气泡穿入批（2026-11-05）：输入条必须画在气泡列之上（.ask-colwrap z:1）。
      材质本身归 .nf-glass（stand-tokens --nf-glass-* 单源 + glass.css 配方），
      本文件不写任何毛玻璃值 —— 作者令「输入框也要是毛玻璃效果」由类供给。 */
   z-index: 2;
 }
-.ask-input:focus-within { border-color: rgb(var(--sapphire) / 0.45); }
 /* 输入行为包批（2026-11-02 作者令）：input → textarea（rows=1）——Shift+Enter
  * 换行键位契约与主会话逐一对齐；单行视觉不变，超行自动长高（JS 封顶 120px）。
  * 记事本批（2026-11-05）：`.note-body textarea` 是本规则的**成员**——字档/字族/
@@ -460,11 +462,14 @@ body.mobile-layer .note-dock .ds-resize-handle {
  * 几何规则里补「占满 + 可滚」，见上方 .note-dock .note-body 段）。 */
 .ask-input textarea,
 .note-body textarea {
-  flex: 1; min-width: 0; border: none; outline: none; background: transparent;
+  flex: 1; min-width: 0;
   resize: none; overflow: hidden; display: block; padding: 0; margin: 0;
-  font: 400 13.5px -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Segoe UI', Roboto, sans-serif;
-  line-height: 1.4; color: var(--color-text); caret-color: var(--color-primary);
+  font: 400 var(--nf-field-fs) -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Segoe UI', Roboto, sans-serif;
+  line-height: var(--nf-field-line); color: var(--color-text); caret-color: var(--color-primary);
 }
+/* 无边框/透明底/无内距：输入面唯一标准批（2026-11-06）起由
+   css/inputSurface.css 的 `.nf-field--bare` 成员表供给（这两条选择器就在表里）
+   —— 本文件不再写第二份造型值（check-input-surface.mjs I2 判据）。 */
 /* 占位（placeholder 形态）：canvas-hint-text 批 —— 色走 dim 令牌、透明度显式
    归 1（修前只写 `--color-text-muted`，与输入本体色太近，占位不像占位；字档
    跟随 textarea 本体 13.5px，与 --cv-hint-fs-placeholder 13 的「同档」原则一致）。 */

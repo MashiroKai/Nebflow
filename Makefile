@@ -1,6 +1,6 @@
 .PHONY: compile run assembly clean install \
   lint fmt fix fmt-check check quality-gate check-visual visual-baseline frontend-gates component-contract \
-  flat-buttons glass toggle toggle-geometry scroll-pill \
+  flat-buttons glass toggle toggle-geometry scroll-pill input-surface \
   plugin-seed-parity
 
 # Auto-detect fastest Maven mirror (Aliyun for China, Maven Central otherwise)
@@ -103,7 +103,7 @@ quality-gate:
 # = 后端把 `GET /api/conversations` 的 case 误删，前端 404 被吞成「暂无会话」，
 # **没有任何断言发现「前端调了但后端没有」**。本闸静态对照两侧（前端 /api 字面量
 # 集合 × 网关路由注册面），前端调了后端没有 ⇒ 红。
-FRONTEND_GATES := design-tokens msgstyle self-explaining circular fixture-secrets api-routes freeze-state freeze-silence flat-buttons glass canvas-hint toggle scroll-pill
+FRONTEND_GATES := design-tokens msgstyle self-explaining circular fixture-secrets api-routes freeze-state freeze-silence flat-buttons glass canvas-hint toggle scroll-pill input-surface
 
 frontend-gates:
 	@command -v node >/dev/null 2>&1 || { echo "node not found — 前端门禁需要 node"; exit 2; }
@@ -168,6 +168,14 @@ frontend-gates:
 	@# S1/S2/S4/S5 四条实测腿给出（需浏览器，不在静态门禁里跑）。
 	@# 盘点：node scripts/check-scroll-pill-center.mjs --json。
 	node scripts/check-scroll-pill-center.mjs
+	@# 输入面唯一性门禁（input-surface-unify 批 2026-11-06；作者裁定「输入框的这个
+	@# 样式也要成为统一标准 不可以出现第二种」）：① --nf-field-* 只在 stand-tokens.css
+	@# 定义；② 输入面选择器上的底/边/圆角/影/描边只许在 css/inputSurface.css；
+	@# ③ 标准文件里的造型值必须取 var(--nf-field-*)；④ 蓝族令牌不许进输入面（唯一
+	@# 开口是 keyboard 模式下的压灰环）；⑤ JS 不许内联给输入件写造型；⑥ 豁免只能
+	@# 在规范文件 input-surface-spec.md 的例外清单里具名登记（空理由 = 红）。
+	@# 盘点：node scripts/check-input-surface.mjs --inventory；机器读：--json。
+	node scripts/check-input-surface.mjs
 	@echo "Frontend static gates passed ($(FRONTEND_GATES))."
 
 # ── 按钮扁平化：单闸入口（CI 同名 step 调的就是它，单一真源别在 CI 里另抄一遍）──
@@ -206,6 +214,18 @@ toggle:
 # 验红：--mutate=prev-mobile-inset|travel-ignores-inset（判据必须转红，否则 exit 3）。
 toggle-geometry:
 	node scripts/check-toggle-geometry.mjs
+
+# ── 输入面唯一性（input-surface-unify 批 2026-11-06；作者裁定「输入框的这个样式
+#    也要成为统一标准 不可以出现第二种」）──────────────────────────────────────
+# 造型单源 = css/inputSurface.css + stand-tokens.css 的 --nf-field-*；
+# 别处写底/边/圆角/影/描边 ⇒ 红（I2）；蓝族令牌不许进输入面（I4）；
+# 豁免只在规范文件例外清单里登记（I6）。盘点：--inventory；机器读：--json。
+input-surface:
+	node scripts/check-input-surface.mjs
+
+# 真几何腿（零端口、真 Chromium，改前/改后对照 + 指针态/键盘态双通道读数）
+input-surface-geometry:
+	node tests/input-surface.spec.mjs
 
 # ── 路由存在性：运行期腿（empty-state-must-not-lie 批 · 件三②，2026-11-05）──────
 # 静态腿判「源码里注册了没」，运行期腿判「启动后真的答不答」——后者才是事故的
