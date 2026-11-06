@@ -70,27 +70,29 @@ object ProviderConcurrency:
     actorId: String,
     orderedChain: List[(String, String)]
   ): IO[Option[PinnedChain]] =
-    counts.modify { c =>
-      val existing = c.byProvider.collectFirst { case (pid, ids) if ids.contains(actorId) => pid }
-      existing match
-        case Some(_) => (c, existing) // 幂等：永不迁移
-        case None =>
-          val chosen = orderedChain.zipWithIndex.find { case ((pid, _), _) =>
-            val cap = config.llm.providers.get(pid).flatMap(capOf)
-            cap.forall(limit => c.byProvider.getOrElse(pid, Set.empty).size < limit)
-          }
-          chosen match
-            case Some(((pid, _), _)) =>
-              val upd = c.byProvider.updated(pid, c.byProvider.getOrElse(pid, Set.empty) + actorId)
-              (Counts(upd), Some(pid))
-            case None => (c, None)
-    }.map {
-      // 幂等命中（existing 非 None）也返回完整快照：按 pid 在链上定位重造，纯函数零副作用。
-      case Some(pid) =>
-        val idx = orderedChain.indexWhere(_._1 == pid)
-        if idx < 0 then None else Some(pinAt(orderedChain, idx))
-      case None => None
-    }
+    counts
+      .modify { c =>
+        val existing = c.byProvider.collectFirst { case (pid, ids) if ids.contains(actorId) => pid }
+        existing match
+          case Some(_) => (c, existing) // 幂等：永不迁移
+          case None =>
+            val chosen = orderedChain.zipWithIndex.find { case ((pid, _), _) =>
+              val cap = config.llm.providers.get(pid).flatMap(capOf)
+              cap.forall(limit => c.byProvider.getOrElse(pid, Set.empty).size < limit)
+            }
+            chosen match
+              case Some(((pid, _), _)) =>
+                val upd = c.byProvider.updated(pid, c.byProvider.getOrElse(pid, Set.empty) + actorId)
+                (Counts(upd), Some(pid))
+              case None => (c, None)
+      }
+      .map {
+        // 幂等命中（existing 非 None）也返回完整快照：按 pid 在链上定位重造，纯函数零副作用。
+        case Some(pid) =>
+          val idx = orderedChain.indexWhere(_._1 == pid)
+          if idx < 0 then None else Some(pinAt(orderedChain, idx))
+        case None => None
+      }
 
   /**
    * 尾链策略（契约 §3d，作者原话「其后按原 fallback 顺序接续」）＝ **仅取被选中的
