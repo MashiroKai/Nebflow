@@ -1,0 +1,125 @@
+mobile-tap 门禁 — 视觉档 48px（--ds-hit-tap-min → --ds-hit-tap-lg） · 命中盒档 48px（--ds-hit-box-min → --ds-hit-tap-min → --ds-hit-tap-lg）
+主口径（运行态几何）：reports-evidence/todo-mobile-revamp__20261106/shots-before/readings-before.json
+  可点元素 19 · 合规 2 · 违规 17 · 无法判定 49（运行态 0 / 静态 49）
+
+违规（视觉边 < 视觉档 且 命中盒 < 命中盒档）：
+  ✗ div.tfl-panel.tfl-panel-open:nth-of-type(1) > div.tfl-header:nth-of-type(1) > button.tfl-icon-btn.tfl-filter-toggle:nth-of-type(1)
+      w×h 28×24  hit 44×44   视觉差 -20×-24 · 命中盒差 -4×-4
+  ✗ button.tfl-chip.tfl-chip-all.selected:nth-of-type(1)
+      w×h 49×26  hit 49×26   视觉差 0×-22 · 命中盒差 0×-22
+  ✗ button.tfl-chip-add
+      w×h 24×26  hit 24×26   视觉差 -24×-22 · 命中盒差 -24×-22
+  ✗ div.tfl-panel.tfl-panel-open:nth-of-type(1) > div.tfl-filter-wrap:nth-of-type(2) > div.tfl-filterbar > div.tfl-chips-row:nth-of-type(1) > button.tfl-chip-trash:nth-of-type(4)
+      w×h 24×26  hit 24×26   视觉差 -24×-22 · 命中盒差 -24×-22
+  ✗ button.tfl-chip.tfl-chip-prio:nth-of-type(1)
+      w×h 35×26  hit 35×26   视觉差 -13×-22 · 命中盒差 -13×-22
+  ✗ button.tfl-chip.tfl-chip-prio:nth-of-type(2)
+      w×h 35×26  hit 35×26   视觉差 -13×-22 · 命中盒差 -13×-22
+  ✗ button.tfl-chip.tfl-chip-prio:nth-of-type(3)
+      w×h 35×26  hit 35×26   视觉差 -13×-22 · 命中盒差 -13×-22
+  ✗ button.tfl-chip.tfl-chip-prio:nth-of-type(4)
+      w×h 35×26  hit 35×26   视觉差 -13×-22 · 命中盒差 -13×-22
+  ✗ div.mf-drawer:nth-of-type(2) > div.mf-drawer-box:nth-of-type(2) > div.mf-drawer-head:nth-of-type(1) > button.mf-drawer-cancel-btn:nth-of-type(1)
+      w×h 44×44  hit 44×44   视觉差 -4×-4 · 命中盒差 -4×-4
+  ✗ div.mf-drawer:nth-of-type(2) > div.mf-drawer-box:nth-of-type(2) > div.mf-drawer-head:nth-of-type(1) > button.mf-drawer-done-btn:nth-of-type(2)
+      w×h 44×44  hit 44×44   视觉差 -4×-4 · 命中盒差 -4×-4
+  ✗ input.tfl-row-title-input
+      w×h 319×16.19  hit 319×16.19   视觉差 0×-31.81 · 命中盒差 0×-31.81
+  ✗ input.tfl-edit-notes
+      w×h 331×23.39  hit 331×23.39   视觉差 0×-24.61 · 命中盒差 0×-24.61
+  ✗ button.tfl-edit-prio-btn.selected:nth-of-type(1)
+      w×h 32×26  hit 32×26   视觉差 -16×-22 · 命中盒差 -16×-22
+  ✗ button.tfl-edit-prio-btn:nth-of-type(2)
+      w×h 32×26  hit 32×26   视觉差 -16×-22 · 命中盒差 -16×-22
+  ✗ button.tfl-edit-prio-btn:nth-of-type(3)
+      w×h 32×26  hit 32×26   视觉差 -16×-22 · 命中盒差 -16×-22
+  ✗ button.tfl-edit-prio-btn:nth-of-type(4)
+      w×h 32×26  hit 32×26   视觉差 -16×-22 · 命中盒差 -16×-22
+  ✗ button.nb-toggle
+      w×h 51×31  hit 51×46   视觉差 0×-17 · 命中盒差 0×-2
+
+静态腿无法判定 49 条（几何只能由运行态定，静态一律不下结论）：
+  ? mobileLayer.css:620  body.mobile-layer .dock-key .dock-ic  [width: 24px]
+      静态声明边长 24px < 视觉档 48px —— 最终几何受级联/var()/内容/JS 影响，静态不可判定
+  ? mobileLayer.css:620  body.mobile-layer .dock-key .dock-ic  [height: 24px]
+      静态声明边长 24px < 视觉档 48px —— 最终几何受级联/var()/内容/JS 影响，静态不可判定
+  ? mobileLayer.css:1048  body.mobile-layer #mobile-pages .mobile-page-body > .fm-modal .fm-msg-md .code-copy-btn  [min-width: 32px]
+      静态声明边长 32px < 视觉档 48px —— 最终几何受级联/var()/内容/JS 影响，静态不可判定
+  ? mobileLayer.css:1048  body.mobile-layer #mobile-pages .mobile-page-body > .fm-modal .fm-msg-md .code-copy-btn  [min-height: 24px]
+      静态声明边长 24px < 视觉档 48px —— 最终几何受级联/var()/内容/JS 影响，静态不可判定
+  ? mobileLayer.css:1351  body.mobile-layer #mh-search-kind-row  [height: 32px]
+      静态声明边长 32px < 视觉档 48px —— 最终几何受级联/var()/内容/JS 影响，静态不可判定
+  ? mobileLayer.css:1712  body.mobile-layer .mf-strip-chip  [height: 32px]
+      静态声明边长 32px < 视觉档 48px —— 最终几何受级联/var()/内容/JS 影响，静态不可判定
+  ? mobileLayer.css:2259  body.mobile-layer .mf-deck-icon  [width: 22px]
+      静态声明边长 22px < 视觉档 48px —— 最终几何受级联/var()/内容/JS 影响，静态不可判定
+  ? mobileLayer.css:2259  body.mobile-layer .mf-deck-icon  [height: 22px]
+      静态声明边长 22px < 视觉档 48px —— 最终几何受级联/var()/内容/JS 影响，静态不可判定
+  ? mobileLayer.css:2351  body.mobile-layer .mf-deck-thumb .thumb-browser .bar  [height: 16px]
+      静态声明边长 16px < 视觉档 48px —— 最终几何受级联/var()/内容/JS 影响，静态不可判定
+  ? mobileLayer.css:2357  body.mobile-layer .mf-deck-thumb .thumb-browser .blk  [height: 18px]
+      静态声明边长 18px < 视觉档 48px —— 最终几何受级联/var()/内容/JS 影响，静态不可判定
+  ? mobileLayer.css:3252  body.mobile-layer .mh-search-bar:not(.g2-fab)  [height: 44px]
+      静态声明边长 44px < 视觉档 48px —— 最终几何受级联/var()/内容/JS 影响，静态不可判定
+  ? mobileLayer.css:3333  body.mobile-layer .mh-scope-chip  [height: 30px]
+      静态声明边长 30px < 视觉档 48px —— 最终几何受级联/var()/内容/JS 影响，静态不可判定
+  ? mobileLayer.css:3580  body.mobile-layer .fm-context-menu button:not(.mfs-back)  [min-height: 44px]
+      静态声明边长 44px < 视觉档 48px —— 最终几何受级联/var()/内容/JS 影响，静态不可判定
+  ? mobileLayer.css:3753  body.mobile-layer .g2-chat-head #memory-btn  [width: 32px]
+      静态声明边长 32px < 视觉档 48px —— 最终几何受级联/var()/内容/JS 影响，静态不可判定
+  ? mobileLayer.css:3753  body.mobile-layer .g2-chat-head #memory-btn  [height: 32px]
+      静态声明边长 32px < 视觉档 48px —— 最终几何受级联/var()/内容/JS 影响，静态不可判定
+  ? split.css:4099  body.mobile-layer #canvas-refback-btn  [height: 32px]
+      静态声明边长 32px < 视觉档 48px —— 最终几何受级联/var()/内容/JS 影响，静态不可判定
+  ? src/main/resources/web/js/askAttachments.js:137  .ask-answer-attach-chip  [（CSS/HTML 零命中）]
+      JS 生成的类名在整个 css/ 与 index.html 内零命中 ⇒ 无样式面，几何不可静态判定
+  ? src/main/resources/web/js/askAttachments.js:356  .ask-answer-attach-chips  [（CSS/HTML 零命中）]
+      JS 生成的类名在整个 css/ 与 index.html 内零命中 ⇒ 无样式面，几何不可静态判定
+  ? src/main/resources/web/js/bgAgentPopup.js:164  .bgagent-strip-toggle  [（CSS/HTML 零命中）]
+      JS 生成的类名在整个 css/ 与 index.html 内零命中 ⇒ 无样式面，几何不可静态判定
+  ? src/main/resources/web/js/bgAgentPopup.js:167  .bgagent-strip-chip  [（CSS/HTML 零命中）]
+      JS 生成的类名在整个 css/ 与 index.html 内零命中 ⇒ 无样式面，几何不可静态判定
+  ? src/main/resources/web/js/bgAgentWorkStrip.js:128  .bgws-row  [（CSS/HTML 零命中）]
+      JS 生成的类名在整个 css/ 与 index.html 内零命中 ⇒ 无样式面，几何不可静态判定（该名共 4 处生成点，此处为首处）
+  ? src/main/resources/web/js/chat.js:1879  .still-processing-row  [（CSS/HTML 零命中）]
+      JS 生成的类名在整个 css/ 与 index.html 内零命中 ⇒ 无样式面，几何不可静态判定
+  ? src/main/resources/web/js/daemonPanel.js:171  .daemon-config-check  [（CSS/HTML 零命中）]
+      JS 生成的类名在整个 css/ 与 index.html 内零命中 ⇒ 无样式面，几何不可静态判定
+  ? src/main/resources/web/js/daemonPanel.js:311  .daemon-config-close  [（CSS/HTML 零命中）]
+      JS 生成的类名在整个 css/ 与 index.html 内零命中 ⇒ 无样式面，几何不可静态判定
+  ? src/main/resources/web/js/daemonPanel.js:333  .daemon-config-btn  [（CSS/HTML 零命中）]
+      JS 生成的类名在整个 css/ 与 index.html 内零命中 ⇒ 无样式面，几何不可静态判定
+  ? src/main/resources/web/js/delegateChainView.js:675  .delegate-archive-fab  [（CSS/HTML 零命中）]
+      JS 生成的类名在整个 css/ 与 index.html 内零命中 ⇒ 无样式面，几何不可静态判定
+  ? src/main/resources/web/js/delegateChainView.js:748  .delegate-archive-drawer-close  [（CSS/HTML 零命中）]
+      JS 生成的类名在整个 css/ 与 index.html 内零命中 ⇒ 无样式面，几何不可静态判定
+  ? src/main/resources/web/js/delegateChainView.js:776  .delegate-archive-row  [（CSS/HTML 零命中）]
+      JS 生成的类名在整个 css/ 与 index.html 内零命中 ⇒ 无样式面，几何不可静态判定
+  ? src/main/resources/web/js/delegateChainView.js:778  .delegate-archive-row-main  [（CSS/HTML 零命中）]
+      JS 生成的类名在整个 css/ 与 index.html 内零命中 ⇒ 无样式面，几何不可静态判定
+  ? src/main/resources/web/js/delegateChainView.js:780  .delegate-archive-row-title  [（CSS/HTML 零命中）]
+      JS 生成的类名在整个 css/ 与 index.html 内零命中 ⇒ 无样式面，几何不可静态判定
+  ? src/main/resources/web/js/delegateChainView.js:785  .delegate-archive-row-meta  [（CSS/HTML 零命中）]
+      JS 生成的类名在整个 css/ 与 index.html 内零命中 ⇒ 无样式面，几何不可静态判定
+  ? src/main/resources/web/js/delegateChainView.js:791  .delegate-archive-row-actions  [（CSS/HTML 零命中）]
+      JS 生成的类名在整个 css/ 与 index.html 内零命中 ⇒ 无样式面，几何不可静态判定
+  ? src/main/resources/web/js/explorer.js:1042  .explorer-search-row  [（CSS/HTML 零命中）]
+      JS 生成的类名在整个 css/ 与 index.html 内零命中 ⇒ 无样式面，几何不可静态判定
+  ? src/main/resources/web/js/fileSearch.js:125  .nf-findbar-close  [（CSS/HTML 零命中）]
+      JS 生成的类名在整个 css/ 与 index.html 内零命中 ⇒ 无样式面，几何不可静态判定
+  ? src/main/resources/web/js/managePanel.js:144  .fa-mgmt-btn  [（CSS/HTML 零命中）]
+      JS 生成的类名在整个 css/ 与 index.html 内零命中 ⇒ 无样式面，几何不可静态判定（该名共 2 处生成点，此处为首处）
+  ? src/main/resources/web/js/managePanel.js:144  .fa-mgmt-stop  [（CSS/HTML 零命中）]
+      JS 生成的类名在整个 css/ 与 index.html 内零命中 ⇒ 无样式面，几何不可静态判定
+  ? src/main/resources/web/js/mobile/navController.js:2475  .mobile-back-injected  [（CSS/HTML 零命中）]
+      JS 生成的类名在整个 css/ 与 index.html 内零命中 ⇒ 无样式面，几何不可静态判定
+  ? src/main/resources/web/js/mobile/searchFace.js:85  .mh-search-kindrow  [（CSS/HTML 零命中）]
+      JS 生成的类名在整个 css/ 与 index.html 内零命中 ⇒ 无样式面，几何不可静态判定
+  ? src/main/resources/web/js/mobile/socialSearch.js:494  .mh-sr-row-desc  [（CSS/HTML 零命中）]
+      JS 生成的类名在整个 css/ 与 index.html 内零命中 ⇒ 无样式面，几何不可静态判定
+  ? src/main/resources/web/js/msgQuote.js:225  .msg-quote-btn  [（CSS/HTML 零命中）]
+      JS 生成的类名在整个 css/ 与 index.html 内零命中 ⇒ 无样式面，几何不可静态判定
+  … 其余 9 条见 --json
+
+✗ mobile-tap gate FAILED — 违规 17 条（上限 0）
+  处置：视觉边可小于 48，但必须用 ::after / padding / 透明外扩把命中盒补到 48×48（写法与豁免判据见 design/liquid-morph__20261106/TAP.md）。

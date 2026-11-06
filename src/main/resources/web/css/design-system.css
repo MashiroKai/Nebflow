@@ -563,6 +563,46 @@
     --lm-dur-slow: 1ms;
   }
 }
+
+/* ── ㉓ 手机端最小可点尺寸槽（min-tap 批 2026-11-06；foundation-tap 节点）──
+   作者令（逐字）：「手机端所有的交互 最小按钮大小就是我们统一的对话框顶部悬浮按钮的样式」
+   ⇒ 手机层（`body.mobile-layer`）内**一切可点元素**立两档下限，一个真值 48：
+
+     视觉档  --ds-hit-tap-min  看得见的那块面的边长下限 = 48px
+     命中盒档 --ds-hit-box-min 可点区域的边长下限 = 48×48px
+                              （视觉可以更小，但 ::after / padding / 透明外扩必须
+                               把可点区补到 48 —— 两档分开正是为了让「视觉更小的
+                               图标钮」合法存在而不牺牲触控面积）
+
+   **取值出处（实测复核，不照抄任务书数字）**：
+     · 作者所指「对话框顶部悬浮按钮」= 聊天根顶缘那两颗圆钮：
+       `#mobile-fab-layer` 内的 `.mh-chrome-btn.g2-fab`
+       （js/mobile/chatChrome.js:258 任务键 / :274 搜索键；同一类、同一块 CSS）。
+     · 其边长的**唯一声明点** = css/glass.css:717-720
+       `body.mobile-layer .g2-fab { width: 48px; height: 48px }`
+       （桌面腿 40px 在 glass.css:554-556，手机档覆写为 48 —— 48 是手机档专属值）。
+     · 实测复核（375×812 真链快照 readings-before.json）：同族
+       `.mobile-back-btn.g2-fab` = 48×48、`.tfl-fab-add.g2-fab` = 48×48
+       ⇒ **48 是真值**，与任务书给的数字一致，无需改判。
+     · 因而不新造数值：视觉档**别名**到既有单源 `--ds-hit-tap-lg`（本文件 §⑮ :417，
+       该槽经手机桥 `--mtap-lg`（mobileLayer.css:328）供全族悬浮圆钮消费）。
+     · 命中盒档默认与视觉档同值 —— 作者「一样的样式」= 同尺寸，不是
+       「视觉 48、热区退回 44」。
+     · ⚠ 与既有 `--ds-turn-hit: 44px`（本文件 :459，desktop 指针档）的关系：
+       44 那档**不动**（桌面腿照旧）；手机层内任何以它为准的热区，改面时必须
+       改读 `--ds-hit-box-min`。手机腿的 `.ds-turn-btn` 本体已是
+       `--ds-turn-btn-size: var(--mtap-lg)` = 48（mobileLayer.css:2867），
+       `::after` 的 `min(0, …)` 在 48 本体上收到 0 ⇒ 天然达标，无需外扩。
+
+   规范条目 = design/liquid-morph__20261106/TAP.md（两档语义 / 合规写法 / 作用域 /
+   豁免判据）；机检 = scripts/check-mobile-tap.mjs（主口径 = 运行态几何读数，
+   静态腿报「无法判定」）。
+   **本批只立槽、不铺消费面**：各面几何改造属后续实现节点，本层零规则改动。 */
+:root {
+  --ds-hit-tap-min: var(--ds-hit-tap-lg);  /* 48px 视觉档（= g2-fab 手机档实测量，glass.css:717-720） */
+  --ds-hit-box-min: var(--ds-hit-tap-min); /* 48px 命中盒档（外扩后 ≥ 本值才算达标；默认同值） */
+}
+
 @media (hover: hover) {
   
   /* ══ 组件类层（`.ds-*`）══════════════════════════════════════════════
