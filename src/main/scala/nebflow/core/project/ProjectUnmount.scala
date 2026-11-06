@@ -391,6 +391,10 @@ object ProjectUnmount:
       case Right(at) =>
         for
           _ <- ProjectRuntimeRegistry.unregister(canonical)
+          // 属主边槽清点（面板代际层级批 2026-11-06 · design 裁定 A②清空纪律）：
+          // 卸载即清「当前分发器」内存槽（NodeEngine.dispatcherSlot）——防重挂面
+          // 复用/误读陈旧分发器 sid（引擎重启路径本就自然归零，本行补卸载腿）。
+          _ <- rt.engine.dispatcherSlot.set(None)
           // ProjectActor Shutdown → Behaviors.stopped（TTL 定时器/tick 源随 actor 停）。
           _ <- rt.actorRef.traverse_(ref => ref ! ProjectActor.ProjectCommand.Shutdown)
           _ <- broadcastFrame(ProjectActor.projectUnmountedFrame(canonical, at)).handleErrorWith(e =>

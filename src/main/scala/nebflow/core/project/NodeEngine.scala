@@ -208,6 +208,19 @@ class NodeEngine(
   private[project] val logger = NebflowLogger.forName("nebflow.node.engine")
 
   /**
+   * **属主边槽**（面板代际层级批 2026-11-06 · design 裁定 A②）：本项目「当前分发器」
+   * 会话 id——node-/loop 会话注册 AgentRecord 时 `parentSessionId` 的唯一读取源。
+   * 写点唯一 = `ProjectActor.spawnDispatcher` 注册区（spawn 事务区，先于任何节点
+   * spawn；分发器单例化裁定保证同项目活分发器至多一个，槽覆写即「当前分发器」）；
+   * 清点 = `ProjectUnmount.removeMountFace`（卸载面显式归零）+ 引擎重启自然归零
+   * （纯内存态，无持久化）。`None` = 本项目当前无在册分发器（纯引擎流 root 直启 /
+   * 重启后 crash-recovery 续跑）⇒ 注册点兜底 `parentSessionId = rootSessionId`
+   * （depth 1 降级，回执声明项）。body val + `Ref.unsafe`：构造签名零改动
+   * （mount / DelegateFlowHosts 双构造面原样）。
+   */
+  private[project] val dispatcherSlot: Ref[IO, Option[String]] = Ref.unsafe[IO, Option[String]](None)
+
+  /**
    * Uplink fail-closed effective value (re-read on every check; there is no online flip
    * route ⇒ changing the prop in production requires a host restart).
    */

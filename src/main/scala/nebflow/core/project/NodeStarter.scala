@@ -1128,6 +1128,12 @@ private[project] trait NodeStarter:
         },
         s"nodebridge-${sessionId.take(8)}"
       )
+      // 属主边读点（面板代际层级批 2026-11-06 · design 裁定 A②）：在册分发器会话
+      // id 即本节点 parentSessionId（depth 2）；无在册分发器（纯引擎流 root 直启 /
+      // 重启后 crash-recovery 续跑——重启内存槽自然归零）⇒ 兜底 rootSessionId
+      // （depth 1 降级，回执声明项）。slot 读点 = startNode 唯一注册码点，15 条
+      // 调用链（投递/结算/工具/reloop/恢复）统一收敛，零签名零调用点改动。
+      dispatcherSid <- dispatcherSlot.get
       // 卡死处置接线（与 ProjectActor 分发器注册同款）：supervisorRef=bridgeRef
       // ——bridge 的 Cancelled 分支（resultDeferred.complete(Left(cancelled))）
       // 成为节点的取消通道，AgentControl cancel / 面板 cancelAgent /
@@ -1142,6 +1148,10 @@ private[project] trait NodeStarter:
             ref,
             AgentKind.Flow,
             rootSessionId,
+            // 属主边（面板代际层级批 2026-11-06）：node 行 parent = 在册分发器，
+            // 兜底 = 挂载 root（见上方 dispatcherSid 读点注释——单一真相 =
+            // AgentRecord.parentSessionId，前端禁从 sessionRef/flow map 二推）。
+            parentSessionId = dispatcherSid.getOrElse(rootSessionId),
             startedAt = System.currentTimeMillis(),
             lastActivityMs = System.currentTimeMillis(),
             supervisorRef = Some(bridgeRef),

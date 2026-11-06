@@ -2264,6 +2264,14 @@ object ProjectActor:
             dispatcherBridge(cfg, active, ref, rootSessionId, sessionId),
             s"dispatchbridge-${sessionId.take(8)}"
           )
+          // 属主边槽写点（面板代际层级批 2026-11-06 · design 裁定 A②）：本项目
+          // 「当前分发器」会话 id 先于 registry 注册落槽——后续 startNode / loop
+          // 会话注册 AgentRecord.parentSessionId 从此读取（读点 =
+          // NodeStarter.startNode / NodeLoopRunner.spawnLoopSession）。分发器
+          // 单例化裁定（2026-09-02）保证同项目活分发器至多一个，槽覆写即
+          // 「当前分发器」；引擎重启自然归零（内存态），卸载面
+          // ProjectUnmount.removeMountFace 显式清 None。
+          _ <- cfg.engine.dispatcherSlot.set(Some(sessionId))
           // 注册元数据对齐 DelegateTool 注册约定（AgentControl 注释原文）：
           // startedAt/lastActivityMs 驱动 list 的 up/idle 列与卡死判定
           // （lastActivityMs=now 从出生即可见——修复「turn 在首次 LLM touch 前
@@ -2275,6 +2283,11 @@ object ProjectActor:
                 ref,
                 AgentKind.Flow,
                 rootSessionId,
+                // 属主边（面板代际层级批 2026-11-06 · design 裁定 A①）：分发器行
+                // parent = 挂载 root/顶层会话（depth 1）——值即本函数 rootSessionId
+                // 参数（SpawnParams.rootSessionId 同源单值），单一真相 =
+                // AgentRecord.parentSessionId 注册写入（快照面已通零契约改动）。
+                parentSessionId = rootSessionId,
                 startedAt = System.currentTimeMillis(),
                 lastActivityMs = System.currentTimeMillis(),
                 supervisorRef = Some(bridgeRef),
