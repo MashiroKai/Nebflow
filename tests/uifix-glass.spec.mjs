@@ -446,8 +446,12 @@ for (const scheme of ['light', 'dark']) {
   ok('G7[手机] ①渐隐退役：mobile-layer 在挂 + #header::after 裙边不存在（content none、无渐变）',
     m.mobile && /none|normal/.test(m.skirtContent) && !/linear-gradient/.test(m.skirtMask),
     `mobile=${m.mobile} after=${m.skirtContent} mask=${m.skirtMask.slice(0, 40)}`);
-  ok('G7[手机] ②消失点同锚 Header 顶缘：mask 变量在场（≥0）+ margin 恒 0 + 盒顶高于 header 盒底（内容穿顶）',
-    /linear-gradient/.test(m.chatMask) && m.clipVar >= 0 && m.chatMargin === 0 && m.chatTop < (m.headerTop + 90),
+  // mobileLayer.css explicitly releases #chat's mask on mobile: clip is 0 there,
+  // and retaining a transparent mask would create a stacking context that buries
+  // the sticky anchor. The contract is the same Header-top clipping geometry,
+  // implemented by no mask in mobile and the variable-backed mask on desktop.
+  ok('G7[手机] ②消失点同锚 Header 顶缘：mask 已释放 + clip 恒 0 + margin 恒 0 + 盒顶高于 header 盒底（内容穿顶）',
+    !/linear-gradient/.test(m.chatMask) && m.clipVar === 0 && m.chatMargin === 0 && m.chatTop < (m.headerTop + 90),
     `clip=${m.clipVar} mask=${m.chatMask.slice(0, 40)} margin=${m.chatMargin} chatTop=${m.chatTop.toFixed(1)} headerTop=${m.headerTop.toFixed(1)}`);
   ok(`R[G7] 零 JS 运行时错误`, merrors.length === 0, merrors.slice(0, 2).join(' | '));
   await mctx.close();

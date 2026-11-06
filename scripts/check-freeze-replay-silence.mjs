@@ -80,11 +80,13 @@ check('R1 两条重放腿都过 collapseSilentReceipts（W1 recoverSweep + W4 re
   const src = read(DRAIN);
   const hits = src.match(/FreezeNotice\.collapseSilentReceipts\(/g) || [];
   assert(hits.length >= 2, `replay legs must call the collapse (§ resumeSweep + recoverSweep), got ${hits.length}`);
-  // 解冻腿：折叠必须发生在 visibility 之前（否则照样冒泡）。
+  // 当前 W4 解冻实现不经 visibility()，而是把折叠后的 events 交给
+  // notifyBatch；检查顺序边界，避免绑定已退役的旧投递实现细节。
   const resumeIdx = src.indexOf('def resumeSweep');
-  const visIdx = src.indexOf('events.traverse_(e => visibility(', resumeIdx);
+  const notifyIdx = src.indexOf('notifyBatch(resources, state, events, depth)', resumeIdx);
   const colIdx = src.indexOf('collapseSilentReceipts(', resumeIdx);
-  assert(colIdx > 0 && visIdx > 0 && colIdx < visIdx, 'collapse must run before visibility() in resumeSweep');
+  assert(colIdx > resumeIdx && notifyIdx > resumeIdx && colIdx < notifyIdx,
+    'collapse must run before notifyBatch in resumeSweep');
 });
 
 // ── R2 判据在场且与既有分类同源 ───────────────────────────────────────────
