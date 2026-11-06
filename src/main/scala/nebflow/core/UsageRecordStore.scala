@@ -36,7 +36,8 @@ case class LlmUsageRecord(
   inputTokens: Int,
   outputTokens: Int,
   cacheReadTokens: Int,
-  cacheWriteTokens: Int
+  cacheWriteTokens: Int,
+  requestId: Option[String] = None
 )
 
 object LlmUsageRecord:

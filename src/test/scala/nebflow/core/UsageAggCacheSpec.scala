@@ -68,6 +68,21 @@ class UsageAggCacheSpec extends FunSuite:
 
   // ── pure invariants ─────────────────────────────────────────────────────────
 
+  test("usage JSONL accepts legacy records and preserves optional requestId") {
+    val dir = os.temp.dir(prefix = "usage-request-id-")
+    val legacy = """{"timestamp":1,"provider":"p","model":"m","agent":"a","sessionId":null,"inputTokens":2,"outputTokens":3,"cacheReadTokens":0,"cacheWriteTokens":0}"""
+    os.write.over(dir / "usage-records.jsonl", legacy + "\n")
+    val store = new UsageRecordStore(dir)
+    val oldRow = store.loadAll().unsafeRunSync().head
+    assertEquals(oldRow.requestId, None)
+
+    val withId = oldRow.copy(timestamp = 2L, requestId = Some("req-1"))
+    store.record(withId).unsafeRunSync()
+    val rows = store.loadAll().unsafeRunSync()
+    assertEquals(rows.last.requestId, Some("req-1"))
+    assertEquals(io.circe.parser.parse(os.read.lines(dir / "usage-records.jsonl").last).toOption.flatMap(_.hcursor.get[String]("requestId").toOption), Some("req-1"))
+  }
+
   test("costEquivalent is recomputed on the merged totals; per-cell truncation is not additive") {
     val c1 = UsageAggCell("2026-12-31T22", "p", "m", "a", UsageCounters(1L, 1000L, 0L, 905L, 0L))
     val c2 = UsageAggCell("2026-12-31T22", "p", "m", "a", UsageCounters(1L, 1000L, 0L, 907L, 0L))

@@ -122,8 +122,11 @@ class CacheAttributionSpec extends FunSuite:
     val secret = "PROMPT-CONTENT-MUST-NOT-LOG"
     CacheAttribution.observeWire("anthropic", paramsOf("log-s"), "Zai",
       List(wireMsg("user", secret), wireMsg("assistant", "ok", marker = true)), clockWire(1))
-    CacheAttribution.observeUsage("log-s", "Zai", "glm-5.3-flash", Some(miss))
+    val requestId = "request-123"
+    val record = CacheAttribution.observeUsage("log-s", "Zai", "glm-5.3-flash", Some(miss), requestId = Some(requestId))
+    assertEquals(record.flatMap(_.requestId), Some(requestId))
     assertEquals(emitted.length, 1)
+    assert(emitted.head.contains(s"request_id=$requestId"))
     assert(emitted.head.contains("cache-attribution: category=new-session"))
     assert(emitted.head.contains("input=1000 read=0"))
     assert(!emitted.head.contains(secret))

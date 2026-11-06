@@ -1082,7 +1082,8 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             // WebSearch P0: housekeeping turns (compact/ask) opt out of
             // provider-native search injection — a server-side search tool
             // must never leak into summarization loops.
-            searchAllowed = !(isCompactTurn || isAskTurn)
+            searchAllowed = !(isCompactTurn || isAskTurn),
+            requestId = Some(llmRequestId)
           )
         yield (turnCtx, request, stateWithCache)
 

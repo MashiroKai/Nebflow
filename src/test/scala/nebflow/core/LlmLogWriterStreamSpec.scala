@@ -89,6 +89,8 @@ class LlmLogWriterStreamSpec extends FunSuite:
     // request 行在流派发时落盘：ts 与 response 行来自真实时序（非同刻批量）。
     val reqLine = summary.find(_.hcursor.get[String]("type").contains("request")).get
     assertEquals(reqLine.hcursor.get[String]("request_id").toOption, Some("req-T1"))
+    val responseLine = summary.find(_.hcursor.get[String]("type").contains("response")).get
+    assertEquals(responseLine.hcursor.get[String]("request_id").toOption, Some("req-T1"))
     // full 文件也落了 request+response 两行（对象引用面）。
     assertEquals(readLines("full").size, 2)
   }
