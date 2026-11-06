@@ -1,9 +1,10 @@
 package nebflow.core.delegate
 
+import cats.effect.IO
 import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
 import nebflow.actor.{AgentCommand, FreezeDisplay, FreezeKind}
-import nebflow.shared.{Defaults, NebflowLogger}
+import nebflow.shared.{Defaults, NebflowLogger, PathUtil}
 
 import java.util.concurrent.ConcurrentHashMap
 
@@ -822,5 +823,189 @@ object FreezeNotice:
     autoResumes.clear()
     episodes.clear()
     windows.clear()
+
+  // ── ⑦ frozen-waiting 播报面：同因只播一次 + 跨因合一个蓝气泡（修复批 2026-11-06 16:14）──
+  //
+  // 作者令逐字（2026-11-06 16:14）：「FROZEN-WAITING · NEBFLOW · FROZEN-WAITING 这种通知
+  // 只准去重通知一次，而且要几个同类型的聚合成一个蓝色气泡通知。」
+  //
+  // 现网实证（15:29→16:14）：同一组 frozen-waiting 摘要每 4 分钟重发一次，每次固定 3 行
+  // （quota-balance 2 / upstream-5xx 1 / auth-subscription 12），内容逐字相同。机械根因：
+  // 静默族冻结回执留在邮箱 taken/ 段随每拍重放，[[collapseSilentReceipts]] 只把 N 条收成
+  // **每族一条**——折叠生效了，但族与族之间、拍与拍之间没有「同一状态只播一次」的抑制，
+  // 也没有跨因聚合，于是同一组 3 行每个 pump 都重播一遍。
+  //
+  // 两把闸（入口 = [[suppressRepeatedWaiting]]，挂在解冻重放腿、visibility/injectIdleTurn
+  // **之前**——`MailboxDrain` W1 recoverSweep / W4 resumeSweep）：
+  //   ① **同因只播一次**：抑制键 = (parentSessionId, family) 的**成员集合**——
+  //      当前有效成员集（本拍成员 ∩ 当前在冻）与上次播报一致 ⇒ 零重播；成员增减 ⇒
+  //      恰再播一次；成员当前全部不在冻（解冻恢复）⇒ 静默清账（下次同成员再冻 =
+  //      新事件，允许再播）——成员集判据而非时间戳节流，才可能「集合未变 ⇒ 零重播」。
+  //   ② **跨因合泡**：同一拍里保留下来的多个族**合成一条** frozen-waiting 事件（一个
+  //      蓝色注入泡——现网既有 `.bubble.injected` 蓝泡路径与 frozen-waiting 词面登记
+  //      原样复用，零新配色零新词表），条目明细在正文逐族分行列。
+  //
+  // 抑制态**落盘**（`<dataRoot>/sessions/<parent>/freeze-waiting-announce.json`，
+  // AtomicJson 原子写，进程内零缓存）：重启不重置——否则每次重启又刷一轮（作者令明言）。
+  // 全链 fail-soft：注册表读失败 ⇒ 按「成员仍在冻」保守处理（维持既有抑制，不误播）；
+  // 台账读/写失败 ⇒ 退化成本拍照播（at-least-once，绝不静音真变化）。
+
+  /** 一条已播报台账：`members` = 播报时的**当前在冻**成员集（抑制判据的落盘态）。 */
+  final case class WaitingAnnounce(family: String, members: List[String], announcedAt: Long):
+    def json: Json =
+      Json.obj(
+        "family" -> Json.fromString(family),
+        "members" -> Json.fromValues(members.map(Json.fromString)),
+        "announcedAt" -> Json.fromLong(announcedAt)
+      )
+
+  /** 台账文件名（`<dataRoot>/sessions/<parent>/` 下；RestartLossLedger 同位）。 */
+  val WaitingAnnounceFileName: String = "freeze-waiting-announce.json"
+
+  /** 会话 id → 目录名安全段（`SessionMailbox.safeId` 同款白名单，防路径穿越；不跨包引件）。 */
+  private def safeSeg(id: String): String =
+    val cleaned = id.map(c => if c.isLetterOrDigit || c == '-' || c == '.' || c == '_' then c else '_')
+    if cleaned.nonEmpty then cleaned.take(120) else "anon"
+
+  def waitingAnnouncePath(parentSessionId: String): os.Path =
+    PathUtil.dataRoot / "sessions" / safeSeg(parentSessionId) / WaitingAnnounceFileName
+
+  /** 读台账（fail-soft：坏文件 / 缺席 = 空账；spec 用它断言落盘态）。 */
+  def readWaitingAnnounces(parentSessionId: String): List[WaitingAnnounce] =
+    try
+      val p = waitingAnnouncePath(parentSessionId)
+      if !os.exists(p) then Nil
+      else
+        io.circe.parser
+          .parse(os.read(p))
+          .toOption
+          .flatMap(_.hcursor.get[List[Json]]("families").toOption)
+          .getOrElse(Nil)
+          .flatMap { j =>
+            for
+              family <- j.hcursor.get[String]("family").toOption
+              members <- j.hcursor.get[List[String]]("members").toOption
+            yield WaitingAnnounce(family, members, j.hcursor.get[Long]("announcedAt").toOption.getOrElse(0L))
+          }
+    catch case _: Throwable => Nil
+
+  private def writeWaitingAnnounces(parentSessionId: String, entries: List[WaitingAnnounce]): Unit =
+    try
+      val p = waitingAnnouncePath(parentSessionId)
+      os.makeDir.all(p / os.up)
+      nebflow.core.AtomicJson.writeSync(
+        p,
+        Json.obj("v" -> Json.fromInt(1), "families" -> Json.fromValues(entries.map(_.json))).noSpaces
+      )
+    catch
+      case e: Throwable =>
+        logger.warn(s"[freeze-notice] waiting-announce ledger write failed for $parentSessionId: ${e.getMessage}")
+
+  /** 当前**在冻**成员集（[[itemsOf]] 全量窗 = 与告警腿同口径；读失败 = None ⇒ 保守处理）。 */
+  private def frozenIdsNowIO(now: Long): IO[Option[Set[String]]] =
+    IO
+      .blocking(itemsOf(DelegateRegistry.list(), now, 0L).map(_.delegateId).toSet)
+      .map(Some.apply)
+      .handleErrorWith { e =>
+        logger.warn(s"[freeze-notice] registry read failed for waiting-announce: ${e.getMessage}").as(None)
+      }
+
+  private def isWaitingRow(e: AgentCommand.ExternalEvent): Boolean =
+    e.source == "delegate" && e.eventType == "frozen-waiting"
+
+  private def rowMemberIds(e: AgentCommand.ExternalEvent): List[String] =
+    e.metadata("quietDelegateIds").flatMap(_.asArray).getOrElse(Vector.empty).toList
+      .flatMap(_.asString)
+      .filter(_.nonEmpty)
+      .distinct
+
+  /**
+   * 同因只播一次 + 跨因合泡（解冻重放腿的唯一入口；纯判据见头注 ⑦）。
+   *
+   * 返回 (播报后事件集, 本拍被抑制的族行数)。非 frozen-waiting 事件原样保序；
+   * frozen-waiting 行全族被抑制/清账 ⇒ 集合里一行不剩（该拍注入轮零冻结噪声，回执
+   * 留在 taken/ 由下一拍继续重放判定——**不消费不丢失**）；保留的族（首播 / 成员变化）
+   * 合成**至多一条**（一个蓝气泡）落回首行位置。
+   */
+  def suppressRepeatedWaiting(
+    events: List[AgentCommand.ExternalEvent]
+  ): IO[(List[AgentCommand.ExternalEvent], Int)] =
+    val waiting = events.filter(isWaitingRow)
+    if waiting.isEmpty then IO.pure((events, 0))
+    else
+      val parent =
+        waiting.flatMap(_.metadata("parentSessionId").flatMap(_.asString)).headOption.getOrElse("_global")
+      val now = System.currentTimeMillis()
+      frozenIdsNowIO(now).flatMap { frozenOpt =>
+        val byFamily: List[(String, List[AgentCommand.ExternalEvent])] =
+          waiting
+            .groupBy(w => w.metadata("quietFamily").flatMap(_.asString).getOrElse(UnclassifiedProviderFamily))
+            .toList
+            .sortBy(_._1)
+        val ledger = readWaitingAnnounces(parent).map(a => a.family -> a).toMap
+        // 逐族裁定：(族, 有效成员, 本拍是否要播, 是否属「已恢复清账」)。
+        val verdicts = byFamily.map { case (fam, rows) =>
+          val all = rows.flatMap(rowMemberIds).distinct
+          // 有效成员 = 本拍成员 ∩ 当前在冻（注册表读失败 = None ⇒ 保守按全在冻）。
+          val effective = frozenOpt.fold(all)(frozen => all.filter(frozen.contains))
+          val announced = ledger.get(fam).exists(_.members.sorted == effective.sorted)
+          (fam, rows, effective, announced)
+        }
+        val toAnnounce = verdicts.filter { case (_, _, eff, announced) => eff.nonEmpty && !announced }
+        val suppressedCount = verdicts.count { case (_, _, eff, announced) => eff.nonEmpty && announced }
+        val recovered = verdicts.collect { case (fam, _, eff, _) if eff.isEmpty => fam }.toSet
+        // 台账下一态：要播的族记新成员集；已恢复的族清账；仍被抑制的族保留原记录。
+        val nextLedger: List[WaitingAnnounce] =
+          toAnnounce.map { case (fam, _, eff, _) => WaitingAnnounce(fam, eff.sorted, now) } ++
+            ledger.collect { case (fam, a) if !toAnnounce.exists(_._1 == fam) && !recovered.contains(fam) => a }
+        // 组装输出：kept 族合成**至多一条**（>1 族 = 跨因合泡；1 族 = 原样首行），
+        // 落回首个 waiting 行的位置；其余 waiting 行移除。非 waiting 事件保序。
+        val out: List[AgentCommand.ExternalEvent] =
+          if toAnnounce.isEmpty then events.filterNot(isWaitingRow)
+          else
+            val firstIdx = events.indexWhere(isWaitingRow)
+            val mergedRow =
+              if toAnnounce.size > 1 then
+                mergedWaitingRow(toAnnounce.map { case (fam, rows, eff, _) => (fam, rows, eff) })
+              else toAnnounce.head._2.head
+            events.zipWithIndex.flatMap { case (e, i) =>
+              if isWaitingRow(e) then (if i == firstIdx then List(mergedRow) else Nil) else List(e)
+            }
+        IO(writeWaitingAnnounces(parent, nextLedger)).as((out, suppressedCount))
+      }
+
+  end suppressRepeatedWaiting
+
+  /** 跨因合并件（一个蓝气泡）：eventType 保持 `frozen-waiting`（复用既有呈现路径），明细逐族分行。 */
+  private def mergedWaitingRow(
+    kept: List[(String, List[AgentCommand.ExternalEvent], List[String])]
+  ): AgentCommand.ExternalEvent =
+    val base = kept.head._2.head
+    val allIds = kept.flatMap(_._3).distinct
+    base.copy(
+      payload = mergedWaitingText(kept),
+      metadata = base.metadata
+        .add("quietMerged", Json.fromBoolean(true))
+        .add("quietFamilies", Json.fromValues(kept.map(_._1).map(Json.fromString)))
+        .add("quietCount", Json.fromInt(allIds.size))
+        .add("quietDelegateIds", Json.fromValues(allIds.map(Json.fromString))),
+      correlationId = Some(s"frozen-waiting-merged-${allIds.sorted.hashCode.abs}")
+    )
+
+  /**
+   * 合并件正文：首行总览（几类、几个、这是状态不是待办），以下逐族**分行列明细**
+   * （作者令「条目明细放在气泡内容里分行列」）。
+   */
+  def mergedWaitingText(kept: List[(String, List[AgentCommand.ExternalEvent], List[String])]): String =
+    val total = kept.flatMap(_._3).distinct.size
+    val lines = kept
+      .map { case (fam, rows, eff) =>
+        val zhs = rows.map(e => receiptReasonZh(e.payload)).filter(_.nonEmpty).distinct.mkString(" / ")
+        val ids = eff.take(6).mkString(", ") + (if eff.size > 6 then s" 等 ${eff.size} 个" else "")
+        s"- `$fam` ×${eff.size}：$zhs（$ids）"
+      }
+      .mkString("\n")
+    s"[frozen-waiting] 共 $total 个委托等待恢复（${kept.size} 类原因；同因只播一次、跨因合成这一条）：这不是失败，" +
+      s"也不影响你——引擎会退避重试，供应商恢复后在原会话上接着跑（已完成的不重做）。状态见后台智能体面板。\n$lines"
 
 end FreezeNotice

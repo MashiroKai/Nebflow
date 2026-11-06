@@ -5,7 +5,7 @@ import cats.effect.kernel.Ref
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.shared.{NebflowServiceConfig, NebflowLogger, ProviderConfig}
+import nebflow.shared.{CandidateSkipCause, NebflowLogger, NebflowServiceConfig, ProviderConfig}
 
 /**
  * provider 并发上限 · 派发时刻 fallback 链快照（provider-concurrency 批，作者令
@@ -33,7 +33,17 @@ final case class PinnedChain(
   /** 每根 ref 的 provider/model（诊断面/可观测面用）。 */
   refs: List[(String, String)],
   /** 占坑的 provider（= headRef 的 provider id）。 */
-  pinnedProviderId: String
+  pinnedProviderId: String,
+  /**
+   * 派发时刻被链首扫描剔出的候选与其原因（缺陷批 2026-11-06 收口，provider-concurrency
+   * 批移交）：`orderedChain` 里排在本链首**之前**的 ref——它们因 provider 满载
+   * （actor 占坑数已达 `maxConcurrentActors`）被剔出本 actor 的链。没有这份账，
+   * 这些候选在请求账本里既不在链上也没有原因 ⇒ `SILENTLY EXCLUDED`（现网实证
+   * 2026-11-06：`UTSC/glm-5.3-flash SILENTLY EXCLUDED` 反复出现）。顺序 = 原链
+   * 相对顺序；经 `AgentSessionExecution` 请求构造单点下发到 `LlmRequest.pinSkips`，
+   * 进候选账本 seeded 层。
+   */
+  preExcluded: List[(String, CandidateSkipCause)] = Nil
 ):
 
   /** 快照物化面：下发到 `LlmRequest.agentModel` 的形状（preferred=链首，fallbacks=尾链）。 */
@@ -45,8 +55,16 @@ object ProviderConcurrency:
 
   private val logger = NebflowLogger.forName("nebflow.llm.provider-concurrency")
 
-  /** 计数表：providerId -> 该 provider 上占坑的 actorId 集合。 */
-  final case class Counts(byProvider: Map[String, Set[String]])
+  /**
+   * 计数表：providerId -> 该 provider 上占坑的 actorId 集合；`pinExclusions` =
+   * actorId -> 派发时刻被链首扫描剔出的候选与原因（缺陷批 2026-11-06 收口）——
+   * 与占坑同一张表、同一次原子 modify 读写（单一真相；release/reconcile 随占坑
+   * 一起清账，不留僵尸条目）。缺省空表 = 既有构造点零改动。
+   */
+  final case class Counts(
+    byProvider: Map[String, Set[String]],
+    pinExclusions: Map[String, List[(String, CandidateSkipCause)]] = Map.empty
+  )
 
   val empty: Counts = Counts(Map.empty)
 
@@ -58,11 +76,18 @@ object ProviderConcurrency:
    *
    * 幂等：同 actorId 已在某 provider 上占坑 ⇒ 原样返回同一快照、不重算、不加计数、
    * 不迁移（BackoffSupervisor 重 spawn / Mail 复活 / SessionResumption 同 id 全覆盖
-   * ——这是「链快照终生稳定」的第二条保证线）。
+   * ——这是「链快照终生稳定」的第二条保证线）。剔除账（[[Counts.pinExclusions]]）
+   * 同幂等：re-assign 取**首钉那一刻**的记录，不随现读计数漂移改写历史。
+   *
+   * 缺陷批 2026-11-06（provider-concurrency 批移交的 `SILENTLY EXCLUDED` 收口）：
+   * 链首扫描跳过的每一根（provider 满载）必须带原因入账
+   * `PinnedChain.preExcluded`——没有这份账，被剔候选在请求账本里既不在链上也没有
+   * 原因，正是现网 `UTSC/glm-5.3-flash SILENTLY EXCLUDED` 反复出现的病灶。
    *
    * @param orderedChain 全序候选 [(providerId, model)]——调用方用
    *        `getCandidatesForAgentUnfiltered` 的产物映射（已含储备层、已剔 disabled）。
-   * @return None = 不钉（空链／全部超限）⇒ 不占坑，回落既有全局行为（零新失败模式）。
+   * @return None = 不钉（空链／全部超限）⇒ 不占坑、剔除账作废，回落既有全局行为
+   *         （零新失败模式）。
    */
   def assign(
     counts: Ref[IO, Counts],
@@ -74,24 +99,37 @@ object ProviderConcurrency:
       .modify { c =>
         val existing = c.byProvider.collectFirst { case (pid, ids) if ids.contains(actorId) => pid }
         existing match
-          case Some(_) => (c, existing) // 幂等：永不迁移
+          case Some(pid) => (c, Left(pid)) // 幂等：永不迁移；剔除账由 modify 外取回
           case None =>
-            val chosen = orderedChain.zipWithIndex.find { case ((pid, _), _) =>
-              val cap = config.llm.providers.get(pid).flatMap(capOf)
-              cap.forall(limit => c.byProvider.getOrElse(pid, Set.empty).size < limit)
+            // (providerId, 链下标, cap, 现占坑数) 一次成形；span 到第一根有余位的为止
+            val scan = orderedChain.zipWithIndex.map { case ((pid, _), idx) =>
+              (pid, idx, config.llm.providers.get(pid).flatMap(capOf), c.byProvider.getOrElse(pid, Set.empty).size)
             }
-            chosen match
-              case Some(((pid, _), _)) =>
+            val (before, rest) = scan.span(entry => !entry._3.forall(limit => entry._4 < limit))
+            rest.headOption match
+              case None => (c, Right(None)) // 全满 ⇒ 不钉
+              case Some((pid, _, _, _)) =>
                 val upd = c.byProvider.updated(pid, c.byProvider.getOrElse(pid, Set.empty) + actorId)
-                (Counts(upd), Some(pid))
-              case None => (c, None)
+                // 被剔的前段逐根记账（首钉那一刻的占坑数 + 上限；有原因，不静默）
+                val excl = before.collect { case (p, idx, Some(cap), inUse) =>
+                  s"$p/${orderedChain(idx)._2}" -> CandidateSkipCause.ProviderFull(inUse, cap)
+                }.toList
+                (Counts(upd, c.pinExclusions.updated(actorId, excl)), Right(Some((pid, excl))))
       }
-      .map {
-        // 幂等命中（existing 非 None）也返回完整快照：按 pid 在链上定位重造，纯函数零副作用。
-        case Some(pid) =>
+      .flatMap {
+        // 幂等命中也返回完整快照：按 pid 在链上定位重造 + 剔除账取首钉记录（纯函数零副作用）。
+        case Left(pid) =>
+          counts.get.map { c =>
+            val idx = orderedChain.indexWhere(_._1 == pid)
+            if idx < 0 then None
+            else Some(pinAt(orderedChain, idx).copy(preExcluded = c.pinExclusions.getOrElse(actorId, Nil)))
+          }
+        case Right(None) =>
+          // 不钉：剔除账一并作废（无 pin 就无账），回落既有全局行为
+          counts.update(c => c.copy(pinExclusions = c.pinExclusions - actorId)).as(None)
+        case Right(Some((pid, excl))) =>
           val idx = orderedChain.indexWhere(_._1 == pid)
-          if idx < 0 then None else Some(pinAt(orderedChain, idx))
-        case None => None
+          IO.pure(Some(pinAt(orderedChain, idx).copy(preExcluded = excl)))
       }
 
   /**
@@ -110,20 +148,27 @@ object ProviderConcurrency:
       pinnedProviderId = head._1
     )
 
-  /** 释放（幂等：坑不在就 no-op；永不 decrement 别人的坑、计数永不为负）。 */
+  /** 释放（幂等：坑不在就 no-op；永不 decrement 别人的坑、计数永不为负）。剔除账随占坑一起清（不留僵尸条目，缺陷批 2026-11-06）。 */
   def release(counts: Ref[IO, Counts], actorId: String): IO[Unit] =
     counts.update { c =>
-      Counts(c.byProvider.view.mapValues(_ - actorId).filter(_._2.nonEmpty).toMap)
+      Counts(
+        c.byProvider.view.mapValues(_ - actorId).filter(_._2.nonEmpty).toMap,
+        c.pinExclusions - actorId
+      )
     }
 
   /**
    * 启动自愈：计数表投影为「原表 ∩ 活 actor 集」（活 ID 集来自
    * `SharedResources.agentRegistry`——agent 记录的唯一权威）。崩溃/热重启后由
-   * GatewayMain boot 调一次；不新增定时器/fiber。
+   * GatewayMain boot 调一次；不新增定时器/fiber。剔除账同法裁剪（死 actor 的账
+   * 不复活，缺陷批 2026-11-06）。
    */
   def reconcile(counts: Ref[IO, Counts], liveActorIds: Set[String]): IO[Unit] =
     counts.update { c =>
-      Counts(c.byProvider.view.mapValues(_ intersect liveActorIds).filter(_._2.nonEmpty).toMap)
+      Counts(
+        c.byProvider.view.mapValues(_ intersect liveActorIds).filter(_._2.nonEmpty).toMap,
+        c.pinExclusions.view.filterKeys(liveActorIds.contains).toMap
+      )
     }
 
   /** 只读投影（§3h 可观测面）：assignable/inUse/cap（不限=显式 null）/full + totalActors。 */

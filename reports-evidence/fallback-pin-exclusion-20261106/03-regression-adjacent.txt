@@ -1,0 +1,170 @@
+[sbt-gate] gate acquired after 0s
+[sbt-gate] heap cap -Xmx2600m applied via SBT_OPTS
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project delegate-fallback-chain-fix-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-fallback-chain-fix/project
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/delegate-fallback-chain-fix/)
+[warn] javaOptions will be ignored, fork is set to false
+[32mnebflow.llm.FallbackChainCandidateSpec:[0m
+[32m  + [0m[32mB/C-1: llm.fallback 的顺序就是运行期候选顺序（首选 + 兜底按文件序）[0m [90m0.328s[0m
+[32m  + [0m[32mC-2: 改 llm.fallback 顺序 ⇒ 运行期候选顺序随之改变（同配置其余不动）[0m [90m0.001s[0m
+[32m  + [0m[32mC-3: 删掉 provider ⇒ 候选集不含它；加回 ⇒ 立刻含它（断言正反两面）[0m [90m0.003s[0m
+[32m  + [0m[32mC-4: 链里残留已删 provider 的 ref ⇒ 该 ref 被跳过（绝不真实调用）[0m [90m0.001s[0m
+[32m  + [0m[32mC-5: 候选集只来自配置实存的 provider/model（不凭空造；储备层只追加）[0m [90m0.001s[0m
+[32m  + [0m[32mC-6: candidatePlan 可观测面列出「这次调用会试哪些、按什么顺序、哪些被跳过」[0m [90m0.012s[0m
+[32m  + [0m[32mC-7: 无 fallback 小节时储备层语义不变（确定序、不重排已引用项）[0m [90m0.0s[0m
+[32m  + [0m[32mC-8: disabled:true 的 provider 一律不进候选集（fail-closed 不回退）[0m [90m0.001s[0m
+[32mnebflow.llm.FallbackRetryPolicySpec:[0m
+[32m  + [0m[32mTurnBudgetExceeded is classified Permanent (llm-fail retry must not fire)[0m [90m0.008s[0m
+[32m  + [0m[32moverload-class errors are classified Transient (retryable at fallback layer)[0m [90m0.003s[0m
+[32m  + [0m[32moverload retry delay is always ≥60s (rate window), regardless of backoff ramp[0m [90m0.0s[0m
+[32m  + [0m[32mnon-overload transients keep the normal exponential ramp[0m [90m0.0s[0m
+[32m  + [0m[32mretry delay is capped at MaxBackoffMs for overload class when floor < MaxBackoffMs[0m [90m0.001s[0m
+[32m  + [0m[32mgate-wedge: StuckAbort is classified Fatal — no provider fallback, no markDown[0m [90m0.0s[0m
+20:06:57.646 [36mINFO [0m nebflow.llm.anthropic - message_start: model=m1 usage_json={"input_tokens":10,"output_tokens":0} inputTokens=10 cacheRead=None cacheWrite=None
+20:07:00.675 [33mWARN [0m nebflow.llm - Stream aborted after partial content (a/m1): inactivity timeout — provider switch suppressed (emitted chunks cannot be recalled; stitched-output guard)
+20:07:01.723 [33mWARN [0m nebflow.llm - Stream: a/m1 permanent error (Timeout) — provider response: timeout [status=n/a, evict=true, round=1/2]
+20:07:01.724 [33mWARN [0m nebflow.llm.health - Provider a/m1 soft-avoided for 45000ms (timeout — NOT evicted, no probe)
+20:07:01.733 [36mINFO [0m nebflow.llm.anthropic - message_start: model=m1 usage_json={"input_tokens":10,"output_tokens":0} inputTokens=10 cacheRead=None cacheWrite=None
+20:07:01.740 [36mINFO [0m nebflow.llm.anthropic - message_delta: model=m1 deltaInput=None stored_input=10 final_input=10 cacheRead=None cacheWrite=None totalInput=10 outputTokens=2 stopReason=Some(end_turn)
+[32mnebflow.llm.FallbackSeamSpec:[0m
+[32m  + [0m[32mseam guard: mid-stream timeout AFTER emitted content fails the whole stream — no provider switch, no stitched output[0m [90m3.526s[0m
+[32m  + [0m[32mseam guard does not over-block: first-token timeout with NO emitted content still falls back to the next provider[0m [90m1.071s[0m
+20:07:01.782 [33mWARN [0m nebflow.llm - Stream: zhipu/glm-5.3-flash permanent error (RateLimit) — provider response: statusCode: 429, response: [wire] HTTP 429 provider=zhipu model=glm-5.3-flash | request=u:t | response=error/rate_limit_error(code=1308) | upstream=[1308][已达到 5 小时的使用上限。您的限额将在当前 5 小时窗口结束后重置。] | raw={"type":"error","error":{"type":"rate_limit_error","code":"1308","message":"[1308][已达到 5 小时的使用上限。您的限额将在当前 5 小时窗口结束后重置。]"},"request_id":"mock1308"} [status=429, evict=true, round=1/2]
+20:07:01.784 [33mWARN [0m nebflow.llm.health - Provider zhipu/glm-5.3-flash soft-avoided for 300000ms (quota exhausted — NOT evicted, no probe)
+20:07:01.790 [36mINFO [0m nebflow.llm.anthropic - message_start: model=kimi-for-coding usage_json={"input_tokens":10,"output_tokens":0} inputTokens=10 cacheRead=None cacheWrite=None
+20:07:01.791 [36mINFO [0m nebflow.llm.anthropic - message_delta: model=kimi-for-coding deltaInput=None stored_input=10 final_input=10 cacheRead=None cacheWrite=None totalInput=10 outputTokens=2 stopReason=Some(end_turn)
+[32mnebflow.llm.GeneralChainFallbackSpec:[0m
+[32m  + [0m[32mT1 general 链头失败走后备：zhipu 配额死 ⇒ kimi-for-coding 交付，头至少被尝试一次[0m [90m0.037s[0m
+[32m  + [0m[32mT2 候选序：general 链解析为有序候选 [zhipu 头, kimi-for-coding, kimi-for-coding-highspeed, …储备层][0m [90m0.006s[0m
+20:07:01.812 [33mWARN [0m nebflow.llm.health - Provider dead/m1 marked DOWN: statusCode: 401
+20:07:01.817 [33mWARN [0m nebflow.llm.health - Provider flaky/m1 marked DOWN: Exception when sending request: POST https://api.deepseek.com/anthropic/v1/messages
+20:07:01.819 [36mINFO [0m nebflow.llm.health - Provider flaky/m1 half-open trial: backoff expired, trying for real (was DOWN: Exception when sending request: POST https://api.deepseek.com/anthropic/v1/messages)
+20:07:01.821 [33mWARN [0m nebflow.llm.health - Provider flaky/m1 marked DOWN: outage
+20:07:01.821 [36mINFO [0m nebflow.llm.health - Provider flaky/m1 half-open trial: backoff expired, trying for real (was DOWN: outage)
+20:07:01.823 [33mWARN [0m nebflow.llm.health - Provider dead/m1 marked DOWN: auth
+20:07:01.823 [36mINFO [0m nebflow.llm.health - Provider dead/m1 half-open trial: backoff expired, trying for real (was DOWN: auth)
+20:07:01.823 [33mWARN [0m nebflow.llm.health - Provider dead/m1 still DOWN (fresh reason): auth (trial #1 really failed)
+20:07:01.824 [36mINFO [0m nebflow.llm.health - Provider dead/m1 half-open trial: backoff expired, trying for real (was DOWN: auth (trial #1 really failed))
+20:07:01.825 [33mWARN [0m nebflow.llm.health - Provider svc/m1 marked DOWN: outage
+20:07:01.825 [36mINFO [0m nebflow.llm.health - Provider svc/m1 half-open trial: backoff expired, trying for real (was DOWN: outage)
+20:07:01.826 [36mINFO [0m nebflow.llm.health - Provider svc/m1 recovered (UP)
+20:07:01.827 [33mWARN [0m nebflow.llm.health - Provider svc/m1 marked DOWN: outage 2
+20:07:01.828 [33mWARN [0m nebflow.llm.health - Provider ghost/gone marked DOWN: provider renamed away
+20:07:01.828 [33mWARN [0m nebflow.llm.health - Provider kept/m1 marked DOWN: real outage
+20:07:01.830 [33mWARN [0m nebflow.llm.health - health table: dropped 1 unresolvable DOWN entr(ies): ghost/gone
+20:07:01.831 [33mWARN [0m nebflow.llm.health - Provider Deepseek/deepseek-flash marked DOWN: Exception when sending request: POST https://api.deepseek.com/anthropic/v1/messages
+20:07:01.833 [33mWARN [0m nebflow.llm.health - Probe failed for Deepseek/deepseek-flash: IOException: Exception when sending request: POST https://api.deepseek.com/anthropic/v1/messages | SocketException: Connection reset
+20:07:01.834 [33mWARN [0m nebflow.llm.health - Provider x/m1 marked DOWN: outage
+20:07:01.835 [33mWARN [0m nebflow.llm.health - health probe loop iteration failed (continuing): RuntimeException: config ref resolution exploded
+[32mnebflow.llm.HealthHalfOpenSpec:[0m
+[32m  + [0m[32mT1: a Down candidate inside the backoff window is still SKIPPED — with the wait spelled out[0m [90m0.008s[0m
+[32m  + [0m[32mT2: once the backoff expires the candidate is put back on the chain for a REAL try (half-open)[0m [90m0.003s[0m
+[32m  + [0m[32mT2b: the READ faces (panel current / waitForAnyUp) never consume a half-open slot[0m [90m0.002s[0m
+[32m  + [0m[32mT3: real failures re-arm a LONGER backoff each time (60s → 120s → 240s → 480s → 600s cap)[0m [90m0.003s[0m
+[32m  + [0m[32mT4: a successful half-open trial clears the ladder — the next Down starts again at base[0m [90m0.003s[0m
+[32m  + [0m[32mT5: DOWN entries whose ref left the config are dropped (phantom DOWN must not accumulate)[0m [90m0.003s[0m
+[32m  + [0m[32mT6: a probe failure REFRESHES the Down reason and carries the full cause chain (class names included)[0m [90m0.003s[0m
+[32m  + [0m[32mT7: the probe loop survives a throwing cycle instead of dying silently (the only passive recovery path)[0m [90m0.605s[0m
+20:07:02.451 [33mWARN [0m nebflow.llm.health - Provider glm/glm-5 marked DOWN: server error
+20:07:02.453 [33mWARN [0m nebflow.llm.health - Provider glm/glm-5 marked DOWN: error1
+20:07:02.453 [33mWARN [0m nebflow.llm.health - Provider glm/glm-5 still DOWN (fresh reason): error2
+20:07:02.455 [33mWARN [0m nebflow.llm.health - Provider glm/glm-5 marked DOWN: server error
+20:07:02.456 [36mINFO [0m nebflow.llm.health - Provider glm/glm-5 recovered (UP)
+20:07:02.458 [33mWARN [0m nebflow.llm.health - Provider glm/glm-5 marked DOWN: model error
+20:07:02.459 [33mWARN [0m nebflow.llm.health - Provider glm/glm-5 marked DOWN: down
+20:07:02.962 [36mINFO [0m nebflow.llm.health - Provider glm/glm-5 recovered (UP)
+20:07:02.965 [33mWARN [0m nebflow.llm.health - Provider glm/glm-5 marked DOWN: down
+20:07:02.965 [36mINFO [0m nebflow.llm.health - Provider glm/glm-5 recovered (UP)
+20:07:02.966 [33mWARN [0m nebflow.llm.health - Provider glm/glm-5 marked DOWN: timeout
+20:07:02.966 [36mINFO [0m nebflow.llm.health - Provider glm/glm-5 recovered (UP)
+20:07:02.967 [33mWARN [0m nebflow.llm.health - Provider glm/glm-5 marked DOWN: down
+20:07:03.169 [36mINFO [0m nebflow.llm.health - Provider glm/glm-5 recovered (UP)
+20:07:03.182 [33mWARN [0m nebflow.llm.health - Provider glm/glm-5 marked DOWN: down
+20:07:03.385 [36mINFO [0m nebflow.llm.health - Provider glm/glm-5 recovered (UP)
+20:07:08.204 [33mWARN [0m nebflow.llm.health - Provider glm/glm-5 marked DOWN: error
+20:07:08.206 [33mWARN [0m nebflow.llm.health - Provider deepseek/deepseek-v4 marked DOWN: error
+20:07:08.210 [33mWARN [0m nebflow.llm.health - Provider glm/glm-5 marked DOWN: error
+20:07:08.210 [33mWARN [0m nebflow.llm.health - Provider kimi/moonshot-v1 marked DOWN: error
+20:07:08.219 [33mWARN [0m nebflow.llm.health - Provider glm/glm-5-107 marked DOWN: first-token timeout
+20:07:08.226 [36mINFO [0m nebflow.llm.health - Provider glm/glm-5-107 recovered (UP)
+20:07:08.228 [33mWARN [0m nebflow.llm.health - Provider glm/glm-5-107 marked DOWN: first-token timeout
+20:07:08.230 [33mWARN [0m nebflow.llm.health - Probe failed for glm/glm-5-107: RuntimeException: probe error
+20:07:08.231 [33mWARN [0m nebflow.llm.health - Provider glm/glm-5-107 marked DOWN: timeout
+20:07:08.232 [33mWARN [0m nebflow.llm.health - Probe failed for glm/glm-5-107: NoSuchElementException
+20:07:08.239 [33mWARN [0m nebflow.llm.health - Provider glm/glm-5-107 marked DOWN: timeout
+20:07:09.244 [33mWARN [0m nebflow.llm.health - Probe failed for glm/glm-5-107: TimeoutException: 1 second
+20:07:09.248 [33mWARN [0m nebflow.llm.health - Provider glm/glm-5 marked DOWN: outage
+20:07:09.255 [36mINFO [0m nebflow.llm.health - Provider glm/glm-5 recovered (UP)
+20:07:09.260 [33mWARN [0m nebflow.llm.health - Provider kimi/k3-256k marked DOWN: timeout
+20:07:09.262 [36mINFO [0m nebflow.llm.health - Provider kimi/k3-256k recovered (UP)
+20:07:09.264 [33mWARN [0m nebflow.llm.health - Provider ghost/gone marked DOWN: error
+[32mnebflow.llm.HealthMonitorSpec:[0m
+[32m  + [0m[32mfresh monitor: all candidates are Up[0m [90m0.001s[0m
+[32m  + [0m[32mmarkDown removes candidate from Up list[0m [90m0.001s[0m
+[32m  + [0m[32mmarkDown keeps ONE entry per candidate and REFRESHES the reason to the latest failure[0m [90m0.003s[0m
+[32m  + [0m[32mmarkUp restores candidate to Up list[0m [90m0.002s[0m
+[32m  + [0m[32mmarkUp is no-op if already Up[0m [90m0.0s[0m
+[32m  + [0m[32mmarkDown is per provider+model, not per provider[0m [90m0.002s[0m
+[32m  + [0m[32mwaitForAnyUp blocks until markUp wakes it[0m [90m0.506s[0m
+[32m  + [0m[32mwaitForAnyUp returns immediately if a signal was already fired[0m [90m0.001s[0m
+[32m  + [0m[32mlate waiter after an early waiter consumed the signal must not hang[0m [90m0.001s[0m
+[32m  + [0m[32mtwo parked waiters both released by one markUp signal[0m [90m0.215s[0m
+[32m  + [0m[32mwaiter blocked on an orphaned Deferred escapes via tick re-check[0m [90m5.017s[0m
+[32m  + [0m[32mfilterCandidates preserves priority order[0m [90m0.01s[0m
+[32m  + [0m[32mfull chain down returns empty Up list[0m [90m0.001s[0m
+[32m  + [0m[32mprobe clears at the FIRST serving event — a slow thinking provider (never completes) still recovers[0m [90m0.017s[0m
+[32m  + [0m[32mprobe keeps Down when the stream errors before any serving event[0m [90m0.002s[0m
+[32m  + [0m[32mprobe keeps Down on a Done-only stream (no content — the real path fails the same shape)[0m [90m0.003s[0m
+[32m  + [0m[32mprobe budget shrinks via nebflow.health.probeTimeoutSec (read at probe, never a startup constant)[0m [90m1.013s[0m
+[32m  + [0m[32mprobeNow → 现读回绿: filterCandidates (the /model panel read face) reflects the clear immediately[0m [90m0.011s[0m
+[32m  + [0m[32mdownCandidates includes Down candidates outside the default chain (kimi fix)[0m [90m0.006s[0m
+[32m  + [0m[32mdownCandidates skips refs whose provider was removed from config[0m [90m0.001s[0m
+20:07:09.359 [36mINFO [0m nebflow.llm.registry - Config hot-reloaded: providers=[cmdcode,zhipu] candidateChain=zhipu/glm-5.3-flash -> cmdcode/deepseek/deepseek-v4.1-flash
+20:07:09.369 [36mINFO [0m nebflow.llm.registry - Config hot-reloaded: providers=[kimi,zhipu] candidateChain=zhipu/glm-5.3-flash -> kimi/kimi-for-coding
+20:07:09.376 [36mINFO [0m nebflow.llm.registry - Config hot-reloaded: providers=[cmdcode,zhipu] candidateChain=zhipu/glm-5.3-flash -> cmdcode/deepseek/deepseek-v4.1-flash
+20:07:09.388 [36mINFO [0m nebflow.llm.registry - Config hot-reloaded: providers=[cmdcode,kimi,zhipu] candidateChain=zhipu/glm-5.3-flash -> cmdcode/deepseek/deepseek-v4.1-flash -> kimi/k3.1-pro-highspeed -> kimi/kimi-for-coding -> kimi/kimi-for-coding-highspeed
+[32mnebflow.llm.ProviderCandidateConfigSyncSpec:[0m
+[32m  + [0m[32mR1 配置里存在但链未引用的 provider 仍进候选集（reserve），origin 可区分[0m [90m0.036s[0m
+[32m  + [0m[32mA1 删掉 kimi ⇒ 运行期候选集立刻不含 kimi（无重启）[0m [90m0.047s[0m
+[32m  + [0m[32mA2 加回 kimi ⇒ 候选集立刻含 kimi（热生效，不重启）[0m [90m0.008s[0m
+[32m  + [0m[32mA3 盘上配置被旁路改掉 ⇒ drift.inSync=false 且点名（可见，不静默沿用旧快照）[0m [90m0.008s[0m
+[32m  + [0m[32mA4 配置里只剩 1 个可用 provider ⇒ 候选集恰为那一个[0m [90m0.003s[0m
+[32m  + [0m[32mR2 无锁旁路写者把已删 provider 写回 ⇒ undeletedProviders 点名上浮（不静默）[0m [90m0.008s[0m
+[32m  + [0m[32mR3 disabled:true 的 provider 不进候选集（配置面内的显式摘除同样生效）[0m [90m0.004s[0m
+20:07:09.411 [33mWARN [0m nebflow.llm - candidate ledger session=sched-gate-t1 — chain=2 tried=0 skipped=1 [zhipu/glm(schedule-window)]
+20:07:09.420 [36mINFO [0m nebflow.llm.anthropic - message_start: model=deepseek-flash usage_json={"input_tokens":10,"output_tokens":0} inputTokens=10 cacheRead=None cacheWrite=None
+20:07:09.421 [36mINFO [0m nebflow.llm.anthropic - message_delta: model=deepseek-flash deltaInput=None stored_input=10 final_input=10 cacheRead=None cacheWrite=None totalInput=10 outputTokens=2 stopReason=Some(end_turn)
+20:07:09.444 [36mINFO [0m nebflow.llm.anthropic - message_start: model=glm usage_json={"input_tokens":10,"output_tokens":0} inputTokens=10 cacheRead=None cacheWrite=None
+20:07:09.445 [36mINFO [0m nebflow.llm.anthropic - message_delta: model=glm deltaInput=None stored_input=10 final_input=10 cacheRead=None cacheWrite=None totalInput=10 outputTokens=2 stopReason=Some(end_turn)
+[32mnebflow.llm.ScheduleChainSwitchSpec:[0m
+[32m  + [0m[32mT1 时段闸绕过：窗口 = 当前时刻±10 分钟 ⇒ 受限 provider 命中数 = 0，答案由未受限方交付[0m [90m0.028s[0m
+[32m  + [0m[32mT2 全受限：<3s 快失败（不进 120s 全灭闸）+ 错误带「受限」原因与窗口[0m [90m0.009s[0m
+[32m  + [0m[32mT3 窗外负控：窗口 = 当前 +2h 起 ⇒ 同一根的 provider 照常承接（零行为变化）[0m [90m0.013s[0m
+[32mnebflow.llm.ScheduleRestrictionChainSpec:[0m
+[32m  + [0m[32mT1 窗内：受限 provider 的候选被剔除，其余保持原链序[0m [90m0.002s[0m
+[32m  + [0m[32mT2 窗外：同一配置链**逐字等于**无窗口配置的链（零行为变化铁律）[0m [90m0.0s[0m
+[32m  + [0m[32mT3 provider 级窗口对该 provider 全部模型生效[0m [90m0.001s[0m
+[32m  + [0m[32mT4 模型级窗口只影响该模型，同 provider 其它模型照常[0m [90m0.001s[0m
+[32m  + [0m[32mT5 储备层：预设链两根全受限 ⇒ 未受限的储备模型承接（链非空）[0m [90m0.0s[0m
+[32m  + [0m[32mT6 全受限（含储备层）⇒ 链出口给空链，不静默回退到受限模型[0m [90m0.001s[0m
+[32m  + [0m[32mT7 跨午夜窗：23:30 与 06:59 受限、07:00 与 22:59 不受限（filterScheduleRestricted 同一谓词）[0m [90m0.001s[0m
+[32m  + [0m[32mT8 可见性读数：ref 当前受限原因 + 声明窗口 + active 双态[0m [90m0.002s[0m
+[32m  + [0m[32mT9 getCandidateForRef 保持纯构造不过滤——HealthMonitor 探测集不被时段闸打穿[0m [90m0.0s[0m
+[32m  + [0m[32mT10 decode：存量配置（无 unavailableWindows）解析不变；新键两层解析；缺字段容忍[0m [90m0.001s[0m
+20:07:09.481 [33mWARN [0m nebflow.llm - Stream: a/m1 permanent error (Format) — provider response: statusCode: 400, response: [wire] HTTP 400 provider=a model=m1 | request=u:t | response=error/invalid_request_error(code=-) | upstream=enable_search is not supported by this endpoint | raw={"type":"error","error":{"type":"invalid_request_error","message":"enable_search is not supported by this endpoint"}} [status=400, evict=false, round=1/2]
+20:07:09.488 [33mWARN [0m nebflow.llm - Stream: b/m1 permanent error (Format) — provider response: statusCode: 400, response: [wire] HTTP 400 provider=b model=m1 | request=u:t | response=error/invalid_request_error(code=-) | upstream=enable_search is not supported by this endpoint | raw={"type":"error","error":{"type":"invalid_request_error","message":"enable_search is not supported by this endpoint"}} [status=400, evict=false, round=1/2]
+20:07:09.495 [33mWARN [0m nebflow.llm - Stream: a/m1 permanent error (Format) — provider response: statusCode: 400, response: [wire] HTTP 400 provider=a model=m1 | request=u:t | response=error/invalid_request_error(code=-) | upstream=enable_search is not supported by this endpoint | raw={"type":"error","error":{"type":"invalid_request_error","message":"enable_search is not supported by this endpoint"}} [status=400, evict=false, round=2/2]
+20:07:09.502 [33mWARN [0m nebflow.llm - Stream: b/m1 permanent error (Format) — provider response: statusCode: 400, response: [wire] HTTP 400 provider=b model=m1 | request=u:t | response=error/invalid_request_error(code=-) | upstream=enable_search is not supported by this endpoint | raw={"type":"error","error":{"type":"invalid_request_error","message":"enable_search is not supported by this endpoint"}} [status=400, evict=false, round=2/2]
+20:07:09.506 [33mWARN [0m nebflow.llm - Stream: candidate chain exhausted after 2 round(s) (cap 2) — failing fast instead of re-entering the health-check loop [providers attempted: 4 attempt(s), reason=all-providers-failed, chain=2 tried=2 skipped=0]
+reason: all-providers-failed  (chain 2: tried 2, skipped 0)
+  [tried]   a/m1
+  [tried]   b/m1
+expected from config: 2 ref(s) — none silently excluded
+[32mnebflow.llm.AllCandidatesFormatLoopSpec:[0m
+[32m  + [0m[32mT1: 全链 400（evict=false ⇒ 无人被驱逐）在有界轮次内以 FallbackExhaustedError 终止[0m [90m0.046s[0m
+[32m  + [0m[32mT2: 上限常量本身 ≥ 2（既有 FormatErrorNoEvictSpec T1 的轮内语义共存硬约束）[0m [90m0.0s[0m
+[info] Passed: Total 68, Failed 0, Errors 0, Passed 68
+[success] Total time: 15 s, completed 2026年11月6日 20:07:09
+TEST_EXIT=0

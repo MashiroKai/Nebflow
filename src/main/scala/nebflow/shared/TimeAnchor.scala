@@ -94,8 +94,8 @@ object TimeAnchor:
   /**
    * 每请求时间锚（**请求级、不落盘**；进 `LlmRequest.systemDynamic`）。
    *
-   * 位置语义：systemStable（前缀缓存锚）之后的动态段 ⇒ 每次请求现取现发，
-   * 长回合中途的每一次工具往返都重新读到新的「现在」，且稳定前缀逐字节不变。
+   * 适配器把本段放在历史末尾、缓存断点之后，不写入顶层 system 或会话历史。
+   * 每次工具往返都重新读到「现在」，同时保留此前历史的完整缓存前缀。
    */
   def block(at: ZonedDateTime = now()): String =
     "── Clock (authoritative; re-read on every request) ──\n" +

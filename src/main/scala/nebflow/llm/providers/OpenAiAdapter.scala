@@ -115,21 +115,25 @@ class OpenAiAdapter(
               Json.obj("reasoning_effort" -> budgetToEffort(budget).asJson)
       case _ => Json.obj()
 
-  /** Build system message from stable + dynamic parts for OpenAI's messages format. */
+  /** Build a stable system prefix containing instructions and route identity. */
   private[providers] def buildSystemMessage(params: SendMessageParams): Option[Json] =
     val stable = params.systemStable.filter(_.nonEmpty)
-    // 路由自述（protocol-compat 批）：拼在 dynamic 段尾部，稳定前缀逐字节不变。
-    val dynamic = Some(
-      List(params.systemDynamic.filter(_.nonEmpty), Some(WireShape.routeBanner(providerId, params.model)))
-        .flatten
-        .mkString("\n\n")
-    ).filter(_.nonEmpty)
+    // Per-request context must not invalidate the system/history cache prefix.
+    val dynamic = Some(WireShape.routeBanner(providerId, params.model)).filter(_.nonEmpty)
     val fallback = params.messages.find(_.role == MessageRole.System).map(_.textContent).filter(_.nonEmpty)
     val text = stable.orElse(fallback) match
       case Some(s) => if dynamic.nonEmpty then s"$s\n\n${dynamic.get}" else s
       case None => dynamic.orNull
     if text != null && text.nonEmpty then Some(Json.obj("role" -> "system".asJson, "content" -> text.asJson))
     else None
+
+  /** Shared by streaming and non-streaming sends; context follows all tool results. */
+  private[providers] def requestMessages(params: SendMessageParams, passback: Boolean): List[Json] =
+    val history = buildSystemMessage(params).toList ++ toOpenAiMessages(params.messages, passback)
+    val tail = params.systemDynamic.filter(_.nonEmpty).map { text =>
+      Json.obj("role" -> "user".asJson, "content" -> text.asJson)
+    }
+    history ++ tail.toList
 
   private[providers] def toOpenAiMessages(
     messages: List[Message],
@@ -411,9 +415,7 @@ class OpenAiAdapter(
 
   def sendMessage(params: SendMessageParams): IO[AdapterResponse] =
     def attempt(p: SendMessageParams, passback: Boolean): IO[AdapterResponse] =
-      val systemMsg = buildSystemMessage(p)
-      val baseMessages = toOpenAiMessages(p.messages, passback = passback)
-      val allMessages = systemMsg.toList ++ baseMessages
+      val allMessages = requestMessages(p, passback)
       val body = Json.obj(
         "model" -> p.model.asJson,
         "messages" -> Json.fromValues(allMessages)
@@ -577,9 +579,7 @@ class OpenAiAdapter(
 
   def sendMessageStream(params: SendMessageParams): Stream[IO, StreamChunk] =
     def attempt(p: SendMessageParams, passback: Boolean): Stream[IO, StreamChunk] =
-      val systemMsg = buildSystemMessage(p)
-      val baseMessages = toOpenAiMessages(p.messages, passback = passback)
-      val allMessages = systemMsg.toList ++ baseMessages
+      val allMessages = requestMessages(p, passback)
       val body = Json.obj(
         "model" -> p.model.asJson,
         "messages" -> Json.fromValues(allMessages),
