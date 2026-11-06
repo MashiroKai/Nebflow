@@ -1451,7 +1451,7 @@ body.canvas-deck-narrow .canvas-title { max-width: none; }
   /* 作者令「动画放慢、自然、流畅」与本批缓动族一致：0.36s 温和缓出
      （cubic-bezier(0.22,0.61,0.36,1)），透明度 0.32s —— 竖向换选的位姿迁移
      不再是旧 0.22s 硬切。 */
-  transition: transform 0.36s cubic-bezier(0.22, 0.61, 0.36, 1), opacity 0.32s ease, filter 0.36s cubic-bezier(0.22, 0.61, 0.36, 1);
+  transition: transform var(--ds-ring-dur) var(--ds-ring-ease), opacity 0.32s ease, filter var(--ds-ring-dur) var(--ds-ring-ease);
 }
 /* 真越出批：显隐选择器随环层本位（环挂 body，标题头后代选择器够不到）。
    可点性走 .steady 门（openRing 在 0.36s 展开过渡后加）——环层如今叠在标题头
@@ -1519,11 +1519,16 @@ body.canvas-deck-narrow .canvas-title { max-width: none; }
 .cr-capsule.is-center:active { --cr-press: 0.96; filter: brightness(0.92); }
 /* 缘位 = 竖向 cover-flow（对称批 2026-10-23：上 −edgeY / 下 +edgeY 真对称，
    几何值见 canvas.js layout()）：沿弧后仰 + 模糊扭曲 +
-   半透（毛玻璃照挂 —— 模糊叠加在 backdrop 之上，曲率感来自 rotateX 透视） */
+   半透（毛玻璃照挂 —— 模糊叠加在 backdrop 之上，曲率感来自 rotateX 透视）
+   环邻位深度配方（mobile-canvas-tabs-c 批 2026-11-06）：**数值改取令牌单源**
+   `--ds-ring-blur` / `--ds-ring-saturate`（design-system.css ⑯b 槽）—— 本条就是
+   作者点名的「电脑端 hover 上下选项的那种模糊效果」的出生实现，手机层横向环带
+   的两侧签按同两枚令牌取值（`filter: blur(calc(…·系数))`），一处定义两处生效。
+   恒值不变（1.6px / 1.25），可见像素零漂移。 */
 .cr-capsule.is-edge {
   z-index: 2;
   opacity: 0.82;
-  filter: blur(1.6px) saturate(1.25);
+  filter: blur(var(--ds-ring-blur)) saturate(var(--ds-ring-saturate));
 }
 .cr-capsule.is-edge:active { --cr-press: 0.96; }
 /* 弧外位（|rel|≥2）：不可见不可点，保留位姿让收放有连续轨迹 */
@@ -1557,6 +1562,11 @@ body.canvas-deck-narrow .canvas-title { max-width: none; }
   }
   .cr-capsule.is-edge {
     opacity: 0.9;
+    /* 收档说明（mobile-canvas-tabs-c 批 2026-11-06 复核）：本条 = **触屏横排腿的
+       可读性收档**，不是第二份配方 —— 横排档旋转角只有 24°、字要当场读清，故半径
+       取 `--ds-ring-blur` 的 3/8（0.6px）、饱和取同间段（1.15）。竖环腿（真
+       hover 上下展开，作者点名的那个效果）硬取令牌原值，两条腿的差异只此一处，
+       改档先改这里的注释与 `canvas-capsule-touch-row.spec` 读数。 */
     filter: blur(0.6px) saturate(1.15);
   }
   /* 邻签朝外一侧连续化开：面板窄时邻签会探出可见区，硬裁边缘读作「破版」，

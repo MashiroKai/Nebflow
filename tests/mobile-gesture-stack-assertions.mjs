@@ -253,80 +253,99 @@ console.log('\n── I1 胶囊边缘渐隐（像素剖面 + 前后对照）─�
     });
     await sleep(420);
   }
-  // 前置对照：3 签时两侧邻签 mask 存在性 + 方向（改后 = **::after 视觉层**方向
-  // mask；宿主本体零 mask —— 渐隐热区修复批：mask 挂宿主会连 hit-test 裁剪一起
-  // 搬走，两端渐隐区就点不到了）。
+  // 前置对照（方案 C 落地批 2026-11-06，作者 08:33 逐字裁定）：
+  // 「采用方案c 主胶囊要采用毛玻璃底 然后背景的文字不使用胶囊 但是还有电脑端
+  //   hover 上下选项的那种模糊效果 文字两边不要渐隐」
+  // ⇒ 本块判据整体换代，旧档（邻签方向 mask + 「唯一差异面 = 渐隐 mask」）已退役：
+  //   ① **零水平 mask**：三枚签的宿主 / label / ::after 一律 mask-image: none；
+  //   ② **材质只在中签**：仅有 `.on` 的 ::after 承载毛玻璃四件套，两侧签 ::after
+  //      零材质（就是作者说的「背景的文字不使用胶囊」）；
+  //   ③ **模糊在邻位**：邻签 filter = 桌面 hover 上下选项同一配方
+  //      blur(--ds-ring-blur) saturate(--ds-ring-saturate)，中签 filter 归零；
+  //   ④ 方向类（side-l/side-r）保留为**环位语义**（语料/读码可读），不再驱动 mask。
   const maskInfo = await page.evaluate(() => [...document.querySelectorAll('.mf-strip-chip')].map((c) => {
     const cs = getComputedStyle(c);
     const after = getComputedStyle(c, '::after');
+    const label = c.querySelector('.mf-strip-label');
+    const ds = getComputedStyle(document.documentElement);
     return {
       id: c.dataset.tabId, on: c.classList.contains('on'),
       sideL: c.classList.contains('side-l'), sideR: c.classList.contains('side-r'),
-      chipMask: cs.maskImage || cs.webkitMaskImage || 'none',
-      afterMask: after.maskImage || after.webkitMaskImage || 'none',
+      chipMask: cs.maskImage, afterMask: after.maskImage,
+      labelMask: label ? getComputedStyle(label).maskImage : 'none',
       afterBg: after.backgroundImage || 'none',
-      afterGlass: after.backdropFilter || after.webkitBackdropFilter || 'none',
+      afterBgColor: after.backgroundColor,
+      afterBorderW: after.borderTopWidth,
+      afterShadow: after.boxShadow,
+      afterGlass: after.backdropFilter || 'none',
+      filter: cs.filter,
+      rblf: cs.getPropertyValue('--rblf').trim(),
       rfade: c.style.getPropertyValue('--rfade').trim(),
-      labelMask: getComputedStyle(c.querySelector('.mf-strip-label')).maskImage,
       op: +cs.opacity,
+      dsBlur: ds.getPropertyValue('--ds-ring-blur').trim(),
+      dsSat: ds.getPropertyValue('--ds-ring-saturate').trim(),
     };
   }));
   const code = maskInfo.find((c) => c.id === 'gs-code');     // 左邻（rdx=+95 ⇒ k=+1 环绕位）
   const gen = maskInfo.find((c) => c.id === 'gs-generic');   // 右邻（rdx=-95 ⇒ k=-1）
   const on = maskInfo.find((c) => c.on);
-  // 方向语义（实现约定）：k<0（签在环心左侧）= side-l = 左端朝外化开；
-  // k>0 = side-r = 右端朝外化开。gs-code 的 rdx=+95 ⇒ 应带 side-r（右端化开）。
   const codeIsR = code.sideR && !code.sideL;
   const genIsL = gen.sideL && !gen.sideR;
-  ok('I1', '邻签方向类与环位一致（rdx>0 ⇒ side-r / rdx<0 ⇒ side-l）', codeIsR && genIsL && !on.sideL && !on.sideR,
-    `code(${code.sideL},${code.sideR}) gen(${gen.sideL},${gen.sideR}) rdx=${code.rfade}`);
-  ok('I1', '邻签 ::after（视觉层）mask = 方向 linear-gradient（--rfade 55% 档）',
-    code.afterMask.includes('linear-gradient') && gen.afterMask.includes('linear-gradient'),
-    `rfade=${code.rfade}/${gen.rfade} code=${code.afterMask.slice(0, 46)}`);
-  // 防架空：::after 的视觉底必须**真在**（mask/background 双非 none）——否则
-  // 「迁移到 ::after」可以靠整块写空来骗过上面一条（永真）。
-  // backdrop-filter 分层钉（渐隐热区修复批）：blur 只许在**中签**的 ::after
-  // （无 mask 层）——邻签 ::after 带 mask，headless 软渲染下同元素
-  // mask × backdrop-filter 会把描边/玻璃面按未裁剪输出（mask 架空，最小复现
-  // 见 CSS 注释）；任何一侧「邻签也有 blur」都说明分层被破坏。
-  ok('I1', '::after 承载玻璃底（background 非 none，防迁移写空）',
-    code.afterBg.includes('linear-gradient') && gen.afterBg.includes('linear-gradient')
-    && on.afterBg.includes('linear-gradient'),
-    `bg=${code.afterBg.slice(0, 40)}`);
-  ok('I1', 'backdrop-filter 分层：blur 只在中签 ::after（mask 层禁 backdrop）',
+  ok('I1', '邻签方向类与环位一致（rdx>0 ⇒ side-r / rdx<0 ⇒ side-l；类=环位语义，不再驱动 mask）',
+    codeIsR && genIsL && !on.sideL && !on.sideR,
+    `code(${code.sideL},${code.sideR}) gen(${gen.sideL},${gen.sideR}) rblf=${code.rblf}/${gen.rblf}`);
+  ok('I1', '三枚签零水平 mask（宿主 / label / ::after 全 none —— 「文字两边不要渐隐」）',
+    [code, gen, on].every((c) => c.chipMask === 'none' && c.afterMask === 'none' && c.labelMask === 'none'),
+    `code=${code.chipMask}/${code.labelMask}/${code.afterMask} gen=${gen.chipMask}/${gen.labelMask}/${gen.afterMask}`);
+  ok('I1', '主机停写 --rfade（旧渐隐驱动量退役）',
+    [code, gen, on].every((c) => c.rfade === ''),
+    `rfade=${[code.rfade, gen.rfade, on.rfade].map((v) => JSON.stringify(v)).join('/')}`);
+  ok('I1', '素材只在中签：主胶囊 ::after 有玻璃底，邻签 ::after 零材质（「背景的文字不使用胶囊」）',
+    on.afterBg !== 'none' && on.afterBgColor !== 'rgba(0, 0, 0, 0)'
+    && [code, gen].every((c) => (c.afterBg === 'none' || c.afterBg === '')
+      && c.afterBgColor === 'rgba(0, 0, 0, 0)' && c.afterBorderW === '0px'
+      && (c.afterShadow === 'none' || c.afterShadow === '')),
+    `on bg=${on.afterBg.slice(0, 40)} alpha=${on.afterBgColor}｜code bg=${code.afterBg} alpha=${code.afterBgColor} border=${code.afterBorderW} shadow=${code.afterShadow}`);
+  ok('I1', 'backdrop-filter 分层：blur 只在主胶囊 ::after（邻签零材质 ⇒ 零 backdrop）',
     on.afterGlass.includes('blur') && code.afterGlass === 'none' && gen.afterGlass === 'none',
     `on=${on.afterGlass} code=${code.afterGlass} gen=${gen.afterGlass}`);
-  ok('I1', '宿主本体零 mask（热区不随 mask 被裁剪 —— 热区修复前提）',
-    [code, gen, on].every((c) => c.chipMask === 'none'),
-    `code=${code.chipMask} gen=${gen.chipMask} on=${on.chipMask}`);
-  ok('I1', '中签零 mask（两端硬边保留 11:23 批语义）',
-    !on.afterMask.includes('linear-gradient'), on.afterMask.slice(0, 40));
-  ok('I1', '邻签 label mask 方向化（只淡朝外 9px）', code.labelMask.includes('linear-gradient') && gen.labelMask.includes('linear-gradient'));
-  // 视口羽化收窄为 0→14px（旧 52→64 硬闸退役）。
-  const stripFade = await page.evaluate(() => {
+  // 环邻位模糊（作者口径 ④）：邻签 filter 必须逐字等于桌面 hover 档配方，
+  // 中签必须归零；配方权重只能来自两枚令牌，不许在本文件自拟数值。
+  const wantNb = `blur(${code.dsBlur}) saturate(${code.dsSat})`;
+  ok('I1', '邻位模糊与桌面 hover 上下选项同源（filter = blur(--ds-ring-blur) saturate(--ds-ring-saturate)）',
+    code.filter === wantNb && gen.filter === wantNb && code.dsBlur === '1.6px' && code.dsSat === '1.25',
+    `want=${wantNb} code=${code.filter} gen=${gen.filter}`);
+  // 中签的 filter 是「零档」blur(0px) saturate(1)（逐值恒等、省一次材质切换），
+  // 与 none 视觉等价 —— 判据读半径值不读字面。
+  const blurPx = (f) => { const m = /blur\(([\d.]+)px\)/.exec(f || ''); return m ? parseFloat(m[1]) : 0; };
+  ok('I1', '环心零模糊（中签模糊半径 0，可读性留在主胶囊）',
+    blurPx(on.filter) === 0, `on=${on.filter}`);
+  // 环带（方案 C 基底）：玻璃带 64 + 下缘渐隐 28，且**窗口级 mask 全退役**。
+  const stripFace = await page.evaluate(() => {
     const el = document.querySelector('.mf-strip');
+    const before = getComputedStyle(el, '::before');
+    const after = getComputedStyle(el, '::after');
     const cs = getComputedStyle(el);
-    return { fade: el.classList.contains('fade'), mask: cs.maskImage || cs.webkitMaskImage };
+    return {
+      fade: el.classList.contains('fade'),
+      mask: cs.maskImage,
+      h: el.getBoundingClientRect().height,
+      glassH: before.height,
+      glassBackdrop: before.backdropFilter || 'none',
+      fadeH: after.height,
+      fadeTop: after.top,
+      fadeBg: after.backgroundImage,
+      fadeMask: after.maskImage,
+    };
   });
-  ok('I1', '环带视口羽化收窄 14px（防复活的旧 52→64 硬闸）',
-    stripFade.fade && stripFade.mask.includes('14px'), stripFade.mask.slice(0, 80));
-
-  // 像素腿（**A/B 差分法**，渐隐热区修复批定稿）：不再量整帧绝对对比度 ——
-  // 玻璃描边弧 + 文字 + 视口羽化混在同一条列读数里，绝对值随内容漂（旧读数
-  // outer/inner ≈ 0.90，描边弧主导）。改量**遮罩贡献**：同一位姿下把该签
-  // ::after 的 mask 摘掉重截，逐列平均亮度取差 —— 朝外半边必须有显著负差
-  // （mask 在把它化开），朝中心半边近零（方向性）。headless 实测（glass 层）：
-  // outward ≈ −40、inward ≈ −2；阈值 −10 / 6 / 方向性 12 留足噪声余量。
-  // 左邻 gs-generic（side-l ⇒ 左端朝外化开）。
-  const f1 = await fadeAB(page, chipBox, 'gs-generic', 'left-is-outer', OUT);
-  writeFileSync(join(OUT, 'i1_neighbor_columns.json'), JSON.stringify(f1.delta));
-  ok('I1', '邻签朝外半边被遮罩化开（A/B 差分 outward ≤ −10，半枚圆环感）',
-    f1.outward <= -10, `outward=${f1.outward} inward=${f1.inward}`);
-  ok('I1', '遮罩差分方向性（outward 比 inward 低 ≥ 12）',
-    f1.outward - f1.inward <= -12, `Δ=${(f1.inward - f1.outward).toFixed(2)}`);
-  ok('I1', '邻签朝中心半边未化开（inward ≥ −6，未整枚化开）', f1.inward >= -6, `inward=${f1.inward}`);
+  readings['I1'].push({ strip: stripFace });
+  ok('I1', '环带 = 64px 玻璃带 + 28px 下缘渐隐（方案 C 基底；窗口级 mask 退役）',
+    Math.round(stripFace.h) === 92 && Math.round(parseFloat(stripFace.glassH)) === 64
+    && Math.round(parseFloat(stripFace.fadeH)) === 28 && Math.round(parseFloat(stripFace.fadeTop)) === 64
+    && stripFace.glassBackdrop.includes('blur') && stripFace.fadeBg.includes('gradient')
+    && stripFace.mask === 'none' && stripFace.fadeMask === 'none' && !stripFace.fade,
+    `h=${stripFace.h} 玻璃=${stripFace.glassH}/${stripFace.glassBackdrop} 渐隐=${stripFace.fadeH}@${stripFace.fadeTop} mask=${stripFace.mask}/${stripFace.fadeMask} fade类=${stripFace.fade}`);
   await page.screenshot({ path: join(OUT, 'i1_after_strip_full.png') });
-  readings['I1'].push({ abDiff: { gs_generic: { outward: f1.outward, inward: f1.inward } } });
 }
 
 /* ════════════════ I2 朝中心文字可辨认（放大截图） ════════════════ */
@@ -336,11 +355,15 @@ console.log('\n── I2 两侧邻签朝中心文字可辨认 ──');
   // 放大截图留证 + 与 I1 同法（同一实现同一判据面，A/B 遮罩差分）。
   const gb = await chipBox('gs-code');
   await page.screenshot({ path: join(OUT, 'i2_neighbor-zoom.png'), clip: { x: Math.max(0, gb.x - 4), y: Math.max(0, gb.y - 4), width: Math.min(gb.w + 8, 390), height: gb.h + 8 } });
-  const f2 = await fadeAB(page, chipBox, 'gs-code', 'right-is-outer', OUT);
-  ok('I2', '右邻朝外半边化开（A/B 差分 outward ≤ −10）',
-    f2.outward <= -10, `outward=${f2.outward} inward=${f2.inward}`);
-  ok('I2', '右邻朝中心半边保持（inward ≥ −6 且差分方向性 ≥ 12）',
-    f2.inward >= -6 && f2.outward - f2.inward <= -12, `inward=${f2.inward} Δ=${(f2.inward - f2.outward).toFixed(2)}`);
+  // 方向渐隐（A/B 遮罩差分）在方案 C 落地批整条退役：邻签不再有 mask（作者令
+  // 「文字两边不要渐隐」），那半枚「化开」改由**环邻位模糊**承担 —— 深度判据见
+  // I1（filter 与桌面 hover 同源 / 零 mask），本块只留「模糊的另一枚签仍然可命中」。
+  ok('I2', '右邻无方向 mask（两向都不淡出）', await page.evaluate(() => {
+    const c = document.querySelector('.mf-strip-chip[data-tab-id="gs-code"]');
+    const l = c.querySelector('.mf-strip-label');
+    return getComputedStyle(c).maskImage === 'none' && getComputedStyle(l).maskImage === 'none'
+      && getComputedStyle(c, '::after').maskImage === 'none';
+  }));
   ok('I2', '邻签可命中（tabIndex=0，非 is-far）', await page.evaluate(() => {
     const c = document.querySelector('.mf-strip-chip[data-tab-id="gs-generic"]');
     return c.tabIndex === 0 && !c.classList.contains('is-far');
