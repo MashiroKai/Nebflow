@@ -110,6 +110,17 @@ try {
   let g = await bannerGeo(page);
   ok('R0 banner exists and hidden while connected', g && g.exists && g.hidden === true && g.shown === false, g);
 
+  // ERROR probe — a browser WebSocket error event is not proof of closure.
+  // Drive the production handler on the live socket and require online state/UI
+  // to remain stable until the authoritative close event arrives.
+  await page.evaluate(async () => {
+    const s = (await import('/js/state.js')).default;
+    s.ws.onerror(new Event('error'));
+  });
+  g = await bannerGeo(page);
+  const afterError = await page.evaluate(async () => (await import('/js/state.js')).default.connected);
+  ok('E1 error without close does not mark live socket disconnected', afterError === true && g.hidden === true && g.shown === false, { connected: afterError, banner: g });
+
   // 腿 D — 服务端真断开 ⇒ 真实 onclose ⇒ 横幅「连接断开 · 正在重连」。
   await page.evaluate(async () => {
     const s = (await import('/js/state.js')).default;
