@@ -38,9 +38,10 @@ class FeishuInboundImageSpec extends FunSuite:
 
   private val PNG = Array[Byte](0x89.toByte, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3)
 
-  /** A stub [[FeishuChannel.RawHttp]] routing on (method-inferred, url). */
+  /** A stub [[FeishuChannel.RawHttp]] capturing safe request shape, never header values. */
   private final class StubHttp:
-    val calls = scala.collection.mutable.ListBuffer.empty[(String, String)]
+    final case class Call(method: String, url: String, hasAuthorization: Boolean, bodyPresent: Boolean)
+    val calls = scala.collection.mutable.ListBuffer.empty[Call]
     var routes: PartialFunction[String, Either[String, (Int, Array[Byte])]] = PartialFunction.empty
 
     def tokenOk(token: String = "stub-token-shape-only"): Unit =
@@ -49,11 +50,11 @@ class FeishuInboundImageSpec extends FunSuite:
           Right((200, Json.obj("code" -> 0.asJson, "tenant_access_token" -> token.asJson).noSpaces.getBytes("UTF-8")))
       }
 
-    def toSeam: FeishuChannel.RawHttp = (url, _headers, body) =>
+    def toSeam: FeishuChannel.RawHttp = (url, headers, body) =>
       calls.synchronized {
-        calls += ((if body.isDefined then "POST" else "GET", url))
+        calls += Call(if body.isDefined then "POST" else "GET", url, headers.contains("Authorization"), body.isDefined)
       }
-      if routes.isDefinedAt(url) then routes(url) else Left(s"no stub route for $url")
+      if routes.isDefinedAt(url) then routes(url) else Left("no stub route")
   end StubHttp
 
   /** Unique appId per test — the object-level token cache must not leak between tests. */
@@ -75,6 +76,24 @@ class FeishuInboundImageSpec extends FunSuite:
     assert(r.ok, s"must land, got $r")
     assertEquals(r.bytes.map(_.toList), Some(PNG.toList), "the exact channel bytes — no re-encode")
     assertEquals(r.code, 200)
+    val imageCall = stub.calls.find(_.url.contains("/open-apis/im/v1/images/")).get
+    assertEquals(imageCall.method, "GET")
+    assert(imageCall.url.endsWith("/open-apis/im/v1/images/img_key_1"))
+    assert(imageCall.hasAuthorization, "Authorization header must be present; its value is intentionally not captured")
+    assert(!imageCall.bodyPresent)
+  }
+
+  test("FI1b image_key is exactly one URL-encoded path segment") {
+    val stub = new StubHttp
+    stub.tokenOk()
+    stub.routes = stub.routes.orElse { case _ => Right((200, PNG)) }
+    val (appId, secret) = freshCreds()
+    val key = "key/with space?"
+    val r = FeishuChannel.getImageVia(stub.toSeam)(appId, secret, "feishu", key)
+    assert(r.ok)
+    val imageCall = stub.calls.find(_.url.contains("/open-apis/im/v1/images/")).get
+    assert(imageCall.url.endsWith("/open-apis/im/v1/images/key%2Fwith%20space%3F"), imageCall.url)
+    assertEquals(imageCall.url.split("/open-apis/im/v1/images/", 2).last.count(_ == '/'), 0)
   }
 
   test(
@@ -93,11 +112,29 @@ class FeishuInboundImageSpec extends FunSuite:
     val r = FeishuChannel.getImageVia(stub.toSeam)(appId, secret, "feishu", "img_v3_0216p_incident")
     assert(!r.ok)
     assertEquals(r.code, 99991400, "feishu's code — the SDK used to mask this behind JsonIOException")
-    assertEquals(r.msg, "too many requests")
+    assert(r.msg.contains("http=429") && r.msg.contains("endpoint=im/v1/images/:image_key"))
+    assert(r.msg.contains("code=99991400") && r.msg.contains("msg=too many requests"))
     assert(
       !r.msg.contains("JsonIOException") && !r.msg.contains("ByteArrayOutputStream"),
       s"the stream-DTO plague must never resurface, got ${r.msg}"
     )
+  }
+
+  test("FI2b 234001 refusal returns safe diagnostic evidence without exposing the image key") {
+    val stub = new StubHttp
+    stub.tokenOk()
+    val testKey = "diagnostic-key-do-not-leak"
+    stub.routes = stub.routes.orElse {
+      case url if url.endsWith("/open-apis/im/v1/images/diagnostic-key-do-not-leak") =>
+        Right((400, Json.obj("code" -> 234001.asJson, "msg" -> "Invalid request param.".asJson).noSpaces.getBytes("UTF-8")))
+    }
+    val (appId, secret) = freshCreds()
+    val r = FeishuChannel.getImageVia(stub.toSeam)(appId, secret, "feishu", testKey)
+    assert(!r.ok)
+    assertEquals(r.code, 234001)
+    assert(r.msg.contains("http=400") && r.msg.contains("endpoint=im/v1/images/:image_key"))
+    assert(r.msg.contains("fields=code:true,msg:true") && r.msg.contains("Invalid request param."))
+    assert(!r.msg.contains(testKey), "diagnostic must not contain the complete user image key")
   }
 
   test("FI3 a refused tenant-token request is an explicit reading (code/msg, no secret on the wire)") {
@@ -129,14 +166,14 @@ class FeishuInboundImageSpec extends FunSuite:
     // 「feishu 原生 code/msg 上浮」对齐——code 取 body 里的 99991400，非 HTTP 429。
     assertEquals(
       FeishuChannel.imageErrorReading(502, "<html>gateway</html>".getBytes("UTF-8")),
-      (502, "HTTP 502 with a non-JSON body (20B)")
+      (502, "Feishu image API refused (http=502 endpoint=im/v1/images/:image_key fields=code:false,msg:false; non-JSON body 20B)")
     )
     assertEquals(
       FeishuChannel.imageErrorReading(
         429,
         Json.obj("code" -> 99991400L.asJson, "msg" -> "busy".asJson).noSpaces.getBytes("UTF-8")
       ),
-      (99991400, "busy")
+      (99991400, "Feishu image API refused (http=429 endpoint=im/v1/images/:image_key fields=code:true,msg:true; code=99991400 msg=busy)")
     )
   }
 
@@ -165,8 +202,8 @@ class FeishuInboundImageSpec extends FunSuite:
     val r1 = FeishuChannel.getImageVia(stub.toSeam)(appId, secret, "feishu", "img_a")
     val r2 = FeishuChannel.getImageVia(stub.toSeam)(appId, secret, "feishu", "img_b")
     assert(r1.ok && r2.ok)
-    val tokenPosts = stub.calls.count { case (m, url) => m == "POST" && url.contains("tenant_access_token") }
-    assertEquals(tokenPosts, 1, s"exactly one token fetch for two downloads, got ${stub.calls.toList}")
+    val tokenPosts = stub.calls.count(call => call.method == "POST" && call.url.contains("tenant_access_token"))
+    assertEquals(tokenPosts, 1, "exactly one token fetch for two downloads")
   }
 
 end FeishuInboundImageSpec
