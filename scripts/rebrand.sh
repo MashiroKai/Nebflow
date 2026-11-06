@@ -132,8 +132,8 @@ SPECIAL|window-global|src/main/resources/web/js/main.js
 #     backslash-quoted patterns.
 SED|src/test/scala/@LOWER@/core/BrandingSpec.scala|s/"nebflow\.json"/"@@CFG@@"/g; s/Branding\.productName, "Nebflow"/Branding.productName, "@PRODUCT@"/; s/Branding\.lowerName, "nebflow"/Branding.lowerName, "@LOWER@"/; s/Branding\.fullName, "Nebflow"/Branding.fullName, "@FULL@"/; s/neblink\.example/@DOMAIN@/g; s/Branding\.githubOrg, "MashiroKai"/Branding.githubOrg, "@ORG@"/; s/Branding\.githubRepo, "Nebflow"/Branding.githubRepo, "@REPO@"/; s/Branding\.homeDirName, "\.nebflow"/Branding.homeDirName, ".@LOWER@"/; s/Branding\.envPrefix, "NEBFLOW"/Branding.envPrefix, "@ENV@"/; s/Branding\.cosBucket, "nebflow-releases"/Branding.cosBucket, "@COS@"/; s|https://neblink\.@HOST@|@SERVER@|g; s|Nebflow/academic-search|@PRODUCT@/academic-search|; s/"@@CFG@@"/"nebflow.json"/g
 SED|src/test/scala/@LOWER@/core/RebrandCompatSpec.scala|s/"nebflow\.json"/"@@CFG@@"/g; s/"@@CFG@@"/"nebflow.json"/g
-SED|src/test/scala/@LOWER@/gateway/BrandInjectionSpec.scala|s/"Nebflow"/"@PRODUCT@"/g; s/"nebflow"/"@LOWER@"/g; s/"\.nebflow"/".@LOWER@"/g; s/neblink\.example/@DOMAIN@/g
-SED|src/test/scala/@LOWER@/gateway/IndexWithBrandServeSpec.scala|s/"nebflow\.json"/"@@CFG@@"/g; s/\\"Nebflow\\"/\\"@PRODUCT@\\"/g; s/neblink\.example/@DOMAIN@/g; s/"@@CFG@@"/"nebflow.json"/g
+SED|src/test/scala/@LOWER@/gateway/static/BrandInjectionSpec.scala|s/"Nebflow"/"@PRODUCT@"/g; s/"nebflow"/"@LOWER@"/g; s/"\.nebflow"/".@LOWER@"/g; s/neblink\.example/@DOMAIN@/g
+SED|src/test/scala/@LOWER@/gateway/static/IndexWithBrandServeSpec.scala|s/"nebflow\.json"/"@@CFG@@"/g; s/\\"Nebflow\\"/\\"@PRODUCT@\\"/g; s/neblink\.example/@DOMAIN@/g; s/"@@CFG@@"/"nebflow.json"/g
 # 5. Docs: brand words + command examples
 SED|README.md|s/nebflow/@LOWER@/g
 SED|README.md|s/Nebflow/@PRODUCT@/g
