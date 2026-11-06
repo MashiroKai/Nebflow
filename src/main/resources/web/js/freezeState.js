@@ -98,6 +98,14 @@ export const FREEZE_KIND = {
   auto: 'auto-recovering',
   /** 需要人决策：引擎不会自己恢复。 */
   manual: 'needs-human',
+  /**
+   * 等待恢复中（修复批 2026-11-06，作者原话「llm 不稳定 不需要向上通知…原地等待恢复
+   * 就行」）：**委托侧**的 provider 故障冻结（`delegate-frozen:llm-failure` /
+   * `cancelled-by-quota`）——引擎在退避重试 / 换供应商，恢复后在原会话上续跑。
+   * 与 `manual`（真失败：要你决定）在**词与色**上必须分开：它不是你的事。
+   * 线值 `waiting-recovery`（英文术语口径，与既有三个 kind 同形）。
+   */
+  recovering: 'waiting-recovery',
 };
 
 /** 自动恢复族的原因线值（与后端 FreezeDisplay.of 的原因表同集）。 */
@@ -153,19 +161,38 @@ export function freezeKindOf(info) {
   const b = freezeBlockOf(i);
   if (b && b.asOf) {
     if (!b.frozen) return '';
-    if (b.kind === FREEZE_KIND.window || b.kind === FREEZE_KIND.auto || b.kind === FREEZE_KIND.manual) {
+    if (
+      b.kind === FREEZE_KIND.window ||
+      b.kind === FREEZE_KIND.auto ||
+      b.kind === FREEZE_KIND.manual ||
+      b.kind === FREEZE_KIND.recovering
+    ) {
       return b.kind;
     }
+    // 修复批 2026-11-06：权威块自报**可自动恢复** ⇒ 等待恢复中（旧实现回落到
+    // manual，等于把「引擎自己会好」说成「要你处理」）。`autoRecoverable` 是后端
+    // `FreezeDisplay` 的同一读数，不另造判据。
+    if (b.autoRecoverable && !b.needsHuman) return FREEZE_KIND.recovering;
     if (b.wakeable) return FREEZE_KIND.manual;
     if (b.needsHuman) return FREEZE_KIND.manual;
     return FREEZE_KIND.manual;
   }
   const explicit = String(i.freezeKind || '');
-  if (explicit === FREEZE_KIND.window || explicit === FREEZE_KIND.auto || explicit === FREEZE_KIND.manual) {
+  if (
+    explicit === FREEZE_KIND.window ||
+    explicit === FREEZE_KIND.auto ||
+    explicit === FREEZE_KIND.manual ||
+    explicit === FREEZE_KIND.recovering
+  ) {
     return explicit;
   }
   if (i.needsHuman === true) return FREEZE_KIND.manual;
   const wire = freezeReasonWire(i);
+  // 修复批 2026-11-06：委托侧**可恢复**冻结先判——`delegate-frozen:*` 一族旧实现
+  // 一律落 `manual`（「待你处理」），provider 故障与真失败在面板上就分不开。
+  // 判据 = 既有 `delegateFreezeIsInfra`（与后端 `FreezeDisplay.InfraReasonCodes`
+  // 同集），**不另起一份词表**。
+  if (delegateFreezeIsInfra(i)) return FREEZE_KIND.recovering;
   if (wire.startsWith('delegate-frozen')) return FREEZE_KIND.manual;
   if (MANUAL_REASONS.includes(wire)) return FREEZE_KIND.manual;
   if (WINDOW_REASONS.includes(wire)) return FREEZE_KIND.window;
@@ -191,6 +218,8 @@ export function showsRecoveryAction(kind) {
 export function freezeBadgeKey(kind) {
   if (kind === FREEZE_KIND.window) return 'subagents.freezeWindow';
   if (kind === FREEZE_KIND.auto) return 'subagents.freezeAuto';
+  // 委托侧可恢复冻结：词与色都与「已冻结 · 待你处理」分开（修复批 2026-11-06）。
+  if (kind === FREEZE_KIND.recovering) return 'subagents.freezeRecovering';
   return 'subagents.frozenBadge';
 }
 

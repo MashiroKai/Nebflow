@@ -7,66 +7,66 @@
     },
     "dock": {
       "x": 1043,
-      "y": 509.84375,
+      "y": 525.84375,
       "w": 372,
-      "h": 301.15625,
-      "top": 509.84375,
-      "bottom": 811,
+      "h": 289.15625,
+      "top": 525.84375,
+      "bottom": 815,
       "left": 1043,
       "right": 1415,
       "r": 0
     },
     "col": {
       "x": 1043,
-      "y": 509.84375,
+      "y": 525.84375,
       "w": 372,
-      "h": 237.15625,
-      "top": 509.84375,
-      "bottom": 747,
+      "h": 260.15625,
+      "top": 525.84375,
+      "bottom": 786,
       "left": 1043,
       "right": 1415,
       "r": 0
     },
     "wrap": {
       "x": 1043,
-      "y": 509.84375,
+      "y": 525.84375,
       "w": 372,
-      "h": 237.15625,
-      "top": 509.84375,
-      "bottom": 747,
+      "h": 260.15625,
+      "top": 525.84375,
+      "bottom": 786,
       "left": 1043,
       "right": 1415,
       "r": 0
     },
     "input": {
       "x": 1043,
-      "y": 753,
+      "y": 757,
       "w": 372,
       "h": 58,
-      "top": 753,
-      "bottom": 811,
+      "top": 757,
+      "bottom": 815,
       "left": 1043,
       "right": 1415,
       "r": 12
     },
     "lastBub": {
       "x": 1043,
-      "y": 573.4375,
+      "y": 589.4375,
       "w": 372,
       "h": 161.5625,
-      "top": 573.4375,
-      "bottom": 735,
+      "top": 589.4375,
+      "bottom": 751,
       "left": 1043,
       "right": 1415,
       "r": 16
     },
     "aiBub": {
       "x": 1043,
-      "y": 573.4375,
+      "y": 589.4375,
       "w": 372,
       "h": 161.5625,
-      "top": 573.4375,
-      "bottom": 735,
+      "top": 589.4375,
+      "bottom": 751,
       "left": 1043,
       "right": 1415,
       "r": 16
@@ -74,37 +74,17 @@
     "nBub": 2,
     "rowGap": "6px",
     "fadeH": "12px",
-    "tail": "12px",
+    "tail": "",
+    "under": "29.00px",
     "colPadTop": "18px",
-    "colPadBottom": "12px",
-    "colMask": "linear-gradient(rgba(0, 0, 0, 0) 0px, rgb(232, 234, 237) 12px, rgb(232, 234, 237) calc(100% - 12px), rgba(0, 0, 0, 0) 100%)",
-    "maskStops": [
-      {
-        "color": "rgba(0, 0, 0, 0)",
-        "v": 0,
-        "unit": "px"
-      },
-      {
-        "color": "rgb(232, 234, 237)",
-        "v": 12,
-        "unit": "px"
-      },
-      {
-        "color": "rgb(232, 234, 237)",
-        "v": 100,
-        "unit": "%"
-      },
-      {
-        "color": "rgba(0, 0, 0, 0)",
-        "v": 100,
-        "unit": "%"
-      }
-    ],
+    "colPadBottom": "35px",
+    "colMask": "none",
+    "maskStops": [],
     "matBubAi": {
-      "bg": "rgb(22, 26, 35)",
+      "bg": "rgba(24, 28, 38, 0.68)",
       "bgImage": "none",
       "border": "rgba(255, 255, 255, 0.06)",
-      "blur": "blur(24px) saturate(1.15)",
+      "blur": "blur(40px) saturate(1.4)",
       "color": "rgb(232, 234, 237)",
       "radius": "16px",
       "shadow": "rgba(255, 255, 255, 0.04) 0px 1px 0px 0px inset, rgba(0, 0, 0, 0.2) 0px 2px 8px 0px, rgba(0, 0, 0, 0.35) 0px 8px 24px 0px",
@@ -112,10 +92,10 @@
       "refractionHeight": "1px"
     },
     "matBubUser": {
-      "bg": "rgb(22, 26, 35)",
-      "bgImage": "linear-gradient(rgba(91, 127, 191, 0.18), rgba(91, 127, 191, 0.18)), none",
-      "border": "rgba(91, 127, 191, 0.35)",
-      "blur": "blur(24px) saturate(1.15)",
+      "bg": "rgba(24, 28, 38, 0.68)",
+      "bgImage": "none",
+      "border": "rgba(255, 255, 255, 0.06)",
+      "blur": "blur(40px) saturate(1.4)",
       "color": "rgb(232, 234, 237)",
       "radius": "16px",
       "shadow": "rgba(255, 255, 255, 0.04) 0px 1px 0px 0px inset, rgba(0, 0, 0, 0.2) 0px 2px 8px 0px, rgba(0, 0, 0, 0.35) 0px 8px 24px 0px",
@@ -123,10 +103,10 @@
       "refractionHeight": "1px"
     },
     "matInput": {
-      "bg": "rgb(22, 26, 35)",
+      "bg": "rgba(24, 28, 38, 0.68)",
       "bgImage": "none",
-      "border": "rgba(91, 127, 191, 0.45)",
-      "blur": "blur(24px) saturate(1.15)",
+      "border": "rgba(255, 255, 255, 0.06)",
+      "blur": "blur(40px) saturate(1.4)",
       "color": "rgb(232, 234, 237)",
       "radius": "12px",
       "shadow": "rgba(255, 255, 255, 0.04) 0px 1px 0px 0px inset, rgba(0, 0, 0, 0.2) 0px 2px 8px 0px, rgba(0, 0, 0, 0.35) 0px 8px 24px 0px",
@@ -137,7 +117,7 @@
       "bg": "rgba(24, 28, 38, 0.68)",
       "bgImage": "linear-gradient(90deg, rgba(0, 0, 0, 0) 10%, rgba(91, 127, 191, 0.06) 50%, rgba(0, 0, 0, 0) 90%), none",
       "border": "rgba(255, 255, 255, 0.06)",
-      "blur": "blur(24px) saturate(1.15)",
+      "blur": "blur(40px) saturate(1.4)",
       "color": "rgb(232, 234, 237)",
       "radius": "20px",
       "shadow": "rgba(255, 255, 255, 0.04) 0px 1px 0px 0px inset",
@@ -162,33 +142,33 @@
       "b": 35
     },
     "opaqueTok": {
-      "r": 22,
-      "g": 26,
-      "b": 35,
-      "a": 1
+      "r": 24,
+      "g": 28,
+      "b": 38,
+      "a": 0.68
     },
     "cvOpaque": {
-      "r": 22,
-      "g": 26,
-      "b": 35,
-      "a": 1
+      "r": 24,
+      "g": 28,
+      "b": 38,
+      "a": 0.68
     },
     "legacy": {
       "truncH": "",
       "truncFrom": "",
       "overhang": "",
-      "inlineStyle": ""
+      "inlineStyle": "--ask-under: 29.00px;"
     },
     "handle": {
       "childCount": 0,
       "gripSelectorHits": 0,
       "hit": {
         "x": 1029,
-        "y": 495.84375,
+        "y": 511.84375,
         "w": 44,
         "h": 44,
-        "top": 495.84375,
-        "bottom": 539.84375,
+        "top": 511.84375,
+        "bottom": 555.84375,
         "left": 1029,
         "right": 1073,
         "r": 0

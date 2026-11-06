@@ -60,6 +60,10 @@
   <link rel="stylesheet" href="css/scrollUnderGlass.css">
   <link rel="stylesheet" href="css/reminder.css">
   <link rel="stylesheet" href="css/todo-page.css">
+  <!-- schedule-todo-unify 批 2026-11-06：定时任务页 ⇄ 待办页共用的**单一面语言**
+       （条目行 name/description 结构、液态形变展开详情、表单两段 + 确认按钮右对齐）。
+       必须排在 reminder.css / todo-page.css / todo-face.css 之后（覆写两页各自的族内规则）。 -->
+  <link rel="stylesheet" href="css/schedule-todo.css">
   <link rel="stylesheet" href="css/neblink.css">
   <link rel="stylesheet" href="css/dropbox.css">
   <!-- #27 Project 面板 + Flow Map 视图（§3.5，试点期与旧面板并列） -->
@@ -115,6 +119,11 @@
        紧随 sapphire 加载：同特异性材质平局以本文件为准；桌面 #header
        （chat.css 基准件 B）零触碰。 -->
   <link rel="stylesheet" href="css/glass.css">
+  <!-- 设置页 iOS 行族（settings-ios-rows 批 2026-11-06 作者令「能点击下一个面板的
+       样式都统一成苹果的这种样式 … 可点击的按钮 布局规整一点」）：造型唯一标准，
+       令牌 --set-* 在 css/stand-tokens.css。置于各面文件之后 ⇒ 行族造型不被
+       旧面覆写；手机层尺寸档在 mobileLayer.css 里按移动令牌换档。 -->
+  <link rel="stylesheet" href="css/settingsRows.css">
   <!-- 卡片家族统一样式包（2026-11-01 作者 16:05 令）：基准=官网过渡卡的 cards
        模块（token --nfc-* + .nfc 族类）。消费面 = 接管弹窗 #takeover-box +
        门入场加载卡 .nf-entry-card；设计稿 docs/design/20261101_162000_cards-family-design__*

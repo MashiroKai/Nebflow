@@ -31,6 +31,11 @@ import { verdictToStatus } from './delegateChainStub.js';
 import { mountSessionWorkStrip, unmountSessionWorkStrip } from './bgAgentWorkStrip.js';
 // 弹窗退场批（作者令 2026-10-31②）：手机层查看器铺满屏 + 左上返回（桌面零变化）。
 import { mobileSheetBack, isMobileLayer } from './mobile/popSheet.js';
+// 手机端简化批（作者令 2026-11-06 10:00/12:03）：手机层 chrome 化——顶带状态胶囊
+// / ⋯ 详情浮层 / 右下悬浮终止钮 / 标题行 ✕ 退役；摘要条与「会话在做什么」条迁入
+// ⋯ 详情（六条口径见 bgAgentMobileChrome.js 文件头）。桌面零变化（模块首闸
+// body.mobile-layer；返回 null = 桌面原路径）。
+import { mountBgAgentMobileChrome, closeBgAgentMobileChrome } from './bgAgentMobileChrome.js';
 
 // P2-4 cycle cut（flowAgentPopup 同款先例）：showToast 动态 import 破环。净化批
 // （2026-10-09）后本文件暂零 toast 消费点（归档入口已迁 L2 抽屉）——常量在册保留
@@ -316,6 +321,8 @@ const stepViews = new Map();
 let currentStepId = null;
 let popupOverlay = null;
 let popupResizeObs = null;
+// 手机端简化批：手机层 chrome 的活跃 api（状态胶囊 refresh 直呼口；桌面恒 null）。
+let bgMobileChromeApi = null;
 
 // ── Bounded history back-paging ─────────────────────────────────────────
 // The panel used to fetch exactly ONE tail page and never ask for anything
@@ -492,7 +499,9 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
   }
 
   popupOverlay = document.createElement('div');
-  popupOverlay.className = 'flow-agent-overlay fullscreen';
+  // `bgagent-overlay` = 手机端简化批的作用域钩（mobileLayer.css 的手机 chrome 档
+  // 全挂 body.mobile-layer .bgagent-overlay —— 姊妹弹窗 flowAgentPopup 零波及）。
+  popupOverlay.className = 'flow-agent-overlay fullscreen bgagent-overlay';
   lastModelBadgeHtml = null; // fresh badge element — force first render on open
 
   // Mount on document.body for bg-agent popups (not inside a flow card)
@@ -537,18 +546,6 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
   modal.insertBefore(entry.container, footer);
   entry.footerEl = footer;
 
-  // delegate 收起式摘要条（两层架构批 WF-01：brief 摘要一行 + 点开 brief/结果
-  // 全文）——弹窗头与聊天体之间，数据到位才显（fail-soft 缺席）；弹窗本体内
-  // 子代理显示/归档件为零（净化口径：弹窗 DOM 无「子代理」字样、无归档钮）。
-  mountDelegateStrip(nodeSessionId, modal, entry.container);
-
-  // #752「会话在做什么」条：摘要条之下、聊天体之上——最近动作 + 本会话后台
-  // 任务行（15s 自刷新拍，关闭即停）。作者实证「delegate 空闲不理人、看不到
-  // 进展」的弹窗内承载面。instanceof 运行期窄化（chatSearch.js:368 仓内先例）。
-  if (modal instanceof HTMLElement) {
-    mountSessionWorkStrip(nodeSessionId, modal, entry.container);
-  }
-
   // Management panel (2026-08-22 ruling): no input bar — stop/retry + state.
   const v = entry.view;
   const bar = buildManageBar();
@@ -556,6 +553,26 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
   entry.manageBar = bar;
   bindManageActions(bar, () => currentStepId);
   import('./utils.js').then(({ createIconsIn }) => { createIconsIn(bar.root); });
+
+  // 手机端简化批（作者令 2026-11-06 10:00/12:03）：手机层 chrome 化——顶带状态
+  // 胶囊 / 右上 ⋯ 详情浮层 / 右下悬浮终止钮 / 标题行 ✕ 退役；stopBtn/retryBtn 是
+  // **同一节点**迁位（syncManageControls 线路零复制）。桌面 ⇒ null，零影响。
+  bgMobileChromeApi = mountBgAgentMobileChrome({
+    overlay: popupOverlay, modal, bar, nodeSessionId, agentName,
+  });
+
+  // delegate 收起式摘要条（两层架构批 WF-01：brief 摘要一行 + 点开 brief/结果
+  // 全文）——桌面挂弹窗头与聊天体之间（原位零变化）；手机层迁入 ⋯ 详情浮层
+  // （口径③任务内容全文在详情里；自动展开一次，二级折叠保留）。
+  // #752「会话在做什么」条同迁（口径⑥：灰行——最近动作 / 本会话无后台任务——
+  // 收进 ⋯ 详情，主界面只留顶栏 + 消息流 + 悬浮终止钮）。15s 自刷新拍、关闭即停。
+  const stripHost = bgMobileChromeApi ? bgMobileChromeApi.sheetBody : modal;
+  const stripAnchor = bgMobileChromeApi ? bgMobileChromeApi.sheetAnchor : entry.container;
+  mountDelegateStrip(nodeSessionId, stripHost, stripAnchor);
+  if (bgMobileChromeApi) bgMobileChromeApi.autoExpandStrip(bgMobileChromeApi.sheetBody, nodeSessionId);
+  if (stripHost instanceof HTMLElement) {
+    mountSessionWorkStrip(nodeSessionId, stripHost, stripAnchor);
+  }
 
   updateFooterStatus(entry);
 
@@ -615,6 +632,8 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
 
 export function closeStepPopup() {
   if (!popupOverlay) return;
+  closeBgAgentMobileChrome(); // 手机端简化批：chrome 账本（胶囊节拍）随弹窗关闭停（幂等）
+  bgMobileChromeApi = null;
   unmountSessionWorkStrip(); // #752「会话在做什么」条随弹窗关闭停拍、摘除（幂等）
   if (currentStepId) {
     const entry = stepViews.get(currentStepId);
@@ -1031,6 +1050,8 @@ function updateFooterStatus(entry) {
   }
   // Management cluster: state-linked buttons + permission matrix.
   syncManageControls(entry.manageBar, entry.meta, currentStepId);
+  // 手机端简化批：顶带状态胶囊与页脚同一拍刷新（词面/时长/动作区开合）。
+  if (bgMobileChromeApi) bgMobileChromeApi.refresh(entry.meta);
 }
 
 // ── cancelAgent result linkage (stop button, @179a009e) ────────────────

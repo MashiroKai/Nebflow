@@ -331,8 +331,18 @@ html[data-theme="light"] {
 .fm-msg.in .fm-att-list .pop-stack-view .media-layer { background: var(--nf-bub-theirs-bg); }
 /* canvas ask 气泡 = **毛玻璃面**（作者 2026-11-05 16:50 令「这三处全部吃唯一
    毛玻璃标准」），无色相 ⇒ 不属于绿/白两档的第三种「色」，材质单点是
-   --glass-bg（下方 .ask-dock 块给完整材质；这里给非 dock 兜底同一底）。 */
-.ask-bub { background: var(--glass-bg); }
+   --glass-bg（下方 .ask-dock 块给完整材质；这里给非 dock 兜底同一底）。
+   毛玻璃批（2026-11-06）：兜底补齐 backdrop-filter —— 兜底只有 α 底没有模糊
+   就还是「半透明洗色」反模式（G7a/G7b 判死形态）；同 token 单源，非第二配方。
+   成因注：气泡曾长期「挂了 blur 却看不到霜」——其容器 .ask-col 的 mask-image
+   是 backdrop root，架空了子气泡的 backdrop-filter；该 mask 已随本批退役
+   （css/ask.css .ask-col 块注），上方豁免条目的「它真的是毛玻璃」前提随之恢复
+   成立，豁免口径无需收紧。防复活钉：tests/ask-glass-drag.spec.mjs G2/G3。 */
+.ask-bub {
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--nf-glass-filter);
+  backdrop-filter: var(--nf-glass-filter);
+}
 
 /* ── ② 面级浮件档（材质三件套 + 顶缘折射线）──────────────────────────── */
 

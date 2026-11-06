@@ -7,26 +7,24 @@
         "w": 1920,
         "h": 1080
       },
-      "dockH": 301.2,
-      "colH": 237.2,
+      "dockH": 289.2,
+      "colH": 260.2,
       "rowGap": 6,
-      "tail": 12,
+      "under": 29,
+      "tail": "",
       "fadeH": "12px",
-      "inputToColBottom": 6,
-      "inputToLastBub": 18,
-      "zeroLine": 237.2,
-      "blankBand": 0,
-      "expectCol": 6,
-      "expectBub": 18,
+      "colMask": "none",
+      "inputToColBottom": -29,
+      "inputToLastBub": 6,
       "legacy": {
         "truncH": "",
         "truncFrom": "",
         "overhang": "",
-        "inlineStyle": ""
+        "inlineStyle": "--ask-under: 29.00px;"
       },
       "gapOk": true,
       "blankOk": true,
-      "visibleOk": true
+      "maskGone": true
     },
     {
       "tier": "desktop-1440",
@@ -34,26 +32,24 @@
         "w": 1440,
         "h": 900
       },
-      "dockH": 301.2,
-      "colH": 237.2,
+      "dockH": 289.2,
+      "colH": 260.2,
       "rowGap": 6,
-      "tail": 12,
+      "under": 29,
+      "tail": "",
       "fadeH": "12px",
-      "inputToColBottom": 6,
-      "inputToLastBub": 18,
-      "zeroLine": 237.2,
-      "blankBand": 0,
-      "expectCol": 6,
-      "expectBub": 18,
+      "colMask": "none",
+      "inputToColBottom": -29,
+      "inputToLastBub": 6,
       "legacy": {
         "truncH": "",
         "truncFrom": "",
         "overhang": "",
-        "inlineStyle": ""
+        "inlineStyle": "--ask-under: 29.00px;"
       },
       "gapOk": true,
       "blankOk": true,
-      "visibleOk": true
+      "maskGone": true
     },
     {
       "tier": "desktop-1024",
@@ -61,26 +57,24 @@
         "w": 1024,
         "h": 900
       },
-      "dockH": 301.2,
-      "colH": 237.2,
+      "dockH": 289.2,
+      "colH": 260.2,
       "rowGap": 6,
-      "tail": 12,
+      "under": 29,
+      "tail": "",
       "fadeH": "12px",
-      "inputToColBottom": 6,
-      "inputToLastBub": 18,
-      "zeroLine": 237.2,
-      "blankBand": 0,
-      "expectCol": 6,
-      "expectBub": 18,
+      "colMask": "none",
+      "inputToColBottom": -29,
+      "inputToLastBub": 6,
       "legacy": {
         "truncH": "",
         "truncFrom": "",
         "overhang": "",
-        "inlineStyle": ""
+        "inlineStyle": "--ask-under: 29.00px;"
       },
       "gapOk": true,
       "blankOk": true,
-      "visibleOk": true
+      "maskGone": true
     }
   ]
 }

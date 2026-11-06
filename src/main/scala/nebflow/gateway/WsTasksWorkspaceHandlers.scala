@@ -408,8 +408,14 @@ private[gateway] object WsTasksWorkspaceHandlers:
         logger.warn(s"createScheduledTask(kind=todo) failed: ${e.getMessage}")
       )
     else if crSessionId.nonEmpty && crContent.nonEmpty && crTriggerAt > System.currentTimeMillis() then
-      val task =
-        nebflow.core.scheduler.ScheduledTask.create(crSessionId, crContent, crTriggerAt, crRefPath, crRepeat)
+      // 定时任务两段化（schedule-todo-unify 批 2026-11-06 作者令「定时任务也要按
+      // name description 来添加 点击展开可以查看细节」）：detail = 描述第二段，
+      // **对定时任务面生效**（两段化批 2026-11-05 的「task 面 detail 恒 None」口
+      // 径由本批扩大：行为可逆——旧调用方不传 detail，detail 恒 None，逐字节不变）。
+      // name 仍是 upsert 键（不参与展示），不在此设。
+      val task = nebflow.core.scheduler.ScheduledTask.create(
+        crSessionId, crContent, crTriggerAt, crRefPath, crRepeat, detail = crDetail
+      )
       sharedResources.scheduledTaskStore.addTask(task).flatMap { _ =>
         // Creation audit trail: without this line a lost WS create (fire-and-forget
         // client, no ack retry) is indistinguishable from a persistence failure —
@@ -741,7 +747,9 @@ private[gateway] object WsTasksWorkspaceHandlers:
             repeat = if t.isTodo then t.repeat else repeatOpt.getOrElse(t.repeat),
             // 两段化只对待办面生效：定时任务面 name 是 upsert 键，不算展示面。
             name = if t.isTodo then nameOpt.getOrElse(t.name) else t.name,
-            detail = if t.isTodo then detailOpt.getOrElse(t.detail) else t.detail
+            // 定时任务面 detail = description（schedule-todo-unify 批 2026-11-06：
+            // 原口径「task 面恒不变」由本批合并，两面同 patch 语义；"" = 清空）。
+            detail = detailOpt.getOrElse(t.detail)
           )
           sharedResources.scheduledTaskStore.updateTask(t.sessionId, upId)(_ => updated).flatMap { changed =>
             if !changed then IO.unit

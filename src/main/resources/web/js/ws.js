@@ -4,7 +4,7 @@ import { isBgAgentId } from './utils.js';
 import { addNotification } from './notificationBanner.js';
 import { brand, getWebsiteLoginUrl } from './brand.js';
 import { armSessionKeepalive } from './sessionGate.js';
-// 渲染遮蔽门（perf 台账 #922 · 2026-10-26）：补页/大帧渲染在途时心跳宽限窗
+// 渲染遮蔽门（perf 台账 922 号 · 2026-10-26）：补页/大帧渲染在途时心跳宽限窗
 // 的 miss 走传输遮蔽同款旁路（不放松 HB_MAX_MISSES 与 sessionGate 重座阈值）。
 // renderGate 是零依赖叶子模块 —— 静态环零增量（check-circular）。
 import { renderGateBegin, renderGateEnd, renderGateBusy } from './chat/renderGate.js';
@@ -271,7 +271,7 @@ const GLOBAL_MSG_TYPES = new Set([
   // reconciler 每拍驱动），无 sessionId ⇒ 必须 GLOBAL：否则被入口过滤器当
   // 会话内事件 ⇒ setActiveView(primary) 抢走当前视图（projectCreated 同律）。
   'bgHealth',
-  // 台账 #929（后台子智能体跨设备透明）：远端设备投影行帧 {type:'remoteAgents',
+  // 台账 929 号（后台子智能体跨设备透明）：远端设备投影行帧 {type:'remoteAgents',
   // agents:[{sessionId,title,source,status,startedAt,endedAt,retryCount,deviceId,
   // deviceName,deviceOnline}]}——无 sessionId 的全应用广播（wsHub.broadcast +
   // 快照回复本连接直发两路）。🔴 必须入 GLOBAL：无 sessionId 的非 GLOBAL 帧会被
@@ -292,7 +292,7 @@ const GLOBAL_MSG_TYPES = new Set([
   //   projectRemounted {type,project,row{...},remountedAt}（unmount-console 面板批
   //     2026-11-02：remount 成功腿——row 与 projectCreated 同构 + remountedAt；
   //     前端据它定点恢复卡片 + 摘「已卸载」灰态行）
-  //   projectDescriptionUpdated {type,project,description,updatedAt}（台账 #920 2026-10-27：
+  //   projectDescriptionUpdated {type,project,description,updatedAt}（台账 920 号 2026-10-27：
   //     REST POST /projects/<name>/description 成功腿；面板侧描述写穿的实时回声）
   // 同族：无 sessionId 的全应用广播（后端 emit 点 = Project 创建腿 / 归档 REST 腿 /
   // unmount 单点 / remount 单点 / 描述写穿 REST 腿，经同一 wsHub.broadcast 面）。🔴 必须入 GLOBAL
@@ -1210,7 +1210,7 @@ export function hbTransferStats() {
 }
 
 /**
- * 心跳诊断读数（perf 台账 #922 · spec 用）：连续 miss 计数、遮蔽窗计数、
+ * 心跳诊断读数（perf 台账 922 号 · spec 用）：连续 miss 计数、遮蔽窗计数、
  * 实测 RTT 高点、渲染门 busy 与在途传输数。只读，零副作用。
  */
 export function hbStats() {
@@ -1224,7 +1224,7 @@ export function hbStats() {
 }
 
 /**
- * spec 缝（perf 台账 #922；_keepaliveTestHooks 先例）：受控触发一次真实
+ * spec 缝（perf 台账 922 号；_keepaliveTestHooks 先例）：受控触发一次真实
  * hbProbe（ping + 宽限定时器武装），让遮蔽腿无需等 30s 自然拍即可验证。
  */
 export function _hbTestHooks() {
@@ -1232,7 +1232,7 @@ export function _hbTestHooks() {
 }
 
 /**
- * 大帧渲染遮蔽阈值（perf 台账 #922）：入站帧超过该字符数（≈256KB JSON），
+ * 大帧渲染遮蔽阈值（perf 台账 922 号）：入站帧超过该字符数（≈256KB JSON），
  * parse + 派发整段（含 historyPage 补页处理器的同步前段）落进渲染遮蔽窗 ——
  * 挂载腿（main.js 补页异步挂载）随后接力持门，直到挂载完成。
  */
@@ -1258,7 +1258,7 @@ function hbProbe() {
       console.debug(`[ws] heartbeat miss sheltered: file transfer in flight (${shelteredMisses}/${HB_TRANSFER_SHELTER_MAX})`);
       return;
     }
-    // 渲染遮蔽（perf 台账 #922 · 2026-10-26）：补页挂载/大帧派发占住主线程的
+    // 渲染遮蔽（perf 台账 922 号 · 2026-10-26）：补页挂载/大帧派发占住主线程的
     // 窗里，pong 即使已到也处理不了（或压在超大帧后面）——这是「渲染饿死心跳」，
     // 不是 socket 死了。同款旁路：本窗 miss 不计入逐出；硬上限（同一计数
     // shelteredMisses）不变 ⇒ 真死连接在遮蔽掩护下也照常判死；pong/新连接清零。
@@ -1488,7 +1488,7 @@ export function connect() {
   };
 
   state.ws.onmessage = (e) => {
-    // 大帧渲染遮蔽（perf 台账 #922）：超大帧（historyPage 大页等）的
+    // 大帧渲染遮蔽（perf 台账 922 号）：超大帧（historyPage 大页等）的
     // JSON.parse + 处理器同步段本身就是一次主线程长任务 —— 与其让宽限定时器
     // 在阻塞结束前先到（miss 记一笔假账），不如把这段如实标记为渲染在途。
     // try/finally 保证异常路径也退门；小帧零额外开销（一次 length 比较）。

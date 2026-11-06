@@ -213,7 +213,8 @@ const read = (page) => page.evaluate(() => {
   const opaqueTok = norm(cs0.getPropertyValue('--glass-bg-opaque'));
   const cvOpaque = norm(cs0.getPropertyValue('--cv-bg-opaque'));
   const fadeH = dcs ? dcs.getPropertyValue('--ask-fade-h').trim() : '';
-  const tail = dcs ? dcs.getPropertyValue('--ask-col-tail').trim() : '';
+  const tail = dcs ? dcs.getPropertyValue('--ask-col-tail').trim() : ''; // 毛玻璃批 2026-11-06 起退役，恒 ''
+  const under = dcs ? dcs.getPropertyValue('--ask-under').trim() : '';
   probe.remove();
   const composite = glassBg && paper ? {
     r: Math.round(glassBg.a * glassBg.r + (1 - glassBg.a) * paper.r),
@@ -225,7 +226,7 @@ const read = (page) => page.evaluate(() => {
     dock: box(dock), col: box(col), wrap: box(wrap), input: box(input), lastBub: box(lastBub), aiBub: box(aiBub),
     nBub: bubs.length,
     rowGap: dcs ? dcs.rowGap : '',
-    fadeH, tail,
+    fadeH, tail, under,
     colPadTop: ccs ? ccs.paddingTop : '', colPadBottom: ccs ? ccs.paddingBottom : '',
     colMask: ccs ? (ccs.maskImage || ccs.webkitMaskImage || '') : '',
     maskStops: (() => {
@@ -492,59 +493,40 @@ try {
   const padBottom = parseFloat(d.colPadBottom);
   ok('L5a --ask-fade-h 短档：≤16px 且 = 12px（桌面档，规范值）',
     fadePx === 12, `fadeH=${d.fadeH}`);
-  ok('L5b mask 首段终停与 token 同值（transparent 0 → 全实 @--ask-fade-h）',
-    !!firstOpaque && firstOpaque.v === fadePx && firstOpaque.unit === 'px',
-    JSON.stringify({ stops: d.maskStops, fadeH: d.fadeH }));
+  ok('L5b 渐隐载体 = 逐泡 opacity（.ask-col 零 mask-image；毛玻璃批 2026-11-06：mask 是 backdrop root，会架空气泡 backdrop-filter = 半透明假玻璃）',
+    String(d.colMask || 'none') === 'none' && fadePx === 12,
+    JSON.stringify({ mask: String(d.colMask).slice(0, 60), fadeH: d.fadeH }));
   ok('L5c 渐隐只占列顶那一条、不吃正文可读区（列 padding-top ≥ fade；静态首条气泡顶 ≥ 列顶 + fade）',
     colPadTop >= fadePx && !!d.aiBub && !!d.col && d.aiBub.top >= d.col.top + fadePx - 0.5,
     JSON.stringify({ padTop: d.colPadTop, fadeH: d.fadeH, bubTop: d.aiBub && d.aiBub.top, colTop: d.col && d.col.top }));
-  ok('L5d 底缘收口锚在列自己的盒上（mask 停点含 calc(100% - …)，且尾部渐出落在列 padding-bottom 之内）',
-    /calc\(100%\s*-\s*/.test(String(d.colMask)) && /100%\s*\)?$/.test(String(d.colMask).trim())
-    && padBottom === parseFloat(d.tail),
-    JSON.stringify({ mask: String(d.colMask).slice(-90), padBottom: d.colPadBottom, tail: d.tail }));
+  ok('L5d 底缘收口锚在列 padding（padding-bottom = --ask-under + --ds-space-1h；毛玻璃批 2026-11-06 起 mask 停点 → padding 净空）',
+    Math.abs(padBottom - (parseFloat(d.under) + parseFloat(d.rowGap))) <= 0.6,
+    JSON.stringify({ padBottom: d.colPadBottom, under: d.under, rowGap: d.rowGap }));
 
-  // ── L6 件四：五档缩放无空白 ──────────────────────────────────────────
-  // 读法：输入条顶边 − 列底边 = dock 的 row-gap（--ds-space-1h = 6px）；
-  //       输入条顶边 − 最新气泡底边 = row-gap + --ask-col-tail（6 + 12 = 18px）。
-  // 两式都只由 token 决定 ⇒ 与内容多少、窗口尺寸彻底解耦（改前：208px 空白）。
+  // ── L6 件四：五档缩放无空白（毛玻璃批 2026-11-06 判据换代）──────────────
+  // 读法：① 列盒底仍钉输入条垂直中线（穿入批几何不变）：输入条顶边 − 列底边
+  //       = −--ask-under（≈ −29）；
+  //       ② 内容净空：输入条顶边 − 最新气泡底边 = row-gap（--ds-space-1h = 6px）
+  //       ⇒ 最新气泡完全在聊天框之上（作者 2026-11-06 令②「可以拉动到聊天框之上」；
+  //       改前气泡底边扎进输入条 17px 必红）。两式都只由 token 决定 ⇒ 与内容多少、
+  //       窗口尺寸彻底解耦（改前：208px 空白）。
   const TOL = 0.6;
-  /**
-   * mask 的「归零线」= 内容被彻底遮掉的那条横线（相对列顶的 px）。
-   * 它是「用户能不能看见列底最后一条消息」的唯一硬指标：
-   *   归零线 ≥ 列底 ⇒ 整列内容都在可见带内（无空白）；
-   *   归零线 << 列底 ⇒ 列的下半段恒透明 ⇒ 内容与输入条之间那一段就是作者看到的
-   *   「一大段空白」（改前实测：归零线 96px / 列高 316px ⇒ 空白带 220px）。
-   */
-  const zeroLineOf = (g) => {
-    const stops = (g.maskStops || []).filter((s) => /rgba?\(0, 0, 0, 0\)|transparent/i.test(s.color));
-    const last = stops[stops.length - 1];
-    const colH = g.col ? g.col.h : 0;
-    if (!last) return { zeroLine: null, blankBand: null };
-    const px = last.unit === '%' ? (last.v / 100) * colH : last.v;
-    return { zeroLine: +px.toFixed(1), blankBand: +(Math.max(0, colH - px)).toFixed(1) };
-  };
   const measureTier = async (label) => {
     const g = await read(page);
     const rowGap = parseFloat(g.rowGap) || 0;
-    const tail = parseFloat(g.tail) || 0;
-    const z = zeroLineOf(g);
+    const under = parseFloat(g.under) || 0;
     const r = {
       tier: label, vp: g.vp,
       dockH: g.dock && +g.dock.h.toFixed(1),
       colH: g.col && +g.col.h.toFixed(1),
-      rowGap, tail, fadeH: g.fadeH,
+      rowGap, under, tail: g.tail, fadeH: g.fadeH, colMask: String(g.colMask || 'none'),
       inputToColBottom: g.input && g.col ? +(g.input.top - g.col.bottom).toFixed(2) : null,
       inputToLastBub: g.input && g.lastBub ? +(g.input.top - g.lastBub.bottom).toFixed(2) : null,
-      zeroLine: z.zeroLine, blankBand: z.blankBand,
-      expectCol: rowGap,
-      expectBub: rowGap + tail,
       legacy: g.legacy,
     };
-    r.gapOk = Math.abs(r.inputToColBottom - rowGap) <= TOL;
-    r.blankOk = Math.abs(r.inputToLastBub - (rowGap + tail)) <= TOL;
-    // 归零线必须落在列底那 --ask-col-tail 之内（列中部不得出现整段透明带）
-    // 注意 0 是合法值（列底就是归零线）⇒ 判空用 !== null，不用真值判断
-    r.visibleOk = r.blankBand !== null && r.blankBand <= tail + 1;
+    r.gapOk = Math.abs(r.inputToColBottom - -under) <= TOL;
+    r.blankOk = Math.abs(r.inputToLastBub - rowGap) <= TOL;
+    r.maskGone = r.colMask === 'none';
     return r;
   };
   const tiers = [];
@@ -555,18 +537,18 @@ try {
     await shot(page, `resize-${vp.width}x${vp.height}-dark-${PHASE}`);
   }
   writeFileSync(join(OUT, 'tiers-desktop.json'), JSON.stringify({ phase: PHASE, tiers }, null, 2));
-  ok('L6a 桌面三档（1920 / 1440 / 1024）：输入条顶边 − 列底边 恒 = dock row-gap（6px）',
+  ok('L6a 桌面三档（1920 / 1440 / 1024）：列盒底仍钉输入条垂直中线（穿入批几何不变，输入条顶边 − 列底边 = −--ask-under）',
     tiers.length === 3 && tiers.every((t) => t.gapOk),
-    JSON.stringify(tiers.map((t) => ({ tier: t.tier, gap: t.inputToColBottom, expect: t.expectCol }))));
-  ok('L6b 桌面三档：输入条顶边 − 最新气泡底边 恒 = row-gap + --ask-col-tail（18px，无「一大段空白」）',
+    JSON.stringify(tiers.map((t) => ({ tier: t.tier, gap: t.inputToColBottom, under: t.under }))));
+  ok('L6b 桌面三档：输入条顶边 − 最新气泡底边 恒 = row-gap（6px，最新气泡完全在聊天框之上；改前 −17 扎进输入条必红）',
     tiers.length === 3 && tiers.every((t) => t.blankOk),
-    JSON.stringify(tiers.map((t) => ({ tier: t.tier, gap: t.inputToLastBub, expect: t.expectBub }))));
+    JSON.stringify(tiers.map((t) => ({ tier: t.tier, gap: t.inputToLastBub, expect: t.rowGap }))));
   ok('L6c 缓存变量零残留（--ask-trunc-h / --ask-trunc-from / --ask-col-overhang 三档全空 + dock 无内联尺寸样式）',
     tiers.every((t) => !!t.legacy && !t.legacy.truncH && !t.legacy.truncFrom && !t.legacy.overhang && !/--ask-(trunc|col-overhang)/.test(t.legacy.inlineStyle)),
     JSON.stringify(tiers.map((t) => t.legacy)));
-  ok('L6e 列内无整段透明带：mask 归零线落列底 --ask-col-tail 之内（改前 = 列中部 96px ⇒ 空白带 220px）',
-    tiers.every((t) => t.visibleOk),
-    JSON.stringify(tiers.map((t) => ({ tier: t.tier, colH: t.colH, zeroLine: t.zeroLine, blankBand: t.blankBand, tail: t.tail }))));
+  ok('L6e 列内无整段透明带（毛玻璃批 2026-11-06：旧「mask 归零线」载体退役 ⇒ 判据换代为列零 mask、内容直达 padding 上沿）',
+    tiers.every((t) => t.maskGone),
+    JSON.stringify(tiers.map((t) => ({ tier: t.tier, colH: t.colH, colMask: t.colMask }))));
   const jsSrc = readFileSync(join(WEB_DIR, 'js/askDock.js'), 'utf8');
   // 剥掉注释再扫：退役说明里必然出现函数名，判据要的是**调用点**归零。
   const jsCode = jsSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
@@ -596,33 +578,28 @@ try {
       await sleep(700);
       const g = await read(mob.page);
       const rowGap = parseFloat(g.rowGap) || 0;
-      const tail = parseFloat(g.tail) || 0;
-      const zeroStops = (g.maskStops || []).filter((s) => /rgba?\(0, 0, 0, 0\)|transparent/i.test(s.color));
-      const lastZero = zeroStops[zeroStops.length - 1];
-      const colH = g.col ? g.col.h : 0;
-      const zeroLine = lastZero ? (lastZero.unit === '%' ? (lastZero.v / 100) * colH : lastZero.v) : null;
+      const under = parseFloat(g.under) || 0;
       const t = {
         tier: `mobile-${vp.width}`, vp: g.vp, visible: !!(g.dock && g.dock.w > 0),
-        colH: g.col && +g.col.h.toFixed(1), rowGap, tail, fadeH: g.fadeH,
-        zeroLine: zeroLine === null ? null : +zeroLine.toFixed(1),
-        blankBand: zeroLine === null ? null : +Math.max(0, colH - zeroLine).toFixed(1),
+        colH: g.col && +g.col.h.toFixed(1), rowGap, under, tail: g.tail, fadeH: g.fadeH,
+        colMask: String(g.colMask || 'none'),
         inputToColBottom: g.input && g.col ? +(g.input.top - g.col.bottom).toFixed(2) : null,
         inputToLastBub: g.input && g.lastBub ? +(g.input.top - g.lastBub.bottom).toFixed(2) : null,
         legacy: g.legacy,
       };
-      t.gapOk = Math.abs(t.inputToColBottom - rowGap) <= TOL;
-      t.blankOk = Math.abs(t.inputToLastBub - (rowGap + tail)) <= TOL;
-      t.visibleOk = t.blankBand !== null && t.blankBand <= tail + 1;
+      t.gapOk = Math.abs(t.inputToColBottom - -under) <= TOL;
+      t.blankOk = Math.abs(t.inputToLastBub - rowGap) <= TOL;
+      t.maskGone = t.colMask === 'none';
       mtiers.push(t);
       await shot(mob.page, `resize-${vp.width}x${vp.height}-mobile-dark-${PHASE}`);
     }
     writeFileSync(join(OUT, 'tiers-mobile.json'), JSON.stringify({ phase: PHASE, mtiers }, null, 2));
-    ok('L6h 手机两档（375 / 768）：同两条几何判据（列底贴输入条 row-gap、内容底贴 18px 净空）',
+    ok('L6h 手机两档（375 / 768）：列盒底钉输入条中线 + 内容净空 = row-gap（最新气泡完全在聊天框之上）',
       mtiers.length === 2 && mtiers.every((t) => t.visible && t.gapOk && t.blankOk),
-      JSON.stringify(mtiers.map((t) => ({ tier: t.tier, vis: t.visible, gap: t.inputToColBottom, expect: t.rowGap, bub: t.inputToLastBub }))));
-    ok('L6i 手机两档列内无整段透明带（归零线落列底 tail 之内）',
-      mtiers.every((t) => t.visibleOk),
-      JSON.stringify(mtiers.map((t) => ({ tier: t.tier, colH: t.colH, zeroLine: t.zeroLine, blankBand: t.blankBand }))));
+      JSON.stringify(mtiers.map((t) => ({ tier: t.tier, vis: t.visible, gap: t.inputToColBottom, under: t.under, bub: t.inputToLastBub }))));
+    ok('L6i 手机两档列零 mask（毛玻璃批载体换代，无归零线概念）',
+      mtiers.every((t) => t.maskGone),
+      JSON.stringify(mtiers.map((t) => ({ tier: t.tier, colH: t.colH, colMask: t.colMask }))));
     ok('L6f 手机档 --ask-fade-h 同为 12px（短渐隐不按腿分叉）',
       mtiers.every((t) => parseFloat(t.fadeH) === 12),
       JSON.stringify(mtiers.map((t) => t.fadeH)));

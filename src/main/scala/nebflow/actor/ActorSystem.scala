@@ -126,6 +126,16 @@ final class LocalActorSystem(
 
   def deadLetterCount: IO[Long] = deadLetters.count
 
+  /**
+   * provider 并发占坑 · 终态释放钩子（provider-concurrency 批，2026-11-06）：
+   * actor **退出**时（正常自停 / 外部 stop / 崩溃 / TTL / cancel——所有退出路径都走
+   * `actorLoop` 的 `guarantee` 收尸块，见下方注释）调用一次 `release(path.name)`。
+   * 默认 no-op（测试/极早期装配零改动）；生产由 GatewayMain 装配赋值为
+   * `ProviderConcurrency.release(counts, _)`。ActorSystem 不持有 SharedResources
+   * ⇒ 可赋值函数注入而非构造参数（禁止在 ActorSystem 里 new 第二份计数表）。
+   */
+  private[nebflow] var providerSlotRelease: String => IO[Unit] = _ => IO.unit
+
   def spawn[Msg](
     behavior: Behavior[Msg],
     name: String,
@@ -347,6 +357,12 @@ final class LocalActorSystem(
         _ <- behaviorRef.get
           .flatMap(_.onStop(ctx))
           .handleErrorWith(e => ctx.log.error(s"onStop failed: ${e.getMessage}").void)
+        // provider 并发占坑释放（provider-concurrency 批）：onStop 之后、notifyWatchers
+        // 之前——所有退出路径（正常/崩溃/TTL/cancel/stopAll）唯一收尸点。失败只
+        // WARN（释放失败不得拖垮收尸链；启动 reconcile + 幂等 release 双兜底）。
+        _ <- providerSlotRelease(path.name).handleErrorWith(e =>
+          ctx.log.warn(s"providerSlotRelease failed: ${e.getMessage}").void
+        )
         _ <- notifyWatchers(path.toString, ctx.self)
       yield ()
     }

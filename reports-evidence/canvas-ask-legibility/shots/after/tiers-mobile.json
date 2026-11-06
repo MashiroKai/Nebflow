@@ -8,23 +8,23 @@
         "h": 812
       },
       "visible": true,
-      "colH": 208.8,
+      "colH": 233.8,
       "rowGap": 6,
-      "tail": 12,
+      "under": 31,
+      "tail": "",
       "fadeH": "12px",
-      "zeroLine": 208.8,
-      "blankBand": 0,
-      "inputToColBottom": 6,
-      "inputToLastBub": 18,
+      "colMask": "none",
+      "inputToColBottom": -31,
+      "inputToLastBub": 6,
       "legacy": {
         "truncH": "",
         "truncFrom": "",
         "overhang": "",
-        "inlineStyle": ""
+        "inlineStyle": "--ask-under: 31.00px;"
       },
       "gapOk": true,
       "blankOk": true,
-      "visibleOk": true
+      "maskGone": true
     },
     {
       "tier": "mobile-768",
@@ -33,23 +33,23 @@
         "h": 800
       },
       "visible": true,
-      "colH": 188,
+      "colH": 213,
       "rowGap": 6,
-      "tail": 12,
+      "under": 31,
+      "tail": "",
       "fadeH": "12px",
-      "zeroLine": 188,
-      "blankBand": 0,
-      "inputToColBottom": 6,
-      "inputToLastBub": 18,
+      "colMask": "none",
+      "inputToColBottom": -31,
+      "inputToLastBub": 6,
       "legacy": {
         "truncH": "",
         "truncFrom": "",
         "overhang": "",
-        "inlineStyle": ""
+        "inlineStyle": "--ask-under: 31.00px;"
       },
       "gapOk": true,
       "blankOk": true,
-      "visibleOk": true
+      "maskGone": true
     }
   ]
 }

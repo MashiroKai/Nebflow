@@ -537,6 +537,45 @@ html[data-theme="light"] {
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
+ * Settings rows（设置页 iOS 行族）—— 全站设置行几何的唯一数值出生地
+ *   （settings-ios-rows 批 2026-11-06；作者令「能点击下一个面板的样式都统一成
+ *     苹果的这种样式 … 这些可点击的按钮 布局规整一点」）
+ *
+ * ── 三层职责 ────────────────────────────────────────────────────────────
+ *   ① 令牌 = 本段（行高 / 图标盒 / 内距 / chevron 几何 / 动作钮高与内距）；
+ *   ② 类   = css/settingsRows.css（.set-card / .set-group / .set-nav / .set-row /
+ *            .set-btn / .set-actions / .set-row-hint / .set-collapse-body）；
+ *   ③ 行为 = js/settingsRows.js（setCard / setGroup / setNavRow / setRow）。
+ *
+ * ── 网格推导（右列对齐 = 一条 x，不靠逐处手填）────────────────────────────
+ *   行内距 --set-row-pad-x = 16；chevron 盒 --set-chevron-box = 20 ⇒ chevron 盒
+ *   左缘距行内容缘 = 20。副值 / 行内动作钮的右缘都要落在同一条 x：
+ *   · 副值（与 chevron 之间隔着 flex gap 12）margin-right = −12 恰抵消 gap；
+ *   · 动作钮（行内末位子件）margin-right = 20（--set-chevron-align-gap）。
+ *   于是「副值右缘 = 动作钮右缘 = chevron 盒左缘」由两条公式各推出一次。
+ *   左基线：图标盒 --set-icon-box = 20 + 间隙 --set-row-gap = 12 ⇒ 文案列恒在
+ *   行左缘 + 48（分隔线的左缩进也取这一条）。
+ * ══════════════════════════════════════════════════════════════════════════ */
+:root {
+  --set-group-gap: var(--ds-space-6);          /* 24px 组与组之间留白（iOS 分组卡节奏） */
+  --set-card-pad-y: var(--ds-space-1h);        /* 卡纵向内距 6（行自带 11/12 内距） */
+  --set-card-pad-x: var(--ds-space-4);         /* 16 卡横向内距（组标题用） */
+  --set-row-h: var(--ds-hit-row);              /* 44 行高下限（触控档） */
+  --set-row-pad-x: var(--ds-space-4);          /* 16 行左右内距（Apple 版式边距） */
+  --set-row-pad-y: var(--ds-space-1h);         /* 6 行纵向内距（行高由 min-height 兜） */
+  --set-row-gap: var(--ds-space-3);            /* 12 图标位与文案之间的间隙 */
+  --set-icon-box: 20px;                        /* 20 图标位固定盒（图标本体 16 居中） */
+  --set-icon-size: 16px;                       /* 16 图标本体 */
+  --set-chevron-box: 20px;                     /* 20 chevron 固定盒（本体 16 居中） */
+  --set-chevron-size: 16px;                    /* 16 chevron 本体 */
+  --set-chevron-opacity: 0.55;                 /* chevron 退到副值档，不抢标题 */
+  /* 动作钮右缘对齐量 = chevron 盒宽 20（副值的对齐 = 负 gap 抵消，见 settingsRows.css） */
+  --set-chevron-align-gap: var(--set-chevron-box);
+  --set-btn-h: 28px;                           /* 28 动作钮高（行内动作与行为按钮同高） */
+  --set-btn-pad-x: var(--ds-space-3);          /* 12 动作钮左右内距 */
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
  * Toggle（开关）—— 全站唯一开关形态的令牌段
  *   （toggle-unify 批 2026-11-05；作者裁定 2026-11-05 19:55「A 胶囊滑块」）
  *

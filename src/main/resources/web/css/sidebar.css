@@ -506,14 +506,13 @@
   padding: 0 0 var(--ds-space-1);
 }
 
-/* ---------- Settings Modal content (scrollable region inside #settings-modal) ----------
-   分组卡片换装批 2026-10-31（作者令 12:33，参考 ChatGPT 设置页解剖；手机端设置
-   页收编同一内容面 ⇒ 双端一份样式）：内容面 = --color-bg 灰底；每个
-   settings-section = 白色圆角大卡（r16、轻阴影堆叠）；区标题留在卡外灰底上
-   （负 margin 上拉进组间留白），语言同现行 tp 组标题（11px / 0.06em / uppercase /
-   muted）；行 = 主文案 + 右值控件，行间 hairline、首末行不留线；嵌套 section
-   （呈现档案区插在 runtime 卡内）压平为卡内子组。暗档经 --color-surface /
-   --color-text 双档自动解析。 */
+/* ---------- Settings content (scroll region inside #settings-modal) ----------
+   settings-ios-rows 批 2026-11-06：行 / 分组卡 / chevron / 行内动作钮的造型已整段
+   迁到 css/settingsRows.css（令牌 --set-* 在 css/stand-tokens.css），本节旧族
+   （.settings-section / .settings-row / .settings-label / .secrets-entry 玻璃行卡自
+   定义段 / .count-pill）随发射点清零一并删除 —— 全页只剩一套设置行实现。
+   本文件只保留滚动容器与设置面内**非行族**的控件（.cfg-btn / .cfg-select /
+   配置卡 / 配置编辑器），见下方各段。 */
 #settings-content {
   flex: 1;
   min-height: 0;
@@ -521,62 +520,6 @@
   padding: var(--ds-space-4);
   background: var(--ds-surface-sunken);
   scrollbar-color: var(--ds-border) transparent;
-}
-.settings-section {
-  /* design-system-token-batch：字面量 → --ds-* 令牌（基准值逐字不变，
-     阴影 = 面板族两档，圆角 = card-lg 16 —— 门禁 scripts/check-design-tokens.mjs
-     严格面从此零字面量）。 */
-  background: var(--ds-surface);
-  border-radius: var(--ds-radius-card-lg);
-  box-shadow: var(--ds-shadow-card);
-  margin: 40px 0 0;
-  padding: var(--ds-space-1h) var(--ds-space-4);
-  display: flow-root;
-}
-@media (prefers-color-scheme: dark) {
-  .settings-section {
-    box-shadow: var(--ds-shadow-card-dark);
-  }
-}
-#settings-content > .settings-section:first-child { margin-top: var(--ds-space-6); }
-/* 嵌套 section（呈现档案区 = runtime 卡的卡内子组）压平：不再成卡、无阴影。 */
-.settings-section .settings-section {
-  background: transparent;
-  border-radius: 0;
-  box-shadow: none;
-  margin: 0;
-  padding: 0;
-  display: block;
-}
-.settings-section-title {
-  font-size: var(--ds-fs-meta);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--ds-text-muted);
-  /* 上拉出卡：卡顶内距 6px + 组间留白 ⇒ 标题整段落在卡外灰底（呼吸感）。 */
-  margin: -33px 0 var(--ds-space-3);
-  padding: 0 var(--ds-space-inline-x);
-}
-/* 卡内子组标题（嵌套 section 首题 / Overrides 副题）回落为卡内分隔子标题。 */
-.settings-section .settings-section-title {
-  margin: 14px 0 var(--ds-space-1h);
-  padding: 0;
-}
-.settings-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: var(--ds-space-2);
-  /* 热区档（本批新增判据）：行高 ≥44px（--ds-hit-row），矮内容行由 min-height
-     撑到触控下限；行内距保持 10px 0（卡内行变体，规范 §5 未覆盖 → 不改值）。 */
-  min-height: var(--ds-row-min-h);
-  padding: var(--ds-space-block-y) 0;
-  border-bottom: 1px solid var(--ds-border-hairline);
-}
-.settings-row:last-child { border-bottom: none; }
-.settings-label {
-  font-size: var(--ds-fs-body);
-  color: var(--ds-text);
 }
 
 /* ── Jev glass card · status badges · secrets entry row (secrets-ui-redesign,
@@ -669,101 +612,18 @@
 /* （ui-unification-20261103-settings · 旧类清零）原 .jev-health-row（min-height 40px，
    三改① 2026-10-09 扁平健康行）随 2026-10-28 批 C 件把通道徽标迁入头行后零 DOM 发射
    （js 侧零命中），样式残留由本批删除；健康读数现由 .st-badge[data-tone] 承载。 */
-/* 密钥入口行：玻璃行卡（key 图标 + 行名 + 副词 + count pill + chevron），
-   取代虚线满宽 .cfg-btn-add。 */
-.secrets-entry {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: var(--ds-space-inline-gap);
-  text-align: left;
-  padding: var(--ds-space-3) 14px;
-  border-radius: var(--ds-radius-card-md);
-  cursor: pointer;
-  font-family: inherit;
-  border: 1px solid var(--color-frame-border-light);
-  background: var(--glass-etched-bg);
-  transition: background 0.15s, border-color 0.15s;
-}
-.secrets-entry:hover {
-  background: var(--color-frame-hover);
-  border-color: var(--color-frame-border);
-}
-.secrets-entry .st-ic { color: var(--color-frame-text-muted); flex: 0 0 auto; }
-.secrets-entry .entry-name {
-  font-size: var(--ds-fs-body);
-  font-weight: 500;
-  color: var(--color-frame-text-bright);
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.secrets-entry .entry-sub { font-size: var(--ds-fs-meta); color: var(--color-frame-text-muted); flex: none; }
-.count-pill {
-  font-size: var(--ds-fs-meta);
-  padding: var(--ds-space-hair) var(--ds-space-2);
-  border-radius: var(--ds-radius-badge);
-  background: color-mix(in srgb, var(--color-frame-text-muted) 12%, transparent);
-  color: var(--color-frame-text-muted);
-  font-variant-numeric: tabular-nums;
-  flex: none;
-}
+/* （settings-ios-rows 批 2026-11-06）密钥入口行 .secrets-entry 玻璃行卡、其 hover /
+   子件规则与 .count-pill 计数胶囊随行族收编整体删除：入口行现为唯一可点进行
+   .set-nav（js/settingsRows.js::setNavRow），计数只画一次（行右副值）。 */
 
-/* STT 高级设置折叠面板（用户 2026-08-20 打回：默认收起，免费路径为默认）——
-   复用 settings-row 基线，chevron 旋转表达开合，无新增颜色 token。 */
-.stt-advance-toggle-row {
-  cursor: pointer;
-}
-.settings-collapse-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--ds-space-1h);
-  background: none;
-  border: none;
-  padding: 0;
-  font: inherit;
-  cursor: pointer;
-  color: var(--color-frame-text);
-}
-.settings-collapse-toggle .settings-label {
-  font-weight: 500;
-}
-.settings-collapse-chevron {
-  width: 0;
-  height: 0;
-  border-left: 4px solid transparent;
-  border-right: 4px solid transparent;
-  border-top: 5px solid var(--color-frame-text-muted);
-  transition: transform 0.18s ease;
-}
-.settings-collapse-toggle[aria-expanded="true"] .settings-collapse-chevron {
-  transform: rotate(180deg);
-}
-/* 设置页热区整改（design-system-token-batch 批·O5，2026-11-02）：
-   入口行此前热区 = 行内 button 自身（实测 114×18px，行宽 494px ⇒ 行上 77% 的
-   空白区域点了没反应）。改为「按钮撑满行内剩余宽度 + 纵向撑到行高」：
-   命中面 = 整行（右侧状态位仍不可点，它只是读数），纵向 ≥44px 触控档。
-   判据（O5 读数）：按钮宽 114 → ≥ 行宽 − 状态位宽；按钮高 18 → 行高 44/46。
+
+/* STT / TTL / JeV / 生图 四节入口行 = 设置页唯一可点进行（settings-ios-rows 批
+   2026-11-06）：旧 .stt-advance-toggle-row / .settings-collapse-toggle /
+   .settings-collapse-chevron（三角 border 画法）/ .settings-collapse-body 四组规则
+   随发射点清零整体删除 —— 头行现由 js/settingsRows.js::setNavRow 发射（.set-nav +
+   .set-nav-chev），折叠体 = .set-collapse-body，几何全在 css/settingsRows.css。
    DRILL 委托（configDrill.js / mobile/settingsSub.js）以 closest('#xxx-toggle')
-   判定，撑大按钮即可整体生效，两模块零改动。 */
-.stt-advance-toggle-row .settings-collapse-toggle {
-  flex: 1 1 auto;
-  min-height: var(--ds-hit-row, 44px);
-  align-self: stretch;
-  padding: 0;
-}
-.stt-advance-toggle-row .stt-status { flex: 0 0 auto; pointer-events: none; }
-/* 配置面风格统一批（2026-10-31 作者令）：层级下钻入口行（JeV/生图）的
-   chevron 常驻右转 affordance——与手机层同款几何（手机层规则见
-   mobileLayer.css 弹窗退场批③块），STT/TTL 原地下旋语义不变。 */
-.settings-collapse-toggle.settings-drill-toggle .settings-collapse-chevron {
-  transform: rotate(-90deg);
-}
-.settings-collapse-body {
-  padding: var(--ds-space-1) 0 var(--ds-space-1h);
-}
+   判定，id 逐字保留 ⇒ 两模块零改动。 */
 .stt-key-configured {
   display: inline-block;
   margin-left: var(--ds-space-2);

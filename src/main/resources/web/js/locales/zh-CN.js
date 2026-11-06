@@ -905,6 +905,12 @@ export default {
   // 原因码 + 自动续跑次数 + 唤醒入口。
   'subagents.frozenAwaitingYou': '已冻结 · {reason}（待你处理）',
   'subagents.frozenAwaitingYouNoReason': '已冻结 · 待你处理',
+  // 修复批 2026-11-06（作者原话「llm 不稳定 不需要向上通知…原地等待恢复就行」）：
+  // 可恢复冻结（llm-failure / 额度）**不再是你的待办**——词从「待你处理」改成
+  // 「等待恢复中」，与真失败（tool-failure / engine-fault）在视觉与文案上分开。
+  'subagents.freezeRecovering': '等待恢复中',
+  'subagents.freezeRecoveringReason': '等待恢复中 · {reason}',
+  'subagents.freezeRecoveringTip': '供应商暂时不可用（不是任务失败，也不需要你做什么）：引擎正在退避重试 / 换可用的供应商，恢复后在原会话上接着跑——已完成的不重做。不向上汇报，也不需要唤醒。',
   'subagents.frozenInfraTip': '供应商故障（不是任务失败）：引擎自己探测恢复，恢复后自动续跑同一会话（续在检查点、已完成的不重做，有次数上限与递增间隔）；也可以现在点「唤醒」立即续跑。不向上级汇报——本面板就是它的状态面。',
   'subagents.frozenAutoResumes': '已自动续跑 {n} 次',
   'subagents.frozenAutoResumesSpent': '自动续跑次数已用尽——需要你：充值 / 换模型 / 取消',
@@ -1415,24 +1421,15 @@ export default {
   // update.impact/update.receipt.*/update.reason.*/update.source.*）已随 auth-trim 批
   // （2026-10-20 作者令）整体删除：设置页「更新」功能退役，未来由官网统一检测更新取代。
 
-  // 既有重启进度帧（`restartStatus`）的相位文案（设置页「重启服务」状态行消费）。
-  'restart.phase.quiesce': '等待在飞工作结束',
-  'restart.phase.draining': '正在冻结并落盘',
-  'restart.phase.spawning': '正在派生新进程',
-  'restart.phase.handing-over': '交接中，旧进程即将退出',
-  'restart.phase.completed': '重启完成',
-  'restart.phase.failed': '重启中止',
-
-  // 设置页重启触发（hotupdate 批 3 · G6 后半）——沿用既有 'restart' WS 命令，
-  // 界面侧两段式确认（第二击即确认位）。
-  'settings.restart': '重启服务',
-  'settings.restartConfirm': '确认重启？',
+  // 「重启服务」整链文案已随 settings-ios-rows 批（2026-11-06 作者令「底部的重启
+  // 服务去掉」）删除：restart.phase.*（restartStatus 相位）与 settings.restart /
+  // settings.restartConfirm / settings.restartAccepted / settings.restartFailed
+  // 十键零消费（唯一消费者 #restart-status 状态行同批移除）。后端 WS `restart`
+  // 命令保留（其余消费方仍在），前端零发射面。
   'settings.fileCache': '文件缓存',
   'settings.fileCacheClear': '清空文件缓存',
   'settings.fileCacheClearConfirm': '确认清空？',
   'settings.fileCacheEntries': '条',
-  'settings.restartAccepted': '重启已受理——完成后界面会自动重连',
-  'settings.restartFailed': '重启未受理：{error}',
 
   // Provider card fields
   'provider.baseUrl': 'Base URL',
@@ -1463,6 +1460,9 @@ export default {
   // 事实句（「无限制」），解释收进 `?` 悬停提示（裁定⑤）。
   'provider.unavailableWindows': '不可用时段',
   'provider.unavailableWindowsHint': '该服务商全部模型统一生效；跨午夜写 23:00-07:00',
+  'provider.maxConcurrentActors': '同时派发上限',
+  'provider.maxConcurrentActorsPh': '留空 = 不限',
+  'provider.maxConcurrentActorsInvalid': '同时派发上限须为正整数',
   'provider.unavailableWindowsPlaceholder': 'HH:mm-HH:mm',
   'provider.unavailableWindowsInvalid': '不可用时段格式错误：「{value}」（需 HH:mm-HH:mm，且开始≠结束）',
   'provider.unavailableWindowsEmpty': '无限制',
@@ -1897,6 +1897,13 @@ export default {
   'bgws.noData': '暂无状态数据（快照未覆盖）',
   'bgws.noBgTasks': '本会话无后台任务',
   'bgws.moreTasks': '还有 {count} 个后台任务（主窗口面板查看）',
+  // 手机端后台 agent 对话框简化批（2026-11-06）：⋯ 详情浮层的 meta 行标签。
+  'bgagent.more': '任务详情',
+  'bgagent.detail.source': '来源',
+  'bgagent.detail.created': '创建',
+  'bgagent.detail.worktree': '工作树',
+  'bgagent.detail.plugins': '插件',
+  'bgagent.detail.noWorktree': '就地（未分配工作树）',
   'bg.sectionAgents': '智能体',
   'bg.empty': '当前无运行中的后台任务',
   // 设备同级批（作者令 2026-11-01「本地/远程这组徽标整对退役」）：bg.kind.local /
@@ -1961,8 +1968,8 @@ export default {
   // sectionProgress/pendingShort/globalSource 键随退役路径一并清除；节点视图
   // 键（nodePending/nodeBlocked/inProgressShort/statsProgress/expand/
   // collapse/justNow/progressEmpty）保留。
-  'task.expand': '展开',
-  'task.collapse': '收起',
+  'task.expand': '展开详情',
+  'task.collapse': '收起详情',
   // progressEmpty：空态兜底键（builder 保留未接主路径，无节点时面板收起）
   'task.progressEmpty': '暂无任务',
   'task.justNow': '刚刚',
@@ -2261,7 +2268,14 @@ export default {
   'task.sheetTitle': '新建定时任务',
   'task.sheetCancel': '取消',
   'task.sheetDone': '创建',
-  'task.inputPlaceholder': '输入任务内容...',
+  // schedule-todo-unify 批 2026-11-06：新建/编辑面拆 name + description 两段
+  // （数据面约定 = content 首行 name、其余行 description，见 scheduled-task.js nameOf/descriptionOf）。
+  'task.inputPlaceholder': '任务名称',
+  'task.descPlaceholder': '描述（可选）',
+  'task.editTitle': '编辑定时任务',
+  'task.nameRequired': '名称不能为空',
+  'task.detailTitle': '详情',
+  'task.detailEmpty': '无描述',
   'task.triggerTime': '触发时间',
   'task.triggered': '已触发',
   'task.triggerTitle': '定时任务已触发',
@@ -3202,6 +3216,15 @@ export default {
   'todoface.tagDeleteTitle': '删除标签',
   'todoface.tagDeleteConfirm': '删除「{name}」后，该标签下的待办不再带此标签。此操作不可撤销。',
   'todoface.colorN': '颜色 {n}',
+  // 顶部悬浮「⋯」两级菜单（todo-mobile-topmenu 批 2026-11-06）
+  'todoface.menu': '菜单',
+  'todoface.menuView': '标签',
+  'todoface.menuPrio': '重要度',
+  'todoface.menuNoTags': '暂无标签',
+  // 互动框（impl-row-reply 批 2026-11-06）
+  'todoface.edit': '编辑',
+  'todoface.replyPh': '回复这个待办…',
+  'todoface.send': '发送',
   // ── 感知域（mail-perception-impl 批）──
   'perception.title': '感知',
   'perception.close': '关闭',

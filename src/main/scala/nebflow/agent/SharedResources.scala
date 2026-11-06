@@ -228,7 +228,15 @@ case class SharedResources(
    * 默认 = 全局单例（惰性绑定 PathUtil.dataRoot，同 FileChangeLedger.unsafe 先例）
    * ⇒ 存量测试构造零改动。置于参数表末尾——其后无参数，位置参数构造点零影响。
    */
-  override val msgTokens: nebflow.core.msgtokens.MsgTokenRegistry = nebflow.core.msgtokens.MsgTokenRegistry.global
+  override val msgTokens: nebflow.core.msgtokens.MsgTokenRegistry = nebflow.core.msgtokens.MsgTokenRegistry.global,
+  /**
+   * provider 并发上限 · actor 占坑表（provider-concurrency 批，2026-11-06）：键 =
+   * providerId，值 = 占坑 actorId 集。唯一读写面 = [[nebflow.llm.ProviderConcurrency]]
+   * （assign/release/reconcile/snapshot 单点）。默认实例 = 本实例独立空表
+   * （`Ref.unsafe` 先例，同 agentRegistry）⇒ 既有测试构造零改动。
+   */
+  providerConcurrency: Ref[IO, nebflow.llm.ProviderConcurrency.Counts] =
+    Ref.unsafe[IO, nebflow.llm.ProviderConcurrency.Counts](nebflow.llm.ProviderConcurrency.empty)
 ) extends AgentRuntimePort,
       SubAgentTaskPort:
 
@@ -300,6 +308,52 @@ case class SharedResources(
   //    this 代入——NodeRunner 委托式保证 receiver == p.resources,零行为差);
   //    agentActorBehavior = AgentActor.apply 全参镜像去 resources(this 代入)。──────────
 
+  /**
+   * provider 并发上限 · 派发时刻分配（provider-concurrency 批，作者令 2026-11-06）。
+   * **唯一调用点 = [[spawnAgentActor]]**（spawn 前一次；`private[agent]` 编译期禁止
+   * 其它调用方——NodeRunner 委托 / 9 个业务调用方 / MailTool 直连 spawn 一律不得加）。
+   *
+   * 语义：从链首开始找第一个「在用 actor 数 < 其 maxConcurrentActors（None=不限）」
+   * 的 provider 作为该 actor 的链首并占坑；此后该 actor 的链快照终生不重算（幂等
+   * assign 不迁移）。返回 None = 不钉（registry 未装配／空链／全部超限）⇒ 既有行为。
+   * 链源 = `getCandidatesForAgentUnfiltered(agentDef.model)`（与请求路径同一解析函数，
+   * 零新选择路径）；配置源 = `providerRegistry.currentConfig`（同一份热读 configRef）。
+   */
+  private[agent] def assignFallbackChain(actorId: String, agentDef: AgentDef): IO[Option[nebflow.llm.PinnedChain]] =
+    if providerRegistry == null then
+      nebflow.llm.ProviderConcurrency
+        .logAssign(actorId, agentDef.name, None, None, Some("registry-absent"))
+        .as(None)
+    else
+      for
+        cfg <- providerRegistry.currentConfig
+        chain <- providerRegistry.getCandidatesForAgentUnfiltered(agentDef.model)
+        configuredHead = chain.headOption.map(c => s"${c.providerId}/${c.model}")
+        pin <- nebflow.llm.ProviderConcurrency.assign(
+          providerConcurrency,
+          cfg,
+          actorId,
+          chain.map(c => c.providerId -> c.model)
+        )
+        _ <- nebflow.llm.ProviderConcurrency.logAssign(
+          actorId,
+          agentDef.name,
+          pin,
+          configuredHead,
+          Some(if chain.isEmpty then "empty-chain" else "all-full")
+        )
+      yield pin
+
+  /** 可观测面投影（§3h）：/api/models/candidates 与 /api/health 共用的 providerConcurrency 键。 */
+  def providerConcurrencyJson: IO[io.circe.Json] =
+    providerRegistry match
+      case null => IO.pure(io.circe.Json.Null)
+      case _ =>
+        for
+          cfg <- providerRegistry.currentConfig
+          json <- nebflow.llm.ProviderConcurrency.snapshot(providerConcurrency, cfg)
+        yield json
+
   /** 共享 spawn:readTracker/fileHistory 创建 + AgentActor spawn(NodeRunner 原体)。 */
   def spawnAgentActor(system: ActorSystem, p: NodeRunner.SpawnParams): IO[ActorRef[AgentCommand]] =
     val actorName = if p.actorName.nonEmpty then p.actorName else p.sessionId
@@ -321,6 +375,10 @@ case class SharedResources(
       )
       readTracker <- ReadTracker.create
       fileHistory <- FileHistory.create()
+      // ── provider 并发上限 · 派发时刻分配（provider-concurrency 批）──────────────
+      // 全仓唯一 assign 调用点（壳方法 private[agent]）。pin = None ⇒ 零行为变化。
+      // spawn 失败 ⇒ onError 回滚占坑（幂等 release，不泄漏）。
+      providerChainPin <- assignFallbackChain(p.sessionId, p.agentDef)
       ref <- system.spawn(
         AgentActor(
           agentDef = p.agentDef,
@@ -353,7 +411,8 @@ case class SharedResources(
           sessionCwd = p.sessionCwd,
           projectSession = p.projectSession,
           sessionDevice = p.sessionDevice,
-          sessionDeviceWorkspace = p.sessionDeviceWorkspace
+          sessionDeviceWorkspace = p.sessionDeviceWorkspace,
+          providerChainPin = providerChainPin
         ),
         actorName
       )
@@ -706,8 +765,9 @@ case class SharedResources(
           )
           .map {
             case nebflow.core.mail.SessionMailbox.MailResult.Failed(cause) => Left(cause)
-            case _                                                        => Right(())
+            case _ => Right(())
           }
+      end deliver
 
       /**
        * 属主能不能被征询 = **会话真的还在**（活体 actor 记录 ∪ 索引/盘上会话记录；
@@ -718,7 +778,8 @@ case class SharedResources(
        * 误判修复批 2026-11-06；同因同源见 `MailboxProducer` 头注）。
        */
       def present(ownerSessionId: String): IO[Boolean] =
-        SessionLiveness.alive(SharedResources.this, ownerSessionId)
+        SessionLiveness
+          .alive(SharedResources.this, ownerSessionId)
           .handleErrorWith(_ => IO.pure(true)) // fail-open：读数失败不判死
   }
 

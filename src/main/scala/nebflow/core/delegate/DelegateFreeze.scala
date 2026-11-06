@@ -84,6 +84,9 @@ object DelegateFreeze:
     /** 配额/预算类取消（额度耗尽触发的 cancel）。 */
     case CancelledByQuota
 
+  /** 全部原因（枚举序；重放面识别回执原因用——Scala 3 `enum` 无反射式 `values`）。 */
+  val All: List[Reason] = List(Reason.LlmFailure, Reason.ToolFailure, Reason.EngineFault, Reason.CancelledByQuota)
+
   /** 原因 → 线值（落盘/帧字段；短横线小写，与既有 frozenReason 词表同规格）。 */
   def wire(r: Reason): String = r match
     case Reason.LlmFailure => "llm-failure"

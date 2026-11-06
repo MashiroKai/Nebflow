@@ -947,6 +947,11 @@ export default {
   // status surface: "needs you" word + reason code + auto-resume count + wake entry.
   'subagents.frozenAwaitingYou': 'Frozen · {reason} (needs you)',
   'subagents.frozenAwaitingYouNoReason': 'Frozen · needs you',
+  // Fix batch 2026-11-06: recoverable freezes (llm-failure / quota) are NOT your todo —
+  // their word is "Recovering", kept visually distinct from real failures (needs you).
+  'subagents.freezeRecovering': 'Recovering',
+  'subagents.freezeRecoveringReason': 'Recovering · {reason}',
+  'subagents.freezeRecoveringTip': 'The provider is temporarily unavailable (not a task failure, and nothing for you to do): the engine keeps retrying with backoff and switches to a usable provider, then resumes in the same session — finished work is not redone. Nothing is reported upward and no wake is needed.',
   'subagents.frozenInfraTip': 'Provider fault (NOT a task failure): the engine probes for recovery and resumes the SAME session by itself once a provider is serving again (from the checkpoint, finished work is not redone, capped attempts with growing gaps); press Wake to resume it right now. Nothing is reported upward — this panel is its status surface.',
   'subagents.frozenAutoResumes': 'auto-resumed {n} time(s)',
   'subagents.frozenAutoResumesSpent': 'auto-resume budget spent — needs you: top up / switch model / cancel',
@@ -1463,25 +1468,15 @@ export default {
   // removed with the auth-trim batch (2026-10-20 author ruling): the settings-page
   // update feature is retired; unified update detection moves to the website later.
 
-  // Phase text for the existing restart progress frame (`restartStatus`, consumed by
-  // the settings "Restart Service" status line).
-  'restart.phase.quiesce': 'Waiting for in-flight work to finish',
-  'restart.phase.draining': 'Freezing and flushing to disk',
-  'restart.phase.spawning': 'Launching the successor process',
-  'restart.phase.handing-over': 'Handing over — the old process is about to exit',
-  'restart.phase.completed': 'Restart completed',
-  'restart.phase.failed': 'Restart aborted',
-
-  // Settings-page restart trigger (hotupdate batch 3 · G6 second half) — reuses the
-  // existing 'restart' WS command; the UI confirms in two steps (2nd click = confirm bit).
-  'settings.restart': 'Restart Service',
-  'settings.restartConfirm': 'Confirm restart?',
+  // The whole "Restart Service" copy chain was removed with the settings-ios-rows
+  // batch (2026-11-06 author ruling): restart.phase.* and the four settings.restart*
+  // keys have zero consumers left (the sole consumer, the #restart-status line, was
+  // removed in the same batch). The backend WS `restart` command stays (other
+  // consumers remain); the frontend has no emit face for it.
   'settings.fileCache': 'File cache',
   'settings.fileCacheClear': 'Clear file cache',
   'settings.fileCacheClearConfirm': 'Confirm clear?',
   'settings.fileCacheEntries': 'items',
-  'settings.restartAccepted': 'Restart admitted — the UI reconnects automatically once it is up',
-  'settings.restartFailed': 'Restart not admitted: {error}',
 
   // Provider card fields
   'provider.baseUrl': 'Base URL',
@@ -1512,6 +1507,9 @@ export default {
   // fact ("No restriction"); the explanation lives in the `?` hover hint (⑤).
   'provider.unavailableWindows': 'Unavailable windows',
   'provider.unavailableWindowsHint': 'Applies to every model of this provider; cross-midnight as 23:00-07:00',
+  'provider.maxConcurrentActors': 'Max concurrent actors',
+  'provider.maxConcurrentActorsPh': 'Empty = unlimited',
+  'provider.maxConcurrentActorsInvalid': 'Max concurrent actors must be a positive integer',
   'provider.unavailableWindowsPlaceholder': 'HH:mm-HH:mm',
   'provider.unavailableWindowsInvalid': 'Invalid unavailable window: "{value}" (expected HH:mm-HH:mm, start ≠ end)',
   'provider.unavailableWindowsEmpty': 'No restriction',
@@ -1961,6 +1959,13 @@ export default {
   'bgws.noData': 'no status data (snapshot not covering)',
   'bgws.noBgTasks': 'no background tasks for this session',
   'bgws.moreTasks': '{count} more background tasks (see the main window panel)',
+  // Mobile bg-agent dialog simplification (2026-11-06): ⋯ details sheet meta labels.
+  'bgagent.more': 'Task details',
+  'bgagent.detail.source': 'Source',
+  'bgagent.detail.created': 'Created',
+  'bgagent.detail.worktree': 'Worktree',
+  'bgagent.detail.plugins': 'Plugins',
+  'bgagent.detail.noWorktree': 'In place (no worktree)',
   'bg.sectionAgents': 'Sub-agents',
   'bg.empty': 'No background tasks running',
   // 设备同级批（作者令 2026-11-01「本地/远程这组徽标整对退役」）：bg.kind.local /
@@ -2026,8 +2031,8 @@ export default {
   // Task panel = pure Flow Map node view (2026-09-05 10:54 ruling): the old
   // task area is retired; sectionProgress/pendingShort/globalSource keys
   // removed with their retired paths. Node-view keys kept.
-  'task.expand': 'Expand',
-  'task.collapse': 'Collapse',
+  'task.expand': 'Show details',
+  'task.collapse': 'Hide details',
   // progressEmpty: empty-state fallback key (builder kept, not wired into
   // the main path — the panel collapses when there are no nodes)
   'task.progressEmpty': 'No active tasks',
@@ -2336,7 +2341,13 @@ export default {
   'task.sheetTitle': 'New scheduled task',
   'task.sheetCancel': 'Cancel',
   'task.sheetDone': 'Create',
-  'task.inputPlaceholder': 'Enter task...',
+  // schedule-todo-unify 2026-11-06: name + description split (content line 1 = name).
+  'task.inputPlaceholder': 'Task name',
+  'task.descPlaceholder': 'Description (optional)',
+  'task.editTitle': 'Edit scheduled task',
+  'task.nameRequired': 'Name cannot be empty',
+  'task.detailTitle': 'Details',
+  'task.detailEmpty': 'No description',
   'task.triggerTime': 'Trigger time',
   'task.triggered': 'Triggered',
   'task.triggerTitle': 'Scheduled Task Triggered',
@@ -3293,6 +3304,15 @@ export default {
   'todoface.tagDeleteTitle': 'Delete tag',
   'todoface.tagDeleteConfirm': 'Deleting “{name}” removes it from every todo. This cannot be undone.',
   'todoface.colorN': 'Color {n}',
+  // Top floating "⋯" two-level menu (todo-mobile-topmenu batch 2026-11-06)
+  'todoface.menu': 'Menu',
+  'todoface.menuView': 'Tags',
+  'todoface.menuPrio': 'Priority',
+  'todoface.menuNoTags': 'No tags yet',
+  // item box (impl-row-reply batch 2026-11-06)
+  'todoface.edit': 'Edit',
+  'todoface.replyPh': 'Reply to this todo…',
+  'todoface.send': 'Send',
   // ── Perception domain (mail-perception-impl batch) ──
   'perception.title': 'Perception',
   'perception.close': 'Close',

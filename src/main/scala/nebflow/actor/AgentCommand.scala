@@ -188,7 +188,10 @@ object InjectionAttribution:
       "bg-lifecycle",
       "waiting-dock-care",
       "chain-orphan",
-      "team"
+      "team",
+      // 修复批 2026-11-06：解冻重放面的静默族冻结回执合并件（一条状态行，来源名
+      // 与逐条的 `delegate-frozen` 分名，前端渲染「等待恢复中」）。
+      "frozen-waiting"
     )
 
 end InjectionAttribution

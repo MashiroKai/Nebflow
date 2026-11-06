@@ -103,7 +103,9 @@ quality-gate:
 # = 后端把 `GET /api/conversations` 的 case 误删，前端 404 被吞成「暂无会话」，
 # **没有任何断言发现「前端调了但后端没有」**。本闸静态对照两侧（前端 /api 字面量
 # 集合 × 网关路由注册面），前端调了后端没有 ⇒ 红。
-FRONTEND_GATES := design-tokens msgstyle bubble-side self-explaining circular fixture-secrets api-routes freeze-state freeze-silence flat-buttons glass canvas-hint toggle scroll-pill input-surface mobile-canvas-strip badge-words panel-unify
+# （Makefile 热点区口径：合并两边门禁并列保留——mobile-canvas-strip / badge-words
+#  / settings-ios-rows 来自 main 侧各批，panel-unify 来自本批。）
+FRONTEND_GATES := design-tokens msgstyle bubble-side self-explaining circular fixture-secrets api-routes freeze-state freeze-silence flat-buttons glass canvas-hint toggle scroll-pill input-surface mobile-canvas-strip badge-words settings-ios-rows panel-unify
 
 frontend-gates:
 	@command -v node >/dev/null 2>&1 || { echo "node not found — 前端门禁需要 node"; exit 2; }
@@ -157,6 +159,11 @@ frontend-gates:
 	@# delegate/flow 两条向上通知腿零产出、面板显形（统计 + 待你处理 + 唤醒按钮）、
 	@# 引擎自动续跑走既有唤醒腿（不花重启预算，有上限 + 递增间隔）、同波一条聚合告警。
 	node scripts/check-freeze-silence.mjs
+	@# 冻结**重放面**门禁（修复批 2026-11-06，作者原话「llm 不稳定 不需要向上通知…现在还是
+	@# 在给你报障」）：既有上面那道只看**投递**腿（main 上已全绿，作者仍被刷）；本道补
+	@# **解冻重放**腿——冻结窗积在邮箱里的回执不许在解冻时逐条冒泡，同因只留一条状态行，
+	@# 可恢复（等待恢复中）与真失败（待你处理）词色分开。
+	node scripts/check-freeze-replay-silence.mjs
 	@# Canvas 提示文字令牌唯一性门禁（canvas-hint-text 批 2026-11-05，作者令「canvas
 	@# 内所有的提示文字，要统一制作规范，不然会跟悬浮在上面的按钮/胶囊重叠」）：
 	@# ① 规范层 css/canvasHint.css 三字档令牌齐备且声明区零裸 px / 零裸色值；
@@ -219,6 +226,13 @@ frontend-gates:
 	@# （本批改前 7 红 → 改后 0）。真渲染读数：tests/panel-language.spec.mjs。
 	@# 盘点模式：node scripts/check-panel-unify.mjs --inventory；机器读：--json。
 	node scripts/check-panel-unify.mjs
+	@# 设置页 iOS 行族门禁（settings-ios-rows 批 2026-11-06，作者令「能点击下一个面板的
+	@# 样式都统一成苹果的这种样式 … 底部的重启服务去掉 … 可点击的按钮 布局规整一点」）：
+	@# R1 重启服务零痕 / R2 可点进行唯一样式（setNavRow 单源 + chevron 单点）/
+	@# R3 行内右侧不重复同一数值 / R4 动作钮走 --set-* 令牌。
+	@# 盘点模式：node scripts/check-settings-ios-rows.mjs --json；
+	@# 改前红证据：--web-root <另一棵 web 树>。
+	node scripts/check-settings-ios-rows.mjs
 	@echo "Frontend static gates passed ($(FRONTEND_GATES))."
 
 # ── 身份/类型徽标词单源：单闸入口（术语统一批 2026-11-06）────────────────────

@@ -816,7 +816,17 @@ case class AgentState(
    * 全部既有构造点（named-apply 走伴生）零改动；合成 apply 仅 .copy 消费。
    * 非 pingpong 会话恒为空值（行为零漂移，spec §G1）。
    */
-  pingpong: PingpongState
+  pingpong: PingpongState,
+  /**
+   * 派发时刻钉定的模型链快照（provider-concurrency 批，2026-11-06）：spawn 侧
+   * （SharedResources.spawnAgentActor → 唯一 assign 调用点）置位，经伴生 apply 进
+   * AgentState；每 turn 下发 `LlmRequest.agentModel = pin 物化`（AgentSessionExecution
+   * 单点），**运行期零重算**——llm.fallback / agent.json 后续变化都不影响本 actor 的
+   * 链首（prompt cache 键稳定）。Restart invariant：AgentState 从不持久化 ⇒ 重启后
+   * 由恢复路径重新 spawn = 新的派发（重新按当时配置分配），与本批语义一致。
+   * 🔴 无默认参（防与伴生 apply 全默认参数重载歧义 E046）：默认值由伴生 apply 提供。
+   */
+  providerChainPin: Option[nebflow.llm.PinnedChain]
 )
 
 object AgentState:
@@ -909,6 +919,8 @@ object AgentState:
     sessionDevice: Option[String] = None,
     /** 会话默认设备 workspace（设备盘绝对路径，详见 SessionContext.sessionDeviceWorkspace）。 */
     sessionDeviceWorkspace: Option[String] = None,
+    /** 派发时刻钉定的模型链快照（provider-concurrency 批）。None = 不钉（既有行为零改动）。 */
+    providerChainPin: Option[nebflow.llm.PinnedChain] = None,
     loopTurnKey: Long = 0L,
     /** 乒乓压缩旁车状态（spec §H1-1）：默认空 = 全部既有构造点零改动。 */
     pingpong: PingpongState = PingpongState()
@@ -960,7 +972,8 @@ object AgentState:
       None,
       nebflow.shared.Counters.Empty,
       loopTurnKey,
-      pingpong
+      pingpong,
+      providerChainPin
     )
   end apply
 end AgentState
