@@ -1,0 +1,4 @@
+=== baselines ===
+type-baseline diff lines = 0
+type-baseline 内容 = {"generatedBy":"scripts/check-js-types.mjs--update","total":0,"files":{}}
+allowlist sha HEAD=ea95c18b4c0b8261951e6502098377549c081ecfb3c81c859adb82f1b31ec90e main=ea95c18b4c0b8261951e6502098377549c081ecfb3c81c859adb82f1b31ec90e

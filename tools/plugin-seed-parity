@@ -1,0 +1,591 @@
+#!/usr/bin/env python3
+# plugin-seed-parity — 插件「运行实例 ↔ 仓库种子」规范漂移门禁（stand 仓 tools/）
+#
+# ── 背景（本脚本为什么存在）─────────────────────────────────────────────
+# 2026-11-05 实例侧依次落了三批 visual-report 规范改动（⑥ 图随文档走 / ⑦ 排版
+# 缩进+彩色 / ⑧ 缩写铁律 + R7/R8/R9 + 允许清单块 + 回归夹具），全部只写在运行实例
+# `<data-root>/plugins/visual-report/`；仓库种子
+# `src/main/resources/seed/plugins/visual-report/` 停在「五条款时代」。
+# 后果不是立刻爆，而是**新装实例自带一个旧标准**：`SeedService.seedPlugin` 是整目录
+# 复制（fresh home / plugin-reconcile 缺失自愈两条路径，见 SeedService.scala:302-358），
+# 新 home、新机器、卸载重装拿到的都是旧字节；而既有 home 的 digest 仲裁
+# （SeedService.scala:75-85）在「实例被改动过」时**不覆盖**（用户态 > 种子）——
+# 一旦某次 re-approve 把 trust 记录刷成实例当前 digest，下一次 boot 种子就会
+# 按「干净快照」把实例覆盖回旧标准。两种路径都通向同一件事：**已批准的标准静默消失**。
+# 所以需要一道机械哨兵，而不是一句「记得同步」。
+#
+# ── 两条腿（一条 CI 可跑，一条需实例在场）─────────────────────────────────
+# 腿 A `--self-check`（自包含，CI 默认跑）：只看**仓库种子自己**。断言种子里的
+#   校验器/规范/夹具三件套是「批准后的形态」——R1–R9 全在、允许清单标记块在、
+#   ①–⑧ 条款正文的关键词在、夹具跑起来且例数不低于钉死的下限、全绿。
+#   这条腿不需要实例，所以能在 CI 里挡住「种子回退到五条款时代」。
+# 腿 B `--parity`（需实例在场，本地/发布前跑）：逐文件比对实例与种子在
+#   规范 / 脚本 / 测试 三类别上的字节漂移，差异即报警。实例不在场时明确打印
+#   SKIPPED（不静默通过），CI 不跑这条腿（CI 机器上没有 <data-root>/plugins）。
+#
+# ── 判定口径（可辩护的宽严）──────────────────────────────────────────────
+# 1. 三类别：规范 = `*.md` / `plugin.json`；脚本 = `*.py *.mjs *.js *.ts *.tsx
+#    *.sh *.cmd *.json *.html`（去掉测试与缓存）；测试 = `test_*.py` / `*_test.py`
+#    / `tests/` 下的件。未归类件照比、标「其它」。
+# 2. 排除面 = 构建与编辑器垃圾：`__pycache__/`、`*.pyc`、`.DS_Store`、`*.swp`。
+#    它们逐次运行都会漂（字节里带路径/时间戳），留在比对面里等于把门禁永久染红；
+#    每次运行**打印跳过条数**（不静默）。
+# 3. 「待裁定」台账（`plugin-seed-parity-known-drift.json`，本脚本旁）：
+#    已知的、等作者裁定的反向漂移（实例或种子某侧另有改动，本批无权定夺方向）。
+#    台账里的条目**每次运行都必须显形打印**，且必须**仍然在场**——条目漂移消失即
+#    FAIL（陈旧条目必须删掉），所以台账不会烂成基线。`--strict` 把台账命中一并判红
+#    （台账清零是目标态，`--strict` 就是验收它清没清）。
+# 4. 基线纪律：本脚本只**报告**漂移，从不改写任何一侧。默认方向 = 实例 → 种子
+#    （种子是「新装实例的起点」，必须与批准后的实例一致）；反向覆盖（拿旧种子盖
+#    实例）不是本脚本的能力，也不该有人手写。
+#
+# ── 跑法 ─────────────────────────────────────────────────────────────────
+#   tools/plugin-seed-parity --self-check                     # 腿 A，CI 同（默认 visual-report）
+#   tools/plugin-seed-parity --self-check --plugin stand-dev   # 换包
+#   tools/plugin-seed-parity                                  # 腿 A + 腿 B（实例在场即比对）
+#   tools/plugin-seed-parity --parity --plugin visual-report   # 只跑漂移比对
+#   tools/plugin-seed-parity --parity --strict                 # 待裁定台账也判红（清账验收）
+#   tools/plugin-seed-parity --parity --instance <dir> --seed <dir>   # 显式指定两侧
+#   make plugin-seed-parity                                    # = 腿 A + 腿 B
+# 退出码：0 通过 · 1 有漂移/断言失败 · 2 用法或环境错误。
+#
+# ── 已知边界（诚实申报）─────────────────────────────────────────────────
+# · 数据根解析顺序 `NEBFLOW_HOME` → `STAND_HOME` → `~/.stand`（与引擎同口径；
+#   更早的 `~/.nebflow` 数据根按历史别名兜底探测）。
+# · 腿 A 只断言「批准形态在场」，不判断内容是否**更好**——它挡的是回退，不是论文。
+# · 换行形态不算内容（2026-11-05 收尾批）：`.gitattributes` 把 `*.cmd` / `*.bat` 钉成
+#   `eol=crlf`（blob 存 LF、checkout 写 CRLF），于是同一份内容在主检出树与 delegate
+#   worktree 上字节不同——直接比 sha256 会**只在 worktree 里跑**时报假红。文本类后缀
+#   归一 CRLF→LF 后比；归一后相同的一对判「换行形态差异」、显形打印、不计漂移。
+# · 种子进 jar 的资源副本在 `target/scala-*/classes/seed/`，需 `make compile` 后
+#   才与源树同步；本脚本比对的是**源树**（进 git 的那一侧），不是编译产物。
+
+from __future__ import annotations
+
+import argparse
+import base64
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+# ── 常量（口径集中在此，勿散落调用点）────────────────────────────────────
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_SEED_ROOT = REPO_ROOT / "src" / "main" / "resources" / "seed" / "plugins"
+LEDGER_PATH = Path(__file__).resolve().parent / "plugin-seed-parity-known-drift.json"
+
+DEFAULT_PLUGINS = ["visual-report"]
+
+EXCLUDE_DIRS = {"__pycache__", ".git", ".DS_Store"}
+EXCLUDE_SUFFIXES = {".pyc", ".pyo", ".swp"}
+EXCLUDE_NAMES = {".DS_Store", "Thumbs.db"}
+
+SPEC_SUFFIXES = {".md", ".markdown"}
+SPEC_NAMES = {"plugin.json"}
+SCRIPT_SUFFIXES = {".py", ".mjs", ".js", ".ts", ".tsx", ".sh", ".cmd", ".json", ".html"}
+
+# 腿 A 的断言面（钉死「批准后的形态」；改标准时**同步改这里**，这是本哨兵的代价）
+# 2026-11-05 回灌后口径：写作风格批 v2（R10 平实语言 / R11 结构三层 / R12 图注）
+# + 只许引用词条批（R13–R15）+ 重号修正批（detail-fold 让号到表尾 R16）。
+REQUIRED_RULE_IDS = ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9",
+                     "R10", "R11", "R12", "R13", "R14", "R15", "R16"]
+REQUIRED_RULE_NAMES = [
+    "obsidian-format", "citation-graph", "concept-first-use", "term-registry",
+    "doc-naming", "image-outside-vault", "doc-color", "doc-indent", "abbrev-expansion",
+    "plain-language", "doc-structure", "image-caption",
+    "doc-reference", "bare-image-path", "dangling-term", "detail-fold",
+]
+ALLOWLIST_START = "<!-- wiki-abbrev-allowlist:start -->"
+ALLOWLIST_END = "<!-- wiki-abbrev-allowlist:end -->"
+PLAINWORDS_START = "<!-- wiki-plainwords:start -->"
+PLAINWORDS_END = "<!-- wiki-plainwords:end -->"
+SKILL_SENTINELS = [
+    "&emsp;&emsp;",           # ⑦ 缩进唯一合规形态
+    "#5e6ad2", "#d0342c", "#12874a",   # ⑦ 三语义色
+    "wiki-img-exempt",        # ⑥ 行内豁免标记
+    "image-outside-vault", "doc-color", "doc-indent", "abbrev-expansion",
+    "doc-structure", "detail-fold", "image-caption",   # ⑩ 写作风格批 v2 的机器面
+]
+TEST_MIN_CASES = 81          # 2026-11-05 实测 81 例（51 + v2 的 27 + 编号卫生 3）
+CLAUSES_MIN = 12             # 「Mandatory clauses」节条款数下限（回灌后 12 条：①–⑫）
+TEST_PATH = Path("skills/wiki-docs/scripts/test_check_wiki_docs.py")
+CHECKER_PATH = Path("skills/wiki-docs/scripts/check_wiki_docs.py")
+WD_SKILL_PATH = Path("skills/wiki-docs/SKILL.md")
+
+# ── 腿 A 的「校验器真能跑」冒烟面（2026-11-05 实例半装事故后补）────────────
+# 事故：实例侧 `check_wiki_docs.py` 处于半装/半写状态——`collect_caption_refs`
+# 被 check() 引用（第 667 行）但定义丢了（第 1013 行那块没落盘），于是**整个
+# 校验器一跑就 NameError**，而两道既有断言全绿：规则表正则照样匹配得到 R1–R15、
+# 回归夹具照样全绿（夹具覆盖不到那条路径就看不见它）。另一半是「文件被写成两个
+# 版本拼接」——表头新、实现旧，只有真跑一遍才露。
+# 所以腿 A 除了「读文本断言形态」，必须**真跑一次校验器**：py_compile（语法/截断）
+# + 在临时 vault 上端到端跑（引用面/实现面缺失才会现形）。
+SMOKE_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8AAAwAB/wH+3wAAAABJRU5ErkJggg=="
+)
+# 冒烟 vault 的覆盖面：frontmatter（R1）· wikilink（R2）· 词条注册（R3/R4）·
+# 图片+图注（R6/R12）· 着色与缩进（R7/R8）· 缩写首现（R9）· 分点结论与折叠块
+# （R11/R16）· 裸路径（R13/R14/R15 的相邻面）。断言只有一条：**不许抛异常**。
+SMOKE_DOC = """---
+type: index
+status: open
+---
+
+# smoke index
+
+&emsp;&emsp;冒烟 vault 的根文档：这一段够长，足以让缩进规则（R8）把它当正文段落而不是短行豁免，也足以让结构规则（R11）看见一个像样的章节。
+
+## 冒烟章节
+
+**这一节的分点结论先行，读者读到这一行就知道答案。**
+
+&emsp;&emsp;论证细节这一段足够长，足以让折叠规则（R16）判定它需要放进 `<details>` 里，因此这里必须有一行加粗结论与一个折叠块，否则冒烟文档自己就会成为违规样本。
+
+<details>
+<summary>展开看细节</summary>
+
+&emsp;&emsp;折叠块里的论证正文。International Atomic Energy Agency（IAEA）在首次出现时必须这样展开，这条同时压到 R9 的解析面。
+
+</details>
+
+![](assets/p.png)
+
+图 1 冒烟图：一像素的占位图，只为压到图注采集面（`collect_caption_refs`）与 R6/R12。
+
+参见 [[smoke-index]]。
+"""
+
+
+# ── 数据根与两侧定位 ────────────────────────────────────────────────────
+
+def data_root() -> Path:
+    for var in ("NEBFLOW_HOME", "STAND_HOME"):
+        raw = os.environ.get(var)
+        if raw and raw.strip():
+            return Path(raw.strip()).expanduser().resolve()
+    current = Path.home() / ".stand"
+    if current.exists():
+        return current
+    legacy = Path.home() / ".nebflow"       # 历史数据根别名（老实例仍可能在此）
+    return legacy if legacy.exists() else current
+
+
+def instance_root(explicit: str | None) -> Path:
+    return Path(explicit).expanduser().resolve() if explicit else data_root() / "plugins"
+
+
+def seed_root(explicit: str | None) -> Path:
+    return Path(explicit).expanduser().resolve() if explicit else DEFAULT_SEED_ROOT
+
+
+# ── 文件归类（三类别 + 排除面）──────────────────────────────────────────
+
+def category_of(rel: str) -> str:
+    path = Path(rel)
+    name = path.name
+    parts = set(path.parts)
+    if name.startswith("test_") or name.endswith("_test.py") or "tests" in parts:
+        return "测试"
+    if name in SPEC_NAMES or path.suffix.lower() in SPEC_SUFFIXES:
+        return "规范"
+    if path.suffix.lower() in SCRIPT_SUFFIXES:
+        return "脚本"
+    return "其它"
+
+
+def walk(root: Path) -> tuple[dict[str, Path], list[str]]:
+    """→ (相对路径 → 绝对路径, 被排除的相对路径)。排除面显形，不静默。"""
+    files: dict[str, Path] = {}
+    skipped: list[str] = []
+    if not root.is_dir():
+        return files, skipped
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(root).as_posix()
+        if any(part in EXCLUDE_DIRS for part in path.relative_to(root).parts[:-1]):
+            skipped.append(rel)
+            continue
+        if path.suffix.lower() in EXCLUDE_SUFFIXES or path.name in EXCLUDE_NAMES:
+            skipped.append(rel)
+            continue
+        files[rel] = path
+    return files, skipped
+
+
+def digest(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+# 换行形态不算内容（2026-11-05 收尾批）：仓库 `.gitattributes` 把 `*.cmd` / `*.bat`
+# 钉成 `eol=crlf`——blob 在对象库里存 LF，checkout 时写成 CRLF（理由见 .gitattributes：
+# cmd.exe 会把 LF-only 批处理里的注释行当命令执行）。后果是同一份内容在**主检出树**
+# 与 **delegate worktree 检出树**上字节不同，而实例里的副本是历史某次落盘的 LF 形态：
+# 直接比 sha256 会把这种纯换行差判成内容漂移，而且**只在 worktree 里跑才出现**——
+# 门禁读数随运行位置摆动 = 假红。所以文本类后缀先归一 CRLF→LF 再比；真差异照旧判红，
+# 归一后相同的一对**逐条显形打印**（排除面不静默，与 __pycache__ 的处置同纪律）。
+EOL_TEXT_SUFFIXES = {
+    ".md", ".markdown", ".json", ".jsonl", ".py", ".mjs", ".js", ".ts", ".tsx",
+    ".sh", ".cmd", ".bat", ".html", ".css", ".txt", ".yml", ".yaml", ".csv",
+}
+
+
+def same_content(a: Path, b: Path) -> tuple[bool, bool]:
+    """→ (字节相同?, 仅换行形态不同?)。非文本后缀只比字节。"""
+    raw_a, raw_b = a.read_bytes(), b.read_bytes()
+    if raw_a == raw_b:
+        return True, False
+    if (a.suffix.lower() in EOL_TEXT_SUFFIXES and b.suffix.lower() in EOL_TEXT_SUFFIXES):
+        if raw_a.replace(b"\r\n", b"\n") == raw_b.replace(b"\r\n", b"\n"):
+            return False, True
+    return False, False
+
+
+# ── 腿 A：种子自检（CI 可跑，不需要实例）─────────────────────────────────
+
+def count_mandatory_clauses(text: str) -> int:
+    """只数「## Mandatory clauses」节里的编号条款（别处的编号条目不算）。"""
+    head = re.search(r"^##\s+Mandatory clauses.*$", text, re.MULTILINE)
+    if not head:
+        return 0
+    rest = text[head.end():]
+    nxt = re.search(r"^##\s+", rest, re.MULTILINE)
+    section = rest[:nxt.start()] if nxt else rest
+    return len(re.findall(r"^\d+\.\s+\*\*", section, re.MULTILINE))
+
+
+def _first_error_line(out: str) -> str:
+    """从 traceback / 语法错误里挑一行「人读得懂的原因」，而不是整段栈。"""
+    lines = [l for l in out.strip().splitlines() if l.strip()]
+    for line in reversed(lines):
+        if re.match(r"^\s*\w*(Error|Exception)\s*:", line.strip()) or "SyntaxError" in line:
+            return line.strip()
+    for line in lines:
+        if line.startswith('  File "') or line.startswith("line ") or "line " in line[:12]:
+            return line.strip()
+    return lines[-1].strip() if lines else "（无输出）"
+
+
+def validator_smoke(base: Path, label: str) -> list[str]:
+    """校验器**真能跑**吗？→ 失败项列表（空 = 跑起来了）。
+
+    两段，分开报，因为病因不同：
+      ① py_compile —— 抓「文件被写成半截」：语法不通、字符串没闭合、被回退成
+         两个版本拼接。报 File/line，能直接定位。
+      ② 端到端跑一次 —— 抓「函数被引用但没定义」（NameError）、「定义在但实现被
+         截断」这类**语法合法、运行才炸**的半装状态。夹具与规则表正则都看不见它。
+    冒烟 vault 建在临时目录里，不写进种子源树（那是被打进 jar 的资源树）。
+    """
+    failures: list[str] = []
+    checker = base / CHECKER_PATH
+    if not checker.is_file():
+        return failures                      # 缺失已由调用方报过，不重复报
+
+    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+
+    # ① 语法面
+    proc = subprocess.run(
+        [sys.executable, "-B", "-c",
+         "import py_compile,sys;py_compile.compile(sys.argv[1],doraise=True)", str(checker)],
+        capture_output=True, text=True, env=env,
+    )
+    if proc.returncode != 0:
+        out = (proc.stderr or "") + (proc.stdout or "")
+        failures.append(f"[{label}] 校验器**编译不过**（{CHECKER_PATH}）：{_first_error_line(out)}"
+                        "（半装/半写？以种子 canonical 副本为基线逐段移植，别手写补函数）")
+
+    # ② 运行面
+    with tempfile.TemporaryDirectory(prefix="seed-parity-smoke-") as tmp:
+        root = Path(tmp) / "docs"
+        (root / "assets").mkdir(parents=True)
+        (root / "index.md").write_text(SMOKE_DOC, encoding="utf-8")
+        (root / "assets" / "p.png").write_bytes(SMOKE_PNG)
+        proc = subprocess.run(
+            [sys.executable, "-B", str(checker), "--root", str(root)],
+            capture_output=True, text=True, env=env,
+        )
+        out = (proc.stderr or "") + (proc.stdout or "")
+        if "Traceback (most recent call last)" in out:
+            reason = _first_error_line(out)
+            hint = ""
+            if "NameError" in out:
+                name = re.search(r"NameError:\s*(?:name\s+)?'?([\w.]+)'?", out)
+                hint = (f" —— 「{name.group(1)}」被引用但没定义" if name else "") + \
+                       "：某函数/常量所在的那一段没落盘（半装状态），整份校验器不可用"
+            failures.append(f"[{label}] 校验器**跑不起来**（端到端冒烟抛异常）：{reason}{hint}")
+        elif "ERROR:" in out and "未发现任何文档" in out:
+            failures.append(f"[{label}] 校验器**跑不起来**：冒烟 vault 没被识别（--root 语义变了？）")
+        elif proc.returncode not in (0, 1):
+            failures.append(f"[{label}] 校验器**跑不起来**（EXIT {proc.returncode}）："
+                            f"{_first_error_line(out)}")
+        else:
+            m = re.search(r"^\s*合计\s+(\d+)", out, re.MULTILINE)
+            seen = f" · 冒烟 vault 违规 {m.group(1)} 条" if m else ""
+            print(f"  [{label}] 校验器冒烟 OK（编译过 · 端到端 EXIT {proc.returncode}{seen}）")
+    return failures
+
+
+def self_check_one(plugin: str, root: Path, label: str) -> list[str]:
+    """→ 失败项列表（空 = 通过）。只读断言，不改写。"""
+    failures: list[str] = []
+    got_ids: list[str] = []
+    clauses = 0
+    base = root / plugin
+    if not base.is_dir():
+        return [f"[{label}] 插件目录不存在：{base}"]
+
+    checker = base / CHECKER_PATH
+    if not checker.is_file():
+        failures.append(f"[{label}] 缺校验器 {CHECKER_PATH}")
+    else:
+        text = checker.read_text(encoding="utf-8", errors="replace")
+        ids = re.findall(r'^\s*\("(R\d+)"\s*,\s*"([a-z0-9-]+)"', text, re.MULTILINE)
+        got_ids = [i for i, _n in ids]
+        got_names = [n for _i, n in ids]
+        if got_ids != REQUIRED_RULE_IDS:
+            failures.append(f"[{label}] 校验器规则表期望 {REQUIRED_RULE_IDS}，实际 {got_ids}"
+                            "（种子回退到旧条款？）")
+        if got_names != REQUIRED_RULE_NAMES:
+            failures.append(f"[{label}] 校验器规则名期望 {REQUIRED_RULE_NAMES}，实际 {got_names}")
+        if ALLOWLIST_START not in text:
+            failures.append(f"[{label}] 校验器缺允许清单解析面（{ALLOWLIST_START}）")
+        # 文本断言全过 ≠ 校验器能用：真跑一遍（编译 + 端到端冒烟）
+        failures += validator_smoke(base, label)
+
+    skill = base / WD_SKILL_PATH
+    if not skill.is_file():
+        failures.append(f"[{label}] 缺规范 {WD_SKILL_PATH}")
+    else:
+        text = skill.read_text(encoding="utf-8", errors="replace")
+        for sentinel in SKILL_SENTINELS:
+            if sentinel not in text:
+                failures.append(f"[{label}] {WD_SKILL_PATH} 缺批准形态关键词 `{sentinel}`")
+        for marker in (ALLOWLIST_START, ALLOWLIST_END):
+            # 标记块必须各出现恰一次：缺失 = R9 按空清单判定（规则形同虚设）；
+            # 重复 = 块边界歧义（解析取首个匹配，第二块静默失效）
+            if text.count(marker) != 1:
+                failures.append(f"[{label}] {WD_SKILL_PATH} 的允许清单标记 `{marker}` "
+                                f"出现 {text.count(marker)} 次（必须恰 1 次）")
+        for marker in (PLAINWORDS_START, PLAINWORDS_END):
+            # 同一失效模式：R10 的禁词表住在这个标记块里，块没了 ⇒ R10 恒不报
+            if text.count(marker) != 1:
+                failures.append(f"[{label}] {WD_SKILL_PATH} 的禁用词表标记 `{marker}` "
+                                f"出现 {text.count(marker)} 次（必须恰 1 次，否则 R10 恒不报）")
+        clauses = count_mandatory_clauses(text)
+        if clauses < CLAUSES_MIN:
+            failures.append(f"[{label}] {WD_SKILL_PATH} 的「Mandatory clauses」节只数到 {clauses} 条"
+                            f"（< {CLAUSES_MIN}，条款批未落种子）")
+
+    test = base / TEST_PATH
+    if not test.is_file():
+        failures.append(f"[{label}] 缺回归夹具 {TEST_PATH}")
+        return failures
+    # 夹具真跑一遍：例数只许涨不许缩，且必须全绿（未跑 = 未核）
+    # PYTHONDONTWRITEBYTECODE：跑测试不许在**种子源树**里落 __pycache__——那是资源树，
+    # sbt 会把 resources 逐字节打进 jar，缓存进来就变成一份会随解释器版本漂的「规范」。
+    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+    proc = subprocess.run(
+        [sys.executable, "-B", "-m", "unittest", test.stem, "-v"],
+        cwd=str(test.parent), capture_output=True, text=True, env=env,
+    )
+    out = (proc.stderr or "") + (proc.stdout or "")
+    ran = re.search(r"Ran (\d+) tests?", out)
+    if not ran:
+        failures.append(f"[{label}] 夹具未产出运行读数（EXIT {proc.returncode}）：{out.strip()[-400:]}")
+        return failures
+    count = int(ran.group(1))
+    if count < TEST_MIN_CASES:
+        failures.append(f"[{label}] 夹具只跑 {count} 例（下限 {TEST_MIN_CASES}：例数只许涨）")
+    if proc.returncode != 0:
+        tail = out.strip().splitlines()[-12:]
+        failures.append(f"[{label}] 夹具未全绿（EXIT {proc.returncode}）：\n      " + "\n      ".join(tail))
+    else:
+        print(f"  [{label}] 夹具 {count} 例 OK（EXIT 0）· 规则表 {len(got_ids)} 条 · 条款 {clauses} 条")
+        print(f"  [{label}] 指纹 {core_fingerprint(base)}")
+    return failures
+
+
+def core_fingerprint(base: Path) -> str:
+    """三件套的 sha256 指纹（各取前 12 位）——跨批次对账用。
+
+    为什么要有这一行：同一个插件目录可能被**多个批同时写**（2026-11-05 实测：某批
+    把三个实例文件回退到 HEAD，另一批又从自己分支恢复；本批作业期间实例侧的规范
+    文件被别的批改了 143 行）。判断「我读到的是不是我以为的那份」，mtimes 不可信
+    （复制/回滚都会刷新它），字节才可信。两个批各自把自己读到的指纹写进报告，
+    冲突当场现形，不必等到回灌时才发现种子拿到的是别人的半成品。
+    """
+    parts = []
+    for rel in (CHECKER_PATH, TEST_PATH, WD_SKILL_PATH):
+        path = base / rel
+        if path.is_file():
+            parts.append(hashlib.sha256(path.read_bytes()).hexdigest()[:12])
+        else:
+            parts.append("MISSING-----")
+    return " ".join(parts)
+
+
+def self_check(plugins: list[str], seed: Path, inst: Path | None) -> int:
+    print("── 腿 A · 种子自检（批准形态在场？）──")
+    failures: list[str] = []
+    for plugin in plugins:
+        failures += self_check_one(plugin, seed, f"seed:{plugin}")
+        if inst is not None and (inst / plugin).is_dir():
+            failures += self_check_one(plugin, inst, f"instance:{plugin}")
+        elif inst is not None:
+            print(f"  [instance:{plugin}] 不在场 → 跳过（不静默通过：parity 腿会明说 SKIPPED）")
+    if failures:
+        print("\nFAIL（腿 A）——种子/实例的批准形态不完整：")
+        for f in failures:
+            print("  · " + f)
+        return 1
+    print("PASS（腿 A）——种子自带批准后的规范/脚本/测试三件套。")
+    return 0
+
+
+# ── 腿 B：实例 ↔ 种子 逐文件漂移比对 ────────────────────────────────────
+
+def load_ledger() -> dict:
+    if not LEDGER_PATH.is_file():
+        return {"entries": []}
+    try:
+        data = json.loads(LEDGER_PATH.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        print(f"WARN: 台账 {LEDGER_PATH.name} 解析失败（{exc}）——按空台账判定", file=sys.stderr)
+        return {"entries": []}
+    data.setdefault("entries", [])
+    return data
+
+
+def parity_one(plugin: str, inst: Path, seed: Path, ledger: dict, strict: bool) -> int:
+    i_root, s_root = inst / plugin, seed / plugin
+    print(f"\n── 腿 B · {plugin} 实例 ↔ 种子 漂移比对 ──")
+    print(f"  实例 {i_root}\n  种子 {s_root}")
+    if not i_root.is_dir():
+        print("  SKIPPED：实例不在场（本机无该包）——腿 A 已跑，本腿未核。")
+        return 0
+    if not s_root.is_dir():
+        print(f"  FAIL：种子缺该包 {s_root}")
+        return 1
+
+    i_files, i_skip = walk(i_root)
+    s_files, s_skip = walk(s_root)
+    print(f"  扫描面 实例 {len(i_files)} 件 · 种子 {len(s_files)} 件 · "
+          f"排除 {len(i_skip) + len(s_skip)} 件（__pycache__/*.pyc/.DS_Store）")
+
+    planned = {e.get("path"): e for e in ledger.get("entries", [])
+               if not e.get("plugin") or e.get("plugin") == plugin}
+
+    drift: list[tuple[str, str, str]] = []   # (类别, 相对路径, 形态)
+    eol_only: list[str] = []                 # 仅换行形态不同（不计漂移，显形）
+    for rel in sorted(set(i_files) | set(s_files)):
+        cat = category_of(rel)
+        if rel not in i_files:
+            drift.append((cat, rel, "种子有 · 实例无"))
+        elif rel not in s_files:
+            drift.append((cat, rel, "实例有 · 种子无" + (
+                "（新建文件，最需要同步进种子）" if cat != "规范" else "")))
+        else:
+            same, eol = same_content(i_files[rel], s_files[rel])
+            if same:
+                continue
+            if eol:
+                eol_only.append(rel)
+                continue
+            drift.append((cat, rel, "内容不同（另一侧已改动）"))
+
+    known, blocking, stale = [], [], []
+    for cat, rel, form in drift:
+        entry = planned.get(rel)
+        if entry:
+            known.append((cat, rel, form, entry))
+        else:
+            blocking.append((cat, rel, form))
+    present = {rel for _c, rel, _f in drift}
+    for rel, entry in planned.items():
+        if rel not in present:
+            stale.append((rel, entry))
+
+    if not drift:
+        print("  PASS：逐文件一致（规范 / 脚本 / 测试 三类别零漂移）。")
+    if eol_only:
+        print(f"\n  换行形态差异 {len(eol_only)} 件（不计漂移，显形不静默）：")
+        for rel in eol_only:
+            print(f"    [{category_of(rel)}] {rel} — 两侧仅 CRLF/LF 形态不同"
+                  "（`.gitattributes` 的 `eol=crlf` 只影响检出形态，blob 存 LF）")
+    if blocking:
+        print(f"\n  DRIFT {len(blocking)} 件（未登记，判红）：")
+        for cat, rel, form in blocking:
+            print(f"    [{cat}] {rel} — {form}")
+        print("    处置：以批准后的那一侧为准同步另一侧（默认实例 → 种子）；"
+              "确实要等裁定的，登记进台账并写清方向与理由。")
+    if known:
+        print(f"\n  待裁定 {len(known)} 件（台账登记，显形不静默）：")
+        for cat, rel, form, entry in known:
+            print(f"    [{cat}] {rel} — {form}")
+            print(f"       方向 {entry.get('direction', '?')} · 理由 {entry.get('reason', '?')}"
+                  f" · 裁定 {entry.get('ruling', '?')}")
+    if stale:
+        print(f"\n  FAIL：台账陈旧 {len(stale)} 件（登记了但当前不漂移——条目必须删，"
+              "否则台账会烂成基线）：")
+        for rel, entry in stale:
+            print(f"    {rel}（{entry.get('reason', '?')}）")
+
+    red = bool(blocking or stale or (strict and known))
+    if strict and known:
+        print("\n  --strict：待裁定台账命中一并判红（清账验收面）。")
+    print(f"  {'FAIL' if red else 'PASS'}（腿 B）——"
+          f"漂移 {len(drift)} 件（判红 {len(blocking)} · 待裁定 {len(known)} · 陈旧 {len(stale)}）"
+          f" · 换行形态差异 {len(eol_only)} 件（不计漂移）")
+    return 1 if red else 0
+
+
+# ── CLI ─────────────────────────────────────────────────────────────────
+
+def main(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(
+        prog="plugin-seed-parity",
+        description="插件运行实例 ↔ 仓库种子 的规范漂移门禁（腿 A 种子自检 / 腿 B 漂移比对）",
+    )
+    ap.add_argument("--plugin", action="append", default=None,
+                    help=f"插件名（可多次；缺省 {DEFAULT_PLUGINS}）")
+    ap.add_argument("--seed", default=None, help="种子根（缺省 src/main/resources/seed/plugins）")
+    ap.add_argument("--instance", default=None, help="实例根（缺省 <data-root>/plugins）")
+    ap.add_argument("--self-check", action="store_true", help="只跑腿 A（CI 同此形态）")
+    ap.add_argument("--parity", action="store_true", help="只跑腿 B")
+    ap.add_argument("--strict", action="store_true",
+                    help="待裁定台账命中一并判红（清账验收；缺省台账只显形不判红）")
+    args = ap.parse_args(argv)
+
+    plugins = args.plugin or DEFAULT_PLUGINS
+    seed = seed_root(args.seed)
+    if not seed.is_dir():
+        print(f"ERROR: 种子根不存在：{seed}", file=sys.stderr)
+        return 2
+    inst_base = instance_root(args.instance)
+    inst = inst_base if inst_base.is_dir() else None
+
+    run_a = args.self_check or not args.parity
+    run_b = args.parity or not args.self_check
+
+    rc = 0
+    if run_a:
+        rc |= self_check(plugins, seed, inst)
+    if run_b:
+        if inst is None:
+            print("\n── 腿 B · 漂移比对 ──\n  SKIPPED：实例根不存在"
+                  f"（{inst_base}；可用 --instance 指定）。本腿未核，不是通过。")
+        else:
+            ledger = load_ledger()
+            for plugin in plugins:
+                rc |= parity_one(plugin, inst, seed, ledger, args.strict)
+    print(f"\nEXIT {rc}")
+    return rc
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

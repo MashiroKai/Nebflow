@@ -33,6 +33,24 @@ private[gateway] object RegistryRoutes:
           }
         }
 
+      // GET /models/candidates — config-single-source batch (author ruling ③
+      // 2026-11-05): the READABLE candidate plan — "which provider/model will the
+      // next call try, in which order", plus the chain refs that no longer resolve
+      // and the section's warnings. Same computation the request path uses
+      // (`ProviderRegistry.candidatePlan`), so it cannot drift from reality.
+      case req @ GET -> Root / "models" / "candidates" =>
+        withAuth(req) {
+          // provider 并发占坑（provider-concurrency 批，2026-11-06）：追加
+          // `providerConcurrency` 键（assignable[].{providerId,inUse,cap,full} +
+          // totalActors；cap=null=不限）——作者核对「当前每个 provider 的在用
+          // actor 数 / 某个 actor 选中的链首」的读数面。既有键零改。
+          sharedResources.providerRegistry.candidatePlan().flatMap { plan =>
+            sharedResources.providerConcurrencyJson.flatMap { conc =>
+              Ok(plan.deepMerge(Json.obj("providerConcurrency" -> conc)))
+            }
+          }
+        }
+
       // GET /models/capability-tags — list predefined capability tags
       case req @ GET -> Root / "models" / "capability-tags" =>
         withAuth(req) {

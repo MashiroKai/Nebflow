@@ -139,6 +139,21 @@ object AgentEvent:
    */
   case class Cancelled(sessionId: String, reason: String) extends AgentEvent
 
+  /**
+   * 刀一（合并队列重构批 P0）**等待态定时消息**：`ActorContext.scheduleOnce` 到点
+   * 自投的 Tick——等待屏障的兜底计时器由此消息驱动，**不再用 `IO.sleep` 小拍轮询**。
+   *
+   *   - `sessionId`：本监督者辖下的子会话（防错投：处理器只认自己那一个）。
+   *   - `heldSinceMs`：本等待期的起点（墙钟总额腿的判据锚）。
+   *   - `arm`：**臂号**（世代号）。只有等于当前臂号的 Tick 才算数——等待期结束/重臂
+   *     后旧 Tick 变陈旧，处理器直接忽略（`scheduleOnce` 无法撤销，臂号是唯一
+   *     可靠的去陈旧手段）。
+   *   - `snapshot`：武装时刻的 transcript 快照（兜底强制终判时的回落 payload；
+   *     到点仍会先尝试重载最新 transcript）。
+   */
+  case class BgWaitCapTick(sessionId: String, heldSinceMs: Long, arm: Long, snapshot: List[Message] = Nil)
+      extends AgentEvent
+
 /**
  * 冻结原因（v2 冻结式错误恢复，§3.1）：统一「暂停在 dispatch 边界」的语义，
  * reason 决定恢复条件与前端两族视觉（schedule=sapphire 冷色 / 错误族=amber 暖色）。
@@ -163,6 +178,296 @@ enum FreezeReason:
   case WaitingNetwork
 
 end FreezeReason
+
+/**
+ * 冻结的**呈现分类**（冻结态误报批 2026-11-05，作者报障逐字：「mail 给近路命中这会话
+ * 让它恢复工作，它显示已冻结，但是我没有冻结它，而且也没有显示恢复按钮」）。
+ *
+ * `AgentStatus.Frozen` 是**一个**枚举值，却承载两类截然不同的处境：
+ *   ① 系统在等 / 在退避，**马上会自己好**（时间表出窗、LLM/网络退避、供应商探测）；
+ *   ② 引擎停在这里**只能由人决定**（循环检测 L2、delegate 错误冻结、已升级到用户）。
+ * 两者都画成「已冻结」时，用户读到的是「有人替我做了一个决定、现在要我去解」——
+ * 既不知道是谁冻的，也找不到恢复按钮（正是本轮报障的形态）。
+ *
+ * 因此把三条判定轴从状态枚举里分出来：谁停的 / 能不能自己好（autoRecoverable）/
+ * 要不要人（needsHuman）。**单一判定点在本对象**：线包（`AgentStreamEvent.Frozen`
+ * 的 frozen/agentFrozen 帧）、快照（`activeAgentEntryJson`）、工具面（`AgentControl
+ * status`）与控制台徽标/按钮共用同一张表——禁止各面各写一份。
+ */
+enum FreezeKind:
+  /** 系统等待（时间表工作时段）：到点自己恢复。 */
+  case WaitingWindow
+
+  /** 自动恢复中的退避/重试：到期自动续跑，无需人。 */
+  case AutoRecovering
+
+  /** 需要人决策：引擎不会自己恢复。 */
+  case NeedsHuman
+
+  /** 线值（WS 帧 / 快照字段；小写短横线，与既有 reason 词表同规格）。 */
+  def wire: String = this match
+    case FreezeKind.WaitingWindow => "waiting-window"
+    case FreezeKind.AutoRecovering => "auto-recovering"
+    case FreezeKind.NeedsHuman => "needs-human"
+
+end FreezeKind
+
+object FreezeKind:
+
+  def fromWire(w: String): Option[FreezeKind] = Option(w).getOrElse("").trim match
+    case "waiting-window" => Some(FreezeKind.WaitingWindow)
+    case "auto-recovering" => Some(FreezeKind.AutoRecovering)
+    case "needs-human" => Some(FreezeKind.NeedsHuman)
+    case _ => None
+
+/**
+ * 一次冻结的呈现判定结果（纯数据；`FreezeDisplay.of` / `FreezeDisplay.ofWire` 是唯一
+ * 构造点）。labelZh/labelEn = 面向用户的一句话（停在哪 + 在等什么，**不含**「已冻结」
+ * 除非确实需要人）；hintZh/hintEn = 需要人时该做什么（不需要人 = 空串——不许给不存在
+ * 的动作指路）。
+ */
+case class FreezeDisplay(
+  kind: FreezeKind,
+  reasonWire: String,
+  needsHuman: Boolean,
+  autoRecoverable: Boolean,
+  labelZh: String,
+  labelEn: String,
+  hintZh: String,
+  hintEn: String
+)
+
+object FreezeDisplay:
+
+  /**
+   * 「自动恢复」承诺的最长时限（默认 24h）：`resumeAt` 超过它而 reason 仍是错误族，
+   * 说明这条冻结事实上**不会自己好**（Loop 族 resumeAt = +1 年），此时按需人工呈现。
+   * 判词诚实铁律：宁可说「不会自动恢复」，也不许把长停说成「马上重试」。
+   */
+  val AutoClaimHorizonMs: Long = 24L * 3600L * 1000L
+
+  /** 需人介入时的统一动作说明（三个真实出口：唤醒续跑 / 断点重启 / 取消任务）。 */
+  val ManualHintZh: String = "引擎不会自动续跑：唤醒它接着做、或让它从断点重启、或取消任务"
+
+  val ManualHintEn: String =
+    "the engine will NOT resume it on its own — wake it to continue, restart it from the checkpoint, or cancel the task"
+
+  /**
+   * **基础设施故障冻结**（provider 故障族）的动作说明（2026-11-05 10:36 作者令逐字：
+   * 「不论是节点还是delegate，由于provider 故障，都不需要向上通知，冻结等待恢复就行。
+   * 然后在面板显示，这个是需要用户去处理的，我们引擎要做的就行检测恢复了能接着工作。
+   * 所以不需要向上汇报。因为provider 故障上级也基本死了，汇报给上级没用。」）：
+   * 引擎**自己**探测供应商可用性并在恢复后续跑（同一会话、续在检查点、次数上限 +
+   * 递增间隔），所以这一族**不再**说「引擎不会自动续跑」（那句话只对 `loop` 这类
+   * 确定性死循环成立）；人也随时可以点「唤醒」立即续跑。
+   */
+  val InfraHintZh: String =
+    "供应商恢复后引擎会自动续跑（同一会话、续在检查点，已完成的不重做，有次数上限与递增间隔）；" +
+      "也可以现在就点「唤醒」让它接着做"
+
+  val InfraHintEn: String =
+    "the engine resumes it on its own once a provider is serving again (same session, from the checkpoint, " +
+      "finished work is not redone, capped attempts with growing gaps) — or wake it now"
+
+  /** provider 故障族（基础设施故障，非任务失败）的 delegate 冻结原因码。 */
+  val InfraReasonCodes: Set[String] = Set("llm-failure", "cancelled-by-quota")
+
+  /** 该 delegate 冻结原因码是否属 provider 故障族（基础设施故障，不是任务失败）。 */
+  def isInfraReasonCode(code: String): Boolean = InfraReasonCodes.contains(Option(code).getOrElse("").trim)
+
+  /**
+   * `delegate-frozen:<reason>` 线值的中文短名。与
+   * `nebflow.core.delegate.DelegateFreeze.reasonLabelZh` 同词（本件在 actor 层，
+   * 分层门禁不许 actor 依赖 core.delegate ⇒ 这张 4 词表在此显式镜像；改词先改
+   * core 侧正文，此处同步）。
+   */
+  private val DelegateReasonLabels: Map[String, String] = Map(
+    "llm-failure" -> "模型层故障",
+    "tool-failure" -> "工具层故障",
+    "engine-fault" -> "引擎侧故障",
+    "cancelled-by-quota" -> "配额耗尽取消"
+  )
+
+  private def auto(
+    reasonWire: String,
+    labelZh: String,
+    labelEn: String,
+    farFuture: Boolean
+  ): FreezeDisplay =
+    if farFuture then
+      FreezeDisplay(
+        kind = FreezeKind.NeedsHuman,
+        reasonWire = reasonWire,
+        needsHuman = true,
+        autoRecoverable = false,
+        labelZh = s"已暂停 · $labelZh（超过自动恢复时限，不会自己好）",
+        labelEn = s"Paused — $labelEn (past the auto-recovery horizon)",
+        hintZh = ManualHintZh,
+        hintEn = ManualHintEn
+      )
+    else
+      FreezeDisplay(
+        kind = FreezeKind.AutoRecovering,
+        reasonWire = reasonWire,
+        needsHuman = false,
+        autoRecoverable = true,
+        labelZh = labelZh,
+        labelEn = labelEn,
+        hintZh = "",
+        hintEn = ""
+      )
+
+  /**
+   * 冻结原因 + 退避时刻 + 升级链 → 呈现判定（纯函数，单测判红锚 = `FreezeDisplaySpec`）。
+   *
+   * 覆盖规则（按优先级）：
+   *   ① `escalation.escalateAt <= 0` = 已升级到用户终态（「用户是最终仲裁」）⇒ 需人，
+   *      与错误族自动性无关：引擎已经停下等人。
+   *   ② 错误族 `resumeAt` 超过 `AutoClaimHorizonMs` ⇒ 需人（不会自己好）。
+   *   ③ 其余按 reason 表（下表即「状态判定表」的执行面）。
+   */
+  def of(
+    reason: FreezeReason,
+    resumeAt: Option[Long] = None,
+    escalation: Option[EscalationInfo] = None,
+    now: Long = System.currentTimeMillis()
+  ): FreezeDisplay =
+    val farFuture = resumeAt.exists(t => t - now > AutoClaimHorizonMs)
+    val userArbiter = escalation.exists(_.escalateAt <= 0)
+    val base = reason match
+      case FreezeReason.Schedule =>
+        FreezeDisplay(
+          FreezeKind.WaitingWindow,
+          "schedule",
+          needsHuman = false,
+          autoRecoverable = true,
+          "等待工作时段",
+          "Waiting for the work window",
+          "",
+          ""
+        )
+      case FreezeReason.LlmTransient =>
+        auto("llm-transient", "自动重试中（模型层故障）", "Auto-retrying (LLM-layer failure)", farFuture)
+      case FreezeReason.Network =>
+        auto("network", "自动重试中（网络抖动）", "Auto-retrying (network blip)", farFuture)
+      case FreezeReason.ProviderDown =>
+        auto("provider-down", "自动重试中（供应商不可用）", "Auto-retrying (all providers down)", farFuture)
+      case FreezeReason.RestartRecovery =>
+        auto("restart-recovery", "断点续跑中", "Resuming from the checkpoint", farFuture)
+      case FreezeReason.WaitingNetwork =>
+        auto("waiting-network", "等待网络/供应商恢复", "Waiting for the network/provider to come back", farFuture)
+      case FreezeReason.Loop =>
+        FreezeDisplay(
+          FreezeKind.NeedsHuman,
+          "loop",
+          needsHuman = true,
+          autoRecoverable = false,
+          "已暂停 · 循环检测（需你决定）",
+          "Paused — loop guard tripped (needs your decision)",
+          ManualHintZh,
+          ManualHintEn
+        )
+    if userArbiter && base.kind != FreezeKind.NeedsHuman then
+      base.copy(
+        kind = FreezeKind.NeedsHuman,
+        needsHuman = true,
+        autoRecoverable = false,
+        labelZh = s"${base.labelZh}（已升级到人，需你决定）",
+        labelEn = s"${base.labelEn} (escalated to a human — needs your decision)",
+        hintZh = ManualHintZh,
+        hintEn = ManualHintEn
+      )
+    else base
+
+  end of
+
+  /**
+   * 线值（`AgentRecord.frozenReason` / `DelegateRegistry.Record.frozenReason`）→ 呈现
+   * 判定。快照/工具面只有线值、没有 `FreezeReason` 对象，是这条腿的唯一入口。
+   * 未知/空线值**不承诺自动恢复**（冻结着却记不下原因 ⇒ 只能人去确认）。
+   */
+  def ofWire(wire: String, resumeAt: Option[Long] = None, now: Long = System.currentTimeMillis()): FreezeDisplay =
+    val w = Option(wire).getOrElse("").trim
+    if w.startsWith("delegate-frozen") then
+      val code = w.stripPrefix("delegate-frozen").stripPrefix(":")
+      val label = DelegateReasonLabels.getOrElse(code, if code.isEmpty then "原因未记录" else code)
+      // provider 故障族（2026-11-05 10:36 作者令）：provider 故障 = **基础设施故障**，
+      // 不是任务失败 ⇒ 不向上汇报、面板标「待你处理」、但引擎自己探测恢复后续跑。
+      // 因此这一族 `autoRecoverable=true`（`kind` 保持 NeedsHuman 只为面板措辞与
+      // 「唤醒」入口在场；耗 supervisor 重启预算的 RestartAgent 腿对它一律不提供——
+      // 唤醒走带 clientMessageId 的 UserInput 幂等腿）。
+      if isInfraReasonCode(code) then
+        FreezeDisplay(
+          FreezeKind.NeedsHuman,
+          w,
+          needsHuman = true,
+          autoRecoverable = true,
+          s"已冻结 · $label（待你处理 · 供应商恢复后自动续跑）",
+          s"Frozen — $label (waiting for you · auto-resumes when a provider is back)",
+          InfraHintZh,
+          InfraHintEn
+        )
+      else
+        FreezeDisplay(
+          FreezeKind.NeedsHuman,
+          w,
+          needsHuman = true,
+          autoRecoverable = false,
+          s"已冻结 · $label（需唤醒）",
+          s"Frozen — $label (needs a wake)",
+          ManualHintZh,
+          ManualHintEn
+        )
+    else
+      w match
+        case "schedule" => of(FreezeReason.Schedule, resumeAt, None, now)
+        case "llm-transient" => of(FreezeReason.LlmTransient, resumeAt, None, now)
+        case "network" => of(FreezeReason.Network, resumeAt, None, now)
+        case "provider-down" => of(FreezeReason.ProviderDown, resumeAt, None, now)
+        case "restart-recovery" => of(FreezeReason.RestartRecovery, resumeAt, None, now)
+        case "waiting-network" => of(FreezeReason.WaitingNetwork, resumeAt, None, now)
+        case "loop" => of(FreezeReason.Loop, resumeAt, None, now)
+        case other =>
+          FreezeDisplay(
+            FreezeKind.NeedsHuman,
+            if other.isEmpty then "unknown" else other,
+            needsHuman = true,
+            autoRecoverable = false,
+            "已冻结 · 原因未记录（需人工确认）",
+            "Frozen — reason not recorded (needs a human check)",
+            ManualHintZh,
+            ManualHintEn
+          )
+
+    end if
+
+  end ofWire
+
+  /** 该线值是否需要人给动作（delegateWake 等恢复入口的判据单点）。 */
+  def needsHumanWire(wire: String, resumeAt: Option[Long] = None): Boolean =
+    ofWire(wire, resumeAt).needsHuman
+
+  /**
+   * 状态迁移日志的 detail 正文（**格式单点**，单测判红锚）：一行说清「谁在什么条件
+   * 下把会话置成了什么」，例如本次报障那条：
+   * `running->frozen kind=needs-human needsHuman=true autoRecoverable=false reason=loop
+   *  by=loop-guard resumeAt=in31536000000ms`
+   * 由 `AgentFrozen.logFreezeTransition` 逐字写出（event=freeze-state），恢复腿同款
+   * （`frozen->running … by=user-wake`）。
+   */
+  def transitionDetail(
+    from: String,
+    to: String,
+    fd: FreezeDisplay,
+    by: String,
+    resumeAt: Option[Long],
+    now: Long
+  ): String =
+    val eta = resumeAt.map(t => s"in${math.max(0L, t - now)}ms").getOrElse("-")
+    s"$from->$to kind=${fd.kind.wire} needsHuman=${fd.needsHuman} autoRecoverable=${fd.autoRecoverable} " +
+      s"reason=${fd.reasonWire} by=$by resumeAt=$eta"
+
+end FreezeDisplay
 
 /**
  * 升级链状态（v2 §5.2）：同 reason 连续冻结 ≥3 次进入——挂 AgentRecord（P0 内存态）。
@@ -472,7 +777,7 @@ enum AgentStreamEvent:
         val withDetail = detail.fold(withReason)(d => withReason.deepMerge(Json.obj("detail" -> d.asJson)))
         val withRetry =
           if retryCount > 0 then withDetail.deepMerge(Json.obj("retryCount" -> retryCount.asJson)) else withDetail
-        escalation.fold(withRetry)(e =>
+        val withEscalation = escalation.fold(withRetry)(e =>
           withRetry.deepMerge(
             Json.obj(
               "escalation" -> Json.obj(
@@ -481,6 +786,18 @@ enum AgentStreamEvent:
                 "awaitedParentSessionId" -> e.awaitedParentSessionId.asJson
               )
             )
+          )
+        )
+        // 冻结态诚实呈现批（2026-11-05）：呈现分类随帧出——控制台据此决定「显示
+        // 自动重试中（无按钮）」还是「需人工（给恢复按钮）」，不再从 reason 猜。
+        // 三个字段并列：freezeKind（线值）/ needsHuman / autoRecoverable；判定单点 =
+        // FreezeDisplay.of（同批件），此处只投影。
+        val fd = FreezeDisplay.of(reason, resumeAtMillis, escalation)
+        withEscalation.deepMerge(
+          Json.obj(
+            "freezeKind" -> fd.kind.wire.asJson,
+            "needsHuman" -> fd.needsHuman.asJson,
+            "autoRecoverable" -> fd.autoRecoverable.asJson
           )
         )
       case Resumed(nextChangeAt) =>

@@ -30,8 +30,15 @@ class SeedPluginDeletionMarkerSpec extends FunSuite:
   private var prevRoot: os.Path = os.Path("/tmp")
   private var home: os.Path = os.Path("/tmp")
 
-  /** 默认集里的一个具体插件（原 #105 生产实例 nebflow-plugin-creator 已并入 stand-dev，2026-10-31 合并批换锚）。 */
-  private val Target = "stand-dev"
+  /**
+   * 默认集里的一个具体插件。
+   *
+   * 史：原 #105 生产实例 `nebflow-plugin-creator` → 2026-10-31 合并批换锚 `stand-dev`
+   * → **2026-11-01 源化批再换锚** `document-production`：`stand-dev` 已迁出 seed 树
+   * （自研插件走远端源，见 `PluginSourceCatalog` / `PluginSourceSync`），不再属于
+   * 「种子自愈面」，本 spec 的墓碑语义只对**仍在 seed 里的默认集包**成立。
+   */
+  private val Target = "document-production"
 
   override def beforeAll(): Unit =
     prevRoot = PathUtil.dataRoot
@@ -173,10 +180,11 @@ class SeedPluginDeletionMarkerSpec extends FunSuite:
 
     assert(!userRemoved.contains(Target), "③ 标记被清（依据信号 = <root>/plugins/<name> 再次存在）")
     assert(seen.contains(Target), "③ 台账回到「在位」态")
-    // 内容面（2026-10-31 stand-dev 合并批合同）：Target = stand-dev，非 `nebflow-` 保留前缀
+    // 内容面：Target = document-production（2026-11-01 源化批换锚），非 `nebflow-` 保留前缀
     // 包——手动装回 + 用户附件的形态按「用户版本保留」语义处理（无信任记录 ⇒ 种子不覆盖），
-    // 原 nebflow-plugin-creator 时代的「官方包镜像回出厂树」断言随该包并入 stand-dev 而
-    // 退役（官方 namespace 现无出厂包，见 SeedPluginReconcileSpec ②b 替代锁）。
+    // 原 nebflow-plugin-creator 时代的「官方包镜像回出厂树」断言随该包并入 stand-dev、
+    // 又随 stand-dev 迁出 seed 而两度失效（官方 namespace 现无出厂包，见
+    // SeedPluginReconcileSpec ②b 替代锁）。
     assertEquals(treeAsText(pluginDir(Target)), before, "③ 非保留名包：手动装回的用户版本保留（内容零改写）")
     assert(os.exists(pluginDir(Target) / "USER-NOTES.md"), "③ 用户附件仍在位")
 

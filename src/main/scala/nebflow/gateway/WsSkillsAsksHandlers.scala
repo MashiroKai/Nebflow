@@ -12,7 +12,6 @@ import nebflow.actor.ActorSystem as RootActorSystem
 import nebflow.agent.*
 import nebflow.core.*
 import nebflow.core.entity.EntityLoader
-import nebflow.core.flow.{FlowTreeActor, FlowTreeRegistry, TeamSessionRegistry}
 import nebflow.core.mcp.McpManager
 import nebflow.core.project.{CancelSource as ChainCancelSource, *}
 import nebflow.core.schedule.FreezeSchedule.given
@@ -134,17 +133,25 @@ private[gateway] object WsSkillsAsksHandlers:
     if skillName.nonEmpty && skillSessionId.nonEmpty then
       // Persist user message and skill activation system bubble to session history,
       // so they survive session switching (frontend rebuilds DOM from backend history).
-      sharedResources.sessionStore.appendUiMessages(
-        skillSessionId,
-        List(
-          UiMessage.User(skillInput, timestamp = System.currentTimeMillis()),
-          UiMessage.System(
-            s"Using skill: $skillName",
-            Some("slash.skillActivated"),
-            Some(io.circe.Json.obj("skillName" -> skillName.asJson))
+      // tool-card-leak-on-reload 批（2026-11-02）：与 dispatchUserText 同一落盘判据
+      // —— 回合进行中发的 skill 激活同样是「同一引擎回合内的插话」，落 midTurn=true
+      // 才能让回放折叠把它归入同一段（缺席即不落键 ⇒ 空闲态字节形态不变）。
+      sharedResources.agentRegistry.get
+        .map(reg => Option.when(reg.get(skillSessionId).exists(_.status == nebflow.actor.AgentStatus.Processing))(true))
+        .handleErrorWith(_ => IO.pure(None))
+        .flatMap { midTurn =>
+          sharedResources.sessionStore.appendUiMessages(
+            skillSessionId,
+            List(
+              UiMessage.User(skillInput, timestamp = System.currentTimeMillis(), midTurn = midTurn),
+              UiMessage.System(
+                s"Using skill: $skillName",
+                Some("slash.skillActivated"),
+                Some(io.circe.Json.obj("skillName" -> skillName.asJson))
+              )
+            )
           )
-        )
-      ) *>
+        } *>
         executeSkill(skillName, skillInput, skillSessionId, wsSend).handleErrorWith { e =>
           logger.warn(s"Skill '$skillName' failed for session $skillSessionId: ${e.getMessage}")
           wsSend(

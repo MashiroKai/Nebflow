@@ -10,7 +10,7 @@ import cats.effect.{IO, Ref}
 import io.circe.parser.parse
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import munit.FunSuite
+import munit.{AfterEach, FunSuite}
 import nebflow.actor.{
   ActorSystem as NebActorSystem,
   AgentCommand,
@@ -45,9 +45,15 @@ class DeviceMailSpec extends FunSuite:
   PathUtil.setDataRoot(tempRoot)
 
   override def beforeEach(context: BeforeEach): Unit =
+    // seal 批（2026-11-03）：本 spec 的 ⑥/⑦ 判「15s 超时腿在场时的行为」，而封存默认
+    // 不挂该腿 ⇒ 逐用例复活、用例后清干净（并行关闭，套件间零残留）。
+    nebflow.core.boot.ProcessSealProps.enableMail()
     DeviceMailInbox.resetForTest()
     if os.exists(tempRoot) then os.remove.all(tempRoot)
     os.makeDir.all(tempRoot)
+
+  override def afterEach(context: AfterEach): Unit =
+    nebflow.core.boot.ProcessSealProps.clearAll()
 
   /** 契约原文（**逐字**引用任务书冻结文本；本批禁改）。 */
   private val contractPayloadText =
@@ -361,6 +367,8 @@ class DeviceMailSpec extends FunSuite:
       // （新增末位 `project`，main 侧 device-mail 批新增本 spec 时该批尚未落基线）。
       // notifypack 解 b 批（2026-09-23）：末位再 +1（`windowItems`，逐字忽略——device-mail
       // 腿恒非窗冲刷件，字段恒 `None`）。
+      // P3 磁盘邮箱批（2026-11-05）：末位再 +1（`clientMessageId`，本腿恒 `None`——
+      // device-mail 是服务端注入，无客户端幂等键）。
       case AgentCommand.ImmediateInput(
             text,
             _,
@@ -371,8 +379,9 @@ class DeviceMailSpec extends FunSuite:
             _,
             fromUser,
             _,
+            _,
             _
-          ) => // W1 shim: +1 slot (windowItems, notifypack-b)
+          ) => // W1 shim: +2 slots (windowItems, notifypack-b; clientMessageId, P3-mailbox)
         assertEquals(text, "[DEVICE-MAIL · from KAI-MBP]\nhello B")
         assertEquals(source, Some(DeviceMail.SourceDeviceMail))
         assertEquals(eventType, Some(DeviceMail.EventTypeInfo))

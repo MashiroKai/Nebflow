@@ -152,7 +152,7 @@ async function aiFrameStats(page) {
 }
 
 test.describe('A1 — 工具运行期单行 badge 行（Spinner → 打勾 → 翻动切换）', () => {
-  test('spinner + tool name on one line; check on done; switch fades the outgoing item to the next tool', async ({ browser }) => {
+  test('spinner + tool name on one line; check on done; the switch is a hard cut to the next tool', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
 
     await page.evaluate(() => window.__toolRun());
@@ -285,37 +285,47 @@ test.describe('A1 — 工具运行期单行 badge 行（Spinner → 打勾 → �
       };
     }, { textA: TOOL_A_TEXT, textB: TOOL_B_TEXT });
     expect(switchRead, 'the switch was traceable').not.toBeNull();
-    expect(switchRead.mid.running, 'the switch is an animation, not an instant swap').toBeGreaterThan(1);
+    // ── 作者令变更（2026-11-05 20:28，工具行定形批）───────────────────────────
+    // 「不要有这个模糊的效果，就是直接按 工具名 参数，来显示，工具名保持不动」
+    // ⇒ 工具→工具的切换由「旧项淡出 300ms → 100ms 空拍 → 新项淡入」改为**硬切**：
+    //   入场项同一帧全不透明（无渐显可延迟），故出场项必须同步摘除（否则两项在
+    //   同一个 18px 槽里叠成一片 = 作者看到的那团「糊」）。
+    //   下面三段断言整组反向，唯一收紧的是「绝不双曝」（bothFrames === 0，保留原值）：
+    //     旧：mid.running > 1（切换是动画）/ sawRunning === true /
+    //         minConnectedOpa < 0.4（旧项淡出）/ tIn ≥ tOut + 100（空拍）
+    //     新：切换期零入场动画 / 旧项在场上**不**变淡（同步摘除）/
+    //         新旧同帧交接（tIn ≤ tOut + 一帧）
+    //   判据与批报告同源：改前实测 bothFrames=25（双曝），改后 0。
     expect(switchRead.mid.labels.join(' '), 'the next tool is named on the line').toContain(TOOL_B_TEXT);
 
     const exit = switchRead.exit;
     expect(exit.frames, 'the exit was sampled over multiple animation frames').toBeGreaterThan(3);
-    expect(exit.sawRunning, 'the outgoing item animates on its way out (it does not just vanish)').toBe(true);
-    // UI-C (2026-10-03): the exit is a PURE-TEXT fade — the leaving item's
-    // opacity actually falls while it is still connected. A still item that is
-    // then detached would read minConnectedOpa ≈ startOpa (≈1); a fade reads
-    // it near 0. Vertical motion is NOT required any more (the retired layer
-    // rolled the item; the current layer fades it).
-    expect(exit.minConnectedOpa,
-      `the outgoing item FADES OUT on its way out (opacity ${exit.startOpa} → ${exit.minConnectedOpa} while still on screen)`)
-      .toBeLessThan(0.4);
+    // 硬切：出场项不走 `.is-out`（不做透明度动画），它只是被摘除。
+    expect(exit.sawRunning, 'the outgoing item does NOT animate on its way out (hard cut, 作者令②)').toBe(false);
+    // 旧读数是 fade 证词（minConnectedOpa ≈ 0）。硬切下它在**整个连接期**都保持
+    // 不透明、随后消失，故读数≈startOpa。
+    // 硬切读数的正确形状：切换提交后的**第一帧**，出场项已经不在 DOM 里
+    // （`startOpa` 读的是「连接中才取 opacity」，故 0 = 已摘除；淡出旧契约下同一
+    // 读数 ≈1）。`minConnectedOpa` 因此恒等 0，不再作为证词使用。
+    expect(exit.startOpa,
+      'the outgoing item is already detached on the frame the switch commits (hard cut, no fade window)').toBe(0);
 
-    // No double exposure: the two items must never be legible at once, and the
-    // old one must be gone before the new one arrives (the demo's hard switch
-    // reads as a visible gap, not a cross-fade). This is the round-2 criterion
-    // the frame trace above exists to catch.
+    // No double exposure — the ORIGINAL invariant, kept at its original value:
+    // the two slot items must never be legible at the same instant. Under the
+    // retired choreography it was met by an empty beat; under the hard cut it is
+    // met by removing the outgoing item in the SAME frame the new one becomes
+    // opaque (改前实测 25 帧双曝 → 改后 0）。
     expect(switchRead.cross.bothFrames,
       'the two slot items are never simultaneously visible (no cross-fade)').toBe(0);
     expect(switchRead.cross.peakOverlap,
       'the leaving and entering labels never overlap on screen').toBe(0);
-    // Ordering, not frame count (rAF-rate independent): the leaving item is
-    // fully gone BEFORE the entering one starts to appear. Under a cross-fade
-    // both edges land at ~0ms — the entering item is already up while the
-    // leaving one is still fading, so the gap between the two edges collapses.
+    // 交接时序（作者令：硬切，不再有「旧出 → 空拍 → 新入」）：
+    //   旧契约：tIn ≥ tOut + 100（100ms 空拍是剧场的一部分）
+    //   新契约：新旧同帧交接，tIn 不得超过 tOut 一帧以上（rAF 抖动留 34ms）
     expect(switchRead.cross.tOut, 'the leaving item is observed going invisible').not.toBeNull();
     expect(switchRead.cross.tIn,
-      'the entering item is held back until the leaving item has gone').toBeGreaterThanOrEqual(
-      switchRead.cross.tOut + 100);
+      'the entering item appears in the same frame the leaving one goes (no empty beat)')
+      .toBeLessThanOrEqual(switchRead.cross.tOut + 34);
 
     // Settled: the outgoing item is gone; only the new tool owns the line.
     await page.waitForTimeout(600);
@@ -699,8 +709,13 @@ test.describe('A6 — 思考单行流式（zcode-484）', () => {
       `the label box never grew a second row (saw ${JSON.stringify(read.distinctLabelH)})`).toBe(1);
     expect(read.last.labelScrollW, 'the label overflows its box (clipped, not shrunk)')
       .toBeGreaterThan(read.last.labelClientW);
+    // 反向（作者令 2026-11-05 20:28「不要有这个模糊的效果」）：旧契约要求工具名
+    // 也带思考行那种**尾缘渐隐**（tail 锚 + 左缘 mask）。该渐隐正是作者说的「糊」的
+    // 一半 —— 文字从半透明往右爬到清晰。本批随 pinTail 一并撤除：工具名是固定的
+    // 主语，参数是流式的宾语，两者都不做渐隐。断言因此从 `not.toBe('none')` 反转为
+    // `toBe('none')`，并同批收紧为「工具名与参数都不带 mask」。
     expect(read.last.labelMaskImage,
-      `the tool label carries the same tail fade (was: ${read.last.labelMaskImage})`).not.toBe('none');
+      `the tool label carries NO tail fade (作者令②；读过 ${read.last.labelMaskImage})`).toBe('none');
     // The completion face lands on that same single row.
     expect(read.done, 'the completed face was readable').not.toBeNull();
     expect(read.done.slotH, 'the check face is still one row').toBe(read.maxSlotH);

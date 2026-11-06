@@ -7,6 +7,12 @@
    token（--color-* / --glass-* / --sapphire / --status-* / --dur-*），运行
    时以客户端为单源；改值先改客户端，再回填本文件。--dl-* 前缀供独立
    场景（HTML 卡、demo 页）整包引用。
+
+   ⚠ 取值与 `web/css/design-system.css` 的 `--ds-*` 槽位对齐（值重定批
+   2026-11-03）：同一档在两处必须同值，本文件按 `--dl-*` 账本命名族
+   （--dl-r-* / --dl-sp-* / --dl-dur-*）承载，客户端按 `--ds-*` 承载；
+   任一侧改值必须同批对齐另一侧。**不采纳项不进本文件**——账本是分流后的
+   结果，不是草案全集（参考系四家的不采档见客户端 CSS 的注释与批文档）。
    ═══════════════════════════════════════════════════════════════════════ */
 
 :root {
@@ -34,8 +40,11 @@
   --dl-border-light: #eeeff1;     /* 行分隔 */
 
   /* ── ① 配色 · 玻璃 ── */
-  --dl-glass-bg: rgba(255, 255, 255, 0.55);   /* 面板底 + blur(24px) saturate(1.15) */
-  --dl-glass-blur: 24px;
+  /* 玻璃 = 全站唯一毛玻璃标准（不透明但承接背景色；见 SKILL.md §1.5）。
+     α 决定透多少色、blur 决定剩多少内容 —— 内容隐身靠 blur，不要靠加 α。 */
+  --dl-glass-bg: rgba(255, 255, 255, 0.55);   /* 面板底（α .55 = 全站唯一玻璃底亮档） */
+  --dl-glass-blur: 40px;                      /* 唯一模糊半径（机检下限 32px） */
+  --dl-glass-saturate: 1.4;                   /* 唯一饱和度（机检下限 1.3） */
   --dl-etched-bg: rgba(0, 0, 0, 0.025);       /* 输入/嵌入面 */
   --dl-etched-border: rgba(91, 127, 191, 0.10);
   --dl-overlay: transparent;                  /* 弹窗背层恒透明。反例：暗化/模糊背层 */
@@ -44,30 +53,49 @@
   --dl-font-ui: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif; /* 官网同栈 */
   --dl-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
-  /* ── ② 字号阶梯（5 档；场景表见 SKILL.md §2） ── */
+  /* ── ② 字号阶梯（5 档 + 2 档吸收；场景表见 SKILL.md §2；与 --ds-fs-* 同值） ── */
+  --dl-fs-title-lg: 28px; /* 大标题档（= 手机层 --mfs-title 28；--ds-fs-title-lg） */
+  --dl-fs-display: 20px;  /* 页面级大标题，600，-0.01em */
+  --dl-fs-lead: 17px;     /* Apple body 17 引导档（--ds-fs-lead） */
   --dl-fs-title: 15px;    /* 面板标题/卡片问题行，600 */
   --dl-fs-body: 13px;     /* 正文/标签/输入/选项，400 */
   --dl-fs-btn: 12px;      /* 按钮，500 */
   --dl-fs-hint: 12px;     /* hint/caption，400。反例：10px+opacity.6 */
   --dl-fs-meta: 11px;     /* meta/徽标/小节标签，400-600。反例：10px */
-  --dl-fs-display: 20px;  /* 页面级大标题，600，-0.01em */
+  /* 档外具名槽补登（design-scale-batch 2026-11-04）：以下 7 槽此前只在运行时
+     --ds-fs-* 出生、账本缺行 ⇒ 账本与运行时对位出现缺口。按 2026-11-03 值重定批
+     「同名同值、任一侧改值同批对齐」纪律补登，值为运行时现盘读数逐字（不改值）。 */
+  --dl-fs-bubble: 14.5px;         /* 主对话气泡（= --ds-fs-bubble；2026-09-12 裁定档） */
+  --dl-fs-row: 13.5px;            /* 侧栏会话行主文案（= --ds-fs-row） */
+  --dl-fs-subtitle: 14px;         /* 次标题/次级正文（= --ds-fs-subtitle；原 capsule+card-body 同值合并） */
+  --dl-fs-card-hero: 21px;        /* 过渡卡主标题（= --ds-fs-card-hero） */
+  --dl-fs-mobile-sub: 15px;       /* 手机次正文（= --ds-fs-mobile-sub） */
+  --dl-fs-mobile-callout: 16px;   /* 手机正文/输入件（= --ds-fs-mobile-callout） */
+  --dl-fs-callout: 16px;          /* 桌面语境 16px（= --ds-fs-callout；与 mobile 槽同值异域） */
+  --dl-fs-glyph: 8px;             /* 图标盒字形（= --ds-fs-glyph；禁作正文） */
 
-  /* ── ③ 行高/字距 ── */
+  /* ── ③ 行高/字距（与 --ds-lh-* / --ds-ls-* 同值） ── */
   --dl-lh-body: 1.5;            /* 聊天/选项 1.55 */
+  --dl-lh-std: 1.45;            /* 长文段落档（Apple body 1.47 中文微调） */
   --dl-lh-title: 1.3;
+  --dl-lh-tight: 1;             /* 单行控件/图标行 */
   --dl-ls-label: 0.5px;         /* 11px uppercase 小节标签 */
-  --dl-ls-display: -0.01em;     /* ≥20px 标题；正文恒 0 */
+  --dl-ls-display: -0.01em;     /* ≥20px 标题；正文档恒 normal（Carbon 正字距不采） */
+  --dl-ls-caps: 0.08em;         /* 仅拉丁/数字大写微标位（SpaceX 正字距）；中文一律 normal */
 
-  /* ── ④ 圆角阶梯（8 档） ── */
+  /* ── ④ 圆角阶梯（8 档；与 --ds-radius-* 同值） ── */
   --dl-r-badge: 4px;    /* 徽标 pill */
   --dl-r-chip: 6px;     /* 图标钮/小 chip */
   --dl-r-input: 8px;    /* 输入 + 面板档按钮。反例：5px 按钮 */
   --dl-r-button: 10px;  /* 对话档按钮（发送族裁定值）/列表行面 */
+  --dl-r-xl: 12px;      /* 条状容器档 */
   --dl-r-card-sm: 10px; /* 行卡 */
   --dl-r-card-md: 14px; /* 面板内卡 */
   --dl-r-card-lg: 16px; /* 聊天浮层卡 */
+  --dl-r-2xl: 18px;     /* 大卡/工具卡档（Apple rounded.lg） */
   --dl-r-shell: 20px;   /* 弹窗外壳（全站唯一弹窗圆角） */
   --dl-r-pill: 999px;
+  --dl-r-thin: 2px;     /* 细件例外槽：滚动条拇指/进度条/微圆点（禁他处复用） */
 
   /* ── ④ 阴影三族 ── */
   --dl-shadow-panel:
@@ -81,22 +109,52 @@
     0 2px 8px rgba(0, 0, 0, 0.04);             /* 玻璃控件（与 --glass-control-* 同构成） */
   --dl-shadow-flat: none;                      /* 平面卡：1px hairline 承担边界 */
 
-  /* ── ⑤ 间距栅格（合法值 4/8/12/16/20/24/32） ── */
+  /* ── ⑤ 间距栅格（与 --ds-space-* 同值；N = px/4 编号法） ── */
+  --dl-sp-half: 2px; /* 微缝半步档（Carbon $spacing-01） */
   --dl-sp-1: 4px;
   --dl-sp-2: 8px;     /* 控件间 gap/行内距 */
   --dl-sp-3: 12px;    /* 卡内块距/行横距 */
   --dl-sp-4: 16px;    /* 节间距/弹窗头横距 */
-  --dl-sp-5: 20px;    /* 弹窗体左右留白 */
+  --dl-sp-5: 20px;    /* 弹窗体左右留白（本档无 Carbon 对应，站内档） */
   --dl-sp-6: 24px;
   --dl-sp-8: 32px;
+  --dl-sp-12: 48px;   /* 区块级留白（Carbon $spacing-09） */
+  --dl-sp-16: 64px;   /* 大区块留白（Carbon $spacing-10） */
+  /* 10px 档按布局角色分六槽（= --ds-space-*，2026-11-04 命名债批）；值恒 10px */
+  --dl-sp-inline-x: 10px;   /* 内横距（= --ds-space-inline-x） */
+  --dl-sp-block-y: 10px;    /* 内纵距（= --ds-space-block-y） */
+  --dl-sp-inset: 10px;      /* 四边等内距（= --ds-space-inset） */
+  --dl-sp-inline-gap: 10px; /* 行内件缝（= --ds-space-inline-gap） */
+  --dl-sp-stack-gap: 10px;  /* 块间纵距（= --ds-space-stack-gap） */
+  --dl-sp-indent-x: 10px;   /* 行缩进（= --ds-space-indent-x） */
+  --dl-sp-1h: 6px;       /* 半步件缝例外档：图标+文字小缝/chip 内距（实测最高频，禁作块距） */
+  --dl-sp-hair: 1px;     /* 发丝缝例外档（= --ds-space-hair；禁作内距） */
 
-  /* ── ⑥ 动画 ── */
+  /* ── ⑤ 密度档（含 NVIDIA 密度联动机制；与 --ds-density-* 同值） ── */
+  --dl-density-row: 44px;          /* regular 行带（触控热区档） */
+  --dl-density-row-compact: 36px;  /* compact 行带（= 胶囊行 36px 档） */
+  --dl-density-gap: 12px;          /* regular = --dl-sp-3；compact 走 --dl-sp-2 */
+  --dl-density-radius: var(--dl-r-button); /* regular；compact 走 --dl-r-input（密度连半径联动） */
+
+  /* ── ⑥ 描边 / focus / 阴影锚（**门禁锚：引用形态，本文件不复制值**） ──
+     单源判据：值一律取客户端 token（`--glass-border` / `--btn-focus-ring` /
+     `--cv-shadow` / `--ig-shadow-press`），此处只做命名面挂接。**禁加字面量
+     fallback**——fallback 就是值的第二份拷贝，等于双写（草案 §3.4-4）。 */
+  --dl-border-width: 1px;                /* 四家共识 hairline 宽（非锚，本档新值） */
+  --dl-border-glass: var(--glass-border);/* 玻璃描边单源（--ds-border-glass 同源） */
+  --dl-focus-width: 2px;                 /* focus 环宽（IBM/NVIDIA 双源，非锚） */
+  --dl-focus-ring: var(--btn-focus-ring);/* 亮暗双档由客户端单源自解 */
+  --dl-shadow-float: var(--cv-shadow);   /* 浮件三档栈单源（--ds-shadow-float 同源） */
+  --dl-shadow-press: var(--ig-shadow-press); /* 墨玻璃按压影单源 */
+
+  /* ── ⑥ 动画（与 --ds-dur-* / --ds-ease-* 同值） ── */
   --dl-dur-1: 120ms;   /* 微变换（icon scale/按下） */
   --dl-dur-2: 160ms;   /* hover 色彩/边框/底纹 */
   --dl-dur-3: 240ms;   /* 主题/表面切换 */
+  --dl-dur-slow: 400ms; /* 大展开/重要通知档（Carbon duration-slow-01） */
   --dl-dur-enter: 200ms;
   --dl-ease-enter: cubic-bezier(0.16, 1, 0.3, 1); /* 入场（modalIn 家族） */
-  --dl-ease-std: cubic-bezier(0.4, 0, 0.2, 1);    /* 几何属性 */
+  --dl-ease-std: cubic-bezier(0.4, 0, 0.2, 1);    /* 几何属性（Carbon 曲线不采） */
 }
 
 @media (prefers-color-scheme: dark) {
@@ -138,6 +196,7 @@
     --dl-dur-1: 0.01ms;
     --dl-dur-2: 0.01ms;
     --dl-dur-3: 0.01ms;
+    --dl-dur-slow: 0.01ms;
     --dl-dur-enter: 0.01ms;
   }
 }

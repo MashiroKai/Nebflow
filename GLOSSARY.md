@@ -161,6 +161,7 @@ lightbox 与 toast。**归类例外**：`socialPanel.js` 的入口按钮在活�
 | Canvas 标签 / Canvas 查看器 | 标签是容器（可关可 pin），查看器是按类型渲染内容的实现。 |
 | 主会话 / Nebula / 子代理 / 后台代理 | 主会话是**会话**（root）；Nebula 是根智能体的**名字**；子代理与后台代理是它派生的执行体（前者聚合在 Sub-Agents 面板，后者脱离当前轮存活）。 |
 | 门禁 / 哨兵 / 基线 / 白名单 | 门禁 = 判定命令；哨兵 = 钉字面串的测试；基线 = 冻结的错误计数（只降）；白名单 = 环境性失败套件的登记表（战役期产物）。 |
+| 内容档位 / 治理 | 档位管**采集时记什么**（Metadata / Content / Full 三档）；治理管**存后怎么处置**（脱敏 / 删除 / 留存采样）；两域互相独立，不得互换（契约 §3.3）。 |
 
 ## 10. 维护
 
@@ -183,8 +184,8 @@ lightbox 与 toast。**归类例外**：`socialPanel.js` 的入口按钮在活�
 | 术语 | English / 代码拼写 | 定义 | 权威落点 |
 |---|---|---|---|
 | app | app | 常驻进程原型：薄 main，只做装配与服面；既裁三例 = `gateway` / `capability-server` / `organic-server`。类比：C 实际运行的只有 main。 | 规划态：三例成形后回锚（B3/B4） |
-| server | server | 角色名：某 app 的服务面角色。裁定：server 内含 engine 驱动（engine 不独立成进程）。 | 规划态：B3/B4 回锚 |
-| engine | engine | 域语义：域驱动件（如 `mem-engine` / `skill-engine` / llm 运行时），被 server 装配驱动。 | 规划态：B3/B4 回锚 |
+| server | server | 角色名：某 app 的服务面角色。裁定：server 内含 engine 驱动（engine 不独立成 app）。〔2026-10-04 措辞修正：原句「engine 不独立成进程」——按 app×wheel 五级词汇改写（常驻进程原型＝app，「进程」泛称不在词层），裁定含义不变〕 | 规划态：B3/B4 回锚 |
+| engine | engine | **执行面口径（2026-10-04 回锚，随 IR v0.3 批准批；欠账登记见 v0.3 §5.5）**：术语与解释器分立——解释器管「表面→IR」、执行引擎管「IR→效果」，engine 一词归执行面专用（bash/cmd/ps 引擎族、EngineManager、device 三元组 engineId）；**家族准入判据＝承接来自实体（agent/LLM）指令的面**，系统规律调用/被动后端＝非 engine。〔B0 原句（2026-09-30）并置保留：域语义：域驱动件（如 `mem-engine` / `skill-engine` / llm 运行时），被 server 装配驱动〕 | 口径 = `../skill-engine/docs/ir-v0.2-normalized-form.md` §3A-1（跨仓）；准入判据 = `../nebflow-src/.zcode/plans/trajectory-接口方案.md` A9 终裁（gitignored 计划侧，§11 头注同款现址记法）；代码落点仍规划态：B3/B4 回锚 |
 | wheel | wheel | 物理形态：无 main 的库包；零依赖纯库 = 理想 wheel。`skill-engine` 与 `document-based-memory` 两独立仓已是 wheel 形态。 | 规划态；两独立仓现址 `../skill-engine/`、`../document-based-memory/`（跨仓） |
 | 底座与契约面 | `shared` + `contract` | 底座（`shared`）与北向契约面（`contract`）：UiMessage 密封族等北向契约落此处。 | 规划态：`contract` 面 B5 析出后回锚；现 UiMessage 密封族在 `src/main/scala/nebflow/shared/protocol.scala` |
 
@@ -197,6 +198,192 @@ lightbox 与 toast。**归类例外**：`socialPanel.js` 的入口按钮在活�
 | mem-engine | mem-engine | 记忆域 engine（域驱动件），挂 capability-server 的 direct-call 面。 | 规划态：随 P1/B7 回锚 |
 | skill-engine | skill-engine | 技能域 engine；独立仓，已是 wheel 形态（无 main 库包）。 | `../skill-engine/`（跨仓）；spec = `../skill-engine/docs/skill-engine-spec.md` |
 | direct-call | direct-call | 应用间协议：IR 标准 §9 候审稿升格为总线；现阶段 = 包间协议（单 JVM 内），§5.5 loopback IPC 为未来物理承载。 | 候审稿 = `../skill-engine/docs/direct-call-spec.md`（跨仓）；dbm spec §5.5 = `../document-based-memory/docs/20260927_nebflow-sandbox.md` |
+| function | `^engine:function` 的 function 分量 | ^ 词位（Subject 面）冒号后段分量：**engine 提供的功能点**——`^engine:function` 一体指定执行后端与被调用的功能点，两段保持（engine 分量与 device 三元组 engineId 不同值域）。**与 caps 分立**：caps＝信任档原子、function＝功能点（展开求值归注册面，随定稿批落定）。 | `../skill-engine/docs/ir-v0.3-command-surface.md` §3.11（裁定 §10-2/§10-3 Q2②，跨仓；2026-10-04 v0.3 转正批收录） |
 | 四行拓扑 | four-line topology | 终态信息流向四行：north(web, cli, bridge, social)→gateway；gateway→organic-server & capability-server；organic-server→capability-server & shared；capability-server→shared；`mem-engine` / `skill-engine` 挂 capability 的 direct-call 面。 | 规划态：终态机器落点 = `scripts/check-scala-layers.mjs` 的 `LAYER_ORDER`（B1 起渐次成形） |
 
 **大小写裁定（2026-09-30，B0）**：组件名全小写（`organic-server`、`capability-server` 等）；句首位置按英文惯例首字母大写。已核：两仓 src / scripts / tests / docs 内组件名 organic 零出现（seed 插件设计语料含英文语义词 organic，非代码标识符），无存量需扫。
+
+## 12. 数据根三层（B1 批次，2026-11-04 落地）
+
+> **批次说明（2026-11-04）**：作者三层数据根裁定的词条（派单九条裁定 1/5/9 + 契约
+> `reports-evidence/b1-dataroot__20261104_110844/design-api.md`）。术语随实现落地入表；
+> 机制的完整解释在契约与落点处，本表只管名字。
+
+| 术语 | English / 代码拼写 | 定义 | 权威落点 |
+|---|---|---|---|
+| 三层数据根 | three-layer data root | 机器层 / 账号层 / 未登录层三档「有效根」的统称，由启动序按指针与 layout 标记定档。 | `src/main/scala/nebflow/core/root/RootLadder.scala` |
+| 机器层 | machine root / `machineRoot` | 全机共享、与账号无关的根：`bin/`、jar、生命周期 `logs/`、`.pid`/`.pid.meta`、`daemons*.json`、`auth.json`、`layout.json`、`active-account`。解析链 = 今日 dataRoot 链（`--home` > `STAND_HOME` > `NEBFLOW_HOME` > 默认 `~/.stand`）。 | `PathUtil.machineRoot`（`src/main/scala/nebflow/shared/paths.scala`） |
+| 账号层 | account layer / account root | 一个账号的私有根 `machineRoot/accounts/<dirNameOf(sub)>`（0700）：设备身份、`neblink/`、`secrets/`、`projects/`、`sessions/`、tasks、memory、模型与所有 `.env`。 | `AccountRoot.accountRoot`（`src/main/scala/nebflow/core/root/AccountRoot.scala`） |
+| 未登录层 | unauthenticated layer | 装机到首次登录之间的有效根 `machineRoot/unauthenticated/`：只开登录面、**不铸** `device.json`（fail-closed 守卫）。 | `RootLayer.Unauthenticated` + `DeviceIdentity.loadOrCreate` 守卫（`src/main/scala/nebflow/neblink/NeblinkModel.scala`） |
+| active-account 指针 | active-account pointer | 机器层单文件指针（0600），指明当前账号；缺失 + 有 layout 标记 ⇒ 未登录层；坏档 ⇒ 降级平铺档（绝不把数据根「弄丢」）。 | `AccountRoot.pointerPath` / `readPointer` |
+| profile.json | account profile | 账号根下的账号档案 `{accountSub, email, createdAt, hostPromptDeclinedAt}`，也是「本目录是账号根」的唯一判据（阶梯第 0 档）。 | `AccountProfile` / `AccountRoot.isAccountRoot` |
+| layout.json | layout marker | 机器层布局标记 `{"layout":"accounts-v1"}`；**无它 ⇒ 一律按老平铺根处理**（兼容红线：平铺根字节不变）。 | `LayoutMarker` / `AccountRoot.readLayoutMarker` |
+| 待认领区 | pending-claim area | `machineRoot/pending-claim/<ts>/`：平铺数据在「尚未登录」时迁入的中转位置，登录后认领进账号根；绝不被认作生效根。 | `RootLayout.migrate`（`MigrationReport.pendingClaim`，`src/main/scala/nebflow/core/root/RootLayout.scala`） |
+| owner 账号校验 | owner guard | 「本引擎服务的账号 == 凭据里的 owner」等值判定；不等 ⇒ 拒服务并点名双方 + 建议 `stand logout`（owner-account-mismatch）。 | `OwnerGuard.check`（`src/main/scala/nebflow/core/root/Guards.scala`） |
+| deviceId scope | device id scope | 设备 id 派生的账号域成分：账号档 = `acct|<accountSub>`（非默认机器根再带 `\|iso\|<hash>` 隔离后缀）；平铺/隔离档保持 `default` / `home\|<hash>` 不变。 | `DeviceIdentity.deviceIdScope`（`src/main/scala/nebflow/neblink/NeblinkModel.scala`） |
+
+## 13. 无静默滞留（R13 纪律，2026-11-05 作者令）
+
+> **批次说明（2026-11-05）**：合并队列重构批追加 1。纪律本体在插件
+> `stand-dev/skills/stand-dev/references/backend/actor-fsm.md` 的 **R13**（与 R1–R12 并列）；
+> **本表是定义唯一落点**，其余文档只引用不复制。
+
+| 术语 | English / 代码拼写 | 定义 | 权威落点 |
+|---|---|---|---|
+| **无静默滞留** | silent limbo | **任何状态若能在没有出口的情况下无限期停留、且外界看不见，即为缺陷。** 判据四条：①可见（面板字段/计数器，能读出「为什么停在这里」）②有出口（时间或次数驱动的升级腿，且**升级到人**；只写事件不算）③有主（写得出「现在该谁动」）④静默要留档（设计上就该静默的必须写明裁定出处，无裁定号 = 漏了出口）。 | 纪律本体 `stand-dev/…/references/backend/actor-fsm.md` R13；典型落地 = 合并队列的持窗提醒阶梯（`src/main/scala/nebflow/core/delegate/MergeQueue.scala`） |
+
+^silent-limbo
+
+## 14. 轨迹线（trajectory，2026-10-03 立项）
+
+> **批次说明（2026-10-03）**：本区为 trajectory 线（agent 行为分析工具）既定词汇，契约槽⑧随小批齐落收录。
+> 契约 v0.2 = 唯一权威源（跨仓 `../trajectory-store/docs/trajectory-contract.md`，镜像 `.zcode/plans/trajectory-contract.md`）；
+> 接口方案 = `.zcode/plans/trajectory-接口方案.md`（含 2026-10-03 选择题批裁定记录）。
+> 采集组件本体已裁住 `extensions/trajectory`（A1，2026-10-03；装配批①落码，现为规划态）。
+
+**概念词条**：
+
+| 术语 | English / 代码拼写 | 定义 | 权威落点 |
+|---|---|---|---|
+| 轨迹 | trajectory | agent 会话行为的结构化事件流：单一 `TrajectoryEvent` 信封（关联键组 + EventKind 密封族〔10 生效 + 1 预留〕+ 内容档位）；一切视图（轮次时间线 / 会话摘要 / 失败链）从事件流**派生**，非快照、非只读投影。 | 契约 §3（跨仓 `../trajectory-store/docs/trajectory-contract.md` v0.2） |
+| 事件汇 | event sink | 采集 port：organic 各缝（轮次 / LLM 受理 / 供应商尝试 / 完成 / 失败 / 中止 / 工具 / 会话生命周期）上行的统一入口；内部有界队列 + 后台 fiber，**汇故障零打断现役行为**。 | 方案 §1（`.zcode/plans/trajectory-接口方案.md`）；组件本体 = `extensions/trajectory`（A1 裁定） |
+| turn | turn | 轮次关联键：一轮用户输入到回合结束；turnId 由 TurnBoundary 侧产生，铸造 = `s"$sessionId:$counter"` 单点；无轮次上下文的事件（会话生命周期 / 北面直连）turnId 缺省。 | 契约 §4；方案 §4 槽 A4 |
+| step | step | 步关联键：轮内**每次 LLM 调用**（send / sendStream）一步；供应商 attempt 不占步（挂单亲事件链）；stepId = `s"$turnId:$stepCounter"`。 | 契约 §4（裁定槽② 2026-10-03 转正）；方案 §4 |
+| 内容档位 | ContentLevel | 采集内容三级档：Metadata（计数 / 时长 / 供应商 / 错误类别，零 PII，默认开）/ Content（消息文本与工具摘要，默认关）/ Full（完整原始负载，显式开）；**档位管采集、治理管存后**，两域不得互换。 | 契约 §3.3 |
+
+**组件词条**（wheel 形态，与 `skill-engine` / `document-based-memory` 同款跨仓先例）：
+
+| 术语 | English / 代码拼写 | 定义 | 权威落点 |
+|---|---|---|---|
+| trajectory-store | trajectory-store | A 轨**存储 wheel**（独立仓）：schema + 同步 port（治理四能力一等：redact / deleteSession 同步回执 / applyRetention / export）+ JSONL 落盘内存索引 + **conformance corpus 持有方**（两轨等价性语料）。 | `../trajectory-store/`（跨仓）；契约权威源 = 其 `docs/trajectory-contract.md` |
+| trajectory-analysis | trajectory-analysis | B 轨**分析套件 wheel**（独立仓）：schema 独立镜像 + InMemoryTrajectoryStore + 缝适配器（纯函数，镜像输入类型）+ 分析视图（轮次时间线 / 会话摘要 / 失败链 / 供应商切换序列）；payload 唯一解释方。 | `../trajectory-analysis/`（跨仓）；README = 分歧裁决记录 |
+
+## 15. fsm 接入线（fsm-runtime，2026-10-04 立项）
+
+> **批次说明（2026-10-04）**：本区为 F 线（fsm-runtime 接入）词汇，随 F1 设计段落字——**规划态**，nebflow 侧零落码，落点随 F1/F2 批次回锚。
+> 计划 = 跨仓 `../nebflow-src/.zcode/plans/fsm-runtime-integration.md`（gitignored；词条清单在其 §5）；实现锚 = fsm-runtime 独立仓 `../default/fsm-runtime/`（符号锚——行号与版本串是易漂事实，记在计划侧，不入本表）。
+> **与 §10 维护规约的冲突（并置注明，不删改上文；同 §11 先例）**：本批裁定先行、先入表后入码，仓内暂无版本化落点；落点列暂记计划文本与 fsm-runtime 仓现址，随批次回锚。
+
+**概念词条**：
+
+| 术语 | English / 代码拼写 | 定义 | 权威落点 |
+|---|---|---|---|
+| fsm-runtime | fsm-runtime | 作者自写的编译计算图工具（独立仓，零第三方依赖），钩子子系统与 agent 运行面**新实现的统一底座**（2026-10-01 裁定「后续所有 hook 和 agent 使用这个工具实现」）。形态 = 编译期冻结图 + lint 唯一守门 + 确定性超步解释器 + A1-A4 字节等价契约 + canonical 文法；接入 = publishLocal 工件 + hash 钉（槽 E 终裁 a）。 | `../default/fsm-runtime/`（跨仓）；接入计划 = `../nebflow-src/.zcode/plans/fsm-runtime-integration.md` §1/§6.3 |
+| 冻结图 | `FrozenGraph` / `Combinators.define` | 经 `Combinators.define` 在定义期定稿的**不可变**计算图：状态、转移与算子树此后冻结，运行期只解释执行；lint 是入图唯一守门。agent 三态（idle/processing/frozen）建模为图状态——**「冻结」指图定稿，非 agent 冻结态**（后者是运行态暂停，入图后是图的一个状态）。 | `../default/fsm-runtime/` Core.scala（`FrozenGraph`）；计划 §2.2 |
+| 超步 | superstep | 确定性解释器的原子执行单元，亦是**逻辑时钟**单位（不引墙钟；墙钟 deadline 只能作外部输入注入）。一次 turn（LLM→工具→LLM 循环）= 超步序列，turn 边界 = 静默点（快照点）；rehook 前实例必须已跑过至少一个超步（日志含 StepMark）。 | `../default/fsm-runtime/`（`EventLog.appendSuperstep` / StepMark）；计划 §2.2/§6.5 |
+| canonical bytes | canonical bytes | 快照与渲染的**规范化字节序**：同图同状态必产出逐字节相同的 canonical 文本；「同指纹必须同渲染」的载体——nebflow 黑盒快照测试对执行后端切换失明即靠此纪律。 | `../default/fsm-runtime/`（Snapshot / canonical 文法）；计划 §2.3 |
+| 图指纹 | graph fingerprint / `graph_fingerprint` | 冻结图的**内容寻址**指纹（持久化六字段之首，CHAR(64) 主键）：同指纹 ⇒ 同图源渲染，冲突 fail loud 不自行合并；与 B8 成熟三件套注册面的内容寻址同构（远期可互认不绑定）。 | `../default/fsm-runtime/`；计划 §2.3（六字段） |
+| 算子（十四） | `Operator`（14 cases） | RuntimeHook 的返回代数，**全集 14 例闭集**（加算子 = 改代数 = 走治理）：Pass（单位元）/ Drop / Defer / Rewrite / Synthesize / Veto（仅⑤）/ Force（仅③）/ Reweight / Tag / Allow / Ask / Deny（⑥ 词，消费位 = 宿主 `EffectRunner.verdict`）/ Wrap（载荷 WrapDecl）/ Patch（应用面 MetaHooks）。 | `../default/fsm-runtime/` Core.scala（`enum Operator`，14 case 2026-10-04 亲数）；计划 §2.1 |
+| 席位 | seat / {Schedule, Commit, Enqueue} | 运行时钩子可介入的图内阶段，**收缩面仅三**：Schedule（③ 候选集）/ Commit（⑤ 待提交变更）/ Enqueue（② 排队）；HookStage 八阶段中其余不开（Lifecycle = 闭集占位）。席位 patterns 只匹配**图事件名** ⇒ 观察型/生命周期型事件入不了席，只有图内裁决点能入席。 | `../default/fsm-runtime/` Core.scala（`enum HookStage` / 收缩面检查）；计划 §2.1 |
+| Tier-P | `HookTier.Pure`（纯档） | 钩子分档之纯档：**纯函数、无 IO、无墙钟**，违约 = fail loud；`RuntimeHook.invoke` 属 Tier-P，享受 A1-A4。nebflow 侧纯谓词（如 `FreezeSchedule.evalWithSkip`）可作 Tier-P。 | `../default/fsm-runtime/` Core.scala（`enum HookTier`）；计划 §2.2 |
+| Tier-X | `HookTier.Extended`（扩展档） | 钩子分档之扩展档：有状态/有 IO 的效果域执行面（LLM/工具调用、外部子进程），**放弃 A1-A4**，重放走 playback「记录即事实」不重跑——只承诺已记录轨迹可重放，不承诺新跑可复现（槽 F 已裁：接受此成文语义）。 | `../default/fsm-runtime/` Core.scala（`enum HookTier`）；计划 §2.2/槽 F |
+| playback | playback（记录即事实） | 重放机制：决策与效果**事实从事件日志回读**，LLM/工具/子进程不被再次调用；轨迹确定性是「日志充分统计量」意义上的确定（`Replay.replayManaged` 同日志 + 同版本定义/钩子完整重放）。 | `../default/fsm-runtime/` Replay.scala；计划 §2.2 |
+
+**组件词条**（fsm-runtime 侧类型；nebflow 侧注入缝规划 = `SharedResources` 的 `fsmHooks` / `effectRunner`，B4 归巢时留——计划 §5.2）：
+
+| 术语 | English / 代码拼写 | 定义 | 权威落点 |
+|---|---|---|---|
+| HookSet | `HookSet` | **实例级**运行时钩子集（私造走 build 的收缩面检查）；rehook = 逐实例手工换装面（最后一次换装胜）；rehook 须先跑过超步，hotSwap 换图后 hooks 不携带须重新 rehook；升版本走 rehook/restore 显式校验（HookVersionMismatch）。 | `../default/fsm-runtime/` Core.scala（`HookSet`）；计划 §2.1/§6.5 |
+| HookLibrary | `HookLibrary` | **世界级**钩子库：宿主侧库，**不入快照不入日志，出生时物化**；继承 = scope 覆盖判定，屏蔽 = 同 id 深作用域覆盖浅作用域。装配点落在哪个 app 内是 hooks 归属裁定（槽 B）的直接后果。 | `../default/fsm-runtime/` Core.scala（`HookLibrary`）；计划 §3 |
+| EffectRunner | `EffectRunner` | 宿主侧效果执行器，两组合子：`wrapped(decl, base)(f)` 包裹记录、`verdict(decl, base)(decide)` 裁决（词表 {Allow, Ask, Deny}：Deny ⇒ 投递 effect.denied、Ask ⇒ effect.ask）。**base 先求值** ⇒ verdict 保不住「工具零执行」，先裁后跑（PreToolUse 类）必须宿主自组 runner。 | `../default/fsm-runtime/` Interpreter.scala（`EffectRunner` / `wrapped` / `verdict`）；计划 §2.1 |
+| WrapDecl | `WrapDecl(label, version)` | 效果声明（纯数据）：runner 以 `WrapDecl(label="llm"/"tools", version=…)` 声明；**prompt/模型变更 = 升 version，不静默替换**；快照 (hkm) 尾槽 + hook.manifest/hook.decision 审计。 | `../default/fsm-runtime/` Core.scala（`WrapDecl`）；计划 §2.2 |
+
+## 16. 事件命名避让表（fsm Event 名铸造，2026-10-04）
+
+> **批次说明（2026-10-04）**：本表是契约件（计划 §5.4，与槽 C 关联——先立 nebflow 侧表，B8 前再议升 contract 面）。范围 = AgentCommand/AgentEvent → fsm Event 名映射的铸造面；保留面取自 fsm-runtime 的 Lint 保留名闭集（计划 §6.4）；五项映射决策为 F1 设计段交接文本落字（机械核对输出录于 F1 设计文档 §2.4，该文档落盘后此处回锚出处）；**落码段 lint 实跑（define 断言）为权威门**。
+
+**保留面**（禁用/避让清单）：
+
+| 避让面 | 保留值 | 规则 |
+|---|---|---|
+| 保留事件名（六闭集） | `timer.fired` / `deadline.expired` / `join.completed` / `cancelled` / `data.ready` / `graph.completed` | 可作转移 on 的仅 {join.completed, deadline.expired, data.ready}（内核合成、有生产者）；其余三名 on 与 emit **双禁**；emit 侧六名全禁 |
+| 保留端口 | `deadletter` / `system` | 端口声明即拒（deadletter = 自动建立的保留死信渠道；system = 系统渠道保留名） |
+| 效果域保留名 | `compile` | CompileRuntime.runner 接管（运行时构图） |
+| 算子保留名 | `noop` | 单位元算子名；非单位元算子取名 noop 即拒（K19） |
+| 完成事件前缀 | `done.state.*` | 独立前缀名空间（整名禁 K1 / 前缀禁 K10） |
+| 审计 marker 命名空间 | `op` / `op.ctx` / `hook.decision` / `hook.manifest` / `lifecycle.spawned` / `gate.paused` / `dead_letter` 等 | 字符串命名空间只增不删改 |
+
+（锚 = `../default/fsm-runtime/` Lint.scala 的 `reservedEventNames` / `matchableReservedEventNames` / `reservedPortNames`，2026-10-04 亲验）
+
+**映射决策**（F1 设计段，2026-10-04）：
+
+1. **命名规则 = 小写点命名空间基名 + 分支后缀双名法**（如 `user.input.wake` / `llm.failed.freeze`）：后缀在铸造侧消歧，使图转移表 exact-match 单目标；dispatch 类统一 `.dispatch` / `.gated` 闸门后缀（`pipeLlmCall` 唯一冻结闸；压缩轮静态解析不过闸除外）。
+2. **`AgentEvent.Cancelled` 必改**：朴素小写 `cancelled` 撞保留名（on/emit 双禁），定名 **`turn.cancelled`**，与 Completed→`turn.completed` / Failed→`turn.failed` 同族；不取裸 `completed`（与保留 `graph.completed` 邻近易误读）。
+3. **冻结恢复驱动禁用 `timer.fired`**（保留名双禁，属宿主/timer 子系统）：CheckFreezeGate 定名 **`freeze.check`**（stay/resume/refreeze）。
+4. **机械核对**：36 项词汇表零撞六保留名 / 保留端口 deadletter·system / 效果域 compile / 算子 noop / `done.state.` 前缀 / 自重复；朴素小写映射唯一撞名 = `cancelled`，证实必改；设计期静态核对（node 脚本），落码段 lint 实跑（define 断言）为权威门。
+5. **避让面边界登记**：AgentEvent 三终态的图外名与 Ephemeral bridge 取消结算日志字符串（非事件名）分置，后者不改。
+
+## 17. vm 词族（架构叙述词；规范词优先·triple 线回写，2026-10-07）
+
+> 本族为**叙述词**：判据文本/裁定/命令面/代码标识一律用规范词；vm 名与规范词一一对应，冲突以规范词为准。出处＝triple 仓《术语重述-vm词族与防撞车》（2026-10-06；源提交 `b08886d`；裁定-二轮 §D 发令入册，执行＝主线批次 2026-10-07）。
+
+- **vm:核心**（虚机核心）＝机器的特权面整体（装载＋特权检查＋能力表＋指令发射＋审计）；其内件与规范词对应：中枢／三检查点／注册面／执行编排／审计缝。
+- **vm:设备**（device）＝一台**主机**及其经**驻机代理**抽象暴露的**能力集合**；既有「设备」概念（DeviceProfile/deviceId/跨设备执行）由此统一。
+- **vm:驻机代理**（vm:supervisor）＝每主机一个的框架标准件：把本机能力抽象暴露给 VM，VM 只识别 supervisor 与其能力表示；与 BackoffSupervisor／责任链监督为**不同物**。
+- **vm:终端**（vm:terminal）＝人面标准件＝**聚合者**（身份认证＋人类侧抽象＋GUI/TUI 挂接）；**非自身即交互门面**，各 GUI/TUI 是挂接其下的终端类型。
+- **vm:程序／vm:指令／vm:装载器／vm:特权检查／vm:能力表／vm:系统调用／vm:核侧·设备侧**＝定义见源件 §3（分别对应：计划·图·配置集／IR 节点／中枢／三检查点／caps＋授权账本／direct-call／权限二分）。
+- **B 级 lens 四枚**：vm:机器日志（＝审计缝）／vm:管理台（＝控制面）／vm:接入口（＝三体接入面）／vm:时钟（＝「语义不读环境」的时间注入源）。
+- **撞车处置**：弃「内核」（撞种子 agent 名 `kernel`）；弃「用户态」（撞三体之「用户」）；「机」不作限定语（撞三体之「机」）；「核心」跨文档必须写限定形「虚机核心」。
+
+## 18. 表述层（三体／双锥／业务环·治理环／中枢=解析面；架构叙述词·裁定轮收录，2026-10-07）
+
+> **批次说明（2026-10-07）**：本区＝[10-07·裁定轮]㉖「表述层＝收录入 GLOSSARY」的落字；四组＝三体／双锥／业务环·治理环／中枢=解析面。
+> **出处与状态**：chronicle/2026-10.md［10-07·裁定轮］＋`三体与解释器中枢提案-评估.md` §九（作者澄清）／§十（址：`../nebflow-ir/.zcode/plans/`）；状态＝已裁采纳（表述层收录，2026-10-07 裁定轮）。
+> **与 §10 维护规约的冲突（并置注明，不删改上文；同 §11/§15 先例）**：本批裁定先行、先入表后入码；现址在 gitignored 计划侧（nebflow-ir/.zcode/ 已 ignore〔.gitignore:57〕；叙事稿/fact 在 nebflow-src/.zcode/plans/），随回锚。
+
+- **三体**（人／LLM／机；别名：三体类、users／agents／computers）＝跨面叙述与命名轴：系统参与方三类——**人**（users）／**LLM**（agents）／**机**（computers，提案原话＝经典计算机）；三类按**调用通路判据**分野：人／LLM＝不规律调用者经路由，机＝系统算法决定的规律调用免经直调。三体各配一条统一类型化表示的适配通路（提案原话）：人→gateway、机→ir-router、LLM→fsm-runtime 的 Port；层图第①层「三体接入面」三线＝人：词位串→解析→结构化信封／机：IR 命令面＋规律调用直调免经／LLM：tool-call JSON≈恒等 lowering（效果面经 fsm Port 缝）。
+- **双锥几何**（三角双锥；别名：三角双锥结构、双锥）＝系统组织的几何叙述（作者原话逐字，2026-10-06 晚）：「这里的图像是一个3角双锥结构。中心赤道面是agents，users，computers。整个几何体中心是解释器作为可编程业务调度枢纽。上顶点是探针面，下顶点是控制面。」——赤道面＝三体（agents／users／computers）；体心＝解释器（＝中枢，可编程业务调度枢纽）；上顶点＝探针面（采集·读数）；下顶点＝控制面（授权·判定·动作）。
+- **业务环／治理环**（两个正交环）＝双锥几何的直读叙述词：**业务环**＝三体 ⇄ 中枢（解析→成形→路由出去→执行→回执），频率高、面宽；**治理环**＝探针（采集）→判定→动作→回读（闭环五守则：判定滞回／动作冷却／防震荡阶梯／回读确认／执行传感分离），传感腿永不发起控制动词。正交性的落点：业务环上的节点（解释器层）不在治理环的判定/执行链条上；治理环的两个顶点（探针面／控制面）不承担业务。
+- **中枢**（解析面；别名：解释器中枢）＝解释器层的叙述名＝**可编程业务调度枢纽**：职责＝解析与调整通信；「计算」＝**解析通信中本身带有可解析的信息**（北侧命令＝「解释器可解析的信息＋路由出去的信息」两分解）；**不是中转面**——接线动态变化（解释器本身＝可变应用逻辑）。**≠控制面**：控制面不负担业务（控制动词不含业务动词，CE-P2 同向）；中枢不执行、不做准入（三检查点在解释器之外、原地不动）。
+
+## 19. 损坏处置（triple 线口径；裁定轮发令入册，2026-10-09）
+
+> **出处注记（跨仓搬运；2026-10-09 补）**：三词条源＝triple 仓 `docs/fact/损坏处置清单-2026-10-08.md` §1（定义逐字；源提交 `24edcee`，末次触及 `e0d7967` 未动 §1）；定义正本＝该线《评估-灾难恢复能力-2026-10-07.md》§5.3（行 321–323）；入册令＝《裁定-十轮-2026-10-08.md》§B-8（作者原文「三枚入册（推荐）」）；执行＝主线批次 2026-10-09。
+> **本节引称**：「清单」＝`../triple/docs/fact/损坏处置清单-2026-10-08.md`；「十轮」＝`../triple/docs/fact/裁定-十轮-2026-10-08.md`；「五轮」＝`../triple/docs/fact/裁定-五轮-2026-10-07.md`；「DR」＝`../triple/docs/chronicle/评估-灾难恢复能力-2026-10-07.md`。
+> **与 §10 维护规约的冲突（并置注明，不删改上文；同 §11 先例）**：本批裁定先行、权威落点在跨仓（triple）——出处注记含提交 hash／行号属并置例外；落点列照记跨仓现址，随真源面落位回锚。
+
+**三枚（定义逐字沿用；分配依据＝可再生性，五轮 §C-P4 逐字「按可再生性分配」）**：
+
+- **显式拒绝**（fail-closed）：**不可再生的真源**（权威定义面、正式账本）；
+- **隔离留档**（改名保内容＋按缺席处理）：**含不可再生内容但可在缺失下运行**的件；
+- **记账降级**（WARN＋空/缺省起步＋计数）：**可重建的缓存/派生面**。
+
+**分野（与「无档」「降级冷启」区分）**：三枚归座的对象是「**坏**」——**存在但读不出**（清单 §4.7 表头）；「**无档**」＝「**空**」的档案面形＝**合法未配置**（该会话尚未被 archive 过；五轮 §A-①）⇒ 走「**降级冷启**＋显式标注」；**不得**由坏档静默降级为无档（清单 §2 行 A1；**空 ≠ 坏**，DR §5.3）。
+
+**权威落点**：「清单」§1（三枚定义）／§2（逐件归座表：①行 D1–D3/E3（类别已定·但本仓未落）/F1/F3/F4、②行 A1/A2/B1、③行 F2）／§4.7（空≠坏可辨位）；入册令＝「十轮」§B-8。
+
+## 20. 能力两面分野（需求／持有／供给；triple 线回写，2026-10-09）
+
+> **出处注记（跨仓搬运；2026-10-09 补）**：三词条源＝triple 仓 `docs/fact/术语重述-vm词族与防撞车.md` §8（依《裁定-十六轮》§C-1；第三枚「供给」依《裁定-十九轮》P-13 增；源提交 `ba04f4e`）；执行＝主线批次 2026-10-09。
+> **本节引称（锚列路径基；2026-10-09 补，依 triple 线精度建议）**：「锚」列除注明者外均为**triple 仓内相对路径**（基＝`../triple/`）；`ir-v0.3`＝`../skill-engine/docs/ir-v0.3-command-surface.md`；`adjudications.md`＝`../nebflow-src/.zcode/plans/fact/adjudications.md`（工作树；行号以实测为准）。
+> **与 §10 维护规约的冲突（并置注明，不删改上文；同 §11/§19 先例）**：本批裁定先行、权威落点在跨仓（triple）——出处注记含提交 hash 属并置例外。
+
+| 词 | 定义一句 | 真值源（谁说了算） | 锚 |
+|---|---|---|---|
+| **能力需求**（capability **requirement**） | 命令／引擎**声明**的「执行它需要什么能力」——**是声明，不是持有位** | 命令 caps 声明（`FsRead`／`FsWrite(prefix)`／`Net`／`Exec`／`Secret`／`MemoryWrite`）＋ engine manifest **自述** | `ir-v0.3` §8.1；`docs/fact/答复-身份与权限四问（参考Linux）.md` §1.4 |
+| **能力持有**（capability **holding**） | 账本记的「**谁实际拥有**什么能力」——**持有面的唯一真值源** | grants／超眼表／caps 策略／trust 档（真源＝`registry/` 文件族；**单写通道、禁自授、可审计**） | `adjudications.md:141`〔工作树，行号以实测为准〕；`设计-terminal-2026-10-07.md` §4.2 |
+| **供给**（provisioning） | **内核 → 模块**的**能力面编排**（＝把哪些内核函数放进某模块的**导入表**）；**不是**「对主体的授权」 | 三类表面**共用** `registry/` 账本本体（「分的是来源与表面，**合的是本体**」）；**授能记录的作用域＝主体粒度＋scope＋时效**（《裁定-十九轮》P-01） | 《裁定-十九轮》§B3·P-13；《十七轮》B1（副作用只住用户件）；`docs/fact/设计-权限与能力供给（Linux对位）-2026-10-09.md` §5 |
+
+**纪律句（同条；防实现混用）**：**需求 ≠ 持有**——判定＝`decide(需求, 持有)`；**禁**把 **manifest 自述当持有**、**禁**把**账本条目当需求**。
+
+**分野句（第三枚；《裁定-十九轮》P-13）**：**提权 ≠ 供给**——**提权＝对主体的授能写**（账本动作者；`sudo`/`su` 形）；**供给＝内核→模块的能力面编排**（**导入表**；住**同一账本本体**，但**表面不同**）。另：本线已裁 **DAC 作基线 ＋ grants 作增量**（判定＝与关系）⇒ 读「持有」时须分清**基线（owner）**与**增量（grants）**。
+
+**分隔线句**：「本两枚为**两面分野**词条——Linux `capabilities(7)` 在本线**被拆成两面**：**判据面看需求、持有面看账本**；与既有『一物一名』纪律相容（**两面＝两物**）。」
+
+**依据**：《`docs/fact/裁定-十六轮-2026-10-09.md`》§B（设计约束令）＋§C-1（连带裁定）；来源＝作者 2026-10-09 提问「尽可能的使用Linux的权限控制概念以及能力供给方式」＋确认句「确认。」。
+
+## 21. 动效语言（liquid-morph 批，2026-11-06 落地）
+
+> **批次说明（2026-11-06）**：作者令「把这种效果起个名 我们以后都用这种效果」的命名落地批。
+> 语言本体（一句话定义 / 两端几何可插值原则 / 禁止项 / 复用清单 / reduced-motion 口径）=
+> `design/liquid-morph__20261106/DESIGN.md`；机制的完整解释在规范与落点处，本表只管名字。
+>
+> **撞名核查（2026-11-06）**：本表此前无「液态 / liquid / morph / 形变」条目；`design/` 下无同名文档。
+> 仓内既有用法（`js/mobile/taskPanel.js` 的「液态形变任务浮层」形态说明、`tests/*morph*` 的
+> `mh-morph-anim` 类名族、「液态下拉」用例描述）是**同一族效果的实例与历史叫法**，不是竞争词条 ⇒ 沿用该名。
+
+| 术语 | English / 代码拼写 | 定义 | 权威落点 |
+|---|---|---|---|
+| **液态形变** | Liquid Morph / `liquidMorph` | **同一个 DOM 节点在两端几何之间连续插值**（长条 ⇄ 圆钮、列表行 ⇄ 互动框、条目 ⇄ 面板）的一段过渡：一条曲线 `cubic-bezier(0.4, 0, 0.2, 1)`、一个基准时长 280ms、一份可插值属性白名单、reduced-motion 降级 1ms；禁止第二套缓动、禁止 JS 定时器逐帧、禁止给不可插值属性做过渡。原型 = 手机搜索「扁平长条 ⇄ 右上角圆钮」。 | `src/main/resources/web/js/motion/liquidMorph.js`（JS 单源）；`src/main/resources/web/css/design-system.css` 的 `--lm-*` 组（CSS 单源）；规范 `design/liquid-morph__20261106/DESIGN.md`；原型 `css/mobileSearchFlat.css` |
+
+^liquid-morph

@@ -23,15 +23,12 @@ class DelegateFlowMapLifecycleSpec extends FunSuite:
     tmp = os.temp.dir(prefix = "fm-lifecycle")
     PathUtil.setDataRoot(tmp / "data")
     System.clearProperty(DelegateFlowMapLifecycle.SysPropGraceMs)
-    System.clearProperty(DualModeConfig.SysPropEnabled)
 
   override def afterEach(context: munit.AfterEach): Unit =
     System.clearProperty(DelegateFlowMapLifecycle.SysPropGraceMs)
-    System.clearProperty(DualModeConfig.SysPropEnabled)
     PathUtil.setDataRoot(originalRoot)
     os.remove.all(tmp)
 
-  private def gateOn(): Unit = System.setProperty(DualModeConfig.SysPropEnabled, "true")
 
   private def mkRecord(id: String, mode: Option[String], cwd: os.Path, projectWs: Option[String], archived: Boolean): Unit =
     DelegateRegistry.put(
@@ -52,16 +49,18 @@ class DelegateFlowMapLifecycleSpec extends FunSuite:
 
   // ── L1 判据单点 ─────────────────────────────────────────────────────────────
 
-  test("L1 applies：闸开 × dispatcher 才真；kernel / 闸关 / 无记录 均假") {
+  test("L1 applies：dispatcher 才真；kernel / 无记录 均假（双模式总闸已退役）") {
     val id = "delegate-nebflow-l1"
     mkRecord(id, Some(DualModeConfig.ModeDispatcher), tmp, None, archived = true)
-    gateOn()
     assert(DelegateFlowMapLifecycle.applies(DelegateRegistry.find(id)), "gate on × dispatcher = applies")
     assert(!DelegateFlowMapLifecycle.applies(DelegateRegistry.find("delegate-nebflow-ghost")), "no record = no lifecycle")
     mkRecord("delegate-nebflow-l1k", Some(DualModeConfig.ModeKernel), tmp, None, archived = true)
     assert(!DelegateFlowMapLifecycle.applies(DelegateRegistry.find("delegate-nebflow-l1k")), "kernel keeps the map (no orchestration face)")
-    System.clearProperty(DualModeConfig.SysPropEnabled)
-    assert(!DelegateFlowMapLifecycle.applies(DelegateRegistry.find(id)), "gate off = byte-identical inert (never applies)")
+    mkRecord("delegate-nebflow-l1legacy", None, tmp, None, archived = true)
+    assert(
+      !DelegateFlowMapLifecycle.applies(DelegateRegistry.find("delegate-nebflow-l1legacy")),
+      "legacy records (mode=None) never engage the dispatcher lifecycle"
+    )
   }
 
   // ── L2 宽限窗旋钮 ───────────────────────────────────────────────────────────

@@ -29,7 +29,7 @@ class GlobalSafetySpec extends CatsEffectSuite:
     os.remove.all(tmp)
 
   private def writeConfig(content: String): Unit =
-    os.write.over(tmp / "nebflow.json", content)
+    os.write.over(tmp / nebflow.shared.Branding.configFileName, content)
 
   test("missing config file falls back to AutoAll (启动默认 = 顶档)"):
     GlobalSafety.defaultMode.map(m => assertEquals(m, SafetyMode.AutoAll))

@@ -197,7 +197,7 @@ object NodeEditTool extends Tool:
 - notify (optional; unset = default: a "(pass)Nebula" :result edge DOES notify the root): "silent" | "dispatcher" (dispatcher session, NOT root) | "root" = who sees the COMPLETED event. Explicit dispatcher/silent suppress its root delivery (edge kept, no rewiring); failed never suppressed; null clears. Settable while wiring/pending/running; else NODE_NOTIFY_INVALID. One-version alias notifyDispatcher (≈ notify=dispatcher; ignored with a warning once declared); completion-only (failed always notifies; blocked reserved).
 ## Scope & addressing (delegate sessions)
 - On a delegate session this tool edits the delegate's OWN scope map (one delegate, one map); a `project` naming anything else is refused (DELEGATE_SCOPE_FOREIGN). Project dispatchers keep the per-project face.
-- Delegate-scope creates land PENDING — release goes through a registered chain (ChainWrite/AgentFlow) or the engine's settle sweep.
+- Delegate-scope creates land PENDING — release goes through a registered chain (ChainWrite) or the engine's settle sweep.
 - Dual addressing: `in`/`deps`/`out` accept node id OR node name (exact id wins; ambiguous name = explicit error listing candidates — CHAIN_ADDR_AMBIGUOUS).
 ## Semantics
 - Create requires an input side (task or in) → else EMPTY_NODE_CONNECTION; out may be empty; entry (task, no in) runs at create, async.

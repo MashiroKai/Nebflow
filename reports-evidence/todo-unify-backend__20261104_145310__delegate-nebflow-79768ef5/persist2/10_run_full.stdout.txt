@@ -1,0 +1,85 @@
+[writeguard] 写根断言通过（todo-persist-live）：1 路径 —— /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-79768ef5/reports-evidence/20261104_todo-unify-backend__delegate-nebflow-79768ef5/persist2/shots
+[delguard] 允许根断言通过（todo-persist-live）：resolved=/private/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/qa-todo-persist2 dryRun=false cleanOptIn=false
+[pre] 6138 listeners: [78176]
+[phase] stub LLM on :19002
+[phase] fixture home: /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/qa-todo-persist2
+[phase] jar: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-79768ef5/target/scala-3.5.2/stand-assembly-2026.10.26-beta.2.jar
+[gw] 18:09:50.609 [36mINFO [0m nebflow.gateway - LLM log recording: disabled (persisted=none → default off) | retention=armed (3-day window, independent of the write switch)
+[gw] 18:09:51.486 [36mINFO [0m nebflow.gateway - stand 2026.10.26-beta.2
+[gw] 18:09:51.487 [36mINFO [0m nebflow.gateway - Context window: 128000 tokens (model chain own-chain: cmdcode/deepseek/deepseek-v4.1-flash)
+[gw] 18:09:51.742 [36mINFO [0m nebflow.gateway - Pending-ask boot reconcile: inspected=0 expiredClosed=0
+[gw] 18:09:52.916 [36mINFO [0m nebflow.gateway - Boot dispatcher wake: boot=1793786989730-60668 projects=0 woken=0 skipped=0 failed=0
+[gw] 18:09:52.919 [36mINFO [0m nebflow.gateway - Merge-queue boot reconcile: alreadyMerged=0 () droppedEmpty=0 ownerGone=0 () preserved=0 ()
+[gw] 18:09:52.921 [36mINFO [0m nebflow.gateway - Msg-token boot reconcile: scanned=0 loaded=0 prunedSessions=0 prunedMappings=0
+[gw] 18:09:53.390 [36mINFO [0m nebflow.gateway - gateway listening on 0.0.0.0:8119
+[gw] 18:09:53.390 [36mINFO [0m nebflow.gateway - static tree: dev web/ sources
+[gw] 18:09:53.391 [36mINFO [0m nebflow.gateway - access URL: http://localhost:8119 (token in ~/.nebflow/auth.json)
+[gw] 18:09:53.545 [36mINFO [0m nebflow.gateway - Type 'quit', 'exit', or 'q' (or press Ctrl+C) to stop
+[gw] 18:09:53.557 [36mINFO [0m nebflow.gateway - Initializing global MCP servers...
+[gw] 18:09:53.559 [36mINFO [0m nebflow.gateway - MCP servers initialized
+PASS  隔离实例起来（非 6138 端口）  — http://127.0.0.1:8119
+PASS  6138 作者生产实例监听集未受影响  — before=[78176] after=[78176]
+PASS  隔离实例存在可渲染会话（胶囊挂载门 sessionShowsNodeEntries 通过）  — sessionId=43c37951-8f8d-49d4-a0e2-a2c7b1084616 agent=Nebula
+[gw] 18:09:54.762 [36mINFO [0m nebflow.gateway - console ticket redeemed: session established (accountSub=local, origin=local-ticket, sid=axEhO4Jq…, networkId=)
+[gw] 18:09:55.435 [36mINFO [0m nebflow.flow.tree - FlowTreeActor started for session Some(43c37951-8f8d-49d4-a0e2-a2c7b1084616)
+[gw] 18:09:59.889 [36mINFO [0m nebflow.gateway - console ticket redeemed: session established (accountSub=local, origin=local-ticket, sid=ckmCZg1x…, networkId=)
+PASS  桌面 context 1280×800 起来  — http://127.0.0.1:8119
+PASS  手机 context 375×812 起来  — http://127.0.0.1:8119
+PASS  手机端进入 mobile-layer（375 视口）  — body.class="sidebar-collapsed deck-look-v2 mobile-layer canvas-open canvas-overlay"
+PASS  手机端胶囊在场可见（跨端读面的载体）  — {"w":71.203125,"h":26,"display":"flex"}
+PASS  A 端 dataSource = backend（非夹具）  — {"dataSource":"backend","openCount":0}
+
+=== ① 新建（带重要度 3）⇒ 真源出现该行且 priority 正确，刷新后仍在 ===
+PASS  ①-1 真源落盘出现该行（scheduled-tasks/*.json 直查）  — file=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/qa-todo-persist2/scheduled-tasks/43c37951-8f8d-49d4-a0e2-a2c7b1084616.json
+PASS  ①-2 真源 priority = 3（新建择重要度真落库）  — priority=3
+PASS  ①-3 真源 kind = todo 且未完成  — kind=todo completedAt=null
+PASS  ①-4 刷新后真源该行仍在且 priority 不变  — id=45404d4e priority=3
+PASS  ①-5 刷新后页面活体可见该行（未完成面）  — ["PERSIST-①-新建高重要度"]
+PASS  ①-6 刷新后 DOM 行序含该行  — ["PERSIST-①-新建高重要度"]
+
+=== ② 完成 ⇒ 真源 completedAt 置位 + DoneRecord 落盘；刷新后仍在已完成态 ===
+PASS  ②-1 真源 completedAt 置位（软删落盘）  — completedAt=1793787012060
+PASS  ②-2 DoneRecord 落盘追加一行（checkin-records/done-records.jsonl）  — lines 0→1 lastTaskId=45404d4e via=ws
+PASS  ②-3 刷新后真源 completedAt 仍在（落库不是内存态）  — completedAt=1793787012060
+PASS  ②-4 刷新后未完成面不再出现该行（收件箱默认面）  — []
+PASS  ②-5 刷新后已完成面（includeCompleted 归档读口）仍见该行 completed=true  — ["PERSIST-①-新建高重要度"]
+PASS  ②-6 刷新后 DOM 未完成行序不含该行  — []
+
+=== ③ 取消完成 ⇒ 真源 completedAt 清空，刷新回到未完成 ===
+PASS  ③-0 前置：完成帧已落盘（completedAt 置位）  — id=84497934
+PASS  ③-1 真源 completedAt 清空  — completedAt=null
+PASS  ③-2 刷新后真源仍是未完成（completedAt 空）  — completedAt=null
+PASS  ③-3 刷新后该行回到未完成可见面  — ["PERSIST-③-取消完成"]
+PASS  ③-4 刷新后 DOM 行序含该行  — ["PERSIST-③-取消完成"]
+
+=== ④ 删除 ⇒ 真源该行物理消失，刷新后不复现 ===
+PASS  ④-1 真源该行物理消失（文件内不存在该 id）  — id=84497934 remaining=["45404d4e"]
+PASS  ④-2 刷新后真源仍无该行
+PASS  ④-3 刷新后页面活体不复现该行  — {"dataSource":"backend","openCount":0,"visible":[],"completed":[{"id":"45404d4e","title":"PERSIST-①-新建高重要度","completedAt":1793787012060}]}
+PASS  ④-4 刷新后 DOM 行序不含该行  — []
+
+=== ⑤ 改重要度 ⇒ 真源 priority 变化，刷新后排序位置随之变化 ===
+PASS  ⑤-0 改前排序：高重要度(3) 排在低重要度(1) 之前  — ["PERSIST-⑤-高重要度","PERSIST-⑤-低重要度"]
+PASS  ⑤-1 真源 priority 由 3 变 0（updateScheduledTask 落库）  — priority=0
+PASS  ⑤-2 排序位置随之变化：低重要度(1) 反超高重要度(0)  — before=["PERSIST-⑤-高重要度","PERSIST-⑤-低重要度"] after=["PERSIST-⑤-低重要度","PERSIST-⑤-高重要度"]
+PASS  ⑤-3 刷新后真源 priority 仍为 0  — priority=0
+PASS  ⑤-4 刷新后 DOM 排序仍为改后顺序  — ["PERSIST-⑤-低重要度","PERSIST-⑤-高重要度"]
+
+=== ⑥ 跨端一致：A 端（桌面）改 ⇒ B 端（手机）reload 可见 ===
+PASS  ⑥-0 B 端 reload 后读同一真源（dataSource=backend，含 A 端此前写入）  — {"dataSource":"backend","visible":["PERSIST-⑤-低重要度","PERSIST-⑤-高重要度"]}
+PASS  ⑥-a 新建跨端：A 端建（priority 2）⇒ B 端 reload 可见且 priority=2  — A=[{"id":"bd048ccd","title":"PERSIST-⑥-跨端新建","priority":2,"completed":false}] B=[{"id":"bd048ccd","title":"PERSIST-⑥-跨端新建","priority":2,"completed":false}]
+PASS  ⑥-b 完成跨端：A 端完成 ⇒ B 端 reload 后不在未完成面，归档面 completed=true  — B.visible=["PERSIST-⑤-低重要度","PERSIST-⑤-高重要度"] B.completed=["PERSIST-⑥-跨端新建","PERSIST-①-新建高重要度"] completedAt=1793787044794
+PASS  ⑥-c 重要度跨端：A 端 1→3 ⇒ B 端 reload 读到 priority=3  — A.priority=3 B.priority=3
+PASS  ⑥-c2 排序跨端一致：B 端该行排在 priority=0 行之前  — ["PERSIST-⑤-低重要度","PERSIST-⑤-高重要度"]
+
+=== 收尾 ===
+PASS  总共：A 端零 JS 异常（pageerror）  — []
+PASS  总共：B 端零 JS 异常（pageerror）  — []
+PASS  总共：两端零待办面 HTTP 失败（/ws、scheduled*、/api/sessions|auth）  — {"desktop":["http 404 http://127.0.0.1:8119/api/canvas-tabs","http 404 http://127.0.0.1:8119/api/portal/status","http 404 http://127.0.0.1:8119/api/portal/status"],"mobile":["http 404 http://127.0.0.1:8119/api/portal/status","http 404 http://127.0.0.1:8119/api/portal/status"]}
+PASS  总共：真源 dataSource 全程 = backend（无夹具/无内存 mock）
+PASS  收尾：6138 作者生产实例监听集仍不变（未触碰）  — before=[78176] after=[78176]
+PASS  总共：五类写帧全在线上出现过（A 端帧计数）  — {"SEND:createScheduledTask":5,"SEND:completeTodo":3,"SEND:uncompleteTodo":1,"SEND:deleteScheduledTask":1,"SEND:updateScheduledTask":2}
+
+==== PASS 45 / FAIL 0 ====
+[cleanup] kept fixture home: /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/qa-todo-persist2
+EXIT=0

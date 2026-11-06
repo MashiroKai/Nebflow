@@ -204,11 +204,17 @@ async function assertCluster(page, tag, { shot = null, expectOverlay = null } = 
   ok(`${tag} O-inside zoom bar 完整落在 pane 内`, inside,
     `bar=[${Math.round(bar.x)},${Math.round(bar.y)},${Math.round(bar.width)}x${Math.round(bar.height)}] pane=${Math.round(pane.width)}x${Math.round(pane.height)}`);
   // 命中面：Fit 钮中心（bar 最右按钮 = 修复前被 find 圆钮盖住的 spot）
+  // 探针修正（canvas 控件尺寸对齐批 2026-11-02）：原选择器按 title 字面量
+  // "Fit to view" 取钮，但 title 走 i18n（canvas.zoomFit → zh「适应视图」），
+  // 本机 locale 下恒取不到 ⇒ 探针在 HEAD 上就已 TypeError 崩（基线复现同错）。
+  // 改为按位置取：条内最后一颗 .canvas-zoom-btn = Fit（按钮序 pan?/out/pct/in/fit
+  // 是既有契约，本批未动顺序）。
   const fit = await page.evaluate(() => {
     const pane = document.querySelector('.canvas-tab-pane.active');
-    const btn = pane.querySelector('.canvas-zoom-btn[title="Fit to view"]');
+    const btns = [...pane.querySelectorAll('.canvas-zoom-btn')];
+    const btn = btns[btns.length - 1];
     const r = btn.getBoundingClientRect();
-    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2, title: btn.title };
   });
   const hitFit = await hitAt(page, fit.x, fit.y);
   ok(`${tag} O-hit Fit 钮中心命中 zoom bar`, hitFit === 'zoom-bar', `hit=${hitFit}`);

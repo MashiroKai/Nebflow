@@ -63,18 +63,30 @@ class HealthMonitorSpec extends CatsEffectSuite:
       assertEquals(down.map(_.providerId), List("glm"))
   }
 
-  test("markDown is idempotent") {
+  test("markDown keeps ONE entry per candidate and REFRESHES the reason to the latest failure") {
+    // 假 DOWN 批（2026-11-05）语义变更：旧实现 `case Some(Down(_)) => IO.unit` 把首次
+    // 原因钉死成化石——现场后果是 20:04 的一次传输层抖动写进表后，后 47 分钟里每次
+    // 探测/试探的真实失败形态一条都没记下来（作者面看到的永远是那句话，无法归类）。
+    // 现在：一条记录（size 仍为 1）+ 原因 = **最新**失败；since 保持首次时刻（事实面）。
     val monitor = newMonitor
 
     for
       _ <- monitor.markDown("glm", "glm-5", "error1")
-      _ <- monitor.markDown("glm", "glm-5", "error2") // no-op
-      states <- monitor.getStates
+      states1 <- monitor.getStates
+      _ <- monitor.markDown("glm", "glm-5", "error2")
+      states2 <- monitor.getStates
     yield
-      assertEquals(states.size, 1)
-      // First reason is kept
-      states.get("glm/glm-5").collect { case HealthState.Down(reason, _) =>
+      assertEquals(states2.size, 1, "one candidate must never hold two Down entries")
+      states1.get("glm/glm-5").collect { case HealthState.Down(reason, _) =>
         assertEquals(reason, "error1")
+      }
+      states2.get("glm/glm-5").collect { case HealthState.Down(reason, since) =>
+        assertEquals(reason, "error2", "the latest failure verdict is the one the operator must see")
+        assertEquals(
+          since,
+          states1.get("glm/glm-5").collect { case HealthState.Down(_, s) => s }.get,
+          "since stays the FIRST down moment (how long has it been broken is a fact, not a retry timer)"
+        )
       }
   }
 

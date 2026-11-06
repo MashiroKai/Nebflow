@@ -11,29 +11,59 @@
 | `ops/bin/stand` | `~/.stand/bin/stand` | stand CLI 入口（薄品牌壳）：只管辖 `~/.stand`（6138 缺省）实例 |
 | `ops/bin/nebflow` | `~/.nebflow/bin/nebflow` | nebflow CLI 入口（薄品牌壳）：只管辖 `~/.nebflow`（6140 缺省，双生分家批 2026-10-31）实例（2026-10-27 隔离批） |
 | `ops/bin/stand-cli-lib.sh` | `~/.stand/bin/` 与 `~/.nebflow/bin/` **各一份** | 两入口的**共享实现库**（隔离契约/守卫/横幅/`restart --detached` 全在此；单一代码路径） |
-| `ops/bin/nebflow-stand-shim` | `~/.stand/bin/nebflow` | PATH 垫片：`nebflow` → `~/.nebflow/bin/nebflow` 真入口（`~/.zshrc` 只把 `~/.stand/bin` 加进 PATH；2026-10-22 旧垫片是「转发 stand」，即跨品牌拉起的总根，本垫片取而代之） |
 | `ops/bin/stand-jdk` | `~/.stand/bin/stand-jdk` | pinned JDK（`$STAND_HOME/jdk-21`）自愈 installer（装 / 修 / 体检） |
-| `ops/nebflow-autostart.sh` | `~/.stand/bin/nebflow-autostart.sh` | 开机自启入口（v2：从 main 树 `sbt run` 起，带 6138 端口守卫） |
-| `ops/nebflow-restart.sh` | `~/.stand/bin/nebflow-restart.sh` | 开发实例自重启工具 v4.2（verbatim 入库，改动仍走它自己的版本纪律） |
+| `ops/stand-autostart.sh` | `~/.stand/bin/stand-autostart.sh` | 开机自启入口（v2：从 main 树 `sbt run` 起，带 6138 端口守卫；2026-11-03 双根分家批由 `nebflow-autostart.sh` git mv 改名——stand 的自启住 stand 家，旧名留弃用垫片转发） |
+| `ops/bin/nebflow-autostart-shim` | `~/.stand/bin/nebflow-autostart.sh` | **旧名弃用垫片**（2026-11-03 双根分家批）：打印弃用提示后 `exec` 转发同目录 `stand-autostart.sh`，参数逐字透传。launchd 现挂 `com.nebflow.gateway` 作业的 ProgramArguments 仍指旧名路径，经垫片继续工作（改 plist 属 launchd 操作，须作者裁定） |
+| `ops/stand-restart.sh` | `~/.stand/bin/stand-restart.sh` | 开发实例自重启工具 v4.4（**开发者/编排侧**；v4.4 主路径 `--hot` = 直接热重启：编译预检 + 隔离 canary → 立即重启，跳过四信号/观察窗——断点续跑兜底〔作者令 2026-11-03 17:59〕；`--canary`/`--watch`/`--wait-idle` 守候语义保留；`--force` 语义收敛=等同 `--hot`；2026-11-03 改名批由 `nebflow-restart.sh` git mv 而来，verbatim 入库，改动仍走它自己的版本纪律） |
+| `ops/bin/nebflow-restart-shim` | `~/.stand/bin/nebflow-restart.sh` | **旧名弃用垫片**（2026-11-03 改名批）：打印 `nebflow-restart.sh is deprecated — use stand-restart.sh` 后 `exec` 转发同目录 `stand-restart.sh "$@"`，参数逐字透传（与 CLI 改名「老 nebflow 命令留垫片转发」同一手法） |
 | `ops/release.sh` | —（不入 live：与仓绑定，从仓内跑） | **发版流水线（工程化 M2）**：`stage` → `approve` → `rollback` / `tag`，显式批准门（见下节） |
 | `ops/bin/stand-jar-pull` | —（不入 live：与仓绑定，从仓内跑） | **KAI → Mac jar 流转（KAI 主线迁移批 2026-10-26）**：拉 KAI 出包位最新 jar → SHA 对账 → 原子落位 → 切指针 → start 指针解析验证（`--verify`/`--dry-run` 零触碰预演；用法一页：`ops/stand-jar-pull.md`） |
 | `release/install.sh` `release/install.ps1` | release 出包路径 | release 安装器：`stand` 主命令 + `nebflow` legacy 转发垫片（与本目录 CLI 的隔离契约分工见 REBRAND「双命令并存」） |
-| `ops/test/stand-lifecycle.test.sh` | —（不入 live） | 守卫的纯 bash 断言测试（沙箱化，零真实 daemon；覆盖 stand+nebflow 两品牌隔离与 `restart --dry-run` 假点火） |
+| `ops/test/stand-lifecycle.test.sh` | —（不入 live） | 守卫的纯 bash 断言测试（沙箱化，零真实 daemon；覆盖 stand+nebflow 两品牌隔离、`restart --dry-run` 假点火、`restart --help` 三面口径、`stand-restart.sh`/`stand-autostart.sh` 弃用垫片的零副作用面） |
+| `ops/memsample.sh` | `~/.stand/bin/memsample.sh` | 60s 内存环形采样器（M4，2026-11-04）：宿主端口**从运行实例解析**（`.pid` → `lsof`；不再写死 8080），列追加 `hostPid,hostPort,compressedMB,totalMemMB`（压缩内存此前完全不在任何 RSS 里）。launchd 作业 `com.nebflow.memsample`（StartInterval=60） |
+| `ops/com.nebflow.watchdog.plist` | `~/Library/LaunchAgents/com.nebflow.watchdog.plist` | **launchd 作业正源（2026-11-05 运维批，作者裁定「挂 launchd」）**：`com.nebflow.watchdog`，`StartInterval=120`（取脚本自身设计节拍 `nebflow-watchdog.sh` 头注释），`EnvironmentVariables` 带全 `NEBFLOW_WD_PORT=6138` / `NEBFLOW_WD_NF_HOME=/Users/kaiyu/.stand` / `NEBFLOW_WD_LOG_CANDIDATES=<stand.log>:<nebflow.log>`（失聪判别日志候选，运维修复批 ①）。**首装为观察态**（`NEBFLOW_WD_FAIL_THRESHOLD=999999` ⇒ 只记失败行、永不升级 Stage1/Stage2）；开启自动恢复 = 该键改回 `3` 并 `launchctl bootout` + `bootstrap` 重载 |
+| `ops/bin/nebflow-watchdog.sh` | `~/.stand/bin/nebflow-watchdog.sh` | **Tier-2 外部监督看门狗 v3（2026-11-05 运维修复批 verbatim 入库——此前是孤儿脚本，门禁覆盖不到）**：健康探针 → 失聪/真死鉴别 → Stage1 优雅重启（`--restart-if-idle`，非 `--force`）→ Stage2 外部 agent 修复（6h 冷却）。v3 修两处生产失配：**①失聪探针**改多日志候选（`NEBFLOW_WD_LOG_CANDIDATES`，取最近 mtime 更新者；全不可读 ⇒ 判「判据不可用」且**禁判 DEAD**）；**②执行顺序**日志哨兵移到健康探针**之后**且只在健康轮跑（宕轮不再先付 find 的账）。三态夹具 `ops/test/watchdog-deaf-probe.test.sh` |
+| `ops/bin/nebflow-log-sentinel.sh` | `~/.stand/bin/nebflow-log-sentinel.sh` | **日志失控哨兵 v2（2026-11-05 运维修复批 verbatim 入库——此前是孤儿脚本）**：只读告警腿（判据①噪声型 >10MB 且单行重复、判据②窗口内增长 >5MB），由看门狗调用、自带 30min 节流。v2 收窄扫描面：**尺寸闸** `SENTINEL_SCAN_MIN_MB=1`（<1MB 的文件触发不了任何判据）+ **剪 `history/`**（19,646 目录 / 151,091 文件 / 单文件最大 26KB 的本地历史快照树 = 纯遍历成本），逃生口 `SENTINEL_SCAN_FULL=1` 逐字回到改前全量口径 |
+| `ops/test/watchdog-deaf-probe.test.sh` | —（不入 live） | 失聪鉴别三态隔离夹具（2026-11-05 运维修复批，24 断言）：C0 健康 / C1 DEAF(`stand.log` 新) / C2 DEAF(`nebflow.log` 新) / C3 DEAD(无监听) / C4 DEAD(日志陈旧) / C5 判据不可用(禁判 DEAD) / C6 FOREIGN；全沙箱化（夹具端口独立、`CLAUDE_BIN=/usr/bin/false` 挡死真 claude），收尾断言真实 6138 监听 pid 前后一致 |
 | `ops/test/release-pipeline.test.sh` | —（不入 live） | release.sh 的纯 bash 断言测试（沙箱化：假构建/假冒烟/假 java + fixture git 仓） |
+
+## 本机构建预算（**不在本仓** · 指针）
+
+sbt 重活串行闸 + 默认堆帽**属本机设置层**（作者裁定 2026-11-04 14:31：「本机的构建预算跟我们
+产品是无关的，它应该是我们本机的一个设置，跟我们 stand 应该是隔离的，不影响 stand」）。
+实现、自测、配置都不在本仓：
+
+- 权威副本 `~/.local/share/nebflow-local/bin/sbt-gate`，自测 `…/bin/sbt-gate.test.sh`，装/卸 `…/bin/local-install.sh`
+- 配置 `~/.config/nebflow/local-budget.conf`（默认堆帽 `-Xmx1500m`、等锁超时 900s，逃生口 `SBT_GATE=off`）
+- 部署位 `~/.stand/bin/sbt` → symlink 到上者（PATH 首位，遮蔽 `/opt/homebrew/bin/sbt`）
+- 边界判据与正反例：`~/.local/share/nebflow-local/README.md`
+
+本仓**不持有**该实现、不检测、不假设它存在。产品侧只有**只读消费方**：
+`ops/stand-restart.sh` 起 sbt 时「垫片存在就用它、不存在就用系统 `sbt`」，两条腿都正常工作。
 
 ## 部署（Mac 侧）
 
 ```bash
 REPO="/Users/kaiyu/Claude code/Stand"        # 或任意 stand 仓 checkout
-# stand 根: 入口 + 库 + 垫片 + JDK 体检
+# stand 根: 入口 + 库 + JDK 体检（PATH 垫片已退役——2026-11-03 作者令，见下节）
 cp "$REPO/ops/bin/stand"       ~/.stand/bin/stand       && chmod +x ~/.stand/bin/stand
 cp "$REPO/ops/bin/stand-cli-lib.sh" ~/.stand/bin/stand-cli-lib.sh
-cp "$REPO/ops/bin/nebflow-stand-shim" ~/.stand/bin/nebflow && chmod +x ~/.stand/bin/nebflow
 cp "$REPO/ops/bin/stand-jdk"   ~/.stand/bin/stand-jdk   && chmod +x ~/.stand/bin/stand-jdk
-cp "$REPO/ops/nebflow-autostart.sh" ~/.stand/bin/nebflow-autostart.sh && chmod +x ~/.stand/bin/nebflow-autostart.sh
+cp "$REPO/ops/stand-autostart.sh" ~/.stand/bin/stand-autostart.sh && chmod +x ~/.stand/bin/stand-autostart.sh
+cp "$REPO/ops/bin/nebflow-autostart-shim" ~/.stand/bin/nebflow-autostart.sh && chmod +x ~/.stand/bin/nebflow-autostart.sh
+# 开发实例自重启工具（2026-11-03 改名批）+ 旧名弃用垫片
+cp "$REPO/ops/stand-restart.sh"  ~/.stand/bin/stand-restart.sh  && chmod +x ~/.stand/bin/stand-restart.sh
+cp "$REPO/ops/bin/nebflow-restart-shim" ~/.stand/bin/nebflow-restart.sh && chmod +x ~/.stand/bin/nebflow-restart.sh
+# 开发重启工具的两个 helper（2026-11-03 双根分家批由 nebflow-* 改名；live 专属件，
+# 仓内无权威副本——与 stand-restart.sh 同目录部署）
+#   ~/.stand/bin/stand-setsid-exec.py / ~/.stand/bin/stand-daemonize.py（chmod +x）
 # nebflow 根 (9.19 自有根): 真入口 + 库
 cp "$REPO/ops/bin/nebflow"     ~/.nebflow/bin/nebflow   && chmod +x ~/.nebflow/bin/nebflow
 cp "$REPO/ops/bin/stand-cli-lib.sh" ~/.nebflow/bin/stand-cli-lib.sh
+# 内存即时缓解批（2026-11-04）: 内存采样器（权威副本 = 仓内）
+# 注: 同批的 sbt 全局闸垫片**已外置到本机设置层**（2026-11-04 剥离批，见上节「本机构建预算」），
+#     本仓不再持有它，部署本目录时也无需安装它——缺它是正常状态。
+cp "$REPO/ops/memsample.sh"    ~/.stand/bin/memsample.sh && chmod +x ~/.stand/bin/memsample.sh
 bash ~/.stand/bin/stand-jdk check        # pinned JDK 体检
 bash "$REPO/ops/test/stand-lifecycle.test.sh"   # 回归：全绿再部署
 ```
@@ -41,13 +71,100 @@ bash "$REPO/ops/test/stand-lifecycle.test.sh"   # 回归：全绿再部署
 **品牌隔离契约（2026-10-27 作者令）**：`stand` 只动 `~/.stand`（端口 `--port > STAND_GATEWAY_PORT > 6138`），
 `nebflow` 只动 `~/.nebflow`（`--port > NEBFLOW_GATEWAY_PORT > 6140`；分家批后引擎侧解析链同为 --port > env > config "port" > 品牌缺省）——互不拉起、互不探活、互不误杀；
 home/端口/JDK 覆写 env 各只认自家变量，stop 双探针（自家端口 ∪ 自家 `.pid`）+ 身份门按品牌收窄。
-**不编辑用户 shell rc**：`~/.zshrc:18` 的 PATH 原样保留，隔离由垫片换向达成。
+**PATH 与双根（2026-11-03 作者令，替代旧「不编辑用户 shell rc」口径）**：`~/.zshrc` 同时收两个根——
+`~/.stand/bin`（stand 命令）与 `~/.nebflow/bin`（nebflow 命令）；两目录互不放对方文件。
+原 PATH 垫片 `~/.stand/bin/nebflow`（转投 `~/.nebflow/bin/nebflow`）同批退役删除，
+删除时 sha256 = `6df461b3c714b94d710822dbd6beddd90804e35d24fcbe234a4a8815bbc79e2d`（留档，文件已不存在）。
+
+> **2026-11-03 作者令（双根分家）**：nebflow 命令住自己的家（`~/.nebflow/bin` 进 PATH），
+> stand 家里不再放 nebflow 任何文件。
 
 改 live 前先备份（沿用该目录既有 `.bak-YYYYMMDD` 惯例）：
 
 ```bash
 cp ~/.stand/bin/stand ~/.stand/bin/stand.bak-$(date +%Y%m%d-%H%M%S)
 ```
+
+## sbt 常驻 server（`sbt --client`）—— 条件性建议 · **默认不启用**（2026-11-04 复核批）
+
+> **归属**：本主题属「本机构建预算」（见上节指针）。**实现与配置在 `~/.local/share/nebflow-local/`**，
+> 本节只留**复核记录与判定**（读数、机制坑、重启判据），供将来条件变化时直接复用；
+> 采集器 `~/.local/share/nebflow-local/bin/sbt-server-bench.sh`。
+>
+> **结论：本机（16GB / swap 已用 61%）实测净负，默认维持现状（每次冷启）。本节是条件性建议，
+> 不是推荐配置**。什么时候再考虑启用，见本节末「重启判据」。
+
+### 机制（先钉三条会被踩的物理事实）
+
+1. **server 按「构建根」注册与寻址**：每个构建根自己一份 `<build>/project/target/active.json`
+   指向 `~/.sbt/1.0/server/<hash>/sock`。**两个 worktree = 两个 server**，不是「6 个 worktree
+   共享一个编译进程」。能共享的只有「同一 worktree 内的多次调用」。
+2. **常驻 server 必须用「真 sbt」启动，不能经闸垫片** `~/.stand/bin/sbt`：闸会把重活锁
+   （`~/.stand/run/sbt.lock`）交给它 exec 的真 sbt 子进程，而 server 常驻不退 ⇒ **锁被永久占用**，
+   全机器下一次编译就卡在 waiting（本批复核时实测踩到，闸日志见 `waiting for …sbt.lock`）。
+   正确起法是绕开垫片直接用 `/opt/homebrew/bin/sbt`（或 `SBT_GATE=off`）。
+3. `sbt --client` 需要 sbtn 原生客户端（`~/.cache/sbt/boot/sbtn/<版本>/sbtn`），首次使用会联网
+   下载；离线或代理不可用时 `--client` 整条路不可用，只能冷启。
+
+### 手工启用（不需要任何新代码）
+
+```bash
+WT=/path/to/worktree
+# 起常驻 server（绕开闸垫片；堆帽沿用闸口径 1500m）
+( cd "$WT" && nohup bash -c "exec sleep infinity | exec env SBT_OPTS='-Xmx1500m' /opt/homebrew/bin/sbt" \
+      >/tmp/sbt-server.log 2>&1 & )
+# 之后同一个 worktree 内的调用走热 server（~0.6s 往返，而不是每次约 5s 冷启）
+( cd "$WT" && /opt/homebrew/bin/sbt --client compile )
+# 关掉（内存立刻回吐；不关就一直常驻）
+( cd "$WT" && /opt/homebrew/bin/sbt --client shutdown )
+```
+
+闸的并发=1 语义不受影响的前提是：**走 server 的调用必须仍受闸串行**。手工上面这套是**绕过闸**的
+（`--client` 不经垫片），多会话并发时会出现「server 在编译 + 另一个会话的闸调用也在编译」，
+即闸的并发=1 失效——这也是本批**没有把它接进闸**的原因之一（接线版需要闸翻译命令 + 超时旁路，
+设计见知识文档，未落地）。
+
+### 实测读数（2026-11-04 14:2x，本机 16GB / 12 核 / JDK23 / sbt 1.10.10）
+
+| 场景 | 现状（每次冷启） | 常驻 server | 备注 |
+|---|---|---|---|
+| 同 worktree 重复调用（目标已热） | **6.7 / 4.9 / 5.1 s**（mean 5.6s） | **1.6 s（首连）/ 0.6 / 0.6 s** | 收益 ≈ **4.5–5 s/次**，即这类短调用快 ~8 倍 |
+| 新 worktree 首次调用（全量编译 741 源） | 98.7 / 84.0 / 88.5 s | server 帮不上（编译时间一分不省）；聚合形态下首次触达反而 **+3~4 s** | 收益在这一类为 **0** |
+| 常驻内存（每构建根一个 server） | 调用结束即退出，常驻 **0** | 空闲 **369 MB** → 编译后 **617–636 MB** | 6 个活跃 worktree ⇒ **2.2–3.8 GB 常驻** |
+| server 冷启动（单构建根） | — | **4.0 s**（boot → ready） | 聚合多构建根形态：**3 个构建根 116.6 s** |
+| 聚合形态（一个 JVM 承载多构建根，`RootProject`） | — | 3 构建根空闲 **587 MB**、每构建根首触达 **8.4–9.5 s**、重复 0.6–0.9 s | 见下节，**不建议** |
+
+按闸日志真实流量折算（本机今日 n=68 次调用、median 11 s、≤15 s 短调用占 59%、总墙钟 3 429 s）：
+全量命中热 server 约省 **240 s ≈ 7%** 的 sbt 墙钟，换成「每次调用省 4.5 s × 短调用次数」也是同一量级。
+**7% 的墙钟换 2.2–3.8 GB 常驻**，在本机（swap 2519/4096 MB = 61%、压缩内存约 4.2 GB、load1 12）是净负——
+这正是 M1 闸当初要压的同一类内存压力。
+
+### 跨 worktree 共享（聚合形态）：技术可行，但**不建议**
+
+`RootProject(file("<worktree>"))` 聚合可以把多个构建根装进**同一个 JVM**，各自加载自己的
+`project/` 定义、各自写自己的 `target/`（实测见知识文档 §4），因此「物理上不可能共享」要修正为
+「sbt server 原生不支持跨根，但可用聚合 build 绕过」。不采用的理由是实测出来的：
+
+- **冷启 116.6 s**（3 个构建根），每多一个活跃 worktree 都要付这份加载成本；
+- 每构建根**首次触达 8.4–9.5 s**，比冷启（5–6.7 s）更慢；
+- 对 build 定义有硬要求：`build.sbt` 里任何 **CWD 相对路径**（本仓 `IO.read(file("VERSION"))`）
+  在聚合根下会 `FileNotFoundException`，必须在聚合根摆副本（实测踩到并绕过）；
+- 注册表一变就要 `reload` 或重建 server，新 worktree 频繁出现的场景下抖动明显。
+
+### 复测方法（数字变了先复测再决定）
+
+```bash
+# 采集器在本机设置层（与本机预算同属一处，不进产品仓）
+BENCH=~/.local/share/nebflow-local/bin/sbt-server-bench.sh
+bash "$BENCH" baseline-3wt -- /tmp/wt1 "compile" -- /tmp/wt2 "compile"
+# 输出 /tmp/sbt-server-bench/<label>.log（原始输出）与 .summary.tsv（wall/sbtRssMB/allRssMB/gateWait/rc）
+```
+
+### 重启判据（满足任一条再谈启用）
+
+- 机器内存 ≥ 32 GB，或 `sysctl vm.swapusage` 的 used 长期 < 20%；
+- 或 sbt 调用量级再上一个数量级（例如常驻 > 200 次/小时），使 4.5 s/次 × N 的绝对收益压过常驻成本；
+- 或将来 sbt 2.x 提供原生多构建根 server（届时「每 worktree 一个 400–600 MB」这条成本项消失）。
 
 ## 2026-10-25 修复批（双病）
 
@@ -166,7 +283,19 @@ bash ops/release.sh status    # 只读: 指针 / previous / staged 状态
 
 ## 内建分离式重启/两阶段更新（台账 #916 · 2026-10-26）
 
-引擎内建（`nebflow.cli.DetachedApply`），设计件：`docs/design/20261026_detached-apply-restart-update-spec.zh-CN.md`。
+引擎内建（`nebflow.cli.DetachedApply`），设计件：`~/.stand/projects/stand/.stand/docs/design/detached-apply-restart-update-spec__20261026_000000.zh-CN.md`（文档库落位 = 项目注册目录 `.stand/docs/`，不在仓库 `docs/`，见「文档落位」条）。
+
+**`stand restart` 三条腿（作者裁定 2026-11-03 07:45：restart 的 CLI 从用户角度设计，用户不用编译版 stand）**
+
+| 腿 | 命令 | 适用场景 | 依赖 |
+|---|---|---|---|
+| 用户面（默认） | `stand restart`（= `--jar-apply`） | 装了官网发布版的终端用户：热重启当前已装版本 | 引擎活着才能注册 OS 作业（需可用 java） |
+| 自救面 | `stand restart --detached` / `--dry-run` | 引擎挂死、jar 面注册不了时 | **零 JVM 依赖**，只要 shell 能跑 |
+| 开发面 | `~/.stand/bin/stand-restart.sh`（**不进 bare 路径、CLI 不暴露开发旗标**） | 本机有源码树、在跑开发实例 | sbt + canary 端口，属开发者/编排侧工具 |
+
+`stand restart --help` 即按此三段渲染（用户面刻意不出现 sbt/编译/canary 字样；用户面文字：
+`ops/bin/stand-cli-lib.sh` 的 `stand_restart_help`）。开发面工具 2026-11-03 由
+`nebflow-restart.sh` 改名 `stand-restart.sh`，旧名保留为弃用垫片转发（见部署表）。
 
 - **`stand restart`（默认 detached）**：CLI 只向 OS 注册一次性 apply 作业
   （macOS = launchd agent bootstrap+kickstart；Windows = schtasks 固定名任务
@@ -185,9 +314,17 @@ bash ops/release.sh status    # 只读: 指针 / previous / staged 状态
 - **引擎 boot 对账**：发现上一 apply 死在中途 → WARN + state 记 `interrupted`，
   只留证据不自作主张。
 
+**用户面语义（作者裁定 2026-11-03 07:45）**：`stand restart` 只重跑当前已安装的版本，
+不涉及编译与 staging——用户装的官网发布版没有源码树，sbt 编译预检对他们不适用。
+失败语义按引擎实况（`DetachedApply` 渲染脚本 `do_apply`，`src/main/scala/nebflow/cli/DetachedApply.scala:512-540`）：
+restart 失败 = `phase=failed` + 写因留证（stop 腿失败 rc=3 / start 健康闸失败 rc=4），
+**服务保持停止**；**只有 `stand update` 才有回滚腿**（切回旧指针并起回旧版）。
+`--jar-apply` = 同一用户面的显式具名（与 bare 同路径，落 `RestartCommand.runDetached`），
+供脚本化调用自证意图；与 `--detached`/`--dry-run` 互斥（rc=2）。
+
 ### CLI 零 JVM detached 面（`restart --detached` / `--dry-run`，2026-10-27 批）
 
-与上节 jar 面**互补不冲突**（设计件：`docs/design/20261027_cli-isolation-and-detached-restart-spec.zh-CN.md`）：
+与上节 jar 面**互补不冲突**（设计件：`~/.stand/projects/stand/.stand/docs/design/cli-isolation-and-detached-restart-spec__20261027_000000.zh-CN.md`）：
 
 - `stand restart --detached`：CLI 层双 fork 孤儿化点火器（过继 launchd，ppid=1）
   + 点火前自检 ppid=1（不达标 ABORT rc=3，引擎分毫未动）+ stop 腿（launcher
@@ -202,6 +339,11 @@ bash ops/release.sh status    # 只读: 指针 / previous / staged 状态
 - bare `stand restart`（含 `run --inline --force/--tree`）**逐字透传 jar 面**，
   #916 语义零改动。`nebflow restart --detached/--dry-run` 同代码路径
   （9.19 jar 无 restart 命令，bare 报错 rc=2 并指路 detached 面）。
+- **三腿关系（2026-11-03 裁定批）**：jar 面（用户面）要求引擎活着才能注册 OS 作业；
+  `--detached`/`--dry-run` 是引擎挂死时**用户唯一的自救腿**（零 JVM），因此帮助文本里
+  排在用户面之后、开发面之前。`stand-restart.sh`（原 `nebflow-restart.sh`）是**第四个面**：
+  开发护栏工具（编译预检 + canary + 四信号 + 观察窗），CLI **刻意不接进 bare 路径**，
+  只在帮助的「开发面」段与本节指路。
 
 ## 测试
 
@@ -216,14 +358,94 @@ argv[0] 对 .app 二进制无效——测试基建里踩过的坑）。覆盖：
 未命中放行（子命令与端口 env 钉一致）、stop 双探针命中/失配态（pid 腿）/双空幂等/
 身份门拒杀/`--force`/`--tree` 透传、Java 版本门 rc=11、passthrough。
 
+**改名批 2026-11-03**（作者令 2026-10-29「这个脚本是不是也改改名为stand了」+ 裁定 2026-11-03 07:45
+「restart 的 CLI 从用户角度设计」）新增断言：弃用垫片 `nebflow-restart.sh` 打印弃用提示并逐字
+转发（含未知旗标透传、正文缺失时 rc=66 指路）；`stand restart --dry-run` 与
+`stand-restart.sh --check` **双零终止**实证（活监听器前后仍在、零 java exec、不留 watchdog
+暂停标志）；`stand restart --help` 三面齐全且**用户面段落不含 sbt/canary 字样**；
+`--jar-apply` 透传与 `--detached/--dry-run` 互斥。
+
 **双实例并存批 2026-10-30**（作者令「和 nebflow 隔离，同时可用」）在此基础上新增：
 默认值解析断言（`stand`→`~/.stand`+6138、`nebflow`→`~/.nebflow`+6140，经隐藏探针
 `__brand-defaults`，零 JVM）；start 撞**对家品牌实例**占口时 rc=1、报错点名「另一实例」
 （含其默认家/口与共存提示）。引擎侧对账 spec 见 `src/test/scala/nebflow/cli/CliBrandDefaultsSpec.scala` 等。
 
+## 故障恢复批 2026-11-05（`stand-restart.sh` v4.6：重启脚本把实例弄死后没起来）
+
+**事故**：2026-11-04 23:29 作者令热重启，脚本走完 编译预检 / canary / 杀旧实例 / 端口排空，
+**在「起新腿」那一行崩掉**，实例从 23:30 躺到次日 08:17 作者手动拉起（**8h45m**）。
+现场 `~/.stand/logs/restart-detach-20261104-232943-25813.log` 末行：
+`stand-restart.sh: line 834: PORT<乱码>: unbound variable`。
+
+**双重根因**：
+
+1. *直接*：macOS 自带 **bash 3.2.57**（`/bin/bash`，不是 brew 5.x）+ 脚本顶部 `set -u`。
+   `$PORT` 后面紧贴全角「（」时，3.2 把「（」的 UTF-8 首字节并进变量名，去查 `PORT<byte>`，
+   未定义 ⇒ 终止。最小复现（`bash -uc`，不碰实例）：
+   `PORT=6138; echo "x $PORT（日志 y"` ⇒ `PORT<byte>: unbound variable`；改成 `${PORT}` ⇒ 正常。
+2. *结构*（更要紧）：「杀」与「起」之间无兜底，且各终态行都写在杀之前的分支里
+   ⇒ 杀之后任何意外终止都只留一行 unbound，日志里没有「已停未起」的交代。
+
+**修法**（v4.6）：① 全脚本同类（`$VAR` 紧贴非 ASCII 字节）一律 `${VAR}`，可执行代码命中数 0；
+② `LEG_WINDOW` 窗口（旧树进程表验证消亡 → 新腿 spawn 完成）内任何原因的退出都走 EXIT trap →
+`abort_guard` 复用唯一 spawn 点 `start_new_leg` 尝试拉起（幂等：已有 pid/监听者则不起第二个）+
+写 `~/.stand/logs/restart-abort-<ts>.marker`（崩溃行号 / `$?` / 时间 / 实例实测在跑与否）+
+终态行明写「已停未起」。**结论只认实测**（端口探针），不认 spawn 返回码。
+
+**演练**（假 pid / 假端口 / 沙箱 `STAND_HOME`，绝不碰真实例）：
+
+```bash
+bash ops/test/restart-abort-guard.test.sh                    # 仓内权威副本
+bash ops/test/restart-abort-guard.test.sh ~/.stand/bin/stand-restart.sh   # 已部署 live 副本
+# 26 断言全绿；含 T4 回归扫描（同类命中数必须 0）
+```
+
+**T4 扫描面（2026-11-05 小修批扩展）**：T4 不再只扫「被测脚本」一个文件，口径为**全仓 shell
+脚本** —— `git ls-files '*.sh'`（排除 `reports-evidence/` 纯过程证据树）+ 无后缀但首行是
+sh/bash/zsh shebang 的入库脚本（`ops/bin/*`、`tools/*`、`scripts/nebflow-bin/*`），本机实测
+72 个文件。扩展前口径（单文件）命中 0，扩展后**一次就照出 3 处真缺陷**（`scripts/coldstart.sh`
+2 处、`scripts/sandbox-poc/60-qa-container-e2e.sh` 1 处），已同批修为 `${VAR}`；扩展后读数
+= 0 命中（唯一豁免是本测试脚本里的「改前形态」复现样本，靠行内 `T4-EXEMPT(<理由>)` 标注，
+不接受整文件豁免）。同类缺陷已扫清：三处 + 孤儿 live 脚本 `~/.stand/bin/coldstart-8080.sh`
+（5 处，仅 live 侧修复 —— **该脚本无仓内正源，属孤儿脚本**，仓内任何门禁都覆盖不到它）。
+注意 `bash -n` 对这类缺陷恒为 0（语法合法，只在运行期展开时崩），静态扫描是唯一机械拦口。
+
+**同批查清（未改行为）**：Tier-2 外部看门狗 `~/.stand/bin/nebflow-watchdog.sh` 整晚没动作，
+根因是**没有任何调度器在跑它**——`~/Library/LaunchAgents`、`/Library/LaunchAgents`、
+`/Library/LaunchDaemons` 均无对应 plist，`launchctl list | grep -iE "stand|nebflow|watchdog"`
+无该作业，`crontab -l` 为空；其自身日志 `~/.stand/logs/watchdog.log` **最后一条是
+2026-10-05 15:16:50**（Stage1 成功恢复），此后 31 天零写入。不是 `watchdog-paused` 残留在作祟
+（两处旗标均不存在，且 11-04 崩溃日志末行证明 restart 的 EXIT trap 已删除旗标）。
+`~/.stand/logs/watchdog/` 下的 `stuck-detected` 事件属**进程内** TaskStuckWatcher，
+按设计只管「agent 楔死但 HTTP 正常」，与「进程已死」正交，不可能救这次。
+详见 vault 报告 `restart-script-abort-and-watchdog-gap__*.md`。
+
+**调度已恢复（2026-11-05 运维批，作者裁定「挂 launchd」）**：plist 正源入库
+`ops/com.nebflow.watchdog.plist`（此前 launchd 侧零正源——全部 `com.nebflow.*` 作业 plist 都只存在于
+`~/Library/LaunchAgents/`），装载为 `com.nebflow.watchdog`，`StartInterval=120` 取脚本自身设计节拍，
+环境变量按硬前提带全（缺省会去探 8080 并调用不存在的重启脚本路径）。**首装跑观察态**（阈值键
+`NEBFLOW_WD_FAIL_THRESHOLD=999999`），自动恢复未开启。
+
+**两处生产失配已修（2026-11-05 当日晚间「运维修复批」）**：① 失聪鉴别曾探 `$NF_HOME/logs/nebflow.log`
+（该文件 mtime 冻结在 2026-10-18），而实例实际写 `~/.stand/logs/stand.log` ⇒ `DEAF` 恒不命中、
+「活着但 HTTP 不可达」会被判 `DEAD` 进 Stage1 ⇒ v2 的失聪根治在生产失效。现改为
+`NEBFLOW_WD_LOG_CANDIDATES` 多候选（取最近 mtime、全不可读则判「判据不可用」且**禁判 DEAD**），
+缺省值已钉进 plist；② 每轮先跑的全量 `find ~/.stand`（实测 25–47s、冷缓存 367s）：哨兵改为
+**健康探针之后、只跑健康轮**（宕轮发现延迟与扫描成本彻底解耦）+ 哨兵加尺寸闸（`SENTINEL_SCAN_MIN_MB=1`）
+与剪 `history/`（19,646 目录/151,091 文件的本地历史快照树）⇒ 扫描腿 43.2s → 20.0s、find 腿 25–28s → 4–5s。
+两脚本已 verbatim 入库（`ops/bin/nebflow-watchdog.sh`、`ops/bin/nebflow-log-sentinel.sh`），
+**不再是门禁覆盖不到的孤儿**。三态夹具 `ops/test/watchdog-deaf-probe.test.sh`（27 断言，全沙箱化）。
+**Stage2 腿仍有 3 处生产失配**（PROMPT 让 agent 跑 `~/.nebflow/bin/nebflow-restart.sh --force`，
+该文件不存在；诊断路径同指旧根；且会 `--dangerously-skip-permissions` 自行 `--force` 重启）
+⇒ 开自动恢复前请先裁定：只解锁 Stage1（把 `NEBFLOW_WD_CLAUDE_BIN` 指向不存在路径让 Stage2 走不可用分支）
+或先修 Stage2。详见 vault 报告 `watchdog-probe-fixes__20261105_101428.md`。
+
 ## 版本纪律
 
 1. 改动只发生在本目录（commit 进 stand 仓）。
 2. 部署 = `cp`（先 `.bak-时间戳` 备份 live）。
-3. `ops/nebflow-restart.sh` 为 verbatim 入库：它的真正开发流仍在 live 侧按其自身
-   头注释的版本纪律走；入库目的是换机/灾备有源可寻。
+3. `ops/stand-restart.sh` 为 verbatim 入库（2026-11-03 由 `ops/nebflow-restart.sh` git mv 改名，
+   `git log --follow` 保完整历史）：它的真正开发流仍在 live 侧按其自身头注释的版本纪律走；
+   入库目的是换机/灾备有源可寻。旧名 `nebflow-restart.sh` 的自造副本在 live 侧已被
+   `ops/bin/nebflow-restart-shim` 的弃用垫片取代（打印一行提示后 exec 转发），
+   老调用点/老脚本/老文档里的旧名一律继续可用。

@@ -475,7 +475,7 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
         try s.iterator().asScala.filter(p => Files.isRegularFile(p)).toList
         finally s.close()
     val seeds =
-      List(policy.dataRoot.resolve("auth.json"), policy.dataRoot.resolve("nebflow.json")) ++
+      List(policy.dataRoot.resolve("auth.json"), policy.dataRoot.resolve(nebflow.shared.Branding.configFileName)) ++
         filesUnder(policy.dataRoot.resolve("secrets")) ++
         filesUnder(home.resolve(".ssh"))
     seeds

@@ -20,6 +20,9 @@ import { makeReference } from './reference.js';
 import { initCanvasDrop } from './canvasDrop.js';
 import { authHeaders } from './flowHelpers.js'; // Bearer token for REST withAuth (/api/canvas-tabs)
 import { setSideBarCollapsed, isMobileViewport } from './activityBar.js';
+// 胶囊标签截断（作者令 2026-11-05 12:10 第④条「可辨识前缀 + 关键尾部」）：
+// 切法单源在 capsuleLabel.js（桌面/触屏腿与手机层腿共用一份），本模块只消费。
+import { splitCapsuleLabel, createTextMeasurer, capsuleTextAvail, CAPSULE_ELLIPSIS } from './capsuleLabel.js';
 // keyboard-first 三期：叠卡/胶囊环/卡窗的键位搬进规则表（keyRules.js），本模块
 // 提供三件事——① 状态 → 上下文键（派生，无推送）② 动作函数（deckKeyAction 等）
 // ③ 不再持有任何 document 级 keydown 监听。
@@ -1039,11 +1042,11 @@ function showExternalConflict(entry) {
   bar.setAttribute('role', 'status');
   bar.dataset.path = entry.absPath || '';
   bar.setAttribute('style', [
-    'display:flex', 'align-items:center', 'gap:10px',
-    'margin:8px 10px', 'padding:8px 10px 8px 12px',
-    'border-radius:10px',
+    'display:flex', 'align-items:center', 'gap:var(--ds-space-inline-gap)',
+    'margin:var(--ds-space-2) var(--ds-space-indent-x)', 'padding:var(--ds-space-2) var(--ds-space-inline-x) var(--ds-space-2) var(--ds-space-3)',
+    'border-radius:var(--ds-radius-button)',
     'background:rgba(28,30,38,0.92)', 'color:#f4f5f7',
-    'font:12.5px/1.4 -apple-system,"Segoe UI",sans-serif',
+    'font:var(--ds-fs-hint)/1.4 -apple-system,"Segoe UI",sans-serif',
     'border:1px solid rgba(255,255,255,0.12)',
     'box-shadow:0 4px 14px rgba(0,0,0,0.22)',
   ].join(';'));
@@ -1054,12 +1057,12 @@ function showExternalConflict(entry) {
   const keep = document.createElement('button');
   keep.className = 'nf-file-conflict-keep';
   keep.textContent = t('canvas.conflictKeep');
-  keep.setAttribute('style', 'flex:0 0 auto;cursor:pointer;padding:3px 10px;border-radius:7px;border:1px solid rgba(255,255,255,0.22);background:transparent;color:inherit;font:inherit;');
+  keep.setAttribute('style', 'flex:0 0 auto;cursor:pointer;padding:var(--ds-space-1) var(--ds-space-inline-x);border-radius:var(--ds-radius-input);border:1px solid rgba(255,255,255,0.22);background:transparent;color:inherit;font:inherit;');
   keep.onclick = () => { entry._externalConflict = null; bar.remove(); };
   const reload = document.createElement('button');
   reload.className = 'nf-file-conflict-reload';
   reload.textContent = t('canvas.conflictReload');
-  reload.setAttribute('style', 'flex:0 0 auto;cursor:pointer;padding:3px 10px;border-radius:7px;border:1px solid rgba(255,255,255,0.22);background:rgba(255,255,255,0.14);color:inherit;font:inherit;');
+  reload.setAttribute('style', 'flex:0 0 auto;cursor:pointer;padding:var(--ds-space-1) var(--ds-space-inline-x);border-radius:var(--ds-radius-input);border:1px solid rgba(255,255,255,0.22);background:rgba(255,255,255,0.14);color:inherit;font:inherit;');
   reload.onclick = () => { entry._externalConflict = null; bar.remove(); refreshFileTab(entry, { force: true }); };
   bar.append(text, keep, reload);
   pane.prepend(bar);
@@ -1315,7 +1318,7 @@ function renderUrlPane(pane, url) {
   // (javascript:, data:, file:) so the sandbox stays meaningful.
   if (!/^https?:\/\//i.test(url)) {
     const err = document.createElement('div');
-    err.style.cssText = 'padding:24px;font-size:13px;color:var(--color-text-muted)';
+    err.style.cssText = 'padding:var(--ds-space-6);font-size:var(--ds-fs-body);color:var(--color-text-muted)';
     err.textContent = '无法显示该链接：仅支持 http/https 网页。';
     pane.appendChild(err);
     return;
@@ -1323,10 +1326,10 @@ function renderUrlPane(pane, url) {
 
   // ── Top toolbar: hostname + "open in new window" fallback ──
   const bar = document.createElement('div');
-  bar.style.cssText = 'flex:none;display:flex;align-items:center;gap:12px;' +
-    'height:32px;padding:0 12px;min-width:0;' +
+  bar.style.cssText = 'flex:none;display:flex;align-items:center;gap:var(--ds-space-3);' +
+    'height:32px;padding:0 var(--ds-space-3);min-width:0;' +
     'border-bottom:1px solid var(--color-border);' +
-    'font-size:12px;color:var(--color-text-muted);user-select:none';
+    'font-size:var(--ds-fs-hint);color:var(--color-text-muted);user-select:none';
 
   const host = document.createElement('span');
   let hostText = url;
@@ -1355,8 +1358,8 @@ function renderUrlPane(pane, url) {
 
   // ── Bottom hint strip — always visible (embedding refusal is undetectable) ──
   const hint = document.createElement('div');
-  hint.style.cssText = 'flex:none;display:flex;align-items:center;justify-content:center;gap:6px;' +
-    'padding:4px 12px;font-size:11px;color:var(--color-text-muted);opacity:.7;user-select:none';
+  hint.style.cssText = 'flex:none;display:flex;align-items:center;justify-content:center;gap:var(--ds-space-1h);' +
+    'padding:var(--ds-space-1) var(--ds-space-3);font-size:var(--ds-fs-meta);color:var(--color-text-muted);opacity:.7;user-select:none';
   const hintText = document.createElement('span');
   hintText.textContent = '如果页面没有显示，可能是该网站不允许嵌入';
   const hintLink = document.createElement('a');
@@ -1408,20 +1411,20 @@ function renderFilePlaceholder(paneEl, errorMsg, absPath) {
   wrap.style.cssText = [
     'display:flex',
     'flex-direction:column',
-    'gap:8px',
+    'gap:var(--ds-space-2)',
     'align-items:flex-start',
     'justify-content:center',
     'height:100%',
-    'padding:24px',
+    'padding:var(--ds-space-6)',
     'color:var(--color-text-muted)',
-    'font-size:14px',
+    'font-size:var(--ds-fs-subtitle)',
   ].join(';');
   const iconRow = document.createElement('div');
   iconRow.textContent = t('canvas.unreadableTitle');
-  iconRow.style.cssText = 'font-weight:600;color:var(--color-text);font-size:15px;';
+  iconRow.style.cssText = 'font-weight:600;color:var(--color-text);font-size:var(--ds-fs-title);';
   const path = document.createElement('div');
   path.textContent = absPath || '';
-  path.style.cssText = 'font-family:var(--font-mono,monospace);font-size:12px;word-break:break-all;';
+  path.style.cssText = 'font-family:var(--font-mono,monospace);font-size:var(--ds-fs-hint);word-break:break-all;';
   const hint = document.createElement('div');
   hint.textContent = `${readErrorHint(errorMsg)}${errorMsg ? ' ' + errorMsg : ''}`;
   wrap.append(iconRow, path, hint);
@@ -1937,6 +1940,17 @@ function deckThumbMock(family) {
   }
 }
 
+/** 卡面语言单源（手机端堆叠卡翻页批 2026-11-02 作者令 §四「让手机端 canvas
+ *  标签页也像电脑端一样变成一张张卡片上下翻动」）：手机 deck 卡面的类型族
+ *  / 图标 / 缩略 mock 全部取自桌面环卡同一份数据（DECK_ICONS / deckTypeFamily
+ *  / deckThumbMock），手机层零复制 —— 桌面换图标/mock 即手机同步。
+ *  @param {{id: string, title?: string}} entry
+ *  @returns {{family: string, icon: string, thumb: string}} */
+export function deckFaceOf(entry) {
+  const family = deckTypeFamily(entry);
+  return { family, icon: deckIconOf(family), thumb: deckThumbMock(family) };
+}
+
 // ── 上下文键（keyboard-first 三期）──────────────────────────────────────────
 // 三条**派生**键：值现场从本模块的状态读，不推送、不重复赋值。
 // 为什么不用「改了状态就 setContextKey」：`deck.open = false` 在本文件出现三处
@@ -2151,6 +2165,9 @@ function renderCanvasHeader() {
   deckTitleEl.classList.toggle('is-dirty', !!(entry && isTabDirty(entry)));
   syncHeaderActions();
   syncRefBackButton();   // F5 返回原文档：随激活页签重sync可见性/座位
+  // 触屏常驻横向档同步（作者令 2026-11-05 12:10）：本函数是「页签集 / 激活签 /
+  // 脏标记」三处变化的公共出口 ⇒ 横排胶囊环在这里对齐新状态（桌面腿 no-op）。
+  if (ringSyncFn) ringSyncFn();
 }
 
 /* ── Canvas 改造批②⑤（2026-10-31 作者令「顶栏换代：左叉号右堆叠视角钮」；
@@ -2162,7 +2179,12 @@ function renderCanvasHeader() {
  *  迁胶囊右座，实证被 deck-layer 环卡吞命中，退出叠卡必须恒可点）——材质随
  *  本批升 v2 液体玻璃（.g2-fab 共享类）。原「独立窗口」chip（#canvas-pop-btn）
  *  随批⑤退役（独立窗出口 = 卡头右键菜单「在独立窗口打开」+ 环卡卡头
- *  .deck-card-pop，零能力损失）。卡窗态（cardWindowMode）✕ 全隐（卡窗自有窗关）。 */
+ *  .deck-card-pop，零能力损失）。卡窗态（cardWindowMode）✕ 全隐（卡窗自有窗关）。
+ *  **件1 回归批（作者令 2026-11-05）**：作者逐字「我们的canvas优化之后，独立窗口
+ *  打开的按钮现在没了。只在手机端隐藏这个按钮。电脑端要放在胶囊的右侧。」——
+ *  独立窗钮以 `.canvas-pop-btn` 类名回到标题胶囊**右座**（见下方 syncHeaderActions
+ *  内件1 块；类名必须沿用，环 hover 覆层右内缝 syncCenterInset 只认这个类名），
+ *  手机层 display:none。批⑤「内容物收口」判据（非内容物 = 禁用态 + 提示）保留。 */
 /* 环卡卡头独立/合并 toggle 图标（批⑤后唯一消费面 = .deck-card-pop；原
    标题头 #canvas-pop-btn 同批退役，SVG 常量随调用面留此单点）。 */
 const CARD_POP_SVG =
@@ -2170,6 +2192,21 @@ const CARD_POP_SVG =
   '<svg class="pop-ic-merge" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><path d="M14 10 21 3"/><path d="M3 21l7-7"/></svg>';
 const HEAD_CLOSE_SVG =
   '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+/* 件1：卡头独立窗钮的图标用 **namespace SVG 构建**（createElementNS，零裸 innerHTML
+   —— component-contract R5；字形与 CARD_POP_SVG 逐形同源：独立 ⧉ / 合并 ⇲ 两形
+   共挂一键，靠 .pop-ic-pop / .pop-ic-merge 类切换显隐，CSS 单源在 split.css）。 */
+const SVG_NS = 'http://www.w3.org/2000/svg';
+/** @param {string} cls @param {Array<[string, Object<string,string>]>} kids */
+function cardPopIcon(cls, kids) {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  for (const [k, v] of Object.entries({ class: cls, width: '13', height: '13', viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': '2', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })) svg.setAttribute(k, v);
+  for (const [tag, attrs] of kids) {
+    const el = document.createElementNS(SVG_NS, tag);
+    for (const k of Object.keys(attrs)) el.setAttribute(k, attrs[k]);
+    svg.appendChild(el);
+  }
+  return svg;
+}
 function syncHeaderActions() {
   const hdr = document.querySelector('#canvas-panel .canvas-header');
   if (!hdr) return;
@@ -2197,6 +2234,61 @@ function syncHeaderActions() {
 
   if (deckFab) deckFab.disabled = tabs.size === 0;
   if (closeBtn) /** @type {HTMLButtonElement} */ (closeBtn).disabled = tabs.size === 0;
+
+  /* ── 件1 回归批（作者令 2026-11-05 逐字「我们的canvas优化之后，独立窗口打开的
+   *  按钮现在没了。只在手机端隐藏这个按钮。电脑端要放在胶囊的右侧。」）：
+   *  批⑤退役的卡头独立窗钮**回位**到标题胶囊右座。实现要点四条：
+   *   ① 类名必须是 `.canvas-pop-btn` —— 环 hover 中心覆层的右内缝 syncCenterInset()
+   *      只认这个类名（--cr-popw = 26 钮 + 6 缝 = 32px），换名即断 #926「hover 不改
+   *      文字布局」契约（中心覆层文字盒与被替换的 .t-name 盒逐像素等宽）。
+   *   ② DOM 座位 = `.canvas-title` 的直接后继（右座单件；布局由 split.css
+   *      §件1 块 + 既有 justify-content:space-between / title flex:1 承担，零手工落位）。
+   *   ③ 行为入口单源 = toggleCardWindow(activeTabId)（与环卡 .deck-card-pop / 右键菜单
+   *      同一条腿）；图标复用 CARD_POP_SVG（.pop-ic-pop ↔ .pop-ic-merge 换形）。
+   *   ④ 内容物收口判据**不推翻**（delegate-nebflow-3a877cec 批）：非内容物页签
+   *      （无 absPath）= disabled + title/aria-label = 既有键 canvas.cardwinContentOnly
+   *      提示（判据单源 cardCanPop / capsuleMenuActions 同款语义），点击零开窗；
+   *      本件只恢复入口与其位置，不动「哪些内容允许独立窗」的判定。 */
+  let popBtn = /** @type {HTMLButtonElement|null} */ (hdr.querySelector('.canvas-pop-btn'));
+  if (!popBtn) {
+    popBtn = document.createElement('button');
+    popBtn.type = 'button';
+    popBtn.className = 'canvas-pop-btn';
+    // id 沿用批⑤前旧 id（既有 spec/验收脚本以 #canvas-pop-btn 命中；类名才是契约面）
+    popBtn.id = 'canvas-pop-btn';
+    popBtn.appendChild(cardPopIcon('pop-ic-pop', [
+      ['path', { d: 'M15 3h6v6' }],
+      ['path', { d: 'M10 14 21 3' }],
+      ['path', { d: 'M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6' }],
+    ]));
+    popBtn.appendChild(cardPopIcon('pop-ic-merge', [
+      ['polyline', { points: '4 14 10 14 10 20' }],
+      ['polyline', { points: '20 10 14 10 14 4' }],
+      ['path', { d: 'M14 10 21 3' }],
+      ['path', { d: 'M3 21l7-7' }],
+    ]));
+    // 手势链：胶囊按住/竖滑换卡/横滑关卡不得被钮吞 —— pointerdown 阻断、click 自带语义
+    popBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
+    popBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (popBtn.disabled || !activeTabId) return;
+      toggleCardWindow(activeTabId);
+    });
+    if (deckTitleEl && deckTitleEl.parentElement === hdr) hdr.insertBefore(popBtn, deckTitleEl.nextSibling);
+    else hdr.appendChild(popBtn);
+  }
+  {
+    const act = activeTabId ? tabs.get(activeTabId) : null;
+    const canPop = !!act && cardCanPop(activeTabId);
+    const indep = !!act && isCardIndependent(activeTabId);
+    const popLabel = indep ? '合并回主窗' : '独立窗口打开';
+    // 无活动页签 ⇒ 离场（此时 --cr-popw 由 syncCenterInset 同步落 0，文字盒两侧同源）
+    popBtn.hidden = !act;
+    popBtn.disabled = !canPop;
+    popBtn.classList.toggle('is-independent', indep);
+    popBtn.title = canPop ? popLabel : t('canvas.cardwinContentOnly');
+    popBtn.setAttribute('aria-label', canPop ? popLabel : t('canvas.cardwinContentOnly'));
+  }
 
   // 批⑤：堆叠态顶部标签数（前景序/总数；常态与单卡态隐藏——数从哪来
   // 标签条/chip 条已有，不重复显示）。
@@ -2247,6 +2339,19 @@ function deckRefreshDirty(id) {
 // （scrollTop）原样保留，「回原页面原位置」零额外状态（§5.5 v1 口径）。
 // 来源页签已关 ⇒ 按钮隐藏（teardownTab 钩子 + 每次激活重sync 双保险）。
 // v1 单层来源（_refSource 每次跳转覆写），多级栈 = §9-10 不做。
+//
+// 挂载点（canvas-overlap-fix 批 2026-11-05）：**按层选宿主**——桌面 = #canvas-slide
+// （面板内 absolute，与顶行浮钮同一坐标系）；手机 = .mf-canvas-page（手机层
+// #canvas-panel 恒 display:none，pane 被 re-parent 进 canvas 页 ⇒ 挂在 slide 上的
+// 钮在手机面**根本不渲染**，实测 0×0；本批随重叠修复一并接回手机宿主）。
+/** 当前层下「返回原文档」钮的挂载宿主（桌面 = 面板壳；手机 = canvas 页）。 */
+function refBackHost() {
+  if (document.body.classList.contains('mobile-layer')) {
+    return document.querySelector('.mobile-page[data-page="canvas"] .mf-canvas-page')
+      || document.querySelector('.mf-canvas-page');
+  }
+  return document.getElementById('canvas-slide');
+}
 function syncRefBackButton() {
   const slide = document.getElementById('canvas-slide');
   if (!slide) return;
@@ -2256,8 +2361,10 @@ function syncRefBackButton() {
   let btn = document.getElementById('canvas-refback-btn');
   if (!srcId) {
     if (btn) btn.remove();
+    document.body.classList.remove('has-refback');   // 第二行档让位随之撤销（无钮即无垫）
     return;
   }
+  document.body.classList.add('has-refback');   // 第二行档让位开关（无钮即无垫）
   const btnEl = /** @type {HTMLButtonElement} */ (btn);
   if (!btnEl) {
     const fresh = document.createElement('button');
@@ -2270,10 +2377,13 @@ function syncRefBackButton() {
       const src = cur && cur._refSource ? cur._refSource : null;
       if (src && tabs.has(src)) setActiveTab(src);
     });
-    slide.appendChild(fresh);
+    (refBackHost() || slide).appendChild(fresh);
   }
   const live = /** @type {HTMLButtonElement} */ (document.getElementById('canvas-refback-btn'));
   if (!live) return;
+  // 层切换/手机页重建后宿主会变 —— 每次 sync 校一次挂载点（幂等，不在就搬）。
+  const host = refBackHost();
+  if (host && live.parentElement !== host) host.appendChild(live);
   const srcEntry = tabs.get(srcId);
   const label = t('wiki.backToSource');
   live.textContent = '← ' + label;
@@ -2319,6 +2429,14 @@ function syncDeckBox() {
   const r = deckPanelRect();
   if (!r || !r.width) return;
   deck.areaH = r.height;               // ④②：透视 y 补偿的层高基准（deckProjectYComp）
+  // 顶行浮钮列第二档（canvas-overlap-fix 批 2026-11-05）：面板窄到顶行左侧净档
+  // 装不下一枚可读的「返回原文档」胶囊时，整枚钮落第二行（split.css
+  // `#canvas-panel.is-head-tight .canvas-refback-btn`）。判据只依赖面板实宽，
+  // 故与盒缓存无关、每帧无代价（classList.toggle 同值即空操作，零重排）。
+  // 540 的来处：净档 = (面板宽 − 胶囊实宽)/2 − 60 − 8；胶囊在 588 以下取 220
+  // 地板档 ⇒ 540 处净档 92px、520 处 82px（< 一枚可读胶囊约 100px）。
+  const panelEl = document.getElementById('canvas-panel');
+  if (panelEl) panelEl.classList.toggle('is-head-tight', r.width < 540);
   const same = deckBoxLast && deckBoxLast.l === r.left && deckBoxLast.t === r.top &&
     deckBoxLast.w === r.width && deckBoxLast.h === r.height;
   if (!same) {
@@ -2550,10 +2668,67 @@ function deckSnapshotSource(entry) {
 /** 建一张快照节点（已缓存直接返回；不可克隆回落 null）。 */
 function deckBuildSnapshot(entry) {
   if (deckSnapshots.has(entry.id)) return deckSnapshots.get(entry.id);
-  const src = deckSnapshotSource(entry);
-  if (!src) return null;
   const area = deckPanelRect();
   const srcW = (area && area.width) || 900;   // 渲染面宽 = canvas 区宽（display:none 面读不到 offsetWidth）
+  const node = deckSnapshotNode(entry, srcW);
+  if (!node) return null;
+  // checkJs：`__nfSnapKind` / `__nfSnapScroller` 是快照宿主的传输期 expando（见
+  // deckSnapshotNode 的写法），断言面只做类型放行，运行期仍是同一个节点对象。
+  const snapNode = /** @type {any} */ (node);
+  const snap = { node, srcW, kind: snapNode.__nfSnapKind || 'clone', scroller: snapNode.__nfSnapScroller || null };
+  delete snapNode.__nfSnapKind;
+  delete snapNode.__nfSnapScroller;
+  deckSnapshots.set(entry.id, snap);
+  return snap;
+}
+
+/**
+ * 快照节点构建（桌面环卡 + 手机堆叠视角共核，**同一套源解析/克隆腿**——
+ * 手机端不另造第二套截图方案，作者铁律「复用现有组件」）。
+ * 手机端堆叠视角批（作者令 2026-11-02 21:47 §三）把它从私有函数提为导出：
+ * 手机层需要自己的缓存生命周期（卡在、快照在；内容变才重截），桌面侧仍走
+ * 上面的 deckSnapshots 单会话缓存，行为零变化。
+ * @param {string} tabId canvas 页签 id
+ * @param {number} srcW 渲染面宽（快照缩放基准，CSS px）
+ * @returns {{node: Element, srcW: number, kind: string, scroller: Element|null}|null}
+ */
+export function canvasSnapshotFor(tabId, srcW) {
+  const entry = tabs.get(tabId);
+  if (!entry) return null;
+  const w = Number(srcW) > 0 ? Number(srcW) : 900;
+  const node = deckSnapshotNode(entry, w);
+  if (!node) return null;
+  const snapNode = /** @type {any} */ (node);   // 同上：expando 类型放行，运行期同一对象
+  const kind = snapNode.__nfSnapKind || 'clone';
+  const scroller = snapNode.__nfSnapScroller || null;
+  delete snapNode.__nfSnapKind;
+  delete snapNode.__nfSnapScroller;
+  return { node, srcW: w, kind, scroller };
+}
+
+/**
+ * 快照内容指纹（手机堆叠视角缓存命中判据，作者令「同一张卡不重复截图，
+ * 内容变了再重截」）：类型族 + 标题 + 源渲染面文本长度/滚动高度。
+ * 极轻（不克隆、不布局），只在开面/切卡时算一次。
+ * @param {string} tabId
+ * @returns {string} 指纹（无源面 = 空串 ⇒ 调用方落 mock）
+ */
+export function canvasSnapshotStamp(tabId) {
+  const entry = tabs.get(tabId);
+  if (!entry) return '';
+  const src = deckSnapshotSource(entry);
+  if (!src) return '';
+  const el = /** @type {HTMLElement} */ (src.el);
+  const text = (el.textContent || '').length;
+  const h = el.scrollHeight || el.offsetHeight || 0;
+  const img = src.kind === 'img' ? (/** @type {HTMLImageElement} */ (el).currentSrc || el.getAttribute('src') || '') : '';
+  return [deckTypeFamily(entry), src.kind, text, h, img.length].join('|');
+}
+
+/** 快照节点构建内核（无缓存；kind/scroller 以临时属性回传，调用方消费后删除）。 */
+function deckSnapshotNode(entry, srcW) {
+  const src = deckSnapshotSource(entry);
+  if (!src) return null;
   let node = null;
   try {
     if (src.kind === 'canvas') {
@@ -2596,9 +2771,12 @@ function deckBuildSnapshot(entry) {
       node.querySelectorAll('button, input, textarea, select').forEach((n) => n.setAttribute('tabindex', '-1'));
     }
   } catch { return null; }
-  const snap = { node, srcW, kind: src.kind, scroller: src.scroller || null };
-  deckSnapshots.set(entry.id, snap);
-  return snap;
+  // kind / scroller 经 node 上的临时属性回传（本内核只造节点，缓存策略归调用方：
+  // 桌面 = deckSnapshots 单会话缓存，手机堆叠视角 = 内容指纹缓存）。
+  const host = /** @type {any} */ (node);
+  host.__nfSnapKind = src.kind;
+  host.__nfSnapScroller = src.scroller || null;
+  return node;
 }
 /** 把快照挂进卡的 thumb 槽（替换 mock；等比缩放 + 只读）。缩放比取布局常量
  *  （卡宽 = 面板盒 85%，thumb 内宽 = 卡宽 − 12×2 margin − 2 border）——建环瞬间
@@ -3333,6 +3511,15 @@ function deckRequestClose(id) {
 let ringCloseFn = null;
 
 /**
+ * 触屏常驻横向档的同步句柄（作者令 2026-11-05 12:10）：`syncCoarseRow` 同样活在
+ * initCapsuleRing 的闭包里，而「页签集/激活签变了」这件事的公共出口是
+ * `renderCanvasHeader()`（openTab / setActiveTab / closeTab / deck 四处都过它）
+ * —— 用登记位接过去，比在每处调点撒一遍稳。桌面腿恒 no-op。
+ * @type {(() => void)|null}
+ */
+let ringSyncFn = null;
+
+/**
  * 叠卡/环的键位动作（三期：**唯一的键盘入口**，由 keyRules.js 的 deck.* /
  * canvas.* 规则按 when 条件转发进来）。
  *
@@ -3929,6 +4116,36 @@ function initCapsuleRing() {
   const isMobileLayer = () => document.body.classList.contains('mobile-layer');
   const panelEl = /** @type {HTMLElement} */ (hdr.closest('#canvas-panel'));
 
+  /* ── 触屏常驻横向档（作者令 2026-11-05 12:10）─────────────────────────────
+   * 作者逐字：「参考电脑端的样式来做手机端的canvas顶部胶囊的样式，总体思路就是
+   * 把上下展开的改为横向展开。并且是直接展开，不需要hover。」
+   *
+   * 病根（改前实证，见批文档 §①）：手机**横屏**（视口宽 > 768px）落不进手机交互
+   * 层（mobile/bootstrap.js MOBILE_MQ = max-width:768px），走的是桌面腿 ⇒ 手机
+   * 上看到的是 `.canvas-header` + `#canvas-capsule-ring` 那套**hover 才展开的竖
+   * 向胶囊环**：触屏没有 hover，邻签要么永远看不见、要么在按下瞬间「上下展开」
+   * 然后立刻收掉 —— 作者截图 (`20261103_215300_ca...` + 上下两条邻居名) 正是
+   * 这个态。同一视口下手机层（≤768）的 `.mf-strip` 早已是横向常驻展开，所以
+   * 漂的是「触屏 + 桌面腿」这一段，不是两套组件各错一半。
+   *
+   * 修法 = **同一套实现 + 能力断点**（不新起第二套）：胶囊环仍是 #canvas-capsule-
+   * ring 这一份 DOM/CSS/JS，只按输入能力换位姿：
+   *   · 细指针（鼠标/触控板）= 旧腿逐字节不变（hover 开环 + 上下对称弧 + 滚轮换选）；
+   *   · 粗指针（触屏/@media (pointer: coarse)）= 本档：**常驻展开**（不进 hover 竞态、
+   *     不需要任何前置手势）+ **横向排布**（--cr-x / --cr-ry 位姿，中心签居中、
+   *     左右邻签各一枚）。
+   * 位姿变量同名不同轴：JS 两档都写，CSS 按 `@media (pointer: coarse)` 取用
+   * —— 断点只存在于 CSS 一处，桌面上这些规则一条都不命中（零回归）。
+   * 「不遮挡」（作者第⑤条）：竖环档上缘位**必须**越过面板顶缘（RING_TOP_OUT 那
+   * 套克制越出），读作「胶囊压住了上面的文件名行」；横向档整排与标题头同高带，
+   * 零上越 —— 遮挡根因随位姿换轴消失，不需要额外让位几何。
+   */
+  /* 判据 = (pointer: coarse) **且** (hover: none)：纯触屏（手机/平板）才换档。
+     只写 coarse 会把「带触摸屏的笔记本」（主指针仍是触控板/鼠标、只是能摸）也
+     卷进来 —— 那类机器 hover 语义完好，桌面竖环腿照旧才对。 */
+  const COARSE_MQ = window.matchMedia('(pointer: coarse) and (hover: none)');
+  const coarsePointer = () => COARSE_MQ.matches;
+
   let acc = 0;                                     // 横滑游标累加器（deltaX 刻度）
   let accY = 0;                                    // 纵滚游标累加器（deltaY 刻度，整数步进零浮点）
   let wheelLockUntil = 0;                          // 滚轮切换冷却截止（performance.now() ms，触控板手感批）
@@ -3959,8 +4176,15 @@ function initCapsuleRing() {
       b.className = 'cr-capsule' + (isTabDirty(entry) ? ' is-dirty' : '');
       b.setAttribute('role', 'button');
       b.dataset.tabId = id;
+      const title = entry.title || entry.id;
       b.innerHTML = '<span class="cr-icon">' + deckIconOf(deckTypeFamily(entry)) + '</span>' +
-        '<span class="cr-dot"></span><span class="cr-name">' + escapeDeckText(entry.title || entry.id) + '</span>';
+        '<span class="cr-dot"></span><span class="cr-name"></span>';
+      /* 标签文字：细指针腿与改前逐字一致（纯文本 + CSS ellipsis 尾切，桌面零变化）；
+         粗指针腿留空，由 layout() 末尾 fillCapsuleNames() 按**实时可用宽**切成
+         「可辨识前缀 … 关键尾部」（作者令 2026-11-05 第④条，切法单源 =
+         capsuleLabel.js）。textContent 赋值天然转义，等价于旧 escapeDeckText。 */
+      const nameEl = /** @type {HTMLElement|null} */ (b.querySelector('.cr-name'));
+      if (nameEl && !coarsePointer()) nameEl.textContent = title;
       // 中心位让 pointer 事件穿透标题头（按压触感/竖滑换卡/横滑关卡手势照旧，
       // 作者令③「按住=交互按钮」）；缘位胶囊 = 纯按钮（不进手势链）。
       b.addEventListener('pointerdown', (e) => { if (ringState && ringState.ids[ringState.cursor] !== id) e.stopPropagation(); });
@@ -4037,13 +4261,118 @@ function initCapsuleRing() {
       k.classList.toggle('is-edge', ar === 1);
       k.classList.toggle('is-far', ar > 1);
       const side = rel < 0 ? -1 : 1;
-      const y = rel === 0 ? 0 : side * (ar === 1 ? edgeY : edgeY * 2);
-      k.style.setProperty('--cr-y', y.toFixed(1) + 'px');
-      k.style.setProperty('--cr-z', (ar === 0 ? 0 : ar === 1 ? -110 : -230) + 'px');
-      /* rotateX(+θ) = 顶边远离视者（CSS y 轴向下 ⇒ 顶部 y<0 ⇒ z' = y·sinθ < 0）：
-         上缘位（侧 −1）取 +34°（顶边后仰 = 竖圆柱外侧曲率），下缘位取 −34°
-         （底边后仰）—— 反号等幅，双缘同读作「圆柱外侧」。 */
-      k.style.setProperty('--cr-rx', String(rel === 0 ? 0 : -side * (ar === 1 ? 34 : 44)) + 'deg');
+      /* ── 位姿两档（作者令 2026-11-05 12:10：上下展开 → 横向展开）────────────
+       * 细指针 = 竖环（旧腿逐字不变）：--cr-y / --cr-rx / 弧深 edgeY。
+       * 粗指针 = 横排（触屏腿）：--cr-x / --cr-ry，纵向恒 0 —— 整排与标题头
+       *   同一条水平带（与手机层 `.mf-strip` 的「全组纸签严格同一水平线」同规），
+       *   相邻签的中心距 = stepX（= 胶囊宽 + 件缝，受视口宽钳制：极窄横屏
+       *   （768 宽）时 stepX 收到 120，保证 3 枚 180 胶囊不出视口）。
+       * rotateY 反号等幅 = 横圆柱同侧曲率（左邻右缘退后、右邻对称），与竖环的
+       * rotateX 反号同构；透视仍由 .capsule-ring 自身 perspective 提供。
+       * --cr-z 横排档只留 −40/−90（竖环的 −110/−230 配 rotateX 34° 的深度语言，
+       * 横排放大后会把邻签压得过小，字读不清 —— 与手机层「邻签有效字号 ≥13px」
+       * 的同一条可读性下限对齐）。 */
+      if (coarsePointer()) {
+        /* 横排档的**行宽预算**（按面板实宽，不是视口宽 —— 面板常与聊天列分屏，
+           844 横屏下实测只剩 ~315px）。三级降级（作者第④条「宽度不够时的降级
+           策略写明」，与标签截断降级同向）：
+             ① 理想档：中心签 180（= 桌面胶囊原寸）+ 邻签 0.72 × 中心 = 130；
+             ② 面板不够 ⇒ 先压**邻签**（下限 56 = 够放图标 + 2 字），中心签不动
+                —— 中心签是辨识主体（与手机层「中签大、邻签小」同比例语义）；
+             ③ 仍不够 ⇒ 再压中心签（下限 120），保证整排落在面板内。
+           落到面板缘外的邻签段由 CSS 横排档的**方向渐隐**（cr-side-l/r）化开，
+           读作「环还在往两边排」而不是被硬裁 —— 与手机层 `.mf-strip` 邻签
+           「朝外一侧连续化开」的既有语言同源（作者令 2026-11-02 21:47）。
+           中心签永不越出面板，故「当前文档名」这一枚在任何宽度下都完整可点。 */
+        const panelW = panelEl.clientWidth || window.innerWidth;
+        const GAP = 8;                                        // 胶囊件缝
+        const ICON_CHIP = 40;                                 // 图标档邻签宽（14 图标 + 内衬）
+        const TEXT_EDGE = 72;                                 // 文字档邻签下限（够放图标 + 3 字）
+        /* 行宽只吃「面板左右浮钮带之间」的净空（✕ / 堆叠钮各 40 + 边距 12 + 呼吸 6
+           = 单侧 58）：横排档与桌面浮钮同处一条顶带，压上去就是作者第⑤条说的那种
+           「叠在一起」。 */
+        const band = Math.max(96, Math.min(panelW - 2 * 58, panelW - 24));
+        let centerW = 180;
+        let edgeW = 0;
+        let iconOnly = false;
+        if (band >= 180 + 2 * TEXT_EDGE + 2 * GAP) {
+          // ① 理想档：中心签 = 桌面原寸 180，邻签文字档（收在剩余净空内）
+          edgeW = Math.min(Math.round(centerW * 0.72), Math.round((band - centerW) / 2 - GAP));
+        } else {
+          // ② 图标档：净空只够塞两枚图标签 ⇒ 邻签转图标，中心签吃满余量（≥96）
+          iconOnly = true;
+          edgeW = ICON_CHIP;
+          centerW = Math.max(96, Math.min(180, Math.round(band - 2 * edgeW - 2 * GAP)));
+          // ③ 兜底档：净空连「中心签 96 + 两枚图标签」都不够 ⇒ 只留中心签
+          if (band < 96 + 2 * ICON_CHIP + 2 * GAP) { edgeW = 0; centerW = Math.min(180, band); }
+        }
+        const stepX = centerW / 2 + edgeW / 2 + GAP;
+        const w = ar === 0 ? centerW : edgeW;
+        k.style.setProperty('--cr-w', w + 'px');
+        k.classList.toggle('cr-icon-only', ar === 1 && (iconOnly || edgeW < TEXT_EDGE));
+        k.classList.toggle('cr-side-l', ar === 1 && side < 0);
+        k.classList.toggle('cr-side-r', ar === 1 && side > 0);
+        const x = rel === 0 ? 0 : side * (ar === 1 ? stepX : stepX * 2);
+        k.style.setProperty('--cr-x', x.toFixed(1) + 'px');
+        k.style.setProperty('--cr-y', '0px');
+        k.style.setProperty('--cr-rx', '0deg');
+        k.style.setProperty('--cr-ry', String(rel === 0 ? 0 : -side * (ar === 1 ? 24 : 38)) + 'deg');
+        k.style.setProperty('--cr-z', (ar === 0 ? 0 : ar === 1 ? -40 : -90) + 'px');
+      } else {
+        k.style.removeProperty('--cr-w');
+        k.classList.remove('cr-side-l', 'cr-side-r', 'cr-icon-only');
+        const y = rel === 0 ? 0 : side * (ar === 1 ? edgeY : edgeY * 2);
+        k.style.setProperty('--cr-x', '0px');
+        k.style.setProperty('--cr-y', y.toFixed(1) + 'px');
+        k.style.setProperty('--cr-z', (ar === 0 ? 0 : ar === 1 ? -110 : -230) + 'px');
+        /* rotateX(+θ) = 顶边远离视者（CSS y 轴向下 ⇒ 顶部 y<0 ⇒ z' = y·sinθ < 0）：
+           上缘位（侧 −1）取 +34°（顶边后仰 = 竖圆柱外侧曲率），下缘位取 −34°
+           （底边后仰）—— 反号等幅，双缘同读作「圆柱外侧」。 */
+        k.style.setProperty('--cr-rx', String(rel === 0 ? 0 : -side * (ar === 1 ? 34 : 44)) + 'deg');
+        k.style.setProperty('--cr-ry', '0deg');
+      }
+    }
+    fillCapsuleNames();
+  };
+
+  /** 粗指针腿的标签填充：按**实时可用宽**切「头 … 尾」（切法单源 = capsuleLabel.js）。
+   *  幂等 + 零抖动：同一 (可用宽, 全名) 只写一次（dataset.sig 比对），换签/旋转屏
+   *  才会重切。DOM 上保留 `title` 与 role=button 的可读全名（读屏/长按提示不降级），
+   *  截断只压**绘制文本**。 */
+  const fillCapsuleNames = () => {
+    if (!coarsePointer()) return;
+    for (const k of root.children) {
+      const el = /** @type {HTMLElement} */ (k);
+      const nameEl = /** @type {HTMLElement|null} */ (el.querySelector('.cr-name'));
+      const entry = tabs.get(el.dataset.tabId || '');
+      if (!nameEl || !entry || !el.clientWidth) continue;
+      const full = entry.title || entry.id;
+      const avail = capsuleTextAvail(el);
+      const sig = avail.toFixed(1) + '|' + full;
+      if (nameEl.dataset.sig === sig) continue;
+      const measure = createTextMeasurer(nameEl);
+      const cut = splitCapsuleLabel(full, avail, measure);
+      measure.dispose?.();
+      nameEl.textContent = '';
+      if (!cut.ellipsis) {
+        nameEl.textContent = cut.head;
+      } else {
+        const head = document.createElement('span');
+        head.className = 'cr-name-head';
+        head.textContent = cut.head;
+        const mid = document.createElement('span');
+        mid.className = 'cr-name-mid';
+        mid.textContent = CAPSULE_ELLIPSIS;
+        nameEl.append(head, mid);
+        if (cut.tail) {
+          const tail = document.createElement('span');
+          tail.className = 'cr-name-tail';
+          tail.textContent = cut.tail;
+          nameEl.append(tail);
+        }
+      }
+      nameEl.dataset.sig = sig;
+      el.setAttribute('title', full);      // 全名兜底（与手机层 chip.title 同规）
     }
   };
 
@@ -4084,6 +4413,7 @@ function initCapsuleRing() {
   };
   const evaluateLeave = () => {
     if (!ringState) return;
+    if (coarsePointer()) return;   // 触屏常驻档：无 hover 语义，永不走收环腿
     if (!lastPtr || inHoverZone(lastPtr.x, lastPtr.y)) {
       if (leaveTimer) { clearTimeout(leaveTimer); leaveTimer = 0; }
     } else if (!leaveTimer) {
@@ -4099,6 +4429,7 @@ function initCapsuleRing() {
    *  惯性末段不连跳，冷却后重新累积。 */
   const onDocWheel = (e) => {
     if (!ringState || isMobileLayer()) return;
+    if (coarsePointer()) return;              // 触屏常驻档：滚轮不在本档语义内（不消费）
     if (deck.open) { closeRing(); return; }   // deck 态不开环（叠卡有自己的滚轮语义；开环态下 deck 开启即让位）
     if (!inHoverZone(e.clientX, e.clientY)) return;   // ④区外零响应：不消费，页面滚动照旧
     e.preventDefault();
@@ -4149,10 +4480,13 @@ function initCapsuleRing() {
     lastPtr = null;
     build();
     hdr.classList.add('ring-open');
-    // P0 §6 查看面顶垫：环展开 = 胶囊浮层侵占内容顶带——给面板壳挂
-    // .capsule-ring-open，.canvas-viewer-safe-top 共享类随环过渡同长垫高
-    // （240ms，split.css 尾块），收起即撤。桌面单页签态不开环，壳类恒不挂。
-    document.getElementById('canvas-content')?.classList.add('capsule-ring-open');
+    // hover 零布局批（作者报障 2026-11-03 21:35「hover canvas 胶囊会带着图片
+    // 一起动」）：旧腿在此给 #canvas-content 挂 .capsule-ring-open，让
+    // split.css 把 .canvas-viewer-safe-top 的 padding-top 16 → 52（配 240ms
+    // 过渡）——padding 是布局属性，定高 flex 列里 viewport 随之 −36px，图片
+    // ResizeObserver 重 fit ⇒ 图片跟着动。环是真浮层（#canvas-capsule-ring 挂
+    // body / z-246 / 真实越出面板顶缘），浮 chrome 不占位不透传布局 ⇒ 壳类整条
+    // 退役（CSS 侧 padding 联动同步删），顶垫只由静态档位决定。
     // 真越出批：显隐随环层本位；可点性 = 稳态门（0.36s 展开过渡后缘位才接
     // pointer —— 展开中胶囊从指针位掠过会抢标题头按压/拖划，见 split.css 注）。
     root.classList.add('open');
@@ -4162,6 +4496,14 @@ function initCapsuleRing() {
     root.hidden = false;
     anchor();
     layout();
+    /* 触屏常驻档不挂 hover 收环链（pointermove/wheel/pointerleave 三监听是
+       "指针离区即收"的载体 —— 触屏腿没有这个概念，挂着反而会被文档滚动/滑动手势
+       误判收环）。细指针腿逐字不变。 */
+    if (coarsePointer()) {
+      root.classList.add('steady');   // 常驻档无「展开中指针掠过」竞态 ⇒ 缘位立即可点
+      if (steadyTimer) { clearTimeout(steadyTimer); steadyTimer = 0; }
+      return;
+    }
     document.addEventListener('pointermove', onDocPointerMove);
     document.addEventListener('wheel', onDocWheel, { capture: true, passive: false });
     document.addEventListener('pointerleave', onDocPointerLeft);
@@ -4170,7 +4512,6 @@ function initCapsuleRing() {
     if (!ringState) return;
     ringState = null;
     hdr.classList.remove('ring-open');
-    document.getElementById('canvas-content')?.classList.remove('capsule-ring-open');
     root.classList.remove('open');
     root.classList.remove('steady');
     if (steadyTimer) { clearTimeout(steadyTimer); steadyTimer = 0; }
@@ -4187,7 +4528,46 @@ function initCapsuleRing() {
     if (leaveTimer) { clearTimeout(leaveTimer); leaveTimer = 0; }
   };
   // 三期：登记给规则表（canvas.ring.close → deckKeyAction('closeRing')）。
-  ringCloseFn = closeRing;
+  // 触屏常驻档下 Esc 收环不收（常驻展开 = 本档的**形态**，不是一次交互）——
+  // 收了也没有 hover 能把它再打开，等于把多签入口锁死。
+  ringCloseFn = () => { if (coarsePointer()) return; closeRing(); };
+
+  /** 触屏常驻横向档同步（作者令 2026-11-05 12:10：「直接展开，不需要 hover」）：
+   *  进入条件全部满足才驻留 —— 粗指针 ∧ 非手机层 ∧ 非卡窗 ∧ 面板开着 ∧
+   *  非叠卡态 ∧ ≥2 页签。任一条件破了就收环（例如关到只剩 1 签、开堆叠视图）。
+   *  每次同步都重算「当前签居中 + 左右邻签」位姿；页签集合变了才重建 DOM。
+   *  ⚠ 本函数是**竖环档的旁观者**：细指针下它必须整体 no-op（连 closeRing 都不许
+   *  调）—— 它挂在 renderCanvasHeader() 出口上，hover 环开着时换签/重绘会走到这里，
+   *  若在此收环就把「换签不断链」契约（CR4/CR4b）打断了。故用 coarseRowOn 记账：
+   *  只收自己开的那一轮。 */
+  let coarseRowOn = false;
+  const syncCoarseRow = () => {
+    const want = coarsePointer() && !isMobileLayer() && !cardWindowMode
+      && !deck.open && tabs.size >= 2 && isCanvasOpen();
+    if (!want) {
+      if (coarseRowOn && ringState) closeRing();
+      coarseRowOn = false;
+      return;
+    }
+    coarseRowOn = true;
+    if (!ringState) {
+      openRing(null);
+      if (!ringState) return;
+    }
+    const ids = [...tabs.keys()];
+    if (ringState.ids.join('|') !== ids.join('|')) {
+      build();
+    } else {
+      ringState.ids = ids;
+    }
+    ringState.cursor = Math.max(0, ids.indexOf(activeTabId));
+    root.classList.add('steady');
+    anchor();
+    layout();
+  };
+  // 供 renderCanvasHeader（页签集/激活签/脏标记三处共用出口）回调 —— 桌面腿
+  // 恒为 no-op（coarsePointer false），零回归。
+  ringSyncFn = syncCoarseRow;
 
   hdr.addEventListener('pointerenter', (e) => {
     if (isMobileLayer() || e.pointerType === 'touch') return;
@@ -4211,6 +4591,7 @@ function initCapsuleRing() {
   // 清零、回锚重排），滚动零断链；指针已离区（他处换签）= 照旧收环。deck 态
   // / 单页签态不开环照旧（deck 叠卡有自己的滚轮语义，双环互搏防回归）。
   document.addEventListener('canvas-tab-switched', () => {
+    if (coarsePointer()) { syncCoarseRow(); return; }   // 触屏常驻档：换签 = 游标跳新签（不收环）
     if (!ringState) return;
     const pt = lastPtr || openPt;
     if (pt && !deck.open && tabs.size >= 2 && inHoverZone(pt.x, pt.y)) {
@@ -4225,6 +4606,7 @@ function initCapsuleRing() {
     closeRing();
   });
   document.addEventListener('canvas-tab-closed', () => {
+    if (coarsePointer()) { setTimeout(syncCoarseRow, 0); return; }   // 触屏常驻档：延一拍读删后状态
     if (!ringState) return;
     /* teardownTab 在 tabs.delete 之前派发本事件（事件序先于删除）——同步重建
      * 会读到删除前状态：ids 含已关页签（死胶囊残留）、且 tabs.size 永远 ≥2
@@ -4242,6 +4624,24 @@ function initCapsuleRing() {
       steadyTimer = setTimeout(() => { root.classList.add('steady'); steadyTimer = 0; }, RING_STEADY_MS);
     }, 0);
   });
+
+  /* 触屏常驻横向档的三类触发（作者令 2026-11-05 12:10）：
+     ① 首屏 / 页签集变化 —— renderCanvasHeader 出口回调（ringSyncFn）；
+     ② 视口变化（旋转屏、拉窗、外接键鼠）—— resize / orientationchange / 能力
+        断点自身变化（pointer:coarse ⇄ fine 切换要立刻换档，否则会停在错的位姿）；
+     ③ 叠卡态进出 —— 面板 `.stacked` 类（deck 开启时环必须让位，双环互搏的
+        既有裁定照旧）。三处都走同一个 syncCoarseRow，桌面腿恒 no-op。 */
+  const onViewportChange = () => syncCoarseRow();
+  window.addEventListener('resize', onViewportChange);
+  window.addEventListener('orientationchange', onViewportChange);
+  if (typeof COARSE_MQ.addEventListener === 'function') COARSE_MQ.addEventListener('change', onViewportChange);
+  else if (typeof COARSE_MQ.addListener === 'function') COARSE_MQ.addListener(onViewportChange);
+  if (typeof MutationObserver === 'function') {
+    const mo = new MutationObserver(() => syncCoarseRow());
+    mo.observe(panelEl, { attributes: true, attributeFilter: ['class'] });
+  }
+  // 首屏一次：页签若已恢复则立即驻留；否则等 canvas-tab-switched / renderCanvasHeader。
+  syncCoarseRow();
 }
 
 /** 手机长按引用通路（navController 卡头长按钮消费）：引用当前活动卡片进聊天，
@@ -4735,10 +5135,10 @@ function cardWindowBootFace(fileName) {
   el.setAttribute('data-state', 'loading');
   el.style.cssText =
     'position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:5;' +
-    'display:flex;flex-direction:column;align-items:center;gap:10px;padding:22px 30px;' +
-    'border:1px solid var(--glass-border,#e0e1e4);border-radius:14px;' +
+    'display:flex;flex-direction:column;align-items:center;gap:var(--ds-space-inline-gap);padding:22px 30px;' +
+    'border:1px solid var(--glass-border,#e0e1e4);border-radius:var(--ds-radius-card-md);' +
     'background:var(--glass-bg,#fff);color:var(--color-text,#1b1e26);' +
-    "font:13px/1.6 -apple-system,'Segoe UI',sans-serif;text-align:center;max-width:78vw;";
+    "font:var(--ds-fs-body)/1.6 -apple-system,'Segoe UI',sans-serif;text-align:center;max-width:78vw;";
   const dot = document.createElement('div');
   dot.className = 'nf-cw-dot';
   dot.style.cssText =
@@ -4747,18 +5147,18 @@ function cardWindowBootFace(fileName) {
     'animation:nf-cardwin-spin 0.9s linear infinite;';
   const title = document.createElement('div');
   title.className = 'nf-cw-title';
-  title.style.cssText = 'font-weight:600;font-size:13px;max-width:52vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+  title.style.cssText = 'font-weight:600;font-size:var(--ds-fs-body);max-width:52vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
   title.textContent = fileName || t('canvas.loadingFile');
   const hint = document.createElement('div');
   hint.className = 'nf-cw-hint';
-  hint.style.cssText = 'font-size:12px;color:var(--color-text-muted,#8b8e96);display:none;';
+  hint.style.cssText = 'font-size:var(--ds-fs-hint);color:var(--color-text-muted,#8b8e96);display:none;';
   const retry = document.createElement('button');
   retry.className = 'nf-cw-retry';
   retry.textContent = t('canvas.retry');
   retry.style.cssText =
-    'display:none;margin-top:2px;padding:5px 16px;border-radius:8px;cursor:pointer;' +
+    'display:none;margin-top:var(--ds-space-half);padding:var(--ds-space-1h) var(--ds-space-4);border-radius:var(--ds-radius-input);cursor:pointer;' +
     'border:1px solid var(--glass-control-border,#d8d9dd);background:var(--glass-control-bg,transparent);' +
-    'color:inherit;font-size:12px;';
+    'color:inherit;font-size:var(--ds-fs-hint);';
   retry.addEventListener('click', () => { try { location.reload(); } catch { /* 无历环境 */ } });
   el.append(dot, title, hint, retry);
   const style = document.createElement('style');

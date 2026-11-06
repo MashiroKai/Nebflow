@@ -70,14 +70,14 @@ class EgressWhitelistSpec extends CatsEffectSuite:
     // 路径进 JSON 先归一正斜杠：Windows 反斜杠形态（os.Path.toString）裸插会造出
     // `\U` 非法转义 ⇒ circe 解析整段失败 ⇒ 宽容解码回 Nil（断言假红）。
     os.write.over(
-      tmp / "nebflow.json",
+      tmp / nebflow.shared.Branding.configFileName,
       s"""{"deviceShare": {"extraPaths": ["/definitely/not/a/real/dir", "${extra.toString.replace('\\', '/')}"]}}"""
     )
     // 坏条目被跳过（WARN 留痕），好条目生效。
     val allowed = EgressWhitelist.checkBrowseAccess(extra / "y.txt").unsafeRunSync()
     assertEquals(allowed, None)
     // 无配置 = 无追加根（宽容解码 Nil ⇒ 拒绝）。
-    os.write.over(tmp / "nebflow.json", "{}")
+    os.write.over(tmp / nebflow.shared.Branding.configFileName, "{}")
     val denied = EgressWhitelist.checkBrowseAccess(extra / "y.txt").unsafeRunSync()
     assert(denied.isDefined)
   }

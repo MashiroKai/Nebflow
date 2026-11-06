@@ -1,0 +1,8 @@
+Traceback (most recent call last):
+  File "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-24f88015/reports-evidence/20261104_root-migration-rehearsal/02-compare.py", line 100, in <module>
+    sys.exit(main())
+             ~~~~^^
+  File "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-24f88015/reports-evidence/20261104_root-migration-rehearsal/02-compare.py", line 31, in main
+    report = json.load(open(report_path))
+                       ~~~~^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/Volumes/rehearsal/root/migration-report.json'

@@ -1,0 +1,42 @@
+# green-shell.log — spec A/B/C（含 spec A 反向面）的 shell 面「后绿」（修复后）
+
+工作树：/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-e7c1a868
+命令行：bash ops/test/stand-lifecycle.test.sh
+结果：exit=0 — summary: PASS=205 FAIL=0
+（HEAD 时同一套件 PASS=191 FAIL=14，见 red-shell.log；断言名一字未改，改的只有实现）
+
+--- spec A: isolated root without a live instance → not running rc=0, zero kill on the other root's instance
+  PASS: spec A isolated root resolves its OWN declared port
+  PASS: spec A isolated root never silently becomes 6138
+  PASS: spec A not-running rc (rc=0)
+  PASS: spec A not-running message
+  PASS: spec A never mentions the other root's port
+  PASS: spec A: production-shaped instance untouched (zero signal)
+  PASS: spec A: production-shaped port still listening
+--- spec A reverse: undeclared isolated root with no live instance → not running rc=0, never 6138
+  PASS: spec A reverse: not-running rc (rc=0)
+  PASS: spec A reverse: not-running message
+  PASS: spec A reverse: never probes the brand default 6138
+  PASS: spec A reverse: never names 6138 in its output
+  PASS: spec A reverse: neighbouring instance untouched (zero signal)
+--- spec B: target home differs from caller home → refuse naming both homes, zero signal
+  PASS: spec B refusal rc (rc=1)
+  PASS: spec B names the target home
+  PASS: spec B names the caller home
+  PASS: spec B declares zero signal
+  PASS: spec B is not a stop
+  PASS: spec B: target survived (zero signal)
+  PASS: spec B: target port still listening
+  PASS: spec B reverse: home-matched stop rc (rc=0)
+  PASS: spec B reverse: home-matched stop really stopped it
+--- spec C: isolated-root start takes its own config port (never 6138); no declaration → hard refusal, zero JVM
+  PASS: spec C start rc (rc=0)
+  PASS: spec C pins the root's own config port
+  PASS: spec C never pins 6138
+  PASS: spec C WARN names the ignored inherited env
+  PASS: spec C undeclared port refusal rc (rc=3)
+  PASS: spec C refusal names the brand default it refuses
+  PASS: spec C refusal asks for --port
+  PASS: spec C refusal exec'd no JVM
+  PASS: spec C default root keeps the brand default 6138
+== summary: PASS=205 FAIL=0 ==

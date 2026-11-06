@@ -22,6 +22,11 @@
   <link rel="stylesheet" href="/src/main/resources/web/css/chat.css">
   <link rel="stylesheet" href="/src/main/resources/web/css/input.css">
   <link rel="stylesheet" href="/src/main/resources/web/css/split.css">
+  <!-- 手机层样式（引用入口移入 footer 批 2026-11-02）：footer 引用键的手机档
+       几何（--mtap-lg 48）在 css/mobileLayer.css 的 body.mobile-layer 作用域里 ——
+       手机腿（375×812）显式挂该姿态类后量到的是真机档。桌面腿零变化（全部规则
+       挂在 body.mobile-layer / html.mobile-html-layer 下）。 -->
+  <link rel="stylesheet" href="/src/main/resources/web/css/mobileLayer.css">
   <style>
     html, body { margin: 0; height: 100%; background: var(--color-bg, #101418); }
     #wrap { position: absolute; inset: 0; display: flex; flex-direction: column; }
@@ -42,6 +47,10 @@
         <div id="attachment-preview"></div>
         <textarea id="input" rows="1" placeholder="Type a message..."></textarea>
       </div>
+      <!-- 🔴 composer 引用键（#quote-item-btn）已整链退役（作者令 2026-11-03 10:11 ②
+           「输入框引用图标移除，不留替代按钮」）：本壳与 index.html 同步移除该键，
+           装配面（msgQuote.initQuoteItemButton）同批摘除。叠卡单张引用的**能力面**
+           仍可用（startItemQuote，探针 __quoteItemOn 直接调用），只是没有 UI 入口。 -->
     </div>
   </div>
   <script type="module">
@@ -55,6 +64,7 @@
       chat: chatEl,
       attPreview: document.getElementById('attachment-preview'),
       input: document.getElementById('input'),
+      inputBar: document.getElementById('input-bar'),
     });
     setActiveView(chatViews.primary);
     chatViews.primary.setSession('quote-harness');
@@ -65,6 +75,10 @@
     const quoteMod = await import(`${WEB}/msgQuote.js`);
     const persistMod = await import(`${WEB}/persistence.js`);
     const view = chatViews.primary;
+
+    // 🔴 composer 引用键装配随 2026-11-03 10:11 ② 退役（本壳不再调 initQuoteItemButton；
+    // 该导出已从 msgQuote.js 摘除）。叠卡单张引用的能力面经 __quoteItemOn 直调
+    // startItemQuote 验证。
 
     const raf2 = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
 
@@ -257,7 +271,29 @@
       return { ok: true };
     };
 
-    /* ── 跳转 + 高亮 ──────────────────────────────────────────────────── */
+    /** 图标对引用块高度的净增量（引用牌图标化批 ⑤「几何零回归」的机械读数）：
+     *  同一块量两次 —— 带图标 / 摘掉 `.msg-quote-head` 后 —— 差值 = 图标行的代价。
+     *  读数后立即把 head 放回原位（DOM 复原，后续断言不受影响）。 */
+    window.__iconDelta = (rowId) => {
+      const row = window.__rowById(rowId);
+      const box = row && row.querySelector('.msg-quote-block');
+      if (!box) return null;
+      const head = box.querySelector('.msg-quote-head');
+      if (!head) return null;
+      const withIcon = box.getBoundingClientRect().height;
+      const next = head.nextSibling;
+      head.remove();
+      const without = box.getBoundingClientRect().height;
+      box.insertBefore(head, next);
+      return {
+        withIcon: Math.round(withIcon),
+        without: Math.round(without),
+        delta: Math.round(withIcon - without),
+        textHeight: Math.round((box.querySelector('.msg-quote-text') || {}).getBoundingClientRect().height || 0),
+      };
+    };
+
+    /** 跳转 + 高亮 ──────────────────────────────────────────────────── */
     window.__jumpFromQuote = async (rowId) => {
       const row = window.__rowById(rowId);
       if (!row) return { ok: false };
@@ -292,8 +328,331 @@
       };
     };
 
-    window.__clearChat = () => { chatEl.innerHTML = ''; };
-    window.__makeRowsTall = () => {
+    /* ── 叠卡单张引用批（2026-11-02 作者令「让叠卡的图片可以分开引用」）─────
+     * 探针面：用户媒体行（renderUserBubble 的附件腿 → buildUserMediaRow）里的
+     * 叠卡，展开态每行一枚单张引用钮；点它 → 引用态（pendingAttachments）。
+     * 读数只读渲染后的 DOM + pendingAttachments 形状（房规）。 */
+    const tinyImg = (tag) => 'data:image/svg+xml;base64,' + btoa(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><rect width="100%" height="100%" fill="#2a4d8f"/><text x="4" y="20" fill="#fff">' + tag + '</text></svg>');
+
+    /** 一条用户消息附 N 张图（N≥2 ⇒ 叠卡；N=1 ⇒ 平铺单图）。 */
+    window.__renderUserStack = (n) => {
+      const atts = [];
+      for (let i = 0; i < n; i++) {
+        atts.push({ type: 'image', name: 'shot-' + i + '.png', path: '/tmp/up/shot-' + i + '.png', preview: tinyImg(i) });
+      }
+      chatMod.renderUserBubble('图 ' + n + ' 张', atts, Date.now());
+      const rows = Array.from(document.querySelectorAll('#chat > .row'));
+      const mediaRow = rows.filter(r => r.classList.contains('user-media')).pop();
+      return { msgId: mediaRow ? mediaRow.dataset.msgId : '', rows: rows.length };
+    };
+
+    /** 叠卡行寻址（同一 msgId 上可能有两行：气泡行 + 用户媒体卡行 ——
+     *  buildUserMediaRow 与文本行共 id，见 chat.js renderUserBubble）⇒ 取带叠卡
+     *  的那一行；没有叠卡则退回任意同 id 行。 */
+    window.__mediaRowById = (id) => {
+      const all = Array.from(document.querySelectorAll(`#chat .row[data-msg-id="${CSS.escape(String(id))}"]`));
+      return all.find(r => r.querySelector('.pop-stack-area')) || all.find(r => r.classList.contains('user-media')) || all[0] || null;
+    };
+
+    /** 展开叠卡（真实用户手势 = 点「展开 N」钮）。 */
+    window.__expandStack = async (msgId) => {
+      const row = window.__mediaRowById(msgId);
+      const pill = row && row.querySelector('.pop-stack-area .pill');
+      if (!pill) return false;
+      if (!row.querySelector('.pop-expand-view.show')) pill.click();
+      await raf2();
+      return true;
+    };
+
+    /** 叠卡引用入口读数（引用入口移入 footer 批 2026-11-02 11:00）：条目面
+     *  **零引用钮**（展开态每行都不许有 .pop-media-quote，折叠面同理），入口 =
+     *  #input-bar 里的 #quote-item-btn（显隐 + 文案 + 一键点击落引用态）。
+     *  未展开就先展开（真实手势 = 点「展开 N」），保证读数是展开面的形态。 */
+    window.__stackQuoteButtons = async (msgId) => {
+      const row = window.__mediaRowById(msgId);
+      const area = row && row.querySelector('.pop-stack-area');
+      if (!area) return null;
+      const expand = area.querySelector('.pop-expand-view');
+      if (!expand.classList.contains('show')) {
+        area.querySelector('.pill').click();
+        await raf2();
+      }
+      const layers = Array.from(expand.querySelectorAll('.media-layer'));
+      const btn = document.getElementById('quote-item-btn');
+      await raf2();
+      return {
+        expanded: expand.classList.contains('show'),
+        count: layers.length,
+        // 面上零引用钮（展开列 + 折叠盒都零命中）—— 作者令「不需要hover图片的
+        // 时候也显示一个图标」的机械判据。
+        surfaceButtons: area.querySelectorAll('.pop-media-quote').length,
+        buttons: layers.map((l, i) => ({
+          index: l.querySelector('.pop-media-quote') ? l.querySelector('.pop-media-quote').dataset.quoteItemIndex : null,
+          inRow: i,
+          label: '',
+          collapsedHasButton: !!area.querySelector('.pop-stack-view .pop-media-quote'),
+        })),
+        // 2026-11-03 10:11 ②：输入框引用键已退役 ⇒ 恒 null（specs 断言键不存在）。
+        footer: btn ? {
+          hidden: !!btn.hidden,
+          title: btn.title || '',
+          ariaLabel: btn.getAttribute('aria-label') || '',
+          inInputBar: btn.parentElement.id === 'input-bar',
+        } : null,
+        footerRetired: !btn,
+        quoteState: typeof area.popQuoteState === 'function' ? area.popQuoteState() : null,
+      };
+    };
+
+    /** 叠卡当前张读数（翻页后 footer 入口指向的那张）。 */
+    window.__stackFront = (msgId) => {
+      const row = window.__mediaRowById(msgId);
+      const area = row && row.querySelector('.pop-stack-area');
+      if (!area || typeof area.popQuoteState !== 'function') return null;
+      const st = area.popQuoteState();
+      return { index: st.index, total: st.total, descName: st.desc ? st.desc.fileName : null };
+    };
+
+    /** 点 footer 引用键 ⇒ 引用态（pendingAttachments）的真实载荷（= 当前张）。 */
+    window.__quoteItemOn = async (msgId, i) => {
+      const row = window.__mediaRowById(msgId);
+      if (!row) return { ok: false, why: 'no row' };
+      const area = row.querySelector('.pop-stack-area');
+      if (!area) return { ok: false, why: 'no stack' };
+      // 想引第 i 张 ⇒ 先把「当前张」翻到 i（拖动/横滑同一序：这里用按钮不可得，
+      // 直接以真实手势等价物 —— 点击 footer 键前先按翻页语义把 front 拨到 i）。
+      if (Number.isInteger(i)) {
+        let guard = 0;
+        while (area.popQuoteState().index !== i && guard++ < 12) {
+          const view = area.querySelector('.pop-stack-view');
+          const r = view.getBoundingClientRect();
+          const opts = { bubbles: true, pointerId: 1, pointerType: 'mouse', isPrimary: true };
+          const x = r.x + r.width - 20;
+          view.dispatchEvent(new PointerEvent('pointerdown', { ...opts, clientX: x, clientY: r.y + r.height / 2 }));
+          view.dispatchEvent(new PointerEvent('pointermove', { ...opts, clientX: x - 120, clientY: r.y + r.height / 2 }));
+          view.dispatchEvent(new PointerEvent('pointerup', { ...opts, clientX: x - 120, clientY: r.y + r.height / 2 }));
+          await raf2();
+        }
+      }
+      // 2026-11-03 10:11 ②：入口键退役 ⇒ 直接走能力面（原按钮点击 = 同一调用）：
+      const st = area.popQuoteState();
+      if (!st || !st.desc) return { ok: false, why: 'no item desc' };
+      quoteMod.startItemQuote(row, st.desc);
+      await new Promise(r => setTimeout(r, 20));
+      const q = quoteMod.quoteAttOf(view.pendingAttachments);
+      if (!q) return { ok: false, why: 'no quote state' };
+      return {
+        ok: true,
+        id: q.id,
+        refType: q.refType,
+        messageId: q.source.messageId,
+        itemIndex: q.content.itemIndex,
+        itemTotal: q.content.itemTotal,
+        attNames: (q.content.attachments || []).map(a => a.name),
+        attPaths: (q.content.attachments || []).map(a => a.path),
+        excerpt: q.content.excerpt,
+        label: q.display.label,
+        fullText: q.content.fullText,
+      };
+    };
+
+    /** 行级（整组）引用：媒体行 footer 引用钮（既有语义，用作对照 + 回归面）。 */
+    window.__quoteRowOn = async (rowId) => {
+      const row = window.__mediaRowById(rowId);
+      if (!row) return { ok: false };
+      const btn = row.querySelector('.duration-badge .msg-quote-btn');
+      if (!btn) return { ok: false, why: 'no footer button' };
+      btn.click();
+      await new Promise(r => setTimeout(r, 20));
+      const q = quoteMod.quoteAttOf(view.pendingAttachments);
+      return q ? {
+        ok: true, id: q.id, messageId: q.source.messageId,
+        itemIndex: q.content.itemIndex, attNames: (q.content.attachments || []).map(a => a.name),
+        excerpt: q.content.excerpt,
+      } : { ok: false, why: 'no quote state' };
+    };
+
+    /** 带着当前引用态发一条用户消息 ⇒ 气泡上方引用块（renderQuoteBlock 真腿）。 */
+    window.__sendQuoted = (text, msgId) => {
+      const row = window.__renderUserRowWithQuote(text, msgId);
+      return row && row.dataset.msgId;
+    };
+
+    /** 一条龙：按描述符进引用态 → 立刻发一条带引用的消息（引用牌图标化的四类
+     *  取证腿：图片真缩略 / 文档色块 / 文字 logo / 叠卡单张）。 */
+    window.__quotePill = async (spec, text, msgId) => {
+      await window.__startQuoteDirect(spec);
+      const row = window.__renderUserRowWithQuote(text, msgId);
+      return row && row.dataset.msgId;
+    };
+    /** 内联图片字节（引用牌「真缩略」的取证源，与叠卡 tinyImg 同族）。 */
+    window.__tinyImg = (tag) => tinyImg(tag);
+
+    /** 引用入口图标的读数（引用入口图标统一批 2026-11-02 12:58）：
+     *  footer 引用键 / footer 徽章引用钮 / 气泡引用牌 / composer chip 四处的
+     *  **SVG path `d` 串**与 `data-icon` 标识 —— 断言①「逐字相同」的直接读数面。
+     *  同时读 `color`（getComputedStyle）证明**只复用形状、不复用颜色**。 */
+    window.__quoteEntryIconShape = (textRowId) => {
+      const readSvg = (host) => {
+        const svg = host && host.querySelector('svg');
+        if (!svg) return null;
+        const cs = getComputedStyle(svg);
+        return {
+          d: Array.from(svg.querySelectorAll('path')).map(p => p.getAttribute('d')),
+          iconId: svg.getAttribute('data-icon') || '',
+          color: cs.color,
+          stroke: svg.getAttribute('stroke') || '',
+          viewBox: svg.getAttribute('viewBox') || '',
+          w: Math.round(svg.getBoundingClientRect().width),
+          h: Math.round(svg.getBoundingClientRect().height),
+        };
+      };
+      const footerBtn = document.getElementById('quote-item-btn');
+      const badgeBtn = document.querySelector('#chat .duration-badge .msg-quote-btn');
+      // 文字引用牌 = 走入口图标的那一块：优先按行 id 精确定位（同屏还有图片/文档/
+      // 历史腿引用牌，其 .nf-qicon 分别是 <img> 与 .fc-icon，不带 SVG）。
+      const textRow = textRowId ? window.__rowById(textRowId) : null;
+      const pill = (textRow && textRow.querySelector('.msg-quote-block .nf-qicon'))
+        || Array.from(document.querySelectorAll('#chat .msg-quote-block .nf-qicon'))
+          .find(el => el.classList.contains('is-glyph') && !el.classList.contains('fc-icon')
+            && el.querySelector('svg[data-icon]'))
+        || null;
+      const chip = document.querySelector('#attachment-preview .att-ref[data-ref-type="chat-message"] .nf-qicon');
+      // 色上下文单点：引用牌宿主链用 `--color-text-muted`，footer 键用
+      // `--color-frame-text-muted`（两个不同变量）。把两个变量在**当前主题**下的解析值
+      // 归一成计算色一并读出 —— 断言「引用牌图标吃的是引用牌那个变量」，而不是
+      // "恰好值不同"（深色主题下两个变量可以算出同值，值比较会误报）。
+      const resolveVar = (name) => {
+        const probe = document.createElement('span');
+        probe.style.color = `var(${name})`;
+        probe.style.position = 'absolute';
+        probe.style.visibility = 'hidden';
+        document.body.appendChild(probe);
+        const v = getComputedStyle(probe).color;
+        probe.remove();
+        return v;
+      };
+      return {
+        footer: readSvg(footerBtn),
+        badge: readSvg(badgeBtn),
+        pill: readSvg(pill),
+        chip: readSvg(chip),
+        pillHostColor: pill ? getComputedStyle(pill).color : '',
+        footerHostColor: footerBtn ? getComputedStyle(footerBtn).color : '',
+        // 2026-11-03 10:11 ②：footer 键退役后，徽章引用钮成为同源锚 ⇒ 同步读它的宿主色。
+        badgeHostColor: badgeBtn ? getComputedStyle(badgeBtn).color : '',
+        chipHostColor: chip ? getComputedStyle(chip).color : '',
+        varTextMuted: resolveVar('--color-text-muted'),
+        varFrameTextMuted: resolveVar('--color-frame-text-muted'),
+        pillHeadHeight: (() => {
+          const h = pill && pill.closest('.msg-quote-head');
+          return h ? Math.round(h.getBoundingClientRect().height) : -1;
+        })(),
+        pillBlockColor: (() => {
+          const b = pill && pill.closest('.msg-quote-block');
+          return b ? getComputedStyle(b).color : '';
+        })(),
+      };
+    };
+
+    /** 引用块读数（张数 UI 的机械判据：data-quote-item-index + 「第 N/total 张」）。
+     *  引用牌图标化批（2026-11-02 11:00）追加 icon* 读数：图标类型（thumb/file/glyph）、
+     *  缩略 src、`.fc-icon` 色族、图标盒几何（16px 档）、图标与摘要行的几何关系。 */
+    window.__quoteBlockShape = (rowId) => {
+      const row = window.__rowById(rowId);
+      const box = row && row.querySelector('.msg-quote-block');
+      if (!box) return null;
+      const icon = box.querySelector('.nf-qicon');
+      const ir = icon ? icon.getBoundingClientRect() : null;
+      const tr = box.querySelector('.msg-quote-text');
+      const trr = tr ? tr.getBoundingClientRect() : null;
+      const img = icon && icon.querySelector('img.nf-qicon-img');
+      const svg = icon && icon.querySelector('svg');
+      return {
+        itemIndex: box.dataset.quoteItemIndex ?? null,
+        text: (box.querySelector('.msg-quote-text') || {}).textContent || '',
+        hasPosText: /第 \d+\/\d+ 张/.test(box.textContent || ''),
+        attCells: box.querySelectorAll('.msg-quote-att-media').length,
+        attFiles: box.querySelectorAll('.msg-quote-att-file').length,
+        jump: box.dataset.quoteJump || '',
+        icon: icon ? {
+          kind: icon.classList.contains('is-thumb') ? 'thumb'
+            : icon.classList.contains('is-file') ? 'file' : 'glyph',
+          src: img ? img.getAttribute('src') : '',
+          fcCls: icon.dataset.fcCls || '',
+          text: icon.textContent || '',
+          hasSvg: !!icon.querySelector('svg'),
+          w: ir ? Math.round(ir.width) : 0,
+          h: ir ? Math.round(ir.height) : 0,
+          leftOfText: !!(ir && trr && ir.right <= trr.left + 1),
+          besideText: !!(ir && trr && ir.top < trr.bottom && ir.bottom > trr.top),
+          inBox: !!(ir && ir.left >= box.getBoundingClientRect().left - 1),
+          // 图标统一批（2026-11-02 12:58）：字形身份 + 色上下文（形状复用、颜色各宿主）。
+          svgD: svg ? Array.from(svg.querySelectorAll('path')).map(p => p.getAttribute('d')) : [],
+          svgId: svg ? (svg.getAttribute('data-icon') || '') : '',
+          svgColor: svg ? getComputedStyle(svg).color : '',
+        } : null,
+        boxColor: getComputedStyle(box).color,
+        boxHeight: Math.round(box.getBoundingClientRect().height),
+        textHeight: trr ? Math.round(trr.height) : 0,
+        textLines: tr ? Math.round(trr.height / parseFloat(getComputedStyle(tr).lineHeight || '17.4')) : 0,
+      };
+    };
+
+    /** composer 引用 chip 的图标读数（引用牌图标化批：图片缩略 / 文档色块 / 文字 logo）。 */
+    window.__chipIconShape = () => {
+      const chip = document.querySelector('#attachment-preview .att-ref[data-ref-type="chat-message"]');
+      if (!chip) return null;
+      const icon = chip.querySelector('.nf-qicon');
+      const ir = icon ? icon.getBoundingClientRect() : null;
+      const cr = chip.getBoundingClientRect();
+      const img = icon && icon.querySelector('img.nf-qicon-img');
+      const svg = icon && icon.querySelector('svg');
+      return {
+        kind: icon ? (icon.classList.contains('is-thumb') ? 'thumb'
+          : icon.classList.contains('is-file') ? 'file' : 'glyph') : 'none',
+        src: img ? img.getAttribute('src') : '',
+        fcCls: icon && icon.dataset ? (icon.dataset.fcCls || '') : '',
+        hasSvg: !!(icon && icon.querySelector('svg')),
+        text: icon ? (icon.textContent || '') : '',
+        w: ir ? Math.round(ir.width) : 0,
+        h: ir ? Math.round(ir.height) : 0,
+        svgD: svg ? Array.from(svg.querySelectorAll('path')).map(p => p.getAttribute('d')) : [],
+        svgId: svg ? (svg.getAttribute('data-icon') || '') : '',
+        svgColor: svg ? getComputedStyle(svg).color : '',
+        chipColor: getComputedStyle(chip).color,
+        chipHeight: Math.round(cr.height),
+        chipText: chip.textContent || '',
+      };
+    };
+
+    /** 深链：点带张序的引用块 ⇒ 目标叠卡展开 + 第 N 行高亮（验收项③）。 */
+    window.__jumpItem = async (rowId) => {
+      const row = window.__rowById(rowId);
+      const box = row && row.querySelector('.msg-quote-block');
+      if (!box) return { ok: false };
+      const targetId = box.dataset.refMessageId;
+      box.click();
+      await new Promise(r => setTimeout(r, 260)); // 展开过渡 + 高亮落定
+      const trow = window.__mediaRowById(targetId);
+      const expand = trow && trow.querySelector('.pop-expand-view');
+      const layers = expand ? Array.from(expand.querySelectorAll('.media-layer')) : [];
+      return {
+        ok: true,
+        expanded: !!(expand && expand.classList.contains('show')),
+        flashed: layers.map((l, i) => (l.classList.contains('quote-item-flash') ? i : -1)).filter(i => i >= 0),
+        rowFlash: !!(trow && trow.classList.contains('quote-target-flash')),
+        scrolled: chatEl.scrollTop,
+        layerInView: layers.map(l => {
+          const r = l.getBoundingClientRect();
+          const c = chatEl.getBoundingClientRect();
+          return r.top >= c.top - 2 && r.bottom <= c.bottom + 2;
+        }),
+      };
+    };
+
+    window.__clearChat = () => { chatEl.innerHTML = ''; };    window.__makeRowsTall = () => {
       // 让 #chat 产生可滚动高度（跳转位移断言的前提）。#chat 在 chat.css 是
       // flex column 容器 ⇒ 占位块必须 flex:none，否则默认 flex-shrink:1 会把它
       // 压回容器高（可滚动前提失效）。

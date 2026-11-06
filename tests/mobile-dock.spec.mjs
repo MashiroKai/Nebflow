@@ -62,7 +62,8 @@ test.use({ viewport: { width: 375, height: 812 }, hasTouch: true, colorScheme: '
  *  `sealed:true`   = 显式再封（features.friends:false ⇒ 封存空态卡面）。
  *  `unread` = mock 会话未读数（真实未读链夹具，D14 用；默认 0）。
  *  `pendingAsk` = 该会话未读里点名作者行动的条数（认知二期可行动判据夹具，
- *    D14 用；默认 0 —— 纯未读不上徽标，见 messages.js actionableUnread）。 */
+ *    D14 用；默认 0 —— 徽标读数口径见 messages.js totalUnread（未读真值腿）+
+ *    pendingAskCount/actionableTotal（可行动轴），两轴相加。 */
 async function bootApp(page, { friends = false, unread = 0, pendingAsk = 0, sealed = false } = {}) {
   await page.addInitScript(({ friends: f, unread: u, pendingAsk: pa }) => {
     localStorage.setItem('nebflow_token', 'e2e-token');
@@ -370,8 +371,8 @@ test('D4 canvas page: empty state on entry, doc cards via openTab (chips/stepper
   expect(empty0.emptyVisible).toBe(true);
   expect(empty0.panelDisplay).toBe('none');
 
-  // 双卡：chip 条两枚 + 工具条 ‹计数› 步进 + X 关卡（详情交互见
-  // mobile-canvas-sheet.spec.mjs —— 此处钉「页内呈现/切换」面）。
+  // 双卡：环带两枚签（当前签居中 + 邻签）+ 工具条 ✕/堆叠钮 + 底部小点
+  // （详情交互见 mobile-canvas-sheet.spec.mjs —— 此处钉「页内呈现/切换」面）。
   await page.evaluate(() => {
     import('/js/canvas.js').then((c) => {
       c.openTab('dock-a', '文档甲', { type: 'dock-a' });
@@ -389,10 +390,17 @@ test('D4 canvas page: empty state on entry, doc cards via openTab (chips/stepper
       popGone: !pg.querySelector('.mf-cv-pop') && !pg.querySelector('.mf-cv-prev'),
       adopted: pg.querySelectorAll('.mf-cv-host .canvas-tab-pane[data-tab-id="dock-b"]').length,
       emptyHidden: pg.querySelector('.mf-cv-empty').hidden,
+      dots: (() => {
+        const d = pg.querySelector('.mf-dots');
+        const items = [...d.querySelectorAll('.mf-dot')];
+        return { hidden: d.hidden, n: items.length, onIdx: items.findIndex((x) => x.classList.contains('on')) };
+      })(),
     };
   });
   expect(st.chips).toEqual([{ id: 'dock-a', on: false }, { id: 'dock-b', on: true }]);
+  // 标签栏重做批（2026-11-02 §二/§三）：档位读数转底部小点，计数降 sr-only 仍播报。
   expect(st.count).toBe('2/2');
+  expect(st.dots).toEqual({ hidden: false, n: 2, onIdx: 1 });
   expect(st.stackBtn).toBe(true);
   expect(st.popGone).toBe(true);   // 批⑤：独立窗/步进钮退役
   expect(st.adopted).toBe(1);
@@ -406,20 +414,30 @@ test('D4 canvas page: empty state on entry, doc cards via openTab (chips/stepper
   expect(errors).toEqual([]);
 });
 
-test('D7 tasks page via chat chrome key: page live, panel adopted, header back pops (panel X retired in page)', async ({ page }) => {
+test('D7 to-do entry is per-end (作者令 2026-11-05 09:28): mobile = top-left floating tasks key, capsule slot hidden', async ({ page }) => {
   const errors = watchErrors(page);
-  await page.locator('[data-chrome="tasks"]').click();
-  await expect(page.locator('.mobile-page[data-page="tasks"]')).toHaveClass(/live/);
-  await settlePage(page, 'tasks');
-  // 面板收编进页面体（懒建 + 收编同步腿）。
-  await expect(page.locator('.mobile-page[data-page="tasks"] .mobile-page-body > #mobile-task-panel')).toHaveCount(1);
-  await expect(page.locator('#mobile-task-panel')).toBeVisible();
-  // 重复返回钮清查批：面板头 X 在页面壳内退场（返回 = 页面壳唯一「<」）。
-  expect(await page.locator('#mobile-task-panel .tp-x').evaluate((el) => getComputedStyle(el).display)).toBe('none');
-  // 「<」关闭 → 弹栈回聊天根。
-  await page.locator('.mobile-page[data-page="tasks"] .mobile-back-btn').click();
-  await expect(page.locator('#mobile-task-panel')).toBeHidden();
-  expect(await page.evaluate(() => window.__nfMobileNav?.top)).toBe('chat');
+  // 端区分批（2026-11-05 09:28）反转了入口收敛批（2026-11-04）的手机侧口径：
+  // 手机端待办入口 = 聊天根左上悬浮「任务」圆钮（→ pushPage('tasks') →
+  // #mobile-task-panel），桌面端才是顶带胶囊。原 D7 的「圆钮/tasks 页/任务面板
+  // 三者皆缺席」断言整体反过来，意图不变：手机端**只有一个**待办入口，且两份
+  // 实现不同端不并存。
+  const taskBtn = page.locator('#mobile-fab-layer .mh-chrome-btn[data-chrome="tasks"]');
+  await expect(taskBtn).toHaveCount(1);
+  await expect(taskBtn).toBeVisible();
+  // 桌面侧载体（顶带胶囊槽）在手机层整槽退场。
+  expect(await page.locator('#task-list').evaluate((el) => getComputedStyle(el).display)).toBe('none');
+  // 直接打导航缝：'tasks' 页恢复（push 即建页），'todo' 页仍无权杖（PAGES 仍无）。
+  const nav = await page.evaluate(async () => {
+    const m = await import('/js/mobile/navController.js');
+    m.pushPage('tasks');
+    await new Promise((r) => setTimeout(r, 300));
+    return {
+      tasksPage: document.querySelectorAll('.mobile-page[data-page="tasks"]').length,
+      todoPages: document.querySelectorAll('.mobile-page[data-page="todo"]').length,
+      panel: document.querySelectorAll('#mobile-task-panel').length,
+    };
+  });
+  expect(nav).toMatchObject({ tasksPage: 1, todoPages: 0, panel: 1 });
   expect(errors).toEqual([]);
 });
 
@@ -511,7 +529,7 @@ test('D5 sealed state: messages/contacts pages show skeleton empty cards; messag
   expect(errors).toEqual([]);
 });
 
-test('D10 center chat-home key form: sapphire circle 44×44 inside dock bounds, stand-logo fallback (dark scheme; 收形批 10-31 22:50)', async ({ page }) => {
+test('D10 center chat-home key form: themed chip circle 44×44 inside dock bounds, stand-logo fallback (dark scheme; 收形批 10-31 22:50 → 头像芯片批 11-01 20:42 → 边缘统一批 11-01 22:3x)', async ({ page }) => {
   const errors = watchErrors(page);
   const st = await page.evaluate(() => {
     const key = document.querySelector('#mobile-dock .dock-key[data-dock="chat"]');
@@ -521,11 +539,31 @@ test('D10 center chat-home key form: sapphire circle 44×44 inside dock bounds, 
     const dockR = document.getElementById('mobile-dock').getBoundingClientRect();
     const cs = getComputedStyle(circle);
     // token 同源探针（frontend-verification 口径）：等色判据来自同一 var()，
-    // 断言与 token 定义解耦 —— fill 恒等于 rgb(var(--sapphire)) 计算值。
+    // 断言与 token 定义解耦。头像芯片批（2026-11-01 20:42「浅色=白底黑 logo/
+    // 深色=黑底白 logo」）：logo 回落态 fill 换主题芯片 token（:has(.dock-
+    // center-logo) 限定；自定义头像态仍 sapphire 底，D11 另钉）—— 本用例
+    // 无头像种子 = logo 态，fill 判据随批换 --agent-avatar-chip-bg。
     const probe = document.createElement('span');
-    probe.style.background = 'rgb(var(--sapphire))';
+    probe.style.background = 'var(--agent-avatar-chip-bg)';
     document.body.appendChild(probe);
     const tokenColor = getComputedStyle(probe).backgroundColor;
+    // 边缘统一批（作者令 11-01 22:3x「dock 的 agent 头像边缘和顶部 agent 头像的
+    // 边缘保持一致」）：收形批④ shadow=='none' 契约随批退役 —— 中键边缘换顶部
+    // 头像同款（chat.css #agent-avatar-btn 逐字同 token 组合）；判据 = 同一
+    // var() 组合探针的计算值逐字等值，与 token 定义/主题档解耦。
+    probe.style.border = '1px solid var(--glass-control-border)';
+    probe.style.boxShadow = 'inset 0 1px 0 var(--glass-control-highlight), 0 2px 8px var(--glass-control-shadow)';
+    const pcs = getComputedStyle(probe);
+    const edge = {
+      borderW: cs.borderTopWidth,
+      borderStyle: cs.borderTopStyle,
+      borderColor: cs.borderColor,
+      shadow: cs.boxShadow,
+      probeBorderW: pcs.borderTopWidth,
+      probeBorderStyle: pcs.borderTopStyle,
+      probeBorderColor: pcs.borderColor,
+      probeShadow: pcs.boxShadow,
+    };
     probe.remove();
     return {
       present: true,
@@ -534,44 +572,77 @@ test('D10 center chat-home key form: sapphire circle 44×44 inside dock bounds, 
       circleTop: r.top,
       dockTop: dockR.top,
       inside: r.top >= dockR.top - 0.5,      // 收形批⑤：圆顶不探出 dock 顶缘
-      shadow: cs.boxShadow,
       radius: cs.borderRadius,
       bg: cs.backgroundColor,
       tokenColor,
+      ...edge,
       logo: !!circle.querySelector('img.dock-center-logo'), // 收形批③：回落 = stand logo
       hasAvatarClass: circle.classList.contains('has-avatar'),
     };
   });
   expect(st.present).toBe(true);
-  expect(st.w).toBe(44);                  // --dock-center-size（冷启动批⑧ 2026-10-30「缩小一档」50→44）
+  expect(st.w).toBe(44);                  // --dock-center-size（冷启动批⑧ 2026-10-30「缩小一档」50→44；border-box ⇒ 描边收进 44 足印）
   expect(st.h).toBe(44);
   expect(st.inside).toBe(true);           // 收形批⑤：中键收回 dock 边界内（lift=0）
-  expect(st.shadow).toBe('none');         // 收形批④：边缘收简 = 纯色零浮影零光环
+  expect(st.borderW).toBe('1px');         // 边缘统一批：描边宽 = 顶部头像同款 1px
+  expect(st.borderStyle).toBe('solid');
+  expect(st.borderColor).toBe(st.probeBorderColor); // 描边色 = --glass-control-border 本值（双主题同源映射）
+  expect(st.shadow).toBe(st.probeShadow); // 光环 = inset 高光 + 0 2px 8px 浮影（逐字同 token；收形批④ zero-shadow 契约退役）
   expect(st.radius).toBe('50%');
-  expect(st.bg).toBe(st.tokenColor);      // 暗档 fill = --sapphire 本值（不新造色）
+  expect(st.bg).toBe(st.tokenColor);      // 暗档 logo 态 fill = 芯片 token 本值（头像芯片批）
   expect(st.logo).toBe(true);             // 无头像回落 = stand logo（不显示空白/默认人形）
   expect(st.hasAvatarClass).toBe(false);
   expect(errors).toEqual([]);
 });
 
 // D13 冷启动批⑧（2026-10-30 作者令「输入框与 dock 无缝贴合」）→ 收形批⑤
-//（10-31 22:50「中键收回 dock + 间隙收窄」）：lift 归 0，输入卡底缘与 dock
-// 顶缘的缝 = lift = 0（修前 12px 抬升缝随收形收窄为零）。
-// 几何恒等式：gap = (dock-h + lift + safe) − (dock-h + safe) = lift。
-test('D13 input card flush-fit above dock: gap == --dock-center-lift (lift=0, no protrusion seam)', async ({ page }) => {
+//（10-31 22:50「中键收回 dock + 间隙收窄」lift 归 0）→ 悬浮胶囊批（2026-11-01
+// 21:07 作者令「呼吸间隙 + 胶囊化」）：输入卡与 dock 上缘的缝 = --dock-gap
+// 常量呼吸缝（收形批的零缝契约随批退役）；dock 本体换胶囊契约 —— 左右
+// inset-x / 底 inset-b + safe / 高 = --dock-h / r999 全圆角 / 面级毛玻璃材质
+//（--glass-bg + blur，#input-bar 同配方单源）。
+// 几何恒等式：gap = dock.top − bar.bottom = --dock-gap（lift 恒 0 不参与）。
+test('D13 capsule dock geometry: breathing gap == --dock-gap, side/bottom insets, pill radius, frosted-glass material, lift stays 0', async ({ page }) => {
   const errors = watchErrors(page);
   const g = await page.evaluate(() => {
     const bar = document.getElementById('input-bar').getBoundingClientRect();
     const dock = document.getElementById('mobile-dock').getBoundingClientRect();
-    const probe = document.createElement('span');
-    probe.style.marginTop = 'var(--dock-center-lift, 0px)';
-    document.body.appendChild(probe);
-    const lift = parseFloat(getComputedStyle(probe).marginTop) || 0;
-    probe.remove();
-    return { gap: dock.top - bar.bottom, lift, barBottom: bar.bottom, dockTop: dock.top };
+    const probe = (v) => {
+      const s = document.createElement('span');
+      s.style.marginTop = `var(${v}, 0px)`;
+      document.body.appendChild(s);
+      const val = parseFloat(getComputedStyle(s).marginTop) || 0;
+      s.remove();
+      return val;
+    };
+    const cs = getComputedStyle(document.getElementById('mobile-dock'));
+    return {
+      gap: dock.top - bar.bottom,
+      gapToken: probe('--dock-gap'),
+      lift: probe('--dock-center-lift'),
+      insetX: probe('--dock-inset-x'),
+      insetB: probe('--dock-inset-b'),
+      vw: window.innerWidth,
+      vh: window.innerHeight,
+      dockLeft: dock.left,
+      dockRight: dock.right,
+      dockFromBottom: window.innerHeight - dock.bottom,
+      dockH: dock.height,
+      radius: cs.borderRadius,
+      backdrop: cs.backdropFilter || cs.webkitBackdropFilter || '',
+    };
   });
-  expect(g.lift).toBe(0);
-  expect(Math.abs(g.gap - g.lift)).toBeLessThanOrEqual(1.5); // 亚像素容差
+  expect(g.lift).toBe(0);                                  // 收形批语义不变：中键零探出
+  expect(g.gapToken).toBeGreaterThan(0);                   // 呼吸缝常量（零缝贴死退役）
+  expect(Math.abs(g.gap - g.gapToken)).toBeLessThanOrEqual(1.5); // 亚像素容差
+  // 胶囊悬浮形态（测试视口 safe=0 ⇒ 底距 == inset-b）：三边边距 + 本体高
+  // + 全圆角 + 毛玻璃 blur 材质。
+  expect(Math.abs(g.dockLeft - g.insetX)).toBeLessThanOrEqual(0.5);
+  expect(Math.abs((g.vw - g.dockRight) - g.insetX)).toBeLessThanOrEqual(0.5);
+  expect(Math.abs(g.dockFromBottom - g.insetB)).toBeLessThanOrEqual(0.5);
+  expect(g.dockH).toBe(54);                                // --dock-h（safe 垫已外置）
+  expect(g.radius).toBe('999px');
+  expect(g.backdrop).toContain('blur');
   expect(errors).toEqual([]);
 });
 
@@ -620,18 +691,20 @@ test('D11 center key avatar: seeded agent avatar paints circular img; live repai
 test.describe('center key light scheme', () => {
   test.use({ colorScheme: 'light' });
 
-  test('D12 center fill = light-deep sapphire token (--accent-agent-light); regular keys unchanged', async ({ page }) => {
+  test('D12 center fill (light) = themed chip token --agent-avatar-chip-bg (logo-fallback; 头像芯片批 11-01 20:42)', async ({ page }) => {
     const errors = watchErrors(page);
     const st = await page.evaluate(() => {
       const circle = document.querySelector('#mobile-dock .dock-key[data-dock="chat"] .dock-center');
       const probe = document.createElement('span');
-      probe.style.background = 'rgb(var(--accent-agent-light))';
+      // 头像芯片批（作者令 20:42「浅色主题=白底黑 logo」）：logo 回落态 fill =
+      // 亮档芯片 token（白底黑 logo；--accent-agent-light 深档留给自定义头像态）。
+      probe.style.background = 'var(--agent-avatar-chip-bg)';
       document.body.appendChild(probe);
       const token = getComputedStyle(probe).backgroundColor;
       probe.remove();
       return { bg: getComputedStyle(circle).backgroundColor, token };
     });
-    expect(st.bg).toBe(st.token); // 亮档深档（unified panel design §6.2 同款双档）
+    expect(st.bg).toBe(st.token); // 亮档 logo 态 = 芯片 token 本值
     expect(errors).toEqual([]);
   });
 });
@@ -677,19 +750,20 @@ test.describe('friends-ON social pages', () => {
 });
 
 test.describe('friends-ON unread chain', () => {
-  // 认知二期产品批②角标可行动判据（9f016dfb3；设计稿 §5 P6）：
-  // messages 徽标只报「需要作者行动」的量 —— 未读 ∩ 点名行动（pendingAsk/mention）
-  // + 跨面板可行动提供者；纯「有更新」不上徽标（新鲜度 ≠ 可行动量）。
-  test('D14 actionable unread lights the numeric badge: mock unread=1 + pendingAsk=1 paints "1"; opening the conversation clears it', async ({ page }) => {
+  // 未读徽标口径（unreadside 批 2026-11-02，作者反馈「侧边栏 没通知我」）：
+  // 图标角标 = 各会话 `unreadCount` 之和——**与会话列表行徽标同一读数源**（此前
+  // 走的是另一套「未读 ∩ pendingAsk/mention」聚合，而那两个字段零生产者 ⇒ 角标
+  // 恒 0、行上有 `(1)`）。可行动量（待答卡 + 待销账待办 + 未读回执）是**另一轴**，
+  // 与本读数相加，不替代它。
+  test('D14 unread lights the numeric badge: mock unread=1 paints "1"; opening the conversation clears it', async ({ page }) => {
     await bootApp(page, { friends: true, unread: 1, pendingAsk: 1 });
     const errors = watchErrors(page);
     const badgeSel = '#mobile-dock .dock-key[data-dock="messages"] .dock-badge';
-    // 可行动未读链（mock 会话 unreadCount=1 + pendingAskCount=1 ⇒
-    // messages.js actionableUnread()=1 → setActivityBadge('messages-btn') →
-    // 手机层镜像），零夹具直写徽标。
+    // 未读真值链（mock 会话 unreadCount=1 ⇒ messages.js totalUnread()=1 →
+    // setActivityBadge('messages-btn') → 手机层镜像），零夹具直写徽标。
     await expect(page.locator(badgeSel)).toBeVisible({ timeout: 8000 });
     await expect(page.locator(badgeSel)).toHaveText('1');
-    // 进消息页 → 点会话 → 开窗即已读（markConvRead ⇒ 未读清零 ⇒ 可行动量归零
+    // 进消息页 → 点会话 → 开窗即已读（markConvRead ⇒ 未读清零 ⇒ 未读腿归零
     // ⇒ 角标熄灭）。
     await dockTo(page, 'messages');
     const row = page.locator('.mobile-page[data-page="messages"] .mobile-page-body #fm-conversations .fm-conv-row').first();
@@ -710,13 +784,14 @@ test.describe('friends-ON unread chain', () => {
     expect(errors).toEqual([]);
   });
 
-  test('D14b pure unread (no actionable flag) does NOT light the dock badge; the row face still reports it', async ({ page }) => {
+  test('D14b pure unread (no actionable flag) lights the dock badge too: badge and row badge read the same number', async ({ page }) => {
     await bootApp(page, { friends: true, unread: 1 });
     const errors = watchErrors(page);
-    // 可行动判据负向锚：unread=1 但无 pendingAsk/mention ⇒ actionableUnread()=0
-    // ⇒ 徽标恒隐（「有更新」不上徽标）。
-    await expect(page.locator('#mobile-dock .dock-key[data-dock="messages"] .dock-badge')).toBeHidden({ timeout: 8000 });
-    // 行面语义不变：会话列表行徽标照报纯未读（行面 ≠ 徽标面，两判据分钉）。
+    // 同源锚（unreadside 批）：unread=1 且无 pendingAsk/mention ⇒ 未读腿 =1
+    // ⇒ 徽标 `1`，与行徽标**同一读数**（两套计数必漂移，是原作者反馈的断链形态）。
+    await expect(page.locator('#mobile-dock .dock-key[data-dock="messages"] .dock-badge')).toBeVisible({ timeout: 8000 });
+    await expect(page.locator('#mobile-dock .dock-key[data-dock="messages"] .dock-badge')).toHaveText('1');
+    // 行面同一读数（agent 断言面：两侧数字相等，不是各读一套）。
     await dockTo(page, 'messages');
     const row = page.locator('.mobile-page[data-page="messages"] .mobile-page-body #fm-conversations .fm-conv-row').first();
     await expect(row).toBeVisible({ timeout: 8000 });
@@ -822,35 +897,35 @@ test('D17 page switch animation retired: zero transition, zero transform, direct
   expect(errors).toEqual([]);
 });
 
-test('D18 floating chrome band: zero-height transparent band, capsule title centered, 48px g2-fab back at 16/16+safe, icon centered', async ({ page }) => {
+test('D18 floating chrome band: zero-height transparent band, back 48px g2-fab at 16/16+safe, icon centered, title in flow (B批)', async ({ page }) => {
   const errors = watchErrors(page);
   // 悬浮钮统一批 2026-10-31 作者令 16:03：页头 = 悬浮 chrome 带（零高透明不拦截），
   // 返回钮归 48px g2-fab 基准（材质 --g2-fab-bg 探针同源），悬浮位 = 聊天根任务键
-  // 同几何（top 16+safe / left 16）；标题胶囊带内居中。判据载体 = 设置详情页。
+  // 同几何（top 16+safe / left 16）。判据载体 = 设置详情页。
+  // 面板头标识 B 批（2026-11-01 作者 17:01 选型 B「iOS 大标题式」）把标题自
+  // 页头胶囊改流内大标题（页体首件）——本探针随批改读流内标题（左缘 16px
+  // 流内左对齐；28px/字重/两态滚动等深判据归 mobile-panel-title.spec.mjs 单源，
+  // 此处不复制）。
   await dockTo(page, 'workbench');
   await page.locator('.mf-hub-row[data-hub-page="settings"]').click();
   await expect(page.locator('.mobile-page[data-page="settings"]')).toHaveClass(/live/);
   const st = await page.evaluate(() => {
     const page = document.querySelector('.mobile-page[data-page="settings"]');
     const head = page.querySelector('.mobile-page-header');
-    const title = head.querySelector('.mobile-page-title');
+    const title = page.querySelector('.mobile-page-title');
     const back = head.querySelector('.mobile-back-btn');
     const svg = back.querySelector('svg');
     // token 同源探针（frontend-verification 口径）：等值判据取自同一 var()。
+    // 统一按钮玻璃批（2026-11-01）：.g2-fab 材质单源换 --glass-bg 族（原
+    // --g2-fab-bg 随族退役）—— 探针随批改读现役单源（canvas 面 --cv-bg 不在
+    // 页面壳作用域，按钮计算值即 --glass-bg）。
     const probe = document.createElement('span');
-    probe.style.background = 'var(--g2-fab-bg)';
+    probe.style.background = 'var(--glass-bg)';
     document.body.appendChild(probe);
     const fabBg = getComputedStyle(probe).backgroundColor;
     probe.remove();
-    const probe2 = document.createElement('span');
-    probe2.style.background = 'var(--glass-control-bg)';
-    document.body.appendChild(probe2);
-    const glassBg = getComputedStyle(probe2).backgroundColor;
-    probe2.remove();
-    const pr = page.getBoundingClientRect();
     const br = back.getBoundingClientRect();
     const sr = svg.getBoundingClientRect();
-    const tr = title.getBoundingClientRect();
     const hs = getComputedStyle(head);
     const ts = getComputedStyle(title);
     const bs = getComputedStyle(back);
@@ -859,11 +934,14 @@ test('D18 floating chrome band: zero-height transparent band, capsule title cent
       headBg: hs.backgroundColor,
       headHeight: hs.height,
       headPointerEvents: hs.pointerEvents,
-      // 标题 = 玻璃胶囊、带内水平居中（页面中心 ±2px）。
-      titleRadius: ts.borderRadius,
-      titleBg: ts.backgroundColor,
-      titleGlassBg: glassBg,
-      titleCenterDx: Math.abs((tr.left + tr.width / 2) - (pr.left + pr.width / 2)),
+      // 标题（B批 → 两段式标题批 2026-11-02）：流内块、页体首件、文本**水平
+      // 居中**，左右内缩各 72px（--mtitle-inset = 返回钮左 16 + 钮 48 + 缝 8，
+      // 块通栏、缩进在 padding 上 —— 居中大标题与左上返回钮横向零重叠）。
+      titlePosition: ts.position,
+      titleIsBodyFirst: page.querySelector('.mobile-page-body')?.firstElementChild === title,
+      titlePadLeft: ts.paddingLeft,
+      titlePadRight: ts.paddingRight,
+      titleTextAlign: ts.textAlign,
       // 返回钮 = 48px g2-fab（材质与 chrome 键同源 token 族），悬浮位同 chrome 几何。
       backBg: bs.backgroundColor,
       backFabBg: fabBg,
@@ -878,9 +956,11 @@ test('D18 floating chrome band: zero-height transparent band, capsule title cent
   expect(st.headBg).toBe('rgba(0, 0, 0, 0)');
   expect(st.headHeight).toBe('0px');
   expect(st.headPointerEvents).toBe('none');
-  expect(st.titleRadius).toBe('999px');
-  expect(st.titleBg).toBe(st.titleGlassBg);
-  expect(st.titleCenterDx).toBeLessThanOrEqual(2);
+  expect(st.titlePosition).toBe('static');
+  expect(st.titleIsBodyFirst).toBe(true);
+  expect(st.titlePadLeft).toBe('72px'); // 两段式标题批：居中内缩（原 16px 左对齐退役）
+  expect(st.titlePadRight).toBe('72px');
+  expect(st.titleTextAlign).toBe('center');
   expect(st.backBg).toBe(st.backFabBg); // 返回钮 = g2-fab 族（统一批新基准）
   expect(st.backRadius).toBe('50%');
   expect(st.backBox).toEqual({ w: 48, h: 48 });

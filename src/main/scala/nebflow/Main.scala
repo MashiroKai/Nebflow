@@ -29,19 +29,27 @@ import scala.util.Try
 // Main. `MainBoot.run` only orchestrates IO per the returned Dispatch.
 
 sealed trait Dispatch
+
 object Dispatch:
   /** `--succeed <intent>` on the start path — hot-restart successor boot. */
   final case class Succeed(intent: os.Path) extends Dispatch
+
   /** `--daemon-child` — the spawned gateway JVM booting under strict gating. */
   case object StrictChild extends Dispatch
+
   /** Foreground exemption — today's full start semantics (sbt run / explicit). */
   case object ForegroundLegacy extends Dispatch
+
   /** Classpath-empty (jpackage/bundled) form — no spawn possible, run foreground. */
   case object ForegroundNoSpawn extends Dispatch
+
   /** Default product form — parent launcher spawns the daemon child JVM. */
   case object Daemon extends Dispatch
+
   /** Everything else (incl. `--succeed X status`) goes to the CLI router. */
   case object CliRoute extends Dispatch
+
+end Dispatch
 
 object MainDispatch:
 
@@ -55,15 +63,15 @@ object MainDispatch:
    * boot > daemon child > foreground > spawnability > daemon.
    */
   def decide(
-      cmdArgs: List[String],
-      succeedOpt: Option[os.Path],
-      daemonChild: Boolean,
-      foreground: Boolean,
-      classPathSpawnable: Boolean
+    cmdArgs: List[String],
+    succeedOpt: Option[os.Path],
+    daemonChild: Boolean,
+    foreground: Boolean,
+    classPathSpawnable: Boolean
   ): Dispatch =
     val isStart = cmdArgs match
-      case Nil          => true
-      case head :: _    => StartModes.contains(head)
+      case Nil => true
+      case head :: _ => StartModes.contains(head)
     if !isStart then Dispatch.CliRoute
     else
       succeedOpt match
@@ -73,6 +81,17 @@ object MainDispatch:
           else if foreground then Dispatch.ForegroundLegacy
           else if !classPathSpawnable then Dispatch.ForegroundNoSpawn
           else Dispatch.Daemon
+  end decide
+
+  /**
+   * 显式 `--takeover` 旗标（隔离实例误伤批 2026-11-04 §2）：**只有**显式给出才允许
+   * 接管「端口被另一个 home 的活实例占着」这一情形（[[SingleInstanceGuard.preemptOtherHome]]
+   * 仍然只对 home 可证且 ≠ 本家的 listener 发信号；home 不可判者一律不碰）。
+   * 默认为 false —— 撞另一个 home 的实例一律拒启、零信号、绝不 focus 绝不 kill。
+   */
+  @volatile private var _takeover: Boolean = false
+  def setTakeover(v: Boolean): Unit = _takeover = v
+  def takeover: Boolean = _takeover
 
   /**
    * Strict-boot port gate verdict: only PortFree may boot; a nebflow
@@ -81,7 +100,7 @@ object MainDispatch:
   def decideStrictPort(state: SingleInstanceGuard.PortState): Either[ExitCode, Unit] =
     state match
       case SingleInstanceGuard.PortFree => Right(())
-      case _                            => Left(ExitCode.Error)
+      case _ => Left(ExitCode.Error)
 
   /** The refusal text paired with a Left from [[decideStrictPort]]. */
   def strictRefusalMessage(state: SingleInstanceGuard.PortState, port: Int): Option[String] =
@@ -101,8 +120,20 @@ object MainDispatch:
             s"a port. Stop that instance ('$brand stop') or pick another port " +
             "(--port / GATEWAY_PORT / config 'port' key)."
         )
+      // 隔离实例误伤批 2026-11-04 §2：端口被**另一个 home 的活实例**占着 —— 同品牌但不同
+      // 数据根就是不同实例。拒启并点名（占用者 home/端口/pid + 建议），**绝不 focus、绝不 kill**；
+      // 只有显式 --takeover 才允许接管（见 portGateThen）。
+      case SingleInstanceGuard.OtherHomeInstance(home, _, pid) =>
+        Some(
+          s"daemon child refused: port $port is held by an instance of ANOTHER home ($home, pid $pid) — " +
+            s"this instance roots at ${PathUtil.dataRoot}; different data roots are different instances, " +
+            "so it is never focused and never killed (zero signal). Stop it from its own home " +
+            "(--home <that root> / --takeover to take it over), or pick another port (--port / config 'port' key)."
+        )
       case SingleInstanceGuard.ForeignOccupant(detail) =>
-        Some(s"ERROR: $detail — ${Branding.productName} cannot start.\nStop it, or pick another port (--port / GATEWAY_PORT / config 'port' key).")
+        Some(
+          s"ERROR: $detail — ${Branding.productName} cannot start.\nStop it, or pick another port (--port / GATEWAY_PORT / config 'port' key)."
+        )
 
 end MainDispatch
 
@@ -210,7 +241,7 @@ private object MainBoot:
    * `remaining` — a leaked flag would hit CliRouter's unknown-flag face.
    */
   private def parseGlobalFlags(
-      args: List[String]
+    args: List[String]
   ): (Option[String], Option[Int], Option[os.Path], Boolean, Boolean, List[String]) =
     var home: Option[String] = None
     var port: Option[Int] = None
@@ -239,6 +270,11 @@ private object MainBoot:
           i += 1
         case "--foreground" =>
           foreground = true
+          i += 1
+        case "--takeover" =>
+          // 显式接管（隔离实例误伤批 2026-11-04 §2）：只影响「端口被另一个 home 的
+          // 活实例占着」这一类的裁决，其余单实例门零改变。
+          MainDispatch.setTakeover(true)
           i += 1
         case other =>
           remaining += other
@@ -296,23 +332,70 @@ private object MainBoot:
             onFree
           case nebflow.cli.SingleInstanceGuard.NebflowInstance(url) =>
             // 门户开门（同 pid 快道）：聚焦目标换 PortalUrl 解析值；探测原样。
-            nebflow.gateway.PortalUrl.focusUrl(
-              url,
-              authenticateLocal = !GatewayConfig.noBrowser && !nebflow.core.HeadlessMode.enabled
-            ).flatMap { focusTarget =>
-              // #512 门审计批：聚焦腿开门目标落 stdout（CLI 路径无 logger 面）——
-              // 二实例撞端口时「开的是哪条门」可从终端对账。
+            nebflow.gateway.PortalUrl
+              .focusUrl(
+                url,
+                authenticateLocal = !GatewayConfig.noBrowser && !nebflow.core.HeadlessMode.enabled
+              )
+              .flatMap { focusTarget =>
+                // #512 门审计批：聚焦腿开门目标落 stdout（CLI 路径无 logger 面）——
+                // 二实例撞端口时「开的是哪条门」可从终端对账。
+                //
+                // 工作过程中开新标签页批（2026-11-05 · 作者令）：本腿同样是**自动**
+                // 开门（二实例撞端口就把浏览器拉到控制台），作者可能正在用控制台
+                // ⇒ 与 boot 门共用 ConsoleActivity 判据（读**活实例**写下的控制台
+                // 在用标记件）。在用 ⇒ 只打「已在运行」的人话，不 exec 浏览器；
+                // 事件本身仍可从终端对账（零静默）。
+                nebflow.gateway.ConsoleActivity.verdict.flatMap {
+                  case nebflow.gateway.ConsoleActivity.Verdict(true, why) =>
+                    IO.println(
+                      s"[door] focus 开门: 目标=$focusTarget（解析=PortalUrl env>config>brand；NEBFLOW_OPEN_UI=local ⇒ 本地自铸票；判据=$why）"
+                    ) *>
+                      // 持久审计（同日批）：stdout 只活在本进程终端里，撞端口那一刻的
+                      // 宿主日志「零开门记录」正是取证卡点 ⇒ 同一判词追加落
+                      // `<dataRoot>/logs/door-focus.log`（best-effort，不拦开门）。
+                      nebflow.gateway.ConsoleActivity.audit(
+                        s"[door] focus 开门: 目标=$focusTarget 判据=$why pid=${ProcessHandle.current().pid()}"
+                      ) *>
+                      nebflow.cli.SingleInstanceGuard
+                        .focusExisting(
+                          focusTarget,
+                          "same port",
+                          openBrowser = !nebflow.gateway.GatewayConfig.noBrowser
+                        )
+                        .as(ExitCode.Success)
+                  case nebflow.gateway.ConsoleActivity.Verdict(false, why) =>
+                    IO.println(s"[door] focus 开门 suppressed: $why") *>
+                      nebflow.gateway.ConsoleActivity.audit(
+                        s"[door] focus 开门 suppressed: $why 目标=$focusTarget pid=${ProcessHandle.current().pid()}"
+                      ) *>
+                      nebflow.cli.SingleInstanceGuard
+                        .focusExisting(focusTarget, "same port", openBrowser = false)
+                        .as(ExitCode.Success)
+                }
+              }
+          case nebflow.cli.SingleInstanceGuard.OtherHomeInstance(home, _, pid) =>
+            // 隔离实例误伤批 2026-11-04 §2：同品牌但**另一个 home** 的活实例占着这个口 ——
+            // 不同数据根就是不同实例。默认：拒启 + 点名，零信号，绝不 focus（那是别人的
+            // 实例），绝不 kill。只有显式 --takeover 才走接管腿。
+            if MainDispatch.takeover then
+              IO.blocking(
+                nebflow.cli.SingleInstanceGuard.preemptOtherHome(cfg.port.value, PathUtil.dataRoot.toString)
+              ) *> IO.println(
+                s"[takeover] port ${cfg.port.value}: explicit --takeover — took over the instance of home $home (pid $pid)"
+              ) *> onFree
+            else
               IO.println(
-                s"[door] focus 开门: 目标=$focusTarget（解析=PortalUrl env>config>brand；NEBFLOW_OPEN_UI=local ⇒ 本地自铸票）"
+                s"ERROR: port ${cfg.port.value} is held by an instance of ANOTHER home ($home, pid $pid)."
               ) *>
-                nebflow.cli.SingleInstanceGuard
-                  .focusExisting(
-                    focusTarget,
-                    "same port",
-                    openBrowser = !nebflow.gateway.GatewayConfig.noBrowser
-                  )
-                  .as(ExitCode.Success)
-            }
+                IO.println(
+                  s"This instance roots at ${PathUtil.dataRoot}; different data roots are different instances, " +
+                    "so it is never focused and never killed (zero signal)."
+                ) *>
+                IO.println(
+                  "Stop it from its own home (--home <that root>), pass --takeover to take it over explicitly, " +
+                    "or pick another port (--port / config 'port' key)."
+                ) *> IO.pure(ExitCode.Error)
           case nebflow.cli.SingleInstanceGuard.OtherInstance(brand, _) =>
             // 双实例并存批 2026-10-30：同机并存的对家命令品牌占着这个口 ——
             // 绝不 focus（那是别人的实例/别人的家），拒启并点名。
@@ -332,7 +415,8 @@ private object MainBoot:
         }
     }
 
-  /** The listening port is authoritative. A PID copied from another device
+  /**
+   * The listening port is authoritative. A PID copied from another device
    * can refer to an unrelated live process, and must never suppress startup.
    */
   private def startGatewayLegacy(metaStartedBy: String): IO[ExitCode] =

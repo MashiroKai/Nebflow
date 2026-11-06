@@ -3,7 +3,7 @@ package nebflow.shared
 import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
 import io.circe.parser.parse
 import io.circe.syntax.*
-import io.circe.{Decoder, Json}
+import io.circe.{Decoder, Json, JsonObject}
 import nebflow.shared.{Defaults, PathUtil}
 
 /**
@@ -101,12 +101,15 @@ case class ModelConfig(
   /**
    * 模型不可用时段规则（model-schedule-unavailable 批，2026-10-29）：模型粒度
    * 时段闸——见 [[UnavailableWindow]]。缺省 None = 无限制（零行为变化）。
+   * 🔴 config-single-source 批（作者裁定④ 2026-11-05）起**已收敛到 provider 级**：
+   *   · 面板只有 provider 级一份编辑面（一个 provider 的行为是一致的）；
+   *   · 存量 model 级数据在加载/落盘时**向上合并**进 provider 级（
+   *     `Config.mergeModelWindowsIntoProvider`，不丢数据），此后该键在文件里消失；
+   *   · 读取面仍接受本键（union，向后兼容），但新写入路径不再产生它。
    * 生效窗口 = 本层 ∪ provider 层（判定单点 = [[ModelAvailability]]）。
    * 🔴 形状纪律：deriveDecoder **不认 case class 默认值**（ensureLlmDefaults
    * 批实测教训）——缺省字段必须 Option 形（本文件全部缺省字段同律），否则
    * 存量 nebflow.json 解码即抛 Missing required field。
-   * 🔴 前端契约：provider 编辑弹窗保存整体重建 `models` 数组 ⇒ 本字段必须由
-   * 保存路径按 id 原样携带（providersUi.js），否则每次保存都会静默抹掉。
    */
   unavailableWindows: Option[List[UnavailableWindow]] = None
 )
@@ -152,7 +155,40 @@ case class ProviderConfig(
    * 🔴 深合并存活面：同上方 unavailableWindows——provider 对象键，
    * `ConfigService.mergeConfig` 天然保留。
    */
-  disabled: Option[Boolean] = None
+  disabled: Option[Boolean] = None,
+  /**
+   * 该 provider 可同时「占坑」的 actor 上限（provider-concurrency 批，作者令
+   * 2026-11-06：并发按 **actor** 计、在**派发那一刻**算一次——actor 的 fallback 链
+   * 首落在本 provider 的在用 actor 数达到本上限时，下一个派发的 actor 链首顺延到
+   * 链上的下一个 provider；此后该 actor 的链快照终生不重算，见
+   * [[nebflow.llm.ProviderConcurrency]]）。缺省 None = **不限**（零行为变化：
+   * 任何非 None 缺省都会改变既有部署的派发链首）。`<= 0` 非法 ⇒ 判定时当作
+   * 不限（不许静默当 0 = 全拒，那会让链首永远落二档）。
+   * 🔴 形状纪律同上：Option 形（deriveDecoder 不认默认值）。
+   * 🔴 深合并存活面：同上方 unavailableWindows——provider 对象键，
+   * `ConfigService.mergeConfig` 天然保留；前端 provider 编辑弹窗须显式携带。
+   */
+  maxConcurrentActors: Option[Int] = None,
+  /**
+   * provider 级额外 HTTP 头（protocol-compat 批，2026-11-01，作者实测令）。
+   *
+   * 事故：cmdcode 端点挂在 Cloudflare 后面，**无 User-Agent 的请求被边缘直接
+   * 挡掉**——`HTTP 403 error code 1010`（Cloudflare 的 browser-signature 封禁），
+   * 引擎侧只看到 403 → 判 Auth/永久 → provider 被摘除 → 归档注释写成「厂家重置
+   * key 后启用」。**key 从来没死过**：同一请求换成 curl（自带 UA）立刻 200。
+   *
+   * 由此的硬纪律（[[nebflow.llm.providers.HttpHeaders]] 收口）：
+   *   1. 所有协议路径的**每一个请求**都必须带一个诚实的 User-Agent；
+   *   2. provider 可用本键追加/覆盖任意头（有的网关要 accept / anthropic-version
+   *      / 自定义鉴权头）；
+   *   3. 头的装配只有一处（两面共用），不允许某个 adapter 私自 header()。
+   *
+   * 形状：`{"user-agent":"...","accept":"application/json"}`。键大小写不敏感
+   * （装配时归一为小写去重，provider 配置覆盖引擎缺省）。缺省 None = 只带引擎
+   * 缺省头（零行为变化）。
+   * 🔴 形状纪律同上：Option 形（deriveDecoder 不认默认值）。
+   */
+  headers: Option[Map[String, String]] = None
 )
 
 object ProviderConfig:
@@ -261,7 +297,8 @@ object SearchConfig:
  *   "jev": { "enabled": true, "provider": "typesafe-jev",
  *            "endpoint": "https://api.typesafe.ai/v1/systemone",
  *            "model": "jev-latest", "keyRef": "typesafe-api-key",
- *            "choiceHighBasePolicy": "warn" }
+ *            "choiceHighBasePolicy": "warn",
+ *            "providers": { "typesafe-jev": { "type": "typesafe-jev", … } } }
  *
  * ==Every field is optional ON PURPOSE==
  * `SearchConfig` requires `provider` + `apiKey`, so a partially written
@@ -295,13 +332,52 @@ object SearchConfig:
  *   now: it feeds a WARNING in the adaptation layer, and promoting it to a
  *   typed enum would fix a product decision that is still open.
  */
+/**
+ * JeV provider 子节（jev-imagegen-align-llm 批 2026-11-02）——`jev.providers.<name>` 项。
+ *
+ *   "providers": { "typesafe-jev": { "type": "typesafe-jev",
+ *                                    "endpoint": "https://api.typesafe.ai/v1/systemone",
+ *                                    "model": "jev-latest",
+ *                                    "keyRef": "jev-typesafe-jev-key" } }
+ *
+ * ==为什么是「可缺席的新事实源」==
+ * `JevConfig` 的顶层 5 键**一个不删**（旧配置零迁移、旧读点零改坏）；
+ * `providers` 一旦存在即优先——`JevSettings.resolve` 逐字段走
+ * `providers[当前选中项] > 顶层 > 缺省` 三级回落（[[ImageGenProviderConfig]]
+ * 同族形状，生图侧先例）。
+ *
+ * 🔴 凭据纪律（jev/embedding/imagegen 同先例）：`keyRef` 是数据根 `secrets/`
+ * 下的**名字**（指针，不落值）；解析方现读在位性，缺件/空/不可读 ⇒ 该腿自动关。
+ * 🔴 形状纪律（同 [[JevConfig]] 注释）：**除 `type` 外全部 Option 且带 `= None`**
+ * ——`deriveDecoder` 不认 case class 默认值，新增必填位会打回冷启动中间态。
+ *
+ * @param `type`
+ *   适配器标识，枚举 = `nebflow.llm.decision.DecisionProvider.AllIds`；选中项的
+ *   type 优先于顶层 `provider` 指针（两者平时同值）。
+ */
+case class JevProviderConfig(
+  `type`: String,
+  endpoint: Option[String] = None,
+  model: Option[String] = None,
+  keyRef: Option[String] = None
+)
+
+object JevProviderConfig:
+  given Decoder[JevProviderConfig] = deriveDecoder[JevProviderConfig]
+
 case class JevConfig(
   enabled: Option[Boolean] = None,
   provider: Option[String] = None,
   endpoint: Option[String] = None,
   model: Option[String] = None,
   keyRef: Option[String] = None,
-  choiceHighBasePolicy: Option[String] = None
+  choiceHighBasePolicy: Option[String] = None,
+  /**
+   * 多 provider 事实源（jev-imagegen-align-llm 批；可缺席）——键 = provider 名，
+   * 与顶层 `provider`（当前选中项指针）配对。存在即优先，见
+   * [[JevProviderConfig]] 与 `JevSettings.resolve` 的三级回落。
+   */
+  providers: Option[Map[String, JevProviderConfig]] = None
 ):
   /**
    * Toggle semantics: absent means OFF is the SAFE default for a face that
@@ -309,6 +385,8 @@ case class JevConfig(
    * defaults true — there the safe direction is the other way.)
    */
   def isEnabled: Boolean = enabled.getOrElse(false)
+
+end JevConfig
 
 object JevConfig:
   given Decoder[JevConfig] = deriveDecoder[JevConfig]
@@ -508,6 +586,18 @@ case class ServiceLlmConfig(
    * schema 仅容忍存量文件的 llm.model 节（可解析但被忽略）。
    */
   model: Option[ModelChainConfig] = None,
+  /**
+   * **fallback 链单一源**（config-single-source 批，作者裁定①③ 2026-11-05）：
+   * `llm.fallback = {"preferred": "<provider>/<model>", "fallbacks": [...]}` ——
+   * 与 agent.json 的 `model` 键同一词汇，写进本文件后即**唯一真相**：
+   *   · 有至少一个 ref ⇒ 全局候选链就是它（顺序 = 文件顺序），不再由代码常量
+   *     或侧车文件决定（见 [[nebflow.llm.ProviderRegistry.getCandidatesUnfiltered]]）；
+   *   · 缺省（None）⇒ 零行为变化：仍走 Nebula 侧车 / provider 推导种子链；
+   *   · 引用不存在的 provider/model ⇒ 启动时 WARN（[[FallbackChain.validate]]），
+   *     不静默跳过。
+   * 形状纪律：Option 形（deriveDecoder 不认 case class 默认值）。
+   */
+  fallback: Option[AgentModelConfig] = None,
   streamTimeouts: Option[StreamTimeoutsConfig] = None,
   /**
    * LLM provider 自适应并发限流器（429 反应式并发闸批，作者令 2026-10-29 21:32）
@@ -778,7 +868,7 @@ object Config:
     // llm 节、或 llm 无 providers）缺省注入，使解码成功而非抛
     // "Missing required field '.llm'"——否则 GatewayMain 走 crash-recovery 用
     // 冷启动期的 {} 快照打回 nebflow.json，信任表被抹掉。
-    val normalized = ensureLlmDefaults(resolvedJson)
+    val normalized = normalizeConfigJson(resolvedJson)
 
     normalized.as[NebflowServiceConfig] match
       case Right(cfg) => cfg
@@ -814,6 +904,75 @@ object Config:
                 Json.fromJsonObject(llmObj.add("providers", Json.obj()))
               case _ => l // 已含 providers 或非对象 → 原样
         Json.fromJsonObject(obj.add("llm", llmNorm))
+
+  /**
+   * Full load-time normalization (single entry for every JSON→config decode).
+   *
+   * = [[ensureLlmDefaults]] (cold-start intermediate states) + the
+   * unavailable-window convergence of the config-single-source batch (author
+   * ruling ④ 2026-11-05): model-level `unavailableWindows` are merged UP into
+   * the provider level and dropped from the model entries — "one provider, one
+   * behaviour". Nothing is discarded: the union is written to the provider.
+   *
+   * Applied on READ (so the runtime already sees the converged shape even before
+   * the file is rewritten) and on WRITE ([[nebflow.service.ConfigService]]
+   * persists the converged shape, so `stand.json` becomes the single place the
+   * setting lives in).
+   */
+  private[nebflow] def normalizeConfigJson(json: Json): Json =
+    mergeModelWindowsIntoProvider(ensureLlmDefaults(json))
+
+  /**
+   * Move every `llm.providers.<id>.models[].unavailableWindows` entry up to
+   * `llm.providers.<id>.unavailableWindows` (dedup by from/to/days, provider
+   * entries first, order preserved) and remove the model-level key.
+   *
+   * Idempotent: a file with no model-level windows comes back byte-equivalent
+   * (only re-serialized). Providers that declare no windows anywhere are left
+   * untouched (no empty array is written — an absent key means "no restriction").
+   */
+  private[nebflow] def mergeModelWindowsIntoProvider(json: Json): Json =
+    def windowsOf(node: Json): List[Json] =
+      node.hcursor.downField("unavailableWindows").as[Option[List[Json]]].toOption.flatten.getOrElse(Nil)
+
+    def dedupe(list: List[Json]): List[Json] =
+      list.distinctBy { w =>
+        (
+          w.hcursor.downField("from").as[Option[String]].toOption.flatten,
+          w.hcursor.downField("to").as[Option[String]].toOption.flatten,
+          w.hcursor.downField("days").as[Option[List[Int]]].toOption.flatten
+        )
+      }
+
+    (for
+      root <- json.asObject
+      llm <- root("llm").flatMap(_.asObject)
+      providers <- llm("providers").flatMap(_.asObject)
+    yield
+      val rewritten = providers.toList.map { case (pid, pJson) =>
+        pJson.asObject match
+          case None => pid -> pJson
+          case Some(p) =>
+            val modelWindows = p("models").flatMap(_.asArray).toList.flatten.flatMap(windowsOf)
+            if modelWindows.isEmpty then pid -> pJson
+            else
+              val merged = dedupe(windowsOf(pJson) ++ modelWindows)
+              val strippedModels = p("models").flatMap(_.asArray).map { arr =>
+                Json.fromValues(arr.map { m =>
+                  m.asObject.map(mo => Json.fromJsonObject(mo.remove("unavailableWindows"))).getOrElse(m)
+                })
+              }
+              val withModels = strippedModels.fold(p)(ms => p.add("models", ms))
+              pid -> Json.fromJsonObject(withModels.add("unavailableWindows", Json.fromValues(merged)))
+      }
+      Json.fromJsonObject(
+        root.add(
+          "llm",
+          Json.fromJsonObject(llm.add("providers", Json.fromJsonObject(JsonObject.fromIterable(rewritten))))
+        )
+      )
+    ).getOrElse(json)
+  end mergeModelWindowsIntoProvider
 
   /** Minimal default config used when no config file exists. */
   private lazy val defaultServiceConfig: NebflowServiceConfig =

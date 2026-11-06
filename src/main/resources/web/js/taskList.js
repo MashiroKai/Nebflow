@@ -29,6 +29,7 @@
 //     (topology edges are rebuilt from per-node declared fields only).
 //   - Header stats = total unit count (roots + members), fold-independent.
 import { t } from './i18n.js';
+import { badgeWord } from './termWords.js';
 import { createIconsIn, onMinuteTick } from './utils.js';
 import state from './state.js';
 import { NODE_STATUS_CLS } from './nodeData.js';
@@ -590,15 +591,17 @@ function buildChainHeaderRow(block) {
     badge.textContent = t('task.restartBadge');
     labelRow.appendChild(badge);
   }
-  // 任务模式标注批（2026-10-30 作者令）：双模式总闸开时 delegate 行标注生效执行
-  // 形态——极简内核（kernel）还是分发器（dispatcher）。row.mode 缺键（闸关/旧盘
-  // /外部执行器）= 不渲染（零徽标语义与 orchestration 徽标同纪律）。
+  // 任务模式标注批（2026-10-30 作者令）+ 术语统一批（2026-11-06 作者令逐字「统一
+  // 根据英文」）：双模式总闸开时 delegate 行标注生效执行形态——词面只从单源徽标
+  // 词表取（js/termWords.js 的 badgeWord，kernel / dispatcher 逐字英文，中文面同串）。
+  // row.mode 缺键（闸关/旧盘/外部执行器）= 不渲染（零徽标语义与 orchestration 徽标
+  // 同纪律）。样式类仍读数据值（.task-delegate-badge-mode-<mode> = 数据面，不是词面）。
   const execMode = String(r.mode || '');
   if (execMode === 'kernel' || execMode === 'dispatcher') {
     const modeBadge = document.createElement('span');
     modeBadge.className = 'task-delegate-badge task-delegate-badge-mode task-delegate-badge-mode-' + execMode;
     modeBadge.setAttribute('aria-hidden', 'true');
-    modeBadge.textContent = t(execMode === 'kernel' ? 'task.mode.kernel' : 'task.mode.dispatcher');
+    modeBadge.textContent = badgeWord(execMode);
     labelRow.appendChild(modeBadge);
   }
   text.appendChild(labelRow);
@@ -643,6 +646,21 @@ function buildChainHeaderRow(block) {
       qp.branch || ''].filter(Boolean);
     rankEl.title = titleBits.join(' '); // raw data (rank / branch), not copy
     row.appendChild(rankEl);
+  }
+
+  // Base-drift slot（`[base-moved]` 降噪重写批 2026-11-05）：基分支自派发以来前进
+  // 的次数——**引擎载荷原样透传**（`r.baseDrift.moves`，🔴 前端零派生），只在
+  // moves > 0 时出场。这一格的存在本身就是作者令「base 动了放面板可见即可，不进
+  // 消息流」的落点：消息腿只在可行动时聚合发一条。
+  // 悬停标题只放原始数据（基线 sha → 当前 sha），不写机制说明（铁律 8）。
+  if (r && r.baseDrift && typeof r.baseDrift.moves === 'number' && r.baseDrift.moves > 0) {
+    const bd = r.baseDrift;
+    const driftEl = document.createElement('span');
+    driftEl.className = 'task-delegate-drift' + (bd.actionable ? ' is-actionable' : '');
+    driftEl.setAttribute('aria-hidden', 'true');
+    driftEl.textContent = t('task.baseDrift', { n: bd.moves });
+    driftEl.title = `${bd.baselineTip || ''} → ${bd.lastSeenTip || ''}`;
+    row.appendChild(driftEl);
   }
 
   const createdAt = typeof r.createdAt === 'number' ? r.createdAt : Date.parse(String(r.createdAt || ''));

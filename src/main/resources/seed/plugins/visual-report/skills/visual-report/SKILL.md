@@ -198,17 +198,23 @@ plt.savefig('<ws>/chart.svg', format='svg')
 
 A markdown/HTML report that belongs to a project's knowledge base (project
 review, investigation record, design note) MUST be delivered into the
-project's document vault: `<workspace>/docs/`, attachments under
-`<workspace>/docs/attachments/`, written in the Obsidian-compatible style
+project's document vault: `<data_root>/projects/<project>/.stand/docs/` (the
+project's registration dir, next to its `project.json` — author ruling
+2026-11-03), attachments under `<vault>/attachments/`, written in the
+Obsidian-compatible style
 carried by the `wiki-docs` skill of this plugin. Concretely:
 
 - Title = first H1; the document cites the documents it builds on with
   wikilinks (`[[doc]]`, `[[doc#Heading]]`, `[[glossary#^concept-id]]`).
 - Every new concept is explained at first mention, or referenced to the
-  document/section that explains it — the reference is the graph edge.
-- These vault documents are indexed by the wiki graph view; links between
-  them are the relationship map, so a report with zero links to its sources
-  is an incomplete deliverable.
+  document/section that explains it — the citation is what lets a reader
+  reach the source, and what the term registry resolves.
+- Write it as people read: plain words (no `人面子` / `印象` / `赋能` style
+  abstraction), the overall answer in one paragraph at the top, one bold
+  conclusion line per section, the argument inside `<details>` folds, one
+  ```human card per part, captioned figures with minimal in-image text
+  (wiki-docs clauses ⑨⑩⑪). Zero links to sources is an incomplete
+  deliverable; zero graph density is not a problem.
 
 Full conventions (vault layout, citation discipline, glossary block ids):
 `skills/wiki-docs/SKILL.md` in this plugin.
@@ -269,7 +275,7 @@ echo ~/.nebflow/docs/<域>/report.html
 
 ## 人读交付体例（节点 result 的一屏摘要与人读件共用）
 
-给**人**看的文档与给机器看的取证件是两类东西：人读件落 `~/.nebflow/docs/<域>/`（活文档 `<topic>.md`、阶段件 `<YYYYMMDD>_<HHMMSS>_<topic>.md`），取证件/过程件落 `<ws>/.nebflow/{Spec,evidence,reports,tasks,results,tmp}/`；写在 `<ws>/.nebflow/**` 下再声明「人读」无效，要给人看必须外移。
+给**人**看的文档与给机器看的取证件是两类东西：人读件落 `~/.nebflow/docs/<域>/`（活文档 `<topic>.md`、阶段件 `<topic>__<YYYYMMDD>_<HHMMSS>[__<chainId>].md`——**topic 前置、时间块后置**，topic 用小写 kebab（英文/拼音）或原样中文，禁用 report/doc/notes 这类空词单独成题；同秒冲突在时间块后接 `-<n>`，有归属才带 chainId 尾段、不得编造），取证件/过程件落 `<ws>/.nebflow/{Spec,evidence,reports,tasks,results,tmp}/`；写在 `<ws>/.nebflow/**` 下再声明「人读」无效，要给人看必须外移。
 
 **首屏四段骨架（顺序固定）**：
 
@@ -306,3 +312,42 @@ $$
 ```
 
 反例：`E = m*c^2`（纯文本，上下标丢失）、把公式截图成 PNG 贴进文档（不可检索、不可复制）。
+
+**④ 排版与缩写（文档面，作者裁定 2026-11-05 11:09 / 11:11）。** 三件事在每一份
+**文档产出**上都要成立（vault 知识文档、人读件、HTML 报告正文同理）：
+
+- **缩进**：正文段落首行以 `&emsp;&emsp;` 起行。Markdown 没有布局——**两个半角空格
+  会被 HTML 折叠吃掉，四个半角空格直接把这段变成代码块**（本部署 marked v12.0.2
+  实测）；HTML 实体 `&emsp;` 在 Obsidian 与 marked 两面都稳定生效。标题 / 列表 /
+  表格 / 引用 / 围栏 / 图片行与可视长度 <40 字符的短行不缩进。
+- **彩色**：Markdown 原生无色，只能内联 HTML `<span style="color:…">`。**一篇文档
+  ≤4 处**（建议 ≤3），只给**关键结论**与**风险/警告**；一般强调用加粗。语义钉死：
+  蓝 `#5e6ad2` = 结论/判定、红 `#d0342c` = 风险/警告、绿 `#12874a` = 已验证/通过
+  （三色在亮/暗两主题都实测过对比度）。
+- **缩写**：领域缩写（GCR / SCD / DPC / MC / NIEL…）与机构缩写（ICRP / IAEA /
+  CERN / NIST…）在**文档首次出现处**必须给全称或挂词条：`银河宇宙线（GCR）`、
+  `GCR（Galactic Cosmic Rays）`、`[[GCR]]（全称）`；单位与通用技术词走允许清单。
+
+机器面：`skills/wiki-docs/scripts/check_wiki_docs.py` 的 R7 `doc-color` / R8
+`doc-indent` / R9 `abbrev-expansion`（条款原文与正反例见
+`skills/wiki-docs/SKILL.md` 条款 ⑦⑧ 与「Document typography」「Abbreviations」两节）。
+新制文档（文件名时间块 ≥ `20261105_111100` 或在 frontmatter 声明 `style:`）按违规
+判，存量文档先记 advisory。
+
+**⑤ 写作风格（写作风格批 v2，作者令 2026-11-05 12:09）。** 四件事在每一份文档上
+都要成立，条款原文与模板见 `skills/wiki-docs/SKILL.md` 条款 ⑨⑩⑪ 与「Plain
+language」「Document skeleton」「Card face」「Figures in a document」四节：
+
+- **平实语言**：能用平实动词+名词说清的，不用抽象名词包裹；禁用词表（`人面子` /
+  `印象` / `抓手` / `赋能` / `闭环` …）住在 wiki-docs 的标记块里，命中即报 `文件:行`。
+- **结论先行 + 细节折叠**：开头一段总体结论；每个 `##` 章节首行一句加粗结论；论证
+  细节放进 `<details><summary>…</summary>`（两台渲染器都认的唯一形态）。
+- **卡片分区**：每部分一张 ```` ```human ```` 卡（= 产品现成的 `.nf-human-card`），
+  卡里只放结论与关键数字，论证进紧随其后的折叠块。
+- **图的简约风格与图注**：图内只留轴标签、刻度、短图例（每条一行）；灰阶配色 +
+  虚实线区分，无网格、无图内标题；解释放图注（`图 N …` 一句结论，≤120 字符）与
+  正文。基准 = DOSTEL `figures/20261103_cabin_neutron_energy_weight_flux/` 那批，
+  参数单源 `figures/20261103_neutron_energy_weight_flux/scripts/fig_style.py`。
+
+机器面：R10 `plain-language` / R11 `doc-structure` + `detail-fold` / R12
+`image-caption`（`--style-since-v2` 是 v2 自己的生效界，缺省 `20261105_130000`）。

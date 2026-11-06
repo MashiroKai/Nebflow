@@ -25,10 +25,10 @@ Consequently `scripts/check-jdk-baseline.sh` asserts `-release == JDK_BYTECODE_T
 ```bash
 sbt compile        # compile
 sbt assembly       # fat JAR -> target/scala-3.5.2/
-sbt run            # start the web server at http://localhost:8080
+sbt run            # start the web server at http://localhost:6138
 ```
 
-To isolate a dev server from anything already on 8080, give it its own home and port (`--home` / `--port` are global flags):
+To isolate a dev server from the running gateway (default port 6138), give it its own home and port (`--home` / `--port` are global flags):
 
 ```bash
 sbt "run --home /tmp/nb-dev --port 8090"
@@ -104,8 +104,9 @@ node scripts/check-provider-modellist.mjs   # provider model-list endpoints stay
 ```bash
 make check-visual              # = node scripts/visual-baseline.mjs --check --max-ratio 0.0005 (gate)
 make check-visual VISUAL_MAX_RATIO=0   # strict zero-diff run
-make visual-baseline          # = node scripts/visual-baseline.mjs --update  (re-record)
+make visual-baseline          # = --update → writes a DRAFT into the review area only (never the committed baseline)
+make visual-baseline-promote  # = --promote --i-reviewed → pushes that reviewed draft into tests/visual/baseline/
 node scripts/visual-baseline.mjs --check --filter canvas --determinism
 ```
 
-Baselines are stored **per host platform key**: `tests/visual/baseline/<process.platform>-<browserLabel>/` (e.g. `win32-msedge-156`, `darwin-chromium-151`). Pixels are not comparable across OS/browser builds, so a host without its own baseline directory reports `MISS` on every shot — a red, never a silent pass. `win32-msedge-156/` was recorded on the author's Windows + Edge host and belongs to the **Windows runner leg**; on another host record your own set with `make visual-baseline`, eyeball the shots under `.nebflow/visual-baseline/<platform>/`, then commit `tests/visual/baseline/<platform>/`. Tolerances are strict zero by default in the script (`--tolerance` / `--max-ratio` widen them explicitly — loosening a baseline is not a fix for a real pixel change); `make check-visual` passes `--max-ratio 0.0005` because both recorded hosts showed 12–16 px of random antialiasing drift on the 1 px pane border of the two monaco scenarios (0.002–0.003%, deterministic within a run, so it is host rendering noise rather than product jitter). Use `make check-visual VISUAL_MAX_RATIO=0` for a strict zero-diff run — recommended on the Windows runner leg, whose baselines were captured noise-free. Run it after frontend changes that can move layout; the GitHub CI legs do not carry it yet (no matching platform baselines there).
+Baselines are stored **per host platform key**: `tests/visual/baseline/<process.platform>-<browserLabel>/` (e.g. `win32-msedge-156`, `darwin-chromium-151`). Pixels are not comparable across OS/browser builds, so a host without its own baseline directory reports `MISS` on every shot — a red, never a silent pass. `win32-msedge-156/` was recorded on the author's Windows + Edge host and belongs to the **Windows runner leg**; on another host record your own set with `make visual-baseline` (draft → `.nebflow/visual-baseline/<platform>/baseline-draft/`), eyeball it, then land it with `make visual-baseline-promote` and commit `tests/visual/baseline/<platform>/`. **Recording is two-stage on purpose**: `--update` used to write straight into the committed baseline directory while the docs claimed a review area existed, so a routine re-record silently replaced the reference frames the gate compares against — the review step was unimplementable. Now `--update` cannot touch `tests/visual/baseline/` at all; only `--promote --i-reviewed` can, and a bare CLI `--promote` without the acknowledgement flag is refused with the draft inventory printed. Tolerances are strict zero by default in the script (`--tolerance` / `--max-ratio` widen them explicitly — loosening a baseline is not a fix for a real pixel change); `make check-visual` passes `--max-ratio 0.0005` because both recorded hosts showed 12–16 px of random antialiasing drift on the 1 px pane border of the two monaco scenarios (0.002–0.003%, deterministic within a run, so it is host rendering noise rather than product jitter). Use `make check-visual VISUAL_MAX_RATIO=0` for a strict zero-diff run — recommended on the Windows runner leg, whose baselines were captured noise-free. Run it after frontend changes that can move layout; the GitHub CI legs do not carry it yet (no matching platform baselines there).

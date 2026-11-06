@@ -242,7 +242,7 @@ export function replayHistoryPageInitialLoad(msg, view) {
       label.className = 'ask-label';
       label.textContent = t('chat.askLabel');
       const content = document.createElement('div');
-      content.innerHTML = renderMarkdownWithMath(activeView.stream.askAnswerText, true, { cache: false }) + '<span class="cursor"></span>';
+      content.innerHTML = renderMarkdownWithMath(activeView.stream.askAnswerText, true, { cache: false, stream: true }) + '<span class="cursor"></span>';
       activeView.stream.currentAskBubble.appendChild(label);
       activeView.stream.currentAskBubble.appendChild(content);
       row.appendChild(activeView.stream.currentAskBubble);
@@ -272,7 +272,7 @@ export function replayHistoryPageInitialLoad(msg, view) {
     // —— 后端 `.ui.json` 落盘时**不写** attachments（WebSocketRoutes.scala:2294-2298
     // 的 `UiMessage.AskUser(items, askRid)`）⇒ 历史行没有该键可透传，本处是**形态
     // 对齐**的防御位，不是活路径（见过程件「构造性边界」一节）。
-    renderAskUser(lastHistMsg.items, sid, lastHistMsg.agentName, lastHistMsg.requestId, { project: lastHistMsg.project, nodeName: lastHistMsg.nodeName }, lastHistMsg.attachments);
+    renderAskUser(lastHistMsg.items, sid, lastHistMsg.agentName, lastHistMsg.requestId, { project: lastHistMsg.project, nodeName: lastHistMsg.nodeName, ownerName: lastHistMsg.ownerName }, lastHistMsg.attachments);
   }
 
   // Re-create interactive AskPermission if the last history message is an unanswered askPermission.

@@ -3,7 +3,11 @@
 // cfg-modal chat window (560px glass), forward-to-agent (one-way), agent-sent
 // chips, pure-badge notifications (no sound/banner/title — [U3]).
 import { t } from './i18n.js';
-import { createIconsIn, markCopyFailed, escapeHtml } from './utils.js';
+// bubble-side-color 批（2026-11-06）：气泡归属方判定/类名工厂单点（收编前本处
+// 直接拼 `bubble ${out ? 'user' : 'peer'}`，归属方语义散在模板串里）。
+import { bubbleClass, bubbleSideOfOutgoing } from './bubbleSide.js';
+import { createIconsIn, markCopyFailed, escapeHtml, renderMarkdownWithMath, looksLikeMarkdown } from './utils.js';
+import { bindMdExtGate } from './mdLinkGate.js';
 import state from './state.js';
 import { onMessage, onReconnect, onDisconnect } from './ws.js';
 import { getNeblinkState, onNeblinkStatus, presenceBadgeHTML, platformDisplay } from './neblink.js';
@@ -28,6 +32,12 @@ import {
 import { makeReference, renderRefBlock } from './reference.js';
 import { appendRefToActiveView } from './input.js';
 import { showPopupMenu, isPopupMenuOpen } from './contextMenu.js';
+// 会话页头同构批（件二+件三，作者令 2026-11-02）：好友/群/设备会话页的**悬浮身份头**
+// 组件唯一属主 = `mobile/sessionHead.js`（与主对话 `chatChrome.js` 消费同一工厂、
+// 同一 CSS 块 —— 差异只来自数据；身份头常显，本模块不接任何滚动显示/隐藏腿，
+// 见身份头常显批 2026-11-04）。桌面零感知：本模块只在手机层分支调用它，桌面窗头行
+// 逐字不变。
+import { createSessionIdentityHead } from './mobile/sessionHead.js';
 // ⑥ 信任好友封存（作者裁定 2026-09-12）：静态常量，非配置读取、不过 latch。
 import { TRUST_SEALED } from './featureFlags.js';
 // 认知二期产品批②角标可行动判据（设计稿 §5 P6）：messages 徽标只报「需要
@@ -35,27 +45,42 @@ import { TRUST_SEALED } from './featureFlags.js';
 // （新鲜度 ≠ 可行动量，闭合相关性判据）。
 import { pendingAskCount } from './askPending.js';
 import { actionableTotal, onActionableChanged } from './actionable.js';
-// 改版批（2026-10-31）：消息列表顶部「待办事项」入口行（scheduled-task.js
-// 渲染核；行随本容器双端同现——手机端整容器收编进消息页）。
-import { buildTodoEntryRow } from './scheduled-task.js';
+// 【入口收敛批 todo-unify-entry-collapse 2026-11-04】改版批（2026-10-31）的
+// 消息列表顶部「待办事项」入口行（scheduled-task.js buildTodoEntryRow）**退役**：
+// 待办唯一入口 = 顶带 #top-overlays 内的待办胶囊（js/todoFace.js，双端同现，
+// 点开即展开面板）。入口行承载的信息（待销账待办数徽标 / 最早一条摘录）由
+// 胶囊面接管——计数 = 胶囊及其展开面板头部的同一个计数节点（.tfl-cap-faces），
+// 摘录 = 展开面板列表首行；行本身不再渲染（import 随撤，函数体保留在
+// scheduled-task.js，注释退役、零物理删除）。
+// import { buildTodoEntryRow } from './scheduled-task.js';
 // ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
 // 本模块的好友会话输入框（作者点名的面）此前**零组字判定** —— 组字 Enter 会
 // 直接 doSend()。
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
+// voicefix 批 腿 B（作者 2026-09-21 14:0x ③）→ 三面-composer 统一批（2026-11-02）：
+// 好友/群聊/设备三面输入条的**装配单点**上收到 `messages/fmComposer.js`（语音腿
+// 复用主窗同一管线 —— 识别流/双模/态机全在 voiceEngine.js，组件只做「键 ⇄ 输入框」
+// 接线）。本模块不再持任何输入条装配语句（三面零分叉；设备面本批补齐语音）。
+import { buildFmComposer } from './messages/fmComposer.js';
 import { withFocusKey } from './focusTrap.js';
-// voicefix 批 腿 B（作者 2026-09-21 14:0x ③）：好友/群聊会话窗的**简单麦克风**
-// 复用主窗同一语音管线 —— 识别流/双模（Web Speech / 云 STT）/态机全在
-// voiceEngine.js 单点，本模块只做「按钮 ⇄ 本窗输入框」的回调接线，零新造机制。
-import { startDictation, stopDictation, sttEnabled } from './voiceEngine.js';
 // 字段方言双兼容批：预览字段的**收面单点**（方言登记表判读 + `data:` 合成全仓唯一落点；
 // 该模块零 import ⇒ 无环）。
 import { readPreviewField, previewDataUrlOf } from './attachPreviewField.js';
 // 时制（12h/24h）：与主对话框/设备对话框共享同一偏好与同一实现。
-import { formatHm, bindTimeToggle, TIME_FORMAT_CHANGED } from './timeFormat.js';
+import { formatHm, formatFooterTime, bindTimeToggle, TIME_FORMAT_CHANGED } from './timeFormat.js';
 // ⑩ 合并期滚动位保持（与 Dropbox 面**共用一份实现**，无第二个公式）。
 // follow 批（2026-10-08）：贴底判定 `isAtBottom`（AT_BOTTOM_PX 单源）也从这一份
 // 实现出 —— 到达跟随、锚点补偿、回底胶囊三处共用同一判据，本面内禁第二个数。
 import { preserveScrollAnchor, isAtBottom } from './msgScrollAnchor.js';
+// 会话面胶囊（单实现批 2026-11-06）：主会话 / 好友 / 群 / 设备**同一实现**
+// （`js/scrollPill.js`）——与「↓ N 条新消息」「搜索回跳」同一枚 `.scroll-new-pill`。
+// 本模块只持「未读计数」宿主状态，几何/显隐/形态全在组件与 chat.css 单源。
+import { createScrollPill } from './scrollPill.js';
+// 进场落底「武装窗」（手机端进场落顶修复批 · 2026-11-02）：一次性同步钉底对
+// **容器搬家/异步撑高**两类时序都只能赢一次 —— 本模块的会话窗在手机层会被
+// `navController.watchChatModal` re-parent 进页面体（迁移即把 scrollTop 归零），
+// 钉底写在迁移之前就等于没写。原语与选型理由见 chat/settleBottom.js 头注。
+import { settleBottom, cancelSettleBottom } from './chat/settleBottom.js';
 // 设备会话统一批 MVP-1（2026-09-15）：设备腿的**数据面**访问器（唯一属主 = dropbox.js，
 // 含 WS 帧 `dropbox-history`/`dropbox-message` + L2 缓存 + 附件队列/闸位）。本模块只
 // **消费**它们，不复制任何取数/合并/落盘逻辑（卡 §6.2：否则造第三实现）。
@@ -113,11 +138,27 @@ import { ticketUrl, queuedTicketUrl } from './nfTicket.js';
 // 二次加载清剿批（2026-10-24，#816 同法）：内联直显字节接 **nfFileCache 账本单点**
 // ——`nfCachedBlob` 查账 / `nfCachePut` 入账 / `nfViewerSource` 账本取数单点。
 import { fetchBlobWithProgress, nfCacheDrop, nfCachedBlob, nfCachePut, nfViewerSource } from './nfFileCache.js';
-import { MAX_INLINE_IMAGE_BYTES, isImageAttachmentName } from './attachmentPreview.js';
+import { MAX_INLINE_IMAGE_BYTES, isImageAttachmentName, isVideoAttachmentName } from './attachmentPreview.js';
+// 附件卡渲染出口（fm-att-card-unify 批 2026-11-02 · 作者令「三面板全部改接主会话卡
+// 语言，不许各自维护一套样式」；fm-att-component-lib 批 2026-11-02 · 作者令「把主
+// 会话用的组件直接做成标准组件库让各面板调用，不是等价适配」）：叠卡媒体组/媒体面/
+// 文件面/下载键字形/扩展名/失败占位单点全部取自 popArtifacts（主会话卡语言唯一家，
+// 三面板**逐字调用同一组件**，禁面板内第二套形态/描边/几何算术）。依赖方向安全：
+// popArtifacts 及其依赖不回指本模块（无环）。
+import { buildMediaFlat, buildMediaStack, buildFileCard, extOf, fitMediaBox, markMediaFailed, DOWNLOAD_SVG, DL_CHECK_SVG } from './popArtifacts.js';
 
 let conversations = [];
 let friendsCache = [];          // accepted friends — source of truth for §3.3 gate
 let friendsFetchedAt = 0;       // ⑨ L1 新鲜度锚：好友列表最后一次成功拉取时刻
+// ── 会话列表**取数失败态**（empty-state-must-not-lie 批 2026-11-05）────────────
+// `null` = 上一次会话列表取数**成功**（或尚未取过）；否则 = `errKind()` 读数
+// （'auth' / 'neblinkOff' / 'retryable' / 'terminal'）。
+// 🔴 它存在的唯一理由：**失败绝不许渲染成空态**。「取数失败」与「服务端明确答复
+// 没有会话」是两个不同事实，混成一句「暂无会话」= 把故障伪装成正常空列表 ——
+// 2026-11-05 事故现场：`GET /api/conversations` 被误删（6c1feea6d），前端 404 被
+// 吞掉 ⇒ 面板渲染「暂无会话」，一天无人发现。渲染判据链（`renderListInner`）
+// 因此固定为：未登录 → 取数失败态 → 真空态 → 列表，逐级只认前一档。
+let convListError = null;
 let openConvId = null;          // conversation shown in the chat modal
 let modalEls = null;            // {overlay, flow, input, sendBtn, toast}
 let triggeringRow = null;       // for focus return (A18)
@@ -321,7 +362,7 @@ function hasFiles(e) {
 
 import { el, avatarEl, deviceAvatarEl } from './messages/elements.js';
 
-import { toEpochMs, fmtTime, isSameDayMs } from './messages/timeFmt.js';
+import { toEpochMs, fmtTime } from './messages/timeFmt.js';
 export { fmtTime } from './messages/timeFmt.js';
 
 // #290: origin column (R2=A, contract-first with the Rust batch) - a message
@@ -437,26 +478,58 @@ function groupEventText(ev) {
 }
 
 /**
- * 可行动未读（P6 判据）：未读会话里点名作者行动的条数。会话无行动标记
- * （pendingAsk/mention）⇒ 该会话计数 0——「有更新」不构成行动请求，纯未读
- * 不上徽标。未读同步等既有腿不消费本函数，零触碰。
+ * 未读总数（**唯一真值 = 各会话 `unreadCount`**，与会话列表行徽标
+ * `convRow` 的 `if (conv.unreadCount > 0)` 支同一读数源，禁第二套计数）。
+ *
+ * 🔴 侧边栏图标角标（activity bar 消息钮）由本函数**派生**——unreadside 批
+ * （作者 2026-11-02 01:1x 反馈逐字「现在新消息的显示好像有问题，侧边栏 没通知
+ * 我。」）之前，图标角标走的是另一套聚合（`actionableUnread`：只数「未读 ∩
+ * `pendingAskCount`/`mentionCount`」，而这两个会话字段**全仓零生产者**——服务端
+ * 会话行契约只有 `unreadCount`，见 NeblinkModel.scala:1319-1330）⇒ 图标角标恒 0，
+ * 而列表行徽标报真未读：两套计数不同源，必然漂移（现场 = 行上 `(1)`、侧栏无提示）。
+ * 判据（作者硬约束）：图标角标只许由这条真值集合派生（sum），禁止另立计数器。
+ *
+ * 语义面不变：本函数只在**徽标读数**上用；未读清零仍由 `markConvRead` /
+ * `markDeviceConvRead` / 帧处理里开会话的那三处负责（读后同拍 `updateBadge()`）。
  */
-function actionableUnread() {
+function totalUnread() {
+  // 三点入口批（2026-11-05）：消息免打扰的会话**不计入**未读读数（作者令的
+  // 「消息免打扰」在本产品里唯一可观测语义 = 不打扰：列表行徽标与侧栏角标）。
   return conversations.reduce((s, c) => {
-    const unread = c.unreadCount || 0;
-    if (unread <= 0) return s;
-    const flagged = (c.pendingAskCount || 0) + (c.mentionCount || 0);
-    return s + Math.min(unread, flagged);
+    if (convMuted(c)) return s;
+    return s + Math.max(0, Math.floor(Number(c && c.unreadCount) || 0));
   }, 0);
 }
 
+// ── 会话级本地偏好（三点入口批 2026-11-05；真源 = 好友行的 muted/pinned）──
+/** 顶置（`friend.pinned === true`；后端只存 true，关 = 删键 ⇒ 回读 null）。 */
+function convPinned(conv) {
+  return !!(conv && conv.friend && conv.friend.pinned === true);
+}
+/** 消息免打扰（同上形态）；命中 ⇒ 行徽标与未读总数都不再计入该会话。 */
+function convMuted(conv) {
+  return !!(conv && conv.friend && conv.friend.muted === true);
+}
+/** 会话行排序唯一判据：**顶置优先**，组内仍按最后消息时间倒序（既有口径）。 */
+function compareConversations(a, b) {
+  const pa = convPinned(a) ? 1 : 0;
+  const pb = convPinned(b) ? 1 : 0;
+  if (pa !== pb) return pb - pa;
+  return (toEpochMs(b.lastMessage?.createdAt) || 0) - (toEpochMs(a.lastMessage?.createdAt) || 0);
+}
+
 function updateBadge() {
-  // 徽标 = 可行动量：会话内点名行动（待批准/@）+ 跨面板可行动（待销账待办/
-  // 待处置任务/未读回执——各面板注册的提供者）。纯「有更新」不上徽标。
-  const n = loggedIn()
-    ? actionableUnread() + pendingAskCount() + actionableTotal()
-    : 0;
-  setActivityBadge('messages-btn', n, t('messages.ariaActionable', { n }));
+  // 徽标 = 未读真值（与会话行徽标同源）+ 可行动量（另一轴，非未读量：待答卡
+  // `pendingAskCount` + 跨面板待销账待办/未读回执 `actionableTotal`）。
+  // 🔴 未读腿**必须是 totalUnread()**：这是行徽标与图标角标唯一的同源点。
+  const on = loggedIn();
+  const unread = on ? totalUnread() : 0;
+  const actionable = on ? pendingAskCount() + actionableTotal() : 0;
+  const n = unread + actionable;
+  // aria 文案：未读腿在场按未读报（与行徽标同词），否则按可行动量报。
+  setActivityBadge('messages-btn', n, unread > 0
+    ? t('messages.ariaUnread', { n: unread })
+    : t('messages.ariaActionable', { n: actionable }));
 }
 
 // 任一可行动提供者计数变化 ⇒ 重算徽标（actionable.js 广播面）。
@@ -480,50 +553,73 @@ async function refreshConversations({ friends = 'reuse' } = {}) {
     || friendsCache.length === 0
     || (Date.now() - friendsFetchedAt) > CACHE_TTL_MS;
   let friendsRefreshed = false; // ③ 本拍是否真的换上了新快照（补判的判据，见函数尾）
+  let devices = [];
   try {
-    const [convs, fr, grp] = await Promise.all([
-      api.getConversations(),
-      wantFriends ? api.getFriends() : Promise.resolve(null),
+    // 会话列表腿**独立**取数（empty-state-must-not-lie 批）：旧形态三项同挂一个
+    // `Promise.all` ⇒ 任一项 reject 就让会话列表整批丢弃，且外层 `catch` 静默 ⇒
+    // 列表落到 `conversations = []`，渲染成「暂无会话」。现在会话列表的失败只落
+    // `convListError`（→ 错误态），**不**牵连同拍的好友/群腿，也**不**清空既有行。
+    const [convRes, fr, grp] = await Promise.all([
+      api.getConversations().then(
+        rows => ({ rows, err: null }),
+        err => ({ rows: null, err })),
+      wantFriends
+        // 好友腿失败 ⇒ null（= keep-last-known 既有的第三态），**不**让它拖垮会话
+        // 列表这一腿（旧形态共用一个 `Promise.all`：好友 5xx 会把已到手的会话行
+        // 一起丢掉，同属「失败伪装成空」的同一族）。
+        ? api.getFriends().catch(() => null)
+        : Promise.resolve(null),
       // 群取数独立兜底（禁拖垮单聊刷新）：失败/不可用按 refreshGroups 三态
       // 语义落（null = keep-last-known；404 = 空集 + fail-closed 翻面）。
       refreshGroups(),
     ]);
-    const direct = convs || [];
+    // 失败态与成功态**互斥落位**：成功一次即清零（错误态不得粘滞到下次成功）。
+    convListError = convRes.err ? api.errKind(convRes.err) : null;
+    const direct = convRes.err ? null : (convRes.rows || []);
     // 设备会话行（设备会话统一批 MVP-1 · 卡 A3 合并点）：**本账号自有设备** ⇒
     // 与好友行/群行同列同排序（排序键 = lastMessage.createdAt 不变）。
     // MVP-2：服务端 `kind:'device'` 行优先（未读/预览权威），peers 派生行只补空缺
     // （归并见 `deviceConvs`）。🔴 服务端设备行**本来就会**出现在 `direct` 里
     // （网关透传 `kind`/`deviceId`）⇒ 必须先从 `direct` 剔除再并入，否则同一设备
     // 出两行（一行无设备档案、一行派生）。
-    const serverDeviceRows = direct.filter(c => c && c.kind === 'device');
-    const directNonDevice = direct.filter(c => !(c && c.kind === 'device'));
-    const devices = deviceConvs(serverDeviceRows);
-    if (grp) {
-      // pendingInvites 的消费方是 contacts 面的群邀请区（它自己调 refreshGroups，
-      // 与面板独立刷新同构）；messages 面只消费 groups。
-      conversations = directNonDevice.concat(grp.groups || []).concat(devices);
-    } else {
-      // keep-last-known：群面取数失败（auth/网络/5xx）⇒ 既有群行原样保留，
-      // 只刷新单聊行（与好友域「失败≠空」同口径，禁闪空列表）。
-      const prevGroups = conversations.filter(c => c && c.kind === 'group');
-      conversations = directNonDevice.concat(prevGroups).concat(devices);
+    if (direct) {
+      const serverDeviceRows = direct.filter(c => c && c.kind === 'device');
+      const directNonDevice = direct.filter(c => !(c && c.kind === 'device'));
+      devices = deviceConvs(serverDeviceRows);
+      if (grp) {
+        // pendingInvites 的消费方是 contacts 面的群邀请区（它自己调 refreshGroups，
+        // 与面板独立刷新同构）；messages 面只消费 groups。
+        conversations = directNonDevice.concat(grp.groups || []).concat(devices);
+      } else {
+        // keep-last-known：群面取数失败（auth/网络/5xx）⇒ 既有群行原样保留，
+        // 只刷新单聊行（与好友域「失败≠空」同口径，禁闪空列表）。
+        const prevGroups = conversations.filter(c => c && c.kind === 'group');
+        conversations = directNonDevice.concat(prevGroups).concat(devices);
+      }
+      // 三点入口批（2026-11-05）：排序单一判据 = `compareConversations`
+      // （顶置优先 + 组内按最后消息时间倒序），禁第二处各写一套 sort。
+      conversations = conversations.sort(compareConversations);
+      // 契约加性 viewer 字段腿：群行行内 selfUserId（§1.1 #2）+ 邀请信封面
+      // （refreshGroups 出口，§1.1 #3）—— 在场则直接学习；缺席 ⇒ 无操作，
+      // groupSelfUserId 继续走发送关联自证。
+      learnSelfFromGroupRows(conversations);
+      if (grp && grp.selfUserId) learnSelfUserId(grp.selfUserId);
     }
-    conversations = conversations.sort((a, b) =>
-      (toEpochMs(b.lastMessage?.createdAt) || 0) - (toEpochMs(a.lastMessage?.createdAt) || 0));
-    // 契约加性 viewer 字段腿：群行行内 selfUserId（§1.1 #2）+ 邀请信封面
-    // （refreshGroups 出口，§1.1 #3）—— 在场则直接学习；缺席 ⇒ 无操作，
-    // groupSelfUserId 继续走发送关联自证。
-    learnSelfFromGroupRows(conversations);
-    if (grp && grp.selfUserId) learnSelfUserId(grp.selfUserId);
+    // direct 为 null（会话列表取数失败）⇒ **keep last known**：既有行一个不动，
+    // 也不写名册快照（失败读数不得成为下一次首帧的「真值」）。
     if (fr) { friendsCache = fr.friends || []; friendsFetchedAt = Date.now(); friendsRefreshed = true; }
     // 写路径（本地层唯一写入口）：合并后的**最终快照**落盘 ⇒ 下一次面板首帧零网络。
     if (isLocalStoreEnabled()) {
-      writeRoster('conversations', conversations);
+      // 会话/设备快照只在**本次取数成功**时刷新（`direct` 非 null）——失败读数不落盘，
+      // 下一次首帧读的仍是上一次的真实快照（失败不得成为「真值」）。
+      if (direct) {
+        writeRoster('conversations', conversations);
+        if (devices.length) writeRoster('devices', devices);
+      }
       if (fr) writeRoster('friends', friendsCache);
       if (grp && Array.isArray(grp.groups)) writeRoster('groups', grp.groups);
-      if (devices.length) writeRoster('devices', devices);
     }
-  } catch { /* keep last known */ }
+  } catch { /* keep last known（末级兜底；会话列表腿的失败已在上面的 convListError 落位） */ }
   // 签名相同 ⇒ **零 DOM 操作**（卡 §4②）：内容没变时不做 innerHTML 全量重建
   // （重建会把每行头像 `<img>` 全部销毁重造，正是「每次进面板都闪一下」的机制）。
   renderListIfChanged();
@@ -560,7 +656,10 @@ async function refreshConversations({ friends = 'reuse' } = {}) {
 let renderedListSig = null;
 
 /** 会话列表内容签名（判定字段 = 卡 §4② 口径；`openConvId` 决定 aria-selected，
- *  属渲染输入 ⇒ 一并入签名，避免「跳过的重建其实该改选中态」）。 */
+ *  属渲染输入 ⇒ 一并入签名，避免「跳过的重建其实该改选中态」）。
+ *  🔴 取数失败态同样是**渲染输入**（empty-state-must-not-lie 批）：不进签名的话
+ *  「行没变、错误态翻转」会被零 DOM 闸跳过 ⇒ 错误态永远画不出来（签名闸当初就是
+ *  为「内容没变不重建」而生，错误态恰恰是内容没变而形态必须变的那一档）。 */
 function rosterSignature(list) {
   const parts = [];
   for (const c of list || []) {
@@ -573,6 +672,7 @@ function rosterSignature(list) {
     );
   }
   parts.push(`open:${openConvId || ''}`);
+  parts.push(`err:${convListError || ''}`);
   return signatureOf(parts);
 }
 
@@ -609,13 +709,15 @@ function renderListInner() {
   if (!box) return;
   box.innerHTML = '';
   updateBadge();
-  // 改版批（2026-10-31）：「待办事项」入口行置顶——待办是引擎面（kind=todo
-  // 台账），不依赖 neblink 社交登录态 ⇒ 无条件渲染（登录空态/空会话态都在，
-  // 像联系人页的「设备/发起群聊」入口）。不挂 .fm-conv-row（真会话行定位面）。
-  box.appendChild(buildTodoEntryRow());
-  // 本拍 DOM 与内容指纹对齐（下一次可比对 ⇒ 相同则零重建）。三条出口（登录空态 /
-  // 列表空态 / 全量重建）都在此落位 —— `#fm-conversations` 是 index.html 的静态
-  // 节点 ⇒ 上面 `!box` 一支只在极早期（HTML 未挂载）可达，不参与指纹。
+  // 【入口收敛批 todo-unify-entry-collapse 2026-11-04】「待办事项」入口行退役：
+  // 待办唯一入口 = 顶带待办胶囊（双端同现，点开即展开面板），本列表不再置顶
+  // 任何非会话行 —— 消息列表 = 纯会话名册。承载信息去向见文件头 import 注记：
+  // 待销账数 = 胶囊计数节点（.tfl-cap-faces，展开时同节点搬进面板头），
+  // 最早一条摘录 = 展开面板列表首行。旧渲染核保留于 scheduled-task.js。
+  // box.appendChild(buildTodoEntryRow());
+  // 本拍 DOM 与内容指纹对齐（下一次可比对 ⇒ 相同则零重建）。四条出口（登录空态 /
+  // 取数失败态 / 列表空态 / 全量重建）都在此落位 —— `#fm-conversations` 是
+  // index.html 的静态节点 ⇒ 上面 `!box` 一支只在极早期（HTML 未挂载）可达，不参与指纹。
   const sig = rosterSignature(conversations);
 
   if (!loggedIn()) {
@@ -625,6 +727,39 @@ function renderListInner() {
     btn.addEventListener('click', () => openLoginModal());
     empty.appendChild(btn);
     box.appendChild(empty);
+    renderedListSig = sig;
+    return;
+  }
+  // 🔴 失败 ≠ 空（empty-state-must-not-lie 批 2026-11-05）：取数失败先于空态判定，
+  // 且**绝不**落到下面那条「暂无会话」。理由 = 两个事实不同：「服务端明确答复没有
+  // 会话」（可以这么说）vs「我压根没拿到答复」（说成空列表 = 把故障伪装成正常态）。
+  // 文案纪律（自解释铁律 8）：只写状态事实 + 下一步动作，一行收口；不给路径指引、
+  // 不教用户怎么排查网络。
+  if (convListError) {
+    // auth = NebLink 会话失效（网关 401 `neblink_not_logged_in`）：动作是重新登录，
+    // 重试恒无效 ⇒ 复用既有登录引导面（同一条链 openLoginModal，零新文案）。
+    if (convListError === 'auth') {
+      const relogin = el('div', 'fm-login-empty fm-list-auth');
+      relogin.appendChild(el('div', 'fm-login-text', t('messages.loginRequired')));
+      const btn = el('button', 'glass-control fm-login-btn', t('messages.login'));
+      btn.addEventListener('click', () => openLoginModal());
+      relogin.appendChild(btn);
+      box.appendChild(relogin);
+      renderedListSig = sig;
+      return;
+    }
+    const errBox = el('div', 'fm-list-error');
+    errBox.dataset.listError = convListError; // QA 断言面：可机械定位错误态与其分态
+    errBox.appendChild(el('div', 'fm-list-error-text', t('messages.listLoadFailed')));
+    const retry = el('button', 'glass-control fm-list-retry', t('messages.retry'));
+    retry.addEventListener('click', () => {
+      // 清零后立刻重取（错误态不得粘滞：成功一次会自动回到列表/空态）。
+      convListError = null;
+      renderListIfChanged();
+      void refreshConversations({ friends: 'force' });
+    });
+    errBox.appendChild(retry);
+    box.appendChild(errBox);
     renderedListSig = sig;
     return;
   }
@@ -687,7 +822,9 @@ function convRow(conv) {
   meta.appendChild(top);
   const bottom = el('div', 'fm-conv-bottom');
   bottom.appendChild(el('span', 'fm-conv-summary', summaryOf(conv)));
-  if (conv.unreadCount > 0) {
+  // 消息免打扰的会话不弹数字徽标（与 `totalUnread` 同一判据：不打扰 = 不计数、
+  // 不报数；未读量本身仍在 `unreadCount` 里，进会话照旧清零）。
+  if (conv.unreadCount > 0 && !convMuted(conv)) {
     const b = el('span', 'fm-row-badge', conv.unreadCount > 99 ? '99+' : String(conv.unreadCount));
     b.setAttribute('aria-label', t('messages.ariaUnread', { n: conv.unreadCount }));
     bottom.appendChild(b);
@@ -736,7 +873,12 @@ function rerenderConvRow(conversationId) {
 }
 
 // ── Chat modal (§2.3/§3.3) ───────────────────────────────
-function closeChat() {
+/** 关窗（**唯一实现**；ESC / 覆层 / × / 发完 / 手机层左上返回全经此）。
+ *  会话页头同构批（件二+件三，2026-11-02）把本函数升为 `export`：手机层页面壳
+ *  的左上「<」= 唯一出页入口（窗头 × 与窗头行在手机层已退场），
+ *  `navController.closePageFace('conversation')` 以动态 import 调本函数（禁第二套
+ *  关窗实现；桌面零变化 —— 桌面 caller 仍走内部引用）。 */
+export function closeChat() {
   // Every close path (ESC, backdrop, ×, post-send) funnels through here —
   // detach the document listener centrally so open/close cycles stay
   // symmetric (D4, mem-diag 20260907). removeEventListener is idempotent.
@@ -749,7 +891,11 @@ function closeChat() {
   // 必须同拍收敛（引擎是全局单例，不关会往已销毁的输入框里继续写字）。
   // fmStopVoice 幂等（未录音 = no-op），且须在 modalEls 清零**之前**调用。
   if (modalEls && modalEls.stopVoice) modalEls.stopVoice();
+  // 会话页头同构批：身份头滚动渐隐监听已随身份头常显批（2026-11-04）整条退役 ⇒
+  // 关窗不再有渐隐解绑腿（`modalEls.unbindFade` 一并删除，见 modalEls 字面量）。
   if (modalEls) {
+    // 进场落底武装窗同拍拆：容器即将脱离文档，窗口期内不许再有写入（幂等拆除）。
+    cancelSettleBottom(modalEls.flow);
     modalEls.overlay.remove();
     modalEls = null;
   }
@@ -774,6 +920,17 @@ function closeChat() {
 function currentConv() {
   if (modalEls && modalEls.conv) return modalEls.conv;
   return conversations.find(c => c.conversationId === openConvId) || null;
+}
+
+/** 会话窗件的**查询根**（唯一入口）：桌面 = `overlay`（窗体在 overlay 子树内）；
+ *  手机层 = 窗体本体 —— navController.watchChatModal 把 `.fm-modal` re-parent 进
+ *  「会话」详情页体，overlay 只剩空壳，`overlay.querySelector(...)` 会**全部落空**
+ *  （旧代码即如此：开着的群窗改名/成员变化、设备在线态都不再就地重绘）。
+ *  会话页头同构批（件二+件三）把「名字」搬进悬浮身份头后这一落空**肉眼可见**，
+ *  故统一收口到本函数：只换查询根，零行为语义变化。 */
+function modalRoot() {
+  if (!modalEls) return null;
+  return modalEls.modal || modalEls.overlay;
 }
 
 /** 群组合头像落槽（**唯一**落槽实现；落点 = **窗头** `.fm-modal-avatar` 一处
@@ -816,7 +973,7 @@ function paintGroupAvatarInto(host, conv, cells) {
  *  （展开面板不再重复「头像 + 群名 + 成员数」）⇒ 本函数只重打窗头那**一处**。 */
 function refreshOpenGroupHeaderAvatar() {
   if (!modalEls) return;
-  const slot = modalEls.overlay.querySelector('.fm-modal-avatar');
+  const slot = modalRoot()?.querySelector('.fm-modal-avatar');
   if (!slot) return;
   const conv = currentConv();
   if (!conv || conv.kind !== 'group') return;
@@ -1228,16 +1385,21 @@ function renderChatModal(conv) {
   // H（决策卡 C/D/G/H）：入口**在会话窗头群名处** —— 窗头群名/标题区整块可点
   // （微信原样），原 `.fm-gs-open` 图标钮**保留**为同族第二入口（既有断言面
   // `.fm-gs-open` 不破；两入口共用同一个 mountDrawer，禁第二套抽屉实现）。
+  // 会话页头同构批（件二+件三）：`mountDrawer` / `groupSettingsMounted` 升到
+  // 群分支**外**——手机层右上三点菜单的「群设置」项与窗头 `.fm-gs-open`、
+  // 群名热区**共用同一个 mountDrawer**（禁第二套抽屉实现、禁第二份开合态）。
   let groupSettingsMounted = false;
+  /** @type {null | (() => void)} 群设置抽屉的唯一开合腿（群窗才赋值）。 */
+  let mountDrawer = null;
   if (conv.kind === 'group') {
     const settingsBtn = el('button', 'fm-gs-open');
     settingsBtn.type = 'button';
     settingsBtn.innerHTML = '<i data-lucide="users"></i>';
     settingsBtn.title = t('messages.groupSettings');
     settingsBtn.setAttribute('aria-label', t('messages.groupSettings'));
-    const mountDrawer = () => {
+    mountDrawer = () => {
       if (!modalEls) return;
-      modalEls.overlay.querySelector('.fm-group-settings')?.remove();
+      modalRoot()?.querySelector('.fm-group-settings')?.remove();
       const drawer = buildGroupSettings(conv, {
         toast: (s) => modalToast(s),
         close: () => closeChat(),
@@ -1256,7 +1418,7 @@ function renderChatModal(conv) {
     const refreshGroupHeaderAvatar = () => refreshOpenGroupHeaderAvatar();
     settingsBtn.addEventListener('click', () => {
       if (groupSettingsMounted) {
-        modalEls?.overlay.querySelector('.fm-group-settings')?.remove();
+        modalRoot()?.querySelector('.fm-group-settings')?.remove();
         groupSettingsMounted = false;
         return;
       }
@@ -1271,7 +1433,7 @@ function renderChatModal(conv) {
     // 🔴 可达性零回归：`role=button` / `tabindex=0` / Enter|Space 键盘契约**随迁**
     // （逐条断言见报告 §P3）；Tab 序不变（`.fm-modal-name` 仍在 `.fm-gs-open` 之前）。
     // 🔴 与 `.fm-gs-open`（同族第二入口）仍共用同一个 `mountDrawer`，禁第二套抽屉实现。
-    const toggleFromTitle = () => { if (groupSettingsMounted) { modalEls?.overlay.querySelector('.fm-group-settings')?.remove(); groupSettingsMounted = false; } else { mountDrawer(); } };
+    const toggleFromTitle = () => { if (groupSettingsMounted) { modalRoot()?.querySelector('.fm-group-settings')?.remove(); groupSettingsMounted = false; } else { mountDrawer(); } };
     nameEl.classList.add('fm-modal-title-btn');
     nameEl.setAttribute('role', 'button');
     nameEl.setAttribute('tabindex', '0');
@@ -1301,6 +1463,75 @@ function renderChatModal(conv) {
   header.appendChild(closeBtn);
   modal.appendChild(header);
 
+  // ── 会话页头同构批（件二+件三，作者令 2026-11-02）─────────────────────────────
+  // 手机层三会话（好友 / 群 / 设备）页头 = **只有左右两颗钮** + **中悬浮身份头**：
+  //   · 左上返回 = 页面壳既有 `.mobile-back-btn`（navController 建，本模块不造第二颗）；
+  //   · 右上三点 = `sessionHead.createSessionIdentityHead` 返回的 `.mh-sess-more`；
+  //   · 中间身份头 = `.mh-idhead.mh-sess-head`（圆头像 + 名字玻璃胶囊在下居中），
+  //     与主对话 `chatChrome.js` 的 `.g2-chat-head.mh-idhead.mh-agent-head` **共用
+  //     同一 CSS 块**（mobileLayer.css 文件尾 / sessionHead.js）。
+  // 🔴 节点迁移非复制：头像槽 `.fm-modal-avatar` 与名字 `.fm-modal-name` **整节点**
+  // 迁入身份头（既有断言面 `.fm-modal-name` 文本、群名热区、`refreshOpenGroupHeaderAvatar`
+  // 的 `.fm-modal-avatar` 查询全部照旧命中），禁第二份文本/第二枚头像。
+  // 桌面零改动：本块只在 `body.mobile-layer` 下执行；桌面窗头行逐字不变。
+  const isMobileLayer = document.body.classList.contains('mobile-layer');
+  /** @type {HTMLElement|null} 悬浮身份头（手机层才有）。 */
+  let idHead = null;
+  if (isMobileLayer) {
+    // 头像槽缺失（理论不可达：三面都建槽）⇒ 用空槽兜底，保持结构同形。
+    const avatarHost = headAvatarSlot || el('span', 'fm-modal-avatar');
+    const idParts = createSessionIdentityHead({
+      avatar: avatarHost,
+      nameEl, // 复用同一节点（群名热区/断言面都挂在它身上）
+      moreTitle: t('session.more'),
+      onMore: (e) => {
+        const r = /** @type {HTMLElement} */ (e.currentTarget).getBoundingClientRect();
+        const items = [];
+        // ① 查看资料（好友/群）：面本体 = 件一 `profileFace.js` 的**导出函数**
+        //   （不另写 Profile 面；动态 import 与群设置抽屉同一纪律 ——
+        //    `profileFace` 静态引 `messages.js`（personLabel）⇒ 静态边成环）。
+        //
+        // 🔴 三点入口批（2026-11-05，作者原话「点击右上角那个三个点的按钮。进去
+        //   应该直接就是好友信息的界面。不需要多点击一次」）：**好友会话**的右上
+        //   三点 = **直接开好友信息面**，中间那层「查看资料」菜单**取消**（原实现
+        //   是先弹单条菜单再点一次，= 多一跳）。判据落在 `conv.friend` 分支最前，
+        //   与群的「资料 + 群设置」两项菜单分开：群有第二个目的地（群设置），
+        //   单目的地（好友）才配直开；设备面同理保留既有菜单（入口 = 描述面板）。
+        if (conv.friend && conv.kind !== 'group') {
+          void import('./profileFace.js').then((m) => m.openFriendProfile(conv.friend)).catch(() => {});
+          return;
+        }
+        if (conv.kind === 'group') {
+          items.push({
+            label: t('profile.open'),
+            onClick: () => { void import('./profileFace.js').then((m) => m.openGroupProfile(conv)).catch(() => {}); },
+          });
+          // ② 群设置（与窗头 `.fm-gs-open` / 群名热区**共用同一个 mountDrawer**）。
+          items.push({
+            label: t('messages.groupSettings'),
+            onClick: () => { if (groupSettingsMounted) { modalRoot()?.querySelector('.fm-group-settings')?.remove(); groupSettingsMounted = false; } else mountDrawer?.(); },
+          });
+        } else if (conv.kind === 'device') {
+          // 设备无 Profile 面（有据偏离申报）：入口 = 既有设备描述编辑面板
+          // （`openDeviceDescPanel` 单点，开合态仍归窗头那枚 `.fm-device-desc-btn`）。
+          items.push({
+            label: t('session.deviceDesc'),
+            onClick: () => {
+              const btn = title.querySelector('.fm-device-desc-btn');
+              if (deviceDescRow && btn) openDeviceDescPanel(conv, deviceDescRow, btn);
+            },
+          });
+        }
+        showPopupMenu(r.left, r.bottom, items);
+      },
+    });
+    idHead = idParts.head;
+    // 头插在窗头行之后（绝对定位 ⇒ 不进 flex 流、不推动内容；DOM 序仍 header→head）。
+    modal.insertBefore(idHead, header.nextSibling);
+    modal.appendChild(idParts.moreBtn);
+    createIconsIn(idParts.moreBtn);
+  }
+
   const toast = el('div', 'fm-modal-toast');
   toast.hidden = true;
   modal.appendChild(toast);
@@ -1322,6 +1553,17 @@ function renderChatModal(conv) {
   const flow = el('div', 'fm-flow');
   modal.appendChild(flow);
 
+  // 会话页头同构批：身份头**不接滚动显示/隐藏**（身份头常显批，作者 2026-11-04
+  // 20:49 裁定「按你的推荐走」）。原先此处接 sessionHead.bindIdHeadFade，把
+  // `.fm-flow` 与 `.mobile-page-body` 的最大 scrollTop 映射成 `--idhead-p`，
+  // CSS 消费 `opacity: calc(1 - var(--idhead-p))`、p≥1 另置 visibility:hidden ——
+  // 而好友/群/设备会话**一打开消息流就贴底**（任何超一屏会话 scrollTop 恒 ≫64）
+  // ⇒ 身份头 100% 不可见（main 上实测 scrollTop=2137 ⇒ --idhead-p=1 ⇒ opacity=0），
+  // 连带头像的 pointer-events 一起退场 = profile 面入口不可达（功能损失，不只是
+  // 视觉）。与主对话腿（同日「顶部头像常显批」已摘）同一口径：身份头是身份/入口
+  // 类元素，作者铁律「腾空间用缩高或上移，不许让元素消失」⇒ 常显。
+  // 驱动器与 --idhead-p 已零消费者 ⇒ 整条清掉，本处不留绑定、关窗也不留解绑。
+
   // ── 贴底跟随 + 「↓ N 条新消息」回底胶囊（follow 批 2026-10-08，主人反馈）────────
   // 目标（与主窗 agent 面同语义，A-branch 2026-09-11 / B4 2026-10-04 的本面对应）：
   //   ① 新消息到达且视口贴底 ⇒ 跟随钉底（appendMessage 判定）；
@@ -1330,17 +1572,20 @@ function renderChatModal(conv) {
   // 本窗滚动判定点**只有这一处**监听：每次滚动重读贴底态并同步胶囊（回底即清零）；
   // 只读几何 + 胶囊态，**不写滚动位**（锚点补偿仍归 preserveScrollAnchor 单点）。
   flow.addEventListener('scroll', () => fmSyncFollowPill(), { passive: true });
-  // 胶囊 DOM/样式/文案全复用 agent 面既有件（零新 CSS、零新 i18n 键）：
-  // `.scroll-new-pill` = chat.css:3691（全局载入，index.html:37）；文案键
-  // `chat.newMessages`（en.js:1178 / zh-CN.js:1137，「↓ {n} 条新消息」）。挂
-  // `.fm-modal`（position:relative，friends.css:618）内绝对定位，落位 =
-  // flow 下缘与窗底之间那截（输入条/引用条/多选条）之上 12px，显示时现算。
-  const followPill = document.createElement('button');
-  followPill.type = 'button';
-  followPill.className = 'scroll-new-pill hidden';
-  followPill.setAttribute('aria-live', 'polite');
-  followPill.addEventListener('click', fmFollowBottom);
-  modal.appendChild(followPill);
+  // 胶囊 = **唯一组件**（单实现批 2026-11-06，作者令「回到底部的按钮不要自己造，
+  // 要跟新消息通知 搜索聊天记录跳转 使用同一套」）：本体/显隐口径/落位/平滑贴底
+  // 全在 `js/scrollPill.js`，主会话面（utils.js `syncScrollPill`）与搜索回跳
+  // （searchReturnPill.js）走**同一个** `createScrollPill`、同一类名
+  // `.scroll-new-pill`、同一形态声明（css/chat.css）。
+  // 本窗只保留「未读计数」这一项宿主状态（`fmUnseenCount`），几何零算术。
+  // 落位参照 = 本窗输入条 `.fm-input-bar` 顶缘（引用条/多选条/输入条三档高度
+  // 变化都由它现算，零重叠，读数见批文档断言表）。
+  const fmPillNew = createScrollPill({
+    host: modal,
+    scrollEl: flow,
+    anchor: () => modal.querySelector('.fm-input-bar'),
+    onReturn: () => { fmUnseenCount = 0; },
+  });
 
   // ── msgmenu 一期 + visup-b（作者 2026-09-19 04:22 照案）：两个新 UI 面 ─────────
   // ① 引用态条（**D2：挂输入条下方**）—— 组件本体仍是既有输入框引用块渲染器
@@ -1387,146 +1632,26 @@ function renderChatModal(conv) {
     exitSelection();
   });
 
-  // input bar
-  const bar = el('div', 'fm-input-bar');
-  const input = document.createElement('input');
-  input.className = 'cfg-input fm-input';
-  input.type = 'text';
-  input.placeholder = t('messages.inputPlaceholder');
-  input.maxLength = 2000;
-  input.autocomplete = 'off';
-  // ── 简单麦克风语音输入（voicefix 批 腿 B，作者 2026-09-21 14:0x ③）──────────
-  //   好友（conv 无 kind 键）/ 群聊（kind='group'）会话窗各挂**一枚简单麦克风键**
-  //   （禁气泡形态 —— 气泡是主窗光球的形态，不进本窗）；设备窗不挂。
-  //   形态 = 主窗既有 `.icon-btn` 族 + lucide `mic`（与纸夹同族）；位置 = 输入条
-  //   最左（微信参照稿同位）。接线复用主窗既有管线：同一 voiceEngine 识别流、
-  //   同一回调契约（onInterim 占位刷新 / onText 落终稿 / onState 态机）、同一
-  //   「点一下开、再点一下关」交互（作者 2026-08-25 21:34 令，与主窗一致）。
-  //   反馈 = 主窗既有 `.icon-btn.recording`（微信绿 + voicePulse）+ 转写中
-  //   `.fm-mic-btn.processing`（既有 sapphire）；出错 = modalToast 可见提示。
-  let fmVoiceActive = false;
-  let fmVoiceAnchor = 0;      // 当前语音段插入锚点（字符偏移）
-  let fmVoiceInterimLen = 0;  // 当前占位 interim 文本长度
-  let fmStopVoice = null;
-  if (conv.kind !== 'device') {
-    const micBtn = el('button', 'icon-btn fm-mic-btn');
-    micBtn.type = 'button';
-    micBtn.title = t('messages.voiceInput');
-    micBtn.setAttribute('aria-label', t('messages.voiceInput'));
-    micBtn.setAttribute('aria-pressed', 'false');
-    micBtn.innerHTML = '<i data-lucide="mic"></i>';
-    const fmSetMicState = (s) => {
-      micBtn.classList.toggle('recording', s === 'listening' || s === 'speaking');
-      micBtn.classList.toggle('processing', s === 'processing');
-      micBtn.setAttribute('aria-pressed', String(s === 'listening' || s === 'speaking'));
-    };
-    fmStopVoice = () => {
-      if (!fmVoiceActive) return;
-      fmVoiceActive = false;
-      // 丢弃未落定的 interim 占位（与主窗 stopVoice 同一约定）
-      if (fmVoiceInterimLen > 0) {
-        input.value = input.value.substring(0, fmVoiceAnchor) + input.value.substring(fmVoiceAnchor + fmVoiceInterimLen);
-        fmVoiceInterimLen = 0;
-      }
-      // 尾段转写在飞 ⇒ processing；引擎随后的 onState('idle') 收敛回常态
-      fmSetMicState('processing');
-      stopDictation();
-      syncComposerSend();
-    };
-    micBtn.addEventListener('click', () => {
-      if (input.disabled) return; // 拉黑/断连等禁用态不挂假入口行为
-      // settings-panel 批 D 件（2026-10-28）：STT 停用态好友消息 mic 入口一并
-      // 收口（toast；引擎闸 voiceEngine.startDictation 是纵深第二层）。
-      if (!sttEnabled()) {
-        window.__showToast?.(t('stt.disabled'), 'error');
-        return;
-      }
-      if (fmVoiceActive) { fmStopVoice(); return; }
-      fmVoiceActive = true;
-      fmVoiceAnchor = input.selectionStart ?? input.value.length;
-      fmVoiceInterimLen = 0;
-      // 与主窗 startVoice 同一约定：锚点前字符非空白 ⇒ 补一个分隔空格
-      if (fmVoiceAnchor > 0) {
-        const ch = input.value[fmVoiceAnchor - 1];
-        if (ch && ch !== ' ') {
-          input.value = input.value.substring(0, fmVoiceAnchor) + ' ' + input.value.substring(fmVoiceAnchor);
-          fmVoiceAnchor++;
-        }
-      }
-      fmSetMicState('listening');
-      input.focus();
-      startDictation({
-        onInterim: (text) => {
-          // [anchor, anchor+interimLen) 占位槽原位刷新（同主窗契约）
-          const before = input.value.substring(0, fmVoiceAnchor);
-          const after = input.value.substring(fmVoiceAnchor + fmVoiceInterimLen);
-          input.value = before + text + after;
-          fmVoiceInterimLen = text.length;
-          input.setSelectionRange(fmVoiceAnchor + text.length, fmVoiceAnchor + text.length);
-        },
-        onText: (text) => {
-          // 终稿落定 = 占位槽换终稿 + 尾随空格，锚点随移（同主窗契约）
-          const before = input.value.substring(0, fmVoiceAnchor);
-          const after = input.value.substring(fmVoiceAnchor + fmVoiceInterimLen);
-          const insert = text + ' ';
-          input.value = before + insert + after;
-          fmVoiceInterimLen = 0;
-          fmVoiceAnchor = before.length + insert.length;
-          input.setSelectionRange(fmVoiceAnchor, fmVoiceAnchor);
-          syncComposerSend(); // 程序化写入不触发 input 事件 ⇒ 发送键可用态就地同步
-        },
-        onState: (s, data) => {
-          if (s === 'error') {
-            // data = 引擎内已分类、已 i18n 的文案；错误必须用户可见（同 #stt-hotfix 纪律）
-            fmSetMicState('idle');
-            modalToast(String(data || t('messages.voiceInput')));
-            console.warn('[voice] friend/group mic error:', data);
-            return;
-          }
-          fmSetMicState(s);
-        },
-      });
-    });
-    bar.appendChild(micBtn);
-  }
-  // ③ 发送键族统一批（作者 2026-09-15「正常绿 / 掉线灰」）：本键与全站发送键共用
-  //   同一套状态色（`sapphire.css` 的发送族块）。`cfg-btn-primary` 只为**承接既有
-  //   墨色**（`sidebar.css:1162-1170` 的主操作白墨声明，既有类名 ⇒ 零新增字面量色值）；
-  //   材质/几何/状态一律由发送族块覆盖，不取 `.cfg-btn` 的灰档。
-  const sendBtn = el('button', 'cfg-btn cfg-btn-primary fm-send-btn', t('messages.send'));
-  bar.appendChild(input);
-  // 附件发送入口。两种形态**共用同一枚纸夹**（`fm-attach-btn` + `paperclip` 图标），
-  // 靠会话面而非两套控件区分（attachcl 批，作者 2026-09-16 07:36）：
-  //   · 设备面（既有，**零行为变化**）：闸位/队列/传输全走 dropbox.js 单点；
-  //   · 好友 / 群面（本批**放开**）：整件一次请求 → 网关 → 复用桌面分块驱动
-  //     （唯一实现 = attachUpload.js；闸位常量同源 = dropbox.js 导出的同一组）。
-  // 🔴 两面各写一套入口/渲染器是本批明令禁止的形态 ⇒ 下面按 `attachAvailable(conv)`
-  //    一个判据分流，二者互斥，设备面走不到新腿。
-  // uxconsist Phase B（§4.1-#2 三面入口收敛）：纸夹 = **一枚键 + 一个 input + 一个分派口**。
-  // 改前按 `conv.kind` **二分建两套控件**（两个 input、两枚键、两个 handler）——同一动作
-  // 三面各有实现，闸位/上限/受理面的差异正是从这类分叉里长出来的。现在入口只有一个，
-  // 面间差异全部收在 `dispatchFiles`（闸位/上限/受理面**三面同源**）。
-  const attachInput = document.createElement('input');
-  attachInput.type = 'file';
-  attachInput.multiple = true;
-  attachInput.style.display = 'none';
-  attachInput.addEventListener('change', () => {
-    if (attachInput.files && attachInput.files.length > 0) dispatchFiles(conv, attachInput.files);
-    attachInput.value = '';
+  // input bar —— 三面**同款**轻量 composer（三面-composer 统一批 2026-11-02 · 作者令
+  // 「好友/群/设备的 composer 收口为同一组件（同布局同能力同行为）」；现状设备面板缺
+  // 语音输入 ⇒ 以能力最全的面为基准补齐，三面能力清单一致）。
+  // 装配单点 = `messages/fmComposer.js`（文本 + 语音 + 附件 + 发送 + 录音中可停止态，
+  // 三面零分叉）。本函数只传宿主钩子（发送 = `dispatchSend`、附件 = `dispatchFiles`、
+  // 可用态收敛 = `syncComposerSend` —— 三者仍是各自单点，组件不复制任何分流判据）。
+  // 与主会话输入组件只共享**视觉语言**、不共享实现（主会话 = input.js 全家桶），
+  // 差异清单见批文档 docs/20261102_234900_fm-threeface-align__delegate-nebflow-c1142b9b.md。
+  const composer = buildFmComposer({
+    // 附件入口可用面 = **三面同源**：设备窗恒有（`sendDeviceFiles` 单点）；好友 / 群窗由
+    // `attachAvailable(conv)` 判（寻址面在 `attachTargetOf` 单点）。不可用面不挂假入口。
+    canAttach: conv.kind === 'device' || attachAvailable(conv),
+    onSend: () => dispatchSend(conv),
+    onFiles: (files) => dispatchFiles(conv, files),
+    onTextChange: syncComposerSend,
+    toast: modalToast,
   });
-  const attachBtn = el('button', 'icon-btn dropbox-attach-btn fm-attach-btn');
-  attachBtn.type = 'button';
-  attachBtn.title = t('dropbox.attachFile');
-  attachBtn.setAttribute('aria-label', t('dropbox.attachFile'));
-  attachBtn.innerHTML = '<i data-lucide="paperclip"></i>';
-  attachBtn.addEventListener('click', () => attachInput.click());
-  // 入口可用面 = **三面同源**：设备窗恒有（`sendDeviceFiles` 单点）；好友 / 群窗由
-  // `attachAvailable(conv)` 判（寻址面在 `attachTargetOf` 单点）。不可用面**不挂假入口**。
-  if (conv.kind === 'device' || attachAvailable(conv)) {
-    bar.appendChild(attachBtn);
-    bar.appendChild(attachInput);
-  }
-  bar.appendChild(sendBtn);
+  const bar = composer.bar;
+  const input = composer.input;
+  const sendBtn = composer.sendBtn;
   modal.appendChild(bar);
 
   // 引用态条宿主（**D2**：挂载点 = 输入条**之后** ⇒ DOM 序 header→flow→input-bar→strip，
@@ -1537,12 +1662,14 @@ function renderChatModal(conv) {
 
   overlay.appendChild(modal);
   document.body.appendChild(overlay);
-  modalEls = { overlay, flow, input, sendBtn, toast, offline, conv, quoteStrip, selectBar, selectCount, selectForward, selectForwardEach, selectForwardMerge, stopVoice: fmStopVoice };
+  modalEls = { overlay, modal, flow, input, sendBtn, toast, offline, conv, quoteStrip, selectBar, selectCount, selectForward, selectForwardEach, selectForwardMerge, stopVoice: composer.stopVoice, idHead };
+  // （渐隐解绑器 `unbindFade` 已随身份头常显批 2026-11-04 删除 —— 身份头不再有
+  // 滚动监听，故 modalEls 无需解绑字段，closeChat 也没有对应的解绑腿。）
   // Fresh modal → reset history-window state (a stale older conversation's
   // tail must never leak into this one).
   chatMsgs = [];
   // follow 批：跟随/胶囊态随窗同拍归零（跨窗残留 = 上个会话的未读数）。
-  fmFollowPill = followPill;
+  fmPill = fmPillNew;
   fmUnseenCount = 0;
   // msgmenu 一期：两个新态同拍归零（关窗重开 ⇒ 选中归零、无跨窗引用态）。
   selectionMode = false;
@@ -1576,18 +1703,9 @@ function renderChatModal(conv) {
     dispatchFiles(conv, e.dataTransfer.files);
   });
 
-  // ── 发送入口**单一分派**（§4.1-#1）：`conv.kind` 的适配器选择只在本函数内出现一次 ──
-  const doSend = () => dispatchSend(conv);
-  sendBtn.addEventListener('click', doSend);
-  // ③ 输入非空 ↔ 发送键可用态即时同步（含发送后清空 ⇒ 回禁用态；禁两态分叉）
-  input.addEventListener('input', syncComposerSend);
-  // ⑤ 中文输入（作者点名的面）：组字期间 Enter 属于输入法（确认候选），不得
-  // 触发 doSend()；组字结束后的 Enter 照旧发送（⑤A3）。
-  bindImeGuard(input);
-  input.addEventListener('keydown', (e) => {
-    if (isImeComposing(e, input)) return;
-    if (e.key === 'Enter') { e.preventDefault(); doSend(); }
-  });
+  // 发送入口**单一分派**（§4.1-#1）：`conv.kind` 的适配器选择只在本函数内出现一次 ——
+  // 键位/Enter 的接线随 composer 组件（`buildFmComposer` 的 onSend 钩子），本函数
+  // 只保留分派单点本身（组件不复制分流判据）。
 
   applyBlockState(conv);
   updateTrustBadge(conv);
@@ -1737,16 +1855,16 @@ function openDeviceDescPanel(conv, row, btn) {
 
 function updateModalTitle(conv) {
   if (!modalEls) return;
-  const nameEl = modalEls.overlay.querySelector('.fm-modal-name');
+  const nameEl = modalRoot()?.querySelector('.fm-modal-name');
   if (nameEl) nameEl.textContent = convTitleLabel(conv);
-  const dlg = modalEls.overlay.querySelector('.fm-modal');
+  const dlg = modalRoot()?.querySelector('.fm-modal');
   if (dlg) dlg.setAttribute('aria-label', convTitleLabel(conv));
 }
 
 // 信任状态指示：trusted → sapphire chip（shield-check + 「已信任」），未信任
 // → 空槽。fm-trust-changed（contacts 右键菜单开关）到达时对开着的窗重打。
 function updateTrustBadge(conv) {
-  const slot = modalEls && modalEls.overlay.querySelector('.fm-trust-slot');
+  const slot = modalEls && modalRoot()?.querySelector('.fm-trust-slot');
   if (!slot) return;
   slot.innerHTML = '';
   if (!conv || !conv.friend || !isFriendTrusted(conv.friend.userId)) return;
@@ -1774,7 +1892,7 @@ function escClose(e) {
 // §3.3/R8: not-friend gate — system bar + disabled input (history read-only)
 function applyBlockState(conv) {
   if (!modalEls) return;
-  modalEls.overlay.querySelector('.fm-blocked-bar')?.remove();
+  modalRoot()?.querySelector('.fm-blocked-bar')?.remove();
   // 群分支（O⑨ 裁定「拉黑只断单聊、同群照常」）：群窗不走好友闸 —— 拉黑/删
   // 好友不产生群内只读栏，也不禁用群发送输入框（群发送权在服务端成员闸）。
   const blocked = conv.kind !== 'group' && conv.kind !== 'device' && !isStillFriend(conv);
@@ -1846,17 +1964,6 @@ const ATT_NOTE_KEY = {
   uploading: 'messages.attachUploading',
   unreadable: 'messages.attachUnreadable',
 };
-
-/** 人类可读体积（十进制，与作者给定数的「1024 MB = 1 GiB = 1,073,741,824 B」同量纲）。 */
-function fmtBytes(n) {
-  const v = Number(n);
-  if (!isFinite(v) || v < 0) return '';
-  if (v < 1000) return `${v} B`;
-  const units = ['KB', 'MB', 'GB'];
-  let x = v / 1000, i = 0;
-  while (x >= 1000 && i < units.length - 1) { x /= 1000; i++; }
-  return `${x < 10 ? x.toFixed(1) : Math.round(x)} ${units[i]}`;
-}
 
 /** §B.4 占位正文的**逐字**复算（用于识别服务端生成的占位文本，见 `fillBubble`）。 */
 function attPlaceholderName(name) {
@@ -1933,170 +2040,289 @@ async function ackAttachmentLanded(att, blob) {
   } catch { /* 静默：回执面永不影响用户 */ }
 }
 
-/** 单件卡片。`kind` 由元数据判定；下载失败**就地**改文案（可重试），
-  * 410（服务端权威）**就地**升级为已过期（终态）。 */
-function attachmentCard(att) {
+/** 单件卡片（fm-att-card-unify 批 2026-11-02 · 作者令「附件卡样式统一成主会话的附件卡
+ *  样式」）：**渲染出口 = popArtifacts 的主会话卡面**（媒体面 `buildMediaFlat` / 文件面
+ *  `buildFileCard`，全站唯一一家，禁第二套卡实现）。本函数只做三件事：
+ *   ① 判面（`mediaFaceKindOf` 单点）：图片且有可期字节 ⇒ 主会话媒体面（圆角卡、自比
+ *      例、点开 = 既有预览腿）；其余（文件 / 过期 / 上传中 / 不可读）⇒ 主会话文件面
+ *      （名称/大小/footer 信息行）。
+ *   ② 状态等价适配（申报）：`expired/uploading/unreadable` 无字节 ⇒ footer 信息行追加
+ *      状态段 + 灰态；设备传输五态 ⇒ 状态段/路径位/进度条原信息结构挂卡（`fm-att-*`
+ *      既有类零改名）。
+ *   ③ 交互腿零回归：点击 = 既有 Canvas 预览腿（`makeCardPreviewable` 原样复用）；下载
+ *      键 = 主会话 `.msg-copy.msg-dl` 键族（字节腿 = 既有 `downloadAttachment` /
+ *      `downloadDeviceSavedAttachment`，反馈改用主会话同款图标闪色——申报差异）。
+ *
+ *  `opts.noMediaFace`：字节失败就地降级腿（媒体面 swap 回文件面）的重建入参。
+ *  `export` = 测试 seam（file-bytes-single-fetch harness 同款纪律：驱动真实生产链）。 */
+export function attachmentCard(att, opts) {
   const kind = attStateOf(att);
-  const card = el('div', `fm-att fm-att-${kind}`);
+  const name = (att && att.name) || t('messages.attachUnnamed');
+  const src = kind === 'device' ? deviceByteSourceOf(att) : null;
+  const mediaKind = mediaFaceKindOf(att, kind, opts);
+  const card = mediaKind === 'media'
+    ? buildMediaAttachmentCard(att, kind, name, src)
+    : buildFileAttachmentCard(att, kind, name, src);
   card.dataset.attState = kind;
   card.dataset.attId = (att && att.id) || '';
+  return card;
+}
 
-  const name = el('span', 'fm-att-name', (att && att.name) || t('messages.attachUnnamed'));
-  card.appendChild(name);
-  const sizeText = fmtBytes(att && att.size);
-  if (sizeText) card.appendChild(el('span', 'fm-att-size', sizeText));
-
-  // ── 设备面文件卡（MVP-1 · 卡 D4「适配 attachmentCard + 气泡状态位保留传输态」）──
-  // 状态判据 = 设备腿 5 态（pending/accepted/transferring/completed/failed）。
-  // 📌 devattach 批 · 作者令 2026-09-17 12:31（逐字）：「设备对话窗口的附件行为和群聊/
-  //    好友的行为不一致。首先 ui/动画的行为上要一致，操作逻辑也要一致，群聊和好友发送的
-  //    附件，是可以直接点击在 canvas 打开的，但是设备对话框的就不行。」
-  //    ⇒ 本分支的**判据 = 与好友/群分支对齐**：
-  //      · 点击 ⇒ `previewBlob`（与好友面**同一条** Canvas 渲染腿）；
-  //      · 下载键 ⇒ 既有 `.fm-att-dl` 键族（同款呈现/动效）。
-  //    🔴 **旧登记已被本令推翻**：此处原注「设备面的落盘由接收端传输链负责…没有应用内
-  //    鉴权下载路由 ⇒ **不挂下载键**（禁「可点但点了报错」的假按钮，§B.7 ③）」——
-  //    本机落盘件**有**既有字节路由（`nfTicket.ticketUrl` ⇒ `/api/nf-file?path=…&ticket=…`，
-  //    即设备内联图片腿同一个字节源），故「无下载面」的前提不成立；键现按
-  //    `canFetchLocalBytes` 判据挂（§B.7 ③ 本身仍成立：票据路由不服务的类型不挂键）。
+/** 判面（**单点**，`fillBubble` 的媒体分组、叠卡成员资格与 `attachmentCard` 共用同一判据）：
+ *  图片/视频 ∧ 呈现态可出媒体面 ∧ 未被降级腿点名 ⇒ `'media'`；否则 `'file'`。
+ *  媒体面判据逐条：
+ *   · 类型 = `isImageAttachmentName` / `isVideoAttachmentName`（与乐观范围闸同一张
+ *     类型表的两个谓词出口，禁第二张表；fm-att-component-lib 批 2026-11-02 起**视频
+ *     同出媒体面**——主会话 Pop 媒体卡的视频形态，上批「视频走文件面」申报差异随批消除）；
+ *   · 内联预算 = 既有 `MAX_INLINE_IMAGE_BYTES`（图片/视频同一把内联尺：视频字节腿 =
+ *     鉴权路由**整件**下载（无 Range 流式腿——数据能力申报，见 attachmentGroup 头注），
+ *     超预算可见降级为文件面，与超预算图片同一条降级面）；
+ *   · 呈现态：`ready`（有 id 才有字节）/ `device`（blob 腿或可服务的本机路径——path 腿
+ *     走票据 URL 流式，不设预算）/ `uploading`（发送侧乐观面带 `localFace` 本机句柄——
+ *     仅图片乐观腿有 localFace，视频 uploading 无字节，不出面）；
+ *   · `opts.noMediaFace` = 字节失败降级腿的重建标记（防降级面再次出面成环）。 */
+function mediaFaceKindOf(att, kind, opts) {
+  if (opts && opts.noMediaFace) return 'file';
+  const name = (att && att.name) || '';
+  const isMedia = isImageAttachmentName(String(name)) || isVideoAttachmentName(String(name));
+  if (!isMedia) return 'file';
+  const inlineBudget = isVideoAttachmentName(String(name)) && kind === 'device'
+    ? Number.POSITIVE_INFINITY // 设备 path 腿 = 票据 URL 流式（整件不进页内内存），预算闸不适用
+    : MAX_INLINE_IMAGE_BYTES;
+  if (typeof att.size === 'number' && att.size > 0 && att.size > inlineBudget) return 'file';
+  if (kind === 'ready') return att.id ? 'media' : 'file';
   if (kind === 'device') {
-    card.appendChild(el('span', 'fm-att-device-status', deviceTransferText(att)));
-    // 预览/下载两腿的**共同前提** = 本机有可读件（发出腿 user / 未完成 / 失败 ⇒ 无句柄无路径
-    // ⇒ 本地没有这件 ⇒ 不挂可点面、不挂键；状态位文案即用户可见的说明，§B.7 ③）。
-    // selfattach 批：判据收敛到**单点** `deviceByteSourceOf`（blob = 发送侧句柄 / path = 本机路径）。
-    const src = deviceByteSourceOf(att);
-    const srcPath = src.kind === 'path' ? src.path : '';
-    // ③ 下载键（作者令 2026-09-17 12:31「操作逻辑也要一致」）：位次紧跟状态位（同一行），
-    //    路径位/进度条仍各占整行 ⇒ 几何与改前一致，只多一枚键（与好友卡同名同类同款）。
-    //    挂键判据 = **能整件取回字节**：
-    //      · blob 腿（发送侧 `File` 在手）⇒ 恒可（`saveBlob` 只吃这枚 blob，无路由可拒）；
-    //      · path 腿 ⇒ 既有 `canFetchLocalBytes`（票据路由白名单；文本腿不挂键）逐字不变。
-    //    §B.7 ③「禁可点但点了报错」两条腿都成立。
-    if (src.kind === 'blob' || (src.kind === 'path' && canFetchLocalBytes(srcPath))) {
-      const note = el('span', 'fm-att-note', t('messages.attachDownload'));
-      note.classList.add('visually-hidden-note'); // 常态只显示键；失败/成功后就地显示文案
-      const btn = el('button', 'fm-att-dl', t('messages.attachDownload'));
-      btn.type = 'button';
-      btn.setAttribute('aria-label', `${t('messages.attachDownload')}: ${(att && att.name) || ''}`);
-      btn.addEventListener('click', () => downloadDeviceSavedAttachment(att, card, btn, note, src));
-      card.appendChild(btn);
-      card.appendChild(note);
-    }
-    if (att && att.deviceSavedPath) card.appendChild(el('span', 'fm-att-device-path', String(att.deviceSavedPath)));
-    // B′ 腿（agent 发）：把发送端本机真实路径显示在同一路径位（同一既有类名，零新样式）。
-    else if (att && att.deviceOutPath) card.appendChild(el('span', 'fm-att-device-path', String(att.deviceOutPath)));
-    const pct = att && att.devicePct;
-    if (typeof pct === 'number') {
-      const track = el('div', 'fm-att-device-progress');
-      const bar2 = el('div', 'fm-att-device-progress-bar');
-      bar2.style.width = `${Math.max(0, Math.min(100, pct))}%`;
-      track.appendChild(bar2);
-      card.appendChild(track);
-    }
-    // ④ 图片直显（设备端）：按字节源分派（blob = 本机句柄 / path = 既有票据链）。
-    attachInlineImage(card, att, kind, src);
-    // ① 点击 ⇒ Canvas 预览（与好友/群同路）。
-    //    可点判据按字节源：path 腿 = 既有 `canPreviewLocalPath`（逐字）；blob 腿 = `canPreviewName`
-    //    （同一判据源，收**真实名**）⇒ `.zip` 之类不挂假可点面（§B.7 ③）。
-    const previewable = src.kind === 'blob'
-      ? canPreviewName(String((att && att.name) || ''))
-      : (src.kind === 'path' && canPreviewLocalPath(srcPath));
-    if (previewable) {
-      makeCardPreviewable(card, att, () => previewDeviceSavedAttachment(att, card, src));
-    }
-    return card;
+    const s = deviceByteSourceOf(att);
+    return (s.kind === 'blob' || (s.kind === 'path' && canPreviewLocalPath(s.path))) ? 'media' : 'file';
   }
+  if (kind === 'uploading') return att.localFace ? 'media' : 'file';
+  return 'file';
+}
 
-  /** @type {HTMLElement} */
-  const note = el('span', 'fm-att-note',
-    kind === 'ready' ? t('messages.attachDownload') : t(ATT_NOTE_KEY[kind] || 'messages.attachUnreadable'));
-  if (kind === 'ready') {
-    const btn = el('button', 'fm-att-dl', t('messages.attachDownload'));
-    btn.type = 'button';
-    btn.setAttribute('aria-label', `${t('messages.attachDownload')}: ${(att && att.name) || ''}`);
-    btn.addEventListener('click', () => downloadAttachment(att, card, btn, note));
-    card.appendChild(btn);
-    card.appendChild(note);
-    note.classList.add('visually-hidden-note'); // 常态下只显示按钮；状态文案在失败/成功后就地显示
-    // 预览腿（作者令 2026-09-15）：**整卡可点 = 在 Canvas 里预览**；下载键是卡内
-    // 嵌套键，其点击不得冒泡成预览（见 `makeCardPreviewable` 的事件路由）。
-    // 只有 `ready` 态挂可点面：其余态无字节可取（§B.7 ③ 不造假按钮）。
-    // ④ 图片直显（好友端 / 群聊端 —— 两面共用本卡片单点渲染）。
-    attachInlineImage(card, att, kind);
-    makeCardPreviewable(card, att, () => previewFriendAttachment(att, card));
-  } else {
-    card.appendChild(note);
-    card.setAttribute('aria-disabled', 'true');
-    // ① 发送侧乐观面（imgmsg 批）：本机件在上传在飞时的**唯一出帧腿** ——
-    //    `att.localFace` 在场才挂（发送侧）；接收侧的 uploading/unreadable/expired 卡
-    //    照旧**零直显槽**（`attachInlineImage` 首行即返回 ⇒ 逐字现状）。
-    attachInlineImage(card, att, kind);
+/** 媒体附件 → 组件数据（数据参数化入口，fm-att-component-lib 批）：视频名 ⇒ 视频面、
+ *  其余图片名 ⇒ 图片面；`dry: true` = 面先出、字节由本模块字节腿自填（hydrateMedia
+ *  约定）。组件唯一家 = popArtifacts，本模块只产数据不产形态。 */
+function mediaItemOf(att, name) {
+  return { kind: isVideoAttachmentName(String(name)) ? 'video' : 'image', name, dry: true };
+}
+
+/** 图片/视频附件卡：主会话媒体面（`.pop-media-flat`：视频 = `<video>`+play-ring+
+ *  dur-chip+vd-progress，图片 = `<img>`，形态与主会话 Pop 媒体卡**逐字同款**）+ 面角
+ *  下载键（标准组件 `corner` 参数位；角标 chrome = `.pop-media-canvas` 既有规则——
+ *  主会话角标位几何/hover 语义逐字复用，字形 = 下载（fm 下载入口的信息结构位，申报：
+ *  主会话该位字形 = Canvas 前向，动作槽语义差异属信息结构，位/形/hover 零漂移））。
+ *  字节 = 既有腿（`attachMediaBytes`：账本/LRU/预览字段/本机句柄/票据链全保留），
+ *  出帧目标 = 面内媒体元素（`popFaces` 句柄）；取字节失败 ⇒ `swapMediaCardToFileCard`
+ *  可见降级（不造破图）。 */
+function buildMediaAttachmentCard(att, kind, name, src) {
+  const card = el('div', `fm-att fm-att-${kind} fm-att-media`);
+  const item = mediaItemOf(att, name);
+  const downloadable = kind === 'ready'
+    || (kind === 'device' && src && (src.kind === 'blob' || (src.kind === 'path' && canFetchLocalBytes(src.path))));
+  const dlBtn = downloadable ? buildDownloadKey(att, kind, src, { corner: true }) : null;
+  const face = buildMediaFlat(item, { onOpen: null, corner: dlBtn });
+  card.appendChild(face);
+  if (kind === 'device') appendDeviceExtras(card, att, kind);
+  // checkJs：`popFaces` 是卡语言组件挂在面元素上的句柄（见 popArtifacts.js:739 的
+  // `area.popFaces = …`），断言面只放行类型，运行期仍是同一枚 DOM 节点。
+  const faceAny = /** @type {any} */ (face);
+  const els = (faceAny.popFaces && faceAny.popFaces[0] && faceAny.popFaces[0].els.length)
+    ? faceAny.popFaces[0].els
+    : [face.querySelector('img, video')].filter(Boolean);
+  attachMediaBytes(card, att, kind, src, els, { video: item.kind === 'video' });
+  // 可点判据（与改前逐字同表）：`ready` / 设备有本机件；`uploading` 乐观面**不挂**
+  // 可点面（与改前一致——上传在飞无预览腿）。
+  const previewable = kind === 'ready'
+    || (kind === 'device' && src && (src.kind === 'blob'
+      ? canPreviewName(String(name))
+      : canPreviewLocalPath(src.path)));
+  if (previewable) {
+    makeCardPreviewable(card, att, () => previewAttachmentOf(att, card, kind, src));
   }
   return card;
 }
 
-// ── ③ 气泡预览盒几何（**唯一算术落点**）· visup-ratio 批 · 作者 2026-09-19 01:29 令 ──
-// 「气泡预览图尺寸按图片**真实宽高比**（禁写死固定比）；微信做法 = 按原图尺寸决定预览框
-//  宽高比；实现侧自定 min/max 夹取防极端长宽比破版；参数按视觉定并在卡面申报。」
-// ⇒ 本段四个常数即**申报的参数**（卡片同款：`css/friends.css` 的 `.fm-att-inline img` 段），
-//    CSS 侧只消费 `--fm-att-w` / `--fm-att-ar`，**禁**第二处比例算术（禁两套并行实现）。
-/** 上限盒宽（px）。沿用既有档（`.fm-att` 卡内容宽同量级）⇒ **零新增几何档**。 */
-const ATT_INLINE_BOX_W = 260;
-/** 上限盒高（px）。同上：既有档，盒永不大于 `260 × 200`。 */
-const ATT_INLINE_BOX_H = 200;
-/** 比夹取下界（1:2）：更竖的图按 1:2 出盒并**居中裁切**（防超长条把版撑破）。 */
-const ATT_INLINE_AR_MIN = 1 / 2;
-/** 比夹取上界（2:1）：更扁的图按 2:1 出盒并**居中裁切**（防超扁条把版撑破）。 */
-const ATT_INLINE_AR_MAX = 2;
-
-/** 由**原图内禀尺寸**算预览盒（**单点**：`W/H` 夹取 + 上限盒 contain + 禁放大）。
- *
- *  规则（与 CSS 段逐条对齐）：
- *   ① 比夹取：`r = clamp(nw / nh, AR_MIN, AR_MAX)`——越界图按界内比出盒（`cover` 居中裁切）；
- *   ② 上限盒：把 `r` 按 contain 装进 `260 × 200` ⇒ `r ≥ 260/200` 时定宽 260、否则定高 200；
- *   ③ 禁放大：盒不超过原图自身尺寸（小图按原尺寸出，不被拉大糊掉）。
- *  `ar` 回传**比率 token**：界内图直接用**所测字节源**的 `nw / nh`，越界图用夹取界
- *  （`2 / 1`、`1 / 2`）。⚠ 语义 = 「token 的**数值** == 目标比」而**非**「token 逐字恒定」：
- *  Chromium 对 `aspect-ratio` 的计算值**不约分**（`1600 / 900` 原样回读），且确认面按
- *  **小图**字节复量（`640 / 480` = 同比、不同 token）⇒ 断言一律走**数值比**（见 spec）。
- *  @param {number} nw 原图宽（px，>0） @param {number} nh 原图高（px，>0）
- *  @returns {{w:number, h:number, apx:number, ar:string, clamped:boolean}|null} 尺寸无效 ⇒ null */
-function inlineBoxFor(nw, nh) {
-  const W = Number(nw) || 0;
-  const H = Number(nh) || 0;
-  if (!(W > 0) || !(H > 0)) return null;
-  const raw = W / H;
-  let apx = raw;                    // 夹取后的**比值**（算术用）
-  let ar = `${W} / ${H}`;           // 夹取后的**比率 token**（CSS 用 + 读数面）
-  let clamped = false;
-  if (raw > ATT_INLINE_AR_MAX) { apx = ATT_INLINE_AR_MAX; ar = '2 / 1'; clamped = true; }
-  else if (raw < ATT_INLINE_AR_MIN) { apx = ATT_INLINE_AR_MIN; ar = '1 / 2'; clamped = true; }
-  const boxApx = ATT_INLINE_BOX_W / ATT_INLINE_BOX_H;
-  let bw = apx >= boxApx ? ATT_INLINE_BOX_W : ATT_INLINE_BOX_H * apx;
-  let bh = bw / apx;
-  if (bw > W) { bw = W; bh = bw / apx; }   // 禁放大（横向量）
-  if (bh > H) { bh = H; bw = bh * apx; }   // 禁放大（纵向量）
-  // 向下取整写宽（`ceil`/`round` 会把高度反向顶破 200px 上限：`h = w / r` 随 w 单调增）。
-  const wi = Math.floor(bw);
-  return { w: wi, h: Math.round((wi / apx) * 100) / 100, apx, ar, clamped };
+/** 叠卡媒体组（**≥2 件媒体**的标准形态，fm-att-component-lib 批 2026-11-02 · 作者令
+ *  「多图/视频的叠卡形态没做——推翻上批『不做叠卡、保留逐卡』申报」）：标准组件
+ *  `buildMediaStack` **逐字调用**（固定 220×280 卡面 + 扑克扇形展开 + 「展开 N」张数
+ *  角标 + 拖动/触控板横滑翻页 + 展开逐卡自比例），本函数只做宿主装配：
+ *   · 数据：媒体附件按序映射为组件 items（`mediaItemOf`，dry 腿）；
+ *   · 动作：`onOpen` = 既有预览腿（`previewAttachmentOf`——fm 的 Canvas 开件等价动作，
+ *     失败 toast 与卡片预览同语义）；`cornerFor` = 展开行角标位挂该件下载键（标准
+ *     `corner` 参数位 + `.pop-media-canvas` 角标 chrome；折叠态无键 = 主会话同款）；
+ *   · 字节：`popFaces` 句柄逐件直填（折叠层 + 展开层同件共享同一枚 URL——账本/LRU
+ *     单点，零第二份抓取）；层内字节失败 = 组件失败占位（`markMediaFailed`，主会话
+ *     同款虚线盒 + 注记），**不**整组换面（其余件照常出帧）；
+ *   · QA 标记：`.fm-att`/`.fm-att-stack` 标记类 + `data-att-ids` 读数。🔴 **禁挂
+ *     `fm-att-media`**（fm-stack-pill-align 批 2026-11-02）：该类是**平面媒体卡根**
+ *     的语义（媒体面 + 设备挂件的列容器，friends.css `.fm-att.fm-att-media` 的
+ *     `flex-direction: column`）——叠卡组不是它，挂上即被宿主卡根规则把组件的
+ *     flex 行几何（`.pop-stack-area` = [展开 N 钮 | 叠卡视口] 横排）压成竖排，
+ *     展开钮从「栈卡左侧/右侧、垂直居中」（主会话同款）掉到栈卡下方 ⇒ 作者所指
+ *     「展开钮位置与主会话不同」。组件默认几何 = 主会话逐字同款，宿主零覆盖。
+ *  数据能力申报（非视觉）：好友/群视频字节腿 = 鉴权路由**整件**下载（`/api/friends/
+ *  attachments/{id}` 无 Range 流式），设备 path 腿 = 票据 URL 流式——形态两腿同款。 */
+function buildMediaStackGroup(entrys) {
+  const items = entrys.map(e => mediaItemOf(e.att, e.name));
+  const area = buildMediaStack(items, {
+    onOpen: (item, index) => {
+      const e = entrys[index];
+      if (!e) return;
+      Promise.resolve(previewAttachmentOf(e.att, area, e.kind, e.src))
+        .then(need => { if (need) modalToast(t('messages.attachPreviewFailed')); })
+        .catch(() => modalToast(t('messages.attachPreviewFailed')));
+    },
+    cornerFor: (item, index) => {
+      const e = entrys[index];
+      if (!e || !e.downloadable) return null;
+      return buildDownloadKey(e.att, e.kind, e.src, { corner: true });
+    },
+  });
+  // 🔴 只挂 fm-att（QA/下载键宿主）+ fm-att-stack（叠卡标记）；禁挂 fm-att-media
+  // （平面媒体卡根语义 —— 见本函数头注 fm-stack-pill-align 批口径：挂上即被宿主
+  // 卡根列向规则压掉组件行向几何，「展开 N」钮会掉到栈卡下方）。
+  area.classList.add('fm-att', 'fm-att-stack');
+  area.dataset.attIds = entrys.map(e => (e.att && e.att.id) || '').join(',');
+  entrys.forEach((e, i) => {
+    const faces = area.popFaces && area.popFaces[i];
+    const els = faces && faces.els.length ? faces.els : [];
+    if (els.length) attachMediaBytes(area, e.att, e.kind, e.src, els, {
+      video: e.itemKind === 'video',
+      stackLayer: true, // 层内失败 = 组件失败占位，不整卡换面
+    });
+  });
+  return area;
 }
 
-/** 把预览盒写进槽 `<img>`（**单点写面**）：CSS 只读这两个变量 + 三个读数面。
+/** 文件/状态附件卡：主会话文件面（`.file-card`：图标 + 名称 + footer 信息行）。
+ *  footer 信息行 = `[类型, 大小, 状态段]`（状态段 = 过期/上传中/不可读/设备传输态——
+ *  信息结构等价适配，申报）。可下载（ready / 设备有本机件）⇒ 下载键挂**标准组件
+ *  `trailing` 参数位**（主会话 `.fwd-btn` 圆键同位同几何；字形 = 下载——fm 下载入口
+ *  的信息结构位，申报）；不可下载态不挂键（§B.7 ③ 禁可点但点了报错，逐字保留）。 */
+function buildFileAttachmentCard(att, kind, name, src) {
+  const downloadable = kind === 'ready'
+    || (kind === 'device' && src && (src.kind === 'blob' || (src.kind === 'path' && canFetchLocalBytes(src.path))));
+  const card = buildFileCard(
+    { kind: 'file', name, ext: extOf(name), size: (att && att.size) || 0 },
+    {
+      onOpen: null,
+      trailing: downloadable ? buildDownloadKey(att, kind, src) : null,
+      subNote: kind === 'ready' ? '' : kind === 'device'
+        ? deviceTransferText(att)
+        : t(ATT_NOTE_KEY[kind] || 'messages.attachUnreadable'),
+    },
+  );
+  card.classList.add('fm-att', `fm-att-${kind}`);
+  if (!downloadable) card.setAttribute('aria-disabled', 'true');
+  if (kind === 'device') appendDeviceExtras(card, att, kind);
+  const previewable = kind === 'ready'
+    || (kind === 'device' && src && (src.kind === 'blob'
+      ? canPreviewName(String(name))
+      : canPreviewLocalPath(src.path)));
+  if (previewable) {
+    makeCardPreviewable(card, att, () => previewAttachmentOf(att, card, kind, src));
+  }
+  return card;
+}
+
+/** 点击 ⇒ Canvas 预览（既有腿，判据与改前逐字同表）：好友/群 = `previewFriendAttachment`
+ *  （鉴权路由流式开）；设备 = `previewDeviceSavedAttachment`（blob/票据双腿）。 */
+function previewAttachmentOf(att, card, kind, src) {
+  return kind === 'device'
+    ? previewDeviceSavedAttachment(att, card, src)
+    : previewFriendAttachment(att, card);
+}
+
+/** 字节失败的就地降级腿：媒体面整卡换成文件面卡（名称/大小/下载键全保留）——
+ *  与改前「摘直显槽、卡片原样」同一语义，卡语言换成本批统一后的文件面。 */
+function swapMediaCardToFileCard(card, att) {
+  if (!card || !card.isConnected) return;
+  const fresh = attachmentCard(att, { noMediaFace: true });
+  card.replaceWith(fresh);
+}
+
+/** 下载键（主会话 `.msg-copy.msg-dl` 键族，唯一字形源 = popArtifacts 的 DOWNLOAD_SVG）：
+ *  点击 = 既有下载腿；反馈 = 主会话同款图标闪色（成功绿勾 1.5s / 失败红键 2s，
+ *  `.copied` / `.copy-failed` 既有规则——文案注记位由此退役，申报差异）。
+ *  键挂 `fm-att-dl` 标记类：卡级预览的嵌套控件豁免判据与既有 QA 钩子同源。
+ *  `opts.corner` = 挂**标准组件角标参数位**（媒体面/叠卡展开层）：追加 `.pop-media-canvas`
+ *  角标 chrome（chat.css 既有规则：绝对右上 8px、28×28、hover 显现——主会话角标位
+ *  几何逐字复用，面板零新增角标样式）。
+ *  busy 宿主 = 点击时 `closest('.fm-att')`（组件参数位先于卡根创建，宿主到点击时才解析——
+ *  flat 卡 = 卡根、叠卡 = 组根，同一判据）。 */
+function buildDownloadKey(att, kind, src, opts = {}) {
+  const btn = el('button', opts.corner ? 'fm-att-dl pop-media-canvas msg-copy msg-dl' : 'fm-att-dl msg-copy msg-dl');
+  btn.type = 'button';
+  const label = t('messages.attachDownload');
+  btn.title = label;
+  btn.setAttribute('aria-label', `${label}: ${(att && att.name) || ''}`);
+  btn.innerHTML = DOWNLOAD_SVG;
+  btn.addEventListener('click', (e) => {
+    // 角标位在可点面（媒体面/叠卡展开行）内：阻止冒泡成宿主的预览/翻页动作。
+    e.stopPropagation();
+    const host = btn.closest('.fm-att');
+    if (!host) return;
+    if (kind === 'device') void downloadDeviceSavedAttachment(att, host, btn, src);
+    else void downloadAttachment(att, host, btn);
+  });
+  return btn;
+}
+
+/** 下载键闪色反馈（`.copied` 绿勾 / `.copy-failed` 红键，主会话同节奏）。 */
+function flashDownloadKey(btn, ok) {
+  if (!btn || !btn.isConnected) return;
+  btn.innerHTML = ok ? DL_CHECK_SVG : DOWNLOAD_SVG;
+  btn.classList.add(ok ? 'copied' : 'copy-failed');
+  setTimeout(() => {
+    if (!btn.isConnected) return;
+    btn.innerHTML = DOWNLOAD_SVG;
+    btn.classList.remove(ok ? 'copied' : 'copy-failed');
+  }, ok ? 1500 : 2000);
+}
+
+/** 设备卡的状态挂件（信息结构等价适配，申报）：传输态文案、路径位、进度条 ——
+ *  既有类名零改名（`.fm-att-device-status/path/progress`），媒体卡挂面下、文件卡挂行内
+ *  （CSS `flex-basis:100%` 通吃两种宿主）。 */
+function appendDeviceExtras(card, att, kind) {
+  if (kind !== 'device') return;
+  // 传输态文案：文件卡已并入 footer 信息行（subNote）⇒ 这里只给媒体卡补一行。
+  if (card.classList.contains('fm-att-media')) {
+    card.appendChild(el('span', 'fm-att-device-status', deviceTransferText(att)));
+  }
+  if (att && att.deviceSavedPath) card.appendChild(el('span', 'fm-att-device-path', String(att.deviceSavedPath)));
+  // B′ 腿（agent 发）：把发送端本机真实路径显示在同一路径位（同一既有类名，零新样式）。
+  else if (att && att.deviceOutPath) card.appendChild(el('span', 'fm-att-device-path', String(att.deviceOutPath)));
+  const pct = att && att.devicePct;
+  if (typeof pct === 'number') {
+    const track = el('div', 'fm-att-device-progress');
+    const bar2 = el('div', 'fm-att-device-progress-bar');
+    bar2.style.width = `${Math.max(0, Math.min(100, pct))}%`;
+    track.appendChild(bar2);
+    card.appendChild(track);
+  }
+}
+
+// ── ③ 气泡预览盒几何 · 读数面（fm-att-card-unify 批 2026-11-02 判据换代）─────────
+// 「气泡预览图尺寸按图片**真实宽高比**」的算术**唯一属主 = popArtifacts 卡语言**
+// （`fitLayer`/`fitMediaBox`：真实比 + ≤220×420 装箱，无夹取）。本模块**不再持有
+// 任何比例算术**——旧 visup-ratio 批的 `[1:2, 2:1]` 夹取 + 260×200 上限盒随旧
+// `.fm-att-inline` 槽一并退役；`applyInlineRatio` 只把同一份装箱算术镜像到
+// `data-att-*` 读数面（禁第二套实现 = 禁读数与可见几何互相矛盾）。 */
+/** 把统一卡的盒读数写进出帧 `<img>`（**单点写面**，算术 = popArtifacts `fitMediaBox`）：
  *  `data-att-nat` = **本次所测字节源**的内禀尺寸（发送侧乐观面 = 原图；确认面按小图复量，
- *  同比不同 token）——它是读数面，不是「原图恒等式」的断言面。
+ *  同比不同 token）——它是读数面，不是「原图恒等式」的断言面；
+ *  `data-att-ar` / `data-att-box` = 同源镜像读数（不参与任何行为分支）。
  *  @param {HTMLImageElement} img @param {number} nw @param {number} nh
- *  @returns {{w:number, h:number, apx:number, ar:string, clamped:boolean}|null} */
+ *  @returns {{w:number, h:number, ar:string}|null} 尺寸无效 ⇒ null */
 function applyInlineRatio(img, nw, nh) {
-  const g = inlineBoxFor(nw, nh);
-  if (!img || !g) return null;
-  img.style.setProperty('--fm-att-w', `${g.w}px`);
-  img.style.setProperty('--fm-att-ar', g.ar);
-  // 读数面（不参与任何行为分支；与既有 `data-att-src` 同族）：
-  //   `data-att-nat` 原图内禀尺寸 · `data-att-ar` 夹取后比率 token · `data-att-box` 计算盒。
-  img.dataset.attNat = `${nw}x${nh}`;
-  img.dataset.attAr = g.ar;
-  img.dataset.attBox = `${g.w}x${g.h}`;
-  return g;
+  const W = Number(nw) || 0;
+  const H = Number(nh) || 0;
+  if (!img || !(W > 0) || !(H > 0)) return null;
+  const box = fitMediaBox(W, H);
+  img.dataset.attNat = `${W}x${H}`;
+  img.dataset.attAr = `${W} / ${H}`;
+  img.dataset.attBox = `${box.w}x${box.h}`;
+  return { w: box.w, h: box.h, ar: `${W} / ${H}` };
 }
 
 /** 取 URL 的内禀尺寸（解码一次；失败 ⇒ `null`，绝不阻断出帧）。
@@ -2178,15 +2404,19 @@ function paintInlineFrame(img, url, dims) {
  *  @param {string} kind `attStateOf` 的结果（`ready` / `device` / …）
  *  @param {{kind:'blob',file:File}|{kind:'path',path:string}|{kind:'none'}} [src] 设备面字节源
  *    （调用方 `attachmentCard` 已算好；缺席时本函数自算，**同一单点**）
+ *  @param {HTMLImageElement} [imgEl] 出帧媒体面（`buildMediaFlat` 面内那枚；缺席 ⇒
+ *    本函数直接返回 false，见函数体首行守卫——仅为 checkJs 参数序放行而标注可选）
  *  @returns {boolean} 是否挂了直显槽
  *
- *  ── ③ 预览盒（作者 2026-09-19 01:29 令：**按原图真实宽高比** + min/max 夹取）──
- *  · **预留**：`<img>` 元素在**字节请求发出之前**入 DOM（无 `src` ⇒ 只渲染 CSS 盒 =
- *    可见骨架）。盒比 = 原图真实比（夹取后），由 `inlineBoxFor` 单点算出（见上段常数）。
- *  · **新占位语义（显式申报，非静默变更）**：骨架期 CSS 回退盒 = 既有上限盒
- *    （`260 / 200`）；比例可知的**同一帧**里换成真实比 —— 本函数/`fillLocalThumbs`
- *    **先解码后点 `src`** ⇒ 图片从不以错误比例被绘制、绘制后**零重排**；骨架 ↔ 真帧
- *    之间恰好**一次**几何变更，量值 = 由原图 `W×H` 精确算出的预测值。
+ *  ── ③ 预览盒（作者 2026-09-19 01:29 令：**按原图真实宽高比**；fm-att-card-unify 批
+ *     2026-11-02 判据换代：算术唯一属主 = popArtifacts 卡语言，**夹取退役**）──
+ *  · **预留**：媒体面 `<img>` 在**字节请求发出之前**入 DOM（无 `src` ⇒ 只渲染
+ *    `.pop-media-flat` CSS 回退盒 = 220×4:3 骨架）。字节就绪的**同一帧**换真实比
+ *    （popArtifacts `fitLayer` 单点写盒；`dataset.nfRatio` 读数）。
+ *  · **占位语义**：骨架期零抖动；比例可知的**同一帧**里换成真实比 —— 本函数/
+ *    `fillLocalThumbs` **先解码后点 `src`** ⇒ 图片从不以错误比例被绘制、绘制后
+ *    **零重排**；骨架 ↔ 真帧之间恰好**一次**几何变更，量值 = 装箱预测值
+ *    （`fitMediaBox`，≤220×420、无夹取——极值图按真实比出极值盒）。
  *  · 📌 **取代关系（勿回退）**：imgmsg 批（2026-09-18）的「`aspect-ratio: 13/10` 固定盒 ⇒
  *    字节到达前后零位移（Δ=0）」**已被 01:29 令取代** ⇒ 真实比与 Δ=0 在数学上互斥
  *    （骨架期不可能预知真实比），故「零位移」改由「真帧后零重排 + 单次变更 = 预测值」
@@ -2199,22 +2429,53 @@ function paintInlineFrame(img, url, dims) {
  *  `data-att-nat` / `data-att-ar` / `data-att-box` 是几何读数面（同上，非行为分支）。
  *
  *  `export` = 测试 seam（二次加载清剿批 2026-10-24：单取数 spec 驱动真实生产链；
- *  零行为变化——函数体一字未改，只是多了一个模块出口）。 */
-export function attachInlineImage(card, att, kind, src) {
-  if (!card || !att) return false;
-  /** 发送侧乐观面（本批唯一新腿）：本机字节句柄。 */
+ *  零行为变化——函数体一字未改，只是多了一个模块出口）。
+ *
+ *  📌 **fm-att-card-unify 批（2026-11-02）口径更新**：出帧槽 = **调用方提供的媒体面
+ *  `<img>`**（`imgEl`，popArtifacts `buildMediaFlat` 面内那枚）——本函数不再自建
+ *  `.fm-att-inline` 槽（旧槽随卡语言统一退役）；取字节腿（账本/LRU/预览字段/本机
+ *  句柄/票据链）**逐字保留**，终态失败由「摘槽」改为「整卡降级为文件面」（同一可见
+ *  降级语义，卡语言换成本批统一后的文件面）。
+ *
+ *  📌 **fm-att-component-lib 批（2026-11-02）口径更新**：本函数降为**图片单卡兼容
+ *  包装**（测试 seam 与既有调用面零变化），字节腿本体上收为 **`attachMediaBytes`
+ *  单实现核心**——同一条腿同时服务：图片/视频面、单卡与叠卡组（1..N 枚媒体元素
+ *  同件同 URL 直填）、层内失败占位（`markMediaFailed`）。禁在核心外再长第二条
+ *  取字节路。 */
+export function attachInlineImage(card, att, kind, src, imgEl) {
+  if (!card || !att || !imgEl) return false;
+  if (!isImageAttachmentName(String((att && att.name) || ''))) return false; // 非图片 ⇒ 零行为变化
+  return attachMediaBytes(card, att, kind, src, [imgEl], { video: false });
+}
+
+/** 附件字节腿**单实现核心**（fm-att-component-lib 批 2026-11-02 上收；腿逻辑 =
+ *  attachInlineImage 原文逐字，参数化三件事）：
+ *   · `els`：本件的**全部**媒体元素（flat 卡 1 枚；叠卡 = 折叠层 + 展开层 2 枚——
+ *     同件共享同一枚 URL，账本/LRU 单点 ⇒ 零第二份抓取）；
+ *   · `opts.video`：视频面语义 —— 直挂 `src`（几何由组件 `loadedmetadata`→`fitLayer`
+ *     驱动），**跳过**图片读数面（`paintInlineFrame`/`applyInlineRatio`）与预览字段腿
+ *     （`attachPreviewField` 合成的是图片缩略字节，视频件无此字段方言）；
+ *   · `opts.stackLayer`：叠卡层失败语义 —— 组件失败占位（`markMediaFailed`，主会话
+ *     同款虚线盒 + 注记行），**不**整组换面（其余件照常出帧）；flat 卡缺省 = 既有
+ *     `swapMediaCardToFileCard` 整卡降级。
+ *  次级元素（index > 0）不挂 error 监听：同件同 URL，自愈/终态由主元素统一驱动
+ *  （重挂 = 全组同帧换 `src`；终态 = 全组同帧落失败占位）。 */
+function attachMediaBytes(card, att, kind, src, els, opts = {}) {
+  if (!card || !att || !Array.isArray(els) || !els.length) return false;
+  const video = !!opts.video;
+  const stackLayer = !!opts.stackLayer;
+  const primary = els[0];
+  const fail = () => {
+    if (stackLayer) els.forEach((el) => markMediaFailed(el));
+    else swapMediaCardToFileCard(card, att);
+  };
+  /** 发送侧乐观面（imgmsg 批唯一新腿）：本机字节句柄。 */
   const localFace = att.localFace || null;
   if (!localFace && kind !== 'ready' && kind !== 'device') return false;
-  if (card.querySelector('.fm-att-inline')) return false; // 幂等（防同卡重入）
+  if (primary.dataset.attSrc) return false; // 幂等（防同卡重入：字节源读数已在场）
   const name = (att && att.name) ? String(att.name) : '';
-  if (!isImageAttachmentName(name)) return false; // 非图片 ⇒ 零行为变化
+  if (!isImageAttachmentName(name) && !isVideoAttachmentName(name)) return false; // 非媒体 ⇒ 零行为变化
 
-  const box = el('div', 'fm-att-inline');
-  box.dataset.attInline = '1';
-  // ③ 骨架 = 这个 `<img>` 自身（无 `src` ⇒ 无内容，只剩 CSS 盒的底色/描边 ⇒ 可见骨架）。
-  const img = document.createElement('img');
-  img.alt = ''; // 骨架期无内容 ⇒ 装饰性（真名在字节就位时补上）
-  box.appendChild(img);
   let mounted = false;
   /** 账本 blob 解码失败的自愈腿（#816 同族语义，二次加载清剿批）：只由账本腿
    *  （设备 path 腿）在场——坏字节先逐出账本，再走既有票腿恰一次重挂。 */
@@ -2224,40 +2485,52 @@ export function attachInlineImage(card, att, kind, src) {
   const mount = (url, tag, dims) => {
     if (mounted || !url) return;
     mounted = true;
-    img.alt = name;
-    if (tag) img.dataset.attSrc = tag;
-    // ③ 先落地盒比再点 `src`（同一帧）⇒ 禁画后重排（见本函数头注「新占位语义」）。
-    paintInlineFrame(img, url, dims || null);
+    els.forEach((el) => {
+      if (el.tagName === 'IMG') el.alt = name;
+      if (tag) el.dataset.attSrc = tag;
+    });
+    // ③ 先落地盒比再点 `src`（同一帧）⇒ 禁画后重排（见 attachInlineImage 头注
+    // 「新占位语义」）——仅**单枚图片面**（flat 卡）写 fm 读数面；叠卡层（固定
+    // 220×280 cover 盒）与视频面（组件 loadedmetadata→fitLayer）几何归组件管，
+    // 禁两套算术在同一件上打架（fm-att-component-lib 批）。
+    if (!video && els.length === 1 && primary.tagName === 'IMG') {
+      paintInlineFrame(primary, url, dims || null);
+    } else {
+      els.forEach((el) => { el.src = url; });
+    }
   };
   // 兜底：任何绕过 `mount`/`fillLocalThumbs` 就点 `src` 的路径（未来腿）也不留
   // 「以回退比绘制、之后再改比」的画面 —— 幂等（`data-att-box` 已在场即不重复写）。
-  img.addEventListener('load', () => {
-    if (img.dataset.attBox) return;
-    if (img.naturalWidth > 0 && img.naturalHeight > 0) applyInlineRatio(img, img.naturalWidth, img.naturalHeight);
-  }, { once: true });
-  img.addEventListener('error', () => {
+  if (!video && els.length === 1 && primary.tagName === 'IMG') {
+    primary.addEventListener('load', () => {
+      if (primary.dataset.attBox) return;
+      if (primary.naturalWidth > 0 && primary.naturalHeight > 0) applyInlineRatio(primary, primary.naturalWidth, primary.naturalHeight);
+    }, { once: true });
+  }
+  primary.addEventListener('error', () => {
     // 账本腿（blob: URL）解码失败 = 手上这份缓存字节坏了（#816 同族语义）：
     // 先把该键逐出账本，再走既有票腿恰一次（`legacyRetry` 只由账本腿设置）——
     // 坏字节不粘死账本（否则 TTL 内每次渲染都命中同一份坏字节）。其余失败
-    // （含自愈后的第二次失败）照旧摘槽（`box.remove` 幂等，摘 detached 节点 = 无操作）。
-    if (legacyRetry && img.src && img.src.startsWith('blob:') && !img.dataset.nfBlobRetried) {
-      img.dataset.nfBlobRetried = '1';
-      mounted = false; // 允许自愈腿重挂同一枚 img
+    // （含自愈后的第二次失败）照旧可见降级（flat 卡整卡换文件面 / 叠卡层落
+    // 组件失败占位——同一「不造破图」语义）。
+    if (legacyRetry && primary.src && primary.src.startsWith('blob:') && !primary.dataset.nfBlobRetried) {
+      primary.dataset.nfBlobRetried = '1';
+      mounted = false; // 允许自愈腿重挂同一组媒体元素
       legacyRetry();
       return;
     }
-    box.remove();
+    fail();
   });
-  card.insertBefore(box, card.firstChild);
 
   if (kind === 'device') {
     // 设备面：字节 = **按字节源分派**（selfattach 批单点）——
     //   · blob 腿（A 腿 · 发送侧本机句柄）：`URL.createObjectURL(File)`，登记进有界 LRU
     //     （键 = transferId；同件重绘复用**同一枚 URL** ⇒ 不重解码）；
-    //   · path 腿（收侧落点 / B′ 腿发送端路径）：既有 `nfTicket` ⇒ `/api/nf-file` 链**逐字保留**；
+    //   · path 腿（收侧落点 / B′ 腿发送端路径）：既有 `nfTicket` ⇒ `/api/nf-file` 链**逐字保留**
+    //     （视频同腿——票据 URL 流式，Range 语义随路由既有能力，零新取字节路）；
     //   · none（未完成 / 失败 / 无本机件）：不挂槽（状态位文案即说明面）。
     const s = src || deviceByteSourceOf(att);
-    if (s.kind === 'none') { box.remove(); return false; }
+    if (s.kind === 'none') { fail(); return false; }
     if (s.kind === 'blob') {
       bindOutHandleEvicted();
       const key = String((att && att.deviceTransferId) || (att && att.name) || '');
@@ -2269,16 +2542,13 @@ export function attachInlineImage(card, att, kind, src) {
     // per-path 票据缓存 ⇒ 零追加铸票。
     // 二次加载清剿批（2026-10-24 · #816 同法）：取字节改经 **账本单点**
     // `nfViewerSource`——`nf:<path>` 命中 = blob URL 直显（零抓取）；未命中 =
-    // 合帧铸票 + 既有票据链取数 + `nfCachePut` 入账。修前形态：裸 `img.src=票据URL`
-    // 直取，字节不进账本 ⇒ 整卡点击的 Canvas 预览（`previewDeviceSavedAttachment`，
-    // 同键 `nf:<path>`）按「未命中」把同图再全量下载一次——同图两次网络抓取；
-    // 修后预览取数即入账，预览 + Canvas 打开 = 恰一次抓取。拿不到字节（账本腿
-    // 拒绝）⇒ 回落既有无票/有票 URL 腿（onerror 摘槽，失败面逐字现状）。
+    // 合帧铸票 + 既有票据链取数 + `nfCachePut` 入账。拿不到字节（账本腿
+    // 拒绝）⇒ 回落既有无票/有票 URL 腿（onerror 失败面，逐字现状）。
     legacyRetry = () => {
       void nfCacheDrop('nf:' + s.path).catch(() => {});
       queuedTicketUrl(s.path)
-        .then((url) => { if (url) mount(url, 'server-ticket'); else box.remove(); })
-        .catch(() => box.remove());
+        .then((url) => { if (url) mount(url, 'server-ticket'); else fail(); })
+        .catch(() => fail());
     };
     // 二次加载清剿批修订（spec T6 验红钉出）：本腿**不挂会话内 objectURL 复用表**
     // （曾用 devnf: 键早退）——LRU 早退在账本**之前**，`nf-cache-invalidate` 只逐出
@@ -2291,8 +2561,8 @@ export function attachInlineImage(card, att, kind, src) {
       })
       .catch(() => {
         queuedTicketUrl(s.path)
-          .then((url) => { if (url) mount(url, 'server-ticket'); else box.remove(); })
-          .catch(() => box.remove());
+          .then((url) => { if (url) mount(url, 'server-ticket'); else fail(); })
+          .catch(() => fail());
       });
     return true;
   }
@@ -2302,8 +2572,11 @@ export function attachInlineImage(card, att, kind, src) {
   //    `fillLocalThumb` 在**同一枚 img 元素**上就地点 `src`（不重建、不重排）。
   //    🔴 本支只在 `att.localFace` 在场时可达，而该属性是**非枚举**且只由发送侧乐观
   //       面挂载 ⇒ 接收侧 / 群面 / 历史卡片**不可能**进入本支（逐字现状）。
+  //    📌 叠卡乐观组：`localFace.img` = 折叠层主元素（fillLocalThumbs 单枚出帧）；
+  //       展开层随确认面重渲补齐（确认面 = 服务端腿整组重建）——上传窗内的瞬态，
+  //       如实申报。
   if (localFace && kind !== 'ready' && kind !== 'device') {
-    localFace.img = img;
+    localFace.img = primary;
     // ③ 本机帧已在手 ⇒ 内禀尺寸同帧带上（`fillLocalThumbs` 解码时就量过，禁第二次解码）。
     const lfDims = (localFace.natW > 0 && localFace.natH > 0) ? { w: localFace.natW, h: localFace.natH } : null;
     if (localFace.url) mount(localFace.url, localFace.isThumb ? 'local-thumb' : 'local-file', lfDims);
@@ -2312,9 +2585,9 @@ export function attachInlineImage(card, att, kind, src) {
 
   // 好友 / 群聊：字节 = 既有鉴权下载路由。
   const id = att.id ? String(att.id) : '';
-  if (!id) { box.remove(); return false; }
+  if (!id) { fail(); return false; }
   if (typeof att.size === 'number' && att.size > 0 && att.size > MAX_INLINE_IMAGE_BYTES) {
-    box.remove(); // 超内联预算 ⇒ 可见降级（卡片原样）
+    fail(); // 超内联预算 ⇒ 可见降级（卡片原样；图片/视频同一把尺，判据上游 mediaFaceKindOf）
     return false;
   }
   const cached = inlineObjectUrlOf(id);
@@ -2323,53 +2596,47 @@ export function attachInlineImage(card, att, kind, src) {
     mount(cached, localOutAttachmentIds.has(id) ? 'local-handle' : 'server-cached');
     return true;
   }
-  // 收端消费腿（字段方言双兼容批）：**预览优先、免往返即显** ——
-  //   · 判读单点 = `attachPreviewField.readPreviewField`（按**方言登记表**逐条试：五键
-  //     `{mime,w,h,size,b64}` 与六键 `{fmt,w,h,bytes,sha256,b64}` **都认**；第三种未知
-  //     方言 / 缺键 / `null` / 形状不全 / 越上限 ⇒ null ⇒ 走下面今天的「拉原件」路，逐字现状）；
-  //   · `data:` 合成只经 `previewDataUrlOf`（全仓唯一合成点；wire 面零 `data:` 前缀）；
-  //   · 盒比协同（visup-ratio 批唯一算术落点）：尺寸已知 ⇒ 归一化 `w/h` 经
-  //     `mount`→`paintInlineFrame` 直通**同一个** `inlineBoxFor`（禁另立宽高逻辑），
-  //     骨架→真帧同帧落地、且**零解码取尺寸**（连内禀尺寸探测都省了）；
-  //   · 读数面：`data-att-src="inline-preview"` + `data-att-preview="1"`（免往返的机械读数
-  //     = 本腿 `return` ⇒ `api.downloadAttachment` 调用计数 **0**）+ `data-att-dialect`
-  //     （识别到的那一版，便于对账）；
-  //   · 本腿在既有内联预算闸**之后** ⇒ 预算外大原件行为逐字不变（零越面）。
-  const previewField = readPreviewField(att);
-  if (previewField) {
-    img.dataset.attPreview = '1';
-    img.dataset.attDialect = previewField.dialectId;
-    mount(previewDataUrlOf(att), 'inline-preview', { w: previewField.w, h: previewField.h });
-    return true;
+  // 收端消费腿（字段方言双兼容批）：**预览优先、免往返即显** ——仅图片面（视频件
+  // 无预览字段方言）。判读单点 = `attachPreviewField.readPreviewField`；`data:`
+  // 合成只经 `previewDataUrlOf`（全仓唯一合成点；wire 面零 `data:` 前缀）；盒比
+  // 协同 = `fitMediaBox` 装箱（读数面镜像）；本腿在既有内联预算闸**之后**。
+  if (!video) {
+    const previewField = readPreviewField(att);
+    if (previewField) {
+      primary.dataset.attPreview = '1';
+      primary.dataset.attDialect = previewField.dialectId;
+      mount(previewDataUrlOf(att), 'inline-preview', { w: previewField.w, h: previewField.h });
+      return true;
+    }
   }
   // 二次加载清剿批（2026-10-24 · #816 同法）：直显取字节接 **账本单点**——键 =
   // Canvas 预览腿同一把 `attach:<id>`（`previewFriendAttachment` ⇒
   // attachmentPreview 的 `nfCachedBlob`/`nfCachePut`），气泡与 Canvas 预览共享同一
-  // 份字节：命中零往返直显（修前两者各取一次）；未命中 = 既有鉴权路由取数 +
-  // `nfCachePut` 入账。`inlineObjectUrls` 仍是会话内 objectURL 复用面（淘汰即撤
-  // URL，不动账本字节）。失败面逐字现状（摘槽，卡片本身即降级面）。
+  // 份字节：命中零往返直显；未命中 = 既有鉴权路由取数 + `nfCachePut` 入账。
+  // `inlineObjectUrls` 仍是会话内 objectURL 复用面（淘汰即撤 URL，不动账本字节）。
+  // 失败面逐字现状（flat 卡整卡降级 / 叠卡层失败占位）。
   const attachKey = `attach:${id}`;
   nfCachedBlob(attachKey)
     .then((hit) => {
       if (hit) {
-        if (typeof hit.size === 'number' && hit.size > MAX_INLINE_IMAGE_BYTES) { box.remove(); return; }
+        if (typeof hit.size === 'number' && hit.size > MAX_INLINE_IMAGE_BYTES) { fail(); return; }
         mount(rememberInlineObjectUrl(id, URL.createObjectURL(hit)), 'server-cached');
         return;
       }
       return api.downloadAttachment(id).then(({ blob }) => {
         // ② 类型复判已删（msgfix 批 · 作者 2026-09-19 睡前令）：该路由的响应头
         // **契约上恒为** `application/octet-stream` ⇒ 旧的 `blob.type` 前缀判据恒假、
-        // 直显腿恒不可达。判据保留在上游（`isImageAttachmentName(name)`）+ 体积上限。
+        // 直显腿恒不可达。判据保留在上游（媒体名谓词）+ 体积上限。
         if (!blob
           || (typeof blob.size === 'number' && blob.size > MAX_INLINE_IMAGE_BYTES)) {
-          box.remove();
+          fail();
           return;
         }
         void nfCachePut(attachKey, blob);
         mount(rememberInlineObjectUrl(id, URL.createObjectURL(blob)), 'server');
       });
     })
-    .catch(() => box.remove()); // 410 过期 / 网络 / 鉴权：卡片本身即降级面
+    .catch(() => fail()); // 410 过期 / 网络 / 鉴权：卡片本身即降级面
   return true;
 }
 
@@ -2397,7 +2664,10 @@ function rememberInlineObjectUrl(id, url) {
     if (oldest.done) break;
     const victim = inlineObjectUrls.get(oldest.value);
     inlineObjectUrls.delete(oldest.value);
-    const stillUsed = document.querySelector(`.fm-att-inline img[src="${victim}"]`);
+    // 「仍在屏上 ⇒ 不淘汰」的挂载面探针：fm-att-card-unify 批起出帧 img 挂在
+    // `.fm-att-media .pop-img`（旧 `.fm-att-inline` 槽退役）——判据面收窄为
+    // `.fm-msg img[src]`（消息卡作用域不变，覆盖现在与未来的消息内挂载腿）。
+    const stillUsed = document.querySelector(`.fm-msg img[src="${victim}"]`);
     if (!stillUsed) { try { URL.revokeObjectURL(victim); } catch { /* non-critical */ } }
     else { inlineObjectUrls.set(oldest.value, victim); break; } // 仍在屏上 ⇒ 不淘汰它
   }
@@ -2426,7 +2696,7 @@ function bindOutHandleEvicted() {
     const url = outInlineUrls.get(key);
     if (!url) return;
     outInlineUrls.delete(key);
-    const stillUsed = document.querySelector(`.fm-att-inline img[src="${url}"]`);
+    const stillUsed = document.querySelector(`.fm-msg img[src="${url}"]`);
     if (!stillUsed) { try { URL.revokeObjectURL(url); } catch { /* non-critical */ } }
     else { outInlineUrls.set(key, url); } // 仍在屏上 ⇒ 不淘汰它
   });
@@ -2450,7 +2720,7 @@ function rememberOutInlineUrl(key, url) {
     if (oldest.done) break;
     const victim = outInlineUrls.get(oldest.value);
     outInlineUrls.delete(oldest.value);
-    const stillUsed = document.querySelector(`.fm-att-inline img[src="${victim}"]`);
+    const stillUsed = document.querySelector(`.fm-msg img[src="${victim}"]`);
     if (!stillUsed) { try { URL.revokeObjectURL(victim); } catch { /* non-critical */ } }
     else { outInlineUrls.set(oldest.value, victim); break; } // 仍在屏上 ⇒ 不淘汰它
   }
@@ -2613,17 +2883,21 @@ async function previewFriendAttachment(att, card) {
 }
 
 /** 取字节：**只走应用内鉴权路由**（`/api/friends/attachments/{id}`，裁定②）。
-  * 🔴 前端不拼任何静态/公开 URL（服务端附件目录不挂 Caddy）。 */
-async function downloadAttachment(att, card, btn, note) {
-  if (card.dataset.busy === '1') return;
+ *  🔴 前端不拼任何静态/公开 URL（服务端附件目录不挂 Caddy）。
+ *  fm-att-card-unify 批：反馈 = 主会话同款**图标闪色**（成功绿勾 1.5s / 失败红键 2s，
+ *  `.copied`/`.copy-failed` 既有规则）；410（服务端权威「已过期」终态）⇒ 整卡就地
+ *  重渲为过期文件面卡（状态段 + 灰态，与改前「就地升级终态」同一语义）。
+ *  fm-att-component-lib 批：宿主 = **叠卡组**（角标参数位键的 `closest('.fm-att')`）
+ *  时 410 改走**成员级终态**（`expireStackMember`——该件落组件失败占位 + 「已过期」
+ *  注记，组与其余成员零扰动；整组替换会吞掉其余件，禁）。 */
+async function downloadAttachment(att, card, btn) {
+  if (!card || card.dataset.busy === '1') return;
   card.dataset.busy = '1';
   btn.disabled = true;
-  note.classList.remove('visually-hidden-note');
-  note.textContent = t('messages.attachDownloading');
   try {
     const { blob, filename } = await api.downloadAttachment(att.id);
     saveBlob(blob, filename || (att && att.name));
-    note.textContent = t('messages.attachDownloaded');
+    flashDownloadKey(btn, true);
     // 4b1 · E4（§F.1b）：**落盘尝试完成之后**才取证回执（saveBlob 抛 ⇒ 走下面的 catch ⇒ 零 E4）。
     // 🔴 `void` = 故意 **不 await**：回执面绝不阻塞/影响下载与 UI（失败静默容忍）。
     void ackAttachmentLanded(att, blob);
@@ -2633,22 +2907,36 @@ async function downloadAttachment(att, card, btn, note) {
       // **就地升级为终态**，并撤掉重试可能（不是「下载失败」）。
       // M2 账本 410 对账：终态过期 ⇒ 账本条目同步淘汰（同预览腿）。
       void nfCacheDrop(`attach:${att.id}`).catch(() => {});
-      card.dataset.attState = 'expired';
-      card.classList.remove('fm-att-ready');
-      card.classList.add('fm-att-expired');
-      btn.remove();
-      note.textContent = t('messages.attachExpired');
-      card.setAttribute('aria-disabled', 'true');
+      if (card.classList.contains('fm-att-stack')) expireStackMember(card, btn, att);
+      else card.replaceWith(attachmentCard({ ...att, state: 'expired' }, { noMediaFace: true }));
       return;
     }
     // 传输/本地失败：**可重试**（§B.7 ③ 表第二行），绝不标成「已过期」。
-    card.dataset.attState = 'failed';
-    note.textContent = t('messages.attachDownloadFailed');
+    flashDownloadKey(btn, false);
     window.dispatchEvent(new CustomEvent('fm-attachment-failed'));
   } finally {
-    card.dataset.busy = '0';
+    if (card.isConnected) card.dataset.busy = '0';
     btn.disabled = false;
   }
+}
+
+/** 叠卡成员过期（410 终态）的就地面（fm-att-component-lib 批）：按角标键定位该件的
+ *  `popFaces` 条目，其全部媒体元素落**组件失败占位**（`markMediaFailed`，注记文案 =
+ *  「附件已过期」终态语义）；组根与其余成员零扰动。找不到 faces 条目（结构意外）⇒
+ *  整组换过期文件卡降级（宁可见降级，不静默）。 */
+function expireStackMember(area, btn, att) {
+  const layer = btn && btn.closest ? btn.closest('.media-layer') : null;
+  const layers = area.querySelectorAll('.pop-expand-view .media-layer');
+  const i = Array.prototype.indexOf.call(layers, layer);
+  const faces = (i >= 0 && area.popFaces && area.popFaces[i]) || null;
+  const els = faces && faces.els && faces.els.length
+    ? faces.els
+    : (layer ? [layer.querySelector('img, video')].filter(Boolean) : []);
+  if (!els.length) {
+    area.replaceWith(attachmentCard({ ...att, state: 'expired' }, { noMediaFace: true }));
+    return;
+  }
+  els.forEach((el) => markMediaFailed(el, null, t('messages.attachExpired')));
 }
 
 // ── 设备面（legacy 本机落盘件）预览 / 下载腿 ────────────────────────────────
@@ -2745,7 +3033,7 @@ async function previewDeviceSavedAttachment(att, card, src) {
   }
 }
 
-/** 设备面（legacy）下载键：与好友面同款键/同款就地反馈，字节 = 同一条票据路由。
+/** 设备面（legacy）下载键：主会话键族（`.msg-copy.msg-dl`）+ 图标闪色反馈，字节 = 同一条票据路由。
  *
  *  与好友面 `downloadAttachment` 的**两处有意差异**（各有依据，非两套逻辑）：
  *   · **无 410 分支**：410 = 服务端附件的「已过期」终态语义（好友面远端件）；本机落盘件
@@ -2755,36 +3043,67 @@ async function previewDeviceSavedAttachment(att, card, src) {
  *    legacy 行**两者皆无** ⇒ 不发回执（禁造无 id 的回执）。
  *  📌 selfattach 批（片 2 · A 腿）：**新增 blob 支**（发送侧 `File` 直接交 `saveBlob`，
  *    与好友面**同一条**保存腿）；path 支（票据路由）**逐字保留**。
- *  @param {HTMLElement} card @param {HTMLButtonElement} btn @param {HTMLElement} note
+ *  fm-att-card-unify 批：反馈 = 主会话同款图标闪色（同好友面，申报差异）。
+ *  @param {HTMLElement} card @param {HTMLButtonElement} btn
  *  @param {{kind:'blob',file:File}|{kind:'path',path:string}|{kind:'none'}} src */
-async function downloadDeviceSavedAttachment(att, card, btn, note, src) {
+async function downloadDeviceSavedAttachment(att, card, btn, src) {
   const s = src || { kind: 'none' };
   if (s.kind === 'none') return;
   if (card.dataset.busy === '1') return;
   card.dataset.busy = '1';
   btn.disabled = true;
-  note.classList.remove('visually-hidden-note');
-  note.textContent = t('messages.attachDownloading');
   try {
     if (s.kind === 'blob') {
       saveBlob(s.file, (att && att.name) || '');
-      note.textContent = t('messages.attachDownloaded');
+      flashDownloadKey(btn, true);
       return;
     }
     const blob = await savedPathBlob(s.path);
     if (!blob) throw new Error('nf-file refused');
     saveBlob(blob, (att && att.name) || String(s.path).split('/').pop());
-    note.textContent = t('messages.attachDownloaded');
+    flashDownloadKey(btn, true);
   } catch {
-    // 可重试（就地文案，不升终态、不动传输状态位：下载面与传输面互不覆盖）。
-    note.textContent = t('messages.attachDownloadFailed');
+    // 可重试（图标红态，不升终态、不动传输状态位：下载面与传输面互不覆盖）。
+    flashDownloadKey(btn, false);
   } finally {
     card.dataset.busy = '0';
     btn.disabled = false;
   }
 }
 
-/** 气泡内容填充（**单点**：新建与就地升级共用，禁两套渲染）。 */
+/** 气泡内容填充（**单点**：新建与就地升级共用，禁两套渲染）。
+ *
+ *  fm-att-component-lib 批（2026-11-02 · 作者三点批评落地）——**卡出泡，泡只装文本**：
+ *  主会话解剖 = 文本气泡 + **独立附件卡区**（`.row.user-media`：卡是自由卡，无泡包边）。
+ *  修前形态：卡在 `.fm-msg-bubble` 内 ⇒ 每张卡带一圈气泡 chrome（入向 etched 描边 /
+ *  出向蓝底）＝作者指认的「fm 面的卡带着边缘/描边」视觉漂移。修后：正文/引用块照旧
+ *  在泡内；附件组 = 泡的**兄弟节点**（自由卡区），媒体独占消息（占位正文被隐藏且全
+ *  媒体）⇒ **泡根本不渲染**——旧 `.fm-msg-bubble-media` 去 chrome 特例随结构退役
+ *  （死 CSS 不留）。`fillBubble` 返回附件组元素（null = 无附件），装配点：
+ *   · `bubbleEl`：泡（非空时）→ 附件组 → meta 依次入行；
+ *   · `keyedDiff` 复用分支：旧附件组摘除、新组插回泡后（节点身份不换 ⇒ 乐观锚定
+ *     与滚动锚点不受影响，逐字保留）。
+ *
+ *  附件组装（**标准组件库装配单点** `attachmentGroup`）：媒体件（图片/视频，判据 =
+ *  `mediaFaceKindOf` 单点）≥2 ⇒ 叠卡媒体组（`buildMediaStack` 逐字调用）；=1 ⇒ 媒体
+ *  平面卡（`attachmentCard`）；文件/状态件 ⇒ 文件卡逐件（`attachmentCard`）。混合消息
+ *  = 叠卡/媒体卡 + 文件卡同一卡区纵排（主会话 `.pop-group` 同构：媒体组在前、文件卡
+ *  随后）。
+ *
+ *  fm-md-social 批（2026-11-02 19:30 作者令「好友/群聊/设备里的聊天也要支持渲染
+ *  markdown」）——**挂同一套渲染器，不新建第二形态**：
+ *   · 渲染器 = 主会话那条 `utils.renderMarkdownWithMath`（同一 marked+KaTeX+hljs 管线、
+ *     同一套 `.code-block-wrap`/`.md-ext` 产物），本面只多传 `{ safe:true }`；
+ *   · `safe` = **外部输入信任档**：对端来的消息比 agent 自己的输出风险高一个量级 ⇒
+ *     原始 HTML 一律转义成字面文本、链接 scheme 白名单（http/https/mailto）、图片不
+ *     自动取远端字节（降级成外链小牌）、KaTeX trust 关、```human 卡族关闭。安全策略
+ *     落在渲染器单点（utils.js），本面零 sanitize 第二实现；
+ *   · **纯文本走原路**（`looksLikeMarkdown` 判据）：无任何 md 语法的普通一句话仍走
+ *     改前的 `el('div','fm-msg-text',body)` 纯文本装载 ⇒ 间距/行高/字色逐字节不变
+ *     （A3 回归门的实现基础）；
+ *   · 收发两侧同档（同一函数、同一样式）——本面不做不对称。
+ *  元素壳：md 态的类名 = `.fm-msg-text.fm-msg-md`（保留 `.fm-msg-text` ⇒ 既有
+ *  `:not(:last-child)` 边距与移动端换行规则照旧命中，只多一层 md 元素样式作用域）。 */
 function fillBubble(bubble, m, conv) {
   bubble.innerHTML = '';
   const atts = m && Array.isArray(m.attachments) ? m.attachments : [];
@@ -2798,12 +3117,56 @@ function fillBubble(bubble, m, conv) {
   // §B.4：附件消息的 `body` 是服务端生成的占位正文 —— 只有当它与「本消息附件的
   // 占位文本」**逐字相等**时才隐藏（否则照旧显示用户原文，不误吞任何真实文本）。
   const hidePlaceholder = atts.length > 0 && body !== '' && body === attPlaceholderBody(atts);
-  if (body && !hidePlaceholder) bubble.appendChild(el('div', 'fm-msg-text', body));
-  if (atts.length > 0) {
-    const list = el('div', 'fm-att-list');
-    atts.forEach(att => list.appendChild(attachmentCard(att)));
-    bubble.appendChild(list);
+  if (body && !hidePlaceholder) bubble.appendChild(bodyEl(body));
+  return atts.length > 0 ? attachmentGroup(atts) : null;
+}
+
+/** 正文单点（fm-md-social 批）：md 语法 ⇒ 共享管线 safe 档；否则原样纯文本节点。
+ *  **禁第二套渲染形态**——md 腿只调 `renderMarkdownWithMath`，本函数不做任何
+ *  markdown 解析、不拼 HTML 标签、不碰内联样式（安全策略全在渲染器单点）。 */
+function bodyEl(body) {
+  if (!looksLikeMarkdown(body)) return el('div', 'fm-msg-text', body);
+  const wrap = el('div', 'fm-msg-text fm-msg-md');
+  // cache:true（稳定文本：历史/增量/首帧一次渲染一次缓存；本面无流式腿）。
+  wrap.innerHTML = renderMarkdownWithMath(body, false, { safe: true });
+  // 外链二次确认（A5）：md-ext 锚（只有 safe 档会产出）走单一处置点
+  // mdLinkGate.js（委托挂容器 ⇒ innerHTML 重建不掉 listener）。
+  bindMdExtGate(wrap);
+  return wrap;
+}
+
+/** 附件组装配（**单点**，fm-att-component-lib 批）：媒体分组 → 叠卡/平面卡/文件卡，
+ *  全部出自 popArtifacts 标准组件（数据参数化入、DOM 出；本函数零形态代码——判据、
+ *  分组、QA 标记之外无任何 DOM 装配）。返回 `.fm-att-list` 卡区元素或 null。
+ *  媒体件 entry = {att, kind, name, src, itemKind, downloadable}（叠卡动作/字节腿
+ *  按件闭包引用）。 */
+function attachmentGroup(atts) {
+  const mediaEntrys = [];
+  const fileAtts = [];
+  for (const att of atts) {
+    const kind = attStateOf(att);
+    if (mediaFaceKindOf(att, kind, null) === 'media') {
+      const name = (att && att.name) || t('messages.attachUnnamed');
+      const src = kind === 'device' ? deviceByteSourceOf(att) : null;
+      const itemKind = isVideoAttachmentName(String(name)) ? 'video' : 'image';
+      const downloadable = kind === 'ready'
+        || (kind === 'device' && src && (src.kind === 'blob' || (src.kind === 'path' && canFetchLocalBytes(src.path))));
+      mediaEntrys.push({ att, kind, name, src, itemKind, downloadable });
+    } else {
+      fileAtts.push(att);
+    }
   }
+  if (!mediaEntrys.length && !fileAtts.length) return null;
+  const list = el('div', 'fm-att-list');
+  if (mediaEntrys.length >= 2) {
+    const stack = buildMediaStackGroup(mediaEntrys);
+    if (stack) list.appendChild(stack);
+  } else {
+    mediaEntrys.forEach(e => list.appendChild(attachmentCard(e.att)));
+  }
+  fileAtts.forEach(att => list.appendChild(attachmentCard(att)));
+  if (!list.childElementCount) return null;
+  return list;
 }
 
 // ── 气泡方向判据（P5 修复 · 单点）─────────────────────────
@@ -2902,7 +3265,11 @@ function resolveOut(m, conv) {
 }
 
 // ── Bubbles ──────────────────────────────────────────────
-function bubbleEl(m, conv) {
+/** 会话窗气泡行构造器。`export` 面 = 真渲染验收锚点
+ *  （tests/bubble-side-color.spec.mjs 用它把夹具消息过一遍**真渲染器**再读
+ *  computed backgroundColor —— 不手抄 DOM、不靠肉眼）。运行期唯一调用方是本模块
+ *  内部的 renderMessages/appendMessage 等路径，导出不改变任何行为。 */
+export function bubbleEl(m, conv) {
   const out = resolveOut(m, conv);
   const wrap = el('div', `fm-msg ${out ? 'out' : 'in'}`);
   wrap.dataset.messageId = m.id;
@@ -2916,7 +3283,19 @@ function bubbleEl(m, conv) {
   // 不构成「agent 发」的定论；服务端强制属 MVP-2。
   wrap.dataset.origin = (m && m.origin === 'agent') ? 'agent' : 'user';
 
-  const bubble = el('div', 'fm-msg-bubble');
+  // 气泡 = 主会话面**同一个类族**（四会话统一批 2026-11-05，作者令「普通消息气泡、
+  // 自己的与他人气泡……与主 agent 面同款」）：`bubble` 基类承担几何/字阶/行高/底色
+  // （chat.css `.bubble` 单点），方向只选**角色类** —— 出向 = `user`（= 主会话自己
+  // 的气泡），入向 = `peer`（= 对方；与 `.bubble.ai` 同一条声明块，见 chat.css
+  // `:is(.bubble.ai, .bubble.peer)`：入向气泡在主会话叫 ai、在会话窗叫 peer，
+  // **样式只有一份**）。旧 `.fm-msg-bubble` 保留为宿主钩子（滚动/断词/QA 断言面）。
+  //
+  // 🔴 bubble-side-color 批（2026-11-06）：**归属方**由 js/bubbleSide.js 单点决定
+  // （出向=我方绿 / 入向=对方白），本处只把结论交给 bubbleClass()；底色本身由
+  // css/glass.css「气泡归属方底色单点」块消费令牌，本文件零色值。
+  const side = bubbleSideOfOutgoing(out);
+  const bubble = el('div', `fm-msg-bubble ${bubbleClass(out ? 'user' : 'peer', side)}`);
+  bubble.dataset.bubbleSide = side;
   // 群气泡发送者名：仅群窗、仅入站（他人）消息挂名（本机消息右侧不挂，微信式）。
   // 成员名册未到时留空槽（data-sender-id），hydrateGroupSenderNames 到达后回填。
   if (conv.kind === 'group' && !out && m.senderId) {
@@ -2924,8 +3303,18 @@ function bubbleEl(m, conv) {
     sender.dataset.senderId = String(m.senderId);
     wrap.appendChild(sender);
   }
-  fillBubble(bubble, m, conv);
-  wrap.appendChild(bubble);
+  // 卡出泡（fm-att-component-lib 批 2026-11-02）：附件组 = 泡的**兄弟节点**（自由卡区，
+  // 主会话 user-media 同构——卡不带泡 chrome）。媒体独占消息（占位正文被隐藏、无可见
+  // 文本/引用）⇒ 泡不渲染（卡区就是消息面）；无附件的空正文消息照旧渲染泡（既有
+  // 形态零变化）。行内序：sender → 泡 → 附件组 → meta。
+  const attGroup = fillBubble(bubble, m, conv);
+  if (bubble.childElementCount > 0 || !attGroup) wrap.appendChild(bubble);
+  if (attGroup) {
+    wrap.appendChild(attGroup);
+    // 卡区加宽标记（叠卡盒 220 + 扇形出画 + 「展开 N」角标 ≈ 350px > 行 78% 上限）：
+    // 行放开 max-width（泡宽 = 内容自适应不受影响），CSS 侧 `.fm-msg.fm-msg-atts`。
+    wrap.classList.add('fm-msg-atts');
+  }
 
   // msgmenu 一期：被引消息 id 挂**气泡节点** dataset（🔴「跳转」的**唯一**预留挂点；
   // 跳转逻辑本批不写）。同一函数也在 `keyedDiff` 复用分支调用（收敛点单一）。
@@ -2946,7 +3335,11 @@ function bubbleEl(m, conv) {
     ]);
   });
 
-  const meta = el('div', 'fm-msg-meta');
+  // footer 元信息 pill = 主会话**同一个组件类**（四会话统一批 2026-11-05）：
+  // `.duration-badge`（chat.css 单点：内距/圆角/戒指影/暗档）+ 时间 `.duration-badge-time`
+  // + 分隔 `.duration-badge-divider` + 复制键 `.msg-copy`。旧 `.fm-msg-*` 类保留为
+  // 宿主钩子（断言面/滚动面引用），几何与配色不再由本文件另写一份。
+  const meta = el('div', 'fm-msg-meta duration-badge');
   // 批 D（作者裁定 2026-09-14 20:5x「双方可见」）：徽标**两端渲染**、无抑制逻辑
   // —— 修前判据 `out && isAgentSent(m)` 让接收侧（`out === false`）**永不进入**
   // 本分支（即便 `origin` 已修复到位，对方也看不到）⇒ 与作者诉求相左。
@@ -2962,17 +3355,26 @@ function bubbleEl(m, conv) {
   }
   if (hasForwarded(fwdKeyOf(conv, m.id))) meta.appendChild(el('span', 'fm-msg-forwarded-badge', t('messages.forwarded')));
   const timeMs = toEpochMs(m.createdAt);
-  const timeSpan = el('span', 'fm-msg-time', fmtTime(m.createdAt));
-  // 仅同日分支（纯时钟文本）参与 12/24 切换：挂 data-ts-text 即声明「本节点文本
-  // 整体 = formatHm(ts)」。「昨天」/「M/D」带日期语义，挂上会被刷新覆写成裸时钟。
-  if (timeMs && isSameDayMs(timeMs)) {
+  // 时间档 = 主会话 footer **同一 formatter**（footer-time 批 2026-10-06 的分层
+  // label：今天 = 纯时钟 / 昨天 = 「昨天 hh:mm」/ 本周 = 星期 + 时钟 / 更早 = 日期
+  // + 时钟）—— fm-footer-align 批 2026-11-02（作者令「消息 footer 参考主会话设计
+  // 对齐：同构同语言」）。与主会话 `.duration-badge-time` 逐项同款：
+  //   · 文本来源 = `formatFooterTime`（**非**列表行用的 `fmtTime` 薄版）；
+  //   · `data-ts-text` + `data-ts-text-format="day"` = 12/24 切换按**同一**分层
+  //     formatter 就地重排（旧形态只在同日的裸时钟上挂 data-ts-text，昨天的
+  //     「昨天」文本切制后就与 renderer 脱钩）；
+  //   · `bindTimeToggle` 恒绑（主会话恒绑 ⇒ 热区/键盘/aria 语义三面同款）。
+  const timeSpan = el('span', 'fm-msg-time duration-badge-time', timeMs ? formatFooterTime(timeMs) : '');
+  if (timeMs) {
+    timeSpan.setAttribute('data-ts', String(timeMs));
     timeSpan.setAttribute('data-ts-text', String(timeMs));
+    timeSpan.setAttribute('data-ts-text-format', 'day');
     bindTimeToggle(timeSpan);
   }
   meta.appendChild(timeSpan);
 
   const actions = el('span', 'fm-msg-actions');
-  const copyBtn = el('button', 'fm-msg-act');
+  const copyBtn = el('button', 'fm-msg-act msg-copy');
   copyBtn.innerHTML = '<i data-lucide="copy"></i>';
   copyBtn.title = t('messages.copy');
   copyBtn.setAttribute('aria-label', t('messages.copy')); // title 不保证被 AT 播报
@@ -3007,6 +3409,12 @@ function bubbleEl(m, conv) {
   fwd.addEventListener('click', () => forwardBubble(wrap, conv));
   actions.appendChild(copyBtn);
   actions.appendChild(fwd);
+  // 分隔符 = 主会话**真节点**（`.duration-badge-divider` / 设备面 `.dropbox-msg-divider`
+  // 同族；本面口径类 = `.fm-msg-divider`，sapphire.css 既有定义 1px×10px currentColor
+  // @.2 + flex-shrink:0）—— fm-footer-align 批 2026-11-02：旧形态用
+  // `.fm-msg-actions::before` 伪元素（视觉等价、结构不同），现与主会话同构：真节点、
+  // 同几何、同间距档（pill gap 6 + 1 + 6 = 13px，主会话实测同档）。
+  meta.appendChild(el('span', 'fm-msg-divider duration-badge-divider'));
   meta.appendChild(actions);
 
   wrap.appendChild(meta);
@@ -3055,7 +3463,17 @@ function keyedDiff(flow, msgs, conv) {
         node.dataset.attachments = attSig(m);
         node.dataset.attCount = String(Array.isArray(m.attachments) ? m.attachments.length : 0);
         const b = node.querySelector('.fm-msg-bubble');
-        if (b) fillBubble(b, m, conv);
+        // 卡出泡（fm-att-component-lib 批）：文本/引用重填 + 附件组重建（fillBubble
+        // 返回组；泡缺席 = 媒体独占行 ⇒ 直取装配单点）。旧卡区摘除、新卡区插回泡后
+        // （泡缺席 ⇒ 插在 meta 之前）；泡被清空（占位正文隐藏）⇒ 摘泡。节点身份不换
+        // ⇒ 乐观项锚定与滚动锚点不受影响（逐字保留）。
+        const g = b ? fillBubble(b, m, conv)
+          : attachmentGroup(m && Array.isArray(m.attachments) ? m.attachments : []);
+        node.querySelectorAll(':scope > .fm-att-list').forEach(old => old.remove());
+        node.classList.toggle('fm-msg-atts', !!g);
+        if (g && b) b.after(g);
+        else if (g) node.insertBefore(g, node.querySelector('.fm-msg-meta'));
+        if (b && b.isConnected && g && !b.childElementCount) b.remove();
         if (m.body !== undefined) node.dataset.body = m.body || '';
       }
       // msgmenu 一期：复用节点的引用挂点与可用性一并收敛（不变量「新 UI 态必须挂
@@ -3122,8 +3540,15 @@ function renderMessages(msgs, { stickBottom = true } = {}) {
   };
   if (stickBottom) {
     // 开窗首帧 / 本机发送：钉到底部。
+    // 🔴 进场落顶修复批（2026-11-02）：同步钉底**必配**一个落底武装窗 ——
+    //   本窗（好友/群/设备三面共用）在手机层会被 `navController.watchChatModal`
+    //   re-parent 进 `.mobile-page-body`，节点迁移把所有者的 `scrollTop` 归零，
+    //   而这次归零发生在同步钉底**之后**（热缓存重开实测：钉底 → 18ms 后归 0 →
+    //   1.5s 内再无回底写入 = 作者报障「从最顶部开始读」）。`settleBottom` 就是
+    //   那次同步写的延续（首帧无可见滚动由本次同步写保证，窗口只负责后续时序；
+    //   用户一动手即解除，窗口有截止时刻——见 chat/settleBottom.js 头注）。
     apply();
-    flow.scrollTop = flow.scrollHeight;
+    settleBottom(flow);
     return;
   }
   // ⑩ 合并/增量路径（`appendMessages` 等）：以**可视锚点**为准补偿。
@@ -3342,39 +3767,34 @@ function prependMessages(older) {
   flow.scrollTop = flow.scrollHeight - prevHeight + prevTop;
 }
 
-// ── 贴底跟随/回底胶囊·状态与腿（follow 批 2026-10-08）─────────────────────
-// 状态生命周期与窗同拍：`fmFollowPill`/`fmUnseenCount` 在 renderChatModal 的
-// reset 块归零重挂，`closeChat` 随 overlay.remove() 一起弃置（胶囊是 modal 子节点）。
+// ── 贴底跟随/回底胶囊·状态与腿（follow 批 2026-10-08；四会话统一批 2026-11-05）──
+// 状态生命周期与窗同拍：`fmPill`/`fmUnseenCount` 在 renderChatModal 的 reset 块
+// 归零重挂，`closeChat` 随 overlay.remove() 一起弃置（胶囊是 modal 子节点）。
 // 计数语义与 agent 面 `syncScrollPill` 对齐：只数「离开贴底区后到达的消息条目」；
 // 本机所发不计数（本机发送即回底，计数同拍归零）。
+// 🔴 单实现批：胶囊本体/显隐口径/落位/平滑贴底全部上抬 `scrollPill.js`
+//    （与主会话面 / 搜索回跳同一个 `createScrollPill`）；本文件只剩「未读计数」一项宿主状态。
 let fmUnseenCount = 0;
-let fmFollowPill = null;
+/** @type {ReturnType<typeof createScrollPill>|null} */
+let fmPill = null;
 
 /** 胶囊唯一同步点（滚动监听 / 到达计数 / 回底腿都汇到这里；幂等、自愈）：
- *  任何原因回到贴底区 ⇒ 无未读，计数清零、胶囊隐藏；否则按计数显隐 + 现算落位。 */
+ *  贴底 ⇒ 计数清零；离底 ⇒ 未读优先，其次「距底 ≥ 320px」拐点（组件内单源）。 */
 function fmSyncFollowPill() {
-  if (!fmFollowPill || !modalEls) return;
+  if (!fmPill || !modalEls) return;
   const flow = modalEls.flow;
   if (isAtBottom(flow)) fmUnseenCount = 0;
-  const show = fmUnseenCount > 0;
-  fmFollowPill.classList.toggle('hidden', !show);
-  if (!show) return;
-  const label = t('chat.newMessages', { n: fmUnseenCount });
-  if (fmFollowPill.textContent !== label) fmFollowPill.textContent = label;
-  const modal = fmFollowPill.parentElement;
-  if (modal && flow) {
-    const below = modal.offsetHeight - (flow.offsetTop + flow.offsetHeight);
-    fmFollowPill.style.bottom = `${Math.max(below, 0) + 12}px`;
-  }
+  fmPill.sync({ count: fmUnseenCount, atBottom: isAtBottom(flow) });
 }
 
-/** 「回到最新」腿（胶囊点击 / 本机发送 / 本机回显 / 贴底到达共用）：
- *  钉底 + 计数归零 + 胶囊收敛，一步到位（与主窗「本机消息恒回底」裁定同向）。 */
+/** 「回到最新」腿（本机发送 / 本机回显 / 贴底到达共用）：钉底 + 计数归零 +
+ *  胶囊收敛，一步到位（与主窗「本机消息恒回底」裁定同向）。
+ *  `smooth:false` —— 这是**程序化跟随**不是用户点击，不该有缓动。 */
 function fmFollowBottom() {
   if (!modalEls) return;
-  modalEls.flow.scrollTop = modalEls.flow.scrollHeight;
   fmUnseenCount = 0;
-  fmSyncFollowPill();
+  if (fmPill) { fmPill.scrollToBottom({ smooth: false }); return; }
+  modalEls.flow.scrollTop = modalEls.flow.scrollHeight;
 }
 
 /**
@@ -4441,8 +4861,7 @@ function armOptimisticText(conv, body, list) {
 }
 
 function resortAndRender() {
-  conversations.sort((a, b) =>
-    (toEpochMs(b.lastMessage?.createdAt) || 0) - (toEpochMs(a.lastMessage?.createdAt) || 0));
+  conversations.sort(compareConversations);
   renderList();
 }
 
@@ -4698,7 +5117,7 @@ function rollbackOptimisticAttach(pending, text) {
   (pending.faces || []).forEach((face) => {
     face.settled = true;
     if (!face.url) return;
-    const stillUsed = document.querySelector(`.fm-att-inline img[src="${face.url}"]`);
+    const stillUsed = document.querySelector(`.fm-msg img[src="${face.url}"]`);
     if (!stillUsed) { try { URL.revokeObjectURL(face.url); } catch { /* non-critical */ } }
   });
   if (modalEls && text && !modalEls.input.value) {
@@ -5502,7 +5921,15 @@ export function settingsDevicesHTML() {
     const list = devs.length === 0
       ? `<div class="fm-empty">${escapeHtml(t('contacts.devicesEmpty'))}</div>`
       : devs.map(settingsDeviceRowHTML).join('');
-    rows = `<div class="fm-device-list" data-settings-device-section="1" data-device-count="${devs.length}">${list}</div>`;
+    // 全设备统一更新（fleet 批 2026-11-01，作者令：控制台设置·设备页要有「全部更新」）：
+    // 动作入口 = 本行；实际渲染/进度全在 `fleetUpdate.js` 的阻塞式状态卡里（本段只管
+    // 一个键，不复制卡片、不复制任何进度状态）。
+    const fleetBar =
+      `<div class="fm-device-fleet-bar" data-fleet-entry="1">` +
+      `<button class="fleet-btn" data-fleet-open="1" type="button">${escapeHtml(t('fleet.startAction'))}</button>` +
+      `</div>`;
+    rows = fleetBar +
+      `<div class="fm-device-list" data-settings-device-section="1" data-device-count="${devs.length}">${list}</div>`;
   }
   return entry + rows;
 }
@@ -5511,11 +5938,17 @@ function settingsDeviceRowHTML(d) {
   const icon = platformDisplay(d.platform).icon;
   const statusText = escapeHtml(platformDisplay(d.platform).text || '');
   const cls = 'neblink-peer fm-device-row' + (d.online === true ? '' : ' neblink-peer-offline');
+  // 每行「更新此设备」（作者令：每台设备单行也有更新动作）。本机行不挂——本机更新
+  // 由「全部更新」腿统一交编排器，单挂一个键只会出重复入口。
+  const updateBtn = d.isLocal
+    ? ''
+    : `<button class="neblink-peer-update-btn" data-settings-device-update="${escapeHtml(String(d.deviceName || ''))}" type="button">${escapeHtml(t('neblink.update'))}</button>`;
   return `<div class="${cls}" role="button" tabindex="0" data-settings-device-row="1" data-device-id="${escapeHtml(String(d.deviceId || ''))}">` +
     `<span class="neblink-peer-icon">${icon}</span>` +
     `<span class="neblink-peer-name">${escapeHtml(deviceLabel(d))}</span>` +
     presenceBadgeHTML({ ...d, isLocal: false }) +
     `<span class="neblink-peer-status">${statusText}</span>` +
+    updateBtn +
     `</div>`;
 }
 
@@ -5537,6 +5970,24 @@ function bindSettingsDevicesOnce() {
   document.addEventListener('click', (e) => {
     const target = e.target instanceof Element ? e.target : null;
     if (!target) return;
+    // 全设备统一更新（fleet 批 2026-11-01）：本区的两个键都只是**打开入口**——
+    // 「全部更新」开阻塞卡（确认 + 进度 + 收口全在那张卡里），「更新此设备」走既有
+    // `remoteUpdate` 单台腿再开同一张卡。动态 import 规避 messages↔fleetUpdate 的
+    // 静态环（fleetUpdate 依赖 neblink.js，而本文件已在环上）。
+    if (target.closest('[data-fleet-open]')) {
+      e.stopPropagation();
+      import('./fleetUpdate.js').then((m) => m.openFleetUpdatePanel()).catch(() => {});
+      return;
+    }
+    const updateBtn = target.closest('[data-settings-device-update]');
+    if (updateBtn instanceof HTMLElement) {
+      e.stopPropagation(); // 行激活（→ 开设备会话窗）让位：更新键只做更新
+      const dn = updateBtn.dataset.settingsDeviceUpdate || '';
+      if (dn) {
+        import('./fleetUpdate.js').then((m) => m.updateSingleDevice(dn)).catch(() => {});
+      }
+      return;
+    }
     const row = target.closest('[data-settings-device-row]');
     if (row instanceof HTMLElement) {
       // checkJs gate fix (mention-routing batch, 2026-09-27): Element has no
@@ -6503,9 +6954,9 @@ function refreshOpenDevicePresence() {
   const conv = modalEls.conv;
   const fresh = devicePeers().find(d => d.deviceId === conv.device.deviceId);
   if (fresh) conv.device = fresh;
-  const sub = modalEls.overlay.querySelector('.fm-modal-id');
+  const sub = modalRoot()?.querySelector('.fm-modal-id');
   if (sub) sub.textContent = deviceSubLabel(conv.device);
-  const slot = modalEls.overlay.querySelector('.fm-modal-presence');
+  const slot = modalRoot()?.querySelector('.fm-modal-presence');
   if (slot) {
     const badge = presenceBadgeHTML({ ...(conv.device || {}), isLocal: false });
     slot.innerHTML = badge;

@@ -1,0 +1,48 @@
+[rig] engine spawned pid= 81217 port= 6410 home= /tmp/nearpath-fire/rig-home
+[rig] relay: device/session exchange
+[rig] relay: engine tunnel connected /api/device/relay-ws?deviceId=36085c44-f4dd-5e72-bd18-2369aa155cb6
+[rig] engine healthy on :6410
+[rig] relay connected = true
+[rig] engine deviceId = 36085c44-f4dd-5e72-bd18-2369aa155cb6
+[rig] ingress https on :7443 (static: engine via tunnel)
+
+=== chromium @ portal-origin(https://mystand.space via rig proxy) (13 variants) ===
+[rig] modes → {"portalStatus":"ok","loopbackInfo":"probe_proxy","mint":"ok","probe":"pass"}
+HIT   V0-full              reason=-                            OK  3841ms
+[rig] modes → {"portalStatus":"ok","loopbackInfo":"engine","mint":"ok","probe":"pass"}
+HIT   V0b-direct           reason=-                            OK  2561ms
+[rig] modes → {"portalStatus":"http404","loopbackInfo":"engine","mint":"ok","probe":"pass"}
+MISS  V1-g1-404            reason=portal_status_http_404       OK  3165ms
+[rig] modes → {"portalStatus":"no_bound_host","loopbackInfo":"engine","mint":"ok","probe":"pass"}
+MISS  V2-g1-nobound        reason=no_bound_host                OK  2791ms
+[rig] modes → {"portalStatus":"ok","loopbackInfo":"http403","mint":"ok","probe":"pass"}
+MISS  V3-g2-403            reason=loopback_info_http_403       OK  2342ms
+[rig] modes → {"portalStatus":"ok","loopbackInfo":"port0","mint":"ok","probe":"pass"}
+MISS  V4-g2-port0          reason=no_loopback_port             OK  2554ms
+[rig] modes → {"portalStatus":"ok","loopbackInfo":"dead_port","mint":"ok","probe":"pass"}
+MISS  V5-g3-unreachable    reason=probe_unreachable            OK  3049ms
+[rig] modes → {"portalStatus":"ok","loopbackInfo":"probe_proxy","mint":"ok","probe":"http500"}
+MISS  V6-g3-http500        reason=probe_http_500               OK  1747ms
+[rig] modes → {"portalStatus":"ok","loopbackInfo":"probe_proxy","mint":"ok","probe":"wrong_id"}
+MISS  V7-g3-deviceid       reason=device_mismatch (127.0.0.1)  OK  1994ms
+[rig] modes → {"portalStatus":"ok","loopbackInfo":"probe_proxy","mint":"ok","probe":"pna_refuse"}
+MISS  V8-g3-pna-sim        reason=probe_http_403               OK  2910ms
+[rig] modes → {"portalStatus":"ok","loopbackInfo":"probe_proxy","mint":"http403","probe":"pass"}
+MISS  V9-g4-mint403        reason=mint_http_403                OK  1461ms
+[rig] modes → {"portalStatus":"ok","loopbackInfo":"probe_proxy","mint":"no_url","probe":"pass"}
+MISS  V10-g4-nourl         reason=mint_no_url                  OK  2190ms
+[rig] modes → {"portalStatus":"ok","loopbackInfo":"probe_proxy","mint":"no_ticket","probe":"pass"}
+MISS  V11-g4-noticket      reason=mint_no_ticket               OK  2358ms
+
+=== chromium @ loopback-origin(https://127.0.0.1:7443) (3 variants) ===
+[rig] modes → {"portalStatus":"ok","loopbackInfo":"probe_proxy","mint":"ok","probe":"pass"}
+HIT   V0-full              reason=-                            OK  1365ms
+[rig] modes → {"portalStatus":"ok","loopbackInfo":"engine","mint":"ok","probe":"pass"}
+HIT   V0b-direct           reason=-                            OK  1937ms
+[rig] modes → {"portalStatus":"ok","loopbackInfo":"probe_proxy","mint":"ok","probe":"wrong_id"}
+MISS  V7-g3-deviceid       reason=device_mismatch (127.0.0.1)  OK  2105ms
+
+zero-presence assertion: PASS (presence lines in all gate windows = 0)
+
+16 runs, 0 mismatched expectations
+engine: loopback-info served = 20 ; console tickets redeemed = 14

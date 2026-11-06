@@ -1,0 +1,1582 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   design-system.css — Stand 设计体系**令牌层 + 组件类层**（单源）
+   ═══════════════════════════════════════════════════════════════════════
+
+   规范权威 = seed/plugins/design-language/skills/design-language/SKILL.md
+   （八节：配色/字体/字距行高/圆角阴影/间距栅格/动画/组件固定尺寸档/文案 tone），
+   基准 = mystand.space 官网 design tokens × 客户端 Sapphire Glass。
+
+   ── 为什么要这一层（本文件的存在理由）─────────────────────────────
+   规范值散在 base.css / sapphire.css / stand-tokens.css 三处出生，**没有一档
+   结构量（圆角/字号/间距/热区）的具名令牌**：实测 border-radius 28 种取值、
+   font-size 26 种取值、两处 `style="width:auto"` 内联。规范说「圆角只有 8 档」
+   靠人记 = 一定会跑偏。本文件把规范表**逐值落成 `--ds-*` 令牌**，让「表里有值
+   取表里的，表里没档先补表」第一次可被机器判据（scripts/check-design-tokens.mjs）。
+
+   ── 三条纪律 ──────────────────────────────────────────────────
+   ① **追加不改写**：本文件**只新增 `--ds-*` 命名空间**，不覆盖、不重定义任何
+      既有 token（`--color-*` / `--glass-*` / `--sapphire*` / `--st-*` / `--btn-*`
+      / `--dur-*`）。既有消费点零影响 ⇒ 引入本层是零视觉回归改动。
+      结构档（圆角/字号/间距/字重/行高/热区）此前**无令牌**，故在此出生；
+      已有令牌的量（颜色/材质/动效）一律走 `var()` 别名，不复制字面量。
+   ② **消费即引用**：新面 / 整改面写 `var(--ds-…)`，禁再写字面量；门禁
+      `scripts/check-design-tokens.mjs` 对新增字面量报红（存量清单外不追溯）。
+   ③ **值域即规范**：档位表见 SKILL.md §4（圆角 8 档）、§2（字号 5 档）、
+      §5（4px 栅格）；本文件是那些表的机器面，改值先改表再改这里。
+
+   ── 加载位置 ─────────────────────────────────────────────────
+   index.html 中紧随 sapphire.css 之前（sapphire 仍是最后加载的设计系统标准层，
+   本文件只提供令牌与独立 `.ds-*` 类，不与之争夺既有选择器的特异性）。
+
+   ── 谁在消费 ─────────────────────────────────────────────────
+   · 设置页（sidebar.css §Settings Modal content / modal.css cfg-input 族）——
+     本批已改走 `--ds-*`（示范面）；
+   · 设计体系文档页 docs/design-language/design-system-token-batch/kit.html
+     的五组件样张；
+   · 后续新面（面板/卡片/列表）按 SKILL.md §10 使用流三步取值取形。
+   ═══════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── ① 配色（别名层：一切颜色仍由 base.css / sapphire.css / stand-tokens.css
+     出生，本层只给「语义角色 → 既有 token」的一跳别名，保证双主题自动解析）──
+     反例：在本文件写任何裸色值。 */
+  --ds-text: var(--color-text);
+  --ds-text-bright: var(--color-frame-text-bright);
+  --ds-text-muted: var(--color-frame-text-muted);
+  --ds-text-dim: var(--color-frame-text-dim);
+  --ds-surface: var(--color-surface);
+  --ds-surface-sunken: var(--color-bg);
+  --ds-border-hairline: var(--color-frame-border-light);
+  --ds-border: var(--color-frame-border);
+  --ds-accent: var(--color-primary);            /* 身份/状态绿（2026-10-30 降级语义） */
+  --ds-accent-ink: rgb(var(--brand-green));     /* 开关 ON / 圆钮实心 */
+  --ds-focus-ring: var(--btn-focus-ring);
+  /* 词条引用字色（term-system-v2 词条视觉面批 2026-11-05，作者令「词条被使用
+     的时候，应该是一个蓝色的文字」）：语义角色 = 「词条」这一实体的字色。
+     值 = 蓝族 ink 双档（stand-tokens.css 的 --term-link-ink；亮 70 99 156 /
+     暗 sapphire-glow），本层只做一拍别名，零字面量。消费点 =
+     split.css a.nf-wikilink.nf-wikilink-term / a.nf-term。对比度实测见
+     tests/_term-face-harness.mjs（**阅读面合成底**实测：亮 5.76:1 / 暗 6.52:1，
+     两侧均 ≥ 正文门槛 4.5:1；数字由 harness 每次跑打印，不手填）。 */
+  --ds-link-term: rgb(var(--term-link-ink));
+  --ds-danger-icon: var(--status-error-icon);
+  --ds-warn-icon: var(--status-warn-icon);
+  --ds-success-icon: var(--status-success-icon);
+  --ds-status-word: var(--status-word);         /* 状态词永远中性字 */
+  --ds-control-bg: var(--glass-control-bg);
+  --ds-control-bg-hover: var(--glass-control-bg-hover);
+  --ds-control-border: var(--glass-control-border);
+  --ds-control-blur: var(--glass-control-blur);
+  --ds-etched-bg: var(--glass-etched-bg);
+  --ds-etched-border: var(--glass-etched-border);
+  --ds-overlay: var(--overlay-bg);              /* 恒透明：弹窗禁遮罩 */
+
+  /* 低调焦面槽（ui-unification-20261103-input-fixes，作者令 2026-11-03 10:11 ⑤
+     「面板键盘焦点/选中高亮改为非常非常低调——几乎不可见但仍有线索」）：
+     值 = 既有 sapphire 蓝通道 4% tint（同文件 --ds-badge err 底 0.10 的降半档、
+     keyboard.css --nf-chip-bg 0.10 的同族低档），零新字面量 —— 只由 var(--sapphire)
+     组合。首批消费者 = 后台任务/子智能体面板行（chat.css .bg-task-row:focus-visible
+     族）与任务节点行（taskList.css .task-node:hover / .task-chain-member:hover）。 */
+  --ds-veil-focus: rgb(var(--sapphire) / 0.04);
+
+  /* ── ② 字体族与字重（SKILL.md §2）── */
+  --ds-font-ui: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif;
+  --ds-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --ds-fw-body: 400;
+  --ds-fw-btn: 500;
+  --ds-fw-title: 600;                           /* 禁 700 / 禁 300 */
+
+  /* ── ② 字号阶梯（5 档 + 页面大标题；SKILL.md §2 场景表）──
+     可读下限 11px：11px 以下不存在合法场景（门禁 R3）。 */
+  --ds-fs-display: 20px;   /* 页面级大标题 600 / -0.01em */
+  --ds-fs-title: 15px;     /* 面板标题、卡片问题行 600 */
+  --ds-fs-body: 13px;      /* 正文/表单标签/输入/下拉/选项 400 */
+  --ds-fs-btn: 12px;       /* 按钮 500（对话发送族 13px 沿用裁定） */
+  --ds-fs-hint: 12px;      /* hint/caption 400 */
+  --ds-fs-meta: 11px;      /* meta/徽标/小节标签 400–600 */
+  /* 字阶吸收（值重定批 §3.3 T 组）：既有 11/12/13/15/20 五档与草案逐档同值
+     （meta↔micro、hint↔label、body↔body、title↔sub、display↔title），故只补
+     草案里原先空缺的两档；档数增不改五档语义，消费点零改动。 */
+  --ds-fs-lead: 17px;      /* Apple body 17（M5：手机档已落地 --mfs-body 17，桌面正文仍 13px 密度档） */
+  --ds-fs-title-lg: 28px;  /* 大标题档（与手机层 --mfs-title 28 同值对齐） */
+
+  /* ── ③ 行高与字距（SKILL.md §3 + 值重定批 §3.3 H/L 组）── */
+  --ds-lh-body: 1.5;       /* 聊天/选项文案 1.55 */
+  --ds-lh-title: 1.3;
+  --ds-lh-tight: 1;        /* 单行控件；图标行 0（Apple display 1.07–1.19 与 SpaceX 0.95–1.25 的
+                             中间档 1.2 不另立：标题已由 --ds-lh-title 1.3 承接，1.2 属同语义带内微差） */
+  --ds-lh-std: 1.45;       /* Apple body 1.47 微调中文行距；长文段落档 */
+  --ds-ls-label: 0.5px;    /* 11px uppercase 小节标签 */
+  --ds-ls-display: -0.01em;
+  --ds-ls-body: 0;         /* 正文恒 0，禁顺手字距；字距三档仲裁：display 负、正文 normal（Carbon 正字距 M16 不采）、caps 仅拉丁/数字位（SpaceX M27） */
+  --ds-ls-caps: 0.08em;    /* SpaceX caps 正字距（≈0.96px@12）；仅拉丁/数字大写微标位，中文一律走 --ds-ls-body */
+
+  /* ── ④ 间距（4px 栅格；SKILL.md §5 合法值 4/8/12/16/20/24/32；值重定批
+     §3.3 S 组吸收 Carbon 2x：值对位见各行注释，编号不重排 —— 既有消费点
+     （.ds-* 与设置页）的索引语义不漂移，缺口档以 -half/-12/-16 延续 N=px/4 编号法）── */
+  --ds-space-1: 4px;       /* Carbon $spacing-02 */
+  --ds-space-2: 8px;       /* Carbon $spacing-03 */
+  --ds-space-3: 12px;      /* Carbon $spacing-04 */
+  --ds-space-4: 16px;      /* Carbon $spacing-05 */
+  --ds-space-5: 20px;      /* 面板左右留白（站内档，Carbon 阶无此值） */
+  --ds-space-6: 24px;      /* 页面级留白；Carbon $spacing-06（编号与站内同值同号） */
+  --ds-space-8: 32px;      /* Carbon $spacing-07 */
+  --ds-space-half: 2px;    /* Carbon $spacing-01：4px 栅格外半步微缝档 */
+  --ds-space-12: 48px;     /* Carbon $spacing-09：区块级留白 */
+  --ds-space-16: 64px;     /* Carbon $spacing-10：大区块留白 */
+  /* ── 10px 档（2.5 栅格 · 例外档）：按**布局角色**分槽 ────────────────────
+     2026-11-04 前这一个值只有 `--ds-space-glass-x` 一个名字，而名字描述的是它的
+     出生语境（玻璃条横缝），却承接了全部 357 处 10px 消费 —— 槽名比语义窄 = 命名债。
+     本批（作者令 2026-11-04 20:49）按用途拆成六个角色槽，**值逐字不变（10px）**，
+     故零像素（与逐值快照对照为证）。不做 `--ds-space-1x` 式换名：那只是把同一笔债
+     换个字面重记一遍，消费面语义仍然不含信息。
+     六槽的分工是「轴 × 内外」，不是组件作用域 —— 按组件派生（--ds-chat-pad-x …）
+     才是同值别名堆，禁。
+       · inline-x   内横距：块/控件与内容的左右内距（padding 横轴）
+       · block-y    内纵距：块的上下内距（padding 纵轴）
+       · inset      四边等内距：`padding: X` 单值
+       · inline-gap 行内件缝：同一行相邻件之间（gap / column-gap）
+       · stack-gap  块间纵距：块与块之间的纵向间隙（margin 纵轴）
+       · indent-x   行缩进：相对容器左缘的横向偏移（margin 横轴）
+     实测消费（366 个 var() 原子）：inline-x 151 · block-y 95 · inline-gap 56 ·
+     stack-gap 49 · indent-x 9 · inset 5。
+     角色化是为了让**下一次收敛能逐角色裁定**（-inline-gap/-inset → 8；-block-y /
+     -stack-gap → 8 或 12；-indent-x → 8/12），而不是一次性动 357 处再看像素。
+     本批不动值：10px 是 4px 栅格的半步（2.5 格），与 6px 档同属「实测高频的半步
+     例外」—— 收敛它必然改 357 处布局，须单独立批 + 基准刷新，见批文档「未做/待裁」。 */
+  --ds-space-inline-x: 10px;
+  --ds-space-block-y: 10px;
+  --ds-space-inset: 10px;
+  --ds-space-inline-gap: 10px;
+  --ds-space-stack-gap: 10px;
+  --ds-space-indent-x: 10px;
+  /* ── 主列边缘盒共用槽（header-input-width-align 批 2026-11-05）─────────────
+     消费者恰两个，且必须逐像素同值：#header 的水平**外**距 与 #input-area 的水平
+     **内**距。两盒都是 `left:0; right:0` 的绝对层 ⇒ 本槽 = 0 时二者的 border-box
+     都铺满 #main 全宽，左右缘逐像素重合。
+     **这是「顶栏宽度 == 输入条宽度」的唯一来源**：改本行 = 两盒同时内缩/外扩；
+     禁止在任一消费点另写一个数（上一轮做偏的根源正是两个独立数值：顶栏水平内距搬
+     到外距、输入区另给内距，两个 16px 各写一处 ⇒ 顶栏被单独缩短 32px，考古见
+     vault 报告 header-input-width-align：62ed39ed2 与 48ec83961）。
+     本槽不是 4px 栅格里的间距档（它是「铺满 / 内缩」的开关量，历史正常值 = 0），
+     故不占用 --ds-space-* 刻度族槽位。 */
+  --ds-main-col-edge-x: 0px;
+  /* 发丝缝例外槽（2026-11-04 间距例外收敛批出生）：1px 是**形态值**不是"差一点的 2px"——
+     它是「存在感为零但把两件分开」的最细缝（分隔线、指示条偏移、发光描边 inset）。
+     收回 2px 会把每条发丝缝视觉加倍（99 处原子），密度直接退化；故立具名槽并限定用途：
+     **只许发丝缝/发丝偏移**，行/卡/控件的内距一律走栅格档（禁在 4px 栅格里拿它找补）。
+     值与现盘逐字相同（1px）⇒ 这 99 处像素零变化。 */
+  --ds-space-hair: 1px;
+  /* 半步件缝例外档（design-scale-spec 2026-11-04 §2.2/§3 登记，本批出生）：
+     6px 是实测最高频间距档（349 处），集中在「图标+文字小缝」「chip 内距」——
+     收敛 4px 会让密集控件贴死，收敛 8px 会让每行膨胀，故以具名半步档收编，
+     **限定小件内缝**（行/卡的块距仍走栅格 8/12/16）。值 = 现盘 6px 逐字搬迁。 */
+  --ds-space-1h: 6px;
+  /* 文档排版缩进组（撤回批 2026-11-05 16:43 作者令：①「你发的消息不加缩进功能」
+     ②「文档只缩进首行」）：以 em 表达（跟字号走，亮暗双档同值，拖动字号不脱节）。
+       · 首行缩进 = 2em（中文排版两字）——**只**用于文档阅读面（css/split.css
+         .canvas-md-viewer 的直接子 p）；气泡面（css/chat.css）零缩进，不再引用它。
+       · 列表每级缩进 = 1.6em（> 一档字号 ⇒ 二三级可辨层级；嵌套按级累加）；
+       · 窄屏（≤390px）收一档 1.15em：手机上 2em 级联三级会吃掉可用宽度。
+     消费面（禁裸 margin 拼缩进）：css/split.css md 阅读面（chat.css 气泡族已于
+     撤回批退出本组）。 */
+  --ds-text-indent: 2em;
+  --ds-list-indent: 1.6em;
+  --ds-list-indent-narrow: 1.15em;
+  --ds-density-row-compact: 36px; /* 紧凑行档（= --cv-head-h 胶囊行带值 36px） */
+  --ds-row-pad: 8px 12px;              /* 列表行静息档 */
+  --ds-row-pad-tight: 8px 10px;
+  --ds-section-gap: var(--ds-space-4);
+  --ds-card-gap: var(--ds-space-3);
+  --ds-modal-head-pad: 12px 16px 12px 20px;  /* 左 20 光学对齐内容 */
+  --ds-modal-body-pad: 12px 20px 20px;
+  --ds-input-pad: 6px 10px;            /* 面板档输入 */
+  --ds-input-pad-lg: 8px 12px;         /* 卡内档输入 */
+  /* 密度组其余两值对位既有槽：gap regular/compact = --ds-space-3/2；
+     radius regular/compact = --ds-radius-button/--ds-radius-input
+     （NVIDIA 密度联动机制，无新槽——值已各有家）。 */
+
+  /* ── ⑤ 圆角阶梯（8 档 + 卡片三档；SKILL.md §4，禁档外值）──
+     值重定批 §3.3 R 组吸收：既有 badge/chip/input/button/shell/pill 六槽与草案
+     xs/sm/md/lg/window/pill 逐档同值（4/6/8/10/20/999，Apple rounded.sm 8px 与
+     NVIDIA --radius-lg 8px 三源互证），故只补草案里原先无归属的两档。 */
+  --ds-radius-badge: 4px;    /* 徽标 pill、行内 code；NVIDIA --radius-md 4px 同值互证 */
+  --ds-radius-chip: 6px;     /* 28px 图标钮、chip */
+  --ds-radius-input: 8px;    /* 输入/下拉/面板档按钮 */
+  --ds-radius-button: 10px;  /* 对话档按钮、列表行 hover 面 */
+  --ds-radius-xl: 12px;      /* 条状容器档（= 悬浮控件 --cv-radius-bar 12，直方图 12×39 次高档） */
+  --ds-radius-2xl: 18px;     /* Apple rounded.lg 18px：工具卡/大卡档（本阶梯唯一非 4 倍数值，来源单一，禁再派生） */
+  --ds-radius-card-sm: 10px;
+  --ds-radius-card-md: 14px; /* 面板内卡（cfg-card 族） */
+  --ds-radius-card-lg: 16px; /* 聊天浮层卡 */
+  --ds-radius-shell: 20px;   /* 弹窗外壳（全站统一值） */
+  --ds-radius-pill: 999px;
+  /* 细件例外槽（design-scale-spec 2026-11-04 §2.1/§3 登记，本批出生）：
+     2px 不是「差一点的 badge」，是细件几何 —— 8px 宽滚动条拇指上归 4px 会变药丸、
+     改滚动条观感。故立具名例外槽，**只许细件用**（滚动条拇指 / 进度条 / 微圆点）；
+     任何「想让边角再柔一点」的诉求走 badge/chip，禁在此槽身上找补。
+     值 = 现盘 21 处 2px 的逐字搬迁，计算值零漂移。 */
+  --ds-radius-thin: 2px;
+
+  /* ── ⑥ 阴影（3 族；SKILL.md §4，禁族外自造）── */
+  --ds-shadow-panel: var(--frost-shadow);
+  --ds-shadow-control: inset 0 1px 0 var(--glass-control-highlight),
+                       inset 0 -1px 0 var(--glass-control-underedge);
+  --ds-shadow-flat: none;    /* 平面族：1px hairline 承担边界 */
+  /* 卡面族（设置页白卡 = SKILL.md §4 面板族两档，不带 inset 高光——与
+     --frost-shadow 同值但少一层，故单独出生；黑α是主题不变「墨常量」，
+     本文件里仅有的字面色出生点，门禁对 --ds 声明行放行）。 */
+  --ds-shadow-card: 0 2px 8px rgb(0 0 0 / 0.04), 0 8px 24px rgb(0 0 0 / 0.06);
+  --ds-shadow-card-dark: 0 2px 8px rgb(0 0 0 / 0.20), 0 8px 24px rgb(0 0 0 / 0.35);
+  /* 阴影吸收（值重定批 §3.3 D 组）：两档都是**既有单源的别名**，不复制值——
+     Apple「唯一投影」纪律（M7）不采，理由：玻璃浮件靠浮影分层，投影是功能
+     不是装饰。文字位禁 box-shadow 判据另记（非 token）。 */
+  --ds-shadow-float: var(--cv-shadow);            /* 浮件三档栈（悬浮控件单源，亮暗已在 sapphire.css） */
+  --ds-shadow-press: var(--ig-shadow-press);      /* 墨玻璃按压影单源（glass.css） */
+
+  /* ── ⑦ 动效（别名既有 token；SKILL.md §6）── */
+  --ds-dur-micro: var(--dur-1);    /* 120ms 微变换（Carbon fast-02 110ms 同语义档） */
+  --ds-dur-hover: var(--dur-2);    /* 160ms 色彩/边框/底纹（Carbon moderate-01 150ms 同语义档） */
+  --ds-dur-surface: var(--dur-3);  /* 240ms 表面切换（Carbon moderate-02 240ms 同值互证） */
+  --ds-dur-slow: 400ms;            /* Carbon duration-slow-01：大展开/重要通知档（现无既有档，本批补）
+                                     缓动不换档：Carbon standard 曲线（M13）不采，--ds-ease-std 保持 Material 同源 */
+  --ds-ease-enter: var(--ease-enter);
+  --ds-ease-std: var(--ease-std);
+  --ds-ease-panel: var(--panel-ease);
+
+  /* ── ⑧ 热区档（本批新增判据：SKILL.md 只钉了行内距，没钉最小热区）──
+     行高热区 = 44px（触控下限，WCAG 2.5.5 / Apple HIG 同档）；行内可点元素的
+     最小热区 = 32px（桌面指针档，低于此互相挤压误触）。设置页整改即按此档。 */
+  --ds-hit-row: 44px;
+  --ds-hit-control: 32px;
+  --ds-row-min-h: var(--ds-hit-row);
+
+  /* ── ⑨ 描边与 focus 宽度（值重定批 §3.3 B 组）──
+     命名裁定：`--ds-border-hairline` 在本文件上半段已是「发丝线**颜色**别名」
+     （② 配色层），语义已占用；宽度另立 --ds-border-width，不改既有槽位语义。
+     1px 为四家共识（Apple/IBM/NVIDIA/SpaceX hairline 全 1px），玻璃描边亦 1px。 */
+  --ds-border-width: 1px;
+  --ds-border-glass: var(--glass-border);   /* 玻璃描边单源别名（不复制值） */
+  --ds-focus-width: 2px;                    /* IBM / NVIDIA focus 双源 2px */
+  /* focus 色锚 = 既有 --ds-focus-ring（var(--btn-focus-ring)），草案条目精确归属，不另立槽 */
+
+  /* ── ⑩ 聊天流面既有值档（ui-unification-20261103-chat-stream）──
+     缺槽先扩再消费：以下四槽 = chat.css .bubble / .tool-card 的**现盘读数逐字搬迁**
+     （值的家从消费面迁到本令牌层，计算值零漂移），不是新规范值。
+     · 好友/设备面 78% 列宽**不**并入：其值家 = sapphire.css --msg-bubble-max-w，
+       被 scripts/check-msgstyle-single-source.mjs A3 规则逐字钉死在 sapphire.css，
+       两档两制并存是门禁钉死的单源现状，禁在本层起同值第二槽。 */
+  --ds-bubble-max-w: 80%;        /* 主对话气泡列宽（chat.css .bubble 既有值档） */
+  --ds-bubble-pad: 10px 14px;    /* 主对话气泡内距既有值档 */
+  --ds-fs-bubble: 14.5px;        /* 主对话气泡字档（2026-09-12 ③-4 裁定：主对话 14.5px、
+                                    好友面 13px 保持——档外既有值以具名槽收编，禁再派生） */
+  --ds-card-pad-compact: 6px 10px; /* 工具卡紧档内距既有值档 */
+  --ds-toolcard-max-w: 85%;      /* 工具卡列宽既有值档 */
+
+  /* ── ⑪ 侧栏行态槽（ui-unification-20261103-sidebar）──
+     缺槽先扩再消费：侧栏行五态（静息/hover/active/pinned/多选）此前只有
+     --color-frame-active 一个槽位在岗，多选洗选灰与 hover 洗选无槽。以下两槽
+     均为既有 rgb 通道的 α 组合（灰通道 = 多选条的既有字面值原样收编，令牌出生
+     行放行——与 --ds-shadow-card 同法），亮暗同式：灰色洗选本就主题中性。
+     字阶/内距两档（13.5px / 6px）不在五档阶梯与 4px 栅格内，按 --ds-fs-bubble
+     先例以具名槽收编（禁再派生第二处）。 */
+  --ds-text-frame: var(--color-frame-text);        /* 面板框内正文（侧栏/面板体——与
+                                                      --ds-text（--color-text）分档，
+                                                      原 .session-name/.ctx-item 投票值） */
+  --ds-fs-row: 13.5px;                             /* 会话行主文案既有档 */
+  --ds-row-inset: 6px;                             /* 列表行左右内缩既有档 */
+  --ds-row-pad-dense: 6px 12px;                    /* 树/文件行既有内距档 */
+  --ds-row-hover: var(--color-frame-hover);        /* 行 hover 洗选（既有槽一跳别名） */
+  --ds-row-active: var(--color-frame-active);      /* 行激活洗选（既有槽一跳别名） */
+  --ds-row-pinned: var(--color-frame-input-bg);    /* 行钉住 / 内联输入洗选（既有槽一跳别名） */
+  --ds-row-selected: rgb(128 128 128 / 0.08);      /* 多选行洗选（灰通道；:hover 加深到
+                                                     0.12 由 --ds-row-selected-strong 承接） */
+  --ds-row-selected-strong: rgb(128 128 128 / 0.12);
+  --ds-attention: rgb(var(--amber));               /* 注意态脉冲点（既有 --amber 通道，
+                                                     亮暗自适应；原 #e8a735 两处写死） */
+  /* 浮层三档栈（右键菜单 / 子菜单 / 多选条）：既有 --cv-* 族无此值，按
+     --ds-shadow-card 先例在此出生（墨α = 主题不变「墨常量」；sapphire 蓝通道
+     高光两档由下面的 prefers-color-scheme 令牌覆盖解析）。 */
+  --ds-shadow-pop: inset 0 1px 0 0 rgb(91 127 191 / 0.04), 0 4px 16px rgb(0 0 0 / 0.08), 0 8px 32px rgb(0 0 0 / 0.06);
+
+  /* ── ⑫ 设置面焦点缝（ui-unification-20261103-settings）──
+     缺槽先扩再消费：设置面控件焦点环的灰缝（.cfg-select / .cfg-input:focus 的
+     2px 灰环）此前是裸 rgba(128,128,128,α) 字面值；灰通道两档 α 与 §⑪ 多选行
+     洗选（--ds-row-selected 0.08 / -strong 0.12）同值但**不同义**（行洗选 vs
+     焦点缝），按「不复制字面量、同义才复用」纪律另立具名槽（令牌出生行放行，
+     亮暗自适应——灰通道本就主题中性）。 */
+  --ds-focus-seam: rgb(128 128 128 / 0.08);
+  --ds-focus-seam-strong: rgb(128 128 128 / 0.12);
+
+  /* ── ⑬ Canvas 卡面 / 叠卡卡族槽（ui-unification-20261103-canvas-overlay）──
+     缺槽先扩再消费：④Canvas 看板卡面（面板卡/标题胶囊/页签轨与四态）与 ⑤叠卡
+     卡族（栈区/展开钮/折叠卡脸/媒体卡层）的尺度、态、圆角、间距此前散在
+     split.css 与 chat.css 的裸值里。以下槽 = 两面的**现盘读数逐字搬迁**（值的
+     家从消费面迁到令牌层，计算值零漂移），不是新规范值；亮/暗两档分列见下方
+     prefers-color-scheme 覆盖块（页签态与叠卡钮底在暗档本就各有一套既有值）。
+     · 灰通道洗选族（页签轨/悬停/分隔、展开钮底、关闭钮悬停）与白通道高光族
+       （选中页签玻璃两缘/描边/投影）= 既有 rgba 通道的 α 组合 —— 与
+       --ds-row-selected / --ds-shadow-card 同法（令牌出生行放行，亮暗各站档）。
+     · 胶囊几何三槽（字档/内距/件缝）与页签几何两槽（横内距/轨内距）为档外
+       既有值，按 --ds-fs-bubble / --ds-row-inset 先例以具名槽收编（禁再派生）。 */
+  --ds-fs-subtitle: 14px;                    /* 次标题/次级正文档（body 13 上一档）。**同值两槽合一**：
+                                                原 --ds-fs-capsule（canvas 标题胶囊）与 --ds-fs-card-body
+                                                （过渡卡正文）同为 14px、同为「比正文大一档的标题/说明」；
+                                                两个名字描述的是同一档位 = 表象债。合并依据：值相同 + 角色
+                                                同族（body↔title 之间那一档）+ 两面都不需要比对方粗/细的
+                                                读数。合并后**值仍 14px**（零像素），改掉的是「一个值几个
+                                                名字」。禁再派生：其余 14px 消费面一律指本槽。 */
+  --ds-capsule-pad: 6px 8px 6px 14px;        /* 胶囊内距（手机/基线档） */
+  --ds-capsule-pad-desk: 4px 7px 4px 12px;   /* 桌面腿 36px 固定高胶囊内距 */
+  --ds-capsule-gap: 6px;                     /* 胶囊内件缝（图标/标题/pop 钮） */
+  --ds-tab-track: rgb(128 128 128 / 0.08);   /* 看板页签轨底（灰通道洗选） */
+  --ds-tab-hover: rgb(128 128 128 / 0.15);   /* 页签悬停洗选 */
+  --ds-tab-divider: rgb(128 128 128 / 0.25); /* 未选中页签分隔线（暗档同值） */
+  --ds-tab-pad-x: 10px;                      /* 页签横内距（既有值档） */
+  --ds-tab-track-pad: 3px;                   /* 页签轨内距（既有微缝档） */
+  --ds-tab-close-hover-bg: rgb(128 128 128 / 0.18);           /* 页签关闭钮悬停底 */
+  --ds-tab-active-hi: rgb(255 255 255 / 0.65);                /* 选中页签玻璃上缘 */
+  --ds-tab-active-hi-soft: rgb(255 255 255 / 0.4);            /* 选中页签玻璃下缘 */
+  --ds-tab-active-border: rgb(255 255 255 / 0.4);             /* 选中页签描边 */
+  --ds-tab-active-shadow: inset 0 1px 0 rgb(255 255 255 / 0.5), 0 1px 3px rgb(0 0 0 / 0.06);
+  --ds-tab-active-hover-hi: rgb(255 255 255 / 0.6);           /* 选中页签悬停：玻璃两缘加深 */
+  --ds-tab-active-hover-hi-soft: rgb(255 255 255 / 0.35);
+  --ds-tab-active-hover-wash: rgb(128 128 128 / 0.06);        /* 选中页签悬停：灰洗第二层 */
+  --ds-media-face-w: 220px;                  /* 叠卡固定卡脸宽（11:14，微信叠卡档） */
+  --ds-media-pill-pad: 10px 18px;            /* 「展开 N」钮内距（既有值档） */
+  --ds-media-pill-bg: rgb(128 128 128 / 0.12);       /* 展开钮底（灰通道洗选） */
+  --ds-media-pill-bg-hover: rgb(128 128 128 / 0.2);
+  --ds-media-letterbox: #17191f;             /* 媒体卡留黑底（墨常量：亮暗各一档） */
+  --ds-shadow-media-card: 0 5px 16px rgb(0 0 0 / 0.16);      /* 叠卡卡层投影（墨α） */
+  --ds-dur-stack: 0.42s;                     /* 叠卡收放/翻页既有时长档 */
+
+  /* ── ⑭ 弹层层族槽（ui-unification-20261103-overlays）──
+     缺槽先扩再消费：⑦门入场加载卡/接管卡与⑧命令面板+弹层族的**层级带 /
+     入场动效 / 面板壳影 / 过渡卡字阶**此前散在 modal.css / keyboard.css /
+     cards.css 的裸值里。以下槽 = 三面**现盘读数逐字搬迁**（值的家从消费面
+     迁到令牌层，计算值零漂移），不是新规范值：
+     · z 四档 = 全站弹层堆叠带（遮罩基础 310 / 命令面板 9000 / 通知 10000 /
+       确认族顶带 11000）。数值一栏不变，只把「谁在谁上面」写成一处可读档表；
+       模态**内部**堆叠坐标（#search-date-popover z20 / .cal-pill-listbox z30）
+       不入档——它们是模态子树内的坐标，不是全站层带。
+     · --ds-dur-layer 0.2s = 弹层入场时长档（base.css 动效 token 批已明文
+       「入场 200ms modalIn 家族（--ease-enter）」——本槽是那句注释的机器面，
+       缓动继续走 --ds-ease-enter 一跳别名，不复制字面量）。
+     · --ds-dur-spin 0.8s = 加载点旋转周期（门环 / 入场清单活动点同周期；连续
+       旋转是循环周期而非过渡档，不并入 dur 阶梯）。
+     · --ds-shadow-palette = 命令面板壳下投蓝晕影（rgb(--sapphire) 通道 α 组合，
+       与 --ds-shadow-card 同法：墨/蓝通道 + α，令牌出生行放行）。
+     · 字档一槽 = 官网 auth 域过渡卡（接管 / 入场同族）标题 21 既有读数
+       （off-ladder，按 --ds-fs-bubble 14.5px 先例以具名槽收编）；card 正文 14 已
+       与胶囊标题 14 合并为 --ds-fs-subtitle（见 §⑬ 头部注释）；cards.css 的
+       --nfc-* 家族令牌改指既有槽 —— 值不再在消费面出生。 */
+  --ds-z-overlay: 310;      /* 遮罩基础带（settings / memory / rules / search / wsp） */
+  --ds-z-quickinput: 9000;  /* 命令面板宿主（QuickInput 层） */
+  --ds-z-toast: 10000;      /* 通知栈（右下角，不与居中弹窗重叠） */
+  --ds-z-modal: 11000;      /* 确认族顶带（任何面板内触发 confirm 都压最上） */
+  --ds-dur-layer: 0.2s;     /* 弹层入场时长档（modalIn 家族；缓动 = --ds-ease-enter） */
+  --ds-dur-spin: 0.8s;      /* 加载点旋转周期（门环 / 清单活动点） */
+  --ds-shadow-palette: 0 18px 48px rgb(var(--sapphire) / 0.2);
+  --ds-fs-card-hero: 21px;  /* 过渡卡主标题（官网 auth 域 21/600/-0.2px 档） */
+  --ds-fs-callout: 16px;    /* callout 档：**桌面语境**的 16px（文档正文/弹窗标题/图标字形）。
+                               与 --ds-fs-mobile-callout 同值不同域：后者是手机档字阶，经 --mfs-callout
+                               桥进手机层；本槽承接全部「桌面语境的 16px」消费点（13 处：markdown h1 /
+                               epub 正文与 h3 / txt 阅读面 / 桌面气泡 h1 / 三弹窗标题 / 三个 × 字形钮 /
+                               邮件卡 h1）。把桌面件挂在 *mobile-* 槽上是槽名宽于语义的反向债
+                               （槽名说手机、消费者是桌面），本批归位。值不变 ⇒ 零像素。 */
+  --ds-fs-glyph: 8px;       /* 图标盒字形档（具名例外槽，2026-11-04 字号收敛批出生）。
+                               **只许固定尺寸图标盒内的字符用**：14–18px 盒里的 2–3 个字符
+                               （文件类型 nf-qicon / 引用附件图标 / 执行器小头像 / 计数徽标）。
+                               为什么不收 11px（文本硬下限）：11px 的三字符在 16px 盒里实测宽
+                               ≈18px，必然溢出固定盒 —— 形态保全优先于档位整齐。这就是
+                               「滚动条拇指归 4px 会把形态弄坏」的同一条判据用在字面上。
+                               禁作正文：任何"看起来能再小一点"的排版诉求走 --ds-fs-meta（11）。
+                               本槽同时是 {7, 8, 8.5, 9}px 四个档外值的收敛终点（6 处）。 */
+
+  /* ── ⑮ 手机端字阶 / 热区桥槽（ui-unification-20261103-mobile）──
+     作者令：手机端**与桌面共用同一套 --ds-* 槽位**，只是经 --mfs-* 手机字号层
+     消费（mobileLayer.css 的 body.mobile-layer token 块）。桥的方向固定为
+     `--mfs-*: var(--ds-*)`，**值只在桌面阶梯出生一次**，手机层零第二份读数：
+       --mfs-body 17        ← --ds-fs-lead 17   （Apple body 档；本文件 §②
+                              注释早前已预告「手机档已落地 --mfs-body 17」）
+       --mfs-min 13         ← --ds-fs-body 13   （桌面正文档；13 = 手机可读下限）
+       --mfs-title 28       ← --ds-fs-title-lg 28（§② 注释同样已对齐）
+       --mfs-sub 15         ← --ds-fs-mobile-sub（见下：缺槽先扩）
+       --mfs-callout 16     ← --ds-fs-mobile-callout（见下：缺槽先扩）
+       --mfs-title-mini     ← --mfs-sub（同值派生，不另立槽 —— 与 --mtitle-inset
+                              取 var(--mchrome-inset) 同法）
+     热区同源：--mtap / --mhit / --mrow ← --ds-hit-row 44（WCAG 2.5.5 触控下限）；
+     --mtap-lg 48（悬浮圆钮档，g2-fab 基准）此前桌面无槽 ⇒ 按「缺槽先扩」补。
+
+     为什么 15/16 两档必须新出生、不能借 --ds-fs-title：15px 在桌面阶梯上的唯一
+     现槽 --ds-fs-title 语义是「面板标题 600」，正文次说明借名会让下一面误用；
+     16px 桌面阶梯上根本没有（iOS 输入焦点不自动缩放的硬下限），属手机层专属档。
+     两槽值 = 手机层既有读数逐字搬迁（不是新规范值）。 */
+  --ds-fs-mobile-callout: 16px;  /* 手机档次正文 / 输入件（iOS 不缩放硬下限 16） */
+  --ds-fs-mobile-sub: 15px;      /* 手机档次要说明（Apple subheadline 15pt） */
+  --ds-hit-tap-lg: 48px;         /* 手机档悬浮圆钮（g2-fab 基准 48；桌面无此档） */
+
+  /* ── ⑯ 手机层洗选 / 状态点 / 浮影槽（ui-unification-20261103-mobile 收编）──
+     mobileLayer.css 的颜色字面量收编：收编前 156，其中 **118 处是 var() 的死
+     fallback 字面量**（`var(--color-frame-text-muted, #98a2b3)` 一类 —— 这些 token
+     在 base.css/sapphire.css 全站有定义，fallback 永不命中，随批逐条摘除 = 零视觉
+     漂移的纯删减）；余下 38 处现盘裸值按「值的家从消费面迁到令牌层」收编至此
+     （沿用 --ds-shadow-card / --ds-row-selected 的「灰/墨通道 + α 出生行放行」先例）。
+     **可复用既有槽的一律不重复出生**：卡片影两档与 --ds-shadow-card /
+     --ds-shadow-card-dark 逐字同值 ⇒ 消费面直接改用那两个槽（本批不改本文件值）。 */
+  --ds-ink-inverse: #fff;                        /* 实底反极字（徽标/角标/图标） */
+  --ds-wash-16: rgb(128 128 128 / 0.16);         /* 玻璃胶囊底 / 按压洗选 */
+  --ds-wash-18: rgb(128 128 128 / 0.18);         /* 行内小圆钮悬停底 */
+  --ds-wash-26: rgb(128 128 128 / 0.26);         /* 抓取态加深档（点条 .is-grip） */
+  --ds-dot-idle: #98a2b3;                        /* 状态点未激活灰（队列/中断点） */
+  --ds-dot-idle-light: rgb(70 78 96 / 0.42);     /* 亮档点条未激活点 */
+  --ds-dot-on-glass: rgb(255 255 255 / 0.55);    /* 暗档点条未激活点 */
+  --ds-dot-glow: 0 0 6px rgb(255 255 255 / 0.55);       /* 当前点亮环 */
+  --ds-shadow-dots: 0 2px 10px rgb(16 20 30 / 0.10);    /* 点条胶囊投影 */
+  --ds-shadow-thumb: 0 2px 8px rgb(0 0 0 / 0.08);       /* 缩略页纸面投影 */
+  --ds-shadow-deck-card: 0 14px 38px rgb(8 10 16 / 0.34); /* 堆叠卡浮影 */
+  --ds-scrim-stack: rgb(12 15 22 / 0.34);        /* 堆叠视角背景压暗层 */
+
+  /* ── ⑯b 环邻位深度配方槽（mobile-canvas-tabs-c 批 2026-11-06 出生）────────
+     作者令逐字：「还有电脑端hover 上下选项的那种模糊效果」+ 本批口径 4「复用同源
+     效果（同一配方、同一时长曲线，不重写一份）」。
+     唯一语义 = **环里「非当前位」那一档的模糊深度**：桌面 `#canvas-capsule-ring`
+     hover 展开后上下两项（`.cr-capsule.is-edge`）与手机横向环带的两侧签
+     （`.mf-strip-chip` 非 `.on`）是同一件事的两种排布轴，配方必须同源。
+     出生理由：该配方此前在 split.css 硬写 `blur(1.6px) saturate(1.25)`、在手机
+     环带由 navController.js 写 `--rbl`（2.40px 曲线，|k|=1 只有 0.40px）—— 同一
+     语义两套数值，作者实拍读作「手机端没有电脑端那种糊感」。本槽收编为单一出生地：
+       · 半径档 = 1.6px（桌面 hover 缘位实测档，即作者点名的那个效果）；
+       · 饱和档 = 1.25（模糊会降饱和，补回一点点让底色不发灰）；
+       · 时长曲线 = --ds-ring-dur / --ds-ring-ease（桌面 0.36s 温和缓出，
+         手机端 transform 另有「切签 ≤300ms」的既有裁定，查文件内注）。
+     消费面：split.css `.cr-capsule.is-edge`（硬取本槽）、mobileLayer.css
+     `.mf-strip-chip`（按位姿系数取本槽）。**不许再在消费面写字面量。** */
+  --ds-ring-blur: 1.6px;                          /* 邻位模糊半径（桌面 hover 缘位档） */
+  --ds-ring-saturate: 1.25;                       /* 邻位补饱和（抵消模糊降饱和） */
+  --ds-ring-dur: 360ms;                           /* 邻位过渡时长（桌面环同值） */
+  --ds-ring-ease: cubic-bezier(0.22, 0.61, 0.36, 1); /* 邻位过渡曲线（桌面环同值） */
+
+  /* ── ⑰ 转回合按钮槽（send / stop 单源；ui-unification-20261103-canvas-ask-resize）──
+     作者令（逐字）：「发送按钮与终止按钮样式与主会话**完全统一**（同一组件/同一
+     design-system 令牌，不得另做一套）」。此前同一对按钮在两条腿各长一套几何：
+     主会话 `#send-btn`/`#stop-btn` = 36×36 正圆 + 18px 图标（input.css，作者
+     2026-11-03 10:11 ③ 裁决的圆形旧版基准），Canvas Ask 面板 `.ask-send`/
+     `.ask-stop` = 32×32 正圆 + 14px 图标（ask.css）——「两态只换图标」在面板侧
+     劣化成一套更小的第二形态。
+     以下槽 = **主会话现盘读数逐字搬迁**（值的家从 input.css 消费面迁到令牌层，
+     计算值零漂移），不是新规范值：36/18/2.5 三档取自 input.css:950-951（宽高）、
+     :984（图标）、:1017-1018（stop 同值）；44 = Apple HIG / WCAG 2.5.5 触控下限
+     （input.css:1037-1039 的 ::after 外扩目标值，原先写在消费面）。
+     配色两档一跳别名到既有单源（本层不复制字面量）：
+       send = --ctl-send-*（stand-tokens.css 微信绿考古值，亮暗同值）
+       stop = --color-error（base.css）+ --ds-ink-inverse（§⑯ 实底反极字）
+     hover 红阶 = 既有 color-mix 配方原样搬家（input.css:1026「--color-error 88%
+     + black」）；混入关键字 black 是**配方常量**不是新色值，与消费面逐字同式。 */
+  --ds-turn-btn-size: 36px;          /* 圆钮边长（主会话现盘；desktop 档） */
+  --ds-turn-btn-icon: 18px;          /* 圆内图标档（两态同档才「在圆内切换」） */
+  --ds-turn-btn-stroke: 2.5;         /* 图标线宽（input.css:984/1027 同值） */
+  --ds-turn-hit: 44px;               /* 命中盒下限：::after 外扩到此（HIG 44） */
+  --ds-turn-send-bg: var(--ctl-send-bg);
+  --ds-turn-send-bg-hover: var(--ctl-send-bg-hover);
+  --ds-turn-send-bg-active: var(--ctl-send-bg-active);
+  --ds-turn-send-ink: var(--ctl-send-ink);
+  --ds-turn-send-border: var(--ctl-send-border);
+  --ds-turn-stop-bg: var(--color-error);
+  --ds-turn-stop-bg-hover: color-mix(in srgb, var(--color-error) 88%, black);
+  --ds-turn-stop-ink: var(--ds-ink-inverse);
+
+  /* ── ⑱ 面板拖柄槽（Canvas Ask 面板拖拽改尺寸；同批）──
+     作者令：「允许用户交互拖拽调整对话框大小（拖柄可见、热区 ≥44px，按 Apple
+     HIG）」。缺槽先扩再消费：面板拖柄此前无任何形态（.ask-dock 尺寸由 CSS
+     令牌固定），故以下为**新面槽位**，不是既有读数搬迁；取值依据均在行尾注。
+     热区 44 = HIG 下限（与 --ds-hit-row 同值同为触控/指针双达标的硬底线）；
+     抓手可见径 18 = 图标档（--ds-turn-btn-icon 同值，视觉体重一致但不共享槽位——
+     语义不同：一个是图标、一个是把手本体）。 */
+  --ds-resize-hit: 44px;             /* 拖柄热区边长（HIG / WCAG 2.5.5 下限） */
+  --ds-resize-grip: 18px;            /* 可见抓手本体边长（= ::before 直角弧的臂长） */
+  --ds-resize-ink: var(--ds-text-muted);        /* 静息把手色（低对比，不争焦点） */
+  --ds-resize-ink-active: var(--ds-focus-ring); /* hover / 拖拽态把手色 */
+  --ds-resize-bg-active: var(--ds-veil-focus);  /* hover / 拖拽态底（极低调洗选） */
+  --ds-resize-border: var(--ds-etched-border);  /* hover / 拖拽态描边 */
+  --ds-resize-min-w: 260px;          /* 拖拽宽度下限（≤ 此宽度列内气泡已不可读） */
+  --ds-resize-min-h: 120px;          /* 拖拽高度下限（列可滚，保一条气泡可读） */
+  --ds-resize-safe: 12px;            /* 视口安全缝（左缘 / 上缘统一同一档） */
+  --ds-resize-top-guard: 44px;       /* 顶缘保险带：面板顶距视口顶不得小于此值（= 热区边长，
+                                        保证拖柄本体永远完整可点、不被顶行胶囊压住） */
+  --ds-resize-step: 16px;            /* 键盘步进（←→ 改宽 / ↑↓ 改高；4px 栅格的 4 倍档） */
+
+  /* ── ⑲ 面板设计语言槽（panel-language 批 2026-11-06，作者令 3(c)(d)(e)）──
+     面板族唯一版式令牌。规范单点 = seed/plugins/design-language/skills/design-language/
+     references/panel-spec.md（与 glass-spec.md 并列）；机检 = scripts/check-panel-unify.mjs
+     （make panel-unify / FRONTEND_GATES）。纪律：**本段只做面板语义命名，值全部 =
+     既有刻度的别名或既有读数**（唯一新数值 = --ds-panel-title-lh 1.4，作者令逐字
+     「15px/600/1.4 档」，按 --ds-fs-bubble 14.5 具名例外槽先例出生）——
+     消费面 = 好友/群信息面板（friends.css pf-*）、cfg-modal 族标题条（sidebar.css）、
+     执行器卡名（executors.css）。 */
+  --ds-panel-title-fs: var(--ds-fs-title);        /* 面板标题条字号 15px（--ds-fs-title 槽语义 = 面板标题） */
+  --ds-panel-title-fw: var(--ds-fw-title);        /* 面板标题条字重 600（禁 700，--ds-fw-title 同规） */
+  --ds-panel-title-lh: 1.4;                       /* 面板标题条行高（作者令 1.4 档；面板族具名例外槽） */
+  --ds-panel-row-h: var(--ds-hit-tap-lg, 48px);   /* 点面行高节奏 48px（导航/开关整行可点档） */
+  --ds-panel-row-gap: var(--ds-space-3);          /* 同组行距 12px（扁平行的留白分隔） */
+  --ds-panel-group-gap: var(--ds-space-4);        /* 分组间距 16px（组与组之间，4px 栅格） */
+  --ds-panel-pad-x: var(--ds-space-4);            /* 面板左右内距 16px（行起笔/收笔离面板缘） */
+  --ds-panel-sep: var(--color-frame-border-light);/* 分隔线色 1px（默认无分隔线的面零消费；密排行列表才用） */
+  --ds-panel-danger-fg: var(--color-danger);      /* 危险项字/图标（红单源 = --color-danger，base.css；与 --btn-danger-ink 同族） */
+  --ds-panel-head-clear: var(--panel-head-clear); /* 吸顶让位单行档（画布族头带，projectPanel.css 语义别名单源） */
+  --ds-panel-head-2row: var(--panel-head-2row);   /* 吸顶让位双行档（自带返回条的面板） */
+}
+
+/* 浮层阴影暗档（令牌层单点解析：消费面不再各写一份 prefers-color-scheme）。 */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ds-shadow-pop: inset 0 1px 0 0 rgb(91 127 191 / 0.05), 0 4px 16px rgb(0 0 0 / 0.30), 0 8px 32px rgb(0 0 0 / 0.45);
+    /* ⑬ Canvas/叠卡槽暗档（与消费面既有暗档读数逐字对齐） */
+    --ds-media-letterbox: #101318;
+    --ds-shadow-media-card: 0 5px 16px rgb(0 0 0 / 0.5);
+    --ds-media-pill-bg: rgb(128 128 128 / 0.18);
+    --ds-media-pill-bg-hover: rgb(128 128 128 / 0.28);
+    --ds-tab-track: rgb(255 255 255 / 0.04);
+    --ds-tab-hover: rgb(255 255 255 / 0.1);
+    --ds-tab-active-hi: rgb(255 255 255 / 0.32);
+    --ds-tab-active-hi-soft: rgb(255 255 255 / 0.14);
+    --ds-tab-active-border: rgb(255 255 255 / 0.16);
+    --ds-tab-active-shadow: inset 0 1px 0 rgb(255 255 255 / 0.1), 0 1px 3px rgb(0 0 0 / 0.2);
+    --ds-tab-active-hover-hi: rgb(255 255 255 / 0.28);
+    --ds-tab-active-hover-hi-soft: rgb(255 255 255 / 0.1);
+    --ds-tab-active-hover-wash: rgb(255 255 255 / 0.04);
+    /* ⑯ 手机层暗档：dock 数字角标的托出描边（= 胶囊毛玻璃下承底带色；
+       mobileLayer.css 原字面 #16181d，取值随本槽） */
+    --ds-badge-ring-dark: #16181d;
+  }
+}
+
+/* ── ㉑ 渐隐带槽（`.ds-edge-fade` 材质桥；ui-unification-20261103-doc-ask-fade）──
+   渐隐带（顶缘「先糊后没」层）的材质真值出生在液体玻璃 v2 渐隐带子族
+   `--g2-veil` / `--g2-fade-*`（stand-tokens.css 该子族块，三态解析：
+   :root 亮档 → html[data-theme] 强制档 → prefers-color-scheme 回退）。
+   **本层不复制字面量**：四个 `--ds-fade-*` 槽一律 `var()` 桥到既有单源，
+   与手机层 `--ds-*` → `--mfs-*` 桥同式（缺槽先扩再消费，来源即上行 token 族）。
+   改渐隐带的颜色/模糊/饱和/高 = 改 stand-tokens.css 那四个 `--g2-*`，本层零改动。 */
+:root {
+  --ds-fade-veil: var(--g2-veil);          /* 渐层罩（色 = 页面底色族，只吃内容不吃底） */
+  --ds-fade-blur: var(--g2-fade-blur);     /* backdrop 模糊径 */
+  --ds-fade-sat: var(--g2-fade-sat);       /* backdrop 饱和倍率 */
+  --ds-fade-height: var(--g2-fade-height); /* 聊天根带高（88）；面板档另由消费面声明 */
+}
+
+/* ── ㉒ 液态形变（Liquid Morph）动效语言槽（liquid-morph 批 2026-11-06）──
+   语言本体与复用清单 = design/liquid-morph__20261106/DESIGN.md；JS 单源 =
+   js/motion/liquidMorph.js；术语 = GLOSSARY.md §14。
+   原型（唯一灵感来源，不许另造缓动）= css/mobileSearchFlat.css 的手机搜索
+   「扁平长条 ⇄ 右上角圆钮」一次性形变：:74-75 时长/曲线出生点、:149-176
+   transition 属性清单、:207-212 reduced-motion 降级、:214-227 实测验收读数。
+   **本组零新造值**：能别名的全部别名；只有 280ms 在本层出生（与 ④ 的
+   --ds-dur-slow 同款理由 —— 原型读数是 mobileSearchFlat.css 的**局部**变量
+   --mhsc-dur，全局无同名令牌，故在此立槽；它是时长出生点，不是新规范值）。
+   本组与 js/motion/liquidMorph.js **逐值镜像**：tests/liquid-morph.spec.mjs 有断言
+   把两侧钉死（改一边不改另一边即红）。消费面不得再写第二份 280ms、第二条曲线、
+   第二份属性清单 —— 这就是「单源」。 */
+:root {
+  --lm-dur-fast: var(--dur-2);        /* 160ms 子腿：opacity / border-color / 底色 / 浮影（= --ds-dur-hover） */
+  --lm-dur: 280ms;                    /* 280ms 主腿（几何形变；原型 :74 --mhsc-dur 读数出生点） */
+  --lm-dur-slow: var(--ds-dur-slow);  /* 400ms 大位移腿：整块浮起 / 从顶部展开（默认不用） */
+  --lm-ease: var(--ease-std);         /* 唯一曲线 cubic-bezier(0.4, 0, 0.2, 1)（base.css:186，原型 :75 同值） */
+  /* 可过渡属性清单：顺序 = 原型 transition 清单顺序（条本体 11 条 + 输入行 2 条）
+     + 末位 transform 追加项（理由见 DESIGN.md §3；原型是流内单节点，位移由 margin
+     表达，浮件宿主只能走 transform）。
+     消费方式（三件套，别塞进 `transition:` 简写 —— var() 无法把一个逗号清单展开成
+     逐属性 timing）：
+       transition-property: var(--lm-props);
+       transition-duration: var(--lm-dur);
+       transition-timing-function: var(--lm-ease); */
+  --lm-props: width, height, margin-left, margin-right, padding-left, padding-right,
+    border-radius, border-color, background-color, box-shadow, backdrop-filter,
+    opacity, max-width, transform, padding-top, padding-bottom;
+}
+/* reduced-motion：二值语义保留、过渡压近零（与原型 :210 的 1ms 同值同语义）。
+   JS 侧同口径 = liquidMorph.js 的 reducedMotion() + morphTransition(..., {reduced:true})。 */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --lm-dur-fast: 1ms;
+    --lm-dur: 1ms;
+    --lm-dur-slow: 1ms;
+  }
+}
+
+/* ── ㉓ 手机端最小可点尺寸槽（min-tap 批 2026-11-06；foundation-tap 节点）──
+   作者令（逐字）：「手机端所有的交互 最小按钮大小就是我们统一的对话框顶部悬浮按钮的样式」
+   ⇒ 手机层（`body.mobile-layer`）内**一切可点元素**立两档下限，一个真值 48：
+
+     视觉档  --ds-hit-tap-min  看得见的那块面的边长下限 = 48px
+     命中盒档 --ds-hit-box-min 可点区域的边长下限 = 48×48px
+                              （视觉可以更小，但 ::after / padding / 透明外扩必须
+                               把可点区补到 48 —— 两档分开正是为了让「视觉更小的
+                               图标钮」合法存在而不牺牲触控面积）
+
+   **取值出处（实测复核，不照抄任务书数字）**：
+     · 作者所指「对话框顶部悬浮按钮」= 聊天根顶缘那两颗圆钮：
+       `#mobile-fab-layer` 内的 `.mh-chrome-btn.g2-fab`
+       （js/mobile/chatChrome.js:258 任务键 / :274 搜索键；同一类、同一块 CSS）。
+     · 其边长的**唯一声明点** = css/glass.css:717-720
+       `body.mobile-layer .g2-fab { width: 48px; height: 48px }`
+       （桌面腿 40px 在 glass.css:554-556，手机档覆写为 48 —— 48 是手机档专属值）。
+     · 实测复核（375×812 真链快照 readings-before.json）：同族
+       `.mobile-back-btn.g2-fab` = 48×48、`.tfl-fab-add.g2-fab` = 48×48
+       ⇒ **48 是真值**，与任务书给的数字一致，无需改判。
+     · 因而不新造数值：视觉档**别名**到既有单源 `--ds-hit-tap-lg`（本文件 §⑮ :417，
+       该槽经手机桥 `--mtap-lg`（mobileLayer.css:328）供全族悬浮圆钮消费）。
+     · 命中盒档默认与视觉档同值 —— 作者「一样的样式」= 同尺寸，不是
+       「视觉 48、热区退回 44」。
+     · ⚠ 与既有 `--ds-turn-hit: 44px`（本文件 :459，desktop 指针档）的关系：
+       44 那档**不动**（桌面腿照旧）；手机层内任何以它为准的热区，改面时必须
+       改读 `--ds-hit-box-min`。手机腿的 `.ds-turn-btn` 本体已是
+       `--ds-turn-btn-size: var(--mtap-lg)` = 48（mobileLayer.css:2867），
+       `::after` 的 `min(0, …)` 在 48 本体上收到 0 ⇒ 天然达标，无需外扩。
+
+   规范条目 = design/liquid-morph__20261106/TAP.md（两档语义 / 合规写法 / 作用域 /
+   豁免判据）；机检 = scripts/check-mobile-tap.mjs（主口径 = 运行态几何读数，
+   静态腿报「无法判定」）。
+   **本批只立槽、不铺消费面**：各面几何改造属后续实现节点，本层零规则改动。 */
+:root {
+  --ds-hit-tap-min: var(--ds-hit-tap-lg);  /* 48px 视觉档（= g2-fab 手机档实测量，glass.css:717-720） */
+  --ds-hit-box-min: var(--ds-hit-tap-min); /* 48px 命中盒档（外扩后 ≥ 本值才算达标；默认同值） */
+
+@media (hover: hover) {
+  
+  /* ══ 组件类层（`.ds-*`）══════════════════════════════════════════════
+     五组件 = 按钮 / 行 / 徽标 / 输入 / 卡（SKILL.md §7 固定尺寸档）。
+     所有值走 `--ds-*`；本层不覆盖任何既有类，只在 `.ds-*` 命名空间内生效
+     ⇒ 引入即用，零回归面。文档页样张 = docs/design-language/
+     design-system-token-batch/kit.html（本批 kit 段）。 */
+  
+  /* ① 按钮：主 = 墨族实心（2026-10-30 作者令「按钮不要绿色」），次级 = 玻璃，
+     危险 = ghost + hover 红。三档，禁第二实色族。
+  
+     ── 扁平六态基类（flat-button-everywhere 批 2026-11-05；作者令「我们的按钮
+        扁平化风格要求要落实到各处 不管是hover还是点击 或者按下」）──
+     本块是「按钮六态怎么写」的**参考实现与唯一范例**：其它按钮族只需要自己的
+     配色/几何，六态行为统一引用 `--btn-*` 扁平槽（sapphire.css 按钮 token 块）
+     与 css/flatButtons.css 共享态层，不许再抄一份 hover/active/focus。
+       默认    = 底色 --ds-control-bg + 1px 描边，**零阴影**（原 --ds-shadow-control
+                 退役：扁平不靠影造厚度，可点击感由描边+底色表达）
+       hover   = 底色升一档（关在 (hover:hover) 里，触屏不粘滞）
+       按下    = 再深一档 + scale(var(--btn-press-scale))（2%，不配影、不位移）
+       键盘    = 2px outline 描边环 + 2px offset（环不占盒、不改几何）
+       禁用    = opacity 50% + not-allowed（不额外灰字：禁用 ≠ 不可读）
+       主题    = 全部 var(--btn-*/--ds-*) 双主题令牌，零裸色值、零暗自适应分叉
+     状态过渡只列扁平允许项——transition 里连 box-shadow 都不出现，属性不存在
+     就不会有人再顺手加回来。 */
+  .ds-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--ds-space-2);
+    min-height: var(--ds-hit-control);
+    padding: 0 var(--ds-space-3);
+    font-family: var(--ds-font-ui);
+    font-size: var(--ds-fs-btn);
+    font-weight: var(--ds-fw-btn);
+    line-height: var(--ds-lh-tight);
+    color: var(--ds-text);
+    background: var(--ds-control-bg);
+    border: 1px solid var(--ds-control-border);
+    border-radius: var(--ds-radius-input);
+    cursor: pointer;
+    transition: background var(--btn-dur-state) var(--ds-ease-std),
+                border-color var(--btn-dur-state) var(--ds-ease-std),
+                color var(--btn-dur-state) var(--ds-ease-std),
+                opacity var(--btn-dur-state) var(--ds-ease-std),
+                transform var(--btn-dur-press) var(--ds-ease-std);
+  }
+}
+
+.ds-btn--primary {
+  color: var(--btn-primary-ink);
+  background: var(--btn-primary-bg);
+  border-color: var(--btn-primary-bg-hover);
+}
+.ds-btn--danger { color: var(--ds-danger-icon); background: transparent; border-color: transparent; }
+/* hover 两态：底色升一档（触屏无 hover ⇒ 包在媒体查询里，按下态照样可见） */
+@media (hover: hover) {
+  .ds-btn:hover { background: var(--ds-control-bg-hover); }
+  .ds-btn--primary:hover { background: var(--btn-primary-bg-hover); border-color: var(--btn-primary-bg-hover); }
+  .ds-btn--danger:hover { background: var(--ds-etched-bg); }
+}
+/* 按下：底色再深一档 + 极轻微缩放（主操作用墨族 active 档，次级用色阶跳档） */
+.ds-btn:active { transform: scale(var(--btn-press-scale)); }
+.ds-btn--primary:active { background: var(--btn-primary-bg-active); border-color: var(--btn-primary-bg-active); }
+.ds-btn--danger:active { color: var(--btn-danger-ink); border-color: var(--btn-danger-stroke); }
+/* 键盘焦点：描边环（不用 box-shadow —— 环是「线」不是「影」） */
+.ds-btn:focus-visible {
+  outline: var(--btn-ring-w) solid var(--btn-ring);
+  outline-offset: var(--btn-ring-offset);
+}
+/* 禁用：只降不透明 + not-allowed */
+.ds-btn:disabled,
+.ds-btn[aria-disabled="true"] {
+  opacity: var(--btn-disabled-opacity);
+  cursor: not-allowed;
+}
+.ds-btn:disabled:active { transform: none; }
+/* 减少动效偏好：缩放换透明度（反馈不撤销，只换通道） */
+@media (prefers-reduced-motion: reduce) {
+  .ds-btn:active { transform: none; opacity: var(--btn-press-fade); }
+}
+
+/* ①b 转回合按钮（send / stop）：**主会话与 Canvas Ask 面板同一组件**
+   ── ui-unification-20261103-canvas-ask-resize（作者令「同一组件/同一 design-system
+      令牌，不得另做一套」）──
+   形态 = 作者 2026-11-03 10:11 ③ 裁定的**圆形旧版**：36×36 正圆 / r50% / 零横向
+   padding / 图标 18px 圆内切换（send 纸飞机 ⇄ stop 方块）。两态几何逐值相等，
+   主次只由配色表达 —— 尺寸永远不承担语义。
+   消费面（两处，零第二套）：
+     · 主会话  index.html `#send-btn` / `#stop-btn`（+ `.ds-turn-btn`）
+     · 面板    js/askDock.js `.ask-send` / `.ask-stop`（+ `.ds-turn-btn`）
+   `.ask-send` / `.ask-stop` 在 ask.css 里**已无任何规则**（纯身份钩子，供既有
+   spec 定位）；一切形态来自本块 ⇒ 「同名类改一处两边同时改」。
+   热区：`::after` 外扩到 --ds-turn-hit 44（本体 36 时 inset -4；本体 ≥44 的手机层
+   48 用 min() 收到 0 —— 不外溢到邻居钮，busy↔idle 显隐互换时热区与几何都对称）。 */
+.ds-turn-btn {
+  position: relative;
+  width: var(--ds-turn-btn-size);
+  height: var(--ds-turn-btn-size);
+  min-width: var(--ds-turn-btn-size);
+  min-height: var(--ds-turn-btn-size);
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: background-color var(--ds-dur-hover) var(--ds-ease-std),
+              border-color var(--ds-dur-hover) var(--ds-ease-std);
+}
+.ds-turn-btn svg {
+  width: var(--ds-turn-btn-icon);
+  height: var(--ds-turn-btn-icon);
+  stroke-width: var(--ds-turn-btn-stroke);
+  pointer-events: none;
+}
+.ds-turn-btn::after {
+  content: '';
+  position: absolute;
+  border-radius: 50%;
+  /* 本体 < 44 ⇒ 负 inset 外扩；本体 ≥ 44 ⇒ 收到 0（不减缩、不外溢） */
+  inset: min(0px, calc((100% - var(--ds-turn-hit)) / 2));
+}
+.ds-turn-btn:focus-visible { outline: 2px solid var(--ds-focus-ring); outline-offset: 2px; }
+/* 发送档：微信绿实底（--ctl-send-* 一跳别名，亮暗同值） */
+.ds-turn-btn--send {
+  background: var(--ds-turn-send-bg);
+  color: var(--ds-turn-send-ink);
+  border-color: var(--ds-turn-send-border);
+}
+@media (hover: hover) {
+  .ds-turn-btn--send:hover {
+    background-color: var(--ds-turn-send-bg-hover);
+    border-color: var(--ds-turn-send-bg-hover);
+  }
+}
+
+.ds-turn-btn--send:active {
+  background-color: var(--ds-turn-send-bg-active);
+  border-color: var(--ds-turn-send-bg-active);
+}
+/* 中断档：红实底白标；**默认隐**（idle 由发送钮在位），busy 由
+   input/composer.js applyTurnChrome 以内联 display:flex 上位 —— 显隐单点仍在
+   状态机，与主会话 #stop-btn 同一实现（本类的 display:none 是两处共用的初始态，
+   消费面不再各写一份）。 */
+.ds-turn-btn--stop {
+  background: var(--ds-turn-stop-bg);
+  color: var(--ds-turn-stop-ink);
+  border-color: transparent;
+  display: none;
+}
+@media (hover: hover) {
+  .ds-turn-btn--stop:hover { background: var(--ds-turn-stop-bg-hover); }
+}
+
+/* 禁用 / 掉线两档**不在此层**：它们是主会话输入条的状态语义（空正文闸 / 未连接），
+   消费面 `#send-btn:disabled` / `#send-btn.disconnected`（input.css，ID 特异性）
+   继续独占——Canvas Ask 面板的发送钮不存在这两态，把它抬到组件层等于给面板凭空
+   加两档不存在的状态。组件层只管**形态与两态配色**。 */
+
+/* ①c 面板拖柄（Canvas Ask 面板拖拽改尺寸；同批）
+   ── 作者令：「允许用户交互拖拽调整对话框大小（拖柄可见、热区 ≥44px，按 Apple
+      HIG）」──
+   热区 = 元素本体 44×44（`--ds-resize-hit`），**不靠 ::after 外扩**：HIG 要的是
+   「可点面积」，而拖拽件的外扩伪元素在 pointer capture 下会与相邻元素抢命中；
+   本体即热区 ⇒ `getBoundingClientRect()` 直接达标（判据里的 fallback 无隐患）。
+   可见抓手 18×18 在热区正中（视觉轻、命中重）。静息半透明（不争焦点），
+   hover / 键盘聚焦 / 拖拽中三态同档提亮，全部走 --ds-resize-* 槽。
+   本块只给**形**：落位（left/top）、上下限计算、指针状态机都在消费面
+   （js/askDock.js + css/ask.css），桌面与手机同一实现、零分叉。 */
+.ds-resize-handle {
+  position: absolute;
+  width: var(--ds-resize-hit);
+  height: var(--ds-resize-hit);
+  padding: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  cursor: nwse-resize;
+  touch-action: none;
+  /* 命中盒（44×44）保持整块；可见形态交给抓手伪元素 ⇒ 本体背景/描边保持透明
+     （作者令 2026-11-04 12:52「调整 Ask 窗口大小的控件改成一个直角左上角的
+     直角弧度」——旧 10px 圆角方块/抓手圆芯片随本批退役）。 */
+  border-radius: 0;
+  border: none;
+  background: transparent;
+  color: var(--ds-resize-ink);
+  opacity: 0.55;
+  z-index: 3;
+  transition: opacity var(--ds-dur-hover) var(--ds-ease-std),
+              color var(--ds-dur-hover) var(--ds-ease-std);
+}
+.ds-resize-handle:hover,
+.ds-resize-handle:focus-visible,
+.ds-resize-handle[data-resizing='true'] {
+  opacity: 1;
+  color: var(--ds-resize-ink-active);
+  outline: none;
+}
+/* 可见形态 = 左上角直角弧（L 形拐角 + 拐角圆角）：两条边臂沿面板上缘/左缘
+   走到 18px 处收头，拐角 7px 圆角（--ds-radius-chip 档）。紧贴面板外缘
+   （面板自带 12px 圆角，直角臂正好叠在玻璃边上、视觉与面板一体）。
+   hover/拖拽态只提亮（color 加深一档），不改几何。
+   ── 单小边框批（作者令 2026-11-05 09:32）──
+   本弧是**唯一**的可见描边。旧态在同一角上还叠着一族 `.ds-resize-grip > i`
+   （三枚 L 形、各 translate 2/4/6px、opacity 递减）——那三枚与这条弧共四条
+   线糊成「叠起来的正方形」，本批整族退役（规则与 DOM 节点同时摘除）：
+   「只要一个小边框就行」。 */
+.ds-resize-handle::before {
+  content: '';
+  position: absolute;
+  /* 臂原点 = 面板左上角在把手盒内的坐标（桌面把手外挂 14px ⇒ 臂落 14/14；
+     手机内挂 ⇒ 0/0）。由宿主面按落位声明，本件不猜。 */
+  left: var(--ds-resize-arm-x, 0);
+  top: var(--ds-resize-arm-y, 0);
+  width: var(--ds-resize-grip, 18px);
+  height: var(--ds-resize-grip, 18px);
+  pointer-events: none;
+  border-top: 2px solid currentColor;
+  border-left: 2px solid currentColor;
+  border-top-left-radius: 7px;
+}
+/* `.ds-resize-grip` 族退役（2026-11-05 09:32）。保留本注释只为让「曾经存在
+   第 2/3/4 条线」这件事在源码里可追溯：askDock.js 的把手 DOM 已只渲染
+   `::before` 这一条弧，grip 的 span/i 结构不再创建。 */
+
+
+/* ② 行：静息无边框盒，hairline 分隔，hover 只做底色 wash（平面族）——
+   热区 44px 起，可点行整行命中（点击目标 = 行本身，不是行内某个 span）。 */
+.ds-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ds-space-2);
+  min-height: var(--ds-row-min-h);
+  padding: var(--ds-row-pad);
+  border-bottom: 1px solid var(--ds-border-hairline);
+  font-size: var(--ds-fs-body);
+  line-height: var(--ds-lh-body);
+  color: var(--ds-text);
+}
+.ds-row:last-child { border-bottom: none; }
+.ds-row--link { cursor: pointer; width: 100%; text-align: left; background: none; border-left: 0; border-right: 0; border-top: 0; font-family: inherit; }
+.ds-row--link:hover { background: var(--color-frame-hover); }
+.ds-row__label { font-size: var(--ds-fs-body); color: var(--ds-text); }
+.ds-row__value { font-size: var(--ds-fs-hint); color: var(--ds-text-muted); font-variant-numeric: tabular-nums; }
+
+/* ③ 徽标 pill：tint 底 + 25% 边，字**中性**（色在图标/底上，SKILL.md §1.3）。 */
+.ds-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space-1);
+  padding: var(--ds-space-hair) var(--ds-space-2);
+  font-size: var(--ds-fs-meta);
+  font-weight: var(--ds-fw-btn);
+  line-height: var(--ds-lh-tight);
+  color: var(--ds-status-word);
+  border: 1px solid var(--ds-border);
+  border-radius: var(--ds-radius-badge);
+  background: var(--ds-etched-bg);
+  white-space: nowrap;
+}
+.ds-badge[data-tone="ok"] { border-color: rgb(var(--brand-green) / 0.25); background: rgb(var(--brand-green) / 0.10); }
+.ds-badge[data-tone="warn"] { border-color: rgb(var(--amber) / 0.25); background: rgb(var(--amber) / 0.12); }
+.ds-badge[data-tone="err"] { border-color: rgb(var(--sapphire) / 0.20); background: var(--ds-etched-bg); }
+
+/* ④ 输入：形态 + 焦点态归 css/inputSurface.css（输入面唯一标准批 2026-11-06；
+   令牌 = stand-tokens.css 的 --nf-field-*）。本文件只留字档与宽度。 */
+.ds-input {
+  width: 100%;
+  padding: var(--ds-input-pad);
+  font-family: var(--ds-font-ui);
+  font-size: var(--ds-fs-body);
+  line-height: var(--ds-lh-body);
+  color: var(--ds-text);
+}
+.ds-input::placeholder { color: var(--ds-text-muted); }
+
+/* ⑤ 卡：平面族面板内卡（radius 14，无影，hairline 边）。 */
+.ds-card {
+  background: var(--ds-surface);
+  border: 1px solid var(--ds-border-hairline);
+  border-radius: var(--ds-radius-card-md);
+  padding: var(--ds-space-3) var(--ds-space-4);
+  box-shadow: var(--ds-shadow-flat);
+}
+.ds-card__title {
+  font-size: var(--ds-fs-title);
+  font-weight: var(--ds-fw-title);
+  line-height: var(--ds-lh-title);
+  color: var(--ds-text-bright);
+  margin-bottom: var(--ds-card-gap);
+}
+
+/* ⑥ 小节标签（meta 档 uppercase）——面板分组的标题语言。 */
+.ds-section-label {
+  font-size: var(--ds-fs-meta);
+  font-weight: var(--ds-fw-body);
+  letter-spacing: var(--ds-ls-label);
+  text-transform: uppercase;
+  color: var(--ds-text-muted);
+}
+
+/* ══ ⑦ 工具卡族（.ds-tool-card）——聊天流「执行命令 — N 行输出」卡片 ══════
+   ui-unification-20261103-chat-stream：**样式唯一家**。chat.css 旧 .tool-card
+   亮/暗档整段退役（含 #ask-indicator 之外的 pop-stack 无关段不动）。
+   钩子契约：渲染腿 emit `class="tool-card ds-tool-card"`——.tool-card 保留为
+   DOM 寻址钩子（main.js 换面 / chatSearch / turnGroup / spec），零样式。
+   折叠语义（密度收敛核心）：.ds-tool-card__preview = 默认可见 ≤8 行预览 +
+   __toggle 明确展开/收起控件（aria-expanded 联动）；.body = 全文槽（遗留 hook，
+   折叠态空壳隐藏——toolline-detail-stream 断言它存在且不可见；全文只在展开
+   瞬间由 utils.js attachToolClick 注入，收起即卸）。
+   主题：全槽语义令牌（暗档自动解析，chat.css 暗档块同批退役）；滚动条墨色 =
+   color-mix(--ds-text 15%)（亮暗自适，替代旧 rgba 黑/白双写）。 */
+.ds-tool-card {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ds-space-1);
+  max-width: var(--ds-toolcard-max-w);
+  padding: var(--ds-card-pad-compact);
+  font-family: var(--ds-font-mono);
+  font-size: var(--ds-fs-hint);
+  border-radius: var(--ds-radius-card-sm);
+  background: var(--ds-etched-bg);
+  color: var(--ds-text);
+  cursor: pointer;
+  /* 越界闸（tool-card-image-face 批 2026-11-04）：卡内任何子元素的外接矩形
+     都不许越出卡壳——越界内容裁掉（卡体自身永不「漏」到流里）。子级滚动
+     容器（.body.open）在自己的盒内照常滚动。 */
+  overflow: hidden;
+  transition: background var(--ds-dur-hover) var(--ds-ease-std);
+}
+.ds-tool-card:hover,
+.ds-tool-card--pending { background: var(--ds-control-bg-hover); }
+.ds-tool-card .icon { flex-shrink: 0; margin-top: var(--ds-space-hair); }
+.ds-tool-card .icon.ok { color: var(--ds-success-icon); }
+.ds-tool-card .icon.err { color: var(--ds-danger-icon); }
+.ds-tool-card .spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid color-mix(in srgb, var(--ds-accent) 25%, transparent);
+  border-top-color: var(--ds-accent);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  display: inline-block;
+}
+.ds-tool-card .content { flex: 1; min-width: 0; }
+.ds-tool-card .label {
+  color: var(--ds-text-muted);
+  font-size: var(--ds-fs-hint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* 过程泄漏修复批（2026-11-04）：label 行恒单行——超长参数省略号截断，
+     第二行（"Tool(args)\n  (detail)" 的参数行）进展开面（mountToolFold）。 */
+  white-space: nowrap;
+}
+.ds-tool-card .label .tool-detail { color: var(--ds-text-dim); font-size: var(--ds-fs-meta); }
+/* 设备角标：旧「金属渐变字」收编语义档（muted→dim→muted），三色随主题。 */
+.ds-tool-card .label .tool-device-tag {
+  display: inline-block;
+  font-size: var(--ds-fs-meta);
+  font-weight: var(--ds-fw-btn);
+  font-style: italic;
+  font-family: var(--ds-font-mono);
+  letter-spacing: 0.3px;
+  background: linear-gradient(135deg, var(--ds-text-muted), var(--ds-text-dim), var(--ds-text-muted));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin-left: var(--ds-space-2);
+  padding: 0 var(--ds-space-half);
+  vertical-align: 1px;
+  white-space: nowrap;
+  user-select: none;
+  opacity: 0.85;
+}
+
+/* ── 卡体：单行摘要面（默认可见）与全文槽（.body）─────────────────────────
+   过程泄漏修复批（作者令 2026-11-04 14:14 · 问题②）：默认面 = **一行摘要**
+   （icon 状态 + label 首行「工具名 — 单行关键参数」+ 失败状态词 + 图片引用件）。
+   改前（6f6b6a81d）这里是「≤8 行预览 + 命令全文 + 展开控件」，实测 Bash 卡
+   previewHeight=264px / cardHeight=297px，作者「还没点击，内容和结果就已经很长」。
+   正文/结果默认不进 DOM（utils.mountToolCardBody 懒装配）——所以本文件的默认面
+   只有摘要行：可见正文高度恒为 0。超长参数一行省略号截断（nowrap + ellipsis），
+   label 第二行（参数行）被单行壳裁掉，展开面随 mountToolFold 回归（内容不丢）。 */
+.ds-tool-card .ds-tool-card__preview {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-1);
+  min-width: 0;
+  max-width: 100%;
+  /* 单行硬闸：一行文案 + 内联 chip，多出来的（label 第二行）裁掉 */
+  overflow: hidden;
+}
+.ds-tool-card .ds-tool-card__preview .label {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ds-tool-card .ds-tool-card__preview .tool-img-ref,
+.ds-tool-card .ds-tool-card__preview .ds-tool-card__status { flex: 0 0 auto; }
+/* 失败状态词（摘要行要看得出成败；成功由 .icon.ok 承载，不加字） */
+.ds-tool-card__status {
+  font-family: var(--ds-font-ui);
+  font-size: var(--ds-fs-meta);
+  font-weight: var(--ds-fw-btn);
+  color: var(--ds-danger-icon);
+  white-space: nowrap;
+}
+.ds-tool-card .body {
+  color: var(--ds-text);
+  font-size: var(--ds-fs-meta);
+  margin-top: var(--ds-space-1);
+  display: none;
+  background: var(--ds-surface);
+  border-radius: var(--ds-radius-badge);
+  padding: var(--ds-space-1) var(--ds-space-2);
+}
+.ds-tool-card .body.open {
+  display: block;
+  max-height: 55vh;
+  overflow-y: auto;
+  overflow-x: auto;
+}
+.ds-tool-card .body.open::-webkit-scrollbar-track { background: transparent; }
+.ds-tool-card .body.open::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--ds-text) 15%, transparent);
+  border-radius: var(--ds-radius-badge);
+}
+.ds-tool-card pre {
+  margin: 0;
+  font-size: var(--ds-fs-meta);
+  line-height: 1.4;
+  scrollbar-color: color-mix(in srgb, var(--ds-text) 15%, transparent) transparent;
+}
+.ds-tool-card pre.tool-body-pre { white-space: pre; }
+/* 预览面折行（同批）：预览是「摘要读数」不是逐字文档——长行折行而非横向溢出
+   （越界闸之上的第二道，内容仍可读）。展开态全文槽保留 `white-space: pre` +
+   .body.open 自身的横向滚动（逐字保真，作者手势不变）。 */
+.ds-tool-card .ds-tool-card__preview pre.tool-body-pre { white-space: pre-wrap; word-break: break-all; }
+.ds-tool-card pre.hljs {
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  overflow: visible;
+}
+.ds-tool-card pre.hljs code.hljs { background: transparent; padding: 0; }
+.ds-tool-card pre::-webkit-scrollbar-track { background: transparent; }
+.ds-tool-card pre::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--ds-text) 15%, transparent);
+  border-radius: var(--ds-radius-badge);
+}
+.ds-tool-card pre::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--ds-text) 25%, transparent);
+}
+.ds-tool-card .diff-line { display: flex; gap: var(--ds-space-1); }
+.ds-tool-card .diff-line:hover { background: var(--ds-veil-focus); }
+.ds-tool-card .diff-lineno { color: var(--ds-text-dim); min-width: 28px; text-align: right; user-select: none; }
+.ds-tool-card .diff-add { color: var(--ds-success-icon); background: color-mix(in srgb, var(--ds-success-icon) 12%, transparent); }
+.ds-tool-card .diff-del { color: var(--ds-danger-icon); background: color-mix(in srgb, var(--ds-danger-icon) 12%, transparent); }
+.ds-tool-card .diff-content { flex: 1; }
+.ds-tool-card .detail-cmd {
+  color: var(--ds-text-muted);
+  font-size: var(--ds-fs-meta);
+  border-bottom: 1px solid var(--ds-border-hairline);
+  padding-bottom: var(--ds-space-1);
+  margin-bottom: var(--ds-space-1);
+  /* 越界闸之二（tool-card-image-face 批 2026-11-04）：命令/参数行含无断点长串
+     （base64、一行式脚本、git patch）时逐字溢出卡壳 2000px 级——真读数见批文档
+     §改前。断行闸打在这里：内容自己收进盒内，不靠外层裁切。 */
+  overflow-wrap: anywhere;
+}
+.ds-tool-card .delegate-prompt {
+  border-bottom: 1px solid var(--ds-border-hairline);
+  padding-bottom: var(--ds-space-1);
+  margin-bottom: var(--ds-space-1);
+}
+.ds-tool-card .delegate-prompt-label {
+  display: inline-block;
+  font-size: var(--ds-fs-meta);
+  font-weight: var(--ds-fw-btn);
+  color: var(--ds-text-muted);
+  text-transform: uppercase;
+  letter-spacing: var(--ds-ls-label);
+  margin-bottom: var(--ds-space-half);
+}
+.ds-tool-card .delegate-prompt > pre {
+  margin: 0;
+  font-size: var(--ds-fs-meta);
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--ds-text);
+}
+
+/* ── 折叠控件：过程泄漏修复批（2026-11-04）退役 .ds-tool-card__toggle ──────
+   默认面改单行摘要后，展开控件（第二个可见行）不再存在：整卡可点 + 摘要行
+   aria-expanded + title 提示承载同一语义（attachToolClick 维持 aria/title 联动），
+   卡内点击=展开全文、再点收回，语义与改前一致。 */
+
+/* ── Mail 工具：卡内 markdown 正文（自 chat.css 迁入本族，色面走语义档）── */
+.ds-tool-card .tool-mail-msg { font-size: var(--ds-fs-body); line-height: var(--ds-lh-body); color: var(--ds-text); }
+.ds-tool-card .tool-mail-msg p { margin: var(--ds-space-1) 0; }
+.ds-tool-card .tool-mail-msg p:first-child { margin-top: 0; }
+.ds-tool-card .tool-mail-msg p:last-child { margin-bottom: 0; }
+.ds-tool-card .tool-mail-msg ul, .ds-tool-card .tool-mail-msg ol { margin: var(--ds-space-1) 0 var(--ds-space-1) var(--ds-space-5); padding: 0; }
+.ds-tool-card .tool-mail-msg li { margin: var(--ds-space-half) 0; }
+.ds-tool-card .tool-mail-msg code {
+  background: color-mix(in srgb, var(--ds-text) 5%, transparent);
+  padding: var(--ds-space-hair) var(--ds-space-1);
+  border-radius: var(--ds-radius-badge);
+  font-size: var(--ds-fs-meta);
+  font-family: var(--ds-font-mono);
+}
+.ds-tool-card .tool-mail-msg pre {
+  background: color-mix(in srgb, var(--ds-text) 5%, transparent);
+  padding: var(--ds-space-2) var(--ds-space-3);
+  border-radius: var(--ds-radius-input);
+  overflow-x: auto;
+  font-size: var(--ds-fs-hint);
+  margin: var(--ds-space-1) 0;
+}
+.ds-tool-card .tool-mail-msg pre code { background: none; padding: 0; }
+.ds-tool-card .tool-mail-msg blockquote {
+  border-left: 3px solid var(--ds-border-hairline);
+  margin: var(--ds-space-1) 0;
+  padding-left: var(--ds-space-2);
+  color: var(--ds-text-muted);
+}
+.ds-tool-card .tool-mail-msg strong { font-weight: var(--ds-fw-title); }
+/* 链接蓝化同登记项（chat 链接全面蓝化，与 .bubble.ai a 同 token 同源）。 */
+.ds-tool-card .tool-mail-msg a { color: rgb(var(--sapphire)); }
+
+/* ── 卡内图片引用件（tool-card-image-face 批 2026-11-04）───────────────
+   语义：工具卡 = 摘要面（命令/参数 + 行数 + 状态）。图片**绝不内嵌渲染**——
+   md 图片语法与漏网 <img> 一律折叠成这枚引用件（utils.js foldToolCardMedia /
+   splitToolBodyImages 单点），点击走灯箱（lightbox.js 唯一出口）。
+   兜底闸：任何路径漏进来的 <img> 在卡内一律不渲染（新腿零回归成本）。 */
+.ds-tool-card img { display: none; }
+.ds-tool-card .tool-img-ref {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  margin: var(--ds-space-hair) 0;
+  padding: var(--ds-space-hair) var(--ds-space-2);
+  font-family: var(--ds-font-ui);
+  font-size: var(--ds-fs-meta);
+  line-height: var(--ds-lh-tight);
+  color: var(--ds-text-muted);
+  background: var(--ds-control-bg-hover);
+  border: none;
+  border-radius: var(--ds-radius-badge);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background var(--ds-dur-hover) var(--ds-ease-std), color var(--ds-dur-hover) var(--ds-ease-std);
+}
+.ds-tool-card .tool-img-ref:hover { color: var(--ds-text); background: var(--ds-veil-focus); }
+.ds-tool-card .tool-img-ref:focus-visible { outline: 2px solid var(--ds-focus-ring); outline-offset: 1px; }
+
+/* ══ ⑧ 侧栏族（.ds-side-*）——ui-unification-20261103-sidebar ═══════════
+   侧栏导航项的**形态唯一家**：行基座 / 紧凑树行 / 行主文案 / 行 meta /
+   小节标签 / 图标钮 / 行内危险钮。字阶、间距、热区、激活态四轴全部取 --ds-*。
+
+   钩子契约（照 .tool-card 先例）：渲染腿 emit `class="session-item ds-side-row"`
+   —— 旧 class（.session-item/.folder-item/.session-name/...）保留为 **DOM 寻址
+   钩子**（js/sidebar.js 的 querySelector 与既有 E2E 全兼容），形状零复制；
+   `.ds-side-*` 是样式唯一来源。状态钩子 .active/.pinned/.selected/.drag-over
+   同理保留（JS 只 toggle 状态，不画形态）。
+
+   热区两档（SKILL.md §8）：会话行 = --ds-hit-row 44px（触控下限）；树/文件行 =
+   --ds-hit-control 32px（桌面指针档）。侧栏会话列表 DOM 已随单会话架构退役
+   （sidebar.js「Session list DOM removed in single-session architecture」），
+   故树行 28px→32px 的档位补齐在运行时零可见位移。
+
+   主题：四态全是语义令牌（令牌层自适应）⇒ sidebar.css 里两处
+   prefers-color-scheme 暗档双写（.session-ctx-menu / .ctx-submenu）退役。 */
+
+/* 行基座：会话行 / 规则行 / 新建行内联 */
+.ds-side-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  min-height: var(--ds-row-min-h);
+  padding: var(--ds-row-pad);
+  border-radius: var(--ds-radius-button);
+  /* 行墨 = 面板框内正文档（--ds-text-frame = 既有 --color-frame-text；侧栏体
+     原投票值），不是主对话正文的 --ds-text 档。 */
+  color: var(--ds-text-frame);
+  font-family: var(--ds-font-ui);
+  font-size: var(--ds-fs-body);
+  line-height: var(--ds-lh-body);
+  cursor: pointer;
+  transition: background var(--ds-dur-hover) var(--ds-ease-std),
+              color var(--ds-dur-hover) var(--ds-ease-std);
+}
+.ds-side-row:hover { background: var(--ds-row-hover); }
+/* 激活态（当前会话 / 当前文件夹） */
+.ds-side-row--active { background: var(--ds-row-active); color: var(--ds-text-bright); }
+.ds-side-row--active:hover { background: var(--ds-row-hover); }
+/* 钉住态 */
+.ds-side-row--pinned { background: var(--ds-row-pinned); color: var(--ds-text-bright); }
+.ds-side-row--pinned:hover { background: var(--ds-row-hover); }
+/* 多选态（灰通道洗选，两档） */
+.ds-side-row--selected { background: var(--ds-row-selected); }
+.ds-side-row--selected:hover { background: var(--ds-row-selected-strong); }
+/* 拖拽中的行整体退淡 */
+.ds-side-row--dragging { opacity: 0.4; }
+
+/* 紧凑树行（文件夹 / 规则条目）：控制钮档热区 + 密内距 */
+.ds-side-row--tree {
+  min-height: var(--ds-hit-control);
+  gap: var(--ds-space-1);
+  padding: var(--ds-row-pad-dense);
+  border-radius: var(--ds-radius-badge);
+  color: var(--ds-text-dim);
+  font-size: var(--ds-fs-body);
+  transition: background var(--ds-dur-hover) var(--ds-ease-std),
+              color var(--ds-dur-hover) var(--ds-ease-std);
+}
+.ds-side-row--tree:hover { color: var(--ds-text-bright); }
+
+/* 行主文案（会话名 / 文件夹名）：占满余宽 + 单行省略 */
+.ds-side-title {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--ds-fs-row);
+  font-weight: var(--ds-fw-body);
+  color: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ds-side-row--tree .ds-side-title { font-size: var(--ds-fs-body); }
+.ds-side-row--active .ds-side-title { color: var(--ds-text-bright); font-weight: var(--ds-fw-btn); }
+.ds-side-row--selected .ds-side-title { color: var(--ds-text-bright); }
+
+/* 行 meta（时间 / 草稿摘要 / 路径提示）：11px 档 */
+.ds-side-meta {
+  font-size: var(--ds-fs-meta);
+  line-height: var(--ds-lh-title);
+  color: var(--ds-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 草稿档：降一档墨色 + 斜体（「未发送」语义） */
+.ds-side-meta--dim { color: var(--ds-text-dim); font-style: italic; }
+
+/* 小节/面板标题（分组头 11px 档、面板题 13px 档） */
+.ds-side-label {
+  font-size: var(--ds-fs-body);
+  font-weight: var(--ds-fw-btn);
+  letter-spacing: var(--ds-ls-label);
+  text-transform: uppercase;
+  color: var(--ds-text-muted);
+}
+.ds-side-label--meta { font-size: var(--ds-fs-meta); font-weight: var(--ds-fw-title); user-select: none; }
+
+/* 图标钮（面板动作档 24px）：描边玻璃、hover 抬亮 */
+.ds-side-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--ds-space-6);
+  height: var(--ds-space-6);
+  padding: 0;
+  font-family: inherit;
+  font-size: var(--ds-fs-body);
+  line-height: var(--ds-lh-tight);
+  color: var(--ds-text-muted);
+  background: none;
+  border: var(--ds-border-width) solid var(--ds-border-glass);
+  border-radius: var(--ds-radius-input);
+  cursor: pointer;
+  opacity: 0.7;
+  transition: background var(--ds-dur-hover) var(--ds-ease-std),
+              border-color var(--ds-dur-hover) var(--ds-ease-std),
+              color var(--ds-dur-hover) var(--ds-ease-std),
+              opacity var(--ds-dur-hover) var(--ds-ease-std);
+}
+@media (hover: hover) {
+  .ds-side-icon-btn:hover {
+    background: var(--ds-row-hover);
+    border-color: var(--ds-text-muted);
+    color: var(--ds-text-bright);
+    opacity: 1;
+  }
+}
+
+
+/* 行内危险钮（删除会话 / 删除文件夹）：静息不可见，行 hover 现身，hover 转危险色 */
+.ds-side-danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--ds-space-5);
+  height: var(--ds-space-5);
+  padding: 0;
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--ds-text-muted);
+  border-radius: var(--ds-radius-badge);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--ds-dur-hover) var(--ds-ease-std),
+              color var(--ds-dur-hover) var(--ds-ease-std);
+}
+.ds-side-row:hover .ds-side-danger { opacity: 1; }
+.ds-side-danger:hover { color: var(--ds-danger-icon); }
+.ds-side-danger svg { width: 14px; height: 14px; }
+/* ══ ⑨ 叠卡卡族（.ds-media-stack / .ds-media-card）——ui-unification-20261103-canvas-overlay ══
+   叠卡（Pop 媒体卡：微信式「前卡 + 右侧露边两层」）的**形态唯一家**：栈区 /
+   展开钮 / 折叠卡脸 / 展开面 / 媒体卡层。此前形与态混在 chat.css「media stack」
+   段一处；本批形迁本层，态留在 chat.css。
+
+   钩子契约（照 .tool-card / .ds-side-row 先例）：渲染腿 popArtifacts.js emit
+   `class="pop-stack-area ds-media-stack"` / `"pill ds-media-stack__pill"` /
+   `"pop-stack-view ds-media-stack__view"` / `"pop-expand-view ds-media-stack__expand"` /
+   `"media-layer ds-media-card"` —— 旧 class 保留为 **DOM 寻址钩子**（msgQuote.js 的
+   `.pop-stack-area` 查询、messages.js/smartCrop.js 的 `.media-layer` 查询、friends.css
+   宿主镜像 `.fm-msg .pop-stack-area`、以及 canvas-stack 等既有 spec 全兼容），
+   形状零复制。
+
+   留在 chat.css 的是**态与机制**（不是形）：layer-front/mid/back 扇形变换、
+   is-buried 隐没、dragging 光标与过渡关闭、展开列逐张 own-ratio 排版、栈内
+   object-fit 裁切域、引用高亮一次闪光。判据 = 「形是否随主题/尺度换值」——
+   换值的进本层，只做状态切换的留消费面。
+
+   主题：卡面材质/四态全槽语义令牌（暗档自动解析 —— chat.css 暗档里
+   `.media-layer` 与 `.pop-stack-area .pill` 的亮暗双写同批退役）。 */
+.ds-media-stack {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-4);
+  transition: height var(--ds-dur-stack) var(--ds-ease-panel);
+}
+/* 展开钮（「展开 N」）：灰通道洗选底 + 胶囊圆角，一档 hover 抬亮。 */
+.ds-media-stack__pill {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  background: var(--ds-media-pill-bg);
+  color: var(--ds-text);
+  border: none;
+  border-radius: var(--ds-radius-pill);
+  padding: var(--ds-media-pill-pad);
+  font-size: var(--ds-fs-body);
+  font-weight: var(--ds-fw-btn);
+  font-family: inherit;
+  cursor: pointer;
+  user-select: none;
+  transition: background var(--ds-dur-hover), transform var(--ds-dur-micro);
+}
+@media (hover: hover) {
+  .ds-media-stack__pill:hover { background: var(--ds-media-pill-bg-hover); }
+}
+
+.ds-media-stack__pill:active { transform: scale(0.95); }
+/* 折叠卡脸：ONE fixed WeChat-style face — 220×280 (11:14)，一切入口无论自身
+   比例都裁到同一张脸上（卡面尺度单源 = --ds-media-face-w）。 */
+.ds-media-stack__view {
+  position: relative;
+  width: var(--ds-media-face-w);
+  aspect-ratio: 11 / 14;
+  flex-shrink: 0;
+  touch-action: pan-y;
+}
+/* 展开列容器（逐张 own-ratio：宽度同卡脸档，纵向自然高）。 */
+.ds-media-stack__expand {
+  display: none;
+  flex-direction: column;
+  gap: var(--ds-space-5);
+  width: var(--ds-media-face-w);
+  flex-shrink: 0;
+}
+/* 媒体卡层（折叠前卡与展开行共用基形）：卡脸圆角 + 卡影 + 留黑底。 */
+.ds-media-card {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--ds-radius-card-md);
+  overflow: hidden;
+  box-shadow: var(--ds-shadow-media-card);
+  cursor: pointer;
+  background: var(--ds-media-letterbox);
+  transition: transform var(--ds-dur-stack) var(--ds-ease-panel),
+              filter var(--ds-dur-stack) var(--ds-ease-panel);
+}
+
+/* ══ ⑩ 弹层层族（.ds-overlay / .ds-layer）——ui-unification-20261103-overlays ══
+   ⑦⑧ 两面的**层形唯一家**：遮罩承接层（层级带 + 遮罩底色）与浮层玻璃壳
+   （圆角 + 入场动效）。材质不在本族：玻璃配方（--glass-* 底 + blur +
+   --cv-saturate / --glass-border / --cv-shadow 三档栈影 + 面级折射线）**仍由
+   css/glass.css 面级浮件档单源供给**——--cv-* 玻璃系本就是弹层层级的既有
+   材质单源，继续有效；本族只持形：层级 / 遮罩 / 圆角 / 入场动效。
+
+   钩子契约（照 .tool-card / .ds-side-row / .ds-media-stack 先例）：
+   · 遮罩层 emit `class="ds-overlay"`（#modal-overlay 叠 `ds-overlay--top`
+     进确认族顶带；workspacePicker / projectTab 两腿 emit
+     `wsp-overlay ds-overlay`）。
+   · 浮层壳 emit `class="ds-layer"`（index.html 六盒 + model-panel /
+     wsp-panel / proj-create-panel 三条 JS 腿）。
+   · 旧 id/class 保留为 **DOM 寻址钩子**（modal.js 的 .on / .takeover-blur
+     切换、focusTrap、mobileLayer 铺平块、既有 spec 全兼容），形零复制。
+   · display 显隐机制留在消费面 modal.css（display:none → .on 显）：本族
+     **不声明 display**——遮罩开关仍由 id 选择器（特异性 100 > 本族 10）单点
+     决定，族在线只是把形交给它，零叠加副作用。
+   · 命令面板（Monaco QuickInput）是内核生成件（不可挂类），按令牌消费同族值
+     （keyboard.css：--ds-radius-card-md / --ds-shadow-palette / --ds-z-quickinput）。
+
+   @keyframes modalIn 自 modal.css 迁来（secrets / social / chat / mobileLayer
+   六处外部消费方按名字引用它；键帧全局解析、与加载序无关 ⇒ 迁址零破面，
+   单点在此）。 */
+.ds-overlay {
+  position: fixed;
+  inset: 0;
+  align-items: center;
+  justify-content: center;
+  background: var(--ds-overlay);   /* 恒透明（弹窗禁遮罩），只承接点击 */
+  z-index: var(--ds-z-overlay);
+}
+/* 确认族顶带（#modal-overlay：任何面板内触发的 confirm 都压在最上） */
+.ds-overlay--top { z-index: var(--ds-z-modal); }
+
+/* 浮层玻璃壳：形 = 圆角（弹窗外壳全站统一值 20px）+ 入场动效（modalIn 家族）。 */
+.ds-layer {
+  position: relative;   /* 壳顶缘折射线（glass.css 面级浮件档 ::before）定位基座 */
+  border-radius: var(--ds-radius-shell);
+  animation: modalIn var(--ds-dur-layer) var(--ds-ease-enter);
+}
+
+/* ── 悬浮 chrome 带（手机端「零视觉底」带）──
+   ui-unification-20261103-mobile-canvas-topbar（作者令 2026-11-03，实拍 IMG_1718/1719）：
+   「顶栏不要有一个明显的边缘，而是能让文字从下方穿过，呈现出一种胶囊和按钮悬浮在
+   上面、正好可以显示它们毛玻璃效果的感觉……这个设计思路其实跟我们的主对话窗口是一样的」。
+   语义 = 顶栏带本体**不存在**：带只是控件的定位上下文，自己不画任何东西 ——
+   无底色块 / 无分割线 / 无阴影 / 无渐变遮条；滚动态正文直接从带底下穿过，视觉层次
+   只由控件自己的毛玻璃承载（.g2-fab 圆钮 / .mf-strip-chip::after 胶囊）。
+   成员（全部手机层，JS 挂类、既有类名零改动 —— 一处定义，处处引用）；
+   各族规则只留**差异档**（高度 / z 序 / 子件几何）：
+     · #mobile-fab-layer   聊天根双钮带（chatChrome.js）
+     · .mobile-page-header 详情页返回钮带（navController.js）
+     · .mf-cv-toolbar      canvas 页 ✕ / 层叠钮带（navController.js）
+     · .mf-strip           canvas 环标签带（同文件；高 72 自持 —— 签位/mask 几何用）
+   交互：pointer-events:none ⇒ 带区手势一律落穿到下方滚动面（从顶栏起手也能滚）；
+   子件自接事件（圆钮 / 签各自 pointer-events:auto，见各面规则）。
+   几何注：top/left/right 贴齐定位上下文；本类**不定高**（零高带 vs 72px 环带由
+   消费面声明），也**不定 z 序**（聊天根 30 / 页头与 canvas 带 20 = 既有层带读数）。
+   初态让位同族单源 = 手机层 --mchrome-clear（簇顶 16 + 钮 48 + 呼吸 8），消费点见
+   split.css .canvas-viewer-safe-top 手机档与 mobileLayer.css 标题盒。 */
+.ds-chrome-band {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  pointer-events: none;
+}
+
+/* ── 顶缘渐隐带（.ds-edge-fade）——「先糊后没」的唯一实现 ──
+   ui-unification-20261103-doc-ask-fade（作者令 2026-11-03 实拍 IMG_1720/IMG_1721）：
+   「上边缘过渡：现在上方边缘有很明显的截断。我想要的效果是像主对话窗口那样，做一个
+   慢慢渐渐隐去的消失效果来做过渡」。
+   本类是**主对话窗顶缘滚入渐隐带**（glass.css 原 `#g2-edge-fade` 材质段）的收编体。
+   成员史：①-批曾收编 Ask 面板 .ask-veil 为第二成员；2026-11-04 ask-fade-content-opacity
+   批作者裁定「渐隐应该是消息透明度渐到 0 的过程，不是放一条过渡带」⇒ .ask-veil
+   退役，Ask 渐隐改走 ask.css .ask-col 的内容级 mask（零底色零 backdrop）。本类
+   成员回归单员 = 主对话窗；两处形态自此分治。
+   材质三件（顺序不可拆，缺一件就退化成一条色带）：
+     ① veil 渐层 `--ds-fade-veil`（色 = 页面底色族 ⇒ 本身几乎不可见，作用是把内容
+        「洗掉」而不是盖一块色）；
+     ② backdrop blur+saturate `--ds-fade-blur`/`--ds-fade-sat`（内容越靠顶越糊）；
+     ③ 两段式 ease-out mask（0% 全实 → 50% 0.55 → 100% 透明）= 「先糊后没」的
+        衰减曲线本身。
+   ── 已知坑（前几轮实证，消费面必须绕开）────────────────────────────
+   ① mask × backdrop-filter **同元素**在自适应/降级路径上会被合成器架空（blur 按
+      未裁剪全幅输出）⇒ 本类的 mask 只承担「带自身的上下缘衰减」，消费面**不得**
+      再给本类叠加第二层 mask / opacity 裁剪；
+   ② mask 参与 hit-test 裁剪（alpha≈0 处整块 pointer-events 透传）⇒ 本类恒
+      `pointer-events:none`（纯视觉层），且**内容宿主绝不许挂 mask**——内容必须
+      保持可滚可点（Ask 面板原「colwrap 挂 mask」的形态即栽在这里，本批已摘）；
+   ③ mask 里的颜色只为取 alpha 通道，故用 `currentColor` + `color-mix()` 表达
+      0.55 中间档（严格面：设计体系层整文件零裸色值，见 scripts/check-design-tokens.mjs）。
+   本类**不定高**（消费面自行声明，现盘 = 聊天根 `--ds-fade-height` 88px）、
+   **不定 z 序**、**不定左右缩进** —— 由消费面声明。 */
+.ds-edge-fade {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  color: var(--ds-text);   /* 只为 mask 取 alpha（见坑③），不参与可见配色 */
+  pointer-events: none;
+  background: var(--ds-fade-veil);
+  -webkit-mask-image: linear-gradient(to bottom, currentColor 0%, color-mix(in srgb, currentColor 55%, transparent) 50%, transparent 100%);
+  mask-image: linear-gradient(to bottom, currentColor 0%, color-mix(in srgb, currentColor 55%, transparent) 50%, transparent 100%);
+}
+/* 降级（微信内置浏览器 / 旧 WebView / X5 无 backdrop-filter）：带退化为纯渐层罩，
+   渐隐语义不破（原 glass.css #g2-edge-fade 降级档逐条收编到本类单源）。 */
+@supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .ds-edge-fade {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+html.no-backdrop .ds-edge-fade {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+@keyframes modalIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* prefers-reduced-motion：全局压掉过渡（SKILL.md §6 官网同款兜底）。 */
+@media (prefers-reduced-motion: reduce) {
+  .ds-btn, .ds-input, .ds-side-row, .ds-side-icon-btn, .ds-side-danger { transition-duration: 0.01ms; }
+  /* 弹层入场同守卫（家族自带，消费面不再各写一份 reduce 块） */
+  .ds-layer { animation-duration: 0.01ms; }
+}

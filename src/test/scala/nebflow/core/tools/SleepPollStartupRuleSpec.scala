@@ -3,6 +3,7 @@ package nebflow.core.tools
 import munit.FunSuite
 import nebflow.core.project.NodeEngine
 import nebflow.shared.Defaults
+import nebflow.shared.PathUtil
 
 /**
  * sleep-poll 禁令批 C 段 spec：启动注入铁律（[[Defaults.NoSleepPollRule]]）
@@ -22,6 +23,20 @@ import nebflow.shared.Defaults
 class SleepPollStartupRuleSpec extends FunSuite:
 
   private val rule = Defaults.NoSleepPollRule
+
+  /** 临时 home + 写 `outputBlock.enabled`（prompt-face 补批两态测试缝，OB-G3 同款形态）。 */
+  private def withGate[A](enabled: Boolean)(body: => A): A =
+    val prev = PathUtil.dataRoot
+    val home = os.temp.dir(prefix = "nb-prompt-gate-")
+    PathUtil.setDataRoot(home)
+    try
+      val cfg  = PathUtil.configJsonReadPath(home)
+      val json = s"""{"outputBlock":{"enabled":$enabled}}"""
+      if os.exists(cfg) then os.write.over(cfg, json) else os.write(cfg, json)
+      body
+    finally
+      PathUtil.setDataRoot(prev)
+      os.remove.all(home)
 
   test("铁律文本三要素：禁止 sleep/轮询 + run_in_background/结束回合 + 作者门控事件处置") {
     assert(rule.contains("NEVER wait with `sleep` or polling loops"), s"forbidden clause: $rule")
@@ -101,6 +116,10 @@ class SleepPollStartupRuleSpec extends FunSuite:
   }
 
   // ── output 块语法批（作者令 2026-10-31 16:13；16:16 修订标签式）──
+  // prompt-face 补批（2026-11-01，作者令「把 output 块相关的内容先关闭」）：
+  // 四个注入面（brief / 节点脚注 / subagent 包装 / 根 Voice 接线面）全部**闸感知
+  // 两态参数化**（includeOutputRule 显式参数 / 临时 home 配置写键），与机器真实
+  // 配置解耦——闸开 = 今日行为逐字，闸关 = 零 output 块指令且布局/身份锚保全。
 
   test("output 块纪律行（OutputBlockRule）：<output> 标签式 + 类微信 + 画像驱动 + 默认中文") {
     val line = Defaults.OutputBlockRule
@@ -112,37 +131,88 @@ class SleepPollStartupRuleSpec extends FunSuite:
     assert(line.nonEmpty && line.length < 900, s"compact: ${line.length} chars")
   }
 
-  test("output 块纪律行：delegate brief 插件行之后、任务正文之前注入") {
+  test("output 块纪律行：delegate brief 插件行之后、任务正文之前注入（闸开）") {
     val brief = DelegateTool.assembleBrief(
       workspaceLine = "[workspace] /tmp/ws",
       bindingLine = None,
       task = "Do the thing.",
-      injectedBlock = ""
+      injectedBlock = "",
+      includeOutputRule = true
     )
     val plugAt = brief.indexOf("[plugin discovery]")
-    val outAt = brief.indexOf("Output discipline")
+    val outAt  = brief.indexOf("Output discipline")
     val taskAt = brief.indexOf("Do the thing.")
     assert(plugAt >= 0 && outAt > plugAt && outAt < taskAt, s"output rule sits after the discovery line, before the task: $brief")
   }
 
-  test("output 块纪律行：节点脚注同源注入（endsWith 身份断言零波及）") {
-    val plain = NodeEngine.protocolFootnoteFor(None)
+  test("output 块纪律行：闸关 = brief 零 output 指令（行距字节零残留）") {
+    val brief = DelegateTool.assembleBrief(
+      workspaceLine = "[workspace] /tmp/ws",
+      bindingLine = None,
+      task = "Do the thing.",
+      injectedBlock = "",
+      includeOutputRule = false
+    )
+    assert(!brief.contains("Output discipline") && !brief.contains("<output>"), s"no output rule may remain: $brief")
+    assert(
+      brief.contains(s"${Defaults.PluginDiscoveryLine}\n\nDo the thing."),
+      s"discovery line and task body keep exactly one blank line between them: $brief"
+    )
+  }
+
+  test("output 块纪律行：节点脚注同源注入（endsWith 身份断言零波及，闸开）") {
+    val plain = NodeEngine.protocolFootnoteFor(None, includeOutputRule = true)
     assert(plain.contains(Defaults.OutputBlockRule), "node footnote must carry the output rule")
-    assert(plain.indexOf(Defaults.OutputBlockRule) > plain.indexOf(Defaults.PluginDiscoveryLine),
-      "output rule sits after the discovery line")
+    assert(
+      plain.indexOf(Defaults.OutputBlockRule) > plain.indexOf(Defaults.PluginDiscoveryLine),
+      "output rule sits after the discovery line"
+    )
     assert(plain.endsWith(NodeEngine.ProtocolFootnote), "identity pin intact (NodeChainAttributionSpec anchor)")
   }
 
-  test("output 块纪律行：subagent/workflow 步包装同源注入（铁律之后、原文之前）") {
-    val wrapped = BlockingSubagent.promptWithRule("Find all callers of X.")
+  test("output 块纪律行：闸关 = 节点脚注零 output 指令（endsWith 身份断言仍保持）") {
+    val plain = NodeEngine.protocolFootnoteFor(None, includeOutputRule = false)
+    assert(!plain.contains(Defaults.OutputBlockRule) && !plain.contains("<output>"), s"no output rule may remain: $plain")
+    assert(
+      plain.contains(s"${Defaults.PluginDiscoveryLine}\n\n${NodeEngine.ProtocolFootnote.take(20)}"),
+      "discovery line keeps exactly one blank line before the baseline footnote"
+    )
+    assert(plain.endsWith(NodeEngine.ProtocolFootnote), "identity pin intact (NodeChainAttributionSpec anchor)")
+    // verifier 附录腿两态同构
+    val verifier = NodeEngine.protocolFootnoteFor(Some("verifier"), includeOutputRule = false)
+    assert(!verifier.contains("<output>"), "verifier footnote gated too")
+    assert(verifier.endsWith(NodeEngine.ProtocolFootnote + "\n" + NodeEngine.VerifierVerdictFootnote), "verifier appendix unchanged")
+  }
+
+  test("output 块纪律行：subagent/workflow 步包装同源注入（铁律之后、原文之前，闸开）") {
+    val wrapped = BlockingSubagent.promptWithRule("Find all callers of X.", includeOutputRule = true)
     assert(wrapped.contains(Defaults.OutputBlockRule), "wrapped prompt carries the output rule")
     assert(wrapped.indexOf(Defaults.OutputBlockRule) > wrapped.indexOf(rule), "after the iron rule")
     assert(wrapped.endsWith("Find all callers of X."), "original prompt intact")
   }
 
-  test("output 块纪律行：root Nebula 提示词正文同文（Voice 节接线面）") {
-    val prompt = nebflow.core.entity.BuiltinAgents.entry("Nebula").map(_.systemPrompt).getOrElse("")
-    assert(prompt.contains("<output>") && prompt.contains("</output>"), "root prompt carries the paired-tag rule")
-    assert(prompt.contains("User.md"), "root prompt names the profile surface")
+  test("output 块纪律行：闸关 = 步包装零 output 指令（铁律前缀 + 原文保全不变）") {
+    val wrapped = BlockingSubagent.promptWithRule("Find all callers of X.", includeOutputRule = false)
+    assert(!wrapped.contains(Defaults.OutputBlockRule) && !wrapped.contains("<output>"), s"no output rule may remain: $wrapped")
+    assert(wrapped.startsWith(rule), "iron rule prefix unchanged")
+    assert(wrapped.endsWith("Find all callers of X."), "original prompt intact")
+  }
+
+  test("output 块纪律行：root Nebula 提示词正文同文（Voice 节接线面，闸开）") {
+    withGate(enabled = true) {
+      val prompt = nebflow.core.entity.BuiltinAgents.entry("Nebula").map(_.systemPrompt).getOrElse("")
+      assert(prompt.contains("<output>") && prompt.contains("</output>"), "root prompt carries the paired-tag rule")
+      assert(prompt.contains("User.md"), "root prompt names the profile surface")
+    }
+  }
+
+  test("output 块纪律行：闸关 = 根提示词零 output 指令（Voice 节其余 bullet 保全）") {
+    withGate(enabled = false) {
+      val prompt = nebflow.core.entity.BuiltinAgents.entry("Nebula").map(_.systemPrompt).getOrElse("")
+      assert(!prompt.contains("<output>") && !prompt.contains("Output discipline"), s"no output rule may remain: $prompt")
+      assert(prompt.contains("## Voice"), "Voice section stays")
+      assert(prompt.contains("Sound like a real human chatting on WeChat"), "neighboring bullet (style) intact")
+      assert(prompt.contains("Terse does not mean robotic"), "neighboring bullet (terse) intact")
+    }
   }
 end SleepPollStartupRuleSpec

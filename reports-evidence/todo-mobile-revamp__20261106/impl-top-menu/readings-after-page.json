@@ -1,0 +1,47 @@
+{
+  "count": 6,
+  "items": [
+    {
+      "selector": "button.mobile-back-btn.g2-fab",
+      "w": 48,
+      "h": 48,
+      "hitW": 48,
+      "hitH": 48
+    },
+    {
+      "selector": "div.tfl-row",
+      "w": 331,
+      "h": 50.83,
+      "hitW": 331,
+      "hitH": 50.83
+    },
+    {
+      "selector": "button.tfl-complete",
+      "w": 28,
+      "h": 28,
+      "hitW": 48,
+      "hitH": 48
+    },
+    {
+      "selector": "button.tfl-del",
+      "w": 18,
+      "h": 18,
+      "hitW": 48,
+      "hitH": 48
+    },
+    {
+      "selector": "button.tfl-fab-add.g2-fab",
+      "w": 48,
+      "h": 48,
+      "hitW": 48,
+      "hitH": 48
+    },
+    {
+      "selector": "button.tfl-topmenu-btn.g2-fab",
+      "w": 48,
+      "h": 48,
+      "hitW": 48,
+      "hitH": 48
+    }
+  ]
+}

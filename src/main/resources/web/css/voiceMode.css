@@ -34,11 +34,9 @@ body.voice-mode-active #queue-bar {
   position: absolute;
   inset: 0;
   z-index: 260;
-  border-radius: 20px;
+  border-radius: var(--ds-radius-shell);
   overflow: hidden;
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
   visibility: hidden;
   pointer-events: none;
@@ -75,9 +73,9 @@ body.voice-mode-active #queue-bar {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   text-align: center;
-  padding: 22px 14px 8px;
+  padding: 22px 14px var(--ds-space-2);
   pointer-events: none;
   transform: scale(0.8);
   opacity: 0;
@@ -126,7 +124,7 @@ body.voice-mode-active #queue-bar {
 .vmo-caption {
   max-width: 100%;
   color: var(--color-text, #e8ecf4);
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   line-height: 1.4;
   white-space: nowrap;
   overflow: hidden;
@@ -135,7 +133,7 @@ body.voice-mode-active #queue-bar {
 .vmo-transcript {
   max-width: 100%;
   color: var(--color-text-muted, rgba(232, 236, 244, 0.65));
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   line-height: 1.4;
   font-style: italic;
   white-space: nowrap;
@@ -150,7 +148,7 @@ body.voice-mode-active #queue-bar {
 }
 .vmo-hint {
   color: var(--color-text-muted, rgba(232, 236, 244, 0.45));
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
 }
 
 .vmo-exit {
@@ -206,7 +204,7 @@ body.voice-mode-active #queue-bar {
   left: 50%;
   top: -16px;
   transform: translateX(-50%);
-  gap: 3px;
+  gap: var(--ds-space-half);
   pointer-events: none;
   z-index: 5;
 }

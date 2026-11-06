@@ -315,6 +315,7 @@ val x = 1
     val sent = new java.util.concurrent.atomic.AtomicReference[List[String]](Nil)
     val p = new FeishuBridgePlugin(
       os.temp.dir(prefix = "nb-socoutbound-bridge-"),
+      outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
       send = (_, _, _, receiveId, text) =>
         IO {
           sent.updateAndGet(_ :+ s"$receiveId|$text");

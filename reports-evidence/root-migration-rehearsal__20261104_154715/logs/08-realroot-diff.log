@@ -1,0 +1,36 @@
+[real] before objects=1401898  after objects=1402990
+[real] (a) layout-managed paths present in the AFTER snapshot: 0 []
+[real] added=1250 removed=158 changed=220
+[real] (b) diffs confined to engine-live entries: False
+[real]     live-entry diffs: 22 entries, 1228 objects
+              514  history
+              255  bg-task-logs
+              213  evidence
+              123  sessions
+               63  tmp
+               18  chains
+               18  delegates
+                6  logs
+                2  cache
+                2  tool-results
+                2  memory-db
+                2  subagent-tasks
+[real]     !! NON-LIVE entries with diffs (6):
+              347  projects   e.g. ['projects/stand-website/.git/objects/00/9009493cdfcf1205967cb359d00d316125fbd7', 'projects/stand-website/.git/objects/02/e8020d2fc64e61cce6d17bf4a26da843c038b8', 'projects/stand-website/.git/objects/19/f7917a373942803a79bd6096233098590709e7']
+               26  plugin-repos   e.g. ['plugin-repos/stand-dev/.git/objects/0d/604d744b222e69b0a625416cb5ffea3c966927', 'plugin-repos/stand-dev/.git/objects/25', 'plugin-repos/stand-dev/.git/objects/25/18ffedb0b618972e557cf987b9aa28ade123ac']
+               12  merge-quarantine   e.g. ['merge-quarantine/Stand/20261104_141527', 'merge-quarantine/Stand/20261104_141527/PROVENANCE.json', 'merge-quarantine/Stand/20261104_141527/reports-evidence']
+                8  merge-channel   e.g. ['merge-channel/delegate-nebflow-01df9dc9.json', 'merge-channel/delegate-nebflow-3f40b03d.json', 'merge-channel/delegate-nebflow-4d30d543.json']
+                5  plugins   e.g. ['plugins/stand-dev/Plugin.md', 'plugins/stand-dev/plugin.json', 'plugins/website/Plugin.md']
+                2  bin   e.g. ['bin/sbt.bak-20261104-143858', 'bin/sbt']
+[real] (c) non-live files compared=1046175 byte-identical=1046067 mismatched=108
+           MISMATCH: bin/sbt
+           MISMATCH: plugin-repos/stand-dev/.git/COMMIT_EDITMSG
+           MISMATCH: plugin-repos/stand-dev/.git/index
+           MISMATCH: plugin-repos/stand-dev/.git/logs/HEAD
+           MISMATCH: plugin-repos/stand-dev/.git/logs/refs/heads/main
+           MISMATCH: plugin-repos/stand-dev/.git/refs/heads/main
+           MISMATCH: plugin-repos/stand-dev/Plugin.md
+           MISMATCH: plugin-repos/stand-dev/plugin.json
+           MISMATCH: plugin-repos/stand-dev/skills/stand-dev/SKILL.md
+           MISMATCH: plugins/stand-dev/Plugin.md
+[real] REVIEW — see above

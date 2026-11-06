@@ -1,0 +1,10 @@
+
+Running 6 tests using 1 worker
+
+[1/6] tests/todo-split.spec.mjs:184:1 › ①② 分家渲染 + 待办入口收敛：提醒面纯定时任务（徽标=超时 1），侧边栏 todo 槽退役，入口行退役，胶囊读数=4 待办 / 1 逾期
+[2/6] tests/todo-split.spec.mjs:219:1 › ③ 待办面（胶囊展开面板）：行集=人待办 4 行（镜像行不入），逾期行红字，分组 chips=stand/DOSTEL
+[3/6] tests/todo-split.spec.mjs:246:1 › ④ 闭环：完成钮 ⇒ completeTodo 帧带行自身 sessionId；计数收敛 4→3；收件箱请求帧带 scope:all
+[4/6] tests/todo-split.spec.mjs:272:1 › ⑤ 待办创建：面板加号内联创建 ⇒ createScheduledTask 帧带 kind:todo；乐观行落胶囊面，提醒面零混入
+[5/6] tests/todo-split.spec.mjs:300:1 › ⑦ 项目维度（追加令①②）：分组 chips 单选生效（行随滤）；行内编辑 ⇒ updateScheduledTask 帧带 content+project
+[6/6] tests/todo-split.spec.mjs:348:1 › ⑥ 手机层级：胶囊是唯一待办入口（聊天根顶带），点击直接展开；无入口行、无 todo 页面腿
+  6 passed (15.9s)

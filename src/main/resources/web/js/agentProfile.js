@@ -36,12 +36,12 @@ import { key } from './branding.js';
 import { brand } from './brand.js';
 import state from './state.js';
 import { avatarImgNode } from './avatarRender.js';
-import { rootDisplayName, isRootNamed } from './rootName.js';
+import { rootDisplayName, isRootNamed, agentDisplayName, ROOT_AGENT_KEY } from './rootName.js';
 import { t } from './i18n.js';
 import { onReconnect } from './ws.js';
 
 /** 头像存储键（镜像 avatarCache.js：branding 命名空间 + 按身份键一条目）。 */
-function avatarKey(agentName) { return key(`agent_avatar_${agentName || 'Nebula'}`); }
+function avatarKey(agentName) { return key(`agent_avatar_${agentName || ROOT_AGENT_KEY}`); }
 
 /** Bearer 文件令牌头（agentManager.js 同款镜像；控制台会话腿同源 cookie，双保险）。 */
 function authHeaders() {
@@ -102,7 +102,7 @@ const META_CHECK_THROTTLE_MS = 30000;
  * 引擎落盘后会外推到全部已配对设备（identity-sync 通道），另一台机器按戳收敛。
  */
 function pushAvatar(agentName, dataUrl) {
-  const path = `/api/agents/${encodeURIComponent(agentName || 'Nebula')}/avatar`;
+  const path = `/api/agents/${encodeURIComponent(agentName || ROOT_AGENT_KEY)}/avatar`;
   const opts = dataUrl
     ? { method: 'PUT', headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify({ dataUrl }) }
     : { method: 'DELETE', headers: authHeaders() };
@@ -116,7 +116,7 @@ function pushAvatar(agentName, dataUrl) {
  */
 const avatarSyncInFlight = new Set();
 function convergeAvatar(agentName, repaint, force) {
-  const name = agentName || 'Nebula';
+  const name = agentName || ROOT_AGENT_KEY;
   if (avatarSyncInFlight.has(name)) return;
   const wrote = localWriteAt.get(name) || 0;
   if (wrote && Date.now() - wrote < LOCAL_WRITE_GRACE_MS) return; // 自己的 PUT 在途
@@ -160,10 +160,10 @@ function convergeAvatar(agentName, repaint, force) {
 /** 上传图降采样上限（px）：localStorage 配额友好（avatarCache.js 同款配额纪律）。 */
 const MAX_DIM = 256;
 
-/** 当前会话头身份 = 活动会话的 agent（root 会话恒 'Nebula' 机制名）。 */
+/** 当前会话头身份 = 活动会话的 agent（root 会话恒 ROOT_AGENT_KEY 机制名）。 */
 export function currentAgentName() {
   const active = state.sessions ? state.sessions.find((s) => s.id === state.activeSessionId) : null;
-  return (active && active.agentName) || 'Nebula';
+  return (active && active.agentName) || ROOT_AGENT_KEY;
 }
 
 // ── dock 中键头像读数面（中键改版批 · 作者令 2026-10-29 23:36）────────
@@ -202,11 +202,10 @@ function notifyAvatarSubs() {
 
 /** 会话头显示名（与 sidebar.js updateHeaderSessionName 同一读链的本地镜像：
  *  root → rootName 单读点（未命名 = 空串，机制名永不作为显示回落）；
- *  非 root → agentsData displayName，机制名兜底。 */
+ *  非 root → 同一单读点 agentDisplayName（该 agent 自己的显示名）。 */
 function headerLabel(agentName) {
-  if (agentName === 'Nebula') return isRootNamed() ? rootDisplayName() : '';
-  const row = (state.agentsData || []).find((a) => a.name === agentName);
-  return (row && row.displayName) || agentName;
+  if (agentName === ROOT_AGENT_KEY) return isRootNamed() ? rootDisplayName() : '';
+  return agentDisplayName(agentName);
 }
 
 // ── 会话头头像槽（两端同一节点；css/chat.css 桌面形 / mobileLayer.css 手机形）──
@@ -263,8 +262,26 @@ export function paintSlot() {
   if (img) {
     img.className = 'agent-avatar-img';
     img.draggable = false;
+    /* 🔴 坏字节兜底（顶部头像可见性批 2026-11-04）：本地条目存在但**解不出位图**
+       （dataURL 截断/损坏、配额写坏的半条、非图像 mime 的落盘）时，改前本函数
+       直接把这个 <img> 挂进槽就结束 —— 之后没有任何一处接管：槽位是一个只有
+       芯片底色的**空圆**（既无照片也无 logo），而 chatChrome 的空态守望又把
+       「槽里有 .agent-avatar-img」当成本头有图 ⇒ 不注入 logo。作者症状
+       「顶部的头像不显示」正是这一档。收敛腿也救不了：条目 sha 与服务端相符时
+       convergeAvatar 走「已收敛」早退，永不自愈。
+       本兜底只在**解码失败事件**上动作（onerror），不预判加载中态 ⇒ 正常照片
+       的加载窗口零影响（同 paintAvatarSlot / neblink.js 的「翻面推到字节就绪」纪律）。 */
+    const fallbackToLogo = () => {
+      if (!slot || !slot.contains(img)) return; // 已被别的重绘替换：不越权改槽
+      slot.classList.remove('has-img');
+      slot.replaceChildren(standLogoNode());
+    };
+    // 兜底接 error 事件；但复用池拿回的节点可能**上一次就已加载失败**（onerror 早于
+    // 本次挂载触发）⇒ 挂载后补一次「已完成且零宽」的既有失败判定。
+    img.onerror = fallbackToLogo;
     slot.replaceChildren(img);
     slot.classList.add('has-img');
+    if (img.complete && img.naturalWidth === 0) fallbackToLogo();
     return;
   }
   // 无自定义头像 ⇒ stand logo（作者令 2026-10-31 22:50；原首字母牌/人形字形
@@ -425,9 +442,9 @@ function saveName() {
   if (!nameInput) return;
   const agentName = currentAgentName();
   const next = nameInput.value.trim();
-  if (agentName === 'Nebula') {
+  if (agentName === ROOT_AGENT_KEY) {
     state.rootDisplayName = next;
-    const self = (state.agentsData || []).find((x) => x.name === 'Nebula');
+    const self = (state.agentsData || []).find((x) => x.name === ROOT_AGENT_KEY);
     if (self) self.displayName = next;
   } else {
     const row = (state.agentsData || []).find((a) => a.name === agentName);

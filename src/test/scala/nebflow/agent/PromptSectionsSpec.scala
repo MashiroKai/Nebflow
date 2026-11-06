@@ -332,10 +332,26 @@ class PromptSectionsSpec extends munit.FunSuite:
   // 钉因：注入链核验实证 Voice 节单 bullet 已在根上下文（builtin 代码解析 +
   // 重启 lifecycle 重建），但根回复零 `<output>` 包裹、模型自述「规则没进我
   // 的上下文」——显著性不足；本段为引擎编译注入的存在性保证。
+  //
+  // output 块总闸·提示词面（prompt-face 补批 2026-11-01，同一作者令「把 output
+  // 块相关的内容先关闭」）：段条件加闸 OutputBlockGate.enabled()——闸关（缺席
+  // 配置 = 默认）整段不进组装，闸开恢复今日行为。两态经隔离数据根写键参数化，
+  // 与机器真实配置解耦。
   // ============================================================
 
-  test("Output block discipline section injected for root agent (order 375, verbatim OutputBlockRule)"):
+  /** 隔离数据根 + 写 `outputBlock.enabled`（OB-G3 同款形态）。 */
+  private def withIsolatedDataRootWithGate[A](enabled: Boolean)(body: => A): A =
     withIsolatedDataRoot {
+      val cfg = PathUtil.configJsonReadPath(PathUtil.dataRoot)
+      val json = s"""{"outputBlock":{"enabled":$enabled}}"""
+      if os.exists(cfg) then os.write.over(cfg, json) else os.write(cfg, json)
+      body
+    }
+
+  test(
+    "Output block discipline section injected for root agent when the gate is ON (order 375, verbatim OutputBlockRule)"
+  ):
+    withIsolatedDataRootWithGate(enabled = true) {
       val ctx = PromptContext(isRootAgent = true)
       val blocks = buildConditionalBlocks(ctx)
       assert(
@@ -350,8 +366,23 @@ class PromptSectionsSpec extends munit.FunSuite:
       )
     }
 
-  test("Output block discipline section NOT injected for non-root agents (dispatcher/node sessions)"):
+  test("Output block gate OFF (default = absent config): root agent systemStable carries NO output-block instruction"):
     withIsolatedDataRoot {
+      val blocks = buildConditionalBlocks(PromptContext(isRootAgent = true))
+      assert(
+        !blocks.contains(nebflow.shared.Defaults.OutputBlockRule),
+        "gate off = the whole order-375 section stays out of the assembly"
+      )
+      assert(
+        !blocks.contains("── Output discipline ──") && !blocks.contains("<output>"),
+        "no output-block instruction text may leak via any other section"
+      )
+      // 邻段零波及
+      assert(blocks.contains("## Routing discipline (root agent)"), "order-370 routing section unaffected")
+    }
+
+  test("Output block discipline section NOT injected for non-root agents (root scoping holds with the gate ON)"):
+    withIsolatedDataRootWithGate(enabled = true) {
       val dispatcher = buildConditionalBlocks(PromptContext(isRootAgent = false))
       assert(
         !dispatcher.contains(nebflow.shared.Defaults.OutputBlockRule),
@@ -363,6 +394,26 @@ class PromptSectionsSpec extends munit.FunSuite:
         !node.contains(nebflow.shared.Defaults.OutputBlockRule),
         "flow-node sessions must not receive the root-only section"
       )
+    }
+
+  test("Output block gate OFF: the JOINED root prompt (base + sections) carries no output-block instruction anywhere"):
+    withIsolatedDataRoot {
+      val base = nebflow.core.entity.BuiltinAgents.entry("Nebula").map(_.systemPrompt).getOrElse("")
+      val joined = PromptSections.assembleSystemPrompt(base, buildConditionalBlocks(PromptContext(isRootAgent = true)))
+      assert(
+        !joined.contains("<output>"),
+        s"no literal tag teaching anywhere: ${joined.linesIterator.filter(_.contains("output")).mkString("\n")}"
+      )
+      assert(!joined.contains("Output discipline"), "no output discipline header anywhere")
+      assert(!joined.contains("wrap everything"), "Voice bullet stripped from the base prompt")
+    }
+
+  test("Output block gate ON: the joined root prompt restores the rule (base Voice bullet + order-375 section)"):
+    withIsolatedDataRootWithGate(enabled = true) {
+      val base = nebflow.core.entity.BuiltinAgents.entry("Nebula").map(_.systemPrompt).getOrElse("")
+      val joined = PromptSections.assembleSystemPrompt(base, buildConditionalBlocks(PromptContext(isRootAgent = true)))
+      assert(joined.contains(nebflow.shared.Defaults.OutputBlockRule), "order-375 section back in the assembly")
+      assert(joined.contains("User-visible output: wrap everything"), "Voice bullet back in the base prompt")
     }
 
   test("MountedProjectList.renderLines renders empty list as the explicit placeholder"):
@@ -395,7 +446,9 @@ class PromptSectionsSpec extends munit.FunSuite:
 
   // ── 台账 #913 ②：设备标注行形（renderLinesWithDevice）──────────────
 
-  test("MountedProjectList.renderLinesWithDevice: cross-device rows carry (on device X); local rows keep the plain shape"):
+  test(
+    "MountedProjectList.renderLinesWithDevice: cross-device rows carry (on device X); local rows keep the plain shape"
+  ):
     val lines = MountedProjectList.renderLinesWithDevice(
       List(
         ("stand-kai", "KAI", Some("主仓")),
@@ -480,8 +533,92 @@ class PromptSectionsSpec extends munit.FunSuite:
     assertEquals(s377.size, 1, "registry carries exactly one order-377 section")
     val sec = s377.head
     assert(sec.shouldInclude(PromptContext()), "always: included on the minimal context")
-    assert(sec.shouldInclude(PromptContext(isRootAgent = true, voiceEnabled = false)), "always: included on any context")
+    assert(
+      sec.shouldInclude(PromptContext(isRootAgent = true, voiceEnabled = false)),
+      "always: included on any context"
+    )
     assertEquals(sec.render(PromptContext()), nebflow.shared.Defaults.SecretsRule, "static body = the constant")
+
+  // ============================================================
+  // 引牌教义·带短名引用（msgchip 批，作者令 2026-11-01「消息身份牌系统升级」
+  // 第 4 条）：order-378 **always** 段，逐字承载 Defaults.MsgQuoteRule。与
+  // order-377 同判据（牌流进每张面）；随下个生命周期生效（systemStable）。
+  // ============================================================
+
+  test("Msg quote doctrine section injected for EVERY agent session (order 378, always, verbatim MsgQuoteRule)"):
+    withIsolatedDataRoot {
+      val root = buildConditionalBlocks(PromptContext(isRootAgent = true))
+      val dispatcher = buildConditionalBlocks(PromptContext(isRootAgent = false))
+      for (who, blocks) <- Seq("root" -> root, "dispatcher" -> dispatcher) do
+        assert(
+          blocks.contains(nebflow.shared.Defaults.MsgQuoteRule),
+          s"$who session systemStable must carry the msg quote doctrine section"
+        )
+        assert(blocks.contains("── Quote with message cards"), s"$who: section body is the msg quote rule text")
+      // 段序钉：紧跟 order-377 Secrets 段之后
+      assert(
+        root.indexOf("── Secrets (credentials) ──") < root.indexOf("── Quote with message cards"),
+        "msg quote section must follow the secrets section (order 378 > 377)"
+      )
+      // 条款面齐：牌+短名形态 / 逐条引用 / 不整段复述 三要素都在段体里
+      val body = nebflow.shared.Defaults.MsgQuoteRule
+      assert(
+        body.contains("{{msg:<sid8>-<seq>|<short-name>}}") && body.contains("cites each one separately")
+          && body.contains("do NOT restate the original text"),
+        body
+      )
+    }
+
+  test("Msg quote doctrine section is a static always-on section (stable-prefix reading)"):
+    val s378 = PromptSections.all.filter(_.order == 378)
+    assertEquals(s378.size, 1, "registry carries exactly one order-378 section")
+    val sec = s378.head
+    assert(sec.shouldInclude(PromptContext()), "always: included on the minimal context")
+    assertEquals(sec.render(PromptContext()), nebflow.shared.Defaults.MsgQuoteRule, "static body = the constant")
+
+  // ============================================================
+  // 时间纪律（时间感知修复批，作者指令 2026-11-05 18:48「修复你的时间感知问题」）：
+  // order-379 **always** 段，逐字承载 Defaults.TimeDisciplineRule。
+  // 与 order-377/378 同判据（相对时间误判不分角色）；静态体落 systemStable，
+  // 而**锚**（「现在」的值）绝不进 stable（写进去 = 时间冻结）。
+  // ============================================================
+
+  test("Time discipline section injected for EVERY agent session (order 379, always, verbatim TimeDisciplineRule)"):
+    withIsolatedDataRoot {
+      val root = buildConditionalBlocks(PromptContext(isRootAgent = true))
+      val dispatcher = buildConditionalBlocks(PromptContext(isRootAgent = false))
+      val worker = buildConditionalBlocks(PromptContext(isSubTaskWorker = true, depth = 1))
+      for (who, blocks) <- Seq("root" -> root, "dispatcher" -> dispatcher, "subtask-worker" -> worker) do
+        assert(
+          blocks.contains(nebflow.shared.Defaults.TimeDisciplineRule),
+          s"$who session systemStable must carry the time discipline section"
+        )
+        assert(blocks.contains("── Time discipline (iron rule) ──"), s"$who: section body is the rule text")
+      // 段序钉：紧跟 order-378 引牌段之后
+      assert(
+        root.indexOf("── Quote with message cards") < root.indexOf("── Time discipline (iron rule) ──"),
+        "time discipline section must follow the msg quote section (order 379 > 378)"
+      )
+      // 「禁止无依据的日期推断」+「允许引用时间锚」两条都在段体里（规则原文面）
+      val body = nebflow.shared.Defaults.TimeDisciplineRule
+      assert(body.contains("MUST be derived from that anchor"), body)
+      assert(body.contains("Never from memory, never from feeling, never from a training prior"), body)
+      assert(body.contains("you may NOT state an absolute date"), body)
+      assert(body.contains("epoch_ms"), "让模型用精确底座换算，而不是凭印象")
+    }
+
+  test("Time discipline section is a static always-on section carrying NO timestamp (stable-prefix reading)"):
+    val s379 = PromptSections.all.filter(_.order == 379)
+    assertEquals(s379.size, 1, "registry carries exactly one order-379 section")
+    val sec = s379.head
+    assert(sec.shouldInclude(PromptContext()), "always: included on the minimal context")
+    val rendered = sec.render(PromptContext())
+    assertEquals(rendered, nebflow.shared.Defaults.TimeDisciplineRule, "static body = the constant")
+    // 🔴 反面：纪律是静态文本，任何真实时间戳都不许出现在段体里（冻结面剥离）
+    assert(
+      raw"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} [+-]\d{2}:\d{2}".r.findFirstIn(rendered).isEmpty,
+      s"the stable time-discipline section must not embed a timestamp: $rendered"
+    )
 
   // ============================================================
   // 文档溯源规范（order 350，always 段；作者 2026-09-11 裁定 / 方案 #165）
@@ -493,7 +630,7 @@ class PromptSectionsSpec extends munit.FunSuite:
 
   /** 正文行（英文批 prompt-en-slim-impl：中→英；语义与判据逐条不变）。 */
   private val traceBodyLine =
-    "- Provenance goes only into the filename tail: stage doc `<YYYYMMDD>_<HHMMSS>_<topic>__<chainId>.md` (no suffix when unattributed); the body carries zero metadata header."
+    "- Provenance goes only into the filename tail: stage doc `<topic>__<YYYYMMDD>_<HHMMSS>[__<chainId>].md` (topic first, time after; no suffix when unattributed); the body carries zero metadata header."
 
   test("文档溯源段恒注入（最小 PromptContext，order 350）：段名 + 正文行逐字"):
     withIsolatedDataRoot {

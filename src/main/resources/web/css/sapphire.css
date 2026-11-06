@@ -34,16 +34,40 @@
   --accent-agent-light: 70 99 156;
 
   /* Glass surface — light: transparent, deep frost */
-  --glass-bg: rgba(255, 255, 255, 0.55);
-  --glass-blur: 24px;
+  /* ── glass-unify 批 2026-11-05（作者令「只允许一个毛玻璃效果」）──
+     **本族全部降级为别名**：值只在 stand-tokens.css 的 `--nf-glass-*` 段定义
+     一次（设计令牌单一源），这里一个色值都不留。历史名（--glass-* / --cv-*）
+     继续可用是为了存量消费面不改名即换材质，但它们已不是值的出生地——改配方
+     请改 stand-tokens.css，改这里等于什么都不改（被判据钉死，见下方注释）。 */
+  --glass-bg: var(--nf-glass-bg);
+  --glass-blur: var(--nf-glass-blur);
+
+  /* ── 历史名（glass-unify 批后与 --glass-bg 同值）─────────────────────────
+     glass-unify 批之前：--glass-bg = α.55 半透、--glass-bg-opaque = 压平 α=1，
+     两个档正是作者实拍「图1 半透明 / 图2 不透明」的分裂来源。现两者同指
+     `--nf-glass-bg`（glass-recalibrate 批 2026-11-05 18:13 重定标后 = 亮 α .55 /
+     暗 α .68，参照物主会话输入框逐值）：**全站只有一个玻璃底**，不再有
+     「不透明档」可选——内容隐身由 blur(40px) 负责，不靠 α（见 stand-tokens.css
+     玻璃段注的参数网格读数）。保留旧名只为存量消费者零改动。 */
+  --glass-bg-opaque: var(--nf-glass-bg);
+
+  /* 顶缘折射线层（#header 背景的第一层，作者令「Header 同款」直接提成 token：
+     面级浮件要复用它时零抄值）。两个消费形态都合法、都有既有先例：
+       · 背景层形态 —— `background: var(--glass-refraction-line) center top / 80% 1px
+         no-repeat, <底>`（#header 用法；custom property 是 token 级替换，shorthand 合法）；
+       · 伪元素形态 —— `::before { top:0; left:10%; right:10%; height:1px;
+         background: var(--glass-refraction-line) }`（#input-bar / #queue-bar 用法）。
+     几何等价：80% 宽居中 = 左右各 10%。 */
+  --glass-refraction-line:
+    linear-gradient(90deg, transparent 10%, var(--sapphire-refraction) 50%, transparent 90%);
 
   /* Glass border — whisper edge, feels like real glass */
-  --glass-border: rgba(255, 255, 255, 0.35);
+  --glass-border: var(--nf-glass-border-color);
   --glass-border-dark: rgba(91, 127, 191, 0.06);
 
   /* ── Frosted 标准 shadow token（2026-10-22 作者令「全站一套毛玻璃」）──
      backdrop blur 参数/材质 token 与 chat header 现实现同源（--glass-bg /
-     --glass-blur saturate(1.15) / --glass-border + 本 token 阴影栈）。
+     --glass-blur saturate(1.4) / --glass-border + 本 token 阴影栈）。
      消费方 = #header、.canvas-header 胶囊、wiki 左栏控制面控件——禁止各画
      各的。字面量与 chat.css #header 亮/暗档逐字同源（单源判据：改一处即全
      站生效）。 */
@@ -96,8 +120,11 @@
     --amber-glow: 255 190 120;
     --amber-dark: 255 168 60;
 
-    --glass-bg: rgba(24, 28, 38, 0.68);
-    --glass-border: rgba(255, 255, 255, 0.06);
+    --glass-bg: var(--nf-glass-bg);
+    /* 不透明毛玻璃档暗值 = 同一个 --nf-glass-bg（glass-unify 批：暗档不再
+       单独拥有一份 α，见 :root 段注释）。 */
+    --glass-bg-opaque: var(--nf-glass-bg);
+    --glass-border: var(--nf-glass-border-color);
     --glass-border-dark: rgba(255, 255, 255, 0.04);
 
     /* Frosted 标准 shadow 暗档（与 chat.css #header 暗档逐字同源）。 */
@@ -118,8 +145,6 @@
 /* ── Glass Surface ─────────────────────────────────────────────────────── */
 .glass {
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
 }
 
@@ -152,9 +177,14 @@
    prefers-color-scheme（本文件历史结构；--g2-* 新族已走 html[data-theme]
    三态，勿把此裂缝复制给新族）。 */
 :root {
-  --glass-control-bg: rgba(255, 255, 255, 0.60);
-  --glass-control-bg-hover: rgba(255, 255, 255, 0.74);
-  --glass-control-border: rgba(255, 255, 255, 0.90);
+  /* glass-unify 批 2026-11-05：本族底色/模糊/描边**降级为别名**（值在
+     stand-tokens.css --nf-glass-* 单源）。控件玻璃不再有自己更淡的一档 ——
+     作者令「只允许一个毛玻璃效果」把「面级 .55 / 控件级 .60」这两档合并成
+     一档（图2 的形态在圆钮上也是同一个白度）。高光/浮雕类 token 保留名位，
+     但扁平契约下已无消费者描厚度。 */
+  --glass-control-bg: var(--nf-glass-bg);
+  --glass-control-bg-hover: var(--nf-glass-bg-hover);
+  --glass-control-border: var(--nf-glass-border-color);
   --glass-control-highlight: rgba(255, 255, 255, 0.95);
   --glass-control-highlight-hover: rgba(255, 255, 255, 0.95);
   /* 上半镜面高光层（设计稿 --g2-fab-specular 同值；折射层本体在 liquid-glass.css） */
@@ -164,15 +194,18 @@
   --glass-control-glow-hover: rgba(0, 0, 0, 0.12);
   --glass-control-shadow: rgba(0, 0, 0, 0.12);
   --glass-control-shadow-hover: rgba(0, 0, 0, 0.12);
-  --glass-control-blur: 16px;
-  --glass-control-sat: 1.8;
+  --glass-control-blur: var(--nf-glass-blur);
+  --glass-control-sat: var(--nf-glass-saturate);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --glass-control-bg: rgba(255, 255, 255, 0.14);
-    --glass-control-bg-hover: rgba(255, 255, 255, 0.20);
-    --glass-control-border: rgba(255, 255, 255, 0.32);
+    /* glass-unify 批：底色/描边随 --nf-glass-* 自动翻面，此处不再另立一档
+       （原先暗档控件底是 rgba(255,255,255,.14) 的白色洗色 —— 那是「半透明
+       玻璃」在暗色下的另一张脸，正是被本批取消的形态）。 */
+    --glass-control-bg: var(--nf-glass-bg);
+    --glass-control-bg-hover: var(--nf-glass-bg-hover);
+    --glass-control-border: var(--nf-glass-border-color);
     --glass-control-highlight: rgba(255, 255, 255, 0.35);
     --glass-control-highlight-hover: rgba(255, 255, 255, 0.35);
     --glass-control-specular: rgba(255, 255, 255, 0.28);
@@ -184,18 +217,12 @@
   }
 }
 
-.glass-control {
-  background-color: var(--glass-control-bg);
-  background-image: linear-gradient(to bottom, var(--glass-control-specular) 0%, transparent 46%);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(var(--glass-control-sat));
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(var(--glass-control-sat));
-  border: 1px solid var(--glass-control-border);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -2px 5px var(--glass-control-underedge),
-    0 1px 3px var(--glass-control-glow),
-    0 8px 24px var(--glass-control-shadow);
-}
+/* 历史类名 `.glass-control`（登录面/面板键的旧挂载点）——glass-unify 批后
+   它**不再拥有自己的配方**：材质由 glass.css 的 `.nf-glass, .glass, .glass-control`
+   同一条声明供给（同一份 token、同一条 backdrop-filter）。本块此前那套
+   「上半镜面渐变 + 顶缘 inset 高光 + 底缘暗边 + 双层浮影」是**第二套等效
+   毛玻璃**（也是先于本批被判死的厚度道具），整段退役，只留一个注记说明它为何
+   是空的 —— 留空块比删干净更危险，故直接删块、改为在 glass.css 登记。 */
 
 /* ── 悬浮控件玻璃 token（2026-10-28 canvas 三件 UI/UX 修 · 件三立族；2026-11-01
    统一按钮玻璃批按设计稿 §2.4 收编升格 = **全站悬浮控件单源**）─────────
@@ -209,10 +236,13 @@
    面阴影取 #input-bar 现值（顶缘 inset 高光 + 两档外投影 —— 与主对话输入框
    同款；修前取 #header inset-only 档，控件条在内容面上「飘不住」）。 */
 :root {
-  /* 模糊配方（= chat #header：--glass-bg + blur 24 saturate 1.15） */
+  /* 模糊配方（= 全站唯一毛玻璃配方：--glass-bg + blur 40 saturate 1.4） */
   --cv-bg: var(--glass-bg);
+  /* 历史“不透明档”名：glass-recalibrate 批 2026-11-05 18:13 起与 --glass-bg 同值
+     （全站不再有第二个 α；canvas Ask 面的内容隐身由 blur 40 负责）。 */
+  --cv-bg-opaque: var(--glass-bg-opaque);
   --cv-blur: var(--glass-blur);
-  --cv-saturate: 1.15;
+  --cv-saturate: var(--nf-glass-saturate);
   /* 边框（= chat #header） */
   --cv-border: var(--glass-border);
   /* 面阴影（冷启动批 2026-10-30 作者令「查看器顶栏/控件条玻璃对齐主对话
@@ -230,12 +260,29 @@
   --cv-hover-underedge: var(--glass-control-underedge);
   --cv-hover-scale: 1.05;
   --cv-active-scale: 0.96;
-  /* 尺寸档（圆钮 40 / 条内小钮 26 / 图标 18·14 / 簇槽距 48 —— 四档全站通用） */
+  /* 尺寸档（圆钮 40 / 条内小钮 26 / 图标 18·14 / 簇槽距 48 —— 四档全站通用）
+     两条作者令冲突的显式裁定（件3 批 2026-11-05，作者逐字「然后电脑端的canvas的
+     底部的按钮的大小，应该和canvas顶部的按钮的大小样式都统一。」）：
+       · 旧令（2026-11-02 09:41「包括 canvas 的这些控件宽度也要保持一致」）= 底部
+         chrome 单独一档 48（对齐手机 --mtap-lg）。
+       · 新令（2026-11-05）= 底部跟顶部同档。**同域作者令按时间后者覆盖前者** ⇒
+         桌面档底部 chrome 收敛回顶部圆钮档：尺寸 = `--cv-size-circle`(40) /
+         圆 = 50% / 内距 0 / 图标 = `--cv-icon`(18)。
+       · 手机 375 档未获新令 ⇒ 保留 11-02 批的 48 档（`--mtap-lg`），由 split.css
+         的 `body.mobile-layer` 块逐值钉回（尺寸/图标/槽位/落位），桌面档零传染。
+       · 单一真值：`--cv-size-circle-lg` 从此**等于** `--cv-size-circle`（不再写第二份
+         字面量），簇槽距 `--cv-row-pitch-lg` = 钮 + 8 缝由 calc 派生。
+       验收 = tests/ui-seven-canvas-chrome.spec.mjs ⑦/⑧（token→实测对照表 + 逐项相等）。 */
   --cv-size-circle: 40px;
-  --cv-size-btn: 26px;
+  --cv-size-circle-lg: var(--cv-size-circle);   /* canvas 文档 chrome 档 = 顶部圆钮同档（件3） */
+  --cv-size-btn: 26px;         /* 查找条内钮（.nf-findbar-btn，条内小钮语言） */
   --cv-icon: 18px;
   --cv-icon-btn: 14px;
-  --cv-row-pitch: 48px;
+  /* 48 档钮内图标（= 手机层 --micon-sm 20px）—— 桌面档随件3 归一到 --cv-icon(18)；
+     手机 375 档在 split.css `body.mobile-layer` 块显式钉 20（--micon-sm）。 */
+  --cv-icon-btn-lg: var(--cv-icon);
+  --cv-row-pitch: calc(var(--cv-size-circle) + var(--ds-space-2));       /* 面板级圆钮簇槽距（钮 + 8 缝） */
+  --cv-row-pitch-lg: calc(var(--cv-size-circle-lg) + var(--ds-space-2)); /* canvas chrome 簇槽距（钮 + 8 缝） */
   /* 圆角档（胶囊 999 / 查找条 12 / 缩放条 10 / 胶囊内小钮 8 / 条内小钮 7） */
   --cv-radius-pill: 999px;
   --cv-radius-bar: 12px;
@@ -255,6 +302,80 @@
   --cv-head-h: var(--capsule-h, 36px);
   --cv-head-band: calc(var(--cv-head-top) + var(--cv-head-h));
   --cv-head-clear: calc(var(--cv-head-band) + 10px);
+  /* ── canvas 正文顶部安全区（canvas-overlap-fix 批 2026-11-05，作者报障
+     「插件面板顶部内容被胶囊压住」）──
+     语义：**Canvas 面板正文首个内容块起笔不得高于本值**。它是唯一来源，
+     面板/查看器一律消费它，禁止各自写裸顶垫（修前 `#plugins-content` /
+     `#agents-content` 各写 `var(--ds-space-4)`=16px，首行整条压进胶囊带
+     27..63，实测遮挡 30px）。
+     值 = header 行下缘（--cv-head-band 46）+ 10 呼吸缝 = 56，与项目面板族
+     `--panel-head-clear` 同源（projectPanel.css :499 即本 token 的别名）。
+     手机层不存在第二个值：`--cv-safe-top` 在 mobileLayer.css 的顶部悬浮
+     chrome 簇几何块里覆写为 `--mchrome-clear`（簇顶 16 + 钮 48 + 呼吸 8 = 72）。
+     消费面 = split.css 文件尾「Canvas 正文顶部安全区（统一布局层）」块 +
+     侧边栏插件/agent 面板根节点（.canvas-safe-top 类，JS 挂）。 */
+  --cv-safe-top: calc(var(--cv-head-top) + max(var(--cv-head-h), var(--cv-size-circle)) + var(--cv-safe-gap));
+  /* ↑ 顶边算式（canvas-hint-text 批 2026-11-05 修正）：
+       10（行顶）+ max(胶囊 36, 圆钮 40) + 8（呼吸缝）= **58**
+     修前 = --cv-head-clear（56）= 「10 + 胶囊 36 + 10 呼吸」—— 算式里只算了胶囊
+     高度，可顶行真正在场的圆钮是 `--cv-size-circle` = **40**（关签钮 / 返回钮 /
+     堆叠钮，实测 y26..66），于是「安全区 56」实际只让出 6px 净空，正是上一批
+     注释里那句「首行贴着胶囊下沿」的 4px 档差来源。本批把顶行**最高件**取大
+     后再加呼吸缝，**净空 = 呼吸缝本身**（几何上可读，不再靠算式巧合）。
+     为什么不动 --cv-head-clear：它是**控件锚点**（查找条 / 缩放条 / 顶行控件都
+     锚在它上面，值 56 是既有 15 个 spec 的判据读数），语义是「行下缘 + 一档缝」，
+     不是「安全区」。安全区与控件锚点本就是两把尺，本批只把安全区那把尺改对。 */
+  /* ── Canvas 安全区 · 四边（canvas-hint-text 批 2026-11-05，作者原话
+     「canvas 内所有的提示文字，要统一制作规范，不然会跟悬浮在上面的按钮/胶囊
+     重叠」）────────────────────────────────────────────────────────────
+     语义（本批把上面那条单边令牌扩成**四边一族**）：
+     **Canvas 面板内任何文字容器与浮层之间的净空，只能由这四个令牌给出**，
+     容器挂 `.cv-safe-pad`（css/canvasHint.css）即四边齐备，禁止各自写
+     padding 数值（禁止的理由是历史：`#plugins-content` / `#agents-content`
+     曾各写裸顶垫 16px ⇒ 首行压进胶囊带 30px）。
+
+     四边的浮层来源（判据统计范围 = 这几类，脚本
+     tests/canvas-hint-safe-area.spec.mjs 逐面实测）：
+       · 顶 = 居中标题胶囊 + 顶行关签钮/返回钮/堆叠钮 ⇒ 值 = --cv-safe-top
+         （= --cv-head-clear 56；手机层 mobileLayer.css 覆写为 --mchrome-clear 72）
+       · 右 = 右下 FAB 列（ask 钮 / 记事本钮）与顶部堆叠钮的右缘净档 ⇒ 16
+       · 下 = 底部浮钮带（源码 <> / 引用 / 查找 / 缩放条 + FAB 行）⇒ **地板 16，
+         真值由 .canvas-tab-pane 上的 max(地板, --canvas-bottom-clearance) 覆写**
+         （实测值由 viewers/shared.js syncBottomClearance 发布，理由见 split.css
+         文件尾「底部浮钮让位」块：钮档随设备/面板宽变，常量必在某个档位失真）
+       · 左 = 面板左内缘净档 ⇒ 16（= --ds-space-4，与项目面板族左右内距同档）
+     为什么右/左不是 0：无浮层时也要有一档稳定内距，否则文字贴面板边（另一种
+     不可读）。16 是既有的面板族左右内距档，不新造值。 */
+  --cv-safe-right: var(--ds-space-4);
+  --cv-safe-bottom: var(--ds-space-4);
+  --cv-safe-left: var(--ds-space-4);
+  /* 提示文字与浮层之间的最小呼吸缝：零交叠判据之外的**余量档**（浮层边缘与
+     文字墨迹之间至少留这一档，防「贴着但不重叠」的观感破绽）。 */
+  --cv-safe-gap: var(--ds-space-2);
+  /* ── canvas 顶行浮钮列几何（同批：返回原文档钮 ↔ 关签钮重叠修复）──
+     顶行 = 一条按序排布的浮钮列：
+       [关签钮 #canvas-head-close] →8 缝→ [返回原文档钮] …(弹性)… [居中标题
+       胶囊] …(弹性)… [堆叠钮 #deck-fab]
+     三把尺全部在此出生，split.css 只消费：
+       · --cv-head-inset-x   顶行左右缘落位（关签钮 left / 堆叠钮 right 同一值，
+         JS syncDeckBox 落笔同值，改这里只是把 CSS 缺省与 JS 对齐）；
+       · --cv-head-row-2nd   第二座（返回钮）左缘 = 首座右缘（inset + 40 圆钮）
+         + 一档缝 = 60；
+       · --cv-head-capsule-w 居中胶囊实宽（与 split.css 胶囊 max-width 同一
+         表达式，含窄面板 220 地板 —— 引用而非另算，防两把尺）；
+       · --cv-refback-w-max  返回钮可用宽上限 = 顶行左侧净档（胶囊左缘左移量）
+         扣掉自己的左缘与一档缝 ⇒ 任何面板宽度下都压不到居中胶囊。 */
+  --cv-head-inset-x: var(--ds-space-3);            /* 12 */
+  --cv-head-row-gap: var(--ds-space-2);            /* 8 */
+  --cv-head-row-2nd: calc(var(--cv-head-inset-x) + var(--cv-size-circle) + var(--cv-head-row-gap));
+  --cv-head-capsule-w: min(76%, max(220px, calc(100% - 368px)));
+  --cv-refback-w-max: calc((100% - var(--cv-head-capsule-w)) / 2 - var(--cv-head-row-2nd) - var(--cv-head-row-gap));
+  /* 两行档让位（同上批）：返回钮落**第二行**（窄面板 / 手机层）时，正文让出
+     两行的净空 = 安全区 56 + 一行钮高 36 + 一档缝 8 = 100（与项目面板族
+     --panel-head-2row = 102 同构：那边多一道 10 呼吸，此处缝已含在安全区里）。
+     只在该钮**真在场**时生效（body.has-refback，syncRefBackButton 挂），
+     不垫白洞。 */
+  --cv-head-2row: calc(var(--cv-safe-top) + var(--cv-head-h) + var(--cv-head-row-gap));
 }
 
 @media (prefers-color-scheme: dark) {
@@ -292,35 +413,29 @@
 .reminder-create-btn,
 .cfg-eye-btn,
 .agent-detail-prompt-toggle,
-.project-archive-btn {
+.project-unmount-btn {
   border: 1px solid transparent;
-  transition: background 0.15s, color 0.15s, border-color 0.15s,
-              box-shadow 0.15s, opacity 0.15s, transform 0.1s;
+  transition: background 0.15s, color 0.15s, border-color 0.15s, opacity 0.15s, transform 0.1s;
 }
-/* Pattern A — hover（liquid-glass-v2 批：材质换代 = .glass-control 同配方 +
-   镜面高光层；按压 spring 回弹 = 投影收短 + 高光收敛，形变档随 v2 规范） */
-.panel-btn:hover,
-.activity-avatar:hover,
-.session-delete:hover,
-.folder-delete:hover,
-.explorer-folder-btn:hover,
-.explorer-action-btn:hover,
-.canvas-close-btn:hover,
-.reminder-create-btn:hover,
-.cfg-eye-btn:hover,
-.agent-detail-prompt-toggle:hover,
-.project-archive-btn:hover {
-  background-color: var(--glass-control-bg-hover);
-  background-image: linear-gradient(to bottom, var(--glass-control-specular) 0%, transparent 46%);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(var(--glass-control-sat));
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(var(--glass-control-sat));
-  border-color: var(--glass-control-border);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight-hover),
-    inset 0 -2px 5px var(--glass-control-underedge),
-    0 1px 3px var(--glass-control-glow-hover),
-    0 8px 24px var(--glass-control-shadow-hover);
+@media (hover: hover) {
+  /* Pattern A — hover（liquid-glass-v2 批：材质换代 = .glass-control 同配方 +
+     镜面高光层；按压 spring 回弹 = 投影收短 + 高光收敛，形变档随 v2 规范） */
+  .panel-btn:hover,
+  .activity-avatar:hover,
+  .session-delete:hover,
+  .folder-delete:hover,
+  .explorer-folder-btn:hover,
+  .explorer-action-btn:hover,
+  .canvas-close-btn:hover,
+  .reminder-create-btn:hover,
+  .cfg-eye-btn:hover,
+  .agent-detail-prompt-toggle:hover,
+  .project-unmount-btn:hover {
+    background-color: var(--glass-control-bg-hover);
+    border-color: var(--glass-control-border);
+  }
 }
+
 
 /* Pattern B — base（v3 实现批 2026-10-31 材质换代：玻璃底材 → 控件族 C3 中性
    扁平实底（--ctl-neutral-*，stand-tokens 单源；纯色 / 无边 / 无高光 / 无模糊 /
@@ -341,26 +456,27 @@
 #rules-modal-actions button {
   background-color: var(--ctl-neutral-bg);
   border-color: transparent;
-  box-shadow: none;
-  transition: background-color 0.15s ease, color 0.15s, border-color 0.15s,
-              box-shadow 0.15s ease, opacity 0.15s;
+  transition: background-color 0.15s ease, color 0.15s, border-color 0.15s, opacity 0.15s;
 }
-/* Pattern B — hover（中性 hover 档；picked/copied 态除外：accent 由各自更高
-   特异档承担） */
-.cfg-btn:not(.cfg-btn-primary):not(.cfg-btn-add):hover,
-.config-actions button:hover,
-.agent-detail-save-btn:hover,
-.option-btn:not(.picked):hover,
-.neblink-peer-update-btn:hover,
-.neblink-ch-btn:hover,
-.epub-nav-btn:hover,
-.code-copy-btn:not(.copied):hover,
-#modal-cancel:hover,
-#delete-cancel:hover,
-#memory-modal-actions button:hover,
-#rules-modal-actions button:hover {
-  background-color: var(--ctl-neutral-bg-hover);
+@media (hover: hover) {
+  /* Pattern B — hover（中性 hover 档；picked/copied 态除外：accent 由各自更高
+     特异档承担） */
+  .cfg-btn:not(.cfg-btn-primary):not(.cfg-btn-add):hover,
+  .config-actions button:hover,
+  .agent-detail-save-btn:hover,
+  .option-btn:not(.picked):hover,
+  .neblink-peer-update-btn:hover,
+  .neblink-ch-btn:hover,
+  .epub-nav-btn:hover,
+  .code-copy-btn:not(.copied):hover,
+  #modal-cancel:hover,
+  #delete-cancel:hover,
+  #memory-modal-actions button:hover,
+  #rules-modal-actions button:hover {
+    background-color: var(--ctl-neutral-bg-hover);
+  }
 }
+
 /* Pattern B — active（v3 §D：扁平按压 = 色深一档，无玻璃式弹缩 —— transform
    形变与投影随本批退役） */
 .cfg-btn:not(.cfg-btn-primary):not(.cfg-btn-add):active,
@@ -399,17 +515,11 @@
      ⑤ button.fm-send-chip        群邀请「发送邀请」（`.fm-msg-btn` 是**共用**类名，
                                    加 `.fm-send-chip` 专指发送语义 ⇒ 不误染
                                    `contacts.js:744` 的「发消息」键）
-     ⑥ button.fm-create-submit    建群面板「创建」（**2026-09-16 追加**；族语义的
-                                   唯一一次扩展）。本键**不是**发送语义，但作者
-                                   2026-09-16 07:46 令 =「创建键 = 正经主按钮 +
-                                   对齐发送键状态语言 + **禁自创第二套禁用语义**」
-                                   ⇒ 主键材质与四态语言必须**单源**，故并入本
-                                   `:is()` 列表（**同一条规则**承载 rest / hover /
-                                   active / disabled），禁止在 `friends.css` 复制
-                                   同值声明（本文件 :444 已立「同值不得双写」）。
-                                   登记偏离：建群面板**不产生** `.disconnected`
-                                   （提交失败的可见分态走 `groupErrToast`，不做
-                                   链路态键面）⇒ 该档对 ⑥ 无生产者，见本批报告 §⑥。
+     ⑥ ~~button.fm-create-submit~~ 建群面板「创建」（**2026-11-06 退役**：统一面板批
+                                   作者令「创建按钮变成右下角的悬浮加号」⇒ 建群
+                                   主操作改 `.g2-fab` 悬浮圆钮族（材质/四态归
+                                   glass.css 圆钮级浮件档），本族不再有该成员。
+                                   族语义仍为「发送/提交主操作」五项，判据不变）
    状态色（v3 实现批 2026-10-31，作者 12:32 点选「发送钮跟随主对话」——主对话
    #send-btn 恢复 10-30 前微信绿（git 考古 c91de8456^），本族四色同走
    --ctl-send-* 绿阶单源；掉线/禁用灰档语义不变）：
@@ -417,9 +527,8 @@
      hover  = var(--ctl-send-bg-hover)  （#06ad56，描边同色递进）
      active = var(--ctl-send-bg-active)（#059a4c；v3 §D 扁平按压 = 色深一档）
      掉线   = 灰（`--glass-send-bg-active` + `--glass-send-border-active` + not-allowed）
-     disabled = `--glass-send-bg-disabled`（发送键 = 空正文闸；建群创建键 = 未选人 ∨
-                未填群名闸 —— **档位与视觉语言同一套**，只有触发判据各按自身契约，
-                禁自创第二套禁用语义）
+     disabled = `--glass-send-bg-disabled`（发送键 = 空正文闸 —— **档位与视觉语言同
+                一套**，触发判据各按自身契约，禁自创第二套禁用语义）
    材质 = v3 控件族 C1 扁平实底（作者 12:32 点选：扁平形态 + Stand 墨族/绿配色
      混血，不用 System Blue 也不用玻璃）：纯色 / 无 blur / 无高光 / 无浮影 ——
      本块原 glass-control 材质（blur + inset 边 + 双层投影）与亮档投影反馈层
@@ -429,13 +538,13 @@
      材质 / 几何 / 状态。
    几何：仍 10px 圆角 + 5px 12px 内距（与 09-14 裁定「圆角 10px 常例」同档；此处显式
      声明以挡住 `.cfg-btn-primary` 的 5px/14px，避免引入几何漂移）。 */
-:is(#dropbox-send-btn, .cfg-btn.fm-send-btn, button.fm-verify-send, button.fm-send-chip, button.fm-create-submit) {
+:is(#dropbox-send-btn, .cfg-btn.fm-send-btn, button.fm-verify-send, button.fm-send-chip) {
   /* 机制：`:is()` 取列表内最高特异度（= #id 档 1,0,0）⇒ 族内所有状态规则同档，
      一律压过 .cfg-btn / .cfg-btn-primary 的常态与 hover 声明（本文件最后加载）。 */
   background: var(--ctl-send-bg);
   border: 1px solid var(--ctl-send-border);
-  border-radius: 10px;
-  padding: 5px 12px;
+  border-radius: var(--ds-radius-button);
+  padding: var(--ds-space-1h) var(--ds-space-3);
   font-family: inherit;
   font-weight: 500;
   cursor: pointer;
@@ -494,14 +603,14 @@
 }
 
 /* hover — 绿阶深一档（--ctl-send-bg-hover）+ 描边同色（v3 扁平实底反馈语言）。 */
-:is(#dropbox-send-btn, .cfg-btn.fm-send-btn, button.fm-verify-send, button.fm-send-chip, button.fm-create-submit):hover {
+:is(#dropbox-send-btn, .cfg-btn.fm-send-btn, button.fm-verify-send, button.fm-send-chip):hover {
   background: var(--ctl-send-bg-hover);
   border-color: var(--ctl-send-bg-hover);
   opacity: 1;
 }
 
 /* active — 再深一档（--ctl-send-bg-active）；v3 §D 扁平按压 = 色深一档，无弹缩。 */
-:is(#dropbox-send-btn, .cfg-btn.fm-send-btn, button.fm-verify-send, button.fm-send-chip, button.fm-create-submit):active {
+:is(#dropbox-send-btn, .cfg-btn.fm-send-btn, button.fm-verify-send, button.fm-send-chip):active {
   background: var(--ctl-send-bg-active);
   border-color: var(--ctl-send-bg-active);
 }
@@ -516,12 +625,11 @@
 /* disabled — :disabled may co-match :hover（同特异度 ⇒ 按次序）。禁用材质 +
    `--color-text` 半透明文字（与 09-12「同意」键同款禁用表达）+ not-allowed；
    **绝不**用元素级 opacity（P4 已退役表达）。 */
-:is(#dropbox-send-btn, .cfg-btn.fm-send-btn, button.fm-verify-send, button.fm-send-chip, button.fm-create-submit):disabled {
+:is(#dropbox-send-btn, .cfg-btn.fm-send-btn, button.fm-verify-send, button.fm-send-chip):disabled {
   background: var(--glass-send-bg-disabled);
   border-color: var(--glass-send-border-disabled);
   color: color-mix(in srgb, var(--color-text) 50%, transparent);
   cursor: not-allowed;
-  box-shadow: var(--glass-send-stack);
   opacity: 1;
 }
 
@@ -529,13 +637,12 @@
    （token 未新造，只是语义从「常态」降为「链路不可用」）；
    cursor: not-allowed ⇒ 与「禁用」同相，但语义是**链路不可用**（真复现读数见本批
    报告 §③：MockWS onclose 真断开后取 computed style，非「改 CSS 声称」）。 */
-:is(#dropbox-send-btn, .cfg-btn.fm-send-btn, button.fm-verify-send, button.fm-send-chip, button.fm-create-submit).disconnected,
-:is(#dropbox-send-btn, .cfg-btn.fm-send-btn, button.fm-verify-send, button.fm-send-chip, button.fm-create-submit).disconnected:hover {
+:is(#dropbox-send-btn, .cfg-btn.fm-send-btn, button.fm-verify-send, button.fm-send-chip).disconnected,
+:is(#dropbox-send-btn, .cfg-btn.fm-send-btn, button.fm-verify-send, button.fm-send-chip).disconnected:hover {
   background: var(--glass-send-bg-active);
   border-color: var(--glass-send-border-active);
   color: var(--color-text-muted);
   cursor: not-allowed;
-  box-shadow: var(--glass-send-stack);
 }
 
 /* ── 登录键族 — 面板侧未登录入口 / 登录面板动作键（2026-09-16 作者令 + 同日 11:55
@@ -634,17 +741,14 @@ button.glass-control.fm-login-btn {
 :is(.fm-login-btn, .login-modal-btn),
 button.glass-control.fm-login-btn {
   background: var(--btn-primary-bg);
-  border: 1px solid var(--btn-primary-bg-hover);
-  box-shadow:
-    inset 0 1px 0 var(--ig-highlight),
-    var(--ig-shadow); /* 统一玻璃批：墨面浮影归 --ig-* 包档 */
+  border: 1px solid var(--btn-primary-bg-hover); /* 统一玻璃批：墨面浮影归 --ig-* 包档 */
   display: block;
   width: 100%;
   box-sizing: border-box;
-  padding: 10px 20px;
-  border-radius: 10px;
+  padding: var(--ds-space-block-y) var(--ds-space-5);
+  border-radius: var(--ds-radius-button);
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-weight: 500;
   line-height: 1.25;
   text-align: center;
@@ -662,9 +766,6 @@ button.glass-control.fm-login-btn:hover {
 :is(.fm-login-btn, .login-modal-btn):active,
 button.glass-control.fm-login-btn:active {
   border-color: var(--glass-send-border-active);
-  box-shadow:
-    inset 0 1px 0 var(--ig-highlight),
-    var(--ig-shadow-press);
 }
 :is(.fm-login-btn, .login-modal-btn):disabled,
 button.glass-control.fm-login-btn:disabled {
@@ -672,7 +773,6 @@ button.glass-control.fm-login-btn:disabled {
   border-color: var(--glass-send-border-disabled);
   color: color-mix(in srgb, var(--color-text) 50%, transparent);
   cursor: not-allowed;
-  box-shadow: var(--glass-send-stack);
   opacity: 1;
 }
 
@@ -686,20 +786,20 @@ button.glass-control.fm-login-btn:disabled {
 .login-modal-btn.login-modal-btn-secondary:hover {
   background: var(--glass-control-bg);
   border-color: var(--glass-control-border);
-  box-shadow: var(--glass-send-stack);
   color: var(--color-text);
 }
-.login-modal-btn.login-modal-btn-secondary:hover { background: var(--glass-control-bg-hover); }
+@media (hover: hover) {
+  .login-modal-btn.login-modal-btn-secondary:hover { background: var(--glass-control-bg-hover); }
+}
+
 .login-modal-btn.login-modal-btn-secondary:active {
   border-color: var(--glass-send-border-active);
-  box-shadow: var(--glass-send-stack), var(--glass-send-shadow-active);
 }
 .login-modal-btn.login-modal-btn-secondary:disabled {
   background: var(--glass-send-bg-disabled);
   border-color: var(--glass-send-border-disabled);
   color: color-mix(in srgb, var(--color-text) 50%, transparent);
   cursor: not-allowed;
-  box-shadow: var(--glass-send-stack);
   opacity: 1;
 }
 
@@ -716,23 +816,34 @@ button.glass-control.fm-login-btn:disabled {
    `title` i18n + 点击弹登录窗）不在本块职责内，逐条读数见报告 §4。 */
 
 /* ── Shared message surface ─────────────────────────────────────────────
-   好友消息面（#fm-chat-overlay）与 dropbox 面共用同一套气泡/元信息声明，写在这
-   里一次（2026-09-12 波2：判据 ③A1 字面量单源 / ③A2 几何跨面相等 / ③A3
-   max-width 同 token / ③A4 元信息字号色相等 / ③A5 文件卡同类名）。sapphire.css
+   🔴 四会话统一批（作者令 2026-11-05「优化一下联系人，群聊，设备的对话框的样式，
+   和我们主agent的对话窗口保持一致……气泡……卡片，文件，按钮……都保持一致」）：
+   好友 / 群 / 设备三种会话窗的气泡与 footer **改挂主会话的类族**
+   （`.bubble` / `.bubble.user` / `.bubble.peer` + `.duration-badge*` +
+   `.msg-copy`，类的家 = chat.css），本节的同值副本随之**从本层撤出**——
+   本节现在只服务 dropbox 面（`.dropbox-msg*`），不再是「两面共用」的一层。
+   撤出而非留双份的理由：同一套视觉只许有一个家（③A1 的初衷），主会话面就是
+   那个家；session 窗若继续留一份 13px/8-12/r14 的副本，就等于同一元素有两种
+   说法（本批实测旧读数 Δ：字号 −1.5px、内距 −2px、圆角 −2px、出向底色不同族）。
+   原沿革（2026-09-12 波2：判据 ③A1 字面量单源 / ③A2 几何跨面相等 / ③A3
+   max-width 同 token / ③A4 元信息字号色相等 / ③A5 文件卡同类名）保留如下；
+   dropbox 面仍逐条受这些判据约束。sapphire.css
    在 index.html 里最后加载，因此同特异度的特性 CSS 声明在此统一生效；两个特性
    文件里的重复声明已删除（同值不得双写）。
    基准（③-E 裁定）= 主对话框气泡形态：尾角 4px、元信息 pill、时间 10px 等宽
    tabular-nums、出向气泡无描边。纯数值按作者 2026-09-12 裁定第 5 条（②-4
    「保持 13px 档」）取 13px / padding 8-12 / r14 —— 未照搬主对话框的
    14.5px / 10-14 / r16，逐条偏离理由见本批结果件的偏离登记。
-   消息列宽 token `--msg-bubble-max-w`（下）的消费方 = 好友/设备两面的气泡 wrapper
-   （`.fm-msg` / `.dropbox-msg`）**与**群气泡发送者名 `.fm-msg-sender`（cired 批
+   🔴 四会话统一批后本 token 的消费方只剩 dropbox 面气泡 wrapper（`.dropbox-msg`）
+   **与**群气泡发送者名 `.fm-msg-sender`（好友/群/设备三窗的气泡已改挂主会话
+   `--ds-bubble-max-w`，见 friends.css 同名块）；群气泡发送者名（cired 批
    2026-09-17：该行原先就地写死 78%，现收归本 token ⇒ 面内零字面量、改一处两侧同步；
    未新增第二个 78% token —— 再起一个同值 token 即把「值的家」重新裂成两处，正是
    ③A3 要挡的漂移形态）。值保持 78% —— 收归只改「值的家」，不改计算值。 */
 :root {
   --msg-bubble-max-w: 78%;
-  /* 消息面元信息卡阴影 —— pill（`.fm-msg-meta` / `.dropbox-msg-meta`）与引用块
+  /* 消息面元信息卡阴影 —— pill（`.dropbox-msg-meta`；好友/群/设备的 pill 已改用
+     主会话 `.duration-badge` 的同一枚戒指影，见 chat.css）与引用块
      （`.fm-quote-block`）共用的同一枚「发丝环 + 微落影」。值的家只有这一处：
      两个消费面只消费 `var(--msg-meta-card-shadow)`，禁再就地复写（判据 ③A2/A4
      元信息 pill ring 阴影单源；scripts/check-msgstyle-single-source.mjs 的
@@ -741,63 +852,76 @@ button.glass-control.fm-login-btn:disabled {
 }
 
 /* wrapper — 同源结构与形态（③-E） */
-.fm-msg,
+/* 四会话统一批：`.fm-msg` 行壳的行宽上限改由 friends.css 指向
+   `--ds-bubble-max-w`（与主会话 `.bubble` 同 token、同 80%）——气泡本体不再在这里
+   取几何。本组只剩 dropbox 面（其气泡仍是 `.dropbox-msg-bubble` 自有形态）。 */
 .dropbox-msg {
   display: flex;
   flex-direction: column;
   max-width: var(--msg-bubble-max-w);
 }
-.fm-msg.out,
 .dropbox-msg.out { align-self: flex-end; align-items: flex-end; }
-.fm-msg.in,
 .dropbox-msg.in { align-self: flex-start; align-items: flex-start; }
 
-/* bubble — 几何 / 字号 / 行高 / 出向无描边 + 方向尾角 4px */
-.fm-msg-bubble,
+/* bubble — 几何 / 字号 / 行高 / 出向无描边 + 方向尾角 4px
+   ui-unification-20261103-chat-stream：几何/字号/行高走 --ds-* 槽（值逐字同前：
+   8px/12px = space-2/3、14px = radius-card-md、13px = fs-body、1.5 = lh-body）。
+   列宽 token --msg-bubble-max-w 的值家**原地不动**（本文件，msgstyle 门禁 A3
+   逐字钉死）；方向尾角 4px 亦保持字面（A1/A2 同门禁按字面计数）。 */
 .dropbox-msg-bubble {
-  padding: 8px 12px;
-  border-radius: 14px;
-  font-size: 13px;
-  line-height: 1.5;
+  padding: var(--ds-space-2) var(--ds-space-3);
+  border-radius: var(--ds-radius-card-md);
+  font-size: var(--ds-fs-body);
+  line-height: var(--ds-lh-body);
   word-break: break-word;
   color: var(--color-text, #000);
 }
-.fm-msg.out .fm-msg-bubble,
 .dropbox-msg.out .dropbox-msg-bubble {
-  background: var(--sapphire-tint-15);
+  /* 底色归 glass.css「气泡归属方底色单点」块（--nf-bub-ours-bg）；本行只留尾角。 */
   border-bottom-right-radius: 4px;
 }
-.fm-msg.in .fm-msg-bubble,
 .dropbox-msg.in .dropbox-msg-bubble {
-  background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
   border-bottom-left-radius: 4px;
 }
 
 /* meta pill — 逐条搬主对话框 .duration-badge（chat.css:1138-1149）
    三窗口 footer 统一（2026-09-14 作者七答 · 方向 A）：S01 补齐主对话已有的
-   `user-select:none` / `width:fit-content`（消除隐式默认，友/设备原缺）。 */
-.fm-msg-meta,
+   `user-select:none` / `width:fit-content`（消除隐式默认，友/设备原缺）。
+   🔴 ui-final-four ⑧（2026-11-03，作者令「消息下方 footer」）· 左右内距 = 气泡内容内距
+   —— 修前 `2px 8px 2px 6px`：pill 盒缘虽与气泡盒缘对齐（实测 Δ=0），但 pill 内容缘
+   与气泡**内容缘**相差（出向右 −4px / 入向左 −7px，逐条实测见 ⑧ 诊断表）；且 6↔8 的
+   左右不对称使时间文字与右端动作钮的光学边距不等。现状改为一律 `var(--ds-space-3)`
+   = 12px（= 气泡内距 `--ds-space-3`），入向再 +1px（气泡有 1px 描边 ⇒ 内容缘 = 13）。
+   判据 = footer 内容缘 ≡ 气泡内容缘（出向/入向、三形态各 0px）。
+   ⚠ 与主对话 `.duration-badge`（chat.css，不在本批所有权内）自本批起内距分档：主对话
+   6/8、消息面 12/12 —— 两条轴线的「值的家」各自单源，禁在本规则再写第二份字面量。 */
 .dropbox-msg-meta {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  margin-top: 4px;
-  padding: 2px 8px 2px 6px;
+  gap: var(--ds-space-1h);
+  margin-top: var(--ds-space-1);
+  padding: var(--ds-space-half) var(--ds-space-3);
   background: var(--color-surface);
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   box-shadow: var(--msg-meta-card-shadow);
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted, #888);
   user-select: none;
   width: fit-content;
+}
+
+/* 入向气泡带 1px 描边（见上方 `.dropbox-msg.in .dropbox-msg-bubble`）⇒ 其内容缘自气泡盒缘起
+   = 12 + 1 = 13px；pill 同向 +1px 才能与气泡内容同列（出向无描边，取 12 即可）。 */
+.dropbox-msg.in .dropbox-msg-meta {
+  padding-left: calc(var(--ds-space-3) + 1px);
+  padding-right: calc(var(--ds-space-3) + 1px);
 }
 
 /* pill 暗档（S04/A2）：主对话有专属暗档覆盖（chat.css:1564-1567），友/设备两面
    原先沿亮档值 ⇒ 黑 alpha 叠暗底「描边几乎不可见」。此处补上主对话取值（单环、
    去 3px 落影），三面同值。 */
 @media (prefers-color-scheme: dark) {
-  .fm-msg-meta,
   .dropbox-msg-meta {
     background: rgba(255, 255, 255, 0.04);
     box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
@@ -817,12 +941,12 @@ button.glass-control.fm-login-btn:disabled {
 .agent-badge,
 .fm-msg-agent-badge {
   display: inline-block;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   letter-spacing: normal;
   text-transform: none;
-  padding: 1px 8px;
-  border-radius: 9999px;
+  padding: var(--ds-space-hair) var(--ds-space-2);
+  border-radius: var(--ds-radius-pill);
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
   color: var(--color-frame-text-muted, var(--color-text-muted));
@@ -832,19 +956,19 @@ button.glass-control.fm-login-btn:disabled {
   text-overflow: ellipsis;
 }
 /* 主对话面独有几何：徽章悬在气泡上方（`.row.ai` = 列向 flex）⇒ 保留下外边距。
-   消息元信息行（`.fm-msg-meta` = 横向 inline-flex + align-items:center）**不取**
+   消息元信息行（`.duration-badge` / `.dropbox-msg-meta` = 横向 inline-flex +
+   align-items:center）**不取**
    本值（否则该行会多出 4px 底距、与时间文本错位）。
    🔴 作用域 = 主对话行（`.agent-row`）；**不是**组件的第二份定义 —— 组件定义
    仍只有上面那一个块（本行只是该组件在特定宿主里的落位几何）。 */
-.agent-row > .agent-badge { margin-bottom: 4px; }
+.agent-row > .agent-badge { margin-bottom: var(--ds-space-1); }
 
 /* time — 10px 等宽栈 + tabular-nums（主对话框 chat.css:1157-1162）
    S06/S07：取色与不透明度收敛到主对话口径 = `--color-text` + opacity .35
    （原先友/设备只声明字号/字体族/数字特性，颜色继承 pill 的 muted **实色**、
    且无 opacity ⇒ 与主对话「半透明浅档」不一致）。R6 = 保持现状「浅」档。 */
-.fm-msg-time,
 .dropbox-msg-time {
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   font-family: ui-monospace, SFMono-Regular, monospace;
   font-variant-numeric: tabular-nums;
   color: var(--color-text);
@@ -854,15 +978,13 @@ button.glass-control.fm-login-btn:disabled {
 }
 
 @media (prefers-color-scheme: dark) {
-  .fm-msg-time,
   .dropbox-msg-time { opacity: 0.28; }
 }
 
 /* 分隔符（S16/A5）：主对话口径 = 真 DOM 节点 1px×10px currentColor @ .2 +
    `flex-shrink:0`（chat.css:1150-1156）。设备面原先**无任何分隔符**（仅 6px flex
-   gap）⇒ 新增真节点；好友面原用 `.fm-msg-actions::before` 伪元素（A 方向保留，
-   视觉等价）但缺 `flex-shrink:0`，在 friends.css 补。 */
-.fm-msg-divider,
+   gap）⇒ 新增真节点。四会话统一批 2026-11-05：好友/群/设备的 pill 改挂
+   `.duration-badge-divider`（= 本规则的主会话同源件），本组只剩 dropbox 面。 */
 .dropbox-msg-divider {
   width: 1px;
   height: 10px;
@@ -881,8 +1003,8 @@ button.glass-control.fm-login-btn:disabled {
 
 /* file card — 单一类名 .msg-file-card（③A5）；out 变体是修饰态，不是第二份规则 */
 .msg-file-card {
-  padding: 8px 12px;
-  border-radius: 12px;
+  padding: var(--ds-space-2) var(--ds-space-3);
+  border-radius: var(--ds-radius-xl);
   background: var(--glass-etched-bg, rgba(128, 128, 128, 0.06));
   border: 1px solid var(--glass-etched-border, rgba(128, 128, 128, 0.12));
   min-width: 180px;
@@ -959,6 +1081,28 @@ button.glass-control.fm-login-btn:disabled {
   --btn-disabled-ink: var(--color-text-muted);
   --btn-unavailable-bg: var(--glass-send-bg-active);
   --btn-unavailable-stroke: var(--glass-send-border-active);
+
+  /* ── 扁平六态槽（flat-button-everywhere 批 2026-11-05）──────────────
+     作者令逐字：「我们的按钮扁平化风格要求要落实到各处 不管是hover还是点击
+     或者按下。」→ 扁平 = **不靠阴影/浮雕/高光营造厚度**，可点击感只由
+     底色阶 / 描边 / 字色 / 透明度 / 极轻微缩放承担。
+     本族是「六态里与厚度无关的那一半」的单源槽：按下幅度、焦点环、禁用档、
+     hover / 触屏隔离口径。**厚度道具（投影、inset 浮雕、渐变、drop-shadow）
+     在这族里结构上没有槽位**——不是遗漏，是契约：要给按钮加影，必须先在规范
+     文件 `seed/plugins/design-language/.../flat-button-spec.md` 的「例外清单」
+     写明理由，否则 `scripts/check-flat-buttons.mjs` 直接红。
+     六态定义与允许项正文见同规范文件 §2；本处只落可执行值。 */
+  --btn-press-scale: 0.98;        /* 按下幅度（桌面档；2% 触感，不配阴影） */
+  --btn-press-scale-touch: 0.97;  /* 触屏档（无 hover 面：反馈只走按下） */
+  --btn-press-fade: 0.92;         /* prefers-reduced-motion 兜底：禁位移，改用透明度 */
+  --btn-ring-w: 2px;              /* 焦点描边环宽（键盘导航可见，WCAG 2.4.7） */
+  --btn-ring-offset: 2px;         /* 环与本体间隙（不侵入邻钮） */
+  --btn-ring: var(--btn-focus-ring);
+  --btn-disabled-opacity: 0.5;    /* 禁用档：只降不透明 + not-allowed，不灰到不可读 */
+  --btn-hover-bg: var(--glass-control-bg-hover);   /* hover 底色阶（仅 (hover:hover) 生效） */
+  --btn-press-bg: color-mix(in srgb, var(--glass-control-bg-hover) 88%, var(--color-text) 12%); /* 按下底色阶 = 比 hover 再深一档 */
+  --btn-dur-state: 120ms;         /* 状态过渡（背景/描边/透明度） */
+  --btn-dur-press: 90ms;          /* 按下过渡（比 hover 快一档，手感更"实"） */
 }
 
 /* 幽灵墨色暗档：亮档用 `--color-frame-text`（弱于次操作 `--color-text` 的一档），
@@ -993,7 +1137,6 @@ button.glass-control.fm-login-btn:disabled {
   background: var(--btn-ghost-bg);
   border-color: transparent;
   color: var(--btn-ghost-ink);
-  box-shadow: none;
   cursor: pointer;
 }
 :is(.fm-row, .fm-nf-entry, .fm-pick-row, .fm-invite-row,
@@ -1002,40 +1145,20 @@ button.glass-control.fm-login-btn:disabled {
     .settings-avatar-entry, .settings-collapse-toggle,
     .fm-context-menu button:not(.danger)):hover {
   color: var(--btn-ghost-ink-hover);
+  /* 扁平化批 2026-11-05：亮档原来靠 `inset 0 0 0 1px 描边影 + 0 2px 7px 投影`
+     给反馈（暗档只有底色）。两者退役后，那 1px 环改写成**真描边**（线不是影），
+     并把底色档提到双主题通用（原来只有暗档有，亮档靠影子撑）——
+     现在两档同构：hover = 描边档 + 底升一档，active = 更强描边 + 更深底。 */
+  border-color: var(--btn-secondary-stroke-hover);
+  background: var(--btn-secondary-fill-hover);
 }
-@media (prefers-color-scheme: light) {
-  :is(.fm-row, .fm-nf-entry, .fm-pick-row, .fm-invite-row,
-      .neblink-peer.fm-device-row, .fm-msg-act, .fm-msg-time.time-toggle,
-      .fm-modal-title-btn, .fm-modal-close, .fm-gs-open, .panel-btn,
-      .settings-avatar-entry, .settings-collapse-toggle,
-      .fm-context-menu button:not(.danger)):hover {
-    box-shadow: inset 0 0 0 1px var(--btn-secondary-stroke-hover),
-                0 2px 7px var(--glass-send-shadow-hover);
-  }
-  :is(.fm-row, .fm-nf-entry, .fm-pick-row, .fm-invite-row,
-      .neblink-peer.fm-device-row, .fm-msg-act, .fm-msg-time.time-toggle,
-      .fm-modal-title-btn, .fm-modal-close, .fm-gs-open, .panel-btn,
-      .settings-avatar-entry, .settings-collapse-toggle,
-      .fm-context-menu button:not(.danger)):active {
-    box-shadow: inset 0 0 0 1px var(--btn-secondary-stroke),
-                var(--glass-send-shadow-active);
-  }
-}
-@media (prefers-color-scheme: dark) {
-  :is(.fm-row, .fm-nf-entry, .fm-pick-row, .fm-invite-row,
-      .neblink-peer.fm-device-row, .fm-msg-act, .fm-msg-time.time-toggle,
-      .fm-modal-title-btn, .fm-modal-close, .fm-gs-open, .panel-btn,
-      .settings-avatar-entry, .settings-collapse-toggle,
-      .fm-context-menu button:not(.danger)):hover {
-    background: var(--btn-secondary-fill-hover);
-  }
-  :is(.fm-row, .fm-nf-entry, .fm-pick-row, .fm-invite-row,
-      .neblink-peer.fm-device-row, .fm-msg-act, .fm-msg-time.time-toggle,
-      .fm-modal-title-btn, .fm-modal-close, .fm-gs-open, .panel-btn,
-      .settings-avatar-entry, .settings-collapse-toggle,
-      .fm-context-menu button:not(.danger)):active {
-    background: var(--btn-unavailable-bg);
-  }
+:is(.fm-row, .fm-nf-entry, .fm-pick-row, .fm-invite-row,
+    .neblink-peer.fm-device-row, .fm-msg-act, .fm-msg-time.time-toggle,
+    .fm-modal-title-btn, .fm-modal-close, .fm-gs-open, .panel-btn,
+    .settings-avatar-entry, .settings-collapse-toggle,
+    .fm-context-menu button:not(.danger)):active {
+  border-color: var(--btn-secondary-stroke);
+  background: var(--btn-unavailable-bg);
 }
 
 /* ── 图标幽灵面（附件小键等，与文字幽灵同档）──────────────────────────────
@@ -1046,17 +1169,20 @@ button.glass-control.fm-login-btn:disabled {
   background: var(--btn-ghost-bg);
   border-color: transparent;
   color: var(--btn-ghost-ink);
-  box-shadow: none;
   cursor: pointer;
 }
-.fm-attach-btn:hover { color: var(--btn-ghost-ink-hover); }
-@media (prefers-color-scheme: light) {
-  .fm-attach-btn:hover { box-shadow: inset 0 0 0 1px var(--btn-secondary-stroke-hover), 0 2px 7px var(--glass-send-shadow-hover); }
-  .fm-attach-btn:active { box-shadow: inset 0 0 0 1px var(--btn-secondary-stroke), var(--glass-send-shadow-active); }
+@media (hover: hover) {
+  /* 同幽灵族口径（扁平化批 2026-11-05）：hover/active 双主题同构，不再按主题分叉。 */
+  .fm-attach-btn:hover {
+    color: var(--btn-ghost-ink-hover);
+    border-color: var(--btn-secondary-stroke-hover);
+    background: var(--btn-secondary-fill-hover);
+  }
 }
-@media (prefers-color-scheme: dark) {
-  .fm-attach-btn:hover { background: var(--btn-secondary-fill-hover); }
-  .fm-attach-btn:active { background: var(--btn-unavailable-bg); }
+
+.fm-attach-btn:active {
+  border-color: var(--btn-secondary-stroke);
+  background: var(--btn-unavailable-bg);
 }
 .fm-attach-btn:disabled {
   background: var(--btn-disabled-bg);
@@ -1076,18 +1202,20 @@ button.glass-control,
   background: var(--btn-secondary-bg);
   border-color: var(--btn-secondary-stroke);
   color: var(--btn-secondary-ink);
-  box-shadow: var(--glass-send-stack);
   cursor: pointer;
 }
-button.glass-control:hover,
-.cfg-btn:not(.cfg-btn-primary):hover,
-.fm-msg-btn:hover,
-.fm-search-btn:hover,
-.fm-device-desc-btn:hover,
-.neblink-switch-btn.neblink-switch-btn:hover {
-  border-color: var(--btn-secondary-stroke-hover);
-  color: var(--btn-secondary-ink);
+@media (hover: hover) {
+  button.glass-control:hover,
+  .cfg-btn:not(.cfg-btn-primary):hover,
+  .fm-msg-btn:hover,
+  .fm-search-btn:hover,
+  .fm-device-desc-btn:hover,
+  .neblink-switch-btn.neblink-switch-btn:hover {
+    border-color: var(--btn-secondary-stroke-hover);
+    color: var(--btn-secondary-ink);
+  }
 }
+
 button.glass-control:active,
 .cfg-btn:not(.cfg-btn-primary):active,
 .fm-msg-btn:active,
@@ -1097,33 +1225,19 @@ button.glass-control:active,
   border-color: var(--btn-secondary-stroke-hover);
   background: var(--btn-secondary-bg);
 }
-@media (prefers-color-scheme: light) {
-  button.glass-control:hover,
-  .cfg-btn:not(.cfg-btn-primary):hover,
-  .fm-msg-btn:hover,
-  .fm-search-btn:hover,
-  .fm-device-desc-btn:hover,
-  .neblink-switch-btn.neblink-switch-btn:hover {
-    box-shadow: var(--glass-send-stack), var(--glass-send-shadow-hover);
-  }
-  button.glass-control:active,
-  .cfg-btn:not(.cfg-btn-primary):active,
-  .fm-msg-btn:active,
-  .fm-search-btn:active,
-  .fm-device-desc-btn:active,
-  .neblink-switch-btn.neblink-switch-btn:active {
-    box-shadow: var(--glass-send-stack), var(--glass-send-shadow-active);
-  }
-}
+
 @media (prefers-color-scheme: dark) {
-  button.glass-control:hover,
-  .cfg-btn:not(.cfg-btn-primary):hover,
-  .fm-msg-btn:hover,
-  .fm-search-btn:hover,
-  .fm-device-desc-btn:hover,
-  .neblink-switch-btn.neblink-switch-btn:hover {
-    background: var(--btn-secondary-fill-hover);
-  }
+@media (hover: hover) {
+    button.glass-control:hover,
+    .cfg-btn:not(.cfg-btn-primary):hover,
+    .fm-msg-btn:hover,
+    .fm-search-btn:hover,
+    .fm-device-desc-btn:hover,
+    .neblink-switch-btn.neblink-switch-btn:hover {
+      background: var(--btn-secondary-fill-hover);
+    }
+}
+
   button.glass-control:active,
   .cfg-btn:not(.cfg-btn-primary):active,
   .fm-msg-btn:active,
@@ -1143,7 +1257,6 @@ button.fm-req-decline {
   background: var(--btn-danger-bg);
   border-color: var(--btn-danger-stroke);
   color: var(--btn-danger-ink);
-  box-shadow: var(--glass-send-stack);
   cursor: pointer;
 }
 .fm-context-menu button.danger,
@@ -1151,20 +1264,24 @@ button.fm-req-decline {
 .canvas-tab-context-menu button.danger {
   background: var(--btn-danger-bg);
   color: var(--btn-danger-ink);
-  box-shadow: inset 0 0 0 1px var(--btn-danger-stroke);
+  outline: 1px solid var(--btn-danger-stroke);
+  outline-offset: calc(-1 * 1px);
   cursor: pointer;
 }
-button.glass-control.fm-gs-kick:hover,
-button.glass-control.fm-gs-danger:hover,
-button.glass-control.fm-gs-action.fm-gs-danger:hover,
-button.fm-req-decline:hover,
-.fm-context-menu button.danger:hover,
-.explorer-context-menu button.danger:hover,
-.canvas-tab-context-menu button.danger:hover {
-  border-color: var(--btn-danger-ink);
-  color: var(--btn-danger-ink);
-  background: var(--btn-danger-tint);
+@media (hover: hover) {
+  button.glass-control.fm-gs-kick:hover,
+  button.glass-control.fm-gs-danger:hover,
+  button.glass-control.fm-gs-action.fm-gs-danger:hover,
+  button.fm-req-decline:hover,
+  .fm-context-menu button.danger:hover,
+  .explorer-context-menu button.danger:hover,
+  .canvas-tab-context-menu button.danger:hover {
+    border-color: var(--btn-danger-ink);
+    color: var(--btn-danger-ink);
+    background: var(--btn-danger-tint);
+  }
 }
+
 button.glass-control.fm-gs-kick:active,
 button.glass-control.fm-gs-danger:active,
 button.glass-control.fm-gs-action.fm-gs-danger:active,
@@ -1174,7 +1291,8 @@ button.fm-req-decline:active,
 .canvas-tab-context-menu button.danger:active {
   border-color: var(--btn-danger-stroke);
   background: var(--btn-danger-tint);
-  box-shadow: inset 0 0 0 1px var(--btn-danger-stroke);
+  outline: 1px solid var(--btn-danger-stroke);
+  outline-offset: calc(-1 * 1px);
 }
 
 /* ── 主操作 — 墨族实心（声明在四类之后 ⇒ 同名元素归属以本节胜出：族内
@@ -1189,55 +1307,37 @@ button.fm-req-decline:active,
 button.fm-send-btn,
 button.fm-verify-send,
 button.fm-send-chip,
-button.fm-create-submit,
 button.glass-control.fm-gs-save,
 button.glass-control.fm-req-accept {
   background: var(--btn-primary-bg);
   border-color: var(--btn-primary-bg-hover);
   color: var(--btn-primary-ink);
-  box-shadow:
-    inset 0 1px 0 var(--ig-highlight),
-    var(--ig-shadow);
   cursor: pointer;
   opacity: 1;
 }
-#dropbox-send-btn:hover,
-.cfg-btn.cfg-btn-primary:hover,
-button.fm-send-btn:hover,
-button.fm-verify-send:hover,
-button.fm-send-chip:hover,
-button.fm-create-submit:hover,
-button.glass-control.fm-gs-save:hover,
-button.glass-control.fm-req-accept:hover {
-  background: var(--btn-primary-bg-hover);
-  border-color: var(--btn-primary-bg-hover);
-  color: var(--btn-primary-ink);
-  opacity: 1;
+@media (hover: hover) {
+  #dropbox-send-btn:hover,
+  .cfg-btn.cfg-btn-primary:hover,
+  button.fm-send-btn:hover,
+  button.fm-verify-send:hover,
+  button.fm-send-chip:hover,
+  button.glass-control.fm-gs-save:hover,
+  button.glass-control.fm-req-accept:hover {
+    background: var(--btn-primary-bg-hover);
+    border-color: var(--btn-primary-bg-hover);
+    color: var(--btn-primary-ink);
+    opacity: 1;
+  }
 }
+
 #dropbox-send-btn:active,
 .cfg-btn.cfg-btn-primary:active,
 button.fm-send-btn:active,
 button.fm-verify-send:active,
 button.fm-send-chip:active,
-button.fm-create-submit:active,
 button.glass-control.fm-gs-save:active,
 button.glass-control.fm-req-accept:active {
   border-color: var(--glass-send-border-active);
-  box-shadow:
-    inset 0 1px 0 var(--ig-highlight),
-    var(--ig-shadow-press);
-}
-@media (prefers-color-scheme: light) {
-  #dropbox-send-btn:active,
-  .cfg-btn.cfg-btn-primary:active,
-  button.fm-send-btn:active,
-  button.fm-verify-send:active,
-  button.fm-send-chip:active,
-  button.fm-create-submit:active,
-  button.glass-control.fm-gs-save:active,
-  button.glass-control.fm-req-accept:active {
-    box-shadow: var(--glass-send-stack), var(--glass-send-shadow-active);
-  }
 }
 
 /* ── 焦点态（2026-10-30 按钮体系批，设计稿 §3：全主操作统一蓝环）────────────
@@ -1249,37 +1349,26 @@ button.glass-control.fm-req-accept:active {
     .fm-login-btn, .login-modal-btn, .flow-viewer-save, .pp-btn.primary,
     .daemon-btn.start,
     button.fm-send-btn, button.fm-verify-send, button.fm-send-chip,
-    button.fm-create-submit, button.glass-control.fm-gs-save,
+    button.glass-control.fm-gs-save,
     button.glass-control.fm-req-accept):focus-visible {
   outline: 2px solid var(--btn-focus-ring);
   outline-offset: 2px;
 }
 
-/* 开关本体（`.nb-toggle`，js/toggle.js）在方向 A 下的口径：
-   · 形态**保持**既有开关语言（轨道填充 + 圆钮）—— 铁律 2 与「开关不是按钮」的
-     设计系统既有排除条款（本文件 :170-172）优先，本批**不改其填充/几何**；
-   · 只补两件：① 状态反馈（hover 描边递进，与次操作同一族语言）；② 显式墨色
-     （`color` 此前落 UA 默认，暗档 = 1.38:1 —— 无文本控件仍按可读性口径给值，
-     避免「读数为黑却是继承而来」的隐性缺陷）。
-   注：轨道填充值 = `--btn-secondary-fill`（既有 `--glass-control-bg`），ON 档 =
-   品牌绿 35% tint + 描边 50%（2026-11-01 作者令「toggle 重新回到绿色」恢复
-   09-06 原配方，撤销 2026-10-30 按钮体系批 B9 的墨 tint 改写；「绿降级为身份/
-   状态色」的总裁定不含开关这一豁免点，开关 ON 档以本口径为准）。
-   hover 描边递进以 `:not(.on)` 限定在 OFF 档——ON 档悬停保持绿描边（原配方
-   行为），否则同特异性后者（本文件最后加载）会把绿描边洗回玻璃描边。
-   ⇒ 分类仍只依赖 token。 */
-.nb-toggle {
-  color: var(--btn-secondary-ink);
-  border-color: var(--btn-secondary-fill-stroke); /* 具名化（值 = 既有 --glass-control-border，零视觉变化） */
-  transition: background 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s;
-}
-.nb-toggle:not(.on):hover { border-color: var(--btn-secondary-stroke-hover); }
-.nb-toggle.on { color: var(--btn-secondary-ink); }
+/* 开关本体 `.nb-toggle`（js/toggle.js）—— **本文件不再参与其造型**（toggle-unify 批
+   2026-11-05）：全站唯一开关的样式单点 = `css/sidebar.css` 的
+   「nb-toggle — shared switch component」组件节，数值单点 = `stand-tokens.css`
+   的 `--nf-toggle-*` 段。此处原有一组覆盖（`color` / `border-color` /
+   0.15s transition / OFF 档 hover 描边递进）已**整组撤除**：它们与组件节抢同一批
+   属性，导致「同一个开关在不同加载顺序下长得不一样」——多一处覆盖 = 多一套皮肤。
+   hover 递进改由组件节自己用 `--nf-toggle-stroke-hover`（值 = 本文件既有的
+   `--btn-secondary-stroke-hover`）表达，视觉意图不变、属主收回。
+   分类结论不变：开关的每个色值仍只依赖 token。 */
 
 /* ── 禁用 / 掉线档（R2′/J3：具名 token `--glass-send-bg-disabled` + not-allowed；
    声明在最后 ⇒ 与 `:hover` 同档时以禁用胜出）────────────────────────── */
 :is(#dropbox-send-btn, .cfg-btn.cfg-btn-primary, button.fm-send-btn,
-    button.fm-verify-send, button.fm-send-chip, button.fm-create-submit,
+    button.fm-verify-send, button.fm-send-chip,
     button.glass-control.fm-gs-save, button.glass-control.fm-req-accept,
     button.glass-control.fm-gs-kick, button.glass-control.fm-gs-danger,
     button.glass-control.fm-gs-action.fm-gs-danger, button.fm-req-decline,
@@ -1291,7 +1380,7 @@ button.glass-control.fm-req-accept:active {
     .settings-avatar-entry, .settings-collapse-toggle,
     .fm-context-menu button):disabled,
 :is(#dropbox-send-btn, .cfg-btn.cfg-btn-primary, button.fm-send-btn,
-    button.fm-verify-send, button.fm-send-chip, button.fm-create-submit,
+    button.fm-verify-send, button.fm-send-chip,
     button.glass-control.fm-gs-save, button.glass-control.fm-req-accept,
     button.glass-control.fm-gs-kick, button.glass-control.fm-gs-danger,
     button.glass-control.fm-gs-action.fm-gs-danger, button.fm-req-decline,
@@ -1305,7 +1394,6 @@ button.glass-control.fm-req-accept:active {
   background: var(--btn-disabled-bg);
   border-color: var(--btn-disabled-stroke);
   color: var(--btn-disabled-ink);
-  box-shadow: var(--glass-send-stack);
   cursor: not-allowed;
   opacity: 1;
 }

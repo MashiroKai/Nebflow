@@ -188,4 +188,36 @@ class BgTaskOutputDiskSpec extends FunSuite:
       assertEquals(disk.kind, Some("local"))
     finally os.remove.all(root)
   }
+
+  // ── A1（bash overhaul T5，分发器裁定 2026-11-04）：通知面必须回可读绝对路径 ──
+  //
+  // 旧形态：`full output: background-tasks panel, job <id>` —— agent 在面板里翻不到，
+  // 「全文在哪」这一格是空的。新形态：`BgTaskOutputStore.readableOutputPath(jobId)`
+  // 给出该任务输出留存文件的**绝对路径**（存在才给）。本用例钉三件事：
+  //   ① 路径是绝对路径；② 文件**确实存在**（不许给空地址）；③ 文件里真有全文。
+
+  test("A1: the truncation marker names the job's output-retention file — absolute, existing, and readable") {
+    val root = tmpDir()
+    BgTaskOutputStore.enablePersistence(root) // 幂等：先到者赢（生产 Main.scala:157 同一调用点）
+    val id = s"a1-pointer-${System.nanoTime().toString.take(8)}"
+    val lines = (1 to 30).map(i => s"line-$i")
+    val buf = BgTaskOutputStore.open(id, None).unsafeRunSync()
+    val sink = BgTaskOutputStore.lineSink(id, buf)
+    lines.foreach(sink)
+    // 生产顺序：终态先落盘（flush + meta），通知负载在后。
+    BgTaskOutputStore.finalizeTask(id, "completed", Some(0), None).unsafeRunSync()
+    val built = BgNotifyPayload.completed("a1 pointer job", Some(0), Some(1234L), lines.mkString("\n"), "", id)
+    val marker = built.payload.linesIterator
+      .find(_.startsWith("[truncated:"))
+      .getOrElse(fail(s"the payload must carry the truncation marker: ${built.payload.take(200)}"))
+    val path = """full output: (.+)\]$""".r
+      .findFirstMatchIn(marker)
+      .map(_.group(1))
+      .getOrElse(fail(s"the marker must name the full output (A1): $marker"))
+    assert(java.nio.file.Paths.get(path).isAbsolute, s"the pointer must be an ABSOLUTE path, got: $path")
+    assert(Files.isRegularFile(java.nio.file.Paths.get(path)), s"the pointer must name an EXISTING file, got: $path")
+    assert(path.endsWith(s"$id.log"), s"the pointer must be this job's retention file, got: $path")
+    val onDisk = os.read(os.Path(path))
+    assert(onDisk.contains("line-1") && onDisk.contains("line-30"), s"the named file must hold the output, got: ${onDisk.take(120)}")
+  }
 end BgTaskOutputDiskSpec

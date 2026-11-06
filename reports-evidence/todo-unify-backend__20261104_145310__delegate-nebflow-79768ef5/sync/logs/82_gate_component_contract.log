@@ -1,0 +1,16 @@
+$ cd /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-79768ef5
+$ node scripts/check-component-contract.mjs
+component-contract：236 个 js / 41 个 css / 面 32 个 / 命中文档 130 个 / 基线条目 130 个
+  R1 no-attach-shadow = 0
+  R2 cross-face-dom = 159
+  R3 event-literal = 113
+  R4 component-dom-leak = 0
+  R5 bare-innerhtml = 668
+  TOTAL = 940
+  ↑ js/askDock.js: bareInnerHtml 5 → 2（改善，建议下次 --update-baseline 收紧）
+
+FAIL 3 项：
+  js/mobile/socialSearch.js:0  [baseline-bareInnerHtml] 裸 innerHTML =（走 mdHtmlGate / 构建器） 从基线 1 增到 2（只许减不许增）
+  js/mobile/socialSearch.js:133  [R5 bare-innerhtml] 裸 innerHTML = 赋值——写 DOM 走 mdHtmlGate / 构建器（绕过净化面 = 回退）
+  js/mobile/socialSearch.js:559  [R5 bare-innerhtml] 裸 innerHTML = 赋值——写 DOM 走 mdHtmlGate / 构建器（绕过净化面 = 回退）
+EXIT=1

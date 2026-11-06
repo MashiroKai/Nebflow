@@ -17,6 +17,7 @@ import nebflow.core.delegate.DelegateWorkspace
 import nebflow.core.delegate.ExternalJudgeHook
 import nebflow.core.delegate.MergeAcceptance
 import nebflow.core.delegate.MergeQueue
+import nebflow.core.delegate.MergeDeclaration
 import nebflow.core.delegate.DelegateTerminal
 import nebflow.core.delegate.PostMergeCleanup
 import nebflow.shared.Message
@@ -142,17 +143,19 @@ object ExternalSessionRunner:
             for
               // 引擎加固批 2026-10-09（P1-2 外部腿接纪律）：外部 CLI 与内部腿走
               // **同一** DelegateWorkspace.prepare——git 工作区 = 判定机（jev/small
-              // -judge）裁决 + 分支 `delegate/<id>` + worktree 座位（cwd = worktree
-              // +分支）；非 git 工作区 = None（旧形态逐字：座位 = 原 workspace）。
-              // 判定机两层全败 = prepare 内部 fail-open 反转判是（分支纪律不丢）。
+              // 判定机已删（delegate-param-decisions 2026-11-04）：外部腿无 worktree
+              // 参数 ⇒ 零分配就地座位 + 分支 `delegate/<id>`；非 git 工作区 = None
+              // （座位 = 原 workspace）。
               // 归属修复批（2026-10-30）：设备项目跳过本机判定腿——外部 CLI 是 host
               // 本地进程，设备仓的 worktree/分支纪律不适用于 host 座位（在 brain 下
               // 建 worktree = 归属错）；binding=None = 旧形态逐字。
               binding <-
                 if spec.deviceProject then IO.pure(None)
                 else
+                  // 外部执行器腿没有 `worktree` 参数（工具面已显式拒收）⇒ 零分配：
+                  // 就地跑道（分支 `delegate/<id>` 照建，共享 HEAD 不动）。
                   DelegateWorkspace
-                    .prepare(spec.workspace, spec.task, sessionId)
+                    .prepareInPlace(spec.workspace, sessionId)
                     .handleErrorWith(e =>
                       logger
                         .warn(
@@ -186,8 +189,8 @@ object ExternalSessionRunner:
                     worktree = binding.flatMap(_.worktree),
                     baseBranch = binding.flatMap(_.baseBranch),
                     projectWorkspace = binding.map(_.baseWs),
-                    // P2-3 判据面：判定机裁决随记录持久化
-                    worktreeJudged = binding.flatMap(_.worktreeJudged),
+                    // 判定机已删（delegate-param-decisions 批 2026-11-04）：恒 None。
+                    worktreeJudged = None,
                     // G1 编排模式初值（delegate-ui 批 2026-10-08）：外部执行器零平台
                     // 工具注入（无 Subagent/AgentFlow 可调）⇒ 恒 single，无升级腿。
                     orchestrationMode = Some(DelegateRegistry.ModeSingle)
@@ -195,6 +198,21 @@ object ExternalSessionRunner:
                 )
               }
               _ <- recordTaskTolerant(spec.resources, sessionId, spec.parentSessionId, ex.id, spec.task, spec.title)
+              // 作者裁定4「登记 AgentKind.External」（2026-11-05 09:38）：内部腿有
+              // actor + 统一注册表行，外部腿此前**两样都没有**（AgentControlTool 自陈
+              // 「外部 delegate 无 actor / agentRegistry 行」）。此处在统一注册表补一条
+              // kind=External 记录（ref=null），只为关闭「所有 agent 都能被 list /
+              // cancel / 挂终态」这条不变式——**不参与监督与恢复**（恢复走
+              // ExternalOutputStore / CLI resume），终态首胜时由 settle 摘除。
+              _ <- nebflow.actor.ExternalAgentRecord.attach(
+                spec.resources.agentRegistry,
+                nebflow.actor.ExternalAgentRecord.build(
+                  sessionId = sessionId,
+                  rootSessionId = spec.rootSessionId,
+                  parentSessionId = spec.parentSessionId,
+                  startedAt = System.currentTimeMillis()
+                )
+              )
               _ <- persistUserTurn(spec.resources, sessionId, spec.title, seatedTask)
               // ⑤A 链存储：外部腿 spawn 行（P1-2 起外部腿与内部腿同账——branch/
               // worktree/判定两键齐备；非 git 腿 binding=None，旧行字节不变）。
@@ -520,6 +538,9 @@ You will be notified when it completes via a system message. Do NOT duplicate th
       case false => IO.unit // 首个终态胜出（cancel 与自然终态竞态防重入）
       case true =>
         for
+          // 裁定4：外部腿终态首胜即从统一注册表摘下（「记录 = 活着」语义与内部腿对齐；
+          // 死行不留）。幂等——没登记过（旧腿/测试）也安全。
+          _ <- nebflow.actor.ExternalAgentRecord.detach(spec.resources.agentRegistry, sessionId)
           cancelledNow <- cancelRequested.get.map(_.contains(sessionId))
           processFailed = exitCode.exists(_ != 0) || finalFrame.exists(_.failed)
           text = finalFrame.map(_.text).map(_.trim).filter(_.nonEmpty).getOrElse("")
@@ -585,7 +606,7 @@ You will be notified when it completes via a system message. Do NOT duplicate th
               case (Outcome.Completed, true) =>
                 IO.blocking(MergeAcceptance.verifyRecord(rec))
                   .flatMap { r =>
-                    if r.ok then PostMergeCleanup.run(rec).as(Outcome.Completed)
+                    if r.ok then PostMergeCleanup.run(rec, allowLiveOwner = true).as(Outcome.Completed)
                     else
                       IO.pure(
                         Outcome.Failed(
@@ -676,18 +697,7 @@ You will be notified when it completes via a system message. Do NOT duplicate th
               rec.filter(r => r.branch.isDefined && r.baseBranch.isDefined) match
                 case Some(r) =>
                   val baseWs = r.projectWorkspace.getOrElse(r.cwd)
-                  val channel = MergeQueue.ExternalLeg { msg =>
-                    noteMergeRound(sessionId) *>
-                      continueExternal(
-                        r,
-                        msg,
-                        parentRef = spec.parentRef,
-                        wsSend = spec.wsSend,
-                        resources = spec.resources
-                      )
-                        .map(_.map(_ => ()))
-                  }
-                  MergeQueue.enqueueIO(
+                  MergeQueue.enqueueVerifiedIO(
                     MergeQueue.Member(
                       delegateId = sessionId,
                       branch = r.branch.get,
@@ -699,8 +709,17 @@ You will be notified when it completes via a system message. Do NOT duplicate th
                       parentSessionId = r.parentSessionId,
                       description = r.title,
                       readyAt = System.currentTimeMillis(),
-                      channelKind = "external",
-                      external = Some(channel)
+                      // P1 投递身份化：外部 leg 的注入闭包（continueExternal + CLI resume）
+                      // 已删除——投递统一走「收件身份 + 落盘邮箱」。⚠ 未核项：外部（CLI
+                      // 续聊）会话被邮箱门铃唤醒的链路需要实测（见本批报告「未核项」）。
+                      channelKind = "identity",
+                      ownerSessionId = sessionId,
+                      // 宣告闸批 2026-11-04：外部腿的 ready-to-merge 是**判定/判词**
+                      // 产出，不是属主宣告——只有属主自己用 `delegate_report(category="merge")`
+                      // 申报过（宣告账在案）的成员才带宣告入队；否则入账但不授窗。
+                      declaredAt = MergeDeclaration.find(sessionId).map(_.at),
+                      declareSource = MergeDeclaration.find(sessionId).map(_.source),
+                      declaredTip = MergeDeclaration.find(sessionId).flatMap(_.tip)
                     )
                   )
                 case None =>

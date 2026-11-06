@@ -14,7 +14,7 @@ import { t } from './i18n.js';
 import { contentText } from './contentI18n.js';
 import { createIconsIn } from './utils.js';
 import { chainRefs, resolvedChainChipsHtml, modelSourceNoteKey, SETTABLE_ROLES } from './modelPanel.js';
-import { rootNameParams } from './rootName.js';
+import { rootNameParams, agentDisplayName, ROOT_AGENT_KEY } from './rootName.js';
 
 // ── Helpers ────────────────────────────────────────────────
 function getToken() { return localStorage.getItem(key('token')) || ''; }
@@ -73,17 +73,20 @@ export async function fetchAgentModel(name) {
 /** Render a single agent card HTML string. */
 function renderAgentCard(a) {
   const name = esc(a.name);
-  const display = esc(contentText('agent', a.name, 'name', a.displayName || a.name));
+  // Nebula 退役批：显示名走单一读点（根 agent = 用户起的名字，未命名 = 通用称呼；
+  // 其余 agent = 自身显示名）——机制名永不上屏。
+  const shown = agentDisplayName(a.name);
+  const display = esc(contentText('agent', a.name, 'name', shown));
   const desc = esc(contentText('agent', a.name, 'desc', a.description || ''));
-  const initial = esc((a.displayName || a.name || '?').charAt(0).toUpperCase());
-  const isNebula = a.name === 'Nebula';
+  const initial = esc((shown || '?').charAt(0).toUpperCase());
+  const isNebula = a.name === ROOT_AGENT_KEY;
   const isGlobalStandalone = (a.layer === 'global' || !a.layer) && (a.category || 'standalone') === 'standalone';
-  // Nebula is the orchestrator, not a delegatable standalone — never shows the badge.
+  // The root agent is the orchestrator, not a delegatable standalone — never shows the badge.
   const showBadge = isGlobalStandalone && !isNebula;
   const badge = showBadge
     ? '<span class="agent-mgr-standalone-badge">可直接委派</span>'
     : '';
-  // ⑧ Nebula: orbit icon avatar (identity must be stable — custom avatar not accepted)
+  // ⑧ Root agent: orbit icon avatar (identity must be stable — custom avatar not accepted)
   // + orchestrator badge pill. All other cards keep letter/custom-avatar logic.
   const avatar = isNebula
     ? '<span class="agent-mgr-avatar"><i data-lucide="orbit" style="width:16px;height:16px"></i></span>'
@@ -125,6 +128,9 @@ function agentsContentEl() {
   if (!content) {
     content = document.createElement('div');
     content.id = 'agents-content';
+    // 统一安全区（canvas-overlap-fix 批 2026-11-05）：canvas 顶行胶囊是浮层，
+    // 面板正文首块让到 --cv-safe-top 之下；类定义在 split.css「统一布局层」块。
+    content.className = 'canvas-safe-top cv-safe-pad';
     pane.appendChild(content);
   }
   return content;
@@ -134,11 +140,11 @@ function agentsContentEl() {
 export function renderAgentManager() {
   const content = agentsContentEl();
   if (!content) return;
-  content.innerHTML = `<div class="agent-mgr-loading">${t('agentManager.loading')}</div>`;
+  content.innerHTML = `<div class="agent-mgr-loading" data-cv-hint="loading">${t('agentManager.loading')}</div>`;
 
   fetchAgents().then(agents => {
     if (agents.length === 0) {
-      content.innerHTML = `<div class="agent-mgr-empty">${t('agentManager.noAgents')}</div>`;
+      content.innerHTML = `<div class="agent-mgr-empty" data-cv-hint="empty">${t('agentManager.noAgents')}</div>`;
       return;
     }
 
@@ -161,8 +167,8 @@ export function renderAgentManager() {
     // (entity-icons-visual-spec §3.2). Nebula is extracted from the global
     // standalone list: it understands intent / dispatches / accepts, it is
     // not a delegatable executor like the standalone agents below.
-    const nebula = global.find(a => a.name === 'Nebula');
-    const standalone = global.filter(a => a.name !== 'Nebula');
+    const nebula = global.find(a => a.name === ROOT_AGENT_KEY);
+    const standalone = global.filter(a => a.name !== ROOT_AGENT_KEY);
 
     if (nebula) {
       html += `<div class="agent-mgr-group agent-mgr-group-orchestrator">`;
@@ -272,7 +278,8 @@ function renderModelSection(pane, model) {
 }
 
 function renderAgentDetail(pane, name, detail, model) {
-  const displayName = detail?.displayName || detail?.name || name;
+  // Nebula 退役批：详情头同样走单一显示名读点（机制名不上屏）。
+  const displayName = agentDisplayName(detail?.name || name);
   const description = detail?.description || '';
   const extends_ = detail?.extends || '';
   // builtin-def 批（2026-10-03 作者令①）：代码定义的内置 agent 在详情页只读——
@@ -298,7 +305,7 @@ function renderAgentDetail(pane, name, detail, model) {
         <div class="agent-detail-face-tabs" id="agent-detail-face-tabs">${faces.map((f, i) => `
           <button type="button" class="agent-detail-face-tab${i === 0 ? ' active' : ''}" data-face="${esc(f.face || '')}">${esc(t(FACE_LABEL_KEYS[f.face]) || f.face)}</button>`).join('')}
         </div>
-        <div class="agent-detail-face-hint" id="agent-detail-face-hint">${esc(t(FACE_HINT_KEYS[faces[0].face] || ''))}</div>` : '';
+        <div class="agent-detail-face-hint" data-cv-hint="page" id="agent-detail-face-hint">${esc(t(FACE_HINT_KEYS[faces[0].face] || ''))}</div>` : '';
 
   pane.innerHTML = `
     <div class="agent-detail">
@@ -307,8 +314,8 @@ function renderAgentDetail(pane, name, detail, model) {
         <div class="agent-detail-header-info">
           <div class="agent-detail-name">${esc(contentText('agent', contentAgentId, 'name', displayName))}${builtin ? `<span class="agent-detail-builtin-badge" title="${esc(t('plugins.builtinTitle'))}">${esc(t('plugins.builtinBadge'))}</span>` : ''}</div>
           ${description ? `<div class="agent-detail-desc">${esc(contentText('agent', contentAgentId, 'desc', description))}</div>` : ''}
-          ${extends_ ? `<div class="agent-detail-extends">extends: ${esc(extends_)}</div>` : ''}
-          ${builtin ? `<div class="agent-detail-builtin-note">${esc(t('agentManager.builtinNote'))}</div>` : ''}
+          ${extends_ ? `<div class="agent-detail-extends" data-cv-hint="foot">extends: ${esc(extends_)}</div>` : ''}
+          ${builtin ? `<div class="agent-detail-builtin-note" data-cv-hint="foot">${esc(t('agentManager.builtinNote'))}</div>` : ''}
         </div>
       </div>
 
@@ -327,7 +334,7 @@ function renderAgentDetail(pane, name, detail, model) {
         </div>
         ${faceTabsHtml}
         <div class="agent-detail-prompt-render canvas-md-viewer" id="agent-detail-prompt-render"></div>
-        ${builtin ? '' : `<textarea class="agent-detail-prompt-edit" data-agent="${esc(name)}" style="display:none">${esc(prompt)}</textarea>
+        ${builtin ? '' : `<textarea class="agent-detail-prompt-edit" data-agent="${esc(name)}" spellcheck="false" autocapitalize="off" autocorrect="off" style="display:none">${esc(prompt)}</textarea>
         <button class="agent-detail-save-btn" id="agent-detail-save-prompt" style="display:none">${t('agentManager.save')}</button>`}
       </div>
     </div>`;

@@ -8,7 +8,7 @@ import io.circe.parser.parse
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.core.AtomicJson
-import nebflow.shared.{Config, ImageGenConfig, PathUtil}
+import nebflow.shared.{Config, ImageGenConfig, JevConfig, PathUtil}
 
 object ConfigService:
 
@@ -33,6 +33,8 @@ object ConfigService:
   // def (not val): dual-read resolves per access; a val would freeze the
   // first-touched dataRoot (test isolation) and skip the legacy fallback.
   private def configPath = PathUtil.configJsonReadPath(PathUtil.dataRoot)
+
+  private val logger = nebflow.shared.NebflowLogger.forName("nebflow.config")
 
   def isConfigured: IO[Boolean] = IO.blocking {
     if !os.exists(configPath) then false
@@ -217,17 +219,25 @@ object ConfigService:
             IO
               .blocking {
                 val merged0 = mergeConfig(existing, incoming)
+                // config-single-source batch (2026-11-05): every persisted config
+                // ① converges model-level unavailable windows UP to the provider
+                //   (author ruling ④ — one provider, one behaviour) and
+                // ② prunes `llm.fallback` refs of providers that were just deleted
+                //   (the file must not promise a candidate the runtime cannot build).
+                val mergedNorm = parse(merged0).toOption match
+                  case Some(j) => pruneChainRefs(nebflow.shared.Config.normalizeConfigJson(j), pureDeletes).spaces2
+                  case None => merged0
                 val merged =
-                  if runtimeOverrides.isEmpty then merged0
+                  if runtimeOverrides.isEmpty then mergedNorm
                   else
-                    parse(merged0).toOption match
+                    parse(mergedNorm).toOption match
                       case Some(j) =>
                         // Runtime-authoritative keys win over the incoming snapshot.
                         val overridden = runtimeOverrides.foldLeft(j) { (acc, kv) =>
                           acc.mapObject(_.add(kv._1, kv._2))
                         }
                         overridden.spaces2
-                      case None => merged0
+                      case None => mergedNorm
                 // Write path: always the brand config name — the first
                 // read-modify-write after a rename completes the file
                 // migration (existing was read through the legacy fallback).
@@ -241,17 +251,189 @@ object ConfigService:
               .flatMap {
                 case Left(e) => IO.pure(Left(e.getMessage))
                 case Right(_) =>
-                  // Reference cleanup across agent.json (all three layers) and
-                  // model presets: pure deletes scrub, renames rewrite old→new.
-                  scrubAgentModelRefs(pureDeletes) *>
-                    rewriteAgentModelRefs(renames) *>
-                    scrubPresetRefs(pureDeletes) *>
-                    rewritePresetRefs(renames).as(Right(()))
+                  // 删除落地校验（provider-config-vs-runtime-mismatch 批）：
+                  // 无锁的旁路写者可能与刚才这次合并交叉，把已删 provider 写回。
+                  // 静默容忍 = 「界面上删了、运行期还在调」——本批的原始病症。
+                  // 因此回读核对，未落地即**上浮失败**（调用方回错误帧给界面）。
+                  val survived = undeletedProviders(pureDeletes)
+                  if survived.nonEmpty then
+                    IO.delay(
+                      logger.warnSync(
+                        s"Provider delete did NOT land for [${survived.mkString(", ")}] — " +
+                          "a concurrent nebflow.json writer restored them; the runtime will keep " +
+                          "using them until a successful delete. Re-save the settings to retry."
+                      )
+                    ).attempt *> IO.pure(
+                      Left(
+                        s"Provider deletion not persisted for: ${survived.mkString(", ")} " +
+                          "(a concurrent config write restored them — retry the removal)"
+                      )
+                    )
+                  else
+                    // Reference cleanup across agent.json (all three layers) and
+                    // model presets: pure deletes scrub, renames rewrite old→new.
+                    scrubAgentModelRefs(pureDeletes) *>
+                      rewriteAgentModelRefs(renames) *>
+                      scrubPresetRefs(pureDeletes) *>
+                      rewritePresetRefs(renames).as(Right(()))
               }
         end if
       }
     }
   end updateConfig
+
+  // ============================================================
+  // fallback 链单一源维护（config-single-source 批，作者裁定①③ 2026-11-05）
+  // ============================================================
+
+  private val fallbackLog = nebflow.shared.NebflowLogger.forName("nebflow.config.fallback")
+
+  /** @deprecated 语义已并入 [[ensureConfigConvergence]]；保留别名以免调用点漂移。 */
+  def ensureFallbackSection(): IO[Unit] = ensureConfigConvergence()
+
+  /**
+   * Boot convergence of the config file (config-single-source batch, author
+   * rulings ③④ 2026-11-05) — ONE read-modify-write, logged, idempotent:
+   *
+   *  1. **unavailable-window convergence**: model-level
+   *     `llm.providers.<id>.models[].unavailableWindows` are merged UP into
+   *     `llm.providers.<id>.unavailableWindows` and removed from the model
+   *     entries ("one provider, one behaviour"). Without this boot write the
+   *     runtime already saw the converged shape (read-side normalization) but
+   *     the FILE still carried two sources — i.e. the exact drift this batch
+   *     removes.
+   *  2. **`llm.fallback` seed**: when the section carries no ref, the CURRENT
+   *     effective chain (Nebula primary chain / provider-derived seed) is written
+   *     into it, so the chain is visible and editable where every other provider
+   *     setting lives. A hand-edited section is never rewritten.
+   *
+   * Failures are the caller's to log (boot continues: a read-only data root must
+   * never brick the engine).
+   */
+  def ensureConfigConvergence(): IO[Unit] =
+    writeLocked {
+      IO.blocking {
+        val existing = if os.exists(configPath) then os.read(configPath) else "{}"
+        parse(existing) match
+          case Left(_) => ()
+          case Right(json) =>
+            val converged = nebflow.shared.Config.normalizeConfigJson(json)
+            val windowsChanged = converged.noSpaces != json.noSpaces
+            if windowsChanged then
+              fallbackLog.infoSync(
+                "[config-convergence] model-level unavailable windows merged into the provider level " +
+                  "(single source: llm.providers.<id>.unavailableWindows)"
+              )
+            val currentRefs =
+              converged.hcursor
+                .downField("llm")
+                .downField("fallback")
+                .as[Option[nebflow.shared.AgentModelConfig]]
+                .toOption
+                .flatten
+                .map(c => nebflow.shared.FallbackChain.refs(Some(c)))
+                .getOrElse(Nil)
+            val withFallback =
+              if currentRefs.nonEmpty then (converged, false)
+              else
+                val policy = nebflow.core.SchemePolicy
+                val (chain, source) = policy.resolveModel(policy.NebulaName, policy.nebulaChain())
+                val refs = nebflow.shared.FallbackChain.refs(Some(chain))
+                if refs.isEmpty then (converged, false)
+                else
+                  val section = Json.obj(
+                    "preferred" -> Json.fromString(refs.head),
+                    "fallbacks" -> Json.arr(refs.tail.map(Json.fromString)*)
+                  )
+                  val updated = converged.mapObject { root =>
+                    val llm = root("llm").flatMap(_.asObject).getOrElse(JsonObject.empty)
+                    root.add("llm", Json.fromJsonObject(llm.add("fallback", section)))
+                  }
+                  fallbackLog.infoSync(
+                    s"[fallback-chain] seeded llm.fallback from ${source}: ${refs.mkString(" → ")} " +
+                      "(the config file is now the single source of the chain)"
+                  )
+                  (updated, true)
+            if windowsChanged || withFallback._2 then
+              AtomicJson.writeSyncRestricted(PathUtil.configJsonWritePath(PathUtil.dataRoot), withFallback._1.spaces2)
+      }
+    }
+
+  /**
+   * Mirror a chain write into `llm.fallback` (the `/model` panel write face).
+   *
+   * Single-source discipline: `PUT /agents/Nebula/model` still owns the Nebula
+   * sidecar (per-turn reload), but the SAME chain must be visible in the config
+   * file — otherwise editing the panel would silently stop affecting the
+   * runtime, which is exactly the class of drift this batch removes. A `None`
+   * chain removes the section (back to the sidecar/seed legs).
+   */
+  def setFallbackChain(chain: Option[nebflow.shared.AgentModelConfig]): IO[Unit] =
+    writeLocked {
+      IO.blocking {
+        val existing = if os.exists(configPath) then os.read(configPath) else "{}"
+        val json = parse(existing).getOrElse(Json.obj())
+        val refs = nebflow.shared.FallbackChain.refs(chain)
+        val updated = json.mapObject { root =>
+          val llm = root("llm").flatMap(_.asObject).getOrElse(JsonObject.empty)
+          val nextLlm =
+            if refs.isEmpty then llm.remove("fallback")
+            else
+              llm.add(
+                "fallback",
+                Json.obj(
+                  "preferred" -> Json.fromString(refs.head),
+                  "fallbacks" -> Json.arr(refs.tail.map(Json.fromString)*)
+                )
+              )
+          root.add("llm", Json.fromJsonObject(nextLlm))
+        }
+        AtomicJson.writeSyncRestricted(PathUtil.configJsonWritePath(PathUtil.dataRoot), updated.spaces2)
+        fallbackLog.infoSync(
+          if refs.isEmpty then "[fallback-chain] llm.fallback removed (chain follows the sidecar/seed legs again)"
+          else s"[fallback-chain] llm.fallback written: ${refs.mkString(" → ")}"
+        )
+      }
+    }
+
+  /**
+   * Provider-delete chain hygiene: refs of a provider that just disappeared are
+   * pruned from `llm.fallback` (with a log line) — the file must never promise a
+   * candidate the runtime cannot build. Surviving order is preserved; when the
+   * preferred ref dies, the first surviving fallback takes its place.
+   */
+  private[service] def pruneChainRefs(json: Json, deletedProviders: List[String]): Json =
+    if deletedProviders.isEmpty then json
+    else
+      val gone = deletedProviders.toSet
+      (for
+        root <- json.asObject
+        llm <- root("llm").flatMap(_.asObject)
+        section <- llm("fallback").flatMap(_.asObject)
+      yield
+        val refs = nebflow.shared.FallbackChain.refs(
+          Json.fromJsonObject(section).as[nebflow.shared.AgentModelConfig].toOption
+        )
+        val kept = refs.filterNot(r => gone.contains(r.takeWhile(_ != '/')))
+        val dropped = refs.filter(r => gone.contains(r.takeWhile(_ != '/')))
+        if dropped.isEmpty then json
+        else
+          fallbackLog.warnSync(
+            s"[fallback-chain] pruned ${dropped.mkString(", ")} from llm.fallback " +
+              s"(provider deleted from llm.providers; kept: ${if kept.isEmpty then "<empty>" else kept.mkString(" → ")})"
+          )
+          val nextLlm =
+            if kept.isEmpty then llm.remove("fallback")
+            else
+              llm.add(
+                "fallback",
+                Json.obj(
+                  "preferred" -> Json.fromString(kept.head),
+                  "fallbacks" -> Json.arr(kept.tail.map(Json.fromString)*)
+                )
+              )
+          Json.fromJsonObject(root.add("llm", Json.fromJsonObject(nextLlm)))
+      ).getOrElse(json)
 
   /**
    * 定向写 `safety.defaultMode`（= 应用的权限模式，全局唯一持久权威源）。
@@ -336,8 +518,12 @@ object ConfigService:
    */
   def setJevSection(values: Map[String, Json]): IO[Either[String, Unit]] =
     val unknown = values.keySet.diff(JEV_WRITABLE_KEYS.toSet)
+    val valueBearing = values.keySet.filter(jevKeyIsValueBearing)
     if unknown.nonEmpty then
       IO.pure(Left(s"jev section write refused — unknown key(s): ${unknown.toList.sorted.mkString(", ")}"))
+    else if valueBearing.nonEmpty then
+      // 🔴 本面不收凭据**值**（契约 §C.6）：值型键即便混进白名单也拒写。
+      IO.pure(Left(s"jev section write refused — value-bearing key(s) not allowed on this face: ${valueBearing.toList.sorted.mkString(", ")}"))
     else if values.isEmpty then IO.pure(Left("jev section write refused — no keys given"))
     else
       writeLocked {
@@ -371,9 +557,25 @@ object ConfigService:
    * 「本面不收凭据值」的机械表达（缺键 ⇒ 写入被拒）。
    * 🔴 零超时（2026-10-19 作者拍板）：`timeoutMs` 已移出白名单——分配链的
    * wall-clock 预算拆除后**不留配置位**，越界键 400（防超时位静默回归）。
+   * 🔴 `providers` 在册（jev-imagegen-align-llm 批 2026-11-02）：多 provider
+   * 事实源整块对象写入；`setJevSection` 逐键 merge 语义对它天然成立（本批零改）。
    */
   private val JEV_WRITABLE_KEYS: List[String] =
-    List("enabled", "provider", "endpoint", "model", "keyRef", "choiceHighBasePolicy")
+    List("enabled", "provider", "endpoint", "model", "keyRef", "choiceHighBasePolicy", "providers")
+
+  /**
+   * `jev` 节**值型凭据**键的显式黑名单（jev-imagegen-align-llm 批 2026-11-02，
+   * 契约 §C.6）——白名单之外的第二道结构护栏：即便将来有人把某个值型键误加进
+   * [[JEV_WRITABLE_KEYS]]，本闸仍拒绝它落盘。命中的键名不分大小写与前后缀
+   * 变体（`apiKey`/`key`/`token`/`value`/`secret`），比较前统一小写去分隔符。
+   */
+  private val JEV_VALUE_KEY_DENYLIST: Set[String] =
+    Set("apikey", "key", "token", "value", "secret")
+
+  /** 键名归一（小写、去 `_`/`-`）——denylist 判据的唯一实现点。 */
+  private def jevKeyIsValueBearing(key: String): Boolean =
+    JEV_VALUE_KEY_DENYLIST.contains(key.toLowerCase.replaceAll("[_\\-]", ""))
+
 
   /** 只读回程：过滤掉任何可能含凭据值的键（本面当前无此类键，作为结构性护栏）。 */
   def jevWritableKeys: List[String] = JEV_WRITABLE_KEYS
@@ -608,6 +810,59 @@ object ConfigService:
     }
 
   /**
+   * JeV 设置面状态投影（`GET /api/config/jev` 的载荷；jev-imagegen-align-llm 批
+   * 2026-11-02 契约 §B.4）。与 [[imagegenStatus]] **逐字段同构**，理由同源：设置
+   * 面板今日读的是 `GET /api/config` 的打码串（`parsedConfig.jev`），拿不到
+   * **key 在位性**，撑不起卡片上的「已保存/未配置」徽标。
+   *
+   *  - `configured` = `jev` 节可解码即真（半节/空节亦真，与 `imagegen` 同口径）；
+   *  - `keyConfigured` / `providers.<name>.keyConfigured` = **只在位性**（secret
+   *    存在且非空，[[jevKeyConfigured]] 单点）；
+   *  - `keyRef` / `providers.<name>.keyRef` 是 secrets 目录里的**名**（指针，
+   *    非值），逐字回传——与 `GET /api/config` 的既有打码口径一致（指针不打码）。
+   *
+   * 🔴 凭据纪律：投影**永不回传 key 值**。本函数不读值（只 stat + 读空判），
+   * 不打任何日志——值的唯一可能位置是 secrets 文件本身。
+   */
+  def jevStatus: IO[Json] = IO.blocking {
+    val raw = if os.exists(configPath) then os.read(configPath) else "{}"
+    val cfg = parse(raw).toOption
+      .flatMap(_.hcursor.downField(JEV_SECTION).as[JevConfig].toOption)
+    val providers = cfg.flatMap(_.providers).getOrElse(Map.empty)
+    val providerJson = Json.fromFields(providers.map { case (name, pc) =>
+      name ->
+        Json.obj(
+          "type" -> pc.`type`.asJson,
+          "endpoint" -> pc.endpoint.asJson,
+          "model" -> pc.model.asJson,
+          "keyRef" -> pc.keyRef.asJson,
+          "keyConfigured" -> jevKeyConfigured(pc.keyRef).asJson
+        )
+    })
+    Json.obj(
+      "configured" -> cfg.isDefined.asJson,
+      "enabled" -> cfg.exists(_.isEnabled).asJson,
+      "provider" -> cfg.flatMap(_.provider).asJson,
+      "endpoint" -> cfg.flatMap(_.endpoint).asJson,
+      "model" -> cfg.flatMap(_.model).asJson,
+      "keyRef" -> cfg.flatMap(_.keyRef).asJson,
+      "keyConfigured" -> jevKeyConfigured(cfg.flatMap(_.keyRef)).asJson,
+      "providers" -> providerJson
+    )
+  }
+
+  /** JeV keyRef 指针的**在位性**判定（存在且非空即已配——与
+   * [[nebflow.llm.decision.JevSettings.readSecretToken]] 的腿关判据同源：缺件/
+   * 空串/不可读一律 false）。只 stat/读空判，不回传值、不打日志。 */
+  private def jevKeyConfigured(keyRef: Option[String]): Boolean =
+    keyRef.filter(_.trim.nonEmpty).exists { name =>
+      try
+        val p = PathUtil.dataRoot / "secrets" / name.trim
+        os.exists(p) && os.read(p).trim.nonEmpty
+      catch case _: Exception => false
+    }
+
+  /**
    * Deep-merge incoming config into existing file.
    *
    * Merge rules:
@@ -656,6 +911,40 @@ object ConfigService:
       .flatMap(_.hcursor.downField("llm").downField("providers").as[Option[Map[String, Json]]].toOption.flatten)
       .map(_.collect { case (name, v) if v.isNull => name }.toList)
       .getOrElse(Nil)
+
+  /**
+   * 删除落地校验（provider-config-vs-runtime-mismatch 批，2026-11-05 作者令）。
+   *
+   * 病：`nebflow.json` 有多名**绕过 `writeLocked`** 的手术式写者
+   * （`PluginRegistry.mutateNebflowJson`、`PluginDispatchPolicy`、
+   * `PluginBlockPolicy`、`SocialChannels`、`FeishuCredentials` 等，均为
+   * 「读全量 → 改自己的子树 → 原子写回」）。它们与 `updateConfig` 的
+   * read-modify-write 无锁交叉 ⇒ 读到旧底稿的一方整文件覆写时，把刚删掉的
+   * provider **原样写回**（lost update）。今日病例：设置页删 kimi → 磁盘仍
+   * 有 kimi ⇒ 运行期按配置照常调用已被"删掉"的 provider，界面上却显示已删。
+   *
+   * 本函数 = 写后立刻回读、逐名核对「声明删除的 provider 是否真的不在了」。
+   * 返回仍存在于磁盘的名字列表（空 = 落地成功）。调用方据此**上浮失败**
+   * （fail-loud，不许静默沿用旧快照）。
+   */
+  private[nebflow] def undeletedProviders(declared: List[String]): List[String] =
+    if declared.isEmpty then Nil
+    else
+      val onDisk =
+        if !os.exists(configPath) then Set.empty[String]
+        else
+          parse(os.read(configPath)).toOption
+            .flatMap(
+              _.hcursor
+                .downField("llm")
+                .downField("providers")
+                .as[Option[Map[String, Json]]]
+                .toOption
+                .flatten
+            )
+            .map(_.keySet)
+            .getOrElse(Set.empty)
+      declared.filter(onDisk.contains)
 
   /** Every agent.json across standalone / team / flow layers. */
   private def allAgentJsonFiles(): List[os.Path] =

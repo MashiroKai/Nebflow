@@ -67,7 +67,7 @@ class PluginMcpManagerSpec extends CatsEffectSuite:
 
   // 隔离 nebflow.json + plugins 目录（trust 表读落在临时根）
   os.makeDir.all(tempRoot / "plugins")
-  os.write.over(tempRoot / "nebflow.json", "{}")
+  os.write.over(tempRoot / nebflow.shared.Branding.configFileName, "{}")
   os.write.over(serverFile, serverPy)
 
   override def afterAll(): Unit =

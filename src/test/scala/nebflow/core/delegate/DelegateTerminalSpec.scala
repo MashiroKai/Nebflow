@@ -47,11 +47,29 @@ class DelegateTerminalSpec extends CatsEffectSuite:
 
   override def beforeEach(context: munit.BeforeEach): Unit =
     MergeQueue.reset()
+    // P1 投递身份化：身份投递端口（生产实现 = 磁盘邮箱；此处 = 记录型，投递恒成功）。
+    nebflow.core.delegate.MergeQueueTestPorts.install()
     nebflow.ForceRemove.removeAll(tempRoot / "chains")
     nebflow.ForceRemove.removeAll(tempRoot / "delegates")
     nebflow.ForceRemove.removeAll(tempRoot / "subagent-tasks")
 
   override def afterEach(context: munit.AfterEach): Unit = MergeQueue.reset()
+
+  /**
+   * `SharedResources` 的构造行会安装**生产**投递端口（磁盘邮箱 + 会话行在场判定）——
+   * `mkResources` 因此会把 beforeEach 里装好的测试端口顶掉，而本套夹具的 delegate 行
+   * 是直写 `DelegateRegistry` 的（会话行不存在）⇒ 生产端口如实回 `parent-session-gone`
+   * ⇒ 放行即 owner-gone，合并轮形态当场失位（本套要判的是终态判定，不是投递可达性）。
+   *
+   * 因此每次构造后把测试端口**重新装回**：夹具声明「属主会话在场，投递恒成功」，与
+   * 生产端口的契约面（身份 → 落盘邮箱）同形，断言强度不变。
+   */
+  private def mkResourcesWithTestPort(
+    system: ActorSystem,
+    tmp: os.Path,
+    llm: LlmHandle[IO]
+  ): IO[SharedResources] =
+    SpecResources.mkResources(system, tmp, llm).flatTap(_ => IO(MergeQueueTestPorts.install()))
 
   private class SilentLlm extends LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
@@ -153,11 +171,11 @@ class DelegateTerminalSpec extends CatsEffectSuite:
       .lastOption
 
   test(
-    "① fallback chain: judge absent + no self-report → completed (legacy); self-report finish → completed; self-report blocked (retired) → completed + note"
+    "① matrix (2026-11-01): judge absent + no self-report ⇒ NudgeIdle (complete×idle = remind, never complete); self-report finish → completed; self-report blocked (retired) → completed + note"
   ) {
     val system = ActorSystem(s"dt-1-${scala.util.Random.nextInt(100000)}")
     for
-      res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
+      res <- mkResourcesWithTestPort(system, tempRoot, new SilentLlm)
       (child, sup) <- noopRefs(system)
       _ = seedRecord("delegate-nebflow-f1", Some("41"))
       r1 <- withJudgeAbsent(
@@ -178,10 +196,15 @@ class DelegateTerminalSpec extends CatsEffectSuite:
       v3 = verdictLine("delegate-nebflow-f3")
       _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
     yield
-      assert(r1.isInstanceOf[DelegateTerminal.Outcome.Release], "no judge + no report ⇒ legacy completed release")
-      assert(r1.toString.contains("completed"))
+      // 状态矩阵批（作者令 2026-11-01）：complete × 未申报 = 提醒调整状态，绝不
+      // 判完成——NudgeIdle、零判词行、零父投递形态（旧「no judge + no report ⇒
+      // legacy completed」回落就此退役）。
+      assert(
+        r1.isInstanceOf[DelegateTerminal.Outcome.NudgeIdle],
+        s"undeclared turn end must be reminded (NudgeIdle), never completed: $r1"
+      )
+      assertEquals(v1, None, "an undeclared turn writes NO verdict line")
       assert(r2.isInstanceOf[DelegateTerminal.Outcome.Release])
-      assertEquals(v1, Some("completed"), "the verdict line lands in ChainStore even on the fallback leg")
       assertEquals(v2, Some("completed"))
       // #566：退役 blocked 申报 → completed＋注记（wire 无 blocked；注记走尾注+reason）。
       assert(
@@ -200,12 +223,11 @@ class DelegateTerminalSpec extends CatsEffectSuite:
     val system = ActorSystem(s"dt-2-${scala.util.Random.nextInt(100000)}")
     try
       for
-        res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
+        res <- mkResourcesWithTestPort(system, tempRoot, new SilentLlm)
         // 注册在 mkResources **之后**——SharedResources 构造行安装的是真判定机
         // 执行体（DelegateJudgeMachine.face），先装会被覆盖（测试装配顺序面）。
         _ = DelegateJudge.DelegateJudgePort.install(
           new DelegateJudge.DelegateJudgePort.Face:
-            def decideWorktree(task: String): IO[Option[Boolean]] = IO.pure(Some(false))
             def judgeTerminal(input: DelegateJudge.TerminalInput): IO[Option[DelegateJudge.Verdict]] =
               IO.pure(Some(DelegateJudge.Verdict.ReadyToMerge))
         )
@@ -240,6 +262,9 @@ class DelegateTerminalSpec extends CatsEffectSuite:
             source = "delegate"
           )
         )
+        // 宣告闸批 2026-11-04：授窗前提 = 属主**明确宣告**完成且可合（判定机判词不算）——
+        // 真实流程里这条宣告来自属主的 `delegate_report(category="merge")`。
+        _ <- IO(MergeDeclaration.write("delegate-nebflow-hold", MergeDeclaration.Source.ReportMerge))
         outcome <- DelegateTerminal.onCompleted(
           res,
           "delegate-nebflow-hold",
@@ -284,17 +309,18 @@ class DelegateTerminalSpec extends CatsEffectSuite:
     val system = ActorSystem(s"dt-3-${scala.util.Random.nextInt(100000)}")
     try
       for
-        res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
+        res <- mkResourcesWithTestPort(system, tempRoot, new SilentLlm)
         // 同②：真判定机在 mkResources 构造行安装，fake 必须后装才生效。
         _ = DelegateJudge.DelegateJudgePort.install(
           new DelegateJudge.DelegateJudgePort.Face:
-            def decideWorktree(task: String): IO[Option[Boolean]] = IO.pure(Some(false))
             def judgeTerminal(input: DelegateJudge.TerminalInput): IO[Option[DelegateJudge.Verdict]] =
               IO.pure(Some(DelegateJudge.Verdict.ReadyToMerge))
         )
         (child, sup) <- noopRefs(system)
         // branch = None（非 git 工作区形态）——无可并之物
         _ = seedRecord("delegate-nebflow-nobranch", Some("61"), branch = None)
+        // 状态矩阵批：判词链门票 = finish 申报（未申报回合被槽位闸接去提醒腿）。
+        _ = DelegateRegistry.updateReport("delegate-nebflow-nobranch", "finish", "declared", "")
         outcome <- DelegateTerminal.onCompleted(
           res,
           "delegate-nebflow-nobranch",
@@ -320,11 +346,10 @@ class DelegateTerminalSpec extends CatsEffectSuite:
     val system = ActorSystem(s"dt-5-${scala.util.Random.nextInt(100000)}")
     try
       for
-        res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
+        res <- mkResourcesWithTestPort(system, tempRoot, new SilentLlm)
         // 同②③：真判定机在 mkResources 构造行安装，fake 必须后装才生效。
         _ = DelegateJudge.DelegateJudgePort.install(
           new DelegateJudge.DelegateJudgePort.Face:
-            def decideWorktree(task: String): IO[Option[Boolean]] = IO.pure(Some(false))
             def judgeTerminal(input: DelegateJudge.TerminalInput): IO[Option[DelegateJudge.Verdict]] =
               IO.pure(Some(DelegateJudge.Verdict.ReadyToMerge))
         )
@@ -338,6 +363,8 @@ class DelegateTerminalSpec extends CatsEffectSuite:
           branch = Some("delegate/delegate-nebflow-zero"),
           cwd = zeroRepo
         )
+        // 状态矩阵批：finish 申报 = 判词链门票。
+        _ = DelegateRegistry.updateReport("delegate-nebflow-zero", "finish", "declared", "")
         outcome <- DelegateTerminal.onCompleted(
           res,
           "delegate-nebflow-zero",
@@ -370,7 +397,7 @@ class DelegateTerminalSpec extends CatsEffectSuite:
   ) {
     val system = ActorSystem(s"dt-4-${scala.util.Random.nextInt(100000)}")
     for
-      res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
+      res <- mkResourcesWithTestPort(system, tempRoot, new SilentLlm)
       (child, sup) <- noopRefs(system)
       _ = seedRecord("delegate-nebflow-fail", Some("71"), branch = Some("delegate/delegate-nebflow-fail"))
       _ = MergeQueue.enqueue(
@@ -385,8 +412,10 @@ class DelegateTerminalSpec extends CatsEffectSuite:
           parentSessionId = "nebula-root",
           description = "t",
           readyAt = 1L,
-          channelKind = "internal",
-          internal = Some(MergeQueue.InternalLeg(child, sup))
+          // 宣告闸批 2026-11-04：属主宣告在案（`delegate_report(category="merge")`）——授窗前提
+          declaredAt = Some(1_000L),
+          declareSource = Some(nebflow.core.delegate.MergeDeclaration.Source.ReportMerge),
+          channelKind = "identity",
         )
       )
       _ <- DelegateTerminal.onTerminalCleanup(res, "delegate-nebflow-fail", "nebula-root", "failed", "failed")
@@ -487,7 +516,7 @@ class DelegateTerminalSpec extends CatsEffectSuite:
   ) {
     val system = ActorSystem(s"dt-6-${scala.util.Random.nextInt(100000)}")
     for
-      res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
+      res <- mkResourcesWithTestPort(system, tempRoot, new SilentLlm)
       // 判定机缺席：漂移闸独立定罪（确证 ⇒ 根本不进判定机——闸先于判定机）
       (child, sup) <- noopRefs(system)
       (repo, fork, baseTip) = mkDriftRepo(
@@ -496,6 +525,8 @@ class DelegateTerminalSpec extends CatsEffectSuite:
         advance = "direct"
       )
       _ = seedRecord("delegate-nebflow-dg1", Some("91"), branch = Some("delegate/delegate-nebflow-dg1"), cwd = repo)
+      // 状态矩阵批：finish 申报 = 判词链门票（漂移闸在链内照常先于判定机）。
+      _ = DelegateRegistry.updateReport("delegate-nebflow-dg1", "finish", "declared", "")
       outcome <- withJudgeAbsent(
         DelegateTerminal.onCompleted(
           res,
@@ -540,7 +571,7 @@ class DelegateTerminalSpec extends CatsEffectSuite:
   ) {
     val system = ActorSystem(s"dt-7-${scala.util.Random.nextInt(100000)}")
     for
-      res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
+      res <- mkResourcesWithTestPort(system, tempRoot, new SilentLlm)
       (child, sup) <- noopRefs(system)
       (repo, _, _) = mkDriftRepo(tempRoot / "drift-attr", "delegate/delegate-nebflow-dg2", advance = "delegateMerge")
       // 账本行：真流程由 MergeQueue.record 落在被并 delegate 自己的键下（跨键扫描
@@ -557,6 +588,8 @@ class DelegateTerminalSpec extends CatsEffectSuite:
         )
       )
       _ = seedRecord("delegate-nebflow-dg2", Some("92"), branch = Some("delegate/delegate-nebflow-dg2"), cwd = repo)
+      // 状态矩阵批：finish 申报 = 判词链门票。
+      _ = DelegateRegistry.updateReport("delegate-nebflow-dg2", "finish", "declared", "")
       outcome <- withJudgeAbsent(
         DelegateTerminal.onCompleted(
           res,
@@ -586,7 +619,7 @@ class DelegateTerminalSpec extends CatsEffectSuite:
   test("⑧ (红验③) mergeRound=true ⇒ drift exempt (the A4 merge-round re-judge stays reachable)") {
     val system = ActorSystem(s"dt-8-${scala.util.Random.nextInt(100000)}")
     for
-      res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
+      res <- mkResourcesWithTestPort(system, tempRoot, new SilentLlm)
       // 判定机缺席（withJudgeAbsent 同⑥⑦⑨）：闸豁免后走既有回落链——completed
       (child, sup) <- noopRefs(system)
       (repo, _, _) = mkDriftRepo(tempRoot / "drift-round", "delegate/delegate-nebflow-dg3", advance = "direct")
@@ -617,8 +650,10 @@ class DelegateTerminalSpec extends CatsEffectSuite:
           parentSessionId = "nebula-root",
           description = "t",
           readyAt = 1L,
-          channelKind = "internal",
-          internal = Some(MergeQueue.InternalLeg(child, sup))
+          // 宣告闸批 2026-11-04：属主宣告在案（`delegate_report(category="merge")`）——授窗前提
+          declaredAt = Some(1_000L),
+          declareSource = Some(nebflow.core.delegate.MergeDeclaration.Source.ReportMerge),
+          channelKind = "identity",
         )
       )
       // 引擎加固批 2026-10-09（P1-1① 机械验收闸）：合并轮 completed 判词的 Release
@@ -689,7 +724,7 @@ class DelegateTerminalSpec extends CatsEffectSuite:
       queueFootprint = _ => true
     )
     for
-      res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
+      res <- mkResourcesWithTestPort(system, tempRoot, new SilentLlm)
       (child, sup) <- noopRefs(system)
       // e2e：branch ref 缺失（rev-parse 不可确证）⇒ 闸 WARN 不罚
       (repo, _, _) = mkDriftRepo(tempRoot / "drift-gone", "delegate/delegate-nebflow-dg4", advance = "direct")
@@ -697,6 +732,8 @@ class DelegateTerminalSpec extends CatsEffectSuite:
         .proc("git", "-C", repo.toString, "branch", "-D", "delegate/delegate-nebflow-dg4")
         .call(check = true, stdout = os.Pipe, stderr = os.Pipe)
       _ = seedRecord("delegate-nebflow-dg4", Some("94"), branch = Some("delegate/delegate-nebflow-dg4"), cwd = repo)
+      // 状态矩阵批：finish 申报 = 判词链门票。
+      _ = DelegateRegistry.updateReport("delegate-nebflow-dg4", "finish", "declared", "")
       outcome <- withJudgeAbsent(
         DelegateTerminal.onCompleted(res, "delegate-nebflow-dg4", "nebula-root", "t", "brief", "done", child, sup)
       )
@@ -705,7 +742,10 @@ class DelegateTerminalSpec extends CatsEffectSuite:
     yield
       assert(warned.isInstanceOf[DelegateTerminal.DriftResult.Warn], s"missing anchor reading ⇒ Warn, got: $warned")
       assertEquals(rows.map(_._1).lastOption, Some("completed"), "unverifiable git readings must NOT block (fail-open)")
-      assertEquals(rows.map(_._2).lastOption, Some("unjudged"), "the fallback leg keeps the honest unjudged source")
+      // 矩阵批：finish 申报在场 ⇒ 自申报背书——平线 source=judge（纯 unjudged 角
+      // = 未申报 × ahead>0 × 无 worktree，归 DelegateTerminalPrecheckSpec③）。
+      assertEquals(rows.map(_._2).lastOption, Some("judge"), "self-report backed: no unjudged marker")
+      assert(!outcome.toString.contains("unjudged"), s"got: $outcome")
       assert(outcome.toString.contains("completed"), s"got: $outcome")
     end for
   }
@@ -715,11 +755,10 @@ class DelegateTerminalSpec extends CatsEffectSuite:
     val captured = ListBuffer.empty[DelegateJudge.TerminalInput]
     try
       for
-        res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
+        res <- mkResourcesWithTestPort(system, tempRoot, new SilentLlm)
         // fake 判定机（后装覆盖真机——同②③⑤装配序）：捕获 gitDigest 输入
         _ = DelegateJudge.DelegateJudgePort.install(
           new DelegateJudge.DelegateJudgePort.Face:
-            def decideWorktree(task: String): IO[Option[Boolean]] = IO.pure(Some(false))
             def judgeTerminal(input: DelegateJudge.TerminalInput): IO[Option[DelegateJudge.Verdict]] =
               IO { captured += input; Some(DelegateJudge.Verdict.Completed) }
         )
@@ -734,6 +773,8 @@ class DelegateTerminalSpec extends CatsEffectSuite:
           worktree = Some(wt),
           projectWorkspace = Some(repo)
         )
+        // 状态矩阵批：finish 申报 = 判词链门票。
+        _ = DelegateRegistry.updateReport("delegate-nebflow-dg5", "finish", "declared", "")
         outcome <- DelegateTerminal.onCompleted(
           res,
           "delegate-nebflow-dg5",
@@ -866,12 +907,11 @@ class DelegateTerminalSpec extends CatsEffectSuite:
     val system = ActorSystem(s"dt-13-${scala.util.Random.nextInt(100000)}")
     try
       for
-        res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
+        res <- mkResourcesWithTestPort(system, tempRoot, new SilentLlm)
         // 同②③：真判定机在 mkResources 构造行安装，fake 必须后装才生效。
         // 判定机裁定 completed（「无可并之物」的误判形态——引擎凭确定性读数翻转）。
         _ = DelegateJudge.DelegateJudgePort.install(
           new DelegateJudge.DelegateJudgePort.Face:
-            def decideWorktree(task: String): IO[Option[Boolean]] = IO.pure(Some(false))
             def judgeTerminal(input: DelegateJudge.TerminalInput): IO[Option[DelegateJudge.Verdict]] =
               IO.pure(Some(DelegateJudge.Verdict.Completed))
         )
@@ -967,10 +1007,9 @@ class DelegateTerminalSpec extends CatsEffectSuite:
     val system = ActorSystem(s"dt-14-${scala.util.Random.nextInt(100000)}")
     try
       for
-        res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
+        res <- mkResourcesWithTestPort(system, tempRoot, new SilentLlm)
         _ = DelegateJudge.DelegateJudgePort.install(
           new DelegateJudge.DelegateJudgePort.Face:
-            def decideWorktree(task: String): IO[Option[Boolean]] = IO.pure(Some(false))
             def judgeTerminal(input: DelegateJudge.TerminalInput): IO[Option[DelegateJudge.Verdict]] =
               IO.pure(Some(DelegateJudge.Verdict.ReadyToMerge))
         )
@@ -991,6 +1030,8 @@ class DelegateTerminalSpec extends CatsEffectSuite:
             projectWorkspace = Some(tempRoot.toString)
           )
         )
+        // 状态矩阵批：finish 申报 = 判词链门票。
+        _ = DelegateRegistry.updateReport("delegate-nebflow-nobase", "finish", "declared", "")
         outcome <- DelegateTerminal.onCompleted(
           res,
           "delegate-nebflow-nobase",

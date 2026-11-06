@@ -85,9 +85,22 @@ object LlmInterface extends LlmRuntime:
     candidates: List[ModelCandidate],
     registry: ProviderRegistry
   ): IO[List[ModelCandidate]] =
-    if candidates.isEmpty then IO.pure(Nil)
+    applyScheduleGateDetailed(candidates, registry).map(_._1)
+
+  /**
+   * [[applyScheduleGate]] 的**带原因**版本（缺陷批 2026-11-05）：时段窗挡掉的候选
+   * 连同窗口描述一起返回，进候选账本（终局错误 + 日志里显形），不再静默消失。
+   */
+  private def applyScheduleGateDetailed(
+    candidates: List[ModelCandidate],
+    registry: ProviderRegistry
+  ): IO[(List[ModelCandidate], List[(String, CandidateSkipCause)])] =
+    if candidates.isEmpty then IO.pure((Nil, Nil))
     else
       registry.filterScheduleRestricted(candidates).flatMap { case (available, restricted) =>
+        val skips = restricted.map { case (c, w) =>
+          s"${c.providerId}/${c.model}" -> CandidateSkipCause.ScheduleWindow(w)
+        }
         val skipLog =
           if restricted.isEmpty then IO.unit
           else
@@ -103,7 +116,7 @@ object LlmInterface extends LlmRuntime:
               restricted.map { case (c, _) => s"${c.providerId}/${c.model}" },
               restricted.map { case (_, w) => w }.distinct.mkString(" / ")
             )
-          ).as(available)
+          ).as((available, skips))
       }
 
   /**
@@ -563,6 +576,46 @@ object LlmInterface extends LlmRuntime:
               ResolvedThinking(kind, resolved.enabled, resolved.effort, resolved.clearThinking)
             }
 
+          /**
+           * 候选账本（缺陷批 2026-11-05，作者报障「fallback 队列里明明有可用模型，
+           * 却报所有模型不可用」）：把「被跳过的候选 + 原因」并进一本账，同 ref
+           * 只留第一条原因（顺序 = 配置层级 → 时段 → 健康面）。
+           */
+          def mergeSkips(
+            base: List[(String, CandidateSkipCause)],
+            more: List[(String, CandidateSkipCause)]
+          ): List[(String, CandidateSkipCause)] =
+            (base ++ more).foldLeft(List.empty[(String, CandidateSkipCause)]) { (acc, cur) =>
+              if acc.exists(_._1 == cur._1) then acc else acc :+ cur
+            }
+
+          /**
+           * 请求入口账本落盘：每个被跳候选一行原因；**静默排除**（配置可见、未
+           * disabled、却既不在链上也没有原因）单独 ERROR 报警——这一行出现即证明
+           * 「有人偷偷把候选扔了」，是作者报障的机器可判形态。
+           */
+          def logCandidateLedger(
+            req: LlmRequest,
+            expected: List[String],
+            chain: List[String],
+            skipped: List[(String, CandidateSkipCause)]
+          ): IO[Unit] =
+            val d = CandidateDisposition(chain, Nil, skipped, expected)
+            val silent = d.silentExclusions
+            val alarm =
+              if silent.isEmpty then IO.unit
+              else
+                logger.error(
+                  s"SILENT-EXCLUSION session=${req.sessionId} agent=${req.agentId}: " +
+                    s"${silent.size} configured candidate(s) dropped with NO recorded reason — " +
+                    silent.sorted.mkString(", ") +
+                    s" (chain=${chain.size}, skipped=${skipped.size})"
+                )
+            val skipsLine =
+              if skipped.isEmpty then IO.unit
+              else logger.warn(s"candidate ledger session=${req.sessionId} — ${d.summary}")
+            alarm *> skipsLine
+
           val handle = new LlmHandle[IO]:
             def send(req: LlmRequest): IO[LlmResponse] =
               val start = System.currentTimeMillis()
@@ -578,12 +631,30 @@ object LlmInterface extends LlmRuntime:
                   )
                 // #33: drop stale session overrides whose provider was removed
                 // by a config hot-reload — graceful skip, never "Unknown provider".
-                filtered <- registry.filterKnownProviders(candidates)
+                // 缺陷批 2026-11-05：带原因版本——被剔候选进账本（不静默消失）。
+                knownRes <- registry.filterKnownProvidersDetailed(candidates)
+                (filtered, droppedKnown) = knownRes
                 // 时段闸补滤（model-schedule-unavailable 批）：override 候选只有
                 // 这里能拦住；全受限在此显式报错（带原因）。
-                schedAvailable <- applyScheduleGate(filtered, registry)
-                (up, _) <- healthMonitor.filterCandidates(schedAvailable)
-                _ <- IO.raiseWhen(up.isEmpty)(new RuntimeException("All providers unavailable"))
+                schedRes <- applyScheduleGateDetailed(filtered, registry)
+                (schedAvailable, schedSkips) = schedRes
+                configSkips <- registry.configLevelExclusions()
+                expected <- registry.expectedCandidateRefs()
+                seededSkips = droppedKnown ++ schedSkips ++ configSkips
+                healthSkipped <- healthMonitor.filterCandidatesDetailed(schedAvailable)
+                (up, healthSkips) = healthSkipped
+                allSkips = mergeSkips(
+                  seededSkips,
+                  healthSkips.map { case (c, cause) => s"${c.providerId}/${c.model}" -> cause }
+                )
+                _ <- logCandidateLedger(req, expected, candidates.map(c => s"${c.providerId}/${c.model}"), allSkips)
+                _ <- IO.raiseWhen(up.isEmpty)(
+                  new FallbackExhaustedError(
+                    Nil,
+                    hadImage = hadImageIn(req.messages),
+                    disposition = Some(CandidateDisposition(Nil, Nil, allSkips, expected))
+                  )
+                )
                 result <- Fallback.tryProviderWithFallback[AdapterResponse](
                   up,
                   candidate =>
@@ -648,8 +719,42 @@ object LlmInterface extends LlmRuntime:
                       case None => IO.unit
                     }
                   ),
-                  onProviderExhausted = Some(c => healthMonitor.markDown(c.providerId, c.model, "provider exhausted"))
+                  // 5xx 归批（2026-11-05）：非流面同流面口径——上游暂时不可用
+                  // （500/502/503/504/550）走**冷却窗 + 指数退避**，不 markDown
+                  // （探测空历史必成功 ⇒ 秒回 UP ⇒ 下一发再 5xx 的 flap 风暴）。
+                  // 其余分类（Auth/404/EmptyStream 等确证死亡）维持 markDown。
+                  onProviderExhausted = Some((c, cls) =>
+                    if cls.reason == FailoverReason.ServerError then
+                      healthMonitor.coolDown(c.providerId, c.model, "upstream 5xx (non-stream)")
+                    else
+                      // 假 DOWN 批（2026-11-05）：原因不再是干巴巴的 "provider exhausted"
+                      // ——带上分类 + 上游响应体摘录（健康表/面板/日志三面同源，可归类）。
+                      healthMonitor.markDown(
+                        c.providerId,
+                        c.model,
+                        nebflow.core.LlmLogWriter.redactSecrets(
+                          s"provider exhausted (${cls.reason})" +
+                            cls.message.map(m => s": ${m.take(300)}").getOrElse("")
+                        )
+                      )
+                  )
                 )
+                // 缺陷批 2026-11-05：非流面终局错误同样带账本——否则这条腿又变成
+                // 「只说试过谁、不说漏了谁」的老形态。chain 取**健康面过滤前**的
+                // 候选（schedAvailable）：账本要的是「进链的全体」，不是「最后能试的」，
+                // 否则被健康面跳过的候选会既不在 chain 也不在 tried 里，形态被判成
+                // all-providers-failed（今天报障的误导源头）。
+                .adaptError {
+                  case e: FallbackExhaustedError =>
+                    e.withDisposition(
+                      CandidateDisposition(
+                        chain = schedAvailable.map(c => s"${c.providerId}/${c.model}"),
+                        tried = e.attempts.map(a => s"${a.providerId}/${a.model}").distinct,
+                        skipped = allSkips,
+                        expected = expected
+                      )
+                    )
+                }
                 // 修 2026-10-21 「恢复不回绿」腿②（非流面）：调用成功即清除——
                 // 与流面 winner 同一事件语义：并发请求中途写入的 Down 标记在
                 // 本请求成功时点清除；本就 Up 时为 no-op。
@@ -664,6 +769,9 @@ object LlmInterface extends LlmRuntime:
                         .map(a => FallbackStep(a.providerId, a.model, a.reason.map(_.toString), a.durationMs))
                     )
                   else None
+
+                // cache-hit 批（2026-11-06）：非流腿命中率聚合读数（面板同口径）。
+                CacheStats.record(result.usedCandidate.providerId, result.usedCandidate.model, result.data.usage)
 
                 IO.pure(
                   LlmResponse(
@@ -716,20 +824,35 @@ object LlmInterface extends LlmRuntime:
                             overrides.get(req.sessionId).exists(o => o.providerId == c.providerId && o.model == c.model)
                           )
                         // #33: same graceful skip as the non-streaming path.
-                        filtered <- registry.filterKnownProviders(candidates)
+                        // 缺陷批 2026-11-05：带原因版本（进候选账本）。
+                        knownRes <- registry.filterKnownProvidersDetailed(candidates)
+                        (filtered, droppedKnown) = knownRes
                         // 时段闸补滤（model-schedule-unavailable 批）：同非流面——
                         // override 候选在此拦住；全受限在健康检查**之前**快失败
                         // （带原因），不进 120s 全灭闸等待。
-                        schedAvailable <- applyScheduleGate(filtered, registry)
-                      yield schedAvailable
+                        schedRes <- applyScheduleGateDetailed(filtered, registry)
+                        (schedAvailable, schedSkips) = schedRes
+                        configSkips <- registry.configLevelExclusions()
+                        expected <- registry.expectedCandidateRefs()
+                        seededSkips = mergeSkips(droppedKnown ++ schedSkips, configSkips)
+                        _ <- logCandidateLedger(
+                          req,
+                          expected,
+                          candidates.map(c => s"${c.providerId}/${c.model}"),
+                          seededSkips
+                        )
+                      yield (schedAvailable, seededSkips, expected)
                     )
-                    .flatMap { candidates =>
+                    .flatMap { case (candidates, seededSkips, expectedRefs) =>
 
                       val maxRetries = Fallback.MaxRetries
 
                       fs2.Stream.eval(IO.ref(false)).flatMap { lockedRef =>
                         fs2.Stream.eval(IO.ref(List.empty[FallbackAttempt])).flatMap { failureRef =>
                           fs2.Stream.eval(IO.ref(Option.empty[ModelCandidate])).flatMap { winnerRef =>
+                            // 候选账本（缺陷批 2026-11-05）：被跳过的候选与原因，
+                            // 每进一次健康检查就追加（同 ref 只留首条）。
+                            fs2.Stream.eval(IO.ref(seededSkips)).flatMap { skippedRef =>
                             // visionfix (甲): the `messagesRef` / `imageStrippedRef`
                             // wrappers that used to sit here existed only for the
                             // PreSendChecker strip and the PostEmptyRecovery retry.
@@ -752,62 +875,104 @@ object LlmInterface extends LlmRuntime:
                             // （见 tryCandidate `case Nil`）⇒ 入口调用点（下方 `attemptWithHealthCheck`）
                             // 用默认轮次 1 起跑。
                             def attemptWithHealthCheck(round: Int = 1): fs2.Stream[IO, StreamChunk] =
-                              fs2.Stream.eval(healthMonitor.filterCandidates(candidates)).flatMap {
-                                case (Nil, down) =>
-                                  val notifyDown = onAttempt.traverse_(
-                                    _.apply(
-                                      FallbackAttempt(
-                                        providerId = "",
-                                        model = "",
-                                        reason = None,
-                                        permanence = None,
-                                        durationMs = 0,
-                                        retriesUsed = 0,
-                                        timestamp = java.time.Instant.now().toString,
-                                        message = Some("所有模型不可用，等待恢复中...")
-                                      )
+                              // 缺陷批 2026-11-05（作者令第 5 条）：**空链**是配置问题，
+                              // 不是供应商问题——不许落进 120s 全灭闸等待，直接终态
+                              // （no-eligible-providers / all-skipped + 处置表）。
+                              if candidates.isEmpty then
+                                fs2.Stream.eval(skippedRef.get).flatMap { skips =>
+                                  val disposition = CandidateDisposition(Nil, Nil, skips, expectedRefs)
+                                  fs2.Stream.eval(
+                                    logger.warn(s"Stream: empty candidate chain — ${disposition.summary}")
+                                  ) *> fs2.Stream.raiseError[IO](
+                                    new FallbackExhaustedError(
+                                      Nil,
+                                      hadImage = hadImageIn(req.messages),
+                                      disposition = Some(disposition)
                                     )
                                   )
-                                  // Probe Down candidates immediately instead of waiting for the
-                                  // next background cycle — cuts worst-case recovery from ~2min to ~15s.
-                                  fs2.Stream
-                                    .eval(
-                                      notifyDown *> healthMonitor.probeNow(down) *> healthMonitor
-                                        .waitForAnyUp(candidates)
-                                        // All candidates Down and none recovered within one probe
-                                        // cycle — surface the failure instead of blocking forever.
-                                        // Re-mapped to AllProvidersDownTimeout (Transient) so the
-                                        // agent-level llm-fail retry fires; a raw TimeoutException
-                                        // is classified Permanent and would kill the turn.
-                                        .timeout(ProviderHealthMonitor.ProbeIntervalSec.seconds)
-                                        .adaptError { case _: java.util.concurrent.TimeoutException =>
-                                          new AllProvidersDownTimeout(
-                                            ProviderHealthMonitor.ProbeIntervalSec * 1000L
-                                          )
-                                        }
+                                }
+                              else
+                                fs2.Stream.eval(healthMonitor.filterCandidatesDetailed(candidates)).flatMap {
+                                  case (Nil, skippedNow) =>
+                                    // 健康面/软回避窗挡掉的候选全部记账（带原因），
+                                    // 再进全灭等待（探测恢复语义不变）。
+                                    val down = skippedNow.collect { case (c, CandidateSkipCause.HealthDown(_)) => c }
+                                    val record = skippedRef.update(prev =>
+                                      mergeSkips(prev, skippedNow.map { case (c, cause) =>
+                                        s"${c.providerId}/${c.model}" -> cause
+                                      })
                                     )
-                                    .flatMap { _ =>
-                                      val notifyUp = onAttempt.traverse_(
-                                        _.apply(
-                                          FallbackAttempt(
-                                            providerId = "",
-                                            model = "",
-                                            reason = Some(FailoverReason.Unknown),
-                                            permanence = None,
-                                            durationMs = 0,
-                                            retriesUsed = 0,
-                                            timestamp = java.time.Instant.now().toString,
-                                            message = Some("模型已恢复，继续处理...")
-                                          )
+                                    val notifyDown = onAttempt.traverse_(
+                                      _.apply(
+                                        FallbackAttempt(
+                                          providerId = "",
+                                          model = "",
+                                          reason = None,
+                                          permanence = None,
+                                          durationMs = 0,
+                                          retriesUsed = 0,
+                                          timestamp = java.time.Instant.now().toString,
+                                          message = Some("所有模型不可用，等待恢复中...")
                                         )
                                       )
-                                      fs2.Stream.eval(notifyUp).drain ++ attemptWithHealthCheck(round)
-                                    }
-                                case (up, _) =>
-                                  // 新一轮：已尝试集合清空（`remaining = up` 是本链的**全量**候选），
-                                  // 轮次原样传入——轮次只在「一轮全部候选试完」时递增。
-                                  tryCandidate(up, maxRetries, Fallback.InitialBackoffMs, Set.empty, round)
-                              }
+                                    )
+                                    // Probe Down candidates immediately instead of waiting for the
+                                    // next background cycle — cuts worst-case recovery from ~2min to ~15s.
+                                    fs2.Stream
+                                      .eval(
+                                        record *> notifyDown *> healthMonitor.probeNow(down) *> healthMonitor
+                                          .waitForAnyUp(candidates)
+                                          // All candidates Down and none recovered within one probe
+                                          // cycle — surface the failure instead of blocking forever.
+                                          // Re-mapped to AllProvidersDownTimeout (Transient) so the
+                                          // agent-level llm-fail retry fires; a raw TimeoutException
+                                          // is classified Permanent and would kill the turn.
+                                          .timeout(ProviderHealthMonitor.ProbeIntervalSec.seconds)
+                                          .adaptError { case _: java.util.concurrent.TimeoutException =>
+                                            val table = CandidateDisposition(Nil, Nil, skippedNow.map {
+                                              case (c, cause) => s"${c.providerId}/${c.model}" -> cause
+                                            }, expectedRefs).render()
+                                            new AllProvidersDownTimeout(
+                                              ProviderHealthMonitor.ProbeIntervalSec * 1000L,
+                                              Some(
+                                                s"no candidate could be tried — every candidate on the chain was skipped:\n$table"
+                                              )
+                                            )
+                                          }
+                                      )
+                                      .flatMap { _ =>
+                                        val notifyUp = onAttempt.traverse_(
+                                          _.apply(
+                                            FallbackAttempt(
+                                              providerId = "",
+                                              model = "",
+                                              reason = Some(FailoverReason.Unknown),
+                                              permanence = None,
+                                              durationMs = 0,
+                                              retriesUsed = 0,
+                                              timestamp = java.time.Instant.now().toString,
+                                              message = Some("模型已恢复，继续处理...")
+                                            )
+                                          )
+                                        )
+                                        fs2.Stream.eval(notifyUp).drain ++ attemptWithHealthCheck(round)
+                                      }
+                                  case (up, skippedNow) =>
+                                    // 新一轮：已尝试集合清空（`remaining = up` 是本链的**全量**候选），
+                                    // 轮次原样传入——轮次只在「一轮全部候选试完」时递增。
+                                    // 健康面挡掉的候选记账后再起跑（不静默）。
+                                    fs2.Stream
+                                      .eval(
+                                        skippedRef.update(prev =>
+                                          mergeSkips(prev, skippedNow.map { case (c, cause) =>
+                                            s"${c.providerId}/${c.model}" -> cause
+                                          })
+                                        )
+                                      )
+                                      .flatMap(_ =>
+                                        tryCandidate(up, maxRetries, Fallback.InitialBackoffMs, Set.empty, round)
+                                      )
+                                }
 
                             def tryCandidate(
                               remaining: List[ModelCandidate],
@@ -840,17 +1005,38 @@ object LlmInterface extends LlmRuntime:
                                   // 「A 命中恰好 1 次 + B 成功」的**轮内**语义逐字不变）。
                                   if round >= Fallback.MaxChainRounds || attempted.isEmpty then
                                     fs2.Stream.eval(failureRef.get).flatMap { failures =>
-                                      fs2.Stream.eval(
-                                        logger.warn(
-                                          s"Stream: all candidates exhausted after $round round(s) " +
-                                            s"(cap ${Fallback.MaxChainRounds}) — failing fast instead of " +
-                                            s"re-entering the health-check loop " +
-                                            s"[providers attempted: ${failures.size} attempt(s), " +
-                                            s"candidates: ${attempted.toList.sorted.mkString(", ")}]"
+                                      // 缺陷批 2026-11-05（作者令第 2/4/5 条）：终局判词必须
+                                      // 分形态——只有「链上每一个候选都被真实试过且全败」才
+                                      // 允许说 All providers failed；被跳过（健康面/软回避窗/
+                                      // 时段窗/配置）的候选连同原因进同一张账本表，随错误送到
+                                      // 作者的通知面（delegate 冻结文案 = err.getMessage）。
+                                      fs2.Stream.eval(skippedRef.get).flatMap { skips =>
+                                        val disposition = CandidateDisposition(
+                                          chain = candidates.map(candidateKey),
+                                          tried = failures
+                                            .map(a => s"${a.providerId}/${a.model}")
+                                            .filter(_.nonEmpty)
+                                            .distinct,
+                                          skipped = skips,
+                                          expected = expectedRefs
                                         )
-                                      ) *> fs2.Stream.raiseError[IO](
-                                        new FallbackExhaustedError(failures, hadImage = hadImageIn(req.messages))
-                                      )
+                                        fs2.Stream.eval(
+                                          logger.warn(
+                                            s"Stream: candidate chain exhausted after $round round(s) " +
+                                              s"(cap ${Fallback.MaxChainRounds}) — failing fast instead of " +
+                                              s"re-entering the health-check loop " +
+                                              s"[providers attempted: ${failures.size} attempt(s), " +
+                                              s"reason=${disposition.reasonCode}, ${disposition.summary}]\n" +
+                                              disposition.render()
+                                          )
+                                        ) *> fs2.Stream.raiseError[IO](
+                                          new FallbackExhaustedError(
+                                            failures,
+                                            hadImage = hadImageIn(req.messages),
+                                            disposition = Some(disposition)
+                                          )
+                                        )
+                                      }
                                     }
                                   else
                                     // 尚有余轮：进健康检查（全员 Down 时阻塞等待恢复），换轮重试。
@@ -982,6 +1168,12 @@ object LlmInterface extends LlmRuntime:
                                               // from the candidate so the frontend shows correct provider name.
                                               val fixedMeta =
                                                 done.meta.map(_.copy(providerId = candidate.providerId))
+                                              // cache-hit 批（2026-11-06）：命中率聚合读数单点
+                                              // （非流腿在同函数 send 的 LlmResponse 装配处，两腿
+                                              // 各记一次、不双记）。放在真实候选腿上——adapter 内
+                                              // 的 providerId 是硬编码协议名（如 "anthropic"），
+                                              // 域分列（failover 换域=物理性）必须以真实腿为准。
+                                              CacheStats.record(candidate.providerId, candidate.model, done.usage)
                                               // visionfix (甲): the oscillation-fix bookkeeping
                                               // (`resetOnSuccess` with `hadImage`) is gone with the
                                               // tracker — there is no demotion state left to lift.
@@ -1080,7 +1272,21 @@ object LlmInterface extends LlmRuntime:
                                             // 失败分类恰好过一次）上；内部自判——总闸关 / 非
                                             // RateLimit / 配额体（1308 计划性额度 = 换链腿）/ 非账户级
                                             // 响应体（单请求类，走既有 retry）⇒ no-op，零行为变化。
-                                            val notify = onAttempt.traverse_(_.apply(attempt)) *>
+                                            // 5xx 归批（2026-11-05）：上游暂时不可用 ⇒
+                                            // **provider 级冷却 + 指数退避**（15s→30s→60s→
+                                            // 120s→300s 封顶，窗到期自动半开试探），不走
+                                            // markDown（进探测集只会造 flap：空历史探测秒成功
+                                            // ⇒ 秒回 UP ⇒ 下一发再 500/550）。挂在 notify 上
+                                            // = 每条失败分支恰好执行一次，三条分支零重复。
+                                            val cooldown5xx =
+                                              if classification.reason == FailoverReason.ServerError then
+                                                healthMonitor.coolDown(
+                                                  candidate.providerId,
+                                                  candidate.model,
+                                                  s"upstream 5xx (${classification.statusCode.map(_.toString).getOrElse("n/a")})"
+                                                )
+                                              else IO.unit
+                                            val notify = onAttempt.traverse_(_.apply(attempt)) *> cooldown5xx *>
                                               registry.throttle.onRateLimitSignal(
                                                 candidate.provider.baseUrl,
                                                 classification.reason,
@@ -1088,9 +1294,16 @@ object LlmInterface extends LlmRuntime:
                                                   .orElse(Option(err.getMessage))
                                                   .getOrElse("")
                                               )
-                                            val downReason = classification.message
-                                              .orElse(Option(err.getMessage))
-                                              .getOrElse(classification.reason.toString)
+                                            // 假 DOWN 批（2026-11-05）：健康表里存的原因必须是
+                                            // **可归类的失败链**，不能是 sttp 的包装句
+                                            // `Exception when sending request: POST <url>`（那一句
+                                            // 对 connect 失败/握手被掐/连接重置/读超时全都一模一样，
+                                            // cause 链里才是真因）。裸 message 会把它永久写进表，
+                                            // 于是「为什么它一直 DOWN」在现场无从判断——本批实测正是
+                                            // 如此。redactSecrets：provider 可能把凭据回显在错误体里。
+                                            val downReason = nebflow.core.LlmLogWriter.redactSecrets(
+                                              FailureChain.reasonFor(classification.message, err)
+                                            )
 
                                             // 案① A5（作者令「随案① 落地带上」）：4xx 的 provider
                                             // 响应体**不受 llmLog `enabled` 开关门控**，常驻落盘
@@ -1186,6 +1399,17 @@ object LlmInterface extends LlmRuntime:
                                                         .getOrElse("")
                                                       + s" [status=${classification.statusCode.map(_.toString).getOrElse("n/a")}, " +
                                                       s"evict=${classification.evict}, round=$round/${Fallback.MaxChainRounds}]"
+                                                      // flysin 收口批（2026-11-04）：能力不匹配单独打一个
+                                                      // `capability=` 标记（带 provider/model）——否则这类 400
+                                                      // 在日志里与「请求形状写错」长得一模一样，只能靠人读上游
+                                                      // 原话分辨。判据 = 上游明说「该模型不收图」（不是关键词猜测）。
+                                                      + nebflow.shared.ImageCapabilityRejection.logNote(
+                                                        candidate.providerId,
+                                                        candidate.model,
+                                                        classification.message
+                                                          .orElse(Option(err.getMessage))
+                                                          .getOrElse("")
+                                                      )
                                                   )
                                                     *> failureRef.update(_ :+ attempt)
                                                     *> notify
@@ -1252,6 +1476,11 @@ object LlmInterface extends LlmRuntime:
                                                         Defaults.QuotaAvoidWindowMs,
                                                         label = "quota exhausted"
                                                       )
+                                                    // 5xx 归批（2026-11-05）：上游暂时不可用**绝不
+                                                    // markDown**（进探测集 ⇒ 空历史探测秒成功 ⇒ 秒回
+                                                    // 恢复 ⇒ 下一发再 5xx 的 flap 风暴）。冷却已在
+                                                    // `notify` 里执行过（cooldown5xx），此处只需不驱逐。
+                                                    else if classification.reason == FailoverReason.ServerError then IO.unit
                                                     else if isTimeout then
                                                       healthMonitor.softAvoid(
                                                         candidate.providerId,
@@ -1288,6 +1517,7 @@ object LlmInterface extends LlmRuntime:
 
                             // 入口：轮次从 1 起跑（案① A2 —— wrapper 现在带轮次参数）。
                             attemptWithHealthCheck()
+                            } // end skippedRef ledger
                           }
                         }
                       }

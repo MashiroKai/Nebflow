@@ -8,7 +8,7 @@ import ch.qos.logback.classic.Level
 import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.read.ListAppender
 import io.circe.parser.parse
-import munit.FunSuite
+import munit.{AfterEach, FunSuite}
 import nebflow.shared.PathUtil
 import org.slf4j.LoggerFactory
 
@@ -51,9 +51,15 @@ class DeviceMailAckRaceProbeSpec extends FunSuite:
   PathUtil.setDataRoot(tempRoot)
 
   override def beforeEach(context: BeforeEach): Unit =
+    // seal 批（2026-11-03）：判据要求 15s 超时腿在场（改前必现假 TIMEOUT 的对照面），
+    // 而封存默认不挂腿 ⇒ 逐用例复活、用例后清干净。
+    nebflow.core.boot.ProcessSealProps.enableMail()
     DeviceMailAck.resetForTest().unsafeRunSync()
     if os.exists(tempRoot) then os.remove.all(tempRoot)
     os.makeDir.all(tempRoot)
+
+  override def afterEach(context: AfterEach): Unit =
+    nebflow.core.boot.ProcessSealProps.clearAll()
 
   private def withAckLog[A](f: => A): (A, List[String]) =
     val lbLogger = LoggerFactory.getLogger(LogName).asInstanceOf[ch.qos.logback.classic.Logger]

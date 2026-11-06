@@ -1,0 +1,34 @@
+{
+  "trans": {
+    "hostProp": "background-color, border-color, border-radius, padding-left, padding-right, padding-top, padding-bottom",
+    "hostDur": "0.28s, 0.28s, 0.28s, 0.28s, 0.28s, 0.28s, 0.28s",
+    "hostEase": "cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1)",
+    "clipProp": "transform, opacity",
+    "clipDur": "0.4s, 0.4s",
+    "clipEase": "cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1)",
+    "clipW": 175
+  },
+  "expect": {
+    "base": 280,
+    "slow": 400,
+    "ease": "cubic-bezier(0.4, 0, 0.2, 1)",
+    "whitelist": [
+      "width",
+      "height",
+      "margin-left",
+      "margin-right",
+      "padding-left",
+      "padding-right",
+      "border-radius",
+      "border-color",
+      "background-color",
+      "box-shadow",
+      "backdrop-filter",
+      "opacity",
+      "max-width",
+      "transform",
+      "padding-top",
+      "padding-bottom"
+    ]
+  }
+}

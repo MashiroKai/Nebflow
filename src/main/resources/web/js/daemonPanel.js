@@ -42,9 +42,7 @@ const PANEL_CSS = `
   max-height: min(620px, 78vh);
   display: none; flex-direction: column;
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  border-radius: 16px; border: 1px solid var(--sapphire-edge);
+  border-radius: var(--ds-radius-card-lg); border: 1px solid var(--sapphire-edge);
   box-shadow:
     inset 0 -1px 0 0 rgba(91, 127, 191, 0.025),
     inset 1px 0 0 0 rgba(91, 127, 191, 0.02),
@@ -57,14 +55,14 @@ const PANEL_CSS = `
 #daemon-config-overlay.open { display: flex; }
 .daemon-config-header {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 12px 14px; border-bottom: 1px solid var(--color-border);
+  padding: var(--ds-space-3) 14px; border-bottom: 1px solid var(--color-border);
   flex-shrink: 0;
 }
-.daemon-config-title { font-size: 14px; font-weight: 600; color: var(--color-text); }
+.daemon-config-title { font-size: var(--ds-fs-subtitle); font-weight: 600; color: var(--color-text); }
 .daemon-config-close {
   background: none; border: 1px solid transparent; cursor: pointer;
   width: 24px; height: 24px; display: flex; align-items: center;
-  justify-content: center; border-radius: 6px; padding: 0;
+  justify-content: center; border-radius: var(--ds-radius-chip); padding: 0;
   color: var(--color-frame-text-muted);
 }
 .daemon-config-close:hover {
@@ -74,25 +72,25 @@ const PANEL_CSS = `
 }
 .daemon-config-close svg { width: 14px; height: 14px; }
 .daemon-config-body { padding: 14px; overflow-y: auto; flex: 1; }
-.daemon-config-field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
-.daemon-config-label { font-size: 12px; font-weight: 500; color: var(--color-text-muted); }
+.daemon-config-field { display: flex; flex-direction: column; gap: var(--ds-space-1); margin-bottom: var(--ds-space-3); }
+.daemon-config-label { font-size: var(--ds-fs-hint); font-weight: 500; color: var(--color-text-muted); }
 .daemon-config-input, .daemon-config-select {
-  font: inherit; font-size: 13px; padding: 7px 9px;
-  border-radius: 8px; border: 1px solid var(--color-border);
+  font: inherit; font-size: var(--ds-fs-body); padding: var(--ds-space-2) var(--ds-space-2);
+  border-radius: var(--ds-radius-input); border: 1px solid var(--color-border);
   background: var(--color-surface); color: var(--color-text);
 }
 .daemon-config-input:focus, .daemon-config-select:focus {
   outline: none; border-color: rgba(91, 127, 191, 0.55);
 }
-.daemon-config-check { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--color-text); }
-.daemon-config-hint { font-size: 11px; color: var(--color-text-muted); }
+.daemon-config-check { display: flex; align-items: center; gap: var(--ds-space-1h); font-size: var(--ds-fs-body); color: var(--color-text); }
+.daemon-config-hint { font-size: var(--ds-fs-meta); color: var(--color-text-muted); }
 .daemon-config-footer {
-  display: flex; justify-content: flex-end; gap: 8px;
-  padding: 12px 14px; border-top: 1px solid var(--color-border); flex-shrink: 0;
+  display: flex; justify-content: flex-end; gap: var(--ds-space-2);
+  padding: var(--ds-space-3) 14px; border-top: 1px solid var(--color-border); flex-shrink: 0;
 }
 .daemon-config-btn {
-  font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;
-  padding: 6px 14px; border-radius: 10px;
+  font: inherit; font-size: var(--ds-fs-body); font-weight: 500; cursor: pointer;
+  padding: var(--ds-space-1h) 14px; border-radius: var(--ds-radius-button);
   border: 1px solid var(--color-border);
   background: var(--glass-control-bg); color: var(--color-text);
 }
@@ -101,11 +99,11 @@ const PANEL_CSS = `
   border-color: rgba(91, 127, 191, 0.45);
 }
 .daemon-config-btn:disabled { opacity: 0.45; cursor: default; }
-.daemon-config-status { font-size: 12px; color: var(--color-text-muted); margin-right: auto; }
+.daemon-config-status { font-size: var(--ds-fs-hint); color: var(--color-text-muted); margin-right: auto; }
 /* ui-status-redesign：错误词转中性字，红由词前 circle-x 图标承载（.st-err token）。 */
 .daemon-config-status.error { color: var(--status-word); }
-.daemon-config-status .st-ic { margin-right: 4px; }
-.daemon-config-iframe { width: 100%; height: 420px; border: 0; border-radius: 8px; background: var(--color-surface); }
+.daemon-config-status .st-ic { margin-right: var(--ds-space-1); }
+.daemon-config-iframe { width: 100%; height: 420px; border: 0; border-radius: var(--ds-radius-input); background: var(--color-surface); }
 </style>`;
 
 let overlay = null;

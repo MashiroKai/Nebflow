@@ -1,0 +1,15 @@
+=== BASELINE (pre-change, HEAD=0fbb64b68) ===
+2026年11月 4日 星期三 15时28分08秒 CST
+--- 1) todo-split.spec.mjs (@playwright/test) ---
+
+Running 6 tests using 1 worker
+
+  ✓  1 tests/todo-split.spec.mjs:158:1 › ①② 分家渲染 + 入口行徽标：提醒面纯定时任务（徽标=超时 1），侧边栏 todo 槽退役，入口行徽标=6 (1.7s)
+  ✓  2 tests/todo-split.spec.mjs:194:1 › ③ 提醒事项页：分组固定序（已到期浮顶→待决策→待批准→计划），镜像行零圆钮，页头计数=6 (1.4s)
+  ✓  3 tests/todo-split.spec.mjs:235:1 › ④ 闭环：镜像行点击跳回卡片（零 pageerror）；销账帧 ⇒ 徽标收敛；圆钮 ⇒ completeTodo 带行自身 sessionId (2.5s)
+  ✓  4 tests/todo-split.spec.mjs:271:1 › ⑤ 待办创建：纯文本内联创建 ⇒ createScheduledTask 帧带 kind:todo；乐观行落收件箱面，提醒面零混入 (1.4s)
+  ✓  5 tests/todo-split.spec.mjs:298:1 › ⑦ 项目维度（追加令①②）：筛选 chips 单选生效（计划组行随滤）；✎ 编辑 ⇒ updateScheduledTask 帧带 content+project (1.7s)
+  ✓  6 tests/todo-split.spec.mjs:347:1 › ⑥ 手机层级下钻：375 视口入口行在消息页；点击 ⇒ todo 详情页收编 #todo-page、返回钮在 (1.1s)
+
+  6 passed (11.3s)
+EXIT=0

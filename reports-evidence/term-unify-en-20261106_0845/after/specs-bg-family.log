@@ -1,0 +1,475 @@
+
+Running 58 tests using 1 worker
+
+[1/58] tests/bg-agentflow-layering.spec.mjs:223:1 › ① ② 三层深度：depth(A) = depth(整体行)+1，depth(A 的子) = depth(A)+1
+tests/bg-agentflow-layering.spec.mjs:223:1 › ① ② 三层深度：depth(A) = depth(整体行)+1，depth(A 的子) = depth(A)+1
+[①② dump] [{"level":"head","sid":"delegate-layer-a1b2c3d4","depth":"0","padLeft":12,"name":"层级批"},{"level":"child","sid":"node-layer-11112222","depth":"1","padLeft":16,"name":"节点A"},{"level":"child","sid":"node-layer-33334444","depth":"2","padLeft":28,"name":"A的子"}]
+
+[2/58] tests/bg-agentflow-layering.spec.mjs:255:1 › ⑤ 反向门：不折叠时三层行全在（不裁行）+ padding-left 严格递增 + 深行可读
+tests/bg-agentflow-layering.spec.mjs:255:1 › ⑤ 反向门：不折叠时三层行全在（不裁行）+ padding-left 严格递增 + 深行可读
+[⑤ dump] [{"sid":"delegate-layer-a1b2c3d4","depth":"0","padLeft":12,"scrollHeight":69,"name":"层级批","nameWidth":39},{"sid":"node-layer-11112222","depth":"1","padLeft":16,"scrollHeight":68,"name":"节点A","nameWidth":32},{"sid":"node-layer-33334444","depth":"2","padLeft":28,"scrollHeight":68,"name":"A的子","nameWidth":32}]
+
+[⑤] domRows=3 data-bg-row-total=3
+
+[⑤] pads=[[0,12],[1,16],[2,28]]
+
+[3/58] tests/bg-agentflow-layering.spec.mjs:299:1 › ⑥ N 层：四层链（整体行 → A → A 的子 → A 的孙）逐层 +1 且全在 DOM
+tests/bg-agentflow-layering.spec.mjs:299:1 › ⑥ N 层：四层链（整体行 → A → A 的子 → A 的孙）逐层 +1 且全在 DOM
+[⑥ dump] [{"sid":"delegate-layer-a1b2c3d4","depth":"0","padLeft":12,"name":"层级批"},{"sid":"node-layer-11112222","depth":"1","padLeft":16,"name":"节点A"},{"sid":"node-layer-33334444","depth":"2","padLeft":28,"name":"A的子"},{"sid":"node-layer-55556666","depth":"3","padLeft":40,"name":"A的孙"}]
+
+[4/58] tests/bg-agentflow-layering.spec.mjs:338:1 › ③ 折叠 A ⇒ A 子树整行数 = 0，整体行与 A 行仍在
+tests/bg-agentflow-layering.spec.mjs:338:1 › ③ 折叠 A ⇒ A 子树整行数 = 0，整体行与 A 行仍在
+[③ before] [{"sid":"delegate-layer-a1b2c3d4","depth":"0","collapsed":"false"},{"sid":"node-layer-11112222","depth":"1","collapsed":"false"},{"sid":"node-layer-33334444","depth":"2","collapsed":null}]
+
+[③ after] [{"sid":"delegate-layer-a1b2c3d4","depth":"0","collapsed":"false","caretCollapsed":false},{"sid":"node-layer-11112222","depth":"1","collapsed":"true","caretCollapsed":true}]
+
+[5/58] tests/bg-agentflow-layering.spec.mjs:367:1 › ④ reload + 同 fixture 重种 ⇒ 折叠状态仍在（不需要重新点）
+tests/bg-agentflow-layering.spec.mjs:367:1 › ④ reload + 同 fixture 重种 ⇒ 折叠状态仍在（不需要重新点）
+[④ localStorage] {"nebflow.bgAgents.collapsed.v1":"{\"node-layer-11112222\":true}"}
+
+[④ after reload] [{"sid":"delegate-layer-a1b2c3d4","depth":"0","collapsed":"false"},{"sid":"node-layer-11112222","depth":"1","collapsed":"true"}]
+
+[④ before reload] [{"sid":"delegate-layer-a1b2c3d4","collapsed":"false"},{"sid":"node-layer-11112222","collapsed":"true"}]
+
+[6/58] tests/bg-agentflow-orphans.spec.mjs:245:1 › ① ② ③ 野分组恰好 3 行（depth 0 / 带 data-bg-orphan / 不带归属锚）；2 条有父行仍在树里
+tests/bg-agentflow-orphans.spec.mjs:245:1 › ① ② ③ 野分组恰好 3 行（depth 0 / 带 data-bg-orphan / 不带归属锚）；2 条有父行仍在树里
+[①②③ dump] {"rows":[{"idx":0,"level":"head","depth":"0","orphan":null,"agentflow":null,"entity":"agentflow","sid":"delegate-orphan-a1b2c3d4","name":"野批","origin":"","buttons":1,"padLeft":12},{"idx":1,"level":"child","depth":"1","orphan":null,"agentflow":"delegate-orphan-a1b2c3d4","entity":"","sid":"node-orphan-11112222","name":"节点A","origin":"","buttons":0,"padLeft":16},{"idx":2,"level":"child","depth":"1","orphan":null,"agentflow":"delegate-orphan-a1b2c3d4","entity":"","sid":"node-orphan-33334444","name":"节点B","origin":"","buttons":0,"padLeft":16},{"idx":4,"level":"top","depth":"0","orphan":"1","agentflow":null,"entity":"","sid":"subagent-orphan-55556666","name":"野一","origin":"来自 AgentFlow 节点","buttons":0,"padLeft":12},{"idx":5,"level":"top","depth":"0","orphan":"1","agentflow":null,"entity":"","sid":"node-orphan-88889999","name":"野二","origin":"","buttons":0,"padLeft":12},{"idx":6,"level":"top","depth":"0","orphan":"1","agentflow":null,"entity":"","sid":"dd-orphan-99990000","name":"野三","origin":"来自已结束的委托","buttons":0,"padLeft":12}],"group":{"idx":3,"depth":"0","text":"无父节点","buttons":0,"isRow":false},"listTotal":"6"}
+
+[① ] group={"idx":3,"depth":"0","text":"无父节点","buttons":0,"isRow":false} wildRows=3 sids=["subagent-orphan-55556666","node-orphan-88889999","dd-orphan-99990000"]
+
+[③ ] parented=[{"sid":"node-orphan-11112222","level":"child","depth":"1","agentflow":"delegate-orphan-a1b2c3d4"},{"sid":"node-orphan-33334444","level":"child","depth":"1","agentflow":"delegate-orphan-a1b2c3d4"}]
+
+[7/58] tests/bg-agentflow-orphans.spec.mjs:290:1 › ④ 面板头计数 == 实际渲染行数（野行计入，一行不丢）
+tests/bg-agentflow-orphans.spec.mjs:290:1 › ④ 面板头计数 == 实际渲染行数（野行计入，一行不丢）
+[④] renderedRows=6 headerTotal=6 badge="6" section="智能体 · 6" rowTotal=6
+
+[④ sids] ["delegate-orphan-a1b2c3d4","node-orphan-11112222","node-orphan-33334444","node-orphan-88889999","subagent-orphan-55556666","dd-orphan-99990000"]
+
+[8/58] tests/bg-agentflow-orphans.spec.mjs:318:1 › ⑤ 反向门：野行排在分组头之后（不与正常树混排），既有「来自 …」角标保留
+tests/bg-agentflow-orphans.spec.mjs:318:1 › ⑤ 反向门：野行排在分组头之后（不与正常树混排），既有「来自 …」角标保留
+[⑤ order] groupIdx=3 wild=[["node-orphan-88889999",4],["subagent-orphan-55556666",5],["dd-orphan-99990000",6]] tree=[["delegate-orphan-a1b2c3d4",0],["node-orphan-11112222",1],["node-orphan-33334444",2]]
+
+[⑤ origin] subagent-orphan-55556666 → "来自 AgentFlow 节点"
+
+[9/58] tests/bg-agentflow-orphans.spec.mjs:353:1 › ⑥ 回收规则：野分组内零关闭/回收动作（引擎侧无明确判据 ⇒ 只展示）
+tests/bg-agentflow-orphans.spec.mjs:353:1 › ⑥ 回收规则：野分组内零关闭/回收动作（引擎侧无明确判据 ⇒ 只展示）
+[⑥] groupButtons=0 rowButtons=[["subagent-orphan-55556666",0],["node-orphan-88889999",0],["dd-orphan-99990000",0]]
+
+[⑥ static block] "function bgOrphanGroupHeadHtml(count) { const n = Number(count) || 0; return '<div class=\"bg-orphan-group\" data-bg-orphan-group=\"1\" data-bg-depth=\"0\" role=\"pres"
+
+[10/58] tests/bg-agentflow-orphans.spec.mjs:381:1 › ⑦ 判定式单点（bgOrphanRowKeys 一个函数）且组头文案 = locale 事实词（zh/en 同键）
+tests/bg-agentflow-orphans.spec.mjs:381:1 › ⑦ 判定式单点（bgOrphanRowKeys 一个函数）且组头文案 = locale 事实词（zh/en 同键）
+[⑦ words] {"orphanGroup":"无父节点","locale":"zh-CN"} groupText="无父节点"
+
+[⑦ counts] defs=1 mentions=2
+
+[⑦ anchor writes] 1
+
+[11/58] tests/bg-agentflow-orphans.spec.mjs:416:1 › ⑦ en 组头文案：同一个 locale 键（en 一键，非硬编码）
+tests/bg-agentflow-orphans.spec.mjs:416:1 › ⑦ en 组头文案：同一个 locale 键（en 一键，非硬编码）
+[⑦ en] {"orphanGroup":"No parent","locale":"en"} groupText="No parent"
+
+[12/58] tests/bg-merged-panel.spec.mjs:157:1 › T1 merge structure: two sections in the carrier, ghost retired (desktop)
+[13/58] tests/bg-merged-panel.spec.mjs:224:1 › T2 desktop split: bg key opens tasks-only view, bgagent key opens agents-only view
+[14/58] tests/bg-merged-panel.spec.mjs:282:1 › T3 split is desktop-only: mobile layer keeps the merged single panel
+[15/58] tests/bg-merged-panel.spec.mjs:324:1 › T4 tree: live child (parentSessionId) indents under its delegate head with guide line
+[16/58] tests/bg-merged-panel.spec.mjs:374:1 › T5 no hollow rows: generic names promoted to task text; orphan keeps a source chip
+[17/58] tests/bg-merged-panel.spec.mjs:427:1 › T6 store child description surfaces (generic def name yields to task text)
+[18/58] tests/bg-merged-panel.spec.mjs:445:1 › T7 mobile narrow viewport: the two sections render as two separated cards
+[19/58] tests/bg-merged-panel.spec.mjs:473:1 › T8 hierarchy: head caret collapses/expands child rows; running head expanded, terminal head collapsed by default
+[20/58] tests/bg-merged-panel.spec.mjs:544:1 › T9 naming: head row shows short name first (title demoted to subline); unnamed rows keep title; popup header carries the row name
+[21/58] tests/bg-merged-panel.spec.mjs:606:1 › T10 no horizontal scroll: panel and lists fit the viewport at desktop and 375
+[22/58] tests/bg-panel-row-dedup.spec.mjs:212:1 › H1+H2 跨通路同 sessionId 收敛：作用域桶链行 + 快照行 ⇒ 同一会话只占一行
+tests/bg-panel-row-dedup.spec.mjs:212:1 › H1+H2 跨通路同 sessionId 收敛：作用域桶链行 + 快照行 ⇒ 同一会话只占一行
+[H1/H2 dump] [{"level":"head","bgKey":"delegate-dedup-a1b2c3d4","sid":"delegate-dedup-a1b2c3d4","state":"进行中","startedAt":"1793926815118"},{"level":"child","bgKey":"node-c329d28b","sid":"node-c329d28b","state":"进行中","startedAt":"1793914214118"}]
+
+[H1/H2] 同 sessionId 行数=1 data-bg-key=["node-c329d28b"]
+
+[23/58] tests/bg-panel-row-dedup.spec.mjs:264:1 › H3 计数同源：面板头 total == 实际渲染行数（五种通路组合）
+tests/bg-panel-row-dedup.spec.mjs:264:1 › H3 计数同源：面板头 total == 实际渲染行数（五种通路组合）
+[H3 combos] [{"name":"仅作用域桶","rows":3,"counts":{"header":"子智能体 · 3","badge":"3","section":"智能体 · 3","rowTotal":"3"}},{"name":"仅快照","rows":2,"counts":{"header":"子智能体 · 2","badge":"2","section":"智能体 · 2","rowTotal":"2"}},{"name":"两者同时","rows":2,"counts":{"header":"子智能体 · 2","badge":"2","section":"智能体 · 2","rowTotal":"2"}},{"name":"含链子行","rows":4,"counts":{"header":"子智能体 · 4","badge":"4","section":"智能体 · 4","rowTotal":"4"}},{"name":"含合成组头","rows":2,"counts":{"header":"子智能体 · 2","badge":"2","section":"智能体 · 2","rowTotal":"2"}}]
+
+[24/58] tests/bg-panel-row-dedup.spec.mjs:342:1 › H4 组头与子行可辨：data-bg-row-level 标识 + 缩进/强调条/字号实测差异
+tests/bg-panel-row-dedup.spec.mjs:342:1 › H4 组头与子行可辨：data-bg-row-level 标识 + 缩进/强调条/字号实测差异
+[H4 dump] [
+ {
+  "level": "head",
+  "padLeft": 12,
+  "borderLeftWidth": 0,
+  "boxShadow": "rgba(70, 99, 156, 0.35) 3px 0px 0px 0px inset",
+  "nameFontSize": "13px",
+  "nameFontWeight": "600"
+ },
+ {
+  "level": "child",
+  "padLeft": 16,
+  "borderLeftWidth": 2,
+  "boxShadow": "none",
+  "nameFontSize": "12px",
+  "nameFontWeight": "400"
+ }
+]
+
+[25/58] tests/bg-panel-row-dedup.spec.mjs:379:1 › H5 不误伤真实多节点：三个不同 sessionId 的链节点 ⇒ 三行
+tests/bg-panel-row-dedup.spec.mjs:379:1 › H5 不误伤真实多节点：三个不同 sessionId 的链节点 ⇒ 三行
+[H5] child rows=3 sids=["node-aaaa1111","node-bbbb2222","node-cccc3333"]
+
+[26/58] tests/bg-panel-row-dedup.spec.mjs:401:1 › H6 长空闲行：多条长空闲行连续两帧顺序一致（并列规则固定，不每帧变）
+tests/bg-panel-row-dedup.spec.mjs:401:1 › H6 长空闲行：多条长空闲行连续两帧顺序一致（并列规则固定，不每帧变）
+[H6 frame1] ["delegate-idle-aaaa","node-idle-bbbb","node-idle-cccc"] idle=["空闲 45 分钟，无在飞工作","空闲 45 分钟，无在飞工作","空闲 45 分钟，无在飞工作"]
+
+[H6 order] f1=["delegate-idle-aaaa","node-idle-bbbb","node-idle-cccc"] f2=["delegate-idle-aaaa","node-idle-bbbb","node-idle-cccc"] f3=["delegate-idle-aaaa","node-idle-bbbb","node-idle-cccc"]
+
+[27/58] tests/bg-panel-row-dedup.spec.mjs:443:1 › H7 可见性解耦：行集不因标签页隐藏被错误淘汰；淘汰判据只看数据
+tests/bg-panel-row-dedup.spec.mjs:443:1 › H7 可见性解耦：行集不因标签页隐藏被错误淘汰；淘汰判据只看数据
+[H7] before=2 hidden=2
+
+[H7] after=2 sids=["node-c329d28b","node-eb2a5aa3"]
+
+[H7] missMarked=2 staleEvictedLeft=0
+
+[H7] armBgUptimeTick 代码行含 visibilityState=false
+
+[28/58] tests/bg-panel-single-scroll.spec.mjs:358:3 › mobile 375 › M single scroll container: whole background page is one continuous scroll
+tests/bg-panel-single-scroll.spec.mjs:358:3 › mobile 375 › M single scroll container: whole background page is one continuous scroll
+[V1 before-scroll] scrollers=[
+ {
+  "sel": "#bg-dropdown",
+  "overflowY": "auto",
+  "overflowX": "hidden",
+  "maxHeight": "none",
+  "flex": "1 1 auto",
+  "scrollHeight": 1327,
+  "clientHeight": 686,
+  "surplus": 641
+ }
+]
+
+[V1] body={"overflowY":"auto","scrollHeight":750,"clientHeight":750,"scrollWidth":375,"clientWidth":375,"surplus":0} carrier={"overflowY":"auto","overflowX":"hidden","maxHeight":"none","flex":"1 1 auto","scrollHeight":1327,"clientHeight":686,"surplus":641,"scrollWidth":375,"clientWidth":375,"scrollTop":0,"top":64,"h":686,"overscroll":"contain","iOSMomentum":""}
+
+[V1] lists=[
+ {
+  "section": "bg-section-tasks",
+  "rows": 3,
+  "overflowY": "hidden",
+  "maxHeight": "none",
+  "flex": "0 0 auto",
+  "scrollHeight": 133,
+  "clientHeight": 133,
+  "surplus": 0,
+  "scrollHeightEqualsClient": true,
+  "h": 133
+ },
+ {
+  "section": "bg-section-agents",
+  "rows": 24,
+  "overflowY": "hidden",
+  "maxHeight": "none",
+  "flex": "0 0 auto",
+  "scrollHeight": 1093,
+  "clientHeight": 1093,
+  "surplus": 0,
+  "scrollHeightEqualsClient": true,
+  "h": 1093
+ }
+]
+
+[V2/V3] scroll={"n":1,"sel":"bg-dropdown","scrollTop":589} bottom={"dockTop":750,"minRowH":44,"rowCount":27,"carrierPadBottom":12,"vh":812,"lastRowText":"单滚批夹具：平铺第 1 条（AgentFlow 节点行）进行中8snode","lastRowTop":687,"lastRowBottom":731,"lastRowVisible":true,"gapToDock":19,"groupTitles":["后台任务 · 3","智能体 · 24"],"sectionCount":2,"overlap":0,"overlapSample":"","carrierScrollTop":589,"carrierSurplus":589,"bodyScrollWidth":375,"bodyClientWidth":375,"carrierScrollWidth":375,"carrierClientWidth":375,"pageBodyBottom":750,"pageBodyH":750,"carrierBottom":750}
+
+[safe-area] pageBodyBottom=750 dockTop=750 gapToDock=19 carrierPadBottom=12px minRowH=44px (rows=27)
+
+[title] rest={"paneScroll":false,"rolled":false,"p":0,"titlePos":"sticky","titleTop":12,"titleH":52,"titleLayoutTop":12,"bodyScrollTop":0,"bodySurplus":0,"titleOpacity":1,"shellOpacity":0,"shellTop":12,"shellH":52,"scrollTop":0} mid={"paneScroll":true,"rolled":false,"p":0.458,"titlePos":"sticky","titleTop":14,"titleH":50,"titleLayoutTop":14,"bodyScrollTop":0,"bodySurplus":0,"titleOpacity":1,"shellOpacity":0.46,"shellTop":14,"shellH":50,"scrollTop":30} bottom={"paneScroll":true,"rolled":true,"p":1,"titlePos":"sticky","titleTop":16,"titleH":48,"titleLayoutTop":16,"bodyScrollTop":0,"bodySurplus":0,"titleOpacity":1,"shellOpacity":1,"shellTop":16,"shellH":48,"scrollTop":589}
+
+[29/58] tests/bg-panel-single-scroll.spec.mjs:456:3 › desktop 1280 › D single scroll container on wide viewport (no double scrollbar inside cards)
+tests/bg-panel-single-scroll.spec.mjs:456:3 › desktop 1280 › D single scroll container on wide viewport (no double scrollbar inside cards)
+[V6 desktop] {
+ "scrollers": [
+  {
+   "sel": "#bg-dropdown",
+   "scrollHeight": 1244,
+   "clientHeight": 478,
+   "surplus": 766,
+   "maxHeight": "480px"
+  }
+ ],
+ "count": 1,
+ "panelMaxHeight": "480px",
+ "panelOverflowY": "auto",
+ "panelSurplus": 766,
+ "lists": [
+  {
+   "section": "bg-section bg-section-tasks",
+   "scrollHeight": 0,
+   "clientHeight": 0,
+   "maxHeight": "none"
+  },
+  {
+   "section": "bg-section bg-section-agents",
+   "scrollHeight": 1215,
+   "clientHeight": 1215,
+   "maxHeight": "none"
+  }
+ ],
+ "vw": 1280
+}
+
+[V6 desktop tail] {"lastBottom":529,"panelBottom":530,"panelTop":50,"lastTop":480}
+
+[30/58] tests/bg-task-output-viewer.spec.mjs:125:1 › T1 remote running task: card shows the pulled log tail (placeholder gone, path in subtitle, running cursor)
+  1) tests/bg-task-output-viewer.spec.mjs:125:1 › T1 remote running task: card shows the pulled log tail (placeholder gone, path in subtitle, running cursor) 
+
+    Error: expect(locator).toHaveCount(expected) failed
+
+    Locator:  locator('#bg-dropdown > .bg-dropdown-list').first().locator('.bg-task-row[data-task-id="job-remote-live"]')
+    Expected: 1
+    Received: 0
+    Timeout:  5000ms
+
+    Call log:
+      - Expect "toHaveCount" with timeout 5000ms
+      - waiting for locator('#bg-dropdown > .bg-dropdown-list').first().locator('.bg-task-row[data-task-id="job-remote-live"]')
+        14 × locator resolved to 0 elements
+           - unexpected value "0"
+
+
+      112 |   const row = page.locator('#bg-dropdown > .bg-dropdown-list').first()
+      113 |     .locator(`.bg-task-row[data-task-id="${taskId}"]`);
+    > 114 |   await expect(row).toHaveCount(1);
+          |                     ^
+      115 |   await row.click();
+      116 |   const card = page.locator('.bgt-overlay');
+      117 |   await expect(card).toBeVisible();
+        at openCard (/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/term-unify-en/tests/bg-task-output-viewer.spec.mjs:114:21)
+        at /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/term-unify-en/tests/bg-task-output-viewer.spec.mjs:141:16
+
+    Error Context: test-results/bg-task-output-viewer-T1-r-39509-in-subtitle-running-cursor-/error-context.md
+
+
+[31/58] tests/bg-task-output-viewer.spec.mjs:159:1 › T2 remote no output path: placeholder = real reason (redirect hint), no 「暂不支持」, polling stops after first beat
+  2) tests/bg-task-output-viewer.spec.mjs:159:1 › T2 remote no output path: placeholder = real reason (redirect hint), no 「暂不支持」, polling stops after first beat 
+
+    Error: expect(locator).toHaveCount(expected) failed
+
+    Locator:  locator('#bg-dropdown > .bg-dropdown-list').first().locator('.bg-task-row[data-task-id="job-remote-nopath"]')
+    Expected: 1
+    Received: 0
+    Timeout:  5000ms
+
+    Call log:
+      - Expect "toHaveCount" with timeout 5000ms
+      - waiting for locator('#bg-dropdown > .bg-dropdown-list').first().locator('.bg-task-row[data-task-id="job-remote-nopath"]')
+        14 × locator resolved to 0 elements
+           - unexpected value "0"
+
+
+      112 |   const row = page.locator('#bg-dropdown > .bg-dropdown-list').first()
+      113 |     .locator(`.bg-task-row[data-task-id="${taskId}"]`);
+    > 114 |   await expect(row).toHaveCount(1);
+          |                     ^
+      115 |   await row.click();
+      116 |   const card = page.locator('.bgt-overlay');
+      117 |   await expect(card).toBeVisible();
+        at openCard (/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/term-unify-en/tests/bg-task-output-viewer.spec.mjs:114:21)
+        at /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/term-unify-en/tests/bg-task-output-viewer.spec.mjs:173:16
+
+    Error Context: test-results/bg-task-output-viewer-T2-r-e396e-ling-stops-after-first-beat/error-context.md
+
+
+[32/58] tests/bg-task-output-viewer.spec.mjs:183:1 › T3 remote finished task: remote-output 404 → /output terminal fill (content + exit chip + done label)
+  3) tests/bg-task-output-viewer.spec.mjs:183:1 › T3 remote finished task: remote-output 404 → /output terminal fill (content + exit chip + done label) 
+
+    Error: expect(locator).toHaveCount(expected) failed
+
+    Locator:  locator('#bg-dropdown > .bg-dropdown-list').first().locator('.bg-task-row[data-task-id="job-remote-done"]')
+    Expected: 1
+    Received: 0
+    Timeout:  5000ms
+
+    Call log:
+      - Expect "toHaveCount" with timeout 5000ms
+      - waiting for locator('#bg-dropdown > .bg-dropdown-list').first().locator('.bg-task-row[data-task-id="job-remote-done"]')
+        14 × locator resolved to 0 elements
+           - unexpected value "0"
+
+
+      112 |   const row = page.locator('#bg-dropdown > .bg-dropdown-list').first()
+      113 |     .locator(`.bg-task-row[data-task-id="${taskId}"]`);
+    > 114 |   await expect(row).toHaveCount(1);
+          |                     ^
+      115 |   await row.click();
+      116 |   const card = page.locator('.bgt-overlay');
+      117 |   await expect(card).toBeVisible();
+        at openCard (/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/term-unify-en/tests/bg-task-output-viewer.spec.mjs:114:21)
+        at /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/term-unify-en/tests/bg-task-output-viewer.spec.mjs:198:16
+
+    Error Context: test-results/bg-task-output-viewer-T3-r-a95ae-ntent-exit-chip-done-label-/error-context.md
+
+
+[33/58] tests/bg-task-output-viewer.spec.mjs:207:1 › T4 local task regression: offset-cursor incremental polling still appends beat by beat
+  4) tests/bg-task-output-viewer.spec.mjs:207:1 › T4 local task regression: offset-cursor incremental polling still appends beat by beat 
+
+    Error: expect(locator).toHaveCount(expected) failed
+
+    Locator:  locator('#bg-dropdown > .bg-dropdown-list').first().locator('.bg-task-row[data-task-id="job-local-live"]')
+    Expected: 1
+    Received: 0
+    Timeout:  5000ms
+
+    Call log:
+      - Expect "toHaveCount" with timeout 5000ms
+      - waiting for locator('#bg-dropdown > .bg-dropdown-list').first().locator('.bg-task-row[data-task-id="job-local-live"]')
+        14 × locator resolved to 0 elements
+           - unexpected value "0"
+
+
+      112 |   const row = page.locator('#bg-dropdown > .bg-dropdown-list').first()
+      113 |     .locator(`.bg-task-row[data-task-id="${taskId}"]`);
+    > 114 |   await expect(row).toHaveCount(1);
+          |                     ^
+      115 |   await row.click();
+      116 |   const card = page.locator('.bgt-overlay');
+      117 |   await expect(card).toBeVisible();
+        at openCard (/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/term-unify-en/tests/bg-task-output-viewer.spec.mjs:114:21)
+        at /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/term-unify-en/tests/bg-task-output-viewer.spec.mjs:217:16
+
+    Error Context: test-results/bg-task-output-viewer-T4-l-a2cb2--still-appends-beat-by-beat/error-context.md
+
+
+[34/58] tests/delegate-chain-stub.spec.mjs:143:1 › T1 默认零变化：stub 无夹具 ⇒ delegate 区块零渲染、面板空态收起与改前同
+[35/58] tests/delegate-chain-stub.spec.mjs:159:1 › T2 骨架行渲染：task#N＋执行器徽标（九点②去重：内部零挂牌/外部保留）＋状态 glyph/词；ready-to-merge=§16键1「待合并」；外部行 coarse 标记
+[36/58] tests/delegate-chain-stub.spec.mjs:205:1 › T3 换源即切（#56 残项 · 晨裁②）：并行一窗摘除——nodeCreated 帧腿照发零节点区块渲染；统计=delegate 行口径
+[37/58] tests/delegate-chain-stub.spec.mjs:235:1 › T4 适配层（页面内纯函数）：registry 行归一＋ChainStore 行投影＋FIFO 排序键=完成时间
+[38/58] tests/delegate-chain-stub.spec.mjs:298:1 › T4b #566 行状态权威（taskStatus）：引擎终态直映 + 退役 blocked 申报/判词零 blocked 产物
+[39/58] tests/delegate-chain-stub.spec.mjs:353:1 › T4c 重启对账（适配层推导）：打断态三序钉——真完成 > 打断旗 > failed；continuedBy 缺键容忍透传
+[40/58] tests/delegate-chain-stub.spec.mjs:399:1 › T5 读取口 null 安全：查无链 → null；行清单默认空；reset 归零
+[41/58] tests/delegate-chain-stub.spec.mjs:509:1 › T6 §16 七键逐字钉（zh/en 双语提取比对）＋ fm-node 拆出件单源钉（静态）
+[42/58] tests/delegate-chain-stub.spec.mjs:573:1 › T7 链块折叠（链结构行脸）：成员行默认折叠 + 头行点击展开 + 成员行点击跳 L1 地图（锚点闪）＋外部行守卫
+[43/58] tests/delegate-chain-stub.spec.mjs:628:1 › T8 S10 per-task 链视图：ChainNode 卡（单源渲染件）＋返回钮键2＋fail-soft 键7 重试
+[44/58] tests/delegate-chain-stub.spec.mjs:683:1 › T8b #523 分配可见面：root 卡副行 plugins/allocation ＋ fm-detail 分配方式行；旧行缺键零渲染
+[45/58] tests/delegate-chain-stub.spec.mjs:723:1 › T9 全景接位（S11 平铺面退役）：FAB→全景根＋归档 FAB 抽屉续挂＋带/卡结构＋卡点进 L1
+  5) tests/delegate-chain-stub.spec.mjs:723:1 › T9 全景接位（S11 平铺面退役）：FAB→全景根＋归档 FAB 抽屉续挂＋带/卡结构＋卡点进 L1 
+
+    Test timeout of 180000ms exceeded.
+
+    Error: locator.click: Test timeout of 180000ms exceeded.
+    Call log:
+      - waiting for locator('.canvas-tab-pane[data-tab-id="projects"]').locator('.delegate-archive-fab')
+        - locator resolved to <button type="button" title="已归档委托" aria-label="已归档委托" aria-expanded="false" class="delegate-archive-fab" data-testid="delegate-structure-archive">…</button>
+      - attempting click action
+        2 × waiting for element to be visible, enabled and stable
+          - element is visible, enabled and stable
+          - scrolling into view if needed
+          - done scrolling
+          - <path d="m12 2.5 8.5 4.8L12 12 3.5 7.3 12 2.5Z"></path> from <button id="deck-fab" aria-label="叠卡切换" aria-pressed="false" class="deck-fab g2-fab" title="叠卡切换（滚轮 / 上下拖动换卡 · 前景轮换 · 点击前景卡换入 · 横向划走关闭）">…</button> subtree intercepts pointer events
+        - retrying click action
+        - waiting 20ms
+        - waiting for element to be visible, enabled and stable
+        - element is visible, enabled and stable
+        - scrolling into view if needed
+        - done scrolling
+        - <path d="m12 2.5 8.5 4.8L12 12 3.5 7.3 12 2.5Z"></path> from <button id="deck-fab" aria-label="叠卡切换" aria-pressed="false" class="deck-fab g2-fab" title="叠卡切换（滚轮 / 上下拖动换卡 · 前景轮换 · 点击前景卡换入 · 横向划走关闭）">…</button> subtree intercepts pointer events
+      2 × retrying click action
+          - waiting 100ms
+          - waiting for element to be visible, enabled and stable
+          - element is visible, enabled and stable
+          - scrolling into view if needed
+          - done scrolling
+          - <button id="deck-fab" aria-label="叠卡切换" aria-pressed="false" class="deck-fab g2-fab" title="叠卡切换（滚轮 / 上下拖动换卡 · 前景轮换 · 点击前景卡换入 · 横向划走关闭）">…</button> intercepts pointer events
+      80 × retrying click action
+           - waiting 500ms
+           - waiting for element to be visible, enabled and stable
+           - element is visible, enabled and stable
+           - scrolling into view if needed
+           - done scrolling
+           - <path d="m12 2.5 8.5 4.8L12 12 3.5 7.3 12 2.5Z"></path> from <button id="deck-fab" aria-label="叠卡切换" aria-pressed="false" class="deck-fab g2-fab" title="叠卡切换（滚轮 / 上下拖动换卡 · 前景轮换 · 点击前景卡换入 · 横向划走关闭）">…</button> subtree intercepts pointer events
+         - retrying click action
+           - waiting 500ms
+           - waiting for element to be visible, enabled and stable
+           - element is visible, enabled and stable
+           - scrolling into view if needed
+           - done scrolling
+           - <path d="m12 2.5 8.5 4.8L12 12 3.5 7.3 12 2.5Z"></path> from <button id="deck-fab" aria-label="叠卡切换" aria-pressed="false" class="deck-fab g2-fab" title="叠卡切换（滚轮 / 上下拖动换卡 · 前景轮换 · 点击前景卡换入 · 横向划走关闭）">…</button> subtree intercepts pointer events
+         - retrying click action
+           - waiting 500ms
+           - waiting for element to be visible, enabled and stable
+           - element is visible, enabled and stable
+           - scrolling into view if needed
+           - done scrolling
+           - <button id="deck-fab" aria-label="叠卡切换" aria-pressed="false" class="deck-fab g2-fab" title="叠卡切换（滚轮 / 上下拖动换卡 · 前景轮换 · 点击前景卡换入 · 横向划走关闭）">…</button> intercepts pointer events
+         - retrying click action
+           - waiting 500ms
+           - waiting for element to be visible, enabled and stable
+           - element is visible, enabled and stable
+           - scrolling into view if needed
+           - done scrolling
+           - <button id="deck-fab" aria-label="叠卡切换" aria-pressed="false" class="deck-fab g2-fab" title="叠卡切换（滚轮 / 上下拖动换卡 · 前景轮换 · 点击前景卡换入 · 横向划走关闭）">…</button> intercepts pointer events
+      2 × retrying click action
+          - waiting 500ms
+          - waiting for element to be visible, enabled and stable
+          - element is visible, enabled and stable
+          - scrolling into view if needed
+          - done scrolling
+          - <path d="m12 2.5 8.5 4.8L12 12 3.5 7.3 12 2.5Z"></path> from <button id="deck-fab" aria-label="叠卡切换" aria-pressed="false" class="deck-fab g2-fab" title="叠卡切换（滚轮 / 上下拖动换卡 · 前景轮换 · 点击前景卡换入 · 横向划走关闭）">…</button> subtree intercepts pointer events
+      - retrying click action
+        - waiting 500ms
+        - waiting for element to be visible, enabled and stable
+        - element is visible, enabled and stable
+        - scrolling into view if needed
+        - done scrolling
+        - <button id="deck-fab" aria-label="叠卡切换" aria-pressed="false" class="deck-fab g2-fab" title="叠卡切换（滚轮 / 上下拖动换卡 · 前景轮换 · 点击前景卡换入 · 横向划走关闭）">…</button> intercepts pointer events
+      - retrying click action
+        - waiting 500ms
+
+
+      759 |   await expect(fab).toHaveAttribute('aria-expanded', 'false');
+      760 |   await expect(pane.locator('.delegate-archive-badge')).toBeHidden(); // 空归档 = 徽章缺席
+    > 761 |   await fab.click();
+          |             ^
+      762 |   const drawer = pane.locator('.delegate-archive-drawer');
+      763 |   await expect(drawer).toBeVisible();
+      764 |   await expect(drawer.locator('.delegate-archive-drawer-head')).toContainText('已归档委托');
+        at /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/term-unify-en/tests/delegate-chain-stub.spec.mjs:761:13
+
+    Error Context: test-results/delegate-chain-stub-T9-全景接-e75cb-景根＋归档-FAB-抽屉续挂＋带-卡结构＋卡点进-L1/error-context.md
+
+
+[46/58] tests/delegate-chain-stub.spec.mjs:779:1 › T10 S16 外部行：openNative 出口（POST 断言）＋进度 offset 增量＋展开守卫
+[47/58] tests/delegate-chain-stub.spec.mjs:873:1 › T11 换源生效：零夹具 ⇒ 行渲染自 live provider（live 活性提示＋verdict 覆写单点）
+[48/58] tests/delegate-chain-stub.spec.mjs:908:1 › T12 per-task 臂：REST record+chain ⇒ S10 渲染一致（节点整组替换；渲染面零改动钉）
+[49/58] tests/delegate-chain-stub.spec.mjs:974:1 › T13 任务数靠边（tasklist-display-fixes·2026-10-19 作者令，取代 ui-train-threefix C 列对齐钉）：统计徽标紧跟左侧折叠箭头
+[50/58] tests/delegate-chain-stub.spec.mjs:1009:1 › T14 delegate 生命周期触发器静态钉（e2e 断点①修 · 2026-10-07）：裸 delegate 在飞期 node* 帧族为零 ⇒ provider 把 turn 边界帧接进同一防抖刷
+[51/58] tests/tasklist-chain-blocks.spec.mjs:147:1 › T1 collapsed face: blocks + header anatomy + dotmap/meta + leaf placeholder + groups + stats
+  6) tests/tasklist-chain-blocks.spec.mjs:147:1 › T1 collapsed face: blocks + header anatomy + dotmap/meta + leaf placeholder + groups + stats 
+
+    Error: expect(received).toBeLessThan(expected)
+
+    Expected: < 2
+    Received:   2.48187255859375
+
+      193 |   const iconBox = await headB.locator('.task-delegate-icon').boundingBox();
+      194 |   const glyphBox = await headB.locator('.task-node-spin').boundingBox();
+    > 195 |   expect(Math.abs(iconBox.y - glyphBox.y)).toBeLessThan(2);
+          |                                            ^
+      196 |   expect(iconBox.height).toBeLessThanOrEqual(13);
+      197 |   expect(iconBox.width).toBeLessThanOrEqual(13);
+      198 |
+        at /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/term-unify-en/tests/tasklist-chain-blocks.spec.mjs:195:44
+
+    Error Context: test-results/tasklist-chain-blocks-T1-c-41ba3-af-placeholder-groups-stats/error-context.md
+
+
+[52/58] tests/tasklist-chain-blocks.spec.mjs:221:1 › T2 fold: header click expands into topological member rows, re-collapses, state survives re-render
+[53/58] tests/tasklist-chain-blocks.spec.mjs:267:1 › T3 member click → L1 map anchored; map structure; detail card on node click; chevron folds to chain card
+[54/58] tests/tasklist-chain-blocks.spec.mjs:321:1 › T4 display-only rows: external (open-native exit, no fold, no click-through) + ready-to-merge (rank chip, members hidden)
+[55/58] tests/tasklist-chain-blocks.spec.mjs:353:1 › T5 transition motion: running→completed across renders plays the check draw + word roll; first-paint terminal stays static
+[56/58] tests/tasklist-chain-blocks.spec.mjs:386:1 › T6 camera: wheel zooms the world transform; double-click refits
+[57/58] tests/tasklist-chain-blocks.spec.mjs:419:1 › T7 external row tail guard: stderr/control/fragment lines never render on the row (raw buffer stays for the detail view)
+[58/58] tests/tasklist-chain-blocks.spec.mjs:466:1 › T8 重启对账三场景：①打断灰行永不勾态 ②已接续旧行折进新行（不双行并存）③未接续死亡行独立灰行
+  6 failed
+    tests/bg-task-output-viewer.spec.mjs:125:1 › T1 remote running task: card shows the pulled log tail (placeholder gone, path in subtitle, running cursor) 
+    tests/bg-task-output-viewer.spec.mjs:159:1 › T2 remote no output path: placeholder = real reason (redirect hint), no 「暂不支持」, polling stops after first beat 
+    tests/bg-task-output-viewer.spec.mjs:183:1 › T3 remote finished task: remote-output 404 → /output terminal fill (content + exit chip + done label) 
+    tests/bg-task-output-viewer.spec.mjs:207:1 › T4 local task regression: offset-cursor incremental polling still appends beat by beat 
+    tests/delegate-chain-stub.spec.mjs:723:1 › T9 全景接位（S11 平铺面退役）：FAB→全景根＋归档 FAB 抽屉续挂＋带/卡结构＋卡点进 L1 ─
+    tests/tasklist-chain-blocks.spec.mjs:147:1 › T1 collapsed face: blocks + header anatomy + dotmap/meta + leaf placeholder + groups + stats 
+  52 passed (5.1m)

@@ -1,0 +1,14 @@
+# RED evidence — 改前（main，运行实例 pid 41715），KAI 设备腿开文件耗时
+# 采集日期 2026-11-04；样本 = C:/Users/Kai/stand/VERSION 与 C:/Users/Kai/stand/README.md（只读）
+# 来源：~/.stand/logs/stand.log 的 'Tool Read(...) OK (NNNNms)' 行
+
+73136:  ("C:/Users/Kai/stand/VERSION") OK (5011ms)
+105931:  ("C:/Users/Kai/stand/VERSION") OK (10025ms)
+117779:  ("C:/Users/Kai/stand/VERSION") OK (5051ms)
+118747:  ("C:/Users/Kai/stand/VERSION") OK (5053ms)
+121253:  ("C:/Users/Kai/stand/VERSION") OK (5179ms)
+121476:  (cd /tmp && grep -nF '("C:/Users/Kai/stand/VERSION") OK (' ~/.stand/logs/stand.log | tail -3; echo "=== present stack ...) OK (732ms)
+79129:  ("C:/Users/Kai/stand/README.md") OK (10032ms)
+79411:  ("C:/Users/Kai/stand/README.md") OK (92ms)
+107653:  ("C:/Users/Kai/stand/README.md") OK (5009ms)
+119606:  ("C:/Users/Kai/stand/README.md") OK (95ms)

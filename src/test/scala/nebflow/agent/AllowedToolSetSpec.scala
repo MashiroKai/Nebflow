@@ -144,6 +144,11 @@ class AllowedToolSetSpec extends FunSuite:
         "Write",
         "Edit",
         "Bash",
+        // bash overhaul T1（2026-11-04）：`BaseTools` 六件 → 七件（+`BgWait`，后台任务的
+        // 唯一等待原语）⇒ 一切 `BaseTools` 派生的授权面同步 +1。team 面的差异化部分
+        // （Mail / SubTask / TeamTask*）零变化；`BgWait` 不进远端注入面（见
+        // `RemoteExecutor.remoteableTools`，恒六件）。
+        "BgWait",
         "Mail",
         "SubTask",
         "TeamTaskCreate",
@@ -764,12 +769,17 @@ class AllowedToolSetSpec extends FunSuite:
     assert(!allowed.contains("Task"), "R2: Task 退役，dispatcher 面零 Task")
 
   test(
-    "nebflow 固定 9 件（builtin-merge 批 2026-10-03；零 Pop 承继；N1 复名批随名）——BaseTools + AskUserQuestion + Subagent + AgentFlow"
+    "nebflow 固定 9 件（builtin-merge 批 2026-10-03；零 Pop 承继；tool-face-agentflow-retire 批 2026-11-05 −AgentFlow）——BaseTools + AskUserQuestion + Subagent"
   ):
     val bare = mkDef("nebflow", Nil)
     val allowed = CoreProbe.allowed(bare, isFlowNode = true)
-    val nine = Set("Read", "Glob", "Edit", "Write", "Grep", "Bash", "AskUserQuestion", "Subagent", "AgentFlow")
+    val nine = Set("Read", "Glob", "Edit", "Write", "Grep", "Bash", "BgWait", "AskUserQuestion", "Subagent")
     nine.foreach(t => assert(allowed.contains(t), s"nebflow fixed tool missing: $t"))
+    assertEquals(nine, AgentCore.NebflowFixedTools, "the nine are exactly the executor fixed face")
+    // tool-face-agentflow-retire 批（2026-11-05，作者裁定二）：AgentFlow 工具整体退役
+    // ⇒ 名字不在注册表、也不在任何固定面（`agentflow` 此后只是模式名）。
+    assert(!allowed.contains("AgentFlow"), "the retired AgentFlow tool must not appear on any delivered face")
+    assert(!nebflow.core.tools.ToolRegistry.TOOL_MAP.contains("AgentFlow"), "AgentFlow must be unregistered")
     // 钉死断言（2026-09-08 作者修订，D6 批D1 G6/G7）：general 默认面含回
     // AskUserQuestion——直达作者方案（节点提问经 InteractionHub 直达 Nebula
     // 窗口；分发器监督=node-ask 留痕审计）——变异验红锚

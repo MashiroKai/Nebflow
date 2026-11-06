@@ -10,6 +10,7 @@ import io.circe.generic.semiauto.*
 import io.circe.parser.decode
 import io.circe.syntax.*
 import nebflow.core.*
+import nebflow.core.root.{RootLadder, RootLayer}
 import nebflow.shared.*
 
 import java.util.UUID
@@ -129,13 +130,18 @@ object DeviceIdentity:
    * 只读身份探测（v2.1 阶段 1 出口白名单用）：读现有 device.json 的 deviceId，
    * **零写盘、零铸造**（与 [[loadOrCreate]] 的差异 = 缺文件/坏文件 ⇒ None 而非
    * mint+persist）。读不到 = 本机尚无身份 ⇒ 消费方按「无本机 id」口径降级。
+   *
+   * 未登录层（契约 §6.2）恒 `None`：不铸造、也不读别的层的 id（有效根本就没有
+   * device.json，机器层/账号层里的任何历史遗留身份都不是「本层身份」）。
    */
   def readDeviceIdOnly: Option[String] =
-    try
-      val p = devicePath
-      if !os.exists(p) then None
-      else decode[DeviceIdentity](os.read(p)).toOption.map(_.deviceId)
-    catch case _: Exception => None
+    if isUnauthenticatedLayer then None
+    else
+      try
+        val p = devicePath
+        if !os.exists(p) then None
+        else decode[DeviceIdentity](os.read(p)).toOption.map(_.deviceId)
+      catch case _: Exception => None
 
   /**
    * 只读本机显示名探测（readDeviceIdOnly 同族，设备角标本名批 2026-10-27）：读
@@ -234,23 +240,67 @@ object DeviceIdentity:
   private[neblink] val MachineIdEnv: String = "NEBLINK_MACHINE_ID"
 
   /**
-   * True when the data root was redirected away from `<user.home>/<brand dir>`
+   * True when the MACHINE root was redirected away from `<user.home>/<brand dir>`
    * (CLI `--home`, see Main.scala; or the `<PREFIX>_HOME` env, both funnel
-   * through PathUtil.dataRoot).
+   * through PathUtil.machineRoot).
+   *
+   * 🔴 三层数据根批（B1）判据校正：**机器层根**而不是有效根。账号档下有效根恒为
+   * `~/.stand/accounts/<sub>`（≠ 默认根），若沿用有效根，每个**真实账号**都会被判成
+   * 「隔离 home」—— EnrollGuard 会拒绝生产注册、设备名被扣 `-iso-` 后缀、scope 落到
+   * 路径摘要档。`--home` / `<PREFIX>_HOME` 重定向的既有全部测试引用（`setDataRoot`，
+   * 机器层与有效根同值）逐字零变化。
    */
   private[neblink] def isNonDefaultHome: Boolean =
-    PathUtil.dataRoot.toNIO.toAbsolutePath.normalize !=
+    PathUtil.machineRoot.toNIO.toAbsolutePath.normalize !=
       (os.home / Branding.homeDirName).toNIO.toAbsolutePath.normalize
 
   /**
    * Scope component of the derivation (see the block comment above).
    *
-   * Default data root ⇒ [[DefaultScope]] verbatim（兼容面硬约束：默认 home 的派生
-   * 语义零漂移）; redirected root ⇒ [[isolatedHomeScope]]（熵修复后的隔离 scope，
-   * coldstart DX 批④）。
+   * 判定顺序（契约 `design-api.md` §7，**顺序即契约**）：
+   *   1. 账号档 + 默认机器根 ⇒ `acct|<accountSub>`（作者裁定：deviceId 主键改账号，不用路径哈希）；
+   *   2. 账号档 + 非默认机器根（canary / `--home` / `STAND_HOME`）⇒ `acct|<sub>|iso|<hash>` —— 后缀是
+   *      **隔离保持**，不参与账号识别：若无它，每个账号第一次跑 canary 就会在服务端
+   *      「one-live-session-per-(device, network)」维度撞 id，把作者主客户端踢下线；
+   *   3. 其余（平铺档 / 未登录档）+ 非默认机器根 ⇒ [[isolatedHomeScope]]（**逐字不动**）；
+   *   4. 其余 + 默认机器根 ⇒ [[DefaultScope]]（**逐字不动**，`DeviceIdentitySpec` 钉死）。
+   *
+   * 既有 `device.json` 可解码即沿用（`loadOrCreate` 既有分支不动）⇒ 老用户 id 零漂移。
    */
   private[neblink] def deviceIdScope: String =
-    if isNonDefaultHome then isolatedHomeScope(PathUtil.dataRoot) else DefaultScope
+    RootLadder.current match
+      case RootLayer.Account(machine, sub, _) =>
+        if isNonDefaultMachineRoot then s"acct|$sub|iso|${machineScopeFingerprint(machine)}"
+        else s"acct|$sub"
+      case _ =>
+        if isNonDefaultHome then isolatedHomeScope(PathUtil.dataRoot) else DefaultScope
+
+  /** 机器层根是否非默认（账号档第 1/2 档的判据；与 [[isNonDefaultHome]] 同一套归一化）。 */
+  private[neblink] def isNonDefaultMachineRoot: Boolean =
+    PathUtil.machineRoot.toNIO.toAbsolutePath.normalize !=
+      (os.home / Branding.homeDirName).toNIO.toAbsolutePath.normalize
+
+  /** 机器根的稳定摘要（**隔离保持后缀**：`uuidV5(DeviceIdNamespace, "iso-scope|<归一化机器根>")`）。 */
+  private[neblink] def machineScopeFingerprint(machineRoot: os.Path): String =
+    val normalized = machineRoot.toNIO.toAbsolutePath.normalize.toString
+    uuidV5(DeviceIdNamespace, s"iso-scope|$normalized").toString
+
+  /**
+   * 未登录层守卫（契约 §6.2）：无账号根时可以起引擎、可以开登录页，但**绝不铸设备身份**。
+   * fail-closed 抛出（不静默返回临时 id —— 静默一次就在服务端留一条幽灵设备行，
+   * 正是 `NeblinkModel.scala:178-212` 记录的历史病根）。
+   */
+  private[neblink] def isUnauthenticatedLayer: Boolean =
+    RootLadder.current.name == RootLayer.UnauthenticatedName
+
+  private[neblink] def unauthenticatedLayerRefusal: IllegalStateException =
+    new IllegalStateException(
+      s"${RootLayer.UnauthenticatedMarker}: refusing to mint device identity " +
+        "(no account root); sign in first"
+    )
+
+  private def requireIdentifiableLayer(): Unit =
+    if isUnauthenticatedLayer then throw unauthenticatedLayerRefusal
 
   /**
    * Entropy fix (coldstart DX 批④, 2026-10-14 作者令): the stable scope for a
@@ -423,13 +473,16 @@ object DeviceIdentity:
    * file); otherwise the deterministic derivation supplies the id.
    */
   def loadOrCreate: IO[DeviceIdentity] =
-    for
-      loaded <- IO.blocking(loadOnce())
-      _ <- loaded.log
-      id <-
-        if loaded.needsSave then save(loaded.identity).as(loaded.identity)
-        else IO.pure(loaded.identity)
-    yield id
+    // 未登录层守卫（契约 §6.2）：唯一入口，fail-closed —— 抛在 IO 里，调用方拿到的是异常
+    // 而不是一个「临时 id」（静默一次就在服务端留一条幽灵设备行）。
+    IO.blocking(requireIdentifiableLayer()) *>
+      (for
+        loaded <- IO.blocking(loadOnce())
+        _ <- loaded.log
+        id <-
+          if loaded.needsSave then save(loaded.identity).as(loaded.identity)
+          else IO.pure(loaded.identity)
+      yield id)
 
   private def loadOnce(): Loaded =
     val path = devicePath
@@ -617,6 +670,45 @@ object EndpointPreference:
   def isTailscaleHost(host: String): Boolean =
     octets(host).exists(o => o(0) == 100 && o(1) >= 64 && o(1) <= 127)
 
+  /**
+   * Tailscale 的 IPv6 ULA 段 `fd7a:115c:a1e0::/48`（IPv6 优先批 2026-11-04）。
+   *
+   * WHY 只认这一个 /48：它是 Tailscale 官方分配给 tailnet 的 ULA（`fd7a:115c:a1e0::/48`），
+   * 与 `100.64/10` 是同一张网的两个地址族。**不**把任意 `fc00::/7` ULA 当 tailnet：
+   * 别的 overlay（ZeroTier `fd00::/8` 自定义段、企业 VPN）也有 ULA，误判会让「① 档」
+   * 的门（Tailscale 服务探测）去管一条根本不是 tailnet 的地址。
+   */
+  def isTailnetV6(host: String): Boolean =
+    val h = Option(host).getOrElse("").trim.toLowerCase.stripPrefix("[").stripSuffix("]")
+    h.startsWith(TailnetV6Prefix) || h == "fd7a:115c:a1e0::"
+
+  /** Tailscale ULA 前缀（小写、带尾冒号）—— [[isTailnetV6]] 的唯一常量来源。 */
+  val TailnetV6Prefix: String = "fd7a:115c:a1e0:"
+
+  /**
+   * 主机是否是 IPv6 字面量（含方括号形态）。
+   *
+   * 用途只有一个：**URL 拼装必须给 v6 加方括号**（`http://[fd7a::1]:6138`），否则
+   * `URI.create` 会把端口当成地址的一部分而抛异常 / 解析成别的主机。判据按「含冒号且
+   * 不是 v4 字面量」——比正则更保守的地方也在此：主机名不会含冒号，误判面为零。
+   */
+  def isIpv6Literal(host: String): Boolean =
+    val h = Option(host).getOrElse("").trim.stripPrefix("[").stripSuffix("]")
+    h.contains(":") && octets(h).isEmpty
+
+  /**
+   * `(host, port)` → `http://…` 的唯一拼装点（IPv6 自动加方括号）。
+   *
+   * WHY 单列：改前 `NeblinkClient.toNeblinkPeers` 里是裸的 `s"http://${ep.address}:${ep.port}"`，
+   * v6 地址会拼出 `http://fd7a:115c:a1e0::1:6138`（URI 解析直接报错）——即「v6 地址塞进
+   * 只认 v4 的地方」的典型。所有候选 URL 都必须经这里。
+   */
+  def urlOf(host: String, port: Int): String =
+    val raw = Option(host).getOrElse("").trim
+    // 已带方括号的输入先剥掉再判/再拼：否则会拼出 `http://[[fd7a::1]]:6138`（spec 抓到的形态）。
+    val bare = raw.stripPrefix("[").stripSuffix("]")
+    if isIpv6Literal(bare) then s"http://[$bare]:$port" else s"http://$raw:$port"
+
   /** `/24` prefix key (`"198.51.100."`) — the cheap "same LAN?" approximation. */
   def subnet24(host: String): Option[String] =
     octets(host).map(o => s"${o(0)}.${o(1)}.${o(2)}.")
@@ -625,7 +717,15 @@ object EndpointPreference:
   def localPrefixesOf(localAddresses: List[String]): Set[String] =
     localAddresses.flatMap(subnet24).toSet
 
-  /** Lower = tried first. 0 = Tailscale/CGNAT, 1 = same `/24` as a local NIC, 2 = the rest. */
+  /**
+   * Lower = tried first. 0 = Tailscale/CGNAT, 1 = same `/24` as a local NIC, 2 = the rest.
+   *
+   * 🔴 `rank` 是**纯排序提示**，不是「① 档可用」的判据（三档选路批 2026-11-04 作者裁定）：
+   * 「地址像 tailnet」只说明它属于那张网，**不说明这台机器的 Tailscale 服务在跑、也不说明
+   * 对端在这张网上 online**。可用性判据与门控唯一落在 `nebflow.core.tools.DirectRoute`
+   * （服务运行态 + 本机 tailnet 地址 + 对端 netmap online 三条全中；不中则整档跳过后落
+   * relay，而不是「排第一再失败回落」）。本函数保持纯、零探测，排序语义与改前逐字节相同。
+   */
   def rank(url: String, localPrefixes: Set[String]): Int =
     val host = hostOf(url)
     if isTailscaleHost(host) then 0
@@ -1059,7 +1159,8 @@ object FriendCodecs:
           displayNameOf(c),
           strOr(c, "avatar", "avatarUrl"),
           c.get[Option[Long]]("since").getOrElse(None),
-          c.get[Option[Boolean]]("blocked").getOrElse(None)
+          c.get[Option[Boolean]]("blocked").getOrElse(None),
+          bio = strOr(c, "bio", "description")
         )
       )
 
@@ -1068,6 +1169,11 @@ object FriendCodecs:
    * 本地态（`FriendRemarkStore`），上游 wire 永不带该键；即便某天带上也必须
    * 忽略，否则上游可覆盖用户自己的备注。`remark` 由 `FriendService.applyRemarks`
    * 在出站口按本地 map 注入。
+   *
+   * `bio`（2026-11-02 件一）：**对方自我介绍**，真源在上游 ⇒ 上游一旦加性出
+   * `bio`（或历史别名 `description`）本解码器直接吃下；缺席 ⇒ `None`。本仓不用
+   * 上游值覆盖用户在本地缓存里写入的值（出站口的合并顺序见
+   * `FriendService.applyDescriptions`：**上游在场优先**，因为 bio 的语义真源是对方）。
    */
   given Decoder[FriendSummary] = Decoder.instance { c =>
     for
@@ -1080,7 +1186,8 @@ object FriendCodecs:
       displayNameOf(c),
       strOr(c, "avatar", "avatarUrl"),
       since,
-      blocked
+      blocked,
+      bio = strOr(c, "bio", "description")
     )
   }
 
@@ -1213,7 +1320,11 @@ object FriendCodecs:
       unreadCount = longField(c, "unreadCount").map(_.toInt).getOrElse(0),
       lastMessageId = longField(c, "lastMessageId").getOrElse(0L),
       createdAt = longField(c, "createdAt").getOrElse(0L),
-      selfUserId = strField(c, "selfUserId").getOrElse("")
+      selfUserId = strField(c, "selfUserId").getOrElse(""),
+      // 件一（2026-11-02）：上游一旦加性下发群介绍即直接吃下（`description` 为其
+      // 契约名；`bio` 作同义别名容忍）；`remark` 是**本仓本地态**，上游值一律丢弃
+      // （与好友 remark 同一条纪律：上游不得覆盖用户自己的备注）。
+      description = strField(c, "description").orElse(strField(c, "bio"))
     )
   }
 
@@ -1239,7 +1350,14 @@ object FriendCodecs:
       "avatar" -> f.avatar.asJson,
       "since" -> f.since.asJson,
       "blocked" -> f.blocked.asJson,
-      "remark" -> f.remark.asJson
+      "remark" -> f.remark.asJson,
+      // 件一（2026-11-02）：对方自我介绍，**键恒在**（未设置 ⇒ null，同 remark 口径
+      // ——前端不必容错「键缺席」与「键为 null」两态）。
+      "bio" -> f.bio.asJson,
+      // 三点入口批（2026-11-05）：会话级本地偏好，**键恒在**（未设置 ⇒ null =
+      // 该偏好为关；前端只判 truthy，不必容错第二形态）。
+      "muted" -> f.muted.asJson,
+      "pinned" -> f.pinned.asJson
     )
   }
   given Encoder[FriendRequestSummary] = deriveEncoder

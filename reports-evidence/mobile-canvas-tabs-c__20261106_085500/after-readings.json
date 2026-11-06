@@ -1,0 +1,3141 @@
+{
+  "tag": "after",
+  "root": "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/canvas-tabs-c-impl/src/main/resources/web",
+  "themes": {
+    "light": {
+      "renderedBody": true,
+      "strip": {
+        "stripRect": {
+          "x": 0,
+          "y": 0,
+          "w": 375,
+          "h": 92
+        },
+        "stripBg": "rgba(0, 0, 0, 0)",
+        "stripMask": "none",
+        "glass": {
+          "height": "64px",
+          "top": "0px",
+          "bg": "rgba(255, 255, 255, 0.55)",
+          "bgImage": "linear-gradient(90deg, rgba(0, 0, 0, 0) 10%, rgba(255, 255, 255, 0.45) 50%, rgba(0, 0, 0, 0) 90%), none",
+          "backdrop": "blur(40px) saturate(1.4)",
+          "borderTop": "1px",
+          "borderBottom": "0px"
+        },
+        "fade": {
+          "height": "28px",
+          "heightPx": 28,
+          "top": "64px",
+          "topPx": 64,
+          "bgImage": "linear-gradient(rgba(245, 246, 248, 0.92) 0%, rgba(245, 246, 248, 0.45) 45%, rgba(245, 246, 248, 0) 100%)",
+          "backdrop": "none",
+          "mask": "none"
+        },
+        "contentOffset": {
+          "cls": "canvas-md-scroll canvas-viewer-safe-top",
+          "paddingTop": "92px",
+          "bg": "rgba(0, 0, 0, 0)",
+          "bgImage": "none",
+          "radius": "0px",
+          "rectTop": 0,
+          "firstTextTop": 64,
+          "scrollTop": 56,
+          "scrollable": true
+        },
+        "tokens": {
+          "ringBlur": "1.6px",
+          "ringSaturate": "1.25",
+          "ringDur": "360ms",
+          "fadeVeil": "linear-gradient(to bottom, rgba(245, 246, 248, 0.92) 0%, rgba(245, 246, 248, 0.45) 45%, rg",
+          "glassFilter": "blur(40px) saturate(1.4)",
+          "stripH": "",
+          "stripGlassH": "",
+          "stripFadeH": ""
+        },
+        "on": {
+          "id": "d3",
+          "cls": "mf-strip-chip on",
+          "label": "release-checklist.md",
+          "filter": "blur(0px) saturate(1)",
+          "opacity": "1",
+          "transitionProperty": "transform, opacity, filter, max-width",
+          "transitionDuration": "0.28s, 0.32s, 0.36s, 0.22s",
+          "transitionTiming": "cubic-bezier(0.22, 0.61, 0.36, 1), ease, cubic-bezier(0.22, 0.61, 0.36, 1), ease",
+          "labelMask": "none",
+          "labelRect": {
+            "x": 144.4,
+            "y": 30.6,
+            "w": 86.2,
+            "h": 18.7
+          },
+          "afterMask": "none",
+          "afterBg": "linear-gradient(90deg, rgba(0, 0, 0, 0) 10%, rgba(255, 255, 255, 0.45) 50%, rgba(0, 0, 0, 0) 90%), none | rgba(255, 255, 255, 0.55)",
+          "afterBorderWidth": "1px",
+          "afterShadow": "rgba(255, 255, 255, 0.25) 0px 1px 0px 0px inset, rgba(0, 0, 0, 0.04) 0px 2px 8px 0px, rgba(0, 0, 0, 0.06) 0px 8px 24px 0px",
+          "backdrop": "blur(40px) saturate(1.4)"
+        },
+        "side": {
+          "id": "d1",
+          "cls": "mf-strip-chip side-r",
+          "label": "meeting-notes-2026-11-05.md",
+          "filter": "blur(1.6px) saturate(1.25)",
+          "opacity": "0.9",
+          "transitionProperty": "transform, opacity, filter, max-width",
+          "transitionDuration": "0.28s, 0.32s, 0.36s, 0.22s",
+          "transitionTiming": "cubic-bezier(0.22, 0.61, 0.36, 1), ease, cubic-bezier(0.22, 0.61, 0.36, 1), ease",
+          "labelMask": "none",
+          "labelRect": {
+            "x": 266.5,
+            "y": 32.6,
+            "w": 29,
+            "h": 14.8
+          },
+          "afterMask": "none",
+          "afterBg": "rgba(0, 0, 0, 0)",
+          "afterBorderWidth": "0px",
+          "afterShadow": "none",
+          "backdrop": "none"
+        },
+        "chipCount": 3
+      },
+      "errors": [],
+      "glassBandStats": {
+        "px": 84000,
+        "mean": {
+          "r": 243.5,
+          "g": 244.1,
+          "b": 245.3
+        },
+        "mode": {
+          "r": 251,
+          "g": 251.5,
+          "b": 252.5,
+          "share": 0.902
+        },
+        "fgLum": 177.4,
+        "bgLum": 251.5,
+        "contrast": 2.07
+      },
+      "fadeBandStats": {
+        "px": 42000,
+        "mean": {
+          "r": 228.2,
+          "g": 229.4,
+          "b": 231.8
+        },
+        "mode": {
+          "r": 245.1,
+          "g": 246.1,
+          "b": 248.2,
+          "share": 0.572
+        },
+        "fgLum": 106,
+        "bgLum": 246,
+        "contrast": 5.01
+      },
+      "contentStats": {
+        "px": 180000,
+        "mean": {
+          "r": 220.7,
+          "g": 222,
+          "b": 224.6
+        },
+        "mode": {
+          "r": 245,
+          "g": 246,
+          "b": 248,
+          "share": 0.843
+        },
+        "fgLum": 29.9,
+        "bgLum": 245.9,
+        "contrast": 15.43
+      },
+      "verticalProfile": {
+        "height": 264,
+        "width": 750,
+        "rows": [
+          {
+            "y": 0,
+            "mean": 252.1,
+            "range": 0.8
+          },
+          {
+            "y": 1,
+            "mean": 252.1,
+            "range": 0.8
+          },
+          {
+            "y": 2,
+            "mean": 251.3,
+            "range": 3.2
+          },
+          {
+            "y": 3,
+            "mean": 251.4,
+            "range": 3.2
+          },
+          {
+            "y": 4,
+            "mean": 250.8,
+            "range": 1.1
+          },
+          {
+            "y": 5,
+            "mean": 250.8,
+            "range": 1.1
+          },
+          {
+            "y": 6,
+            "mean": 250.8,
+            "range": 1.1
+          },
+          {
+            "y": 7,
+            "mean": 250.8,
+            "range": 1.1
+          },
+          {
+            "y": 8,
+            "mean": 250.3,
+            "range": 1.1
+          },
+          {
+            "y": 9,
+            "mean": 250.3,
+            "range": 1.1
+          },
+          {
+            "y": 10,
+            "mean": 250.8,
+            "range": 1.1
+          },
+          {
+            "y": 11,
+            "mean": 250.8,
+            "range": 1.1
+          },
+          {
+            "y": 12,
+            "mean": 250.8,
+            "range": 1.1
+          },
+          {
+            "y": 13,
+            "mean": 250.8,
+            "range": 1.1
+          },
+          {
+            "y": 14,
+            "mean": 250.3,
+            "range": 1.1
+          },
+          {
+            "y": 15,
+            "mean": 250.8,
+            "range": 1.1
+          },
+          {
+            "y": 16,
+            "mean": 250.8,
+            "range": 1.1
+          },
+          {
+            "y": 17,
+            "mean": 250.8,
+            "range": 1.1
+          },
+          {
+            "y": 18,
+            "mean": 250.8,
+            "range": 1.1
+          },
+          {
+            "y": 19,
+            "mean": 250.8,
+            "range": 1.1
+          },
+          {
+            "y": 20,
+            "mean": 250.8,
+            "range": 1.1
+          },
+          {
+            "y": 21,
+            "mean": 250.8,
+            "range": 1.1
+          },
+          {
+            "y": 22,
+            "mean": 250.3,
+            "range": 1.1
+          },
+          {
+            "y": 23,
+            "mean": 250.8,
+            "range": 1.1
+          },
+          {
+            "y": 24,
+            "mean": 250.7,
+            "range": 1.3
+          },
+          {
+            "y": 25,
+            "mean": 250.1,
+            "range": 2
+          },
+          {
+            "y": 26,
+            "mean": 250.6,
+            "range": 1.3
+          },
+          {
+            "y": 27,
+            "mean": 250.6,
+            "range": 1.3
+          },
+          {
+            "y": 28,
+            "mean": 250.6,
+            "range": 1.3
+          },
+          {
+            "y": 29,
+            "mean": 250.6,
+            "range": 1.3
+          },
+          {
+            "y": 30,
+            "mean": 250.5,
+            "range": 1.4
+          },
+          {
+            "y": 31,
+            "mean": 250.6,
+            "range": 1.3
+          },
+          {
+            "y": 32,
+            "mean": 250.6,
+            "range": 4.2
+          },
+          {
+            "y": 33,
+            "mean": 250.8,
+            "range": 4.1
+          },
+          {
+            "y": 34,
+            "mean": 250.6,
+            "range": 5.2
+          },
+          {
+            "y": 35,
+            "mean": 250.6,
+            "range": 5.2
+          },
+          {
+            "y": 36,
+            "mean": 250.6,
+            "range": 5.2
+          },
+          {
+            "y": 37,
+            "mean": 250.6,
+            "range": 5.1
+          },
+          {
+            "y": 38,
+            "mean": 250.6,
+            "range": 5.2
+          },
+          {
+            "y": 39,
+            "mean": 250.6,
+            "range": 5.1
+          },
+          {
+            "y": 40,
+            "mean": 250.8,
+            "range": 4.9
+          },
+          {
+            "y": 41,
+            "mean": 250.5,
+            "range": 6.1
+          },
+          {
+            "y": 42,
+            "mean": 250.6,
+            "range": 5.9
+          },
+          {
+            "y": 43,
+            "mean": 250.2,
+            "range": 7.1
+          },
+          {
+            "y": 44,
+            "mean": 250.8,
+            "range": 6.1
+          },
+          {
+            "y": 45,
+            "mean": 251.7,
+            "range": 5.9
+          },
+          {
+            "y": 46,
+            "mean": 251.9,
+            "range": 6.1
+          },
+          {
+            "y": 47,
+            "mean": 252.1,
+            "range": 5.9
+          },
+          {
+            "y": 48,
+            "mean": 252,
+            "range": 6.1
+          },
+          {
+            "y": 49,
+            "mean": 251.8,
+            "range": 6.1
+          },
+          {
+            "y": 50,
+            "mean": 251.8,
+            "range": 6.1
+          },
+          {
+            "y": 51,
+            "mean": 251.8,
+            "range": 6.1
+          },
+          {
+            "y": 52,
+            "mean": 251.9,
+            "range": 6.1
+          },
+          {
+            "y": 53,
+            "mean": 251.8,
+            "range": 6.1
+          },
+          {
+            "y": 54,
+            "mean": 251.6,
+            "range": 6.9
+          },
+          {
+            "y": 55,
+            "mean": 251.9,
+            "range": 6.1
+          },
+          {
+            "y": 56,
+            "mean": 251.9,
+            "range": 7.1
+          },
+          {
+            "y": 57,
+            "mean": 251.9,
+            "range": 6.1
+          },
+          {
+            "y": 58,
+            "mean": 251.7,
+            "range": 7.9
+          },
+          {
+            "y": 59,
+            "mean": 251.7,
+            "range": 7.9
+          },
+          {
+            "y": 60,
+            "mean": 252,
+            "range": 7.1
+          },
+          {
+            "y": 61,
+            "mean": 251.8,
+            "range": 44.1
+          },
+          {
+            "y": 62,
+            "mean": 250.1,
+            "range": 224.1
+          },
+          {
+            "y": 63,
+            "mean": 248.8,
+            "range": 224.1
+          },
+          {
+            "y": 64,
+            "mean": 247.6,
+            "range": 224.1
+          },
+          {
+            "y": 65,
+            "mean": 247.1,
+            "range": 224.1
+          },
+          {
+            "y": 66,
+            "mean": 246.8,
+            "range": 224.1
+          },
+          {
+            "y": 67,
+            "mean": 247,
+            "range": 224.1
+          },
+          {
+            "y": 68,
+            "mean": 245.9,
+            "range": 224.1
+          },
+          {
+            "y": 69,
+            "mean": 243.7,
+            "range": 224.1
+          },
+          {
+            "y": 70,
+            "mean": 243.4,
+            "range": 224.1
+          },
+          {
+            "y": 71,
+            "mean": 243.8,
+            "range": 224.1
+          },
+          {
+            "y": 72,
+            "mean": 242.7,
+            "range": 224.1
+          },
+          {
+            "y": 73,
+            "mean": 240.6,
+            "range": 224.1
+          },
+          {
+            "y": 74,
+            "mean": 237,
+            "range": 224.1
+          },
+          {
+            "y": 75,
+            "mean": 226.1,
+            "range": 224.1
+          },
+          {
+            "y": 76,
+            "mean": 212.5,
+            "range": 224.1
+          },
+          {
+            "y": 77,
+            "mean": 205.3,
+            "range": 224.1
+          },
+          {
+            "y": 78,
+            "mean": 208.3,
+            "range": 225.1
+          },
+          {
+            "y": 79,
+            "mean": 213.1,
+            "range": 225
+          },
+          {
+            "y": 80,
+            "mean": 214.6,
+            "range": 225
+          },
+          {
+            "y": 81,
+            "mean": 214.8,
+            "range": 225.1
+          },
+          {
+            "y": 82,
+            "mean": 207.9,
+            "range": 224.1
+          },
+          {
+            "y": 83,
+            "mean": 200.5,
+            "range": 224.1
+          },
+          {
+            "y": 84,
+            "mean": 200.5,
+            "range": 224.1
+          },
+          {
+            "y": 85,
+            "mean": 210.8,
+            "range": 224.1
+          },
+          {
+            "y": 86,
+            "mean": 217.6,
+            "range": 224.1
+          },
+          {
+            "y": 87,
+            "mean": 217.1,
+            "range": 224.1
+          },
+          {
+            "y": 88,
+            "mean": 215.1,
+            "range": 224.1
+          },
+          {
+            "y": 89,
+            "mean": 214,
+            "range": 224.1
+          },
+          {
+            "y": 90,
+            "mean": 212,
+            "range": 224.1
+          },
+          {
+            "y": 91,
+            "mean": 214.2,
+            "range": 224.1
+          },
+          {
+            "y": 92,
+            "mean": 223.7,
+            "range": 224.1
+          },
+          {
+            "y": 93,
+            "mean": 239.1,
+            "range": 224.1
+          },
+          {
+            "y": 94,
+            "mean": 245.2,
+            "range": 224.1
+          },
+          {
+            "y": 95,
+            "mean": 247.3,
+            "range": 224.1
+          },
+          {
+            "y": 96,
+            "mean": 249,
+            "range": 224.1
+          },
+          {
+            "y": 97,
+            "mean": 250.3,
+            "range": 224.1
+          },
+          {
+            "y": 98,
+            "mean": 251.7,
+            "range": 34.1
+          },
+          {
+            "y": 99,
+            "mean": 251.8,
+            "range": 11.1
+          },
+          {
+            "y": 100,
+            "mean": 251.8,
+            "range": 12.1
+          },
+          {
+            "y": 101,
+            "mean": 251.7,
+            "range": 12.1
+          },
+          {
+            "y": 102,
+            "mean": 251.7,
+            "range": 12.2
+          },
+          {
+            "y": 103,
+            "mean": 251.6,
+            "range": 12.2
+          },
+          {
+            "y": 104,
+            "mean": 251.6,
+            "range": 12.2
+          },
+          {
+            "y": 105,
+            "mean": 251.6,
+            "range": 12.1
+          },
+          {
+            "y": 106,
+            "mean": 251.6,
+            "range": 12.1
+          },
+          {
+            "y": 107,
+            "mean": 251.5,
+            "range": 12.1
+          },
+          {
+            "y": 108,
+            "mean": 251.2,
+            "range": 13.9
+          },
+          {
+            "y": 109,
+            "mean": 251.5,
+            "range": 13.1
+          },
+          {
+            "y": 110,
+            "mean": 251.4,
+            "range": 14.1
+          },
+          {
+            "y": 111,
+            "mean": 251.4,
+            "range": 13.1
+          },
+          {
+            "y": 112,
+            "mean": 251,
+            "range": 14.9
+          },
+          {
+            "y": 113,
+            "mean": 251.3,
+            "range": 13.9
+          },
+          {
+            "y": 114,
+            "mean": 250.7,
+            "range": 15.1
+          },
+          {
+            "y": 115,
+            "mean": 248.6,
+            "range": 16.2
+          },
+          {
+            "y": 116,
+            "mean": 246.7,
+            "range": 17.9
+          },
+          {
+            "y": 117,
+            "mean": 247.4,
+            "range": 16.9
+          },
+          {
+            "y": 118,
+            "mean": 247.4,
+            "range": 16.9
+          },
+          {
+            "y": 119,
+            "mean": 247.5,
+            "range": 16.1
+          },
+          {
+            "y": 120,
+            "mean": 247.7,
+            "range": 15.1
+          },
+          {
+            "y": 121,
+            "mean": 248,
+            "range": 14.1
+          },
+          {
+            "y": 122,
+            "mean": 248,
+            "range": 14.1
+          },
+          {
+            "y": 123,
+            "mean": 248.2,
+            "range": 13.1
+          },
+          {
+            "y": 124,
+            "mean": 248.3,
+            "range": 13.1
+          },
+          {
+            "y": 125,
+            "mean": 248.4,
+            "range": 12.1
+          },
+          {
+            "y": 126,
+            "mean": 248.7,
+            "range": 11.1
+          },
+          {
+            "y": 127,
+            "mean": 248.6,
+            "range": 11.1
+          },
+          {
+            "y": 128,
+            "mean": 244.1,
+            "range": 9
+          },
+          {
+            "y": 129,
+            "mean": 244.6,
+            "range": 7.3
+          },
+          {
+            "y": 130,
+            "mean": 244.3,
+            "range": 7.9
+          },
+          {
+            "y": 131,
+            "mean": 244.7,
+            "range": 7.8
+          },
+          {
+            "y": 132,
+            "mean": 243.8,
+            "range": 8
+          },
+          {
+            "y": 133,
+            "mean": 243.4,
+            "range": 7.9
+          },
+          {
+            "y": 134,
+            "mean": 243.9,
+            "range": 6.8
+          },
+          {
+            "y": 135,
+            "mean": 244.3,
+            "range": 6.2
+          },
+          {
+            "y": 136,
+            "mean": 243.6,
+            "range": 21.9
+          },
+          {
+            "y": 137,
+            "mean": 242.8,
+            "range": 55.1
+          },
+          {
+            "y": 138,
+            "mean": 238.6,
+            "range": 60.9
+          },
+          {
+            "y": 139,
+            "mean": 237.4,
+            "range": 63.1
+          },
+          {
+            "y": 140,
+            "mean": 236.6,
+            "range": 69.1
+          },
+          {
+            "y": 141,
+            "mean": 230.1,
+            "range": 74.9
+          },
+          {
+            "y": 142,
+            "mean": 229.4,
+            "range": 80.1
+          },
+          {
+            "y": 143,
+            "mean": 228.2,
+            "range": 83.5
+          },
+          {
+            "y": 144,
+            "mean": 224.5,
+            "range": 88
+          },
+          {
+            "y": 145,
+            "mean": 221.6,
+            "range": 90.1
+          },
+          {
+            "y": 146,
+            "mean": 224.1,
+            "range": 94.3
+          },
+          {
+            "y": 147,
+            "mean": 224.4,
+            "range": 98.2
+          },
+          {
+            "y": 148,
+            "mean": 224.5,
+            "range": 102.8
+          },
+          {
+            "y": 149,
+            "mean": 222.1,
+            "range": 106
+          },
+          {
+            "y": 150,
+            "mean": 223.3,
+            "range": 111
+          },
+          {
+            "y": 151,
+            "mean": 219.6,
+            "range": 113.2
+          },
+          {
+            "y": 152,
+            "mean": 217.3,
+            "range": 119
+          },
+          {
+            "y": 153,
+            "mean": 220.2,
+            "range": 120.3
+          },
+          {
+            "y": 154,
+            "mean": 220.6,
+            "range": 124.9
+          },
+          {
+            "y": 155,
+            "mean": 223,
+            "range": 127.8
+          },
+          {
+            "y": 156,
+            "mean": 219.5,
+            "range": 130.9
+          },
+          {
+            "y": 157,
+            "mean": 213.5,
+            "range": 133.7
+          },
+          {
+            "y": 158,
+            "mean": 209.6,
+            "range": 137.2
+          },
+          {
+            "y": 159,
+            "mean": 208.9,
+            "range": 140.1
+          },
+          {
+            "y": 160,
+            "mean": 208.8,
+            "range": 142.9
+          },
+          {
+            "y": 161,
+            "mean": 217.6,
+            "range": 145.2
+          },
+          {
+            "y": 162,
+            "mean": 221.8,
+            "range": 148.9
+          },
+          {
+            "y": 163,
+            "mean": 220.1,
+            "range": 151.1
+          },
+          {
+            "y": 164,
+            "mean": 218.7,
+            "range": 155.9
+          },
+          {
+            "y": 165,
+            "mean": 211.2,
+            "range": 158.1
+          },
+          {
+            "y": 166,
+            "mean": 206.1,
+            "range": 161.4
+          },
+          {
+            "y": 167,
+            "mean": 205.3,
+            "range": 163.9
+          },
+          {
+            "y": 168,
+            "mean": 200.9,
+            "range": 167.9
+          },
+          {
+            "y": 169,
+            "mean": 199.5,
+            "range": 170.1
+          },
+          {
+            "y": 170,
+            "mean": 217.3,
+            "range": 174.7
+          },
+          {
+            "y": 171,
+            "mean": 223.9,
+            "range": 176.9
+          },
+          {
+            "y": 172,
+            "mean": 232.4,
+            "range": 181
+          },
+          {
+            "y": 173,
+            "mean": 242,
+            "range": 183.3
+          },
+          {
+            "y": 174,
+            "mean": 245.9,
+            "range": 64.6
+          },
+          {
+            "y": 175,
+            "mean": 245.6,
+            "range": 0.9
+          },
+          {
+            "y": 176,
+            "mean": 246,
+            "range": 1
+          },
+          {
+            "y": 177,
+            "mean": 246.2,
+            "range": 1
+          },
+          {
+            "y": 178,
+            "mean": 245.5,
+            "range": 0.9
+          },
+          {
+            "y": 179,
+            "mean": 245.9,
+            "range": 0.1
+          },
+          {
+            "y": 180,
+            "mean": 245.6,
+            "range": 1
+          },
+          {
+            "y": 181,
+            "mean": 245.9,
+            "range": 0
+          },
+          {
+            "y": 182,
+            "mean": 245.4,
+            "range": 1
+          },
+          {
+            "y": 183,
+            "mean": 245.9,
+            "range": 0
+          },
+          {
+            "y": 184,
+            "mean": 245.9,
+            "range": 0
+          },
+          {
+            "y": 185,
+            "mean": 245.9,
+            "range": 0
+          },
+          {
+            "y": 186,
+            "mean": 245.9,
+            "range": 0
+          },
+          {
+            "y": 187,
+            "mean": 245.9,
+            "range": 0
+          },
+          {
+            "y": 188,
+            "mean": 245.9,
+            "range": 0
+          },
+          {
+            "y": 189,
+            "mean": 245.9,
+            "range": 0
+          },
+          {
+            "y": 190,
+            "mean": 245.9,
+            "range": 0
+          },
+          {
+            "y": 191,
+            "mean": 245.9,
+            "range": 0
+          },
+          {
+            "y": 192,
+            "mean": 245.9,
+            "range": 0
+          },
+          {
+            "y": 193,
+            "mean": 245.9,
+            "range": 0
+          },
+          {
+            "y": 194,
+            "mean": 245.9,
+            "range": 0
+          },
+          {
+            "y": 195,
+            "mean": 245.9,
+            "range": 0
+          },
+          {
+            "y": 196,
+            "mean": 245.9,
+            "range": 0
+          },
+          {
+            "y": 197,
+            "mean": 245.9,
+            "range": 0
+          },
+          {
+            "y": 198,
+            "mean": 245.9,
+            "range": 0
+          },
+          {
+            "y": 199,
+            "mean": 245.9,
+            "range": 0
+          },
+          {
+            "y": 200,
+            "mean": 245.9,
+            "range": 0
+          },
+          {
+            "y": 201,
+            "mean": 244.4,
+            "range": 70.1
+          },
+          {
+            "y": 202,
+            "mean": 231.8,
+            "range": 216
+          },
+          {
+            "y": 203,
+            "mean": 217.9,
+            "range": 216
+          },
+          {
+            "y": 204,
+            "mean": 193.2,
+            "range": 216
+          },
+          {
+            "y": 205,
+            "mean": 185.8,
+            "range": 216
+          },
+          {
+            "y": 206,
+            "mean": 195.9,
+            "range": 216
+          },
+          {
+            "y": 207,
+            "mean": 209,
+            "range": 216
+          },
+          {
+            "y": 208,
+            "mean": 200.6,
+            "range": 216
+          },
+          {
+            "y": 209,
+            "mean": 199.1,
+            "range": 216
+          },
+          {
+            "y": 210,
+            "mean": 201.2,
+            "range": 216
+          },
+          {
+            "y": 211,
+            "mean": 204.9,
+            "range": 216
+          },
+          {
+            "y": 212,
+            "mean": 197.9,
+            "range": 216
+          },
+          {
+            "y": 213,
+            "mean": 183.5,
+            "range": 216
+          },
+          {
+            "y": 214,
+            "mean": 187.6,
+            "range": 216
+          },
+          {
+            "y": 215,
+            "mean": 193.2,
+            "range": 216
+          },
+          {
+            "y": 216,
+            "mean": 185.9,
+            "range": 216
+          },
+          {
+            "y": 217,
+            "mean": 182.5,
+            "range": 216
+          },
+          {
+            "y": 218,
+            "mean": 189.4,
+            "range": 216
+          },
+          {
+            "y": 219,
+            "mean": 195,
+            "range": 216
+          },
+          {
+            "y": 220,
+            "mean": 190.5,
+            "range": 216
+          },
+          {
+            "y": 221,
+            "mean": 196.6,
+            "range": 216
+          },
+          {
+            "y": 222,
+            "mean": 206.2,
+            "range": 216
+          },
+          {
+            "y": 223,
+            "mean": 210.8,
+            "range": 216
+          },
+          {
+            "y": 224,
+            "mean": 214.4,
+            "range": 216
+          },
+          {
+            "y": 225,
+            "mean": 213.5,
+            "range": 216
+          },
+          {
+            "y": 226,
+            "mean": 208.5,
+            "range": 216
+          },
+          {
+            "y": 227,
+            "mean": 206,
+            "range": 216
+          },
+          {
+            "y": 228,
+            "mean": 203,
+            "range": 216
+          },
+          {
+            "y": 229,
+            "mean": 193.6,
+            "range": 216
+          },
+          {
+            "y": 230,
+            "mean": 186.7,
+            "range": 216
+          },
+          {
+            "y": 231,
+            "mean": 196.7,
+            "range": 216
+          },
+          {
+            "y": 232,
+            "mean": 219.9,
+            "range": 216
+          },
+          {
+            "y": 233,
+            "mean": 241.8,
+            "range": 216
+          },
+          {
+            "y": 234,
+            "mean": 245.3,
+            "range": 216
+          },
+          {
+            "y": 235,
+            "mean": 245.8,
+            "range": 61.1
+          },
+          {
+            "y": 236,
+            "mean": 245.9,
+            "range": 0
+          },
+          {
+            "y": 237,
+            "mean": 245.9,
+            "range": 0
+          },
+          {
+            "y": 238,
+            "mean": 245.9,
+            "range": 0
+          },
+          {
+            "y": 239,
+            "mean": 245.9,
+            "range": 0
+          },
+          {
+            "y": 240,
+            "mean": 245.9,
+            "range": 0
+          },
+          {
+            "y": 241,
+            "mean": 245.9,
+            "range": 0
+          },
+          {
+            "y": 242,
+            "mean": 245.9,
+            "range": 0
+          },
+          {
+            "y": 243,
+            "mean": 245.9,
+            "range": 0
+          },
+          {
+            "y": 244,
+            "mean": 245.9,
+            "range": 0
+          },
+          {
+            "y": 245,
+            "mean": 245.9,
+            "range": 0
+          },
+          {
+            "y": 246,
+            "mean": 245.9,
+            "range": 0
+          },
+          {
+            "y": 247,
+            "mean": 245.9,
+            "range": 0
+          },
+          {
+            "y": 248,
+            "mean": 245.9,
+            "range": 0
+          },
+          {
+            "y": 249,
+            "mean": 245.9,
+            "range": 0
+          },
+          {
+            "y": 250,
+            "mean": 245.9,
+            "range": 0
+          },
+          {
+            "y": 251,
+            "mean": 245.9,
+            "range": 0
+          },
+          {
+            "y": 252,
+            "mean": 245.9,
+            "range": 0
+          },
+          {
+            "y": 253,
+            "mean": 245.9,
+            "range": 0
+          },
+          {
+            "y": 254,
+            "mean": 245.9,
+            "range": 0
+          },
+          {
+            "y": 255,
+            "mean": 245.9,
+            "range": 0
+          },
+          {
+            "y": 256,
+            "mean": 245.9,
+            "range": 0
+          },
+          {
+            "y": 257,
+            "mean": 245.9,
+            "range": 0
+          },
+          {
+            "y": 258,
+            "mean": 245.9,
+            "range": 0
+          },
+          {
+            "y": 259,
+            "mean": 244.9,
+            "range": 84.8
+          },
+          {
+            "y": 260,
+            "mean": 230.3,
+            "range": 216
+          },
+          {
+            "y": 261,
+            "mean": 200.9,
+            "range": 216
+          },
+          {
+            "y": 262,
+            "mean": 179.1,
+            "range": 216
+          },
+          {
+            "y": 263,
+            "mean": 163.3,
+            "range": 216
+          }
+        ]
+      },
+      "onLabel": {
+        "clip": {
+          "x": 142.4,
+          "y": 29.6,
+          "width": 90.2,
+          "height": 20.7
+        },
+        "stats": {
+          "px": 7200,
+          "mean": {
+            "r": 208.6,
+            "g": 209.3,
+            "b": 211.6
+          },
+          "mode": {
+            "r": 252.8,
+            "g": 252.8,
+            "b": 253.8,
+            "share": 0.633
+          },
+          "fgLum": 37.9,
+          "bgLum": 252.9,
+          "contrast": 14.88
+        },
+        "ramp": {
+          "width": 180,
+          "height": 40,
+          "peak": 223.1324,
+          "interiorMedian": 215.1324,
+          "inkFrom": 5,
+          "inkTo": 176,
+          "rampLeft": 3,
+          "rampRight": 2
+        },
+        "fileName": "after-375-light-on.png"
+      },
+      "sideLabel": {
+        "clip": {
+          "x": 264.5,
+          "y": 31.6,
+          "width": 33,
+          "height": 16.8
+        },
+        "stats": {
+          "px": 2112,
+          "mean": {
+            "r": 213.3,
+            "g": 214.6,
+            "b": 217.1
+          },
+          "mode": {
+            "r": 249.9,
+            "g": 250.9,
+            "b": 251.9,
+            "share": 0.295
+          },
+          "fgLum": 151.9,
+          "bgLum": 250.8,
+          "contrast": 2.78
+        },
+        "ramp": {
+          "width": 66,
+          "height": 32,
+          "peak": 111.9238,
+          "interiorMedian": 99.9238,
+          "inkFrom": 2,
+          "inkTo": 65,
+          "rampLeft": 6,
+          "rampRight": 5
+        },
+        "fileName": "after-375-light-side.png"
+      }
+    },
+    "dark": {
+      "renderedBody": true,
+      "strip": {
+        "stripRect": {
+          "x": 0,
+          "y": 0,
+          "w": 375,
+          "h": 92
+        },
+        "stripBg": "rgba(0, 0, 0, 0)",
+        "stripMask": "none",
+        "glass": {
+          "height": "64px",
+          "top": "0px",
+          "bg": "rgba(24, 28, 38, 0.68)",
+          "bgImage": "linear-gradient(90deg, rgba(0, 0, 0, 0) 10%, rgba(91, 127, 191, 0.35) 50%, rgba(0, 0, 0, 0) 90%), none",
+          "backdrop": "blur(40px) saturate(1.4)",
+          "borderTop": "1px",
+          "borderBottom": "0px"
+        },
+        "fade": {
+          "height": "28px",
+          "heightPx": 28,
+          "top": "64px",
+          "topPx": 64,
+          "bgImage": "linear-gradient(rgba(19, 22, 28, 0.9) 0%, rgba(19, 22, 28, 0.4) 45%, rgba(19, 22, 28, 0) 100%)",
+          "backdrop": "none",
+          "mask": "none"
+        },
+        "contentOffset": {
+          "cls": "canvas-md-scroll canvas-viewer-safe-top",
+          "paddingTop": "92px",
+          "bg": "rgba(0, 0, 0, 0)",
+          "bgImage": "none",
+          "radius": "0px",
+          "rectTop": 0,
+          "firstTextTop": 64,
+          "scrollTop": 56,
+          "scrollable": true
+        },
+        "tokens": {
+          "ringBlur": "1.6px",
+          "ringSaturate": "1.25",
+          "ringDur": "360ms",
+          "fadeVeil": "linear-gradient(to bottom, rgba(19, 22, 28, 0.90) 0%, rgba(19, 22, 28, 0.40) 45%, rgba(19,",
+          "glassFilter": "blur(40px) saturate(1.4)",
+          "stripH": "",
+          "stripGlassH": "",
+          "stripFadeH": ""
+        },
+        "on": {
+          "id": "d3",
+          "cls": "mf-strip-chip on",
+          "label": "release-checklist.md",
+          "filter": "blur(0px) saturate(1)",
+          "opacity": "1",
+          "transitionProperty": "transform, opacity, filter, max-width",
+          "transitionDuration": "0.28s, 0.32s, 0.36s, 0.22s",
+          "transitionTiming": "cubic-bezier(0.22, 0.61, 0.36, 1), ease, cubic-bezier(0.22, 0.61, 0.36, 1), ease",
+          "labelMask": "none",
+          "labelRect": {
+            "x": 144.4,
+            "y": 30.6,
+            "w": 86.2,
+            "h": 18.7
+          },
+          "afterMask": "none",
+          "afterBg": "linear-gradient(90deg, rgba(0, 0, 0, 0) 10%, rgba(91, 127, 191, 0.06) 50%, rgba(0, 0, 0, 0) 90%), none | rgba(24, 28, 38, 0.68)",
+          "afterBorderWidth": "1px",
+          "afterShadow": "rgba(255, 255, 255, 0.04) 0px 1px 0px 0px inset, rgba(0, 0, 0, 0.2) 0px 2px 8px 0px, rgba(0, 0, 0, 0.35) 0px 8px 24px 0px",
+          "backdrop": "blur(40px) saturate(1.4)"
+        },
+        "side": {
+          "id": "d1",
+          "cls": "mf-strip-chip side-r",
+          "label": "meeting-notes-2026-11-05.md",
+          "filter": "blur(1.6px) saturate(1.25)",
+          "opacity": "0.9",
+          "transitionProperty": "transform, opacity, filter, max-width",
+          "transitionDuration": "0.28s, 0.32s, 0.36s, 0.22s",
+          "transitionTiming": "cubic-bezier(0.22, 0.61, 0.36, 1), ease, cubic-bezier(0.22, 0.61, 0.36, 1), ease",
+          "labelMask": "none",
+          "labelRect": {
+            "x": 266.5,
+            "y": 32.6,
+            "w": 29,
+            "h": 14.8
+          },
+          "afterMask": "none",
+          "afterBg": "rgba(0, 0, 0, 0)",
+          "afterBorderWidth": "0px",
+          "afterShadow": "none",
+          "backdrop": "none"
+        },
+        "chipCount": 3
+      },
+      "errors": [],
+      "glassBandStats": {
+        "px": 84000,
+        "mean": {
+          "r": 30.2,
+          "g": 34.2,
+          "b": 44.1
+        },
+        "mode": {
+          "r": 22.2,
+          "g": 26.2,
+          "b": 36.3,
+          "share": 0.839
+        },
+        "fgLum": 105.2,
+        "bgLum": 26.1,
+        "contrast": 3.18
+      },
+      "fadeBandStats": {
+        "px": 42000,
+        "mean": {
+          "r": 36.1,
+          "g": 39,
+          "b": 44.6
+        },
+        "mode": {
+          "r": 18.7,
+          "g": 21.7,
+          "b": 27.6,
+          "share": 0.811
+        },
+        "fgLum": 166.7,
+        "bgLum": 21.5,
+        "contrast": 7.53
+      },
+      "contentStats": {
+        "px": 180000,
+        "mean": {
+          "r": 45.4,
+          "g": 48.2,
+          "b": 53.9
+        },
+        "mode": {
+          "r": 19,
+          "g": 22,
+          "b": 28,
+          "share": 0.843
+        },
+        "fgLum": 233.8,
+        "bgLum": 21.8,
+        "contrast": 15.04
+      },
+      "verticalProfile": {
+        "height": 264,
+        "width": 750,
+        "rows": [
+          {
+            "y": 0,
+            "mean": 39,
+            "range": 0.9
+          },
+          {
+            "y": 1,
+            "mean": 39,
+            "range": 0.9
+          },
+          {
+            "y": 2,
+            "mean": 36.8,
+            "range": 35
+          },
+          {
+            "y": 3,
+            "mean": 36.8,
+            "range": 35
+          },
+          {
+            "y": 4,
+            "mean": 25.9,
+            "range": 0.3
+          },
+          {
+            "y": 5,
+            "mean": 25.9,
+            "range": 0.3
+          },
+          {
+            "y": 6,
+            "mean": 25.9,
+            "range": 0.3
+          },
+          {
+            "y": 7,
+            "mean": 25.9,
+            "range": 0.3
+          },
+          {
+            "y": 8,
+            "mean": 25.9,
+            "range": 0.3
+          },
+          {
+            "y": 9,
+            "mean": 25.9,
+            "range": 0.3
+          },
+          {
+            "y": 10,
+            "mean": 25.9,
+            "range": 0.3
+          },
+          {
+            "y": 11,
+            "mean": 25.9,
+            "range": 0.3
+          },
+          {
+            "y": 12,
+            "mean": 25.9,
+            "range": 0.3
+          },
+          {
+            "y": 13,
+            "mean": 25.9,
+            "range": 0.3
+          },
+          {
+            "y": 14,
+            "mean": 25.9,
+            "range": 0.3
+          },
+          {
+            "y": 15,
+            "mean": 25.9,
+            "range": 0.3
+          },
+          {
+            "y": 16,
+            "mean": 25.9,
+            "range": 0.3
+          },
+          {
+            "y": 17,
+            "mean": 25.9,
+            "range": 0.3
+          },
+          {
+            "y": 18,
+            "mean": 25.9,
+            "range": 0.3
+          },
+          {
+            "y": 19,
+            "mean": 25.8,
+            "range": 0.3
+          },
+          {
+            "y": 20,
+            "mean": 25.8,
+            "range": 0.3
+          },
+          {
+            "y": 21,
+            "mean": 25.8,
+            "range": 0.3
+          },
+          {
+            "y": 22,
+            "mean": 25.7,
+            "range": 0.8
+          },
+          {
+            "y": 23,
+            "mean": 25.7,
+            "range": 0.8
+          },
+          {
+            "y": 24,
+            "mean": 25.7,
+            "range": 1
+          },
+          {
+            "y": 25,
+            "mean": 25.6,
+            "range": 1
+          },
+          {
+            "y": 26,
+            "mean": 25.6,
+            "range": 1
+          },
+          {
+            "y": 27,
+            "mean": 25.6,
+            "range": 1
+          },
+          {
+            "y": 28,
+            "mean": 25.6,
+            "range": 1
+          },
+          {
+            "y": 29,
+            "mean": 25.6,
+            "range": 1
+          },
+          {
+            "y": 30,
+            "mean": 25.6,
+            "range": 1
+          },
+          {
+            "y": 31,
+            "mean": 25.6,
+            "range": 1
+          },
+          {
+            "y": 32,
+            "mean": 26,
+            "range": 15.1
+          },
+          {
+            "y": 33,
+            "mean": 26.4,
+            "range": 15.4
+          },
+          {
+            "y": 34,
+            "mean": 26.2,
+            "range": 15.4
+          },
+          {
+            "y": 35,
+            "mean": 26.1,
+            "range": 15.1
+          },
+          {
+            "y": 36,
+            "mean": 25.9,
+            "range": 15.9
+          },
+          {
+            "y": 37,
+            "mean": 25.8,
+            "range": 15.9
+          },
+          {
+            "y": 38,
+            "mean": 25.7,
+            "range": 16.1
+          },
+          {
+            "y": 39,
+            "mean": 25.7,
+            "range": 16.1
+          },
+          {
+            "y": 40,
+            "mean": 25.7,
+            "range": 16.1
+          },
+          {
+            "y": 41,
+            "mean": 25.5,
+            "range": 16.9
+          },
+          {
+            "y": 42,
+            "mean": 25.4,
+            "range": 17.1
+          },
+          {
+            "y": 43,
+            "mean": 25.4,
+            "range": 17.2
+          },
+          {
+            "y": 44,
+            "mean": 25.7,
+            "range": 17.1
+          },
+          {
+            "y": 45,
+            "mean": 28.1,
+            "range": 16.9
+          },
+          {
+            "y": 46,
+            "mean": 29.2,
+            "range": 17.1
+          },
+          {
+            "y": 47,
+            "mean": 29.2,
+            "range": 17.1
+          },
+          {
+            "y": 48,
+            "mean": 29,
+            "range": 17.1
+          },
+          {
+            "y": 49,
+            "mean": 27.5,
+            "range": 16.9
+          },
+          {
+            "y": 50,
+            "mean": 26.7,
+            "range": 17.1
+          },
+          {
+            "y": 51,
+            "mean": 26.7,
+            "range": 17.1
+          },
+          {
+            "y": 52,
+            "mean": 26.6,
+            "range": 16.9
+          },
+          {
+            "y": 53,
+            "mean": 26.6,
+            "range": 17.1
+          },
+          {
+            "y": 54,
+            "mean": 26.6,
+            "range": 17.1
+          },
+          {
+            "y": 55,
+            "mean": 26.6,
+            "range": 17.1
+          },
+          {
+            "y": 56,
+            "mean": 26.6,
+            "range": 17.1
+          },
+          {
+            "y": 57,
+            "mean": 26.6,
+            "range": 16.9
+          },
+          {
+            "y": 58,
+            "mean": 26.6,
+            "range": 17.9
+          },
+          {
+            "y": 59,
+            "mean": 26.6,
+            "range": 17.2
+          },
+          {
+            "y": 60,
+            "mean": 26.6,
+            "range": 17.1
+          },
+          {
+            "y": 61,
+            "mean": 26.7,
+            "range": 43.9
+          },
+          {
+            "y": 62,
+            "mean": 28.3,
+            "range": 211
+          },
+          {
+            "y": 63,
+            "mean": 29.5,
+            "range": 211.7
+          },
+          {
+            "y": 64,
+            "mean": 30.7,
+            "range": 211.1
+          },
+          {
+            "y": 65,
+            "mean": 31.2,
+            "range": 211
+          },
+          {
+            "y": 66,
+            "mean": 31.2,
+            "range": 211.1
+          },
+          {
+            "y": 67,
+            "mean": 31.2,
+            "range": 211.8
+          },
+          {
+            "y": 68,
+            "mean": 32.2,
+            "range": 211.1
+          },
+          {
+            "y": 69,
+            "mean": 34.3,
+            "range": 211.8
+          },
+          {
+            "y": 70,
+            "mean": 34.6,
+            "range": 211.8
+          },
+          {
+            "y": 71,
+            "mean": 34.3,
+            "range": 211.1
+          },
+          {
+            "y": 72,
+            "mean": 35.3,
+            "range": 211.9
+          },
+          {
+            "y": 73,
+            "mean": 37.3,
+            "range": 211.8
+          },
+          {
+            "y": 74,
+            "mean": 41.3,
+            "range": 211.8
+          },
+          {
+            "y": 75,
+            "mean": 53.8,
+            "range": 211.9
+          },
+          {
+            "y": 76,
+            "mean": 65.7,
+            "range": 212.1
+          },
+          {
+            "y": 77,
+            "mean": 72,
+            "range": 212.1
+          },
+          {
+            "y": 78,
+            "mean": 70.1,
+            "range": 212.7
+          },
+          {
+            "y": 79,
+            "mean": 65.8,
+            "range": 212.1
+          },
+          {
+            "y": 80,
+            "mean": 64.3,
+            "range": 212.1
+          },
+          {
+            "y": 81,
+            "mean": 64.3,
+            "range": 212.7
+          },
+          {
+            "y": 82,
+            "mean": 72,
+            "range": 212.7
+          },
+          {
+            "y": 83,
+            "mean": 77.4,
+            "range": 212.8
+          },
+          {
+            "y": 84,
+            "mean": 77.1,
+            "range": 212.8
+          },
+          {
+            "y": 85,
+            "mean": 68.4,
+            "range": 212.8
+          },
+          {
+            "y": 86,
+            "mean": 61.3,
+            "range": 212.8
+          },
+          {
+            "y": 87,
+            "mean": 61.7,
+            "range": 212.1
+          },
+          {
+            "y": 88,
+            "mean": 63.4,
+            "range": 212.1
+          },
+          {
+            "y": 89,
+            "mean": 64.3,
+            "range": 212.9
+          },
+          {
+            "y": 90,
+            "mean": 66.5,
+            "range": 212.9
+          },
+          {
+            "y": 91,
+            "mean": 63.5,
+            "range": 212.9
+          },
+          {
+            "y": 92,
+            "mean": 54.4,
+            "range": 212.9
+          },
+          {
+            "y": 93,
+            "mean": 39.5,
+            "range": 212.9
+          },
+          {
+            "y": 94,
+            "mean": 32.7,
+            "range": 212.9
+          },
+          {
+            "y": 95,
+            "mean": 30.8,
+            "range": 212.9
+          },
+          {
+            "y": 96,
+            "mean": 29.2,
+            "range": 213.1
+          },
+          {
+            "y": 97,
+            "mean": 27.9,
+            "range": 213.1
+          },
+          {
+            "y": 98,
+            "mean": 26.5,
+            "range": 37.7
+          },
+          {
+            "y": 99,
+            "mean": 26.4,
+            "range": 20.1
+          },
+          {
+            "y": 100,
+            "mean": 26.4,
+            "range": 20.1
+          },
+          {
+            "y": 101,
+            "mean": 26.4,
+            "range": 20.1
+          },
+          {
+            "y": 102,
+            "mean": 26.4,
+            "range": 20
+          },
+          {
+            "y": 103,
+            "mean": 26.4,
+            "range": 20
+          },
+          {
+            "y": 104,
+            "mean": 26.3,
+            "range": 19.9
+          },
+          {
+            "y": 105,
+            "mean": 26.2,
+            "range": 20.2
+          },
+          {
+            "y": 106,
+            "mean": 26.2,
+            "range": 21
+          },
+          {
+            "y": 107,
+            "mean": 26.2,
+            "range": 20.5
+          },
+          {
+            "y": 108,
+            "mean": 26.2,
+            "range": 21.2
+          },
+          {
+            "y": 109,
+            "mean": 26.2,
+            "range": 21.2
+          },
+          {
+            "y": 110,
+            "mean": 26.2,
+            "range": 21
+          },
+          {
+            "y": 111,
+            "mean": 26.1,
+            "range": 21.2
+          },
+          {
+            "y": 112,
+            "mean": 26,
+            "range": 21.3
+          },
+          {
+            "y": 113,
+            "mean": 26,
+            "range": 21.5
+          },
+          {
+            "y": 114,
+            "mean": 25.5,
+            "range": 22.3
+          },
+          {
+            "y": 115,
+            "mean": 24.2,
+            "range": 22.3
+          },
+          {
+            "y": 116,
+            "mean": 23.6,
+            "range": 23.1
+          },
+          {
+            "y": 117,
+            "mean": 23.7,
+            "range": 23.1
+          },
+          {
+            "y": 118,
+            "mean": 23.8,
+            "range": 22.2
+          },
+          {
+            "y": 119,
+            "mean": 23.7,
+            "range": 22.1
+          },
+          {
+            "y": 120,
+            "mean": 23.9,
+            "range": 22.1
+          },
+          {
+            "y": 121,
+            "mean": 24.1,
+            "range": 21.4
+          },
+          {
+            "y": 122,
+            "mean": 24.1,
+            "range": 21.3
+          },
+          {
+            "y": 123,
+            "mean": 24.2,
+            "range": 21.2
+          },
+          {
+            "y": 124,
+            "mean": 24.3,
+            "range": 21.1
+          },
+          {
+            "y": 125,
+            "mean": 24.7,
+            "range": 20.2
+          },
+          {
+            "y": 126,
+            "mean": 24.9,
+            "range": 20.3
+          },
+          {
+            "y": 127,
+            "mean": 24.5,
+            "range": 20.3
+          },
+          {
+            "y": 128,
+            "mean": 20.8,
+            "range": 5.9
+          },
+          {
+            "y": 129,
+            "mean": 20.8,
+            "range": 4.4
+          },
+          {
+            "y": 130,
+            "mean": 20.3,
+            "range": 5.1
+          },
+          {
+            "y": 131,
+            "mean": 20.6,
+            "range": 4.1
+          },
+          {
+            "y": 132,
+            "mean": 20.5,
+            "range": 4.9
+          },
+          {
+            "y": 133,
+            "mean": 20.8,
+            "range": 4.6
+          },
+          {
+            "y": 134,
+            "mean": 20.6,
+            "range": 4.1
+          },
+          {
+            "y": 135,
+            "mean": 20.5,
+            "range": 3.8
+          },
+          {
+            "y": 136,
+            "mean": 21.3,
+            "range": 41.3
+          },
+          {
+            "y": 137,
+            "mean": 22.4,
+            "range": 64.9
+          },
+          {
+            "y": 138,
+            "mean": 28.1,
+            "range": 68.9
+          },
+          {
+            "y": 139,
+            "mean": 29,
+            "range": 72.2
+          },
+          {
+            "y": 140,
+            "mean": 30.9,
+            "range": 76.8
+          },
+          {
+            "y": 141,
+            "mean": 37.5,
+            "range": 81
+          },
+          {
+            "y": 142,
+            "mean": 38.6,
+            "range": 85.9
+          },
+          {
+            "y": 143,
+            "mean": 39.1,
+            "range": 89.1
+          },
+          {
+            "y": 144,
+            "mean": 43.6,
+            "range": 93.9
+          },
+          {
+            "y": 145,
+            "mean": 46.1,
+            "range": 97.4
+          },
+          {
+            "y": 146,
+            "mean": 43.4,
+            "range": 101.9
+          },
+          {
+            "y": 147,
+            "mean": 43.7,
+            "range": 105.2
+          },
+          {
+            "y": 148,
+            "mean": 45.3,
+            "range": 109.9
+          },
+          {
+            "y": 149,
+            "mean": 46.5,
+            "range": 113.9
+          },
+          {
+            "y": 150,
+            "mean": 45.8,
+            "range": 117.9
+          },
+          {
+            "y": 151,
+            "mean": 49.9,
+            "range": 122.4
+          },
+          {
+            "y": 152,
+            "mean": 52.3,
+            "range": 126.9
+          },
+          {
+            "y": 153,
+            "mean": 48.6,
+            "range": 130.1
+          },
+          {
+            "y": 154,
+            "mean": 48.6,
+            "range": 132.2
+          },
+          {
+            "y": 155,
+            "mean": 48.4,
+            "range": 135
+          },
+          {
+            "y": 156,
+            "mean": 50.5,
+            "range": 138.1
+          },
+          {
+            "y": 157,
+            "mean": 56.2,
+            "range": 141.1
+          },
+          {
+            "y": 158,
+            "mean": 60.6,
+            "range": 144.1
+          },
+          {
+            "y": 159,
+            "mean": 60.7,
+            "range": 145.9
+          },
+          {
+            "y": 160,
+            "mean": 60.4,
+            "range": 149.1
+          },
+          {
+            "y": 161,
+            "mean": 52.2,
+            "range": 151.2
+          },
+          {
+            "y": 162,
+            "mean": 48.2,
+            "range": 154.9
+          },
+          {
+            "y": 163,
+            "mean": 49.2,
+            "range": 156.9
+          },
+          {
+            "y": 164,
+            "mean": 50.5,
+            "range": 160.1
+          },
+          {
+            "y": 165,
+            "mean": 59.8,
+            "range": 163.2
+          },
+          {
+            "y": 166,
+            "mean": 63.2,
+            "range": 165.1
+          },
+          {
+            "y": 167,
+            "mean": 63.8,
+            "range": 167.8
+          },
+          {
+            "y": 168,
+            "mean": 69.1,
+            "range": 171.1
+          },
+          {
+            "y": 169,
+            "mean": 69.9,
+            "range": 173.1
+          },
+          {
+            "y": 170,
+            "mean": 53.3,
+            "range": 175.9
+          },
+          {
+            "y": 171,
+            "mean": 44.9,
+            "range": 178.9
+          },
+          {
+            "y": 172,
+            "mean": 38,
+            "range": 181.1
+          },
+          {
+            "y": 173,
+            "mean": 26.8,
+            "range": 183.2
+          },
+          {
+            "y": 174,
+            "mean": 22.4,
+            "range": 105.6
+          },
+          {
+            "y": 175,
+            "mean": 22.2,
+            "range": 0.7
+          },
+          {
+            "y": 176,
+            "mean": 21.9,
+            "range": 1
+          },
+          {
+            "y": 177,
+            "mean": 21.8,
+            "range": 0.3
+          },
+          {
+            "y": 178,
+            "mean": 21.5,
+            "range": 0.9
+          },
+          {
+            "y": 179,
+            "mean": 21.8,
+            "range": 0.1
+          },
+          {
+            "y": 180,
+            "mean": 21.8,
+            "range": 0.3
+          },
+          {
+            "y": 181,
+            "mean": 21.7,
+            "range": 0.9
+          },
+          {
+            "y": 182,
+            "mean": 22.2,
+            "range": 1
+          },
+          {
+            "y": 183,
+            "mean": 21.8,
+            "range": 0
+          },
+          {
+            "y": 184,
+            "mean": 21.8,
+            "range": 0
+          },
+          {
+            "y": 185,
+            "mean": 21.8,
+            "range": 0
+          },
+          {
+            "y": 186,
+            "mean": 21.8,
+            "range": 0
+          },
+          {
+            "y": 187,
+            "mean": 21.8,
+            "range": 0
+          },
+          {
+            "y": 188,
+            "mean": 21.8,
+            "range": 0
+          },
+          {
+            "y": 189,
+            "mean": 21.8,
+            "range": 0
+          },
+          {
+            "y": 190,
+            "mean": 21.8,
+            "range": 0
+          },
+          {
+            "y": 191,
+            "mean": 21.8,
+            "range": 0
+          },
+          {
+            "y": 192,
+            "mean": 21.8,
+            "range": 0
+          },
+          {
+            "y": 193,
+            "mean": 21.8,
+            "range": 0
+          },
+          {
+            "y": 194,
+            "mean": 21.8,
+            "range": 0
+          },
+          {
+            "y": 195,
+            "mean": 21.8,
+            "range": 0
+          },
+          {
+            "y": 196,
+            "mean": 21.8,
+            "range": 0
+          },
+          {
+            "y": 197,
+            "mean": 21.8,
+            "range": 0
+          },
+          {
+            "y": 198,
+            "mean": 21.8,
+            "range": 0
+          },
+          {
+            "y": 199,
+            "mean": 21.8,
+            "range": 0
+          },
+          {
+            "y": 200,
+            "mean": 21.8,
+            "range": 0
+          },
+          {
+            "y": 201,
+            "mean": 24.4,
+            "range": 113.1
+          },
+          {
+            "y": 202,
+            "mean": 37.3,
+            "range": 212
+          },
+          {
+            "y": 203,
+            "mean": 56.5,
+            "range": 212
+          },
+          {
+            "y": 204,
+            "mean": 78.1,
+            "range": 212
+          },
+          {
+            "y": 205,
+            "mean": 84.1,
+            "range": 212
+          },
+          {
+            "y": 206,
+            "mean": 78,
+            "range": 212
+          },
+          {
+            "y": 207,
+            "mean": 62.4,
+            "range": 212
+          },
+          {
+            "y": 208,
+            "mean": 72.8,
+            "range": 212
+          },
+          {
+            "y": 209,
+            "mean": 71.3,
+            "range": 212
+          },
+          {
+            "y": 210,
+            "mean": 71,
+            "range": 212
+          },
+          {
+            "y": 211,
+            "mean": 67,
+            "range": 212
+          },
+          {
+            "y": 212,
+            "mean": 74.2,
+            "range": 212
+          },
+          {
+            "y": 213,
+            "mean": 88.5,
+            "range": 212
+          },
+          {
+            "y": 214,
+            "mean": 84.1,
+            "range": 212
+          },
+          {
+            "y": 215,
+            "mean": 82.2,
+            "range": 212
+          },
+          {
+            "y": 216,
+            "mean": 87,
+            "range": 212
+          },
+          {
+            "y": 217,
+            "mean": 88.9,
+            "range": 212
+          },
+          {
+            "y": 218,
+            "mean": 85.8,
+            "range": 212
+          },
+          {
+            "y": 219,
+            "mean": 79.2,
+            "range": 212
+          },
+          {
+            "y": 220,
+            "mean": 79.4,
+            "range": 212
+          },
+          {
+            "y": 221,
+            "mean": 76.2,
+            "range": 212
+          },
+          {
+            "y": 222,
+            "mean": 65.7,
+            "range": 212
+          },
+          {
+            "y": 223,
+            "mean": 59.5,
+            "range": 212
+          },
+          {
+            "y": 224,
+            "mean": 57.7,
+            "range": 212
+          },
+          {
+            "y": 225,
+            "mean": 57.4,
+            "range": 212
+          },
+          {
+            "y": 226,
+            "mean": 62.6,
+            "range": 212
+          },
+          {
+            "y": 227,
+            "mean": 64.8,
+            "range": 212
+          },
+          {
+            "y": 228,
+            "mean": 69.2,
+            "range": 212
+          },
+          {
+            "y": 229,
+            "mean": 79.9,
+            "range": 212
+          },
+          {
+            "y": 230,
+            "mean": 85,
+            "range": 212
+          },
+          {
+            "y": 231,
+            "mean": 75.1,
+            "range": 212
+          },
+          {
+            "y": 232,
+            "mean": 52.9,
+            "range": 212
+          },
+          {
+            "y": 233,
+            "mean": 28,
+            "range": 212
+          },
+          {
+            "y": 234,
+            "mean": 22.6,
+            "range": 212
+          },
+          {
+            "y": 235,
+            "mean": 21.9,
+            "range": 101.1
+          },
+          {
+            "y": 236,
+            "mean": 21.8,
+            "range": 0
+          },
+          {
+            "y": 237,
+            "mean": 21.8,
+            "range": 0
+          },
+          {
+            "y": 238,
+            "mean": 21.8,
+            "range": 0
+          },
+          {
+            "y": 239,
+            "mean": 21.8,
+            "range": 0
+          },
+          {
+            "y": 240,
+            "mean": 21.8,
+            "range": 0
+          },
+          {
+            "y": 241,
+            "mean": 21.8,
+            "range": 0
+          },
+          {
+            "y": 242,
+            "mean": 21.8,
+            "range": 0
+          },
+          {
+            "y": 243,
+            "mean": 21.8,
+            "range": 0
+          },
+          {
+            "y": 244,
+            "mean": 21.8,
+            "range": 0
+          },
+          {
+            "y": 245,
+            "mean": 21.8,
+            "range": 0
+          },
+          {
+            "y": 246,
+            "mean": 21.8,
+            "range": 0
+          },
+          {
+            "y": 247,
+            "mean": 21.8,
+            "range": 0
+          },
+          {
+            "y": 248,
+            "mean": 21.8,
+            "range": 0
+          },
+          {
+            "y": 249,
+            "mean": 21.8,
+            "range": 0
+          },
+          {
+            "y": 250,
+            "mean": 21.8,
+            "range": 0
+          },
+          {
+            "y": 251,
+            "mean": 21.8,
+            "range": 0
+          },
+          {
+            "y": 252,
+            "mean": 21.8,
+            "range": 0
+          },
+          {
+            "y": 253,
+            "mean": 21.8,
+            "range": 0
+          },
+          {
+            "y": 254,
+            "mean": 21.8,
+            "range": 0
+          },
+          {
+            "y": 255,
+            "mean": 21.8,
+            "range": 0
+          },
+          {
+            "y": 256,
+            "mean": 21.8,
+            "range": 0
+          },
+          {
+            "y": 257,
+            "mean": 21.8,
+            "range": 0
+          },
+          {
+            "y": 258,
+            "mean": 21.8,
+            "range": 0
+          },
+          {
+            "y": 259,
+            "mean": 23.7,
+            "range": 132.1
+          },
+          {
+            "y": 260,
+            "mean": 39.3,
+            "range": 212
+          },
+          {
+            "y": 261,
+            "mean": 76.6,
+            "range": 212
+          },
+          {
+            "y": 262,
+            "mean": 92.8,
+            "range": 212
+          },
+          {
+            "y": 263,
+            "mean": 109.9,
+            "range": 212
+          }
+        ]
+      },
+      "onLabel": {
+        "clip": {
+          "x": 142.4,
+          "y": 29.6,
+          "width": 90.2,
+          "height": 20.7
+        },
+        "stats": {
+          "px": 7200,
+          "mean": {
+            "r": 67.8,
+            "g": 71.4,
+            "b": 79.9
+          },
+          "mode": {
+            "r": 23,
+            "g": 27,
+            "b": 37,
+            "share": 0.599
+          },
+          "fgLum": 229.9,
+          "bgLum": 26.9,
+          "contrast": 13.8
+        },
+        "ramp": {
+          "width": 180,
+          "height": 40,
+          "peak": 206.9198,
+          "interiorMedian": 203.91979999999998,
+          "inkFrom": 5,
+          "inkTo": 176,
+          "rampLeft": 2,
+          "rampRight": 2
+        },
+        "fileName": "after-375-dark-on.png"
+      },
+      "sideLabel": {
+        "clip": {
+          "x": 264.5,
+          "y": 31.6,
+          "width": 33,
+          "height": 16.8
+        },
+        "stats": {
+          "px": 2112,
+          "mean": {
+            "r": 60,
+            "g": 63.6,
+            "b": 71.6
+          },
+          "mode": {
+            "r": 22.1,
+            "g": 26.1,
+            "b": 35,
+            "share": 0.287
+          },
+          "fgLum": 129.8,
+          "bgLum": 25.9,
+          "contrast": 4.52
+        },
+        "ramp": {
+          "width": 66,
+          "height": 32,
+          "peak": 116.85160000000002,
+          "interiorMedian": 105.71119999999999,
+          "inkFrom": 2,
+          "inkTo": 65,
+          "rampLeft": 6,
+          "rampRight": 5
+        },
+        "fileName": "after-375-dark-side.png"
+      }
+    }
+  },
+  "desktop": {
+    "light": {
+      "ringOpen": true,
+      "edgeCount": 2,
+      "edge": {
+        "filter": "blur(1.6px) saturate(1.25)",
+        "opacity": "1"
+      },
+      "center": {
+        "filter": "none",
+        "opacity": "1"
+      },
+      "tokens": {
+        "ringBlur": "1.6px",
+        "ringSaturate": "1.25",
+        "ringDur": "360ms"
+      },
+      "fileName": "after-1440-light.png",
+      "errors": []
+    },
+    "dark": {
+      "ringOpen": true,
+      "edgeCount": 2,
+      "edge": {
+        "filter": "blur(1.6px) saturate(1.25)",
+        "opacity": "1"
+      },
+      "center": {
+        "filter": "none",
+        "opacity": "1"
+      },
+      "tokens": {
+        "ringBlur": "1.6px",
+        "ringSaturate": "1.25",
+        "ringDur": "360ms"
+      },
+      "fileName": "after-1440-dark.png",
+      "errors": []
+    }
+  },
+  "errors": []
+}

@@ -48,6 +48,7 @@ class MergeQueueBootSweepSpec extends FunSuite:
 
   private class SilentLlm extends LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
@@ -57,15 +58,30 @@ class MergeQueueBootSweepSpec extends FunSuite:
   private def ledgerActions(delegateId: String): List[String] =
     ChainStore.listSync().flatMap(_.entries).filter(_.kind == MergeQueue.EntryKind).flatMap { e =>
       val c = e.payload.hcursor
-      c.get[String]("delegateId").toOption.filter(_ == delegateId).map(_ => c.get[String]("action").toOption.getOrElse(""))
+      c.get[String]("delegateId")
+        .toOption
+        .filter(_ == delegateId)
+        .map(_ => c.get[String]("action").toOption.getOrElse(""))
     }
 
-  private def seedRecord(id: String, repo: os.Path, executor: String = "nebflow", worktree: Option[os.Path] = None): Unit =
+  private def seedRecord(
+    id: String,
+    repo: os.Path,
+    executor: String = "nebflow",
+    worktree: Option[os.Path] = None
+  ): Unit =
     DelegateRegistry.put(
       DelegateRegistry.Record(
-        id = id, executor = executor, cwd = worktree.map(_.toString).getOrElse(repo.toString),
-        project = None, taskId = Some("99"), parentSessionId = "nebula-root", title = "survivor", createdAt = 1L,
-        branch = Some(s"delegate/$id"), baseBranch = Some("main"),
+        id = id,
+        executor = executor,
+        cwd = worktree.map(_.toString).getOrElse(repo.toString),
+        project = None,
+        taskId = Some("99"),
+        parentSessionId = "nebula-root",
+        title = "survivor",
+        createdAt = 1L,
+        branch = Some(s"delegate/$id"),
+        baseBranch = Some("main"),
         projectWorkspace = Some(repo.toString),
         worktree = worktree.map(_.toString)
       )
@@ -89,6 +105,8 @@ class MergeQueueBootSweepSpec extends FunSuite:
     if merge then g("merge", "--no-ff", branch, "-m", "merge the branch")
     dir
 
+  end mkRepo
+
   /** 把一条开放成员直接写进持久账本（模拟重启前的在账成员；无通道闭包）。 */
   private def seedMember(id: String, repo: os.Path, readyAt: Long): Unit =
     MergeQueue.seedMemberForTest(
@@ -103,11 +121,16 @@ class MergeQueueBootSweepSpec extends FunSuite:
         parentSessionId = "nebula-root",
         description = "survivor",
         readyAt = readyAt,
-        channelKind = "internal"
+        channelKind = "identity",
+        // 宣告闸批 2026-11-04：属主宣告在案——授窗前提
+        declaredAt = Some(1_000L),
+        declareSource = Some(nebflow.core.delegate.MergeDeclaration.Source.ReportMerge)
       )
     )
 
-  test("① already-merged member ⇒ closed merged + leftover scene cleaned under the zero-ahead guard + report; NO merge round is revived") {
+  test(
+    "① already-merged member ⇒ closed merged + leftover scene cleaned under the zero-ahead guard + report; NO merge round is revived"
+  ) {
     val repo = mkRepo(tempRoot / "sweep-merged-repo", branch = "delegate/mq-merged", merge = true)
     val wt = tempRoot / "sweep-merged-wt"
     nebflow.ForceRemove.removeAll(wt) // 夹具幂等：上一轮残留的 kept 场景 wt 会撞 worktree add already exists
@@ -122,7 +145,10 @@ class MergeQueueBootSweepSpec extends FunSuite:
       report <- MergeQueueBootSweep.sweep(res)
       actions = ledgerActions("mq-merged")
       cleanup <- IO {
-        ChainStore.listSync().flatMap(_.entries).filter(_.kind == "worktree-cleanup")
+        ChainStore
+          .listSync()
+          .flatMap(_.entries)
+          .filter(_.kind == "worktree-cleanup")
           .flatMap(_.payload.hcursor.get[String]("action").toOption)
       }
       state = MergeQueue.find("mq-merged").map(_.state)
@@ -133,7 +159,11 @@ class MergeQueueBootSweepSpec extends FunSuite:
     assert(cleanupActions.contains("removed"), s"the leftover worktree scene must be cleaned: $cleanupActions")
     assert(!os.exists(wt), "the worktree directory must be gone after the sweep cleanup")
     assert(!GitWorktrees.branchExists(repo, "delegate/mq-merged"), "the merged branch must be deleted (branch -d)")
-    assertEquals(state, Some("merged"), "the membership is closed as merged (owner-gone must NOT apply to a landed merge)")
+    assertEquals(
+      state,
+      Some("merged"),
+      "the membership is closed as merged (owner-gone must NOT apply to a landed merge)"
+    )
   }
 
   test("② missing branch ref (nothing mergeable) ⇒ closed merged with the honest note + report droppedEmpty") {
@@ -154,11 +184,16 @@ class MergeQueueBootSweepSpec extends FunSuite:
     yield (report, actions, state)).unsafeRunSync()
     assertEquals(report.droppedEmpty, List("mq-empty"), "an empty membership closes honestly")
     assertEquals(state.map(_._1), Some("merged"), "the membership is closed as merged (nothing to merge)")
-    assert(state.flatMap(_._2).exists(_.contains("nothing to merge")), s"the honest note rides the close reason: $state")
+    assert(
+      state.flatMap(_._2).exists(_.contains("nothing to merge")),
+      s"the honest note rides the close reason: $state"
+    )
     assert(actions.contains("merge-merged"), s"the close-out row must be audited: $actions")
   }
 
-  test("③ mergeable but the owner session died with the restart ⇒ owner-gone + task row failed; NO revival channel is invoked") {
+  test(
+    "③ mergeable but the owner session died with the restart ⇒ owner-gone + task row failed; NO revival channel is invoked"
+  ) {
     val repo = mkRepo(tempRoot / "sweep-gone-repo", branch = "delegate/mq-gone", merge = false)
     seedRecord("mq-gone", repo)
     seedMember("mq-gone", repo, readyAt = 444L)
@@ -168,9 +203,17 @@ class MergeQueueBootSweepSpec extends FunSuite:
       res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
       _ <- res.subAgentTaskStore.recordTask(
         SubAgentTask(
-          taskId = "mq-gone", parentSessionId = "nebula-root", agentName = "nebflow",
-          prompt = "brief", description = "survivor", status = "ready-to-merge", retryCount = 0,
-          spawnedAt = 1L, completedAt = None, lastError = None, source = "delegate"
+          taskId = "mq-gone",
+          parentSessionId = "nebula-root",
+          agentName = "nebflow",
+          prompt = "brief",
+          description = "survivor",
+          status = "ready-to-merge",
+          retryCount = 0,
+          spawnedAt = 1L,
+          completedAt = None,
+          lastError = None,
+          source = "delegate"
         )
       )
       report <- MergeQueueBootSweep.sweep(res)
@@ -183,7 +226,10 @@ class MergeQueueBootSweepSpec extends FunSuite:
     assert(actions.contains("owner-gone"), s"the owner-gone row must be audited: $actions")
     assertEquals(state, Some("owner-gone"), "the membership is closed as owner-gone (needs dispatcher handling)")
     assertEquals(task.map(_.status), Some("failed"), "the ghost ready-to-merge row must close as failed")
-    assert(task.flatMap(_.lastError).exists(_.contains("merge-queue owner-gone")), s"the reason channel carries the cause: ${task.flatMap(_.lastError)}")
+    assert(
+      task.flatMap(_.lastError).exists(_.contains("merge-queue owner-gone")),
+      s"the reason channel carries the cause: ${task.flatMap(_.lastError)}"
+    )
   }
 
   test("④ no open members = zero-action sweep") {
@@ -196,7 +242,9 @@ class MergeQueueBootSweepSpec extends FunSuite:
     assertEquals(report, MergeQueueBootSweep.Report(), "an empty ledger sweeps to an empty report")
   }
 
-  test("⑤ mergeable + owner lost BUT the write-ahead channel holds an un-closed record ⇒ PRESERVED (window returned, task row untouched) — owner-gone suppressed by the channel premise (R5)") {
+  test(
+    "⑤ mergeable + owner lost BUT the write-ahead channel holds an un-closed record ⇒ PRESERVED (window returned, task row untouched) — owner-gone suppressed by the channel premise (R5)"
+  ) {
     val repo = mkRepo(tempRoot / "sweep-preserve-repo", branch = "delegate/mq-preserve", merge = false)
     seedRecord("mq-preserve", repo)
     val m = MergeQueue.Member(
@@ -210,7 +258,10 @@ class MergeQueueBootSweepSpec extends FunSuite:
       parentSessionId = "nebula-root",
       description = "survivor",
       readyAt = 555L,
-      channelKind = "internal"
+      channelKind = "identity",
+      // 宣告闸批 2026-11-04：属主宣告在案——授窗前提
+      declaredAt = Some(1_000L),
+      declareSource = Some(nebflow.core.delegate.MergeDeclaration.Source.ReportMerge)
     )
     MergeQueue.seedMemberForTest(m) // 账本行（开放成员）
     MergeQueue.seedChannelOnlyForTest(m) // write-ahead 通道镜像（未关账）——write-ahead 盘面
@@ -231,7 +282,9 @@ class MergeQueueBootSweepSpec extends FunSuite:
     assert(actions.contains("restart-preserved"), s"the preservation is audited: $actions")
   }
 
-  test("⑤b an already-merged member with a channel record but NO registry record ⇒ closed merged by fact-check (the channel premise never blocks the happy path)") {
+  test(
+    "⑤b an already-merged member with a channel record but NO registry record ⇒ closed merged by fact-check (the channel premise never blocks the happy path)"
+  ) {
     val repo = mkRepo(tempRoot / "sweep-orphan-merged-repo", branch = "delegate/mq-orphan-merged", merge = true)
     val m = MergeQueue.Member(
       delegateId = "mq-orphan-merged",
@@ -244,7 +297,10 @@ class MergeQueueBootSweepSpec extends FunSuite:
       parentSessionId = "nebula-root",
       description = "orphan merged",
       readyAt = 666L,
-      channelKind = "internal"
+      channelKind = "identity",
+      // 宣告闸批 2026-11-04：属主宣告在案——授窗前提
+      declaredAt = Some(1_000L),
+      declareSource = Some(nebflow.core.delegate.MergeDeclaration.Source.ReportMerge)
     )
     MergeQueue.seedChannelOnlyForTest(m) // 仅通道镜像（账本行缺——ready-前被杀 + 期间已被人工并入）
     MergeQueue.dropMemoryStateForTest()

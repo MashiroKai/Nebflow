@@ -216,7 +216,10 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
         parentSessionId = "spec-root",
         description = "spec merge",
         readyAt = readyAt,
-        channelKind = "internal"
+        channelKind = "identity",
+        // 宣告闸批 2026-11-04：属主宣告在案——授窗前提
+        declaredAt = Some(1_000L),
+        declareSource = Some(nebflow.core.delegate.MergeDeclaration.Source.ReportMerge)
       )
     MergeQueue.seedMemberForTest(
       member(holderId, 1000L, Some("61")).copy(state = MergeQueue.State.TurnGranted, grantedAt = Some(1L))

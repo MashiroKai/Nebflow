@@ -350,6 +350,15 @@ function buildFriendPicker(opts) {
   return wrap;
 }
 
+/** lucide 图标**占位节点**（`<i data-lucide=…>`）：`createIconsIn(root)` 收尾时统一
+ *  升级成 svg。存在的理由是组件契约 R5（禁裸 innerHTML 赋值）——图标不再用
+ *  字符串拼进 innerHTML（该基线只降不升；脚本按源码文本计数，注释里也不写赋值式）。 */
+function lucideStub(name) {
+  const ic = document.createElement('i');
+  ic.setAttribute('data-lucide', name);
+  return ic;
+}
+
 // ── 建群对话框（contacts 面入口；成功后经 fm-groups-changed 交 messages 开窗）─
 /** 发起群聊：选好友（可多选）+ 群名 → POST /api/groups `{title}`（**契约只有
  *  title 一个字段**：GroupCreateBody，model.rs:828-830）——建群成功后对选中好友
@@ -361,18 +370,24 @@ function buildFriendPicker(opts) {
  *  成员上限 50 同样做 UX 预检（含本机 1 人）；权威闸在服务端（超限 422/403 走
  *  groupErrToast）。
  *
- *  视觉骨架（2026-09-16 重做；作者 07:46 令「至少群聊面板很丑」）——四段：
- *   ① 标题区 `.fm-modal-header`（既有骨架，几何零改动）
- *   ② 输入区 / ③ 列表区（`.fm-pick-body` 内的两个 `.fm-gs-section`）
- *   ④ 操作区 `.fm-pick-foot`（主键 `fm-create-submit` 右贴边）
- *  ②③ 的章节标签与输入行类名取**群设置抽屉同族**（`.fm-gs-title` /
+ *  视觉骨架（**2026-11-06 统一面板批**起，作者 08:48 令；前身 = 2026-09-16 四段）：
+ *   ① 顶栏 `.fm-modal-header` = 左上返回圆钮（`.fm-pick-back` ∈ `.g2-fab` 悬浮圆钮族）
+ *      + 标题 `.fm-modal-name`（**全面板只此一处**；字阶/字重/字色 = 项目面板
+ *      `.wsp-title` 同一套：`--ds-fs-title` / 600 / `--color-frame-text-bright`）
+ *   ② 主体 `.fm-pick-body`（输入区 + 列表区两个 `.fm-gs-section`，单一滚动容器）
+ *   ③ 主操作 = 右下悬浮圆形加号 `.fm-pick-fab`（`.g2-fab` + `.nf-glass`；与 Canvas
+ *      右下悬浮圆钮同尺寸/同离边距档；四态由 glass.css 圆钮级浮件档单源承载）
+ *  ② 的章节标签与输入行类名取**群设置抽屉同族**（`.fm-gs-title` /
  *  `.fm-gs-title-row` / `.fm-gs-rename` / `.fm-gs-rename-input`）⇒ 两面板层次同源，
  *  禁另起一套间距/字号档。
- *  🔴 创建键 = Glass 主键：材质与四态（rest 绿实心 / hover 深绿 / active 描边 /
- *  disabled 灰）由 `sapphire.css` 的 Glass 主键 `:is()` 族**单源**承载
- *  （与发送键族同一条规则 ⇒ 禁用语义零复制、零自创）。
- *  🔴 启用闸（本函数单点 `refreshSubmit`）= **已选 ≥1 人 ∧ 群名 trim 非空**；
- *  任一处就地改 `createBtn.disabled` 都会绕过该闸，禁写第二份判定。
+ *  🔴 操作键 = 悬浮圆钮（**不是** Glass 主键文本键）：`.fm-create-submit` /
+ *  `cfg-btn-primary` / `.fm-pick-foot` 三条消费面同批退役，材质与四态（rest 玻璃 /
+ *  hover 抬亮 / active 缩放 / disabled opacity .35 + not-allowed）由
+ *  `css/glass.css` 的圆钮级浮件档**单源**承载（与 deck-fab / ask-fab 同一条规则）。
+ *  🔴 使能闸（本函数单点 `refreshSubmit`）= **已选 ≥1 人**（作者逐字：「一开始没有
+ *  勾选其他联系人时，应该处于不可点击状态」）。群名必填仍由服务端契约权威判定，
+ *  客户端在点击时就地提示（不再压灰加号）。任一处就地改 `fab.disabled` 都会绕过
+ *  该闸，禁写第二份判定。
  */
 export function openCreateGroupDialog() {
   if (!getNeblinkState().loggedIn) return;
@@ -383,22 +398,33 @@ export function openCreateGroupDialog() {
   modal.setAttribute('role', 'dialog');
   modal.setAttribute('aria-label', t('contacts.createGroupTitle'));
 
-  // ── ① 标题区（fm-modal-header，既有骨架）
-  const header = el('div', 'fm-modal-header');
+  const close = () => overlay.remove();
+
+  // ── ① 顶栏（标准面板顶栏：左上返回圆钮 + 标题；标题**全局面只此一处**）
+  // 作者令 2026-11-06 08:48：「顶栏标题（不包含订单标题）」「叉号键改成左上角的
+  // 返回按钮」。修前 = 右上 `.fm-modal-close`（`span` + role/tabindex 手搓按钮），
+  // 现 = **原生 `<button>` 返回圆钮**：类 `.g2-fab`（全站悬浮圆钮基准：40px 圆 /
+  // 图标 `--cv-icon` / 材质与四态与焦点环单源 = css/glass.css「圆钮级浮件档」）
+  // + `.nf-glass`（毛玻璃唯一工具类）+ `.fm-pick-back`（本面落位与手机 48 档，
+  // 见 friends.css 同名块）。零第二套圆钮；键盘可达性由原生 button 承担
+  // （Enter/Space 原生激活），并补 `aria-label` 与 title 双读屏面。
+  const header = el('div', 'fm-modal-header fm-pick-header');
+  const backBtn = el('button', 'g2-fab nf-glass fm-pick-back');
+  backBtn.type = 'button';
+  // 图标 = `<i data-lucide>` 占位节点（`createIconsIn(modal)` 收尾统一升级成 svg）；
+  // 走 appendChild 而非字符串写入 —— 组件契约 R5（禁裸 innerHTML 赋值）的基线
+  // 只降不升，新增一处赋值即红（见 scripts/check-component-contract.mjs）。
+  backBtn.appendChild(lucideStub('chevron-left'));
+  backBtn.title = t('contacts.back');
+  backBtn.setAttribute('aria-label', t('contacts.back'));
+  backBtn.addEventListener('click', close);
+  header.appendChild(backBtn);
   const title = el('div', 'fm-modal-title');
   title.appendChild(el('span', 'fm-modal-name', t('contacts.createGroupTitle')));
   header.appendChild(title);
-  const closeBtn = el('span', 'fm-modal-close');
-  closeBtn.textContent = '×';
-  closeBtn.setAttribute('role', 'button');
-  closeBtn.setAttribute('tabindex', '0');
-  const close = () => overlay.remove();
-  closeBtn.addEventListener('click', close);
-  closeBtn.addEventListener('keydown', (e) => { if (e.key === 'Enter') close(); });
-  header.appendChild(closeBtn);
   modal.appendChild(header);
 
-  // 主体（②+③ 同处一个滚动容器；操作区固定在底 —— 单一滚动条）
+  // 主体（② 输入区 + ③ 列表区同处一个滚动容器 —— 单一滚动条；主操作改为卡片右下悬浮加号）
   const bodyBox = el('div', 'fm-pick-body');
 
   // ── ② 输入区（群名**必填** —— 契约 GroupCreateBody.title 无缺省；O④ 同族最小面；
@@ -430,31 +456,41 @@ export function openCreateGroupDialog() {
   bodyBox.appendChild(pickSec);
   modal.appendChild(bodyBox);
 
-  // ── ④ 操作区（主键 = 「创建」）
-  const foot = el('div', 'fm-pick-foot');
-  // 类名：`fm-create-submit` = Glass 主键族成员（sapphire.css:`:is()` 列表，四态单源）；
-  // `cfg-btn-primary` 只为承接既有**主操作白墨**声明（族内既有约定，非新色值）。
-  const createBtn = el('button', 'glass-control cfg-btn-primary fm-create-submit',
-    t('contacts.createGroupSubmit'));
-  createBtn.type = 'button';
+  // ── ④ 主操作 = 右下悬浮圆形加号（原底部「创建」文本键整件退役）
+  // 作者令 2026-11-06 08:48：「创建按钮变成右下角的悬浮加号……这个按钮的样式也是
+  // 用我们统一的悬浮按钮样式，就是毛玻璃效果的圆形按钮」。
+  // 类面与返回钮同一族：`.g2-fab`（悬浮圆钮基准 + 四态 + 焦点环单源）+ `.nf-glass`
+  // （毛玻璃唯一工具类）+ `.fm-pick-fab`（本面落位：与 Canvas 右下悬浮圆钮同档的
+  // 尺寸/离边距/命中盒，见 friends.css 同名块）。**不许自造第二种圆钮**。
+  const fab = el('button', 'g2-fab nf-glass fm-pick-fab');
+  fab.type = 'button';
+  fab.appendChild(lucideStub('plus'));   // 同 R5：图标占位节点，不走裸 innerHTML
+  fab.title = t('contacts.createGroupSubmit');
+  fab.setAttribute('aria-label', t('contacts.createGroupSubmit'));
 
-  /** 启用闸 + 已选徽标的**单点刷新**：任何影响闸态的输入（群名 input / 名册点选）
-   *  都只经本函数 ⇒ 禁用语义只有一处判定（与发送键族同一套「空 ⇒ 不可用」判据
-   *  口径：`disabled` 属性 + not-allowed 视觉，禁元素级 opacity 表达）。 */
+  /** 使能闸 + 已选徽标的**单点刷新**：任何影响闸态的输入（名册点选）都只经本函数
+   *  ⇒ 禁用语义只有一处判定。
+   *  使能判据（作者令 2026-11-06 08:48 逐字）：「一开始没有勾选其他联系人时，应该
+   *  处于不可点击状态」⇒ **未选人 = disabled**，勾选 ≥1 即恢复可点。
+   *  群名的必填闸仍归服务端契约（GroupCreateBody.title 无缺省），客户端不再用它
+   *  把加号压灰（否则「勾了人却点不动」）；未填名时点击 → 就地提示 + 聚焦输入框，
+   *  见下方 click handler 第一段。禁用视觉 = `.g2-fab:disabled`（glass.css 圆钮档
+   *  opacity .35 + not-allowed），仍是同一份毛玻璃材质，不另造禁用色。 */
   function refreshSubmit() {
     const n = selected.size;
-    createBtn.disabled = !(n > 0 && nameInput.value.trim().length > 0);
+    fab.disabled = n === 0;
     counter.textContent = t('contacts.createGroupSelected', { n });
     counter.classList.toggle('on', n > 0);
   }
 
-  createBtn.addEventListener('click', async () => {
-    if (createBtn.disabled) return;
+  fab.addEventListener('click', async () => {
+    if (fab.disabled) return;   // 禁用态双保险（原生 disabled 已不派发 click）
     // 群名必填（契约 GroupCreateBody.title 无缺省；空串 ⇒ 422 invalid_title）。
-    // 闸态下本分支不可达，保留为契约同判据的防御位（服务端仍为权威闸）。
+    // 使能闸不再包含它 ⇒ 本分支**可达**：就地提示 + 焦点落到输入框（不是静默）。
     const groupName = nameInput.value.trim();
     if (!groupName) {
       toastGlobal(t('contacts.createGroupNameRequired'), 'error');
+      nameInput.focus();
       return;
     }
     // 成员上限 50（含本机）UX 预检；权威闸在服务端。
@@ -462,7 +498,7 @@ export function openCreateGroupDialog() {
       toastGlobal(t('contacts.createGroupCap'), 'error');
       return;
     }
-    createBtn.disabled = true;
+    fab.disabled = true;
     try {
       // ① 建群（契约：`{title}` 单字段 —— 不带 memberIds）
       const conv = await api.createGroup(groupName);
@@ -478,24 +514,22 @@ export function openCreateGroupDialog() {
       if (failed > 0) toastGlobal(t('messages.groupInviteFailed', { n: failed }), 'error');
       else toastGlobal(t('messages.groupCreated'));
     } catch (err) {
-      // 失败 ⇒ 回闸态（按当前输入重新判定，禁写死 `false`：写死会让「空名 + 已选」
+      // 失败 ⇒ 回闸态（按当前选择集重新判定，禁写死 `false`：写死会让「未选人」
       // 这一态重新变绿，正是本批要消灭的禁用语义漂移）。
       refreshSubmit();
       groupErrToast(err);
     }
   });
-  foot.appendChild(createBtn);
-  modal.appendChild(foot);
+  modal.appendChild(fab);   // 绝对定位在卡片右下（friends.css `.fm-pick-fab`）
 
   // 闸态刷新接入点：名册点选（选择集由本闭包持有；行点击先于容器冒泡到达 ⇒ 读到的是
-  // 翻转后的 size）+ 群名输入。
+  // 翻转后的 size）。群名输入不再是闸态输入（见 refreshSubmit 注释），故不再挂它。
   picker.addEventListener('click', refreshSubmit);
-  nameInput.addEventListener('input', refreshSubmit);
 
   overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
   overlay.appendChild(modal);
   document.body.appendChild(overlay);
-  refreshSubmit(); // 初值：未选人 / 未填名 ⇒ 灰（面板打开即正确态，禁「先绿后灰」）
+  refreshSubmit(); // 初值：未选人 ⇒ 加号灰（面板打开即正确态，禁「先绿后灰」）
   createIconsIn(modal);
 }
 
@@ -560,6 +594,29 @@ export function buildGroupSettings(conv, hooks) {
   }
   titleSec.appendChild(titleRow);
   root.appendChild(titleSec);
+
+  // ── 群资料（件一 2026-11-02）：群介绍 + 我的群备注（微信式 Profile 面）────────
+  // 入口 = 本抽屉里一行「查看资料」（群窗 `.fm-gs-open` 与窗头群名两处既有入口都收敛到
+  // 本抽屉 ⇒ 抽屉内一行即可达）。面本体 = `profileFace.openGroupProfile`（**唯一属主**；
+  // 禁在本模块另建第二套 Profile 面 —— 另一节点的「右上三点」入口 import 的是同一个函数）。
+  //
+  // 🔴 本处用**动态 import**：`friendGroups` 已被 `messages.js` 静态引入，而
+  // `profileFace` → `messages.js`（personLabel）⇒ 静态引入会成
+  // `friendGroups → profileFace → messages → friendGroups` 环（本仓静态环闸）。
+  // 点击时才拉模块 = 零静态边、零环，且面本体仍是同一份实现（`socialSearch.js`
+  // 动态引 `contacts.js` 同族先例）。
+  const infoSec = el('div', 'fm-gs-section');
+  infoSec.appendChild(el('div', 'fm-gs-title', t('profile.groupTitle')));
+  const infoRow = el('div', 'fm-gs-rename');
+  const infoBtn = el('button', 'glass-control fm-gs-action fm-gs-profile', t('profile.open'));
+  infoBtn.addEventListener('click', () => {
+    void import('./profileFace.js')
+      .then((m) => m.openGroupProfile(conv))
+      .catch((err) => console.debug('[friendGroups] open group profile failed', err && err.message));
+  });
+  infoRow.appendChild(infoBtn);
+  infoSec.appendChild(infoRow);
+  root.appendChild(infoSec);
 
   async function saveTitle() {
     const next = titleInput.value.trim();

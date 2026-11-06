@@ -136,15 +136,27 @@ for (const scheme of ['dark', 'light']) {
   await page.locator('#mobile-dock .dock-key[data-dock="messages"]').click();
   await sleep(600);
   await shot(page, '2-messages', scheme);
-  // 2b. 消息页展开式搜索态
-  const fab = page.locator('.mobile-page[data-page="messages"] .mh-fab-search');
-  if (await fab.count()) { await fab.click(); await sleep(500); await shot(page, '2b-messages-search', scheme); await fab.click(); await sleep(300); }
+  // 2b. 消息页常驻搜索条有查询态（常驻条批 2026-11-02：无浮钮可点，直接键入）
+  const msgInput = page.locator('.mobile-page[data-page="messages"] .mh-search-input');
+  if (await msgInput.count()) {
+    await msgInput.fill('部署');
+    await sleep(900);
+    await shot(page, '2b-messages-search', scheme);
+    await page.locator('.mobile-page[data-page="messages"] .mh-search-clear').click();
+    await sleep(300);
+  }
   // 3. 联系人页
   await page.locator('#mobile-dock .dock-key[data-dock="contacts"]').click();
   await sleep(600);
   await shot(page, '3-contacts', scheme);
-  const cfab = page.locator('.mobile-page[data-page="contacts"] .mh-fab-search');
-  if (await cfab.count()) { await cfab.click(); await sleep(500); await shot(page, '3b-contacts-search', scheme); await cfab.click(); await sleep(300); }
+  const ctInput = page.locator('.mobile-page[data-page="contacts"] .mh-search-input');
+  if (await ctInput.count()) {
+    await ctInput.fill('xintongxue');
+    await sleep(1200);
+    await shot(page, '3b-contacts-search', scheme);
+    await page.locator('.mobile-page[data-page="contacts"] .mh-search-clear').click();
+    await sleep(300);
+  }
   // 4. canvas 页
   await page.locator('#mobile-dock .dock-key[data-dock="canvas"]').click();
   await sleep(800);

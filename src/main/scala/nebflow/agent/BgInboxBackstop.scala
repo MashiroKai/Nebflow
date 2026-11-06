@@ -30,8 +30,11 @@ object BgInboxBackstop:
               existing.exists(_.events.exists(_.correlationId.contains(event.correlationId.getOrElse(""))))
             if already then IO.unit
             else
-              resources.sessionStore.listSessions.flatMap { sessions =>
-                if !sessions.exists(_.id == sid) then IO.unit
+              // 会话在场判据 = [[SessionLiveness]]（活体 actor ∪ 索引/盘上会话记录）。
+              // 改前只读会话索引 ⇒ delegate/subagent 等后台收件方恒判「已删」，兜底
+              // 写箱永不发生（OWNER-GONE 误判修复批 2026-11-06 同因）。
+              SessionLiveness.alive(resources, sid).flatMap { alive =>
+                if !alive then IO.unit
                 else
                   val q = existing.getOrElse(CompactionQueueStore.PersistedQueues())
                   CompactionQueueStore.save(sid, q.copy(events = q.events :+ event))

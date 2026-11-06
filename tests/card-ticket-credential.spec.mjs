@@ -287,15 +287,32 @@ const browser = await chromium.launch();
       },
     }));
   });
-  let title = '';
+  // image-in-doc 批（2026-11-05）：失败面从「<img> 上一行 title」升级为**明确占位**
+  // （`.nf-md-img-fail`：标题 + 原因 + 文档里写的原路径）。被守护的不变量不变、且更
+  // 严：失败面**必须说出哪张图**、且**任何一处都不许夹带凭据**——这里对整棵
+  // viewer 子树判一次，而不是只看 title 这一行。
+  let face = null;
   for (let i = 0; i < 40; i++) {
     await sleep(200);
-    title = await page.evaluate(() => document.querySelector('.canvas-md-viewer img')?.title || '');
-    if (title) break;
+    face = await page.evaluate(() => {
+      const box = document.querySelector('.canvas-md-viewer [data-nf-md-img-fail]');
+      const viewer = document.querySelector('.canvas-md-viewer');
+      if (!box || !viewer) return null;
+      return {
+        text: (box.textContent || '').replace(/\s+/g, ' ').trim(),
+        path: ((box.querySelector('.nf-md-img-fail-path') || {}).textContent || '').trim(),
+        reason: ((box.querySelector('.nf-md-img-fail-reason') || {}).textContent || '').trim(),
+        status: box.getAttribute('data-nf-md-img-status') || '',
+        markup: viewer.innerHTML,
+      };
+    });
+    if (face) break;
   }
-  ok('C3 markdown image tooltip set on error', !!title, title);
-  ok('C3 tooltip carries NO credential', !CRED_RE.test(title), title);
-  ok('C3 tooltip still names the file', title.includes('pic.png'), title);
+  ok('C3 markdown image failure face rendered', !!face, face ? face.text.slice(0, 120) : '(none)');
+  ok('C3 failure face carries NO credential', !!face && !CRED_RE.test(face.markup),
+    face ? (String(face.markup).match(/(?:ticket|token)=[^&"'\s]{0,12}/) || [''])[0] : '');
+  ok('C3 failure face names the file', !!face && face.path.includes('pic.png'), face && face.path);
+  ok('C3 failure face states a reason', !!face && face.reason.length > 0, face && face.reason);
   ok('C3 no pageerror', pageErrors.length === 0, pageErrors.join(' | '));
   await ctx.close();
 }

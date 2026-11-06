@@ -4,7 +4,7 @@ import { isBgAgentId } from './utils.js';
 import { addNotification } from './notificationBanner.js';
 import { brand, getWebsiteLoginUrl } from './brand.js';
 import { armSessionKeepalive } from './sessionGate.js';
-// 渲染遮蔽门（perf 台账 #922 · 2026-10-26）：补页/大帧渲染在途时心跳宽限窗
+// 渲染遮蔽门（perf 台账 922 号 · 2026-10-26）：补页/大帧渲染在途时心跳宽限窗
 // 的 miss 走传输遮蔽同款旁路（不放松 HB_MAX_MISSES 与 sessionGate 重座阈值）。
 // renderGate 是零依赖叶子模块 —— 静态环零增量（check-circular）。
 import { renderGateBegin, renderGateEnd, renderGateBusy } from './chat/renderGate.js';
@@ -17,7 +17,23 @@ import { probeNearPath } from './nearpath.js';
 // 消息设备标注全自动批（2026-10-26 作者令）：来源识别自动判定——绑定读数
 // （花名册 self）在每连 onopen 刷新（与近路探测同拍；deviceIdentity.js 只依赖
 // deviceRoster/branding，无 ws.js 回边——零环）。
-import { refreshAutoBinding } from './deviceIdentity.js';
+// 接管误报根修批（2026-11-02）：同一模块的 deviceClientId 也是 ws 握手要带的
+// 实例身份（`?clientId=`）——同一条零环依赖，不新增边。
+import { refreshAutoBinding, deviceClientId } from './deviceIdentity.js';
+// 断连风暴修复批（2026-11-04 作者报障「一直弹 连接断开 正在重连」）：退避的
+// 「何时归零」抽成纯件——flap（握手成功但几秒必死）不得再清零退避。纯逻辑、
+// 零依赖叶子（零环），机制级判据见 tests/ws-backoff.test.mjs。
+import {
+  backoffDelayMs,
+  attemptsAfterClose,
+  BASE_RECONNECT_DELAY,
+  MAX_RECONNECT_DELAY,
+} from './wsBackoff.js';
+// 弹窗回跳批（2026-11-05 作者报障「老是有弹窗然后重新进控制台」）：整页重座
+// 导航目标解析——卡窗契约（`card-window=1&path&title`）在重座全程守恒，独立
+// 卡窗不被重座升级成整控制台。纯逻辑、零依赖叶子（零环），判据见
+// tests/reseat-target.test.mjs。
+import { readReseatContext, resolveReseatTarget } from './reseatTarget.js';
 
 // Long-lived token cookie name follows the brand namespace. This is one of
 // the legacy credential copies the B' hook retires (purgeLongLivedCopies
@@ -241,6 +257,13 @@ const GLOBAL_MSG_TYPES = new Set([
   // 两者都只是「既有帧 + 补消费」，零新消息类型。
   'restartStatus', 'restartResult',
   'remoteUpdateResult', 'peerListChanged',
+  // 全设备统一更新（fleet 批 2026-11-01）：状态卡的进度快照帧
+  // {type:'fleetUpdate', minRemoteVersion, protocol, currentVersion, job, inflight}
+  // ——wsHub.broadcast 到**所有**连接、无 sessionId。🔴 必须入 GLOBAL：否则每
+  // 一次阶段推进都被 :485-494 当会话内事件 ⇒ setActiveView(primary)，把用户正在
+  // 看的视图抢走。`fleetUpdateResult` = 四个命令（start/cancel/retry/snapshot）的
+  // 直回帧（无 sessionId，同律）。
+  'fleetUpdate', 'fleetUpdateResult',
   'activeBgTasks', 'activeAgents',
   // P0 面板投影批（设计稿 20261030 §3.2/§3.4）：bgHealth 徽标帧
   // {type:'bgHealth', unread, suspect, escalated}——全表健康计数对账广播
@@ -248,7 +271,7 @@ const GLOBAL_MSG_TYPES = new Set([
   // reconciler 每拍驱动），无 sessionId ⇒ 必须 GLOBAL：否则被入口过滤器当
   // 会话内事件 ⇒ setActiveView(primary) 抢走当前视图（projectCreated 同律）。
   'bgHealth',
-  // 台账 #929（后台子智能体跨设备透明）：远端设备投影行帧 {type:'remoteAgents',
+  // 台账 929 号（后台子智能体跨设备透明）：远端设备投影行帧 {type:'remoteAgents',
   // agents:[{sessionId,title,source,status,startedAt,endedAt,retryCount,deviceId,
   // deviceName,deviceOnline}]}——无 sessionId 的全应用广播（wsHub.broadcast +
   // 快照回复本连接直发两路）。🔴 必须入 GLOBAL：无 sessionId 的非 GLOBAL 帧会被
@@ -265,14 +288,17 @@ const GLOBAL_MSG_TYPES = new Set([
   //   projectCreated  {type,project,row{name,workspace,agentFile,description,createdAt},mounted}
   //   projectArchived {type,project,archivedAt}
   //   projectUnmounted {type,project,unmountedAt}   （N2 project-tool 批 2026-10-06：
-  //     Project 工具 action="unmount" 成功腿；载荷镜像 archived 三键形状）
-  //   projectDescriptionUpdated {type,project,description,updatedAt}（台账 #920 2026-10-27：
+  //     Project 工具/控制台 unmount 成功腿；载荷镜像 archived 三键形状）
+  //   projectRemounted {type,project,row{...},remountedAt}（unmount-console 面板批
+  //     2026-11-02：remount 成功腿——row 与 projectCreated 同构 + remountedAt；
+  //     前端据它定点恢复卡片 + 摘「已卸载」灰态行）
+  //   projectDescriptionUpdated {type,project,description,updatedAt}（台账 920 号 2026-10-27：
   //     REST POST /projects/<name>/description 成功腿；面板侧描述写穿的实时回声）
   // 同族：无 sessionId 的全应用广播（后端 emit 点 = Project 创建腿 / 归档 REST 腿 /
-  // unmount 工具腿 / 描述写穿 REST 腿，经同一 wsHub.broadcast 面）。🔴 必须入 GLOBAL
+  // unmount 单点 / remount 单点 / 描述写穿 REST 腿，经同一 wsHub.broadcast 面）。🔴 必须入 GLOBAL
   // ——否则 :485-494 会把无 sessionId 的非 GLOBAL 帧当会话内事件 ⇒ setActiveView(primary)，
   // 把用户正在看的会话/面板视图抢走。
-  'projectCreated', 'projectArchived', 'projectUnmounted', 'projectDescriptionUpdated',
+  'projectCreated', 'projectArchived', 'projectUnmounted', 'projectRemounted', 'projectDescriptionUpdated',
   // 应用内工作区浏览器（workspace-picker Route C 兜底）响应帧：无 sessionId 的
   // 弹窗私有请求-响应。必须 GLOBAL——无 sessionId 时 GLOBAL 保视图不换（:457 语义），
   // TERMINAL 会把 activeView 换成 primary。
@@ -313,6 +339,16 @@ const GLOBAL_MSG_TYPES = new Set([
   // 把用户正在看的视图抢走。消费点 = main.js（applyPendingAskSnapshot，零
   // view 依赖）。
   'pendingAsksSnapshot',
+  // schedule-created-card 批（2026-11-05）：定时任务/待办面四帧进 GLOBAL。
+  // 为什么必须：这些帧的 sessionId = **条目所属会话**，而待办收件箱与消息内嵌
+  // 卡片的回执面是**跨会话**的（卡片可能是历史会话里的条目，收件箱聚合 scope:all
+  // 天然跨会话）。不入 GLOBAL ⇒ 下方入口过滤器把「sessionId ≠ 当前会话」的帧整帧
+  // 丢弃，于是卡片/收件箱永远等不到 scheduledTaskUpdated/Deleted 回执，只能超时
+  // ——本批实测（隔离实例 + 真浏览器）：卡上保存后引擎已写库，卡片却停在「提交中」。
+  // 入 GLOBAL 只改**路由**（不切视图 + 不被会话过滤丢弃），消费面 = scheduled-task.js
+  // 与 js/scheduleApi.js，两者都是按 id 幂等收敛，跨会话多收一帧无副作用。
+  'scheduledTaskCreated', 'scheduledTaskUpdated', 'scheduledTaskDeleted',
+  'scheduledTaskCompleted', 'scheduledTaskList',
   // 控制台单实例批（2026-10-27）：接管独占两帧——均无 sessionId 的**本连接**直回/
   // 定向帧。🔴 必须入 GLOBAL（remoteAgents 同律）：否则会被下方视图路由当会话内
   // 事件 ⇒ setActiveView(primary) 抢走正在看的视图。
@@ -354,6 +390,16 @@ const TERMINAL_MSG_TYPES = new Set([
   // 往往不是用户正在看的会话）——不入门面过滤集就会被入口过滤器静默丢弃，
   // 处理器饥饿。taskStuck 同律先例。
   'delegateWaiting', // delegate ready-to-merge 停靠态（平台修复批 fix 4；对话层活性批 2026-10-22 补路由）
+  // 错误冻结批（2026-11-01）：delegate 错误冻结三帧——sessionId = 被冻结的子会话
+  // 自身（几乎总不是用户正在看的会话），不入门面过滤集就会被入口过滤器静默丢弃，
+  // 面板的「已冻结」徽标/原因 tooltip 与唤醒回执永远不出现（delegateWaiting 同律）。
+  //   delegateFrozen        冻结发生（徽标上线 + 详情卡原因/唤醒入口）
+  //   delegateFrozenDormant 长期无人唤醒提示（dormantSweep 的 24h 提醒）
+  //   delegateWakeResult    面板「唤醒」动作回执
+  //   delegateWoken         状态变更帧（冻结状态两套真相批 2026-11-05）：任何腿
+  //                         （面板/Mail/自动恢复/复活）清掉冻结后必发——面板据此
+  //                         即时收起「需唤醒」；漏进过滤集 = Mail 唤醒后不刷新（原报障）。
+  'delegateFrozen', 'delegateFrozenDormant', 'delegateWakeResult', 'delegateWoken',
   'heldReceipts', // held-receipt 投递可靠性批（2026-10-21）：父会话积压/未读计数
   // #753 速率闸熔断告警帧：{sessionId, rootSessionId, count, windowSec,
   // cooldownSec}——sessionId = 被熔断的（往往非活跃）会话。不入门面过滤集会被
@@ -377,7 +423,7 @@ const STREAM_MSG_TYPES = new Set([
   // teamTaskListUpdate 已移出（2026-09-05 10:54 裁定：旧任务区退役）——
   // 无 sessionId 帧直达分发但无订阅者 = no-op（后端照发，零触碰）。
   // Legacy flow-canvas events (flowMail/flowStarted/flowNodesAdded/
-  // flowProgress/flowCompleted/teamList/treeBranch*) removed 2026-09-05
+  // flowProgress/flowCompleted/teamList/tree-branch*) removed 2026-09-05
   // 旧 UI 退役 — the backend may still broadcast them; unknown types with no
   // registered handler are dispatched to an empty handler list (no-op), and
   // off-session frames are dropped by the entry filter above.
@@ -427,14 +473,18 @@ export function onDisconnect(callback) {
 // ---------- Reconnection state ----------
 // No hard limit on attempts - this is a desktop app; the connection should
 // always recover from sleep / wake, network changes, or server restarts.
+//
+// 断连风暴修复批（2026-11-04）：退避**不再**因握手成功而清零（旧口径见
+// wsBackoff.js 头注）——清零判据改为「这条连接活够了 STABLE_CONN_MS」。
+// flap 形态（开得起来、2–9s 必死）因此逐拍升档直到 30s 封顶，重连频率随着
+// 故障持续而下降，而不是恒定 2–3s 一直弹横幅。
 let reconnectAttempts = 0;
 let reconnectTimer = null;
-const BASE_RECONNECT_DELAY = 2000;
-const MAX_RECONNECT_DELAY = 30000;
+/** 本次连接握手成功时刻（0 = 尚未成功过）；与 reconnectAttempts 配对使用。 */
+let connOpenedAt = 0;
 
 function reconnectDelay() {
-  const delay = Math.min(BASE_RECONNECT_DELAY * Math.pow(2, reconnectAttempts), MAX_RECONNECT_DELAY);
-  return delay * (0.8 + Math.random() * 0.4);
+  return backoffDelayMs(reconnectAttempts);
 }
 
 function scheduleReconnect() {
@@ -450,7 +500,9 @@ function scheduleReconnect() {
 /** Force immediate reconnect, skipping exponential backoff. */
 export function forceReconnect() {
   if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  // 显式动作（唤醒探针判死／用户点重连）⇒ 归零是人给的意图，不走 flap 判据。
   reconnectAttempts = 0;
+  connOpenedAt = 0;
   // Close the old connection cleanly before opening a new one - prevents orphan sockets.
   if (state.ws) {
     try { state.ws.onclose = null; state.ws.close(); } catch (_) {}
@@ -635,10 +687,28 @@ function showTicketEntry() {
 // have no relay (login-config absent) and keep the existing fall-through to
 // the login gate. Once-per-page-life guard (sessionStorage): a persistently
 // failing host must not turn this into a reload loop.
+/**
+ * 整页重座目标（弹窗回跳批 2026-11-05）：三条重进腿（自愈重座 / 环回近路 /
+ * LAN 近路）共用的单一出口。卡窗页（独立窗 popup）⇒ 补回卡窗契约；主窗 ⇒
+ * 逐字返回原 URL（零回归面）。任何异常都退回原 URL（绝不让诊断逻辑拦重座）。
+ * @param {string} target consoleUrl / 本机票 URL
+ * @returns {string}
+ */
+function reseatTarget(target) {
+  try {
+    return resolveReseatTarget(target, readReseatContext(location.search), location.href);
+  } catch (_) {
+    return target;
+  }
+}
+
 async function remintHostSessionAndReload() {
-  // #522 键盘点收尾：GUARD 原 `nebflow_ws_remint_at` 裸字面随品牌迁移失效——
-  // 与 #500 同族迁 `key()`（branding.js 单一真源）。sessionStorage 30s 防
+  // 台账 522 键盘点收尾：GUARD 原 `nebflow_ws_remint_at` 裸字面随品牌迁移失效——
+  // 与台账 500 同族迁 `key()`（branding.js 单一真源）。sessionStorage 30s 防
   // 重载闸，语义不变；旧拼写值弃置无害（最坏多一次 remint 尝试）。
+  // 🔴 注：编号不带井号前缀——check-design-tokens 的 JS 行注释不清扫会把
+  // 「井号 + 3 位数字」形态的台账号误计成「颜色字面量」（恰为 3 位 hex），
+  // 曾致基线 10→12 假红（panel-language 批 2026-11-06 顺带面，仅注释改写、零语义）。
   const GUARD = key('ws_remint_at');
   let last = 0;
   try { last = Number(sessionStorage.getItem(GUARD)) || 0; } catch (_) {}
@@ -672,7 +742,8 @@ async function remintHostSessionAndReload() {
     if (!mint.ok) return false;
     const consoleUrl = (await mint.json())?.consoleUrl;
     if (typeof consoleUrl !== 'string' || consoleUrl === '') return false;
-    window.location.href = consoleUrl;
+    // 弹窗回跳批：卡窗页重座后仍是卡窗（见 reseatTarget 注）。
+    window.location.href = reseatTarget(consoleUrl);
     return true;
   } catch (_) {
     return false;
@@ -730,12 +801,114 @@ export function attemptSilentReseat() {
 // `localhost`——Safari 对二者的 PNA/混合内容处理不一致是近路 miss 的头号嫌疑
 // （设计 §6.1），首腿失败自动换 host 重试，预算仍各 4s；命中判据不变（deviceId
 // 等值），双败才记 miss 停留现状。
+// ── 近路批（2026-11-04）根因修复：探针形态 + 闸序 ─────────────────────────────
+// 实测台逐闸钉死（reports-evidence/20261104_nearpath-fire/red/FINDINGS.md）：
+//   · Chromium 四闸全通（真跳 723/741ms）⇒ **本批不许回归**；
+//   · WebKit（Safari 引擎）**死在闸③**：https 页面对 `http://127.0.0.1` 的跨源
+//     fetch 是 active mixed content，网络层之前就被拦（`[blocked] … insecure
+//     content …`），连 HTTP 状态都拿不到 ⇒ 旧代码只能记 `probe_unreachable`，
+//     与「本机没有网关」**不可区分**——这正是旧设计最要命的地方；
+//   · 闸链 window 内 presence 行数 = 0（assert-zero-presence PASS）⇒ 与 P2P 无关。
+//
+// 修法 = 「正证才通过」+「可并行的并起来」，**判据一个字没放宽**：
+//
+//   A. 闸③ 换正证取得方式（两条腿，顺序固定：先现状腿，抛错才换腿）
+//      腿 A = 原 CORS fetch（Chromium 今天就靠它命中，行为逐字保留：
+//             200 ∧ `deviceId` 与闸① 全等）；它**抛错**（策略拦截 / 无 CORS 头 /
+//             连接被拒——三者本就不可区分）才走腿 B。
+//      腿 B = **身份像素**（no-cors `<img>`，WebKit 不拦的被动子资源形态）：
+//             请求 `http://<host>:<port>/api/health/loopback-pixel.png?expect=<闸①
+//             的 deviceId>`；网关新臂（HealthRoutes.LoopbackPixel）只在「请求从
+//             **环回 socket** 进来 ∧ expect == 本机 deviceId」时回一张 5×3 的哨兵
+//             PNG，页面读 `img.naturalWidth/Height`（跨源可读，不受 canvas taint
+//             限制）比对哨兵尺寸。
+//      为什么这张图就是「同机证明」：127.0.0.1/localhost 的 TCP 连接**不可能离开
+//      本机**，能在这条连接上答出「我持有你在闸① 拿到的那个 deviceId」的进程，
+//      只可能是本机那个引擎 ⇒ **环回请求本身就是证明**（候选 e），`<img>` 是
+//      WebKit 里唯一还能发出去的形态（候选 b）。
+//      为什么不用导航型判据（候选 a/c 变体）：导航到无人监听的环回端口 = 浏览器
+//      错误页，作者明令禁止；本实现里导航只发生在「身份已正证」之后，错误页的
+//      唯一来源被结构性消掉。为什么不用本机 https 自签（候选 c）：证书信任是用户
+//      手势级一次性动作，未信任态的证书警告页本身就是错误页，且与「无网关」同样
+//      不可区分。为什么不用同源反代（候选 d）：门户面在 link-server（独立仓
+//      Rust），本仓改不到那一层，本批零行改动。
+//      误判面（写死）：
+//        ①「被策略拦」vs「本机无网关」页面侧不可区分 —— 无所谓：两者都必须停留
+//          隧道腿，方向安全（本实现**永不误跳**，只会误停）；
+//        ②同机别的进程占住同一端口：fetch 腿要它答出 deviceId、像素腿要它答出
+//          expect 匹配的哨兵图 —— 都要求它先知道本机 deviceId（有本地文件读权限
+//          = 已失守，与本批前同一威胁面，未扩大）；
+//        ③像素 200 但尺寸不符（占位进程回图）⇒ 记 `pixel_mismatch` 停留，绝不跳；
+//        ④跨设备场景在闸① deviceId 与闸③ 全等处天然不成立（见下「同机判据」）。
+//
+//   B. 闸序：闸① ∥ 闸②（都是同源隧道腿请求，互不依赖；串行 = 白付一程 RTT）；
+//      闸④ 铸票**只在闸③ 正证之后**发 —— 远端设备/身份不符场景**绝不铸票**
+//      （「不发任何票」是硬判据），所以铸票与探测不并行：再省 ~1 程的代价是回落
+//      路径上多一张废票，判据优先。分段计时进 console + sessionStorage
+//      （`ws_nearpath_timings`），台子从 consoleLines 直接收数，不进任何载荷。
+//
+// 同机判据清单（回执③，逐条写死，顺序 = 短路顺序；任一不成立 ⇒ miss + 停留隧道腿）：
+//   ① 隧道腿页面判别：`/api/portal/status` 200 ∧ `boundHost.deviceId` 非空——只有
+//      经 relay 加载的控制台才有此面（直连/LAN 腿 404 ⇒ 不进链）。
+//   ② 引擎自报端口锚：`/api/health/loopback-info`（withAuth）给 1..65535 的 port。
+//   ③ 环回侧身份全等：腿 A `http://<host>:<port>/api/health` 的 deviceId == ①的
+//      deviceId；腿 B 身份像素 `expect=①的 deviceId` 由网关自比 ∧ 哨兵尺寸全等。
+//      环回地址不可能跨机 ⇒ ③ 成立即「同一台机器上的同一个引擎」。
+//   ④ 铸票面向同一 device：`POST /api/portal/console-ticket` body.deviceId = ① 的
+//      deviceId，2xx ∧ consoleUrl 非空 ∧ 带 `?ticket=`。
+//   ⑤ 落地页自证：导航目标 = ③ 里答出身份的那个 host:port（同一监听面）；票在环
+//      回腿兑换（引擎侧 origin=relay-mint + one-shot，见 ConsoleTicketRoutes），落
+//      错 device 兑换必败 ⇒ 用户看到的是页面自身的失败面，不是本实现的跳转错误页。
+//   ⑥ 零 presence：命中路径不咨询 presence/P2P、不调 `/api/neblink/**`（派发侧硬
+//      判据；实测台断言闸链窗口 presence 行数 = 0）。
+//
+// 失效回落（全部 ⇒ noteLoopbackMiss + return false，**不可能出现浏览器错误页**）：
+//   被策略拦 / 超时 / 读数缺失 / deviceId 不等 / 像素尺寸不符 / 铸票非 2xx / 任何
+//   意外异常。导航只发生在 ③∧④ 全绿的末尾一行。
+//
+// 可观测（回执④）：hit / miss 各打一次 beacon 到 `/api/health/nearpath-event`
+// （hit 在导航前用 sendBeacon —— 导航会掐掉普通 fetch）；reason 用稳定词表；
+// sessionStorage `stand_ws_nearpath_loopback_miss` 照旧写（形状仍是 `{at, reason}`，
+// 旧取证工具与历史证据链不断）；beacon 端点不在（老引擎 404）/ sendBeacon 返回
+// false ⇒ 静默跳过，**绝不影响跳转判定**。
 let loopbackSwitchAttempted = false;
 
 const LOOPBACK_PROBE_HOSTS = ['127.0.0.1', 'localhost'];
 
-/** 近路 miss 原因曝光（sessionStorage 诊断键 + console 一行；命中不写）。 */
-function noteLoopbackMiss(reason) {
+/** 近路事件上报面（近路批 2026-11-04；契约 = 引擎侧 NearPathStats）。 */
+const NEARPATH_EVENT_PATH = '/api/health/nearpath-event';
+/** 身份像素（闸③ 腿 B）：路径与哨兵尺寸与 HealthRoutes.LoopbackPixel 双写，改动须成对。 */
+const NEARPATH_PIXEL_PATH = '/api/health/loopback-pixel.png';
+const NEARPATH_PIXEL_W = 5;
+const NEARPATH_PIXEL_H = 3;
+const NEARPATH_PIXEL_TIMEOUT_MS = 4000;
+
+/**
+ * 近路事件 beacon（观测面；任何失败静默 —— 绝不影响跳转判定）。
+ * reason 词表（稳定 token，引擎侧归一化 `^[a-z0-9_.:-]{1,64}$`）：
+ *   hit  : `fetch`（腿 A 命中）/ `pixel`（腿 B 命中）
+ *   miss : `portal_status_http_<n>` `portal_status_unreachable` `no_bound_host`
+ *          `loopback_info_http_<n>` `loopback_info_unreachable` `no_loopback_port`
+ *          `probe_unreachable` `probe_http_<n>` `pixel_mismatch` `device_mismatch`
+ *          `mint_http_<n>` `mint_unreachable` `mint_no_url` `mint_no_ticket`
+ *          `nearpath_error`
+ */
+function nearPathEvent(event, reason, port) {
+  try {
+    const payload = { event, reason };
+    if (Number.isInteger(port) && port > 0) payload.port = port;
+    if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+      navigator.sendBeacon(NEARPATH_EVENT_PATH, JSON.stringify(payload));
+    }
+  } catch (_) { /* 观测面永不影响判定 */ }
+}
+
+/**
+ * 近路 miss 原因曝光（sessionStorage 诊断键 + console 一行 + miss beacon；命中不写）。
+ * `reason` 同时是 sessionStorage 里的原文（历史证据链格式，可带 host 明细）；
+ * `beaconReason` 是干净 token（缺省同 reason）。
+ */
+function noteLoopbackMiss(reason, beaconReason) {
   try {
     sessionStorage.setItem(
       key('ws_nearpath_loopback_miss'),
@@ -743,7 +916,69 @@ function noteLoopbackMiss(reason) {
     );
   } catch (_) { /* 内存态即可 */ }
   console.info(`[nearpath] loopback probe miss: ${reason}`);
+  nearPathEvent('miss', beaconReason || reason);
 }
+
+/** 分段计时读数（console 一行 + sessionStorage；台子从 consoleLines 直接收数）。 */
+function noteNearPathTimings(seg) {
+  console.info(
+    `[nearpath] timings g1=${seg.g1Ms}ms g2=${seg.g2Ms}ms probe=${seg.probeMs}ms ` +
+      `mint=${seg.mintMs}ms total=${seg.totalMs}ms leg=${seg.leg || '-'}`
+  );
+  try { sessionStorage.setItem(key('ws_nearpath_timings'), JSON.stringify(seg)); } catch (_) {}
+}
+
+/**
+ * 闸③ 腿 B：身份像素探针（`<img>`，no-cors 被动子资源）。
+ * 判据：onload ∧ naturalWidth === 5 ∧ naturalHeight === 3（哨兵尺寸）⇒ 'ok'。
+ * onload 但尺寸不符 ⇒ 'mismatch'（有进程答图，但不是本机网关的哨兵；绝不跳）。
+ * onerror / 超时 ⇒ 'unreachable'（被策略拦 or 无人监听 —— 不可区分，两者都停留）。
+ * 不怕「mixed image 被升级成 https」（Chromium 的 auto-upgrade）：127.0.0.1 是
+ * potentially trustworthy origin，按规范不构成 mixed content；即便某版本升级，
+ * 结果也只是 onerror ⇒ 'unreachable' ⇒ 停留 —— 本腿只在 fetch 已抛错时才走，
+ * 与改动前同结论，不产生新失败面。
+ * @param {string} host
+ * @param {number} port
+ * @param {string} expectId 闸① 的 boundHost.deviceId（网关侧自比）
+ * @returns {Promise<'ok'|'mismatch'|'unreachable'>}
+ */
+function probeLoopbackPixel(host, port, expectId) {
+  return new Promise((resolve) => {
+    try {
+      const img = new Image();
+      let settled = false;
+      const settle = (verdict) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        img.onload = null;
+        img.onerror = null;
+        try { img.src = ''; } catch (_) { /* 卸载不关心 */ }
+        resolve(verdict);
+      };
+      const timer = setTimeout(() => settle('unreachable'), NEARPATH_PIXEL_TIMEOUT_MS);
+      img.onload = () => settle(
+        img.naturalWidth === NEARPATH_PIXEL_W && img.naturalHeight === NEARPATH_PIXEL_H ? 'ok' : 'mismatch'
+      );
+      img.onerror = () => settle('unreachable');
+      img.referrerPolicy = 'no-referrer';
+      img.src = `http://${host}:${port}${NEARPATH_PIXEL_PATH}` +
+        `?expect=${encodeURIComponent(expectId)}&v=${Date.now()}`;
+    } catch (_) {
+      resolve('unreachable');
+    }
+  });
+}
+
+/** 闸① 回执（`/api/portal/status`）：判别式 `ok` 收敛成功/失败两支——
+ *  成功带 deviceId、失败带 reason。对侧字段声明为**可选**而非缺席，是因为本仓
+ *  checkJs 跑在 `strict:false`（无 strictNullChecks）下：该配置里 `if (!r.ok)` 的
+ *  假分支**不做判别式收敛**（falsy 收敛依赖 strictNullChecks），写成两支互斥的
+ *  类型别名会让「失败支读 reason」这句合法代码报 TS2339。运行时形状不变：
+ *  每个回执只带自己那侧的字段，缺省键仍是 undefined。 */
+/** @typedef {{ok:true, deviceId:string, reason?:string} | {ok:false, reason:string, deviceId?:string}} Gate1Result */
+/** 闸② 回执（`/api/health/loopback-info`）：同款判别式，成功带 port。 */
+/** @typedef {{ok:true, port:number, reason?:string} | {ok:false, reason:string, port?:number}} Gate2Result */
 
 async function attemptLoopbackNearPath() {
   if (loopbackSwitchAttempted) return false;
@@ -753,59 +988,112 @@ async function attemptLoopbackNearPath() {
   try { last = Number(sessionStorage.getItem(GUARD)) || 0; } catch (_) {}
   if (Date.now() - last < 30000) return false;
   try { sessionStorage.setItem(GUARD, String(Date.now())); } catch (_) {}
+
+  const nowMs = () => ((typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now());
+  const t0 = nowMs();
+  const seg = { g1Ms: -1, g2Ms: -1, probeMs: -1, mintMs: -1, totalMs: -1, leg: '' };
+  const stamp = () => Math.round(nowMs() - t0);
+  const fail = (storageReason, beaconReason) => {
+    seg.totalMs = stamp();
+    noteLoopbackMiss(storageReason, beaconReason);
+    noteNearPathTimings(seg);
+    return false;
+  };
+
   try {
-    const status = await fetch('/api/portal/status', {
+    // ── 闸① ∥ 闸②（同源隧道腿，互不依赖；串行 = 白付一程 RTT）──────────────
+    const gate1P = fetch('/api/portal/status', {
       credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(5000),
-    });
-    if (!status.ok) { noteLoopbackMiss(`portal_status_http_${status.status}`); return false; }
-    const deviceId = (await status.json())?.boundHost?.deviceId;
-    if (typeof deviceId !== 'string' || deviceId === '') { noteLoopbackMiss('no_bound_host'); return false; }
-    const info = await fetch('/api/health/loopback-info', {
+    }).then(async (r) => {
+      if (!r.ok) return { ok: false, reason: `portal_status_http_${r.status}` };
+      const id = (await r.json().catch(() => null))?.boundHost?.deviceId;
+      if (typeof id !== 'string' || id === '') return { ok: false, reason: 'no_bound_host' };
+      return { ok: true, deviceId: id };
+    }).catch(() => ({ ok: false, reason: 'portal_status_unreachable' }));
+
+    const gate2P = fetch('/api/health/loopback-info', {
       credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(5000),
-    });
-    if (!info.ok) { noteLoopbackMiss(`loopback_info_http_${info.status}`); return false; }
-    const port = (await info.json())?.port;
-    if (!Number.isInteger(port) || port <= 0 || port > 65535) { noteLoopbackMiss('no_loopback_port'); return false; }
-    // 双 host 探测（小刀①）：127.0.0.1 先行（现状腿），失败换 localhost——首个
-    // 应答 ok 且 deviceId 相等的 host 赢；双败记 miss（PNA 拒答 = fetch throw，
-    // HTTP 非 200 = 别机网关占位，两类原因分开记）。
-    let probe = null;
+    }).then(async (r) => {
+      if (!r.ok) return { ok: false, reason: `loopback_info_http_${r.status}` };
+      const p = (await r.json().catch(() => null))?.port;
+      if (!Number.isInteger(p) || p <= 0 || p > 65535) return { ok: false, reason: 'no_loopback_port' };
+      return { ok: true, port: p };
+    }).catch(() => ({ ok: false, reason: 'loopback_info_unreachable' }));
+
+    // 回执收敛点：两条腿的 `{ok, ...}` 契约在 Gate1Result / Gate2Result 单点声明
+    // （`ok` 分支对象字面量在 .then 里会被放宽成 boolean，故在此显式收敛到 typedef）。
+    const [g1, g2] = /** @type {[Gate1Result, Gate2Result]} */ (await Promise.all([gate1P, gate2P]));
+    seg.g1Ms = stamp();
+    seg.g2Ms = stamp();
+    // 原因归属按闸序（① 先于 ②）：两闸同拍失败时给上游闸的原因，词表与历史证据一致。
+    if (!g1.ok) return fail(g1.reason);
+    if (!g2.ok) return fail(g2.reason);
+    const deviceId = g1.deviceId;
+    const port = g2.port;
+
+    // ── 闸③：环回身份（正证才通过；腿 A 现状腿 → 抛错才换腿 B）──────────────
     let probeHost = '';
-    let lastProbeStatus = 0;
+    let probeLeg = '';        // 'fetch' | 'pixel'
+    let reachedStatus = 0;    // 任一 host 拿到的 HTTP 状态（⇒ 不是被策略拦）
+    let pixelMismatch = false;
     for (const host of LOOPBACK_PROBE_HOSTS) {
+      let blocked = false;
       try {
         const candidate = await fetch(`http://${host}:${port}/api/health`, {
           signal: AbortSignal.timeout(4000), cache: 'no-store',
         });
-        probeHost = host;
-        if (candidate.ok) { probe = candidate; break; }
-        lastProbeStatus = candidate.status;
-      } catch (_) { /* 换下一 host */ }
+        if (candidate.ok) {
+          const probeId = (await candidate.json().catch(() => null))?.deviceId;
+          if (probeId !== deviceId) {
+            seg.probeMs = stamp();
+            return fail(`device_mismatch (${host})`, 'device_mismatch');
+          }
+          probeHost = host;
+          probeLeg = 'fetch';
+          break;
+        }
+        reachedStatus = candidate.status;   // 到 HTTP 层 ⇒ 没被策略拦，无需像素腿
+      } catch (_) {
+        blocked = true;                     // 策略拦截 / 连接被拒 / 主机不可达 —— 不可区分
+      }
+      if (blocked) {
+        const px = await probeLoopbackPixel(host, port, deviceId);
+        if (px === 'ok') { probeHost = host; probeLeg = 'pixel'; break; }
+        if (px === 'mismatch') { pixelMismatch = true; break; }
+      }
     }
-    if (!probe) {
-      noteLoopbackMiss(lastProbeStatus ? `probe_http_${lastProbeStatus}` : 'probe_unreachable');
-      return false; // 本机无网关 / CORS(PNA) 拒答 —— 停留 relay 现状
+    seg.probeMs = stamp();
+    if (!probeHost) {
+      if (pixelMismatch) return fail('pixel_mismatch');
+      return fail(reachedStatus ? `probe_http_${reachedStatus}` : 'probe_unreachable');
     }
-    const probeId = (await probe.json())?.deviceId;
-    if (probeId !== deviceId) { noteLoopbackMiss(`device_mismatch (${probeHost})`); return false; }
+
+    // ── 闸④：铸票（只在 ③ 正证之后 —— 远端/身份不符场景绝不铸票）────────────
     const mint = await fetch('/api/portal/console-ticket', {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ deviceId }),
+      body: JSON.stringify({ deviceId }),   // 票永远只面向闸① 的绑定 device
       signal: AbortSignal.timeout(8000),
-    });
-    if (!mint.ok) { noteLoopbackMiss(`mint_http_${mint.status}`); return false; }
-    const consoleUrl = (await mint.json())?.consoleUrl;
-    if (typeof consoleUrl !== 'string' || consoleUrl === '') { noteLoopbackMiss('mint_no_url'); return false; }
+    }).catch(() => null);
+    seg.mintMs = stamp();
+    if (!mint) return fail('mint_unreachable');
+    if (!mint.ok) return fail(`mint_http_${mint.status}`);
+    const consoleUrl = (await mint.json().catch(() => null))?.consoleUrl;
+    if (typeof consoleUrl !== 'string' || consoleUrl === '') return fail('mint_no_url');
     const ticket = new URL(consoleUrl, location.href).searchParams.get('ticket');
-    if (!ticket) { noteLoopbackMiss('mint_no_ticket'); return false; }
-    // 命中 host 即跳转 host（双 host 腿：赢在 localhost 就跳 localhost——跳转目标
-    // 与探测命中面一致，绝不回退硬编码 127.0.0.1 制造死链）。
-    window.location.href = `http://${probeHost}:${port}/?ticket=${encodeURIComponent(ticket)}`;
+    if (!ticket) return fail('mint_no_ticket');
+
+    // 命中：beacon 必须在导航前用 sendBeacon（普通 fetch 会被导航掐掉）；
+    // 跳转 host = ③ 里答出身份的那个 host（双 host 腿赢在谁就跳谁，绝不回退硬编码）。
+    seg.leg = probeLeg;
+    seg.totalMs = stamp();
+    nearPathEvent('hit', probeLeg === 'pixel' ? 'pixel' : 'fetch', port);
+    noteNearPathTimings(seg);
+    window.location.href = reseatTarget(`http://${probeHost}:${port}/?ticket=${encodeURIComponent(ticket)}`);
     return true;
   } catch (_) {
-    return false;
+    return fail('nearpath_error');
   }
 }
 
@@ -850,7 +1138,7 @@ async function attemptLanNearPathJump() {
     if (typeof consoleUrl !== 'string' || consoleUrl === '') return false;
     const ticket = new URL(consoleUrl, location.href).searchParams.get('ticket');
     if (!ticket) return false;
-    window.location.href = `${near.base}/?ticket=${encodeURIComponent(ticket)}`;
+    window.location.href = reseatTarget(`${near.base}/?ticket=${encodeURIComponent(ticket)}`);
     return true;
   } catch (_) {
     return false;
@@ -922,7 +1210,7 @@ export function hbTransferStats() {
 }
 
 /**
- * 心跳诊断读数（perf 台账 #922 · spec 用）：连续 miss 计数、遮蔽窗计数、
+ * 心跳诊断读数（perf 台账 922 号 · spec 用）：连续 miss 计数、遮蔽窗计数、
  * 实测 RTT 高点、渲染门 busy 与在途传输数。只读，零副作用。
  */
 export function hbStats() {
@@ -936,7 +1224,7 @@ export function hbStats() {
 }
 
 /**
- * spec 缝（perf 台账 #922；_keepaliveTestHooks 先例）：受控触发一次真实
+ * spec 缝（perf 台账 922 号；_keepaliveTestHooks 先例）：受控触发一次真实
  * hbProbe（ping + 宽限定时器武装），让遮蔽腿无需等 30s 自然拍即可验证。
  */
 export function _hbTestHooks() {
@@ -944,7 +1232,7 @@ export function _hbTestHooks() {
 }
 
 /**
- * 大帧渲染遮蔽阈值（perf 台账 #922）：入站帧超过该字符数（≈256KB JSON），
+ * 大帧渲染遮蔽阈值（perf 台账 922 号）：入站帧超过该字符数（≈256KB JSON），
  * parse + 派发整段（含 historyPage 补页处理器的同步前段）落进渲染遮蔽窗 ——
  * 挂载腿（main.js 补页异步挂载）随后接力持门，直到挂载完成。
  */
@@ -970,7 +1258,7 @@ function hbProbe() {
       console.debug(`[ws] heartbeat miss sheltered: file transfer in flight (${shelteredMisses}/${HB_TRANSFER_SHELTER_MAX})`);
       return;
     }
-    // 渲染遮蔽（perf 台账 #922 · 2026-10-26）：补页挂载/大帧派发占住主线程的
+    // 渲染遮蔽（perf 台账 922 号 · 2026-10-26）：补页挂载/大帧派发占住主线程的
     // 窗里，pong 即使已到也处理不了（或压在超大帧后面）——这是「渲染饿死心跳」，
     // 不是 socket 死了。同款旁路：本窗 miss 不计入逐出；硬上限（同一计数
     // shelteredMisses）不变 ⇒ 真死连接在遮蔽掩护下也照常判死；pong/新连接清零。
@@ -1072,7 +1360,14 @@ export function connect() {
   attemptLanNearPathJump();
   // Session-only connect: the handshake rides the HttpOnly session cookie
   // (gateway WsAuth). A rejected handshake lands on the paste-ticket entry.
-  const wsUrl = `${proto}//${location.host}/ws`;
+  // 接管误报根修批（2026-11-02）：随握手带上浏览器稳定身份 clientId——服务端
+  // 单实例注册表以它为实例键（会话 id 会变：过期/静默重座/换设备，clientId 不变）。
+  // 无鉴权含义（鉴权仍是会话 cookie）：它只决定「是不是同一个人」，伪造最坏
+  // 只是不弹接管提示。取不到 id（storage 全禁）时省略该参数 ⇒ 服务端落会话退路。
+  let clientIdParam = '';
+  try { clientIdParam = deviceClientId() || ''; } catch (_) { clientIdParam = ''; }
+  const wsUrl = `${proto}//${location.host}/ws` +
+    (clientIdParam ? `?clientId=${encodeURIComponent(clientIdParam)}` : '');
   try {
     state.ws = new WebSocket(wsUrl);
   } catch (e) {
@@ -1087,12 +1382,29 @@ export function connect() {
     // 入场加载卡（接管/入场同族批 2026-11-01 作者令③）：「连接主机」项的真实
     // 完成信号（index.html 门脚本定义；typeof 防御——面不在场即零副作用）。
     try { window.__nfEntry && window.__nfEntry.mark && window.__nfEntry.mark('host', 'done'); } catch (_) {}
-    reconnectAttempts = 0;
+    // 断连风暴修复批（2026-11-04）：这里**不再**无条件 `reconnectAttempts = 0`。
+    // 握手成功不等于连接健康——flap 形态下每次握手都成功，一清零就把退避钉死在
+    // 基值（旧口径 = 恒定 2–3s 一次重连，即作者看到的「一直弹」）。现在只记
+    // 「何时开起来的」，由 onclose 按存活时长（STABLE_CONN_MS）决定是否归零。
+    connOpenedAt = Date.now();
     state.connected = true;
     hbMisses = 0;             // freezetimeout B2: 新连接从零计 miss
     shelteredMisses = 0;      // 传输遮蔽窗计数同清零（本地回路短路批）
     state.pendingPong = false;
     syncSendButtonConnState();
+    // 单实例在带身份声明批（2026-11-03 作者报障「手机+电脑同时在线，没有被挤掉」）：
+    // 实例身份**必须**在连接建立后于数据面重申一次。根因实证：握手 `?clientId=` 在
+    // 控制台的真实交付路径上会丢（门户/隧道腿与中转代理会重写请求目标）——
+    // stand.log 2026-11-03 10:07–10:30 连续 7 条控制台连接全部以会话 id 入账
+    //（`joined — no takeover (joining page carries no client id)`），其中一个还来自
+    // 刚在 HTTP retake 体里带上 clientId 的同一浏览器 ⇒ 服务端身份不可证 ⇒ 永不
+    // 提示永不踢。在带声明走数据面：只要能收到本连接的应用帧，引擎就必然收到它。
+    // 与握手腿同一份 deviceClientId()（同一 localStorage 键，无第二身份源）；
+    // 老引擎把未知帧型走既有回退，零破坏。
+    try {
+      const cid = deviceClientId();
+      if (cid) sendWs({ type: 'takeoverIdentify', clientId: cid });
+    } catch (_) { /* 取不到身份 ⇒ 省略该帧（服务端落会话退路，行为同本批之前） */ }
     // 离线期间入队的 WS 命令按序补发（观察项① 收口；先于以下引导命令）。
     flushPendingSends();
     if (state.thinkingMode?.enabled) {
@@ -1135,6 +1447,14 @@ export function connect() {
   state.ws.onclose = () => {
     state.connected = false;
     syncSendButtonConnState();
+    // 断连风暴修复批（2026-11-04）：退避归零的判据 = 这条连接**活够了**才归零。
+    // 存活时长 ≥ STABLE_CONN_MS ⇒ 健康连接的正常断开（睡醒/换网/服务端重启），
+    // 下一次重连用基值 2s；< STABLE_CONN_MS ⇒ flap（开得起来、几秒必死），保持
+    // 升档，由下面的 scheduleReconnect 继续 +1 ⇒ 2s→4s→8s→16s→30s 封顶。
+    // 必须先于 scheduleReconnect 算——它读 reconnectAttempts 定本拍时长。
+    const lifetimeMs = connOpenedAt ? Date.now() - connOpenedAt : -1;
+    reconnectAttempts = attemptsAfterClose(reconnectAttempts, { opened, lifetimeMs });
+    connOpenedAt = 0;
     disconnectCallbacks.forEach(cb => { try { cb(); } catch (e) { console.error('[ws] disconnect callback error:', e); } });
     if (state.heartbeat) { clearInterval(state.heartbeat); state.heartbeat = null; }
     if (!opened) {
@@ -1168,7 +1488,7 @@ export function connect() {
   };
 
   state.ws.onmessage = (e) => {
-    // 大帧渲染遮蔽（perf 台账 #922）：超大帧（historyPage 大页等）的
+    // 大帧渲染遮蔽（perf 台账 922 号）：超大帧（historyPage 大页等）的
     // JSON.parse + 处理器同步段本身就是一次主线程长任务 —— 与其让宽限定时器
     // 在阻塞结束前先到（miss 记一笔假账），不如把这段如实标记为渲染在途。
     // try/finally 保证异常路径也退门；小帧零额外开销（一次 length 比较）。

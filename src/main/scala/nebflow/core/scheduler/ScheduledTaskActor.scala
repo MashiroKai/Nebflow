@@ -7,7 +7,7 @@ import io.circe.Json
 import io.circe.syntax.*
 import io.circe.JsonObject
 import nebflow.actor.AgentCommand
-import nebflow.core.SessionStorePort
+import nebflow.core.{InjectionChannel, SessionStorePort}
 import nebflow.shared.{NebflowLogger, UiMessage}
 
 import java.time.format.DateTimeFormatter
@@ -47,6 +47,16 @@ object ScheduledTaskService:
   val MissThreshold: Int = 3
 
   /**
+   * 浮出候选过滤（待办体系统一批 2026-11-04，**纯函数** ⇒ spec 直接钉口径）：
+   * 已完成（completedAt 置位）的待办一律剔除。头道闸在读口
+   * （[[ScheduledTaskStore.getAllDueTodos]] 已过滤），本函数是 actor 侧的二道闸：
+   * 「即使将来有人换读口或直接构造列表，completed 行也进不了 digest、不涨
+   * missCount、不被顺延」。
+   */
+  def surfacedTodos(todos: List[ScheduledTask]): List[ScheduledTask] =
+    todos.filterNot(_.isCompleted)
+
+  /**
    * digest 文案（缺卡调整流版）：[[digestPayload]] 同款，另对 missStreak 集内
    * 的待办逐条附「已连续 N 次浮出未销账——建议降频或拆小，要调整请直接说」。
    * missStreak = 本次浮出后计数将达阈值的待办 id 集（纯函数，now/集合注入）。
@@ -82,6 +92,28 @@ object ScheduledTaskService:
         val t = m.text.trim.replace('\n', ' ').replaceAll("\\s+", " ")
         if t.length > 160 then t.take(160) + "…" else t
     }
+
+  // ── 注入身份键（事件投递绑定批 2026-11-03 · 作者报障「定时任务怎么都没触发
+  //    你的轮次了」）────────────────────────────────────────────────────────
+  //
+  // 病灶：触发事件旧 identity = 任务 id（`correlationId = Some(task.id)`）。重复任务
+  // **每期一炮**，而注入即标记的「已投递回执台账」（DeliveredReceiptLedger，
+  // session 级持久文件）以 correlationId 为身份键 ⇒ 首炮入账后，第 2…N 炮在会话
+  // 收件口被 intake 闸判为「重复件」**静默丢弃**（只留一行 duplicate-suppressed
+  // 日志）：面板卡片照常落盘（卡片写在路由之前）但**轮次永不启动**，直到作者下次
+  // 发言才把内容一起带进那一轮。实证 11-03 10:55（corr=b65f1355，session
+  // d7c3cb54 的台账里 b65f1355 / 9d0e41d6 各只入账一次，此后每期皆 suppressed）。
+  //
+  // 修法：身份键升为**单次触发**（任务 id + 触发时刻毫秒），逐炮唯一；同一炮的
+  // 重复投递仍按同键去重（exactly-once 语义保留）。
+
+  /** 单次触发身份键：`<taskId>@<firedAtMs>`（纯函数，spec 判红锚）。 */
+  def firingKey(taskId: String, firedAtMs: Long): String = s"$taskId@$firedAtMs"
+
+  /** 同窗合并组身份键：触发时刻 + 任务集摘要（同窗重复合并注入仍去重）。 */
+  def mergedFiringKey(taskIds: List[String], firedAtMs: Long): String =
+    val ids = taskIds.map(_.trim).filter(_.nonEmpty).distinct.sorted.mkString("+")
+    s"merged[$ids]@$firedAtMs"
 
 end ScheduledTaskService
 
@@ -222,44 +254,31 @@ class ScheduledTaskService(
     event: AgentCommand.ExternalEvent,
     scheduleMeta: Json
   ): IO[Unit] =
+    val now = System.currentTimeMillis()
+    // schedcard 批（2026-10-29）：触发行落盘时**必须带注入标记**（`injected=true` +
+    // `source="schedule"`）——无标记行会被前端历史恢复渲染成通用绿色用户气泡
+    // （= 作者报障的退化态）。渲染分支由前端 `buildInjectedRow` 的
+    // `source === 'schedule'` 专属卡接住（live 与两史恢复路径同 builder 同构）。
+    //
+    // 外部注入统一通道批（2026-11-05）：本腿改走**唯一投递入口**
+    // [[nebflow.core.InjectionChannel.deliver]]（落盘 + 广播一处收口）——改前这里是
+    // 第二份手写实现（自己的 `appendUiMessages` + 自己手拼的 `user` 帧），与
+    // `AgentActor#emitInjectedUserEvent` 的帧形态各写一份 ⇒ 两者漂移即「一边有泡一边
+    // 没有」。本腿专属的两枚帧键（`timestamp` / `schedule` 卡载荷）走 `extra` 段透传。
+    val row = UiMessage.User(
+      payload,
+      injected = true,
+      timestamp = now,
+      source = Some("schedule"),
+      eventType = Some("trigger"),
+      schedule = Some(scheduleMeta.asJson)
+    )
+    val extra = io.circe.JsonObject(
+      "timestamp" -> now.asJson,
+      "schedule" -> scheduleMeta.asJson
+    )
     for
-      // Persist the trigger as a user message in session history so it survives
-      // page refresh and behaves like a normal user message (shows bubble + busy state).
-      // schedcard 批（2026-10-29）：触发行落盘时**必须带注入标记**（`injected=true` +
-      // `source="schedule"`）——无标记行会被前端历史恢复渲染成通用绿色用户气泡
-      // （= 作者报障的退化态）。渲染分支由前端 `buildInjectedRow` 的
-      // `source === 'schedule'` 专属卡接住（live 与两史恢复路径同 builder 同构）。
-      _ <- sessionStore.appendUiMessages(
-        resolvedSessionId,
-        List(
-          UiMessage.User(
-            payload,
-            injected = true,
-            timestamp = System.currentTimeMillis(),
-            source = Some("schedule"),
-            eventType = Some("trigger"),
-            schedule = Some(scheduleMeta.asJson)
-          )
-        )
-      )
-      // Broadcast the user message so the frontend shows it in real-time.
-      // schedcard 批（2026-10-29）：帧形从裸 `userMessage`（前端零消费者——死帧，
-      // 卡片只有刷新后才出现）换成**注入 user 帧标准形**（`injected:true` +
-      // `source:"schedule"` + `schedule` 载荷）——与 main.js `onMessage('user')`
-      // 既有消费管道路径逐字段同形 ⇒ 触发即渲染专属卡，无需刷新。帧键集 =
-      // UiMessage.User 编码面 + sessionId（display 路由键），零新协议面。
-      _ <- broadcast(
-        io.circe.Json.obj(
-          "type" -> "user".asJson,
-          "sessionId" -> resolvedSessionId.asJson,
-          "text" -> payload.asJson,
-          "injected" -> true.asJson,
-          "source" -> "schedule".asJson,
-          "eventType" -> "trigger".asJson,
-          "timestamp" -> System.currentTimeMillis().asJson,
-          "schedule" -> scheduleMeta.asJson
-        )
-      )
+      _ <- InjectionChannel.deliver(sessionStore, broadcast, resolvedSessionId, row, extra = extra)
       // Route to agent — ExternalEvent so it queues properly if agent is busy
       _ <- routeToAgent(resolvedSessionId, event).handleErrorWith(e =>
         logger.warn(s"Failed to route scheduled task to agent: ${e.getMessage}")
@@ -279,30 +298,19 @@ class ScheduledTaskService(
     payload: String,
     event: AgentCommand.ExternalEvent
   ): IO[Unit] =
+    val now = System.currentTimeMillis()
+    // 外部注入统一通道批（2026-11-05）：同 [[injectScheduleCard]]——第三份手写投递腿
+    // 收口到 [[InjectionChannel.deliver]]（`extra` 只带本腿的 `timestamp` 帧键）。
+    val row = UiMessage.User(
+      payload,
+      injected = true,
+      timestamp = now,
+      source = Some("todo"),
+      eventType = Some("digest")
+    )
+    val extra = io.circe.JsonObject("timestamp" -> now.asJson)
     for
-      _ <- sessionStore.appendUiMessages(
-        resolvedSessionId,
-        List(
-          UiMessage.User(
-            payload,
-            injected = true,
-            timestamp = System.currentTimeMillis(),
-            source = Some("todo"),
-            eventType = Some("digest")
-          )
-        )
-      )
-      _ <- broadcast(
-        io.circe.Json.obj(
-          "type" -> "user".asJson,
-          "sessionId" -> resolvedSessionId.asJson,
-          "text" -> payload.asJson,
-          "injected" -> true.asJson,
-          "source" -> "todo".asJson,
-          "eventType" -> "digest".asJson,
-          "timestamp" -> System.currentTimeMillis().asJson
-        )
-      )
+      _ <- InjectionChannel.deliver(sessionStore, broadcast, resolvedSessionId, row, extra = extra)
       _ <- routeToAgent(resolvedSessionId, event).handleErrorWith(e =>
         logger.warn(s"Failed to route todo digest to agent: ${e.getMessage}")
       )
@@ -467,7 +475,8 @@ class ScheduledTaskService(
         else ""
       prevChain <- prevResultNote(task)
       chainNote = prevChain.map(s => s"\n（上一轮结果摘要：$s）").getOrElse("")
-      actualTime = formatTime(System.currentTimeMillis())
+      firedAtMs = System.currentTimeMillis()
+      actualTime = formatTime(firedAtMs)
       payload = s"${task.content}$refNote$extraNote$downfreqNote$chainNote\n（实际触发 $actualTime，预定 $formattedTime）"
 
       event = AgentCommand.ExternalEvent(
@@ -477,9 +486,16 @@ class ScheduledTaskService(
         metadata = io.circe.JsonObject(
           "taskId" -> task.id.asJson,
           "triggerAt" -> task.triggerAt.asJson,
+          "firedAt" -> firedAtMs.asJson,
           "referencePath" -> task.referencePath.asJson
         ),
-        correlationId = Some(task.id)
+        // 🔴 身份键 = **本次触发**（事件投递绑定批 2026-11-03）：重复任务每期一炮，
+        // 身份必须逐炮不同——旧形态用它 = 任务 id，与「已投递回执台账」
+        // （DeliveredReceiptLedger，注入即标记）撞键 ⇒ 首炮之后的每一期都被 intake
+        // 闸判为重复件**静默丢弃**（实证 11-03 10:55：corr=b65f1355 报
+        // external-event-duplicate-suppressed，会话整轮不启动，作者 10:58 手动发
+        // 消息才把卡片内容带进同一轮）。同一次触发的重复投递仍按本键去重。
+        correlationId = Some(ScheduledTaskService.firingKey(task.id, firedAtMs))
       )
 
       _ <- logger.info(
@@ -519,7 +535,6 @@ class ScheduledTaskService(
    * 逐任务的后事（例行落账/一次性删除/面板广播）不合并，逐字保留各自语义。
    */
   private def fireMergedGroup(resolvedSessionId: String, tasks: List[ScheduledTask]): IO[Unit] =
-    val now = System.currentTimeMillis()
     for
       perTask <- tasks.traverse { t =>
         t.repeat.filter(nextPeriodMs(_).isDefined) match
@@ -536,22 +551,26 @@ class ScheduledTaskService(
         case Some(first) => prevResultNote(first)
         case None => IO.pure(None)
       chainNote = prevChain.map(s => s"\n（上一轮结果摘要：$s）").getOrElse("")
+      firedAtMs = System.currentTimeMillis()
       lines = perTask.map { case (t, _, _) =>
         val notes = fireNote(t)
         s"- ${t.content.take(160)}$notes（预定 ${formatTime(t.triggerAt)}）"
       }
       header =
         s"[定时任务批量触发 ×${tasks.size}]（同窗合并注入：本窗口 ${tasks.size} 个到点触发合并为一次，请逐条处置）"
-      payload = ((header +: chainNote.toList) ++ lines :+ s"（实际触发 ${formatTime(now)}）").mkString("\n")
+      payload = ((header +: chainNote.toList) ++ lines :+ s"（实际触发 ${formatTime(firedAtMs)}）").mkString("\n")
       event = AgentCommand.ExternalEvent(
         source = "scheduled-task",
         eventType = "trigger-batch",
         payload = payload,
         metadata = io.circe.JsonObject(
           "taskIds" -> tasks.map(_.id).asJson,
-          "merged" -> true.asJson
+          "merged" -> true.asJson,
+          "firedAt" -> firedAtMs.asJson
         ),
-        correlationId = None
+        // 🔴 身份键 = **本次合并窗**（同 [[fireTask]] 的逐炮身份批——同窗触发集合
+        // 几乎必不同，取齐到毫秒的触发时刻 + 任务集做键；空集退化 raw id）。
+        correlationId = Some(ScheduledTaskService.mergedFiringKey(tasks.map(_.id), firedAtMs))
       )
       _ <- logger.info(
         s"Merged ${tasks.size} due tasks into one batched trigger for session $resolvedSessionId: ${tasks.map(_.id).mkString(", ")}"
@@ -631,7 +650,13 @@ class ScheduledTaskService(
   // 浮出时间推到明晨 09:00。销账/取消 = 从存储删除 ⇒ 永不再浮出。
   // ------------------------------------------------------------
 
-  private def surfaceTodos(dueTodos: List[ScheduledTask]): IO[Unit] =
+  private def surfaceTodos(dueTodosRaw: List[ScheduledTask]): IO[Unit] =
+    // 🔴 触发面二道闸（待办体系统一批 2026-11-04）：已完成（completedAt 置位）的
+    // 待办**绝不许浮出**。头道闸在 read 口（ScheduledTaskStore.getAllDueTodos 已
+    // 过滤 completedAt.isEmpty，本类无处绕过它）；此处再过同一纯函数
+    // ScheduledTaskService.surfacedTodos，保证「即使将来有人换读口/直接构造列表，
+    // completed 行也进不了 digest 与顺延」（spec 钉该函数）。
+    val dueTodos = ScheduledTaskService.surfacedTodos(dueTodosRaw)
     if dueTodos.isEmpty then IO.unit
     else
       for
@@ -667,9 +692,13 @@ class ScheduledTaskService(
         payload = payload,
         metadata = io.circe.JsonObject(
           "todoIds" -> dueTodos.map(_.id).asJson,
-          "digestTodoIds" -> allTodos.map(_.id).asJson
+          "digestTodoIds" -> allTodos.map(_.id).asJson,
+          "surfacedAt" -> now.asJson
         ),
-        correlationId = dueTodos.headOption.map(_.id)
+        // 同 [[ScheduledTaskService.firingKey]] 的身份口径：待办每天浮出一次，身份
+        // 必须逐次唯一——旧形态用 `dueTodos.head.id`（同一待办次日的浮出撞键 ⇒
+        // 天天只浮出第一天那次）。同一次浮出的重复投递仍按本键去重。
+        correlationId = Some(ScheduledTaskService.firingKey("todo-digest", now))
       )
       _ <- injectTodoDigest(resolvedSessionId, payload, event)
       // 只顺延**到期**的待办（未到期的首次浮出时间不动——它明晨自会浮出）。
@@ -693,8 +722,9 @@ class ScheduledTaskService(
     case other => current // unknown pattern — don't advance (will re-fire immediately)
 
   private def formatTime(epochMs: Long): String =
-    val instant = Instant.ofEpochMilli(epochMs)
-    val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault())
-    formatter.format(instant)
+    // 格式单源（时间感知修复批 2026-11-05）：定时事件注入文本里的「预定 / 实际触发」
+    // 时刻与每回合时间锚同源（[[nebflow.shared.TimeAnchor.compact]] = 本地
+    // `yyyy-MM-dd HH:mm`，与改前逐字节相同，只是不再自带一份 ofPattern）。
+    nebflow.shared.TimeAnchor.compact(epochMs)
 
 end ScheduledTaskService

@@ -50,13 +50,26 @@ private[gateway] object SessionRoutes:
         }
 
       // Session list. `includeUnindexed=1` (search scope) unions in on-disk-only
-      // .ui.json sessions (delegate/subtask/dag sub-agents) that never enter the
-      // index. The sidebar consumes this endpoint WITHOUT the param and must stay
-      // index-only — that isolation is the reason this is a query param.
+      // .ui.json sessions that never enter the index. The sidebar consumes this
+      // endpoint WITHOUT the param and must stay index-only — that isolation is
+      // the reason this is a query param.
+      //
+      // 会话搜索范围收窄批（2026-11-01，作者 17:29 令「主 agent 的聊天记录搜索只搜
+      // 主会话，后台 agent 产生的消息一条不出」）：`includeUnindexed=1` 现在只返回
+      // **主会话**（listSearchScopeSessions——判据单点 = SessionScope），后台 agent
+      // 族（delegate/subtask/subagent/workflow/node/dispatcher/external/dag）一条
+      // 不进。旧全扫引擎（chatSearch.js 的 fetchSessionList → 逐会话 history）因此
+      // 与索引引擎（/api/search/chat）自动同一范围，前端零事后剔除。
+      //
+      // `includeBgAgents=1` 是**显式取全量**的旧形态口子（仅 bg-agent / flow 弹窗
+      // 需要看自己的家族）：`includeUnindexed=1&includeBgAgents=1` ⇒ 旧的全量并集。
       case req @ GET -> Root / "sessions" =>
         withAuth(req) {
+          val includeUnindexed = req.params.get("includeUnindexed").contains("1")
+          val includeBgAgents  = req.params.get("includeBgAgents").contains("1")
           val list =
-            if req.params.get("includeUnindexed").contains("1") then sessionStore.listSessionsIncludeUnindexed
+            if includeUnindexed && includeBgAgents then sessionStore.listSessionsIncludeUnindexed
+            else if includeUnindexed then sessionStore.listSearchScopeSessions
             else sessionStore.listSessions
           list.flatMap { sessions =>
             sessionStore.getActiveId.flatMap { activeId =>
@@ -75,6 +88,33 @@ private[gateway] object SessionRoutes:
         withAuth(req) {
           sessionStore.getUiMessages(sessionId, 0, 0).flatMap { case (messages, total) =>
             Ok(Json.obj("messages" -> messages.asJson, "total" -> total.asJson, "sessionId" -> sessionId.asJson))
+          }
+        }
+
+      // 按牌取原消息（msgchip 批 2026-11-01，作者令「消息身份牌系统升级」取数腿）：
+      // **只读**端点——前端聊天气泡里的短名牌 chip（{{msg:sid8-seq6|短名}} 渲染形态）
+      // 点击弹小窗时，跨会话/后台 agent 的牌经此按牌号取映射全文。同会话优先前端
+      // 本地查（会话消息已在内存），本端点是权威回退腿；映射缺失/畸形牌面 = 404
+      // `found:false`（前端降级「原消息不可达」，不崩）。入参 = 裸核心 sid8-seq6
+      // （也容忍完整牌面，registry.lookup 单点剥形）。铸牌零涉入（纯读内存索引，
+      // 惰性装载与消解同缝）。
+      case req @ GET -> Root / "sessions" / "msg-token" / tokenId =>
+        withAuth(req) {
+          sharedResources.msgTokens.lookup(tokenId).flatMap {
+            case None =>
+              NotFound(Json.obj("found" -> false.asJson, "token" -> tokenId.asJson))
+            case Some(m) =>
+              val base = Json.obj(
+                "found" -> true.asJson,
+                "token" -> m.token.asJson,
+                "sessionId" -> m.sessionId.asJson,
+                "ts" -> m.ts.asJson,
+                "text" -> m.text.asJson
+              )
+              sessionStore.getSessionMeta(m.sessionId).flatMap {
+                case Some(meta) => Ok(base.deepMerge(Json.obj("sessionName" -> meta.name.asJson)))
+                case None       => Ok(base.deepMerge(Json.obj("sessionName" -> "".asJson)))
+              }
           }
         }
 

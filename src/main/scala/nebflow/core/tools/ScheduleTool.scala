@@ -5,6 +5,7 @@ import cats.syntax.foldable.toFoldableOps
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.core.scheduler.{DoneRecord, ScheduledTask, ScheduledTaskService, ScheduledTaskStore}
+import nebflow.shared.TimeAnchor
 
 import java.time.*
 
@@ -164,7 +165,10 @@ Your context does NOT show the current date/time — never invent an absolute da
   message); the digest rides the same ExternalEvent channel, so it also lands on the next
   idle turn. Todo persistence equals scheduled-task persistence (same engine storage)."""
 
-  private val validRepeat = Set("hourly", "daily", "weekly")
+  /** 重复档白名单（单源）。schedule-created-card 批（2026-11-05）起对 gateway 的
+   *  `updateScheduledTask` 帧公开 —— 卡片内联编辑的 repeat 校验必须命中**同一份**
+   *  白名单，复制一份字符串集合 = 两条校验路必然漂移。 */
+  val validRepeat = Set("hourly", "daily", "weekly")
   private val validActions = Set("create", "list", "cancel", "done", "edit")
 
   val inputSchema = JsonObject.fromIterable(
@@ -197,7 +201,11 @@ Your context does NOT show the current date/time — never invent an absolute da
         ),
         "name" -> Json.obj(
           "type" -> "string".asJson,
-          "description" -> "(create) Stable identifier — same name + kind replaces the existing entry instead of stacking (upsert). Use a fixed name for routine/recurring tasks.".asJson
+          "description" -> "(create/edit) Short TITLE — one short readable line. kind=\"todo\": this is the todo's displayed name, the `#<name>` reference token users type, and the upsert key (same name + kind replaces the existing entry instead of stacking). kind=\"task\": a stable identifier for routine re-arm. Omit for an anonymous entry.".asJson
+        ),
+        "detail" -> Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "(create/edit, kind=\"todo\") The todo's long body — whatever context the user will want when they open it (the daily digest still injects `content`). The todo list shows `name` as the row and folds `detail` behind a disclosure. On edit, pass \"\" to clear it. Ignored for kind=\"task\".".asJson
         ),
         "project" -> Json.obj(
           "type" -> "string".asJson,
@@ -330,7 +338,8 @@ Your context does NOT show the current date/time — never invent an absolute da
               val status = if t.enabled then "active" else "PAUSED"
               val nm = t.name.map(n => s" | name: $n").getOrElse("")
               val proj = t.project.map(p => s" | project: $p").getOrElse("")
-              s"- ${t.id} | todo | created ${formatDate(t.createdAt)} | $status$nm$proj | ${t.content.take(60)}"
+              // 两段化：detail 有则展示它（这才是"那条待办的具体内容"），否则回落 content。
+              s"- ${t.id} | todo | created ${formatDate(t.createdAt)} | $status$nm$proj | ${t.detail.getOrElse(t.content).take(60)}"
             }
             Some(
               s"Todos (${todos.size}) — 无固定时间，每日 09:00 浮出直至处理；完成 → {action:\"done\", id:\"<id>\"} 销账，" +
@@ -512,18 +521,28 @@ Your context does NOT show the current date/time — never invent an absolute da
             // project 提供即生效（"" = 清空归属）；缺席 = 不改。
             val projectOpt: Option[Option[String]] =
               input("project").flatMap(_.asString).map(raw => Some(raw.trim).filter(_.nonEmpty))
-            if contentOpt.isEmpty && projectOpt.isEmpty then
+            // 两段化批（2026-11-05）：name / detail 进入 patch 面。
+            // detail 传 "" = 清空第二段（Some(None)）；缺席 = 不改。
+            val nameOpt: Option[Option[String]] =
+              input("name").flatMap(_.asString).map(raw => Some(raw.trim).filter(_.nonEmpty))
+            val detailOpt: Option[Option[String]] =
+              input("detail").flatMap(_.asString).map(raw => Some(raw.trim).filter(_.nonEmpty))
+            if contentOpt.isEmpty && projectOpt.isEmpty && nameOpt.isEmpty && detailOpt.isEmpty then
               IO.pure(
                 Left(
                   ToolError(
-                    "edit requires at least one field to change: content (new text) and/or project (new label; \"\" clears)."
+                    "edit requires at least one field to change: content (new text), name (short title), " +
+                      "detail (long text; \"\" clears it) and/or project (new label; \"\" clears)."
                   )
                 )
               )
             else
               val updated = t.copy(
                 content = contentOpt.getOrElse(t.content),
-                project = projectOpt.getOrElse(t.project)
+                project = projectOpt.getOrElse(t.project),
+                name = nameOpt.getOrElse(t.name),
+                // 定时任务面没有两段语义：只有待办接受 detail 改写。
+                detail = if t.isTodo then detailOpt.getOrElse(t.detail) else t.detail
               )
               taskStore.updateTask(t.sessionId, id)(_ => updated).flatMap { changed =>
                 if !changed then
@@ -551,6 +570,7 @@ Your context does NOT show the current date/time — never invent an absolute da
                               "enabled" -> updated.enabled.asJson,
                               "kind" -> updated.kind.asJson,
                               "name" -> updated.name.asJson,
+                              "detail" -> updated.detail.asJson,
                               "missCount" -> updated.missCount.asJson,
                               "project" -> updated.project.asJson,
                               "sessionId" -> updated.sessionId.asJson
@@ -561,6 +581,8 @@ Your context does NOT show the current date/time — never invent an absolute da
                   yield
                     val what = List(
                       contentOpt.map(_ => "content").toList,
+                      nameOpt.map(_ => "name").toList,
+                      detailOpt.map(_ => "detail").toList,
                       projectOpt.map(p => s"project=${p.getOrElse("(none)")}" :: Nil).toList.flatten
                     ).flatten.mkString(", ")
                     Right(s"Updated ${if updated.isTodo then "todo" else "task"} $id ($what): ${updated.content.take(60)}")
@@ -598,8 +620,13 @@ Your context does NOT show the current date/time — never invent an absolute da
           IO.pure(
             Left(
               ToolError(
-                s"triggerAt must be in the future (given $triggerAt = ${formatTime(triggerAt)}, " +
-                  s"current ${formatTime(now)} = $now ms, zone ${ZoneId.systemDefault().getId})."
+                // 时间串单源（时间感知修复批 2026-11-05）：改前此处自带
+                // `formatTime` + 「ms + zone」两段自拼格式，与每回合时间锚的格式
+                // 不同源（同一时刻在提示词里两种写法 = 模型要做二次解释）。现统一走
+                // [[nebflow.shared.TimeAnchor]]：`stamp` 已含本地时间 + 偏移 + 时区名 +
+                // 星期 + epoch_ms，故「= $now ms, zone …」冗余段一并去掉。
+                s"triggerAt must be in the future (given ${TimeAnchor.stamp(TimeAnchor.at(triggerAt))}, " +
+                  s"current ${TimeAnchor.stamp(TimeAnchor.at(now))})."
               )
             )
           )
@@ -686,6 +713,7 @@ Your context does NOT show the current date/time — never invent an absolute da
   ): IO[Either[ToolError, String]] =
     val content = input("content").flatMap(_.asString).getOrElse("")
     val taskName = input("name").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
+    val todoDetail = input("detail").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
     val project = input("project").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
     val now = System.currentTimeMillis()
     if content.isBlank then
@@ -701,7 +729,8 @@ Your context does NOT show the current date/time — never invent an absolute da
       val surfaceAt = ScheduledTask.nextTodoSurfaceAt(now, ZoneId.systemDefault())
       val todo = ScheduledTask.create(
         sessionId, content, surfaceAt, None, None, taskName,
-        Some(ScheduledTask.KindTodo), None, project
+        Some(ScheduledTask.KindTodo), None, project,
+        0, todoDetail
       )
       for
         removed <- taskName match
@@ -737,6 +766,7 @@ Your context does NOT show the current date/time — never invent an absolute da
                   "referencePath" -> Json.Null,
                   "repeat" -> Json.Null,
                   "name" -> todo.name.asJson,
+                  "detail" -> todo.detail.asJson,
                   "kind" -> ScheduledTask.KindTodo.asJson,
                   "project" -> todo.project.asJson
                 )
@@ -797,7 +827,8 @@ Your context does NOT show the current date/time — never invent an absolute da
             s"Cannot parse triggerAt: \"$raw\". Use epoch ms, ISO 8601 (e.g. 2026-08-16T21:00:00+08:00), " +
               s"or natural language (\"tomorrow at 21:00\", \"in 2 hours\", \"21:30\", \"7pm\", " +
               s"\"friday 21:00\", \"周一\", \"明天下午3点\"). " +
-              s"Current time: ${formatTime(now)} (${now} ms, zone ${zone.getId})."
+              // 时间串单源（时间感知修复批 2026-11-05）：与每回合时间锚同源同格式。
+              s"${TimeAnchor.line(TimeAnchor.at(now, zone))}"
           )
       end match
 
@@ -1041,10 +1072,8 @@ Your context does NOT show the current date/time — never invent an absolute da
       case _ => None
 
   private def formatTime(epochMs: Long): String =
-    val instant = java.time.Instant.ofEpochMilli(epochMs)
-    val formatter = java.time.format.DateTimeFormatter
-      .ofPattern("yyyy-MM-dd HH:mm")
-      .withZone(java.time.ZoneId.systemDefault())
-    formatter.format(instant)
+    // 格式单源（时间感知修复批 2026-11-05）：本工具不再自带 `ofPattern`，
+    // 行内时刻一律走 [[nebflow.shared.TimeAnchor.compact]]（与每回合时间锚同源）。
+    TimeAnchor.compact(epochMs)
 
 end ScheduleTool

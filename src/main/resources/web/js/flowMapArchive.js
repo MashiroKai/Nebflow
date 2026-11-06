@@ -557,11 +557,11 @@ const LAYER_HTML = `
     <div class="fm-archive-panel" role="region" aria-label="${esc(t('flowmap.archive.title'))}" data-testid="archive-panel" hidden>
       <div class="fm-panel-head">
         <span class="fm-panel-title" title="${esc(t('flowmap.archive.ttlTitle'))}">${esc(t('flowmap.archive.title'))}</span>
-        <span class="fm-panel-count"></span>
+        <span class="fm-panel-count" data-cv-hint="foot"></span>
         <button class="fm-panel-close" type="button" aria-label="${esc(t('flowmap.archive.close'))}">${CLOSE_SVG}</button>
       </div>
       <div class="fm-panel-body"></div>
-      <div class="fm-panel-guide">${esc(t('flowmap.archive.readGuide'))}</div>
+      <div class="fm-panel-guide" data-cv-hint="foot">${esc(t('flowmap.archive.readGuide'))}</div>
     </div>
     <div class="fm-detail" role="region" aria-label="${esc(t('flowmap.archive.detailLabel'))}" data-testid="detail-panel" hidden>
       <div class="fm-detail-head">
@@ -765,7 +765,7 @@ function renderArchiveUi(/** @type {LayerCtx} */ ctx, opts = {}) {
   const totalNodes = entries.reduce((m, c) => m + c.nodeCount, 0);
   ctx.panelBody.innerHTML = entries.length
     ? entries.map(entryHtml).join('')
-    : `<div class="fm-panel-empty">${esc(t('flowmap.archive.empty'))}</div>`;
+    : `<div class="fm-panel-empty" data-cv-hint="empty">${esc(t('flowmap.archive.empty'))}</div>`;
   if (s.expandedEntry) {
     const el = ctx.panelBody.querySelector(`.fm-entry[data-chain-id="${CSS.escape(s.expandedEntry)}"]`);
     if (el) {

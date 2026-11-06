@@ -205,10 +205,11 @@ class ActiveAgentsEntrySpec extends FunSuite:
     assertEquals(WebSocketRoutes.delegateDisplayTitle(AgentKind.SubTask, None, None), None)
   }
 
-  test("delegateDisplayTitle: non-task kinds untouched (Team/Flow/Ephemeral → None)") {
+  test("delegateDisplayTitle: non-task kinds untouched (Team/Flow/External → None)") {
     assertEquals(WebSocketRoutes.delegateDisplayTitle(AgentKind.Team, Some("X"), Some("Y")), None)
     assertEquals(WebSocketRoutes.delegateDisplayTitle(AgentKind.Flow, Some("X"), Some("Y")), None)
-    assertEquals(WebSocketRoutes.delegateDisplayTitle(AgentKind.Ephemeral, Some("X"), Some("Y")), None)
+    // 裁定4：外部 CLI 腿（ref=null，无 actor）也不参与批名解析
+    assertEquals(WebSocketRoutes.delegateDisplayTitle(AgentKind.External, Some("X"), Some("Y")), None)
   }
 
   // ── 面板树批（2026-10-29 ① · 后台智能体面板三修）：快照 face 携带 parentSessionId ──

@@ -5,6 +5,7 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
+import nebflow.actor.RootAgentIdentity
 import nebflow.core.*
 import nebflow.core.project.*
 import nebflow.core.tools.NodeTools
@@ -44,37 +45,55 @@ private[gateway] object ProjectsRoutes:
       // （Root / "projects"），写 "api" 会双前缀 /api/api（QA P1②）。
       case req @ GET -> Root / "projects" =>
         withAuth(req) {
-          ProjectStore
-            .list()
-            .map { projects =>
-              Json.obj(
-                "projects" -> projects
-                  .map(p =>
-                    Json.obj(
-                      "name" -> p.name.asJson,
-                      "workspace" -> p.workspace.asJson,
-                      "agentFile" -> p.agentFile.asJson,
-                      "description" -> p.description.asJson,
-                      "createdAt" -> p.createdAt.asJson,
-                      // ui-device-faces 批（2026-10-10 · 设计稿 §6 后端②）：additive
-                      // `origin{device,path}|null`（面C 徽标数据源；键名对齐 project.json
-                      // 的 ProjectOrigin Codec）。老前端忽略未知键零破坏；存量项目（无
-                      // origin 盘面）= 显式 null。
-                      "origin" -> p.origin
-                        .fold(Json.Null)(o =>
-                          Json.obj("device" -> o.device.asJson, "path" -> o.path.asJson)
-                        ),
-                      // 台账 #913 ②（2026-10-26）：additive `device` —— workspace 所在
-                      // 设备的**存储值**（"self" = 本机 / 对端 deviceId；判定单点 =
-                      // ProjectStore.effectiveDevice）。显示名由前端按需解析（面板既有
-                      // origin 徽标同域）；老前端忽略未知键零破坏。
-                      "device" -> ProjectStore.effectiveDevice(p).asJson
-                    )
-                  )
-                  .asJson
+          (ProjectStore.list(), ProjectStore.listAll()).mapN { (projects, all) =>
+            // unmount-console 面板批 2026-11-02：additive `unmounted` 数组——卸载态
+            // 项目的可见去处（「已卸载」分组数据源；行形与 mounted 行同构 +
+            // unmountedAt）。老前端忽略未知键零破坏；已归档项目仍不出列（归档保持
+            // 单程语义，remount 也不复活）。
+            val unmountedRows = all
+              .filter(pd => pd.unmounted.contains(true) && !pd.archived.contains(true))
+              .sortBy(pd => -(pd.unmountedAt.getOrElse(0L)))
+              .map(pd =>
+                Json.obj(
+                  "name" -> pd.name.asJson,
+                  "workspace" -> pd.workspace.asJson,
+                  "agentFile" -> pd.agentFile.asJson,
+                  "description" -> pd.description.asJson,
+                  "createdAt" -> pd.createdAt.asJson,
+                  "origin" -> pd.origin
+                    .fold(Json.Null)(o => Json.obj("device" -> o.device.asJson, "path" -> o.path.asJson)),
+                  "device" -> ProjectStore.effectiveDevice(pd).asJson,
+                  "unmountedAt" -> pd.unmountedAt.getOrElse(0L).asJson
+                )
               )
-            }
-            .flatMap(Ok(_))
+            Json.obj(
+              "projects" -> projects
+                .map(p =>
+                  Json.obj(
+                    "name" -> p.name.asJson,
+                    "workspace" -> p.workspace.asJson,
+                    "agentFile" -> p.agentFile.asJson,
+                    "description" -> p.description.asJson,
+                    "createdAt" -> p.createdAt.asJson,
+                    // ui-device-faces 批（2026-10-10 · 设计稿 §6 后端②）：additive
+                    // `origin{device,path}|null`（面C 徽标数据源；键名对齐 project.json
+                    // 的 ProjectOrigin Codec）。老前端忽略未知键零破坏；存量项目（无
+                    // origin 盘面）= 显式 null。
+                    "origin" -> p.origin
+                      .fold(Json.Null)(o =>
+                        Json.obj("device" -> o.device.asJson, "path" -> o.path.asJson)
+                      ),
+                    // 台账 #913 ②（2026-10-26）：additive `device` —— workspace 所在
+                    // 设备的**存储值**（"self" = 本机 / 对端 deviceId；判定单点 =
+                    // ProjectStore.effectiveDevice）。显示名由前端按需解析（面板既有
+                    // origin 徽标同域）；老前端忽略未知键零破坏。
+                    "device" -> ProjectStore.effectiveDevice(p).asJson
+                  )
+                )
+                .asJson,
+              "unmounted" -> unmountedRows.asJson
+            )
+          }.flatMap(Ok(_))
         }
 
       // POST /projects/<name>/archive — 归档（迁移方案 v2 §6.1）：显式人工动作唯一入口
@@ -98,6 +117,95 @@ private[gateway] object ProjectsRoutes:
               // `*>`：先广播（IO[Unit]）再回响应（Ok(...) 本体已是 IO[Response]）
               wsHub.broadcast(ProjectActor.projectArchivedFrame(name, at)) *>
                 Ok(Json.obj("archived" -> true.asJson, "archivedAt" -> at.asJson))
+          }
+        }
+
+      // POST /projects/<name>/unmount — 控制台「取消加载」按钮的引擎缝（unmount-console
+      // 面板批 2026-11-02）：与编排侧 Project 工具 `action="unmount"` **同一条引擎通路**
+      // （同一单点 ProjectUnmount.unmount、同一保护顺序 停飞→摘面→零删除——禁两套行为）。
+      // 契约：
+      //   · 需 auth（withAuth）；零 body；
+      //   · Left（不存在/未挂载/排空超时中止）→ 404 {"error": "<可行动文案>"}（本文件
+      //     族惯例——文案自带「重试安全/挂载面零触碰」语义）；
+      //   · Right(report) → 200 {project, chainsCancelled, nodesCancelled, sessionsCancelled,
+      //     delegatesCancelled, unmountedAt, alreadyUnmounted}（确认卡后续态与审计对账面）；
+      //   · 成功腿已由 ProjectUnmount 内部广播 projectUnmounted 帧（前端定点退场 +
+      //     落「已卸载」分组）并追加 flow-map-events.jsonl 审计行（actor=console）。
+      case req @ POST -> Root / "projects" / name / "unmount" =>
+        withAuth(req) {
+          ProjectUnmount
+            .unmount(name, ctx.sharedResources.agentRegistry, json => ctx.wsHub.broadcast(json), actor = "console")
+            .flatMap {
+              case Left(err) => NotFound(Json.obj("error" -> err.asJson))
+              case Right(r) =>
+                Ok(
+                  Json.obj(
+                    "project" -> r.project.asJson,
+                    "chainsCancelled" -> r.chainsCancelled.asJson,
+                    "nodesCancelled" -> r.nodesCancelled.asJson,
+                    "sessionsCancelled" -> r.sessionsCancelled.asJson,
+                    "delegatesCancelled" -> r.delegatesCancelled.asJson,
+                    "unmountedAt" -> r.unmountedAt.asJson,
+                    "alreadyUnmounted" -> r.alreadyUnmounted.asJson
+                  )
+                )
+            }
+        }
+
+      // POST /projects/<name>/remount — 控制台「已卸载」分组「重新加载」按钮的引擎缝
+      // （unmount-console 面板批 2026-11-02）：与编排侧 Project 工具 `action="remount"`
+      // 同一条引擎通路（同一单点 ProjectRemount.remount：校验盘面定义→摘卸载标记→挂载）。
+      // rootSessionId = 真顶层根——ensureActiveAgentSession(RootAgentIdentity.Name) 与
+      // GatewayMain.startupMount **同一唯一真源**（幂等：boot 已补建 ⇒ 现查返回同会话），
+      // 🔴 不自造占位根（freshinstall-rootsessionid 红线）。契约：
+      //   · 需 auth；Left（不存在/已归档/挂载失败）→ 404 {"error"}；
+      //   · Right(report) → 200 {project, remountedAt, alreadyMounted}；成功腿已广播
+      //     projectRemounted 帧（前端定点恢复卡片）+ 追加 project-remounted 审计行。
+      case req @ POST -> Root / "projects" / name / "remount" =>
+        withAuth(req) {
+          ctx.sessionStore.ensureActiveAgentSession(RootAgentIdentity.Name).flatMap { root =>
+            ProjectRemount
+              .remount(
+                name,
+                ctx.sharedResources.actorSystem,
+                ctx.sharedResources,
+                root.id,
+                Some((json: Json) => ctx.wsHub.broadcast(json)),
+                actor = "console"
+              )
+              .flatMap {
+                case Left(err) => NotFound(Json.obj("error" -> err.asJson))
+                case Right(r) =>
+                  Ok(
+                    Json.obj(
+                      "project" -> r.project.asJson,
+                      "remountedAt" -> r.remountedAt.asJson,
+                      "alreadyMounted" -> r.alreadyMounted.asJson
+                    )
+                  )
+              }
+          }
+        }
+
+      // GET /projects/<name>/inflight — 在飞工作计数（unmount-console 面板批
+      // 2026-11-02）：控制台「取消加载」确认卡的数据源——点卸载前如实展示「几条链/
+      // 几个节点/几个会话」。只读面（零副作用）：计数判据与 ProjectUnmount.stopInFlight
+      // 的取消靶集合同源（单点 = ProjectUnmount.inFlight）。未挂载/不存在 → 404。
+      case req @ GET -> Root / "projects" / name / "inflight" =>
+        withAuth(req) {
+          ProjectUnmount.inFlight(name, ctx.sharedResources.agentRegistry).flatMap {
+            case None => NotFound(Json.obj("error" -> s"project '$name' not mounted".asJson))
+            case Some(f) =>
+              Ok(
+                Json.obj(
+                  "project" -> f.project.asJson,
+                  "chains" -> f.chains.asJson,
+                  "runningNodes" -> f.runningNodes.asJson,
+                  "dispatcherSessions" -> f.dispatcherSessions.asJson,
+                  "delegateSessions" -> f.delegateSessions.asJson,
+                  "total" -> f.total.asJson
+                )
+              )
           }
         }
 

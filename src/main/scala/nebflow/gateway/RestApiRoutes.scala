@@ -110,6 +110,10 @@ class RestApiRoutes(
       // PerceptionPanelRoutes）：面板条目 / 两问配置 / OTP 消费 / 草稿与发送——
       // `/api/perception` 前缀与既有域互不重叠；preset 保持引擎本地。
       PerceptionRoutes.routes(ctx) <+>
+      // 全设备统一更新（fleet 批 2026-11-01）：/api/update/fleet 四端点（计划/发起/
+      // 中断/重试）+ /events 重连面。与既有 /api/update* 面互不重叠（本域前缀带
+      // `/update/fleet` 字面量），全部经既有 withAuth 门、零新增凭据。
+      FleetUpdateRoutes.routes(ctx) <+>
       // Phase 3b: the AuthAdmin face (break-glass ticket / token rotate /
       // sessions list+revoke), file-token Bearer ONLY (R1-1) — appended last:
       // its /api/auth/* paths are disjoint from every sibling above.

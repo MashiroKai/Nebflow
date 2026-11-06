@@ -22,6 +22,7 @@ import { removePendingAsk } from './askPending.js';
 // 鉴权拒绝伞（sessionGate 零静态依赖，本导入无环）。感知面板是控制台最后一个
 // 未接伞的 REST 面——修前 401/403 只会把服务端错误体原样印进卡片死底。
 import { noteAuthRejected } from './sessionGate.js';
+import { toggleHTML, setToggleState, setToggleBusy } from './toggle.js';
 
 // ── api ─────────────────────────────────────────────────────────────────
 
@@ -53,9 +54,18 @@ async function api(method, path, body) {
 
 /** 失败文案面：鉴权拒绝显示会话引导，不透传裸错误体——修前「Missing token」
  *  原样印进连接卡红字（报障 2026-10-26 12:43）；服务商测连失败等业务错误仍
- *  透传服务端 error 原文（要直达作者）。 */
+ *  透传服务端 error 原文（要直达作者）。
+ *  根治批 2026-11-01：隧道中转面的英文 504「Host did not answer in time」
+ *  （neblink relay portal_cycle_timeout，周期 15s 预算）不再裸上屏——分类成
+ *  中文提示（连接可能已在后台完成，引导看面板状态）；本机网络不可达（fetch
+ *  直接失败 status 0）同样分类。 */
 function authErrMsg(r, fallback) {
   if (r.status === 401 || r.status === 403) return t('perception.sessionExpired');
+  if (r.status === 504 || (r.data && (r.data.reason === 'portal_cycle_timeout' ||
+      /did not answer/i.test(String((r.data && r.data.error) || ''))))) {
+    return t('perception.relayTimeout');
+  }
+  if (r.status === 0) return t('perception.netFail');
   return (r.data && r.data.error) || fallback;
 }
 
@@ -367,7 +377,12 @@ function renderEntryDetail(entryEl) {
         <div class="addr">${esc(addr)}</div>
         <div class="srv">${esc(provider)}</div>
       </div>
-      <button class="pp-toggle ${en.enabled ? 'on' : ''}" data-act="toggle" title="${esc(t('perception.toggleTitle'))}" aria-label="${esc(t('perception.toggleTitle'))}"></button>
+      ${toggleHTML({
+        on: !!en.enabled,
+        label: t('perception.toggleTitle'),
+        title: t('perception.toggleTitle'),
+        attrs: 'data-act="toggle"',
+      })}
     </div>
     <div style="height:8px"></div>
     <div class="pp-quiet-line">
@@ -378,11 +393,21 @@ function renderEntryDetail(entryEl) {
       <button class="pp-btn" data-act="config">${esc(t('perception.configBtn'))}</button>
     </div>`;
   detail.innerHTML = html;
-  detail.querySelector('[data-act="toggle"]').addEventListener('click', async (e) => {
-    const on = !e.currentTarget.classList.contains('on');
-    e.currentTarget.classList.toggle('on', on);
-    await api('POST', '/api/perception/mail/toggle', { id, enabled: on });
-  });
+  // 共享开关组件（js/toggle.js）：乐观翻面 + 后端写；失败回滚（不留假态）。
+  // toggle-unify 批 2026-11-05 前这里是 `.pp-toggle` 自画开关（38×22 轨道 +
+  // 带投影的 16px 圆钮，无 role/aria-checked —— 对读屏是一枚无状态按钮）。
+  const mailSwitch = /** @type {HTMLButtonElement|null} */ (detail.querySelector('.nb-toggle[data-act="toggle"]'));
+  if (mailSwitch) {
+    mailSwitch.addEventListener('click', async () => {
+      const on = !mailSwitch.classList.contains('on');
+      setToggleState(mailSwitch, on);
+      // aria-busy 而不是 disabled：停用一个正在被键盘操作的开关会丢焦点（同 daemons）
+      setToggleBusy(mailSwitch, true);
+      const ok = await api('POST', '/api/perception/mail/toggle', { id, enabled: on });
+      setToggleBusy(mailSwitch, false);
+      if (!ok || ok.ok !== true) setToggleState(mailSwitch, !on);
+    });
+  }
   detail.querySelector('[data-act="config"]').addEventListener('click', () => openConfigCard(en));
   const reconn = detail.querySelector('[data-act="reconnect"]');
   if (reconn) reconn.addEventListener('click', () => openConfigCard(en));
@@ -424,12 +449,12 @@ function openConfigCard(existing) {
         </div>
         <div class="pp-field">
           <label for="pp-cfg-code">${esc(t('perception.cfgAuthCode'))}</label>
-          <input id="pp-cfg-code" type="password" autocomplete="new-password" placeholder="· · · · · · · ·">
+          <input id="pp-cfg-code" type="password" autocomplete="new-password" spellcheck="false" autocapitalize="off" autocorrect="off" placeholder="· · · · · · · ·">
           <div class="hint">${esc(t('perception.cfgAuthCodeHint'))}</div>
         </div>
         <div class="pp-auto-note">
           <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg>
-          <span>${esc(t('perception.cfgAutoNote'))}</span>
+          <span id="pp-cfg-autonote">${esc(t('perception.cfgAutoNote'))}</span>
         </div>
         <details class="pp-adv">
           <summary>
@@ -438,15 +463,15 @@ function openConfigCard(existing) {
           </summary>
           <div class="pp-adv-body">
             <div class="pp-field-grid">
-              <div class="pp-field"><label for="pp-cfg-imap">${esc(t('perception.cfgImapHost'))}</label><input id="pp-cfg-imap" placeholder="imap.qq.com"></div>
-              <div class="pp-field"><label for="pp-cfg-imapport">${esc(t('perception.cfgPort'))}</label><input id="pp-cfg-imapport" placeholder="993"></div>
+              <div class="pp-field"><label for="pp-cfg-imap">${esc(t('perception.cfgImapHost'))}</label><input id="pp-cfg-imap" placeholder="imap.qq.com" spellcheck="false" autocapitalize="off" autocorrect="off"></div>
+              <div class="pp-field"><label for="pp-cfg-imapport">${esc(t('perception.cfgPort'))}</label><input id="pp-cfg-imapport" placeholder="993" spellcheck="false" inputmode="numeric"></div>
             </div>
             <div class="pp-field-grid">
-              <div class="pp-field"><label for="pp-cfg-smtp">${esc(t('perception.cfgSmtpHost'))}</label><input id="pp-cfg-smtp" placeholder="smtp.qq.com"></div>
-              <div class="pp-field"><label for="pp-cfg-smtpport">${esc(t('perception.cfgPort'))}</label><input id="pp-cfg-smtpport" placeholder="465"></div>
+              <div class="pp-field"><label for="pp-cfg-smtp">${esc(t('perception.cfgSmtpHost'))}</label><input id="pp-cfg-smtp" placeholder="smtp.qq.com" spellcheck="false" autocapitalize="off" autocorrect="off"></div>
+              <div class="pp-field"><label for="pp-cfg-smtpport">${esc(t('perception.cfgPort'))}</label><input id="pp-cfg-smtpport" placeholder="465" spellcheck="false" inputmode="numeric"></div>
             </div>
             <div class="pp-field"><label for="pp-cfg-name">${esc(t('perception.cfgDisplayName'))}</label><input id="pp-cfg-name" placeholder="${esc(t('perception.cfgDisplayNamePh'))}"></div>
-            <div class="pp-field"><label for="pp-cfg-trusted">${esc(t('perception.cfgTrusted'))}</label><input id="pp-cfg-trusted" placeholder="${esc(t('perception.cfgTrustedPh'))}"><div class="hint">${esc(t('perception.cfgTrustedHint'))}</div></div>
+            <div class="pp-field"><label for="pp-cfg-trusted">${esc(t('perception.cfgTrusted'))}</label><input id="pp-cfg-trusted" placeholder="${esc(t('perception.cfgTrustedPh'))}" spellcheck="false" autocapitalize="off" autocorrect="off"><div class="hint">${esc(t('perception.cfgTrustedHint'))}</div></div>
           </div>
         </details>
       </div>
@@ -460,6 +485,55 @@ function openConfigCard(existing) {
   document.body.appendChild(overlay);
   overlay.addEventListener('click', (e) => { if (e.target === overlay) closeConfigCard(); });
   overlay.querySelector('#pp-cfg-cancel').addEventListener('click', closeConfigCard);
+  // 自动配置显形（根治批 2026-11-01）：地址可识别 ⇒ 即时回显将拨的 host:port
+  // （高级设置占位符同步预填）；不可识别 ⇒ 明说，引导高级手填。输 Mist. 300ms
+  // 防抖；同地址命中缓存不重复打。失败静默（说明行保持默认文案——识别腿只是
+  // 体验增强，连接本身以服务端 preset 为准）。
+  const autoNoteEl = overlay.querySelector('#pp-cfg-autonote');
+  const presetCache = new Map();
+  let presetTimer = null;
+  function updateAutoNote() {
+    const a = (/** @type {any} */ (overlay.querySelector('#pp-cfg-addr') || {})).value || '';
+    const addr = a.trim();
+    if (!addr || addr.indexOf('@') < 0) { autoNoteEl.textContent = t('perception.cfgAutoNote'); return; }
+    if (presetCache.has(addr)) { applyPreset(addr, presetCache.get(addr)); return; }
+    autoNoteEl.textContent = t('perception.cfgAutoNote');
+    api('GET', '/api/perception/mail/preset?address=' + encodeURIComponent(addr)).then((r) => {
+      presetCache.set(addr, r && r.ok ? r.data : null);
+      applyPreset(addr, presetCache.get(addr));
+    });
+  }
+  function applyPreset(addr, data) {
+    const cur = (/** @type {any} */ (overlay.querySelector('#pp-cfg-addr') || {})).value || '';
+    if (cur.trim() !== addr) return; // 地址已改：过期响应弃用
+    if (data && data.recognized) {
+      // 服务端解析面（根治批 2026-11-01）：preset 端点带 host:port/TLS——
+      // 显形与占位符预填以此为准；旧引擎无字段时降级为内置 QQ 映射。
+      const ih = data.imapHost || '', sh = data.smtpHost || '';
+      const ip = Number.isFinite(data.imapPort) ? String(data.imapPort) : '';
+      const sp = Number.isFinite(data.smtpPort) ? String(data.smtpPort) : '';
+      const tls = data.smtpImplicitTls === false ? 'STARTTLS' : 'SSL';
+      const resolved = ih && sh ? `${ih}:${ip || 993} · ${sh}:${sp || 465}（${tls}）` : '';
+      autoNoteEl.textContent = t('perception.cfgAutoResolved', { addr, resolved: resolved || t('perception.cfgAutoNote') });
+      const imapEl = /** @type {HTMLInputElement|null} */ (overlay.querySelector('#pp-cfg-imap'));
+      const smtpEl = /** @type {HTMLInputElement|null} */ (overlay.querySelector('#pp-cfg-smtp'));
+      const ipEl = /** @type {HTMLInputElement|null} */ (overlay.querySelector('#pp-cfg-imapport'));
+      const spEl = /** @type {HTMLInputElement|null} */ (overlay.querySelector('#pp-cfg-smtpport'));
+      const dom = addr.slice(addr.indexOf('@') + 1).toLowerCase();
+      const qqish = /^(qq|foxmail|vip\.qq)\.com$/.test(dom);
+      // 预填只填占位符不填值：显式手填优先于推断（权威识别在服务端）。
+      if (ih) { if (imapEl) imapEl.placeholder = ih; if (ipEl) ipEl.placeholder = ip || '993'; }
+      else if (qqish) { if (imapEl) imapEl.placeholder = 'imap.qq.com'; if (ipEl) ipEl.placeholder = '993'; }
+      if (sh) { if (smtpEl) smtpEl.placeholder = sh; if (spEl) spEl.placeholder = sp || '465'; }
+      else if (qqish) { if (smtpEl) smtpEl.placeholder = 'smtp.qq.com'; if (spEl) spEl.placeholder = '465'; }
+    } else {
+      autoNoteEl.textContent = t('perception.cfgAutoUnknown');
+    }
+  }
+  overlay.querySelector('#pp-cfg-addr').addEventListener('input', () => {
+    if (presetTimer) clearTimeout(presetTimer);
+    presetTimer = setTimeout(() => { presetTimer = null; updateAutoNote(); }, 300);
+  });
   overlay.querySelector('#pp-cfg-connect').addEventListener('click', async () => {
     const result = overlay.querySelector('#pp-cfg-result');
     const addrEl = overlay.querySelector('#pp-cfg-addr');
@@ -788,10 +862,10 @@ export async function openMailEditor(draftId, opts = {}) {
 
   const tools = document.createElement('div');
   tools.className = 'canvas-tools';
-  tools.style.cssText = 'position:absolute;top:10px;right:14px;z-index:30;display:flex;align-items:center;gap:6px;padding:4px 6px 4px 10px;border-radius:999px;background:var(--st-control-bg);border:1px solid var(--st-control-border);box-shadow:inset 0 1px 0 var(--st-control-highlight),inset 0 -1px 0 var(--st-control-underedge),0 1px 3px var(--st-control-glow),0 2px 8px var(--st-control-shadow)';
+  tools.style.cssText = 'position:absolute;top:10px;right:14px;z-index:30;display:flex;align-items:center;gap:var(--ds-space-1h);padding:var(--ds-space-1) var(--ds-space-1h) var(--ds-space-1) var(--ds-space-inline-x);border-radius:var(--ds-radius-pill);background:var(--st-control-bg);border:1px solid var(--st-control-border);box-shadow:inset 0 1px 0 var(--st-control-highlight),inset 0 -1px 0 var(--st-control-underedge),0 1px 3px var(--st-control-glow),0 2px 8px var(--st-control-shadow)';
   tools.innerHTML = `
     <button class="pp-btn" data-t="abandon" style="border:none;background:transparent;box-shadow:none;color:var(--st-text-muted)">${esc(t('perception.abandon'))}</button>
-    <button class="pp-btn primary" data-t="send" style="border-radius:999px;padding:4px 14px">${esc(t('perception.send'))}</button>`;
+    <button class="pp-btn primary" data-t="send" style="border-radius:var(--ds-radius-pill);padding:var(--ds-space-1) 14px">${esc(t('perception.send'))}</button>`;
   pane.appendChild(tools);
 
   const wrap = document.createElement('div');

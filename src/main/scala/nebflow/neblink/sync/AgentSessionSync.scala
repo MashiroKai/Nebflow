@@ -8,7 +8,7 @@ import io.circe.syntax.*
 import io.circe.{Decoder, Encoder, Json, JsonObject}
 import nebflow.agent.SubAgentTaskStore
 import nebflow.core.device.{DeviceHmac, DeviceRegistry}
-import nebflow.shared.{NebflowLogger, SubAgentTask}
+import nebflow.shared.{NebflowLogger, SubAgentTask, TransportLog}
 
 /**
  * AgentSessionSync —— **后台子智能体会话的跨设备投影通道**（台账 #929，2026-10-26
@@ -295,18 +295,25 @@ object AgentSessionSync:
           }
           unsigned = buildPayload(task, selfId, deviceName, System.currentTimeMillis())
           targets = DeviceRegistry.loadSync.map(_.deviceId).filterNot(_ == selfId)
-          _ <- logger
-            .info(
-              s"session-sync push: session=${unsigned.sessionId} status=${unsigned.status} " +
-                s"updatedAt=${unsigned.updatedAt} bytes=${payloadBytes(unsigned)} targets=${targets.size}"
+          // 日志降噪批 C（2026-11-04）：逐条 INFO ⇒ 经 TransportLog 记账（缺省按 60s
+          // 窗口聚合成一行摘要；`-Dnebflow.log.transport.mode=per-line` 回切逐条 INFO，
+          // 行文逐字节不变）。推送本身与下面 unreachable 分支的级别都不动。
+          _ <- IO.delay(
+            TransportLog.sessionSyncPush(
+              logger,
+              unsigned.sessionId,
+              unsigned.status,
+              unsigned.updatedAt,
+              payloadBytes(unsigned),
+              targets.size
             )
-            .flatMap { _ =>
-              // 每目标单独签署（配对 key 每对一份——见 signedFor）。
-              targets.traverse_(t => fn(t, encodePayload(signedFor(unsigned, t))).flatMap {
-                case true  => IO.unit
-                case false => logger.debug(s"session-sync: device $t unreachable (offline?)")
-              })
-            }
+          ).flatMap { _ =>
+            // 每目标单独签署（配对 key 每对一份——见 signedFor）。
+            targets.traverse_(t => fn(t, encodePayload(signedFor(unsigned, t))).flatMap {
+              case true  => IO.unit
+              case false => logger.debug(s"session-sync: device $t unreachable (offline?)")
+            })
+          }
         yield ()
     }
 

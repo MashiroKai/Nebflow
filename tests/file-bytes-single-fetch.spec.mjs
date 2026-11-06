@@ -359,9 +359,11 @@ test('T6: 好图直显后内容换成坏字节（事件失效）⇒ blob 解码�
   fs.writeFileSync(imgPath(), BAD_BYTES);
 
   // 重渲：账本未命中 ⇒ 取数（第 2 次抓取）入账坏字节 ⇒ blob 解码失败 ⇒ 自愈腿
-  // （nfCacheDrop + 既有票腿恰一次）⇒ 票腿字节同样非图 ⇒ 终态摘槽（失败面逐字现状）。
+  // （nfCacheDrop + 既有票腿恰一次）⇒ 票腿字节同样非图 ⇒ 终态降级（fm-att-card-unify
+  // 批口径：媒体面整卡换成文件面卡 = `boxInDom` false；禁静默无反应，名称/大小/下载键
+  // 全保留——与改前「摘槽、卡片原样」同一可见降级语义）。
   const again = await page.evaluate((pp) => window.__deviceInline(pp), imgPath());
-  expect(again.boxInDom).toBe(false); // 终态：直显槽已摘（禁静默无反应，卡片原样）
+  expect(again.boxInDom).toBe(false); // 终态：媒体面已降级（文件面卡接管，零破图）
   expect(nfFileGets.length).toBeGreaterThanOrEqual(3); // 直显1 + 重取1 + 自愈票腿1
   // 坏字节不粘死账本：自愈已把该键逐出。
   const stats = await page.evaluate(() => window.__cacheStats());

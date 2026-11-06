@@ -1,5 +1,11 @@
 package nebflow.neblink.social
 
+import nebflow.neblink.ProfileDescriptionStore
+
+import nebflow.neblink.ProfileSync
+
+import nebflow.neblink.ProfileDescriptions
+
 import nebflow.neblink.attachment.*
 import nebflow.neblink.core.*
 import nebflow.neblink.relay.*
@@ -116,9 +122,27 @@ final class FriendService(
    * （修前 `GatewayMain` 的 `case None => IO.unit` 与本层的 `IO[Unit]` 口径合起来
    * 使「无 live socket」不可能被判别）。本层据此**如实留痕**（见 [[ackProcessed]]）。
    */
-  ackSender: Option[String => IO[NeblinkRelayTunnel.AckOutcome]] = None
+  ackSender: Option[String => IO[NeblinkRelayTunnel.AckOutcome]] = None,
+  /**
+   * 件一（2026-11-02）「好友/群 Profile 双描述」本地态：`friendBio`（好友自我介绍
+   * 的**本地缓存**）/ `groupRemark`（我的群备注，本地真源）/ `groupDescription`
+   * （群介绍的**本地缓存**）/ `selfBio`（我给自己写的介绍，本地真源）。
+   *
+   * 持久化 = `ProfileDescriptionStore`（`<dataRoot>/profile-descriptions.json`，
+   * 单写者 = 本进程，`os.write.over` 原子覆盖，与 `FriendRemarkStore` 同族）。
+   * 缺省空 Ref ⇒ 既有构造点与既有测试零改动（`remarkRef` 的加性先例逐字同形）。
+   *
+   * 🔴 「本地缓存」= 语义真源在上游、本仓只回显：上游当前**没有**这两个字段，
+   * 故 UI 必须标「本地缓存·未同步」（见 `ProfileDescriptions` 头注）。
+   */
+  descriptionsRef: Ref[IO, ProfileDescriptions] = Ref.unsafe[IO, ProfileDescriptions](ProfileDescriptions.empty)
 ) extends FriendServicePort: // 严格DAG第⑥步第二批裁定(2026-09-27,R11):原地混入 core 窄口(searchUser/sendAsAgent/refreshFriends/listGroups/sendGroupAsAgent/listFriends,签名镜像,行为保持)
   private val logger = NebflowLogger.forName("nebflow.neblink.friends")
+
+  // profile-sync 批（2026-11-06）：本实例是描述面的**唯一写者**，跨设备同步通道必须
+  // 与它共用同一个 Ref（远端收敛改磁盘却漏改内存 Ref ⇒ 下次本地写把远端值覆盖回去）。
+  // 自注册先例 = `NeblinkWiring` 的 LlmRuntimePort / DeviceMailAck 自注册段。
+  ProfileSync.attachDescriptions(descriptionsRef)
 
   // ===== 本地好友备注（2026-09-12 好友消息改造批 ⑦）=====
 
@@ -173,6 +197,162 @@ final class FriendService(
 
   /** 当前备注快照（键 = `userId`）。仅供查询/seam；写面唯一入口是 `setRemark`。 */
   def remarks: IO[Map[String, String]] = remarkRef.get
+
+  // ===== 双描述（件一，2026-11-02：好友/群 Profile）=====
+
+  /**
+   * 描述覆盖应用（**唯一合并点**，与 `applyRemark` 逐行同形）。
+   *
+   * 合并顺序（bio 的语义真源是**对方**）：
+   *   ① 上游带了 `bio` ⇒ 用上游值（上游 = 真源，本仓缓存不得覆盖它）；
+   *   ② 上游缺席 ⇒ 用本地缓存（`friendBio` 映射，键 = `userId`）；
+   *   ③ 两侧都空 ⇒ 保持 `None`（**不写空串**：前端与工具两侧都不必容错第二种形态）。
+   */
+  private def applyFriendBio(f: FriendSummary, bios: Map[String, String]): FriendSummary =
+    f.bio.map(_.trim).filter(_.nonEmpty) match
+      case Some(upstreamBio) => f.copy(bio = Some(upstreamBio))
+      case None =>
+        bios.get(f.userId).filter(_.nonEmpty) match
+          case Some(local) => f.copy(bio = Some(local))
+          case None => f
+
+  /**
+   * 好友列表出站口的描述注入（备注之外的第二个本地字段）。
+   * 与 [[applyRemarks]] 同一批 merge、同一处收口（禁各调用点自行 map）。
+   */
+  private def applyFriendBios(resp: FriendListResponse): IO[FriendListResponse] =
+    descriptionsRef.get.map { d =>
+      resp.copy(friends = resp.friends.map(f => applyFriendBio(f, d.friendBio)))
+    }
+
+  /** 会话内嵌 `friend` 档案同样注入 bio（冻结契约 2 的同族：三处显示面同源）。 */
+  private def applyFriendBiosToConvs(convs: List[ConversationSummary]): IO[List[ConversationSummary]] =
+    descriptionsRef.get.map { d =>
+      convs.map(c => c.copy(friend = applyFriendBio(c.friend, d.friendBio)))
+    }
+
+  // ===== 会话级本地偏好（三点入口批 2026-11-05：免打扰 / 顶置）=====
+
+  /**
+   * 会话偏好覆盖（**唯一合并点**）：`muted` / `pinned` 是**纯本地真源** ⇒ 恒取本地
+   * 映射（与 `applyGroupDescriptions` 的群 `remark` 同档：上游值不得穿透；本仓无该
+   * 键 ⇒ `None`，前端按 null = 关）。
+   *
+   * 存储形态只存 `true`（关闭 = 删键，与 `setRemark` 的「空即清除」同族）⇒ 两个
+   * 映射里不可能出现 `false` 值，前端零容错第二种形态。
+   */
+  private def applyFriendPrefs(f: FriendSummary, d: ProfileDescriptions): FriendSummary =
+    f.copy(
+      muted = d.friendMuted.get(f.userId).filter(identity),
+      pinned = d.friendPinned.get(f.userId).filter(identity)
+    )
+
+  /** 好友列表出站口的偏好注入（与 [[applyRemarks]] / [[applyFriendBios]] 同一处收口）。 */
+  private def applyFriendPrefsToResp(resp: FriendListResponse): IO[FriendListResponse] =
+    descriptionsRef.get.map { d =>
+      resp.copy(friends = resp.friends.map(f => applyFriendPrefs(f, d)))
+    }
+
+  /** 会话内嵌 `friend` 档案同样注入偏好（同一收口，禁各调用点自行 map）。 */
+  private def applyFriendPrefsToConvs(convs: List[ConversationSummary]): IO[List[ConversationSummary]] =
+    descriptionsRef.get.map { d =>
+      convs.map(c => c.copy(friend = applyFriendPrefs(c.friend, d)))
+    }
+
+  /**
+   * 消息免打扰写入（纯本地态，零上游往返 ⇒ 无 502 面）。
+   * `true` = 存键；`false` = **删键**（清除），与既有两个本地写面同族。
+   */
+  def setFriendMuted(friendUserId: String, muted: Boolean): IO[Unit] =
+    putDescription(Nil) { d =>
+      d.copy(friendMuted = if muted then d.friendMuted + (friendUserId -> true) else d.friendMuted - friendUserId)
+    }.void
+
+  /** 顶置写入（同上：`true` = 存键，`false` = 删键）。 */
+  def setFriendPinned(friendUserId: String, pinned: Boolean): IO[Unit] =
+    putDescription(Nil) { d =>
+      d.copy(friendPinned = if pinned then d.friendPinned + (friendUserId -> true) else d.friendPinned - friendUserId)
+    }.void
+
+  /**
+   * 群行描述注入（群列表出站口唯一合并点）：`description` 与 `remark` **互不影响**
+   * （两个独立键、两个独立写面，改其一回读只变其一）。
+   *  - `description`：上游在场优先（真源在群管理），缺席回落本地缓存；
+   *  - `remark`：**恒取本地**（纯本地真源，上游永不带）。
+   */
+  private def applyGroupDescriptions(gs: List[GroupSummary]): IO[List[GroupSummary]] =
+    descriptionsRef.get.map { d =>
+      gs.map { g =>
+        val desc = g.description
+          .map(_.trim)
+          .filter(_.nonEmpty)
+          .orElse(d.groupDescription.get(g.groupId).filter(_.nonEmpty))
+        val remark = d.groupRemark.get(g.groupId).filter(_.nonEmpty)
+        g.copy(description = desc, remark = remark)
+      }
+    }
+
+  /** 双描述全量快照（四个字段一次读；写面唯一入口是下面四个 setter）。 */
+  def descriptions: IO[ProfileDescriptions] = descriptionsRef.get
+
+  /**
+   * 单字段写入的公共形（trim → 空串删键 → 改 Ref → 落盘，`setRemark` 逐行同形）。
+   *
+   * profile-sync 批（2026-11-06，作者令「描述信息需要支持云同步」）：`touched` = 本次
+   * **真正改动**的同步键（`ProfileSync.keyOf` 命名空间：`friendBio:<userId>` /
+   * `groupRemark:<groupId>` / `groupDescription:<groupId>` / `selfBio`）。落盘成功后
+   * 在同一点打戳（网关时钟 ms + 本机设备 id）并 fire-and-forget 外推——**写面仍是
+   * 唯一写者**，跨设备同步只是它的尾巴（本批没有第二个写入口）。
+   * `touched = Nil` = 不同步的设备本地偏好（`friendMuted` / `friendPinned`）。
+   */
+  private def putDescription(touched: List[String])(
+    f: ProfileDescriptions => ProfileDescriptions
+  ): IO[ProfileDescriptions] =
+    descriptionsRef
+      .modify { cur =>
+        val next = f(cur)
+        (next, next)
+      }
+      .flatTap(ProfileDescriptionStore.save)
+      .flatTap { _ =>
+        // fire-and-forget：`.start` 起 fiber 即返回（不自起第二个 runtime），打戳/外推
+        // 的失败绝不回灌写路径（错误已在 ProfileSync 内收敛成 WARN）。
+        ProfileSync.afterLocalWrite(touched).handleError(_ => ()).start.void
+      }
+
+  /**
+   * 好友 `bio` 的**本地缓存**写入（语义真源在上游，本仓只缓存/回显 ⇒ UI 必须标
+   * 「本地缓存·未同步」）。`trim` 后空串 = 清除（删键）；未知 `userId` 照存
+   * （纯本地态，零上游校验 ⇒ 无 502 面，同 `setRemark` 口径）。
+   */
+  def setFriendBio(friendUserId: String, bio: String): IO[Unit] =
+    val v = bio.trim
+    putDescription(List(ProfileSync.keyOf(ProfileSync.KindFriendBio, friendUserId))) { d =>
+      d.copy(friendBio = if v.isEmpty then d.friendBio - friendUserId else d.friendBio + (friendUserId -> v))
+    }.void
+
+  /** 我的群备注（纯本地真源）。trim 后空串 = 清除。 */
+  def setGroupRemark(groupId: String, remark: String): IO[Unit] =
+    val v = remark.trim
+    putDescription(List(ProfileSync.keyOf(ProfileSync.KindGroupRemark, groupId))) { d =>
+      d.copy(groupRemark = if v.isEmpty then d.groupRemark - groupId else d.groupRemark + (groupId -> v))
+    }.void
+
+  /**
+   * 群介绍的**本地缓存**写入（真源 = 上游群管理；上游无该键 ⇒ 本仓只缓存 + 标注
+   * 「本地缓存·未同步」，禁假装已同步）。
+   */
+  def setGroupDescription(groupId: String, description: String): IO[Unit] =
+    val v = description.trim
+    putDescription(List(ProfileSync.keyOf(ProfileSync.KindGroupDescription, groupId))) { d =>
+      d.copy(
+        groupDescription = if v.isEmpty then d.groupDescription - groupId else d.groupDescription + (groupId -> v)
+      )
+    }.void
+
+  /** 我给自己写的介绍（本地真源，无 key：单值）。trim 后空串 = 清除。 */
+  def setSelfBio(bio: String): IO[Unit] =
+    putDescription(List(ProfileSync.KindSelfBio))(d => d.copy(selfBio = bio.trim)).void
 
   /**
    * F1: resolve the authoritative live client per call. None (logged out /
@@ -492,14 +672,47 @@ final class FriendService(
   /**
    * 拉会话列表，合并未读 cursor。内嵌 `friend` 档案同样盖本地备注（⑦：
    * conversations 面与 `GET /api/friends` 面出参口径一致）。
+   *
+   * 🔴 后台刷新语义（失败折叠空列表）：`refreshAll` / 重连链吃的是本方法，上游
+   * 故障不该在那里变成异常（那里没有 UI 错误面，折叠 = keep-last-known 的同族
+   * 口径）。REST 直通面**禁**用本方法 —— 走 [[listConversations]]（空态诚实批
+   * 2026-11-05）。
    */
   def refreshConversations(): IO[List[ConversationSummary]] =
+    listConversations.map(_.getOrElse(Nil))
+
+  /**
+   * 会话列表 **REST 直通**（empty-state-must-not-lie 批 · 2026-11-05）：上游 `Left`
+   * **原样上抛**，由网关按既有单点判据（`RestApiCtx.friendErr`）落成可区分状态码
+   * —— 未登录 ⇒ 401 `code=neblink_not_logged_in`；其余上游失败 ⇒ 502
+   * `code=neblink_upstream_failed`。
+   *
+   * 修前形态（`refreshConversations` 单点）：`Left(err) => logger.warn(...).as(Nil)`
+   * ⇒ 网关给前端恒 200 + `[]`，而前端把 `[]` 画成「暂无会话」= **把「拿不到」
+   * 伪装成「确实没有」**。事故现场 = 2026-11-05 08:18:02.798
+   * `listConversations failed: Not logged in`（登录面 150ms 后才就绪）：同一条件
+   * 改前读 200+`[]`，改后读 401+code。
+   *
+   * 与 `listFriends` / `refreshFriends` 是**同一对偶**（F4 分态穿透先例）：后台
+   * 折叠版 + REST 直通版，判据只有一份（备注/bio/未读合并都在这一个出口）。
+   */
+  def listConversations: IO[Either[String, List[ConversationSummary]]] =
     withClient(_.listConversations).flatMap {
-      case Left(err) => logger.warn(s"listConversations failed: $err").as(Nil)
+      case Left(err) =>
+        logger
+          .warn(s"listConversations failed: $err")
+          .as(
+            Left(err): Either[String, List[ConversationSummary]]
+          )
       case Right(convs) =>
+        // 件一（2026-11-02）：内嵌 `friend` 档案的第二个描述（bio）同样在此合并
+        // —— 与 `GET /api/friends` 同一出口口径（禁各调用点自行 map）。
         applyRemarksToConvs(convs)
+          .flatMap(applyFriendBiosToConvs)
+          .flatMap(applyFriendPrefsToConvs)
           .flatMap(_.traverse(c => guard.mergeUnread(c).map(_ => c)))
           .flatTap(cs => logger.debug(s"Refreshed ${cs.size} conversations"))
+          .map(Right(_): Either[String, List[ConversationSummary]])
     }
 
   /**
@@ -916,7 +1129,7 @@ final class FriendService(
   def refreshFriends(): IO[FriendListResponse] =
     withClient(_.listFriends).flatMap {
       case Left(err) => logger.warn(s"listFriends failed: $err").as(FriendListResponse(Nil))
-      case Right(resp) => applyRemarks(resp)
+      case Right(resp) => applyRemarks(resp).flatMap(applyFriendBios).flatMap(applyFriendPrefsToResp)
     }
 
   /**
@@ -927,7 +1140,11 @@ final class FriendService(
    */
   def listFriends: IO[Either[String, FriendListResponse]] =
     withClient(_.listFriends).flatMap {
-      case Right(resp) => applyRemarks(resp).map(Right(_))
+      // 件一（2026-11-02）：两个本地描述在**同一出口**合并（备注 + bio，两次 map
+      // 串联而非各调用点各写一套）。三点入口批（2026-11-05）：会话偏好
+      // （muted / pinned）在同一出口再串一次，禁各调用点自行 map。
+      case Right(resp) =>
+        applyRemarks(resp).flatMap(applyFriendBios).flatMap(applyFriendPrefsToResp).map(Right(_))
       case Left(err) => IO.pure(Left(err))
     }
 
@@ -1101,7 +1318,12 @@ final class FriendService(
    * 空表会让工具报「你没有群」，即把一次上游故障伪装成一个确证结论。
    */
   def listGroups: IO[Either[String, List[GroupSummary]]] =
-    withClient(_.listGroups)
+    // 件一（2026-11-02）：群列表出站口注入 `description`（上游优先 / 本地缓存兜底）
+    // 与 `remark`（恒本地），全仓唯一合并点（禁各调用点自行 map）。
+    withClient(_.listGroups).flatMap {
+      case Right(gs) => applyGroupDescriptions(gs).map(Right(_))
+      case Left(err) => IO.pure(Left(err))
+    }
 
   /**
    * UI 直发的群消息（**用户身份**，无 agent 权限档位）——与 [[sendAsUser]] 同语义。

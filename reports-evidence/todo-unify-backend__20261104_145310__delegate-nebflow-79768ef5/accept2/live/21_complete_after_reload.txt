@@ -1,0 +1,22 @@
+{
+  "store": [
+    {
+      "id": "c4b28374",
+      "content": "PERSIST-①-新建高重要度",
+      "completedAt": 1793791482392
+    }
+  ],
+  "live": {
+    "dataSource": "backend",
+    "openCount": 0,
+    "visible": [],
+    "completed": [
+      {
+        "id": "c4b28374",
+        "title": "PERSIST-①-新建高重要度",
+        "completedAt": 1793791482392
+      }
+    ]
+  },
+  "domTitles": []
+}

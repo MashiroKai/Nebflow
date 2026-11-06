@@ -1,0 +1,26 @@
+[
+  {
+    "cls": "reminder-row",
+    "h": 701,
+    "w": 343,
+    "kids": 4,
+    "disp": "flex",
+    "bodyH": 668
+  },
+  {
+    "cls": "reminder-row",
+    "h": 561.828125,
+    "w": 343,
+    "kids": 4,
+    "disp": "flex",
+    "bodyH": 668
+  },
+  {
+    "cls": "reminder-row",
+    "h": 92,
+    "w": 343,
+    "kids": 4,
+    "disp": "flex",
+    "bodyH": 668
+  }
+]

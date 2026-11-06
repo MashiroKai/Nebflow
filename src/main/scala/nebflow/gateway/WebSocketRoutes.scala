@@ -11,7 +11,6 @@ import nebflow.actor.{ActorSystem as RootActorSystem, *}
 import nebflow.agent.*
 import nebflow.core.*
 import nebflow.core.entity.EntityLoader
-import nebflow.core.flow.{FlowTreeActor, FlowTreeRegistry, TeamSessionRegistry}
 import nebflow.core.mcp.McpManager
 import nebflow.core.project.{CancelSource as ChainCancelSource, *}
 import nebflow.core.schedule.FreezeSchedule.given
@@ -192,7 +191,7 @@ class WebSocketRoutes(
       // ── ctxthresh 批（2026-09-15 方案 A，作者卡答「按方案A实施」）─────────────
       // 🔴 **本行是全仓唯一的阈值覆盖注入点**（口径③「仅 Nebula 窗口」的**结构性**
       // 保证，不是口号）：depth=0 的 WS 根会话 spawn 是全仓唯一的 root spawn 点，
-      // 非 root spawn（NodeRunner / MailTool / FlowTreeActor）一律不传该实参 ⇒ SessionContext.compactThresholdRatio = None
+      // 非 root spawn（`NodeRunner` / `MailTool`）一律不传该实参 ⇒ SessionContext.compactThresholdRatio = None
       // ⇒ 走 CompactThreshold 现值函数（口径②）。
       //
       // 优先级链：内存 Ref（本进程内已热更的权威值）＞ 盘上 SessionMeta（跨重启
@@ -295,11 +294,12 @@ class WebSocketRoutes(
         // 一个来源（应用级 `safety.defaultMode`，见 SharedResources）。此前每建立
         // 一次连接就用盘上 meta 值写桶的路径（2026-09-12 前）以及"内存覆盖"路径
         // （2026-09-12–09-13）都已随覆盖层删除。
-        registerRootInteraction(sessionId, recordingWsSend) *>
-        initFlowTree(sessionId, ref, pr, safetyMode)
-          .handleErrorWith(e => logger.error(s"initFlowTree failed for session $sessionId: ${e.getMessage}"))
-          .start
-          .as(ref)
+        // 团队功能删除批（team-feature-deletion-20261104）阶段 1：此处原为
+        // `initFlowTree(...)` —— 每个 root 会话 spawn 就无条件建一棵「团队树」actor
+        // 并注册进树注册表。阶段 1 断掉该无条件路径，阶段 2 摘掉惰性入口
+        // （Load 工具的 team 分支），阶段 3 把类型本体与注册表一并删除 ——
+        // 至此「连接即建树」的生产者、入口、类型三层全无。
+        registerRootInteraction(sessionId, recordingWsSend).as(ref)
     }
 
   end doSpawnRootAgent
@@ -316,7 +316,7 @@ class WebSocketRoutes(
    * 家族分派：
    *   - registry 行已活（判活→激活竞态合拢）⇒ 直接投该会话（新鲜 ref）；
    *   - 会话已删（SessionStore 无行）⇒ `UnknownSession`（不落盘、不激活、审计收口）；
-   *   - Delegate/SubTask/Ephemeral/Plan ⇒ `Deferred`（复活归监督者 respawn /
+   *   - Delegate/SubTask ⇒ `Deferred`（复活归监督者 respawn /
    *     boot sweep 既有恢复腿所有，不越权重挂——持久标记等自然复活重放补投）；
    *   - Root/Team/Flow ⇒ 先把标记写进**目标会话**注入队（correlationId 幂等，
    *     BgInboxBackstop 会话存在守卫双保险），再走恢复 spawn ⇒ 重放交付。
@@ -348,7 +348,7 @@ class WebSocketRoutes(
     pendingEvent: AgentCommand.ExternalEvent
   ): IO[BgSessionActivator.ActivationResult] =
     kind match
-      case AgentKind.Delegate | AgentKind.SubTask | AgentKind.Ephemeral | AgentKind.Plan =>
+      case AgentKind.Delegate | AgentKind.SubTask =>
         IO.pure(
           BgSessionActivator.Deferred(
             s"session family $kind revival is owned by its supervisor respawn / boot-sweep legs"
@@ -486,40 +486,17 @@ class WebSocketRoutes(
     ConfigService.setSafetyDefaultMode(mode) *>
       wsHub.broadcast(io.circe.Json.obj("type" -> "configUpdated".asJson, "success" -> true.asJson))
 
-  /** Create and register a FlowTreeActor for a session. Fire-and-forget via .start. */
-  private def initFlowTree(
-    sessionId: String,
-    agentRef: nebflow.actor.ActorRef[AgentCommand],
-    projectRoot: String,
-    safetyMode: String = "confirm-edits"
-  ): IO[Unit] =
-    val config = FlowTreeActor.TreeConfig(
-      parentAgentRef = agentRef,
-      wsSend = Some(makeRecordingWsSend(sessionId, (json: Json) => wsHub.broadcast(json))),
-      sessionId = Some(sessionId),
-      resources = sharedResources,
-      projectRoot = projectRoot,
-      safetyMode = safetyMode
-    )
-    for
-      // ⑦ (2026-08-24): mark restore in flight BEFORE spawn so a concurrent
-      // GET /api/teams/mounted (awaitRestore) waits for restoreTeams to
-      // finish instead of fast-pathing past it and returning an empty list.
-      // The completion signal always fires (signalRestoreComplete in the
-      // actor setup, even for a zero-team home), so the wait is bounded to
-      // the restore itself — no fixed stall.
-      _ <- FlowTreeRegistry.markRestoreStarted
-      treeRef <- rootSystem.spawn(FlowTreeActor(config), s"flow-tree-$sessionId")
-      _ <- FlowTreeRegistry.register(sessionId, treeRef)
-      _ = logger.info(s"FlowTreeActor created for session $sessionId (pipelines auto-restored on startup)")
-    yield ()
-
-  end initFlowTree
+  // 团队功能删除批（team-feature-deletion-20261104）阶段 1：`initFlowTree`
+  // （原 :490-517）整段删除 —— 它是「每次 root 会话 spawn 就无条件建一棵团队树」
+  // 的唯一定义面（markRestoreStarted + spawn 树 actor + 注册进树注册表）。
+  // 阶段 2（同一批）：注释里那条「树仍可经惰性入口 getOrCreate（LoadTool 腿）按需
+  // 建立」的腿也已摘掉（Load 工具的 team 分支删除）。
+  // 阶段 3（同一批）：树 actor / 树注册表 / 树命令三套类型本体与其
+  // `unregister` 清理腿一并删除（上面的 removeRootAgent 只剩 agentRegistry 一条）。
 
   /** Stop and remove the root AgentActor for a session. */
   private def removeRootAgent(sessionId: String): IO[Unit] =
-    FlowTreeRegistry.unregister(sessionId) *>
-      sharedResources.agentRegistry.update(_ - sessionId) *>
+    sharedResources.agentRegistry.update(_ - sessionId) *>
       unregisterRootInteraction(sessionId) *>
       // 2026-09-13（permshield S1）：此处原为"清该会话的内存覆盖条目"。覆盖层删除后
       // 档位是应用级的，删除会话**不得**（也不能）改动它——故本清理点整体移除。
@@ -533,33 +510,13 @@ class WebSocketRoutes(
           case None => (agents, IO.unit)
       }.flatten
 
-  /**
-   * #38 Layer C (2026-09-01): team 成员会话删除闭环。
-   *
-   * 此前 deleteSession 只停 root agent（removeRootAgent）+ 删磁盘文件；
-   * team 成员 actor（qa-backend 等，注册于 TeamSessionRegistry.actorMap）
-   * 完全存活——state.messages 持 ~10MB，下一次活动（Mail/flow dispatch）
-   * 触发 persistIfSession 2s 防抖 → <id>.json 以 10MB 重建 → 删除复活
-   * （观测：deleteSession 后 ~12s 历史灌回）。修复：删除前停成员 actor +
-   * 清 TeamSessionRegistry 三处映射（actorMap / AgentRegistry / sessionMap）。
-   */
-  private def stopTeamSessionActors(sessionId: String): IO[Unit] =
-    for
-      actorOpt <- TeamSessionRegistry.getRunningActor(sessionId)
-      _ <- actorOpt match
-        case Some(ref) =>
-          logger.info(s"deleteSession: stopping team member actor for $sessionId")
-          // 注意：`ref ! msg` 本身返回 IO[Unit]（offer 的描述）——直接使用，
-          // 不能包 IO(...)（嵌套 IO[IO[Unit]]，内层 offer 永不执行——与 V1
-          // 级联修复同类 bug，#38 停成员 stop 曾因此静默无效）。
-          ref ! AgentCommand.Stop(s"session $sessionId deleted")
-        case None => IO.unit
-      _ <- TeamSessionRegistry.unregisterActor(sessionId, sharedResources)
-      pairOpt <- TeamSessionRegistry.instanceAndAgentOfSession(sessionId)
-      _ <- pairOpt match
-        case Some((inst, agent)) => TeamSessionRegistry.unregisterAgent(inst, agent, sessionId)
-        case None => IO.unit
-    yield ()
+  // ═══ 团队功能删除批（team-feature-deletion-20261104）阶段 3：团队成员删除闭环退役
+  // 本文件原有的 `stopTeamSessionActors`（#38 Layer C 2026-09-01）做两件事：
+  // ① 从团队会话登记表的 actorMap 取成员 actor 并 Stop；② 清该登记表的三处映射
+  // （actorMap / AgentRegistry / sessionMap）。团队会话登记表本体删除后本腿零对象
+  // （actorMap 自 P1 dual-write 起就与 agentRegistry 同源，成员 actor 的停止由
+  // `removeRootAgent` + `stopChildDelegateActors`（SessionChildCascade）覆盖），
+  // 故整段删除，`WsDispatchCtx` 的接线字段一并摘除。
 
   /**
    * V1 (2026-09-03): Delegate/SubTask/Ephemeral 子代理级联停止——实现抽在
@@ -626,9 +583,17 @@ class WebSocketRoutes(
               )
               .map(_.getOrElse(Nil).map(_.idx).toSet)
               .handleErrorWith(_ => IO.pure(Set.empty[Int]))
+            // 作答落库归属批（2026-11-03）：桥腿与 web 腿同一裁决单点（作者报障
+            // 「回答后台智能体的提问泄漏进主会话」）——子代理 / 节点提问 ⇒ 脱敏全文
+            // 只落提问会话，根会话（rootSid）只留不含内容的代答痕迹行；根自问 /
+            // 归属读数缺席 ⇒ 改前路径逐字不变。连接件在 [[AskAnswerPlacement]]。
             _ <- BridgeAnswerReflection.rowFor(requestId, payload, secretIdxs).traverse_ { row =>
-              sharedResources.sessionStore
-                .appendUiMessages(rootSid, List(row))
+              AskAnswerPlacement
+                .originOf(sharedResources, requestId)
+                .flatMap { origin =>
+                  val plan = AskAnswerPlacement.plan(origin, rootSid, row.text, requestId, row.timestamp)
+                  AskAnswerPlacement.persist(sharedResources.sessionStore, requestId, plan)
+                }
                 .handleErrorWith(e =>
                   logger.warn(
                     s"bridge answer ui-row append failed requestId=$requestId root=$rootSid: ${e.getMessage}"
@@ -1089,6 +1054,13 @@ class WebSocketRoutes(
               val takeoverSession: Option[String] = cred match
                 case Credential.ViaSession(record) => Some(record.sessionId)
                 case _ => None
+              // 接管误报根修批（2026-11-02）：浏览器稳定身份（`deviceIdentity.js` 的
+              // localStorage clientId，随 `/ws?clientId=` 带上）。会话 id 会变（过期/
+              // 重座/换浏览器），clientId 不会——接管身份必须以 clientId 为准，会话只
+              // 作退路（老缓存页不带参时的既有行为）。无鉴权含义：鉴权仍由上面
+              // GatewayAuth 的会话 cookie 决定，伪造 clientId 最坏只是不弹提示。
+              val takeoverClient: Option[String] =
+                req.params.get("clientId").map(_.trim).filter(id => id.nonEmpty && id.length <= 128)
               // 门户身份透传批（方案 A1，2026-10-28）：会话身份快照——session 轨
               // 连接把 SessionRecord 投影（accountSub/origin/sessionId）随接管入账
               // 一起穿进收流管（下方 receivePipe 同一闭包作用域）；Bearer 轨连接恒
@@ -1170,16 +1142,26 @@ class WebSocketRoutes(
                               ) *>
                               outboundOverflowClosed.complete(()).void
                         }
+                    // 在带身份声明（握手 query 不可靠批 2026-11-03）：本连接的实例
+                    // 键读数——初值 = 握手腿（query 可用时已是身份键；隧道脸无 query
+                    // = 会话退路键）。identify 帧到达后经 onIdentify 迁移并写回，
+                    // 内容闸随读数换轨（None = Bearer 轨/总闸关，直通）。
+                    takeoverHolderRef = new java.util.concurrent.atomic.AtomicReference[Option[String]](
+                                          takeoverSession.map(sid => ConsoleTakeover.holderOf(sid, takeoverClient))
+                                        )
                     // 单实例四修批（2026-10-29 作者令 · 隐私面）：被顶出连接的
-                    // 内容帧闸——ConsoleTakeover.gateFrame 按会话裁决（owner 非本会话
-                    // ⇒ 只放行 takeover/takeoverResult 接管协议帧，对话内容帧断喂）。
+                    // 内容帧闸——ConsoleTakeover.gateFrame 按**实例**裁决（owner 非本
+                    // 实例 ⇒ 只放行 takeover/takeoverResult 接管协议帧，对话内容帧
+                    // 断喂）。误报根修批（2026-11-02）：闸键与入账键同为 holder
+                    // （clientId 优先），否则同浏览器换会话后自己的新连接会被自己掐死。
                     // Bearer 轨（takeoverSession=None）与总闸关闭 ⇒ 恒放行（零漂移）。
                     // 心跳面不受影响：pong 走 perConnJsonSend 旁路，不经本闸。
+                    // 在带声明批：闸键改读本连接实例键（握手腿初值 / identify 换轨）。
                     gatedWsSend = (text: String, isStream: Boolean) =>
-                      takeoverSession match
+                      takeoverHolderRef.get match
                         case None => perConnWsSend(text, isStream)
-                        case Some(sid) =>
-                          takeover.gateFrame(sid, text).flatMap {
+                        case Some(holder) =>
+                          takeover.gateFrame(holder, text).flatMap {
                             case true  => perConnWsSend(text, isStream)
                             case false => IO.unit
                           }
@@ -1217,13 +1199,31 @@ class WebSocketRoutes(
                     )(
                       _.evalMap {
                         case WebSocketFrame.Text(text, _) =>
+                          // 控制台在用判据（2026-11-05）：页面上有任何交互流量 ⇒ 作者
+                          // 此刻就在用控制台（比「连接还在」更硬——僵尸连接不算在用）。
+                          // 节流写（最密 5s 一次），绝不失败、绝不拦帧。
+                          ConsoleActivity.touch("ws-frame") *>
+                          {
                           // 控制台单实例批：retake 帧前置拦截——连接身份（connId→session）
                           // 只在本管上有（WsDispatchCtx 不携带），故不走 WsDispatch 注册表。
                           // 总闸关闭时 isRetakeFrame 恒 false 侧不成立，故显式以
                           // takeover.enabled 判：关闭 ⇒ 帧走既有未知类型回退（零漂移）。
+                          // 在带身份声明（握手 query 不可靠批 2026-11-03）：握手腿与
+                          // 声明腿同键（holderOf）⇒ 闭包三态经下方识别后归还本管、
+                          // 后续帧照常进常规分派（takeoverIdentify 不是常规帧型）。
                           val handled =
                             if takeover.enabled && ConsoleTakeover.isRetakeFrame(text) then
                               takeover.handleRetake(hubConnId, perConnJsonSend)
+                            else if takeover.enabled && ConsoleTakeover.isIdentifyFrame(text) then
+                              (ConsoleTakeover.declaredClientId(text), takeoverSession) match
+                                case (Some(cid), Some(sid)) =>
+                                  // 迁移 + 重裁决（kick 与否在 ConsoleTakeover.settle 内定），
+                                  // 再把本连接实例键写回闸读数（闸随之换轨）。
+                                  takeover.onIdentify(sid, hubConnId, Some(cid)).flatMap { h =>
+                                    IO(takeoverHolderRef.set(h))
+                                  }
+                                // 坏体/无身份/Bearer 轨 ⇒ 静默空转（声明是加速面，不是语义面）。
+                                case _ => IO.unit
                             // 门户身份透传批（方案 A1）：本连接的会话身份随帧进消息
                             // 分发（两处消费点：typeless 腿 + immediateInput 腿——
                             // 后者经 wsDispatchContext 闭包）。Bearer 轨恒 None。
@@ -1231,6 +1231,7 @@ class WebSocketRoutes(
                           handled.handleErrorWith { e =>
                             logger.error(s"WebSocket message handler error: ${e.getMessage}", e)
                             IO.unit
+                          }
                           }
                         case _ => IO.unit
                       }.onFinalize(
@@ -1274,6 +1275,10 @@ class WebSocketRoutes(
                         )
                     )
                     _ <- logger.info("WebSocket client connected")
+                    // 控制台在用判据（工作过程中开新标签页批 2026-11-05）：连接建立
+                    // = 「控制台真的在用」的服务端事实之一，落一笔标记件（节流写，
+                    // 绝不失败）——boot/focus 两条开门腿据此抑制自动开门。
+                    _ <- ConsoleActivity.touch("ws-connect")
                     thinkingCfg <- sharedResources.thinkingConfigRef.get
                     workScheduleCfg <- sharedResources.freezeScheduleRef.get
                     skipUntil <- sharedResources.freezeSkipUntilRef.get
@@ -1284,6 +1289,12 @@ class WebSocketRoutes(
                     updateSnapshot <- sharedResources.updateConvergence
                       .traverse(_.stateJson)
                       .map(_.flatten)
+                    // 全设备统一更新（fleet 批 2026-11-01）：连接初始态并「fleetUpdate」
+                    // 快照——状态卡纯订阅 + 快照，刷新/重连/换设备后自动接续，零轮询。
+                    // 未装配 ⇒ 空对象，帧形零变化（与上面 updateSnapshot 同纪律）。
+                    fleetSnapshot <- sharedResources.fleetUpdate
+                      .traverse(_.snapshot)
+                      .map(_.getOrElse(io.circe.Json.obj()))
                     mcpServers <- mcpManager.listServers.map(_.map { case (id, enabled) =>
                       io.circe.Json.obj("id" -> id.asJson, "enabled" -> enabled.asJson)
                     })
@@ -1321,27 +1332,31 @@ class WebSocketRoutes(
                             "mcpServers" -> mcpServers.asJson
                           )
                           // M3 ④：update 快照 additive 挂载（未装配 = 空对象 = 不出现键）
+                          // fleet 批：fleetUpdate 快照同款 additive 挂载（`fleetUpdate`
+                          // 键——状态卡刷新/重连后一帧接续）。
                           .deepMerge(
                             updateSnapshot.map(u => io.circe.Json.obj("update" -> u)).getOrElse(io.circe.Json.obj())
+                          )
+                          .deepMerge(
+                            if fleetSnapshot.isObject && fleetSnapshot.asObject.exists(!_.isEmpty) then
+                              io.circe.Json.obj("fleetUpdate" -> fleetSnapshot)
+                            else io.circe.Json.obj()
                           )
                           .noSpaces
                       )
                     )
                     activeMeta <- sessionStore.getActiveMeta
                     agentName = activeMeta.flatMap(_.agentName).getOrElse(RootAgentIdentity.Name)
-                    // ⑦ (2026-08-24): restore mounted teams right on WS connect — not
-                    // only on first user message. Team mount recovery lives in
-                    // FlowTreeActor startup (restoreTeams → TeamSessionRegistry), and
-                    // the actor is only created alongside the root agent. After a
-                    // restart, a client that connects but sends no message would leave
-                    // /api/teams/mounted empty → "No active teams" panel. ensureRootAgent
-                    // is idempotent (existing ref is returned) and chains initFlowTree
-                    // on first spawn, so a plain call covers both the cold start (new
-                    // agent → tree → restore) and the warm path (existing agent/tree →
-                    // no-op).
+                    // ⑦ (2026-08-24): 原为「WS connect 即恢复已挂团队」——挂在
+                    // initFlowTree → 树 actor 的 restoreTeams 上。团队功能删除批
+                    // 阶段 1 已断掉 initFlowTree（见 :490 注），此处**只保留** root
+                    // agent 的确保（ensureRootAgent 幂等，冷启 spawn / 热路径原样返回）；
+                    // 团队恢复腿随之不存在。/api/teams/mounted 在阶段 1 的中间态见
+                    // reports-evidence/team-feature-deletion/stage1/README.md §4；
+                    // 该路由本身已在阶段 2 退役（见 PresenceRoutes 同位墓碑注）。
                     _ <- activeMeta.traverse_(meta =>
                       ensureRootAgent(meta.id).void.handleErrorWith(e =>
-                        logger.warn(s"WS-connect team restore failed for session ${meta.id}: ${e.getMessage}")
+                        logger.warn(s"WS-connect root agent ensure failed for session ${meta.id}: ${e.getMessage}")
                       )
                     )
                     _ <- sessionService.sendSessionList(perConnJsonSend, agentName)
@@ -1351,7 +1366,7 @@ class WebSocketRoutes(
                     // takeoverSession=None 直通。事件面只有 fresh-claim 翻位与旧主回连
                     // superseded 通知；断线/判死回收路径（onFinalize ⇒ onDisconnect）
                     // 零出帧——掉线 ≠ 让位（设计稿 §7 边界）。
-                    _ <- takeoverSession.traverse_(sid => takeover.onConnect(sid, hubConnId))
+                    _ <- takeoverSession.traverse_(sid => takeover.onConnect(sid, hubConnId, takeoverClient))
                     // R-960：入账/回减已移入收流管会话 scope（上方 guardedReceive）——
                     // build 前不再预占槽位；升级会话未起跑 ⇒ 计数未发生（幽灵洞封死）。
                     ws <- wsb.build(sendStream, receivePipe)
@@ -2123,20 +2138,27 @@ class WebSocketRoutes(
                              // 不落 quote 键 ⇒ 无引用行字节形态与旧 .ui.json 逐字相同。
                              val quoteJson = quoteFromRefs(json)
                              val injected = json.hcursor.downField("injected").as[Boolean].getOrElse(false)
-                             sharedResources.sessionStore
-                               .appendUiMessages(
-                                 msgSessionId,
-                                 List(
-                                   UiMessage.User(
-                                     content,
-                                     attJson,
-                                     injected,
-                                     timestamp = System.currentTimeMillis(),
-                                     quote = quoteJson
+                             // tool-card-leak-on-reload 批（2026-11-02）：与
+                             // dispatchUserText 同一落盘判据——回合进行中送来的输入
+                             // 落 midTurn=true（回放折叠段边界的数据面依据；注入行
+                             // 由 injected 自辨，本键只对真人输入有意义）。
+                             midTurnAtPersist(msgSessionId).flatMap { midTurn =>
+                               sharedResources.sessionStore
+                                 .appendUiMessages(
+                                   msgSessionId,
+                                   List(
+                                     UiMessage.User(
+                                       content,
+                                       attJson,
+                                       injected,
+                                       timestamp = System.currentTimeMillis(),
+                                       quote = quoteJson,
+                                       midTurn = if injected then None else midTurn
+                                     )
                                    )
                                  )
-                               )
-                               .handleErrorWith(e => logger.warn(s"Failed to record user UiMessage: ${e.getMessage}"))
+                                 .handleErrorWith(e => logger.warn(s"Failed to record user UiMessage: ${e.getMessage}"))
+                             }
                              // attachmentsSaved（用户附件点击统一批 2026-10-08）：live 渲染腿
                              // 前端只有 data/preview、没有落盘 path —— Pop 面的点击开 Canvas
                              // 依赖 item.path（popArtifacts.openMediaItemClick / buildFileCard
@@ -2235,7 +2257,6 @@ class WebSocketRoutes(
       applyPermissionUpgradeImpl = applyPermissionUpgrade,
       persistGlobalSafetyModeImpl = persistGlobalSafetyMode,
       removeRootAgentImpl = removeRootAgent,
-      stopTeamSessionActorsImpl = stopTeamSessionActors,
       stopChildDelegateActorsImpl = stopChildDelegateActors,
       forwardInteractionAnswerImpl = forwardInteractionAnswer,
       isRootScopeSessionImpl = isRootScopeSession,
@@ -2389,14 +2410,16 @@ class WebSocketRoutes(
     content: String,
     source: String,
     fromUser: Boolean,
-    device: Option[nebflow.bridge.ResolvedDevice] = None
+    device: Option[nebflow.bridge.ResolvedDevice] = None,
+    // P3 磁盘邮箱批：客户端幂等键透传（见 dispatchUserText 同名参数）。
+    clientMessageId: Option[String] = None
   ): IO[Unit] =
     if sessionId.nonEmpty && content.nonEmpty then
       // 输入框直通退役（2026-09-14 作者令）：输入框文本一律按普通消息投递 ——
       // 不再探 hub 的 pending AskUser 槽位，文本也不再成为卡片答案
       // （[[dispatchUserText]] = 唯一入队路径）。pending 卡保持 pending，
       // 只能在卡片上作答；headless REST (`rest-turn`) 与输入框同腿，形态不变。
-      dispatchUserText(sessionId, content, source, fromUser, device)
+      dispatchUserText(sessionId, content, source, fromUser, device, clientMessageId)
     else
       // P1 2026-08-27 (frontend c1d57710): the queue "send-now" branch emitted an
       // empty-content frame (attachments dropped), which reached this path and was
@@ -2428,13 +2451,22 @@ class WebSocketRoutes(
     content: String,
     source: String,
     fromUser: Boolean,
-    device: Option[nebflow.bridge.ResolvedDevice] = None
+    device: Option[nebflow.bridge.ResolvedDevice] = None,
+    // P3 磁盘邮箱批（作者 2026-11-05 10:46）：把 WS 边界 `:2005` 已解析出的客户端
+    // 幂等键**穿到 ImmediateInput**——改前它在 Gateway→agent 转换处蒸发，真人文字
+    // 主腿因此没有任何幂等面（重发同一帧 = 可能双跑）。加性尾参，缺席逐字现状。
+    clientMessageId: Option[String] = None
   ): IO[Unit] =
     logger.info(s"User text ($source) for session $sessionId (${content.length} chars)") *>
-      sessionStore.appendUiMessages(
-        sessionId,
-        List(UiMessage.User(content, Nil, timestamp = System.currentTimeMillis()))
-      ) *>
+      // tool-card-leak-on-reload 批（2026-11-02）：回合内插话判定在**落盘这一瞬**
+      // 取（注册表 Processing = 引擎回合在跑），随行落 `midTurn=true`。这是回放
+      // 折叠段边界判据的数据面依据 —— 回合中插话不再把同一回合劈成两段。
+      midTurnAtPersist(sessionId).flatMap { midTurn =>
+        sessionStore.appendUiMessages(
+          sessionId,
+          List(UiMessage.User(content, Nil, timestamp = System.currentTimeMillis(), midTurn = midTurn))
+        )
+      } *>
       // Hard-recovery P4: if the target turn is wedged (Processing + idle >
       // SessionKickIdleSec), break it BEFORE queueing — the queued message
       // injects at the turn boundary the kick creates (user intent first).
@@ -2444,7 +2476,9 @@ class WebSocketRoutes(
       ensureAgent(sessionId)(ref =>
         ref ! AgentCommand.ImmediateInput(
           device.fold(content)(nebflow.bridge.DeviceProvenance.compose(_, content)),
-          fromUser = fromUser
+          fromUser = fromUser,
+          // P3：客户端幂等键随件到会话本体（改前在本转换处蒸发）。
+          clientMessageId = clientMessageId
         )
       )
 
@@ -2573,6 +2607,11 @@ class WebSocketRoutes(
    * attachments（附件批 2026-10-31 作者令「引用要支持你发的文件 图片等」）：
    * content.attachments 的**白名单**拷贝 —— 每项只留 type（image|video|file）/
    * name/path（sanitize + 截长，cap 8），前端 preview（data: 内联字节）不落盘。
+   *
+   * 叠卡单张引用（2026-11-02 作者令「让叠卡的图片可以分开引用」）：content 可带
+   * itemIndex（0 基，≤99）/itemTotal（该组张数，≤99）——两张量都是**位置标注**，
+   * 引用目标仍是 refMessageId（寻址/降级矩阵不变）。缺失/非法 ⇒ 不落键（旧载荷
+   * 落盘字节形态逐字不变，旧行渲染零变化）。
    */
   private def quoteFromRefs(frame: io.circe.Json): Option[io.circe.Json] =
     val refs = frame.hcursor.downField("refs").as[List[io.circe.Json]].getOrElse(Nil)
@@ -2629,6 +2668,19 @@ class WebSocketRoutes(
               )
           }
         if atts.nonEmpty then base("attachments") = io.circe.Json.fromValues(atts)
+        // 叠卡单张引用（2026-11-02）：「第 N 张」位置标注。itemIndex 0 基、≤99；
+        // itemTotal 只在 > itemIndex 且 ≤99 时落（组张数，展示「第 N/M 张」）。
+        // 两者都缺席/非法 ⇒ 不落键 ⇒ 旧载荷的快照字节形态逐字不变。
+        val itemIndex = c.downField("content").downField("itemIndex").as[Int].toOption.filter(i => i >= 0 && i <= 99)
+        itemIndex.foreach { i =>
+          base("itemIndex") = i.asJson
+          c.downField("content")
+            .downField("itemTotal")
+            .as[Int]
+            .toOption
+            .filter(n => n > i && n <= 99)
+            .foreach(n => base("itemTotal") = n.asJson)
+        }
         Some(io.circe.Json.fromJsonObject(io.circe.JsonObject.fromIterable(base)))
       end if
     }
@@ -2763,31 +2815,32 @@ class WebSocketRoutes(
   // ============================================================
   // UI Message recording — wraps wsSend to persist frontend-renderable history
   // ============================================================
+  // process-recorder 批（2026-11-01）：本包装自此只承载 **root 帧族**（textDelta /
+  // thinking / toolStart / roundComplete / done / toolEnd / askUser / …，按 ctor
+  // `sessionId` 落盘）。agent* 帧族（按帧内 nodeSessionId 落盘）已整体移交
+  // `ProcessRecorder`（wsHub.registerListener 监听者位，单写者）——见下方 P1 注记。
+  // 下述三缓冲的键自此只有 root sessionId（node-* 键的缓冲在 recorder，含孤儿扫）。
 
-  /** Per-session accumulator for text deltas (emitted one-by-one, saved on textDone). */
+  /** Per-session accumulator for text deltas (emitted one-by-one, saved on textDone). Root-frame family only — node-* keys live in ProcessRecorder. */
   private val sessionTextBuffers: Ref[IO, Map[String, String]] =
     Ref.unsafe[IO, Map[String, String]](Map.empty)
 
-  /** Per-session accumulator for thinking deltas. */
+  /** Per-session accumulator for thinking deltas. Root-frame family only. */
   private val sessionThinkingBuffers: Ref[IO, Map[String, String]] =
     Ref.unsafe[IO, Map[String, String]](Map.empty)
 
-  /** Per-session turn start time — set on first streaming event, consumed on done. */
+  /** Per-session turn start time — set on first streaming event, consumed on done. Root-frame family only. */
   private val sessionTurnStarts: Ref[IO, Map[String, Long]] =
     Ref.unsafe[IO, Map[String, Long]](Map.empty)
 
-  private def makeRecordingWsSend(
+  // `private[gateway]`：Test seam（ProcessRecorderSpec S5 root 零漂移行为钉直调；
+  // 类外无生产调用点——生产仅本类 :183/:498 两处自用）。
+  private[gateway] def makeRecordingWsSend(
     sessionId: String,
     underlying: io.circe.Json => IO[Unit]
   ): io.circe.Json => IO[Unit] = json =>
     val hc = json.hcursor
     val eventType = hc.downField("type").as[String].getOrElse("")
-    // "team-" is a frontend routing marker injected by MailTool.activateAgent,
-    // not a real session id. Strip it so Mail-activated team agent streams
-    // persist to the team session's own ui.json instead of a phantom
-    // "team-<id>" session.
-    def normalizeNodeSessionId(nsid: String): String =
-      if nsid.startsWith("team-") then nsid.drop(5) else nsid
     val record = eventType match
       case "thinkingDelta" =>
         val delta = hc.downField("delta").as[String].getOrElse("")
@@ -2940,134 +2993,16 @@ class WebSocketRoutes(
         // We'll record a minimal agent entry for history if needed.
         IO.unit
 
-      // ── Flow agent session persistence ───────────────────────────────
-      // Flow agent events carry an injected nodeSessionId.
-      // Accumulate/flush them into that session's .ui.json
-      // so the agent popup shows full history on reopen.
-      case "agentTextDelta" =>
-        val nodeSessionId =
-          hc.downField("nodeSessionId").as[String].toOption.filter(_.nonEmpty).map(normalizeNodeSessionId)
-        val delta = hc.downField("delta").as[String].getOrElse("")
-        nodeSessionId match
-          case Some(nsid) if delta.nonEmpty =>
-            // Record turn start for this flow agent so agentDone can compute a
-            // duration for the ✻ duration badge on its final AI message.
-            sessionTurnStarts
-              .update(m => if m.contains(nsid) then m else m.updated(nsid, System.currentTimeMillis())) *>
-              sessionTextBuffers.update(m => m.updatedWith(nsid)(_.map(_ + delta).orElse(Some(delta))))
-          case _ => IO.unit
-
-      case "agentThinking" =>
-        // Mark turn start on the first thinking token too (some turns emit
-        // thinking before any text). Also accumulate the delta into the
-        // sub-agent's own sessionThinkingBuffers so agentToolEnd/agentDone
-        // can persist thinking into ui.json.
-        hc.downField("nodeSessionId").as[String].toOption.filter(_.nonEmpty).map(normalizeNodeSessionId) match
-          case Some(nsid) =>
-            val delta = hc.downField("delta").as[String].getOrElse("")
-            val recordThinking =
-              if delta.nonEmpty then
-                sessionThinkingBuffers.update(m => m.updatedWith(nsid)(_.map(_ + delta).orElse(Some(delta))))
-              else IO.unit
-            recordThinking *> sessionTurnStarts
-              .update(m => if m.contains(nsid) then m else m.updated(nsid, System.currentTimeMillis()))
-          case None => IO.unit
-
-      case "agentToolEnd" =>
-        val nodeSessionId =
-          hc.downField("nodeSessionId").as[String].toOption.filter(_.nonEmpty).map(normalizeNodeSessionId)
-        val label = hc.downField("label").as[String].getOrElse("")
-        nodeSessionId match
-          case Some(nsid) if label.nonEmpty =>
-            val summary = hc.downField("summary").as[String].getOrElse("")
-            val content = hc.downField("content").as[String].getOrElse("")
-            val isError = hc.downField("isError").as[Boolean].getOrElse(false)
-            val input = hc.downField("input").as[io.circe.Json].getOrElse(io.circe.Json.Null).noSpaces
-            // Flush any accumulated text + thinking before recording the tool, so the AI
-            // message bubble (with thinking) appears above the tool card in history.
-            sessionTextBuffers
-              .modify(m => (m - nsid, m.getOrElse(nsid, "")))
-              .flatMap { text =>
-                sessionThinkingBuffers
-                  .modify(m => (m - nsid, m.getOrElse(nsid, "")))
-                  .flatMap { thinking =>
-                    val flushMsg =
-                      if text.nonEmpty then
-                        sharedResources.sessionStore.appendUiMessages(
-                          nsid,
-                          List(
-                            UiMessage.Ai(
-                              text,
-                              None,
-                              None,
-                              Option.when(thinking.nonEmpty)(thinking),
-                              System.currentTimeMillis()
-                            )
-                          )
-                        )
-                      else IO.unit
-                    flushMsg *> sharedResources.sessionStore.appendUiMessages(
-                      nsid,
-                      List(UiMessage.Tool(label, summary, content, isError, input))
-                    )
-                  }
-              }
-          case _ => IO.unit
-        end match
-
-      case "agentDone" =>
-        val nodeSessionId =
-          hc.downField("nodeSessionId").as[String].toOption.filter(_.nonEmpty).map(normalizeNodeSessionId)
-        nodeSessionId match
-          case Some(nsid) =>
-            // Flush any remaining accumulated text + thinking as a final AI bubble, with
-            // duration (from the turn start) and model so the popup renders the
-            // ✻ duration badge on the agent's last reply.
-            val model = hc.downField("model").as[Option[String]].getOrElse(None)
-            sessionTurnStarts
-              .modify(m => (m - nsid, m.getOrElse(nsid, 0L)))
-              .flatMap { startTime =>
-                val durationMs = if startTime > 0 then Some(System.currentTimeMillis() - startTime) else None
-                sessionTextBuffers
-                  .modify(m => (m - nsid, m.getOrElse(nsid, "")))
-                  .flatMap { text =>
-                    sessionThinkingBuffers
-                      .modify(m => (m - nsid, m.getOrElse(nsid, "")))
-                      .flatMap { thinking =>
-                        val thinkingOpt = Option.when(thinking.nonEmpty)(thinking)
-                        if text.nonEmpty || thinkingOpt.isDefined then
-                          sharedResources.sessionStore.appendUiMessages(
-                            nsid,
-                            // replay-terminal 批（2026-10-28，案一「A 根治」）：
-                            // agentDone = 节点会话轮终态——terminal=true 与
-                            // durationMs 同批落盘（弹窗回放腿同判据）。
-                            List(UiMessage.Ai(text, durationMs, model, thinkingOpt, System.currentTimeMillis(), terminal = Some(true)))
-                          )
-                        else
-                          // No text (flushed earlier by agentToolEnd) — backfill
-                          // model + timestamp onto the round's last carrier. We no
-                          // longer gate on durationMs.isDefined: when sessionTurnStarts
-                          // was never set (startTime=0 → durationMs=None), team agent
-                          // AI messages still need model and timestamp so the popup
-                          // renders the badge (model name + time). durationMs stays
-                          // None when unknown; the frontend falls back to a simpler
-                          // badge (model + timestamp, no thinking phrase).
-                          // replay-terminal 批：agentDone 亦为轮终态——回填批一律
-                          // 盖 terminal=true。卫生批（2026-10-28，残余①根治）：改走
-                          // 段感知 markRoundTerminal——段内零 ai 行的退化全工具轮盖
-                          // 末行 Tool（等价终态面），不再越段改写上一轮的行。
-                          sharedResources.sessionStore.markRoundTerminal(
-                            nsid,
-                            durationMs,
-                            model,
-                            System.currentTimeMillis()
-                          )
-                        end if
-                      }
-                  }
-              }
-          case _ => IO.unit
-        end match
+      // ── Flow agent session persistence：已整体移交 ProcessRecorder ─────────
+      // process-recorder 批（2026-11-01，设计稿
+      // docs/design/20261101_192000_process-recorder-design）：agent* 四分支
+      // （agentTextDelta / agentThinking / agentToolEnd / agentDone）的落盘语义
+      // 逐字迁入 `ProcessRecorder`（挂 wsHub.registerListener 的进程级录制），
+      // 本 wrapper **不再**持有 agent* 分支——单写者移交，禁共存（共存 = 同一帧
+      // 落两次 ⇒ 面板双气泡）。agent* 帧经本包装的 underlying 广播进 hub 后由
+      // recorder 接住，行为严格超集（有录制腿零损失，无录制腿④⑤⑥开始有录制）。
+      // 🔴 P1 防复活钉：本 match 内禁再现 `case "agentTextDelta"` 等四个 agent*
+      // 分支（回潮 = 双写复活；ProcessRecorderSpec 钉红）。
 
       case "askUser" =>
         // 案 B（双开缺陷批 2026-09-21，chain-askuserdup）：随行落盘 requestId ⇒ 历史
@@ -3251,6 +3186,26 @@ class WebSocketRoutes(
         case e => InternalServerError(Json.obj("error" -> e.getMessage.asJson))
       }
 
+  /**
+   * 落盘判据（tool-card-leak-on-reload 批 2026-11-02）：**此刻**该会话是否有一个
+   * 引擎回合在跑。与 `sessionBusyStates`（getSessionBusy 的权威忙判据）同源
+   * （`AgentStatus.Processing`），差别只在取数时刻是**落盘这一瞬**：
+   *
+   *   true  ⇒ 这条 user 行是回合内插话 → `UiMessage.User.midTurn=Some(true)`，
+   *           回放折叠的段边界判据（turnGroup.isNonInjectedUserRow）据此**不**把
+   *           它当轮起点，同一个引擎回合仍是一段（一枚 turn-header 收全部工具卡）；
+   *   false ⇒ 普通开轮用户行（缺席即不落键，字节形态与本批前逐字相同）。
+   *
+   * 判据失效的忠实降级：注册表里没有该会话（未激活的冷会话）⇒ None ⇒ 按老口径
+   * 落成开轮行；旧存量 `.ui.json` 行同样没有本键，由前端时间戳蕴含推断回落。
+   */
+  private def midTurnAtPersist(sessionId: String): IO[Option[Boolean]] =
+    if sessionId.isEmpty then IO.pure(None)
+    else
+      sharedResources.agentRegistry.get
+        .map(reg => Option.when(reg.get(sessionId).exists(_.status == AgentStatus.Processing))(true))
+        .handleErrorWith(_ => IO.pure(None))
+
   /** Resolve a session: use provided ID, or create a new one for the agent. */
   private def resolveSession(agentName: String, sessionIdOpt: Option[String]): IO[String] =
     sessionIdOpt match
@@ -3287,27 +3242,25 @@ object WebSocketRoutes:
   /**
    * Which AgentRegistry entries getActiveAgents should report as running.
    *
-   * Task-lifecycle kinds (Delegate/Ephemeral/Flow/SubTask) are reported
+   * Task-lifecycle kinds (Delegate/Flow/SubTask) are reported
    * as-is: their presence in the registry means the task is in flight
    * (they unregister on completion).
    *
    * Team agents are LONG-LIVED: activateAgent registers them on the first
    * Mail and they stay in the registry while idle, waiting for the next
-   * Mail. "In the registry" says nothing about running — gate them on the
-   * same busy signal /api/teams/mounted uses (markBusy/markIdle around each
-   * team turn), otherwise every browser refresh reports idle team agents
-   * back as running ghosts in the bg-agent dropdown.
+   * Mail. "In the registry" says nothing about running.
+   *
+   * 团队功能删除批（team-feature-deletion-20261104）阶段 3：原有第二条腿「Team
+   * 记录按 busyMap 过滤」随 busy 标记面整体退役（busyMap 的唯一读者就是它，而
+   * `AgentKind.Team` 记录的唯一生产者是以团队会话登记表为底座的冷激活腿 ⇒ 两侧
+   * 同时失去数据源）。呈现面因此零变化：本仓再也产生不出 Team 记录。
    *
    * Standalone (zero class deps) so it is directly unit-testable
    * (ActiveAgentsFilterSpec).
    */
   def filterActiveAgents(registry: Map[String, AgentRecord]): IO[List[AgentRecord]] =
-    val taskKinds = Set(AgentKind.Delegate, AgentKind.Ephemeral, AgentKind.Flow, AgentKind.SubTask)
-    val inFlight = registry.values.toList.filter(r => taskKinds.contains(r.kind))
-    val teamAgents = registry.values.toList.filter(_.kind == AgentKind.Team)
-    teamAgents
-      .traverseFilter(rec => TeamSessionRegistry.isBusy(rec.sessionId).map(busy => if busy then Some(rec) else None))
-      .map(_ ++ inFlight)
+    val taskKinds = Set(AgentKind.Delegate, AgentKind.Flow, AgentKind.SubTask)
+    IO.pure(registry.values.toList.filter(r => taskKinds.contains(r.kind)))
 
   /**
    * 显示名契约批（2026-10-22 · 子智能体面板行显示名修复）：activeAgents 快照面
@@ -3368,8 +3321,35 @@ object WebSocketRoutes:
     delegateTitle: Option[String] = None, // 显示名契约批 2026-10-22: delegate/SubTask 行批次标题（delegateDisplayTitle 解析）
     delegateName: Option[String] = None, // 面板命名批 2026-10-31: 批次短名（DelegateRegistry.Record.name，≤12 字）——行首扫读名
     bgWaiting: List[(String, String, Long, String, String)] =
-      Nil // #752: (jobId, description, startedAtMs, health, ownerName) — the session's own waiting-type bg tasks; ownerName = 开启会话的 delegate 批次短名（归属批 2026-10-31，空 = 非 delegate/无名）
+      Nil, // #752: (jobId, description, startedAtMs, health, ownerName) — the session's own waiting-type bg tasks; ownerName = 开启会话的 delegate 批次短名（归属批 2026-10-31，空 = 非 delegate/无名）
+    standbySince: Option[Long] = None, // 案A 待命批 2026-10-31（状态矩阵批收编）: delegate 待命停靠时刻（DelegateRegistry.standbySince）——快照行「待命」徽标数据源；None = 非待命（缺省，旧调用方逐字节兼容）
+    frozenSince: Option[Long] = None, // 错误冻结批 2026-11-01: 冻结时刻（DelegateRegistry.frozenSince）——快照行「已冻结」徽标数据源（与 standby 的「待命」显式区分）；None = 非冻结
+    frozenReason: Option[String] = None, // 错误冻结批 2026-11-01: 冻结原因线值（`delegate-frozen:<reason>`）——徽标 tooltip / 详情卡原因行
+    wakeAddress: Option[String] = None, // 错误冻结批 2026-11-01: 唤醒地址（`delegate:<id>`）——详情卡「唤醒」按钮的动作载荷
+    // name/address 批（2026-11-05）：本行的 Mail 续传地址——MailAddress 单点推导
+    // （delegate:<id> / kernel:<id> / node:<节点名>），与 AgentControl list/status 同源。
+    // 面板行的地址 chip 只**读**它（前端零推导：地址是「可原样粘进 Mail」的令牌，
+    // 两个推导点就是两种形态的温床）。None = 本 kind 无 Mail 面 ⇒ 空串（falsy 契约）。
+    mailAddress: Option[String] = None,
+    freezeTruth: Option[nebflow.actor.FreezeTruth] = None // 冻结状态两套真相批 2026-11-05: 调用方预算的单一真相（缺省 = 本函数按 rec + 落盘槽自算，逐字节兼容旧调用方）
   ): Json =
+    // 冻结态诚实呈现批（2026-11-05）：快照行的**呈现分类**随快照出帧——与线包
+    // （AgentStreamEvent.Frozen）/ 工具面（AgentControl status）同判定单点
+    // FreezeDisplay。刷新后控制台仍能分辨「自动重试中（无按钮）」与「需人工（给
+    // 恢复按钮）」，不必从 status 字符串猜（猜错的样子就是本轮报障：一行写着
+    // Frozen、没有按钮、作者不知道自己什么时候冻的）。
+    //
+    // 冻结状态两套真相批（2026-11-05 10:42 报障「显示需要我唤醒，我点了唤醒又弹
+    // frozenReason=none」）：快照行原先**同屏读两个写点**——`frozenSince/frozenReason`
+    // 来自 delegate 落盘槽，`frozenKind/needsHuman/freezeReasonWire` 来自统一注册表
+    // 记录，两者可以一个说冻结、一个说已清。本批统一走 [[nebflow.actor.FreezeTruth]]
+    // （并集派生 + 一份分类），`frozen` 块是权威面，旧扁平字段全部由同一份读数派生
+    // （保留键名只为旧前端兼容，值不再能自相矛盾）。
+    val truth: nebflow.actor.FreezeTruth =
+      freezeTruth.getOrElse(
+        nebflow.actor.FreezeTruth.of(Some(rec), frozenReason, frozenSince, System.currentTimeMillis())
+      )
+    val freezeOf = if truth.frozen then Some(nebflow.actor.FreezeDisplay.ofWire(truth.reasonWire, truth.since, System.currentTimeMillis())) else None
     Json.obj(
       "sessionId" -> rec.sessionId.asJson,
       "agentId" -> rec.sessionId.asJson,
@@ -3390,13 +3370,20 @@ object WebSocketRoutes:
       // 面板树批（2026-10-29 · 后台智能体面板三修①）：父会话归属随快照出帧——
       // 前端按 parentSessionId 建派生树（delegate 组头 + 缩进子行）；父已终态/
       // 不可见时前端降级为「孤儿提升顶层 + 来源标注」。AgentRecord.parentSessionId
-      // 在 Delegate/SubTask/BlockingSubagent/FlowDag(dag-) 注册点均有值；缺省 ""
-      // = 无归属（前端 falsy，零徽标零认领——与 project/taskId 同契约）。
+      // 在 Delegate/SubTask/BlockingSubagent/FlowDag(dag-)/dispatcher-/node-（本批
+      // 面板代际层级批 2026-11-06 补齐：分发器 = 挂载 root、节点/loop worker/verify
+      // = 在册分发器，兜底 rootSessionId——写点 ProjectActor.spawnDispatcher /
+      // NodeStarter.startNode / NodeLoopRunner.spawnLoopSession）注册点均有值；
+      // 缺省 "" = 无归属（前端 falsy，零徽标零认领——与 project/taskId 同契约）。
       "parentSessionId" -> rec.parentSessionId.asJson,
       // 面板命名批（2026-10-31 · 作者令②）：批次短名随快照出帧（live 面由
       // routeWsSend 在 agentStart 同键注入）——前端行首扫读名数据源；空串 = 无名
       // 旧数据（前端回落既有截断式标题显示，falsy 契约同 project/taskId）。
       "delegateName" -> delegateName.getOrElse("").asJson,
+      // name/address 批（2026-11-05）：Mail 续传地址随快照出帧（与 AgentControl
+      // list/status 同一推导点 MailAddress）——后台代理面板行渲染地址 chip。
+      // 空串 = 本 kind 无 Mail 面（falsy 契约同 project/taskId）。
+      "mailAddress" -> mailAddress.getOrElse("").asJson,
       "kind" -> rec.kind.toString.asJson,
       "task" -> meta.map(_.name).getOrElse("").asJson,
       // 2026-08-22 缺口 2：快照自带可刷新恢复三字段（向后兼容——旧字段不动，
@@ -3407,6 +3394,37 @@ object WebSocketRoutes:
       "status" -> rec.status.toString.asJson,
       "startedAt" -> rec.startedAt.asJson,
       "retryCount" -> retryCount.getOrElse(0).asJson,
+      // 案A 待命批 2026-10-31（状态矩阵批收编）：delegate 待命停靠时刻（epoch ms；
+      // null = 非待命）。快照行的「待命」徽标数据源——delegateWaiting 实时帧
+      // （mode=standby）在浏览器刷新后靠本字段复原（delegateTitle 同款读面一次
+      // lookup 带出）。
+      "standbySince" -> standbySince.asJson,
+      // 错误冻结批（2026-11-01）：冻结三字段随快照出帧——`frozenSince`（epoch ms，
+      // null = 非冻结）驱动行徽标「已冻结」，`frozenReason`（线值）给徽标 tooltip /
+      // 详情卡原因行，`wakeAddress` 是详情卡「唤醒」按钮的投递地址。三者缺省 None
+      // ⇒ 旧调用方逐字节兼容（null = falsy，前端零徽标）。
+      //
+      // 冻结状态两套真相批（2026-11-05）：三字段一律由 `truth` 派生——**冻结就说冻结、
+      // 清掉就说清**（旧实现里 `wakeAddress` 跟着落盘槽走、`frozenKind` 跟着内存态走，
+      // 于是「面板给按钮、后端拒绝」的同屏矛盾有了土壤）。
+      "frozenSince" -> (if truth.frozen then truth.since else None).asJson,
+      "frozenReason" -> (if truth.frozen then Option(truth.reasonWire).filter(_.nonEmpty) else None).asJson,
+      // 唤醒地址 = 可操作性本身：只有「冻结且需人」才给地址（自动恢复族给地址 =
+      // 教用户去做一件引擎正在自己做的事）。
+      "wakeAddress" -> (if truth.wakeable then Some(s"delegate:${rec.sessionId}") else None).asJson,
+      // 冻结态诚实呈现批（2026-11-05）：呈现分类三字段 + registry 侧冻结原因线值。
+      // `frozenReasonWire` 与上面的 `frozenReason`（DelegateRegistry 冻结槽，仅
+      // delegate 错误冻结族）分工：本字段是 **AgentRecord** 的原因线值（schedule /
+      // loop / llm-transient / delegate-frozen:* 全族），供徽标 tooltip 与「谁停的」
+      // 说明。空串 = 非冻结（falsy 契约同 project/taskId）。
+      "frozenKind" -> truth.kindWire.asJson,
+      "needsHuman" -> truth.needsHuman.asJson,
+      "autoRecoverable" -> truth.autoRecoverable.asJson,
+      "freezeReasonWire" -> truth.reasonWire.asJson,
+      // 冻结状态两套真相批（2026-11-05）：**权威面**——面板可操作性与唤醒闸读同一份
+      // 读数（`wakeable`），并按 `asOf` 定序合并（旧的「快照缺席就保留本地值」单调
+      // 合并在冻结面上会把一次唤醒永久吞掉）。
+      "freeze" -> truth.json,
       // #752 空闲细分（快照恢复路径的数据源；live 行由实时帧写 currentTool，快照
       // 字段合并时不降级实时值——前端 merge 规则）。currentTool = 在飞/最后工具名
       // （最近动作摘要）、lastActivityMs = agent 侧最近活动戳（长空闲徽标判据）。

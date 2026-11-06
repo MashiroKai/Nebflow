@@ -3,6 +3,8 @@
 # 源面平移：.github/workflows/ci.yml（GitHub Actions，14 个 job 键 / matrix 展开
 # 16 个实体腿；评估报告口径按 §1.2 归 10 组。GitHub 面冻结只读，本文件是唯一活面）
 # + release.yml / auto-release.yml（发版链 → 本文件 release job）。
+# 平移之外本文件另有 1 个 GitHub 面无对应的原生 job：process-artifacts-gate
+# （2026-11-02 过程产物停跟踪门禁，见下方对照表与 gates 段注释）。
 # 施工图：docs/20261101_151034_ustc-cicd-migration-assessment__delegate-nebflow-7f8e8dec.md
 #   §1.3 依赖矩阵（checkout / upload-download-artifact / setup-java-node cache 的
 #   GitLab 对应物）与 §3.2 阶段 2。
@@ -191,6 +193,11 @@ js-types:
     # ③-G gate：friend chat modal 与 dropbox modal 共享的消息面值唯一字面家 =
     # css/sapphire.css，feature CSS 重抄即红。
     - node scripts/check-msgstyle-single-source.mjs
+    # design-scale gate（作者令 2026-11-04「把圆角 边距 文字离边缘的距离 各文字的大小
+    # 写进spec和前端开发包」）：四类刻度只在 design-language 插件 references/
+    # design-language-tokens.md 的 spec 表登记；spec 行与令牌源双向漂移即红
+    # （spec→源：变量存在且同值；源→spec：刻度族新档必须进表），另查 --dl-* 账本镜像。
+    - node scripts/check-design-spec-sync.mjs
     # Provider model-list endpoint 必须由协议 face 声明，gateway 不得拼 baseUrl。
     - node scripts/check-provider-modellist.mjs
     # Gate #491：ship face 不带贡献者本机标识（运行时自推导执行机身份）。

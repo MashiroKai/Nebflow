@@ -1,0 +1,25 @@
+wiki-docs 校验：通过（/Users/kaiyu/.stand/projects/stand/.stand/docs，404 篇文档，零违规）
+
+图片纪律（R6 image-outside-vault）：图片引用 36 处 · 违规 0 条 · 行内豁免 0 条
+  图外挂提示（info，不计违规）：93 篇文档点名 vault 外证据树路径
+    Jev与生图配置面板对齐LLM__20261105_091500__delegate-nebflow-79bb6698.md:87  .stand/evidence/20261103_jev-imagegen-align-llm/shots/{red,green}/
+    actor-as-agent-framework-creation-paths-and-invariants__20261104_214436__delegate-nebflow-f3849ed1.md:552  reports-evidence/
+    agent-panel-row-dedup__20261102_223000__delegate-nebflow-4e1fad0a.md:25  .nebflow/worktrees/delegate-nebflow-4e1fad0a/src/main/resources/web/js/main/bgAgents.js
+    askuser-attach__20261104_104000__ui-unification-20261103-supp5.md:11  .stand/evidence/ui-unification-20261103/askuser-attach/
+    attachments-history-loss__20261105_083911.md:120  .stand/uploads/ 等 2 处
+    b1-dataroot-impl__20261104_124800.md:10  reports-evidence/b1-dataroot__20261104_110844/design-api.md 等 5 处
+    bash-tool-overhaul__20261104_194409__bash-overhaul-20261104-v3.md:13  reports-evidence/bash-overhaul__20261104_133316/e2e/NUMBERS.md 等 9 处
+    canvas-ask-resize-supps__20261104_121000__delegate-nebflow-bb1a8bbb.md:67  .stand/evidence/ui-unification-20261103/{canvas-ask-resize,thinking-timer-proximity,rcpt-diffchip-hit}/{before,after}/
+    canvas-hover-zero-layout__20261103_215500__delegate-nebflow-bb1a8bbb.md:54  .stand/evidence/ui-unification-20261103/hover-layout/
+    canvas-stack-view__20261104_093201__ui-unification-20261103-supp4.md:10  .stand/evidence/ui-unification-20261103/canvas-stack-view/
+    canvas-top-tabs-swipe__20261104_142800__ui-final-four.md:75  .stand/evidence/ui-unification-20261103/ui-final-four/{before,after}/swipe/
+    console-ask-grow__20261104_132000__delegate-nebflow-bb1a8bbb.md:36  .stand/evidence/ui-unification-20261103/console-ask-grow/{before,after}/ 等 2 处
+    conversation-heads-always-visible__20261105_084500__delegate-nebflow-fec6393b.md:83  reports-evidence/conversation-heads-always-visible__20261104_213000__delegate-nebflow-fec6393b/
+    delegate-param-decisions__20261104_220500__delegate-nebflow-dcdeaa46.md:71  reports-evidence/delegate-param-decisions/06-regression/
+    delegate-standby-status-matrix__20261101_193000__delegate-nebflow-c6c62891.md:33  .nebflow/worktrees/delegate-nebflow-164aec7e
+    delegate-status-audit__20261101_174600__kernel.md:38  .nebflow/worktrees/
+    design-language-recon__20261102_234917__dlc-frontend.md:9  .nebflow/worktrees/delegate-nebflow-ec513a08
+    design-scale-migration__20261104_184032__delegate-nebflow-7ecba82c.md:85  reports-evidence/20261104_design-scale-migration/mapping-table.md 等 2 处
+    design-spec-value-convergence__20261105_091500.md:215  reports-evidence/20261105_design-spec-value-convergence
+    design/cards-family-design__20261101_162000__delegate-nebflow-67f23d42.zh-CN.md:118  .stand/uploads/d7c3cb54-dd90-4f3f-bbf6-e7898c425cff/669358390463000_2522.jpg
+    …（余 73 篇，见 --json 违规清单外的存量盘点报告）

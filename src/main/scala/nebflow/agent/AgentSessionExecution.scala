@@ -339,36 +339,30 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
   /**
    * B5: whether this depth-1 agent is a team lead — a registered Manager
    * session, or name-based lead of any defined team (covers fork/temporary
-   * sessions, same fallback as MailTool.canMailRoot). Non-lead depth-1
-   * agents (team members, flow agents, delegate sub-agents) compact with
-   * the Worker profile instead of Manager.
+   * sessions, same fallback as the retired MailTool root-access gate).
+   * Non-lead depth-1 agents compact with the Worker profile instead of Manager.
+   *
+   * 团队功能删除批（team-feature-deletion-20261104）阶段 3：两条判据（团队会话
+   * 登记表的 managerMap / `EntityLoader.listTeams` 的 lead 名匹配）随团队面一并
+   * 退役 ⇒ **恒 false**（团队 Manager 概念不存在，depth-1 一律走 Worker 档）。
    */
   protected def isTeamLeadForCompaction(agentDef: AgentDef, sessionId: Option[String]): IO[Boolean] =
-    def nameIsLead: IO[Boolean] =
-      if agentDef.name.isEmpty then IO.pure(false)
-      else nebflow.core.entity.EntityLoader.listTeams().map(_.values.exists(_.lead == agentDef.name))
-    sessionId match
-      case Some(sid) =>
-        nebflow.core.flow.TeamSessionRegistry.isManager(sid).flatMap {
-          case true => IO.pure(true)
-          case false => nameIsLead
-        }
-      case None => nameIsLead
+    IO.pure(false)
 
   /**
    * Team Manager task tool gating (2026-08-25): is this session the lead
-   * (Manager) of its team? Strict registry lookup only — TeamSessionRegistry
-   * .managerMap is populated at mount by FlowTreeActor.createSingleTeamSession
+   * (Manager) of its team? Strict registry lookup only — the team session
+   * registry's managerMap was populated at mount by the tree actor
    * (agentName == teamDef.lead). NO nameIsLead fallback (unlike
    * isTeamLeadForCompaction): a team MEMBER whose agent name happens to match
-   * some other team's lead must not receive the owner toolset (U2). No
-   * separate spawn-time flag needed — the registry is the single source of
-   * truth and survives Mail activation / respawn.
+   * some other team's lead must not receive the owner toolset (U2).
+   *
+   * 团队功能删除批阶段 3：团队 Manager 概念随团队面退役 ⇒ **恒 false**
+   * （owner 工具集不再有团队维度；U2 的「成员不得拿 owner 工具集」由「无人拿到」
+   * 这一更严的结果覆盖）。
    */
   protected def isTeamLeadStatus(agentDef: AgentDef, sessionId: Option[String]): IO[Boolean] =
-    sessionId match
-      case Some(sid) => nebflow.core.flow.TeamSessionRegistry.isManager(sid)
-      case None => IO.pure(false)
+    IO.pure(false)
 
   private[agent] def startDirectCompaction(
     agentDef: AgentDef,
@@ -461,15 +455,22 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
   // ============================================================
 
   /**
-   * Min gap between two time reminders on system-event turns (user ruling:
-   * 「每小时通知一次。轮次的第一个 user turn 注入等」). Real-user turns
-   * always inject. Initialized to construction time: a fresh actor (spawn /
-   * restart) stays quiet on system events for the first hour — real user
-   * input is the orientation trigger, not background noise.
+   * 时间锚注入闸（时间感知修复批，作者指令 2026-11-05 18:48「修复你的时间感知问题」）。
+   *
+   * 旧形态 = `TimeReminderMinGapMs`（1 小时）+ `lastTimeReminderMs`：只有**真人轮**
+   * 无条件注入，system-event 轮（Mail / 节点消息 / 定时任务 / 外部事件 / 后台作业通知）
+   * 最多每小时一次 ⇒ 交给模型的新输入可能**完全不带「现在」**，或带一个最多 59 分钟前
+   * 的旧锚。这正是「10 天前的提交被说成两年」那类系统性误判的入口：模型没有可信锚就
+   * 只能猜。
+   *
+   * 现行判据 = **每一个起始轮（isUserTurn）都注入**（[[SystemReminders.collectAllIO]]
+   * 内的 `isUserTurn` 闸），不再有 gap 计时器——**全仓不再持有任何「上次注入时刻」
+   * 状态**（那本身也是一份会被长生命周期对象冻住的「现在」）。
+   *
+   * 长回合中途（工具往返轮，`!isUserTurn`）的新鲜度由**请求级**锚负责：
+   * `LlmRequest.systemDynamic = TimeAnchor.block()`，每次请求现取现发。两条腿同源
+   * （[[nebflow.shared.TimeAnchor]]），不同粒度。
    */
-  private val TimeReminderMinGapMs = 60 * 60 * 1000L
-
-  @volatile private var lastTimeReminderMs: Long = System.currentTimeMillis()
 
   /**
    * Previous turn's task lines (id -> "#id [status] subject") for delta
@@ -488,6 +489,19 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     rendered.linesIterator.collect { case TaskLineRegex(id, rest) =>
       id -> s"#$id $rest".trim
     }.toMap
+
+  /**
+   * 派发时刻链快照下发（provider-concurrency 批，2026-11-06）：pin 存在 ⇒ agentModel
+   * = 快照物化 `(preferred=链首, fallbacks=尾链)`（走 registry 同一条既有解析——
+   * 零新选择路径）；pin = None（未钉：无上限满载路径/既有构造/测试字面量）⇒ base
+   * 原值透传 = 既有行为逐字节不变。🔴 禁止把快照写回 agent.json 的 model 键——
+   * `AgentLibrary.loadFromDir` 每 turn 现读，那会把快照变成「每 turn 重算」。
+   */
+  private def agentModelWithPin(
+    base: Option[nebflow.shared.AgentModelConfig],
+    pin: Option[nebflow.llm.PinnedChain]
+  ): Option[nebflow.shared.AgentModelConfig] =
+    pin.fold(base)(p => Some(p.toAgentModelConfig))
 
   /** Full / delta / unchanged task text for this turn's reminder. */
   private def renderTasksForTurn(
@@ -714,6 +728,21 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                 )
               )
             else IO.pure("")
+          // 既有 worktree 候选段（worktree-reuse-selection 批 2026-11-02）：根代理
+          // only（同 executorsText 判据）。数据源 = WorktreeCandidates.inventory
+          // （候选发现 + 活会话对账 + 状态标注），fail-soft 空串 = 段不注入。
+          // 注入时机 = systemStable 生命周期重建（同快照口径）；mid-session 变化
+          // 靠 Delegate 拒绝面的显式文案自纠错（active 拒绝时列出谁在持有）。
+          worktreesText <-
+            if isRootAgent then
+              // 枚举根 = 根会话座位工作区（挂载项目各自的 worktree 不在此列——派发
+              // 到别的项目时，`Delegate` 的续用腿按**目标项目**的 workspace 现读重
+              // 枚举，见 DelegateTool.internalSpawn；本段只是主座位的提示面）。
+              val rootWs = turnCtx.projectRoot.getOrElse((PathUtil.dataRoot / "general").toString)
+              nebflow.core.delegate.WorktreeCandidates
+                .inventory(rootWs)
+                .map(inv => nebflow.core.delegate.WorktreeCandidates.render(inv, rootWs))
+            else IO.pure("")
           // identity-sync 批（2026-10-23）：展示身份现读（displayName + 头像 sha）——
           // `## Self` 段体（order 396）与 identity 变更提醒的唯一数据源。空 = 该
           // agent 无非默认身份（未起名且无自定义头像）= 段不注入、提醒不产生 =
@@ -722,8 +751,8 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
           identitySelfText <-
             if stateForLlm.isSubTaskWorker then IO.pure("")
             else nebflow.core.entity.AgentIdentityStore.readSelfSection(freshDef.name, freshDef.displayName)
-          nowMs = System.currentTimeMillis()
-          injectTime = isUserTurn && (isRealUserTurn || nowMs - lastTimeReminderMs >= TimeReminderMinGapMs)
+          // 时间锚闸（时间感知修复批 2026-11-05）：见 `TimeAnchorInjection` 头注——
+          // 起始轮一律注入，不再有 1 小时 gap；工具往返轮靠请求级 systemDynamic 锚。
           // Plugin surface live convergence (plugins-live 批 2026-09-12). The Plugin
           // Catalog enters the session ONLY via its first message
           // (ProjectActor.pluginCatalogText → newTaskPrompt/newPrompt), so an
@@ -752,12 +781,10 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
           // 进展列表）。renderForPrompt returns the FULL list; the delta
           // against the previous turn lives here (unchanged → one line;
           // changed → +/-/~ lines; lifecycle → full).
-          taskTeamOpt <-
-            if isRealUserTurn then
-              stateForLlm.sessionId match
-                case Some(sid) => nebflow.core.flow.TeamSessionRegistry.teamOfSession(sid)
-                case None => IO.pure(None)
-            else IO.pure(None)
+          // 团队功能删除批阶段 3：`teamOfSession` 已随团队会话面删除 ⇒ 本段恒 None
+          // （团队 scope 的任务列表注入不存在；`renderTasksForTurn` 本体与
+          // `TaskStore.teamScopeKey` 保留 —— 它们仍服务项目/链 scope 的任务渲染）。
+          taskTeamOpt = Option.empty[String]
           taskListText <-
             (taskTeamOpt, stateForLlm.sessionId) match
               case (Some(team), Some(_)) =>
@@ -810,6 +837,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             isRootAgent = isRootAgent,
             mountedProjectsText = mountedProjectsText,
             executorsText = executorsText,
+            worktreesText = worktreesText,
             identitySelfText = identitySelfText
           )
           // systemStable: rebuilt only at lifecycle nodes; otherwise reuse the
@@ -854,7 +882,6 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             taskListText = taskListText,
             language = changeLanguage,
             isRootAgent = isRootAgent,
-            injectTime = injectTime,
             mountedProjectsDelta = changeProjects,
             pluginSurfaceChange = pluginSurfaceChange,
             identityDelta = identityDeltaText,
@@ -908,10 +935,6 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
           timeMsg =
             if isCompactTurn || isAskTurn || timeReminders.isEmpty then Nil
             else List(Message(MessageRole.User, Left(SystemReminder.renderAll(timeReminders))))
-          // Reminder refactor (2026-08-20): stamp the injection time only when
-          // a time reminder actually fires — the ≥1h system-event gap is
-          // measured from the last REAL injection, not the last turn.
-          _ = if timeMsg.nonEmpty then lastTimeReminderMs = System.currentTimeMillis()
           pluginSurfaceMsg =
             if isCompactTurn || isAskTurn || pluginSurfaceReminders.isEmpty then Nil
             else List(Message(MessageRole.User, Left(SystemReminder.renderAll(pluginSurfaceReminders))))
@@ -927,7 +950,14 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
               val withPluginSurface =
                 if pluginSurfaceMsg.isEmpty then stateForLlm.messages
                 else SystemReminders.prunePluginSurfaceReminders(stateForLlm.messages ++ pluginSurfaceMsg)
-              stateForLlm.withMessages(SystemReminders.pruneTimeReminders(withPluginSurface ++ timeMsg))
+              // 时间锚插在**触发输入之前**（时间感知修复批 2026-11-05）：语义上「先有时刻、
+              // 后有此轮输入」，并且保住既有不变量「最后一条 user 消息 = 本轮输入」——
+              // 注入源归因（`QueueDirectPassSourceSpec` ②③ 的 lastUserSource）与任何
+              // 「谁叫醒的这一轮」的读法都靠它；锚若追加在尾部，那条不变量就被一条
+              // source=None 的系统提醒顶掉（本批实测打挂两条既有用例）。
+              stateForLlm.withMessages(
+                SystemReminders.pruneTimeReminders(SystemReminders.insertAnchor(withPluginSurface, timeMsg))
+              )
           // Cache v2: persist the rebuilt systemStable + snapshot in state at
           // lifecycle nodes (next turns reuse it). Non-lifecycle turns keep the
           // existing cache untouched — except the per-axis baselines that advance
@@ -1056,7 +1086,14 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             tools = freshTools,
             thinking = Some(askThinkingJson),
             systemStable = Some(systemStable),
-            agentModel = freshDef.model,
+            // Fresh request context is appended by the adapters after the cached history.
+            // Keep it out of systemStable and out of persisted session messages.
+            systemDynamic = Some(TimeAnchor.block()),
+            // 派发时刻链快照下发（provider-concurrency 批，2026-11-06）：本 actor 的
+            // agentModel = spawn 时钉死的 (preferred=链首, fallbacks=尾链)——运行期
+            // llm.fallback / agent.json 变化 / 储备层追加都**不再改变链首**（缓存键
+            // 稳定）。pin = None ⇒ 原值透传 = 既有行为逐字节不变。
+            agentModel = agentModelWithPin(freshDef.model, stateForLlm.providerChainPin),
             // WebSearch P0: housekeeping turns (compact/ask) opt out of
             // provider-native search injection — a server-side search tool
             // must never leak into summarization loops.
@@ -1288,9 +1325,11 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
       // the running actor instead of waiting for an actor rebuild. This
       // closes the 2026-08-15 follow-up: mid-session flows edits were still
       // gated by the actor-startup snapshot ("Allowed: <stale list>").
-      teamNameOpt <- state.sessionId match
-        case Some(sid) => nebflow.core.flow.TeamSessionRegistry.teamOfSession(sid)
-        case None => IO.pure(None)
+      // 团队功能删除批阶段 3：原 `teamNameOpt` 取团队会话登记表（团队 agent 的
+      // def 从 teams/<team>/agents/ 重载）；团队退役 ⇒ **恒 None**（全局 agents
+      // 目录重载路径不变）。`loadCurrentDef` 的签名与团队分支保留 —— 那是通用
+      // 「按团队重载 agent 定义」的实体层工具，作者未裁定其去留。
+      teamNameOpt <- IO.pure(Option.empty[String])
       currentDefOpt <- ContextRefresher.loadCurrentDef(teamNameOpt, resources, agentDef)
       effectiveDef = currentDefOpt.getOrElse(agentDef)
       isTeamLead <- isTeamLeadStatus(effectiveDef, state.sessionId)
@@ -1866,23 +1905,23 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     sourceSession: String,
     rootSessionId: String
   )(using ctx: ActorContext[AgentCommand]): IO[Unit] =
-    // Origin attribution for the permission card: team name (authoritative via
-    // TeamSessionRegistry) or flow name (parsed from sessionName "flowName/nodeId"
-    // set by FlowDagExecutor, confirmed via agentRegistry kind == Flow so a
-    // standalone agent whose sessionName happens to contain '/' is not misread).
+    // Origin attribution for the permission card: flow name (parsed from
+    // sessionName "flowName/nodeId" set by FlowDagExecutor, confirmed via
+    // agentRegistry kind == Flow so a standalone agent whose sessionName happens
+    // to contain '/' is not misread).
+    // 团队功能删除批阶段 3：原第一档 `sourceTeam`（团队会话登记表查询）随团队
+    // 会话面删除 ⇒ 标注面只剩 flow 一档（`sourceTeam` 字段本体保留 = 存量历史行
+    // 渲染契约不变，只是不再有产出点）。
     val resourcesOpt = toolCtx.sharedResources
     for
-      teamOpt <- nebflow.core.flow.TeamSessionRegistry.teamOfSession(sourceSession)
       recordOpt <- resourcesOpt
         .fold(IO.pure(Option.empty[AgentRecord]))(_.agentRegistry.get.map(_.get(sourceSession)))
-      flowOpt = (teamOpt, recordOpt, state.sessionName) match
-        case (None, Some(rec), Some(sn)) if rec.kind == AgentKind.Flow && sn.contains("/") =>
-          Some(sn.takeWhile(_ != '/'))
+      flowOpt = recordOpt match
+        case Some(rec) if rec.kind == AgentKind.Flow && state.sessionName.exists(_.contains("/")) =>
+          state.sessionName.map(_.takeWhile(_ != '/'))
         case _ => None
       enrichment =
-        val teamFld = teamOpt.map(t => Json.obj("sourceTeam" -> t.asJson)).getOrElse(Json.obj())
-        val flowFld = flowOpt.map(f => Json.obj("sourceFlow" -> f.asJson)).getOrElse(Json.obj())
-        teamFld.deepMerge(flowFld)
+        flowOpt.map(f => Json.obj("sourceFlow" -> f.asJson)).getOrElse(Json.obj())
       enriched = permJson.deepMerge(enrichment)
       _ <- resourcesOpt.traverse(_.interactionHubRef.get).map(_.flatten).flatMap {
         case Some(hub) =>
@@ -2010,17 +2049,14 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
   )(using ctx: ActorContext[AgentCommand]): IO[Unit] =
     val resourcesOpt = toolCtx.sharedResources
     for
-      teamOpt <- nebflow.core.flow.TeamSessionRegistry.teamOfSession(sourceSession)
       recordOpt <- resourcesOpt
         .fold(IO.pure(Option.empty[AgentRecord]))(_.agentRegistry.get.map(_.get(sourceSession)))
-      flowOpt = (teamOpt, recordOpt, state.sessionName) match
-        case (None, Some(rec), Some(sn)) if rec.kind == AgentKind.Flow && sn.contains("/") =>
-          Some(sn.takeWhile(_ != '/'))
+      flowOpt = recordOpt match
+        case Some(rec) if rec.kind == AgentKind.Flow && state.sessionName.exists(_.contains("/")) =>
+          state.sessionName.map(_.takeWhile(_ != '/'))
         case _ => None
       enrichment =
-        val teamFld = teamOpt.map(t => Json.obj("sourceTeam" -> t.asJson)).getOrElse(Json.obj())
-        val flowFld = flowOpt.map(f => Json.obj("sourceFlow" -> f.asJson)).getOrElse(Json.obj())
-        teamFld.deepMerge(flowFld)
+        flowOpt.map(f => Json.obj("sourceFlow" -> f.asJson)).getOrElse(Json.obj())
       enriched = cardJson.deepMerge(enrichment)
       _ <- resourcesOpt.traverse(_.interactionHubRef.get).map(_.flatten).flatMap {
         case Some(hub) =>
@@ -2555,9 +2591,13 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     // ── 双模式批（2026-10-28 · 设计 §4.2/§5.1）：模式面单点分叉 ──────────────
     // delegateMode = None（总闸关/未判定）⇒ 本段全部分叉失效，现状逐字节。
     // kernel 腿（极简内核执行器）：编排面整体退场——node 四件（ChainWrite/
-    //   NodeEdit/NodeList/NodeCancel）在追加前截断 + 显式减去 Subagent/AgentFlow
-    //   （NebflowFixedTools 是执行 agent 全局机制面——摘除只在 delegateSession
-    //   判据内，root 等非 delegate 会话不受影响）。
+    //   NodeEdit/NodeList/NodeCancel）在追加前截断。
+    //   tool-face-agentflow-retire 批（2026-11-05）：`- "AgentFlow"` 减法**删除**——
+    //   该名已不在任何固定面里（工具整体退役、注册表无此名），Set 减法恒为空操作。
+    //   `- "Subagent"` 减法**同时删除**（作者裁定一：kernel 腿补只读侦察件）——
+    //   kernel 现在**有** Subagent（只读五件，无写/无 shell/无消息），与之配套的是
+    //   不变量 R-3a 的收窄（core.delegate.KernelChildSpawnGate 只放行
+    //   def='subagent' 的子 actor 生成，其余照旧拒）。
     //   node_report 摘除（作者裁定 2026-10-29 逐字「node_report工具对极简内核应该
     //   不需要吧，那不是agentflow的节点使用的工具吗？」）：显式减法钉语义——现状
     //   事实源 node_report 本就不达 delegate 面（RootExclusiveTools 防声明逃逸剥
@@ -2569,8 +2609,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     val kernelFace = delegateSession && delegateMode.contains(nebflow.core.delegate.DualModeConfig.ModeKernel)
     val dispatcherFace = delegateSession && delegateMode.contains(nebflow.core.delegate.DualModeConfig.ModeDispatcher)
     val modeTruncated =
-      if kernelFace then
-        withDelegateReport - "Subagent" - "AgentFlow" - nebflow.core.tools.NodeReportToolDef.Name
+      if kernelFace then withDelegateReport - nebflow.core.tools.NodeReportToolDef.Name
       else if dispatcherFace then withDelegateReport - "Subagent"
       else withDelegateReport
     // N1 刀2（v3 §10.1 A4 授能）：delegate 会话的四件 Node 工具面挂载——
@@ -2593,10 +2632,14 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     // 纪律不受扰——本授能只对 delegateSession 身份生效，Subagent/AgentFlow 步会话
     // 不经此腿。
     val withDelegateMail = if delegateSession then withDelegateFace + "Mail" else withDelegateFace
-    // ask 工具反剥（ask 早退的对偶防线）：ask 专属两件只对 ask 会话授能——其余
-    // 身份即便 agent.json 声明 "*" 也不得获得（the tool name IS the permission
-    // boundary，TeamTaskTools 剥离先例）。**反剥集 = AskExclusiveTools（只两件）**：
-    // AllowedTools 里的只读五件是全员注册工具，进反剥集会连主会话读面一起剥掉。
+    // ask 工具反剥（ask 早退的对偶防线）：ask 专属三件（message_record_search /
+    // send_message_to_main_chat / GitQuery，gitquery 批 2026-11-05 增第三件）只对
+    // ask 会话授能——其余身份即便 agent.json 声明 "*" 也不得获得（the tool name
+    // IS the permission boundary，TeamTaskTools 剥离先例）。**反剥集 =
+    // AskExclusiveTools（只这三件）**：AllowedTools 里的只读五件是全员注册工具，
+    // 进反剥集会连主会话读面一起剥掉。GitQuery 进反剥集的理由 = 它必须在
+    // ToolRegistry 在册才解析得出 schema，而在册即意味着 "*" 声明会拿到名字——
+    // 本集是唯一能把名字从非 ask 身份摘掉的面（工具内 isAskSession 闸为第二保险）。
     val askStripped = withDelegateMail -- nebflow.core.ask.AskSessions.AskExclusiveTools
     if flowNodeSession then askStripped + nebflow.core.tools.NodeReportToolDef.Name else askStripped
 

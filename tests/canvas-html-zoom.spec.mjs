@@ -25,6 +25,15 @@
 //   Z10 亮暗双主题截图（缩放中态 + 复位态）；
 //   R0 主文档无 JS 运行时错误。
 //
+// 存量红修（-legacy 提交 ui-unification-20261103-canvas-overlay-legacy）：
+//   本 spec boot 显式设 `nebflow_locale = zh-CN`，而选择器钉英文 title
+//   （`.canvas-zoom-btn[title="Zoom in"]`）—— 工具钮 title 走 t('canvas.zoomIn')，
+//   zh 档实渲染「放大 / 缩小 / 适应视图」⇒ 选择器 30s 超时（main 存量红，本轮
+//   HEAD 复现；探针实测 bar 在场、三钮 title 全中文、零 JS 错误）。改为
+//   **locale-free 选择器** `.canvas-zoom-btn:has([data-lucide="zoom-in"])`
+//   （图标属性在内层 <i> 由 lucide 换成 <svg>，data-lucide 两态都在），图示
+//   身份与文案解耦，任何语种腿同选。
+//
 // 运行（仓库根 node_modules 提供 playwright）：
 //   node tests/canvas-html-zoom.spec.mjs
 // 可选 env：
@@ -180,14 +189,14 @@ mkdirSync(SHOTS_DIR, { recursive: true });
   ok('Z1 sandbox 契约快照不变', sandbox === 'allow-scripts allow-same-origin allow-forms allow-popups', sandbox);
 
   /* Z2 工具钮放大 → scale 1.25 + 徽标 125%（computed transform 变化）*/
-  await page.locator('.canvas-zoom-btn[title="Zoom in"]').click();
+  await page.locator('.canvas-zoom-btn:has([data-lucide="zoom-in"])').click();
   await sleep(150);
   const z2 = await getZoom(page);
   ok('Z2 工具钮放大 → computed scale=1.25', approx(z2.scale, 1.25, 0.002), `scale=${z2.scale}`);
   ok('Z2 比例徽标同步 125%', z2.pct === '125%', `pct=${z2.pct}`);
 
   /* Z3 工具钮复位 → 恒等 + 100% */
-  await page.locator('.canvas-zoom-btn[title="Fit to view"]').click();
+  await page.locator('.canvas-zoom-btn:has([data-lucide="maximize-2"])').click();
   await sleep(150);
   const z3 = await getZoom(page);
   ok('Z3 工具钮复位 → 恒等矩阵 + 100%', approx(z3.scale, 1, 1e-9) && approx(z3.tx, 0, 1e-9) && approx(z3.ty, 0, 1e-9) && z3.pct === '100%', `scale=${z3.scale} tx=${z3.tx} ty=${z3.ty} pct=${z3.pct}`);
@@ -242,30 +251,30 @@ mkdirSync(SHOTS_DIR, { recursive: true });
   ok('Z5 纯滚轮 → scale 与徽标纹丝不动', postZ5.raw === preZ5.raw && postZ5.pct === preZ5.pct, `raw ${preZ5.raw} → ${postZ5.raw} pct=${postZ5.pct}`);
 
   /* Z6 上钳制 3.0 */
-  for (let i = 0; i < 10; i++) await page.locator('.canvas-zoom-btn[title="Zoom in"]').click();
+  for (let i = 0; i < 10; i++) await page.locator('.canvas-zoom-btn:has([data-lucide="zoom-in"])').click();
   await sleep(150);
   const z6 = await getZoom(page);
-  await page.locator('.canvas-zoom-btn[title="Zoom in"]').click();
+  await page.locator('.canvas-zoom-btn:has([data-lucide="zoom-in"])').click();
   await sleep(150);
   const z6b = await getZoom(page);
   ok('Z6 上钳制：scale ≤ 3.0 且徽标 300%', z6.scale <= 3.0005 && z6.pct === '300%', `scale=${z6.scale} pct=${z6.pct}`);
   ok('Z6 钳制后继续放大仍 3.0', approx(z6b.scale, 3, 1e-9) && z6b.pct === '300%', `scale=${z6b.scale}`);
 
   /* Z7 下钳制 0.3 */
-  for (let i = 0; i < 20; i++) await page.locator('.canvas-zoom-btn[title="Zoom out"]').click();
+  for (let i = 0; i < 20; i++) await page.locator('.canvas-zoom-btn:has([data-lucide="zoom-out"])').click();
   await sleep(150);
   const z7 = await getZoom(page);
   ok('Z7 下钳制：scale ≥ 0.3 且徽标 30%', z7.scale >= 0.29995 && z7.pct === '30%', `scale=${z7.scale} pct=${z7.pct}`);
 
   /* Z8 复位回 100% */
-  await page.locator('.canvas-zoom-btn[title="Fit to view"]').click();
+  await page.locator('.canvas-zoom-btn:has([data-lucide="maximize-2"])').click();
   await sleep(150);
   const z8 = await getZoom(page);
   ok('Z8 复位回 100%（恒等矩阵）', approx(z8.scale, 1, 1e-9) && approx(z8.tx, 0, 1e-9) && approx(z8.ty, 0, 1e-9) && z8.pct === '100%', `scale=${z8.scale} pct=${z8.pct}`);
   await page.screenshot({ path: join(SHOTS_DIR, '20260904_canvas-html-zoom-light-reset.png') });
 
   /* Z9 iframe 内键盘桥：聚焦 iframe 后 Control+= 放大 / Control+0 复位 */
-  await page.locator('.canvas-zoom-btn[title="Zoom in"]').click();
+  await page.locator('.canvas-zoom-btn:has([data-lucide="zoom-in"])').click();
   await sleep(150);
   await frame.click('#zoom-marker');   // 焦点移入 iframe（真实用户点击路径）
   await page.keyboard.press('Control+=');
@@ -295,7 +304,7 @@ mkdirSync(SHOTS_DIR, { recursive: true });
   const zd = await getZoom(page);
   ok('Z10 暗色：ctrl+wheel 缩放生效 + 徽标同步', zd.scale > 1.2 && zd.pct === String(Math.round(zd.scale * 100)) + '%', `scale=${zd.scale} pct=${zd.pct} bg=${darkVars}`);
   await page.screenshot({ path: join(SHOTS_DIR, '20260904_canvas-html-zoom-dark-zoomed.png') });
-  await page.locator('.canvas-zoom-btn[title="Fit to view"]').click();
+  await page.locator('.canvas-zoom-btn:has([data-lucide="maximize-2"])').click();
   await sleep(150);
   const zr = await getZoom(page);
   ok('Z10 暗色：复位 100%', approx(zr.scale, 1, 1e-9) && zr.pct === '100%', `scale=${zr.scale} pct=${zr.pct}`);

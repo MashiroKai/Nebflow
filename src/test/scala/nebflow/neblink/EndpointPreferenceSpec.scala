@@ -185,4 +185,77 @@ class EndpointPreferenceSpec extends CatsEffectSuite:
     assertEquals(client.toNeblinkPeers(List(NeblinkPeerInfo("k", "KAI", "macos", Nil, online = true))), Nil)
   }
 
+  // ===== ④ IPv6 优先批（2026-11-04）：v6 只在能处理它的地方出现 =====
+
+  test("v6: isTailnetV6 只认 Tailscale ULA fd7a:115c:a1e0::/48（别的 ULA 不算）") {
+    assert(EndpointPreference.isTailnetV6("fd7a:115c:a1e0::1"))
+    assert(EndpointPreference.isTailnetV6("FD7A:115C:A1E0:0:1::2"), "大小写不敏感")
+    assert(EndpointPreference.isTailnetV6("[fd7a:115c:a1e0::1]"), "方括号形态也要认")
+    assert(!EndpointPreference.isTailnetV6("fd00::1"), "ZeroTier 之类自定义 ULA 不是 tailnet")
+    assert(!EndpointPreference.isTailnetV6("2001:db8::1"), "全局单播不是 tailnet")
+    assert(!EndpointPreference.isTailnetV6("100.64.0.1"), "v4 CGNAT 由 isTailscaleHost 负责")
+  }
+
+  test("v6: urlOf 是候选 URL 的唯一拼装点（v6 自动加方括号，v4/主机名逐字节不变）") {
+    assertEquals(EndpointPreference.urlOf("192.168.1.145", 6138), "http://192.168.1.145:6138")
+    assertEquals(EndpointPreference.urlOf("100.91.165.120", 8080), "http://100.91.165.120:8080")
+    assertEquals(EndpointPreference.urlOf("host.local", 8080), "http://host.local:8080")
+    assertEquals(EndpointPreference.urlOf("fd7a:115c:a1e0::2", 6138), "http://[fd7a:115c:a1e0::2]:6138")
+    assertEquals(EndpointPreference.urlOf("[fd7a:115c:a1e0::2]", 6138), "http://[fd7a:115c:a1e0::2]:6138")
+    // 拼出来的形态必须能被 URI 解析，并且 hostOf 能取回同一个地址（闭环判据）。
+    val uri = java.net.URI.create(EndpointPreference.urlOf("fd7a:115c:a1e0::2", 6138))
+    // 🔴 JDK 的 `URI.getHost` 对 IPv6 字面量**保留方括号**（RFC 3986 的 authority 原样）——
+    // 这正是「v6 地址不能塞进只认 v4 的地方」的第二层：凡是要拿 host 再拼东西的地方，
+    // 必须先剥方括号（`hostOf` 已经这么做）。
+    assertEquals(uri.getHost, "[fd7a:115c:a1e0::2]")
+    assertEquals(uri.getPort, 6138)
+    assertEquals(EndpointPreference.hostOf(EndpointPreference.urlOf("fd7a:115c:a1e0::2", 6138)), "fd7a:115c:a1e0::2")
+  }
+
+  test("v6: toNeblinkPeers 的 v6 候选带方括号（改前会拼出不可解析的 URL）") {
+    val client = new NeblinkClient(
+      NeblinkServerConfig(url = "http://unused.invalid", networkId = "n", secret = "s"),
+      8080
+    )
+    val peers = client.toNeblinkPeers(
+      List(
+        NeblinkPeerInfo(
+          "k",
+          "KAI",
+          "macos",
+          List(
+            NeblinkEndpoint("fd7a:115c:a1e0::2", 6138, "tailscale", "utun3"),
+            NeblinkEndpoint("192.168.1.145", 8080, "lan", "en0")
+          ),
+          online = true
+        )
+      )
+    )
+    val eps = peers.head.endpoints
+    assert(eps.contains("http://[fd7a:115c:a1e0::2]:6138"), eps.toString)
+    eps.foreach(u => assert(java.net.URI.create(u).getHost.nonEmpty, s"不可解析的候选 URL: $u"))
+    assertEquals(peers.head.address, eps.head, "address 与 candidates.head 一致")
+  }
+
+  test("v6: 信任 IP 面保持 v4 专属（peerAddresses 丢 v6：那里是精确字符串匹配）") {
+    val client = new NeblinkClient(
+      NeblinkServerConfig(url = "http://unused.invalid", networkId = "n", secret = "s"),
+      8080
+    )
+    assertEquals(
+      client.peerAddresses(
+        List(
+          NeblinkPeerInfo(
+            "k",
+            "KAI",
+            "macos",
+            List(NeblinkEndpoint("192.168.1.145", 8080, "lan"), NeblinkEndpoint("fd7a:115c:a1e0::2", 6138, "tailscale")),
+            online = true
+          )
+        )
+      ),
+      Set("192.168.1.145")
+    )
+  }
+
 end EndpointPreferenceSpec

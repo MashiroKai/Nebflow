@@ -2,7 +2,8 @@
 // mobile-dock-shape-shots.mjs — dock 收形批（作者令 10-31 22:50 六件）双主题截图取证
 // + 机械探针。产出 → evidence/20261101_dock-shape-post-muse/：
 //   dock-<scheme>.png         聊天根 dock 全景（中键 = agent 头像图、无文字、收进 dock 内）
-//   msgflow-<scheme>.png      消息流样张（Muse 悬浮头像批后：零身份头 + 顶部 sticky 悬浮锚）
+//   msgflow-<scheme>.png      消息流样张（零身份头 + 顶部 fixed 单行会话顶栏，
+//                             会话顶栏单行三段式批 2026-11-02 07:23 起）
 //   logo-fallback-<scheme>.png 无头像回落样张（dock 中键 + 会话头 = stand logo）
 // 🔴 Muse 式悬浮头像批（作者令 2026-11-01 13:33）重跑档：批①「消息流头像+名」
 //    已整批退役（.g2-msg-meta 摘除）—— 探针①翻转为「零身份头」断言；探针③
@@ -15,8 +16,12 @@
 //   ② 中键零文字标签（.dock-label 不存在）+ aria-label 承接
 //   ③ 无头像回落 = stand logo（.dock-center-logo 中键 + 会话头
 //      .agent-avatar-stand-logo，双面；消息流腿随退役摘除）
-//   ④ 中键圆 box-shadow == none（边缘收简：纯色零浮影零光环）
-//   ⑤ 中键圆不探出 dock 顶缘（inside）+ 输入卡底缘与 dock 顶缘缝 ≤1.5px
+//   ④ 中键边缘 = 顶部头像同款边缘语言（边缘统一批 2026-11-01 22:3x 修订：
+//      1px --glass-control-border 描边 + inset 高光 + 0 2px 8px 浮影，dock
+//      中键与会话头 #agent-avatar-btn 计算值逐字等值；原收形批④
+//      box-shadow==none 契约随批退役）
+//   ⑤ 中键圆不探出 dock 顶缘（inside）+ 输入卡-胶囊呼吸缝 == 10px
+//      （--dock-gap 常量；悬浮胶囊批 2026-11-01 21:07 作者令修订，原零缝契约退役）
 //   ⑥ #send-btn = 36×36 r50% 纯圆（绿保留，颜色探针跟查 --ctl-send-bg）
 // 走 mobile-dock.spec / tmp-dock-center-evidence 同款静态 harness（无后端）。
 // Run: node tests/mobile-dock-shape-shots.mjs
@@ -127,12 +132,19 @@ for (const scheme of ['dark', 'light']) {
         }));
       const centerImg = center?.querySelector('img');
       const avatarSlot = document.getElementById('agent-avatar-btn');
+      const edgeOf = (el) => {
+        if (!el) return null;
+        const c = getComputedStyle(el);
+        return { borderW: c.borderTopWidth, borderStyle: c.borderTopStyle, borderColor: c.borderColor, shadow: c.boxShadow };
+      };
       return {
         centerLabel: !!centerKey.querySelector('.dock-label'),
         centerAria: centerKey.getAttribute('aria-label'),
         centerHasImg: !!centerImg && centerImg.complete && centerImg.naturalWidth > 0,
         centerIsLogo: !!center?.querySelector('img.dock-center-logo'),
         centerShadow: getComputedStyle(center).boxShadow,
+        centerEdge: edgeOf(center),
+        slotEdge: edgeOf(avatarSlot),
         circle: r(center), dockRect: r(dock), barRect: r(bar),
         sendRadius: sendCs.borderRadius, sendW: r(send).width, sendH: r(send).height,
         sendBg: sendCs.backgroundColor,
@@ -162,13 +174,18 @@ for (const scheme of ['dark', 'light']) {
         probe.centerIsLogo && probe.slotLogo && !probe.slotGlyph,
         `centerLogo=${probe.centerIsLogo} slotLogo=${probe.slotLogo} glyph=${probe.slotGlyph}`);
     }
-    // ④ 边缘收简
-    ok(`${tag} ④ 中键 box-shadow == none`, probe.centerShadow === 'none', probe.centerShadow);
-    // ⑤ 中键不探出 dock + 输入卡间隙收窄
+    // ④ 边缘统一（边缘统一批 2026-11-01 22:3x：中键边缘 = 顶部头像逐字同款）
+    const ce = probe.centerEdge, se = probe.slotEdge;
+    const edgeSame = ce && se && ce.borderW === se.borderW && ce.borderStyle === se.borderStyle
+      && ce.borderColor === se.borderColor && ce.shadow === se.shadow;
+    ok(`${tag} ④ 中键边缘 = 顶部头像同款（1px 描边+高光+浮影逐字等值）`,
+      edgeSame && ce.shadow !== 'none' && ce.borderW === '1px',
+      `center=${JSON.stringify(ce)} slot=${JSON.stringify(se)}`);
+    // ⑤ 中键不探出 dock + 输入卡-胶囊呼吸缝（悬浮胶囊批：缝 = --dock-gap = 10px）
     const inside = probe.circle.top >= probe.dockRect.top - 0.5 && probe.circle.bottom <= probe.dockRect.bottom + 0.5;
     const gap = probe.dockRect.top - probe.barRect.bottom;
     ok(`${tag} ⑤ 中键收进 dock 边界内`, inside, `circleTop=${probe.circle.top.toFixed(1)} dockTop=${probe.dockRect.top.toFixed(1)}`);
-    ok(`${tag} ⑤ 输入卡-dock 缝 ≤1.5px`, Math.abs(gap) <= 1.5, `gap=${gap.toFixed(2)}`);
+    ok(`${tag} ⑤ 输入卡-胶囊呼吸缝 == 10px（--dock-gap）`, Math.abs(gap - 10) <= 1.5, `gap=${gap.toFixed(2)}`);
     // ⑥ 发送钮纯圆
     ok(`${tag} ⑥ 发送钮 36×36 r50% 纯圆 + 绿保留`,
       probe.sendRadius === '50%' && Math.abs(probe.sendW - 36) <= 0.6 && Math.abs(probe.sendH - 36) <= 0.6 && probe.sendBg === 'rgb(7, 193, 96)',
@@ -177,7 +194,7 @@ for (const scheme of ['dark', 'light']) {
     // ── 截图 ──────────────────────────────────────────────────────
     await page.screenshot({ path: join(OUT, `dock-${tag}.png`) });
     if (withAvatar) {
-      // 消息流样张：滚到底（Muse 批后 = sticky 悬浮锚锚定窗口顶 + 消息行零身份头）。
+      // 消息流样张：滚到底（固定顶栏不动 + 消息行零身份头）。
       await page.evaluate(() => { const c = document.getElementById('chat'); c.scrollTop = c.scrollHeight; });
       await page.waitForTimeout(300);
       await page.screenshot({ path: join(OUT, `msgflow-${tag}.png`) });

@@ -1,0 +1,57 @@
+=== 生成时间 ===
+2026-11-04 20:26:48
+=== git rev-parse --short main ===
+579af6acf
+=== git log -1 --oneline main ===
+579af6acf Merge branch 'delegate/delegate-nebflow-cff8a531'
+=== behind: git rev-list --count HEAD..main ===
+0
+=== git log --oneline main..HEAD ===
+f436e4087 chore(evidence): 终树 Scala 实测证据（compile [success] + 52 passed / 0 failed / EXIT=0；前一轮 SBT_EXIT=2 归因为 sbt-gate 包装脚本超时分支语法错而非测试红）
+5b652f06f chore(evidence): 收口终树 main 579af6acf 复跑（八道门禁六命令全 EXIT=0、check-js-types 在 ws.js 取 main 新退避逻辑后仍 EXIT=0、批 spec 22 passed）+ merge 口径逐文件表
+f17442426 Merge branch 'main' into delegate/delegate-nebflow-79768ef5
+dd109b130 Merge branch 'main' into delegate/delegate-nebflow-79768ef5
+2eebcf400 fix(tests): 两处截图落点跟到命名新制目录（旧制目录已被 main 命名迁移批改名），断言零改动；附第三轮门禁读数（6 命令全 EXIT=0）
+304418197 chore(evidence): 收口终轮证据 —— main 9a134bd5b 树复跑八道门禁（6 命令全 EXIT=0）+ Scala compile/testOnly（52 passed, EXIT=0）+ 批 spec 22 passed；allowlist 与 type-baseline 零改动机械证明
+633402681 Merge branch 'main' into delegate/delegate-nebflow-79768ef5
+211436c12 chore(evidence): 证据目录收口到命名新制 <topic>__<time>（旧制目录并入本目录，零内容丢失）+ 收口索引 README + final/ 八道门禁与批 spec 读数
+333d17b2d Merge branch 'main' into delegate/delegate-nebflow-79768ef5 — 收口追平本地 main a0597efdd（design-scale 令牌迁移 / 文档命名新制 / presence 补丁）；冲突唯一处 todo-face.css .tfl-list padding：取本批 FAB 让位、数值换 main 令牌等值
+1d7a56a15 chore(evidence): accept2 更正范围核对口径（证据目录 ≠ 产品越界；scala 与 web 外子树零改动）
+c91ac91d9 chore(evidence): accept2 补收尾现场与范围核对（本批零越界、6138 未触碰、工作树干净）
+95bb82482 chore(evidence): 最终验收 accept2 —— 八道门禁本树实测 8/8 EXIT=0、改前红复跑、隔离实例 45 PASS、本批 22 spec 与 UI 套件全绿、双端入口/新建截图
+da0f3255f chore(evidence): 入口收敛验收——补基点树 face-shots 对照读数（96 PASS/8 FAIL 与本树 FAIL 集合逐条相同）
+38c1046b7 feat(todo): 入口收敛——撤消息列表待办入口行与手机任务圆钮，#todo-page 整面退役
+712242e85 Merge branch 'main' into delegate/delegate-nebflow-79768ef5
+4537d8779 chore(evidence): persist2 索引补一条——真源原件副本目录（97_final_store_artifact/）
+1dc9d1fdc chore(evidence): persist2 归档真源原件副本（scheduledTaskStore JSON + done-records JSONL），防 tmp 清理丢失
+8d41ca6ab chore(evidence): persist2 补齐跨端腿总闸申报——单实例接管 env off 的行为证据（两控制台同时在线零拦指针）
+6ed1be768 chore(evidence): persist2 落库验收——五项真落库+刷新+跨端在隔离实例实测 45 PASS/0 FAIL
+e3aac6ea6 chore(evidence): 类型门禁证据 README 补提交清单与并行节点现场注记（panel 截图归属更正）
+06675f9ec chore(evidence): 类型门禁回归跑动 todo-capsule-create.spec 重生成的 panel 截图（渲染噪声级差异，断言全绿）
+d0135c588 chore(evidence): 类型门禁修复提交后在 ddf7e3e43 树复跑 check-js-types（EXIT=0）+ 收束态 range 核对
+ddf7e3e43 fix(type-gate): checkJs 13 错清零（EXIT=1 → EXIT=0），零基线豁免
+8ba3fcd01 chore(evidence): Sync 索引件对齐四轮 merge 口径（最终 HEAD 02c61d914 / main 51309ec51）
+02c61d914 chore(evidence): 第四轮追平 main 51309ec51 —— 五道门禁在最终树上全绿
+7c26c4519 Merge branch 'main' into delegate/delegate-nebflow-79768ef5
+11afa229c chore(evidence): 第三轮追平 main 0960a0898 —— 门禁/spec/让位链在收束树上复跑
+2223b7159 Merge branch 'main' into delegate/delegate-nebflow-79768ef5
+d8406f6d9 chore(evidence): 提交后在 1484bfaeb 树上复跑 process-artifacts + component-contract（均 EXIT=0）
+1484bfaeb chore(evidence): 收束态复跑读数——再合 main 后门禁四跑 + 本批 20 spec 全绿 + 让位链 18/18 + 范围核对零漂移
+096408f90 chore(evidence): todo-unify 批证据归档——Sync 中断遗留 sync/ 收编 + 门禁补跑与让位链实测读数
+f70dccb9f Merge branch 'main' into delegate/delegate-nebflow-79768ef5
+f7dba5ef9 fix(todo): 胶囊面两个新控件改由 DOM API 装配（component-contract R5）
+fa6526fb8 Merge branch 'main' into delegate/delegate-nebflow-79768ef5
+6b883302f feat(todo): 胶囊面交互——右下角加号/空白建/重要度落库/完成撤回/删除/手机层胶囊
+=== git rev-list --count main..HEAD ===
+35
+=== scope (web/scala/tests) ===
+ tests/todo-page-shots.mjs                         |  37 +-
+ tests/todo-split.spec.mjs                         | 305 ++++++------
+ 37 files changed, 1951 insertions(+), 435 deletions(-)
+=== scala only ===
+(空=与main一致)
+=== status --porcelain ===
+?? reports-evidence/todo-unify-backend__20261104_145310__delegate-nebflow-79768ef5/final/logs/r5_11_final_git_snapshot.log
+=== 6138 listener ===
+COMMAND   PID  USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
+java    78176 kaiyu  175u  IPv6 0xc2a437ddcfefe972      0t0  TCP *:6138 (LISTEN)

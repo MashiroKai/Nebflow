@@ -415,6 +415,32 @@ object ProjectActor:
     )
 
   /**
+   * **remount 帧单点**（unmount-console 面板批 2026-11-02）：ProjectRemount 成功腿
+   * 广播的 `projectRemounted` 帧——row 与 GET /api/projects 行同构（projectCreated
+   * 帧的 row 形状逐字复用：name/workspace/agentFile/description/createdAt/origin/
+   * device）+ `unmountedAt`（卸载标记的既有时刻，纯展示）+ `remountedAt`。emit 点 =
+   * ProjectRemount 步③挂载成功后，经**既有** wsHub.broadcast 全连接下发（🔴 零第二
+   * 套推送面）。前端按名定点恢复卡片 + 摘「已卸载」分组的灰态行；幂等腿（已挂载）
+   * 不发帧（无状态变化）。
+   */
+  def projectRemountedFrame(pd: ProjectDef, remountedAt: Long): Json =
+    Json.obj(
+      "type" -> "projectRemounted".asJson,
+      "project" -> pd.name.asJson,
+      "row" -> Json.obj(
+        "name" -> pd.name.asJson,
+        "workspace" -> pd.workspace.asJson,
+        "agentFile" -> pd.agentFile.asJson,
+        "description" -> pd.description.asJson,
+        "createdAt" -> pd.createdAt.asJson,
+        "origin" -> pd.origin
+          .fold(Json.Null)(o => Json.obj("device" -> o.device.asJson, "path" -> o.path.asJson)),
+        "device" -> ProjectStore.effectiveDevice(pd).asJson
+      ),
+      "remountedAt" -> remountedAt.asJson
+    )
+
+  /**
    * **链控三态帧单点**（chainview 批 2026-10-01）：链 pause / resume / cancel 后广播的
    * `chainState` 帧 —— 与上文两个项目级帧同族（同一 [[Json]] 构造函数纪律：🔴 禁调用点
    * 各拼帧形）。推送面复用**既有** `wsHub.broadcast`（REST 腿）与 `engine.wsSendFn`
@@ -533,8 +559,8 @@ object ProjectActor:
    * prompt 也计 1 件**。
    * pendingTaskTexts = 未消费件的触发任务全文队列（队首=最早未消费件）；不变量
    * `pendingInjected == pendingTaskTexts.size`，桥 Completed 时以 k 同减两者。
-   * （R7-b 后不再 pop 出摘要投递——本队列仅用于**拆除裁决**；投递改由分发器
-   * 显式 `Mail(address="Nebula", …)` 承担。）
+   * （R7-b 后不再 pop 出摘要投递——本队列仅用于**拆除裁决**；改由引擎级回执承担：
+   * 链级终态回执由引擎送达创建该链的 delegate / 项目根。分发器**没有** Mail 工具。）
    *
    * Q3-a（2026-09-11 收件规则批）曾允许 mid-turn 直投让**一个 turn 消费多件**
    * （tools-complete 边界整队合批）；该合批已由 2026-09-15 ub 缺陷批（root 裁定
@@ -581,7 +607,8 @@ object ProjectActor:
   // `taskSummaryLine` / `batchSummaryLine` 同批删净（R2「一个 Mail 统一」批
   // 2026-09-12，R7-b）：二者唯一消费点 = 桥侧 turn 级自动投递的标注行，随
   // `NodeEngine.deliverDispatcherOutputToNebula` 一起移除（D-4 删净，不留死代码）。
-  // 分发器的批级回传改由显式 `Mail(address="Nebula", type=RESULT, chainId=…, …)` 承载。
+  // 分发器的批级回传改由**引擎级回执**承担（链级终态送达创建该链的 delegate / 项目根；
+  // 分发器固定工具集里没有 Mail，见 [[AgentCore.DispatcherFixedTools]]）。
 
   /**
    * Slot-key single point: a bound session = the bare task id (strip the `#` prefix,
@@ -1234,6 +1261,8 @@ object ProjectActor:
         .as(Behaviors.stopped)
     Behaviors.receive[AgentEvent] { (_, event) =>
       event match
+        // 刀一等待态计时消息：本 actor 不接（恒等行为）。
+        case _: AgentEvent.BgWaitCapTick => IO.pure(Behaviors.ignore)
         case AgentEvent.Completed(_, messages) =>
           // 原子裁决（Q3-a 扩展，2026-09-11 收件规则批）：本 turn 消费了几件 =
           // 会话历史里带注入来源标签（task/dispatch）的消息**增量**——mid-turn 直投
@@ -1247,8 +1276,13 @@ object ProjectActor:
           // **R7-b 桥收敛（R2「一个 Mail 统一」批 2026-09-12，作者裁定 D-4）**：
           // 本桥**不再**每 turn 无条件把最终 assistant 文本投递给 Nebula root
           // （旧路径 `NodeEngine.deliverDispatcherOutputToNebula` 同批删净）。root
-          // 注入面 100% 由显式载体驱动——分发器必须自己
-          // `Mail(address="Nebula", type=RESULT, chainId=<本批链 id>, …)`。
+          // 注入面 100% 由显式载体驱动——**但该载体不是分发器**：分发器的固定工具集
+          // 里**没有** Mail（[[AgentCore.DispatcherFixedTools]]：NodeList/NodeEdit/
+          // NodeCancel/AskUserQuestion/Read/Glob/Grep/Bash/TaskBoard 共 9 件），它
+          // 没有地址可写。分发器终文只落 Flow Map / 事件流；需要人裁定走
+          // `AskUserQuestion`（阻塞到作者答复），要留痕走 `TaskBoard`。
+          // 链级终态（含「链永久 wedged」）的回执**由引擎负责送达**（作用域面落到
+          // 创建该链的 delegate，项目面落到项目根），不靠分发器手写消息。
           // 本桥职责 = ① 消费计数裁决（在飞 ⇒ 保活；归零 ⇒ 记 `idleSince` 进入
           // 空闲窗）② Failed/Cancelled 的即时拆除 + 面板终态帧；turn 级自动摘要消失。
           // 观测口径：source=="dispatcher" 族自本批起**生产者恒 0**。
@@ -2230,6 +2264,14 @@ object ProjectActor:
             dispatcherBridge(cfg, active, ref, rootSessionId, sessionId),
             s"dispatchbridge-${sessionId.take(8)}"
           )
+          // 属主边槽写点（面板代际层级批 2026-11-06 · design 裁定 A②）：本项目
+          // 「当前分发器」会话 id 先于 registry 注册落槽——后续 startNode / loop
+          // 会话注册 AgentRecord.parentSessionId 从此读取（读点 =
+          // NodeStarter.startNode / NodeLoopRunner.spawnLoopSession）。分发器
+          // 单例化裁定（2026-09-02）保证同项目活分发器至多一个，槽覆写即
+          // 「当前分发器」；引擎重启自然归零（内存态），卸载面
+          // ProjectUnmount.removeMountFace 显式清 None。
+          _ <- cfg.engine.dispatcherSlot.set(Some(sessionId))
           // 注册元数据对齐 DelegateTool 注册约定（AgentControl 注释原文）：
           // startedAt/lastActivityMs 驱动 list 的 up/idle 列与卡死判定
           // （lastActivityMs=now 从出生即可见——修复「turn 在首次 LLM touch 前
@@ -2241,6 +2283,11 @@ object ProjectActor:
                 ref,
                 AgentKind.Flow,
                 rootSessionId,
+                // 属主边（面板代际层级批 2026-11-06 · design 裁定 A①）：分发器行
+                // parent = 挂载 root/顶层会话（depth 1）——值即本函数 rootSessionId
+                // 参数（SpawnParams.rootSessionId 同源单值），单一真相 =
+                // AgentRecord.parentSessionId 注册写入（快照面已通零契约改动）。
+                parentSessionId = rootSessionId,
                 startedAt = System.currentTimeMillis(),
                 lastActivityMs = System.currentTimeMillis(),
                 supervisorRef = Some(bridgeRef),

@@ -26,6 +26,14 @@ object ToolRegistry:
       "Grep" -> GrepTool,
       // Shell
       "Bash" -> BashTool,
+      // BgWait（bash overhaul T1，作者令 2026-11-04）：**后台任务的唯一等待原语**——
+      // 有界等待（到期不杀任务），阻塞上限与前台等待预算同源
+      // （ctx.bashConfig.foregroundWaitBudgetMs，不自造第二个上限）。全仓注册使
+      // agent.json 声明可解析；真实授能面 = AgentCore.BaseTools → NebflowFixedTools
+      // （执行 agent 面 + legacy catch-all）。**不在** RemoteExecutor.remoteableTools
+      // / FleetConfig.RemoteableToolNames：等待是本机语义（任务图在本地会话里），
+      // 跨设备腿由注册表探测承接（ShellSession.waitBackgroundResults ② 腿）。
+      "BgWait" -> BgWaitTool,
       // Web
       "WebSearch" -> WebSearchTool,
       "WebFetch" -> WebFetchTool,
@@ -68,13 +76,14 @@ object ToolRegistry:
       // 执行件，目标恒为 `kernel` def（无 agent 目标参数）；persistent 模式已退役。
       "Delegate" -> DelegateTool,
       // builtin-merge 批（2026-10-03）：Subagent = 只读侦察子入口（阻塞，结果即
-      // 返回值）。N1 复名批（v2 ①/v3 §5）：Workflow → **AgentFlow**（同参数：
-      // steps = [{id, task, deps}], description）＝内联 DAG 便捷面，非阻塞薄壳化
-      // （steps → ChainWrite.registerChain 同闸同底座）。授权面 =
-      // AgentCore.NebflowFixedTools（执行 agent 机制面）；RootExclusiveTools
-      // 防声明逃逸。
+      // 返回值）。授权面 = AgentCore.NebflowFixedTools（执行 agent 机制面）；
+      // RootExclusiveTools 防声明逃逸。
+      // 🔴 tool-face-agentflow-retire 批（2026-11-05，作者裁定二）：`AgentFlow` 名
+      // **不再注册**（AgentFlow 工具整文件删除，能力原样留在 ChainWrite 一个入口）。
+      // 注册面没有该名 ⇒ `executeToolInner` 的 `case None` 命中
+      // `AgentCore.RetiredToolGuides("AgentFlow")`，给出「agentflow 只是模式名；改用
+      // ChainWrite 一次写全链」的可诊断错误（绝不是静默 no-op，也不是别名转发）。
       "Subagent" -> SubagentTool,
-      "AgentFlow" -> AgentFlowTool,
       // ChainWrite（N1 刀2 新注册项，v3 §5 S4）：delegate 会话专属整链登记件——
       // 一次调用登记节点＋deps＋任务＋描述整链进调用 delegate 自己的作用域图，
       // 校验过 → 原子落盘 → 入口放行（链齐才跑）。授权面 = buildAllowedToolSet
@@ -192,7 +201,15 @@ object ToolRegistry:
       // 插件白名单与 remoteableTools 均不含 ask 专属两件。工具内侧再用
       // ctx.sessionId 同判据拒绝（AskTools 双保险，DelegateReportTool 先例）。
       "message_record_search" -> MessageRecordSearchTool,
-      "send_message_to_main_chat" -> SendMessageToMainChatTool
+      "send_message_to_main_chat" -> SendMessageToMainChatTool,
+      // GitQuery（gitquery 批 2026-11-05，作者令「ask 会话新增只读 GitQuery
+      // 工具」）：ask 会话的**只读 git 查询**面（log / show / diff / merge-base
+      // 四件，零自由 argv），动因 = 分身对账审计文末的提交号/可复跑命令时只能
+      // 转述文件里写死的值。授权面同 ask 专属两件——AskSessions.AskExclusiveTools
+      // 反剥集单点（非 ask 身份即便声明 "*" 也不得挂名，the tool name IS the
+      // permission boundary）+ 工具内 ctx.sessionId 身份拒绝（GITQUERY_FORBIDDEN）
+      // 双保险；插件白名单与 remoteableTools 均不含本件（v1 只跑本机）。
+      "GitQuery" -> GitQueryTool
     )
     // imagegen 双层批（2026-10-24）+ 功能开放批（2026-10-30 作者令「直接开放
     // 出来」，缺省编入）：编译期 seal 门控保留为应急开关——显式 `STAND_IMAGEGEN=0`

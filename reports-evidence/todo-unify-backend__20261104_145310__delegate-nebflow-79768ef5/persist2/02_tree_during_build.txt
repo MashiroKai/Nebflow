@@ -1,0 +1,16 @@
+== 构建期树状态 @ 2026-11-04 17:54:50 ==
+--- git status --porcelain ---
+ M src/main/resources/web/js/todoStore.js
+ M src/main/resources/web/js/ws.js
+?? reports-evidence/20261104_todo-unify-backend__delegate-nebflow-79768ef5/persist2/
+?? reports-evidence/20261104_todo-unify-backend__delegate-nebflow-79768ef5/typefix/
+--- git diff --stat (tracked) ---
+ src/main/resources/web/js/todoStore.js | 11 ++++++++---
+ src/main/resources/web/js/ws.js        | 14 +++++++++++++-
+ 2 files changed, 21 insertions(+), 4 deletions(-)
+--- shasum ---
+986c3a447f5c57927919f9098e5a19fcbec9fa13fb1755c813ef68d9ff142b14  src/main/resources/web/js/todoStore.js
+00290d7259f4e7a0fb566d0a671032a77d75bf059a04700edeb6f8b8a353683a  src/main/resources/web/js/ws.js
+--- diff 是否只含类型标注（非空行增删统计）---
+8	3	src/main/resources/web/js/todoStore.js
+13	1	src/main/resources/web/js/ws.js

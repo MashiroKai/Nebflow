@@ -24,27 +24,28 @@ import java.nio.file.Files
 import scala.concurrent.duration.*
 
 /**
- * Mail 续接（`delegate:<id>` → 终态实例续起）结果回传回归（mail-continuation
- * delivery 修 2026-10-09）。
+ * Mail 续接（`delegate:<id>` → 终态实例续命）结果回传回归（mail-continuation
+ * delivery 修 2026-10-09；**会话续命名与位修正批 2026-11-03 重钉**）。
  *
- * 实测 bug（父会话视角，两起）：Mail 续接一个已终态的 delegate ⇒ 续起会话正常
- * 跑完、工作实际已完成，但 (a) 续起 spawn 恒传 `parentRef = None` ⇒ 监督者
+ * 2026-10-09 实测 bug（父会话视角，两起）：Mail 续接一个已终态的 delegate ⇒ 续起
+ * 会话正常跑完、工作实际已完成，但 (a) 续起 spawn 恒传 `parentRef = None` ⇒ 监督者
  * `notifyParentAndStop` 的 None 分支是裸 `IO.unit`，终态 ExternalEvent 无投递对象，
- * 结果静默蒸发；(b) registry 行随后移除 ⇒ 会话从 AgentControl list 消失，父会话
- * 零消息、零告警。
+ * 结果静默蒸发；(b) registry 行随后移除 ⇒ 会话从 AgentControl list 消失。
  *
- * 本 spec 钉住修后的四条契约：
- *  1. **wiring**：续起会话的监督者拿到原父会话（registry 记录 `parentSessionId`）
- *     的**活引用**（`AgentRecord.parentRef = Some(parentRef)`）——终态回传链有锚点；
- *  2. **e2e 回传**：续起会话（真 AgentActor + stub LLM）完成后，父会话 actor 收到
- *     `ExternalEvent(source="delegate", eventType="completed")`——结果必达；
- *  3. **父不 live 面**：父会话不在注册表 ⇒ 续起照常进行（不阻断），但 Mail 回执
- *     **当场说破**（可见 NOTE），且终态仍落 taskStore（面板可见，不因父缺席而
- *     半途而废）；
- *  4. **监督者兜底（绝静默面）**：`parentRef = None` 的终态不再是裸 no-op ——
- *     wsSend 在场时发出 `delegateResultUndelivered` 显式终态帧；正向对照 =
- *     `parentRef = Some` 时父收到 ExternalEvent 且**无**兜底帧（兜底只在 None
- *     分支触发，零误报噪声）。
+ * 2026-11-03 批（作者 16:48/16:51/16:53 三段报障）把续命语义改为**原位恢复优先**：
+ * 历史完好的终态实例 ⇒ **同一 sessionId** 复活（转录重放追加、作用域图同 id 重挂
+ * ⇒ 链节点归属与事件路由不变）；派生只留给 cancel 墓碑 / 转录损坏（断言迁
+ * [[SessionResumptionSpec]]）。本 spec 钉住重钉后的契约：
+ *  1. **wiring**：原位续后**同一会话 id** 在统一注册表复活为 Delegate 活体，且监督者
+ *     拿到原父会话（registry 记录 `parentSessionId`）的**活引用**（回传链锚点不变）；
+ *  2. **矩阵腿**：续命回合无 delegate_report 申报收尾 ⇒ complete×idle = 提醒腿
+ *     （NudgeIdle）——绝不自动 completed 投父、绝不假终态（与 boot 复活 V1 同矩阵，
+ *     2026-11-01 状态矩阵批口径）；结果在模型申报 finish/merge 时照常回传；
+ *  3. **父不 live 面**：父会话不在注册表 ⇒ 原位续照常进行（不阻断），但 Mail 回执
+ *     **当场说破**（可见 NOTE）；
+ *  4. **监督者兜底（绝静默面）**（既有，逐字不动）：`parentRef = None` 的终态发出
+ *     `delegateResultUndelivered` 显式终态帧；正向对照 = `parentRef = Some` 时父收到
+ *     ExternalEvent 且**无**兜底帧。
  *
  * Harness = BackoffSupervisorCancelSpec（SharedResources 装配）＋ MailTerminalReviveSpec
  * （temp dataRoot / StubLlm）同款拼装。
@@ -165,14 +166,14 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
       rootCtx(resources, system, parentSid)
     )
 
-  // ── (1) wiring：续起会话的监督者锚定原父会话的活引用 ─────────────────────
+  // ── (1) wiring：原位续后同一 id 复活，监督者锚定原父会话的活引用 ─────────
 
-  test("(1) continuation wiring: the spawned session's registry record carries parentRef = the original parent's live ref"):
+  test("(1) continuation wiring: the SAME session id comes back live and its record keeps parentRef = the original parent's live ref"):
     val deadId = "delegate-nebflow-wire0001"
     val parentSid = "wire-parent-1"
     val system = ActorSystem("mail-cont-wire")
     for
-      resources <- mkResources(system, hang = true) // 永挂流 ⇒ 新会话不终态 ⇒ registry 行稳定可读
+      resources <- mkResources(system, hang = true) // 永挂流 ⇒ 不终态 ⇒ registry 行稳定可读
       parentEvents <- Ref.of[IO, List[AgentCommand]](Nil)
       parentRef <- system.spawn(mkRecordingCmd(parentEvents), "parent-rec-wire")
       _ <- resources.agentRegistry.update(
@@ -180,26 +181,28 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
       )
       _ <- seedDeadDelegate(deadId, parentSid)
       res <- continuationMail(resources, system, parentSid, deadId)
-      // 等新 delegate 会话出现在注册表（registerAgent 行）
-      recOpt <- waitUntil(15.seconds)(
-        resources.agentRegistry.get.map(_.keys.exists(k => k.startsWith("delegate-") && k != deadId))
-      ) *> resources.agentRegistry.get.map(_.find((k, _) => k.startsWith("delegate-") && k != deadId))
-      _ <- recOpt.map((_, v) => DelegateBudget.release(v.sessionId)).sequence.void
+      // 原位续：**同一个** id 复活为活体（不再派生新会话）
+      _ <- waitUntil(15.seconds)(resources.agentRegistry.get.map(_.contains(deadId)))
+      recOpt <- resources.agentRegistry.get.map(_.get(deadId))
+      _ <- recOpt.traverse_(rec => DelegateBudget.release(rec.sessionId))
       _ <- system.stopAll
     yield
       val receipt = res match
         case Right(r) => r
         case Left(e)  => fail(s"the continuation must proceed, got error: ${e.message}")
-      assert(receipt.contains("CONTINUED the delegate as a fresh session"), receipt)
+      assert(receipt.contains("RESUMED IT IN PLACE"), receipt)
+      assert(receipt.contains("same session id"), receipt)
       assert(!receipt.contains("not live right now"), "the parent IS live — the undeliverable NOTE must be absent")
-      val (_, recVal) = recOpt.getOrElse(fail("the continuation session must be registered"))
+      assert(!receipt.contains("resumedFrom="), "in-place resume carries no lineage (same identity)")
+      val recVal = recOpt.getOrElse(fail("the resumed session must be registered under the SAME id"))
+      assertEquals(recVal.kind, AgentKind.Delegate)
       assertEquals(recVal.parentRef, Some(parentRef),
         "the continuation supervisor must be anchored to the original parent session's live ref (result-return anchor)")
       assertEquals(recVal.parentSessionId, parentSid)
 
-  // ── (2) e2e：续起会话跑完 ⇒ 父会话收到 completed ExternalEvent ────────────
+  // ── (2) 矩阵腿：续命回合无申报 ⇒ 提醒腿（不自动终判、不投父、活体留存）──────
 
-  test("(2) e2e: the continuation session completes and the result REACHES the parent session"):
+  test("(2) resumed turn WITHOUT a declaration ⇒ NudgeIdle: no auto terminal, the parent is NOT notified, the session stays live"):
     val deadId = "delegate-nebflow-e2e00001"
     val parentSid = "e2e-parent-1"
     val system = ActorSystem("mail-cont-e2e")
@@ -213,53 +216,44 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
       _ <- seedDeadDelegate(deadId, parentSid)
       res <- continuationMail(resources, system, parentSid, deadId)
       _ = assert(res.isRight, s"continuation must proceed: ${res.swap.map(_.message).getOrElse("")}")
-      // 续起会话（真 AgentActor + stub LLM）自然跑完 ⇒ 监督者终态 ⇒ 父收到回传
-      _ <- waitUntil(30.seconds)(parentEvents.get.map(_.exists(_.isInstanceOf[AgentCommand.ExternalEvent])))
+      // 续命回合（stub 回声）自然收尾 ⇒ 无申报 ⇒ 矩阵提醒腿；先沉降。
+      _ <- waitUntil(30.seconds)(
+        resources.sessionStore.loadMessagesForSession(deadId).map(_.map(_.textContent).mkString.contains("continuation work done"))
+      )
+      _ <- IO.sleep(800.millis)
       events <- parentEvents.get
+      stillLive <- resources.agentRegistry.get.map(_.contains(deadId))
+      _ <- DelegateBudget.release(deadId).attempt.void
       _ <- system.stopAll
     yield
-      val ext = events.collect { case e: AgentCommand.ExternalEvent => e }
-      assertEquals(ext.size, 1, s"exactly one terminal ExternalEvent expected, got: $events")
-      assertEquals(ext.head.source, "delegate", "source must stay delegate")
-      assertEquals(ext.head.eventType, "completed", "the continuation finished successfully — completed must reach the parent")
-      assert(ext.head.payload.nonEmpty, "the result payload must not be empty")
-      assert(ext.head.metadata("description").flatMap(_.asString).exists(_.startsWith("continuation:")),
-        s"the description must mark the continuation, got: ${ext.head.metadata}")
-      assertEquals(ext.head.correlationId.map(_.startsWith("delegate-")), Some(true))
+      // 零自动终判：父会话收不到 completed ExternalEvent（提醒腿不是终态）
+      assertEquals(events.count(_.isInstanceOf[AgentCommand.ExternalEvent]), 0,
+        s"no declaration ⇒ no auto terminal, got: $events")
+      assert(stillLive, "the resumed session is reminded, never terminalized (matrix idle leg)")
 
-  // ── (3) 父不 live 面：续起照常 + 回执当场说破 + 终态仍落 taskStore ─────────
+  // ── (3) 父不 live 面：原位续照常 + 回执当场说破 ─────────────────────────
 
-  test("(3) parent not live: continuation still proceeds, the receipt says so up front, terminal state still lands in the task store"):
+  test("(3) parent not live: in-place resume still proceeds and the receipt says so up front (never silent)"):
     val deadId = "delegate-nebflow-gone0001"
     val parentSid = "gone-parent-1" // NOT registered in the registry — the parent is gone
     val system = ActorSystem("mail-cont-gone")
     for
-      resources <- mkResources(system, hang = false)
+      resources <- mkResources(system, hang = true)
       _ <- seedDeadDelegate(deadId, parentSid)
       res <- continuationMail(resources, system, parentSid, deadId)
-      newSidOpt <- waitUntil(15.seconds)(
-        resources.agentRegistry.get.map(_.keys.exists(k => k.startsWith("delegate-") && k != deadId))
-      ) *> resources.agentRegistry.get.map(_.keys.find(k => k.startsWith("delegate-") && k != deadId))
-      // 续起会话自然跑完（无父可通知——监督者走 undelivered 兜底）⇒ 终态仍落 taskStore
-      _ <- waitUntil(30.seconds)(
-        resources.subAgentTaskStore.loadTasks(parentSid).map(_.exists(t => t.status == "completed"))
-      )
-      tasks <- resources.subAgentTaskStore.loadTasks(parentSid)
-      stored <- newSidOpt.traverse(sid => IO.blocking(DelegateRegistry.find(sid)))
-      _ <- newSidOpt.traverse_(DelegateBudget.release)
+      _ <- waitUntil(15.seconds)(resources.agentRegistry.get.map(_.contains(deadId)))
+      recOpt <- IO.blocking(DelegateRegistry.find(deadId))
+      _ <- DelegateBudget.release(deadId).attempt.void
       _ <- system.stopAll
     yield
       val receipt = res match
         case Right(r) => r
         case Left(e)  => fail(s"a dead parent must NOT block the continuation, got error: ${e.message}")
-      assert(receipt.contains("CONTINUED the delegate as a fresh session"), receipt)
+      assert(receipt.contains("RESUMED IT IN PLACE"), receipt)
       assert(receipt.contains("is not live right now"),
         "the receipt must say up front that the result cannot be delivered back (never silent)")
       assert(receipt.contains(parentSid), "the NOTE must name the unreachable parent session")
-      assert(newSidOpt.isDefined, s"the continuation session must be registered")
-      assert(stored.exists(_.isDefined), s"the continuation record must persist: $newSidOpt")
-      assert(tasks.exists(t => t.status == "completed"),
-        s"the terminal state must still land in the task store keyed by the (dead) parent session id, got: $tasks")
+      assert(recOpt.isDefined, "the registry record is kept (the same identity resumes)")
 
   // ── (4) 监督者兜底：parentRef=None 的终态发出显式 WS 帧，绝不静默 ──────────
 

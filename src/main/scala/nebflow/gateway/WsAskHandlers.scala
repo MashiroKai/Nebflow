@@ -6,7 +6,7 @@ import io.circe.Json
 import io.circe.syntax.*
 import nebflow.actor.AgentCommand
 import nebflow.core.AskHandoffPort
-import nebflow.core.ask.{AskCooldown, AskGatewayServices, AskSessions}
+import nebflow.core.ask.{AskCooldown, AskGatewayServices, AskNoteStore, AskNoteWrite, AskSessions}
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * Canvas ask mode · WS 域（机制稿 §2/§3.3/§4/§7，实施批 2026-10-28）
@@ -28,7 +28,9 @@ private[gateway] object WsAskHandlers:
     "askOpen" -> handleAskOpen,
     "askQuestion" -> handleAskQuestion,
     "askHandoff" -> handleAskHandoff,
-    "askReply" -> handleAskReply
+    "askReply" -> handleAskReply,
+    "askNoteGet" -> handleAskNoteGet,
+    "askNotePut" -> handleAskNotePut
   )
 
   private def send(wsSend: Json => IO[Unit], payload: Json): IO[Unit] = wsSend(payload)
@@ -112,16 +114,46 @@ private[gateway] object WsAskHandlers:
     end if
   end handleAskOpen
 
-  /** .ui.json 转录 → dock 气泡面（injected 族 = sys；回问行带前缀照常入 sys）。 */
+  /**
+   * .ui.json 转录 → dock 气泡面（injected 族 = sys；回问行带前缀照常入 sys）。
+   *
+   * Ask 面板历史丢失批（2026-11-03，作者 15:26 报障「Ask 的历史对话记录会消失，
+   * 主要是 AI 回复的内容，我提问的内容还存在」）：旧实现只把 `UiMessage.Agent`
+   * 投成 ai 泡——而 ask 会话的 ai 行由 root 帧族落盘点
+   * （`WebSocketRoutes.makeRecordingWsSend` 的 toolStart/roundComplete/done）写成
+   * `UiMessage.Ai`（typeName=`"ai"`），`UiMessage.Agent`（typeName=`"agent"`）在
+   * ask 会话从不出现 ⇒ **AI 回复行在 askOpen 回放里恒被静默丢弃**（collect 不
+   * 匹配即跳过），user 行照常下发——正是「问还在、答没了」。盘上数据一直完好
+   * （`.ui.json` 两族俱在），丢的是这条回放投影腿；前端 localStorage write-through
+   * 与「永不缩水」合并律在同一浏览器里掩住了它，本地账缺席/被淘汰/换设备时回放
+   * 是唯一真源 ⇒ 整批 AI 回复消失。
+   *
+   * 修法：ai 族接 `UiMessage.Ai`。相邻 ai 段（同轮被 toolStart/roundComplete 切开
+   * 的多段 flush；tool 行透明不隔断）并回**一**行，正文 = 各段原文**直连**——
+   * 与 live 腿同形（textDelta 跨轮续同一 ai 泡 = 原文拼接，无分隔符）。这同时是
+   * dock「永不缩水」合并律的正确性前提：不并则服务端快照行数 > 本地 live 行数，
+   * 回放采纳后单轮多泡（重开面板与 live 形态漂移）。纯 thinking 段（正文空白）
+   * 不出空泡（live 同样无泡）。
+   */
   private[gateway] def encodeTranscript(msgs: List[nebflow.shared.UiMessage]): List[Json] =
-    msgs.collect {
+    val rows = scala.collection.mutable.ListBuffer.empty[Json]
+    msgs.foreach {
       case u: nebflow.shared.UiMessage.User if u.injected =>
-        Json.obj("role" -> "sys".asJson, "text" -> u.text.asJson, "source" -> u.source.getOrElse("").asJson)
+        rows += Json.obj("role" -> "sys".asJson, "text" -> u.text.asJson, "source" -> u.source.getOrElse("").asJson)
       case u: nebflow.shared.UiMessage.User =>
-        Json.obj("role" -> "user".asJson, "text" -> u.text.asJson)
-      case a: nebflow.shared.UiMessage.Agent =>
-        Json.obj("role" -> "ai".asJson, "text" -> a.text.asJson)
+        rows += Json.obj("role" -> "user".asJson, "text" -> u.text.asJson)
+      case a: nebflow.shared.UiMessage.Ai if a.text.trim.nonEmpty =>
+        rows.lastOption.flatMap(_.hcursor.downField("role").as[String].toOption) match
+          case Some("ai") =>
+            // 同轮相邻段并回一泡（原文直连 = live delta 拼接同形；tool 行透明不隔断，
+            // user/sys 行已落行故天然隔断）。
+            val prev = rows.last.hcursor.downField("text").as[String].getOrElse("")
+            rows(rows.length - 1) = Json.obj("role" -> "ai".asJson, "text" -> (prev + a.text).asJson)
+          case _ =>
+            rows += Json.obj("role" -> "ai".asJson, "text" -> a.text.asJson)
+      case _ => () // tool / agent / ask / system：dock 透明纪律（live 腿同样不进泡列）
     }
+    rows.toList
 
   // ── askQuestion：真实用户文本链路（与输入框同腿 dispatchUserText）────────
 
@@ -240,4 +272,89 @@ private[gateway] object WsAskHandlers:
           }
     end if
   end handleAskReply
+
+  // ── 记事本持久（持久化缺陷批 2026-11-05：内容会丢 → 引擎侧真源）───────────
+  // 入站两帧 / 出站两帧，与 ask 会话同一套文件身份（sid = ask-<8hex>）：
+  //   askNoteGet {sessionId}            → askNoteState {sessionId, text, ts, exists}
+  //   askNotePut {sessionId, text, baseTs?}
+  //                                     → askNoteAck {sessionId, ok, ts, overwritten,
+  //                                                    error?, bytes?, limit?}
+  // 落盘单点 = AskNoteStore（`<dataRoot>/ask/notes/<sid>.md`；容量/清理/并发口径
+  // 见该文件头注）。本层只做帧 → store 的映射与错误回执，**不缓存内容**。
+  //
+  // 为什么不在 askOpen 里捎带记事本：askOpen 的 askState 是转录回放帧（「永不
+  // 缩水」合并律的输入），记事本是另一条独立生命周期的数据（与问答零同步关系），
+  // 捎带会让「打开问答窗」成为记事本读盘的前置——记事本钮与 ask 钮是两个独立
+  // 入口（作者令 2026-11-05 11:38），读盘也必须各自独立。
+
+  private def handleAskNoteGet(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: Json => IO[Unit],
+    watch: ExplorerWatchSession
+  ): IO[Unit] =
+    val raw = WsDispatch.parsedJson(text)
+    val sid = raw.hcursor.downField("sessionId").as[String].getOrElse("")
+    if !AskSessions.isAskSession(sid) then askError(wsSend, sid, "askNoteGet: sessionId must be an ask- session")
+    else
+      AskNoteStore.current.read(sid).map { snap =>
+        Json.obj(
+          "type" -> "askNoteState".asJson,
+          "sessionId" -> sid.asJson,
+          "text" -> snap.text.asJson,
+          "ts" -> snap.ts.asJson,
+          "exists" -> snap.exists.asJson
+        )
+      }.flatMap(send(wsSend, _))
+
+  private def handleAskNotePut(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: Json => IO[Unit],
+    watch: ExplorerWatchSession
+  ): IO[Unit] =
+    val raw = WsDispatch.parsedJson(text)
+    val sid = raw.hcursor.downField("sessionId").as[String].getOrElse("")
+    val body = raw.hcursor.downField("text").as[String].getOrElse("")
+    val baseTs = raw.hcursor.downField("baseTs").as[Long].getOrElse(0L)
+    if !AskSessions.isAskSession(sid) then askError(wsSend, sid, "askNotePut: sessionId must be an ask- session")
+    else
+      AskNoteStore.current.write(sid, body).map {
+        case AskNoteWrite.Ok(ts, supersededTs) =>
+          Json.obj(
+            "type" -> "askNoteAck".asJson,
+            "sessionId" -> sid.asJson,
+            "ok" -> true.asJson,
+            "ts" -> ts.asJson,
+            // overwritten = 本次写覆盖了别人在 baseTs 之后的更新（并发写信号；
+            // 策略是最后写者胜，这里只让前端能把这件事说出来，不静默）。
+            "overwritten" -> (supersededTs > 0L && supersededTs > baseTs).asJson
+          )
+        case AskNoteWrite.TooLarge(bytes, limit) =>
+          Json.obj(
+            "type" -> "askNoteAck".asJson,
+            "sessionId" -> sid.asJson,
+            "ok" -> false.asJson,
+            "error" -> "too-large".asJson,
+            "bytes" -> bytes.asJson,
+            "limit" -> limit.asJson
+          )
+        case AskNoteWrite.BadSessionId(id) =>
+          Json.obj(
+            "type" -> "askNoteAck".asJson,
+            "sessionId" -> sid.asJson,
+            "ok" -> false.asJson,
+            "error" -> "bad-session-id".asJson,
+            "detail" -> id.asJson
+          )
+        case AskNoteWrite.Failed(msg) =>
+          Json.obj(
+            "type" -> "askNoteAck".asJson,
+            "sessionId" -> sid.asJson,
+            "ok" -> false.asJson,
+            "error" -> "write-failed".asJson,
+            "detail" -> String.valueOf(msg).asJson
+          )
+      }.flatMap(send(wsSend, _))
+  end handleAskNotePut
 end WsAskHandlers

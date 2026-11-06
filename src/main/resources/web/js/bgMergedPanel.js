@@ -50,7 +50,9 @@ export function initBgMergedPanel() {
   const aSec = document.createElement('div');
   aSec.className = 'bg-section bg-section-agents';
   grpLabel = document.createElement('div');
-  grpLabel.className = 'mh-bg-grp';
+  // panel-ia 批（2026-11-03）：分组签收编 .ds-section-label（与 .bg-dropdown-header
+  // 同语言——字号/字距/大写化/色走 design-system 组件类单源）。
+  grpLabel.className = 'mh-bg-grp ds-section-label';
   carrier.appendChild(aSec);
   aSec.appendChild(grpLabel);
   aSec.appendChild(gList);
@@ -58,9 +60,12 @@ export function initBgMergedPanel() {
 
   // 空节收签：列表 0 子 → 签 hidden（渲染面写 innerHTML/增删行都会触发）；
   // 计数随行数现算（签文案 = t('bg.sectionAgents') + ' · N'）。
+  // 野节点归置批（2026-11-05 腿③）：签数改数**行**（.bg-task-row），不数列表子元素
+  // ——野节点分组的组头是标签不是行（data-bg-orphan-group），数子元素会把标签算成
+  // 一行，签与行集当场打架。口径与 data-bg-row-total / 头部计数同源：一行一个数。
   const sync = () => {
     if (!grpLabel || !grpList) return;
-    const n = grpList.children.length;
+    const n = grpList.querySelectorAll('.bg-task-row').length;
     grpLabel.hidden = n === 0;
     grpLabel.textContent = t('bg.sectionAgents') + (n > 0 ? ' · ' + n : '');
   };
@@ -69,4 +74,29 @@ export function initBgMergedPanel() {
   sync();
 
   window.addEventListener('locale-changed', sync);
+
+  // 全名可达性（三行结构批 2026-11-05 · 作者令「name 截断但必须能完整获取，不许
+  // 出现「搜…」这种到死都看不到全名的形态」）：L1 主名恒单行截断，全名有两条路 ——
+  //   ① title（桌面 hover，既有 nameTooltip 读取点，零改动）；
+  //   ② 点击主名展开（**手机无 hover**，这条是触屏端的唯一路）：在 单行截断 ↔
+  //      多行完整 之间翻转（.is-expanded，chat.css）。
+  // 只在**真的被截断**时接管点击（scrollWidth > clientWidth）：没截断的名字点击
+  // 照旧冒泡给行体（开详情弹窗），零行为漂移。事件挂载体一次（两节共用），
+  // 行重渲染不丢（委派），幂等（重复 init 不重复挂）。
+  if (!carrier.dataset.bgNameExpandBound) {
+    carrier.dataset.bgNameExpandBound = '1';
+    // 捕获相（第三参 true）是必需的：行自身挂了 click（开详情弹窗），冒泡相在载体
+    // 上收到的点击已经太晚（弹窗已开、面板已隐）；捕获相先于行处理器 ⇒
+    // stopPropagation 才真正把「展开全名」与「开详情」分开。
+    carrier.addEventListener('click', (e) => {
+      const target = /** @type {HTMLElement|null} */ (e.target);
+      const nameEl = target && target.closest ? target.closest('.bg-task-name') : null;
+      if (!nameEl) return;
+      const truncated = nameEl.scrollWidth > nameEl.clientWidth + 1;
+      if (!truncated && !nameEl.classList.contains('is-expanded')) return;
+      e.stopPropagation(); // 展开/收起全名 ≠ 开详情（行体点击语义不变）
+      nameEl.classList.toggle('is-expanded');
+      nameEl.setAttribute('aria-expanded', nameEl.classList.contains('is-expanded') ? 'true' : 'false');
+    }, true);
+  }
 }

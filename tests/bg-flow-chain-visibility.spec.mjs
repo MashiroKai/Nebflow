@@ -186,11 +186,11 @@ test('T1 溯源分组：作用域桶链行挂组头子行（分发器置顶 + �
   await expect(head.locator('.bg-task-kind')).toHaveText('dispatcher');
   const kids = page.locator(`${LIST} > .bg-task-row.bg-task-row-child`);
   await expect(kids.nth(0)).toHaveAttribute('data-node-session-id', 'dispatcher-20b0e8ea');
-  await expect(kids.nth(0).locator('.bg-task-kind')).toHaveText('分发器');
+  await expect(kids.nth(0).locator('.bg-task-kind')).toHaveText('dispatcher');
   await expect(kids.nth(1)).toHaveAttribute('data-node-session-id', 'node-7846cc03');
-  await expect(kids.nth(1).locator('.bg-task-kind')).toHaveText('节点');
+  await expect(kids.nth(1).locator('.bg-task-kind')).toHaveText('node');
   await expect(kids.nth(2)).toHaveAttribute('data-node-session-id', 'node-eb2a5aa3');
-  await expect(kids.nth(2).locator('.bg-task-kind')).toHaveText('节点');
+  await expect(kids.nth(2).locator('.bg-task-kind')).toHaveText('node');
   // 各带运行时长（uptime 槽在列——startedAt 属性行级可刷新）。
   await expect(kids.nth(0).locator('.bg-task-uptime[data-started-at]')).toHaveCount(1);
   await expect(kids.nth(1).locator('.bg-task-uptime[data-started-at]')).toHaveCount(1);
@@ -219,11 +219,16 @@ test('T2 延续态（live 行终态在场）：delegate done 而链仍活 → �
 
   const head = page.locator(`${LIST} > .bg-task-row.bg-task-row-head`);
   await expect(head).toHaveAttribute('data-node-session-id', DELEGATE_SID);
-  // 延续徽标：琥珀词「链运行中」+ warn 图标档 + active 点；行不挂 .done（不灰化）。
+  // 延续徽标：琥珀词「链运行中」+ warn 图标档 + 链色状态位；行不挂 .done（不灰化）。
   await expect(head.locator('.bg-task-state.bg-task-chain')).toHaveText('链运行中');
   await expect(head.locator('.bg-task-chain .st-ic')).toHaveCount(1);
   await expect(head).not.toHaveClass(/done/);
-  await expect(head.locator('.bg-task-status')).toHaveClass(/bg-status-active/);
+  // 三行结构批（2026-11-05）：状态位从「6px 圆点」升级为「行内图标」，链态自成一档
+  // （bg-status-chain，琥珀）——原断言读的 bg-status-active 是圆点时代链行借用的运行态
+  // 点色，契约随批改锚：图标档 + 色调 + 无障碍词三读点同测。
+  await expect(head.locator('.bg-task-status')).toHaveClass(/bg-status-chain/);
+  await expect(head.locator('.bg-task-status')).toHaveAttribute('data-tone', 'chain');
+  await expect(head.locator('.bg-task-status')).toHaveAttribute('aria-label', /链运行中/);
   // 链子行在列（默认展开——活链可见即本批目的）。
   await expect(page.locator(`${LIST} > .bg-task-row.bg-task-row-child`)).toHaveCount(2);
   expect(errors).toEqual([]);
@@ -257,9 +262,9 @@ test('T3 延续态（live 行已离场）：主桶空 + 注册行镜像 → 快�
   const kids = page.locator(`${LIST} > .bg-task-row.bg-task-row-child`);
   await expect(kids).toHaveCount(3);
   await expect(kids.nth(0)).toHaveAttribute('data-node-session-id', 'dispatcher-20b0e8ea');
-  await expect(kids.nth(0).locator('.bg-task-kind')).toHaveText('分发器');
+  await expect(kids.nth(0).locator('.bg-task-kind')).toHaveText('dispatcher');
   await expect(kids.nth(1)).toHaveAttribute('data-node-session-id', 'node-7846cc03');
-  await expect(kids.nth(1).locator('.bg-task-kind')).toHaveText('节点');
+  await expect(kids.nth(1).locator('.bg-task-kind')).toHaveText('node');
   // 徽标计数 = 链行 3 + 合成组头 1 = 4（主桶 0 行——「批死了」症状的反面钉）。
   await expect(page.locator('#bgagent-indicator .bgagent-count')).toHaveText('4');
   // 合成组头行体点击 = delegate 详情弹窗（历史恢复承载）。
@@ -303,8 +308,8 @@ test('T5 无主 Flow 行顶层直显：分发器/节点 kind 徽标 + 计数照�
   await expect(rows).toHaveCount(2);
   await expect(rows.nth(0)).not.toHaveClass(/bg-task-row-head/);
   await expect(rows.nth(0)).not.toHaveClass(/bg-task-row-child/);
-  await expect(rows.nth(0).locator('.bg-task-kind')).toHaveText('分发器');
-  await expect(rows.nth(1).locator('.bg-task-kind')).toHaveText('节点');
+  await expect(rows.nth(0).locator('.bg-task-kind')).toHaveText('dispatcher');
+  await expect(rows.nth(1).locator('.bg-task-kind')).toHaveText('node');
   await expect(page.locator('#bgagent-indicator .bgagent-count')).toHaveText('2');
   expect(errors).toEqual([]);
 });

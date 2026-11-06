@@ -113,7 +113,7 @@ object SessionStore:
 end SessionStore
 
 // Phase 5 解耦:混入 core 窄端口(实现原地不搬;四个成员签名与既有定义逐字一致,
-// core 的 ScheduledTaskActor / FlowTreeActor / ToolContext 面向端口编程)。
+// core 的 ScheduledTaskActor / ToolContext 面向端口编程)。
 class SessionStore(
   sessionsDir: os.Path,
   tasksDir: os.Path,
@@ -871,6 +871,41 @@ class SessionStore(
   def listSessions: IO[List[SessionMeta]] =
     indexRef.get.map { case (_, sessions, _) => sessions.sortBy(-_.updatedAt) }
 
+  /**
+   * **会话记录是否还在**（存活判据的**数据面单点**；OWNER-GONE 误判修复批
+   * 2026-11-06）。
+   *
+   * 与 [[listSessions]] 的关键差异：`listSessions` 只读**索引**（`_index.json`），
+   * 而后台 agent 会话（`delegate-*` / `subtask-*` / `subagent-*` / `workflow-*` /
+   * `node-*` / `dispatcher-*` / `external-*` / `dag-*`）**从不登记进索引**——它们
+   * 只把 `<id>.json` / `<id>.ui.json` 直接写到盘上（见
+   * [[listSessionsIncludeUnindexed]] 的「盘上独有」分支与 `shared.SessionScope`
+   * 头注）。所以拿 `listSessions.exists(_.id == x)` 当「会话还在吗」判据，对任一
+   * delegate 会话**恒假**——这正是今早「活着的 delegate 被判父会话已消失、
+   * 合并槽被关掉」的机理（`agent.SessionLiveness` 是本判据的消费单点）。
+   *
+   * 判据 = **索引行 ∪ 盘上会话记录**（转录 `<id>.json` / UI `<id>.ui.json` /
+   * 侧车 `<id>.meta.json` / 会话目录 `<id>/`）。删除会话（[[deleteSession]]）会
+   * 把这四处一并清掉 ⇒ 真删仍然判死（真 OWNER-GONE 不被这条放宽掩盖）。
+   *
+   * 只读、无副作用；读盘故障 = false（调用方按 fail-open 处置，见 SessionLiveness）。
+   */
+  def sessionRecordExists(id: String): IO[Boolean] =
+    val target = Option(id).map(_.trim).getOrElse("")
+    // 会话 id 恒为单段文件名；带路径分隔符的 id 不是合法会话（也绝不落盘探测）。
+    if target.isEmpty || target.contains('/') || target.contains('\\') then IO.pure(false)
+    else
+      indexRef.get.map { case (_, sessions, _) => sessions.exists(_.id == target) }.flatMap {
+        case true => IO.pure(true)
+        case false =>
+          IO.blocking {
+            os.exists(sessionFile(target)) ||
+            os.exists(uiFile(target)) ||
+            os.exists(metaSidecarFile(target)) ||
+            os.exists(sessionsDir / target)
+          }.handleErrorWith(_ => IO.pure(false))
+      }
+
   // Patterns mirror the generators: DelegateTool.scala `delegate-<agent>-<uuid8>`,
   // SubTaskTool.scala `subtask-<uuid8>`, FlowDagExecutor.scala
   // `dag-<flow[:10]>-<nodeId>-<ts6>`. Greedy middles + anchored suffixes keep
@@ -922,6 +957,27 @@ class SessionStore(
             }
       }.map(unindexed => (indexed ++ unindexed).sortBy(-_.updatedAt))
     }
+
+  /**
+   * **搜索范围会话清单**（会话搜索范围收窄批 2026-11-01，作者 17:29 令「主 agent
+   * 的聊天记录搜索只搜主会话，后台 agent 产生的消息一条不出」）。
+   *
+   * = [[listSessionsIncludeUnindexed]] 再按 [[nebflow.shared.SessionScope]] 收窄到
+   * 主会话。收益双向：
+   *   - **正确性**：旧全扫引擎（前端 `GET /api/sessions?includeUnindexed=1` + 逐会话
+   *     history 扫描）拿到的清单里没有 delegate-/subtask-/subagent-/workflow-/
+   *     node-/dispatcher-/external-/dag- 任何一族 ⇒ 后台 agent 消息一个不出（与
+   *     索引引擎 / 查询层同一判据，见 SessionScope 头注三个收口点）；
+   *   - **成本**：清单从「盘上全部 .ui.json」（开发机实测 6896 个会话，其中 95% 是
+   *     后台族）收窄到主会话（实测 347 个 uuid 主会话 + 索引登记项）⇒ 旧全扫不再
+   *     逐会话拉 6800 次 history。
+   *
+   * 兄弟入口不受影响：侧边栏仍读 [[listSessions]]（索引全量，含 index 登记的
+   * external-* 会话）；bg-agent / flow 弹窗读 [[listSessionsIncludeUnindexed]]
+   * （`includeBgAgents=1` 显式取全量）。
+   */
+  def listSearchScopeSessions: IO[List[SessionMeta]] =
+    listSessionsIncludeUnindexed.map(_.filter(m => nebflow.shared.SessionScope.isMainSession(m.id)))
 
   /** List folders for a given agent. Old folders (agentName == "") are visible to Nebula only. */
   def listFolders(agentName: String): IO[List[Folder]] =

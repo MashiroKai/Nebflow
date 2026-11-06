@@ -4,8 +4,9 @@
 //   • Avatar — the NebLink login entry. Tap when logged out → opens the
 //     NebLink login modal (Logto OIDC, Authorization Code + PKCE; legacy
 //     device flow as fallback). Tap when logged in → opens the account menu
-//     (「个人主页」/「退出登录」, 2026-11 sign-out-entry fix batch — the profile
-//     page path is unchanged, sign-out needs a second, explicit click).
+//     (「个人资料」/「退出登录」, 2026-11 sign-out-entry fix batch; the profile
+//     item now opens the in-app face, 2026-11-02 batch 四 — sign-out still
+//     needs a second, explicit click).
 //   • Side Bar panel switch buttons (Files; future panels register the same way).
 //   • (spacer)
 //   • Projects / Plugins (Canvas tabs) and Settings.
@@ -24,7 +25,10 @@ import { fetchNeblinkStatus, getNeblinkState, startPkceLogin, pollPkceState, can
 // setUpdateDot（settings-btn 更新绿点，updateCheck.js）已随 auth-trim 批删除 ——
 // 绿点与静默自动检查整链退役（2026-10-20 作者令，未来由官网统一检测更新取代）。
 import { createIconsIn, escapeHtml, statusIcon } from './utils.js';
-import { getProfileUrl, standLockupSvg } from './brand.js';
+import { standLockupSvg } from './brand.js';
+// 件四（作者令 2026-11-02）：设置页身份卡的头像引擎（换头像流程触发）+ App 内个人资料面。
+// 无环：该模块是叶子（只依 neblink/friendsApi/utils/i18n/brand/mobile-popSheet）。
+import { openSettingsAvatarPicker, openProfileFace } from './settingsIdentity.js';
 import { t } from './i18n.js';
 import { key } from './branding.js';
 // 已登录态账号菜单壳（2026-11「退出登录没有入口」修复批）：复用既有右键/长按
@@ -471,14 +475,16 @@ function observeSettingsModal() {
  * longer forwards a synthetic click — see bindSettingsAccountEntry).
  *
  * Logged out → the single click starts the PKCE flow (no second confirmation
- * step); logged in → open the account menu (profile page + sign out).
+ * step); logged in → open the account menu (in-app profile + sign out).
  *
  * 2026-11「退出登录没有入口」修复批（作者裁「只修退不出」）：已登录态原先一点
- * 就**直接打开**官网个人页 —— 作者踩坑点（想登出却进了个人页）。现改为一个
- * 两选一菜单：**打开个人页这条路逐字保留**（同一个 `getProfileUrl()` +
- * `window.open(..., 'noopener')`），退出登录是**菜单里的第二枚键**（需明确
- * 点击两次：点头像 → 点「退出登录」）⇒ 不会误触。菜单壳 = 既有
- * `contextMenu.js` (`showPopupMenu`)，零新视觉体系、零新弹层形态。
+ * 就**直接打开**官网个人页。当批改为一个两选一菜单，退出登录是菜单里的
+ * **第二枚键**（需明确点击两次：点头像 → 点「退出登录」）⇒ 不会误触。
+ *
+ * 2026-11-02 件四·身份卡本地化（作者令：「现在的设计是跳转到官网，但是我是要在这里
+ * 直接修改」）—— 菜单里那条「打开个人页」从 `window.open(getProfileUrl())`
+ * 改为打开 **App 内个人资料面**（settingsIdentity.js `openProfileFace`）；
+ * `brand.getProfileUrl()` 本身保留不删（它仍服务 takeoverModal 的退出落地等链路）。
  * @param {Element|null} [anchorEl] 菜单锚点（调用者传入自己那个入口元素；
  *   缺省回退到活动条头像）。
  */
@@ -486,6 +492,13 @@ export function activateAccountEntry(anchorEl) {
   const st = getNeblinkState();
   if (st.pairing) return; // pairing in progress — ignore
   if (st.loggedIn) {
+    // 设置页身份卡的头像点击 = 「直接换头像」（作者令 2026-11-02：「点击头像就是
+    // 直接换头像进去就是自己的 profile 设置页」—— 头像本体走换头像流程，胶囊才是 profile 面）。
+    // 只对**设置页那枚入口**生效：活动条头像仍是账号菜单（那里没有身份卡语境，且菜单里
+    // 的「个人资料」已是 App 内面）。换头像函数返回 false = 该入口不在场⇒ 回退菜单。
+    if (anchorEl instanceof Element && anchorEl.id === 'settings-avatar-entry' && openSettingsAvatarPicker()) {
+      return;
+    }
     openAccountMenu(anchorEl || null);
     return;
   }
@@ -498,8 +511,9 @@ export function activateAccountEntry(anchorEl) {
  * Logged-in account menu (2026-11 sign-out-entry fix batch).
  *
  * 两枚键，都走既有实现，零新增链路：
- *   · 打开个人页 → `brand.getProfileUrl()` + `window.open(..., 'noopener')`
- *     （逐字沿用修复前 activateAccountEntry 的实现 —— 该路径不得删除）；
+ *   · 打开个人资料 → `openProfileFace()`（settingsIdentity.js 的 **App 内** 资料面；
+ *     2026-11-02 件四前这里是 `window.open(getProfileUrl(), 'noopener')`，作者令「不再跳官网」
+ *     后改为就地面；`brand.getProfileUrl()` 函数保留，只是本条链路不再调它）；
  *   · 退出登录 → `openEndSessionHandoff(false)`（neblink.js；本地八步拆除 +
  *     provider end-session + /auth/logged-out 落地页，与「清理并重登」同一链路，
  *     仅入参 false = 不做强制登录）。
@@ -513,9 +527,9 @@ function openAccountMenu(anchorEl) {
   const y = r ? Math.round(r.top) : Math.round(window.innerHeight / 2);
   showPopupMenu(x, y, [
     {
-      // 打开个人页这条路径**保留**（修复前点头像的唯一行为）。
+      // App 内个人资料面（件四：零外链）。点中即关菜单并就地开面。
       label: t('activity.profile'),
-      onClick: () => window.open(getProfileUrl(), '_blank', 'noopener'),
+      onClick: () => openProfileFace(),
     },
     {
       // 退出登录 = 明确第二次点击；危险档位不套 red（退出不是破坏性操作）。
@@ -546,8 +560,8 @@ function bindAvatar() {
 function bindSettingsAccountEntry() {
   document.addEventListener('click', (e) => {
     const target = e.target instanceof Element ? e.target : null;
-    // 锚点 = 设置里那个头像入口本身（已登录态的账号菜单从它展开，见
-    // openAccountMenu）—— 行为与活动条头像一致，仅锚点不同。
+    // 锚点 = 设置里那个头像入口本身。未登录 ⇒ 登录卡（与活动条头像同一肿）；
+    // 已登录 ⇒ 「直接换头像」（件四，只对本入口生效；见 activateAccountEntry）。
     const entry = target ? target.closest('#settings-avatar-entry') : null;
     if (entry) activateAccountEntry(entry);
   });
@@ -566,11 +580,9 @@ function injectLoginModalStyles() {
 .nebflow-login-modal {
   position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
   width: 320px; z-index: 1000; overflow: hidden;
-  background: var(--glass-bg, rgba(24, 28, 38, 0.68));
-  -webkit-backdrop-filter: blur(var(--glass-blur, 24px)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur, 24px)) saturate(1.15);
+  background: var(--nf-glass-bg);
   border: 1px solid var(--glass-border, rgba(255,255,255,0.1));
-  border-radius: 16px;
+  border-radius: var(--ds-radius-card-lg);
   box-shadow:
     inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
     0px 2px 8px rgba(0, 0, 0, 0.04),
@@ -606,52 +618,52 @@ function injectLoginModalStyles() {
    it can never drift between surfaces. */
 .login-modal-header {
   display: flex; justify-content: space-between; align-items: center;
-  padding: 12px 16px; border-bottom: 1px solid var(--glass-border, rgba(255,255,255,0.05));
+  padding: var(--ds-space-3) var(--ds-space-4); border-bottom: 1px solid var(--glass-border, rgba(255,255,255,0.05));
 }
-.login-modal-header h3 { font-size: 15px; margin: 0; color: var(--color-text); font-weight: 600; letter-spacing: -0.01em; }
+.login-modal-header h3 { font-size: var(--ds-fs-title); margin: 0; color: var(--color-text); font-weight: 600; letter-spacing: -0.01em; }
 .login-modal-close {
   background: none; border: none; color: var(--color-text-muted);
-  font-size: 18px; cursor: pointer; padding: 0 4px; line-height: 1;
+  font-size: var(--ds-fs-display); cursor: pointer; padding: 0 var(--ds-space-1); line-height: 1;
   opacity: 0.5; transition: opacity 0.15s;
 }
 .login-modal-close:hover { opacity: 1; }
-.login-modal-body { padding: 16px; text-align: center; }
-.login-hint { font-size: 13px; color: var(--color-text-muted); margin-bottom: 14px; line-height: 1.55; }
+.login-modal-body { padding: var(--ds-space-4); text-align: center; }
+.login-hint { font-size: var(--ds-fs-body); color: var(--color-text-muted); margin-bottom: 14px; line-height: 1.55; }
 .login-user-code {
   font-family: 'SF Mono', 'Fira Code', monospace;
-  font-size: 26px; font-weight: 600; letter-spacing: 2px;
-  color: var(--color-primary); margin-bottom: 4px;
+  font-size: var(--ds-fs-title-lg); font-weight: 600; letter-spacing: 2px;
+  color: var(--color-primary); margin-bottom: var(--ds-space-1);
   font-variant-numeric: tabular-nums;
 }
-.login-code-caption { font-size: 12px; color: var(--color-text-muted); margin-bottom: 14px; }
+.login-code-caption { font-size: var(--ds-fs-hint); color: var(--color-text-muted); margin-bottom: 14px; }
 /* Key stack. The two tiers are ONE family (sapphire.css 登录键族块):
    primary = green solid (cfg-btn-primary carries the white ink),
    secondary = same geometry, glass material. Geometry itself lives in the
    family block (single source) — this block only stacks the keys. */
-.login-actions { display: flex; flex-direction: column; gap: 8px; }
-.login-waiting { margin-top: 12px; font-size: 12px; color: var(--color-text-muted); }
-.login-success { font-size: 14px; color: var(--color-primary); padding: 12px 0; }
+.login-actions { display: flex; flex-direction: column; gap: var(--ds-space-2); }
+.login-waiting { margin-top: var(--ds-space-3); font-size: var(--ds-fs-hint); color: var(--color-text-muted); }
+.login-success { font-size: var(--ds-fs-subtitle); color: var(--color-primary); padding: var(--ds-space-3) 0; }
 /* ui-status-redesign（S11 / 盘点 G3）：全盘点对比度最差件（#e57373 白底 2.8:1 ✗）
    → 中性正文（回到 ~10:1 级）＋行首 octagon-alert 红图标（activityBar.js 注入）。 */
-.login-error-msg { font-size: 13px; color: var(--status-word); margin-bottom: 14px; line-height: 1.5; display: flex; align-items: flex-start; gap: 8px; }
-.login-error-msg .st-ic { width: 15px; height: 15px; margin-top: 2px; flex-shrink: 0; }
+.login-error-msg { font-size: var(--ds-fs-body); color: var(--status-word); margin-bottom: 14px; line-height: 1.5; display: flex; align-items: flex-start; gap: var(--ds-space-2); }
+.login-error-msg .st-ic { width: 15px; height: 15px; margin-top: var(--ds-space-half); flex-shrink: 0; }
 /* Social one-click keys (2026-10-15 login-card batch) — LAYOUT/TYPOGRAPHY
    ONLY: the keys carry the .login-modal-btn family classes (sapphire.css
    登录键族块 owns geometry/material — primary green solid tier, the
    "显眼位" ask), this block only stands the inline brand mark next to the
    label. Same one-family discipline as the keys above. */
-.login-social-btn { display: flex; align-items: center; justify-content: center; gap: 7px; }
+.login-social-btn { display: flex; align-items: center; justify-content: center; gap: var(--ds-space-1h); }
 .login-social-btn svg { width: 16px; height: 16px; flex-shrink: 0; }
 /* v3 登录卡（mobile-mockup-375 v3④）：单键制 + 官方横排 lockup。idle 面无头栏
    （lockup 即卡头；关闭 = Esc / 点外，既有链）；面板材质沿用上方 .nebflow-login-modal
    玻璃族（blur24 与 glass-control 同族色值域，键族 token 在 sapphire.css 登录键族块）。 */
 .nebflow-login-modal.login-idle { width: 300px; }
 .nebflow-login-modal.login-idle .login-modal-header { display: none; }
-.nebflow-login-modal.login-idle .login-modal-body { padding: 24px 22px 20px; display: flex; flex-direction: column; align-items: center; gap: 10px; }
-.login-lockup { color: var(--color-text); display: block; margin-bottom: 2px; }
+.nebflow-login-modal.login-idle .login-modal-body { padding: var(--ds-space-6) 22px var(--ds-space-5); display: flex; flex-direction: column; align-items: center; gap: var(--ds-space-inline-gap); }
+.login-lockup { color: var(--color-text); display: block; margin-bottom: var(--ds-space-half); }
 .login-lockup .stand-lockup { width: 136px; height: 25px; display: block; }
-.login-card-title { font-size: 15.5px; font-weight: 600; color: var(--color-text); margin: 0; letter-spacing: -0.01em; }
-.login-sub2 { font-size: 11px; color: var(--color-text-muted); line-height: 1.55; }
+.login-card-title { font-size: var(--ds-fs-title); font-weight: 600; color: var(--color-text); margin: 0; letter-spacing: -0.01em; }
+.login-sub2 { font-size: var(--ds-fs-meta); color: var(--color-text-muted); line-height: 1.55; }
 .login-idle .login-hint b { color: var(--color-text); font-weight: 500; }
 /* 主键 = 官网登录卡同款（mystand.space/login 的 .auth 主键，作者补充令）：
    单色反白实色、无图标、全宽居中、rounded-lg、14px/500、hover 提阶、disabled .6。
@@ -664,9 +676,9 @@ function injectLoginModalStyles() {
   align-items: center;
   justify-content: center;
   border: none;
-  border-radius: 8px;
-  padding: 10px 16px;
-  font-size: 14px;
+  border-radius: var(--ds-radius-input);
+  padding: var(--ds-space-block-y) var(--ds-space-4);
+  font-size: var(--ds-fs-subtitle);
   font-weight: 500;
   background: #111827;
   color: #fff;
@@ -883,7 +895,7 @@ export function showLoginModal(opts = {}) {
         </div>
         <div class="login-sub2">${t('login.authNote')}</div>`;
     } else if (state === 'starting') {
-      body = `<div class="login-waiting" style="margin-top:0;padding:12px 0">${t('login.starting')}</div>`;
+      body = `<div class="login-waiting" style="margin-top:0;padding:var(--ds-space-3) 0">${t('login.starting')}</div>`;
     } else if (state === 'waiting') {
       // PKCE primary path: nothing to copy - the browser tab does the whole
       // hosted login and redirects back to the local gateway.

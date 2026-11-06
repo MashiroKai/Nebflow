@@ -3,6 +3,7 @@ package nebflow.core.project
 import cats.effect.IO
 import cats.effect.std.Semaphore
 import cats.syntax.all.*
+import io.circe.Json
 import nebflow.core.delegate.DelegateRegistry
 import nebflow.shared.{Defaults, NebflowLogger}
 
@@ -185,6 +186,17 @@ object ProjectCrashRecovery:
       }
       resumed = outcomes.collect { case (id, Some(Right(ctx))) => (id, ctx) }
       failedReasons: List[String] = outcomes.collect { case (_, Some(Left(reason))) => reason }
+      // C-2 队列兜底回放（2026-11-04）：**未被认领**的节点（wiring/pending 等）台账里
+      // 的「已排队未投递」消息追加进 task（见 NodeRecovery.replayPendingNodeMessages）。
+      // 必须跑在 claim 循环**之后**：已认领节点归 resume prompt 回放腿，两腿不相交。
+      // fail-soft（内部已兜）：回放失败不阻断 boot 汇总/慢段。
+      replayed <- rt.engine.replayPendingNodeMessages()
+      _ <-
+        if replayed <= 0 then IO.unit
+        else
+          logger.info(
+            s"[boot-recovery] project '${rt.project.name}': $replayed node-message(s) replayed into their node tasks (never delivered before the crash)"
+          )
       actions = resumed.size + failedReasons.size
       _ <-
         if actions == 0 then IO.unit
@@ -258,14 +270,41 @@ object ProjectCrashRecovery:
     // 本工程测试 JVM 下 sys.props 注入静默失效（BootCrashRecoverySpec 先例），重挂宿主
     // 的确定性腿经显式参数注入。
     reportGateHold: Option[Boolean] = None,
-    rootNotifyQuietMs: Option[Long] = None
+    rootNotifyQuietMs: Option[Long] = None,
+    /**
+     * 重挂宿主的流帧出口（**wsSend 桥接批 2026-11-01**；与 `startupMount` 的
+     * `mountAll(wsSend = …)` 同一契约、同一缺省语义）。
+     *
+     * 为什么必须由调用方给：本 sweep 在 **boot 期**跑，进程里没有任何控制台连接
+     * （无 `ctx.wsSend` 可桥——那是 continueDelegate 的形态）。改前此处（经
+     * `recoverDelegateScopeOn`）恒传 `None` ⇒ `DelegateFlowHosts.mount` 把
+     * `NodeEngine.wsSendFn` 退化成 `(_) => IO.unit`（DelegateFlowHosts.scala:165）⇒
+     * 恢复窗口里 node-* 会话的**全部流帧在发射处被吞**：既无 live 广播，也到不了
+     * 录制层（`WebSocketRoutes#makeRecordingWsSend` 按帧内 `nodeSessionId` 落盘）⇒
+     * 重挂作用域的节点会话面板只剩注入行。同一退化的第二处损失 = `emitScopeEvent`
+     * （DelegateFlowHosts.scala:396 的方法，内部 :400 的 `wsSend.fold(IO.unit)`）——
+     * 作用域 flow-map 事件（nodeUpdated/nodeCompleted 等）同样静默丢失，恢复期间
+     * Flow Map 面板零事件。
+     *
+     * 缺省 `None` = 逐字旧形态（无广播载体的调用方/spec 桩面零改动）；生产唯一调用点
+     * [[nebflow.gateway.GatewayMain]] boot 链传**真实广播**（`wsHub.broadcast`），
+     * 与 startupMount 的 #28 接线同源。
+     *
+     * 录制面（process-recorder 批 2026-11-01 F1 收口，P4 注记）：本参数桥出的
+     * 广播面上，node-* 帧由进程级 ProcessRecorder（挂 `wsHub.registerListener`，
+     * GatewayMain boot 链 `recorderSetup`——先于 startupMount）按 nodeSessionId
+     * 落 `.ui.json`——重挂会话自恢复第一帧起就有录制，「本参数只给 live、录制
+     * 无人管」的缺口随 recorder 落地关闭。本参数职责自此收窄为 **live 广播面**
+     * （流帧 live + emitScopeEvent 作用域事件）；录制不再依赖任何腿自带录制 send。
+     */
+    wsSend: Option[Json => IO[Unit]] = None
   ): IO[Int] =
     DelegateFlowHosts.sweepRoots.flatMap { roots =>
       roots
         .traverse { ws =>
           DelegateFlowHosts.scopeDirs(ws).flatMap { dirs =>
             dirs.traverse { dir =>
-              recoverDelegateScope(ws, dir.last, concurrency, reportGateHold, rootNotifyQuietMs)
+              recoverDelegateScope(ws, dir.last, concurrency, reportGateHold, rootNotifyQuietMs, wsSend)
                 .handleErrorWith(e =>
                   logger
                     .error(
@@ -285,19 +324,22 @@ object ProjectCrashRecovery:
     scope: String,
     concurrency: Int,
     reportGateHold: Option[Boolean],
-    rootNotifyQuietMs: Option[Long]
+    rootNotifyQuietMs: Option[Long],
+    wsSend: Option[Json => IO[Unit]]
   ): IO[Int] =
     DelegateRegistry.find(scope) match
       case None =>
-        recoverDelegateScopeOn(
-          baseWorkspace,
-          scope,
-          project = None,
-          engineCwd = baseWorkspace,
-          concurrency,
-          reportGateHold,
-          rootNotifyQuietMs
-        )
+        // 孤儿链判定（引擎会话治理专项 · 缺陷六，作者令 14:52）：作用域的属主
+        // dispatcher **不在 delegate 注册表**（重启前已死、且无在册记录）⇒ 这是
+        // 一条孤儿链。改前此处无条件重挂 + 续跑 Running/Interrupted 节点——父已
+        // 死的链在面板上继续「运行中」，节点无限推进、结果无处投递。
+        // 现行为：**暂停推进**（处置语义选 a：链台账落 paused——`blocksDispatch`
+        // 把所有派发闸住，根会话可经 resume 原语接管；不选 b「跑完归档」——无主
+        // 产出没有收口对象，白烧 LLM 且与后续接管实例抢工作树）+ `chain-orphaned`
+        // 审计事件（含 chainId/parentSessionId/剩余节点数）+ 根会话通知（活投 /
+        // 持久收件箱补投）。挂载动作照做（只读面/面板语义要宿主在，但**零认领
+        // 零续跑**）。
+        recoverOrphanScope(baseWorkspace, scope, concurrency, reportGateHold, rootNotifyQuietMs, wsSend)
       case Some(rec) =>
         recoverDelegateScopeOn(
           baseWorkspace,
@@ -306,8 +348,113 @@ object ProjectCrashRecovery:
           engineCwd = scala.util.Try(os.Path(rec.cwd)).map(_.toString).getOrElse(baseWorkspace),
           concurrency,
           reportGateHold,
-          rootNotifyQuietMs
+          rootNotifyQuietMs,
+          wsSend
         )
+
+  /**
+   * 孤儿作用域处置（缺陷六）：属主 dispatcher 不在注册表的作用域。
+   *
+   * 步骤：① 重挂宿主（面板/只读面要有挂载语义）② 链台账落 `paused`（暂停推进
+   * ——`chainGateOf` 闸死所有派发；节点不再被 claim/rehydrate ⇒ 不无限推进；根会
+   * 话 `NodeCancel.resumeChain` 可解）③ `chain-orphaned` 事件行（链号、父会话、剩
+   * 余非终态节点数）④ 根会话通知（活投 / 持久收件箱）。
+   */
+  private def recoverOrphanScope(
+    baseWorkspace: String,
+    scope: String,
+    concurrency: Int,
+    reportGateHold: Option[Boolean],
+    rootNotifyQuietMs: Option[Long],
+    wsSend: Option[Json => IO[Unit]]
+  ): IO[Int] =
+    runtimeCarrier.flatMap {
+      case None =>
+        logger.warn(s"[boot-recovery] orphan scope '$scope' skipped: no runtime carrier").as(0)
+      case Some((system, resources)) =>
+        DelegateFlowHosts
+          .mount(
+            delegateId = scope,
+            project = None,
+            baseWorkspace = baseWorkspace,
+            engineCwd = baseWorkspace,
+            system = system,
+            resources = resources,
+            wsSend = wsSend,
+            reportGateHold = reportGateHold,
+            rootNotifyQuietMs = rootNotifyQuietMs
+          )
+          .flatMap {
+            case None => IO.pure(0)
+            case Some(h) =>
+              if OrphanChainPolicy.pauseEnabled then
+                // 判定 + 动作单点 = OrphanChainPolicy（pause：暂停推进 + 留痕 + 通知根）：
+                // 本腿**零** bootRecoveryClaim / bootRecoveryStart —— 节点绝不无限推进。
+                OrphanChainPolicy
+                  .handle(
+                    new OrphanChainPolicy.Port:
+                      def scopeState = h.store.snapshot.map { snap =>
+                        val chains = snap.nodes.values.flatMap(_.chainId).toList.distinct
+                        val remaining = snap.nodes.values.count(n => !NodeLifecycle.Terminal.contains(n.status))
+                        (chains, remaining)
+                      }
+                      def pauseChain(chainId: String) =
+                        h.store.chainLedgerStore
+                          .setChainControl(chainId, ChainLedger.StatusPaused, System.currentTimeMillis())
+                          .void
+                      def event(chainId: String, remaining: Int) =
+                        FlowMapEventLog.append(
+                          workspace = baseWorkspace,
+                          project = h.engine.projectName,
+                          nodeId = chainId,
+                          typ = OrphanChainPolicy.EventType,
+                          summary =
+                            s"orphan chain: parent dispatcher session '$scope' is not in the delegate registry after restart " +
+                              s"($remaining non-terminal node(s) left) — chain PAUSED (dispatch gated; the root session can resume it via NodeCancel resume)",
+                          chainId = Some(chainId)
+                        )
+                      override def notifyRoot(scope: String, chains: List[String], remaining: Int) =
+                        notifyRootOfOrphan(resources, scope, chains, remaining)
+                    ,
+                    scope
+                  )
+                  .map(n => if n > 0 then 1 else 0)
+              else
+                // 回滚腿（`nebflow.boot.orphanChain.action=resume`）：改前的无脑续跑。
+                notifyRootOfOrphan(resources, scope, Nil, 0) *> IO.pure(0)
+          }
+    }
+
+  /** 孤儿链根通知：活投（rootSessionId 在注册表）否则持久收件箱补投。 */
+  private def notifyRootOfOrphan(
+    resources: nebflow.core.AgentRuntimePort,
+    scope: String,
+    chains: List[String],
+    remaining: Int
+  ): IO[Unit] =
+    // 父会话 id = 作用域 id（delegate 会话 id 即父 dispatcher 会话）；rootSessionId
+    // 从 delegate 注册表记录取（已无记录 ⇒ 回落空 = 只留审计面）。
+    val root = DelegateRegistry.find(scope).map(_.parentSessionId).getOrElse("")
+    if root.trim.isEmpty then IO.unit
+    else
+      val text =
+        s"[chain-orphaned] parent dispatcher session '$scope' died across restart (not in the delegate registry). " +
+          s"Chain(s) ${if chains.isEmpty then "(no chain ids)" else chains.mkString(", ")} are PAUSED with $remaining " +
+          "non-terminal node(s) — dispatch is gated, nothing advances. Resume via NodeCancel resume, or re-dispatch."
+      nebflow.core.tools.BgNotifyDelivery
+        .deliverToRootOrInbox(
+          Some(resources.actorSystem),
+          Some(resources.agentRegistry),
+          root,
+          nebflow.actor.AgentCommand.ExternalEvent(
+            source = "chain-orphan",
+            eventType = "chain-orphaned",
+            payload = text,
+            correlationId = chains.headOption
+          )
+        )
+        .void
+        .handleErrorWith(e => logger.warn(s"[orphan-chain] root notify failed: ${e.getMessage}"))
 
   private def recoverDelegateScopeOn(
     baseWorkspace: String,
@@ -316,7 +463,8 @@ object ProjectCrashRecovery:
     engineCwd: String,
     concurrency: Int,
     reportGateHold: Option[Boolean],
-    rootNotifyQuietMs: Option[Long]
+    rootNotifyQuietMs: Option[Long],
+    wsSend: Option[Json => IO[Unit]]
   ): IO[Int] =
     // system/resources 载体：启动挂载后的任一项目 runtime（boot 链序 = startupMount 先行；
     // 零项目挂载 = 无 ActorSystem 载体 → WARN 跳过，宿主扫描器 +30s 兜底重试面不存在
@@ -335,7 +483,14 @@ object ProjectCrashRecovery:
             engineCwd = engineCwd,
             system = system,
             resources = resources,
-            wsSend = None,
+            // wsSend 桥接批（2026-11-01，续聊面板空白批的同类点②）：**改前此处恒 None**。
+            // None ⇒ delegate 作用域引擎的 wsSendFn = no-op（DelegateFlowHosts.scala:165
+            // 的 getOrElse）+ emitScopeEvent 的 fold(IO.unit) ⇒ 恢复窗口里 node-* 会话
+            // 的流帧在发射处被吞（无 live、无录制），作用域 flow-map 事件同样静默——
+            // 与「spawn 腿传真实 wsSend、只有 boot 重挂腿传 None」的形态差异即本行。
+            // 现按调用方给的 wsSend 逐字透传（生产 = GatewayMain boot 链的 wsHub 广播，
+            // 与 startupMount 的 #28 接线同源；None = 旧形态，spec 桩面零改动）。
+            wsSend = wsSend,
             reportGateHold = reportGateHold,
             rootNotifyQuietMs = rootNotifyQuietMs
           )
@@ -370,6 +525,14 @@ object ProjectCrashRecovery:
                         }
                       resumed = outcomes.collect { case (id, Some(Right(ctx))) => (id, ctx) }
                       failed = outcomes.count(_._2.exists(_.isLeft))
+                      // C-2 队列兜底回放（同项目 sweep 腿；delegate 作用域同判据）。
+                      replayed <- h.engine.replayPendingNodeMessages()
+                      _ <-
+                        if replayed <= 0 then IO.unit
+                        else
+                          logger.info(
+                            s"[boot-recovery] delegate scope '$scope': $replayed node-message(s) replayed into their node tasks"
+                          )
                       _ = logger.info(
                         s"[boot-recovery] delegate scope '$scope': ${resumed.size} node(s) claimed for rehydrate, $failed failed (events in ${h.baseWorkspace}/.nebflow/flow-map-events.jsonl; no dispatcher notify — creator-delegate routing lands with N1 cut 3)"
                       )

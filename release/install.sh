@@ -27,7 +27,12 @@ PRODUCT_NAME=stand
 LOWER_NAME=stand
 COS_BUCKET=nebflow-releases
 HOME_DIR=.stand
-CONFIG_FILE=nebflow.json
+CONFIG_FILE=stand.json
+# 2026-11-05 config-single-source batch (author ruling ②): the historical file
+# name stays READ-ONLY compatible — never let the installer create an empty
+# stand.json next to a populated nebflow.json (that would strand the user's
+# configuration in a file the engine no longer reads).
+LEGACY_CONFIG_FILE=nebflow.json
 WRAPPER_NAME=stand
 COS_BASE_CN="https://${COS_BUCKET}.oss-cn-hangzhou.aliyuncs.com"
 # Batch 2 (v2): all third-party deps mirrored on the above endpoint under the
@@ -1774,6 +1779,16 @@ stage_wrapper() {
 create_config() {
     local config_dir="${STAND_BASE}"
     local config_file="${config_dir}/${CONFIG_FILE}"
+    local legacy_file="${config_dir}/${LEGACY_CONFIG_FILE}"
+    # config-single-source migration (2026-11-05): the legacy file is carried
+    # over BEFORE the "create default" branch, so an existing install keeps
+    # every value. Byte-identical copy + legacy renamed to .bak (never deleted).
+    if [ ! -f "${config_file}" ] && [ -f "${legacy_file}" ]; then
+        log_i "Migrating ${LEGACY_CONFIG_FILE} -> ${CONFIG_FILE}..."
+        cp -p "${legacy_file}" "${config_file}"
+        mv "${legacy_file}" "${legacy_file}.bak"
+        log_ok "Config migrated: ${config_file} (backup: ${legacy_file}.bak)"
+    fi
     if [ ! -f "${config_file}" ]; then
         log_i "Creating default config at ${config_file}..."
         mkdir -p "${config_dir}"

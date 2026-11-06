@@ -226,6 +226,19 @@ private[project] trait NodeDelivery:
       }
       .handleErrorWith(e => logger.warn(s"chain text references not noted (face=$faceId): ${e.getMessage}"))
 
+  /**
+   * `node:` 消息投递入口（三态语义见上方机制注释）。
+   *
+   * **C-2 落盘前置（2026-11-04 · D5 缝修补）**：无论走哪条路由，**投递前**先往
+   * [[NodeMessageLedger]]（`<workspace>/.nebflow/node-messages.jsonl`，append-only）追加
+   * 一行 `queued`，并把同一身份牌（`消息号 nm-…`）埋进投递正文。理由：running 腿的
+   * `ref ! ImmediateInput` 是 fire-and-forget tell（NodeDelivery.scala:317），真正的落盘
+   * 发生在**接收方**（idle 直投腿 `AgentFinishTurn.scala:649` 才写转录；busy 腿
+   * `AgentProcessing.scala:1651-1655` 才写注入队）——进程在这两点之前死，消息只剩事件流
+   * 一行（NodeDelivery.scala:332-338，无人回放）⇒ 永久丢件，正是本批要关的缝。
+   * `queued` 写失败 => **投递失败**（NODE_MESSAGE_NOT_PERSISTED），绝不制造「已投无盘面」窗口。
+   * 终态拒收（裁定④）在落盘**之前**判定，语义逐字不变。
+   */
   def sendNodeMessage(
     nodeId: String,
     message: String,
@@ -238,7 +251,7 @@ private[project] trait NodeDelivery:
       // 在三条路由（injectRunning / appendToTaskRoute / appendUndelivered）前展开为
       // 消息全文（映射缺失 = 显式报错行注入）。单点覆盖运行中注入与待启动补充两腿；
       // 事件日志随消解后文本留痕。机制关 = 原样透传。
-      resources.msgTokens.resolve(trimmed).flatMap { text =>
+      resources.msgTokens.resolveForAgent(trimmed).flatMap { text =>
         store.findNode(nodeId).flatMap {
           case None =>
             IO.pure(
@@ -254,19 +267,61 @@ private[project] trait NodeDelivery:
                   "a finished node is never retro-edited; create a new node instead (NODE_TERMINAL_NO_MESSAGE)"
               )
             )
-          case Some(n) if n.status == NodeLifecycle.Running =>
-            injectRunning(n, text, attribution)
-          // interrupted（中断恢复语义批 2026-09-13 spec §2.2 不变量第 4 条）：
-          // 节点非终态但「休眠」——**不得按终态拒收**（spec 原口径「现状即兼容」经实读
-          // 核验**不成立**：旧路由落到 appendToTaskRoute 的终态分支，会把 interrupted
-          // 误报成 terminal 并丢消息）。改走注入面：活会话（钩子窗口）→ ImmediateInput；
-          // 会话已死/未登记（重启后未认领 / crashRecovery=false 降级）→ injectRunning
-          // 的既有兜底 appendUndelivered（记录在 task 上「注入未达」，续跑/重跑经
-          // NodeList(detail) 可读）——与 spec §2.2 期望语义一致且零丢失。
-          case Some(n) if n.status == NodeLifecycle.Interrupted =>
-            injectRunning(n, text, attribution)
           case Some(n) =>
-            appendToTaskRoute(n, text, retried = false, attribution)
+            val msgId = NodeMessageLedger.newId()
+            val ledgerRoute =
+              if n.status == NodeLifecycle.Running || n.status == NodeLifecycle.Interrupted then
+                NodeMessageLedger.RouteInject
+              else NodeMessageLedger.RouteTask
+            NodeMessageLedger
+              .append(
+                workspace,
+                NodeMessageLedger.Row(
+                  id = msgId,
+                  event = NodeMessageLedger.Queued,
+                  nodeId = n.id,
+                  nodeName = n.name,
+                  text = text,
+                  route = ledgerRoute,
+                  ts = System.currentTimeMillis()
+                )
+              )
+              .attempt
+              .flatMap {
+                case Left(e) =>
+                  logger.error(
+                    s"NodeMessage -> node '${n.name}' (${n.id}) REFUSED: the message could not be persisted to the ledger " +
+                      s"before delivery (${Option(e.getMessage).getOrElse(e.toString)}) — nothing was delivered (NODE_MESSAGE_NOT_PERSISTED)"
+                  )
+                  .as(
+                    Left(
+                      s"Message NOT delivered to node '${n.name}': it could not be persisted first (${Option(e.getMessage).getOrElse(e.toString)}) — " +
+                        "a node message is never delivered without a durable copy (NODE_MESSAGE_NOT_PERSISTED)"
+                    )
+                  )
+                case Right(_) =>
+                  val entry = NodeMessageLedger.Entry(
+                    id = msgId,
+                    nodeId = n.id,
+                    nodeName = n.name,
+                    text = text,
+                    route = ledgerRoute,
+                    event = NodeMessageLedger.Queued,
+                    firstTs = System.currentTimeMillis(),
+                    detail = None,
+                    rows = 1
+                  )
+                  if n.status == NodeLifecycle.Running then injectRunning(n, text, Some(entry), attribution)
+                  // interrupted（中断恢复语义批 2026-09-13 spec §2.2 不变量第 4 条）：
+                  // 节点非终态但「休眠」——**不得按终态拒收**（spec 原口径「现状即兼容」经实读
+                  // 核验**不成立**：旧路由落到 appendToTaskRoute 的终态分支，会把 interrupted
+                  // 误报成 terminal 并丢消息）。改走注入面：活会话（钩子窗口）→ ImmediateInput；
+                  // 会话已死/未登记（重启后未认领 / crashRecovery=false 降级）→ injectRunning
+                  // 的既有兜底 appendUndelivered（记录在 task 上「注入未达」，续跑/重跑经
+                  // NodeList(detail) 可读）——与 spec §2.2 期望语义一致且零丢失。
+                  else if n.status == NodeLifecycle.Interrupted then injectRunning(n, text, Some(entry), attribution)
+                  else appendToTaskRoute(n, text, retried = false, attribution, Some(entry))
+              }
         }
       }
 
@@ -291,6 +346,7 @@ private[project] trait NodeDelivery:
   private def injectRunning(
     node: NodeDef,
     text: String,
+    ledgerEntry: Option[NodeMessageLedger.Entry] = None,
     attribution: Option[InjectionAttribution] = None
   ): IO[Either[String, String]] =
     nodeSessions.get.map(_.get(node.id)).flatMap { cached =>
@@ -302,7 +358,9 @@ private[project] trait NodeDelivery:
             resources.agentRegistry.get.flatMap { reg =>
               reg.get(sid) match
                 case Some(record) =>
-                  val head = NodeEngine.nodeMessageHeader(node.name)
+                  // C-2 幂等键进 header：`消息号 nm-…` 与正文同投 ⇒ 转录命中即「已消费」。
+                  val head0 = NodeEngine.nodeMessageHeader(node.name)
+                  val head = ledgerEntry.fold(head0)(e => s"$head0 · ${NodeMessageLedger.markerOf(e.id)}")
                   // 自愈：命中者非缓存值（重激活/重挂载后缓存滞后）→ 刷新缓存，
                   // 后续投递恢复快路径。
                   val heal =
@@ -336,6 +394,16 @@ private[project] trait NodeDelivery:
                       NodeEngine.NodeMessageEventType,
                       s"injected -> live session $sid: $text"
                     ) *>
+                    // C-2 状态迁移（soft）：tell 已发出 = 投递事实成立；台账标 `injected`
+                    // 表示「已投未确认消费」——重启回放腿据此重放（转录命中则转 `consumed`）。
+                    ledgerEntry.traverse_(e =>
+                      NodeMessageLedger.transition(
+                        workspace,
+                        e,
+                        NodeMessageLedger.Injected,
+                        Some(s"session=$sid (fire-and-forget tell; consumption confirmed on the next boot by the ledger replay leg)")
+                      )
+                    ) *>
                     logger
                       .info(
                         s"NodeMessage -> node '${node.name}' (${node.id}) injected at turn boundary (session $sid, ${text.length} chars)"
@@ -358,17 +426,23 @@ private[project] trait NodeDelivery:
    * 裁定②竞态兜底：注入不可达 → 记录追加「注入未达」（纯留痕写——只对节点
    * 存在性守卫，不挑剔状态；会话已终结时状态可能已翻终态，留痕必须不丢）。
    */
-  private def appendUndelivered(node: NodeDef, text: String, sid: String): IO[Either[String, String]] =
+  private def appendUndelivered(
+    node: NodeDef,
+    text: String,
+    sid: String,
+    ledgerEntry: Option[NodeMessageLedger.Entry] = None
+  ): IO[Either[String, String]] =
     store
       .mutate { st =>
         st.nodes.get(node.id) match
           case Some(fresh) =>
+            // C-2：分节头带幂等标记（同一字符串判据——task 正文命中即已消费）。
+            val sec0 = NodeEngine.nodeMessageSection(undelivered = true)
+            val sec = ledgerEntry.fold(sec0)(e => s"$sec0 · ${NodeMessageLedger.markerOf(e.id)}")
             st.copy(nodes =
               st.nodes.updated(
                 node.id,
-                fresh.copy(task =
-                  Some(fresh.task.getOrElse("") + s"\n\n${NodeEngine.nodeMessageSection(undelivered = true)}\n$text")
-                )
+                fresh.copy(task = Some(fresh.task.getOrElse("") + s"\n\n$sec\n$text"))
               )
             )
           case None => st
@@ -404,18 +478,20 @@ private[project] trait NodeDelivery:
     node: NodeDef,
     text: String,
     retried: Boolean,
-    attribution: Option[InjectionAttribution] = None
+    attribution: Option[InjectionAttribution] = None,
+    ledgerEntry: Option[NodeMessageLedger.Entry] = None
   ): IO[Either[String, String]] =
     store
       .mutate { st =>
         st.nodes.get(node.id) match
           case Some(fresh) if fresh.status == NodeLifecycle.Wiring || fresh.status == NodeLifecycle.Pending =>
+            // C-2：分节头带幂等标记（task 正文命中 ⇒ 已消费，回放腿不再注入）。
+            val sec0 = NodeEngine.nodeMessageSection(undelivered = false)
+            val sec = ledgerEntry.fold(sec0)(e => s"$sec0 · ${NodeMessageLedger.markerOf(e.id)}")
             st.copy(nodes =
               st.nodes.updated(
                 node.id,
-                fresh.copy(task =
-                  Some(fresh.task.getOrElse("") + s"\n\n${NodeEngine.nodeMessageSection(undelivered = false)}\n$text")
-                )
+                fresh.copy(task = Some(fresh.task.getOrElse("") + s"\n\n$sec\n$text"))
               )
             )
           case _ => st // 状态已变 → 本事务不写（下方复核分流）
@@ -432,7 +508,17 @@ private[project] trait NodeDelivery:
                   node.id,
                   NodeEngine.NodeMessageEventType,
                   s"appended to task (status=${fresh.status}): $text"
+                ) *>
+              // C-2：task = 持久载体（随 flow-map 落盘）⇒ 台账直接转 `appended`（终态：
+              // 节点启动时 buildInput 必读到，无需回放）。
+              ledgerEntry.traverse_(e =>
+                NodeMessageLedger.transition(
+                  workspace,
+                  e,
+                  NodeMessageLedger.Appended,
+                  Some(s"task section durable (status=${fresh.status})")
                 )
+              )
                 .as(
                   Right(
                     s"Message appended to node '${fresh.name}' task (status=${fresh.status}) as「分发器补充（NodeMessage）」— " +
@@ -444,9 +530,9 @@ private[project] trait NodeDelivery:
             logger.info(
               s"NodeMessage -> node '${node.name}' started concurrently during append — rerouting to live injection"
             )
-            injectRunning(fresh, text, attribution)
+            injectRunning(fresh, text, ledgerEntry, attribution)
           case Some(fresh) if fresh.status == NodeLifecycle.Running =>
-            appendUndelivered(fresh, text, "rerun-race")
+            appendUndelivered(fresh, text, "rerun-race", ledgerEntry)
           case Some(fresh) =>
             IO.pure(
               Left(

@@ -1,0 +1,25 @@
+# red-scala.log — spec A/B/C/D 的 Scala 面「先红」（修复前的 HEAD 源码树）
+
+工作树（真）：/tmp/red-iso-1448 = `git archive HEAD`（base tip 712ec659a）+ 探针 spec 文件
+探针文件：src/test/scala/nebflow/cli/IsolatedScopeRedProbeSpec.scala
+          （源码随证据留档：red-probe-spec.scala.txt）
+只用 HEAD 已有 API（无 InstanceScope / 无 homeProof 注入口），因此它只在 HEAD 树上编译运行。
+
+命令行：
+    cd /tmp/red-iso-1448 && sbt -batch "testOnly nebflow.cli.IsolatedScopeRedProbeSpec"
+结果：exit=1 — Failed: Total 5, Failed 4, Passed 1（4 条新法则断言全红，1 条既有保护断言本来就绿）
+
+断言名（与 green 侧 IsolatedInstanceScopeSpec 逐字一致的红/绿对账锚）：
+  · spec A: isolated root without its own port ⇒ port resolution REFUSED (never the brand default 6138)
+  · spec B: target home differs from caller home ⇒ REFUSED naming both homes, zero signal
+  · spec C: inherited env port is NOT explicit for an overridden root (WARN names it) and never becomes 6138
+  · spec D: occupant of another home classifies OtherHomeInstance (never focused)
+
+nebflow.cli.IsolatedScopeRedProbeSpec:
+==> X nebflow.cli.IsolatedScopeRedProbeSpec.spec A: isolated root without its own port ⇒ port resolution REFUSED (never the brand default 6138)  0.09s munit.FailException: src/test/scala/nebflow/cli/IsolatedScopeRedProbeSpec.scala:59 HEAD resolved the isolated root to the production default port 6138 (must be REFUSED by the isolated-root law)
+==> X nebflow.cli.IsolatedScopeRedProbeSpec.spec C: inherited env port is NOT explicit for an overridden root (WARN names it) and never becomes 6138  0.001s munit.FailException: src/test/scala/nebflow/cli/IsolatedScopeRedProbeSpec.scala:68 HEAD treated the inherited env port as explicit and picked the production port 6138
+==> X nebflow.cli.IsolatedScopeRedProbeSpec.spec B: target home differs from caller home ⇒ REFUSED naming both homes, zero signal  0.218s munit.FailException: src/test/scala/nebflow/cli/IsolatedScopeRedProbeSpec.scala:93 HEAD did not refuse a target of another home (pid file = its own, target home = /Users/kaiyu/.stand): Stopped(stand stopped (pid 44339)); signals sent = List(44339)
+  + spec B: target pid != caller's .pid (44339 vs 68701) ⇒ prod shape always REFUSED 0.005s
+==> X nebflow.cli.IsolatedScopeRedProbeSpec.spec D: occupant of another home classifies OtherHomeInstance (never focused)  0.001s munit.FailException: src/test/scala/nebflow/cli/IsolatedScopeRedProbeSpec.scala:125 HEAD has NO OtherHomeInstance state — a same-brand occupant of another home can only be NebflowInstance (focus) or verified-stale (destroyForcibly)
+[error] Failed: Total 5, Failed 4, Errors 0, Passed 1
+[error] Failed tests:

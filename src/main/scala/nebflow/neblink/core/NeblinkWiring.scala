@@ -1,5 +1,7 @@
 package nebflow.neblink.core
 
+import nebflow.neblink.ProfileDescriptions
+
 import nebflow.neblink.identity.*
 import nebflow.neblink.relay.*
 import nebflow.neblink.social.*
@@ -80,7 +82,12 @@ object NeblinkWiring:
      * 🔴 F4（2026-09-18 回执诚实性批）：返回值 = 可判别的
      * `NeblinkRelayTunnel.AckOutcome`（「无 live socket」不再被吞成成功）。
      */
-    ackSender: Option[String => IO[NeblinkRelayTunnel.AckOutcome]] = None
+    ackSender: Option[String => IO[NeblinkRelayTunnel.AckOutcome]] = None,
+    /**
+     * 件一（2026-11-02）双描述本地态（`profile-descriptions.json` 的内存 Ref）。
+     * 缺省空 ⇒ 既有调用点/测试零改动（`remarks` 的加性先例逐字同形）。
+     */
+    descriptions: ProfileDescriptions = ProfileDescriptions.empty
   ): FriendService =
     new FriendService(
       clientProvider,
@@ -89,7 +96,8 @@ object NeblinkWiring:
       onFriendEvent,
       askConfirm,
       remarkRef = Ref.unsafe[IO, Map[String, String]](remarks),
-      ackSender = ackSender
+      ackSender = ackSender,
+      descriptionsRef = Ref.unsafe[IO, ProfileDescriptions](descriptions)
     )
 
   /**

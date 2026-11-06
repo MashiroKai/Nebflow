@@ -1,0 +1,804 @@
+{
+  "_comment": "check-design-tokens.mjs 存量基线（设计令牌批次 2026-11-02）。数字只许降不许升：升基线 = 放水，必须在批报告里逐项说明理由。重生成：node scripts/check-design-tokens.mjs --update-baseline",
+  "generatedAt": "2026-11-02T16:13:50.798Z",
+  "counts": {
+    "css/ask.css": {
+      "color": 11,
+      "transitionAll": 1,
+      "fsSmall": 1,
+      "radiusOff": 2
+    },
+    "css/base.css": {
+      "color": 22,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 2
+    },
+    "css/cards.css": {
+      "color": 0,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 1
+    },
+    "css/chat.css": {
+      "color": 342,
+      "transitionAll": 4,
+      "fsSmall": 34,
+      "radiusOff": 25
+    },
+    "css/delegatePanorama.css": {
+      "color": 6,
+      "transitionAll": 0,
+      "fsSmall": 1,
+      "radiusOff": 6
+    },
+    "css/diffView.css": {
+      "color": 36,
+      "transitionAll": 0,
+      "fsSmall": 6,
+      "radiusOff": 0
+    },
+    "css/dropbox.css": {
+      "color": 16,
+      "transitionAll": 1,
+      "fsSmall": 0,
+      "radiusOff": 3
+    },
+    "css/executors.css": {
+      "color": 20,
+      "transitionAll": 0,
+      "fsSmall": 2,
+      "radiusOff": 1
+    },
+    "css/flowMap.css": {
+      "color": 56,
+      "transitionAll": 1,
+      "fsSmall": 1,
+      "radiusOff": 6
+    },
+    "css/friends.css": {
+      "color": 70,
+      "transitionAll": 0,
+      "fsSmall": 4,
+      "radiusOff": 16
+    },
+    "css/glass.css": {
+      "color": 4,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 1
+    },
+    "css/humanFace.css": {
+      "color": 3,
+      "transitionAll": 0,
+      "fsSmall": 1,
+      "radiusOff": 0
+    },
+    "css/input.css": {
+      "color": 104,
+      "transitionAll": 1,
+      "fsSmall": 5,
+      "radiusOff": 1
+    },
+    "css/keyboard.css": {
+      "color": 0,
+      "transitionAll": 0,
+      "fsSmall": 2,
+      "radiusOff": 0
+    },
+    "css/lightbox.css": {
+      "color": 5,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "css/liveness.css": {
+      "color": 1,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "css/mobile.css": {
+      "color": 1,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "css/mobileLayer.css": {
+      "color": 135,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 13
+    },
+    "css/modal.css": {
+      "color": 49,
+      "transitionAll": 5,
+      "fsSmall": 2,
+      "radiusOff": 8
+    },
+    "css/nav.css": {
+      "color": 15,
+      "transitionAll": 0,
+      "fsSmall": 2,
+      "radiusOff": 2
+    },
+    "css/neblink.css": {
+      "color": 6,
+      "transitionAll": 2,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "css/perception.css": {
+      "color": 18,
+      "transitionAll": 5,
+      "fsSmall": 1,
+      "radiusOff": 5
+    },
+    "css/projectPanel.css": {
+      "color": 12,
+      "transitionAll": 2,
+      "fsSmall": 1,
+      "radiusOff": 6
+    },
+    "css/reminder.css": {
+      "color": 55,
+      "transitionAll": 3,
+      "fsSmall": 9,
+      "radiusOff": 5
+    },
+    "css/sapphire.css": {
+      "color": 12,
+      "transitionAll": 0,
+      "fsSmall": 1,
+      "radiusOff": 2
+    },
+    "css/scrollUnderGlass.css": {
+      "color": 6,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "css/secrets.css": {
+      "color": 3,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "css/sidebar.css": {
+      "color": 116,
+      "transitionAll": 7,
+      "fsSmall": 6,
+      "radiusOff": 8
+    },
+    "css/social.css": {
+      "color": 5,
+      "transitionAll": 0,
+      "fsSmall": 2,
+      "radiusOff": 0
+    },
+    "css/split.css": {
+      "color": 253,
+      "transitionAll": 5,
+      "fsSmall": 10,
+      "radiusOff": 27
+    },
+    "css/taskList.css": {
+      "color": 42,
+      "transitionAll": 0,
+      "fsSmall": 8,
+      "radiusOff": 1
+    },
+    "css/todo-face.css": {
+      "color": 73,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 6
+    },
+    "css/todo-page.css": {
+      "color": 9,
+      "transitionAll": 0,
+      "fsSmall": 2,
+      "radiusOff": 1
+    },
+    "css/usage.css": {
+      "color": 15,
+      "transitionAll": 0,
+      "fsSmall": 5,
+      "radiusOff": 5
+    },
+    "css/voice.css": {
+      "color": 3,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "css/voiceMode.css": {
+      "color": 9,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/activityBar.js": {
+      "color": 19,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/agentProfile.js": {
+      "color": 1,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/askAttachments.js": {
+      "color": 28,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/askDock.js": {
+      "color": 1,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/askPending.js": {
+      "color": 2,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/attachImagePreview.js": {
+      "color": 2,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/attachmentPreview.js": {
+      "color": 1,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/bgAgentPopup.js": {
+      "color": 18,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/bgAgentWorkStrip.js": {
+      "color": 1,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/bgTaskOutputPopup.js": {
+      "color": 15,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/canvas.js": {
+      "color": 44,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/cardRegistry.js": {
+      "color": 3,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/cardwinDirect.js": {
+      "color": 2,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/chat/askBubbles.js": {
+      "color": 2,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/chat/durationBadges.js": {
+      "color": 1,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/chat/historyReplay.js": {
+      "color": 2,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/chat/injectedRows.js": {
+      "color": 3,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/chat/popArtifact.js": {
+      "color": 2,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/chat/renderGate.js": {
+      "color": 1,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/chat.js": {
+      "color": 31,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/chatSearch.js": {
+      "color": 9,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/contacts.js": {
+      "color": 3,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/contextMenu.js": {
+      "color": 1,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/daemonPanel.js": {
+      "color": 11,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/daemons.js": {
+      "color": 33,
+      "transitionAll": 3,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/delegateApi.js": {
+      "color": 3,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/delegateChainProvider.js": {
+      "color": 1,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/delegateChainStub.js": {
+      "color": 8,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/delegateChainView.js": {
+      "color": 11,
+      "transitionAll": 1,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/delegateFlowMap.js": {
+      "color": 1,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/errorRecovery.js": {
+      "color": 1,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/executorIcons.js": {
+      "color": 3,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/explorer.js": {
+      "color": 11,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/fleetUpdate.js": {
+      "color": 2,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/flowAgentPopup.js": {
+      "color": 21,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/flowCss.js": {
+      "color": 118,
+      "transitionAll": 2,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/flowMapArchive.js": {
+      "color": 2,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/flowMapTab.js": {
+      "color": 5,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/fmNodeCard.js": {
+      "color": 3,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/friendsApi.js": {
+      "color": 1,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/hotStamp.js": {
+      "color": 1,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/input/attachments.js": {
+      "color": 5,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/input.js": {
+      "color": 26,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/lightbox.js": {
+      "color": 2,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/locales/en.js": {
+      "color": 17,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/locales/zh-CN.js": {
+      "color": 17,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/main/bgAgents.js": {
+      "color": 9,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/main/permToast.js": {
+      "color": 1,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/main.js": {
+      "color": 62,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/mergeQueueStatus.js": {
+      "color": 1,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/mermaidRenderer.js": {
+      "color": 14,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/messages.js": {
+      "color": 13,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/micOrb.js": {
+      "color": 2,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/mobile/chatChrome.js": {
+      "color": 1,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/mobile/sessionHead.js": {
+      "color": 3,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/modelPanel.js": {
+      "color": 1,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/monacoEditor.js": {
+      "color": 9,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/neblink.js": {
+      "color": 3,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/nfFileCache.js": {
+      "color": 4,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/nfTicket.js": {
+      "color": 2,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/nodeData.js": {
+      "color": 3,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/orbPresets.js": {
+      "color": 60,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/persistence.js": {
+      "color": 27,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/popArtifacts.js": {
+      "color": 4,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/popMediaIndex.js": {
+      "color": 1,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/projectTab.js": {
+      "color": 12,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/reference.js": {
+      "color": 6,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/sessionGate.js": {
+      "color": 7,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/sidebar/pathRules.js": {
+      "color": 1,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/sidebar.js": {
+      "color": 17,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/socialPanel.js": {
+      "color": 2,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/staleTabHint.js": {
+      "color": 7,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/state.js": {
+      "color": 9,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/taskList.js": {
+      "color": 1,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/todoFace.js": {
+      "color": 5,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/todoStore.js": {
+      "color": 14,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/toggle.js": {
+      "color": 2,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/turnGroup.js": {
+      "color": 5,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/usageDashboard.js": {
+      "color": 3,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/utils.js": {
+      "color": 2,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/viewers/docx.js": {
+      "color": 1,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/viewers/epub.js": {
+      "color": 2,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/viewers/html.js": {
+      "color": 14,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/viewers/image.js": {
+      "color": 1,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/viewers/largeText.js": {
+      "color": 3,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/viewers/markdown.js": {
+      "color": 6,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/viewers/pdf.js": {
+      "color": 3,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/viewers/pptx.js": {
+      "color": 12,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/viewers/readerChrome.js": {
+      "color": 6,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/viewers/shared.js": {
+      "color": 2,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/viewers/video.js": {
+      "color": 1,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/viewers/xlsx.js": {
+      "color": 2,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/voiceEngine.js": {
+      "color": 1,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/voiceMode.js": {
+      "color": 2,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/voiceSeal.js": {
+      "color": 13,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/wikiGraph.js": {
+      "color": 15,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    },
+    "js/ws.js": {
+      "color": 10,
+      "transitionAll": 0,
+      "fsSmall": 0,
+      "radiusOff": 0
+    }
+  }
+}

@@ -295,7 +295,7 @@ function buildMediaFallbackScript() {
     var alt=(el.getAttribute&&el.getAttribute('alt'))||'';
     var box=document.createElement('div');
     box.setAttribute('data-nf-load-error','1');
-    box.style.cssText='box-sizing:border-box;width:100%;max-width:100%;padding:10px 12px;margin:0;border:1px dashed var(--color-border,rgba(127,127,127,0.55));border-radius:8px;background:var(--color-surface,transparent);color:var(--color-text-muted,#8b8e96);font-size:12px;line-height:1.5;word-break:break-all;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif';
+    box.style.cssText='box-sizing:border-box;width:100%;max-width:100%;padding:var(--ds-space-block-y) var(--ds-space-3);margin:0;border:1px dashed var(--color-border,rgba(127,127,127,0.55));border-radius:var(--ds-radius-input);background:var(--color-surface,transparent);color:var(--color-text-muted,#8b8e96);font-size:var(--ds-fs-hint);line-height:1.5;word-break:break-all;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif';
     var head=document.createElement('div');
     head.style.cssText='color:var(--color-text,#1b1e26);font-weight:500';
     head.textContent=tag+' could not be loaded'+(alt?' — '+alt:'');
@@ -411,7 +411,7 @@ function renderHtmlCard(container, html, title, warnings) {
   // either expired before the card was ever shown (lazy iframes) or was
   // replayed across mounts (T2, both forbidden). The credential now enters at
   // exactly one point: `injectFileTickets(processedHtml, tickets)` below.
-  const srcdocHead = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}html,body{margin:0;padding:0;font-size:15px;line-height:1.5;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg);color:var(--color-text);overflow:hidden;}*,*:before,*:after{box-sizing:inherit;}svg{max-width:100%;height:auto;}svg text{font-size:min(max(14px,100%),5vw);}img{max-width:100%;height:auto;}</style>${mediaFallbackScript}</head><body><div id="nf-wrap" style="width:100%">`;
+  const srcdocHead = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}html,body{margin:0;padding:0;font-size:var(--ds-fs-title);line-height:1.5;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg);color:var(--color-text);overflow:hidden;}*,*:before,*:after{box-sizing:inherit;}svg{max-width:100%;height:auto;}svg text{font-size:min(max(14px,100%),5vw);}img{max-width:100%;height:auto;}</style>${mediaFallbackScript}</head><body><div id="nf-wrap" style="width:100%">`;
   // localLinkNavScript(): the card's half of the local-link channel (parent
   // half = bindLocalLinkBridge below). Inside #nf-wrap's sibling position so
   // the height script's measurement of the wrapper is unaffected.

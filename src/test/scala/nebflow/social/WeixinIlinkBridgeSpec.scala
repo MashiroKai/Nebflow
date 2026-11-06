@@ -130,7 +130,7 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
   end OriginRecordingCtx
 
   private def plugin(allowed: Option[List[String]] = None, root: os.Path = tmpRoot()): WeixinIlinkBridgePlugin =
-    new WeixinIlinkBridgePlugin(root, pinnedAllowedIlinkUserIds = allowed)
+    new WeixinIlinkBridgePlugin(root, pinnedAllowedIlinkUserIds = allowed, outputBlockGate = () => true)
 
   /** bring the seam up over a recording context (armed gate + routing table). */
   private def started(p: WeixinIlinkBridgePlugin, ctx: BridgeContext): IO[Unit] =
@@ -705,6 +705,7 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     val p = new WeixinIlinkBridgePlugin(
       root,
       pinnedAllowedIlinkUserIds = None,
+      outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
       send = _ =>
         (to, text) =>
           calls.update(_ :+ ((to, text))).as(WeixinOutboundAdapter.SendResult(true, true, None, 200, "delivered"))
@@ -743,6 +744,7 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     new WeixinIlinkBridgePlugin(
       root,
       pinnedAllowedIlinkUserIds = None,
+      outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
       send = _ =>
         (to, text) =>
           calls.update(_ :+ ((to, text))).as(WeixinOutboundAdapter.SendResult(true, true, None, 200, "delivered"))
@@ -1421,6 +1423,7 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     val p = new WeixinIlinkBridgePlugin(
       tmpRoot(),
       pinnedAllowedIlinkUserIds = None,
+      outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
       send = _ =>
         (to, text) =>
           calls.update(_ :+ ((to, text))).as(WeixinOutboundAdapter.SendResult(true, true, None, 200, "delivered"))
@@ -1466,6 +1469,7 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     val p = new WeixinIlinkBridgePlugin(
       tmpRoot(),
       pinnedAllowedIlinkUserIds = None,
+      outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
       send = _ =>
         (to, text) =>
           calls.update(_ :+ ((to, text))).as(WeixinOutboundAdapter.SendResult(true, true, None, 200, "delivered"))
@@ -1514,6 +1518,7 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     val p = new WeixinIlinkBridgePlugin(
       tmpRoot(),
       pinnedAllowedIlinkUserIds = Some(List("wx_alice")),
+      outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
       send = _ =>
         (to, text) =>
           calls.update(_ :+ ((to, text))).as(WeixinOutboundAdapter.SendResult(true, true, None, 200, "delivered"))
@@ -1587,6 +1592,7 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     val p = new WeixinIlinkBridgePlugin(
       root,
       pinnedAllowedIlinkUserIds = None,
+      outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
       send = _ =>
         (to, text) =>
           n.modify(i => (i + 1, i))
@@ -1672,6 +1678,7 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     val p = new WeixinIlinkBridgePlugin(
       root,
       pinnedAllowedIlinkUserIds = None,
+      outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
       send = _ => (to, text) => IO.pure(okResult), // the ask text cards succeed — only the MEDIA leg dies
       sendMedia =
         _ => (to, media) => n.modify(i => (i + 1, i)).flatMap(i => IO.pure(if i + 1 <= 5 then fail else okResult)),

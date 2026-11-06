@@ -40,8 +40,32 @@ private[providers] final class ToolCallEntry(val id: String, val name: String, i
   val emptyIdNameSamples = mutable.ListBuffer.empty[String]
 end ToolCallEntry
 
-class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, Fs2Streams[IO]])
-    extends ProviderAdapter[IO]:
+class OpenAiAdapter(
+  baseUrl: String,
+  apiKey: String,
+  backend: StreamBackend[IO, Fs2Streams[IO]],
+  /**
+   * 思考回传族（protocol-compat 批 2026-11-01）：true ⇒ assistant 历史里的
+   * Thinking 块按 `reasoning_content` 回传。
+   *
+   * 与 AnthropicAdapter 的同名开关**语义对称、方向相反**：
+   *   - anthropic 面：思考块是 content[] 的一员，缺了要 400；有则回传。
+   *   - openai 面：思考内容是 `reasoning_content` 这个旁支字段，旧实现**从不
+   *     回传**（`toOpenAiMessages` 只收 Text/Image/ToolUse/ToolResult），于是
+   *     `requireThinkingPassback` 这个配置在 openai 面**是个哑开关**——配了也
+   *     不生效（registry 只把它交给 AnthropicAdapter）。本批补上：配置说了要
+   *     回传，就必须真的回传。
+   */
+  requireThinkingPassback: Boolean = false,
+  /** 本适配器服务的 provider 名（路由自述 + 诊断串；见 [[WireShape]]）。 */
+  providerId: String = "unknown",
+  /**
+   * provider 级额外 HTTP 头（`ProviderConfig.headers`，protocol-compat 批）。
+   * 装配唯一一点 = [[HttpHeaders]]：引擎缺省必带 User-Agent，本参数覆盖/追加。
+   * cmdcode（OpenAI 面）的 403/1010 事故就是无 UA 被 Cloudflare 边缘挡下。
+   */
+  providerHeaders: Option[Map[String, String]] = None
+) extends ProviderAdapter[IO]:
   private val base = baseUrl.replaceAll("/+$", "")
   private val logger = NebflowLogger.forName("nebflow.llm.openai")
 
@@ -91,10 +115,11 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
               Json.obj("reasoning_effort" -> budgetToEffort(budget).asJson)
       case _ => Json.obj()
 
-  /** Build system message from stable + dynamic parts for OpenAI's messages format. */
+  /** Build a stable system prefix containing instructions and route identity. */
   private[providers] def buildSystemMessage(params: SendMessageParams): Option[Json] =
     val stable = params.systemStable.filter(_.nonEmpty)
-    val dynamic = params.systemDynamic.filter(_.nonEmpty)
+    // Per-request context must not invalidate the system/history cache prefix.
+    val dynamic = Some(WireShape.routeBanner(providerId, params.model)).filter(_.nonEmpty)
     val fallback = params.messages.find(_.role == MessageRole.System).map(_.textContent).filter(_.nonEmpty)
     val text = stable.orElse(fallback) match
       case Some(s) => if dynamic.nonEmpty then s"$s\n\n${dynamic.get}" else s
@@ -102,7 +127,19 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
     if text != null && text.nonEmpty then Some(Json.obj("role" -> "system".asJson, "content" -> text.asJson))
     else None
 
-  private[providers] def toOpenAiMessages(messages: List[Message]): List[Json] =
+  /** Shared by streaming and non-streaming sends; context follows all tool results. */
+  private[providers] def requestMessages(params: SendMessageParams, passback: Boolean): List[Json] =
+    val history = buildSystemMessage(params).toList ++ toOpenAiMessages(params.messages, passback)
+    val tail = params.systemDynamic.filter(_.nonEmpty).map { text =>
+      Json.obj("role" -> "user".asJson, "content" -> text.asJson)
+    }
+    history ++ tail.toList
+
+  private[providers] def toOpenAiMessages(
+    messages: List[Message],
+    passback: Boolean = false
+  ): List[Json] =
+    val replayThinking = passback || requireThinkingPassback
     messages.filterNot(_.role == MessageRole.System).flatMap { msg =>
       val role = msg.role match
         case MessageRole.User => "user"
@@ -119,6 +156,22 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
           val toolResultParts = blocks.collect { case ContentBlock.ToolResult(toolUseId, content, _) =>
             (toolUseId, content)
           }
+          // 思考回传（protocol-compat 批 2026-11-01）：openai 面把推理内容放在
+          // 旁支字段 reasoning_content，历史里不回传 ⇒ 要求回传的族（DeepSeek
+          // 系）后续轮 400。只有配置显式要求时才带（README 语义：显式配置永远赢）。
+          val reasoningText =
+            if replayThinking then
+              Some(blocks.collect { case ContentBlock.Thinking(t, _) => t }.filter(_.trim.nonEmpty).mkString("\n"))
+                .filter(_.nonEmpty)
+            else None
+
+          // 一条消息里既有工具结果又有正文时，旧实现走 toolResult 分支
+          // **把正文整段丢掉**（用户文本静默消失）。现在正文单独发一条 user
+          // 消息，排在 tool 消息之后——顺序上模型先看到结果、再看到追问。
+          def toolResultMessages: List[Json] =
+            toolResultParts.map { case (id, content) =>
+              Json.obj("role" -> "tool".asJson, "content" -> content.asJson, "tool_call_id" -> id.asJson)
+            }
 
           if toolUseParts.nonEmpty then
             List(
@@ -135,17 +188,14 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
                     )
                   )
                 })
-              )
+              ).deepMerge(reasoningText.map(r => Json.obj("reasoning_content" -> r.asJson)).getOrElse(Json.obj()))
             )
           else if toolResultParts.nonEmpty then
             // OpenAI requires each tool result to be a separate message with its own tool_call_id
-            toolResultParts.map { case (id, content) =>
-              Json.obj(
-                "role" -> "tool".asJson,
-                "content" -> content.asJson,
-                "tool_call_id" -> id.asJson
-              )
-            }
+            toolResultMessages ++
+              (if textParts.nonEmpty then
+                 List(Json.obj("role" -> "user".asJson, "content" -> textParts.mkString("\n").asJson))
+               else Nil)
           else
             val contentParts = scala.collection.mutable.ListBuffer.empty[Json]
             textParts.foreach(t => contentParts += Json.obj("type" -> "text".asJson, "text" -> t.asJson))
@@ -155,9 +205,15 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
                 "image_url" -> Json.obj("url" -> s"data:$mediaType;base64,$data".asJson)
               )
             }
-            if contentParts.nonEmpty then
-              List(Json.obj("role" -> Json.fromString(role), "content" -> Json.fromValues(contentParts.toList)))
-            else List(Json.obj("role" -> Json.fromString(role), "content" -> textParts.mkString("\n").asJson))
+            val base =
+              if contentParts.nonEmpty then
+                List(Json.obj("role" -> Json.fromString(role), "content" -> Json.fromValues(contentParts.toList)))
+              else List(Json.obj("role" -> Json.fromString(role), "content" -> textParts.mkString("\n").asJson))
+            // 纯思考轮（无正文、无工具）：正文为空但 reasoning_content 要回传，
+            // 否则这条 assistant 消息在历史里等于「什么都没说」。
+            reasoningText match
+              case Some(r) => base.map(_.deepMerge(Json.obj("reasoning_content" -> r.asJson)))
+              case None => base
           end if
       end match
     }
@@ -293,7 +349,19 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
       .flatMap { tc =>
         val id = tc.hcursor.downField("id").as[String].getOrElse("")
         val name = tc.hcursor.downField("function").downField("name").as[String].getOrElse("")
-        val args = tc.hcursor.downField("function").downField("arguments").as[String].getOrElse("{}")
+        // `arguments` 在部分兼容端点是**对象**而不是 JSON 字符串（规范要求字符串）。
+        // 旧实现只读字符串 ⇒ 对象形态的参数被当成 "{}"，工具静默拿到空参数。
+        val args = tc.hcursor
+          .downField("function")
+          .downField("arguments")
+          .as[String]
+          .toOption
+          .orElse(
+            tc.hcursor.downField("function").downField("arguments").focus
+              .filter(j => j.isObject || j.isArray)
+              .map(_.noSpaces)
+          )
+          .getOrElse("{}")
         // qwen-degenerate guard (2026-08-20 incident): a tool call with an
         // empty name (and/or empty id) cannot pass the agent's allowed-tool
         // whitelist — it would surface as "Tool not available: " and send the
@@ -325,186 +393,286 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
       .orElse(message.downField("thinking").as[String].toOption)
       .exists(_.trim.nonEmpty)
 
+  /** 头装配唯一一点（[[HttpHeaders]]）：引擎缺省（含必带 UA）+ provider 覆盖。 */
+  private def applyHeaders[B](req: sttp.client4.Request[B]): sttp.client4.Request[B] =
+    HttpHeaders.applyTo(req.header("Authorization", s"Bearer $apiKey"), providerHeaders)
+
+  /** 形状类失败：带 provider/model + 请求形状 + 响应形状的 HttpError（同 anthropic 面口径）。 */
+  private def wireError(status: Int, body: String, params: SendMessageParams): sttp.client4.HttpError[String] =
+    new sttp.client4.HttpError(
+      s"${WireShape.diagnose(providerId, params.model, params.messages, Some(status), body)} " +
+        s"| upstream=${WireShape.upstreamExcerpt(body)}${HttpHeaders.edgeBlockHint(status, body)} " +
+        s"| raw=${Option(body).getOrElse("").take(600)}",
+      sttp.model.StatusCode(status)
+    )
+
+  /**
+   * 形状降级重试的参数与开关（protocol-compat 批）：上游说"思考必须回传" ⇒
+   * 把历史里的 reasoning_content 打开再发一次。方向与 anthropic 面相反——那边
+   * 思考块是正文成员、多则被判 400，这边思考是旁支字段、缺则被判 400。
+   */
+  private def thinkingPassbackParams(params: SendMessageParams): SendMessageParams = params
+
   def sendMessage(params: SendMessageParams): IO[AdapterResponse] =
-    val systemMsg = buildSystemMessage(params)
-    val baseMessages = toOpenAiMessages(params.messages)
-    val allMessages = systemMsg.toList ++ baseMessages
-    val body = Json.obj(
-      "model" -> params.model.asJson,
-      "messages" -> Json.fromValues(allMessages)
-    )
-    // maxTokens dropped from the request body (maxcfg batch 2026-09-16): the
-    // output cap is no longer user configurable, and the OpenAI face must not
-    // send `max_tokens` at all — it is a deprecated field, and o-series /
-    // GPT-5 models reject it outright (400). Omitting it leaves the provider
-    // default. WebSearch P0: search tool appended AFTER agent tools (never replaces);
-    // kimi search forces thinking disabled; qwen gets enable_search.
-    val bodyWithTools = bodyWithSearchTools(body, params.tools, params.providerSearch)
-    // Thinking parameters are model-specific: GLM uses `thinking`, OpenAI uses `reasoning_effort`
-    val bodyWithThinking = bodyWithSearchThinking(
-      bodyWithTools,
-      params.model,
-      params.thinking,
-      params.providerSearch,
-      params.thinkingResolved
-    )
-    val bodyWithSearchExtras = bodyWithThinking.deepMerge(searchRequestExtras(params.providerSearch))
-    val bodyWithMetadata = (params.sessionId, params.agentId) match
-      case (Some(sid), Some(aid)) =>
-        bodyWithSearchExtras.deepMerge(
-          Json.obj(
-            "metadata" -> Json.obj(
-              "session_id" -> sid.asJson,
-              "agent_id" -> aid.asJson
+    def attempt(p: SendMessageParams, passback: Boolean): IO[AdapterResponse] =
+      val allMessages = requestMessages(p, passback)
+      val body = Json.obj(
+        "model" -> p.model.asJson,
+        "messages" -> Json.fromValues(allMessages)
+      )
+      // maxTokens dropped from the request body (maxcfg batch 2026-09-16): the
+      // output cap is no longer user configurable, and the OpenAI face must not
+      // send `max_tokens` at all — it is a deprecated field, and o-series /
+      // GPT-5 models reject it outright (400). Omitting it leaves the provider
+      // default. WebSearch P0: search tool appended AFTER agent tools (never replaces);
+      // kimi search forces thinking disabled; qwen gets enable_search.
+      val bodyWithTools = bodyWithSearchTools(body, p.tools, p.providerSearch)
+      // Thinking parameters are model-specific: GLM uses `thinking`, OpenAI uses `reasoning_effort`
+      val bodyWithThinking = bodyWithSearchThinking(
+        bodyWithTools,
+        p.model,
+        p.thinking,
+        p.providerSearch,
+        p.thinkingResolved
+      )
+      val bodyWithSearchExtras = bodyWithThinking.deepMerge(searchRequestExtras(p.providerSearch))
+      val bodyWithMetadata = (p.sessionId, p.agentId) match
+        case (Some(sid), Some(aid)) =>
+          bodyWithSearchExtras.deepMerge(
+            Json.obj(
+              "metadata" -> Json.obj(
+                "session_id" -> sid.asJson,
+                "agent_id" -> aid.asJson
+              )
             )
           )
-        )
-      case (Some(sid), _) =>
-        bodyWithSearchExtras.deepMerge(Json.obj("metadata" -> Json.obj("session_id" -> sid.asJson)))
-      case (_, Some(aid)) =>
-        bodyWithSearchExtras.deepMerge(Json.obj("metadata" -> Json.obj("agent_id" -> aid.asJson)))
-      case _ => bodyWithSearchExtras
+        case (Some(sid), _) =>
+          bodyWithSearchExtras.deepMerge(Json.obj("metadata" -> Json.obj("session_id" -> sid.asJson)))
+        case (_, Some(aid)) =>
+          bodyWithSearchExtras.deepMerge(Json.obj("metadata" -> Json.obj("agent_id" -> aid.asJson)))
+        case _ => bodyWithSearchExtras
 
-    // 🔴 缺陷①（2026-11-02）：非流式请求此前**不带** readTimeout ⇒ 落回 sttp
-    // client4 的 60s 缺省值（同 DecisionHttpTransport.scala 的书面记录）。插件
-    // 自动分配腿走的正是这条非流式路（`sendMessage`），于是慢模型一过 60s 就被
-    // 掐断，上层 fail-open 成 plugins=[]。此处与流式面 （:480）同口径显式给
-    // LlmReadTimeoutSec（600s），预算对全部非流式调用面（分配器/小判官/健康探测）
-    // 一并生效。
-    val request = basicRequest
-      .post(uri"$endpoint")
-      .header("Authorization", s"Bearer $apiKey")
-      .header("content-type", "application/json")
-      .body(bodyWithMetadata.noSpaces)
-      .readTimeout(Defaults.LlmReadTimeoutSec.seconds)
-    IO.delay(logSearchInjection(params)) *>
-      backend.send(request).flatMap { response =>
-        response.body match
-          case Left(error) =>
-            // 审计 20260903 子项②：结构化 HttpError（与 AnthropicAdapter 同款）——
-            // classifyError 据状态码区分 400 Format（不驱逐）与 Auth/配额（驱逐）。
-            IO.raiseError(sttp.client4.HttpError(error, response.code))
-          case Right(bodyStr) =>
-            IO.defer {
-              parse(bodyStr) match
-                case Left(err) => IO.raiseError(new RuntimeException(s"Failed to parse response: ${err.message}"))
-                case Right(json) =>
-                  IO.defer {
-                    val reply = json.hcursor
-                      .downField("choices")
-                      .downN(0)
-                      .downField("message")
-                      .downField("content")
-                      .as[String]
-                      .getOrElse("")
-                    val toolCalls = extractToolCalls(json)
-                    val usage = json.hcursor.downField("usage").as[Json].toOption.map { u =>
-                      TokenUsage(
-                        inputTokens = u.hcursor.downField("prompt_tokens").as[Int].getOrElse(0),
-                        outputTokens = u.hcursor.downField("completion_tokens").as[Int].getOrElse(0)
-                      )
-                    }
-                    // Thinking models (GLM-5.2, DeepSeek reasoning) may return a
-                    // response whose `content` is empty because all tokens went to
-                    // reasoning (reasoning_content / thinking fields). That is NOT
-                    // an empty response — treat it as a successful reply so probes
-                    // and real calls don't falsely fail or fall back.
-                    val reasoning = hasReasoningContent(json)
-
-                    // Empty response with no tool calls — treat as error to trigger fallback
-                    if reply.isEmpty && toolCalls.isEmpty && !reasoning then
-                      val finishReason = json.hcursor
-                        .downField("choices")
-                        .downN(0)
-                        .downField("finish_reason")
-                        .as[String]
-                        .toOption
-                        .getOrElse("")
-                      val detail = if finishReason.nonEmpty then s" (finish_reason: $finishReason)" else ""
+      // 🔴 缺陷①（2026-11-02，本线保留）：非流式请求必须显式带 readTimeout——sttp
+      // client4 的 60s 缺省会把插件自动分配/小判官/健康探测腿在 60.0xx s 掐断。
+      // 与流式面同口径给 LlmReadTimeoutSec（600s）；USTC 侧的结构（applyHeaders
+      // 统一装头 + wireError）逐字保留。
+      val request = applyHeaders(
+        basicRequest
+          .post(uri"$endpoint")
+          .contentType("application/json")
+          .body(bodyWithMetadata.noSpaces)
+      ).readTimeout(Defaults.LlmReadTimeoutSec.seconds)
+      IO.delay(logSearchInjection(p)) *>
+        backend.send(request).flatMap { response =>
+          if response.code.isClientError then
+            val raw = response.body.fold(_.toString, identity)
+            IO.raiseError(wireError(response.code.code, raw, p))
+          else
+            response.body match
+              case Left(error) =>
+                // 审计 20260903 子项②：结构化 HttpError（与 AnthropicAdapter 同款）——
+                // classifyError 据状态码区分 400 Format（不驱逐）与 Auth/配额（驱逐）。
+                IO.raiseError(sttp.client4.HttpError(error, response.code))
+              case Right(bodyStr) =>
+                IO.defer {
+                  parse(bodyStr) match
+                    case Left(err) =>
                       IO.raiseError(
                         new RuntimeException(
-                          s"LLM returned empty response$detail"
+                          s"Failed to parse response: ${err.message} | " +
+                            WireShape.diagnose(
+                              providerId,
+                              p.model,
+                              p.messages,
+                              Some(response.code.code),
+                              bodyStr
+                            )
                         )
                       )
-                    else
-                      val searchInfo = extractSearchInfo(json)
-                      IO.pure(AdapterResponse(reply, toolCalls, usage, searchInfo))
-                    end if
-                  }
-            }
-      }
+                    case Right(json) =>
+                      IO.defer {
+                        val reply = textOfMessage(json)
+                        val toolCalls = extractToolCalls(json)
+                        val usage = json.hcursor.downField("usage").as[Json].toOption.map { u =>
+                          // cache-hit 批（2026-11-06）：非流腿此前丢 cached_tokens（只有流腿解析
+                          // prompt_tokens_details）——命中率聚合读数要求两腿同口径。
+                          val cachedTokens =
+                            u.hcursor.downField("prompt_tokens_details").downField("cached_tokens").as[Option[Int]].toOption.flatten
+                          TokenUsage(
+                            inputTokens = u.hcursor.downField("prompt_tokens").as[Int].getOrElse(0),
+                            outputTokens = u.hcursor.downField("completion_tokens").as[Int].getOrElse(0),
+                            cacheReadTokens = cachedTokens,
+                            cacheWriteTokens = None
+                          )
+                        }
+                        // cache-hit 批（2026-11-06）：聚合读数的 record 单点在
+                        // interface.scala（真实候选腿；adapter 内 record 会与流腿双记）。
+                        // Thinking models (GLM-5.2, DeepSeek reasoning) may return a
+                        // response whose `content` is empty because all tokens went to
+                        // reasoning (reasoning_content / thinking fields). That is NOT
+                        // an empty response — treat it as a successful reply so probes
+                        // and real calls don't falsely fail or fall back.
+                        val reasoning = hasReasoningContent(json)
+
+                        // Empty response with no tool calls — treat as error to trigger fallback
+                        if reply.isEmpty && toolCalls.isEmpty && !reasoning then
+                          val finishReason = json.hcursor
+                            .downField("choices")
+                            .downN(0)
+                            .downField("finish_reason")
+                            .as[String]
+                            .toOption
+                            .getOrElse("")
+                          val detail = if finishReason.nonEmpty then s" (finish_reason: $finishReason)" else ""
+                          IO.raiseError(
+                            new RuntimeException(
+                              s"LLM returned empty response$detail | " +
+                                WireShape.diagnose(
+                                  providerId,
+                                  p.model,
+                                  p.messages,
+                                  Some(response.code.code),
+                                  bodyStr
+                                )
+                            )
+                          )
+                        else
+                          val searchInfo = extractSearchInfo(json)
+                          IO.pure(AdapterResponse(reply, toolCalls, usage, searchInfo))
+                        end if
+                      }
+                }
+        }
+
+    // 单 provider 失败不许打死整批（作者令 17:45 第 3 条）：形状可自愈的一类
+    // 失败就地降级重试一次（补回 reasoning_content），再谈向上抛。
+    attempt(params, passback = false).handleErrorWith {
+      case e: sttp.client4.HttpError[?]
+          if WireShape.isThinkingPassbackRejection(
+            e.statusCode.code,
+            Option(e.body).map(_.toString).getOrElse("")
+          ) =>
+        nebflow.shared.NebflowLogger
+          .forName("nebflow.llm.openai")
+          .warn(
+            s"thinking-passback rejection — degraded retry with reasoning_content replay: " +
+              WireShape.routeLine(providerId, params.model)
+          ) *> attempt(thinkingPassbackParams(params), passback = true)
+      case other => IO.raiseError(other)
+    }
 
   end sendMessage
 
+  /** 非流式正文归一化：`content` 既可能是字符串，也可能是块数组（兼容端点）。 */
+  private[providers] def textOfMessage(json: Json): String =
+    val msg = json.hcursor.downField("choices").downN(0).downField("message")
+    msg.downField("content").as[String].toOption.getOrElse {
+      msg
+        .downField("content")
+        .as[List[Json]]
+        .toOption
+        .getOrElse(Nil)
+        .flatMap { b =>
+          WireShape.classifyBlock(b) match
+            case WireShape.Block.Text(t)       => Some(t)
+            case WireShape.Block.Thinking(_, _) => None
+            case WireShape.Block.Opaque(_)     => None
+        }
+        .mkString("")
+    }
+
   def sendMessageStream(params: SendMessageParams): Stream[IO, StreamChunk] =
-    val systemMsg = buildSystemMessage(params)
-    val baseMessages = toOpenAiMessages(params.messages)
-    val allMessages = systemMsg.toList ++ baseMessages
-    val body = Json.obj(
-      "model" -> params.model.asJson,
-      "messages" -> Json.fromValues(allMessages),
-      "stream" -> true.asJson,
-      "stream_options" -> Json.obj("include_usage" -> true.asJson)
-    ) // maxTokens dropped from the request body (maxcfg batch 2026-09-16) — see
-    // sendMessage above: o-series / GPT-5 reject `max_tokens` with a 400.
-    // WebSearch P0: same injection chain as the non-streaming path (see
-    // sendMessage) — the main conversation is streaming, so provider-native
-    // search must be armed here too.
-    val bodyWithTools = bodyWithSearchTools(body, params.tools, params.providerSearch)
-    // Thinking parameters are model-specific: GLM uses `thinking`, OpenAI uses `reasoning_effort`
-    val bodyWithThinking = bodyWithSearchThinking(
-      bodyWithTools,
-      params.model,
-      params.thinking,
-      params.providerSearch,
-      params.thinkingResolved
-    )
-    val bodyWithSearchExtras = bodyWithThinking.deepMerge(searchRequestExtras(params.providerSearch))
-    val bodyWithMetadata = (params.sessionId, params.agentId) match
-      case (Some(sid), Some(aid)) =>
-        bodyWithSearchExtras.deepMerge(
-          Json.obj(
-            "metadata" -> Json.obj(
-              "session_id" -> sid.asJson,
-              "agent_id" -> aid.asJson
+    def attempt(p: SendMessageParams, passback: Boolean): Stream[IO, StreamChunk] =
+      val allMessages = requestMessages(p, passback)
+      val body = Json.obj(
+        "model" -> p.model.asJson,
+        "messages" -> Json.fromValues(allMessages),
+        "stream" -> true.asJson,
+        "stream_options" -> Json.obj("include_usage" -> true.asJson)
+      ) // maxTokens dropped from the request body (maxcfg batch 2026-09-16) — see
+      // sendMessage above: o-series / GPT-5 reject `max_tokens` with a 400.
+      // WebSearch P0: same injection chain as the non-streaming path (see
+      // sendMessage) — the main conversation is streaming, so provider-native
+      // search must be armed here too.
+      val bodyWithTools = bodyWithSearchTools(body, p.tools, p.providerSearch)
+      // Thinking parameters are model-specific: GLM uses `thinking`, OpenAI uses `reasoning_effort`
+      val bodyWithThinking = bodyWithSearchThinking(
+        bodyWithTools,
+        p.model,
+        p.thinking,
+        p.providerSearch,
+        p.thinkingResolved
+      )
+      val bodyWithSearchExtras = bodyWithThinking.deepMerge(searchRequestExtras(p.providerSearch))
+      val bodyWithMetadata = (p.sessionId, p.agentId) match
+        case (Some(sid), Some(aid)) =>
+          bodyWithSearchExtras.deepMerge(
+            Json.obj(
+              "metadata" -> Json.obj(
+                "session_id" -> sid.asJson,
+                "agent_id" -> aid.asJson
+              )
             )
           )
-        )
-      case (Some(sid), _) =>
-        bodyWithSearchExtras.deepMerge(Json.obj("metadata" -> Json.obj("session_id" -> sid.asJson)))
-      case (_, Some(aid)) =>
-        bodyWithSearchExtras.deepMerge(Json.obj("metadata" -> Json.obj("agent_id" -> aid.asJson)))
-      case _ => bodyWithSearchExtras
+        case (Some(sid), _) =>
+          bodyWithSearchExtras.deepMerge(Json.obj("metadata" -> Json.obj("session_id" -> sid.asJson)))
+        case (_, Some(aid)) =>
+          bodyWithSearchExtras.deepMerge(Json.obj("metadata" -> Json.obj("agent_id" -> aid.asJson)))
+        case _ => bodyWithSearchExtras
 
-    Stream.eval(IO.delay(logSearchInjection(params))).drain ++
-      Stream.eval(IO.ref(Map.empty[Int, ToolCallEntry])).flatMap { toolCallState =>
-        val request = basicRequest
-          .post(uri"$endpoint")
-          .header("Authorization", s"Bearer $apiKey")
-          .header("content-type", "application/json")
-          .body(bodyWithMetadata.noSpaces)
-          .response(asStreamUnsafe(Fs2Streams[IO]))
-          .readTimeout(Defaults.LlmReadTimeoutSec.seconds)
+      Stream.eval(IO.delay(logSearchInjection(p))).drain ++
+        Stream.eval(IO.ref(Map.empty[Int, ToolCallEntry])).flatMap { toolCallState =>
+          // 头装配在 .response/.readTimeout 之前完成（后两者返回 StreamRequest）。
+          val request = applyHeaders(
+            basicRequest
+              .post(uri"$endpoint")
+              .contentType("application/json")
+              .body(bodyWithMetadata.noSpaces)
+          ).response(asStreamUnsafe(Fs2Streams[IO])).readTimeout(Defaults.LlmReadTimeoutSec.seconds)
 
-        // Hard-recovery P1: per-attempt backend when provided (per-request
-        // HttpClient whose shutdownNow aborts exactly this request).
-        Stream.eval(params.attemptBackend.getOrElse(backend).send(request)).flatMap { response =>
-          response.body match
-            case Left(error) =>
-              // 同 sendMessage：结构化 HttpError（子项②）。
-              Stream.eval(IO.raiseError(sttp.client4.HttpError(error, response.code)))
-            case Right(byteStream) =>
-              // If the stream dies mid-tool-call (transport error, or downstream
-              // cancellation from the no-progress watchdog / a fallback switch),
-              // the finish flush never runs — this finalizer emits whatever
-              // empty-id/name summaries were already counted so aggregation
-              // never silently loses content (日志完整性优先). After a normal
-              // finish flush the state map is empty and this is a no-op;
-              // getAndSet makes it idempotent under any termination path.
-              parseOpenAiSseIncrementally(byteStream, toolCallState, params)
-                .onFinalize(flushEmptyIdNameSummaries(toolCallState, params))
+          // Hard-recovery P1: per-attempt backend when provided (per-request
+          // HttpClient whose shutdownNow aborts exactly this request).
+          Stream.eval(p.attemptBackend.getOrElse(backend).send(request)).flatMap { response =>
+            if response.code.isClientError then
+              // 流式请求的 body 是字节流，错误页只在 Left 侧（sttp 对非 2xx 不建流）
+              val raw = response.body.fold(_.toString, _ => "(stream body not read: non-2xx)")
+              Stream.eval(IO.raiseError(wireError(response.code.code, raw, p)))
+            else
+              response.body match
+                case Left(error) =>
+                  // 同 sendMessage：结构化 HttpError（子项②）。
+                  Stream.eval(IO.raiseError(sttp.client4.HttpError(error, response.code)))
+                case Right(byteStream) =>
+                  // If the stream dies mid-tool-call (transport error, or downstream
+                  // cancellation from the no-progress watchdog / a fallback switch),
+                  // the finish flush never runs — this finalizer emits whatever
+                  // empty-id/name summaries were already counted so aggregation
+                  // never silently loses content (日志完整性优先). After a normal
+                  // finish flush the state map is empty and this is a no-op;
+                  // getAndSet makes it idempotent under any termination path.
+                  parseOpenAiSseIncrementally(byteStream, toolCallState, p)
+                    .onFinalize(flushEmptyIdNameSummaries(toolCallState, p))
+          }
         }
-      }
+
+    // 降级重试（同 anthropic 面接缝论证：4xx 在响应头即判定，零块已发出 ⇒ 重试
+    // 不会拼接两家输出）。
+    attempt(params, passback = false).handleErrorWith {
+      case e: sttp.client4.HttpError[?]
+          if WireShape.isThinkingPassbackRejection(
+            e.statusCode.code,
+            Option(e.body).map(_.toString).getOrElse("")
+          ) =>
+        Stream.eval(
+          nebflow.shared.NebflowLogger
+            .forName("nebflow.llm.openai")
+            .warn(
+              s"thinking-passback rejection — degraded retry with reasoning_content replay: " +
+                WireShape.routeLine(providerId, params.model)
+            )
+        ).drain ++ attempt(thinkingPassbackParams(params), passback = true)
+      case other => Stream.raiseError(other)
+    }
 
   end sendMessageStream
 
@@ -568,16 +736,36 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
           delta match
             case None => IO.pure(Nil)
             case Some(d) =>
-              val textChunks = d.hcursor.downField("content").as[String].toOption.filter(_.trim.nonEmpty).toList
+              // 正文归一化（protocol-compat 批）：`content` 规范上是字符串，但
+              // 兼容端点会发数组（[{type:text,text:..}]）或 null。旧实现只认
+              // 字符串 ⇒ 数组形态的正文整段丢失。统一走 WireShape 降级。
+              val textChunks =
+                d.hcursor.downField("content").as[String].toOption
+                  .orElse {
+                    d.hcursor
+                      .downField("content")
+                      .as[List[Json]]
+                      .toOption
+                      .map(_.flatMap(b =>
+                        WireShape.classifyBlock(b) match
+                          case WireShape.Block.Text(t)    => Some(t)
+                          case WireShape.Block.Thinking(_, _) => None
+                          case WireShape.Block.Opaque(_)  => None
+                      ).mkString(""))
+                  }
+                  .filter(_.trim.nonEmpty)
+                  .toList
               val textDeltas = textChunks.map(StreamChunk.TextDelta.apply)
               // Some OpenAI-compatible providers (GLM, DeepSeek, etc.) return reasoning/thinking
               // content in separate fields during thinking mode. Emit them as ThinkingDelta so they
               // are recognized as content and prevent "Stream completed with no content" errors.
+              // `reasoning`（无 _content 后缀）是部分网关的变体名，一并收。
               val thinkText = d.hcursor
                 .downField("reasoning_content")
                 .as[String]
                 .toOption
                 .orElse(d.hcursor.downField("thinking").as[String].toOption)
+                .orElse(d.hcursor.downField("reasoning").as[String].toOption)
                 .filter(_.trim.nonEmpty)
               val thinkingDeltas = thinkText.map(t => List(StreamChunk.ThinkingDelta(t))).getOrElse(Nil)
               val allTextDeltas = thinkingDeltas ++ textDeltas

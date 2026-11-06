@@ -61,6 +61,22 @@ export default {
   // N2 project-tool 批（2026-10-06）：面板手动卸载（归档按钮）被 Project 工具
   // action="unmount" 工具面替代；播报镜像 archived（aria-live 状态行）。
   'project.unmountedAnnounce': '「{name}」已卸载——在飞任务已停，文件全部保留',
+  // unmount-console 面板批 2026-11-02：取消加载/重新加载 + 已卸载分组。
+  'project.unmountBtn': '取消加载',
+  'project.unmountTitle': '取消加载「{name}」？',
+  'project.unmountInflight': '当前在飞工作：{chains} 条链、{nodes} 个节点、{sessions} 个会话——取消加载会先把它们全部停止。',
+  'project.unmountConfirm': '确认后：「{name}」将从项目列表与 Agent 上下文中消失，不能再派活；本地文件全部保留（零删除）。之后可在「已卸载」分组里重新加载。',
+  'project.unmountConfirmGo': '取消加载',
+  'project.unmountFail': '取消加载「{name}」失败：{detail}',
+  'project.unmountedGroup': '已卸载',
+  // 作者令 2026-11-05 08:26：分组头的灰字解释句已删（铁律 8 重复说明 + 行为教学，
+  // 标题已表达状态、「重新加载」钮已表达出路）。键 `project.unmountedGroupHint`
+  // 随之成为孤儿键，整键摘除，不留死键。
+  'project.unmountedRowTitle': '「{name}」卸载于 {at}（本地文件保留）',
+  'project.remountBtn': '重新加载',
+  'project.remounting': '正在重新加载…',
+  'project.remountFail': '重新加载「{name}」失败：{detail}',
+  'project.remountedAnnounce': '「{name}」已重新加载',
   // Project-panel右下角「+」钮 + 轻弹层（projcreate 批 · 乙案：提交 = 预填主输入框 + 聚焦，
   // 零新端点、零新增写面 —— 描述框只收一段描述，不设路径/名称字段：乙案前端不写盘，
   // 放一个前端无从校验的路径框 = 假控件；路径由 Nebula 侧 ProjectCreate 自带路径面板解析）。
@@ -135,6 +151,9 @@ export default {
   'flowmap.cardRunning': '运行中…',
   // 节点卡 Agent 退役（node-flowmap-slim）：preset 未配置的克制空态文案
   'flowmap.presetDefault': '默认预设',
+  // 卡内说明行溢出入口（edge-render-fix 批 2026-11-05 作者令「说明不许静默省略」）：
+  // 说明两行封顶后，只要能装下的更少，卡内就出现本入口 —— 点卡打开详情窗读全文。
+  'flowmap.descFull': '全文',
   'flowmap.loading': '加载 Flow Map…',
   'flowmap.loadFail': 'Flow Map 加载失败',
   'flowmap.empty': '暂无节点，项目空闲',
@@ -333,6 +352,31 @@ export default {
   'contacts.menuSetRemark': '设置备注',
   'contacts.remarkPlaceholder': '备注（留空清除）',
   'contacts.remarkHint': 'Enter 保存 · Esc 取消 · 留空清除备注',
+  // ── 件一（2026-11-02）：好友/群 Profile 双描述面 ─────────────────────────
+  'profile.open': '查看资料',
+  'profile.friendTitle': '好友信息',
+  'profile.groupTitle': '群资料',
+  'profile.close': '关闭',
+  'profile.save': '保存',
+  'profile.saved': '已保存',
+  // 三点入口批（2026-11-05，作者令「里面……还要有搜索聊天记录……然后就是消息
+  // 免打扰的 toggle，然后就是顶置的 toggle」）：三条新行的文案。
+  //  · searchMessages = 复用主对话同一张搜索面板的入口行；
+  //  · muteLabel / pinLabel = 两个共享开关（nb-toggle）的行标签。
+  'profile.searchMessages': '搜索聊天记录',
+  'profile.muteLabel': '消息免打扰',
+  'profile.pinLabel': '顶置',
+  'profile.friendRemarkLabel': '我的备注',
+  'profile.friendRemarkPlaceholder': '我给对方起的备注（留空清除）',
+  'profile.friendBioLabel': '自我介绍',
+  'profile.friendBioPlaceholder': '对方的自我介绍（留空清除）',
+  'profile.groupRemarkLabel': '我的群备注',
+  'profile.groupRemarkPlaceholder': '我给这个群起的备注（留空清除）',
+  'profile.groupDescriptionLabel': '群介绍',
+  'profile.groupDescriptionPlaceholder': '群介绍（留空清除）',
+  'profile.localCacheHint': '本地缓存·未同步',
+  'profile.friendNote': '备注只存在本机；自我介绍与群介绍的上游同步接口尚未提供，当前为本机缓存。两者都已纳入搜索。',
+  'profile.groupNote': '我的群备注只存在本机；群介绍的上游同步接口尚未提供，当前为本机缓存。两者都已纳入搜索。',
   'contacts.deleteTitle': '删除好友',
   'contacts.deleteConfirm': '删除后，将解除与 {name} 的好友关系，聊天记录保留。',
   'contacts.blockTitle': '加入黑名单',
@@ -351,6 +395,8 @@ export default {
   // 群组一期（friendgroups 客户端腿）：建群/群邀请（契约 = 主卡案1② + A-4）。
   'contacts.createGroup': '发起群聊',
   'contacts.createGroupTitle': '发起群聊',
+  // 统一面板批（2026-11-06）：顶栏返回圆钮的读屏/悬浮文案（原右上 X 无文案面）。
+  'contacts.back': '返回',
   'contacts.createGroupName': '群名称',
   // 建群面板骨架四段（2026-09-16 视觉重做）：输入区示例占位 / 列表区章节标签 /
   // 空态引导。三键与 en 同批落地（禁死键）。
@@ -364,6 +410,13 @@ export default {
   'contacts.groupInvites': '群邀请',
   'contacts.groupInviteFrom': '{name} 邀请你加入群聊',
   'messages.empty': '暂无会话',
+  // 会话列表**取数失败态**（empty-state-must-not-lie 批 2026-11-05）。🔴 与上面那条
+  // 空态文案是**两个不同事实**，禁互相顶替：`messages.empty` 只在「服务端明确答复
+  // 确实没有会话」（200 + `[]`）时出现；取数失败（非 2xx / 超时 / 解析失败）走本键
+  // ⇒ 错误态 + 重试键。文案纪律 = 自解释铁律 8：只写状态事实（加载失败），下一步
+  // 动作由重试键本身承载，不写「请检查网络连接」这类排查教学。
+  'messages.listLoadFailed': '会话列表加载失败',
+  'messages.retry': '重试',
   // 🔴 `systemNowFriends` = **好友接受流程**的语境（唯一合法消费点 =
   // messages.js `onFriendEvent` 的 `friend_accepted` 分支）⇒ 下条群语境键是
   // **拆键**产物（2026-09-16 作者令「入群提示还是：你们已成为好友，这不对」：
@@ -406,10 +459,25 @@ export default {
   'chat.quoteDeletedSnapshot': '原消息已删除 · 已保留快照文',
   'chat.quoteSenderMe': '我',
   'chat.quoteTypeImage': '[图片]',
+  // 叠卡单张引用批（2026-11-02 作者令「让叠卡的图片可以分开引用」）：引用牌上的
+  // 位置标注 —— 同一叠卡内不同张的引用牌靠它彼此可区分。
+  'chat.quoteImagePos': '第 {n}/{total} 张',
+  'chat.quoteItemAria': '引用第 {n} 张',
   'chat.quoteTypeFile': '[文件]',
   'chat.quoteTypeTool': '[工具]',
   'chat.quoteTypeAsk': '[提问]',
   'chat.quoteTypeSystem': '[系统]',
+  // ── msgchip 批（消息身份牌带短名引用，作者令 2026-11-01）新增键 ─────────────
+  'chat.msgTokenChipHint': '查看原消息',
+  'chat.msgTokenPopTitle': '原消息',
+  'chat.msgTokenUnreachable': '原消息不可达',
+  'chat.msgTokenLoading': '读取中…',
+  'chat.msgTokenExpand': '展开',
+  'chat.msgTokenCollapse': '收起',
+  // ── msgchip-provenance 批（2026-11-01 作者令「msg 牌剥渠道前缀」）：附件指示 ──
+  // 牌窗正文剥掉附件路径指针行后，改由这条简短指示承载「这条消息带附件」这一事实
+  // （不显示路径/文件名噪声）。{n} = 附件件数。
+  'chat.msgTokenAttachNote': '含 {n} 个附件',
   'messages.multiSelect': '多选转发',
   'messages.selectedCount': '已选 {n} 条',
   'messages.forward': '转发',
@@ -626,6 +694,11 @@ export default {
   'messages.ariaUnread': '{n} 条未读消息',
   'messages.ariaActionable': '{n} 项待你处理',
   'messages.copy': '复制',
+  // fm-md-social 批（2026-11-02）：好友/群聊/设备消息里的 markdown 外链点击**二次确认**
+  // （正文来自外部，外跳动作要确认；确认框 = 全站既有 __showConfirm）。
+  'messages.mdLinkTitle': '打开外部链接',
+  'messages.mdLinkConfirm': '这条消息来自外部，链接指向 {host}。确认在新窗口打开？',
+  'messages.mdLinkOpen': '打开',
   'header.memory': '记忆',
   'header.bgTasks': '后台任务',
   'input.placeholder': '输入消息...',
@@ -686,6 +759,10 @@ export default {
   // GET /api/projects（与项目面板同源），文案仅浮层无匹配态与 ARIA 标签。
   'mention.title': '项目',
   'mention.noMatch': '无匹配项目',
+  // `#` 待办引用补全（待办结构化批 2026-11-05）：文案只写状态事实，不写操作教学。
+  'todoComplete.title': '待办',
+  'todoComplete.noMatch': '无匹配待办',
+  'todoComplete.detailUnavailable': '这条待办不在当前列表里',
   'slash.title': '斜杠命令',
   'modal.newSession': '新建会话',
   'modal.sessionName': '会话名称',
@@ -693,7 +770,10 @@ export default {
   'modal.create': '创建',
   'modal.deleteSession': '删除会话',
   'modal.deleteConfirm': '删除',
-  // === 实体图标语义化 + Nebula 独立分区（20260824_entity-icons-visual-spec §6）===
+  // === 实体图标语义化 + 主 Agent 独立分区（20260824_entity-icons-visual-spec §6）===
+  // Nebula 退役批（作者令 2026-11-01）：未命名的根 agent 读通用称呼，机制名永不
+  // 作为显示回落（读点 = js/rootName.js#rootGenericName）。
+  'agent.rootGeneric': '主 Agent',
   'agents.group.orchestrator': '编排者',
   'agents.group.standalone': '独立智能体',
   'agents.badge.orchestrator': '编排者',
@@ -713,11 +793,14 @@ export default {
   'settings.thinkingMode': '思考模式',
   'settings.llmLog': 'LLM 日志记录',
   'settings.workSchedule': '冻结时间（非工作时间）',
-  'settings.workScheduleOnHint': '在冻结时段内，agent 在工具执行完成后自动冻结，不调用 LLM（零 token 消耗），到点自动恢复继续。期间输入栏与麦克风禁用，点击「跳过本次」即可立即解冻。',
+  // 自解释批（2026-11-04 铁律 8）：原文尾句「点击「跳过本次」即可立即解冻」= 行为教学，
+  // 删除——「跳过本次」按钮名即动作（细则 b 动作标签）。保留的是冻结期间的事实状态。
+  'settings.workScheduleOnHint': '冻结时段内 agent 在工具执行完成后暂停，不调用 LLM（零 token 消耗），到点自动恢复。期间输入栏与麦克风禁用。',
   'settings.workScheduleOffHint': '默认关闭。关闭时所有 agent 全天候工作，行为与现状完全一致。',
   'settings.addSegment': '添加冻结时段',
   'settings.removeSegment': '删除该时段',
   'settings.segmentLabel': '时段 {n}',
+  'settings.segmentEdit': '编辑冻结时段',
   'settings.segmentTo': '至',
   'settings.scheduleInvalidTime': '时间格式应为 HH:mm',
   'settings.scheduleInvalidRange': '时段起止不能相同',
@@ -795,6 +878,9 @@ export default {
   // 钉住的可见状态词——面板行状态位直显「候合并」。
   'subagents.status.waiting': '候合并',
   'subagents.status.waitingMerge': '等待合并轮',
+  // 案A 待命批 2026-10-31（状态矩阵批收编）：delegate 显式待命态（delegate_report
+  // standby）——行状态位直显「待命」，区别于候合并（tooltip = 申报的「在等什么」）。
+  'subagents.status.standby': '待命（等作者）',
   'subagents.status.idle': '空闲',
   // panel-merge-status 批（2026-10-25）：候合并行队列细节段（/api/merge-queue 只读
   // 状态面；位次只渲染不派生，API 未生效 ⇒ 段全缺 = 静态「等待合并轮」降级）。
@@ -808,20 +894,83 @@ export default {
   'subagents.status.stuck': '卡死',
   'subagents.status.error': '失败',
   'subagents.status.frozen': '已冻结',
+  // 错误冻结批（2026-11-01 · 作者令「冻结态方便被唤醒 接着做」）：**错误冻结**
+  // （delegate 因 LLM/工具/引擎故障或配额取消就地停住）的行面文案——徽标带原因
+  // 短名、tooltip 说明「不是失败判词」、唤醒按钮 = 显式唤醒动作（同会话续跑）。
+  // 与 standby（待命·等作者）/ waitingMerge（候合并）显式区分：三者都是「停」，
+  // 但只有本族是**异常停**且**必须有人唤醒才会继续**。
+  'subagents.frozenBadgeWithReason': '已冻结 · {reason}',
+  // 冻结通知策略批（2026-11-05 作者令两连）：provider 故障 = **基础设施故障**，不是
+  // 任务失败 ⇒ 不向上汇报（上级多半也在同一波里挨饿），面板即状态面：标「待你处理」+
+  // 原因码 + 自动续跑次数 + 唤醒入口。
+  'subagents.frozenAwaitingYou': '已冻结 · {reason}（待你处理）',
+  'subagents.frozenAwaitingYouNoReason': '已冻结 · 待你处理',
+  // 修复批 2026-11-06（作者原话「llm 不稳定 不需要向上通知…原地等待恢复就行」）：
+  // 可恢复冻结（llm-failure / 额度）**不再是你的待办**——词从「待你处理」改成
+  // 「等待恢复中」，与真失败（tool-failure / engine-fault）在视觉与文案上分开。
+  'subagents.freezeRecovering': '等待恢复中',
+  'subagents.freezeRecoveringReason': '等待恢复中 · {reason}',
+  'subagents.freezeRecoveringTip': '供应商暂时不可用（不是任务失败，也不需要你做什么）：引擎正在退避重试 / 换可用的供应商，恢复后在原会话上接着跑——已完成的不重做。不向上汇报，也不需要唤醒。',
+  'subagents.frozenInfraTip': '供应商故障（不是任务失败）：引擎自己探测恢复，恢复后自动续跑同一会话（续在检查点、已完成的不重做，有次数上限与递增间隔）；也可以现在点「唤醒」立即续跑。不向上级汇报——本面板就是它的状态面。',
+  'subagents.frozenAutoResumes': '已自动续跑 {n} 次',
+  'subagents.frozenAutoResumesSpent': '自动续跑次数已用尽——需要你：充值 / 换模型 / 取消',
+  'subagents.freezeDigestRecoverable': '{count} 条已冻结（可唤醒）',
+  'subagents.freezeDigestNeedsHuman': '{count} 条冻结待你处理',
+  'subagents.frozenTip': '已冻结：引擎/上游故障导致就地停住，这不是失败判词。会话历史、工作区与未提交改动、台账行、合并队列位全部保留；点「唤醒」或 Mail 它的地址即在原会话上下文上继续（已完成的不重做）。',
+  'subagents.frozenReason': '原因：{reason}',
+  'subagents.frozenDormantTip': '已冻结 {hours} 小时仍无人唤醒（超保留期会归档记录，转录与工作区保留）。',
+  'subagents.wake': '唤醒',
+  'subagents.wakeTip': '在原会话上下文上继续（同一会话、历史在场，已完成的不重做）',
+  // name/address 批（2026-11-05）：地址 chip 的 tooltip 后缀（前面拼完整地址本身）。
+  'subagents.copyAddress': '复制地址',
+  'subagents.wakeFailed': '唤醒失败：记录与转录已保留，可稍后重试',
+  // 冻结原因四类短名（快照恢复路径按线值 `delegate-frozen:<code>` 本地映射；与
+  // DelegateFreeze.reasonLabelZh 逐字一致）。
+  'subagents.frozenReasonLlm': '模型层故障',
+  'subagents.frozenReasonTool': '工具层故障',
+  'subagents.frozenReasonEngine': '引擎侧故障',
+  'subagents.frozenReasonQuota': '配额耗尽取消',
+  // 冻结态误报批（2026-11-05 · 作者报障「显示已冻结，但我没有冻结它，也没有恢复
+  // 按钮」）：冻结行分两族呈现——**自动恢复族**（时间表出窗 / 退避 / 供应商探测 /
+  // 断点续跑）写「在等什么 + 会自己续跑」，**不给按钮**；**需人介入族**（循环检测 /
+  // 错误冻结 / 已升级到人）才写「已冻结」并给恢复入口。判定单点 = 后端
+  // nebflow.actor.FreezeDisplay（前端 freezeState.js 只做呈现映射）。
+  'subagents.freezeBadge': '已冻结',
+  'subagents.freezeBadgeWithReason': '{word} · {reason}',
+  'subagents.freezeWindow': '等待工作时段',
+  'subagents.freezeAuto': '自动恢复中',
+  'subagents.freezeWindowTip': '工作时段外的自动停靠：到工作时段自行恢复。',
+  'subagents.freezeAutoTip': '引擎在退避重试/等待外部恢复：到期自行续跑，取消任务才终止它。',
+  'subagents.freezeReasonLoop': '循环检测',
+  'subagents.freezeReasonLlmTransient': '模型层故障',
+  'subagents.freezeReasonNetwork': '网络抖动',
+  'subagents.freezeReasonProviderDown': '供应商不可用',
+  'subagents.freezeReasonRestartRecovery': '断点续跑',
+  'subagents.freezeReasonWaitingNetwork': '等待网络恢复',
+  'subagents.freezeReasonSchedule': '工作时段',
   'subagents.status.done': '已完成',
   // 面板树批（2026-10-29 ①）：孤儿行来源角标（父不可见提升顶层的「来自 …」标注）。
   'subagents.fromDelegate': '来自已结束的委托',
   'subagents.fromFlowNode': '来自 AgentFlow 节点',
   'subagents.fromSubagent': '来自上层子代理',
   'subagents.orphanTip': '父会话已不可见 · {sid}',
+  // 野节点归置批（2026-11-05 腿③）：野节点（父不可解析的行）独立归置分组的组头词。
+  // 一个事实词（这群行没有父），不是解释句/教学句（自解释铁律 8）。
+  'subagents.orphanGroup': '无父节点',
+  // 面板三代层级批（2026-11-06）：root 锚（树 depth 0 基座标签）+ 判定表②「父不在场」
+  // 标——都是事实词（这一层是根 / 父会话当前不在面板），非解释句。
+  'subagents.rootAnchor': '根会话',
+  'subagents.parentAbsent': '父不在场',
+  'subagents.parentAbsentTip': '父会话当前不在面板 · {sid}',
   // 面板层级批（2026-10-31 ①）：组头折叠 caret 的无障碍/悬停文案（随折叠态翻转）。
   'subagents.collapseGroup': '收起子任务',
   'subagents.expandGroup': '展开子任务',
-  // Flow 会话可见性批（2026-11-01）：dispatcher-*/node-* 行 kind 徽标（引擎协议
-  // kind 一律 "Flow" 无区分度——显示词按前缀单点判读）＋ delegate 已终态而链仍在
-  // 跑的延续态徽标（琥珀词 + workflow 图标；tooltip 带链会话数）。
-  'subagents.kindDispatcher': '分发器',
-  'subagents.kindNode': '节点',
+  // 术语统一批（2026-11-06 作者令逐字「统一 根据英文」）：kind 徽标词**整族退役**
+  // ——subagents.kindDispatcher / kindNode / kindAgentflow 三键随本批删除。身份/类型
+  // 徽标词面（kernel / dispatcher / node / subagent / delegate / AgentFlow）是作者
+  // 术语、不本地化，单源 = js/termWords.js（BADGE_WORDS）；放语言包等于给同一概念
+  // 造第二张词表（中文面「分发器 / 节点」就是这么来的）。判据 = scripts/check-badge-words.mjs。
+  // 保留：delegate 已终态而链仍在跑的延续态徽标（琥珀词 + workflow 图标）。
   'subagents.chainRunning': '链运行中',
   'subagents.chainRunningTip': '委托已交付，链仍在运行 · {n} 个会话',
   // 面板行说明批（2026-10-29 ②）：任务摘要次行无文案键（原文上屏）。
@@ -1059,32 +1208,51 @@ export default {
   'settings.save': '保存',
   'settings.saved': '已保存 ✓',
   'settings.saveFailed': '保存失败',
+  // jev-imagegen-align-llm 批（2026-11-02，契约 §D.1）：配置提供方卡片共用组
+  // —— LLM / Jev / 生图三面同一份文案，组件单源 = js/cfgProviderCard.js。
+  'settings.cfgCard.addProvider': '＋ 新增提供方',
+  'settings.cfgCard.delete': '删除此提供方',
+  'settings.cfgCard.deleteConfirm': '再点一次确认删除',
+  'settings.cfgCard.deleted': '提供方已删除',
+  'settings.cfgCard.inUse': '当前使用',
+  'settings.cfgCard.keyConfigured': '已保存',
+  'settings.cfgCard.keyMissing': '未配置',
+  'settings.cfgCard.models': '{n} 个模型',
+  'settings.cfgCard.emptyHint': '尚未配置提供方——填写下方表单并保存。',
   'settings.jev': 'Jev（插件分配）',
   'settings.jevEnabled': '用 Jev 分配插件',
   'settings.jevProvider': '提供方',
   'settings.jevEndpoint': '端点',
-  'settings.jevKeyRef': 'API 密钥引用',
-  // secrets-ui-redesign（2026-10-08 设计稿落定）：hint 只留安全关键句一行；
-  // 健康行三态词补齐（此前四键缺失，t() 未命中回退键名 → 裸键名当文案的 bug）。
-  'settings.jevHint': 'keyRef 是 ~/.nebflow/secrets/ 下的密钥名（指针），永远不是密钥值。',
   'settings.jevHealth': '分配通道',
   'settings.jevHealthUp': '正常',
   'settings.jevHealthDown': '异常',
   'settings.jevHealthUnconfigured': '未配置',
-  'settings.jevKeyRefShow': '显示密钥引用',
-  'settings.jevKeyRefHide': '隐藏密钥引用',
-  // jev-panel-threefix（2026-10-09 用户反馈三点）：行体开合 title / 钉死端点
-  // 解释 / 回退态徽标词（如实反映「Jev 不可用 → 已回退 llm」）。
+  // jev-panel-threefix（2026-10-09 用户反馈三点）：行体开合 title / 回退态徽标词
+  // （如实反映「Jev 不可用 → 已回退 llm」）。
   'settings.jevToggleDetails': '展开或收起分配设置',
-  'settings.jevEndpointFixed': 'Jev 版端点固定，无需填写',
   'settings.jevHealthFallback': 'Jev 不可用 → 已回退 llm',
-  // settings-panel-jev-imagegen 批（2026-10-28）：JeV key 值明文直显
-  // （作者令①——默认可见，eye 仅可选遮蔽）。
-  'settings.jevKeyValue': 'key 值',
-  'settings.jevKeyValuePlaceholder': '从 secrets 读取…',
-  'settings.jevKeyValueNoRef': '先填写 keyRef',
-  'settings.jevKeyValueMissing': 'secrets 下不存在——待录入',
-  'settings.jevKeyValueError': '读取失败（{code}）',
+  // jev-imagegen-align-llm 批（2026-11-02，契约 §D.2）：Jev 配置面 20 键 ——
+  // 提供方名/协议适配/模型/单一 key 框（UI 层零密钥引用字眼）。
+  'settings.jev.name': '提供方名称',
+  'settings.jev.namePlaceholder': '如 typesafe-jev',
+  'settings.jev.type': '协议适配',
+  'settings.jev.typeTypesafe': 'Typesafe JeV（官方托管）',
+  'settings.jev.typeLaya': 'LAYA（自托管）',
+  'settings.jev.model': '模型',
+  'settings.jev.modelPlaceholder': '模型名',
+  'settings.jev.keyEntry': 'API Key',
+  'settings.jev.keyPlaceholder': '输入 key 值…',
+  'settings.jev.keyReentryPlaceholder': '已配置——重新输入即覆盖',
+  'settings.jev.keyShow': '显示 key 值',
+  'settings.jev.keyHide': '隐藏 key 值',
+  'settings.jev.keySaved': '密钥已保存',
+  'settings.jev.keySaveFailed': '密钥保存失败（{code}）',
+  'settings.jev.keyEmpty': 'key 值为空',
+  'settings.jev.nameRequired': '先填写提供方名称',
+  'settings.jev.nameInvalid': '提供方名称只允许字母/数字/._-',
+  'settings.jev.typeRequired': '先选择协议适配',
+  'settings.jev.modelRequired': '模型不能为空',
+  'settings.jev.detailHint': '填入 API Key 并保存即可；未配 key 时 Jev 腿自动关闭。',
   // settings-panel 批 D 件（2026-10-28）：STT 总开关（缺席=开，存量行为
   // 逐字不变；关=STT 整体停用，入口与快捷键全收）。
   'settings.sttEnabled': '启用语音识别',
@@ -1107,7 +1275,10 @@ export default {
   // 移除——面板只认「填 API Key 值、保存」；指针名对用户不可见。
   'settings.imagegenShortHint': '填入 API Key 并保存即可；未配 key 时生图停用。',
   'settings.imagegenProvider': '提供方',
-  'settings.imagegenAddProvider': '＋ 新增提供方…',
+  // jev-imagegen-align-llm 批（2026-11-02，契约 §D.3）：生图提供方名/空态提示 3 键。
+  'settings.imagegen.name': '提供方名称',
+  'settings.imagegen.namePlaceholder': '如 zhipu',
+  'settings.imagegen.emptyHint': '尚未配置提供方——填写下方表单并保存。',
   'settings.imagegenProviderNamePlaceholder': '新提供方名称（字母/数字/._-）',
   'settings.imagegenType': '协议适配',
   'settings.imagegenTypePlaceholder': '选择协议适配',
@@ -1115,8 +1286,6 @@ export default {
   'settings.imagegenModelPlaceholder': '模型 ID',
   'settings.imagegenBaseUrl': '自定义端点（可选）',
   'settings.imagegenBaseUrlPlaceholder': '留空 = 适配器缺省端点',
-  'settings.imagegenKeyConfigured': '已配置',
-  'settings.imagegenKeyMissing': '待录入',
   'settings.imagegenKeyEntry': 'API Key',
   'settings.imagegenKeyPlaceholder': '输入 key 值…',
   'settings.imagegenKeyReentryPlaceholder': '已配置——重新输入即覆盖',
@@ -1129,9 +1298,6 @@ export default {
   'settings.imagegenTypeRequired': '先选择协议适配',
   'settings.imagegenNameRequired': '先填写提供方名称',
   'settings.imagegenNameInvalid': '提供方名称只允许字母/数字/._-',
-  'settings.imagegenDelete': '删除此提供方',
-  'settings.imagegenDeleteConfirm': '再点一次确认删除',
-  'settings.imagegenDeleted': '提供方已删除',
   // settings-panel-jev-imagegen 批（2026-10-29 作者令「然后 Jev/生图，也要像我们
   // LLM 这样，有个按钮来测试可用性」）：JeV 一枚测试钮（同 LLM 测试钮口径）；
   // 生图两级（轻探活 + 实跑一次最小生成）。
@@ -1225,10 +1391,32 @@ export default {
   'model.roleGeneral': '节点',
   'model.viaSlash': '用 /model 命令编辑',
   'model.currentRun': '当前运行',
+  // jev-imagegen-align-llm 批（2026-11-02，契约 §D.4）：/model 里 Jev / 生图
+  // 两个新分组 = 「该配置节当前使用哪个提供方」的指针切换器（不是 agent 模型链）。
+  'model.groupJev': 'Jev（插件分配）',
+  'model.groupImagegen': '生图',
+  'model.groupSwitch': '切换',
+  'model.groupSwitched': '已切换到 {name}',
   'settings.advanced': '高级',
   'settings.editRawJson': '编辑原始 JSON',
   'settings.reload': '重新加载',
   'settings.account': '账号',
+  // 件四 · 设置页身份卡本地化（作者令 2026-11-02「头像在上，下面是用户名和邮箱…
+  // 点击胶囊直接进自己的 profile 设置页」）。zh/en **同键对称**新增（14 键 × 2 文件）。
+  'settings.identityCardLabel': '账号资料',
+  'settings.identityChangeAvatar': '更换头像',
+  'settings.identityNotSignedIn': '未登录',
+  'settings.identityUnknown': '未知',
+  'settings.avatarChangeUnavailable': '账号服务暂未提供头像上传接口，图片未上传。',
+  'settings.profileSelf': '个人资料',
+  'settings.profileClose': '关闭',
+  'settings.profileUsername': '用户名',
+  'settings.profileNickname': '昵称',
+  'settings.profileEmail': '邮箱',
+  'settings.profileGithub': 'GitHub 绑定',
+  'settings.profileGoogle': 'Google 绑定',
+  'settings.profileReadonlyNote': '以下均为账号服务当前返回的真实读数，客户端不缓存、不代填。',
+  'settings.accountServiceUnavailable': '账号服务暂未提供该接口，当前无法在应用内修改。',
   'settings.about': '关于',
   'settings.connection': '连接状态',
   'settings.connected': '已连接',
@@ -1238,24 +1426,15 @@ export default {
   // update.impact/update.receipt.*/update.reason.*/update.source.*）已随 auth-trim 批
   // （2026-10-20 作者令）整体删除：设置页「更新」功能退役，未来由官网统一检测更新取代。
 
-  // 既有重启进度帧（`restartStatus`）的相位文案（设置页「重启服务」状态行消费）。
-  'restart.phase.quiesce': '等待在飞工作结束',
-  'restart.phase.draining': '正在冻结并落盘',
-  'restart.phase.spawning': '正在派生新进程',
-  'restart.phase.handing-over': '交接中，旧进程即将退出',
-  'restart.phase.completed': '重启完成',
-  'restart.phase.failed': '重启中止',
-
-  // 设置页重启触发（hotupdate 批 3 · G6 后半）——沿用既有 'restart' WS 命令，
-  // 界面侧两段式确认（第二击即确认位）。
-  'settings.restart': '重启服务',
-  'settings.restartConfirm': '确认重启？',
+  // 「重启服务」整链文案已随 settings-ios-rows 批（2026-11-06 作者令「底部的重启
+  // 服务去掉」）删除：restart.phase.*（restartStatus 相位）与 settings.restart /
+  // settings.restartConfirm / settings.restartAccepted / settings.restartFailed
+  // 十键零消费（唯一消费者 #restart-status 状态行同批移除）。后端 WS `restart`
+  // 命令保留（其余消费方仍在），前端零发射面。
   'settings.fileCache': '文件缓存',
   'settings.fileCacheClear': '清空文件缓存',
   'settings.fileCacheClearConfirm': '确认清空？',
   'settings.fileCacheEntries': '条',
-  'settings.restartAccepted': '重启已受理——完成后界面会自动重连',
-  'settings.restartFailed': '重启未受理：{error}',
 
   // Provider card fields
   'provider.baseUrl': 'Base URL',
@@ -1270,9 +1449,6 @@ export default {
   'provider.keyRequired': '新建服务商需要 API Key',
   'provider.required': '必填',
   'provider.protocol': '接口格式',
-  // 接口格式下拉下方的 helper 行（protoface-ui 批，2026-09-22）：显示当前所选
-  // 面 + 当前 baseUrl 推导出的实际 POST 目标。{target} = 完整 URL。
-  'provider.protocolHelper': '该服务商将收到：POST {target}',
   'provider.idRequired': '请填写服务商 ID',
   'provider.noSpaces': '服务商 ID 不能包含空格',
   'provider.baseUrlRequired': '请填写 Base URL',
@@ -1284,10 +1460,54 @@ export default {
   'provider.ctxExceedsCeiling': '模型 {id}：上下文窗口 {value} 超出支持的绝对上限 {max}',
   'provider.ctxDefaulted': '以下模型未填写上下文窗口，已按默认值 {def} 保存：{ids}',
   'provider.ctxClampedToMax': '模型 {id}：默认值 1,000,000 超过该模型上报的上限，已按 {max} 保存',
-  // 模型不可用时段（model-schedule-unavailable 批）：provider 弹窗编辑面。
+  // 模型不可用时段（model-schedule-unavailable 批）：**只保留 provider 级一份**
+  // （config-single-source 批，作者裁定④ 2026-11-05）。常显文字只留标签与空态
+  // 事实句（「无限制」），解释收进 `?` 悬停提示（裁定⑤）。
   'provider.unavailableWindows': '不可用时段',
-  'provider.unavailableWindowsPlaceholder': '如 14:00-18:00；多条用逗号分隔，跨午夜写 23:00-07:00；留空 = 不限制',
+  'provider.unavailableWindowsHint': '该服务商全部模型统一生效；跨午夜写 23:00-07:00',
+  'provider.maxConcurrentActors': '同时派发上限',
+  'provider.maxConcurrentActorsPh': '留空 = 不限',
+  'provider.maxConcurrentActorsInvalid': '同时派发上限须为正整数',
+  'provider.unavailableWindowsPlaceholder': 'HH:mm-HH:mm',
   'provider.unavailableWindowsInvalid': '不可用时段格式错误：「{value}」（需 HH:mm-HH:mm，且开始≠结束）',
+  'provider.unavailableWindowsEmpty': '无限制',
+  'provider.unavailableWindowsAdd': '添加不可用时段',
+  'provider.unavailableWindowsDaysReadonly': '按星期 · 手编只读',
+  'provider.unavailableWindowsDays': '生效星期',
+
+  // ── 时间滚轮选择器（time-wheel-picker 实施批 2026-11-03，组件单源 js/timeWheel.js）──
+  // 设计出处 docs/design/20261101_163000_time-wheel-picker-spec__*.zh-CN.md §7/§9。
+  'timewheel.titleRange': '选择时间段',
+  'timewheel.titlePoint': '选择时间',
+  'timewheel.cancel': '取消',
+  'timewheel.confirm': '确定',
+  'timewheel.sepTo': '至',
+  'timewheel.editRange': '编辑时间段',
+  'timewheel.editPoint': '编辑时间',
+  'timewheel.crossDay': '跨零点时段：至次日 {to} 结束（合法，同现役跨午夜语义）',
+  'timewheel.equalError': '起止不能相同（零长度时段无意义，后端校验会拒绝）',
+  'timewheel.exactInput': '精确输入 HH:mm',
+  'timewheel.startHour': '开始·时',
+  'timewheel.startMin': '开始·分',
+  'timewheel.endHour': '结束·时',
+  'timewheel.endMin': '结束·分',
+  'timewheel.hourUnit': '时',
+  'timewheel.minUnit': '分',
+  'timewheel.dateLabel': '日期',
+  'timewheel.daysLabel': '生效星期',
+  'timewheel.everyDay': '每天',
+  'timewheel.mon': '一',
+  'timewheel.tue': '二',
+  'timewheel.wed': '三',
+  'timewheel.thu': '四',
+  'timewheel.fri': '五',
+  'timewheel.sat': '六',
+  'timewheel.sun': '日',
+  'timewheel.presetAllDay': '全天',
+  'timewheel.presetNight': '深夜 23–08',
+  'timewheel.presetDay': '白天 09–18',
+  'timewheel.presetAfternoon': '午后 14–18',
+  'timewheel.deadline': '截止时间',
 
   // Model fields in modal
   'model.idPlaceholder': '模型 ID',
@@ -1350,6 +1570,10 @@ export default {
   'session.delete': '删除此会话',
   'session.dropDelete': '拖放以删除',
   'session.dropDeleteCount': '拖放以删除 {count} 个会话',
+  // 会话页头同构批（件二+件三，2026-11-02）：右上三点键的无障碍名（仅图标钮）
+  // + 设备会话三点菜单的「设备描述」项（设备无 Profile 面 ⇒ 入口 = 既有描述编辑面板）。
+  'session.more': '更多',
+  'session.deviceDesc': '设备描述',
   'folder.newPlaceholder': '新文件夹名称…',
 
   // === Delete modals ===
@@ -1375,6 +1599,9 @@ export default {
   'chat.retry': '重试',
   // A 支 · 滚动跟随收敛：新增消息胶囊（计数 = 自离开底部以来新增的消息行数）
   'chat.newMessages': '↓ {n} 条新消息',
+  // 回到底部（单实现批 2026-11-06，js/scrollPill.js）：无未读、只是往上翻得够远
+  // （距底 ≥ SHOW_AFTER_PX）时的文案 —— 与上面计数档**同一枚**胶囊的第二个档。
+  'chat.backToBottom': '回到底部',
   // 搜索跳转回位胶囊（作者令 2026-11-01，searchReturnPill.js）：锚在 ⇒ 回跳转前
   // 位置；锚失 ⇒ 诚实降级回最新。
   'chat.backToPrevPosition': '回到跳转前位置',
@@ -1388,6 +1615,18 @@ export default {
   // cardguard（作者裁定 2026-09-17 · #687①）：含卡片哨兵的工具结果不再以 <pre>
   // 兜底渲染原文 ⇒ 走卡片路径，提取失败时显示本占位（🔴 原文不进 DOM）。
   'chat.toolCardUnavailable': '卡片内容不可用（未渲染原始数据）',
+  // 工具卡折叠控件（ui-unification-20261103-chat-stream）：长输出默认折叠，
+  // 控件明示全文行数；收起文案与 aria-expanded 联动（收起态回显行数）。
+  // 过程泄漏修复批（2026-11-04）：收起态 = 单行摘要，行数/文案改挂 title
+  // （无视觉噪声的可达性面），默认面不再渲染预览正文。
+  'chat.toolExpandMore': '展开全部 {n} 行',
+  'chat.toolCollapse': '收起',
+  // 失败状态词（过程泄漏修复批 2026-11-04）：摘要行要能看出成败——失败必须
+  // 显式写出来（成功由 ✓ 图标承载，不加字：每卡写「成功」是纯噪声）。
+  'chat.toolStatusFailed': '失败',
+  // 工具卡图片引用件（tool-card-image-face 批 2026-11-04）：工具卡 = 摘要面，
+  // 卡内图片一律折叠成「🖼 图片 ×N」引用，点开走灯箱——绝不内嵌渲染。
+  'chat.toolImgRef': '🖼 图片 ×{n}',
   // pop-upgrade 批(2026-10-03):Pop 工件面(叠卡/文件卡片)文案
   'chat.popExpand': '展开 {n}',
   'chat.popCollapse': '收起',
@@ -1407,6 +1646,10 @@ export default {
   'chat.other': '其他...',
   'chat.frozenNoTime': '已冻结 · 等待恢复',
   'chat.frozenShort': '已冻结 · {time} 恢复',
+  // 冻结态误报批（2026-11-05）：自动恢复族的页脚词——「已冻结」是需人工措辞，
+  // 退避/时间表等待不是它。
+  'chat.freezeAutoTile': '自动重试中 · {reason}',
+  'chat.freezeWindowTile': '等待工作时段',
   'chat.frozenPlaceholder': '已冻结 · {time} 恢复',
   'chat.frozenPlaceholderNoTime': '已冻结 · 等待恢复',
   'chat.skipFreeze': '跳过本次',
@@ -1463,6 +1706,17 @@ export default {
   'askUser.attachmentUnavailable': '不可用',
   'askUser.attachmentPreview': '预览 {name}',
   'askUser.attachmentDownload': '下载 {name}',
+  // ui-unification-20261103-askuser-attach 批（2026-11-04，IMG_1725 实拍）：附件区
+  // 同源化 + 叠卡 + 来源标签 + 折叠；不可用态给**原因档**与可执行动作（⑤a「· 不可用」
+  // 裸奔退役）。
+  'askUser.attUnavailable_missing': '文件不存在或已被移动',
+  'askUser.attUnavailable_denied': '暂无读取权限（登录态/票据失效）',
+  'askUser.attUnavailable_network': '网络不可达，稍后可重试',
+  'askUser.attUnavailable_unsupported': '该类型暂不支持预览',
+  'askUser.attCanDownload': '可尝试下载',
+  'askUser.attRetryDownload': '重试下载',
+  'askUser.attDownloadFailed': '下载未成功',
+  'askUser.attFoldTotal': '共 {n} 个',
     'askUser.pendingTitle': '待回答问题',
   // held-receipt 投递可靠性批（2026-10-21 fix 3）：「N 条回执待投递」徽标词条。
   // 补投静默批（2026-10-29）：词条去机制名——「被子代理屏障扣留」（引擎内部
@@ -1538,6 +1792,15 @@ export default {
   'chat.copy': '复制',
   'human.details': '细节',
   // 认知二期产品批①选档器（§6.2 五档参数表产品化；档名/档价值观/覆盖参数）
+  // rich-render 批（2026-11-05）：图围栏 / SVG 围栏 / 公式共用的失败态与读数。
+  'fence.renderFailed': '图表渲染失败',
+  'fence.showSource': '展开源码',
+  'fence.hideSource': '收起源码',
+  'fence.sanitized': '已移除 {n} 项不安全内容',
+  'fence.svgParseFailed': 'SVG 语法错误',
+  'fence.svgRootRequired': '根元素不是 svg',
+  'fence.svgNothingLeft': '无可绘制内容',
+  'fence.mathFailed': '公式渲染失败',
   'mermaid.showSource': '查看源码',
   'mermaid.hideSource': '收起源码',
   'chat.copyFailed': '复制失败',
@@ -1615,6 +1878,9 @@ export default {
 
   // === Background tasks ===
   'bg.cancel': '取消',
+  // 扁平取消钮批（2026-11-05 · 三行结构批）：扁平化后按钮只剩字面 + 危险色，
+  // 破坏性语义由 title/aria-label 明说（不可恢复），不留「看着像普通按钮」的缝。
+  'bg.cancelTip': '取消该后台任务（进程会被终止，不可恢复）',
   'bg.cancelling': '取消中...',
   'bg.running': '运行中',
   'bg.ended': '进程已结束',
@@ -1636,6 +1902,13 @@ export default {
   'bgws.noData': '暂无状态数据（快照未覆盖）',
   'bgws.noBgTasks': '本会话无后台任务',
   'bgws.moreTasks': '还有 {count} 个后台任务（主窗口面板查看）',
+  // 手机端后台 agent 对话框简化批（2026-11-06）：⋯ 详情浮层的 meta 行标签。
+  'bgagent.more': '任务详情',
+  'bgagent.detail.source': '来源',
+  'bgagent.detail.created': '创建',
+  'bgagent.detail.worktree': '工作树',
+  'bgagent.detail.plugins': '插件',
+  'bgagent.detail.noWorktree': '就地（未分配工作树）',
   'bg.sectionAgents': '智能体',
   'bg.empty': '当前无运行中的后台任务',
   // 设备同级批（作者令 2026-11-01「本地/远程这组徽标整对退役」）：bg.kind.local /
@@ -1700,8 +1973,8 @@ export default {
   // sectionProgress/pendingShort/globalSource 键随退役路径一并清除；节点视图
   // 键（nodePending/nodeBlocked/inProgressShort/statsProgress/expand/
   // collapse/justNow/progressEmpty）保留。
-  'task.expand': '展开',
-  'task.collapse': '收起',
+  'task.expand': '展开详情',
+  'task.collapse': '收起详情',
   // progressEmpty：空态兜底键（builder 保留未接主路径，无节点时面板收起）
   'task.progressEmpty': '暂无任务',
   'task.justNow': '刚刚',
@@ -1842,7 +2115,30 @@ export default {
   'canvas.zoomIn': '放大',
   'canvas.zoomFit': '适应视图',
   'canvas.pan': '抓手（或按住空格）',
+  'canvas.a11yZoomLevel': '缩放 %d%', // 手机手势批：手机层图片查看 aria-live 档位播报（规格表 §2.8）
   'canvas.imgFailed': '加载失败',
+  // canvas-video-player 批（2026-11-05）：自研视频控件条的无障碍名（aria-label/title，
+  // 不是页面文案 —— 控件面无可见字，除时间读数外零 copy）。
+  'canvas.videoControls': '视频控件',
+  'canvas.videoPlay': '播放',
+  'canvas.videoPause': '暂停',
+  'canvas.videoMute': '静音',
+  'canvas.videoUnmute': '取消静音',
+  'canvas.videoProgress': '进度',
+  'canvas.videoVolume': '音量',
+  'canvas.videoPip': '画中画',
+  'canvas.videoFullscreen': '全屏',
+  'canvas.videoExitFullscreen': '退出全屏',
+  // 文档里放图批（作者报障 2026-11-05「文档里只有路径 图片没渲染出来」）：
+  // 取不到图时**明确占位**（原因 + 原路径），不许留白。
+  'canvas.imgFailTitle': '图片加载失败',
+  'canvas.imgFailMissing': '文件不存在（HTTP {status}）',
+  'canvas.imgFailDenied': '无权读取，票据被拒（HTTP {status}）',
+  'canvas.imgFailBusy': '服务繁忙（HTTP {status}）',
+  'canvas.imgFailBadPath': '路径不合法（HTTP {status}）',
+  'canvas.imgFailUnsupported': '这个类型不供图片取字节（HTTP {status}）',
+  'canvas.imgFailUnreachable': '读不到这张图（路径无效或无权限）',
+  'canvas.imgFailUnknown': '读取失败（HTTP {status}）',
   'canvas.closeTab': '关闭标签页',
   'canvas.stackToggle': '叠卡切换（滚轮 / 上下拖动换卡 · 前景轮换 · 点击前景卡换入 · 横向划走关闭）',
   'canvas.noRef': '该标签页暂不支持引用',
@@ -1973,7 +2269,19 @@ export default {
   // === Scheduled Tasks ===
   'task.empty': '暂无定时任务',
   'task.emptyHint': '点击空白处或按 + 创建',
-  'task.inputPlaceholder': '输入任务内容...',
+  // 新建抽屉（todo-fullbleed 批 2026-11-05：手机页面态新建入口改底部抽屉）
+  'task.sheetTitle': '新建定时任务',
+  'task.sheetCancel': '取消',
+  'task.sheetDone': '创建',
+  // schedule-todo-unify 批 2026-11-06：新建/编辑面拆 name + description 两段
+  // （数据面约定 = content 首行 name、其余行 description，见 scheduled-task.js nameOf/descriptionOf）。
+  'task.inputPlaceholder': '任务名称',
+  'task.descPlaceholder': '描述（可选）',
+  'task.editTitle': '编辑定时任务',
+  'task.nameRequired': '名称不能为空',
+  'task.detailTitle': '详情',
+  'task.detailEmpty': '无描述',
+  'task.triggerTime': '触发时间',
   'task.triggered': '已触发',
   'task.triggerTitle': '定时任务已触发',
   'task.scheduledAt': '预定于 {time} 触发，正在执行...',
@@ -2027,12 +2335,15 @@ export default {
   'todo.filterUngrouped': '未分组',
   'todo.projectPlaceholder': '项目（可选）',
   'todo.edit': '编辑',
-  // 任务模式标注批（2026-10-30 作者令「派发任务显示执行模式」）：
-  // 派发任务（delegate/节点）的执行形态徽标——极简内核（kernel）/ 分发器（dispatcher）。
-  // task.mode.* 三处消费：任务卡（taskList 行内徽标）+ 后台任务面板行 mode chip +
-  // 面板组头徽标词（bgAgents 用原始数据词，不经 i18n）。
-  'task.mode.kernel': '内核',
-  'task.mode.dispatcher': '分发器',
+  // 任务模式标注批（2026-10-30 作者令「派发任务显示执行模式」）+ 术语统一批
+  // （2026-11-06 作者令「统一 根据英文」）：执行形态徽标的词面**不再走 locale**——
+  // task.mode.kernel / task.mode.dispatcher 两键随本批删除，词面单源 =
+  // js/termWords.js（kernel / dispatcher 逐字英文，中文面同串）。
+  // 视觉类名仍由数据值给（.bg-mode-kernel / .bg-mode-dispatcher）。
+  // base 漂移状态位（`[base-moved]` 降噪重写批 2026-11-05）：基分支自本任务派发以来
+  // 前进的次数——**只陈述状态事实**（作者令「base 动了放面板可见即可，不进消息流」），
+  // 不解释机制、不给建议。
+  'task.baseDrift': 'base 已前进 {n} 次',
   'bg.modeTitle': '执行模式：{mode}',
 
   // NebLink
@@ -2045,7 +2356,9 @@ export default {
   'neblink.reachDirect': 'P2P 直连已建立',
   'neblink.reachRelay': '可经服务器中继',
   'neblink.reachServerOnly': '在线——暂无直连通道',
-  'neblink.loggedOutHint': '未登录 —— 点击上方头像登录 {lowerBrand} 账号，登录后自动入网',
+  // 自解释批（2026-11-04 铁律 8）：删尾句「登录后自动入网」= 行为教学/能力说明；
+  // 「未登录」+「点击上方头像登录」= 空态状态 + 下一步动作（细则 b 空态，保留）。
+  'neblink.loggedOutHint': '未登录 —— 点击上方头像登录 {lowerBrand} 账号',
   // 缺陷 A（2026-09-18）：未登录面板的两条读数 —— ①「清理并重登」入口（只在
   // 本地凭据文件类分类下渲染）；②状态面降级（`/status` 非 2xx 的可见读数，修前静默）。
   'neblink.cleanupRelogin': '清理并重登',
@@ -2061,11 +2374,96 @@ export default {
   'neblink.stable': '稳定版',
   'neblink.beta': '测试版',
   'neblink.cancel': '取消',
-  'neblink.updating': '更新中…',
-  'neblink.restarting': '重启中…',
-  // 远端更新超时态（hotupdate 批 3 · 裁定 7「外层 300 秒落在触发/受理面」+ 设计 §7:149
-  // 「超时上限与超时态」）：触发面在 300 秒内没等到任何结果帧时的收口文案。
-  'neblink.updateTimeout': '等待超时（300 秒）——请检查设备状态',
+  // 远端更新的三态文案（`neblink.updating` / `neblink.restarting` / `neblink.updateTimeout`）
+  // 随件五（2026-11-02「联系人里的设备更新去掉，现在统一由官网进行统一更新」）删除：
+  // 三键的唯一消费者是联系人设备行的行内回显，该面退役后全仓零引用（grep 实证）。
+  // `neblink.update` **保留**——设置页设备区每行仍用（`messages.js` 的
+  // `[data-settings-device-update]`，fleet 批 2026-11-01）。
+
+  // ── 全设备统一更新（fleet 批 2026-11-01，作者令「一键把所有设备更新到同一版本，
+  //    并全程有状态卡片引导」）──────────────────────────────────────────────
+  // 帧内只带键（`stageKey` / `failureKey` / `statusKey` / `capabilityKey`），展示文案
+  // 全在这里——禁在 JS 里硬编码中文。`{...}` 为插值占位（i18n.js 的 t()）。
+  'fleet.title': '全设备统一更新',
+  'fleet.subtitle': '本机 v{current} → 目标 v{target} · 阶段：{stages}',
+  'fleet.stages': '准备 → 下载 → 校验 → 切换 → 重启 → 自检 → 完成',
+  // 自解释批（2026-11-04 铁律 8 反例 2 同族）：原「正在更新，请稍候……更新期间本控制台
+  // 不可用，完成后自动接续」= 行为教学（教用户等）+ 能力承诺；改为状态事实：阶段名 + ETA。
+  'fleet.blocking': '正在更新——当前阶段「{stage}」，{eta}。',
+  // 原「设备已发起重启，正在等待它回来（回到本页会自动接续，不需要手动刷新）」= 行为教学 +
+  // 括号补注；改为状态事实：重启中 / 等待重连（细则 b 状态事实）。
+  'fleet.reconnecting': '本机已发起重启——等待重连。',
+  'fleet.eta': '预计 3–5 分钟',
+  'fleet.empty': '暂无可更新的设备。',
+  'fleet.close': '关闭',
+  'fleet.cancel': '中断',
+  'fleet.retry': '重试失败项',
+  'fleet.startConfirm': '开始全部更新',
+  'fleet.startAction': '全部更新',
+  'fleet.updateThisDevice': '更新此设备',
+  'fleet.thisDevice': '本机',
+  'fleet.online': '在线',
+  'fleet.offline': '离线',
+  'fleet.versionUnknown': '版本未知',
+  'fleet.attempt': '第 {n} 次尝试',
+  'fleet.manualTitle': '需手动更新（版本过旧或无法远控）',
+  // `fleet.manualHow` 已删（自解释批 2026-11-04 铁律 8 反例 1 原样点名）：路径指引
+  // 「到该设备上打开控制台 → 设置 → 检查更新」。用户要的是「这行为什么不能一键推」，
+  // 由上面的事实徽标（`fleet.capability.*` / `fleet.stage.manual`）承载；行内只剩
+  // 设备名 + 版本（事实）。渲染点 `fleetUpdate.js` 的手动行徽标同批摘除。
+  'fleet.pendingTitle': '待上线（上线后自动补推）',
+  'fleet.summary.counts': '{updated} 台已更新、{failed} 台失败、{manual} 台需手动、{pending} 台待上线',
+  // 收口状态（引擎 `FleetSummary.status` 的 messageKey 面）
+  'fleet.summary.all-consistent': '全部一致',
+  'fleet.summary.manual-required': '有待手动更新的设备',
+  'fleet.summary.pending-online': '有待上线设备',
+  'fleet.summary.out-of-sync': '版本尚未统一（可推送更新的设备已列出）',
+  // 任务状态（`fleet.job.<status>`）
+  'fleet.job.running': '进行中',
+  'fleet.job.completed': '全部完成',
+  'fleet.job.partial': '部分成功',
+  'fleet.job.cancelled': '已中断',
+  // 七阶段 + 非进度态（`fleet.stage.<wire>`，与 FleetStage 的 wire 值一一对应）
+  'fleet.stage.queued': '排队中',
+  'fleet.stage.prepare': '准备',
+  'fleet.stage.download': '下载中',
+  'fleet.stage.verify': '校验中',
+  'fleet.stage.switch': '切换中',
+  'fleet.stage.restart': '正在重启',
+  'fleet.stage.healthcheck': '健康自检',
+  'fleet.stage.done': '完成',
+  'fleet.stage.failed': '失败',
+  'fleet.stage.manual': '需手动更新',
+  'fleet.stage.waiting-online': '待上线',
+  'fleet.stage.cancelled': '已中断',
+  // 失败五类 + 可操作建议（`fleet.failure.<wire>` / `.advice`）
+  'fleet.failure.download-failed': '下载失败',
+  // 自解释批（2026-11-04 铁律 8）：删两条 advice 的第二句「多次失败请在该设备上手动更新」
+  // ——能力徽标（需手动更新）已说明该事实（重复说明）；保留「失败原因 + 下一步」的失败收口
+  // （细则 b 失败收口，一句话）。
+  'fleet.failure.download-failed.advice': '建议：网络恢复后点「重试失败项」。',
+  'fleet.failure.verify-failed': '校验不过（安装包与本机记录不符）',
+  'fleet.failure.verify-failed.advice': '建议：重试一次；仍不过说明包源有问题。',
+  'fleet.failure.switch-rolled-back': '切换回滚（新版本未站住，已退回上一版）',
+  'fleet.failure.switch-rolled-back.advice': '建议：已自动回滚到可用版本，本机仍在正常服务；请查看该设备日志后手动更新。',
+  'fleet.failure.healthcheck-failed': '自检没过（重启后健康检查失败）',
+  'fleet.failure.healthcheck-failed.advice': '建议：查看该设备日志；确认问题后点「重试失败项」。',
+  'fleet.failure.device-lost': '设备失联',
+  'fleet.failure.device-lost.advice': '建议：确认该设备已开机并联网，然后点「重试失败项」。',
+  'fleet.failure.device-refused': '设备拒绝更新',
+  'fleet.failure.device-refused.advice': '建议：按上面的原因处理；版本过旧的设备请手动更新。',
+  'fleet.failure.unknown': '未知失败',
+  'fleet.failure.unknown.advice': '建议：重试一次；仍失败请查看该设备日志。',
+  // 能力门槛（`fleet.capability.<wire>`）：每台设备的「可远控更新 / 需手动」
+  'fleet.capability.self-reported': '可远控更新（自报支持）',
+  'fleet.capability.version-threshold': '可远控更新（版本达标）',
+  'fleet.capability.version-too-old': '需手动更新（版本过旧）',
+  'fleet.capability.unknown': '需手动更新（版本未知）',
+  // 分发分支（`fleet.branch.<wire>`）
+  'fleet.branch.push': '直接推送',
+  'fleet.branch.manual': '需手动',
+  'fleet.branch.queued': '待上线补推',
+
   // 登录态只读展示（auth-trim 批 2026-10-20 作者令）：谁登录着，无动作入口。
   // 原「切换账号 / 退出登录」键组（switchAccount/logout/loggingOut/useOtherAccount/
   // currentTag）已随两键退役删除 —— 登出/切号只在官网门户操作。
@@ -2101,7 +2499,6 @@ export default {
   'search.scopeCurrent': '当前会话',
   'search.scopeAll': '全部会话',
   'search.scopeMain': '主会话',
-  'search.mobileScopeNote': '仅检索当前主会话 · 类型/日期/角色筛选可叠加 · 空态：{empty}——{hint}',
   // === 消息/联系人页展开式搜索（悬浮钮统一+搜索批 2026-10-31 作者令 16:03）===
   'mhsearch.aria': '搜索',
   'mhsearch.placeholder': '搜索聊天记录',
@@ -2112,6 +2509,7 @@ export default {
   'mhsearch.scopeGroup': '群聊',
   'mhsearch.searching': '搜索中…',
   'mhsearch.resultCount': '{n} 条结果',
+  'mhsearch.descHits': '资料命中 · {n} 个会话',
   'mhsearch.noResults': '无匹配结果',
   'mhsearch.noResultsHint': '试试更换关键词或切换范围',
   'mhsearch.error': '搜索失败，请稍后重试',
@@ -2240,6 +2638,9 @@ export default {
   // 词条引用批 batch 2（hover 气泡 + 返回原文档钮）
   'wiki.termSource': '来源：',
   'wiki.termJumpHint': '点击跳转',
+  // 词条索引块（term-system-v2 词条视觉面批 2026-11-05）：文档尾自动生成的
+  // 「本文引用的词条 + 它所在的文档」折叠小节；{n} = 词条条数。
+  'wiki.termIndexCount': '词条索引（{n}）',
   'wiki.backToSource': '返回原文档',
   // 左栏控制面（搜索/chips/详情卡/断链清单/统计行）
   'wiki.chipAll': '全部',
@@ -2435,6 +2836,18 @@ export default {
   'plugins.builtinBadge': '内置',
   'plugins.builtinTitle': '内置 agent：定义在代码中（BuiltinAgents），面板只读',
   'plugins.detail': '详情',
+  // 源化插件（2026-11-01 源化批，作者令「运行时插件要能热更新、立即用最新版本」）：
+  // 面板每卡的「来源 + 版本」行与「更新」钮。仅对**有源声明**的包渲染（seed 包零变化）。
+  'plugins.sourceLabel': '来源 {source} · v{version} · {state}',
+  'plugins.sourceCurrent': '已是最新',
+  'plugins.sourceOutdated': '有新版本',
+  'plugins.sourceUnreachable': '远端不可达，保持本地版本',
+  'plugins.sourceNotInstalled': '未安装',
+  'plugins.sourceUpdate': '更新',
+  // 自解释批（2026-11-04 铁律 8）：删括号补注「（零重启；失败则本地版本不变）」——能力说明
+  // + 行为承诺；保留版本迁移事实 v{from} → v{to}（细则 c 正例 1 同形）。
+  'plugins.sourceUpdateTitle': '拉取并生效：v{from} → v{to}',
+  'plugins.sourceUpdated': '{name} 已更新',
   'explorer.loading': '加载中...',
   'explorer.empty': '空',
   'flowViewers.saving': '保存中…',
@@ -2583,15 +2996,15 @@ export default {
   'content.agent.general.name': 'general',
   'content.agent.general.desc': '通用执行 agent——能力由分配的 plugins 决定',
   'content.agent.kernel.name': 'kernel',
-  'content.agent.kernel.desc': '极简内核（Delegate 内核）：Nebula 经 Delegate 派发的一次性任务执行者——六件基础工具（Read/Write/Edit/Glob/Grep/Bash，均支持 device= 远端）+ AskUserQuestion，共七件；无项目上下文、无记忆、不派发子代理。用于「不属任何项目 ∧ 需实际执行动作 ∧ 单次」的任务。工具面为机制固定（AgentCore.KernelFixedTools = BaseTools + AskUserQuestion；本文件 tools/skills 声明因 ConvergedAgentNames 含 kernel 而整体失效）。',
+  'content.agent.kernel.desc': '极简内核（Delegate 内核）：主 Agent 经 Delegate 派发的一次性任务执行者——六件基础工具（Read/Write/Edit/Glob/Grep/Bash，均支持 device= 远端）+ AskUserQuestion，共七件；无项目上下文、无记忆、不派发子代理。用于「不属任何项目 ∧ 需实际执行动作 ∧ 单次」的任务。工具面为机制固定（AgentCore.KernelFixedTools = BaseTools + AskUserQuestion；本文件 tools/skills 声明因 ConvergedAgentNames 含 kernel 而整体失效）。',
   'content.plugin.visual-report.name': 'visual-report',
-  'content.plugin.visual-report.desc': '可视化汇报与人读化报告包——节点获得用专业工具（matplotlib/graphviz/plotly）出图、把人读化报告写成给人读的一屏结论、落盘交付并给绝对路径的能力（展示与打开归 Nebula，不调用 Pop）。适用于画图表、画架构图、画流程图、数据可视化、出图配图、做可视化汇报、写给人看的汇报、交付文档、验收报告、调研报告、复盘报告、写给项目负责人的总结、报告太长要压缩、过程件与交付件分开等任务。内含 skill：visual-report（图表/架构图/流程图生成规范：配色、排版、标注、布局审美、单文档 ≤3 图预算；人读交付体例：四段骨架、体量预算；md 规则：图片嵌入、可跳转目录、LaTeX 公式）。不适用于插件封装（另配 nebflow-plugin-creator）；HTML 卡片样式另配 design-cards。组件面：无 mcp.json、无工具扩展。',
+  'content.plugin.visual-report.desc': '可视化汇报与人读化报告包——节点获得用专业工具（matplotlib/graphviz/plotly）出图、把人读化报告写成给人读的一屏结论、落盘交付并给绝对路径的能力（展示与打开归主 Agent，不调用 Pop）。适用于画图表、画架构图、画流程图、数据可视化、出图配图、做可视化汇报、写给人看的汇报、交付文档、验收报告、调研报告、复盘报告、写给项目负责人的总结、报告太长要压缩、过程件与交付件分开等任务。内含 skill：visual-report（图表/架构图/流程图生成规范：配色、排版、标注、布局审美、单文档 ≤3 图预算；人读交付体例：四段骨架、体量预算；md 规则：图片嵌入、可跳转目录、LaTeX 公式）。不适用于插件封装（另配 nebflow-plugin-creator）；HTML 卡片样式另配 design-cards。组件面：无 mcp.json、无工具扩展。',
   'content.plugin.slideblocks.name': 'slideblocks',
   'content.plugin.slideblocks.desc': 'SlideBlocks 演示制作包——节点获得用 Slidev 从零制作/改进完整 PPT 演示（slides、deck、幻灯片）的全流程纪律。适用于做 PPT、写演示、出幻灯片、制作 slides、改进已有 deck、按 Slidev 重做演示等任务。内含 skill：slideblocks（Blocks/Decks/Recipes 全流程、执行锁、交付校验）。不适用于 HTML 卡片与社交图设计（另配 design-cards 插件）。组件面：无 mcp.json、无工具扩展。',
   'content.plugin.nebflow-plugin-creator.name': 'nebflow-plugin-creator',
   'content.plugin.nebflow-plugin-creator.desc': '插件封装器包——节点获得把能力需求封装为合规插件包的全流程执行能力（三输入分析→包生成→机械自检→落盘即生效的交付自检）。适用于把已有 skill 或能力封装成插件、做一个能 Y 的新插件、写 plugin.json 与 SKILL.md、插件描述质量体检、跑包校验脚本等任务。内含 skills：plugin-packaging（三输入→生成→自检→交付的封装主流程，含同名冲突与 digest 漂移等六分叉处置、交付前自检与来源/digest 报告口径）、description-quality（manifest 五段式描述规范：模板、好坏范例、M1-M15 判定口径与核心词表圈定法）。验证与质量审查任务另配 qa 插件。无 mcp.json、无工具扩展。',
   'content.project.general.name': 'general',
-  'content.project.general.desc': 'General-purpose project for executing general tasks: any domain, one-off or recurring; Nebula dispatches, nodes execute.',
+  'content.project.general.desc': 'General-purpose project for executing general tasks: any domain, one-off or recurring; 主 Agent 派发，节点执行。',
 
   // === Bundled-content localization — default-set SKILL descriptions
   // (skillsi18n batch, 2026-09-15; pure data, zero code change) ===
@@ -2607,7 +3020,7 @@ export default {
   'content.skill.nebflow-plugin-creator/description-quality.desc': '{brand} 插件 manifest 描述规范的操作手册——description 五段式唯一描述源口径、触发词核心词表圈定法（全命中判定）、M1-M15 判定口径与四例好坏对照；适用于撰写或体检 plugin.json description 时逐条对照执行。',
   'content.skill.nebflow-plugin-creator/plugin-packaging.desc': '把能力需求封装为合规 {brand} 插件包的执行手册——三输入形态判定（既有 skill 迁移 / MCP server 配置 / 口头能力描述）→生成→机械自检→交付全流程，含六分叉处置与「落盘即生效」的交付口径；适用于节点被分配「封装插件 / 做插件」类任务时按本手册执行。',
   'content.skill.slideblocks/slideblocks.desc': '用 SlideBlocks 自主制作或改进完整、精良的 Slidev 演示——输入可以是一条很短的请求，也可以是 PDF、Word、网页、Markdown、表格、图片、品牌素材、PowerPoint 源 deck 等混合材料。适用于：用户想做一份演示；想迁移到 Slidev；想重新设计、扩充或改进演示；需要为报告、路演、评审、授课、发布、决策或演讲做一份完整 deck；想要 SlideBlocks 的 Blocks、Decks 或 Recipes；或直接给材料说「做成 PPT」。不适用于：要求的最终交付物是任何 PPT/PPTX 或 Office 文件、通用 Office 编辑、或非 Slidev 的演示运行时。',
-  'content.skill.visual-report/visual-report.desc': '可视化汇报工具。用专业工具（matplotlib/graphviz/plotly 等）生成 SVG 图表，落盘后在交付文本里给绝对路径（展示权归 Nebula，节点不调用 Pop）。当需要制作图表、架构图、流程图、数据可视化、可视化报告时使用。',
+  'content.skill.visual-report/visual-report.desc': '可视化汇报工具。用专业工具（matplotlib/graphviz/plotly 等）生成 SVG 图表，落盘后在交付文本里给绝对路径（展示权归主 Agent，节点不调用 Pop）。当需要制作图表、架构图、流程图、数据可视化、可视化报告时使用。',
 
   // === Social interface cards (socpanel batch, 2026-09-19) — pure append ===
   // Definition/data lives in js/socialChannels.js (one array drives order,
@@ -2771,6 +3184,52 @@ export default {
   'taskpanel.grpRunning': '运行中',
   'taskpanel.grpQueued': '排队',
   'taskpanel.empty': '暂无任务',
+  // ── 待办列表面（ReminderIsland 复刻批 2026-11-02；词条 = ReminderIsland L10n 逐对迁）──
+  'todoface.aria': '待办列表',
+  'todoface.capsuleCount': '{n} 待办',
+  'todoface.overdue': '{n} 逾期',
+  'todoface.filter': '筛选',
+  'todoface.collapse': '收起',
+  'todoface.all': '全部',
+  'todoface.add': '添加提醒',
+  'todoface.done': '完成',
+  'todoface.titlePh': '标题',
+  'todoface.notesPh': '备注（可选）',
+  // 两段化（待办结构化批 2026-11-05）：detail 折叠钮与编辑面字段名的可读标签。
+  'todoface.detailToggle': '展开详情',
+  'todoface.detailFieldLabel': '详情',
+  'todoface.prioNone': '无',
+  'todoface.prioLow': '低',
+  'todoface.prioMed': '中',
+  'todoface.prioHigh': '高',
+  'todoface.hasDue': '有截止时间',
+  'todoface.noDue': '无截止时间',
+  'todoface.emptyAll': '暂无提醒',
+  'todoface.emptyAdd': '点按添加提醒',
+  'todoface.complete': '标记完成',
+  'todoface.del': '删除',
+  'todoface.fabAdd': '新建待办',
+  // 新建抽屉（todo-fullbleed 批 2026-11-05：手机页面态新建入口改底部抽屉）
+  'todoface.sheetTitle': '新建待办',
+  'todoface.cancel': '取消',
+  'todoface.completedToast': '已完成',
+  'todoface.undo': '撤回',
+  'todoface.tagName': '提醒标签',
+  'todoface.tagNew': '新建标签',
+  'todoface.tagRename': '重命名',
+  'todoface.tagDelete': '删除',
+  'todoface.tagDeleteTitle': '删除标签',
+  'todoface.tagDeleteConfirm': '删除「{name}」后，该标签下的待办不再带此标签。此操作不可撤销。',
+  'todoface.colorN': '颜色 {n}',
+  // 顶部悬浮「⋯」两级菜单（todo-mobile-topmenu 批 2026-11-06）
+  'todoface.menu': '菜单',
+  'todoface.menuView': '标签',
+  'todoface.menuPrio': '重要度',
+  'todoface.menuNoTags': '暂无标签',
+  // 互动框（impl-row-reply 批 2026-11-06）
+  'todoface.edit': '编辑',
+  'todoface.replyPh': '回复这个待办…',
+  'todoface.send': '发送',
   // ── 感知域（mail-perception-impl 批）──
   'perception.title': '感知',
   'perception.close': '关闭',
@@ -2796,6 +3255,10 @@ export default {
   'perception.cfgAuthCode': '授权码',
   'perception.cfgAuthCodeHint': '在邮箱设置里生成的专用密码，非登录密码',
   'perception.cfgAutoNote': '服务器与端口将按邮箱自动配置',
+  'perception.cfgAutoResolved': '已识别 {addr}：将连接 {resolved}',
+  'perception.cfgAutoUnknown': '未能自动识别该邮箱域 · 请展开「高级设置」手填收发服务器与端口',
+  'perception.relayTimeout': '云端通道未在时限内收到本机应答（Host did not answer in time）· 连接可能已在后台完成，请展开感知面板查看状态；反复出现请检查本机网络与隧道',
+  'perception.netFail': '网络请求失败 · 请确认本机控制台可达后重试 (network unreachable)',
   'perception.cfgAdvanced': '高级设置',
   'perception.cfgImapHost': '收信服务器 (IMAP)',
   'perception.cfgSmtpHost': '发信服务器 (SMTP)',
@@ -2849,4 +3312,43 @@ export default {
   'perception.toPh': '收件人地址，回车添加',
   'perception.addrPh': '输入地址，回车添加',
   'perception.ccBcc': '抄送/密送',
+  // === schedule-created-card 批（2026-11-05）：消息内嵌定时任务/待办卡片 ===
+  // 文案纪律（铁律 8 自解释）：只写状态事实与决策动词 —— 零能力说明、零路径
+  // 指引、零行为教学。状态词一律「是什么」，不写「你可以…」。
+  'schedCard.kindTask': '定时任务',
+  'schedCard.kindTodo': '待办',
+  'schedCard.statusActive': '进行中',
+  'schedCard.statusWriting': '提交中',
+  'schedCard.statusPaused': 'PAUSED',
+  'schedCard.statusDone': '已完成',
+  'schedCard.statusCancelled': '已取消',
+  'schedCard.statusGone': '已不在列表',
+  'schedCard.createdAt': '建 {at}',
+  'schedCard.repeatOnce': '不重复',
+  'schedCard.repeat.hourly': '每小时',
+  'schedCard.repeat.daily': '每天',
+  'schedCard.repeat.weekly': '每周',
+  'schedCard.expand': '展开',
+  'schedCard.collapse': '收起',
+  'schedCard.edit': '编辑',
+  'schedCard.cancel': '取消',
+  'schedCard.save': '保存',
+  'schedCard.saving': '保存中',
+  'schedCard.discard': '放弃修改',
+  'schedCard.fieldContent': '内容',
+  'schedCard.fieldProject': '项目',
+  'schedCard.fieldTriggerAt': '触发时间',
+  'schedCard.fieldRepeat': '重复',
+  'schedCard.projectPlaceholder': '项目标签（空 = 未分组）',
+  'schedCard.confirmCancelAsk': '取消后不再触发。',
+  'schedCard.confirmCancel': '确认取消',
+  'schedCard.cancelling': '取消中',
+  'schedCard.keep': '保留',
+  'schedCard.noChange': '没有改动',
+  'schedCard.readFailed': '引擎状态未读回',
+  'schedCard.errOffline': '未连接引擎，改动未提交',
+  'schedCard.errTimeout': '引擎未回执，改动未确认',
+  'schedCard.errGone': '条目已不存在，改动未保存',
+  'schedCard.errEngine': '引擎拒绝：{detail}',
+  'schedCard.errGeneric': '写入失败，改动未保存',
 };

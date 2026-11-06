@@ -308,8 +308,15 @@ export function nodeHtml(n, pos, originX, nameOf, opts = {}) {
   // 行，不新增卡内纵行（88px 卡纵向不可加行）。
   const loopPhase = (st === 'running' && n.loopPhase && n.loop && typeof n.loop === 'object')
     ? esc(t(`flowmap.loopPhase.${n.loopPhase === 'verify' ? 'verify' : 'worker'}`)) : '';
+  // 说明行（edge-render-fix 批 2026-11-05 作者令「说明不许静默省略」）：**全文入 DOM**，
+  // 视觉两行封顶（CSS -webkit-line-clamp），装不下时由实测趟（flowMapTab
+  // syncDescClipMarkers）给 .fm-desc 打 `.fm-desc--clipped`，同一兄弟位的
+  // `.fm-desc-more`「全文」入口随之显形 —— 点卡即开详情窗（完整获取路径可见）。
+  // 旧实现 `descText.slice(0, 46)` + 硬追加「…」是**在数据层丢信息**（DOM 里从此
+  // 没有原文，任何样式改动都救不回来），本批删除切片：截断只许发生在渲染层。
   const desc = o.noDesc ? '' : (descText
-    ? `<div class="fm-desc" title="${esc(descText)}">${esc(descText.slice(0, 46))}${descText.length > 46 ? '…' : ''}</div>`
+    ? `<div class="fm-desc" title="${esc(descText)}">${esc(descText)}</div>`
+      + `<span class="fm-desc-more">${esc(t('flowmap.descFull'))}</span>`
     : (st === 'running'
         ? `<div class="fm-desc running">${loopPhase || esc(t('flowmap.cardRunning'))}</div>`
         : ''));
@@ -355,7 +362,10 @@ export function nodeHtml(n, pos, originX, nameOf, opts = {}) {
   const titleAttr = subGiven
     ? `${esc(n.name)}${subTitle ? ` · ${esc(subTitle)}` : ''}${(term || delegateReady) && FM_NODE_ST_KEY[st] ? `（${esc(t(FM_NODE_ST_KEY[st]))}）` : ''}`
     : `${esc(n.name)} · ${esc(subTitle)}${term && FM_NODE_ST_KEY[st] ? `（${esc(t(FM_NODE_ST_KEY[st]))}）` : ''}`;
-  const subHtml = !subGiven || subTitle ? `<div class="solar-node-sub">${esc(subTitle)}</div>` : '';
+  // 副行（预设·身份）：单行 + 省略号保留（元数据，非「说明」面），但**整行原文进
+  // title**——截断可见、全文可及（edge-render-fix 批 2026-11-05）。
+  const subHtml = !subGiven || subTitle
+    ? `<div class="solar-node-sub" title="${esc(subTitle)}">${esc(subTitle)}</div>` : '';
   return `
     <div class="solar-node fm-node ${cls}${term ? ' terminal' : ''}" data-node-id="${esc(n.id)}"
          data-status="${esc(st)}" tabindex="0" title="${titleAttr}"${styleAttr}>
@@ -367,7 +377,7 @@ export function nodeHtml(n, pos, originX, nameOf, opts = {}) {
       <div class="fm-node-head${queueFlag ? ' fm-head-queued' : ''}">${o.headPrefix || ''}${worktreeBadge}${flags}${queueFlag}${statusIcon}${statusWord}${chainChev}</div>
       <div class="solar-node-label" title="${esc(n.name)}">${esc(n.name)}</div>
       ${subHtml}
-      ${st === 'pending' && (n.in || []).length > 1 ? `<div class="fm-barrier-hint">barrier ×${(n.in || []).length}</div>` : ''}
+      ${st === 'pending' && (n.in || []).length > 1 ? `<div class="fm-barrier-hint" data-cv-hint="status">barrier ×${(n.in || []).length}</div>` : ''}
       ${waitNote}
       ${desc}
     </div>`;

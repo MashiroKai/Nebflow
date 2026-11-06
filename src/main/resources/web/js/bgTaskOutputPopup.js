@@ -21,6 +21,10 @@
 // - XSS 纪律：动态文本一律 textContent（骨架 innerHTML 仅静态结构）。
 
 import { t } from './i18n.js';
+import { rootDisplayName } from './rootName.js';
+// 来源链批（作者令 2026-11-01 19:23）：详情卡来源行与面板行同走一条链解析
+// （bgSourceChain 单点——「上层 · 下层」名字链；纯显示层既有镜像读数）。
+import { chainForTask, chainLabel } from './bgSourceChain.js';
 import { key } from './branding.js';
 import { statusIcon, escapeHtml } from './utils.js';
 // 弹窗退场批（作者令 2026-10-31②）：手机层输出卡铺满屏 + 左上返回（桌面零变化）。
@@ -84,29 +88,18 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
   height: min(560px, calc(100vh - 96px));
   display: flex; flex-direction: column;
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
-  border-radius: 20px;
+  border-radius: var(--ds-radius-shell);
   overflow: hidden;
-  box-shadow:
-    inset 0 1px 0 0 rgba(255,255,255,0.25),
-    0px 2px 8px rgba(0,0,0,0.04),
-    0px 8px 32px rgba(0,0,0,0.10);
-}
-@media (prefers-color-scheme: dark) {
-  .bgt-modal {
-    box-shadow:
-      inset 0 1px 0 0 rgba(255,255,255,0.04),
-      0px 2px 8px rgba(0,0,0,0.20),
-      0px 8px 32px rgba(0,0,0,0.35);
-  }
+  /* panel-ia 批：面板族弹窗统一走 --ds-shadow-panel（= sapphire.css --frost-shadow
+     单源，亮/暗双档由 token 解析）；本面不再各画一套三元投影。 */
+  box-shadow: var(--ds-shadow-panel);
 }
 
 /* Header：同 .flow-agent-header（顶缘折射线 + 底部 hairline）。 */
 .bgt-header {
-  display: flex; align-items: center; gap: 6px;
-  padding: 10px 16px;
+  display: flex; align-items: center; gap: var(--ds-space-1h);
+  padding: var(--ds-space-block-y) var(--ds-space-4);
   border-bottom: 1px solid var(--glass-border);
   flex-shrink: 0;
   position: relative;
@@ -119,29 +112,29 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
   height: 1px;
   background: linear-gradient(90deg,
     transparent 10%,
-    var(--sapphire-refraction, rgba(99,179,237,0.25)) 50%,
+    var(--sapphire-refraction) 50%,
     transparent 90%);
   pointer-events: none;
   z-index: 1;
 }
-.bgt-title-wrap { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 1px; }
+.bgt-title-wrap { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: var(--ds-space-hair); }
 .bgt-title {
-  font: 600 13px -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 600 var(--ds-fs-body) -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   max-width: 100%;
 }
 .bgt-subtitle {
-  font: 400 11px -apple-system, sans-serif;
+  font: 400 var(--ds-fs-meta) -apple-system, sans-serif;
   color: var(--color-text-muted);
   font-family: ui-monospace, SFMono-Regular, monospace;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   max-width: 100%;
 }
 .bgt-state-chip {
-  display: inline-flex; align-items: center; gap: 5px;
+  display: inline-flex; align-items: center; gap: var(--ds-space-1);
   flex-shrink: 0;
-  font: 400 11px -apple-system, sans-serif;
+  font: 400 var(--ds-fs-meta) -apple-system, sans-serif;
   color: var(--color-frame-text-muted);
 }
 /* Unified panel spec §3.1：状态词 400 让位主名；终态分色同行面板
@@ -152,10 +145,10 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
 .bgt-state-label--failed { color: var(--status-word); }
 .bgt-state-chip .st-ic { width: 11px; height: 11px; }
 .bgt-close {
-  cursor: pointer; font-size: 16px; line-height: 1;
+  cursor: pointer; font-size: var(--ds-fs-callout); line-height: 1;
   opacity: 0.7; transition: opacity 0.15s;
-  padding: 2px 4px; color: var(--color-text);
-  border-radius: 4px;
+  padding: var(--ds-space-half) var(--ds-space-1); color: var(--color-text);
+  border-radius: var(--ds-radius-badge);
   flex-shrink: 0;
   background: none; border: none;
 }
@@ -172,15 +165,15 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
    中性字，红由左侧 2px 描边（图案）＋行首 circle-alert 图标承载。 */
 .bgt-error {
   flex-shrink: 0;
-  display: flex; align-items: flex-start; gap: 6px;
-  padding: 6px 16px;
-  font: 400 11px -apple-system, sans-serif;
+  display: flex; align-items: flex-start; gap: var(--ds-space-1h);
+  padding: var(--ds-space-1h) var(--ds-space-4);
+  font: 400 var(--ds-fs-meta) -apple-system, sans-serif;
   color: var(--status-word);
   border-bottom: 1px solid var(--glass-border);
   border-left: 2px solid var(--status-error-icon);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.bgt-error .st-ic { width: 12px; height: 12px; margin-top: 1px; flex-shrink: 0; }
+.bgt-error .st-ic { width: 12px; height: 12px; margin-top: var(--ds-space-hair); flex-shrink: 0; }
 
 /* 输出区（2026-09-10 作者指令：终端化内芯）：后台任务输出是终端任务——
    内芯 = 跟随主题的深/浅终端底（light #f5f5f5 / dark #111419，与代码块
@@ -189,7 +182,7 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
    复制：.bgt-body 复用代码块 .code-block-wrap 容器 class——.code-copy-btn
    的 hover 浮现（chat.css）与玻璃主题（sapphire.css Pattern B / dark 档）
    零复制生效；padding-top 抬高给右上角浮层按钮留位（28px = 按钮高+余量）。 */
-.bgt-body { flex: 1; min-height: 0; display: flex; position: relative; padding: 0 12px 10px; }
+.bgt-body { flex: 1; min-height: 0; display: flex; position: relative; padding: 0 var(--ds-space-3) var(--ds-space-block-y); }
 /* 复制按钮落进输出框内（2026-09-12 作者令：「复制按钮需要在输出框内」）。
    公共定位（chat.css:1043-1046 .code-copy-btn）为 absolute top:4px/right:4px，
    定位祖先是最近的 position:relative 容器 .bgt-body（padding: 0 12px 10px）
@@ -204,12 +197,12 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
 .bgt-output {
   flex: 1;
   margin: 0;
-  padding: 28px 14px 12px;
+  padding: 28px 14px var(--ds-space-3);
   overflow: auto;
   background: #f5f5f5;
   border: 1px solid var(--color-frame-border);
-  border-radius: 8px;
-  font: 400 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+  border-radius: var(--ds-radius-input);
+  font: 400 var(--ds-fs-hint)/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--color-text);
   white-space: pre-wrap;
   word-break: break-word;
@@ -224,8 +217,8 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
 .bgt-placeholder {
   position: absolute; inset: 0;
   display: flex; align-items: center; justify-content: center;
-  padding: 16px;
-  font: 400 12px -apple-system, sans-serif;
+  padding: var(--ds-space-4);
+  font: 400 var(--ds-fs-hint) -apple-system, sans-serif;
   color: var(--color-text-muted);
   text-align: center;
 }
@@ -237,8 +230,8 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
    与代码块同款交互同款样式，见 .bgt-body 的 code-block-wrap 复用。） */
 .bgt-footer {
   flex-shrink: 0;
-  display: flex; align-items: center; gap: 8px;
-  padding: 8px 16px;
+  display: flex; align-items: center; gap: var(--ds-space-2);
+  padding: var(--ds-space-2) var(--ds-space-4);
   border-top: 1px solid var(--glass-border);
   position: relative;
 }
@@ -249,17 +242,17 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
   height: 1px;
   background: linear-gradient(90deg,
     transparent 10%,
-    var(--sapphire-refraction, rgba(99,179,237,0.25)) 50%,
+    var(--sapphire-refraction) 50%,
     transparent 90%);
   pointer-events: none;
   z-index: 1;
 }
 .bgt-meta {
-  font: 400 11px ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 400 var(--ds-fs-meta) ui-monospace, SFMono-Regular, Menlo, monospace;
   font-variant-numeric: tabular-nums;
   color: var(--color-text-muted);
   min-width: 0;
-  display: inline-flex; align-items: center; gap: 6px;
+  display: inline-flex; align-items: center; gap: var(--ds-space-1h);
 }
 .bgt-meta-text {
   min-width: 0;
@@ -275,15 +268,15 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
   content: '';
   display: inline-block;
   width: 5px; height: 12px;
-  margin-left: 1px;
+  margin-left: var(--ds-space-hair);
   background: var(--color-primary);
   vertical-align: text-bottom;
   animation: blink 1s steps(2) infinite;
 }
 .bgt-prompt { opacity: 0.7; flex-shrink: 0; }
 .bgt-truncated {
-  font: 500 11px -apple-system, sans-serif;
-  color: #d4a030;
+  font: 500 var(--ds-fs-meta) -apple-system, sans-serif;
+  color: var(--status-warn-icon);
   flex-shrink: 0;
 }
 @media (prefers-reduced-motion: reduce) {
@@ -723,12 +716,21 @@ function copyButtonHtml() {
 
 // ── Open / close ──────────────────────────────────────────
 
-export function openBgTaskOutput(task) {
+export function openBgTaskOutput(task, bucketSid) {
   if (!task || !task.taskId) return;
   closeBgTaskOutput();
   ensureCss();
 
   const restoreFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  // 来源链批（作者令 2026-11-01 19:23）：卡面来源行 = 面板行同源链解析（「上层 ·
+  // 下层」名字链）——delegate 批显短名链、节点/分发器链带所属 delegate、根会话件
+  // 显主 agent 显示名（既有口径）。空链（设备任务/解析不出）= 旧读数逐字节回退
+  // （此前 delegate 件在此误显 root 名——origin='nebula' 走 rootDisplayName 分支，
+  // 本链顺修：ownerName 在场即短名链）。
+  const taskChain = chainLabel(chainForTask(task, bucketSid));
+  const legacyOrigin = task.origin === 'nebula'
+    ? rootDisplayName()
+    : String(task.originLabel || '').trim();
   cur = {
     taskId: task.taskId,
     offset: 0,
@@ -749,7 +751,9 @@ export function openBgTaskOutput(task) {
     // 设备同级批（作者令 2026-11-01「本地/远程这组徽标整对退役」）：详情卡来源行
     // 同步停止拼「· 本地 / · 远程」尾缀——设备名（originLabel，设备任务恒为对端
     // 设备名）已在，跑在哪由面板行设备 chip 承载（禁残留第二口径）。
-    originText: String(task.originLabel || '').trim(),
+    // Nebula 退役批（同令）：来源行与面板行同口径——delegate 批次显短名，主 agent
+    // 开启的件显**用户给它起的名字**（后端 originLabel 的机制名不上屏）。
+    originText: taskChain || legacyOrigin,
     // 远端模式面（输出查看补全批）：remoteMode = 轮询 /remote-output 的整窗渲染
     // 分叉；outputPath = 对端日志路径（引擎逐拍回带）；deviceName = 设备名
     // （origin chip 的 label，拉取中占位文案用）。

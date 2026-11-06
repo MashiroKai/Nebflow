@@ -12,7 +12,6 @@ import nebflow.actor.{ActorSystem as RootActorSystem, folderId}
 import nebflow.agent.*
 import nebflow.core.*
 import nebflow.core.entity.EntityLoader
-import nebflow.core.flow.{FlowTreeActor, FlowTreeRegistry, TeamSessionRegistry}
 import nebflow.core.mcp.McpManager
 import nebflow.core.project.{CancelSource as ChainCancelSource, *}
 import nebflow.core.schedule.FreezeSchedule.given
@@ -467,24 +466,72 @@ private[gateway] object WsFileOpsHandlers:
         Json.fromJsonObject(withCached.add("content", content.asJson))
     end contentFrame
 
-    def pullAndStore(re: nebflow.core.tools.RemoteExecutor, peer: PeerInfo, fpOpt: Option[nebflow.core.tools.FileOpenCache.Fingerprint]): IO[Unit] =
-      re.transferGetScopedChunked(peer, remotePath, (b, t, ms) => wsSend(progressFrame(b, t, ms))).flatMap {
-        case Left(err) =>
-          logger.warn(s"remote readFile failed for ${peer.deviceName}: $err")
-          wsSend(errorFrame(err, cancelled = err == nebflow.core.tools.BrowseGetCursor.Cancelled))
-        case Right(res) =>
-          IO.blocking {
-            val bytes = os.read.bytes(res.path)
-            // 对端取件 → 本机持久层入账（下次同件探测指纹命中即免拉）。
-            fpOpt.foreach(fp =>
-              nebflow.core.tools.FileOpenCache.putRemote(peer.deviceId, remotePath, fp, bytes, res.wholeSha256))
-            (res.path, bytes, res.wholeSha256)
-          }.flatMap { case (pickup, bytes, sha) =>
-            val mtimeMs = scala.util.Try(os.mtime(pickup)).getOrElse(0L)
-            wsSend(contentFrame(bytes, pickup, mtimeMs, sha, cached = false))
-          }
-      }
+    // 砍探测税/串行搬运批（2026-11-04 · 作者硬要求「真实实测结果对比」）：每次
+    // 远端开文件打**一条**结构化耗时行，字段固定三档 —— probeMs（目录指纹探测，
+    // 即探测税所在）/ transferMs（分块拉取本体）/ totalMs（含解析与回帧前的全部）。
+    // `path=cache-hit` 是「续开」那一档（本机持久层命中、零拉取）。
+    def timingLine(
+      peerName: String,
+      kind: String,
+      bytes: Long,
+      probeMs: Long,
+      transferMs: Long,
+      totalMs: Long,
+      chunks: Long,
+      chunkSize: Int,
+      window: Int
+    ): String =
+      s"[file-open-timing] device=$peerName path=$kind bytes=$bytes " +
+        s"probeMs=$probeMs transferMs=$transferMs totalMs=$totalMs " +
+        s"chunks=$chunks chunkSize=$chunkSize window=$window"
 
+    def pullAndStore(
+      re: nebflow.core.tools.RemoteExecutor,
+      peer: PeerInfo,
+      fpOpt: Option[nebflow.core.tools.FileOpenCache.Fingerprint],
+      probeMs: Long,
+      openT0: Long
+    ): IO[Unit] =
+      re
+        .transferGetScopedChunked(
+          peer,
+          remotePath,
+          (b, t, ms) => wsSend(progressFrame(b, t, ms)),
+          totalBytesHint = fpOpt.map(_.size).getOrElse(0L)
+        )
+        .flatMap {
+          case Left(err) =>
+            logger.warn(
+              s"remote readFile failed for ${peer.deviceName}: $err " +
+                timingLine(
+                  peer.deviceName,
+                  "pull-error",
+                  0L,
+                  probeMs,
+                  (System.nanoTime() - openT0) / 1000000L - probeMs,
+                  (System.nanoTime() - openT0) / 1000000L,
+                  0L,
+                  0,
+                  0
+                )
+            ) *> wsSend(errorFrame(err, cancelled = err == nebflow.core.tools.BrowseGetCursor.Cancelled))
+          case Right(res) =>
+            IO.blocking {
+              val bytes = os.read.bytes(res.path)
+              // 对端取件 → 本机持久层入账（下次同件探测指纹命中即免拉）。
+              fpOpt.foreach(fp =>
+                nebflow.core.tools.FileOpenCache.putRemote(peer.deviceId, remotePath, fp, bytes, res.wholeSha256))
+              (res.path, bytes, res.wholeSha256)
+            }.flatMap { case (pickup, bytes, sha) =>
+              val mtimeMs = scala.util.Try(os.mtime(pickup)).getOrElse(0L)
+              val totalMs = (System.nanoTime() - openT0) / 1000000L
+              logger.info(
+                timingLine(peer.deviceName, "pull", res.size, probeMs, res.elapsedMs, totalMs, res.chunks, res.chunkSize, res.window)
+              ) *> wsSend(contentFrame(bytes, pickup, mtimeMs, sha, cached = false))
+            }
+        }
+
+    val openT0 = System.nanoTime()
     resolveBrowseTarget(device)(using ctx).flatMap {
       case Left(err) => wsSend(errorFrame(err))
       case Right(None) =>
@@ -509,25 +556,43 @@ private[gateway] object WsFileOpsHandlers:
                   case Right(js) =>
                     IO.pure(nebflow.core.tools.FileOpenCache.fingerprintFromListing(js, probe.substring(slash + 1)))
                 }
-            probeFp.flatMap {
-              case None => pullAndStore(re, peer, None)
-              case Some(fp) =>
-                IO.blocking(nebflow.core.tools.FileOpenCache.lookupRemote(peer.deviceId, remotePath, fp))
-                  .flatMap {
-                    case None => pullAndStore(re, peer, Some(fp))
-                    case Some(hit) =>
-                      IO.blocking {
-                        val pickup =
-                          nebflow.core.tools.FileOpenCache.ensurePickup(peer.deviceId, remotePath, hit.bytes)
-                        (pickup, scala.util.Try(os.mtime(pickup)).getOrElse(0L))
-                      }.flatMap { case (pickup, mtimeMs) =>
-                        logger.info(
-                          s"[file-open-cache] remote hit ${peer.deviceName}:$remotePath (${hit.bytes.length}B) — pull skipped"
-                        )
-                        IO(nebflow.core.tools.FileOpenCache.noteRemotePullSkip())
-                          *> wsSend(contentFrame(hit.bytes, pickup, mtimeMs, hit.sha16, cached = true))
-                      }
-                  }
+            val probeT0 = System.nanoTime()
+            probeFp.flatMap { fpOpt =>
+              val probeMs = (System.nanoTime() - probeT0) / 1000000L
+              fpOpt match {
+                case None => pullAndStore(re, peer, None, probeMs, openT0)
+                case Some(fp) =>
+                  IO.blocking(nebflow.core.tools.FileOpenCache.lookupRemote(peer.deviceId, remotePath, fp))
+                    .flatMap {
+                      case None => pullAndStore(re, peer, Some(fp), probeMs, openT0)
+                      case Some(hit) =>
+                        IO.blocking {
+                          val pickup =
+                            nebflow.core.tools.FileOpenCache.ensurePickup(peer.deviceId, remotePath, hit.bytes)
+                          (pickup, scala.util.Try(os.mtime(pickup)).getOrElse(0L))
+                        }.flatMap { case (pickup, mtimeMs) =>
+                          // 🔴 顺序纪律（2026-11-04 e2e 实测抓到的坑）：`NebflowLogger.info`
+                          // 返回 IO[Unit]，裸写在同一块里会被**丢弃不执行**（本批首版即如此，
+                          // 引擎重启后跑真机 e2e 一行都没打出来）——这里必须 `*>` 串起来。
+                          logger.info(
+                            s"[file-open-cache] remote hit ${peer.deviceName}:$remotePath (${hit.bytes.length}B) — pull skipped"
+                          ) *> logger.info(
+                            timingLine(
+                              peer.deviceName,
+                              "cache-hit",
+                              hit.bytes.length.toLong,
+                              probeMs,
+                              (System.nanoTime() - openT0) / 1000000L - probeMs,
+                              (System.nanoTime() - openT0) / 1000000L,
+                              0L,
+                              0,
+                              0
+                            )
+                          ) *> IO(nebflow.core.tools.FileOpenCache.noteRemotePullSkip())
+                            *> wsSend(contentFrame(hit.bytes, pickup, mtimeMs, hit.sha16, cached = true))
+                        }
+                    }
+              }
             }
     }.handleErrorWith { e =>
       logger.warn(s"remote readFile failed: ${e.getMessage}")

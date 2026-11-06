@@ -2,7 +2,12 @@
    入口 = 消息列表顶部「待办事项」行（.fm-todo-entry，friends.css fm-row 家族）；
    本文件只管：页壳（桌面玻璃 overlay ⇄ 手机收编页）、分组签、待批准 chip、
    入口行图标。行/圆钮/逾期/overdue 语言全部复用 reminder.css reminder-row 族
-   （含 completing/removing 动画），零复制。 */
+   （含 completing/removing 动画），零复制。
+
+   ⛔ 入口收敛批 todo-unify-entry-collapse 2026-11-04：#todo-page 整面退役
+   （DOM 保留在 index.html、不可达），入口行 .fm-todo-entry 亦撤除 ⇒ 本文件
+   全部规则当前无渲染宿主（页壳/分组签/chip/入口行图标）。按本仓退役惯例
+   **样式保留不物理删除**：同一批 DOM 仍挂在 index.html，回切只需恢复入口。 */
 
 /* ── 页壳（桌面 = 玻璃 overlay 页；.open 开合，reminder-panel 同款语义） ── */
 #todo-page {
@@ -15,9 +20,7 @@
   display: flex;
   flex-direction: column;
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  border-radius: 20px;
+  border-radius: var(--ds-radius-shell);
   border: 1px solid var(--sapphire-edge);
   box-shadow:
     inset 0 -1px 0 0 rgba(91, 127, 191, 0.025),
@@ -49,11 +52,11 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 16px 10px;
+  padding: 14px var(--ds-space-4) var(--ds-space-block-y);
   flex-shrink: 0;
 }
 .todo-page-title {
-  font-size: 15px;
+  font-size: var(--ds-fs-title);
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--color-frame-text);
@@ -61,10 +64,10 @@
 .todo-page-header-right {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
 }
 .todo-page-count {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   font-variant-numeric: tabular-nums;
   color: var(--color-frame-text-muted);
@@ -79,17 +82,20 @@
   align-items: center;
   justify-content: center;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   background: none;
   color: var(--color-frame-text-muted);
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
 }
-.todo-create-btn:hover,
-.todo-close-btn:hover {
-  background: var(--glass-control-bg-hover);
-  color: var(--color-frame-text);
+@media (hover: hover) {
+  .todo-create-btn:hover,
+  .todo-close-btn:hover {
+    background: var(--glass-control-bg-hover);
+    color: var(--color-frame-text);
+  }
 }
+
 .todo-create-btn svg,
 .todo-close-btn svg {
   width: 14px;
@@ -100,7 +106,7 @@
 .todo-page-body {
   flex: 1;
   overflow-y: auto;
-  padding: 2px 12px 12px;
+  padding: var(--ds-space-half) var(--ds-space-3) var(--ds-space-3);
   display: flex;
   flex-direction: column;
 }
@@ -110,20 +116,20 @@
 
 /* 空态：复用 reminder-empty 族（reminder.css）。 */
 .todo-page-body .reminder-empty {
-  margin: 24px 0;
+  margin: var(--ds-space-6) 0;
 }
 
 /* ── 分组签（苹果提醒事项小标题语言：小号、淡、计数） ─────────────── */
 .todo-grp {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   letter-spacing: 0.01em;
   color: var(--color-frame-text-muted);
   opacity: 0.75;
-  padding: 10px 6px 4px;
+  padding: var(--ds-space-block-y) var(--ds-space-1h) var(--ds-space-1);
   display: flex;
   align-items: baseline;
-  gap: 6px;
+  gap: var(--ds-space-1h);
 }
 .todo-grp .todo-grp-n {
   font-variant-numeric: tabular-nums;
@@ -134,9 +140,9 @@
 .todo-perm-chip {
   flex-shrink: 0;
   display: inline-block;
-  padding: 0 5px;
-  border-radius: 6px;
-  font-size: 9px;
+  padding: 0 var(--ds-space-1h);
+  border-radius: var(--ds-radius-chip);
+  font-size: var(--ds-fs-meta);
   font-weight: 600;
   line-height: 14px;
   letter-spacing: 0.02em;
@@ -167,18 +173,18 @@
 .todo-filter-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  padding: 8px 6px 4px;
+  gap: var(--ds-space-1h);
+  padding: var(--ds-space-2) var(--ds-space-1h) var(--ds-space-1);
 }
 .todo-filter-chip {
   border: 1px solid var(--glass-control-border, rgba(91, 127, 191, 0.18));
   background: none;
   color: var(--color-frame-text-muted);
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   line-height: 18px;
-  padding: 0 9px;
-  border-radius: 9999px;
+  padding: 0 var(--ds-space-2);
+  border-radius: var(--ds-radius-pill);
   cursor: pointer;
   transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
@@ -196,9 +202,9 @@
 .reminder-proj-tag {
   flex-shrink: 0;
   display: inline-block;
-  padding: 0 5px;
-  border-radius: 6px;
-  font-size: 9px;
+  padding: 0 var(--ds-space-1h);
+  border-radius: var(--ds-radius-chip);
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   line-height: 14px;
   letter-spacing: 0.02em;
@@ -226,8 +232,8 @@
 .reminder-inline-project {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 4px 10px 10px 38px;
+  gap: var(--ds-space-1h);
+  padding: var(--ds-space-1) var(--ds-space-inline-x) var(--ds-space-block-y) 38px;
   color: var(--color-frame-text-muted);
 }
 .reminder-inline-project svg {
@@ -238,12 +244,11 @@
 .reminder-inline-project input {
   flex: 1;
   min-width: 0;
-  border: none;
-  background: none;
   color: var(--color-frame-text);
-  font-size: 11px;
-  outline: none;
+  font-size: var(--ds-fs-meta);
 }
+/* 裸件（无底/无边/无环）：归 css/inputSurface.css 的裸件成员表（输入面唯一
+   标准批 2026-11-06）。 */
 .reminder-inline-project input::placeholder {
   color: var(--color-frame-text-muted);
   opacity: 0.6;

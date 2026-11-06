@@ -57,6 +57,15 @@ import nebflow.shared.{ContentBlock, NebflowLogger, PathUtil}
  * 临界区与崩溃窗口双劣化）。积压零墙钟：无 TTL、无自动丢弃（开放决策⑤）；
  * 可见性 = `depth`（徽标面）。
  *
+ * == 唯一的例外：爆炸保护（刀三，不是流量控制）==
+ *
+ * 「积压零墙钟、一件不丢」**仍然成立**，其边界是一条**极高**的上界：
+ * `DefaultMaxPending`（10000，`-D nebflow.mailbox.maxPending` 可覆写）。新条目
+ * 使 pending 深度达到上界时 `mailOnce` 返回 `Failed("mailbox-full")`——条目
+ * **不入盘**、生产者腿上抛为显式失败（响亮 WARN），绝无静默丢弃、绝无 TTL、
+ * 绝无常态限流；`AlreadyPresent` / `Coalesced` 不走此闸（合条不增条目）。
+ * 越界即事故态（磁盘/内存爆炸前的最后一道闸），不是调度信号。
+ *
  * 分层纪律：本件 ∈ core.mail（core 层，零 agent 依赖）；agent 层消费经
  * [[nebflow.agent.MailboxDrain]]；ExternalEvent codec 本地手写（与
  * `CompactionQueueStore` 同形同键，迁移期两 surface 字节兼容）。
@@ -64,6 +73,26 @@ import nebflow.shared.{ContentBlock, NebflowLogger, PathUtil}
 object SessionMailbox:
 
   private val logger = NebflowLogger.forName("nebflow.core.mail.session-mailbox")
+
+  /**
+   * pending 深度上限默认值（**刀三·爆炸保护，不是流量控制**）。
+   *
+   * 来源 = 审计件
+   * `actorization-gap-and-pekko-migration-audit__20261104_211833__delegate-nebflow-18eb158f.md`
+   * §3 刀三 + 作者裁定：只做爆炸保护、不做流量控制，上界极高，只在极端积压时
+   * 拒绝 + 计数 + 死信可见。10000 ≈ 单个会话正常 pending 的一百倍以上——越界
+   * 即事故态（磁盘/内存爆炸前的最后一道闸），不是调度信号。
+   */
+  val DefaultMaxPending = 10000
+
+  /** `-D nebflow.mailbox.maxPending=<n>` 覆写面（≤0 / 非数 → 回落默认）。 */
+  def maxPending: Int =
+    sys.props
+      .getOrElse("nebflow.mailbox.maxPending", DefaultMaxPending.toString)
+      .trim
+      .toIntOption
+      .filter(_ > 0)
+      .getOrElse(DefaultMaxPending)
 
   /** 邮箱条目（信封 + 载荷）。`identity` = 入队幂等键（防写重，非判重键）。 */
   final case class Entry(
@@ -194,11 +223,30 @@ object SessionMailbox:
               AtomicJson.writeSync(pendingFileOf(recipientSid, merged), merged.asJson.noSpaces)
               MailResult.Coalesced(merged)
             case None =>
-              val seq = nextSeq(recipientSid)
-              val e = Entry(seq, identity, kind, coalesce, now, producer, 0, event)
-              os.makeDir.all(pendingDir(recipientSid))
-              AtomicJson.writeSync(pendingFileOf(recipientSid, e), e.asJson.noSpaces)
-              MailResult.Enqueued(e)
+              // 闸口只读 depth、只拦「新条目」。三句口径（作者裁定，不可改）：
+              // ① 本闸是**爆炸保护，不是流量控制**：默认 10000 极高，只在极端
+              //    积压时拒绝，绝不在常规积压下改变投递行为；
+              // ② 头部「积压零墙钟、一件不丢」**仍成立**：无 TTL、无自动丢弃、
+              //    无常态限流——被拒条目**不在盘上**（显式 Failed，绝不静默吞），
+              //    生产者腿按既有 Failed 分支响亮处置；
+              // ③ 常规积压（depth < 上限）与今日行为**完全一致**：Enqueued 路径
+              //    逐字节未变，仅多一次目录计数。
+              // 已存在条目的 AlreadyPresent / Coalesced 两条分支在闸之前返回，
+              // **闸不误伤**：满箱时合条仍照常合条（合条不增条目 = 不增爆炸压力）。
+              // 接缝（P3 批合入时）：保留本闸，只读 depth、不参与投递消费语义。
+              if pendingDepthSync(recipientSid) >= maxPending then
+                logger.warn(
+                  s"SessionMailbox: pending depth reached explosion guard for '$recipientSid' " +
+                    s"(limit=$maxPending) — entry '$identity' REJECTED as mailbox-full " +
+                    "(not queued; producer must handle the explicit failure; no TTL, no silent drop)"
+                )
+                MailResult.Failed("mailbox-full")
+              else
+                val seq = nextSeq(recipientSid)
+                val e = Entry(seq, identity, kind, coalesce, now, producer, 0, event)
+                os.makeDir.all(pendingDir(recipientSid))
+                AtomicJson.writeSync(pendingFileOf(recipientSid, e), e.asJson.noSpaces)
+                MailResult.Enqueued(e)
         }
       }.handleErrorWith(e => IO.pure(MailResult.Failed(Option(e.getMessage).getOrElse(e.getClass.getSimpleName))))
 
@@ -278,8 +326,14 @@ object SessionMailbox:
 
   /** 徽标面（设计 §2.3：heldReceipts 徽标换数据源 = 邮箱 pending 深度）。 */
   def depth(sid: String): IO[Int] =
-    IO.blocking(listNames(pendingDir(sid)).count(n => n.endsWith(".json") && parseSeq(n).isDefined))
-      .handleErrorWith(_ => IO.pure(0))
+    IO.blocking(pendingDepthSync(sid)).handleErrorWith(_ => IO.pure(0))
+
+  /**
+   * [[depth]] 的同步面：[[mailOnce]] 的爆炸保护闸在 `lock` 内读深度，不再重入
+   * IO（同 [[takeSync]]/[[scanPendingSync]] 的 val 位先例）。只读，不消费。
+   */
+  private def pendingDepthSync(sid: String): Int =
+    listNames(pendingDir(sid)).count(n => n.endsWith(".json") && parseSeq(n).isDefined)
 
   // ── 消费原语（drain 的物理面）────────────────────────────────────────
 

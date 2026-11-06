@@ -58,6 +58,7 @@ export function setFrozenBarState(v, frozen) {
     if (frozen) { input.setAttribute('disabled', ''); input.setAttribute('aria-disabled', 'true'); }
     else { input.removeAttribute('disabled'); input.setAttribute('aria-disabled', 'false'); }
   }
+  // 🔴 #quote-item-btn 随 2026-11-03 10:11 ②（输入框引用图标移除）退出冻结名单。
   for (const sel of ['#voice-btn', '#attach-btn', '#send-btn', '#stop-btn']) {
     const el = bar.querySelector(sel);
     if (!el) continue;

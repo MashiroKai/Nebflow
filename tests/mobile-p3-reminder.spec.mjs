@@ -202,21 +202,37 @@ test('T4 next-trigger main line + last-triggered sub line (open point ①)', asy
   expect(errors).toEqual([]);
 });
 
-test('T5 create entries: header + button and empty-state guide both alive', async ({ page }) => {
+// todo-fullbleed 批（作者令 2026-11-05 17:33「加号按钮使用我们 canvas 同款的按钮
+// 风格放在右下角悬浮」）：**入口换代** —— 页头那颗 22px「+」在手机页面态退场，
+// 新建入口 = 右下 48px 悬浮加号（`.g2-fab` 单源）+ **底部抽屉**（表单不再塞进
+// 列表尾部）。判据随换代改写：① 头 + 不可见 ② 悬浮加号在场且 48 档 ③ 点它 ⇒
+// 抽屉开、表单在抽屉里 ④ 抽屉「取消」键收回 ⑤ 空态引导仍走同一抽屉。
+test('T5 create entries: 右下悬浮加号（Canvas 档）→ 底部抽屉；空态引导同一抽屉', async ({ page }) => {
   const errors = watchErrors(page);
   await openPanel(page);
 
-  // 头部 + 创建钮入口（开放点④：头部入口；桌面既有路径在面板内原样可用）。
-  await expect(page.locator('#reminder-create-btn')).toBeVisible();
-  await page.locator('#reminder-create-btn').click();
-  await expect(page.locator('#reminder-inline-input')).toBeVisible();
+  // ① 页头「+」在手机页面态退场（入口收敛，不留两个新建口）
+  await expect(page.locator('#reminder-create-btn')).toBeHidden();
 
-  // 退出行内创建：点面板体非行区（分组签 div —— body 监听的取消路径；Esc 会
-  // 关整个面板，不入本断言）。
-  await page.locator('#reminder-panel .mh-rd-grp').first().click();
+  // ② 右下悬浮加号：.g2-fab 成员 + Canvas 圆钮档 48
+  const fab = page.locator('#reminder-panel .reminder-fab-add');
+  await expect(fab).toBeVisible();
+  await expect(fab).toHaveClass(/g2-fab/);
+  const box = await fab.boundingBox();
+  expect(Math.round(box.width)).toBe(48);
+  expect(Math.round(box.height)).toBe(48);
+
+  // ③ 点加号 ⇒ 底部抽屉开、表单落在抽屉体内（不在 .reminder-panel-body 里）
+  await fab.click();
+  await expect(page.locator('#reminder-panel .mf-drawer-box')).toBeVisible();
+  await expect(page.locator('#reminder-panel .mf-drawer-body #reminder-inline-input')).toBeVisible();
+
+  // ④ 抽屉「取消」⇒ 表单清场、抽屉收起（列表回到铺满态）
+  await page.locator('#reminder-panel .mf-drawer-cancel-btn').click();
   await expect(page.locator('#reminder-inline-input')).toHaveCount(0);
+  await expect(page.locator('#reminder-panel .mf-drawer-box')).toBeHidden();
 
-  // 空态引导（开放点④：空态入口；tasks 空 + 非 creating 才显示）。
+  // ⑤ 空态引导（开放点④：空态入口；tasks 空 + 非 creating 才显示）同一抽屉
   harness?.sendTasks([]);
   const empty = page.locator('#reminder-panel .reminder-empty');
   await expect(empty).toBeVisible();
@@ -225,6 +241,6 @@ test('T5 create entries: header + button and empty-state guide both alive', asyn
   // 命中用 dispatchEvent（真点击动作性检查会撞上 smooth-scroll 重渲不稳定窗口；
   // 行为腿 = 同一 body click 委托路径）。
   await empty.dispatchEvent('click');
-  await expect(page.locator('#reminder-inline-input')).toBeVisible();
+  await expect(page.locator('#reminder-panel .mf-drawer-body #reminder-inline-input')).toBeVisible();
   expect(errors).toEqual([]);
 });

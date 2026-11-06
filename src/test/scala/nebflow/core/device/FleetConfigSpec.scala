@@ -22,7 +22,7 @@ class FleetConfigSpec extends FunSuite:
   os.makeDir.all(tempRoot)
 
   private def writeConfig(json: String): Unit =
-    os.write.over(tempRoot / "nebflow.json", json, createFolders = true)
+    os.write.over(tempRoot / nebflow.shared.Branding.configFileName, json, createFolders = true)
 
   // ── readSettings 四态 ─────────────────────────────────────────────
 
@@ -51,13 +51,18 @@ class FleetConfigSpec extends FunSuite:
 
   // ── 强制模式报错文案（纯函数）────────────────────────────────────
 
+  // 意图变更（2026-11-02「local 展示面退场」批）：原意图 = 「本机名带 (= local) 括注出现在
+  // 设备列表」；新意图 = 「本机名在列表里与对端名同形、只出现一次（无任何身份括注），
+  // 而 'device="local"' 作为**参数写法**的操作说明仍在尾句」。
   test("explicitDeviceRefusal: lists local + peers and the escape hatch"):
     val msg = FleetConfig.explicitDeviceRefusal("Bash", "KAI", List("Mac"), None)
     assert(msg.startsWith("Bash refused: missing required `device` parameter"), msg)
     assert(msg.contains("fleet.enforceExplicitDevice is ON"), msg)
-    assert(msg.contains("KAI (= local)"), "local device listed with its name")
+    assert(msg.contains("Available devices: KAI, Mac."), s"local name listed, no identity parenthetical: $msg")
+    assert(!msg.contains("(= local)"), s"no 'local' identity annotation next to the local name: $msg")
+    assertEquals(msg.split("KAI", -1).length - 1, 1, s"local device named exactly once: $msg")
     assert(msg.contains("Mac"), "peer listed")
-    assert(msg.contains("device=\"local\""), "explicit local escape hatch documented")
+    assert(msg.contains("device=\"local\""), "explicit local escape hatch documented (parameter syntax, not a badge)")
 
   test("explicitDeviceRefusal: empty roster degrades honestly (roster unavailable)"):
     val msg = FleetConfig.explicitDeviceRefusal("Read", "", Nil, None)

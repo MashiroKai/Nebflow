@@ -43,7 +43,7 @@ class TargetDirNoSideEffectSpec extends CatsEffectSuite:
         _ <- IO(PathUtil.setDataRoot(tmp))
         // 接收端本地允许根配置（发送端无法影响该清单）
         _ <- IO.blocking(
-          os.write.over(tmp / "nebflow.json", s"""{"dropbox":{"allowTargetDirRoots":["$allowRoot"]}}""")
+          os.write.over(tmp / nebflow.shared.Branding.configFileName, s"""{"dropbox":{"allowTargetDirRoots":["$allowRoot"]}}""")
         )
         ms <- NeblinkService.create(0, dispatcher)
         seen <- Ref.of[IO, List[Json]](Nil)

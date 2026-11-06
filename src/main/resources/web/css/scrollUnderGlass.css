@@ -51,8 +51,6 @@
   z-index: 1;
   /* tint 渐变 = 面板底色向下的接续（主态/降级态共用，渐隐过渡本体） */
   background: linear-gradient(to bottom, var(--sug-tint), rgba(251, 252, 254, 0));
-  -webkit-backdrop-filter: blur(var(--sug-blur)) saturate(var(--sug-sat));
-  backdrop-filter: blur(var(--sug-blur)) saturate(var(--sug-sat));
   /* mask 渐变：裙边自身纵向渐隐（毛玻璃"过渡消失"的几何载体） */
   -webkit-mask-image: linear-gradient(to bottom, #000 0%, transparent 100%);
   mask-image: linear-gradient(to bottom, #000 0%, transparent 100%);

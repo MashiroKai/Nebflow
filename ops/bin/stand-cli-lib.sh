@@ -28,6 +28,15 @@
 #   与应用侧 #916 (`stand restart` 注册 launchd 一次性任务, DetachedApply) 互补:
 #   jar 面要求引擎活着能注册; 本 CLI 面零 JVM 依赖(点火腿), 引擎死/挂也能点火。
 #   bare `stand restart` 保持透传给 jar(#916 detached apply 语义不变)。
+#
+# ── restart 三面口径 (作者裁定 2026-11-03 07:45「stand restart 的 cli 的话应该从用户
+#    的角度去设计, 用户应该不是用编译版本的 stand, 应该和我们官网的自动更新、热重启相关」) ──
+#   bare `stand restart` 不接开发护栏腿——终端用户装的是官网发布版(jar+指针布局), 没有源码
+#   树, sbt 编译预检对他们不适用。bare = jar 面 #916 热重启(注册 OS 一次性作业后立即返回,
+#   stop→start→健康闸由系统托管), 与 `stand update` 成对(同一 apply 执行器/日志/状态相)。
+#   CLI 帮助面: `stand restart --help` 分三段(用户面/自救面/开发面), 用户面不出现 sbt/
+#   编译/canary 字样; 开发面单独成段指路 ~/.stand/bin/stand-restart.sh(原 nebflow-restart.sh,
+#   2026-11-03 改名批, 编译预检+canary+四信号, 不进 bare 路径、CLI 不暴露开发旗标)。
 # =============================================================================
 
 BRAND="${_STAND_CLI_BRAND:-stand}"
@@ -58,15 +67,76 @@ stand_port_from_args() { # 扫描 "$@": --port N / --port=N -> echo 端口; 无�
     return 1
 }
 
-stand_resolve_port() { # $@ = 子命令参数; --port > 本品牌 env > 品牌缺省 (隔离: 不读对家 env)
-    local _p _env _dflt
+# >>> HOME-SCOPE (隔离实例误伤批 2026-11-04 §2: 端口解析先看 home) >>>
+# 事故: STAND_HOME=/tmp/seal-canary-home 的隔离 canary 解析出品牌缺省口 6138,
+#      把跑在 6138 的生产实例停机了。本段是法则——Scala 侧同一法则的单一实现是
+#      src/main/scala/nebflow/shared/InstanceScope.scala（decide / proveHome / homeRefusal），
+#      此处是它的 bash 镜像（同一判据、同一文案骨架、逐条对账）。
+stand_home_norm() { # <path> -> 去尾斜杠 (路径字节口径, 不解析符号链接)
+    local _p="$1"
+    while [ "${#_p}" -gt 1 ] && [ "${_p%?}" != "$_p" ] && [ "${_p%/}" != "$_p" ]; do _p="${_p%/}"; done
+    printf '%s\n' "$_p"
+}
+
+stand_home_isolated() { # rc 0 = 本品牌的数据根被覆盖(隔离根); rc 1 = 是默认根
+    # 默认根 = 本品牌默认家 (~/.stand 或 ~/.nebflow) 与 legacy ~/.nebflow —— 与
+    # PathUtil.resolveDefaultDataRoot 的候选集同源。
+    local _b _legacy
+    _b=$(stand_home_norm "$(stand_brand_default_home "$BRAND")")
+    _legacy=$(stand_home_norm "${HOME:-}/.nebflow")
+    case "$(stand_home_norm "${STAND_HOME:-}")" in
+        "$_b"|"$_legacy") return 1 ;;
+    esac
+    return 0
+}
+
+stand_port_from_config() { # <root> -> 该根 nebflow.json 里的顶层 "port" 整数; 无则 rc=1
+    local _f="$1/nebflow.json" _v
+    [ -r "$_f" ] || return 1
+    _v=$(grep -o '"port"[[:space:]]*:[[:space:]]*[0-9][0-9]*' "$_f" 2>/dev/null | head -n 1 | grep -o '[0-9][0-9]*$')
+    [ -n "${_v:-}" ] || return 1
+    printf '%s\n' "$_v"
+}
+
+# 端口解析 (单一实现): --port > [默认根时: 本品牌 env] > 本根配置 "port" >
+#   [默认根时: 品牌缺省口] / [隔离根时: **拒绝** rc=3]。
+# 隔离根里继承来的 *_GATEWAY_PORT 不算显式(可能就是父 shell 给生产实例的那一个):
+# 忽略并打一行 WARN 点名它。
+stand_resolve_port() { # $@ = 子命令参数
+    local _p _env _envname _dflt _cnf
     case "$BRAND" in
-        stand)   _env="${STAND_GATEWAY_PORT:-}";   _dflt=6138 ;;
-        nebflow) _env="${NEBFLOW_GATEWAY_PORT:-}"; _dflt=6140 ;;
+        stand)   _env="${STAND_GATEWAY_PORT:-}";   _envname=STAND_GATEWAY_PORT;   _dflt=6138 ;;
+        nebflow) _env="${NEBFLOW_GATEWAY_PORT:-}"; _envname=NEBFLOW_GATEWAY_PORT; _dflt=6140 ;;
     esac
     if _p=$(stand_port_from_args "$@"); then printf '%s\n' "$_p"; return 0; fi
+    if stand_home_isolated; then
+        if _cnf=$(stand_port_from_config "$STAND_HOME"); then
+            if [ -n "$_env" ]; then
+                echo "WARN: ignoring inherited $_envname=$_env — this invocation's data root is $STAND_HOME (an isolated root, not the default root), so an inherited port is not treated as explicit" >&2
+            fi
+            printf '%s\n' "$_cnf"; return 0
+        fi
+        echo "ERROR: refusing to inherit the brand default port ($_dflt) for data root $STAND_HOME: it is an ISOLATED root (not the default root), and an instance in an isolated root must name its own port." >&2
+        echo "       Pass --port <N> explicitly, or set the \"port\" key in $STAND_HOME/nebflow.json." >&2
+        [ -n "$_env" ] && echo "       (the inherited $_envname=$_env is ignored: an inherited port is not explicit)" >&2
+        return 3
+    fi
     printf '%s\n' "${_env:-$_dflt}"
 }
+
+stand_pid_home() { # <pid> -> 目标进程可证的 home; 无法判定 rc=1
+    # 腿与 InstanceScope.homeFromCommandLine 同序: --home <p> / --home=<p> / -Duser.home=<p>
+    local _cmd _h
+    _cmd=$(stand_cmd_of "$1")
+    [ -n "${_cmd:-}" ] || return 1
+    _h=$(printf '%s\n' "$_cmd" | tr ' ' '\n' | awk 'p{print;exit} $0=="--home"{p=1}')
+    [ -n "${_h:-}" ] || _h=$(printf '%s\n' "$_cmd" | tr ' ' '\n' | sed -n 's/^--home=//p' | head -n 1)
+    [ -n "${_h:-}" ] || _h=$(printf '%s\n' "$_cmd" | tr ' ' '\n' | sed -n 's/^-Duser\.home=//p' | head -n 1)
+    [ -n "${_h:-}" ] || return 1
+    stand_home_norm "$_h"
+}
+# <<< HOME-SCOPE <<<
+
 
 stand_listener_pids() { # <port> -> LISTEN pids (每行一个), 空则端口空闲
     lsof -ti tcp:"$1" -sTCP:LISTEN 2>/dev/null
@@ -186,8 +256,22 @@ cli_stop_impl() { # $@ = 原始参数 (--force/--tree/--port 扫描)
         esac
     done
     if [ "$_stop_tree" = 0 ]; then
-        local _port _stop_port_pids _stop_pf_pid _stop_pf_alive _stop_targets _stop_foreign _p _i _stop_left
-        _port=$(stand_resolve_port "$@")
+        local _port _stop_port_pids _stop_pf_pid _stop_pf_alive _stop_targets _stop_ours _stop_foreign _p _i _stop_left _stop_home
+        if ! _port=$(stand_resolve_port "$@" 2>/dev/null); then
+            # 反向面（隔离实例误伤批 2026-11-04 §1 反）：本根的端口声明不出来，但本根
+            # 也没有活实例 ⇒ 诚实的答案是「没在跑」+ exit 0（零信号、零探测），绝不
+            # 回落到品牌缺省口 6138 去找别人的实例。有活 .pid 时才把解析失败当拒绝上报。
+            local _rp=""
+            [ -r "$STAND_HOME/.pid" ] && _rp=$(tr -d ' \t\r\n' < "$STAND_HOME/.pid" 2>/dev/null)
+            if [ -z "$(printf '%s\n' "${_rp:-}" | stand_alive_pids)" ]; then
+                rm -f "$STAND_HOME/.pid" "$STAND_HOME/.pid.meta" 2>/dev/null
+                echo "$BRAND is not running"
+                return 0
+            fi
+            # 本根确有活实例却声明不出端口 ⇒ 把解析失败的原因照原样打出去再拒（fail-closed）
+            stand_resolve_port "$@" >/dev/null
+            return 3
+        fi
         _stop_port_pids=$(stand_listener_pids "$_port" | stand_alive_pids)
         _stop_pf_pid=""
         if [ -r "$STAND_HOME/.pid" ]; then
@@ -221,6 +305,34 @@ cli_stop_impl() { # $@ = 原始参数 (--force/--tree/--port 扫描)
             echo "       Re-run with --force to kill anyway." >&2
             return 1
         fi
+        # ── HOME 归属门 (隔离实例误伤批 2026-11-04 §1; 不可被 --force 绕过) ──
+        # 2026-11-03 22:59 事故铁证: 一次 STAND_HOME=/tmp/seal-canary-home 的 stand CLI
+        # 调用停掉的是 home=~/.stand/端口=6138 的 44339, 而不是 home=/tmp/seal-canary-home
+        # 的 68701 —— 目标集合只按端口/品牌认实例, 从不看 home。此门把它反过来:
+        #   · home 可证且 ≠ 本家 ⇒ 拒绝并点名两个 home, 零信号;
+        #   · home 无法判定 ⇒ 拒绝(fail-closed, 本家 .pid 记账是唯一可接受的归属证明);
+        # 例外: 用户显式 --force 且目标是**外姓**(上面已判) —— 仍要 home 可证才允许.
+        # 只对本品牌实例过人（外姓进程不属本法则：--force 显式允许杀外姓，语义不变）。
+        _stop_ours=""
+        for _p in $_stop_targets; do
+            if stand_is_ours "$_p"; then _stop_ours="$_stop_ours $_p"; fi
+        done
+        for _p in $_stop_ours; do
+            if _stop_home=$(stand_pid_home "$_p"); then
+                if [ "$_stop_home" != "$(stand_home_norm "$STAND_HOME")" ]; then
+                    echo "ERROR: refusing to stop pid $_p: the target instance's home is $_stop_home but this invocation's home is $(stand_home_norm "$STAND_HOME") — different data roots are different instances; zero signal sent." >&2
+                    echo "       Run the stop from THAT home, or pass the --port of your own instance." >&2
+                    return 1
+                fi
+            else
+                if [ "${_stop_pf_pid:-}" = "$_p" ]; then
+                    :   # 来源即证明: pid 就是本家 .pid 记账的那一个
+                else
+                    echo "ERROR: refusing to stop pid $_p: cannot prove it belongs to this invocation's home $(stand_home_norm "$STAND_HOME") (no --home/-Duser.home evidence in its command line and it is not this root's .pid record) — fail-closed, zero signal sent" >&2
+                    return 1
+                fi
+            fi
+        done
         echo "stopping $BRAND (port $_port, pids:$(echo $_stop_targets))"
         kill $_stop_targets 2>/dev/null
         _i=0
@@ -278,6 +390,9 @@ cli_restart_arm() { # $@ = 已过滤 port args; env: _RESTART_DRY(非空=dry-run
     _log="$STAND_HOME/logs/restart-detached-$(date +%Y%m%d-%H%M%S).log"
     [ -e "$_log" ] && _log="$STAND_HOME/logs/restart-detached-$(date +%Y%m%d-%H%M%S)-$$.log"
     cli_restart_guard_check || exit 1
+    # 隔离实例误伤批 2026-11-04 §2: 端口解析不出来(隔离根没声明端口) ⇒ 不布防 ——
+    # 否则点火器会带着空端口进 stop 腿/点火腿。
+    stand_resolve_port "$@" >/dev/null || exit $?
     {
         echo "== $BRAND restart-detached armed =="
         echo "ts: $(date '+%F %T') (epoch $(date +%s))"
@@ -314,8 +429,14 @@ cli_ignite_restart() { # 隐藏动词: 必须以孤儿身份运行; $1=log, 其�
     done
     exec >> "$_log" 2>&1   # 点火器全程日志落盘 (armed 头由外层已写)
     trap 'rm -f "$STAND_HOME/$RESTART_GUARD_NAME" 2>/dev/null' EXIT
-    local _port _pp _i _targets _t _c _chain _cur _eng_in_tree _rc _jdk _jar
-    _port=$(stand_resolve_port "${IGN_PORT_ARGS[@]}")
+    local _port _prc _pp _i _targets _t _c _chain _cur _eng_in_tree _rc _jdk _jar
+    # 隔离实例误伤批 2026-11-04 §2: 解析不出端口 ⇒ 点火器一步不动 (不 stop 不 start)。
+    _port=$(stand_resolve_port "${IGN_PORT_ARGS[@]}"); _prc=$?
+    if [ "$_prc" != 0 ]; then
+        echo "-- igniter boot --"
+        echo "verdict: ABORT (rc=$_prc) — 端口解析被拒 (隔离根必须显式声明端口); 引擎分毫未动"
+        exit 7
+    fi
     echo "-- igniter boot --"
     echo "ts: $(date '+%F %T') (epoch $(date +%s))  mode: $( [ "$_dry" = 1 ] && echo dry-run || echo restart )"
     echo "brand: $BRAND  home: $STAND_HOME  port: $_port"
@@ -540,12 +661,73 @@ cli_pin_child_env() { # <port> — 探到的端口/解析的家钉进子进程 e
     esac
 }
 
+# >>> RESTART-HELP (作者裁定 2026-11-03 07:45: restart 的 CLI 从用户角度设计) >>>
+# 三段口径: 用户面(jar 面 #916 热重启, 默认) / 自救面(--detached · --dry-run, 零 JVM) /
+# 开发面(stand-restart.sh 外部工具, 不进 bare 路径)。用户面刻意不出现 sbt / 编译 / canary
+# 字样——读者是「只装了官网发布的 stand、机器上没有源码树」的人。
+# 失败语义按引擎实况写(DetachedApply 渲染脚本 do_apply): restart 失败 = phase=failed
+# + 报因留证(日志/状态相), 服务保持停止; **只有 update 才有回滚腿**(切回旧指针并起旧版)。
+stand_restart_help() {
+    local _root="${STAND_HOME:-$(stand_brand_default_home "$BRAND")}"
+    if [ "$BRAND" != "stand" ]; then
+        # nebflow 品牌挂的是 9.19 自有根 jar，没有 restart 子命令 ⇒ 用户面不可用（既有事实，rc=2）。
+        echo "note: '$BRAND' 品牌的 jar（9.19 自有根）没有 restart 命令 —— 用户面（bare / --jar-apply）"
+        echo "      在 '$BRAND' 上不可用，请直接用下面「自救面」的两条腿。以下按 stand 品牌口径说明。"
+        echo
+    fi
+    cat <<EOF
+$BRAND restart — 重启 stand 服务
+
+── 用户面（默认，敲这个就够）：$BRAND restart ──
+  命令只做一件事：把这次「停旧服务 → 起新服务 → 健康检查」交给操作系统的后台作业，
+  随即打印「已排定」回执并返回（几秒内）。所以命令返回后你可以立刻关终端、断 ssh、
+  退出任何会话——后台作业照常跑完，不会被连带中断。
+
+  · 装的是什么版本，重启的就是什么版本：只重跑当前已安装的那一份，不下载、不换包。
+  · 多久生效：通常几十秒。停旧服务最多等 90 秒；新服务的健康检查最多等 180 秒，
+    超时按失败处理。
+  · 失败了会怎样：后台作业停下并写明原因——服务保持停止（不会带着起不来的实例继续跑），
+    原因落在 $_root/logs/apply-restart.log，进度相在 $_root/apply/state.json。
+    照日志里的结论处理即可；修好后重跑一次 $BRAND restart。
+  · 顺带换新版本：用 $BRAND update --from <jar>。它先校验新包再排定同一次重启；
+    健康检查不过会自动回滚到上一个版本并起回旧服务。
+  · 平台：macOS（launchd 一次性作业）/ Windows（计划任务）。Linux 上此能力未内置，
+    命令会直接报错说明，不会假装已排定。
+  · 想同步等待结果、不要后台作业：$BRAND restart --inline（旧同步面，命令自己不返回
+  一直到起停做完）；终端断开即前功尽弃）。
+
+── 自救面（引擎已经挂死、命令起不来时）：--detached / --dry-run ──
+  上面的用户面要求引擎活着（才能把作业排进系统）。引擎死透时用这两条腿——它们
+  完全不碰 JVM，只要 shell 能跑就行：
+  · $BRAND restart --detached
+      在命令行这一层把点火器过继给系统（ppid=1，脱离调用方进程树/会话），自检通过才
+      动手：停旧 → 等端口空 → 直接起服务。全程日志 $_root/logs/restart-detached-*.log。
+      防双点火守卫：$_root/.restart-detached.pid（点火器在飞时再敲会被拒绝）。
+  · $BRAND restart --dry-run
+      假点火：只把「自身 ppid、要动的进程、祖先链里有没有引擎」写成证据日志，不停也不起。
+      验证判据：日志出现 "ppid=1 OK" 且 "engine pid in igniter ancestor chain: NO"，
+      即点火器已经脱离引擎树，之后真跑不会被引擎的树杀连带带走。
+
+── 开发面（本机有源码树、在跑开发实例时才相关）：stand-restart.sh ──
+  这是**另一个工具**，不是本命令的分支：$_root/bin/stand-restart.sh（2026-11 改名前为
+  nebflow-restart.sh，旧名保留为弃用垫片，转发同一实现）。
+  它服务开发者场景——先在本机源码树上做编译预检，再用隔离实例真实起一遍验证，然后等
+  「四信号全空闲 + 观察窗」确认没人在干活了才动手，宁可等也不打断在途任务。
+  用法与全部护栏见 ops/README.md 与脚本自身头注释；裸调用 = 只检测不动手
+  （$_root/bin/stand-restart.sh --check，安全默认）。
+  本命令刻意不把它接进 bare 路径：官网安装版没有源码树，编译预检对终端用户不适用。
+EOF
+}
+# <<< RESTART-HELP <<<
+
 stand_cli_main() {
     local cli_cmd="${1:-}"
     case "$cli_cmd" in
         start)
             local _port _guard_pids _guard_pid
-            _port=$(stand_resolve_port "$@")
+            # 隔离实例误伤批 2026-11-04 §2: 端口解析失败(隔离根没声明端口) ⇒ 直接拒启,
+            # 绝不静默回落品牌缺省口 6138/6140 (那正是 canary 抢生产口的入口).
+            _port=$(stand_resolve_port "$@") || exit $?
             cli_pin_child_env "$_port"
             _guard_pids=$(stand_listener_pids "$_port")
             if [ -n "$_guard_pids" ]; then
@@ -584,17 +766,29 @@ stand_cli_main() {
             ;;
         restart)
             shift
-            local _detached=0 _dry=0 _fwd=() _a
+            local _detached=0 _dry=0 _jar_apply=0 _fwd=() _a _help=0
             for _a in "$@"; do
                 case "$_a" in
-                    --detached) _detached=1 ;;
-                    --dry-run)  _dry=1 ;;
-                    *)          _fwd+=("$_a") ;;   # 其余一律透传 (--port/--force/--tree/run --inline…)
+                    --detached)  _detached=1 ;;
+                    --dry-run)   _dry=1 ;;
+                    --jar-apply) _jar_apply=1 ;;   # 显式具名 = 用户面 jar 面 (#916 detached apply)；与 bare 同路径
+                    --help|-h)   _help=1 ;;        # 帮助面在 brand 探针之前: 不落 JVM
+                    *)           _fwd+=("$_a") ;;   # 其余一律透传 (--port/--force/--tree/run --inline…)
                 esac
             done
+            if [ "$_help" = 1 ]; then stand_restart_help; exit 0; fi
+            if [ "$_jar_apply" = 1 ] && { [ "$_detached" = 1 ] || [ "$_dry" = 1 ]; }; then
+                echo "ERROR: --jar-apply 与 --detached/--dry-run 互斥（前者走引擎 jar 面, 后者是零 JVM 自救腿）" >&2
+                exit 2
+            fi
+            # 用户面（bare / --jar-apply）: jar 面 #916 热重启——RestartCommand.runDetached 注册
+            # OS 一次性 apply 作业（stop→start→健康闸由系统托管）后立即返回, 与 `stand update`
+            # 成对。作者裁定 2026-11-03 07:45: 终端用户装的是官网发布版, 无源码树,
+            # **bare 不接开发护栏腿**（stand-restart.sh 的编译预检/canary 对用户不适用）。
             if [ "$_detached" = 0 ] && [ "$_dry" = 0 ]; then
                 if [ "$BRAND" = "stand" ]; then
-                    cli_boot "restart" "$@"   # bare 透传(逐字, 含 --force/--tree/run --inline): jar 侧 #916 detached apply 语义不变
+                    # --jar-apply 是本面显式具名；剥掉后逐字透传（jar 侧不认识该旗标）。
+                    cli_boot "restart" "${_fwd[@]}"   # bare 透传(逐字, 含 --force/--tree/run --inline): jar 侧 #916 语义不变
                 else
                     echo "nebflow (2026.9.19) jar has no restart command — use: nebflow restart --detached (or --dry-run 假点火验证)" >&2
                     exit 2

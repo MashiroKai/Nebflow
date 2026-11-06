@@ -1,0 +1,374 @@
+diff --git a/src/main/resources/web/js/todoFace.js b/src/main/resources/web/js/todoFace.js
+index 55934ba7d..d13112b11 100644
+--- a/src/main/resources/web/js/todoFace.js
++++ b/src/main/resources/web/js/todoFace.js
+@@ -48,7 +48,7 @@ import { createToggle, setToggleState } from './toggle.js';
+ // 液态形变动效语言单源（todo-mobile-topmenu 批 · 2026-11-06）：顶部两级菜单的
+ // 展开/叠出、新建表单的自顶展开全部只吃这一条时长/曲线/属性白名单；reduced-motion
+ // 由同一模块降级（1ms），本文件不另写第二份毫秒数、不另造第二条曲线。
+-import { morphTransition, reducedMotion as lmReducedMotion } from './motion/liquidMorph.js';
++import { morphTransition, reducedMotion as lmReducedMotion, DURATION as LM_DURATION } from './motion/liquidMorph.js';
+ 
+ /** 截止时间开关的无障碍标签 id 序号（同一面板可能同时挂编辑行与创建行两枚开关）。 */
+ let dueToggleSeq = 0;
+@@ -380,6 +380,21 @@ class TodoFace {
+     this.islandH = 0;
+     this.islandRo = null;
+     this.enteredIds = new Set();
++    // 互动框（impl-row-reply 批 2026-11-06 ③）：唯一节点 + 唯一状态位。
++    //   hitBox = 在飞的框节点（关场延时内仍持有，供计时器自检）；hitId = 它服务的
++    //   条目；hitRow = 起点几何来源（行被重渲后由 reanchorItemBox 换新引用）；
++    //   hitStartH / hitCapH = 两端高（收回落回行高、内容增高不超过页内余量）。
++    this.hitBox = null;
++    this.hitId = null;
++    this.hitRow = null;
++    this.hitStartH = 0;
++    this.hitCapH = 0;
++    this.hitReplyEl = null;
++    this.hitTimer = 0;
++    this.hitOutside = null;
++    this.hitKey = null;
++    this.hitFollow = null;
++    this.hitNav = null;
+     this.unsub = todoStore.subscribe(() => this.onStoreChange());
+     this.buildDom();
+     if (this.expanded) this.panel.classList.add('tfl-panel-open');
+@@ -1049,6 +1064,8 @@ class TodoFace {
+     if (this.destroyed) return;
+     this.renderAll();
+     if (this.expanded && !this.mobile && !this.outsideBound) this.bindOutsideClose();
++    // 互动框开着时行会被重建 ⇒ 重新锚定到新行（条目消失即收场）
++    if (this.hitId) this.reanchorItemBox();
+     // 菜单开着时重画两级读面（勾选态/次行读数跟随 store；面板状态类不重播动画）
+     if (this.menuOpen) {
+       this.renderMenu();
+@@ -1363,9 +1380,14 @@ class TodoFace {
+       due.classList.toggle('overdue', isOverdue);
+       main.appendChild(due);
+     }
+-    // 点击行体 = 进编辑（展开+聚焦统一入口；编辑态点击文本区 = 保存收起）
++    // 点击行体：手机腿 = 原位浮出**互动框**（impl-row-reply 批 2026-11-06 ③，
++    // 不再跳详情/编辑页）；桌面腿 = 进编辑（展开+聚焦统一入口；编辑态点击文本区
++    // = 保存收起）。
+     if (!editing) {
+-      main.addEventListener('click', () => { if (!this.editingId) this.startEditing(item.id); });
++      main.addEventListener('click', () => {
++        if (this.mobile) this.toggleItemBox(item.id);
++        else if (!this.editingId) this.startEditing(item.id);
++      });
+     }
+     row.appendChild(main);
+     row.appendChild(this.buildCompleteButton(item));
+@@ -1408,6 +1430,303 @@ class TodoFace {
+     return btn;
+   }
+ 
++  /* ── ③ 条目点击 → 互动框（impl-row-reply 批 · 2026-11-06）──────────────────
++     作者口径：点待办行**不再跳详情/编辑页**，先原位浮出一块互动框（图3 的
++     「浮起 + 轻微上移」层级感）；点外部 / 再点同一行 / Esc 收起。
++
++     形态与动效（液态形变单源）：
++       · 同一个节点、两端几何各自显式 —— 起点 = **行盒实测**（宽/高/落位/行圆角/
++         无浮影），终点 = 内容自然高 / 卡圆角 / 浮影 / -2px 上移；中间零声明，由
++         浏览器插值（DESIGN.md §4 判据 1）。过渡串 = js/motion/liquidMorph.js 的
++         morphTransition()（base 280ms / 唯一曲线 / 属性白名单内），reduced-motion
++         由同一模块降到 1ms —— 本文件不写第二份毫秒数、不写第二份曲线。
++       · 位移腿只走 transform（不写 top 补间）⇒ 插值段里零布局跳变。
++     零位移不变量：框是**绝对定位浮件**（定位盒 = 手机页面壳 `.mobile-page`，
++     absolute + overflow:hidden），全程不参与列表布局 ⇒ 开合前后首条行 rect、
++     `.tfl-list` 的 scrollTop/scrollHeight、页面壳滚轴逐值不变（spec A 组）。
++     材质 / 尺寸：面 = `.nf-glass`（毛玻璃单源，本文件零 backdrop-filter）；
++     圆角吃既有 `--ds-radius-card-lg`；输入面 = `.nf-textarea`（css/input.css 与
++     主输入框同一份声明，本批只补几何），不新造第二套输入框。 */
++
++  /** 互动框的定位盒 = 手机页面壳；取不到时回落 body（两种口径同一套相对坐标）。 */
++  itemBoxShell() {
++    const root = this.root;
++    const shell = (root && root.closest) ? root.closest('.mobile-page') : null;
++    return shell || document.body;
++  }
++
++  /** 行点击入口：同一行二次点击 = 收起（作者口径「再次点条目收起」）。 */
++  toggleItemBox(id) {
++    if (this.hitId === id) this.closeItemBox();
++    else this.openItemBox(id);
++  }
++
++  openItemBox(id) {
++    if (this.destroyed) return;
++    const item = todoStore.openItems().find((it) => it.id === id);
++    if (!item) return;
++    const row = this.listInner.querySelector(`.tfl-row[data-id="${CSS.escape(id)}"]`);
++    if (!row) return;
++    const shell = this.itemBoxShell();
++    if (!shell) return;
++    this.closeItemBox(true); // 换行开框：旧框瞬时清场（不叠两块）
++    const box = this.buildItemBox(item);
++    shell.appendChild(box);
++    const shellRect = shell.getBoundingClientRect();
++    const r = row.getBoundingClientRect();
++    const gap = Number.parseFloat(getComputedStyle(shell).getPropertyValue('--ds-space-2')) || 8;
++    const rowTop = r.top - shellRect.top;
++    // 起点几何 = 行盒（逐值实测）；先量终点（自然高）再回写起点高
++    box.style.left = `${r.left - shellRect.left}px`;
++    box.style.top = `${rowTop}px`;
++    box.style.width = `${r.width}px`;
++    box.style.height = 'auto';
++    const natural = box.offsetHeight;
++    const startH = r.height;
++    box.style.height = `${startH}px`;
++    box.style.transform = 'translateY(0px)';
++    // 终点几何：长到内容自然高；页内只留 2×gap 余量（超出 ⇒ 框体内部滚动）
++    const capH = Math.max(startH, shellRect.height - 2 * gap);
++    const targetH = Math.min(natural, capH);
++    // 下方放得下 ⇒ 向下长；放不下且上方更宽裕 ⇒ 同一节点向上长（位移腿 = transform）
++    let dy = 0;
++    if (targetH > shellRect.height - rowTop - startH) {
++      dy = -(targetH - startH);
++      if (rowTop + dy < gap) dy = gap - rowTop; // 不越页顶
++    }
++    box.style.transition = morphTransition(
++      ['height', 'border-radius', 'box-shadow', 'transform'],
++      { duration: 'base', reduced: lmReducedMotion() },
++    );
++    this.hitBox = box;
++    this.hitId = id;
++    this.hitRow = row;
++    this.hitStartH = startH;
++    this.hitCapH = targetH;
++    this.bindItemBoxChrome();
++    requestAnimationFrame(() => {
++      if (this.hitBox !== box) return;
++      box.style.height = `${targetH}px`;
++      box.style.transform = `translateY(${dy - 2}px)`; // -2px = 图3 的轻微上移
++      box.classList.add('is-open');
++    });
++  }
++
++  closeItemBox(instant = false) {
++    const box = this.hitBox;
++    const startH = this.hitStartH;
++    this.unbindItemBoxChrome();
++    this.hitBox = null;
++    this.hitId = null;
++    this.hitRow = null;
++    this.hitReplyEl = null;
++    this.hitCapH = 0;
++    if (!box) return;
++    clearTimeout(this.hitTimer);
++    if (instant || lmReducedMotion()) { box.remove(); return; }
++    // 收回 = 同一节点倒放回行盒（高/圆角/浮影/位移四腿同段）
++    box.style.transition = morphTransition(
++      ['height', 'border-radius', 'box-shadow', 'transform'],
++      { duration: 'base' },
++    );
++    box.classList.remove('is-open');
++    if (startH) box.style.height = `${startH}px`;
++    box.style.transform = 'translateY(0px)';
++    this.hitTimer = setTimeout(() => box.remove(), LM_DURATION.base + 40);
++  }
++
++  /** 框的 DOM（纯构建器：标题 / 详情 / 重要度 / 标签 / 完成 / 编辑 / 多行输入 + 发送）。
++   *  结构类名一律 `tfl-hit-*`；零裸 innerHTML（组件契约 R5）。 */
++  buildItemBox(item) {
++    const box = el('div', 'tfl-hit nf-glass');
++    box.setAttribute('role', 'dialog');
++    box.setAttribute('aria-label', item.name);
++    const body = el('div', 'tfl-hit-body');
++
++    const head = el('div', 'tfl-hit-head');
++    const dot = el('span', 'tfl-hit-dot');
++    dot.style.background = PRIORITY_COLORS[item.priority] || PRIORITY_COLORS[0];
++    const title = el('span', 'tfl-hit-title', item.name);
++    title.title = item.name;
++    head.append(dot, title);
++    const prio = el('span', 'tfl-hit-prio', t(PRIORITY_LABEL_KEYS[item.priority] || PRIORITY_LABEL_KEYS[0]));
++    head.appendChild(prio);
++    const tag = item.tagId ? todoStore.tagById(item.tagId) : null;
++    if (tag) {
++      const badge = el('span', 'tfl-hit-tag', tag.name);
++      badge.style.setProperty('--tag-color', tag.color);
++      head.appendChild(badge);
++    }
++    body.appendChild(head);
++
++    if (item.detail) body.appendChild(el('div', 'tfl-hit-detail', item.detail));
++
++    const acts = el('div', 'tfl-hit-acts');
++    const done = el('button', 'tfl-hit-done', t('todoface.done'));
++    done.type = 'button';
++    done.addEventListener('click', (e) => {
++      e.stopPropagation();
++      const rowEl = this.hitRow;
++      this.closeItemBox();
++      if (rowEl && rowEl.isConnected) this.performComplete(item.id, rowEl);
++    });
++    // 行内编辑入口搬到框里（作者口径「不跳编辑页」：先看框，想改再进）。
++    // 编辑面本体零改动 —— 仍是 startEditing() 那一套。
++    const edit = el('button', 'tfl-hit-edit', t('todoface.edit'));
++    edit.type = 'button';
++    edit.addEventListener('click', (e) => {
++      e.stopPropagation();
++      this.closeItemBox(true);
++      this.startEditing(item.id);
++    });
++    acts.append(done, edit);
++    body.appendChild(acts);
++
++    // ④ 多行输入：回车 = 换行（不发送）、内容自增高到上限后内部滚动、发送 = 独立钮
++    const replyRow = el('div', 'tfl-hit-replyrow');
++    const ta = el('textarea', 'nf-textarea tfl-hit-reply');
++    ta.rows = 1;
++    ta.placeholder = t('todoface.replyPh');
++    ta.setAttribute('aria-label', t('todoface.replyPh'));
++    ta.addEventListener('input', () => this.autosizeReply(ta));
++    ta.addEventListener('keydown', (e) => {
++      // 回车只换行：既不发送、也不让页面级键道接管（stopPropagation 不吃默认行为）。
++      // IME 组合中的回车照常交给输入法上屏（isImeComposing 判在按键处理器之外）。
++      if (e.key === 'Enter') e.stopPropagation();
++      if (e.key === 'Escape') e.stopPropagation();
++    });
++    const send = el('button', 'tfl-hit-send', t('todoface.send'));
++    send.type = 'button';
++    send.addEventListener('click', (e) => {
++      e.stopPropagation();
++      this.sendReply(item);
++    });
++    replyRow.append(ta, send);
++    body.appendChild(replyRow);
++    box.appendChild(body);
++    this.hitReplyEl = ta;
++    return box;
++  }
++
++  /** 输入面自增高：先 `height:auto` 量内容，再按 CSS 的 max-height 上限钳住
++   *  （上限只有一份 —— 在 css/mobileLayer.css 的 `.tfl-hit-reply` 里）。 */
++  autosizeReply(ta) {
++    if (!ta || !ta.isConnected) return;
++    ta.style.height = 'auto';
++    const cap = Number.parseFloat(getComputedStyle(ta).maxHeight);
++    const next = Number.isFinite(cap) && cap > 0 ? Math.min(ta.scrollHeight, cap) : ta.scrollHeight;
++    ta.style.height = `${next}px`;
++    this.growItemBox();
++  }
++
++  /** 输入变高 ⇒ 框同段长高（同一语言、fast 档：几何小位移腿），钳在页内余量。 */
++  growItemBox() {
++    const box = this.hitBox;
++    if (!box) return;
++    const body = box.firstElementChild;
++    if (!body) return;
++    const pad = box.offsetHeight - box.clientHeight; // 盒边框
++    const want = Math.min(body.scrollHeight + pad, this.hitCapH || Infinity);
++    if (!Number.isFinite(want) || want <= 0) return;
++    if (Math.abs(want - box.offsetHeight) < 1) return;
++    box.style.transition = morphTransition(['height'], {
++      duration: 'fast', reduced: lmReducedMotion(),
++    });
++    box.style.height = `${want}px`;
++  }
++
++  /** ⑤ reply 腿：`#<待办名> <回复正文>` 逐字进**主会话**（单源出口 = input.js 的
++   *  send()：乐观气泡 / 落盘 / 历史 / 排队 / 出帧全在它里面，本文件不拼帧）。 */
++  async sendReply(item) {
++    const ta = this.hitReplyEl;
++    if (!ta) return;
++    const text = ta.value;
++    if (!text.trim()) return;
++    // 逐字形态：井号 + 待办名 + 一个空格 + 回复正文（多行原样保留换行）
++    const body = `#${item.name} ${text}`;
++    let send;
++    let composer;
++    try {
++      const mod = await import('./input.js');
++      send = mod.send;
++      const view = await import('./chatView.js');
++      composer = (view.activeView && view.activeView.dom && view.activeView.dom.input)
++        || document.getElementById('input');
++    } catch (err) {
++      console.error('[todoFace] reply 出口不可得:', err);
++      return;
++    }
++    if (typeof send !== 'function' || !composer) return;
++    composer.value = body;
++    // 冒泡 input 事件 = 输入模块既有监听（auto-grow / 活动视图锚定）的入口
++    composer.dispatchEvent(new Event('input', { bubbles: true }));
++    send();
++    // send() 消费了输入框 = 已派发或已入队（它自己清空）；否则保留输入内容
++    if (composer.value === '') {
++      ta.value = '';
++      this.closeItemBox();
++    }
++  }
++
++  /** 外部收起 / Esc / 跟随滚动 / 页面切走（一次绑定，关场即解绑）。 */
++  bindItemBoxChrome() {
++    this.unbindItemBoxChrome();
++    this.hitOutside = (e) => {
++      const t = e.target;
++      if (!(t instanceof Element)) return;
++      if (this.hitBox && this.hitBox.contains(t)) return;
++      // 行自己负责开/收（再点同一行 = 收起），外部处理器让位给行的 click
++      if (t.closest('.tfl-row')) return;
++      this.closeItemBox();
++    };
++    document.addEventListener('pointerdown', this.hitOutside, true);
++    this.hitKey = (e) => { if (e.key === 'Escape') this.closeItemBox(); };
++    document.addEventListener('keydown', this.hitKey, true);
++    this.hitFollow = () => this.followItemBox();
++    window.addEventListener('scroll', this.hitFollow, true);
++    window.addEventListener('resize', this.hitFollow);
++    this.hitNav = (e) => {
++      const d = e && e.detail;
++      if (d && d.top && d.top !== 'tasks') this.closeItemBox(true);
++    };
++    document.addEventListener('nf:mobile-nav', this.hitNav);
++  }
++
++  unbindItemBoxChrome() {
++    if (this.hitOutside) document.removeEventListener('pointerdown', this.hitOutside, true);
++    if (this.hitKey) document.removeEventListener('keydown', this.hitKey, true);
++    if (this.hitFollow) {
++      window.removeEventListener('scroll', this.hitFollow, true);
++      window.removeEventListener('resize', this.hitFollow);
++    }
++    if (this.hitNav) document.removeEventListener('nf:mobile-nav', this.hitNav);
++    this.hitOutside = null;
++    this.hitKey = null;
++    this.hitFollow = null;
++    this.hitNav = null;
++  }
++
++  /** 跟随行（列表内滚 / 视口变化）：只写 top（不参与过渡），框不锚死在旧 y。 */
++  followItemBox() {
++    const box = this.hitBox;
++    const row = this.hitRow;
++    if (!box || !row) return;
++    if (!row.isConnected) { this.closeItemBox(); return; }
++    const shell = box.parentElement;
++    if (!shell) return;
++    const shellRect = shell.getBoundingClientRect();
++    box.style.top = `${row.getBoundingClientRect().top - shellRect.top}px`;
++  }
++
++  /** 行被重渲（store 变更 ⇒ renderRows 重建行）后重新锚定；条目没了就收场。 */
++  reanchorItemBox() {
++    if (!this.hitId) return;
++    const row = this.listInner.querySelector(`.tfl-row[data-id="${CSS.escape(this.hitId)}"]`);
++    if (!row) { this.closeItemBox(); return; }
++    this.hitRow = row;
++    this.followItemBox();
++  }
++
+   /** 完成三段动画（performComplete 逐帧迁移）：
+    *  0s 圆环→绿填 spring(0.3,0.7)；+0.15s 对勾 scale spring(0.2,0.6)；
+    *  +0.5s 行淡出上移 easeOut 0.3；+0.8s 真删除（store completeItem）。 */
+@@ -2354,6 +2673,8 @@ class TodoFace {
+     clearTimeout(this.menuTimer);
+     clearTimeout(this.subTimer);
+     clearTimeout(this.sheetTimer);
++    clearTimeout(this.hitTimer);
++    this.closeItemBox(true);
+     this.unsub();
+     this.unbindOutsideClose();
+     if (this.cancelMorph) this.cancelMorph();

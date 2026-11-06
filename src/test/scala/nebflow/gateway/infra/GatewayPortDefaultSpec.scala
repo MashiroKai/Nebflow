@@ -84,16 +84,16 @@ class GatewayPortDefaultSpec extends FunSuite:
       // 无配置文件 → None
       assertEquals(GatewayConfig.configFilePort(), None)
       // 空对象 → None
-      os.write.over(tmp / "nebflow.json", "{}")
+      os.write.over(tmp / nebflow.shared.Branding.configFileName, "{}")
       assertEquals(GatewayConfig.configFilePort(), None)
       // 显式 port 键 → 命中
-      os.write.over(tmp / "nebflow.json", """{"port": 6199, "llm": {}}""")
+      os.write.over(tmp / nebflow.shared.Branding.configFileName, """{"port": 6199, "llm": {}}""")
       assertEquals(GatewayConfig.configFilePort(), Some(6199))
       // 非法 JSON → None（绝不抛错炸掉启动闸）
-      os.write.over(tmp / "nebflow.json", "{not json")
+      os.write.over(tmp / nebflow.shared.Branding.configFileName, "{not json")
       assertEquals(GatewayConfig.configFilePort(), None)
       // 非整数 port → None
-      os.write.over(tmp / "nebflow.json", """{"port": "6199"}""")
+      os.write.over(tmp / nebflow.shared.Branding.configFileName, """{"port": "6199"}""")
       assertEquals(GatewayConfig.configFilePort(), None)
     finally
       nebflow.shared.PathUtil.setDataRoot(savedRoot)

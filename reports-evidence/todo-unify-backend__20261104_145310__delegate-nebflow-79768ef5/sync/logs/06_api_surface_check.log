@@ -1,0 +1,13 @@
+=== exports still present after merge ===
+--- utils.js createIconsIn ---
+1088:export function createIconsIn(root) {
+--- i18n.js t ---
+25:export function t(key, params) {
+--- imeGuard.js ---
+86:export function isImeComposing(e, el) {
+--- ws.js sendWs ---
+524:export function sendWs(msg) {
+--- state.js activeSessionId ---
+116:  activeSessionId: null,
+--- taskList.js sessionShowsNodeEntries ---
+57:export function sessionShowsNodeEntries(sid) {

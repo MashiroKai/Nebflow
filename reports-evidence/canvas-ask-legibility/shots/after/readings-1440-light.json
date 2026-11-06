@@ -1,0 +1,221 @@
+{
+  "phase": "after",
+  "ld": {
+    "vp": {
+      "w": 1440,
+      "h": 900
+    },
+    "dock": {
+      "x": 1043,
+      "y": 573.03125,
+      "w": 372,
+      "h": 241.96875,
+      "top": 573.03125,
+      "bottom": 815,
+      "left": 1043,
+      "right": 1415,
+      "r": 0
+    },
+    "col": {
+      "x": 1043,
+      "y": 573.03125,
+      "w": 372,
+      "h": 212.96875,
+      "top": 573.03125,
+      "bottom": 786,
+      "left": 1043,
+      "right": 1415,
+      "r": 0
+    },
+    "wrap": {
+      "x": 1043,
+      "y": 573.03125,
+      "w": 372,
+      "h": 212.96875,
+      "top": 573.03125,
+      "bottom": 786,
+      "left": 1043,
+      "right": 1415,
+      "r": 0
+    },
+    "input": {
+      "x": 1043,
+      "y": 757,
+      "w": 372,
+      "h": 58,
+      "top": 757,
+      "bottom": 815,
+      "left": 1043,
+      "right": 1415,
+      "r": 12
+    },
+    "lastBub": {
+      "x": 1043,
+      "y": 636.625,
+      "w": 372,
+      "h": 114.375,
+      "top": 636.625,
+      "bottom": 751,
+      "left": 1043,
+      "right": 1415,
+      "r": 16
+    },
+    "aiBub": {
+      "x": 1043,
+      "y": 636.625,
+      "w": 372,
+      "h": 114.375,
+      "top": 636.625,
+      "bottom": 751,
+      "left": 1043,
+      "right": 1415,
+      "r": 16
+    },
+    "nBub": 2,
+    "rowGap": "6px",
+    "fadeH": "12px",
+    "tail": "",
+    "under": "29.00px",
+    "colPadTop": "18px",
+    "colPadBottom": "35px",
+    "colMask": "none",
+    "maskStops": [],
+    "matBubAi": {
+      "bg": "rgba(255, 255, 255, 0.55)",
+      "bgImage": "none",
+      "border": "rgba(255, 255, 255, 0.35)",
+      "blur": "blur(40px) saturate(1.4)",
+      "color": "rgb(27, 30, 38)",
+      "radius": "16px",
+      "shadow": "rgba(255, 255, 255, 0.25) 0px 1px 0px 0px inset, rgba(0, 0, 0, 0.04) 0px 2px 8px 0px, rgba(0, 0, 0, 0.06) 0px 8px 24px 0px",
+      "refractionBefore": "linear-gradient(90deg, rgba(0, 0, 0, 0) 10%, rgba(255, 255, 255, 0.45) 50%, rgba(0, 0, 0, 0) 90%)",
+      "refractionHeight": "1px"
+    },
+    "matBubUser": {
+      "bg": "rgba(255, 255, 255, 0.55)",
+      "bgImage": "none",
+      "border": "rgba(255, 255, 255, 0.35)",
+      "blur": "blur(40px) saturate(1.4)",
+      "color": "rgb(27, 30, 38)",
+      "radius": "16px",
+      "shadow": "rgba(255, 255, 255, 0.25) 0px 1px 0px 0px inset, rgba(0, 0, 0, 0.04) 0px 2px 8px 0px, rgba(0, 0, 0, 0.06) 0px 8px 24px 0px",
+      "refractionBefore": "linear-gradient(90deg, rgba(0, 0, 0, 0) 10%, rgba(255, 255, 255, 0.45) 50%, rgba(0, 0, 0, 0) 90%)",
+      "refractionHeight": "1px"
+    },
+    "matInput": {
+      "bg": "rgba(255, 255, 255, 0.55)",
+      "bgImage": "none",
+      "border": "rgba(255, 255, 255, 0.35)",
+      "blur": "blur(40px) saturate(1.4)",
+      "color": "rgb(27, 30, 38)",
+      "radius": "12px",
+      "shadow": "rgba(255, 255, 255, 0.25) 0px 1px 0px 0px inset, rgba(0, 0, 0, 0.04) 0px 2px 8px 0px, rgba(0, 0, 0, 0.06) 0px 8px 24px 0px",
+      "refractionBefore": "linear-gradient(90deg, rgba(0, 0, 0, 0) 10%, rgba(255, 255, 255, 0.45) 50%, rgba(0, 0, 0, 0) 90%)",
+      "refractionHeight": "1px"
+    },
+    "header": {
+      "bg": "rgba(255, 255, 255, 0.55)",
+      "bgImage": "linear-gradient(90deg, rgba(0, 0, 0, 0) 10%, rgba(255, 255, 255, 0.45) 50%, rgba(0, 0, 0, 0) 90%), none",
+      "border": "rgba(255, 255, 255, 0.35)",
+      "blur": "blur(40px) saturate(1.4)",
+      "color": "rgb(27, 30, 38)",
+      "radius": "20px",
+      "shadow": "rgba(255, 255, 255, 0.25) 0px 1px 0px 0px inset",
+      "refractionBefore": "none",
+      "refractionHeight": null
+    },
+    "glassBg": {
+      "r": 255,
+      "g": 255,
+      "b": 255,
+      "a": 0.55
+    },
+    "paper": {
+      "r": 245,
+      "g": 246,
+      "b": 248,
+      "a": 1
+    },
+    "composite": {
+      "r": 251,
+      "g": 251,
+      "b": 252
+    },
+    "opaqueTok": {
+      "r": 255,
+      "g": 255,
+      "b": 255,
+      "a": 0.55
+    },
+    "cvOpaque": {
+      "r": 255,
+      "g": 255,
+      "b": 255,
+      "a": 0.55
+    },
+    "legacy": {
+      "truncH": "",
+      "truncFrom": "",
+      "overhang": "",
+      "inlineStyle": "--ask-under: 29.00px;"
+    },
+    "handle": {
+      "childCount": 0,
+      "gripSelectorHits": 0,
+      "hit": {
+        "x": 1029,
+        "y": 559.03125,
+        "w": 44,
+        "h": 44,
+        "top": 559.03125,
+        "bottom": 603.03125,
+        "left": 1029,
+        "right": 1073,
+        "r": 0
+      },
+      "arm": {
+        "top": "2px",
+        "left": "2px",
+        "right": "0px",
+        "bottom": "0px",
+        "radius": "7px",
+        "width": "18px",
+        "height": "18px"
+      }
+    }
+  },
+  "lct": {
+    "bub": {
+      "bg": {
+        "r": 255,
+        "g": 255,
+        "b": 255,
+        "a": 0.55
+      },
+      "fg": {
+        "r": 27,
+        "g": 30,
+        "b": 38,
+        "a": 1
+      },
+      "alpha": 0.55,
+      "ratio": 16.66
+    },
+    "input": {
+      "bg": {
+        "r": 255,
+        "g": 255,
+        "b": 255,
+        "a": 0.55
+      },
+      "fg": {
+        "r": 27,
+        "g": 30,
+        "b": 38,
+        "a": 1
+      },
+      "alpha": 0.55,
+      "ratio": 16.66
+    }
+  }
+}

@@ -1,6 +1,8 @@
 /* 从 RestApiRoutes 迁出(行为保持重构,2026-09-24)。 */
 package nebflow.gateway
 
+import nebflow.neblink.AvatarByteCache
+
 import nebflow.neblink.core.*
 import nebflow.neblink.identity.*
 import nebflow.neblink.misc.*
@@ -265,6 +267,13 @@ private[gateway] object NeblinkRoutes:
             friendPull <- sharedResources.friendService match
               case Some(fs) => fs.pullCountersJson
               case None => IO.pure(Json.Null)
+            // 件一（2026-11-02）：我给自己写的介绍（`selfBio`，本地真源，落
+            // `profile-descriptions.json`）。**加性键**，与 `device.userDescription`
+            // 刻意分家（后者 = 设备描述，Agent 选设备用；勘察报告 §6.2 定案 (b)）。
+            // 未装配 friendService ⇒ 空串（不是 null：该字段的「没有」就是空介绍）。
+            selfBio <- sharedResources.friendService match
+              case Some(fs) => fs.descriptions.map(_.selfBio)
+              case None => IO.pure("")
             r <- Ok(
               Json.obj(
                 "loggedIn" -> loggedIn.asJson,
@@ -274,6 +283,9 @@ private[gateway] object NeblinkRoutes:
                 // `null` = 读干净（有/无凭据都是正常态）；非 null = 出过事，带
                 // `code`/`reason`/`action` 三段（**零路径、零异常类名**，判据 G2/G3）。
                 "credentialIssue" -> credentialIssue.fold(Json.Null)(_.toJson),
+                // 件一（2026-11-02）：自我介绍（本地真源；空串 = 未设置）。
+                // 🔴 与 `device.userDescription`（设备描述）**两个字段两个语义**，禁混用。
+                "selfBio" -> selfBio.asJson,
                 "device" -> Json.obj(
                   "id" -> id.deviceId.asJson,
                   "name" -> id.deviceName.asJson,
@@ -321,35 +333,56 @@ private[gateway] object NeblinkRoutes:
       // never populated — every settings open fell back to a slow remote <img>.
       // Same-origin proxy fixes the cache build; fetches ONLY the current
       // identity avatarUrl (client supplies no URL — no open-proxy surface).
+      //
+      // 2026-11-04 两小件批 · 件二（旧域 301 批的收口）：**网关侧字节缓存**。
+      // 对端路由 `/api/neblink/avatars/:userId` 在 a6b3ad30 批已接
+      // `AvatarByteCache`（TTL 10 min / 64 条 / 16MB / 单条 2MB + 最旧淘汰 +
+      // 失败不入缓存 + `X-Avatar-Cache: hit|miss` 自证头），本路由（**自己**的头像）
+      // 当时明写「走的还是无缓存路径」，于是设置页/列表每次打开都要回源一次远端
+      // 头像；上游一旦慢/跳转，本路由就恒 502 且缓存永远建不起来。现在与对端路由
+      // 共用同一个 `AvatarByteCache.shared` 实例与同一套语义（按源 URL 键 ⇒ 换头像
+      // 即 URL 变 ⇒ 自然 miss，无失效逻辑；失败不写条目 ⇒ 不记忆失败态）。
+      // 保留本路由既有的 `private, max-age=300`（#538 家族保守值：5 分钟内浏览器
+      // 零往返，叠上网关 10 分钟缓存 ⇒ 真正回源最多每 10 分钟一次）。
       case req @ GET -> Root / "neblink" / "avatar" =>
         withNeblink(req) { ms =>
           ms.identity.flatMap { id =>
             id.avatarUrl.filter(_.nonEmpty) match
               case None => NotFound(Json.obj("error" -> "no avatar".asJson))
               case Some(url) =>
-                AvatarProxy.fetch(AvatarProxy.jdkFetch)(url).flatMap {
-                  case Right((contentType, bytes)) =>
-                    // Explicit byte-stream entity: bare Ok(Array[Byte]) resolves to
-                    // the circe generic encoder in this scope (circe encodes byte
-                    // arrays as JSON number arrays — the bytes would be mangled).
-                    val ct = org.http4s.headers.`Content-Type`
-                      .parse(contentType)
-                      .getOrElse(org.http4s.headers.`Content-Type`(MediaType.application.`octet-stream`))
-                    IO.pure(
-                      Response[IO](Status.Ok)
-                        .withEntity(fs2.Stream.emits(bytes).covary[IO])
-                        .withHeaders(Headers(
-                          ct,
-                          // 二次加载清剿批（2026-10-24）：同族对端路由
-                          // /api/neblink/avatars/:userId 早已带 ETag+304 + private,
-                          // max-age=3600（line ~390）；本路由（自己的头像）此前零缓存
-                          // 策略 ⇒ 设置页/列表每次开都全额重拉远源头像。对齐 #538 家族
-                          // 的保守值（300 ≪ 身份切换窗）：5 分钟内零往返。
-                          Header.Raw(CIString("Cache-Control"), "private, max-age=300")
-                        ))
-                    )
-                  case Left(err) =>
-                    BadGateway(Json.obj("error" -> err.asJson))
+                val avatarCache = AvatarByteCache.shared
+                def renderAvatar(entry: AvatarByteCache.Entry, cacheState: String): IO[Response[IO]] =
+                  // Explicit byte-stream entity: bare Ok(Array[Byte]) resolves to
+                  // the circe generic encoder in this scope (circe encodes byte
+                  // arrays as JSON number arrays — the bytes would be mangled).
+                  val ct = org.http4s.headers.`Content-Type`
+                    .parse(entry.contentType)
+                    .getOrElse(org.http4s.headers.`Content-Type`(MediaType.application.`octet-stream`))
+                  IO.pure(
+                    Response[IO](Status.Ok)
+                      .withEntity(fs2.Stream.emits(entry.bytes).covary[IO])
+                      .withHeaders(Headers(
+                        ct,
+                        Header.Raw(CIString("X-Avatar-Sha256"), entry.sha256),
+                        // 自证头（客户端不消费；排障/验收可读）：hit = 零上游往返。
+                        Header.Raw(CIString("X-Avatar-Cache"), cacheState),
+                        // 二次加载清剿批（2026-10-24）：同族对端路由
+                        // /api/neblink/avatars/:userId 早已带 ETag+304 + private,
+                        // max-age=3600（line ~390）；本路由（自己的头像）此前零缓存
+                        // 策略 ⇒ 设置页/列表每次开都全额重拉远源头像。对齐 #538 家族
+                        // 的保守值（300 ≪ 身份切换窗）：5 分钟内零往返。
+                        Header.Raw(CIString("Cache-Control"), "private, max-age=300")
+                      ))
+                  )
+                avatarCache.get(url).flatMap {
+                  case Some(hit) => renderAvatar(hit, "hit")
+                  case None =>
+                    avatarCache
+                      .getOrFetch(url)(AvatarProxy.fetch(AvatarProxy.jdkFetch)(url))
+                      .flatMap {
+                        case Right(entry) => renderAvatar(entry, "miss")
+                        case Left(err) => BadGateway(Json.obj("error" -> err.asJson))
+                      }
                 }
           }
         }
@@ -375,7 +408,21 @@ private[gateway] object NeblinkRoutes:
       // 响应面（方案卡 §3 前置项逐条）：字节 + `Content-Type` 原样透传，
       //   带 `X-Avatar-Sha256` + `ETag`（强 ETag = 内容 sha）+ `Cache-Control: private`；
       //    `If-None-Match` 命中 ⇒ **304**（零重传 —— 客户端「hash 未变 ⇒ 复用旧 blob」的
-      //    判据面）。上游非 200 ⇒ 502（客户端按失败退避，不污染既有缓存）。
+      //    判据面）。上游取不到字节 ⇒ 502（客户端按失败退避，不污染既有缓存）。
+      //
+      // 2026-11-04 旧域 301 批（本 case 的第二道修复，缺它则字节缓存永远建不起来）：
+      //   ① **跟随跳转**：上游 3xx 不再当失败 —— 好友头像 URL 仍指旧域
+      //      `mashiro.staging.nebflow.space`，域名迁移后该域 301 到
+      //      `staging.mystand.space`（2026-11-04 20:50 CST 实测），旧体把 301 折成
+      //      502 `upstream HTTP 301` ⇒ 浏览器直连自己会跟（画面看不出坏），
+      //      服务端这条腿永远取不到字节。跳转策略（跳数上限 + 同源/产品域族白名单
+      //      + 拒 https→http 降级）在 `AvatarProxy.jdkFetch`，**不**放宽本路由的
+      //      「客户端只给 userId」的 SSRF 边界。
+      //   ② **网关侧字节缓存**（`AvatarByteCache.shared`，按源 URL 键，TTL 10 min，
+      //      条目数/总字节有界）：旧体在 `If-None-Match` 判定**之前**就回源，于是
+      //      「第二次请求」与第一次等价、每次都回源。现在命中即零上游往返（304 也
+      //      用条目里存的 sha 判），失败不入缓存。`X-Avatar-Cache: hit|miss`
+      //      是这条通路自证用的响应头（客户端不消费，排障/验收可读）。
       case req @ GET -> Root / "avatars" / userId =>
         withAuth(req) {
           sharedResources.friendService match
@@ -390,38 +437,57 @@ private[gateway] object NeblinkRoutes:
                     resp.friends.find(_.userId == wanted).flatMap(_.avatar).filter(_.nonEmpty) match
                       case None => NotFound(Json.obj("error" -> "no avatar".asJson))
                       case Some(url) =>
-                        AvatarProxy.fetch(AvatarProxy.jdkFetch)(url).flatMap {
-                          case Right((contentType, bytes)) =>
-                            val sha = AvatarProxy.sha256Hex(bytes)
-                            val etag = "\"" + sha + "\""
-                            val inm = req.headers.get(CIString("If-None-Match")).map(_.head.value.trim).getOrElse("")
-                            if inm.nonEmpty && inm.contains(sha) then
-                              IO.pure(
-                                Response[IO](Status.NotModified)
-                                  .withHeaders(Headers(Header.Raw(CIString("ETag"), etag)))
-                              )
-                            else
-                              // 显式字节流实体（同 /neblink/avatar 与附件下载先例：裸
-                              // `Ok(Array[Byte])` 会命中 circe 的 byte 数组编码器，把字节
-                              // 变成 JSON 数字数组 ⇒ 图片损坏）。
-                              val ct = org.http4s.headers.`Content-Type`
-                                .parse(contentType)
-                                .getOrElse(org.http4s.headers.`Content-Type`(MediaType.application.`octet-stream`))
-                              IO.pure(
-                                Response[IO](Status.Ok)
-                                  .withEntity(fs2.Stream.emits(bytes).covary[IO])
-                                  .withHeaders(
-                                    Headers(
-                                      ct,
-                                      Header.Raw(CIString("ETag"), etag),
-                                      Header.Raw(CIString("X-Avatar-Sha256"), sha),
-                                      Header.Raw(CIString("Cache-Control"), "private, max-age=3600")
-                                    )
+                        // 2026-11-04 旧域 301 批：**字节缓存优先** + `X-Avatar-Cache`
+                        // 自证头。旧体每次请求都无条件回源（`AvatarProxy.fetch` 在
+                        // `If-None-Match` 判定之前），上游一 301（旧域迁移后跳走）就
+                        // 恒 502 且缓存永远建不起来。现在：命中 ⇒ 零上游往返（连 304
+                        // 都靠条目里存的 sha，不回源算）；未命中 ⇒ 取一次并落
+                        // `AvatarByteCache.shared`（TTL 10 min，按源 URL 键）。
+                        def renderAvatar(entry: AvatarByteCache.Entry, cacheState: String): IO[Response[IO]] =
+                          val inm = req.headers.get(CIString("If-None-Match")).map(_.head.value.trim).getOrElse("")
+                          if inm.nonEmpty && inm.contains(entry.sha256) then
+                            IO.pure(
+                              Response[IO](Status.NotModified)
+                                .withHeaders(
+                                  Headers(
+                                    Header.Raw(CIString("ETag"), entry.etag),
+                                    Header.Raw(CIString("X-Avatar-Cache"), cacheState)
                                   )
-                              )
-                            end if
-                          case Left(err) =>
-                            BadGateway(Json.obj("error" -> err.asJson))
+                                )
+                            )
+                          else
+                            // 显式字节流实体（同 /neblink/avatar 与附件下载先例：裸
+                            // `Ok(Array[Byte])` 会命中 circe 的 byte 数组编码器，把字节
+                            // 变成 JSON 数字数组 ⇒ 图片损坏）。
+                            val ct = org.http4s.headers.`Content-Type`
+                              .parse(entry.contentType)
+                              .getOrElse(org.http4s.headers.`Content-Type`(MediaType.application.`octet-stream`))
+                            IO.pure(
+                              Response[IO](Status.Ok)
+                                .withEntity(fs2.Stream.emits(entry.bytes).covary[IO])
+                                .withHeaders(
+                                  Headers(
+                                    ct,
+                                    Header.Raw(CIString("ETag"), entry.etag),
+                                    Header.Raw(CIString("X-Avatar-Sha256"), entry.sha256),
+                                    Header.Raw(CIString("X-Avatar-Cache"), cacheState),
+                                    Header.Raw(CIString("Cache-Control"), "private, max-age=3600")
+                                  )
+                                )
+                            )
+                          end if
+                        end renderAvatar
+
+                        val avatarCache = AvatarByteCache.shared
+                        avatarCache.get(url).flatMap {
+                          case Some(hit) => renderAvatar(hit, "hit")
+                          case None =>
+                            avatarCache
+                              .getOrFetch(url)(AvatarProxy.fetch(AvatarProxy.jdkFetch)(url))
+                              .flatMap {
+                                case Right(entry) => renderAvatar(entry, "miss")
+                                case Left(err) => BadGateway(Json.obj("error" -> err.asJson))
+                              }
                         }
                 }
               end if
@@ -1244,36 +1310,10 @@ private[gateway] object NeblinkRoutes:
   )(using ctx: RestApiCtx): IO[Either[String, String]] =
     import ctx.*
 
-    ns.peers.flatMap { peers =>
-      peers.find(p =>
-        p.deviceName.equalsIgnoreCase(targetDevice) ||
-          p.deviceName.toLowerCase.contains(targetDevice.toLowerCase)
-      ) match
-        case None => IO.pure(Left(s"Device '$targetDevice' not found"))
-        case Some(peer) =>
-          if peer.address.isEmpty then IO.pure(Left(s"Device '$targetDevice' has no address"))
-          else
-            logger.info(s"Remote update via P2P: ${peer.deviceName} at ${peer.address} (beta=$beta)") *>
-              IO.blocking {
-                import sttp.client4.*
-                val fields = List("beta" -> beta.asJson)
-                  ++ clientRequestId.map(id => "clientRequestId" -> id.asJson)
-                val body = Json.obj(fields*).noSpaces
-                val resp = basicRequest
-                  .post(sttp.model.Uri.unsafeParse(s"${peer.address}/api/neblink/update"))
-                  .contentType("application/json")
-                  .body(body)
-                  .readTimeout(180.seconds)
-                  .response(asStringAlways)
-                  .send(ns.httpBackend)
-                resp
-              }.flatMap { resp =>
-                if resp.code.isSuccess then IO.pure(Right("Update installed, device is restarting..."))
-                else relayUpdateFallback(ns, peer, beta, s"P2P HTTP ${resp.code}")
-              }.handleErrorWith { e =>
-                relayUpdateFallback(ns, peer, beta, s"P2P unreachable: ${e.getMessage}")
-              }
-    }
+    // fleet 批（2026-11-01）收口：P2P → 中继的派发**唯一实现**在
+    // [[nebflow.neblink.RemoteUpdateDispatch]]（批量推送与单台点击共用同一腿）。
+    // 本方法保留为薄壳：调用方（REST 路由此处）零改动，派发语义逐字不变。
+    nebflow.neblink.RemoteUpdateDispatch.dispatchByName(ns, targetDevice, beta, clientRequestId)
 
   end doRemoteUpdate
 

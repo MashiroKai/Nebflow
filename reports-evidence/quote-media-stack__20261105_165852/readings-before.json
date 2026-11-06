@@ -1,0 +1,64 @@
+{
+  "leg": "before",
+  "webRoot": "/tmp/web-before",
+  "shots": [
+    {
+      "viewport": {
+        "w": 1440,
+        "h": 900
+      },
+      "mobileLayer": false,
+      "three": {
+        "blockH": 99.33,
+        "blockW": 331.08,
+        "viewportSharePct": 11,
+        "thumbH": 48,
+        "thumbRows": 1,
+        "stackPresent": false,
+        "faceW": 0,
+        "faceH": 0,
+        "pillText": ""
+      },
+      "six": {
+        "blockH": 99.33,
+        "blockW": 331.08,
+        "viewportSharePct": 11,
+        "thumbH": 48,
+        "thumbRows": 1,
+        "stackPresent": false,
+        "faceW": 0,
+        "faceH": 0,
+        "pillText": ""
+      }
+    },
+    {
+      "viewport": {
+        "w": 375,
+        "h": 812
+      },
+      "mobileLayer": true,
+      "three": {
+        "blockH": 99.33,
+        "blockW": 274.39,
+        "viewportSharePct": 12.2,
+        "thumbH": 48,
+        "thumbRows": 1,
+        "stackPresent": false,
+        "faceW": 0,
+        "faceH": 0,
+        "pillText": ""
+      },
+      "six": {
+        "blockH": 151.33,
+        "blockW": 274.39,
+        "viewportSharePct": 18.6,
+        "thumbH": 48,
+        "thumbRows": 2,
+        "stackPresent": false,
+        "faceW": 0,
+        "faceH": 0,
+        "pillText": ""
+      }
+    }
+  ]
+}

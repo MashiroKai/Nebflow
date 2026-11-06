@@ -1,0 +1,15 @@
+nebflow.core.delegate.DelegateWorkspaceWorktreeLegSpec:
+  + W1 零分配：worktree 参数缺省 ⇒ 不建树，新建目录清单前后逐项相同 + brief/回执都写明未分配 0.128s
+  + W2 按名建树：worktree="<name>" ⇒ <worktreeRoot>/<name> 且分支 delegate/<name>，回执写『精确 name/新建』 0.154s
+  + W3 同名复用：同一 name 再派一次 ⇒ 复用既有树，不产生第二个目录 0.328s
+  + W4 零模型调用：装计数判官面，跑完零分配腿 + 按名建树腿 + 模式解析后计数仍为 0 0.334s
+  + W5 非 git 工作区：就地腿 = None（旧语义不回归） 0.017s
+
+nebflow.core.delegate.ModeParamSpec:
+  + P1 纯函数形态：resolve 返回 Either（无 IO / 无端口）——零模型调用是类型级保证 0.003s
+  + P2 不填 mode ⇒ 确定性 kernel（leg=default，理由里写明 zero model calls） 0.001s
+  + P2b 显式 kernel/dispatcher 原样采纳（大小写/空白容忍，leg=param） 0.0s
+  + P3 显式 auto ⇒ 明确报错（含引导语），绝不静默映射成 kernel 0.001s
+  + P3b 值域外的词 ⇒ 显式报错（enum 单点来自 DualModeConfig.ModeWords） 0.001s
+  + P4 旧双模式总闸配置已退役：nebflow.json 里怎么写都不改变解析结果 0.001s
+  + P5 值域词表与 schema enum 同源（ModeWords = kernel|dispatcher，无 auto） 0.001s

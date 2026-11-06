@@ -35,7 +35,9 @@ export const CHANGE_EVENT = 'micorb-palette-changed';
  * separately below.
  */
 export const PRESETS = [
-  { id: 'nebula',  name: { zh: '星云', en: 'Nebula' },
+  // Nebula 退役批（作者令 2026-11-01）：预设 id 仍是机制键（存储/映射面不动），
+  // 显示名不再出现退役名——英文侧改星空的通用词（中文侧本就是「星云」）。
+  { id: 'nebula',  name: { zh: '星云', en: 'Starcloud' },
     dark:  { a: '#8FA2FF', b: '#DC7CF0', c: '#2A1E5C' },
     light: { a: '#6B7FE8', b: '#C75FD8', c: '#221750' } },
   { id: 'ocean',   name: { zh: '海洋', en: 'Ocean' },

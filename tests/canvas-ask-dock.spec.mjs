@@ -5,10 +5,14 @@
 // 机制稿 §8 验收条目 → 本 spec 断言映射（前端组件行为面；后端路由/绑定/流式
 // 的协议面用 routeWebSocket mock 驱动，形态 = canvas-stack.spec.mjs 孪生）：
 //   T0  页面零 pageerror（载入健康面）
-//   T1  入口（§8-1/§8-2/§8-3）：.ask-fab 44×44 右下角最靠右、z 序 25 = ask-dock
+//   T1  入口（§8-1/§8-2/§8-3）：.ask-fab 48×48（canvas 控件尺寸对齐批 2026-11-02
+//       作者令 09:41「包括 canvas 的这些控件宽度也要保持一致」：入口钮 44 → 48 =
+//       canvas chrome 档 --cv-size-circle-lg，全站悬浮圆钮回到一个真值）、右下角
+//       最靠右、z 序 25 = ask-dock
 //       24+1 < 顶行胶囊 30（排他 z 序）、dock 宽 372（E-2 桌面档）；
 //       单行排布批（2026-11-01 作者令 16:18）：功能钮簇左锚 / fab 独右一行两端
-//       对齐（T1f 共中线）、对话框钉按钮行上一行（T1g）、座位基准 22（T1c）
+//       对齐（T1f 共中线）、对话框钉按钮行上一行（T1g）、座位基准 = 实测簇中线 −
+//       fab 半高（T1c；件3 批：簇钮 40 ⇒ 中线 44 ⇒ 基准 20，判据由实测派生）
 //   T2  开合三通路（§8-1）：入口钮再点 / Esc / 画布空白点击；开 = .closed 摘除
 //       + fab.open + 输入聚焦；输入条在按钮上方（transform-origin 100% 100% 锚定）
 //   T3  提问 → 气泡流式回答（§8-1）：askOpen 帧先于 askQuestion 帧、sessionId =
@@ -25,7 +29,7 @@
 //   T7  主会话零交集（§8-2 视图排他）：ask 流式全程 #chat .bubble 计数不变
 //   T8  UI 纪律（§8-2）：dock max-h 316（E-2）、零遮罩（新增阻塞层计数零）、
 //       气泡列 touch-action pan-y（#988 列内纵滚原生）
-//   T9  移动档（§8-3）：44×48 命中盒、座位 = dock-h+16 与左锚簇行同带（单行
+//   T9  移动档（§8-3）：48×48 命中盒、座位 = dock-h+16 与左锚簇行同带（单行
 //       排布批）、列 max-h 250、
 //       气泡列表面横滑零切卡（.mobile-card-peek 不亮起，surface 归属制）
 //   T10 v2.1 减法纪律（作者令 2026-10-28 22:42「简约一点…」）：ghost 提示行/
@@ -44,11 +48,15 @@
 //       F1 ④双泡修复——发问等待期零空 ai 泡（typing 单件）；
 //       F2 ①ai 气泡复用主会话渲染腿 renderMarkdownWithMath（h2/ul/pre+code/
 //          table 全在场、裸 md 字面量退场）；
-//       F3 ⑤顶带渐隐按液体玻璃 v2（--g2-veil + blur(18) saturate(1.5) + 两段式
-//          mask）且列顶留白 64px 首条不入带。
+//       F3 ⑤顶缘渐隐（ask-fade-content-opacity 批 2026-11-04 改判据）：面板内零遮罩
+//          条元素，渐隐本体 = .ask-col 自身的 mask-image（内容 alpha 渐到 0）；
+//          面板/滚动容器整体透明无边框（①-批 .ask-veil + .ds-edge-fade 成员形态退役）。
 //   T12 风格统一（三修③ 作者令 2026-10-29「ask 输入条/气泡对齐 canvas 统一风格，
-//       不新造风格」）：输入条/气泡三面计算材质与聊天 #header 玻璃模板（--cv-* 单源）
-//       逐项相等；入口钮材质随液体玻璃 v3 F1 扩面批（2026-10-31 作者 12:32 点选
+//       不新造风格」）：输入条/气泡与聊天 #header 同一套配方（blur 参数 / 描边 token
+//       逐项相等）+ **底收不透明档**（α=1，= --glass-bg 压平 --color-bg 的合成值）
+//       ——判据由「底逐项相等」改判于 2026-11-05 09:32 作者令「看不清楚，要 Header
+//       同款，那个是不透明的」（半透底背后是 canvas 文档正文 ⇒ 双层重影）；
+//       入口钮材质随液体玻璃 v3 F1 扩面批（2026-10-31 作者 12:32 点选
 //       「悬浮族 = F1」，liquid-glass.css ④）归 --g2-fab-* 单源 = #deck-fab 同族
 //       （本批实测对齐——旧断言比 #header 为 v3 批欠账，main 快照同红）；
 //       发送钮 = 微信绿跟随主对话（v3 实现批 2026-10-31 作者 12:32「其它面板发送钮
@@ -286,15 +294,17 @@ try {
 
   // T1 入口几何 + z 序
   const g1 = await geo(page);
-  ok('T1a 入口钮 44×44（命中盒=视觉径）', !!g1.fab && Math.abs(g1.fab.w - 44) < 1.5 && Math.abs(g1.fab.h - 44) < 1.5, JSON.stringify(g1.fab));
+  ok('T1a 入口钮 48×48（命中盒=视觉径；canvas 控件尺寸对齐批 2026-11-02 作者令 09:41：44 → 48 = canvas chrome 档）', !!g1.fab && Math.abs(g1.fab.w - 48) < 1.5 && Math.abs(g1.fab.h - 48) < 1.5, JSON.stringify(g1.fab));
   ok('T1b 右下角最靠右（右缘距面板右缘 ~14px）', !!g1.fab && Math.abs(g1.panel.right - g1.fab.right - 14) < 3, `gap=${g1.panel.right - (g1.fab ? g1.fab.right : 0)}`);
   // T1c 座位契约（单行排布批 2026-11-01 作者令 16:18「功能钮靠左、ask 单独
-  // 靠右，一行两端对齐」）：基准 22px = 与左锚文档工具簇行共中线（簇面板系
-  // 行带 [24..64] 中线 44 − fab 半高 22）；左锚簇与右缘 fab 异侧不再让位，
-  // 实测让位只剩通栏底栏（epub reader nav，上沿+12）。本环境无 epub → 基准。
+  // 靠右，一行两端对齐」）：基准 = 与左锚文档工具簇行共中线。簇在 pane 内
+  // bottom:16、钮高 = --cv-size-circle-lg（件3 批后 40）⇒ 中线 = 面板底 − (16 + 8 + 半钮高)
+  // = 44、fab 48 半高 24 ⇒ 底距 **20**；本 spec 由实测簇中线派生（不再写死 24，
+  // 48 档时代的常量）—— 簇/钮档再改，判据自动跟随；左锚簇与右缘 fab 异侧不再让位，实测让位
+  // 只剩通栏底栏（epub reader nav，上沿+12）。本环境无 epub → 基准。
   const seatExpect = await page.evaluate(() => {
     const panel = document.getElementById('canvas-panel');
-    if (!panel) return 22;
+    if (!panel) return 24;
     const pr = panel.getBoundingClientRect();
     let occupied = 0;
     panel.querySelectorAll('.epub-reader-nav').forEach((f) => {
@@ -304,9 +314,17 @@ try {
       if (r.width === 0 && r.height === 0) return;
       occupied = Math.max(occupied, pr.bottom - r.top);
     });
-    return occupied > 0 ? occupied + 12 : 22;
+    if (occupied > 0) return occupied + 12;
+    // 件3 批（2026-11-05）：基准由**实测簇行中线**派生（簇钮档 = --cv-size-circle-lg，
+    // 40 档 ⇒ 中线 44、fab 48 ⇒ 底距 20）；不再写死 24（48 档时代的常量，改档即漂 4px）。
+    const rowBtn = panel.querySelector('.canvas-source-toggle, .canvas-ref-select, .canvas-find-toggle');
+    const rb = rowBtn ? rowBtn.getBoundingClientRect() : null;
+    const fabEl = document.querySelector('.ask-fab');
+    const fabH = fabEl ? fabEl.getBoundingClientRect().height : 48;
+    const mid = rb && rb.height > 0 ? pr.bottom - (rb.top + rb.height / 2) : 48;
+    return Math.max(8, Math.round(mid - fabH / 2));
   });
-  ok('T1c 座位：基准 22px（与左锚工具簇行共中线），通栏底栏在场时实测让位（上沿+12）', !!g1.fab && Math.abs(g1.panel.bottom - g1.fab.bottom - seatExpect) < 3, `gap=${g1.panel.bottom - (g1.fab ? g1.fab.bottom : 0)} expected=${seatExpect}`);
+  ok('T1c 座位：基准 = 实测簇中线 − fab 半高（件3 批：簇钮 40 ⇒ 中线 44 ⇒ 基准 20；与左锚工具簇共中线），通栏底栏在场时实测让位（上沿+12）', !!g1.fab && Math.abs(g1.panel.bottom - g1.fab.bottom - seatExpect) < 3, `gap=${g1.panel.bottom - (g1.fab ? g1.fab.bottom : 0)} expected=${seatExpect}`);
   // 单行排布批：一行两端对齐——文档工具簇贴 pane 左缘、fab 独守右缘、同带共中线。
   const rowAlign = await page.evaluate(() => {
     const pane = document.querySelector('.canvas-tab-pane.active');
@@ -343,7 +361,7 @@ try {
   await sleep(400);
   let g2 = await geo(page);
   const fabOpen = await page.evaluate(() => document.querySelector('.ask-fab').classList.contains('open'));
-  const inputFocused = await page.evaluate(() => document.activeElement === document.querySelector('.ask-dock input'));
+  const inputFocused = await page.evaluate(() => document.activeElement === document.querySelector('.ask-dock textarea'));
   ok('T2a 点击入口开：dock 摘 .closed + fab.open + 输入聚焦', !g2.dockClosed && fabOpen && inputFocused, `closed=${g2.dockClosed} open=${fabOpen} focus=${inputFocused}`);
   const anchored = await page.evaluate(() => {
     const d = document.querySelector('.ask-dock');
@@ -367,8 +385,8 @@ try {
   inbound.length = 0;
   await page.click('.ask-fab');
   await sleep(350);
-  await page.fill('.ask-dock input', 'τ 为什么取 30 天？');
-  await page.press('.ask-dock input', 'Enter');
+  await page.fill('.ask-dock textarea', 'τ 为什么取 30 天？');
+  await page.press('.ask-dock textarea', 'Enter');
   await sleep(200);
   const askOpenIdx = inbound.findIndex((m) => m.type === 'askOpen');
   const askQ = inbound.find((m) => m.type === 'askQuestion');
@@ -418,8 +436,8 @@ try {
   //    saturate(--g2-fade-sat) + 两段式 mask；列顶留白 = fade-h（首条不入带）。
   inbound.length = 0;
   const aiCountBefore = await page.evaluate(() => document.querySelectorAll('.ask-dock .ask-bub.ai').length);
-  await page.fill('.ask-dock input', '## 结构\n\n- 甲\n- 乙\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\n```js\ncode\n```');
-  await page.press('.ask-dock input', 'Enter');
+  await page.fill('.ask-dock textarea', '## 结构\n\n- 甲\n- 乙\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\n```js\ncode\n```');
+  await page.press('.ask-dock textarea', 'Enter');
   await sleep(250);
   const f1 = await page.evaluate((prevAi) => ({
     user: document.querySelectorAll('.ask-dock .ask-bub.user').length,
@@ -463,30 +481,44 @@ try {
     return b ? { n: nodes.length, table: !!b.querySelector('table td'), pre: !!b.querySelector('pre') } : null;
   });
   ok('F2-b done 定稿：markdown 渲染保持 + ai 泡总数稳定（无空泡残留）', !!f2final && f2final.n === aiCountBefore + 1 && f2final.table && f2final.pre, JSON.stringify(f2final));
+  // F3 顶缘渐隐（毛玻璃批 2026-11-06 载体换代 —— 作者令「聊天气泡使用我们的毛玻璃
+  //    效果 显然它使用错了 现在是半透明的效果」）：列 mask 使 .ask-col 成为 backdrop
+  //    root，架空子气泡 backdrop-filter（= 半透明洗色假玻璃）⇒ mask 整体退役，
+  //    载体 = askDock.js syncAskFade 逐泡 opacity（泡顶到列顶距离在 --ask-fade-h 内
+  //    线性落 alpha）。判据：① 面板内零渐隐带遮罩元素；② .ask-col 计算样式
+  //    mask-image = none + askDock.js 源含 syncAskFade（ask-fade-content-opacity 批
+  //    2026-11-04「内容本体 alpha 渐到 0」令语义不变，只换实现载体）。
   const f3 = await page.evaluate(() => {
-    const veil = document.querySelector('.ask-colwrap .ask-veil');
     const wrap = document.querySelector('.ask-colwrap');
     const col = document.querySelector('.ask-col');
-    const vcs = getComputedStyle(veil);
+    const dock = document.querySelector('.ask-dock');
+    const mainFade = document.getElementById('g2-edge-fade');
+    const ccs = getComputedStyle(col);
     const wcs = getComputedStyle(wrap);
-    const vr = veil.getBoundingClientRect();
-    const cr = col.getBoundingClientRect();
+    const dcs = getComputedStyle(dock);
     return {
-      veilBg: vcs.backgroundImage,
-      veilFilter: vcs.backdropFilter || vcs.webkitBackdropFilter,
-      veilMask: vcs.maskImage || vcs.webkitMaskImage,
-      colPadTop: wcs.paddingTop, // 带净空在 colwrap（滚动容器之外）
-      // 结构保证：列可视口顶 = 带底沿——可视气泡永在带下（滚出的旧泡被 overflow 裁剪）。
-      colTop: cr.top,
-      veilBottom: vr.bottom,
+      fadeLayers: dock.querySelectorAll('.ds-edge-fade, .ask-veil').length,
+      mainCls: mainFade ? mainFade.className : null,
+      colMask: String(ccs.maskImage || ccs.webkitMaskImage),
+      colMaskWebkit: String(ccs.webkitMaskImage || ''),
+      fadeH: parseFloat(ccs.getPropertyValue('--ask-fade-h')) || 0,
+      colPadTop: parseFloat(ccs.paddingTop) || 0,
+      colwrapMask: String(wcs.maskImage),
+      dockBg: dcs.backgroundColor, dockBorder: dcs.borderTopWidth, dockShadow: dcs.boxShadow,
+      dockFilter: dcs.backdropFilter || dcs.webkitBackdropFilter,
     };
   });
-  ok('F3 液体玻璃 v2 顶带：--g2-veil 渐层 + blur(18px) saturate(1.5) + 两段式 mask',
-    f3.veilBg.includes('gradient') && /blur\(18px\)/.test(f3.veilFilter) && /saturate\(1\.5\)/.test(f3.veilFilter) && f3.veilMask.includes('gradient'),
-    JSON.stringify({ bg: f3.veilBg.slice(0, 40), f: f3.veilFilter, m: f3.veilMask.slice(0, 40) }));
-  ok('F3-b 与消息留距：colwrap 列顶留白 = fade-h 64px（滚动容器外保留区），列可视口顶 ≥ 带底沿（首条永不入带）',
-    f3.colPadTop === '64px' && f3.colTop >= f3.veilBottom - 1,
-    JSON.stringify({ pad: f3.colPadTop, colTop: f3.colTop, veilBottom: f3.veilBottom }));
+  const askDockSrc = readFileSync(join(WEB_DIR, 'js', 'askDock.js'), 'utf8');
+  ok('F3 顶缘渐隐 = 逐泡 opacity（面板内零遮罩条元素；.ask-col 零 mask（backdrop root 摘除）'
+    + '+ askDock.js syncAskFade 载体在场；--ask-fade-h 衰减档保留）',
+    f3.fadeLayers === 0 && f3.colMask === 'none' && f3.fadeH > 0 && /syncAskFade/.test(askDockSrc),
+    JSON.stringify({ layers: f3.fadeLayers, mask: f3.colMask, fadeH: f3.fadeH, syncAskFade: /syncAskFade/.test(askDockSrc) }));
+  ok('F3-b 整体透明无边框（dock 零背景/零边框/零浮影/零 backdrop-filter；外框零 mask）',
+    f3.dockBg === 'rgba(0, 0, 0, 0)' && parseFloat(f3.dockBorder) === 0 && f3.dockShadow === 'none'
+      && /^none$/.test(String(f3.dockFilter)) && f3.colwrapMask === 'none' && /^none$/.test(String(f3.colwrapMask)),
+    JSON.stringify({ bg: f3.dockBg, bw: f3.dockBorder, sh: f3.dockShadow, bf: f3.dockFilter, wrapMask: f3.colwrapMask }));
+  ok('F3-c 主对话窗 #g2-edge-fade 未受影响（本批只改 Ask）', f3.mainCls !== null && /\bds-edge-fade\b/.test(String(f3.mainCls)),
+    JSON.stringify({ main: f3.mainCls }));
   await shot(page, 'f-batch-md-render-and-fade');
 
   // mock 服务端持久化面：A 的转录入库（T5 再开 askOpen 重放需复现——服务端为权威）。
@@ -563,10 +595,26 @@ try {
   const t6a = await page.evaluate(() => {
     const row = document.querySelector('.ask-dock .ask-input');
     const btns = row ? [...row.querySelectorAll('button')] : [];
-    return { n: btns.length, cls: btns.map((b) => b.className), hasHandoff: !!document.querySelector('.ask-dock .ask-handoff') };
+    const stop = /** @type {HTMLElement|null} */ (row && row.querySelector('.ask-stop'));
+    return {
+      n: btns.filter((b) => getComputedStyle(/** @type {HTMLElement} */ (b)).display !== 'none').length,
+      cls: btns.map((b) => b.className),
+      hasHandoff: !!document.querySelector('.ask-dock .ask-handoff'),
+      stopHidden: !!stop && getComputedStyle(stop).display === 'none',
+    };
   });
-  ok('T6a v2.1 单箭头：转交钮退场，输入条右侧唯一按钮 = .ask-send',
-    !t6a.hasHandoff && t6a.n === 1 && t6a.cls[0] === 'ask-send', JSON.stringify(t6a));
+  // 输入行为包批（2026-11-02 作者令「给 ask 也加一个 interrupt 的状态」）：
+  // 输入条按钮面 = 发送 + 中断两枚（中断钮 idle 态 display:none 隐着，busy 才
+  // 上位）——转交钮退场契约（v2.1 减法）由 hasHandoff=false + idle 可见按钮唯一
+  // （.ask-send）共同钉住；T-IX 批（ask-input-composer.spec）另有 busy 互换全断言。
+  // 转回合按钮单源批（ui-unification-20261103-canvas-ask-resize）：两钮在 DOM 上
+  // 追加了主会话同一组件类 `ds-turn-btn ds-turn-btn--send|--stop`（作者令「发送
+  // 按钮与终止按钮样式与主会话完全统一」）⇒ 本钉由「className 逐字等于 ask-send」
+  // 改为「**首 token** 仍是身份钩子 ask-send」（钩子在前的次序契约不变，组件类
+  // 在场由 canvas-ask-resize.spec 的 c7/c11/c12 独立钉住）。
+  ok('T6a v2.1 单箭头 + 中断钮对：转交钮退场，idle 可见按钮唯一 = .ask-send（.ask-stop 隐）',
+    !t6a.hasHandoff && t6a.n === 1 && String(t6a.cls[0]).split(/\s+/)[0] === 'ask-send' && t6a.stopHidden === true,
+    JSON.stringify(t6a));
   // 转交回执（服务端 ack 帧）收进不可见处：零 sys 气泡、气泡总数不变
   const before6b = await page.evaluate(() => document.querySelectorAll('.ask-dock .ask-bub').length);
   wsSend({ type: 'askHandoffAck', sessionId: askedSid, ok: true, question: 'τ 为什么取 30 天？' });
@@ -640,6 +688,39 @@ try {
       const cs = getComputedStyle(el);
       return { bg: cs.backgroundColor, border: cs.borderTopColor, blur: cs.backdropFilter };
     };
+    // 不透明毛玻璃改判批（作者令 2026-11-05 09:32「看不清楚 ⇒ 要 Header 同款，
+    // 那个是不透明的」）：Ask 面（输入条/气泡）与 #header 的关系从「底逐项相等」
+    // 改判成「同一套配方 + 底收 α 到 1」。判据拆成三件实测：
+    //   ① 配方件（blur 参数 / 描边 token）与 #header 逐项相等；
+    //   ② Ask 面底的 α = 1（= 不再透出背后文档正文；#header 仍是 .55/.68，它靠
+    //      #chat 的 mask 把内容洗掉才读成不透明，见 sapphire --glass-bg-opaque 注）；
+    //   ③ Ask 面底 = --glass-bg 压平在 --color-bg 上的合成值（同色收 α，零新色相）。
+    const probe = document.createElement('div');
+    document.body.appendChild(probe);
+    const norm = (raw) => {
+      if (!raw) return null;
+      probe.style.backgroundColor = '';
+      probe.style.backgroundColor = String(raw).trim();
+      const m = String(getComputedStyle(probe).backgroundColor).match(/rgba?\(([^)]+)\)/);
+      if (!m) return null;
+      const p = m[1].split(/[,/]/).map((x) => parseFloat(x.trim()));
+      return { r: p[0], g: p[1], b: p[2], a: p.length > 3 ? p[3] : 1 };
+    };
+    const cs0 = getComputedStyle(probe);
+    const glassBg = norm(cs0.getPropertyValue('--glass-bg'));
+    const paper = norm(cs0.getPropertyValue('--color-bg'));
+    probe.remove();
+    const composite = glassBg && paper ? {
+      r: Math.round(glassBg.a * glassBg.r + (1 - glassBg.a) * paper.r),
+      g: Math.round(glassBg.a * glassBg.g + (1 - glassBg.a) * paper.g),
+      b: Math.round(glassBg.a * glassBg.b + (1 - glassBg.a) * paper.b),
+    } : null;
+    const asRgba = (s) => {
+      const m = String(s).match(/rgba?\(([^)]+)\)/);
+      if (!m) return null;
+      const p = m[1].split(/[,/]/).map((x) => parseFloat(x.trim()));
+      return { r: p[0], g: p[1], b: p[2], a: p.length > 3 ? p[3] : 1 };
+    };
     return {
       fab: pick(document.querySelector('.ask-fab')),
       input: pick(document.querySelector('.ask-input')),
@@ -647,6 +728,9 @@ try {
       // 悬浮族 F1 参照（v3 批 liquid-glass.css ④：ask-fab 与 deck-fab 同族配方）
       deck: pick(document.getElementById('deck-fab')),
       header: pick(document.getElementById('header')),
+      inputBg: asRgba(pick(document.querySelector('.ask-input')).bg),
+      bubBg: asRgba(pick(document.querySelector('.ask-bub.ai')).bg),
+      composite,
     };
   });
   const matSame = (a, b) => !!a && !!b && a.bg === b.bg && a.border === b.border && a.blur === b.blur;
@@ -654,15 +738,27 @@ try {
   // #deck-fab 同族（旧「= #header」断言为 v3 批欠账——ask.css 三修③ 的 --cv-*
   // 基础档被 liquid-glass.css ④ 后写胜出，#deck-fab 同吃同配方，两者计算样式相等）。
   ok('T12a 入口钮材质 = 悬浮族 F1 单源（#deck-fab 同配方逐项相等）', matSame(mat.fab, mat.deck), JSON.stringify({ fab: mat.fab, deck: mat.deck }));
-  ok('T12b 输入条材质 = #header 玻璃模板', matSame(mat.input, mat.header), JSON.stringify({ input: mat.input, ref: mat.header }));
-  ok('T12c 气泡材质 = #header 玻璃模板', matSame(mat.bub, mat.header), JSON.stringify({ bub: mat.bub, ref: mat.header }));
+  // 配方件相等（blur / border 逐项）+ 底 α=1 + 底 = 压平合成值（2026-11-05 改判）
+  const recipeSame = (a, b) => !!a && !!b && a.border === b.border && a.blur === b.blur;
+  const near3 = (x, y) => !!x && !!y && Math.abs(x.r - y.r) <= 1 && Math.abs(x.g - y.g) <= 1 && Math.abs(x.b - y.b) <= 1;
+  ok('T12b 输入条 = #header 同套配方（blur/描边逐项相等）+ 底收不透明档（α=1 且 = 玻璃压平纸面的合成值）',
+    recipeSame(mat.input, mat.header) && !!mat.inputBg && mat.inputBg.a === 1 && near3(mat.inputBg, mat.composite),
+    JSON.stringify({ input: mat.input, ref: mat.header, bg: mat.inputBg, composite: mat.composite }));
+  ok('T12c 气泡 = #header 同套配方（blur/描边逐项相等）+ 底收不透明档（α=1 且 = 玻璃压平纸面的合成值）',
+    recipeSame(mat.bub, mat.header) && !!mat.bubBg && mat.bubBg.a === 1 && near3(mat.bubBg, mat.composite),
+    JSON.stringify({ bub: mat.bub, ref: mat.header, bg: mat.bubBg, composite: mat.composite }));
   const greenFaces = await page.evaluate(() => ({
     send: getComputedStyle(document.querySelector('.ask-input .ask-send')).backgroundColor,
+    sendInk: getComputedStyle(document.querySelector('.ask-input .ask-send')).color,
     dot: getComputedStyle(document.querySelector('.ask-fab .ask-sess-dot')).backgroundColor,
   }));
   // v3 实现批（作者 12:32「其它面板发送钮跟随主对话」）：墨族档退役，考古绿
   // --ctl-send-bg（#07C160）回归——与主对话发送键同源（input.css 基准）。
-  ok('T12d 发送钮 = 微信绿跟随主对话（--ctl-send-*，#07C160）', greenFaces.send === 'rgb(7, 193, 96)', greenFaces.send);
+  // 12:52 批改判（作者令「底部按钮毛玻璃照抄顶部两个按钮」）：发送钮材质吃玻璃
+  // token（--cv-bg 玻璃底），微信绿改走**墨色**通道（.ds-turn-btn--send color =
+  // --ctl-send-bg）——两条作者令并存 ⇒ 材质令优先于底色令，语义绿保留在 icon 上。
+  ok('T12d 发送钮 = 微信绿跟随主对话（--ctl-send-*，#07C160）',
+    greenFaces.send === 'rgb(7, 193, 96)' || greenFaces.sendInk === 'rgb(7, 193, 96)', JSON.stringify(greenFaces));
   ok('T12e 通知点底色 = --color-primary 品牌绿（#07c160，身份/状态色冻结保留）', greenFaces.dot === 'rgb(7, 193, 96)', greenFaces.dot);
   await shot(page, 't12-unified-style');
 
@@ -877,13 +973,16 @@ try {
     const m1 = await mob.page.evaluate(() => {
       // 批⑨ 2026-10-31：手机层 FAB = body 级 fixed（canvas 整页制）——座位判据
       // 视口径。单行排布批（2026-11-01 作者令 16:18）：文档工具簇左锚化，与右缘
-      // fab 异侧零交叠——角簇让位腿退役；座位 = dock-h + env(safe-area) + 16
-      // （与左锚簇行同带共中线：簇 pane 内 bottom:16，pane 底 = 页底 = dock-h+env）。
+      // fab 异侧零交叠——角簇让位腿退役；座位 = dock-h + --dock-inset-b（dock 悬浮
+      // 胶囊批 2026-11-01 21:07 加的下缘内距 8） + env(safe-area) + 16（与左锚簇行
+      // 同带共中线：簇 pane 内 bottom:16，pane 底 = 页底 = dock 带顶）。期望值按
+      // 活 token 读数拼装（不在 spec 里另抄一份几何真值）。
       const fab = document.querySelector('.ask-fab');
       if (!fab) return null;
       const fr = fab.getBoundingClientRect();
       const dock = document.getElementById('mobile-dock');
       const dr = dock ? dock.getBoundingClientRect() : null;
+      const cssVar = (el, name) => parseFloat(getComputedStyle(el).getPropertyValue(name)) || 0;
       // 同带共中线镜像核对（左锚簇可见者取中线）。
       const pane = document.querySelector('.canvas-tab-pane.active');
       const circles = pane ? [...pane.querySelectorAll('.canvas-source-toggle, .canvas-find-toggle, .canvas-ref-select')].filter((b) => !b.hidden && b.offsetParent !== null) : [];
@@ -896,20 +995,28 @@ try {
         dockH: dr ? dr.height : null,
         fabRightToViewport: innerWidth - fr.right,
         fabBottomOffset: innerHeight - fr.bottom,
-        seatExpect: 54 + 16,
+        // dock 悬浮胶囊批（2026-11-01 21:07）：--dock-inset-b 8 抬出「胶囊底缘 →
+        // 簇行」；原 spec 写死 54+16 是胶囊化之前的账（HEAD 基线即红）。
+        // dock 域 token 声明在 body.mobile-layer 作用域（不在 :root）⇒ 从 body 读。
+        seatExpect: cssVar(document.body, '--dock-h') + cssVar(document.body, '--dock-inset-b') + 16,
         cCenter,
         fabCenter: fr.top + fr.height / 2,
         colMaxH: getComputedStyle(document.querySelector('.ask-col')).maxHeight,
+        colwrapMaxH: getComputedStyle(document.querySelector('.ask-colwrap')).maxHeight,
       };
     });
     ok('T9a 移动入口钮 48×48（悬浮钮统一批 g2-fab 基准）', !!m1 && Math.abs(m1.w - 48) < 1.5 && Math.abs(m1.h - 48) < 1.5, JSON.stringify(m1));
-    ok('T9b 座位 = dock-h+16（单行排布批：与左锚工具簇行同带共中线，异侧零让位）',
+    ok('T9b 座位 = dock-h + --dock-inset-b + 16（单行排布批：与左锚工具簇行同带共中线，异侧零让位；期望按活 token 拼装）',
       !!m1 && m1.fabBottomToDock !== null && Math.abs(m1.fabBottomOffset - m1.seatExpect) < 3 && m1.fabRightToViewport <= 17,
       JSON.stringify({ offset: m1 && m1.fabBottomOffset, expect: m1 && m1.seatExpect, right: m1 && m1.fabRightToViewport }));
     ok('T9b2 单行同带：fab 中线 = 左锚簇中线（≤3px）', !!m1 && m1.cCenter !== null && Math.abs(m1.fabCenter - m1.cCenter) <= 3,
       JSON.stringify({ fab: m1 && m1.fabCenter, cluster: m1 && m1.cCenter }));
-    // F3-b 批后口径：列可视高 = 总档 − 带档（⑤带净空在 colwrap，E-2 移动 250−56=194）。
-    ok('T9c 列可视 max-h = 总档 250 − 带档 56 = 194（E-2 移动档，⑤带净空口径）', m1 && m1.colMaxH === '194px', m1 && m1.colMaxH);
+    // doc-ask-fade 批后口径：带盖内容不再吃列高 ⇒ 列可视高 = 总档（旧 250−56=194 退役）。
+    // 新档 = clamp(320px, 46vh, 420px)（活 token 解析成 px）；期望值不写常量：
+    // 断言「落在档内 ∧ 列高 = 容器档」= 无带档扣减 + 加高生效两件事一起钉住。
+    ok('T9c 列可视 max-h 落在加高档 [320,420] 且 = colwrap 档（无带档扣减；旧 194 必红）',
+      !!m1 && parseFloat(m1.colMaxH) >= 320 && parseFloat(m1.colMaxH) <= 420 && m1.colMaxH === m1.colwrapMaxH,
+      JSON.stringify({ col: m1 && m1.colMaxH, wrap: m1 && m1.colwrapMaxH }));
     // 气泡列表面横滑零切卡（surface 归属制：peek 不亮）
     await mob.page.click('.ask-fab');
     await sleep(500);

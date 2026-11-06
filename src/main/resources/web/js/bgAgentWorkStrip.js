@@ -26,30 +26,30 @@ const STRIP_CSS = `<style id="${STRIP_CSS_ID}">
 /* 「会话在做什么」条：弹窗头下、聊天体上的窄条（玻璃语言，零新设计词）。 */
 .bgws {
   border-bottom: 1px solid var(--glass-border);
-  padding: 6px 16px;
+  padding: var(--ds-space-1h) var(--ds-space-4);
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--ds-space-1);
   flex-shrink: 0;
-  font: 400 11px -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 400 var(--ds-fs-meta) -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text-muted);
   max-height: 108px;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
-.bgws-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.bgws-row { display: flex; align-items: center; gap: var(--ds-space-1h); min-width: 0; }
 .bgws-label {
   flex-shrink: 0;
   font-weight: 500;
   color: var(--color-frame-text-dim, var(--color-text-muted));
 }
 .bgws-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bgws-value .st-ic { width: 11px; height: 11px; margin-right: 3px; vertical-align: -1px; }
+.bgws-value .st-ic { width: 11px; height: 11px; margin-right: var(--ds-space-1); vertical-align: -1px; }
 .bgws-idle { color: var(--status-warn-icon); font-weight: 500; }
 .bgws-task {
   cursor: pointer;
-  border-radius: 6px;
-  padding: 1px 4px;
+  border-radius: var(--ds-radius-chip);
+  padding: var(--ds-space-hair) var(--ds-space-1);
   margin-left: -4px;
 }
 .bgws-task:hover { background: var(--color-frame-hover); }
@@ -143,8 +143,17 @@ function renderStrip(stripEl, nodeSessionId) {
   } else if (status === 'Waiting') {
     // statusIcon 返回的是 lucide 生成的 SVG 字符串（库内模板，非用户数据）——
     // 与 bgAgents.js 行渲染同一注入姿势：innerHTML 承载图标，动态文本走 textContent。
+    // 案A 待命批 2026-10-31（状态矩阵批收编）：Waiting 面两型——mode=standby 行显示
+    // 「待命」（tooltip = 申报的「在等什么」）；其余（候合并/道忙停靠）照旧
+    // 「等待合并轮」。
+    const waitingMode = (info && info.waiting && info.waiting.mode) || '';
     actValue.innerHTML = statusIcon('pause', 11);
-    actValue.appendChild(document.createTextNode(t('subagents.status.waitingMerge')));
+    actValue.appendChild(document.createTextNode(
+      waitingMode === 'standby' ? t('subagents.status.standby') : t('subagents.status.waitingMerge')
+    ));
+    if (waitingMode === 'standby' && info.waiting.detail) {
+      actValue.title = String(info.waiting.detail);
+    }
   } else if (status === 'Idle' || status === 'WaitingForUser' || status === 'idle') {
     // 空闲细分：等什么（bgWaiting / 回执）或长空闲徽标——与面板行同判据。
     const bgWaiting = Array.isArray(info?.bgWaiting) ? info.bgWaiting : [];

@@ -12,10 +12,11 @@ function showBatchDeleteModalLazy() {
 import { renderMarkdownWithMath, smartScroll, stopSpinner, createIconsIn, statusIcon } from './utils.js';
 import { finishAgent, setStatus, renderToolPending, cancelThinkingRAF, bindCollapsibleToggle } from './chat.js';
 import { restoreFromStorage, loadMsgs } from './persistence.js';
-import { renderTaskList } from './taskList.js';
+import { renderTodoTaskList } from './todoFace.js';
 import { clearMemoryCache } from './memory.js';
 // eyeSvg/eyeOffSvg（provider 密码域可见性切换图标）单源 = sidebar/providersUi.js（FE 拆分后
-// 迁入；JEV 密钥引用行本地批 2026-10-09 的新调用点自模块引入，禁第二份字面量）。
+// 迁入；jev-imagegen-align-llm 批 2026-11-02 起 Jev 面唯一掩码输入框 #cfg-jev-key 的
+// eye 也从本模块取，禁第二份字面量）。
 import { eyeSvg, eyeOffSvg } from './sidebar/providersUi.js';
 // JeV「测试可用性」钮（settings-panel-jev-imagegen 批 2026-10-29 作者令「然后
 // Jev/生图，也要像我们LLM这样，有个按钮来测试可用性」）：钮 + 结果块 + 绑定面
@@ -24,22 +25,32 @@ import { jevTestButtonHTML, jevTestResultsHTML, bindJevTestButton } from './side
 import { chatViews, setActiveView, activeView } from './chatView.js';
 import { cleanupCardIframes, resetCardAccumulator } from './cardRegistry.js';
 import { t, getLocale, setLocale, getAvailableLocales } from './i18n.js';
-import { fetchNeblinkStatus, neblinkSettingsHTML, bindNeblinkEvents, avatarViewState, noteAvatarFailure, paintAvatarSlot } from './neblink.js';
+import { fetchNeblinkStatus, neblinkSettingsHTML, bindNeblinkEvents } from './neblink.js';
+// 件四 · 设置页身份卡本地化（作者令 2026-11-02）：头像在上 + 用户名/邮箱单行胶囊，
+// 点胶囊 = App 内个人资料面（不再跳官网）。卡片结构/绘制/资料面全在该叶子模块，
+// 本文件只调两个入口（settingsIdentityCardHTML 出结构，paintSettingsIdentity 出读数）。
+import { settingsIdentityCardHTML, paintSettingsIdentity } from './settingsIdentity.js';
+// settings-ios-rows 批（2026-11-06 作者令）：设置页行/卡/chevron/动作钮的结构单点。
+import { setCard, setGroup, setNavRow, setRow } from './settingsRows.js';
 // updateCheck.js（更新检查/更新执行链）已随 auth-trim 批（2026-10-20 作者令）整体删除：
 // 设置页「更新」功能退役，未来由官网统一检测更新取代。重启面（restartStatus/
-// restartResult 帧消费）留在本文件（见 bindSettingsEvents 后的模块级订阅）。
+// restartResult 帧消费）曾迁到本文件模块级；settings-ios-rows 批（2026-11-06）随
+// 「重启服务」入口整件移除而一并删除（见 bindSettingsEvents 内注释）。
 import { toggleHTML, setToggleState } from './toggle.js';
+// 时间滚轮选择器（time-wheel-picker 实施批 2026-11-03，作者令 22:16/22:20）：
+// 冻结时段 = 原子段字段（整段一颗触发钮），交互单源 = js/timeWheel.js。
+import { HHMM_RE, toMin, rangeTriggerHTML, paintRangeTrigger, attachTimeTriggers } from './timeWheel.js';
 import { authHeaders } from './flowHelpers.js';
 import { preloadModelCapabilities, renderVisionBadge } from './modelCapabilities.js';
 import { renderAppearanceSection, bindAppearanceEvents } from './orbSettingsUI.js';
 // 骨架卡（audit ②27，2026-10-25）：初次进会话（历史未加载完）的 loading 占位泡。
-import { showChatSkeleton, hideChatSkeleton } from './main/historyIndicators.js';
+import { showHistoryLoader } from './main/historyIndicators.js';
 // ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
 import { withFocusKey, pushLayer, popLayer } from './focusTrap.js';
 // Root agent's DISPLAY name — the single read point shared with onboarding /
 // micOrb / chat / modelPanel (leaf module; no cycle risk).
-import { rootDisplayName, isRootNamed } from './rootName.js';
+import { rootDisplayName, isRootNamed, agentDisplayName, ROOT_AGENT_KEY } from './rootName.js';
 // 文件缓存设置行（M2 · 设计 v1 §6.4/§7 表5）：占用读数/清空 seam 单源 = nfFileCache.js。
 // 依赖纪律安全：nfFileCache 只 import state.js/branding.js（后者为叶子），本边不成环。
 import { nfCacheStats, nfCacheReset } from './nfFileCache.js';
@@ -57,6 +68,11 @@ import { nfCacheStats, nfCacheReset } from './nfFileCache.js';
 // sidebar.js),公共导出面(批次前 41 符号)经下方 `export ... from` 显式转发,
 // 外部 import 方零改动。
 import { protocolFormLabel, escapeHtml, flushConfigToServer, showProviderModal, saveNewProvider, revealProviderApiKeys } from './sidebar/providersUi.js';
+// 配置提供方卡片单源（jev-imagegen-align-llm 批 · card 件，契约 §A.1/§A.4）：
+// 卡片 DOM 与两个交互绑定抽到 js/cfgProviderCard.js，LLM 面 = 第一个消费方
+// （下方 renderProviderCard 退化为薄壳，调用点与产出逐字不变）；Jev / 生图面
+// 各自节点只读该件。本文件对它的依赖是单向的（该件不回指 sidebar.js）。
+import { providerCardHTML, addProviderButtonHTML, bindCardRemove, bindCardSelect } from './cfgProviderCard.js';
 // 生图设置节（settings-panel 批 ②③件）与每模型连接性测试钮（B 件）——渲染/
 // 绑定单点在各自子模块，本文件只挂壳 + 转发调用（子模块不回指本文件）。
 import { bindImagegenSection } from './sidebar/imagegenSection.js';
@@ -217,30 +233,33 @@ export function initNavTabs() {
 }
 
 // ---------- Agent icons in Nav Bar ----------
-/** DISPLAY name of an agent by mechanism name: `agentList` carries
- *  `displayName || name`, so the root agent renders the user's chosen name.
- *  Judgement keys (`a.name === 'Nebula'` below) stay untouched — display only. */
+/** DISPLAY name of an agent by mechanism name — delegates to the SINGLE display
+ *  read point (rootName.js#agentDisplayName), so the root agent renders the
+ *  user's chosen name (generic appellation while unnamed — never the mechanism
+ *  key) and background agents render their own name. Judgement keys
+ *  (`a.name === ROOT_AGENT_KEY` below) stay untouched — display only. */
 function agentDisplayLabel(agentName) {
-  const a = (state.agentsData || []).find(x => x.name === agentName);
-  return a ? (a.displayName || a.name || agentName) : agentName;
+  return agentDisplayName(agentName);
 }
 
 export function renderAgentList() {
   const list = document.getElementById('nav-agent-list');
   if (!list) return;
   list.innerHTML = '';
-  // ⑧ Nebula (orchestrator) pinned first with a separator before the rest
-  // (entity-icons-visual-spec §3.3). Nebula always renders the orbit icon —
+  // ⑧ root agent (orchestrator) pinned first with a separator before the rest
+  // (entity-icons-visual-spec §3.3). It always renders the orbit icon —
   // its identity marker must stay stable, so custom avatars are ignored.
   const ordered = [...state.agentsData].sort((a, b) =>
-    (b.name === 'Nebula' ? 1 : 0) - (a.name === 'Nebula' ? 1 : 0));
+    (b.name === ROOT_AGENT_KEY ? 1 : 0) - (a.name === ROOT_AGENT_KEY ? 1 : 0));
   ordered.forEach((a, idx) => {
-    const isNebula = a.name === 'Nebula';
+    const isNebula = a.name === ROOT_AGENT_KEY;
     const el = document.createElement('div');
     const isActive = state.selectedAgent === a.name;
     el.className = 'nav-agent' + (isActive ? ' active' : '') + (isNebula ? ' nav-agent-orchestrator' : '');
     const avatar = a.avatar || '';
-    const displayName = a.displayName || a.name;
+    // Display name = the single read point (named root → its name; unnamed root →
+    // generic appellation; every other agent → its own name).
+    const displayName = agentDisplayLabel(a.name);
     el.dataset.name = a.name;
     el.title = displayName;
     const iconHtml = isNebula
@@ -421,42 +440,41 @@ function renderWorkScheduleSection() {
   const segs = Array.isArray(ws.segments) ? ws.segments : [];
   const segRows = segs.map((s, i) => buildSegmentRowHtml(s, i)).join('');
   return `
-    <div class="settings-row">
-      <span class="settings-label">${t('settings.workSchedule')}</span>
-      ${toggleHTML({ on: enabled, id: 'toggle-schedule', label: t('settings.workSchedule') })}
-    </div>
-    <div id="schedule-editor" style="display:${enabled ? 'block' : 'none'};padding:4px 0 8px;">
+    ${setRow({
+      title: t('settings.workSchedule'),
+      control: toggleHTML({ on: enabled, id: 'toggle-schedule', label: t('settings.workSchedule') }),
+    })}
+    <div id="schedule-editor" class="set-sub" style="display:${enabled ? 'block' : 'none'};">
       <div class="segment-list" id="segment-list">${segRows}</div>
-      <button class="cfg-btn cfg-btn-add" id="btn-add-segment">${t('settings.addSegment')}</button>
-      <div class="cfg-hint">${t('settings.workScheduleOnHint')}</div>
+      <button class="cfg-btn cfg-btn-add set-btn set-btn-block" id="btn-add-segment">${t('settings.addSegment')}</button>
+      <div class="set-row-hint">${t('settings.workScheduleOnHint')}</div>
     </div>
     <!-- Dirty hint + action row live OUTSIDE #schedule-editor so they stay
          visible even when the editor is display:none — a toggled-OFF draft
          must remain committable (Save) / abandonable (Reset). The segments
          themselves stay in the DOM (renderScheduleEditorRows rebuilds from
          the draft on re-enable), so nothing is cleared on toggle-off. -->
-    <div class="cfg-hint" id="schedule-dirty-hint" style="display:${scheduleDraft !== null ? 'block' : 'none'};margin-top:6px;color:var(--color-text-muted)">${t('settings.scheduleDirtyHint')}</div>
-    <div style="display:${scheduleDraft !== null ? 'flex' : 'none'};gap:8px;margin-top:8px" id="schedule-actions">
-      <button class="cfg-btn cfg-btn-primary" id="btn-save-schedule">${t('settings.scheduleSave')}</button>
-      <button class="cfg-btn" id="btn-reset-schedule">${t('settings.scheduleReset')}</button>
+    <div class="set-row-hint" id="schedule-dirty-hint" style="display:${scheduleDraft !== null ? 'block' : 'none'}">${t('settings.scheduleDirtyHint')}</div>
+    <div class="set-actions" style="display:${scheduleDraft !== null ? 'flex' : 'none'}" id="schedule-actions">
+      <button class="cfg-btn cfg-btn-primary set-btn" id="btn-save-schedule">${t('settings.scheduleSave')}</button>
+      <button class="cfg-btn set-btn" id="btn-reset-schedule">${t('settings.scheduleReset')}</button>
     </div>
-    <div class="cfg-hint" id="schedule-off-hint" style="display:${enabled ? 'none' : 'block'};margin-top:-2px">${t('settings.workScheduleOffHint')}</div>`;
+    <div class="set-row-hint" id="schedule-off-hint" style="display:${enabled ? 'none' : 'block'}">${t('settings.workScheduleOffHint')}</div>`;
 }
 
 /**
- * One segment row — start/end HH:mm inputs + remove. A small sapphire hint is
- * shown when the segment crosses midnight (start > end): the freeze window
- * spans into the next day (blacklist semantics).
+ * One segment row — 原子段字段（整段「09:00-12:00」一颗触发钮，作者令 2026-11-01 16:46
+ * 「8:00-12:00 应该是一个整体」）+ remove。跨零点的行内 sapphire 徽标保留
+ * （start > end = 冻结窗跨入次日，黑名单语义）。交互组件单源 = js/timeWheel.js。
  */
 function buildSegmentRowHtml(s, i) {
-  const crossMidnight = HHMM_RE.test(s.start) && HHMM_RE.test(s.end)
-    && toMin(s.start) > toMin(s.end);
+  const start = HHMM_RE.test(s.start) ? s.start : '09:00';
+  const end = HHMM_RE.test(s.end) ? s.end : '12:00';
+  const crossMidnight = toMin(start) > toMin(end);
   return `
     <div class="segment-row" data-seg-index="${i}">
       <span class="seg-label">${t('settings.segmentLabel', { n: i + 1 })}</span>
-      <input class="time-input" value="${escapeHtml(s.start || '')}" data-role="start" autocomplete="off" spellcheck="false">
-      <span class="seg-label">${t('settings.segmentTo')}</span>
-      <input class="time-input" value="${escapeHtml(s.end || '')}" data-role="end" autocomplete="off" spellcheck="false">
+      ${rangeTriggerHTML({ start, end, label: t('settings.segmentEdit'), presets: 'freeze' })}
       ${crossMidnight ? `<span class="seg-cross-midnight">${t('settings.segmentCrossMidnight')}</span>` : ''}
       <button class="seg-remove" title="${t('settings.removeSegment')}" aria-label="${t('settings.removeSegment')}">×</button>
     </div>`;
@@ -535,26 +553,29 @@ function renderTtlSection() {
       <div class="cfg-form-group">
         <label class="cfg-label" for="${id}">${t(labelKey)}</label>
         <input class="cfg-input" id="${id}" type="number" inputmode="numeric" value="${Number(value)}" ${enabled ? '' : 'disabled'} autocomplete="off">
-        <div class="cfg-hint">${t(hintKey)}</div>
+        <div class="set-row-hint">${t(hintKey)}</div>
       </div>`;
+  // settings-ios-rows 批：原地展开头行 = 同一套可点进行（setNavRow expand，chevron
+  // 下转表达开合），主体 = .set-collapse-body；开关/保存按钮取同一行网格与尺寸令牌。
   return `
-    <div class="settings-row stt-advance-toggle-row">
-      <button type="button" class="settings-collapse-toggle" id="ttl-advance-toggle"
-              aria-expanded="${ttlAdvanceExpanded}" aria-controls="ttl-advance-body">
-        <span class="settings-label">${t('settings.ttlAdvanceTitle')}</span>
-        <span class="settings-collapse-chevron" aria-hidden="true"></span>
-      </button>
-    </div>
-    <div class="settings-collapse-body" id="ttl-advance-body" ${ttlAdvanceExpanded ? '' : 'hidden'}>
-      <div class="settings-row">
-        <span class="settings-label">${t('settings.ttlEnabled')}</span>
-        ${toggleHTML({ on: enabled, id: 'toggle-ttl-enabled', label: t('settings.ttlEnabled') })}
-      </div>
-      <div class="cfg-hint">${t('settings.ttlEnabledHint')}</div>
-      ${rowHtml('settings.ttlMinutesLabel', 'settings.ttlMinutesHint', 'ttl-minutes', cfg.ttlMinutes ?? TTL_DEFAULTS.ttlMinutes)}
-      ${rowHtml('settings.keepRecentLabel', 'settings.keepRecentHint', 'ttl-keep-recent', cfg.keepRecent ?? TTL_DEFAULTS.keepRecent)}
-      <div style="display:flex;gap:8px;margin-top:8px">
-        <button class="cfg-btn cfg-btn-primary" id="btn-save-ttl">${t('settings.ttlSave')}</button>
+    ${setNavRow({
+      icon: statusIcon('timer', 16),
+      title: t('settings.ttlAdvanceTitle'),
+      id: 'ttl-advance-toggle',
+      expand: true,
+      expanded: ttlAdvanceExpanded,
+      controls: 'ttl-advance-body',
+    })}
+    <div class="set-collapse-body" id="ttl-advance-body" ${ttlAdvanceExpanded ? '' : 'hidden'}>
+      ${setRow({
+        title: t('settings.ttlEnabled'),
+        control: toggleHTML({ on: enabled, id: 'toggle-ttl-enabled', label: t('settings.ttlEnabled') }),
+        hint: t('settings.ttlEnabledHint'),
+      })}
+      ${setGroup(rowHtml('settings.ttlMinutesLabel', 'settings.ttlMinutesHint', 'ttl-minutes', cfg.ttlMinutes ?? TTL_DEFAULTS.ttlMinutes))}
+      ${setGroup(rowHtml('settings.keepRecentLabel', 'settings.keepRecentHint', 'ttl-keep-recent', cfg.keepRecent ?? TTL_DEFAULTS.keepRecent))}
+      <div class="set-actions">
+        <button class="cfg-btn cfg-btn-primary set-btn" id="btn-save-ttl">${t('settings.ttlSave')}</button>
       </div>
     </div>`;
 }
@@ -680,21 +701,26 @@ function renderSttSection() {
     : configured
       ? t('settings.sttConfiguredStatus', { endpoint: escapeHtml(endpoint), model: escapeHtml(model) })
       : t('settings.sttUnconfiguredStatus');
+  // settings-ios-rows 批：头行与 TTL 节同一套可点进行（原地展开 = setNavRow expand），
+  // 右侧只放一个状态读数（.set-nav-val），不再有第二种行壳。
   return `
-    <div class="settings-row stt-advance-toggle-row">
-      <button type="button" class="settings-collapse-toggle" id="stt-advance-toggle"
-              aria-expanded="${sttAdvanceExpanded}" aria-controls="stt-advance-body">
-        <span class="settings-label">${t('settings.sttAdvanceTitle')}</span>
-        <span class="settings-collapse-chevron" aria-hidden="true"></span>
-      </button>
-      <span class="cfg-hint stt-status" id="stt-status-hint">${status}</span>
-    </div>
-    <div class="settings-collapse-body" id="stt-advance-body" ${sttAdvanceExpanded ? '' : 'hidden'}>
-      <div class="settings-row">
-        <span class="settings-label">${t('settings.sttEnabled')}</span>
-        ${toggleHTML({ on: enabled, id: 'toggle-stt-enabled', label: t('settings.sttEnabled') })}
-      </div>
-      <div class="cfg-hint">${t('settings.sttEnabledHint')}</div>
+    ${setNavRow({
+      icon: statusIcon('mic', 16),
+      title: t('settings.sttAdvanceTitle'),
+      id: 'stt-advance-toggle',
+      expand: true,
+      expanded: sttAdvanceExpanded,
+      controls: 'stt-advance-body',
+      value: status,
+      valueTitle: status.replace(/<[^>]*>/g, ''),
+      valueId: 'stt-status-hint',
+    })}
+    <div class="set-collapse-body" id="stt-advance-body" ${sttAdvanceExpanded ? '' : 'hidden'}>
+      ${setRow({
+        title: t('settings.sttEnabled'),
+        control: toggleHTML({ on: enabled, id: 'toggle-stt-enabled', label: t('settings.sttEnabled') }),
+        hint: t('settings.sttEnabledHint'),
+      })}
       <div class="cfg-form-group">
         <label class="cfg-label" for="stt-endpoint">${t('settings.sttEndpoint')}</label>
         <input class="cfg-input" id="stt-endpoint" type="text" value="${escapeHtml(endpoint)}" placeholder="https://api.example.com/v1/audio/transcriptions" autocomplete="off" spellcheck="false" ${enabled ? '' : 'disabled'}>
@@ -703,25 +729,31 @@ function renderSttSection() {
         <label class="cfg-label" for="stt-apikey">${t('settings.sttApiKey')}
           ${configured ? `<span class="stt-key-configured">${t('settings.sttKeyConfigured')}</span>` : ''}
         </label>
-        <input class="cfg-input" id="stt-apikey" type="password" value="" placeholder="${t(configured ? 'settings.sttApiKeyConfiguredPlaceholder' : 'settings.sttApiKeyPlaceholder')}" autocomplete="off" ${enabled ? '' : 'disabled'}>
-        <div class="cfg-hint">${t('settings.sttHint')}</div>
-        <div style="display:flex;gap:8px;margin-top:8px">
-          <button class="cfg-btn cfg-btn-primary" id="btn-save-stt">${t('settings.sttSave')}</button>
-          <button class="cfg-btn" id="btn-clear-stt">${t('settings.sttClear')}</button>
+        <!-- 密钥字段关拼写检查（input-focus-ring 批 2026-11-05）：浏览器会把 key 当
+             单词画红波浪线，且部分实现会把值送拼写服务 ⇒ 一并关自动大写/自动更正。 -->
+        <input class="cfg-input" id="stt-apikey" type="password" value="" placeholder="${t(configured ? 'settings.sttApiKeyConfiguredPlaceholder' : 'settings.sttApiKeyPlaceholder')}" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" ${enabled ? '' : 'disabled'}>
+        <div class="set-row-hint">${t('settings.sttHint')}</div>
+        <div class="set-actions">
+          <button class="cfg-btn cfg-btn-primary set-btn" id="btn-save-stt">${t('settings.sttSave')}</button>
+          <button class="cfg-btn set-btn" id="btn-clear-stt">${t('settings.sttClear')}</button>
         </div>
       </div>
     </div>`;
 }
 
 /**
- * Collect segments currently in the editor (all rows, raw values).
+ * Collect segments currently in the editor (all rows). 值域单源 = 原子段触发钮的
+ * dataset（data-start/data-end）——整段一个字段，无半边输入框可取。
  */
 function collectSegments() {
   const rows = document.querySelectorAll('#segment-list .segment-row');
-  return Array.from(rows).map(row => ({
-    start: (/** @type {HTMLInputElement|null} */ (row.querySelector('[data-role="start"]')))?.value.trim() || '',
-    end: (/** @type {HTMLInputElement|null} */ (row.querySelector('[data-role="end"]')))?.value.trim() || ''
-  }));
+  return Array.from(rows).map((row) => {
+    const btn = /** @type {HTMLElement|null} */ (row.querySelector('[data-tw-range]'));
+    return {
+      start: btn ? (btn.dataset.start || '') : '',
+      end: btn ? (btn.dataset.end || '') : ''
+    };
+  });
 }
 
 /** Rebuild the segment rows (used for the F2 default on first enable). */
@@ -730,9 +762,6 @@ function renderScheduleEditorRows(segs) {
   if (!list) return;
   list.innerHTML = segs.map((s, i) => buildSegmentRowHtml(s, i)).join('');
 }
-
-const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
-function toMin(hhmm) { const [h, m] = hhmm.split(':').map(Number); return h * 60 + m; }
 
 /**
  * Blacklist validation contract (user ruling 2026-08-19 23:16): HH:mm format;
@@ -751,12 +780,12 @@ function validateSegments(segs) {
   return null;
 }
 
-/** In-place toggle of a row's cross-midnight hint (no rebuild → no focus loss
- *  while the user clicks from the start input into the end input). */
+/** In-place toggle of a row's cross-midnight hint（值域单源 = 原子段触发钮 dataset）。 */
 function updateSegmentRowHint(row) {
   if (!row) return;
-  const start = row.querySelector('[data-role="start"]')?.value.trim() || '';
-  const end = row.querySelector('[data-role="end"]')?.value.trim() || '';
+  const btn = /** @type {HTMLElement|null} */ (row.querySelector('[data-tw-range]'));
+  const start = btn ? (btn.dataset.start || '') : '';
+  const end = btn ? (btn.dataset.end || '') : '';
   const cross = HHMM_RE.test(start) && HHMM_RE.test(end) && toMin(start) > toMin(end);
   let hint = row.querySelector('.seg-cross-midnight');
   if (cross && !hint) {
@@ -811,53 +840,465 @@ function effortFromConfig() {
 // 7 个 i18n 键一并移除；`PUT /api/safety/mode` 的前端调用点随之归零（REST 端点
 // 由后端保留，供外部/脚本使用）。档位的**唯一 UI 入口 = 顶栏盾牌**
 // （`web/js/main.js` `initSafetyToggle`，写的是同一条全局持久路径）。
-// ── Jev 面板三改（用户 2026-10-09 23:11 截图反馈）─────────────────────────
-// 钉死端点单点：Jev 版（provider=typesafe-jev）的端点是固定的——镜像后端
-// DecisionProvider.DefaultTypesafeEndpoint（llm/decision/DecisionProvider.scala:270），
-// 前端无后端常量导入面，此处是唯一拼写点（渲染钉死 / 提供方切换 / 恢复钉死共用）。
-const JEV_PINNED_ENDPOINT = 'https://api.typesafe.ai/v1/systemone';
+// ── Jev 面板全面对齐 LLM 配置面（jev-imagegen-align-llm 批 · jevpanel 件，2026-11-02
+// 作者令逐字：「设置页 Jev 配置面按 LLM 配置面全面对齐——空态起步无预填、无任何
+//『密钥名/内部指针』类字眼、已配置以卡片列表呈现可并存可单删、密钥直接录入走
+// secrets」）。契约：reports/20261102_jev-imagegen-align-llm/contract.md §B.1（
+// jev.providers 形状）/ §C（密钥面）/ §E.2（DOM 钩子表）。
+//
+// 本批整体退役的三处旧面（旧锚一删即不再渲染；id 清单见契约 §E.2「退役 id」行）：
+//   · 写死的两选项提供方下拉 → 卡片列表 + `#cfg-jev-name` 文本名；
+//   · 凭据名输入框 + 明文回读只读行（及其 `GET /api/secrets/<名>/value` 拉取
+//     路径、eye 换标）→ 唯一掩码输入框 `#cfg-jev-key`；
+//   · 「typesafe-jev 端点钉死 disabled」预填（钉死端点常量与提供方切换联动）→
+//     `#cfg-jev-endpoint` 永不禁用、空态空、不再预填。
+//
+// 数据源 = GET /api/config/jev（ConfigService.jevStatus 单点投影：配置热读 + key
+// 在位性；永不回传 key 值）。凭据面无感化（作者令「前端永远不出现引用类字眼与
+// 解释文案」）：面板只认「API Key 值」——内部 secret 名按提供方名派生
+// （`jev-<小写名>-key`，SecretsStore.NamePattern 只认小写），对用户不可见、不可
+// 编辑；值只进输入框与请求体（secrets 面 0600 落盘），保存后清空 ⇒ 不进 value
+// 属性 / data-* / localStorage / console / DOM 文本。
+// 空态铁律：无配置 ⇒ 0 张卡片 + 表单五字段全空 + 协议下拉无预选 + 端点不预填。
 
-// ── JeV key 值明文拉取（settings-panel 批①件单点，2026-10-28 作者令「把我们
-// 设置面板里的 jev 的 key，要能直接可见」）：keyRef 输入框当前值 → GET
-// /api/secrets/<name>/value（owner 鉴权，与设置写同门槛）→ 只读行明文回填。
-// 缺 keyRef = 占位；404 = 「待录入」占位（不造假值）；其余失败 = 通用占位。
-// 🔴 纪律：值只进 #cfg-jev-key-value 输入框（作者令「直接可见」的本命位），
-// 不写日志、不进 localStorage、不落任何卡面/属性；面板关闭即随 DOM 蒸发。
-function refreshJevKeyValue() {
-  const input = /** @type {HTMLInputElement|null} */ (document.getElementById('cfg-jev-key-value'));
-  if (!input) return;
-  const keyRefEl = /** @type {HTMLInputElement|null} */ (document.getElementById('cfg-jev-keyref'));
-  const keyRef = (keyRefEl?.value || '').trim();
-  if (!keyRef) {
-    input.value = '';
-    input.placeholder = t('settings.jevKeyValueNoRef');
+/** 协议适配枚举（= 后端 DecisionProvider.AllIds；前端无后端常量导入面，此处唯一拼写点）。 */
+const JEV_PROVIDER_TYPES = ['typesafe-jev', 'laya'];
+
+/** 提供方名合法性（允许大写输入，派生 secret 名时转小写——§C.2）。 */
+const JEV_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$/;
+
+/** GET /api/config/jev 最近一次载荷（null = 尚未拉到 ⇒ 空态面）。 */
+/** @type {any} */
+let lastJevStatus = null;
+
+/** 正在编辑的提供方名（'' = 空态/新增面：表单全空）。 */
+let activeJevProvider = '';
+
+/** 两段式删除已武装的提供方名（'' = 未武装）。 */
+let jevDeleteArmed = '';
+
+/**
+ * 拉取 Jev 状态投影（GET /api/config/jev）。任何失败 → null：面板保持空态，
+ * 绝不造假数据（生图法面同款）。
+ * @returns {Promise<any|null>}
+ */
+async function fetchJevStatus() {
+  try {
+    const resp = await fetch('/api/config/jev', { headers: authHeaders() });
+    if (!resp.ok) return null;
+    return await resp.json();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 内部 secret 名派生（契约 §C.2 单点）：`jev-<小写提供方名>-key`，截到 64 字符
+ * （SecretsStore.MaxLen；NamePattern 只认小写，故必须小写化）。
+ * 🔴 该名**永不出渲染文本 / 属性 / 日志**——只作请求路径与配置里的 secret 名字段。
+ * @param {string} name 提供方名
+ * @returns {string}
+ */
+function jevSecretName(name) {
+  return `jev-${String(name || '').toLowerCase()}-key`.slice(0, 64);
+}
+
+/**
+ * 投影里的某个提供方条目（缺席 = null）。
+ * @param {string} name
+ * @returns {any}
+ */
+function jevProviderEntry(name) {
+  if (!name) return null;
+  const providers = /** @type {Record<string, any>} */ ((lastJevStatus && lastJevStatus.providers) || {});
+  return providers[name] || null;
+}
+
+/**
+ * 投影里的提供方名清单（顺序 = 配置顺序）。
+ * @returns {string[]}
+ */
+function jevProviderNames() {
+  return Object.keys(/** @type {Record<string, any>} */ ((lastJevStatus && lastJevStatus.providers) || {}));
+}
+
+/**
+ * 协议适配徽标文案（卡片 .cfg-card-badge）；未知类型不出徽标（§A.2）。
+ * @param {string} type
+ * @returns {string}
+ */
+function jevTypeLabel(type) {
+  if (type === 'typesafe-jev') return t('settings.jev.typeTypesafe');
+  if (type === 'laya') return t('settings.jev.typeLaya');
+  return '';
+}
+
+/**
+ * 卡片右侧 key 状态徽标（已保存 / 未配置）——只报在位性，永不回显值。
+ * @param {boolean} configured
+ * @returns {string}
+ */
+function jevKeyBadge(configured) {
+  return configured
+    ? `<span class="st-badge" data-tone="ok">${escapeHtml(t('settings.cfgCard.keyConfigured'))}</span>`
+    : `<span class="st-badge" data-tone="warn">${escapeHtml(t('settings.cfgCard.keyMissing'))}</span>`;
+}
+
+/**
+ * 一张 Jev 提供方卡片（共用卡片组件 · 契约 §A.1/§A.2/§E.2：face='jev'，一卡 =
+ * 一个提供方 + 它的主模型，DOM 与 LLM 卡片逐字同构）。
+ * @param {string} name
+ * @param {any} p 投影条目
+ * @param {boolean} active 当前正在编辑
+ * @returns {string}
+ */
+function jevCardHTML(name, p, active) {
+  const model = String((p && p.model) || '').trim();
+  return providerCardHTML({
+    name,
+    face: 'jev',
+    protocolBadge: jevTypeLabel(String((p && p.type) || '')),
+    models: model ? [model] : [],
+    metaExtra: jevKeyBadge(!!(p && p.keyConfigured)),
+    active,
+  });
+}
+
+/**
+ * 卡片列表 + 空态引导（空态 = 0 张 .cfg-card，只剩一句「尚未配置」提示）。
+ * @returns {string}
+ */
+function jevProviderListHTML() {
+  const providers = /** @type {Record<string, any>} */ ((lastJevStatus && lastJevStatus.providers) || {});
+  const names = Object.keys(providers);
+  const cards = names.map((n) => jevCardHTML(n, providers[n], n === activeJevProvider)).join('');
+  const empty = names.length ? '' : `<div class="cfg-hint">${escapeHtml(t('settings.cfgCard.emptyHint'))}</div>`;
+  return `<div id="jev-provider-list">${cards}${empty}</div>`;
+}
+
+/**
+ * 编辑表单（契约 §E.2 的 id 表逐字）。空态 = 五字段全空 + 协议占位不预选 +
+ * 端点不预填（空态铁律）；选中卡片 = 该提供方现值，key 框**永不带值**（只按
+ * key 在位性换 placeholder）。
+ * @returns {string}
+ */
+function jevProviderFormHTML() {
+  const names = jevProviderNames();
+  const active = names.includes(activeJevProvider) ? activeJevProvider : '';
+  const p = active ? jevProviderEntry(active) : null;
+  const type = String((p && p.type) || '');
+  const keyConfigured = !!(p && p.keyConfigured);
+  const keyPlaceholder = keyConfigured ? t('settings.jev.keyReentryPlaceholder') : t('settings.jev.keyPlaceholder');
+  // 协议下拉：空态 = 占位项选中（不预选任何真实适配器）；既有值不在枚举内时补一项。
+  const typeList = type && !JEV_PROVIDER_TYPES.includes(type) ? [...JEV_PROVIDER_TYPES, type] : JEV_PROVIDER_TYPES;
+  const typeOpts = [
+    `<option value="" disabled${type ? '' : ' selected'}>${escapeHtml(t('settings.imagegenTypePlaceholder'))}</option>`,
+    ...typeList.map((tp) => `<option value="${escapeHtml(tp)}"${tp === type ? ' selected' : ''}>${escapeHtml(jevTypeLabel(tp) || tp)}</option>`),
+  ].join('');
+  const armed = !!active && jevDeleteArmed === active;
+  return `
+    <div class="cfg-form-group" id="jev-provider-form">
+      <label class="cfg-label" for="cfg-jev-name">${t('settings.jev.name')}</label>
+      <input class="cfg-input" id="cfg-jev-name" type="text" value="${escapeHtml(active)}" placeholder="${escapeHtml(t('settings.jev.namePlaceholder'))}" autocomplete="off" spellcheck="false">
+      <label class="cfg-label" for="cfg-jev-type">${t('settings.jev.type')}</label>
+      <select class="cfg-input" id="cfg-jev-type">${typeOpts}</select>
+      <label class="cfg-label" for="cfg-jev-endpoint">${t('settings.jevEndpoint')}</label>
+      <input class="cfg-input" id="cfg-jev-endpoint" type="text" value="${escapeHtml(String((p && p.endpoint) || ''))}" autocomplete="off" spellcheck="false">
+      <label class="cfg-label" for="cfg-jev-model">${t('settings.jev.model')}</label>
+      <input class="cfg-input" id="cfg-jev-model" type="text" value="${escapeHtml(String((p && p.model) || ''))}" placeholder="${escapeHtml(t('settings.jev.modelPlaceholder'))}" autocomplete="off" spellcheck="false">
+      <label class="cfg-label" for="cfg-jev-key">${t('settings.jev.keyEntry')}</label>
+      <div class="cfg-password-wrap">
+        <input class="cfg-input" id="cfg-jev-key" type="text" value="" placeholder="${escapeHtml(keyPlaceholder)}" autocomplete="off" spellcheck="false" style="-webkit-text-security:disc">
+        <button type="button" class="cfg-eye-btn" id="jev-key-eye" tabindex="-1" aria-label="${escapeHtml(t('settings.jev.keyShow'))}" aria-pressed="false" title="${escapeHtml(t('settings.jev.keyShow'))}">${eyeSvg}</button>
+      </div>
+      <div class="cfg-hint">${escapeHtml(t('settings.jev.detailHint'))}</div>
+      <div class="cfg-card-action-row">
+        <button class="cfg-btn cfg-btn-primary" id="btn-save-jev">${t('settings.save')}</button>
+        ${jevTestButtonHTML()}
+        <button class="cfg-btn" id="btn-delete-jev" type="button" data-armed="${armed ? '1' : '0'}"${active ? '' : ' disabled'}>${escapeHtml(armed ? t('settings.cfgCard.deleteConfirm') : t('settings.cfgCard.delete'))}</button>
+        <span class="inline-state" id="jev-save-state" role="status" aria-live="polite"></span>
+      </div>
+    </div>
+    ${jevTestResultsHTML()}`;
+}
+
+/**
+ * 整节内容（`#jev-section-wrap` 的唯一绘制点）：列表 + 新增钮 + 表单 + 测试结果块。
+ * @returns {string}
+ */
+function jevSectionHTML() {
+  return `${jevProviderListHTML()}${addProviderButtonHTML({ id: 'btn-add-jev-provider', face: 'jev' })}${jevProviderFormHTML()}`;
+}
+
+/** 原地重画（选中/新增/保存/删除后都走这里，零第二份状态副本）。 */
+function paintJevSection() {
+  const wrap = document.getElementById('jev-section-wrap');
+  if (!wrap) return;
+  wrap.innerHTML = jevSectionHTML();
+}
+
+/**
+ * 保存结果就地反馈（既有 inline-state 惯例：1.5s 自清，role=status 播报）。
+ * @param {boolean} ok
+ */
+function setJevSaveState(ok) {
+  const stateEl = document.getElementById('jev-save-state');
+  if (!stateEl) return;
+  stateEl.innerHTML = ok
+    ? statusIcon('circle-check', 11, 'st-ok') + escapeHtml(t('settings.saved'))
+    : statusIcon('circle-alert', 11, 'st-err') + escapeHtml(t('settings.saveFailed'));
+  setTimeout(() => { if (stateEl.isConnected) stateEl.innerHTML = ''; }, 1500);
+}
+
+/**
+ * 表单字段现值（trim）。@param {string} id @returns {string}
+ */
+function jevFieldValue(id) {
+  const el = /** @type {HTMLInputElement|HTMLSelectElement|null} */ (document.getElementById(id));
+  return el && typeof el.value === 'string' ? el.value.trim() : '';
+}
+
+/**
+ * 写入一枚 secret（契约 §C.3，与生图 writeSecret 同口径）：POST 先建；
+ * 409（同名已存在）⇒ PUT 覆写；其余非 2xx ⇒ toast 带 code。值只出现在请求体里。
+ * @param {string} name 派生 secret 名（对用户不可见）
+ * @param {string} value 输入的 key 值
+ * @returns {Promise<boolean>}
+ */
+async function writeJevSecret(name, value) {
+  try {
+    let resp = await fetch(`/api/secrets/${encodeURIComponent(name)}`, {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value }),
+    });
+    if (resp.status === 409) {
+      resp = await fetch(`/api/secrets/${encodeURIComponent(name)}`, {
+        method: 'PUT',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value }),
+      });
+    }
+    if (!resp.ok) window.__showToast?.(t('settings.jev.keySaveFailed', { code: String(resp.status) }), 'error');
+    return resp.ok;
+  } catch {
+    window.__showToast?.(t('settings.jev.keySaveFailed', { code: 'io' }), 'error');
+    return false;
+  }
+}
+
+/**
+ * 保存流（契约 §C.4 / §B.1）：读五字段 → key 非空先落 secret → 整块 PUT
+ * `/api/config/jev`。providers 从 GET 投影**现读合并**（绝不丢别的提供方）；
+ * key 留空 = 只写配置不改凭据（keyRef 原样带走）。成功后输入框清空、面板停在
+ * 刚保存的提供方。
+ * @returns {Promise<void>}
+ */
+async function saveJevProvider() {
+  const name = jevFieldValue('cfg-jev-name');
+  const type = jevFieldValue('cfg-jev-type');
+  const endpoint = jevFieldValue('cfg-jev-endpoint');
+  const model = jevFieldValue('cfg-jev-model');
+  const keyInput = /** @type {HTMLInputElement|null} */ (document.getElementById('cfg-jev-key'));
+  const key = keyInput ? keyInput.value.trim() : '';
+  if (!name) { window.__showToast?.(t('settings.jev.nameRequired'), 'error'); return; }
+  if (!JEV_NAME_PATTERN.test(name)) { window.__showToast?.(t('settings.jev.nameInvalid'), 'error'); return; }
+  if (!type) { window.__showToast?.(t('settings.jev.typeRequired'), 'error'); return; }
+  if (!model) { window.__showToast?.(t('settings.jev.modelRequired'), 'error'); return; }
+
+  // ① 凭据腿：有输入的 key 才写（留空 = 不动已存凭据）。
+  if (key) {
+    const written = await writeJevSecret(jevSecretName(name), key);
+    if (!written) return; // 凭据没落盘 ⇒ 不动配置（避免半更新）
+  }
+
+  // ② 配置腿：其余提供方逐条原样带走（改名即旧名让位），本条落 {type,$endpoint,$model,keyRef}。
+  const existing = /** @type {Record<string, any>} */ ((lastJevStatus && lastJevStatus.providers) || {});
+  const prev = existing[name] || (activeJevProvider ? existing[activeJevProvider] : null) || null;
+  /** @type {Record<string, Record<string, string>>} */
+  const providers = {};
+  for (const n of Object.keys(existing)) {
+    if (n === activeJevProvider && n !== name) continue; // 改名：旧条目让位
+    const e = existing[n] || {};
+    /** @type {Record<string, string>} */
+    const row = { type: String(e.type || '') };
+    if (e.endpoint) row.endpoint = String(e.endpoint);
+    if (e.model) row.model = String(e.model);
+    if (e.keyRef) row.keyRef = String(e.keyRef);
+    providers[n] = row;
+  }
+  /** @type {Record<string, string>} */
+  const row = { type };
+  if (endpoint) row.endpoint = endpoint;
+  row.model = model;
+  const keyRef = key ? jevSecretName(name) : String((prev && prev.keyRef) || '');
+  if (keyRef) row.keyRef = keyRef;
+  providers[name] = row;
+
+  const enabled = document.getElementById('toggle-jev')?.classList.contains('on') || false;
+  let ok = false;
+  try {
+    const resp = await fetch('/api/config/jev', {
+      method: 'PUT',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled, provider: name, providers }),
+    });
+    ok = resp.ok;
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => null);
+      const err = data && /** @type {any} */ (data).error;
+      if (typeof err === 'string' && err) window.__showToast?.(err, 'error');
+    }
+  } catch { ok = false; }
+  if (!ok) { setJevSaveState(false); return; }
+
+  // ③ 落定：清空 key 输入框（明文零驻留）→ 现读回投影（key 徽标即刻到位）→ 停在刚保存的提供方。
+  if (keyInput) keyInput.value = '';
+  activeJevProvider = name;
+  jevDeleteArmed = '';
+  const fresh = await fetchJevStatus();
+  if (fresh) lastJevStatus = fresh;
+  paintJevSection();
+  bindJevSectionEvents();
+  setJevSaveState(true);
+}
+
+/**
+ * 两段式删除（契约 §E.2 `#btn-delete-jev` 的 `data-armed` 中间态）：首击武装
+ * （标签换「再点一次确认删除」），二击才真删（整块 PUT，其余提供方原样保留；
+ * 凭据文件不动——删配置 ≠ 删凭据）。
+ * @param {string} name
+ * @returns {Promise<void>}
+ */
+async function armOrDeleteJevProvider(name) {
+  if (!name || !jevProviderEntry(name)) return;
+  if (jevDeleteArmed !== name) {
+    jevDeleteArmed = name;
+    activeJevProvider = name;
+    paintJevSection();
+    bindJevSectionEvents();
     return;
   }
-  fetch(`/api/secrets/${encodeURIComponent(keyRef)}/value`, { headers: authHeaders() })
-    .then(async (r) => {
-      if (!input.isConnected) return null;
-      if (r.status === 404) {
-        input.value = '';
-        input.placeholder = t('settings.jevKeyValueMissing', { name: keyRef });
-        return null;
-      }
-      if (!r.ok) {
-        input.value = '';
-        input.placeholder = t('settings.jevKeyValueError', { code: String(r.status) });
-        return null;
-      }
-      const data = await r.json().catch(() => null);
-      const value = data && typeof data.value === 'string' ? data.value : '';
-      input.value = value;
-      input.placeholder = t('settings.jevKeyValuePlaceholder');
-      return value;
-    })
-    .catch(() => {
-      if (input.isConnected) {
-        input.value = '';
-        input.placeholder = t('settings.jevKeyValueError', { code: 'io' });
-      }
+  const existing = /** @type {Record<string, any>} */ ((lastJevStatus && lastJevStatus.providers) || {});
+  /** @type {Record<string, Record<string, string>>} */
+  const providers = {};
+  for (const n of Object.keys(existing)) {
+    if (n === name) continue;
+    const e = existing[n] || {};
+    /** @type {Record<string, string>} */
+    const row = { type: String(e.type || '') };
+    if (e.endpoint) row.endpoint = String(e.endpoint);
+    if (e.model) row.model = String(e.model);
+    if (e.keyRef) row.keyRef = String(e.keyRef);
+    providers[n] = row;
+  }
+  const remaining = Object.keys(providers);
+  const enabled = document.getElementById('toggle-jev')?.classList.contains('on') || false;
+  let ok = false;
+  try {
+    const resp = await fetch('/api/config/jev', {
+      method: 'PUT',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled, provider: remaining[0] || '', providers }),
     });
+    ok = resp.ok;
+  } catch { ok = false; }
+  if (!ok) { window.__showToast?.(t('settings.saveFailed'), 'error'); return; }
+  jevDeleteArmed = '';
+  activeJevProvider = remaining[0] || '';
+  const fresh = await fetchJevStatus();
+  if (fresh) lastJevStatus = fresh;
+  paintJevSection();
+  bindJevSectionEvents();
+  window.__showToast?.(t('settings.cfgCard.deleted'), 'success');
+}
+
+/**
+ * 「测试可用性」钮的表单读取（点击时现读——未保存的改动照样测）。provider =
+ * 表单里的提供方名（= DecisionProvider id）；keyRef = 配置里已存的凭据名优先，
+ * 否则按名派生（保存后即真名；未落盘 ⇒ 引擎按「待录入」失败，不造假值）。
+ * @returns {{provider: string, endpoint: string, keyRef: string}}
+ */
+function jevTestForm() {
+  const provider = jevFieldValue('cfg-jev-name') || jevFieldValue('cfg-jev-type');
+  const entry = jevProviderEntry(provider);
+  return {
+    provider,
+    endpoint: jevFieldValue('cfg-jev-endpoint'),
+    keyRef: entry && entry.keyRef ? String(entry.keyRef) : (provider ? jevSecretName(provider) : ''),
+  };
+}
+
+/**
+ * 绑定整节交互（每次重画后重绑：元素随 innerHTML 重建，监听器随元素蒸发；
+ * 卡片两条走容器级委托 + 幂等哨兵）。
+ */
+function bindJevSectionEvents() {
+  const wrap = document.getElementById('jev-section-wrap');
+  if (!wrap) return;
+  const list = document.getElementById('jev-provider-list');
+  if (list) {
+    bindCardSelect(list, (name) => {
+      if (!name || name === activeJevProvider) return;
+      activeJevProvider = name;
+      jevDeleteArmed = '';
+      paintJevSection();
+      bindJevSectionEvents();
+    });
+    bindCardRemove(list, (name) => { void armOrDeleteJevProvider(name); });
+  }
+  document.getElementById('btn-add-jev-provider')?.addEventListener('click', () => {
+    activeJevProvider = '';
+    jevDeleteArmed = '';
+    paintJevSection();
+    bindJevSectionEvents();
+    (/** @type {HTMLInputElement|null} */ (document.getElementById('cfg-jev-name')))?.focus();
+  });
+  // key 输入框掩码切换（判掩码只认内联 -webkit-text-security:disc；生图面同款读法）。
+  // 值只进本输入框，切换不读写任何存储。
+  document.getElementById('jev-key-eye')?.addEventListener('click', () => {
+    const input = /** @type {HTMLInputElement|null} */ (document.getElementById('cfg-jev-key'));
+    const eye = document.getElementById('jev-key-eye');
+    if (!input || !eye) return;
+    const style = /** @type {any} */ (input.style);
+    const isMasked = style.webkitTextSecurity === 'disc';
+    style.webkitTextSecurity = isMasked ? 'none' : 'disc';
+    eye.replaceChildren();
+    eye.insertAdjacentHTML('afterbegin', isMasked ? eyeOffSvg : eyeSvg);
+    const label = t(isMasked ? 'settings.jev.keyHide' : 'settings.jev.keyShow');
+    eye.setAttribute('aria-label', label);
+    eye.title = label;
+    eye.setAttribute('aria-pressed', isMasked ? 'true' : 'false');
+  });
+  document.getElementById('btn-save-jev')?.addEventListener('click', () => { void saveJevProvider(); });
+  document.getElementById('btn-delete-jev')?.addEventListener('click', () => { void armOrDeleteJevProvider(activeJevProvider); });
+  bindJevTestButton(wrap, { getForm: jevTestForm });
+}
+
+/**
+ * 整节装配（renderSettings 尾调用）：先按手上的状态画（首次 = 空态：0 卡 +
+ * 五字段全空），再拉 GET /api/config/jev 现读重画——拉取失败保持空态，不造假数据。
+ * @returns {Promise<void>}
+ */
+async function bindJevSection() {
+  if (!document.getElementById('jev-section-wrap')) return;
+  const firstLoad = lastJevStatus === null;
+  paintJevSection();
+  bindJevSectionEvents();
+  const fresh = await fetchJevStatus();
+  if (!document.getElementById('jev-section-wrap')) return; // 面板已关 / 重渲换了节点
+  if (!fresh) return;
+  lastJevStatus = fresh;
+  const sw = document.getElementById('toggle-jev');
+  if (sw) setToggleState(sw, !!fresh.enabled);
+  // 首载且当前选中项指向已配置的提供方 ⇒ 面板停在该提供方（空态则保持全空，不预填）。
+  if (firstLoad) {
+    const names = jevProviderNames();
+    const pointer = String(fresh.provider || '');
+    activeJevProvider = names.includes(pointer) ? pointer : '';
+  }
+  paintJevSection();
+  bindJevSectionEvents();
 }
 
 export function renderSettings() {
@@ -876,136 +1317,110 @@ export function renderSettings() {
   // 2026-09-06 作者裁定：账号区与设备互联统一为一个区块——设备属于账号，
   // 登录态头像下方直接放设备列表，未登录态只有 logo + 一句「不可用」说明，
   // 不再有独立的 neblink settings-section。
-  // 手机顶栏批（2026-10-31 作者令②③，仅手机层）：设置页撤掉头像入口与设备区 ——
-  // 头像上收工作台顶部（点击进个人主页），设备在联系人页展示、不重复。桌面
-  // 逐字不变（渲染期按 body.mobile-layer 判别；两处消费腿均为元素在场判空，
-  // 缺席零成本）。设置页账号块保留 neblink 登录态读数行。
+  // 件四 · 设置页身份卡本地化（作者令 2026-11-02「头像在上，下面是用户名和邮箱…
+  // 点击胶囊直接进自己的 profile 设置页」）：头像在上 + 用户名/邮箱单行胶囊，两档
+  // 形态同一 DOM（手机层由 mobileLayer.css 同族规则适配）。**手机层也渲染** ——
+  // 「设置页头像入口手机层不渲染」是手机顶栏批（2026-10-31）的旧口径，本批按作者
+  // 新令就地推翻：身份卡回到设置页两档并在场（设备区仍在联系人页，不搬回）。
+  // 点胶囊 = App 内个人资料面；点头像 = 换头像流程 / 未登录登录卡（activityBar
+  // 既有委托统一承担，本文件不绑任何点击）。
   const mobileLayer = typeof document !== 'undefined' && document.body.classList.contains('mobile-layer');
+  // ── settings-ios-rows 批（2026-11-06 作者令「能点击下一个面板的样式都统一成苹果的
+  // 这种样式 然后 底部的重启服务去掉 并且这些可点击的按钮 布局规整一点」）──────────
+  // 全页结构单点 = js/settingsRows.js（setCard / setGroup / setNavRow / setRow）；
+  // 造型单点 = css/settingsRows.css（令牌 --set-* 落在 css/stand-tokens.css）。
+  // 「能进下一面板」的行一律 setNavRow（图标位 + 主标题 + 单个副值 + chevron），
+  // 读数/控件行一律 setRow（同一高度网格）；动作按钮一律 .set-btn（同尺寸令牌）。
   content.innerHTML = `
-    <div class="settings-section">
-      <div class="settings-section-title">${t('settings.account')}</div>
-      ${mobileLayer ? '' : `
-      <button class="settings-avatar-entry" id="settings-avatar-entry" type="button">
-        <span class="settings-avatar-frame">
-          <picture>
-            <source media="(prefers-color-scheme: dark)" srcset="${brand.logoDarkUrl}">
-            <img class="settings-avatar-logo" src="${brand.logoUrl}" alt="">
-          </picture>
-          <img class="settings-avatar-photo" alt="" hidden>
-        </span>
-      </button>`}
+    ${setCard({ title: t('settings.account'), body: `
+      ${settingsIdentityCardHTML()}
       ${neblinkSettingsHTML()}
-      ${mobileLayer ? '' : '<div id="settings-devices-slot"></div>'}
-    </div>
-    <div class="settings-section">
-      <div class="settings-section-title">${t('settings.runtime')}</div>
-      <div class="settings-row">
-        <span class="settings-label">${t('settings.thinkingMode')}</span>
-        <select class="cfg-select" id="cfg-thinking-effort" style="width:auto">
-          ${['off','low','medium','high'].map(lvl => `<option value="${lvl}"${effortFromConfig() === lvl ? ' selected' : ''}>${t('settings.thinkingEffort.' + lvl)}</option>`).join('')}
-        </select>
-      </div>
-      <div class="settings-row">
-        <span class="settings-label">${t('settings.llmLog')}</span>
-        ${toggleHTML({ on: state.llmLogEnabled !== false, id: 'toggle-llm-log', label: t('settings.llmLog') })}
-      </div>
+      ${mobileLayer ? '' : '<div id="settings-devices-slot"></div>'}` })}
+    ${setCard({ title: t('settings.runtime'), body: `
+      ${setGroup(
+        setRow({
+          title: t('settings.thinkingMode'),
+          control: `<select class="cfg-select set-field" id="cfg-thinking-effort" style="width:auto">
+            ${['off','low','medium','high'].map(lvl => `<option value="${lvl}"${effortFromConfig() === lvl ? ' selected' : ''}>${t('settings.thinkingEffort.' + lvl)}</option>`).join('')}
+          </select>`,
+        })
+        + setRow({
+          title: t('settings.llmLog'),
+          control: toggleHTML({ on: state.llmLogEnabled !== false, id: 'toggle-llm-log', label: t('settings.llmLog') }),
+        })
+      )}
       ${renderWorkScheduleSection()}
       ${renderSttSection()}
       <div id="ttl-section-wrap">${renderTtlSection()}</div>
-      <div class="settings-row">
-        <span class="settings-label">${t('settings.language')}</span>
-        <select class="cfg-select" id="cfg-language" style="width:auto">${langOpts}</select>
-      </div>
-      <div class="settings-row">
-        <span class="settings-label">${t('settings.autostart')}</span>
-        ${toggleHTML({ on: !!(state.autostartStatus && state.autostartStatus.enabled), id: 'toggle-autostart', label: t('settings.autostart'), disabled: !!(state.autostartStatus && !state.autostartStatus.supported) })}
-      </div>
-      <div class="cfg-hint" id="autostart-hint" style="display:${state.autostartStatus && !state.autostartStatus.supported ? 'block' : 'none'};margin-top:-4px">${escapeHtml(state.autostartStatus?.reason || t('settings.autostartUnsupported'))}</div>
-    </div>
-    ${ORB_SETTINGS_VISIBLE ? `
-    <div class="settings-section">
-      <div class="settings-section-title">${t('settings.appearance')}</div>
-      ${renderAppearanceSection()}
-    </div>` : ''}
-    <div class="settings-section">
-      <div class="settings-section-title">${t('settings.providers')}</div>
+      ${setGroup(
+        setRow({
+          title: t('settings.language'),
+          control: `<select class="cfg-select set-field" id="cfg-language" style="width:auto">${langOpts}</select>`,
+        })
+        + setRow({
+          title: t('settings.autostart'),
+          control: toggleHTML({ on: !!(state.autostartStatus && state.autostartStatus.enabled), id: 'toggle-autostart', label: t('settings.autostart'), disabled: !!(state.autostartStatus && !state.autostartStatus.supported) }),
+          hint: escapeHtml(state.autostartStatus?.reason || t('settings.autostartUnsupported')),
+          hintId: 'autostart-hint',
+          hintStyle: `display:${state.autostartStatus && !state.autostartStatus.supported ? 'block' : 'none'}`,
+        })
+      )}` })}
+    ${ORB_SETTINGS_VISIBLE ? setCard({ title: t('settings.appearance'), body: renderAppearanceSection() }) : ''}
+    ${setCard({ title: t('settings.providers'), body: `
       <div id="provider-list">
         ${providerNames.map(name => renderProviderCard(name, providers[name])).join('')}
       </div>
-      <button class="cfg-btn cfg-btn-add" id="btn-add-provider">${t('settings.addProvider')}</button>
-    </div>
-    <div class="cfg-hint" id="model-chain-hint">${t('settings.modelChainHint')}</div>
-    <div class="settings-section" id="model-chain-section">
+      <button class="cfg-btn cfg-btn-add set-btn set-btn-block" id="btn-add-provider">${t('settings.addProvider')}</button>` })}
+    <div class="set-row-hint" id="model-chain-hint">${t('settings.modelChainHint')}</div>
+    ${setCard({ title: t('settings.modelChainTitle'), id: 'model-chain-section', body: `
       <!-- 模型回退链节（配置面风格统一批②，2026-10-31 作者令：/model 里的回退
            顺序调整页在设置页原样再放一份，不用打 /model；两份共享同一份状态/
            保存通道，改哪边都即时同步）。内容面 = modelPanel.js 的
            buildNebulaChainFace 同款（seed 态 / 拖拽排序链编辑器，逐动作即存）；
            /model 原入口保留不动（上方 model-chain-hint 照旧指路）。 -->
-      <div class="settings-section-title">${t('settings.modelChainTitle')}</div>
-      <div class="cfg-hint">${t('settings.modelChainSectionHint')}</div>
-      <div id="model-chain-section-body"></div>
-    </div>
-    <div class="settings-section">
+      <div class="set-row-hint">${t('settings.modelChainSectionHint')}</div>
+      <div id="model-chain-section-body"></div>` })}
+    ${setCard({ title: t('settings.jev'), body: `
       <!-- Jev allocation section — 风格统一重排（settings-panel 批 C 件，
            2026-10-28 作者令：「JeV 插件分配那部分的风格，与『STT 高级设置』区的
            风格保持一致——以 STT 高级设置的风格为基准（布局/间距/控件形态/分组
            样式逐项对齐）」）。组件族与 STT 高级设置逐项同源：
-           · 头行   .settings-row.stt-advance-toggle-row + .settings-collapse-toggle
-                    （标题+chevron）+ 右侧状态位（分配通道健康，同 stt-status 位）；
-           · 折叠体 .settings-collapse-body（层级下钻的收编内容面，见批注下）；
-           · 开关行 .settings-row + .settings-label + toggleHTML（启用 JeV——
-                    旧卡头行内开关随重排迁入折叠体首行，STT enabled 行同款）；
-           · 字段组 .cfg-form-group 纵排 label+input（旧 cfg-row 横排退役）；
+           · 头行 = settings-ios-rows 批后的唯一可点进行 setNavRow（图标位 + 标题 +
+             健康徽标 + chevron）；
+           · 折叠体 .set-collapse-body（层级下钻的收编内容面）；
+           · 开关行 setRow + toggleHTML（启用 JeV）；
+           · 字段组 .cfg-form-group 纵排 label+input；
            · 保存行 显式保存 + inline-state（#334 语义不变）。
-           功能零删减：提供方切换联动端点钉死（三改②）、分配通道健康 legs 分腿
-           徽标（三改③）、PUT /api/config/jev 白名单保存全保留。
-           key 明文直显（本批①件，作者令 2026-10-28 21:30「把我们设置面板里的
-           jev 的 key，要能直接可见」）：keyRef 指针行下新增「key 值」只读行，
-           打开即经 GET /api/secrets/<keyRef>/value（owner 鉴权）拉真值明文显示
-           （默认态=明文，eye 仅作可选遮蔽——点首击上掩码；值零落日志/本地存
-           储，面板关即烧）。缺 keyRef/读失败 ⇒ 占位说明，不造假数据。-->
+           功能零删减：分配通道健康 legs 分腿徽标（三改③）、PUT /api/config/jev
+           保存全保留。
+           🔴 jev-imagegen-align-llm 批（2026-11-02 作者令）推翻了本节三处旧面：
+           提供方下拉→卡片列表、keyRef 行 + 明文回读行→唯一掩码 key 输入框、
+           typesafe-jev 端点钉死预填→端点永不禁用且空态空。详见模块区
+           「Jev 面板全面对齐 LLM 配置面」段（jevSecretName / saveJevProvider /
+           bindJevSection）。-->
       <!-- 配置面风格统一批（2026-10-31 作者令）：本节改层级下钻——头行 =
            下钻入口（chevron 右转），点按桌面开浮层玻璃面板（js/configDrill.js）
            /手机 push 层级子页（mobile/settingsSub.js）；同一 #jev-advance-body
            节点两端收编，内容面/绑定零副本。「展开式配置」退役后端内联不渲染。-->
-      <div class="settings-row stt-advance-toggle-row">
-        <button type="button" class="settings-collapse-toggle settings-drill-toggle" id="jev-advance-toggle"
-                aria-haspopup="dialog" aria-controls="jev-advance-body">
-          <span class="settings-label">${t('settings.jev')}</span>
-          <span class="settings-collapse-chevron" aria-hidden="true"></span>
-        </button>
-        <span class="cfg-hint stt-status" id="jev-status-hint"><span class="st-badge" data-tone="mut" id="settings-jev-health">…</span></span>
-      </div>
-      <div class="settings-collapse-body" id="jev-advance-body" hidden>
-        <div class="settings-row">
-          <span class="settings-label">${t('settings.jevEnabled')}</span>
-          ${toggleHTML({ on: !!(cfg.jev && cfg.jev.enabled), id: 'toggle-jev', label: t('settings.jevEnabled') })}
-        </div>
-        <div class="cfg-form-group">
-          <label class="cfg-label" for="cfg-jev-provider">${t('settings.jevProvider')}</label>
-          <select class="cfg-input" id="cfg-jev-provider">
-            ${['typesafe-jev', 'laya'].map(p => `<option value="${p}"${(cfg.jev && cfg.jev.provider) === p ? ' selected' : ''}>${p}</option>`).join('')}
-          </select>
-          <label class="cfg-label" for="cfg-jev-endpoint">${t('settings.jevEndpoint')}</label>
-          <input class="cfg-input" id="cfg-jev-endpoint" placeholder="${(cfg.jev && cfg.jev.provider) === 'laya' ? 'http://127.0.0.1:8080/predict' : JEV_PINNED_ENDPOINT}" value="${escapeHtml((cfg.jev && cfg.jev.provider) === 'laya' ? ((cfg.jev && cfg.jev.endpoint) || '') : JEV_PINNED_ENDPOINT)}" ${(cfg.jev && cfg.jev.provider) === 'laya' ? '' : 'disabled'} title="${(cfg.jev && cfg.jev.provider) === 'laya' ? '' : t('settings.jevEndpointFixed')}" spellcheck="false">
-          <label class="cfg-label" for="cfg-jev-keyref">${t('settings.jevKeyRef')}</label>
-          <input class="cfg-input" id="cfg-jev-keyref" placeholder="typesafe-api-key" value="${escapeHtml((cfg.jev && cfg.jev.keyRef) || '')}" autocomplete="off" spellcheck="false">
-          <label class="cfg-label" for="cfg-jev-key-value">${t('settings.jevKeyValue')}</label>
-          <div class="cfg-password-wrap">
-            <input class="cfg-input" type="text" id="cfg-jev-key-value" readonly placeholder="${t('settings.jevKeyValuePlaceholder')}" autocomplete="off" spellcheck="false">
-            <button type="button" class="cfg-eye-btn" id="jev-key-eye" tabindex="-1" aria-label="${t('settings.jevKeyRefHide')}" aria-pressed="false" title="${t('settings.jevKeyRefHide')}">${eyeOffSvg}</button>
-          </div>
-          <div class="cfg-hint">${t('settings.jevHint')}</div>
-          <div style="display:flex;gap:8px;margin-top:8px">
-            <button class="cfg-btn cfg-btn-primary" id="btn-save-jev">${t('settings.save')}</button>
-            ${jevTestButtonHTML()}
-            <span class="inline-state" id="jev-save-state" role="status" aria-live="polite"></span>
-          </div>
-        </div>
-        ${jevTestResultsHTML()}
-      </div>
-    </div>
-    <div class="settings-section">
+      ${setNavRow({
+        icon: statusIcon('sparkles', 16),
+        title: t('settings.jev'),
+        id: 'jev-advance-toggle',
+        attrs: 'aria-haspopup="dialog" aria-controls="jev-advance-body"',
+        extra: `<span class="cfg-hint stt-status" id="jev-status-hint"><span class="st-badge" data-tone="mut" id="settings-jev-health">…</span></span>`,
+      })}
+      <div class="set-collapse-body" id="jev-advance-body" hidden>
+        ${setRow({
+          title: t('settings.jevEnabled'),
+          control: toggleHTML({ on: !!(cfg.jev && cfg.jev.enabled), id: 'toggle-jev', label: t('settings.jevEnabled') }),
+        })}
+        <!-- 内容面（jev-imagegen-align-llm 批 · jevpanel 件，2026-11-02 作者令）：
+             已配置以卡片列表呈现（可并存/可单删）、空态起步零预填、密钥直接录入走
+             secrets。唯一绘制点 = jevSectionHTML()，数据源 = GET /api/config/jev
+             （bindJevSection 拉取后原位重画——首帧即空态，零造假数据）。 -->
+        <div id="jev-section-wrap">${jevSectionHTML()}</div>
+      </div>` })}
+    ${setCard({ title: t('settings.imagegenTitle'), body: `
       <!-- 生图（imagegen）设置节（settings-panel 批 ②③件，2026-10-28 作者令；
            功能开放批 2026-10-30：正式开放、调试中徽标退役）。
            两形态由 sidebar/imagegenSection.js 单点渲染：seal=OFF（显式剔除构建）
@@ -1017,81 +1432,65 @@ export function renderSettings() {
            浮层玻璃面板（js/configDrill.js）/手机 push 层级子页（mobile/
            settingsSub.js settings-imagegen 路由）；同一 #imagegen-advance-body
            节点两端收编，模块渲染面 #imagegen-section-wrap 住在其中随节点走。-->
-      <div class="settings-row stt-advance-toggle-row">
-        <button type="button" class="settings-collapse-toggle settings-drill-toggle" id="imagegen-advance-toggle"
-                aria-haspopup="dialog" aria-controls="imagegen-advance-body">
-          <span class="settings-label">${t('settings.imagegenTitle')}</span>
-          <span class="settings-collapse-chevron" aria-hidden="true"></span>
-        </button>
-      </div>
-      <div class="settings-collapse-body" id="imagegen-advance-body" hidden>
+      ${setNavRow({
+        icon: statusIcon('image', 16),
+        title: t('settings.imagegenTitle'),
+        id: 'imagegen-advance-toggle',
+        attrs: 'aria-haspopup="dialog" aria-controls="imagegen-advance-body"',
+      })}
+      <div class="set-collapse-body" id="imagegen-advance-body" hidden>
         <div id="imagegen-section-wrap"><div class="cfg-hint">${t('settings.imagegenLoading')}</div></div>
-      </div>
-    </div>
-    <div class="settings-section">
+      </div>` })}
+    ${setCard({ title: t('settings.secrets'), body: `
       <!-- Secrets entry (secrets-frontend batch, 2026-09-27, author ruling
            2026-09-27 19:20): one row only — the list itself lives in the
            standalone dedicated dialog (#secrets-overlay, owned by
-           js/secretsPanel.js), not inside #settings-modal. Placement per
-           brief §三: after MODEL PRESETS, before ADVANCED.
-           secrets-ui-redesign 2026-10-08: the dashed full-width cfg-btn-add
-           becomes a glass row-card entry (key icon + row name + "{n} secrets"
-           subtitle + count pill + chevron). The count is the length of
-           GET /api/secrets — metadata only (the contract has no read-value
-           face); read via refreshSecretsEntryCount() below (module cache +
-           the 'secrets-changed' nudge from secretsPanel.js). -->
-      <div class="settings-section-title">${t('settings.secrets')}</div>
-      <button type="button" class="secrets-entry" id="btn-open-secrets">
-        ${statusIcon('key-round', 16)}
-        <span class="entry-name">${t('settings.secretsManage')}</span>
-        <span class="entry-sub" id="secrets-entry-sub">…</span>
-        <span class="count-pill" id="secrets-entry-pill">…</span>
-        ${statusIcon('chevron-right', 14)}
-      </button>
-    </div>
-    <div class="settings-section">
-      <div class="settings-section-title">${t('settings.advanced')}</div>
-      <button class="cfg-btn" id="btn-toggle-json">${t('settings.editRawJson')}</button>
-      ${SHOW_RERUN_ONBOARDING ? `<button class="cfg-btn" id="btn-rerun-onboarding" style="margin-left:8px">${t('settings.rerunOnboarding')}</button>` : ''}
+           js/secretsPanel.js), not inside #settings-modal.
+           settings-ios-rows 批 2026-11-06：原来的「密钥管理 + 14 个密钥 + [14] 胶囊
+           + chevron」四件行卡收编为本页唯一可点进行 setNavRow —— 副值只剩**一个**
+           计数读数（设置项是图标位，不再是重复图标），不再有第二份数字。 -->
+      ${setNavRow({
+        icon: statusIcon('key-round', 16),
+        title: t('settings.secretsManage'),
+        id: 'btn-open-secrets',
+        value: '…',
+        valueId: 'secrets-entry-sub',
+      })}` })}
+    ${setCard({ title: t('settings.advanced'), body: `
+      <div class="set-actions">
+        <button class="cfg-btn set-btn" id="btn-toggle-json">${t('settings.editRawJson')}</button>
+        ${SHOW_RERUN_ONBOARDING ? `<button class="cfg-btn set-btn" id="btn-rerun-onboarding">${t('settings.rerunOnboarding')}</button>` : ''}
+      </div>
       <!-- 文件缓存行（M2 · 设计 v1 §6.4/§7 表5）：占用读数（nfCacheStats 同步 seam，
            分桶明细进 title）+ 清空键（nfCacheReset seam，两段式确认 = 按钮第二击
-           即确认位，同 btn-restart-gateway 先例——共用 #delete-box 弹窗其确认键
-           文案是「删除」，复用会把本键错标成删除）。 -->
-      <div class="settings-row" id="nf-cache-row">
-        <span class="settings-label">${t('settings.fileCache')}</span>
-        <span style="display:flex;align-items:center;gap:8px">
-          <span id="nf-cache-usage" role="status" style="font-size:12px;color:var(--color-text-secondary)">…</span>
-          <button class="cfg-btn cfg-btn-sm" id="btn-clear-nf-cache" type="button">${t('settings.fileCacheClear')}</button>
-        </span>
-      </div>
-    </div>
-    <div class="settings-section" id="json-editor-section" style="display:${state.settingsShowJson ? 'block' : 'none'}">
+           即确认位）。settings-ios-rows 批：清空键与上方行为按钮同一尺寸令牌
+           .set-btn，右缘与全页 chevron 列同 x。 -->
+      ${setRow({
+        title: t('settings.fileCache'),
+        control: `<span id="nf-cache-usage" role="status" class="set-row-val">…</span><button class="cfg-btn set-btn" id="btn-clear-nf-cache" type="button">${t('settings.fileCacheClear')}</button>`,
+      })}` })}
+    ${setCard({ hidden: !state.settingsShowJson, id: 'json-editor-section', body: `
       <div class="config-editor-wrap">
         <textarea id="config-editor" spellcheck="false">${escapeHtml(state.configText)}</textarea>
         <div class="config-actions">
           <button class="btn-save" id="btn-save-config">${t('settings.save')}</button>
           <button id="btn-reload-config">${t('settings.reload')}</button>
         </div>
-      </div>
-    </div>
-    <div class="settings-section">
-      <div class="settings-section-title">${t('settings.about')}</div>
+      </div>` })}
+    ${/* 「重启服务」整件已由 settings-ios-rows 批（2026-11-06 作者令「底部的重启服务去掉」）
+          移除：按钮 + 两段式确认逻辑 + #restart-status 状态行 + restartStatus/restartResult
+          两个模块级订阅全删（前端零发射面）；后端 WS `restart` 命令保留不动（其余消费方
+          仍在）。更新功能已随 auth-trim 批（2026-10-20 作者令）退役。 */ ''}
+    ${setCard({ title: t('settings.about'), body: `
       <div class="about-info">
         <div>${brand.productName} ${state.serverVersion || '...'}</div>
-        <div style="margin-top:4px;font-size:12px;color:var(--color-text-secondary)">${t('settings.connection')}: ${state.connected
+        <div class="about-conn">${t('settings.connection')}: ${state.connected
           ? statusIcon('circle-check', 14, 'st-ok') + ' <span style="color:var(--status-word)">' + t('settings.connected') + '</span>'
           : statusIcon('wifi-off', 14, 'st-err') + ' <span style="color:var(--status-word)">' + t('settings.disconnected') + '</span>'}</div>
-        <div style="margin-top:10px;display:flex;align-items:center;gap:8px">
-          <button class="cfg-btn cfg-btn-sm" id="btn-restart-gateway">${t('settings.restart')}</button>
-          <span id="restart-status" role="status" style="font-size:12px;line-height:18px;min-height:18px;flex:1;min-width:0;color:var(--color-text-muted)"></span>
-        </div>
-        <!-- 更新功能已随 auth-trim 批（2026-10-20 作者令）退役：检查更新/立即更新/
-             进度面/绿点整链移除，未来由官网统一检测更新取代。重启（restartStatus/
-             restartResult 帧）状态行 = 上方 #restart-status，消费订阅见模块级。 -->
       </div>
-    </div>`;
+    ` })}`;
 
-  renderSettingsAvatar();
+  paintSettingsIdentity();
   bindSettingsEvents(content, cfg);
   bindNeblinkEvents(() => renderSettings());
   // Secrets entry count pill (secrets-ui-redesign, 2026-10-08): read/cached
@@ -1112,9 +1511,10 @@ export function renderSettings() {
   modelChainUnmount?.();
   modelChainUnmount = mountModelChainSection(
     document.getElementById('model-chain-section-body'));
-  // JeV key 值明文直显（本批①件）：按当前 keyRef 拉 GET /api/secrets/<name>/
-  // value 填只读行（默认明文，eye 仅可选遮蔽）。失败/缺 keyRef = 占位说明。
-  refreshJevKeyValue();
+  // Jev 配置面装配（jev-imagegen-align-llm 批 · jevpanel 件）：先画空态，再拉
+  // GET /api/config/jev 现读重画（卡片列表 + 表单 + key 在位性徽标；拉取失败保持
+  // 空态）。旧的 key 值明文回读（GET /api/secrets/<keyRef>/value）整链已退役。
+  void bindJevSection();
   // 设置页 apikey 明文回读预取（作者令 2026-10-27「设置里配置的 apikey 直接
   // 显示」）：进页即拉已存 provider key 真值（owner 鉴权单点
   // GET /api/config/provider-keys；providersUi 模块内 60s 缓存 + 单飞），编辑
@@ -1161,7 +1561,7 @@ export function renderSettings() {
         bindNeblinkEvents(() => renderSettings());
       }
       // Keep the avatar section in lockstep with login/avatar changes.
-      renderSettingsAvatar();
+      paintSettingsIdentity();
       // friendseal (2026-09-25 ①-A): keep the device expansion area in
       // lockstep with peer/presence/login changes on the same tick.
       const devicesSlot = document.getElementById('settings-devices-slot');
@@ -1188,66 +1588,32 @@ export function renderSettings() {
   }, 3000);
 }
 
+// 配置提供方卡片 = 共用组件薄壳（jev-imagegen-align-llm 批 · card 件，契约 §A.3）。
+// 结构与层级已抽到 js/cfgProviderCard.js —— 本函数只剩「LLM 面实参装配」：
+// 调用点（:934 providerNames.map）、class 族、DOM 顺序、文案逐字不变
+// （metaExtra 仍传既有 "N model(s)" 串；模型行 ref/vision 徽标由组件同款生成）。
 function renderProviderCard(name, p) {
   // Deleted providers are stored as null — render nothing instead of crashing
   // the settings re-render (remove flow calls renderSettings synchronously).
   if (!p) return '';
   const modelCount = (p.models || []).length;
-  const modelsHtml = (p.models || []).map(m => {
-    const ref = `${name}/${m.id}`;
-    // 模型行面（fourfix 批 ②件后）：名称 + vision 徽标。连接性测试钮已迁入
-    // provider 编辑弹窗（作者令 2026-10-29「连接性测试按钮应放到 LLM provider
-    // 配置页面里」）；思考配置已收归全局（本批①件）——模型行零配置控件。
-    return `<div class="cfg-model-row" data-model-ref="${escapeHtml(ref)}">
-      <span class="cfg-model-name">${escapeHtml(m.id)}</span>
-      <div class="cfg-model-vision">${renderVisionBadge(ref)}</div>
-    </div>`;
-  }).join('');
-
-  return `
-    <div class="cfg-card" data-provider="${escapeHtml(name)}">
-      <div class="cfg-card-header">
-        <span class="cfg-card-title">${escapeHtml(name)}</span>
-        <button class="cfg-card-remove" data-provider="${escapeHtml(name)}" title="${t('provider.remove')}">×</button>
-      </div>
-      <div class="cfg-card-meta">
-        <span class="cfg-card-badge">${escapeHtml(protocolFormLabel(p.protocol))}</span>
-        <span class="cfg-card-sub">${modelCount} model${modelCount !== 1 ? 's' : ''}</span>
-      </div>
-      ${modelsHtml ? `<div class="cfg-model-list">${modelsHtml}</div>` : ''}
-    </div>`;
+  return providerCardHTML({
+    name,
+    face: 'llm',
+    protocolBadge: protocolFormLabel(p.protocol),
+    models: (p.models || []).map(m => m.id),
+    metaExtra: `${modelCount} model${modelCount !== 1 ? 's' : ''}`,
+  });
 }
 
-// ── Settings avatar section (09-05 五项裁定④; 2026-09-06 修整: 头像-only) ──
-// Dual state driven by the SAME decision as the Activity Bar avatar
-// (neblink.js avatarViewState): logged in with a usable account avatar →
-// photo; otherwise the product logo. The entry renders the centered avatar
-// only — all in-area text removed (author 2026-09-06). Click behavior is not
-// reimplemented here either: activityBar.js's activateAccountEntry owns it for
-// both entries (login when logged out, profile page when logged in → hence the
-// landing URL, including the `from=client` hint, comes from the single source
-// brand.js getProfileUrl()).
-function renderSettingsAvatar() {
-  const entry = document.getElementById('settings-avatar-entry');
-  if (!entry) return;
-  const { url: validAvatarUrl, showPhoto } = avatarViewState();
-  const logoEl = /** @type {HTMLElement|null} */ (entry.querySelector('.settings-avatar-logo'));
-  const photoEl = /** @type {HTMLElement|null} */ (entry.querySelector('.settings-avatar-photo'));
-  if (photoEl) {
-    // Same shared, readiness-gated slot paint as the Activity Bar avatar
-    // (neblink.js paintAvatarSlot, 2026-09-15 flicker fix): the logo holds the
-    // slot until the photo is paintable, so a fresh mount can never paint an
-    // empty ring while the avatar bytes are still loading.
-    paintAvatarSlot(photoEl, logoEl, validAvatarUrl, showPhoto, () => {
-      noteAvatarFailure(validAvatarUrl); // shared failed-URL latch
-      const view = avatarViewState();
-      if (photoEl) photoEl.hidden = true;
-      if (logoEl) logoEl.hidden = view.showPhoto;
-    });
-  } else if (logoEl) {
-    logoEl.hidden = showPhoto;
-  }
-}
+// ── Settings avatar section — 已迁入 settingsIdentity.js（件四，作者令 2026-11-02）──
+// 修前本处是 `renderSettingsAvatar()`（只画头像、点击委托 activityBar 的
+// activateAccountEntry）：2026-09-06 起「头像 only、区内零文案」；2026-11-01 起
+// 已登录态点头像 = 两选一菜单（其中「个人主页」= window.open 官网）。
+// 件四按作者令整体改写：头像在上 + 用户名/邮箱单行胶囊 + 点胶囊进 **App 内**
+// 个人资料面（零外链），绘制/交互/资料面全在 `settingsIdentity.js`
+// （`settingsIdentityCardHTML()` 出结构，`paintSettingsIdentity()` 出读数）。
+// 本文件不再持有任何头像绘制代码 —— 禁在此重建第二份（双真源必然分叉）。
 
 // ---------- Autostart (开机自启动) ----------
 // Target `enabled` while an autostartSet request is in flight; null when idle.
@@ -1293,21 +1659,20 @@ onMessage('autostartStatusResult', (msg) => {
 /** @type {{n: number|null, at: number}} */
 let secretsCountCache = { n: null, at: 0 };
 
-/** Paint a known count onto the entry row (0 = the "no secrets yet" wording). */
+/** Paint a known count onto the entry row (0 = the "no secrets yet" wording).
+ *  settings-ios-rows 批 2026-11-06：**只画一处**读数（行右副值 #secrets-entry-sub）
+ *  —— 修前「{n} 个密钥」与计数胶囊两件并排，同一数字说了两遍，作者实拍点名。 */
 function paintSecretsEntryCount(n) {
-  const pill = document.getElementById('secrets-entry-pill');
   const sub = document.getElementById('secrets-entry-sub');
-  if (!pill || !sub) return;
-  pill.textContent = String(n);
+  if (!sub) return;
   sub.textContent = n > 0 ? t('settings.secretsCount', { n }) : t('settings.secretsNone');
 }
 
 /** Read the count (cached ≤60s) and paint it; a failure keeps the "…"
  *  placeholder — the same silent-catch convention as the health probe below. */
 function refreshSecretsEntryCount() {
-  const pill = document.getElementById('secrets-entry-pill');
   const sub = document.getElementById('secrets-entry-sub');
-  if (!pill || !sub) return;
+  if (!sub) return;
   if (secretsCountCache.n !== null && Date.now() - secretsCountCache.at < 60000) {
     paintSecretsEntryCount(secretsCountCache.n);
     return;
@@ -1317,7 +1682,7 @@ function refreshSecretsEntryCount() {
     .then(data => {
       const rows = Array.isArray(data && data.secrets) ? data.secrets : [];
       secretsCountCache = { n: rows.length, at: Date.now() };
-      if (!pill.isConnected || !sub.isConnected) return;
+      if (!sub.isConnected) return;
       paintSecretsEntryCount(rows.length);
     })
     .catch(() => {});
@@ -1380,95 +1745,16 @@ function bindSettingsEvents(content, cfg) {
   // settings 默认执行器 row, the panel-entry button and the /agents command
   // left with their locale keys; ExecutorRegistry/detect (scala) untouched.
 
-  // ── Jev section: explicit save (whitelist keys only; PUT /api/config/jev).
-  // keyRef is a NAME under ~/.nebflow/secrets/ — a pointer, never a value.
-  // 三改①（2026-10-09 用户反馈①）：开关只作用法闸——不联动展开/收起。
+  // ── Jev section: 开关只作用法闸（三改①，2026-10-09）——不联动展开/收起。
   // 配置面风格统一批（2026-10-31）：开合入口退役——#jev-advance-toggle 改
   // 层级下钻入口（桌面浮层/手机子页收编），点按绑定在 js/configDrill.js +
   // mobile/settingsSub.js 的 document 委托。
+  // 🔴 jev-imagegen-align-llm 批（2026-11-02 作者令）后，本节的字段/保存/删除/
+  // 测试/掩码切换绑定**全部**迁到模块区的 bindJevSectionEvents（每次重画后重绑，
+  // 元素随 #jev-section-wrap 的 innerHTML 重建）——此处只留这枚不随重画重建的开关。
+  // 旧的提供方下拉切换联动端点钉死（三改②）随端点解禁整体退役。
   document.getElementById('toggle-jev')?.addEventListener('click', function() {
     setToggleState(this, !this.classList.contains('on'));
-  });
-
-  // 三改②（2026-10-09 用户反馈②）：提供方切换联动端点钉死——typesafe-jev =
-  // 预填固定值 + disabled 禁用态（用户只填密钥引用）；其他提供方恢复可编辑，
-  // 钉死值/空值让位（后端 JevSettings.resolve 对空端点自有默认，不发错值）。
-  document.getElementById('cfg-jev-provider')?.addEventListener('change', function() {
-    const input = /** @type {HTMLInputElement | null} */ (document.getElementById('cfg-jev-endpoint'));
-    if (!input) return;
-    const provider = /** @type {HTMLSelectElement} */ (this).value;
-    if (provider === 'typesafe-jev') {
-      input.value = JEV_PINNED_ENDPOINT;
-      input.disabled = true;
-      input.title = t('settings.jevEndpointFixed');
-      input.placeholder = JEV_PINNED_ENDPOINT;
-    } else {
-      input.disabled = false;
-      input.title = '';
-      input.placeholder = 'http://127.0.0.1:8080/predict';
-      if (input.value === JEV_PINNED_ENDPOINT || !input.value.trim()) input.value = '';
-    }
-  });
-
-  // JeV key 值行 eye（本批①件）：默认态 = 明文（作者令「要能直接可见」），
-  // 首击上掩码（-webkit-text-security:disc，providersUi showModal 同款判读）；
-  // 值只进该只读输入框——零 localStorage、零日志、面板重渲即重拉。
-  const jevKeyEye = document.getElementById('jev-key-eye');
-  if (jevKeyEye) {
-    jevKeyEye.addEventListener('click', () => {
-      const input = /** @type {HTMLInputElement|null} */ (document.getElementById('cfg-jev-key-value'));
-      if (!input) return;
-      const style = /** @type {any} */ (input.style);
-      const isMasked = style.webkitTextSecurity === 'disc';
-      style.webkitTextSecurity = isMasked ? 'none' : 'disc';
-      jevKeyEye.innerHTML = isMasked ? eyeOffSvg : eyeSvg;
-      const label = t(isMasked ? 'settings.jevKeyRefHide' : 'settings.jevKeyRefShow');
-      jevKeyEye.setAttribute('aria-label', label);
-      jevKeyEye.title = label;
-      jevKeyEye.setAttribute('aria-pressed', isMasked ? 'true' : 'false');
-    });
-  }
-
-  document.getElementById('btn-save-jev')?.addEventListener('click', async function() {
-    const enabled = document.getElementById('toggle-jev')?.classList.contains('on') || false;
-    const provider = (/** @type {HTMLSelectElement|null} */ (document.getElementById('cfg-jev-provider')))?.value || 'typesafe-jev';
-    const endpoint = (/** @type {HTMLInputElement|null} */ (document.getElementById('cfg-jev-endpoint')))?.value.trim() || '';
-    const keyRef = (/** @type {HTMLInputElement|null} */ (document.getElementById('cfg-jev-keyref')))?.value.trim() || '';
-    const body = { enabled, provider };
-    if (endpoint) body.endpoint = endpoint;
-    if (keyRef) body.keyRef = keyRef;
-    let ok = false;
-    try {
-      const resp = await fetch('/api/config/jev', {
-        method: 'PUT',
-        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      });
-      ok = resp.ok;
-    } catch (e) { ok = false; }
-    // Inline feedback (secrets-ui-redesign, 2026-10-08): the button text no
-    // longer swaps — a role=status line beside the right-aligned primary
-    // button flashes the outcome for 1.5s (the old swap's duration
-    // convention; the copy reuses settings.saved / settings.saveFailed).
-    const stateEl = document.getElementById('jev-save-state');
-    if (stateEl) {
-      stateEl.innerHTML = ok
-        ? statusIcon('circle-check', 11, 'st-ok') + escapeHtml(t('settings.saved'))
-        : statusIcon('circle-alert', 11, 'st-err') + escapeHtml(t('settings.saveFailed'));
-      setTimeout(() => { if (stateEl.isConnected) stateEl.innerHTML = ''; }, 1500);
-    }
-    // keyRef 指针可能刚被改写——保存成功后按新 keyRef 重拉 key 值明文。
-    if (ok) refreshJevKeyValue();
-  });
-
-  // JeV「测试可用性」钮（settings-panel-jev-imagegen 批 2026-10-29）：表单
-  // 当前值即被测对象（点击时现读——未保存的 endpoint/keyRef 改动照样测）。
-  bindJevTestButton(content, {
-    getForm: () => ({
-      provider: (/** @type {HTMLSelectElement|null} */ (document.getElementById('cfg-jev-provider')))?.value || '',
-      endpoint: (/** @type {HTMLInputElement|null} */ (document.getElementById('cfg-jev-endpoint')))?.value.trim() || '',
-      keyRef: (/** @type {HTMLInputElement|null} */ (document.getElementById('cfg-jev-keyref')))?.value.trim() || '',
-    }),
   });
 
   // ── Jev section: allocation-decision health (jev-plugins batch, 2026-10-07;
@@ -1557,8 +1843,10 @@ function bindSettingsEvents(content, cfg) {
     const list = document.getElementById('segment-list');
     if (!list) return;
     const idx = list.children.length;
-    list.insertAdjacentHTML('beforeend', buildSegmentRowHtml({ start: '', end: '' }, idx));
-    (/** @type {HTMLElement|null} */ (list.querySelector(`[data-seg-index="${idx}"] [data-role="start"]`)))?.focus();
+    // 新段 = 合法默认段（09:00-12:00）：原子段字段没有「空值」这一状态
+    // （空串不是 HH:mm，且面板只能产出合法的 HH:mm 二元组）。
+    list.insertAdjacentHTML('beforeend', buildSegmentRowHtml({ start: '09:00', end: '12:00' }, idx));
+    (/** @type {HTMLElement|null} */ (list.querySelector(`[data-seg-index="${idx}"] [data-tw-range]`)))?.focus();
     markScheduleDirty();
   });
 
@@ -1736,35 +2024,11 @@ function bindSettingsEvents(content, cfg) {
   // 设置页更新功能退役（入口 + checkUpdate/doUpdate 发送 + updateCheck.js 消费链），
   // 未来由官网统一检测更新取代。
 
-  // --- Restart the gateway (hotupdate 批 3 · G6 后半：界面重启触发补齐) ---
-  // 🔴 沿用**既有** WS 命令 `restart`（`WebSocketRoutes.scala:1585-1619` 的 `case "restart"`）,
-  //    禁新造重启命令、禁新造第二套重启面。
-  // 🔴 载荷只带 `confirm: true`：**不传** `waitTimeoutMs`/`waitIdle` ⇒ 引擎侧沿用既有默认
-  //    （等待上限 600 秒、等待空闲模式），本批对该默认值零改动。
-  // 确认形态 = **两段式**（第二击即确认位）：强制确认位语义要求「用户的确认动作」，
-  // 而共用的 `#delete-box` 确认弹窗其确认键文案是「删除」（`modal.deleteConfirm`），
-  // 复用它会把中文/英文界面都写成错标签 ⇒ 按钮自身两段式，5 秒无第二击自动复位。
-  const restartBtn = /** @type {HTMLButtonElement|null} */ (document.getElementById('btn-restart-gateway'));
-  if (restartBtn) {
-    let armed = false;
-    let armTimer = null;
-    const disarm = () => {
-      armed = false;
-      if (armTimer) { clearTimeout(armTimer); armTimer = null; }
-      restartBtn.textContent = t('settings.restart');
-    };
-    restartBtn.addEventListener('click', () => {
-      if (!armed) {
-        armed = true;
-        restartBtn.textContent = t('settings.restartConfirm');
-        armTimer = setTimeout(disarm, 5000);
-        return;
-      }
-      disarm();
-      sendWs({ type: 'restart', confirm: true });
-    });
-  }
-
+  // --- 「重启服务」按钮：已随 settings-ios-rows 批（2026-11-06 作者令「底部的重启
+  //     服务去掉」）**整件移除** —— 按钮 + 两段式确认逻辑 + #restart-status 状态行
+  //     + restartStatus/restartResult 两个模块级订阅（原在文件尾部）全删，前端
+  //     对 WS `restart` 零发射面。后端 `case "restart"`（WebSocketRoutes）保留不动：
+  //     它是引擎侧通用能力，其余消费方仍在，本批只摘 UI 入口。
   // --- 文件缓存：占用读数入画 + 清空入口（M2 · 设计 v1 §6.4/§7 表5） ---
   // 清空 = nfCacheReset()（索引 + Cache Storage 字节 + 会话内存 blob 全清；已铸的
   // blob URL 不受影响——URL 与字节源解耦，活动 viewer 继续渲染，下轮打开重新取数
@@ -1797,26 +2061,11 @@ function bindSettingsEvents(content, cfg) {
   }
 }
 
-// ── 重启进度面（auth-trim 批迁址）────────────────────────────────────────────
-// 原 updateCheck.js 的 restartStatus/restartResult 订阅（hotupdate 批 3 · G6）随该文件
-// 整体退役；「重启服务」按钮（btn-restart-gateway，本文件 bindSettingsEvents 内）
-// 仍需可见反馈 ⇒ 订阅迁到本模块**模块级**（import 时恰好一次，settings 面板重渲不重复订阅）。
-// 消费元素 = About 区的 #restart-status；面板关闭时元素不存在 ⇒ 静默（既有口径）。
-// 相位文案仍由 `restart.phase.*` locale 表解析（🔴 不写字面）。
-onMessage('restartStatus', (msg) => {
-  const el = document.getElementById('restart-status');
-  if (!el) return;
-  const key = msg && msg.phase ? 'restart.phase.' + msg.phase : '';
-  el.textContent = key ? t(key, { detail: (msg && msg.detail) || '' }) : '';
-});
-
-onMessage('restartResult', (msg) => {
-  const el = document.getElementById('restart-status');
-  if (!el) return;
-  el.textContent = (msg && msg.ok)
-    ? t('settings.restartAccepted')
-    : t('settings.restartFailed', { error: (msg && msg.error) || '' });
-});
+// ── 重启进度面：整体退役（settings-ios-rows 批 2026-11-06）────────────────────
+// 原 updateCheck.js 的两条订阅随该文件退役后迁到本文件模块级；「重启服务」入口
+// 本轮被作者明令删除 ⇒ 唯一消费元素（#restart-status）不复存在，两条订阅
+// （restartStatus / restartResult）随之整段删除，前端零消费面。WS 端
+// `restartStatus`/`restartResult` 广播帧本身不受影响（引擎侧照旧发，只是没人听）。
 
 // Delegated segment-editor listeners — bound ONCE at module scope, NOT inside
 // bindSettingsEvents. renderSettings() re-runs on every serverConfig echo while
@@ -1837,12 +2086,16 @@ document.addEventListener('click', (e) => {
   markScheduleDirty();   // #334: local draft only — Save commits
 });
 
-document.addEventListener('change', (e) => {
-  const settings = document.getElementById('settings-content');
-  if (!settings || !(e.target instanceof Element) || !settings.contains(e.target)) return;
-  if (!e.target.classList.contains('time-input')) return;
-  updateSegmentRowHint(e.target.closest('.segment-row'));
-  markScheduleDirty();   // #334: local draft only — Save commits
+// 时段选择器（原子段字段 = 整段一颗触发钮，js/timeWheel.js 单源）：
+// 委托单点绑定——面板确认回写 dataset 后刷新行内跨零点徽标 + 落本地草稿。
+// 精确输入行（.tw-in）在面板内、不走 settings 容器，故不再需要 change 委托。
+attachTimeTriggers(document, {
+  onRangeChange(btn) {
+    const row = btn.closest('.segment-row');
+    if (!row) return;
+    updateSegmentRowHint(row);
+    markScheduleDirty();   // #334: local draft only — Save commits
+  },
 });
 
 // Listen for config validation errors
@@ -1880,11 +2133,13 @@ function renderOneSessionItem(s, container, opts = {}) {
   const inFolder = opts.inFolder || false;
   const item = document.createElement('div');
   const isSelected = state.selectedSessionIds.has(s.id);
-  item.className = 'session-item'
+  // 侧栏族（ui-unification-20261103-sidebar）：.ds-side-row = 形态唯一家
+  // （design-system.css），.session-item 保留为 DOM 寻址钩子（JS 查询 + spec）。
+  item.className = 'session-item ds-side-row'
     + (inFolder ? ' in-folder' : '')
-    + (s.id === state.activeSessionId ? ' active' : '')
-    + (state.pinnedSessions.has(s.id) ? ' pinned' : '')
-    + (isSelected ? ' selected' : '');
+    + (s.id === state.activeSessionId ? ' ds-side-row--active active' : '')
+    + (state.pinnedSessions.has(s.id) ? ' ds-side-row--pinned pinned' : '')
+    + (isSelected ? ' ds-side-row--selected selected' : '');
   item.dataset.id = s.id;
   // B3-2 生产者：会话行的跨重渲稳定 key（重渲后按 key 回焦，见 renderSessionSidebar）。
   item.dataset.focusKey = `session:${s.id}`;
@@ -1899,24 +2154,26 @@ function renderOneSessionItem(s, container, opts = {}) {
       e.dataTransfer.setData('text/plain', s.id);
     }
     e.dataTransfer.effectAllowed = 'move';
-    item.classList.add('dragging');
+    item.classList.add('dragging', 'ds-side-row--dragging');
     showDeleteZone();
   });
   item.addEventListener('dragend', () => {
-    item.classList.remove('dragging');
+    item.classList.remove('dragging', 'ds-side-row--dragging');
     document.querySelectorAll('.folder-item.drag-over').forEach(el => el.classList.remove('drag-over'));
     hideDeleteZone();
   });
   const statusCls = getSessionStatusClass(s.id);
   const draft = state.sessionInputDrafts[s.id];
+  // 行内文字形态走族内槽（.ds-side-title 主文案 / .ds-side-meta 时间与草稿），
+  // 旧 class 全保留为钩子（重命名 contenteditable 与查询都按旧名）。
   const draftHtml = draft && draft.text
-    ? '<div class="session-draft">' + escapeHtml(draft.text.replace(/\n/g, ' ').slice(0, 60)) + '</div>'
+    ? '<div class="session-draft ds-side-meta ds-side-meta--dim">' + escapeHtml(draft.text.replace(/\n/g, ' ').slice(0, 60)) + '</div>'
     : '';
-  const deleteBtnHtml = '<button class="session-delete" title="' + t('session.delete') + '"><i data-lucide="x"></i></button>';
+  const deleteBtnHtml = '<button class="session-delete ds-side-danger" title="' + t('session.delete') + '"><i data-lucide="x"></i></button>';
   item.innerHTML =
     '<div class="session-info">' +
-    '<div class="session-name">' + escapeHtml(s.name) + '</div>' +
-    (draftHtml || '<div class="session-time">' + formatSessionTime(s.updatedAt || s.createdAt) + '</div>') +
+    '<div class="session-name ds-side-title">' + escapeHtml(s.name) + '</div>' +
+    (draftHtml || '<div class="session-time ds-side-meta">' + formatSessionTime(s.updatedAt || s.createdAt) + '</div>') +
     '</div>' +
     '<div class="session-status ' + statusCls + '">' +
     '<div class="status-spinner"><i data-lucide="loader-2"></i></div>' +
@@ -2005,7 +2262,7 @@ function updateHeaderSessionName() {
   const sessionNameEl = chatViews.primary?.dom?.sessionNameEl;
   const active = state.sessions.find(s => s.id === state.activeSessionId);
   if (active) {
-    const agentName = active.agentName || 'Nebula';
+    const agentName = active.agentName || ROOT_AGENT_KEY;
     // Show agent display name in center (session name is redundant when there's only one session).
     if (sessionNameEl) {
       // Root agent reads the SINGLE display-name read point (rootName.js): both
@@ -2017,9 +2274,9 @@ function updateHeaderSessionName() {
       // EMPTY string — the mechanism name is a key, not a display fallback, and
       // the empty <span> keeps the header's center-slot layout intact (no jump).
       // Named root → display name as before; non-root agents keep their own name.
-      const label = agentName === 'Nebula'
+      const label = agentName === ROOT_AGENT_KEY
         ? (isRootNamed() ? rootDisplayName() : '')
-        : (state.agentsData.find(a => a.name === agentName)?.displayName || agentName);
+        : agentDisplayName(agentName);
       sessionNameEl.textContent = label;
       sessionNameEl.style.display = '';
     }
@@ -2160,12 +2417,12 @@ function renderSessionSidebarInner(sessionData, activeId) {
   const allFolders = state.folders || [];
   const agentGroups = {};
   visibleSessions.forEach(s => {
-    const agent = s.agentName || 'Nebula';
+    const agent = s.agentName || ROOT_AGENT_KEY;
     if (!agentGroups[agent]) agentGroups[agent] = { sessions: [], folders: [] };
     agentGroups[agent].sessions.push(s);
   });
   allFolders.forEach(f => {
-    const agent = f.agentName || 'Nebula';
+    const agent = f.agentName || ROOT_AGENT_KEY;
     if (!agentGroups[agent]) agentGroups[agent] = { sessions: [], folders: [] };
     agentGroups[agent].folders.push(f);
   });
@@ -2180,7 +2437,7 @@ function renderSessionSidebarInner(sessionData, activeId) {
     // Agent group header (only when multiple agents exist)
     if (agentOrder.length > 1) {
       const header = document.createElement('div');
-      header.className = 'agent-group-header';
+      header.className = 'agent-group-header ds-side-label ds-side-label--meta';
       header.textContent = agentDisplayLabel(agentName);
       sessionList.appendChild(header);
     }
@@ -2434,7 +2691,7 @@ export function resetChatForActiveSession() {
       row.className = 'row ai';
       pv.stream.currentAiBubble = document.createElement('div');
       pv.stream.currentAiBubble.className = 'bubble ai';
-      pv.stream.currentAiBubble.innerHTML = renderMarkdownWithMath(pv.stream.aiText, true, { cache: !isStreaming }) + (isStreaming ? '<span class="cursor"></span>' : '');
+      pv.stream.currentAiBubble.innerHTML = renderMarkdownWithMath(pv.stream.aiText, true, { cache: !isStreaming, stream: isStreaming }) + (isStreaming ? '<span class="cursor"></span>' : '');
       row.appendChild(pv.stream.currentAiBubble);
       chat.appendChild(row);
       if (!isStreaming) {
@@ -2445,10 +2702,16 @@ export function resetChatForActiveSession() {
 
     smartScroll();
   } else if (sid) {
-    // audit ②27（2026-10-25）：初次进会话（历史未加载完）且**无缓冲流内容可恢复**
-    // ⇒ 出骨架卡占位；historyPage 到场由 main.js 处理器同帧摘除（让位零跳变）。
-    // 有缓冲内容（thinking/text）的会话直渲真内容，不出骨架（占位不与真内容同帧）。
-    showChatSkeleton();
+    // 骨架占位卡整件退役（作者令 2026-11-05 12:28「我们目前的逻辑是通过一个卡片来
+    // 显示加载过程 进来就应该是加载好的 这个占位逻辑多余了」；实拍形态 = 聊天流顶部
+    // 4 条大圆角占位泡，含右侧用户位**绿泡**）。
+    // 🔴 旧形态的真 bug：本支每次重渲都挂，摘除却只发生在 historyPage 帧 ⇒ 已渲染
+    // 真消息的会话重渲后「占位与真内容同框」，且没有新 historyPage 到达时占位永不
+    // 退场。现在：线程**真的空**（一条消息都没渲染）才出一条细加载行 —— 既有
+    // `.history-loader`（spinner + 「加载中…」，与翻页加载同一个件，非卡片/非气泡
+    // 形态），historyPage 到场由 main.js 处理器同帧摘除。三档判据因此仍分开：
+    // 加载中 = 这一行；有内容 = 零占位；失败/空态各有自己的面（不吃本条）。
+    if (!pv.dom.chat.children.length) showHistoryLoader();
   }
 
   if (state.sessionPendingTools[sid]) {
@@ -2463,7 +2726,10 @@ export function resetChatForActiveSession() {
 
   if (!isBusy) pv.dom.input.focus();
 
-  renderTaskList([], undefined, sid); // 首参占位——旧任务入参退役（2026-09-05 裁定纯节点视图）
+  // 任务面换血（ReminderIsland 复刻批 2026-11-02）：本槽位渲染 = 待办列表
+  //（renderTodoTaskList；旧 delegate 链块渲染 taskList.renderTaskList 代码零删除、
+  // 本面零触发——模块仍被 todoFace/mobile/taskPanel 引用，数据面活在别面）。
+  renderTodoTaskList(sid);
   if (state.updateBgTasksUI) state.updateBgTasksUI();
   if (state.updateBgAgentIndicator) state.updateBgAgentIndicator();
   if (state.updateBypassToggle) state.updateBypassToggle(pv);
@@ -3015,7 +3281,7 @@ export function getTargetAgent() {
   // 2. Active session
   const active = (state.sessions || []).find(s => s.id === state.activeSessionId);
   if (active?.agentName) return active.agentName;
-  return 'Nebula';
+  return ROOT_AGENT_KEY;
 }
 
 /** Resolve the target folder ID for creating new sessions/folders, based on context.
@@ -3155,10 +3421,12 @@ function renderFolderItem(folder, sessions, container) {
   const isExpanded = state.expandedFolders.has(folder.id);
   const isPinned = state.pinnedFolders.has(folder.id);
 
+  // 侧栏族：树行 = .ds-side-row .ds-side-row--tree（32px 热区 + 紧内距）；
+  // .folder-item 保留为 DOM 寻址钩子（拖放态 .drag-over 仍写在旧 class 上）。
   const folderEl = document.createElement('div');
-  folderEl.className = 'folder-item'
-    + (isPinned ? ' pinned' : '')
-    + (state.activeFolderId === folder.id ? ' active' : '');
+  folderEl.className = 'folder-item ds-side-row ds-side-row--tree'
+    + (isPinned ? ' ds-side-row--pinned pinned' : '')
+    + (state.activeFolderId === folder.id ? ' ds-side-row--active active' : '');
   folderEl.dataset.folderId = folder.id;
   folderEl.draggable = true;
 
@@ -3173,23 +3441,23 @@ function renderFolderItem(folder, sessions, container) {
         : '<i data-lucide="chevron-right"></i>') +
     '</div>' +
     '<div class="folder-icon"><i data-lucide="folder"></i></div>' +
-    '<div class="folder-name">' + escapeHtml(folder.name) + '</div>' +
-    (folder.projectRoot ? '<span class="folder-badge" title="' + escapeHtml(folder.projectRoot) + '"><i data-lucide="hard-drive" style="width:12px;height:12px"></i></span>' : '') +
+    '<div class="folder-name ds-side-title">' + escapeHtml(folder.name) + '</div>' +
+    (folder.projectRoot ? '<span class="folder-badge ds-side-meta" title="' + escapeHtml(folder.projectRoot) + '"><i data-lucide="hard-drive" style="width:12px;height:12px"></i></span>' : '') +
     '<div class="folder-status ' + statusCls + '">' +
       '<div class="status-spinner"><i data-lucide="loader-2"></i></div>' +
       '<div class="folder-status-dot"></div>' +
     '</div>' +
-    '<button class="folder-delete" title="' + t('sidebar.folderDelete') + '"><i data-lucide="x"></i></button>';
+    '<button class="folder-delete ds-side-danger" title="' + t('sidebar.folderDelete') + '"><i data-lucide="x"></i></button>';
 
   // Drag: folder itself can be dragged (into another folder) or to delete zone
   folderEl.addEventListener('dragstart', (e) => {
     e.dataTransfer.setData('text/plain', 'folder:' + folder.id);
     e.dataTransfer.effectAllowed = 'move';
-    folderEl.classList.add('dragging');
+    folderEl.classList.add('dragging', 'ds-side-row--dragging');
     showDeleteZone();
   });
   folderEl.addEventListener('dragend', () => {
-    folderEl.classList.remove('dragging');
+    folderEl.classList.remove('dragging', 'ds-side-row--dragging');
     document.querySelectorAll('.folder-item.drag-over').forEach(el => el.classList.remove('drag-over'));
     hideDeleteZone();
   });
@@ -3268,10 +3536,10 @@ function renderFolderItem(folder, sessions, container) {
     // Rules.md entry — only shown when rules exist for this folder
     if (state.foldersWithRules && state.foldersWithRules.has(folder.id)) {
       const rulesItem = document.createElement('div');
-      rulesItem.className = 'session-item in-folder rules-item';
+      rulesItem.className = 'session-item in-folder rules-item ds-side-row ds-side-row--tree';
       rulesItem.innerHTML =
         '<div class="session-icon"><i data-lucide="file-text" style="width:14px;height:14px;color:var(--color-text-muted)"></i></div>' +
-        '<div class="session-name">rules.md</div>';
+        '<div class="session-name ds-side-title">rules.md</div>';
       rulesItem.addEventListener('click', (e) => {
         e.stopPropagation();
         openRulesEditor(folder.id, folder.name);

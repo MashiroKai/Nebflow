@@ -2,6 +2,19 @@ import { key } from './branding.js'; // MUST be first: storage-key migration run
 import state from './state.js';
 import { initBranding, brand } from './brand.js';
 
+// ask-paradigm-a（2026-11-03）：vanilla 组件范式基座三件（dom / events / component）
+// 目前只有下游组件 import 才进构建图，入口侧在这里显式登记一次 ——
+// `scripts/build-web.mjs` 的孤儿守卫要求 web/js/**/*.js 每个文件都出现在 esbuild
+// metafile inputs 里。三个模块在 import 期零副作用（纯导出），不改变启动顺序。
+import './dom.js';
+import './events.js';
+import './component.js';
+// 输入嫌体（input-surface-unify 批 2026-11-06）：把「最近一次交互是键盘还是指针」
+// 写进 html[data-nf-modality]，供 css/inputSurface.css 的焦点态读取 —— 纯 CSS
+// 做不到「点进去不出环 / Tab 进去出环」，因为浏览器对文本输入件的 :focus-visible
+// 口径恒为真。模块零副作用地只挂两个捕获期监听。
+import './focusModality.js';
+
 // Branding first: correct the tab title before any other module body runs.
 initBranding();
 
@@ -14,7 +27,7 @@ if (document.documentElement.dataset.nfEmbedded === '1') {
   // Tab title follows the same uppercase brand-token rule as initBranding().
   document.title = `${brand.lowerName.toUpperCase()} (embedded)`;
   document.addEventListener('DOMContentLoaded', () => {
-    document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font:13px -apple-system,BlinkMacSystemFont,sans-serif;color:#888;padding:24px;text-align:center">Stand 预览已停止——该页面试图在应用内嵌套启动（已防止无限递归）。</div>';
+    document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font:var(--ds-fs-body) -apple-system,BlinkMacSystemFont,sans-serif;color:#888;padding:var(--ds-space-6);text-align:center">Stand 预览已停止——该页面试图在应用内嵌套启动（已防止无限递归）。</div>';
   });
   throw new Error('[nf] embedded context — boot refused (anti-recursion guard)');
 }
@@ -23,19 +36,30 @@ if (document.documentElement.dataset.nfEmbedded === '1') {
 // 验证脚本只能从产品自己的模块图取到**同一实例**，否则键盘闸永远只能验源树。
 installProbeSurface();
 import { LS_SESSIONS_KEY, LS_MODEL_INFO_KEY } from './state.js';
-import { initSpinner, initMarkdown, smartScroll, renderMarkdownWithMath, isNearBottom, shouldFollowBottom, initScrollFollow, refreshScrollPill, countsAsRealMessage, setMentionListProvider, enhanceMentionSpansInDom, bgHealthNorm } from './utils.js';
+import { initSpinner, initMarkdown, smartScroll, renderMarkdownWithMath, isNearBottom, shouldFollowBottom, initScrollFollow, refreshScrollPill, countsAsRealMessage, setMentionListProvider, setTodoListProvider, enhanceMentionSpansInDom, bgHealthNorm } from './utils.js';
 // mermaid-md batch (2026-10-23): ONE global hydration point — every markdown
 // face that shares renderMarkdownWithMath gets its ```mermaid placeholders
 // hydrated by this observer (chat bubbles, flow/report cards, popups). The
 // canvas md viewer additionally hydrates explicitly in viewers/markdown.js.
 import { armMermaidAutoHydrate } from './mermaidRenderer.js';
+// rich-render 批（2026-11-05 作者令 08:53/08:55）：```svg 与按需装载的 KaTeX 走
+// 同一套围栏水合（fenceKit），同样在一处接线。
+import { armSvgFenceHydrate } from './svgFence.js';
+import { armMathHydrate } from './mathRender.js';
 // human-face batch (2026-10-30): ```human 卡内 [[词条]] 短形引用 → hover 气泡
 // （termTip.js 共享件，API 兜底腿）。同一 body 级 MutationObserver 先例。
 import { armTermCiteAutoHydrate } from './termCite.js';
 import { registerActionableProvider, notifyActionableChanged } from './actionable.js';
 import { getProjectsSnapshot, getProjectsListGen, preheatProjects, onProjectsArrival } from './mentionComplete.js';
+// 待办引用面（待办结构化批 2026-11-05）：`#` 待办引用补全 provider + 渲染侧待办
+// 清单 provider。两个模块都在这里 import 一次，引擎与渲染从此各有一份真源。
+import './todoComplete.js';
+import { todoStore } from './todoStore.js';
 import { initServiceWorker } from './swReg.js'; // console-load-perf 批：温访问秒开注册器（load 后注册，降级零影响）
 import { initHotStampWatch } from './hotStamp.js'; // 台账 #919：热更新地基——asset stamp 轮询自愈（端点缺席 = 静默空转）
+// 冻结状态两套真相批（2026-11-05）：冻结面的合并/派生单点在 freezeState.js
+// （`mergeFreeze` 按后端权威块的 asOf 定序，允许「不再冻结」降级）。
+import { mergeFreeze } from './freezeState.js';
 import { connect, onMessage, sendWs, onReconnect } from './ws.js';
 import {
   setBusy, clearBusy, clearStatus,
@@ -59,6 +83,10 @@ import {
 // ON the turn line (dots + live timer), not in a bubble row.
 import { startWorklineDots, beginRound } from './workline.js';
 import { replayHistoryPageInitialLoad } from './chat/historyReplay.js';
+// 进场落底「武装窗」撤窗口（手机端进场落顶修复批 · 2026-11-02）：回看补页腿
+// （分帧挂载 + 相对补偿）必须与每帧钉底互斥 —— 见下方补页分支的注释。
+import { cancelSettleBottom } from './chat/settleBottom.js';
+import { installMsgTokenChip } from './chat/msgTokenChip.js'; // msgchip 批：带短名引用小牌交互/取数腿
 import { notePendingAsk, removePendingAsk, applyPendingAskSnapshot, pendingSnapshotFailed, initPendingAsks, requestPendingAskSync, startPendingAskSync } from './askPending.js';
 import { initScrollUnderGlass } from './scrollUnderGlass.js'; // uifix ⑤
 import {
@@ -98,6 +126,10 @@ import { installProbeSurface } from './probeSurface.js';
 // 取 G1 编排模式（rows）与 G3 星型子代理投影（children）——读 port 单缝，禁渲染面
 // 直连 WS/REST（数据权威恒在 provider 镜像）。
 import { listDelegateRows, listDelegateChildren, getChainByTask } from './delegateChainStub.js';
+// 来源链批（作者令 2026-11-01 19:23）：后台 agent badge 标注来源链——「上层 · 下层」
+// 名字链（delegate 短名/subagent 名/node 名）。解析 = 纯显示层既有镜像读数
+// （bgSourceChain 单点；引擎侧 id 生成与协议字段零触碰）。
+import { chainForTask, chainLabel } from './bgSourceChain.js';
 // taskList.js 引用已随旧任务区退役移除（2026-09-05 10:54 裁定）：面板渲染
 // 由 taskList.js 自包含节点订阅驱动，session 切换重渲走 sidebar.js。
 import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
@@ -105,6 +137,9 @@ import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
 // EPUB chapters have no frame guarding them): bound once at boot below.
 import { bindDocMarkupLinkBridge } from './viewers/shared.js';
 import { escapeHtml, isBgAgentId } from './utils.js';
+// 三行结构批（2026-11-05）：后台任务行状态位的唯一发射点（图标 + 色调 + 无障碍词
+// 单表，与智能体行同一份 bgRowStatus）。
+import { bgStatusHtml } from './bgRowStatus.js';
 // 本机设备名登记（设备角标本名批 2026-10-27）：configData.selfDevice.name（引擎
 // 自身身份读数，加法字段）→ deviceRoster 本机显示名缓存——工具卡设备角标本机字面
 // （local/self）的解析第二源（花名册 self 为第一源），两源皆缺不渲染、绝不「local」。
@@ -122,6 +157,7 @@ import { nfCacheInvalidatePath, noteHistoryFingerprint } from './nfFileCache.js'
 import { registerCanvasPanelButton } from './canvas.js';
 import { openProjectsTab } from './projectTab.js';
 import { initScheduledTask, refreshScheduledTasks } from './scheduled-task.js';
+import { initScheduleApi } from './scheduleApi.js';
 import { initDaemons } from './daemons.js';
 import { initPerception } from './perception.js';
 import { initChatSearch } from './chatSearch.js';
@@ -129,6 +165,8 @@ import { initFileSearch } from './fileSearch.js';
 import { initUsageDashboard } from './usageDashboard.js';
 import { initExplorer, refreshExplorer } from './explorer.js';
 import { initChatView, chatViews, findViewBySessionId, activeView, setActiveView } from './chatView.js';
+// 🔴 引用入口移入 footer 批（2026-11-02 11:00）的 initQuoteItemButton 接线随
+// 2026-11-03 10:11 ②（输入框引用图标移除）整链退役：本文件不再 import 该装配面。
 // 回合活动流条（turnActivity.js，对话层活性批 2026-10-22）已整链退役 ——
 // 2026-10-23 作者令逐字「这个活动面板我不是让删掉吗，就是对话框上面这个」。
 // 防复活钉：tests/turn-activity-stream.spec.mjs。
@@ -138,6 +176,9 @@ import { handleBgAgentHistory, openStepPopup as openBgAgentPopup, cleanupBgAgent
 import { openBgTaskOutput } from './bgTaskOutputPopup.js';
 import { fmtUptime, isFailedSnapshotStatus } from './managePanel.js';
 import { initNeblink } from './neblink.js';
+// 全设备统一更新（fleet 批 2026-11-01）：阻塞式状态卡 + 「全部更新 / 更新此设备」
+// 两个动作面的唯一属主（纯订阅 `fleetUpdate` 帧，服务端为唯一真源）。
+import { initFleetUpdate } from './fleetUpdate.js';
 import { initDropbox } from './dropbox.js';
 import { initContacts } from './contacts.js';
 import { initMessages } from './messages.js';
@@ -181,9 +222,12 @@ import { applyVoiceSeal } from './voiceSeal.js';
 // window.* 挂钩行与顶层 setInterval/addEventListener 挂点保留在 main.js 原位置)。
 import { stopThinkingTimer } from './main/thinkingTimer.js';
 import { applyLocalFreeze, setFrozenBarState, skipCurrentFreeze } from './main/freeze.js';
-import { showHistoryLoader, hideHistoryLoader, showHistoryEnd, clearHistoryIndicators, hideChatSkeleton } from './main/historyIndicators.js';
+import { showHistoryLoader, hideHistoryLoader, showHistoryEnd, clearHistoryIndicators } from './main/historyIndicators.js';
 import { showGlobalPermissionToast, dismissGlobalPermissionToasts } from './main/permToast.js';
 import { updateBgAgentIndicator, bgAgentKindFromSession, renderBgAgentDropdown, armBgUptimeTick, fetchActiveAgentsOnOpen, clearBgStuck, bgScopeRootForBucket, refreshAllBgAgentIndicators } from './main/bgAgents.js';
+// 术语统一批（2026-11-06 作者令「统一 根据英文」）：身份/类型徽标词只从单源词表取
+// （js/termWords.js）——后台任务面板的 mode chip 不再走 locale 键。
+import { badgeWord } from './termWords.js';
 // uifix 批（2026-10-22 作者令「附件放在对话框上面，不要遮挡文字」）：附件条 in-flow
 // 独立行的溢出折叠腿（+N 收展）—— 桌面/手机层共用单点，桌面启动即挂观察链（幂等）。
 import { watchAttachmentStrip } from './attachStripFold.js';
@@ -285,6 +329,11 @@ initChatView(
   }
 );
 
+// 🔴 引用入口（#quote-item-btn）装配已退役（作者令 2026-11-03 10:11 ②「输入框引用
+// 图标移除，不留替代按钮」）：输入框动作行不再引用 `initQuoteItemButton`——
+// 装配面本体在 msgQuote.js 同批摘除，本处不留调用点、不留死入口。
+// （叠卡单张引用能力面 startItemQuote 仍在，入口另行设计。）
+
 // D6 批 F2: pending-ask bar + header badge wiring (click = jump to oldest ask).
 initPendingAsks();
 // 修复批 2026-10-25「待答徽章常显」：对账请求单点化（since 戳随行）——重连、
@@ -318,6 +367,8 @@ if (typeof marked !== 'undefined') initMarkdown();
 if (typeof lottie !== 'undefined') initSpinner();
 if (typeof lucide !== 'undefined') lucide.createIcons();
 armMermaidAutoHydrate(); // mermaid-md batch: global ```mermaid placeholder hydration
+armSvgFenceHydrate(); // rich-render batch: ```svg fence hydration
+armMathHydrate(); // rich-render batch: on-demand KaTeX hydration (.nf-math)
 armTermCiteAutoHydrate(); // human-face batch: global ```human card term-cite linkify
 
 // Mention-render batch (2026-09-27): the message renderer reads the shared
@@ -329,6 +380,20 @@ armTermCiteAutoHydrate(); // human-face batch: global ```human card term-cite li
 setMentionListProvider(() => ({ projects: getProjectsSnapshot(), gen: getProjectsListGen() }));
 preheatProjects();
 onProjectsArrival(() => { enhanceMentionSpansInDom(); });
+
+// `#` 待办引用（待办结构化批 2026-11-05）：同一个渲染管线读待办清单，代次由
+// todoStore 的每次变更自增（LRU 键含代次 ⇒ 待办改名/完成/新建后不会命中旧 HTML）。
+// 首次到达时同样跑一次 DOM 补齐，让清单未到时已画成纯文本的气泡长出 chip。
+let todoRefGen = 0;
+let todoArrivalEnhanced = false;
+setTodoListProvider(() => ({ todos: todoStore.openItems(), gen: todoRefGen }));
+todoStore.subscribe(() => {
+  todoRefGen++;
+  if (!todoArrivalEnhanced && todoStore.openItems().length > 0) {
+    todoArrivalEnhanced = true;
+    enhanceMentionSpansInDom();
+  }
+});
 
 // ---------- 3. Register WS message handlers ----------
 
@@ -1017,6 +1082,13 @@ onMessage('agentFrozen', (msg, view) => {
     state.sessionBgAgents[sid][aid].frozenResumeAt = msg.resumeAt || null;
     // Error-recovery family: pass the reason (UI-7 amber dot vs sapphire).
     state.sessionBgAgents[sid][aid].freezeReason = normalizeReason(msg.reason);
+    // 冻结态误报批（2026-11-05）：后端判定分类随帧到（freezeKind/needsHuman/
+    // autoRecoverable）——面板据此决定「自动恢复中（不给按钮）」还是「需人工（给
+    // 唤醒/重启）」，不再从 reason 猜。缺字段（旧后端）⇒ 空串，freezeState.js 回落
+    // 同一张表。
+    state.sessionBgAgents[sid][aid].freezeKind = msg.freezeKind || '';
+    state.sessionBgAgents[sid][aid].needsHuman = msg.needsHuman === true;
+    state.sessionBgAgents[sid][aid].freezeReasonWire = msg.reason || '';
     if (view) renderBgAgentDropdown();
   }
   // R4-a (wait-timeout-fix, audit 20260903 Q2-A): a sub-agent freeze parks the
@@ -1047,6 +1119,11 @@ onMessage('agentResumed', (msg, view) => {
     state.sessionBgAgents[sid][aid].frozen = false;
     state.sessionBgAgents[sid][aid].frozenResumeAt = null;
     state.sessionBgAgents[sid][aid].freezeReason = null;
+    // 冻结态误报批（2026-11-05）：恢复即清分类三字段——否则行会带着上一轮的
+    // 「需人工」判定留在面板上（冻结已解、按钮还在）。
+    state.sessionBgAgents[sid][aid].freezeKind = '';
+    state.sessionBgAgents[sid][aid].needsHuman = false;
+    state.sessionBgAgents[sid][aid].freezeReasonWire = '';
     if (view) renderBgAgentDropdown();
   }
   // 现象2 fix: when background agents wake, re-evaluate the foreground freeze
@@ -1569,6 +1646,12 @@ onMessage('roundComplete', (msg, view) => {
 });
 
 onMessage('error', (msg, view) => {
+  // schedule-created-card 批（2026-11-05）：定时任务/待办卡片的**局部写失败**
+  // （卡片内联编辑/取消被引擎拒绝）不是回合错误 —— 它既不清 busy、也不 failTurn、
+  // 更不落错误气泡（错误已在卡片上就地显示 + 用户输入保留，js/scheduleCard.js）。
+  // 本批实测（隔离实例真浏览器）：不拦的话，卡上一次失败的保存会顺手把正在跑的
+  // 回合标成失败、并在消息流里多冒一条与卡内错误重复的红行。
+  if (msg.msgType === 'updateScheduledTask' || msg.msgType === 'deleteScheduledTask') return;
   clearBusyFor(msg);
   const sid = msg.sessionId || state.activeSessionId;
   delete state.sessionPendingTools[sid];
@@ -1792,7 +1875,9 @@ onMessage('askUser', (msg, view) => {
     delete state.sessionBusyTimeouts[sid];
   }
   // D6 批 F1: source-label passthrough (project/nodeName) for the badge.
-  const askSource = { project: msg.project, nodeName: msg.nodeName };
+  // 归属命名批（2026-11-05）：ownerName = 引擎侧解析的 delegate 批次短名，
+  // 与 project/nodeName 同路透传（卡片与待办条同一 `askSourceParts` 口径）。
+  const askSource = { project: msg.project, nodeName: msg.nodeName, ownerName: msg.ownerName };
   // 刷新存活 (2026-09-03): replayed frames — the hub snapshot re-sent by the
   // backend right after the initial historyPage of a session (re)subscribe
   // (browser refresh, WS reconnect, session switch). This is state
@@ -1821,7 +1906,7 @@ onMessage('askUser', (msg, view) => {
       if (rdata) saveAskMsgDedup(rdata, msg.sessionId, msg.requestId);
     } else if (sid) {
       // Non-active session: persist (deduped) so it can be restored on session switch
-      saveAskMsgDedup({ type: 'askUser', items: msg.items, agentName: msg.agentName, requestId: msg.requestId, project: msg.project, nodeName: msg.nodeName, attachments: msg.attachments }, sid, msg.requestId);
+      saveAskMsgDedup({ type: 'askUser', items: msg.items, agentName: msg.agentName, requestId: msg.requestId, project: msg.project, nodeName: msg.nodeName, ownerName: msg.ownerName, attachments: msg.attachments }, sid, msg.requestId);
     }
     return;
   }
@@ -1841,7 +1926,7 @@ onMessage('askUser', (msg, view) => {
     if (data) saveMsg(data, msg.sessionId);
   } else if (sid) {
     // Non-active session: persist so it can be restored on session switch
-    saveMsg({ type: 'askUser', items: msg.items, agentName: msg.agentName, requestId: msg.requestId, project: msg.project, nodeName: msg.nodeName, attachments: msg.attachments }, sid);
+    saveMsg({ type: 'askUser', items: msg.items, agentName: msg.agentName, requestId: msg.requestId, project: msg.project, nodeName: msg.nodeName, ownerName: msg.ownerName, attachments: msg.attachments }, sid);
   }
 });
 
@@ -2076,7 +2161,6 @@ onMessage('historyPage', (msg, view) => {
 
   const sid = msg.sessionId;
   hideHistoryLoader();
-  hideChatSkeleton(); // audit ②27：初载骨架卡让位（与渲染同一任务帧 ⇒ 零布局跳变）
   if (!view) return;
 
   // Use explicit flag instead of historyOffset === 0 to prevent double-clear.
@@ -2112,6 +2196,12 @@ onMessage('historyPage', (msg, view) => {
     // 到 onDone（升级批 drain 完）才放行 —— 期间不会发出第二页请求。
     const chat = activeView.dom.chat;
     const prevScrollHeight = chat.scrollHeight;
+    // 进场落底武装窗（2026-11-02 手机端进场落顶修复批）：**回看补页腿撤窗**——
+    // 本腿以 `chat.prepend + scrollTop += 增量` 相对补偿把读者钉在原来读的那一行，
+    // 而武装窗的每帧钉底会把这笔补偿直接抹掉（把回看的人拽回底部）。撤窗放在
+    // 补页腿入口（不是 onBuilt 里）：构建切片期间窗口的任何一帧都不该再钉底。
+    // 撤窗是幂等的，窗口本就没武装时是空操作。
+    cancelSettleBottom(chat);
     // 陈页守卫：会话切换/重连初载会 `resetPagination()` **整替** pagination
     // 对象（chatView.js:175 / sidebar.js:2194）——守卫用对象**身份**比对
     // （数值比对在「新会话初载恰回同 offset」的窄竞态下会漏判）。
@@ -2256,6 +2346,9 @@ onMessage('agentStart', (msg, view) => {
     // 面板命名批（2026-10-31 ②）：批次短名（live 帧 routeWsSend 注入；快照面
     // activeAgentEntryJson 同键）——跨 turn 保留同款合并语义。
     delegateName: msg.delegateName || (prev && prev.delegateName) || '',
+    // name/address 批（2026-11-05）：续传地址（live 帧 routeWsSend 注入；快照面
+    // activeAgentEntryJson 同键）——跨 turn 保留同款合并语义。
+    mailAddress: msg.mailAddress || (prev && prev.mailAddress) || '',
     kind: (prev && prev.kind) || bgAgentKindFromSession(msg.nodeSessionId || ''),
     // Project attribution badge: live frames carry it only on agentStart
     // (routeSubagentWsSend injects it for node-*/dispatcher-* sessions);
@@ -2424,10 +2517,173 @@ onMessage('delegateWaiting', (msg) => {
     for (const info of Object.values(agents)) {
       const entrySid = (info.sessionId || '').replace(/^team-/, '');
       if (entrySid !== bare) continue;
-      info.waiting = { mode: msg.mode || 'merge' };
+      // 案A 待命批 2026-10-31（状态矩阵批收编）：mode 扩 standby（待命≠候合并）；
+      // detail = 申报的「在等什么」（徽标 tooltip）。mode 缺席缺省 'merge'（旧帧兼容）。
+      info.waiting = { mode: msg.mode || 'merge', detail: msg.detail || '' };
       updateBgAgentIndicator(rootSid);
     }
   }
+});
+
+// ═══ 错误冻结批（2026-11-01）：delegate 错误冻结态的前端面 ═══════════════════
+// backend `delegateFrozen` 帧（BackoffSupervisor.freezeAndHold）→ 面板行置冻结标记。
+// 与 agentFrozen（时间表/错误族冻结，sapphire/琥珀点）显式区分：本族是**错误冻结**
+// = 就地停住等唤醒（可唤醒续做，不是失败也不是「待命」）。字段隔离：frozen/
+// frozenSince/frozenReason/wakeAddress（不与 freezeReason 混用——后者是
+// error-recovery 归因色的输入）。
+function applyDelegateFrozen(rootSid, sid, patch) {
+  if (!sid) return false;
+  let touched = false;
+  for (const agents of Object.values(state.sessionBgAgents)) {
+    for (const info of Object.values(agents || {})) {
+      const entrySid = (info && info.sessionId || '').replace(/^team-/, '');
+      if (entrySid !== sid) continue;
+      Object.assign(info, patch);
+      touched = true;
+    }
+  }
+  const view = rootSid ? findViewBySessionId(rootSid) : null;
+  if (view) renderBgAgentDropdown && renderBgAgentDropdown();
+  return touched;
+}
+
+onMessage('delegateFrozen', (msg) => {
+  const sid = String(msg.sessionId || msg.agentId || '').replace(/^team-/, '');
+  if (!sid) return;
+  // 冻结状态两套真相批（2026-11-05）：帧若带权威块（`freeze`），分类/可唤醒性
+  // 一律由它定（不再从线值二次猜测）；缺块 = 旧后端，走既有扁平字段。
+  if (msg.freeze) {
+    for (const agents of Object.values(state.sessionBgAgents)) {
+      for (const info of Object.values(agents || {})) {
+        if (((info && info.sessionId) || '').replace(/^team-/, '') !== sid) continue;
+        mergeFreeze(info, msg.freeze);
+      }
+    }
+  }
+  applyDelegateFrozen(msg.rootSessionId, sid, {
+    frozen: true,
+    frozenSince: msg.frozenSince || Date.now(),
+    frozenReason: msg.frozenReason || '',
+    frozenReasonLabel: msg.frozenReasonLabel || '',
+    frozenDetail: msg.frozenDetail || '',
+    wakeAddress: msg.wakeAddress || ('delegate:' + sid),
+  });
+  // 同一行上残留的 waiting（候合并/待命）语义被冻结覆盖——冻结是更硬的停态。
+  for (const agents of Object.values(state.sessionBgAgents)) {
+    for (const info of Object.values(agents || {})) {
+      if ((info && info.sessionId || '').replace(/^team-/, '') === sid) info.waiting = undefined;
+    }
+  }
+  renderBgAgentDropdown && renderBgAgentDropdown();
+});
+
+// 长期无人唤醒提示（dormantSweep，缺省冻结满 24h 起）：行上追加「长期冻结」警示
+// ——与 delegateFrozen 同字段面，只多一个 dormantHours 读数（tooltip 用）。
+onMessage('delegateFrozenDormant', (msg) => {
+  const sid = String(msg.sessionId || '').replace(/^team-/, '');
+  if (!sid) return;
+  applyDelegateFrozen(msg.rootSessionId, sid, {
+    frozen: true,
+    frozenSince: msg.frozenSince || null,
+    frozenReason: msg.frozenReason || '',
+    dormantHours: Number(msg.ageHours) || 0,
+    wakeAddress: msg.wakeAddress || ('delegate:' + sid),
+  });
+  renderBgAgentDropdown && renderBgAgentDropdown();
+});
+
+// 会话被唤醒的状态变更帧（冻结状态两套真相批 2026-11-05）：**任何腿**（面板唤醒 /
+// Mail 唤醒 / 自动恢复 / 同 id 复活）清掉冻结后都由后端推这一帧——面板据此把
+// 「需唤醒」即时收起。旧版 Mail 唤醒腿不发帧，面板于是永远停在旧值（本轮报障）。
+onMessage('delegateWoken', (msg) => {
+  const sid = String(msg.sessionId || '').replace(/^team-/, '');
+  if (!sid) return;
+  let touched = false;
+  for (const agents of Object.values(state.sessionBgAgents)) {
+    for (const info of Object.values(agents || {})) {
+      if (((info && info.sessionId) || '').replace(/^team-/, '') !== sid) continue;
+      // 权威块（含 frozen=false）优先；旧后端帧缺块 ⇒ 按「已唤醒」直接清扁平字段。
+      if (msg.freeze) {
+        mergeFreeze(info, msg.freeze);
+      } else {
+        Object.assign(info, {
+          frozen: false, frozenSince: null, frozenReason: '', frozenDetail: '', dormantHours: 0,
+          freezeKind: '', needsHuman: false, freezeReasonWire: '', delegateFrozen: false, wakeAddress: '',
+        });
+      }
+      if (msg.status) info.status = msg.status;
+      info.waiting = undefined;
+      touched = true;
+    }
+  }
+  if (touched) renderBgAgentDropdown && renderBgAgentDropdown();
+});
+
+// 面板「唤醒」动作回执（delegateWakeResult）：成功 ⇒ 撤掉冻结标记（同一会话续跑，
+// 行回到普通进行中）；失败 ⇒ 保留冻结标记并抛出可见告警（绝不静默）。
+// 冻结态误报批（2026-11-05）：回执三态分明——`mode=live|revived|restart` 是真的动了
+// 会话（撤标记）；`ok=false` 一律保留标记 + 弹出后端的原话（含 mode：自动恢复族会
+// 明确说「不需要唤醒，原因 X 到期自己续跑」）——失败绝不伪装成已恢复。
+onMessage('delegateWakeResult', (msg) => {
+  const sid = String(msg.sessionId || '').replace(/^team-/, '');
+  if (!sid) return;
+  const ok = !!msg.ok;
+  // 冻结状态两套真相批（2026-11-05 10:42 报障的正脸）：回执里带 `freeze` 块时，
+  // **以块为准**——面板若显示「需唤醒」而服务端说「已不是冻结态」，这一帧就把面板
+  // 纠正过来（收起按钮 → 显示运行中），而不是让用户对着一句 `frozenReason=none`
+  // 发愣。旧后端无块 ⇒ 保留既有语义（ok 才撤标记）。
+  if (msg.freeze) {
+    let touched = false;
+    for (const agents of Object.values(state.sessionBgAgents)) {
+      for (const info of Object.values(agents || {})) {
+        if (((info && info.sessionId) || '').replace(/^team-/, '') !== sid) continue;
+        // 唤醒成功 ⇒ 直接用服务端块（非冻结）；失败 ⇒ 也用它（可能是"仍然冻结"，
+        // 那正是要保留的真相）。
+        if (mergeFreeze(info, msg.freeze)) touched = true;
+        if (ok && msg.actualStatus) info.status = msg.actualStatus;
+      }
+    }
+    if (!touched) {
+      // 行不在本地面板（另一台设备/已刷新）也要落地：交给扁平通道兜底。
+      applyDelegateFrozen(null, sid, ok ? { frozen: false, frozenSince: null, frozenReason: '' } : {});
+    }
+  } else {
+    applyDelegateFrozen(null, sid, ok
+      ? {
+        frozen: false, frozenSince: null, frozenReason: '', frozenDetail: '', dormantHours: 0,
+        freezeKind: '', needsHuman: false, freezeReasonWire: '', freezeReason: null, freezeResumeAt: null,
+      }
+      : {});
+  }
+  if (!ok) {
+    console.warn('[delegateWake] failed for', sid, msg.mode || '', msg.error || '');
+    window.__showToast?.(msg.error || t('subagents.wakeFailed'), 'error');
+  }
+  renderBgAgentDropdown && renderBgAgentDropdown();
+});
+
+// 冻结通知策略批（2026-11-05 作者令两连）：**静默统计帧**（后端
+// `FreezeAlertSweep.digestTick` → `delegateFreezeDigest`）。被压掉的逐条冻结通知的唯一
+// 去处 = 面板头部读数（「N 条已冻结（可唤醒）」/「M 条冻结待你处理」）＋ 逐行徽标。
+// 零弹窗、零消息、零 toast：可恢复的冻结不该在消息流里出现。
+onMessage('delegateFreezeDigest', (msg) => {
+  state.freezeDigest = {
+    total: Number(msg.total) || 0,
+    recoverable: Number(msg.recoverable) || 0,
+    needsHuman: Number(msg.needsHuman) || 0,
+    windowMs: Number(msg.windowMs) || 0,
+    items: Array.isArray(msg.items) ? msg.items : [],
+  };
+  // 逐项读数回灌到对应行（自动续跑次数 / 次数用尽标记）——行 tooltip 要用。
+  for (const it of state.freezeDigest.items) {
+    const sid = String((it && it.sessionId) || '').replace(/^team-/, '');
+    if (!sid) continue;
+    applyDelegateFrozen(it.parentSessionId, sid, {
+      autoResumes: Number(it.autoResumes) || 0,
+      autoResumesExhausted: !!it.autoResumesExhausted,
+    });
+  }
+  renderBgAgentDropdown && renderBgAgentDropdown();
 });
 
 onMessage('agentDone', (msg, view) => {
@@ -3217,9 +3473,14 @@ function bgTaskOrigin(task) {
       else cat = 'nebula';
     }
   }
+  // Nebula 退役批（作者令 2026-11-01「界面里不该再有 Nebula 的身影」）：主 agent
+  // 开启的任务一律标**用户给它起的名字**（单一显示名读点 rootDisplayName —— 未命名
+  // 读通用称呼）。后端 originLabel 携带的是机制名（BgTaskRegistry.originFor =
+  // RootAgentIdentity.Name），只作数据面标记，**不上屏** ⇒ 此分支整体覆盖 label。
+  // 后台 agent 的 chip 不变：delegate 短名 / dispatcher / node 名 / 设备名 = 自身身份。
+  if (cat === 'nebula') return { cat, label: rootDisplayName() };
   if (!label) {
-    label = cat === 'nebula' ? rootDisplayName()
-      : cat === 'dispatcher' ? (task.sessionId ? 'dispatcher' : 'dispatcher')
+    label = cat === 'dispatcher' ? (task.sessionId ? 'dispatcher' : 'dispatcher')
       : cat === 'device' ? (deviceFromDesc || 'device')
       : (task.sessionId || 'node');
   }
@@ -3341,14 +3602,9 @@ function renderBgDropdown() {
       : rowState === 'cancelling' ? t('bg.cancelling')
       : rowState === 'stuck' ? t('bg.stuck')
       : t('bg.running');
-    const dotClass = {
-      running: 'bg-status-active', idle: 'bg-status-idle',
-      stuck: 'bg-status-stuck', cancelling: 'bg-status-done',
-      failed: 'bg-status-error', done: 'bg-status-done',
-    }[rowState];
-    const stateClass = rowState === 'stuck' ? ' bg-state-stuck'
-      : rowState === 'failed' ? ' bg-state-failed'
-      : rowState === 'cancelling' || rowState === 'done' ? ' bg-state-done' : '';
+    // 三行结构批：状态位走 bgRowStatus 单表（图标 + 色调 + 无障碍词），行内不再写
+    // 中文状态词——词只作 aria-label / title / sr-only 文本存在。
+    const bgState = rowState === 'failed' ? 'error' : rowState;
     const endedClass = (rowState === 'done' || rowState === 'failed') ? ' bg-task-ended' : '';
     const { cat, label } = bgTaskOrigin(task);
     // 设备同级批（作者令 2026-11-01「本地/远程这组徽标整对退役」）：行内一律带设备
@@ -3359,21 +3615,34 @@ function renderBgDropdown() {
       ? '<span class="bg-task-origin bg-origin-device" title="' +
         escapeHtml(t('bg.runsOn', { origin: deviceLabel })) + '">' + escapeHtml(deviceLabel) + '</span>'
       : '';
+    // 来源链批（作者令 2026-11-01 19:23「后台 agent badge 标注来源链」）：来源 chip
+    // 升级为「上层 · 下层」名字链（delegate 短名 → 其下 subagent/node 名；链级全
+    // 名字，悬浮 title 给全链，过长走 .bg-task-origin 既有省略规则）。解析不到
+    // （chainForTask 空链/单段）= 既有单名显示逐字节不变——根直派 delegate 恰单段
+    // （「只显示自己」）、根会话自开单段（主 agent 显示名）、设备任务链不掺轴。
+    // 链在场时 chip 样式走 bg-origin-delegate 归属槽位（链本质 = 归属标注）。
+    const chainText = chainLabel(chainForTask(task, bucketSid));
     // 来源 chip（谁开启：delegate 短名 / nebula / dispatcher / node）。设备任务的
     // 名称已由 devicePart 承载 ⇒ 此处零渲染（禁同一行双写设备名）；其余类别语义
     // 不变——「跑在哪」（bg.runsOn）与「谁开启」（bg.openedBy）两轴仍分列。
-    const originTitle = cat === 'device'
-      ? t('bg.runsOn', { origin: label })
-      : t('bg.openedBy', { origin: label });
+    const originTitle = chainText
+      ? t('bg.openedBy', { origin: chainText })
+      : cat === 'device'
+        ? t('bg.runsOn', { origin: label })
+        : t('bg.openedBy', { origin: label });
     const originPart = cat === 'device'
       ? ''
-      : '<span class="bg-task-origin bg-origin-' + cat + '" title="' +
-        escapeHtml(originTitle) + '">' + escapeHtml(label) + '</span>';
-    // 任务模式标注批（2026-10-30 作者令）：开启任务的 delegate 会话生效执行形态
-    // （kernel 极简内核 / dispatcher 分发器，注册帧 + 快照帧 ownerMode 字段）。
-    // 空/脏值（旧后端/非 delegate/双模式闸关）零渲染——与 origin chip 同纪律。
+      : chainText
+        ? '<span class="bg-task-origin bg-origin-delegate" title="' +
+          escapeHtml(originTitle) + '">' + escapeHtml(chainText) + '</span>'
+        : '<span class="bg-task-origin bg-origin-' + cat + '" title="' +
+          escapeHtml(originTitle) + '">' + escapeHtml(label) + '</span>';
+    // 任务模式标注批（2026-10-30 作者令）+ 术语统一批（2026-11-06 作者令「统一 根据
+    // 英文」）：开启任务的 delegate 会话生效执行形态（注册帧 + 快照帧 ownerMode 字段）。
+    // 词面 = 单源徽标词表（js/termWords.js）；空/脏值（旧后端/非 delegate/双模式闸关）
+    // 零渲染——与 origin chip 同纪律。样式类读数据值，不读词面。
     const modeWord = (task.ownerMode === 'kernel' || task.ownerMode === 'dispatcher')
-      ? t('task.mode.' + task.ownerMode) : '';
+      ? badgeWord(task.ownerMode) : '';
     const modePart = modeWord
       ? '<span class="bg-task-mode bg-mode-' + task.ownerMode + '" title="' +
         escapeHtml(t('bg.modeTitle', { mode: modeWord })) + '">' + escapeHtml(modeWord) + '</span>'
@@ -3382,8 +3651,12 @@ function renderBgDropdown() {
     // 绿=healthy / 黄=suspect / 红=escalated；bgHealthNorm 双端容错（脏值回落
     // healthy、空值（旧后端）零渲染不膨胀行高）。与智能体行 bgWaiting[].health
     // 同一词表同一账本（禁第二状态源）。
+    // panel-ia 批（2026-11-03 · 作者「信息太多、太杂」）：健康点只在**非健康**
+    // 时上位——healthy 行原本已是「状态点 + 状态词 + 绿健康点」三枚状态元素叠在
+    // 一行上（同一件事说三遍）；健康色因此改为**异常信号**（suspect/escalated
+    // 出点、healthy 静默）。判读链不变：词表/账本/后端字段零改动。
     const healthWord = bgHealthNorm(task.health);
-    const healthPart = healthWord
+    const healthPart = (healthWord && healthWord !== 'healthy')
       ? '<span class="bg-health-dot bg-health-' + healthWord + '" title="' + escapeHtml(t('bg.health.' + healthWord)) + '" aria-hidden="true"></span>'
       : '';
     const hb = task.heartbeat;
@@ -3415,19 +3688,37 @@ function renderBgDropdown() {
     const nameTitle = desc + ' · ' + task.taskId;
     // Terminal rows: no cancel button (nothing to cancel) — the row itself is
     // the click target for output viewing. Running rows keep the cancel button.
+    // 扁平按钮批（2026-11-05 · 作者令「取消按钮需要设计一下，用我们最新的扁平风
+    // 按钮风格」）：本体直接挂 design-system 扁平六态基类 `.ds-btn` + 危险档
+    // `.ds-btn--danger`（ghost：透明底 + danger 字色 + hover 危险洗底 + 按下缩放 +
+    // 焦点描边环；零渐变/零阴影/零位移——flat-button-spec 的契约面）。破坏性语义
+    // 靠三件事保留：① danger 字色（红）恒定可见；② 文案就是「取消」（不做图标化
+    // 弱化）；③ title 明说不可恢复。`.bg-task-cancel` 只留几何（尺寸/间距）。
     const cancelPart = (rowState === 'cancelling' || rowState === 'running' || rowState === 'idle' || rowState === 'stuck')
-      ? '<button class="bg-task-cancel" type="button">' + escapeHtml(rowState === 'cancelling' ? t('bg.cancelling') : t('bg.cancel')) + '</button>'
+      ? '<button class="ds-btn ds-btn--danger bg-task-cancel" type="button"'
+        + (rowState === 'cancelling' ? ' disabled' : '')
+        + ' title="' + escapeHtml(t('bg.cancelTip')) + '"'
+        + ' aria-label="' + escapeHtml(t('bg.cancelTip')) + '">'
+        + escapeHtml(rowState === 'cancelling' ? t('bg.cancelling') : t('bg.cancel')) + '</button>'
       : '';
+    // ── 三行/二行结构（UI 批 2026-11-05 · 作者令「后台任务也是。name·状态·输出·time
+    //    第二行 badge」）────────────────────────────────────────────────────────
+    //   · L1 `.bg-task-name-line`：name · 状态图标（bgRowStatus 单点）· 输出摘要
+    //     （行数 chip / 退出码）· time（margin-left:auto 钉右）；
+    //   · L2 `.bg-task-meta`（badges）：设备 / 来源链 / 执行模式 —— 独立成行、可换行。
+    // 既有锚（.bg-task-name-line / .bg-task-meta / .bg-task-lines / .bg-task-state）
+    // 全部保留：回归套件按类取数，本批只改**归行**，不改读点。
+    const badgeParts = devicePart + originPart + modePart;
     return '<div class="bg-task-row' + (rowState === 'cancelling' ? ' bg-task-cancelling' : '') + endedClass + extraCls + '" role="listitem" tabindex="0" data-task-id="' + escapeHtml(task.taskId) + '">' +
-      '<span class="bg-task-status ' + dotClass + '" aria-hidden="true"></span>' +
       '<div class="bg-task-info">' +
-        '<div class="bg-task-line bg-task-meta">' +
-          '<span class="bg-task-state' + stateClass + '">' + escapeHtml(statusLabel) + '</span>' +
-          devicePart + originPart + modePart + healthPart + linesPart + exitPart + uptimePart +
-        '</div>' +
-        '<div class="bg-task-line bg-task-name-line">' +
+        '<div class="bg-task-line bg-task-name-line bg-task-row-line1">' +
           '<span class="bg-task-name" title="' + escapeHtml(nameTitle) + '">' + escapeHtml(desc) + '</span>' +
+          bgStatusHtml(rowState === 'cancelling' ? 'cancelling' : rowState, { label: statusLabel }) +
+          healthPart + linesPart + exitPart + uptimePart +
         '</div>' +
+        (badgeParts
+          ? '<div class="bg-task-line bg-task-meta bg-task-row-line2 bg-task-badges">' + badgeParts + '</div>'
+          : '') +
       '</div>' +
       cancelPart +
     '</div>';
@@ -3439,7 +3730,10 @@ function renderBgDropdown() {
     const states = members.map((m) => bgTaskRowState(m));
     const runningCount = states.filter((s) => s === 'running' || s === 'idle' || s === 'stuck').length;
     const cancellingCount = states.filter((s) => s === 'cancelling').length;
-    const dotClass = bgAggregateDot(states);
+    // 族头聚合态（三行结构批）：聚合点词表 → bgRowStatus 状态键（stuck > failed >
+    // running/idle/cancelling > done 的优先级同 bgAggregateDot，单表出图标/色调）。
+    const aggTone = bgAggregateDot(states).replace('bg-status-', '');
+    const aggState = aggTone === 'error' ? 'error' : aggTone;
     const stateWord = runningCount > 0
       ? t('bg.familyRunning', { count: runningCount })
       : cancellingCount > 0 ? t('bg.cancelling')
@@ -3456,18 +3750,21 @@ function renderBgDropdown() {
     const uptimePart = earliest
       ? '<span class="bg-task-uptime">' + escapeHtml(formatDuration(now - earliest)) + '</span>' : '';
     const base = bgFamilyBaseLabel(members);
+    // panel-ia 批（2026-11-03）：组头行序同批翻转——族名（身份）在前，
+    // 聚合状态/计数/行数/族龄退到第二行。
+    // 族头行（三行结构批 · 同款二行）：L1 族名 · 聚合状态图标 · 族龄；L2 计数/行数徽标。
     return '<div class="bg-task-row bg-task-row-family" role="listitem" tabindex="0" aria-expanded="' + (expanded ? 'true' : 'false') + '" data-family-key="' + escapeHtml(key) + '">' +
-      '<span class="bg-task-status ' + dotClass + '" aria-hidden="true"></span>' +
       '<div class="bg-task-info">' +
-        '<div class="bg-task-line bg-task-meta">' +
-          '<span class="bg-task-state' + (runningCount > 0 ? '' : ' bg-state-done') + '">' + escapeHtml(stateWord) + '</span>' +
+        '<div class="bg-task-line bg-task-name-line bg-task-row-line1">' +
+          '<span class="bg-task-name" title="' + escapeHtml(base || key) + '">' + escapeHtml(base || key) + '</span>' +
+          bgStatusHtml(aggState, { label: stateWord }) +
+          '<span class="bg-family-caret" aria-hidden="true">' + (expanded ? '▾' : '▸') + '</span>' +
+          uptimePart +
+        '</div>' +
+        '<div class="bg-task-line bg-task-meta bg-task-row-line2 bg-task-badges">' +
           '<span class="bg-task-kind" title="' + escapeHtml(t('bg.familyTitle', { count: members.length })) + '">' +
             escapeHtml(t('bg.familyCount', { count: members.length })) + '</span>' +
-          linesPart + uptimePart +
-        '</div>' +
-        '<div class="bg-task-line bg-task-name-line">' +
-          '<span class="bg-task-name" title="' + escapeHtml(base || key) + '">' + escapeHtml(base || key) + '</span>' +
-          '<span class="bg-family-caret" aria-hidden="true">' + (expanded ? '▾' : '▸') + '</span>' +
+          linesPart +
         '</div>' +
       '</div>' +
     '</div>';
@@ -3534,9 +3831,10 @@ function renderBgDropdown() {
     // Row click target (2026-09-09 output viewing): open the glass detail card.
     // Cancel button stopPropagation above; a click anywhere else on a terminal
     // OR running row opens the card. Remote tasks degrade in the card itself.
+    // 来源链批（2026-11-01 19:23）：桶键随行传入详情卡——卡面来源行走同一条链解析。
     row.addEventListener('click', (e) => {
       if (e.target.closest('.bg-task-cancel')) return; // belt — cancel already stopsPropagation
-      openBgTaskOutput(task);
+      openBgTaskOutput(task, bucketSid);
     });
     // Keyboard parity (APG listbox precedent): Enter/Space on a focused row
     // opens the detail card; ArrowUp/Down navigation stays in the shared handler.
@@ -3544,7 +3842,7 @@ function renderBgDropdown() {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
         e.stopPropagation();
-        openBgTaskOutput(task);
+        openBgTaskOutput(task, bucketSid);
       }
     });
   });
@@ -4134,6 +4432,9 @@ initNavTabs();
 initModals();
 initRulesModal();
 initInput(chatViews.primary);
+// msgchip 批（2026-11-01 作者令「消息身份牌系统升级」）：带短名引用小牌的点击委托
+// 单点安装（幂等；渲染面在 utils.js 单管线内，取数/popover 在 chat/msgTokenChip.js）。
+installMsgTokenChip();
 // 会话头头像 + profile 面板（mobile-mockup-375 v3 批 · 扩展③）：头像/名称两端
 // 同款 —— 同一 DOM 节点（.header-center 首位），形态差异全在 CSS 层。
 initAgentProfile();
@@ -4235,7 +4536,13 @@ watchAttachmentStrip(); // uifix 批 2026-10-22：附件条 in-flow 行折叠腿
   // ⇒ getBoundingClientRect 全零，本行桌面恒无副作用）。静止态内容首（页标题/
   // 首条消息）让位到渐隐带之下，滚动态内容穿入渐隐带「先糊后没」。
   const edgeFade = document.getElementById('g2-edge-fade');
-  // chat.css's #chat padding-top (the no-overlay breathing room baseline).
+  // 会话页头同构批（件二+件三，作者令 2026-11-02 15:xx）：手机层会话身份头回到
+  // **悬浮**形态（.mh-idhead，绝对定位、零全宽带，见 mobileLayer.css 文件尾批次块）
+  // —— 单行三段式批（2026-11-02 07:23）的 fixed 真顶栏及其「按顶栏下缘实测让位」
+  // 链（mobileHead / getMobileHead / headRo / 建拆层广播监听）**整条退役**：
+  // 悬浮头不再是 #chat 的流内首件，也没有可测的「顶栏下缘」——让位回到本文件的
+  // 单一真值 bandBottom()（手机层 = 顶缘渐隐带 88 底缘 ⇒ reserve 96，与四种会话
+  // 身份头的可视足迹 96 同值；会话页面壳侧由 CSS 直接给同一 96）。  // chat.css's #chat padding-top (the no-overlay breathing room baseline).
   const BASE_TOP_PAD = 8;
   const bandBottom = () => Math.max(
     header.getBoundingClientRect().bottom,
@@ -4274,7 +4581,12 @@ watchAttachmentStrip(); // uifix 批 2026-10-22：附件条 in-flow 行折叠腿
     if ((parseFloat(chat.style.getPropertyValue('--chat-top-clip')) || 0) !== clipTop) {
       chat.style.setProperty('--chat-top-clip', clipTop + 'px');
     }
-    const reserve = Math.max(BASE_TOP_PAD, Math.ceil(bandBottom() - chatTop) + BASE_TOP_PAD);
+    /* 会话页头同构批（件二+件三，2026-11-02）：让位 = **单一真值 bandBottom()**
+       （手机层 = 顶缘渐隐带 88 底缘 ⇒ 96；桌面 = header/overlays 实测）——
+       单行三段式批的「顶栏下缘 − chat 顶 + 8」分支随该批的 fixed 顶栏一并退役
+       （悬浮身份头 .mh-idhead 不在流内、也不占版面，故没有可让位的「顶栏下缘」；
+       会话页的同类让位由 CSS `.mobile-page[data-page=conversation] .mobile-page-body`
+       给同一 96，四种会话内容起点同值）。 */    const reserve = Math.max(BASE_TOP_PAD, Math.ceil(bandBottom() - chatTop) + BASE_TOP_PAD);
     const prev = parseFloat(getComputedStyle(chat).paddingTop) || BASE_TOP_PAD;
     if (Math.abs(prev - reserve) < 0.5) return;
     const delta = reserve - prev;
@@ -4296,7 +4608,14 @@ watchAttachmentStrip(); // uifix 批 2026-10-22：附件条 in-flow 行折叠腿
     // under the band.
     chat.scrollTop = st + delta;
   };
-  const ro = new ResizeObserver(syncTopReserve);
+  /* 写入延到下一帧（胶囊面交互批 2026-11-04 ⑤ 连带修）：
+     RO 回调里直接写 #chat 的 padding-top / --chat-top-clip，在 WebKit 上会触发
+     「ResizeObserver loop completed with undelivered notifications」——带内一有
+     内容（手机层待办胶囊上手机层后默认有、ask-pending-bar/通知横幅同理；HEAD
+     上把 bar 造出内容即可复现同一句）就报一次 console error，污染「零 console
+     error」类断言。改为 rAF 一跳再写：语义不变（reserve 仍是带底实测驱动、幂等
+     轻写），只是把写动作移出 RO 投递周期，浏览器不再判为环。 */
+  const ro = new ResizeObserver(() => { requestAnimationFrame(syncTopReserve); });
   ro.observe(header);
   ro.observe(overlays);
   // 手机端白屏批：渐隐带 #g2-edge-fade 是 bandBottom() 的成员且随手机层
@@ -4400,11 +4719,16 @@ restoreTabs().then((restored) => {
 });
 // Auto-restore is triggered from sessionList handler (needs activeSessionId)
 initScheduledTask();
+// schedule-created-card 批（2026-11-05）：消息内嵌定时任务/待办卡片的入站帧单点
+// （scheduledTaskUpdated / Deleted / Completed / error / List）——挂在启动期一次，
+// 卡片本体（js/scheduleCard.js）只调 js/scheduleApi.js 的方法面。
+initScheduleApi();
 initDaemons();
 initPerception();
 initChatSearch();
 initUsageDashboard();
 initNeblink();
+initFleetUpdate();
 initSocialPanel();
 initSecretsPanel();
 initDropbox();
@@ -4732,12 +5056,14 @@ onMessage('activeAgents', (msg) => {
     const twin = twinKey ? bucket[twinKey] : null;
     if (twin && !twin.done && !isFailedSnapshotStatus(twin.status)) {
       twin._missSince = null;
+      // 冻结面同样以快照权威块定序（实时行更丰富，但「已不是冻结态」是硬事实）。
+      mergeFreeze(twin, a.freeze || null);
       seen.add(sid + '\u0000' + twinKey);
       activeRootSessions.add(sid);
       continue;
     }
     const prev = bucket[a.agentId] || null;
-    bucket[a.agentId] = {
+    const entry = {
       name: a.agentName || a.agentId,
       task: a.task || '',
       sessionId: a.sessionId || '',
@@ -4755,6 +5081,10 @@ onMessage('activeAgents', (msg) => {
       // 面板命名批（2026-10-31 ②）：批次短名随快照出帧；旧后端无字段 → 回落本地
       // 值（同 parentSessionId 合并类——不降级已渲染行）。
       delegateName: a.delegateName || (prev && prev.delegateName) || '',
+      // name/address 批（2026-11-05）：Mail 续传地址随快照出帧（后端 MailAddress
+      // 单点推导）——面板行地址 chip 的唯一数据源；旧后端无字段 ⇒ 回落本地值
+      // （同 delegateName 合并类，不降级已渲染行）。空 = 本 kind 无 Mail 面 ⇒ 零 chip。
+      mailAddress: a.mailAddress || (prev && prev.mailAddress) || '',
       // Project attribution (2026-09-06): activeAgents restore entries carry
       // project for node-*/dispatcher-* rows (AgentRecord.project →
       // activeAgentEntryJson); empty string → no badge.
@@ -4767,15 +5097,62 @@ onMessage('activeAgents', (msg) => {
       taskTitle: a.taskTitle || '',
       startedAt: a.startedAt || (prev && prev.startedAt) || null,
       status: a.status || '',
+      // 案A 待命批 2026-10-31（状态矩阵批收编）：快照行带 standbySince（DelegateRegistry
+      // 待命停靠时刻）⇒ 待命徽标随刷新复原（delegateWaiting 实时帧的恢复脸；快照缺席
+      // ⇒ 保留本地 waiting 值，不降级已渲染行）。
+      waiting: (prev && prev.waiting) || (a.standbySince ? { mode: 'standby', detail: '' } : undefined),
       retryCount: typeof a.retryCount === 'number' ? a.retryCount : ((prev && prev.retryCount) || 0),
       // 只由实时帧写入的字段：快照不表态 ⇒ 保留本地值（不降级已渲染行）。
       // currentTool 例外面：实时值优先，实时缺席时快照 currentToolName 兜底
       // （#752 最近动作摘要在刷新恢复路径可用——旧行为刷新后工具行丢失）。
       currentTool: (prev && prev.currentTool) || a.currentTool || null,
       stuck: (prev && prev.stuck) || null,
-      frozen: (prev && prev.frozen) || false,
+      // 冻结状态两套真相批（2026-11-05 10:42 报障「显示需要我唤醒，点了又说不在冻结
+      // 态」）：冻结面改为**带时间戳的权威块**驱动。快照每一行都带 `freeze` 块
+      // （后端 FreezeTruth 派生：frozen / kind / needsHuman / **wakeable** / asOf），
+      // 而且**包括 `frozen:false` 的块**——旧合并 `frozen: (prev && prev.frozen) || …`
+      // 只增不减，Mail 唤醒清掉后端冻结槽后快照「不表态」也照旧保留 true，面板于是
+      // 永远挂着「需唤醒」而闸那边早已不是冻结态（两套真相的正脸）。
+      // 下面这段是**旧后端（无 freeze 块）**的兼容回落；有块时一律由 mergeFreeze 覆写
+      // （asOf 定序，允许降级）。
+      frozen: (prev && prev.frozen) || a.status === 'Frozen' || false,
       freezeResumeAt: (prev && prev.freezeResumeAt) || null,
       freezeReason: (prev && prev.freezeReason) || null,
+      freezeKind: (prev && prev.freezeKind) || a.frozenKind || '',
+      needsHuman: a.needsHuman === true || !!(prev && prev.needsHuman),
+      freezeReasonWire: (prev && prev.freezeReasonWire) || a.freezeReasonWire || '',
+      // 权威块本体（新后端）；缺席 ⇒ null（mergeFreeze 不动，回落上面扁平字段）。
+      freeze: a.freeze || (prev && prev.freeze) || null,
+      // 错误冻结批（2026-11-01）：**delegate 错误冻结**的刷新恢复面——快照
+      // frozenSince / frozenReason（DelegateRegistry 冻结槽，线值 `delegate-frozen:<reason>`）
+      // 在场 ⇒ 行「已冻结」徽标 + 原因 tooltip + 唤醒按钮随刷新复原（delegateFrozen
+      // 实时帧的恢复脸）；快照缺席 ⇒ 保留本地值（不降级已渲染行，同 standbySince
+      // 合并类）。`delegateFrozen` 判别位把错误冻结与时间表冻结（agentFrozen 帧的
+      // sapphire 点）分开——只有本族渲染原因徽标与唤醒入口。
+      ...(() => {
+        const wire = String(a.frozenReason || '');
+        const isErr = wire.indexOf('delegate-frozen') === 0;
+        const prevErr = !!(prev && prev.delegateFrozen);
+        if (!isErr && !prevErr) return { delegateFrozen: false };
+        const code = wire.indexOf('delegate-frozen:') === 0 ? wire.slice('delegate-frozen:'.length) : '';
+        return {
+          delegateFrozen: true,
+          frozen: true,
+          frozenSince: a.frozenSince || (prev && prev.frozenSince) || null,
+          frozenReason: wire || ((prev && prev.frozenReason) || ''),
+          // 后端实时帧带来的中文短名优先；快照恢复路径按线值本地映射（双语文案
+          // 同下表——与 DelegateFreeze.reasonLabelZh 逐字一致，缺词回落原文）。
+          frozenReasonLabel: (prev && prev.frozenReasonLabel) || ({
+            'llm-failure': t('subagents.frozenReasonLlm'),
+            'tool-failure': t('subagents.frozenReasonTool'),
+            'engine-fault': t('subagents.frozenReasonEngine'),
+            'cancelled-by-quota': t('subagents.frozenReasonQuota'),
+          }[code] || code),
+          frozenDetail: (prev && prev.frozenDetail) || '',
+          wakeAddress: a.wakeAddress || ((prev && prev.wakeAddress) || ('delegate:' + String(a.sessionId || ''))),
+          dormantHours: (prev && prev.dormantHours) || 0,
+        };
+      })(),
       // `done` 单调：本地已收到的终态事件优先于快照行（其 2s 清理随后自会移除）。
       done: !!(prev && prev.done),
       // #752 空闲细分（快照为权威——引擎 bg-wait 屏障 / actor 回执快照的单点）：
@@ -4791,6 +5168,10 @@ onMessage('activeAgents', (msg) => {
       // 本行已被本次快照覆盖 ⇒ 陈旧窗关闭（陈旧判据见下方分类 ③）。
       _missSince: null,
     };
+    // 冻结面收口（冻结状态两套真相批 2026-11-05）：权威块按 asOf 定序落进本行，
+    // 含「不再冻结」的块——唤醒后快照即可把「需唤醒」降级，无需任何手动刷新。
+    mergeFreeze(entry, a.freeze || null);
+    bucket[a.agentId] = entry;
     seen.add(sid + '\u0000' + a.agentId);
     activeRootSessions.add(sid);
   }

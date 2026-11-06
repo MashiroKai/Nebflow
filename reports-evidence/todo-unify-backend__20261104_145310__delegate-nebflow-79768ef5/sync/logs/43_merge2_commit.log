@@ -1,0 +1,13 @@
+$ git log --oneline -5
+f70dccb9f Merge branch 'main' into delegate/delegate-nebflow-79768ef5
+995142a5f Merge branch 'delegate/delegate-nebflow-1d300d2e'
+f7dba5ef9 fix(todo): 胶囊面两个新控件改由 DOM API 装配（component-contract R5）
+043b5f693 ops(worktree-cleanup): 盘 283 棵 delegate 树，删除 163 棵干净已合树（无 --force，逐棵复核），回收 ≈70Gi 可用磁盘
+1bfe6892d Merge branch 'delegate/delegate-nebflow-b1d91721'
+
+$ git log -1 --format='%H%nparents: %P'
+f70dccb9fcf218b35de12d1548f7b8577433ea99
+parents: f7dba5ef999b1c3cbb25bbe2db74dad20a7b9b5d 995142a5f99760e8d948361fc1691e4f45617e8d
+
+$ git log -1 --oneline main
+995142a5f Merge branch 'delegate/delegate-nebflow-1d300d2e'

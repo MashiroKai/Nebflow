@@ -103,10 +103,14 @@ object DelegateRegistry:
      * 编排模式（delegate-ui 批 2026-10-08 · G1）：本 delegate 实际呈现的编排形态
      * ——`single`（纯本体，缺省初值）/ `subagent-star`（星型：已在 SubAgentTaskStore
      * 域记账过子代理——Subagent/Subtask/嵌套 Delegate 任一 spawn 记账点惰性升级）/
-     * `agentflow`（flow 结构：AgentFlow 链登记成功惰性升级，值域顶——升级只上不下，
+     * `agentflow`（flow 结构：**链登记成功**惰性升级，值域顶——升级只上不下，
      * 两形态混用时 flow 胜出）。**写点两处**：spawn 初值（[[nebflow.core.tools.DelegateTool]]
      * 内置腿 + [[nebflow.core.executor.ExternalSessionRunner]] 外部腿——外部执行器
      * 零平台工具，恒 single）＋ 惰性升级（记账点单写 [[upgradeOrchestrationMode]]）。
+     * 🔴 tool-face-agentflow-retire 批（2026-11-05，作者裁定二）：`agentflow` 的升级
+     * 调用点原先长在已删的 AgentFlow 工具里，现**唯一**在
+     * `ChainWriteTool.upgradeOrchestrationModeOnRegister`（链登记成功回执路径）。
+     * 注意它只是**模式名**：同名工具已退役，两者不要再混用。
      * 缺省 None：旧盘面记录 = 前端过渡启发（面板 kind 前缀判）兜底——**禁在读面把
      * None 折叠成 single**（会剥夺存量行的启发兜底）。
      */
@@ -160,7 +164,69 @@ object DelegateRegistry:
      * 缺省解码见 [[modeFaceOf]]：`None` = 未判定（总闸关时代的存量记录/外部腿），
      * 消费方按 kernel 折叠（存量零迁移）。缺省 None：旧盘面照常解码。
      */
-    mode: Option[String] = None
+    mode: Option[String] = None,
+    /**
+     * 待命停靠时刻（案A 批 2026-10-31 · 作者 11:40 拍板显式待命态为主干；审计基线
+     * `docs/20261031_112344_delegate-standby-semantics-audit__delegate-nebflow-c0a2b939.md`；
+     * 状态矩阵批 2026-11-01 收编为矩阵组合 complete×standby）：
+     * delegate_report 申报 `standby` 且回合收尾被判定机采纳 ⇒ 停靠写时刻（epoch
+     * millis）——任务行保持 running、会话置 Waiting、不终判不投父；面板/快照面
+     * 据此透出「待命（等作者）」。**写点 = 回合收尾采纳点**（非申报点——同回合
+     * 后续 finish/merge 覆写申报时本槽不脏）；消费三态：Some = 在待命、None =
+     * 非待命。**申报槽（reportStatus=standby）与停靠槽（standbySince）分立**：
+     * 申报是回合内意图、停靠是回合收尾裁决——唤醒（Mail 注入，MailTool
+     * deliverToDelegate live 腿）清两槽，唤醒轮新申报照常走矩阵（finish ⇒ 终判、
+     * standby ⇒ 再停靠、未申报 ⇒ 提醒）。缺省 None：旧盘面照常解码（cliSessionId
+     * 同款纪律）。
+     */
+    standbySince: Option[Long] = None,
+    /**
+     * 冻结时刻（错误冻结批 2026-11-01 · 作者令「所有因错误状态的 delegate 应该上报
+     * 之后要能保留状态 冻结态 方便被唤醒 接着做」）：delegate 因**错误**结束（LLM 层
+     * 故障 / 工具层不可恢复 / 引擎侧异常 / 外部执行器崩溃 / 配额取消）⇒ 不再走 failed
+     * 终止，而是**原地冻结**——会话上下文（transcript）、工作区/worktree 与未提交
+     * 改动、任务台账条目、ahead 提交指针、失败原因与最后错误上下文全部保留在盘上，
+     * 重启后仍在；`frozenSince = 冻结时刻`（epoch millis）。
+     *
+     * 与 [[standbySince]] 的分工（两者互斥语义，不共用槽）：standby = **自愿待命**
+     * （delegate_report 申报，回合正常收尾，等作者给活）；frozen = **异常冻结**（回合
+     * 异常中断，等唤醒续做）。写点 = 监督者冻结腿（[[nebflow.core.delegate
+     * .DelegateFreeze.park]]），清点 = 唤醒（Mail live 注入 / 面板唤醒 / boot 原地复活）
+     * 与真正终态（[[nebflow.core.delegate.DelegateTerminal.onTerminalCleanup]]）。
+     * 缺省 None：旧盘面照常解码（cliSessionId 同款纪律）。
+     */
+    frozenSince: Option[Long] = None,
+    /**
+     * 冻结原因词表值（错误冻结批 2026-11-01）：`llm-failure` | `tool-failure` |
+     * `engine-fault` | `cancelled-by-quota`（[[DelegateFreeze.Reason.wire]]）。面板
+     * 详情卡与唤醒回执的「为什么」数据源；None = 非冻结。
+     */
+    frozenReason: Option[String] = None,
+    /**
+     * 冻结上下文摘要（错误冻结批 2026-11-01）：最后一次错误的可读全文（含
+     * provider/model 线索）+ 保留面清单摘要——「谁冻了、为什么、保留了什么、
+     * 怎么唤醒」四项回执里「为什么/保留了什么」的持久承载面（回执只是一条消息，
+     * 本槽是它的盘上真源）。None = 非冻结。
+     */
+    frozenDetail: Option[String] = None,
+    /**
+     * **续命血缘**（会话续命名与位修正批 2026-11-03 · 作者 16:48/16:51 报障）：
+     * 本会话是**派生**出来的时（原位续不可恢复：cancel 墓碑 / 转录损坏），值 =
+     * 被继承的原 delegate 会话 id。原位续（同 sessionId）恒 None——同一身份不需要
+     * 血缘。审计面：AgentControl 列表行尾标注、ChainStore `delegate-resume-derived`
+     * 行、面板会话详情。缺省 None：旧盘面照常解码（cliSessionId 同款纪律）。
+     */
+    resumedFrom: Option[String] = None,
+    /**
+     * 就地腿的派发时快照：spawn 时工作区 HEAD（delegate-param-decisions 批
+     * 2026-11-04 · 作者补充令第 2 条机械护栏）。**只在 `worktree` 参数缺省
+     * （零分配 ⇒ 就地跑道）时落值**——收尾时 [[DelegateTerminal.inPlaceWriteAlarm]]
+     * 拿它比对「本任务没分配 worktree 却动了项目工作区」，命中即回执标红。
+     * `None` = 有树 / 非 git / 旧盘面记录（照常解码）。
+     */
+    seatSnapshotSha: Option[String] = None,
+    /** 就地腿的派发时快照：spawn 时 `git status --porcelain` 的路径集（同上）。 */
+    seatSnapshotDirty: Option[List[String]] = None
   )
 
   private def dir: os.Path = PathUtil.dataRoot / "delegates"
@@ -228,12 +294,22 @@ object DelegateRegistry:
                 val old = rec.reportDetail.getOrElse("")
                 if old.trim.nonEmpty && old != detail then Some(old) else None
               }
+              // 案A 批 2026-10-31：新申报非 standby ⇒ 清待命停靠槽（新申报覆旧申报，
+              // standby 是旧轮的意图——唤醒/重申报后轮收尾不再误认待命）。standby
+              // 申报本身不动槽（停靠时刻由回合收尾采纳点单写，见 [[parkStandby]]）。
+              val standbyCleared =
+                if status != nebflow.core.tools.DelegateReportTool.StandbyValue then None
+                else rec.standbySince
+              // 待命期边界（应答消费批 2026-11-03）：非 standby 申报把停靠槽清掉
+              // ⇒ 旧待命期结束，看护记账清零（下一轮待命 = 新期，退避序从头发）。
+              if rec.standbySince.isDefined && standbyCleared.isEmpty then DelegateStandbyCare.resetPeriod(id)
               put(
                 rec.copy(
                   reportStatus = Some(status),
                   reportDetail = Some(detail),
                   reportSuggestion = if suggestion.nonEmpty then Some(suggestion) else None,
-                  workReport = preservedWorkReport
+                  workReport = preservedWorkReport,
+                  standbySince = standbyCleared
                 )
               )
               Right(())
@@ -266,6 +342,115 @@ object DelegateRegistry:
   /** 进程内读-改-写串行化（updateReport 临界区；与 ChainStore.writeLock 各管各件）。 */
   private val writeLock = new Object
 
+  /**
+   * 待命停靠单写（案A 批 2026-10-31）：`standbySince = now`——回合收尾采纳 standby
+   * 申报时由 [[nebflow.core.delegate.DelegateTerminal]] 调用。查无记录 = `Left`
+   * （只对真实 spawn 生效，updateReport 同纪律）。写锁同缝串行；每次停靠刷新时刻
+   * （新一轮待命 = 新时刻，caretaker 退避序从头发）。
+   */
+  def parkStandby(id: String): Either[String, Long] =
+    if !validId(id) then Left(s"parkStandby: invalid session id '$id'")
+    else
+      writeLock.synchronized {
+        find(id) match
+          case None => Left(s"parkStandby: no registry record for '$id'")
+          case Some(rec) =>
+            val ts = System.currentTimeMillis()
+            try
+              put(rec.copy(standbySince = Some(ts)))
+              Right(ts)
+            catch case e: Throwable => Left(s"parkStandby: write failed: ${e.getMessage}")
+      }
+
+  /**
+   * 待命唤醒单写（案A 批 2026-10-31）：Mail 注入待命会话（[[nebflow.core.tools
+   * .MailTool]] deliverToDelegate live 腿）时调用——`standbySince = None` 且
+   * report* 三槽一并清空（申报已被该回合消费；唤醒轮若无新申报，矩阵按未申报
+   * 分流——提醒补报，绝不静默判完成）。**workReport 槽不动**（工作结果保真面
+   * 与待命语义正交）。查无记录 = `Left`。写锁同缝串行。
+   */
+  def clearStandby(id: String): Either[String, Unit] =
+    if !validId(id) then Left(s"clearStandby: invalid session id '$id'")
+    else
+      writeLock.synchronized {
+        find(id) match
+          case None => Left(s"clearStandby: no registry record for '$id'")
+          case Some(rec) =>
+            if rec.standbySince.isEmpty && rec.reportStatus.isEmpty then Right(()) // 幂等：非待命零写
+            else
+              try
+                // 待命期边界（应答消费批 2026-11-03）：停靠槽被清 = 该会话已被唤醒
+                // /已离开待命 ⇒ 看护记账清零（下轮停靠是新期待命，退避序从头发）。
+                DelegateStandbyCare.resetPeriod(id)
+                put(
+                  rec.copy(
+                    standbySince = None,
+                    reportStatus = None,
+                    reportDetail = None,
+                    reportSuggestion = None
+                  )
+                )
+                Right(())
+              catch case e: Throwable => Left(s"clearStandby: write failed: ${e.getMessage}")
+      }
+
+  // ── 错误冻结槽（错误冻结批 2026-11-01）────────────────────────────────────
+
+  /**
+   * 冻结单写（错误冻结批 2026-11-01）：`frozenSince = now` + 原因词表值 + 详情。
+   * 「冻结即停」——本槽只记事实，不做任何处置；不知原因的重复冻结（同一波故障反复
+   * 冻结）刷新时刻与详情，但**保留首个原因**（`frozenReason` 已存在时零改——
+   * 根因比症状重要）。查无记录 = `Left`（只对真实 spawn 生效，parkStandby 同纪律）。
+   * 写锁同缝串行。
+   */
+  def parkFrozen(id: String, reason: String, detail: String): Either[String, Long] =
+    if !validId(id) then Left(s"parkFrozen: invalid session id '$id'")
+    else
+      writeLock.synchronized {
+        find(id) match
+          case None => Left(s"parkFrozen: no registry record for '$id'")
+          case Some(rec) =>
+            val ts = System.currentTimeMillis()
+            try
+              put(
+                rec.copy(
+                  frozenSince = Some(ts),
+                  frozenReason = rec.frozenReason.orElse(Some(reason)),
+                  frozenDetail = if detail.trim.nonEmpty then Some(detail) else rec.frozenDetail
+                )
+              )
+              Right(ts)
+            catch case e: Throwable => Left(s"parkFrozen: write failed: ${e.getMessage}")
+      }
+
+  /**
+   * 冻结槽唤醒单写（错误冻结批 2026-11-01）：Mail 唤醒 / 面板唤醒 / boot 原地复活
+   * 三腿调用——三槽一并清空（`frozenSince` / `frozenReason` / `frozenDetail`）。
+   * **不动** standby 槽与 workReport 槽（正交面）。幂等：非冻结 = `Right` 零写。
+   * 查无记录 = `Left`。
+   */
+  def clearFrozen(id: String): Either[String, Unit] =
+    if !validId(id) then Left(s"clearFrozen: invalid session id '$id'")
+    else
+      writeLock.synchronized {
+        find(id) match
+          case None => Left(s"clearFrozen: no registry record for '$id'")
+          case Some(rec) =>
+            if rec.frozenSince.isEmpty && rec.frozenReason.isEmpty && rec.frozenDetail.isEmpty then Right(())
+            else
+              try
+                put(rec.copy(frozenSince = None, frozenReason = None, frozenDetail = None))
+                Right(())
+              catch case e: Throwable => Left(s"clearFrozen: write failed: ${e.getMessage}")
+      }
+
+  /** 冻结态读数（纯查盘；面板快照 / Mail 腿 / 复活资格共用单点判据）。 */
+  def frozenOf(id: String): Option[(Long, String, String)] =
+    find(id).flatMap(r => r.frozenSince.map(ts => (ts, r.frozenReason.getOrElse(""), r.frozenDetail.getOrElse(""))))
+
+  /** 是否处于冻结态（`frozenSince` 在场）。 */
+  def isFrozen(id: String): Boolean = find(id).exists(_.frozenSince.isDefined)
+
   // ── 编排模式值域（G1，delegate-ui 批 2026-10-08）────────────────────────
 
   /** 纯本体（spawn 初值；外部执行器恒此值）。 */
@@ -274,7 +459,11 @@ object DelegateRegistry:
   /** 星型：SubAgentTaskStore 域记过账（Subagent/Subtask/嵌套 Delegate 子代理）。 */
   val ModeSubagentStar = "subagent-star"
 
-  /** flow 结构：AgentFlow 链登记成功。值域顶（与星型混用时胜出）。 */
+  /**
+   * flow 结构：**链登记成功**（`ChainWriteTool.registerChain` 的回执路径）。值域顶
+   * （与星型混用时胜出）。tool-face-agentflow-retire 批（2026-11-05）：本章名**不是**
+   * 工具名——同名工具已整体退役，读它就是读「这个 delegate 按节点编排在干活」。
+   */
   val ModeAgentflow = "agentflow"
 
   /** 升级序（只上不下）：single(0) < subagent-star(1) < agentflow(2)。未知值 = 0（保守底）。 */
@@ -391,6 +580,57 @@ object DelegateRegistry:
       }
 
   /**
+   * 重启打断旗摘除（会话续命名与位修正批 2026-11-03）：原位续命成功 = 打断结束
+   * ——`restartInterruptedAt = None`。幂等：未旗 = Right 零写。查无记录 = `Left`。
+   * 写锁同缝串行（与墓碑/归档写同缝——单记录读-改-写互斥）。
+   */
+  def clearRestartInterrupted(id: String): Either[String, Unit] =
+    if !validId(id) then Left(s"clearRestartInterrupted: invalid session id '$id'")
+    else
+      writeLock.synchronized {
+        find(id) match
+          case None => Left(s"clearRestartInterrupted: no registry record for '$id'")
+          case Some(rec) =>
+            if rec.restartInterruptedAt.isEmpty then Right(())
+            else
+              try
+                put(rec.copy(restartInterruptedAt = None))
+                Right(())
+              catch case e: Throwable => Left(s"clearRestartInterrupted: write failed: ${e.getMessage}")
+      }
+
+  /**
+   * 续命血缘单写（会话续命名与位修正批 2026-11-03）：派生腿（原位续不可恢复）
+   * 在新会话记录上落 `resumedFrom = <原 delegate id>`。幂等：已落 = 原值零重写
+   * （血缘是终身事实，首写权威）。查无记录 = `Left`（血缘只对真实 spawn 生效）。
+   */
+  def markResumedFrom(id: String, fromDelegateId: String): Either[String, Unit] =
+    if !validId(id) then Left(s"markResumedFrom: invalid session id '$id'")
+    else if !validId(fromDelegateId) then Left(s"markResumedFrom: invalid origin id '$fromDelegateId'")
+    else
+      writeLock.synchronized {
+        find(id) match
+          case None => Left(s"markResumedFrom: no registry record for '$id'")
+          case Some(rec) =>
+            rec.resumedFrom match
+              case Some(existing) => Right(()) // 幂等：首写权威
+              case None =>
+                try
+                  put(rec.copy(resumedFrom = Some(fromDelegateId)))
+                  Right(())
+                catch case e: Throwable => Left(s"markResumedFrom: write failed: ${e.getMessage}")
+      }
+
+  /**
+   * 显示名读数（会话续命名与位修正批 · A 部分单点消费）：任务账 title 的**去叠加
+   * 形态**（[[SessionResumption.displayTitle]] 单点剥离）——AgentControl 列表 /
+   * 快照面 / 任务行显示统一取本口径。剥空回落批次短名 → 会话 id。**纯读投影，
+   * 零写盘**（存量污染行当场读干净，不改历史）。
+   */
+  def displayTitleOf(id: String): String =
+    find(id).map(SessionResumption.displayTitle(_)).getOrElse(id)
+
+  /**
    * JSON 编解码（circe）：Encoder = generic 派生；Decoder = **手工容错形态**——
    * 新扩的 Option 字段缺键时按 None 读（存量记录零迁移）。deriveDecoder 缺键即
    * 失败会让 `find`/`list` 把旧记录静默吞掉（catch → None），禁。
@@ -426,6 +666,13 @@ object DelegateRegistry:
       cancelRequestedAt <- c.get[Option[Long]]("cancelRequestedAt")
       cancelRequestedBy <- c.get[Option[String]]("cancelRequestedBy")
       mode <- c.get[Option[String]]("mode")
+      standbySince <- c.get[Option[Long]]("standbySince")
+      frozenSince <- c.get[Option[Long]]("frozenSince")
+      frozenReason <- c.get[Option[String]]("frozenReason")
+      frozenDetail <- c.get[Option[String]]("frozenDetail")
+      resumedFrom <- c.get[Option[String]]("resumedFrom")
+      seatSnapshotSha <- c.get[Option[String]]("seatSnapshotSha")
+      seatSnapshotDirty <- c.get[Option[List[String]]]("seatSnapshotDirty")
     yield Record(
       id,
       executor,
@@ -453,22 +700,30 @@ object DelegateRegistry:
       restartInterruptedAt,
       cancelRequestedAt,
       cancelRequestedBy,
-      mode
+      mode,
+      standbySince,
+      frozenSince,
+      frozenReason,
+      frozenDetail,
+      resumedFrom,
+      seatSnapshotSha,
+      seatSnapshotDirty
     )
 
   /**
-   * 双模式批：delegate 会话的**生效执行形态**读数（工具面/挂载面分叉的单点判据）。
-   * `None` = 双模式总闸关（Inert 态——行为逐字节回退现状，读盘上的 mode 也绝不
-    * 分叉）∨ 非 delegate 会话 ∨ 记录缺席/未判定。消费方（buildAllowedToolSet 等）
-    * 对 None 恒走现状路径——「闸关 = 现行为逐字节」的读面保证。
+   * delegate 会话的**生效执行形态**读数（工具面/挂载面分叉的单点判据）。
+   *
+   * delegate-param-decisions 批（2026-11-04）：**双模式总闸退役**——模式现在是
+   * `Delegate` 工具的参数（不填 = 确定性 kernel），记录里的 mode 就是权威读面；
+   * 不再有「闸关 ⇒ 盘上有 mode 也不分叉」的 Inert 态（那个闸会让显式
+   * `mode="dispatcher"` 在缺省配置下静默失效）。`None` 只留给「非 delegate 会话 /
+   * 记录缺席 / 本批之前的存量记录」——对 None 消费方恒走现状路径（零迁移）。
    */
   def modeFaceOf(sessionId: Option[String]): Option[String] =
-    if !DualModeConfig.enabledNow then None
-    else
-      sessionId.filter(sid => DelegateSessions.isDelegateSession(Some(sid))) match
-        case None => None
-        case Some(sid) =>
-          find(sid).flatMap(_.mode).filter(DualModeConfig.isModeWord)
+    sessionId.filter(sid => DelegateSessions.isDelegateSession(Some(sid))) match
+      case None => None
+      case Some(sid) =>
+        find(sid).flatMap(_.mode).filter(DualModeConfig.isModeWord)
 
   /**
    * 后台任务归属批（作者令 2026-10-31「后台任务行标归属」）：开启任务的会话的

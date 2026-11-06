@@ -14,7 +14,6 @@ import nebflow.actor.{ActorSystem as RootActorSystem, AgentCommand, status}
 import nebflow.agent.*
 import nebflow.core.*
 import nebflow.core.entity.EntityLoader
-import nebflow.core.flow.{FlowTreeActor, FlowTreeRegistry, TeamSessionRegistry}
 import nebflow.core.mcp.McpManager
 import nebflow.core.project.{CancelSource as ChainCancelSource, *}
 import nebflow.core.schedule.FreezeSchedule.given
@@ -51,6 +50,10 @@ private[gateway] object WsSystemHandlers:
     "checkUpdate" -> handleCheckUpdate,
     "doUpdate" -> handleDoUpdate,
     "remoteUpdate" -> handleRemoteUpdate,
+    "fleetUpdateStart" -> handleFleetUpdateStart,
+    "fleetUpdateCancel" -> handleFleetUpdateCancel,
+    "fleetUpdateRetry" -> handleFleetUpdateRetry,
+    "fleetUpdateSnapshot" -> handleFleetUpdateSnapshot,
     "autostartStatus" -> handleAutostartStatus,
     "autostartSet" -> handleAutostartSet
   )
@@ -313,14 +316,16 @@ private[gateway] object WsSystemHandlers:
       nebflow.core.flow.RunningFlowRegistry.cancel(instanceId) *>
         logger.info(s"Cancel DAG flow '$instanceId' requested by user via WS")
     else if flowName.nonEmpty && cfSessionId.nonEmpty then
-      // Cancel a team pipeline flow via FlowTreeActor
-      nebflow.core.flow.FlowTreeRegistry.get(cfSessionId).flatMap {
-        case Some(treeRef) =>
-          treeRef ! nebflow.core.flow.TreeCommand.CancelPipeline(flowName)
-          logger.info(s"Cancel flow '$flowName' requested by user via WS")
-        case None =>
-          logger.warn(s"Cannot cancel flow '$flowName': no FlowTreeActor for session")
-      }
+      // 团队功能删除批（team-feature-deletion-20261104）阶段 2：此处原有「按会话找
+      // 团队树 actor 并发 CancelPipeline(flowName)」的团队 pipeline
+      // 取消腿，已随团队挂载面一并删除（详见
+      // reports-evidence/team-feature-deletion/stage2/README.md §D）。
+      // **帧本身保留**：上面的 instanceId 分支服务 flow-map/DAG 实例取消
+      // （RunningFlowRegistry），与本批无关，仍是活语义。
+      // 走到这里 = 调用方只给了 name+sessionId（团队形状）⇒ 明确拒绝而非静默吞掉。
+      logger.warn(
+        s"Cannot cancel flow '$flowName': team-pipeline cancellation was retired (session $cfSessionId) — no pipeline of that shape exists any more"
+      )
     else IO.unit
   end handleCancelFlow
 
@@ -592,67 +597,111 @@ private[gateway] object WsSystemHandlers:
             )
           )
         case Some(neblinkService) =>
-          neblinkService.peers.flatMap { peers =>
-            peers.find(p =>
-              p.deviceName.equalsIgnoreCase(targetDevice) ||
-                p.deviceName.toLowerCase.contains(targetDevice.toLowerCase)
-            ) match
-              case None =>
+          // fleet 批（2026-11-01）收口：P2P → 中继的派发**唯一实现**在
+          // [[nebflow.neblink.RemoteUpdateDispatch]]（批量推送与单点点击同一腿）；
+          // 本分支只把 `Either` 翻译成既有 `remoteUpdateResult` 帧（字段与改前逐字
+          // 相同，含 `clientRequestId` 回显；`device` 用**对端自报名**，与改前同口径）。
+          nebflow.neblink.RemoteUpdateDispatch
+            .dispatchByNameResolved(neblinkService, targetDevice, beta, clientRequestId)
+            .flatMap {
+              case Right((deviceName, msg)) =>
+                wsSend(
+                  resultFrame(
+                    "success" -> true.asJson,
+                    "device" -> deviceName.asJson,
+                    "message" -> msg.asJson
+                  )
+                )
+              case Left(err) =>
                 wsSend(
                   resultFrame(
                     "success" -> false.asJson,
-                    "error" -> s"Device '$targetDevice' not found".asJson
+                    "error" -> err.asJson
                   )
                 )
-              case Some(peer) =>
-                if peer.address.isEmpty then
-                  wsSend(
-                    resultFrame(
-                      "success" -> false.asJson,
-                      "error" -> s"Device '$targetDevice' has no address".asJson
-                    )
-                  )
-                else
-                  logger.info(
-                    s"Remote update: sending update request to ${peer.deviceName} at ${peer.address} (beta=$beta)"
-                  ) *>
-                    IO.blocking {
-                      import sttp.client4.*
-                      val fields = List("beta" -> beta.asJson)
-                        ++ clientRequestId.map(id => "clientRequestId" -> id.asJson)
-                      val body = io.circe.Json.obj(fields*).noSpaces
-                      val resp = basicRequest
-                        .post(sttp.model.Uri.unsafeParse(s"${peer.address}/api/neblink/update"))
-                        .contentType("application/json")
-                        .body(body)
-                        .readTimeout(180.seconds)
-                        .response(asStringAlways)
-                        .send(neblinkService.httpBackend)
-                      resp
-                    }.flatMap { resp =>
-                      if resp.code.isSuccess then
-                        wsSend(
-                          resultFrame(
-                            "success" -> true.asJson,
-                            "device" -> peer.deviceName.asJson,
-                            "message" -> "Update installed, device is restarting...".asJson
-                          )
-                        )
-                      else
-                        // P2P returned an HTTP error — try relay before failing
-                        tryRelayUpdate(neblinkService, peer, beta, s"Remote returned HTTP ${resp.code}")
-                    }.handleErrorWith { e =>
-                      tryRelayUpdate(
-                        neblinkService,
-                        peer,
-                        beta,
-                        s"Cannot reach ${peer.deviceName}: ${e.getMessage}"
-                      )
-                    }
-            end match
-          }
+            }
     end if
   end handleRemoteUpdate
+
+  // ── 全设备统一更新（fleet 批 2026-11-01）WS 命令面 ─────────────────────
+  //
+  // 四个命令都是**既有 REST 面的镜像**（同一协调器实例、同一语义），供控制台
+  // 状态卡免走 HTTP 轮询：发起 / 中断 / 重试 / 取快照。纪律：
+  //   · 发起**必带** `confirm:true`（协调器侧强制，缺位即拒——不静默默认）；
+  //   · 审计由协调器单点写（本层不加第二处）；
+  //   · 回帧类型 `fleetUpdateResult`（命令回执）+ 进度一律由协调器经 wsHub 广播的
+  //     `fleetUpdate` 帧承载（前端只解析一套载荷形状）。
+
+  private def fleetFrame(ok: Boolean, action: String, extra: (String, io.circe.Json)*): io.circe.Json =
+    io.circe.Json.obj(
+      (Seq(
+        "type" -> io.circe.Json.fromString("fleetUpdateResult"),
+        "ok" -> io.circe.Json.fromBoolean(ok),
+        "action" -> io.circe.Json.fromString(action)
+      ) ++ extra)*
+    )
+
+  private def handleFleetUpdateStart(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
+    val confirm = hc.downField("confirm").as[Boolean].getOrElse(false)
+    val beta = hc.downField("beta").as[Boolean].getOrElse(false)
+    val source = hc.downField("source").as[String].toOption.filter(_.trim.nonEmpty).getOrElse("console")
+    sharedResources.fleetUpdate match
+      case None => wsSend(fleetFrame(false, "start", "error" -> "fleet update is not wired".asJson))
+      case Some(fleet) =>
+        fleet.start(confirm, source, beta).flatMap {
+          case Right(job) =>
+            wsSend(fleetFrame(true, "start", "jobId" -> job.id.asJson, "job" -> job.summaryJson))
+          case Left(err) => wsSend(fleetFrame(false, "start", "error" -> err.asJson))
+        }
+
+  private def handleFleetUpdateCancel(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    sharedResources.fleetUpdate match
+      case None => wsSend(fleetFrame(false, "cancel", "error" -> "fleet update is not wired".asJson))
+      case Some(fleet) =>
+        fleet.cancel().flatMap {
+          case Right(snap) => wsSend(fleetFrame(true, "cancel", "snapshot" -> snap))
+          case Left(err) => wsSend(fleetFrame(false, "cancel", "error" -> err.asJson))
+        }
+
+  private def handleFleetUpdateRetry(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    sharedResources.fleetUpdate match
+      case None => wsSend(fleetFrame(false, "retry", "error" -> "fleet update is not wired".asJson))
+      case Some(fleet) =>
+        fleet.retryFailed().flatMap {
+          case Right(snap) => wsSend(fleetFrame(true, "retry", "snapshot" -> snap))
+          case Left(err) => wsSend(fleetFrame(false, "retry", "error" -> err.asJson))
+        }
+
+  private def handleFleetUpdateSnapshot(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    sharedResources.fleetUpdate match
+      case None => wsSend(fleetFrame(false, "snapshot", "error" -> "fleet update is not wired".asJson))
+      case Some(fleet) =>
+        fleet.snapshot.flatMap(snap => wsSend(fleetFrame(true, "snapshot", "snapshot" -> snap)))
 
   private def handleAutostartStatus(
     ctx: WsDispatchCtx,

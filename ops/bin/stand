@@ -11,7 +11,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _LIB="$SCRIPT_DIR/stand-cli-lib.sh"
 if [ ! -r "$_LIB" ]; then
     echo "ERROR: stand-cli-lib.sh missing next to this entry (looked at: $_LIB)" >&2
-    echo "       repair: cp <stand-repo>/ops/bin/{stand,nebflow,stand-cli-lib.sh} ~/.stand/bin/ && chmod +x ~/.stand/bin/{stand,nebflow}" >&2
+    echo "       repair: cp <stand-repo>/ops/bin/{stand,stand-cli-lib.sh} ~/.stand/bin/ && chmod +x ~/.stand/bin/stand" >&2
     exit 66
 fi
 _STAND_CLI_BRAND=stand

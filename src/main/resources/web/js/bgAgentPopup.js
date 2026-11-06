@@ -15,7 +15,9 @@ import state from './state.js';
 import { key } from './branding.js';
 import { t } from './i18n.js';
 import { buildManageBar, bindManageActions, syncManageControls, onCancelResult, isFailedSnapshotStatus } from './managePanel.js';
-import { isErrorReason, errorTileText, errorIcon } from './errorRecovery.js';
+import { isErrorReason, errorTileText, errorIcon, reasonText } from './errorRecovery.js';
+// 冻结态误报批（2026-11-05）：页脚冻结词按呈现分类分词（自动恢复族 vs 需人介入族）。
+import { FREEZE_KIND, freezeKindOf } from './freezeState.js';
 import { cleanupCardIframes } from './cardRegistry.js';
 // 两层架构批（2026-10-09 · 规格 §A 净化）：弹窗只留 G4 单查一个数据缝——星型区
 // （G3 children）迁任务列表（§B）、flow 节点区迁 L1 委托流程图（§C）、归档动作
@@ -28,7 +30,12 @@ import { verdictToStatus } from './delegateChainStub.js';
 // 点击行 = 输出详情卡）。挂载/卸载与 openStepPopup/closeStepPopup 成对。
 import { mountSessionWorkStrip, unmountSessionWorkStrip } from './bgAgentWorkStrip.js';
 // 弹窗退场批（作者令 2026-10-31②）：手机层查看器铺满屏 + 左上返回（桌面零变化）。
-import { mobileSheetBack } from './mobile/popSheet.js';
+import { mobileSheetBack, isMobileLayer } from './mobile/popSheet.js';
+// 手机端简化批（作者令 2026-11-06 10:00/12:03）：手机层 chrome 化——顶带状态胶囊
+// / ⋯ 详情浮层 / 右下悬浮终止钮 / 标题行 ✕ 退役；摘要条与「会话在做什么」条迁入
+// ⋯ 详情（六条口径见 bgAgentMobileChrome.js 文件头）。桌面零变化（模块首闸
+// body.mobile-layer；返回 null = 桌面原路径）。
+import { mountBgAgentMobileChrome, closeBgAgentMobileChrome } from './bgAgentMobileChrome.js';
 
 // P2-4 cycle cut（flowAgentPopup 同款先例）：showToast 动态 import 破环。净化批
 // （2026-10-09）后本文件暂零 toast 消费点（归档入口已迁 L2 抽屉）——常量在册保留
@@ -44,28 +51,31 @@ const showToast = (msg, type) =>
 // 平移的可见性保底：一行摘要 + 点开 brief/结果全文）。
 if (typeof document !== 'undefined' && !document.getElementById('bgagent-delegate-strip-css')) {
   document.head.insertAdjacentHTML('beforeend', `<style id="bgagent-delegate-strip-css">
+/* panel-ia 批（2026-11-03）：摘要条材质/字阶全面走 --ds-* 槽（原来裸灰值 +
+   非阶梯字号），条内两层（收起行 / 展开体）语言同源。 */
 .bgagent-delegate-strip {
-  border-bottom: 1px solid rgba(128,128,128,0.18);
-  padding: 6px 14px;
-  font-size: 12px;
+  border-bottom: var(--ds-border-width) solid var(--ds-border-hairline);
+  padding: var(--ds-space-2) var(--ds-space-3);
+  font-size: var(--ds-fs-hint);
 }
 /* 收起式摘要条（WF-01）：默认收起 = 一行（任务 chip + brief 摘要 + 结果词 +
    展开 chevron）；点开 = 任务 brief 全文 + 判词 + 报告全文（九点⑦正文不丢）。 */
 .bgagent-strip-toggle {
-  display: flex; align-items: center; gap: 8px; min-width: 0; width: 100%;
-  padding: 2px 0; border: none; background: transparent; color: inherit;
+  display: flex; align-items: center; gap: var(--ds-space-2); min-width: 0; width: 100%;
+  padding: var(--ds-space-half) 0; border: none; background: transparent; color: inherit;
   font: inherit; text-align: left; cursor: pointer;
 }
 .bgagent-strip-toggle:hover .bgagent-strip-briefline { color: var(--color-text, inherit); }
 .bgagent-strip-chip {
-  flex-shrink: 0; padding: 1px 8px; border-radius: 8px;
-  font-size: 10px; font-weight: 600; letter-spacing: 0.02em;
-  color: var(--color-frame-text-muted, rgba(128,128,128,0.9));
-  background: var(--color-frame-hover, rgba(128,128,128,0.12));
+  flex-shrink: 0; padding: var(--ds-space-hair) var(--ds-space-2); border-radius: var(--ds-radius-input);
+  font-size: var(--ds-fs-meta); font-weight: var(--ds-fw-title);
+  letter-spacing: var(--ds-ls-body);
+  color: var(--ds-text-muted);
+  background: var(--color-frame-hover);
 }
 .bgagent-strip-briefline {
   flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  color: var(--color-frame-text-muted, rgba(128,128,128,0.9));
+  color: var(--ds-text-muted);
 }
 .bgagent-strip-result {
   flex-shrink: 0; font-weight: 500; color: var(--color-text, inherit);
@@ -73,23 +83,23 @@ if (typeof document !== 'undefined' && !document.getElementById('bgagent-delegat
 .bgagent-strip-result[hidden] { display: none; }
 .bgagent-strip-chev {
   flex-shrink: 0; width: 12px; height: 12px; display: inline-flex;
-  color: var(--color-frame-text-dim, rgba(128,128,128,0.6));
-  transition: transform 0.15s ease;
+  color: var(--ds-text-dim);
+  transition: transform var(--ds-dur-hover) var(--ds-ease-std);
 }
 .bgagent-strip-chev svg { width: 12px; height: 12px; display: block; }
 .bgagent-strip-toggle[aria-expanded="true"] .bgagent-strip-chev { transform: rotate(180deg); }
 .bgagent-strip-body {
-  margin-top: 6px; padding-top: 6px; border-top: 1px dashed rgba(128,128,128,0.18);
+  margin-top: var(--ds-space-2); padding-top: var(--ds-space-2); border-top: var(--ds-border-width) dashed var(--ds-border-hairline);
   max-height: 38vh; overflow-y: auto;
-  display: flex; flex-direction: column; gap: 3px;
+  display: flex; flex-direction: column; gap: var(--ds-space-half);
 }
 .bgagent-strip-body[hidden] { display: none; }
 .bgagent-strip-plugins {
-  color: var(--color-frame-text-dim, rgba(128,128,128,0.6));
+  color: var(--ds-text-dim);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .bgagent-strip-sec {
-  display: flex; flex-direction: column; gap: 3px; min-width: 0;
+  display: flex; flex-direction: column; gap: var(--ds-space-half); min-width: 0;
 }
 /* hidden 属性守卫（修订批截图期发现）：author display 规则会压过 UA 的
    [hidden]{display:none}——结果区（在飞无判词）收起时以空壳区透出。零空区
@@ -97,25 +107,26 @@ if (typeof document !== 'undefined' && !document.getElementById('bgagent-delegat
 .bgagent-strip-sec[hidden],
 .bgagent-strip-verdict[hidden] { display: none; }
 .bgagent-strip-sec-label {
-  font-weight: 600; font-size: 10px; letter-spacing: 0.02em;
-  color: var(--color-frame-text-dim, rgba(128,128,128,0.6)); flex-shrink: 0;
+  font-weight: var(--ds-fw-title); font-size: var(--ds-fs-meta);
+  letter-spacing: var(--ds-ls-body);
+  color: var(--ds-text-dim); flex-shrink: 0;
 }
 .bgagent-strip-tasktext {
-  font-size: 12px; line-height: 1.5; color: var(--color-text, inherit);
+  font-size: var(--ds-fs-hint); line-height: var(--ds-lh-body); color: var(--ds-text);
   white-space: pre-wrap; word-break: break-word;
   max-height: 88px; overflow-y: auto;
 }
 .bgagent-strip-verdict {
-  display: flex; align-items: baseline; gap: 8px; min-width: 0;
-  font-size: 12px; color: var(--color-text, inherit);
+  display: flex; align-items: baseline; gap: var(--ds-space-2); min-width: 0;
+  font-size: var(--ds-fs-hint); color: var(--ds-text);
 }
 .bgagent-strip-verdict-word { flex-shrink: 0; font-weight: 500; }
 .bgagent-strip-verdict-reason {
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  color: var(--color-frame-text-muted, rgba(128,128,128,0.9));
+  color: var(--ds-text-muted);
 }
 .bgagent-strip-report {
-  font-size: 12px; line-height: 1.5; color: var(--color-text, inherit);
+  font-size: var(--ds-fs-hint); line-height: var(--ds-lh-body); color: var(--ds-text);
   white-space: pre-wrap; word-break: break-word;
   max-height: 132px; overflow-y: auto;
 }
@@ -310,6 +321,8 @@ const stepViews = new Map();
 let currentStepId = null;
 let popupOverlay = null;
 let popupResizeObs = null;
+// 手机端简化批：手机层 chrome 的活跃 api（状态胶囊 refresh 直呼口；桌面恒 null）。
+let bgMobileChromeApi = null;
 
 // ── Bounded history back-paging ─────────────────────────────────────────
 // The panel used to fetch exactly ONE tail page and never ask for anything
@@ -421,7 +434,14 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
       if (!entry.meta.status && row.status) {
         if (isFailedSnapshotStatus(row.status)) entry.meta.status = 'failed';
         else if (row.status === 'Processing') entry.meta.status = 'running';
-        else if (row.status === 'Frozen') entry.meta.status = 'frozen';
+        else if (row.status === 'Frozen') {
+          entry.meta.status = 'frozen';
+          // 冻结态误报批（2026-11-05）：呈现分类随快照恢复（缺字段 ⇒ freezeState.js
+          // 按原因线值回落同一张表）。没有这三行，刷新后的冻结页脚只能从 reason 猜。
+          entry.meta.freezeKind = row.frozenKind || '';
+          entry.meta.needsHuman = row.needsHuman === true;
+          entry.meta.freezeReasonWire = row.freezeReasonWire || '';
+        }
         // held-receipt 投递可靠性批（2026-10-21 fix 4）：显式停靠态快照恢复——
         // 「等合并轮」的 delegate 行不再貌似 Idle。
         else if (row.status === 'Waiting') entry.meta.status = 'waiting';
@@ -479,17 +499,29 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
   }
 
   popupOverlay = document.createElement('div');
-  popupOverlay.className = 'flow-agent-overlay fullscreen';
+  // `bgagent-overlay` = 手机端简化批的作用域钩（mobileLayer.css 的手机 chrome 档
+  // 全挂 body.mobile-layer .bgagent-overlay —— 姊妹弹窗 flowAgentPopup 零波及）。
+  popupOverlay.className = 'flow-agent-overlay fullscreen bgagent-overlay';
   lastModelBadgeHtml = null; // fresh badge element — force first render on open
 
   // Mount on document.body for bg-agent popups (not inside a flow card)
+  // panel-ia 批（2026-11-03 · 作者报障「信息太多、太杂」+ 竖排字实拍）：弹窗头收敛为
+  // 单一身份行（名字 + 模型徽标 + 关闭）——原第二行 .flow-agent-subtitle 承载的任务
+  // 全文与页脚 .fa-task / delegate 摘要条 briefline 三处重复，属同一信息的二次上屏；
+  // 退役头部副本后（任务全文单源 = 页脚），头部在窄屏不再把名字挤成逐字竖排
+  // （.flow-agent-name 抗压缩契约见 POPUP_CSS 同批注释）。功能零删：页脚与摘要条
+  // 两承载面原样保留。
+  // 3(d) 按钮去重（panel-language 批 2026-11-06）：手机层返回键在（下方
+  // mobileSheetBack 注入 .mfs-back）⇒ 头部 ✕ 不建（作者令「已经有返回键了，就不要
+  // 再放叉号键（X）」）；桌面层无返回键 ⇒ ✕ 保留（点外关闭路径不变）。模板每次
+  // open 重建 ⇒ 守卫逐次评估。🔴 守卫与 ✕ 同行相邻（机检 P2 = scripts/
+  // check-panel-unify.mjs；判定单源 = popSheet.isMobileLayer，禁自写）。
   popupOverlay.innerHTML = `
     <div class="flow-agent-modal">
       <div class="flow-agent-header">
         <span class="flow-agent-name">${esc(agentName || entry.meta.agentName || 'Sub-agent')}</span>
-        <span class="flow-agent-subtitle">${esc(taskDescription || entry.meta.task || '')}</span>
         <span class="flow-agent-model" id="bgagent-model"></span>
-        <div class="flow-agent-close" id="bgagent-close">✕</div>
+        ${isMobileLayer() ? '' : '<div class="flow-agent-close" id="bgagent-close">✕</div>'}
       </div>
       <div class="flow-agent-footer" id="bgagent-footer">
         <span class="fa-status-dot"></span>
@@ -514,18 +546,6 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
   modal.insertBefore(entry.container, footer);
   entry.footerEl = footer;
 
-  // delegate 收起式摘要条（两层架构批 WF-01：brief 摘要一行 + 点开 brief/结果
-  // 全文）——弹窗头与聊天体之间，数据到位才显（fail-soft 缺席）；弹窗本体内
-  // 子代理显示/归档件为零（净化口径：弹窗 DOM 无「子代理」字样、无归档钮）。
-  mountDelegateStrip(nodeSessionId, modal, entry.container);
-
-  // #752「会话在做什么」条：摘要条之下、聊天体之上——最近动作 + 本会话后台
-  // 任务行（15s 自刷新拍，关闭即停）。作者实证「delegate 空闲不理人、看不到
-  // 进展」的弹窗内承载面。instanceof 运行期窄化（chatSearch.js:368 仓内先例）。
-  if (modal instanceof HTMLElement) {
-    mountSessionWorkStrip(nodeSessionId, modal, entry.container);
-  }
-
   // Management panel (2026-08-22 ruling): no input bar — stop/retry + state.
   const v = entry.view;
   const bar = buildManageBar();
@@ -533,6 +553,26 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
   entry.manageBar = bar;
   bindManageActions(bar, () => currentStepId);
   import('./utils.js').then(({ createIconsIn }) => { createIconsIn(bar.root); });
+
+  // 手机端简化批（作者令 2026-11-06 10:00/12:03）：手机层 chrome 化——顶带状态
+  // 胶囊 / 右上 ⋯ 详情浮层 / 右下悬浮终止钮 / 标题行 ✕ 退役；stopBtn/retryBtn 是
+  // **同一节点**迁位（syncManageControls 线路零复制）。桌面 ⇒ null，零影响。
+  bgMobileChromeApi = mountBgAgentMobileChrome({
+    overlay: popupOverlay, modal, bar, nodeSessionId, agentName,
+  });
+
+  // delegate 收起式摘要条（两层架构批 WF-01：brief 摘要一行 + 点开 brief/结果
+  // 全文）——桌面挂弹窗头与聊天体之间（原位零变化）；手机层迁入 ⋯ 详情浮层
+  // （口径③任务内容全文在详情里；自动展开一次，二级折叠保留）。
+  // #752「会话在做什么」条同迁（口径⑥：灰行——最近动作 / 本会话无后台任务——
+  // 收进 ⋯ 详情，主界面只留顶栏 + 消息流 + 悬浮终止钮）。15s 自刷新拍、关闭即停。
+  const stripHost = bgMobileChromeApi ? bgMobileChromeApi.sheetBody : modal;
+  const stripAnchor = bgMobileChromeApi ? bgMobileChromeApi.sheetAnchor : entry.container;
+  mountDelegateStrip(nodeSessionId, stripHost, stripAnchor);
+  if (bgMobileChromeApi) bgMobileChromeApi.autoExpandStrip(bgMobileChromeApi.sheetBody, nodeSessionId);
+  if (stripHost instanceof HTMLElement) {
+    mountSessionWorkStrip(nodeSessionId, stripHost, stripAnchor);
+  }
 
   updateFooterStatus(entry);
 
@@ -592,6 +632,8 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
 
 export function closeStepPopup() {
   if (!popupOverlay) return;
+  closeBgAgentMobileChrome(); // 手机端简化批：chrome 账本（胶囊节拍）随弹窗关闭停（幂等）
+  bgMobileChromeApi = null;
   unmountSessionWorkStrip(); // #752「会话在做什么」条随弹窗关闭停拍、摘除（幂等）
   if (currentStepId) {
     const entry = stepViews.get(currentStepId);
@@ -690,11 +732,18 @@ export function interceptBgAgentStep(msg) {
     entry.meta.status = 'frozen';
     entry.meta.frozenResumeAt = msg.resumeAt || null;
     entry.meta.freezeReason = msg.reason; // UI-7: error-family → amber tile
+    // 冻结态误报批（2026-11-05）：呈现分类随帧到（后端 FreezeDisplay 判定）。
+    entry.meta.freezeKind = msg.freezeKind || '';
+    entry.meta.needsHuman = msg.needsHuman === true;
+    entry.meta.freezeReasonWire = msg.reason || '';
     entry.meta.escalation = msg.escalation ? msg.escalation.level : null;
   } else if (msg.type === 'agentResumed') {
     entry.meta.status = 'running';
     entry.meta.frozenResumeAt = null;
     entry.meta.freezeReason = null;
+    entry.meta.freezeKind = '';
+    entry.meta.needsHuman = false;
+    entry.meta.freezeReasonWire = '';
     entry.meta.escalation = null;
   } else if (msg.type === 'agentThinking') {
     // Granular phase (#343): LLM reasoning in progress — set once, subsequent
@@ -933,24 +982,31 @@ function updateFooterStatus(entry) {
   entry.footerEl.classList.remove('running', 'done', 'failed', 'frozen', 'thinking', 'tool', 'responding', 'stuck', 'stopped', 'error');
   if (status) entry.footerEl.classList.add(status);
   const taskEl = entry.footerEl.querySelector('.fa-task');
-  const isErrorFrozen = status === 'frozen' && isErrorReason(entry.meta.freezeReason);
+  // 冻结态误报批（2026-11-05）：冻结页脚按**呈现分类**分词——
+  //   · 需人介入族（循环检测 / 错误冻结 / 已升级到人）：amber 原因词（既有 UI-7），
+  //     恢复入口在页脚管理条（managePanel 的「重启并续跑」）；
+  //   · 自动恢复族（时间表/退避/探测/断点续跑）：只写「在等什么 + 会自己续跑」，
+  //     绝不写「已冻结」（那是需人工措辞——作者报障的原文就是被这句话骗的）。
+  const freezeKind = status === 'frozen' ? freezeKindOf(entry.meta) : '';
+  const isErrorFrozen = status === 'frozen' && freezeKind === FREEZE_KIND.manual;
   // UI-7: error-recovery frozen → amber tile (add .error modifier).
   if (isErrorFrozen) entry.footerEl.classList.add('error');
   if (taskEl) {
     if (status === 'frozen') {
-      if (isErrorFrozen) {
-        // Error family: reason short text (重试中 / 等恢复 / 等待上级决策).
+      if (!isErrorFrozen) {
+        // 自动恢复族：状态事实（原因 + 在等什么），零按钮。
+        const why = reasonText(entry.meta.freezeReason) || '';
+        taskEl.textContent = freezeKind === FREEZE_KIND.window
+          ? t('chat.freezeWindowTile')
+          : (why ? t('chat.freezeAutoTile', { reason: why }) : t('chat.freezeAutoTile', { reason: '' }).replace(/\s*·\s*$/, ''));
+      } else if (isErrorReason(entry.meta.freezeReason)) {
+        // 需人介入 + 错误族原因（循环检测 L2 / 已升级到人）：amber 原因词自带判词
+        // （loop ⇒「循环检测暂停 · 不会自动恢复」），恢复入口在页脚管理条。
         const escTxt = errorTileText(entry.meta);
         taskEl.innerHTML = `${errorIcon(entry.meta.freezeReason, 'error-icon')}<span class="fa-task-text">${escTxt}</span>`;
       } else {
-        // Frozen tile: "已冻结 · HH:mm 恢复" — resumeAt epoch → local HH:mm
-        const at = entry.meta.frozenResumeAt;
-        const clock = at ? (() => {
-          const d = new Date(at);
-          if (Number.isNaN(d.getTime())) return '';
-          return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-        })() : '';
-        taskEl.textContent = clock ? t('chat.frozenShort', { time: clock }) : t('chat.frozenNoTime');
+        // 需人介入但非错误族（delegate 错误冻结 / 原因未记录）：如实说「需处理」。
+        taskEl.textContent = t('subagents.freezeBadge');
       }
     } else if (status === 'stuck' && entry.meta.stuck) {
       // Restrained stuck label (manage-panel, 2026-08-22) — ui-status-redesign
@@ -994,6 +1050,8 @@ function updateFooterStatus(entry) {
   }
   // Management cluster: state-linked buttons + permission matrix.
   syncManageControls(entry.manageBar, entry.meta, currentStepId);
+  // 手机端简化批：顶带状态胶囊与页脚同一拍刷新（词面/时长/动作区开合）。
+  if (bgMobileChromeApi) bgMobileChromeApi.refresh(entry.meta);
 }
 
 // ── cancelAgent result linkage (stop button, @179a009e) ────────────────

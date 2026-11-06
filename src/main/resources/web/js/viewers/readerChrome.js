@@ -121,7 +121,7 @@ export function mountReader(pane, adapter) {
       <div class="epub-reader-menu" data-epub-menu="closed" hidden></div>
       <div class="epub-toc" data-epub-toc="closed" hidden>
         <div class="epub-toc-head">
-          <span class="epub-toc-title">${escapeHtml(t('reader.toc'))}</span>
+          <span class="epub-toc-title" data-cv-hint="divider">${escapeHtml(t('reader.toc'))}</span>
           <button type="button" class="epub-nav-btn epub-toc-close" aria-label="${escapeHtml(t('epub.menu.close'))}">×</button>
         </div>
         <div class="epub-toc-list" role="listbox"></div>
@@ -134,7 +134,7 @@ export function mountReader(pane, adapter) {
           <div class="epub-progress-ticks" aria-hidden="true"></div>
           <input type="range" class="epub-progress-range" min="0" max="1000" step="1"
                  aria-label="${escapeHtml(t('reader.aria.slider'))}">
-          <div class="epub-progress-tip" aria-hidden="true"></div>
+          <div class="epub-progress-tip" data-cv-hint="foot" aria-hidden="true"></div>
         </div>
         <span class="epub-nav-info"></span>
         <button type="button" class="epub-nav-btn epub-aa" aria-label="${escapeHtml(t('reader.aria.aa'))}">Aa</button>

@@ -276,8 +276,22 @@ console.log(`\n== ${BEFORE ? 'BEFORE（改前取证：Monaco 兜底应在位）'
     const hasVideo = await paneHas(page, 'video.canvas-video');
     ok('视频元素在位（video.canvas-video）', hasVideo);
     ok('Monaco 兜底不在位', !(await paneHas(page, '.monaco-editor')));
-    const hasControls = await page.evaluate(() => document.querySelector('.canvas-tab-pane.active video')?.controls === true);
-    ok('controls=原生控件（无自绘播放器）', hasControls);
+    // canvas-video-player 批（2026-11-05）翻转：原生 `controls` 属性**退役**，
+    // 换成自研扁平控件条（流内、零遮挡）。判据从「controls === true」改为
+    // 「controls 关闭 ∧ 自研控件条在位」—— 两件事一起断言，防止半迁移。
+    const chromeState = await page.evaluate(() => {
+      const pane = document.querySelector('.canvas-tab-pane.active');
+      const v = pane?.querySelector('video');
+      const bar = pane?.querySelector('.canvas-video-bar');
+      return {
+        controls: v ? v.controls : null,
+        bar: !!bar,
+        buttons: bar ? bar.querySelectorAll('button.canvas-video-btn').length : 0,
+      };
+    });
+    ok('原生 controls 退役 ∧ 自研控件条在位（4 颗扁平钮）',
+      chromeState.controls === false && chromeState.bar === true && chromeState.buttons >= 4,
+      JSON.stringify(chromeState));
     ok('loadedmetadata 出画面（videoWidth>0）', decoded && !!dims && dims.w > 0, JSON.stringify(dims));
 
     // 播放推进

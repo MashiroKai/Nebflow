@@ -271,6 +271,8 @@ object FileTransferAction:
           Right(base.deepMerge(Json.obj("wholeSha256" -> ChunkedTransfer.hashFileStreaming(path).asJson)))
         else Right(base)
 
+      end if
+
   /** 读文件的一个字节窗（有界：≤ chunkSize 驻留，禁整件读入——分块契约 I4 同规）。 */
   private def readSlice(path: os.Path, offset: Long, want: Int): Array[Byte] =
     val buf = new Array[Byte](want)
@@ -289,6 +291,44 @@ object FileTransferAction:
 
   private def msgOf(e: Throwable): String =
     Option(e.getMessage).filter(_.nonEmpty).getOrElse(e.getClass.getSimpleName)
+
+  /**
+   * 分块 put 的**父目录建位**（跨设备附件批 2026-11-05）。
+   *
+   * WHY：接收腿用 `os.write.append`，os-lib 的 append **不建父目录** ⇒ 目标落在尚不存在的
+   * 目录里时首块必 `NoSuchFileException`（改前：跨设备附件无法送进任何新目录）。legacy
+   * 整件 put 早就带 `createFolders = true`，本方法把分块腿对齐到同一语义。
+   *
+   * 纪律：**只建目录，绝不碰既有文件**；建不出来 ⇒ 结构化错误（`INSUFFICIENT_DISK` 易判，
+   * 否则 `INVALID_ARGUMENT` 带原文），不静默。
+   */
+  private def ensureParentDir(path: os.Path): Either[String, Unit] =
+    val parent = path / os.up
+    try
+      if parent != path && !os.exists(parent) then os.makeDir.all(parent)
+      Right(())
+    catch
+      case e: Exception =>
+        val text = msgOf(e)
+        val code =
+          if text.toLowerCase.contains("no space") || text.toLowerCase.contains("not enough space") then
+            AttachContract.Codes.InsufficientDisk
+          else AttachContract.Codes.InvalidArgument
+        Left(
+          AttachContract
+            .AttachError(
+              code,
+              s"Cannot create the parent directory $parent for $path: $text",
+              phase = "transfer",
+              path = Some(path.toString)
+            )
+            .toJson
+            .noSpaces
+        )
+
+    end try
+
+  end ensureParentDir
 
   private def hasChunkParams(params: JsonObject): Boolean =
     params("chunkIndex").flatMap(_.asNumber).isDefined && params("chunkSize").flatMap(_.asNumber).isDefined
@@ -338,7 +378,12 @@ object FileTransferAction:
     contentB64: String,
     overwrite: Boolean
   ): Either[String, Json] =
-    if contentB64.isEmpty then Left("Missing content for put")
+    // 零块形态（跨设备附件批 2026-11-05）：`totalBytes == 0` 的整件 = **空文件**，此时
+    // `content` 缺席是**合法**的（base64("") = ""）——不能当成缺参拒绝，否则 0 字节附件
+    // 永远落不了盘。判据只看「请求**显式声明** totalBytes == 0」（键缺席 = 老形态，仍然报
+    // `Missing content for put`，逐字不变）。
+    val declaresZeroBytes = params("totalBytes").flatMap(_.asNumber).flatMap(_.toLong).contains(0L)
+    if contentB64.isEmpty && !declaresZeroBytes then Left("Missing content for put")
     else
       val chunkIndex = params("chunkIndex").flatMap(_.asNumber).flatMap(_.toInt).getOrElse(0)
       val totalBytes = params("totalBytes").flatMap(_.asNumber).flatMap(_.toLong).getOrElse(0L)
@@ -375,7 +420,34 @@ object FileTransferAction:
             .toJson
             .noSpaces
         )
-      else if zeroChunks then Right(chunkAckJson(0L, computedChunk, None, totalBytes))
+      else if zeroChunks then
+        // 零块形态（跨设备附件批 2026-11-05）：`totalBytes == 0` 的整件 = **空文件**。
+        // 改前该支是「什么都不写、回 0 字节 ack」⇒ 空附件永远落不了盘（发送侧只看到
+        // 一个「成功」）。现在：**幂等建出空件**并把接收端自算的整件摘要回传（空文件的
+        // 摘要），使 0 字节附件同样可被验证。既有发送方从不发零块帧（`plan(0)` = 空），
+        // 故对存量调用零影响。
+        ensureParentDir(path) match
+          case Left(reason) => Left(reason)
+          case Right(_) =>
+            try
+              if !os.exists(path) then os.write(path, Array.emptyByteArray)
+              Right(
+                chunkAckJson(0L, computedChunk, Some(ChunkedTransfer.hashFileStreaming(path)), totalBytes)
+              )
+            catch
+              case e: Exception =>
+                Left(
+                  AttachContract
+                    .AttachError(
+                      AttachContract.Codes.InvalidArgument,
+                      s"Cannot create the empty target $path: ${msgOf(e)}",
+                      phase = "transfer",
+                      chunkIndex = Some(chunkIndex),
+                      path = Some(path.toString)
+                    )
+                    .toJson
+                    .noSpaces
+                )
       else if alreadyAtOrPastTotal then
         // 幂等：整件已落盘 ⇒ 回当前 offset + 自算整件摘要（重放安全）。
         Right(chunkAckJson(existing, computedChunk, Some(ChunkedTransfer.hashFileStreaming(path)), totalBytes))
@@ -480,6 +552,12 @@ object FileTransferAction:
                   finally raf.close()
                   derivedOffset
                 else existing
+              // 跨设备附件批（2026-11-05）：建父目录（`os.write.append` 不建 ⇒ 改前嵌套路径
+              // 首块必 `NoSuchFileException`）。与 legacy 整件 put 的 `createFolders = true`
+              // 语义对齐；**只在缺目录时建**，既有件零触碰（收端全保护口径不变）。
+              ensureParentDir(path) match
+                case Left(reason) => return Left(reason)
+                case Right(_) => ()
               os.write.append(path, payload)
               // 本流从零创建了该文件 ⇒ 登记归属（后续块 / 末块清理才敢动它）。
               if baseBytes == 0L then streamClaims.put(path.toString, streamKey(totalBytes, chunkSize))
@@ -535,6 +613,10 @@ object FileTransferAction:
         end if
 
       end if
+
+    end if
+
+  end chunkedPut
 
   private def chunkAckJson(
     bytesReceived: Long,

@@ -1,8 +1,9 @@
 // bg-mode-badge.spec.mjs — 任务模式标注批（2026-10-30 作者令「派发任务显示其执行
 // 模式——极简内核（kernel）还是分发器（dispatcher），任务卡/后台任务面板加模式徽标」）
 // 后台任务面板面验收：
-//  ① backgroundTaskUpdate 帧带 ownerMode ⇒ 行内 mode chip 渲染（内核/分发器，
-//    样式类 bg-mode-kernel / bg-mode-dispatcher）；
+//  ① backgroundTaskUpdate 帧带 ownerMode ⇒ 行内 mode chip 渲染（kernel/dispatcher 逐字
+//     英文词面——术语统一批 2026-11-06 起不再走 locale；
+//     样式类 bg-mode-kernel / bg-mode-dispatcher）；
 //  ② ownerMode 缺席（旧后端/非 delegate/双模式闸关）⇒ 零渲染（行高不膨胀）；
 //  ③ activeBgTasks 快照帧（刷新恢复路径）ownerMode 同行下发 ⇒ chip 同样渲染。
 //
@@ -125,10 +126,10 @@ test('①② 实时帧：ownerMode ⇒ mode chip（内核/分发器样式类）�
   await openBgDropdown(page);
 
   const chip1 = page.locator('.bg-task-row[data-task-id="j1"] .bg-task-mode');
-  await expect(chip1).toHaveText('内核');
+  await expect(chip1).toHaveText('kernel');
   await expect(chip1).toHaveClass(/bg-mode-kernel/);
   const chip2 = page.locator('.bg-task-row[data-task-id="j2"] .bg-task-mode');
-  await expect(chip2).toHaveText('分发器');
+  await expect(chip2).toHaveText('dispatcher');
   await expect(chip2).toHaveClass(/bg-mode-dispatcher/);
   // 旧形态行：mode chip 零渲染。
   await expect(page.locator('.bg-task-row[data-task-id="j3"] .bg-task-mode')).toHaveCount(0);
@@ -156,8 +157,8 @@ test('③ 快照帧（activeBgTasks 刷新恢复路径）：ownerMode 同行下�
   await page.waitForTimeout(400);
   await openBgDropdown(page);
 
-  await expect(page.locator('.bg-task-row[data-task-id="j1"] .bg-task-mode')).toHaveText('内核');
-  await expect(page.locator('.bg-task-row[data-task-id="j2"] .bg-task-mode')).toHaveText('分发器');
+  await expect(page.locator('.bg-task-row[data-task-id="j1"] .bg-task-mode')).toHaveText('kernel');
+  await expect(page.locator('.bg-task-row[data-task-id="j2"] .bg-task-mode')).toHaveText('dispatcher');
   await expect(page.locator('.bg-task-row[data-task-id="j3"] .bg-task-mode')).toHaveCount(0);
 
   expect(errors).toEqual([]);

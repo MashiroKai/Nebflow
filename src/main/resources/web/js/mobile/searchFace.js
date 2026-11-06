@@ -11,17 +11,26 @@
 //     档值走 chatSearch.matchesKind 缝，window.__mhSearchKind，桌面恒空。
 //     「工具」档随 2026-10-30 作者令①退役：关键词搜索只搜对话，tool 行不入
 //     结果，常驻空档不再列出）；
-//   · 脚注（说明/空态）：「仅检索当前主会话 · 类型/日期/角色筛选可叠加 ·
-//     空态：无匹配结果——试试缩短关键词或清除日期/类型筛选」（empty/hint 两腿
-//     = 既有 search.noResults / search.noResultsSuggestion 现网同款）。
+//   · 角色行（保留）：类型·日期（桌面 .search-tabs 同款沿用）+ 角色（本文件建的
+//     kind select：全部来源/用户/助手/AI —— i18n search.sourceAll 同源键；
+//     档值走 chatSearch.matchesKind 缝，window.__mhSearchKind，桌面恒空。
+//     「工具」档随 2026-10-30 作者令①退役：关键词搜索只搜对话，tool 行不入
+//     结果，常驻空档不再列出）。
 //
-// 桌面零改动边界：本文件只追加自有节点（头图标/角色行/脚注）+ 写 window 缝 +
-// pin 既有 select 值；拆层全部原样摘除。搜索逻辑（流式/分页/跳转）零重造。
+// 🔴 三点入口批（2026-11-05 作者令，本文件的破坏性变更——**只删不增**）：
+//   ① 面板头图标 `.mh-search-head-ic` 退役：它住在 `.search-modal-header`，而该头
+//      （重复标题「搜索聊天记录」）同批整体隐藏 ⇒ 顶部唯一标题 = 页面名胶囊
+//      「搜索聊天记录」（`mobile/navController.js` PAGES.search）；
+//   ② 底部说明脚注 `#mh-search-foot`（原第 14-16 行那条 mobileScopeNote）**整件
+//      删除**（作者：「底下的说明文字不要」）；结果区因此多吃到它的高度，读数见
+//      批报告；`search.mobileScopeNote` 文案键随同退役（零死键）。
+//
+// 桌面零改动边界：本文件只动自有节点（角色行）+ 写 window 缝 + pin 既有 select
+// 值；搜索逻辑（流式/分页/跳转）零重造。
 
 import { t } from '../i18n.js';
-import { createIconsIn } from '../utils.js';
 import { scheduleSearch } from '../chatSearch.js';
-import { logEvent } from './navController.js';
+import { logEvent } from './navEvents.js';
 
 /** 角色档位（值 = chatSearch data-kind 词表；label 键与桌面 type 徽标同源）。
  *  2026-10-30 作者令①：tool 档退役（搜索结果只搜对话，tool 行不入结果）。 */
@@ -36,10 +45,6 @@ const KIND_OPTIONS = [
 let kindRow = null;
 /** @type {HTMLSelectElement|null} */
 let kindSel = null;
-/** @type {HTMLElement|null} 说明/空态脚注。 */
-let foot = null;
-/** @type {HTMLElement|null} 面板头图标（来源键 i-search 同款）。 */
-let headIcon = null;
 /** @type {MutationObserver|null} overlay .on 观察（开面板即 pin 主会话范围）。 */
 let overlayMo = null;
 /** @type {Array<() => void>} */
@@ -58,28 +63,18 @@ function syncKindRow() {
   if (KIND_OPTIONS.some((o) => o.value === prev)) kindSel.value = prev;
 }
 
-function syncFoot() {
-  if (!foot) return;
-  foot.textContent = t('search.mobileScopeNote', {
-    empty: t('search.noResults'),
-    hint: t('search.noResultsSuggestion'),
-  });
-}
-
 function ensureFaces() {
   const modal = document.getElementById('search-modal');
   if (!modal) return;
 
-  // 面板头图标（样张 P2 头 = 来源键图标；桌面头只有标题 + 关闭钮）。
-  const head = modal.querySelector('.search-modal-header');
-  if (head && !head.querySelector('.mh-search-head-ic')) {
-    headIcon = document.createElement('span');
-    headIcon.className = 'mh-search-head-ic';
-    headIcon.setAttribute('aria-hidden', 'true');
-    headIcon.innerHTML = '<i data-lucide="search"></i>';
-    head.insertBefore(headIcon, head.firstChild);
-    if (typeof lucide !== 'undefined') createIconsIn(headIcon);
-  }
+  // 🔴 三点入口批（2026-11-05，作者令「把搜索和搜索聊天记录结合……下面的文字不要，
+  // 然后底下的说明文字不要」）：本文件原建的两件**同批退役**——
+  //   ① 面板头图标 `.mh-search-head-ic`：它住在 `.search-modal-header` 里，而该头
+  //      （重复标题「搜索聊天记录」）已整体隐藏（顶部唯一标题 = 页名胶囊）；
+  //   ② 底部说明脚注 `#mh-search-foot`（`search.mobileScopeNote` 那条「仅检索当前
+  //      主会话 · 类型/日期/角色筛选可叠加 · 空态：…」）：整行删除，结果区因此
+  //      获得原本被它吃掉的高度。
+  // 保留件 = 角色筛选行（`#mh-search-kind-row`，v3.6 筛选两行口径）与范围 pin。
 
   // 角色行：类型·日期 tabs 之后的第二筛选行（v3.6 筛选两行口径）。
   const controls = modal.querySelector('.search-controls');
@@ -101,15 +96,6 @@ function ensureFaces() {
     kindRow.appendChild(kindSel);
     tabs.insertAdjacentElement('afterend', kindRow);
   }
-
-  // 说明/空态脚注（面板底部；CSS 管样式，本文件只管文案与生命周期）。
-  if (!document.getElementById('mh-search-foot')) {
-    foot = document.createElement('div');
-    foot.id = 'mh-search-foot';
-    foot.className = 'mh-search-foot';
-    syncFoot();
-    modal.appendChild(foot);
-  }
 }
 
 export function activateSearchFace() {
@@ -125,11 +111,10 @@ export function activateSearchFace() {
     overlayMo.observe(overlay, { attributes: true, attributeFilter: ['class'] });
   }
 
-  // 语言切换：角色档/脚注/aria 同帧刷新（locale-changed 与桌面渲染同源事件）。
+  // 语言切换：角色档/aria 同帧刷新（locale-changed 与桌面渲染同源事件）。
   const onLocale = () => {
     syncKindRow();
     if (kindSel) kindSel.setAttribute('aria-label', t('search.sourceAll'));
-    syncFoot();
   };
   window.addEventListener('locale-changed', onLocale);
   unsubs.push(() => window.removeEventListener('locale-changed', onLocale));
@@ -139,7 +124,5 @@ export function activateSearchFace() {
     if (overlayMo) { overlayMo.disconnect(); overlayMo = null; }
     (/** @type {any} */ (window)).__mhSearchKind = '';
     if (kindRow) { kindRow.remove(); kindRow = null; kindSel = null; }
-    if (foot) { foot.remove(); foot = null; }
-    if (headIcon) { headIcon.remove(); headIcon = null; }
   };
 }

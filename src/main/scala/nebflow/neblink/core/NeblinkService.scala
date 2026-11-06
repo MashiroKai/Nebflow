@@ -1,5 +1,7 @@
 package nebflow.neblink.core
 
+import nebflow.neblink.PresenceCandidateProbe
+
 import nebflow.neblink.identity.*
 import nebflow.neblink.relay.*
 
@@ -316,14 +318,35 @@ class NeblinkService private (
         case None => peer
     }
 
-  /** Add or update a single peer. Fires callback only when peer is newly discovered. */
+  /**
+   * Add or update a single peer. Fires the change callback when the peer is
+   * newly discovered **or when it comes back online** after having been
+   * flagged offline.
+   *
+   * 回归批（fleet 统一更新 2026-11-02，离线补推哨兵的触发腿）：修前只在 `isNew`
+   * 时通知 ⇒ 一台**已在名册里但被标下线**的设备重新上线时，名册腿只做原地覆盖，
+   * 订阅方（fleet 哨兵「设备上线即补推」）永远收不到「它回来了」这一刻 ⇒ 离线队列
+   * 只能等引擎重启后靠 `restore()` 兜底。判据取**既有新鲜度谓词**
+   * （[[NeblinkService.isPeerOnline]]，本实例 `configRef` 的 syncIntervalSec），
+   * 前后两次读数都由它算 ⇒ 不新增第二套「在线」定义，也不新增定时器。
+   */
   def upsertPeer(peer: PeerInfo): IO[Unit] =
     for
       _ <- pendingRemovals.update(_ - peer.deviceId)
-      isNew <- peersRef.get.map(!_.contains(peer.deviceId))
+      syncSec <- configRef.get.map(_.syncIntervalSec)
+      prevIsNew <- peersRef.get.map(!_.contains(peer.deviceId))
       finalPeer <- applyDescOverride(peer)
-      _ <- peersRef.update(_ + (peer.deviceId -> finalPeer))
-      _ <- if isNew then notifyPeersChanged else IO.unit
+      newlyOnline <- peersRef.modify { peers =>
+        val now = System.currentTimeMillis()
+        // 候选集保真（presence-direct 批 C-1）：入站 presence/announce/handshake 带的记录
+        // `endpoints = Nil`，整记录替换会把名册给的全量候选集抹成单地址（≤1 拍即塌缩）。
+        // 名册腿（endpoints 非空）原样通过 ⇒ 零行为变化。
+        val kept = PresenceCandidateProbe.mergeObserved(peers.get(peer.deviceId), finalPeer)
+        val wasOnline = peers.get(peer.deviceId).exists(p => NeblinkService.isPeerOnline(p, now, syncSec))
+        val isOnline = NeblinkService.isPeerOnline(kept, now, syncSec)
+        (peers + (peer.deviceId -> kept), prevIsNew || (isOnline && !wasOnline))
+      }
+      _ <- if newlyOnline then notifyPeersChanged else IO.unit
     yield ()
 
   /** Schedule peer removal after grace period. If peer reconnects before timeout, removal is cancelled. */
@@ -376,7 +399,10 @@ class NeblinkService private (
         for
           _ <- pendingRemovals.update(_ - info.deviceId)
           finalPeer <- applyDescOverride(peer)
-          _ <- peersRef.update(_ + (info.deviceId -> finalPeer))
+          // C-1 候选集保真：announce 的 `endpoints = Nil` 不得抹掉名册候选（见 PresenceCandidateProbe）。
+          _ <- peersRef.update { ps =>
+            ps + (info.deviceId -> PresenceCandidateProbe.mergeObserved(ps.get(info.deviceId), finalPeer))
+          }
           _ <- logger.debug(s"Peer announced: ${info.deviceName} at ${peer.address}")
         yield ()
     }
@@ -433,7 +459,10 @@ class NeblinkService private (
     for
       _ <- pendingRemovals.update(_ - deviceId)
       finalPeer <- applyDescOverride(peer)
-      _ <- peersRef.update(_ + (deviceId -> finalPeer))
+      // C-1 候选集保真：handshake 的 `endpoints = Nil` 不得抹掉名册候选（见 PresenceCandidateProbe）。
+      _ <- peersRef.update { ps =>
+        ps + (deviceId -> PresenceCandidateProbe.mergeObserved(ps.get(deviceId), finalPeer))
+      }
       _ <- logger.info(s"Peer joined: $deviceName at $address")
     yield ()
   end handleHandshake

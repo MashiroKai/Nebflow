@@ -40,11 +40,28 @@ class DelegateFinishWorkResultSpec extends CatsEffectSuite:
 
   override def beforeEach(context: munit.BeforeEach): Unit =
     MergeQueue.reset()
+    // P1 投递身份化：身份投递端口（生产实现 = 磁盘邮箱；此处 = 记录型，投递恒成功）。
+    nebflow.core.delegate.MergeQueueTestPorts.install()
     nebflow.ForceRemove.removeAll(tempRoot / "chains")
     nebflow.ForceRemove.removeAll(tempRoot / "delegates")
     nebflow.ForceRemove.removeAll(tempRoot / "subagent-tasks")
 
   override def afterEach(context: munit.AfterEach): Unit = MergeQueue.reset()
+
+  /**
+   * `SharedResources` 的构造行会安装**生产**投递端口（磁盘邮箱 + 会话行在场判定）——
+   * `mkResources` 因此会把 beforeEach 里装好的测试端口顶掉，而本套夹具的 delegate 行
+   * 是直写 `DelegateRegistry` 的（会话行不存在）⇒ 生产端口如实回 `parent-session-gone`
+   * ⇒ 放行即 owner-gone，合并轮形态当场失位（本套要判的是 finish 工作结果回传，
+   * 不是投递可达性）。因此每次构造后把测试端口**重新装回**：夹具声明「属主会话在场，
+   * 投递恒成功」，与生产端口的契约面（身份 → 落盘邮箱）同形，断言强度不变。
+   */
+  private def mkResourcesWithTestPort(
+    system: ActorSystem,
+    tmp: os.Path,
+    llm: LlmHandle[IO]
+  ): IO[SharedResources] =
+    SpecResources.mkResources(system, tmp, llm).flatTap(_ => IO(nebflow.core.delegate.MergeQueueTestPorts.install()))
 
   private class SilentLlm extends LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
@@ -139,7 +156,6 @@ class DelegateFinishWorkResultSpec extends CatsEffectSuite:
     IO {
       DelegateJudge.DelegateJudgePort.install(
         new DelegateJudge.DelegateJudgePort.Face:
-          def decideWorktree(task: String): IO[Option[Boolean]] = IO.pure(Some(false))
           def judgeTerminal(input: DelegateJudge.TerminalInput): IO[Option[DelegateJudge.Verdict]] = IO.pure(Some(verdict))
       )
     } *> io <* IO(DelegateJudge.DelegateJudgePort.clear())
@@ -169,8 +185,10 @@ class DelegateFinishWorkResultSpec extends CatsEffectSuite:
         parentSessionId = "nebula-root",
         description = "t",
         readyAt = 1L,
-        channelKind = "internal",
-        internal = Some(MergeQueue.InternalLeg(child, sup))
+        // 宣告闸批 2026-11-04：属主宣告在案（`delegate_report(category="merge")`）——授窗前提
+        declaredAt = Some(1_000L),
+        declareSource = Some(nebflow.core.delegate.MergeDeclaration.Source.ReportMerge),
+        channelKind = "identity",
       )
     )
 
@@ -180,7 +198,7 @@ class DelegateFinishWorkResultSpec extends CatsEffectSuite:
     val system = ActorSystem(s"dfwr-1-${scala.util.Random.nextInt(100000)}")
     try
       for
-        res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
+        res <- mkResourcesWithTestPort(system, tempRoot, new SilentLlm)
         (child, sup) <- noopRefs(system)
         repo = mkRepo(tempRoot / "hold-repo", "delegate/delegate-nebflow-wr1", withReport = false)
         _ = seedRecord("delegate-nebflow-wr1", Some("81"), Some("delegate/delegate-nebflow-wr1"), repo)
@@ -254,9 +272,11 @@ class DelegateFinishWorkResultSpec extends CatsEffectSuite:
     try
       val repo = mkRepo(tempRoot / "e2e-repo", "delegate/delegate-nebflow-wr5", withReport = true)
       for
-        res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
+        res <- mkResourcesWithTestPort(system, tempRoot, new SilentLlm)
         (child, sup) <- noopRefs(system)
         _ = seedRecord("delegate-nebflow-wr5", Some("85"), Some("delegate/delegate-nebflow-wr5"), repo)
+        // 宣告闸批 2026-11-04：合并轮成立的前提 = 属主已宣告（`delegate_report(category="merge")`）。
+        _ <- IO(MergeDeclaration.write("delegate-nebflow-wr5", MergeDeclaration.Source.ReportMerge))
         // 工作轮终态：judge ready-to-merge ⇒ 停靠 + 保真（根因①）
         _ <- withJudge(DelegateJudge.Verdict.ReadyToMerge) {
           DelegateTerminal.onCompleted(
@@ -315,7 +335,7 @@ class DelegateFinishWorkResultSpec extends CatsEffectSuite:
       val repo = mkRepo(tempRoot / "legacy-repo", "delegate/delegate-nebflow-wr6", withReport = false)
       val bareRepo = mkRepo(tempRoot / "legacy-bare-repo", "delegate/delegate-nebflow-wr8", withReport = false)
       for
-        res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
+        res <- mkResourcesWithTestPort(system, tempRoot, new SilentLlm)
         (child, sup) <- noopRefs(system)
         // ④a 老盘面形态：无停靠保真（修复前已完成停靠）、finish 自申报在槽、无
         // 报告文件 ⇒ 附页 = merge status 一行（merge 信息降为一行——正是修复形态），

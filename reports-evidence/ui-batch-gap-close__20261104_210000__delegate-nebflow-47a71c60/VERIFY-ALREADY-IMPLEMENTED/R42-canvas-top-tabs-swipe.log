@@ -1,0 +1,53 @@
+
+═══ chromium（:8360，web=/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-47a71c60/src/main/resources/web）═══
+PASS  [chromium]  H0 canvas 页在位 + 三签 + 唯一 .on  — chips=3 on=1 active=doc-c strip=375x72
+PASS  [chromium]  H1a 签上横滑左 ⇒ active b→c（真的切签）  — active doc-b → doc-c
+PASS  [chromium]  H1b setActiveTab/syncCanvasPage 生效：pane 收编换人 + 计数 + 小点同步  — pane=doc-c count=3/3 dots=2/3
+PASS  [chromium]  H1c 跟手位移真实（轴锁后 --sdx 随指变，非瞬切）  — --sdx 逐步 = [-12.0px, -24.0px, -36.0px, -48.0px, -60.0px, -72.0px, -84.0px, -96.0px, -108.0px, -120.0px]
+PASS  [chromium]  H1d 横轴锁后单次判定（探针 axis=x，claim 恰 1）  — axis=x claims=1
+PASS  [chromium]  H2 签上横滑右 ⇒ active c→b（反向等价）  — active doc-c → doc-b，pane=doc-b count=2/3
+PASS  [chromium]  H3a-① 首签右滑 ⇒ active 不变（端点非环式，不环绕到尾签）  — active doc-a → doc-a
+PASS  [chromium]  H3a-② 越界段跟手被阻尼（0 < sdx < dx）  — mid dx=56 sdx=19.6（比例 0.35）
+PASS  [chromium]  H3a-③ 松手位移归零回弹（--sdx = 0px）+ 不闪白（pane 在场 opacity 1）  — sdx="0.0px" pane=doc-a paneOpacity=1 hostOpacity=1
+PASS  [chromium]  H3a-④ 端点记一次 bounce（探针），换签计数不增  — bounces=1 switches=2
+PASS  [chromium]  H3b 尾签左滑 ⇒ active 不变 + 阻尼（sdx < 0 且 |sdx| < |dx|）+ 归零回弹  — active=doc-c mid sdx=-19.6 settled sdx="0.0px" bounces=2
+PASS  [chromium]  H4a 签上纵拖 ⇒ active 不变 + 零 claim（axis=y，不抢 capture）  — active=doc-b axis=y claims 4→4
+PASS  [chromium]  H4b 文档区纵拖 ⇒ active 不变 + 滚轮照常滚（原生滚动路径保持）  — active=doc-b scrollTop=320
+PASS  [chromium]  H4c [chromium] 真触屏纵拖 ⇒ 文档区 scrollTop 增加 + active 不变  — scrollTop=415 active=doc-b
+PASS  [chromium]  H5a 位移 6px（< 8px 阈值）⇒ 不认横滑、active 不变、零 claim  — active=doc-b claims 4→4
+PASS  [chromium]  H5b dx=-40 / dy=+62（|dx| < 1.2×|dy|）⇒ 轴锁给纵轴、不切签  — active=doc-b axis=y claims=4
+PASS  [chromium]  H6 .canvas-image-viewport 上起手横拖 ⇒ 不切签 + 零 claim  — active=doc-b claims 4→4
+PASS  [chromium]  H7 内容区横滑仍为环式（末签左滑 → 首签；首签右滑 → 末签）  — 环序 doc-c —左滑→ doc-a —右滑→ doc-c
+PASS  [chromium]  H9 签本体 touch-action=pan-y（横轴收指针管线 / 纵轴让原生）  — touch-action=pan-y
+PASS  [chromium]  H10 环带透传契约未变（带 pointer-events:none / 签 auto）  — strip=none chip=auto
+PASS  [chromium]  H8 全程零 pageerror  — 0 error
+
+═══ webkit（:8361，web=/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-47a71c60/src/main/resources/web）═══
+PASS  [webkit]  H0 canvas 页在位 + 三签 + 唯一 .on  — chips=3 on=1 active=doc-c strip=375x72
+PASS  [webkit]  H1a 签上横滑左 ⇒ active b→c（真的切签）  — active doc-b → doc-c
+PASS  [webkit]  H1b setActiveTab/syncCanvasPage 生效：pane 收编换人 + 计数 + 小点同步  — pane=doc-c count=3/3 dots=2/3
+PASS  [webkit]  H1c 跟手位移真实（轴锁后 --sdx 随指变，非瞬切）  — --sdx 逐步 = [-12.0px, -24.0px, -36.0px, -48.0px, -60.0px, -72.0px, -84.0px, -96.0px, -108.0px, -120.0px]
+PASS  [webkit]  H1d 横轴锁后单次判定（探针 axis=x，claim 恰 1）  — axis=x claims=1
+PASS  [webkit]  H2 签上横滑右 ⇒ active c→b（反向等价）  — active doc-c → doc-b，pane=doc-b count=2/3
+PASS  [webkit]  H3a-① 首签右滑 ⇒ active 不变（端点非环式，不环绕到尾签）  — active doc-a → doc-a
+PASS  [webkit]  H3a-② 越界段跟手被阻尼（0 < sdx < dx）  — mid dx=56 sdx=19.6（比例 0.35）
+PASS  [webkit]  H3a-③ 松手位移归零回弹（--sdx = 0px）+ 不闪白（pane 在场 opacity 1）  — sdx="0.0px" pane=doc-a paneOpacity=1 hostOpacity=1
+PASS  [webkit]  H3a-④ 端点记一次 bounce（探针），换签计数不增  — bounces=1 switches=2
+PASS  [webkit]  H3b 尾签左滑 ⇒ active 不变 + 阻尼（sdx < 0 且 |sdx| < |dx|）+ 归零回弹  — active=doc-c mid sdx=-19.6 settled sdx="0.0px" bounces=2
+PASS  [webkit]  H4a 签上纵拖 ⇒ active 不变 + 零 claim（axis=y，不抢 capture）  — active=doc-b axis=y claims 4→4
+PASS  [webkit]  H4b 文档区纵拖 ⇒ active 不变 + 滚轮照常滚（原生滚动路径保持）  — active=doc-b scrollTop=320
+PASS  [webkit]  H5a 位移 6px（< 8px 阈值）⇒ 不认横滑、active 不变、零 claim  — active=doc-b claims 4→4
+PASS  [webkit]  H5b dx=-40 / dy=+62（|dx| < 1.2×|dy|）⇒ 轴锁给纵轴、不切签  — active=doc-b axis=y claims=4
+PASS  [webkit]  H6 .canvas-image-viewport 上起手横拖 ⇒ 不切签 + 零 claim  — active=doc-b claims 4→4
+PASS  [webkit]  H7 内容区横滑仍为环式（末签左滑 → 首签；首签右滑 → 末签）  — 环序 doc-c —左滑→ doc-a —右滑→ doc-c
+PASS  [webkit]  H9 签本体 touch-action=pan-y（横轴收指针管线 / 纵轴让原生）  — touch-action=pan-y
+PASS  [webkit]  H10 环带透传契约未变（带 pointer-events:none / 签 auto）  — strip=none chip=auto
+PASS  [webkit]  H8 全程零 pageerror  — 0 error
+
+═══ 汇总（phase=after）═══
+  chromium: ALL PASS（帧 8 张）
+  webkit: ALL PASS（帧 8 张）
+  证据目录 = /Users/kaiyu/.stand/evidence/ui-unification-20261103/ui-final-four/after/swipe
+  readings.json = /Users/kaiyu/.stand/evidence/ui-unification-20261103/ui-final-four/after/swipe/readings.json
+
+RESULT: GREEN

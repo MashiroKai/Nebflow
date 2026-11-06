@@ -192,7 +192,7 @@ const activate = async (page, tabId) => { await page.evaluate((id) => document.q
   ok('C2b 短标题零截断：插件 全显示（修前 6.9px/24px 自然宽）', mPlugins.truncated === false, `w=${mPlugins.w}`);
   ok('C2c 短标题零截断：文档图谱 全显示（修前 21.8px/48px 自然宽）', mGraph.truncated === false, `w=${mGraph.w}`);
 
-  ok('C4 高度跨签种一致（原「与 pop 钮解耦」：#canvas-pop-btn 随 Canvas 改造批⑤ 2026-10-31 退役，pop 条件随删；三面高度仍全等）',
+  ok('C4 高度跨签种一致（件1 回归批 2026-11-05：pop 钮以 .canvas-pop-btn 回位胶囊右座，仍是 26px 小钮档 ⇒ 与 36px 胶囊高解耦，三面高度仍全等）',
     mFile.h === mPlugins.h && mFile.h === mGraph.h,
     `file=${mFile.h} plugins=${mPlugins.h} graph=${mGraph.h}`);
 
@@ -321,9 +321,9 @@ const activate = async (page, tabId) => { await page.evaluate((id) => document.q
     (sap.match(/--capsule-h:\s*36px/g) || []).length === 1
     && (sap.match(/--capsule-w:\s*180px/g) || []).length === 1,
     `h=${(sap.match(/--capsule-h:\s*36px/g) || []).length} w=${(sap.match(/--capsule-w:\s*180px/g) || []).length}`);
-  ok('F6b 两胶囊脸消费 token（split.css：var(--capsule-w) 3 处〔标题头 width + .cr-capsule width/max-width 护栏〕+ var(--capsule-h) 6 处〔标题头 height/环胶囊 height/卡窗胶囊/内容顶垫档等〕——竖环回退批 2026-10-31：环胶囊 height 消费随还原 +1〔扇卡期 220px 卡面为有意字面量，F6b 扇代锚 5 处作废〕，无第二字面量档）',
+  ok('F6b 两胶囊脸消费 token（split.css：var(--capsule-w) 3 处〔标题头 width + .cr-capsule width/max-width 护栏〕+ var(--capsule-h) 4 处〔标题头 height / 环胶囊 height / 卡窗胶囊 height / md 面常驻顶垫〕——竖环回退批 2026-10-31：环胶囊 height 消费随还原 +1〔扇卡期 220px 卡面为有意字面量，F6b 扇代锚 5 处作废〕；透传悬浮批 ui-unification-20261103-mobile-canvas-topbar：手机档顶垫换源 --mchrome-clear（−1）；hover 零布局批 2026-11-03：`.capsule-ring-open ⇒ padding-top` 联动整条退役（hover 不许改布局，那张图跟着图片动）⇒ 再 −1，无第二字面量档）',
     (split.match(/var\(--capsule-w/g) || []).length === 3
-    && (split.match(/var\(--capsule-h/g) || []).length === 6
+    && (split.match(/var\(--capsule-h/g) || []).length === 4
     && !/\.cr-capsule\s*\{[^}]*width:\s*\d+px/.test(split),
     `w-ref=${(split.match(/var\(--capsule-w/g) || []).length} h-ref=${(split.match(/var\(--capsule-h/g) || []).length}`);
   ok('F6c 标题头固定宽不再有 fit-content 桌面档（body:not(.mobile-layer) 规则内）',

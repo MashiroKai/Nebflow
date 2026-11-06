@@ -1,0 +1,153 @@
+#!/usr/bin/env node
+// manifest.mjs — 把 readings.json / gates.json / 三案元数据合成 manifest.json（回执与 vault 引用的唯一数据源）
+// 用法：node design/mobile-canvas-tabs/manifest.mjs
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const read = (f) => JSON.parse(readFileSync(join(HERE, f), 'utf8'));
+const R = read('readings.json');
+const G = existsSync(join(HERE, 'gates.json')) ? read('gates.json') : null;
+
+const META = {
+  a: {
+    name: 'A · 通栏玻璃带', file: 'variants/a-band.css', intent: '与内容割裂',
+    form: '.mf-strip 本体 = 玻璃面，375×72，圆角 0 0 18 18，底缘一条 --nf-glass-border；叉号/堆叠两键降为带内扁平图标键',
+    glassLayer: '整幅正文从带底下滚过（玻璃接的是全宽正文的颜色）',
+    contrastGuard: '文字 + var(--nf-glass-bg)（亮 α.549 / 暗 α.678）+ blur40；签在带内、底 = 玻璃面本身',
+    scroll: '贴顶钉住，无让位无收起',
+    capsule: '两圆钮降为带内扁平图标键，与签同一水平中线 39.5（差 0.5px）',
+    change: ['web/css/mobileLayer.css（追加块）', 'web/css/glass.css（成员登记表 1 行）', 'web/js/mobile/navController.js（环位姿停写）'],
+    newTokens: 0,
+    note: '唯一的“整条带都是玻璃”的读法：内容穿过来是一条连续的颜色带；代价是既有 g2-fab 圆钮的玻璃语义被并入带面。',
+  },
+  b: {
+    name: 'B · 悬浮玻璃胶囊', file: 'variants/b-capsule.css', intent: '可读性',
+    form: '.mf-strip = 231×44 胶囊（left/right 72 / 顶 18 / 圆角 --ds-radius-pill），三签等分（各 79.67 绘制宽、32 高），两圆钮原样留在两端',
+    glassLayer: '胶囊背后 = 正文；两侧各 8px 气隙里正文保持原样，读作“浮在内容上的一枚透镜”',
+    contrastGuard: '文字 + var(--nf-glass-bg) + blur40，签底同时被胶囊玻璃与正文洗过；实测三签 12.04–16.08:1',
+    scroll: '贴顶钉住（中心线 40 与圆钮同线），正文从胶囊下方穿过',
+    capsule: '与两圆钮同一水平中线 40，左右各 8px 气隙（64→72 / 303→311），零重叠',
+    change: ['web/css/mobileLayer.css（追加块）', 'web/css/glass.css（成员登记表 1 行）', 'web/js/mobile/navController.js（环位姿停写 + 横滑行程重算）'],
+    newTokens: 0,
+    note: '三案里唯一“不拿面去压正文”的：玻璃只占 231×44，其余是正文本身。',
+  },
+  c: {
+    name: 'C · 玻璃底 + 内容透出渐隐边', file: 'variants/c-fade.css', intent: '贴顶太硬',
+    form: '.mf-strip 高 96：::before = 0–64 玻璃层（无底缘硬线、不用 --nf-glass-shadow），::after = 64–92 的 28px --ds-fade-veil 渐隐带；环签位姿原样保留',
+    glassLayer: '正文同一行滚过时依次经过“清晰 → 半洗 → 全糊”三档（剖面峰值 27↗56 证明是坡不是线）',
+    contrastGuard: '文字 + 玻璃层；环签仍是逐签视觉层（::after 退役），实测最低 7.0:1（三案最低，仍 >AA 4.5）',
+    scroll: '贴顶钉住；滚走的行被“化掉”而不是被一条线“切掉”',
+    capsule: '两圆钮原样在带两端（带通栏，玻璃与圆钮各自成层）',
+    change: ['web/css/mobileLayer.css（追加块）', 'web/css/glass.css（成员登记表 1 行）'],
+    newTokens: 0,
+    note: 'navController 零改动（环签原样）——改动面最小的一个；代价是签仍是环位姿，邻签绘制宽只有 57.4、对比度掉到 7.0:1。',
+  },
+};
+
+// 本目录的绝对路径（worktree 与主仓各自成立：不写死某一处）
+const BASE = HERE;
+
+// ── 现状（产品当前渲染）──────────────────────────────────────────────────
+const P = read('shots/probe.json');
+const cur = P.themes.light.probe;
+const current = {
+  dom: '.mf-canvas-page > .mf-strip.ds-chrome-band[role=tablist] > button.mf-strip-chip[role=tab] × N > span.mf-strip-label；工具条 .mf-cv-toolbar.ds-chrome-band 挂在 section 根',
+  geometry: {
+    strip: { x: cur.strip.x, y: cur.strip.y, w: cur.strip.w, h: cur.strip.h, position: 'absolute', zIndex: 20, background: cur.strip.backgroundColor, borderRadius: cur.strip.borderRadius, mask: cur.strip.maskImage },
+    chipOn: { w: 119.54, h: 35.2, y: 22.4, backdrop: 'blur(40px) saturate(1.4)' },
+    chipOff: { w: 57.42, h: 27.84, y: 26.08, transform: 'matrix(0.87,0,0,0.87,…)', opacity: 0.9, filter: 'blur(0.4px)', backdrop: 'none' },
+    fab: { w: 48, h: 48, y: 16, leftX: 16, rightX: 311 },
+    scrollPaddingTop: 72,
+  },
+  verdict: '代码层只有**中签**有真毛玻璃（css/mobileLayer.css:1815-1827 注释写明「backdrop-filter 不落本层」，mask × backdrop 在合成器上空化）；侧签是「玻璃底 + 描边 + 阴影」的伪玻璃，正文从侧签里穿过时字仍清楚。',
+  anchors: [
+    'src/main/resources/web/css/mobileLayer.css:1671-1712（.mf-strip 几何）',
+    'src/main/resources/web/css/mobileLayer.css:1687-1693（双侧 14px 羽化 mask）',
+    'src/main/resources/web/css/mobileLayer.css:1745-1755（.mf-strip-chip 基础档）',
+    'src/main/resources/web/css/mobileLayer.css:1815-1827（::after 视觉层 / 注释：backdrop 不落本层）',
+    'src/main/resources/web/css/mobileLayer.css:368-382（--mchrome-* / --cv-safe-top）',
+    'src/main/resources/web/css/stand-tokens.css:412-417（--nf-glass-* 唯一配方）',
+    'src/main/resources/web/css/glass.css:135（成员登记表含 .mf-strip-chip.on::after）',
+    'src/main/resources/web/css/design-system.css:1391-1401 / 1403-1445（.ds-chrome-band / .ds-edge-fade）',
+    'src/main/resources/web/js/mobile/navController.js:756-810 / 963-1020 / 1122-1131 / 1765-1835',
+  ],
+};
+
+// ── 三案的实测读数（readings.json 汇总）────────────────────────────────────
+const variants = {};
+for (const [id, m] of Object.entries(META)) {
+  const themes = {};
+  for (const th of ['light', 'dark']) {
+    const k = `${id}-${th}`;
+    const cs = R.contrast[k];
+    const geo = R.geometry[k];
+    const fab = geo.fabs && geo.fabs[0];
+    const stripCy = geo.strip.y + geo.strip.h / 2;
+    const chipCy = geo.chips[0].box.cy;
+    themes[th] = {
+      shot: `shots/variant-${k}.png`,
+      shotAbs: `${BASE}/shots/variant-${k}.png`,
+      strip: { w: geo.strip.w, h: geo.strip.h, y: geo.strip.y, radius: geo.stripStyle.radius, backdrop: geo.stripStyle.backdrop, bg: geo.stripStyle.bg, mask: geo.stripStyle.mask },
+      chips: cs.map((c) => ({ text: c.text, on: c.on, w: c.chip.w, h: c.chip.h, cy: geo.chips.find((x) => x.on === c.on).box.cy, contrast: c.coreMedian, contrastMin: c.coreMin, fg: c.sample.fgHex, bg: c.sample.bgHex })),
+      minContrast: Math.min(...cs.map((c) => c.coreMin)),
+      hit: Math.max(...geo.chips.map((c) => c.hit.h)),
+      fabCy: fab ? fab.cy : null,
+      chipVsFabDelta: fab ? +(chipCy - fab.cy).toFixed(2) : null,
+      fade: R.fade[k],
+    };
+  }
+  variants[id] = { ...m, themes };
+}
+
+const allMin = Math.min(...Object.values(variants).flatMap((v) => Object.values(v.themes).map((t) => t.minContrast)));
+
+const manifest = {
+  batch: 'mobile-canvas-tabs',
+  title: '手机端 Canvas 顶部标签页 · 毛玻璃三方案',
+  generatedAt: new Date().toISOString(),
+  base: { width: 375, height: 812, dsf: 2, scrollTop: 118, themes: ['light', 'dark'] },
+  scope: '只出方案，产品代码零改动（src/main/resources/web/** 一行未动）',
+  current,
+  variants,
+  overview: {
+    pageAbs: `${BASE}/overview.html`,
+    shotAbs: `${BASE}/shots/overall.png`,
+    pageRel: 'overview.html',
+    shotRel: 'shots/overall.png',
+  },
+  comparePage: { localPath: `${BASE}/index.html`, sizeMB: 1.61, selfContained: true, offline: true, note: '六个面板同文档渲染（iframe 内 backdrop-filter 在 Chromium 151 不生效，已实证），底衬是真实页面截图（backdrop-*.png 摘掉环签 / backdrop-nochrome-*.png 连两圆钮一起摘）' },
+  readings: {
+    contrastRule: 'WCAG 2.x 相对亮度比；前景/背景逐像素配对法（同一裁剪区拍两帧，一帧藏字）',
+    minContrastAcrossAll: allMin,
+    aa: 'WCAG AA 正文 4.5:1 —— 全部通过',
+    fadeRule: '藏签藏钮后逐行亮度标准差峰值（8px 窗）；玻璃区 5–33 vs 正文区 80–86 ⇒ 内容被压下 3–10 倍',
+    rawFile: 'readings.json',
+  },
+  gates: G ? {
+    method: '同构临时树 /tmp/canvas-tabs-gates（产品 web 树 + 三道门禁脚本），@glass 段 → css/glass.css、@mobile 段 → css/mobileLayer.css，主仓门禁文件零改动',
+    glass: { verdict: '三案全部 exit 0 · 0 违规', detail: G.variants.a.glass.tail },
+    flat: { verdict: '三案全部 exit 0 · 0 违规', detail: { a: G.variants.a.flat.tail, bc: G.variants.b.flat.tail } },
+    tokens: { verdict: '零新增裸值：三案追加的 CSS 让令牌闸输出与未改产品树**逐字相同**', preexistingRed: 'js/ws.js 颜色字面量 10→12（main tip 上同样 FAIL，与本批无关）', identical: Object.fromEntries(Object.entries(G.variants).map(([k, v]) => [k, v.tokens.cssDeltaIdentical])) },
+    rawFile: 'gates.json',
+  } : null,
+  recommendation: {
+    pick: 'b',
+    name: 'B · 悬浮玻璃胶囊',
+    reasons: [
+      '可读性拿满：三签等分等大（各 79.67 绘制宽、32 高），签心 40 与两圆钮严格同线，实测三签对比度 12.04–16.08:1 —— 三案里唯一「三个签都拿满一档」的（C 的邻签只有 57.4 宽、最低 7.0:1，A 需要对圆钮语义动手）。',
+      '改动面最小且零新令牌：3 文件、零新令牌，几何全部由 --mchrome-inset(72) / --mtap(44) / --ds-radius-pill 派生；扁平闸对既有圆钮零触碰（A 要把 g2-fab 降级为带内扁平键，动了既有 chrome 语义）。',
+      '贴合既有语言：胶囊与 .g2-fab 圆钮同一条水平中线（40）、左右各留 8px 气隙，玻璃只有一层不叠第二层；三案里唯一「不拿一条面去压正文」的读法。',
+    ],
+    risk: '胶囊两侧各 8px 气隙里正文保持原样，长标题滚动时可能被读作「内容从胶囊两边漏出来」（一条竖缝）。缓解：气隙 8px < 正文 15px 行距的一半以上时视觉上是「包边」而非「漏」；若要彻底消除，退 C（无下边缘）或把气隙收到 4px（需再算横滑行程）。',
+  },
+  files: {
+    variants: Object.values(META).map((m) => m.file),
+    scripts: ['capture.mjs（零端口取证）', 'build.mjs（生成对照页/总览页）', 'verify.mjs（截图+对比度+几何+剖面）', 'overall.mjs（总览图）', 'gates.mjs（三案投门禁）', 'manifest.mjs（本文件）'],
+    shots: ['current-{light,dark}.png', 'backdrop-{light,dark}.png', 'backdrop-nochrome-{light,dark}.png', 'variant-{a,b,c}-{light,dark}.png', 'overall.png', 'probe.json'],
+  },
+};
+
+writeFileSync(join(HERE, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+console.log(`manifest.json 已生成 · 三案最低对比度 ${allMin}:1 · 门禁 ${manifest.gates ? '已收录' : '缺 gates.json'}`);

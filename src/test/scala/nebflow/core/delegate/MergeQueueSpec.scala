@@ -69,12 +69,18 @@ class MergeQueueSpec extends CatsEffectSuite:
   override def beforeEach(context: munit.BeforeEach): Unit =
     MergeQueue.reset()
     removeRetry(tempRoot / "chains")
+    routes.clear()
+    goneSessions.clear()
+    delivered.clear()
 
   override def afterEach(context: munit.AfterEach): Unit =
     MergeQueue.reset()
-    MergeQueue.installLivenessProbe(_ => IO.pure(true))
+    nebflow.core.delegate.MergeQueueTestPorts.install()
     MergeQueue.OwnerGonePort.clear()
     MergeQueue.BlockNotifyPort.clear()
+    routes.clear()
+    goneSessions.clear()
+    delivered.clear()
 
   /** 真 git 基座（main@init + 可选的已并分支形态）。 */
   private def mkRepo(dir: os.Path, branch: String, merge: Boolean): os.Path =
@@ -109,6 +115,19 @@ class MergeQueueSpec extends CatsEffectSuite:
   /** 每条目的监督者 ref（replyTo 断言的期望值——全局 var 会被后建条目覆盖）。 */
   private val sups = scala.collection.mutable.Map.empty[String, ActorRef[AgentEvent]]
 
+  /** 身份路由表：ownerSessionId（= delegateId）→ 该成员自己的 (Sink, 监督者 ref)。 */
+  private val routes = scala.collection.mutable.Map.empty[String, (ActorRef[AgentCommand], ActorRef[AgentEvent])]
+
+  /** 已删会话（P1 新语义下「投不出去」的唯一真实来源）。 */
+  private val goneSessions = scala.collection.mutable.Set.empty[String]
+
+  /** 收件身份记录（身份面断言用：谁收到了这一条）。 */
+  private val delivered = ListBuffer.empty[MergeQueueTestPorts.Sent]
+
+  /** 装一次路由端口：多成员各投各路（端口是进程级单例，逐个装会互相覆盖）。 */
+  private def installPort(): Unit =
+    MergeQueueTestPorts.routing(routes, goneSessions.contains, onDelivered = s => { delivered += s; () })
+
   private def member(
     system: ActorSystem,
     records: ListBuffer[(String, Option[ActorRef[AgentEvent]])],
@@ -127,6 +146,11 @@ class MergeQueueSpec extends CatsEffectSuite:
         s"sup-$delegateId"
       )
     yield
+      // P1 投递身份化：端口按收件身份路由，brief 投给**这个成员自己的** Sink（replyTo = 它
+      // 自己的监督者）。旧的逐个 toActor 装法在多成员夹具里会互相覆盖（后装者劫走前者的
+      // brief），因此改为一张路由表。
+      routes(delegateId) = (child, sup)
+      installPort()
       sups(delegateId) = sup
       MergeQueue.Member(
         delegateId = delegateId,
@@ -139,8 +163,10 @@ class MergeQueueSpec extends CatsEffectSuite:
         parentSessionId = "nebula-root",
         description = s"task for $delegateId",
         readyAt = readyAt,
-        channelKind = "internal",
-        internal = Some(MergeQueue.InternalLeg(child, sup))
+        // 宣告闸批 2026-11-04：属主宣告在案（`delegate_report(category="merge")`）——授窗前提
+        declaredAt = Some(1_000L),
+        declareSource = Some(nebflow.core.delegate.MergeDeclaration.Source.ReportMerge),
+        channelKind = "identity",
       )
 
   private def chainLines(action: String): List[ChainStore.Entry] =
@@ -161,6 +187,9 @@ class MergeQueueSpec extends CatsEffectSuite:
       _ <- IO { MergeQueue.enqueue(earlier.copy(projectKey = "p1")) }
       _ <- IO.sleep(80.millis)
       first = records.toList
+      // P1 身份面观测单点：端口记录是进程级单例（跨两次放行累积）——必须在第二次
+      // 放行之前取快照，否则会把队尾那次投递也算进「第一拍」。
+      firstDelivery = delivered.toList
       _ <- IO { MergeQueue.onTerminal("d-late", Some(MergeQueue.RoundOutcome.Merged)) }
       _ <- IO.sleep(80.millis)
       both = records.toList
@@ -180,7 +209,18 @@ class MergeQueueSpec extends CatsEffectSuite:
         Some(sups("d-late")),
         "the injected turn's replyTo must be the holder's supervisor (merge-round Completed must return to the terminal hook)"
       )
+      // P1 身份面：收件人是**这个成员自己的**投递身份（端口按身份路由，不是靠闭包 ref）。
+      assertEquals(
+        firstDelivery.map(_.ownerSessionId),
+        List("d-late"),
+        "the first turn notice is addressed to the holder's own delivery identity (identity routing, no process-local closure)"
+      )
       assertEquals(both.size, 2, "after the holder's merge round closes the next member is granted (pump)")
+      assertEquals(
+        delivered.toList.map(_.ownerSessionId),
+        List("d-late", "d-early"),
+        "the second turn addresses the NEXT holder's own identity (one delivery per member, in FIFO order)"
+      )
       assert(
         both(1)._1.contains("delegate/d-early"),
         s"the SECOND turn must be d-early (readyAt rank), got: ${both(1)._1.take(120)}"
@@ -363,9 +403,11 @@ class MergeQueueSpec extends CatsEffectSuite:
     val system = ActorSystem(s"mq-7-${scala.util.Random.nextInt(100000)}")
     val records = ListBuffer.empty[(String, Option[ActorRef[AgentEvent]])]
     val repo = mkRepo(tempRoot / "mq7-repo", branch = "delegate/d-gone", merge = false)
-    // 死通道：internal ref 指向不存在的注册表条目 ⇒ 活性探针判死（fail-open 默认恒活
-    // ——装一个假探针把目标判死，模拟会话已终态）。
-    MergeQueue.installLivenessProbe(ref => IO.pure(false))
+    // P1 投递身份化：「死主」= **收件会话已删**（生产端口同一读数：`MailboxProducer` 在
+    // 会话行不在时不写箱，回 `parent-session-gone`）。旧夹具用 `presentOwner=false` 只把
+    // 「在场探针」判死、投递腿照样成功——那是闭包时代的形状（投给死 ref 才叫投不出去）；
+    // 身份投递下「写盘必达」，投不出去只能因为会话真的没了。
+    goneSessions += "d-gone"
     val escalations = ListBuffer.empty[(String, String)]
     MergeQueue.OwnerGonePort.install((m, reason) => IO { escalations += ((m.delegateId, reason)) })
     for
@@ -377,7 +419,7 @@ class MergeQueueSpec extends CatsEffectSuite:
       reason = MergeQueue.find("d-gone").flatMap(_.closeReason)
       _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
     yield
-      MergeQueue.installLivenessProbe(_ => IO.pure(true)) // 复位探针（后续用例恒活）
+      nebflow.core.delegate.MergeQueueTestPorts.install() // 复位探针（后续用例恒活）
       assertEquals(got.size, 0, "no merge notice is ever injected into a dead session")
       assertEquals(state, Some("owner-gone"), "the member is closed as owner-gone (visible, never silently parked)")
       assert(reason.exists(_.contains("undeliverable")), s"the close reason names the delivery failure: $reason")
@@ -423,7 +465,7 @@ class MergeQueueSpec extends CatsEffectSuite:
       assertEquals(before, Some(("turn-granted", 42L)), "the member was granted before the restart")
       assertEquals(after.map(_.state), Some("turn-granted"), "the ledger reloads from disk across a restart")
       assertEquals(after.map(_.readyAt), Some(42L), "readyAt is the ledger original value (FIFO rank survives)")
-      assertEquals(after.flatMap(_.internal).isDefined, false, "channel closures are process-local and NOT persisted")
+      assertEquals(after.map(_.ownerSession), Some("d-persist"), "P1：投递身份是持久数据（重启回载后照样投得出去），闭包已整体删除")
       assertEquals(view.map(_.position), Some(1), "the reloaded member still projects its queue position")
     end for
   }
@@ -552,7 +594,7 @@ class MergeQueueSpec extends CatsEffectSuite:
       openRecord = MergeQueueChannel.hasOpenRecord("d-wa", MergeQueue.State.Open)
       // ready-前被杀形态：通道落盘后、账本写盘前进程死亡——boot 从通道收养
       lost <- member(system, records, "d-lost", repo, readyAt = 8L)
-      _ <- IO { MergeQueue.seedChannelOnlyForTest(lost.copy(projectKey = "p13", internal = None)) }
+      _ <- IO { MergeQueue.seedChannelOnlyForTest(lost.copy(projectKey = "p13")) }
       _ <- IO { MergeQueue.dropMemoryStateForTest() } // 重启（d-lost 无账本行）
       adopted = MergeQueue.find("d-lost")
       _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
@@ -560,65 +602,75 @@ class MergeQueueSpec extends CatsEffectSuite:
       assertEquals(fileExists, true, "enqueue must land the channel mirror on disk (write-ahead, before the ledger)")
       assertEquals(before, Some(("turn-granted", true)), "the member was granted before the restart")
       assertEquals(after.map(_.state), Some("turn-granted"), "boot replay restores the queue state from disk")
-      assertEquals(after.flatMap(_.internal).isDefined, false, "closures stay process-local — only the data plane persists")
+      assertEquals(after.map(_.ownerSession), Some("d-wa"), "P1：身份随账本持久（数据面唯一真源，闭包已删）")
       assertEquals(openRecord, true, "the un-closed channel record survives the restart (owner-gone premise)")
       assertEquals(adopted.map(_.state), Some("waiting"), "a channel-only member (ledger write lost) is ADOPTED at boot — the ready-killed gap is closed")
       assertEquals(adopted.map(_.readyAt), Some(8L), "the adopted member keeps its FIFO rank")
     end for
   }
 
-  // ── ⑬ owner-gone 前提反转（R5）：内存缺席不再判死 ────────────────────
+  // ── ⑬ 重启后的投递（R5 前提反转的新真值）：身份随账本 ⇒ 照样投得出去 ──
 
-  test("⑬ owner-gone premise inversion: a restarted member with an un-closed channel record is preserved on grant attempts (never owner-gone); a ledger-only member without a record still closes owner-gone") {
+  test("⑬ owner-gone premise inversion (P1): a restarted member still DELIVERS — the delivery identity is ledger data, not a process-local closure; owner-gone now fires only when the delivery itself fails (session gone)") {
     val system = ActorSystem(s"mq-14-${scala.util.Random.nextInt(100000)}")
     val records = ListBuffer.empty[(String, Option[ActorRef[AgentEvent]])]
     val repo = mkRepo(tempRoot / "mq14-repo", branch = "delegate/d-premise", merge = false)
+    val repo2 = mkRepo(tempRoot / "mq14b-repo", branch = "delegate/d-gone-au", merge = false)
     val notices = ListBuffer.empty[(String, String)]
     MergeQueue.BlockNotifyPort.install((m, kind, reason) => IO { notices += ((m.delegateId, s"$kind|$reason")) })
+    val escalations = ListBuffer.empty[(String, String)]
+    MergeQueue.OwnerGonePort.install((m, reason) => IO { escalations += ((m.delegateId, reason)) })
     for
       a <- member(system, records, "d-premise", repo, readyAt = 1L)
       _ <- IO { MergeQueue.enqueue(a.copy(projectKey = "p14")) }
       _ <- IO.sleep(80.millis)
-      _ <- IO { MergeQueue.dropMemoryStateForTest() } // 重启：闭包消亡，通道镜像在盘
+      firstGrant = MergeQueue.find("d-premise").map(_.state)
+      _ <- IO { MergeQueue.dropMemoryStateForTest() } // 重启：内存清零（闭包/进程态全没），盘上账在
       holder = MergeQueue.find("d-premise").map(_.state)
       _ <- IO { MergeQueue.preserveAfterRestart("d-premise", "boot sweep: window returned (channel record open)") }
       preserved = MergeQueue.find("d-premise").map(m => (m.state, m.grantedAt))
-      _ <- IO { MergeQueue.pump("p14") } // 无活通道的放行尝试
+      _ <- IO { MergeQueue.pump("p14") } // 重启后的放行尝试（旧语义在这里判「无活投递通道」）
       state = MergeQueue.find("d-premise").map(_.state)
-      reason = MergeQueue.find("d-premise").flatMap(_.lastBlockReason)
-      _ <- IO.blocking { (2 to MergeQueue.EscalateAfterBlockedRounds).foreach(_ => MergeQueue.pump("p14")) }
-      after = notices.toList
-      // 对照组：无通道镜像的存量账面（直写账本）——前提成立，owner-gone 照旧
-      repo2 = mkRepo(tempRoot / "mq14b-repo", branch = "delegate/d-legacy", merge = false)
-      legacy = MergeQueue.Member(
-        delegateId = "d-legacy",
-        branch = "delegate/d-legacy",
-        baseWs = repo2.toString,
-        baseBranch = "main",
-        worktree = false,
-        projectKey = "p14b",
-        taskId = Some("31"),
-        parentSessionId = "nebula-root",
-        description = "legacy",
-        readyAt = 1L,
-        channelKind = "internal"
-      )
-      _ <- IO { MergeQueue.seedMemberForTest(legacy) } // 仅账本——无通道镜像
-      _ <- IO { MergeQueue.pump("p14b") }
-      legacyState = MergeQueue.find("d-legacy").map(_.state)
+      allDeliveries = delivered.toList
+      grantedRows = chainLines("granted").size
+      // 对照组：同形账面，但**收件会话已删** ⇒ 投不出去 ⇒ owner-gone + 恰一次升级
+      _ <- IO { goneSessions += "d-gone-au" }
+      b <- member(system, records, "d-gone-au", repo2, readyAt = 1L)
+      _ <- IO { MergeQueue.enqueue(b.copy(projectKey = "p14b")) }
+      _ <- IO.sleep(50.millis)
+      deadState = MergeQueue.find("d-gone-au").map(_.state)
+      deadReason = MergeQueue.find("d-gone-au").flatMap(_.closeReason)
       _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
     yield
       assertEquals(holder, Some("turn-granted"), "the restart restores the granted state (ledger + channel)")
       assertEquals(preserved, Some(("waiting", None)), "preserveAfterRestart returns the window (waiting, grant cleared)")
-      assertEquals(state, Some("waiting"), "a member with an un-closed channel record must NOT be owner-gone on memory absence")
-      assert(reason.exists(_.contains("un-closed record")), s"the block reason names the channel premise: $reason")
-      // 三条通知：preserve 落账（原因 A）→ Deferred 原因 B ≠ A ⇒ 状态变化重发（既有
-      // 去重语义）→ 同因第 10 拍恰一次 escalate。
-      assertEquals(after.size, 3, "preserve notifies, the changed Deferred cause re-notifies, round N escalates exactly once")
-      assert(after(0)._2.startsWith("blocked|"), "the first notice is the preservation block")
-      assert(after(1)._2.startsWith("blocked|") && after(1)._2.contains("un-closed record"), "the Deferred cause rides as its own blocked notice")
-      assert(after(2)._2.startsWith("escalate|"), "the escalation rides the same blocked premise")
-      assertEquals(legacyState, Some("owner-gone"), "a ledger-only member (no channel record) still closes owner-gone — premise met")
+      assertEquals(firstGrant, Some("turn-granted"), "precondition: the first grant delivered the turn before the restart")
+      assertEquals(
+        state,
+        Some("turn-granted"),
+        "P1：重启后再放行**照样投得出去**（身份是账本数据）——旧「无活投递通道 / Deferred ⇒ 留队判死」那一整类随闭包一起退役"
+      )
+      assertEquals(
+        allDeliveries.size,
+        2,
+        s"one delivery before the restart and one after — the restart does not lose the delivery face: $allDeliveries"
+      )
+      assertEquals(
+        allDeliveries.map(_.ownerSessionId).distinct,
+        List("d-premise"),
+        s"both deliveries address the SAME persistent owner identity (never a process-local closure): $allDeliveries"
+      )
+      assert(
+        allDeliveries.forall(_.brief.contains("merge --no-ff")),
+        "both deliveries carry the merge brief itself (not a placeholder)"
+      )
+      assertEquals(grantedRows, 2, "both grants are audited across the restart (no grant is lost)")
+      // 保留腿的必通知（#943）：preserve 落一条 blocked；随后放行成功把去重账清零。
+      assertEquals(notices.count(_._1 == "d-premise"), 1, s"preserve notifies exactly once and the grant clears the ladder: $notices")
+      assert(notices.head._2.contains("channel record open"), s"the preservation notice names the restart premise: ${notices.head._2}")
+      assertEquals(deadState, Some("owner-gone"), "undeliverable (owner session deleted) ⇒ owner-gone as before — never a silent park")
+      assert(deadReason.exists(_.contains("undeliverable")), s"the close reason names the delivery failure: $deadReason")
+      assertEquals(escalations.map(_._1).toList, List("d-gone-au"), "exactly one owner-gone escalation for the undeliverable member")
     end for
   }
 

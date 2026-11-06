@@ -90,7 +90,9 @@ const active = (page) => page.evaluate(`(() => {
   return (el.id ? '#' + el.id : el.tagName.toLowerCase() + (el.className && typeof el.className === 'string' ? '.' + el.className.trim().split(/\\s+/)[0] : ''));
 })()`);
 
-const mode = (page) => page.evaluate(() => (document.getElementById('nf-mode-chip') || {}).dataset?.mode || 'none');
+// 2026-11-03 10:11 ④：模式胶囊（#nf-mode-chip）已整链退役，探针改读同一个状态源
+// body[data-nf-mode]（js/mode.js publishMode 写入，读数语义 = 旧 chip.dataset.mode）。
+const mode = (page) => page.evaluate(() => document.body.dataset.nfMode || 'none');
 
 const FORM = webForm();
 const JS_FACE = jsSources();
@@ -407,14 +409,12 @@ for (const scheme of ['dark', 'light']) {
 console.log('E 双模态');
 {
   const s = await fresh();
-  // 启动即 meta，且指示器可见
-  const boot = await s.page.evaluate(() => {
-    const chip = document.getElementById('nf-mode-chip');
-    if (!chip) return { exists: false };
-    const r = chip.getBoundingClientRect();
-    return { exists: true, mode: chip.dataset.mode, visible: r.width > 0 && r.height > 0, text: chip.textContent };
-  });
-  check('启动态 = meta 且指示器可见', boot.exists === true && boot.mode === 'meta' && boot.visible === true, JSON.stringify(boot));
+  // 启动即 meta；指示器已退役（2026-11-03 10:11 ④）⇒ 断言 = 状态可读 + DOM 无胶囊
+  const boot = await s.page.evaluate(() => ({
+    mode: document.body.dataset.nfMode || 'none',
+    chipPresent: !!document.getElementById('nf-mode-chip'),
+  }));
+  check('启动态 = meta 且胶囊已退役（0 元素）', boot.mode === 'meta' && boot.chipPresent === false, JSON.stringify(boot));
 
   // `]` 中心区：焦点进消息流
   await s.page.evaluate(() => document.body.focus());
@@ -439,7 +439,7 @@ console.log('E 双模态');
   await s.page.keyboard.press('Space');
   await s.page.waitForTimeout(200);
   const edit = await s.page.evaluate(() => ({
-    mode: document.getElementById('nf-mode-chip').dataset.mode,
+    mode: document.body.dataset.nfMode,
     focus: document.activeElement?.id,
   }));
   check('meta Space → edit，焦点进输入框', edit.mode === 'edit' && edit.focus === 'input', JSON.stringify(edit));
@@ -458,7 +458,7 @@ console.log('E 双模态');
     const ev = new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true, isComposing: true });
     input.dispatchEvent(ev);
     await new Promise((r) => setTimeout(r, 250));
-    return { before, after: (window.__wsSent || []).length, mode: document.getElementById('nf-mode-chip').dataset.mode };
+    return { before, after: (window.__wsSent || []).length, mode: document.body.dataset.nfMode };
   });
   check('IME 合成态 Enter 不发送', ime.after === ime.before, `sent ${ime.before}→${ime.after}`);
   check('IME 合成态 Enter 不切模式', ime.mode === 'edit', ime.mode);
@@ -472,7 +472,7 @@ console.log('E 双模态');
   await s.page.waitForTimeout(350);
   const afterSend = await s.page.evaluate(() => ({
     sent: (window.__wsSent || []).length,
-    mode: document.getElementById('nf-mode-chip').dataset.mode,
+    mode: document.body.dataset.nfMode,
     focus: document.activeElement?.id || document.activeElement?.tagName,
   }));
   check('Enter 发送（产生帧）', afterSend.sent > sent, `${sent}→${afterSend.sent}`);
@@ -1013,7 +1013,7 @@ console.log('K EDIT 模式不穿透');
     const km = await window.__nfProbeModule('/js/keymap.js');
     if (!km.ok) return 'unavailable';
     km.ns.setMode(mm);
-    return document.getElementById('nf-mode-chip') && document.getElementById('nf-mode-chip').dataset.mode;
+    return document.body.dataset.nfMode;
   }, m);
   const selCount = () => s.page.evaluate(() => document.querySelectorAll('#explorer-tree .explorer-item.selected').length);
   const focusInput = () => s.page.evaluate(() => document.getElementById('input')?.focus());

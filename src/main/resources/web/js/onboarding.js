@@ -50,6 +50,8 @@
 //   updateConfig         → configUpdated (same single write path the Settings panel uses)
 
 import state from './state.js';
+// Nebula 退役批（作者令 2026-11-01）：根 agent 的身份键取单一常量（显示名另有读点）。
+import { ROOT_AGENT_KEY } from './rootName.js';
 import { sendWs, onMessage } from './ws.js';
 import { activeView } from './chatView.js';
 import { t, getLocale } from './i18n.js';
@@ -356,7 +358,7 @@ document.addEventListener('keydown', (e) => {
 /** Apply a newly chosen name everywhere the display surface reads it. */
 function renameEverywhere(name) {
   state.rootDisplayName = name;
-  const self = (state.agentsData || []).find((x) => x.name === 'Nebula');
+  const self = (state.agentsData || []).find((x) => x.name === ROOT_AGENT_KEY);
   if (self) self.displayName = name;
   // The header center title (#session-name) is a display face of this name —
   // refresh it NOW. Nothing in the rename path re-renders the sidebar (the

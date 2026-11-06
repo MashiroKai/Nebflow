@@ -1,0 +1,28 @@
+# 降噪前现网原文（快照 sha256 7f012e2502…，2026-11-04 10:53:42，112 125 行）
+
+## 目标家族 INFO（本批降噪对象）—— presence sendData ×5
+2026-11-04 09:09:47.099 [io-compute-blocker-11] INFO  nebflow.neblink.presence - presence sendData: device=40742cd4-851a-4ec4-a49d-6db2509bf03d channel=agent-identity connectionsHasKey=false
+2026-11-04 09:09:47.578 [io-compute-blocker-18] INFO  nebflow.neblink.presence - presence sendData: device=40742cd4-851a-4ec4-a49d-6db2509bf03d channel=agent-session connectionsHasKey=false
+2026-11-04 09:09:47.668 [io-compute-blocker-18] INFO  nebflow.neblink.presence - presence sendData: device=40742cd4-851a-4ec4-a49d-6db2509bf03d channel=agent-session connectionsHasKey=false
+2026-11-04 09:09:47.777 [io-compute-blocker-18] INFO  nebflow.neblink.presence - presence sendData: device=40742cd4-851a-4ec4-a49d-6db2509bf03d channel=agent-session connectionsHasKey=false
+2026-11-04 09:09:47.872 [io-compute-blocker-18] INFO  nebflow.neblink.presence - presence sendData: device=40742cd4-851a-4ec4-a49d-6db2509bf03d channel=agent-session connectionsHasKey=false
+
+## 目标家族 INFO —— session-sync push ×5
+2026-11-04 09:09:47.572 [io-compute-6] INFO  nebflow.neblink.session-sync - session-sync push: session=subtask-d5fffa39 status=failed updatedAt=1787614082599 bytes=387 targets=1
+2026-11-04 09:09:47.667 [io-compute-blocker-18] INFO  nebflow.neblink.session-sync - session-sync push: session=subtask-2da2915b status=failed updatedAt=1787614082599 bytes=387 targets=1
+2026-11-04 09:09:47.777 [io-compute-blocker-18] INFO  nebflow.neblink.session-sync - session-sync push: session=subtask-55e76993 status=failed updatedAt=1787614082599 bytes=387 targets=1
+2026-11-04 09:09:47.871 [io-compute-blocker-18] INFO  nebflow.neblink.session-sync - session-sync push: session=subtask-d0594d7c status=failed updatedAt=1787614082599 bytes=387 targets=1
+2026-11-04 09:09:47.967 [io-compute-blocker-18] INFO  nebflow.neblink.session-sync - session-sync push: session=subtask-ea28986b status=completed updatedAt=1787614371232 bytes=390 targets=1
+
+## 失败/异常面（本批【不降级】：这些行不经 TransportLog，级别分毫未动）
+### WARN nebflow.neblink.presence —— dial/reconnect 失败族，共 175 行
+2026-11-04 09:10:19.674 [io-compute-blocker-29] WARN  nebflow.neblink.presence - Presence dial failed for KAI via http://100.91.165.120:6138: timeout after 3000ms (dial target 100.91.165.120:6138; tried 2 candidate endpoint(s))
+2026-11-04 09:10:21.178 [io-compute-blocker-29] WARN  nebflow.neblink.presence - Presence dial failed for KAI via http://192.168.1.145:6138: timeout after 1500ms (dial target 192.168.1.145:6138; tried 2 candidate endpoint(s))
+2026-11-04 09:10:49.708 [io-compute-blocker-9] WARN  nebflow.neblink.presence - Presence dial failed for KAI via http://100.91.165.120:6138: timeout after 3000ms (dial target 100.91.165.120:6138; tried 2 candidate endpoint(s))
+
+### WARN/ERROR nebflow.neblink.session-sync —— 0 行（frame REJECTED 等，本批零改动）
+
+## 重要旁证（不在本批范围，供作者判断）：presence 直连腿今日 100% 不通
+   - presence sendData 49 570 行 connectionsHasKey 全部 false ⇒ 每条外推都在走 relay 兜底
+   - 同一时段 WARN 'Presence dial failed for KAI via …: timeout' 175 行（100.91.165.120:6138 / 192.168.1.145:6138 两个候选都超时）
+   ⇒ 这批噪音的「量」本身就是「P2P 直连一直没建立」的症状；降噪只是止血，病灶在直连。

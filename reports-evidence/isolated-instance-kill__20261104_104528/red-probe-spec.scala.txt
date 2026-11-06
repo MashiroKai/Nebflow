@@ -1,0 +1,134 @@
+package nebflow.cli
+
+import cats.effect.unsafe.implicits.global
+import munit.FunSuite
+import nebflow.shared.PathUtil
+
+import scala.collection.mutable.ListBuffer
+
+/**
+ * 红证据探针（隔离实例误伤批 2026-11-04）—— **只在 HEAD（修复前）源码树上编译运行**，
+ * 存在的唯一目的是把「修复前行为违反新法则」机械地跑出来（红），断言名与本批落地
+ * 的 `IsolatedInstanceScopeSpec` 逐字一致（红→绿对账用）。
+ *
+ * 只用 HEAD 已有的 API（无 `InstanceScope`，无 `homeProof` 注入口），因此修复后的
+ * 树上本文件不参与编译（同一断言名在 `IsolatedInstanceScopeSpec` 里是绿的）。
+ */
+class IsolatedScopeRedProbeSpec extends FunSuite:
+
+  private val CanaryHome = "/tmp/seal-canary-home"
+  private val ProdHome = "/Users/kaiyu/.stand"
+
+  private def withTempRoot(f: => Unit): Unit =
+    val original = PathUtil.dataRoot
+    val tmp = os.temp.dir(prefix = "iso-red-probe-")
+    try
+      PathUtil.setDataRoot(tmp)
+      f
+    finally
+      PathUtil.setDataRoot(original)
+      os.remove.all(tmp)
+
+  private def daemonCmd(home: String): String =
+    s"java --add-opens java.base/java.lang=ALL-UNNAMED -jar /opt/stand/bin/stand-assembly-2026.10.jar start --home $home"
+
+  private final class Rec:
+    val destroyed = ListBuffer[Long]()
+
+  private def deps(rec: Rec, readCmd: Long => Option[String]): ProcessManager.StopDeps =
+    ProcessManager.StopDeps(
+      readCmd = readCmd,
+      listeningPortsOf = _ => Nil,
+      listenerAlive = _ => false,
+      destroy = p => rec.destroyed += p,
+      destroyForcibly = p => rec.destroyed += p,
+      isRunning = pid => !rec.destroyed.contains(pid),
+      graceTimeoutMs = 0L,
+      forceTimeoutMs = 0L,
+      drainTimeoutMs = 0L,
+      pollMs = 0L,
+      gatewayPortOverride = None
+    )
+
+  test("spec A: isolated root without its own port ⇒ port resolution REFUSED (never the brand default 6138)") {
+    // HEAD 的端口链完全不看 home: 隔离根无声明 ⇒ 静默回落品牌缺省口。
+    val resolved = nebflow.gateway.GatewayConfig.resolvePort(None, None, None).value
+    assert(
+      resolved != 6138,
+      s"HEAD resolved the isolated root to the production default port $resolved (must be REFUSED by the isolated-root law)"
+    )
+  }
+
+  test("spec C: inherited env port is NOT explicit for an overridden root (WARN names it) and never becomes 6138") {
+    // HEAD: 继承来的 STAND_GATEWAY_PORT=6138 被当成显式端口 ⇒ 直接取生产口。
+    val resolved = nebflow.gateway.GatewayConfig.resolvePort(None, Some("6138"), None).value
+    assert(
+      resolved != 6138,
+      s"HEAD treated the inherited env port as explicit and picked the production port $resolved"
+    )
+  }
+
+  test("spec B: target home differs from caller home ⇒ REFUSED naming both homes, zero signal") {
+    withTempRoot {
+      // 事故形状：本根（隔离根）的 .pid 记着一个 pid，而那个 pid 的 home 是别人的。
+      // HEAD 的停机面**不看 home**：它会把这个「别人的实例」当成自己的停掉。
+      ProcessManager.writePid(44339L)
+      // launcher 记账（否则所有权门先拒，测不到 home 门）
+      nebflow.cli.PidMeta.writeFreshFor(nebflow.cli.PidMeta.StartedByLauncher, nebflow.cli.PidMeta.ModeDaemon, 44339L)
+      val rec = new Rec
+      val outcome = ProcessManager
+        .stopHardened(
+          ProcessManager.StopOptions(),
+          deps(rec, _ => Some(daemonCmd(ProdHome)))
+        )
+        .unsafeRunSync()
+      outcome match
+        case ProcessManager.StopOutcome.Refused(reason) =>
+          assert(reason.contains(ProdHome), reason)
+          assert(reason.contains("zero signal"), reason)
+        case other =>
+          fail(
+            s"HEAD did not refuse a target of another home (pid file = its own, target home = $ProdHome): $other; " +
+              s"signals sent = ${rec.destroyed.toList}"
+          )
+    }
+  }
+
+  test("spec B: target pid != caller's .pid (44339 vs 68701) ⇒ prod shape always REFUSED") {
+    withTempRoot {
+      ProcessManager.writePid(68701L) // canary 记账
+      val rec = new Rec
+      val readCmd: Long => Option[String] = {
+        case 68701L => Some(daemonCmd(CanaryHome))
+        case 44339L => Some(daemonCmd(ProdHome))
+        case _      => Some(daemonCmd(ProdHome))
+      }
+      val outcome = ProcessManager
+        .stopHardened(ProcessManager.StopOptions(), deps(rec, readCmd))
+        .unsafeRunSync()
+      assert(
+        !rec.destroyed.contains(44339L),
+        s"HEAD signalled the production instance 44339: ${rec.destroyed.toList} (outcome=$outcome)"
+      )
+    }
+  }
+
+  test("spec D: occupant of another home classifies OtherHomeInstance (never focused)") {
+    // HEAD 树上的机器证明：**这个分类根本不存在**，因此「另一个 home 的活实例」
+    // 只能落进 NebflowInstance（focus existing / 静默借用宿主实例）或
+    // ensureSingleInstance 的 verified-stale 腿（destroyForcibly）。
+    // 判据一：SingleInstanceGuard 的 PortState 里没有任何带 home 的形态。
+    val guardSrc = scala.io.Source.fromFile("src/main/scala/nebflow/cli/SingleInstanceGuard.scala").mkString
+    assert(
+      guardSrc.contains("OtherHomeInstance"),
+      "HEAD has NO OtherHomeInstance state — a same-brand occupant of another home can only be NebflowInstance (focus) or verified-stale (destroyForcibly)"
+    )
+    // 判据二：启动面的单实例闸没有任何 home 归属证明（先 classify，再 destroyForcibly）。
+    val mainSrc = scala.io.Source.fromFile("src/main/scala/nebflow/cli/../../gateway/GatewayMain.scala").mkString
+    assert(
+      mainSrc.contains("proveHome") || mainSrc.contains("InstanceScope"),
+      "HEAD's ensureSingleInstance has no home-ownership proof — an unprovable occupant falls through to destroyForcibly"
+    )
+  }
+
+end IsolatedScopeRedProbeSpec

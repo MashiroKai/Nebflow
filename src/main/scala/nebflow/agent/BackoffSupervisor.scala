@@ -1,6 +1,6 @@
 package nebflow.agent
 
-import cats.effect.{Fiber, IO, Ref}
+import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
@@ -74,7 +74,14 @@ object BackoffSupervisor:
      * A 段等待屏罩兜底计时上限（spec 注入缝——测试 JVM 下 sys.props 不可靠，
      * NodeEngine.bgWaitCapMs 同款构造器缝先例）。
      */
-    bgWaitCapMs: Long = Defaults.BgGateWaitTimeoutMs
+    bgWaitCapMs: Long = Defaults.BgGateWaitTimeoutMs,
+    /**
+     * **R5（bg-turn-end barrier idle 上限放行批 2026-11-04）**：等待屏罩的**空闲**
+     * 上限（ms）——等待集里每个后台作业都「一段时间没有新输出」且已达此上限 ⇒
+     * 放行回合收尾（不再等那个永不结束的作业）。0/负数 = 关闭本腿（旧行为）。
+     * 默认 [[Defaults.BgTurnEndIdleCapMs]]（15min）；构造器缝 = spec 注入点。
+     */
+    bgIdleCapMs: Long = Defaults.BgTurnEndIdleCapMs
   ): Behavior[AgentEvent] =
     Behaviors.setup { ctx =>
       // R11 第 4 层（作者裁定 U1=C-a / U8=(ii)）：**仅 Delegate 轨**装配 3600s
@@ -96,7 +103,7 @@ object BackoffSupervisor:
       // 兜底计时器句柄（每等待期重臂，NodeStarter 桥 bg-wait 同款形态）+ cap
       // 触发闩（到点强制终判的复检回合路由）。
       val bgWaitHeld = Ref.unsafe[IO, Boolean](false)
-      val bgWaitCapFiber = Ref.unsafe[IO, Option[Fiber[IO, Throwable, Unit]]](None)
+      val bgWaitCapArm = Ref.unsafe[IO, Long](0L)
       val bgWaitCapFired = Ref.unsafe[IO, Boolean](false)
       budgetArmedIO *> ctx.watch(childRef) *>
         logger
@@ -123,11 +130,31 @@ object BackoffSupervisor:
               maxRestarts,
               withinTimeRange,
               bgWaitCapMs,
+              bgIdleCapMs,
               bgWaitHeld,
-              bgWaitCapFiber,
+              bgWaitCapArm,
               bgWaitCapFired
             )
           )
+    }
+
+  /**
+   * R5 空闲上限判据（纯函数，spec 判红锚；零 IO）：等待集里**每一个**作业的最近
+   * 活动时刻（`max(启动时刻, 最近输出行时刻)`）距今都 ≥ `idleCapMs` ⇒ true。
+   *
+   * 为什么「全部空闲」而不是「任一空闲」：只要还有一个作业在产出，等它就有意义
+   * （编译/测试的长尾），此时不该放行；只有当整集**都**不动了，继续等下去只是
+   * 让回合与父会话干等（79c40e17 实证形态）。
+   * `idleCapMs <= 0` = 本腿关闭（false，回到墙钟总额唯一兜底）。
+   */
+  private[agent] def bgIdleCapReached(
+    activities: List[(Long, Option[Long])], // (startedAtMs, lastOutputAtMs)
+    nowMs: Long,
+    idleCapMs: Long
+  ): Boolean =
+    idleCapMs > 0L && activities.nonEmpty && activities.forall { case (startedAtMs, lastOutputAt) =>
+      val lastActivity = math.max(startedAtMs, lastOutputAt.getOrElse(0L))
+      nowMs - lastActivity >= idleCapMs
     }
 
   /** Active state: forwards completion/failure to parent, restarts on Terminated. */
@@ -152,8 +179,9 @@ object BackoffSupervisor:
     maxRestarts: Int,
     withinTimeRange: FiniteDuration,
     bgWaitCapMs: Long,
+    bgIdleCapMs: Long,
     bgWaitHeld: Ref[IO, Boolean],
-    bgWaitCapFiber: Ref[IO, Option[Fiber[IO, Throwable, Unit]]],
+    bgWaitCapArm: Ref[IO, Long],
     bgWaitCapFired: Ref[IO, Boolean]
   ): Behavior[AgentEvent] =
     new Behavior[AgentEvent]:
@@ -201,7 +229,20 @@ object BackoffSupervisor:
                   // （merged / failed；回合外 = None → 账实核对回落 owner-gone）
                   // ——无留队待重试语义。
                   val note = bgWaitNote.fold("")(n => s"\n[delegate-bg-wait] $n")
-                  terminalDiffMetadata().flatMap(diff =>
+                  // 矩阵接线（通知矩阵批 2026-11-03 · 作者 18:14）：finish×complete ⇒
+                  // decide(Finish)=ReportToParent——结果照常回报主 agent（既有终态投递
+                  // 主路径），**不额外发任何 reminder**。
+                  val finishNotify: IO[Unit] =
+                    nebflow.core.delegate.DelegateCompletionMatrix.decide(
+                      nebflow.core.delegate.DelegateCompletionMatrix.SessionState.Finish
+                    ) match
+                      case nebflow.core.delegate.DelegateCompletionMatrix.NotifyDecision.ReportToParent => IO.unit
+                      case other =>
+                        logger.warn(
+                          s"BackoffSupervisor: matrix invariant drift for $subagentId — finish×complete decided '$other' " +
+                            "(expected ReportToParent); the terminal receipt still goes to the parent, no reminder is sent"
+                        )
+                  finishNotify *> terminalDiffMetadata().flatMap(diff =>
                     notifyParentAndStop(
                       "completed",
                       payload + suffix + note,
@@ -210,10 +251,12 @@ object BackoffSupervisor:
                     )
                   )
                 case Right(nebflow.core.delegate.DelegateTerminal.Outcome.HoldForMerge) =>
-                  // 合并回执通知链修复批 2026-10-31（作者 08:38 裁定：「delegate 不是
-                  // 应该合并完成了才通知你吗——怎么还没合并就通知你了，然后合并完了
-                  // 也没通知你」）：ready-to-merge 停靠**不再向父投工作结果**——投递
-                  // 可靠性批 2026-10-29「停靠即投」就此撤销。
+                  // 合并回执通知链修复批 2026-10-31（作者 08:38 裁定）：ready-to-merge
+                  // 停靠不投递工作结果、**零完成提醒注入**——合并窗预算照常重挂、
+                  // Waiting 快照、WS delegateWaiting mode="merge" 照旧（通知矩阵批
+                  // 2026-11-03 · 作者 18:14：merge×complete = QueueSilently——下面
+                  // 接线决策点自证本腿无任何 reminder 腿；合并轮执行指令
+                  // MergeQueue.notifyTurn 是引擎授命的合并 brief，非完成提醒，保留）。
                   // 断点定位（撤销理由）：停靠投递与合并轮终态回执**共用
                   // correlationId=delegateId**，父 intake 的 DeliveredReceiptLedger 按
                   // 身份键恰一次判重——停靠件注入即标记 delegateId 已投递 ⇒ 合并落地
@@ -229,75 +272,90 @@ object BackoffSupervisor:
                   //
                   // 合并窗预算重挂（旧窗口随工作相终结释放；DelegateBudget ∈
                   // agent 层——core 钩子只回 Outcome，重挂留在本层，分层纪律）。
-                  DelegateBudget
-                    .release(subagentId)
-                    .*>(
-                      logger.info(
-                        s"BackoffSupervisor: delegate $subagentId held for merge round (parent NOT notified — the single terminal receipt follows when the merge lands; fresh merge-window budget armed)"
+                  // 矩阵接线：decide(Merge)=QueueSilently——本腿零提醒注入的机械
+                  // 自证（决策单点 [[nebflow.core.delegate.DelegateCompletionMatrix]]）。
+                  val mergeSilence: IO[Unit] =
+                    nebflow.core.delegate.DelegateCompletionMatrix.decide(
+                      nebflow.core.delegate.DelegateCompletionMatrix.SessionState.Merge
+                    ) match
+                      case nebflow.core.delegate.DelegateCompletionMatrix.NotifyDecision.QueueSilently => IO.unit
+                      case other =>
+                        logger.warn(
+                          s"BackoffSupervisor: matrix invariant drift for $subagentId — merge×complete decided '$other' " +
+                            "(expected QueueSilently); the parked merge round sends no completion reminder"
+                        )
+                  mergeSilence.*>(
+                    DelegateBudget
+                      .release(subagentId)
+                      .*>(
+                        logger.info(
+                          s"BackoffSupervisor: delegate $subagentId held for merge round (parent NOT notified — the single terminal receipt follows when the merge lands; fresh merge-window budget armed)"
+                        )
                       )
-                    )
-                    .*>(
-                      DelegateBudget
-                        .register(subagentId)(ctx.self ! AgentEvent.Cancelled(subagentId, "merge-window-timeout"))
-                    )
-                    .*>(
-                      logger.info(
-                        s"BackoffSupervisor: delegate $subagentId held for merge round (fresh merge-window budget armed)"
+                      .*>(
+                        DelegateBudget
+                          .register(subagentId)(ctx.self ! AgentEvent.Cancelled(subagentId, "merge-window-timeout"))
                       )
-                    )
-                    // 显式等待停靠态（平台修复批 fix 4，2026-10-21）：ready-to-merge
-                    // 停靠不再貌似 Idle 完成——registry 状态快照置 Waiting（等待屏障
-                    // 语义：TaskStuckWatcher 豁免 / MailIdleGate 视同可投递 / 面板
-                    // 快照透出 "Waiting"），父会话与作者都看得见「在等合并轮」。
-                    // 清理面零新增：终态腿 notifyParentAndStop 本就整行移除 registry。
-                    .*>(
-                      resources.agentRegistry.modify { m =>
-                        m.get(subagentId) match
-                          case Some(rec) if rec.status != AgentStatus.Waiting =>
-                            (m.updated(subagentId, rec.copy(status = AgentStatus.Waiting)), ())
-                          case _ => (m, ())
-                      }
-                    )
-                    .*>(
-                      wsSend match
-                        case Some(send) =>
-                          send(
-                            Json.obj(
-                              "type" -> "delegateWaiting".asJson,
-                              "sessionId" -> subagentId.asJson,
-                              "rootSessionId" -> parentSessionId.asJson,
-                              "mode" -> "merge".asJson
-                            )
-                          ).handleErrorWith(e => logger.warn(s"delegateWaiting WS frame failed: ${e.getMessage}"))
-                        case None => IO.unit
-                    )
-                    .as(
-                      active(
-                        childRef,
-                        childSpawnFn,
-                        childName,
-                        parentRef,
-                        description,
-                        agentName,
-                        subagentId,
-                        parentSessionId,
-                        resources,
-                        initialPrompt,
-                        source,
-                        extraMetadata,
-                        wsSend,
-                        restartCount,
-                        restartHistory,
-                        minBackoff,
-                        maxBackoff,
-                        maxRestarts,
-                        withinTimeRange,
-                        bgWaitCapMs,
-                        bgWaitHeld,
-                        bgWaitCapFiber,
-                        bgWaitCapFired
+                      .*>(
+                        logger.info(
+                          s"BackoffSupervisor: delegate $subagentId held for merge round (fresh merge-window budget armed)"
+                        )
                       )
-                    )
+                      // 显式等待停靠态（平台修复批 fix 4，2026-10-21）：ready-to-merge
+                      // 停靠不再貌似 Idle 完成——registry 状态快照置 Waiting（等待屏障
+                      // 语义：TaskStuckWatcher 豁免 / MailIdleGate 视同可投递 / 面板
+                      // 快照透出 "Waiting"），父会话与作者都看得见「在等合并轮」。
+                      // 清理面零新增：终态腿 notifyParentAndStop 本就整行移除 registry。
+                      .*>(
+                        resources.agentRegistry.modify { m =>
+                          m.get(subagentId) match
+                            case Some(rec) if rec.status != AgentStatus.Waiting =>
+                              (m.updated(subagentId, rec.copy(status = AgentStatus.Waiting)), ())
+                            case _ => (m, ())
+                        }
+                      )
+                      .*>(
+                        wsSend match
+                          case Some(send) =>
+                            send(
+                              Json.obj(
+                                "type" -> "delegateWaiting".asJson,
+                                "sessionId" -> subagentId.asJson,
+                                "rootSessionId" -> parentSessionId.asJson,
+                                "mode" -> "merge".asJson
+                              )
+                            ).handleErrorWith(e => logger.warn(s"delegateWaiting WS frame failed: ${e.getMessage}"))
+                          case None => IO.unit
+                      )
+                      .as(
+                        active(
+                          childRef,
+                          childSpawnFn,
+                          childName,
+                          parentRef,
+                          description,
+                          agentName,
+                          subagentId,
+                          parentSessionId,
+                          resources,
+                          initialPrompt,
+                          source,
+                          extraMetadata,
+                          wsSend,
+                          restartCount,
+                          restartHistory,
+                          minBackoff,
+                          maxBackoff,
+                          maxRestarts,
+                          withinTimeRange,
+                          bgWaitCapMs,
+                          bgIdleCapMs,
+                          bgWaitHeld,
+                          bgWaitCapArm,
+                          bgWaitCapFired
+                        )
+                      )
+                  )
                 case Right(nebflow.core.delegate.DelegateTerminal.Outcome.RequeueForLane(reason)) =>
                   // 病灶②收口（投递可靠性批 2026-10-29 · 作者令 23:57「道忙应 REQUEUE，
                   // 只有属主死灭的孤儿合并才走 abort+关账」）：合并轮撞道忙 = 不是失败
@@ -306,11 +364,25 @@ object BackoffSupervisor:
                   // MailIdleGate 可投递 / 面板可见）；道净后 careTick 放行腿自动重排
                   // （重新授窗 → 合并轮指令重新注入本会话）。会话预算重挂（合并窗语义
                   // ——现值为 no-op 墓碑，机制重挂时本腿自动正确）。
-                  DelegateBudget
+                  // 矩阵接线：decide(Merge)=QueueSilently（通知矩阵批 2026-11-03 ·
+                  // 作者 18:14：等合并停靠零注入零唤醒；本腿自证无完成提醒腿）。
+                  val laneSilence: IO[Unit] =
+                    nebflow.core.delegate.DelegateCompletionMatrix.decide(
+                      nebflow.core.delegate.DelegateCompletionMatrix.SessionState.Merge
+                    ) match
+                      case nebflow.core.delegate.DelegateCompletionMatrix.NotifyDecision.QueueSilently => IO.unit
+                      case other =>
+                        logger.warn(
+                          s"BackoffSupervisor: matrix invariant drift for $subagentId — merge×complete decided '$other' " +
+                            "(expected QueueSilently); the lane re-queue sends no completion reminder"
+                        )
+                  laneSilence *> DelegateBudget
                     .release(subagentId)
                     .*>(
                       IO.blocking(nebflow.core.delegate.MergeQueue.requeueForLane(subagentId, reason))
-                        .handleErrorWith(e => logger.warn(s"MergeQueue requeueForLane failed for $subagentId: ${e.getMessage}").void)
+                        .handleErrorWith(e =>
+                          logger.warn(s"MergeQueue requeueForLane failed for $subagentId: ${e.getMessage}").void
+                        )
                     )
                     .*>(
                       DelegateBudget
@@ -364,8 +436,163 @@ object BackoffSupervisor:
                         maxRestarts,
                         withinTimeRange,
                         bgWaitCapMs,
+                        bgIdleCapMs,
                         bgWaitHeld,
-                        bgWaitCapFiber,
+                        bgWaitCapArm,
+                        bgWaitCapFired
+                      )
+                    )
+                case Right(nebflow.core.delegate.DelegateTerminal.Outcome.Standby(detail, declared)) =>
+                  // 待命停靠（案A 批 2026-10-31 · 状态矩阵批 2026-11-01 收编为矩阵
+                  // 组合 complete×standby；**通知矩阵批 2026-11-03 · 作者 18:14 裁定
+                  // 「stand by×complete 不通知」**）：回合收尾不终判——不报父、不停
+                  // actor、不动任务库终态（任务行保持 running——待命≠完工）；registry
+                  // 状态快照置 Waiting（复用 merge 停靠的等待屏障语义：TaskStuckWatcher
+                  // 豁免 / MailIdleGate 可投递 / 面板透出 "Waiting"）；WS 帧
+                  // delegateWaiting mode="standby" 让前端即时换「待命」徽标；
+                  // ~~DelegateStandbyCare 武装退避看护~~ **已停**（矩阵裁定：申报待命
+                  // 腿零注入零唤醒——完成事件静默入队，会话下次自然醒来才可见；
+                  // 本次申报起本腿不武装任何 caretaker）。
+                  // 防退化：终态判定机内已闸拒「分支有未并提交」的 standby——本腿
+                  // 收到的 Standby 必然是可停靠形态（declared 恒 true），不重复检查。
+                  // 矩阵接线：decide(Standby)=QueueSilently（决策单点
+                  // [[nebflow.core.delegate.DelegateCompletionMatrix]]）——本腿不再
+                  // 武装任何 caretaker（零注入零唤醒，完成事件静默入队）。
+                  val standbySilence: IO[Unit] =
+                    nebflow.core.delegate.DelegateCompletionMatrix.decide(
+                      nebflow.core.delegate.DelegateCompletionMatrix.SessionState.Standby
+                    ) match
+                      case nebflow.core.delegate.DelegateCompletionMatrix.NotifyDecision.QueueSilently => IO.unit
+                      case other =>
+                        logger.warn(
+                          s"BackoffSupervisor: matrix invariant drift for $subagentId — standby×complete decided '$other' " +
+                            "(expected QueueSilently); the parked standby leg still sends no reminder"
+                        )
+                  standbySilence
+                    .*>(
+                      logger.info(
+                        s"BackoffSupervisor: delegate $subagentId parked in standby " +
+                          "(matrix standby×complete ⇒ silent queue, zero nudge — author 2026-11-03 18:14; " +
+                          s"completion event queued silently, visible at the session's next natural wake): ${detail.take(200)}"
+                      )
+                    )
+                    .*>(resources.agentRegistry.modify { m =>
+                      m.get(subagentId) match
+                        case Some(rec) if rec.status != AgentStatus.Waiting =>
+                          (m.updated(subagentId, rec.copy(status = AgentStatus.Waiting)), ())
+                        case _ => (m, ())
+                    })
+                    .*>(
+                      resources.subAgentTaskStore
+                        .updateStatus(parentSessionId, subagentId, "running")
+                        .handleErrorWith(e => logger.warn(s"standby task-row reset failed: ${e.getMessage}"))
+                    )
+                    .*>(wsSend match
+                      case Some(send) =>
+                        send(
+                          Json.obj(
+                            "type" -> "delegateWaiting".asJson,
+                            "sessionId" -> subagentId.asJson,
+                            "rootSessionId" -> parentSessionId.asJson,
+                            "mode" -> "standby".asJson,
+                            "detail" -> detail.take(500).asJson
+                          )
+                        ).handleErrorWith(e =>
+                          logger.warn(s"delegateWaiting(standby) WS frame failed: ${e.getMessage}")
+                        )
+                      case None => IO.unit)
+                    .as(
+                      active(
+                        childRef,
+                        childSpawnFn,
+                        childName,
+                        parentRef,
+                        description,
+                        agentName,
+                        subagentId,
+                        parentSessionId,
+                        resources,
+                        initialPrompt,
+                        source,
+                        extraMetadata,
+                        wsSend,
+                        restartCount,
+                        restartHistory,
+                        minBackoff,
+                        maxBackoff,
+                        maxRestarts,
+                        withinTimeRange,
+                        bgWaitCapMs,
+                        bgIdleCapMs,
+                        bgWaitHeld,
+                        bgWaitCapArm,
+                        bgWaitCapFired
+                      )
+                    )
+                case Right(nebflow.core.delegate.DelegateTerminal.Outcome.NudgeIdle(chainsInFlight, emptyTurn)) =>
+                  // 未申报空等提醒（状态矩阵批 2026-11-01 · 作者令「complete ×
+                  // idle（未申报）⇒ system reminder 提醒其调整状态，不终判」）：
+                  // 零终态报父、零判词行、不停 actor；任务行诚实回 running（空烧
+                  // 重启后的 restarting 不滞留）；DelegateStandbyCare 以 IdleNudge
+                  // 型武装退避提醒（补报 standby 或 finish）。registry Waiting 不置
+                  // （未申报空等≠申报待命——「待命」徽标只归显式申报；行外观零变化，
+                  // 提醒面承担可见性；补报 standby 的下一轮收尾自然换停靠腿）。
+                  // 矩阵接线：decide(Idle)=InjectReminder（唯一在提醒的腿，
+                  // [[nebflow.core.delegate.DelegateCompletionMatrix]]）。
+                  val idleNotify: IO[Unit] =
+                    nebflow.core.delegate.DelegateCompletionMatrix.decide(
+                      nebflow.core.delegate.DelegateCompletionMatrix.SessionState.Idle
+                    ) match
+                      case nebflow.core.delegate.DelegateCompletionMatrix.NotifyDecision.InjectReminder =>
+                        nebflow.core.delegate.DelegateStandbyCare
+                          .arm(
+                            subagentId,
+                            childRef,
+                            ctx.self,
+                            resources,
+                            nebflow.core.delegate.DelegateStandbyCare.IdleNudge,
+                            chainsInFlight = chainsInFlight,
+                            emptyTurn = emptyTurn
+                          )
+                      case _ => IO.unit // 矩阵不变式：Idle 恒 InjectReminder（防御）
+                  idleNotify
+                    .*>(
+                      logger.info(
+                        s"BackoffSupervisor: delegate $subagentId ended its turn WITHOUT a delegate_report " +
+                          s"(matrix complete×idle: chainsInFlight=$chainsInFlight, emptyTurn=$emptyTurn) — " +
+                          "reminder armed, NO terminal verdict, parent NOT notified"
+                      )
+                    )
+                    .*>(
+                      resources.subAgentTaskStore
+                        .updateStatus(parentSessionId, subagentId, "running")
+                        .handleErrorWith(e => logger.warn(s"nudge-idle task-row reset failed: ${e.getMessage}"))
+                    )
+                    .as(
+                      active(
+                        childRef,
+                        childSpawnFn,
+                        childName,
+                        parentRef,
+                        description,
+                        agentName,
+                        subagentId,
+                        parentSessionId,
+                        resources,
+                        initialPrompt,
+                        source,
+                        extraMetadata,
+                        wsSend,
+                        restartCount,
+                        restartHistory,
+                        minBackoff,
+                        maxBackoff,
+                        maxRestarts,
+                        withinTimeRange,
+                        bgWaitCapMs,
+                        bgIdleCapMs,
+                        bgWaitHeld,
+                        bgWaitCapArm,
                         bgWaitCapFired
                       )
                     )
@@ -400,8 +627,80 @@ object BackoffSupervisor:
             s"(${waiting.map(t => s"'${t.description}' (${t.jobId})").mkString(", ")}) — their completion " +
             "notifications will be lost with this session (honest forced delivery; re-dispatch or re-attach if the work matters)"
 
-        def disarmBgWaitCap: IO[Unit] =
-          bgWaitCapFiber.get.flatMap(_.traverse_(_.cancel).void) *> bgWaitCapFiber.set(None)
+        // R5（bg-turn-end barrier idle 上限放行批 2026-11-04 · 停顿审计 §4-R5）：
+        // 墙钟总额兜底（bgWaitCapMs，2h）之外再加一条**空闲**上限（bgIdleCapMs，
+        // 默认 15min）——等待集里每个作业都「长时间没有任何新输出」时，回合不再被
+        // 一个永不结束的作业吊着（实证：79c40e17 被 `Find stand-website dir`
+        // 吊了 1h49m，未到 2h 总额 ⇒ 回合不收尾 ⇒ 无 Completed ⇒ 无 leg ⇒ 合并队
+        // 头不可投递）。放行语义与墙钟 cap 完全一致：置 fired 闩 + 诚实注记 + 自投
+        // Completed，绝不静默丢结果。
+        def bgIdleCapNote(waiting: List[nebflow.core.tools.BgTaskRegistry.ActiveTask], idleCapMs: Long): String =
+          s"background wait IDLE cap hit (${idleCapMs / 60000L}min without any new output): completion delivered while " +
+            s"${waiting.size} background task(s) are still pending but stalled " +
+            s"(${waiting.map(t => s"'${t.description}' (${t.jobId})").mkString(", ")}) — their completion " +
+            "notifications will be lost with this session (honest forced delivery; re-dispatch or re-attach if the work matters)"
+
+        def disarmBgWaitCap: IO[Unit] = bgWaitCapArm.update(_ + 1L)
+
+        /**
+         * 下一次**真实截止时刻**的毫秒延迟 = min(墙钟腿剩余, idle 腿最早剩余)，
+         * 下限 1ms。idle 腿的要害：截止时刻会随新输出**向后移**——所以每次到点
+         * 都重算，而不是固定小拍去猜（这正是轮询 vs 到点消息的差别）。
+         */
+        def capWakeDelayMs(
+          heldSinceMs: Long,
+          waiting: List[nebflow.core.tools.BgTaskRegistry.ActiveTask],
+          now: Long
+        ): IO[Long] =
+          val wallAt = heldSinceMs + bgWaitCapMs
+          if bgIdleCapMs <= 0L then IO.pure(math.max(1L, wallAt - now))
+          else
+            waiting
+              .traverse(t =>
+                nebflow.core.tools.BgTaskOutputStore
+                  .lastOutputAt(t.jobId)
+                  .handleErrorWith(_ => IO.pure(Option.empty[Long]))
+                  .map(at => (t.startedAtMs, at))
+              )
+              .map { activities =>
+                val idleAt = activities
+                  .map { case (startedAtMs, lastOutputAt) =>
+                    math.max(startedAtMs, lastOutputAt.getOrElse(0L)) + bgIdleCapMs
+                  }
+                  .minOption
+                  .getOrElse(wallAt)
+                math.max(1L, math.min(wallAt, idleAt) - now)
+              }
+
+        /**
+         * 武装兜底计时器（**刀一：到点消息，不轮询**）。
+         *
+         * 一次武装 = 臂号 +1 + 一条 `scheduleOnce` 自投的
+         * [[nebflow.actor.AgentEvent.BgWaitCapTick]]。臂号唯一的用途是**作废旧
+         * Tick**（`scheduleOnce` 无法撤销）：等待期结束、重臂、强制终判都会让旧
+         * Tick 到点时臂号不符而被丢弃——因此「多臂并存」永远是安全的。
+         *
+         * 等待集已空 ⇒ 直接不武装（竞态：唤醒轮在飞，它的 Completed 会走干净
+         * 放行腿）。
+         */
+        def armBgWaitCap(messages: List[Message]): IO[Unit] =
+          val heldSince = System.currentTimeMillis()
+          nebflow.core.tools.BgTaskRegistry.waitingFor(subagentId).flatMap { waiting =>
+            if waiting.isEmpty then disarmBgWaitCap
+            else
+              capWakeDelayMs(heldSince, waiting, heldSince).flatMap { delayMs =>
+                bgWaitCapArm.updateAndGet(_ + 1L).flatMap { arm =>
+                  logger.info(
+                    s"BackoffSupervisor: delegate $subagentId bg-wait cap armed as a TIMED MESSAGE (arm=$arm, " +
+                      s"wake in ${delayMs}ms, ${waiting.size} task(s) pending) — no polling loop"
+                  ) *> ctx.scheduleOnce(
+                    delayMs.millis,
+                    AgentEvent.BgWaitCapTick(subagentId, heldSince, arm, messages)
+                  )
+                }
+              }
+          }
+
 
         def holdForBgWait(
           waiting: List[nebflow.core.tools.BgTaskRegistry.ActiveTask],
@@ -431,46 +730,103 @@ object BackoffSupervisor:
             emitOnce *> armBgWaitCap(messages)
           }
 
-        def armBgWaitCap(messages: List[Message]): IO[Unit] =
-          disarmBgWaitCap *>
-            (IO.sleep(bgWaitCapMs.millis) *>
+        /**
+         * 兜底计时器（每等待期重臂）。两条放行腿，判据都是**事件事实**而非猜测：
+         *   - 墙钟总额：等待期 ≥ [[bgWaitCapMs]]（既有 2h 腿，零行为变化）；
+         *   - **空闲上限（R5）**：等待集里每个作业的最近活动（max(启动时刻, 最近
+         *     输出行时刻)）距今都 ≥ [[bgIdleCapMs]] ⇒ 没有哪个作业还在产出，等它
+         *     也等不出东西（`bgIdleCapMs <= 0` = 关闭本腿，回到旧行为）。
+         * 拍粒度 = 已拆除（刀一：**到点消息**，不是拍）。到点时刻 = min(墙钟腿截止,
+         * idle 腿最早截止)，只在截止时刻**变化**时重臂一次。
+         */
+        /**
+         * 到点 Tick 的处理（**刀一**，替代原 `capLoop` 的 `IO.sleep` 轮询）：
+         *   - 臂号不符 ⇒ 陈旧 Tick，丢弃（等待期已结束/已重臂/已强制终判）；
+         *   - 等待集已空 ⇒ 计时器自然终结（唤醒轮的 Completed 走干净放行腿）；
+         *   - 墙钟腿或 idle 腿到点 ⇒ 既有强制终判语义**逐字不变**；
+         *   - 都未到点（新输出把 idle 截止时刻推后了）⇒ 按**新的真实截止时刻**
+         *     重臂（同一臂号延续本等待期——墙钟腿的 `heldSinceMs` 不变）。
+         */
+        def onBgWaitCapTick(heldSinceMs: Long, arm: Long, snapshot: List[Message]): IO[Behavior[AgentEvent]] =
+          bgWaitCapArm.get.flatMap { cur =>
+            if cur != arm then
+              logger
+                .info(s"BackoffSupervisor: stale bg-wait cap tick for $subagentId (arm $arm vs current $cur) — dropped")
+                .as(this)
+            else
               nebflow.core.tools.BgTaskRegistry.waitingFor(subagentId).flatMap {
-                case Nil => IO.unit // 竞态：唤醒轮在飞，其 Completed 会正常放行
+                case Nil => disarmBgWaitCap.as(this) // 竞态：唤醒轮在飞，其 Completed 会正常放行
                 case still =>
-                  logger.warn(
-                    s"BackoffSupervisor: delegate $subagentId bg-wait cap (${bgWaitCapMs}ms) hit with " +
-                      s"${still.size} task(s) pending — forcing honest terminal delivery"
-                  ) *>
-                    // ── 孤儿登记（修复批 2026-10-24 fix 3「两种死法统一收口」）──
-                    // cap 强制终判 = 本会话终结、这些任务的完成通知将无处投递。
-                    // 逐条写入持久账本（含当时输出尾段快照——「完成事件+输出尾段
-                    // 供续会话拾取，现在直接丢」的收口）：会话若被复活/重派拾取，
-                    // 账本条目即完整证据链；completion 事件此后照常经 BashTool
-                    // recordCompletion 原位升级 orphan 条目（kind 不降级）。
-                    // fail-soft：账本故障绝不阻断强制终判。
-                    still
-                      .traverse { t =>
-                        nebflow.core.tools.BgTaskOutputStore
-                          .read(t.jobId, 0L)
-                          .map(out => out.map(o => o.output.takeRight(2000)).filter(_.trim.nonEmpty))
-                          .handleErrorWith(_ => IO.pure(Option.empty[String]))
-                          .map(tail => (t.jobId, t.description, tail))
-                      }
-                      .flatMap(rows => nebflow.core.tools.BgTaskLedger.markOrphaned(subagentId, rows)) *>
-                    bgWaitCapFired.set(true) *>
-                    bgWaitHeld.set(false) *>
-                    // 🔴 只清句柄不 cancel——此刻正在本 fiber 体内，cancel 自己
-                    // 会让 self-message 永远发不出去（A-4 实测）。句柄清空后外部
-                    // disarm 调用对其 cancel 为 no-op。
-                    bgWaitCapFiber.set(None) *>
-                    // 诊断修复批 2026-10-24：cap 触发时**重载会话最新 transcript**——
-                    // hold 时武装捕获的 messages 是旧轮快照（hold 期唤醒轮的新产出
-                    // 不在其中），直接强投会把过期 payload 交付父会话；重载失败/
-                    // 空读回落旧快照（既有行为，绝不静默丢失复检事件本身）。
-                    latestMessages(subagentId, messages).flatMap(latest =>
-                      (ctx.self ! AgentEvent.Completed(subagentId, latest)).void
-                    )
-              }).start.flatMap(f => bgWaitCapFiber.set(Some(f)))
+                  val now = System.currentTimeMillis()
+                  val wallHit = now - heldSinceMs >= bgWaitCapMs
+                  for
+                    idleHit <-
+                      if wallHit || bgIdleCapMs <= 0L then IO.pure(false)
+                      else
+                        still
+                          .traverse(t =>
+                            nebflow.core.tools.BgTaskOutputStore
+                              .lastOutputAt(t.jobId)
+                              .handleErrorWith(_ => IO.pure(Option.empty[Long]))
+                              .map(at => (t.startedAtMs, at))
+                          )
+                          .map(activities => bgIdleCapReached(activities, now, bgIdleCapMs))
+                    _ <-
+                      if wallHit then
+                        logger.warn(
+                          s"BackoffSupervisor: delegate $subagentId bg-wait cap (${bgWaitCapMs}ms) hit with " +
+                            s"${still.size} task(s) pending — forcing honest terminal delivery (timed message, arm=$arm)"
+                        ) *> forceTerminalDelivery(still, snapshot)
+                      else if idleHit then
+                        logger.warn(
+                          s"BackoffSupervisor: delegate $subagentId bg-wait IDLE cap (${bgIdleCapMs}ms) hit with " +
+                            s"${still.size} task(s) pending and no new output — releasing the turn end (R5: a never-finishing " +
+                            s"background job must not hold the completion forever) (timed message, arm=$arm)"
+                        ) *> forceTerminalDelivery(still, snapshot)
+                      else
+                        // 未到点：截止时刻被新输出推后 ⇒ 按新截止时刻**重臂**同一等待期。
+                        capWakeDelayMs(heldSinceMs, still, now).flatMap { delayMs =>
+                          logger.info(
+                            s"BackoffSupervisor: delegate $subagentId bg-wait cap re-armed (arm=$arm) — " +
+                              s"deadline moved, next wake in ${delayMs}ms"
+                          ) *> ctx.scheduleOnce(
+                            delayMs.millis,
+                            AgentEvent.BgWaitCapTick(subagentId, heldSinceMs, arm, snapshot)
+                          )
+                        }
+                  yield this
+              }
+          }
+
+        /** 强制终判（两腿共用）：孤儿登记 → 置闩 → 自投 Completed（带诚实注记）。 */
+        def forceTerminalDelivery(
+          still: List[nebflow.core.tools.BgTaskRegistry.ActiveTask],
+          messages: List[Message]
+        ): IO[Unit] =          // ── 孤儿登记（修复批 2026-10-24 fix 3「两种死法统一收口」）──
+          // 强制终判 = 本会话终结、这些任务的完成通知将无处投递。逐条写入持久
+          // 账本（含当时输出尾段快照）：会话若被复活/重派拾取，账本条目即完整
+          // 证据链；completion 事件此后照常经 BashTool recordCompletion 原位升级
+          // orphan 条目（kind 不降级）。fail-soft：账本故障绝不阻断强制终判。
+          still
+            .traverse { t =>
+              nebflow.core.tools.BgTaskOutputStore
+                .read(t.jobId, 0L)
+                .map(out => out.map(o => o.output.takeRight(2000)).filter(_.trim.nonEmpty))
+                .handleErrorWith(_ => IO.pure(Option.empty[String]))
+                .map(tail => (t.jobId, t.description, tail))
+            }
+            .flatMap(rows => nebflow.core.tools.BgTaskLedger.markOrphaned(subagentId, rows)) *>
+            bgWaitCapFired.set(true) *>
+            bgWaitHeld.set(false) *>
+            // **刀一**：定时器已改为「到点消息」，撤不掉在途 Tick —— 用臂号让它在
+            // 到点时自认陈旧（处理器臂号不符即丢弃），因此这里只推进臂号。
+            disarmBgWaitCap *>
+            // 诊断修复批 2026-10-24：cap 触发时**重载会话最新 transcript**——
+            // hold 时武装捕获的 messages 是旧轮快照（hold 期唤醒轮的新产出
+            // 不在其中），直接强投会把过期 payload 交付父会话；重载失败/
+            // 空读回落旧快照（既有行为，绝不静默丢失复检事件本身）。
+            latestMessages(subagentId, messages)
+              .flatMap(latest => (ctx.self ! AgentEvent.Completed(subagentId, latest)).void)
 
         /**
          * cap 触发的强制终判用消息快照：优先会话持久层的最新 transcript
@@ -482,7 +838,9 @@ object BackoffSupervisor:
             .map(latest => if latest.nonEmpty then latest else fallback)
             .handleErrorWith(e =>
               logger
-                .warn(s"bg-wait cap: fresh transcript reload failed for $sessionId (${e.getMessage}) — using the held snapshot")
+                .warn(
+                  s"bg-wait cap: fresh transcript reload failed for $sessionId (${e.getMessage}) — using the held snapshot"
+                )
                 .as(fallback)
             )
 
@@ -504,9 +862,28 @@ object BackoffSupervisor:
               if fired then
                 // cap 触发后的复检回合：不再 hold，带注记强制终判（fail-open 交付）。
                 bgWaitCapFired.set(false) *> bgWaitHeld.set(false) *>
-                  nebflow.core.tools.BgTaskRegistry.waitingFor(subagentId).map {
-                    case Nil => BgWaitProceed // 兜底触发与唤醒轮竞态：实际已清空 ⇒ 干净放行
-                    case still => BgWaitForce(bgWaitCapNote(still))
+                  nebflow.core.tools.BgTaskRegistry.waitingFor(subagentId).flatMap {
+                    case Nil => IO.pure(BgWaitProceed: BgWaitDecision) // 兜底触发与唤醒轮竞态：实际已清空 ⇒ 干净放行
+                    case still =>
+                      // R5：「注记指哪条腿」按当下事实判——等待集整体空闲（无新输出）
+                      // 已达 idle 上限 ⇒ idle 注记（说明等的是「不动的作业」）；否则
+                      // 走既有墙钟总额注记。两注记都是诚实面（任务/描述/jobId 全带）。
+                      if bgIdleCapMs <= 0L then IO.pure(BgWaitForce(bgWaitCapNote(still)): BgWaitDecision)
+                      else
+                        still
+                          .traverse(t =>
+                            nebflow.core.tools.BgTaskOutputStore
+                              .lastOutputAt(t.jobId)
+                              .handleErrorWith(_ => IO.pure(None))
+                              .map(at => (t.startedAtMs, at))
+                          )
+                          .map { activities =>
+                            val now = System.currentTimeMillis()
+                            val note =
+                              if bgIdleCapReached(activities, now, bgIdleCapMs) then bgIdleCapNote(still, bgIdleCapMs)
+                              else bgWaitCapNote(still)
+                            BgWaitForce(note): BgWaitDecision
+                          }
                   }
               else
                 // P2 death-watch 活性复检（10-30 合并闸卡死 3 小时病灶收口：
@@ -525,19 +902,19 @@ object BackoffSupervisor:
                       )
                     )
                   } *>
-                nebflow.core.tools.BgTaskRegistry.waitingFor(subagentId).flatMap {
-                  case Nil =>
-                    bgWaitHeld.get.flatMap { held =>
-                      (disarmBgWaitCap *>
-                        IO.whenA(held) {
-                          bgWaitHeld.set(false) *>
-                            logger.info(
-                              s"BackoffSupervisor: delegate $subagentId background task(s) all finished — releasing held completion"
-                            )
-                        }).as(BgWaitProceed)
-                    }
-                  case waiting => holdForBgWait(waiting, messages).as(BgWaitHeld)
-                }
+                  nebflow.core.tools.BgTaskRegistry.waitingFor(subagentId).flatMap {
+                    case Nil =>
+                      bgWaitHeld.get.flatMap { held =>
+                        (disarmBgWaitCap *>
+                          IO.whenA(held) {
+                            bgWaitHeld.set(false) *>
+                              logger.info(
+                                s"BackoffSupervisor: delegate $subagentId background task(s) all finished — releasing held completion"
+                              )
+                          }).as(BgWaitProceed)
+                      }
+                    case waiting => holdForBgWait(waiting, messages).as(BgWaitHeld)
+                  }
             }
 
         event match
@@ -577,8 +954,9 @@ object BackoffSupervisor:
                       maxRestarts,
                       withinTimeRange,
                       bgWaitCapMs,
+                      bgIdleCapMs,
                       bgWaitHeld,
-                      bgWaitCapFiber,
+                      bgWaitCapArm,
                       bgWaitCapFired
                     )
                   )
@@ -617,42 +995,84 @@ object BackoffSupervisor:
           case AgentEvent.Failed(sessionId, error) =>
             val sessionInfo =
               if sessionId.nonEmpty then s" [session=$sessionId]" else ""
-            val retryable = error.errorType match
-              case AgentErrorType.LlmFailed => true
-              case AgentErrorType.Timeout => true
-              case _ => false
-            val failureMeta = JsonObject(
-              "failedSessionId" -> subagentId.asJson,
-              "retryable" -> retryable.asJson,
-              "failureType" -> error.errorType.toString.asJson
-            )
-            // file-diff → 委托结果行（同完成腿）：失败前已写入的文件同样出 diff
-            // 载荷（用户预期 = 任何改了文件的委托批；失败批看「写到哪里了」同价）；
-            // 合并提交统计同面随行（合并轮夭折形态下锚定多半不可读 ⇒ None = 不带键）。
-            val withFc =
-              if source == "delegate" then terminalDiffMetadata().map(_.deepMerge(failureMeta))
-              else IO.pure(failureMeta)
-            withFc.flatMap(fc => notifyParentAndStop("failed", s""""$description": ${error.message}$sessionInfo""", fc))
+            // ═══ 错误冻结腿（错误冻结批 2026-11-01 · 作者令逐字「所有因错误状态的
+            // delegate 应该上报之后 要能保留状态 冻结态 方便被唤醒 接着做」）═══
+            // delegate 轨的回合级失败不再走 failed 终止：同一会话（同 id、同历史、
+            // 同 worktree、同合并队列位）**就地冻结**——registry 置 Frozen + 冻结槽落
+            // 盘 + 台账行 status=frozen + 一条**冻结回执**（eventType="frozen"，不是
+            // failed）入父会话持久邮箱 + 面板 delegateFrozen 帧；actor 保持 active
+            // 行为等待唤醒（唤醒才是重试，引擎不做无限重试）。判词诚实：引擎/上游
+            // 故障绝不写成 agent 的失败。subtask 轨逐字保持既有 failed 终态（重派成本
+            // 低，无留态价值）。
+            if source == "delegate" && nebflow.shared.Defaults.DelegateFreezeEnabled then
+              val fzReason = nebflow.core.delegate.DelegateFreeze.classify(
+                error.errorType.toString,
+                error.message
+              )
+              freezeAndHold(s"${error.message}$sessionInfo", fzReason)
+            else
+              val retryable = error.errorType match
+                case AgentErrorType.LlmFailed => true
+                case AgentErrorType.Timeout => true
+                case _ => false
+              val failureMeta = JsonObject(
+                "failedSessionId" -> subagentId.asJson,
+                "retryable" -> retryable.asJson,
+                "failureType" -> error.errorType.toString.asJson
+              )
+              // file-diff → 委托结果行（同完成腿）：失败前已写入的文件同样出 diff
+              // 载荷（用户预期 = 任何改了文件的委托批；失败批看「写到哪里了」同价）；
+              // 合并提交统计同面随行（合并轮夭折形态下锚定多半不可读 ⇒ None = 不带键）。
+              val withFc =
+                if source == "delegate" then terminalDiffMetadata().map(_.deepMerge(failureMeta))
+                else IO.pure(failureMeta)
+              withFc.flatMap(fc =>
+                notifyParentAndStop("failed", s""""$description": ${error.message}$sessionInfo""", fc)
+              )
+            end if
+
+          // 刀一：等待屏障兜底计时器的**到点消息**（`ctx.scheduleOnce` 自投）。
+          // 凡不是本子会话的 Tick 一律不认（错投防护）。
+          case tick: AgentEvent.BgWaitCapTick if tick.sessionId == subagentId =>
+            onBgWaitCapTick(tick.heldSinceMs, tick.arm, tick.snapshot)
+
+          case _: AgentEvent.BgWaitCapTick =>
+            IO.pure(this) // 别家子会话的 Tick（本监督者是 per-child 实例，正常到不了这里）
 
           case AgentEvent.Cancelled(_, reason) =>
-            // AgentControl cancel（spec §3.2）：与自然终态同路清理——父
-            // ExternalEvent(source 保持 delegate/subtask → barrier 正确释放)
-            // + taskStore cancelled + registry 移除 + child Stop + 自停。
-            // 与 Completed/Failed 竞态：mailbox 串行，首个终态胜出，supervisor
-            // 停止后其余消息被丢弃（actor 语义），无双重通知。
-            val reasonSuffix = if reason.nonEmpty then s" — $reason" else ""
-            notifyParentAndStop(
-              "cancelled",
-              s""""$description": cancelled by Nebula via AgentControl$reasonSuffix""",
-              JsonObject(
-                "failedSessionId" -> subagentId.asJson,
-                "retryable" -> false.asJson,
-                "failureType" -> "cancelled".asJson,
-                "cancelled" -> true.asJson,
-                "reason" -> reason.asJson
-              ),
-              taskStatusOverride = Some("cancelled")
-            )
+            // 错误冻结批（2026-11-01）：**配额/额度类取消**是「外部条件不足」而非作者
+            // 意图——delegate 轨就地冻结（可等额度恢复后唤醒续做），显式取消（作者
+            // AgentControl cancel / 项目卸载 / 父会话删除 / 卡死硬取消）仍走 cancelled
+            // 终态逐字不变（取消意图必须落地成终态，绝不被冻结漂移）。空依赖
+            // （resource-empty / 孤儿空烧）同归冻结腿——它们是「转不动了」而非
+            // 「不要了」。
+            if source == "delegate" && nebflow.shared.Defaults.DelegateFreezeEnabled &&
+              isQuotaLikeCancel(reason)
+            then
+              freezeAndHold(
+                s"cancelled by the engine: ${if reason.nonEmpty then reason else "quota/budget exhausted"}",
+                nebflow.core.delegate.DelegateFreeze.Reason.CancelledByQuota
+              )
+            else
+              // AgentControl cancel（spec §3.2）：与自然终态同路清理——父
+              // ExternalEvent(source 保持 delegate/subtask → barrier 正确释放)
+              // + taskStore cancelled + registry 移除 + child Stop + 自停。
+              // 与 Completed/Failed 竞态：mailbox 串行，首个终态胜出，supervisor
+              // 停止后其余消息被丢弃（actor 语义），无双重通知。
+              val reasonSuffix = if reason.nonEmpty then s" — $reason" else ""
+              notifyParentAndStop(
+                "cancelled",
+                s""""$description": cancelled by Nebula via AgentControl$reasonSuffix""",
+                JsonObject(
+                  "failedSessionId" -> subagentId.asJson,
+                  "retryable" -> false.asJson,
+                  "failureType" -> "cancelled".asJson,
+                  "cancelled" -> true.asJson,
+                  "reason" -> reason.asJson
+                ),
+                taskStatusOverride = Some("cancelled")
+              )
+            end if
         end match
       end receive
 
@@ -672,16 +1092,194 @@ object BackoffSupervisor:
                 s"BackoffSupervisor: child $childName exceeded maxRestarts " +
                   s"($maxRestarts in ${withinTimeRange}), giving up"
               ) *>
-                notifyParentAndStop(
-                  "failed",
-                  s""""$description": agent crashed and could not recover after $maxRestarts restarts""",
-                  JsonObject(
-                    "failedSessionId" -> subagentId.asJson,
-                    "retryable" -> false.asJson,
-                    "failureType" -> "supervision-exhausted".asJson
-                  )
-                )
+                (if source == "delegate" && Defaults.DelegateFreezeEnabled then
+                   // 错误冻结批（2026-11-01）：监督耗尽 = **引擎侧故障**——delegate 轨
+                   // 不再落 failed（工作现场/分支/worktree 全在，重派即整段白干），
+                   // 就地冻结等唤醒（唤醒 = 同 id 复活，见 DelegateRevival 冻结腿）。
+                   // child 已死（Terminated 触发）⇒ 冻结后本监督者自停（registry 记录
+                   // 保留 = 面板与 Mail 唤醒的地址锚）。
+                   freezeAndHold(
+                     s"the agent crashed and could not recover after $maxRestarts restarts",
+                     nebflow.core.delegate.DelegateFreeze.Reason.EngineFault,
+                     childAlive = false
+                   )
+                 else
+                   notifyParentAndStop(
+                     "failed",
+                     s""""$description": agent crashed and could not recover after $maxRestarts restarts""",
+                     JsonObject(
+                       "failedSessionId" -> subagentId.asJson,
+                       "retryable" -> false.asJson,
+                       "failureType" -> "supervision-exhausted".asJson
+                     )
+                   ))
             end if
+
+      /**
+       * 错误冻结腿（错误冻结批 2026-11-01 · 作者令「所有因错误状态的 delegate 应该
+       * 上报之后 要能保留状态 冻结态 方便被唤醒 接着做」）。
+       *
+       * 语义（判词诚实铁律）：错误 = **冻结态**，不是终止态。本腿做四件事、四件都
+       * 不出终态判词：
+       *   ① 冻结落盘 —— [[nebflow.core.delegate.DelegateFreeze.park]]：registry 冻结槽
+       *      （frozenSince/frozenReason/frozenDetail）+ 台账行 status=frozen（不进 boot
+       *      收殓视野，见 SubAgentStartupRecovery.InFlightStatuses）；
+       *   ② registry 状态 = `AgentStatus.Frozen`（面板徽标/`freezeReason` 面；与
+       *      standby 的 Waiting 显式区分）+ 合并队列处置（持窗成员 requeueForLane 退回
+       *      waiting、**保留 FIFO 位**）；
+       *   ③ 冻结回执入父会话**持久邮箱**（`eventType="frozen"` —— **不是**
+       *      failed/completed/cancelled：不抢终态幂等键、不与后续真终态互吞）+
+       *      `delegateFrozen` WS 帧（面板实时徽标 + 原因 tooltip）；
+       *   ④ **不**调 notifyParentAndStop —— 不写判词行、不关合并队列账、不拆 registry
+       *      行、不发 child Stop（child 若已死则本监督者自停，registry 记录保留 = 唤醒
+       *      地址锚）。
+       *
+       * @param childAlive child actor 是否仍在（Failed/Cancelled 事件 = 在；Terminated /
+       *                   respawn 失败 = 不在——后者冻结后本监督者自停）
+       */
+      private def freezeAndHold(
+        detail: String,
+        reason: nebflow.core.delegate.DelegateFreeze.Reason,
+        childAlive: Boolean = true
+      ): IO[Behavior[AgentEvent]] =
+        val d = nebflow.core.delegate.DelegateFreeze.compactDetail(detail)
+        val workspace = nebflow.core.delegate.DelegateRegistry
+          .find(subagentId)
+          .map(r => r.worktree.getOrElse(r.cwd))
+          .getOrElse("")
+        val receipt =
+          nebflow.core.delegate.DelegateFreeze.receiptText(
+            delegateId = subagentId,
+            description = description,
+            reason = reason,
+            detail = d,
+            workspace = workspace
+          )
+        // 冻结通知策略批（2026-11-05 作者令两连：「然后frozen这种可恢复的，不需要通知，」
+        // + 10:36「不论是节点还是delegate，由于provider 故障，都不需要向上通知，冻结等待
+        // 恢复就行…因为provider 故障上级也基本死了，汇报给上级没用」）：
+        // 分类单点 = `FreezeDisplay`（经 `FreezeNotice`）——**provider 故障族**
+        // （llm-failure / cancelled-by-quota）⇒ **零向上投递**（父会话收不到任何东西），
+        // 面板标「已冻结 · 待你处理」，引擎自己探测恢复后续跑（次数上限 + 递增间隔）；
+        // **确定性缺陷**（tool-failure / engine-fault）⇒ 也不逐条推，交给同波聚合
+        // （`FreezeAlertSweep` 一拍内合并成一条）。静默总闸关闭（回滚开关）时保留旧回执。
+        val tier = nebflow.core.delegate.FreezeNotice.tierOfReason(reason, d)
+        val quiet = nebflow.shared.Defaults.DelegateFreezeSilence
+        val frozenEvent = AgentCommand.ExternalEvent(
+          source = "delegate",
+          eventType = "frozen",
+          payload = receipt,
+          metadata = JsonObject(
+            "description" -> description.asJson,
+            "agentName" -> agentName.asJson,
+            "frozenDelegateId" -> subagentId.asJson,
+            "frozenReason" -> nebflow.core.delegate.DelegateFreeze.wire(reason).asJson,
+            "frozenReasonLabel" -> nebflow.core.delegate.DelegateFreeze.reasonLabelZh(reason).asJson,
+            "noticeTier" -> nebflow.core.delegate.FreezeNotice.tierWire(tier).asJson,
+            "frozenDetail" -> d.asJson,
+            "wakeAddress" -> s"delegate:$subagentId".asJson,
+            "retryable" -> true.asJson,
+            "frozen" -> true.asJson
+          ).deepMerge(extraMetadata),
+          // 身份键带冻结序号（`restartHistory.size`）：同一 delegate 二次冻结是**另
+          // 一份回执**（唤醒后又冻了一次必须让父会话看见），若沿用裸 id 会被
+          // `DeliveredReceiptLedger` 的不过时 intake 闸当重复件吞掉，父会话永远
+          // 不知道第二次冻结。seq=0（首冻）与既有形态同长。
+          correlationId = Some(s"delegate-frozen-$subagentId-${restartHistory.size}")
+        )
+        val persistAndAnnounce =
+          nebflow.core.delegate.DelegateFreeze
+            .park(resources, subagentId, parentSessionId, reason, d)
+            .flatMap { frozenAt =>
+              nebflow.core.delegate.DelegateFreeze.markRegistryState(resources, subagentId, reason) *>
+                IO(nebflow.core.delegate.DelegateFreeze.requeueMergeMember(subagentId, d)) *>
+                DelegateBudget.release(subagentId) *>
+                // 通知面：静默总闸开 ⇒ 监督者**一条都不推**（provider 故障族靠面板 +
+                // 引擎自愈；确定性缺陷由同波聚合发一条）；只记一行 INFO（静默不等于
+                // 无声，日志与面板可查）。总闸关（回滚开关）⇒ 逐字节回旧回执行为。
+                (if quiet then
+                   logger.info(
+                     s"[delegate-freeze] $subagentId frozen (${nebflow.core.delegate.DelegateFreeze.wire(reason)}, " +
+                       s"tier=${nebflow.core.delegate.FreezeNotice.tierWire(tier)}) — no upward notification by design " +
+                       "(provider faults are infrastructure faults, not task failures); the panel badge + panel digest carry it"
+                   )
+                 else
+                   MailboxProducer
+                     .deliver(
+                       resources,
+                       parentSessionId,
+                       frozenEvent,
+                       identity = s"frozen-$subagentId-${frozenAt.getOrElse(0L)}",
+                       kind = "delegate-frozen",
+                       coalesce = false,
+                       producer = "backoff-supervisor"
+                     )
+                     .handleErrorWith(e =>
+                       logger.warn(s"[delegate-freeze] frozen receipt delivery failed for $subagentId: ${e.getMessage}")
+                     )) *>
+                // 面板即时读数（静默统计帧）：冻结一落盘就刷新「N 条已冻结（可唤醒）」。
+                FreezeAlertSweep
+                  .digestTick(resources, wsSend)
+                  .handleErrorWith(e =>
+                    logger.warn(s"[delegate-freeze] digest refresh failed for $subagentId: ${e.getMessage}")
+                  ) *>
+                wsSend.fold(IO.unit) { send =>
+                  send(
+                    Json.obj(
+                      "type" -> "delegateFrozen".asJson,
+                      "sessionId" -> subagentId.asJson,
+                      "rootSessionId" -> parentSessionId.asJson,
+                      "agentId" -> subagentId.asJson,
+                      "frozenSince" -> frozenAt.getOrElse(System.currentTimeMillis()).asJson,
+                      "frozenReason" -> nebflow.core.delegate.DelegateFreeze.wire(reason).asJson,
+                      "frozenReasonLabel" -> nebflow.core.delegate.DelegateFreeze.reasonLabelZh(reason).asJson,
+                      "noticeTier" -> nebflow.core.delegate.FreezeNotice.tierWire(tier).asJson,
+                      "tierLabel" -> nebflow.core.delegate.FreezeNotice.tierLabelZh(tier).asJson,
+                      "notified" -> (!quiet).asJson,
+                      "frozenDetail" -> d.asJson,
+                      "wakeAddress" -> s"delegate:$subagentId".asJson,
+                      "childAlive" -> childAlive.asJson
+                    )
+                  ).handleErrorWith(e => logger.warn(s"delegateFrozen WS frame failed: ${e.getMessage}"))
+                }
+            }
+        persistAndAnnounce *>
+          logger
+            .warn(
+              s"[delegate-freeze] delegate $subagentId FROZEN (reason=${nebflow.core.delegate.DelegateFreeze
+                  .wire(reason)}, childAlive=$childAlive) — no failure verdict; wake via `delegate:$subagentId` or the panel: $d"
+            )
+            .as(
+              if !childAlive then Behaviors.stopped[AgentEvent]
+              else
+                active(
+                  childRef,
+                  childSpawnFn,
+                  childName,
+                  parentRef,
+                  description,
+                  agentName,
+                  subagentId,
+                  parentSessionId,
+                  resources,
+                  initialPrompt,
+                  source,
+                  extraMetadata,
+                  wsSend,
+                  restartCount,
+                  restartHistory,
+                  minBackoff,
+                  maxBackoff,
+                  maxRestarts,
+                  withinTimeRange,
+                  bgWaitCapMs,
+                  bgIdleCapMs,
+                  bgWaitHeld,
+                  bgWaitCapArm,
+                  bgWaitCapFired
+                )
+            )
+      end freezeAndHold
 
       /**
        * #692 修批（重启屏障健壮化）：respawn 链的崩溃安全壳。respawn 本体是长
@@ -703,19 +1301,31 @@ object BackoffSupervisor:
           logger
             .error(
               s"BackoffSupervisor: respawn chain FAILED for $childName ($trigger): ${e.getMessage} — " +
-                "falling back to an honest failed terminal (a stuck 'restarting' row is never left behind)"
+                "falling back to an honest terminal (a stuck 'restarting' row is never left behind)"
             )
             .as(()) *>
-            notifyParentAndStop(
-              "failed",
-              s""""$description": supervisor respawn failed mid-restart ($trigger): ${Option(e.getMessage)
-                  .getOrElse(e.getClass.getSimpleName)} — task force-failed instead of stalling in 'restarting'""",
-              JsonObject(
-                "failedSessionId" -> subagentId.asJson,
-                "retryable" -> true.asJson,
-                "failureType" -> "respawn-failed".asJson
-              )
-            )
+            (if source == "delegate" && Defaults.DelegateFreezeEnabled then
+               // 错误冻结批（2026-11-01）：respawn 链中途失败 = **引擎侧故障**（spawn
+               // 工厂异常 / session store 读炸 / registry 写失败）——delegate 轨就地
+               // 冻结（可唤醒续做），绝不把引擎故障写成 agent 的 failed；subtask 轨
+               // 逐字保持既有 failed 终态。
+               freezeAndHold(
+                 s"supervisor respawn failed mid-restart ($trigger): ${Option(e.getMessage)
+                     .getOrElse(e.getClass.getSimpleName)}",
+                 nebflow.core.delegate.DelegateFreeze.Reason.EngineFault,
+                 childAlive = false
+               )
+             else
+               notifyParentAndStop(
+                 "failed",
+                 s""""$description": supervisor respawn failed mid-restart ($trigger): ${Option(e.getMessage)
+                     .getOrElse(e.getClass.getSimpleName)} — task force-failed instead of stalling in 'restarting'""",
+                 JsonObject(
+                   "failedSessionId" -> subagentId.asJson,
+                   "retryable" -> true.asJson,
+                   "failureType" -> "respawn-failed".asJson
+                 )
+               ))
         }
 
       /**
@@ -747,7 +1357,9 @@ object BackoffSupervisor:
           .blocking(nebflow.core.delegate.DelegateRegistry.find(subagentId))
           .handleErrorWith(e =>
             logger
-              .warn(s"BackoffSupervisor: cancel-tombstone probe failed for $subagentId (respawn proceeds): ${e.getMessage}")
+              .warn(
+                s"BackoffSupervisor: cancel-tombstone probe failed for $subagentId (respawn proceeds): ${e.getMessage}"
+              )
               .as(None)
           )
           .flatMap {
@@ -823,9 +1435,8 @@ object BackoffSupervisor:
           _ <- logger.info(s"BackoffSupervisor: $triggerLine")
           // A 段等待屏障：respawn 后旧 hold 期作废（兜底计时器持有的 messages
           // 是崩溃前旧轮快照）——撤计时器与 hold 状态，续跑轮的 Completed 重新
-          // 评估等待集。
-          _ <- bgWaitCapFiber.get.flatMap(_.traverse_(_.cancel).void) *>
-            bgWaitCapFiber.set(None) *> bgWaitHeld.set(false) *> bgWaitCapFired.set(false)
+          // 评估等待集。（刀一：在途 Tick 靠臂号作废，不能 cancel。）
+          _ <- bgWaitCapArm.update(_ + 1L) *> bgWaitHeld.set(false) *> bgWaitCapFired.set(false)
           _ <- notifyIO
           _ <- resources.subAgentTaskStore
             .updateStatus(
@@ -923,7 +1534,7 @@ object BackoffSupervisor:
           _ <-
             if source == "delegate" then
               nebflow.core.delegate.MergeQueue
-                .reattachIO(subagentId, newChild)
+                .reattachIO(subagentId)
                 .handleErrorWith(e => logger.warn(s"MergeQueue reattach failed for $subagentId: ${e.getMessage}"))
             else IO.unit
           _ <- logger.info(
@@ -958,8 +1569,9 @@ object BackoffSupervisor:
           maxRestarts,
           withinTimeRange,
           bgWaitCapMs,
+          bgIdleCapMs,
           bgWaitHeld,
-          bgWaitCapFiber,
+          bgWaitCapArm,
           bgWaitCapFired
         )
         end for
@@ -1009,9 +1621,11 @@ object BackoffSupervisor:
               .handleErrorWith(e =>
                 logger.warn(s"delegate merge diff-stat failed for $subagentId: ${e.getMessage}").as(None)
               )
-              .map(_.map(s =>
-                Json.obj("commit" -> s.commit.asJson, "added" -> s.added.asJson, "removed" -> s.removed.asJson)
-              ))
+              .map(
+                _.map(s =>
+                  Json.obj("commit" -> s.commit.asJson, "added" -> s.added.asJson, "removed" -> s.removed.asJson)
+                )
+              )
           case None => IO.pure(None)
         }
 
@@ -1288,5 +1902,16 @@ object BackoffSupervisor:
     else
       val last = extractLastAssistantText(messages)
       last.isEmpty || last.trim == Defaults.MaxTokensStubText
+
+  /**
+   * 配额/额度类取消判据（错误冻结批 2026-11-01，纯函数判红锚）：`AgentEvent.Cancelled`
+   * 的 reason 属「外部条件不足」而非「不要了」⇒ delegate 轨就地冻结（可等额度恢复
+   * 后唤醒续做）。显式取消（作者 AgentControl cancel / 父会话删除 / 项目卸载 /
+   * 卡死硬取消）**不在**此列——取消意图必须落地成终态。
+   */
+  private[agent] def isQuotaLikeCancel(reason: String): Boolean =
+    val r = Option(reason).getOrElse("").toLowerCase
+    r.contains("quota") || r.contains("额度") || r.contains("budget") || r.contains("rate limit") ||
+    r.contains("insufficient_quota")
 
 end BackoffSupervisor

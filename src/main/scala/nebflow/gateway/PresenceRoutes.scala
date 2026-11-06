@@ -17,7 +17,6 @@ import nebflow.agent.{AgentCore, SharedResources}
 import nebflow.core.*
 import nebflow.core.daemon.*
 import nebflow.core.entity.{AgentIdentityStore, EntityLoader, NodeRoute}
-import nebflow.core.flow.{FlowTreeRegistry, TreeCommand}
 import nebflow.core.hotrestart.HealthPayload
 import nebflow.core.project.*
 import nebflow.core.schedule.FreezeSchedule.given
@@ -592,71 +591,25 @@ private[gateway] object PresenceRoutes:
       // here — the classify pass recorded it as 仓内零调用点 (no FE/CLI/BE caller)
       // and the 11-route takedown was authorised by the author.
 
-      // GET /teams/mounted — return all mounted teams with agent status
-      // NOTE: Router mounts this under /api prefix, so full path is /api/teams/mounted
-      case req @ GET -> Root / "teams" / "mounted" =>
-        withAuth(req) {
-          for
-            _ <- nebflow.core.flow.FlowTreeRegistry.awaitRestore(3000L)
-            teamsJson <- buildMountedTeamsJson()
-            result <- Ok(Json.obj("teams" -> teamsJson))
-          yield result
-        }
+      // (团队功能删除批 team-feature-deletion-20261104 阶段 2) GET /teams/mounted
+      // 在此 RETIRED：它的数据源是团队会话登记表（listMountedTeams），只有团队树
+      // actor 填充；阶段 1 断掉每会话无条件建树后该表恒空，读面只剩一条
+      // 「awaitRestore 等一个永不到来的信号 → 返回 {"teams":[]}」的空壳。
+      // 前端零调用点（grep src/main/resources/web/：仅 ws.js:1590 一条历史注释），
+      // CLI/BE 亦零调用。判定依据见
+      // reports-evidence/team-feature-deletion/stage2/README.md §B。
+      // 随之删除的还有树注册表的恢复等待腿（awaitRestore / markRestoreStarted /
+      // signalRestoreComplete / restoreStarted / restoreDone）—— 该腿的唯一生产者
+      // 是树 actor setup，唯一消费者就是本路由。阶段 3 把该注册表与团队会话登记表
+      // 的本体一并删除。
 
       // (2026-09-20 device-face hardening batch) 11-route takedown, authorised by
       // the author: GET /running-flows, GET /flow/dag/:name, GET /teams and
       // GET /teams/status/:sessionId were RETIRED here — each was 仓内零调用点 in
       // the classify pass (no FE/CLI/BE caller). The live siblings
-      // (/teams/mounted, /teams/mailbox/*, /teams/def/*, /teams/mail-queue/*,
-      // /team/rules/*) are untouched.
-
-      // GET /teams/mailbox/:sessionId/:teamName — mail history for a team
-      case req @ GET -> Root / "teams" / "mailbox" / sessionId / flowName =>
-        withAuth(req) {
-          if sessionId.isEmpty || !sessionId.matches("^[a-zA-Z0-9._-]{1,64}$") then
-            BadRequest(Json.obj("error" -> "Invalid sessionId".asJson))
-          else
-            for
-              records <- nebflow.core.flow.FlowMailStore.load(sessionId, flowName)
-              result <- Ok(Json.obj("records" -> records.asJson))
-            yield result
-        }
-
-      // DELETE /teams/mailbox/:sessionId/:teamName — clear mail history
-      case req @ DELETE -> Root / "teams" / "mailbox" / sessionId / flowName =>
-        withAuth(req) {
-          if sessionId.isEmpty || !sessionId.matches("^[a-zA-Z0-9._-]{1,64}$") then
-            BadRequest(Json.obj("error" -> "Invalid sessionId".asJson))
-          else
-            for
-              _ <- nebflow.core.flow.FlowMailStore.clear(sessionId, flowName)
-              result <- Ok(Json.obj("cleared" -> true.asJson))
-            yield result
-        }
-
-      // GET /teams/mail-queue/:sessionId — pending queue mails
-      case req @ GET -> Root / "teams" / "mail-queue" / sessionId =>
-        withAuth(req) {
-          if sessionId.isEmpty || !sessionId.matches("^[a-zA-Z0-9._-]{1,64}$") then
-            BadRequest(Json.obj("error" -> "Invalid sessionId".asJson))
-          else
-            for
-              items <- nebflow.core.flow.MailQueueStore.load(sessionId)
-              result <- Ok(Json.obj("items" -> items.asJson))
-            yield result
-        }
-
-      // DELETE /teams/mail-queue/:sessionId/:itemId — cancel a pending queue mail
-      case req @ DELETE -> Root / "teams" / "mail-queue" / sessionId / itemId =>
-        withAuth(req) {
-          if sessionId.isEmpty || !sessionId.matches("^[a-zA-Z0-9._-]{1,64}$") then
-            BadRequest(Json.obj("error" -> "Invalid sessionId".asJson))
-          else
-            for
-              remaining <- nebflow.core.flow.MailQueueStore.removeById(sessionId, itemId)
-              result <- Ok(Json.obj("items" -> remaining.asJson))
-            yield result
-        }
+      // (/teams/mailbox/*, /teams/def/*, /teams/mail-queue/*,
+      // /team/rules/*) are untouched. (/teams/mounted left this list in the
+      // team-feature-deletion stage 2 — see the tombstone above.)
 
       // GET /api/chains — per-task delegate 链**行投影**（N1 刀3 · A8 读面上半：
       // #1228 stub §四.3 唯一硬依赖 + §四.4 活性提示位 = agentRegistry 快照同面携带；
@@ -779,40 +732,6 @@ private[gateway] object PresenceRoutes:
         }
 
       // ===== Flow Editor APIs =====
-
-      // GET /teams/def/:name — return team definition for the editor
-      case req @ GET -> Root / "teams" / "def" / flowName =>
-        withAuth(req) {
-          if !isValidFlowName(flowName) then BadRequest(Json.obj("error" -> "Invalid name".asJson))
-          else
-            for
-              teamOpt <- EntityLoader.loadTeam(flowName)
-              agents <- EntityLoader.listAgents()
-              result <- teamOpt match
-                case None => NotFound(Json.obj("error" -> s"Team '$flowName' not found".asJson))
-                case Some(team) =>
-                  val leadEntry = agents.get(team.lead)
-                  val memberEntries = team.members.flatMap(agents.get)
-                  val allEntries = (leadEntry.toList ++ memberEntries)
-                  val agentsJson = allEntries.map { entry =>
-                    Json.obj(
-                      "name" -> entry.name.asJson,
-                      "description" -> entry.description.asJson,
-                      "tools" -> entry.tools.asJson,
-                      "systemPrompt" -> entry.systemPrompt.asJson
-                    )
-                  }
-                  Ok(
-                    Json.obj(
-                      "name" -> team.name.asJson,
-                      "manager" -> team.lead.asJson,
-                      "description" -> team.description.asJson,
-                      "agents" -> agentsJson.asJson,
-                      "type" -> "team".asJson
-                    )
-                  )
-            yield result
-        }
 
       // GET /bg-tasks/:jobId/output?offset=N — background task output view
       // (2026-09-09 author request: the bg-tasks panel rows open a detail card).
@@ -1314,7 +1233,28 @@ private[gateway] object PresenceRoutes:
                               val persistedLeg =
                                 if sessionStore == null then IO.unit
                                 else droppedIds.traverse_(id => sessionStore.updateSessionModel(id, None))
-                              persistedLeg *> Ok(
+                              // config-single-source batch (2026-11-05): the Nebula
+                              // primary chain IS the global chain, and its single
+                              // source is `llm.fallback` in the config file. Mirror the
+                              // write there so the panel edit is visible/editable in
+                              // `stand.json` and the engine (which reads the file
+                              // first) never serves a stale order. Failure is loud but
+                              // non-fatal for the sidecar write that already landed.
+                              val configLeg =
+                                if agentName != nebflow.core.SchemePolicy.NebulaName then IO.unit
+                                else
+                                  nebflow.service.ConfigService.setFallbackChain(own).attempt.flatMap {
+                                    case Right(_) => IO.unit
+                                    case Left(e) =>
+                                      IO.delay(
+                                        nebflow.shared.NebflowLogger
+                                          .forName("nebflow.config.fallback")
+                                          .warnSync(
+                                            s"[fallback-chain] mirroring the Nebula chain into llm.fallback failed: ${e.getMessage}"
+                                          )
+                                      )
+                                  }
+                              configLeg *> persistedLeg *> Ok(
                                 Json.obj(
                                   "updated" -> true.asJson,
                                   "mode" -> mode.asJson,
@@ -1571,6 +1511,62 @@ private[gateway] object PresenceRoutes:
               Json.obj("sources" -> known.result().asJson, "unknownSources" -> unknown.result().asJson)
             }.flatMap(Ok(_))
           }
+        }
+
+      // GET /plugins/updates — **源化插件的更新面**（作者令 2026-11-01 22:55「运行时插件
+      // 不是应该要能热更新吗，立即使用我们最新的版本」）。逐包（= 源声明表，
+      // `nebflow.json → plugins.sources` ∪ 代码内建 [[PluginSourceCatalog.Builtins]]）
+      // 给出安装版本 / 远端版本 / 状态。**用户驱动**：只在面板打开或点「检查更新」时跑
+      // （每包一次 ls-remote + 一次浅克隆读版本号），无后台轮询、无定时器。
+      // 远端不可达 ⇒ `state=unreachable` + 原因，**包照常可用**（本地那一份在位即信任）。
+      case req @ GET -> Root / "plugins" / "updates" =>
+        withAuth(req) {
+          nebflow.core.plugin.PluginSourceSync.checkAll().flatMap { statuses =>
+            val entries = statuses.map(nebflow.core.plugin.PluginSourceSync.statusJson)
+            Ok(
+              Json.obj(
+                "sources" -> entries.asJson,
+                "updatable" -> statuses.count(_.updateAvailable).asJson
+              )
+            )
+          }
+        }
+
+      // POST /plugins/:name/source/update — **拉取更新并生效**（body 可选：
+      // {"commit": "<40-hex>"} 钉到指定 commit，缺省跟声明分支 tip）。
+      // 落盘语义 = 暂存拉取 → 布局/身份校验 → 备份旧版 → **原子换装** → 账本落 pin
+      // → 审计行。零重启：装载读面是 mtime 缓存（PluginRegistry.snapshot），换装后
+      // 下一条读命令即见新内容；已在飞节点保持其注入内容（新派发生效）。
+      // 失败 ⇒ 400 + 人读原因（含稳定错误码），**在位版本零变化**（远端不可达不是事故，
+      // 是「保持本地版本」的正常结局）。
+      case req @ POST -> Root / "plugins" / name / "source" / "update" =>
+        withAuth(req) {
+          if !isValidAgentName(name) then BadRequest(Json.obj("error" -> "Invalid plugin name".asJson))
+          else
+            req.as[Json].attempt.map(_.getOrElse(Json.obj())).flatMap { body =>
+              val commit = body.hcursor.downField("commit").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+              nebflow.core.plugin.PluginSourceSync.update(name, commit, "panel/rest").flatMap {
+                case Right(r) =>
+                  Ok(
+                    ApiJson.okMessage(
+                      s"Plugin '$name' updated: v${r.fromVersion} → v${r.toVersion} (commit ${r.commit.take(12)}…, " +
+                        s"digest ${r.digest.take(12)}…). ${r.effective}" +
+                        r.backupDir.fold("")(b => s" Previous version backed up at $b.")
+                    )
+                  )
+                case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
+              }
+            }
+        }
+
+      // GET /plugins/:name/source — 单包源状态（面板卡片的「来源 + 版本」行数据源）。
+      case req @ GET -> Root / "plugins" / name / "source" =>
+        withAuth(req) {
+          if !isValidAgentName(name) then BadRequest(Json.obj("error" -> "Invalid plugin name".asJson))
+          else
+            nebflow.core.plugin.PluginSourceSync.check(name).flatMap { st =>
+              Ok(Json.obj("source" -> nebflow.core.plugin.PluginSourceSync.statusJson(st)))
+            }
         }
 
       // POST /plugins/:name/approve — **兼容保留**（无审批批 2026-09-13 起 UI 主线不再调用）：
@@ -2042,41 +2038,17 @@ private[gateway] object PresenceRoutes:
       // (team detail) was RETIRED here — 仓内零调用点 in the classify pass. The
       // /team/rules/:name pair below is the live face (FE caller).
 
-      // GET /team/rules/:name — read team rules.md
-      case req @ GET -> Root / "team" / "rules" / teamName =>
-        withAuth(req) {
-          if !isValidAgentName(teamName) then BadRequest(Json.obj("error" -> "Invalid team name".asJson))
-          else
-            for
-              rules <- EntityLoader.loadTeamRules(teamName)
-              result <- Ok(Json.obj("content" -> rules.asJson))
-            yield result
-        }
-
-      // POST /team/rules/:name — save team rules.md + trigger reload
-      case req @ POST -> Root / "team" / "rules" / teamName =>
-        withAuth(req) {
-          if !isValidAgentName(teamName) then BadRequest(Json.obj("error" -> "Invalid team name".asJson))
-          else
-            for
-              body <- req.as[Json]
-              content = body.hcursor.downField("content").as[String].getOrElse("")
-              rulesDir = PathUtil.dataRoot / "teams" / teamName
-              _ <- IO.blocking {
-                os.makeDir.all(rulesDir)
-                val tmp = rulesDir / ".rules.md.tmp"
-                os.write(tmp, content)
-                os.move.over(tmp, rulesDir / "rules.md")
-              }
-              // Trigger reload so changes take effect on next activation
-              _ <- FlowTreeRegistry.treesRef.get.flatMap { treeMap =>
-                treeMap.values.toList.traverse_ { treeRef =>
-                  treeRef ! TreeCommand.ReloadDefinition(teamName)
-                }
-              }
-              result <- Ok(Json.obj("saved" -> true.asJson))
-            yield result
-        }
+      // 团队功能删除批（team-feature-deletion-20261104）阶段 3：GET/POST
+      // /api/team/rules/:name 两条路由在此 RETIRED。
+      //  · 阶段 2 曾判「端点保留」，理由是 rules.md 是盘上真配置文件、仍有非树读面
+      //    （ContextRefresher 的团队目录注入 / Mail 的跨团队开关）与「活的前端写
+      //    调用方 flowViewers.js:174」。阶段 3 现场复核推翻了后两条：跨团队 Mail
+      //    开关随团队寻址面整体退役（`allow-cross-team-mail` 判据已删），团队目录
+      //    注入随团队会话面删除（ContextRefresher 的团队归属恒 None），而
+      //    flowViewers.js 的 `openRules` 在 `web/` 内**零调用点**（孤儿函数，随同批
+      //    删除）⇒ 两条路由已零消费者，整体退役。
+      //  · `EntityLoader.loadTeamRules` 本体保留（实体层通用读面，作者未裁定去留；
+      //    本阶段只摘消费者）。
 
       // (2026-09-20 device-face hardening batch) 11-route takedown: GET /entity-agents
       // was RETIRED here — 仓内零调用点 in the classify pass. Live agent faces are
@@ -2200,32 +2172,49 @@ private[gateway] object PresenceRoutes:
 
       // ── JeV 分配通道连接性测试（settings-panel-jev-imagegen 批 2026-10-29
       // 作者令逐字「然后 Jev/生图，也要像我们LLM这样，有个按钮来测试可用性」）──
-      // 表单覆写腿优先（未保存也测）：provider/endpoint/keyRef 覆写即按表单值
-      // 探活；缺省回落存储配置。laya 走 /health metadata 面、typesafe 走极小
-      // 真实补全（JevProbe 单点）；keyRef secret 缺席 = 直接 Failed（待录入），
-      // 不发注定 401 的击。零持久化——纯诊断读数。
+      // 表单覆写腿优先（未保存也测）：provider/endpoint/**apiKey**/keyRef 覆写即按
+      // 表单值探活；缺省回落存储配置（**含选中项 provider 的 providers 条目**——
+      // jev-imagegen-align-llm 批 2026-11-02：provider/endpoint/model/keyRef 逐字段
+      // `providers[选中项] > 顶层 > 缺省`，与 JevSettings.resolve 同回落序）。
+      // token 解析三腿单点 = JevProbe.resolveToken（apiKey 覆写 > 已存 keyRef
+      // secret > 无）；旧 keyRef 腿逐字保留（JevProbeSpec.callWithKeyRef 断言照绿）。
+      // laya 走 /health metadata 面、typesafe 走极小真实补全（JevProbe 单点）；
+      // keyRef secret 缺席 = 直接 Failed（待录入），不发注定 401 的击。
+      // 🔴 日志零 key：本臂不打任何日志；apiKey 覆写值只在 process 内活到一击。
+      // 零持久化——纯诊断读数。
       case req @ POST -> Root / "jev" / "test" =>
         withAuth(req) {
           req.as[Json].flatMap { body =>
             val providerOv = body.hcursor.downField("provider").as[String].toOption.map(_.trim).filter(_.nonEmpty)
             val endpointOv = body.hcursor.downField("endpoint").as[String].toOption.map(_.trim).filter(_.nonEmpty)
             val keyRefOv = body.hcursor.downField("keyRef").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+            val apiKeyOv = body.hcursor.downField("apiKey").as[String].toOption.map(_.trim).filter(_.nonEmpty)
             if providerOv.exists(p => !DecisionProvider.AllIds.contains(p)) then
               BadRequest(Json.obj("error" -> s"unknown jev provider '${providerOv.get}'".asJson))
             else
               configRef.get.flatMap { cfg =>
                 val stored = cfg.jev
-                val provider = providerOv.getOrElse(stored.flatMap(_.provider).getOrElse(DecisionProvider.TypesafeJev))
-                val endpoint = endpointOv.orElse(stored.flatMap(_.endpoint)).getOrElse(
-                  if provider == DecisionProvider.Laya then DecisionProvider.DefaultLayaEndpoint
-                  else DecisionProvider.DefaultTypesafeEndpoint
-                )
-                val model = stored.flatMap(_.model).getOrElse(DecisionProvider.DefaultModel)
-                val keyRef = keyRefOv.orElse(stored.flatMap(_.keyRef))
+                val selected = providerOv.orElse(stored.flatMap(_.provider)).getOrElse(DecisionProvider.TypesafeJev)
+                // 选中项条目（jev.providers.<selected>）：逐字段优先于顶层。
+                val entry = stored.flatMap(_.providers).flatMap(_.get(selected))
+                val provider = selected
+                val endpoint = endpointOv
+                  .orElse(entry.flatMap(_.endpoint).map(_.trim).filter(_.nonEmpty))
+                  .orElse(stored.flatMap(_.endpoint))
+                  .getOrElse(
+                    if provider == DecisionProvider.Laya then DecisionProvider.DefaultLayaEndpoint
+                    else DecisionProvider.DefaultTypesafeEndpoint
+                  )
+                val model = entry.flatMap(_.model).map(_.trim).filter(_.nonEmpty)
+                  .orElse(stored.flatMap(_.model))
+                  .getOrElse(DecisionProvider.DefaultModel)
+                val keyRef = keyRefOv
+                  .orElse(entry.flatMap(_.keyRef).map(_.trim).filter(_.nonEmpty))
+                  .orElse(stored.flatMap(_.keyRef))
                 if !jevTestGate.tryAcquire() then
                   Conflict(Json.obj("error" -> "a test for this provider is already in flight".asJson))
                 else
-                  IO.blocking(JevProbe.callWithKeyRef(provider, endpoint, model, keyRef)).flatMap {
+                  IO.blocking(JevProbe.callWithToken(provider, endpoint, model, apiKeyOv, keyRef)).flatMap {
                     case JevProbe.Verdict.Ok(latency, reply) =>
                       Ok(Json.obj("ok" -> true.asJson, "latencyMs" -> latency.asJson, "reply" -> reply.asJson))
                     case JevProbe.Verdict.Failed(detail) =>
@@ -2642,51 +2631,12 @@ private[gateway] object PresenceRoutes:
   // (GET/PUT /agents/:name/model), which reads agent.json directly through
   // `SchemePolicy`.
 
-  /**
-   * Build mounted teams JSON for the frontend (GET /api/teams/mounted).
-   *  Reads from live TeamSessionRegistry runtime state. Each team is a card with
-   *  agent tiles showing status.
-   */
-  private def buildMountedTeamsJson(): IO[Json] =
-    for
-      teamsMap <- nebflow.core.flow.TeamSessionRegistry.listMountedTeams
-      teams <- EntityLoader.listTeams()
-      teamsList <- teamsMap.toList.sortBy(_._1).traverse { (instanceName, agents) =>
-        val teamDefOpt = teams.get(instanceName)
-        // Only render agents declared in team.json (lead + members). Delegate /
-        // SubTask sub-agents are no longer registered in TeamSessionRegistry
-        // (no Mail identity), so no ghost tiles can appear here; the filter
-        // remains as defense-in-depth. Fall back to all agents when the team
-        // definition is missing (legacy behavior).
-        val memberNames = teamDefOpt.map(td => (td.lead :: td.members).toSet)
-        for
-          agentsJson <- agents
-            .filter((name, _) => memberNames.forall(_.contains(name)))
-            .traverse { (agentName, sid) =>
-              nebflow.core.flow.TeamSessionRegistry.isBusy(sid).map { busy =>
-                Json.obj(
-                  "name" -> agentName.asJson,
-                  "sessionId" -> sid.asJson,
-                  "status" -> (if busy then "running" else "idle").asJson,
-                  "manager" -> teamDefOpt.exists(_.lead == agentName).asJson
-                )
-              }
-            }
-          // Team Manager task tool (#D 2026-08-25): the team panel renders a
-          // Tasks section from this array (flowTeams.js buildTasksSection,
-          // frontend phase-2 contract A1: id/subject/status/blockedBy/blocks).
-          // Read straight from the team task store directory (scope key
-          // "team:<name>") — empty array for teams with no tasks yet.
-          tasks <- FileTaskStore.list(TaskStore.teamScopeKey(instanceName))
-        yield Json.obj(
-          "name" -> instanceName.asJson,
-          "type" -> "team".asJson,
-          "agents" -> agentsJson.asJson,
-          "tasks" -> tasks.asJson
-        )
-        end for
-      }
-    yield teamsList.asJson
+  // (团队功能删除批 team-feature-deletion-20261104 阶段 2) `buildMountedTeamsJson`
+  // 曾在此（原 :2701-2745）：为 GET /api/teams/mounted 拼「已挂团队 + agent 磁贴
+  // 状态 + 团队任务」的响应体。路由与它的唯一调用方一并删除，故整段移除；
+  // 它读的团队会话登记表（listMountedTeams / isBusy）本体已在阶段 3 随团队面删除，
+  // 故此处只是失去本消费者。判定见
+  // reports-evidence/team-feature-deletion/stage2/README.md §B。
 
   // ── Flow editor helpers ──────────────────────────────────
 

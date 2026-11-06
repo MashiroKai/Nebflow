@@ -44,7 +44,8 @@
   <link rel="icon" type="image/png" sizes="192x192" href="favicon-192.png?v=71a456e2d388b27e">
   <link rel="icon" type="image/png" sizes="512x512" href="favicon-512.png?v=71a456e2d388b27e">
   <link rel="apple-touch-icon" sizes="180x180" href="favicon-180.png?v=71a456e2d388b27e">
-  <link rel="stylesheet" href="vendor/katex.min.css">
+  <!-- KaTeX 样式改为按需注入（rich-render 批 2026-11-05）：首个公式进视口时
+       由 js/mathRender.js 插入 <link data-nf-katex>，23KB 不进开屏关键路径。 -->
   <link rel="stylesheet" href="vendor/highlight-github.min.css" media="(prefers-color-scheme: light)">
   <link rel="stylesheet" href="vendor/highlight-github-dark.min.css" media="(prefers-color-scheme: dark)">
   <link rel="stylesheet" href="css/base.css">
@@ -54,9 +55,15 @@
   <link rel="stylesheet" href="css/modal.css">
   <link rel="stylesheet" href="css/input.css">
   <link rel="stylesheet" href="css/taskList.css">
+  <!-- todo-face.css 必须紧随 taskList.css（同选择器 #task-list.has-tasks 收口，后者赢）-->
+  <link rel="stylesheet" href="css/todo-face.css">
   <link rel="stylesheet" href="css/scrollUnderGlass.css">
   <link rel="stylesheet" href="css/reminder.css">
   <link rel="stylesheet" href="css/todo-page.css">
+  <!-- schedule-todo-unify 批 2026-11-06：定时任务页 ⇄ 待办页共用的**单一面语言**
+       （条目行 name/description 结构、液态形变展开详情、表单两段 + 确认按钮右对齐）。
+       必须排在 reminder.css / todo-page.css / todo-face.css 之后（覆写两页各自的族内规则）。 -->
+  <link rel="stylesheet" href="css/schedule-todo.css">
   <link rel="stylesheet" href="css/neblink.css">
   <link rel="stylesheet" href="css/dropbox.css">
   <!-- #27 Project 面板 + Flow Map 视图（§3.5，试点期与旧面板并列） -->
@@ -98,6 +105,13 @@
   <!-- sapphire.css loads LAST: it is the design-system standard layer.
        Its grouped glass-control rules must win equal-specificity ties
        against feature CSS hover/base states. -->
+  <!-- 设计体系令牌层 + 组件类层（`.ds-*`，本批 design-system-token-batch）：
+       规范权威 = seed/plugins/design-language SKILL.md 八节表；本文件把
+       「圆角 8 档 / 字号 5 档 / 4px 间距 / 热区档」第一次落成具名令牌，
+       供门禁 scripts/check-design-tokens.mjs 判定。只新增 `--ds-*` 命名空间，
+       不覆盖任何既有 token ⇒ 零回归面。置于 sapphire 之前（sapphire 仍是
+       最后加载的设计系统标准层）。 -->
+  <link rel="stylesheet" href="css/design-system.css">
   <link rel="stylesheet" href="css/sapphire.css">
   <!-- 全站玻璃单源包（统一按钮+玻璃批 2026-11-01，设计稿 cc28a33e §3/§4）：
        取代 liquid-glass.css（F1 配方退役）——玻璃配方单文件（气泡半透明实底
@@ -105,6 +119,11 @@
        紧随 sapphire 加载：同特异性材质平局以本文件为准；桌面 #header
        （chat.css 基准件 B）零触碰。 -->
   <link rel="stylesheet" href="css/glass.css">
+  <!-- 设置页 iOS 行族（settings-ios-rows 批 2026-11-06 作者令「能点击下一个面板的
+       样式都统一成苹果的这种样式 … 可点击的按钮 布局规整一点」）：造型唯一标准，
+       令牌 --set-* 在 css/stand-tokens.css。置于各面文件之后 ⇒ 行族造型不被
+       旧面覆写；手机层尺寸档在 mobileLayer.css 里按移动令牌换档。 -->
+  <link rel="stylesheet" href="css/settingsRows.css">
   <!-- 卡片家族统一样式包（2026-11-01 作者 16:05 令）：基准=官网过渡卡的 cards
        模块（token --nfc-* + .nfc 族类）。消费面 = 接管弹窗 #takeover-box +
        门入场加载卡 .nf-entry-card；设计稿 docs/design/20261101_162000_cards-family-design__*
@@ -117,12 +136,42 @@
        script。层样式落 css/（/css/<file> 单段路由服务），控制器落 js/mobile/
        （jsRoutes 任意深度服务）—— 均为既有静态路由面，零引擎改动。 -->
   <link rel="stylesheet" href="css/mobileLayer.css">
+  <link rel="stylesheet" href="css/mobileSearchFlat.css">
+  <!-- 时间滚轮选择器（time-wheel-picker 实施批 2026-11-03，作者令 22:16「把它补回来」
+       + 22:20「编辑面也采用同款的滚轮」）：全站时间/日期类输入面的唯一交互单源。
+       设计出处 docs/design/20261101_163000_time-wheel-picker-spec__*（§7 视觉 token 表）。
+       置于 mobileLayer 之后：面板的 body.mobile-layer 适配规则需压过手机层同特异性。 -->
+  <link rel="stylesheet" href="css/timeWheel.css">
   <!-- 对话层活性批（2026-10-22）：回合活动流条 + 断连横幅 -->
   <link rel="stylesheet" href="css/liveness.css">
   <!-- 键盘层（keyboard-first 一期，2026-11-01）：焦点环基线 + meta/edit 模式
        指示器 + 命令面板。放最后 = 兜底环压得住前面 26 个文件里的 `outline:none`
        （特异性与颜色单源见该文件头注）。 -->
   <link rel="stylesheet" href="css/keyboard.css">
+  <!-- 输入面唯一标准批（input-surface-unify 2026-11-06；作者裁定「输入框的这个样式
+       也要成为统一标准 不可以出现第二种」+「采用我们主对话窗口这种 灰色圆角阴影」）：
+       全站输入件（文本 input / textarea / select）的**造型 + 焦点态**只此一处 ——
+       底/边/圆角/影取 --nf-field-*（stand-tokens.css 单源），指针态零环、键盘可见
+       焦点走内缩压灰环（唯一保留蓝的位置）。置于 keyboard.css 之后：键盘层那条
+       全局 `:focus-visible` 蓝描边基线按元素种类被挡在输入件之外（按钮/链接/复选
+       等仍走键盘层基线）。取代 input-focus-ring 批（2026-11-05）的 inputFocus.css。 -->
+  <link rel="stylesheet" href="css/inputSurface.css">
+  <!-- 按钮扁平化批（2026-11-05，作者令「不管 hover 还是点击 或者按下」）：
+       全站按钮**扁平六态共享态层**。放最后 = 补「族自己没写」的按下/焦点/禁用
+       态时压得住前面各文件的基础声明，且与 keyboard.css 的兜底焦点环同一层级
+       语义（环 = outline，不占盒、不靠阴影）。令牌单源 = sapphire.css 的
+       --btn-press-* / --btn-ring-* / --btn-disabled-*；厚度禁令由
+       scripts/check-flat-buttons.mjs 机械把关（例外须写进 flat-button-spec.md）。 -->
+  <link rel="stylesheet" href="css/flatButtons.css">
+  <!-- Canvas 提示文字统一制作规范（canvas-hint-text 批 2026-11-05，作者令
+       「canvas 内所有的提示文字，要统一制作规范，不然会跟悬浮在上面的按钮/
+       胶囊重叠」）：三字档角色 + 四边安全区消费类 `.cv-safe-pad` + 零交叠/
+       换行判据的**缺省层**（`[data-cv-hint]` 标记即落档）。放最后 = 缺省值
+       不得压过各面已按规范改好的既有规则（同值时取各面自己的那条，便于逐面
+       溯源）；四边安全区令牌本体仍单源在 sapphire.css（:317 起），本文件
+       只消费不生产数值。判据脚本 = scripts/check-canvas-hint-tokens.mjs（静态）
+       + tests/canvas-hint-safe-area.spec.mjs（真几何）。 -->
+  <link rel="stylesheet" href="css/canvasHint.css">
   <!-- 偶发裸渲染修复批（2026-10-30，作者 20:03 截图实证：冷启动实例「有时候」
        右侧面板整面无样式、工作台列表以原文竖排裸露）。根因面：stylesheet 是
        渲染阻塞资源，但若任一 CSS 请求**失败**（实例重启在途请求被掐断 / 隧道
@@ -166,7 +215,11 @@
       border: 2px solid rgba(0, 0, 0, 0.25); border-top-color: transparent;
       animation: nf-boot-spin 0.8s linear infinite;
     }
-    @media (prefers-color-scheme: reduce) { .nf-boot-ring { animation: none; } }
+    /* 品牌图标缺字形批（2026-11-02）：原写 `prefers-color-scheme: reduce` ——
+       不存在的特性值（reduce 是 prefers-reduced-motion 的取值），整条媒体查询
+       永不命中 ⇒ 减少动效用户的加载环照转，门面「尊重 reduced-motion」形同虚设。
+       本批改正为 prefers-reduced-motion（加载态动效验收项③的连带缺口）。 */
+    @media (prefers-reduced-motion: reduce) { .nf-boot-ring { animation: none; } }
     @keyframes nf-boot-spin { to { transform: rotate(360deg); } }
     #nf-boot-gate[data-state="failed"] .nf-boot-ring { display: none; }
     /* 失败卡 = 卡片家族 hint/错误卡面具的**内联手抄档**（css/cards.css .nfc
@@ -324,6 +377,9 @@
         var el = entryRows();
         if (!el) return;
         el.face.setAttribute('data-entry', 'on');
+        // 标签槽档位（css/cards.css .nf-entry-label min-width：zh 四字槽 / en 加宽槽
+        // ——首项勾图标对齐批 2026-11-03：点位锚统一要求标签槽宽随 locale 定档）
+        el.face.setAttribute('data-locale', zh ? 'zh' : 'en');
         el.title.textContent = T.cardTitle;
         var frag = document.createDocumentFragment();
         for (var i = 0; i < entry.order.length; i++) {
@@ -535,13 +591,17 @@
        接管/入场同族批（2026-11-01 作者令③）追加 .nf-entry-card：主脸的入场
        延长门面（真实加载项清单 + 就绪揭幕，门脚本置 data-entry="on" 才显；
        卡窗脸与 CSS 窗不显，行为不变）。
-       卡片家族批（作者 16:05 令）基准化：入场卡挂 .nfc 家族卡体 + 官方字标
-       双档（web/brand/stand/lockup-*.png）+ 家族字阶类；样式体在 css/cards.css。 -->
+       卡片家族批（作者 16:05 令）基准化：入场卡挂 .nfc 家族卡体 + 官方字标 +
+       家族字阶类；样式体在 css/cards.css。
+       品牌图标缺字形批（2026-11-02 作者 08:16 报障）：字标原为两张 PNG `<img>`
+       （/brand/stand/lockup-*.png，主题双档显隐），实跑实例上 404 ⇒ 蓝底问号
+       破图。改为**内联 SVG**（几何 = 仓内集中源 stand-horizontal-black.svg
+       逐 path，fill=currentColor 随 --nfc-heading）——零请求、零第二份资产、
+       双主题单档；诊断与实测见 evidence/20261102_bootcard-brandicon__* §1。 -->
   <div id="nf-boot-gate" role="status" aria-live="polite">
     <div class="nf-boot-ring" aria-hidden="true"></div>
     <div class="nf-entry-card nfc" role="status" aria-live="polite">
-      <img class="nfc-lockup nfc-lockup-light" src="/brand/stand/lockup-light.png" alt="STAND">
-      <img class="nfc-lockup nfc-lockup-dark" src="/brand/stand/lockup-dark.png" alt="" aria-hidden="true">
+      <svg class="nfc-lockup" viewBox="0 0 1375.18 343.15" role="img" aria-label="STAND"><g transform="translate(15.00,15.00) scale(1.000000)" fill="currentColor" fill-rule="evenodd"><path d="M 22.96,167.53 L 27.19,174.53 L 32.46,179.99 L 37.46,183.80 L 46.46,188.91 L 58.46,193.82 L 68.46,196.76 L 90.46,200.79 L 102.46,201.93 L 121.46,202.18 L 150.46,199.84 L 174.46,194.71 L 186.46,190.82 L 198.46,185.85 L 206.46,181.86 L 206.46,180.81 L 185.46,183.98 L 174.46,184.80 L 160.46,184.79 L 142.46,182.69 L 127.46,177.99 L 119.03,172.53 L 115.30,168.53 L 113.11,164.53 L 112.05,160.53 L 112.04,155.53 L 115.16,145.53 L 118.19,140.53 L 123.13,134.53 L 134.46,124.20 L 145.46,116.23 L 165.46,104.32 L 198.46,88.22 L 237.46,72.24 L 291.46,53.27 L 336.36,39.53 L 347.46,31.86 L 386.55,0.53 L 385.46,0.00 L 373.46,0.20 L 344.46,2.29 L 316.46,6.40 L 278.46,14.36 L 244.46,23.31 L 199.46,37.41 L 164.46,50.21 L 133.46,63.25 L 102.46,78.21 L 80.46,90.35 L 60.46,103.21 L 44.46,115.98 L 33.21,127.53 L 28.07,134.53 L 24.31,141.53 L 22.08,147.53 L 20.95,154.53 L 21.13,161.53 Z M 0.00,312.53 L 1.46,313.15 L 12.46,312.94 L 42.46,310.78 L 77.46,305.78 L 117.46,297.83 L 159.46,287.80 L 191.46,278.79 L 225.46,267.89 L 255.46,256.74 L 286.46,242.70 L 304.46,232.86 L 320.46,221.84 L 329.91,213.53 L 338.81,203.53 L 344.83,192.53 L 346.62,185.53 L 346.85,180.53 L 345.82,173.53 L 341.66,165.53 L 336.25,159.53 L 327.46,153.14 L 320.46,149.27 L 308.46,144.37 L 298.46,141.24 L 273.46,136.23 L 246.46,134.53 L 219.46,136.21 L 193.46,141.31 L 172.46,148.35 L 158.21,155.53 L 158.46,156.42 L 186.46,152.28 L 203.46,151.98 L 221.46,154.13 L 229.46,156.24 L 236.46,159.04 L 244.46,164.18 L 249.69,170.53 L 251.73,178.53 L 249.76,187.53 L 242.62,197.53 L 230.46,207.68 L 211.46,218.93 L 192.46,227.86 L 170.46,236.75 L 147.46,244.88 L 99.46,259.83 L 49.46,274.05 L 42.46,278.25 Z"/></g><g transform="translate(436.55,103.97) scale(1.000000)" fill="currentColor" fill-rule="evenodd"><path d="M 544.59,124.16 L 454.52,1.16 L 433.31,0.00 L 420.31,0.74 L 337.45,103.16 L 319.12,124.16 L 320.31,124.71 L 362.31,124.05 L 433.04,35.16 L 436.31,32.11 L 505.31,123.73 L 543.31,124.72 Z M 181.48,104.16 L 183.66,98.16 L 184.53,92.16 L 184.57,78.16 L 183.67,72.16 L 181.55,66.16 L 178.50,61.16 L 174.31,56.75 L 168.31,52.72 L 161.31,49.75 L 150.31,47.86 L 62.31,47.89 L 59.31,47.27 L 55.15,44.16 L 53.98,42.16 L 53.00,37.16 L 54.05,33.16 L 56.31,30.34 L 58.31,28.81 L 62.31,27.57 L 153.31,27.19 L 184.31,2.51 L 184.87,1.16 L 153.31,0.34 L 51.31,0.78 L 42.31,2.88 L 33.31,7.95 L 28.31,12.10 L 24.81,16.16 L 20.12,24.16 L 18.86,28.16 L 18.15,34.16 L 18.10,45.16 L 18.81,50.16 L 22.03,59.16 L 27.62,66.16 L 35.31,71.41 L 41.31,73.60 L 47.31,74.71 L 138.31,75.11 L 142.31,75.68 L 146.31,77.81 L 148.63,81.16 L 149.47,85.16 L 148.63,90.16 L 146.86,93.16 L 144.31,95.48 L 139.31,96.84 L 36.31,97.48 L 0.00,124.16 L 1.31,124.79 L 152.31,124.01 L 162.31,121.50 L 169.31,117.39 L 176.31,111.12 Z M 182.06,27.16 L 255.31,27.41 L 257.45,28.16 L 257.51,134.16 L 258.31,135.20 L 288.60,107.16 L 288.80,28.16 L 290.31,27.45 L 341.31,27.40 L 368.00,1.16 L 367.31,0.50 L 205.31,0.53 L 182.24,26.16 Z M 726.38,124.16 L 726.31,0.98 L 711.31,0.24 L 696.31,0.56 L 695.06,1.16 L 695.01,87.16 L 694.31,88.01 L 584.31,1.75 L 580.31,0.80 L 555.31,0.46 L 554.03,1.16 L 554.31,123.95 L 583.31,124.29 L 584.62,123.16 L 584.65,44.16 L 585.31,42.80 L 692.31,123.47 L 694.31,124.50 L 725.31,124.76 Z M 921.76,98.16 L 923.64,91.16 L 923.55,32.16 L 921.47,26.16 L 914.58,15.16 L 908.31,8.01 L 901.31,3.10 L 895.31,1.02 L 888.31,0.38 L 737.31,0.57 L 736.67,1.16 L 753.62,19.16 L 753.58,123.16 L 754.31,124.32 L 883.31,124.24 L 889.31,123.46 L 897.31,120.45 L 905.31,115.38 L 914.65,107.16 Z M 886.66,87.16 L 883.31,91.34 L 879.31,94.49 L 870.31,97.31 L 786.90,97.16 L 786.02,95.16 L 786.05,28.16 L 788.31,27.40 L 869.31,27.42 L 876.31,28.79 L 880.31,30.88 L 886.43,37.16 L 888.52,42.16 L 888.96,45.16 L 888.98,79.16 Z"/></g></svg>
       <div class="nf-entry-title nfc-title"></div>
       <div class="nf-entry-items nfc-steps"></div>
     </div>
@@ -612,7 +672,11 @@
          activity bar #todo-btn 与侧边栏 #panel-todo；入口 = 消息列表顶部
          「待办事项」行（随 #fm-conversations 双端同现），内页 = #todo-page
          提醒事项风格独立页（桌面玻璃 overlay ⇄ 手机 pushPage 收编，见
-         scheduled-task.js / navController.js / css/todo-page.css）。 -->
+         scheduled-task.js / navController.js / css/todo-page.css）。
+         ⛔ 入口收敛批 todo-unify-entry-collapse 2026-11-04：上述入口行与手机
+         推页腿**都已退役**，待办唯一入口 = 顶带待办胶囊 #task-list
+         （#top-overlays 内，双端同现，点开即展开面板）；#todo-page 整面退到
+         不可达（DOM 保留）。 -->
     <button id="projects-btn" class="activity-btn" title="Projects"><i data-lucide="folder-kanban"></i></button>
     <!-- Wiki document graph (wiki-graph batch, 2026-10-14; icon wiring batch,
          2026-10-15: lucide sparkles replaced by the C2 hub-spoke inline SVG —
@@ -755,11 +819,14 @@
       </div>
     </div>
     <!-- 顶缘滚入渐隐带（液体玻璃 v2 批 2026-10-31）：手机端替代顶栏的 88px
-         「先糊后没」层（blur 18 / sat 1.5 + veil + 两段式 mask；样式随
-         统一按钮玻璃批逐字迁 glass.css，待裁项 M9 维持现状）。
+         「先糊后没」层（blur 18 / sat 1.5 + veil + 两段式 mask；材质随
+         doc-ask-fade 批 2026-11-03 收编到 design-system.css `.ds-edge-fade` 单源，
+         本节点只挂类 + 高度/z 序差异档）。
          桌面恒隐；不是栏——pointer-events:none、无背景容器/边框/固定标题
-         （作者裁定 ② 逐字）。层级：内容 < 渐隐带 25 < 悬浮圆钮层 30。 -->
-    <div id="g2-edge-fade" aria-hidden="true"></div>
+         （作者裁定 ② 逐字）。层级：内容 < 渐隐带 25 < 悬浮圆钮层 30。
+         （Ask 面板曾为本类第二成员 .ask-veil，2026-11-04 ask-fade-content-opacity
+         批按作者令退役——Ask 渐隐改走内容级 mask，见 ask.css .ask-col。） -->
+    <div id="g2-edge-fade" class="ds-edge-fade" aria-hidden="true"></div>
     <!-- Dropdowns moved outside #header so backdrop-filter can blur chat content.
          #header has its own backdrop-filter which creates a backdrop root, preventing
          child elements from blurring content behind the header. -->
@@ -773,7 +840,9 @@
       <div class="bg-dropdown-list" role="list"></div>
     </div>
     <div id="bg-dropdown" class="hidden">
-      <div class="bg-dropdown-header" aria-live="polite">Background tasks</div>
+      <!-- panel-ia 批 2026-11-03：面板分组签收编 .ds-section-label（design-system
+           组件类；字号/字距/大写化由此单源，chat.css 只留布局面）。 -->
+      <div class="bg-dropdown-header ds-section-label" aria-live="polite">Background tasks</div>
       <div class="bg-dropdown-list" role="list"></div>
     </div>
     <!-- Reminder Panel — floating dropdown from header button -->
@@ -794,7 +863,14 @@
          顶部「待办事项」行；桌面 = 玻璃 overlay 页开合（.open），手机层由
          navController 收编进 pushPage 详情页。分组：已到期（浮顶）/待决策/
          待批准/计划；圆钮打勾销账；跨会话收件箱（scope:all）。渲染核 =
-         scheduled-task.js。 -->
+         scheduled-task.js。
+         ⛔ 【整面退役】入口收敛批 todo-unify-entry-collapse 2026-11-04 —— 处置
+         =(a) 整面退役：**DOM 原样保留于此、但已不可达**（消息列表入口行撤除 +
+         手机 pushPage('todo') 导航页撤除，见 js/messages.js、js/scheduled-task.js、
+         js/mobile/navController.js 同批注记）。理由：同一待办面已有更新的完整
+         实现 = 顶带待办胶囊 + 展开面板（js/todoFace.js，真源 = todoStore ↔
+         ScheduledTaskStore），两套并存必然状态分叉。本页渲染核/CSS 未删，
+         按本仓退役惯例注释留档。 -->
     <div id="todo-page" class="scroll-under-glass">
       <div class="todo-page-header">
         <div class="todo-page-title" data-i18n="todo.entryTitle">待办事项</div>
@@ -830,6 +906,21 @@
          穿顶内容 = Header 玻璃自身磨砂（盒内）+ 带下零蒙层；带下过渡 = 纯硬边界
          （任务卡玻璃 blur 仍在卡上，裙边渐隐本体退役）。五面浮层面板裙边照旧。 -->
     <div id="top-overlays">
+      <!-- 待办胶囊槽位（作者令 2026-11-03 10:11 ①「桌面端待办胶囊从输入框下方
+           移到顶栏正下方」）：#task-list 回到顶带 #top-overlays —— 本带是
+           `position:absolute; top:68px` 的顶栏布局层（chat.css:3004 块，紧贴
+           #header 下缘、全宽、pointer-events:none + 子件 auto），胶囊行即
+           「顶栏正下方」的居中一行（.tfl-mount flex 居中）。
+           形态口径**原样保留**（重做批 2026-11-02 11:52：高 26px 小胶囊 /
+           逾期翻面 / 两态严格等宽，见 css/todo-face.css 几何单源块）；本批只改
+           挂载位置与布局层级 —— 展开面板随之改为**自胶囊向下生长**
+           （top:calc(100% + 8px)，原向上生长的 bottom 锚随迁位退役）。
+           让位链自动跟随：js/main.js bandBottom() 读 #top-overlays 实测盒 ⇒
+           胶囊出现即把 #chat 的 padding-top 让出（top-reserve 观察器挂在
+           #top-overlays 的 ResizeObserver 上，零 JS 改动）。
+           手机层也显示胶囊（胶囊面交互批 2026-11-04 ⑤：原 mobileLayer.css 的
+           「整条 display:none」退役）—— 胶囊即手机端待办入口，身份头之下居中
+           一行；空态（无 .has-tasks）仍整条不显示。 -->
       <div id="task-list"></div>
       <!-- D6 批 F2: pending-AskUser persistent bar (one row per unanswered
            question: source · summary, click = scroll to card + highlight) -->
@@ -887,8 +978,22 @@
       </div>
       <button class="skip-freeze-btn" id="skip-freeze-btn" type="button"><i data-lucide="skip-forward"></i><span id="skip-freeze-label">跳过本次</span></button>
       <button class="icon-btn" id="attach-btn"><i data-lucide="paperclip"></i></button>
-      <button id="send-btn"><i data-lucide="send"></i></button>
-      <button id="stop-btn"><i data-lucide="square"></i></button>
+      <!-- 🔴 输入框引用图标移除（作者令 2026-11-03 10:11 ②）：#quote-item-btn
+           （2026-11-02 11:00「引用入口移入 footer」批引入的动作行引用键）整键退役，
+           不留替代按钮——作者原意是「引用消息时用图标替代长文本展示」，不是输入框
+           加引用按钮；引用消息图标化语义另行核对后再设计入口，本批只做移除。
+           装配链（msgQuote.js initQuoteItemButton / freeze.js 冻结名单 /
+           input.css frozen disabled 档）同批摘除；防复活钉 =
+           /Users/kaiyu/.stand/evidence/ui-unification-20261103/input-fixes/
+           verify-five-fixes.mjs ② 腿（元素 0 命中）。 -->
+      <button id="send-btn" class="ds-turn-btn ds-turn-btn--send"><i data-lucide="send"></i></button>
+      <button id="stop-btn" class="ds-turn-btn ds-turn-btn--stop"><i data-lucide="square"></i></button>
+      </div>
+      <!-- 待办胶囊槽位已迁出输入区（作者令 2026-11-03 10:11 ①「待办胶囊挪位：
+           桌面端待办胶囊从输入框下方移到顶栏正下方」）——槽位现挂 #top-overlays，
+           见上方顶带块注记。本处不留挂载点（防复活钉：
+           /Users/kaiyu/.stand/evidence/ui-unification-20261103/input-fixes/
+           verify-five-fixes.mjs ① 腿 = 祖先链必须落在 #top-overlays）。 -->
     </div>
   </div>
   </div>
@@ -953,8 +1058,12 @@
   </div>
 
   <!-- Modals -->
-  <div id="modal-overlay">
-    <div id="modal-box">
+  <!-- 弹层层族批（ui-unification-20261103-overlays）：遮罩/壳的形由
+       design-system.css `.ds-overlay` / `.ds-layer` 层类族单点承担（层级带 /
+       遮罩底 / 壳圆角 / 入场动效）；id 保留为 DOM 寻址钩子（modal.js 的 .on /
+       .takeover-blur 切换、focusTrap、mobileLayer 铺平、既有 spec）。 -->
+  <div id="modal-overlay" class="ds-overlay ds-overlay--top">
+    <div id="modal-box" class="ds-layer">
       <div id="modal-title">New Session</div>
       <input id="modal-input" type="text" placeholder="Session name" autocomplete="off">
       <div id="modal-actions">
@@ -962,7 +1071,7 @@
         <button id="modal-confirm">Create</button>
       </div>
     </div>
-    <div id="delete-box">
+    <div id="delete-box" class="ds-layer">
       <div id="delete-title">Delete Session</div>
       <div id="delete-msg"></div>
       <div id="delete-actions">
@@ -974,7 +1083,7 @@
     <!-- Drop conflict dialog (external file drag-in, VS Code parity) — 3-choice
          Replace / Keep Both / Cancel. Cleaned/re-rendered by modal.js; buttons
          localized via the i18n `conflict-*` entries. -->
-    <div id="conflict-box">
+    <div id="conflict-box" class="ds-layer">
       <div id="conflict-title">Replace</div>
       <div id="conflict-msg"></div>
       <div id="conflict-actions">
@@ -986,14 +1095,16 @@
     <!-- 控制台单实例接管模态（2026-10-27 批；四修批 2026-10-29：极简卡 + 毛玻璃背景
          + 退出直达官网个人主页；接管/入场同族批 2026-11-01 作者令②：按钮语换代
          g2 药丸族。卡片家族批 2026-11-01 作者 16:05 令：面板基准化 = .nfc 家族
-         实色卡（白底/1px 边/radius 18/软影）+ 官方字标双档 + 家族字阶——原玻璃
+         实色卡（白底/1px 边/radius 18/软影）+ 官方字标 + 家族字阶——原玻璃
          面板档随本批退役（[USER-RULING] 申报见设计稿 §5）；.takeover-blur 整页
          背景模糊裁定维持）。视觉单源 = css/cards.css（.nfc 家族 + #takeover-box
          显隐/动画）；语义与既有模态族不同——Escape/遮罩点击不关闭（互斥权的
-         裁决点不可误关）。渲染单点 = takeoverModal.js。 -->
+         裁决点不可误关）。渲染单点 = takeoverModal.js。
+         品牌图标缺字形批（2026-11-02 作者 08:16 报障）：字标原为「双档 PNG
+         <img>」——那批图在生产脸 404（根因同入场卡，见上方引导面注释与本批
+         证据目录 §1）。改为内联 SVG 单档（currentColor 随 --nfc-heading）。 -->
     <div id="takeover-box" class="nfc">
-      <img class="nfc-lockup nfc-lockup-light" src="/brand/stand/lockup-light.png" alt="STAND">
-      <img class="nfc-lockup nfc-lockup-dark" src="/brand/stand/lockup-dark.png" alt="" aria-hidden="true">
+      <svg class="nfc-lockup" viewBox="0 0 1375.18 343.15" role="img" aria-label="STAND"><g transform="translate(15.00,15.00) scale(1.000000)" fill="currentColor" fill-rule="evenodd"><path d="M 22.96,167.53 L 27.19,174.53 L 32.46,179.99 L 37.46,183.80 L 46.46,188.91 L 58.46,193.82 L 68.46,196.76 L 90.46,200.79 L 102.46,201.93 L 121.46,202.18 L 150.46,199.84 L 174.46,194.71 L 186.46,190.82 L 198.46,185.85 L 206.46,181.86 L 206.46,180.81 L 185.46,183.98 L 174.46,184.80 L 160.46,184.79 L 142.46,182.69 L 127.46,177.99 L 119.03,172.53 L 115.30,168.53 L 113.11,164.53 L 112.05,160.53 L 112.04,155.53 L 115.16,145.53 L 118.19,140.53 L 123.13,134.53 L 134.46,124.20 L 145.46,116.23 L 165.46,104.32 L 198.46,88.22 L 237.46,72.24 L 291.46,53.27 L 336.36,39.53 L 347.46,31.86 L 386.55,0.53 L 385.46,0.00 L 373.46,0.20 L 344.46,2.29 L 316.46,6.40 L 278.46,14.36 L 244.46,23.31 L 199.46,37.41 L 164.46,50.21 L 133.46,63.25 L 102.46,78.21 L 80.46,90.35 L 60.46,103.21 L 44.46,115.98 L 33.21,127.53 L 28.07,134.53 L 24.31,141.53 L 22.08,147.53 L 20.95,154.53 L 21.13,161.53 Z M 0.00,312.53 L 1.46,313.15 L 12.46,312.94 L 42.46,310.78 L 77.46,305.78 L 117.46,297.83 L 159.46,287.80 L 191.46,278.79 L 225.46,267.89 L 255.46,256.74 L 286.46,242.70 L 304.46,232.86 L 320.46,221.84 L 329.91,213.53 L 338.81,203.53 L 344.83,192.53 L 346.62,185.53 L 346.85,180.53 L 345.82,173.53 L 341.66,165.53 L 336.25,159.53 L 327.46,153.14 L 320.46,149.27 L 308.46,144.37 L 298.46,141.24 L 273.46,136.23 L 246.46,134.53 L 219.46,136.21 L 193.46,141.31 L 172.46,148.35 L 158.21,155.53 L 158.46,156.42 L 186.46,152.28 L 203.46,151.98 L 221.46,154.13 L 229.46,156.24 L 236.46,159.04 L 244.46,164.18 L 249.69,170.53 L 251.73,178.53 L 249.76,187.53 L 242.62,197.53 L 230.46,207.68 L 211.46,218.93 L 192.46,227.86 L 170.46,236.75 L 147.46,244.88 L 99.46,259.83 L 49.46,274.05 L 42.46,278.25 Z"/></g><g transform="translate(436.55,103.97) scale(1.000000)" fill="currentColor" fill-rule="evenodd"><path d="M 544.59,124.16 L 454.52,1.16 L 433.31,0.00 L 420.31,0.74 L 337.45,103.16 L 319.12,124.16 L 320.31,124.71 L 362.31,124.05 L 433.04,35.16 L 436.31,32.11 L 505.31,123.73 L 543.31,124.72 Z M 181.48,104.16 L 183.66,98.16 L 184.53,92.16 L 184.57,78.16 L 183.67,72.16 L 181.55,66.16 L 178.50,61.16 L 174.31,56.75 L 168.31,52.72 L 161.31,49.75 L 150.31,47.86 L 62.31,47.89 L 59.31,47.27 L 55.15,44.16 L 53.98,42.16 L 53.00,37.16 L 54.05,33.16 L 56.31,30.34 L 58.31,28.81 L 62.31,27.57 L 153.31,27.19 L 184.31,2.51 L 184.87,1.16 L 153.31,0.34 L 51.31,0.78 L 42.31,2.88 L 33.31,7.95 L 28.31,12.10 L 24.81,16.16 L 20.12,24.16 L 18.86,28.16 L 18.15,34.16 L 18.10,45.16 L 18.81,50.16 L 22.03,59.16 L 27.62,66.16 L 35.31,71.41 L 41.31,73.60 L 47.31,74.71 L 138.31,75.11 L 142.31,75.68 L 146.31,77.81 L 148.63,81.16 L 149.47,85.16 L 148.63,90.16 L 146.86,93.16 L 144.31,95.48 L 139.31,96.84 L 36.31,97.48 L 0.00,124.16 L 1.31,124.79 L 152.31,124.01 L 162.31,121.50 L 169.31,117.39 L 176.31,111.12 Z M 182.06,27.16 L 255.31,27.41 L 257.45,28.16 L 257.51,134.16 L 258.31,135.20 L 288.60,107.16 L 288.80,28.16 L 290.31,27.45 L 341.31,27.40 L 368.00,1.16 L 367.31,0.50 L 205.31,0.53 L 182.24,26.16 Z M 726.38,124.16 L 726.31,0.98 L 711.31,0.24 L 696.31,0.56 L 695.06,1.16 L 695.01,87.16 L 694.31,88.01 L 584.31,1.75 L 580.31,0.80 L 555.31,0.46 L 554.03,1.16 L 554.31,123.95 L 583.31,124.29 L 584.62,123.16 L 584.65,44.16 L 585.31,42.80 L 692.31,123.47 L 694.31,124.50 L 725.31,124.76 Z M 921.76,98.16 L 923.64,91.16 L 923.55,32.16 L 921.47,26.16 L 914.58,15.16 L 908.31,8.01 L 901.31,3.10 L 895.31,1.02 L 888.31,0.38 L 737.31,0.57 L 736.67,1.16 L 753.62,19.16 L 753.58,123.16 L 754.31,124.32 L 883.31,124.24 L 889.31,123.46 L 897.31,120.45 L 905.31,115.38 L 914.65,107.16 Z M 886.66,87.16 L 883.31,91.34 L 879.31,94.49 L 870.31,97.31 L 786.90,97.16 L 786.02,95.16 L 786.05,28.16 L 788.31,27.40 L 869.31,27.42 L 876.31,28.79 L 880.31,30.88 L 886.43,37.16 L 888.52,42.16 L 888.96,45.16 L 888.98,79.16 Z"/></g></svg>
       <div id="takeover-title" class="nfc-title">Console opened elsewhere</div>
       <div id="takeover-msg" class="nfc-body"></div>
       <div id="takeover-error" class="nfc-error" role="alert" hidden></div>
@@ -1006,8 +1117,8 @@
   <!-- Agent Editor Modal — retired 2026-09-06 (tool-face retirement batch):
        per-agent editing lives in the Canvas detail tab (agentManager.js). -->
   <!-- Memory Editor Modal (three tabs: Folder / Agent / User) -->
-  <div id="memory-overlay">
-    <div id="memory-modal" class="scroll-under-glass">
+  <div id="memory-overlay" class="ds-overlay">
+    <div id="memory-modal" class="scroll-under-glass ds-layer">
       <div id="memory-modal-title">Memory</div>
       <div class="memory-tabs">
         <button class="memory-tab active" data-scope="agent">Agent</button>
@@ -1023,8 +1134,8 @@
     </div>
   </div>
   <!-- Rules Editor Modal -->
-  <div id="rules-overlay">
-    <div id="rules-modal" class="scroll-under-glass">
+  <div id="rules-overlay" class="ds-overlay">
+    <div id="rules-modal" class="scroll-under-glass ds-layer">
       <div id="rules-modal-title">Project Rules</div>
       <div id="rules-modal-body">
         <textarea id="rules-input" placeholder="" rows="14" spellcheck="false"></textarea>
@@ -1037,8 +1148,8 @@
     </div>
   </div>
   <!-- Settings Modal (centered popup — no dimming backdrop, no blur) -->
-  <div id="settings-overlay">
-    <div id="settings-modal" class="scroll-under-glass">
+  <div id="settings-overlay" class="ds-overlay">
+    <div id="settings-modal" class="scroll-under-glass ds-layer">
       <div class="settings-modal-header">
         <span id="settings-modal-title">Settings</span>
         <button id="settings-modal-close" class="panel-btn" title="Close"><i data-lucide="x"></i></button>
@@ -1047,8 +1158,8 @@
     </div>
   </div>
   <!-- Chat History Search Modal (centered popup — no dimming backdrop, no blur) -->
-  <div id="search-overlay">
-    <div id="search-modal">
+  <div id="search-overlay" class="ds-overlay">
+    <div id="search-modal" class="ds-layer">
       <div class="search-modal-header">
         <span id="search-modal-title">Search Messages</span>
         <button id="search-modal-close" class="panel-btn" title="Close"><i data-lucide="x"></i></button>
@@ -1162,13 +1273,15 @@
        module 脚本同入「按文档序延迟执行」队列——下列脚本仍在 js/main.js 之前执行，
        window 全局契约与执行顺序不变；变化只在不再阻塞 HTML 解析/首帧（10-19 瀑布
        审计根因#4 止损）。qrcode.js 摘出首开路径：非首屏（社交渠道二维码），按需
-       注入见 socialPanel.js ensureVendorQr——typeof 兜底路径原样保留。katex/lottie
-       保留 defer 在册：katex 服务聊天历史数学块渲染、lottie 服务 boot 门控
-       （main.js waitForGlobals），二者按需化会引入首屏回归面，留 dist 打包时代再收。 -->
+       注入见 socialPanel.js ensureVendorQr——typeof 兜底路径原样保留。lottie 保留
+       defer 在册（服务 boot 门控 main.js waitForGlobals，按需化会引入首屏回归面，
+       留 dist 打包时代再收）。katex 已按需化：见 rich-render 批 2026-11-05
+       （js/mathRender.js 首个 .nf-math 才装载），本条台账只剩 lottie。 -->
   <script defer src="vendor/lucide.min.js"></script>
   <script defer src="vendor/lottie.min.js"></script>
   <script defer src="vendor/marked.min.js"></script>
-  <script defer src="vendor/katex.min.js"></script>
+  <!-- KaTeX 运行库改为按需装载（rich-render 批 2026-11-05）：275KB 不再随开屏
+       加载，首个 .nf-math 占位渲染时由 js/mathRender.js 注入 script。 -->
   <script defer src="vendor/highlight.min.js"></script>
   <script type="module" src="js/main.js"></script>
   <!-- 卡窗静态引导看门狗（独立窗口本机加速批 2026-10-29）。诊断失地：模块图

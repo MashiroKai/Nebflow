@@ -29,6 +29,26 @@ case class ScheduledTask(
    */
   name: Option[String] = None,
   /**
+   * 待办两段化的第二段（待办结构化批 2026-11-05 作者令「待办要求用 name 和
+   * detail 这样的架构」）：`name` = 短标题（列表行显示面、`#` 引用键、同名
+   * upsert 键），`detail` = 具体内容（可长，列表行折叠显示）。
+   *
+   * 🔴 兼容矩阵（逐条申报，不许假装"已迁移"）：
+   *   · **存量行**（本批之前写入）没有 detail 键 ⇒ 解码 None。前端
+   *     `todoText.projectTodoText` 在**读时**把 content 投影成 {name, detail}
+   *     （首句 / 前 24 字作 name，其余留 detail；只丢首尾空白，不丢内容字符），
+   *     **不写回、不删改文件** ⇒ 零丢失是结构性的，投影规则变更可重算。
+   *   · **新行**：创建时带 detail ⇒ 前端直接用 name/detail，不再投影。
+   *   · `content` 仍是必填的**注入文本**（每日摘要、done/cancel 回执、Schedule
+   *     list 都读它）——两段化不改它对既有读者的语义，只把"给人看的标题"从
+   *     content 里分出来。只传 content 的旧调用方行为逐字不变。
+   *   · `kind="task"` 面：schedule-todo-unify 批（2026-11-06 作者令「定时任务也要
+   *     按 name description 来添加 点击展开可以查看细节」）起 detail = **description
+   *     第二段**（首行 = name 的展示约定在 UI 侧）；不传 ⇒ None，旧调用方逐字节不变。
+   *     （本节此前写「task 面 detail 恒 None」，由本批改写，口径随真源。）
+   */
+  detail: Option[String] = None,
+  /**
    * 双面化 kind（2026-10-24 作者令「Schedule 定时工具双面化」）：None /
    * Some("task") = 定时任务（现状，triggerAt 到点触发一次或按 repeat 续期）；
    * Some("todo") = 待办——无固定触发时间，triggerAt 复用为**下次浮出时间**
@@ -81,10 +101,31 @@ case class ScheduledTask(
    * 自由文本标签（引擎不持项目注册表权威——标签即数据）；存量文件无此键 →
    * None（withDefaults 零迁移）。定/待两面通用（定时任务面 UI 暂不消费）。
    */
-  project: Option[String] = None
+  project: Option[String] = None,
+  /**
+   * 重要度（待办体系统一批 2026-11-04）：0 = 无（缺省）/ 1 低 / 2 中 / 3 高。
+   * 越界一律钳位到 0..3（[[ScheduledTask.clampPriority]] 单点，create 与 WS patch
+   * 都过它——库内不可能出现 4/‑1，前端排序无须再防）。存量文件无此键 → 0
+   * （ConfiguredCodec + withDefaults 缺键回默认值，先例 missCount；spec 钉）。
+   * 仅待办面消费；定时任务面字段恒 0、语义零改动。
+   */
+  priority: Int = 0,
+  /**
+   * 完成时刻（待办体系统一批 2026-11-04）：None = 未完成；Some(ms) = 已完成。
+   * 🔴 这是**软删标记**——`completeTodo` 不再物理删行（DoneRecord 只增不改续
+   * 写 + 行留库 ⇒ 取消完成可一键回退、周报数据源不断；旧「删行」路径把二者
+   * 都做绝了）。已完成行：不进 scope:"all" 收件箱默认面、不进 getAllTodos /
+   * getAllDueTodos 等读口 ⇒ **绝不被 scheduler 浮出**（见 Store 读口与
+   * ScheduledTaskActor.surfaceTodos 双闸）。取消完成 = 置回 None（幂等）。
+   * 存量文件无此键 → None（withDefaults 零迁移）。
+   */
+  completedAt: Option[Long] = None
 ):
   /** true = 待办面（周期浮出直至销账），false = 定时任务面（现状）。 */
   def isTodo: Boolean = kind.contains(ScheduledTask.KindTodo)
+
+  /** true = 已完成（软删标记置位）——读口/触发面据此排除。 */
+  def isCompleted: Boolean = completedAt.isDefined
 
 end ScheduledTask
 
@@ -99,6 +140,24 @@ object ScheduledTask:
   /** kind 等值比较：None 与 Some(KindTask) 同面。 */
   def sameKind(a: Option[String], b: Option[String]): Boolean =
     a.getOrElse(KindTask) == b.getOrElse(KindTask)
+
+  /** 重要度下界（0 = 无/未分级）。 */
+  val PriorityMin: Int = 0
+
+  /** 重要度上界（3 = 高）。 */
+  val PriorityMax: Int = 3
+
+  /** 重要度钳位单点：越界收进 [PriorityMin, PriorityMax]（0..3 之外的读数只可能
+   *  来自老/手改文件或旧前端，一律收敛，库内不出现越界值）。 */
+  def clampPriority(n: Int): Int = math.max(PriorityMin, math.min(PriorityMax, n))
+
+  /**
+   * 收件箱排序键（服务端权威，2026-11-04）：未完成优先 → priority 降序 →
+   * triggerAt 升序（下次浮出早者先）→ createdAt 升序（稳定兜底，同键不抖动）。
+   * 全键可**从每行数据本身算出** ⇒ 前端只消费服务端顺序，不许自己内存重排。
+   */
+  def todoSortKey(t: ScheduledTask): (Int, Int, Long, Long) =
+    (if t.isCompleted then 1 else 0, -t.priority, t.triggerAt, t.createdAt)
 
   // 存量文件向后兼容（2026-09-06 实证 + 2026-10-29 修正）：缺键回构造器默认值。
   // 🔴 deriveCodec（generic.semiauto）只对 **Option 字段** 容忍缺键——非 Option
@@ -120,9 +179,19 @@ object ScheduledTask:
     name: Option[String] = None,
     kind: Option[String] = None,
     condition: Option[String] = None,
-    project: Option[String] = None
+    project: Option[String] = None,
+    /** 重要度 0..3（越界钳位，见 [[ScheduledTask.clampPriority]]）；kind=todo 的
+     *  唯一创建点即此处，定时任务面调用方不传 = 0（逐字节现状）。 */
+    priority: Int = 0,
+    /** 第二段 detail（两段化批 2026-11-05；定时任务面启用 = schedule-todo-unify
+     *  批 2026-11-06 作者令「定时任务也要按 name description 来添加 点击展开可以
+     *  查看细节」）：待办面 = detail（2026-11-05 起），定时任务面 = description。
+     *  **缺键/空白 ⇒ None**（旧调用方不传 = 逐字节现状，零迁移）。
+     *  末位默认参数 ⇒ 全部既有位置/命名调用零改动。 */
+    detail: Option[String] = None
   ): ScheduledTask =
     val normalizedKind = kind.map(_.trim.toLowerCase).filter(_.nonEmpty)
+    val isTodo = normalizedKind.contains(KindTodo)
     ScheduledTask(
       id = UUID.randomUUID().toString.take(8),
       sessionId = sessionId,
@@ -132,11 +201,14 @@ object ScheduledTask:
       createdAt = System.currentTimeMillis(),
       referencePath = referencePath,
       // 待办无 repeat 语义（浮出周期是引擎侧固定策略：每日 09:00）。
-      repeat = if normalizedKind.contains(KindTodo) then None else repeat,
+      repeat = if isTodo then None else repeat,
       name = name.map(_.trim).filter(_.nonEmpty),
+      // 两面都收 detail（schedule-todo-unify 批）：空白串归一为 None（不留"空的第二段"）。
+      detail = detail.map(_.trim).filter(_.nonEmpty),
       kind = normalizedKind.filter(_ == KindTodo), // 非 "todo" 值一律归定时任务面
       condition = condition.map(_.trim).filter(_.nonEmpty),
-      project = project.map(_.trim).filter(_.nonEmpty)
+      project = project.map(_.trim).filter(_.nonEmpty),
+      priority = clampPriority(priority)
     )
 
   end create

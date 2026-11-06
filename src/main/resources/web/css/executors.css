@@ -4,7 +4,7 @@
    sidebar.css); kept separate here since the panel is its own module. */
 
 #executors-content {
-  padding: 16px 20px;
+  padding: var(--ds-space-4) var(--ds-space-5);
   overflow-y: auto;
   height: 100%;
   box-sizing: border-box;
@@ -12,30 +12,30 @@
 
 .executor-loading {
   color: var(--text-secondary, #888);
-  font-size: 13px;
-  padding: 24px 4px;
+  font-size: var(--ds-fs-body);
+  padding: var(--ds-space-6) var(--ds-space-1);
 }
 
 .executor-hint {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   line-height: 1.5;
   color: var(--text-secondary, #888);
-  margin-bottom: 12px;
+  margin-bottom: var(--ds-space-3);
 }
 
 .executor-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--ds-space-2);
 }
 
 .executor-card {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
+  gap: var(--ds-space-3);
+  padding: var(--ds-space-3) 14px;
   border: 1px solid var(--border-color, rgba(128, 128, 128, 0.2));
-  border-radius: 10px;
+  border-radius: var(--ds-radius-card-sm);
   background: var(--panel-bg, transparent);
   transition: border-color 0.15s ease, background 0.15s ease;
 }
@@ -55,7 +55,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   background: rgba(128, 128, 128, 0.08);
   color: var(--text-primary, #ddd);
 }
@@ -66,45 +66,47 @@
 }
 
 .executor-card-name {
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--ds-fs-body);
+  /* panel-language 批 2026-11-06：卡名行字重收编令牌（值不变 600 = --ds-fw-title），
+     机检 P1 登记槽（check-panel-unify.mjs）：裸字面量即红。 */
+  font-weight: var(--ds-fw-title);
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
   flex-wrap: wrap;
 }
 
 .executor-card-desc {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--text-secondary, #888);
-  margin-top: 2px;
+  margin-top: var(--ds-space-half);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .executor-card-path {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--text-secondary, #777);
-  margin-top: 3px;
+  margin-top: var(--ds-space-1);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .executor-card-pending {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: #d97709;
-  margin-top: 3px;
+  margin-top: var(--ds-space-1);
 }
 
 .executor-card-badge {
   display: inline-flex;
   align-items: center;
-  padding: 0 7px;
-  border-radius: 9px;
-  font-size: 10px;
+  padding: 0 var(--ds-space-2);
+  border-radius: var(--ds-radius-button);
+  font-size: var(--ds-fs-meta);
   line-height: 16px;
   font-weight: 600;
   white-space: nowrap;
@@ -121,7 +123,7 @@
 }
 
 .executor-card-detect {
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   white-space: nowrap;
 }
@@ -134,9 +136,9 @@
   border: 1px solid var(--border-color, rgba(128, 128, 128, 0.3));
   background: transparent;
   color: var(--text-primary, #ddd);
-  font-size: 12px;
-  padding: 5px 12px;
-  border-radius: 8px;
+  font-size: var(--ds-fs-hint);
+  padding: var(--ds-space-1h) var(--ds-space-3);
+  border-radius: var(--ds-radius-input);
   cursor: pointer;
 }
 

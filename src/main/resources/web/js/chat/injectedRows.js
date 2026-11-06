@@ -4,7 +4,9 @@ import { t } from '../i18n.js';
 import { createIconsIn, renderMarkdownWithMath, shouldFollowBottom } from '../utils.js';
 import { parseTaskReturnText, buildTaskRefLine } from '../reference.js';
 // Root agent DISPLAY name（单读点 rootName.js；A 侧 deviceMail 标签批本簇改动随簇迁入）。
-import { rootDisplayName } from '../rootName.js';
+// Nebula 退役批（作者令 2026-11-01）追加：ROOT_AGENT_KEY 用于把「机制名段」在显示层
+// 换成用户给它起的名字（引擎 header 的 PROJECT 段与 sender 都可能携带机制名）。
+import { rootDisplayName, ROOT_AGENT_KEY } from '../rootName.js';
 import { bindCollapsibleToggle } from './collapsible.js';
 import { createMsgFooterBadge } from './durationBadges.js';
 // diff 拆面板批（2026-10-22 作者令「摘要上移+左右分体」）：交付消息顶部摘要条
@@ -18,6 +20,17 @@ import { attachQuoteMenu, nextChatMsgId } from '../msgQuote.js';
 // schedcard 批（2026-10-29）：卡片「预定时间」读全局时钟偏好面（12h/24h + 日分层
 // ——今天纯时钟、昨天/星期/日期分层），与消息 footer 同一实现（timeFormat 单源）。
 import { formatFooterTime } from '../timeFormat.js';
+// 来源链批（作者令 2026-11-01 19:23）：完工卡归属链上层段读数（bgSourceChain
+// 单点——收件 delegate 的批次短名；解析不到 = ''，卡面零变化）。
+import { chainNameOf } from '../bgSourceChain.js';
+
+/** 完工卡上层段（来源链批）：收件会话是 delegate（注册行镜像有批次短名）⇒ 该短名
+ *  =「挂在谁下面」上层段；根会话/无名旧记录 ⇒ ''（链不造空段——卡面逐字节不变）。 */
+function receiptUpperName(receiverSid) {
+  const nm = chainNameOf(String(receiverSid || ''));
+  const sid = String(receiverSid || '').replace(/^team-/, '');
+  return (/^delegate-/.test(sid) && nm) ? nm : '';
+}
 
 // ---------- Injected bubble (task P+Q: tool-injected prompts & result notifications) ----------
 // Mail/Delegate/SubTask/Skill/Flow/ExternalEvent injections arrive as WS
@@ -48,6 +61,26 @@ const INJECTED_SOURCE_LABELS = {
   // （「来自 <from_device> 的 Nebula」，sender 携带 from_device），故不改本表——
   // 契约门 InjectionSourceContractSpec 的显式分支集合同样认它。
   system: 'System', background: 'Background',
+  // 外部注入统一通道批（2026-11-05）：此前**恒不可见**的一族外部事件（只以
+  // `<system-reminder>` 进 LLM 上下文、前端零气泡 = 作者 08:44 报障
+  // 「我又被触发了但看不到是什么」）。引擎侧 `AgentActor#visibleExternalEventSource`
+  // 改判为「除自写行腿外一律可见」后这些 source 真的会到达本表 ⇒ 逐值显式登记
+  // （禁首字母大写兜底；契约门 InjectionSourceContractSpec ② 同源对账
+  // `InjectionAttribution.BackendNamedSources`）。
+  //   merge-queue       放行/阻塞/属主失联通知（SharedResources / MergeQueue）
+  //   bg-lifecycle      后台任务生命周期催办（BgLifecycleReconciler）
+  //   waiting-dock-care 等待坞超时升级（TaskStuckWatcher）
+  //   chain-orphan      孤儿链回收通报（ProjectCrashRecovery）
+  //   team              团队错误升级链（AgentActor.notifyEscalation）
+  // 修复批 2026-11-06（作者原话「llm 不稳定 不需要向上通知…现在还是在给你报障」）：
+  // 解冻轮把静默族冻结回执合成一条状态行（引擎 `FreezeNotice.collapseSilentReceipts`）
+  // ⇒ 独立来源名，渲染为「等待恢复中」而不是冻结回执。
+  'frozen-waiting': 'FrozenWaiting',
+  'merge-queue': 'MergeQueue',
+  'bg-lifecycle': 'BgLifecycle',
+  'waiting-dock-care': 'DockCare',
+  'chain-orphan': 'ChainOrphan',
+  team: 'Team',
   // b64 批（2026-09-13）：链级摘要投根通道（NodeEngine.deliverChainSummary，
   // source="chain"，`FlowMapStore.ChainSummarySource`）。后端自定名 ⇒ 必须显式登记
   // （禁首字母大写兜底，契约门 InjectionSourceContractSpec）。
@@ -172,6 +205,31 @@ function delegateReceiptSummary(text, merged) {
   return { text: first || '', hash: '' };
 }
 
+/** 通用注入泡的**一句话摘要**（外部注入统一通道批 2026-11-05，作者 08:44 报障
+ *  逐字：「所有的外部注入消息应该有统一的途径和蓝色气泡通知，我刚刚看到你好多条
+ *  消息触发你，我都看不到是什么」）。
+ *
+ *  判据 = **正文本身的首条有效行**（不造新话、不改写、不截断语义）：
+ *    · 跳过空行与 `<system-reminder>` / `</system-reminder>` 包裹行（注入正文常整段
+ *      包在 reminder 里，那两行不是内容）；
+ *    · 取第一条其余非空行，剥掉行首 `- ` / `1. ` 这类列表前缀；
+ *    · 超过 SUMMARY_MAX 字符截断并加省略号（纯显示层省略，展开后是完整正文）。
+ *  取不到（正文为空）⇒ ''（调用点不挂摘要行，气泡形态与改前逐字节相同）。
+ *  纯函数，绝不抛。 */
+const INJECT_SUMMARY_MAX = 160;
+function injectSummaryLine(text) {
+  const lines = String(text || '').split('\n');
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (line === '<system-reminder>' || line === '</system-reminder>') continue;
+    const body = line.replace(/^(?:[-*+]\s+|\d+[.)]\s+)/, '').trim();
+    if (!body) continue;
+    return body.length > INJECT_SUMMARY_MAX ? `${body.slice(0, INJECT_SUMMARY_MAX)}…` : body;
+  }
+  return '';
+}
+
 /** Build the source label text, optionally combining with sender and eventType.
  *  e.g. source='mail', sender='Manager', eventType='result' → 'Mail · Manager · Result'
  *  sender is optional (backward compatible): absent → 'SOURCE · EventType'.
@@ -190,6 +248,17 @@ function delegateReceiptSummary(text, merged) {
  *  takes **presentation priority**; absent ⇒ the fallback path is byte-identical
  *  to before (old history rows without the field, node face, non-project Mail,
  *  dispatch notifications all render exactly as before). */
+/** 显示层身份段：机制名（root agent 的 key，大小写不敏感——引擎
+ *  `NotificationHeader` 会把 PROJECT 段全大写归一，`RootProject` 亦由此而来）⇒
+ *  用户给它起的名字；其余值（项目/节点/团队/设备/后台 agent 自身身份）原样。
+ *  Nebula 退役批（作者令 2026-11-01「界面里不该再有 Nebula 的身影」）：只换显示，
+ *  帧与落盘行上的字段一律不动（协议面零改动）。 */
+export function displayIdentitySegment(seg) {
+  const v = String(seg == null ? '' : seg).trim();
+  if (!v) return '';
+  return v.toLowerCase() === ROOT_AGENT_KEY.toLowerCase() ? rootDisplayName() : v;
+}
+
 export function injectedSourceLabel(source, eventType, sender, sourceTeam, intake) {
   // 未知/畸形 source 防御（全降级列表态批 2026-09-16，J6「未知 source 不得异常」）：
   // 非字符串来源（历史脏行 / 未来新源的畸形值）先串化，禁让下方 `charAt`/`slice`
@@ -230,7 +299,7 @@ export function injectedSourceLabel(source, eventType, sender, sourceTeam, intak
     const key = intake || source;
     const base = INJECTED_SOURCE_LABELS[key] || key.charAt(0).toUpperCase() + key.slice(1);
     parts.push(base);
-    if (sender) parts.push(sender);
+    if (sender) parts.push(displayIdentitySegment(sender));
   }
   if (eventType) {
     const et = EVENT_TYPE_LABELS[eventType] || eventType.charAt(0).toUpperCase() + eventType.slice(1);
@@ -403,8 +472,12 @@ function buildScheduleCardRow(row, text, timestamp, deferFn, schedule) {
  *  schedule (optional, schedcard 批 2026-10-29): 定时任务触发行的卡片载荷
  *  （引擎 `UiMessage.User.schedule` 同源：{id, name?, triggerAt, repeat?,
  *  referencePath?}）。`source==='schedule'` ⇒ 走**专属卡分支**（见下），载荷
- *  缺席（旧历史行）也能渲染卡（降级：无 name/无重复标/时间回落行 timestamp）。 */
-export function buildInjectedRow(text, source, timestamp, eventType, sender, sourceTeam, deferFn, delivery, intake, header, fileChanges, schedule) {
+ *  缺席（旧历史行）也能渲染卡（降级：无 name/无重复标/时间回落行 timestamp）。
+ *  receiverSid (optional, 来源链批 2026-11-01 19:23 作者令): 收件会话 id——完工卡
+ *  归属链的上层段判据：收件会话是 delegate（有批次短名）⇒ 该 delegate 名即
+ *  「挂在谁下面」的上层段（pill 首段前插「父短名 · DELEGATE · INTERNAL」形）；
+ *  根会话收件 = 无上层链（作者令「不造空段」）⇒ 缺省/空 = 卡面逐字节不变。 */
+export function buildInjectedRow(text, source, timestamp, eventType, sender, sourceTeam, deferFn, delivery, intake, header, fileChanges, schedule, receiverSid) {
   const row = document.createElement('div');
   row.className = 'row user';
 
@@ -464,8 +537,14 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
   // 引擎单一来源优先（气泡四段式统一批 2026-09-15）：帧/落盘行带 `header` ⇒ 逐字
   // 渲染该串（**禁二次拼接**——引擎 `NotificationHeader` 是唯一格式化实现）；
   // 缺席 ⇒ 回落既有 `injectedSourceLabel`（旧历史行与词表外 source 逐字节不变）。
-  const renderedLabel =
-    (header && String(header).trim()) ? String(header) : injectedSourceLabel(source, eventType, sender, sourceTeam, intake);
+  // Nebula 退役批（作者令 2026-11-01）：引擎 header 逐字渲染的口径不变，唯一例外 =
+  // 携带机制名的段（PROJECT 段缺项目时会回落 `NotificationHeader.RootProject`）在
+  // 显示层换成用户给它起的名字——判据见 displayIdentitySegment（只认机制名，其余
+  // 段逐字保留：节点/链/团队/后台 agent 自身身份一律不动）。
+  const rawHeader = (header && String(header).trim()) ? String(header) : '';
+  const renderedLabel = rawHeader
+    ? rawHeader.split(' · ').map(displayIdentitySegment).join(' · ')
+    : injectedSourceLabel(source, eventType, sender, sourceTeam, intake);
 
   // ── Delegate 完工通知卡（2026-10-31 重设计批 → 22:29 单行化+hover 批 → 11-01
   //   完工卡 diff 统计恢复批，作者令版式四条）：
@@ -504,8 +583,14 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
     pill.className = 'nf-rcpt-pill';
     const name = document.createElement('span');
     name.className = 'nf-rcpt-name';
+    // 来源链批（作者令 2026-11-01 19:23）：收件会话是 delegate ⇒ 上层段 =
+    // 该 delegate 批次短名（bgSourceChain 单点读数）——嵌套 delegate 的完工卡
+    // 「挂在谁下面」上屏；根会话收件（无链）⇒ 段缺席，卡面逐字节不变。
     // 分段 span 承载：textContent 逐字节维持「KIND · EXECUTOR」口径（A1 契约面）。
-    delegateReceiptName(renderedLabel, sender, eventType).split(' · ').forEach((segText, i) => {
+    const upperSeg = receiptUpperName(receiverSid);
+    const receiptSegs = delegateReceiptName(renderedLabel, sender, eventType).split(' · ');
+    const pillSegs = upperSeg ? [upperSeg, ...receiptSegs] : receiptSegs;
+    pillSegs.forEach((segText, i) => {
       if (i > 0) name.appendChild(document.createTextNode(' · '));
       const seg = document.createElement('span');
       seg.className = 'nf-rcpt-seg';
@@ -589,6 +674,19 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
     label.appendChild(document.createTextNode(renderedLabel));
     appendDeliveryBadge(label, delivery);
     bubble.appendChild(label);
+    // 外部注入统一通道批（2026-11-05）：折叠态也要「看得到是什么」。
+    // 来源行下追加**一句话摘要**（正文首条有效行，逐字取自注入内容）；
+    // 展开后让位给正文（CSS 由 label 的 aria-expanded 驱动，防首行重复）。
+    // 摘要恒为 label 的**紧邻兄弟**（选择器依赖），故挂位固定在本块末尾。
+    if (collapsible) {
+      const summaryText = injectSummaryLine(trimmed);
+      if (summaryText) {
+        const summaryEl = document.createElement('div');
+        summaryEl.className = 'nf-inject-summary';
+        summaryEl.textContent = summaryText;
+        bubble.appendChild(summaryEl);
+      }
+    }
   }
   if (collapsible) {
     bindCollapsibleToggle(source === 'delegate' ? receiptTop : label, () => content);
@@ -627,7 +725,8 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
  *  与历史恢复（persistence.js）走同一 builder，渲染逐字同构。 */
 export function renderInjectedBubble(text, source, timestamp, eventType, sender, sourceTeam, delivery, intake, header, fileChanges, schedule) {
   const chat = activeView.dom.chat;
-  const row = buildInjectedRow(text, source, timestamp || Date.now(), eventType, sender, sourceTeam, undefined, delivery, intake, header, fileChanges, schedule);
+  // 来源链批（2026-11-01 19:23）：收件会话 id 随 builder 下传（完工卡归属链上层段）。
+  const row = buildInjectedRow(text, source, timestamp || Date.now(), eventType, sender, sourceTeam, undefined, delivery, intake, header, fileChanges, schedule, activeView?.sessionId);
   // A 侧 #491 单点落序（chat.js appendChatRow = `chat.append(row)`）随簇同位落此：
   // 纯 doc-order 追加，等价语义、同为唯一追加语义（禁反向 import chat.js 成环）。
   chat.append(row);

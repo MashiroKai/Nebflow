@@ -26,6 +26,8 @@ private[project] trait NodeLoopRunner:
     new Behavior[AgentEvent]:
       def receive(ctx: ActorContext[AgentEvent], event: AgentEvent): IO[Behavior[AgentEvent]] =
         event match
+          // 刀一等待态计时消息：本桥不接（恒等行为——绝不用停桥/完成 round 消化它）。
+          case _: AgentEvent.BgWaitCapTick => IO.pure(Behaviors.ignore)
           case AgentEvent.Completed(_, messages) =>
             round.get.flatMap(_.complete(Right(messages)).attempt.void).as(loopBridge(round, sessionId, sessionName))
           case AgentEvent.Failed(_, err) =>
@@ -140,12 +142,21 @@ private[project] trait NodeLoopRunner:
         },
         s"loopbridge-${sessionId.take(8)}"
       )
+      // 属主边读点（面板代际层级批 2026-11-06 · design 裁定 A②）：loop worker /
+      // verify 会话与普通节点同读点收敛——在册分发器 = parentSessionId（depth 2），
+      // 无在册分发器兜底 rootSessionId（depth 1 降级，回执声明项）。worker/verify
+      // 共用本码点（spawnLoopSession 唯一注册处），零签名零调用点改动。
+      dispatcherSid <- dispatcherSlot.get
       _ <- resources.agentRegistry.update(
         _ + (sessionId -> AgentRecord(
           sessionId,
           ref,
           AgentKind.Flow,
           rootSessionId,
+          // 属主边（面板代际层级批 2026-11-06）：parent = 在册分发器，兜底 =
+          // 挂载 root（与 NodeStarter.startNode 同口径——单一真相 =
+          // AgentRecord.parentSessionId 注册写入）。
+          parentSessionId = dispatcherSid.getOrElse(rootSessionId),
           startedAt = System.currentTimeMillis(),
           lastActivityMs = System.currentTimeMillis(),
           supervisorRef = Some(bridgeRef),

@@ -13,6 +13,7 @@ import { t } from './i18n.js';
 import { brand } from './brand.js';
 import { key } from './branding.js';
 import { createIconsIn } from './utils.js';
+import { toggleHTML, setToggleState, setToggleBusy } from './toggle.js';
 import { openDaemonConfig } from './daemonPanel.js';
 
 // ── Inline CSS ─────────────────────────────────────────────
@@ -22,14 +23,12 @@ const DAEMON_CSS = `
 #daemon-btn {
   background: none; border: 1px solid transparent; cursor: pointer; padding: 0;
   width: 28px; height: 28px; display: flex; align-items: center;
-  justify-content: center; border-radius: 6px;
+  justify-content: center; border-radius: var(--ds-radius-chip);
   color: var(--color-frame-text-muted); position: relative;
   flex-shrink: 0; transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
 #daemon-btn:hover {
   background: var(--glass-control-bg-hover);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   border-color: var(--glass-control-border);
   box-shadow:
     inset 0 1px 0 var(--glass-control-highlight),
@@ -45,9 +44,7 @@ const DAEMON_CSS = `
   position: absolute; top: 56px; right: 16px; width: 400px;
   max-height: min(540px, 70vh);
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  border-radius: 16px; border: 1px solid var(--sapphire-edge);
+  border-radius: var(--ds-radius-card-lg); border: 1px solid var(--sapphire-edge);
   box-shadow:
     inset 0 -1px 0 0 rgba(91, 127, 191, 0.025),
     inset 1px 0 0 0 rgba(91, 127, 191, 0.02),
@@ -87,26 +84,24 @@ const DAEMON_CSS = `
 /* ── Panel Header ── */
 .daemon-panel-header {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 12px 14px 6px; flex-shrink: 0;
+  padding: var(--ds-space-3) 14px var(--ds-space-1h); flex-shrink: 0;
 }
 .daemon-panel-title {
-  font-size: 13px; font-weight: 600; color: var(--color-text);
+  font-size: var(--ds-fs-body); font-weight: 600; color: var(--color-text);
   letter-spacing: -0.02em;
 }
-.daemon-panel-header-right { display: flex; align-items: center; gap: 4px; }
+.daemon-panel-header-right { display: flex; align-items: center; gap: var(--ds-space-1); }
 
 /* ── Close Button ── */
 .daemon-close-btn {
   display: flex; align-items: center; justify-content: center;
-  width: 22px; height: 22px; border: 1px solid transparent; border-radius: 6px;
+  width: 22px; height: 22px; border: 1px solid transparent; border-radius: var(--ds-radius-chip);
   background: transparent; cursor: pointer; transition: all 0.15s; opacity: 0.7;
 }
 .daemon-close-btn { color: var(--color-text-muted); }
 .daemon-close-btn:hover {
   opacity: 1;
   background: var(--glass-control-bg-hover);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   border-color: var(--glass-control-border);
   box-shadow:
     inset 0 1px 0 var(--glass-control-highlight),
@@ -116,12 +111,12 @@ const DAEMON_CSS = `
 
 /* ── Panel Body ── */
 .daemon-panel-body {
-  flex: 1; overflow-y: auto; padding: 4px 6px 8px; min-height: 80px;
+  flex: 1; overflow-y: auto; padding: var(--ds-space-1) var(--ds-space-1h) var(--ds-space-2); min-height: 80px;
   overscroll-behavior: contain;
 }
 .daemon-panel-body::-webkit-scrollbar { width: 4px; }
 .daemon-panel-body::-webkit-scrollbar-track { background: transparent; }
-.daemon-panel-body::-webkit-scrollbar-thumb { background: rgba(128, 128, 128, 0.15); border-radius: 2px; }
+.daemon-panel-body::-webkit-scrollbar-thumb { background: rgba(128, 128, 128, 0.15); border-radius: var(--ds-radius-thin); }
 @media (prefers-color-scheme: dark) {
   .daemon-panel-body::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.10); }
 }
@@ -132,16 +127,16 @@ const DAEMON_CSS = `
 /* ── Empty State ── */
 .daemon-empty {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  padding: 40px 16px 36px; gap: 6px; user-select: none;
-  border-radius: 10px; margin: 0 4px;
+  padding: 40px var(--ds-space-4) 36px; gap: var(--ds-space-1h); user-select: none;
+  border-radius: var(--ds-radius-button); margin: 0 var(--ds-space-1);
 }
-.daemon-empty-text { font-size: 12px; color: var(--color-text); opacity: 0.3; letter-spacing: -0.01em; }
-.daemon-empty-hint { font-size: 11px; color: var(--color-text); opacity: 0.18; letter-spacing: -0.01em; }
+.daemon-empty-text { font-size: var(--ds-fs-hint); color: var(--color-text); opacity: 0.3; letter-spacing: -0.01em; }
+.daemon-empty-hint { font-size: var(--ds-fs-meta); color: var(--color-text); opacity: 0.18; letter-spacing: -0.01em; }
 
 /* ── Daemon Row ── */
 .daemon-row {
-  display: flex; align-items: center; gap: 10px; padding: 9px 10px;
-  border-radius: 10px; margin: 1px 0; transition: background 0.15s;
+  display: flex; align-items: center; gap: var(--ds-space-inline-gap); padding: var(--ds-space-2) var(--ds-space-inline-x);
+  border-radius: var(--ds-radius-button); margin: var(--ds-space-hair) 0; transition: background 0.15s;
 }
 .daemon-row.anim { animation: daemonRowIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) backwards; }
 .daemon-row.anim:nth-child(1) { animation-delay: 0ms; }
@@ -156,7 +151,7 @@ const DAEMON_CSS = `
 
 /* ── Status Dot ── */
 .daemon-status {
-  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-top: 3px;
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-top: var(--ds-space-1);
 }
 .daemon-status.running { background: var(--color-primary, #07c160); animation: daemon-pulse 1.6s ease-out infinite; }
 .daemon-status.stopped { background: var(--color-text-muted); opacity: 0.3; }
@@ -170,60 +165,39 @@ const DAEMON_CSS = `
 }
 
 /* ── Row Info ── */
-.daemon-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-.daemon-name-row { display: flex; align-items: baseline; gap: 5px; }
+.daemon-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--ds-space-hair); }
+.daemon-name-row { display: flex; align-items: baseline; gap: var(--ds-space-1); }
 .daemon-name {
-  font-size: 13px; font-weight: 500; color: var(--color-text);
+  font-size: var(--ds-fs-body); font-weight: 500; color: var(--color-text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; letter-spacing: -0.01em;
 }
 .daemon-name.clickable { cursor: pointer; text-decoration: none; transition: color 0.15s; }
 .daemon-name.clickable:hover { color: rgb(91, 127, 191); text-decoration: none; }
 .daemon-port {
-  font-size: 11px; color: var(--color-text-muted); opacity: 0.6;
+  font-size: var(--ds-fs-meta); color: var(--color-text-muted); opacity: 0.6;
   flex-shrink: 0; font-variant-numeric: tabular-nums;
 }
 .daemon-command {
-  font-size: 11px; color: var(--color-text-muted); opacity: 0.4;
+  font-size: var(--ds-fs-meta); color: var(--color-text-muted); opacity: 0.4;
   font-family: ui-monospace, SFMono-Regular, monospace;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
-/* ── Auto-start Toggle (small switch) ── */
-.daemon-autostart {
-  display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0;
-  cursor: pointer; user-select: none; opacity: 0.75;
-  transition: opacity 0.15s;
-}
-.daemon-autostart:hover { opacity: 1; }
-.daemon-autostart-track {
-  position: relative; width: 26px; height: 15px; border-radius: 8px;
-  background: rgba(128, 128, 128, 0.28);
-  transition: background 0.2s; flex-shrink: 0;
-}
-.daemon-autostart-thumb {
-  position: absolute; top: 2px; left: 2px; width: 11px; height: 11px;
-  border-radius: 50%; background: #fff;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.25);
-  transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1);
-}
-.daemon-autostart-input {
-  position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none;
-}
-.daemon-autostart-input:checked + .daemon-autostart-track {
-  background: rgb(91, 127, 191);
-}
-.daemon-autostart-input:checked + .daemon-autostart-track .daemon-autostart-thumb {
-  transform: translateX(11px);
-}
+/* ── 自动启动开关 ──────────────────────────────────────────────────────────
+   toggle-unify 批 2026-11-05：原 .daemon-autostart 一族（label + 隐藏
+   input[checkbox] + .daemon-autostart-track + .daemon-autostart-thumb，
+   26×15 轨道 / 11px 圆钮 / 圆钮带 0 1px 2px 投影 / 蓝 rgb(91,127,191) 自造色）
+   是**全站第二套开关**，整族删除。开关本体改为共享组件（js/toggle.js 的
+   .nb-toggle，css/sidebar.css，40×22 胶囊 + 16 圆钮），行为走 click + setToggleState，
+   几何/配色/动效全部来自 --nf-toggle-* 令牌。本文件零开关样式。
+   注：本段位于 DAEMON_CSS 模板串内 —— 注释里不许出现反引号（会截断模板串）。 */
 
 /* ── Action Buttons ── */
-.daemon-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.daemon-actions { display: flex; align-items: center; gap: var(--ds-space-1); flex-shrink: 0; }
 .daemon-btn {
-  font: 500 11px -apple-system, sans-serif; padding: 4px 10px;
-  border-radius: 7px; border: 1px solid transparent;
+  font: 500 var(--ds-fs-meta) -apple-system, sans-serif; padding: var(--ds-space-1) var(--ds-space-inline-x);
+  border-radius: var(--ds-radius-input); border: 1px solid transparent;
   background: var(--glass-control-bg);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   box-shadow:
     inset 0 1px 0 var(--glass-control-highlight),
     inset 0 -1px 0 var(--glass-control-underedge);
@@ -235,14 +209,12 @@ const DAEMON_CSS = `
 .daemon-btn.stop:hover { background: rgba(91, 127, 191, 0.08); }
 .daemon-btn-icon {
   width: 26px; height: 26px; padding: 0; display: flex;
-  align-items: center; justify-content: center; border-radius: 7px;
+  align-items: center; justify-content: center; border-radius: var(--ds-radius-input);
   border: 1px solid transparent; background: transparent; cursor: pointer;
   color: var(--color-text-muted); transition: all 0.15s;
 }
 .daemon-btn-icon:hover {
   background: var(--glass-control-bg-hover);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   border-color: var(--glass-control-border);
   box-shadow:
     inset 0 1px 0 var(--glass-control-highlight),
@@ -394,10 +366,12 @@ function buildRow(d, animate = false) {
       </div>
       <div class="daemon-command">${esc(d.command || '')}</div>
     </div>
-    <label class="daemon-autostart" title="Auto-start with ${brand.productName}">
-      <input type="checkbox" class="daemon-autostart-input" data-id="${esc(d.id)}" ${d.autoStart ? 'checked' : ''}>
-      <span class="daemon-autostart-track"><span class="daemon-autostart-thumb"></span></span>
-    </label>
+    ${toggleHTML({
+      on: !!d.autoStart,
+      label: `Auto-start with ${brand.productName}`,
+      title: `Auto-start with ${brand.productName}`,
+      attrs: `data-autostart-id="${esc(d.id)}"`,
+    })}
     <div class="daemon-actions">
       ${status === 'running' || status === 'starting'
         ? `<button class="daemon-btn stop" data-act="stop" data-id="${esc(d.id)}">${t('daemons.stop')}</button>`
@@ -425,20 +399,27 @@ function buildRow(d, animate = false) {
   // Daemon name is a native <a target="_blank"> when the port is open —
   // no JS click handler needed (and none that Safari could block).
 
-  // Auto-start toggle — optimistic flip + PUT, revert on failure.
-  const autoInput = /** @type {HTMLInputElement} */ (row.querySelector('.daemon-autostart-input'));
-  if (autoInput) {
-    autoInput.addEventListener('change', async (e) => {
+  // Auto-start toggle — shared switch component（js/toggle.js）：乐观翻面 + PUT，
+  // 失败回滚。toggle-unify 批 2026-11-05 前这里是 label+input[checkbox] 自画开关，
+  // 自带一套 track/thumb 与蓝 rgb(91,127,191) 自造色；现在行为与本行其余控件同源。
+  const autoSwitch = /** @type {HTMLButtonElement|null} */ (row.querySelector('.nb-toggle[data-autostart-id]'));
+  if (autoSwitch) {
+    autoSwitch.addEventListener('click', async (e) => {
       e.stopPropagation();
-      const id = autoInput.getAttribute('data-id');
-      const next = autoInput.checked;
+      const id = autoSwitch.getAttribute('data-autostart-id');
+      const next = !autoSwitch.classList.contains('on');
+      setToggleState(autoSwitch, next); // 乐观：组件自有翻转（与 bindToggle 同一套视觉态）
       const target = daemons.find(x => x.id === id);
       if (target) target.autoStart = next;
+      // 在途用 aria-busy（不确定态）而不是 disabled：禁用一个刚被键盘操作的按钮会
+      // 立刻丢焦点 —— 用户按 Space 之后紧接着按 Enter 就没反应了（本批实测踩到）。
+      setToggleBusy(autoSwitch, true);
       const resp = await apiCall('PUT', `/api/daemons/${encodeURIComponent(id)}`, { autoStart: next });
+      setToggleBusy(autoSwitch, false);
       if (!resp) {
-        // Revert on failure
+        // Revert on failure — 界面绝不留在假态
         if (target) target.autoStart = !next;
-        autoInput.checked = !next;
+        setToggleState(autoSwitch, !next);
       }
     });
   }

@@ -44,7 +44,7 @@ object SessionChildCascade:
     resources.agentRegistry.get.flatMap { registry =>
       val children = registry.values.filter { rec =>
         rec.parentSessionId == sessionId &&
-        (rec.kind == AgentKind.Delegate || rec.kind == AgentKind.SubTask || rec.kind == AgentKind.Ephemeral)
+        (rec.kind == AgentKind.Delegate || rec.kind == AgentKind.SubTask)
       }.toList
       children.traverse { rec =>
         logger.info(s"deleteSession: cascade-cancelling child ${rec.kind} actor ${rec.sessionId}") *>

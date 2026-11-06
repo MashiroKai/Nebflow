@@ -238,6 +238,12 @@ class DeviceFaceHardeningRoutesSpec extends FunSuite:
     ("POST /api/plugins/:name/dispatch/clear", post("/plugins/visual-report/dispatch/clear")),
     ("GET /api/flows/list", get("/flows/list")),
     ("GET /api/teams/:teamName", get("/teams/research")),
+    // 团队功能删除批 team-feature-deletion-20261104 阶段 2：/teams/mounted 从
+    // 「live siblings」移入退役清单 —— 它的数据源（团队会话登记表
+    // .listMountedTeams）只由团队树 actor 填充，阶段 1 断掉每会话无条件建树后
+    // 恒空；前端/CLI/BE 零调用点。与 /teams/:teamName 同理，退役后
+    // `/teams/mounted` 落到 `/teams/{name}` 家族之外（该家族已退役）⇒ None。
+    ("GET /api/teams/mounted", get("/teams/mounted")),
     ("GET /api/entity-agents", get("/entity-agents")),
     // chain-face (modelcfg) takedown: the preset CRUD family and the
     // preset-reference write face are gone with the preset concept.
@@ -250,11 +256,11 @@ class DeviceFaceHardeningRoutesSpec extends FunSuite:
     ("PUT /api/agents/:name/preset", put("/agents/Nebula/preset"))
   )
 
+  // 团队功能删除批（team-feature-deletion-20261104）阶段 3：`GET /api/teams/mailbox/:sid/:flow`、
+  // `GET /api/teams/def/:flow`、`GET /api/team/rules/:name` 三条**团队面路由**已随本阶段
+  // 删除（作者裁定「7 条 teams REST 路由随本阶段一并删」）⇒ 它们从「必须仍活着的邻座」
+  // 名单里移出，改由 teams 路由的退役清单举证，不再构成本用例的 collateral 判据。
   private val stillServed: List[(String, Request[IO])] = List(
-    ("GET /api/teams/mounted", get("/teams/mounted")),
-    ("GET /api/teams/mailbox/:sid/:flow", get("/teams/mailbox/test-session/research")),
-    ("GET /api/teams/def/:flow", get("/teams/def/research")),
-    ("GET /api/team/rules/:name", get("/team/rules/research")),
     ("GET /api/agents/:name", get("/agents/Nebula")),
     ("GET /api/agents/:name/model", get("/agents/Nebula/model")),
     ("GET /api/plugins", get("/plugins")),

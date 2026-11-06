@@ -10,9 +10,23 @@ import nebflow.shared.*
  * Display/routing kind of an agent (P1 统一注册表). Replaces the nodeSessionId
  * string-prefix conventions (team-/dag-/delegate-/ephemeral-) as the *identity*
  * discriminator; P3 drops the prefixes entirely and routes by this field.
+ *
+ * **死枚举清理（作者裁定5「删」，2026-11-05 09:38）**：`Ephemeral` 与 `Plan` 已删。
+ * 依据 = 设计件 `actor-as-agent-framework-creation-paths-and-invariants__20261104_214436__
+ * delegate-nebflow-f3849ed1.md` §7.3：两者**全仓无生产者**（只有测试夹具与消费
+ * 白名单），旧语义已被 `SubTask` 覆盖；存量化核（2026-11-05）在数据根
+ * `agents/ sessions/ subagent-tasks/ tasks/` 全量扫描 `"kind": "Ephemeral"|"Plan"`
+ * **零命中** ⇒ 无存量兼容负担。
+ *
+ * **外部 CLI 腿登记（作者裁定4「登记 AgentKind.External」，2026-11-05 09:38）**：
+ * `External` = 执行器腿（`external-<exec>-<id>`，脑子在**另一个进程**里，没有
+ * `AgentActor` / 没有邮箱）。登记它只为关闭「所有 agent 都能被 list / cancel /
+ * 挂终态」这条不变式，**不参与监督与恢复**（恢复由 `ExternalOutputStore` /
+ * CLI resume 承担）——这是设计件 §1.4 #13 的 (a) 口径，也是本枚举唯一一条
+ * **ref 恒为 null** 的记录（见 [[nebflow.actor.ExternalAgentRecord]]）。
  */
 enum AgentKind:
-  case Root, Team, Flow, Delegate, Ephemeral, Plan, SubTask
+  case Root, Team, Flow, Delegate, External, SubTask
 
 /**
  * Unified registry entry — one identity per agent (P1 统一注册表).
@@ -502,7 +516,7 @@ case class SessionContext(
    *
    * 🔴 **作用域 = 仅 root 会话**（口径③）：本字段的**唯一注入点**是
    * `WebSocketRoutes.doSpawnRootAgent`（depth=0 全仓唯一 spawn 点）。非 root
-   * spawn（`NodeRunner` / `MailTool` / `FlowTreeActor`）一律不传 ⇒ 恒为 `None`
+   * spawn（`NodeRunner` / `MailTool`）一律不传 ⇒ 恒为 `None`
    * ⇒ 走现值函数。
    * 🔴 **禁**把本字段放进 `SpawnParams` / `ToolContext`（那会让一次设定传染给
    * 全部子 agent / 节点，直接违反口径③）——静态泄漏判据见
@@ -809,7 +823,17 @@ case class AgentState(
    * （E046），默认 RunLedger.empty 由伴生 apply 提供；AgentState 不持久化 ⇒
    * 零迁移。actor 包对 pilogic（叶子）单向引用——pilogic 禁反向 import 保持。
    */
-  pilogicLedger: nebflow.pilogic.RunLedger
+  pilogicLedger: nebflow.pilogic.RunLedger,
+  /**
+   * 派发时刻钉定的模型链快照（provider-concurrency 批，2026-11-06）：spawn 侧
+   * （SharedResources.spawnAgentActor → 唯一 assign 调用点）置位，经伴生 apply 进
+   * AgentState；每 turn 下发 `LlmRequest.agentModel = pin 物化`（AgentSessionExecution
+   * 单点），**运行期零重算**——llm.fallback / agent.json 后续变化都不影响本 actor 的
+   * 链首（prompt cache 键稳定）。Restart invariant：AgentState 从不持久化 ⇒ 重启后
+   * 由恢复路径重新 spawn = 新的派发（重新按当时配置分配），与本批语义一致。
+   * 🔴 无默认参（防与伴生 apply 全默认参数重载歧义 E046）：默认值由伴生 apply 提供。
+   */
+  providerChainPin: Option[nebflow.llm.PinnedChain]
 )
 
 object AgentState:
@@ -902,6 +926,8 @@ object AgentState:
     sessionDevice: Option[String] = None,
     /** 会话默认设备 workspace（设备盘绝对路径，详见 SessionContext.sessionDeviceWorkspace）。 */
     sessionDeviceWorkspace: Option[String] = None,
+    /** 派发时刻钉定的模型链快照（provider-concurrency 批）。None = 不钉（既有行为零改动）。 */
+    providerChainPin: Option[nebflow.llm.PinnedChain] = None,
     loopTurnKey: Long = 0L,
     /** 乒乓压缩旁车状态（spec §H1-1）：默认空 = 全部既有构造点零改动。 */
     pingpong: PingpongState = PingpongState(),
@@ -956,7 +982,8 @@ object AgentState:
       nebflow.shared.Counters.Empty,
       loopTurnKey,
       pingpong,
-      pilogicLedger
+      pilogicLedger,
+      providerChainPin
     )
   end apply
 end AgentState

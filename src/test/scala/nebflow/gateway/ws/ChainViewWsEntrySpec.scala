@@ -177,7 +177,6 @@ class ChainViewWsEntrySpec extends CatsEffectSuite:
       applyPermissionUpgradeImpl = null,
       persistGlobalSafetyModeImpl = null,
       removeRootAgentImpl = null,
-      stopTeamSessionActorsImpl = null,
       stopChildDelegateActorsImpl = null,
       forwardInteractionAnswerImpl = null,
       isRootScopeSessionImpl = null,

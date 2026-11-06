@@ -195,9 +195,29 @@ object BgTaskReaper:
     }
 
   /**
-   * 沿 bg-wait 链注入「等待对象已终止」：属主会话 ∪ 根会话（去重）——
-   * deliverAgentEvent 三腿（直投/激活/持久补投）全覆盖，活会话被唤醒后经
-   * 回合尾复检自然放行；死会话的补投件由其复活轮消费。
+   * 沿 bg-wait 链注入「等待对象已终止」。
+   *
+   * ═══ 身份绑定批（2026-11-03 · 作者令「后台任务的通知，应该是谁调用，就通知谁」）═══
+   *
+   * 旧形态 = `row.sessionId ∪ row.rootSessionId` 双投——把**顶层根会话**当成第二
+   * 收件人。实证（11-03 10:50，jobId 40c10011，属主 = Flow Map 节点会话
+   * `node-338261c7`，其 rootSessionId = Nebula 根）：死信同时落进根会话转录
+   * （作者控制台「BACKGROUND · SPIDER · FAILED」横幅，归属还是**收件会话**的
+   * 项目段 ⇒ 看起来像别人的事），根会话为此白烧一整轮。根会话与非属主会话**不是**
+   * 这条死信的责任方。
+   *
+   * 新口径（三段，纯函数判据见 [[deadLetterTargets]]）：
+   *   ① **属主会话 = 唯一必然收件人**（谁调用通知谁；直投/激活/持久补投的既有
+   *      三腿照旧由 [[BgNotifyDelivery.deliverAgentEvent]] 承担）；
+   *   ② 属主**不可达**（不在 registry / actor 已死）⇒ **静默记账**（WARN + 审计
+   *      留痕），绝不升级为根会话广播——死信的「送达」不是引擎的义务，记账是；
+   *   ③ 确需上级知情**且**能解析出**直接父会话**（delegate 属主的
+   *      `parentSessionId`）⇒ 只投父会话**一次**，载荷/元数据标注属主身份
+   *      （`ownerSessionId` / `ownerUnreachable`）——这是「上级知情」的唯一出口，
+   *      不沿链继续上溯（根会话永远不在名单里）。
+   *
+   * 放行语义不变：注入只是把「死」送达，各闸口的 hold/放行仍由既有活性复检承担
+   * （行已被 [[reapOne]] 取走 ⇒ 等待集本拍即空）。
    */
   private def injectAlongChain(
     row: BgTaskRegistry.ActiveTask,
@@ -205,27 +225,116 @@ object BgTaskReaper:
     system: Option[ActorSystem],
     registry: Option[Ref[IO, Map[String, AgentRecord]]]
   ): IO[Unit] =
-    val targets = (List(row.sessionId) ++ Option(row.rootSessionId).toList).filter(_.trim.nonEmpty).distinct
-    targets.traverse_ { sid =>
-      val refIO: IO[Option[ActorRef[AgentCommand]]] =
-        registry match
-          case None      => IO.pure(None)
-          case Some(reg) => reg.get.map(_.get(sid).map(_.ref))
-      refIO.flatMap { refOpt =>
-        BgNotifyDelivery.deliverAgentEvent(
-          targetRef = refOpt,
-          targetSessionId = Some(sid),
-          system = system,
-          registry = registry,
-          projectName = None,
-          flowNodeId = None,
-          jobId = row.jobId,
-          source = "background-task",
-          eventType = "failed",
-          payload = payload,
-          metadata = io.circe.JsonObject("jobId" -> row.jobId.asJson, "ownerLost" -> true.asJson)
+    val owner = row.sessionId.trim
+    if owner.isEmpty then
+      logger.warn(
+        s"[bg-reaper] job=${row.jobId} has no owner session (REST/ad-hoc task) — dead letter recorded here only, nothing injected"
+      )
+    else
+      for
+        ownerAlive <- ownerReachable(system, registry, owner)
+        parent = if ownerAlive then Option.empty[String] else directParentOf(owner)
+        targets = deadLetterTargets(row, ownerAlive, parent)
+        _ <- IO.whenA(!ownerAlive)(
+          logger.warn(
+            s"[bg-reaper] owner session '$owner' unreachable for job=${row.jobId} — dead letter folded into this audit line " +
+              s"(no root broadcast); one-hop parent notice: ${parent.getOrElse("<none derivable>")}"
+          )
         )
-      }
+        _ <- targets.traverse_ { sid =>
+          val oneHop = sid != owner
+          refOf(registry, sid).flatMap { refOpt =>
+            BgNotifyDelivery.deliverAgentEvent(
+              targetRef = refOpt,
+              targetSessionId = Some(sid),
+              system = system,
+              registry = registry,
+              projectName = None,
+              flowNodeId = None,
+              jobId = row.jobId,
+              source = "background-task",
+              eventType = "failed",
+              payload = if oneHop then ownerUnreachableNote(row, owner, sid) else payload,
+              metadata =
+                if oneHop then
+                  io.circe.JsonObject(
+                    "jobId" -> row.jobId.asJson,
+                    "ownerLost" -> true.asJson,
+                    "ownerSessionId" -> owner.asJson,
+                    "ownerUnreachable" -> true.asJson,
+                    "directParentSessionId" -> sid.asJson
+                  )
+                else
+                  io.circe.JsonObject(
+                    "jobId" -> row.jobId.asJson,
+                    "ownerLost" -> true.asJson,
+                    "ownerSessionId" -> owner.asJson
+                  )
+            )
+          }
+        }
+      yield ()
+
+  /** 「上级知情」一跳载荷（标注 owner 身份：读的人立刻知道不是自己的作业）。 */
+  def ownerUnreachableNote(row: BgTaskRegistry.ActiveTask, owner: String, parent: String): String =
+    s"[Background task terminated · owner-unreachable] '${row.description}' (jobId=${row.jobId}) belongs to session " +
+      s"'$owner', which is gone — reported ONCE to its direct parent ('$parent'), no further chain fan-out. " +
+      "The task is treated as terminal (death-watch); the wait barrier over it releases."
+
+  /**
+   * 死信收件人裁决（纯函数，spec 判红锚）。
+   *
+   * 返回有序收件人：`head = 属主会话`（恒在，空 id 除外）；属主**不可达**且能解析
+   * 出直接父会话 ⇒ 追加父会话**一跳**。根会话（`row.rootSessionId`）**永不出现**
+   * ——作者令「怎么失败了到处通知」的机械防线就在本函数（无关会话零收件）。
+   */
+  def deadLetterTargets(
+    row: BgTaskRegistry.ActiveTask,
+    ownerAlive: Boolean,
+    parent: Option[String]
+  ): List[String] =
+    val owner = row.sessionId.trim
+    val head = if owner.isEmpty then List.empty[String] else List(owner)
+    val parentLeg =
+      if owner.isEmpty || ownerAlive then Nil
+      else parent.map(_.trim).filter(p => p.nonEmpty && p != owner).toList
+    (head ++ parentLeg).distinct
+
+  /** registry 行上的会话 actor ref（无行 = None；不判活）。 */
+  private def refOf(
+    registry: Option[Ref[IO, Map[String, AgentRecord]]],
+    sessionId: String
+  ): IO[Option[ActorRef[AgentCommand]]] =
+    registry match
+      case None      => IO.pure(None)
+      case Some(reg) => reg.get.map(_.get(sessionId).map(_.ref))
+
+  /**
+   * 属主可达性：registry 有行 ∧ actor 活（内核事实，零墙钟）。无 actor 系统
+   * （spec harness）= 无法判活 ⇒ 按可达处理（旧行为直投，语义零漂移）。
+   */
+  private def ownerReachable(
+    system: Option[ActorSystem],
+    registry: Option[Ref[IO, Map[String, AgentRecord]]],
+    sessionId: String
+  ): IO[Boolean] =
+    refOf(registry, sessionId).flatMap {
+      case None => IO.pure(false)
+      case Some(ref) =>
+        system match
+          case None      => IO.pure(true)
+          case Some(sys) => sys.isAlive(ref.path).handleErrorWith(_ => IO.pure(true))
     }
+
+  /**
+   * 直接父会话解析（「上级知情」的唯一目标，单跳不溯根）：delegate 属主 ⇒
+   * DelegateRegistry 记录的 `parentSessionId`（派发者会话）；非 delegate / 无记录 /
+   * 自指 / 空 ⇒ None（无处可投 ⇒ 只记账，绝不改用根会话兜底）。
+   */
+  private def directParentOf(owner: String): Option[String] =
+    nebflow.core.delegate.DelegateRegistry
+      .find(owner)
+      .map(_.parentSessionId.trim)
+      .filter(p => p.nonEmpty && p != owner)
 
 end BgTaskReaper

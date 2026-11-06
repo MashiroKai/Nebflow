@@ -5,28 +5,26 @@ import cats.effect.unsafe.implicits.global
 import munit.FunSuite
 import nebflow.core.GitWorktrees
 
+import java.util.concurrent.atomic.AtomicInteger
 import scala.util.Try
 
 /**
- * A5 步1（判否腿轻量 worktree + 四配套 · 评审 chain-n-247e206d §六 步1，作者
- * 2026-10-08 三项裁定「①②组合、①先②后」）判读——临时真仓实测（GitWorktreesSpec
- * 形态，对主仓零 git 写）：
+ * worktree 参数决定论 spec（delegate-param-decisions 批 2026-11-04 · 作者令
+ * 「我想去掉由小llm来决策是否分配worktree」「不填worktree的任务是适合于只读型任务
+ * 工作还是要默认创建worktree」）——临时真仓实测（GitWorktreesSpec 形态，对主仓
+ * 零 git 写）。**验收第 1/2/3/4 条的机械判据都在本文件**：
  *
- *  - 红验① 判否（fake Face `decideWorktree=Some(false)`）⇒ prepare 仍有座位：
- *    `binding.worktree=Some` 且 `cwd ≠ workspace`（只读座位 = 同判是建权路径，
- *    仅 brief 行走只读变体）；
- *  - 红验② 机械强制力固化断言：该 worktree 内 `git checkout <基分支>` ⇒ 非零
- *    退出且报「already checked out / used by worktree」——座位在 worktree 内后
- *    「直改基分支」从可违约束变不可达形态（git 本体拒绝，同分支双检出禁令）；
- *  - 红验③ worktree 建败 ⇒ inPlaceBinding 回落（branch 有 / worktree None /
- *    brief 行含 GIT_INDEX_FILE 配方）——fail-open 合同不回归。建败 mock = 目录
- *    候选（`<base>`、`<base>-2`…`<base>-99`）99 个全占满（真仓无 hook，
- *    createWorktree 在碰 git 前即 Left）；
- *  - 判是腿对照：工作座位 brief 行（交付提交措辞 + merge 纪律行）逐字不回归；
- *  - 非 git 腿：prepare = None（既有语义）。
- *
- * （红验④ 零领先提交降级 = DelegateTerminalSpec 扩展例；红验⑤ = 既有断言 +
- * `sbt test` 全绿。）
+ *  - **W1 零分配**：`prepareInPlace`（= `worktree` 参数缺省）不建任何树——
+ *    `<基工作区>/.nebflow/worktrees/` **前后目录列表逐项相同**；binding 的
+ *    `worktree=None`、`seatSource=none`、brief 行明确「NO worktree was allocated」，
+ *    且带派发时快照（收尾护栏的基线）。
+ *  - **W2 按名建树**：`createNamed` 建 `<worktreeRoot>/<name>`，分支 `delegate/<name>`
+ *    （作者令：填的内容就是 worktree 的 name），`seatSource=created`。
+ *  - **W3 同名复用**：同名目录已被同一棵树占用时——解析面判定 exact-name 命中
+ *    （复用，不新建）；即使有人硬走建树腿也**绝不产生第二个目录**（显式 Left）。
+ *  - **W4 零模型调用**：装一个**计数判官面**（`DelegateJudgePort` 的唯一模型缝），
+ *    跑完全部座位腿后计数 = 0——spawn 路径（座位分配 + 模式解析）没有模型调用点。
+ *  - 非 git 工作区 = 就地腿 None（旧语义不回归）。
  */
 class DelegateWorkspaceWorktreeLegSpec extends FunSuite:
 
@@ -45,115 +43,138 @@ class DelegateWorkspaceWorktreeLegSpec extends FunSuite:
     os.proc("git", "-C", dir.toString, "commit", "--allow-empty", "-m", "init")
       .call(check = true, stdout = os.Pipe, stderr = os.Pipe)
 
-  /** fake 判定机（钉死判词），用毕卸载（端口是全局注册面——测试间零残留）。 */
-  private def withJudge[A](answer: Option[Boolean])(io: IO[A]): IO[A] =
+  private def wtDirs(ws: os.Path): List[String] =
+    val root = ws / ".nebflow" / "worktrees"
+    if !os.exists(root) then Nil else os.list(root).map(_.last).toList.sorted
+
+  /** 计数判官面：判定机只剩终态判词——座位腿跑完它必须**一次都没被问**。 */
+  private def withCountingJudge[A](counter: AtomicInteger)(io: IO[A]): IO[A] =
     IO {
       DelegateJudge.DelegateJudgePort.install(
         new DelegateJudge.DelegateJudgePort.Face:
-          def decideWorktree(task: String): IO[Option[Boolean]] = IO.pure(answer)
-          def judgeTerminal(input: DelegateJudge.TerminalInput): IO[Option[DelegateJudge.Verdict]] = IO.pure(None)
+          def judgeTerminal(input: DelegateJudge.TerminalInput): IO[Option[DelegateJudge.Verdict]] =
+            IO { counter.incrementAndGet(); None }
       )
     } *> io <* IO(DelegateJudge.DelegateJudgePort.clear())
 
-  test("红验① 判否腿: decideWorktree=Some(false) still creates branch + worktree (read-only seat); cwd = the seat, not the workspace") {
+  test("W1 零分配：worktree 参数缺省 ⇒ 不建树，新建目录清单前后逐项相同 + brief/回执都写明未分配") {
     if !gitAvailable then () // 环境无 git = 跳过（CI 侧 git 前置同既有 MergeMutexGateSpec 先例）
     else
-      val repo = tempRoot / "no-leg-repo"
+      val repo = tempRoot / "no-alloc-repo"
       mkRepo(repo)
-      val id = "nebflow-ro1"
-      val b = withJudge(Some(false))(
-        DelegateWorkspace.prepare(repo.toString, "read-only inspection task", id)
-      ).unsafeRunSync()
-      val binding = b.getOrElse(fail("judged-no leg must still produce a binding (read-only seat), not None"))
+      val id = "nebflow-noalloc1"
+      val before = wtDirs(repo)
+      val binding = DelegateWorkspace
+        .prepareInPlace(repo.toString, id)
+        .unsafeRunSync()
+        .getOrElse(fail("a git workspace must still produce an in-place binding"))
+      val after = wtDirs(repo)
+      assertEquals(after, before, "zero allocation: the worktree root must list EXACTLY the same entries before and after")
+      assertEquals(after, Nil, "a fresh repo has no worktree directory at all")
+      assert(!os.exists(repo / ".nebflow" / "worktrees"), "no worktree root may even be created on the zero-allocation leg")
+      assertEquals(binding.worktree, None, "no worktree in the binding")
+      assertEquals(binding.cwd, repo.toString, "the seat is the project workspace itself")
+      assertEquals(binding.seatSource, DelegateWorkspace.SeatSource.InPlace)
       assertEquals(binding.branch, s"delegate/$id")
-      val seat = binding.worktree.getOrElse(fail("judged-no leg must carry a worktree seat"))
-      assertEquals(os.Path(seat).toString, (repo / ".nebflow" / "worktrees" / GitWorktrees.sanitizeRefName(id)).toString)
-      assert(binding.cwd != repo.toString, "the delegate must NOT sit in the shared workspace any more")
-      assertEquals(binding.cwd, seat, "cwd = the worktree seat")
-      assertEquals(GitWorktrees.currentBranch(os.Path(seat)), Some(s"delegate/$id"))
       assertEquals(GitWorktrees.currentBranch(repo), Some("main"), "the shared HEAD stays on the base branch")
-      assertEquals(binding.baseBranch, Some("main"))
-      assertEquals(binding.baseWs, repo.toString)
-      assertEquals(GitWorktrees.commitsAhead(repo, "main", binding.branch), 0, "a fresh read-only seat has zero commits ahead")
-      // brief 行 = 只读座位变体（🔴 模型可见文案，§16 待过目——随批呈报件）
-      val line = binding.briefLine.getOrElse(fail("the read-only seat brief line must exist"))
-      assert(line.contains(s"[working branch] delegate/$id"), line)
-      assert(line.contains("read-only seat"), line)
-      assert(line.contains("do NOT create commits"), line)
-      assert(line.contains("NEVER commit directly to main"), line)
+      assertEquals(GitWorktrees.branchExists(repo, s"delegate/$id"), true, "the in-place branch is still created")
+      // 快照（收尾护栏的基线）：HEAD + 空脏集
+      assertEquals(binding.snapshotSha, GitWorktrees.headSha(repo))
+      assertEquals(binding.snapshotDirty, Some(Nil))
+      val line = binding.briefLine.getOrElse(fail("the in-place brief line must exist"))
+      assert(line.contains("NO worktree was allocated"), line)
+      assert(line.contains("READ-ONLY channel"), line)
+      assert(line.contains("GIT_INDEX_FILE"), line)
+      val receipt = DelegateWorkspace.receiptLine(Some(binding), repo.toString)
+      assert(receipt.contains("NONE ALLOCATED"), receipt)
+      assert(receipt.contains("read-only channel"), receipt)
   }
 
-  test("红验② 机械强制力: git checkout of the base branch inside the seat is REFUSED by git itself (double-checkout ban)") {
+  test("W2 按名建树：worktree=\"<name>\" ⇒ <worktreeRoot>/<name> 且分支 delegate/<name>，回执写『精确 name/新建』") {
     if !gitAvailable then ()
     else
-      val repo = tempRoot / "force-repo"
+      val repo = tempRoot / "named-repo"
       mkRepo(repo)
-      val id = "nebflow-force1"
-      val b = withJudge(Some(false))(
-        DelegateWorkspace.prepare(repo.toString, "read-only task", id)
-      ).unsafeRunSync()
-      val seat = os.Path(b.getOrElse(fail("binding must exist")).worktree.getOrElse(fail("worktree seat must exist")))
-      // 自然形态的直改 main 第一步（checkout）被 git 本体拒绝。LC_ALL=C 钉住
-      // git 报文语言（本机 zh_CN locale 下 git 出中文报文——「已经被工作区使用」
-      // 与英文 "already used by worktree" 同义；断言只认英文形态 ⇒ 钉 locale）。
-      val res = os.proc("git", "-C", seat.toString, "checkout", "main")
-        .call(check = false, mergeErrIntoOut = true, env = Map("LC_ALL" -> "C"))
-      assert(res.exitCode != 0, s"checkout of the already-checked-out base branch must fail, got: ${res.out.trim()}")
-      val msg = res.out.trim().toLowerCase
+      val name = "liquid-glass-batch"
+      val binding = DelegateWorkspace
+        .createNamed(repo.toString, name, "nebflow-named1")
+        .unsafeRunSync()
+        .getOrElse(fail("creating a fresh name must succeed"))
+      assertEquals(os.exists(repo / ".nebflow" / "worktrees" / name), true, "the directory is named EXACTLY as the parameter")
+      assertEquals(wtDirs(repo), List(name), "and it is the only directory created")
+      assertEquals(binding.branch, s"delegate/$name", "the branch follows the NAME (not the delegate id)")
+      assertEquals(GitWorktrees.currentBranch(os.Path(binding.cwd)), Some(s"delegate/$name"))
+      assertEquals(binding.worktree, Some((repo / ".nebflow" / "worktrees" / name).toString))
+      assertEquals(binding.seatSource, DelegateWorkspace.SeatSource.Created)
+      assertEquals(binding.seatName, Some(name))
+      val receipt = DelegateWorkspace.receiptLine(Some(binding), repo.toString)
+      assert(receipt.contains("created for name 'liquid-glass-batch'"), receipt)
+  }
+
+  test("W3 同名复用：同一 name 再派一次 ⇒ 复用既有树，不产生第二个目录") {
+    if !gitAvailable then ()
+    else
+      val repo = tempRoot / "reuse-name-repo"
+      mkRepo(repo)
+      val name = "shared-name"
+      val first = DelegateWorkspace.createNamed(repo.toString, name, "nebflow-reuse-a").unsafeRunSync().getOrElse(fail("first create"))
+      // 解析面：同名 = exact-name 命中（复用），绝不落到 Create。
+      val inv = WorktreeCandidates.inventory(repo.toString).unsafeRunSync()
+      WorktreeCandidates.resolveNamed(inv, repo.toString, name, force = false) match
+        case Right(WorktreeCandidates.SeatPlan.Reuse(cand, source)) =>
+          assertEquals(source, DelegateWorkspace.SeatSource.ExactName, "the exact-name rule must be the one that hits")
+          val second = DelegateWorkspace.reuse(repo.toString, "nebflow-reuse-b", cand, source).unsafeRunSync()
+          assertEquals(second.worktree, first.worktree, "the SAME tree is reused")
+          assertEquals(second.seatSource, DelegateWorkspace.SeatSource.ExactName)
+          assertEquals(second.reusedFrom.isDefined, true)
+          val receipt = DelegateWorkspace.receiptLine(Some(second), repo.toString)
+          assert(receipt.contains("exact name 'shared-name'"), receipt)
+        case other => fail(s"a second dispatch with the same name must resolve to an exact-name reuse, got $other")
+      assertEquals(wtDirs(repo), List(name), "no second directory appears")
+      // 兜底闸：即便有人硬调建树腿，也必须显式失败（绝不悄悄建第二棵）。
       assert(
-        msg.contains("already checked out") || msg.contains("used by worktree"),
-        s"the refusal text must name the double-checkout ban, got: ${res.out.trim()}"
+        DelegateWorkspace.createNamed(repo.toString, name, "nebflow-reuse-c").unsafeRunSync().isLeft,
+        "creating a name that already exists must fail explicitly"
       )
+      assertEquals(wtDirs(repo), List(name), "still exactly one directory")
   }
 
-  test("红验③ worktree 建败 ⇒ inPlaceBinding 回落: branch set / worktree None / brief line carries the GIT_INDEX_FILE recipe (fail-open intact)") {
+  test("W4 零模型调用：装计数判官面，跑完零分配腿 + 按名建树腿 + 模式解析后计数仍为 0") {
     if !gitAvailable then ()
     else
-      val repo = tempRoot / "fallback-repo"
+      val repo = tempRoot / "zero-model-repo"
       mkRepo(repo)
-      val id = "exhaust"
-      // 建败 mock（真仓无 hook）：候选目录 <base>, <base>-2 … <base>-99 全部占满
-      // ⇒ freeName=None ⇒ createWorktree 在 git 之前即 Left ⇒ 回落腿。
-      val nebflowDir = repo / ".nebflow"
-      os.makeDir.all(nebflowDir)
-      (1 to 99).foreach { i =>
-        val n = if i == 1 then id else s"$id-$i"
-        os.makeDir.all(nebflowDir / n)
-      }
-      val b = withJudge(Some(true))(
-        DelegateWorkspace.prepare(repo.toString, "task", id)
+      val counter = new AtomicInteger(0)
+      val modes = withCountingJudge(counter)(
+        IO.blocking {
+          DelegateWorkspace.prepareInPlace(repo.toString, "nebflow-zm1").unsafeRunSync()
+          val created = DelegateWorkspace.createNamed(repo.toString, "zm-name", "nebflow-zm2").unsafeRunSync()
+          val reused = created.toOption.flatMap { b =>
+            WorktreeCandidates.inventory(repo.toString).unsafeRunSync() match
+              case inv =>
+                WorktreeCandidates.resolveNamed(inv, repo.toString, "zm-name", force = false).toOption.collect {
+                  case WorktreeCandidates.SeatPlan.Reuse(c, s) => DelegateWorkspace.reuse(repo.toString, "nebflow-zm3", c, s).unsafeRunSync()
+                }
+          }
+          // 模式解析（同一条 spawn 路径）：不填 ⇒ kernel；显式 dispatcher ⇒ dispatcher；auto ⇒ 拒。
+          val m1 = nebflow.core.delegate.ModeParam.resolve(None)
+          val m2 = nebflow.core.delegate.ModeParam.resolve(Some("dispatcher"))
+          val m3 = nebflow.core.delegate.ModeParam.resolve(Some("auto"))
+          (reused, m1, m2, m3)
+        }
       ).unsafeRunSync()
-      val binding = b.getOrElse(fail("fallback must still produce a binding — dispatch is never rejected on a git-face failure"))
-      assertEquals(binding.worktree, None, "worktree creation failed ⇒ no worktree in the binding")
-      assertEquals(binding.branch, s"delegate/$id", "the in-place branch is still created")
-      assertEquals(binding.cwd, repo.toString, "the fallback seat = the original workspace")
-      assert(GitWorktrees.branchExists(repo, s"delegate/$id"), "the fallback branch ref must exist")
-      assertEquals(GitWorktrees.currentBranch(repo), Some("main"), "shared HEAD untouched by the fallback")
-      assert(binding.briefLine.exists(_.contains("GIT_INDEX_FILE")), binding.briefLine.getOrElse("missing brief line"))
+      assertEquals(counter.get(), 0, "the spawn path (seat allocation + mode resolution) must make ZERO model calls")
+      assert(modes._1.isDefined, "the reuse leg also ran inside the same window")
+      assertEquals(modes._2.map(_.mode), Right(DualModeConfig.ModeKernel))
+      assertEquals(modes._3.map(_.mode), Right(DualModeConfig.ModeDispatcher))
+      assert(modes._4.isLeft, "auto is rejected without any allocator call")
   }
 
-  test("判是腿对照: decideWorktree=Some(true) — worktree seat with the deliverable-commit brief line unchanged (word-for-word leg)") {
-    if !gitAvailable then ()
-    else
-      val repo = tempRoot / "yes-leg-repo"
-      mkRepo(repo)
-      val id = "nebflow-yes1"
-      val b = withJudge(Some(true))(
-        DelegateWorkspace.prepare(repo.toString, "implement the fix", id)
-      ).unsafeRunSync()
-      val binding = b.getOrElse(fail("judged-yes leg must produce a binding"))
-      assertEquals(binding.worktree.isDefined, true)
-      assertEquals(binding.cwd, binding.worktree.getOrElse(fail("seat")))
-      val line = binding.briefLine.getOrElse(fail("brief line"))
-      assert(line.contains("commit your deliverable commits here"), line)
-      assert(line.contains("delegate_report(category=\"merge\""), line)
-      assert(!line.contains("read-only seat"), "the working seat must NOT carry the read-only variant")
-  }
-
-  test("非 git 腿: prepare = None (legacy semantics intact)") {
+  test("W5 非 git 工作区：就地腿 = None（旧语义不回归）") {
     val plain = os.temp.dir(prefix = "dwl-plain") // /var/folders 下，任何仓库之外
-    val r = DelegateWorkspace.prepare(plain.toString, "task", "nebflow-nogit").unsafeRunSync()
+    val r = DelegateWorkspace.prepareInPlace(plain.toString, "nebflow-nogit").unsafeRunSync()
     assertEquals(r, None)
+    assert(DelegateWorkspace.createNamed(plain.toString, "x", "nebflow-nogit2").unsafeRunSync().isLeft)
   }
 
 end DelegateWorkspaceWorktreeLegSpec

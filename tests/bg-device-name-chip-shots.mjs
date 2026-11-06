@@ -78,6 +78,11 @@ async function makePage(browser, colorScheme, narrow) {
     if (p.startsWith('/api/')) return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
     // 智能体定义静态件（/agents/<name>/agent.json）：本 harness 无该目录 ⇒ 空壳
     // JSON 兜底，避免 404 噪声污染「零 console error」判据（与功能面无关）。
+    // Nebula 退役批（作者令 2026-11-01）：根 agent 的来源 chip 读单一显示名权威
+    // （rootName.js#rootDisplayName）——此处喂「已命名 home」= 用户起的名 Spider。
+    if (p === '/agents/Nebula/agent.json') {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ name: 'Nebula', displayName: 'Spider' }) });
+    }
     if (p.startsWith('/agents/')) return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
     const file = normalize(join(WEB, p));
     if (!file.startsWith(normalize(WEB))) return route.fulfill({ status: 403, body: 'forbidden' });
@@ -151,14 +156,15 @@ async function shoot(colorScheme, narrow) {
   // 形态 1：本机 + delegate 短名 + 内核（设备同级：本机 = 设备名，无「本地」）。
   ok(`delegate row device=本机设备名 (${tag})`, audit.delegate?.devices?.[0] === 'Mashiros-MacBook-Pro', JSON.stringify(audit.delegate));
   ok(`delegate row chips = [设备, 短名, 内核] (${tag})`,
-    JSON.stringify(audit.delegate?.chips) === JSON.stringify(['Mashiros-MacBook-Pro', '模型链面板精简', '内核']), JSON.stringify(audit.delegate?.chips));
+    JSON.stringify(audit.delegate?.chips) === JSON.stringify(['Mashiros-MacBook-Pro', '模型链面板精简', 'kernel']), JSON.stringify(audit.delegate?.chips));
   // 形态 2：远程 = 对端设备名 + 内核（无「远程」字样，单设备 chip）。
   ok(`remote row device=对端设备名 (${tag})`, audit.remote?.devices?.[0] === 'DESKTOP-IJBBEOT', JSON.stringify(audit.remote));
   ok(`remote row chips = [设备, 内核] (${tag})`,
-    JSON.stringify(audit.remote?.chips) === JSON.stringify(['DESKTOP-IJBBEOT', '内核']), JSON.stringify(audit.remote?.chips));
-  // 形态 3：本机 + 谁开启（nebula）——设备 chip 与来源 chip 并列。
-  ok(`plain row chips = [设备, Nebula] (${tag})`,
-    JSON.stringify(audit.plain?.chips) === JSON.stringify(['Mashiros-MacBook-Pro', 'Nebula']), JSON.stringify(audit.plain?.chips));
+    JSON.stringify(audit.remote?.chips) === JSON.stringify(['DESKTOP-IJBBEOT', 'kernel']), JSON.stringify(audit.remote?.chips));
+  // 形态 3：本机 + 谁开启（主 agent）——设备 chip 与来源 chip 并列；来源 chip 的
+  // 名字 = 显示名权威读数（用户起的名 Spider；Nebula 退役批，机制名不上屏）。
+  ok(`plain row chips = [设备, 显示名] (${tag})`,
+    JSON.stringify(audit.plain?.chips) === JSON.stringify(['Mashiros-MacBook-Pro', 'Spider']), JSON.stringify(audit.plain?.chips));
   // 零残留：本地/远程 kind chip 整对退役。
   const kindLeft = [audit.delegate, audit.remote, audit.plain].reduce((n, r) => n + (r?.kinds || 0), 0);
   ok(`no local/remote kind chip (${tag})`, kindLeft === 0, `${kindLeft} left`);

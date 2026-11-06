@@ -55,7 +55,7 @@ class FreshHomeNodeCreationSpec extends CatsEffectSuite:
     // 私有空 home：只有 agents/ skills/ 两个空目录（零遗留 general/kernel 目录）。
     os.makeDir.all(tempRoot / "agents")
     os.makeDir.all(tempRoot / "skills")
-    os.write.over(tempRoot / "nebflow.json", "{}")
+    os.write.over(tempRoot / nebflow.shared.Branding.configFileName, "{}")
     PathUtil.setDataRoot(tempRoot)
 
   override def afterAll(): Unit =

@@ -43,13 +43,37 @@ class DeviceProvenanceInjectionGateSpec extends FunSuite:
   private lazy val inputJs: String = read("src/main/resources/web/js/input.js")
   private lazy val recoveryJs: String = read("src/main/resources/web/js/errorRecovery.js")
 
+  /**
+   * 显示面裸正文行的**形状锚**：只钉两个契约实参（正文实参 = 裸 `content`、附件实参
+   * = `Nil`），不钉整行的可选键尾。
+   *
+   * 形状沿革（本门唯一被钉的字面量，两次成因都记在此处）：
+   *   - device-provenance 批 aefea8f77（2026-10-23）原形状：
+   *     `List(UiMessage.User(content, Nil, timestamp = System.currentTimeMillis()))`
+   *   - tool-card-leak-on-reload 批 85535b139（2026-11-02）在同一行尾追加正交键
+   *     `midTurn = midTurn`（落盘这一瞬判「回合内插话」，供回放折叠段边界），并把
+   *     整段落盘包进 `midTurnAtPersist(sessionId).flatMap`。正文实参仍是裸 `content`、
+   *     附件仍是 `Nil` —— 两 face 分离的红线未被触碰，缺的只是本门的旧字面量。
+   *
+   * 为什么只钉前缀而不钉整行：`midTurn` / `quote` / `header` 这类可选键的增删与
+   * 「标记会不会泄漏到显示面」无关，把整行配参钉死只会让这类无关批误伤本门
+   * （2026-11-02 批即如此）。先例：同包 `UserTextGateSpec` 正控①「钉语义而非参数
+   * 个数/字面，后续再加参不再误伤本门」。
+   */
   private val BareUiRow =
-    "List(UiMessage.User(content, Nil, timestamp = System.currentTimeMillis()))"
+    "List(UiMessage.User(content, Nil, timestamp = System.currentTimeMillis()"
 
   test("①a dispatchUserText: the UiMessage display row stays BARE content (marker can never leak to the chat stream)") {
+    // 判据收在 dispatchUserText **体内**（不是全文件任意一处同名行）：裸正文行的
+    // 语义是「这条唯一的普通消息入队路径落盘时写的是裸 content」。
+    val defHead = "private def dispatchUserText"
+    val start = wsRoutesCode.indexOf(defHead)
+    assert(start >= 0, "dispatchUserText 定义丢失（普通消息唯一入队路径）")
+    val nextDef = wsRoutesCode.indexOf("\n  private def ", start + defHead.length)
+    val body = if nextDef > start then wsRoutesCode.substring(start, nextDef) else wsRoutesCode.substring(start)
     assert(
-      wsRoutesCode.contains(BareUiRow),
-      s"显示面必须保持裸正文行 $BareUiRow（标记只进模型面）"
+      body.contains(BareUiRow),
+      s"显示面必须保持裸正文行 $BareUiRow （正文实参 content 裸、附件 Nil；标记只进模型面）"
     )
   }
 

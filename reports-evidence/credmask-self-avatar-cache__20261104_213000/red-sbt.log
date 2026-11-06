@@ -1,0 +1,210 @@
+[sbt-gate] gate acquired after 0s
+[sbt-gate] heap cap -Xmx2600m applied via SBT_OPTS
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project delegate-nebflow-7c3dd022-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-7c3dd022/project
+[info] compiling 2 Scala sources to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-7c3dd022/project/target/scala-2.12/sbt-1.0/classes ...
+[info] done compiling
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/delegate-nebflow-7c3dd022/)
+[info] compiling 749 Scala sources to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-7c3dd022/target/scala-3.5.2/classes ...
+[info] done compiling
+[info] compiling 1057 Scala sources to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-7c3dd022/target/scala-3.5.2/test-classes ...
+[info] done compiling
+[warn] javaOptions will be ignored, fork is set to false
+[32mnebflow.core.SecretMaskingCoverageSpec:[0m
+[91m==> X [0m[91mnebflow.core.SecretMaskingCoverageSpec[0m.[91mtext leg (LlmLogWriter.redactSecrets): every credential key is masked[0m  [90m0.248s[0m munit.ComparisonFailException: src/test/scala/nebflow/core/SecretMaskingCoverageSpec.scala:33
+32:    val leaks = AllKeys.filter(k => LlmLogWriter.redactSecrets(jsonBody(k)).contains(FakeValue))
+[7m33:    assertEquals(leaks, Nil, s"这些键的值被原样回显（未掩码）：$leaks")[0m
+34:  }
+这些键的值被原样回显（未掩码）：List(deviceToken, accessToken, refreshToken, token, clientSecret, password)
+[1m=> Obtained[0m
+List(
+  "deviceToken",
+  "accessToken",
+  "refreshToken",
+  "token",
+  "clientSecret",
+  "password"
+)
+[1m=> Diff[0m ([91m- expected[0m, [92m+ obtained[0m)
+[91m-Nil[0m
+[92m+List([0m
+[92m+  "deviceToken",[0m
+[92m+  "accessToken",[0m
+[92m+  "refreshToken",[0m
+[92m+  "token",[0m
+[92m+  "clientSecret",[0m
+[92m+  "password"[0m
+[92m+)[0m
+[90m    at [0m[90mmunit.FunSuite.assertEquals[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.core.SecretMaskingCoverageSpec.$init$$$anonfun$1[0m[1m([0m[1mSecretMaskingCoverageSpec.scala[0m:[1m33[0m[1m)[0m
+[91m==> X [0m[91mnebflow.core.SecretMaskingCoverageSpec[0m.[91mtext leg: underscore / hyphen / case variants are masked too[0m  [90m0.001s[0m munit.ComparisonFailException: src/test/scala/nebflow/core/SecretMaskingCoverageSpec.scala:39
+38:    val leaks = variants.filter(k => LlmLogWriter.redactSecrets(s"""{"$k": "$FakeValue"}""").contains(FakeValue))
+[7m39:    assertEquals(leaks, Nil, s"变体键未掩码：$leaks")[0m
+40:  }
+变体键未掩码：List(device_token, device-token, DEVICE_TOKEN, DeviceToken, client_secret)
+[1m=> Obtained[0m
+List(
+  "device_token",
+  "device-token",
+  "DEVICE_TOKEN",
+  "DeviceToken",
+  "client_secret"
+)
+[1m=> Diff[0m ([91m- expected[0m, [92m+ obtained[0m)
+[91m-Nil[0m
+[92m+List([0m
+[92m+  "device_token",[0m
+[92m+  "device-token",[0m
+[92m+  "DEVICE_TOKEN",[0m
+[92m+  "DeviceToken",[0m
+[92m+  "client_secret"[0m
+[92m+)[0m
+[90m    at [0m[90mmunit.FunSuite.assertEquals[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.core.SecretMaskingCoverageSpec.$init$$$anonfun$2[0m[1m([0m[1mSecretMaskingCoverageSpec.scala[0m:[1m39[0m[1m)[0m
+[91m==> X [0m[91mnebflow.core.SecretMaskingCoverageSpec[0m.[91mkey predicate (GateRedact.isSecretKey): every credential key is sensitive[0m  [90m0.001s[0m munit.ComparisonFailException: src/test/scala/nebflow/core/SecretMaskingCoverageSpec.scala:44
+43:    val misses = AllKeys.filterNot(GateRedact.isSecretKey)
+[7m44:    assertEquals(misses, Nil, s"这些键没被当成凭据：$misses")[0m
+45:  }
+这些键没被当成凭据：List(authorization)
+[1m=> Obtained[0m
+List(
+  "authorization"
+)
+[1m=> Diff[0m ([91m- expected[0m, [92m+ obtained[0m)
+[91m-Nil[0m
+[92m+List([0m
+[92m+  "authorization"[0m
+[92m+)[0m
+[90m    at [0m[90mmunit.FunSuite.assertEquals[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.core.SecretMaskingCoverageSpec.$init$$$anonfun$3[0m[1m([0m[1mSecretMaskingCoverageSpec.scala[0m:[1m44[0m[1m)[0m
+[32m  + [0m[32mno over-mask: an ordinary log line is byte-for-byte unchanged[0m [90m0.001s[0m
+[32m  + [0m[32mno over-mask: quota keys are NOT credentials (maxTokens / budgetTokens)[0m [90m0.0s[0m
+[32mnebflow.neblink.DeviceTokenMaskingSpec:[0m
+[91m==> X [0m[91mnebflow.neblink.DeviceTokenMaskingSpec[0m.[91mtunnel leg (RelayTunnelDiagnostics.redact): every credential key is masked[0m  [90m0.003s[0m munit.ComparisonFailException: src/test/scala/nebflow/neblink/DeviceTokenMaskingSpec.scala:26
+25:    }
+[7m26:    assertEquals(leaks, Nil, s"这些键的值被原样回显（未掩码）：$leaks")[0m
+27:  }
+这些键的值被原样回显（未掩码）：List(accessToken, refreshToken, clientSecret, apiKey, password, authorization)
+[1m=> Obtained[0m
+List(
+  "accessToken",
+  "refreshToken",
+  "clientSecret",
+  "apiKey",
+  "password",
+  "authorization"
+)
+[1m=> Diff[0m ([91m- expected[0m, [92m+ obtained[0m)
+[91m-Nil[0m
+[92m+List([0m
+[92m+  "accessToken",[0m
+[92m+  "refreshToken",[0m
+[92m+  "clientSecret",[0m
+[92m+  "apiKey",[0m
+[92m+  "password",[0m
+[92m+  "authorization"[0m
+[92m+)[0m
+[90m    at [0m[90mmunit.FunSuite.assertEquals[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.neblink.DeviceTokenMaskingSpec.$init$$$anonfun$1[0m[1m([0m[1mDeviceTokenMaskingSpec.scala[0m:[1m26[0m[1m)[0m
+[91m==> X [0m[91mnebflow.neblink.DeviceTokenMaskingSpec[0m.[91mtunnel leg: underscore / hyphen / case variants are masked too[0m  [90m0.001s[0m munit.ComparisonFailException: src/test/scala/nebflow/neblink/DeviceTokenMaskingSpec.scala:34
+33:    }
+[7m34:    assertEquals(leaks, Nil, s"变体键未掩码：$leaks")[0m
+35:  }
+变体键未掩码：List(device_token, device-token, DEVICE_TOKEN, x-api-key, client_secret)
+[1m=> Obtained[0m
+List(
+  "device_token",
+  "device-token",
+  "DEVICE_TOKEN",
+  "x-api-key",
+  "client_secret"
+)
+[1m=> Diff[0m ([91m- expected[0m, [92m+ obtained[0m)
+[91m-Nil[0m
+[92m+List([0m
+[92m+  "device_token",[0m
+[92m+  "device-token",[0m
+[92m+  "DEVICE_TOKEN",[0m
+[92m+  "x-api-key",[0m
+[92m+  "client_secret"[0m
+[92m+)[0m
+[90m    at [0m[90mmunit.FunSuite.assertEquals[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.neblink.DeviceTokenMaskingSpec.$init$$$anonfun$2[0m[1m([0m[1mDeviceTokenMaskingSpec.scala[0m:[1m34[0m[1m)[0m
+[32m  + [0m[32mno over-mask: the auth-rejection body survives verbatim[0m [90m0.0s[0m
+[32mnebflow.cli.ConfigSecretKeySpec:[0m
+[91m==> X [0m[91mnebflow.cli.ConfigSecretKeySpec[0m.[91mConfigCommand.isSecretKey: every credential key is sensitive[0m  [90m0.004s[0m munit.ComparisonFailException: src/test/scala/nebflow/cli/ConfigSecretKeySpec.scala:22
+21:    val misses = AllKeys.filterNot(ConfigCommand.isSecretKey)
+[7m22:    assertEquals(misses, Nil, s"这些键没被当成凭据：$misses")[0m
+23:  }
+这些键没被当成凭据：List(authorization)
+[1m=> Obtained[0m
+List(
+  "authorization"
+)
+[1m=> Diff[0m ([91m- expected[0m, [92m+ obtained[0m)
+[91m-Nil[0m
+[92m+List([0m
+[92m+  "authorization"[0m
+[92m+)[0m
+[90m    at [0m[90mmunit.FunSuite.assertEquals[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.cli.ConfigSecretKeySpec.$init$$$anonfun$1[0m[1m([0m[1mConfigSecretKeySpec.scala[0m:[1m22[0m[1m)[0m
+[91m==> X [0m[91mnebflow.cli.ConfigSecretKeySpec[0m.[91mConfigCommand.isSecretKey: underscore / hyphen / case variants are sensitive[0m  [90m0.0s[0m munit.ComparisonFailException: src/test/scala/nebflow/cli/ConfigSecretKeySpec.scala:28
+27:    val misses = variants.filterNot(ConfigCommand.isSecretKey)
+[7m28:    assertEquals(misses, Nil, s"这些变体键没被当成凭据：$misses")[0m
+29:  }
+这些变体键没被当成凭据：List(Authorization)
+[1m=> Obtained[0m
+List(
+  "Authorization"
+)
+[1m=> Diff[0m ([91m- expected[0m, [92m+ obtained[0m)
+[91m-Nil[0m
+[92m+List([0m
+[92m+  "Authorization"[0m
+[92m+)[0m
+[90m    at [0m[90mmunit.FunSuite.assertEquals[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.cli.ConfigSecretKeySpec.$init$$$anonfun$2[0m[1m([0m[1mConfigSecretKeySpec.scala[0m:[1m28[0m[1m)[0m
+[32m  + [0m[32mConfigCommand.isSecretKey: quota keys stay visible (not credentials)[0m [90m0.0s[0m
+21:30:27.041 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-avatar-self-cache11652156925202636029/device.json — minted deviceId=1ab19eb3-34c9-534e-8342-fe63f277677c (scope=home|f0e30ba0-455e-55f0-996b-425a484831db, machine-code derived) and persisted
+21:30:28.035 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-avatar-self-cache14858019321385279172/device.json — minted deviceId=a127696b-4813-5785-abfa-ec184b1bb1d6 (scope=home|49ed8681-56c8-5372-b543-f53763fad3cb, machine-code derived) and persisted
+[32mnebflow.gateway.AvatarSelfByteCacheSpec:[0m
+[91m==> X [0m[91mnebflow.gateway.AvatarSelfByteCacheSpec[0m.[91msecond request to the own avatar route is served from cache (hit, zero upstream)[0m  [90m1.125s[0m munit.ComparisonFailException: src/test/scala/nebflow/gateway/AvatarSelfByteCacheSpec.scala:158
+157:        )
+[7m158:        assertEquals(firstState, Some("miss"), s"第一次必须是 miss（实读 $firstState）")[0m
+159:        assertEquals(secondState, Some("hit"), s"第二次必须是 hit（实读 $secondState）")
+第一次必须是 miss（实读 None）
+[1m=> Obtained[0m
+None
+[1m=> Diff[0m ([91m- expected[0m, [92m+ obtained[0m)
+[91m-Some([0m
+[91m-  value = "miss"[0m
+[91m-)[0m
+[92m+None[0m
+[90m    at [0m[90mmunit.FunSuite.assertEquals[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.gateway.AvatarSelfByteCacheSpec.$init$$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$2$$anonfun$2[0m[1m([0m[1mAvatarSelfByteCacheSpec.scala[0m:[1m158[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.gateway.AvatarSelfByteCacheSpec.$init$$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$2[0m[1m([0m[1mAvatarSelfByteCacheSpec.scala[0m:[1m147[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.gateway.AvatarSelfByteCacheSpec.$init$$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$2[0m[1m([0m[1mAvatarSelfByteCacheSpec.scala[0m:[1m147[0m[1m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mmodify @ nebflow.neblink.NeblinkService.updateDeviceInfo[0m[90m([0m[90mNeblinkService.scala[0m:[90m223[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mrethrow$extension @ fs2.Compiler$Target.compile$$anonfun$1[0m[90m([0m[90mCompiler.scala[0m:[90m157[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Pull$.fs2$Pull$$$_$interruptGuard$1[0m[90m([0m[90mPull.scala[0m:[90m960[0m[90m)[0m
+[32m  + [0m[32mupstream failure is never cached: the second call still hits upstream and still 502s[0m [90m0.064s[0m
+[error] Failed: Total 13, Failed 8, Errors 0, Passed 5
+[error] Failed tests:
+[error] 	nebflow.gateway.AvatarSelfByteCacheSpec
+[error] 	nebflow.cli.ConfigSecretKeySpec
+[error] 	nebflow.neblink.DeviceTokenMaskingSpec
+[error] 	nebflow.core.SecretMaskingCoverageSpec
+[error] (Test / testOnly) sbt.TestsFailedException: Tests unsuccessful
+[error] Total time: 169 s (0:02:49.0), completed 2026年11月4日 21:30:28
+EXIT=1

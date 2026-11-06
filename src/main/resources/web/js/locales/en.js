@@ -61,6 +61,24 @@ export default {
   // N2 project-tool batch (2026-10-06): the Project tool's action="unmount" face replaced
   // the panel's manual archive button; the announce mirrors the archived one (aria-live row).
   'project.unmountedAnnounce': '"{name}" unmounted — in-flight work stopped, files kept',
+  // unmount-console panel batch 2026-11-02: unload button / remount / the "Unloaded"
+  // group (visible destination for unmounted projects; same engine path as the tool).
+  'project.unmountBtn': 'Unload',
+  'project.unmountTitle': 'Unload "{name}"?',
+  'project.unmountInflight': 'In-flight right now: {chains} chain(s), {nodes} node(s), {sessions} session(s) — unloading stops all of them first.',
+  'project.unmountConfirm': 'Once confirmed, "{name}" disappears from the Projects list and the agent context and can no longer receive dispatches; every local file is kept (zero deletion). You can reload it later from the "Unloaded" group.',
+  'project.unmountConfirmGo': 'Unload',
+  'project.unmountFail': 'Failed to unload "{name}": {detail}',
+  'project.unmountedGroup': 'Unloaded',
+  // Author order 2026-11-05 08:26: the group-head explainer line is gone (iron rule 8
+  // "self-explaining": duplicate explanation + behaviour teaching — the "Unloaded" title
+  // already states the state and the Reload button already states the way out). Key
+  // `project.unmountedGroupHint` went orphan with it and is removed entirely.
+  'project.unmountedRowTitle': '"{name}" unloaded at {at} (local files kept)',
+  'project.remountBtn': 'Reload',
+  'project.remounting': 'Reloading…',
+  'project.remountFail': 'Failed to reload "{name}": {detail}',
+  'project.remountedAnnounce': '"{name}" reloaded',
   // Projects-panel bottom-right "+" button + light dialog (projcreate batch, plan B:
   // submit = prefill the main chat input + focus; zero new endpoints, zero new write
   // face). The description box is the ONLY field — no path/name field: plan B never
@@ -146,6 +164,10 @@ export default {
   'flowmap.cardRunning': 'Running…',
   // Node card agent retirement (node-flowmap-slim): restrained empty state when no preset
   'flowmap.presetDefault': 'Default preset',
+  // Card description overflow entry (edge-render-fix batch 2026-11-05): the description
+  // is capped at two lines, so a visible entry appears whenever it does not fit —
+  // clicking the card opens the detail panel with the full text.
+  'flowmap.descFull': 'Full text',
   'flowmap.loading': 'Loading Flow Map…',
   'flowmap.loadFail': 'Failed to load Flow Map',
   'flowmap.empty': 'No nodes yet — project idle',
@@ -357,11 +379,41 @@ export default {
   'contacts.menuSetRemark': 'Set remark',
   'contacts.remarkPlaceholder': 'Remark (empty clears)',
   'contacts.remarkHint': 'Enter saves · Esc cancels · empty clears the remark',
+  // ── Batch 1 (2026-11-02): friend/group profile with two descriptions ─────
+  'profile.open': 'View profile',
+  'profile.friendTitle': 'Friend info',
+  'profile.groupTitle': 'Group profile',
+  'profile.close': 'Close',
+  'profile.save': 'Save',
+  'profile.saved': 'Saved',
+  // Three-dot entry batch (2026-11-05): the three new rows.
+  'profile.searchMessages': 'Search messages',
+  'profile.muteLabel': 'Mute notifications',
+  'profile.pinLabel': 'Pin to top',
+  'profile.friendRemarkLabel': 'My remark',
+  'profile.friendRemarkPlaceholder': 'Remark you gave this friend (empty clears)',
+  'profile.friendBioLabel': 'Self-introduction',
+  'profile.friendBioPlaceholder': "The friend's self-introduction (empty clears)",
+  'profile.groupRemarkLabel': 'My group remark',
+  'profile.groupRemarkPlaceholder': 'Remark you gave this group (empty clears)',
+  'profile.groupDescriptionLabel': 'Group description',
+  'profile.groupDescriptionPlaceholder': 'Group description (empty clears)',
+  'profile.localCacheHint': 'Local cache · not synced',
+  'profile.friendNote': 'Your remark stays on this device; upstream sync for self-introductions and group descriptions is not available yet, so those are cached locally. Both fields are included in search.',
+  'profile.groupNote': 'Your group remark stays on this device; upstream sync for group descriptions is not available yet, so it is cached locally. Both fields are included in search.',
   'contacts.deleteTitle': 'Delete friend',
   'contacts.deleteConfirm': 'This removes {name} from your friends. Chat history is kept.',
   'contacts.blockTitle': 'Block',
   'contacts.blockConfirm': 'You will no longer receive messages or friend requests from {name}.',
   'messages.empty': 'No conversations',
+  // Conversation-list **fetch failure** face (empty-state-must-not-lie batch,
+  // 2026-11-05). 🔴 Distinct fact from the empty key above, never interchangeable:
+  // `messages.empty` renders only when the server ANSWERED that there are no
+  // conversations (200 + `[]`); any failed fetch (non-2xx / timeout / parse
+  // error) renders this key with a retry control. Self-explaining rule 8: the
+  // fact only — the retry control carries the next step.
+  'messages.listLoadFailed': "Couldn't load conversations",
+  'messages.retry': 'Retry',
   // 🔴 `systemNowFriends` belongs to the **friend-acceptance** context (its only
   // legal consumer = the `friend_accepted` branch of `onFriendEvent` in
   // messages.js) ⇒ the two group keys below are the **key split** product
@@ -406,10 +458,22 @@ export default {
   'chat.quoteDeletedSnapshot': 'Original message deleted · snapshot kept',
   'chat.quoteSenderMe': 'Me',
   'chat.quoteTypeImage': '[Image]',
+  // Stack-card per-image quote batch (2026-11-02): position label on a quote chip.
+  'chat.quoteImagePos': 'Image {n}/{total}',
+  'chat.quoteItemAria': 'Quote image {n}',
   'chat.quoteTypeFile': '[File]',
   'chat.quoteTypeTool': '[Tool]',
   'chat.quoteTypeAsk': '[Q&A]',
   'chat.quoteTypeSystem': '[System]',
+  // ── msgchip batch (msg-token short-name quote, author order 2026-11-01): new keys ──
+  'chat.msgTokenChipHint': 'View original message',
+  'chat.msgTokenPopTitle': 'Original message',
+  'chat.msgTokenUnreachable': 'Original message unavailable',
+  'chat.msgTokenLoading': 'Loading…',
+  'chat.msgTokenExpand': 'Expand',
+  'chat.msgTokenCollapse': 'Collapse',
+  // ── msgchip-provenance batch (2026-11-01 author order: strip channel prefix): attach note ──
+  'chat.msgTokenAttachNote': '{n} attachment(s)',
   'messages.multiSelect': 'Multi-select',
   'messages.selectedCount': '{n} selected',
   'messages.forward': 'Forward',
@@ -637,6 +701,11 @@ export default {
   'messages.ariaUnread': '{n} unread messages',
   'messages.ariaActionable': '{n} items need you',
   'messages.copy': 'Copy',
+  // fm-md-social batch (2026-11-02): markdown external links in friend/group/device
+  // messages need a second confirmation — the body comes from a peer, not from us.
+  'messages.mdLinkTitle': 'Open external link',
+  'messages.mdLinkConfirm': 'This message came from outside. The link points to {host}. Open it in a new window?',
+  'messages.mdLinkOpen': 'Open',
   'contacts.searching': 'Searching…',
   'contacts.notFoundHint': 'The user may not have set a Username yet, or the input may be wrong',
   'contacts.cancelVerify': 'Cancel',
@@ -652,6 +721,8 @@ export default {
   // (contract = main card case-1 interface list + A-4).
   'contacts.createGroup': 'New Group',
   'contacts.createGroupTitle': 'Start a group chat',
+  // Unified-panel batch (2026-11-06): label for the top-left back round button.
+  'contacts.back': 'Back',
   'contacts.createGroupName': 'Group name',
   // Create-group panel skeleton, 4 sections (2026-09-16 visual rework): input
   // placeholder example / list section label / empty-state guidance. Landed in
@@ -732,13 +803,21 @@ export default {
   // the popup's no-match state and its ARIA label only.
   'mention.title': 'Projects',
   'mention.noMatch': 'No matching projects',
+  // `#` todo-reference completion (todo name+detail batch, 2026-11-05).
+  'todoComplete.title': 'Todos',
+  'todoComplete.noMatch': 'No matching todos',
+  'todoComplete.detailUnavailable': 'This todo is not in the current list',
   'modal.newSession': 'New Session',
   'modal.sessionName': 'Session name',
   'modal.cancel': 'Cancel',
   'modal.create': 'Create',
   'modal.deleteSession': 'Delete Session',
   'modal.deleteConfirm': 'Delete',
-  // === Entity icon semantics + Nebula orchestrator section (20260824_entity-icons-visual-spec §6) ===
+  // === Entity icon semantics + main-agent section (20260824_entity-icons-visual-spec §6) ===
+  // Nebula-retire batch (author order 2026-11-01): an unnamed root reads this generic
+  // appellation; the mechanism key is never a display fallback (read point =
+  // js/rootName.js#rootGenericName).
+  'agent.rootGeneric': 'Main agent',
   'agents.group.orchestrator': 'Orchestrator',
   'agents.group.standalone': 'Standalone Agents',
   'agents.badge.orchestrator': 'Orchestrator',
@@ -758,11 +837,15 @@ export default {
   'settings.thinkingMode': 'Thinking Mode',
   'settings.llmLog': 'LLM Logging',
   'settings.workSchedule': 'Freeze time (non-work hours)',
-  'settings.workScheduleOnHint': 'During a freeze window the agent parks after each tool round — no LLM calls (zero token cost) — and resumes automatically when the window ends. The input bar and mic are disabled during a freeze; click "Skip this freeze" to unfreeze immediately.',
+  // Self-explaining batch (2026-11-04, rule 8): the trailing "click Skip this freeze to
+  // unfreeze immediately" taught an action the button label already carries (action-label
+  // retention). What stays is the freeze-window fact.
+  'settings.workScheduleOnHint': 'During a freeze window the agent parks after each tool round — no LLM calls (zero token cost) — and resumes automatically when the window ends. The input bar and mic are disabled during a freeze.',
   'settings.workScheduleOffHint': 'Off by default. When off, all agents work around the clock exactly as today.',
   'settings.addSegment': 'Add freeze segment',
   'settings.removeSegment': 'Remove segment',
   'settings.segmentLabel': 'Segment {n}',
+  'settings.segmentEdit': 'Edit freeze window',
   'settings.segmentTo': 'to',
   'settings.scheduleInvalidTime': 'Time must be in HH:mm format',
   'settings.scheduleInvalidRange': 'Start and end must differ',
@@ -841,6 +924,9 @@ export default {
   // 钉住的可见状态词——面板行状态位直显「Merge-queued」。
   'subagents.status.waiting': 'Merge-queued',
   'subagents.status.waitingMerge': 'waiting-merge (FIFO)',
+  // 案A 待命批 2026-10-31（状态矩阵批收编）：delegate 显式待命态（delegate_report
+  // standby）——行状态位直显「待命」，区别于候合并（tooltip = 申报的「在等什么」）。
+  'subagents.status.standby': 'Standby (awaiting orders)',
   'subagents.status.idle': 'Idle',
   // panel-merge-status 批（2026-10-25）：候合并行队列细节段（/api/merge-queue 只读
   // 状态面；位次只渲染不派生，API 未生效 ⇒ 段全缺 = 静态「waiting-merge」降级）。
@@ -854,6 +940,52 @@ export default {
   'subagents.status.stuck': 'Stuck',
   'subagents.status.error': 'Failed',
   'subagents.status.frozen': 'Frozen',
+  // 错误冻结批（2026-11-01）：delegate 错误冻结行面文案（徽标/原因 tooltip/唤醒）。
+  'subagents.frozenBadgeWithReason': 'Frozen · {reason}',
+  // freeze-notice policy batch (2026-11-05): provider faults are INFRASTRUCTURE faults,
+  // not task failures — no upward report (the parent is starving too); the panel is the
+  // status surface: "needs you" word + reason code + auto-resume count + wake entry.
+  'subagents.frozenAwaitingYou': 'Frozen · {reason} (needs you)',
+  'subagents.frozenAwaitingYouNoReason': 'Frozen · needs you',
+  // Fix batch 2026-11-06: recoverable freezes (llm-failure / quota) are NOT your todo —
+  // their word is "Recovering", kept visually distinct from real failures (needs you).
+  'subagents.freezeRecovering': 'Recovering',
+  'subagents.freezeRecoveringReason': 'Recovering · {reason}',
+  'subagents.freezeRecoveringTip': 'The provider is temporarily unavailable (not a task failure, and nothing for you to do): the engine keeps retrying with backoff and switches to a usable provider, then resumes in the same session — finished work is not redone. Nothing is reported upward and no wake is needed.',
+  'subagents.frozenInfraTip': 'Provider fault (NOT a task failure): the engine probes for recovery and resumes the SAME session by itself once a provider is serving again (from the checkpoint, finished work is not redone, capped attempts with growing gaps); press Wake to resume it right now. Nothing is reported upward — this panel is its status surface.',
+  'subagents.frozenAutoResumes': 'auto-resumed {n} time(s)',
+  'subagents.frozenAutoResumesSpent': 'auto-resume budget spent — needs you: top up / switch model / cancel',
+  'subagents.freezeDigestRecoverable': '{count} frozen (wakeable)',
+  'subagents.freezeDigestNeedsHuman': '{count} frozen (needs you)',
+  'subagents.frozenTip': 'Frozen: an engine/upstream fault stopped it in place — this is NOT a failure verdict. The session history, workspace with uncommitted changes, task-ledger row and merge-queue slot are all kept; press Wake (or mail its address) to continue in the SAME session (finished work is not redone).',
+  'subagents.frozenReason': 'Reason: {reason}',
+  'subagents.frozenDormantTip': 'Frozen for {hours}h with no wake (past the retention window the record is archived; transcript and workspace are kept).',
+  'subagents.wake': 'Wake',
+  'subagents.wakeTip': 'Continue in the same session context (history in place, finished work is not redone)',
+  // name/address 批（2026-11-05）：地址 chip 的 tooltip 后缀（前面拼完整地址本身）。
+  'subagents.copyAddress': 'copy address',
+  'subagents.wakeFailed': 'Wake failed — record and transcript are kept; retry later',
+  'subagents.frozenReasonLlm': 'LLM-layer failure',
+  'subagents.frozenReasonTool': 'tool-layer failure',
+  'subagents.frozenReasonEngine': 'engine fault',
+  'subagents.frozenReasonQuota': 'quota-exhausted cancel',
+  // Frozen-state honesty batch (2026-11-05): two presentation families —
+  // auto-recovering (window / backoff / provider probe / checkpoint resume) says
+  // what it is waiting for and gets NO button; needs-human (loop guard / error
+  // freeze / escalated) says "Frozen" and carries the recovery entry.
+  'subagents.freezeBadge': 'Frozen',
+  'subagents.freezeBadgeWithReason': '{word} · {reason}',
+  'subagents.freezeWindow': 'Waiting for the work window',
+  'subagents.freezeAuto': 'Auto-recovering',
+  'subagents.freezeWindowTip': 'Parked outside the work window: it resumes on its own when the window opens.',
+  'subagents.freezeAutoTip': 'The engine is backing off / waiting for an external condition to clear: it resumes on its own; only a cancel stops it.',
+  'subagents.freezeReasonLoop': 'loop guard',
+  'subagents.freezeReasonLlmTransient': 'LLM-layer failure',
+  'subagents.freezeReasonNetwork': 'network blip',
+  'subagents.freezeReasonProviderDown': 'providers unavailable',
+  'subagents.freezeReasonRestartRecovery': 'checkpoint resume',
+  'subagents.freezeReasonWaitingNetwork': 'waiting for the network',
+  'subagents.freezeReasonSchedule': 'work window',
   'subagents.status.done': 'Done',
   // Panel-tree batch (2026-10-29 ①): orphan-row origin chips (parent invisible,
   // row promoted top-level — "from …" attribution).
@@ -861,17 +993,28 @@ export default {
   'subagents.fromFlowNode': 'from an AgentFlow node',
   'subagents.fromSubagent': 'from a parent sub-agent',
   'subagents.orphanTip': 'Parent session no longer visible · {sid}',
+  // Orphan-placement batch (2026-11-05 leg ③): head word of the standalone group
+  // holding wild nodes (rows whose parent cannot be resolved). One fact word,
+  // no explanation / no teaching sentence (self-explaining rule 8).
+  'subagents.orphanGroup': 'No parent',
+  // Three-generation panel batch (2026-11-06): root anchor (depth-0 tree base
+  // label) + the decision-table state-② "parent absent" chip — fact words only.
+  'subagents.rootAnchor': 'Root session',
+  'subagents.parentAbsent': 'Parent absent',
+  'subagents.parentAbsentTip': 'Parent session not currently shown · {sid}',
   // Panel-hierarchy batch (2026-10-31 ①): group-head collapse caret a11y/hover
   // text (flips with the collapsed state).
   'subagents.collapseGroup': 'Collapse subtasks',
   'subagents.expandGroup': 'Expand subtasks',
-  // Flow-session visibility batch (2026-11-01): kind chips for dispatcher-*/
-  // node-* rows (the engine protocol kind is uniformly "Flow" — display words
-  // are resolved per session-id prefix) + the continuation badge for a
-  // terminal delegate whose chain is still running (amber word + workflow
-  // icon; tooltip carries the live session count).
-  'subagents.kindDispatcher': 'Dispatcher',
-  'subagents.kindNode': 'Node',
+  // Term-unification batch (2026-11-06, author order "统一 根据英文"): the kind
+  // chip word family is RETIRED — subagents.kindDispatcher / kindNode /
+  // kindAgentflow are deleted. Identity/type badge words are author terms and
+  // are not localised; single source = js/termWords.js (BADGE_WORDS). A locale
+  // entry per language is exactly the second word table this batch removes
+  // (that is how zh-CN ended up with its own translations). Gate:
+  // scripts/check-badge-words.mjs.
+  // Kept: the continuation badge for a terminal delegate whose chain is still
+  // running (amber word + workflow icon; tooltip carries the live session count).
   'subagents.chainRunning': 'Chain running',
   'subagents.chainRunningTip': 'Delegate delivered, chain still running · {n} session(s)',
   // Task attribution badge (2026-09-27 taskbadge batch): hover tooltip of the
@@ -1103,34 +1246,53 @@ export default {
   'settings.save': 'Save',
   'settings.saved': 'Saved ✓',
   'settings.saveFailed': 'Save failed',
+  // jev-imagegen-align-llm batch (2026-11-02, contract §D.1): shared config
+  // provider card keys — one copy for the LLM / Jev / imagegen faces; the
+  // rendering single source is js/cfgProviderCard.js.
+  'settings.cfgCard.addProvider': '＋ Add provider',
+  'settings.cfgCard.delete': 'Delete this provider',
+  'settings.cfgCard.deleteConfirm': 'Click again to confirm',
+  'settings.cfgCard.deleted': 'Provider deleted',
+  'settings.cfgCard.inUse': 'In use',
+  'settings.cfgCard.keyConfigured': 'Saved',
+  'settings.cfgCard.keyMissing': 'Not configured',
+  'settings.cfgCard.models': '{n} models',
+  'settings.cfgCard.emptyHint': 'No provider yet — fill in the form below and save.',
   'settings.jev': 'Jev (plugin allocation)',
   'settings.jevEnabled': 'Use Jev to allocate plugins',
   'settings.jevProvider': 'Provider',
   'settings.jevEndpoint': 'Endpoint',
-  'settings.jevKeyRef': 'API key reference',
-  // secrets-ui-redesign (2026-10-08 design handoff): the hint keeps only the
-  // safety-critical line; the health-row tri-state words fill the four keys
-  // that were missing (t() miss fell back to the key itself → bare key names
-  // rendered as copy).
-  'settings.jevHint': 'keyRef is a secret NAME under ~/.nebflow/secrets/ — a pointer, never the value.',
   'settings.jevHealth': 'Allocation channel',
   'settings.jevHealthUp': 'Up',
   'settings.jevHealthDown': 'Down',
   'settings.jevHealthUnconfigured': 'Not configured',
-  'settings.jevKeyRefShow': 'Show key reference',
-  'settings.jevKeyRefHide': 'Hide key reference',
   // jev-panel-threefix (2026-10-09 user feedback, three points): head-row
-  // toggle title / pinned-endpoint explanation / fallback badge word.
+  // toggle title / fallback badge word.
   'settings.jevToggleDetails': 'Expand or collapse allocation settings',
-  'settings.jevEndpointFixed': 'Endpoint is fixed for the Jev edition — no entry needed',
   'settings.jevHealthFallback': 'Jev unavailable → fell back to llm',
-  // settings-panel-jev-imagegen batch (2026-10-28): JeV key VALUE plaintext
-  // display (author order #1 — visible by default, eye = optional masking).
-  'settings.jevKeyValue': 'Key value',
-  'settings.jevKeyValuePlaceholder': 'Read from secrets…',
-  'settings.jevKeyValueNoRef': 'Enter a keyRef first',
-  'settings.jevKeyValueMissing': 'Not found under secrets — entry pending',
-  'settings.jevKeyValueError': 'Read failed ({code})',
+  // jev-imagegen-align-llm batch (2026-11-02, contract §D.2): Jev config face,
+  // 20 keys — provider name / protocol adapter / model / one single key box
+  // (zero pointer wording on the UI layer).
+  'settings.jev.name': 'Provider name',
+  'settings.jev.namePlaceholder': 'e.g. typesafe-jev',
+  'settings.jev.type': 'Protocol adapter',
+  'settings.jev.typeTypesafe': 'Typesafe JeV (hosted)',
+  'settings.jev.typeLaya': 'LAYA (self-hosted)',
+  'settings.jev.model': 'Model',
+  'settings.jev.modelPlaceholder': 'Model name',
+  'settings.jev.keyEntry': 'API Key',
+  'settings.jev.keyPlaceholder': 'Enter the key value…',
+  'settings.jev.keyReentryPlaceholder': 'Configured — re-enter to overwrite',
+  'settings.jev.keyShow': 'Show key value',
+  'settings.jev.keyHide': 'Hide key value',
+  'settings.jev.keySaved': 'Key saved',
+  'settings.jev.keySaveFailed': 'Key save failed ({code})',
+  'settings.jev.keyEmpty': 'Key value is empty',
+  'settings.jev.nameRequired': 'Enter a provider name first',
+  'settings.jev.nameInvalid': 'Provider name allows letters/digits/._- only',
+  'settings.jev.typeRequired': 'Pick a protocol adapter first',
+  'settings.jev.modelRequired': 'Model must not be empty',
+  'settings.jev.detailHint': 'Enter the API key and save; without a key the Jev leg stays closed.',
   // settings-panel batch D (2026-10-28): STT master switch (absent = on —
   // existing behavior untouched; off = the whole STT face collected).
   'settings.sttEnabled': 'Enable speech-to-text',
@@ -1154,7 +1316,11 @@ export default {
   // face is a plain "type API key, save" flow; the pointer name is invisible.
   'settings.imagegenShortHint': 'Enter the API key and save; without a key, image generation stays off.',
   'settings.imagegenProvider': 'Provider',
-  'settings.imagegenAddProvider': '＋ Add provider…',
+  // jev-imagegen-align-llm batch (2026-11-02, contract §D.3): imagegen provider
+  // name / empty-state hint — 3 keys.
+  'settings.imagegen.name': 'Provider name',
+  'settings.imagegen.namePlaceholder': 'e.g. zhipu',
+  'settings.imagegen.emptyHint': 'No provider yet — fill in the form below and save.',
   'settings.imagegenProviderNamePlaceholder': 'New provider name (letters/digits/._-)',
   'settings.imagegenType': 'Adapter type',
   'settings.imagegenTypePlaceholder': 'Choose an adapter type',
@@ -1162,8 +1328,6 @@ export default {
   'settings.imagegenModelPlaceholder': 'Model ID',
   'settings.imagegenBaseUrl': 'Custom endpoint (optional)',
   'settings.imagegenBaseUrlPlaceholder': 'Empty = adapter default endpoint',
-  'settings.imagegenKeyConfigured': 'Configured',
-  'settings.imagegenKeyMissing': 'Pending entry',
   'settings.imagegenKeyEntry': 'API Key',
   'settings.imagegenKeyPlaceholder': 'Enter the API key…',
   'settings.imagegenKeyReentryPlaceholder': 'Configured — typing overwrites',
@@ -1176,9 +1340,6 @@ export default {
   'settings.imagegenTypeRequired': 'Choose an adapter type first',
   'settings.imagegenNameRequired': 'Enter a provider name first',
   'settings.imagegenNameInvalid': 'Provider name allows letters/digits/._- only',
-  'settings.imagegenDelete': 'Delete this provider',
-  'settings.imagegenDeleteConfirm': 'Click again to confirm',
-  'settings.imagegenDeleted': 'Provider deleted',
   // settings-panel-jev-imagegen batch (2026-10-29, author order: give JeV and
   // imagegen the same test-availability button the LLM face has). JeV = one
   // button; imagegen = two levels (light probe + one minimal real generation).
@@ -1274,10 +1435,34 @@ export default {
   'model.roleGeneral': 'Node',
   'model.viaSlash': 'Edit with the /model command',
   'model.currentRun': 'Running',
+  // jev-imagegen-align-llm batch (2026-11-02, contract §D.4): two new /model
+  // groups = pointer switchers ("which provider this config section uses"),
+  // NOT agent model chains.
+  'model.groupJev': 'Jev (plugin allocation)',
+  'model.groupImagegen': 'Image generation',
+  'model.groupSwitch': 'Switch',
+  'model.groupSwitched': 'Switched to {name}',
   'settings.advanced': 'Advanced',
   'settings.editRawJson': 'Edit Raw JSON',
   'settings.reload': 'Reload',
   'settings.account': 'Account',
+  // 件四 · settings identity card localization (author ruling 2026-11-02: avatar on
+  // top, one capsule below with username + email; the capsule opens the profile page).
+  // zh/en added **symmetrically** (14 keys x 2 files).
+  'settings.identityCardLabel': 'Account details',
+  'settings.identityChangeAvatar': 'Change avatar',
+  'settings.identityNotSignedIn': 'Not signed in',
+  'settings.identityUnknown': 'Unknown',
+  'settings.avatarChangeUnavailable': 'The account service does not offer an avatar upload endpoint yet — the image was not uploaded.',
+  'settings.profileSelf': 'Profile',
+  'settings.profileClose': 'Close',
+  'settings.profileUsername': 'Username',
+  'settings.profileNickname': 'Nickname',
+  'settings.profileEmail': 'Email',
+  'settings.profileGithub': 'GitHub binding',
+  'settings.profileGoogle': 'Google binding',
+  'settings.profileReadonlyNote': 'Everything below is a live reading from the account service; the client caches nothing and fills nothing in.',
+  'settings.accountServiceUnavailable': 'The account service does not offer this endpoint yet, so it cannot be edited in the app.',
   'settings.about': 'About',
   'settings.connection': 'Connection',
   'settings.connected': 'Connected',
@@ -1288,25 +1473,15 @@ export default {
   // removed with the auth-trim batch (2026-10-20 author ruling): the settings-page
   // update feature is retired; unified update detection moves to the website later.
 
-  // Phase text for the existing restart progress frame (`restartStatus`, consumed by
-  // the settings "Restart Service" status line).
-  'restart.phase.quiesce': 'Waiting for in-flight work to finish',
-  'restart.phase.draining': 'Freezing and flushing to disk',
-  'restart.phase.spawning': 'Launching the successor process',
-  'restart.phase.handing-over': 'Handing over — the old process is about to exit',
-  'restart.phase.completed': 'Restart completed',
-  'restart.phase.failed': 'Restart aborted',
-
-  // Settings-page restart trigger (hotupdate batch 3 · G6 second half) — reuses the
-  // existing 'restart' WS command; the UI confirms in two steps (2nd click = confirm bit).
-  'settings.restart': 'Restart Service',
-  'settings.restartConfirm': 'Confirm restart?',
+  // The whole "Restart Service" copy chain was removed with the settings-ios-rows
+  // batch (2026-11-06 author ruling): restart.phase.* and the four settings.restart*
+  // keys have zero consumers left (the sole consumer, the #restart-status line, was
+  // removed in the same batch). The backend WS `restart` command stays (other
+  // consumers remain); the frontend has no emit face for it.
   'settings.fileCache': 'File cache',
   'settings.fileCacheClear': 'Clear file cache',
   'settings.fileCacheClearConfirm': 'Confirm clear?',
   'settings.fileCacheEntries': 'items',
-  'settings.restartAccepted': 'Restart admitted — the UI reconnects automatically once it is up',
-  'settings.restartFailed': 'Restart not admitted: {error}',
 
   // Provider card fields
   'provider.baseUrl': 'Base URL',
@@ -1321,10 +1496,6 @@ export default {
   'provider.keyRequired': 'API Key is required for new providers',
   'provider.required': 'Required',
   'provider.protocol': 'Endpoint format',
-  // The helper line under the endpoint-format select (protoface-ui batch
-  // 2026-09-22): shows the POST target the engine will actually hit for the
-  // selected face + the currently typed base URL. {target} = full URL.
-  'provider.protocolHelper': 'This provider will receive: POST {target}',
   'provider.idRequired': 'Provider ID is required',
   'provider.noSpaces': 'Provider ID cannot contain spaces',
   'provider.baseUrlRequired': 'Base URL is required',
@@ -1336,10 +1507,53 @@ export default {
   'provider.ctxExceedsCeiling': 'Model {id}: context window {value} exceeds the supported ceiling {max}',
   'provider.ctxDefaulted': 'Context window left empty for {ids}; saved with the default {def}',
   'provider.ctxClampedToMax': 'Model {id}: the default 1,000,000 exceeds the reported maximum; saved as {max}',
-  // model-schedule-unavailable batch: provider modal edit face.
+  // model-schedule-unavailable batch: provider-level ONLY (config-single-source
+  // batch, author ruling ④ 2026-11-05). Always-on copy = label + empty-state
+  // fact ("No restriction"); the explanation lives in the `?` hover hint (⑤).
   'provider.unavailableWindows': 'Unavailable windows',
-  'provider.unavailableWindowsPlaceholder': 'e.g. 14:00-18:00; comma-separate multiple; cross-midnight as 23:00-07:00; empty = no restriction',
+  'provider.unavailableWindowsHint': 'Applies to every model of this provider; cross-midnight as 23:00-07:00',
+  'provider.maxConcurrentActors': 'Max concurrent actors',
+  'provider.maxConcurrentActorsPh': 'Empty = unlimited',
+  'provider.maxConcurrentActorsInvalid': 'Max concurrent actors must be a positive integer',
+  'provider.unavailableWindowsPlaceholder': 'HH:mm-HH:mm',
   'provider.unavailableWindowsInvalid': 'Invalid unavailable window: "{value}" (expected HH:mm-HH:mm, start ≠ end)',
+  'provider.unavailableWindowsEmpty': 'No restriction',
+  'provider.unavailableWindowsAdd': 'Add unavailable window',
+  'provider.unavailableWindowsDaysReadonly': 'By weekday · hand-edited, read-only',
+  'provider.unavailableWindowsDays': 'Active weekdays',
+
+  // ── Time wheel picker (time-wheel-picker impl batch 2026-11-03; single source js/timeWheel.js) ──
+  'timewheel.titleRange': 'Select time range',
+  'timewheel.titlePoint': 'Select time',
+  'timewheel.cancel': 'Cancel',
+  'timewheel.confirm': 'Done',
+  'timewheel.sepTo': 'to',
+  'timewheel.editRange': 'Edit time range',
+  'timewheel.editPoint': 'Edit time',
+  'timewheel.crossDay': 'Crosses midnight: ends at {to} the next day (valid, same as the current cross-midnight semantics)',
+  'timewheel.equalError': 'Start and end cannot be equal (a zero-length window is meaningless and the backend rejects it)',
+  'timewheel.exactInput': 'Type exact HH:mm',
+  'timewheel.startHour': 'Start hour',
+  'timewheel.startMin': 'Start minute',
+  'timewheel.endHour': 'End hour',
+  'timewheel.endMin': 'End minute',
+  'timewheel.hourUnit': 'h',
+  'timewheel.minUnit': 'm',
+  'timewheel.dateLabel': 'Date',
+  'timewheel.daysLabel': 'Active weekdays',
+  'timewheel.everyDay': 'Every day',
+  'timewheel.mon': 'Mo',
+  'timewheel.tue': 'Tu',
+  'timewheel.wed': 'We',
+  'timewheel.thu': 'Th',
+  'timewheel.fri': 'Fr',
+  'timewheel.sat': 'Sa',
+  'timewheel.sun': 'Su',
+  'timewheel.presetAllDay': 'All day',
+  'timewheel.presetNight': 'Night 23–08',
+  'timewheel.presetDay': 'Day 09–18',
+  'timewheel.presetAfternoon': 'Afternoon 14–18',
+  'timewheel.deadline': 'Due time',
 
   // Model fields in modal
   'model.idPlaceholder': 'Model ID',
@@ -1402,6 +1616,10 @@ export default {
   'session.delete': 'Delete this session',
   'session.dropDelete': 'Drop to delete',
   'session.dropDeleteCount': 'Drop to delete {count} sessions',
+  // Conversation head unification batch (件二+件三, 2026-11-02): accessible name of
+  // the top-right "more" button (icon-only).
+  'session.more': 'More',
+  'session.deviceDesc': 'Device description',
   'folder.newPlaceholder': 'New folder name…',
 
   // === Delete modals ===
@@ -1431,6 +1649,10 @@ export default {
   // A-branch scroll-follow convergence: new-message pill (N = message rows
   // added since the user left the bottom).
   'chat.newMessages': '↓ {n} new messages',
+  // Back-to-bottom (single-implementation batch 2026-11-06, js/scrollPill.js):
+  // no unread, just scrolled far enough up (distance-to-bottom >= SHOW_AFTER_PX)
+  // — the same pill's second arm.
+  'chat.backToBottom': 'Back to bottom',
   // Search jump return pill (author order 2026-11-01, searchReturnPill.js):
   // anchor live => back to the pre-jump reading spot; anchor gone => honest
   // degrade to the latest message.
@@ -1446,6 +1668,21 @@ export default {
   // card sentinel is no longer dumped through the <pre> fallback ⇒ it takes the
   // card path, and this placeholder when extraction fails (raw text never in DOM).
   'chat.toolCardUnavailable': 'Card content unavailable (raw data not rendered)',
+  // Tool-card fold toggle (ui-unification-20261103-chat-stream): long output
+  // collapses by default; the toggle names the full line count and mirrors
+  // aria-expanded. Process-leak fix (2026-11-04): the collapsed face is now a
+  // single summary line — the line count/copy ride the title (accessible, no
+  // visual noise) and the default face renders no preview body at all.
+  'chat.toolExpandMore': 'Expand all {n} lines',
+  'chat.toolCollapse': 'Collapse',
+  // Failure status word (process-leak fix, 2026-11-04): the summary line must
+  // show success/failure — failure is spelled out (success rides the check
+  // icon; printing "succeeded" on every card is noise).
+  'chat.toolStatusFailed': 'failed',
+  // Tool-card image ref chip (tool-card-image-face batch, 2026-11-04): a tool
+  // card is a summary face — images fold into a "🖼 N image(s)" reference that
+  // opens the lightbox; never rendered inline.
+  'chat.toolImgRef': '🖼 {n} image(s)',
   // pop-upgrade batch (2026-10-03): Pop artifact faces (media stack / file cards)
   'chat.popExpand': 'Expand {n}',
   'chat.popCollapse': 'Collapse',
@@ -1469,6 +1706,10 @@ export default {
   'chat.other': 'Other...',
   'chat.frozenNoTime': 'Frozen · waiting to resume',
   'chat.frozenShort': 'Frozen · {time} resume',
+  // Frozen-state honesty batch (2026-11-05): auto-recovering footer wording —
+  // "Frozen" is the needs-a-human label, a backoff/window wait is not it.
+  'chat.freezeAutoTile': 'Retrying · {reason}',
+  'chat.freezeWindowTile': 'Waiting for the work window',
   'chat.frozenPlaceholder': 'Frozen · resumes {time}',
   'chat.frozenPlaceholderNoTime': 'Frozen · waiting to resume',
   'chat.skipFreeze': 'Skip this freeze',
@@ -1525,6 +1766,18 @@ export default {
   'askUser.attachmentUnavailable': 'unavailable',
   'askUser.attachmentPreview': 'Preview {name}',
   'askUser.attachmentDownload': 'Download {name}',
+  // ui-unification-20261103-askuser-attach batch (2026-11-04, IMG_1725): the
+  // attachment area unifies with the input strip + embedded media stack + source
+  // tag + folding; the unavailable state carries a REASON tier and an action
+  // (the bare "unavailable" wording retires per ⑤a).
+  'askUser.attUnavailable_missing': 'File missing or moved',
+  'askUser.attUnavailable_denied': 'No read permission (session/ticket expired)',
+  'askUser.attUnavailable_network': 'Network unreachable — retry later',
+  'askUser.attUnavailable_unsupported': 'Preview not supported for this type',
+  'askUser.attCanDownload': 'download available',
+  'askUser.attRetryDownload': 'Retry download',
+  'askUser.attDownloadFailed': 'Download failed',
+  'askUser.attFoldTotal': '{n} total',
     'askUser.pendingTitle': 'Pending questions',
   // held-receipt 投递可靠性批（2026-10-21 fix 3）：「N 条回执待投递」徽标词条。
   // 补投静默批（2026-10-29）：词条去机制名——"held by the sub-agent barrier"
@@ -1598,6 +1851,16 @@ export default {
   'chat.skillLabel': 'skill: {skill}',
   'human.details': 'Details',
   'mermaid.renderFailed': 'Diagram failed to render',
+  // rich-render batch (2026-11-05): shared failure states for diagram / svg /
+  // math fences.
+  'fence.renderFailed': 'Diagram failed to render',
+  'fence.showSource': 'Show source',
+  'fence.hideSource': 'Hide source',
+  'fence.sanitized': 'Removed {n} unsafe item(s)',
+  'fence.svgParseFailed': 'SVG syntax error',
+  'fence.svgRootRequired': 'Root element is not svg',
+  'fence.svgNothingLeft': 'Nothing drawable left',
+  'fence.mathFailed': 'Formula failed to render',
   'mermaid.showSource': 'Show source',
   'mermaid.hideSource': 'Hide source',
   'chat.copyFailed': 'Copy failed',
@@ -1679,6 +1942,7 @@ export default {
 
   // === Background tasks ===
   'bg.cancel': 'Cancel',
+  'bg.cancelTip': 'Cancel this background task (the process is killed; not reversible)',
   'bg.cancelling': 'Cancelling...',
   'bg.running': 'Running',
   'bg.ended': 'Process ended',
@@ -1700,6 +1964,13 @@ export default {
   'bgws.noData': 'no status data (snapshot not covering)',
   'bgws.noBgTasks': 'no background tasks for this session',
   'bgws.moreTasks': '{count} more background tasks (see the main window panel)',
+  // Mobile bg-agent dialog simplification (2026-11-06): ⋯ details sheet meta labels.
+  'bgagent.more': 'Task details',
+  'bgagent.detail.source': 'Source',
+  'bgagent.detail.created': 'Created',
+  'bgagent.detail.worktree': 'Worktree',
+  'bgagent.detail.plugins': 'Plugins',
+  'bgagent.detail.noWorktree': 'In place (no worktree)',
   'bg.sectionAgents': 'Sub-agents',
   'bg.empty': 'No background tasks running',
   // 设备同级批（作者令 2026-11-01「本地/远程这组徽标整对退役」）：bg.kind.local /
@@ -1765,8 +2036,8 @@ export default {
   // Task panel = pure Flow Map node view (2026-09-05 10:54 ruling): the old
   // task area is retired; sectionProgress/pendingShort/globalSource keys
   // removed with their retired paths. Node-view keys kept.
-  'task.expand': 'Expand',
-  'task.collapse': 'Collapse',
+  'task.expand': 'Show details',
+  'task.collapse': 'Hide details',
   // progressEmpty: empty-state fallback key (builder kept, not wired into
   // the main path — the panel collapses when there are no nodes)
   'task.progressEmpty': 'No active tasks',
@@ -1915,7 +2186,30 @@ export default {
   'canvas.zoomIn': 'Zoom in',
   'canvas.zoomFit': 'Fit to view',
   'canvas.pan': 'Pan (or hold Space)',
+  'canvas.a11yZoomLevel': 'Zoom %d%', // mobile gesture batch: mobile-layer image viewer aria-live zoom level (spec §2.8)
   'canvas.imgFailed': 'Failed',
+  // canvas-video-player batch (2026-11-05): accessible names for the custom player
+  // controls (aria-label/title only — the control strip carries no visible copy).
+  'canvas.videoControls': 'Video controls',
+  'canvas.videoPlay': 'Play',
+  'canvas.videoPause': 'Pause',
+  'canvas.videoMute': 'Mute',
+  'canvas.videoUnmute': 'Unmute',
+  'canvas.videoProgress': 'Progress',
+  'canvas.videoVolume': 'Volume',
+  'canvas.videoPip': 'Picture in picture',
+  'canvas.videoFullscreen': 'Fullscreen',
+  'canvas.videoExitFullscreen': 'Exit fullscreen',
+  // image-in-doc batch (author report 2026-11-05 "the document only shows paths"):
+  // a missing image gets an explicit placeholder (reason + original path).
+  'canvas.imgFailTitle': 'Image failed to load',
+  'canvas.imgFailMissing': 'File not found (HTTP {status})',
+  'canvas.imgFailDenied': 'No read access — ticket rejected (HTTP {status})',
+  'canvas.imgFailBusy': 'Service busy (HTTP {status})',
+  'canvas.imgFailBadPath': 'Invalid path (HTTP {status})',
+  'canvas.imgFailUnsupported': 'This type is not served as image bytes (HTTP {status})',
+  'canvas.imgFailUnreachable': 'Cannot read this image (invalid path or no permission)',
+  'canvas.imgFailUnknown': 'Read failed (HTTP {status})',
   'canvas.closeTab': 'Close tab',
   'canvas.stackToggle': 'Stacked cards (wheel / vertical drag to switch · click front card to bring in · swipe away to close)',
   'canvas.noRef': 'This tab cannot be referenced',
@@ -2048,7 +2342,18 @@ export default {
   // === Scheduled Tasks ===
   'task.empty': 'No scheduled tasks',
   'task.emptyHint': 'Click empty area or press + to create',
-  'task.inputPlaceholder': 'Enter task...',
+  // 新建抽屉（todo-fullbleed 批 2026-11-05：手机页面态新建入口改底部抽屉）
+  'task.sheetTitle': 'New scheduled task',
+  'task.sheetCancel': 'Cancel',
+  'task.sheetDone': 'Create',
+  // schedule-todo-unify 2026-11-06: name + description split (content line 1 = name).
+  'task.inputPlaceholder': 'Task name',
+  'task.descPlaceholder': 'Description (optional)',
+  'task.editTitle': 'Edit scheduled task',
+  'task.nameRequired': 'Name cannot be empty',
+  'task.detailTitle': 'Details',
+  'task.detailEmpty': 'No description',
+  'task.triggerTime': 'Trigger time',
   'task.triggered': 'Triggered',
   'task.triggerTitle': 'Scheduled Task Triggered',
   'task.scheduledAt': 'Scheduled at {time}, executing...',
@@ -2106,10 +2411,15 @@ export default {
   'todo.edit': 'Edit',
   // Task-mode badge batch (2026-10-30 author order "show dispatch execution mode"):
   // delegate/node tasks carry their execution-mode badge — kernel vs dispatcher.
-  // task.mode.* consumers: task cards (taskList row badge) + bg-panel row mode chip
-  // (bgAgents group-head badge word uses the raw data word, not i18n).
-  'task.mode.kernel': 'Kernel',
-  'task.mode.dispatcher': 'Dispatcher',
+  // Task mode badge batch (2026-10-30) + term-unification batch (2026-11-06):
+  // the mode chip word no longer comes from a locale key — task.mode.kernel /
+  // task.mode.dispatcher are deleted; single source = js/termWords.js
+  // (kernel / dispatcher verbatim, same string in every language face).
+  // Visual classes still keyed on the data value (.bg-mode-kernel / -dispatcher).
+  // Base-drift state slot (`[base-moved]` noise-reduction batch 2026-11-05): how many
+  // times the base branch advanced since this task was dispatched — a STATE FACT only
+  // ("base moved" belongs on the panel, not in the message stream). No mechanism talk.
+  'task.baseDrift': 'base advanced {n}×',
   'bg.modeTitle': 'Execution mode: {mode}',
 
   // NebLink
@@ -2122,7 +2432,9 @@ export default {
   'neblink.reachDirect': 'Direct P2P connection established',
   'neblink.reachRelay': 'Reachable via server relay',
   'neblink.reachServerOnly': 'Online — no direct data path',
-  'neblink.loggedOutHint': 'Not signed in — click the avatar above to sign in with your {lowerBrand} account; signing in joins the network automatically.',
+  // Self-explaining batch (2026-11-04, rule 8): dropped the trailing "signing in joins
+  // the network automatically" (behaviour teaching). State + next step stay.
+  'neblink.loggedOutHint': 'Not signed in — click the avatar above to sign in with your {lowerBrand} account',
   // Defect A (2026-09-18): two readings of the signed-out panel — (1) the
   // "clean up and sign in again" entry (local credential-file class only);
   // (2) the status-face degradation line (a non-2xx `/status` used to be silent).
@@ -2139,12 +2451,92 @@ export default {
   'neblink.stable': 'Stable',
   'neblink.beta': 'Beta',
   'neblink.cancel': 'Cancel',
-  'neblink.updating': 'Updating...',
-  'neblink.restarting': 'Restarting...',
-  // Remote-update timeout state (hotupdate batch 3 · ruling 7 "the outer 300s lands on
-  // the trigger/admission face" + design §7:149 "timeout cap and timeout state"): the
-  // trigger face's closing text when no result frame arrived within 300 seconds.
-  'neblink.updateTimeout': 'Timed out (300s) — check the device state',
+  // The three remote-update state strings (neblink.updating / neblink.restarting /
+  // neblink.updateTimeout) were removed with item 5 (2026-11-02: "drop the device
+  // update inside contacts — updates are unified on the website now"): their only
+  // consumer was the contacts device row's inline echo, and after that face retired
+  // they had zero references repo-wide (grep-verified).
+  // `neblink.update` STAYS — the settings device area still uses it per row
+  // (`messages.js` `[data-settings-device-update]`, fleet batch 2026-11-01).
+
+  // ── Fleet-wide unified update (fleet batch 2026-11-01: "one click brings every
+  //    device to the same version, with a status card guiding the whole way") ──
+  // Frames carry keys only (stageKey / failureKey / statusKey / capabilityKey);
+  // every display string lives here.
+  'fleet.title': 'Update all devices',
+  'fleet.subtitle': 'This device v{current} → target v{target} · stages: {stages}',
+  'fleet.stages': 'prepare → download → verify → switch → restart → self-check → done',
+  // Self-explaining batch (2026-11-04, rule 8, same family as the rule's counter-example 2):
+  // "please wait" / "this console is unavailable … resumes automatically" taught waiting and
+  // promised behaviour; what stays is the state fact (stage name + ETA).
+  'fleet.blocking': 'Updating — current stage "{stage}", {eta}.',
+  // Was "…waiting for it to come back (this page resumes automatically, no manual refresh
+  // needed)" — behaviour teaching plus a parenthetical. Now a state fact.
+  'fleet.reconnecting': 'This device is restarting — waiting to reconnect.',
+  'fleet.eta': 'ETA 3–5 minutes',
+  'fleet.empty': 'No devices to update right now.',
+  'fleet.close': 'Close',
+  'fleet.cancel': 'Stop',
+  'fleet.retry': 'Retry failed',
+  'fleet.startConfirm': 'Update everything',
+  'fleet.startAction': 'Update all',
+  'fleet.updateThisDevice': 'Update this device',
+  'fleet.thisDevice': 'this device',
+  'fleet.online': 'online',
+  'fleet.offline': 'offline',
+  'fleet.versionUnknown': 'version unknown',
+  'fleet.attempt': 'attempt {n}',
+  'fleet.manualTitle': 'Needs a manual update (too old or not remotely updatable)',
+  // `fleet.manualHow` removed (self-explaining batch 2026-11-04, rule 8 counter-example 1):
+  // it was the "open the console on that device → Settings → …" walkthrough. Why this row
+  // cannot be pushed is carried by the capability badge; the row keeps name + version.
+  'fleet.pendingTitle': 'Waiting for the device to come online (pushed automatically)',
+  'fleet.summary.counts': '{updated} updated, {failed} failed, {manual} need a manual update, {pending} waiting to come online',
+  'fleet.summary.all-consistent': 'All devices consistent',
+  'fleet.summary.manual-required': 'Some devices need a manual update',
+  'fleet.summary.pending-online': 'Some devices are waiting to come online',
+  'fleet.summary.out-of-sync': 'Versions are not unified yet (remotely updatable devices are listed)',
+  'fleet.job.running': 'in progress',
+  'fleet.job.completed': 'all done',
+  'fleet.job.partial': 'partially succeeded',
+  'fleet.job.cancelled': 'stopped',
+  'fleet.stage.queued': 'queued',
+  'fleet.stage.prepare': 'preparing',
+  'fleet.stage.download': 'downloading',
+  'fleet.stage.verify': 'verifying',
+  'fleet.stage.switch': 'switching',
+  'fleet.stage.restart': 'restarting',
+  'fleet.stage.healthcheck': 'self-check',
+  'fleet.stage.done': 'done',
+  'fleet.stage.failed': 'failed',
+  'fleet.stage.manual': 'manual update required',
+  'fleet.stage.waiting-online': 'waiting for the device',
+  'fleet.stage.cancelled': 'stopped',
+  'fleet.failure.download-failed': 'download failed',
+  // Self-explaining batch (2026-11-04, rule 8): dropped the second clause ("update that
+  // device manually …") — the capability badge already states it (duplicate explanation).
+  // What stays is the failure closure: cause + next step, one sentence.
+  'fleet.failure.download-failed.advice': 'Try "Retry failed" after the network recovers.',
+  'fleet.failure.verify-failed': 'checksum/size check failed',
+  'fleet.failure.verify-failed.advice': 'Retry once; if it still fails the package source is wrong.',
+  'fleet.failure.switch-rolled-back': 'rolled back (the new version did not take hold)',
+  'fleet.failure.switch-rolled-back.advice': 'It rolled back to a working version and keeps serving; read that device log, then update it manually.',
+  'fleet.failure.healthcheck-failed': 'health check failed after restart',
+  'fleet.failure.healthcheck-failed.advice': 'Read that device log; once understood, use "Retry failed".',
+  'fleet.failure.device-lost': 'device unreachable',
+  'fleet.failure.device-lost.advice': 'Make sure the device is powered on and online, then use "Retry failed".',
+  'fleet.failure.device-refused': 'device refused the update',
+  'fleet.failure.device-refused.advice': 'Handle the reason shown above; devices that are too old need a manual update.',
+  'fleet.failure.unknown': 'unknown failure',
+  'fleet.failure.unknown.advice': 'Retry once; if it fails again, read that device log.',
+  'fleet.capability.self-reported': 'remotely updatable (self-reported)',
+  'fleet.capability.version-threshold': 'remotely updatable (version OK)',
+  'fleet.capability.version-too-old': 'manual update required (too old)',
+  'fleet.capability.unknown': 'manual update required (unknown version)',
+  'fleet.branch.push': 'push now',
+  'fleet.branch.manual': 'manual',
+  'fleet.branch.queued': 'push when online',
+
   // Read-only signed-in display (auth-trim batch 2026-10-20 author ruling): who is
   // signed in, no action entry. The former switch/logout key group (switchAccount/
   // logout/loggingOut/useOtherAccount/currentTag) is removed with the two buttons —
@@ -2181,7 +2573,6 @@ export default {
   'search.scopeCurrent': 'Current session',
   'search.scopeAll': 'All sessions',
   'search.scopeMain': 'Main session',
-  'search.mobileScopeNote': 'Main session only · type/date/source filters stack · empty: {empty} — {hint}',
   // === Messages/contacts expanding search (FAB unification + search batch, order 10-31 16:03) ===
   'mhsearch.aria': 'Search',
   'mhsearch.placeholder': 'Search chat history',
@@ -2192,6 +2583,7 @@ export default {
   'mhsearch.scopeGroup': 'Groups',
   'mhsearch.searching': 'Searching…',
   'mhsearch.resultCount': '{n} results',
+  'mhsearch.descHits': 'Profile matches · {n} chats',
   'mhsearch.noResults': 'No matches',
   'mhsearch.noResultsHint': 'Try a different keyword or scope',
   'mhsearch.error': 'Search failed, try again later',
@@ -2323,6 +2715,9 @@ export default {
   // Term citation batch 2 (hover bubble + back-to-source button)
   'wiki.termSource': 'Source: ',
   'wiki.termJumpHint': 'Click to jump',
+  // Term index block (term-system-v2 term face batch 2026-11-05): the doc-foot
+  // collapsible listing each cited term and the document it lives in.
+  'wiki.termIndexCount': 'Term index ({n})',
   'wiki.backToSource': 'Back to source doc',
   // Side control face (search/chips/detail card/broken list/stats line)
   'wiki.chipAll': 'All',
@@ -2519,6 +2914,19 @@ export default {
   'plugins.builtinBadge': 'built-in',
   'plugins.builtinTitle': 'Built-in agent: defined in code (BuiltinAgents); the panel is read-only',
   'plugins.detail': 'Details',
+  // Source-managed plugins (2026-11-01 source batch: "runtime plugins should hot-update").
+  // Rendered only for packages that carry a source declaration — seed packages are unchanged.
+  'plugins.sourceLabel': 'Source {source} · v{version} · {state}',
+  'plugins.sourceCurrent': 'up to date',
+  'plugins.sourceOutdated': 'update available',
+  'plugins.sourceUnreachable': 'source unreachable, keeping the local version',
+  'plugins.sourceNotInstalled': 'not installed',
+  'plugins.sourceUpdate': 'Update',
+  // Self-explaining batch (2026-11-04, rule 8): dropped the parenthetical "(zero restart;
+  // the local version stays if this fails)" — capability claim + behaviour promise. The
+  // version-migration fact v{from} → v{to} stays.
+  'plugins.sourceUpdateTitle': 'Pull and activate: v{from} → v{to}',
+  'plugins.sourceUpdated': '{name} updated',
   'explorer.loading': 'Loading...',
   'explorer.empty': 'Empty',
   'flowViewers.saving': 'Saving…',
@@ -2670,15 +3078,15 @@ export default {
   'content.agent.general.name': 'general',
   'content.agent.general.desc': 'General-purpose execution agent — its capabilities are determined by the plugins assigned to it',
   'content.agent.kernel.name': 'kernel',
-  'content.agent.kernel.desc': 'Minimal kernel (Delegate kernel): the one-shot task executor that Nebula dispatches via Delegate — six base tools (Read/Write/Edit/Glob/Grep/Bash, all supporting device= for remote) plus AskUserQuestion, seven in total; no project context, no memory, and it does not dispatch sub-agents. Used for tasks that belong to no project ∧ require real execution ∧ are one-shot. Its tool surface is fixed by mechanism (AgentCore.KernelFixedTools = BaseTools + AskUserQuestion; the tools/skills declarations in this file are wholly inert because ConvergedAgentNames includes kernel).',
+  'content.agent.kernel.desc': 'Minimal kernel (Delegate kernel): the one-shot task executor that the main agent dispatches via Delegate — six base tools (Read/Write/Edit/Glob/Grep/Bash, all supporting device= for remote) plus AskUserQuestion, seven in total; no project context, no memory, and it does not dispatch sub-agents. Used for tasks that belong to no project ∧ require real execution ∧ are one-shot. Its tool surface is fixed by mechanism (AgentCore.KernelFixedTools = BaseTools + AskUserQuestion; the tools/skills declarations in this file are wholly inert because ConvergedAgentNames includes kernel).',
   'content.plugin.visual-report.name': 'visual-report',
-  'content.plugin.visual-report.desc': 'Visual reporting and human-readable report pack — nodes gain the ability to produce charts with professional tools (matplotlib/graphviz/plotly), turn a human-readable report into a one-screen conclusion a person can read, and deliver artifacts to disk with an absolute path (display and opening belong to Nebula; Pop is not invoked). Use for drawing charts, architecture diagrams and flow diagrams, data visualization, producing figures for a document, visual briefings, writing reports meant for people, delivery documents, acceptance reports, research reports, retrospective reports, summaries written for the project owner, compressing an over-long report, and keeping process artifacts separate from deliverables. Bundles skill: visual-report (chart / architecture-diagram / flow-diagram generation rules: palette, typography, annotation, layout aesthetics, a budget of at most 3 figures per document; human-readable delivery conventions: four-part skeleton, length budget; md rules: inline images, jumpable tables of contents, LaTeX formulas). Not for packaging plugins (use nebflow-plugin-creator); for HTML card styling use design-cards. Component surface: no mcp.json, no tool extensions.',
+  'content.plugin.visual-report.desc': 'Visual reporting and human-readable report pack — nodes gain the ability to produce charts with professional tools (matplotlib/graphviz/plotly), turn a human-readable report into a one-screen conclusion a person can read, and deliver artifacts to disk with an absolute path (display and opening belong to the main agent; Pop is not invoked). Use for drawing charts, architecture diagrams and flow diagrams, data visualization, producing figures for a document, visual briefings, writing reports meant for people, delivery documents, acceptance reports, research reports, retrospective reports, summaries written for the project owner, compressing an over-long report, and keeping process artifacts separate from deliverables. Bundles skill: visual-report (chart / architecture-diagram / flow-diagram generation rules: palette, typography, annotation, layout aesthetics, a budget of at most 3 figures per document; human-readable delivery conventions: four-part skeleton, length budget; md rules: inline images, jumpable tables of contents, LaTeX formulas). Not for packaging plugins (use nebflow-plugin-creator); for HTML card styling use design-cards. Component surface: no mcp.json, no tool extensions.',
   'content.plugin.slideblocks.name': 'slideblocks',
   'content.plugin.slideblocks.desc': 'SlideBlocks presentation pack — nodes gain the end-to-end discipline for building from scratch or improving a complete slide deck with Slidev (slides, deck, presentation). Use for making a deck, writing a presentation, producing slides, improving an existing deck, or rebuilding a presentation in Slidev. Bundles skill: slideblocks (the full Blocks/Decks/Recipes pipeline, execution lock, delivery validation). Not for HTML cards or social-image design (use the design-cards plugin). Component surface: no mcp.json, no tool extensions.',
   'content.plugin.nebflow-plugin-creator.name': 'nebflow-plugin-creator',
   'content.plugin.nebflow-plugin-creator.desc': 'Plugin packager — nodes gain the full-pipeline ability to package a capability requirement into a compliant plugin pack (three-input analysis → pack generation → mechanical self-check → delivery self-check that takes effect once written to disk). Use for packaging an existing skill or capability into a plugin, building a new plugin that does Y, writing plugin.json and SKILL.md, running a quality review of a plugin description, or running the pack validation script. Bundles skills: plugin-packaging (the three-input → generate → self-check → deliver packaging pipeline, including the handling of six forks such as name collisions and digest drift, the pre-delivery self-check, and the origin/digest reporting convention) and description-quality (the five-part manifest description spec: templates, good and bad examples, the M1-M15 criteria, and how to bound the core vocabulary). Verification and quality-review tasks use the qa plugin instead. No mcp.json, no tool extensions.',
   'content.project.general.name': 'general',
-  'content.project.general.desc': 'General-purpose project for executing general tasks: any domain, one-off or recurring; Nebula dispatches, nodes execute.',
+  'content.project.general.desc': 'General-purpose project for executing general tasks: any domain, one-off or recurring; the main agent dispatches, nodes execute.',
 
   // === Bundled-content localization — default-set SKILL descriptions
   // (skillsi18n batch, 2026-09-15; pure data, zero code change) ===
@@ -2694,7 +3102,7 @@ export default {
   'content.skill.nebflow-plugin-creator/description-quality.desc': 'Operating manual for the {brand} plugin manifest description spec — the five-part description as the single source of description, the method for bounding the core trigger vocabulary (all-hit determination), the M1-M15 criteria, and four worked good/bad examples; work through it item by item when writing or reviewing a plugin.json description.',
   'content.skill.nebflow-plugin-creator/plugin-packaging.desc': 'Execution manual for packaging a capability requirement into a compliant {brand} plugin pack — the whole pipeline (three-input form determination: migrating an existing skill / MCP server configuration / a spoken capability description → generation → mechanical self-check → delivery), including the handling of six forks and the \'takes effect once written to disk\' delivery convention; follow this manual when a node is assigned a packaging / build-a-plugin task.',
   'content.skill.slideblocks/slideblocks.desc': 'Autonomously create or improve complete, polished Slidev presentations with SlideBlocks from short requests and mixed materials including PDF, Word, web pages, Markdown, spreadsheets, images, brand assets, and PowerPoint source decks. Use when the user wants a presentation made, migrated to Slidev, redesigned, extended, or improved; needs a full deck for a report, pitch, review, lesson, launch, decision, or talk; wants SlideBlocks Blocks, Decks, or Recipes; or provides materials and simply asks to make them into a PPT. Do not use when the required final deliverable is any PPT/PPTX or Office file, for general Office editing, or for non-Slidev presentation runtimes.',
-  'content.skill.visual-report/visual-report.desc': 'Visual reporting toolkit. Generate SVG figures with professional tools (matplotlib/graphviz/plotly and the like); after writing them to disk, give the absolute path in the delivery text (display belongs to Nebula — nodes do not invoke Pop). Use when you need to draw charts, architecture diagrams or flow diagrams, when you need data visualization, or when you need a visual report.',
+  'content.skill.visual-report/visual-report.desc': 'Visual reporting toolkit. Generate SVG figures with professional tools (matplotlib/graphviz/plotly and the like); after writing them to disk, give the absolute path in the delivery text (display belongs to the main agent — nodes do not invoke Pop). Use when you need to draw charts, architecture diagrams or flow diagrams, when you need data visualization, or when you need a visual report.',
 
   // === Social interface cards (socpanel batch, 2026-09-19) — pure append ===
   // Key-for-key mirror of the zh-CN block (gate: equal key sets, both sides
@@ -2864,6 +3272,52 @@ export default {
   'taskpanel.grpRunning': 'Running',
   'taskpanel.grpQueued': 'Queued',
   'taskpanel.empty': 'No tasks yet',
+  // ── To-do list face (ReminderIsland replica batch 2026-11-02; L10n pairs ported verbatim) ──
+  'todoface.aria': 'To-do list',
+  'todoface.capsuleCount': '{n} to-dos',
+  'todoface.overdue': '{n} overdue',
+  'todoface.filter': 'Filter',
+  'todoface.collapse': 'Collapse',
+  'todoface.all': 'All',
+  'todoface.add': 'Add reminder',
+  'todoface.done': 'Done',
+  'todoface.titlePh': 'Title',
+  'todoface.notesPh': 'Notes (optional)',
+  // Two-field split (todo name+detail batch, 2026-11-05).
+  'todoface.detailToggle': 'Show details',
+  'todoface.detailFieldLabel': 'Details',
+  'todoface.prioNone': 'None',
+  'todoface.prioLow': 'Low',
+  'todoface.prioMed': 'Med',
+  'todoface.prioHigh': 'High',
+  'todoface.hasDue': 'Has due date',
+  'todoface.noDue': 'No due date',
+  'todoface.emptyAll': 'No reminders',
+  'todoface.emptyAdd': 'Tap to add a reminder',
+  'todoface.complete': 'Mark complete',
+  'todoface.del': 'Delete',
+  'todoface.fabAdd': 'New to-do',
+  // 新建抽屉（todo-fullbleed 批 2026-11-05：手机页面态新建入口改底部抽屉）
+  'todoface.sheetTitle': 'New to-do',
+  'todoface.cancel': 'Cancel',
+  'todoface.completedToast': 'Completed',
+  'todoface.undo': 'Undo',
+  'todoface.tagName': 'Tag name',
+  'todoface.tagNew': 'New tag',
+  'todoface.tagRename': 'Rename',
+  'todoface.tagDelete': 'Delete',
+  'todoface.tagDeleteTitle': 'Delete tag',
+  'todoface.tagDeleteConfirm': 'Deleting “{name}” removes it from every todo. This cannot be undone.',
+  'todoface.colorN': 'Color {n}',
+  // Top floating "⋯" two-level menu (todo-mobile-topmenu batch 2026-11-06)
+  'todoface.menu': 'Menu',
+  'todoface.menuView': 'Tags',
+  'todoface.menuPrio': 'Priority',
+  'todoface.menuNoTags': 'No tags yet',
+  // item box (impl-row-reply batch 2026-11-06)
+  'todoface.edit': 'Edit',
+  'todoface.replyPh': 'Reply to this todo…',
+  'todoface.send': 'Send',
   // ── Perception domain (mail-perception-impl batch) ──
   'perception.title': 'Perception',
   'perception.close': 'Close',
@@ -2889,6 +3343,10 @@ export default {
   'perception.cfgAuthCode': 'App password',
   'perception.cfgAuthCodeHint': 'Generated in your mailbox settings — not your login password',
   'perception.cfgAutoNote': 'Server and ports are configured automatically',
+  'perception.cfgAutoResolved': 'Recognized {addr} — will connect to {resolved}',
+  'perception.cfgAutoUnknown': 'Could not recognize this mail domain · please fill in the servers under Advanced',
+  'perception.relayTimeout': 'The cloud relay got no answer from this machine in time (Host did not answer in time) · the connection may have completed in the background — open the panel to check; if it repeats, check this machine\'s network and tunnel',
+  'perception.netFail': 'Network request failed · make sure the local console is reachable, then retry',
   'perception.cfgAdvanced': 'Advanced',
   'perception.cfgImapHost': 'Incoming server (IMAP)',
   'perception.cfgSmtpHost': 'Outgoing server (SMTP)',
@@ -2942,4 +3400,41 @@ export default {
   'perception.toPh': 'Recipient address, Enter to add',
   'perception.addrPh': 'Type an address, Enter to add',
   'perception.ccBcc': 'Cc / Bcc',
+  // === schedule-created-card batch (2026-11-05): in-message schedule/todo card ===
+  'schedCard.kindTask': 'Scheduled task',
+  'schedCard.kindTodo': 'Todo',
+  'schedCard.statusActive': 'Active',
+  'schedCard.statusWriting': 'Saving',
+  'schedCard.statusPaused': 'PAUSED',
+  'schedCard.statusDone': 'Done',
+  'schedCard.statusCancelled': 'Cancelled',
+  'schedCard.statusGone': 'Not in list',
+  'schedCard.createdAt': 'created {at}',
+  'schedCard.repeatOnce': 'One-shot',
+  'schedCard.repeat.hourly': 'Hourly',
+  'schedCard.repeat.daily': 'Daily',
+  'schedCard.repeat.weekly': 'Weekly',
+  'schedCard.expand': 'Expand',
+  'schedCard.collapse': 'Collapse',
+  'schedCard.edit': 'Edit',
+  'schedCard.cancel': 'Cancel',
+  'schedCard.save': 'Save',
+  'schedCard.saving': 'Saving',
+  'schedCard.discard': 'Discard',
+  'schedCard.fieldContent': 'Content',
+  'schedCard.fieldProject': 'Project',
+  'schedCard.fieldTriggerAt': 'Trigger at',
+  'schedCard.fieldRepeat': 'Repeat',
+  'schedCard.projectPlaceholder': 'Project label (empty = ungrouped)',
+  'schedCard.confirmCancelAsk': 'Cancelled entries never fire again.',
+  'schedCard.confirmCancel': 'Cancel it',
+  'schedCard.cancelling': 'Cancelling',
+  'schedCard.keep': 'Keep',
+  'schedCard.noChange': 'Nothing changed',
+  'schedCard.readFailed': 'Engine state not read back',
+  'schedCard.errOffline': 'Not connected to the engine — change not submitted',
+  'schedCard.errTimeout': 'No engine receipt — change unconfirmed',
+  'schedCard.errGone': 'Entry no longer exists — change not saved',
+  'schedCard.errEngine': 'Engine rejected: {detail}',
+  'schedCard.errGeneric': 'Write failed — change not saved',
 };

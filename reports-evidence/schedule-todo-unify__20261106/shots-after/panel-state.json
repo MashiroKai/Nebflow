@@ -1,0 +1,17 @@
+{
+  "framesSeen": [
+    "listScheduledTasks",
+    "listScheduledTasks:all",
+    "listScheduledTasks",
+    "listScheduledTasks:all",
+    "listScheduledTasks:all",
+    "listScheduledTasks",
+    "listScheduledTasks:all",
+    "listScheduledTasks"
+  ],
+  "panelState": {
+    "cls": "scroll-under-glass open",
+    "children": 4,
+    "html": "<div class=\"mh-rd-grp\">即将触发 · 3</div><div class=\"reminder-row\" data-id=\"fx-1\" role=\"button\" tabindex=\"0\" style=\"cursor: pointer;\"><button class=\"reminder-circle\" data-action=\"delete\" data-id=\"fx-1\"></"
+  }
+}

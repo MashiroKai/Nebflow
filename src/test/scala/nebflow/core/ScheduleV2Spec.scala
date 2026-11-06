@@ -14,7 +14,7 @@ import nebflow.shared.PathUtil
  *     schedules. time-context (peak/off-peak) removed 2026-08-19 audit.
  *   - Reminder refactor (2026-08-20 user ruling): schedule/tasks are root-only
  *     (Nebula); sessions/environment reminder types removed; devices takes
- *     delta lines; time suppressible via injectTime.
+ *     delta lines; time 不可抑制（时间感知修复批 2026-11-05：每次起始轮都注入）。
  */
 class ScheduleV2Spec extends CatsEffectSuite:
 
@@ -117,7 +117,8 @@ class ScheduleV2Spec extends CatsEffectSuite:
   //     upstream in AgentCore (teamOfSession), collectAllIO includes the
   //     reminder whenever text is non-empty; schedule: Nebula only
   //   - devices: caller supplies delta lines
-  //   - time: suppressible via injectTime (system-event turns, ≥1h gap)
+  //   - time: 恒注入（时间感知修复批 2026-11-05 退役了 ≥1h gap 闸——没有可信
+  //     「现在」正是相对时间误判的病根）
   // ------------------------------------------------------------------
 
   test("collectAllIO injects devices/tasks/language for root agents; sessions & environment are gone"):
@@ -145,11 +146,18 @@ class ScheduleV2Spec extends CatsEffectSuite:
       assert(dev.content.contains("+ Desktop-PC"), dev.content)
       assert(dev.content.contains("- Old-Phone"), dev.content)
 
-  test("collectAllIO injectTime=false suppresses the time reminder (system-event ≥1h gate)"):
+  test("collectAllIO has no time-suppression switch: the ≥1h system-event gate is retired (time感知修复批 2026-11-05)"):
     for
       _ <- reset()
-      reminders <- SystemReminders.collectAllIO(true, taskStore, Some("s1"), isRootAgent = true, injectTime = false)
-    yield assert(!reminders.exists(_.category == "time"), "system-event turns within 1h must not re-inject time")
+      // 传参面已无 `injectTime`：每一次起始轮（含 system-event 轮）都必须拿到当刻锚。
+      // 旧用例钉的是「1 小时闸内不重注时间」——那道闸正是相对时间误判的入口
+      // （最多 59 分钟前的旧锚 / 干脆没锚），随本批一起退役。
+      reminders <- SystemReminders.collectAllIO(true, taskStore, Some("s1"), isRootAgent = true)
+    yield assertEquals(
+      reminders.count(_.category == "time"),
+      1,
+      s"system-event turns must carry the anchor too (gate retired): ${reminders.map(_.category)}"
+    )
 
   test("collectAllIO omits reminders when values are empty (time stays)"):
     for

@@ -1,0 +1,7 @@
+$ # ③ 真命中的处置记录（值不回显：只记键名 / 长度 / 新占位词）
+file: tests/fixtures/tool-card-leak-on-reload/fixture.json:123        key=deviceToken  old_len=43  -> placeholder len=41
+file: tests/fixtures/tool-card-leak-on-reload/fixture-legacy.json:123 key=deviceToken  old_len=43  -> placeholder len=41
+new_value_literal: placeholder-device-token-rotated-20261104
+why: 43 字符 base64url 形态 = 真实 deviceToken 形状（32 字节 base64url），来自真实会话转录（本值由 85535b139 落库）
+action: ①夹具换占位词（本批）②该 deviceToken 按已暴露处置 —— 轮换（重登一次即换发）③git 历史仍含旧值，若需彻底清除须改写历史（本批不做）
+how_verified: node scripts/check-fixture-secrets.mjs -> EXIT=0（740 文件 0 命中），见 gate-green.log

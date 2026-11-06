@@ -53,7 +53,7 @@ class WaitingDockCareSpec extends CatsEffectSuite:
 
   override def afterEach(context: munit.AfterEach): Unit =
     MergeQueue.reset()
-    MergeQueue.installLivenessProbe(_ => IO.pure(true))
+    nebflow.core.delegate.MergeQueueTestPorts.install()
     MergeQueue.OwnerGonePort.clear()
 
   private def fakeLlm: LlmHandle[IO] = new LlmHandle[IO]:
@@ -127,6 +127,8 @@ class WaitingDockCareSpec extends CatsEffectSuite:
     sup: ActorRef[AgentEvent],
     baseWs: os.Path
   ): MergeQueue.Member =
+    // P1 投递身份化：端口把 brief 转发到同一个记录 actor（旧断言 received.size 零改动）。
+    nebflow.core.delegate.MergeQueueTestPorts.toActor(child, sup)
     MergeQueue.Member(
       delegateId = delegateId,
       branch = s"delegate/$delegateId",
@@ -138,8 +140,10 @@ class WaitingDockCareSpec extends CatsEffectSuite:
       parentSessionId = "root-1",
       description = s"task for $delegateId",
       readyAt = 1_000L,
-      channelKind = "internal",
-      internal = Some(MergeQueue.InternalLeg(child, sup))
+      // 宣告闸批 2026-11-04：属主宣告在案（`delegate_report(category="merge")`）——授窗前提
+      declaredAt = Some(1_000L),
+      declareSource = Some(nebflow.core.delegate.MergeDeclaration.Source.ReportMerge),
+      channelKind = "identity",
     )
 
   private def recordTask(resources: SharedResources, taskId: String): IO[Unit] =

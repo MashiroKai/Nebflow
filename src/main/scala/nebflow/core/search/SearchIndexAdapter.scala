@@ -37,3 +37,18 @@ trait SearchIndexAdapter:
 
   /** 会话月时间片键（§4.2）：当月 = "current"，历史 = yyyymm。缺省 ""。 */
   def monthKey(sessionId: String): String = ""
+
+  /**
+   * 检索面**排除**的会话 id 前缀（缺省 Nil = 不排除）。
+   *
+   * 语义 = 「这些族的会话一律不出结果」；由 adapter 声明、索引层统一执行两处：
+   *   ① 入库面：adapter 自己在 `extractSession` / `sessionFingerprint` 里按同一
+   *      判据回答 None（本 trait 不代劳，抽取口径是 adapter 的地盘）；
+   *   ② 查询面：[[SearchIndexService.query]] 把本表落进 WHERE（`NOT LIKE '前缀%'`）
+   *      ——**旧库残留行兜底**：本表启用之前入库的文档在任何查询形状下都不出
+   *      结果，total 用同一谓词计数（不虚高、翻页不塌），残留随会话重建收敛为零。
+   *
+   * 单点能力、多入口一致：查询 API（`/api/search/chat`）与其上所有前端入口共用
+   * 这一处谓词，前端零事后剔除。
+   */
+  def excludedSidPrefixes: List[String] = Nil

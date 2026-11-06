@@ -3,9 +3,10 @@
      (二次加载清剿批 2026-10-24) 的静态测试 harness。#816（pop-image-single-fetch）
      的姊妹面：驱动**真实前端模块**，各消费面都是生产链原样：
 
-       · 设备面内联直显：messages.attachInlineImage（export = 测试 seam）
-         device/path 腿 ⇒ nfViewerSource 账本单点（命中 blob / 未命中取数+入账）；
-       · 好友面内联直显：attachInlineImage ready 腿 ⇒ `attach:<id>` 账本键
+       · 设备面图片卡：messages.attachmentCard（export = 测试 seam，fm-att-card-unify
+         批起为卡装配单点）⇒ 媒体面内 attachInlineImage device/path 腿 ⇒ nfViewerSource
+         账本单点（命中 blob / 未命中取数+入账）；
+       · 好友面图片卡：attachmentCard ready 腿 ⇒ `attach:<id>` 账本键
          （与 Canvas 预览腿 previewFriendAttachment 同键同字节）；
        · Canvas 打开：fileViewers.renderFile({itemType:'image'}) ⇒ 同一
          nfViewerUrl 单点（#816 harness 同款）；
@@ -66,10 +67,12 @@
 
     // messages.js 的依赖图最重（ws/neblink/input/voiceEngine…）——失败要显性：
     // spec 读 __importError，非空即红（禁静默假绿）。
+    // fm-att-card-unify 批（2026-11-02）：seam = `attachmentCard`（卡语言统一后的
+    // 唯一卡装配点；媒体面的字节腿 attachInlineImage 由卡内单点调用）。
     let importError = '';
     try {
       const messages = await import(`${WEB}/messages.js`);
-      window.__attachInlineImage = messages.attachInlineImage;
+      window.__attachmentCard = messages.attachmentCard;
     } catch (e) { importError = String((e && e.stack) || e); }
     window.__importError = importError;
 
@@ -80,18 +83,18 @@
       await new Promise(r => setTimeout(r, ms));
     };
 
-    // ── 设备面内联直显（attachInlineImage · device/path 腿）──────────────────
+    // ── 设备面图片卡（attachmentCard · device/path 腿 ⇒ 媒体面 + 账本单点）──────
     window.__deviceInline = async (attPath, name) => {
-      const card = document.createElement('div');
-      card.className = 'fm-att';
+      const card = window.__attachmentCard({
+        id: '', name: name || attPath.split('/').pop(), size: 0, state: 'device',
+        deviceStatus: 'completed', deviceSavedPath: attPath, deviceOut: false, deviceTransferId: '',
+      });
       document.getElementById('chat').appendChild(card);
-      const ok = window.__attachInlineImage(
-        card, { name: name || attPath.split('/').pop() }, 'device', { kind: 'path', path: attPath });
       await settle();
-      const img = card.querySelector('.fm-att-inline img');
+      const img = card.querySelector('.pop-img');
       return {
-        ok,
-        boxInDom: !!card.querySelector('.fm-att-inline'),
+        ok: !!img,
+        boxInDom: !!(card.isConnected && card.querySelector('.pop-media-flat')),
         src: img ? String(img.src || '') : '',
         isBlob: !!(img && String(img.src || '').startsWith('blob:')),
         isTicket: !!(img && String(img.src || '').includes('/api/nf-file')),
@@ -101,17 +104,15 @@
       };
     };
 
-    // ── 好友面内联直显（attachInlineImage · ready 腿 = 鉴权路由 + attach:<id> 账本键）
+    // ── 好友面图片卡（attachmentCard · ready 腿 = 鉴权路由 + attach:<id> 账本键）──
     window.__friendInline = async (attId, name, size) => {
-      const card = document.createElement('div');
-      card.className = 'fm-att';
+      const card = window.__attachmentCard({ id: attId, name, size, state: 'ready' });
       document.getElementById('chat').appendChild(card);
-      const ok = window.__attachInlineImage(card, { id: attId, name, size }, 'ready');
       await settle();
-      const img = card.querySelector('.fm-att-inline img');
+      const img = card.querySelector('.pop-img');
       return {
-        ok,
-        boxInDom: !!card.querySelector('.fm-att-inline'),
+        ok: !!img,
+        boxInDom: !!(card.isConnected && card.querySelector('.pop-media-flat')),
         src: img ? String(img.src || '') : '',
         isBlob: !!(img && String(img.src || '').startsWith('blob:')),
         loaded: !!(img && img.complete && img.naturalWidth > 0),

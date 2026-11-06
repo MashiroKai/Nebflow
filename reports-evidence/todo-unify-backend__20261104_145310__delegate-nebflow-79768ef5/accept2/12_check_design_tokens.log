@@ -1,0 +1,30 @@
+design-tokens：131 文件 / 2079 处颜色字面量 / 133 个基线条目
+  ℹ css/glass.css: 语义关键字（不计档外） radius×1(inherit)
+  ℹ css/mobileLayer.css: 语义关键字（不计档外） radius×5(inherit)
+  ℹ css/split.css: 语义关键字（不计档外） radius×1(inherit)
+  ↑ css/chat.css: color 342 → 286（改善，建议下次 --update-baseline 收紧）
+  ↑ css/chat.css: fsSmall 34 → 21（改善，建议下次 --update-baseline 收紧）
+  ↑ css/chat.css: radiusOff 25 → 20（改善，建议下次 --update-baseline 收紧）
+  ↑ css/input.css: color 104 → 103（改善，建议下次 --update-baseline 收紧）
+  ↑ css/keyboard.css: fsSmall 2 → 1（改善，建议下次 --update-baseline 收紧）
+  ↑ css/mobileLayer.css: color 135 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ css/mobileLayer.css: radiusOff 13 → 12（改善，建议下次 --update-baseline 收紧）
+  ↑ css/modal.css: color 49 → 47（改善，建议下次 --update-baseline 收紧）
+  ↑ css/modal.css: radiusOff 8 → 7（改善，建议下次 --update-baseline 收紧）
+  ↑ css/reminder.css: color 55 → 49（改善，建议下次 --update-baseline 收紧）
+  ↑ css/sidebar.css: color 116 → 52（改善，建议下次 --update-baseline 收紧）
+  ↑ css/sidebar.css: transitionAll 7 → 3（改善，建议下次 --update-baseline 收紧）
+  ↑ css/sidebar.css: fsSmall 6 → 5（改善，建议下次 --update-baseline 收紧）
+  ↑ css/sidebar.css: radiusOff 8 → 7（改善，建议下次 --update-baseline 收紧）
+  ↑ css/split.css: color 253 → 225（改善，建议下次 --update-baseline 收紧）
+  ↑ css/split.css: transitionAll 5 → 0（改善，建议下次 --update-baseline 收紧）
+  ↑ css/split.css: radiusOff 27 → 26（改善，建议下次 --update-baseline 收紧）
+  ↑ css/taskList.css: color 42 → 40（改善，建议下次 --update-baseline 收紧）
+  ↑ css/todo-face.css: color 73 → 70（改善，建议下次 --update-baseline 收紧）
+  ↑ js/bgAgentPopup.js: color 18 → 9（改善，建议下次 --update-baseline 收紧）
+  ↑ js/bgTaskOutputPopup.js: color 15 → 6（改善，建议下次 --update-baseline 收紧）
+  ↑ js/chat.js: color 31 → 27（改善，建议下次 --update-baseline 收紧）
+  ↑ js/flowAgentPopup.js: color 21 → 5（改善，建议下次 --update-baseline 收紧）
+  ↑ js/persistence.js: color 27 → 22（改善，建议下次 --update-baseline 收紧）
+  ↑ js/reference.js: color 6 → 5（改善，建议下次 --update-baseline 收紧）
+PASS: 无新增设计字面量；严格面（设置页结构面 + 设计体系层）零跑偏，令牌引用全部有定义。

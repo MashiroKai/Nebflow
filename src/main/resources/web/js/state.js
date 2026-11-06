@@ -52,6 +52,53 @@ function safeParse(json, fallback) {
   try { const v = JSON.parse(json); return (v !== null && v !== undefined) ? v : fallback; } catch { return fallback; }
 }
 
+// ── 路径订阅面（ask-paradigm-a 批 2026-11-03：组件范式基座）──────────────────
+// 与下面默认导出的关系：既有 60+ 消费者**直接读字段**（state.xxx），那条腿一行不动、
+// 也**不会**被通知（没有 Proxy，直读绕过一切钩子）；本表只服务按路径订阅的新调用点
+// （组件化后的 Ask 面等）。要通知就必须显式走 state.set —— 这是刻意的：改动路径
+// 可见，不存在「谁偷偷改了状态」的黑箱。
+/**
+ * 订阅表。path 为 '' 表示订阅全量（任何写入都通知）。
+ * @type {{path: string, fn: (value: any, path: string) => void}[]}
+ */
+const subs = [];
+
+/**
+ * 按点路径读值（中间层缺失返回 undefined）。
+ * @param {any} root
+ * @param {string} path
+ * @returns {any}
+ */
+function readPath(root, path) {
+  if (!path) return root;
+  let node = root;
+  for (const seg of path.split('.')) {
+    if (node === null || node === undefined) return undefined;
+    node = node[seg];
+  }
+  return node;
+}
+
+/**
+ * 值是否**真的变了**（Object.is 之外，普通对象/数组/Set 按结构比较）。
+ * @param {any} a
+ * @param {any} b
+ * @returns {boolean}
+ */
+function sameValue(a, b) {
+  if (Object.is(a, b)) return true;
+  if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object') return false;
+  if (a instanceof Set || b instanceof Set) {
+    if (!(a instanceof Set) || !(b instanceof Set) || a.size !== b.size) return false;
+    for (const v of a) { if (!b.has(v)) return false; }
+    return true;
+  }
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  const ka = Object.keys(a); const kb = Object.keys(b);
+  if (ka.length !== kb.length) return false;
+  return ka.every((k) => Object.prototype.hasOwnProperty.call(b, k) && sameValue(a[k], b[k]));
+}
+
 // Shared mutable state
 export default {
   // WebSocket
@@ -300,6 +347,11 @@ export default {
   // parent session isn't currently displayed, preventing stale indicators.
   sessionBgAgents: {},
 
+  // 冻结通知策略批（2026-11-05）：一批冻结的**静默统计**（后端 `delegateFreezeDigest`
+  // 帧；面板头部读数的数据源）。可恢复冻结（provider 故障族）不推消息，只有这样
+  // 作者主动打开面板时能看到「N 条已冻结（可唤醒）」。缺省 null = 未收到帧。
+  freezeDigest: null,
+
   // 台账 #929（后台子智能体跨设备透明）：远端设备投影行（引擎 remoteAgents 帧）。
   // deviceId -> { deviceName, online, rows: { [sessionId]: row } }。行 = 引擎摘要
   // （title/source/status/startedAt/endedAt/retryCount），LWW 已在引擎投影仓收敛，
@@ -334,4 +386,52 @@ export default {
 
   // Persistent notifications (survive session switches)
   notifications: [],
+
+  // ── 路径订阅面（新代码用；既有直读不受影响，见文件上方订阅表的说明）──────
+  /**
+   * 订阅一个点路径。path 为 ''/null/undefined ⇒ 订阅全量。
+   * 通知口径：写入路径与订阅路径互为前缀（父写子、子写父）即通知，同步调用。
+   * @param {string|null|undefined} path 点路径（'a.b.c'）
+   * @param {(value: any, path: string) => void} fn 回调：本订阅路径上的当前值 + 写入路径
+   * @returns {() => void} unsubscribe（重复调用无害）
+   */
+  subscribe(path, fn) {
+    const entry = { path: typeof path === 'string' ? path : '', fn };
+    subs.push(entry);
+    return () => {
+      const i = subs.indexOf(entry);
+      if (i >= 0) subs.splice(i, 1);
+    };
+  },
+
+  /**
+   * 点路径写入（中间层不存在则创建普通对象）。值真的变了才同步通知受影响订阅者；
+   * 单个订阅者抛错被吞并 console.warn —— 一个订阅者绝不炸掉写入。
+   * 注意：必须以 `state.set(...)` 形态调用（内部用 this 作根）。
+   * @param {string} path 点路径（'a.b.c'）
+   * @param {any} val 新值
+   * @returns {boolean} 值真的变了（已写入）= true；无变化或空路径 = false
+   */
+  set(path, val) {
+    const p = typeof path === 'string' ? path : '';
+    if (!p) return false;
+    const parts = p.split('.');
+    let node = /** @type {any} */ (this);
+    for (let i = 0; i < parts.length - 1; i++) {
+      const seg = parts[i];
+      if (node[seg] === null || typeof node[seg] !== 'object') node[seg] = {};
+      node = node[seg];
+    }
+    const leaf = parts[parts.length - 1];
+    if (sameValue(node[leaf], val)) return false;
+    node[leaf] = val;
+    for (const sub of [...subs]) {
+      const hit = sub.path === '' || sub.path === p
+        || p.startsWith(`${sub.path}.`) || sub.path.startsWith(`${p}.`);
+      if (!hit) continue;
+      try { sub.fn(readPath(this, sub.path), p); } catch (err) { console.warn('[state] subscribe 回调抛错（已吞，写入不受影响）', err); }
+    }
+    return true;
+  },
 };
+

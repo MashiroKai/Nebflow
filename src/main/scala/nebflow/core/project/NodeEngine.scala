@@ -91,10 +91,23 @@ class NodeEngine(
    */
   notifyTriggerOverride: Option[String => IO[Unit]] = None,
   /**
-   * 完成门腿 1 开关（noderpt 批 A 段 2026-09-11）：后台任务存活是否拦节点终态化。
-   * None = 现读 `Defaults.BgGateCompletionHold`（生产默认 **false = 封存**：不查
-   * `BgTaskRegistry.waitingFor`，hold 代码与 armCap 逐字保留、打开即恢复旧行为）；
-   * Some = spec 显式注入（避开全局 prop 的跨 suite 污染，测试矩阵双态各一条）。
+   * dispatch-notify **投递目标**覆盖（P0 投递地址批 2026-11-02，与
+   * `notifyTriggerOverride` 同族接缝但语义不同）：`None`（缺省 / per-project 引擎）=
+   * 逐字节旧行为——投给项目分发器（[[DispatchNotify.defaultTrigger]] 链）；
+   * `Some(t)` = 投给 `t`（[[DelegateFlowHosts.mount]] 恒传
+   * `delegate-creator:<delegateId>` + `DelegateNotify.inject` ——通知投给**创建者
+   * delegate 本人**）。探针 false（creator 不 live）⇒ 件**滞留**（不 markSent，留补投
+   * 候选集），**绝不旁路回项目分发器**；探针 true ⇒ 照旧 markSent + 既有审计行。
+   */
+  notifyDeliveryTarget: Option[DispatchNotify.DeliveryTarget] = None,
+  /**
+   * 完成门腿 1 开关（noderpt 批 A 段 2026-09-11；缺省面 T4 批 2026-11-04 翻转）：
+   * 后台任务存活是否拦节点终态化。None = 现读 `Defaults.BgGateCompletionHold`
+   * （生产默认 **true = 默认保结果**：查 `BgTaskRegistry.waitingFor` 并 hold，任务
+   * 全部完成后自动续；要丢弃必须显式 `-Dnebflow.bgGate.completionHold=false` 或
+   * `nebflow.json` 同名键经启动面转成 `-D`）；Some = spec 显式注入（避开全局 prop
+   * 的跨 suite 污染，
+   * 测试矩阵双态各一条）。
    */
   bgGateCompletionHold: Option[Boolean] = None,
   /**
@@ -193,6 +206,19 @@ class NodeEngine(
     with NodeCompletion
     with NodeStarter:
   private[project] val logger = NebflowLogger.forName("nebflow.node.engine")
+
+  /**
+   * **属主边槽**（面板代际层级批 2026-11-06 · design 裁定 A②）：本项目「当前分发器」
+   * 会话 id——node-/loop 会话注册 AgentRecord 时 `parentSessionId` 的唯一读取源。
+   * 写点唯一 = `ProjectActor.spawnDispatcher` 注册区（spawn 事务区，先于任何节点
+   * spawn；分发器单例化裁定保证同项目活分发器至多一个，槽覆写即「当前分发器」）；
+   * 清点 = `ProjectUnmount.removeMountFace`（卸载面显式归零）+ 引擎重启自然归零
+   * （纯内存态，无持久化）。`None` = 本项目当前无在册分发器（纯引擎流 root 直启 /
+   * 重启后 crash-recovery 续跑）⇒ 注册点兜底 `parentSessionId = rootSessionId`
+   * （depth 1 降级，回执声明项）。body val + `Ref.unsafe`：构造签名零改动
+   * （mount / DelegateFlowHosts 双构造面原样）。
+   */
+  private[project] val dispatcherSlot: Ref[IO, Option[String]] = Ref.unsafe[IO, Option[String]](None)
 
   /**
    * Uplink fail-closed effective value (re-read on every check; there is no online flip
@@ -333,6 +359,9 @@ class NodeEngine(
     escalate = (text, nodeName) => enqueueRootNotify(text, nodeName, DispatchNotify.NoticeEventType),
     emitUpdated = emitUpdated,
     triggerOverride = notifyTriggerOverride,
+    // P0（投递地址批 2026-11-02）：投递目标覆盖——None = 项目分发器（逐字节旧行为），
+    // Some = 链属主 delegate（作用域引擎由 DelegateFlowHosts.mount 注入）。
+    deliveryTarget = notifyDeliveryTarget,
     // M4（b64 批）：`notify.quietMs` → 打包/静默窗口（缺省 5s，上界 60s 由挂载面校验）。
     windowMs = notifyQuietMs.getOrElse(NotifyPolicy.NotifyQuietMsDefaultMs)
   )
@@ -835,6 +864,21 @@ class NodeEngine(
    * 即出集，未来再次停滞可再告警一次。
    */
   private[project] val barrierAlerted: Ref[IO, Set[String]] =
+    Ref.unsafe[IO, Set[String]](Set.empty)
+
+  /**
+   * **链级终态回执单发记账**（P0 dispatch-notify 批 2026-11-02，RCA §7-P1）：
+   * 已发过 `chain-wedged` 回执的 **chainId** 集（key = chainId，**与 [[barrierAlerted]]
+   * 的 key 面正交**——后者按下游节点 id 单发告警事件，本集按链单发**上层回执**）。
+   *
+   * 语义对齐 [[barrierAlerted]]：同一 chainId 只发一次；由 `settleRunnableSweep`
+   * 每轮按「此刻该链是否仍有节点被终态上游闸住」剪枝（恢复 ⇒ 出集 ⇒ 该链未来再次
+   * wedged 时可再回执一次），⇒ 集合有界（≤ 活在链数），不会随 tick 无界增长。
+   *
+   * 为什么必须去重：`checkBarriersNow` 由**每个终态写点**同步调用（failed/cancelled/
+   * dead-session 各腿），一条多成员链的多次终态会反复命中同一 chainId。
+   */
+  private[project] val chainWedgedAlerted: Ref[IO, Set[String]] =
     Ref.unsafe[IO, Set[String]](Set.empty)
 
   /**
@@ -1507,6 +1551,19 @@ object NodeEngine:
    */
   val NotifyRedirectedEventType: String = "notify-redirected"
 
+  /**
+   * **链级终态回执事件类型**（P0 dispatch-notify 批 2026-11-02，RCA §7-P1「链断了要有
+   * 人知道」）：`checkBarriersNow` 发现「某 pending/wiring 下游被终态上游永久闸死 ∧
+   * 该下游带 `chainId`」时，除既有 `barrier-blocked` 留痕外**追加**一行本类型事件，
+   * summary 携三要素 `chain=<chainId> node=<被闸死的下游 id> wedgedBy=<terminalId id>`
+   * （机械可 grep），并由同一分支发一条上层回执（`enqueueRootNotify`）。
+   *
+   * 与 `barrier-blocked` 的关系：**追加而非替换**——后者文本/发射条件逐字未动（既有
+   * 消费方零影响）；本类型是「链级」聚合面（一条链一条），前者是「节点级」留痕面。
+   * 作用域面落作用域事件流，项目面落项目流（与既有事件同锚点，未改）。
+   */
+  val ChainWedgedEventType: String = "chain-wedged"
+
   /** S19① 通知目标形态（判别单点；见构造参 [[NodeEngine.notifyTargetKind]]）。 */
   private[project] enum NotifyTargetKind:
     /** per-project 面：root 通道目标 = 项目根会话（既有行为，逐字节不变）。 */
@@ -1672,7 +1729,16 @@ object NodeEngine:
 
   val VerifierVerdictFootnote: String = NodeEngineContract.VerifierVerdictFootnote
 
-  def protocolFootnoteFor(role: Option[String]): String = NodeEngineContract.protocolFootnoteFor(role)
+  /**
+   * 公开再导出（NodeEngineContract 为 private[project]）：转发 + output 块总闸
+   * 参数（prompt-face 补批 2026-11-01）。`includeOutputRule` 缺省 = 组装期热读
+   * `OutputBlockGate.enabled()`——`NodeStarter` 等既有单参调用零波及；离线 spec
+   * 显式传参两态判定。
+   */
+  def protocolFootnoteFor(
+    role: Option[String],
+    includeOutputRule: Boolean = nebflow.shared.OutputBlockGate.enabled()
+  ): String = NodeEngineContract.protocolFootnoteFor(role, includeOutputRule)
 
   type NodeChainContext = NodeEngineContract.NodeChainContext
   val NodeChainContext: NodeEngineContract.NodeChainContext.type = NodeEngineContract.NodeChainContext

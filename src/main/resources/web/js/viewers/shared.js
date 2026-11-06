@@ -321,7 +321,7 @@ function markUnsolvedLink(a) {
   const s = document.createElement('span');
   s.setAttribute('data-nf-link-unsolved-note', '1');
   s.textContent = ' (local link: no path to open from this preview)';
-  s.style.cssText = 'font-size:11px;color:var(--color-text-muted,#8b8e96);';
+  s.style.cssText = 'font-size:var(--ds-fs-meta);color:var(--color-text-muted,#8b8e96);';
   if (a.parentNode) a.parentNode.insertBefore(s, a.nextSibling);
 }
 export { markUnsolvedLink };
@@ -792,11 +792,16 @@ const FIND_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="non
  * 单行排布批（2026-11-01 作者令 16:18）：簇左锚化（作者令「功能钮靠左、ask
  * 单独靠右，两端对齐」）——`left` 语义与旧 `right` 值一比一（槽值原样，
  * 角缘序镜像）；css 同批 split.css .canvas-source-toggle 注。
+ * canvas 控件尺寸对齐批（2026-11-02 作者追加令 09:41「包括 canvas 的这些控件
+ * 宽度也要保持一致」）：钮 40 → 48 ⇒ 槽距 48 → 56（48 + 8 缝，缝不变），
+ * 调用方槽值随之派生：md 64 → **72**（源码 16 + 48 + 8）/ html 112 → **128**
+ * （引用 72 + 48 + 8）/ monaco 16 不变（源码态无簇，单钮独坐）。缩放条同理
+ * 160 → 184（split.css）。
  *  @param {HTMLElement} pane — canvas tab pane
- *  @param {number} [left] - offset from the pane's left edge (default 112;
- *    md 64 / html 112 / monaco 16 —— 调用方槽值零改）
+ *  @param {number} [left] - offset from the pane's left edge (default 128;
+ *    md 72 / html 128 / monaco 16 —— 48px 钮 + 8px 缝的 56px 槽距派生)
  */
-export function addFindToggle(pane, left = 112) {
+export function addFindToggle(pane, left = 128) {
   pane.querySelector('.canvas-find-toggle')?.remove();
   if (getComputedStyle(pane).position === 'static') pane.style.position = 'relative';
 
@@ -817,14 +822,18 @@ export function addFindToggle(pane, left = 112) {
 // ── File refresh button (canvas 文件刷新批, 作者令 2026-10-25) ──────────
 
 const REFRESH_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>';
-// Same corner family as source/ref/find: 40px glass circles on a 48px
-// pitch, bottom:16 (split.css). The zoom bar is the one non-circle member —
+// Same corner family as source/ref/find: **48px glass circles on a 56px
+// pitch**, bottom:16 (split.css). The zoom bar is the one non-circle member —
 // its occupied span is measured, not assumed.（图谱圆钮批④退役后簇内只剩
-// 源码/引用/查找三圆钮 + 缩放条 + 壳刷新钮，簇内 48px 间距不变。
-// 单行排布批 2026-11-01：簇左锚化——座位计算同式镜像到 left 轴。）
+// 源码/引用/查找三圆钮 + 缩放条 + 壳刷新钮。
+// 单行排布批 2026-11-01：簇左锚化——座位计算同式镜像到 left 轴。
+// canvas 控件尺寸对齐批 2026-11-02：钮 40→48 ⇒ 槽距 48→56（缝 8px 不变），
+// 第二行底锚 64→72（= 圆钮行顶 16+48 + 8 缝），行判定容差随槽距同源。）
 const REFRESH_CIRCLE_SEL = '.canvas-source-toggle, .canvas-ref-select, .canvas-find-toggle';
-const REFRESH_ROW_PITCH = 48;
-const REFRESH_ROW_BOTTOMS = [16, 64];
+const REFRESH_CIRCLE_SIZE = 48;      // = --cv-size-circle-lg
+const REFRESH_ROW_PITCH = 56;        // = --cv-row-pitch-lg（48 钮 + 8 缝）
+const REFRESH_ROW_BOTTOMS = [16, 72];
+const REFRESH_ROW_TOLERANCE = REFRESH_ROW_PITCH / 2;  // 行归并容差（同槽距半档）
 
 function _refreshCornerItems(pane) {
   const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : NaN; };
@@ -838,15 +847,15 @@ function _refreshCornerItems(pane) {
     const left = Number.isFinite(num(el.style.left)) ? num(el.style.left) : (num(cs.left) || 16);
     const bottom = num(cs.bottom) || 16;
     const isBar = el.classList.contains('canvas-zoom-bar');
-    items.push({ left, bottom, span: isBar ? (el.getBoundingClientRect().width || 140) + 8 : REFRESH_ROW_PITCH });
+    items.push({ left, bottom, span: isBar ? (el.getBoundingClientRect().width || 222) + 8 : REFRESH_ROW_PITCH });
   }
   return items;
 }
 
-/** First free seat on the bottom-left corner row for one more 40px circle.
+/** First free seat on the bottom-left corner row for one more 48px circle.
  *  Row 0 = bottom:16 (the circle row); when the measured seat would overflow
- *  the panel the button drops to row 1 = bottom:64 (same convention the narrow
- *  html zoom bar already uses). */
+ *  the panel the button drops to row 1 = bottom:72 (same convention the narrow
+ *  html zoom bar uses — 圆钮行顶 16+48 + 8 缝). */
 function _refreshSeat(pane) {
   const items = _refreshCornerItems(pane);
   // The mount can run mid open-transition (flex-basis 0 → target, 0.32s): the
@@ -860,10 +869,10 @@ function _refreshSeat(pane) {
   for (const bottom of REFRESH_ROW_BOTTOMS) {
     let left = 16;
     for (const it of items) {
-      if (Math.abs(it.bottom - bottom) > 24) continue;  // different row
+      if (Math.abs(it.bottom - bottom) > REFRESH_ROW_TOLERANCE) continue;  // different row
       left = Math.max(left, it.left + it.span);
     }
-    if (bottom === REFRESH_ROW_BOTTOMS[0] && widthKnown && left + 40 > target - 8) continue;  // row 0 full
+    if (bottom === REFRESH_ROW_BOTTOMS[0] && widthKnown && left + REFRESH_CIRCLE_SIZE > target - 8) continue;  // row 0 full
     return { left, bottom };
   }
   return { left: 16, bottom: REFRESH_ROW_BOTTOMS[1] };
@@ -925,6 +934,180 @@ export function addRefreshButton(pane, opts) {
   mount.appendChild(btn);
   seatRefreshButton(btn, pane);
   return btn;
+}
+
+// ── 底部浮钮让位：滚动面末尾安全留白（canvas 正文底部遮挡修复批）─────────
+// 作者报障 2026-11-05 12:09（逐字）「因为我们现在canvas的文档的底部不是有按钮吗，
+// 按钮会挡住底部的文字，所以要允许文档再进一步上滑，保证最底部的文字能够呈现在
+// 按钮之上。不会被遮挡。」
+//
+// 现场：canvas 文档面的底部浮钮簇（源码 <> / 引用 / 查找 / 缩放条 + 壳层刷新钮）
+// 是 absolute 浮层（split.css），不占流内位置；滚动面（.canvas-md-scroll /
+// .canvas-txt-scroll / .canvas-tab-pane.scrollable）的正文照旧铺到面板底缘 ⇒
+// 滚到底时最后一行落在浮钮带**底下**（改前桌面实测：末行 bottom 比钮顶低 36px，
+// 即末行下半截被钮压住）。手机档 2026-11-02「底部控件浮层带批」已用静态
+// padding-bottom 76px 修过同一现象（mobileLayer.css），桌面档一直没有。
+//
+// 修法（治本，不写死像素）：底部让位 = **实测**浮钮带顶到面板底缘的距离 + 呼吸缝，
+// 以 CSS 变量 --canvas-bottom-clearance 发布到 pane 上（CSS 侧单点消费）。
+// 为什么必须是实测而不是常量：浮钮尺寸随档位变（桌面 --cv-size-circle 40 / 手机
+// --mtap-lg 48）、html 缩放条会因面板变窄回落第二行、刷新钮会按簇满座下移一行
+// ⇒ 常量必然在某个档位失真（手机档 76 只是 16+48+12 这一个档的读数）。
+// 为什么留白不会造成多余空白滚动：留白是**滚动内容盒的末尾垫**，滚到底时内容底缘
+// 恰好停在钮带顶之上，余下那段正好被浮钮本身占住（不是空区）；文档短到内容 +
+// 留白仍装得下（短于一屏）时 scrollHeight ≤ clientHeight ⇒ 零滚动条、零空白。
+// 零按钮场景（无底部 chrome 的面板/页签）实测为 0 ⇒ 不留空白。
+//
+// 观测面：ResizeObserver 观测 pane（宽高变化 ⇒ 浮钮换行/档位变化）+ 每一颗浮钮
+// （显示/隐藏、缩放条读数宽度变化）+ MutationObserver 盯 pane 子树增删（换页签/
+// 换查看器会重建钮）。三路统一 raf 合并到一次重算。写值只落在 pane 的 CSS 变量上
+// （不改任何 DOM 结构、不触发被观测元素的尺寸），故无自激环。
+/** 底部浮钮簇成员（与 split.css 的底部浮钮块同一族；缩放条是非圆钮成员）。 */
+const BOTTOM_CHROME_SEL = '.canvas-source-toggle, .canvas-ref-select, .canvas-find-toggle, .canvas-zoom-bar';
+/** 同一条带上、但不由本面板 pane 持有的浮钮：ask 会话钮与记事本钮（askDock.js，
+ *  桌面宿主 #canvas-panel / 手机宿主页面壳）。手机层「底部控件浮层带批」已把
+ *  ask 圆钮与文档圆钮族**逐值对齐成同一行**（mobileLayer.css 簇几何块，三钮中心
+ *  极差 0px）—— 故让位带必须按同一行算，只算 pane 内三颗会漏掉右端那颗。
+ *  几何过滤（横向相交 + 落在 pane 竖向范围内）保证「别处的 fur 钮」不会被误计。 */
+const BOTTOM_CHROME_GLOBAL_SEL = '.ask-fab, .note-fab';
+/** 末行与浮钮带顶之间的呼吸缝（与手机档 76 = 16 + 48 + 12 的 12 同一把尺）。 */
+export const BOTTOM_CLEARANCE_GAP = 12;
+
+/** 该 pane 当下的底部浮钮候选（pane 内簇 + 壳层刷新钮单例 + 同带全局 fab）。 */
+function _bottomChromeCandidates(pane) {
+  const out = [...pane.querySelectorAll(BOTTOM_CHROME_SEL)];
+  const shell = pane.parentElement;
+  const refresh = shell ? shell.querySelector(':scope > .canvas-refresh-toggle') : null;
+  if (refresh) out.push(refresh);
+  // 全局同带 fab 走**类选择器 + 几何过滤**（不用面 id 选择器：本模块无面，
+  // 跨面 id 直查会踩组件契约 R2；几何过滤本身就是判定「是否与这个 pane 同带」）。
+  for (const el of document.querySelectorAll(BOTTOM_CHROME_GLOBAL_SEL)) out.push(el);
+  return out;
+}
+
+function _chromeShown(el) {
+  if (!el || !el.isConnected || el.hidden) return false;
+  const cs = getComputedStyle(el);
+  if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+  const r = el.getBoundingClientRect();
+  return r.width > 0.5 && r.height > 0.5;
+}
+
+/**
+ * 实测底部让位高度（px）。返回 null = 本次不可测（pane 未挂载/隐藏页签），
+ * 调用方跳过写值（保留既有值，隐藏态不可见故无影响）。
+ * @param {HTMLElement} pane
+ * @returns {number|null}
+ */
+export function measureBottomClearance(pane) {
+  if (!pane || !pane.isConnected) return null;
+  const pr = pane.getBoundingClientRect();
+  if (pr.width < 1 || pr.height < 1) return null;
+  let top = Infinity;
+  for (const el of _bottomChromeCandidates(pane)) {
+    if (!_chromeShown(el)) continue;
+    const r = el.getBoundingClientRect();
+    // 只认「在面板竖向范围内、与面板横向相交」的浮钮（壳层刷新钮可能在别的
+    // 页签的座位上，或整颗隐藏 —— 两者都由本判据与 _chromeShown 排除）。
+    if (r.top < pr.top - 1 || r.top >= pr.bottom) continue;
+    if (r.right <= pr.left || r.left >= pr.right) continue;
+    if (r.top < top) top = r.top;
+  }
+  if (!Number.isFinite(top)) return 0;   // 无底部浮钮 ⇒ 零留白
+  const v = pr.bottom - top + BOTTOM_CLEARANCE_GAP;
+  return Math.max(0, Math.round(v * 100) / 100);
+}
+
+/** 重算并写 --canvas-bottom-clearance（值不变则不写，避免无谓重排）。 */
+export function syncBottomClearance(pane) {
+  if (!pane) return null;
+  const px = measureBottomClearance(pane);
+  if (px === null) return null;
+  const next = px + 'px';
+  if (pane.style.getPropertyValue('--canvas-bottom-clearance') === next) return px;
+  pane.style.setProperty('--canvas-bottom-clearance', next);
+  return px;
+}
+
+/**
+ * 给一个 canvas tab pane 装「底部让位」观测（幂等：同 pane 重复调用只补一次同步）。
+ * 由 fileViewers.renderFile（唯一挂载点）在查看器渲染完成后调用。
+ * @param {HTMLElement} pane
+ */
+export function observeBottomClearance(pane) {
+  if (!pane) return;
+  const slot = /** @type {any} */ (pane);
+  let st = slot._nfBottomClearance;
+  if (!st) {
+    st = { ro: null, mo: null, moAttr: null, moAnc: null, els: [], raf: 0 };
+    const disconnect = () => {
+      try { st.ro?.disconnect(); } catch { /* 已断开 */ }
+      try { st.mo?.disconnect(); } catch { /* 已断开 */ }
+      try { st.moAttr?.disconnect(); } catch { /* 已断开 */ }
+      try { st.moAnc?.disconnect(); } catch { /* 已断开 */ }
+      st.ro = null; st.mo = null; st.moAttr = null; st.moAnc = null; st.els = [];
+      if (st.raf) { cancelAnimationFrame(st.raf); st.raf = 0; }
+    };
+    const observeChrome = () => {
+      if (!st.ro) return;
+      const next = _bottomChromeCandidates(pane);
+      const same = next.length === st.els.length && next.every((el, i) => el === st.els[i]);
+      if (same) return;
+      st.ro.disconnect();
+      st.ro.observe(pane, { box: 'border-box' });
+      for (const el of next) st.ro.observe(el, { box: 'border-box' });
+      // 浮钮「座位/显隐」属性的变化（seatRefreshButton 写 style、syncFileRefreshButton
+      // 写 hidden、换档写 class）不改变任何被观测盒的尺寸时才需要这条腿 —— 例如窄面板
+      // 下刷新钮从第一行下移到第二行（bottom 16 → 72），浮钮带顶因此抬高。
+      st.moAttr?.disconnect();
+      if (st.moAttr) for (const el of next) st.moAttr.observe(el, { attributes: true, attributeFilter: ['style', 'class', 'hidden'] });
+      st.els = next;
+    };
+    const run = () => {
+      st.raf = 0;
+      if (!pane.isConnected) {          // 页签关闭：观测面自行退场（不靠外部拆除）
+        disconnect();
+        slot._nfBottomClearance = null;
+        return;
+      }
+      syncBottomClearance(pane);
+      observeChrome();
+    };
+    const schedule = () => { if (!st.raf) st.raf = requestAnimationFrame(run); };
+    st.ro = new ResizeObserver(schedule);
+    st.mo = new MutationObserver(schedule);
+    st.moAttr = new MutationObserver(schedule);
+    // 子树增删盯**面板壳**（pane 的父层）：壳层刷新钮是 #canvas-content 的直接子
+    // （定位修复批 2026-10-25），只盯 pane 会漏掉它挂上/摘下的那一次。本函数自己只写
+    // pane 的 style 变量（attribute）⇒ 不触发这条 childList 观测，无自激环。
+    st.mo.observe(pane.parentElement || pane, { childList: true, subtree: true });
+    // 祖先「显隐/态类」腿（手机层实测补）：手机页面栈里非前台页是 **visibility:
+    // hidden 但仍整幅占位** —— 尺寸与边长全程不变，ResizeObserver 一声不响；从
+    // hidden 翻到 visible 只体现为祖先链上某个 .mobile-page 的 class/内联态换档。
+    // 不挂这条腿，手机档首次渲染（页还没推前台）量到的就是「无浮钮 = 0」，且此后
+    // 永无重算机会。观测对象刻意**不含 pane 自身**（本函数只写 pane 的 style，
+    // 排除它 = 结构上无自激环）。
+    st.moAnc = new MutationObserver(schedule);
+    {
+      let anc = pane.parentElement;
+      for (let i = 0; i < 5 && anc; i++, anc = anc.parentElement) {
+        st.moAnc.observe(anc, { attributes: true, attributeFilter: ['class', 'style', 'hidden', 'aria-hidden'] });
+      }
+    }
+    st.ro.observe(pane, { box: 'border-box' });
+    st.els = _bottomChromeCandidates(pane);
+    for (const el of st.els) {
+      st.ro.observe(el, { box: 'border-box' });
+      st.moAttr.observe(el, { attributes: true, attributeFilter: ['style', 'class', 'hidden'] });
+    }
+    slot._nfBottomClearance = st;
+  } else {
+    st.els = _bottomChromeCandidates(pane);
+    for (const el of st.els) {
+      try { st.ro.observe(el, { box: 'border-box' }); } catch { /* 重复观测无害 */ }
+    }
+  }
+  syncBottomClearance(pane);
 }
 
 // ── ZIP utilities (EPUB viewer) ────────────────────────────────────────

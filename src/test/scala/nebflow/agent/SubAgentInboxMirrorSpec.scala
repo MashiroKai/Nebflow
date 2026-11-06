@@ -57,6 +57,8 @@ class SubAgentInboxMirrorSpec extends FunSuite:
   // def，调用点文本逐字未动）。
   private lazy val agentProcessing: String = read("src/main/scala/nebflow/agent/AgentProcessing.scala")
   private lazy val mirrorSrc: String = read("src/main/scala/nebflow/agent/InjectedInboxMirror.scala")
+  /** 注入帧/落盘/广播单点（外部注入统一通道批 2026-11-05；pin 随单点迁移）。 */
+  private lazy val injectionChannel: String = read("src/main/scala/nebflow/core/InjectionChannel.scala")
   private lazy val utilsJs: String = read("src/main/resources/web/js/utils.js")
   // 2026-09-28 FE 组件化批次三拆分：source 标签表随注入行族迁到 js/chat/injectedRows.js
   // （chat.js 只留转发 export）；本 tripwire 随迁到真实落点（先例 1c4cbb0）。
@@ -95,8 +97,9 @@ class SubAgentInboxMirrorSpec extends FunSuite:
    * 注册表候选集（`sessionId -> rootSessionId`）——覆盖全部族前缀 + 两个 root + 非族会话。
    *
    * P1-3 归因修正批（2026-10-03）：`subagent-` / `workflow-` 两族补入候选集——
-   * builtin-merge 批新增的 `SubagentTool` / `AgentFlowTool`（N1 复名批 ex-WorkflowTool）会话即用这两个
-   * 前缀，前端 `utils.js#isBgAgentId` 早已收录，后端本表此前漏收（真产品缺陷，
+   * builtin-merge 批新增的 `SubagentTool` 会话即用 `subagent-` 前缀（ex-Workflow 的
+   * 内联 DAG 工具已随 tool-face-agentflow-retire 批 2026-11-05 整体退役，`workflow-`
+   * 前缀留作存量会话的身份兼容），前端 `utils.js#isBgAgentId` 早已收录，后端本表此前漏收（真产品缺陷，
    * 同批补齐）。夹具不覆盖这两族时，`targets` 的路由表 pin 会漏掉它们。
    */
   private val candidates: List[(String, String)] = List(
@@ -327,11 +330,20 @@ class SubAgentInboxMirrorSpec extends FunSuite:
     )
   }
 
-  test("③ -2 单点收口：注入行唯一发射点仍在，12 处调用点零改（含 idle 窗载体腿），镜像腿挂在发射点内") {
+  test("③ -2 单点收口：注入行唯一发射点仍在，调用点零改（含 idle 窗载体腿），镜像腿挂在发射点内") {
+    // re-pin（外部注入统一通道批 2026-11-05）：帧组装 + 落盘 + 广播三面**整体迁入**
+    // `nebflow/core/InjectionChannel`（`"injected" -> true.asJson` 的单锤唯一写者随迁）。
+    // 判据语义不变：全仓只有**一处**组装注入帧、只有**一处**发射点。故此处改判
+    // 「AgentActor 内 0 命中 ∧ InjectionChannel 内恰 1 命中」。
     assertEquals(
       "\"injected\" -> true.asJson".r.findAllMatchIn(agentActor).size,
+      0,
+      "AgentActor 内又出现 `\"injected\" -> true.asJson` —— 注入帧出现第二个写者（单点在 InjectionChannel）"
+    )
+    assertEquals(
+      "\"injected\" -> true.asJson".r.findAllMatchIn(injectionChannel).size,
       1,
-      "AgentActor 内 `\"injected\" -> true.asJson` 不再单命中 —— 注入行出现了第二个写者"
+      "InjectionChannel 内 `\"injected\" -> true.asJson` 不再单命中 —— 注入帧写者漂移"
     )
     // re-pin（2026-09-25 收尾族迁移）：finishTurnCont 的 2 处调用随实现迁至
     // AgentFinishTurn.scala，计数改为 AgentActor + AgentFinishTurn 两文件聚合
@@ -370,14 +382,20 @@ class SubAgentInboxMirrorSpec extends FunSuite:
     // （AgentActor 3 / AgentFinishTurn 2 / AgentFrozen 1 / AgentIdle 4 /
     // AgentProcessing 4），纯基线重钉非放宽；镜像腿单点收口语义（下发射点内、
     // wsSend 之后、rootSessionId 解析）不变。
+    // re-pin（外部注入统一通道批 2026-11-05，对现 HEAD 重钉）：14 钉在本分支 HEAD
+    // **改前已红**（纯存量漂移，非本批引入）——实测 HEAD 逐文件计数为
+    // AgentActor 3 / AgentFinishTurn 3 / AgentFrozen 1 / AgentIdle 4 /
+    // AgentProcessing 5 = 16（16 = 15 调用 + 1 def）。本批**零调用点增删**
+    // （只加了一个缺省参数 `dedup`，不改 `emitInjectedUserEvent(` 的出现面）
+    // ⇒ 改前改后同为 16，纯基线重钉非放宽。
     assertEquals(
       "emitInjectedUserEvent\\(".r.findAllMatchIn(agentActor).size +
         "emitInjectedUserEvent\\(".r.findAllMatchIn(agentFinishTurn).size +
         "emitInjectedUserEvent\\(".r.findAllMatchIn(agentFrozen).size +
         "emitInjectedUserEvent\\(".r.findAllMatchIn(agentIdle).size +
         "emitInjectedUserEvent\\(".r.findAllMatchIn(agentProcessing).size,
-      14,
-      "`emitInjectedUserEvent(` occurrence-count drift (expected 13 call sites + 1 def, aggregated over AgentActor + AgentFinishTurn + AgentFrozen + AgentIdle + AgentProcessing) - call sites must not change in this batch"
+      16,
+      "`emitInjectedUserEvent(` occurrence-count drift (expected 15 call sites + 1 def, aggregated over AgentActor + AgentFinishTurn + AgentFrozen + AgentIdle + AgentProcessing) - call sites must not change in this batch"
     )
     val emitStart = agentActor.indexOf("private[agent] def emitInjectedUserEvent(")
     val applyStart = agentActor.indexOf("\n  def apply(", emitStart)
@@ -388,8 +406,8 @@ class SubAgentInboxMirrorSpec extends FunSuite:
       "镜像腿未挂在唯一发射点内 —— 11 处调用点的镜像扩展落点漂移"
     )
     assert(
-      emitBody.indexOf("wsSend(withWaiting)") < emitBody.indexOf("*> inboxMirror"),
-      "镜像腿必须在 wsSend 之后（live 帧时序逐字不变）"
+      emitBody.indexOf("InjectionChannel.deliver(") < emitBody.indexOf("*> inboxMirror"),
+      "镜像腿必须在投递（落盘+广播，InjectionChannel.deliver）之后（live 帧时序逐字不变）"
     )
     assert(
       emitBody.contains("reg.iterator.map((s, rec) => (s, rec.rootSessionId))"),
@@ -407,8 +425,18 @@ class SubAgentInboxMirrorSpec extends FunSuite:
       )
     assert(mirrorCode.contains("UiMessage.User"), "镜像行类型漂移（禁新造行类型）")
     assert(mirrorCode.contains("append"), "镜像件未走既有落盘入口 append（禁新造写面）")
-    // 既有注入文案面 tripwire：header 帧字段与前端 source 标签表逐字未动
-    assert(agentActor.contains("""Json.obj("header" -> h.asJson)"""), "header 帧字段被改动")
+    // 既有注入文案面 tripwire：header 帧字段与前端 source 标签表语义未动
+    // （外部注入统一通道批 2026-11-05：header 帧键的组装面随单点迁入
+    // InjectionChannel.frame —— 判据从「在 AgentActor 内」改为「在唯一帧组装点内」，
+    // 且 AgentActor 不得残留第二份）。
+    assert(
+      injectionChannel.contains("""Json.obj("header" -> h.asJson)"""),
+      "header 帧字段被改动（InjectionChannel.frame 是唯一组装点）"
+    )
+    assert(
+      !agentActor.contains("""Json.obj("header" -> h.asJson)"""),
+      "AgentActor 又出现第二份 header 帧组装 —— 帧组装必须单点"
+    )
     assert(injectedRowsJs.contains("mail: 'Mail'"), "前端 source 标签表被改动 —— 渲染侧零改是本批硬边界")
   }
 end SubAgentInboxMirrorSpec

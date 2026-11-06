@@ -251,13 +251,18 @@ end SessionApprovals
  * 防卡面爆炸；对照：内置 `askPermission` 卡带完整 `input`，本门不复用该形状）。
  */
 object GateRedact:
-  private val SecretKeyHints = List("password", "token", "secret", "credential", "key")
   private val MaxValueChars = 120
   private val MaxSummaryChars = 600
 
+  /**
+   * 键名判定 —— 🔴 2026-11-04 两小件批 · 件一：委托单一真源
+   * [[nebflow.shared.SecretKeys.isSensitive]]（词根 14 条，含 `deviceToken` /
+   * `accessToken` / `refreshToken` / `clientSecret` / `authorization`，并豁免
+   * `maxTokens` / `budgetTokens` 这类配额键）。旧实现在此自写
+   * `password|token|secret|credential|key` 五词根子串表，是四份键表之一。
+   */
   def isSecretKey(k: String): Boolean =
-    val l = k.toLowerCase
-    SecretKeyHints.exists(l.contains)
+    nebflow.shared.SecretKeys.isSensitive(k)
 
   def redact(json: Json): Json =
     json.fold(

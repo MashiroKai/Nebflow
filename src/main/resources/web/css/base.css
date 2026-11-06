@@ -34,6 +34,12 @@
      #2e7d32 / #66bb6a / #f26b6b / #ffa83c = sapphire --amber-dark 暗档值）。
      --color-error / --color-danger 保留现值不迁移：改版后正文字不再消费红
      token，红 token 转供图标/描边/底纹（危险按钮族仍走 --btn-danger-*）。 */
+  /* 定时任务蓝（schedule-todo-unify 批 2026-11-06 单源）：值逐字取自
+     reminder.css 既有字面量 rgb(91, 127, 191)（触发时刻/已完成打卡圆，本批只做
+     「字面量 → token」搬迁，集合差 = ∅）。语义 = 定时/计划类信息蓝 —— 定时任务
+     页与待办页（tfl 完成打卡 / swipe 保留图标）按作者令「以定时任务为准」同
+     消费本 token，不许各留一套。 */
+  --color-info: rgb(91, 127, 191);
   --status-error-icon: #d64545;   /* 图标档：亮 4.4:1（图形 ≥3:1 ✓） */
   --status-warn-icon: #b45309;    /* 图标档：亮 5.0:1 ✓（全案唯一新值） */
   --status-success-icon: #2e7d32; /* 图标档：亮 5.1:1 ✓（仓内已有值） */
@@ -217,23 +223,21 @@ body.sidebar-collapsed #sidebar {
   border: 1px solid transparent; /* reserves edge space for glass hover */
   background: none;
   color: var(--color-frame-text-muted);
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   cursor: pointer;
-  margin-right: 6px;
+  margin-right: var(--ds-space-1h);
   flex-shrink: 0;
   padding: 0;
-  transition: color 0.15s, background 0.15s, border-color 0.15s, box-shadow 0.15s;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
 }
-.panel-toggle-btn:hover {
-  color: var(--color-frame-text-bright);
-  background: var(--glass-control-bg-hover);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  border-color: var(--glass-control-border);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge);
+@media (hover: hover) {
+  .panel-toggle-btn:hover {
+    color: var(--color-frame-text-bright);
+    background: var(--glass-control-bg-hover);
+    border-color: var(--glass-control-border);
+  }
 }
+
 
 /* ── Scrollbar: fixed slim width ── */
 /* Fixed 6px width everywhere. Previous auto-slim toggled between 6px/10px,
@@ -253,7 +257,7 @@ body.sidebar-collapsed #sidebar {
 }
 ::-webkit-scrollbar-thumb {
   background: rgba(0,0,0,0.15);
-  border-radius: 3px;
+  border-radius: var(--ds-radius-badge);
 }
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(0,0,0,0.25);
@@ -305,20 +309,18 @@ body.sidebar-collapsed #sidebar {
   height: 28px;
   padding: 0;
   border: 1px solid transparent; /* reserves edge space for glass hover */
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   background: transparent;
   color: var(--color-frame-text-muted);
   cursor: pointer;
-  transition: background 0.15s ease, color 0.2s ease, border-color 0.15s, box-shadow 0.15s;
+  transition: background 0.15s ease, color 0.2s ease, border-color 0.15s;
 }
 .bypass-toggle:hover {
+  /* 扁平契约（check-flat-buttons 的 toggle/switch 判据段 2026-11-05 补盲后抓出）：
+     原先这里是两条 inset 内高光（上白下黑 = 浮雕厚度）。撤掉后 hover 反馈只走
+     背景升一档 + 描边，与全站扁平按钮同一口径。 */
   background: var(--glass-control-bg-hover);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   border-color: var(--glass-control-border);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge);
 }
 /* Shield icon color changes with safety mode */
 .bypass-toggle[data-mode="confirm-edits"] {
@@ -341,14 +343,12 @@ body.sidebar-collapsed #sidebar {
   right: 24px;
   min-width: 120px;
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
-  border-radius: 10px;
-  padding: 4px;
+  border-radius: var(--ds-radius-button);
+  padding: var(--ds-space-1);
   display: none;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--ds-space-half);
   z-index: 300;
   box-shadow:
     inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
@@ -380,20 +380,23 @@ body.sidebar-collapsed #sidebar {
 .header-dropdown-menu button {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-1h) var(--ds-space-inline-x);
   border: none;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   background: transparent;
   color: var(--color-frame-text);
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   cursor: pointer;
   text-align: left;
   transition: background 0.12s;
 }
-.header-dropdown-menu button:hover {
-  background: var(--color-surface);
+@media (hover: hover) {
+  .header-dropdown-menu button:hover {
+    background: var(--color-surface);
+  }
 }
+
 .header-dropdown-menu button.active {
   color: var(--color-primary);
   font-weight: 500;
@@ -417,40 +420,38 @@ body.sidebar-collapsed #sidebar {
   z-index: 10000;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--ds-space-2);
   max-width: 360px;
 }
 .global-perm-toast {
-  background: var(--bg-secondary-translucent, rgba(255, 255, 255, 0.72));
-  backdrop-filter: blur(16px) saturate(1.4);
-  -webkit-backdrop-filter: blur(16px) saturate(1.4);
+  background: var(--nf-glass-bg);   /* glass-unify 批：原 α=.72 半透底 → 唯一毛玻璃底 */
   border: 0.5px solid var(--border-light, rgba(0, 0, 0, 0.06));
-  border-radius: 12px;
-  padding: 12px 14px;
+  border-radius: var(--ds-radius-xl);
+  padding: var(--ds-space-3) 14px;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.12);
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
 }
 .global-perm-toast-title {
   font-weight: 600;
-  margin-bottom: 4px;
+  margin-bottom: var(--ds-space-1);
 }
 .global-perm-toast-body {
   opacity: 0.78;
   word-break: break-all;
-  margin-bottom: 10px;
+  margin-bottom: var(--ds-space-stack-gap);
   max-height: 3.6em;
   overflow: hidden;
 }
 .global-perm-toast-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--ds-space-2);
 }
 .global-perm-toast-btn {
   border: 0.5px solid var(--border-light, rgba(0, 0, 0, 0.08));
-  border-radius: 8px;
-  padding: 4px 12px;
-  font-size: 12px;
+  border-radius: var(--ds-radius-input);
+  padding: var(--ds-space-1) var(--ds-space-3);
+  font-size: var(--ds-fs-btn);
   cursor: pointer;
   background: var(--bg-tertiary, rgba(255, 255, 255, 0.6));
 }

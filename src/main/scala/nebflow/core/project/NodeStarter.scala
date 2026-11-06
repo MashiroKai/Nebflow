@@ -320,7 +320,7 @@ private[project] trait NodeStarter:
         // 消息身份牌消解（msgtokens 批 2026-10-31）：节点 spawn 输入出口单点消解——
         // task 正文（含「分发器补充」段）与上游 result 里的 {{msg:sid8-seq6}} 在投递前
         // 展开为消息全文（映射缺失 = 显式报错行注入）。机制关 = 原样透传。
-        .flatMap(resources.msgTokens.resolve)
+        .flatMap(resources.msgTokens.resolveForAgent)
     }
 
   end buildInput
@@ -949,11 +949,18 @@ private[project] trait NodeStarter:
               lazy val bridge: Behavior[AgentEvent] = new Behavior[AgentEvent]:
                 def receive(ctx: ActorContext[AgentEvent], event: AgentEvent): IO[Behavior[AgentEvent]] =
                   event match
+                    // 刀一等待态计时消息：本桥不接（恒等行为，桥的终态只由真终态驱动）。
+                    case _: AgentEvent.BgWaitCapTick => IO.pure(Behaviors.ignore)
                     case AgentEvent.Completed(_, messages) =>
-                      // 完成门（noderpt 批 A 段 2026-09-11 作者裁定）——同一闸门两条腿：
-                      //   腿 1「后台任务存活」（`bgGateHoldEnabled`，默认 false = 封存）：
-                      //     关 ⇒ **不查** BgTaskRegistry.waitingFor，直接用空等待集走放行
-                      //     分支（hold/armCap 代码逐字保留，开 flag 即恢复逐字旧行为）；
+                      // 完成门（noderpt 批 A 段 2026-09-11 作者裁定；缺省面 T4 批
+                      // 2026-11-04 作者令 + 自查件 D2 翻转）——同一闸门两条腿：
+                      //   腿 1「后台任务存活」（`bgGateHoldEnabled`，默认 true =
+                      //     默认保结果）：开 ⇒ 查 BgTaskRegistry.waitingFor，等待集
+                      //     非空 ⇒ hold + armCap 兜底计时器（下方既有路径），任务全部
+                      //     完成后自动续；要丢弃结果必须显式
+                      //     `-Dnebflow.bgGate.completionHold=false`（或 nebflow.json
+                      //     同名键经启动面转成 -D）⇒ 关 ⇒ 不查等待集，直接用空等待集
+                      //     走放行分支（hold/armCap 代码逐字保留，显式关即封存面）；
                       //   腿 2「未申报 node_report」（`reportGateHoldEnabled`，默认 true）：
                       //     放行前非消费读申报槽——空 ⇒ **不终态化**（节点保持 Running、
                       //     会话存活）并起表（只置不重）；非空 ⇒ 清表后放行，终态点 drain
@@ -963,7 +970,7 @@ private[project] trait NodeStarter:
                           // P2 death-watch 活性复检（与 delegate 闸同病灶同收口）：
                           // hold 前探活等待集并收割活性死行（进程已死/属主已殁 ⇒
                           // 注销 + 代行终态 + 沿等待链注入），复检后再决 hold——
-                          // 零墙钟（活性 = 内核进程事实）。未开 flag 的封存面零变化。
+                          // 零墙钟（活性 = 内核进程事实）。显式关（封存面）时零变化。
                           nebflow.core.tools.BgTaskReaper
                             .reapDead(Some(resources.actorSystem), Some(resources.agentRegistry))
                             .flatTap { r =>
@@ -1013,8 +1020,9 @@ private[project] trait NodeStarter:
                         else
                           BgTaskRegistry.drainFailures(sessionId).flatMap { failures =>
                             if failures.isEmpty then
-                              // 放行分支（腿 1 封存后 Completed 直达此处）。放行前的
-                              // 腿 2 判定 = 未申报闸。
+                              // 放行分支（腿 1 缺省开：等待集为空——无名下任务或 hold
+                              // 已全部释放/收割——时 Completed 到此；显式关 = 封存面时
+                              // Completed 直达此处）。放行前的腿 2 判定 = 未申报闸。
                               def releaseNow: IO[Behavior[AgentEvent]] =
                                 holdEmitted.get.flatMap { held =>
                                   disarmCap *> holdEmitted.set(false) *>
@@ -1120,6 +1128,12 @@ private[project] trait NodeStarter:
         },
         s"nodebridge-${sessionId.take(8)}"
       )
+      // 属主边读点（面板代际层级批 2026-11-06 · design 裁定 A②）：在册分发器会话
+      // id 即本节点 parentSessionId（depth 2）；无在册分发器（纯引擎流 root 直启 /
+      // 重启后 crash-recovery 续跑——重启内存槽自然归零）⇒ 兜底 rootSessionId
+      // （depth 1 降级，回执声明项）。slot 读点 = startNode 唯一注册码点，15 条
+      // 调用链（投递/结算/工具/reloop/恢复）统一收敛，零签名零调用点改动。
+      dispatcherSid <- dispatcherSlot.get
       // 卡死处置接线（与 ProjectActor 分发器注册同款）：supervisorRef=bridgeRef
       // ——bridge 的 Cancelled 分支（resultDeferred.complete(Left(cancelled))）
       // 成为节点的取消通道，AgentControl cancel / 面板 cancelAgent /
@@ -1134,6 +1148,10 @@ private[project] trait NodeStarter:
             ref,
             AgentKind.Flow,
             rootSessionId,
+            // 属主边（面板代际层级批 2026-11-06）：node 行 parent = 在册分发器，
+            // 兜底 = 挂载 root（见上方 dispatcherSid 读点注释——单一真相 =
+            // AgentRecord.parentSessionId，前端禁从 sessionRef/flow map 二推）。
+            parentSessionId = dispatcherSid.getOrElse(rootSessionId),
             startedAt = System.currentTimeMillis(),
             lastActivityMs = System.currentTimeMillis(),
             supervisorRef = Some(bridgeRef),

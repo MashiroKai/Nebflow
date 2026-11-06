@@ -89,6 +89,7 @@ const DEV_CHEV_SVG =
 /** 头部设备 chip 的菜单开合态 + 花名册 self（显示名缓存，模块级——chip 常驻后跨
  *  paint 复用；picker-device-switch 批）。 */
 let explorerDevMenuOpen = false;
+let explorerDevMenuAnchorRect = null; // placeExplorerDevMenu 落位的 chip 视口矩形（滚动判移用）
 let explorerRosterSelf = null;
 
 /**
@@ -112,10 +113,7 @@ function renderExplorerDeviceChip() {
     chip.setAttribute('aria-haspopup', 'listbox');
     chip.setAttribute('aria-expanded', 'false');
     chip.setAttribute('aria-label', t('explorer.deviceSelectAria'));
-    const menu = document.createElement('div');
-    menu.className = 'dev-menu';
-    menu.hidden = true;
-    anchor.append(chip, menu);
+    anchor.append(chip);
     const titleEl = header.querySelector('.explorer-title');
     if (titleEl) titleEl.after(anchor);
     else header.appendChild(anchor);
@@ -126,7 +124,26 @@ function renderExplorerDeviceChip() {
     });
     document.addEventListener('pointerdown', explorerDevOutsideClose, true);
   }
+  // 菜单体 = body 级浮层（弹层浮出批 2026-11-01）：不再挂在锚内——#sidebar→
+  // #sidebar-panel→.panel→#explorer-section 全链 overflow:hidden 会几何裁切弹层，
+  // 且 #sidebar 自带 backdrop-filter 把毛玻璃采样困在自己子树里（同款坑
+  // base.css .header-dropdown-menu 注释在先）。创建一次，开合复用。
+  if (!document.querySelector('.dev-menu.explorer-dev-menu')) {
+    const menu = document.createElement('div');
+    menu.className = 'dev-menu explorer-dev-menu';
+    menu.hidden = true;
+    document.body.appendChild(menu);
+  }
   paintExplorerDevChip();
+}
+
+/** chip 标签包一层 .dev-nm（弹层浮出批）：窄栏受挤时在标签上省略号（放不下才
+ *  省略 + title 悬浮全名），替代旧 110px 硬截。 */
+function devChipLabelEl(text) {
+  const nm = document.createElement('span');
+  nm.className = 'dev-nm';
+  nm.textContent = text;
+  return nm;
 }
 
 /** chip 常态绘制：当前 origin 设备（远端 = 花名册名 + 离线琥珀点；本机 = self 名）。 */
@@ -138,7 +155,7 @@ function paintExplorerDevChip() {
   const label = deviceId || selfName || t('workspacePicker.thisDevice');
   chip.classList.remove('is-offline');
   chip.innerHTML = DEVICE_HD_SVG;
-  chip.appendChild(document.createTextNode(label));
+  chip.appendChild(devChipLabelEl(label));
   chip.insertAdjacentHTML('beforeend', DEV_CHEV_SVG);
   chip.title = deviceId || selfName;
   chip.setAttribute('aria-expanded', String(explorerDevMenuOpen));
@@ -150,7 +167,7 @@ function paintExplorerDevChip() {
       if (!explorerRootDevice || !chip.isConnected) return;
       chip.textContent = '';
       chip.innerHTML = DEVICE_HD_SVG;
-      chip.appendChild(document.createTextNode(name));
+      chip.appendChild(devChipLabelEl(name));
       chip.insertAdjacentHTML('beforeend', DEV_CHEV_SVG);
       chip.title = explorerRootDevice;
       if (online === false) {
@@ -168,7 +185,7 @@ function paintExplorerDevChip() {
       explorerRosterSelf = roster.self;
       chip.textContent = '';
       chip.innerHTML = DEVICE_HD_SVG;
-      chip.appendChild(document.createTextNode(roster.self.name));
+      chip.appendChild(devChipLabelEl(roster.self.name));
       chip.insertAdjacentHTML('beforeend', DEV_CHEV_SVG);
       chip.title = roster.self.name;
     }).catch(() => {});
@@ -178,27 +195,71 @@ function paintExplorerDevChip() {
 function closeExplorerDevMenu() {
   if (!explorerDevMenuOpen) return;
   explorerDevMenuOpen = false;
-  const menu = /** @type {HTMLElement | null} */ (document.querySelector('.explorer-dev-anchor .dev-menu'));
+  explorerDevMenuAnchorRect = null;
+  const menu = /** @type {HTMLElement | null} */ (document.querySelector('.dev-menu.explorer-dev-menu'));
   if (menu) { menu.hidden = true; menu.innerHTML = ''; }
   const chip = document.getElementById('explorer-device-btn');
   if (chip) chip.setAttribute('aria-expanded', 'false');
+  document.removeEventListener('scroll', explorerDevViewportChanged, true);
+  window.removeEventListener('resize', explorerDevViewportChanged);
 }
 
 /** @param {Event} e */
 function explorerDevOutsideClose(e) {
   if (!explorerDevMenuOpen) return;
   const tgt = /** @type {Element|null} */ (e.target);
-  if (tgt && tgt.closest('.explorer-dev-anchor')) return;
+  if (tgt && tgt.closest('.explorer-dev-anchor, .dev-menu.explorer-dev-menu')) return;
   closeExplorerDevMenu();
+}
+
+/** 弹层开着时滚动/改窗：锚 chip 视口矩形没动（无关容器的杂散 scroll——focus 滚动
+ *  等会打到 overflow:hidden 的 #sidebar 上，实测 chip 位移为零）→ 原地重锚不收；
+ *  锚真动了 → 收（fixed 按 chip 矩形锚定，锚失效即收，不做跟踪重排）。 */
+function explorerDevViewportChanged() {
+  if (!explorerDevMenuOpen) return;
+  const chip = document.getElementById('explorer-device-btn');
+  const a = explorerDevMenuAnchorRect;
+  if (!chip || !a) { closeExplorerDevMenu(); return; }
+  const r = chip.getBoundingClientRect();
+  const still = Math.abs(r.left - a.left) < 1 && Math.abs(r.top - a.top) < 1 && Math.abs(r.bottom - a.bottom) < 1;
+  if (still) placeExplorerDevMenu();
+  else closeExplorerDevMenu();
+}
+
+/** body 级 fixed 菜单按 chip 视口矩形锚定（弹层浮出批 2026-11-01）：chip 下方
+ *  6px 起弹；右/下缘出视口时 8px 边距内回收；下方放不下且上方容得下时上翻。 */
+function placeExplorerDevMenu() {
+  const chip = document.getElementById('explorer-device-btn');
+  const menu = /** @type {HTMLElement | null} */ (document.querySelector('.dev-menu.explorer-dev-menu'));
+  if (!chip || !menu || menu.hidden) return;
+  const r = chip.getBoundingClientRect();
+  const M = 8;
+  menu.style.left = '0px';
+  menu.style.top = '0px'; // 先归零再量自然尺寸（上翻腿要用真实高）
+  const mw = menu.offsetWidth;
+  const mh = menu.offsetHeight;
+  let x = r.left;
+  let y = r.bottom + 6;
+  if (x + mw > window.innerWidth - M) x = Math.max(M, window.innerWidth - M - mw);
+  if (y + mh > window.innerHeight - M) {
+    const above = r.top - M;
+    y = above >= mh ? r.top - mh - 6 : Math.max(M, window.innerHeight - M - mh);
+  }
+  menu.style.left = Math.round(x) + 'px';
+  menu.style.top = Math.round(y) + 'px';
+  explorerDevMenuAnchorRect = { left: r.left, top: r.top, bottom: r.bottom };
 }
 
 function openExplorerDevMenu() {
   explorerDevMenuOpen = true;
   const chip = document.getElementById('explorer-device-btn');
-  const menu = /** @type {HTMLElement | null} */ (document.querySelector('.explorer-dev-anchor .dev-menu'));
+  const menu = /** @type {HTMLElement | null} */ (document.querySelector('.dev-menu.explorer-dev-menu'));
   if (chip) chip.setAttribute('aria-expanded', 'true');
   if (!menu) return;
+  document.addEventListener('scroll', explorerDevViewportChanged, true);
+  window.addEventListener('resize', explorerDevViewportChanged);
   menu.hidden = false;
+  placeExplorerDevMenu(); // 空壳先落位（花名册回来重排一次）
   import('./deviceRoster.js')
     .then(({ getDeviceRoster }) => getDeviceRoster())
     .then((roster) => {
@@ -232,6 +293,7 @@ function openExplorerDevMenu() {
       foot.className = 'dev-menu-foot';
       foot.textContent = t('project.deviceMenuFoot');
       menu.appendChild(foot);
+      placeExplorerDevMenu(); // 行集落定后按真实尺寸重锚（宽度自适应最长设备名）
     })
     .catch(() => {
       // 花名册不可得 = 回落单本机行，不弹错误（可继续本机浏览）。
@@ -243,6 +305,7 @@ function openExplorerDevMenu() {
       item.innerHTML = '<span class="dot"></span><span class="nm">' + escapeHtml(t('workspacePicker.thisDevice')) + '</span>' + DEV_ICON_CHECK;
       item.addEventListener('click', (e) => { e.stopPropagation(); selectExplorerDevice({ id: 'self', name: '', online: true, self: true }); });
       menu.appendChild(item);
+      placeExplorerDevMenu();
     });
 }
 
@@ -981,16 +1044,16 @@ function ensureExplorerSearch() {
   // 注意：光设 `hidden` 属性**打不过**内联 display（UA 的 [hidden]{display:none} 优先级最低）
   // —— 这里连 display 一起关，展开时一起开。踩过一次：属性 true 但行照样占位，
   // 整棵树下移，14 张基线全 DIFF。
-  row.setAttribute('style', 'display:none;align-items:center;gap:6px;padding:2px 8px 6px;');
+  row.setAttribute('style', 'display:none;align-items:center;gap:var(--ds-space-1h);padding:var(--ds-space-half) var(--ds-space-2) var(--ds-space-1h);');
   const input = document.createElement('input');
   input.type = 'search';
   input.id = 'explorer-search';
   input.className = 'explorer-search-input';
   input.placeholder = t('explorer.searchPlaceholder');
   input.setAttribute('aria-label', t('explorer.searchPlaceholder'));
-  input.setAttribute('style', 'flex:1 1 auto;min-width:0;padding:4px 8px;border-radius:8px;'
+  input.setAttribute('style', 'flex:1 1 auto;min-width:0;padding:var(--ds-space-1) var(--ds-space-2);border-radius:var(--ds-radius-input);'
     + 'border:1px solid rgba(255,255,255,0.14);background:rgba(255,255,255,0.06);'
-    + 'color:inherit;font:12.5px/1.4 inherit;');
+    + 'color:inherit;font:var(--ds-fs-hint)/1.4 inherit;');
   input.addEventListener('input', () => applyTreeFilter(input.value));
   input.addEventListener('keydown', (e) => {
     // Esc 只收自己的过滤词并收起（不吞事件给全局：层栈/壳的 Esc 契约逐字保留）
@@ -1012,7 +1075,7 @@ function ensureExplorerSearch() {
   sortBtn.title = sortModeLabel(explorerSortMode);
   sortBtn.setAttribute('aria-label', sortModeLabel(explorerSortMode));
   sortBtn.textContent = sortModeLabel(explorerSortMode);
-  sortBtn.setAttribute('style', 'flex:0 0 auto;font:11.5px/1.2 inherit;padding:3px 7px;border-radius:7px;'
+  sortBtn.setAttribute('style', 'flex:0 0 auto;font:var(--ds-fs-hint)/1.2 inherit;padding:var(--ds-space-1) var(--ds-space-2);border-radius:var(--ds-radius-input);'
     + 'border:1px solid rgba(255,255,255,0.14);background:rgba(255,255,255,0.06);color:inherit;cursor:pointer;');
   sortBtn.addEventListener('click', (e) => {
     e.stopPropagation();

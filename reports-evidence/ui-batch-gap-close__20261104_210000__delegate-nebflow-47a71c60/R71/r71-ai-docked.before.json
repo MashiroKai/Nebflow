@@ -1,0 +1,10 @@
+{
+  "want": 16,
+  "docked": {
+    "tl": 16,
+    "tr": 16,
+    "br": 16,
+    "bl": 4,
+    "cls": "bubble ai"
+  }
+}

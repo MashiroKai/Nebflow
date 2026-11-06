@@ -18,7 +18,7 @@ import scala.concurrent.duration.{FiniteDuration, *}
  * 时介入，卡死（活着但不动）永不触发。本扫描器补上"Processing 态 + turn 活动
  * 长时间为零"的识别与恢复。
  *
- * 判定（只对 taskKinds = {Delegate, Ephemeral, Flow, SubTask}，与
+ * 判定（只对 taskKinds = {Delegate, Flow, SubTask}，与
  * WebSocketRoutes.filterActiveAgents 同集合）：
  *   - AgentRecord.status == Processing 且 now - lastActivityMs > threshold
  *   - idle 态永不判卡死（run_in_background 时 agent 回 Idle 为合法状态）——
@@ -86,7 +86,7 @@ object TaskStuckWatcher:
   val LoopFreezeReasonWire: String = "loop"
 
   /** 与 WebSocketRoutes.filterActiveAgents 相同的 task 集合（保持单一事实源意识）。 */
-  private val taskKinds = Set(AgentKind.Delegate, AgentKind.Ephemeral, AgentKind.Flow, AgentKind.SubTask)
+  private val taskKinds = Set(AgentKind.Delegate, AgentKind.Flow, AgentKind.SubTask)
 
   /**
    * 2026-09-10 卡死判据换轴（唯一判据事实源）：本 watcher 的扫描 + AgentControlTool
@@ -845,6 +845,38 @@ object TaskStuckWatcher:
             nebflow.core.delegate.DelegateDeliveryReceipts
               .sweep(resources)
               .handleErrorWith(e => logger.warn(s"[delegate-delivery] sweep failed: ${e.getMessage}").void)
+              .void *>
+            // ── 引擎会话治理专项 · 缺陷七 ②（2026-11-03 作者报障「你杀掉父会话，
+            // 子会话也应该一并关闭，但是现在好像是只会清理父会话，子会话变成孤儿」）：
+            // 孤儿子会话检测。判据 = **在案事实**（父取消墓碑 / 归档旗在案）∧ 子仍在
+            // 注册表里活；处置按 `nebflow.session.orphan.action`（默认 cancel ⇒ 墓碑 +
+            // Cancelled/Stop + 任务行终态化，面板不再有「运行中」残留；report ⇒ 只留
+            // 审计 + 通知根会话）。搭本既有扫描拍，零新增定时器；幂等（子行消失后不再命中）。
+            nebflow.core.delegate.ChildOrphanWatch
+              .scan(resources)
+              .handleErrorWith(e => logger.warn(s"[child-orphan-watch] sweep failed: ${e.getMessage}").void)
+              .void *>
+            // ── 引擎会话治理专项 · 缺陷四（2026-11-03 作者令）：main 漂移无通知 ──
+            // 在飞 delegate 的基分支 tip 被别人推进 ⇒ **默认静默**（降噪重写
+            // 2026-11-05 作者报障「这个通知也太多了」：worktree 隔离下 base 前进
+            // 本身不构成任何行动要求）。只在**可行动**（移动触及我改过的文件 /
+            // base 历史被改写）时注入一条**聚合**通知（同一任务 ≥30min 最多一条）；
+            // 纯「base 动了」的事实进面板（行 `baseDrift` 键），不进消息流。
+            // 节点侧结构性零命中（节点不建分支/worktree、不写 DelegateRegistry）。
+            // 搭本既有扫描拍，零新增定时器。
+            nebflow.core.delegate.BaseDriftWatch
+              .scan(nebflow.core.delegate.BaseDriftWatch.fromResources(resources))
+              .handleErrorWith(e => logger.warn(s"[base-drift] sweep failed: ${e.getMessage}").void)
+              .void *>
+            // ── merge-fifo 批 2026-11-03（作者报障「两个会话都已经报了 merge，为什么
+            // 还没收到通知」）：合并队列**活性守卫**。入队只在回合终态腿发生，任何让
+            // 那条腿没跑成的路径（重启打断 / 判定降级 / 提前收尾）都会让有交付提交
+            // 的分支永远不进队——本拍把「Idle + 有未并交付 + 任务行 running/restarting
+            // + 账本无开放条目 + 静默够久」的漏网成员补进队并通知（幂等：账本有开放
+            // 条目即零动作）。搭本既有扫描拍，零新增定时器。
+            nebflow.core.delegate.MergeEnqueueWatch
+              .scan(resources)
+              .handleErrorWith(e => logger.warn(s"[merge-enqueue-watch] sweep failed: ${e.getMessage}").void)
               .void
       }
 
@@ -867,6 +899,12 @@ object TaskStuckWatcher:
   ): IO[Unit] =
     registry.values.toList
       .filter(rec => scannedKinds.contains(rec.kind) && rec.status == AgentStatus.Waiting)
+      // 错误冻结批（2026-11-01）：记录带**本批冻结线值**（`delegate-frozen:*`）的
+      // 行天然豁免停靠看护——冻结是**故意的停**（监督者可能已自停），不是「停靠
+      // 会话死亡」；把冻结行按死体终态化会把冻结点上的工作判成 failed（作者令
+      // 「保留状态 方便被唤醒」被正面违反）。冻结行的兜底归
+      // `DelegateFreeze.dormantSweep`（提示/超期归档），不归本看护。
+      .filterNot(_.frozenReason.exists(nebflow.core.delegate.DelegateFreeze.isFreezeWire))
       .traverse_ { rec =>
         resources.actorSystem.isAlive(rec.ref.path).flatMap {
           case true => IO.unit

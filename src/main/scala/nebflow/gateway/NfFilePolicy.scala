@@ -241,8 +241,13 @@ object NfFilePolicy extends FilePolicyPort:
      */
     private[gateway] def scanCredentialInodes(dataRoot: java.nio.file.Path): Set[String] =
       val home = java.nio.file.Paths.get(sys.props.getOrElse("user.home", "/"))
+      // 配置文件名单一源（config-single-source 批 2026-11-05）：改名后凭据种子
+      // 必须认**两个名字**——canonical（写面当前名）与 legacy（迁移前的存量名，
+      // 迁移把旧文件改名 `.bak`，但迁移失败/只读旧名时仍是凭据落位）。
+      val configNames: List[String] =
+        List(nebflow.shared.Branding.configFileName, nebflow.shared.PathUtil.LegacyConfigFileName).distinct
       val seeds: List[java.nio.file.Path] =
-        List(dataRoot.resolve("auth.json"), dataRoot.resolve("nebflow.json")) ++
+        (dataRoot.resolve("auth.json") :: configNames.map(n => dataRoot.resolve(n))) ++
           filesUnder(dataRoot.resolve("secrets"), 8) ++
           filesUnder(home.resolve(".ssh"), 8)
       seeds.flatMap(inodeKey).toSet
@@ -404,13 +409,19 @@ object NfFilePolicy extends FilePolicyPort:
         if rp.startsWith(dr) then
           val rel = dr.relativize(rp).toString.replace('\\', '/')
           val head = rel.split('/').headOption.getOrElse("")
-          if head == "secrets" || rel == "auth.json" || rel == "nebflow.json" then
+          // 配置文件名单一源（config-single-source 批 2026-11-05）：canonical 与
+          // legacy 两个名字都按凭据身份拒绝——配置文件里就是 apiKey 本体。
+          val configNames = Set(
+            nebflow.shared.Branding.configFileName,
+            nebflow.shared.PathUtil.LegacyConfigFileName
+          )
+          if head == "secrets" || rel == "auth.json" || configNames.contains(rel) then
             Some(
                 (
                   NfDenyLayer.Credential,
                   "this path is a " + nebflow.shared.Branding.productName +
                     " credential file inside the data directory " +
-                    "(auth.json / nebflow.json / the secrets subtree)"
+                    "(auth.json / " + nebflow.shared.Branding.configFileName + " / the secrets subtree)"
                 )
             )
           else None

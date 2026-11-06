@@ -16,22 +16,32 @@ import { dropDeviceMessageCache } from './fmDropboxCache.js';
 import { evict as evictLocalStore } from './localStore.js';
 import { activeView } from './chatView.js';
 import { t } from './i18n.js';
-import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent, isBgAgentId, shouldFollowBottom, deviceTagHtml } from './utils.js';
+import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, appendUserTextWithFences, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, mountToolCardBody, delegatePromptRaw, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent, isBgAgentId, shouldFollowBottom, deviceTagHtml } from './utils.js';
 // output 块语法批（作者令 2026-10-31）：历史重放腿同 live 腿一个 output 面——
 // 平衡 <output> 对 ⇒ 正常态只渲染块内，角标展开回原文（turnGroup toggle）。
 import { applyOutputFace, hasOutputBlock } from './outputTag.js';
 import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
+// schedule-created-card 批（2026-11-05）：历史重放两腿与 live renderTool 共用
+// 同一个卡片行 builder（零第二套判据）。
+import { scheduleCardRowForTool } from './scheduleCard.js';
 import { createDurationBadgeElement, createMsgFooterBadge, buildInjectedRow, bindCollapsibleToggle, renderAskUserHistory, buildCompactCardRow, sameAskCards, applyThinkingWindowCap } from './chat.js';
 // pop-upgrade 批(2026-10-03):Pop 工件载荷面(叠卡/文件卡片)单一真源——live
 // (chat.js renderTool)与两条历史重放路共用本模块;popArtifacts 不 import chat.js
 // (chat.js 的 openPopArtifact/popArtifactFromInput 已移入该处再 re-export,无环)。
 import { isPopPayload, parsePopPayload, buildPopArtifactRow, renderPopToolRow, applyLegacyPopCard, buildUserMediaRow, unifyUserMediaFace } from './popArtifacts.js';
+// msgchip-provenance 批（2026-11-01）：渠道/平台来源注记剥离单点（与 live 腿 chat.js
+// renderUserBubble、牌窗 msgTokenChip 同一实现）。
+import { stripChannelProvenance } from './channelProvenance.js';
 import { buildTurnSummariesForHistory } from './turnGroup.js';
 import { renderRefBlock, normalizeTaskRef } from './reference.js';
 // quote-message 一期（2026-10-09，spec §7.5）：历史重放行挂 data-msg-id（页内
 // index + mount token）+ 可引用行右键菜单 + UiMessage.User.quote 引用块重渲。
 import { beginHistoryMount, historyMsgId, attachQuoteMenu, renderQuoteBlock, syncQuoteJumpStates } from './msgQuote.js';
 import { renderGateBegin, renderGateEnd } from './chat/renderGate.js'; // perf 台账 #922：分帧挂载腿持渲染遮蔽门
+// 进场落底「武装窗」（手机端进场落顶修复批 · 2026-11-02）：同步钉底的延续，
+// 覆盖 deferred markdown 升级批 / 晚到媒体的撑高（下方 followBottom 分支用）；
+// 分帧挂载腿（挂载进行中）以 `cancelSettleBottom` 同拍撤回。理由见模块头注。
+import { settleBottom, cancelSettleBottom } from './chat/settleBottom.js';
 // quote-message 一期：被引用者名（助手/工具/提问行）= agent 显示名 —— ownAgentName
 // （会话行）缺席时回落 rootDisplayName（叶模块，只读 state，无环）。
 import { rootDisplayName } from './rootName.js';
@@ -647,7 +657,8 @@ export function restoreFromStorage(opts = {}) {
         //（main.js saveMsg 落缓存；缺席 ⇒ undefined = 旧行为逐字不变）。
         // schedule（schedcard 批 2026-10-29）：定时任务卡片载荷同字段透传——
         // `m.source==='schedule'` 的行在 builder 内走专属卡分支（缺席 = 旧行为）。
-        chat.appendChild(buildInjectedRow(m.text || '', m.source, m.timestamp, m.eventType, m.sender, m.senderTeam, undefined, m.delivery, m.intake, m.header, m.fileChanges, m.schedule));
+        // 来源链批（2026-11-01 19:23）：收件会话 id 末参下传（同上方历史分页腿）。
+        chat.appendChild(buildInjectedRow(m.text || '', m.source, m.timestamp, m.eventType, m.sender, m.senderTeam, undefined, m.delivery, m.intake, m.header, m.fileChanges, m.schedule, ownerSessionId));
         return;
       }
       // Look ahead: if next message is a skill-activated system message,
@@ -660,9 +671,17 @@ export function restoreFromStorage(opts = {}) {
       // Ask ANSWER marker — same contract as the backend-history leg below
       // (AskUser 强制展开修令 2026-10-06): mid-turn, never a turn opener.
       if (m.answerOf) row.dataset.nfAskAnswer = m.answerOf;
+      // tool-card-leak-on-reload 批（2026-11-02）：回合内插话行标——与后端历史腿
+      // 同一 DOM 契约（data-nf-mid-turn = 该 user 行不是轮起点；turnGroup 的段边界
+      // 单点判据据此把同一引擎回合保持为一段）。缺席（旧缓存行/普通开轮行）⇒ 不落标。
+      if (m.midTurn === true) row.dataset.nfMidTurn = '1';
       // 媒体统一适配批（2026-10-20）：存量「已存至」行级换算（单点
       // unifyUserMediaFace）——识别命中 ⇒ 媒体行接管、文本气泡隐去；否则逐字现状。
       const userUnified = unifyUserMediaFace(m.text, m.attachments);
+      // msgchip-provenance 批（2026-11-01）：显示面只留作者原生输入——渠道来源块 /
+      // 注入头 / 附件路径指针行剥除（单点 channelProvenance；与 live 腿 chat.js
+      // renderUserBubble 同一实现，两条恢复腿同源）。
+      userUnified.text = stripChannelProvenance(userUnified.text).text;
       if (userUnified.text) {
         const bubble = document.createElement('div');
         bubble.className = 'bubble user';
@@ -671,7 +690,7 @@ export function restoreFromStorage(opts = {}) {
           label.className = 'ask-label';
           label.textContent = t('chat.skillLabel', { skill: skillName });
           const content = document.createElement('div');
-          content.textContent = m.text;
+          content.textContent = userUnified.text;
           bubble.appendChild(label);
           bubble.appendChild(content);
         } else {
@@ -679,7 +698,7 @@ export function restoreFromStorage(opts = {}) {
           // Plain-text face with mention spans (mention-render batch):
           // identical output when nothing matches; user text never enters
           // markdown on a restore path either.
-          appendTextWithMentions(t, userUnified.text || '');
+          appendUserTextWithFences(t, userUnified.text || '');
           bubble.appendChild(t);
         }
         row.appendChild(bubble);
@@ -687,7 +706,7 @@ export function restoreFromStorage(opts = {}) {
       const storageMediaRow = buildUserAttachmentRows(row, userUnified.atts, m.timestamp);
       // Unified v1.2 footer pill (time + copy; copy-only when no timestamp)
       if ((m.timestamp && m.timestamp > 0) || m.text) {
-        row.appendChild(createAiCopyBadge(m.timestamp, m.text));
+        row.appendChild(createAiCopyBadge(m.timestamp, userUnified.text));
       }
       chat.appendChild(row);
       // #491 主题三 (AC-S4): the independent media card row follows the user
@@ -747,6 +766,10 @@ export function restoreFromStorage(opts = {}) {
         if (isTurnTerminal) {
           row.dataset.nfTurnTerminal = '1';
           if (m.model) row.dataset.nfModel = m.model;
+          // tool-card-leak-on-reload 批（2026-11-02）：轮时长随 terminal 行落 DOM，
+          // 供 turnGroup 对**旧存量**转录（无 `midTurn` 键）做「该 user 行是否落在
+          // 这轮引擎窗口内」的时间戳蕴含推断（零迁移降级路径）。
+          if (hasDuration) row.dataset.nfTurnDuration = String(m.durationMs);
         }
         if (hasDuration) {
           const badge = createDurationBadgeElement(m.durationMs, m.model, i, m.timestamp, m.text);
@@ -769,7 +792,7 @@ export function restoreFromStorage(opts = {}) {
       // 读写 <K> 文件 count (same contract as chat.js renderTool).
       if (m.input) { try { row.dataset.nfInput = typeof m.input === 'string' ? m.input : JSON.stringify(m.input); } catch {} }
       const card = document.createElement('div');
-      card.className = 'tool-card';
+      card.className = 'tool-card ds-tool-card';
       // beta.56 ruling: tool-class bubbles carry NO footer (message-class
       // only). Card/iframe payloads render without any copy badge.
       // Pop artifact payload (pop-upgrade batch): process row + artifact row,
@@ -793,7 +816,7 @@ export function restoreFromStorage(opts = {}) {
       } else if (m.content && typeof m.content === 'string' && /^___\w+_HTML___/.test(m.content)) {
         const isError = m.isError;
         const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
-                             : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+                             : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
         const localLabel = localizeToolLabel(m.label);
         const localSummary = localizeToolSummary(m.summary, m.label);
         const lParts = localLabel.split('\n', 2);
@@ -827,7 +850,7 @@ export function restoreFromStorage(opts = {}) {
         // branch below byte-for-byte.
         const isError = m.isError;
         const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
-                             : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+                             : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
         const localLabel = localizeToolLabel(m.label);
         const localSummary = localizeToolSummary(m.summary, m.label);
         const lParts = localLabel.split('\n', 2);
@@ -846,12 +869,12 @@ export function restoreFromStorage(opts = {}) {
       } else {
         const isError = m.isError;
         const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
-                             : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+                             : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
         const detailHtml = buildToolDetail(m.input, m.label);
-        const _delegatePrompt = buildDelegatePromptHtml(m.input);
-        const highlightHtml = renderHighlightedContent(m.content, m.label);
-        const bodyHtml = (detailHtml + _delegatePrompt + (highlightHtml || (m.content ? '<pre class="tool-body-pre">' + esc(m.content) + '</pre>' : ''))) || '';
-        const hasBody = !!bodyHtml;
+        // 折叠单源（ui-unification-20261103-chat-stream）：与 chat.js renderTool
+        // 同构——预览/全文两态 mountToolCardBody 单点定义，全文只在展开瞬间进 DOM。
+        const promptText = delegatePromptRaw(m.input);
+        const hasBody = !!(detailHtml || promptText || m.content);
         const localLabel = localizeToolLabel(m.label);
         const localSummary = localizeToolSummary(m.summary, m.label);
         const lParts = localLabel.split('\n', 2);
@@ -860,11 +883,20 @@ export function restoreFromStorage(opts = {}) {
         const lHtml = esc(lParts[0]) + ' &mdash; ' + esc(localSummary) + _deviceTag
           + (lParts.length > 1 ? '<br><span class="tool-detail">' + esc(lParts[1]) + '</span>' : '');
         card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
-          '<div class="content"><div class="label">' + lHtml + '</div>' +
-          (bodyHtml ? '<div class="body">' + bodyHtml + '</div>' : '') + '</div>';
+          '<div class="content"><div class="label">' + lHtml + '</div></div>';
+        mountToolCardBody(card, { detailHtml, promptText, content: m.content, label: m.label, labelTail: lParts[1] || '' });
         row.appendChild(card);
         chat.appendChild(row);
         if (hasBody) attachToolClick(card);
+        // Schedule 卡片（schedule-created-card 批 2026-11-05）：重放腿与 live
+        // renderTool 同形 —— 进程行 + 卡片行两行制，同一个 builder（零第二套判据）。
+        const schedRow = scheduleCardRowForTool({
+          label: m.label, inputJson: m.input, content: m.content, isError: m.isError, sessionId: ownerSessionId,
+        });
+        if (schedRow) {
+          schedRow.dataset.msgId = historyMsgId(i) + '-sched';
+          chat.appendChild(schedRow);
+        }
       }
     } else if (m.type === 'askUser') {
       // Same card component + lock state as the live path (see
@@ -1049,8 +1081,10 @@ function buildHistoryRow(m, i, ctx) {
         // fileChanges（bug #58 修）：后端历史分页行同字段透传（缺席 = 旧行为）。
         // schedule（schedcard 批 2026-10-29）：定时任务卡片载荷同字段透传——
         // `m.source==='schedule'` 的行在 builder 内走专属卡分支（缺席 = 旧行为）。
+        // 来源链批（2026-11-01 19:23）：收件会话 id 末参下传（完工卡归属链上层段；
+        // live 路径 renderInjectedBubble 同键）。
         fragment.appendChild(buildInjectedRow(m.text || '', m.source, m.timestamp, m.eventType, m.sender, m.senderTeam,
-          (el, text) => deferMd(el, text, false), m.delivery, m.intake, m.header, m.fileChanges, m.schedule));
+          (el, text) => deferMd(el, text, false), m.delivery, m.intake, m.header, m.fileChanges, m.schedule, ownerSessionId));
         return;
       }
       // Look ahead: if next message is a skill-activated system message,
@@ -1063,8 +1097,12 @@ function buildHistoryRow(m, i, ctx) {
       // quote-message 一期（spec §7.5）：重放行挂 h<index>-<mount> id + 右键菜单
       // （用户文本行 = 复制 + 引用；快照数据全在行内，重放腿引用零引擎依赖）。
       row.dataset.msgId = historyMsgId(i);
+      // msgchip-provenance 批（2026-11-01）：显示面只留作者原生输入——渠道来源块 /
+      // 注入头 / 附件路径指针行剥除（单点 channelProvenance）。剥离结果一并在本行
+      // 的引用菜单与复制钮上生效（显示/引用/复制三面同文，与 live 腿 chat.js 同读）。
+      const shownText = stripChannelProvenance(m.text || '').text;
       attachQuoteMenu(row, {
-        kind: 'text', text: m.text || '',
+        kind: 'text', text: shownText,
         sessionId: ownerSessionId || undefined, messageId: row.dataset.msgId,
         senderRole: 'user', senderName: t('chat.quoteSenderMe'), ts: m.timestamp || Date.now(),
       });
@@ -1077,6 +1115,12 @@ function buildHistoryRow(m, i, ctx) {
       // workline turnAnchor same exemption). Absent on pre-案B rows ⇒ those
       // keep the legacy split behaviour (unchanged).
       if (m.answerOf) row.dataset.nfAskAnswer = m.answerOf;
+      // tool-card-leak-on-reload 批（2026-11-02）：回合内插话行标——后端在落盘那
+      // 一瞬判定「该会话仍在 Processing」并随行写 `midTurn=true`（dispatchUserText
+      // / typeless 帧腿 / skill 腿），此处转成 data-nf-mid-turn（turnGroup 的段边界
+      // 单点判据读它；live 腿 chat.js renderUserBubble 盖同一标）。缺席（旧
+      // `.ui.json` 行 / 普通开轮行）⇒ 不落标，判据回落时间戳蕴含推断。
+      if (m.midTurn === true) row.dataset.nfMidTurn = '1';
       // quote-message 一期（spec §3.4）：`m.quote` 在场 ⇒ 气泡上方引用块（与
       // live 腿同一渲染器 renderQuoteBlock；快照文随行落盘自包含 —— ui.json 裁剪/
       // 换设备/分页都稳）。目标行可点性在 fragment 挂载后由 syncQuoteJumpStates
@@ -1097,6 +1141,10 @@ function buildHistoryRow(m, i, ctx) {
       // unifyUserMediaFace，与缓存恢复腿同源）——识别命中 ⇒ 媒体行接管、
       // 文本气泡隐去；否则逐字现状。
       const userUnified = unifyUserMediaFace(m.text, m.attachments);
+      // msgchip-provenance 批（2026-11-01）：显示面只留作者原生输入——渠道来源块 /
+      // 注入头 / 附件路径指针行剥除（单点 channelProvenance；与 live 腿 chat.js
+      // renderUserBubble 同一实现，两条恢复腿同源）。
+      userUnified.text = stripChannelProvenance(userUnified.text).text;
       if (userUnified.text) {
         const bubble = document.createElement('div');
         bubble.className = 'bubble user';
@@ -1115,7 +1163,7 @@ function buildHistoryRow(m, i, ctx) {
           // Plain-text face with mention spans (mention-render batch):
           // identical output when nothing matches; user text never enters
           // markdown on a restore path either.
-          appendTextWithMentions(t, userUnified.text || '');
+          appendUserTextWithFences(t, userUnified.text || '');
           bubble.appendChild(t);
         }
         (composite || row).appendChild(bubble);
@@ -1123,7 +1171,7 @@ function buildHistoryRow(m, i, ctx) {
       const backendMediaRow = buildUserAttachmentRows(row, userUnified.atts, m.timestamp);
       // Unified v1.2 footer pill (time + copy; copy-only when no timestamp)
       if ((m.timestamp && m.timestamp > 0) || m.text) {
-        row.appendChild(createAiCopyBadge(m.timestamp, m.text));
+        row.appendChild(createAiCopyBadge(m.timestamp, shownText));
       }
       fragment.appendChild(row);
       // #491 主题三 (AC-S4): media row into the fragment right after the user
@@ -1185,6 +1233,10 @@ function buildHistoryRow(m, i, ctx) {
         if (isTurnTerminal) {
           row.dataset.nfTurnTerminal = '1';
           if (m.model) row.dataset.nfModel = m.model;
+          // tool-card-leak-on-reload 批（2026-11-02）：轮时长随 terminal 行落 DOM，
+          // 供 turnGroup 对**旧存量**转录（无 `midTurn` 键）做「该 user 行是否落在
+          // 这轮引擎窗口内」的时间戳蕴含推断（零迁移降级路径）。
+          if (hasDuration) row.dataset.nfTurnDuration = String(m.durationMs);
         }
         if (hasDuration) {
           const badge = createDurationBadgeElement(m.durationMs, m.model, i, m.timestamp, m.text);
@@ -1211,7 +1263,7 @@ function buildHistoryRow(m, i, ctx) {
       // 读写 <K> 文件 count (same contract as chat.js renderTool).
       if (m.input) { try { row.dataset.nfInput = typeof m.input === 'string' ? m.input : JSON.stringify(m.input); } catch {} }
       const card = document.createElement('div');
-      card.className = 'tool-card';
+      card.className = 'tool-card ds-tool-card';
       // beta.56 ruling: tool-class bubbles carry NO footer (message-class
       // only). Card/iframe payloads render without any copy badge.
       // Pop artifact payload (pop-upgrade batch): process row + artifact row,
@@ -1234,7 +1286,7 @@ function buildHistoryRow(m, i, ctx) {
       } else if (m.content && typeof m.content === 'string' && /^___\w+_HTML___/.test(m.content)) {
         const isError = m.isError;
         const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
-                             : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+                             : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
         const localLabel = localizeToolLabel(m.label);
         const localSummary = localizeToolSummary(m.summary, m.label);
         const lParts = localLabel.split('\n', 2);
@@ -1272,7 +1324,7 @@ function buildHistoryRow(m, i, ctx) {
           // ordinary tool results never match the regex, so their rendering is untouched.
           const isError = m.isError;
           const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
-                               : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+                               : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
           const localLabel = localizeToolLabel(m.label);
           const localSummary = localizeToolSummary(m.summary, m.label);
           const lParts = localLabel.split('\n', 2);
@@ -1290,7 +1342,7 @@ function buildHistoryRow(m, i, ctx) {
           fragment.appendChild(row);
         } else {
         const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
-                             : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+                             : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
         // perf 台账 #922（2026-10-26）：大工具正文是补页/初载长任务的大头——
         // 实测 renderHighlightedContent 在 60KB 正文上 ~0.6s/条（正则重灾），
         // esc+innerHTML 仅 ~3ms。三刀合一：>TOOL_HEAVY_BODY 的正文（甲）跳过
@@ -1298,14 +1350,13 @@ function buildHistoryRow(m, i, ctx) {
         // 纯成本）；（乙）分帧挂载腿把正文构建推进空闲升级批（卡片壳即时、
         // .body 稍后逐字同形）；（丙）同步腿（初载/弹窗）同享甲刀（cap 在
         // 共享 helper 内）。TOOL_HEAVY_BODY 以下逐字现状。
-        const deferBigBody = !!(deferToolBody && typeof m.content === 'string' && m.content.length > TOOL_HEAVY_BODY);
-        let bodyHtml = '';
-        if (deferBigBody) {
-          deferToolBody(card, () => toolBodyHtml(m.content, m.input, m.label));
-        } else {
-          bodyHtml = toolBodyHtml(m.content, m.input, m.label);
-        }
-        const hasBody = deferBigBody || !!bodyHtml;
+        // 折叠单源（ui-unification-20261103-chat-stream）：与 live 腿同构。
+        // perf 台账 #922 的闲置分帧腿被折叠面**取代**：预览只对 ≤TOOL_PREVIEW_LINES
+        // 行做渲染（capLines 后高亮，成本与行数无关的墙已拆），全文改为展开瞬间
+        // 才构建——比「空闲升级批」严格更懒，故此处不再走 deferToolBody。
+        const detailHtml = buildToolDetail(m.input, m.label);
+        const promptText = delegatePromptRaw(m.input);
+        const hasBody = !!(detailHtml || promptText || m.content);
         const localLabel = localizeToolLabel(m.label);
         const localSummary = localizeToolSummary(m.summary, m.label);
         const lParts = localLabel.split('\n', 2);
@@ -1314,11 +1365,20 @@ function buildHistoryRow(m, i, ctx) {
         const lHtml = esc(lParts[0]) + ' &mdash; ' + esc(localSummary) + _deviceTag2
           + (lParts.length > 1 ? '<br><span class="tool-detail">' + esc(lParts[1]) + '</span>' : '');
         card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
-          '<div class="content"><div class="label">' + lHtml + '</div>' +
-          (bodyHtml ? '<div class="body">' + bodyHtml + '</div>' : '') + '</div>';
+          '<div class="content"><div class="label">' + lHtml + '</div></div>';
+        mountToolCardBody(card, { detailHtml, promptText, content: m.content, label: m.label, labelTail: lParts[1] || '' });
         row.appendChild(card);
         fragment.appendChild(row);
         if (hasBody) attachToolClick(card);
+        // Schedule 卡片（schedule-created-card 批 2026-11-05）：与 storage 腿逐字
+        // 同形（进程行 + 卡片行；同一 builder、同一行 id 后缀）。
+        const schedRow = scheduleCardRowForTool({
+          label: m.label, inputJson: m.input, content: m.content, isError: m.isError, sessionId: ownerSessionId,
+        });
+        if (schedRow) {
+          schedRow.dataset.msgId = historyMsgId(i) + '-sched';
+          fragment.appendChild(schedRow);
+        }
         }
       }
     } else if (m.type === 'askUser') {
@@ -1554,6 +1614,14 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
   if (followBottom) {
     chat.scrollTop = chat.scrollHeight;
     if (activeView) activeView.stream.scrollSnapped = true;
+    // 进场落底修复批（2026-11-02 · 作者实拍报障「手机端点进聊天从最顶部开始读」）：
+    // 上面这次同步钉底只赢一次 —— 紧随其后的 deferred markdown 升级批（下方
+    // `upgradeBatch`，每帧 6 条）与晚到的图片字节都会在下一次布局把内容撑高，
+    // 而**下方增长不产生 scroll 事件**（同族既有注记见 main.js `pinIfFollowing`），
+    // 视图就停在原处。武装窗在原语里把「这一小段时间内任何原因导致的离开底部」
+    // 逐帧收敛回来（用户一动手即解除、有截止时刻 —— 见 chat/settleBottom.js 头注）。
+    // 非跟随腿（回看中段）**不**武装：那里要的是锚位，不是底部。
+    settleBottom(chat);
   } else if (scrollToBottom) {
     // 非跟随（用户回看中段）：绝对锚位恢复——重放上方行与改前同形（同一历史
     // 重放），scrollTop 回到 prev 即回到原阅读位；不写 scrollSnapped（不劫持

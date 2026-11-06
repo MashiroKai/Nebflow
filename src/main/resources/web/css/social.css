@@ -34,10 +34,8 @@
   max-height: 85vh;
   padding: 0;
   overflow: hidden;
-  border-radius: 20px;
+  border-radius: var(--ds-radius-shell);
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
   box-shadow:
     inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
@@ -56,27 +54,27 @@
      existing values only). Measured asymmetry: the title sat 21px from the
      modal edge, the close button 15px; cards measured 21/21 and the embedded
      appId box 16/16 — the header chrome was the one unequal layer. */
-  padding: 14px 20px 12px 20px;
+  padding: 14px var(--ds-space-5) var(--ds-space-3) var(--ds-space-5);
   border-bottom: 1px solid var(--glass-border);
   flex-shrink: 0;
-  gap: 8px;
+  gap: var(--ds-space-2);
 }
 #social-modal-title {
-  font-size: 15px;
+  font-size: var(--ds-fs-title);
   font-weight: 600;
   color: var(--color-frame-text-bright);
 }
 .social-modal-body {
-  padding: 16px 20px 20px;
+  padding: var(--ds-space-4) var(--ds-space-5) var(--ds-space-5);
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: var(--ds-space-4);
   min-width: 0;
 }
 
 /* ── Sections ───────────────────────────────────────────────────────────── */
-.social-section { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.social-section { display: flex; flex-direction: column; gap: var(--ds-space-2); min-width: 0; }
 /* 🔴 Author ruling 2026-09-23 (Part A): the remote-access section is WITHHELD
    from the visible face (`hidden` in index.html) — hidden, not deleted, so its
    DOM, JS consumers and locale keys all survive and restoring it is one
@@ -87,7 +85,7 @@
    in this repo: flowMap.css:783 / :929, usage.css:16, sidebar.css:861. */
 #social-section-remote[hidden] { display: none; }
 .social-section-title {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   font-weight: 600;
   letter-spacing: 0.02em;
   color: var(--color-frame-text-muted);
@@ -98,13 +96,13 @@
 /* weixin-scanbind (2026-10-03, 极简 pass): the rhythm loosens one step — the
    list breathes at 10px, the cards carry 14px air — all values stay in the
    existing token/length family (no new colour, radius or breakpoint). */
-.social-card-list { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.social-card-list { display: flex; flex-direction: column; gap: var(--ds-space-inline-gap); min-width: 0; }
 .social-card {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 14px 16px;
-  border-radius: 14px;
+  gap: var(--ds-space-inline-gap);
+  padding: 14px var(--ds-space-4);
+  border-radius: var(--ds-radius-card-md);
   border: 1px solid var(--glass-border);
   background: var(--glass-etched-bg);
   min-width: 0;
@@ -112,13 +110,13 @@
 .social-card-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
   flex-wrap: wrap;
   min-width: 0;
 }
 .social-card-icon { width: 16px; height: 16px; flex-shrink: 0; color: var(--color-frame-text); }
 .social-card-name {
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-weight: 600;
   color: var(--color-frame-text-bright);
   min-width: 0;
@@ -166,10 +164,10 @@
 }
 /* 危险 pill 词前图标（S13）：11px，与词距 3px，红由图标、字归中性。 */
 .social-status-pill[data-status="configInvalid"] .st-ic,
-.social-status-pill[data-status="failed"] .st-ic { width: 11px; height: 11px; margin-right: 3px; }
+.social-status-pill[data-status="failed"] .st-ic { width: 11px; height: 11px; margin-right: var(--ds-space-1); }
 
 .social-card-desc {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   line-height: 1.45;
   color: var(--color-frame-text-muted);
 }
@@ -177,12 +175,12 @@
 .social-card-fields {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px 12px;
+  gap: var(--ds-space-2) var(--ds-space-3);
   min-width: 0;
 }
-.social-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.social-field { display: flex; flex-direction: column; gap: var(--ds-space-1); min-width: 0; }
 .social-field-label {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   color: var(--color-frame-text-muted);
 }
@@ -190,31 +188,24 @@
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
-  padding: 6px 8px;
-  font: 400 12px -apple-system, BlinkMacSystemFont, sans-serif;
-  border-radius: 8px;
-  border: 1px solid var(--glass-border);
-  background: var(--glass-etched-bg);
+  padding: var(--ds-space-1h) var(--ds-space-2);
+  font: 400 var(--ds-fs-hint) -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-frame-input-text, var(--color-frame-text));
 }
-.social-input:focus {
-  outline: none;
-  border-color: rgb(var(--sapphire) / 0.4);
-  box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.12);
-}
-.social-secret-state { font-size: 10px; color: var(--color-frame-text-dim); }
+/* 造型 + 焦点态：归 css/inputSurface.css（输入面唯一标准批 2026-11-06）。 */
+.social-secret-state { font-size: var(--ds-fs-meta); color: var(--color-frame-text-dim); }
 
 /* Wrong configuration hint (W9) — ui-status-redesign：11px 通知句转中性字，
    语义红由句首 triangle-alert 图标承载（.social-card-hint .st-ic）。 */
 .social-card-hint {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   line-height: 1.45;
   color: var(--status-word);
   overflow-wrap: anywhere;
 }
-.social-card-hint .st-ic { width: 12px; height: 12px; margin-right: 4px; vertical-align: -2px; }
-.social-card-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.social-save-state { font-size: 10px; color: var(--color-frame-text-muted); }
+.social-card-hint .st-ic { width: 12px; height: 12px; margin-right: var(--ds-space-1); vertical-align: -2px; }
+.social-card-actions { display: flex; align-items: center; gap: var(--ds-space-2); flex-wrap: wrap; }
+.social-save-state { font-size: var(--ds-fs-meta); color: var(--color-frame-text-muted); }
 
 /* ── feishu-panel: two-face scanBind card ───────────────────────────────────
    Live-app block (C1), archive (C5), bindings + default session (C3/C4), and
@@ -224,14 +215,14 @@
 .social-live {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 8px 10px;
+  gap: var(--ds-space-1);
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
   border: 1px solid var(--glass-border);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   background: var(--glass-etched-bg);
   min-width: 0;
 }
-.social-live-row { display: flex; gap: 8px; font-size: 11px; line-height: 1.45; min-width: 0; }
+.social-live-row { display: flex; gap: var(--ds-space-2); font-size: var(--ds-fs-meta); line-height: 1.45; min-width: 0; }
 .social-live-value { color: var(--color-frame-text); overflow-wrap: anywhere; }
 /* 🔴 socpanel-min wave-2 (author ruling 2026-10-01), removal readings taken in
    this tree before deleting (emitter grep over the web JS and HTML sources):
@@ -247,8 +238,11 @@
    危险文字项字转常规色，危险语义由行首 unplug 图标（红）承载；hover 时刻整键
    （字＋图标）转红 = 交互红保留（铁律三）。 */
 .social-btn-danger { color: var(--color-frame-text); }
-.social-btn-danger .st-ic { color: var(--status-error-icon); margin-right: 5px; }
-.social-btn-danger:hover, .social-btn-danger:hover .st-ic { color: var(--btn-danger-ink); }
+.social-btn-danger .st-ic { color: var(--status-error-icon); margin-right: var(--ds-space-1h); }
+@media (hover: hover) {
+  .social-btn-danger:hover, .social-btn-danger:hover .st-ic { color: var(--btn-danger-ink); }
+}
+
 /* 🔴 socpanel-min wave-2: `.social-archive-hint` REMOVED — 0 emitters. The
    hint's permanent line went away and its copy (social.feishu.archive.hint)
    moved onto the unbind button's `title`, i.e. hover-at-intent, so no rule is
@@ -264,17 +258,17 @@
 
 /* ── Remote-access section (令②): an independent section, NOT a channel card.
    This batch renders it inert on purpose — no link, no QR, no address. ──── */
-.social-remote-card { gap: 10px; }
+.social-remote-card { gap: var(--ds-space-inline-gap); }
 .social-remote-note {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   line-height: 1.5;
   color: var(--color-frame-text);
   border-left: 2px solid var(--color-frame-text-dim);
-  padding-left: 8px;
+  padding-left: var(--ds-space-2);
 }
-.social-remote-safety { display: flex; flex-direction: column; gap: 4px; }
+.social-remote-safety { display: flex; flex-direction: column; gap: var(--ds-space-1); }
 .social-remote-safety-line {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   line-height: 1.45;
   color: var(--color-frame-text-muted);
 }
@@ -282,7 +276,7 @@
 /* ── Narrow viewports (design §B.2: existing 480 / 768 values only) ─────── */
 @media (max-width: 768px) {
   #social-modal { max-width: calc(100vw - 24px); max-height: 90vh; }
-  .social-modal-body { padding: 12px 14px 16px; gap: 14px; }
+  .social-modal-body { padding: var(--ds-space-3) 14px var(--ds-space-4); gap: 14px; }
 }
 @media (max-width: 480px) {
   /* Fields go single-column; the pill + switch row may wrap without pushing
@@ -304,8 +298,8 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
-  padding: 6px 0 2px;
+  gap: var(--ds-space-3);
+  padding: var(--ds-space-1h) 0 var(--ds-space-half);
   min-width: 0;
 }
 .social-scan-qr {
@@ -318,26 +312,26 @@
   display: block;
   width: 200px;
   height: 200px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 6px 18px rgba(0, 0, 0, 0.1);
 }
 /* Vendor-missing fallback: the verification URL itself, kept breakable. */
-.social-scan-fallback { font-size: 11px; color: var(--color-frame-text-muted); text-align: center; }
+.social-scan-fallback { font-size: var(--ds-fs-meta); color: var(--color-frame-text-muted); text-align: center; }
 .social-scan-qr a {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-frame-text);
   overflow-wrap: anywhere;
   text-align: center;
 }
 .social-scan-code {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   font-weight: 500;
   color: var(--color-frame-text);
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.04em;
 }
 .social-scan-status {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   line-height: 1.5;
   color: var(--color-frame-text-muted);
   text-align: center;
@@ -395,7 +389,7 @@
   color: inherit;
   text-align: left;
   cursor: pointer;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
 }
 .social-item-row:focus-visible {
   outline: 2px solid rgb(var(--sapphire) / 0.4);
@@ -415,7 +409,7 @@
 .social-item-line {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
   flex-wrap: wrap;
   min-width: 0;
 }

@@ -25,7 +25,10 @@ import { notifyVoiceState } from './micOrb.js';
 import { voiceEnabled, voiceOrbEnabled, consoleInputMode } from './featureFlags.js';
 import { showToast } from './modal.js';
 // ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
-import { bindImeGuard, isImeComposing } from './imeGuard.js';
+// 输入行为包批（2026-11-02 作者令「文字输入框的逻辑做成一个包」）：主会话不再
+// 直呼 imeGuard——键盘契约（IME 前置短路 + 裸 Enter 发送判定）经
+// input/composer.js 统一装配（与 canvas ask 同一实现）；中断帧出口同批收进包
+// （requestTurnInterrupt）。imeGuard 语义零改动，仅消费方式升级。
 // qattachvault 批（2026-10-21）：消息队列附件**载荷库**（IndexedDB）——入队写字节、
 // 刷新后水合灌回、派发闸拒绝空心帧（失败可见可重传）。叶子模块（queueVault → branding）。
 import {
@@ -41,7 +44,11 @@ import { deviceStamp } from './deviceIdentity.js';
 // an ASCII letter/digit (email-like 'foo@' never triggers) — whitespace, line
 // start, CJK characters and CJK punctuation all open it. Data source =
 // fetchProjects() (nodeData.js).
-import { bindMention, handleMentionKeydown, closeMentionDropdown } from './mentionComplete.js';
+// 输入补全单引擎（待办结构化批 2026-11-05）：`@` 项目 与 `#` 待办 共用
+// tokenComplete.js 一套弹层/分词/键盘/插入；两个 provider 分别在
+// mentionComplete.js（import 链经 main.js）与 todoComplete.js 注册。
+import { bindTokenComplete, handleTokenKeydown, closeTokenDropdown } from './tokenComplete.js';
+import './todoComplete.js';
 
 // input.js 拆分（FE组件化批次四 2026-09-27）：slash 命令族/输入模式族/附件与引用帧族 → js/input/ 可复用模块（行为保持）。
 // 主体消费面 import + 原导出面转发（23 个 export 仍全部可从 input.js 取得，批次一~三同款纪律）。
@@ -51,6 +58,8 @@ import { cancelAskMode, cancelSkillMode, cancelCompactMode } from './input/input
 export { enterAskMode, cancelAskMode, enterSkillMode, cancelSkillMode, enterCompactMode, cancelCompactMode, applyInputModes } from './input/inputModes.js';
 import { addFileAttachment, pendingAttCount, isRefOnlyFrame, syncRefOnlyGate, showAttError, joinAbsPath } from './input/attachments.js';
 export { addFileAttachment, wireAttachmentsOf, isRefOnlyFrame, syncRefOnlyGate, appendRefToActiveView, initGlobalFileDrop } from './input/attachments.js';
+// 输入行为包（2026-11-02 作者令）：键盘契约装配 + 中断帧单点（ask 与主会话共用）。
+import { bindComposerKeys, requestTurnInterrupt } from './input/composer.js';
 
 // ---------- 真人消息 turn 标志（2026-09-16 msunread-r2；作者裁定 ①）----------
 // 「本机派发了一条真人消息 = 本 turn 的起点」的 per-session turn 级标志。
@@ -96,7 +105,7 @@ function showAttachmentBanner(message) {
   const banner = document.createElement('div');
   banner.className = 'attachment-banner';
   banner.textContent = message;
-  banner.style.cssText = 'position:fixed;top:50px;left:50%;transform:translateX(-50%);background:var(--color-surface,rgba(20,25,35,0.9));color:var(--color-text);padding:8px 16px;border-radius:8px;z-index:1000;font-size:13px;box-shadow:0 2px 12px rgba(0,0,0,0.15);border:1px solid var(--glass-border);transition:opacity 0.3s;';
+  banner.style.cssText = 'position:fixed;top:50px;left:50%;transform:translateX(-50%);background:var(--color-surface,rgba(20,25,35,0.9));color:var(--color-text);padding:var(--ds-space-2) var(--ds-space-4);border-radius:var(--ds-radius-input);z-index:1000;font-size:var(--ds-fs-body);box-shadow:0 2px 12px rgba(0,0,0,0.15);border:1px solid var(--glass-border);transition:opacity 0.3s;';
   document.body.appendChild(banner);
   setTimeout(() => { banner.style.opacity = '0'; }, 2700);
   setTimeout(() => banner.remove(), 3000);
@@ -204,7 +213,7 @@ export function send(resendId) {
   const input = v.dom.input;
   // @-mention popup: send() clears the input on every path below, which would
   // strand the popup over the next turn — close it up front.
-  closeMentionDropdown();
+  closeTokenDropdown();
   const text = input.value.trim();
   // 同 id 重发：重放 state.inputHistory 末条（resendLastInput 会先把值塞回输入框；
   // 直接从登记表兜底取文本，输入框被并行路径清空也不落空）。
@@ -1643,7 +1652,7 @@ export function initInput(view) {
     // placeholder 位（#531 作者令 2026-10-18：不新增独立占位行；清空附件/输入附言
     // 后由下方分支恢复原文案）。
     if (isRefOnlyFrame(view)) { input.placeholder = t('input.refOnlyHint'); return; }
-    if (n > 0) { input.placeholder = t('input.ph.attachments').replace('%n', String(n)); return; }
+    if (n > 0) { input.placeholder = attachmentPlaceholder(n); return; }
     input.placeholder = t('input.placeholder');
   }
 
@@ -1655,10 +1664,12 @@ export function initInput(view) {
   };
 
   // Stop button — send interrupt with sessionId, reset UI immediately
+  // （输入行为包批 2026-11-02：帧出口收进包单点 requestTurnInterrupt——与 ask
+  //  .ask-stop 同一实现，帧形态逐字节不变。）
   stopBtn.onclick = () => {
     setActiveView(view);
     const sid = view.sessionId;
-    sendWs({type: 'interrupt', sessionId: sid});
+    requestTurnInterrupt(sid);
     state.cancelTurnConfirm?.(sid);
     if (sid && state.sessionBusyTimeouts[sid]) {
       clearTimeout(state.sessionBusyTimeouts[sid]);
@@ -1681,9 +1692,9 @@ export function initInput(view) {
     });
   };
 
-  // Element-level IME bookkeeping (⑤ 收归) — the keyboard decision below reads
-  // `input.dataset.imeComposing`, written only by bindImeGuard.
-  bindImeGuard(input);
+  // Element-level IME bookkeeping (⑤ 收归) — moved INTO the shared composer
+  // package below (bindComposerKeys → bindImeGuard; the keyboard decision
+  // reads the same element-level flag through the package's hoisted guard).
 
   // @deprecated ⑤-A4（作者裁定 2026-09-12）：视图级 `view.composing` 已由
   // imeGuard 的元素级判定取代（14 个分叉点里 13 个根本没有 view 对象）。
@@ -1734,35 +1745,55 @@ export function initInput(view) {
     files.forEach(file => addFileAttachment(file));
   });
 
-  // Keydown handler — slash autocomplete navigation, input history navigation, Enter-to-send
-  input.onkeydown = (e) => {
-    setActiveView(view);
-    // ⑤ IME 收归（作者裁定 2026-09-12，方案 §4.1 步骤 2）：组字判定上提到处理器
-    // 首行统一短路——在 setActiveView 之后、任何 `e.key` 分支之前。组字期间
-    // 每一个键都属于输入法（Enter 确认候选 / ↑↓ 选候选词 / Esc 取消组字 /
-    // Backspace 删拼音），一律不 preventDefault、不动作，交还浏览器。
-    // 该短路同时修掉「斜杠下拉抢先消费组字 Enter」的既有缺陷（⑤-A 同批修）。
-    if (isImeComposing(e, input)) return;
+  // ── 键盘契约 = 统一输入行为包（input/composer.js；2026-11-02 作者令「文字
+  // 输入框的逻辑做成一个包」）──组字判定（bindImeGuard 元素级记账 + 前置短路）
+  // 与裸 Enter 发送判定（commitEnter）收进包实现，本文件只注入两件面级私货：
+  //   preamble = setActiveView（每个键都要先落的视图登记，语义原位）；
+  //   cascade  = surfaceKeydownCascade（@-mention / 模式取消 / 斜杠 / 历史）。
+  // 决策顺序与搬位前逐位一致：IME 短路仍是处理器首行（任何 `e.key` 分支之前，
+  // 组字期间每一个键都属于输入法——Enter 确认候选 / ↑↓ 选候选词 / Esc 取消组字
+  // / Backspace 删拼音，一律不 preventDefault 不动作交还浏览器；该短路同时修掉
+  // 「斜杠下拉抢先消费组字 Enter」的既有缺陷，⑤-A 同批修）、级联居中、Enter
+  // 判定仍是末位；Shift+Enter 仍走浏览器默认换行。行为基准 = 搬位前（ime-guard
+  // spec A1-A7 全绿为证）。
+  bindComposerKeys(input, {
+    preamble: () => { setActiveView(view); },
+    cascade: (e) => surfaceKeydownCascade(e),
+    onSend: () => {
+      // 入口②（Enter 直发，fwdguard-impl）：纯引用帧不产帧 —— 该形态在网关
+      // `WebSocketRoutes.scala:4055` 判空并被 `:4246` 静默丢弃（前端已 setBusy
+      // ⇒ 会话永久转圈）。提示件由 syncRefOnlyGate 常驻显示。
+      // （preventDefault 已由包内 commitEnter 完成拍点与搬位前相同。）
+      if (isRefOnlyFrame(view)) { syncRefOnlyGate(view); return; }
+      send();
+    },
+  });
+
+  /** 面级键级联（原 keydown 处理器主体原样搬位；返回 true = 已消费）：
+   *  mention 弹窗 → Esc 取消 ask/skill/compact 模式 → 空输入退格删模式 →
+   *  斜杠下拉键盘导航 → 输入历史 ↑↓ 下沉。每个分支消费即 preventDefault +
+   *  true；未消费落空（交给包的 Enter 判定 / 浏览器默认）。IME 组字键永远到
+   *  不了这里（包的前置短路在上游）——IME 会话既不能导航也不能选中。 */
+  function surfaceKeydownCascade(e) {
     // @-mention popup navigation (ArrowUp/Down, Tab/Enter pick, Esc close).
-    // Consumes keys only while the popup is open; IME keys never reach here
-    // (hoisted guard above), so an IME session can neither navigate nor pick.
-    if (handleMentionKeydown(e, view)) return;
+    // Consumes keys only while the popup is open.
+    if (handleTokenKeydown(e, view)) return true;
     // Escape cancels ask/skill/compact mode
     if (e.key === 'Escape') {
       if (view.stream.askMode) {
         e.preventDefault();
         cancelAskMode();
-        return;
+        return true;
       }
       if (view.skillMode) {
         e.preventDefault();
         cancelSkillMode();
-        return;
+        return true;
       }
       if (view.compactMode) {
         e.preventDefault();
         cancelCompactMode();
-        return;
+        return true;
       }
     }
     // Backspace/Delete on empty input cancels ask/skill/compact mode (like removing a tag)
@@ -1770,39 +1801,39 @@ export function initInput(view) {
       if (view.stream.askMode) {
         e.preventDefault();
         cancelAskMode();
-        return;
+        return true;
       }
       if (view.skillMode) {
         e.preventDefault();
         cancelSkillMode();
-        return;
+        return true;
       }
       if (view.compactMode) {
         e.preventDefault();
         cancelCompactMode();
-        return;
+        return true;
       }
     }
     if (slashDropdown.classList.contains('on')) {
       if (e.key === 'ArrowDown') {
         e.preventDefault();
         setSlashHighlight((view.slashSelectedIndex + 1) % view.slashMatches.length);
-        return;
+        return true;
       }
       if (e.key === 'ArrowUp') {
         e.preventDefault();
         setSlashHighlight((view.slashSelectedIndex - 1 + view.slashMatches.length) % view.slashMatches.length);
-        return;
+        return true;
       }
       if (e.key === 'Enter') {
         e.preventDefault();
         pickSlashCommand(view.slashSelectedIndex);
-        return;
+        return true;
       }
       if (e.key === 'Escape') {
         e.preventDefault();
         closeSlashDropdown();
-        return;
+        return true;
       }
     }
     // Input history navigation (up/down arrows). The composition arm that used
@@ -1812,7 +1843,7 @@ export function initInput(view) {
     if (!slashDropdown.classList.contains('on')) {
       if (e.key === 'ArrowUp' && input.selectionStart === 0 && input.selectionEnd === 0) {
         e.preventDefault();
-        if (state.inputHistory.length === 0) return;
+        if (state.inputHistory.length === 0) return true;
         if (view.historyIndex === -1) {
           view.historyDraft = input.value;
           view.historyIndex = state.inputHistory.length - 1;
@@ -1823,11 +1854,11 @@ export function initInput(view) {
         input.style.height = 'auto';
         input.style.height = Math.min(input.scrollHeight, 200) + 'px';
         input.setSelectionRange(input.value.length, input.value.length);
-        return;
+        return true;
       }
       if (e.key === 'ArrowDown' && input.selectionStart === input.value.length && input.selectionEnd === input.selectionStart) {
         e.preventDefault();
-        if (view.historyIndex === -1) return;
+        if (view.historyIndex === -1) return true;
         if (view.historyIndex >= state.inputHistory.length - 1) {
           view.historyIndex = -1;
           input.value = view.historyDraft;
@@ -1838,20 +1869,11 @@ export function initInput(view) {
         input.style.height = 'auto';
         input.style.height = Math.min(input.scrollHeight, 200) + 'px';
         input.setSelectionRange(input.value.length, input.value.length);
-        return;
+        return true;
       }
     }
-    // Enter sends. The composition arm is covered by the hoisted guard, so the
-    // gate is a plain Shift test now (⑤ 收归，方案 §4.1 步骤 2；语义等价、仅实现搬位)。
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      // 入口②（Enter 直发，fwdguard-impl）：纯引用帧不产帧 —— 该形态在网关
-      // `WebSocketRoutes.scala:4055` 判空并被 `:4246` 静默丢弃（前端已 setBusy
-      // ⇒ 会话永久转圈）。提示件由 syncRefOnlyGate 常驻显示。
-      if (isRefOnlyFrame(view)) { syncRefOnlyGate(view); return; }
-      send();
-    }
-  };
+    return false;
+  }
 
   // Attach button — hidden file input trigger (supports multiple files)
   attachBtn.onclick = () => {
@@ -2131,9 +2153,7 @@ export function initInput(view) {
     // 纯引用帧分支同 updateInputPlaceholder：闸文案落在输入框自身 placeholder
     // （#531，2026-10-18；无独立提示行）。
     if (isRefOnlyFrame(view)) { input.placeholder = t('input.refOnlyHint'); return; }
-    input.placeholder = n > 0
-      ? t('input.ph.attachments').replace('%n', String(n))
-      : t('input.placeholder');
+    input.placeholder = n > 0 ? attachmentPlaceholder(n) : t('input.placeholder');
   };
   voiceBtn.addEventListener('pointerdown', (e) => {
     // #513 纠正：拖动手势 = 全双工入口（面 A），默认封存态整个 dead ——
@@ -2190,7 +2210,7 @@ export function initInput(view) {
   // token parsing and popup rendering live in mentionComplete.js. Key
   // handling is hooked in the keydown handler above (behind the imeGuard
   // short-circuit); send() closes the popup up front.
-  bindMention(view);
+  bindTokenComplete(view);
 
   // Ask/skill indicator cancel buttons
   {
@@ -2307,4 +2327,25 @@ async function addPathAttachment({ path, rootPath }, view, target) {
   }
   const file = new File([detail.content], name, { type: 'text/plain' });
   addFileAttachment(file, null, target);
+}
+
+/* ── 附件态占位文案（输入框附件图标化批，作者令 2026-11-02）─────────────
+   **模块级单点**：initInput 的 updateInputPlaceholder 与 voice 作用域的
+   refreshPlaceholder 两处消费（零第二份判据）。
+
+   令文口径：「添加附件后占位提示文字不变，仍是『请输入消息...』」。手机层
+   （body.mobile-layer）附件条已改为扩展名族图标盒 —— 附件不再以文字占名，
+   「已附加文件——输入一句话一起发送」这条文字提示在手机层随之退场，占位恒为
+   通用文案 `input.placeholder`（=「输入消息...」）；桌面层逐字沿用既有
+   `input.ph.attachments`（%n 计数），按令「桌面共组件先不动」。
+
+   🔴 放置纪律：本函数刻意追加在**文件尾**（函数声明提升 ⇒ 两处消费点照常可用）
+   —— 上方 1698-1699 是 ime-guard 哨兵允许清单的锚行（scripts/check-ime-guard.mjs
+   ALLOWLIST 的 lines 元数据 + tests/ime-guard.spec.mjs 的 G4 组），正文插入会把
+   该对逐行下推打红哨兵；追加尾部 = 行号零漂移（本批实证：1698/1699 原值）。 */
+function attachmentPlaceholder(n) {
+  const mobile = typeof document !== 'undefined'
+    && document.body && document.body.classList.contains('mobile-layer');
+  if (mobile) return t('input.placeholder');
+  return t('input.ph.attachments').replace('%n', String(n));
 }

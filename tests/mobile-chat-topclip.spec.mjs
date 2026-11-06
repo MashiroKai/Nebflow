@@ -88,9 +88,12 @@ for (const scheme of ['light', 'dark']) {
       await page.waitForTimeout(200);
       const healed = await page.evaluate(() => document.getElementById('chat').style.getPropertyValue('--chat-top-clip').trim());
       expect(healed === '' || healed === '0px').toBe(true);
-      // mask 消费端仍在场（机制不拆，只是锚点被正确维护）
+      // mask 消费端：桌面现役；手机层由 mobileLayer.css「#chat mask 释放」块
+      // 有意置 none（非 none ⇒ #chat 自成堆叠上下文，顶栏/悬浮钮 z 序被困）。
+      // 本断言的旧口径（手机层 mask 恒含 linear-gradient）在 main 同树即存量红，
+      // 随会话顶栏单行三段式批（2026-11-02）按现役契约改写。
       const mask = await page.evaluate(() => String(getComputedStyle(document.getElementById('chat')).maskImage));
-      expect(mask).toContain('linear-gradient');
+      expect(mask).toBe('none');
     });
   });
 }

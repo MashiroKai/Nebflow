@@ -1,0 +1,7 @@
+$ cd /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-79768ef5
+$ node scripts/check-design-spec-sync.mjs
+design-spec-sync —— 设计规格刻度 spec ↔ 令牌源 防漂移闸
+  spec 表：src/main/resources/seed/plugins/design-language/skills/design-language/references/design-language-tokens.md
+  spec 行数：56 · 账本对位比对：37 条
+PASS —— spec 表与令牌源逐条同值，刻度族令牌全部在表（无漂移）
+EXIT=0

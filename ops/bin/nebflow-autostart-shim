@@ -1,0 +1,18 @@
+#!/bin/bash
+# nebflow-autostart-shim — 弃用垫片（2026-11-03 双根分家批；stand-autostart.sh 由
+# nebflow-autostart.sh git mv 改名而来）
+#
+# 权威副本: stand 仓 ops/bin/nebflow-autostart-shim → live 部署位 ~/.stand/bin/nebflow-autostart.sh
+# 语义: 打印一行弃用提示后 exec 转发同目录 stand-autostart.sh，参数逐字透传
+#   （与 CLI/restart 改名「老 nebflow 命令留垫片转发」同一手法）。本文件名含旧名是
+#   刻意的——垫片自身就是旧名的承接面。launchd 现挂作业 com.nebflow.gateway 的
+#   ProgramArguments 仍指本旧名路径，经此垫片继续工作（改 plist 属 launchd 操作，
+#   须作者裁定后另行处理）。stand-autostart.sh 正文见 ops/stand-autostart.sh。
+DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ ! -x "$DIR/stand-autostart.sh" ]; then
+    echo "ERROR: $DIR/stand-autostart.sh missing — shim cannot forward" >&2
+    echo "       repair: cp <stand-repo>/ops/stand-autostart.sh $DIR/stand-autostart.sh && chmod +x $DIR/stand-autostart.sh" >&2
+    exit 66
+fi
+echo "nebflow-autostart.sh is deprecated — use stand-autostart.sh" >&2
+exec "$DIR/stand-autostart.sh" "$@"

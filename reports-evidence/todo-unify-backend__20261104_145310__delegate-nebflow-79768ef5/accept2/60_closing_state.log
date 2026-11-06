@@ -1,0 +1,50 @@
+## process-artifacts (post-commit)
+✓ process-artifacts gate clean: git ls-files evidence/ reports/ docs/ = 0 违规（0 个被白名单豁免）
+  白名单：0 条生效（scripts/process-artifacts-allowlist.txt）
+  铁律：每次跨仓合并之后必须重跑本脚本（双向合并会把对方仍 tracked 的文件带回来）。
+EXIT=0
+
+## git status
+?? reports-evidence/20261104_todo-unify-backend__delegate-nebflow-79768ef5/accept2/60_closing_state.log
+(empty = clean)
+
+## worktrees
+/Users/kaiyu/Claude code/Stand                                               a0597efdd [main]
+/private/tmp/bashoverhaul-baseline-aade799e                                  77afefc77 (detached HEAD)
+/private/tmp/cc-before                                                       9308090a3 (detached HEAD)
+/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-01a0ffe7  4828151c2 [delegate/delegate-nebflow-01a0ffe7]
+/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-183b016d  a91fc4c6f [delegate/delegate-nebflow-183b016d]
+/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-1d300d2e  043b5f693 [delegate/delegate-nebflow-1d300d2e]
+/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-4280aa54  8c22da5e4 [delegate/delegate-nebflow-4280aa54]
+/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-485bb4f4  9edce92a9 [delegate/delegate-nebflow-485bb4f4]
+/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-4d537ce5  20443269e [delegate/delegate-nebflow-4d537ce5]
+/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-6e1a0c4c  0fffa26b5 [delegate/delegate-nebflow-6e1a0c4c]
+/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-6f8eab41  6eb8d3f3e [delegate/delegate-nebflow-6f8eab41]
+/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-70e8d8ab  00c78e8d9 [delegate/delegate-nebflow-70e8d8ab]
+/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-71767a56  5d39447a3 [delegate/delegate-nebflow-71767a56]
+/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-750143b4  0fffa26b5 [delegate/delegate-nebflow-750143b4]
+/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-79768ef5  95bb82482 [delegate/delegate-nebflow-79768ef5]
+/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-79bb6698  a17723e44 [delegate/delegate-nebflow-79bb6698]
+/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-7ecba82c  9be1797fd [delegate/delegate-nebflow-7ecba82c]
+/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-835d17e9  6009a16e6 [delegate/delegate-nebflow-835d17e9]
+/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98f9ca81  5c046b9ee [delegate/delegate-nebflow-98f9ca81]
+/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-af261318  baac652dd [delegate/delegate-nebflow-af261318]
+/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-b1d91721  15f175813 [delegate/delegate-nebflow-b1d91721]
+/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-b3bdf8d3  0fffa26b5 [delegate/delegate-nebflow-b3bdf8d3]
+/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-be138470  3858e3eb7 [delegate/delegate-nebflow-be138470]
+/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-d432ab0c  d1d669aab [delegate/delegate-nebflow-d432ab0c]
+/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-e7c1a868  901fba6fb [delegate/delegate-nebflow-e7c1a868]
+
+## /tmp leftovers
+none
+
+## 6138 owner
+COMMAND   PID  USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
+java    78176 kaiyu  175u  IPv6 0xc2a437ddcfefe972      0t0  TCP *:6138 (LISTEN)
+
+## no sbt/java killed by me — current java PIDs
+37341 bash -c cd "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-6e1a0c4c" && SBT_OPTS="-Xmx3g -XX:+UseG1GC -XX:MaxMetaspaceSize=1536m" sbt -batch compile "testOnly nebflow.agent.PromptSectionsSpec nebflow.core.project.NodeChainAttributionSpec" > /tmp/sbt2.log 2>&1; echo "SBT_EXIT=$?" | tee -a /tmp/sbt2.log
+37343 /bin/bash /Users/kaiyu/.stand/bin/sbt -batch compile testOnly nebflow.agent.PromptSectionsSpec nebflow.core.project.NodeChainAttributionSpec
+37593 bash -c cd "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-485bb4f4" && SUITES="nebflow.core.tools.DeviceBashAutoBackgroundSpec nebflow.core.tools.BgWaitToolSpec nebflow.core.tools.DeviceBgTaskSpec" && SBT_OPTS="-Xms512m -Xmx2560m -XX:MaxMetaspaceSize=1536m" sbt -batch testOnly $SUITES > reports-evidence/20261104_bash-overhaul/green/merge-parity-T7.log 2>&1; echo "EXIT=$?" >> reports-evidence/20261104_bash-overhaul/green/merge-parity-T7.log
+37595 /bin/bash /Users/kaiyu/.stand/bin/sbt -batch testOnly nebflow.core.tools.DeviceBashAutoBackgroundSpec nebflow.core.tools.BgWaitToolSpec nebflow.core.tools.DeviceBgTaskSpec
+73613 /usr/bin/java -Xmx3g -XX:+UseG1GC -XX:MaxMetaspaceSize=512m -XX:MaxInlineLevel=18 -Dsbt.script=/opt/homebrew/Cellar/sbt/1.10.10/libexec/bin/sbt -Dscala.ext.dirs=/Users/kaiyu/.sbt/1.0/java9-rt-ext-eclipse_adoptium_23_0_1 -Xms512m -Xmx2560m -XX:MaxMetaspaceSize=1536m -jar /opt/homebrew/Cellar/sbt/1.10.10/libexec/bin/sbt-launch.jar testOnly nebflow.core.tools.DeviceBashAutoBackgroundSpec nebflow.core.tools.BgWaitToolSpec nebflow.core.tools.DeviceBgTaskSpec

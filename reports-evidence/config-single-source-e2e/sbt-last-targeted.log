@@ -1,0 +1,183 @@
+[sbt-gate] waiting for /Users/kaiyu/.stand/run/sbt.lock (another sbt holds the heavy-work gate; bypass: SBT_GATE=off sbt …)
+[sbt-gate] acquired after 9s
+[sbt-gate] gate acquired after 9s
+[sbt-gate] heap cap -Xmx2600m applied via SBT_OPTS
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project delegate-config-single-source-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-config-single-source/project
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/delegate-config-single-source/)
+[info] compiling 15 Scala sources to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-config-single-source/target/scala-3.5.2/classes ...
+[info] done compiling
+[info] compiling 12 Scala sources to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-config-single-source/target/scala-3.5.2/classes ...
+[info] done compiling
+[info] compiling 12 Scala sources to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-config-single-source/target/scala-3.5.2/test-classes ...
+[info] done compiling
+[warn] javaOptions will be ignored, fork is set to false
+15:04:09.498 [36mINFO [0m nebflow.config.migrate - [config-migration] nebflow.json → stand.json (backup kept as nebflow.json.bak; values unchanged, 211 bytes)
+15:04:09.502 [36mINFO [0m nebflow.config.migrate - [config-migration] nebflow.json → stand.json (backup kept as nebflow.json.bak; values unchanged, 211 bytes)
+15:04:09.505 [36mINFO [0m nebflow.config.migrate - [config-migration] nebflow.json → stand.json (backup kept as nebflow.json.bak; values unchanged, 211 bytes)
+15:04:09.506 [36mINFO [0m nebflow.config.migrate - [config-migration] nebflow.json → stand.json (backup kept as nebflow.json.bak; values unchanged, 211 bytes)
+[32mnebflow.shared.ConfigSingleSourceSpec:[0m
+[32m  + [0m[32mA1: 只有旧 nebflow.json ⇒ 自动生成 stand.json，值一一相等（逐字节）[0m [90m0.092s[0m
+[32m  + [0m[32mA2: 迁移幂等 + 已存在 stand.json 时不被旧文件覆盖[0m [90m0.001s[0m
+[32m  + [0m[32mA3: 两文件都不存在 ⇒ 返回新文件名（首次创建走新名）[0m [90m0.0s[0m
+[32m  + [0m[32mA4: 读写两面是同一个路径（不许两个真相）[0m [90m0.002s[0m
+[32m  + [0m[32mA5: 读旧名配置文件的调用点零改动仍读得到（向后兼容）[0m [90m0.001s[0m
+[32m  + [0m[32mD1: model 级不可用时段向上合并到 provider 级，且不丢任何一条目[0m [90m0.088s[0m
+[32m  + [0m[32mD2: 已收敛配置再跑一次 == 幂等（逐字相同）[0m [90m0.002s[0m
+[32m  + [0m[32mD3: 无任何时段时配置逐字不变（零行为变化铁律）[0m [90m0.001s[0m
+[32m  + [0m[32mD4: 合并后运行时只读 provider 级（model 级为空）[0m [90m0.024s[0m
+[32m  + [0m[32mB1: llm.fallback 小节可解码（preferred + fallbacks，与 agent 链同形状）[0m [90m0.001s[0m
+[32m  + [0m[32mB2: 引用不存在的 provider ⇒ 可读告警（不静默跳过）[0m [90m0.003s[0m
+[32m  + [0m[32mB3: 引用 provider 未声明的 model ⇒ 也可读告警[0m [90m0.001s[0m
+[32m  + [0m[32mB4: 健康链零告警；重复 ref 有独立告警[0m [90m0.001s[0m
+[32m  + [0m[32mB5: 无 fallback 小节 ⇒ configured 为空（零行为变化：走侧车/种子链）[0m [90m0.0s[0m
+[32mnebflow.llm.FallbackChainCandidateSpec:[0m
+[32m  + [0m[32mB/C-1: llm.fallback 的顺序就是运行期候选顺序（首选 + 兜底按文件序）[0m [90m0.092s[0m
+[32m  + [0m[32mC-2: 改 llm.fallback 顺序 ⇒ 运行期候选顺序随之改变（同配置其余不动）[0m [90m0.001s[0m
+[32m  + [0m[32mC-3: 删掉 provider ⇒ 候选集不含它；加回 ⇒ 立刻含它（断言正反两面）[0m [90m0.002s[0m
+[32m  + [0m[32mC-4: 链里残留已删 provider 的 ref ⇒ 该 ref 被跳过（绝不真实调用）[0m [90m0.001s[0m
+[32m  + [0m[32mC-5: 候选集只来自配置实存的 provider/model（不凭空造；储备层只追加）[0m [90m0.001s[0m
+[32m  + [0m[32mC-6: candidatePlan 可观测面列出「这次调用会试哪些、按什么顺序、哪些被跳过」[0m [90m0.007s[0m
+[32m  + [0m[32mC-7: 无 fallback 小节时储备层语义不变（确定序、不重排已引用项）[0m [90m0.001s[0m
+[32m  + [0m[32mC-8: disabled:true 的 provider 一律不进候选集（fail-closed 不回退）[0m [90m0.001s[0m
+[stand] data root: /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/rebrand-home4660160836543609913/.stand not found; using legacy /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/rebrand-home4660160836543609913/.nebflow (migrate with scripts/data-root-migration/ or set STAND_HOME to pin a root)
+[32mnebflow.shared.RebrandCompatSpec:[0m
+[32m  + [0m[32mdualEnv: current prefix collapses to a single NEBFLOW_ variable[0m [90m0.0s[0m
+[32m  + [0m[32mdualEnv: rename day — new prefix wins when set[0m [90m0.0s[0m
+[32m  + [0m[32mdualEnv: rename day — legacy NEBFLOW_ still recognized on miss[0m [90m0.0s[0m
+[32m  + [0m[32mdualEnv: neither prefix set → None (caller default applies)[0m [90m0.0s[0m
+[32m  + [0m[32mdualEnv: STAND_HOME (第一优先级) wins over legacy NEBFLOW_HOME; NEBFLOW_HOME alone still honored[0m [90m0.0s[0m
+[32m  + [0m[32mresolveConfigJson: current name collapses to nebflow.json[0m [90m0.0s[0m
+[32m  + [0m[32mresolveConfigJson: rename day — new file preferred when present[0m [90m0.001s[0m
+[32m  + [0m[32mresolveConfigJson: rename day — legacy file read on new-name miss[0m [90m0.001s[0m
+[32m  + [0m[32mresolveConfigJson: neither present → new name (first-run initializer)[0m [90m0.0s[0m
+[32m  + [0m[32mconfigJsonReadPath/WritePath: config-single-source 批后品牌名 = stand.json（含迁移）[0m [90m0.001s[0m
+[32m  + [0m[32mresolveDefaultDataRoot: ④ legacy brand value (.nebflow) collapses to itself[0m [90m0.0s[0m
+[32m  + [0m[32mresolveDefaultDataRoot: ① ~/.stand present wins (toolbox-cloned or fresh-on-new-root)[0m [90m0.001s[0m
+[32m  + [0m[32mresolveDefaultDataRoot: ③ neither dir exists (fresh machine) → lands on ~/.stand[0m [90m0.0s[0m
+[32m  + [0m[32mresolveDefaultDataRoot: ② only legacy ~/.nebflow → legacy root + ONE-LINE hint, zero copy[0m [90m0.003s[0m
+[32m  + [0m[32mresolveDefaultDataRoot: ② toolbox-cloned ~/.stand + legacy present → ~/.stand wins, no hint[0m [90m0.001s[0m
+[32m  + [0m[32minstall companions derive from installUrl by basename swap[0m [90m0.0s[0m
+[32m  + [0m[32minstall companions degrade to installUrl when the shape doesn't match[0m [90m0.0s[0m
+15:04:09.873 [36mINFO [0m nebflow.llm.registry - Config hot-reloaded: providers=[cmdcode,zhipu] candidateChain=zhipu/glm-5.3-flash -> cmdcode/deepseek/deepseek-v4.1-flash
+15:04:09.883 [36mINFO [0m nebflow.llm.registry - Config hot-reloaded: providers=[kimi,zhipu] candidateChain=zhipu/glm-5.3-flash -> kimi/kimi-for-coding
+15:04:09.890 [36mINFO [0m nebflow.llm.registry - Config hot-reloaded: providers=[cmdcode,zhipu] candidateChain=zhipu/glm-5.3-flash -> cmdcode/deepseek/deepseek-v4.1-flash
+15:04:09.900 [36mINFO [0m nebflow.llm.registry - Config hot-reloaded: providers=[cmdcode,kimi,zhipu] candidateChain=zhipu/glm-5.3-flash -> cmdcode/deepseek/deepseek-v4.1-flash -> kimi/k3.1-pro-highspeed -> kimi/kimi-for-coding -> kimi/kimi-for-coding-highspeed
+[32mnebflow.llm.ProviderCandidateConfigSyncSpec:[0m
+[32m  + [0m[32mR1 配置里存在但链未引用的 provider 仍进候选集（reserve），origin 可区分[0m [90m0.022s[0m
+[32m  + [0m[32mA1 删掉 kimi ⇒ 运行期候选集立刻不含 kimi（无重启）[0m [90m0.031s[0m
+[32m  + [0m[32mA2 加回 kimi ⇒ 候选集立刻含 kimi（热生效，不重启）[0m [90m0.008s[0m
+[32m  + [0m[32mA3 盘上配置被旁路改掉 ⇒ drift.inSync=false 且点名（可见，不静默沿用旧快照）[0m [90m0.007s[0m
+[32m  + [0m[32mA4 配置里只剩 1 个可用 provider ⇒ 候选集恰为那一个[0m [90m0.003s[0m
+[32m  + [0m[32mR2 无锁旁路写者把已删 provider 写回 ⇒ undeletedProviders 点名上浮（不静默）[0m [90m0.008s[0m
+[32m  + [0m[32mR3 disabled:true 的 provider 不进候选集（配置面内的显式摘除同样生效）[0m [90m0.003s[0m
+15:04:10.279 [33mWARN [0m nebflow.llm.health - Provider p1/m1 marked DOWN: provider exhausted
+15:04:10.283 [33mWARN [0m nebflow.llm.health - Provider p2/m1 marked DOWN: provider exhausted
+15:04:10.327 [33mWARN [0m nebflow.llm.health - Provider k1/m1 marked DOWN: provider exhausted
+15:04:10.343 [33mWARN [0m nebflow.llm - candidate ledger session=eligible-a3 — chain=0 tried=0 skipped=2 [d1/m1(not-configured), d2/m1(not-configured)]
+15:04:10.356 [33mWARN [0m nebflow.llm.health - Provider f1/m1 marked DOWN: provider exhausted
+15:04:10.359 [33mWARN [0m nebflow.llm.health - Provider f2/m1 marked DOWN: provider exhausted
+15:04:10.363 [33mWARN [0m nebflow.llm.health - Provider f3/m1 marked DOWN: provider exhausted
+15:04:10.371 [33mWARN [0m nebflow.llm.health - Provider m3p/m1 marked DOWN: simulated 429
+15:04:10.371 [33mWARN [0m nebflow.llm.health - Provider m4p/m1 marked DOWN: simulated 429
+15:04:10.372 [33mWARN [0m nebflow.llm - candidate ledger session=eligible-a5 — chain=4 tried=0 skipped=2 [m3p/m1(health-down), m4p/m1(health-down)]
+15:04:10.376 [33mWARN [0m nebflow.llm.health - Provider m1p/m1 marked DOWN: provider exhausted
+15:04:10.380 [33mWARN [0m nebflow.llm.health - Provider m2p/m1 marked DOWN: provider exhausted
+[32mnebflow.llm.FallbackEligibleProvidersSpec:[0m
+[32m  + [0m[32mA1: 4 候选（2 必败 + 2 正常）⇒ 换链成功，第 3 根交付；前两根如实记为 failed[0m [90m0.407s[0m
+[32m  + [0m[32mA2: 1 个 auth 403 + 3 个正常 ⇒ 必须成功（auth 只降级该候选，不终止整链）[0m [90m0.016s[0m
+[32m  + [0m[32mA3: 全部候选都被跳过（provider 全 disabled）⇒ all-skipped，且不许说 All providers failed[0m [90m0.015s[0m
+[32m  + [0m[32mA4: 链上每根都被试过且全败 ⇒ all-providers-failed，通知带完整候选处置表[0m [90m0.019s[0m
+[32m  + [0m[32mA5(事故形态): 3 根里只试了 2 根、1 根被健康面跳过 ⇒ partially-tried + 跳过原因进表，禁说全败[0m [90m0.015s[0m
+[32m  + [0m[32mA6: 配置可见的候选被人为排除 ⇒ silentExclusions 检出并报警；有原因的排除不误报[0m [90m0.007s[0m
+[32mnebflow.core.tools.FileRefsWhitelistSpec:[0m
+[32m  + [0m[32mA14: FileRefs.AllowedExtensions == NfFilePolicy.NfFileAllowedExt (no table drift)[0m [90m0.006s[0m
+[32m  + [0m[32mA14: the mirrored table is non-empty and covers the Canvas companions[0m [90m0.0s[0m
+[32m  + [0m[32mA14-batch: the mirrored table carries the legacy binary Office types the endpoint now serves[0m [90m0.0s[0m
+[32m  + [0m[32mA1-mirror: FileRefs.DataRootServedNamespaces == NfFilePolicy.NfDataRootAllowlist (no namespace drift)[0m [90m0.001s[0m
+[32m  + [0m[32mA1-mirror: non-empty, carries `docs`, keeps the pre-batch entries, renders to the tool-face text[0m [90m0.0s[0m
+[32m  + [0m[32mA1-mirror (2026-10-07 flip): the shipped tool descriptions no longer enumerate the served namespaces (retired prose cannot silently return)[0m [90m0.004s[0m
+[32m  + [0m[32mA1-judge (2026-10-07 flip): the namespace reach layer is RETIRED — only credential identity refuses (pure judge, no disk)[0m [90m0.002s[0m
+15:04:10.929 [33mWARN [0m nebflow.nf-file - nf-file denied: status=403 reason=path-mismatch path=/private/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nebflow-nfticket-test5125898384446675749/dataroot/projects/demo/reports/plot.svg remote=unknown
+15:04:12.245 [33mWARN [0m nebflow.nf-file - nf-file denied: status=403 reason=expired path=/private/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nebflow-nfticket-test13738668291752771089/outside/x.json remote=unknown
+15:04:12.290 [33mWARN [0m nebflow.nf-file - nf-file denied: status=403 reason=credential-path path=/private/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nebflow-nfticket-test7557864141571976609/dataroot/auth.json remote=unknown
+15:04:12.290 [33mWARN [0m nebflow.nf-file - nf-file denied: status=403 reason=credential-path path=/private/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nebflow-nfticket-test7557864141571976609/dataroot/stand.json remote=unknown
+15:04:12.291 [33mWARN [0m nebflow.nf-file - nf-file denied: status=403 reason=credential-path path=/private/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nebflow-nfticket-test7557864141571976609/dataroot/secrets/x.txt remote=unknown
+15:04:12.318 [33mWARN [0m nebflow.nf-file - nf-file denied: status=403 reason=credential-path path=/private/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nebflow-nfticket-test5527092991266690943/outside/link.json remote=unknown
+15:04:12.322 [33mWARN [0m nebflow.nf-file - nf-file denied: status=403 reason=credential-hardlink path=/private/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nebflow-nfticket-test15769807511434866711/outside/hard.json remote=unknown
+15:04:12.388 [33mWARN [0m nebflow.nf-file - nf-file denied: status=403 reason=credential-path path=/private/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nebflow-nfticket-test3286419852952771065/dataroot/auth.json remote=unknown
+15:04:12.389 [33mWARN [0m nebflow.nf-file - nf-file denied: status=403 reason=credential-path path=/private/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nebflow-nfticket-test3286419852952771065/dataroot/secrets/x.txt remote=unknown
+15:04:12.389 [33mWARN [0m nebflow.nf-file - nf-file denied: status=403 reason=credential-path path=/private/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nebflow-nfticket-test3286419852952771065/dataroot/projects/../../.ssh/id_ed25519 remote=unknown
+[32mnebflow.gateway.NfTicketRoutesSpec:[0m
+[32m  + [0m[32mA1: a request without a ticket is 401 (ticket-only read leg, R5)[0m [90m0.509s[0m
+[32m  + [0m[32mA2: a ticket bound to another path is 403 path-mismatch[0m [90m0.011s[0m
+[32m  + [0m[32mA3: an expired ticket is 403 expired[0m [90m1.315s[0m
+[32m  + [0m[32mA4: R4 = unlimited inside the TTL — five reads on one ticket all 200[0m [90m0.04s[0m
+[32m  + [0m[32mA5/A6: credential paths are 403 even WITH a valid ticket (identity pattern + R2 inode)[0m [90m0.005s[0m
+[32m  + [0m[32mA7: a file outside the protected namespaces still serves (no over-blocking)[0m [90m0.009s[0m
+[32m  + [0m[32mA8: the extension gate is RETIRED — a non-whitelisted, credential-clean file serves (2026-10-07 flip)[0m [90m0.014s[0m
+[32m  + [0m[32mA9: a symlink into a credential file is refused (realpath normalization, C1-1/C1-2)[0m [90m0.005s[0m
+[32m  + [0m[32mA10: a hard link to a credential file is refused ((dev,ino) guard, R2)[0m [90m0.004s[0m
+[32m  + [0m[32mA11/A16: the issuer rejects credential paths and never signs them; non-credential paths all sign[0m [90m0.034s[0m
+[32m  + [0m[32missuer: requires the gateway token (403 without it)[0m [90m0.003s[0m
+[32m  + [0m[32mA15: GET /api/nf-authcheck is 204 with a valid credential, 403 otherwise, never touches disk[0m [90m0.006s[0m
+[32m  + [0m[32mA15-slide: a session-rail authcheck re-emits the cookie with a fresh Max-Age; Bearer hits emit nothing[0m [90m0.009s[0m
+[32m  + [0m[32mA17: `<dataRoot>/docs/**` mints a ticket and reads 200 (author ruling #687-A, existing chain only)[0m [90m0.007s[0m
+[32m  + [0m[32mA17-counter (2026-10-07 flip): former namespace refusals serve; ONLY credential identity/inode stay refused[0m [90m0.008s[0m
+[32m  + [0m[32mpolicy: P1 is PathUtil.dataRoot (never a hardcoded home directory)[0m [90m0.002s[0m
+[32m  + [0m[32mpolicy: a newly added data-root directory SERVES after the 2026-10-07 flip (namespace default-deny retired)[0m [90m0.005s[0m
+[32m  + [0m[32mpolicy: P3 namespace is RETIRED (2026-10-07 flip) — repo files, project .nebflow and evidence alike serve; credentials still refuse[0m [90m0.001s[0m
+[32m  + [0m[32mpolicy: production P3 root is <cwd>/.nebflow (R1), not the workspace root[0m [90m0.001s[0m
+[32mnebflow.service.ConfigServiceSpec:[0m
+[32m  + [0m[32mvalidateConfig accepts null provider (deletion) without field errors[0m [90m0.001s[0m
+[32m  + [0m[32mvalidateConfig still validates non-null providers[0m [90m0.0s[0m
+[32m  + [0m[32mvalidateConfig ignores llm.model chain refs (#339: field retired)[0m [90m0.0s[0m
+[32m  + [0m[32mupdateConfig deletes provider and scrubs global chain + agent fallbacks[0m [90m0.007s[0m
+[32m  + [0m[32mupdateConfig ignores dangling llm.model refs (#339: field retired, validation removed)[0m [90m0.003s[0m
+[32m  + [0m[32mpure delete leaves retired llm.model field untouched (#339: scrubGlobalChain removed)[0m [90m0.004s[0m
+[32m  + [0m[32mupdateConfig detects rename and rewrites global chain + agent refs (partial update)[0m [90m0.005s[0m
+[32m  + [0m[32mupdateConfig rename with old-name refs in incoming chain passes validation[0m [90m0.005s[0m
+[32m  + [0m[32mupdateConfig pure delete does not create model-presets.json when absent[0m [90m0.002s[0m
+[32m  + [0m[32mupdateConfig pure delete scrubs preset refs with fallback promotion[0m [90m0.005s[0m
+[32m  + [0m[32mupdateConfig rename rewrites preset refs and preserves other fields[0m [90m0.004s[0m
+[32m  + [0m[32mupdateConfig: stale incoming workSchedule is overridden by runtime-authoritative value (roll-back regression)[0m [90m0.004s[0m
+[32m  + [0m[32mupdateConfig: no overrides keeps legacy deep-merge semantics (incoming wins)[0m [90m0.002s[0m
+[32m  + [0m[32mupdateConfig: override keys do not leak into providers scope or delete unrelated top-level keys[0m [90m0.002s[0m
+15:04:12.509 [33mWARN [0m nebflow.llm.health - Provider a/m1 cooled down for 15000ms (upstream 5xx (500) — strike 1/5, NOT evicted, no probe; half-open on expiry)
+15:04:12.509 [33mWARN [0m nebflow.llm - Stream retry a/m1: ServerError (1 left, 1422ms)
+15:04:13.940 [33mWARN [0m nebflow.llm - Stream fallback: a/m1 retries exhausted
+15:04:13.941 [33mWARN [0m nebflow.llm.health - Provider a/m1 cooled down for 30000ms (upstream 5xx (500) — strike 2/5, NOT evicted, no probe; half-open on expiry)
+15:04:13.949 [36mINFO [0m nebflow.llm.anthropic - message_start: model=m1 usage_json={"input_tokens":10,"output_tokens":0} inputTokens=10 cacheRead=None cacheWrite=None
+15:04:13.954 [36mINFO [0m nebflow.llm.anthropic - message_delta: model=m1 deltaInput=None stored_input=10 final_input=10 cacheRead=None cacheWrite=None totalInput=10 outputTokens=2 stopReason=Some(end_turn)
+15:04:13.970 [33mWARN [0m nebflow.llm.health - Provider a/m1 cooled down for 15000ms (upstream 5xx (550) — strike 1/5, NOT evicted, no probe; half-open on expiry)
+15:04:13.970 [33mWARN [0m nebflow.llm - Stream retry a/m1: ServerError (1 left, 2224ms)
+15:04:16.203 [33mWARN [0m nebflow.llm - Stream fallback: a/m1 retries exhausted
+15:04:16.204 [33mWARN [0m nebflow.llm.health - Provider a/m1 cooled down for 30000ms (upstream 5xx (550) — strike 2/5, NOT evicted, no probe; half-open on expiry)
+15:04:16.209 [36mINFO [0m nebflow.llm.anthropic - message_start: model=m1 usage_json={"input_tokens":10,"output_tokens":0} inputTokens=10 cacheRead=None cacheWrite=None
+15:04:16.210 [36mINFO [0m nebflow.llm.anthropic - message_delta: model=m1 deltaInput=None stored_input=10 final_input=10 cacheRead=None cacheWrite=None totalInput=10 outputTokens=2 stopReason=Some(end_turn)
+15:04:16.216 [33mWARN [0m nebflow.llm.health - Provider a/m1 cooled down for 15000ms (strike 1 — strike 1/5, NOT evicted, no probe; half-open on expiry)
+15:04:16.216 [33mWARN [0m nebflow.llm.health - Provider a/m1 cooled down for 30000ms (strike 2 — strike 2/5, NOT evicted, no probe; half-open on expiry)
+15:04:16.217 [33mWARN [0m nebflow.llm.health - Provider a/m1 cooled down for 60000ms (strike 3 — strike 3/5, NOT evicted, no probe; half-open on expiry)
+15:04:16.218 [33mWARN [0m nebflow.llm.health - Provider a/m1 cooled down for 120000ms (cap — strike 4/5, NOT evicted, no probe; half-open on expiry)
+15:04:16.218 [33mWARN [0m nebflow.llm.health - Provider a/m1 cooled down for 240000ms (cap — strike 5/5, NOT evicted, no probe; half-open on expiry)
+15:04:16.218 [33mWARN [0m nebflow.llm.health - Provider a/m1 cooled down for 240000ms (cap — strike 5/5, NOT evicted, no probe; half-open on expiry)
+15:04:16.218 [33mWARN [0m nebflow.llm.health - Provider a/m1 cooled down for 240000ms (cap — strike 5/5, NOT evicted, no probe; half-open on expiry)
+15:04:16.218 [33mWARN [0m nebflow.llm.health - Provider a/m1 cooled down for 240000ms (cap — strike 5/5, NOT evicted, no probe; half-open on expiry)
+15:04:16.222 [33mWARN [0m nebflow.llm.health - Provider a/m1 soft-avoided for 1ms (unit-test 1ms window — NOT evicted, no probe)
+15:04:16.288 [33mWARN [0m nebflow.llm - Stream: a/m1 permanent error (Auth) — provider response: statusCode: 403, response: [wire] HTTP 403 provider=a model=m1 | request=u:t | response=error/permission_error(code=-) | upstream=5-hour usage limit | raw={"type":"error","error":{"type":"permission_error","message":"5-hour usage limit"}} [status=403, evict=true, round=1/2]
+15:04:16.289 [33mWARN [0m nebflow.llm.health - Provider a/m1 soft-avoided for 300000ms (quota exhausted — NOT evicted, no probe)
+15:04:16.294 [36mINFO [0m nebflow.llm.anthropic - message_start: model=m1 usage_json={"input_tokens":10,"output_tokens":0} inputTokens=10 cacheRead=None cacheWrite=None
+15:04:16.295 [36mINFO [0m nebflow.llm.anthropic - message_delta: model=m1 deltaInput=None stored_input=10 final_input=10 cacheRead=None cacheWrite=None totalInput=10 outputTokens=2 stopReason=Some(end_turn)
+[32mnebflow.llm.UpstreamUnavailableSpec:[0m
+[32m  + [0m[32mT1: 500/502/503/504/550 ⇒ server 族 + Transient + evict=false（非标准码同一族）[0m [90m0.002s[0m
+[32m  + [0m[32mT2: 全 5xx 链 ⇒ 可等待；含 403 的混合链 ⇒ 不可等待（拒绝等不来）[0m [90m0.018s[0m
+[32m  + [0m[32mT3: 500 ⇒ 兜底 provider 服务、本家不进 Down（冷却窗替代驱逐）[0m [90m1.483s[0m
+[32m  + [0m[32mT4: 550 + 空响应体（现场形态）⇒ 兜底 provider 服务、本家不进 Down[0m [90m2.255s[0m
+[32m  + [0m[32mT5: 连续 3 次 5xx ⇒ 冷却窗 15s/30s/60s 指数增长，冷却期内候选被剔出链[0m [90m0.006s[0m
+[32m  + [0m[32mT6: 冷却窗到期后候选自动回链（无探测、无人工动作）[0m [90m0.055s[0m
+[32m  + [0m[32mT7: 403（配额闸形态）⇒ 不重试、直接换 provider、走配额软回避而不是 5xx 冷却[0m [90m0.023s[0m
+[32m  + [0m[32mT8: 429 + code 1310（周/月额度实测）⇒ quota 族软回避，不落 5xx 冷却[0m [90m0.001s[0m
+[info] Passed: Total 100, Failed 0, Errors 0, Passed 100
+[success] Total time: 29 s, completed 2026年11月5日 15:04:16

@@ -1,29 +1,27 @@
 package nebflow.agent
 
-import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import io.circe.JsonObject
 import io.circe.syntax.*
 import munit.FunSuite
 import nebflow.actor.AgentDef
-import nebflow.core.delegate.{DelegateModeAllocator, DelegateRegistry, DualModeConfig, ModeDecision}
+import nebflow.core.delegate.{DelegateRegistry, DualModeConfig, ModeDecision, ModeLeg, ModeParam}
 import nebflow.core.tools.{SubagentTool, ToolContext}
 import nebflow.shared.PathUtil
 
 /**
- * 双模式批（2026-10-28 · 第 6 步）**灰度断言专组**：
+ * 执行形态（kernel | dispatcher）**参数决定论**专组（delegate-param-decisions 批
+ * 2026-11-04 · 作者令「kernel和dispatcher 由于你有任务的全部上下文 你也可以做到
+ * 直接选择」——原 DualModeGrayReleaseSpec 的「灰度闸/分配器」语义已随分配器一并
+ * 删除，本文件保留「决策 → 读面 → 工具面」全链断言，改钉新契约）：
  *
- *  - GR1 **同一盘面记录 × 两闸态读数**（灰度核心不变量）：闸关 = Inert 单点
- *    （盘上有 mode 也 None）；同一记录闸开 = 透传——翻闸即分叉，零数据迁移。
- *  - GR2 **缺省安全方向**：出厂态（无 config 无 sys prop）= 闸关 + fail-open
- *    kernel（便宜侧）——「发布即现状」的元断言。
- *  - GR3 **决策→读面→工具面全链**（闸 on §7 形态一）：分配器判 dispatcher ⇒
- *    记录落盘 ⇒ modeFaceOf 读回 ⇒ 挂载面分叉（Subagent 摘除）⇒ 工具内第二保险
- *    拒——一条链钉死 dispatcher 形态。
- *  - GR4 全链形态二：fail-open kernel 判定（分配器抛异常）⇒ 记录 kernel ⇒
- *    读面 kernel ⇒ 编排面退场（Subagent/AgentFlow/node 四件全摘）。
- *  - GR5 **闸关逐字节终检**：同一 GR3 链在闸关下全段失效——记录读 None、
- *    工具调用走参数校验腿（绝无双模式文案）、分配器从未被问。
+ *  - GR1 记录里的 mode 是**权威读面**：不再有闸门把盘上的 mode 藏起来。
+ *  - GR2 出厂缺省 = 确定性 kernel（不填 `mode` ⇒ kernel，零模型调用）。
+ *  - GR3 `dispatcher` 全链：记录落盘 ⇒ modeFaceOf 读回 ⇒ 挂载面分叉（Subagent
+ *    摘除）⇒ 工具内第二保险拒。
+ *  - GR4 `kernel` 全链：编排面整体退场。
+ *  - GR5 **分配器不存在**：`auto` 在参数解析点显式报错，任何调用都不可能被分配器
+ *    截获（旧的「分配器从未被问」改钉「分配器已不存在」）。
  */
 class DualModeGrayReleaseSpec extends FunSuite:
 
@@ -38,12 +36,8 @@ class DualModeGrayReleaseSpec extends FunSuite:
   override def beforeEach(context: munit.BeforeEach): Unit =
     tmp = os.temp.dir(prefix = "dual-mode-gray")
     PathUtil.setDataRoot(tmp / "data")
-    System.clearProperty(DualModeConfig.SysPropEnabled)
-    DelegateModeAllocator.clear()
 
   override def afterEach(context: munit.AfterEach): Unit =
-    System.clearProperty(DualModeConfig.SysPropEnabled)
-    DelegateModeAllocator.clear()
     PathUtil.setDataRoot(originalRoot)
     os.remove.all(tmp)
 
@@ -64,77 +58,85 @@ class DualModeGrayReleaseSpec extends FunSuite:
       )
     )
 
-  // ── GR1 同一记录 × 两闸态 ───────────────────────────────────────────────────
+  // ── GR1 记录 = 权威读面 ─────────────────────────────────────────────────────
 
-  test("GR1 同一盘面记录：闸关读 None（Inert 单点），同一记录闸开透传 dispatcher——翻闸即分叉零迁移") {
+  test("GR1 盘上 mode 直读：没有闸门把 kernel/dispatcher 藏起来（显式选择永不被静默吞掉）") {
     val id = "delegate-nebflow-gr1"
     putRecord(id, Some(DualModeConfig.ModeDispatcher))
     assertEquals(
       DelegateRegistry.modeFaceOf(Some(id)),
-      None,
-      "gate OFF: the on-disk mode is NEVER read (Inert is a single point — the release-safe direction)"
-    )
-    System.setProperty(DualModeConfig.SysPropEnabled, "true")
-    assertEquals(
-      DelegateRegistry.modeFaceOf(Some(id)),
       Some(DualModeConfig.ModeDispatcher),
-      "the SAME record flips the whole face on gate-on — zero data migration between gates"
+      "the record is the authoritative face — no gate, no allocator, no migration step"
+    )
+    putRecord(id, Some(DualModeConfig.ModeKernel))
+    assertEquals(DelegateRegistry.modeFaceOf(Some(id)), Some(DualModeConfig.ModeKernel))
+    putRecord("delegate-nebflow-gr1-legacy", None)
+    assertEquals(
+      DelegateRegistry.modeFaceOf(Some("delegate-nebflow-gr1-legacy")),
+      None,
+      "legacy records stay None (zero migration)"
     )
   }
 
   // ── GR2 缺省安全方向 ────────────────────────────────────────────────────────
 
-  test("GR2 出厂态：无 config 无 sys prop ⇒ 闸关 + fail-open kernel（发布即现状）") {
-    assertEquals(DualModeConfig.enabledNow, false, "factory default = gate OFF (byte-identical release)")
-    assertEquals(DualModeConfig.failopenMode, DualModeConfig.ModeKernel, "factory fail-open side = kernel (the cheap side)")
+  test("GR2 不填 mode ⇒ 确定性 kernel（leg=default），auto 被显式拒绝") {
+    val d = ModeParam.resolve(None).getOrElse(fail("an omitted mode must resolve, never fail"))
+    assertEquals(d.mode, DualModeConfig.ModeKernel, "omitting the parameter deterministically means kernel")
+    assertEquals(d.leg, ModeLeg.Default)
+    assert(ModeParam.resolve(Some("auto")).left.exists(_.contains("DELEGATE_MODE_AUTO_REMOVED")))
   }
 
-  // ── GR3/GR4 决策→读面→工具面全链（闸 on 两形态）────────────────────────────
+  // ── GR3/GR4 记录 → 读面 → 工具面全链 ───────────────────────────────────────
 
   private def fullChain(decision: ModeDecision): (Set[String], Either[nebflow.core.tools.ToolError, String]) =
     val id = "delegate-nebflow-gray-chain"
     putRecord(id, Some(decision.mode))
-    val face = CoreProbe.allowedWithDelegateMode(probeDef, delegateSession = true, delegateMode = DelegateRegistry.modeFaceOf(Some(id)))
+    val face = CoreProbe.allowedWithDelegateMode(
+      probeDef,
+      delegateSession = true,
+      delegateMode = DelegateRegistry.modeFaceOf(Some(id))
+    )
     val subagentCall =
-      SubagentTool.call(JsonObject("prompt" -> "recon".asJson), ToolContext(projectRoot = tmp.toString, sessionId = Some(id)))
+      SubagentTool
+        .call(JsonObject("prompt" -> "recon".asJson), ToolContext(projectRoot = tmp.toString, sessionId = Some(id)))
         .unsafeRunSync()
     (face, subagentCall)
 
-  test("GR3 闸 on 全链形态一（dispatcher）：分配器判 dispatcher ⇒ 读面 ⇒ 面 fork ⇒ Subagent 工具内拒") {
-    System.setProperty(DualModeConfig.SysPropEnabled, "true")
-    DelegateModeAllocator.install((_, _) => IO.pure(ModeDecision(DualModeConfig.ModeDispatcher, "jev", "gray chain stub")))
-    val (face, subagentCall) = fullChain(ModeDecision(DualModeConfig.ModeDispatcher, "jev", "stub"))
+  test("GR3 全链形态一（dispatcher）：参数给 dispatcher ⇒ 读面 ⇒ 面 fork ⇒ Subagent 工具内拒") {
+    val (face, subagentCall) =
+      fullChain(ModeDecision(DualModeConfig.ModeDispatcher, ModeLeg.Param, "explicit mode parameter"))
     assert(!face.contains("Subagent"), "dispatcher face strips Subagent (mount face)")
-    assert(face.contains("ChainWrite") && face.contains("AgentFlow"), "dispatcher keeps the orchestration face")
+    assert(face.contains("ChainWrite"), "dispatcher keeps the orchestration face (ChainWrite)")
+    assert(
+      !face.contains("AgentFlow"),
+      "dispatcher must not carry AgentFlow — the tool is retired (tool-face-agentflow-retire 批 2026-11-05)"
+    )
     assert(
       subagentCall.left.exists(_.message.contains("DUAL_MODE_FACE_REMOVED")),
       s"the tool-internal second guard rejects the escaped call: $subagentCall"
     )
   }
 
-  test("GR4 闸 on 全链形态二（fail-open kernel）：分配器抛异常 ⇒ kernel ⇒ 编排面整体退场") {
-    System.setProperty(DualModeConfig.SysPropEnabled, "true")
-    DelegateModeAllocator.install((_, _) => IO.raiseError(new RuntimeException("face exploded")))
-    val (face, _) = fullChain(ModeDecision(DualModeConfig.ModeKernel, "fail-open", "degraded"))
-    Set("Subagent", "AgentFlow", "NodeEdit", "NodeList", "NodeCancel", "ChainWrite").foreach { t =>
+  test("GR4 全链形态二（kernel）：不填 mode ⇒ kernel ⇒ 编排面整体退场（Subagent 按裁定一保留）") {
+    val decision = ModeParam.resolve(None).getOrElse(fail("default must resolve"))
+    val (face, _) = fullChain(decision)
+    Set("NodeEdit", "NodeList", "NodeCancel", "ChainWrite").foreach { t =>
       assert(!face.contains(t), s"kernel face strips the whole orchestration face: $t")
     }
+    assert(!face.contains("AgentFlow"), "the retired AgentFlow tool never appears on any face")
+    assert(face.contains("Subagent"), "kernel keeps the read-only recon leg (author ruling 2026-11-05)")
     assert(face.contains("Mail") && face.contains("Read"), "kernel keeps the executor continuation face")
   }
 
-  // ── GR5 闸关逐字节终检 ─────────────────────────────────────────────────────
+  // ── GR5 分配器不存在 ───────────────────────────────────────────────────────
 
-  test("GR5 闸关终检：决策链全段失效——记录读 None、工具走参数校验腿、分配器从未被问") {
-    val id = "delegate-nebflow-gr5"
-    var allocatorAsked = 0
-    DelegateModeAllocator.install((_, _) => IO { allocatorAsked += 1; ModeDecision(DualModeConfig.ModeDispatcher, "jev", "must not run") })
-    putRecord(id, Some(DualModeConfig.ModeDispatcher))
-    assertEquals(DelegateRegistry.modeFaceOf(Some(id)), None, "the record read stays None gate-off")
-    val face = CoreProbe.allowedWithDelegateMode(probeDef, delegateSession = true, delegateMode = DelegateRegistry.modeFaceOf(Some(id)))
-    Set("Subagent", "AgentFlow", "ChainWrite").foreach(t => assert(face.contains(t), s"gate-off face keeps: $t"))
-    val call = SubagentTool.call(JsonObject.empty, ToolContext(projectRoot = tmp.toString, sessionId = Some(id))).unsafeRunSync()
-    assert(call.left.exists(_.message.contains("Missing required parameter")), s"the gate-off call walks the legacy validation leg: $call")
-    assert(!call.left.exists(_.message.contains("DUAL_MODE_FACE_REMOVED")), "gate-off never produces dual-mode copy")
-    assertEquals(allocatorAsked, 0, "the allocator is never consulted when the gate is off (decideMode short-circuits)")
+  test("GR5 分配器已删除：auto 在参数解析点就报错（引导语在文案里），不存在任何模型判定兜底") {
+    val err = ModeParam.resolve(Some("auto")).swap.getOrElse(fail("auto must be rejected"))
+    assert(err.contains("allocator has been removed"), err)
+    assert(err.contains("kernel") && err.contains("dispatcher"), err)
+    assert(err.contains("请直接指定 kernel 或 dispatcher，分配器已移除"), err)
+    // 值域外的词同样显式拒（零静默映射）。
+    assert(ModeParam.resolve(Some("jeV")).isLeft, "no fuzzy/alias mapping — only the two words are accepted")
   }
 end DualModeGrayReleaseSpec

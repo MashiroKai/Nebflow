@@ -124,11 +124,17 @@ test('T1 settings opens with NO profile entry row; agent surface lives in the me
   // 也无旧独立面板解隐路径。
   await expect(page.locator('.profile-entry')).toHaveCount(0);
   const body = page.locator('.mobile-page[data-page="settings"] .mobile-page-body');
-  // 工作台批：设置页体首块即收编设置面（hub 行迁回工作台根页，页体无 mf-hub）。
+  // 工作台批：设置页体收编设置面（hub 行迁回工作台根页，页体无 mf-hub）。
+  // 面板头标识 B 批（2026-11-01 作者 17:01 选型 B「iOS 大标题式」）：页体
+  // 首件 = 流内大标题（.mobile-page-title），收编设置面随其后入列 —— 首件
+  // 地位由标题承接（navController buildPage「首件地位恒定」），本探针随批
+  // 换读新序：首 = 标题，次 = 收编面。
   const head = await body.evaluate((el) => ({
     first: el.firstElementChild?.id || el.firstElementChild?.className || '',
+    modalIdx: [...el.children].findIndex((c) => c.id === 'settings-modal'),
   }));
-  expect(head.first).toBe('settings-modal');
+  expect(head.first).toBe('mobile-page-title');
+  expect(head.modalIdx).toBe(1);
 
   // 出页弹回工作台根（设置 = push 详情）→ 中键回聊天根（批②+顶栏批：dock 根页
   // 无「<」/顶栏，返回语义由底 dock 承担）→ header 头像 = 唯一智能体入口：开合并面板。
@@ -214,11 +220,14 @@ test('T3 name inline save on Enter via merged panel; settings groups follow desk
   });
   expect(named).toBe('笨笨二号');
 
-  // 七分组沿用桌面次序：#settings-modal 内分组标题在场（收编进设置页）。
+  // 七分组沿用桌面次序：#settings-modal 收编进设置页、分组节在场。手机档
+  // 面头已整头退役（标题-内容间距修整批 2026-11-01 20:42 ⑤：两子件全隐后
+  // 成 25px 纯空带 ⇒ display:none）—— 探针随批改钉「退役 + 分组节在场」。
   await page.keyboard.press('Escape');
   await pushSettings(page);
   await expect(page.locator('.mobile-page[data-page="settings"]')).toHaveClass(/live/);
-  await expect(page.locator('#settings-modal .settings-modal-header')).toBeVisible();
+  await expect(page.locator('.mobile-page[data-page="settings"] .mobile-page-body > #settings-modal .settings-modal-header')).toBeHidden();
+  await expect(page.locator('#settings-modal .settings-section').first()).toBeVisible();
 
   // 出页清场：零入口行残留（面板合并批 ④）+ 弹回工作台根（工作台批）。
   await page.locator('.mobile-page[data-page="settings"] .mobile-page-header .mobile-back-btn').click();

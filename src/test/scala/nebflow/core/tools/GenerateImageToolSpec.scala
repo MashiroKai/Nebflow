@@ -69,7 +69,7 @@ class GenerateImageToolSpec extends munit.FunSuite:
     val original = PathUtil.dataRoot
     PathUtil.setDataRoot(tmp)
     try
-      os.write(tmp / "nebflow.json", imagegenJson.replace("__PORT__", stub.port.toString))
+      os.write(tmp / nebflow.shared.Branding.configFileName, imagegenJson.replace("__PORT__", stub.port.toString))
       f(tmp)
     finally
       PathUtil.setDataRoot(original)

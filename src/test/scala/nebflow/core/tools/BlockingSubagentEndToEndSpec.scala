@@ -27,9 +27,11 @@ import scala.concurrent.duration.*
  *
  * 三条读数：
  *  - Subagent（defName=subagent）：blocking run 完成，返回子文本。
- *  - AgentFlow（N1 复名薄壳，ex-Workflow）：steps 走 ChainWrite 登记闸（scope 图
- *    落 pending → 入口放行 → settleDeps 逐级完成；b 的 prompt 带 a 的 `=== Node a ===`
- *    结果块）——非阻塞 ACK 即返。
+ *  - ChainWrite（tool-face-agentflow-retire 批 2026-11-05 起为唯一链登记入口，
+ *    ex-AgentFlow 薄壳）：nodes 走登记闸（scope 图落 pending → 入口放行 → settleDeps
+ *    逐级完成；b 的 prompt 带 a 的 `=== Node a ===` 结果块）——非阻塞 ACK 即返；
+ *    并钉住 `orchestrationMode` 升级写点（登记的 ACK 路径上把调用 delegate 升到
+ *    `agentflow`，迁移前该写点在已删的 已删的 AgentFlow 工具 里）。
  *  - 生产者排他钉：`grep '"finalText"' src/main/scala` 恰两个命中
  *    （`AgentEvent.scala` 生产者 + `BlockingSubagent.scala` 读取点）。
  */
@@ -44,7 +46,7 @@ class BlockingSubagentEndToEndSpec extends CatsEffectSuite:
   override def beforeAll(): Unit =
     os.remove.all(tempRoot)
     os.makeDir.all(tempRoot / "agents")
-    os.write.over(tempRoot / "nebflow.json", "{}")
+    os.write.over(tempRoot / nebflow.shared.Branding.configFileName, "{}")
     PathUtil.setDataRoot(tempRoot)
 
   override def afterAll(): Unit =
@@ -114,13 +116,18 @@ class BlockingSubagentEndToEndSpec extends CatsEffectSuite:
       }
       .guarantee(system.stopAll.handleErrorWith(_ => IO.unit))
 
-  // ── AgentFlow（N1 复名批：ex-Workflow 薄壳）——steps → ChainWrite 登记闸 ──
+  // ── ChainWrite（N1 刀2）——整链登记闸 ＋ **orchestrationMode 升级写点** e2e ──
+  // tool-face-agentflow-retire 批（2026-11-05，作者裁定二）：本用例原走 已删的 AgentFlow 工具
+  // 薄壳（已随工具退役删除），改走**唯一现役入口** ChainWriteTool。同时钉住本批的
+  // **头号判据**：`orchestrationMode = "agentflow"` 的唯一写点自 已删的 AgentFlow 工具 迁入
+  // `ChainWriteTool.registerChain` ⇒ 一次真实链登记后，读回 mode 必须已升到
+  // `agentflow`（迁移前这条升级永远不发生的形态就在这里被抓住）。
 
   test(
-    "P0-2 AgentFlow thin shell: a two-step DAG registers through the chain gate, the entry runs, and step b settles after a completes"
+    "P0-2 ChainWrite: a two-node chain registers through the gate, the entry runs, node b settles after a — AND orchestrationMode rises to 'agentflow'"
   ):
     val captured = TrieMap[String, LlmRequest]()
-    val system = nebflow.actor.ActorSystem("bse2e-af")
+    val system = nebflow.actor.ActorSystem("bse2e-cw")
     val llm = new ScriptedLlm(_ => "STEP-TEXT", captured)
     val delegateId = "delegate-general-af11aa11"
     val ws = tempRoot / "af-ws"
@@ -137,6 +144,22 @@ class BlockingSubagentEndToEndSpec extends CatsEffectSuite:
       go(System.currentTimeMillis() + timeout.toMillis)
     (for
       res <- SpecResources.mkResources(system, tempRoot, llm)
+      // spawn 形态记录（mode 缺省 = single）：升级秩 0 ⇒ 升 agentflow（秩 2）必然发生。
+      _ <- IO(
+        nebflow.core.delegate.DelegateRegistry.put(
+          nebflow.core.delegate.DelegateRegistry.Record(
+            id = delegateId,
+            executor = "nebflow",
+            cwd = ws.toString,
+            project = None,
+            taskId = None,
+            parentSessionId = "e2e-root",
+            title = "chain e2e",
+            createdAt = System.currentTimeMillis() - 60_000L,
+            mode = None
+          )
+        )
+      )
       mo <- nebflow.core.project.DelegateFlowHosts.mount(
         delegateId = delegateId,
         project = None,
@@ -150,11 +173,13 @@ class BlockingSubagentEndToEndSpec extends CatsEffectSuite:
         destroyWindowMs = Some(0L)
       )
       h = mo.getOrElse(fail("delegate host must mount"))
-      out <- AgentFlowTool.call(
+      modeBefore <- IO(nebflow.core.delegate.DelegateRegistry.find(delegateId).flatMap(_.orchestrationMode))
+      registeredAt = System.currentTimeMillis()
+      out <- ChainWriteTool.call(
         JsonObject.fromIterable(
           List(
-            "description" -> "e2e".asJson,
-            "steps" -> io.circe.Json.arr(
+            "chainName" -> "e2e-chain".asJson,
+            "nodes" -> io.circe.Json.arr(
               io.circe.Json.obj("id" -> "a".asJson, "task" -> "do A".asJson),
               io.circe.Json.obj("id" -> "b".asJson, "task" -> "do B".asJson, "deps" -> io.circe.Json.arr("a".asJson))
             )
@@ -167,28 +192,45 @@ class BlockingSubagentEndToEndSpec extends CatsEffectSuite:
           actorSystem = Some(system)
         )
       )
+      // 回执后立刻读回（升级写点就在回执路径上——登记成功 ⇒ 同步读完即应已升）
+      modeAfter <- IO(nebflow.core.delegate.DelegateRegistry.find(delegateId).flatMap(_.orchestrationMode))
+      readBackAt = System.currentTimeMillis()
       _ <- waitUntil(60.seconds)(
         h.store.getNode("b").map(n => n.exists(x => nebflow.core.project.NodeLifecycle.Terminal.contains(x.status)))
       )
-      a <- h.store.getNode("a").map(_.getOrElse(fail("step a must exist")))
-      b <- h.store.getNode("b").map(_.getOrElse(fail("step b must exist")))
+      a <- h.store.getNode("a").map(_.getOrElse(fail("node a must exist")))
+      b <- h.store.getNode("b").map(_.getOrElse(fail("node b must exist")))
       _ <- nebflow.core.project.DelegateFlowHosts.unmount(delegateId)
-    yield (out, a, b))
-      .map { case (out, a, b) =>
+    yield (out, a, b, modeBefore, modeAfter, registeredAt, readBackAt))
+      .map { case (out, a, b, modeBefore, modeAfter, registeredAt, readBackAt) =>
         assert(out.isRight, s"the non-blocking ack must land: $out")
         val ack = out.getOrElse("")
-        assert(ack.contains("Chain 'flow-"), s"auto chain id in the ack: $ack")
+        assert(ack.contains("Chain 'e2e-chain'"), s"declared chain id in the ack: $ack")
         assert(ack.contains("released"), s"entry release declared in the ack: $ack")
-        assertEquals(a.status, nebflow.core.project.NodeLifecycle.Completed, "entry step runs to completion")
-        assertEquals(b.status, nebflow.core.project.NodeLifecycle.Completed, "downstream step settles via deps")
-        // 逐级交付证明：步骤 b 的 prompt 必带步骤 a 的结果块（=== Node a === 头）——
-        // 薄壳下数据流仍沿边投递（buildInput 上游结果块）。
+        assertEquals(a.status, nebflow.core.project.NodeLifecycle.Completed, "entry node runs to completion")
+        assertEquals(b.status, nebflow.core.project.NodeLifecycle.Completed, "downstream node settles via deps")
+        // 逐级交付证明：节点 b 的 prompt 必带节点 a 的结果块（=== Node a === 头）——
+        // 数据流沿边投递（buildInput 上游结果块）。
         val reqTexts = captured.values.toList.flatMap(_.messages.lastOption).map(m => m.textContent).mkString("\n")
         assert(
           captured.size >= 2,
-          s"both steps must actually run a turn, got ${captured.size}: ${captured.keys.toList}"
+          s"both nodes must actually run a turn, got ${captured.size}: ${captured.keys.toList}"
         )
-        assert(reqTexts.contains("=== Node a ==="), s"step b's prompt must carry step a's result block: $reqTexts")
+        assert(reqTexts.contains("=== Node a ==="), s"node b's prompt must carry node a's result block: $reqTexts")
+        // 🔴 头号判据：orchestrationMode 写点迁移实测时间线（登记 → 读回 mode）。
+        assertEquals(modeBefore, None, "pre-registration the record has no orchestration mode (rank 0)")
+        assertEquals(
+          modeAfter,
+          Some(nebflow.core.delegate.DelegateRegistry.ModeAgentflow),
+          s"a successful chain registration MUST raise orchestrationMode to 'agentflow' " +
+            s"(write point migrated from the deleted 已删的 AgentFlow 工具 into ChainWriteTool.registerChain); " +
+            s"timeline: register@$registeredAt -> readback@$readBackAt (Δt=${readBackAt - registeredAt}ms)"
+        )
+        println(
+          s"[MODE-MIGRATION] mode before registration = $modeBefore; " +
+            s"chain registration @$registeredAt; mode readback @$readBackAt => $modeAfter " +
+            s"(Δt=${readBackAt - registeredAt}ms)"
+        )
       }
       .guarantee(
         (nebflow.core.project.DelegateFlowHosts.unmount(delegateId) *> system.stopAll.handleErrorWith(_ => IO.unit))

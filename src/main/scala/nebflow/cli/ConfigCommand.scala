@@ -130,13 +130,13 @@ object ConfigCommand extends CliCommand:
    * masked.
    */
   private[cli] def isSecretKey(key: String): Boolean =
-    val k = key.toLowerCase.filter(_.isLetterOrDigit)
-    val named =
-      k.contains("apikey") || k.contains("secret") || k.contains("password") ||
-        k.contains("passwd") || k.contains("credential")
-    // "token" only when it is a singular credential-ish name, never a plural quota
-    val tokenish = k.startsWith("token") || k.endsWith("token")
-    named || tokenish
+    // 🔴 2026-11-04 两小件批 · 件一：键表收归单一真源
+    // [[nebflow.shared.SecretKeys.isSensitive]]。旧实现在这里自写一份
+    // （`apikey|secret|password|passwd|credential` + 单数 token 首尾），与日志腿 /
+    // 隧道腿 / MCP 卡面腿各一份、互有出入 —— 缺 `authorization`、`refreshToken`
+    // 家族的部分变体。D6 的两条既定口径（配额 `maxTokens` / `budgetTokens` 不掩码、
+    // 非秘密字段逐字保留）现在由真源的配额豁免承接，语义不变。
+    nebflow.shared.SecretKeys.isSensitive(key)
 
   private[cli] def redact(json: Json): Json =
     json.fold(

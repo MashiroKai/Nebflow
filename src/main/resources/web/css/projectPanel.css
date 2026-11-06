@@ -4,16 +4,16 @@
 .project-card .project-fields {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px 14px 12px;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-block-y) 14px var(--ds-space-3);
   border-top: 1px solid var(--color-border);
-  margin-top: 10px;
+  margin-top: var(--ds-space-stack-gap);
 }
 
 .project-field {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
   min-width: 0;
 }
 
@@ -22,12 +22,12 @@
      different widths and a ragged left edge on the value column reads as
      three unrelated rows instead of one field table. */
   flex: 0 0 76px;
-  font: 500 11px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font: 500 var(--ds-fs-meta)/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: var(--color-text-muted);
 }
 
 .project-field-value {
-  font: 400 12px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font: 400 var(--ds-fs-hint)/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: var(--color-text);
   white-space: nowrap;
   overflow: hidden;
@@ -59,57 +59,130 @@
   border: none;
   background: transparent;
   padding: 0;
-  font: 500 12px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font: 500 var(--ds-fs-btn)/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: rgb(var(--sapphire) / 1);
   cursor: pointer;
   transition: opacity 150ms ease;
 }
-.project-link-btn:hover { opacity: 0.75; text-decoration: underline; }
-.project-link-btn:focus-visible { box-shadow: 0 0 0 2px var(--glass-control-border); border-radius: 4px; }
+@media (hover: hover) {
+  .project-link-btn:hover { opacity: 0.75; text-decoration: underline; }
+}
+
+.project-link-btn:focus-visible {
+  outline: var(--btn-ring-w) solid var(--btn-ring);
+  outline-offset: var(--btn-ring-offset); border-radius: var(--ds-radius-badge); }
 
 .project-open-btn {
   flex: 0 0 auto;
   width: 26px;
   height: 26px;
   border: 1px solid var(--color-border);
-  border-radius: 7px;
+  border-radius: var(--ds-radius-input);
   background: transparent;
   color: var(--color-text-muted);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  margin-left: 4px;
+  margin-left: var(--ds-space-1);
   transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
 }
-
-.project-open-btn:hover {
-  color: rgb(var(--sapphire) / 1);
-  border-color: rgb(var(--sapphire) / 0.45);
-  background: rgb(var(--sapphire) / 0.08);
+@media (hover: hover) {
+  
+  .project-open-btn:hover {
+    color: rgb(var(--sapphire) / 1);
+    border-color: rgb(var(--sapphire) / 0.45);
+    background: rgb(var(--sapphire) / 0.08);
+  }
 }
+
 
 .project-open-btn svg { width: 15px; height: 15px; }
 
-/* 归档按钮（迁移方案 v2 §6.1）：卡片头部显式人工归档入口，尺寸/形态对齐
-   .project-open-btn（26×26 icon 按钮，位于 header 摘要右侧）。归档可逆
-   （可取消归档）→ 不用 danger 红语义；静态 ghost、hover 全玻璃材质，
+/* 取消加载按钮（unmount-console 面板批 2026-11-02）：卡片头部显式人工卸载入口
+   （原 .project-archive-btn 面位回归，类名随语义更替）。尺寸/形态对齐
+   .project-open-btn（26×26 icon 按钮，位于 header 摘要右侧）。卸载可逆（「已卸载」
+   分组可重新加载）→ 中性玻璃，不用 danger 红语义；静态 ghost、hover 全玻璃材质，
    走 sapphire.css Pattern A（同 .session-delete 等 icon 控件族，2026-09-05）。 */
-.project-archive-btn {
+.project-unmount-btn {
   flex: 0 0 auto;
   width: 26px;
   height: 26px;
   border: 1px solid transparent;
-  border-radius: 7px;
+  border-radius: var(--ds-radius-input);
   background: transparent;
   color: var(--color-text-muted);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: background 150ms ease, color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+  transition: background 150ms ease, color 150ms ease, border-color 150ms ease;
 }
-.project-archive-btn svg { width: 15px; height: 15px; }
+.project-unmount-btn svg { width: 15px; height: 15px; }
+.project-unmount-btn:focus-visible {
+  outline: var(--btn-ring-w) solid var(--btn-ring);
+  outline-offset: var(--btn-ring-offset); }
+
+/* ── 已卸载分组（unmount-console 面板批 2026-11-02）：卸载态项目的可见去处 ──
+   列表尾部一组灰态行（名字 + 工作区 + 「重新加载」）。灰态 = 减淡（muted），
+   不抢 mounted 卡的视觉权重；分组头只有一行小标题（作者令 2026-11-05 08:26 删掉
+   了原先并列的灰字解释句 `.project-unm-hint`——自解释铁律 8 的重复说明）。
+   深浅主题全走 var(--color-*) token，零裸 hex。 */
+.project-unmounted-group {
+  margin: 14px var(--ds-space-half) var(--ds-space-1);
+  padding-top: var(--ds-space-block-y);
+  border-top: 1px dashed var(--color-border);
+}
+.project-unm-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--ds-space-2);
+  padding: 0 var(--ds-space-3) var(--ds-space-1h);
+  min-width: 0;
+}
+.project-unm-title {
+  flex: 0 0 auto;
+  font: 600 var(--ds-fs-meta)/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--color-text-muted);
+  letter-spacing: 0.02em;
+}
+.project-unm-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-inline-gap);
+  padding: var(--ds-space-2) var(--ds-space-3);
+  border-radius: var(--ds-radius-button);
+}
+.project-unm-row + .project-unm-row { margin-top: var(--ds-space-half); }
+.project-unm-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  font: 500 var(--ds-fs-hint)/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: default;
+}
+.project-unm-ws {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--ds-fs-meta);
+  color: var(--color-text-muted);
+  opacity: 0.7;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
+}
+.project-unm-remount {
+  flex: 0 0 auto;
+  padding: var(--ds-space-1) var(--ds-space-inline-x);
+  font: 500 var(--ds-fs-meta)/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  cursor: pointer;
+}
+.project-unm-remount:disabled { opacity: 0.55; cursor: default; }
+.project-unm-remount:focus-visible { box-shadow: 0 0 0 2px var(--glass-control-border); }
 
 /* ── Flow Map 就地视图（同标签页切换，projectTab.openFlowMapInPlace）────────── */
 
@@ -120,9 +193,9 @@
 .flowmap-nav-bar {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--ds-space-3);
   flex: 0 0 auto;
-  padding: 10px 14px;
+  padding: var(--ds-space-block-y) 14px;
   border-bottom: 1px solid var(--color-border);
   background: var(--glass-bg);
 }
@@ -130,23 +203,26 @@
 .flowmap-back-btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   max-width: min(60%, 420px); /* 顶栏合并批：100%→60% 给右侧摘要让位，超出由名字 span ellipsis 承接 */
   min-width: 0;
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   background: transparent;
   color: var(--color-text);
-  font: 500 12px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  padding: 6px 10px;
+  font: 500 var(--ds-fs-btn)/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  padding: var(--ds-space-1h) var(--ds-space-inline-x);
   cursor: pointer;
   transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
 }
-.flowmap-back-btn:hover {
-  color: rgb(var(--sapphire) / 1);
-  border-color: rgb(var(--sapphire) / 0.45);
-  background: rgb(var(--sapphire) / 0.08);
+@media (hover: hover) {
+  .flowmap-back-btn:hover {
+    color: rgb(var(--sapphire) / 1);
+    border-color: rgb(var(--sapphire) / 0.45);
+    background: rgb(var(--sapphire) / 0.08);
+  }
 }
+
 .flowmap-back-btn svg { width: 14px; height: 14px; flex: 0 0 auto; }
 .flowmap-back-btn .flowmap-back-name {
   min-width: 0;
@@ -191,12 +267,16 @@
   color: var(--color-text-muted);
 }
 
+/* 「空」标记（empty 形态 · M 档）：项目/团队卡上「暂无描述」这类行内空态标记。 */
 .project-empty-tag {
-  font: 500 10px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  color: var(--color-text-muted);
-  margin-left: 6px;
-  padding: 2px 6px;
-  border-radius: 4px;
+  font-size: var(--cv-hint-fs-m);
+  font-weight: var(--cv-hint-fw-s);
+  line-height: var(--cv-hint-lh-m);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--cv-hint-color);
+  margin-left: var(--ds-space-1h);
+  padding: var(--ds-space-half) var(--ds-space-1h);
+  border-radius: var(--ds-radius-badge);
   background: var(--color-frame-hover);
   white-space: nowrap;
   vertical-align: 2px;
@@ -264,7 +344,7 @@
   display: inline-block;
   width: 46px;
   height: 7px;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   background: var(--color-frame-hover);
   animation: projectSkeletonPulse 1.2s ease-in-out infinite;
 }
@@ -317,11 +397,6 @@
   border-radius: 50%;
   border: 1px solid var(--glass-control-border);
   background: var(--glass-control-bg);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -331,18 +406,18 @@
   transition: all 0.2s ease;
   opacity: 0.6;
 }
-.proj-create-fab:hover {
-  background: var(--glass-control-bg-hover);
-  opacity: 1;
-  transform: scale(1.05);
+@media (hover: hover) {
+  .proj-create-fab:hover {
+    background: var(--glass-control-bg-hover);
+    opacity: 1;
+    transform: scale(1.05);
+  }
 }
-/* 焦点环沿本文件既有范式（`:focus-visible` + `--glass-control-border`，见 :69）。 */
-.proj-create-fab:focus { outline: none; }
+
+
 .proj-create-fab:focus-visible {
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge),
-    0 0 0 2px var(--glass-control-border);
+  outline: var(--btn-ring-w) solid var(--btn-ring);
+  outline-offset: var(--btn-ring-offset);
   opacity: 1;
 }
 
@@ -360,11 +435,6 @@
   border-radius: 50%;
   border: 1px solid var(--glass-control-border);
   background: var(--glass-control-bg);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -376,16 +446,17 @@
   padding: 0;
 }
 .proj-flowmap-fab svg { width: 17px; height: 17px; }
-.proj-flowmap-fab:hover {
-  background: var(--glass-control-bg-hover);
-  opacity: 1;
-  transform: scale(1.05);
+@media (hover: hover) {
+  .proj-flowmap-fab:hover {
+    background: var(--glass-control-bg-hover);
+    opacity: 1;
+    transform: scale(1.05);
+  }
 }
+
 .proj-flowmap-fab:focus-visible {
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge),
-    0 0 0 2px var(--glass-control-border);
+  outline: var(--btn-ring-w) solid var(--btn-ring);
+  outline-offset: var(--btn-ring-offset);
   opacity: 1;
 }
 
@@ -401,31 +472,98 @@
    特异度 (0,3,0) > `.team-scroll` (0,1,0) ⇒ 按特异度胜出，与样式表顺序无关。 */
 .canvas-tab-pane[data-type="projects"] .team-scroll { padding-bottom: 72px; }
 
-/* ── 顶行让位带（2026-10-22 作者追加令「胶囊与标题文字/相邻控件零重叠」）────
-   作者截图：「项目」卡头胶囊（.canvas-header，浮层 absolute top10/left14
-   z-30，实测高 36 ⇒ 底缘 46）叠压住本面板「委托全景」标题与列表卡标题
-   （.team-card-title[data-open-flowmap] 即卡片唯一交互件）——遮查看又遮点击，
-   且 projcreate 两 spec 的点击被胶囊 subtree 拦截超时（基点 5 败实证）。
-   布局层解法 = 面板顶预留 56px 胶囊带（胶囊底缘 46；deck fab fixed top10+40
-   高底缘 50 ⇒ 56 = 全清出 + 4px 基数；手机层卡头通栏底缘 ≈40-46 同带覆盖）：
-   ① in-flow 面（.flowmap-nav-bar 返回钮/链标题/摘要、delegate 视图体）——
-   pane padding-top 直接生效；
-   ② 列表滚动体 .team-scroll 是 **absolute top:0**（flowCss.js 注入的共用壳，
-   锚 padding box ⇒ pane padding 对它无效）——须同带改 `top: 56px`，列表首行
-   卡标题才真正离开胶囊命中区（elementFromPoint/click 双证钉死）。
-   纯定位让位——不改胶囊定位、不动视图结构、零 sticky 面；绝对定位子级
-   （proj-create-fab bottom/right 座、fm-fab 右缘座）不随带移位。 */
-.canvas-tab-pane[data-type="projects"] { padding-top: 56px; }
-.canvas-tab-pane[data-type="projects"] .team-scroll { top: 56px; }
+/* ══ 面板头「穿顶」带（件4 · 2026-11-05 作者令）══════════════════════════
+   作者原话：「canvas 顶部的这种内容一开始不允许在按钮下，但是滑动后可以从按钮下
+   穿过的这种设计要落实到其他的面板……这样式和 Canvas 的统一。」
+   两条铁律：**元素不许为了腾地方而消失**；**两态都要成立** = 初始不遮挡/不重叠，
+   滚动后才允许从按钮/胶囊下穿过。
+
+   机制单源 = canvas 标题胶囊三件（实测活变量，spec REF 腿钉死）：
+     ① 胶囊 = **滚动容器之外的绝对浮层**：`.canvas-header` position:absolute /
+        top 10 / z-index 30 + 玻璃本体 backdrop-filter（split.css:723-760，
+        sapphire.css:264-267 的 --cv-head-* 几何档）；
+     ② 让位 = **滚动容器自身的 padding-top**（md 面 52px，split.css:4052-4054）：
+        padding 是滚动内容的一部分 ⇒ 初态首内容起笔在胶囊下缘之下，滚动后 padding
+        随内容滚走 ⇒ 内容从胶囊底下真穿过；
+     ③ **不是遮罩**：桌面 canvas 的裙边渐隐已退役（scrollUnderGlass.css:76-78
+        display:none，作者 2026-10-22 裁定「不允许任何渐变蒙层盖在内容上」），
+        穿过读作 = z 序 + 玻璃本体本身；排他是布局性的（行占位 + 下方起算），
+        非 z-index 遮掩（split.css:713-720）。
+
+   token 单源纪律：几何只有一份（sapphire.css 的 --cv-* 声明），本块只给面板族
+   语义别名 —— 禁各面板另抄一套魔数（值 = band 46px / clear 56px）。
+   ─────────────────────────────────────────────────────────────────── */
+:root {
+  --panel-head-top: var(--cv-head-top);
+  --panel-head-h: var(--cv-head-h);
+  --panel-head-band: var(--cv-head-band);
+  --panel-head-clear: var(--cv-head-clear);
+  /* 呼吸缝（= --cv-head-clear 扣掉行带的那 10px，不另立数值）+ 双行让位：
+     面板自带返回条排在 canvas 标题胶囊那一行**之下**（胶囊 10..46 / 自带条
+     56..92），故双行面（有自带返回条的面板）的让位 = 胶囊行 + 呼吸缝 + 自带条高
+     = 56 + 36 + 10 = 102（首内容起笔读数）。 */
+  --panel-head-seam: calc(var(--panel-head-clear) - var(--panel-head-band));
+  --panel-head-2row: calc(var(--panel-head-clear) + var(--panel-head-h) + var(--panel-head-seam));
+}
+
+/* ① 项目列表面板（.team-scroll = 卡片列表滚动体）
+   旧实现（2026-10-22 顶行让位带）把整个滚动体下移 `top: 56px` —— 首卡确实离开了
+   胶囊命中区，代价是滚动体顶缘钉死 56：46..56 成一条死带、56 处一条硬切线，「穿过」
+   态不成立（件4 改前实测 B1 裁剪感知可见顶 73 ≥ 胶囊底 63、B2 带内命中 pane 底）。
+   本批改回 canvas 机制：滚动体顶缘留在 pane 顶（top 0，绝对定位锚 padding box ⇒
+   pane padding 对它无效，故让位必须写在滚动体自身），让位交给它自己的 padding-top
+   ⇒ 首卡仍起笔 56（胶囊底 46 + 10 呼吸缝，读数不变），滚动后首卡从胶囊底下穿过
+   （首卡滚动到 pane 顶缘，内容真正经过胶囊背后）。
+   桌面限定：手机层项目页是页面壳（大标题 + 悬浮返回钮自有让位），见 mobileLayer.css
+   「项目面旧胶囊让位带收编」块。 */
+body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] {
+  padding-top: 0;
+}
+body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .team-scroll {
+  top: 0;
+  padding-top: var(--panel-head-clear);
+}
+
+/* ② Flow-Map 族就地视图（项目全景 / 委托链视图）：返回条升为**浮层玻璃胶囊**。
+   与 canvas 标题胶囊同高（--panel-head-h 36）/ 同材质（--glass-bg + blur 24 +
+   saturate 1.15 + 玻璃描边、底缘描边透明化 = 内容从条底下穿过时不衬横线）/
+   同圆角（pill），实测材质逐项 = 胶囊档。
+   🔴 行序（本块第一版踩过的坑，留档防复发）：返回条**不得**占 canvas 标题胶囊
+   那一行（top: --panel-head-top）——两件都是 z 30 浮层，会正面叠印、把页签胶囊盖掉
+   （=「元素为了腾地方而消失」，作者铁律①）。故返回条排第二行 = top: --panel-head-clear
+   （胶囊行下缘 46 + 10 呼吸缝 = 56），视图体让位 = 双行档 --panel-head-2row（102）。
+   视图体（.delegate-chain-view-body）自带 padding-top 让位 ⇒ 初态首内容在条下，
+   滚动后从条底下穿过（滚动体顶缘留在 pane 顶 = 真穿过，不是被裁在条下）。
+   pane 型页（委托链 per-task = pan/zoom 地图面，无纵向滚动轴）同一套几何：
+   只要求「初态不压」（穿过腿对 pan 面无意义，见 spec B1 N/A 注）。 */
+body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .flowmap-nav-bar {
+  position: absolute;
+  top: var(--panel-head-clear);
+  left: 14px;
+  right: 14px;
+  z-index: 30;
+  box-sizing: border-box;
+  height: var(--panel-head-h);
+  padding: 0 var(--ds-space-3);
+  border: var(--ds-border-width, 1px) solid var(--ds-border-glass);
+  border-bottom-color: transparent;
+  border-radius: var(--ds-radius-pill);
+  background: var(--glass-bg);
+}
+body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .delegate-chain-view-body {
+  padding-top: var(--panel-head-2row);
+}
+/* ②-c 地图面（per-task）同款浮层：地图无纵向滚动轴 ⇒ 只要求「初态不压」，不要求
+   穿过（pan 面不是滚动面）；视图体仍吃 padding-top 让位，地图满幅从条下起笔。 */
 
 /* 弹层专属布局（材质/玻璃/零暗化全部继承 `.wsp-*` 与共享玻璃卡组，此处只补
    `.wsp-*` 族没有的 textarea 槽位与计数行——材质仍取 `.modal-input`，零新造）。 */
 .proj-create-panel { width: 520px; }
 .proj-create-label {
   display: block;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-frame-text-dim);
-  margin-bottom: 6px;
+  margin-bottom: var(--ds-space-1h);
 }
 .proj-create-desc {
   font-family: inherit;
@@ -435,8 +573,8 @@
 .proj-create-meter {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 6px;
+  gap: var(--ds-space-2);
+  margin-top: var(--ds-space-1h);
   min-height: 16px;
 }
 /* 错误行占满左侧，计数器固定右侧。ui-status-redesign（盘点 #35，S9 同族）：
@@ -446,21 +584,21 @@
   min-width: 0;
   display: flex;
   align-items: flex-start;
-  gap: 5px;
-  font-size: 11.5px;
+  gap: var(--ds-space-1);
+  font-size: var(--ds-fs-hint);
   color: var(--status-word);
 }
-.proj-create-error .st-ic { width: 12px; height: 12px; margin-top: 1px; flex-shrink: 0; }
+.proj-create-error .st-ic { width: 12px; height: 12px; margin-top: var(--ds-space-hair); flex-shrink: 0; }
 .proj-create-count {
   flex: 0 0 auto;
-  font-size: 11.5px;
+  font-size: var(--ds-fs-hint);
   font-variant-numeric: tabular-nums;
   color: var(--color-frame-text-muted);
 }
 /* 超 500 时染色（ui-status-redesign 盘点 #50）：11.5px 红数字退役 → 数字转
    中性、行首 triangle-alert 琥珀图标（projectTab.js 注入，非阻断超量=警示档）。 */
 .proj-create-count.is-over { color: var(--status-word); }
-.proj-create-count.is-over .st-ic { width: 11px; height: 11px; margin-right: 3px; vertical-align: -1px; }
+.proj-create-count.is-over .st-ic { width: 11px; height: 11px; margin-right: var(--ds-space-1); vertical-align: -1px; }
 .proj-create-hint { flex: 1; min-width: 0; }
 
 /* ── D4 path slot (author ruling 2026-09-24: "use a path picker to choose, rather
@@ -475,22 +613,22 @@
 .proj-create-path-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--ds-space-inline-gap);
   margin-bottom: 14px;
 }
 .proj-create-pick {
   flex: 0 0 auto;
-  font: 500 12.5px -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 500 var(--ds-fs-hint) -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text);
-  padding: 7px 14px;
-  border-radius: 10px;
+  padding: var(--ds-space-2) 14px;
+  border-radius: var(--ds-radius-button);
   cursor: pointer;
 }
 .proj-create-pick:hover { background: var(--glass-control-bg-hover); }
 .proj-create-path {
   flex: 1;
   min-width: 0;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-frame-text-dim);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -509,30 +647,33 @@
   position: relative; /* .dev-menu 的锚（absolute 下拉） */
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
   margin-bottom: 14px;
 }
 .dev-btn {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  padding: 7px 12px;
+  gap: var(--ds-space-1h);
+  padding: var(--ds-space-2) var(--ds-space-3);
   border: none;
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
   background: var(--color-frame-hover);
   color: var(--color-text);
-  font: 500 12.5px -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 500 var(--ds-fs-btn) -apple-system, BlinkMacSystemFont, sans-serif;
   cursor: pointer;
   transition: background 0.12s;
 }
-.dev-btn:hover { background: var(--glass-control-bg-hover); }
+@media (hover: hover) {
+  .dev-btn:hover { background: var(--glass-control-bg-hover); }
+}
+
 .dev-btn .dev-ic { display: inline-flex; width: 14px; height: 14px; color: var(--color-frame-text-muted); }
 .dev-btn .dev-ic svg { width: 100%; height: 100%; }
 .dev-btn.is-remote .dev-ic { color: rgb(var(--sapphire)); } /* 远端腿着色（设计稿 A1 远端形） */
 .dev-btn .chev { width: 12px; height: 12px; color: var(--color-frame-text-muted); flex: 0 0 auto; }
 .dev-btn[aria-expanded="true"] .chev { transform: rotate(180deg); }
 .dev-note {
-  font-size: 11.5px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-frame-text-dim);
   min-width: 0;
   overflow: hidden;
@@ -548,15 +689,13 @@
   left: 0;
   z-index: 300;
   min-width: 300px;
-  padding: 4px;
+  padding: var(--ds-space-1);
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--ds-space-half);
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
   box-shadow:
     inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
     0px 2px 8px rgba(0, 0, 0, 0.04),
@@ -589,13 +728,13 @@
 .dev-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 10px;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
   border: none;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   background: transparent;
   color: var(--color-frame-text);
-  font-size: 12.5px;
+  font-size: var(--ds-fs-hint);
   cursor: pointer;
   text-align: left;
   transition: background 0.12s;
@@ -607,7 +746,7 @@
 .dev-item .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dev-item .sub {
   flex: 0 0 auto;
-  font: 500 10px/1 ui-monospace, SFMono-Regular, monospace;
+  font: 500 var(--ds-fs-meta)/1 ui-monospace, SFMono-Regular, monospace;
   color: var(--color-frame-text-muted);
   opacity: 0.8;
 }
@@ -615,81 +754,84 @@
 .dev-item .off-tag {
   flex: 0 0 auto;
   margin-left: auto;
-  padding: 2px 6px;
-  border-radius: 6px;
+  padding: var(--ds-space-half) var(--ds-space-1h);
+  border-radius: var(--ds-radius-chip);
   background: var(--color-frame-hover);
-  font: 600 10px/1 -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 600 var(--ds-fs-meta)/1 -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-frame-text-muted);
 }
 /* 离线行禁选（设计稿 A3）：减淡 + 不可点 + cursor 默认——不给「点了必失败」的按钮。 */
 .dev-item.disabled { opacity: 0.5; cursor: default; }
 .dev-item.disabled:hover { background: transparent; }
 .dev-menu-foot {
-  padding: 6px 10px 4px;
+  padding: var(--ds-space-1h) var(--ds-space-inline-x) var(--ds-space-1);
   border-top: 1px solid var(--glass-border);
-  margin-top: 2px;
-  font-size: 10.5px;
+  margin-top: var(--ds-space-half);
+  font-size: var(--ds-fs-meta);
   line-height: 1.45;
   color: var(--color-frame-text-muted);
 }
-/* 远端选中语义提示行（设计稿 A4）：info 图标（--sapphire）+ 一句执行绑定语义。 */
+/* 远端选中语义提示行（设计稿 A4）：info 图标（--sapphire）+ 一句执行绑定语义。
+   canvas-hint-text 批：page 形态 ⇒ H 档 12/400/1.45/muted（修前裸 `line-height:
+   1.5` + `--ds-fs-hint`，行高不在三档内）。 */
 .dev-hintline {
   display: flex;
   align-items: flex-start;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   margin: -4px 0 14px;
-  font-size: 11.5px;
-  line-height: 1.5;
-  color: var(--color-frame-text-muted);
+  font-size: var(--cv-hint-fs-h);
+  font-weight: var(--cv-hint-fw);
+  line-height: var(--cv-hint-lh-h);
+  color: var(--cv-hint-color);
 }
-.dev-hintline svg { width: 12px; height: 12px; margin-top: 2px; flex: 0 0 auto; color: rgb(var(--sapphire)); }
+.dev-hintline svg { width: 12px; height: 12px; margin-top: var(--ds-space-half); flex: 0 0 auto; color: rgb(var(--sapphire)); }
 /* 远端回显 chip（创建弹层路径行 + 选择器面包屑共用一件）：hard-drive 图形 + 设备名，
    sapphire 着色（与 .dev-btn.is-remote 同族）。 */
 .path-chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
-  border-radius: 7px;
+  gap: var(--ds-space-1);
+  padding: var(--ds-space-half) var(--ds-space-2);
+  border-radius: var(--ds-radius-input);
   background: rgb(var(--sapphire) / 0.12);
   color: rgb(var(--sapphire));
-  font: 600 11px/1.6 -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 600 var(--ds-fs-meta)/1.6 -apple-system, BlinkMacSystemFont, sans-serif;
   vertical-align: -3px;
 }
 .path-chip svg { width: 11px; height: 11px; flex: 0 0 auto; }
 /* 远端失败错误行升级（设计稿 §1.3）：码尾注（mono 弱化）+ 行内动作链接。 */
 .proj-create-error .err-code {
-  font: 600 10px/1.4 ui-monospace, SFMono-Regular, monospace;
+  font: 600 var(--ds-fs-meta)/1.4 ui-monospace, SFMono-Regular, monospace;
   color: var(--color-frame-text-muted);
 }
-.proj-create-error .err-acts { display: inline-flex; gap: 10px; margin-left: 8px; }
+.proj-create-error .err-acts { display: inline-flex; gap: var(--ds-space-inline-gap); margin-left: var(--ds-space-2); }
 .proj-create-error .err-act {
   border: none;
   background: transparent;
   padding: 0;
-  font: 500 11.5px -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 500 var(--ds-fs-hint) -apple-system, BlinkMacSystemFont, sans-serif;
   color: rgb(var(--sapphire));
   cursor: pointer;
 }
 .proj-create-error .err-act:hover { text-decoration: underline; }
 /* 创建中四步说明（设计稿 §1.2）：spinner + 四枚静态 chips + 步间分隔点。 */
-.creating-row { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.creating-row { display: inline-flex; align-items: center; gap: var(--ds-space-1h); flex-wrap: wrap; }
 .creating-row .spin {
   width: 12px; height: 12px; flex: 0 0 auto;
   color: rgb(var(--sapphire));
   animation: proj-create-spin 0.9s linear infinite;
 }
 @keyframes proj-create-spin { to { transform: rotate(360deg); } }
-.creating-row .step { display: inline-flex; align-items: center; gap: 4px; }
+.creating-row .step { display: inline-flex; align-items: center; gap: var(--ds-space-1); }
 .creating-row .step-n {
   display: inline-flex; align-items: center; justify-content: center;
   width: 14px; height: 14px;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   background: var(--color-frame-hover);
-  font: 600 9px/1 ui-monospace, SFMono-Regular, monospace;
+  font: 600 var(--ds-fs-meta)/1 ui-monospace, SFMono-Regular, monospace;
   color: var(--color-frame-text-muted);
 }
-.creating-row .step-t { font-size: 11px; color: var(--color-frame-text-dim); }
+.creating-row .step-t { font-size: var(--ds-fs-meta); color: var(--color-frame-text-dim); }
 .creating-row .step-sep { color: var(--color-frame-text-muted); opacity: 0.55; }
 
 /* ── ui-device-faces 批（2026-10-10）面C：项目卡设备徽标 ─────────────────────
@@ -698,12 +840,12 @@
 .dev-badge {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 7px;
-  border-radius: 7px;
+  gap: var(--ds-space-1);
+  padding: var(--ds-space-half) var(--ds-space-2);
+  border-radius: var(--ds-radius-input);
   background: rgb(var(--sapphire) / 0.12);
   color: rgb(var(--sapphire));
-  font: 600 10px/1.5 -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 600 var(--ds-fs-meta)/1.5 -apple-system, BlinkMacSystemFont, sans-serif;
   flex: 0 0 auto;
   min-width: 0;
 }
@@ -729,7 +871,7 @@
   width: 24px;
   height: 24px;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   background: transparent;
   color: var(--color-text-muted);
   display: inline-flex;
@@ -740,21 +882,26 @@
   transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
 }
 .project-desc-edit-btn svg { width: 13px; height: 13px; }
-.project-desc-edit-btn:hover {
-  color: rgb(var(--sapphire) / 1);
-  border-color: rgb(var(--sapphire) / 0.45);
-  background: rgb(var(--sapphire) / 0.08);
+@media (hover: hover) {
+  .project-desc-edit-btn:hover {
+    color: rgb(var(--sapphire) / 1);
+    border-color: rgb(var(--sapphire) / 0.45);
+    background: rgb(var(--sapphire) / 0.08);
+  }
 }
-.project-desc-edit-btn:focus-visible { box-shadow: 0 0 0 2px var(--glass-control-border); }
+
+.project-desc-edit-btn:focus-visible {
+  outline: var(--btn-ring-w) solid var(--btn-ring);
+  outline-offset: var(--btn-ring-offset); }
 .project-desc-editor {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-top: 2px;
+  gap: var(--ds-space-2);
+  margin-top: var(--ds-space-half);
 }
 .project-desc-input {
   width: 100%;
-  font: 400 12px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font: 400 var(--ds-fs-hint)/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   resize: vertical;
   min-height: 54px;
 }
@@ -762,20 +909,20 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--ds-space-2);
 }
-.project-desc-save { font-size: 12px; padding: 5px 14px; }
+.project-desc-save { font-size: var(--ds-fs-hint); padding: var(--ds-space-1h) 14px; }
 .project-desc-cancel {
   border: none;
   background: transparent;
-  padding: 5px 8px;
-  font: 500 12px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  padding: var(--ds-space-1h) var(--ds-space-2);
+  font: 500 var(--ds-fs-hint)/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: var(--color-text-muted);
   cursor: pointer;
   transition: color 150ms ease;
 }
 .project-desc-cancel:hover { color: var(--color-text); }
-.project-desc-cancel:focus-visible { box-shadow: 0 0 0 2px var(--glass-control-border); border-radius: 6px; }
+.project-desc-cancel:focus-visible { box-shadow: 0 0 0 2px var(--glass-control-border); border-radius: var(--ds-radius-chip); }
 
 /* ── 减动效降级（🔴 本文件首个 `prefers-reduced-motion` 块；取证 §E 实测本文件此前无覆盖）──
    降级后语义仍完整（§F-3）：
@@ -797,7 +944,9 @@
      （断言 animation-duration ≤ 0.01s）。 */
   .proj-create-panel { animation-duration: 0.01s; }
   .proj-create-fab { transition-duration: 0.01s; }
-  .proj-create-fab:hover { transform: none; }
+  @media (hover: hover) {
+    .proj-create-fab:hover { transform: none; }
+  }
   /* ui-device-faces 批：创建中 spinner 停转（语义仍在——四步 chips 静态可读）。 */
   .creating-row .spin { animation: none; }
   .dev-btn, .dev-item { transition-duration: 0.01s; }
@@ -821,12 +970,12 @@
    重试面——FSM loaderr 终态）。muted 克制文案 + 虚线框，读作「暂不可达」非报错。 */
 .delegate-chain-failsoft {
   align-self: stretch;
-  padding: 26px 16px;
+  padding: 26px var(--ds-space-4);
   border: 1px dashed var(--color-border);
-  border-radius: 12px;
+  border-radius: var(--ds-radius-xl);
   background: transparent;
   color: var(--color-text-muted);
-  font: 400 13px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font: 400 var(--ds-fs-body)/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   cursor: pointer;
   transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
 }
@@ -841,7 +990,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font: 500 11px/1.5 ui-monospace, SFMono-Regular, monospace;
+  font: 500 var(--ds-fs-meta)/1.5 ui-monospace, SFMono-Regular, monospace;
   color: var(--color-text-muted);
 }
 
@@ -851,7 +1000,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: flex-start;
-  gap: 12px;
+  gap: var(--ds-space-3);
 }
 .delegate-chain-card { flex: 0 0 auto; }
 /* 卡片流内定位钉（delegate-ui 批 2026-10-08 · R3 聚合分组时实测暴露；两层架构批
@@ -865,8 +1014,8 @@
 .delegate-chain-frames {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding-top: 8px;
+  gap: var(--ds-space-half);
+  padding-top: var(--ds-space-2);
   border-top: 1px dashed var(--color-border);
 }
 .delegate-chain-frame {
@@ -874,28 +1023,28 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font: 500 10px/1.6 ui-monospace, SFMono-Regular, monospace;
+  font: 500 var(--ds-fs-meta)/1.6 ui-monospace, SFMono-Regular, monospace;
   color: var(--color-text-muted);
   opacity: 0.75;
 }
 
 /* ── S11 结构总视图 ─────────────────────────────────────────────── */
 .delegate-structure-head {
-  font: 600 15px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font: 600 var(--ds-fs-title)/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: var(--color-text);
-  padding-bottom: 2px;
+  padding-bottom: var(--ds-space-half);
 }
 .delegate-structure-section {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 10px 12px;
+  gap: var(--ds-space-1h);
+  padding: var(--ds-space-block-y) var(--ds-space-3);
   border: 1px solid var(--color-border);
-  border-radius: 12px;
+  border-radius: var(--ds-radius-xl);
   background: var(--color-surface);
 }
 .delegate-structure-label {
-  font: 600 11px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 600 var(--ds-fs-meta)/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
   letter-spacing: 0.02em;
   color: var(--color-text-muted);
 }
@@ -903,7 +1052,7 @@
 .delegate-structure-lane-item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
   min-width: 0;
 }
 .delegate-seat-executor { flex: 0 0 auto; display: inline-flex; }
@@ -918,10 +1067,10 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0 4px;
-  border-radius: 6px;
+  padding: 0 var(--ds-space-1);
+  border-radius: var(--ds-radius-chip);
   background: var(--color-frame-hover);
-  font: 600 10px/1 ui-monospace, SFMono-Regular, monospace;
+  font: 600 var(--ds-fs-meta)/1 ui-monospace, SFMono-Regular, monospace;
   color: var(--color-text-muted);
 }
 
@@ -940,7 +1089,7 @@
 .delegate-chain-meta {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--ds-space-1);
   min-width: 0;
   flex-wrap: wrap;
 }
@@ -960,8 +1109,8 @@
 .delegate-chain-dot.st-pending { background: var(--color-text-muted, #888); }
 .delegate-chain-steps {
   flex: 0 0 auto;
-  margin-left: 3px;
-  font: 600 11px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
+  margin-left: var(--ds-space-1);
+  font: 600 var(--ds-fs-meta)/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text-muted);
 }
 .delegate-card-rank {
@@ -971,10 +1120,10 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0 4px;
-  border-radius: 6px;
+  padding: 0 var(--ds-space-1);
+  border-radius: var(--ds-radius-chip);
   background: rgb(var(--sapphire) / 0.14);
-  font: 600 10px/1 ui-monospace, SFMono-Regular, monospace;
+  font: 600 var(--ds-fs-meta)/1 ui-monospace, SFMono-Regular, monospace;
   font-variant-numeric: tabular-nums;
   color: rgb(var(--sapphire));
 }

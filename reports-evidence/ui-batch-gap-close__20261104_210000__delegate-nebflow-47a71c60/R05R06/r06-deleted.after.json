@@ -1,0 +1,21 @@
+{
+  "confirmSeen": {
+    "on": true,
+    "shown": true,
+    "title": "删除标签",
+    "confirmLabel": "删除"
+  },
+  "targetTagId": "tag-life",
+  "after": {
+    "storeIds": [
+      "tag-work",
+      "tag-study",
+      "tag-idea"
+    ],
+    "domIds": [
+      "tag-work",
+      "tag-study",
+      "tag-idea"
+    ]
+  }
+}

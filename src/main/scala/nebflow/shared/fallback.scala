@@ -86,14 +86,73 @@ class FallbackExhaustedError(
    * ported from main's FallbackExhaustedError, following this class's move
    * into nebflow.shared.)
    */
-  val hadImage: Boolean = false
+  val hadImage: Boolean = false,
+  /**
+   * 候选处置账本（缺陷批 2026-11-05，作者报障「有可用模型却报所有模型不可用」）：
+   * 链上每个候选的处置（tried / skipped+reason）与配置可见全集。有账本时文案
+   * 由 [[CandidateDisposition.headline]] 定型（**只有全试全败才允许说
+   * "All providers failed"**），并追加处置表；缺省 None = 老文案逐字不变
+   * （既有单测零改动）。
+   */
+  val disposition: Option[CandidateDisposition] = None
 ) extends Exception:
 
+  /** 绑定账本（构造点可能分两段：链在 registry 侧算好、终局在 stream 层给出）。 */
+  def withDisposition(d: CandidateDisposition): FallbackExhaustedError =
+    new FallbackExhaustedError(attempts, hadImage, Some(d))
+
   override def getMessage: String =
+    // 可诊断（protocol-compat 批，作者令 2026-11-01 17:49 第 3 条）：
+    // 旧文案是一句话 `All providers failed:` + 每行 `provider/model: Reason`——
+    // 配额耗尽（429 计划额度）与形状/格式失败（400 Format）混成同一个词，
+    // 读的人分不出"等一会儿会好"还是"我们的请求形状错了"。现在每行前置一个
+    // **失败族标签**，并把上游原话（截断）带出来。
+    def familyOf(a: FallbackAttempt): String =
+      a.reason match
+        // vision 能力不匹配（flysin 收口批 2026-11-04）：机制上是 400（Format），
+        // 但语义上「这条腿不收图」——不是我们的形状 bug，重试一百次也不会好。
+        // 归到 format 族里，作者只能读到「provider 失败了」这种笼统面；单列
+        // 一族并点名模型，才是可理解的错误条目。
+        case _ if ImageCapabilityRejection.isRejection(a.message.getOrElse("")) => "image-capability"
+        case Some(FailoverReason.RateLimit)       => "quota"    // 额度/频率闸：等得来
+        case Some(FailoverReason.Overloaded)      => "overload"
+        case Some(FailoverReason.Auth)            => "auth"     // key/权限问题：等不来
+        case Some(FailoverReason.ModelNotFound)   => "model"
+        case Some(FailoverReason.Format)          => "format"   // 请求/响应形状 vs 契约
+        case Some(FailoverReason.Timeout)         => "timeout"
+        case Some(FailoverReason.ConnectionReset) => "conn-reset"
+        case Some(FailoverReason.NetworkUnreachable) => "network"
+        case Some(FailoverReason.ServerError)     => "server"
+        case Some(FailoverReason.EmptyStream)     => "empty"
+        case Some(FailoverReason.ProviderError)   => "provider"
+        case _                                    => "unknown"
+    val families = attempts.map(familyOf).distinct
     val summary = attempts
       .map { a =>
-        s"  ${a.providerId}/${a.model}: ${a.reason.map(_.toString).getOrElse("unknown")}"
+        val detail = a.message.map(m => s" — ${m.replaceAll("\\s+", " ").take(300)}").getOrElse("")
+        s"  [${familyOf(a)}] ${a.providerId}/${a.model}: ${a.reason.map(_.toString).getOrElse("unknown")}$detail"
       }
       .mkString("\n")
-    s"All providers failed:\n$summary"
+    val verdict =
+      if families == List("quota") || families == List("quota", "overload") then
+        "\nquota-class failure: upstream quota/rate window exhausted — waits are meaningful, the request shape is not at fault"
+      else if families.contains("image-capability") then
+        // 能力不匹配的判词必须说清「谁不收图」+「怎么办」——这是作者报障
+        // （2026-11-03 22:23/22:36）里读不出来的那两件事。
+        val models = ImageCapabilityRejection.rejectingModels(attempts)
+        s"\nimage-capability failure: ${models.mkString("、")} does not accept image input " +
+          "(plain-text model) — pick a vision-capable model or remove the image; retrying will not help"
+      else if families.contains("format") then
+        "\nformat-class failure: at least one provider rejected the request/response shape (400) — see the [wire] line for provider, model, request block sequence and response types"
+      else ""
+    // 缺陷批 2026-11-05：有账本时判词由账本定型（四种形态四种 reason code），
+    // 并把「试过谁 / 跳过谁 / 为什么跳过 / 有没有人静默消失」整表贴在下面。
+    // delegate 冻结通知 = err.getMessage 逐字 ⇒ 这一表就是作者看到的那张表。
+    disposition match
+      case None => s"All providers failed (${attempts.size} attempt(s); families: ${families.mkString(",")}):\n$summary$verdict"
+      case Some(d) =>
+        val failedBy = attempts
+          .map(a => s"${a.providerId}/${a.model}" -> s"${familyOf(a)} ${a.reason.map(_.toString).getOrElse("unknown")}")
+          .toMap
+        s"${d.headline(attempts.size, families.mkString(","))}:\n$summary$verdict\n${d.render(failedBy)}"
 end FallbackExhaustedError

@@ -131,6 +131,7 @@ class WeixinOutboundSpec extends CatsEffectSuite:
     new WeixinIlinkBridgePlugin(
       root,
       pinnedAllowedIlinkUserIds = None,
+      outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
       send = send,
       sendMedia = sendMedia,
       sendMediaGroup = sendMediaGroup,

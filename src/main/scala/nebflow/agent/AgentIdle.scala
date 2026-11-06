@@ -168,7 +168,14 @@ private[agent] object AgentIdle:
                 intake = intake,
                 // 气泡四段式统一批（2026-09-15）：PROJECT 段链首级/② 级。
                 project = project,
-                sessionProject = stateWithWidth.projectName
+                sessionProject = stateWithWidth.projectName,
+                // 外部注入统一通道批（2026-11-05）：引擎通知族（merge-queue 放行/阻塞、
+                // bg-lifecycle 催办、waiting-dock-care、chain-orphan、team 升级）走
+                // **呈现级去重** —— 同一条重试提示按 care tick 重复投递时只留一条蓝泡，
+                // 状态一变（正文变）才追加（键见 `InjectionChannel.dedupKey`）。
+                // Mail / node / skill 等族**不在此列**：同一发送方的同文两次是两次合法
+                // 投递，呈现层不得吞。
+                dedup = AgentActor.DedupedNoticeSources.contains(src)
               )
             case None => IO.unit
           val sessionBusyIO =
@@ -176,6 +183,27 @@ private[agent] object AgentIdle:
               stateWithWidth.sessionId.fold(IO.unit)(sid => emitSessionBusy(stateWithWidth.wsSend, sid, busy = true))
             else IO.unit
           for
+            // ── P3 磁盘邮箱（节点 3 最小闭环，作者 2026-11-05 10:46）──────────
+            // 写盘先于消费：本件先入队并取走（条目在 turn 执行期间仍在
+            // taken-input/ 上）；Duplicate ⇒ 幂等键判定已执行过 ⇒ 跳过本 turn。
+            landed <- InputLanding.landUser(
+              stateWithFlush.sessionId,
+              AgentCommand.UserInput(
+                text = text,
+                replyTo = replyTo,
+                clientMessageId = clientMessageId,
+                blocks = blocks,
+                chatWidth = chatWidth,
+                source = source,
+                sender = sender,
+                senderTeam = senderTeam,
+                delivery = delivery,
+                eventType = eventType,
+                intake = intake,
+                fromUser = fromUser,
+                project = project
+              )
+            )
             ledgerFlush <- flushPendingLedgerCompletions(stateWithFlush, Nil)
             // 账本补投不改内存状态（消费在账本侧）——held 计划仍以 stateWithFlush 为底。
             heldFlush = heldFlushPlan(stateWithFlush)
@@ -202,22 +230,29 @@ private[agent] object AgentIdle:
             // 宣告与后续派发消解都依赖映射已落（先映射后会话数组双写序）。clientMessageId
             // 为幂等键：busy 入队已铸的转发件在此命中去重（每条用户消息铸唯一牌）。
             _ <- mintUserMsgToken(resources, stateWithFlush.sessionId, text, fromUser, blocks, clientMessageId)
-            result <- pipeLlmCall(
-              agentDef,
-              resources,
-              depth,
-              parentRef,
-              flushBase
-                .withMessages(newMessages)
-                .withEmptyResponseRetries(0)
-                .withMailUsedThisTurn(false)
-                // Block 3：新用户/系统 turn 起点——loop 纪元 +1
-                .withNextLoopTurn,
-              replyTo,
-              // D2：真实用户 WS 输入恒带 clientMessageId → UserWake（冻结时段也
-              // 放行，用户输入即唤醒）；系统注入（Mail/continue 等 None）→ Gated。
-              if clientMessageId.isDefined then DispatchCause.UserWake else DispatchCause.Gated
-            )
+            result <- landed match
+              // 幂等键命中（同 key 已执行过：客户端重发 / 崩溃重放）⇒ **不开第二 turn**
+              case InputLanding.LandOutcome.Duplicate =>
+                IO.pure(idle(agentDef, resources, depth, parentRef, state))
+              case _ =>
+                pipeLlmCall(
+                  agentDef,
+                  resources,
+                  depth,
+                  parentRef,
+                  flushBase
+                    .withMessages(newMessages)
+                    .withEmptyResponseRetries(0)
+                    .withMailUsedThisTurn(false)
+                    // Block 3：新用户/系统 turn 起点——loop 纪元 +1
+                    .withNextLoopTurn,
+                  replyTo,
+                  // D2：真实用户 WS 输入恒带 clientMessageId → UserWake（冻结时段也
+                  // 放行，用户输入即唤醒）；系统注入（Mail/continue 等 None）→ Gated。
+                  if clientMessageId.isDefined then DispatchCause.UserWake else DispatchCause.Gated
+                )
+            // D3 锚点：turn **成功之后**才 unlink + 写墓碑（消费成功才标记完成）
+            _ <- InputLanding.consume(stateWithFlush.sessionId, landed)
           yield result
           end for
         end if
@@ -465,7 +500,10 @@ private[agent] object AgentIdle:
                 // delegate 终态 metadata 的 diff 载荷（缺席 = 旧行为逐字）。
                 fileChanges = metadata("fileChanges"),
                 sessionProject = state.projectName,
-                waitingForBatch = waiting
+                waitingForBatch = waiting,
+                // 外部注入统一通道批（2026-11-05）：外部事件的呈现级去重（同一
+                // 成员同一状态的重试提示只留一条蓝泡，状态变化才追加）。
+                dedup = true
               )
             case None => IO.unit)
         // ── Sub-agent result barrier (worker blocking semantics) ──────────
@@ -894,7 +932,10 @@ private[agent] object AgentIdle:
             delivery,
             fromUser,
             project,
-            windowItems
+            windowItems,
+            // P3 磁盘邮箱批（节点 3）：cid **必须**随件转生（见下方 case _ 分支的说明）——
+            // 这是「同 cid 重发同一帧 ⇒ 执行计数 = 1」在主腿上的承重项。
+            clientMessageId
           ) =>
         windowItems match
           case Some(items) if items.nonEmpty =>
@@ -910,6 +951,8 @@ private[agent] object AgentIdle:
               ).copy(source = injectionSourceFor(item.fromUser, item.source))
             )
             for
+              // ── P3 磁盘邮箱（节点 3，真人文字主腿 / 注入件同门）──────────────
+              landed <- InputLanding.landImmediate(state.sessionId, imm)
               ledgerFlush <- flushPendingLedgerCompletions(state, Nil)
               heldFlush = heldFlushPlan(state)
               flushBase = heldFlush.map(_.state).getOrElse(state)
@@ -965,28 +1008,47 @@ private[agent] object AgentIdle:
               }
               // ONE wake for the whole payload (same state preparation as the idle
               // UserInput leg / the turn-boundary immediate-input drain).
-              result <- pipeLlmCall(
-                agentDef,
-                resources,
-                depth,
-                parentRef,
-                flushBase
-                  .withMessages(flushBase.messages ++ ledgerFlush.messages ++ heldMessages ++ carrierMessages)
-                  .withEmptyResponseRetries(0)
-                  .withMailUsedThisTurn(false)
-                  .withNextLoopTurn,
-                None,
-                // Same cause as the legacy forward below: an ImmediateInput carries no
-                // clientMessageId ⇒ system injection ⇒ Gated (freeze window still applies).
-                DispatchCause.Gated
-              )
+              result <- landed match
+                // 幂等键命中（同 cid 重发 / 崩溃重放）⇒ 不开第二 turn
+                case InputLanding.LandOutcome.Duplicate =>
+                  IO.pure(idle(agentDef, resources, depth, parentRef, state))
+                case _ =>
+                  pipeLlmCall(
+                    agentDef,
+                    resources,
+                    depth,
+                    parentRef,
+                    flushBase
+                      .withMessages(flushBase.messages ++ ledgerFlush.messages ++ heldMessages ++ carrierMessages)
+                      .withEmptyResponseRetries(0)
+                      .withMailUsedThisTurn(false)
+                      .withNextLoopTurn,
+                    None,
+                    // Window-flush carriers are system-generated (NodeEngine.flushRootNotify):
+                    // a human frame never carries `windowItems` ⇒ this leg stays a system
+                    // injection ⇒ Gated (freeze window still applies). Human frames (cid
+                    // present) take the plain branch below, where the cid rides along.
+                    DispatchCause.Gated
+                  )
+              // D3 锚点：turn 成功之后才 unlink + 写墓碑
+              _ <- InputLanding.consume(state.sessionId, landed)
             yield result
             end for
           case _ =>
             for _ <- ctx.self ! AgentCommand.UserInput(
                 text,
                 None,
-                None,
+                // P3 磁盘邮箱批（节点 3，作者 10:46 裁定的 cid 穿线）：改前此槽恒
+                // `None`——真人帧经 `dispatchUserText → ImmediateInput` 进来后，cid
+                // **在本转换处蒸发**，于是落到 idle UserInput 腿的落盘门只能用 K3
+                // 铸造键（每次重发铸新键）⇒ 同一帧重发必双跑。穿下去才让 K2 生效。
+                //
+                // 连带效应（如实标注，作者可否决）：本槽 being defined 同时是 D2
+                // 判据（`DispatchCause.UserWake` vs `Gated`）——cid 携带件（= 真人 WS
+                // 输入）此后与 typeless `userMessage` 腿同口径：冻结窗内**唤醒**而非
+                // 压队。改前它因 cid 被抹掉而误当系统注入（Gated），与 D2 的既定
+                // 语义（「真实用户 WS 输入恒带 clientMessageId → UserWake」）相悖。
+                clientMessageId,
                 blocks,
                 0,
                 source,

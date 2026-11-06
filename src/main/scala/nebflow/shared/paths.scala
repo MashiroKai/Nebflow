@@ -206,16 +206,94 @@ object PathUtil:
    * Single point: every data-root derivation must go through this value or
    * the Branding.homeDirName default — no scattered literals.
    */
-  private var _dataRootOverride: Option[os.Path] = None
+  // ── 三层数据根（B1 批，契约 reports-evidence/20261104_b1-dataroot/design-api.md §1/§2）──
+  //
+  // 语义自本批起分两层：
+  //   · **机器层根**（machineRoot）= 全机共享、与账号无关的根（bin/ jar、生命周期 logs/、.pid、
+  //     daemons*.json、auth.json、layout.json、active-account）。解析链与今日 dataRoot 逐字相同；
+  //   · **有效根**（dataRoot）= 账号层根 / 未登录层根 / 平铺根，由 `RootLadder` 阶梯从机器层根派生。
+  //
+  // 三条不可动的总则：
+  //   1. 无 `layout.json` 的平铺根，一切字节不变（既有 713 处 `setDataRoot` 引用与隔离实例的全部前提）；
+  //   2. 进程级单值、禁热切 —— 登录成功后写指针 + 重启进程，进程内不二次换根；
+  //   3. 机器层先于账号层可写 —— 即使账号根不存在/不可读/未登录，引擎也必须起得来并说清原因。
+  //
+  // 数据根覆盖优先级（数据根指向切换批, 2026-10）不变：
+  //   1. CLI --home flag          ( setDataRoot / setMachineRoot — isolation / canary )
+  //   2. STAND_HOME env           ( first-priority env, brand prefix )
+  //   3. NEBFLOW_HOME env         ( legacy compat — old scripts / launchd units keep working )
+  //   4. default directory        ( ~/.stand; legacy-only machines fall back to ~/.nebflow
+  //                                 + a one-line hint, see resolveDefaultDataRoot )
+  // Single point: every data-root derivation must go through this value or the
+  // Branding.homeDirName default — no scattered literals.
 
-  def setDataRoot(path: os.Path): Unit = _dataRootOverride = Some(path)
+  // 两个覆盖位都在 setter 的 `synchronized` 里写、在无锁读路径上读 ⇒ 用 `@volatile` 保证可见性
+  // （与今日语义同：换根不是并发热切换机制，只是不许读线程看到撕裂/陈旧值）。
+  @volatile private var _machineRootOverride: Option[os.Path] = None
+  @volatile private var _effectiveOverride: Option[os.Path] = None
 
-  def dataRoot: os.Path =
-    _dataRootOverride.getOrElse(
-      Branding.env("HOME") match
-        case Some(home) => os.Path(home, os.pwd)
-        case None => resolvedDefaultRoot
-    )
+  /**
+   * 有效根分档的进程级快照（`@volatile`：定案后是无锁读 —— `dataRoot` 是热路径，
+   * 全仓 490 处引用，不能为了一次性定档让每次取根都过锁）。`None` = 尚未定档。
+   */
+  @volatile private var _layerCache: Option[nebflow.core.root.RootLayer] = None
+
+  /**
+   * 平铺钉死语义（契约 §1）：一个值同时当机器层与有效根。**签名与可重复赋值语义不变** ——
+   * 713 处测试引用、`--home` 隔离实例、canary 全部零字节变化（它们从来没有账号层）。
+   */
+  def setDataRoot(path: os.Path): Unit = synchronized {
+    _machineRootOverride = Some(path)
+    _effectiveOverride = Some(path)
+    _layerCache = None
+  }
+
+  /**
+   * 生产启动序唯一调用点（契约 §1/§8.1）：只钉机器层根，有效根交给 `nebflow.core.root.RootLadder`
+   * 阶梯派生。两个 setter 都允许重复调用（测试面需要）；「禁热切」是生产启动面的约束，由
+   * `nebflow.core.root.LoginGuard.checkHotSwitch` 在 CLI / 网关入口判，不在这里硬拦。
+   */
+  def setMachineRoot(path: os.Path): Unit = synchronized {
+    _machineRootOverride = Some(path)
+    _effectiveOverride = None
+    _layerCache = None
+  }
+
+  /** 机器层根 = `--home` / `STAND_HOME` / `NEBFLOW_HOME` / 默认 `~/.stand`（今日 dataRoot 的解析链原样搬来）。 */
+  def machineRoot: os.Path =
+    _machineRootOverride.getOrElse(envOrDefaultRoot)
+
+  private def envOrDefaultRoot: os.Path =
+    Branding.env("HOME") match
+      case Some(home) => os.Path(home, os.pwd)
+      case None => resolvedDefaultRoot
+
+  /**
+   * 有效根的分档（进程级单值，定案一次；`setDataRoot` / `setMachineRoot` 是唯一的搬手）：
+   *  - 显式换根（`setDataRoot`）⇒ 平铺档，有效根 = 那个值（钉死语义，不探盘）；
+   *  - 否则 ⇒ `RootLadder.resolve(machineRoot)` 的阶梯判定（account / unauthenticated / flat）。
+   *
+   * 单一事实来源：`dataRoot` 与 `RootLadder.current` 都读这里，避免两处缓存各自漂移。
+   */
+  private[nebflow] def resolvedLayer: nebflow.core.root.RootLayer =
+    _layerCache match
+      case Some(layer) => layer // 快照命中：无锁（热路径）
+      case None => synchronized {
+          _layerCache match
+            case Some(layer) => layer
+            case None =>
+              val layer = _effectiveOverride match
+                case Some(pinned) => nebflow.core.root.RootLayer.Flat(machineRoot, pinned)
+                case None => nebflow.core.root.RootLadder.resolve(machineRoot)
+              _layerCache = Some(layer)
+              layer
+        }
+
+  /**
+   * 有效根（语义自本批起 = 有效根，契约 §1）：账号层根 / 未登录层根 / 平铺根。
+   * 平铺档恒等于 [[machineRoot]] ⇒ 无布局标记的既有机器字节不变。
+   */
+  def dataRoot: os.Path = resolvedLayer.root
 
   // ── 数据根渲染层（home 硬编码 → 运行时动态化批，2026-09-11）─────────────
   //
@@ -293,9 +371,9 @@ object PathUtil:
       case Some(p) => root / os.SubPath(normalized.drop(p.length).stripPrefix("/"))
       case None =>
         // 绝对 ref（POSIX 前导 / 或 Windows 盘符斜杠形态）按契约原样返回。
-        if normalized.startsWith("/") || normalized.matches("[A-Za-z]:/.*") then
-          os.Path(normalized, os.pwd)
+        if normalized.startsWith("/") || normalized.matches("[A-Za-z]:/.*") then os.Path(normalized, os.pwd)
         else root / os.SubPath(normalized)
+  end resolveRootRef
 
   /**
    * The legacy data-root directory name, HARDCODED — it is a historical
@@ -359,30 +437,120 @@ object PathUtil:
 
   end resolveDefaultDataRoot
 
-  /**
-   * Config file path for READS (L3 rebrand compat): prefer the brand name
-   * (brand.conf configFileName), fall back to the HARDCODED legacy
-   * "nebflow.json" when only the legacy file exists. When neither exists
-   * the NEW name is returned — initializers (Main's first-run "{}" write)
-   * then create the new name. Current brand value collapses all branches
-   * to the same file: zero behavior change.
-   */
-  def configJsonReadPath(dir: os.Path): os.Path =
-    resolveConfigJson(dir, Branding.configFileName)
+  // ============================================================
+  // Config file — SINGLE ENTRY POINT (config-single-source batch, author
+  // ruling ②/③ 2026-11-05). Every reader AND writer of the config file goes
+  // through [[configJsonPath]]; no call site spells a config filename itself
+  // (a stray literal is how the file name and the runtime truth drifted apart
+  // in the first place).
+  //
+  // The historical name is a FACT, not a configuration — hardcoded here (same
+  // rule as [[LegacyHomeDirName]]): deriving it from brand.conf would make the
+  // compat branch unreachable the moment the brand value changes.
+  // ============================================================
 
-  /** Pure core of configJsonReadPath (parameterized for the spec). */
+  /** Historical config filename — READ-ONLY compatibility. Never written by this build. */
+  val LegacyConfigFileName: String = "nebflow.json"
+
+  /** Suffix of the one-time migration backup (legacy file is renamed, not deleted). */
+  val configMigrationBackupSuffix: String = ".bak"
+
+  private val configMigrateLog = NebflowLogger.forName("nebflow.config.migrate")
+
+  /** Serializes the one-time rename so two first-touch callers cannot migrate twice. */
+  private val configMigrateLock = new AnyRef
+
+  /**
+   * THE config file path (`<dir>/<brand configFileName>`, i.e. `stand.json`).
+   *
+   * Backward compatibility is mandatory (author ruling: 升级后配置静默丢失 is
+   * forbidden). Behavior:
+   *  1. canonical file exists                          → return it;
+   *  2. neither file exists                            → return the canonical
+   *     path (first-run initializers then create the NEW name);
+   *  3. only the legacy `nebflow.json` exists          → ONE-TIME migration:
+   *     byte-identical copy to the canonical name (temp file + move, so a
+   *     crash cannot leave a half-written config), legacy file renamed to
+   *     `nebflow.json.bak`, one log line. Then return the canonical path;
+   *  4. migration failed (read-only dir, disk full…)    → return the LEGACY
+   *     path and warn loudly — the engine keeps running on the old file
+   *     rather than silently starting from an empty config.
+   *
+   * Idempotent and safe on every read/write path (the hot-read faces call it
+   * per access).
+   */
+  def configJsonPath(dir: os.Path): os.Path =
+    val canonical = dir / Branding.configFileName
+    if canonical == dir / LegacyConfigFileName then canonical // legacy brand value: nothing to rename
+    else if os.exists(canonical) then canonical
+    else
+      configMigrateLock.synchronized {
+        if os.exists(canonical) then canonical
+        else
+          resolveConfigJson(dir, Branding.configFileName) match
+            case p if p == canonical => canonical // neither file exists → first-run initializer
+            case _ => if migrateLegacyConfig(dir, canonical) then canonical else dir / LegacyConfigFileName
+      }
+
+  /**
+   * Pure pre-migration resolution (parameterized for the rebrand-compat spec):
+   * "which file holds the truth RIGHT NOW", with no side effect.
+   *
+   *  - the brand value IS the legacy name  → that file (nothing to rename);
+   *  - the brand-named file exists         → it;
+   *  - only the legacy file exists         → the legacy file (the caller is the
+   *    one that migrates it — see [[configJsonPath]]);
+   *  - neither exists                      → the brand name (first-run write).
+   *
+   * Kept as its own function so the compat matrix stays testable without
+   * touching the filesystem contract of [[configJsonPath]].
+   */
   private[shared] def resolveConfigJson(dir: os.Path, fileName: String): os.Path =
-    if fileName == "nebflow.json" then dir / fileName
+    if fileName == LegacyConfigFileName then dir / fileName
     else if os.exists(dir / fileName) then dir / fileName
-    else if os.exists(dir / "nebflow.json") then dir / "nebflow.json"
+    else if os.exists(dir / LegacyConfigFileName) then dir / LegacyConfigFileName
     else dir / fileName
 
   /**
-   * Config file path for WRITES: always the brand name. A read-modify-write
-   * cycle (existing from configJsonReadPath, output to here) completes the
-   * file rename migration on first write.
+   * One-time legacy→canonical rename. Returns true when the canonical file is
+   * the live config afterwards.
+   *
+   * Backup discipline: the legacy file is RENAMED to `nebflow.json.bak`
+   * (content preserved, never deleted); an existing backup is overwritten
+   * because it describes the same pre-migration state and the legacy file is
+   * the authoritative one at migration time.
    */
-  def configJsonWritePath(dir: os.Path): os.Path =
-    dir / Branding.configFileName
+  private[shared] def migrateLegacyConfig(dir: os.Path, canonical: os.Path): Boolean =
+    val legacy = dir / LegacyConfigFileName
+    val backup = dir / (LegacyConfigFileName + configMigrationBackupSuffix)
+    try
+      val body = os.read(legacy)
+      // temp + move: an interrupted write can never truncate the new config
+      val tmp = dir / (canonical.last + ".migrating")
+      os.write.over(tmp, body, createFolders = true)
+      os.move(tmp, canonical, replaceExisting = true)
+      if os.exists(backup) then os.remove(backup)
+      os.move(legacy, backup)
+      configMigrateLog.infoSync(
+        s"[config-migration] ${legacy.last} → ${canonical.last} (backup kept as ${backup.last}; values unchanged, ${body.length} bytes)"
+      )
+      true
+    catch
+      case e: Exception =>
+        configMigrateLog.warnSync(
+          s"[config-migration] ${legacy.last} → ${canonical.last} FAILED (${e.getClass.getSimpleName}: ${e.getMessage}) — " +
+            s"continuing to serve the legacy file; fix the data root permissions and restart to complete the rename"
+        )
+        false
+
+  /** Config path for READS — alias of the single entry (kept for call-site readability). */
+  def configJsonReadPath(dir: os.Path): os.Path = configJsonPath(dir)
+
+  /**
+   * Config path for WRITES — the same single entry. Sequential read-modify-write
+   * cycles land on the canonical file, so the rename completes on first write
+   * even when migration was deferred earlier in the process' life.
+   */
+  def configJsonWritePath(dir: os.Path): os.Path = configJsonPath(dir)
 
 end PathUtil

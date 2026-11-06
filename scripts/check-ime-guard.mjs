@@ -74,7 +74,7 @@ const TRIGGER_LABELS = TRIGGERS.map(([label]) => label);
 const ALLOWLIST = [
   {
     file: 'js/input.js',
-    lines: [1442, 1443], // 2026-10-23 spec-hygiene: location metadata refreshed (binding drifted 1175-1176 → 1442-1443 as input.js grew; verdict is text-anchored, metadata only)
+    lines: [1698, 1699], // 2026-11-02 spec-hygiene: location metadata refreshed (binding drifted 1442-1443 → 1698-1699 as the input-behavior-package batch moved the keydown cascade into input/composer.js; verdict is text-anchored, metadata only)
     label: 'direct composition binding',
     anchors: [
       "input.addEventListener('compositionstart', () => { view.composing = true; });",

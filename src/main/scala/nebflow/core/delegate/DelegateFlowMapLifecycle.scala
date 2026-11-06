@@ -35,9 +35,9 @@ import scala.concurrent.duration.*
  *      复活窗内重挂/盘面复活即跳过）。
  *
  * == 触发判据（单点）==
- * `applies` = 双模式总闸开 ∧ 属主 mode=dispatcher（[[DualModeConfig.enabledNow]] ×
- * registry mode 读面）——kernel/Inert 腿零触碰（kernel 无编排图诉求；闸关 = 现行为
- * 逐字节：unmount 后目录永存）。
+ * `applies` = 属主 mode=dispatcher（registry mode 读面）——kernel/存量腿零触碰
+ * （kernel 无编排图诉求）。双模式总闸已于 delegate-param-decisions 批（2026-11-04）
+ * 退役：模式由 `Delegate` 工具参数决定。
  *
  * fail-soft 纪律：本件全部腿 best-effort——失败只 WARN，绝不拖垮终态清理序列
  * （onTerminalCleanup 各环同款）。
@@ -55,9 +55,13 @@ object DelegateFlowMapLifecycle:
   def graceMs: Long =
     sys.props.get(SysPropGraceMs).flatMap(v => scala.util.Try(v.toLong).toOption).getOrElse(DefaultGraceMs)
 
-  /** 触发判据单点：总闸开 ∧ 属主 mode=dispatcher（读面 = DualModeConfig × registry）。 */
+  /**
+   * 触发判据单点：属主 mode=dispatcher（读面 = registry）。双模式总闸已于
+   * delegate-param-decisions 批（2026-11-04）退役——模式由 `Delegate` 工具参数
+   * 决定，不再有闸门条件。
+   */
   def applies(record: Option[DelegateRegistry.Record]): Boolean =
-    DualModeConfig.enabledNow && record.flatMap(_.mode).contains(DualModeConfig.ModeDispatcher)
+    record.flatMap(_.mode).contains(DualModeConfig.ModeDispatcher)
 
   /** 作用域目录读数（与 DelegateFlowRuntime.scopeDir 同式——单一算式两处消费）。 */
   def scopeDirOf(baseWorkspace: String, delegateId: String): os.Path =

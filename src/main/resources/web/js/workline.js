@@ -144,11 +144,35 @@ export function priorTurnBadgeSettled(chat, row) {
       }
     }
     if (cls.contains('user') && !el.hasAttribute('data-nf-ask-answer') &&
+        !isMidTurnRow(el) &&
         !(el.querySelector && el.querySelector('.bubble.injected'))) {
       return !!rid; // plain user row: stamped ⇒ new group; injected ⇒ open tail
     }
   }
   return false;
+}
+
+/** MID-TURN 插话行的唯一判据（tool-card-leak-on-reload 批 2026-11-02）。
+ *
+ *  作者现象：「我在回复中，然后我网络中断或者刷新了页面，再次进来就会看到
+ *  完整的工具执行过程」——即同一个引擎回合被**回合内插话**的 user 行劈成两段，
+ *  前段没有任何终态载体（terminal 只落在整轮 done 的那一段）⇒ 回放折叠
+ *  `summarizeSegment` 平铺 ⇒ 整段裸工具卡。
+ *
+ *  DOM 契约 = `data-nf-mid-turn`：
+ *    · 回放腿：persistence.js 的 user 行渲染据落盘字段 `midTurn===true` 盖戳
+ *      （写者 = 后端 dispatchUserText / typeless 帧腿 / skill 腿，落盘那一瞬读
+ *      `AgentStatus.Processing`）；旧 `.ui.json` 行无该字段 ⇒ 同处按时间戳蕴含
+ *      推断盖同一戳（`data-nf-mid-turn-src="inferred"`，零迁移）。
+ *    · live 腿：chat.js `renderUserBubble` 在会话 busy 时盖同一戳 ⇒ 流式进行中
+ *      的同一回合在 DOM 里也只有一个边界。
+ *
+ *  本判据是**唯一**的，turnGroup 的五个边界读者（isNonInjectedUserRow →
+ *  turnScope / dissolveTurnChrome / scopeFromHeader / expandGroupContaining /
+ *  buildTurnSummariesForHistory）与 workline 的 turnAnchor /
+ *  priorTurnBadgeSettled 全部只读它，不许第二套判断。 */
+export function isMidTurnRow(row) {
+  return !!(row && row.hasAttribute && row.hasAttribute('data-nf-mid-turn'));
 }
 
 /** The turn-top anchor: the last user-class row of #chat — CONDITIONAL since
@@ -203,6 +227,9 @@ function turnAnchor(chat) {
       if (priorTurnBadgeSettled(chat, el) || !el.nextElementSibling) anchor = el;
       continue;
     }
+    // tool-card-leak-on-reload 批（2026-11-02）：回合内插话行**不是**开轮事件
+    // （同一引擎回合仍在跑）⇒ 线锚留在该回合真正的开轮用户行上，不随插话下移。
+    if (isMidTurnRow(el)) continue;
     anchor = el; // real user input: unconditional opener
   }
   for (let n = anchor ? anchor.nextElementSibling : null; n; n = n.nextElementSibling) {
@@ -319,12 +346,26 @@ function swap(wl, item, { key, kind, roll }) {
   const animated = motion(wl.view);
   const reduce = prefersReducedMotion() || !animated;
   const old = wl.item;
+  // 「无入场渐显」族的判据，出/入场两侧共用（见下方两处注释）：
+  //   · 入场方是工具项（kind === 'tool'）或轮次终态徽章（`.is-final`，构造时就带类）；
+  //   · `.is-final` 的硬切同时修一个既有脆弱点：settle 时旧工具项现在恒为 opacity:1，
+  //     会走淡出支 ⇒ header 里 300ms 内同时挂着旧项与终态项，ui-batch UI-B 的
+  //     「settled header holds exactly ONE item」当场读到 2（main 上只因旧工具项此刻
+  //     还停在入场动画的 opacity≈0 才侥幸没触发）。
+  const hardCut = kind === 'tool' || item.classList.contains('is-final');
   if (old && old !== item) {
     // Roll the outgoing item out only when there is something legible to
     // animate AND motion is on. An item already held invisible by an open
     // window has no exit of its own left — animating it would restart its
     // opacity at 1 and double-expose it against the item still rolling away.
-    if (roll && !reduce && isLegible(old)) {
+    // 入场无渐显的项（作者令 2026-11-05「一次性清晰呈现」）：**工具项**（kind ===
+    // 'tool'）与**轮次终态徽章**（`.is-final`）都是「同一帧就全不透明」的 —— 旧项若再
+    // 淡出 300ms，两项会在同一个 18px 槽里叠成一片（旧的 `.is-enter-late` 交错窗正是
+    // 为「有渐显的项」准备的）。判据见上方 hardCut：工具项的类名是在 swap **之后**才挂
+    // 上的（startWorklineItem 尾部 add('nf-wl-tool')），在 swap 里读类名读到的是上一帧
+    // 的事实 —— 首版即此处错位，实测旧项淡出 300ms ⇒ 两项同时可读 25 帧
+    // （stream-ux A1 的「no cross-fade」红）。
+    if (roll && !reduce && isLegible(old) && !hardCut) {
       old.classList.add('is-out');
       const doomed = old;
       // No exit timer in a static window (UI-G): the leaving item is dropped
@@ -342,7 +383,10 @@ function swap(wl, item, { key, kind, roll }) {
   // 0.1s-delayed bounce); a single-animation item uses the first value.
   // Static windows hold nothing: with the CSS animations off the item is
   // legible immediately, so an inline delay would only hide it.
-  const hold = reduce ? 0 : Math.max(0, Math.round(wl.exitUntil - performance.now()));
+  // 「无入场渐显」族（工具项 / 终态徽章）永不进「等旧项退场」的窗口：它们没有入场
+  // 渐显可延迟，而 `.is-enter-late` 的 from-state 是 opacity:0 —— 挂上去只会在没有
+  // 动画可跑时把整行按在不可见态（类名靠 animationend 摘除，无动画则永不摘除）。
+  const hold = reduce || hardCut ? 0 : Math.max(0, Math.round(wl.exitUntil - performance.now()));
   item.classList.toggle('is-enter-late', hold > 0);
   if (hold > 0) item.style.animationDelay = hold + 'ms, ' + (hold + 100) + 'ms';
   wl.item = item;
@@ -424,12 +468,18 @@ export function startWorklineItem(view, label, kind = 'tool') {
   const key = label;
   if (wl.item && wl.key === key && wl.kind === kind) {
     const labelEl = wl.item.querySelector('.nf-wl-label');
-    if (labelEl) { labelEl.textContent = label; pinTail(labelEl); }
+    // tool-name-fixed 批（2026-11-05，作者令 20:28「工具名保持不动」）：**工具名
+    // 不参与尾锚**。旧路径对 label 也跑 pinTail（scrollLeft = 1e7 + 左缘 mask）——
+    // 工具名一被推着左滚，「保持不动」就不成立；且那段渐隐本身也是「糊」的一半
+    // （另一半见 worklineToolDetail 头的同批注）。
+    if (labelEl) labelEl.textContent = label;
     return;
   }
   swap(wl, buildItem(label, 'spin'), { key, kind, roll: true });
-  const fresh = wl.item && wl.item.querySelector('.nf-wl-label');
-  if (fresh) pinTail(fresh);
+  // tool 项 = 「静态行首簇 + 左侧固定的工具名 + 右侧流式参数」形态：本类关掉该项的
+  // 入场渐显（CSS `animation:none`），并让 swap **同步摘掉**旧项 —— 没有入场渐显就
+  // 不需要交错窗口，否则两项在同一个 18px 槽里叠成作者看到的「糊成一团」。
+  if (wl.item && kind === 'tool') wl.item.classList.add('nf-wl-tool');
 }
 
 /** Same item COMPLETED: drawn check + bounce, in place (no roll).
@@ -445,6 +495,7 @@ export function doneWorklineItem(view, key, resultText) {
   const fallback = labelEl ? labelEl.textContent : '';
   const text = (typeof resultText === 'string' && resultText) ? resultText : fallback;
   swap(wl, buildItem(text, 'chk', 'is-done'), { key: wl.key, kind: wl.kind, roll: false });
+  if (wl.item && wl.kind === 'tool') wl.item.classList.add('nf-wl-tool');
 }
 
 /** Same item FAILED (toolEnd with isError): cross mark, in place (no roll).
@@ -457,6 +508,7 @@ export function failWorklineItem(view, key, resultText) {
   const fallback = labelEl ? labelEl.textContent : '';
   const text = (typeof resultText === 'string' && resultText) ? resultText : fallback;
   swap(wl, buildItem(text, '', 'is-error'), { key: wl.key, kind: wl.kind, roll: false });
+  if (wl.item && wl.kind === 'tool') wl.item.classList.add('nf-wl-tool');
 }
 
 /** ② 运行中类型化细节行（toolline-detail 批 2026-10-06）：muted 小字细节骑在
@@ -483,7 +535,13 @@ export function worklineToolDetail(view, text) {
     wl.item.appendChild(el);
   }
   if (el.textContent !== next) el.textContent = next;
-  pinTail(el);
+  // tool-name-fixed 批（2026-11-05，作者令 20:28「工具名保持不动，然后参数就隔开
+  // 一点，然后流式输出」）：细节 span **不再尾锚**（旧路径 = pinTail 的
+  // `scrollLeft = 1e7` + `.nf-wl-clip` 左缘渐隐）。尾锚的语义是「新字进右、旧字左
+  // 滑出」，读起来是一段没有起点的中间片段，叠上左缘 mask 正是作者截图里
+  // 「糊成一团」的现场。现形态：参数从工具名右侧**向右生长**，静置在行首左对齐，
+  // 超出行宽时右端省略号截断（`.nf-wl-detail` 的 ellipsis）—— 起头永远是参数本身，
+  // 全文入口 = 该 turn 行的既有展开（tool 卡正文含完整参数）。
 }
 
 /** Thinking: the badge shows the thinking text as TEXT (UI-C text cadence). The

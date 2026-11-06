@@ -9,9 +9,14 @@
 //      顶层并带「来自 …」来源角标（.bg-task-orphan）。
 //   ② 行说明 … 泛名行（name = builtin def 名「subagent」等）主名 = 任务摘要首行；
 //      实名行附 .bg-task-subline 摘要次行 —— 任何条目不再出现纯「subagent」空洞行。
-//   ③ 分区 … 载体内两节（.bg-section-tasks / .bg-section-agents）各自独立滚动
-//      （各自 overflow-y:auto + 载体 flex 收缩），分区签带实时计数；手机窄宽两节
-//      升格两张内嵌卡（mobileLayer.css）。
+//   ③ 分区 … 载体内两节（.bg-section-tasks / .bg-section-agents），分区签带实时
+//      计数；手机窄宽两节升格两张内嵌卡（mobileLayer.css）。
+//      ⚠ 后台面板单滚批（2026-11-02 作者令「把内容都放进这个面板，可以下滑；
+//      现在是分块了，然后分块下滑」）：滚动语义由「两节各自内滚」改为**载体
+//      单一滚动** —— 载体自身 overflow-y:auto 是唯一纵向滚动上下文，两条列表
+//      按内容自然展开（overflow-y:hidden 只作裁剪兜底、不再是滚动单元）。T1
+//      的布局断言随批改锚（原 overflowYs == ['auto','auto'] 已被作者令推翻），
+//      单滚面的六条机械断言见 tests/bg-panel-single-scroll.spec.mjs。
 //   ④ 层级显形（10-31 ①）… 组头行首 caret 折叠子行树：默认展开进行中父、终态
 //      组头默认收起；caret 点击偏好跨重渲染保持；行体点击开详情不变。
 //   ⑤ 行首短名（10-31 ② · 锚点「行首必须显短名」）… Delegate 工具 name 参数
@@ -177,23 +182,43 @@ test('T1 merge structure: two sections in the carrier, ghost retired (desktop)',
   expect(structure.ghostDisplay).toBe('none');
   expect(errors).toEqual([]);
 
-  // 布局（开面板后才有盒）：flex column + max-height 收口；两列表各自独立滚动。
+  // 布局（开面板后才有盒）：flex column + max-height 收口。
+  // 后台面板单滚批（2026-11-02 作者令「把内容都放进这个面板，可以下滑；现在是
+  // 分块了，然后分块下滑」）：滚动语义由「两列表各自内滚」改为**载体单一滚动**
+  // ——载体自身 overflow-y:auto 是唯一纵向滚动上下文，两条列表按内容自然展开
+  // （overflow-y:hidden 只作横向裁剪兜底，不再是滚动单元）。断言随批改锚：
+  // 原 overflowYs == ['auto','auto'] 是分块滚动时代的取值，已被作者令推翻。
   await page.click('#bg-indicator');
   await expect(page.locator('#bg-dropdown')).toBeVisible();
   const layout = await page.evaluate(() => {
     const c = document.getElementById('bg-dropdown');
     const lists = c.querySelectorAll('.bg-dropdown-list');
+    const over = (el) => {
+      const cs = getComputedStyle(el);
+      return (cs.overflowY === 'auto' || cs.overflowY === 'scroll') && el.scrollHeight - el.clientHeight > 0;
+    };
     return {
       displayFlex: getComputedStyle(c).display === 'flex',
       maxHeight: getComputedStyle(c).maxHeight,
       listCount: lists.length,
-      overflowYs: [...lists].map((l) => getComputedStyle(l).overflowY),
+      carrierOverflowY: getComputedStyle(c).overflowY,
+      listOverflowYs: [...lists].map((l) => getComputedStyle(l).overflowY),
+      listMaxHeights: [...lists].map((l) => getComputedStyle(l).maxHeight),
+      // 本夹具内容不足一屏 ⇒ 载体无余量不算失败；判据 = 有滚动的元素只可能是载体，
+      // 且载体的滚动**机制**恒为 auto（唯一滚动上下文）。
+      scrollerIdents: [c, ...c.querySelectorAll('*')]
+        .filter(over)
+        .map((el) => (el === c ? '#bg-dropdown' : (el.id ? '#' + el.id : '.' + String(el.className || el.tagName).split(' ')[0]))),
     };
   });
   expect(layout.displayFlex).toBe(true);
   expect(layout.maxHeight).not.toBe('none');
   expect(layout.listCount).toBe(2);
-  expect(layout.overflowYs).toEqual(['auto', 'auto']);
+  expect(layout.carrierOverflowY).toBe('auto');
+  expect(layout.listOverflowYs).toEqual(['hidden', 'hidden']);
+  expect(layout.listMaxHeights).toEqual(['none', 'none']);
+  expect(layout.scrollerIdents, '面板内唯一可能的纵向滚动器 = 载体（零卡片内滚动）')
+    .toEqual(layout.scrollerIdents.filter((s) => s === '#bg-dropdown'));
 });
 
 test('T2 desktop split: bg key opens tasks-only view, bgagent key opens agents-only view', async ({ page }) => {

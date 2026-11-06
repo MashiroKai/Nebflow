@@ -14,6 +14,8 @@ import { sendWs, onMessage, setFlowStepInterceptor, setTeamMetaApplier } from '.
 import { restoreFromBackendHistory } from './persistence.js';
 import { authHeaders } from './flowHelpers.js';
 import state from './state.js';
+// Nebula 退役批（作者令 2026-11-01）：浮窗标题的 agent 名走单一显示名读点。
+import { agentDisplayName } from './rootName.js';
 import { key } from './branding.js';
 import { t } from './i18n.js';
 import { buildManageBar, bindManageActions, syncManageControls } from './managePanel.js';
@@ -21,7 +23,7 @@ import { isErrorReason, errorTileText, errorIcon } from './errorRecovery.js';
 import { truncateMiddle, shouldFollowBottom, initScrollFollow, statusIcon } from './utils.js';
 import { cleanupCardIframes } from './cardRegistry.js';
 // 弹窗退场批（作者令 2026-10-31②）：手机层查看器铺满屏 + 左上返回（桌面零变化）。
-import { mobileSheetBack } from './mobile/popSheet.js';
+import { mobileSheetBack, isMobileLayer } from './mobile/popSheet.js';
 
 // ── Per-agent state ───────────────────────────────────────
 // nodeSessionId → { view: ChatView, container: div, meta: {}, historyLoaded: bool }
@@ -52,30 +54,34 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   display: flex; flex-direction: column;
   background: var(--glass-bg);
   /* Panel keeps its own glass blur; only the overlay is forbidden from dimming. */
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
-  border-radius: 20px;
+  border-radius: var(--ds-radius-shell);
   overflow: hidden;
-  box-shadow:
-    inset 0 1px 0 0 rgba(255,255,255,0.25),
-    0px 2px 8px rgba(0,0,0,0.04),
-    0px 8px 32px rgba(0,0,0,0.10);
-}
-@media (prefers-color-scheme: dark) {
-  .flow-agent-modal {
-    box-shadow:
-      inset 0 1px 0 0 rgba(255,255,255,0.04),
-      0px 2px 8px rgba(0,0,0,0.20),
-      0px 8px 32px rgba(0,0,0,0.35);
-  }
+  /* 全站一套毛玻璃（sapphire.css --frost-shadow 单源；design-system 的
+     --ds-shadow-panel 即其别名）：亮/暗双档由 token 自身解析——本面不再各画
+     一套三元投影（panel-ia 批 · 面板族弹窗统一收编，暗档逐字同值，亮档底影
+     收进「唯一投影」口径）。 */
+  box-shadow: var(--ds-shadow-panel);
 }
 
-/* Header — matches #header glassmorphism + sapphire refraction line. */
+/* Header — matches #header glassmorphism + sapphire refraction line.
+   ── panel-ia 批（2026-11-03 · 竖排字实拍 784832362646666_IMG_1707.jpg）────────
+   症状：卡片标题「文字卡模板升级」逐字竖排（一字一行）。根因 = **flex 压缩**，
+   不是 writing-mode / 逐字 span：旧头是一行 display:flex 且三个文本槽都可自由
+   收缩，长任务全文（.flow-agent-subtitle）与长模型串（.flow-agent-model）同场时，
+   主名槽被压到 min-content —— CJK 允许任意两字间断行 ⇒ 压缩终点就是「一列一个字」。
+   修法写成机制契约（不是一次性补丁）：
+     · .flow-agent-name 不参与收缩（flex:0 0 auto）+ 单行（nowrap）+ 自身截断
+       （max-width 46% / ellipsis）—— 无论邻居多长都不会再退回竖排；
+     · 长文本槽（subtitle / model）单行截断（nowrap + min-width:0 + ellipsis），
+       不再靠多行换行撑高头部（原形态在窄屏把头部撑到 5 行，视觉噪音主源之一）；
+     · 间距/字阶/圆角一律取 --ds-* 槽（design-system.css 单源）。
+   回归断言：evidence/panel-ia/verify-panel-ia.mjs U1/U2/U4（U4 = 真实几何探针：
+   390px 窄容器 + 长任务全文，量 .flow-agent-name 的宽高比与行数）。 */
 .flow-agent-header {
-  display: flex; align-items: center; gap: 6px;
-  padding: 10px 16px;
-  border-bottom: 1px solid var(--glass-border, rgba(255,255,255,0.08));
+  display: flex; align-items: center; gap: var(--ds-space-2);
+  padding: var(--ds-space-2) var(--ds-space-4);
+  border-bottom: var(--ds-border-width) solid var(--glass-border);
   flex-shrink: 0;
   position: relative;
   user-select: none;
@@ -87,29 +93,62 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   height: 1px;
   background: linear-gradient(90deg,
     transparent 10%,
-    var(--sapphire-refraction, rgba(99,179,237,0.25)) 50%,
+    var(--sapphire-refraction) 50%,
     transparent 90%);
   pointer-events: none;
   z-index: 1;
 }
 .flow-agent-name {
-  font: 600 13px -apple-system, BlinkMacSystemFont, sans-serif;
-  color: var(--color-text);
+  flex: 0 0 auto;
+  max-width: 46%;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--ds-font-ui);
+  font-size: var(--ds-fs-body);
+  font-weight: var(--ds-fw-title);
+  line-height: var(--ds-lh-title);
+  color: var(--ds-text);
 }
 .flow-agent-subtitle {
-  font: 400 11px -apple-system, sans-serif;
-  color: var(--color-text-muted);
-  margin-right: auto; margin-left: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--ds-font-ui);
+  font-size: var(--ds-fs-meta);
+  line-height: var(--ds-lh-title);
+  color: var(--ds-text-muted);
+  margin-right: auto; margin-left: 0;
 }
+/* 模型徽标槽：单行、可收缩、自身截断（长 provider/model 串不再撑行/挤邻居）。 */
+.flow-agent-model {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 42%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--ds-font-ui);
+  font-size: var(--ds-fs-meta);
+  line-height: var(--ds-lh-title);
+  color: var(--ds-text-muted);
+  text-align: right;
+}
+.flow-agent-model .flow-agent-subtitle,
+.flow-agent-model .flow-agent-model-badge { margin: 0; min-width: 0; }
 /* 弹窗头部用量环样式已随 2026-10-23 上下文用量显示退役批删除。 */
 .flow-agent-close {
-  cursor: pointer; font-size: 16px; line-height: 1;
-  opacity: 0.7; transition: opacity 0.15s;
-  padding: 2px 4px; color: var(--color-text);
+  cursor: pointer; font-size: var(--ds-fs-title); line-height: var(--ds-lh-tight);
+  opacity: 0.7; transition: opacity var(--ds-dur-hover) var(--ds-ease-std);
+  padding: var(--ds-space-half) var(--ds-space-1); color: var(--ds-text);
   z-index: 10;
-  border-radius: 4px;
+  flex: 0 0 auto;
+  border-radius: var(--ds-radius-badge);
 }
-.flow-agent-close:hover { opacity: 1; background: rgba(255,255,255,0.06); }
+.flow-agent-close:hover { opacity: 1; background: var(--ds-control-bg-hover); }
 /* Code copy buttons inside popup: shift left to avoid overlapping close button */
 .flow-agent-modal .code-copy-btn { right: 40px; }
 
@@ -118,7 +157,7 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
    Bottom padding ≥12px: visual gap above the glass input bar (popup-input-polish §I). */
 .flow-agent-chat {
   flex: 1; overflow-y: auto;
-  padding: 12px 16px 12px;
+  padding: var(--ds-space-3) var(--ds-space-4) var(--ds-space-3);
   display: flex; flex-direction: column;
   overscroll-behavior: contain;
   scrollbar-color: var(--color-frame-border) transparent;
@@ -127,8 +166,8 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
 /* Footer status bar — matches #input-bar glassmorphism + sapphire refraction */
 .flow-agent-footer {
   flex-shrink: 0;
-  display: flex; align-items: center; gap: 8px;
-  padding: 8px 16px;
+  display: flex; align-items: center; gap: var(--ds-space-2);
+  padding: var(--ds-space-2) var(--ds-space-4);
   border-top: 1px solid var(--glass-border);
   position: relative;
   /* 2026-08-24 frozen-input spec §4: 300ms material transition */
@@ -143,7 +182,7 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   height: 1px;
   background: linear-gradient(90deg,
     transparent 10%,
-    var(--sapphire-refraction, rgba(99,179,237,0.25)) 50%,
+    var(--sapphire-refraction) 50%,
     transparent 90%);
   pointer-events: none;
   z-index: 1;
@@ -154,14 +193,14 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
 }
 .flow-agent-footer.running .fa-status-dot,
 .flow-agent-footer.responding .fa-status-dot {
-  background: var(--color-primary, #07c160); opacity: 1;
+  background: var(--color-primary); opacity: 1;
   animation: fa-pulse 1.4s ease-in-out infinite;
 }
 .flow-agent-footer.done .fa-status-dot {
-  background: var(--color-success, #4caf50); opacity: 1;
+  background: var(--color-success); opacity: 1;
 }
 .flow-agent-footer.failed .fa-status-dot {
-  background: var(--color-error, #f44336); opacity: 1;
+  background: var(--color-error); opacity: 1;
 }
 /* Frozen (work-schedule park, freeze-spec §3.2): sapphire dot + tint,
    sapphire task text — distinct from running (pulse green) / done (green) */
@@ -211,7 +250,7 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   height: 13px;
   color: rgb(var(--amber));
   vertical-align: -2px;
-  margin-right: 4px;
+  margin-right: var(--ds-space-1);
   flex-shrink: 0;
 }
 .flow-agent-footer .fa-task .fa-task-text {
@@ -227,7 +266,7 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   animation: fa-pulse 1.4s ease-in-out infinite;
 }
 .flow-agent-footer.tool .fa-status-dot {
-  background: #d4a030; opacity: 1;
+  background: var(--status-warn-icon); opacity: 1;
   animation: fa-pulse 0.9s ease-in-out infinite;
 }
 /* 2026-09-03 toolline truncate fix: the phase line carries "Using tool: …"
@@ -236,9 +275,9 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
    pushes the right-side manage cluster (uptime/retries/buttons) past the
    modal's clipped edge. Hover tooltip shows the FULL label (set in JS). */
 .flow-agent-footer .fa-phase {
-  font: 500 11px -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 500 var(--ds-fs-meta) -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text-muted);
-  margin-left: 2px;
+  margin-left: var(--ds-space-half);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -247,7 +286,7 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
 @keyframes fa-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
 .flow-agent-footer .fa-task {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font: 500 11px -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 500 var(--ds-fs-meta) -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text-muted);
 }
 
@@ -257,7 +296,7 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
    sapphire. Read-only kinds grey out instead of hiding (permission matrix). */
 .flow-agent-footer .fa-manage {
   margin-left: auto;
-  display: flex; align-items: center; gap: 8px;
+  display: flex; align-items: center; gap: var(--ds-space-2);
   flex-shrink: 0;
 }
 .flow-agent-footer .fa-mgmt-btn {
@@ -269,19 +308,19 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   transition: background 0.15s, box-shadow 0.15s, border-color 0.15s, opacity 0.15s;
 }
 .flow-agent-footer .fa-mgmt-btn svg { width: 13px; height: 13px; stroke-width: 2.5; }
-.flow-agent-footer .fa-mgmt-stop { color: var(--color-error, #f44336); }
+.flow-agent-footer .fa-mgmt-stop { color: var(--color-error); }
 .flow-agent-footer .fa-mgmt-retry { color: rgb(var(--sapphire)); }
 .flow-agent-footer .fa-mgmt-btn.readonly {
   opacity: 0.35;
   cursor: not-allowed;
 }
 .flow-agent-footer .fa-retries {
-  font: 500 11px -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 500 var(--ds-fs-meta) -apple-system, BlinkMacSystemFont, sans-serif;
   font-variant-numeric: tabular-nums;
-  color: #d4a030;
+  color: var(--status-warn-icon);
 }
 .flow-agent-footer .fa-uptime {
-  font: 400 11px -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 400 var(--ds-fs-meta) -apple-system, BlinkMacSystemFont, sans-serif;
   font-variant-numeric: tabular-nums;
   color: var(--color-text-muted);
 }
@@ -293,7 +332,7 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   animation: none;
 }
 .flow-agent-footer.stuck .fa-task { color: var(--status-word); }
-.flow-agent-footer .fa-task .st-ic { width: 11px; height: 11px; margin-right: 3px; vertical-align: -1px; }
+.flow-agent-footer .fa-task .st-ic { width: 11px; height: 11px; margin-right: var(--ds-space-1); vertical-align: -1px; }
 /* Stopped (user-intent interrupt): muted dot, no alarm. */
 .flow-agent-footer.stopped .fa-status-dot {
   background: var(--color-text-muted); opacity: 0.7;
@@ -376,9 +415,11 @@ export async function resolveFlowNodeSession(flowName, nodeId) {
   if (best) return best.sid;
   // REST fallback: includeUnindexed scans .ui.json files on disk (dag-*
   // sessions never enter the session index), sorted by -updatedAt — the first
-  // match is the latest run.
+  // match is the latest run. `includeBgAgents=1` 会话搜索范围收窄批 2026-11-01：
+  // includeUnindexed 的缺省形态已收窄到**主会话**（搜索面用）；本弹窗要看的是
+  // dag- 后台族自己的会话 ⇒ 显式取全量（同端点另一档，非前端过滤）。
   try {
-    const resp = await fetch('/api/sessions?includeUnindexed=1', { headers: authHeaders() });
+    const resp = await fetch('/api/sessions?includeUnindexed=1&includeBgAgents=1', { headers: authHeaders() });
     if (resp.ok) {
       const data = await resp.json();
       const hit = (data.sessions || []).find(s => isDagSessionOf(s.id || '', flowName, nodeId));
@@ -472,10 +513,10 @@ export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessio
   popupOverlay.innerHTML = `
     <div class="flow-agent-modal">
       <div class="flow-agent-header">
-        <span class="flow-agent-name">${esc(agentName || entry.meta.agentName || '')}</span>
+        <span class="flow-agent-name">${esc(agentDisplayName(agentName || entry.meta.agentName || ''))}</span>
         <span class="flow-agent-subtitle">${esc(flowName || '')}</span>
         <span class="flow-agent-model" id="flow-agent-model"></span>
-        <div class="flow-agent-close" id="flow-agent-close">✕</div>
+        ${isMobileLayer() ? '' : '<div class="flow-agent-close" id="flow-agent-close">✕</div>'}
       </div>
       <div class="flow-agent-footer" id="flow-agent-footer">
         <span class="fa-status-dot"></span>
@@ -485,6 +526,11 @@ export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessio
       </div>
     </div>
   `;
+  // 3(d) 按钮去重（panel-language 批 2026-11-06）：头部 ✕ 建不建由上一行模板内联
+  // 守卫分档 —— 手机层返回键在（下方 mobileSheetBack 注入 .mfs-back）⇒ ✕ 不建
+  // （作者令「已经有返回键了，就不要再放叉号键（X）」）；桌面层无返回键 ⇒ ✕ 保留。
+  // 模板每次 open 重建 ⇒ 守卫逐次评估。🔴 判定单源 = popSheet.isMobileLayer（禁自写
+  // body.classList），守卫与 ✕ 同行相邻（机检 P2 = scripts/check-panel-unify.mjs）。
 
   // Async-fetch agent model info for header badge
   if (agentName) {

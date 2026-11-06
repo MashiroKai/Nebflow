@@ -1,0 +1,163 @@
+{
+  "left": 12,
+  "right": 12,
+  "want": 12,
+  "dock": {
+    "left": 12,
+    "right": 363
+  },
+  "geo": {
+    "viewport": {
+      "w": 375,
+      "h": 812
+    },
+    "bodyClass": "sidebar-collapsed deck-look-v2 mobile-layer canvas-open canvas-overlay",
+    "mobileLayer": true,
+    "main": {
+      "left": 0,
+      "right": 375,
+      "top": 0,
+      "bottom": 812,
+      "width": 375,
+      "height": 812
+    },
+    "chat": {
+      "left": 0,
+      "right": 375,
+      "top": 0,
+      "bottom": 812,
+      "width": 375,
+      "height": 812
+    },
+    "sidebar": {
+      "left": 0,
+      "right": 0,
+      "top": 0,
+      "bottom": 0,
+      "width": 0,
+      "height": 0
+    },
+    "canvas": {
+      "left": 0,
+      "right": 0,
+      "top": 0,
+      "bottom": 0,
+      "width": 0,
+      "height": 0
+    },
+    "inputArea": {
+      "left": 0,
+      "right": 375,
+      "top": 682,
+      "bottom": 812,
+      "width": 375,
+      "height": 130
+    },
+    "inputBar": {
+      "left": 12,
+      "right": 363,
+      "top": 682,
+      "bottom": 740,
+      "width": 351,
+      "height": 58
+    },
+    "inputAreaCss": {
+      "paddingLeft": "12px",
+      "paddingRight": "12px",
+      "paddingBottom": "72px",
+      "marginLeft": "0px",
+      "marginRight": "0px",
+      "marginBottom": "0px",
+      "maxWidth": "none",
+      "bottom": "0px"
+    },
+    "inputBarCss": {
+      "paddingLeft": "12px",
+      "paddingRight": "12px",
+      "paddingBottom": "4px",
+      "marginLeft": "0px",
+      "marginRight": "0px",
+      "marginBottom": "0px",
+      "maxWidth": "none",
+      "bottom": "0px"
+    },
+    "mainCss": {
+      "paddingLeft": "0px",
+      "paddingRight": "0px",
+      "paddingBottom": "0px",
+      "marginLeft": "0px",
+      "marginRight": "0px",
+      "marginBottom": "0px",
+      "maxWidth": "none",
+      "bottom": "0px"
+    },
+    "chatPadBottom": "132px",
+    "lastRowClass": "row ai",
+    "lastBubble": {
+      "borderRadius": "16px 16px 16px 16px",
+      "bottomLeft": "16px",
+      "bottomRight": "16px",
+      "cls": "bubble ai"
+    },
+    "allBubbles": [
+      {
+        "borderRadius": "16px 16px 16px 4px",
+        "bottomLeft": "4px",
+        "bottomRight": "16px",
+        "cls": "bubble ai"
+      },
+      {
+        "borderRadius": "16px 16px 4px 16px",
+        "bottomLeft": "16px",
+        "bottomRight": "4px",
+        "cls": "bubble user"
+      },
+      {
+        "borderRadius": "16px 16px 16px 4px",
+        "bottomLeft": "4px",
+        "bottomRight": "16px",
+        "cls": "bubble ai"
+      },
+      {
+        "borderRadius": "16px 16px 4px 16px",
+        "bottomLeft": "16px",
+        "bottomRight": "4px",
+        "cls": "bubble user"
+      },
+      {
+        "borderRadius": "16px 16px 16px 4px",
+        "bottomLeft": "4px",
+        "bottomRight": "16px",
+        "cls": "bubble ai"
+      },
+      {
+        "borderRadius": "16px 16px 4px 16px",
+        "bottomLeft": "16px",
+        "bottomRight": "4px",
+        "cls": "bubble user"
+      },
+      {
+        "borderRadius": "16px 16px 16px 4px",
+        "bottomLeft": "4px",
+        "bottomRight": "16px",
+        "cls": "bubble ai"
+      },
+      {
+        "borderRadius": "16px 16px 4px 16px",
+        "bottomLeft": "16px",
+        "bottomRight": "4px",
+        "cls": "bubble user"
+      },
+      {
+        "borderRadius": "16px 16px 16px 16px",
+        "bottomLeft": "16px",
+        "bottomRight": "16px",
+        "cls": "bubble ai"
+      }
+    ],
+    "chatScroll": {
+      "top": 299,
+      "h": 1111
+    }
+  }
+}

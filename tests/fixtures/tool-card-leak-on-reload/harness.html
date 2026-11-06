@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<!-- tool-card-leak-on-reload harness.html — 刷新回放「回合内插话切段 ⇒ 整段裸工具卡」
+     回归试验台（2026-11-02，作者报障：「我在回复中，然后我网络中断或者刷新了页面，
+     再次进来的时候就会看到你的完整的工具执行过程」）。
+
+     驱动（与 turn-terminal-replay harness 同款自举）：
+       window.__replay(msgs, opts) → 全新 #chat + 真实 restoreFromBackendHistory(msgs, opts)
+                                     —— 刷新后 historyPage 初载腿的同一函数；
+       window.__fixture(name)      → /tests/fixtures/tool-card-leak-on-reload/<name>.json
+                                     （真实 session 片段落盘件，见 fixture.json / fixture-legacy.json）；
+       window.__counts()           → 折叠现场读数（headers / tucked / 裸卡 / 行标）。
+
+     被测树 = 伺服根（本树或 NB_UX_ROOT 红腿基线树——spec 把本 harness 覆盖复制
+     过去，turn-terminal-replay 同款自举）。驱动里 await import(...) 拿到的是
+     **该树**的模块 ⇒ 同一份 harness 在两棵树上的行为差 = 被测代码差。
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>tool-card-leak-on-reload harness</title>
+  <link rel="stylesheet" href="/src/main/resources/web/css/base.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/chat.css">
+  <style>
+    /* Minimal stand-in for the app shell (history-replay / turn-terminal harness 同款). */
+    html, body { margin: 0; height: 100%; background: var(--color-bg, #101418); }
+    #chat {
+      position: absolute; top: 0; bottom: 0; left: 50%; transform: translateX(-50%);
+      width: 680px; max-width: 96vw; margin: 0; padding: 16px 0 36px;
+    }
+  </style>
+</head>
+<body>
+  <div id="chat"></div>
+  <script type="module">
+    const WEB = '/src/main/resources/web/js';
+
+    const { chatViews, ChatView, setActiveView } = await import(`${WEB}/chatView.js`);
+    const stateMod = await import(`${WEB}/state.js`);
+    const state = stateMod.default;
+
+    const chatEl = document.getElementById('chat');
+    chatViews.primary = new ChatView('primary', { chat: chatEl });
+    setActiveView(chatViews.primary);
+    state.activeSessionId = 'harness-session';
+    // Nothing may reach a real socket in this harness.
+    state.ws = { readyState: 1, send: () => {} };
+    try { localStorage.removeItem('nebflow_sessions'); } catch {}
+
+    async function freshChat() {
+      const chat = (chatViews.primary && chatViews.primary.dom && chatViews.primary.dom.chat) || chatEl;
+      chat.innerHTML = '';
+      return chat;
+    }
+
+    /** 刷新回放腿：全新容器 + 真实 restoreFromBackendHistory。 */
+    window.__replay = async (msgs, opts = {}) => {
+      await freshChat();
+      const { restoreFromBackendHistory } = await import(`${WEB}/persistence.js`);
+      restoreFromBackendHistory(msgs, opts);
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      return window.__counts();
+    };
+
+    /** 真实 session 片段落盘件（fixtures 目录，served from the tree under test's
+     *  own copy —— 两侧同字节，避免基线与新树读不同数据）。 */
+    window.__fixture = async (name) => {
+      const res = await fetch(`/tests/fixtures/tool-card-leak-on-reload/${name}.json`, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`fixture ${name} → HTTP ${res.status}`);
+      return res.json();
+    };
+
+    /** 折叠现场读数（形态红线：turn-header 常驻 + 工具行 tucked + 点开可展）。 */
+    window.__counts = () => {
+      const chat = chatEl;
+      const headers = [...chat.querySelectorAll(':scope > .turn-header')];
+      const toolRows = [...chat.querySelectorAll(':scope > .row.tool')];
+      const userRows = [...chat.querySelectorAll(':scope > .row.user')];
+      const aiRows = [...chat.querySelectorAll(':scope > .row.ai')];
+      // 顶层兄弟判据：每张工具卡左右最近的 .turn-header 是否恰是同一条（归组面）。
+      const topLevel = [...chat.children].filter(el => el.classList && el.classList.contains('row'));
+      return {
+        headers: headers.length,
+        headerStates: headers.map(h => h.dataset.turnState || ''),
+        headerTexts: headers.map(h => (h.querySelector('.turn-header-text') || {}).textContent || ''),
+        tools: toolRows.length,
+        toolsTucked: toolRows.filter(r => r.classList.contains('nf-tucked')).length,
+        aiRows: aiRows.length,
+        terminalStamped: aiRows.filter(r => r.dataset && r.dataset.nfTurnTerminal === '1').length,
+        userRows: userRows.length,
+        midTurnStamped: userRows.filter(r => r.dataset && r.dataset.nfMidTurn === '1').length,
+        midTurnInferred: userRows.filter(r => r.dataset && r.dataset.nfMidTurnSrc === 'inferred').length,
+        // 「工具卡是否还是顶层散行」：= 没有任何 turn-header 夹在其上 ⇒ 无折叠归属。
+        // 逐卡算：向上找最近的 turn-header，找不到 ⇒ 该卡无归属（裸卡）。
+        bareTools: toolRows.filter(r => {
+          let n = r.previousElementSibling;
+          while (n) {
+            if (n.classList && n.classList.contains('turn-header')) return false;
+            if (n.classList && n.classList.contains('row') && n.classList.contains('user')
+                && !(n.dataset && n.dataset.nfMidTurn) && !n.hasAttribute('data-nf-ask-answer')) return true;
+            n = n.previousElementSibling;
+          }
+          return true;
+        }).length,
+        // 「工具卡是否还是顶层散行」：= 没有任何 turn-header 夹在它所属回合之内
+        // ⇒ 无折叠归属。逐卡向上走：先遇 turn-header ⇒ 有归属；先遇**真·开轮
+        // user 行**（非插话行）⇒ 该卡所在段没有 header ⇒ 裸卡。插话行不是边界，
+        // 走过它继续找（与 turnGroup 的段边界判据同口径）。
+        topLevelRows: topLevel.length,
+      };
+    };
+
+    window.__ready = true;
+  </script>
+</body>
+</html>

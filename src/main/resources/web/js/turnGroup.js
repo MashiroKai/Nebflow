@@ -84,7 +84,7 @@ import { isNearBottom } from './utils.js';
 // buildHeader insert below is only the fallback for turns with no live line
 // (history rebuild, popup restores). One-way dependency: workline.js imports
 // i18n + utils only, so this adds no cycle (chat.js → workline.js ← here).
-import { settleWorklineAsHeader, removeWorkline, priorTurnBadgeSettled, buildBadgeLabel } from './workline.js';
+import { settleWorklineAsHeader, removeWorkline, priorTurnBadgeSettled, buildBadgeLabel, isMidTurnRow } from './workline.js';
 // output 块语法批（作者令 2026-10-31）：turn-header 角标 = 「看思考过程与工具
 // 结果」的现成入口——output 气泡的展开/收起随同一 toggle 换面（展开 = 原文
 // 全量 + <output> 语法原样现形）。
@@ -113,6 +113,14 @@ function isInjectedRow(row) {
 function isNonInjectedUserRow(row) {
   if (!row.classList || !row.classList.contains('row') ||
       !row.classList.contains('user') || isInjectedRow(row)) return false;
+  // tool-card-leak-on-reload 批（2026-11-02）：回合内插话行**不是**轮起点。
+  // 作者现象「我在回复中…刷新页面 ⇒ 完整工具执行过程摊平」的根因即此：后端两个
+  // 普通用户帧落盘点与引擎回合状态无关地无条件落一条 User 行，任何非注入 user
+  // 行都被当轮边界 ⇒ 一轮被劈成两段，前段零 terminal 载体 ⇒ summarizeSegment
+  // 平铺 ⇒ 整段裸工具卡。判据 = workline.isMidTurnRow（data-nf-mid-turn 单点，
+  // 写入面：后端 midTurn=true 落盘 → persistence 两条回放腿盖戳，旧行按时间戳
+  // 蕴含推断盖同一戳；live 腿 chat.js renderUserBubble 在 busy 时盖同一戳）。
+  if (isMidTurnRow(row)) return false;
   // Real user input: unconditional opener (unchanged — the reference shape).
   if (!row.hasAttribute('data-nf-ask-answer')) return true;
   // Ask ANSWER row (AskUser 强制展开修令, author 2026-10-06 19:29 → 条件化升级:
@@ -441,16 +449,25 @@ export function collapseTurn(view, meta = {}) {
   if (tuckable.length > 0 || rows.some(rowHasOutputFace)) {
     const stats = computeTurnStats(rows);
     const segments = headerSegments(meta, stats);
-    // Same-element settle first (「过程全部展示在这一行」): the live line rolls
-    // its last item out and the stats badge in, then becomes the header.
-    header = settleWorklineAsHeader(view, segments, meta.title || '');
+    // 采用既有摘要行（过程泄漏修复批 2026-11-04）：回放腿给未终态尾段建过一枚
+    // **中性摘要行**（summarizeUnconfirmed）；该轮真正收尾时这枚节点就是本轮的
+    // 摘要行——就地改写文本/状态，绝不并列第二枚（「并列 badge」家族病灶）。
+    header = adoptHeaderAbove(chat, scope);
     if (header) {
+      removeWorkline(view);
+      fillHeaderText(header.querySelector('.turn-header-text'), meta, stats);
+      header.title = meta.title || '';
       header.dataset.turnState = 'done';
+      header.removeAttribute('data-nf-turn-unconfirmed');
       header.setAttribute('aria-expanded', 'false');
       bindHeaderToggle(header);
     } else {
-      header = buildHeader(chat, scope, meta, stats);
+      // Same-element settle first (「过程全部展示在这一行」): the live line rolls
+      // its last item out and the stats badge in, then becomes the header.
+      header = settleWorklineAsHeader(view, segments, meta.title || '');
+      if (!header) header = buildHeader(chat, scope, meta, stats);
       header.dataset.turnState = 'done';
+      header.removeAttribute('data-nf-turn-unconfirmed');
       header.setAttribute('aria-expanded', 'false');
       bindHeaderToggle(header);
     }
@@ -562,8 +579,148 @@ function exchangeComplete(tail) {
   return badgeIdx > stampIdx;
 }
 
+/* ---------- 摘要行归属：scope 顶端的既有 header ---------- */
+
+/**
+ * `scope` 顶上（= 本轮回放段的开头）是否已有一枚摘要行（未终态尾段的中性摘要
+ * 行）。有 ⇒ 返回该节点供 collapseTurn 就地改写；无 ⇒ null（走原 settle/insert）。
+ *
+ * 归属判据（两条硬闸，缺一不可 —— 上一版只挡「真·开轮 user 行」，结果在
+ * `#403`（注入行开新轮）与 turn-single-badge 的 post-closure / busyTail 面上
+ * 越界取走了上一轮**已确认**的 header，两轮并成一枚 = 「badge 并列/融合」家族
+ * 病灶）。修法 = 认「出处」而非「位置」：
+ *   ① 只有带 `data-nf-turn-unconfirmed="1"` 的 header 可被采用 —— 这枚戳只由
+ *      `summarizeUnconfirmed`（回放腿给未终态段建的中性摘要行）写入，已确认轮
+ *      的 header 永不被改写（每轮各一枚，绝不融合）；
+ *   ② 回溯不跨任何 user 行（含注入行、作答行）—— 任何 user 行都是轮边界；
+ *      回放腿把 header 插在段首行之前（buildHeader 的插入点），所以本轮的
+ *      中性摘要行总在命中边界之前。
+ */
+function adoptHeaderAbove(chat, scope) {
+  const first = scope[0];
+  if (!first || first.parentNode !== chat) return null;
+  let n = first.previousElementSibling;
+  while (n) {
+    if (n.classList && n.classList.contains('turn-header')) {
+      return n.dataset && n.dataset.nfTurnUnconfirmed === '1' ? n : null;
+    }
+    if (n.classList && n.classList.contains('user')) return null; // 轮边界：不跨
+    n = n.previousElementSibling;
+  }
+  return null;
+}
+
+/* ---------- 未终态段的过程面折叠（过程泄漏修复批 2026-11-04） ---------- */
+
+/**
+ * 未终态段（段内既无 writer terminal 戳、也无 done 徽章）的**中性摘要行**。
+ *
+ * 根因（本批 P1，作者令 2026-11-04 14:14「断网或者刷新页面……直接把所有的思考
+ * 和工具过程全部呈现出来」）：live 渲染腿的过程行**出生即折叠**——
+ *   chat.js:1057 / :1348  renderTool/Pending → `'row tool nf-tucked'`
+ *   chat.js:4330          appendThinkingDelta → `'row ai thinking-row nf-tucked'`
+ * 这条「出生态折叠」正是流式期间「一行揭示行掩盖思考与工具过程」的真源：过程行
+ * 从来不是「跑完才折」，而是**从来没有可见过**；可见面只有那条流式行 → 终态
+ * settle 成 `.turn-header`。
+ * 回放腿没有出生态折叠（persistence.js 直接把行建成可见态），全靠
+ * `buildTurnSummariesForHistory` 的事后一遍折叠；而那一遍**只折有终态判据的段**
+ * （本文件 :686 `if (!termRow && !badge) return []`、:693 E6）⇒ 任何没有终态判据
+ * 的段（刷新/断网时该轮仍在飞、终态戳缺失的异常收尾、旧转录无徽章）整段平铺，
+ * 思考行与工具卡（含正文）全部现形 = 作者看到的泄露。
+ *
+ * 收敛口径 = **live 那一行摘要**两态同形：未终态段同样建一枚 `.turn-header`
+ * 摘要行（可点 = 明细完整可展开，绝不把内容丢掉）+ 过程行折叠；但**不编造成败**
+ * ——✻ 成功文案只来自 done 徽章的 `data-nf-phrase`，未终态段没有徽章 ⇒ 摘要行
+ * 只出现「模型 · 工具 N 次 · 读写 K 文件」这些过程事实，不出现「到站」式成功句。
+ * 「未确认」在 DOM 上单点可读：`data-nf-turn-unconfirmed="1"`（审计/断言面），
+ * 后续若 live done 帧到达，collapseTurn 会**采用**这枚节点改写（不并列第二枚）。
+ */
+function summarizeUnconfirmed(chat, seg, meta) {
+  if (seg.length === 0) return null;
+  // E5 边界：零过程行（纯文字轮 / 孤立注入）没有可收拢的内容 —— 不立行
+  // （立了就是一枚空壳摘要行，live 腿同样不立）。output 面由调用方另走
+  // buildHeader（output 角标是原文唯一入口）。
+  const tuckable = seg.filter(isTuckableRow);
+  if (tuckable.length === 0) return null;
+  const stats = computeTurnStats(seg);
+  const header = buildHeader(chat, seg, meta || {}, stats);
+  header.dataset.turnState = 'done';
+  header.dataset.nfTurnUnconfirmed = '1';
+  header.setAttribute('aria-expanded', 'false');
+  bindHeaderToggle(header);
+  tuckRows(tuckable);
+  return header;
+}
+
+/* ---------- 旧存量转录的插话推断（tool-card-leak-on-reload 批 2026-11-02） ---------- */
+
+/** 行的时间戳（epoch ms，0 = 不可判）。行级时间只长在 footer 徽章的
+ *  `.duration-badge-time[data-ts]` 上（createMsgFooterBadge /
+ *  createDurationBadgeElement 同款契约），除此之外无第二处时间载子。 */
+function rowTimestamp(row) {
+  const el = row.querySelector('.duration-badge-time[data-ts]');
+  const ts = el ? Number(el.getAttribute('data-ts')) : 0;
+  return Number.isFinite(ts) && ts > 0 ? ts : 0;
+}
+
+/** 该行是不是「本回合的过程行」（ai / thinking / tool）。user 行（含注入与作答）
+ *  与系统行都不算 —— 插话判定要求紧邻上方确有本回合正在进行的产出。 */
+function isProcessRow(row) {
+  if (!row.classList) return false;
+  return row.classList.contains('tool') || row.classList.contains('ai')
+    || row.classList.contains('thinking-row');
+}
+
+/**
+ * 旧存量 `.ui.json` 没有 `midTurn` 键（本批的写者字段是新增的）——为让老会话
+ * 刷新后同样不再摊平，这里用**时间戳蕴含关系**把回合内插话行补标成与写者字段
+ * 同一枚 DOM 戳（`data-nf-mid-turn`，src=inferred）。
+ *
+ * 判定（全部满足才算，任一不满足 ⇒ 不动该行，维持现状=平铺，绝不劣化）：
+ *   ① 行 = 普通 user 行（非注入、非作答行、尚未带戳）；
+ *   ② 行有时间戳 T；
+ *   ③ 向下最近的 terminal 行（`data-nf-turn-terminal`）存在，且它带
+ *      `data-nf-turn-duration`（= 该引擎回合的 durationMs）与时间戳 E，
+ *      T 落在开区间 (E - durationMs, E] 内 —— 即插话发生在该引擎回合的
+ *      **运行窗口内部**（回合结束时刻正是 terminal 行的落盘时刻）；
+ *   ④ 紧邻上方是本回合的过程行（ai/thinking/tool）且它**不是** terminal 行
+ *      —— 证明插话是「回复中插进来的」，不是新回合的第一条输入。
+ *
+ * 判据推不出（老行无 timestamp / 无 durationMs / 回合失败无 terminal）⇒ 保持
+ * 老口径（平铺），与改前逐字节同形；既有 DOM 已被写者字段标过的行不改写。
+ */
+function markInferredMidTurnRows(chat) {
+  const kids = Array.from(chat.children);
+  for (let i = 0; i < kids.length; i++) {
+    const row = kids[i];
+    if (!row.classList || !row.classList.contains('row') || !row.classList.contains('user')) continue;
+    if (isInjectedRow(row)) continue;
+    if (row.hasAttribute('data-nf-mid-turn') || row.hasAttribute('data-nf-ask-answer')) continue;
+    const t = rowTimestamp(row);
+    if (!t) continue;
+    let term = null;
+    for (let j = i + 1; j < kids.length; j++) {
+      const k = kids[j];
+      if (k.classList && k.classList.contains('user') && !isInjectedRow(k)) break; // 下一开轮行 = 窗口外
+      if (k.dataset && k.dataset.nfTurnTerminal) { term = k; break; }
+    }
+    if (!term) continue;
+    const end = rowTimestamp(term);
+    const dur = Number(term.dataset.nfTurnDuration || 0);
+    if (!end || !(dur > 0)) continue;
+    if (!(t > end - dur && t <= end)) continue;
+    const prev = i > 0 ? kids[i - 1] : null;
+    if (!prev || !isProcessRow(prev) || (prev.dataset && prev.dataset.nfTurnTerminal)) continue;
+    row.dataset.nfMidTurn = '1';
+    row.dataset.nfMidTurnSrc = 'inferred';
+  }
+}
+
 export function buildTurnSummariesForHistory(chat, opts = {}) {
   const { busyTail = false } = opts;
+  // tool-card-leak-on-reload 批（2026-11-02）：段边界判据之前先把**旧存量转录**的
+  // 回合内插话行补标（新转录由后端 midTurn 字段在行构建期直接落标）。
+  markInferredMidTurnRows(chat);
   const rows = Array.from(chat.children).filter(el => el.classList && el.classList.contains('row'));
   let segStart = 0;
   const flush = (end) => {
@@ -586,6 +743,11 @@ export function buildTurnSummariesForHistory(chat, opts = {}) {
     flush(rows.length);
     markClosed(chat);
   } else if (tail.length > 0) {
+    // 在飞尾段（会话仍 busy）：live 腿的过程行出生即折叠（chat.js 三处
+    // nf-tucked）+ 可见面只有那条流式行 ⇒ 回放同形给一枚中性摘要行
+    // （过程泄漏修复批 2026-11-04，判据见 summarizeUnconfirmed 头注）。
+    const meta0 = { model: '', phrase: '', title: '' };
+    summarizeUnconfirmed(chat, tail, meta0);
     const idx = Array.from(chat.children).indexOf(tail[0]);
     if (idx > 0) markClosedAt(chat, idx);
   } else {
@@ -608,7 +770,13 @@ function summarizeSegment(chat, seg) {
   // （phrase/model 进 header）；terminal 行无徽章时 header 缺 phrase 段照样成立。
   const termRow = findTerminalRow(seg);
   const badge = findDoneBadge(seg);
-  if (!termRow && !badge) return []; // failed/unfinished segment: flat, no header
+  // 未终态段（无 writer terminal 戳、无 done 徽章）：失败收尾 / 异常中断 / 旧转录
+  // 无判据 —— 建**中性摘要行**（无 ✻ 成功文案）+ 过程行折叠：默认态不漏明细，
+  // 明细仍可点开（过程泄漏修复批 2026-11-04，判据见 summarizeUnconfirmed 头注）。
+  if (!termRow && !badge) {
+    summarizeUnconfirmed(chat, seg, { model: '', phrase: '', title: '' });
+    return [];
+  }
   // E6: nothing would remain visible — kept for the heuristic-only face (a badge
   // on an all-tuckable segment = uncertain legacy read, stay flat). A
   // WRITER-STAMPED terminal row is the round-close FACT (data face, not a

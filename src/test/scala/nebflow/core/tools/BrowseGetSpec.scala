@@ -146,7 +146,7 @@ class BrowseGetSpec extends CatsEffectSuite:
         }
       /** @type Array[(Long, Long)] */ val progress = new scala.collection.mutable.ArrayBuffer[(Long, Long)]()
       BrowseGetLoop
-        .run(target, fetch, (b, t, _) => IO { progress += ((b, t)) }, new AtomicBoolean(false), startChunkSize = Chunk)
+        .run(target, fetch, (b, t, _) => IO { progress += ((b, t)) }, new AtomicBoolean(false), startChunkSize = Chunk, window = 1) // window=1 = 改前的纯串行语义（既有断言按串行档钉）
         .map {
           case Right((path, size, sha)) =>
             assertEquals(size, 50L)
@@ -174,7 +174,7 @@ class BrowseGetSpec extends CatsEffectSuite:
           Right(chunkReply(total, idx, cs, Option.when(wantWhole)(wholeSha)))
         }
       BrowseGetLoop
-        .run(target, fetch, (_, _, _) => IO.unit, new AtomicBoolean(false), startChunkSize = Chunk)
+        .run(target, fetch, (_, _, _) => IO.unit, new AtomicBoolean(false), startChunkSize = Chunk, window = 1) // window=1 = 改前的纯串行语义（既有断言按串行档钉）
         .map {
           case Right((path, size, _)) =>
             assertEquals(size, 50L)
@@ -202,7 +202,7 @@ class BrowseGetSpec extends CatsEffectSuite:
           Right(chunkReply(total, idx, cs, Option.when(wantWhole)(wholeSha)))
         }
       BrowseGetLoop
-        .run(target, fetch, (_, _, _) => IO.unit, flag, startChunkSize = Chunk)
+        .run(target, fetch, (_, _, _) => IO.unit, flag, startChunkSize = Chunk, window = 1) // window=1 = 改前的纯串行语义（既有断言按串行档钉）
         .map {
           case Left(err) =>
             assertEquals(err, BrowseGetCursor.Cancelled, "cancel must surface the Cancelled sentinel, not a generic error")
@@ -228,7 +228,7 @@ class BrowseGetSpec extends CatsEffectSuite:
           else Right(reply)
         }
       BrowseGetLoop
-        .run(target, fetch, (_, _, _) => IO.unit, new AtomicBoolean(false), startChunkSize = Chunk)
+        .run(target, fetch, (_, _, _) => IO.unit, new AtomicBoolean(false), startChunkSize = Chunk, window = 1) // window=1 = 改前的纯串行语义（既有断言按串行档钉）
         .map {
           case Right((path, size, _)) =>
             assertEquals(size, 40L)
@@ -249,7 +249,7 @@ class BrowseGetSpec extends CatsEffectSuite:
         contentB64 = b64(total)
       )
       BrowseGetLoop
-        .run(target, (_, _, _) => IO.pure(Right(legacy)), (_, _, _) => IO.unit, new AtomicBoolean(false), startChunkSize = Chunk)
+        .run(target, (_, _, _) => IO.pure(Right(legacy)), (_, _, _) => IO.unit, new AtomicBoolean(false), startChunkSize = Chunk, window = 1) // window=1 = 改前的纯串行语义（既有断言按串行档钉）
         .map {
           case Right((path, size, sha)) =>
             assertEquals(size, 24L)
@@ -269,7 +269,7 @@ class BrowseGetSpec extends CatsEffectSuite:
         totalBytes = overCap, totalChunks = 999, wholeSha256 = None, contentB64 = ""
       )
       BrowseGetLoop
-        .run(target, (_, _, _) => IO.pure(Right(reply)), (_, _, _) => IO.unit, new AtomicBoolean(false), startChunkSize = Chunk)
+        .run(target, (_, _, _) => IO.pure(Right(reply)), (_, _, _) => IO.unit, new AtomicBoolean(false), startChunkSize = Chunk, window = 1) // window=1 = 改前的纯串行语义（既有断言按串行档钉）
         .map {
           case Left(err) =>
             assert(err.contains("use explicit batch transfer"), "cap error must steer to the dropbox channel")
@@ -294,6 +294,103 @@ class BrowseGetSpec extends CatsEffectSuite:
       // 无在途：cancel 幂等 false（不误报）。
       assertEquals(BrowseFetchRegistry.cancel("dev-1", s"$dir/x.png"), false)
       }
+    }
+  }
+
+  // ===== 流水线（砍串行搬运开销批 2026-11-04）：窗口 / 顺序落盘 / 波次粒度取消 =====
+
+  /** 并发读数：fetch 进/出各一拍，取最大值（钉住「窗口真的在飞」而不是「声明了窗口」）。 */
+  private final class InFlight:
+    private val cur = new java.util.concurrent.atomic.AtomicInteger(0)
+    private val peak = new java.util.concurrent.atomic.AtomicInteger(0)
+    def enter(): Int =
+      val n = cur.incrementAndGet()
+      peak.updateAndGet(p => math.max(p, n))
+    def leave(): Unit = cur.decrementAndGet()
+    def max: Int = peak.get()
+
+  test("ChunkSizing：块长按文件大小选档 + 窗口受在飞字节预算约束") {
+    assertEquals(ChunkSizing.chunkSizeFor(0L), ChunkSizing.SmallChunk, "unknown size ⇒ slow-start档")
+    assertEquals(ChunkSizing.chunkSizeFor(1024L), ChunkSizing.SmallChunk)
+    assertEquals(ChunkSizing.chunkSizeFor(4L * 1024 * 1024), ChunkSizing.SmallChunk)
+    assertEquals(ChunkSizing.chunkSizeFor(5L * 1024 * 1024), ChunkSizing.MediumChunk)
+    assertEquals(ChunkSizing.chunkSizeFor(16L * 1024 * 1024), ChunkSizing.MediumChunk)
+    assertEquals(ChunkSizing.chunkSizeFor(17L * 1024 * 1024), ChunkSizing.LargeChunk)
+    // 窗口 × 块长 ≤ 在飞字节预算（小窗口档按 MinWindow 夹），且不超过 MaxWindow。
+    List(ChunkSizing.SmallChunk, ChunkSizing.MediumChunk, ChunkSizing.LargeChunk).foreach { cs =>
+      val w = ChunkSizing.windowFor(cs)
+      assert(w >= ChunkSizing.MinWindow && w <= ChunkSizing.MaxWindow, s"window out of range for $cs: $w")
+      assert(w.toLong * cs <= math.max(ChunkSizing.InFlightByteBudget, ChunkSizing.MinWindow.toLong * cs))
+    }
+    assertEquals(ChunkSizing.windowFor(ChunkSizing.SmallChunk), 8, "512KiB × 8 = 4MiB ≤ 8MiB 预算 ⇒ 顶到 MaxWindow")
+  }
+
+  test("BrowseGetLoop：window=3 ⇒ 三块同时在飞（并发读数 > 1），字节与顺序仍精确") {
+    withTmp { dir =>
+      val target = dir / "pickups" / "k.bin"
+      val total = payload(96, 21) // 6 块（Chunk=16）+ 首块
+      val wholeSha = ChunkedTransfer.sha256Hex(total)
+      val inFlight = new InFlight
+      val fetch: (Int, Int, Boolean) => IO[Either[String, BrowseGetCursor.ChunkReply]] = (idx, cs, wantWhole) =>
+        IO(inFlight.enter()) *> IO.sleep(scala.concurrent.duration.DurationInt(40).millis) *>
+          IO(inFlight.leave()).as(Right(chunkReply(total, idx, cs, Option.when(wantWhole)(wholeSha))))
+      BrowseGetLoop
+        .run(target, fetch, (_, _, _) => IO.unit, new AtomicBoolean(false), startChunkSize = Chunk, window = 3)
+        .map {
+          case Right((path, size, sha)) =>
+            assertEquals(size, 96L)
+            assertEquals(sha, wholeSha)
+            assertEquals(os.read.bytes(path).toSeq, total.toSeq, "pipelined fetch must still land exact ordered bytes")
+            assert(inFlight.max >= 2, s"window=3 must put more than one chunk in flight (peak=${inFlight.max})")
+            assert(inFlight.max <= 3, s"window is a hard cap (peak=${inFlight.max})")
+          case other => fail(s"expected a completed pipelined fetch, got: $other")
+        }
+    }
+  }
+
+  test("BrowseGetLoop：window=1 = 改前的纯串行语义（并发读数恒 1）——A/B 对照基线") {
+    withTmp { dir =>
+      val target = dir / "pickups" / "l.bin"
+      val total = payload(64, 23)
+      val wholeSha = ChunkedTransfer.sha256Hex(total)
+      val inFlight = new InFlight
+      val fetch: (Int, Int, Boolean) => IO[Either[String, BrowseGetCursor.ChunkReply]] = (idx, cs, wantWhole) =>
+        IO(inFlight.enter()) *> IO.sleep(scala.concurrent.duration.DurationInt(20).millis) *>
+          IO(inFlight.leave()).as(Right(chunkReply(total, idx, cs, Option.when(wantWhole)(wholeSha))))
+      BrowseGetLoop
+        .run(target, fetch, (_, _, _) => IO.unit, new AtomicBoolean(false), startChunkSize = Chunk, window = 1)
+        .map {
+          case Right((path, size, _)) =>
+            assertEquals(size, 64L)
+            assertEquals(os.read.bytes(path).toSeq, total.toSeq)
+            assertEquals(inFlight.max, 1, "window=1 must behave exactly like the pre-batch serial loop")
+          case other => fail(s"expected a completed serial fetch, got: $other")
+        }
+    }
+  }
+
+  test("BrowseGetLoop：流水线中途取消 = 波次粒度——已落字节是块边界，可续传") {
+    withTmp { dir =>
+      val target = dir / "pickups" / "m.bin"
+      val total = payload(96, 25) // 6 块
+      val wholeSha = ChunkedTransfer.sha256Hex(total)
+      val flag = new AtomicBoolean(false)
+      val fetch: (Int, Int, Boolean) => IO[Either[String, BrowseGetCursor.ChunkReply]] = (idx, cs, wantWhole) =>
+        IO {
+          // 首块落盘后翻旗标 ⇒ 当前波次收口后必须停（波间即停，不再发下一波）。
+          if idx >= 3 then flag.set(true)
+          Right(chunkReply(total, idx, cs, Option.when(wantWhole)(wholeSha)))
+        }
+      BrowseGetLoop
+        .run(target, fetch, (_, _, _) => IO.unit, flag, startChunkSize = Chunk, window = 3)
+        .map {
+          case Left(err) =>
+            assertEquals(err, BrowseGetCursor.Cancelled, "wave-boundary cancel must surface the Cancelled sentinel")
+            val landed = os.size(target)
+            assertEquals(landed % Chunk.toLong, 0L, "cancel leaves whole-chunk boundaries ⇒ resume-safe")
+            assert(landed > 0L, "bytes already landed must be preserved")
+          case other => fail(s"expected the Cancelled sentinel, got: $other")
+        }
     }
   }
 

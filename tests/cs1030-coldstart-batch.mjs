@@ -434,7 +434,9 @@ async function legMobileDock(browser) {
     return { w: r.width, h: r.height, inside: r.top >= dock.top - 0.5, gap: dock.top - bar.bottom };
   });
   ok('D1 dock 中键缩小一档（44×44，修前 50）+ 收回 dock 边界内（收形批⑤ lift 归 0）', Math.abs(d.w - 44) <= 1 && Math.abs(d.h - 44) <= 1 && d.inside, JSON.stringify(d));
-  ok('D2 输入卡与 dock 缝 == lift 0px（收形批⑤间隙收窄，修前 12px 抬升缝）', Math.abs(d.gap) <= 1.5, `gap=${d.gap}`);
+  // 悬浮胶囊批（2026-11-01 21:07）：缝契约由「== lift 0」换为「== --dock-gap 10」
+  // 呼吸缝（作者令「dock 上缘和输入框之间保留一点呼吸间隙」）。
+  ok('D2 输入卡与胶囊 dock 呼吸缝 == 10px（--dock-gap，收形批零缝契约退役）', Math.abs(d.gap - 10) <= 1.5, `gap=${d.gap}`);
   await page.screenshot({ path: join(SHOTS_DIR, 'dark-D-mobile-dock.png') });
   ok('R0 腿D零 JS 错误', errors.length === 0, errors.slice(0, 2).join(' | '));
   await ctx.close();

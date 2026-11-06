@@ -13,11 +13,16 @@ import { voiceEnabled } from './featureFlags.js';
 // 今天仍为纯时钟（formatHm），更早按本地日历日加日期层（昨天/星期X/M月D日/跨年）。
 import { formatHm, formatFooterTime, toggleTimeFormat, bindTimeToggle } from './timeFormat.js';
 import { activeView, setActiveView, findViewBySessionId, chatViews } from './chatView.js';
-import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, buildToolDetail, buildDelegatePromptHtml, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode, createMsgCopyButton, createIconsIn, statusIcon, isNearBottom, shouldFollowBottom, NEAR_BOTTOM_PX, deviceTagHtml } from './utils.js';
+import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, appendUserTextWithFences, buildToolDetail, buildDelegatePromptHtml, attachToolClick, mountToolCardBody, delegatePromptRaw, foldToolCardMedia, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode, createMsgCopyButton, createIconsIn, statusIcon, isNearBottom, shouldFollowBottom, NEAR_BOTTOM_PX, deviceTagHtml } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
+// schedule-created-card 批（2026-11-05）：Schedule 工具创建/编辑成功后落卡片行。
+// 单一调用点 = 本文件 renderTool + persistence.js 两条历史重放腿（同一个 builder）。
+import { scheduleCardRowForTool } from './scheduleCard.js';
 import { t } from './i18n.js';
+// msgchip-provenance 批（2026-11-01）：渠道/平台来源注记剥离单点（牌窗与气泡共用）。
+import { stripChannelProvenance } from './channelProvenance.js';
 import { sendWs, onMessage } from './ws.js';
-import { askSourceLabel, removePendingAsk } from './askPending.js';
+import { askSourceParts, removePendingAsk } from './askPending.js';
 import { renderRefBlock, normalizeTaskRef, parseTaskReturnText, buildTaskRefLine, CLOSE_X_SVG } from './reference.js';
 // quote-message 一期（spec §7）：主聊天区右键引用 —— 菜单/引用条/引用块/跳转收口在
 // msgQuote.js 单模块（chat.js 只挂点，不复制逻辑）。
@@ -52,7 +57,7 @@ import { startWorklineItem, doneWorklineItem, failWorklineItem, thinkingWorkline
 // Root agent DISPLAY name (single read point — rootName.js). Leaf module
 // (state.js only) ⇒ no cycle. Used only on display faces; mechanism keys stay
 // the literal "Nebula".
-import { isRootNamed, rootDisplayName } from './rootName.js';
+import { isRootNamed, rootDisplayName, agentDisplayName } from './rootName.js';
 // askuser-dragdrop 实施批（2026-10-19，批 #551）：卡片作用域答复附件面（拖入即传
 // / 粘贴 / 点选；入口判据 = `answerAttachmentsAllowed`——只给开放题，secret/dirPicker/
 // 选择题卡一律静默无入口，作者修正①②）+ 历史卡「已回答 · 附 N 个文件」徽标。
@@ -74,6 +79,9 @@ import { createMsgFooterBadge, renderDurationBadge } from './chat/durationBadges
 // 正常态只渲染块内（框外正文摘除），turn-header 角标展开见 outputTag.js。
 import { applyOutputFace } from './outputTag.js';
 import { bindCollapsibleToggle } from './chat/collapsible.js';
+// 输入行为包批（2026-11-02 作者令）：busy↔idle 按钮 chrome = input/composer.js
+// 统一状态机（主会话 setBusy/clearBusy 与 canvas ask 共用同一实现）。
+import { applyTurnChrome } from './input/composer.js';
 import { withFocusKey } from './focusTrap.js';
 export { formatDuration, formatLiveDuration, pickThinkingPhrase, createMsgFooterBadge, createDurationBadgeElement, renderDurationBadge } from './chat/durationBadges.js';
 // Pop 族合流（A 侧 pop-upgrade 批单源化）：`popArtifactFromInput` / `openPopArtifact`
@@ -401,10 +409,10 @@ export function setBusy(sessionId) {
   if (sessionId) state.busySessionIds.add(sessionId);
   window.dispatchEvent(new CustomEvent('session-busy', { detail: { sessionId, busy: true } }));
   if (activeView && activeView.sessionId === sessionId) {
-    const { sendBtn, stopBtn, statusWrap } = activeView.dom;
-    if (sendBtn) sendBtn.style.display = 'none';
-    if (stopBtn) stopBtn.style.display = 'flex';
-    if (statusWrap) statusWrap.classList.add('on');
+    // 输入行为包批（2026-11-02 作者令「文字输入框的逻辑做成一个包」）：按钮
+    // chrome 互换收进包实现 applyTurnChrome（与 canvas ask .ask-stop 同一状态机
+    // ——语句与顺序逐字保留，仅实现搬位）。
+    applyTurnChrome(activeView.dom, true);
   }
 }
 
@@ -415,10 +423,9 @@ export function clearBusy(sessionId) {
   removeStillProcessingNotice(sessionId);
   window.dispatchEvent(new CustomEvent('session-busy', { detail: { sessionId, busy: false } }));
   if (activeView && activeView.sessionId === sessionId) {
-    const { input, sendBtn, stopBtn, statusWrap } = activeView.dom;
-    if (sendBtn) sendBtn.style.display = 'flex';
-    if (stopBtn) stopBtn.style.display = 'none';
-    if (statusWrap) statusWrap.classList.remove('on');
+    const { input } = activeView.dom;
+    // 输入行为包批：按钮 chrome 互换收进包实现（搬位律同 setBusy）。
+    applyTurnChrome(activeView.dom, false);
     // 不夺进行中的输入焦点（2026-09-15 作者现场报 · 件②）：本函数由全部 turn 终态帧
     // 调用（clearBusyFor ← done/error/interrupted/timeout/maxTokens/compactFailed，
     // 以及 sessionBusy{busy:false}），而引擎在「AskUser 卡 park 住 turn」时**成对**
@@ -466,6 +473,31 @@ function createPendingSendMark() {
  *   消息只在排队条行，drain 后由 input.js 补渲本气泡；排队条行按钮 = 队列动作
  *   唯一入口。）
  */
+/**
+ * live 腿辅助（tool-card-leak-on-reload 批 2026-11-02）：DOM 里此刻是否有一个
+ * **尚未终态**的引擎回合 —— 判据 = 最后一条开轮 user 行之后没有
+ * `data-nf-turn-terminal` 行、也没有 `.turn-header`（collapseTurn 收拢过的轮）。
+ * `busySessionIds` 是真值源，但在飞终态帧的处理窗口里它可能比 DOM 慢一拍；本
+ * 判据把「回合其实已经收口」的那一拍挡掉，避免新回合的开轮行被误标成插话。
+ */
+function liveTurnStillOpen(chat) {
+  const kids = Array.from(chat.children);
+  let lastOpener = -1;
+  kids.forEach((el, i) => {
+    if (!el.classList || !el.classList.contains('row') || !el.classList.contains('user')) return;
+    if (el.hasAttribute('data-nf-mid-turn') || el.hasAttribute('data-nf-ask-answer')) return;
+    if (el.querySelector('.bubble.injected')) return;
+    lastOpener = i;
+  });
+  if (lastOpener < 0) return false;
+  for (let i = lastOpener + 1; i < kids.length; i++) {
+    const el = kids[i];
+    if (el.classList && el.classList.contains('turn-header')) return false;
+    if (el.dataset && el.dataset.nfTurnTerminal) return false;
+  }
+  return true;
+}
+
 export function renderUserBubble(text, attachments, timestamp, opts) {
   const chat = activeView.dom.chat;
   // 媒体统一适配批（2026-10-20）：社交通道入站媒体的**存量「已存至」文本行**
@@ -473,9 +505,28 @@ export function renderUserBubble(text, attachments, timestamp, opts) {
   // 新登记行同一张媒体气泡面；附件在场（新登记/控制台）⇒ 逐字原样。换算命中
   // ⇒ 文本气泡隐去（媒体行接管，控制台纯图发送同形）。
   ({ text, atts: attachments } = unifyUserMediaFace(text, attachments));
+  // msgchip-provenance 批（2026-11-01 作者令「msg 身份牌剥渠道前缀」④）：用户气泡显示面
+  // 同样只留作者原生输入——渠道来源块（`<system-reminder>以下消息来自…`，社交通道入站行
+  // 的 .ui.json 里是真存了这个块的）、注入头行、附件路径指针行在此剥除。依据：
+  //   ① author 早前既裁「system reminder 永远不显示在会话中」（BridgeOrigin.faces 原律），
+  //      存量飞书入站行破例落盘带块 ⇒ 显示面本就是漂移，剥 = 回到裁定；
+  //   ② 判据 = 位置+结构（channelProvenance 单点），作者正文里自己写的同类句子原样保留。
+  // 注入气泡（buildInjectedRow / NODE-MESSAGE / mail 头那族）**不动**：那是引擎自己的
+  // 投递面展示（带 sender/header 行，语义不同），本批不碰它的视觉。
+  text = stripChannelProvenance(text).text;
   const row = document.createElement('div');
   row.className = 'row user';
   row.dataset.msgId = (opts && opts.msgId) || nextChatMsgId();
+  // tool-card-leak-on-reload 批（2026-11-02）：live 腿的回合内插话标 —— 发送时该
+  // 会话仍 busy（引擎回合在跑）⇒ 本行不是轮起点（与回放腿的同一 DOM 契约
+  // data-nf-mid-turn；turnGroup 的段边界判据 / workline.turnAnchor 只读它）。
+  // 缺席（空闲态发送 / 旧调用点）⇒ 不落标，行为逐字不变。
+  // pending:true（离线入队乐观气泡）不算：那一行根本不代表引擎回合内的输入。
+  if (!(opts && opts.pending) && activeView && activeView.sessionId &&
+      state.busySessionIds && state.busySessionIds.has(activeView.sessionId) &&
+      liveTurnStillOpen(chat)) {
+    row.dataset.nfMidTurn = '1';
+  }
   // quote-message 一期：带引用发送 ⇒ 气泡上方引用块（微信形态）。数据单点 =
   // 附件里的 chat-message ref（live/排队/草稿恢复共用同一形状 ⇒ 三个入路零
   // 额外处理）；该 ref 不进气泡内的 ref 卡循环（引用块是它唯一的消费面）。
@@ -507,8 +558,9 @@ export function renderUserBubble(text, attachments, timestamp, opts) {
     const t = document.createElement('div');
     // Plain-text face with mention spans (mention-render batch): identical
     // single-text-node output when nothing matches — user text never
-    // enters markdown.
-    appendTextWithMentions(t, text);
+    // enters markdown. rich-render 批（2026-11-05 作者令第 1 条）：唯一放行的
+    // 结构是**已闭合的图围栏**（```mermaid / ```svg），其余仍逐字纯文本。
+    appendUserTextWithFences(t, text);
     bubble.appendChild(t);
     (composite || row).appendChild(bubble);
   }
@@ -880,7 +932,9 @@ export function appendAgentText(agentId, text) {
     { bubble: a.bubble, chat, snapped: view.stream.scrollSnapped },
     (target) => {
       if (!target.bubble.isConnected) return;
-      target.bubble.innerHTML = renderMarkdownWithMath(target.bubble._nfText || '', true, { cache: false }) + '<span class="cursor"></span>';
+      // stream:true — 这是逐帧重渲的流式快照：图围栏保持代码块，消息收尾腿才出图
+      // （rich-render 批判据，见 utils.js renderMarkdownWithMath 的 opts.stream）。
+      target.bubble.innerHTML = renderMarkdownWithMath(target.bubble._nfText || '', true, { cache: false, stream: true }) + '<span class="cursor"></span>';
       rafScrollChat(target);
     });
 }
@@ -915,7 +969,16 @@ export function finishAgent(agentId) {
 // imported from here — re-export, not redefinition (single source in
 // popArtifacts.js).
 export { openPopArtifact, popArtifactFromInput } from './popArtifacts.js';
-import { isPopPayload, parsePopPayload, buildPopArtifactRow, renderPopToolRow, applyLegacyPopCard, buildUserMediaRow, registerUserMediaRow, patchUserMediaRow, unifyUserMediaFace } from './popArtifacts.js';
+import { isPopPayload, parsePopPayload, buildPopArtifactRow, renderPopToolRow, applyLegacyPopCard, buildUserMediaRow, registerUserMediaRow, patchUserMediaRow, unifyUserMediaFace, fileIconStyle, extOf } from './popArtifacts.js';
+// ui-unification-20261103-askuser-attach（作者令 2026-11-04）：AskUser 卡内附件的
+// 媒体档 = **卡语言标准组件**（叠卡 `.ds-media-stack` 族 / 平面 `.pop-media-flat`）；
+// 预览层 = 灯箱单点。禁在本文件再写第二套媒体卡 / 叠卡 / 预览实现。
+// attachment-thumb-unify 批（作者令 2026-11-05 12:57「附件这里添加的图片文件等应该
+// 用我们输入框同款的小图标/缩略图」）：卡区媒体档**不再**装配 220px 卡语言媒体卡
+// ⇒ buildMediaFlat/buildMediaStack 在本文件的消费点清零（组件本体仍在
+// popArtifacts.js，主会话/社交三窗照用）。缩略帧字节腿 = 同一 `hydrateMedia`
+// （nfFileCache 账本 ⇒ 预览与灯箱复用同一份字节，零重复抓取）。
+import { openMediaLightbox, hydrateMedia } from './popArtifacts.js';
 
 /** quote-message 一期：AskUser 卡首个 question 的纯文本（剥 HTML 标签；镜像
  *  persistence.js askUserQuestionText 的剥标签先例 —— chat.js 不反向 import
@@ -993,7 +1056,7 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   if (pending && pending.isConnected) {
     row = pending;
     card = row.querySelector('.tool-card');
-    card.classList.remove('tool-card--pending');
+    card.classList.remove('tool-card--pending', 'ds-tool-card--pending');
     card.innerHTML = '';
   } else {
     row = document.createElement('div');
@@ -1004,7 +1067,9 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
     // （9.19 同一收拢路径）。
     row.className = bareProcessRows(activeView) ? 'row tool' : 'row tool nf-tucked';
     card = document.createElement('div');
-    card.className = 'tool-card';
+    // .tool-card = DOM 寻址钩子（main.js 换面/chatSearch/turnGroup/spec），
+    // .ds-tool-card = 样式族（design-system.css 唯一家）。
+    card.className = 'tool-card ds-tool-card';
     row.appendChild(card);
     appendChatRow(chat, row);
   }
@@ -1033,7 +1098,7 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   // consistent tool card header — while the rendered HTML card appears separately.
   if (content && typeof content === 'string' && /^___\w+_HTML___/.test(content)) {
     const cIcon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
-                         : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+                         : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
     const cLocalLabel = localizeToolLabel(label);
     const cLocalSummary = localizeToolSummary(summary, label);
     const cLabelParts = cLocalLabel.split('\n', 2);
@@ -1105,7 +1170,7 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
 
   if (_toolName === 'Mail' && inputJson) {
     const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
-                         : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+                         : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
     const localLabel = localizeToolLabel(label);
     const localSummary = localizeToolSummary(summary, label);
     const labelParts = localLabel.split('\n', 2);
@@ -1120,6 +1185,10 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
     card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
       '<div class="content"><div class="label">' + labelHtml + '</div>' +
       (mailBody ? '<div class="body">' + mailBody + '</div>' : '') + '</div>';
+    // 工具卡图片引用面（tool-card-image-face 批 2026-11-04）：Mail 卡 markdown
+    // 正文里的图片语法被 marked 渲成真 <img> —— 工具卡是摘要面，图片一律折叠为
+    // 「🖼 图片 ×N」引用件（灯箱单点），绝不内嵌渲染。utils 单点兜底。
+    if (mailBody) foldToolCardMedia(card);
     smartScroll();
     if (mailBody) attachToolClick(card);
     return { type: 'tool', label, summary, content: null, isError, input: inputJson };
@@ -1127,7 +1196,7 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
 
   // Default rendering for all other tools
   const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
-                       : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+                       : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
   //
   // ── cardguard negative filter (author ruling 2026-09-17 · #687①) ──────────
   // A tool RESULT whose content carries the card sentinel ANYWHERE — not only
@@ -1174,12 +1243,10 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   }
 
   const detailHtml = buildToolDetail(inputJson, label);
-  const delegatePromptHtml = buildDelegatePromptHtml(inputJson);
-  // Render full content in body with syntax highlighting (Read/Grep only).
-  // Body is hidden by default, click to expand shows full content with scroll for long output.
-  const highlightHtml = content ? renderHighlightedContent(content, label) : null;
-  const bodyHtml = (detailHtml + delegatePromptHtml + (highlightHtml || (content ? '<pre class="tool-body-pre">' + escapeHtml(content) + '</pre>' : ''))) || '';
-  const hasBody = !!bodyHtml;
+  // 折叠单源（ui-unification-20261103-chat-stream）：长输出默认 ≤TOOL_PREVIEW_LINES
+  // 行预览 + 展开控件，全文只在展开瞬间进 DOM（mountToolCardBody 单点定义，
+  // persistence.js 两条历史腿同构引用）。短内容保持遗留「点击开合」形态。
+  const promptText = delegatePromptRaw(inputJson);
   const localLabel = localizeToolLabel(label);
   const localSummary = localizeToolSummary(summary, label);
   const labelParts = localLabel.split('\n', 2);
@@ -1197,11 +1264,24 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   const labelHtml = escapeHtml(labelParts[0]) + ' &mdash; ' + escapeHtml(localSummary) + truncBadge + deviceTag
     + (labelParts.length > 1 ? '<br><span class="tool-detail">' + escapeHtml(labelParts[1]) + '</span>' : '');
   card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
-    '<div class="content"><div class="label">' + labelHtml + '</div>' +
-    (bodyHtml ? '<div class="body">' + bodyHtml + '</div>' : '') + '</div>';
+    '<div class="content"><div class="label">' + labelHtml + '</div></div>';
+  const { hasBody } = mountToolCardBody(card, { detailHtml, promptText, content, label, labelTail: labelParts[1] || '' });
   smartScroll();
 
   if (hasBody) attachToolClick(card);
+  // ── Schedule 创建/编辑卡片（schedule-created-card 批 2026-11-05）───────────
+  // 作者令：创建定时任务/待办成功时，**消息流里**落一张可原地改/取消的卡片。
+  // 形态沿用 Pop 交付卡的两行制（进程行 = 上面这张既有工具卡，卡片行紧随其
+  // 后；行类名 `row sched-row`），卡体是 light DOM 组件 <nf-sched-card>
+  // （js/scheduleCard.js），写读走 js/scheduleApi.js 的既有 WS 帧（与 Schedule
+  // 工具同一 store）。判据面只在这里接线，卡的所有细节在组件里。
+  const schedRow = scheduleCardRowForTool({
+    label: _toolName, inputJson, content, isError, sessionId: sid,
+  });
+  if (schedRow) {
+    row.after(schedRow);
+    smartScroll();
+  }
   return { type: 'tool', label, summary, content, isError, input: inputJson };
 }
 
@@ -1299,7 +1379,7 @@ export function renderToolPending(label, sessionId) {
   stampRound(activeView, row);
   if (label && label.startsWith('[NebLink]')) row.classList.add('neblink-row');
   const card = document.createElement('div');
-  card.className = 'tool-card tool-card--pending';
+  card.className = 'tool-card ds-tool-card tool-card--pending ds-tool-card--pending';
   const localLabel = localizeToolLabel(label);
   const labelParts = localLabel.split('\n', 2);
   const labelHtml = escapeHtml(labelParts[0])
@@ -1807,7 +1887,7 @@ export function renderStillProcessingNotice(sid, rung = 0) {
   const text = document.createElement('span');
   text.textContent = t('chat.stillProcessing');
   card.appendChild(text);
-  const btnCss = 'padding:4px 12px;border-radius:6px;border:1px solid var(--color-frame-border);background:var(--color-frame-hover);color:var(--color-frame-text);cursor:pointer;font-size:13px;font-family:inherit;';
+  const btnCss = 'padding:var(--ds-space-1) var(--ds-space-3);border-radius:var(--ds-radius-chip);border:1px solid var(--color-frame-border);background:var(--color-frame-hover);color:var(--color-frame-text);cursor:pointer;font-size:var(--ds-fs-body);font-family:inherit;';
   // ① 首次动作：`chat.retry`（文案不变、语义变为**需确认**）——turn 仍在跑时不发 interrupt，
   //    只把行推进到确认态；turn 已结束（busy 已清）则直接重发，无需确认。
   const retryBtn = document.createElement('button');
@@ -1916,7 +1996,7 @@ function renderTerminalRow(sid, i18nKey, dataset = {}) {
   card.appendChild(text);
   const btn = document.createElement('button');
   btn.textContent = t('chat.retry');
-  btn.style.cssText = 'padding:4px 12px;border-radius:6px;border:1px solid var(--color-frame-border);background:var(--color-frame-hover);color:var(--color-frame-text);cursor:pointer;font-size:13px;font-family:inherit;';
+  btn.style.cssText = 'padding:var(--ds-space-1) var(--ds-space-3);border-radius:var(--ds-radius-chip);border:1px solid var(--color-frame-border);background:var(--color-frame-hover);color:var(--color-frame-text);cursor:pointer;font-size:var(--ds-fs-body);font-family:inherit;';
   btn.onmouseenter = () => { btn.style.background = 'var(--color-frame-active)'; };
   btn.onmouseleave = () => { btn.style.background = 'var(--color-frame-hover)'; };
   btn.onclick = () => {
@@ -2769,7 +2849,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     if (answerAttachments.length) {
       const countLine = document.createElement('div');
       countLine.className = 'option-answer';
-      countLine.style.cssText = 'color: var(--color-text-muted, #888); font-size: 12px;';
+      countLine.style.cssText = 'color: var(--color-text-muted, #888); font-size: var(--ds-fs-hint);';
       countLine.textContent = t('askUser.attachAnswerCount', { n: String(answerAttachments.length) });
       box.appendChild(countLine);
       mountAnsweredBadge(box, answerAttachments.length);
@@ -2903,10 +2983,15 @@ async function probeAttachmentFile(path) {
   try {
     const { queuedTicketUrl } = await import('./nfTicket.js');
     const url = await queuedTicketUrl(path);
-    if (!url) return false;
+    if (!url) return { ok: false, reason: 'unsupported' };
     const resp = await fetch(url, { headers: { Range: 'bytes=0-0' } });
-    return resp.ok;
-  } catch { return false; }
+    if (resp.ok) return { ok: true, reason: 'ok' };
+    // 作者实拍 IMG_1725 ⑤a（「不可用」三个字既无原因也无动作）：不可读**给原因档**，
+    // 三档正好覆盖作者现场的三种成因（会话未登录 / 文件已迁走 / 网络不可达）。
+    if (resp.status === 401 || resp.status === 403) return { ok: false, reason: 'denied' };
+    if (resp.status === 404 || resp.status === 410) return { ok: false, reason: 'missing' };
+    return { ok: false, reason: 'network' };
+  } catch { return { ok: false, reason: 'network' }; }
 }
 
 // ---------- AskUser 附件行（顶层 `attachments` ⇒ 整次提问层，2026-10-02；askuser-attach-align 2026-10-07 重写判定面） ----------
@@ -2920,6 +3005,16 @@ const ASK_ATTACHMENT_FOLD_AT = 3;
 function askAttachmentBasename(p) {
   const parts = String(p).split('/');
   return parts[parts.length - 1] || String(p);
+}
+
+/** 来源标签文本（ui-unification-20261103-askuser-attach 批）：文件卡左上角
+ *  「AskUser · <问题摘要/短 id>」（作者令原话例「AskUser · 图片缩放确认」）。
+ *  摘要 = 首问剥标签文本前 14 字（长问截断进 title——完整摘要在卡面本就可见）；
+ *  无问题文本时回退 requestId 尾段（短 id 档——作者令给出的第二选项）。 */
+function askAttOriginLabel(items, requestId) {
+  const q = askUserCardQuestionText(items);
+  const head = q ? q.slice(0, 14) : (requestId ? String(requestId).slice(-6) : '');
+  return head ? 'AskUser · ' + head : 'AskUser';
 }
 
 /** AskUser 答复附件**不再开 Canvas**（askuser-attach-replyrender 批 2026-10-30，
@@ -2954,154 +3049,176 @@ async function downloadAttachmentFile(path, base) {
   } catch { return false; }
 }
 
-/** 附件行的**单一渲染位**（整次提问层；`renderAskUser` 唯一调用方）。
+/** 附件行的**单一渲染位**（整次提问层；`renderAskUser` / `renderAskUserHistory` 唯二调用方）。
  *
  *  §三 落点 = 卡内 `.option-q-wrapper` 之内、`.option-btn-row` 之前：本函数自建一个
- *  承载块并复用**既有类名** `.option-q-wrapper`（全仓无该类的 CSS 规则，纯 JS 钩子 ⇒
- *  零新增 CSS），插在 `box.children` 里的 `.option-btn-row` 之前。该块**不**登记进
- *  `createDepVisibility`（那是逐问题的 dependsOn 控件）⇒ 末条问题被条件隐藏时附件行
- *  不随之消失。挂载序号在**全部问题 wrapper 之后** ⇒ `markAnsweredPick` 的
- *  `wrappers[qi]`（按问题下标取）不受影响。
+ *  承载块并复用**既有类名** `.option-q-wrapper`（纯 JS 钩子），插在 `box.children`
+ *  里的 `.option-btn-row` 之前。该块**不**登记进 `createDepVisibility` ⇒ 末条问题被
+ *  条件隐藏时附件行不随之消失。挂载序号在**全部问题 wrapper 之后** ⇒
+ *  `markAnsweredPick` 的 `wrappers[qi]`（按问题下标取）不受影响。
  *
- *  行形态（askuser-attach-replyrender 批 2026-10-30 起，作者令「我回复你的附件，
- *  不需要在 Canvas 打开」；此前形态 = askuser-attach-align 2026-10-07「跟 Pop 保持
- *  一致」——注册表认领的类型一律跳 Canvas 标签页）：
- *   · 图片（判据 = `itemTypeForFileName` === 'image'，真源仍是 viewer 注册表自身，
- *     禁第二张扩展名表）⇒ **会话流内联缩略帧**（`nfViewerSource` 账本单点取数，
- *     与设备内联图/lightbox 同一条字节腿）+ 点击 **lightbox** 大图 —— 零 Canvas
- *     依赖，不新开任何标签。
- *   · 其余全部类型（含注册表未认领）⇒ 真按钮，点击走**下载腿**
- *     （`downloadAttachmentFile` = 设备面下载键同通路）。
- *   · 探针判定缺失/不可读（`probeAttachmentFile` 败）⇒ 该行**就地降级**为
- *     静态行 + `attachmentUnavailable` 标注；图片行取数额外失败时先降级为下载行
- *     （附件仍可拿，禁死行）。🔴 静态行零按钮语义（不出 `<button>` / `[role=button]`）。
- *  文案一律取自 `t()`（🔴 禁硬编码中文串入 JS）。 */
-function renderAskAttachments(box, attachments) {
+ *  形态（attachment-thumb-unify 批 2026-11-05 12:57，作者令原话「附件这里添加的
+ *  图片文件等应该用我们输入框同款的小图标/缩略图」；被本批取代的形态 =
+ *  ui-unification-20261103-askuser-attach 2026-11-04 的 220px 卡语言媒体卡）：
+ *   · 图片 ⇒ **与输入框附件条逐值同盒的小缩略图** `.att-thumb`（28px 档 / 同圆角
+ *     / 同描边；渲染单源 = `renderAttachmentFace` 图片档，禁第二套媒体面）。点击
+ *     = 灯箱原图（`openMediaLightbox` 单点，零 Canvas 依赖——10-30 作者令「不需要
+ *     在 Canvas 打开」；`path` 在 ⇒ 灯箱内另给 Canvas 次级入口）。
+ *   · 其余全部类型（含视频/pdf/zip/md）⇒ 文件 chip（`renderAttachmentFace` —— 与
+ *     输入框附件条 `renderAttachmentPreviewInner` **同一函数**的同一张脸）：类型
+ *     小图标（`.fc-icon` 色族单源）+ 文件名（可见省略号截断，不靠渐隐）。
+ *   · 来源标签（`ds-att-origin`）= 标题行一处（不再每枚 chip 挂 notch：28px chip
+ *     装不下 14px notch，压图且行间必撞）。
+ *   · 一条 `flex-wrap: wrap` 窄条带（间距/换行全走 --ds-space-* token）：默认只显
+ *     前 3 枚 + 「共 N 个」展开（卡身不随件数线性膨胀）。
+ *   · 探针判定不可读 ⇒ **降级态**：图片先换同款文件 chip，再落 名字 + **原因档**
+ *     （401/403 无权限 / 404/410 已不存在 / 其余网络不可达——「不可用」三字裸奔
+ *     形态退役）+ 「重试下载」真动作（不净死）。下载链出错同样落该降级态。
+ *  文案一律取自 `t()`（🔴 禁硬编码中文串入 JS）。
+ *
+ *  @param {HTMLElement} box 卡根（.option-box）
+ *  @param {string[]|{path:string}[]} attachments 附件绝对路径清单
+ *  @param {string} [originLabel] 来源标签文本（问题摘要腿；缺省回退 requestId 尾段） */
+function renderAskAttachments(box, attachments, originLabel) {
   const atts = Array.isArray(attachments)
-    ? attachments.filter(p => typeof p === 'string' && p.length > 0)
+    ? attachments.filter(p => typeof p === 'string' ? p.length > 0 : !!(p && p.path))
     : [];
   if (!box || atts.length === 0) return;
+  const paths = atts.map(p => typeof p === 'string' ? p : p.path);
   const btnRow = box.querySelector('.option-btn-row');
   if (!btnRow) return; // 形态兜底：无按钮行就无插位（改前形态逐字保留）
 
   const wrap = document.createElement('div');
-  // 既有类名（零新增 CSS）+ 本批专属钩子类（纯 JS 选择器，无 CSS 规则 ⇒ 不触单源闸）
+  // 既有类名 + 本批钩子类（纯 JS 选择器，形在 css/chat.css / mobileLayer.css 单点）
   wrap.className = 'option-q-wrapper ask-attachments-wrap';
 
   const head = document.createElement('div');
   head.className = 'ask-attachments-head';
-  head.style.cssText = 'font: 600 11px -apple-system, sans-serif; color: var(--color-text-muted, #888); margin: 2px 0 4px;';
-  // 标题词位 = 独立 span（折叠控件是同级 `<button>`）⇒ 文案读数不被控件文本污染。
+  // 标题词位 = 独立 span（文案读数不被折叠控件文本污染）。形（字阶/字重/色/边距）
+  // 全在 css/chat.css（本批把原内联 cssText 收编：内联 font 简写会压过手机层的
+  // 字阶覆盖，body.mobile-layer 的 --mfs-min 档此前一直是死规则）。
   const label = document.createElement('span');
   label.className = 'ask-attachments-head-label';
+  label.textContent = t('askUser.attachmentsTitle') + ' · ' + paths.length;
   head.appendChild(label);
+  // 来源标签：本批**从「每枚 chip 左上角 notch」收拢到标题行一处** —— chip 本批
+  // 缩到 28px 档（输入框同款），14px 的 notch 会盖住缩略图上半并被下一行叠压；
+  // 信息不丢（仍是「AskUser · <问题摘要>」），位置从压字的绝对定位变成标题行内联。
+  const originText = originLabel || '';
+  if (originText) {
+    const tag = document.createElement('span');
+    tag.className = 'ds-att-origin';
+    tag.textContent = originText;
+    tag.title = originText;
+    head.appendChild(tag);
+  }
 
   const list = document.createElement('div');
   list.className = 'ask-attachments-list';
-  list.style.cssText = 'display: flex; flex-direction: column; gap: 4px; align-items: flex-start;';
 
-  /** 静态（不可点）行：探针失败 / 下载腿失败共用同一形态 —— 🔴 零按钮语义。 */
-  function makeStaticRow(path, unavailable) {
-    const base = askAttachmentBasename(path);
-    const row = document.createElement('span');
-    row.className = 'ask-attachment-static';
-    row.title = path; // 悬停给全路径（可见标签只给 basename）
-    row.style.cssText = 'font-size: 12px; color: var(--color-text-muted, #888); opacity: 0.75;';
-    row.textContent = unavailable ? base + ' · ' + t('askUser.attachmentUnavailable') : base;
-    return row;
-  }
-
-  /** 图片行：内联缩略帧 + 点击 lightbox 大图（askuser-attach-replyrender 批）。
-   *  取数 = `nfViewerSource` 账本单点（动态 import——静态边纪律同 lightbox.js），
-   *  失败 ⇒ 就地降级为下载行（附件仍可拿，禁死行）。 */
-  function makeImageRow(path, base) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'glass-control ask-attachment-image';
-    btn.title = path;
-    btn.setAttribute('aria-label', t('askUser.attachmentPreview', { name: base }));
-    btn.style.cssText = 'padding: 2px; border: none; background: none; line-height: 0;';
-    const img = document.createElement('img');
-    img.alt = base;
-    img.style.cssText = 'display: block; max-width: 240px; max-height: 180px; border-radius: 8px;';
-    btn.appendChild(img);
-    btn.onclick = () => {
-      // lightbox 自身亦经 nfViewerSource 单点 ⇒ 账本命中零二次抓取。
-      if (!img.src) return;
-      import('./lightbox.js')
-        .then(({ openLightbox }) => openLightbox(img.src, base, path))
-        .catch(() => {});
-    };
-    import('./nfFileCache.js')
-      .then(({ nfViewerSource }) => nfViewerSource({ absPath: path, objectUrl: null, pane: btn }))
-      .then(({ url }) => { if (btn.isConnected && !img.src) img.src = url; })
-      .catch(() => {
-        if (!btn.isConnected) return;
-        const row = makeDownloadRow(path, base);
-        btn.replaceWith(row);
-        createIconsIn(row);
-      });
-    return btn;
-  }
-
-  /** 非图片行（含注册表未认领类型）：下载腿 —— 设备面下载键同一字节通路。 */
-  function makeDownloadRow(path, base) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'glass-control ob-compare-btn';
-    btn.title = path;
-    btn.setAttribute('aria-label', t('askUser.attachmentDownload', { name: base }));
-    btn.innerHTML = '<i data-lucide="paperclip"></i><span>' + escapeHtml(base) + '</span>';
-    btn.onclick = () => {
-      downloadAttachmentFile(path, base).then(ok => { if (!ok) degradeRow(btn, path); });
-    };
-    return btn;
-  }
-
-  atts.forEach(path => {
-    const base = askAttachmentBasename(path);
-    // 类型判定 = viewer 注册表自身（禁第二张扩展名表）：
-    // 图片 ⇒ 内联/lightbox（makeImageRow）；其余 ⇒ 下载（makeDownloadRow）。
-    // 两条开法都**不开 Canvas**（作者令 2026-10-30）。
-    const row = itemTypeForFileName(path) === 'image'
-      ? makeImageRow(path, base)
-      : makeDownloadRow(path, base);
-    list.appendChild(row);
-    // 可达性探针（票据轨首字节探针 `probeAttachmentFile`——零 Canvas 副作用）：
-    // 🔴 失败只降级**本行**，整卡渲染一点不改。
-    probeAttachmentFile(path).then(ok => { if (!ok) degradeRow(row, path); });
+  // ── 图/文件同一条带（输入框附件条的同一套视觉语言）────────────────────
+  // 图片 ⇒ `.att-thumb` 小缩略图（28px 档，与输入框条逐值同盒；点击 = 灯箱原图）；
+  // 其余（含视频/pdf/zip/md）⇒ `.att-file` 类型小图标 + 文件名 chip（同一函数）。
+  // 两档都是 `renderAttachmentFace` 的同一张脸 ⇒ 卡区零第二份附件实现。
+  /** @type {Array<{path:string, base:string, index:number, kind:string,
+   *                el?:HTMLElement}>} 本枚的在场元素（降级时就地换脸要寻址） */
+  const items = paths.map((path, i) => ({
+    path, base: askAttachmentBasename(path), index: i, kind: itemTypeForFileName(path),
+  }));
+  items.forEach((item, i) => {
+    const el = item.kind === 'image' ? attachThumbFace(item) : attachFileFace(item);
+    if (i >= ASK_ATTACHMENT_FOLD_AT) el.classList.add('ask-att-folded');
+    item.el = el;
+    list.appendChild(el);
+    // 可达性探针（票据轨首字节，probeAttachmentFile 单点）：失败 = 就地降级为
+    // 同款文件 chip（原因档 + 重试下载键），只降级本枚。
+    probeAttachmentFile(item.path).then(res => { if (res && !res.ok) degradeAskAttachment(item, res.reason); });
   });
 
-  /** 就地降级：可点行 → 不可点静态行（探针失败 / 下载腿失败共用）。
-   *  卡已被替换或移除（`isConnected === false`）时静默跳过 —— 降级只服务在卡行。 */
-  function degradeRow(btn, path) {
-    if (!btn.isConnected) return;
-    btn.replaceWith(makeStaticRow(path, true));
+  /** 图片档：输入框同款小缩略图（渲染单源 = renderAttachmentFace 图片档）。
+   *  点击 = 灯箱单点（`path` 在 ⇒ 灯箱内另给 Canvas 次级入口）；缩略帧字节与
+   *  灯箱同走 nfFileCache 账本 ⇒ 点开看原图不再二次抓取。 */
+  function attachThumbFace(item) {
+    return renderAttachmentFace({ name: item.base, path: item.path }, {
+      className: 'ask-att-thumb',
+      ariaLabel: item.base,
+      onClick: () => openMediaLightbox({ kind: 'image', name: item.base, path: item.path }),
+    });
   }
 
-  if (atts.length > ASK_ATTACHMENT_FOLD_AT) {
-    // 折叠态：标题位显「N 个附件」；展开后显标题词。切换件是真控件（展开/收起确实可做）。
+  /** 非图片档：类型小图标 + 文件名 chip（截断走可见省略号，不靠渐隐）。 */
+  function attachFileFace(item) {
+    const chip = renderAttachmentFace({ name: item.base }, {
+      className: 'ask-att-file',
+      ariaLabel: t('askUser.attachmentDownload', { name: item.base }),
+      onClick: () => { downloadAttachmentFile(item.path, item.base).then(ok => { if (!ok) degradeAskAttachment(item, 'network'); }); },
+    });
+    chip.dataset.askAttPath = item.path;
+    return chip;
+  }
+
+  if (items.length > ASK_ATTACHMENT_FOLD_AT) {
+    // 折叠控件：文案 = 「共 N 个」（件数真相）；展开后全部可见。真控件（确实可切换）。
     let expanded = false;
-    label.textContent = t('askUser.attachmentsCount', { n: String(atts.length) });
-    list.style.display = 'none';
-    const toggle = document.createElement('button');
-    toggle.type = 'button';
-    toggle.className = 'glass-control';
-    toggle.style.cssText = 'font-size: 11px; padding: 1px 8px; margin-left: 6px;';
-    toggle.setAttribute('aria-expanded', 'false');
-    toggle.textContent = t('ref.expand');
-    toggle.onclick = () => {
+    const foldBtn = document.createElement('button');
+    foldBtn.type = 'button';
+    foldBtn.className = 'glass-control ask-att-fold-btn';
+    foldBtn.style.cssText = 'font-size: var(--ds-fs-meta); padding: var(--ds-space-half) var(--ds-space-inline-x);';
+    foldBtn.setAttribute('aria-expanded', 'false');
+    foldBtn.textContent = t('askUser.attFoldTotal', { n: String(items.length) });
+    foldBtn.onclick = () => {
       expanded = !expanded;
-      list.style.display = expanded ? '' : 'none';
-      label.textContent = expanded
-        ? t('askUser.attachmentsTitle')
-        : t('askUser.attachmentsCount', { n: String(atts.length) });
-      toggle.textContent = expanded ? t('ref.collapse') : t('ref.expand');
-      toggle.setAttribute('aria-expanded', String(expanded));
+      list.querySelectorAll('.ask-att-folded').forEach(el => el.classList.toggle('ask-att-folded', !expanded));
+      foldBtn.textContent = expanded ? t('ref.collapse') : t('askUser.attFoldTotal', { n: String(items.length) });
+      foldBtn.setAttribute('aria-expanded', String(expanded));
     };
-    head.appendChild(toggle);
-  } else {
-    label.textContent = t('askUser.attachmentsTitle');
+    list.appendChild(foldBtn);
+  }
+
+  /** 就地降级：不可读件 → 文件 chip 形态（原因档 + 重试下载真动作——「不可用」
+   *  裸奔退役）。图片档先由缩略帧就地换成同款 chip（同一函数同一张脸），再落
+   *  降级态 ⇒ 不新增第二套降级面。卡已被替换/移除（isConnected=false）时静默跳过。 */
+  function degradeAskAttachment(item, reason) {
+    let chip = item.el;
+    if (!chip || !chip.isConnected) return;
+    if (chip.classList.contains('ask-att-thumb')) {
+      const next = attachFileFace(item);
+      next.classList.toggle('ask-att-folded', chip.classList.contains('ask-att-folded'));
+      chip.replaceWith(next);
+      chip = next;
+      item.el = next;
+    }
+    chip.classList.add('ask-att-unavailable');
+    let note = chip.querySelector('.ask-att-reason');
+    if (!note) {
+      note = document.createElement('span');
+      note.className = 'ask-att-reason';
+      const name = chip.querySelector('.att-file-name');
+      if (name) name.after(note);
+    }
+    const why = t('askUser.attUnavailable_' + (reason || 'network'));
+    note.textContent = why + ' · ' + t('askUser.attCanDownload');
+    let retry = chip.querySelector('.ask-att-retry');
+    if (!retry) {
+      retry = document.createElement('button');
+      retry.type = 'button';
+      retry.className = 'ask-att-retry glass-control';
+      retry.textContent = t('askUser.attRetryDownload');
+      retry.onclick = (e) => {
+        e.stopPropagation();
+        downloadAttachmentFile(item.path, item.base).then(ok => {
+          if (!ok) {
+            retry.textContent = t('askUser.attDownloadFailed');
+            window.__showToast?.(t('askUser.attachUploadFailedToast', { name: item.base }), 'error');
+          } else {
+            chip.classList.remove('ask-att-unavailable');
+            note.remove();
+            retry.remove();
+          }
+        });
+      };
+      chip.appendChild(retry);
+    }
   }
 
   wrap.appendChild(head);
@@ -3126,7 +3243,7 @@ export function renderAskUser(items, askSessionId, agentName, requestId, source,
   row.dataset.msgId = nextChatMsgId();
   attachQuoteMenu(row, {
     kind: 'ask', question: askUserCardQuestionText(items),
-    senderRole: 'askUser', senderName: agentName || rootDisplayName(), ts: Date.now(),
+    senderRole: 'askUser', senderName: agentName ? agentDisplayName(agentName) : rootDisplayName(), ts: Date.now(),
   });
   // Ghost seat (askuser-hybrid 重皮 2026-10-06): this bubble's only payload is
   // the AskUser card (+ source badge / optional canvas button) — the bubble
@@ -3139,18 +3256,54 @@ export function renderAskUser(items, askSessionId, agentName, requestId, source,
   // Source badge. D6 批 F1 (G9): project context (project node / dispatcher ask)
   // renders "project · nodeName" so concurrent asks from several nodes stay
   // attributable; no project field → bare agentName (root self-ask / REPL).
-  const badgeLabel = askSourceLabel({ project: source && source.project, nodeName: source && source.nodeName, agentName });
+  // 归属命名批（2026-11-05 作者令「卡片要显示 delegate name / node name，不再只
+  // 显示项目名」）：段① 换成发起实体**自身名**（delegate 批次短名，引擎侧解析随
+  // 载荷 `ownerName` 下发；无 delegate 归属仍回落项目名）——两段各自成 span，
+  // 段①弱化为「父批」、段②加粗为「当前节点」，窄屏折两行也不丢段。
+  const badgeParts = askSourceParts({
+    project: source && source.project,
+    nodeName: source && source.nodeName,
+    ownerName: source && source.ownerName,
+    agentName
+  });
   // N4 (unnamed-state batch 2026-10-06): the self-ask badge mounts only when the
   // root is NAMED — single-point `isRootNamed()` (rootName.js). The retired
   // `badgeLabel !== 'Nebula'` literal was a judgement-face use of the mechanism
   // name (the exact line rootName.js's header draws): it silently dual-tracked
   // the unnamed state AND mis-hid the badge when a user literally named the
   // agent "Nebula". Project asks keep their badge regardless of named state.
-  if (badgeLabel && ((source && source.project) || isRootNamed())) {
+  // 归属命名批同上：delegate 归属（ownerName）与项目归属同权——**不因根未命名而
+  // 隐藏**（改前判据只认 project ⇒ delegate 卡的归属会整块消失）。
+  if (badgeParts && ((source && (source.project || source.ownerName)) || isRootNamed())) {
     const badge = document.createElement('div');
     badge.className = 'ask-user-source';
-    badge.textContent = badgeLabel;
-    badge.style.cssText = 'font: 600 11px -apple-system, sans-serif; color: var(--color-text-muted, #888); margin-bottom: 8px; padding: 2px 8px; background: var(--color-surface, rgba(255,255,255,0.06)); border-radius: 6px; display: inline-block;';
+    const parentSpan = document.createElement('span');
+    parentSpan.className = 'ask-user-source-parent';
+    parentSpan.textContent = badgeParts.parent;
+    badge.appendChild(parentSpan);
+    if (badgeParts.node) {
+      const sep = document.createElement('span');
+      sep.className = 'ask-user-source-sep';
+      sep.setAttribute('aria-hidden', 'true');
+      sep.textContent = ' · ';
+      badge.appendChild(sep);
+      const nodeSpan = document.createElement('span');
+      nodeSpan.className = 'ask-user-source-node';
+      nodeSpan.textContent = badgeParts.node;
+      badge.appendChild(nodeSpan);
+    }
+    // 完整名可查（长名截断后不丢信息）：hover 全量 title；窄屏/触屏点按展开
+    // （长按同源——触屏长按会触发 title 的系统浮层，桌面悬停即读）。
+    badge.title = badgeParts.full;
+    if (badgeParts.node) {
+      badge.setAttribute('role', 'button');
+      badge.tabIndex = 0;
+      const toggle = () => badge.classList.toggle('is-expanded');
+      badge.addEventListener('click', toggle);
+      badge.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+      });
+    }
     bubble.appendChild(badge);
   }
   appendChatRow(chat, row);
@@ -3228,7 +3381,7 @@ export function renderAskUser(items, askSessionId, agentName, requestId, source,
     // 的 options 区（`showOptions` 内层）原样不动 ⇒ dirPicker 路径
     // (ProjectTool.scala，原 ProjectCreateTool.scala:425) 不受影响、免回归。
     // showOptions 同步完成 `container.appendChild(box)` ⇒ 此处 box 已在 DOM 内。
-    renderAskAttachments(bubble.querySelector('.option-box'), attachments);
+    renderAskAttachments(bubble.querySelector('.option-box'), attachments, askAttOriginLabel(items, requestId));
     // 感知域增强（mail-perception-impl 批）：OTP 单码片 + 感知草稿快照卡。
     // 单一可选钩子——perception.js 未装载（或未注册）时恒为 no-op，本路径与
     // 改前逐字节同行为；钩子自身零抛出（实现侧 self-contained）。答复由
@@ -3247,7 +3400,9 @@ export function renderAskUser(items, askSessionId, agentName, requestId, source,
   return {
     type: 'askUser', items, requestId,
     ...(Array.isArray(attachments) && attachments.length > 0 ? { attachments } : {}),
-    ...(source && source.project ? { project: source.project, nodeName: source.nodeName } : {})
+    ...(source && (source.project || source.ownerName)
+      ? { project: source.project, nodeName: source.nodeName, ownerName: source.ownerName }
+      : {})
   };
 }
 
@@ -3385,7 +3540,7 @@ export function renderAskUserHistory(bubble, items, answerText, requestId, attac
   // 调用 —— 🔴 经 `.option-box` 定位、插位由 `renderAskAttachments` 自身决定
   // （卡内 `.option-btn-row` 之前），本函数不新开第二套开法 / 不新增模块 / 不新增 CSS。
   // 缺席或空列表 ⇒ 函数内早退 ⇒ 历史卡形态与改前逐字节同。
-  renderAskAttachments(box, attachments);
+  renderAskAttachments(box, attachments, askAttOriginLabel(items, requestId));
   // askuser-dragdrop 批（2026-10-19，批 #551）：**作答**附件的只读面——只在确有
   // 作答（非取消 / 非「无作答记录」）时渲染：徽标（已回答 · 附 N 个文件）+
   // renderAskAttachments 同一渲染器的只读行。判据 = answerText 为真且非取消哨兵
@@ -3396,7 +3551,7 @@ export function renderAskUserHistory(bubble, items, answerText, requestId, attac
   const cancelled = answerText === '__cancelled__';
   if (answerText && !cancelled && answerAtts.length) {
     mountAnsweredBadge(box, answerAtts.length);
-    renderAskAttachments(box, answerAtts.map(a => a.path));
+    renderAskAttachments(box, answerAtts.map(a => a.path), askAttOriginLabel(items, requestId));
   }
   // 单一判据的形态锚（`sameAskCards` ②）：这张卡来自历史恢复，不是 live 卡。
   // 属性不进 innerHTML ⇒ 与 live 卡的逐字节 parity 断言（history-replay-cards.spec）
@@ -3549,7 +3704,9 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
     const sourceBadge = document.createElement('div');
     sourceBadge.className = 'perm-source-badge';
     const shortSession = sourceSession ? sourceSession.substring(0, 12) : '';
-    const agentLabel = sourceTeam ? `${sourceTeam}/${sourceAgent}` : sourceAgent;
+    // Nebula 退役批（作者令 2026-11-01）：来源 badge 的 agent 段走单一显示名读点
+    // （根会话 = 用户起的名字 / 未命名 = 通用称呼；后台 agent = 自身身份）。
+    const agentLabel = sourceTeam ? `${sourceTeam}/${sourceAgent}` : agentDisplayName(sourceAgent);
     sourceBadge.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17l9.2-9.2M17 17V7H7"/></svg>' +
       '<span>' + escapeHtml(t('chat.permSource', { agent: agentLabel, session: shortSession })) + '</span>';
     bubble.appendChild(sourceBadge);
@@ -3715,11 +3872,80 @@ export function renderAttachmentPreview(target) {
   return withFocusKey(box instanceof HTMLElement ? box : null, () => renderAttachmentPreviewInner(target));
 }
 
-/** 附件条重建本体（重渲保焦包装见 renderAttachmentPreview）。 */
+/** ── 附件面单源组件（ui-unification-20261103-askuser-attach）──────────────
+ *  输入框附件条（renderAttachmentPreviewInner）与 AskUser 卡附件区
+ *  （renderAskAttachments）**同一函数**产出附件面 —— 机械断言 a)「两处附件渲染
+ *  共用同一组件/函数（grep 无第二份实现）」的本体：
+ *   · 图片档 ⇒ `.att-thumb` 真缩略帧（同一 28px 几何档，桌面/手机层各自由 CSS
+ *     接管尺寸）。字节源两档同构：`src` = data:/blob: 直显（输入框即时选中的
+ *     本地 File）；`path` = 绝对路径（卡区）⇒ 同一 `hydrateMedia` 账本腿取字节
+ *     —— 与灯箱共用一份字节，预览后再点开零重复抓取。
+ *   · 其余/图无源 ⇒ `.att-file` chip（glyph + 色族块 `.fc-icon` + 文件名；图标
+ *     语言 = fileIcon.js 色族单源）。
+ *  attachment-thumb-unify 批（作者令 2026-11-05 12:57：「附件这里添加的图片文件等
+ *  应该用我们输入框同款的小图标/缩略图」）：卡区媒体档改走本函数的图片档（此前
+ *  走卡语言 220px 媒体卡 —— 竖图被放大成 220×476 的大卡，见批文档前后对照）。
+ *  可点面（role/tabIndex/Enter·Space）与 ✕ 角标**两档同法**挂根元素 ⇒ 图片档与
+ *  文件档的交互语义同源，不各写一套。
+ *  @param {{name:string, src?:string, mime?:string, path?:string}} att
+ *    src = data:/blob: 直显源；path = 绝对路径（卡区；src 缺省时走票腿）
+ *  @param {{rm?:Element, className?:string, ariaLabel?:string,
+ *           onClick?:Function}} opts
+ *    rm        输入框条传入 ✕ 圆盘（卡区不传——只读面无删除语义）
+ *    className 宿主差异类（卡区传 'ask-att-thumb'：卡区作用域样式在 css/chat.css，
+ *              输入条逐像素形态不受影响） */
+function renderAttachmentFace(att, opts) {
+  const o = opts || {};
+  const nameText = String(att.name || '');
+  const src = String(att.src || '');
+  const pathText = String(att.path || '');
+  const isMedia = /^image\//.test(String(att.mime || '')) || itemTypeForFileName(nameText) === 'image';
+  const withClass = (cls) => cls + (o.className ? ' ' + o.className : '');
+  let root;
+  if (isMedia && (src || pathText)) {
+    root = document.createElement('div');
+    root.className = withClass('att-thumb-wrap');
+    const img = document.createElement('img');
+    img.className = 'att-thumb';
+    img.alt = nameText;
+    img.draggable = false;
+    if (src) {
+      img.src = src;
+      img.onerror = () => { img.style.display = 'none'; };
+    } else {
+      // 票腿/账本腿单点（popArtifacts.hydrateMedia）：失败面由宿主经
+      // opts.onFail 或外层探针（probeAttachmentFile）接管，本函数不自造降级面。
+      hydrateMedia(img, { path: pathText });
+    }
+    root.appendChild(img);
+  } else {
+    root = document.createElement('div');
+    root.className = withClass('att-file');
+    const iconSpec = fileIconStyle(extOf(nameText));
+    root.title = nameText;
+    root.innerHTML = '<svg class="att-file-glyph" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>'
+      + '<span class="att-file-icon fc-icon ' + iconSpec.cls + '" aria-hidden="true">' + escapeHtml(iconSpec.label) + '</span>'
+      + '<span class="att-file-name">' + escapeHtml(nameText) + '</span>';
+  }
+  if (o.onClick) {
+    root.classList.add('is-clickable');
+    root.setAttribute('role', 'button');
+    root.tabIndex = 0;
+    if (o.ariaLabel) root.setAttribute('aria-label', o.ariaLabel);
+    root.addEventListener('click', /** @type {EventListener} */ (/** @type {any} */ (o.onClick)));
+    root.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); o.onClick(e); }
+    });
+  }
+  if (o.rm) root.appendChild(o.rm);
+  return root;
+}
+
+/** 附件条重建本体（重渲保焦包装见 renderAttachmentPreview）。
+ *  target: optional { attPreviewEl, attachments } for non-primary windows.
+ *  Defaults to the primary window's attPreview + pendingAttachments so existing
+ *  call sites are unaffected. */
 function renderAttachmentPreviewInner(target) {
-  // target: optional { attPreviewEl, attachments } for non-primary windows.
-  // Defaults to the primary window's attPreview + pendingAttachments so existing
-  // call sites are unaffected.
   const attPreview = (target && target.attPreviewEl) || activeView.dom.attPreview;
   const attachments = (target && target.attachments) || activeView.pendingAttachments;
   if (!attPreview) return;
@@ -3749,13 +3975,6 @@ function renderAttachmentPreviewInner(target) {
         remove);
       attPreview.appendChild(card);
     } else if (att.type === 'image' && att.preview && typeof att.preview === 'string' && att.preview.startsWith('data:')) {
-      const wrap = document.createElement('div');
-      wrap.style.position = 'relative';
-      const img = document.createElement('img');
-      img.src = att.preview;
-      img.className = 'att-thumb';
-      img.onerror = () => { img.style.display = 'none'; };
-      wrap.appendChild(img);
       const rm = document.createElement('div');
       rm.className = 'att-remove';
       // 修正②（作者 2026-09-19 04:22）：图形由文本字符 'x' 改为**几何对称 SVG ✕**
@@ -3768,16 +3987,24 @@ function renderAttachmentPreviewInner(target) {
         attachments.splice(idx, 1);
         renderAttachmentPreview(target);
       };
-      wrap.appendChild(rm);
-      attPreview.appendChild(wrap);
+      // 面本体 = 单源组件（图片档 ⇒ .att-thumb 真缩略帧 + ✕；卡区同函数同面）。
+      attPreview.appendChild(renderAttachmentFace(
+        { name: String(att.name || ''), src: att.preview, mime: att.mimeType || 'image/jpeg' },
+        { rm },
+      ));
     } else {
-      const wrap = document.createElement('div');
-      wrap.className = 'att-file';
-      wrap.style.position = 'relative';
-      // uifix 批 2026-10-22：文件名 span 改类挂样式（.att-file-name，input.css
-      // 统一 chip 语言段）—— 旧内联 max-width:100px 收 140px（+N 折叠在，长名
-      // 不再吃满条带宽）。
-      wrap.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg><span class="att-file-name">' + escapeHtml(att.name) + '</span>';
+      // 输入框附件图标化批（作者令 2026-11-02「输入框里的附件条不显示文件名，
+      // 用与图片附件缩略图一样大小的图标代替」）：
+      //  · chip 本体 = `renderAttachmentFace`（本批同源化：AskUser 卡附件区
+      //    消费同一函数——机械断言 a) 单点；下方注释逐字保留原实现说明）。
+      //  · `.att-file-icon` = 扩展名族色块（fileIconStyle/`.fc-icon` 既有色档单源：
+      //    文档蓝/表格绿/演示橙/PDF 红/压缩紫/代码灰），**手机层**由
+      //    css/mobileLayer.css 作用域规则接管为 28×28 图标盒（与 .att-thumb 逐值
+      //    同盒），文件名 span 在同层隐藏 —— 桌面层两件均不高亮（icon display:none
+      //    ⇒ 桌面 chip 逐像素原样，按令「桌面共组件先不动」）。
+      //  · 文件名信息不丢：名字进 chip 的 title（指针悬停）与 aria-label（读屏），
+      //    只褪出条面；✕ 删除角标与图片附件逐字同族。
+      const nameText = String(att.name || '');
       const rm = document.createElement('div');
       rm.className = 'att-remove';
       rm.innerHTML = CLOSE_X_SVG;   // 修正②：几何对称 ✕（同图片附件键）
@@ -3788,7 +4015,7 @@ function renderAttachmentPreviewInner(target) {
         attachments.splice(idx, 1);
         renderAttachmentPreview(target);
       };
-      wrap.appendChild(rm);
+      const wrap = renderAttachmentFace({ name: nameText }, { rm });
       attPreview.appendChild(wrap);
     }
   });
@@ -3823,7 +4050,7 @@ export function appendAskAnswer(delta) {
       if (!target.bubble.isConnected) return;
       const contentEl = target.bubble.querySelector('div:not(.ask-label)');
       if (contentEl) {
-        contentEl.innerHTML = renderMarkdownWithMath(target.bubble._nfText || '', true, { cache: false }) + '<span class="cursor"></span>';
+        contentEl.innerHTML = renderMarkdownWithMath(target.bubble._nfText || '', true, { cache: false, stream: true }) + '<span class="cursor"></span>';
       }
       rafScrollChat(target);
     });
@@ -4124,18 +4351,18 @@ function streamRenderPlan(contentEl, text, parseVoice, final, mark) {
     // Not safely splittable — drop the cache and do the honest full render.
     reset();
     st.seg = seg;
-    return { mode: 'full', html: renderMarkdownWithMath(text, parseVoice, { cache: false }) };
+    return { mode: 'full', html: renderMarkdownWithMath(text, parseVoice, { cache: false, stream: true }) };
   }
   if (split < st.closedLen) reset();  // text shrank ⇒ new message
   st.seg = seg;
   if (split > st.closedLen) {
-    st.chunks.push({ len: split, html: renderMarkdownWithMath(text.slice(st.closedLen, split), parseVoice, { cache: false }) });
+    st.chunks.push({ len: split, html: renderMarkdownWithMath(text.slice(st.closedLen, split), parseVoice, { cache: false, stream: true }) });
     st.closedLen = split;
   }
   const append = [];
   for (let i = st.rendered; i < st.chunks.length; i++) append.push(st.chunks[i].html);
   st.rendered = st.chunks.length;
-  return { mode: 'incr', append, tail: renderMarkdownWithMath(text.slice(split), parseVoice, { cache: false }), st };
+  return { mode: 'incr', append, tail: renderMarkdownWithMath(text.slice(split), parseVoice, { cache: false, stream: true }), st };
 }
 
 // ── §③ 思考窗硬上限（stream-919-unify 批 · 作者 2026-10-07 10:10 澄清令）──────

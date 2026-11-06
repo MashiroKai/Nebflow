@@ -7,7 +7,6 @@ import cats.effect.unsafe.implicits.global
 import io.circe.JsonObject
 import munit.CatsEffectSuite
 import nebflow.core.SessionStore
-import nebflow.core.flow.TeamSessionRegistry
 import nebflow.shared.{Message, MessageRole, PathUtil}
 
 import java.nio.file.{Files, Path}
@@ -17,9 +16,14 @@ import scala.jdk.CollectionConverters.*
  * #38 Layer C — deleteSession 删除闭环（2026-09-01）。
  *
  * 回归护栏：deleteSession 必须删除 tool-results 落盘目录 + 清 turn-state
- * （否则重启后恢复/防抖 persist 复活会话）；TeamSessionRegistry 的
- * sessionMap/actorMap 映射删除后无残留（否则 team 成员 actor 存活持
- * ~10MB state.messages 原样写回——qa-backend「删不掉」根因）。
+ * （否则重启后恢复/防抖 persist 复活会话）。
+ *
+ * 团队功能删除批（team-feature-deletion-20261104）阶段 3：原两条
+ * `TeamSessionRegistry` 用例（unregisterAgent+unregisterActor 无残留 /
+ * 未知 sid 幂等）随团队会话登记表本体删除 —— 散表 sessionMap/actorMap 已不存在，
+ * 其「team 成员 actor 持 ~10MB state.messages 原样写回」的护栏对象也随之消失
+ * （会话清理现在只剩统一 agentRegistry 一条权威路径）。删因：**团队会话登记表
+ * 已退役**（不是「跑不过」）。
  */
 class DeleteSessionCleanupSpec extends CatsEffectSuite:
 
@@ -70,32 +74,6 @@ class DeleteSessionCleanupSpec extends CatsEffectSuite:
       for _ <- store.deleteSession(sid)
       yield assert(!Files.exists((os.Path(tmp) / "sessions" / s"$sid.json").toNIO))
     }
-
-  test("TeamSessionRegistry: unregisterAgent + unregisterActor leaves no mapping residue"):
-    // 模拟 stopTeamSessionActors 的两步清理（WebSocketRoutes 接线）：
-    // unregisterActor（actorMap）+ unregisterAgent（sessionMap）
-    for
-      _ <- TeamSessionRegistry.clear
-      _ <- TeamSessionRegistry.registerSession("team-a", "backend", "sess-c3")
-      _ <- TeamSessionRegistry.registerActor("sess-c3", null) // null ref: 只验证映射删除
-      pairBefore <- TeamSessionRegistry.instanceAndAgentOfSession("sess-c3")
-      _ = assertEquals(pairBefore, Some(("team-a", "backend")))
-      _ <- TeamSessionRegistry.unregisterActor("sess-c3")
-      _ <- TeamSessionRegistry.unregisterAgent("team-a", "backend", "sess-c3")
-      pairAfter <- TeamSessionRegistry.instanceAndAgentOfSession("sess-c3")
-      actorAfter <- TeamSessionRegistry.getRunningActor("sess-c3")
-      sids <- TeamSessionRegistry.sessionIdsOf("team-a")
-    yield
-      assertEquals(pairAfter, None, "sessionMap must have no residue")
-      assertEquals(actorAfter, None, "actorMap must have no residue")
-      assertEquals(sids, Nil, "instance must have no sessions left")
-
-  test("TeamSessionRegistry: unregisterActor on unknown sid is harmless (idempotent)"):
-    for
-      _ <- TeamSessionRegistry.clear
-      _ <- TeamSessionRegistry.unregisterActor("ghost-sid")
-      _ <- TeamSessionRegistry.unregisterAgent("team-x", "agent-x", "ghost-sid")
-    yield assert(true)
 
   test("deleteSession does not resurrect after repeated calls (idempotent)"):
     withStore { store =>

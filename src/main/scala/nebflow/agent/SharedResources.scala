@@ -100,9 +100,11 @@ case class SharedResources(
   runtimeModels: Ref[IO, Map[String, String]] = Ref.unsafe[IO, Map[String, String]](Map.empty),
   /**
    * P1 统一注册表: the single registry for ALL running agents
-   * (Root/Team/Flow/Delegate/Ephemeral). Replaces `subAgentRegistry`; during P1
-   * `rootAgents` and `TeamSessionRegistry.actorMap` remain as dual-written
-   * caches (P3 removes them). Interaction answers route through this map only —
+   * (Root/Flow/Delegate/Ephemeral/SubTask). Replaces `subAgentRegistry`; during
+   * P1 `rootAgents` remained as a dual-written cache. 团队功能删除批
+   * （team-feature-deletion-20261104）阶段 3：另一份 dual-write 缓存（团队会话
+   * 登记表的 actorMap）随团队面整体删除 ⇒ 本表自此是 agent 记录的**唯一**权威。
+   * Interaction answers route through this map only —
    * a lookup miss never spawns a ghost agent.
    */
   agentRegistry: Ref[IO, Map[String, AgentRecord]] = Ref.unsafe[IO, Map[String, AgentRecord]](Map.empty),
@@ -199,6 +201,16 @@ case class SharedResources(
    */
   updateConvergence: Option[nebflow.neblink.core.NeblinkUpdateConvergence] = None,
   /**
+   * **全设备统一更新协调器**（fleet 批 2026-11-01，作者令「一键把所有设备更新到同一
+   * 版本」）：GatewayMain 装配后注入；None = 未装配（测试 / 极早期 boot / neblink 关闭）。
+   *
+   * 面：`GET/POST /api/update/fleet`（计划 + 发起）、`/cancel`、`/retry`（REST），
+   * `fleetUpdate` WS 帧（阻塞式状态卡），`/api/health` 的 `fleet` 自报键。
+   * 装包/重启/自检/回滚一律复用 [[updateOrchestrator]] 与既有远端更新动作——本件只
+   * 做**调度与可见性**。
+   */
+  fleetUpdate: Option[nebflow.core.hotupdate.FleetUpdateCoordinator] = None,
+  /**
    * **会话级压缩阈值比例覆盖**（ctxthresh 批，2026-09-15 方案 A）：键 = **root
    * sessionId**，值 = 比例 `r`（`15% < r ≤ 90%`，见
    * [[nebflow.agent.CompactThresholdOverride]]）。与 `sessionModelOverrides`
@@ -222,7 +234,15 @@ case class SharedResources(
    * 默认 = 全局单例（惰性绑定 PathUtil.dataRoot，同 FileChangeLedger.unsafe 先例）
    * ⇒ 存量测试构造零改动。置于参数表末尾——其后无参数，位置参数构造点零影响。
    */
-  override val msgTokens: nebflow.core.msgtokens.MsgTokenRegistry = nebflow.core.msgtokens.MsgTokenRegistry.global
+  override val msgTokens: nebflow.core.msgtokens.MsgTokenRegistry = nebflow.core.msgtokens.MsgTokenRegistry.global,
+  /**
+   * provider 并发上限 · actor 占坑表（provider-concurrency 批，2026-11-06）：键 =
+   * providerId，值 = 占坑 actorId 集。唯一读写面 = [[nebflow.llm.ProviderConcurrency]]
+   * （assign/release/reconcile/snapshot 单点）。默认实例 = 本实例独立空表
+   * （`Ref.unsafe` 先例，同 agentRegistry）⇒ 既有测试构造零改动。
+   */
+  providerConcurrency: Ref[IO, nebflow.llm.ProviderConcurrency.Counts] =
+    Ref.unsafe[IO, nebflow.llm.ProviderConcurrency.Counts](nebflow.llm.ProviderConcurrency.empty)
 ) extends AgentRuntimePort,
       SubAgentTaskPort:
 
@@ -294,12 +314,77 @@ case class SharedResources(
   //    this 代入——NodeRunner 委托式保证 receiver == p.resources,零行为差);
   //    agentActorBehavior = AgentActor.apply 全参镜像去 resources(this 代入)。──────────
 
+  /**
+   * provider 并发上限 · 派发时刻分配（provider-concurrency 批，作者令 2026-11-06）。
+   * **唯一调用点 = [[spawnAgentActor]]**（spawn 前一次；`private[agent]` 编译期禁止
+   * 其它调用方——NodeRunner 委托 / 9 个业务调用方 / MailTool 直连 spawn 一律不得加）。
+   *
+   * 语义：从链首开始找第一个「在用 actor 数 < 其 maxConcurrentActors（None=不限）」
+   * 的 provider 作为该 actor 的链首并占坑；此后该 actor 的链快照终生不重算（幂等
+   * assign 不迁移）。返回 None = 不钉（registry 未装配／空链／全部超限）⇒ 既有行为。
+   * 链源 = `getCandidatesForAgentUnfiltered(agentDef.model)`（与请求路径同一解析函数，
+   * 零新选择路径）；配置源 = `providerRegistry.currentConfig`（同一份热读 configRef）。
+   */
+  private[agent] def assignFallbackChain(actorId: String, agentDef: AgentDef): IO[Option[nebflow.llm.PinnedChain]] =
+    if providerRegistry == null then
+      nebflow.llm.ProviderConcurrency
+        .logAssign(actorId, agentDef.name, None, None, Some("registry-absent"))
+        .as(None)
+    else
+      for
+        cfg <- providerRegistry.currentConfig
+        chain <- providerRegistry.getCandidatesForAgentUnfiltered(agentDef.model)
+        configuredHead = chain.headOption.map(c => s"${c.providerId}/${c.model}")
+        pin <- nebflow.llm.ProviderConcurrency.assign(
+          providerConcurrency,
+          cfg,
+          actorId,
+          chain.map(c => c.providerId -> c.model)
+        )
+        _ <- nebflow.llm.ProviderConcurrency.logAssign(
+          actorId,
+          agentDef.name,
+          pin,
+          configuredHead,
+          Some(if chain.isEmpty then "empty-chain" else "all-full")
+        )
+      yield pin
+
+  /** 可观测面投影（§3h）：/api/models/candidates 与 /api/health 共用的 providerConcurrency 键。 */
+  def providerConcurrencyJson: IO[io.circe.Json] =
+    providerRegistry match
+      case null => IO.pure(io.circe.Json.Null)
+      case _ =>
+        for
+          cfg <- providerRegistry.currentConfig
+          json <- nebflow.llm.ProviderConcurrency.snapshot(providerConcurrency, cfg)
+        yield json
+
   /** 共享 spawn:readTracker/fileHistory 创建 + AgentActor spawn(NodeRunner 原体)。 */
   def spawnAgentActor(system: ActorSystem, p: NodeRunner.SpawnParams): IO[ActorRef[AgentCommand]] =
     val actorName = if p.actorName.nonEmpty then p.actorName else p.sessionId
     for
+      // ── R-3a spawn 期硬闸（actor-tree spec v1 §13.2 #P2）────────────────────────
+      // 闸位 = **spawn 动作本身**（这是全仓 spawn 的唯一实现；NodeRunner 及其
+      // Delegate/SubTask/flow/node/dispatcher/恢复六路调用方全部经此）。判据 =
+      // `parentRef → registry → 父会话身份` 的 kernel 双重证据（mode 记录 ∪
+      // `delegate-kernel-` 前缀），见 core.delegate.KernelChildSpawnGate。
+      // 零行为变化：无父/未解析/非 kernel 身份一律放行（dispatcher 是本闸之后
+      // 唯一被允许派生的 delegate 形态）；kernel 身份下**唯一**放行面 = 只读侦察腿
+      // （子 agent def = `subagent`，tool-face-agentflow-retire 批 2026-11-05 作者
+      // 裁定「改 R-3a，只放行只读 subagent」），第三个实参即该判据的输入。
+      _ <- nebflow.core.delegate.KernelChildSpawnGate.check(
+        agentRegistry,
+        p.parentRef,
+        p.sessionId,
+        p.agentDef.name
+      )
       readTracker <- ReadTracker.create
       fileHistory <- FileHistory.create()
+      // ── provider 并发上限 · 派发时刻分配（provider-concurrency 批）──────────────
+      // 全仓唯一 assign 调用点（壳方法 private[agent]）。pin = None ⇒ 零行为变化。
+      // spawn 失败 ⇒ onError 回滚占坑（幂等 release，不泄漏）。
+      providerChainPin <- assignFallbackChain(p.sessionId, p.agentDef)
       ref <- system.spawn(
         AgentActor(
           agentDef = p.agentDef,
@@ -332,7 +417,8 @@ case class SharedResources(
           sessionCwd = p.sessionCwd,
           projectSession = p.projectSession,
           sessionDevice = p.sessionDevice,
-          sessionDeviceWorkspace = p.sessionDeviceWorkspace
+          sessionDeviceWorkspace = p.sessionDeviceWorkspace,
+          providerChainPin = providerChainPin
         ),
         actorName
       )
@@ -487,12 +573,28 @@ case class SharedResources(
         AskUserAnswerBridge.ref(target, items, requestId, ctx)
   )
 
-  // worktree-judge-fifo 批（#1224 增补 §3.1）：delegate 判定机注册（⑦ Jev 优先
-  // ＋SmallJudge 兜底——执行体在 llm.decision.DelegateJudgeMachine，core 只见
+  // worktree-judge-fifo 批（#1224 增补 §3.1）：delegate **终态**判定机注册（⑦ Jev
+  // 优先＋SmallJudge 兜底——执行体在 llm.decision.DelegateJudgeMachine，core 只见
   // DelegateJudgePort 注册器，分层纪律同 DelegateBudgetPort 三先例）。注册点 =
-  // 本构造行（生产 boot 与测试装配共用）。
+  // 本构造行（生产 boot 与测试装配共用）。**spawn 腿已删**（delegate-param-decisions
+  // 批 2026-11-04：worktree 判定改由参数决定，spawn 路径零模型调用）——本端口只剩
+  // judgeTerminal 一个方法。
   nebflow.core.delegate.DelegateJudge.DelegateJudgePort.install(
     nebflow.llm.decision.DelegateJudgeMachine.face(providerRegistry)
+  )
+
+  // worktree-reuse-selection 批（2026-11-02）：续用候选的「活会话持有」判据注册
+  // （M2 注册器形态，DelegateJudgePort 邻位同缝）。读面 = 本实例的 agentRegistry：
+  // 会话在表内即演员仍在场（注销/终态删行 ⇒ 缺席）；判据不需要 status 细化——
+  // 「演员还在」与「它会不会碰这棵树」是两件事，前者可机械判，后者交作者/模型
+  // 用 force 显式承担。端口缺席（离线 spec）= 恒空集 = 全部按不 live 判（保守
+  // 方向见 WorktreeCandidates.LiveSessions 头注）。
+  nebflow.core.delegate.WorktreeCandidates.LiveSessions.install(
+    new nebflow.core.delegate.WorktreeCandidates.LiveSessions.Face:
+      def liveAmong(ids: List[String]): IO[Set[String]] =
+        val wanted = ids.toSet
+        if wanted.isEmpty then IO.pure(Set.empty[String])
+        else agentRegistry.get.map(_.keySet.intersect(wanted))
   )
 
   // 引擎加固批 2026-10-09（P1-2）：外部执行器判定缝**缺省接线**——同一判定机
@@ -521,15 +623,6 @@ case class SharedResources(
     )
   )
 
-  // 双模式批（2026-10-28）：delegate 模式选择器注册（JeV 问对→LLM fallback→
-  // fail-open kernel 三态——PluginAllocatorMachine 同族机制同缝同序；执行体在
-  // llm.decision.DelegateModeMachine，core 只见 core.delegate.DelegateModeAllocator
-  // 注册器，分层纪律同上）。总闸（delegate.dualMode.enabled，缺省 false）在调用侧
-  // 判——本注册面惰性在场，闸关 = 零调用。
-  nebflow.core.delegate.DelegateModeAllocator.install(
-    nebflow.llm.decision.DelegateModeMachine.face(providerRegistry)
-  )
-
   // D1（steward 批 2026-10-23）：后台任务通知「持久补投」面注册——BashTool 完成
   // 回调的改道/补投腿经 BgInboxPort 消费（core 不 import agent 的分层纪律，
   // DelegateJudgePort 同款 M2 形态）；实现 = 持久注入队 append（CompactionQueueStore，
@@ -550,7 +643,9 @@ case class SharedResources(
         if rootId.trim.isEmpty then
           nebflow.shared.NebflowLogger
             .forName("nebflow.merge-queue")
-            .warn(s"[merge-queue] no responsible session for owner-gone '${m.delegateId}' — escalation dropped with this line")
+            .warn(
+              s"[merge-queue] no responsible session for owner-gone '${m.delegateId}' — escalation dropped with this line"
+            )
           IO.unit
         else
           val event = nebflow.actor.AgentCommand.ExternalEvent(
@@ -595,13 +690,29 @@ case class SharedResources(
         s"""[merge-queue] delegate "${m.description}" (${m.delegateId}) is WAITING in the merge queue for branch '${m.branch}' → '${m.baseBranch}' because: $reason. It stays queued and is re-attempted every care tick — ACTION: fix the base workspace condition above (e.g. check out '${m.baseBranch}' in '${m.baseWs}') or the member keeps waiting; an escalation notice follows if the same blocker persists."""
       case "failed" =>
         s"""[merge-queue] delegate "${m.description}" (${m.delegateId}) — its merge round for branch '${m.branch}' → '${m.baseBranch}' was REFUSED and the membership is CLOSED as failed: $reason. No merge rounds are revived (traffic-controller model). MANUAL ACTION: merge '${m.branch}' by hand or re-dispatch the task (branch and worktree preserved)."""
+      // merge-fifo 批 2026-11-03（作者报障「两个会话都已经报了 merge，为什么还没收到
+      // 通知」·「队列侧合并是静默的」）：**落地也是要宣布的**——队列侧异步关账
+      // （care-tick 账实核对 / 放行前核对 / boot 对账）读到「分支已并入基分支」即
+      // 关账 merged，本条通知把这件事说给父/根会话（作者面「落了地，从不宣布」的消除闸）。
+      case "merged" =>
+        s"""[merge-queue] delegate "${m.description}" (${m.delegateId}) — its branch '${m.branch}' is MERGED into '${m.baseBranch}'; the merge-queue membership is CLOSED as merged: $reason. No action needed on the queue side (this is the close-out notice for a membership that landed without the owner reporting back)."""
+      // 入队强保证的失败腿（enqueueVerifiedIO）：入队没核到开放条目 ⇒ 这条分支
+      // **不会被排到**，必须显式宣布（否则又回到「零台账行 + 零通知」）。
+      case "enqueue-failed" =>
+        s"""[merge-queue] delegate "${m.description}" (${m.delegateId}) — the merge-queue ENQUEUE for branch '${m.branch}' → '${m.baseBranch}' could NOT be verified: $reason. This branch will NOT be granted a merge turn. MANUAL ACTION: merge '${m.branch}' by hand or re-dispatch the task (branch and worktree preserved)."""
+      // 活性守卫补入队（MergeEnqueueWatch）：申报/终态腿双失的漏网成员被守护腿捡回
+      // 队列——作者面可见「差点漏掉的那条是这一条」。
+      case "watch-queued" =>
+        s"""[merge-queue] delegate "${m.description}" (${m.delegateId}) — branch '${m.branch}' → '${m.baseBranch}' was MISSING from the merge queue (its report/terminal leg never enqueued it); the idle-safety watch has just queued it: $reason. No action needed unless the membership looks wrong to you."""
       case _ =>
         s"""[merge-queue] ESCALATION: delegate "${m.description}" (${m.delegateId}) has been blocked for ${nebflow.core.delegate.MergeQueue.EscalateAfterBlockedRounds} consecutive pump rounds with the same reason: $reason. AUTHOR ATTENTION: the merge queue cannot proceed past this blocker by itself — resolve it or close the membership."""
     nebflow.core.tools.BgNotifyDelivery
       .resolveRootSessionId(Some(agentRegistry), m.delegateId, m.parentSessionId)
       .flatMap { rootId =>
         if rootId.trim.isEmpty then
-          logger943.warn(s"[merge-queue] no responsible session for '$kind' notify '${m.delegateId}' — dropped with this line")
+          logger943.warn(
+            s"[merge-queue] no responsible session for '$kind' notify '${m.delegateId}' — dropped with this line"
+          )
           IO.unit
         else
           val event = nebflow.actor.AgentCommand.ExternalEvent(
@@ -622,12 +733,62 @@ case class SharedResources(
           nebflow.core.tools.BgNotifyDelivery
             .deliverToRootOrInbox(Some(actorSystem), Some(agentRegistry), rootId, event)
             .void
-            .handleErrorWith(e => logger943.warn(s"[merge-queue] '$kind' notify delivery failed for '${m.delegateId}': ${e.getMessage}"))
+            .handleErrorWith(e =>
+              logger943.warn(s"[merge-queue] '$kind' notify delivery failed for '${m.delegateId}': ${e.getMessage}")
+            )
       }
   }
 
-  // D3-②（steward 批 2026-10-23）：MergeQueue 合并提醒注入的活性探针——放行前
-  // 探测属主 childRef 是否活（actor 注册表已退出 = 死 ⇒ 不盲投，成员 owner-gone
-  // 关账，绝不盲投死 ref）。未注册（无 SharedResources 场）= 恒活，测试行为零变化。
-  nebflow.core.delegate.MergeQueue.installLivenessProbe(ref => actorSystem.isAlive(ref.path))
+  // ── P1 投递身份化（2026-11-05）：合并指令的投递端口 ──────────────────────
+  // 队列侧只见身份（`ownerSessionId`），不见 actor ref / 闭包。本端口是**唯一**的
+  // 落地实现：MailboxProducer.deliver → 属主会话的**磁盘邮箱**（真源，重启后照样
+  // 投得出去）+ 门铃（尽力而为）。
+  nebflow.core.delegate.MergeQueue.OwnerDeliveryPort.install {
+    new nebflow.core.delegate.MergeQueue.OwnerDeliveryPort.Face:
+      private val loggerMc = nebflow.shared.NebflowLogger.forName("nebflow.merge-queue")
+
+      def deliver(ownerSessionId: String, kind: String, brief: String, identity: String): IO[Either[String, Unit]] =
+        val event = nebflow.actor.AgentCommand.ExternalEvent(
+          source = "merge-queue",
+          // agent 面把 `merge-turn` 这类外部事件渲染成可行动的回合输入（与既有
+          // 外部腿的注入形态同源：同一个 source 名、同一种 eventType 语义）。
+          eventType = kind,
+          payload = brief,
+          metadata = io.circe.JsonObject(
+            "kind" -> io.circe.Json.fromString(kind),
+            "deliveredBy" -> io.circe.Json.fromString("merge-queue")
+          ),
+          correlationId = Some(identity)
+        )
+        nebflow.agent.MailboxProducer
+          .deliver(
+            SharedResources.this,
+            ownerSessionId,
+            event,
+            identity = identity,
+            kind = kind,
+            producer = "merge-queue"
+          )
+          .map {
+            case nebflow.core.mail.SessionMailbox.MailResult.Failed(cause) => Left(cause)
+            case _ => Right(())
+          }
+      end deliver
+
+      /**
+       * 属主能不能被征询 = **会话真的还在**（活体 actor 记录 ∪ 索引/盘上会话记录；
+       * 邮件的落盘语义见 [[SessionLiveness]]）。
+       *
+       * 改前读的是 `sessionStore.listSessions`（只读会话索引）——delegate 会话从不进
+       * 索引 ⇒ 对任何 delegate 属主恒回 false ⇒ careTick 把持窗活属主判死（OWNER-GONE
+       * 误判修复批 2026-11-06；同因同源见 `MailboxProducer` 头注）。
+       */
+      def present(ownerSessionId: String): IO[Boolean] =
+        SessionLiveness
+          .alive(SharedResources.this, ownerSessionId)
+          .handleErrorWith(_ => IO.pure(true)) // fail-open：读数失败不判死
+  }
+
+  // D3-②（steward 批 2026-10-23）的 `installLivenessProbe` 已随 P1 投递身份化删除：
+  // 队列不再持有任何 actor ref，在场判据统一走上面的身份探针。
 end SharedResources

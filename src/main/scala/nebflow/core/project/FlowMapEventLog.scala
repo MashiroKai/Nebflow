@@ -82,7 +82,12 @@ import java.util.concurrent.atomic.AtomicLong
  *   已被 `drain` take-and-remove 取走、而终态写按 R2 fresh-read 纪律**拒写**（节点已
  *   消失 / 状态已变 / 关机期 draining 抑制）时的**补偿写回**——summary 含 sessionId +
  *   category + detail + suggestion 全文（不截断），写点 =
- *   `NodeEngine.compensateUnconsumedReport`；旧口径下该形态零痕迹、申报永久丢失）。
+ *   `NodeEngine.compensateUnconsumedReport`；旧口径下该形态零痕迹、申报永久丢失）/
+ *   project-unmounted（**unmount-console 面板批** 2026-11-02：项目硬卸载动作本体
+ *   的「谁 / 何时 / 哪个项目」留痕——写点 = `ProjectUnmount.removeMountFace`（工具腿
+ *   与控制台 REST 腿同一单点），summary = `unmounted by <actor> at <ts> …`）/
+ *   project-remounted（**同批**：卸载标记摘除 + 恢复挂载动作本体留痕——写点 =
+ *   `ProjectRemount.remount`，summary = `remounted by <actor> at <ts> …`）。
  * 注册式扩展：append API 无 schema 变更，新事件类型 = 本清单加一词 + 写入点调用；
  * chainId 为顶层**可选**字段（2026-09-10 加，spec §9.2 项 9）：旧行无该键照常解析
  * （零迁移、append-only），新行仅在链族事件带上。

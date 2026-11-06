@@ -26,7 +26,7 @@ object MailIdleGate:
    * Team kind，gate 检查发送者会误判「有下属在飞」→ 永不投递（方案 R4）。
    */
   private[flow] val taskKinds: Set[AgentKind] =
-    Set(AgentKind.Delegate, AgentKind.SubTask, AgentKind.Flow, AgentKind.Ephemeral, AgentKind.Plan)
+    Set(AgentKind.Delegate, AgentKind.SubTask, AgentKind.Flow)
 
   /**
    * 规则②：目标 agent 自身子树完全空闲（team 内 queue 语义）。
@@ -51,8 +51,15 @@ object MailIdleGate:
       // 显式等待停靠态（平台修复批 fix 4，2026-10-21）视同可投递：Waiting =
       // 引擎停靠（等合并轮提醒）——停靠会话的已产出报告照样走投递链，合并轮
       // Mail/续聊可达；「自身 busy」语义只对真实 turn（Processing）成立。
-      (!checkStatus || rec.status == AgentStatus.Idle || rec.status == AgentStatus.Waiting) &&
-      rec.outstandingSubagents == 0 &&
+      //
+      // 错误冻结批（2026-11-01）：`Frozen` 同样视同可投递——冻结是**停住的等待
+      // 态**（监督者已停/已让窗，本会话零员工），投给它的 Mail 正是唤醒腿的载体；
+      // 若把 Frozen 计成忙，冻结会话的出箱/续聊永远投不进去（冻结即失联）。
+      (!checkStatus || rec.status == AgentStatus.Idle || rec.status == AgentStatus.Waiting ||
+        rec.status == AgentStatus.Frozen) &&
+      // 在飞子代理数：冻结监督者已自停，但记录里 outstanding 可能残留（冻结拍未清）
+      // ——冻结态不看该计数（冻结 = 零在飞：child 已停），否则冻结父永远不可投递。
+      (rec.status == AgentStatus.Frozen || rec.outstandingSubagents == 0) &&
       // 无在飞任务型子 agent（一阶；递归由存在性覆盖）
       !registry.values.exists(c => c.parentRef.exists(_ == rec.ref) && taskKinds.contains(c.kind)) &&
       // 无关联 running flow（Q3：RunningFlow.sessionId 关联触发者，补节点间隙窗口）

@@ -80,6 +80,53 @@ object GitWorktrees:
     Try(git(ws, "rev-parse", "--short", "HEAD")).toOption.flatMap(_.toOption).map(_.trim).filter(_.nonEmpty)
 
   /**
+   * HEAD commit's committer time (epoch **seconds**), None when unknown —
+   * worktree-reuse-selection 批（2026-11-02）候选「最后活动时间」的辅助读数。
+   * fail-soft 同 [[headSha]]。
+   */
+  def headCommitEpoch(ws: os.Path): Option[Long] =
+    Try(git(ws, "log", "-1", "--format=%ct")).toOption
+      .flatMap(_.toOption)
+      .map(_.trim)
+      .filter(_.nonEmpty)
+      .flatMap(s => Try(s.toLong).toOption)
+
+  /**
+   * All worktrees of the repo in ONE git call（`git worktree list --porcelain`）——
+   * worktree-reuse-selection 批（2026-11-02）：候选枚举的**批量读数**（每条 = 路径 +
+   * 检出分支 + HEAD sha）。逐树各跑 `rev-parse` 在生产工作区（数百棵树）是数百次
+   * 进程叉，本方法把这一层压到一次。
+   *
+   * 返回顺序 = git 的输出顺序；解析失败/非 repo = Nil（fail-soft）。
+   */
+  def worktreeList(ws: os.Path): List[(String, Option[String], Option[String])] =
+    Try(git(ws, "worktree", "list", "--porcelain")).toOption.flatMap(_.toOption) match
+      case None => Nil
+      case Some(out) =>
+        // 记录块以空行分隔；键 = worktree / HEAD / branch / detached / bare / locked …
+        val blocks = out.split("\n\n").toList.map(_.trim).filter(_.nonEmpty)
+        blocks.flatMap { b =>
+          val fields = b.linesIterator.toList
+          def field(k: String): Option[String] =
+            fields.collectFirst { case l if l.startsWith(k + " ") => l.stripPrefix(k + " ").trim }.filter(_.nonEmpty)
+          field("worktree").map { path =>
+            val branch = field("branch").map(_.stripPrefix("refs/heads/"))
+            (path, branch, field("HEAD").map(_.take(9)))
+          }
+        }
+
+  /**
+   * Uncommitted / untracked paths（`git status --porcelain` 原始行，含冲突行）——
+   * worktree-reuse-selection 批（2026-11-02）：候选 worktree 的「脏度」读数（接续
+   * 前必须让模型知道树上有前任的进行中工作）。fail-soft：非 repo / git 失败 = None
+   * （与 [[statusDigest]] 的「读不到不算脏」同族，但保真——None ≠ Some(Nil)）。
+   */
+  def dirtyPaths(ws: os.Path): Option[List[String]] =
+    Try(git(ws, "status", "--porcelain")).toOption
+      .flatMap(_.toOption)
+      .map(_.linesIterator.toList.filter(_.trim.nonEmpty))
+
+  /**
    * 合并道读数（投递可靠性批 2026-10-29 修复 A/B/②）：`.git/MERGE_HEAD` 在场 =
    * 该工作区有一笔**进行中的 merge**（未 commit 未 abort）。返回其 commit 全 sha。
    * 文件缺席 = None（道净）；读失败 = None（fail-open——读数缺失不判占道）。
@@ -152,7 +199,18 @@ object GitWorktrees:
         val usedBranch = if branchFollowsDir then name else branch
         os.makeDir.all(ws / ".nebflow" / "worktrees")
         git(ws, "worktree", "add", "-b", usedBranch, path.toString, baseRef)
-          .map(_ => Created(name, path))
+          .flatMap { _ =>
+            // 分配后验收（引擎会话治理专项 · 缺陷二，2026-11-03 作者令）：`git
+            // worktree add` 返回 0 不等于座位真的可用（半写残场/目录被外部清空
+            // 后透传过）。四查全过才把座位交出去；不过 = 显式报错（可重试），
+            // 绝不把坏座位交给任务。验收失败的现场不自动清（留给人/调用方判）。
+            val problems = validateAllocation(ws, path.toString)
+            if problems.isEmpty then Right(Created(name, path))
+            else
+              val msg = s"worktree allocation post-validation failed for '$path': ${problems.mkString("; ")}"
+              logger.warn(msg)
+              Left(msg)
+          }
           .leftMap { err =>
             logger.warn(s"git worktree add failed for branch '$usedBranch' at '$path': $err")
             err
@@ -161,6 +219,77 @@ object GitWorktrees:
     end match
 
   end createWorktree
+
+  /**
+   * Create a worktree at an **exactly named** directory（delegate-param-decisions 批
+   * 2026-11-04 · 作者令「填的内容就是 worktree 的 name」）。
+   *
+   * 与 [[createWorktree]] 的唯一差异 = **不做目录候选派生**：路径恒为
+   * `<ws>/.nebflow/worktrees/<name>`（不试 `<name>-2`…）。名字被占就是错——
+   * 调用方本来就要先按 name 查「已存在 ⇒ 复用」，走到这里还撞名 = 现场不干净，
+   * 必须显式报出来而不是悄悄换个名字建第二棵树。
+   *
+   * 建后照走 [[validateAllocation]] 四查（同 [[createWorktree]]：`git worktree add`
+   * 返回 0 不等于座位可用）。
+   */
+  def createNamedWorktree(
+    ws: os.Path,
+    name: String,
+    branch: String,
+    baseRef: String = "HEAD"
+  ): Either[String, Created] =
+    val root = ws / ".nebflow" / "worktrees"
+    val path = root / name
+    if os.exists(path) then
+      Left(s"worktree path already exists: $path (a name hit must reuse that tree, never create a second one)")
+    else
+      os.makeDir.all(root)
+      git(ws, "worktree", "add", "-b", branch, path.toString, baseRef)
+        .flatMap { _ =>
+          val problems = validateAllocation(ws, path.toString)
+          if problems.isEmpty then Right(Created(name, path))
+          else
+            val msg = s"worktree allocation post-validation failed for '$path': ${problems.mkString("; ")}"
+            logger.warn(msg)
+            Left(msg)
+        }
+        .leftMap { err =>
+          logger.warn(s"git worktree add failed for branch '$branch' at '$path': $err")
+          err
+        }
+
+    end if
+
+  end createNamedWorktree
+
+  /**
+   * Worktree 座位可用性四查（引擎会话治理专项 · 缺陷二；分配腿与续用腿共用）。
+   * 返回问题清单（空 = 可用座位）。判据全部是**机械读数**：
+   *   ① `git worktree list`（以 ws 为仓）里能看到该目录 —— 未登记的目录不是座位；
+   * ② `rev-parse --show-toplevel` 恰好等于该目录 —— 防空目录沿父级仓解析被骗
+   *    （`.nebflow/worktrees/<name>` 在主工作区内时 isGitRepo 会误报 true）；
+   *   ③ HEAD 可解（checkout 完成）；
+   *   ④ `status --porcelain` 可执行（git 语义面在座位内工作）。
+   */
+  def validateAllocation(ws: os.Path, path: String): List[String] =
+    val p = os.Path(path)
+    val problems = scala.collection.mutable.ListBuffer[String]()
+    if !os.isDir(p) then problems += s"directory does not exist: $path"
+    else
+      val registered = worktreeList(ws).exists(_._1.stripSuffix("/") == path.stripSuffix("/"))
+      if !registered then problems += "not registered in `git worktree list` (not a worktree of this repo)"
+      Try(git(p, "rev-parse", "--show-toplevel")).toOption.flatMap(_.toOption).map(_.trim) match
+        case None =>
+          problems += "rev-parse --show-toplevel unreadable (no git checkout at this path)"
+        case Some(top)
+            if java.nio.file.Paths.get(top).toRealPath() != java.nio.file.Paths.get(p.toString).toRealPath() =>
+          problems += s"toplevel '$top' is not this directory (not a checkout — parent repo resolution)"
+        case _ => ()
+      if headSha(p).isEmpty then problems += "HEAD does not resolve (checkout incomplete)"
+      if dirtyPaths(p).isEmpty then problems += "git status not runnable in this directory"
+    problems.toList
+
+  end validateAllocation
 
   /**
    * Create a plain branch (no checkout, no worktree) — the S13 no-worktree
@@ -176,6 +305,30 @@ object GitWorktrees:
   /** True when the branch ref exists locally. */
   def branchExists(ws: os.Path, branch: String): Boolean =
     Try(git(ws, "rev-parse", "--verify", "--quiet", branch)).toOption.exists(_.isRight)
+
+  /**
+   * A branch's current tip sha (short form) — base-drift 批（缺陷四）：在飞 delegate
+   * 的基分支 tip 漂移读数。fail-soft 同 [[headSha]]（ref 不存在/非 repo = None）。
+   */
+  def headShaOfBranch(ws: os.Path, branch: String): Option[String] =
+    Try(git(ws, "rev-parse", "--short", branch)).toOption.flatMap(_.toOption).map(_.trim).filter(_.nonEmpty)
+
+  /**
+   * Files touched between two revisions（`git diff --name-only from to`）——base-drift
+   * 通知的「涉及文件列表」读数。任一 rev 不可解/非 repo = Nil（fail-soft）。
+   */
+  def changedFilesBetween(ws: os.Path, from: String, to: String): List[String] =
+    Try(git(ws, "diff", "--name-only", from, to)).toOption
+      .flatMap(_.toOption)
+      .map(_.linesIterator.map(_.trim).filter(_.nonEmpty).toList)
+      .getOrElse(Nil)
+
+  /**
+   * 某 revision 下的文件内容（`git show <ref>:<path>`）——合并前健康闸的冲突标记扫描
+   * 读面（只读 blob，不碰工作区）。文件在该 rev 不存在 / 二进制 / 不可读 = None。
+   */
+  def fileAtRef(ws: os.Path, ref: String, path: String): Option[String] =
+    Try(git(ws, "show", s"$ref:$path")).toOption.flatMap(_.toOption)
 
   /**
    * Count of branch commits not reachable from `baseBranch`（`git log --oneline
@@ -206,6 +359,44 @@ object GitWorktrees:
       .flatMap(_.toOption)
       .map(_.trim)
       .filter(_.nonEmpty)
+
+  /**
+   * 三段合并冲突面（`git merge-tree --write-tree --no-messages --name-only <ours>
+   * <theirs>`）：输出首行 = 结果树 oid，其后每行 = **冲突文件路径**（`--no-messages`
+   * 已滤掉本地化的过程说明，故路径列表可直接机读）。无冲突 = Nil。
+   *
+   * base-drift 降噪批（2026-11-05）：这是「base 前进会不会真的撞上我」的**唯一**
+   * 可算判据——实测证明任何单侧 diff（`merge-base..branch` 或 `base..branch`）都会
+   * 把「分支早就并过的旧 main 改动」或「base 自己走在我前面的部分」算成我的改动，
+   * 于是「文件交集」判据对今天 25 个在飞分支里 25 个全报冲突（含 CONTRIBUTING.md
+   * 这类从没碰过的文件）——纯噪音。三段合并实况把假阳性压到 2/25。
+   *
+   * fail-soft：git 不支持 `--write-tree` / 非 repo / 任何失败 = Nil——**不可确证 ≠
+   * 有冲突**，宁默不作声（通知的默认态是静默）。
+   *
+   * 🔴 退出码语义（实测钉死，别猜）：**0 = 干净合并，1 = 有冲突**，≥2 = 用法/仓库
+   * 错误。冲突时输出仍是「首行树 oid + 冲突路径」两段，故 1 走解析腿、其余走空腿。
+   */
+  def mergeTreeConflicts(ws: os.Path, ours: String, theirs: String): List[String] =
+    Try {
+      val res = os
+        .proc(
+          "git",
+          "-C",
+          ws.toString,
+          "merge-tree",
+          "--write-tree",
+          "--no-messages",
+          "--name-only",
+          ours,
+          theirs
+        )
+        .call(cwd = ws, check = false, mergeErrIntoOut = true)
+      res.exitCode match
+        case 1 =>
+          res.out.text().linesIterator.map(_.trim).filter(_.nonEmpty).toList.drop(1)
+        case _ => Nil
+    }.getOrElse(Nil)
 
   /** Merge-base of two refs (full sha)，任一 ref 不可读 = None（fail-soft 同上）。 */
   def mergeBase(ws: os.Path, a: String, b: String): Option[String] =

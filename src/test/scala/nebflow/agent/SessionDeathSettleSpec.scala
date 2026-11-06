@@ -32,6 +32,8 @@ class SessionDeathSettleSpec extends FunSuite:
     tmp = os.temp.dir(prefix = "sds")
     PathUtil.setDataRoot(tmp / "data")
     MergeQueue.reset()
+    // P1 投递身份化：身份投递端口（投递恒成功）——否则队列会在 grant 腿判 owner-gone。
+    nebflow.core.delegate.MergeQueueTestPorts.install()
 
   override def afterEach(context: munit.AfterEach): Unit =
     MergeQueue.reset()
@@ -84,8 +86,10 @@ class SessionDeathSettleSpec extends FunSuite:
     assert(report.terminalized.contains(id), s"zombie must be settled: ${report.summary}")
     val row = store.loadTasks(parent.id).unsafeRunSync().find(_.taskId == id).get
     assertEquals(row.status, "failed", "settled row must be terminal")
-    assert(row.lastError.exists(_.startsWith(SubAgentStartupRecovery.RestartLossFingerprint)),
-      "settled row must carry the restart-loss fingerprint (drives the interrupted flag)")
+    assert(
+      row.lastError.exists(_.startsWith(SubAgentStartupRecovery.RestartLossFingerprint)),
+      "settled row must carry the restart-loss fingerprint (drives the interrupted flag)"
+    )
     assert(row.completedAt.isDefined)
     val rec = DelegateRegistry.find(id).get
     assert(rec.restartInterruptedAt.isDefined, "registry record must carry the restart-interrupted flag")
@@ -112,12 +116,17 @@ class SessionDeathSettleSpec extends FunSuite:
         parentSessionId = parent.id,
         description = "queued member",
         readyAt = System.currentTimeMillis(),
+        // 宣告闸批 2026-11-04：属主宣告在案（`delegate_report(category="merge")`）——授窗前提
+        declaredAt = Some(1_000L),
+        declareSource = Some(nebflow.core.delegate.MergeDeclaration.Source.ReportMerge),
         channelKind = "external",
-        external = Some(MergeQueue.ExternalLeg(_ => IO.pure(Right(()))))
       )
     )
     val report = SubAgentStartupRecovery.sweep(store, sessionStore, None).unsafeRunSync()
-    assert(!report.terminalized.contains(id), s"queue-owned member must not be settled by this sweep: ${report.summary}")
+    assert(
+      !report.terminalized.contains(id),
+      s"queue-owned member must not be settled by this sweep: ${report.summary}"
+    )
     val row = store.loadTasks(parent.id).unsafeRunSync().find(_.taskId == id).get
     assertEquals(row.status, "ready-to-merge", "queue-owned member stays parked for the merge-queue boot reconcile")
   }
@@ -137,8 +146,11 @@ class SessionDeathSettleSpec extends FunSuite:
     }
     SubAgentStartupRecovery.sweep(store, sessionStore, None).unsafeRunSync()
     val left = store.findAllTasks().unsafeRunSync().map(t => t.taskId -> t.status)
-    assertEquals(left.filterNot((id, st) => st == "completed" || st == "failed" || st == "cancelled"), Nil,
-      s"no in-flight zombie row may survive the boot sweep; got: $left")
+    assertEquals(
+      left.filterNot((id, st) => st == "completed" || st == "failed" || st == "cancelled"),
+      Nil,
+      s"no in-flight zombie row may survive the boot sweep; got: $left"
+    )
     os.remove.all(seat)
   }
 end SessionDeathSettleSpec

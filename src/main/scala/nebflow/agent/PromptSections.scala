@@ -36,6 +36,11 @@ import nebflow.shared.PathUtil
  *              单点文本 = [[nebflow.shared.Defaults.SendMessageScopeRule]]）
  *   377      — 密钥教义（所有 agent 会话，always；同源单点文本 =
  *              [[nebflow.shared.Defaults.SecretsRule]]）
+ *   378      — 引牌教义（所有 agent 会话，always；同源单点文本 =
+ *              [[nebflow.shared.Defaults.MsgQuoteRule]]）
+ *   379      — 时间纪律（所有 agent 会话，always；同源单点文本 =
+ *              [[nebflow.shared.Defaults.TimeDisciplineRule]]）——**纪律**在 stable，
+ *              **锚**（「现在」的值）在请求级 systemDynamic，永不进 stable
  *   400-499  — tool-dependent sections（阶段 2d §D.2：条件工具指南段已全部
  *              下迁进工具 description——AskUserQuestion/Read/Pop/TeamTask 三件，
  *              提示词层不再按「是否有该工具」注入用法段落）
@@ -118,6 +123,14 @@ object PromptSections:
      * 渲染；非根会话空串 = 段不注入。
      */
     executorsText: String = "",
+    /**
+     * Pre-rendered existing-worktree candidate list body (worktree-reuse-selection
+     * 批 2026-11-02)：本工作区既有 delegate worktree 清单（状态词 orphan /
+     * active / done + 脏度 + 最后活动），模型面「续用哪棵树」的选择输入。
+     * 来源 = `WorktreeCandidates.render`（AgentSessionExecution 装配期现读）。
+     * 仅根代理渲染；空串 = 段不注入（无既有树的会话零字节变化）。
+     */
+    worktreesText: String = "",
     /**
      * Pre-rendered `## Self` section body (identity-sync 批 2026-10-23): the
      * agent's display name / avatar self-knowledge — rendered by
@@ -290,7 +303,7 @@ Before wrapping up call `node_report` — reporting IS the wrap-up action, not a
   val traceSection: String =
     """## Document provenance
       |
-      |- Provenance goes only into the filename tail: stage doc `<YYYYMMDD>_<HHMMSS>_<topic>__<chainId>.md` (no suffix when unattributed); the body carries zero metadata header.""".stripMargin
+      |- Provenance goes only into the filename tail: stage doc `<topic>__<YYYYMMDD>_<HHMMSS>[__<chainId>].md` (topic first, time after; no suffix when unattributed); the body carries zero metadata header.""".stripMargin
 
   // ============================================================
   // 根代理路由纪律（冷启动路由批 2026-09-17；order 370，条件 isRootAgent）
@@ -405,9 +418,17 @@ Before wrapping up call `node_report` — reporting IS the wrap-up action, not a
     // 纪律段和 system.md 内「Recon: Read only」的显式优先级并存先例同形）。
     // 分发器 / 节点会话（isRootAgent=false）收不到本段——它们的面已由
     // DelegateTool brief / ProtocolFootnote / BlockingSubagent 首条消息承载。
+    //
+    // output 块总闸·提示词面（prompt-face 补批 2026-11-01，同一作者令「把
+    // output 块相关的内容先关闭」）：条件加闸 `nebflow.shared.OutputBlockGate
+    // .enabled()`——闸关 = 本段整段不进组装（`&&` 短路，非根会话连读数都不发生，
+    // 其余段零波及）。组装期求值：段条件在 buildConditionalBlocks（会话
+    // lifecycle 组装点）求值，翻闸后新装配即翻面；已在飞的旧上下文不回改
+    // （下个生命周期节点自然刷新）。与 Voice 节 bullet、brief、脚注、subagent
+    // 包装四处共闸（同一键同一读数）。
     PromptSection(
       375,
-      condition = ctx => ctx.isRootAgent,
+      condition = ctx => ctx.isRootAgent && nebflow.shared.OutputBlockGate.enabled(),
       body = nebflow.shared.Defaults.OutputBlockRule
     ),
 
@@ -437,6 +458,34 @@ Before wrapping up call `node_report` — reporting IS the wrap-up action, not a
       377,
       condition = _ => true,
       body = nebflow.shared.Defaults.SecretsRule
+    ),
+
+    // --- 引牌教义·带短名引用（msgchip 批，作者令 2026-11-01「消息身份牌系统升级」
+    // 第 4 条）：回复作者消息用「牌+短名」引用要点、不整段复述原文。条件 always——
+    // 与 order-377 同判据：牌经 Mail / brief / node 消息流进每张面，任何面上都可能
+    // 引用上游消息。段体逐字引用 [[nebflow.shared.Defaults.MsgQuoteRule]]（同源单点，
+    // 勿复制改写）；语法机制的单一权威 = MsgTokenRegistry（TokenRegex + msgtoken
+    // reminder）。段序 378 = 紧跟 order-377 后；静态体落在 systemStable（生命周期
+    // 节点重建时携带）——随下个生命周期生效，在飞旧上下文不回改。
+    PromptSection(
+      378,
+      condition = _ => true,
+      body = nebflow.shared.Defaults.MsgQuoteRule
+    ),
+
+    // --- 时间纪律（时间感知修复批，作者指令 2026-11-05 18:48「修复你的时间感知
+    // 问题」）：条件 **always** —— 相对时间误判不分角色（root / 分发器 / delegate /
+    // 节点 / team / 子代理都会输出「刚才 / 昨天 / 上次」）。段体逐字引用
+    // [[nebflow.shared.Defaults.TimeDisciplineRule]]（同源单点，勿复制改写）。
+    // 段序 379 = 紧跟 order-378 后；静态体落 systemStable（生命周期节点重建时携带）——
+    // 🔴 **纪律**（静态文本）进 stable 是对的，**锚**（「现在」的值）绝不能进：
+    // 值一旦固化进 systemStable，长会话就停在装配那一刻（本批修的正是这种冻结）。
+    // 锚的两条腿 = 请求级 `LlmRequest.systemDynamic`（每请求现取）+ 起始轮持久化
+    // reminder（`SystemReminders`），同源 [[nebflow.shared.TimeAnchor]]。
+    PromptSection(
+      379,
+      condition = _ => true,
+      body = nebflow.shared.Defaults.TimeDisciplineRule
     ),
 
     // --- 轨道二 #5 identity clauses (before tool guides — who reads your
@@ -523,6 +572,19 @@ Before wrapping up call `node_report` — reporting IS the wrap-up action, not a
 ${ctx.executorsText}
 
 External executors receive the task text only — no platform tools or plugins are injected."""
+    ),
+    // --- 既有 worktree 候选段（worktree-reuse-selection 批 2026-11-02）──────
+    // 作者令：「不仅是要能分配 worktree 还要能选择接着已有的 worktree继续干的
+    // 能力 灵活一点」。候选发现 + 状态标注在 core（`WorktreeCandidates`），本段
+    // 只是它的渲染面：根代理逐棵看到 orphan（前任退场但树上有活）/ active（活
+    // 会话持有——续用需 force）/ done 三态与脏度。
+    // 注入判据与 Mounted Projects / Available executors 同族：仅根代理（分发器
+    // 与节点会话不派发 Delegate，零面）；空清单 = 段不注入（无既有树的工作区
+    // 提示词字节零变化）。
+    PromptSection.dynamic(
+      645,
+      condition = ctx => ctx.isRootAgent && ctx.worktreesText.nonEmpty,
+      renderer = _.worktreesText
     ),
     // --- 阶段 2d（§D.1-14/§D.2）：原 order 630 Task List Protocol 段已删除
     // ——内容下迁进 TeamTask 三件 description（双轨期语义，阶段 3 随 team
@@ -731,11 +793,20 @@ External executors receive the task text only — no platform tools or plugins a
    * Falls back to the raw template if the script fails or output is invalid JSON.
    */
   private def renderWithScript(template: String, script: os.Path, ctx: PromptContext): String =
+    // 品牌围栏（引擎会话治理专项 · 缺陷五，2026-11-03）：端口**不再只以跨品牌名
+    // `NEBFLOW_GATEWAY_PORT` 出现在提示词渲染面**——本品牌专属名（stand 构建 =
+    // `STAND_GATEWAY_PORT`）是主名；遗留名保留给既有 data.sh（`${NEBFLOW_GATEWAY_PORT:-…}`）
+    // 的**脚本读取**（只活在这个渲染子进程里，绝不进会话环境——会话环境的围栏在
+    // [[nebflow.core.tools.ShellEnvCordon]]）。两个名字同源同值。
+    val brandPortVar = nebflow.core.tools.ShellEnvCordon.brandPortVar(nebflow.shared.Branding.envPrefix)
+    val portValue =
+      sys.props.getOrElse("nebflow.gateway.port", nebflow.shared.Defaults.brandDefaultPort.toString)
     val envVars = Map(
       "CHAT_WIDTH" -> ctx.chatWidth.toString,
       "NEBFLOW_VERSION" -> nebflow.Version.string,
       "NEBFLOW_PID" -> sys.props.getOrElse("nebflow.gateway.pid", java.lang.ProcessHandle.current().pid().toString),
-      "NEBFLOW_GATEWAY_PORT" -> sys.props.getOrElse("nebflow.gateway.port", nebflow.shared.Defaults.brandDefaultPort.toString),
+      brandPortVar -> portValue,
+      "NEBFLOW_GATEWAY_PORT" -> portValue,
       // 数据根供给（home 硬编码 → 运行时动态化批 2026-09-11；P3）：data.sh 的
       // JSON 由它派生 `data_root` 字段。命名避 NEBFLOW_HOME（env/sysprop 既名，
       // 语义不同：这里是**本实例**数据根的绝对路径）。

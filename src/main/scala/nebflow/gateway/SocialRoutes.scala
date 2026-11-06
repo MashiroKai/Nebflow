@@ -1,6 +1,8 @@
 /* 从 RestApiRoutes 迁出(行为保持重构,2026-09-24)。 */
 package nebflow.gateway
 
+import nebflow.neblink.ProfileSync
+
 import nebflow.neblink.attachment.*
 import nebflow.neblink.core.*
 import nebflow.neblink.social.*
@@ -312,8 +314,222 @@ private[gateway] object SocialRoutes:
               }
         }
 
-      /** 会话列表（按 last_message_id 倒序，含 unreadCount）。 */
+      /**
+       * 消息免打扰 / 顶置（三点入口批 2026-11-05，作者令「消息免打扰的 toggle，
+       * 然后就是顶置的 toggle」）。body `{muted:true|false}` 或 `{pinned:...}` →
+       * 200 `{ok:true}`。
+       *
+       * 语义边界（与上面 `remark` / `bio` 两个写面的关系）：
+       *  - 二者是**会话级本地偏好、纯本地真源**（上游 neblink-server 无该字段，
+       *    且语义上不外发）⇒ 落 `profile-descriptions.json` 的 `friendMuted` /
+       *    `friendPinned`（键 = userId，**只存 true**；`false` = 删键），与
+       *    `setRemark` 的「空即清除」同族。
+       *  - 零上游往返 ⇒ **无 502 面**（唯一失败面 = 400 缺参 / 类型不对；未认证 =
+       *    `withAuth` 403）。回显恒 `{ok:true}`：真值由 `GET /api/friends` 的
+       *    `muted` / `pinned` 键回读（`FriendService.applyFriendPrefs` 单一出口）。
+       *  - 键缺席 / null / 非布尔 = 缺参 400（**不用** null 表达「关」，用 `false`）。
+       */
+      case req @ PUT -> Root / "friends" / friendUserId / "muted" =>
+        withAuth(req) {
+          sharedResources.friendService match
+            case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+            case Some(fs) =>
+              req.as[Json].flatMap { body =>
+                body.hcursor.downField("muted").as[Boolean].toOption match
+                  case Some(muted) => fs.setFriendMuted(friendUserId, muted) *> Ok(ApiJson.ok)
+                  case None => BadRequest(Json.obj("error" -> "Missing muted".asJson))
+              }
+        }
+
+      case req @ PUT -> Root / "friends" / friendUserId / "pinned" =>
+        withAuth(req) {
+          sharedResources.friendService match
+            case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+            case Some(fs) =>
+              req.as[Json].flatMap { body =>
+                body.hcursor.downField("pinned").as[Boolean].toOption match
+                  case Some(pinned) => fs.setFriendPinned(friendUserId, pinned) *> Ok(ApiJson.ok)
+                  case None => BadRequest(Json.obj("error" -> "Missing pinned".asJson))
+              }
+        }
+
+      /**
+       * 会话列表（按 last_message_id 倒序，含 unreadCount）。
+       *
+       * ⚠️ 恢复（2026-11-05 紧急诊断批）：本 case 于 `6c1feea6d`（件一 Profile
+       * 双描述批，2026-11-02 13:06）被**误删** —— 该提交在同一锚点上把本 case 的
+       * 两行头替换成了 `PUT /friends/{id}/bio` 的文档注释 + case 头，导致
+       * `GET /api/conversations` 从路由表消失（实测网关回 404，与不存在的路径
+       * 同码）。前端 `friendsApi.getConversations()` 取数失败被
+       * `messages.js:560 catch { /* keep last known */ }` 吞掉 ⇒「消息」面板
+       * 渲染 `messages.empty`「暂无会话」。此处逐字恢复原件（作者令：不删数据、
+       * 只修读面）。
+       *
+       * 🔴 empty-state-must-not-lie（2026-11-05 第二刀）：本 case 原先把
+       * `fs.refreshConversations()` 的**折叠版**接在出参上 —— 上游失败被折成
+       * `Nil` ⇒ 恒 200 + `[]`，前端无从区分「确实没有会话」与「拿不到答复」。
+       * 现在走 `fs.listConversations`（REST 直通版，保留 `Left`）并按好友域既有
+       * **单一**判据 `friendErr` 应答：
+       *   · `Not logged in` 且已配置 ⇒ **401** + `code=neblink_not_logged_in`
+       *     （既有语义，`friendErr` 原文分态，不改鉴权面）；
+       *   · 其余上游失败 ⇒ **502** + `code=neblink_upstream_failed`（本 case 加性
+       *     补的机器可读原因键 —— **只**在本 case，`friendErr` 其余调用方的响应体
+       *     逐字不变）。前端据此进错误态而非空态。
+       * 200 + `[]` 自此**只**表示「服务端明确答复没有会话」。
+       */
       case req @ GET -> Root / "conversations" =>
+        withAuth(req) {
+          sharedResources.friendService match
+            case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+            case Some(fs) =>
+              fs.listConversations.flatMap {
+                case Right(convs) => Ok(convs.asJson)
+                case Left(err) =>
+                  // 502 = 上游失败（`friendErr` 的其余分支不动：401 未登录 / 404 未启用）。
+                  friendErr(err).map { resp =>
+                    if resp.status == Status.BadGateway then
+                      resp.withEntity(
+                        Json.obj(
+                          "error" -> err.asJson,
+                          "code" -> "neblink_upstream_failed".asJson
+                        )
+                      )
+                    else resp
+                  }
+              }
+        }
+
+      /**
+       * 好友自我介绍 `bio` 的**本地缓存**写入（件一，2026-11-02「双描述」）。
+       * body `{bio}` → 200 `{ok:true}`。
+       *
+       * 🔴 语义边界（与上面 `remark` 端点**两个不同字段、两个不同写面**）：
+       *  - `bio` = **对方**的自我介绍，语义真源在**上游**（neblink-server 目前**无**
+       *    该字段）⇒ 本仓这份是**本地缓存**，UI 必须标「本地缓存·未同步」，禁把
+       *    本地写读当成「已同步到对方」。上游一旦加性出键，上游值在出站口优先
+       *    （见 `FriendService.applyFriendBio`）。
+       *  - `remark` = **我给对方写的备注**，纯本地真源（既有端点）。
+       * 形态逐字镜像 `PUT /friends/{id}/remark`：`withAuth` + 缺参 400 + 恒
+       * `{ok:true}`（**无 502 面**：纯本地态、零上游往返）；`trim` 后空串 = 清除；
+       * 清值用 `""`，不用 null（键缺席 / null / 非字符串 = 缺参 400）。
+       */
+      case req @ PUT -> Root / "friends" / friendUserId / "bio" =>
+        withAuth(req) {
+          sharedResources.friendService match
+            case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+            case Some(fs) =>
+              req.as[Json].flatMap { body =>
+                body.hcursor.downField("bio").as[String].toOption match
+                  case Some(bio) => fs.setFriendBio(friendUserId, bio) *> Ok(ApiJson.ok)
+                  case None => BadRequest(Json.obj("error" -> "Missing bio".asJson))
+              }
+        }
+
+      /**
+       * 我的群备注（件一，2026-11-02）。body `{remark}` → 200 `{ok:true}`。
+       *
+       * **纯本地真源**（`profile-descriptions.json` 的 `groupRemark`，键 = `groupId`），
+       * 与好友 `remark` 同族同形：零上游往返 ⇒ 无 502 面；`trim` 后空串 = 清除。
+       * 🔴 与 `PUT /groups/{id}/description`（群介绍）**互不影响**：两个独立键。
+       */
+      case req @ PUT -> Root / "groups" / groupId / "remark" =>
+        withAuth(req) {
+          sharedResources.friendService match
+            case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+            case Some(fs) =>
+              req.as[Json].flatMap { body =>
+                body.hcursor.downField("remark").as[String].toOption match
+                  case Some(remark) => fs.setGroupRemark(groupId, remark) *> Ok(ApiJson.ok)
+                  case None => BadRequest(Json.obj("error" -> "Missing remark".asJson))
+              }
+        }
+
+      /**
+       * 群介绍的**本地缓存**写入（件一，2026-11-02）。body `{description}` → 200
+       * `{ok:true}`。
+       *
+       * 🔴 语义边界：群介绍的真源在**上游群管理**（neblink-server 的 `GroupSummary`
+       * 目前**无**该键）⇒ 本仓这份是**本地缓存**，UI 必须标「本地缓存·未同步」。
+       * 而且群域其余 12 条路由是**逐字代理**（`groups.rs` 契约，禁 reshape）⇒ 本键
+       * **刻意不走上游**、只落本地（上游出字段后，出站口上游值优先，见
+       * `FriendService.applyGroupDescriptions`）。
+       */
+      case req @ PUT -> Root / "groups" / groupId / "description" =>
+        withAuth(req) {
+          sharedResources.friendService match
+            case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+            case Some(fs) =>
+              req.as[Json].flatMap { body =>
+                body.hcursor.downField("description").as[String].toOption match
+                  case Some(desc) => fs.setGroupDescription(groupId, desc) *> Ok(ApiJson.ok)
+                  case None => BadRequest(Json.obj("error" -> "Missing description".asJson))
+              }
+        }
+
+      /**
+       * 双描述快照（件一，2026-11-02）：`GET /api/profile/descriptions` →
+       * `{friendBio:{userId→str}, groupRemark:{groupId→str}, groupDescription:{…}, selfBio:str}`。
+       *
+       * 为什么需要它（不是冗余面）：四条字段的**写面**各自独立（上面三条 + 下面的
+       * `selfBio`），而**读面**分散在 `/friends`、`/groups` 与 `/neblink/status`
+       * （`selfBio`）。前端 Profile 面需要在**一次往返**里拿全「哪些是我写的本地态」，
+       * 否则会出现「同一批描述来自三个不同拍次的快照」的撕裂态。本端点只回**原始
+       * 本地真值**（空串 / 缺键 = 未设置），不参与任何合并（合并只在出站口做）。
+       */
+      case req @ GET -> Root / "profile" / "descriptions" =>
+        withAuth(req) {
+          sharedResources.friendService match
+            case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+            case Some(fs) =>
+              fs.descriptions.flatMap(d => Ok(d.asJson))
+        }
+
+      /**
+       * 描述跨设备同步状态（profile-sync 批，2026-11-06）：
+       * `GET /api/profile/sync-status` →
+       * ```
+       * { neblink: bool, selfDeviceId: str, peers: int,
+       *   fields: { friendBio|groupRemark|groupDescription|selfBio:
+       *             { state: "synced"|"syncing"|"local-only", updatedAt: ms, peers: int } } }
+       * ```
+       *
+       * **只读出口**（前端徽标读它，不写任何东西、不推任何帧）：判据单点在
+       * `ProfileSync.status`（本 case 只做鉴权 + 转发，禁在路由层二次判读）。
+       * 未配置 NebLink / 已配对设备为 0 ⇒ 每类字段恒 `local-only`——「没有对端可同步」
+       * 就是事实，绝不假装 `synced`。
+       *
+       * 🔴 与 `/api/profile/descriptions` 的职责分家：后者 = 描述**正文**（本地真值），
+       * 本端点 = 正文的**收敛状态**（跨设备的账）。前端渲染徽标必须读本端点，禁从
+       * 「正文非空」反推「已同步」。
+       */
+      case req @ GET -> Root / "profile" / "sync-status" =>
+        withAuth(req) {
+          ProfileSync.status.flatMap(json => Ok(json))
+        }
+
+      /**
+       * 自己给自己写的介绍 `selfBio`（件一，2026-11-02）。body `{selfBio}` →
+       * 200 `{ok:true}`。
+       *
+       * 🔴 与 `/neblink/device-info` 的 `userDescription` **刻意分家**：后者语义 =
+       * 「设备描述，Agent 选设备用」（有 `DeviceProfile` 等消费面），把自我介绍塞进
+       * 去是语义污染（勘察报告 §6.2 定案 (b)）。故本字段独立落
+       * `profile-descriptions.json`，读面 = `/api/profile/descriptions` 与
+       * `/api/neblink/status` 的 `selfBio` 加性键。
+       */
+      case req @ PUT -> Root / "profile" / "self-bio" =>
+        withAuth(req) {
+          sharedResources.friendService match
+            case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+            case Some(fs) =>
+              req.as[Json].flatMap { body =>
+                body.hcursor.downField("selfBio").as[String].toOption match
+                  case Some(bio) => fs.setSelfBio(bio) *> Ok(ApiJson.ok)
+                  case None => BadRequest(Json.obj("error" -> "Missing selfBio".asJson))
+              }
+        }
+
+
         withAuth(req) {
           sharedResources.friendService match
             case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
@@ -957,6 +1173,23 @@ private[gateway] object SocialRoutes:
        */
       case req @ POST -> Root / "groups" / groupId / "members" / userId / "kick" =>
         groupProxy(req, "POST", s"/api/groups/${encSeg(groupId)}/members/${encSeg(userId)}/kick")
+
+      /**
+       * PUT .../members/{userId}/role —— 群成员角色变更（owner only）。
+       * body `{role}` ∈ `{admin, member}`，**幂等**；上游 `200 {ok, role, selfUserId}`
+       * / 404 `group_not_found` / 403 `group_disbanded` / 403 `not_group_admin` /
+       * 403 `not_member` / 404 `member_not_found` / 422 `invalid_role`。
+       *
+       * 🔴 补路由（empty-state-must-not-lie 批 · 2026-11-05）：前端
+       * `friendsApi.setGroupMemberRole`（`friendsApi.js:1550`，消费点
+       * `friendGroups.js:713` 的群成员管理面）一直在调本路径，而网关**从未**注册它
+       * —— 症状与同日 `GET /api/conversations` 事故同族（前端调了、后端没有），
+       * 由本批新增的 `scripts/check-api-routes.mjs` 哨兵首次报出。形态逐字镜像
+       * 上面的 `kick`（纯透传：判定全在上游，本层零复制）；判据序与错误码逐字
+       * 来自客户端侧正典（`friendsApi.js:1536-1549`）。
+       */
+      case req @ PUT -> Root / "groups" / groupId / "members" / userId / "role" =>
+        groupProxy(req, "PUT", s"/api/groups/${encSeg(groupId)}/members/${encSeg(userId)}/role")
 
       /**
        * POST /api/groups/{groupId}/messages —— **冻结群发契约**（`groups.rs:403-524`）。

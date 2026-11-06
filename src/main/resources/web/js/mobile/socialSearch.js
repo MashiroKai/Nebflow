@@ -1,21 +1,43 @@
-// mobile/socialSearch.js — 消息/联系人页右上浮搜索钮 + 展开式搜索栏
-// （悬浮钮统一+搜索批 2026-10-31 作者令 16:03 ③④；规格书
-//  docs/20261031_160300_mobile-fab-unify-search.md §2.2/§2.3）。
+// mobile/socialSearch.js — 消息/联系人页「常驻顶部搜索条」
+// （作者令 2026-11-02 07:13：两个 tab 的搜索框固定在页面顶部，不再用右上角
+//  悬浮按钮控制搜索；右上搜索浮钮在这两页退役，其它面保持现状）。
 //
-// 两件：
-//   · 共用交互件：48px g2-fab 搜索钮（top:16+safe right:16，与 chrome 搜索键
-//     同几何）→ 页面 section 挂 .mh-search-open → 搜索区从钮处展开（max-height
-//     spring + 栏 scaleX origin right），下方内容整体下拉让位；再点/Esc 收合。
+// 形态换代（相对 2026-10-31 悬浮钮统一+搜索批的「浮钮呼出 + 展开式搜索区」）：
+//   · 搜索条 = 页面体流内**首件常驻**（.mh-search-dock > .mh-search-bar），
+//     静止态即在位、不再有呼出/收合；呼出钮 .mh-fab-search 与页面 section 的
+//     .mh-search-open 收合语汇整件退役（两页之外的搜索入口零触碰：聊天根
+//     chrome 搜索键 / 详情页搜索页等均不动）。
+//   · 输入即搜、清空即回列表：消息页有查询时 .has-query 让 #fm-conversations
+//     整块让位，结果区吃满余量自滚（条在流内占位 ⇒ 列表首条永不被遮挡）。
+//   · 材质 = 既有玻璃包单源（--glass-control-*，sapphire.css 深浅双主题），
+//     零新色值；CSS 见 mobileLayer.css「常驻搜索条」块。
+//
+// 件八（作者令 2026-11-05 12:28「上滑之后变成一个搜索按钮挂在右上角 … 直接使用
+// 一样的就行」）：条 = **扁平长条 ⇄ 右上角圆钮**的一次性形变，同一 DOM 节点。
+//   · 展开 = 扁平长条（css/mobileSearchFlat.css，微信形态 + 我方圆角档
+//     --ds-radius-input）；收起 = 同节点追加 `.g2-fab`（主会话搜索钮同一个类／
+//     同一套 CSS，glass.css），落位右上角、住在页面体内的常驻搜索带里。
+//   · 判据/阈值单源：本条 COLLAPSE_AT / EXPAND_AT / 带高与过渡曲线分居 JS/CSS，
+//     断言侧读同一组常量（tests/mobile-search-flat.spec.mjs）。
+//   · 旧形态（独立 `.mh-search-fab` 浮钮 + dock.style.height 实测像素过渡）整件
+//     退役：那条路线同时是 bug①（滚动容器几何逐帧变化 → 滚动卡死）与 bug②
+//     （fixed + visibility:visible 自持 → 跨页泄漏）的根因，见 setCollapsed 注。
+//
+// 两面内容臂（数据源 = 桌面既有面/读数，零复制零第二实现）：
 //   · 消息页 = 类微信跨会话聊天记录检索：范围 chips（全部/好友/设备/群聊）+
 //     按会话分组结果 + <mark> 高亮 + 点行跳转定位（messages.js revealMessage
 //     缝）。纯客户端渐进检索：getConversations 快照 + 每会话 getMessages 前向
 //     翻页（20 页 × 50 = 1000 条上限，脚注声明）；300ms debounce + requestId
 //     竞态丢弃 + AbortController 中止（chatSearch 同族纪律）。
-//   · 联系人页 = 既有 .fm-search-block 桌面逻辑零改动承载（CSS 收合/展开，
-//     结果卡 in-flow 推挤好友列表）。
+//   · 联系人页 = 既有桌面搜索块逻辑零改动承载：常驻条只做输入的**单入口**，
+//     查询串写回 contacts.js 的 searchQ 单一源并走同一条提交流水（节流/六态
+//     结果卡/渲染全复用，contacts.js#submitContactsSearch）。联系人页无「好友/
+//     群/设备」切面控件（现状 = 单条流：搜索块 → 新的朋友 → 设备 → 群入口 →
+//     好友列表）⇒ 本批按「同一条搜索条覆盖该页全部内容段」落地；条住在收编
+//     面之外（页面体首件），面板重渲不重建输入内容（输入串跨重渲保留）。
 //
 // 桌面零改动边界：本模块只追加自有节点 + 读桌面导出 API；封存态
-// （features.friends OFF）不建钮（ensureSocialPage 同口径）。
+// （features.friends OFF）不建条（ensureSocialPage 同口径）。
 
 import { t } from '../i18n.js';
 import { createIconsIn } from '../utils.js';
@@ -25,13 +47,18 @@ import {
   openConversation, revealMessage, personLabel, deviceLabel, fmtTime, conversationSnapshot,
 } from '../messages.js';
 import { groupTitleOf } from '../friendGroups.js';
-import { logEvent } from './navController.js';
+import { logEvent } from './navEvents.js';
+// 件一（2026-11-02）「描述进检索」：谓词唯一实现 = 零依赖叶子 `descSearch.js`
+// （桌面联系人本地过滤与手机常驻条共用同一份，禁各写一套 includes）。
+import { descMatches, convDescribeFields } from '../descSearch.js';
 
-/** 检索纪律（规格书 §2.3）：每会话前向翻页上限 / 页大小 / 单会话命中上限。 */
+/** 检索纪律（沿用旧批 §2.3）：每会话前向翻页上限 / 页大小 / 单会话命中上限。 */
 const PAGE_CAP = 20;
 const PAGE_SIZE = 50;
 const MATCH_CAP_PER_CONV = 30;
 const DEBOUNCE_MS = 300;
+/** 联系人页 = 远程用户名检索，去抖略长（桌面提交键另有 1s 最小间隔，同源）。 */
+const CONTACTS_DEBOUNCE_MS = 450;
 
 /** 范围档位（值 ↔ conversation.kind：friend = 缺省非 group/device 行）。 */
 const SCOPES = [
@@ -41,24 +68,45 @@ const SCOPES = [
   { value: 'group', labelKey: 'mhsearch.scopeGroup' },
 ];
 
-/** @type {Map<string, HTMLButtonElement>} page id → 搜索钮。 */
-const fabs = new Map();
-/** @type {HTMLElement|null} 消息页展开区（.mh-search-dock）。 */
-let msgDock = null;
-/** @type {HTMLInputElement|null} */
-let msgInput = null;
-/** @type {HTMLElement|null} 状态行。 */
-let msgStatus = null;
-/** @type {HTMLElement|null} 结果流。 */
+/** 常驻搜索条所属页（其余面的搜索入口零触碰）。 */
+const PAGE_IDS = ['messages', 'contacts'];
+
+/** 阈值算术**单源**（作者令 2026-11-04 13:07 + 2026-11-05 12:28 同一条判据）：
+ *   · COLLAPSE_AT = 24px：内容上滚过 24px ⇒ 收起成右上角圆钮；
+ *   · EXPAND_AT = 4px：滚回 4px 以内（回顶部）⇒ 还原为长条；
+ *   · 4..24 = **回滞带**，带内状态不翻转（防抖边：收/展各只有一次阈值穿越）。
+ *  断言侧读同一组常量（tests/mobile-search-flat.spec.mjs 判据 ②③）。 */
+const COLLAPSE_AT = 24;
+const EXPAND_AT = 4;
+// 过渡锁已删除（作者令 2026-11-05 12:28 修批）：带高恒定后收/展不再改滚动容器
+// 几何 ⇒ 不存在「到底被钳回 ⇒ 反向判据再触发」的抖振回路，翻转节流唯一需要的是
+// 回滞带（EXPAND_AT..COLLAPSE_AT）。旧锁是 bug① 的第二个病根：用户在锁窗内继续
+// 上滑，判据被整段丢弃 ⇒ 「上滑了之后动不了」的观感。
+
+/**
+ * @typedef {{
+ *   pageId: string, dock: HTMLElement, bar: HTMLElement, input: HTMLInputElement,
+ *   clear: HTMLButtonElement, scopeRow: HTMLElement|null, status: HTMLElement|null,
+ *   results: HTMLElement|null, note: HTMLElement|null,
+ * }} SearchBar
+ */
+
+/** @type {Map<string, SearchBar>} page id → 常驻条部件表。 */
+const bars = new Map();
+/** @type {HTMLElement|null} 消息页结果流（检索腿只服务这一页）。 */
 let msgResults = null;
+/** @type {HTMLElement|null} 消息页状态行。 */
+let msgStatus = null;
 /** @type {string} 当前范围档。 */
 let scope = 'all';
 /** @type {number} requestId 竞态丢弃判据。 */
 let seq = 0;
 /** @type {AbortController|null} */
 let abortCtl = null;
-/** @type {ReturnType<typeof setTimeout>|null} */
+/** @type {ReturnType<typeof setTimeout>|null} 消息页去抖。 */
 let debTimer = null;
+/** @type {ReturnType<typeof setTimeout>|null} 联系人页去抖。 */
+let contactTimer = null;
 /** @type {Array<() => void>} */
 let unsubs = [];
 
@@ -66,105 +114,59 @@ function pageSection(pageId) {
   return document.querySelector(`#mobile-pages .mobile-page[data-page="${pageId}"]`);
 }
 
-/** 搜索钮（48px g2-fab；几何 = mobileLayer.css .mh-fab-search 块）。 */
-function buildFab(pageId) {
-  const section = pageSection(pageId);
-  if (!section || fabs.has(pageId)) return;
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'mh-fab-search g2-fab';
-  btn.dataset.page = pageId;
-  btn.title = t('mhsearch.aria');
-  btn.setAttribute('aria-label', t('mhsearch.aria'));
-  btn.setAttribute('aria-expanded', 'false');
-  btn.innerHTML = '<i data-lucide="search"></i>';
-  btn.addEventListener('click', (e) => {
-    // 桌面面 outside-close 监听 document 冒泡 —— 入口键停冒泡防误关（hub 行同款）。
-    e.stopPropagation();
-    toggleSearch(pageId);
-  });
-  section.appendChild(btn);
-  if (typeof lucide !== 'undefined') createIconsIn(btn);
-  fabs.set(pageId, btn);
+function pageBody(pageId) {
+  return /** @type {HTMLElement|null} */ (
+    pageSection(pageId)?.querySelector('.mobile-page-body') || null);
 }
 
-/** 钮图标 search↔x 两态 + aria-expanded。 */
-function paintFab(pageId, open) {
-  const btn = fabs.get(pageId);
-  if (!btn) return;
-  btn.setAttribute('aria-expanded', String(open));
-  const icon = open ? 'x' : 'search';
-  btn.innerHTML = `<i data-lucide="${icon}"></i>`;
-  if (typeof lucide !== 'undefined') createIconsIn(btn);
-}
+function msgBar() { return bars.get('messages') || null; }
 
-function toggleSearch(pageId, force) {
-  const section = pageSection(pageId);
-  const btn = fabs.get(pageId);
-  if (!section || !btn) return;
-  const open = force === undefined ? !section.classList.contains('mh-search-open') : !!force;
-  const wasOpen = section.classList.contains('mh-search-open');
-  if (open && pageId === 'messages' && !msgDock) ensureMsgDock();
-  section.classList.toggle('mh-search-open', open);
-  paintFab(pageId, open);
-  logEvent('mh-search-toggle', { page: pageId, open });
-  if (open) {
-    // 焦点进输入框：消息页 = 自有输入；联系人页 = 桌面块输入（重渲后重查）。
-    const input = pageId === 'messages'
-      ? msgInput
-      : (/** @type {HTMLInputElement|null} */ (section.querySelector('.fm-search-block .fm-search-input')));
-    setTimeout(() => input?.focus?.(), 120); // 等展开动效首段落位再聚焦
-  } else if (wasOpen) {
-    if (pageId === 'messages') resetMsgSearch();
-    btn.focus?.();
-  }
-}
+// ── 部件构建 ────────────────────────────────────────────────────────
 
-// ── 消息页检索面 ────────────────────────────────────────────────────
-
-/** 展开区一次构建（幂等）：输入栏 + 范围 chips + 状态行 + 结果流 + 脚注。 */
-function ensureMsgDock() {
-  if (msgDock) return;
-  const body = pageSection('messages')?.querySelector('.mobile-page-body');
-  if (!body) return;
-  const dock = document.createElement('div');
-  dock.className = 'mh-search-dock';
-  dock.setAttribute('data-mh', 'msgsearch');
-
-  const bar = document.createElement('div');
-  bar.className = 'mh-search-bar';
+/** 输入行（玻璃单源 + 图标 + 清空键）；返回三件，事件由各页处理器接线。
+ *
+ *  `.nf-glass`（glass-top-overlays 批 2026-11-06）：本行**浮在滚动列表之上**
+ *  （搜索带 `position:absolute`、带本体零底、内容从带下连续穿过），按作者令
+ *  「所有悬浮在顶部 可以透出背景的 都用毛玻璃效果 比如消息和联系人的手机端的
+ *  搜索框」⇒ 材质必须走唯一工具类，不许再在这里/在 CSS 里另造一档浅灰底。
+ *  收起态（同一节点追加 `.g2-fab`）继承的仍是同一份玻璃；`.nf-glass` 常驻
+ *  不收不展 —— 它不参与几何，只供材质。 */
+function buildBarRow(placeholder) {
+  const row = document.createElement('div');
+  row.className = 'mh-search-bar nf-glass';
   const ic = document.createElement('i');
   ic.setAttribute('data-lucide', 'search');
   ic.setAttribute('aria-hidden', 'true');
-  msgInput = document.createElement('input');
-  msgInput.className = 'mh-search-input';
-  msgInput.type = 'text';
-  msgInput.autocomplete = 'off';
-  msgInput.placeholder = t('mhsearch.placeholder');
-  msgInput.setAttribute('aria-label', t('mhsearch.placeholder'));
+  const input = document.createElement('input');
+  input.className = 'mh-search-input';
+  input.type = 'text';
+  input.autocomplete = 'off';
+  input.placeholder = placeholder;
+  input.setAttribute('aria-label', placeholder);
   const clear = document.createElement('button');
   clear.type = 'button';
   clear.className = 'mh-search-clear';
   clear.title = t('mhsearch.clear');
   clear.setAttribute('aria-label', t('mhsearch.clear'));
-  clear.innerHTML = '<i data-lucide="x"></i>';
+  // 构建器而非 HTML 串（component-contract R5）：clear 是刚 createElement 出来的
+  // 新元素，无需 HTML 解析面；图标仍是同一个 lucide 'x'，尺寸/位置零变化。
+  const clearIcon = document.createElement('i');
+  clearIcon.dataset.lucide = 'x';
+  clear.append(clearIcon);
   clear.addEventListener('click', () => {
-    if (!msgInput) return;
-    msgInput.value = '';
-    bar.classList.remove('has-text');
-    onQuery();
-    msgInput.focus();
+    input.value = '';
+    row.classList.remove('has-text');
+    // 清空 = 走与键入同一条 input 处理腿（单一驱动，零第二套复位逻辑）。
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.focus();
   });
-  msgInput.addEventListener('input', () => {
-    bar.classList.toggle('has-text', !!msgInput && msgInput.value.length > 0);
-    onQuery();
-  });
-  msgInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); toggleSearch('messages', false); }
-    else if (e.key === 'Enter') { e.preventDefault(); scheduleSearchNow(); }
-  });
-  bar.append(ic, msgInput, clear);
+  input.addEventListener('input', () => row.classList.toggle('has-text', input.value.length > 0));
+  row.append(ic, input, clear);
+  return { row, input, clear };
+}
 
+/** 消息页：输入行 + 范围 chips + 状态行 + 结果流 + 脚注（全部常驻，静止态折叠视觉由 CSS）。 */
+function fillMessagesBar(dock, parts) {
   const scopeRow = document.createElement('div');
   scopeRow.className = 'mh-scope-row';
   scopeRow.setAttribute('role', 'group');
@@ -190,24 +192,136 @@ function ensureMsgDock() {
     scopeRow.appendChild(chip);
   }
 
-  msgStatus = document.createElement('div');
-  msgStatus.className = 'mh-search-status';
-  msgStatus.setAttribute('role', 'status');
-  msgStatus.setAttribute('aria-live', 'polite');
-  msgStatus.hidden = true;
+  const status = document.createElement('div');
+  status.className = 'mh-search-status';
+  status.setAttribute('role', 'status');
+  status.setAttribute('aria-live', 'polite');
+  status.hidden = true;
 
-  msgResults = document.createElement('div');
-  msgResults.className = 'mh-search-results';
+  const results = document.createElement('div');
+  results.className = 'mh-search-results';
 
   const note = document.createElement('div');
   note.className = 'mh-search-note';
   note.textContent = t('mhsearch.capNote');
 
-  dock.append(bar, scopeRow, msgStatus, msgResults, note);
+  dock.append(parts.row, scopeRow, status, results, note);
+  msgStatus = status;
+  msgResults = results;
+
+  // 输入即搜：查询串非空 ⇒ 条吃满余量 + 列表让位（CSS 判据 = .has-query）。
+  parts.input.addEventListener('input', () => {
+    dock.classList.toggle('has-query', parts.input.value.trim().length > 0);
+    onQuery();
+  });
+  parts.input.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      // Esc = 清空回列表（常驻条的「收起」语义已无，保留清场一键）。
+      e.preventDefault();
+      e.stopPropagation();
+      parts.clear.click();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      scheduleSearchNow();
+    }
+  });
+
+  return { scopeRow, status, results, note };
+}
+
+/** 联系人页：只有输入行（结果卡由桌面搜索块在收编面内自渲染，逻辑零复制）。 */
+function fillContactsBar(dock, parts) {
+  dock.append(parts.row);
+  parts.input.addEventListener('input', () => {
+    const q = parts.input.value.trim();
+    dock.classList.toggle('has-query', q.length > 0);
+    if (contactTimer) { clearTimeout(contactTimer); contactTimer = null; }
+    // 清空 = **立即**回列表（去抖只服务远程查号：空串零请求、零反爬代价）。
+    // 件一（2026-11-02）起 `searchQ` 同时是好友列表**本地过滤**的输入源（描述进
+    // 检索）⇒ 清空若还等 450ms，列表会停在被过滤的旧态一瞬（微信式「清空即回列表」
+    // 的语义硬要求；消息页 P4 同款）。
+    if (!q) { runContactsSearch(''); return; }
+    contactTimer = setTimeout(() => { contactTimer = null; runContactsSearch(q); }, CONTACTS_DEBOUNCE_MS);
+  });
+  parts.input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (contactTimer) { clearTimeout(contactTimer); contactTimer = null; }
+      runContactsSearch(parts.input.value.trim());
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      parts.clear.click();
+    }
+  });
+}
+
+/** contacts.js 模块句柄缓存（**同步复用**的关键，件一 2026-11-02）。
+ *  动态 import 是为了不造 `socialSearch → contacts → messages → socialSearch`
+ *  静态环；但 `await import()` 每次都在微任务后交付 ⇒ 调用方若在同一事件回合里
+ *  先探测 DOM（`mobile-pinned-search.spec.mjs` P6「清空后首行回位」就是同步读），
+ *  会读到**上一拍**的列表。首次 import 后把句柄记住，之后同步调用 —— 首拍仍异步
+ *  （那时 DOM 里还没有任何查询态，无人探测）。 */
+let contactsMod = null;
+
+/** 联系人页检索腿：查询串写回 contacts.js 单一源（searchQ）并走同一提交流水
+ *  （节流关 = 输入已在上游去抖；空串 = 清场回列表）。
+ *  🔴 空串必须**同回合**重渲（微信式「清空即回列表」；列表本地过滤的输入源就是
+ *  同一个 `searchQ`，晚一拍的代价是用户看见「暂无联系人和搜索卡并存」的中间态）。 */
+function runContactsSearch(q) {
+  if (contactsMod) { contactsMod.submitSearch(q, { throttle: false }); return; }
+  import('../contacts.js')
+    .then((m) => { contactsMod = m; m.submitSearch(q, { throttle: false }); })
+    .catch(() => { /* 模块未载（好友域未初始化）——静默，桌面逻辑缺席即无票可投 */ });
+}
+
+/** 建一条常驻条（幂等；页面体首件）。 */
+function ensureBar(pageId) {
+  const existing = bars.get(pageId);
+  if (existing && existing.dock.isConnected) return existing;
+  const body = pageBody(pageId);
+  if (!body) return null;
+  const dock = document.createElement('div');
+  dock.className = 'mh-search-dock';
+  dock.setAttribute('data-mh', pageId === 'messages' ? 'msgsearch' : 'contactsearch');
+  dock.setAttribute('role', 'search');
+  const parts = buildBarRow(pageId === 'messages'
+    ? t('mhsearch.placeholder')
+    : t('contacts.searchPlaceholder'));
+  /** @type {SearchBar} */
+  const bar = {
+    pageId, dock, bar: parts.row, input: parts.input, clear: parts.clear,
+    scopeRow: null, status: null, results: null, note: null,
+  };
+  if (pageId === 'messages') Object.assign(bar, fillMessagesBar(dock, parts));
+  else fillContactsBar(dock, parts);
   body.insertBefore(dock, body.firstChild);
   if (typeof lucide !== 'undefined') createIconsIn(dock);
-  msgDock = dock;
+  // 件八（2026-11-05）：圆钮 = 条本体的形变态（零第二节点）⇒ 只绑激活腿 + 页内
+  // 滚动探针；收/展的几何全在 css/mobileSearchFlat.css，这里零内联样式。
+  bindBarActivate(bar);
+  bindPageScroll(bar);
+  bars.set(pageId, bar);
+  return bar;
 }
+
+/** 摘条（封存态/拆除；消息页同时复位检索腿）。 */
+function destroyBar(pageId) {
+  const bar = bars.get(pageId);
+  if (!bar) return;
+  bars.delete(pageId);
+  bar.dock.remove();
+  if (pageId === 'messages') {
+    resetMsgSearch();
+    msgStatus = null;
+    msgResults = null;
+  } else if (contactTimer) {
+    clearTimeout(contactTimer);
+    contactTimer = null;
+  }
+}
+
+// ── 消息页检索腿 ────────────────────────────────────────────────────
 
 function setStatus(text) {
   if (!msgStatus) return;
@@ -226,15 +340,19 @@ function scheduleSearchNow() {
   runSearch();
 }
 
-/** 收合即复位（结果/状态清场；范围档保留——重开续用）。 */
+/** 清空即回列表：结果/状态清场（范围档保留——下次查询续用）。 */
 function resetMsgSearch() {
   seq++;
   abortCtl?.abort();
   abortCtl = null;
   if (msgResults) msgResults.replaceChildren();
   setStatus('');
-  if (msgInput) msgInput.value = '';
-  msgDock?.querySelector('.mh-search-bar')?.classList.remove('has-text');
+  const bar = msgBar();
+  if (bar) {
+    bar.input.value = '';
+    bar.bar.classList.remove('has-text');
+    bar.dock.classList.remove('has-query');
+  }
 }
 
 /** 会话标签（与 convRow 渲染同源：好友 personLabel / 设备 deviceLabel / 群群名）。 */
@@ -312,7 +430,7 @@ function scopeFilter(conv) {
   return conv.kind !== 'device' && conv.kind !== 'group';
 }
 
-/** 结果行：meta（发送者 · 时间）+ 命中片段；点击跳转定位（规格书 §2.3）。 */
+/** 结果行：meta（发送者 · 时间）+ 命中片段；点击跳转定位。 */
 function buildResultRow(conv, m, q) {
   const row = document.createElement('button');
   row.type = 'button';
@@ -350,7 +468,7 @@ function buildResultRow(conv, m, q) {
  * 竞态纪律：seq 换代丢弃 + AbortController 中止在飞取数。
  */
 async function runSearch() {
-  const q = (msgInput?.value || '').trim();
+  const q = (msgBar()?.input.value || '').trim();
   const mySeq = ++seq;
   abortCtl?.abort();
   abortCtl = new AbortController();
@@ -365,6 +483,45 @@ async function runSearch() {
   }
   if (mySeq !== seq) return;
   convs = convs.filter(scopeFilter);
+
+  // ── 描述命中段（件一 2026-11-02）─────────────────────────────────────
+  // 定案（勘察报告 §7.2）：会话的**档案描述**（好友 remark/bio、群 remark/description）
+  // 不进消息正文检索，而是作为**会话级命中**单独成组（组名 = 会话标签 · 「资料命中」），
+  // 点击 = 直接开会话。这样「按描述找联系人/群」与「按正文找消息」两个语义面不互相
+  // 污染（不然一条描述命中的会话会显示成「0 条消息」的空组）。
+  const descHits = convs.filter((c) => descMatches(q, convDescribeFields(c)));
+  if (descHits.length && msgResults) {
+    const g = document.createElement('div');
+    g.className = 'mh-sr-group mh-sr-group-desc';
+    g.textContent = `${t('mhsearch.descHits', { n: descHits.length })}`;
+    msgResults.appendChild(g);
+    for (const conv of descHits) {
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'mh-sr-row mh-sr-row-desc';
+      row.dataset.mhDesc = '1';
+      const meta = document.createElement('div');
+      meta.className = 'mh-sr-meta';
+      const name = document.createElement('span');
+      name.className = 'mh-sr-sender';
+      name.textContent = convLabel(conv);
+      meta.appendChild(name);
+      const kind = document.createElement('span');
+      kind.className = 'mh-sr-time';
+      kind.textContent = conv.kind === 'group'
+        ? (conv.remark ? t('profile.groupRemarkLabel') : t('profile.groupDescriptionLabel'))
+        : (conv.friend && conv.friend.remark ? t('profile.friendRemarkLabel') : t('profile.friendBioLabel'));
+      meta.appendChild(kind);
+      row.appendChild(meta);
+      row.addEventListener('click', () => {
+        logEvent('mh-desc-hit-jump', { conv: String(conv.conversationId) });
+        openConversation(conv.conversationId, null).catch(() => {
+          window.__showToast?.(t('mhsearch.jumpFail'), 'error');
+        });
+      });
+      msgResults.appendChild(row);
+    }
+  }
 
   let total = 0;
   let cursor = 0;
@@ -392,47 +549,139 @@ async function runSearch() {
     : `${t('mhsearch.noResults')} · ${t('mhsearch.noResultsHint')}`);
 }
 
+// ── 件八：滚动收起 / 右上角圆钮（作者令 2026-11-05 12:28，逐字见文件头）───
+//
+// 形态：
+//   · 判据类 = `.mh-search-collapsed`（挂 `.mh-search-dock`）∪ `.g2-fab`（挂条
+//     本体）。**整件只有一个 DOM 节点**（条本体 .mh-search-bar）：收起 = 同一
+//     节点追加 `.g2-fab`（主会话搜索钮同一个类 ⇒ 同一套 CSS，零仿制副本），
+//     展开 = 摘掉。样式与过渡时长单源在 css/mobileSearchFlat.css，本模块**零
+//     内联样式写入**（旧实现写 dock.style.height 实测像素 = bug① 根因，已删）。
+//   · 落位 = 页面顶缘的**透明顶带**（带高常量，收/展不变）：带本体零底色、零
+//     毛玻璃、手势穿透（css/mobileSearchFlat.css「透明顶带」块），收编滚区吃满
+//     页体全高、内容自带让位内距 ⇒ 静止时列表首行在带下，上滚后内容从带内连续
+//     穿过（作者令 2026-11-05 17:34「顶部那部分应该是透明的，能显示内容」）。
+//   · 反向（下滑/回顶）同一条过渡曲线还原。
+//   · 有查询（.has-query）不自动收起 —— 否则结果场被收掉、「.has-query 让位 /
+//     清空回列表」的既有语义被破坏。
+//   · 点圆钮 = 展开并聚焦输入框（可直接键入）。
+
+/** 点/键激活：收起态下整条 = 一枚按钮（展开 + 聚焦输入）。
+ *  无障碍：收起态补 role=button/tabindex=0/aria-label，展开即摘（输入框自己是焦点面）。 */
+function bindBarActivate(bar) {
+  const activate = (/** @type {Event} */ e) => {
+    if (!bar.dock.classList.contains('mh-search-collapsed')) return;
+    e.preventDefault();
+    setCollapsed(bar, false);
+    // 展开并聚焦：activeElement 命中 .mh-search-input，可直接键入。
+    bar.input.focus();
+    logEvent('mh-search-expand', { page: bar.pageId });
+  };
+  bar.bar.addEventListener('click', activate);
+  bar.bar.addEventListener('keydown', (e) => {
+    const k = /** @type {KeyboardEvent} */ (e).key;
+    if (k === 'Enter' || k === ' ' || k === 'Spacebar') activate(e);
+  });
+}
+
+/** 收起/展开的唯一写点（样式态零第二实现）：只切类，不写任何几何。
+ *  bug①「上滑后动不了」的结构解：旧实现在 scroll 事件里改滚动容器高度 ⇒ 到底
+ *  时 scrollTop 被钳回 ⇒ 回钳的 scroll 事件又走反向判据 ⇒ 收/展抖动。现在带高
+ *  是常量（CSS `--mhsc-band`），滚动容器几何在收/展全程零变化。 */
+function setCollapsed(bar, collapsed) {
+  const dock = bar.dock;
+  if (!dock.isConnected) return;
+  if (dock.classList.contains('mh-search-collapsed') === collapsed) return;
+  // 收/展各只穿一次阈值（回滞带 4..24 见常量块）；动画中途再翻转由 CSS 从当前
+  // 帧继续插值 ⇒ 不需要锁，也就不存在「锁窗内上滑被判据丢弃」。
+  dock.classList.toggle('mh-search-collapsed', collapsed);
+  bar.bar.classList.toggle('g2-fab', collapsed);
+  if (collapsed) {
+    bar.bar.setAttribute('role', 'button');
+    bar.bar.setAttribute('tabindex', '0');
+    bar.bar.setAttribute('aria-expanded', 'false');
+    bar.bar.setAttribute('aria-label', bar.input.placeholder);
+  } else {
+    bar.bar.removeAttribute('role');
+    bar.bar.removeAttribute('tabindex');
+    bar.bar.removeAttribute('aria-expanded');
+    bar.bar.removeAttribute('aria-label');
+  }
+}
+
+/** 路由复位（bug②「按钮泄漏到其他页面」的修点）：圆钮是**条本体的形变态**，
+ *  不是独立浮件 —— 页面一离开 live，收起态立即还原为展开长条；非 live 页面
+ *  的条随页面 `visibility: hidden` 一起退场（结构上不再可能压到别的页面）。
+ *  调用点 = activateSocialSearch 的 `nf:mobile-nav` 监听（同一次路由广播）。 */
+function resetCollapseOutsideLive() {
+  for (const bar of bars.values()) {
+    const sec = pageSection(bar.pageId);
+    if (!sec || !sec.classList.contains('live')) setCollapsed(bar, false);
+  }
+}
+
+/** 页内滚动探针（scroll 不冒泡 ⇒ 挂 section 捕获相位；navController.bindRollProbe
+ *  同族纪律）。读数 = **真实滚动容器的** scrollTop（消息页 #fm-conversations /
+ *  联系人页 #fm-contacts-body；查询态结果场 .mh-search-results 由 has-query 闸挡掉）。
+ *  上滚过 COLLAPSE_AT(24) 收起；滚回 EXPAND_AT(4) 以内（回顶部）展开；
+ *  4..24 = 回滞带。防抖边三闸 = 有查询 / 焦点在条内 / 事件源非滚动容器
+  （过渡锁已删，见 STATE_LOCK 退役注；滚动永远不被拦）。 */
+function bindPageScroll(bar) {
+  const section = pageSection(bar.pageId);
+  if (!section) return;
+  section.addEventListener('scroll', (e) => {
+    if (!bar.dock.isConnected) return;
+    const src = /** @type {HTMLElement|null} */ (e.target);
+    if (!src || src === section || typeof src.scrollTop !== 'number') return;
+    const y = src.scrollTop;
+    const collapsed = bar.dock.classList.contains('mh-search-collapsed');
+    if (bar.dock.classList.contains('has-query') || document.activeElement === bar.input) return;
+    if (!collapsed) {
+      if (y > COLLAPSE_AT) setCollapsed(bar, true);
+    } else if (y <= EXPAND_AT) {
+      setCollapsed(bar, false);
+    }
+  }, { capture: true, passive: true });
+}
+
 // ── 生命周期 ─────────────────────────────────────────────────────────
 
 export function activateSocialSearch() {
-  // 门控随 config 到达重对账（nav 事件汇合点）：封存态不建钮；缺席默认开放
-  // （friendsEnabled 口径）⇒ 激活即建，显式封存 config 到达后下一拍 nav 摘除
-  // （激活早于首帧 configData 的时序与 syncHubGate 同病同药）。
+  // 门控随 config 到达重对账（nav 事件汇合点）：封存态不建条；缺席默认开放
+  // （friendsEnabled 口径）⇒ 激活即建，显式封存 config 到达后下一拍 nav 摘除。
   const syncGate = () => {
     const on = friendsEnabled();
-    for (const pageId of ['messages', 'contacts']) {
-      if (on) buildFab(pageId);
-      else { fabs.get(pageId)?.remove(); fabs.delete(pageId); }
+    for (const pageId of PAGE_IDS) {
+      if (on) ensureBar(pageId);
+      else destroyBar(pageId);
     }
+    // 件八（bug② 修点，作者令 2026-11-05 12:28「这个搜索按钮会泄漏到其他页面」）：
+    // 每次路由广播（navController.renderPages → `nf:mobile-nav`）把**非 live 页**
+    // 的收起态无条件还原为展开长条 —— 回到该页永远是展开的长条，圆钮不会被带走。
+    resetCollapseOutsideLive();
   };
   syncGate();
   document.addEventListener('nf:mobile-nav', syncGate);
 
-  // Esc 收合任一展开页（返回钮契约同族）；焦点归还对应钮在 toggleSearch 内。
-  const onKey = (e) => {
-    if (e.key !== 'Escape') return;
-    for (const [pageId] of fabs) {
-      if (pageSection(pageId)?.classList.contains('mh-search-open')) {
-        toggleSearch(pageId, false);
-      }
-    }
-  };
-  document.addEventListener('keydown', onKey);
-
+  // Esc：输入框自有处理（清空回列表）；这里兜底「焦点不在条内」的同键语义 ——
+  // 焦点在条外时不吞事件（页面的返回/关闭语义各自保留），故不做全局拦。
   const onLocale = () => {
-    for (const [pageId, btn] of fabs) {
-      btn.title = t('mhsearch.aria');
-      btn.setAttribute('aria-label', t('mhsearch.aria'));
-      paintFab(pageId, pageSection(pageId)?.classList.contains('mh-search-open'));
-    }
-    if (msgInput) msgInput.placeholder = t('mhsearch.placeholder');
-    if (msgDock) {
-      msgDock.querySelectorAll('.mh-scope-chip').forEach((c) => {
+    for (const bar of bars.values()) {
+      bar.input.placeholder = bar.pageId === 'messages'
+        ? t('mhsearch.placeholder')
+        : t('contacts.searchPlaceholder');
+      bar.input.setAttribute('aria-label', bar.input.placeholder);
+      bar.clear.title = t('mhsearch.clear');
+      bar.clear.setAttribute('aria-label', t('mhsearch.clear'));
+      // 件八：收起态的无障碍名随语言面同拍（收起态整条 = 一枚按钮）。
+      if (bar.bar.classList.contains('g2-fab')) {
+        bar.bar.setAttribute('aria-label', bar.input.placeholder);
+      }
+      bar.scopeRow?.querySelectorAll('.mh-scope-chip').forEach((c) => {
         const def = SCOPES.find((s) => s.value === (/** @type {HTMLElement} */ (c)).dataset.scope);
         if (def) c.textContent = t(def.labelKey);
       });
-      const note = msgDock.querySelector('.mh-search-note');
-      if (note) note.textContent = t('mhsearch.capNote');
+      if (bar.note) bar.note.textContent = t('mhsearch.capNote');
     }
   };
   window.addEventListener('locale-changed', onLocale);
@@ -440,19 +689,15 @@ export function activateSocialSearch() {
 
   return function teardownSocialSearch() {
     for (const fn of unsubs.splice(0)) { try { fn(); } catch { /* ignore */ } }
-    document.removeEventListener('keydown', onKey);
     document.removeEventListener('nf:mobile-nav', syncGate);
     if (debTimer) { clearTimeout(debTimer); debTimer = null; }
+    if (contactTimer) { clearTimeout(contactTimer); contactTimer = null; }
     seq++;
     abortCtl?.abort();
     abortCtl = null;
-    for (const [, btn] of fabs) btn.remove();
-    fabs.clear();
-    msgDock?.remove();
-    msgDock = null;
-    msgInput = null;
-    msgStatus = null;
+    for (const pageId of [...bars.keys()]) destroyBar(pageId);
     msgResults = null;
+    msgStatus = null;
     scope = 'all';
   };
 }

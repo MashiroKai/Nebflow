@@ -645,7 +645,13 @@ test.describe('U3 — the expanded face keeps each media\'s own ratio', () => {
     const video = read.layers.find(l => l.type === 'video');
     expect(video, 'the video is in the expanded column').toBeTruthy();
     expect(video.controls, 'the expanded face exposes native controls').toBe(true);
-    expect(video.ringVisible, 'and the play ring retires there').toBe(false);
+    // 契约变更（video-cover 批 2026-11-05，作者令「不管是在对话框还是canvas，都应该有
+    // 一个内容预览的一个封面」+「封面之上保留播放键与时长」）：展开面仍是原生控件面，
+    // 但内容封面是一张盖住整帧的 `<img>`，原生控件条画在 video 像素里 ⇒ 被封面上
+    // **遮住**。故放映键（`.play-ring`）在封面在位期间回到封面上方（点它即 play，
+    // 播放后封面让位、原生控件条复现）。断言因此从「永远退场」改为「与封面互斥」。
+    expect(video.ringVisible, 'the play ring returns ON TOP of the cover iff a cover is up')
+      .toBe(video.coverPresent);
 
     expect(pageErrors).toEqual([]);
     await context.close();

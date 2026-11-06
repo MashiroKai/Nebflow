@@ -54,7 +54,7 @@ class DelegatePluginAllocationSpec extends CatsEffectSuite:
     os.remove.all(tempRoot / "chains")
     os.remove.all(tempRoot / "logs")
     os.remove.all(tempRoot / "general")
-    os.write.over(tempRoot / "nebflow.json", "{}", createFolders = true)
+    os.write.over(tempRoot / nebflow.shared.Branding.configFileName, "{}", createFolders = true)
     PluginAllocator.clear()
     nebflow.core.project.DelegateFlowHosts.clear
 
@@ -190,7 +190,7 @@ class DelegatePluginAllocationSpec extends CatsEffectSuite:
         parentRef = None,
         wsSend = None,
         parentSessionId = Some("root-x"),
-        judgeWorkspace = false
+        allocateSeat = false
       )
       .map(r => (r, system.stopAll.attempt.void))
 

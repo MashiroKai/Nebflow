@@ -215,7 +215,8 @@ const openFile = (page, p) => page.evaluate((pp) => {
     headCloseTitle: document.getElementById('canvas-head-close')?.getAttribute('title') || '',
   }));
   probes.noGraphToggle = await page.evaluate(() => !document.querySelector('.canvas-tab-pane.active .canvas-graph-toggle') && !document.querySelector('.canvas-graph-toggle'));
-  probes.noPopChip = await page.evaluate(() => !document.getElementById('canvas-pop-btn'));
+  // 件1 回归批（2026-11-05）：独立窗钮回位胶囊右座 ⇒ probe 由「无 chip」翻为「在挂」
+  probes.hasPopChip = await page.evaluate(() => !!document.getElementById('canvas-pop-btn'));
 
   // ⑤堆叠态顶计数
   await page.click('#deck-fab');
@@ -291,7 +292,7 @@ const openFile = (page, p) => page.evaluate((pp) => {
   await sleep(600);
   probes.stackView = await page.evaluate(() => ({
     count: (document.querySelector('.mf-stack-count') || {}).textContent || '',
-    cards: document.querySelectorAll('.mf-stack-card').length,
+    cards: document.querySelectorAll('.mf-deck-card').length,       // 标签栏重做批：卡叠翻页视图
   }));
   await page.screenshot({ path: join(SHOTS_DIR, 'm03-stackview.png') });
   await page.click('.mf-stack-view, .mf-stack-count, .mf-cv-stack').catch(() => {});

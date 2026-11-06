@@ -48,6 +48,95 @@ object ProjectStore:
 
   def projectJsonPath(name: String): os.Path = projectDir(name) / "project.json"
 
+  // ── 文档库落位单源（作者令 2026-11-03 20:02）─────────────────────────
+  //
+  // 「docs 放各 projects 下的 .stand（放 project.json 的地方）目录下的 docs，不放
+  // 各项目目录下」——项目知识文档（设计/审计/裁定/调研/Obsidian 文档）的 vault 根
+  // = **项目注册目录** `projects/<name>/`（project.json 所在）下的 `.stand/docs/`，
+  // 不在项目 workspace 仓库的 `docs/` 里（后者退化为纯过程产物位，且被仓 .gitignore
+  // 根锚定忽略——历史上靠 `git add -f` 强推的重文档不再有家）。
+  //
+  // 本三件是「项目名 → 文档根」的 **Scala 侧单源**；Python 镜像 =
+  // `visual-report/skills/wiki-docs/scripts/check_wiki_docs.py`
+  // `resolve_project_docs_root`（同公式，改则同改，禁两套口径）。
+  // 消费点：脚手架（[[ensureLedgerDocs]]）、图谱面 vault 解析（[[localVault]]）、
+  // 周报附件落位（WeeklyReport）。
+
+  /** 项目知识文档库根：`projects/<name>/.stand/docs`。 */
+  def ledgerDocsDir(name: String): os.Path = projectDir(name) / ".stand" / "docs"
+
+  /** 文档库附件目录（vault 约定：`attachments/` 挂在 vault 根下）。 */
+  def ledgerDocsAttachments(name: String): os.Path = ledgerDocsDir(name) / "attachments"
+
+  /** 目录下是否有 ≥1 篇文档（`.md/.markdown/.html`，递归；不存在 = false）。
+    * 早退语义：命中第一篇即真 ⇒ 大 vault 上也可当廉价探针用。 */
+  def hasDocs(dir: os.Path): Boolean =
+    os.isDir(dir) && os.walk.stream(dir).exists { p =>
+      if !os.isFile(p) then false
+      else
+        val n = p.last.toLowerCase(java.util.Locale.ROOT)
+        n.endsWith(".md") || n.endsWith(".markdown") || n.endsWith(".html")
+    }
+
+  /**
+   * 本地项目 vault 解析（**读面**单点，迁移分级期的兼容解析）：
+   *   ① 注册目录 vault 有文档 ⇒ 用它（已迁移项目 / 本批之后的新项目）；
+   *   ② 否则 workspace 内 `docs/` 有文档 ⇒ 用它（**未迁移项目零影响**——迁移逐
+   *      项目推进，DOSTEL/CZT 等迁移前图谱照旧可读）；
+   *   ③ 两者皆空 ⇒ 注册目录（canonical 写面：新建项目首写即落这里）。
+   *
+   * 设备项目的 vault 在对端盘上（设备通道面），不经本函数。
+   */
+  def localVault(pd: ProjectDef): os.Path =
+    val ledger = ledgerDocsDir(pd.name)
+    if hasDocs(ledger) then ledger
+    else
+      val wsVault = os.Path(pd.workspace, PathUtil.dataRoot) / "docs"
+      if hasDocs(wsVault) then wsVault else ledger
+
+  /**
+   * 文档库脚手架（缺件即补、幂等）：建注册目录 `<ledger>/` ——作者令 2026-11-03
+   * 「新建项目时自动建 .stand/docs/」。新建（本地/设备项目同路：大脑与文档库恒在
+   * 引擎侧，见 [[brainWorkspace]]）与幂等重挂补缺两处消费。
+   */
+  def ensureLedgerDocs(name: String): IO[ScaffoldItem] = IO.blocking(ensureLedgerDocsSync(name))
+
+  private def ensureLedgerDocsSync(name: String): ScaffoldItem =
+    val dir = ledgerDocsDir(name)
+    val existed = os.exists(dir)
+    os.makeDir.all(dir)
+    ScaffoldItem(
+      ".stand/docs/",
+      created = !existed,
+      detail =
+        if existed then "already present (project ledger docs vault)"
+        else "project ledger docs vault (in the project's registration dir, NOT the workspace)"
+    )
+
+  /**
+   * AGENTS.md 模板的「文档落位」节（作者令 2026-11-03 20:02）。与
+   * [[FleetConfig.agentsMdSection]] 同为**装配形节**：基模板（
+   * `ProjectCreateService.AgentMdTemplate`）保持空串（作者 2026-09-18 §2.3「项目
+   * 自持指令」），本节点进装配形 ⇒ 新项目 AGENTS.md 自带落位说明、存量工作区
+   * 零回写（缺件即补纪律只补缺件，不覆盖已有 AGENTS.md）。
+   *
+   * 文本里的 `<data_root>` 是渲染层占位符（PathUtil.substituteDataRoot 在提示词
+   * 面消费）；磁盘字节保持占位形态 ⇒ 隔离实例（--home）与默认 home 同一份模板。
+   */
+  def docsLandingSection: String =
+    """## Document landing (docs discipline)
+
+Knowledge documents (designs, audits, rulings, research, Obsidian notes) land in the
+project's OWN registration dir, not in this workspace:
+
+- vault root = `<data_root>/projects/<this project>/.stand/docs/` — created for you at
+  project creation; attachments go to `<vault>/attachments/`.
+- The workspace `docs/` dir is NOT the knowledge vault (it stays for transient process
+  output and is gitignored in this repo). Deliverables written there are not indexed.
+- Format: Obsidian (YAML frontmatter `type:` / `status:` + at least one `[[wikilink]]`).
+- Validate before closing: `python3 <data_root>/plugins/visual-report/skills/wiki-docs/scripts/check_wiki_docs.py --project <this project>` (exit 0 = compliant).
+"""
+
   // ============================================================
   // 设备项目（跨设备挂载批 2026-10-25）
   // ============================================================
@@ -296,6 +385,41 @@ object ProjectStore:
       }
 
   /**
+   * 卸载标记摘除（unmount-console 面板批 2026-11-02，remount 通路 · 打标面的对称
+   * 摘键腿）：与 [[markUnmounted]] 同一手术式原位写形状——读原始 Json → **删**
+   * unmounted + unmountedAt 两键（[[updateDescription]] 清空腿的 JsonObject.remove
+   * 同法；deepMerge 无法删键）→ AtomicJson 原子写回。零删除零移动：只重写这一个
+   * 文件，workspace 与目录不动；其余字段逐字节稳定（不走 ProjectDef re-encode）。
+   * 幂等：本就未卸载（无 unmounted=true）⇒ Right(None) 零写入。
+   * 返回 Right(Some(摘除时刻))＝写盘成功；Right(None)＝本来就没卸载（零写）；
+   * 项目不存在/名字非法/JSON 损坏 → Left。调用方纪律：摘键必须由**重挂面**
+   * （ProjectRemount）在前置校验（定义在盘、未归档）后调用——直接摘键等于绕过
+   * 挂载预检（禁）。
+   */
+  def clearUnmounted(name: String): IO[Either[String, Option[Long]]] =
+    if name.isEmpty || name.contains("/") || name.contains("\\") || name == "." || name == ".." then
+      IO.pure(Left(s"Invalid project name: '$name'"))
+    else
+      IO.blocking {
+        val p = projectJsonPath(name)
+        if !os.exists(p) then Left(s"Project '$name' not found")
+        else
+          jsonParse(os.read(p)) match
+            case Left(e) => Left(s"Corrupt project.json for '$name': $e")
+            case Right(json) =>
+              val marked = json.hcursor.downField("unmounted").as[Boolean].toOption.contains(true)
+              if !marked then Right(None)
+              else
+                val ts = System.currentTimeMillis()
+                val obj = json.asObject.getOrElse(io.circe.JsonObject.empty)
+                val updated = io.circe.Json.fromJsonObject(obj.remove("unmounted").remove("unmountedAt"))
+                AtomicJson.writeSync(p, updated.noSpaces)
+                logger.infoSync(s"Project '$name' unmount marker cleared (remount face; files untouched)")
+                Right(Some(ts))
+        end if
+      }
+
+  /**
    * description 更新（台账 #913 ④，2026-10-26）：**只改 description 一个字段**
    * 的手术式原位写（读原始 Json → deepMerge/删键 → AtomicJson 原子写回——与
    * [[archive]] 同形状，不走 ProjectDef 全量 re-encode：其余字段逐字节稳定）。
@@ -414,8 +538,10 @@ object ProjectStore:
           os.makeDir.all(projectDir(name))
           AtomicJson.writeSync(projectJsonPath(name), pd.asJson.noSpaces)
           // remote-origin：本地零脚手架（空报告——脚手架已由远端腿完成并验收）。
-          val report = if remote then ScaffoldReport(Nil) else ensureScaffoldSync(ws, agentMdTemplate)
-          Right((pd, report))
+          // 唯一例外 = 项目文档库（.stand/docs/）：它恒在**引擎侧注册目录**（大脑面，
+          // 与 [[brainWorkspace]] 同侧，设备项目也不例外），故设备腿同样落。
+          val workspaceReport = if remote then ScaffoldReport(Nil) else ensureScaffoldSync(ws, agentMdTemplate)
+          Right((pd, ScaffoldReport(workspaceReport.items :+ ensureLedgerDocsSync(name))))
       }
 
   /**

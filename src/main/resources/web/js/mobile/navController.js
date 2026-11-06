@@ -46,13 +46,24 @@
 // API / 桌面已渲染节点收编；桌面侧零改动。
 
 import {
-  getTabPane, setActiveTab, closeTab,
+  getTabPane, setActiveTab, closeTab, deckFaceOf,
+  // 堆叠视角真快照（作者令 2026-11-02 21:47 §三「让堆叠视觉能看到卡片内容」）：
+  // 源解析/克隆腿**单源复用**桌面 canvas.js 的同一内核（不另造第二套截图方案），
+  // 手机层只负责缓存与挂载。
+  canvasSnapshotFor, canvasSnapshotStamp,
 } from '../canvas.js';
 import { key } from '../branding.js';
 import { openSettingsPanel, closeSettingsPanel, isSettingsPanelActive } from '../sidebar.js';
 import { createIconsIn } from '../utils.js';
 import { ensureSocialPage, syncSocialFaces } from './socialFaces.js';
 import { ensureTaskPanel, closeTaskPanel } from './taskPanel.js';
+// 【恢复：作者令 2026-11-05 09:28】'tasks' 页随左上「任务」圆钮一并恢复 ——
+// 入口收敛批 todo-unify-entry-collapse（2026-11-04）曾把本页与圆钮一起撤除
+// （待办入口收敛到顶带胶囊一处）；作者 2026-11-05 反转该口径，要求手机端回到
+// 「左上角悬浮待办按钮」，桌面端继续用胶囊 ⇒ 本页的页面收编腿原样恢复。
+// 层事件流水（循环门禁修复批 2026-11-04）：叶子模块，taskPanel 等打事件方直取它，
+// 本模块只写 + 在 activateNav 挂 window（见该定义处注释）。
+import { logEvent, navLayerEvents } from './navEvents.js';
 import { buildMeFace } from './meFace.js';
 // 弹窗退场批③（2026-10-31）：设置页折叠配置项 → 层级子页（meFace 同款注入式）。
 import { buildSettingsSubFace, syncSettingsSubFaces, initSettingsSub, SETTINGS_SUB } from './settingsSub.js';
@@ -108,12 +119,22 @@ export const PAGES = [
   { id: 'graph',    tabId: 'wiki-graph', icon: 'sparkles',      zh: '图谱',     en: 'Wiki Graph' },
   { id: 'plugins',  tabId: 'plugins',  icon: 'puzzle',          zh: '插件',     en: 'Plugins' },
   { id: 'usage',    tabId: null,       icon: 'bar-chart-3',     zh: 'token 用量', en: 'Usage' },
+  // 'tasks' 页（**恢复**：作者令 2026-11-05 09:28 —— 手机端待办入口回到左上
+  // 悬浮圆钮，入口收敛批 2026-11-04 的撤除被本批反转；桌面端仍走胶囊）。
   { id: 'tasks',    tabId: null,       icon: 'list-todo',       zh: '任务',     en: 'Tasks' },
-  { id: 'search',   tabId: null,       icon: 'search',          zh: '搜索',     en: 'Search' },
+  // 搜索页标题（三点入口批 2026-11-05，作者令「把搜索和搜索聊天记录结合，把胶囊的
+  // 内容改为搜索聊天记录」）：页名胶囊 = 唯一标题「搜索聊天记录」；面内部那枚
+  // 重复的 `.search-modal-header` 标题已由 mobileLayer.css 同批隐藏（顶部只剩一个胶囊）。
+  { id: 'search',   tabId: null,       icon: 'search',          zh: '搜索聊天记录', en: 'Search messages' },
   { id: 'reminder', tabId: null,       icon: 'alarm-clock',     zh: '定时任务', en: 'Scheduled' },
   // 改版批（2026-10-31 作者令）：待办事项页——入口 = 消息列表顶部行（桌面 =
   // #todo-page 玻璃 overlay；手机 = 本详情页收编同一 DOM，层级下钻左上返回）。
-  { id: 'todo',     tabId: null,       icon: 'list-checks',     zh: '待办事项', en: 'To-Dos' },
+  // ⛔ 【整面退役】todo-unify-entry-collapse 2026-11-04：#todo-page 处置 = (a)
+  // 整面退役（DOM 保留在 index.html、不可达）。两个入口（消息列表入口行 /
+  // `nf:mobile-todo-entry` → pushPage('todo')）同时撤除后，本页已无触发器；
+  // 待办面唯一实现 = 顶带胶囊 + 展开面板（js/todoFace.js / todoStore 真源）。
+  // 理由全文见 js/scheduled-task.js openTodoPage 的退役注记。
+  // { id: 'todo',     tabId: null,       icon: 'list-checks',     zh: '待办事项', en: 'To-Dos' },
   { id: 'daemon',   tabId: null,       icon: 'heart-pulse',     zh: '心跳',     en: 'Daemons' },
   { id: 'background', tabId: null,     icon: 'square-terminal', zh: '后台任务', en: 'Background' },
   { id: 'profile',  tabId: null,       icon: 'bot',             zh: '智能体', en: 'Agent' },
@@ -122,9 +143,10 @@ export const PAGES = [
   { id: 'conversation', tabId: null,   icon: 'message-circle',  zh: '会话',   en: 'Conversation' },
   // 手机顶栏批（2026-10-31 作者令④）：个人主页 + 层级配置子页（苹果层级式
   // 点进下一层铺满屏、左上返回 —— 复用既有详情页壳，返回钮/pop 语义零新建）。
-  // 内容面 = 官网个人页字段的本地读数（/api/neblink/status：displayName/email/
-  // avatarUrl/peers），配置动作统一跳官网个人主页（brand getProfileUrl，
-  // 既有接口）——不新造配置面。
+  // 内容面 = 账号读数（/api/neblink/status 的 id_token claims + /api/users/search 自证探针，
+  // 单点 = settingsIdentity.js getIdentityReadout）。**件四（2026-11-02 作者令）起配置/
+  // 编辑动作不再跳官网**，而是就地开 App 内个人资料面
+  // （settingsIdentity.js openProfileFace）—— 四个 me 子页零外链。
   { id: 'me',        tabId: null, icon: 'user-round', zh: '个人主页', en: 'Profile' },
   { id: 'me-user',   tabId: null, icon: 'user-round', zh: '用户名',   en: 'Username' },
   { id: 'me-avatar', tabId: null, icon: 'image',      zh: '头像',     en: 'Avatar' },
@@ -168,10 +190,10 @@ function tt(zh, en) {
 }
 
 // ── 层事件流水（QA 探针 window.__nfMobileLayerEvents，只读）──────────
-const __nfEvents = [];
-export function logEvent(kind, extra = {}) {
-  __nfEvents.push({ t: Date.now(), kind, ...extra });
-}
+// 循环门禁修复批（2026-11-04）：流水 + logEvent 抽到叶子 navEvents.js —— 这里是
+// 它的**挂载点**（activateNav 把同一数组引用挂 window）。taskPanel/searchFace/
+// socialSearch/chatChrome 打事件时直取叶子，不再反过来 import 本模块（那是 SCC[2]
+// 的一半：本模块 → taskPanel 的页面收编是真集成，不动）。
 
 // ── 首触标记（启动自动展开抑制的判据）────────────────────────────────
 let layerTouched = false;
@@ -206,25 +228,130 @@ let unsubs = [];
 
 const backLabel = () => tt('返回', 'Back');
 
-// ── 面板头两态滚动探针（B 批 2026-11-01 作者 17:01 选型）───────────────
-// 收缩阈值：样张迷你比例 36px（258×470 壳）→ 真机 390 宽换算 ≈ 56px
-// （大标题文本行滑入顶缘渐隐带实底区、行将没入时小字接棒）。
+// ── 面板头标题「大标题 → 胶囊」滚动探针（两段式标题批 2026-11-02 作者令，
+//    标题单元素化批 2026-11-02 22:32 沿用同一进度源）──────────────────
+// 承接 B 批（2026-11-01 17:01 选型）的 56px 吸附阈值，并把它由「布尔切换」
+// 升级为**连续进度**：同一元素（.mobile-page-title）的全部形态量（字号/盒高/
+// 内距/外边距/字距/壳层 alpha）都由 CSS 侧的 --mtitle-p 0→1 插值，逐帧跟手。
+//   进度区间：[ROLL_START, ROLL_THRESHOLD] = [8, 56]（区间外钳死在 0/1）——
+//   8 起算 = 手指一动即开始收，56 到位 = 字形缩到胶囊档、壳层显影到满。
+//   .rolled 保留为「进度到顶」的布尔判据（spec 与兼容读者用；阈值仍 56）。
+const ROLL_START = 8;
 const ROLL_THRESHOLD = 56;
+/** reduced-motion：形态二值切换（进度只在 0/1 两值 —— 本形态零 transition、
+ *  零位移量，故二值即「瞬时换形、不卡中间」，无额外摘除）。 */
+const reducedMotion = () => typeof window.matchMedia === 'function'
+  && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+/** 事件目标到 section 之间**最外层**纵向可滚容器（getComputedStyle overflowY
+ *  auto/scroll + 真实可滚余量）—— 内层横滑 chip 条/嵌套小滚区不误判。 */
+function primaryScroller(section, target) {
+  let primary = null;
+  for (let n = /** @type {Element} */ (target); n && n !== section; n = n.parentElement) {
+    const oy = getComputedStyle(n).overflowY;
+    if ((oy === 'auto' || oy === 'scroll') && n.scrollHeight - n.clientHeight > 4) primary = n;
+  }
+  return primary;
+}
+/** 写进度 + 两个判据类：
+ *   --mtitle-p        0→1 连续进度（CSS 两段形态量单源）；
+ *   .rolled           scrollTop > 阈值（吸附成立，spec/兼容读者）；
+ *   .mpt-pane-scroll  主滚轴**不是**页面体（pane/内滚面：大标题不会随滚走，
+ *                     故 CSS 侧按进度收高把整条顶带还给收编面）。 */
+function applyRoll(section, scroller) {
+  const st = scroller ? scroller.scrollTop : 0;
+  let p = (st - ROLL_START) / (ROLL_THRESHOLD - ROLL_START);
+  p = p < 0 ? 0 : p > 1 ? 1 : p;
+  if (reducedMotion()) p = p >= 0.5 ? 1 : 0;
+  section.style.setProperty('--mtitle-p', String(Math.round(p * 1000) / 1000));
+  section.classList.toggle('rolled', st > ROLL_THRESHOLD);
+  const body = section.querySelector('.mobile-page-body');
+  section.classList.toggle('mpt-pane-scroll', !!scroller && scroller !== body);
+  // 长页名溢出标记（端区分批 2026-11-05 09:28 起 `.mtitle-clip` 不再画渐隐蒙版，
+  // 只作「这一页的名字被钳宽了」的**溢出标记类**：截断本体 = 基座档的可见省略号
+  // （css/mobileLayer.css .mobile-page-title）。类本身保留，供标题几何/探针按
+  // 「是否钳宽」分档读数。进度写盘后同帧读 scrollWidth（样式落定后读布局量会
+  // 同步重排，无滞后帧），不误伤装得下的页名。
+  const title = /** @type {HTMLElement|null} */ (section.querySelector('.mobile-page-title'));
+  if (title) title.classList.toggle('mtitle-clip', title.scrollWidth > title.clientWidth + 1);
+  measureTitleStill(section, title);
+}
+
+/**
+ * 大标题档内容宽实测（schedule-todo-unify 批 2026-11-06「顶栏标题被截成『定时任...』」
+ * 修复的读数腿）：
+ *  · CSS 侧大标题宽度 = calc(100% − (100% − var(--mtitle-w-still)) × 进度)，即
+ *    静止档吃满两端内缩带；内容宽只能在**进度 0** 时测（进度 >0 时盒已被收窄，
+ *    scrollWidth 会自己钳住 —— 那样测出来的值会随滚动变化，不是内容宽）。
+ *  · 故把进度暂时打到 0、测 `scrollWidth`，再还原进度 —— 全部在同一次样式落定内
+ *    完成，不产生可见帧。只在文字可能变了的时候重测（首帧 / 换页 / locale 重绘 /
+ *    窗口宽度变），拖动滚动时不重测（内容宽与滚动无关，省掉每帧强制布局）。
+ * @param {HTMLElement} section
+ * @param {HTMLElement|null} title
+ */
+function measureTitleStill(section, title) {
+  if (!title) return;
+  const cs = getComputedStyle(title);
+  const mcapPad = parseFloat(cs.getPropertyValue('--mcap-pad')) || 12;
+  const prevP = section.style.getPropertyValue('--mtitle-p') || '0';
+  const oldW = title.style.getPropertyValue('--mtitle-w-still');
+  // 静止档实测：进度 0 + 拔 max-width ⇒ scrollWidth = 纯文字宽（静止档水平内距
+  // 已归 0 —— 内缩由盒宽钳制承担，见 mobileLayer.css .mobile-page-title 注）。
+  const oldMax = title.style.maxWidth;
+  title.style.maxWidth = 'none';
+  section.style.setProperty('--mtitle-p', '0');
+  const textW = title.scrollWidth;
+  title.style.maxWidth = oldMax;
+  section.style.setProperty('--mtitle-p', prevP);
+  // 胶囊终态盒 = 文字 + 2×胶囊内距（贴字收紧）；超长页名钳到「满宽 − 2×胶囊内距」
+  // （胶囊永不贴屏幕边；bodyW = 页体内容宽 = 视口 − 页体内距，实测不按页写死）。
+  const body = title.parentElement;
+  let bodyW = 0;
+  if (body) {
+    const bcs = getComputedStyle(body);
+    bodyW = body.clientWidth - (parseFloat(bcs.paddingLeft) || 0) - (parseFloat(bcs.paddingRight) || 0);
+  }
+  const still = Math.min(textW + 2 * mcapPad, Math.max(0, bodyW - 2 * mcapPad));
+  title.style.setProperty('--mtitle-w-still', `${still}px`);
+  if (oldW !== `${still}px`) {
+    // 文字变了才重算截断标记（同一帧内读，不额外起帧）。
+    title.classList.toggle('mtitle-clip', title.scrollWidth > title.clientWidth + 1);
+  }
+}
 /** 滚动收缩探针：section 上挂捕获相位监听（scroll 不冒泡但走捕获，页内一切
  *  滚动容器——页体自身/pane 内部 .team-scroll、#settings-content、.todo-page-body
- *  等——统一汇入，零逐面接线）。主滚轴判定 = 事件目标到 section 之间**最外层**
- *  纵向可滚容器（getComputedStyle overflowY auto/scroll + 真实可滚余量）：
- *  内层横滑 chip 条/嵌套小滚区的 scrollTop 不误触发、不误复位。 */
+ *  等——统一汇入，零逐面接线）。 */
 function bindRollProbe(section) {
   section.addEventListener('scroll', (e) => {
-    let primary = null;
-    for (let n = /** @type {Element} */ (e.target); n && n !== section; n = n.parentElement) {
-      const oy = getComputedStyle(n).overflowY;
-      if ((oy === 'auto' || oy === 'scroll') && n.scrollHeight - n.clientHeight > 4) primary = n;
-    }
-    const sc = /** @type {HTMLElement} */ (primary || e.target);
-    section.classList.toggle('rolled', sc.scrollTop > ROLL_THRESHOLD);
+    const sc = primaryScroller(section, e.target) || /** @type {HTMLElement} */ (e.target);
+    applyRoll(section, sc);
   }, { capture: true, passive: true });
+}
+/** 进场对账（push/切根时调用）：页面壳 DOM 常驻、滚动位保留，故按当前实测
+ *  主滚轴重算一次进度（否则离场时的吸附态会带进下一次进场）。
+ *  判据同事件腿：**最外层**有余量的纵向滚动器（按距 section 的层级取最小者，
+ *  避免把 earlier 兄弟里的嵌套滚区误当主滚轴）。 */
+function refreshRoll(section) {
+  if (section.classList.contains('mobile-page-nohead')) return;
+  const body = section.querySelector('.mobile-page-body');
+  let primary = null;
+  let primaryDepth = Infinity;
+  const depthOf = (n) => {
+    let d = 0;
+    for (let p = n; p && p !== section; p = p.parentElement) d += 1;
+    return d;
+  };
+  if (body) {
+    for (const n of [body, ...body.querySelectorAll('*')]) {
+      const oy = getComputedStyle(n).overflowY;
+      if (oy !== 'auto' && oy !== 'scroll') continue;
+      if (n.scrollHeight - n.clientHeight <= 4) continue;
+      const d = depthOf(n);
+      if (d < primaryDepth) { primary = n; primaryDepth = d; }
+      if (d === 1) break; // 页体自身可滚 ⇒ 它必是最外层，无需再扫
+    }
+  }
+  applyRoll(section, primary || body);
+  measureTitleStill(section, /** @type {HTMLElement|null} */ (section.querySelector('.mobile-page-title')));
 }
 
 // ── 页面壳构建 ───────────────────────────────────────────────────────
@@ -249,30 +376,33 @@ function buildSection(def) {
   //  （随滚走；.mobile-page-title 类名不变，locale 重绘/ push 聚焦两个既有
   //  查询点零改）；收缩态 = 小字居中 + 顶缘渐隐带承底（几何/材质在
   //  mobileLayer.css）。dock 根页无页头不变。
+  //  两段式标题批（2026-11-02 作者令，实拍 IMG_1677/1678）：两态升级为
+  //  「静止大标题（水平居中）→ 吸附毛玻璃胶囊」连续两段，渐隐带退役；
+  //  滚动进度 --mtitle-p 由 bindRollProbe 写（几何全在 mobileLayer.css）。
   if (!def.dock) {
     const head = document.createElement('div');
-    head.className = 'mobile-page-header';
-    // 收缩态两件（装饰副本，aria-hidden —— 页名播报与聚焦由流内大标题承接）。
-    const band = document.createElement('div');
-    band.className = 'mobile-page-title-band';
-    band.setAttribute('aria-hidden', 'true');
-    const mini = document.createElement('span');
-    mini.className = 'mobile-page-title-mini';
-    mini.setAttribute('aria-hidden', 'true');
-    mini.textContent = tt(def.zh, def.en);
+    // 零底带类 = design-system.css 单源（透传悬浮批 2026-11-03：与聊天根
+    // #mobile-fab-layer / canvas 工具条同一族，一处定义处处引用）。
+    head.className = 'mobile-page-header ds-chrome-band';
+    // 标题单元素化批（2026-11-02 22:32 作者令「两个割裂的形态…一直是同一个的
+    // 形式」）：吸附态装饰副本 .mobile-page-title-mini **退役**（DOM 不再建节点）。
+    // 双影根因 = 两套元素同屏交接（大标题盒收高的同时胶囊元素登场，交接区间内
+    // 两者同时可见）。现在页名只有一个节点 .mobile-page-title，吸附态由它自身的
+    // ::before 壳层（玻璃底/圆角/描边）连续渐显承担 —— 原理与读数见
+    // mobileLayer.css「面板头标题单元素连续变形」块。
     const back = document.createElement('button');
     back.type = 'button';
     // 悬浮钮统一批（作者令 10-31 16:03）：「<」归 48px g2-fab 基准材质，
-    // 悬浮位/几何由 mobileLayer.css 页面悬浮带块承担。
+    // 悬浮位/几何由 mobileLayer.css 页面悬浮带块承担；单元素化批后吸附态几何
+    // 不变（标题左缘恒 72 = 钮右缘 64 + 缝 8），吸附态保持可点。
     back.className = 'mobile-back-btn g2-fab';
     back.title = backLabel();
     back.setAttribute('aria-label', backLabel());
     back.innerHTML = '<i data-lucide="chevron-left"></i>';
     back.addEventListener('click', () => backOut());
-    head.append(back, band, mini);
+    head.append(back);
     if (typeof lucide !== 'undefined') createIconsIn(head);
-    // 展开态大标题 = 页体流内首件（在一切收编面之前入列 —— 后续 pane/面
-    // adopt 全部 append，首件地位恒定）。
+    // 唯一页名节点：静止态 = 流内大标题，吸附态 = 同一件的胶囊形态（无第二份）。
     const title = document.createElement('span');
     title.className = 'mobile-page-title';
     title.tabIndex = -1; // push 后聚焦（读屏从头播报页名）
@@ -439,11 +569,10 @@ function ensureContainer() {
     for (const def of PAGES) {
       const s = sections.get(def.id);
       if (!s) continue;
-      // B 批：展开态大标题与收缩态小字是同名双节点，locale 切换两处同步重绘。
+      // 标题单元素化批（2026-11-02）：页名只有 .mobile-page-title 一个节点
+      // （装饰副本已退役），locale 重绘单点。
       const t = s.querySelector('.mobile-page-title');
       if (t) t.textContent = tt(def.zh, def.en);
-      const tMini = s.querySelector('.mobile-page-title-mini');
-      if (tMini) tMini.textContent = tt(def.zh, def.en);
       const b = /** @type {HTMLElement|null} */ (s.querySelector('.mobile-back-btn'));
       if (b) { b.title = backLabel(); b.setAttribute('aria-label', backLabel()); }
     }
@@ -497,8 +626,10 @@ const overlayFaceByPage = {
   daemon: '#daemon-panel',
   background: '#bg-dropdown',
   profile: '#memory-modal',
+  // 'tasks'（#mobile-task-panel）随左上任务圆钮一并恢复（作者令 2026-11-05 09:28）；
+  // 'todo'（#todo-page）仍整面退役（本批无入口要求，见 PAGES 同批注记）。
   tasks: '#mobile-task-panel',
-  todo: '#todo-page',
+  // todo: '#todo-page',
 };
 
 /** 把 overlay 内容面移入页面体（幂等；锚点照 paneAnchors 惯例记录）。 */
@@ -581,13 +712,16 @@ async function ensurePanelContent(pageId) {
     case 'reminder':
       if (!document.querySelector('#reminder-panel.open')) clickDesktopBtn('reminder-btn');
       break;
-    case 'todo':
-      // 改版批（2026-10-31）：待办页无桌面钮（入口 = 消息列表行）——直调
-      // scheduled-task.js 开合臂；overlay 首开此刻建态，收编由 syncOverlayFaces 对账。
-      import('../scheduled-task.js')
-        .then((m) => m.openTodoPage())
-        .catch((e) => console.error('[mobile-layer] todo', e));
-      break;
+    // ⛔ 【退役】todo-unify-entry-collapse 2026-11-04：'todo' 页整面退役（PAGES
+    // 与 overlayFaceByPage 的同批注记）——本分支不再可达（无 pushPage('todo')），
+    // 原文留档，零物理删除：
+    // case 'todo':
+    //   // 改版批（2026-10-31）：待办页无桌面钮（入口 = 消息列表行）——直调
+    //   // scheduled-task.js 开合臂；overlay 首开此刻建态，收编由 syncOverlayFaces 对账。
+    //   import('../scheduled-task.js')
+    //     .then((m) => m.openTodoPage())
+    //     .catch((e) => console.error('[mobile-layer] todo', e));
+    //   break;
     case 'daemon':
       if (!document.querySelector('#daemon-panel.open')) clickDesktopBtn('daemon-btn');
       break;
@@ -606,7 +740,7 @@ async function ensurePanelContent(pageId) {
         if (ap.openProfilePanel) ap.openProfilePanel();
       } catch (e) { console.error('[mobile-layer] profile', e); }
       break;
-    case 'tasks':
+    case 'tasks':   // 恢复：作者令 2026-11-05 09:28（手机端左上任务圆钮）
       ensureTaskPanel();
       // 面板惰性建出 —— 建好即挂关闭对账 + 收编（X 关闭 → hidden → 弹栈）。
       ensureOverlayReconcile('tasks', '#mobile-task-panel', (el) => !!el.hidden, ['hidden']);
@@ -648,6 +782,119 @@ const PANEL_TAB_IDS = new Set(PAGES.filter((p) => p.tabId).map((p) => p.tabId));
 const SWIPE_AXIS_PX = 8;
 const SWIPE_SWITCH_PX = 48;
 
+// ── 横向圆环标签栏（作者令 2026-11-02 07:22「手机端 canvas 顶部标签栏重做」）──
+// 桌面语言 = hover 后上下展开的竖向圆环（canvas.js §胶囊环：缘位逐级缩径 +
+// 减淡 + 弧深，|d|≥2 越出 = 读作绕到圈外）；手机端无 hover，映射为**常驻展开
+// 的横向圆环**（竖向 → 横向的等价变换：「上下展」改为「左右展」，缩径 / 减淡 /
+// 模糊三条深度语言沿用并改为连续曲线 —— 见下「对齐修正批」）。
+//
+// 对齐修正批（作者令 2026-11-02 09:00「不应该都是同一水平吗」）——根因实证：
+// 签的垂直定位 = `top:40px` + `translateY(-50% + var(--rdy))`。`-50%` 量的是**未
+// 缩放盒**的一半，而 `--rdy` 是环的垂直弧深 ⇒ 渲染盒中心 = 40 + rdy（|k|=1 时
+// 40 + 11.1 = 51.1，与中签 40 差 11.1px，正是实测偏差）。缩放本身无责：
+// transform-origin:center 下 scale 围绕盒中心对称，中心不动。
+// 修法（几何源头，不做反向偏移补偿）：**删除纵向弧深**。环的「绕到圈后」只由
+// 横向位移 + 缩径 + 连续减淡/模糊表达，签心恒 y=40（= 两悬浮钮中心线）。
+//
+// 几何（375 基线；环带左右各让 68px = 悬浮钮 48 + 边距 16 + 4 气隙）：
+//   · 环带（.mf-strip）高 72px，overflow:visible + 双侧 mask 52 → 64px 渐隐
+//     （浮钮右缘 64 起恒全实色 ⇒ 可见签不被误伤）；
+//   · 签心恒 y = 40（= 两悬浮钮垂直中心）；scale 走 transform-origin:center ⇒
+//     缩放后中心不动 ⇒ 全组纸签严格同一水平线（机械断言极差 ≤1px）；
+//   · 中签 dx=0、基准宽 112px（CSS `.on` 档）、scale 1.14 ⇒ 渲染 127.7×36.5，
+//     文字框 78px（= 112 − 2×16 内衬 − 2 边框；旧 58px）⇒ 有效字号 14.82px、
+//     单行可见约 5.3 个汉字宽（旧 4.5）——「能显示稍微完整一些」；中签左缘
+//     123.7，远在悬浮钮右缘 64 之外（不压钮）；
+//   · 步距 RING_DX1 = 95px：邻签基准宽 68px、scale 0.80 ⇒ 渲染 54.4×25.6，
+//     中心 187.5 ± 95 ⇒ 左邻左缘 65.3 ≥ 悬浮钮右缘 64（不压钮，余量 1.3px）；
+//     邻签右缘 119.7 vs 中签左缘 123.7 ⇒ 缝隙 4.0px（**不重叠**）；
+//   · |k|=2 = ±190px：被环带 mask 咬掉 + 曲线归零 = 读作已绕到圈外
+//     （.is-far 零透明零命中）；
+//   · 露出半径 RING_VISIBLE = 1 —— 环带净宽只容得下「中签 + 左右各一枚邻签」。
+const RING_DX1 = 93.5;
+const RING_VISIBLE = 1;
+// 宽度档住 CSS（唯一视觉源）：两侧签 `.mf-strip-chip` max-width 66px、中签
+// `.mf-strip-chip.on` max-width 112px —— JS 只给 scale，不改宽，两者相乘才是
+// 渲染宽度（中签 112×1.10 = 123.2 / 邻签 66×0.87 = 57.4）。
+// 连续曲线（作者令「越到边缘越模糊」+「不用…号」）：三条量全按 t = min(|k|,2)/2
+// ∈ [0,1] 连续单调取值，不再分三档跳；k 取整数，故实际采样点 = |k| 0/1/2，
+// 其余行只为证明曲线连续（拖动换签的过渡帧即落在这些 t 上）。
+//   t   |k|   scale           opacity        blur 系数     rotY
+//   0    0    1.100           1.000          0.00         0.0°
+//   0.25 0.5  0.988           0.951          0.50         −12.0°
+//   0.5  1    0.870           0.901          1.00         −24.0°  ← 邻签（唯一可见的非中签）
+//   0.75 1.5  0.735           0.772          1.50         −36.0°
+//   1    2    0.600           0.000          2.00         −48.0°  ← 与 .is-far 的无缝点
+// 三条曲线（**可读字批 2026-11-03 12:59 作者令**重定 —— 「两边的标签尽量能清晰
+// 显现」+「切换要有旋转感」）：
+//   · scale 用 (1−t)^0.889：邻签 0.87（旧 0.80）—— 字号档 × 0.87 ≥13px 可读
+//     下限（基档 --mfs-sub 15 ⇒ 13.05px 有效），|k|≥2 仍触底 0.60 保轨迹连续；
+//   · op 用 (1−t)^0.15：邻签 0.901（旧 0.66 —— 作者判「近乎不可见」的根因面）——
+//     指数 < 0.2 ⇒ 前段几乎平坦（邻签保持全可见），只在 |k| 1→2 的最后一段
+//     陡降到 0，与 .is-far 无缝衔接（可见集恒 = |k| ≤ 1）；
+//   · blur **系数** = min(|k|, 2)：本文件不再写模糊半径（方案 C 落地批 2026-11-06，
+//     作者令「还有电脑端hover 上下选项的那种模糊效果」）。半径与饱和的唯一出生地
+//     = design-system.css ⑯b 槽的 `--ds-ring-blur`（1.6px）/ `--ds-ring-saturate`
+//     （1.25）—— 与桌面 hover 环 `.cr-capsule.is-edge` 同两枚令牌；本文件只写
+//     「拿几档」这枚系数（|k|=1 恰拿满一档 = 桌面 hover 上下选项的同一档）。
+//     旧档（MAX 2.40、指数 2.6 ⇒ |k|=1 只有 0.40px）退役：数值自拟 + 邻位被压到
+//     1/4 档，正是作者实拍「手机端没有电脑端那种糊感」的根因。
+//   · rotY = −24°·k：**转盘位姿**（见 layoutRing 的 --rrot）。环是横向圆环，
+//     邻签绕圆心转到侧面 ⇒ 环绕 Y 轴转 24°（左邻右缘退到纸面里、右邻对称），
+//     换签时 k 变动 ⇒ 位移 + 缩径 + 旋转三者同步插值 = 「转盘转过去」的动效
+//     （纯淡入淡出被否 —— 作者令「不要纯淡入淡出」）。
+const RING_SCALE_ON = 1.10;      // 中签缩径（旧 1.14：与邻签 0.87 的宽度差仍 >2×）
+const RING_SCALE_MIN = 0.60;     // 环外下限（|k| ≥ 2）
+const RING_SCALE_POW = 0.889;    // s = MIN + (ON − MIN)·(1−t)^P ⇒ |k|=1 恰 0.870
+const RING_OP_POW = 0.15;        // op = (1−t)^P ⇒ |k|=1 0.901、|k|=2 恰 0
+/** 环邻位模糊系数上限 = 2（|k| 钳到 2；1 = 拿满 `--ds-ring-blur` 那一档）。
+ *  CSS 侧只做一次乘法（blur: calc(--ds-ring-blur × 本系数)）⇒ 半径值的家仍在令牌层。 */
+const RING_BLUR_FACTOR_MAX = 2;
+/** 邻签绕 Y 轴转角（转盘位姿；单位 °，符号 = 环形偏移 k 的负值）。 */
+const RING_ROT_Y_DEG = 24;
+
+// ── 底部小点指示器（作者令：1 个标签不显示 / 2 个起显示 / 最多 3 点）──────
+// 省略策略（申报，批文档 §3「小点数量规则」）：n > 3 时点数**恒为 3**，点位 =
+// 标签序号归一映射 bucket = round(idx × 2 / (n−1)) ∈ {0,1,2} —— 点本身不滑动
+// （位置稳定、不随换签跳动），当前位置由「哪一点高亮放大」表达 = 首/中/末三段
+// 各占一档（5 签 ⇒ 序号 0/1,2,3/4 分别落三点）。n ≤ 3 时一一对应。
+const DOTS_MAX = 3;
+// ── 底部三点手势区（作者令 2026-11-02 21:47 §二「三点区手势化」）──────────
+// 判据换代：**去掉长按门槛**（旧 DOT_LONGPRESS_MS 260ms 放大档已退役）——三点
+// 那一条就是一枚手势交互区，一上手即响应：
+//   · 左右滑 = 上一张 / 下一张（切文档卡）；
+//   · 上滑   = 进入堆叠视角；
+//   · 下滑   = **关闭当前标签页**（作者 2026-11-02 21:54 裁定「下滑删除不需要
+//              确认 只是关闭标签页而已 后果没那么严重」——语义 = 关标签、不是
+//              删文档；零确认步；失败不乐观：只有手势过阈才调 closeTab，
+//              关不掉（页签已不在/closeTab 拒）就等于没发生，UI 由 syncCanvasPage
+//              按真实页签集重建，绝不先删 DOM 再祈祷）；
+//   · 轻触     = 跳该点对应签（旧腿保留，同时是「非手势可点等价入口」之一）。
+// 阈值（实测调优读数见批文档 §I4/I5/I6/I7）：轴锁 6px（touch-action:none 下
+// 不需要大的死区，但要压住点按抖动）；横向提交 = 位移 ≥26px **或** 位移 ≥14px
+// 且末段速度 ≥0.35px/ms（快弹腿，短促轻扫也换页）；纵向提交 = 22px。纵向阈值
+// 比横向小：纵向只有「开堆叠 / 关标签」两个明确意图，且要与横向互斥判定。
+const DOT_AXIS_PX = 6;          // 轴锁死区（内 = 点按）
+const DOT_SWIPE_X_PX = 26;      // 横向位移阈（换页）
+const DOT_FLICK_X_PX = 14;      // 快弹位移下限（配合速度阈）
+const DOT_FLICK_V_PX_MS = 0.35; // 快弹速度阈（px/ms）
+const DOT_SWIPE_Y_PX = 22;      // 纵向位移阈（上滑开堆叠 / 下滑关标签）
+// 点按容差 = 上面的轴锁死区本身（未过 DOT_AXIS_PX 即「没有位移」，等同点按）；
+// 独立常量退役 —— 两个 6px 并存的读数口径只会互相打架。
+
+// ── 堆叠视角（iOS app switcher 形态；作者令 2026-11-02 21:47 §三）───────
+// 形态 = **横向卡列**（旧「纵向卡叠」退役）：中央卡最大最清晰，左右相邻卡
+// 被裁切只露出一部分、越靠边越暗越模糊，背景重度模糊。位姿变量单源在本文件
+// （layoutDeck 写 --dtx/--dsc/--dop/--dblur），CSS 只消费。
+const DECK_CARD_W_RATIO = 0.78;  // 中央卡宽 = 舞台宽 × 0.78（iOS 观感档；高
+                                 // 由 CSS 侧 min(74%, 520px) 承担 —— 高不参与 JS 几何）
+const DECK_SIDE_STEP_RATIO = 0.66;  // 邻卡中心距 = 卡宽 × 0.66（露约 1/3 卡身）
+const DECK_SCALE_SIDE = 0.84;    // 邻卡缩径
+const DECK_SCALE_FAR = 0.72;     // 第二邻卡缩径
+const DECK_SWITCH_PX = 56;       // 横拖过阈即换中央卡（松手吸附）
+const DECK_AXIS_PX = 8;          // 轴锁死区（内 = 点按）
+const DECK_SWIPE_Y_PX = 48;      // 纵拖过阈：上滑收面回阅读 / 下滑关当前标签
+
 // ── 手势仲裁（内容操作优先，作者令 2026-11-01「拖动图谱、调整图片大小这类
 //    内容操作，会和左右滑动切换卡片的手势冲突……内容区起手的横滑归内容操作，
 //    不触发切卡；切卡手势限定在非交互内容区」）────────────────────────
@@ -663,7 +910,8 @@ const CONTENT_GESTURE_SELECTOR =
  *  查它 —— 认领期内切卡手势整体让路（同模块直读，零 DOM 事件戏法）。 */
 let swipeSuppressed = false;
 
-/** @type {{strip: HTMLElement, toolbar: HTMLElement, host: HTMLElement, empty: HTMLElement}|null} */
+/** @type {{strip: HTMLElement, toolbar: HTMLElement, host: HTMLElement,
+ *          empty: HTMLElement, dots: HTMLElement}|null} */
 let canvasUI = null;
 /** @type {{pane: Element, parent: Node, next: Node|null}|null} 活动文档 pane 收编槽（单槽）。 */
 let canvasDocAnchor = null;
@@ -745,37 +993,260 @@ function adoptActiveDoc() {
   }
 }
 
-/** canvas 页同步：chip 条重建（签名闸）+ 工具条态 + pane 收编 + 空态。 */
+// ══ 横向圆环标签栏（作者令 2026-11-02 07:22；对齐修正批 2026-11-02 09:00）══
+// 环位姿 = 唯一几何源（ringPose）：chip 的 dx/scale/opacity/blur 四值全由环形
+// 距离 k 派生，CSS 只消费变量不另算 —— 换签即换 k，四值同步过渡 = 环在转。
+// **无纵向量（无 dy / 无 --rdy）**：对齐修正批删掉了弧深，签心恒 y=40，全组纸签
+// 同一水平线；环的「绕到圈后」只由横向位移 + 缩径 + 连续减淡/模糊表达。
+// 三条量都是 |k| 的连续单调函数（不再分档跳），|k| ≥ 2 时 s 触底、op 归零 ⇒
+// 与 .is-far（零命中）无缝衔接；>2 仍参与计算，换签时轨迹连续而不是瞬切。
+
+/** 环内最短偏移（i 相对活动位；n=1 恒 0）。@returns {number} */
+function ringOffset(d, n) {
+  if (n < 2) return 0;
+  let k = ((d % n) + n) % n;      // 0..n-1
+  if (k > n / 2) k -= n;          // (−n/2, n/2]
+  return k;
+}
+
+/** chip 位姿四值（k → dx/scale/opacity/blur 系数）。三条曲线均按
+ *  t = min(|k|,2)/2 ∈ [0,1] 连续单调；数值表见文件头 RING_* 常量注释。
+ *  `blurf` 是**系数**不是半径（半径 = `--ds-ring-blur` × 本系数，配方在令牌层）。
+ *  @returns {{dx: number, s: number, op: number, blurf: number}} */
+function ringPose(k) {
+  const t = Math.min(Math.abs(k), 2) / 2;
+  return {
+    dx: RING_DX1 * k,
+    s: RING_SCALE_MIN + (RING_SCALE_ON - RING_SCALE_MIN) * (1 - t) ** RING_SCALE_POW,
+    op: (1 - t) ** RING_OP_POW,
+    blurf: Math.min(Math.abs(k), RING_BLUR_FACTOR_MAX),
+  };
+}
+
+/** 环重排（不发 DOM 重建）：按当前活动位给每个 chip 写变量 + on/far 类。
+ *  重建仅由签名闸驱动（syncCanvasPage）——本函数只做位姿对账，切签零建删。
+ *  中签基准宽 112px（CSS `.on` 档 `max-width` 消费），两侧签 68px 窄一档 ——
+ *  两者差只体现在**宽度**上：圆角/玻璃底/描边/字重/字号全同源（作者令
+ *  「样式应该要是和两边的统一」，机械断言 T13③ 钉死）。 */
+function layoutRing() {
+  const strip = canvasUI?.strip;
+  if (!strip) return;
+  const docs = docTabs();
+  const ai = docs.findIndex((d) => d.id === activeDocId());
+  for (const chip of strip.querySelectorAll('.mf-strip-chip')) {
+    const el = /** @type {HTMLElement} */ (chip);
+    const i = docs.findIndex((d) => d.id === el.dataset.tabId);
+    if (i < 0) continue;
+    const k = ringOffset(i - (ai < 0 ? 0 : ai), docs.length);
+    const p = ringPose(k);
+    el.style.setProperty('--rdx', `${p.dx.toFixed(1)}px`);
+    el.style.setProperty('--rsc', p.s.toFixed(3));
+    el.style.setProperty('--rop', p.op.toFixed(2));
+    /* 环邻位模糊 = 系数（方案 C 落地批 2026-11-06）：半径与饱和由 CSS 取
+       `--ds-ring-blur` / `--ds-ring-saturate`（与桌面 hover 上下选项同两枚令牌），
+       本文件只写「拿几档」。--rbl（半径字面量）同批退役。 */
+    el.style.setProperty('--rblf', p.blurf.toFixed(2));
+    /* 转盘位姿（可读字批 2026-11-03）：邻签绕 Y 轴 −24°×k —— 环是横向圆环，
+       邻签绕到圆心侧面 ⇒ 左邻右缘退进纸面、右邻对称；换签时 k 变 ⇒ 位移 +
+       缩径 + 旋转同步插值（CSS transform 过渡）＝「转盘转过去」。中签 k=0
+       恒 0°（正面朝向读者，不受透视变形 ⇒ 文字恒正）。 */
+    el.style.setProperty('--rrot', `${(-RING_ROT_Y_DEG * k).toFixed(1)}deg`);
+    el.classList.toggle('on', k === 0);
+    el.classList.toggle('is-far', Math.abs(k) > RING_VISIBLE);
+    /* 环方向类（k 的符号）：保留为**环位语义**（「这枚签绕到了哪一侧」），判据与
+       手势腿都读它。**水平渐隐的 CSS 消费已整条退役**（方案 C 落地批 2026-11-06，
+       作者令「文字两边不要渐隐」）—— 旧档 `--rfade` 宽度同步停写：化开这件事不再
+       存在，留着它只会让下一个人以为还有一条水平遮罩在跑。 */
+    el.classList.toggle('side-l', k < 0);
+    el.classList.toggle('side-r', k > 0);
+    el.setAttribute('aria-selected', k === 0 ? 'true' : 'false');
+    el.tabIndex = Math.abs(k) <= 1 ? 0 : -1;
+  }
+  // 环带渐隐门控退役（方案 C 落地批）：旧档 2 签起给带子挂 `.fade`（双侧 14px
+  // 羽化 mask）。水平渐隐整族退役后 `.fade` 无消费面 ⇒ 不再挂类（带子恒无 mask）。
+  fitRingLabels();
+}
+
+// ══ 中签整字收束（作者令 2026-11-02 11:23「前置显示的那个标签，两端不要有虚化
+// 渐隐」）════════════════════════════════════════════════════════════
+// 上一批给所有签的 label 加了水平 alpha 渐隐（`.mf-strip-label` 的 mask-image）
+// 来替代「…」。本令只撤**中签**那一段（CSS `.mf-strip-chip.on .mf-strip-label`
+// 的 `mask-image: none`），两侧邻签的渐隐原样保留。
+//
+// 撤掉 mask 之后，超宽文字若只靠 `overflow: hidden` 硬裁，右端会**切半个字**——
+// 比渐隐更难看。故本函数把中签 label 的 `max-width` 收到**「能完整放下的最大整字
+// 前缀」**上：截断点永远落在字界（grapheme cluster，中文一字、emoji 一簇、拉丁
+// 一个字母），一个完整字都不缺省、也绝不出现半个字，**不出省略号、不溢出签盒**。
+// 多出来的部分照既有展开腿承载（点活签 → `.is-expanded` 加宽一档 → 2600ms 自动
+// 收）；全名另有两处保底（label.textContent 全名 + chip.title），收束只压绘制宽。
+//
+//   实测（375 基线，中签 scale 1.14）：常态 label 可用宽 78px ⇒ 整 6 个汉字；
+//   展开档可用宽 168.6px ⇒ 整 12 个汉字（= 展开腿在 48px 浮钮钳制下的几何上限）。
+//
+// 只在**中签**上生效：非中签的 label 每次重排都清掉内联 max-width，回到「由
+// max-width 收紧 + mask 渐隐」的原始行为 ⇒ 邻签视觉零变化。
+//
+// 度量腿 = 隐藏探针 span（字体从 label 抄）+ 签的**内衬内容宽**（= 计算 max-width
+// − 左右内衬 − 左右描边，CSS px）：探针不受 chip 的 `scale(--rsc)` 与 flex 收紧
+// 影响 ⇒ 与 `max-width` 同一度量面。签宽是 auto（贴合内容收缩），故「可用宽」取
+// 签的上限内容宽，而不是 label 的当前宽（后者会被文字长短反向污染）。
+const FIT_EPS_PX = 0.05;        // 亚像素容差（advance 边界处的侧承，非墨迹）
+
+/** 按 grapheme cluster 切分（中文一字 / emoji 一簇 / 拉丁一字母）。 */
+function graphemes(text) {
+  if (typeof Intl !== 'undefined' && Intl.Segmenter) {
+    return [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text)]
+      .map((s) => s.segment);
+  }
+  return Array.from(text);
+}
+
+/** 度量用的隐藏探针（body 直属：不受签名 flex 收紧、不受 chip 的 scale 影响 ——
+ *  量到的是**未缩放 CSS px**，正好是 max-width 的度量面）。字体样式从 label 抄。 */
+let fitProbe = null;
+function fitProbeEl(label) {
+  if (!fitProbe) {
+    fitProbe = document.createElement('span');
+    fitProbe.setAttribute('aria-hidden', 'true');
+    fitProbe.style.cssText = 'position:absolute;left:-9999px;top:0;visibility:hidden;white-space:nowrap;pointer-events:none;contain:layout style;';
+    document.body.appendChild(fitProbe);
+  }
+  const cs = getComputedStyle(label);
+  fitProbe.style.font = cs.font;
+  fitProbe.style.letterSpacing = cs.letterSpacing;
+  fitProbe.style.wordSpacing = cs.wordSpacing;
+  fitProbe.style.textTransform = cs.textTransform;
+  return fitProbe;
+}
+
+/** 签的**目标档**内衬内容宽（CSS px，= max-width − 左右内衬 − 左右描边）。
+ *  **不能直接读计算 max-width**：它带 220ms 过渡，切签瞬间读到的是过渡中的中间值
+ *  （实测 34px ⇒ 中签只留 2 个字）。故先把该签的 `transition` 临时掐掉读一次目标值
+ *  再复原（同一任务内改回 ⇒ 不触发重绘，无视觉抖动、无额外 DOM 节点）。
+ *  **不造探针元素**：任何带 `.mf-strip-chip` 的离屏节点都会污染
+ *  `querySelectorAll('.mf-strip-chip')` 的既有判据面（T13 / 手势腿 / 小点对账）。
+ *  @returns {number} */
+function chipInnerWidth(chip) {
+  /* 陷阱（方案 C 落地批实测，别再加回来）：旧档为了拿**目标档** max-width 会先
+     `chip.style.transition = 'none'`、读一次计算值、再复原。收束面从「只收中签」
+     扩到「全组」以后，这一手会落在**正在切签的那几枚签**身上 —— 掐过渡的那次强制
+     重算把**终点位姿**提前提交，整段切签动画就静默消失（实测：L3③ 无任何
+     transitionend、L5 连拍零中间帧，且不影响任何静态判据 ⇒ 只有动的腿才看得见）。
+     故此处只读不算：切签瞬间可能读到过渡起点档（比目标窄一档），稳态由下面
+     `transitionend` 自校补齐。 */
+  const cs = getComputedStyle(chip);
+  const cap = parseFloat(cs.maxWidth);
+  return Number.isFinite(cap)
+    ? cap - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0)
+      - (parseFloat(cs.borderLeftWidth) || 0) - (parseFloat(cs.borderRightWidth) || 0)
+    : 0;
+}
+
+/** 把某枚签的 label 收到整字边界（幂等：先回原始态再量，收束只压绘制宽）。 */
+function fitChipLabel(chip) {
+  const label = /** @type {HTMLElement|null} */ (chip.querySelector('.mf-strip-label'));
+  if (!label) return;
+  label.style.maxWidth = '';                    // 回原始态：量到的是「未收束」的真实排版
+  const avail = chipInnerWidth(chip);           // 签能容纳的文本上限（CSS px）
+  if (avail <= 0) return;
+  const chars = graphemes(label.textContent || '');
+  if (!chars.length) return;
+  const probe = fitProbeEl(label);
+  probe.textContent = chars.join('');
+  if (probe.getBoundingClientRect().width <= avail - FIT_EPS_PX) return;   // 全文放得下：不收
+  let keep = 0;
+  let keepW = 0;
+  for (let i = 1; i < chars.length; i++) {
+    probe.textContent = chars.slice(0, i).join('');
+    const w = probe.getBoundingClientRect().width;
+    if (w > avail - FIT_EPS_PX) break;          // 再放一个字就压进内衬 ⇒ 停在字界
+    keep = i;
+    keepW = w;
+  }
+  if (!keep) return;                            // 一个字都放不下（病态窄）：让 clip 兜底
+  // 向上取整到 0.01：收到字界的那一刻不能比最后一个字的 advance 窄（窄 0.4px 就会
+  // 削掉末字右缘的笔画 —— 那正是本批要消灭的「硬裁半个字」）。
+  label.style.maxWidth = `${Math.ceil(keepW * 100) / 100}px`;
+}
+
+/** 全体签的收束对账（方案 C 落地批 2026-11-06：**全组生效**，不再只收中签）。
+ *  理由 = 水平渐隐整族退役（作者令「文字两边不要渐隐」）—— 旧档邻签超宽时靠
+ *  方向 mask 化开兜底，mask 一去，若仍只收中签，邻签右端就会**硬裁半个字**。
+ *  改为每枚签都把 label 收到字界（不出现半个字、不出省略号、不越签盒），
+ *  代价是邻签可能比旧档少显示一个字（旧档那一个字本来也是半透明的）。 */
+function fitRingLabels() {
+  const strip = canvasUI?.strip;
+  if (!strip) return;
+  for (const chip of strip.querySelectorAll('.mf-strip-chip')) {
+    const el = /** @type {HTMLElement} */ (chip);
+    if (!el.querySelector('.mf-strip-label')) continue;
+    fitChipLabel(el);
+  }
+}
+
+/** 切到第 idx 签（环绕安全；同签零动作）。@param {number} idx */
+function switchToIndex(idx) {
+  const docs = docTabs();
+  if (!docs.length) return;
+  const i = Math.min(docs.length - 1, Math.max(0, Math.round(idx)));
+  const d = docs[i];
+  if (!d || d.id === activeDocId()) return;
+  logEvent('card-switch', { via: 'ring', tab: d.id });
+  setActiveTab(d.id);
+}
+
+/** canvas 页同步：环标签重建（签名闸）+ 工具条态 + 小点指示器 + pane 收编 + 空态。 */
 function syncCanvasPage() {
   if (!canvasUI) return;
   const docs = docTabs();
   const activeId = activeDocId();
-  const sig = docs.map((d) => d.id).join('|') + '#' + (activeId || '');
+  const sig = docs.map((d) => d.id).join('|');
   if (canvasUI.strip.dataset.sig !== sig) {
     canvasUI.strip.dataset.sig = sig;
     canvasUI.strip.innerHTML = '';
     for (const d of docs) {
       const chip = document.createElement('button');
       chip.type = 'button';
-      chip.className = 'mf-strip-chip' + (d.id === activeId ? ' on' : '');
+      chip.className = 'mf-strip-chip';
       chip.dataset.tabId = d.id;
-      chip.textContent = d.label;
+      chip.setAttribute('role', 'tab');
+      const label = document.createElement('span');
+      label.className = 'mf-strip-label';
+      label.textContent = d.label;
+      chip.appendChild(label);
+      // 全名三处保留（对齐修正批：视觉上不再有「…」，但读屏/悬停仍拿得到全名）：
+      //   ① label.textContent = 全名（读屏直接读 DOM 文本，mask 只影响绘制）；
+      //   ② chip.title = 全名（桌面悬停 / 长按提示）；
+      //   ③ 触屏展开腿 = 点活签 `.is-expanded`（宽度解一档，超宽继续 mask 淡出）。
       chip.title = d.label;
       chip.addEventListener('click', () => {
+        if (chip.classList.contains('on')) {
+          // 活签再点 = 展开/收起全名（长标签专利；其余签点击一律换签）。
+          const open = !chip.classList.contains('is-expanded');
+          chip.classList.toggle('is-expanded', open);
+          fitRingLabels();          // 展开档另一档宽度 ⇒ 重新按整字收束（全名放得下就全显）
+          logEvent('tab-label-expand', { tab: d.id, open });
+          if (open) armLabelCollapse(chip);
+          return;
+        }
         logEvent('card-switch', { via: 'strip', tab: d.id });
         setActiveTab(d.id);
       });
       canvasUI.strip.appendChild(chip);
     }
-    // 活动 chip 滚入视野（切卡后一键可见）。
-    canvasUI.strip.querySelector('.mf-strip-chip.on')?.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
   }
-  syncStripFade();
+  // 活签的全名展开态不跨切签存活（换签即收，防宽签压邻签）。
+  for (const chip of canvasUI.strip.querySelectorAll('.mf-strip-chip.is-expanded')) {
+    if ((/** @type {HTMLElement} */ (chip)).dataset.tabId !== activeId) chip.classList.remove('is-expanded');
+  }
+  layoutRing();
+  syncDots();
+  // 位置读数仍留 sr-only live 区（小点是纯视觉，读屏靠这行播报「第几/共几」）。
   const idx = docs.findIndex((d) => d.id === activeId);
   const cnt = /** @type {HTMLElement|null} */ (canvasUI.toolbar.querySelector('.mf-cv-count'));
   if (cnt) cnt.textContent = docs.length > 1 && idx >= 0 ? `${idx + 1}/${docs.length}` : '';
-  // Canvas 改造批②⑤（2026-10-31 作者令）：工具条 = 左叉号 + 计数 + 右堆叠视角
-  // 钮；独立窗/步进钮退役（独立窗出口桌面保留；切卡走 chip/横滑/堆叠视角）。
+  // Canvas 改造批②⑤（2026-10-31 作者令）：工具条 = 左叉号 + 右堆叠视角钮
+  // （计数改 sr-only；档位读数下沉到底部小点指示器）。
   const stackBtn = /** @type {HTMLButtonElement|null} */ (canvasUI.toolbar.querySelector('.mf-cv-stack'));
   if (stackBtn) stackBtn.disabled = docs.length === 0;
   adoptActiveDoc();
@@ -783,26 +1254,288 @@ function syncCanvasPage() {
   canvasUI.strip.hidden = docs.length === 0;
   canvasUI.toolbar.hidden = docs.length === 0;
   canvasUI.host.hidden = docs.length === 0;
-  if (stackOpen) syncStackView();
+  if (stackOpen) syncDeck();
 }
 
-/** 标签条横向边缘渐隐门控（顶栏批② 2026-10-31）：内容横向溢出才挂 .fade
- *  （左右两端 28px mask 渐隐，chat.css .nf-wl-clip 同配方双侧版）；不溢出
- *  摘 mask 全清晰。chip 重建/横滚/视口变化三路都对账（签名闸零成本直过）。 */
-function syncStripFade() {
-  const strip = canvasUI?.strip;
-  if (!strip) return;
-  strip.classList.toggle('fade', strip.scrollWidth > strip.clientWidth + 1);
+/** 全名展开的自动收起定时（同一时刻至多一枚活签展开）。@type {number} */
+let labelCollapseTimer = 0;
+function armLabelCollapse(chip) {
+  clearTimeout(labelCollapseTimer);
+  labelCollapseTimer = window.setTimeout(() => {
+    chip.classList.remove('is-expanded');
+    fitRingLabels();     // 收回常态宽度 ⇒ 重按整字收束
+  }, 2600);
 }
 
-/** 堆叠视角开关态（批②⑤：手机端「堆叠态」= 全卡堆叠列表面，顶部显示标签数）。 */
+// ══ 底部小点指示器（作者令 2026-11-02 07:22 §三）════════════════════
+// 数量规则：n = 1 不显示；n ≥ 2 显示且最多 3 点（DOTS_MAX）。n > 3 时点**不滑动**
+// ——点数恒 3，序号归一映射到 0/1/2 三档，当前位置由「高亮点」表达（申报口径）。
+// 交互：见下方 bindDots 头注（长按门槛已退役，一上手即响应）。
+
+/** 标签序号 → 点位（n ≤ 3 一一对应；n > 3 三段归一）。@returns {number} */
+function dotBucket(idx, n) {
+  if (n <= DOTS_MAX) return Math.max(0, idx);
+  return Math.round((idx * (DOTS_MAX - 1)) / (n - 1));
+}
+
+/** 点位 → 该点的代表签序号（n > 3 时取该段首签；n ≤ 3 即本签）。@returns {number} */
+function dotIndex(bucket, n) {
+  if (n <= DOTS_MAX) return Math.min(bucket, n - 1);
+  return Math.round((bucket * (n - 1)) / (DOTS_MAX - 1));
+}
+
+/** 小点重绘（点数 + 高亮；点数变化才重建 DOM，其余只改类）。 */
+function syncDots() {
+  const dotsEl = canvasUI?.dots;
+  if (!dotsEl) return;
+  const docs = docTabs();
+  const n = docs.length;
+  const ai = Math.max(0, docs.findIndex((d) => d.id === activeDocId()));
+  const count = n < 2 ? 0 : Math.min(DOTS_MAX, n);
+  dotsEl.hidden = count === 0;
+  dotsEl.setAttribute('aria-hidden', count === 0 ? 'true' : 'false');
+  if (Number(dotsEl.dataset.count) !== count) {
+    dotsEl.dataset.count = String(count);
+    dotsEl.innerHTML = '';
+    for (let i = 0; i < count; i++) {
+      const dot = document.createElement('span');
+      dot.className = 'mf-dot';
+      dotsEl.appendChild(dot);
+    }
+  }
+  const on = dotBucket(ai, n);
+  [...dotsEl.querySelectorAll('.mf-dot')].forEach((el, i) => el.classList.toggle('on', i === on));
+  dotsEl.dataset.n = String(n);
+  dotsEl.dataset.idx = String(ai);
+}
+
+/** 触感反馈（有 vibrate API 才响；reduced-motion 不影响触感，仅关动效）。 */
+function hapticTap(ms = 8) {
+  try { navigator.vibrate?.(ms); } catch { /* 无 API / 被策略拒 */ }
+}
+
+/** 小点手势区（作者令 2026-11-02 21:47 §二「三点区手势化……不用长按才响应」）：
+ *  一上手即响应 —— 左右滑换签（快弹/位移双判据）、上滑进堆叠、下滑关标签
+ *  （作者 21:54 裁定：关标签零确认）、轻触点跳签。阈值常量见上方 DOT_* 注释。 */
+function bindDots(dotsEl) {
+  /** @type {{id: number, x0: number, y0: number, t0: number, lx: number, lt: number,
+   *          vx: number, axis: string|null, bucket: number}|null} */
+  let g = null;
+  const endGrip = () => dotsEl.classList.remove('is-grip');
+  dotsEl.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    const docs = docTabs();
+    if (!docs.length) return;      // 无文档卡 = 手势区无对象（空态另有空态面）
+    e.stopPropagation();          // 不惊动页面壳的边缘返回/切卡手势
+    // 点按落点必须**下手时**取：setPointerCapture 会把后续 pointer 事件整体
+    // 重定向到采集元素（pointerup.target 恒为 dotsEl，closest('.mf-dot') 恒
+    // null ⇒ 轻触跳签整条腿失效 —— 探针实证）。
+    // 其次，胶囊的 44px 热区是 ::before 伪元素（纵向把 26px 本体外扩），伪元素
+    // 参与父元素的命中 ⇒ 落在点上方的指针 target 是 .mf-dots 本身（closest 拿
+    // 不到点）。故 target 拿不到点时按**横坐标几何**兜底：取水平覆盖 x 的点。
+    const hitEl = /** @type {Element|null} */ (e.target instanceof Element ? e.target.closest('.mf-dot') : null);
+    const dots = [...dotsEl.querySelectorAll('.mf-dot')];
+    const bucket0 = hitEl ? dots.indexOf(hitEl) : dots.findIndex((d) => {
+      const r = d.getBoundingClientRect();
+      return e.clientX >= r.left - 3 && e.clientX <= r.right + 3;
+    });
+    g = {
+      id: e.pointerId, x0: e.clientX, y0: e.clientY, t0: performance.now(),
+      lx: e.clientX, lt: performance.now(), vx: 0,
+      axis: null, bucket: bucket0,
+    };
+    try { dotsEl.setPointerCapture(e.pointerId); } catch { /* 合成事件无 capture */ }
+  });
+  dotsEl.addEventListener('pointermove', (e) => {
+    if (!g || e.pointerId !== g.id) return;
+    const dx = e.clientX - g.x0;
+    const dy = e.clientY - g.y0;
+    // 末段速度 EMA（快弹判据用；普通位移腿不依赖它）。
+    const dt = Math.max(1, performance.now() - g.lt);
+    g.vx = 0.6 * g.vx + 0.4 * ((e.clientX - g.lx) / dt);
+    g.lx = e.clientX;
+    g.lt = performance.now();
+    if (!g.axis && (Math.abs(dx) > DOT_AXIS_PX || Math.abs(dy) > DOT_AXIS_PX)) {
+      g.axis = Math.abs(dx) >= Math.abs(dy) ? 'x' : 'y';
+      // 横划即放大态（不等长按 —— 「抓住了」的读感保留，零等待）。
+      if (g.axis === 'x') dotsEl.classList.add('is-grip');
+    }
+    if (g.axis !== 'x') return;
+    // 横划**不在拖动中逐签换**（一次滑 = 一张，松手提交）：早期实现按
+    // dx/26px 步距在「下手时基准」上连跳，52px 的快扫会一次翻两张 —— 与
+    // 「左右滑 = 上一张 / 下一张」的语义不符（探针实证：52px 滑出落在两张
+    // 之后）。拖动中只维持放大态（is-grip）作「抓住了」的临界反馈。
+  });
+  const finish = (e, cancelled) => {
+    if (!g || e.pointerId !== g.id) return;
+    const { axis, bucket, vx } = g;
+    const dx = e.clientX - g.x0;
+    const dy = e.clientY - g.y0;
+    g = null;
+    endGrip();
+    if (cancelled) return;
+    // 轻触（未过轴锁）：落点小点 = 跳到该点对应签。
+    if (!axis) {
+      if (bucket >= 0) {
+        switchToIndex(dotIndex(bucket, docTabs().length));
+        hapticTap(6);
+      }
+      return;
+    }
+    if (axis === 'x') {
+      // 横向提交 = 位移阈 或 快弹（短位移 + 末段速度）。
+      const hit = Math.abs(dx) >= DOT_SWIPE_X_PX ||
+        (Math.abs(dx) >= DOT_FLICK_X_PX && Math.abs(vx) >= DOT_FLICK_V_PX_MS);
+      if (hit && docTabs().length > 1) {
+        logEvent('dots-swipe-x', { dx: Math.round(dx), dir: dx < 0 ? 1 : -1 });
+        switchDocCard(dx < 0 ? 1 : -1);
+        hapticTap(6);
+      }
+      return;
+    }
+    // 纵向：上滑进堆叠 / 下滑关当前标签（关标签 = closeTab 一发，零确认 ——
+    // 作者 21:54 裁定「只是关闭标签页而已」；语义 = 关页签不是删文档）。
+    if (dy <= -DOT_SWIPE_Y_PX) {
+      if (!stackOpen) {
+        logEvent('dots-swipe-up', { dy: Math.round(dy) });
+        toggleDeck(true);
+        hapticTap(8);
+      }
+    } else if (dy >= DOT_SWIPE_Y_PX) {
+      logEvent('dots-swipe-down', { dy: Math.round(dy) });
+      closeCard();
+      hapticTap(12);
+    }
+  };
+  dotsEl.addEventListener('pointerup', (e) => finish(e, false));
+  dotsEl.addEventListener('pointercancel', (e) => finish(e, true));
+  // 触屏长按的系统 contextmenu 一律吞掉（手势区自己的语义，不弹原生菜单）。
+  dotsEl.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+
+// ══ 堆叠视角（iOS app switcher 形态；作者令 2026-11-02 21:47 §三）════════
+// 以作者附图（iPhone app switcher 实拍）为设计基准：
+//   · **中央卡最大最清晰**，左右相邻卡**被裁切只露一部分**（横列，露约 1/3 卡身）；
+//   · **越往边越暗**（邻卡 brightness 压暗 + 减淡 + 模糊，连续曲线）；
+//   · **背景重度模糊**（浮层 backdrop blur 重档，阅读面在背后化开）；
+//   · **每张卡有真实内容快照**（不是空白框也不是标题占位）——快照管线**单源复用
+//     桌面 canvas.js 的 deckSnapshotNode 内核**（md/代码/html/图片/pdf 各自的
+//     真渲染面克隆），本文件只做缓存与挂载；内容指纹（canvasSnapshotStamp）
+//     命中即不重截，「内容变了再重截」由指纹失配兜底 —— 作者令「同一张卡不
+//     重复截图，内容变了再重截」。
+//   · 卡上方有可辨识标识（类型图标 + 标题 + ✕，参考图的「图标 + 名字」档）。
+// 交互（与阅读面语义连续）：
+//   · 左右拖 = 换中央卡（跟手 + 松手吸附/回弹）；
+//   · 点中央卡 = 收面回阅读；点邻卡 = 换入中央；点 ✕ = 关该标签；
+//   · 纵拖下滑 = 关当前标签（零确认，作者 21:54 裁定）；上滑 = 收面回阅读；
+//   · 显式出口 = 头行 ✕ / Esc（可点等价入口，Apple HIG 硬要求）。
+const DECK_VISIBLE = 2;
+
+/** 堆叠卡视图开关态。 */
 let stackOpen = false;
-/** @type {{view: HTMLElement, list: HTMLElement, count: HTMLElement}|null} */
-let stackUI = null;
+/** @type {{view: HTMLElement, stage: HTMLElement, count: HTMLElement,
+ *          cards: Map<string, HTMLElement>}|null} */
+let deckUI = null;
+/** 拖动中的临时位移（px）：正值方向由轴决定 —— 横拖 = 卡列平移（换中央卡），
+ *  纵拖 = 中央卡下坠（关闭预览）/ 整列上移（收面预览）。 */
+let deckDragDx = 0;
+let deckDragDy = 0;
+/** 卡内 ✕ / 点卡换入的 pointerup 抑制窗（跟手拖过后松手不触发 click）。 */
+let deckDragEndedAt = 0;
 
-/** 堆叠视角面构建（一次）：顶部「N 张文档」计数行 + 全卡堆叠列表（活动卡高亮；
- *  点卡换入并收面；✕/下滑/Esc 收面）。毛玻璃浮层面，锚 canvas 页内。 */
-function buildStackView(wrap) {
+// ── 快照缓存（作者令「同一张卡不重复截图，内容变了再重截」）────────────
+// tabId → { node, srcW, kind, stamp }。stamp = canvas.js canvasSnapshotStamp()
+// 的内容指纹：命中即挂缓存节点（零重截）；失配（内容/类型变了）才走重截。
+// 缓存不随堆叠面关闭清空（卡在、快照在），由指纹失配驱动刷新 —— 面每次开合
+// 都重截的话，连开连关就是纯浪费（作者令的另一半「同一张卡不重复截图」）。
+/** @type {Map<string, {node: Element, srcW: number, kind: string, stamp: string}>} */
+const deckSnapCache = new Map();
+/** 挂载中标记（防同卡并发重截；rAF 批处理用）。 */
+const deckSnapPending = new Set();
+/** 快照构建读数探针（性能验收 I9 用；window 只读）。 */
+let deckSnapLastMs = 0;
+/** 累计真建次数（缓存命中不计数）—— 「内容变了才重截」的机械判据。 */
+let deckSnapBuilds = 0;
+/** 单次构建的最长耗时（掉帧面读数）。 */
+let deckSnapMaxMs = 0;
+
+/** 建一张卡的快照并挂进 thumb 槽（mock 先在，真快照好了就位替换 —— 不闪白）。
+ *  失败（不可克隆腿）= 留 mock，不清空：mock 也是桌面 deckThumbMock 单源。 */
+function deckMountSnapshot(id, card) {
+  if (deckSnapPending.has(id)) return;
+  const thumb = card.querySelector('.mf-deck-thumb');
+  if (!thumb) return;
+  const stamp = canvasSnapshotStamp(id);
+  const cached = deckSnapCache.get(id);
+  if (cached && cached.stamp === stamp && cached.node.isConnected) return;
+  if (!stamp) { deckSnapCache.delete(id); return; }   // 不可克隆面 → mock 兜底
+  deckSnapPending.add(id);
+  // rAF 卸载到下一帧：开面当帧只做布局，快照构建（cloneNode 重活）不挤首帧。
+  requestAnimationFrame(() => {
+    deckSnapPending.delete(id);
+    if (!stackOpen || !deckUI || !docTabs().some((d) => d.id === id)) return;
+    const t0 = performance.now();
+    let snap = null;
+    try {
+      snap = canvasSnapshotFor(id, deckCardW());
+    } catch { snap = null; }
+    deckSnapLastMs = performance.now() - t0;
+    deckSnapBuilds++;
+    if (deckSnapLastMs > deckSnapMaxMs) deckSnapMaxMs = deckSnapLastMs;
+    if (!snap || !snap.node) return;                 // 不可克隆 → mock 留守
+    deckSnapCache.set(id, { node: snap.node, srcW: snap.srcW, kind: snap.kind, stamp });
+    const slot = deckUI.cards.get(id)?.querySelector('.mf-deck-thumb');
+    if (!slot) return;
+    mountDeckSnapNode(slot, snap.node, snap.srcW, snap.kind);
+  });
+}
+
+/** 快照节点挂载（桌面 .card-snap 同语言：原宽渲染 + scale 缩进槽，origin 左上，
+ *  只读）。img 腿 = object-fit contain 直排（同桌面 card-snap-img 档）。 */
+function mountDeckSnapNode(slot, node, srcW, kind) {
+  const wrap = document.createElement('div');
+  wrap.className = 'mf-deck-snap';
+  wrap.dataset.kind = kind;
+  const inner = document.createElement('div');
+  inner.className = 'mf-deck-snap-inner';
+  const slotW = Math.max(1, slot.clientWidth || (deckUI ? deckCardW() : 320));
+  if (kind === 'img') {
+    /** @type {HTMLElement} */ (node).classList.add('mf-deck-snap-img');
+    /* 图片快照腿的几何单源 = 槽盒（CSS `.mf-deck-snap[data-kind="img"]
+       .mf-deck-snap-inner { inset:0 }` ⇒ img 的 100%/100% + object-fit:contain
+       有确定盒可解 = 按槽宽等比铺满、高受限时居中留白）。
+       但克隆节点带的是**阅读面当时的内联变换**（viewers/image.js 的
+       `translate(tx,ty) scale(s)`）—— 那是「按阅读视口算的适屏比」，原样带进
+       卡槽就是作者实拍的「缩略图缩成中间一小块四周全白」（实测渲染宽 = 槽宽
+       的 0.349 = 旧 fit 的 s 值，不是槽盒几何）。故此处必须掐掉内联几何：
+       卡面是**只读缩放面**，视觉尺寸只由槽盒决定，与源视口的缩放态无关。 */
+    const imgEl = /** @type {HTMLElement} */ (node);
+    imgEl.style.transform = '';
+    imgEl.style.transformOrigin = '';
+    imgEl.style.width = '';
+    imgEl.style.height = '';
+    inner.appendChild(node);
+  } else {
+    const k = srcW > 0 ? slotW / srcW : 1;
+    inner.style.width = `${srcW}px`;
+    inner.style.transform = `scale(${k.toFixed(4)})`;
+    inner.appendChild(node);
+  }
+  wrap.appendChild(inner);
+  slot.replaceChildren(wrap);
+  slot.classList.add('has-snap');
+}
+
+/** 中央卡宽（快照 srcW 与拖拽几何共用一个口径）。@returns {number} */
+function deckCardW() {
+  const stage = deckUI?.stage;
+  const w = stage?.clientWidth || (canvasUI?.host?.clientWidth ?? window.innerWidth);
+  return Math.max(240, Math.round(w * DECK_CARD_W_RATIO));
+}
+
+/** 卡片翻页视图构建（一次）：头行「N 张文档」+ ✕，卡叠舞台（.mf-deck）。
+ *  浮层宿主仍用 .mf-stack-view 类名（开合动画/工具条让位选择器零改）。 */
+function buildDeckView(wrap) {
   const view = document.createElement('div');
   view.className = 'mf-stack-view';
   view.hidden = true;
@@ -813,108 +1546,288 @@ function buildStackView(wrap) {
   const x = document.createElement('button');
   x.type = 'button';
   x.className = 'mf-stack-x g2-fab';
-  x.title = tt('关闭堆叠视角', 'Close stacked view');
+  x.title = tt('返回标签视图', 'Back to tabs');
   x.setAttribute('aria-label', x.title);
   x.innerHTML = '<i data-lucide="x"></i>';
-  x.addEventListener('click', () => toggleStackView(false));
+  x.addEventListener('click', () => toggleDeck(false));
   head.append(count, x);
-  const list = document.createElement('div');
-  list.className = 'mf-stack-list';
-  view.append(head, list);
+  const stage = document.createElement('div');
+  stage.className = 'mf-deck';
+  view.append(head, stage);
   wrap.appendChild(view);
-  // 下滑收面（浮面自身纵滑手势；横滑无义不接管）。
-  let dy0 = null;
-  view.addEventListener('pointerdown', (e) => { dy0 = e.clientY; });
-  view.addEventListener('pointerup', (e) => {
-    if (dy0 === null) return;
-    const dy = e.clientY - dy0;
-    dy0 = null;
-    if (dy > 56) toggleStackView(false);
-  });
+  bindDeckSwipe(stage);
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && stackOpen) toggleStackView(false);
+    if (e.key === 'Escape' && stackOpen) toggleDeck(false);
   });
-  stackUI = { view, list, count };
+  deckUI = { view, stage, count, cards: new Map() };
+  if (typeof lucide !== 'undefined') createIconsIn(head);
   return view;
 }
 
-/** 堆叠视角开合 + 列表同步（open 省略 = 翻转）。
- *  顶栏批④（2026-10-31 作者令「展开动画与电脑端类似」）：开合不再瞬时
- *  display 切换——开 = 摘 hidden → 回流 → .open（浮面淡入 + 卡列自堆叠位
- *  逐张弹簧升起，CSS .open/.mf-stack-card stagger 承载）；收 = 摘 .open 卡列
- *  即时回落（.closing 清 stagger 递延，不拖尾）→ 淡出后 hidden。 */
-function toggleStackView(open) {
-  if (!stackUI) return;
+/** 堆叠面拖拽（iOS app switcher 手势；轴锁 + 分轴语义）：
+ *  · 横轴 = 卡列跟手平移，松手过 DECK_SWITCH_PX 换中央卡，不过阈回弹；
+ *  · 纵轴下 = 中央卡跟手坠落 + 渐淡，松手过 DECK_SWIPE_Y_PX 关该标签（零确认）；
+ *  · 纵轴上 = 整列上移预览，松手过阈收面回阅读（与阅读面「上滑进堆叠」互逆）。 */
+function bindDeckSwipe(stage) {
+  /** @type {{id: number, x0: number, y0: number, axis: string|null}|null} */
+  let g = null;
+  stage.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (performance.now() < deckDragEndedAt) return;  // 拖后松手的 click 抑制窗内不再武装
+    const t = /** @type {Element} */ (e.target);
+    if (t.closest('button')) return;         // 卡内 ✕ 不参与翻页
+    g = { id: e.pointerId, x0: e.clientX, y0: e.clientY, axis: null };
+    // capture 延到轴锁后才抢：一上手就 setPointerCapture 会把 pointerup 整体
+    // 重定向到舞台 ⇒ 卡面（含卡内 ✕ / 点卡换入）的 click 永不触发（探针实证）。
+  });
+  stage.addEventListener('pointermove', (e) => {
+    if (!g || e.pointerId !== g.id) return;
+    const dx = e.clientX - g.x0;
+    const dy = e.clientY - g.y0;
+    if (!g.axis && (Math.abs(dx) > DECK_AXIS_PX || Math.abs(dy) > DECK_AXIS_PX)) {
+      g.axis = Math.abs(dx) >= Math.abs(dy) ? 'x' : 'y';
+      if (g.axis) {
+        try { stage.setPointerCapture(e.pointerId); } catch { /* 合成事件无 capture */ }
+        stage.dataset.dragging = '1';             // CSS 关过渡（直写变量即跟手）
+      }
+    }
+    if (!g.axis) return;
+    if (g.axis === 'x') {
+      deckDragDx = dx;
+      deckDragDy = 0;
+    } else {
+      deckDragDy = dy;
+      deckDragDx = 0;
+    }
+    layoutDeck();
+  });
+  const finish = (e, cancelled) => {
+    if (!g || e.pointerId !== g.id) return;
+    const { axis } = g;
+    const dx = e.clientX - g.x0;
+    const dy = e.clientY - g.y0;
+    g = null;
+    deckDragDx = 0;
+    deckDragDy = 0;
+    delete stage.dataset.dragging;            // 回过渡档：回弹/落位走弹簧
+    // 只有**真的拖过**（轴锁建立过）才吞后续 click：一次纯点按没有轴 ⇒ click 必须
+    // 照常送达卡面（否则「点邻卡换入 / 点中央卡收面」两条可点等价入口全废 ——
+    // 点按的 pointerup 也会把 click 抑制窗打开，click 紧跟着就被吞掉）。
+    if (axis) deckDragEndedAt = performance.now() + 350;
+    if (cancelled) { layoutDeck(); return; }
+    if (axis === 'x') {
+      // 横向提交：左滑（dx<0）= 下一张；右滑 = 上一张。吸附 = 落到该签。
+      if (Math.abs(dx) > DECK_SWITCH_PX && docTabs().length > 1) {
+        logEvent('deck-page', { dir: dx < 0 ? 1 : -1 });
+        switchDocCard(dx < 0 ? 1 : -1);
+        hapticTap(6);
+      }
+    } else if (axis === 'y') {
+      if (dy >= DECK_SWIPE_Y_PX) {
+        // 下滑 = 关当前标签（零确认 —— 作者 21:54 裁定「只是关闭标签页而已」）。
+        logEvent('deck-close', { via: 'swipe-down' });
+        closeCard();
+        hapticTap(12);
+      } else if (dy <= -DECK_SWIPE_Y_PX) {
+        // 上滑 = 收面回阅读（与阅读面「上滑进堆叠」互逆成环）。
+        logEvent('deck-exit', { via: 'swipe-up' });
+        toggleDeck(false);
+        return;                                // 面已收，无需回弹排版
+      }
+    }
+    layoutDeck();                             // 回弹/落位（过阈时活动签已变）
+  };
+  stage.addEventListener('pointerup', (e) => finish(e, false));
+  stage.addEventListener('pointercancel', (e) => finish(e, true));
+}
+
+/** 单张卡面（图标 + 标题 + ✕ + **真实内容快照**）。
+ *  快照先在 mock（桌面 deckThumbMock 单源，立即有面），rAF 里换真快照。 */
+function buildDeckCard(doc) {
+  const card = document.createElement('div');
+  card.className = 'mf-deck-card';
+  card.dataset.tabId = doc.id;
+  card.setAttribute('role', 'tab');
+  const face = deckFaceOf({ id: doc.id, title: doc.label });
+  const top = document.createElement('div');
+  top.className = 'mf-deck-top';
+  const icon = document.createElement('span');
+  icon.className = 'mf-deck-icon';
+  icon.innerHTML = face.icon;
+  const title = document.createElement('span');
+  title.className = 'mf-deck-title';
+  title.textContent = doc.label;
+  title.title = doc.label;
+  const x = document.createElement('button');
+  x.type = 'button';
+  x.className = 'mf-deck-x';
+  x.title = tt('关闭卡片', 'Close card');
+  x.setAttribute('aria-label', `${tt('关闭', 'Close')} ${doc.label}`);
+  x.innerHTML = '<i data-lucide="x"></i>';
+  x.addEventListener('pointerdown', (e) => e.stopPropagation());
+  x.addEventListener('click', (e) => {
+    e.stopPropagation();
+    logEvent('card-close', { tab: doc.id, via: 'deck' });
+    closeTab(doc.id);
+    syncCanvasPage();
+  });
+  top.append(icon, title, x);
+  const thumb = document.createElement('div');
+  thumb.className = 'mf-deck-thumb';
+  thumb.innerHTML = face.thumb;
+  card.append(top, thumb);
+  /* 点击语义（iOS app switcher 同构）：
+     · 邻卡（露出的那一段）= 换入中央（不换视图）；
+     · 中央卡（= 活动签）= 收面回阅读。 */
+  card.addEventListener('click', () => {
+    if (performance.now() < deckDragEndedAt) return;   // 跟手拖过 = 不是点击
+    if (doc.id !== activeDocId()) {
+      logEvent('card-switch', { via: 'deck', tab: doc.id });
+      setActiveTab(doc.id);
+      return;
+    }
+    logEvent('deck-exit', { via: 'front-card' });
+    toggleDeck(false);
+  });
+  return card;
+}
+
+/** 卡列位姿对账（唯一几何源；CSS 只消费 --dtx/--dty/--dsc/--dop/--ddark/--dblur）。
+ *  iOS app switcher 形态：中央卡（|k|=0）满幅清晰；邻卡（|k|=1）横移露出约
+ *  1/3、缩径、压暗、轻模糊；第二邻（|k|=2）更远更暗；再远（|k|>2）隐藏
+ *  （class .is-far，op 已压到近 0 —— 留在列里只为换卡连续性）。
+ *  |k| 是环距（整数），故位姿是**三档表**而非插值式；越靠边越暗越糊由档位
+ *  单调性保证，拖动中的跟手连续量只来自 deckDragDx/deckDragDy（不是几何插值）：
+ *    |k|   scale   opacity  brightness  blur
+ *    0     1.000   1.000    1.000       0px     ← 中央
+ *    1     0.840   0.920    0.620       1.4px   ← 邻卡
+ *    2     0.720   0.520    0.340       3.2px   ← 第二邻
+ */
+function layoutDeck() {
+  if (!deckUI) return;
+  const docs = docTabs();
+  if (!docs.length) return;
+  const ai = Math.max(0, docs.findIndex((d) => d.id === activeDocId()));
+  const cardW = deckCardW();
+  const step = cardW * DECK_SIDE_STEP_RATIO;
+  for (const [id, card] of deckUI.cards) {
+    const i = docs.findIndex((d) => d.id === id);
+    if (i < 0) continue;
+    const k = ringOffset(i - ai, docs.length);
+    const ak = Math.abs(k);
+    const scale = ak === 0 ? 1 : (ak === 1 ? DECK_SCALE_SIDE : DECK_SCALE_FAR);
+    const op = ak === 0 ? 1 : ak === 1 ? 0.92 : 0.52;
+    const dark = ak === 0 ? 1 : ak === 1 ? 0.62 : 0.34;
+    const blur = ak === 0 ? 0 : ak === 1 ? 1.4 : 3.2;
+    // 中央卡：纵拖跟手（下坠 = 关闭预览 / 上移 = 收面预览）；
+    // 两侧卡：横拖时整列跟手（换卡跟手感），纵拖只吃 35%（视差，不跟着飞出去）。
+    const dtx = k * step + deckDragDx;
+    const dty = ak === 0 ? deckDragDy * 0.9 : deckDragDy * 0.35;
+    card.style.setProperty('--dtx', `${dtx.toFixed(1)}px`);
+    card.style.setProperty('--dty', `${dty.toFixed(1)}px`);
+    card.style.setProperty('--dsc', scale.toFixed(3));
+    card.style.setProperty('--dop', String(op));
+    card.style.setProperty('--ddark', dark.toFixed(2));
+    card.style.setProperty('--dblur', `${blur.toFixed(2)}px`);
+    // 中央卡拖动中随下坠/上移淡出（关闭/收面的跟手反馈）。
+    if (ak === 0 && deckDragDy !== 0) {
+      const fade = Math.max(0.35, 1 - Math.abs(deckDragDy) / 420);
+      card.style.setProperty('--dop', fade.toFixed(3));
+    }
+    card.style.zIndex = String(60 - ak);
+    card.classList.toggle('on', ak === 0);
+    card.classList.toggle('is-far', ak > DECK_VISIBLE);
+    card.tabIndex = ak === 0 ? 0 : -1;
+    card.setAttribute('aria-selected', ak === 0 ? 'true' : 'false');
+  }
+}
+
+/** 卡列重建（签名闸 = 签集）；点卡换入、✕ 关卡、拖拽换卡/关卡三腿都在此对账。 */
+function syncDeck() {
+  if (!deckUI || !stackOpen) return;
+  const docs = docTabs();
+  deckUI.count.textContent = docs.length ? tt(`${docs.length} 张文档`, `${docs.length} cards`) : '';
+  deckUI.count.dataset.n = String(docs.length);
+  const sig = docs.map((d) => d.id).join('|');
+  if (deckUI.stage.dataset.sig !== sig) {
+    deckUI.stage.dataset.sig = sig;
+    deckUI.stage.innerHTML = '';
+    deckUI.cards.clear();
+    for (const d of docs) {
+      const card = buildDeckCard(d);
+      deckUI.stage.appendChild(card);
+      deckUI.cards.set(d.id, card);
+    }
+  }
+  // 卡集变了 ⇒ 缓存里已无主稿的条目清掉（防 Map 无界增长）
+  for (const id of [...deckSnapCache.keys()]) {
+    if (!docs.some((d) => d.id === id)) deckSnapCache.delete(id);
+  }
+  layoutDeck();
+  // 快照：先给中央卡与两侧卡（可视窗）挂，深处的分帧挂（作者令「不阻塞主线程」）。
+  const ordered = docs
+    .map((d) => ({ id: d.id, ak: Math.abs(ringOffset(docs.findIndex((x) => x.id === d.id) - Math.max(0, docs.findIndex((x) => x.id === activeDocId())), docs.length)) }))
+    .filter((o) => o.ak <= DECK_VISIBLE)
+    .sort((a, b) => a.ak - b.ak);
+  for (const o of ordered) {
+    const card = deckUI.cards.get(o.id);
+    if (card) deckMountSnapshot(o.id, card);
+  }
+}
+
+/** 堆叠卡视图开合（open 省略 = 翻转）。开 = 摘 hidden → 建卡 → 回流 → .open
+ *  （浮面淡入 + 卡叠逐张自落位升起，CSS 承接）；收 = 摘 .open 即时回落 →
+ *  淡出后 hidden（.closing 清零递延不拖尾）。 */
+function toggleDeck(open) {
+  if (!deckUI) return;
   const next = open === undefined ? !stackOpen : !!open;
   if (next === stackOpen) return;
   stackOpen = next;
+  deckDragDx = 0;
+  deckDragDy = 0;
   logEvent('canvas-stack-' + (next ? 'open' : 'close'));
-  const view = stackUI.view;
+  const view = deckUI.view;
   if (next) {
     view.hidden = false;
     view.classList.remove('closing');
-    syncStackView();                   // 先建列（卡生于收合落位态，:not(.open) 初始样式）
-    void view.offsetWidth;             // 回流：.open 自初始态（opacity 0/卡落位）起播
-    view.classList.add('open');        // 后开闸：stagger 从落位态逐张归位（建列在闸前 = 中段帧可取证）
+    syncDeck();                        // 先建卡（卡生于收合落位态，:not(.open) 初始样式）
+    void view.offsetWidth;             // 回流：.open 自初始态起播
+    view.classList.add('open');
   } else {
     view.classList.remove('open');
-    view.classList.add('closing');     // 收面零递延：卡列即时回落不逐张拖尾
+    view.classList.add('closing');
     setTimeout(() => {
       if (!stackOpen) { view.hidden = true; view.classList.remove('closing'); }
     }, 200);
   }
+  syncCanvasPage();                    // 工具条让位/计数对账（:has 选择器读 hidden 态）
 }
 
-/** 堆叠列表重建（签名闸同 chip 条纪律）：活动卡高亮，点卡 = 换入 + 收面。 */
-function syncStackView() {
-  if (!stackUI || !stackOpen) return;
-  const docs = docTabs();
-  const activeId = activeDocId();
-  stackUI.count.textContent = docs.length ? `${docs.length} 张文档` : '';
-  const sig = docs.map((d) => d.id).join('|') + '#' + (activeId || '');
-  if (stackUI.list.dataset.sig === sig) {
-    stackUI.list.querySelectorAll('.mf-stack-card').forEach((el) => {
-      el.classList.toggle('on', (/** @type {HTMLElement} */ (el)).dataset.tabId === activeId);
-    });
-    return;
-  }
-  stackUI.list.dataset.sig = sig;
-  stackUI.list.innerHTML = '';
-  docs.forEach((d, i) => {
-    const card = document.createElement('button');
-    card.type = 'button';
-    card.className = 'mf-stack-card' + (d.id === activeId ? ' on' : '');
-    card.dataset.tabId = d.id;
-    const num = document.createElement('span');
-    num.className = 'mf-stack-num';
-    num.textContent = String(i + 1);
-    const label = document.createElement('span');
-    label.className = 'mf-stack-label';
-    label.textContent = d.label;
-    card.append(num, label);
-    card.addEventListener('click', () => {
-      logEvent('card-switch', { via: 'stack-view', tab: d.id });
-      if (d.id !== activeDocId()) setActiveTab(d.id);
-      toggleStackView(false);
-    });
-    stackUI.list.appendChild(card);
-  });
-}
-
-/** canvas 页内容臂构建（一次；chip 条 + 工具条 + 文档区 + 空态 + 堆叠视角）。
- *  Canvas 改造批②⑤（2026-10-31 作者令）：工具条换代 = 左叉号（液态玻璃悬浮
- *  钮）+ 中部计数 + 右堆叠视角钮（.g2-fab 复用液体玻璃 v2 材质，零新造）。
- *  退役：‹ › 步进（chip/横滑/堆叠视角三条换卡腿已足）、独立窗钮（批⑤）。 */
+/** canvas 页内容臂构建（一次；环标签带 + 工具条 + 文档区 + 空态 + 小点 +
+ *  卡叠视图）。Canvas 改造批②⑤（2026-10-31 作者令）：工具条换代 = 左叉号
+ *  （液态玻璃悬浮钮）+ 右堆叠视角钮（.g2-fab 复用液体玻璃 v2 材质，零新造）。
+ *  标签栏重做批（2026-11-02 07:22 作者令）：
+ *   ① 两颗钮图标修复 —— toolbar 挂 section 根（body.parentElement），图标替换
+ *      必须对它单独跑一次 createIconsIn（修前只跑 wrap 子树 ⇒ 两钮永远空圆）；
+ *   ② 标签条 = 常驻展开的横向圆环（位姿变量由 layoutRing 写），计数降为
+ *      sr-only（档位读数下沉到底部小点指示器）；
+ *   ③ 底部小点指示器 = 内容区底部居中（不压 dock）——host 之后的独立行；
+ *   ④ 右上堆叠钮 → 卡叠翻页视图（.mf-stack-view 宿主 + .mf-deck 卡叠）。
+ *  退役：‹ › 步进、独立窗钮（批⑤）、堆叠列表（本批改卡叠）。 */
 function buildCanvasPage(body) {
   const wrap = document.createElement('div');
   wrap.className = 'mf-canvas-page';
   const strip = document.createElement('div');
-  strip.className = 'mf-strip';
+  // 零底带类 = design-system.css 单源（透传悬浮批 2026-11-03）：环带离流成
+  // 覆盖层（几何零变化：签 top:40 / 高 72 不变），带本体零视觉 + 手势落穿
+  // （pointer-events:none，签本体自接事件）—— 滚动正文从签底下穿过。
+  strip.className = 'mf-strip ds-chrome-band';
   strip.setAttribute('role', 'tablist');
   strip.setAttribute('aria-label', tt('文档卡片', 'Document cards'));
 
   const toolbar = document.createElement('div');
-  toolbar.className = 'mf-cv-toolbar';
+  // 零底带类同上（与页头带 / 聊天根双钮带同一族）。
+  toolbar.className = 'mf-cv-toolbar ds-chrome-band';
   const close = document.createElement('button');
   close.type = 'button';
   close.className = 'mf-cv-close g2-fab';
@@ -927,15 +1840,29 @@ function buildCanvasPage(body) {
   const stack = document.createElement('button');
   stack.type = 'button';
   stack.className = 'mf-cv-stack g2-fab';
-  stack.title = tt('堆叠视角', 'Stacked view');
-  stack.setAttribute('aria-label', tt('堆叠视角', 'Stacked view'));
+  stack.title = tt('堆叠卡视图', 'Stacked cards');
+  stack.setAttribute('aria-label', tt('堆叠卡视图', 'Stacked cards'));
   stack.innerHTML = '<i data-lucide="layers"></i>';
-  stack.addEventListener('click', () => { logEvent('canvas-stack-toggle'); toggleStackView(); });
+  stack.addEventListener('click', () => { logEvent('canvas-stack-toggle'); toggleDeck(); });
   toolbar.append(close, count, stack);
 
   const host = document.createElement('div');
   host.className = 'mf-cv-host';
   bindDocSwipe(host);
+  bindStripSwipe(strip);
+  /* 整字收束的**稳态自校**（方案 C 落地批 2026-11-06）：切签瞬间签的 max-width
+     正在 220ms 过渡里，`chipInnerWidth` 直读到的是过渡起点档（比目标窄一档）。
+     过渡一落定就再收一次 —— 稳态恒落在整字边界，且**不碰过渡**（本腿只读）。
+     代价只有 220ms 内可能早收一个字（旧档那一个字本来也是半透明的边缘字）。 */
+  strip.addEventListener('transitionend', (ev) => {
+    if (/** @type {TransitionEvent} */ (ev).propertyName === 'max-width') fitRingLabels();
+  });
+  const dots = document.createElement('div');
+  dots.className = 'mf-dots';
+  dots.hidden = true;
+  dots.setAttribute('role', 'group');
+  dots.setAttribute('aria-label', tt('卡片位置', 'Card position'));
+  bindDots(dots);
   const empty = document.createElement('div');
   empty.className = 'mf-cv-empty';
   const eIcon = document.createElement('i');
@@ -947,18 +1874,156 @@ function buildCanvasPage(body) {
   eSub.className = 'mf-cv-empty-sub';
   eSub.textContent = tt('在聊天里打开文件或文档后会出现在这里', 'Documents opened from chat appear here');
   empty.append(eIcon, eTitle, eSub);
-  const stackView = buildStackView(wrap);
-  wrap.append(strip, host, empty);
+  const stackView = buildDeckView(wrap);
+  wrap.append(strip, host, dots, empty);
   body.appendChild(wrap);
   // 悬浮钮统一批：工具条 = 页面悬浮 chrome 带控件 —— 挂 section 根（与页头带同
-  // 定位上下文，top:16+safe 落位），mf-canvas-page 只吃 chip 条/文档区/空态。
+  // 定位上下文，top:16+safe 落位），mf-canvas-page 只吃环带/文档区/小点/空态。
   body.parentElement?.appendChild(toolbar);
-  canvasUI = { strip, toolbar, host, empty };
-  // 顶栏批②：标签条渐隐门控的横滚/视口两路对账（chip 重建路在 syncCanvasPage）。
-  strip.addEventListener('scroll', syncStripFade, { passive: true });
-  window.addEventListener('resize', syncStripFade);
-  if (typeof lucide !== 'undefined') createIconsIn(wrap);
+  canvasUI = { strip, toolbar, host, empty, dots };
+  // 标签栏重做批①：图标替换覆盖到 toolbobar 子树（根因修复 —— 修前只 createIconsIn(wrap)，
+  // 而 ✕/堆叠两钮在 toolbar 内、wrap 之外 ⇒ 永远停在 <i data-lucide>）。
+  if (typeof lucide !== 'undefined') {
+    createIconsIn(wrap);
+    createIconsIn(toolbar);
+  }
+  // 视口变化：环带渐隐/小点位姿均为纯 CSS + 变量，无需重算；补小点计数对账，
+  // 并按新可用宽重跑中签整字收束（字体/内衬不变时内联 maxWidth 数值不变，幂等）。
+  window.addEventListener('resize', () => { syncDots(); fitRingLabels(); });
+  // 字体后到（网络字体 / 首帧 fallback 度量不同）⇒ 重跑一次收束，避免按 fallback
+  // 字体算出的截断点。document.fonts 缺失（老 WebView）则跳过，无副作用。
+  document.fonts?.ready?.then(() => { fitRingLabels(); }).catch(() => {});
   void stackView;
+}
+
+// ══ 顶部环签横滑切签（ui-final-four ②；作者令 2026-11-04 13:04 逐字
+// 「把canvas顶部的标签 支持左右滑的手势现在也没了」）══════════════════════
+// 史检（本腿第一步，结论先行）：签条**从未**有过切签手势 —— 全史（git log -60
+// 逐版 navController.js）对 `.mf-strip` / `.mf-strip-chip` 的 pointer 绑定命中数
+// 恒为 0（chip 只绑 click）；切卡横滑一直是**内容区**那条腿（bindDocSwipe，
+// dc7c965bb 引入，至今在场）。作者读到的「没了」= 签条横拖**响应面退化**：
+// 9a992ea68（2026-11-02 08:39 标签栏重做）把签条从 in-flow `overflow-x:auto`
+// 签行（横拖 = 原生横滚）改成离流覆盖带（overflow:visible + 带 pointer-events:
+// none + 签 touch-action:manipulation）⇒ 横拖在签上零响应、零位移、零切签。
+// 故本腿 = **加法**：只给签本体加横滑切签（内容是环式的既有语义一字不动 ——
+// tests/mobile-canvas-sheet.spec.mjs T3 钉死）。判据三条：
+//   ① 横滑真的切签（setActiveTab → syncCanvasPage；非「整段禁切」凑绿）；
+//   ② 端点**非环式**：首/尾越界一律阻尼回弹，active 不变、不越界、不闪白；
+//   ③ 纵拖一律不认领（axis=y 时不 setPointerCapture、不 preventDefault，原生
+//      滚动路径保持）；横滑判定 = 双条件（|dx| ≥ 1.2×|dy| ∧ |dx| ≥ 8px），
+//      轴锁后单次成立不来回翻转。
+const STRIP_AXIS_PX = 8;        // 轴锁最小位移（与内容区 SWIPE_AXIS_PX 同参）
+const STRIP_AXIS_RATIO = 1.2;   // 横滑判据：|dx| ≥ 1.2×|dy|（两条件缺一不认）
+const STRIP_SWITCH_PX = 48;     // 提交阈（与内容区 SWIPE_SWITCH_PX 同参）
+const STRIP_BOUNCE_K = 0.35;    // 端点越界段阻尼（跟手 0.35 折 = 回弹手感）
+
+/** 签条横滑切签（非环式端点；只认签上的指针序列）。
+ *  跟手位移 = 签组统一变量 `--sdx`（chip 的 transform 链里加一项，布局零改、
+ *  环位姿 --rdx 照旧各算各的）；松手先摘 `.is-swiping`（恢复 CSS 过渡）再写 0
+ *  ⇒ 真回弹（不靠 JS 补间）。探针 `window.__nfStripSwipe` = 只读判据面。
+ *  @param {HTMLElement} strip */
+function bindStripSwipe(strip) {
+  /** @type {{id: number, x0: number, y0: number, axis: 'x'|'y'|null}|null} */
+  let g = null;
+  /** 横滑后必须吞掉的那一次 click（否则松手瞬间 chip 的 click 腿会把刚切好的
+   *  签再切一次 / 展开中签全名）。 */
+  let swallowClick = false;
+  const probe = { axis: /** @type {string|null} */ (null), claims: 0, switches: 0, bounces: 0, lastDx: 0, lastOffset: 0 };
+  (/** @type {any} */ (window)).__nfStripSwipe = probe;
+  const writeOffset = (px) => {
+    strip.style.setProperty('--sdx', `${px.toFixed(1)}px`);
+    probe.lastOffset = +px.toFixed(1);
+  };
+  const ringState = () => {
+    const docs = docTabs();
+    const i = docs.findIndex((d) => d.id === activeDocId());
+    return { i, n: docs.length, atStart: i <= 0, atEnd: i < 0 || i >= docs.length - 1 };
+  };
+  /** 端点越界段阻尼（首签右滑 / 尾签左滑 —— 非环式，不许环绕）。 */
+  const rubberBand = (dx, s) => ((s.atEnd && dx < 0) || (s.atStart && dx > 0) ? dx * STRIP_BOUNCE_K : dx);
+  const drop = () => { g = null; strip.classList.remove('is-swiping'); };
+
+  strip.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    const target = e.target instanceof Element ? e.target : null;
+    if (!target) return;
+    // 仲裁①原样保留（内容手势面起手永不接管；签条不压在内容面上，本闸是
+    // 「内容优先」硬口径的延续，防未来叠加层/标记面把内容手势漏进切签腿）。
+    if (target.closest(CONTENT_GESTURE_SELECTOR)) return;
+    if (docTabs().length < 2) return;     // 单签 / 空态：切签无对象
+    if (g) return;
+    swallowClick = false;
+    probe.axis = null;
+    g = { id: e.pointerId, x0: e.clientX, y0: e.clientY, axis: null };
+  });
+
+  strip.addEventListener('pointermove', (e) => {
+    if (!g || e.pointerId !== g.id) return;
+    // 双指 = pinch（调尺寸/缩放）：解除已武装的签条手势，让位内容操作。
+    if (e.isPrimary === false) { drop(); writeOffset(0); return; }
+    const dx = e.clientX - g.x0;
+    const dy = e.clientY - g.y0;
+    if (!g.axis) {
+      const ax = Math.abs(dx);
+      const ay = Math.abs(dy);
+      if (ax >= STRIP_AXIS_PX && ax >= STRIP_AXIS_RATIO * ay) g.axis = 'x';
+      else if (ay >= STRIP_AXIS_PX) g.axis = 'y';
+      else return;                                    // 死区内：不判定（点按路径原样）
+      probe.axis = g.axis;
+      if (g.axis === 'y') return;                     // 纵拖：零 capture / 零 preventDefault
+      // 横轴锁后**单次**成立（不来回翻转）：此刻才抢 capture + 关过渡（跟手）。
+      try { strip.setPointerCapture(e.pointerId); } catch { /* 合成事件无 capture */ }
+      swallowClick = true;
+      strip.classList.add('is-swiping');
+      probe.claims += 1;
+    }
+    if (g.axis !== 'x') return;
+    e.preventDefault();
+    probe.lastDx = dx;
+    writeOffset(rubberBand(dx, ringState()));
+  });
+
+  const finish = (e) => {
+    if (!g || e.pointerId !== g.id) return;
+    const { axis } = g;
+    g = null;
+    strip.classList.remove('is-swiping');
+    if (axis !== 'x') return;                 // 纵拖 / 死区：零接管、零归位写入
+    const dx = probe.lastDx;
+    const s = ringState();
+    const dir = dx < 0 ? 1 : -1;              // 左滑 = 下一张签，右滑 = 上一张签
+    const nextIdx = s.i + dir;
+    const canSwitch = Math.abs(dx) >= STRIP_SWITCH_PX && s.n > 1 && s.i >= 0
+      && nextIdx >= 0 && nextIdx < s.n;       // 端点非环式：越界一律回弹
+    // 弹簧归位：先摘 `.is-swiping`（恢复 CSS transform 过渡）并强制一次样式刷新，
+    // 再写 0 —— 同一帧「摘类 + 改值」在 WebKit 按无过渡直跳（实测），刷新后写值
+    // 才是真回弹；换签腿同样归零（新环位姿接管位移，不叠双重偏移）。
+    void strip.offsetWidth;
+    writeOffset(0);
+    // 吞 click 的旗有看门狗：pointercancel 路径不会到来 click，若旗滞留会吞掉
+    // 下一次真实的键盘/辅助点击（指针路径的 pointerdown 已重置，这里再兜一层）。
+    if (swallowClick) setTimeout(() => { swallowClick = false; }, 400);
+    if (canSwitch) {
+      probe.switches += 1;
+      logEvent('card-switch', { via: 'strip-swipe', dir });
+      switchToIndex(nextIdx);
+    } else {
+      probe.bounces += 1;
+      logEvent('strip-swipe-bounce', {
+        dir, edge: s.atStart ? 'start' : (s.atEnd ? 'end' : 'none'), dx: Math.round(dx),
+      });
+    }
+  };
+  strip.addEventListener('pointerup', finish);
+  strip.addEventListener('pointercancel', finish);
+
+  // 横滑吞 click（捕获阶段先于 chip 自身的 click 腿）。
+  strip.addEventListener('click', (e) => {
+    if (!swallowClick) return;
+    swallowClick = false;
+    e.stopPropagation();
+    e.preventDefault();
+  }, true);
 }
 
 /** 文档区横滑切卡（轴锁 8px / 阈 48px；环式；纵滚零劫持 —— 卡头手势同参数）。
@@ -1278,7 +2343,12 @@ function renderPages() {
   for (const [id, section] of sections) {
     const live = top === id;
     section.classList.toggle('live', live);
-    if (live) (/** @type {HTMLElement|null} */ (section.querySelector('.mobile-page-title')))?.focus?.();
+    if (live) {
+      (/** @type {HTMLElement|null} */ (section.querySelector('.mobile-page-title')))?.focus?.();
+      // 两段式标题批：进场按当前实测主滚轴重算进度（DOM 常驻、滚动位保留，
+      // 离场时的吸附态不得带进下一次进场）。
+      refreshRoll(section);
+    }
   }
   document.body.classList.toggle('mf-page-open', top !== 'chat');
   syncDockActive();
@@ -1298,6 +2368,23 @@ function backOut() {
   else if (stack[0] !== 'chat') goHome();
 }
 
+// 大标题内容宽在「文字 / 视口宽」变化时重测（schedule-todo-unify 批）：
+// locale 重绘（i18n 改 .mobile-page-title 文本）与视口变化（横竖屏）都会让静止档
+// 内容宽变化，而这两个事件不经过 renderPages —— 只挂在 document 上一次监听，
+// 按当前可见页重测，零逐面接线。
+window.addEventListener('locale-changed', () => {
+  const top = stack[stack.length - 1];
+  const section = sections.get(top);
+  if (!section) return;
+  measureTitleStill(section, /** @type {HTMLElement|null} */ (section.querySelector('.mobile-page-title')));
+});
+window.addEventListener('resize', () => {
+  const top = stack[stack.length - 1];
+  const section = sections.get(top);
+  if (!section) return;
+  measureTitleStill(section, /** @type {HTMLElement|null} */ (section.querySelector('.mobile-page-title')));
+});
+
 /** 页面面关闭（出栈/换根时归位桌面开/关态）。 */
 function closePageFace(pageId) {
   switch (pageId) {
@@ -1313,11 +2400,11 @@ function closePageFace(pageId) {
     case 'reminder':
       document.querySelector('#reminder-panel')?.classList.remove('open');
       break;
-    case 'todo':
-      // 改版批（2026-10-31）：待办页出栈 ⇒ overlay 载体关态（收编面归还由
-      // syncOverlayFaces 对账；桌面 outside-close 同源语义）。
-      document.querySelector('#todo-page')?.classList.remove('open');
-      break;
+    // ⛔ 【退役】todo-unify-entry-collapse 2026-11-04：'todo' 页整面退役（PAGES
+    // 同批注记）；原文留档，零物理删除：
+    // case 'todo':
+    //   document.querySelector('#todo-page')?.classList.remove('open');
+    //   break;
     case 'daemon':
       document.querySelector('#daemon-panel')?.classList.remove('open');
       break;
@@ -1327,7 +2414,7 @@ function closePageFace(pageId) {
     case 'profile':
       import('../memory.js').then((m) => m.closeMemoryModal?.()).catch(() => { /* 未载即未开 */ });
       break;
-    case 'tasks':
+    case 'tasks':   // 恢复：作者令 2026-11-05 09:28
       closeTaskPanel(true);
       break;
     case 'canvas':
@@ -1336,8 +2423,20 @@ function closePageFace(pageId) {
       // 隐藏页体直到下次换卡才归还，滞留窗内的树变即触发双页叠开）。
       releaseAdoptedDoc();
       break;
+    case 'conversation':
+      // 会话页头同构批（件二+件三，2026-11-02）：会话页的左上返回钮必须**真关窗**
+      // —— 旧 `default` 是 no-op，靠随后「桌面关窗 ⇒ watchChatModal 对账」
+      // 巧合兜底；现在窗体头（×）与窗头行在手机层已退场（身份头接管），返回钮
+      // 成为唯一出页入口 ⇒ 在这里显式走 `messages.closeChat()`（唯一关窗实现：
+      // 摘 overlay ⇒ watchChatModal 的 childList 腿照旧弃收编节点 + 弹页）。
+      // 动态 import：`messages.js` 静态引 `navController.js`（pushPage/logEvent），
+      // 静态反向边会成环 —— 本腿只在运行期、页面已建出时执行，模块必已求值。
+      import('../messages.js')
+        .then((m) => m.closeChat?.())
+        .catch(() => { /* 模块态异常不阻断出页 */ });
+      break;
     default:
-      break; // messages/contacts/canvas/panels/conversation：面态无需翻转
+      break; // messages/contacts/canvas/panels：面态无需翻转
   }
 }
 
@@ -1469,7 +2568,9 @@ const CLOSE_WATCH = [
   { page: 'settings', sel: '#settings-overlay', off: (el) => !el.classList.contains('on'), attr: ['class'] },
   { page: 'search', sel: '#search-overlay', off: (el) => !el.classList.contains('on'), attr: ['class'] },
   { page: 'reminder', sel: '#reminder-panel', off: (el) => !el.classList.contains('open'), attr: ['class'] },
-  { page: 'todo', sel: '#todo-page', off: (el) => !el.classList.contains('open'), attr: ['class'] },
+  // ⛔ 【退役】todo-unify-entry-collapse 2026-11-04：'todo' 页整面退役 ⇒ 关闭对账
+  // 无对象（#todo-page 不再有 .open 开合路径）；原文留档：
+  // { page: 'todo', sel: '#todo-page', off: (el) => !el.classList.contains('open'), attr: ['class'] },
   { page: 'daemon', sel: '#daemon-panel', off: (el) => !el.classList.contains('open'), attr: ['class'] },
   { page: 'background', sel: '#bg-dropdown', off: (el) => el.classList.contains('hidden'), attr: ['class'] },
   { page: 'profile', sel: '#memory-overlay', off: (el) => !el.classList.contains('on'), attr: ['class'] },
@@ -1786,8 +2887,10 @@ function watchCanvasEvents() {
   document.addEventListener('canvas-independent-changed', onSwitch);
   // 「手机接入」入口行已撤除（作者令 2026-10-31 22:55）——nf:mobile-social-entry
   // 事件环外发腿随之摘除，联系人页无 social 页 push 路径。
-  // 改版批（2026-10-31）：消息列表「待办事项」入口行的手机层推页腿。
-  document.addEventListener('nf:mobile-todo-entry', () => pushPage('todo'));
+  // ⛔ 【退役】todo-unify-entry-collapse 2026-11-04：消息列表「待办事项」入口行已撤
+  // ⇒ 它的手机层推页腿（事件环外发 nf:mobile-todo-entry → pushPage('todo')）随之
+  // 摘除；手机端待办唯一入口 = 顶带待办胶囊（点开即展开面板）。原文留档：
+  // document.addEventListener('nf:mobile-todo-entry', () => pushPage('todo'));
   document.addEventListener('nf:mobile-goto', (e) => {
     const page = (/** @type {CustomEvent<{page?: string}>} */ (e)).detail?.page;
     if (page && PAGE_BY_ID.get(page)?.dock) dockTo(page);
@@ -1812,7 +2915,19 @@ function watchCanvasEvents() {
 // ── 激活 / 拆除 ─────────────────────────────────────────────────────
 
 export function activateNav() {
-  (/** @type {any} */ (window)).__nfMobileLayerEvents = __nfEvents;
+  (/** @type {any} */ (window)).__nfMobileLayerEvents = navLayerEvents();
+  // 堆叠视角只读探针（性能验收 I9：首建耗时 / 缓存命中数 / 缓存条目）。
+  (/** @type {any} */ (window)).__nfDeckProbe = () => ({
+    lastMs: +deckSnapLastMs.toFixed(2),
+    maxMs: +deckSnapMaxMs.toFixed(2),
+    builds: deckSnapBuilds,
+    cacheSize: deckSnapCache.size,
+    pending: deckSnapPending.size,
+    open: stackOpen,
+    cards: deckUI ? deckUI.cards.size : 0,
+    snapped: deckUI ? [...deckUI.cards.values()].filter((c) => c.querySelector('.mf-deck-thumb.has-snap')).length : 0,
+  });
+  (/** @type {any} */ (window)).__nfDeckProbeReset = () => { deckSnapBuilds = 0; deckSnapMaxMs = 0; deckSnapLastMs = 0; };
   ensureContainer();
   buildDock();
   watchCanvasContent();
@@ -1849,6 +2964,11 @@ export function activateNav() {
     if (dockEl) { dockEl.remove(); dockEl = null; }
     dockKeys.clear();
     canvasUI = null;
+    // 标签栏重做批：卡叠视图/小点手势句柄随页面树一并归零（重挂时重建，
+    // 防旧节点引用悬挂 + stackOpen 卡在 true 导致新页首帧就开浮面）。
+    deckUI = null;
+    stackOpen = false;
+    deckDragDy = 0;
     hubBodies.clear();
     for (const b of injectedBacks.splice(0)) b.remove();
     document.body.classList.remove('mf-page-open');
@@ -1858,5 +2978,6 @@ export function activateNav() {
     layerTouched = false;
     overlayReconcileBound.clear();
     delete (/** @type {any} */ (window)).__nfMobileNav;
+    delete (/** @type {any} */ (window)).__nfDeckProbe;
   };
 }

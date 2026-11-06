@@ -45,15 +45,24 @@ private[gateway] object PerceptionRoutes:
     HttpRoutes.of[IO] {
 
       // 域 → 服务商自动识别（保持引擎本地：纯函数，daemon 停机时向导仍可用）
+      // 根治批 2026-11-01：携带解析出的 host:port/TLS 面——前端「自动配置
+      // 显形」（高级设置可见实际将拨的地址）以此为准，不再前端猜表。
       case req @ GET -> Root / "perception" / "mail" / "preset" =>
         withAuth(req) {
           val address = req.params.getOrElse("address", "")
           val preset = nebflow.perception.MailboxPresets.forAddress(address)
-          Ok(Json.obj(
+          val fields: Vector[(String, Json)] = Vector(
             "recognized" -> preset.isDefined.asJson,
             "provider" -> preset.map(_.provider).getOrElse("").asJson,
             "authCodeHint" -> preset.exists(_.authCodeHint).asJson
-          ))
+          ) ++ preset.map(p => Vector(
+            "imapHost" -> p.imapHost.asJson,
+            "imapPort" -> p.imapPort.asJson,
+            "smtpHost" -> p.smtpHost.asJson,
+            "smtpPort" -> p.smtpPort.asJson,
+            "smtpImplicitTls" -> p.smtpImplicitTls.asJson
+          )).getOrElse(Vector.empty)
+          Ok(Json.fromJsonObject(io.circe.JsonObject.fromIterable(fields)))
         }
 
       // ── 代理腿：/perception 下全部其余端点逐字转发统一 daemon ──────────

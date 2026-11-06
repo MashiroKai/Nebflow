@@ -56,8 +56,9 @@ Service-type background jobs (persistent):
 - Waiting-type (default): the system waits for it to complete and you are notified. No time limit — background jobs run to completion (the idle/stuck sensor only alerts; use cancel_background_job: true to kill).
 - persistent jobs are EXEMPT from the idle/hard-timeout/stall guards — a server that sits idle is healthy. They run until you cancel them (cancel_background_job: true) or the session ends. You own their lifecycle; the frontend indicator stays visible.
 
-Querying background jobs (background_job_id):
-- Only query when you receive a "stuck" notification or the user asks about a job's status.
+Waiting on background jobs (BgWait):
+- `BgWait` is the ONLY sanctioned way to wait on a background job inside a turn: it blocks (bounded) until the jobIds you list are terminal or its deadline is reached, and it NEVER kills a job. Its deadline defaults to — and is capped at — the same foreground wait budget as Bash.
+- Do NOT repeat `background_job_id` status queries. `background_job_id` now has exactly two uses: cancelling (`cancel_background_job: true`), and checking a job's state after a stuck notification.
 
 Do not use Bash when a dedicated tool exists:
 | Task | Use | Not Bash |
@@ -97,7 +98,7 @@ Git safety:
         ),
         "run_in_background" -> io.circe.Json.obj(
           "type" -> "boolean".asJson,
-          "description" -> "Run the command in the background. You will be automatically notified when it finishes — continue with other work or end your turn, the result will come to you.".asJson
+          "description" -> "Run the command in the background. You will be automatically notified when it finishes — continue with other work or end your turn, the result will come to you. Blocked on it inside this turn? Wait with BgWait (jobIds: [\"<jobId>\"]).".asJson
         ),
         "persistent" -> io.circe.Json.obj(
           "type" -> "boolean".asJson,
@@ -673,7 +674,8 @@ Git safety:
                       )
                       _ <- emitBgTaskStarted(ctx, jobId, bgDescription, persistent)
                     yield Right(
-                      s"[Background job started] Job ID: $jobId\nThe command is running in the background. You will be automatically notified when it finishes — continue with other work or finish your turn."
+                      s"[Background job started] Job ID: $jobId\nThe command is running in the background. You will be automatically notified when it finishes — continue with other work or finish your turn. " +
+                        s"""Wait with BgWait (jobIds: ["$jobId"]) if you are genuinely blocked, or end your turn — you will be notified on completion. Cancel with background_job_id + cancel_background_job: true."""
                     )
                     end for
                   end startBg
@@ -689,24 +691,69 @@ Git safety:
                       }
                   run
                 else if ctx.isRemoteExec then
-                  // Remote-exec: run synchronously to completion and return the
-                  // real output. The caller (another Nebflow instance via HTTP)
-                  // manages the lifecycle — the call blocks until the remote
-                  // result arrives (or the remote timeout fires).
+                  // ── 设备腿（本实例替对端实例跑一条 Bash 请求）────────────────
+                  // T7（作者令 2026-11-04，自查件 D9 M6/§4）：**与本地前台腿同构**。
+                  //
+                  // 改前（缺陷态）：`explicitTimeoutMs.getOrElse(DEFAULT_TIMEOUT = 30s)`
+                  // 被当作**进程超时**——30s 到点即杀对端命令并回
+                  // `[Command timed out after 30000ms]`（`isError=true`，喂 S1 同败
+                  // streak，8 次就 L1 杀会话）。而本地腿早在 main-agent-nonblocking 批
+                  // 就把「到点」从**杀**改成了**收编为后台**。
+                  //
+                  // 改后（本块）：唯一上限 = min(显式 timeout, 前台等待预算
+                  // `ctx.bashConfig.foregroundWaitBudgetMs`）——与 [[executeForeground]]
+                  // **同源单点**，禁第二个上限（尤其禁 30s 兜底）。竞速（racePair，落败
+                  // 侧不取消）：
+                  //   - 预算内完成 ⇒ 既有 [[formatOutcome]]（成功/停滞/真错误三态照旧）；
+                  //   - 到点未完成 ⇒ **收编为后台任务**：进程不杀，按 host 下发的
+                  //     `bgJobId`（= 对端发起侧的任务 id，两侧同一 id）登记本侧
+                  //     `BgTaskRegistry`（`kind="remote"`，命令来自对端）并把仍在跑的执行
+                  //     fiber 挂进会话任务图，回**与本地 auto-background 逐字同形**的回执
+                  //     （同一构造点 [[RemoteExecutor.autoBackgroundReceipt]]），
+                  //     `isError=false`，可被 BgWait 等、可被 BgTaskCancel 按同一 id 取消。
+                  // 本侧无 PeerInfo，故「远端后台机制」在本侧的同构体 =
+                  // `shell.adoptAsBackgroundJob` + `BgTaskRegistry.register`（= host 侧
+                  // `executeRemoteBackground`/`startRemoteBgFiber` 的等价面）。
+                  // 真失败（cwd 不存在、shell 起不来、真错误）**照旧** Left(ToolError)
+                  // [[formatOutcome]]，绝不被吞成后台回执。
+                  // `run_in_background: true` 的显式后台语义不经过本块（上方 background 腿）。
+                  val deviceBudgetMs = math.max(1L, ctx.bashConfig.foregroundWaitBudgetMs)
+                  val waitBudgetMs = explicitTimeoutMs.fold(deviceBudgetMs)(_.min(deviceBudgetMs))
                   // P2 单任务取消远端腿：host 随下发参数带 bgJobId ⇒ 对端把本进程
-                  // 登记进 RemoteExecCancelRegistry（execKey），bg-cancel 按它精确杀树。
-                  val remoteTimeout = explicitTimeoutMs.getOrElse(DEFAULT_TIMEOUT).millis
+                  // 登记进 RemoteExecCancelRegistry（execKey），bg-cancel 按它精确杀树；
+                  // 同一 id 也是收编行的 jobId（登记行与回执同一 id，不铸第二个）。
                   val execKey = input("bgJobId").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
-                  shell
-                    .execute(actualCommand, remoteTimeout, execKey = execKey)
-                    .attempt
-                    .map {
-                      case Right(pr) => formatResult(pr, desc, tailN)
-                      case Left(_: TimeoutException) =>
-                        Left(ToolError(s"[Command timed out after ${remoteTimeout.toMillis}ms]"))
-                      case Left(e) =>
-                        Left(ToolError(s"Error: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"))
-                    }
+                  val deviceHealth = new JobHealth()
+                  for
+                    // 进程级时间杀退役（同本地腿）：365.days 送下去，判据只有预算竞速。
+                    execFiber <- shell
+                      .execute(actualCommand, 365.days, Some(deviceHealth), execKey = execKey)
+                      .attempt
+                      .start
+                    raced <- IO.racePair(joinResult(execFiber), IO.sleep(waitBudgetMs.millis))
+                    result <- (raced match
+                      case Left((winOutcome, budgetFiber)) =>
+                        // 预算内完成 —— 既有渲染三态（毫秒不差）。
+                        budgetFiber.cancel *> unwrapOutcome(winOutcome).map(res => formatOutcome(res, desc, tailN))
+                      case Right(_) =>
+                        // 预算到点仍在跑 —— 收编，进程不杀，回执 isError=false。
+                        remoteLegAutoBackground(
+                          shell,
+                          execFiber,
+                          deviceHealth,
+                          actualCommand,
+                          desc,
+                          ctx,
+                          tailN,
+                          waitBudgetMs,
+                          execKey
+                        )
+                    ).handleErrorWith(e =>
+                      // 契约 2：真失败（进程起不来、cwd 不存在、执行期异常）如实走
+                      // Left(ToolError)，绝不被吞成后台回执（与改前同域）。
+                      IO.pure(Left(ToolError(s"Error: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}")))
+                    )
+                  yield result
                 else
                   // sleep-poll 禁令批 B 段：护栏只包前台腿（显式 run_in_background
                   // 豁免——后台是正道姿势；auto-background 收编路径也在本腿内，
@@ -881,10 +928,15 @@ Git safety:
     desc: Option[String],
     ctx: ToolContext,
     tailN: Option[Int],
-    waitedMs: Long
+    waitedMs: Long,
+    // T7：设备腿复用本收编腿时的两个缝——jobId 由 host 下发（两侧同一 id）与
+    // 台账 kind（设备腿 = "remote"，本地腿 = "local"）。缺省 = 本地腿逐字节不变。
+    jobIdOverride: Option[String] = None,
+    kind: String = "local",
+    originOverride: Option[(String, String)] = None
   ): IO[Either[ToolError, String]] =
     for
-      jobId <- IO.randomUUID.map(_.toString.take(8))
+      jobId <- jobIdOverride.fold(IO.randomUUID.map(_.toString.take(8)))(IO.pure)
       onHeartbeat = makeHeartbeatCallback(command, desc, ctx)
       firstLine = command.split('\n').headOption.getOrElse(command).take(80)
       bgDescription = desc.getOrElse(firstLine)
@@ -914,7 +966,14 @@ Git safety:
         on_heartbeat = onHeartbeat,
         onSlowDetected = Some((summary: String) => auditBgSlow(ctx, jobId, summary))
       )
-      _ <- emitBgTaskStarted(ctx, jobId, bgDescription, persistent = false)
+      _ <- emitBgTaskStarted(
+        ctx,
+        jobId,
+        bgDescription,
+        persistent = false,
+        kind = kind,
+        originOverride = originOverride
+      )
       // #753 速率闸：收编计一次创建（本拍可能正好触发熔断——本任务已在前台
       // 跑着，不能拒；熔断生效后**下一个**创建被拒）。Left 消息在此无消费面
       // （任务已存在），触发沿告警帧照发。
@@ -924,14 +983,68 @@ Git safety:
     // 回执契约（main-agent-nonblocking 批，裁定原文「转后台时给主 agent 的
     // 回执要含：已转后台 + job 标识 + 如何查询」）：① [Background job started]
     // 头 + ② Job ID + ③ 已转后台说明（Auto-backgrounded after … NOT killed）
-    // + ④ 完成通知承诺 + ⑤ 查询/取消方式（background_job_id /
-    // cancel_background_job）。
-    yield Right(
-      s"[Background job started] Job ID: $jobId\n" +
-        s"Auto-backgrounded after ${waitedMs / 1000}s in the foreground (wait budget reached — the command was NOT killed). " +
-        "It keeps running in the background and you will be automatically notified when it finishes — continue with other work or finish your turn. " +
-        s"Query progress anytime with background_job_id: $jobId; cancel it with background_job_id: $jobId + cancel_background_job: true."
-    )
+    // + ④ 完成通知承诺 + ⑤ 等待方式（BgWait 唯一有界等待原语）/取消方式
+    // （background_job_id + cancel_background_job）。
+    // 🔴 bash overhaul T1（作者令 2026-11-04）：原回执里「随时查询进度」式的
+    // `background_job_id` 邀请是**受逼轮询**的来源（缺陷 D3——提示词禁止轮询，回执却
+    // 邀请轮询，而当时没有任何等待原语）。现回执只给两条合法出路：真被阻塞 ⇒
+    // BgWait 一次有界等待；否则结束回合等通知。
+    // 🔴 T7（作者令 2026-11-04）：回执正文的唯一构造点移到
+    // [[RemoteExecutor.autoBackgroundReceipt]] —— 本地腿与设备腿**逐字同形**由
+    // 同一个函数保证（不是两处字符串「看起来一样」）。调用方加的前缀（如 sleep-poll
+    // 警告）在 [[sleepPollGate]] 里拼，不在此处。
+    yield Right(RemoteExecutor.autoBackgroundReceipt(jobId, waitedMs))
+
+
+  /**
+   * T7（作者令 2026-11-04）：**设备腿的收编腿**——把仍在跑的对端请求命令收编成本
+   * 实例的后台任务，回执与本地腿逐字同形。
+   *
+   * 与本地 [[autoBackground]] 的差异只有三处，全部是「这是对端发起的一条命令」的
+   * 必然结果：
+   *  1. jobId = host 下发的 `bgJobId`（对端发起侧铸的 id）——两侧同一 id，使
+   *     `BgWait`/`BgTaskCancel`/对端 `bg-cancel` 全按同一个 id 工作（禁在本侧铸第二
+   *     个 id 让登记行与回执发散）；
+   *  2. 台账 `kind="remote"`（命令不在本实例的会话里发起）；
+   *  3. 该 kind 的死亡看护只读 `RemoteExecutor` 的等待句柄图（[[BgTaskLiveness]]
+   *     的 remote 判据），故把「等命令终态」的 joiner 挂进图 —— 否则收编行会在收割
+   *     器面前立刻显示为「终态腿绝路」，被误收割成 owner-lost（命令其实还在跑）。
+   *
+   * 真错误语义不变：本腿只在**到点未完成**时进入；命令自身的失败照旧经完成回调
+   * （makeNotifyCallback）落终态。
+   */
+  private def remoteLegAutoBackground(
+    shell: ShellSession,
+    execFiber: Fiber[IO, Throwable, Either[Throwable, ProcessResult]],
+    health: JobHealth,
+    command: String,
+    desc: Option[String],
+    ctx: ToolContext,
+    tailN: Option[Int],
+    waitedMs: Long,
+    hostJobId: Option[String]
+  ): IO[Either[ToolError, String]] =
+    val jobId = hostJobId.getOrElse(java.util.UUID.randomUUID().toString.take(8))
+    for
+      _ <- RemoteExecutor.current.fold(IO.unit) { exec =>
+        joinResult(execFiber).attempt.void
+          .guarantee(exec.unregisterWaitFiber(jobId))
+          .start
+          .flatMap(fib => exec.registerWaitFiber(jobId, fib))
+      }
+      out <- autoBackground(
+        shell,
+        execFiber,
+        health,
+        command,
+        desc,
+        ctx,
+        tailN,
+        waitedMs,
+        jobIdOverride = Some(jobId),
+        kind = "remote"
+      )
+    yield out
 
   /**
    * Activity bridge (#319): periodically checks the running process and, when
@@ -1106,8 +1219,33 @@ Git safety:
   private def isNodeSession(ctx: ToolContext): Boolean =
     ctx.sessionId.exists(_.startsWith(nebflow.core.project.NodeEngine.SessionPrefix))
 
-  /** Build an on_complete callback that notifies agent + frontend + logs. */
-  private def makeNotifyCallback(
+  /**
+   * Build the terminal-completion callback: agent + frontend + ledger + output retention.
+   *
+   * **T2 契约（bash overhaul，作者令 2026-11-04）——恒有回调、先落账再推送、绝不
+   * 静默丢弃**（事实源 §D5/§M3/§5.1-A1·A3；业界依据 = dsh「结算通知推会话 + 忙时
+   * next-step inbox + awaited 去重」）：
+   *
+   *  1. 返回 `Some(...)` **恒定**——旧形态 `ctx.agentActorRef.map{...}` 让「无 agent
+   *     上下文」（REST 直调 / pre-spawn / 设备腿）整条回调链静默缺席：不注销行、
+   *     不终态化输出留存、不落账本、不通知（缺陷 D5）。可见性放宽到
+   *     `private[tools]`，供同包 spec 直调判红。
+   *  2. 链内顺序**钉死**（每一环 fail-soft，任一环失败都不阻断后续；但**投递失败
+   *     绝不吞账本**——顺序本身即保证）：
+   *     `BgTaskRegistry.unregisterReturning` → `BgTaskOutputStore.finalizeTask`
+   *     （fail-soft）→ `BgTaskLedger.recordCompletion`（**无条件**，fail-soft +
+   *     日志）→ 前端 WS 帧 → agent 事件。
+   *  3. 无 `agentActorRef` ⇒ 只跳过「推给它自己的 actor」那一段：投递面转
+   *     [[BgNotifyDelivery.deliverAgentEvent]] 的 `None` 门（持久补投腿），
+   *     事件照样有落点，绝不 IO.unit 蒸发。
+   *  4. `awaited` 去重（[[BgTaskRegistry.markAwaited]] 的反面消费）：注销行带
+   *     `awaited=true`（终态结果已被 BgWait 当面收走）⇒ **只跳过 agent 推送**
+   *     （审计 `bg-notify-awaited-skip`），账本行与输出留存照做。
+   *  5. 忙时下一站 = 既有 next-step 收件口：目标会话在 Processing 时事件入
+   *     `pendingEvents`、回合边界统一 drain（`AgentProcessing.scala:1360-1441`），
+   *     不另立第二套队列（详见 deliverAgentEvent 文档）。
+   */
+  private[tools] def makeNotifyCallback(
     command: String,
     desc: Option[String],
     ctx: ToolContext,
@@ -1115,7 +1253,7 @@ Git safety:
     tailN: Option[Int] = None,
     gateOwned: Boolean = false
   ): Option[Either[Throwable, ProcessResult] => IO[Unit]] =
-    ctx.agentActorRef.map { ref => (result: Either[Throwable, ProcessResult]) =>
+    Some { (result: Either[Throwable, ProcessResult]) =>
       val firstLine = command.split('\n').headOption.getOrElse(command).take(80)
       val description = desc.getOrElse(firstLine)
       // 通知详情批（作者报障 2026-10-24「后台任务通知很不详细甚至有截断」）：注销
@@ -1123,6 +1261,11 @@ Git safety:
       // 前置（旧链在负载定型后才 unregister，取不到）。
       val finishedAtMs = System.currentTimeMillis()
       BgTaskRegistry.unregisterReturning(jobId).flatMap { registered =>
+        // awaited 去重读数（T2 契约 3）：注销即读——markAwaited 写的是同一行，
+        // `unregisterReturning` 的原子取回就是终局读数（两拍分开读会漏掉「读后、
+        // 注销前」落下的标记）。行已消失 = 极早终态/重复回调 ⇒ 视为未 awaited。
+        val awaited = registered.exists(_.awaited)
+
         val durationMs = registered.map(st => (finishedAtMs - st.startedAtMs).max(0L))
         val (eventType, payload, metadata, exitInfo, exitCodeOpt, errHintOpt, storeStatus) = result match
           case Right(pr) =>
@@ -1207,19 +1350,31 @@ Git safety:
         // BgNotifyDelivery。无 actorSystem（harness）保持旧行为直投。
         // ref ! 返回 IO[Unit] already — do NOT wrap in IO() or it
         // becomes IO[IO[Unit]] (double-wrapped, fires at construction time).
-        val notifyAgent = BgNotifyDelivery.deliverAgentEvent(
-          targetRef = Some(ref),
-          targetSessionId = ctx.sessionId,
-          system = ctx.actorSystem,
-          registry = ctx.sharedResources.map(_.agentRegistry),
-          projectName = ctx.projectName,
-          flowNodeId = ctx.flowNodeId,
-          jobId = jobId,
-          source = "background-task",
-          eventType = eventType,
-          payload = payload,
-          metadata = metadata
-        )
+        // T2 契约 1/3：`targetRef` 传 **ctx 原值**（可能是 None）——
+        //   - None ⇒ deliverAgentEvent 的 None 门（有目标会话 = 持久补投腿；连会话
+        //     都没有 = 响亮 WARN + 审计），事件绝不蒸发；
+        //   - awaited（终态结果已被 BgWait 当面交付）⇒ 跳过推送这一整段
+        //     （账本与输出留存已在上面无条件落完），审计 `bg-notify-awaited-skip`。
+        val notifyAgent =
+          if awaited then
+            logger.info(
+              s"[bg-notify-awaited-skip] background job $jobId ($eventType): terminal result was already delivered by an awaiting caller (BgWait) — agent push skipped; ledger row + output retention kept",
+              "sessionId" -> ctx.sessionId.getOrElse("")
+            )
+          else
+            BgNotifyDelivery.deliverAgentEvent(
+              targetRef = ctx.agentActorRef,
+              targetSessionId = ctx.sessionId,
+              system = ctx.actorSystem,
+              registry = ctx.sharedResources.map(_.agentRegistry),
+              projectName = ctx.projectName,
+              flowNodeId = ctx.flowNodeId,
+              jobId = jobId,
+              source = "background-task",
+              eventType = eventType,
+              payload = payload,
+              metadata = metadata
+            )
 
         // Notify frontend via WS so the indicator dismisses. 通知详情批：终态帧
         // 补 exitCode / durationMs / finishedAt 三个只增键（面板行 exit chip 与
@@ -1248,38 +1403,40 @@ Git safety:
         // doesn't prevent the other.
         // 输出查看批：终态翻转 + 进留存区（completed/failed；cancelled 走 WS
         // cancelBackgroundJob / reclaimSession 的 finalizeTask，幂等防双写）。
-        // P2 first-terminal-wins：行已被显式取消/death-watch 收割取走（None）
-        // ⇒ 终态已有人落（通知+账本齐）——本迟到腿只补输出留存区（幂等翻转），
-        // 不重注账本/不重发通知（防「terminated→completed」双注）。
+        // T2 契约 2（顺序钉死）：finalize → **无条件** recordCompletion → 前端帧 →
+        // agent 事件。P2 first-terminal-wins 的**闸门退场**（原 `alreadyTerminal`
+        // 跳过三段的写法会连带吃掉「无 agent 上下文/迟到腿」的全部落账——那正是
+        // 缺陷 D5 的一半）：幂等改由各面自身承担——`finalizeTask` 首终态胜出、
+        // `recordCompletion` 同 jobId 原位替换、注入队 correlationId 幂等。行已不在
+        // 册的事实只进日志，不再改行为。
         val alreadyTerminal = registered.isEmpty
         BgTaskOutputStore
           .finalizeTask(jobId, storeStatus, exitCodeOpt, errHintOpt)
           .handleErrorWith(e2 => logger.warn(s"bg-output finalize failed for job $jobId: ${e2.getMessage}")) *>
           gateLedger *>
-          // 完成事件持久账本（修复批 2026-10-24「先落账本再投递」）：事件与输出
-          // 尾段先落账，再走投递——投递面任何一环失联（目标会话 idle 无栅栏 /
-          // 直投未唤醒 / 激活 Deferred），账本条目挂起，会话下次唤醒由补投腿
-          // （AgentActor.flushPendingLedgerCompletions）先补投未消费事件，永不
-          // 蒸发。fail-soft：账本故障绝不阻断投递。
-          (if alreadyTerminal then IO.unit
-           else
-             BgTaskLedger
-               .recordCompletion(
-                 ctx.sessionId.getOrElse(""),
-                 jobId,
-                 description,
-                 eventType,
-                 payload
-               )
-               .handleErrorWith(e2 => logger.warn(s"bg-ledger record failed for job $jobId: ${e2.getMessage}"))
-          ) *>
+          // 完成事件持久账本（修复批 2026-10-24「先落账本再投递」+ T2 无条件化）：
+          // 事件与输出尾段先落账，再走投递——投递面任何一环失联（目标会话 idle /
+          // 无栅栏 / 直投未唤醒 / 激活 Deferred / 根本没有 agent ref），账本条目
+          // 挂起，会话下次唤醒由补投腿（AgentActor.flushPendingLedgerCompletions）
+          // 先补投未消费事件，永不蒸发。fail-soft：账本故障绝不阻断投递；反之
+          // **投递失败也绝不吞账本**（顺序在前）。
+          BgTaskLedger
+            .recordCompletion(
+              ctx.sessionId.getOrElse(""),
+              jobId,
+              description,
+              eventType,
+              payload
+            )
+            .handleErrorWith(e2 => logger.warn(s"bg-ledger record failed for job $jobId: ${e2.getMessage}")) *>
+          notifyFrontend.void *>
+          notifyAgent *>
           logger.info(
             s"Background job $jobId callback: $eventType$exitInfo" +
-              (if alreadyTerminal then " (row already terminal — output store only, no re-notify)" else ""),
+              (if alreadyTerminal then " (row already terminal — recorded + retained anyway, T2 durable-first)" else "") +
+              (if awaited then " (awaited — agent push suppressed)" else ""),
             "sessionId" -> ctx.sessionId.getOrElse("")
-          ) *>
-          (if alreadyTerminal then IO.unit
-           else notifyFrontend.void *> notifyAgent)
+          )
       }
     }
 
@@ -1319,17 +1476,26 @@ Git safety:
 
   end auditBgSlow
 
-  /** Emit a WS event so the frontend shows the background task indicator. */
+  /** Emit a WS event so the frontend shows the background task indicator.
+   *
+   * T7（作者令 2026-11-04）：`kind` / `originOverride` 两个缝供设备腿收编用——
+   * 设备腿（替对端实例跑的命令）登记 `kind="remote"`（命令不在本会话发起），
+   * origin 可由调用方外部指定；本地腿两个缺省值 ⇒ 逐字节不变（注册面与 WS
+   * 信封同源同值）。
+   */
   private def emitBgTaskStarted(
     ctx: ToolContext,
     jobId: String,
     description: String,
-    persistent: Boolean = false
+    persistent: Boolean = false,
+    kind: String = "local",
+    originOverride: Option[(String, String)] = None
   ): IO[Unit] =
     // 来源标注：类别+显示名从
     // 注册会话推导（node- → Flow Map 节点名，dispatcher- → dispatcher/<project>，
     // 其余 → Nebula），注册与 WS 信封同源携带。
-    val (origin, originLabel) = BgTaskRegistry.originFor(ctx.sessionId.getOrElse(""), ctx.sessionName)
+    val (origin, originLabel) =
+      originOverride.getOrElse(BgTaskRegistry.originFor(ctx.sessionId.getOrElse(""), ctx.sessionName))
     // 任务模式标注批（2026-10-30）：开启任务的 delegate 会话生效执行形态
     // （kernel/dispatcher；modeFaceOf = 双模式总闸 + delegate 会话 + 记录三闸，
     // 闸关/非 delegate ⇒ None ⇒ 空串零渲染）。
@@ -1341,7 +1507,7 @@ Git safety:
       jobId,
       ctx.sessionId.getOrElse(""),
       description,
-      "local",
+      kind,
       ctx.rootSessionId.orElse(ctx.sessionId).getOrElse(""),
       persistent,
       origin,
@@ -1360,7 +1526,7 @@ Git safety:
           "description" -> description.asJson,
           "status" -> "running".asJson,
           "startedAt" -> System.currentTimeMillis().asJson,
-          "kind" -> "local".asJson,
+          "kind" -> kind.asJson,
           "origin" -> origin.asJson,
           "originLabel" -> originLabel.asJson,
           "ownerMode" -> ownerMode.asJson,

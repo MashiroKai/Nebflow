@@ -1,0 +1,6 @@
+$ playwright test tests/{todo-store-backend,todo-capsule-create,todo-entry-collapse,todo-split}.spec.mjs
+[20/22] tests/todo-store-backend.spec.mjs:417:1 › ④ 服务端广播/清单回执 ⇒ 可见面收敛（零用户操作）
+[21/22] tests/todo-store-backend.spec.mjs:451:1 › ⑤ __seed 测试缝不破：夹具数据注入仍可用（旧排序语义 + dataSource=fixture + 零写帧），__live 回真源
+[22/22] tests/todo-store-backend.spec.mjs:507:1 › ⑥ 服务端显式拒绝 ⇒ 回滚 + console.error（不静默吞）
+  22 passed (52.1s)
+SPECS_EXIT=0

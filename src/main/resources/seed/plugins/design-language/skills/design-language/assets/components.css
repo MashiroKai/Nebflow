@@ -23,8 +23,8 @@
   overflow: hidden;
   border-radius: var(--dl-r-shell);
   background: var(--dl-glass-bg);
-  -webkit-backdrop-filter: blur(var(--dl-glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--dl-glass-blur)) saturate(1.15);
+  -webkit-backdrop-filter: blur(var(--dl-glass-blur)) saturate(var(--dl-glass-saturate, 1.4));
+  backdrop-filter: blur(var(--dl-glass-blur)) saturate(var(--dl-glass-saturate, 1.4));
   border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.35));
   box-shadow: var(--dl-shadow-panel);
   animation: dl-modal-in var(--dl-dur-enter) var(--dl-ease-enter);

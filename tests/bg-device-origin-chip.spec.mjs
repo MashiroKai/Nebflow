@@ -8,7 +8,11 @@
 //     （bg.runsOn——「跑在哪」轴 ≠ nebula/dispatcher/node 的「谁开启」轴）；
 //   · 旧后端快照回退：origin 字段缺席时从描述 `[<设备>] ` 前缀提取设备名
 //     （RemoteExecutor 描述形态），兜底 'device'；
-//   · 对照行：nebula 行 chip 逐字回归（Nebula / 由 Nebula 开启）。
+//   · 对照行：nebula（主 agent 开启）行 chip 逐字回归——**但名字换源**：
+//     Nebula 退役批（作者令 2026-11-01「界面里不该再有 Nebula 的身影」）后，
+//     该 chip 读单一显示名权威（js/rootName.js#rootDisplayName）= 用户给它起的名
+//     （本 spec 夹具 = Spider / 由 Spider 开启）；未命名 = 通用称呼（agent.rootGeneric）。
+//     后端 originLabel 携带的机制名只作数据面标记，不上屏（T4 反证）。
 //
 // 设备同级批（作者令 2026-11-01「本地/远程这组徽标整对退役」）契约变更：
 //   · 「本地/远程」kind chip（.bg-task-kind）整对删除——本批前 T1/T3 曾断言
@@ -68,6 +72,11 @@ async function bootApp(page) {
         return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ sessions: [{ id: SID, name: 'root', agentName: 'Nebula' }], activeId: SID }) });
       }
       return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    }
+    // 根 agent 的持久化显示名（显示名权威的落盘面，Nebula 退役批）：
+    // 夹具 = 已命名 home（displayName = Spider）。
+    if (p === '/agents/Nebula/agent.json') {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ name: 'Nebula', displayName: 'Spider' }) });
     }
     const file = normalize(join(WEB, p));
     if (!file.startsWith(WEB)) return route.fulfill({ status: 403, body: 'forbidden' });
@@ -156,7 +165,7 @@ test('T2 legacy snapshot fallback: no origin fields → device name extracted fr
   expect(errors).toEqual([]);
 });
 
-test('T3 control: nebula-origin row keeps Started-by chip AND gains the local device-name chip', async ({ page }) => {
+test('T3 control: root-agent-origin row keeps Started-by chip (display name) AND gains the local device-name chip', async ({ page }) => {
   const errors = watchErrors(page);
   await page.click('#bg-indicator');
   await expect(page.locator('#bg-dropdown')).toBeVisible();
@@ -168,11 +177,14 @@ test('T3 control: nebula-origin row keeps Started-by chip AND gains the local de
   await expect(dev).toHaveCount(1);
   await expect(dev).toHaveText('Mashiros-MacBook-Pro');
   await expect(dev).toHaveAttribute('title', '跑在 Mashiros-MacBook-Pro');
-  // 「谁开启」chip 并列不变（Started-by 语义逐字回归）。
+  // 「谁开启」chip 并列不变（Started-by 语义不变），但名字 = 显示名权威读数
+  // （Nebula 退役批：用户起的名 Spider，不是机制名）。
   const chip = row.locator('.bg-origin-nebula');
-  await expect(chip).toHaveText('Nebula');
+  await expect(chip).toHaveText('Spider');
   await expect(chip).not.toHaveClass(/bg-origin-device/);
-  await expect(chip).toHaveAttribute('title', '由 Nebula 开启');
+  await expect(chip).toHaveAttribute('title', '由 Spider 开启');
+  // 退役名零残留（大小写不敏感）。
+  await expect(row.locator('.bg-origin-nebula')).not.toHaveText(/nebula/i);
   // 本地/远程 kind chip 整对退役。
   await expect(row.locator('.bg-task-kind')).toHaveCount(0);
   await expect(row.locator('.bg-task-meta')).not.toContainText('本地');

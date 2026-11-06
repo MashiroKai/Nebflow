@@ -351,6 +351,93 @@ final class ShellSession private (
       yield res
     }
 
+  /**
+   * **有界等待原语**（bash overhaul T1，作者令 2026-11-04「用业界成熟做法完整实现，
+   * 一步到位」）：等到所列后台任务**全部终态**或**期限到**（先到者），**绝不杀任务、
+   * 绝不 cancel**。
+   *
+   * 业界依据（调研件 §0-1/§4）：DeepSeek Harness 的 `job_output(wait: true,
+   * timeout_ms)`——有界等待，等超时不杀 job，直接回「仍在跑」，由完成通知接管。
+   * 本方法即那条语义在会话任务图上的执行面（工具面 = `BgWaitTool`）。
+   *
+   * 两条腿（id 的归属决定走哪条）：
+   *  ① **本会话任务图内**（显式 run_in_background / 前台转后台收编）：逐任务
+   *    `BackgroundJob.deferred.get` 与**同一个** `deadlineMs` race；只把**已终态**
+   *    的条目放进返回 Map（未终态 = 该 id 缺席，调用方据此渲染 `[still running]`）。
+   *    用 `deferred.get` 而不是 `getBackgroundResult`：等待是**观察**，不消费任务图
+   *    条目（终态条目的回收仍归完成回调与 5min 清理 fiber，职责不重叠）。
+   *  ② **不在本会话任务图里**（设备腿 / 别会话 / 已离开本图）：回落
+   *    `BgTaskRegistry.find` 每 `RegistryProbeIntervalMs` 探一次，直到行消失或到期；
+   *    行消失 = 终态已由别处记账（终态回调注销）⇒ 从 `BgTaskOutputStore` 取终态
+   *    读数与尾段折算回报。
+   *
+   * 🔴 预算纪律：`deadlineMs` 由调用方（`BgWaitTool`）按 `ctx.bashConfig
+   * .foregroundWaitBudgetMs` 钳好传进来——**本方法不收第二个上限、也不自造**。
+   * 🔴 读面纪律：不 `checkAlive`、不取 `lifecycleMutex`、不 `touch`——长等待绝不许
+   * 攥住会话锁（否则 cancel/execute 被阻塞）；会话已销毁时任务图读面照常返回空。
+   */
+  def waitBackgroundResults(
+    ids: Seq[String],
+    deadlineMs: Long
+  ): IO[Map[String, Either[Throwable, ProcessResult]]] =
+    val waitMs = math.max(1L, deadlineMs)
+    val wanted = ids.toList.map(_.trim).filter(_.nonEmpty).distinct
+    if wanted.isEmpty then IO.pure(Map.empty[String, Either[Throwable, ProcessResult]])
+    else
+      backgroundJobs.get.flatMap { jobs =>
+        val inGraph: List[(String, BackgroundJob)] = wanted.flatMap(id => jobs.get(id).map(id -> _))
+        val graphIds = inGraph.map(_._1).toSet
+        val others = wanted.filterNot(graphIds.contains)
+        val graphRaces: List[IO[Option[(String, Either[Throwable, ProcessResult])]]] =
+          inGraph.map { case (id, job) =>
+            // IO.race 的两种结果同型（都 Option[...]）：fold 合流——Left/Right 都表示
+            // 「这一路的结果」，只是赢家不同（deferred 已终态 / 期限先到）。
+            IO.race(
+              job.deferred.get.map(r => Option(id -> r)),
+              IO.sleep(waitMs.millis).as(Option.empty[(String, Either[Throwable, ProcessResult])])
+            ).map(_.fold(identity, identity))
+          }
+        val registryWaits: List[IO[Option[(String, Either[Throwable, ProcessResult])]]] =
+          others.map(id => waitOneViaRegistry(id, waitMs))
+        // 并行 race：总阻塞上限 = **一个** waitMs（不是每任务各一个）——语义 = 至多
+        // 一次 LLM 往返；顺序等待会让 N 个任务叠加成 N×预算（越界即第二个上限）。
+        (graphRaces ++ registryWaits).parSequence.map(_.flatten.toMap)
+      }
+
+  /** 注册表探测拍间隔（不是等待上限——上限只有一个，见 [[waitBackgroundResults]]）。 */
+  private val RegistryProbeIntervalMs: Long = 500L
+
+  /**
+   * 注册表腿（不在本会话任务图里的任务）：行在 = 仍未终态（注册行只在该任务的
+   * 终态回调里被注销）；行消失 ⇒ 从输出留存区取终态读数。到期仍未终态 ⇒ None。
+   */
+  private def waitOneViaRegistry(
+    jobId: String,
+    budgetMs: Long
+  ): IO[Option[(String, Either[Throwable, ProcessResult])]] =
+    val deadlineAt = System.currentTimeMillis() + budgetMs
+    def loop: IO[Option[(String, Either[Throwable, ProcessResult])]] =
+      BgTaskRegistry.find(jobId).flatMap {
+        case Some(_) =>
+          if System.currentTimeMillis() >= deadlineAt then IO.pure(None)
+          else IO.sleep(RegistryProbeIntervalMs.millis) *> loop
+        case None =>
+          BgTaskOutputStore.read(jobId, 0L).map { entry =>
+            entry.flatMap { o =>
+              if o.status == "running" then None
+              else if o.status == "completed" then
+                Some(jobId -> Right(ProcessResult(o.output, "", o.exitCode.getOrElse(0), "")))
+              else
+                Some(
+                  jobId -> Left(
+                    new RuntimeException(o.errorHint.getOrElse(s"job $jobId ended with status '${o.status}'"))
+                  )
+                )
+            }
+          }
+      }
+    loop
+
   /** Get health info for a running background job (does not remove the job). */
   def getBackgroundJobHealth(jobId: String): IO[Option[BackgroundJobHealth]] =
     lifecycleMutex.lock.surround {
@@ -507,7 +594,20 @@ final class ShellSession private (
   // Internals
   // ------------------------------------------------------------------
 
-  private val MaxOutputSize = 10 * 1024 * 1024 // 10MB
+  /**
+   * 命令输出窗口（bash overhaul T5，作者令 2026-11-04「组织优化 bash」；取代
+   * 2026-11-04 内存即时缓解批 M3 的「首 64KB + 尾 64KB」双窗）。
+   *
+   * 口径统一：构建/测试日志的价值集中在**尾部错误**——窗口只保**尾**段（最后
+   * `Defaults.BashTailLines` 行、`Defaults.BashTailBytes` 字节，行粒度回退，取小），
+   * 一旦累计输出越过保留预算，从该点起把**完整输出**（含已读头段）镜像溢写进
+   * `<java.io.tmpdir>/stand-bash-<epochMs>-<rand>.log`，回执末行回路径。改前
+   * M3 保「首+尾」会把 11MiB 流的头部约 2MB 也灌进上下文（构建日志头部通常是
+   * 无害的启动横幅），T5 头部只进溢写文件、不进上下文。堆占用与输出总量解耦
+   * 的目标不变（100MB 输出堆增长 ≤1MB，`ShellOutputSpillSpec` 红绿双侧实测）。
+   */
+  private val OutputTailKeepLines = Defaults.BashTailLines
+  private val OutputTailKeepBytes = Defaults.BashTailBytes
 
   private val isWindows: Boolean =
     sys.props.getOrElse("os.name", "").toLowerCase.contains("win")
@@ -590,6 +690,15 @@ final class ShellSession private (
     // exactly as it was — the inherited parent environment, unfiltered, as
     // before this batch.
     if secretEnv.nonEmpty then secretEnv.foreach { case (k, v) => pb.environment().put(k, v) }
+    // 环境品牌围栏（缺陷五）：非 nebflow 品牌摘 NEBFLOW_GATEWAY_PORT、写本品牌
+    // 专属名（stand 构建 = STAND_GATEWAY_PORT）。判据单点 = ShellEnvCordon。
+    val cordon = ShellEnvCordon.decide(
+      pb.environment().keySet().toArray.map(_.toString).toSet,
+      nebflow.shared.Branding.envPrefix,
+      ShellEnvCordon.port
+    )
+    cordon.removals.foreach(k => pb.environment().remove(k))
+    cordon.additions.foreach { case (k, v) => pb.environment().put(k, v) }
     pb.redirectErrorStream(false) // stdout/stderr separated
     pb
 
@@ -1296,7 +1405,8 @@ final class ShellSession private (
     is: java.io.InputStream,
     onLine: String => Unit = _ => (),
     isProcessExited: () => Boolean = () => true,
-    exitGraceMs: Long = 250L
+    exitGraceMs: Long = 250L,
+    spillDir: os.Path = OutputSpill.defaultDir
   ): String =
     // On Windows, detect whether the output is UTF-8 or system ANSI code page
     // (GBK on Chinese Windows). Git Bash and Python (with PYTHONUTF8=1) output
@@ -1312,10 +1422,11 @@ final class ShellSession private (
       else (is, StandardCharsets.UTF_8)
 
     Using.resource(new java.io.BufferedReader(new java.io.InputStreamReader(stream, charset))) { reader =>
-      val sb = new StringBuilder
+      // T5（2026-11-04）: 攒输出的容器从「10MB StringBuilder」（M3 前的保头截断）
+      // 换成「滚动尾窗（≤2000 行 ∧ ≤50KB）+ 全量溢写文件」——堆占用与输出总量
+      // 解耦，且上下文里只有尾部（构建/测试的错误就在尾巴上）。
+      val out = new OutputTailWindow(OutputTailKeepLines, OutputTailKeepBytes, spillDir)
       var line: String = null
-      val truncationMarker = "\n[Output truncated due to size limit]\n"
-      var truncated = false
       var exitedAtMs = -1L
       var done = false
 
@@ -1327,13 +1438,7 @@ final class ShellSession private (
             if line == null then done = true // EOF
             else
               onLine(line)
-              if !truncated then
-                sb.append(line).append("\n")
-                if sb.length > MaxOutputSize then
-                  val trimTo = math.max(0, MaxOutputSize - truncationMarker.length)
-                  sb.setLength(trimTo)
-                  sb.append(truncationMarker)
-                  truncated = true
+              out.append(line)
           else if isProcessExited() then
             val now = System.currentTimeMillis()
             if exitedAtMs < 0 then exitedAtMs = now
@@ -1347,8 +1452,8 @@ final class ShellSession private (
           case _: java.io.IOException => done = true
       end while
 
-      val s = sb.toString()
-      if s.trim.isEmpty then "" else s
+      try out.result()
+      finally out.close()
     }
 
   end readStream
@@ -1774,3 +1879,154 @@ object ShellSession:
           }
     }
 end ShellSession
+
+/**
+ * 滚动尾窗 + 全量溢写（bash overhaul T5，作者令 2026-11-04「组织优化 bash」；
+ * 取代 M3 的「首 64KB + 尾 64KB + dataRoot/shell-spill」三件套）。
+ *
+ * 语义（业界成熟做法，pi `truncateTail` 一格：保最后 N 行/字节 + 全文落盘回路径）：
+ * 命令输出在内存里只保留**滚动尾窗**——最后 `Defaults.BashTailLines`(2000) 行且
+ * `Defaults.BashTailBytes`(50KB) 以内（行粒度回退，取小）；一旦累计输出越过保留
+ * 预算，从该点起把**完整输出**（从第一行起，含已读头段）镜像溢写进
+ * `<java.io.tmpdir>/stand-bash-<epochMs>-<rand>.log`，回执末行回绝对路径。上下文
+ * 只有尾部——构建/测试日志的错误就在尾巴上，头部横幅不值得灌进上下文。
+ *
+ * 与 BgTaskOutputStore 的关系（两条留存面各司其职，互不接管）：本溢写文件只服务
+ * **进程读取面**（前台回执 / 后台 ProcessResult.stdout，单命令生命期）；后台任务的
+ * 面板全文留存腿走 BgTaskOutputStore.lineSink（jobId 键控、详情卡回看）——溢写文件
+ * **不**接入 store，避免同一输出双写双账。
+ *
+ * 目录取舍：溢写落 OS tmp 而非 dataRoot——文件是「本命令上下文的延伸」，进程级
+ * 生命期，无跨命令价值；不设清理定时任务（OS tmp 自清，macOS/Linux/tmpreaper 均
+ * 会回收；dataRoot 版 M3 曾带 24h sweep，OS 层自清后该机制退役）。
+ */
+private[tools] object OutputSpill:
+
+  /** 溢写目录单点（`java.io.tmpdir`）。OS tmp 自清 ⇒ 无清理任务。 */
+  def defaultDir: os.Path = os.Path(java.nio.file.Paths.get(sys.props.getOrElse("java.io.tmpdir", "/tmp")))
+
+  /** 溢写文件名（含秒级时间戳 + 12 位随机段，同秒冲突靠随机段避让；随机段无 `-`）。 */
+  def newFileName(nowMs: Long): String =
+    val rand = java.util.UUID.randomUUID().toString.replace("-", "").take(12)
+    s"stand-bash-$nowMs-$rand.log"
+
+/**
+ * 滚动尾窗 + 溢写文件的输出容器（`readStream` 单点消费；bash overhaul T5）。
+ *
+ * 线程模型：单读线程 append（stdout / stderr 各一条读线程、各持一个实例），
+ * `result()` 在同一线程尾部调用；锁仅防御性（无并发读写场景）。
+ *
+ * 失败容忍：溢写不可写（磁盘满 / 权限）→ 标 `spillFailed`，退化为「尾窗 +
+ * 明示丢弃注记」，**绝不向上抛异常**（命令本身的成败不能被输出采集拖垮）。
+ */
+private[tools] final class OutputTailWindow(
+  tailKeepLines: Int,
+  tailKeepBytes: Long,
+  spillDir: os.Path
+) extends AutoCloseable:
+
+  private val lock = new Object
+  private val tail = new java.util.ArrayDeque[String]() // 有界结构：尾窗即全部驻留内存
+  private var tailBytes: Long = 0L
+  private var tailLines: Int = 0
+  private var totalBytes: Long = 0L
+  private var totalLines: Long = 0L
+  private var writer: java.io.BufferedWriter = null
+  private var spillPath: os.Path = null
+  private var spillFailed: Boolean = false
+
+  /** 全量字节数 / 行数（含未驻留内存的部分）。 */
+  def bytes: Long = lock.synchronized(totalBytes)
+  def lines: Long = lock.synchronized(totalLines)
+
+  /** 溢写文件路径（未溢出 / 写失败时为 None）。 */
+  def overflowPath: Option[String] = lock.synchronized(Option(spillPath).map(_.toString))
+
+  /** 已溢出（= 需要回执标注；含溢写失败——同样要标注「全文拿不到」）。 */
+  def overflowed: Boolean = lock.synchronized(spillPath != null)
+
+  def append(line: String): Unit = lock.synchronized {
+    val len = line.getBytes(java.nio.charset.StandardCharsets.UTF_8).length + 1 // +\n
+    totalBytes += len
+    totalLines += 1
+    // 溢出判据：累计输出已越过尾窗预算 ⇒ 从此行起整流镜像（含头段——writer 落
+    // 地时先回放已读的尾窗行，保证盘上是**完整**输出、从第一行起）。
+    if totalBytes > tailKeepBytes || totalLines > tailKeepLines then spill(line)
+    tail.addLast(line)
+    tailLines += 1
+    tailBytes += len
+    // 尾窗裁剪：行数与字节双上限，行粒度回退（至少留一行——单行超限也保它）
+    while tail.size() > 1 && (tailLines > tailKeepLines || tailBytes > tailKeepBytes) do
+      val dropped = tail.removeFirst()
+      val dl = dropped.getBytes(java.nio.charset.StandardCharsets.UTF_8).length + 1
+      tailBytes -= dl
+      tailLines -= 1
+  }
+
+  /** 首次触发时建文件并**回放已读尾窗全部历史行**（盘上 = 从第一行起的完整输出）。 */
+  private def spill(line: String): Unit =
+    if spillFailed then ()
+    else
+      try
+        if writer == null then
+          val dir = spillDir
+          if !os.exists(dir) then os.makeDir.all(dir)
+          val p = dir / OutputSpill.newFileName(System.currentTimeMillis())
+          spillPath = p
+          writer = java.nio.file.Files.newBufferedWriter(
+            p.toNIO,
+            java.nio.charset.StandardCharsets.UTF_8
+          )
+          // 回放：此刻驻留内存的行 = 这条流已读过的全部行（本容器单读线程持有）
+          val it = tail.iterator()
+          while it.hasNext do
+            writer.write(it.next())
+            writer.write("\n")
+        writer.write(line)
+        writer.write("\n")
+      catch
+        case e: java.io.IOException =>
+          spillFailed = true
+          try if writer != null then writer.close() catch case _: java.io.IOException => ()
+          writer = null
+        case e: RuntimeException =>
+          spillFailed = true
+          writer = null
+
+  /**
+   * 收口结果：未溢出 ⇒ 原文（逐字节同改前）；溢出 ⇒ 尾窗 + 末行标注
+   * `[Output truncated: showing last N of M lines — full output: <绝对路径>]`
+   * （溢写写失败时路径段换成明示丢弃，标注保留 `Output truncated` 前缀供消费方识别）。
+   */
+  def result(): String = lock.synchronized {
+    if spillPath == null then
+      // 未溢出：原文**逐字节不变**（每行 + `\n`，末尾换行照旧；空白输出为 ""）——
+      // 与改前 10MB 保头版本、M3 首尾窗口版本的短输出回执完全一致，不加任何标记。
+      val s =
+        if tail.isEmpty then ""
+        else
+          val sb = new java.lang.StringBuilder(tailBytes.toInt + 16)
+          val it = tail.iterator()
+          while it.hasNext do
+            sb.append(it.next())
+            sb.append('\n')
+          sb.toString
+      if s.trim.isEmpty then "" else s
+    else
+      val pathPart =
+        if spillFailed then "full output unavailable — spill file write failed"
+        else s"full output: ${spillPath.toString}"
+      val sb = new java.lang.StringBuilder(tailBytes.toInt + 256)
+      val it = tail.iterator()
+      while it.hasNext do
+        sb.append(it.next())
+        sb.append('\n')
+      sb.append(s"[Output truncated: showing last $tailLines of $totalLines lines — $pathPart]")
+      sb.append('\n')
+      sb.toString
+  }
+
+  override def close(): Unit = lock.synchronized {
+    try if writer != null then { writer.flush(); writer.close() } catch case _: java.io.IOException => ()
+    writer = null
+  }

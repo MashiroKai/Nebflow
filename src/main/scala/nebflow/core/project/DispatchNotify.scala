@@ -2,6 +2,7 @@ package nebflow.core.project
 
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
+import nebflow.core.delegate.FreezeNotice
 import nebflow.db.DbHandle
 import nebflow.db.format.GuardDocs
 import nebflow.shared.NebflowLogger
@@ -168,7 +169,20 @@ final class DispatchNotify(
    * 未 markSent 节点的重启补投不再打穿冷却 ⇒ 不重发风暴，#144 家族）。
    * 生产由 [[DispatchNotify.forEngine]] 自开注入；测试直构缺省 None。
    */
-  guardDb: Option[DbHandle] = None
+  guardDb: Option[DbHandle] = None,
+  /**
+   * **投递目标（P0 · 2026-11-02 dispatch-notify 投递地址批）**：链属主（delegate 作用域
+   * 引擎 = 创建者 delegate 本人）取代「项目分发器常量」的唯一接缝。
+   * `None`（缺省 / per-project 引擎）= **逐字节旧行为**：投递闭包由
+   * [[DispatchNotify.defaultTrigger]] 给出、投递探针恒 `true` ⇒ [[flushBatch]] 恒
+   * `markSent` + 既有 `triggered: <key> → dispatcher (…)` 审计行一字不改。
+   * `Some(t)` = 投递后**按探针结果分支**：`true`（已投到活会话）⇒ 照旧逐件 markSent
+   * ＋既有审计行 ＋ 一条 `dispatch-notify-delivery`；`false`（目标不 live）⇒ **不
+   * markSent**（件留在 [[redeliver]] 候选集，at-least-once 补投）＋ 一条
+   * `dispatch-notify-parked` 审计 ＋ WARN——**绝不旁路回项目分发器**（链主人不 live 的
+   * 语义是「滞留」，不是「换个收件人」）。
+   */
+  deliveryTarget: Option[DispatchNotify.DeliveryTarget] = None
 ):
   private val logger = NebflowLogger.forName("nebflow.project.dispatch-notify")
 
@@ -324,7 +338,8 @@ final class DispatchNotify(
       case List(one) => one
       case many =>
         // 本批 N 件触发 + 各件清单。（桥侧 `batchSummaryLine` 已随 R7-b 删净，
-        // 分发器的批级回传改由显式 `Mail(address="Nebula", type=RESULT, chainId=…)` 承载。）
+        // 批级回传改由**引擎级回执**承担——分发器没有 Mail 工具，见
+        // [[AgentCore.DispatcherFixedTools]]。）
         s"[dispatch-notify] 本批 ${many.size} 件触发（同打包窗口合并为一次注入）：\n\n" + many.mkString("\n\n---\n\n")
 
   /**
@@ -360,6 +375,10 @@ final class DispatchNotify(
    * 预算耗尽：逐件走 [[escalateBudgetExhaustedFor]]（节点保持终态 + markSent 退出
    * 候选集 + single-flight 监督通知）——账务口径与窗口引入前一致。
    * 投递成功后逐件 `markSent`（tell-then-mark，per-node 持久去重语义不变）。
+   *
+   * P0（投递地址批）：投递目标可由 [[deliveryTarget]] 覆盖——探针 `true` = 上面的旧
+   * 行为（markSent + 既有审计行）；`false` = 目标不 live ⇒ **滞留**（不 markSent，
+   * 留 [[redeliver]] 候选集 + `dispatch-notify-parked` 审计 + WARN，不旁路项目分发器）。
    */
   private def flushBatch(reason: NotifyReason): IO[Unit] =
     val key = batchKey(reason)
@@ -369,25 +388,81 @@ final class DispatchNotify(
         budgetUsedFor(reason).modify(n => if n >= budgetMaxFor(reason) then (n, false) else (n + 1, true)).flatMap {
           case true =>
             val nodes = entries.map(_._1)
-            trigger(mergedText(entries.map(_._2)))
-              .handleErrorWith(e =>
-                logger
-                  .warn(s"dispatch-notify trigger failed (reason=${key}, batch=${entries.size}): ${e.getMessage}")
-                  .void
-              ) *>
-              nodes.traverse_(node =>
-                markSent(node.id) *>
-                  FlowMapEventLog.append(
-                    workspace,
-                    projectName,
-                    node.id,
-                    "dispatch-notify",
-                    s"triggered: $key → dispatcher (node '${node.name}', batch=${entries.size}, budget ${budgetMaxFor(reason)})"
+            // P0：投递结果（探针 true/false）决定「照旧 markSent」还是「滞留」。
+            //  - `deliveryTarget=None`（缺省 / per-project）= **唯一**投递腿仍是 `trigger`
+            //    （project dispatcher 链），其结果语义恒 true ⇒ 旧行为逐字节不变。
+            //  - `Some(t)` = **只**走 `t.deliver`，项目 dispatcher 链在这条 flushBatch
+            //    腿上完全不被调用（不旁路：作用域件绝不进项目分发器）。
+            // 抛错一律按「已尝试投递（true）」处理 = 旧行为（WARN 后照旧 markSent）。
+            val send: IO[Boolean] = deliveryTarget match
+              case Some(t) =>
+                t.deliver(mergedText(entries.map(_._2))).handleErrorWith { e =>
+                  logger
+                    .warn(
+                      s"dispatch-notify delivery failed (target=${t.label}, reason=${key}, batch=${entries.size}): ${e.getMessage}"
+                    )
+                    .as(true)
+                }
+              case None =>
+                trigger(mergedText(entries.map(_._2)))
+                  .handleErrorWith(e =>
+                    logger
+                      .warn(s"dispatch-notify trigger failed (reason=${key}, batch=${entries.size}): ${e.getMessage}")
+                      .void
                   )
-              ) *>
-              logger.info(
-                s"Project '$projectName' dispatch-notify batch flushed: reason=$key batch=${entries.size} nodes=${nodes.map(_.name).mkString(",")}"
-              )
+                  .as(true)
+            send.flatMap {
+              case true =>
+                nodes.traverse_(node =>
+                  markSent(node.id) *>
+                    FlowMapEventLog.append(
+                      workspace,
+                      projectName,
+                      node.id,
+                      "dispatch-notify",
+                      s"triggered: $key → dispatcher (node '${node.name}', batch=${entries.size}, budget ${budgetMaxFor(reason)})"
+                    ) *>
+                    deliveryTarget.traverse_(t =>
+                      FlowMapEventLog
+                        .append(
+                          workspace,
+                          projectName,
+                          node.id,
+                          DispatchNotify.DeliveryEventType,
+                          DispatchNotify.deliverySummary(t.label, node.id, "delivered")
+                        )
+                        .handleErrorWith(e =>
+                          logger.warn(s"dispatch-notify-delivery audit append failed: ${e.getMessage}")
+                        )
+                    )
+                ) *>
+                  logger.info(
+                    s"Project '$projectName' dispatch-notify batch flushed: reason=$key batch=${entries.size} nodes=${nodes.map(_.name).mkString(",")}"
+                  )
+              case false =>
+                // 目标不 live ⇒ **滞留**：不 markSent（留 redeliver 候选集，at-least-once），
+                // 不写既有「triggered → dispatcher」行，不旁路项目分发器。
+                nodes.traverse_(node =>
+                  deliveryTarget.traverse_(t =>
+                    FlowMapEventLog
+                      .append(
+                        workspace,
+                        projectName,
+                        node.id,
+                        DispatchNotify.ParkedEventType,
+                        DispatchNotify.deliverySummary(t.label, node.id, "parked")
+                      )
+                      .handleErrorWith(e =>
+                        logger.warn(s"dispatch-notify-parked audit append failed: ${e.getMessage}")
+                      )
+                  ) *>
+                    logger.warn(
+                      s"Project '$projectName' dispatch-notify PARKED: target=${deliveryTarget.map(_.label).getOrElse("-")} " +
+                        s"reason=$key node=${node.id} ('${node.name}') batch=${entries.size} — target not live, " +
+                        "notifySentAt NOT set (stays a redelivery candidate; no bypass to the project dispatcher)"
+                    )
+                )
+            }
           case false =>
             entries.traverse_((node, _) => escalateBudgetExhaustedFor(node, reason))
         }
@@ -421,7 +496,28 @@ final class DispatchNotify(
       case NotifyReason.Failed =>
         // 不查 flag（设计 §2.2 四理由：failed 是异常低频事件，拓扑主人全知情）；
         // 持久去重同样按 store 现读判定。
+        //
+        // 冻结通知策略批（2026-11-05 10:36 作者令逐字「不论是节点还是delegate，由于
+        // provider 故障，都不需要向上通知…所以不需要向上汇报。因为provider 故障上级也
+        // 基本死了，汇报给上级没用」）：节点失败正文属**基础设施故障**（provider /
+        // 网络 / 额度 / 鉴权——判据单点 `FreezeNotice.infraFault`，与 delegate 冻结面
+        // 共用同一把尺）⇒ **零向上通知**：不投父会话、不进补投候选（落 notifySentAt
+        // 止重扫，避免 30s 拍反复尝试），只 WARN 留痕。节点仍保持 failed 终态（面板 /
+        // Flow Map 可见、可 NodeEdit 重激活）——**这不是失败汇报的删除，是"别用一条
+        // 上游也救不了的消息去吵一个同样在挨饿的上级"**。
         if node.status != NodeLifecycle.Failed then IO.pure(false)
+        else if DispatchNotify.suppressFailedNotifyForInfraFault(
+            node,
+            nebflow.shared.Defaults.DelegateFreezeSilence
+          )
+        then
+          logger
+            .warn(
+              s"dispatch-notify: node '${node.name}' (${node.id}) failed on an INFRASTRUCTURE fault " +
+                s"(${node.result.getOrElse("").take(160)}) — upward failed-notification suppressed " +
+                "(provider faults are not task failures); the node stays failed and visible on the flow map, re-activate with NodeEdit"
+            )
+            .as(()) *> markSent(node.id).as(false)
         else markerEmpty(node.id)
       case NotifyReason.Cancelled =>
         // R1：与 failed 完全对称——不查 flag。取消同样是
@@ -969,7 +1065,7 @@ final class DispatchNotify(
        |2. 改接（该轨确实不再需要）：**普通取消路径引擎已自动处理**——取消终态写点即把本节点 out 摘除并改接 Nebula（下游 in 镜像随之 prune，下游登记「待承接」标）。若下游 in 里仍见本节点，NodeEdit 把本节点 out 改为 Nebula 即可（幂等）。
        |   **L3 硬恢复路径语义不同**：该路径取消时**不摘除**（resume 成功后拓扑必须完整，提前 prune 会让下游永远拿不到结果）；resume 失败则节点被**改判 failed**（不是留在 cancelled）——failed 侧按 D5 零结算停等，**同样不摘除**，下游 in 保持完整、等上游 NodeEdit 重激活重跑后自动续跑；此时若该轨确实不再需要，请用于该节点 out→Nebula 的 NodeEdit 触发 prune（幂等）。兜底腿：仅当引擎已无法定位该会话归属节点（节点已离活动区/归档）时，引擎才代做 cancelled 侧的**迟到摘除**（反向 prune 活动区引用 + 登记「待承接」+ 事件流留痕）；两者都查无则记 ERROR + 事件流（人工介入）。
        |3. 放弃该轨：NodeEdit abandon=true 标记放弃；下游的「待承接」标记仍需按 1/2 处置，否则其 barrier 永久停等。
-       |4. 需人工/外部条件 → 在你的最终输出中写明上报内容（自动投递 Nebula）。
+       |4. 需人工/外部条件 → 在你的最终输出中写明上报内容（分发器**没有消息工具**：终文只落 Flow Map / 事件流，root **不会自动收到**，别指望自动投递）。要人裁定 ⇒ `AskUserQuestion`（阻塞到作者答复）；要留痕/转交 ⇒ `TaskBoard` 注记。链级终态（含「链永久 wedged」）的回执由**引擎**送达（作用域面 = 创建该链的 delegate，项目面 = 项目根），不靠分发器手写消息。
        |$waiterLine
        |前置检查：本节点可能在 L3 硬恢复中已被引擎复活（status 已非 cancelled）**或被改判 failed**——先 NodeList(detail="${node.id}") 读现状；若已 running/pending 则本轮无需动作（若已是 failed，按 failed 版通知的处置指引处理：首选 NodeEdit 重激活重跑）。
        |无需回报——拓扑与状态已落 Flow Map。""".stripMargin
@@ -995,7 +1091,7 @@ final class DispatchNotify(
        |1. **不要承接**（严禁新建 `<原名>-retry` / 语义新名承接节点，也严禁编辑本节点试图复活）：若确需恢复这条轨，只能等用户在本会话中明确要求之后（Nebula 或本项目收到新指令）再动手，不要自行重派。
        |2. 改接（该轨确实不再需要）：**普通取消路径引擎已自动处理**——取消终态写点即把本节点 out 摘除并改接 Nebula（下游 in 镜像随之 prune，下游登记「待承接」标）。若下游 in 里仍见本节点，NodeEdit 把本节点 out 改为 Nebula 即可（幂等）。
        |3. 放弃该轨：NodeEdit abandon=true 标记放弃；下游的「待承接」标记仍需按 1/2 处置，否则其 barrier 永久停等。
-       |4. 需人工/外部条件 → 在你的最终输出中写明上报内容（自动投递 Nebula）。
+       |4. 需人工/外部条件 → 在你的最终输出中写明上报内容（分发器**没有消息工具**：终文只落 Flow Map / 事件流，root **不会自动收到**，别指望自动投递）。要人裁定 ⇒ `AskUserQuestion`（阻塞到作者答复）；要留痕/转交 ⇒ `TaskBoard` 注记。链级终态（含「链永久 wedged」）的回执由**引擎**送达（作用域面 = 创建该链的 delegate，项目面 = 项目根），不靠分发器手写消息。
        |$waiterLine
        |前置检查：本节点可能在 L3 硬恢复中已被引擎复活（status 已非 cancelled）**或被改判 failed**——先 NodeList(detail="${node.id}") 读现状；若已 running/pending 则本轮无需动作（若已是 failed，按 failed 版通知的处置指引处理：首选 NodeEdit 重激活重跑）。
        |无需回报——拓扑与状态已落 Flow Map。""".stripMargin
@@ -1147,7 +1243,7 @@ final class DispatchNotify(
        |1. 承接（首选）：NodeEdit 新建替代节点（建议命名 <原名>-retry 或语义新名），接原拓扑位置（in 同源、out 同目标）。
        |2. 该轨确实不再需要：无需额外动作（链级腿已把取消成员的 out 摘除并改接 Nebula，下游 in 镜像随之 prune）。
        |3. 放弃该轨：NodeEdit abandon=true 标记放弃。
-       |4. 需人工/外部条件 → 在你的最终输出中写明上报内容（自动投递 Nebula）。
+       |4. 需人工/外部条件 → 在你的最终输出中写明上报内容（分发器**没有消息工具**：终文只落 Flow Map / 事件流，root **不会自动收到**，别指望自动投递）。要人裁定 ⇒ `AskUserQuestion`（阻塞到作者答复）；要留痕/转交 ⇒ `TaskBoard` 注记。链级终态（含「链永久 wedged」）的回执由**引擎**送达（作用域面 = 创建该链的 delegate，项目面 = 项目根），不靠分发器手写消息。
        |读取入口：NodeList(detail="<节点id>", project=$projectName) / flow-map 链定位（chainId=$chainId）。
        |无需回报——拓扑与状态已落 Flow Map。""".stripMargin
 
@@ -1172,7 +1268,7 @@ final class DispatchNotify(
        |1. 瞬时/基础设施类失败（LLM 超时、agent 基础设施故障等，同参数值得重试）→ NodeEdit 编辑该节点任意实际变更（task/description/in/out/deps 任一实际改动）触发 reactivate 重跑——原节点复活（status 回 wiring/pending），in/out 拓扑保持，轮次计数清零；
        |2. 需换基线/重派（任务定义或执行形态需实质调整）→ NodeEdit 新建承接节点（建议命名 <原名>-retry 或语义新名），接原拓扑位置（in 同源、out 同目标）；原 failed 节点留作审计，勿删改；
        |3. 任务无意义/无法修复 → NodeEdit abandon=true 标记放弃；
-       |4. 需人工/外部条件 → 在你的最终输出中写明上报内容（自动投递 Nebula）。
+       |4. 需人工/外部条件 → 在你的最终输出中写明上报内容（分发器**没有消息工具**：终文只落 Flow Map / 事件流，root **不会自动收到**，别指望自动投递）。要人裁定 ⇒ `AskUserQuestion`（阻塞到作者答复）；要留痕/转交 ⇒ `TaskBoard` 注记。链级终态（含「链永久 wedged」）的回执由**引擎**送达（作用域面 = 创建该链的 delegate，项目面 = 项目根），不靠分发器手写消息。
        |$waiterLine
        |无需回报——拓扑与状态已落 Flow Map。""".stripMargin
 
@@ -1221,7 +1317,7 @@ final class DispatchNotify(
        |1. **首选：等承接 / 勿重激活**（勿把 '${up.name}' (${up.id}) 重新卷进来）——用户取消的意图必须被尊重：要恢复本节点，先由用户在本会话明确要求恢复该上游（或先按第 2 条改接替代上游）再动手，不要自行重激活重跑；
        |2. 需换基线/重派（任务定义或执行形态需实质调整）→ NodeEdit 新建承接节点（建议命名 <原名>-retry 或语义新名），接原拓扑位置（in 同源、out 同目标）；原 failed 节点留作审计，勿删改——**注意**：若其 in 仍同源引用 '${up.name}' (${up.id})，该节点照样停等（上游已是用户取消的终态、不会再产出结果），须先按 cancelled 通知处置该上游（改接替代上游 / abandon）或改换上游；
        |3. 任务无意义/无法修复 → NodeEdit abandon=true 标记放弃；
-       |4. 需人工/外部条件 → 在你的最终输出中写明上报内容（自动投递 Nebula）。
+       |4. 需人工/外部条件 → 在你的最终输出中写明上报内容（分发器**没有消息工具**：终文只落 Flow Map / 事件流，root **不会自动收到**，别指望自动投递）。要人裁定 ⇒ `AskUserQuestion`（阻塞到作者答复）；要留痕/转交 ⇒ `TaskBoard` 注记。链级终态（含「链永久 wedged」）的回执由**引擎**送达（作用域面 = 创建该链的 delegate，项目面 = 项目根），不靠分发器手写消息。
        |$waiterLine
        |无需回报——拓扑与状态已落 Flow Map。""".stripMargin
 
@@ -1232,6 +1328,22 @@ end DispatchNotify
 object DispatchNotify:
   /** 链级通知预算默认值（设计约束③建议值；completion/failed 同值独立分账）。 */
   val DefaultBudget: Int = 5
+
+  /**
+   * **failed 通知的「基础设施故障 ⇒ 不向上汇报」判据**（纯函数；spec 判红锚）。
+   *
+   * 冻结通知策略批（2026-11-05 10:36 作者令逐字「不论是节点还是delegate，由于provider
+   * 故障，都不需要向上通知…因为provider 故障上级也基本死了，汇报给上级没用」）：
+   * 节点 failed 且失败正文属基础设施故障（provider / 网络 / 额度 / 鉴权——判据单点
+   * `FreezeNotice.infraFault`，与 delegate 冻结面同一把尺）⇒ **不投递**。节点仍是
+   * failed 终态（Flow Map / 面板可见、可 NodeEdit 重激活）——被压掉的只是这条**上游
+   * 也救不了**的消息。
+   *
+   * @param silenceOn 静默总闸（`Defaults.DelegateFreezeSilence`；关 = 回旧行为）
+   */
+  def suppressFailedNotifyForInfraFault(node: NodeDef, silenceOn: Boolean): Boolean =
+    silenceOn && node.status == NodeLifecycle.Failed &&
+      FreezeNotice.infraFault(node.result.getOrElse(""))
 
   /**
    * **R1/R4 文本契约锚**：user-cancel 变体的可判读标记
@@ -1305,6 +1417,47 @@ object DispatchNotify:
    */
   val NoticeEventType: String = "notice"
 
+  // ── P0 投递目标（2026-11-02 dispatch-notify 投递地址批）─────────────────────
+  //
+  // 语义：把「通知投给谁」从项目常量升为**显式三态**（label 审计用 + 投递探针）。
+  // 缺省（None）= 项目分发器腿，逐字节旧行为；作用域引擎（DelegateFlowHosts.mount）
+  // 传 `delegate-creator:<delegateId>` + `DelegateNotify.inject(...)`。
+
+  /** 投递目标缺省标签：项目分发器（= [[defaultTrigger]] 那条链的审计归因）。 */
+  val ProjectDispatcherLabel: String = "project-dispatcher"
+
+  /** 作用域引擎的投递目标标签（`delegate-creator:<delegateId>`，与 NotifyRule.Target 同族命名）。 */
+  def delegateCreatorLabel(delegateId: String): String = s"delegate-creator:$delegateId"
+
+  /** 「已投达」审计事件（探针 true；**新增**行，不改既有 `triggered: …` 执行文本）。 */
+  val DeliveryEventType: String = "dispatch-notify-delivery"
+
+  /** 「滞留」审计事件（探针 false：目标不 live ⇒ 不 markSent、不旁路项目分发器）。 */
+  val ParkedEventType: String = "dispatch-notify-parked"
+
+  /** 投递审计 summary（delivery / parked 共用形状：`target=<label> node=<id> outcome=<…>`）。 */
+  def deliverySummary(label: String, nodeId: String, outcome: String): String =
+    s"target=$label node=$nodeId outcome=$outcome"
+
+  /**
+   * **投递目标**：`label`（审计/日志归因）+ `deliver`（投递探针，`true` = 已投达活
+   * 会话，`false` = 目标不 live ⇒ [[DispatchNotify.flushBatch]] 走滞留分支）。
+   *
+   * 生产装配：delegate 作用域引擎 = `delegate-creator:<delegateId>` +
+   * `DelegateNotify.inject(resources.agentRegistry, delegateId, _)`（`nebflow.core.delegate`
+   * 在 core 内，层级门禁合法）；per-project 引擎不传（缺省 = [[defaultTrigger]] 链，
+   * 项目 dispatcher 行为零变化）。
+   */
+  final case class DeliveryTarget(label: String, deliver: String => IO[Boolean])
+
+  /**
+   * 默认投递目标（label = [[ProjectDispatcherLabel]]，探针 = `trigger` 后恒 true）——
+   * 便于显式装配方复用「项目分发器」语义；`forEngine` 的缺省路径**不用**本值（它保持
+   * 零行为差的 `trigger`+恒 true 形态，见 [[forEngine]]）。
+   */
+  def projectDispatcherTarget(trigger: String => IO[Unit]): DeliveryTarget =
+    DeliveryTarget(ProjectDispatcherLabel, text => trigger(text).as(true))
+
   /**
    * 默认触发通道：ProjectRuntimeRegistry → ProjectActor.TriggerDispatcher
    * （与 `Mail(address="project:<名>")` 同链路；rootSessionId 用挂载根——系统发起，
@@ -1351,7 +1504,14 @@ object DispatchNotify:
     triggerOverride: Option[String => IO[Unit]] = None,
     windowMs: Long = DefaultWindowMs,
     /** db 接线（D-10）：None = 生产自开共享句柄（best-effort）；Some = 显式注入（隔离/测试）。 */
-    guardDb: Option[DbHandle] = None
+    guardDb: Option[DbHandle] = None,
+    /**
+     * P0：投递目标（None = 项目分发器腿，逐字节旧行为；作用域引擎传
+     * `delegate-creator:<id>` + `DelegateNotify.inject`）。`Some` 时**只**走该探针，
+     * [[defaultTrigger]] 链不被调用（作用域件不进项目分发器）。
+     * `triggerOverride` 与 `deliveryTarget` 同时给出 ⇒ 仍按测试接缝纪律关窗（同步逐条）。
+     */
+    deliveryTarget: Option[DeliveryTarget] = None
   ): DispatchNotify =
     new DispatchNotify(
       store,
@@ -1369,7 +1529,8 @@ object DispatchNotify:
       guardDb = guardDb.orElse {
         if triggerOverride.isDefined then None
         else nebflow.db.DbHost.openBestEffort(nebflow.shared.PathUtil.dataRoot.toNIO)
-      }
+      },
+      deliveryTarget = deliveryTarget
     )
 
 end DispatchNotify

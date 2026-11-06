@@ -176,13 +176,13 @@ class SocialChannelsBootSealSpec extends FunSuite:
   test("A1 golden explicit `enabled:true`: the switch is written and every other key of the file survives") {
     val root = tmpRoot()
     os.write(
-      root / "nebflow.json",
+      root / nebflow.shared.Branding.configFileName,
       """{"version":3,"theme":"dark","socialChannels":{"version":1,"channels":{"wechat":{"enabled":true,"fields":{"app_id":"wx0123456789abcdef"},"updatedAt":111}}},"unrelatedKey":{"nested":[1,2,3]}}"""
     )
 
     saved(root, "feishu", verifiedBody(Some(true)))
 
-    val file = io.circe.parser.parse(os.read(root / "nebflow.json")).toOption.get
+    val file = io.circe.parser.parse(os.read(root / nebflow.shared.Branding.configFileName)).toOption.get
     assertEquals(file.hcursor.downField("version").as[Int].toOption, Some(3), "top-level keys survive")
     assertEquals(file.hcursor.downField("theme").as[String].toOption, Some("dark"))
     assertEquals(
@@ -224,7 +224,7 @@ class SocialChannelsBootSealSpec extends FunSuite:
   test("A2 fingerprint mismatch is a STATUS: the connection face reports it and rewrites nothing") {
     val root = tmpRoot()
     saved(root, "feishu", verifiedBody(Some(true)))
-    val before = os.read(root / "nebflow.json")
+    val before = os.read(root / nebflow.shared.Branding.configFileName)
 
     val plugin = new FeishuBridgePlugin(
       root,
@@ -244,7 +244,7 @@ class SocialChannelsBootSealSpec extends FunSuite:
       Some(true),
       "the stored switch is reported as-is"
     )
-    assertEquals(os.read(root / "nebflow.json"), before, "零配置改写：读一次 connection face 不得动盘上任何字节（更不得写 enabled=false）")
+    assertEquals(os.read(root / nebflow.shared.Branding.configFileName), before, "零配置改写：读一次 connection face 不得动盘上任何字节（更不得写 enabled=false）")
     assertEquals(enabledOf(root, "feishu"), Some(true))
   }
 end SocialChannelsBootSealSpec
