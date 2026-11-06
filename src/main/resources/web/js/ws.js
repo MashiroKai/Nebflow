@@ -1483,8 +1483,10 @@ export function connect() {
   };
 
   state.ws.onerror = () => {
-    state.connected = false;
-    syncSendButtonConnState();
+    // `error` is diagnostic, not a transport-state transition: browser WebSocket
+    // errors do not identify whether the socket closed. Keep the last known state
+    // until the authoritative `close` event below schedules recovery; otherwise
+    // a transient/error notification can flash the reconnect banner on a live WS.
   };
 
   state.ws.onmessage = (e) => {
