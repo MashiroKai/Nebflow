@@ -2390,8 +2390,8 @@ object GatewayMain extends IOApp:
                                                             .start
                                                           // --- Background: 合并队列自驱拍（P2 QueueActor 批 2026-11-06）---
                                                           // 队列状态机搬进 actor 之后，**队列自己的看护拍归队列自己**
-                                                          // （`ActorContext.scheduleOnce` → `QueueMsg.Tick`，零 IO.sleep
-                                                          // 轮询）：持窗尸体判死、账实核对、补一拍放行都在 Tick 里做，
+                                                          // （`ActorContext.scheduleOnce` → `QueueMsg.Tick`，零睡眠轮询）：
+                                                          // 持窗尸体判死、账实核对、补一拍放行都在 Tick 里做，
                                                           // 不再依赖「宿主扫描拍顺带捎一脚」的搭车关系。
                                                           // TaskStuckWatcher 那一拍保留（幂等，且它还有别的腿）；
                                                           // 队列只是不再只能靠它。
