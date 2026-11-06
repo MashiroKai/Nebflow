@@ -480,6 +480,29 @@ private[gateway] object SocialRoutes:
         }
 
       /**
+       * 描述跨设备同步状态（profile-sync 批，2026-11-06）：
+       * `GET /api/profile/sync-status` →
+       * ```
+       * { neblink: bool, selfDeviceId: str, peers: int,
+       *   fields: { friendBio|groupRemark|groupDescription|selfBio:
+       *             { state: "synced"|"syncing"|"local-only", updatedAt: ms, peers: int } } }
+       * ```
+       *
+       * **只读出口**（前端徽标读它，不写任何东西、不推任何帧）：判据单点在
+       * `ProfileSync.status`（本 case 只做鉴权 + 转发，禁在路由层二次判读）。
+       * 未配置 NebLink / 已配对设备为 0 ⇒ 每类字段恒 `local-only`——「没有对端可同步」
+       * 就是事实，绝不假装 `synced`。
+       *
+       * 🔴 与 `/api/profile/descriptions` 的职责分家：后者 = 描述**正文**（本地真值），
+       * 本端点 = 正文的**收敛状态**（跨设备的账）。前端渲染徽标必须读本端点，禁从
+       * 「正文非空」反推「已同步」。
+       */
+      case req @ GET -> Root / "profile" / "sync-status" =>
+        withAuth(req) {
+          ProfileSync.status.flatMap(json => Ok(json))
+        }
+
+      /**
        * 自己给自己写的介绍 `selfBio`（件一，2026-11-02）。body `{selfBio}` →
        * 200 `{ok:true}`。
        *
