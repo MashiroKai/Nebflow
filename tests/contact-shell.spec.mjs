@@ -61,21 +61,44 @@ const ok = (name, cond, extra = '') => {
 };
 
 // ── 契约镜像夹具 ────────────────────────────────────────────────────────────
+// 🔴 日期行上移批（2026-11-06 作者令②）：FIXED 同时是**页面内冻结时钟**
+//   （createSession({clock})）——formatFooterDay 的 now = new Date() 恒 11-06
+//   09:00 ⇒ 「昨天/星期二」分桶判定与断言跨日确定（不随跑测日期漂移）。
 const FIXED = new Date(2026, 10, 6, 9, 0, 0).getTime();
+const DAY_MS = 86400000;
 const iso = (ms) => new Date(ms).toISOString();
 const FRIEND = { userId: 'u-p', neblinkId: 'pagfriend', name: '分页君', avatarUrl: '', remark: null, since: iso(FIXED - 86400000) };
-/** 消息行（wire = id/senderId/kind/body/createdAt）；40 条 ⇒ 一定超一屏，可滚动。 */
-const MSGS = Array.from({ length: 40 }, (_, i) => ({
-  id: 100 + i,
-  senderId: i % 2 ? 'me' : 'u-p',
-  kind: 'text',
-  body: `第 ${i + 1} 条：这一行用来量「内容从窗头底下穿过去」的那一段几何。`,
-  createdAt: iso(FIXED - (40 - i) * 60000),
-}));
+/** 消息行（wire = id/senderId/kind/body/createdAt）；40 条**跨三个本地日历日**：
+ *  i∈[0,12) = 11-03（本周周二）· i∈[12,28) = 11-05（昨天）· i∈[28,40) = 今天。
+ *  ⇒ 日期行判据（跨天只显一次：恰 2 条居中日期行、今天无行）+ 纯时钟 footer 判据
+ *  （改前昨天/更早的 footer 逐条带日期层 = 本组判据改前必红）。 */
+const MSGS = Array.from({ length: 40 }, (_, i) => {
+  const dayBack = i < 12 ? 3 : (i < 28 ? 1 : 0);
+  return {
+    id: 100 + i,
+    senderId: i % 2 ? 'me' : 'u-p',
+    kind: 'text',
+    body: `第 ${i + 1} 条：这一行用来量「内容从窗头底下穿过去」的那一段几何。`,
+    createdAt: iso(FIXED - dayBack * DAY_MS - (40 - i) * 60000),
+  };
+});
 const CONVS = [
   { conversationId: 'cF', friend: FRIEND, lastMessage: MSGS[MSGS.length - 1], unreadCount: 0 },
 ];
 const CONFIG = { llm: { providers: {} }, features: { friends: true } };
+/** sync-status 桩（3(a) 三态徽标真数据源）：body 由各会话按态给。 */
+const syncStatusStub = (state) => ({
+  status: 200,
+  body: {
+    neblink: true, selfDeviceId: 'dev-self', peers: 2,
+    fields: {
+      friendBio: { state, updatedAt: FIXED - 60000, peers: 2 },
+      groupRemark: { state, updatedAt: FIXED - 60000, peers: 2 },
+      groupDescription: { state, updatedAt: FIXED - 60000, peers: 2 },
+      selfBio: { state, updatedAt: FIXED - 60000, peers: 2 },
+    },
+  },
+});
 
 const API_STUBS = {
   '/api/conversations/cF/messages': { status: 200, body: MSGS },
@@ -83,6 +106,7 @@ const API_STUBS = {
   '/api/friends': { status: 200, body: { friends: [FRIEND], incoming: [], outgoing: [] } },
   '/api/groups': { status: 200, body: [] },
   '/api/groups/invites': { status: 200, body: { incoming: [] } },
+  '/api/profile/sync-status': syncStatusStub('synced'),
   '/api/neblink/status': {
     status: 200,
     body: {
@@ -235,6 +259,15 @@ const PIERCE = () => {
   const hb = header.getBoundingClientRect();
   const fb = flow.getBoundingClientRect();
   flow.scrollTop = Math.min(220, Math.max(0, flow.scrollHeight - flow.clientHeight));
+  // 日期行上移批（2026-11-06）补充：跨天日期行让「滚动 220px」落在行间隙的
+  // 概率出现（行位随日期行高度漂移）⇒ 滚后做一次**确定性对齐**——把第 4 条
+  // 消息行的顶缘对到窗头带内 8px，被测语义（一条可见消息真穿过窗头带）不再
+  // 依赖行布局的绝对位置。
+  const alignRow = [...flow.querySelectorAll('.fm-msg')][3];
+  if (alignRow) {
+    const ar = alignRow.getBoundingClientRect();
+    flow.scrollTop += ar.top - (hb.top + 8);
+  }
   const rows = [...flow.querySelectorAll('.fm-msg')].map((el) => {
     const r = el.getBoundingClientRect();
     return { top: +r.top.toFixed(2), bottom: +r.bottom.toFixed(2) };
@@ -262,6 +295,37 @@ const PIERCE = () => {
 const url = setWebRoot(ROOT_DIR);
 console.log(`# contact-shell · tag=${TAG} · static root = ${url}`);
 
+/** 日期行上移批（作者令②）读数：日期行/纯时钟 footer/会话档搜索的机械证据。 */
+const DAYLINES = () => {
+  const flow = document.querySelector('.fm-flow');
+  const q = (s) => document.querySelector(s);
+  const seps = flow ? [...flow.querySelectorAll('.fm-day-sep')] : [];
+  const flowRect = flow ? flow.getBoundingClientRect() : null;
+  const footers = [...document.querySelectorAll('.fm-msg-time')].map((e) => ({
+    text: e.textContent || '',
+    hasDayFormat: e.hasAttribute('data-ts-text-format'),
+  }));
+  return {
+    seps: seps.map((s) => {
+      const r = s.getBoundingClientRect();
+      return {
+        dayKey: s.dataset.dayKey || '',
+        text: (s.querySelector('.duration-badge-time') || s).textContent || '',
+        pill: s.classList.contains('duration-badge'),
+        centerX: +(r.left + r.width / 2).toFixed(1),
+      };
+    }),
+    flowCenterX: flowRect ? +(flowRect.left + flowRect.width / 2).toFixed(1) : null,
+    footerCount: footers.length,
+    footersWithDateLayer: footers.filter((f) => !/^[0-9]{1,2}:[0-9]{2}(\s?(AM|PM))?$/.test(f.text.trim())).length,
+    footersWithDayFormatAttr: footers.filter((f) => f.hasDayFormat).length,
+    footerSample: footers.slice(0, 3).map((f) => f.text),
+    searchTitle: q('#search-modal-title') ? q('#search-modal-title').textContent : null,
+    convScope: document.getElementById('search-overlay')?.dataset.convScope || '',
+    scopeDisplay: q('#search-scope') ? getComputedStyle(q('#search-scope')).display : null,
+  };
+};
+
 const { mod } = loadPlaywright();
 const { browser, label } = await launchBrowser(mod);
 console.log(`# browser = ${label}`);
@@ -284,7 +348,9 @@ const readings = { tag: TAG, webRoot: url, browser: label, desktop: null, mobile
 
 // ═══ 桌面档 1440×900 ═══════════════════════════════════════════════════════
 {
-  const s = await createSession(browser, { width: 1440, height: 900, colorScheme: 'light', apiStubs: API_STUBS });
+  // clock 冻结（日期行上移批）：页面内 new Date() 恒 FIXED ⇒ 跨天分桶/日期行
+  // 文本断言跨跑测日确定（FIXED = 2026-11-06 周五 09:00 本地）。
+  const s = await createSession(browser, { width: 1440, height: 900, colorScheme: 'light', apiStubs: API_STUBS, clock: FIXED });
   try {
     await s.boot({ config: CONFIG });
     await openConv(s.page);
@@ -369,6 +435,52 @@ const readings = { tag: TAG, webRoot: url, browser: label, desktop: null, mobile
       `#header=${mh && mh.backdrop} / 会话窗=${h && h.backdrop}`);
     ok('收编 · 主会话顶栏仍零下边缘（回归）', mh && mh.borderBottomAlpha === 0,
       `borderBottom=${mh && mh.borderBottomColor}`);
+
+    // ── 日期行上移批（2026-11-06 作者令②「跨天只显示一次」）────────────────────
+    // 夹具 40 条跨三个本地日历日（11-03 / 11-05 昨天 / 今天），时钟冻结在
+    // FIXED = 11-06 09:00 ⇒ 期望恰 2 条居中日期行（今天 = 纯时钟档无行），
+    // 且 footer 全部为纯时钟（改前昨天/更早 footer 逐条带日期层 = 改前必红）。
+    const dl = await s.page.evaluate(DAYLINES);
+    readings.desktopDay = dl;
+    const sepKeys = dl.seps.map((x) => x.dayKey);
+    const dayKeyOfTs = (ms) => { const d = new Date(ms); return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`; };
+    const wantKeys = [...new Set(MSGS.map((m) => dayKeyOfTs(Date.parse(m.createdAt))))].filter((k) => k !== dayKeyOfTs(FIXED));
+    ok('D1 · 跨天日期行在场且数量 = 天数−1（今天无行）',
+      dl.seps.length === wantKeys.length && wantKeys.every((k) => sepKeys.includes(k)),
+      `seps=${dl.seps.length}(${sepKeys.join(',')}) want=${wantKeys.length}(${wantKeys.join(',')})`);
+    ok('D2 · 日期行文本 = 分层档（星期X/昨天，今天无）',
+      dl.seps.map((x) => x.text).join('|') === '星期二|昨天',
+      `texts=${dl.seps.map((x) => x.text).join('|')}`);
+    ok('D3 · 日期行居中（中心 x = flow 中心 x ±2px）',
+      dl.seps.length > 0 && dl.seps.every((x) => Math.abs(x.centerX - dl.flowCenterX) <= 2),
+      `centers=${dl.seps.map((x) => x.centerX).join(',')} flow=${dl.flowCenterX}`);
+    ok('D4 · 日期行壳 = 主会话 footer 同一枚 .duration-badge（零第二套 pill）',
+      dl.seps.length > 0 && dl.seps.every((x) => x.pill),
+      `pill=${dl.seps.map((x) => x.pill).join(',')}`);
+    ok('D5 · footer 全纯时钟（40 条无一携带日期层；改前 = 昨天/更早逐条「昨天 hh:mm」）',
+      dl.footerCount === MSGS.length && dl.footersWithDateLayer === 0,
+      `footers=${dl.footerCount} 带日期层=${dl.footersWithDateLayer} sample=${dl.footerSample.join('/')}`);
+    ok('D6 · footer 零 data-ts-text-format="day"（12/24 切换按纯时钟重排）',
+      dl.footersWithDayFormatAttr === 0,
+      `dayFormatAttrs=${dl.footersWithDayFormatAttr}`);
+
+    // ── 搜索页标题两字档（2026-11-06 作者令「用搜索两个字吧」）──────────────────
+    // 真入口：主对话顶栏搜索钮 → i18n 单点 search.title 渲染到 #search-modal-title。
+    // 🔴 桌面会话窗是页级模态（cfg-modal-overlay 盖住顶栏）⇒ 先关窗再点主顶栏
+    //    搜索钮（主会话搜索的本态 = 主对话在场）。
+    await s.page.click('.fm-modal-close');
+    await settle(s.page, 300);
+    await s.page.click('#search-btn');
+    await s.page.waitForSelector('#search-overlay.on', { timeout: 8000 });
+    await settle(s.page, 200);
+    const st = await s.page.evaluate(DAYLINES);
+    readings.desktopSearch = { title: st.searchTitle, convScope: st.convScope };
+    ok('S1 · 搜索面板标题 = 「搜索」二字（search.title，整族「搜索聊天记录」退役）',
+      st.searchTitle === '搜索', `title=${JSON.stringify(st.searchTitle)}`);
+    ok('S2 · 主对话入口无会话档（convScope 清空 ⇒ 全局形态零变化）',
+      st.convScope === '', `data-conv-scope=${JSON.stringify(st.convScope)}`);
+    await s.page.click('#search-modal-close');
+    await settle(s.page, 150);
   } finally {
     await s.close();
   }
@@ -376,7 +488,7 @@ const readings = { tag: TAG, webRoot: url, browser: label, desktop: null, mobile
 
 // ═══ 手机档 375×812 ═══════════════════════════════════════════════════════
 {
-  const s = await createSession(browser, { width: 375, height: 812, colorScheme: 'light', apiStubs: API_STUBS });
+  const s = await createSession(browser, { width: 375, height: 812, colorScheme: 'light', apiStubs: API_STUBS, clock: FIXED });
   try {
     await s.boot({ config: CONFIG });
     await openConv(s.page);
@@ -399,9 +511,139 @@ const readings = { tag: TAG, webRoot: url, browser: label, desktop: null, mobile
       `bar.right=${m.bar && m.bar.rect.right} modal.right=${m.modal && m.modal.right}`);
     ok('375 · 无横向溢出', m.doc.scrollWidth <= m.doc.innerWidth + 1,
       `scrollWidth=${m.doc.scrollWidth} innerWidth=${m.doc.innerWidth}`);
+    // 日期行上移批（手机档同批判据）：跨天日期行在手机档同样只显一次。
+    const mdl = await s.page.evaluate(DAYLINES);
+    readings.mobileDay = mdl;
+    ok('375 · 跨天日期行恰 2 条（11-03 + 昨天；今天无行）', mdl.seps.length === 2,
+      `seps=${mdl.seps.length}(${mdl.seps.map((x) => x.text).join(',')})`);
+    ok('375 · footer 全纯时钟', mdl.footerCount === MSGS.length && mdl.footersWithDateLayer === 0,
+      `footers=${mdl.footerCount} 带日期层=${mdl.footersWithDateLayer}`);
   } finally {
     await s.close();
   }
+}
+
+// ═══ 会话内独立搜索（3(b) 作者令：只搜当前会话，scope 隔离不串全局）══════════
+// 真入口全程：dock 消息页 → 会话行 → 右上三点（好友=直开资料面）→ 「搜索聊天记录」
+// 行 → 搜索面板（带 convScope）。判据：
+//   C1 面板挂 data-conv-scope="1"（会话档落位）；
+//   C2 范围/agent select 折叠（scope 词汇在会话档不存在）；
+//   C3 状态行前缀 = 会话名（scope 隔离可见化）；
+//   C4 关键词命中的行全部来自会话桩（/api/conversations/cF/messages）——**隔离
+//      机械证明 = 面板打开期间零请求打到 /api/sessions/**/history**（agent 会话
+//      数据源完全进不了视野；改前该面板走 state.activeSessionId = 串全局）；
+//   C5 点结果行跳会话窗并定位（messages.revealMessage 既有缝，1.6s 闪烁）。
+{
+  const s = await createSession(browser, { width: 375, height: 812, colorScheme: 'light', apiStubs: API_STUBS, clock: FIXED });
+  try {
+    await s.boot({ config: CONFIG });
+    await openConv(s.page);
+    // 右上三点（手机层好友会话 = 直开好友信息面，friend-info-panel 批同款入口）。
+    await s.page.click('.mh-sess-more');
+    await s.page.waitForSelector('#profile-face-overlay:not([hidden]) .pf-modal', { timeout: 8000 });
+    await settle(s.page, 300);
+
+    // 3(a) 同面板顺带断言：徽标真值回填（本会话桩 = synced）。
+    // 🔴 改前树无 data-pf-sync-badge（写死「本地缓存·未同步」）⇒ 等待超时 ⇒
+    // try/catch 收口成 FAIL 行（逐条红，不栈崩中断）。
+    let badge = { state: '', text: '' };
+    try {
+      await s.page.waitForFunction(() => {
+        const b = document.querySelector('#profile-face-overlay [data-pf-sync-badge="bio"]');
+        return b && b.dataset.syncState === 'synced';
+      }, null, { timeout: 8000 });
+      badge = await s.page.evaluate(() => {
+        const b = document.querySelector('#profile-face-overlay [data-pf-sync-badge="bio"]');
+        return { state: b?.dataset.syncState || '', text: b?.textContent || '' };
+      });
+    } catch { /* 改前树：徽标面不存在 ⇒ 红 */ }
+    ok('B1 · 三态徽标读真数据源（synced 桩 ⇒ data-sync-state=synced · 文案=已同步）',
+      badge.state === 'synced' && badge.text === '已同步', JSON.stringify(badge));
+
+    // 开会话档搜索（真入口行）。
+    await s.page.click('#profile-face-overlay [data-pf-nav="search"]');
+    await s.page.waitForSelector('#search-overlay.on', { timeout: 8000 });
+    await settle(s.page, 400);
+    const sc = await s.page.evaluate(DAYLINES);
+    // 状态行独立读（DAYLINES 不带它；textContent 兜 ''，改前树无 #search-status 也不断链）。
+    const statusText = await s.page.locator('#search-status').textContent().catch(() => '');
+    readings.convSearch = {
+      convScope: sc.convScope, scopeDisplay: sc.scopeDisplay, status: statusText,
+    };
+    ok('C1 · 面板挂 data-conv-scope="1"（会话档落位）', sc.convScope === '1', `convScope=${sc.convScope}`);
+    ok('C2 · 范围/agent select 折叠（scope 词汇在会话档不存在）', sc.scopeDisplay === 'none', `display=${sc.scopeDisplay}`);
+    ok('C3 · 状态行前缀 = 会话名（scope 隔离可见化）', (statusText || '').includes('分页君'), `status=${statusText}`);
+
+    // C4 的机械证据：面板打开期间记录全部 /api 请求。
+    const apiHits = [];
+    const onReq = (r) => { const u = r.url(); if (u.includes('/api/')) apiHits.push(new URL(u).pathname + new URL(u).search); };
+    s.page.on('request', onReq);
+    // 🔴 改前红可读：等待腿全部 try/catch 收口成 FAIL 行（改前树无会话档 ⇒
+    // 结果区恒空 ⇒ waitFor* 超时——要的是「逐条红」，不是栈崩中断）。
+    let resInfo = { rows: 0, texts: [] };
+    try {
+      await s.page.fill('#search-keyword', '第 9 条');
+      await settle(s.page, 900); // 300ms 去抖 + 全量拉取 + 渲染
+      await s.page.waitForFunction(() => document.querySelectorAll('#search-results .search-result').length > 0, null, { timeout: 8000 });
+      resInfo = await s.page.evaluate(() => ({
+        rows: document.querySelectorAll('#search-results .search-result').length,
+        texts: [...document.querySelectorAll('#search-results .search-result')].slice(0, 3).map((e) => (e.textContent || '').slice(0, 40)),
+      }));
+    } catch { /* 改前树：主会话桩缺席 ⇒ 零结果行（这本身就是红） */ }
+    const historyHits = apiHits.filter((p) => /\/api\/sessions\/.+\/history/.test(p));
+    ok('C4 · 会话档关键词命中（fixture 恰 1 行含「第 9 条」）', resInfo.rows === 1,
+      `rows=${resInfo.rows} sample=${JSON.stringify(resInfo.texts)}`);
+    ok('C4b · 隔离机械证明：会话档搜索零请求打 /api/sessions/**/history（改前串全局）',
+      historyHits.length === 0, `sessionHistoryHits=${historyHits.length} apiCalls=${apiHits.length}`);
+    readings.convSearch.rows = resInfo.rows;
+    readings.convSearch.sessionHistoryHits = historyHits;
+
+    // C5 跳转：点首行 → 关面板（手机 = 搜索页弹栈）→ 开会话窗 → revealMessage 定位闪烁。
+    let flashed = false;
+    try {
+      if (resInfo.rows > 0) {
+        await s.page.click('#search-results .search-result');
+        await s.page.waitForSelector('.fm-flow .fm-msg.fm-reveal-flash', { timeout: 8000 });
+        flashed = true;
+      }
+    } catch { /* 定位失败 = 下判据红 */ }
+    ok('C5 · 结果行跳会话窗并定位（revealMessage 闪烁在场）', flashed);
+    readings.convSearch.flashed = flashed;
+    s.page.off?.('request', onReq);
+  } finally {
+    await s.close();
+  }
+}
+
+// ═══ 3(a) 三态徽标 × 其余两态（待同步 / 仅本地——同一面板同一实现）══════════
+{
+  const badgeCase = async (state, wantText, label) => {
+    const stubs = { ...API_STUBS, '/api/profile/sync-status': syncStatusStub(state) };
+    const s = await createSession(browser, { width: 375, height: 812, colorScheme: 'light', apiStubs: stubs, clock: FIXED });
+    try {
+      await s.boot({ config: CONFIG });
+      await openConv(s.page);
+      await s.page.click('.mh-sess-more');
+      await s.page.waitForSelector('#profile-face-overlay:not([hidden]) .pf-modal', { timeout: 8000 });
+      let badge = { state: '', text: '' };
+      try {
+        await s.page.waitForFunction((want) => {
+          const b = document.querySelector('#profile-face-overlay [data-pf-sync-badge="bio"]');
+          return b && b.dataset.syncState === want;
+        }, state, { timeout: 8000 });
+        badge = await s.page.evaluate(() => {
+          const b = document.querySelector('#profile-face-overlay [data-pf-sync-badge="bio"]');
+          return { state: b?.dataset.syncState || '', text: b?.textContent || '' };
+        });
+      } catch { /* 改前树：徽标面不存在 ⇒ 红 */ }
+      ok(`${label} · 徽标随真值变（${state} 桩 ⇒ ${wantText}）`,
+        badge.state === state && badge.text === wantText, JSON.stringify(badge));
+    } finally {
+      await s.close();
+    }
+  };
+  await badgeCase('syncing', '待同步', 'B2');
+  await badgeCase('local-only', '仅本地', 'B3');
 }
 
 await browser.close();
@@ -416,5 +658,11 @@ console.log(`1440 输入条: h=${d.bar && d.bar.rect.height} w=${d.bar && d.bar.
 const mo = readings.mobile || {};
 console.log(`375 身份头:  ${mo.idhead && JSON.stringify(mo.idhead.rect)} 名字胶囊 bg=${mo.nameCap && mo.nameCap.backgroundColor} filter=${mo.nameCap && mo.nameCap.backdrop}`);
 console.log(`375 输入条:  w=${mo.bar && mo.bar.rect.width} radius=${mo.bar && mo.bar.radius} 距左=${mo.bar && mo.bar.distToModalLeft} 距底=${mo.bar && mo.bar.distToModalBottom} scrollWidth=${mo.doc && mo.doc.scrollWidth}`);
+const dd = readings.desktopDay || {};
+console.log(`1440 日期行: ${dd.seps ? JSON.stringify(dd.seps.map((x) => `${x.text}@${x.centerX}`)) : '—'} flowCenter=${dd.flowCenterX} footer带日期层=${dd.footersWithDateLayer}/${dd.footerCount}`);
+const md = readings.mobileDay || {};
+console.log(`375 日期行:  ${md.seps ? md.seps.map((x) => x.text).join(',') : '—'} footer带日期层=${md.footersWithDateLayer}/${md.footerCount}`);
+const cs2 = readings.convSearch || {};
+console.log(`会话档搜索: convScope=${cs2.convScope} scopeDisplay=${cs2.scopeDisplay} rows=${cs2.rows} sessionHistoryHits=${cs2.sessionHistoryHits} flashed=${cs2.flashed}`);
 console.log(`\n合计 ${checks} 项 · FAIL ${failures} 项 · 读数 ${join(OUT, `readings-${TAG}.json`)}`);
 process.exit(failures ? 1 : 0);

@@ -1,0 +1,28 @@
+SYNTAX_OK
+PASS  375 · 输入条悬浮（左侧留距 > 0）  — distToLeft=12
+PASS  375 · 输入条不越窗（右缘 ≤ 窗右缘）  — bar.right=363 modal.right=375
+PASS  375 · 无横向溢出  — scrollWidth=375 innerWidth=375
+PASS  375 · 跨天日期行恰 2 条（11-03 + 昨天；今天无行）  — seps=2(星期二,昨天)
+PASS  375 · footer 全纯时钟  — footers=40 带日期层=0
+PASS  B1 · 三态徽标读真数据源（synced 桩 ⇒ data-sync-state=synced · 文案=已同步）  — {"state":"synced","text":"已同步"}
+PASS  C1 · 面板挂 data-conv-scope="1"（会话档落位）  — convScope=1
+PASS  C2 · 范围/agent select 折叠（scope 词汇在会话档不存在）  — display=none
+PASS  C3 · 状态行前缀 = 会话名（scope 隔离可见化）  — status=分页君 · 40 条结果
+PASS  C4 · 会话档关键词命中（fixture 恰 1 行含「第 9 条」）  — rows=1 sample=["\n    \n      分页君\n      用户\n      2026-11-0"]
+PASS  C4b · 隔离机械证明：会话档搜索零请求打 /api/sessions/**/history（改前串全局）  — sessionHistoryHits=0 apiCalls=1
+PASS  C5 · 结果行跳会话窗并定位（revealMessage 闪烁在场）
+PASS  B2 · 徽标随真值变（syncing 桩 ⇒ 待同步）  — {"state":"syncing","text":"待同步"}
+PASS  B3 · 徽标随真值变（local-only 桩 ⇒ 仅本地）  — {"state":"local-only","text":"仅本地"}
+
+── 读数（after）──────────────────────────────────────────────
+1440 窗头: h=62 top=136 bg=rgba(255, 255, 255, 0.55) α=0.55 filter=blur(40px) saturate(1.4) borderBottom=1px/rgba(0, 0, 0, 0)
+1440 流:   top=136 paddingTop=72 borderTop=0px 穿过消息=1
+1440 输入条: h=50 w=534 radius=20px 距底=13 距左=13 bg=rgba(255, 255, 255, 0.55)
+375 身份头:  {"top":12,"bottom":68,"left":0,"right":375,"width":375,"height":56} 名字胶囊 bg=rgba(255, 255, 255, 0.55) filter=blur(40px) saturate(1.4)
+375 输入条:  w=351 radius=20px 距左=12 距底=12 scrollWidth=375
+1440 日期行: ["星期二@720","昨天@720"] flowCenter=720 footer带日期层=0/40
+375 日期行:  星期二,昨天 footer带日期层=0/40
+会话档搜索: convScope=1 scopeDisplay=none rows=1 sessionHistoryHits= flashed=true
+
+合计 60 项 · FAIL 0 项 · 读数 /tmp/cs-after/readings-after.json
+CS_EXIT=0

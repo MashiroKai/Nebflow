@@ -17,8 +17,12 @@
 // | 群   | `description`  | 群自己的介绍     | 上游（当前无） | profile-descriptions.json   | ✅（本地缓存） |
 // | 群   | `remark`       | 我给群起的备注   | 本仓本地       | profile-descriptions.json   | ✅ |
 //
-// 🔴 「本地缓存」= 语义真源在上游、上游**尚无**该字段 ⇒ 本面在字段旁**显式**标
-// `profile.localCacheHint`（本地缓存·未同步）。绝不把本地写读画成「已同步给对方/群」。
+// 🔴 「本地缓存」= 语义真源在上游、上游**尚无**该字段 ⇒ 本面在字段旁显式标注
+// 跨设备收敛状态（profile-sync 徽标批 2026-11-06 作者令 3(a)）：徽标不再是写死的
+// 「本地缓存·未同步」，改读 `GET /api/profile/sync-status`（`ProfileSync.status`
+// 真数据源）三态 = 已同步 / 待同步 / 仅本地，开面 / 保存后 / `profileDescriptionsChanged`
+// 帧三拍刷新。诚实优先：无外推成功证据绝不画「已同步」（判据在后端单点，
+// 前端禁二次判读）。
 //
 // 形态纪律（沿用本仓既有先例，零新弹层家族）：
 //  · 壳 = `.cfg-modal-overlay` + `.cfg-modal`（`settingsIdentity.js` / `friendGroups.js`
@@ -33,7 +37,8 @@ import { t } from './i18n.js';
 import { createIconsIn } from './utils.js';
 import { h } from './dom.js';
 import * as api from './friendsApi.js';
-import { personLabel } from './messages.js';
+import { personLabel, conversationSnapshot } from './messages.js';
+import { onMessage } from './ws.js';
 import { avatarNodeFor } from './avatarRender.js';
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
 import { mobileSheetBack, isMobileLayer } from './mobile/popSheet.js';
@@ -105,21 +110,25 @@ async function readFieldValue(field) {
 
 /**
  * 单字段编辑行（**扁平行**，三点入口批 2026-11-05 重排）：
- * head = label [+ 缓存提示]，行体 = 输入框 + 保存键（同一行，不套卡片盒）。
+ * head = label [+ 跨设备同步徽标]，行体 = 输入框 + 保存键（同一行，不套卡片盒）。
  * @param {{
  *   field: string, labelKey: string, value: string, max: number,
- *   placeholderKey: string, hintKey?: string, onSave: (v: string) => Promise<any>,
- * }} spec
+ *   placeholderKey: string, syncField?: string, onSave: (v: string) => Promise<any>,
+ * }} spec `syncField` = ProfileSync 键类（`friendBio` / `groupDescription`）——
+ *    在场 ⇒ head 挂三态徽标（`refreshSyncBadges` 按 `GET /api/profile/sync-status`
+ *    真值回填；写死的 `hintKey` 静态文案已随 3(a) 令退役）。
  */
 function fieldRow(spec) {
   const row = el('div', 'pf-field');
   row.dataset.pfField = spec.field;
   const head = el('div', 'pf-field-head');
   head.appendChild(el('span', 'pf-label', t(spec.labelKey)));
-  if (spec.hintKey) {
-    const hint = el('span', 'pf-cache-hint', t(spec.hintKey));
-    hint.dataset.pfCacheHint = spec.field;
-    head.appendChild(hint);
+  if (spec.syncField) {
+    const badge = el('span', 'pf-cache-hint pf-sync-badge', '');
+    badge.dataset.pfSyncBadge = spec.field;
+    badge.dataset.syncField = spec.syncField;
+    badge.dataset.syncState = '';
+    head.appendChild(badge);
   }
   row.appendChild(head);
 
@@ -154,6 +163,8 @@ function fieldRow(spec) {
         current && current.kind === 'friend' ? 'fm-friends-changed' : 'fm-groups-changed'
       ));
       window.__showToast?.(t('profile.saved'), 'info');
+      // 3(a)：写后外推已在后端起跑 ⇒ 徽标真值变了，立即重读（同步态→待同步/已同步）。
+      void refreshSyncBadges();
     } catch (err) {
       // 失败**不清空输入**（同设备描述面板口径：写失败不收起）
       window.__showToast?.(t('messages.networkError'), 'error');
@@ -172,6 +183,55 @@ function fieldRow(spec) {
   row.appendChild(line);
   return row;
 }
+
+// ── 三态同步徽标（profile-sync 徽标批 2026-11-06 作者令 3(a)）────────────────
+// 真数据源 = `GET /api/profile/sync-status`（`ProfileSync.status`，判据后端单点）；
+// 本面只做「读 → 画」，禁二次判读。三态词汇：`synced`（已同步）/ `syncing`
+// （待同步）/ `local-only`（仅本地）。消费字段 = 今天挂徽标的两行：好友 `bio`
+// 与群介绍（`description`）；群备注/我的备注行不挂（面上没有这枚徽标，不是无状态）。
+const SYNC_KIND_OF_FIELD = { bio: 'friendBio', description: 'groupDescription' };
+
+/** wire 态 → 文案键尾（唯一拼写桥：`local-only` → `localOnly`）。 */
+function syncStateKey(state) {
+  return state === 'local-only' ? 'localOnly' : state;
+}
+
+/**
+ * 徽标真值回填（幂等）：一次往返读全量状态，逐徽标按 kind 落三态。
+ * 读失败 ⇒ 徽标退空档（`data-sync-state=""`，CSS 折叠）——「读不到」不冒充
+ * 任何一态，下一拍刷新重画。竞态守卫 = seq（连拍时旧回包不覆新画）。
+ */
+let syncBadgeSeq = 0;
+async function refreshSyncBadges() {
+  if (!overlay || overlay.hidden) return;
+  const badges = [...overlay.querySelectorAll('[data-pf-sync-badge]')];
+  if (!badges.length) return;
+  const seq = ++syncBadgeSeq;
+  let fields = null;
+  try {
+    const st = await api.getProfileSyncStatus();
+    fields = st && st.fields && typeof st.fields === 'object' ? st.fields : null;
+  } catch { /* 读失败 = 空档（不猜） */ }
+  if (seq !== syncBadgeSeq) return; // 已被更新的刷新取代
+  for (const badge of badges) {
+    const kind = SYNC_KIND_OF_FIELD[badge.dataset.pfSyncBadge || ''] || '';
+    const f = fields ? fields[kind] : null;
+    const state = f && typeof f.state === 'string' ? f.state : '';
+    badge.dataset.syncState = state;
+    badge.textContent = state ? t(`profile.sync.${syncStateKey(state)}`) : '';
+  }
+}
+
+// 三拍刷新之②③：远端收敛帧（描述被对端改写 ⇒ 状态变）+ 语言切换（就地改文案）。
+// ①开面在 `afterMount`。模块级注册一次；面未开 ⇒ 幂等空转。
+onMessage('profileDescriptionsChanged', () => { void refreshSyncBadges(); });
+window.addEventListener('locale-changed', () => {
+  if (!overlay || overlay.hidden) return;
+  for (const badge of overlay.querySelectorAll('[data-pf-sync-badge]')) {
+    const state = badge.dataset.syncState || '';
+    if (state) badge.textContent = t(`profile.sync.${syncStateKey(state)}`);
+  }
+});
 
 /**
  * 导航行（扁平）：label（可带副行）+ 右箭头。行本体是 `<button>`（键盘可达）。
@@ -313,12 +373,33 @@ function renderBody() {
   return { ov, body };
 }
 
-/** 面开好之后的共同收尾（手机层返回钮 + 图标）。 */
+/** 面开好之后的共同收尾（手机层返回钮 + 图标 + 三态徽标首拍回填）。 */
 function afterMount(ov) {
   ov.hidden = false;
   if (document.body.classList.contains('mobile-layer')) mobileSheetBack(ov, () => closeProfile());
   if (typeof lucide !== 'undefined') createIconsIn(ov);
+  void refreshSyncBadges(); // 3(a)：开面即读真值（三拍刷新之一）
   return ov;
+}
+
+/**
+ * 当前主体的**会话身份**（3(b) 会话内独立搜索批 2026-11-06）：群 = groupId 本身
+ * 就是 conversationId；好友 = 会话快照按 userId 解析（`conversationSnapshot` 与
+ * 消息列表同一份 `conversations`）。解析不到（好友会话尚未建立的边界态）⇒ null
+ * ——调用方退回全局搜索（与改前同行为），不猜。
+ * @returns {{convId: string, convName: string}|null}
+ */
+function convScopeForCurrent() {
+  if (!current) return null;
+  if (current.kind === 'group') {
+    return { convId: String(current.id), convName: subjectTitle() };
+  }
+  const uid = String(current.id);
+  const hit = conversationSnapshot().find(
+    (c) => c && c.friend && String(c.friend.userId) === uid
+  );
+  if (!hit || !hit.conversationId) return null;
+  return { convId: String(hit.conversationId), convName: personLabel(current.conv) || '' };
 }
 
 /**
@@ -352,8 +433,9 @@ export async function openFriendProfile(friend) {
     value: fresh.bio || '',
     max: BIO_MAX,
     placeholderKey: 'profile.friendBioPlaceholder',
-    // 「本地缓存·未同步」= 该字段真源在上游、上游当前无接口（禁假装已同步）
-    hintKey: 'profile.localCacheHint',
+    // 三态同步徽标（3(a)）：真源 = GET /api/profile/sync-status 的 friendBio 档，
+    // 已同步/待同步/仅本地随真值变化（写死的「本地缓存·未同步」已退役）。
+    syncField: 'friendBio',
     onSave: (v) => api.setFriendBio(current.id, v),
   }));
 
@@ -364,13 +446,28 @@ export async function openFriendProfile(friend) {
   //    ① 搜索聊天记录 = **复用**主对话那张搜索面板：调的是 `chatSearch.openSearchModal`
   //       同一个导出函数（手机搜索页 / 顶栏搜索钮同一条链），零第二套实现。
   //       开前先收本面（面板是页级浮层，两面叠着会抢焦点/滚动容器）。
+  //       3(b) 会话内独立搜索批（2026-11-06 作者令）：会话窗内搜索**只搜当前会话**
+  //       （scope 隔离，不串全局）⇒ 开面板时带上本主体的会话身份（convScope）。
   body.appendChild(navRow({
     labelKey: 'profile.searchMessages',
     node: 'search',
     onClick: () => {
+      const scope = convScopeForCurrent();
       closeProfile();
+      // 手机层走搜索**页**（C5 实证批 2026-11-06）：body 级 overlay 在页面世界是
+      // pointer-events:none 的状态载体（mobileLayer.css 遮罩/指针全退族），直开 =
+      // 面可见但点不可交互 ⇒ stageConvScope + pushPage('search')（overlay 收编进
+      // 页体后可交互；页栈顺序 = 搜索页盖会话页；scope 由页面激活的
+      // openSearchModal() 无参一次性消费）。桌面 = 既有直开路径零变化。
+      if (isMobileLayer()) {
+        void import('./chatSearch.js')
+          .then((m) => { m.stageConvScope(scope); return import('./mobile/navController.js'); })
+          .then((nav) => { nav.pushPage('search'); })
+          .catch((e) => console.debug('[profileFace] open search failed', e && e.message));
+        return;
+      }
       void import('./chatSearch.js')
-        .then((m) => m.openSearchModal())
+        .then((m) => m.openSearchModal(scope || undefined))
         .catch((e) => console.debug('[profileFace] open search failed', e && e.message));
     },
   }));
@@ -427,7 +524,9 @@ export async function openGroupProfile(conv) {
     value: fresh.description || '',
     max: BIO_MAX,
     placeholderKey: 'profile.groupDescriptionPlaceholder',
-    hintKey: 'profile.localCacheHint',
+    // 三态同步徽标（3(a)）：真源 = GET /api/profile/sync-status 的
+    // groupDescription 档（同好友 bio 一套实现）。
+    syncField: 'groupDescription',
     onSave: (v) => api.setGroupDescription(groupId, v),
   }));
   body.appendChild(el('p', 'pf-note', t('profile.groupNote')));

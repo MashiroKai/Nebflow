@@ -374,7 +374,13 @@ export default {
   'profile.groupRemarkPlaceholder': '我给这个群起的备注（留空清除）',
   'profile.groupDescriptionLabel': '群介绍',
   'profile.groupDescriptionPlaceholder': '群介绍（留空清除）',
-  'profile.localCacheHint': '本地缓存·未同步',
+  // 云同步徽标三态（profile-sync 徽标批 2026-11-06 作者令 3(a)）：写死的
+  // 「本地缓存·未同步」徽标退役，改读 GET /api/profile/sync-status
+  // （ProfileSync.status）真数据源，开面 / 保存后 / profileDescriptionsChanged
+  // 帧三拍刷新。诚实优先：无外推成功证据绝不画「已同步」。
+  'profile.sync.synced': '已同步',
+  'profile.sync.syncing': '待同步',
+  'profile.sync.localOnly': '仅本地',
   'profile.friendNote': '备注只存在本机；自我介绍与群介绍的上游同步接口尚未提供，当前为本机缓存。两者都已纳入搜索。',
   'profile.groupNote': '我的群备注只存在本机；群介绍的上游同步接口尚未提供，当前为本机缓存。两者都已纳入搜索。',
   'contacts.deleteTitle': '删除好友',
@@ -1960,6 +1966,10 @@ export default {
   'time.footerYesterday': '昨天 {time}',
   'time.footerWeekday': '星期{weekday} {time}',
   'time.footerDate': '{date} {time}',
+  // 会话窗跨天居中日期行（日期行上移批 2026-11-06 作者令②）的本周档：
+  // formatFooterDay 消费（与 footer 分层档同一桶梯，去时间半边）。{weekday} =
+  // time.weekday.* 同源；日期档（昨天 / M月D日）分别复用 time.yesterday 与 Intl。
+  'time.dayWeekday': '星期{weekday}',
   'time.weekday.sun': '日',
   'time.weekday.mon': '一',
   'time.weekday.tue': '二',
@@ -2493,8 +2503,10 @@ export default {
   'dropbox.noMessages': '暂无消息',
 
   // === Chat History Search ===
-  'search.btnTitle': '搜索聊天记录',
-  'search.title': '搜索聊天记录',
+  // 标题两字档（2026-11-06 作者令逐字「不要有省略 那就用搜索两个字吧」）：
+  // 「搜索聊天记录」整族写法退役，搜索页标题 / 开启钮 tooltip 一律「搜索」。
+  'search.btnTitle': '搜索',
+  'search.title': '搜索',
   'search.placeholder': '输入关键词…',
   'search.scopeCurrent': '当前会话',
   'search.scopeAll': '全部会话',

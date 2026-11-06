@@ -742,6 +742,47 @@ export function __convergeForTest(data) {
   return rememberFriendState(convergeRequests(data));
 }
 
+/** GET /api/profile/sync-status → 描述**收敛状态**（profile-sync 徽标批
+ *  2026-11-06 作者令 3(a) 的前端取数腿）。返回恒为四键全在的形状
+ *  `{neblink, selfDeviceId, peers, fields: {friendBio|groupRemark|groupDescription|
+ *  selfBio: {state:'synced'|'syncing'|'local-only', updatedAt, peers}}}`。
+ *  🔴 判据单点在后端 `ProfileSync.status`（诚实优先：无外推成功证据绝不报
+ *  synced）——本层只做形状兜底，**禁**在前端从「正文非空」反推「已同步」。 */
+export async function getProfileSyncStatus() {
+  if (!MOCK) {
+    const raw = await req('GET', '/api/profile/sync-status');
+    const fields = (raw && raw.fields && typeof raw.fields === 'object') ? raw.fields : {};
+    const norm = (s) => (['synced', 'syncing', 'local-only'].includes(s && s.state)
+      ? { state: s.state, updatedAt: Number(s.updatedAt) || 0, peers: Number(s.peers) || 0 }
+      : { state: 'local-only', updatedAt: 0, peers: 0 });
+    return {
+      neblink: !!(raw && raw.neblink),
+      selfDeviceId: (raw && raw.selfDeviceId) || '',
+      peers: Number(raw && raw.peers) || 0,
+      fields: {
+        friendBio: norm(fields.friendBio),
+        groupRemark: norm(fields.groupRemark),
+        groupDescription: norm(fields.groupDescription),
+        selfBio: norm(fields.selfBio),
+      },
+    };
+  }
+  // mock 腿：mock 存储没有设备网络 ⇒ 全部 local-only（诚实档，与未配置 NebLink
+  // 的生产形态同值——「没有对端可同步」就是事实）。
+  await delay();
+  return {
+    neblink: false,
+    selfDeviceId: 'mock-self',
+    peers: 0,
+    fields: {
+      friendBio: { state: 'local-only', updatedAt: 0, peers: 0 },
+      groupRemark: { state: 'local-only', updatedAt: 0, peers: 0 },
+      groupDescription: { state: 'local-only', updatedAt: 0, peers: 0 },
+      selfBio: { state: 'local-only', updatedAt: 0, peers: 0 },
+    },
+  };
+}
+
 /** POST /api/friends/requests {query, note?} → {requestId} (201)。
  *  形状不变（§4.4）；query 语义 = username OR email 双键精确（服务端）。 */
 export async function sendFriendRequest(query, note) {

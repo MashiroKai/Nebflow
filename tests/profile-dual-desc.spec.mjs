@@ -13,9 +13,11 @@
 //   D3  群 Profile：改写「我的群备注」与「群介绍」→ 各自保存 → 回读一致；互不覆盖。
 //   D4  群侧描述进检索（④-b）：把独特串写进群 `description` 与群 `remark` ⇒ 手机消息页
 //       常驻搜索条输入该串 ⇒ 出现「资料命中」组且含该群行（`.mh-sr-row-desc`）。
-//   D5  「本地缓存·未同步」标记：bio / 群介绍两个字段行必须显式标注（禁假装已同步），
-//       而两个本地真源字段（好友备注 / 我的群备注）没有该标记。
-//   D6  i18n 对称：zh/en 的 `profile.*` + `mhsearch.descHits` 键全部双语齐全。
+//   D5  三态同步徽标（profile-sync 徽标批 2026-11-06 作者令 3(a)）：bio / 群介绍
+//       两行挂 `data-pf-sync-badge` 徽标，真数据源 = GET /api/profile/sync-status
+//       三态（mock 无对端 ⇒ 诚实落「仅本地」）；我的备注行不挂徽标。
+//   D6  i18n 对称：zh/en 的 `profile.*`（含 profile.sync.* 三态词汇）+
+//       `mhsearch.descHits` 键全部双语齐全。
 //
 // 两段 boot：桌面 1280×800（D0/D1/D2/D3/D5/D6）+ 手机 375×812（D4，走真实 dock 导航）。
 // 数据面 = `fm_api_mock=1` + `fm_api_mock_seed`（friendsApi 的 mock 腿与真机同形：
@@ -296,13 +298,20 @@ test.describe('好友/群 Profile 双描述 + 描述进检索', () => {
     const reopened = await readFields(page);
     expect(reopened, '重开后回读 = 落库值（关面不丢）').toEqual({ remark: REMARK1, bio: BIO1 });
 
-    // ── D5 缓存标注：bio 标「本地缓存·未同步」，remark 不标 ──
+    // ── D5 三态同步徽标（profile-sync 徽标批 2026-11-06 作者令 3(a)）──
+    // mock 存储无设备网络 ⇒ 真数据源（GET /api/profile/sync-status 的 mock 腿）
+    // 恒 local-only ⇒ bio 徽标 = 「仅本地」；我的备注行不挂徽标（面上无此位）。
+    // 徽标回填是异步一拍（30ms mock delay）⇒ poll 到 data-sync-state 落位再断言。
+    await expect.poll(() => page.evaluate(() =>
+      document.querySelector('#profile-face-overlay [data-pf-sync-badge="bio"]')?.dataset.syncState || '',
+    ), 'bio 三态徽标回填落位（data-sync-state）').toBe('local-only');
     const hints = await page.evaluate(() => ({
-      bio: [...document.querySelectorAll('#profile-face-overlay [data-pf-cache-hint="bio"]')].map((e) => e.textContent),
-      remark: [...document.querySelectorAll('#profile-face-overlay [data-pf-cache-hint="remark"]')].map((e) => e.textContent),
+      bio: [...document.querySelectorAll('#profile-face-overlay [data-pf-sync-badge="bio"]')].map((e) => e.textContent),
+      remark: [...document.querySelectorAll('#profile-face-overlay [data-pf-sync-badge="remark"]')].map((e) => e.textContent),
     }));
-    expect(hints.bio, '自我介绍真源在上游、上游无接口 ⇒ 必须标「本地缓存·未同步」').toEqual(['本地缓存·未同步']);
-    expect(hints.remark, '我的备注是本地真源 ⇒ 不得标「未同步」').toEqual([]);
+    expect(hints.bio, 'mock 无对端 ⇒ 徽标诚实落「仅本地」三态（写死「本地缓存·未同步」已退役）')
+      .toEqual(['仅本地']);
+    expect(hints.remark, '我的备注是本地真源 ⇒ 不挂同步徽标').toEqual([]);
 
     await closeProfile(page);
 
@@ -341,12 +350,12 @@ test.describe('好友/群 Profile 双描述 + 描述进检索', () => {
       kind: document.querySelector('#profile-face-overlay .pf-modal')?.dataset.pfKind,
       fields: [...document.querySelectorAll('#profile-face-overlay [data-pf-field]')].map((e) => e.dataset.pfField),
       labels: [...document.querySelectorAll('#profile-face-overlay .pf-label')].map((e) => e.textContent),
-      hints: [...document.querySelectorAll('#profile-face-overlay [data-pf-cache-hint]')].map((e) => e.dataset.pfCacheHint),
+      badges: [...document.querySelectorAll('#profile-face-overlay [data-pf-sync-badge]')].map((e) => e.dataset.pfSyncBadge),
     }));
     expect(shape.kind, '同一面按主体分档（禁第二套 Profile 面）').toBe('group');
     expect(shape.fields, '群 Profile = 两个描述字段（我的群备注 / 群介绍）').toEqual(['remark', 'description']);
     expect(shape.labels).toEqual(['我的群备注', '群介绍']);
-    expect(shape.hints, '只有群介绍（上游真源）带「本地缓存·未同步」，我的群备注不带')
+    expect(shape.badges, '只有群介绍挂三态同步徽标（3(a)），我的群备注不挂')
       .toEqual(['description']);
 
     const initial = await readFields(page);
@@ -463,8 +472,10 @@ test.describe('i18n 对称（D6）', () => {
       'profile.save', 'profile.saved', 'profile.friendRemarkLabel', 'profile.friendRemarkPlaceholder',
       'profile.friendBioLabel', 'profile.friendBioPlaceholder', 'profile.groupRemarkLabel',
       'profile.groupRemarkPlaceholder', 'profile.groupDescriptionLabel',
-      'profile.groupDescriptionPlaceholder', 'profile.localCacheHint', 'profile.friendNote',
+      'profile.groupDescriptionPlaceholder', 'profile.friendNote',
       'profile.groupNote', 'mhsearch.descHits',
+      // 三态同步徽标（3(a)）词汇：写死的 profile.localCacheHint 已退役。
+      'profile.sync.synced', 'profile.sync.syncing', 'profile.sync.localOnly',
     ];
     for (const k of keys) {
       expect(zh, `zh 缺键 ${k}`).toContain(`'${k}':`);

@@ -595,6 +595,21 @@
 }
 .search-filters .cfg-select { width: auto; font-size: var(--ds-fs-hint); }
 #search-go { margin-left: auto; }
+/* ── 会话内独立搜索（3(b) 会话内独立搜索批 2026-11-06 作者令）─────────────────
+   会话档（overlay 挂 data-conv-scope="1"）只搜当前会话 ⇒ 范围/agent 两枚 select
+   语义不存在（「全部会话/主会话/按 agent 筛」是 agent 会话面的词汇）⇒ 折叠。
+   状态行的会话名前缀（chatSearch.statusSummary）承担 scope 可见化。 */
+/* 🔴 样式锚 = 内容面（#search-modal）而非 overlay 载体：手机层页面化后 modal 被
+   re-parent 进页面体（navController overlayFaceByPage.search），以载体为锚的后代
+   选择器随收编断链（2026-11-06 C2 实证：display=inline-block）。setConvScope 把
+   data-conv-scope 双写在载体与内容面上 ⇒ 桌面（modal 在 overlay 内）与手机收编态
+   同一条规则命中。 */
+#search-modal[data-conv-scope="1"] .search-filters .cfg-select { display: none; }
+/* 会话档实例层级（C5 实证批 2026-11-06）：面板从资料面/会话窗（.cfg-modal-overlay
+   族 z-index 10000，见 friends.css 层级注）里调起，310 档会被**仍在场的会话窗**
+   整体盖住（桌面实证）⇒ 会话档开态升入 10200（> 10000 / body>.fm-context-menu
+   10001，< timeWheel 11000）。主对话入口（无 data-conv-scope）层级零变化。 */
+#search-overlay[data-conv-scope="1"].on { z-index: 10200; }
 
 /* ── Category tabs (v3.1, WeChat retrieval-window paradigm) ─────────────── */
 .search-tabs {

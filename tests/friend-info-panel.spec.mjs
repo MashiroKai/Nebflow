@@ -12,7 +12,8 @@
 //   P5 偏好落到好友行：mock 好友行 `muted/pinned === true`。
 //   P6 搜索入口复用：从好友信息页点「搜索聊天记录」打开的面板与主对话搜索钮打开的
 //      是**同一个 DOM 节点**（同一节点打标记后换入口仍在）+ 全页只有 1 个 `#search-modal`。
-//   P7 搜索面板顶部：页面名胶囊 = 「搜索聊天记录」是唯一标题（面板头隐藏、无第二处标题），
+//   P7 搜索面板顶部：页面名胶囊是唯一标题（面板头隐藏、无第二处标题）——文案随
+//      会话内独立搜索批（2026-11-06 作者令「用搜索两个字」）= 「搜索」，
 //      底部说明行 `#mh-search-foot` 不存在。
 //   P8 零 console error（全流程）。
 //
@@ -257,7 +258,8 @@ test('P6–P7 搜索入口复用同一面板 + 顶部只有一个胶囊', async 
     '两条入口打开的是同一个 DOM 节点（不是复制品）').toBe('1');
 
   // ── P7 顶部收敛 ──
-  await expect(page.locator('.mobile-page[data-page="search"] .mobile-page-title')).toHaveText('搜索聊天记录');
+  // 2026-11-06 作者令「不要有省略 那就用搜索两个字吧」：页名胶囊 = 「搜索」。
+  await expect(page.locator('.mobile-page[data-page="search"] .mobile-page-title')).toHaveText('搜索');
   await expect(page.locator('#search-modal .search-modal-header')).toBeHidden();
   await expect(page.locator('#mh-search-foot')).toHaveCount(0);
   const visibleTitles = await page.evaluate(() => [...document.querySelectorAll('#search-modal-title')]
