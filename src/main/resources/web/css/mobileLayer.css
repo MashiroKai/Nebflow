@@ -1494,6 +1494,11 @@ body.mobile-layer #bg-dropdown .bg-task-row {
 body.mobile-layer #bg-dropdown .bg-task-row.bg-task-row-child {
   padding-left: calc(var(--ds-space-5) + (var(--bg-row-depth, 1) - 1) * var(--ds-space-3));
 }
+/* 面板三代层级批（2026-11-06）：dispatcher/node 顶层行与 child 行同一公式随深度
+   累加（判定表①②带真实深度锚——桌面 chat.css 同款选择器并集，基准档随本面令牌）。 */
+body.mobile-layer #bg-dropdown .bg-task-row[data-bg-depth]:not([data-bg-depth="0"]) {
+  padding-left: calc(var(--ds-space-5) + (var(--bg-row-depth, 1) - 1) * var(--ds-space-3));
+}
 body.mobile-layer #bg-dropdown .bg-dropdown-empty {
   padding: var(--ds-space-block-y) var(--ds-space-3);
 }
@@ -4338,6 +4343,9 @@ body.mobile-layer #bg-dropdown .bg-task-row {
 }
 /* 层级缩进批（2026-11-05 腿②）：手机合并面板的同款缩进按真实深度累加（逐层 +12px）。 */
 body.mobile-layer #bg-dropdown .bg-task-row.bg-task-row-child { padding-left: calc(var(--mpad-x) + 6px + (var(--bg-row-depth, 1) - 1) * var(--ds-space-3)); }
+/* 面板三代层级批（2026-11-06）：dispatcher/node 顶层行同一公式随深度累加（判定表
+   ①②——桌面同构；基准档随本面 mpad-x 形制，与上行 child 档逐字同源）。 */
+body.mobile-layer #bg-dropdown .bg-task-row[data-bg-depth]:not([data-bg-depth="0"]) { padding-left: calc(var(--mpad-x) + 6px + (var(--bg-row-depth, 1) - 1) * var(--ds-space-3)); }
 body.mobile-layer #bg-dropdown .bg-task-row .bg-task-btn,
 body.mobile-layer #bg-dropdown .bg-task-row button {
   min-width: var(--mtap);

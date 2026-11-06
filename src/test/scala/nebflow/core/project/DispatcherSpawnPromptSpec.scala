@@ -188,6 +188,22 @@ class DispatcherSpawnPromptSpec extends CatsEffectSuite:
       actorRef = rt.actorRef.getOrElse(sys.error("ProjectActor must be spawned by mount"))
       _ <- (actorRef ! ProjectActor.ProjectCommand.TriggerDispatcher(taskText, "nebula-root")).void
       _ <- waitUntil(20.seconds)(llm.inputs.get.map(_.nonEmpty))
+      // 属主边断言（面板代际层级批 2026-11-06 · design 裁定 A①）：spawn 注册记录含
+      // parentSessionId = 挂载 rootSessionId（分发器行 depth 1 数据源）。此窗口确定性
+      // 成立：GatedLlm 在 gate 前阻塞（首个 turn 未终态 ⇒ 会话与 registry 记录必在）。
+      dispatcherRec <- resources.agentRegistry.get.map(
+        _.values.find(_.sessionId.startsWith(ProjectActor.DispatcherSessionPrefix))
+      )
+      _ = assert(
+        dispatcherRec.isDefined,
+        "dispatcher AgentRecord must be registered while the first turn is in flight"
+      )
+      _ = assertEquals(
+        dispatcherRec.map(_.parentSessionId),
+        Some("nebula-root"),
+        "dispatcher AgentRecord.parentSessionId must equal the mount rootSessionId " +
+          s"(got ${dispatcherRec.map(_.parentSessionId)})"
+      )
       _ <- g1.complete(()).void // 首个（也是唯一）turn 完成 → 拆除
       _ <- waitUntil(20.seconds)(
         resources.agentRegistry.get.map(!_.keySet.exists(_.startsWith(ProjectActor.DispatcherSessionPrefix)))

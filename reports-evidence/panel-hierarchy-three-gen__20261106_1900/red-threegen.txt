@@ -1,0 +1,115 @@
+
+Running 6 tests using 1 worker
+
+[1/6] tests/bg-panel-three-gen.spec.mjs:241:1 › G1 三层夹具：root 锚 depth0 + dispatcher depth1 + node depth2，1440 桌面 16/28px + 375 手机档同构
+tests/bg-panel-three-gen.spec.mjs:241:1 › G1 三层夹具：root 锚 depth0 + dispatcher depth1 + node depth2，1440 桌面 16/28px + 375 手机档同构
+[G1 1440] {"anchor":null,"rows":[{"sid":"node-3gen-b002","level":"top","depth":"0","padLeft":12},{"sid":"dispatcher-3gen-a001","level":"top","depth":"0","padLeft":12}]}
+
+  1) tests/bg-panel-three-gen.spec.mjs:241:1 › G1 三层夹具：root 锚 depth0 + dispatcher depth1 + node depth2，1440 桌面 16/28px + 375 手机档同构 
+
+    Error: expect(received).toBeTruthy()
+
+    Received: null
+
+      252 |   console.log('[G1 1440] ' + JSON.stringify({ anchor: dump1440.anchor, rows: dump1440.rows.map((r) => ({ sid: r.sid, level: r.level, depth: r.depth, padLeft: r.padLeft })) }));
+      253 |   // root 锚：标签面行（不是 .bg-task-row）、depth 0、caret 键 = 桶根会话 id。
+    > 254 |   expect(dump1440.anchor).toBeTruthy();
+          |                           ^
+      255 |   expect(dump1440.anchor.isRow).toBe(false);
+      256 |   expect(dump1440.anchor.depth).toBe('0');
+      257 |   expect(dump1440.anchor.caretKey).toBe(ROOT_SID);
+        at /private/tmp/panel-hierarchy-red/tests/bg-panel-three-gen.spec.mjs:254:27
+
+    Error Context: test-results/bg-panel-three-gen-G1-三层夹具-ce4a9-2，1440-桌面-16-28px-375-手机档同构/error-context.md
+
+
+[2/6] tests/bg-panel-three-gen.spec.mjs:322:1 › G2 真实形夹具：无 parentSessionId 的 dispatcher/node 行一行不少落野组，depth 不伪造
+tests/bg-panel-three-gen.spec.mjs:322:1 › G2 真实形夹具：无 parentSessionId 的 dispatcher/node 行一行不少落野组，depth 不伪造
+[G2 dump] {"anchor":null,"group":{"idx":0,"depth":"0"},"rows":[{"sid":"dispatcher-3gen-a001","depth":"0","padLeft":12,"orphan":"1"},{"sid":"node-3gen-b002","depth":"0","padLeft":12,"orphan":"1"}]}
+
+[3/6] tests/bg-panel-three-gen.spec.mjs:366:1 › G3 deps 判定：bgDepsParentPolicy().parentEdgeFromDeps === false 且 deps 边同深度平级
+  2) tests/bg-panel-three-gen.spec.mjs:366:1 › G3 deps 判定：bgDepsParentPolicy().parentEdgeFromDeps === false 且 deps 边同深度平级 
+
+    Error: page.evaluate: TypeError: m.bgDepsParentPolicy is not a function
+        at eval (eval at evaluate (:311:30), <anonymous>:3:14)
+        at async <anonymous>:337:30
+        at eval (eval at evaluate (:311:30), <anonymous>:3:14)
+        at async <anonymous>:337:30
+        at /private/tmp/panel-hierarchy-red/tests/bg-panel-three-gen.spec.mjs:389:29
+
+    Error Context: test-results/bg-panel-three-gen-G3-deps-38ac1-romDeps-false-且-deps-边同深度平级/error-context.md
+
+
+[4/6] tests/bg-panel-three-gen.spec.mjs:412:1 › G4 判定表三态各一例：①真子行 depth2 ②父不在场 depth1+标不进野组 ③无父字段落野组
+tests/bg-panel-three-gen.spec.mjs:412:1 › G4 判定表三态各一例：①真子行 depth2 ②父不在场 depth1+标不进野组 ③无父字段落野组
+[G4 dump] {"anchor":null,"group":{"idx":1,"depth":"0"},"rows":[{"sid":"node-3gen-b002","depth":"0","padLeft":12,"orphan":null,"absent":null,"origin":"dispatcher/Nebflow","absentChip":""},{"sid":"dispatcher-3gen-a001","depth":"0","padLeft":12,"orphan":"1","absent":null,"origin":"","absentChip":""},{"sid":"node-3gen-c003","depth":"0","padLeft":12,"orphan":"1","absent":null,"origin":"来自 AgentFlow 节点","absentChip":""},{"sid":"node-3gen-d004","depth":"0","padLeft":12,"orphan":"1","absent":null,"origin":"","absentChip":""}]}
+
+  3) tests/bg-panel-three-gen.spec.mjs:412:1 › G4 判定表三态各一例：①真子行 depth2 ②父不在场 depth1+标不进野组 ③无父字段落野组 ─
+
+    Error: expect(received).toBe(expected) // Object.is equality
+
+    Expected: "1"
+    Received: "0"
+
+      452 |
+      453 |   // ① 有父且在册 → 真子行：node 挂 dispatcher 下 depth2，无任何标（父可见）。
+    > 454 |   expect(disp.depth).toBe('1');
+          |                      ^
+      455 |   expect(node.depth).toBe('2');
+      456 |   expect(node.orphan).toBe(null);
+      457 |   expect(node.absentParent).toBe(null);
+        at /private/tmp/panel-hierarchy-red/tests/bg-panel-three-gen.spec.mjs:454:22
+
+    Error Context: test-results/bg-panel-three-gen-G4-判定表三-c01ed-②父不在场-depth1-标不进野组-③无父字段落野组/error-context.md
+
+
+[5/6] tests/bg-panel-three-gen.spec.mjs:485:1 › G5 折叠 dispatcher → node 子树整棵隐藏、展开恢复、刷新持久；root 锚收起 = 根下全隐
+  4) tests/bg-panel-three-gen.spec.mjs:485:1 › G5 折叠 dispatcher → node 子树整棵隐藏、展开恢复、刷新持久；root 锚收起 = 根下全隐 
+
+    Test timeout of 180000ms exceeded.
+
+    Error: page.click: Test timeout of 180000ms exceeded.
+    Call log:
+      - waiting for locator('[data-bg-caret="dispatcher-3gen-a001"]')
+
+
+      494 |
+      495 |   // 折叠 dispatcher 行 → node 整棵子树隐藏；dispatcher 行仍在、锚仍在。
+    > 496 |   await page.click(`[data-bg-caret="${DISP_SID}"]`);
+          |              ^
+      497 |   await page.waitForTimeout(150);
+      498 |   const folded = await dumpPanel(page);
+      499 |   console.log('[G5 folded] ' + JSON.stringify(folded.rows.map((r) => ({ sid: r.sid, depth: r.depth, collapsed: r.collapsed, caretCollapsed: r.caretCollapsed }))) + ' anchor=' + JSON.stringify(folded.anchor));
+        at /private/tmp/panel-hierarchy-red/tests/bg-panel-three-gen.spec.mjs:496:14
+
+    Error Context: test-results/bg-panel-three-gen-G5-折叠-d-5bf5d-棵隐藏、展开恢复、刷新持久；root-锚收起-根下全隐/error-context.md
+
+
+[6/6] tests/bg-panel-three-gen.spec.mjs:558:1 › S 静态钉：三态判定单点一个函数；父不在场/根锚机器锚各一个写点
+  5) tests/bg-panel-three-gen.spec.mjs:558:1 › S 静态钉：三态判定单点一个函数；父不在场/根锚机器锚各一个写点 ────────────────────
+
+    Error: expect(received).toBe(expected) // Object.is equality
+
+    Expected: 1
+    Received: 0
+
+      564 |   const count = (needle) => codeOnly.split(needle).length - 1;
+      565 |   // 三态判定单点：定义恰一次（bgRowTree / bgRowPlan / 野判定式三处消费面只读它）。
+    > 566 |   expect(count('function bgTopRowParentStateOf(')).toBe(1);
+          |                                                    ^
+      567 |   // 机器锚写点唯一。
+      568 |   expect(count('data-bg-parent-absent="1"')).toBe(1);
+      569 |   expect(count('data-bg-root-anchor="1"')).toBe(1);
+        at /private/tmp/panel-hierarchy-red/tests/bg-panel-three-gen.spec.mjs:566:52
+
+    Error Context: test-results/bg-panel-three-gen-S-静态钉：三态判定单点一个函数；父不在场-根锚机器锚各一个写点/error-context.md
+
+
+  5 failed
+    tests/bg-panel-three-gen.spec.mjs:241:1 › G1 三层夹具：root 锚 depth0 + dispatcher depth1 + node depth2，1440 桌面 16/28px + 375 手机档同构 
+    tests/bg-panel-three-gen.spec.mjs:366:1 › G3 deps 判定：bgDepsParentPolicy().parentEdgeFromDeps === false 且 deps 边同深度平级 
+    tests/bg-panel-three-gen.spec.mjs:412:1 › G4 判定表三态各一例：①真子行 depth2 ②父不在场 depth1+标不进野组 ③无父字段落野组 ──
+    tests/bg-panel-three-gen.spec.mjs:485:1 › G5 折叠 dispatcher → node 子树整棵隐藏、展开恢复、刷新持久；root 锚收起 = 根下全隐 
+    tests/bg-panel-three-gen.spec.mjs:558:1 › S 静态钉：三态判定单点一个函数；父不在场/根锚机器锚各一个写点 ─────────────────────
+  1 passed (3.2m)
+RED-NEW exit=1

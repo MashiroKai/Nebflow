@@ -3370,8 +3370,11 @@ object WebSocketRoutes:
       // 面板树批（2026-10-29 · 后台智能体面板三修①）：父会话归属随快照出帧——
       // 前端按 parentSessionId 建派生树（delegate 组头 + 缩进子行）；父已终态/
       // 不可见时前端降级为「孤儿提升顶层 + 来源标注」。AgentRecord.parentSessionId
-      // 在 Delegate/SubTask/BlockingSubagent/FlowDag(dag-) 注册点均有值；缺省 ""
-      // = 无归属（前端 falsy，零徽标零认领——与 project/taskId 同契约）。
+      // 在 Delegate/SubTask/BlockingSubagent/FlowDag(dag-)/dispatcher-/node-（本批
+      // 面板代际层级批 2026-11-06 补齐：分发器 = 挂载 root、节点/loop worker/verify
+      // = 在册分发器，兜底 rootSessionId——写点 ProjectActor.spawnDispatcher /
+      // NodeStarter.startNode / NodeLoopRunner.spawnLoopSession）注册点均有值；
+      // 缺省 "" = 无归属（前端 falsy，零徽标零认领——与 project/taskId 同契约）。
       "parentSessionId" -> rec.parentSessionId.asJson,
       // 面板命名批（2026-10-31 · 作者令②）：批次短名随快照出帧（live 面由
       // routeWsSend 在 agentStart 同键注入）——前端行首扫读名数据源；空串 = 无名

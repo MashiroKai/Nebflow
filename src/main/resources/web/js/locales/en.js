@@ -997,6 +997,11 @@ export default {
   // holding wild nodes (rows whose parent cannot be resolved). One fact word,
   // no explanation / no teaching sentence (self-explaining rule 8).
   'subagents.orphanGroup': 'No parent',
+  // Three-generation panel batch (2026-11-06): root anchor (depth-0 tree base
+  // label) + the decision-table state-② "parent absent" chip — fact words only.
+  'subagents.rootAnchor': 'Root session',
+  'subagents.parentAbsent': 'Parent absent',
+  'subagents.parentAbsentTip': 'Parent session not currently shown · {sid}',
   // Panel-hierarchy batch (2026-10-31 ①): group-head collapse caret a11y/hover
   // text (flips with the collapsed state).
   'subagents.collapseGroup': 'Collapse subtasks',
