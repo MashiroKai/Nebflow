@@ -747,6 +747,41 @@ class SessionStore(
   def listSessions: IO[List[SessionMeta]] =
     indexRef.get.map { case (_, sessions, _) => sessions.sortBy(-_.updatedAt) }
 
+  /**
+   * **会话记录是否还在**（存活判据的**数据面单点**；OWNER-GONE 误判修复批
+   * 2026-11-06）。
+   *
+   * 与 [[listSessions]] 的关键差异：`listSessions` 只读**索引**（`_index.json`），
+   * 而后台 agent 会话（`delegate-*` / `subtask-*` / `subagent-*` / `workflow-*` /
+   * `node-*` / `dispatcher-*` / `external-*` / `dag-*`）**从不登记进索引**——它们
+   * 只把 `<id>.json` / `<id>.ui.json` 直接写到盘上（见
+   * [[listSessionsIncludeUnindexed]] 的「盘上独有」分支与 `shared.SessionScope`
+   * 头注）。所以拿 `listSessions.exists(_.id == x)` 当「会话还在吗」判据，对任一
+   * delegate 会话**恒假**——这正是今早「活着的 delegate 被判父会话已消失、
+   * 合并槽被关掉」的机理（`agent.SessionLiveness` 是本判据的消费单点）。
+   *
+   * 判据 = **索引行 ∪ 盘上会话记录**（转录 `<id>.json` / UI `<id>.ui.json` /
+   * 侧车 `<id>.meta.json` / 会话目录 `<id>/`）。删除会话（[[deleteSession]]）会
+   * 把这四处一并清掉 ⇒ 真删仍然判死（真 OWNER-GONE 不被这条放宽掩盖）。
+   *
+   * 只读、无副作用；读盘故障 = false（调用方按 fail-open 处置，见 SessionLiveness）。
+   */
+  def sessionRecordExists(id: String): IO[Boolean] =
+    val target = Option(id).map(_.trim).getOrElse("")
+    // 会话 id 恒为单段文件名；带路径分隔符的 id 不是合法会话（也绝不落盘探测）。
+    if target.isEmpty || target.contains('/') || target.contains('\\') then IO.pure(false)
+    else
+      indexRef.get.map { case (_, sessions, _) => sessions.exists(_.id == target) }.flatMap {
+        case true => IO.pure(true)
+        case false =>
+          IO.blocking {
+            os.exists(sessionFile(target)) ||
+            os.exists(uiFile(target)) ||
+            os.exists(metaSidecarFile(target)) ||
+            os.exists(sessionsDir / target)
+          }.handleErrorWith(_ => IO.pure(false))
+      }
+
   // Patterns mirror the generators: DelegateTool.scala `delegate-<agent>-<uuid8>`,
   // SubTaskTool.scala `subtask-<uuid8>`, FlowDagExecutor.scala
   // `dag-<flow[:10]>-<nodeId>-<ts6>`. Greedy middles + anchored suffixes keep

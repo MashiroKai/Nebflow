@@ -276,7 +276,11 @@ object MergeQueueBootSweep:
    * 父通知（P2 邮箱化批：delegate 轨改走**收件方持久邮箱**——mailOnce 幂等入队
    * + 门铃；写成功=必达，不再依赖父会话 live。identity = 本通知的 correlationId
    * （`mq-recovery-<id>` 等专用键，与旧 F2 队列的幂等键同串——迁移期两 surface
-   * 判重互不误伤）。父会话已删 = 跳过通知，账本行仍在）。
+   * 判重互不误伤）。父会话已删 = 跳过通知，账本行仍在。
+   *
+   * 「父会话已删」= [[SessionLiveness]] 判据（活体 actor ∪ 索引/盘上记录）。改前读
+   * `sessionStore.listSessions`（只读索引）⇒ delegate 父会话恒判已删、补投通知静默
+   * 跳过（OWNER-GONE 误判修复批 2026-11-06；重启路径上的一处同因缺陷）。
    */
   private def notifyParent(
     resources: AgentRuntimePort,
@@ -285,9 +289,10 @@ object MergeQueueBootSweep:
     payload: String,
     blockedStyle: Boolean
   ): IO[Unit] =
-    resources.sessionStore.listSessions
-      .flatMap { sessions =>
-        if !sessions.exists(_.id == rec.parentSessionId) then IO.unit
+    SessionLiveness
+      .alive(resources, rec.parentSessionId)
+      .flatMap { parentAlive =>
+        if !parentAlive then IO.unit
         else
           val correlationId = s"mq-recovery-${rec.id}"
           val metadata =

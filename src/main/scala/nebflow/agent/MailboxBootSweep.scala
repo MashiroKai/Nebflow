@@ -133,6 +133,9 @@ object MailboxBootSweep:
    * 单行合成判定：父会话在场 ∧ 邮箱无该条目（pending/taken 都无）∧ 无消费墓碑
    * ⇒ 合成补投条目（identity = taskId，与主投递腿同一幂等键）。返回 Some(taskId)
    * = 已合成落箱。
+   *
+   * 「父会话在场」= [[SessionLiveness]] 的记录面（索引 ∪ 盘上会话记录；改前只读
+   * 索引 ⇒ delegate 父会话恒判「已删」）。见 OWNER-GONE 误判修复批 2026-11-06。
    */
   private def synthesizeOne(
     sessionStore: nebflow.core.SessionStore,
@@ -140,8 +143,8 @@ object MailboxBootSweep:
   ): IO[Option[String]] =
     if t.parentSessionId.trim.isEmpty then IO.pure(None)
     else
-      sessionStore.listSessions.flatMap { sessions =>
-        if !sessions.exists(_.id == t.parentSessionId) then IO.pure(None)
+      SessionLiveness.recordAlive(sessionStore, t.parentSessionId).flatMap { parentAlive =>
+        if !parentAlive then IO.pure(None)
         else
           for
             pending <- SessionMailbox.scanPending(t.parentSessionId)

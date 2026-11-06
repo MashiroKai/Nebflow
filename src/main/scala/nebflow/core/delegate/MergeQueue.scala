@@ -1191,11 +1191,6 @@ Merge ledger close-out: your branch `${m.branch}` is ALREADY merged into `${m.ba
      * 该情形各自的关账通知由既有三端口承担，本条只是「没有开放条目」的补票）。
      */
     def enqueueVerified(entry: Member): Boolean =
-      val reason =
-        s"merge-queue membership verification failed: no OPEN ledger entry for '${entry.delegateId}' after enqueue " +
-          s"(branch '${entry.branch}' → '${entry.baseBranch}') — either the row never landed or it was closed immediately " +
-          "(a separate merged/failed/owner-gone notice accompanies the closed shape). The merge turn for this delegate is NOT scheduled: " +
-          "merge the branch by hand or re-dispatch the task (branch and worktree preserved)."
       val ok =
         try
           enqueue(entry)
@@ -1207,7 +1202,25 @@ Merge ledger close-out: your branch `${m.branch}` is ALREADY merged into `${m.ba
               s"[merge-queue] enqueue FAILED for '${entry.delegateId}': ${Option(e.getMessage).getOrElse(e.toString).take(200)}"
             )
             false
-      if !ok then BlockNotifyPort.deliver(entry, "enqueue-failed", reason)
+      if !ok then
+        // 判词分两形（诚实面）：① 账本压根没落行（异常/进队路失败）；② 行落了但**开放态
+        // 不在**（入队腿内被立即关账——merged / failed / owner-gone）。后者今天被读成
+        // 「入队没落地」，与事实相反（OWNER-GONE 误判批 2026-11-06）：入队后 **回读**
+        // 一次账本，把真实状态与关账原因随行，判词不再靠猜。
+        val readBack =
+          try
+            find(entry.delegateId)
+              .map(m => s"state=${m.state}" + m.closeReason.fold("")(r => s"; closeReason=${r.take(200)}"))
+              .getOrElse("no ledger row for this delegate")
+          catch case _: Throwable => "ledger unreadable"
+        BlockNotifyPort.deliver(
+          entry,
+          "enqueue-failed",
+          s"merge-queue membership verification failed: no OPEN ledger entry for '${entry.delegateId}' after enqueue " +
+            s"(branch '${entry.branch}' → '${entry.baseBranch}'). Ledger read-back: $readBack. " +
+            "The merge turn for this delegate is NOT scheduled: merge the branch by hand or re-dispatch the task " +
+            "(branch and worktree preserved)."
+        )
       ok
 
     // ── R1 队头跳过 + 退避（队头不再堵死全队批 2026-11-04 · 审计 R1）──────

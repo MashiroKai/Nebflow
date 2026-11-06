@@ -709,10 +709,16 @@ case class SharedResources(
             case _                                                        => Right(())
           }
 
-      /** 属主能不能被征询 = 会话行还在（邮件在盘，随任何唤醒点被消费）。 */
+      /**
+       * 属主能不能被征询 = **会话真的还在**（活体 actor 记录 ∪ 索引/盘上会话记录；
+       * 邮件的落盘语义见 [[SessionLiveness]]）。
+       *
+       * 改前读的是 `sessionStore.listSessions`（只读会话索引）——delegate 会话从不进
+       * 索引 ⇒ 对任何 delegate 属主恒回 false ⇒ careTick 把持窗活属主判死（OWNER-GONE
+       * 误判修复批 2026-11-06；同因同源见 `MailboxProducer` 头注）。
+       */
       def present(ownerSessionId: String): IO[Boolean] =
-        SharedResources.this.sessionStore.listSessions
-          .map(_.exists(_.id == ownerSessionId))
+        SessionLiveness.alive(SharedResources.this, ownerSessionId)
           .handleErrorWith(_ => IO.pure(true)) // fail-open：读数失败不判死
   }
 

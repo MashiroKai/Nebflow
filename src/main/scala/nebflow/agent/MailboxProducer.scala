@@ -17,6 +17,12 @@ import scala.concurrent.duration.*
  * `mailOnce` 幂等入队 → **就地有限重试**（写失败=生产者腿失败，绝不静默继续）→
  * 门铃 best-effort（信已在盘上，门铃蒸发无所谓）。
  *
+ * **在场判定（OWNER-GONE 误判修复批 2026-11-06）**：判据 = [[SessionLiveness]]
+ * 单点（活体 actor 记录 ∪ 索引/盘上会话记录），**不再**用
+ * `sessionStore.listSessions.exists(...)`——那条只读会话索引，而 delegate 会话从不
+ * 进索引（见 [[SessionLiveness]] 头注），于是每个活着的 delegate 都会被判
+ * `parent-session-gone`、合并槽被关掉（作者 2026-11-06 08:21 实证）。
+ *
  * 纪律：
  *   - 生产者职责止于 Enqueued/Coalesced——无回执、无标记、无重投（I5 无 ack）；
  *   - 重试穷尽 = 响亮 ERROR（payload 头随行）+ Failed 回传——**绝不回退旧 push 链**
@@ -52,14 +58,16 @@ private[agent] object MailboxProducer:
       logger.warn(s"[mailbox-producer] empty parentSessionId — event not deliverable (kind=$kind identity=$identity)")
         .as(SessionMailbox.MailResult.Failed("parent-session-missing"))
     else
-      resources.sessionStore.listSessions.flatMap { sessions =>
-        if !sessions.exists(_.id == parentSessionId) then
-          // 父会话已删 = 跳过（不产生无人读的垃圾文件；payload 仍在生产者转录可取回）
+      SessionLiveness.alive(resources, parentSessionId).flatMap {
+        case false =>
+          // 父会话真没了（活体记录与盘上记录都查不到）= 跳过（不产生无人读的垃圾文件；
+          // payload 仍在生产者转录可取回）。判据见 [[SessionLiveness]]：**只**在确实
+          // 查不到会话记录时成立——「索引里没有」不再是判死依据。
           logger.warn(
-            s"[mailbox-producer] parent session '$parentSessionId' is gone — skipping mailbox write " +
-              s"(kind=$kind identity=$identity); payload remains in the producer session transcript"
+            s"[mailbox-producer] parent session '$parentSessionId' is gone (${SessionLiveness.goneReason(parentSessionId)}) — " +
+              s"skipping mailbox write (kind=$kind identity=$identity); payload remains in the producer session transcript"
           ).as(SessionMailbox.MailResult.Failed("parent-session-gone"))
-        else
+        case true =>
           attempt(resources, parentSessionId, event, identity, kind, coalesce, producer, attemptNo = 1)
       }.handleErrorWith(e =>
         logger
