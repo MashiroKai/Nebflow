@@ -50,6 +50,7 @@ class DetachedApplySpec extends CatsEffectSuite:
       "stop leg:",
       "start leg:",
       "state.json",
+      s"STATE=\"$${APPLY_DIR}/state.json\"",
       "export STAND_HOME=",
       "export STAND_GATEWAY_PORT='6138'"
     )
@@ -63,6 +64,35 @@ class DetachedApplySpec extends CatsEffectSuite:
     // （printf 的 \n、tr 的 \t\r\n），不能被 Scala 提前变成真实控制字符。
     assert(s.contains("printf '%s apply: %s\\n'"), "printf format must carry a literal backslash-n")
     assert(s.contains("tr -d '\\t\\r\\n'"), "tr set must carry literal backslash escapes")
+  }
+
+  test("bash script executes from an isolated data root and creates log parent before first log write") {
+    val root = sandbox()
+    val p = planIn(root)
+    val script = DetachedApply.renderBash(p)
+    val tools = root / "tools"
+    os.makeDir.all(tools)
+    val launcher = root / "bin" / "stand"
+    os.makeDir.all(launcher / os.up)
+    os.write.over(launcher, "#!/bin/sh\nexit 0\n")
+    os.perms.set(launcher, "rwxr-xr-x")
+    os.write.over(tools / "lsof", "#!/bin/sh\nexit 0\n")
+    os.write.over(tools / "curl", "#!/bin/sh\nprintf '{\\\"status\\\":\\\"ok\\\"}'\n")
+    os.write.over(tools / "launchctl", "#!/bin/sh\nexit 0\n")
+    os.write.over(tools / "uname", "#!/bin/sh\necho Linux\n")
+    List("lsof", "curl", "launchctl", "uname").foreach(n => os.perms.set(tools / n, "rwxr-xr-x"))
+    val scriptPath = p.dataRoot / "apply" / DetachedApply.ScriptNameBash
+    os.makeDir.all(scriptPath / os.up)
+    os.write.over(scriptPath, script)
+    os.perms.set(scriptPath, "rwxr-xr-x")
+    val builder = new ProcessBuilder("/bin/bash", scriptPath.toString).redirectErrorStream(true)
+    builder.environment().put("PATH", tools.toString + ":/usr/bin:/bin")
+    val process = builder.start()
+    val output = scala.io.Source.fromInputStream(process.getInputStream).mkString
+    val code = process.waitFor()
+    assertEquals(code, 0, output)
+    assert(os.exists(DetachedApply.logPath(p.dataRoot)), "first log write must create its parent")
+    assert(os.read(DetachedApply.statePath(p.dataRoot)).contains("\"phase\":\"done\""))
   }
 
   test("bash update script asserts target version and has rollback leg") {

@@ -417,7 +417,7 @@ object DetachedApply:
 |LAUNCHER=${sh(plan.launcher)}
 |APPLY_DIR=${sh(applyDir(plan.dataRoot).toString)}
 |LOG=${sh(logPath(plan.dataRoot).toString)}
-|STATE='$${APPLY_DIR}/state.json'
+|STATE="$${APPLY_DIR}/state.json"
 |APPLY_LABEL=${sh(macLabel(plan))}
 |APPLY_PLIST=$plistPath
 |STOP_DEADLINE=${plan.stopDeadlineSec}
@@ -429,7 +429,7 @@ object DetachedApply:
 |export STAND_GATEWAY_PORT='${plan.port}'
 |export NEBFLOW_GATEWAY_PORT='${plan.port}'
 |
-|log() { printf '%s apply: %s\\n' "$$(date '+%Y-%m-%d %H:%M:%S')" "$$*" >> "$$LOG"; }
+|log() { mkdir -p "$$(dirname "$$LOG")"; printf '%s apply: %s\\n' "$$(date '+%Y-%m-%d %H:%M:%S')" "$$*" >> "$$LOG"; }
 |set_phase() {
 |  __p="$${1:-}"; __c="$${2:-}"
 |  __tmp="$$STATE.tmp.$$"
