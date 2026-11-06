@@ -177,6 +177,9 @@ class CacheWarmingSpec extends FunSuite:
   // ── C-WARM-5：账本分列 ───────────────────────────────────────────────
 
   test("⑨ warming ledger is separate from business attribution (business totals untouched)"):
+    // 序无关口径（合并后批跑序含 CacheAttributionSpec 先行 ⇒ business 起点非零）：
+    // 差量断言——保温动作前后业务账本必须零增量。
+    val before = nebflow.llm.CacheAttribution.snapshot
     val ledger = new Ledger()
     evaluate(cand(), knownPositive, ledger, nowMs = 1_000L)
     ledger.recordWarm("warm-spec-session", atMs = 1_000L, costUsd = BigDecimal("0.20096"))
@@ -184,6 +187,9 @@ class CacheWarmingSpec extends FunSuite:
     assertEquals(ledger.entryCount, 1)
     assertEquals(ledger.spentUsd, BigDecimal("0.20096"))
     // 业务归因账本（CacheAttribution.business）零污染——保温决策不产生 usage 记录
-    assertEquals(nebflow.llm.CacheAttribution.snapshot.business.requests, 0L)
+    val after = nebflow.llm.CacheAttribution.snapshot
+    assertEquals(after.business.requests, before.business.requests, "warming must not add business usage records")
+    assertEquals(after.business.inputTokens, before.business.inputTokens, "warming must not add business input tokens")
+    assertEquals(after.warmup.requests, before.warmup.requests, "evaluate-only flow adds no warmup usage either")
 
 end CacheWarmingSpec
