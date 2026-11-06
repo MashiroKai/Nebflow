@@ -702,7 +702,10 @@ object LlmInterface extends LlmRuntime:
                           // thinking-config 批（2026-10-28）：按候选解析思考语义
                           // （model > provider > 全局逐字段就近 + 能力类显式优先），
                           // adapter 据此走 wire 翻译表。
-                          thinkingResolved = resolveThinkingFor(req, candidate)
+                          thinkingResolved = resolveThinkingFor(req, candidate),
+                          // cache-warmup 批（2026-11-06）：REQUEST-ONLY 提醒段随行，
+                          // 适配器排在持久历史断点之后（CachePrefixAssemblySpec 契约）。
+                          requestOnlyContext = req.requestOnlyContext
                         )
                       )
                     yield resp
@@ -776,6 +779,14 @@ object LlmInterface extends LlmRuntime:
 
                 // cache-hit 批（2026-11-06）：非流腿命中率聚合读数（面板同口径）。
                 CacheStats.record(result.usedCandidate.providerId, result.usedCandidate.model, result.data.usage)
+                // cache-warmup 批（2026-11-06）：同点位归因落账（miss 归因/账目分列，
+                // 见 [[CacheAttribution]]——与 CacheStats 同数据源，双记但不双算）。
+                CacheAttribution.observeUsage(
+                  req.sessionId,
+                  result.usedCandidate.providerId,
+                  result.usedCandidate.model,
+                  result.data.usage
+                )
 
                 IO.pure(
                   LlmResponse(
@@ -1131,6 +1142,9 @@ object LlmInterface extends LlmRuntime:
                                               // thinking-config 批（2026-10-28）：同非流面——
                                               // 按候选解析思考语义（wire 翻译表单点消费）。
                                               thinkingResolved = resolveThinkingFor(req, candidate),
+                                              // cache-warmup 批（2026-11-06）：同非流面——
+                                              // REQUEST-ONLY 提醒段随行（持久历史断点之后上线）。
+                                              requestOnlyContext = req.requestOnlyContext,
                                               attemptBackend = transportOpt.map(_.backend)
                                             )
                                           )
@@ -1191,6 +1205,13 @@ object LlmInterface extends LlmRuntime:
                                               // 的 providerId 是硬编码协议名（如 "anthropic"），
                                               // 域分列（failover 换域=物理性）必须以真实腿为准。
                                               CacheStats.record(candidate.providerId, candidate.model, done.usage)
+                                              // cache-warmup 批（2026-11-06）：同点位归因落账（流腿）。
+                                              CacheAttribution.observeUsage(
+                                                req.sessionId,
+                                                candidate.providerId,
+                                                candidate.model,
+                                                done.usage
+                                              )
                                               // visionfix (甲): the oscillation-fix bookkeeping
                                               // (`resetOnSuccess` with `hadImage`) is gone with the
                                               // tracker — there is no demotion state left to lift.

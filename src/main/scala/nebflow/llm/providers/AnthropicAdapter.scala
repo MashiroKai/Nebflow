@@ -7,7 +7,7 @@ import fs2.Stream
 import io.circe.parser.parse
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.llm.{AdapterResponse, ProviderAdapter, ResolvedThinking, SendMessageParams}
+import nebflow.llm.{AdapterResponse, CacheAttribution, ProviderAdapter, ResolvedThinking, SendMessageParams}
 import nebflow.core.compact.TokenEstimator
 import nebflow.shared.*
 import sttp.capabilities.fs2.Fs2Streams
@@ -266,18 +266,22 @@ class AnthropicAdapter(
 
   /** Append ephemeral request context after the cached history without persisting it.
    * Tool results must remain the first blocks in their user message.
+   *
+   * cache-warmup 批（2026-11-06）：临时段 = requestOnlyContext（REQUEST-ONLY 提醒）
+   * + systemDynamic（请求级时间锚）。调用点保证断点已先钉在**持久历史**最后一块
+   * （[[withTailCacheBreakpoint]]），本函数只做纯尾追加——临时段永不携带 marker，
+   * 永不进持久历史（CachePrefixAssemblySpec 契约 C1/C4）。
    */
-  private def appendRequestContext(messages: List[Json], dynamic: Option[String]): List[Json] =
-    dynamic.filter(_.nonEmpty) match
-      case None => messages
-      case Some(text) =>
-        val block = Json.obj("type" -> "text".asJson, "text" -> text.asJson)
-        messages.lastOption match
-          case Some(last) if last.hcursor.get[String]("role").toOption.contains("user") =>
-            val blocks = last.hcursor.get[Vector[Json]]("content").getOrElse(Vector.empty)
-            messages.init :+ last.mapObject(_.add("content", Json.fromValues(blocks :+ block)))
-          case _ =>
-            messages :+ Json.obj("role" -> "user".asJson, "content" -> Json.arr(block))
+  private def appendRequestContext(messages: List[Json], ephemeralTexts: List[String]): List[Json] =
+    ephemeralTexts.filter(_.nonEmpty).foldLeft(messages) { (acc, text) =>
+      val block = Json.obj("type" -> "text".asJson, "text" -> text.asJson)
+      acc.lastOption match
+        case Some(last) if last.hcursor.get[String]("role").toOption.contains("user") =>
+          val blocks = last.hcursor.get[Vector[Json]]("content").getOrElse(Vector.empty)
+          acc.init :+ last.mapObject(_.add("content", Json.fromValues(blocks :+ block)))
+        case _ =>
+          acc :+ Json.obj("role" -> "user".asJson, "content" -> Json.arr(block))
+    }
 
   /**
    * 把最后一条消息的最后一个可标块钉上 cache_control。
@@ -574,7 +578,10 @@ class AnthropicAdapter(
   private def estimateInputTokens(params: SendMessageParams): Int =
     val systemText = params.systemStable.getOrElse("") + params.systemDynamic.getOrElse("")
     val toolsChars = params.tools.foldLeft(0)((acc, ts) => acc + ts.map(t => t.inputSchema.asJson.noSpaces.length).sum)
-    TokenEstimator.estimate(params.messages) +
+    // cache-warmup 批（2026-11-06）：REQUEST-ONLY 提醒段也吃窗口预算——从 messages
+    // 拆出后必须单独计入，max_tokens 推导才不失真。
+    val contextText = params.requestOnlyContext.map(_.textContent).mkString("\n")
+    TokenEstimator.estimate(params.messages) + (TokenEstimator.estimateWeightedChars(contextText) / 4) +
       (TokenEstimator.estimateWeightedChars(systemText) / 4) +
       (toolsChars / 4)
 
@@ -587,13 +594,20 @@ class AnthropicAdapter(
   /** 请求体裁剪：engine 侧唯一的 body 装配点（两发送面共用同一形状）。private[providers] = CacheBreakpointSpec 直接钉全 body 断点预算。 */
   private[providers] def bodyOf(params: SendMessageParams, streaming: Boolean): Json =
     val systemBlocks = buildSystemBlocks(params)
+    // cache-warmup 批（2026-11-06）：持久/临时分界显式化——断点只钉**持久历史**
+    // 尾块；REQUEST-ONLY 提醒段与 systemDynamic 作为临时尾段排在断点之后（顺序 =
+    // contextMsg → branchMsg → maintenanceMsg → systemDynamic，与旧拼接序一致）。
+    val persisted      = withTailCacheBreakpoint(toAnthropicMessages(params.messages))
+    val ephemeralTexts = params.requestOnlyContext.map(_.textContent) ++ params.systemDynamic.toList
+    val ephemeralWire  =
+      ephemeralTexts.filter(_.nonEmpty) match
+        case Nil   => Nil
+        case texts => List(Json.obj("role" -> "user".asJson, "content" -> Json.fromValues(texts.map(t => Json.obj("type" -> "text".asJson, "text" -> t.asJson)))))
     val base = Json.obj(
       "model" -> params.model.asJson,
       // cache-hit 批（2026-11-06）：消息尾增量 cache 断点（见
       // [[withTailCacheBreakpoint]]）——这是「同会话连续请求必须命中」判据的装配点。
-      "messages" -> Json.fromValues(
-        appendRequestContext(withTailCacheBreakpoint(toAnthropicMessages(params.messages)), params.systemDynamic)
-      ),
+      "messages" -> Json.fromValues(appendRequestContext(persisted, ephemeralTexts)),
       "max_tokens" -> maxTokensFor(params).asJson
     )
     val withStream = if streaming then base.deepMerge(Json.obj("stream" -> true.asJson)) else base
@@ -606,7 +620,7 @@ class AnthropicAdapter(
     // thinking-config 批（2026-10-28）+ protocol-compat 批（2026-11-01）：
     // wire 翻译单点——按能力类发参数/省略键/显式关态（[[wireThinkingFragment]]）。
     val withThinking = withTools.deepMerge(wireThinkingFragment(params))
-    (params.sessionId, params.agentId) match
+    val body = (params.sessionId, params.agentId) match
       case (Some(sid), Some(aid)) =>
         withThinking.deepMerge(
           Json.obj(
@@ -616,6 +630,10 @@ class AnthropicAdapter(
       case (Some(sid), _) => withThinking.deepMerge(Json.obj("metadata" -> Json.obj("session_id" -> sid.asJson)))
       case (_, Some(aid)) => withThinking.deepMerge(Json.obj("metadata" -> Json.obj("agent_id" -> aid.asJson)))
       case _              => withThinking
+    // 可归因观测（cache-warmup 批）：最终 wire 装配点采指纹（辅助面 sessionId=None
+    // 在 observeWire 内零采集；指纹无正文，见 [[CacheAttribution]]）。
+    CacheAttribution.observeWire("anthropic", params, providerId, persisted, ephemeralWire)
+    body
 
   /**
    * 降级重试用的参数：**显式离开思考模式**。

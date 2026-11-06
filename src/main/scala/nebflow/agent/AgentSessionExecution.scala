@@ -1066,8 +1066,14 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
               base.deepMerge(Json.obj("effort" -> nebflow.shared.ThinkingEffort.Low.wireName.asJson))
             else base
           request = LlmRequest(
-            messages =
-              ttlCleanedMessages.getOrElse(stateWithReminder.messages) ++ contextMsg ++ branchMsg ++ maintenanceMsg,
+            // cache-warmup 批（2026-11-06）：messages 只装**持久历史**（会与
+            // stateWithReminder 一起落盘/下一轮重放的序列），REQUEST-ONLY 提醒段
+            // （contextMsg/branchMsg/maintenanceMsg）改走 requestOnlyContext——
+            // 适配器把它们排在持久历史断点之后上线。旧形态「H ++ R 拼进 messages」
+            // 会让尾断点落在 R 上 ⇒ 缓存写到 H+R ⇒ 下一轮（H+assistant）必 miss
+            // （CachePrefixAssemblySpec 判据①②的红）。
+            messages = ttlCleanedMessages.getOrElse(stateWithReminder.messages),
+            requestOnlyContext = contextMsg ++ branchMsg ++ maintenanceMsg,
             sessionId = stateForLlm.sessionId.getOrElse(ctx.self.path.name),
             agentId = freshDef.name,
             tools = freshTools,

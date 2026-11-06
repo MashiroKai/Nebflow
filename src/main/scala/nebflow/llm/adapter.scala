@@ -61,7 +61,15 @@ case class SendMessageParams(
    * （enabled → budget JSON；off → `Json.Null`）；wire 形态翻译单点 =
    * `AnthropicAdapter.wireThinkingFragment`。
    */
-  thinkingResolved: Option[ResolvedThinking] = None
+  thinkingResolved: Option[ResolvedThinking] = None,
+  /**
+   * REQUEST-ONLY 装配段（cache-warmup 批 2026-11-06）：请求级环境/分支/维护
+   * 提醒——由 [[nebflow.shared.LlmRequest.requestOnlyContext]] 透传。适配器把
+   * 本段排在**持久历史断点之后**（Anthropic 面）/历史尾部（OpenAI 面）再上线，
+   * 与 [[systemDynamic]] 同一「临时尾段」区。缺省 Nil = 辅助面与既有构造点
+   * 逐字零改动。
+   */
+  requestOnlyContext: List[Message] = Nil
 )
 
 /**

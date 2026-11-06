@@ -153,7 +153,10 @@ object LlmLogWriter:
     else
       IO.blocking {
         val agent = request.agentId
-        val messages = request.messages
+        // cache-warmup 批（2026-11-06）：REQUEST-ONLY 提醒段（requestOnlyContext）
+        // 已从 messages 拆出，但它们**确实随请求上线**（排在持久历史断点之后）——
+        // 日志如实呈现尾部上下文：作为尾随消息条目记录（内容+顺序与 wire 一致）。
+        val messages = request.messages ++ request.requestOnlyContext
         val tools = request.tools.getOrElse(Nil)
         val systemText = request.systemStable.getOrElse("") +
           request.systemDynamic.map(d => s"\n\n$d").getOrElse("")
