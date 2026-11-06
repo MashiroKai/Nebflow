@@ -51,9 +51,20 @@ export function buildFmComposer(opts) {
   const onTextChange = typeof opts.onTextChange === 'function' ? opts.onTextChange : () => {};
   const toast = typeof opts.toast === 'function' ? opts.toast : (() => {});
 
-  const bar = el('div', 'fm-input-bar');
+  // 输入条外壳 = **悬浮毛玻璃条**（contact-panel-unify 链 · 作者令 2026-11-06
+  // 「输入框：同样采用悬浮、毛玻璃半透明、带大圆角的设计」，参照物 = 主会话
+  // `#input-bar`）：
+  //   · `nf-glass` = 全站唯一毛玻璃工具类（css/glass.css 单源，玻璃底/模糊/细边/
+  //     影四件套由类供，本文件与 friends.css 都**不写** backdrop-filter 与色值）；
+  //   · 圆角/内距/落位 = css/friends.css 的 `.fm-input-bar`（20px 外壳档 + 6/12 内距，
+  //     与 `#input-bar` 逐值同）。
+  // 禁第二个类名/第二份材质：换个名字再画一遍就是「第二种输入面」（check-input-surface
+  // 的 I2 与 check-glass-unify 的 G1 都会红）。
+  const bar = el('div', 'fm-input-bar nf-glass');
   const input = document.createElement('input');
-  input.className = 'cfg-input fm-input';
+  // 裸件档（css/inputSurface.css 的 `.nf-field--bare` 显式类）：外壳已给材质，
+  // 内件只留字与 caret —— 与主会话 `#input` 同档，禁「框里套框」。
+  input.className = 'cfg-input fm-input nf-field--bare';
   input.type = 'text';
   input.placeholder = t('messages.inputPlaceholder');
   input.maxLength = 2000;

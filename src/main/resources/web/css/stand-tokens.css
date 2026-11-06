@@ -435,6 +435,49 @@ html[data-theme="light"] {
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
+ * 顶部悬浮头（top overlay header）—— 两个消费者、一套令牌、一条共享声明
+ *   （contact-panel-unify 链 · 作者令 2026-11-06 逐字：
+ *    「顶栏：做成完全悬浮且无边缘的样式，内容可以从下方穿过」（会话窗顶栏），
+ *    「仿照主会话」= 参照物就是主会话顶栏）
+ *
+ * 消费者（**收编**：此前是两套各写各的，现在是同一套）：
+ *   ① `#header`            主会话顶栏 —— 参照物（几何/内部件仍归 css/chat.css）
+ *   ② `.fm-modal-header`   好友/群/设备会话窗顶栏（几何/内部件仍归 css/friends.css）
+ * 共享声明（材质/内距/圆角/零下边缘的唯一写出点）= css/glass.css「顶部悬浮头」块。
+ *
+ * ── 高度公式（两面同一条，不是两个手写数）────────────────────────────────
+ *    height = 2×内距 + 行高档 + 2×描边
+ *    行高档 = 同一把尺子的两个刻度（不是两套实现）：
+ *      图标键行 28（主会话顶栏的行高 = 既有图标键档）
+ *      头像行   40（会话窗顶栏的行高 = 窗头头像槽既有 40 档）
+ *
+ * ── 材质 ────────────────────────────────────────────────────────────────
+ *    玻璃底 = 顶缘折射线 + 唯一玻璃底（`--nf-glass-bg`；与 #header 历史取值
+ *             逐字同源，本段只是把它提成两面的共同定义）；
+ *    模糊   = `--nf-glass-filter`（唯一毛玻璃配方，值不在这里重复）；
+ *    影     = **只有顶缘 inset 高光，外投影零**。理由继承 Header 底缘零边界批
+ *             （2026-10-22）：外投影会在玻璃底缘压出深色带 + 裙影，正是作者
+ *             点名移除的那条「边缘」。两面共用同一条，会话窗不再自成一套。
+ * ══════════════════════════════════════════════════════════════════════════ */
+:root {
+  --nf-head-pad-y: var(--ds-space-block-y);   /* 10px（= #header 现值，逐值不动） */
+  --nf-head-pad-x: var(--ds-space-4);         /* 16px（= #header 现值，逐值不动） */
+  --nf-head-radius: var(--ds-radius-shell);   /* 20px（= #header 现值，逐值不动） */
+  --nf-head-border-w: 1px;
+  --nf-head-row-h: 28px;                      /* 图标键行档：主会话顶栏 */
+  --nf-head-row-h-avatar: 40px;               /* 头像行档：会话窗顶栏（头像槽既有 40） */
+  --nf-head-h: calc(var(--nf-head-pad-y) * 2 + var(--nf-head-row-h) + var(--nf-head-border-w) * 2);
+  --nf-head-h-avatar: calc(var(--nf-head-pad-y) * 2 + var(--nf-head-row-h-avatar) + var(--nf-head-border-w) * 2);
+  /* 窗头底缘 ↔ 首条内容的净空：被摘除的那条 `.fm-flow` 分隔线由它替代（留白，不是线） */
+  --nf-head-gap: var(--ds-space-block-y);
+  /* 玻璃底：顶缘折射线（80%×1px，sapphire 渐变）+ 唯一玻璃底。单行书写是判据要求
+     （多行续行会被 check-design-tokens 当成裸色值消费，见上方 --nf-glass-shadow 注）。 */
+  --nf-head-bg: var(--glass-refraction-line, linear-gradient(90deg, transparent 10%, var(--sapphire-refraction) 50%, transparent 90%)) center top / 80% 1px no-repeat, var(--nf-glass-bg);
+  /* 顶缘内高光（唯一的一条「边」，且在内侧：底缘什么都不画） */
+  --nf-head-shadow: inset 0 1px 0 0 #ffffff40;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
  * Input field（输入面）—— 全站唯一输入造型的令牌段
  *   （input-surface-unify 批 2026-11-06；作者裁定逐字：
  *    「这个蓝色输入框怎么到处在显示 我不是说去掉吗 就采用我们主对话窗口这种
