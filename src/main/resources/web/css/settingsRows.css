@@ -119,6 +119,10 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* iOS 语义：空间不足时**值先截断**、标题保全 —— 值的 shrink 权重远高于标题
+   （真渲染实测：长值「使用浏览器内置语音识别（免费）」会把无权重差分的标题
+   挤成「STT …」；权重差分后值先收，标题逐字全出）。 */
+.set-nav .set-nav-val { flex-shrink: 999; }
 
 /* 右侧副值：**只放一个**读数（重复数值由机检 R3 判红）。 */
 .set-nav-val,
@@ -132,11 +136,12 @@
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
-/* 副值右缘 = chevron 盒左缘（= 动作钮右缘）：同一个对齐量。 */
+/* 副值右缘 = chevron 盒左缘：行是 flex gap 布局，副值与 chevron 之间隔着
+   --set-row-gap ⇒ 副值 margin-right = 负 gap 恰好抵消（真渲染实测 Δ=0）。
+   动作钮右缘同一 x（见下方 .set-row-ctrl .set-btn，它在行内距上收 20）。 */
 .set-nav .set-nav-val,
-.set-nav .set-nav-meta,
-.set-row .set-row-val {
-  margin-right: var(--set-chevron-align-gap);
+.set-nav .set-nav-meta {
+  margin-right: calc(-1 * var(--set-row-gap));
 }
 .set-nav-meta {
   flex: 0 0 auto;
@@ -160,13 +165,35 @@
 /* 原地展开行（STT / TTL）：chevron 下转表达开合，与「进下一面板」区分。 */
 .set-nav-expand[aria-expanded="true"] .set-nav-chev { transform: rotate(90deg); }
 
-/* 右列控件（开关 / 下拉）：占位宽度与副值同一列，不与 chevron 争夺网格。 */
+/* 右列控件（开关 / 下拉 / 读数+动作钮）：空间不足时**值先截断**、标题保全
+   （同 .set-nav 的语义；ctrl 本体可缩，钮不缩）。 */
 .set-row .set-row-ctrl {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  flex-shrink: 999;   /* 标题保全：空间不足时右列（值）先截，钮不缩 */
+  min-width: 0;
   display: inline-flex;
   align-items: center;
   gap: var(--ds-space-2);
 }
+.set-row .set-row-ctrl .set-row-val {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 头行右侧的既有状态徽标（Jev 健康腿 / STT 状态）：可缩 + 单行省略，不许把行
+   撑出卡、也不许被压成竖排（flex 缩到 1ch 宽时 CJK 逐字换行——真渲染实录，
+   nowrap 钉死 + 外层 overflow hidden 截）。 */
+.set-nav > .stt-status {
+  flex: 0 1 auto;
+  flex-shrink: 999;   /* 标题保全：空间不足时徽标先截（同副值语义） */
+  min-width: 0;
+  max-width: 45%;
+  overflow: hidden;
+}
+.set-nav > .stt-status .st-badge,
+.set-nav > .stt-status .st-badge .badge-reason { white-space: nowrap; }
 /* 行内下拉：造型归输入面唯一标准（inputSurface.css），宽度按内容。 */
 .set-field { width: auto; max-width: 60%; }
 
@@ -200,17 +227,19 @@
 }
 .set-btn-block { width: 100%; }
 
-/* 成组行为按钮：同一网格（同高、同左基线、同一间距）。 */
+/* 成组行为按钮：同一网格（同高、同宽、同左基线、同一间距）——等分列。 */
 .set-actions {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   gap: var(--ds-space-2);
   padding: var(--ds-space-2) var(--set-row-pad-x);
   flex-wrap: wrap;
 }
+.set-actions .set-btn { flex: 1 1 0; min-width: 0; }
 .set-actions:first-child { padding-top: var(--ds-space-1h); }
 
-/* 行内动作钮右缘 = chevron 盒左缘（与副值同一条对齐量）。 */
+/* 行内动作钮右缘 = chevron 盒左缘：ctrl span 是末位子件，右缘贴行内容缘 ⇒
+   内收一个 chevron 盒宽（20）即与上排 chevron 盒左缘同 x。 */
 .set-row .set-row-ctrl .set-btn { margin-right: var(--set-chevron-align-gap); }
 
 /* ── 折叠体（原地展开 / 配置下钻的内容面）────────────────────────────────── */
@@ -228,7 +257,8 @@
 @media (max-width: 768px) {
   body.mobile-layer .set-nav,
   body.mobile-layer .set-row {
-    min-height: var(--mrow);
+    /* 与 mf-hub-row 同一条热区表达式（44 触控下限，工作台行族实测 50 档）。 */
+    min-height: max(50px, var(--mrow));
     font-size: var(--mfs-body);
     padding-left: var(--mpad-x);
     padding-right: var(--mpad-x);

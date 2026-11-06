@@ -1454,8 +1454,7 @@ export function renderSettings() {
         title: t('settings.secretsManage'),
         id: 'btn-open-secrets',
         value: '…',
-        valueTitle: '',
-        attrs: 'data-set-nav-val-id="secrets-entry-sub"',
+        valueId: 'secrets-entry-sub',
       })}` })}
     ${setCard({ title: t('settings.advanced'), body: `
       <div class="set-actions">

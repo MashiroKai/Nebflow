@@ -505,10 +505,11 @@ html[data-theme="light"] {
  *   ③ 行为 = js/settingsRows.js（setCard / setGroup / setNavRow / setRow）。
  *
  * ── 网格推导（右列对齐 = 一条 x，不靠逐处手填）────────────────────────────
- *   行内距 --set-row-pad-x = 16；chevron 盒 --set-chevron-box = 20、本体 16 居中
- *   ⇒ chevron 中心距行右缘 = 16 + 20/2 = 26。副值 / 行内动作钮的右缘要落在
- *   同一条 x ⇒ 它们的 margin-right = 20（= --set-chevron-align-gap），
- *   于是「副值右缘 = 动作钮右缘 = chevron 盒左缘」由同一条公式推出。
+ *   行内距 --set-row-pad-x = 16；chevron 盒 --set-chevron-box = 20 ⇒ chevron 盒
+ *   左缘距行内容缘 = 20。副值 / 行内动作钮的右缘都要落在同一条 x：
+ *   · 副值（与 chevron 之间隔着 flex gap 12）margin-right = −12 恰抵消 gap；
+ *   · 动作钮（行内末位子件）margin-right = 20（--set-chevron-align-gap）。
+ *   于是「副值右缘 = 动作钮右缘 = chevron 盒左缘」由两条公式各推出一次。
  *   左基线：图标盒 --set-icon-box = 20 + 间隙 --set-row-gap = 12 ⇒ 文案列恒在
  *   行左缘 + 48（分隔线的左缩进也取这一条）。
  * ══════════════════════════════════════════════════════════════════════════ */
@@ -525,7 +526,7 @@ html[data-theme="light"] {
   --set-chevron-box: 20px;                     /* 20 chevron 固定盒（本体 16 居中） */
   --set-chevron-size: 16px;                    /* 16 chevron 本体 */
   --set-chevron-opacity: 0.55;                 /* chevron 退到副值档，不抢标题 */
-  /* 副值/动作钮右缘对齐量 = chevron 盒宽（= 全盒宽，于是右缘 = chevron 盒左缘 = 行内距 + 可用宽 − 20） */
+  /* 动作钮右缘对齐量 = chevron 盒宽 20（副值的对齐 = 负 gap 抵消，见 settingsRows.css） */
   --set-chevron-align-gap: var(--set-chevron-box);
   --set-btn-h: 28px;                           /* 28 动作钮高（行内动作与行为按钮同高） */
   --set-btn-pad-x: var(--ds-space-3);          /* 12 动作钮左右内距 */

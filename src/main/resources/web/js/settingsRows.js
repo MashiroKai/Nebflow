@@ -1,4 +1,5 @@
-// settingsRows.js — 设置页「iOS 设置行」组件族（单源；settings-ios-rows 批 2026-11-06）
+// settingsRows.js — 设置页「iOS 设置行」组件族（单源；settings-ios-rows 批 2026-11-06）//
+import { statusIcon } from './utils.js';
 //
 // 作者令（逐字）：「能点击下一个面板的样式都统一成苹果的这种样式 然后 底部的重启服务
 //   去掉 并且这些可点击的按钮 布局规整一点」
@@ -19,10 +20,12 @@
 
 /**
  * chevron 唯一发射点（尺寸由 CSS 令牌 `.set-nav-chev svg` 统一钉死）。
+ * 用 statusIcon 直出内联 svg —— renderSettings 一次 innerHTML 后没有 lucide
+ * 升级趟（settings 页不再依赖 createIconsIn），`<i data-lucide>` 会永远是空壳。
  * @returns {string}
  */
 export function setChevron() {
-  return '<i data-lucide="chevron-right" class="set-nav-chev" aria-hidden="true"></i>';
+  return `<span class="set-nav-chev" aria-hidden="true">${statusIcon('chevron-right', 16)}</span>`;
 }
 
 /**
