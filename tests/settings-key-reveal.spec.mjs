@@ -157,7 +157,7 @@ async function bootPage(page, opts = {}) {
 
 async function openSettings(page) {
   await page.click('#settings-btn');
-  await page.waitForSelector('#settings-content .settings-section', { timeout: 10000 });
+  await page.waitForSelector('#settings-content .set-card', { timeout: 10000 });
 }
 /** kimi 编辑弹窗打开（卡点点击自带回读兜底 ⇒ 弹窗出现即回读已落地）。 */
 async function openKimiModal(page) {

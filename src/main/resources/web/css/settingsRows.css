@@ -175,6 +175,12 @@
   align-items: center;
   gap: var(--ds-space-2);
 }
+/* provider-add-tabs 批（溢出零容忍断言 320px 实测）：开关不可缩（nb-toggle
+   flex-shrink:0 固定几何），ctrl 收缩权 999 会把它整列压成 0 宽、开关原样
+   外溢出卡（改前实测：toggle 右缘越界 35px，#settings-content +19px 真横滑
+   ——正是作者令禁的「面板手机端可以左右滑动」）。含开关的 ctrl 不低于
+   min-content，让标题侧省略号+title 收尾；纯值/钮 ctrl 语义不变。 */
+.set-row .set-row-ctrl:has(> .nb-toggle) { min-width: min-content; }
 .set-row .set-row-ctrl .set-row-val {
   flex: 0 1 auto;
   min-width: 0;
@@ -192,8 +198,16 @@
   max-width: 45%;
   overflow: hidden;
 }
+/* provider-add-tabs 批（溢出零容忍 P6）：裸 nowrap ⇒ 补齐省略号三件（overflow
+   由 .stt-status 外层与自身承接）；title 全文由 paintJevHealth slot.title 提供，
+   四件齐 = 合规收尾，不是「靠遮掩」的假绿。 */
 .set-nav > .stt-status .st-badge,
-.set-nav > .stt-status .st-badge .badge-reason { white-space: nowrap; }
+.set-nav > .stt-status .st-badge .badge-reason {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
 /* 行内下拉：造型归输入面唯一标准（inputSurface.css），宽度按内容。 */
 .set-field { width: auto; max-width: 60%; }
 
@@ -235,7 +249,16 @@
   padding: var(--ds-space-2) var(--set-row-pad-x);
   flex-wrap: wrap;
 }
-.set-actions .set-btn { flex: 1 1 0; min-width: 0; }
+.set-actions .set-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  /* provider-add-tabs 批（溢出零容忍断言 320px）：等分列下长标签（Re-run
+     Onboarding）会顶破按钮盒（改前 +10px 双钮 → #settings-content +19px 真
+     横滑）。省略号收尾；title 全文由各发射点补（运行时豁免第四件）。 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .set-actions:first-child { padding-top: var(--ds-space-1h); }
 
 /* 行内动作钮右缘 = chevron 盒左缘：ctrl span 是末位子件，右缘贴行内容缘 ⇒

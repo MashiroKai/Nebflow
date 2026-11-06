@@ -928,8 +928,8 @@ export function renderSettings() {
       })}` })}
     ${setCard({ title: t('settings.advanced'), body: `
       <div class="set-actions">
-        <button class="cfg-btn set-btn" id="btn-toggle-json">${t('settings.editRawJson')}</button>
-        ${SHOW_RERUN_ONBOARDING ? `<button class="cfg-btn set-btn" id="btn-rerun-onboarding">${t('settings.rerunOnboarding')}</button>` : ''}
+        <button class="cfg-btn set-btn" id="btn-toggle-json" title="${t('settings.editRawJson')}">${t('settings.editRawJson')}</button>
+        ${SHOW_RERUN_ONBOARDING ? `<button class="cfg-btn set-btn" id="btn-rerun-onboarding" title="${t('settings.rerunOnboarding')}">${t('settings.rerunOnboarding')}</button>` : ''}
       </div>
       <!-- 文件缓存行（M2 · 设计 v1 §6.4/§7 表5）：占用读数（nfCacheStats 同步 seam，
            分桶明细进 title）+ 清空键（nfCacheReset seam，两段式确认 = 按钮第二击
@@ -937,7 +937,7 @@ export function renderSettings() {
            .set-btn，右缘与全页 chevron 列同 x。 -->
       ${setRow({
         title: t('settings.fileCache'),
-        control: `<span id="nf-cache-usage" role="status" class="set-row-val">…</span><button class="cfg-btn set-btn" id="btn-clear-nf-cache" type="button">${t('settings.fileCacheClear')}</button>`,
+        control: `<span id="nf-cache-usage" role="status" class="set-row-val">…</span><button class="cfg-btn set-btn" id="btn-clear-nf-cache" type="button" title="${t('settings.fileCacheClear')}">${t('settings.fileCacheClear')}</button>`,
       })}` })}
     ${setCard({ hidden: !state.settingsShowJson, id: 'json-editor-section', body: `
       <div class="config-editor-wrap">
@@ -1107,7 +1107,10 @@ let secretsCountCache = { n: null, at: 0 };
 function paintSecretsEntryCount(n) {
   const sub = document.getElementById('secrets-entry-sub');
   if (!sub) return;
-  sub.textContent = n > 0 ? t('settings.secretsCount', { n }) : t('settings.secretsNone');
+  const txt = n > 0 ? t('settings.secretsCount', { n }) : t('settings.secretsNone');
+  sub.textContent = txt;
+  // provider-add-tabs 批（溢出零容忍断言）：副值省略号收尾时 title 全文。
+  sub.title = txt;
 }
 
 /** Read the count (cached ≤60s) and paint it; a failure keeps the "…"
@@ -1391,11 +1394,13 @@ function bindSettingsEvents(content, cfg) {
       cacheArmed = false;
       if (cacheArmTimer) { clearTimeout(cacheArmTimer); cacheArmTimer = null; }
       clearCacheBtn.textContent = t('settings.fileCacheClear');
+      clearCacheBtn.title = t('settings.fileCacheClear');
     };
     clearCacheBtn.addEventListener('click', async () => {
       if (!cacheArmed) {
         cacheArmed = true;
         clearCacheBtn.textContent = t('settings.fileCacheClearConfirm');
+        clearCacheBtn.title = t('settings.fileCacheClearConfirm');
         cacheArmTimer = setTimeout(cacheDisarm, 5000);
         return;
       }

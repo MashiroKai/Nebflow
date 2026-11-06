@@ -150,7 +150,7 @@ async function bootPage(page, opts = {}) {
 
 async function openSettings(page) {
   await page.click('#settings-btn');
-  await page.waitForSelector('#settings-content .settings-section', { timeout: 10000 });
+  await page.waitForSelector('#settings-content .set-card', { timeout: 10000 });
 }
 
 function watchErrors(page) {

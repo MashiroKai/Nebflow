@@ -138,7 +138,7 @@ async function bootPage(page, opts = {}) {
 /** Open the settings modal and wait for render. */
 async function openSettings(page) {
   await page.click('#settings-btn');
-  await page.waitForSelector('#settings-content .settings-section', { timeout: 10000 });
+  await page.waitForSelector('#settings-content .set-card', { timeout: 10000 });
 }
 
 // ══ R1 · i18n 裸键名回归 ═══════════════════════════════════
@@ -250,29 +250,35 @@ const SECRETS_THREE = [
   { name: 'social-x-auth', size: 1248, mtime: 1728295320000, mode: '0600', refs: [], value: 'TOPSECRET-VALUE' },
   { name: 'legacy-backup-key', size: 96, mtime: 1726140180000, mode: '0644', refs: [], value: 'TOPSECRET-VALUE' },
 ];
-test('R6 entry row: glass row card with icon + name + count sub + pill + chevron', async ({ page }) => {
+test('R6 entry row: 唯一可点进行 setNavRow（settings-ios-rows 批现行面；旧玻璃行卡退役）', async ({ page }) => {
+  // R6 换代注（provider-add-tabs 批 rebase 收敛，2026-11-06）：main 平行批
+  // settings-ios-rows（2026-11-06 作者令）把密钥入口收编为本页唯一可点进行
+  // setNavRow——旧 .secrets-entry 玻璃行卡与 .count-pill 计数胶囊整件退役，
+  // 计数只画一次（行右副值 #secrets-entry-sub）。本判据按现行面改钉：
+  // 图标位 + 行名 + 单一计数副值 + chevron；旧行壳/胶囊零复活（防回潮）。
   await bootPage(page, { locale: 'zh-CN', secrets: SECRETS_THREE });
   await openSettings(page);
-  await page.waitForFunction(() => document.getElementById('secrets-entry-pill')?.textContent === '3');
+  await page.waitForFunction(() => document.getElementById('secrets-entry-sub')?.textContent === '3 个密钥');
   const dump = await page.evaluate(() => {
     const e = document.getElementById('btn-open-secrets');
     return {
-      isEntry: e.classList.contains('secrets-entry'),
-      notDashed: !e.classList.contains('cfg-btn-add'),
-      name: e.querySelector('.entry-name')?.textContent.trim(),
-      sub: e.querySelector('.entry-sub')?.textContent.trim(),
-      pill: document.getElementById('secrets-entry-pill')?.textContent,
-      icons: e.querySelectorAll('svg.st-ic').length,
-      title: [...document.querySelectorAll('#settings-content .settings-section-title')].map(t => t.textContent.trim()),
+      isSetNav: !!e && e.classList.contains('set-nav'),
+      oldGlassRow: !!document.querySelector('.secrets-entry'),
+      oldPill: !!document.getElementById('secrets-entry-pill'),
+      name: e?.querySelector('.set-nav-label')?.textContent.trim(),
+      sub: document.getElementById('secrets-entry-sub')?.textContent.trim(),
+      subTitle: document.getElementById('secrets-entry-sub')?.title,
+      icons: e ? e.querySelectorAll('svg').length : 0,
+      chevron: !!e?.querySelector('[data-lucide="chevron-right"], svg.lucide-chev'),
     };
   });
-  expect(dump.isEntry, 'the entry is the glass row card').toBe(true);
-  expect(dump.notDashed, 'the dashed full-width add-button is gone').toBe(true);
+  expect(dump.isSetNav, 'the entry is the set-nav tappable row').toBe(true);
+  expect(dump.oldGlassRow, '旧 .secrets-entry 玻璃行卡零复活').toBe(false);
+  expect(dump.oldPill, '旧计数胶囊零复活（计数只画一次）').toBe(false);
   expect(dump.name, 'row name = 密钥管理').toBe('密钥管理');
-  expect(dump.sub, 'subtitle counts the secrets').toBe('3 个密钥');
-  expect(dump.pill, 'count pill shows 3').toBe('3');
-  expect(dump.icons, 'key icon + chevron').toBe(2);
-  expect(dump.title, 'section keeps its 密钥 title').toContain('密钥');
+  expect(dump.sub, '副值计数 = 3 个密钥（唯一读数）').toBe('3 个密钥');
+  expect(dump.subTitle, '副值带 title 全文（溢出零容忍豁免件）').toBe('3 个密钥');
+  expect(dump.icons, 'key icon + chevron 两枚 svg').toBe(2);
 
   await page.click('#btn-open-secrets');
   await page.waitForSelector('#secrets-overlay.on', { timeout: 5000 });
@@ -281,12 +287,16 @@ test('R6 entry row: glass row card with icon + name + count sub + pill + chevron
   const focusBack = await page.evaluate(() => document.activeElement?.id);
   expect(focusBack, 'focus returns to the entry row after close').toBe('btn-open-secrets');
 });
-test('R6 zero secrets → 尚无密钥 + 0 pill', async ({ page }) => {
+test('R6 zero secrets → 尚无密钥（副值唯一读数，无胶囊）', async ({ page }) => {
   await bootPage(page, { locale: 'zh-CN', secrets: [] });
   await openSettings(page);
-  await page.waitForFunction(() => document.getElementById('secrets-entry-pill')?.textContent === '0');
-  const sub = await page.evaluate(() => document.getElementById('secrets-entry-sub')?.textContent.trim());
-  expect(sub, 'empty wording').toBe('尚无密钥');
+  await page.waitForFunction(() => document.getElementById('secrets-entry-sub')?.textContent === '尚无密钥');
+  const dump = await page.evaluate(() => ({
+    sub: document.getElementById('secrets-entry-sub')?.textContent.trim(),
+    pill: !!document.getElementById('secrets-entry-pill'),
+  }));
+  expect(dump.sub, 'empty wording').toBe('尚无密钥');
+  expect(dump.pill, '计数胶囊零复活').toBe(false);
 });
 
 // ══ R7 · 面板行卡重排 ════════════════════════════════════════
@@ -392,7 +402,7 @@ async function shots(colorScheme, tag) {
     await page.evaluate(() => document.querySelector('.nf-ptab[data-provider-type="jev"]')?.click());
     await page.waitForSelector('.nf-provider-panel[data-type="jev"]', { timeout: 5000 });
     await page.waitForFunction(() => (document.getElementById('settings-jev-health')?.textContent || '').trim() !== '…');
-    await page.waitForFunction(() => document.getElementById('secrets-entry-pill')?.textContent === '3');
+    await page.waitForFunction(() => document.getElementById('secrets-entry-sub')?.textContent === '3 个密钥');
     await page.locator('#provider-panel-host').screenshot({ path: `${SHOTS}/provider-panel-jev-health-${tag}.png` });
 
     // 2) 密钥入口行特写

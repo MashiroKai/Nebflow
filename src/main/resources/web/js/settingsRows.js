@@ -90,7 +90,9 @@ export function setNavRow(o) {
     : '';
   return `<button type="button" class="${cls}"${id}${attrs}${aria}>`
     + `<span class="set-nav-ic">${o.icon}</span>`
-    + `<span class="set-nav-label">${o.title}</span>`
+    // provider-add-tabs 批（溢出零容忍断言）：标签省略号收尾时 title 全文 =
+    // 豁免第四件（.set-nav-label css 四件套缺一不可）。
+    + `<span class="set-nav-label" title="${esc(o.title)}">${o.title}</span>`
     + value + meta + (o.extra || '')
     + setChevron()
     + '</button>';
@@ -106,6 +108,7 @@ export function setRow(o) {
   const hintId = o.hintId ? ` id="${esc(o.hintId)}"` : '';
   const hintStyle = o.hintStyle ? ` style="${o.hintStyle}"` : '';
   const hint = o.hint ? `<div class="set-row-hint"${hintId}${hintStyle}>${o.hint}</div>` : '';
-  return `<div class="set-row"${id}><span class="set-row-label">${o.title}</span>`
+  // provider-add-tabs 批（溢出零容忍断言）：同 set-nav-label，title 全文豁免件。
+  return `<div class="set-row"${id}><span class="set-row-label" title="${esc(o.title)}">${o.title}</span>`
     + `<span class="set-row-ctrl">${o.control || ''}</span></div>${hint}`;
 }

@@ -251,8 +251,16 @@ for (const cell of MATRIX) {
       (await import('/js/sidebar.js')).openSettingsPanel();
       document.getElementById('settings-overlay')?.classList.add('on');
     });
-    await page.waitForSelector('#settings-content .settings-section', { timeout: 15000 });
+    // settings-ios-rows 批（main 平行批）后设置节 = .set-card；服务商面板首帧
+    // 由 bindProviderPanel 同步画——等卡 + 首帧标签都在场再开测。
+    await page.waitForSelector('#settings-content .set-card', { timeout: 15000 });
+    await page.waitForSelector('#provider-panel-host .nf-ptab', { timeout: 15000 });
     await page.waitForTimeout(400);
+
+    // 防空转：三张类型标签必须在场（ProviderDomains.All 投影），否则本判据
+    // 的标签轮换腿会静默跳过 = 假绿。
+    const tabCount = await page.evaluate(() => document.querySelectorAll('.nf-ptab').length);
+    expect(tabCount, '类型标签数（llm/imagegen/jev 三域投影）').toBe(3);
 
     // ── 态①：设置页里的服务商面板（ALL 行都在 = 一项不筛）───────────────
     const panel = await measure(page, '#settings-content');
@@ -285,8 +293,11 @@ for (const cell of MATRIX) {
     await page.waitForTimeout(150);
     const modal = await measure(page, '#cfg-modal');
     const modalMsg = fmt(modal.scrollers, '弹窗横向可滚元素') + fmt(modal.texts, '弹窗文本溢出元素');
+
     await page.keyboard.press('Escape');
     await page.waitForTimeout(100);
+
+
 
     const report = `[${tag}] 面板：${panelMsg || ' 无'}\n[${tag}] 表单：${modalMsg || ' 无'}`;
     console.log(report);
