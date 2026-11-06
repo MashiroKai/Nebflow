@@ -1073,13 +1073,8 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             tools = freshTools,
             thinking = Some(askThinkingJson),
             systemStable = Some(systemStable),
-            // 每请求时间锚（时间感知修复批，作者指令 2026-11-05 18:48）：
-            // `systemDynamic` 是**稳定前缀（含 cache breakpoint）之后的动态段**
-            // （AnthropicAdapter.buildSystemBlocks / OpenAiAdapter.buildSystemMessage）——
-            // 故此处现取「现在」既不破坏前缀缓存，又保证**每一次 LLM 请求**（含长回合
-            // 中途的每一次工具往返、压缩轮、ask 轮、子代理轮）都带一条当刻的时间锚。
-            // 🔴 不得改成 systemStable/任何缓存字段：那份字符串只在生命周期节点重建，
-            // 固化进去 = 时间冻结（本批要修的正是这一类）。
+            // Fresh request context is appended by the adapters after the cached history.
+            // Keep it out of systemStable and out of persisted session messages.
             systemDynamic = Some(TimeAnchor.block()),
             // 派发时刻链快照下发（provider-concurrency 批，2026-11-06）：本 actor 的
             // agentModel = spawn 时钉死的 (preferred=链首, fallbacks=尾链)——运行期

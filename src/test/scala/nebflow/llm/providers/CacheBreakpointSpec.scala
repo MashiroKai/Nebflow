@@ -17,29 +17,8 @@ import sttp.client4.StreamBackend
 import scala.concurrent.duration.*
 import scala.jdk.CollectionConverters.*
 
-/**
- * cache-hit 批（2026-11-06）回归闸：**「不该 miss 的场景」钉死**。
- *
- * 现场读数（作者令「为什么现在缓存命中率这么低」的定谳证据，stand 日志
- * 2026-11-06 1574 单 / 202.7M input tokens）：命中率 4.83%；命中请求的
- * cacheRead 中位数 13,056 / p90 19,392 / max 33,152，**无一单 >50k**，而请求
- * input 中位数 ≈119k——供应商只缓存到显式 `cache_control` 断点为止，旧断点只钉
- * system 稳定段 + 末尾 tool schema（≈13-19k），会话历史（~106k）**结构性不可
- * 缓存**（「缓存面积」只盖每请求 ~11%）。
- *
- * 修法 = 消息尾增量断点（`withTailCacheBreakpoint`，装配点 `bodyOf`）：每请求
- * 把断点钉在最后一条消息的最后一个可标块上，同会话下一轮即可整段命中。本 spec
- * 四条不变量：
- *
- *   ①尾断点落位——最后一条消息的可标尾块必须带 `cache_control: ephemeral`；
- *   ②同会话连续请求 prefix 逐字节稳定——历史只增一条时，先前全部消息的 wire
- *     序列化逐字节不变（断点只影响最后一条）⇒ 供应商前缀查找必命中；
- *   ③安全退化——全 thinking 块尾消息不标（Anthropic 对 thinking 块的
- *     cache_control 无契约）、空/异形 content 不构造坏 wire；
- *   ④断点预算 ≤ 4——system 稳定段(1) + 末 tool(1) + 消息尾(1) = 3。
- *
- * 另：failover 换 provider/model = 换缓存域，属**物理性**、不算回归，但必须可
- * 观测（CacheStats 域分列，本文件 §CacheStats）。
+/** Reusable history must remain a stable prefix across changing request clocks.
+ * History-tail cache markers precede ephemeral context; the total marker budget is at most four.
  */
 class CacheBreakpointSpec extends FunSuite:
 
@@ -74,7 +53,7 @@ class CacheBreakpointSpec extends FunSuite:
       model = "glm-5.3-flash",
       tools = tools,
       systemStable = Some("STABLE-SYSTEM-PROMPT"),
-      systemDynamic = Some("dynamic env info that changes every turn")
+      systemDynamic = None
     )
 
   /** 标准四轮 agent 会话：user → assistant(tool_use) → user(tool_result) → assistant(text)。 */
@@ -84,6 +63,16 @@ class CacheBreakpointSpec extends FunSuite:
     toolResult("call_1", "file contents ..."),
     asstText("done, here is the summary")
   )
+
+  test("changing request clocks must not change system or the cached history prefix") {
+    val t1 = TimeAnchor.block(TimeAnchor.at(1793920000000L))
+    val t2 = TimeAnchor.block(TimeAnchor.at(1793920001000L))
+    val before = adapter.bodyOf(params(conversation).copy(systemDynamic = Some(t1)), streaming = false)
+    val after = adapter.bodyOf(params(conversation).copy(systemDynamic = Some(t2)), streaming = true)
+    assertEquals(before.hcursor.downField("system").focus, after.hcursor.downField("system").focus)
+    assert(!before.hcursor.downField("system").focus.get.noSpaces.contains("epoch_ms"))
+    assert(before.hcursor.downField("messages").focus.get.noSpaces.contains("epoch_ms"))
+  }
 
   // ── 判据① 尾断点落位 ─────────────────────────────────────────────────
 
