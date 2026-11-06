@@ -114,7 +114,16 @@ case class LlmRequest(
    * maintenance LLM calls set this to false so a server-side search tool
    * never leaks into summarization or memory-extraction requests.
    */
-  searchAllowed: Boolean = true
+  searchAllowed: Boolean = true,
+  /**
+   * 派发时刻并发钉链剔除账本（缺陷批 2026-11-06，provider-concurrency 批移交）：
+   * spawn 时因 provider 满载被链首扫描跳过的候选与原因（`PinnedChain.preExcluded`，
+   * AgentSessionExecution 请求构造单点下发）。进候选账本的 seeded 层——没有它，
+   * 这些候选既不在链上也没有原因 ⇒ `SILENTLY EXCLUDED`（现网实证：
+   * `UTSC/glm-5.3-flash SILENTLY EXCLUDED` 反复出现）。缺省 Nil = 未钉/无剔除
+   * （既有构造点逐字零改动）。
+   */
+  pinSkips: List[(String, CandidateSkipCause)] = Nil
 )
 
 case class TokenUsage(

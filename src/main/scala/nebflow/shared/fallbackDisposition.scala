@@ -25,6 +25,17 @@ enum CandidateSkipCause:
   /** 软回避窗内（配额 / 超时）：窗口到期自然回链，不探测。 */
   case SoftAvoid(remainingMs: Long, label: String)
 
+  /**
+   * 派发时刻并发钉链剔除（provider-concurrency 批移交 2026-11-06，缺陷批本日
+   * 收口进账本）：provider 的 actor 占坑数在**派发那一刻**已达
+   * `maxConcurrentActors` 上限 ⇒ 链首扫描跳过它、新 actor 的链从第一根有余位的
+   * provider 起钉（`PinnedChain.preExcluded` 随请求下发）。这是**计划性**剔除
+   * （prompt-cache 键稳定换来的），但必须有账——否则它就是 `SILENTLY EXCLUDED`
+   * 的头号来源（现网实证 2026-11-06：`UTSC/glm-5.3-flash SILENTLY EXCLUDED`
+   * 反复出现——配置可见、未 disabled、被钉链踢出链外且无原因）。
+   */
+  case ProviderFull(inUse: Int, cap: Int)
+
   /** 模型不可用时段窗（`unavailableWindows`）。 */
   case ScheduleWindow(window: String)
 
@@ -40,6 +51,7 @@ enum CandidateSkipCause:
   def wire: String = this match
     case HealthDown(_)     => "health-down"
     case SoftAvoid(_, _)   => "soft-avoid"
+    case ProviderFull(_, _) => "provider-full"
     case ScheduleWindow(_) => "schedule-window"
     case NotConfigured(_)  => "not-configured"
     case SilentExclusion   => "silent-exclusion"
@@ -47,9 +59,11 @@ enum CandidateSkipCause:
   def describe: String = this match
     case HealthDown(d)        => s"health-down ($d)"
     case SoftAvoid(ms, label) => s"soft-avoid ($label, ${ms / 1000}s left)"
-    case ScheduleWindow(w)    => s"schedule-window ($w)"
-    case NotConfigured(d)     => s"not-configured ($d)"
-    case SilentExclusion      => "silent-exclusion (no reason recorded — dropped before the chain)"
+    case ProviderFull(inUse, cap) =>
+      s"provider-full ($inUse of $cap actor slots in use at dispatch — chain pinned to start past it)"
+    case ScheduleWindow(w) => s"schedule-window ($w)"
+    case NotConfigured(d)  => s"not-configured ($d)"
+    case SilentExclusion   => "silent-exclusion (no reason recorded — dropped before the chain)"
 end CandidateSkipCause
 
 /**

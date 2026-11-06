@@ -562,4 +562,126 @@ class ProviderConcurrencyFallbackSpec extends CatsEffectSuite:
   private def boolAt(e: Option[Json], f: String): Option[Boolean] =
     e.flatMap(_.hcursor.downField(f).as[Boolean].toOption)
 
+  // ── 派发钉链剔除账本（缺陷批 2026-11-06，provider-concurrency 批移交）─────────
+  // 现网实证：`UTSC/glm-5.3-flash SILENTLY EXCLUDED（无原因剔除）` 反复出现——
+  // provider 满载被链首扫描剔出的候选没有入账面。收口判据：assign 的快照必须携带
+  // `preExcluded`（ref → ProviderFull(inUse, cap)），release/reconcile 清账，
+  // 幂等 re-assign 不丢账。
+
+  test("PE1: 满载 provider 的候选在派发钉链时被剔，且带 provider-full 原因进 preExcluded（不再无账消失）"):
+    val cfg1 = NebflowServiceConfig(
+      llm = ServiceLlmConfig(
+        providers = Map("a" -> withCap(provider("m1"), Some(1)), "b" -> provider("m1")),
+        fallback = Some(AgentModelConfig(Some("a/m1"), List("b/m1")))
+      )
+    )
+    for
+      reg <- mkRegistry(cfg1)
+      chain <- orderedChainOf(reg, Some(AgentModelConfig(Some("a/m1"), List("b/m1"))))
+      counts <- countsRef
+      p1 <- ProviderConcurrency.assign(counts, cfg1, "actor-1", chain)
+      p2 <- ProviderConcurrency.assign(counts, cfg1, "actor-2", chain)
+      c <- counts.get
+    yield
+      assertEquals(chain, List(("a", "m1"), ("b", "m1")), "先验：a/m1 → b/m1")
+      assertEquals(p1.map(_.headRef), Some("a/m1"), "actor-1 钉链首 a/m1")
+      assertEquals(p1.map(_.preExcluded), Some(Nil), "链首本身无剔除")
+      assertEquals(p2.map(_.headRef), Some("b/m1"), "actor-2 链首落第二档 b/m1")
+      assertEquals(
+        p2.map(_.preExcluded),
+        Some(List("a/m1" -> CandidateSkipCause.ProviderFull(1, 1))),
+        "被剔的 a/m1 必须带 provider-full(1 of 1) 原因进账——不许无账消失（UTSC 形态根治判据）"
+      )
+      assertEquals(c.byProvider.get("a"), Some(Set("actor-1")), "a 占坑 = actor-1")
+      assertEquals(c.byProvider.get("b"), Some(Set("actor-2")), "b 占坑 = actor-2")
+
+    end for
+
+  test("PE2: 幂等 re-assign 不丢 preExcluded（重 spawn 场景：取首钉那一刻的账，不随现读计数漂移）"):
+    val cfg1 = NebflowServiceConfig(
+      llm = ServiceLlmConfig(
+        providers = Map("a" -> withCap(provider("m1"), Some(1)), "b" -> provider("m1")),
+        fallback = Some(AgentModelConfig(Some("a/m1"), List("b/m1")))
+      )
+    )
+    for
+      reg <- mkRegistry(cfg1)
+      chain <- orderedChainOf(reg, Some(AgentModelConfig(Some("a/m1"), List("b/m1"))))
+      counts <- countsRef
+      _ <- ProviderConcurrency.assign(counts, cfg1, "actor-1", chain)
+      p2 <- ProviderConcurrency.assign(counts, cfg1, "actor-2", chain)
+      // a 的坑释放（现读 a 已空闲）——已钉 actor-2 重复询问不得因漂移改判/丢账
+      _ <- ProviderConcurrency.release(counts, "actor-1")
+      p2Again <- ProviderConcurrency.assign(counts, cfg1, "actor-2", chain)
+    yield
+      assertEquals(p2Again, p2, "整快照相等（含 preExcluded）——幂等不迁移不丢账")
+      assertEquals(
+        p2Again.map(_.preExcluded),
+        Some(List("a/m1" -> CandidateSkipCause.ProviderFull(1, 1))),
+        "剔除原因必须保持首钉时刻的账（a 此刻已空闲也不改写历史）"
+      )
+
+    end for
+
+  test("PE3: release / reconcile 清剔除账（不留僵尸条目）"):
+    val cfg1 = NebflowServiceConfig(
+      llm = ServiceLlmConfig(
+        providers = Map("a" -> withCap(provider("m1"), Some(1)), "b" -> provider("m1")),
+        fallback = Some(AgentModelConfig(Some("a/m1"), List("b/m1")))
+      )
+    )
+    for
+      reg <- mkRegistry(cfg1)
+      chain <- orderedChainOf(reg, Some(AgentModelConfig(Some("a/m1"), List("b/m1"))))
+      counts <- countsRef
+      _ <- ProviderConcurrency.assign(counts, cfg1, "actor-1", chain)
+      _ <- ProviderConcurrency.assign(counts, cfg1, "actor-2", chain)
+      withBoth <- counts.get
+      _ <- ProviderConcurrency.release(counts, "actor-2")
+      afterRelease <- counts.get
+      _ <- ProviderConcurrency.reconcile(counts, Set("actor-1"))
+      afterReconcile <- counts.get
+    yield
+      assert(withBoth.pinExclusions.contains("actor-2"), "actor-2 被剔时必须入账")
+      assertEquals(
+        afterRelease.pinExclusions.get("actor-2"),
+        None,
+        "release 必须连剔除账一起清（不留僵尸条目）"
+      )
+      assertEquals(afterRelease.pinExclusions.get("actor-1"), Some(Nil), "actor-1 无剔除 ⇒ 账为空表但保留")
+      assertEquals(
+        afterReconcile.pinExclusions.keySet,
+        Set("actor-1"),
+        "reconcile 以活集裁账（死 actor 的剔除账不复活）"
+      )
+
+    end for
+
+  test("PE4: 全满 ⇒ assign = None 且剔除账作废（无 pin 就无账，回落既有全局行为）"):
+    val cfgFull = NebflowServiceConfig(
+      llm = ServiceLlmConfig(
+        providers = Map(
+          "a" -> withCap(provider("m1"), Some(1)),
+          "b" -> withCap(provider("m1"), Some(1))
+        ),
+        fallback = Some(AgentModelConfig(Some("a/m1"), List("b/m1")))
+      )
+    )
+    for
+      reg <- mkRegistry(cfgFull)
+      chain <- orderedChainOf(reg, Some(AgentModelConfig(Some("a/m1"), List("b/m1"))))
+      counts <- countsRef
+      p1 <- ProviderConcurrency.assign(counts, cfgFull, "actor-1", chain)
+      p2 <- ProviderConcurrency.assign(counts, cfgFull, "actor-2", chain)
+      p3 <- ProviderConcurrency.assign(counts, cfgFull, "actor-3", chain)
+      c <- counts.get
+    yield
+      assertEquals(p1.map(_.headRef), Some("a/m1"), "actor-1 钉 a/m1")
+      assertEquals(p2.map(_.headRef), Some("b/m1"), "actor-2 钉 b/m1（a 已满）")
+      assertEquals(p2.flatMap(_.preExcluded.headOption.map(_._1)), Some("a/m1"), "actor-2 的剔除账 = a/m1")
+      assertEquals(p3, None, "全满 ⇒ None（不钉，零新失败模式）")
+      assertEquals(c.pinExclusions.get("actor-3"), None, "不钉的 actor 不得留剔除账")
+
+    end for
+
 end ProviderConcurrencyFallbackSpec

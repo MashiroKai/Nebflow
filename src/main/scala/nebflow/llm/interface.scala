@@ -640,7 +640,11 @@ object LlmInterface extends LlmRuntime:
                 (schedAvailable, schedSkips) = schedRes
                 configSkips <- registry.configLevelExclusions()
                 expected <- registry.expectedCandidateRefs()
-                seededSkips = droppedKnown ++ schedSkips ++ configSkips
+                // 派发钉链剔除账本（缺陷批 2026-11-06）：`req.pinSkips` = spawn 时因
+                // provider 满载被链首扫描剔出的候选（`PinnedChain.preExcluded`，本就是
+                // 请求前的事实）——并入 seeded 层。没有它，这些候选既不在链上也没有
+                // 原因 ⇒ SILENTLY EXCLUDED（现网实证 UTSC/glm-5.3-flash）。
+                seededSkips = droppedKnown ++ schedSkips ++ configSkips ++ req.pinSkips
                 healthSkipped <- healthMonitor.filterCandidatesDetailed(schedAvailable)
                 (up, healthSkips) = healthSkipped
                 allSkips = mergeSkips(
@@ -834,7 +838,10 @@ object LlmInterface extends LlmRuntime:
                         (schedAvailable, schedSkips) = schedRes
                         configSkips <- registry.configLevelExclusions()
                         expected <- registry.expectedCandidateRefs()
-                        seededSkips = mergeSkips(droppedKnown ++ schedSkips, configSkips)
+                        // 派发钉链剔除账本（缺陷批 2026-11-06）：`req.pinSkips` = spawn
+                        // 时因 provider 满载被链首扫描剔出的候选（`PinnedChain.preExcluded`，
+                        // 请求前的事实）——并入 seeded 层，不静默（UTSC 现网形态根治）。
+                        seededSkips = mergeSkips(droppedKnown ++ schedSkips, configSkips ++ req.pinSkips)
                         _ <- logCandidateLedger(
                           req,
                           expected,
@@ -920,25 +927,35 @@ object LlmInterface extends LlmRuntime:
                                     // next background cycle — cuts worst-case recovery from ~2min to ~15s.
                                     fs2.Stream
                                       .eval(
-                                        record *> notifyDown *> healthMonitor.probeNow(down) *> healthMonitor
-                                          .waitForAnyUp(candidates)
-                                          // All candidates Down and none recovered within one probe
-                                          // cycle — surface the failure instead of blocking forever.
-                                          // Re-mapped to AllProvidersDownTimeout (Transient) so the
-                                          // agent-level llm-fail retry fires; a raw TimeoutException
-                                          // is classified Permanent and would kill the turn.
-                                          .timeout(ProviderHealthMonitor.ProbeIntervalSec.seconds)
-                                          .adaptError { case _: java.util.concurrent.TimeoutException =>
-                                            val table = CandidateDisposition(Nil, Nil, skippedNow.map {
-                                              case (c, cause) => s"${c.providerId}/${c.model}" -> cause
-                                            }, expectedRefs).render()
-                                            new AllProvidersDownTimeout(
-                                              ProviderHealthMonitor.ProbeIntervalSec * 1000L,
-                                              Some(
-                                                s"no candidate could be tried — every candidate on the chain was skipped:\n$table"
-                                              )
-                                            )
-                                          }
+                                        record *> notifyDown *> healthMonitor.probeNow(down) *> {
+                                          healthMonitor
+                                            .waitForAnyUp(candidates)
+                                            // All candidates Down and none recovered within one probe
+                                            // cycle — surface the failure instead of blocking forever.
+                                            // Re-mapped to AllProvidersDownTimeout (Transient) so the
+                                            // agent-level llm-fail retry fires; a raw TimeoutException
+                                            // is classified Permanent and would kill the turn.
+                                            .timeout(ProviderHealthMonitor.ProbeIntervalSec.seconds)
+                                            .recoverWith { case _: java.util.concurrent.TimeoutException =>
+                                              // 缺陷批 2026-11-06（作者令「全 skip 给逐候选原因汇总」）：
+                                              // 超时表用**累计账本**（skippedRef = seeded 配置/时段/钉链层
+                                              // + 各轮健康面跳过），不再只用本轮 skippedNow——否则
+                                              // 派发钉链剔除（provider-full）这类 seeded 层会被踢出表外，
+                                              // 冻结通知又变黑箱（2026-11-06 现网形态）。
+                                              skippedRef.get.flatMap { skips =>
+                                                val table = CandidateDisposition(Nil, Nil, skips, expectedRefs)
+                                                  .render()
+                                                IO.raiseError(
+                                                  new AllProvidersDownTimeout(
+                                                    ProviderHealthMonitor.ProbeIntervalSec * 1000L,
+                                                    Some(
+                                                      s"no candidate could be tried — every candidate on the chain was skipped:\n$table"
+                                                    )
+                                                  )
+                                                )
+                                              }
+                                            }
+                                        }
                                       )
                                       .flatMap { _ =>
                                         val notifyUp = onAttempt.traverse_(

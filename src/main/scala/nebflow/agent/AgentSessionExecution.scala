@@ -1081,6 +1081,10 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             // llm.fallback / agent.json 变化 / 储备层追加都**不再改变链首**（缓存键
             // 稳定）。pin = None ⇒ 原值透传 = 既有行为逐字节不变。
             agentModel = agentModelWithPin(freshDef.model, stateForLlm.providerChainPin),
+            // 派发钉链剔除账本（缺陷批 2026-11-06）：spawn 时因满载被链首扫描剔出的
+            // 候选连原因随请求下发——进候选账本 seeded 层。没有它，这些候选既不在链上
+            // 也没有原因 ⇒ `SILENTLY EXCLUDED`（现网实证 UTSC/glm-5.3-flash）。缺省 Nil。
+            pinSkips = stateForLlm.providerChainPin.map(_.preExcluded).getOrElse(Nil),
             // WebSearch P0: housekeeping turns (compact/ask) opt out of
             // provider-native search injection — a server-side search tool
             // must never leak into summarization loops.
