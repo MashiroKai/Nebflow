@@ -7,10 +7,13 @@
 
    ── 本文件 = 该件的样式单源。三个形态判据 ───────────────────────────────
    ① 展开 = 扁平长条（微信形态，值全取我方令牌）：**同一个元素**
-      `.mh-search-bar`，浅灰底 `--ds-wash-16`、无描边、无投影、无毛玻璃、
-      圆角 `--ds-radius-xl`（= 12px，我方「条状容器」档；2026-11-05 17:37 作者令
-      「没收缩之前的圆角幅度再大一点」前为 `--ds-radius-input` 8px；微信截图只借
-      形态不借数值）、左右内距 16、居左图标（lucide search 16px）+ 占位文字。
+      `.mh-search-bar`，几何 = 圆角 `--ds-radius-xl`（= 12px，我方「条状容器」档；
+      2026-11-05 17:37 作者令「没收缩之前的圆角幅度再大一点」前为
+      `--ds-radius-input` 8px；微信截图只借形态不借数值）、左右内距 16、居左图标
+      （lucide search 16px）+ 占位文字；**材质 = `.nf-glass`**（glass-top-overlays
+      批 2026-11-06：条浮在滚动列表之上 ⇒ 按「顶部悬浮可透出面 = 毛玻璃」标准走
+      唯一工具类；12:28 那版的 `--ds-wash-16` 浅灰底 + 零模糊整条退役 —— 见下方
+      ①「材质换代」段）。
    ② 收起 = 右上角圆钮：**同一元素**追加 `.g2-fab` 类 ⇒ 视觉整件由
       css/glass.css 的 `.g2-fab` 块供给（`body.mobile-layer .g2-fab` = 48×48 /
       `--cv-bg` 玻璃底 / `--cv-border` 描边 / `--cv-shadow` 浮影 /
@@ -129,18 +132,27 @@ body.mobile-layer .mh-search-dock:not(.has-query) .mh-search-results {
    不需要新造令牌）。不取 16（--ds-radius-card-lg，聊天浮层卡档）：条与圆钮
    （50%）的形态差靠圆角档位差承载体，跳到卡档会把「长条 → 圆钮」的区分压平。
    内距同步 12 → 16（--ds-space-4）：12px 圆角下 12 的图标内距正好落在弧线上、
-   观感贴边，16 让图标与弧线脱开，并向右缘留同一份呼吸。 */
+   观感贴边，16 让图标与弧线脱开，并向右缘留同一份呼吸。
+
+   ── 材质换代（glass-top-overlays 批 2026-11-06，作者令逐字：「所有悬浮在顶部
+      可以透出背景的 都用毛玻璃效果 比如消息和联系人的手机端的搜索框 这个要成为
+      标准」）────────────────────────────────────────────────────────────────
+   12:28 那版给本条定的材质是「--ds-wash-16 浅灰底 + 零描边 + 零投影 + 零毛玻璃」
+   （微信形态）。当时它背后是**页面实底**（带还在流内、页体 --color-bg 不透明），
+   没有「透出背景」这回事；17:34 透明顶带批把带离流之后，条就直接浮在滚动列表
+   之上 —— α .16 的洗色底 + 零模糊 = 底下的会话名/头像**清清楚楚穿上来**，正是
+   作者这次点名的形态（也是规范里判死的「内容透底」那一端）。
+   故本条**只保留几何**（宽/高/内距/圆角/居中），材质整件交给唯一工具类
+   `.nf-glass`（css/glass.css：--nf-glass-bg + blur(40px) saturate(1.4) + 细边 +
+   内高光，DOM 侧 js/mobile/socialSearch.js 建条时挂类）。旧「浅灰无玻璃」材质
+   整条退役；本文件不再出现 background / border / box-shadow / backdrop-filter
+   任何一条材质声明 —— 第二套玻璃味不允许在这里长回来（check-glass-unify G7 判红）。 */
 body.mobile-layer .mh-search-dock:not(.mh-search-collapsed) .mh-search-bar {
   width: calc(100% - var(--ds-space-4) * 2);
   height: 44px;
   margin: 0 var(--ds-space-4);
   padding: 0 var(--ds-space-4);
   border-radius: var(--ds-radius-xl);
-  background: var(--ds-wash-16);
-  border: 1px solid transparent;
-  box-shadow: none;
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
 }
 
 /* ── ③ 形变编排：宽度 / 高 / 位移 / 圆角 / 底色 / 描边 / 浮影一整段 ──────
@@ -187,6 +199,11 @@ body.mobile-layer .mh-search-dock.mh-search-collapsed .mh-search-bar {
   padding-right: 0;
   justify-content: center;
   cursor: pointer;
+  /* 收起态零投影：本元素常挂 `.nf-glass`（常驻于条本体，收/展同一节点），而
+     `.g2-fab` 圆钮族在扁平批（flat-button-everywhere 2026-11-05）已定为**零投影**
+     —— 圆钮的「浮」由玻璃采样 + 1px 描边表达。故收起态显式摘掉玻璃卡的影子，
+     展开态才吃 `--nf-glass-shadow`（面级浮件档）。两态差异仅此一项，材质同源。 */
+  box-shadow: none;
 }
 body.mobile-layer .mh-search-dock.mh-search-collapsed .mh-search-input {
   opacity: 0;
@@ -212,12 +229,14 @@ body.mobile-layer .mh-search-dock.mh-search-collapsed .mh-scope-row {
 }
 
 /* ── 验收读数归档（实测值见 reports-evidence/search-band-transparent__<批次时间戳>/
-   与 reports-evidence/mobile-search-flat__20261105_135329/readings.json）：
-   展开 = bar 44×343 @ left16/right359、radius 12px（--ds-radius-xl）、底
-   rgba(128,128,128,0.16)（--ds-wash-16 亮档）、无描边/无投影/无毛玻璃、
+   与 reports-evidence/mobile-search-flat__20261105_135329/readings.json；
+   材质换代后的读数见 reports-evidence/glass-top-overlays__<批次时间戳>/）：
+   展开 = bar 44×343 @ left16/right359、radius 12px（--ds-radius-xl）、
+   材质 = `.nf-glass`（玻璃底 α .549 亮 / .678 暗 + blur 40px saturate 1.4 +
+   1px 白细边 + 内高光；旧值 rgba(128,128,128,0.16) 洗色底 + 零模糊**已退役**）、
    内距 16（图标距条左缘 17 = 16 + 1px 描边）；dock 高 60（两页同值）。
    收起 = bar 48×48 @ right359、radius 50%、玻璃底与浮影逐档同主会话钮
-   （.g2-fab）、图标 20px；dock 高仍 60（滚动容器几何零变化）；输入行
+   （.g2-fab，零投影）、图标 20px；dock 高仍 60（滚动容器几何零变化）；输入行
    opacity 0 / max-width 0。回顶 = bar 与初始逐值相同。
    透明顶带（2026-11-05 17:34 批）实测（375×812）：dock position absolute /
    background rgba(0,0,0,0) / backdrop-filter none / pointer-events none /

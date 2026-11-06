@@ -123,10 +123,17 @@ function msgBar() { return bars.get('messages') || null; }
 
 // ── 部件构建 ────────────────────────────────────────────────────────
 
-/** 输入行（玻璃单源 + 图标 + 清空键）；返回三件，事件由各页处理器接线。 */
+/** 输入行（玻璃单源 + 图标 + 清空键）；返回三件，事件由各页处理器接线。
+ *
+ *  `.nf-glass`（glass-top-overlays 批 2026-11-06）：本行**浮在滚动列表之上**
+ *  （搜索带 `position:absolute`、带本体零底、内容从带下连续穿过），按作者令
+ *  「所有悬浮在顶部 可以透出背景的 都用毛玻璃效果 比如消息和联系人的手机端的
+ *  搜索框」⇒ 材质必须走唯一工具类，不许再在这里/在 CSS 里另造一档浅灰底。
+ *  收起态（同一节点追加 `.g2-fab`）继承的仍是同一份玻璃；`.nf-glass` 常驻
+ *  不收不展 —— 它不参与几何，只供材质。 */
 function buildBarRow(placeholder) {
   const row = document.createElement('div');
-  row.className = 'mh-search-bar';
+  row.className = 'mh-search-bar nf-glass';
   const ic = document.createElement('i');
   ic.setAttribute('data-lucide', 'search');
   ic.setAttribute('aria-hidden', 'true');

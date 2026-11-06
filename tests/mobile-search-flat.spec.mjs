@@ -2,10 +2,13 @@
 // （件八，作者令 2026-11-05 12:28 逐字见 css/mobileSearchFlat.css 头注）
 //
 // 判据九组（消息页 + 联系人页各跑一遍 = ⑨ 两页同源）：
-//   ① 展开态几何与扁平场：.mh-search-bar 44×343 @ left16/right359；圆角 = 我方圆角
+//   ① 展开态几何与材质场：.mh-search-bar 44×343 @ left16/right359；圆角 = 我方圆角
 //      档 --ds-radius-xl（12px；2026-11-05 17:37 作者令「圆角幅度再大一点」由
-//      --ds-radius-input 8px 抬档）；底 = --ds-wash-16（浅灰，显式 token 解析值）；
-//      无描边/无投影/无毛玻璃；doc/搜索带高 = 60（两页同值）。
+//      --ds-radius-input 8px 抬档）；**材质 = .nf-glass 唯一毛玻璃标准**
+//      （glass-top-overlays 批 2026-11-06 —— 条浮在滚动列表之上，按作者令
+//      「所有悬浮在顶部 可以透出背景的 都用毛玻璃效果 比如消息和联系人的手机端
+//      的搜索框」；12:28 那版的 --ds-wash-16 浅灰底 + 零模糊已退役）；
+//      doc/搜索带高 = 60（两页同值）。
 //   ② 上滚过阈值（真实滚动容器 scrollTop > 24）⇒ 条**同一节点**形变为右上角圆钮：
 //      48×48 / right 359 / radius 50% / 挂 .g2-fab；材料逐值 = 主会话搜索钮
 //      （#mobile-fab-layer .mh-chrome-btn.g2-fab）计算样式 —— 同一套 CSS 的同源证据。
@@ -21,9 +24,10 @@
 //   ⑧ reduced-motion：--mhsc-dur 压到 1ms（二值语义保留，功能不退化）。
 //   ⑨ 两页同源（同上判据在 contacts 页重跑）。
 //
-// 改前树腿：SEARCH7_LEGACY_TREE=1 + SEARCH7_WEB_ROOT=<77afefc77 导出的 web 树>
-// ⇒ 同一脚本按「改前红口径」断言（玻璃胶囊在位 / 上滚不收 / 无 g2-fab 形变），
-// 红即证明本批判据钉在改动上（不是恒真断言）。
+// 改前树腿：SEARCH7_LEGACY_TREE=1 + SEARCH7_WEB_ROOT=<改前 web 树> ⇒ 同一脚本按
+// 「改前红口径」断言（条无 .nf-glass / 无毛玻璃配方 / 上滚不收 / 无 g2-fab 形变），
+// 红即证明本批判据钉在改动上（不是恒真断言）。改前树取 main tip fa38813ea 的
+// src/main/resources/web 导出。
 //
 // Self-contained: route-intercepted static files + mocked REST/WS（夹具与
 // mobile-pinned-search.spec.mjs 同源：fm_api_mock 好友域种子），零后端。
@@ -241,6 +245,24 @@ function readState(page, pageId) {
         boxShadow: cs.boxShadow,
         backgroundColor: cs.backgroundColor,
       } : null,
+      /** 玻璃单源实解析值（探针元素读 token，不手写期望值 —— 令牌改了本腿跟随）。 */
+      glassTokens: (() => {
+        const mk = (css) => {
+          const p = document.createElement('div');
+          p.style.cssText = `position:absolute;left:-9999px;top:0;${css}`;
+          document.body.appendChild(p);
+          const s = getComputedStyle(p);
+          const out = { bg: s.backgroundColor, border: s.borderTopColor, shadow: s.boxShadow, filter: s.webkitBackdropFilter || s.backdropFilter || 'none' };
+          p.remove();
+          return out;
+        };
+        return {
+          bg: mk('background:var(--nf-glass-bg)').bg,
+          border: mk('border-top:1px solid var(--nf-glass-border-color)').border,
+          shadow: mk(`box-shadow:var(--nf-glass-shadow)`).shadow,
+          filter: mk('backdrop-filter:var(--nf-glass-filter)').filter,
+        };
+      })(),
       inputOpacity: input ? +getComputedStyle(input).opacity : null,
       inputMaxWidth: input ? getComputedStyle(input).maxWidth : null,
       inputColor: input ? getComputedStyle(input).color : null,
@@ -341,8 +363,15 @@ function assertIntermediateFrames(frames, w0, w1, phase) {
 /** 改前树红腿：把本批判据对着 77afefc77 的 web 树跑一遍，逐条收集**未落地**项。 */
 async function legacyRedLeg(page, pageId, s0, tag) {
   const unmet = [];
-  if (s0.barStyle.backdropFilter !== 'none') unmet.push(`① 未扁平：backdrop-filter=${s0.barStyle.backdropFilter}`);
-  if (s0.barStyle.borderRadius !== '0px') unmet.push(`① 未扁平：圆角 ${s0.barStyle.borderRadius}`);
+  // 改前红口径（glass-top-overlays 批 2026-11-06 换代）：本条判据现在是「条必须
+  // 吃唯一毛玻璃标准」。改前树是 --ds-wash-16 浅灰底 + 零模糊 ⇒ 下列两条必红。
+  if ((s0.barClass || '').includes('nf-glass')) unmet.push(`① 改前已挂 .nf-glass（不应出现）：${s0.barClass}`);
+  else unmet.push(`① 未走毛玻璃：条无 .nf-glass 类（class = ${s0.barClass}）`);
+  if (/blur\(/.test(s0.barStyle.backdropFilter)) {
+    unmet.push(`① 改前已带毛玻璃配方（不应出现）：${s0.barStyle.backdropFilter}`);
+  } else {
+    unmet.push(`① 无毛玻璃配方：backdrop-filter = ${s0.barStyle.backdropFilter}，底 = ${s0.barStyle.backgroundColor}`);
+  }
   const scrollerSel = pageId === 'messages' ? '#fm-conversations' : '#fm-contacts-body';
   await page.evaluate(([pid, sel, at]) => {
     const sc = document.querySelector(`.mobile-page[data-page="${pid}"] ${sel}`);
@@ -404,13 +433,29 @@ test('mobile-search-flat: messages + contacts（九组判据，双页同源）',
     expect(Math.round(s0.bar.right), '① bar 右缘 359').toBe(359);
     expect(Math.round(s0.bar.top), '① bar 顶 8（带高 60 内垂直居中：(60-44)/2）').toBe(8);
     expect(s0.dockH, `① 搜索带高 = ${BAND_H}`).toBe(BAND_H);
-    // 扁平场：无毛玻璃 / 圆角 = 我方圆角档 12px（条状容器档 --ds-radius-xl）/ 无投影 / 无描边。
-    expect(s0.barStyle.backdropFilter, '① backdrop-filter none').toBe('none');
+    // 材质场（glass-top-overlays 批 2026-11-06 换代）：条浮在滚动列表之上 ⇒
+    // 必须吃唯一毛玻璃标准（.nf-glass：玻璃底 + blur(40px) saturate(1.4) +
+    // 细边 + 内高光），圆角仍是我方条状容器档 12px（几何零改）。
+    // 12:28 那版的「--ds-wash-16 浅灰底 / 零描边 / 零投影 / 零毛玻璃」断言随
+    // 作者令（「所有悬浮在顶部 可以透出背景的 都用毛玻璃效果 比如消息和联系人的
+    // 手机端的搜索框」）整组退役 —— 不是删断言，是**换成新的材质标准**：
+    expect(s0.barClass, '① 材质 = .nf-glass（唯一工具类）').toContain('nf-glass');
+    expect(s0.barStyle.backdropFilter, '① 毛玻璃配方 = --nf-glass-filter').toBe(s0.glassTokens.filter);
+    expect(s0.barStyle.backdropFilter, '① 配方含 blur 与 saturate').toMatch(/blur\(40px\)\s+saturate\(1\.4\)/);
+    expect(s0.barStyle.backgroundColor, '① 玻璃底 = --nf-glass-bg').toBe(s0.glassTokens.bg);
+    expect(s0.barStyle.borderTopColor, '① 细边 = --nf-glass-border-color').toBe(s0.glassTokens.border);
+    expect(s0.barStyle.boxShadow, '① 内高光/浮影 = --nf-glass-shadow').toBe(s0.glassTokens.shadow);
     expect(s0.barStyle.borderRadius, '① 圆角 = --ds-radius-xl 12px').toBe('12px');
-    expect(s0.barStyle.borderTopColor, '① 无描边（transparent）').toBe('rgba(0, 0, 0, 0)');
-    expect(s0.barStyle.boxShadow, '① 无投影').toBe('none');
-    // 浅灰底 = --ds-wash-16 暗档解析值（rgb(128 128 128 / 0.16) ⇒ 透明灰）：
-    expect(s0.barStyle.backgroundColor, '① 底 = --ds-wash-16').toBe('rgba(128, 128, 128, 0.16)');
+    // 玻璃底不透明度必须落进 [0.45, 0.75]（低了内容透底、高了死白 —— 规范 G3 区间）。
+    const glassAlpha = (() => {
+      const m = s0.barStyle.backgroundColor.match(/rgba?\(([^)]*)\)/);
+      if (!m) return null;
+      const tail = m[1].includes('/') ? m[1].split('/').pop().trim() : (m[1].split(',').map((x) => x.trim())[3] ?? '1');
+      return parseFloat(tail);
+    })();
+    readings[`${tag}.glassAlpha`] = glassAlpha;
+    expect(glassAlpha, '① 玻璃底 α 落进 [0.45, 0.75]').toBeGreaterThanOrEqual(0.45);
+    expect(glassAlpha, '① 玻璃底 α 落进 [0.45, 0.75]').toBeLessThanOrEqual(0.75);
     expect(s0.inputColor, '① 输入行字色仍走既有 --color-frame-text').toBe('rgb(200, 202, 208)');
     expect(s0.dockInlineStyle, '① 条/带零内联样式（旧 bug① 的高度写入已删）').toBeNull();
     expect(s0.barClass, '① 展开态不挂 .g2-fab').not.toContain('g2-fab');

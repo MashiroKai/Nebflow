@@ -134,6 +134,12 @@ frontend-gates:
 	@# --nf-glass-bg 的 α 必须落在 [0.45, 0.75]（低了内容透底、高了死白，两端都红）；
 	@# --nf-glass-blur ≥ 32px 且 --nf-glass-saturate ≥ 1.3（配方不许被降档）；
 	@# --nf-glass-* 只许在 stand-tokens.css 定义；canvas ask 的气泡/输入条必须挂 .nf-glass。
+	@# glass-top-overlays 批 2026-11-06 加 G7（作者令「所有悬浮在顶部 可以透出背景的
+	@# 都用毛玻璃效果 比如消息和联系人的手机端的搜索框 这个要成为标准」）：
+	@# G7a 顶部悬浮 + 半透明（α ∈ (0,.90)）+ 无模糊的面 ⇒ 红（sticky 带 top / 顶带 /
+	@# 顶带子件三类锚定）；G7b 规范 §7.1「顶部悬浮面清单」逐行机检材质漂移；
+	@# G7c 例外清单理由为空或指向已不存在的面 ⇒ 红。手机搜索条与聊天气泡上方的
+	@# sticky 等待条即本批由 G7 抓出并整改的两面。
 	@# 规范正文与例外登记：web/.../design-language/references/glass-spec.md。
 	@# A/B 证据装置：node scripts/capture-glass-ab.mjs --root <web> --tag <before|after>。
 	@# 盘点模式：node scripts/check-glass-unify.mjs --inventory；机器读：--json。

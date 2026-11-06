@@ -329,7 +329,12 @@ test.describe('手机搜索透明顶带', () => {
         expect(rest.bar.borderRadiusValue, `④ ${pageId} 展开态圆角 = --ds-radius-xl 12px`).toBe('12px');
         expect(rest.bar.paddingLeft, `④ ${pageId} 左内距 = --ds-space-4 16px`).toBe('16px');
         expect(Math.round(rest.icon.left - rest.bar.rect.left), `④ ${pageId} 图标距条左缘 17（内距 16 + 1px 描边，不贴弧线）`).toBe(17);
-        expect(rest.bar.backdropFilter, `④ ${pageId} 长条仍无毛玻璃`).toBe('none');
+        // 材质换代（glass-top-overlays 2026-11-06）：带仍透明（本条判据不变 ——
+        // 内容从带内穿行是作者 17:34 的原令），但**条本体必须走唯一毛玻璃标准**
+        // （作者本批原令「所有悬浮在顶部 可以透出背景的 都用毛玻璃效果 比如消息和
+        // 联系人的手机端的搜索框」）。旧的「长条仍无毛玻璃」断言随之换代。
+        expect(rest.bar.backdropFilter, `④ ${pageId} 长条吃毛玻璃配方（-nf-glass-filter）`)
+          .toMatch(/blur\(40px\)\s+saturate\(1\.4\)/);
 
         // ── ③′ 滚回顶部 ⇒ 还原长条（既有语义不受扰）────────────────────
         await page.evaluate((pid) => {

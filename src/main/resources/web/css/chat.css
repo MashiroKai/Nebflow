@@ -2021,7 +2021,10 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   }
   .duration-badge-time { opacity: 0.28; }
 
-  .retry-status { background: rgba(217,165,65,0.12); color: #d4a030; }
+  /* 顶部悬浮批 2026-11-06：暗档只换**洗色层**的力度，玻璃底由复合背景里的
+     var(--nf-glass-bg) 随主题自翻转 —— 这里若再写一条裸 background，会把
+     玻璃底整层冲掉（= 暗档退回单层 α .12 透底，G7 判红）。 */
+  .retry-status { --retry-tint: rgba(217,165,65,0.12); }
 }
 
 /* ── askuser-hybrid 浮层卡 token（light 档）───────────────────────────────
@@ -3579,17 +3582,34 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 
 /* ---------- Retry status ---------- */
+/* 顶部悬浮批（glass-top-overlays 2026-11-06，作者令逐字：「所有悬浮在顶部 可以
+   透出背景的 都用毛玻璃效果……这个要成为标准」）：
+   本档是 `position: sticky; top: 8px` —— 钉在消息滚区顶缘、气泡从它底下滚过，
+   正是「顶部悬浮 + 背景可透出」的定义面。改前材质 = rgba(217,165,65,.15) 单层
+   洗色：底下的气泡正文以 85% 强度直接穿上来（规范判死的「内容透底」端）。
+   改法 = 唯一标准的两件套，**语义色不丢**：
+     · 玻璃本体 → glass.css 成员登记表「.retry-status」供给 blur(40px) saturate(1.4)；
+     · 等待色 → 15% warning 洗色层**压在玻璃底之上**（复合背景，与 .ask-bub.user
+       的 sapphire tint 同一手法），α = .15 + .55×.85 ≈ .617 落进 [0.45, 0.75]；
+     · 描边/内高光 → --nf-glass-border / --nf-glass-shadow（面级浮件档同值）。
+   语义色值收成本地变量 --retry-tint（亮/暗两档各一处字面量，净新增 0）。
+   字色同步收回中性（`--color-frame-text`）：改前 `#b8941e` 压在洗色底上实测
+   WCAG 2.78（亮档）/ 4.0 上下（暗档），两个档都不达 AA 4.5 —— 而语义本来就
+   不靠字色承担（15% warning 洗色层已经在说「等等」）。中性正文色实测 10.4 / 9.7，
+   与 design-language §1.3「语义色只上载体、不上正文」同向。 */
 .retry-status {
   position: sticky;
   top: 8px;
-  background: rgba(217,165,65,0.15);
-  color: #b8941e;
+  --retry-tint: rgba(217,165,65,0.15);
+  background: linear-gradient(var(--retry-tint), var(--retry-tint)), var(--nf-glass-bg);
+  border: var(--nf-glass-border);
+  box-shadow: var(--nf-glass-shadow);
+  color: var(--color-frame-text);
   padding: var(--ds-space-1h) 14px;
   font-size: var(--ds-fs-hint);
   border-radius: var(--ds-radius-chip);
   margin-bottom: var(--ds-space-stack-gap);
   z-index: 20;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.1);
 }
 
 /* ===== NebLink tool row ===== */
