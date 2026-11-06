@@ -9,6 +9,11 @@ import { initBranding, brand } from './brand.js';
 import './dom.js';
 import './events.js';
 import './component.js';
+// 输入嫌体（input-surface-unify 批 2026-11-06）：把「最近一次交互是键盘还是指针」
+// 写进 html[data-nf-modality]，供 css/inputSurface.css 的焦点态读取 —— 纯 CSS
+// 做不到「点进去不出环 / Tab 进去出环」，因为浏览器对文本输入件的 :focus-visible
+// 口径恒为真。模块零副作用地只挂两个捕获期监听。
+import './focusModality.js';
 
 // Branding first: correct the tab title before any other module body runs.
 initBranding();

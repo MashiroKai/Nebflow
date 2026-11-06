@@ -244,12 +244,11 @@
 .reminder-inline-project input {
   flex: 1;
   min-width: 0;
-  border: none;
-  background: none;
   color: var(--color-frame-text);
   font-size: var(--ds-fs-meta);
-  outline: none;
 }
+/* 裸件（无底/无边/无环）：归 css/inputSurface.css 的裸件成员表（输入面唯一
+   标准批 2026-11-06）。 */
 .reminder-inline-project input::placeholder {
   color: var(--color-frame-text-muted);
   opacity: 0.6;

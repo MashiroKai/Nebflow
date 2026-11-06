@@ -57,11 +57,9 @@
    （「输入框键盘提示与高亮移除……键盘态不再给输入区加高亮」）退役 —— 既有
    `#input { outline: none }`（input.css）恢复为唯一口径；焦点是否在输入框由
    `body[data-nf-mode]`（mode.js，零视觉痕迹）承载，不再上屏。
-   命令面板的输入框（Monaco `.quick-input-box`）是另一张脸，环照旧。 */
-#nf-quickinput-host .quick-input-box input:focus-visible {
-  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
-  outline-offset: var(--nf-focus-ring-offset);
-}
+   命令面板的输入框（Monaco `.quick-input-box`）：输入面唯一标准批（2026-11-06）
+   起不再自留蓝键盘环 —— 全站输入件的焦点态只有 css/inputSurface.css 一处
+   （那里键盘态是内缩压灰环，仍然可见、仍然键盘可达）。 */
 
 /* 程序化焦点落点（对话流容器 / 画布面板）：环走内描边，避免被父级
    overflow 裁掉。 */
@@ -128,14 +126,12 @@
   width: 100%;
   box-sizing: border-box;
   padding: var(--ds-space-2) var(--ds-space-inline-x);
-  border-radius: var(--ds-radius-input);
-  border: 1px solid var(--nf-chip-border);
-  background: var(--nf-chip-bg);
   color: var(--color-text);
   font-size: var(--ds-fs-subtitle);
   font-family: inherit;
-  outline: none;
 }
+/* 造型 + 焦点态：归 css/inputSurface.css（输入面唯一标准批 2026-11-06 ——
+   命令面板的输入框同样只是「一种输入件」，不再自留一圈蓝键盘环）。 */
 
 #nf-quickinput-host .quick-input-box input::placeholder {
   color: var(--color-text-muted);

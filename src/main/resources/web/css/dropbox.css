@@ -89,14 +89,9 @@
   line-height: 1.5;
   font-family: inherit;
   padding: var(--ds-space-inset);
-  border-radius: var(--ds-radius-input);
-  border: 1px solid var(--color-border);
-  background: var(--color-bg);
   color: var(--color-text);
-  outline: none;
-  transition: border-color 0.2s;
 }
-/* 焦点态：.dropbox-desc-textarea 已收编 css/inputFocus.css（2026-11-05）。 */
+/* 造型 + 焦点态：归 css/inputSurface.css（输入面唯一标准批 2026-11-06）。 */
 .dropbox-desc-actions {
   display: flex;
   justify-content: flex-end;

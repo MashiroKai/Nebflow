@@ -66,15 +66,12 @@
   flex: 1 1 auto;
   min-width: 0;
   padding: var(--ds-space-2) var(--ds-space-inline-x);
-  border-radius: var(--ds-radius-input);
-  border: 1px solid var(--color-frame-border, var(--color-border));
-  background: var(--color-frame-input-bg, var(--color-bg));
   color: var(--color-frame-text, var(--color-text));
   font-size: var(--ds-fs-subtitle);
   letter-spacing: 3px;
   text-align: center;
 }
-/* 焦点态：.neblink-paircode-input 已收编 css/inputFocus.css（2026-11-05）。 */
+/* 造型 + 焦点态：归 css/inputSurface.css（输入面唯一标准批 2026-11-06）。 */
 .neblink-paircode-btn {
   flex: 0 0 auto;
   width: auto;

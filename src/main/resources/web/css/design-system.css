@@ -792,7 +792,8 @@
 .ds-badge[data-tone="warn"] { border-color: rgb(var(--amber) / 0.25); background: rgb(var(--amber) / 0.12); }
 .ds-badge[data-tone="err"] { border-color: rgb(var(--sapphire) / 0.20); background: var(--ds-etched-bg); }
 
-/* ④ 输入：etched 材质，focus = 1px 强边 + 2px 环（面板档灰环）。 */
+/* ④ 输入：形态 + 焦点态归 css/inputSurface.css（输入面唯一标准批 2026-11-06；
+   令牌 = stand-tokens.css 的 --nf-field-*）。本文件只留字档与宽度。 */
 .ds-input {
   width: 100%;
   padding: var(--ds-input-pad);
@@ -800,14 +801,8 @@
   font-size: var(--ds-fs-body);
   line-height: var(--ds-lh-body);
   color: var(--ds-text);
-  background: var(--ds-etched-bg);
-  border: 1px solid var(--ds-etched-border);
-  border-radius: var(--ds-radius-input);
-  transition: border-color var(--ds-dur-hover) var(--ds-ease-std),
-              box-shadow var(--ds-dur-hover) var(--ds-ease-std);
 }
 .ds-input::placeholder { color: var(--ds-text-muted); }
-/* 焦点态：.ds-input 已收编 css/inputFocus.css（input-focus-ring 批 2026-11-05）。 */
 
 /* ⑤ 卡：平面族面板内卡（radius 14，无影，hairline 边）。 */
 .ds-card {

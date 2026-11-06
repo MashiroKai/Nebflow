@@ -191,14 +191,12 @@
   font-size: var(--ds-fs-hint);
   font-weight: 500;
   color: var(--color-text);
-  padding: var(--ds-space-1) 22px var(--ds-space-1) var(--ds-space-inline-x);
-  border-radius: var(--ds-radius-input);
+  padding: var(--ds-space-1) var(--ds-space-inline-x);
   max-width: 140px;
-  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
-  background-position: calc(100% - 12px) 55%, calc(100% - 8px) 55%;
-  background-size: 4px 4px;
-  background-repeat: no-repeat;
 }
+/* 造型 + 焦点态 + 原生下拉箭头：归 css/inputSurface.css（输入面唯一标准批
+   2026-11-06；`.ud-select` 登记在标准的下拉成员表里，箭头 = 标准里的
+   --nf-field-caret，只由 currentColor 组成）。 */
 .ud-select:disabled { opacity: 0.5; cursor: not-allowed; }
 .ud-colormode, .ud-drill-dims {
   display: flex;

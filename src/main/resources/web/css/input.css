@@ -719,15 +719,14 @@
    是**计算值零变化**（主窗口此前无 hover 声明，值与此处逐字相同）。 */
 .att-remove:hover,
 .fm-quote-remove:hover { background: var(--color-error); color: #fff; }
+/* 输入面唯一标准批（2026-11-06）：`#input` 是 `#input-bar` 玻璃壳里的**裸件**，
+   无底/无边/无圆角/无环四条归 css/inputSurface.css 的裸件成员表（作者令
+   2026-11-03 ④「输入区键盘态不再加高亮」在那里以具名例外落地）。本文件只留几何。 */
 #input {
-  border: none;
-  background: transparent;
-  border-radius: var(--ds-radius-2xl);
   /* 瘦身批：垂直内 padding 8px → 6px（横向 14px 不动；多行增长逻辑读
      scrollHeight，与本 padding 无耦合）。 */
   padding: var(--ds-space-1h) 14px;
   font-size: var(--ds-fs-bubble);
-  outline: none;
   width: 100%;
   line-height: 1.4;
   resize: none;
