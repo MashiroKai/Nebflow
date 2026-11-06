@@ -30,9 +30,12 @@ import { fetchNeblinkStatus, neblinkSettingsHTML, bindNeblinkEvents } from './ne
 // 点胶囊 = App 内个人资料面（不再跳官网）。卡片结构/绘制/资料面全在该叶子模块，
 // 本文件只调两个入口（settingsIdentityCardHTML 出结构，paintSettingsIdentity 出读数）。
 import { settingsIdentityCardHTML, paintSettingsIdentity } from './settingsIdentity.js';
+// settings-ios-rows 批（2026-11-06 作者令）：设置页行/卡/chevron/动作钮的结构单点。
+import { setCard, setGroup, setNavRow, setRow } from './settingsRows.js';
 // updateCheck.js（更新检查/更新执行链）已随 auth-trim 批（2026-10-20 作者令）整体删除：
 // 设置页「更新」功能退役，未来由官网统一检测更新取代。重启面（restartStatus/
-// restartResult 帧消费）留在本文件（见 bindSettingsEvents 后的模块级订阅）。
+// restartResult 帧消费）曾迁到本文件模块级；settings-ios-rows 批（2026-11-06）随
+// 「重启服务」入口整件移除而一并删除（见 bindSettingsEvents 内注释）。
 import { toggleHTML, setToggleState } from './toggle.js';
 // 时间滚轮选择器（time-wheel-picker 实施批 2026-11-03，作者令 22:16/22:20）：
 // 冻结时段 = 原子段字段（整段一颗触发钮），交互单源 = js/timeWheel.js。
@@ -437,26 +440,26 @@ function renderWorkScheduleSection() {
   const segs = Array.isArray(ws.segments) ? ws.segments : [];
   const segRows = segs.map((s, i) => buildSegmentRowHtml(s, i)).join('');
   return `
-    <div class="settings-row">
-      <span class="settings-label">${t('settings.workSchedule')}</span>
-      ${toggleHTML({ on: enabled, id: 'toggle-schedule', label: t('settings.workSchedule') })}
-    </div>
-    <div id="schedule-editor" style="display:${enabled ? 'block' : 'none'};padding:var(--ds-space-1) 0 var(--ds-space-2);">
+    ${setRow({
+      title: t('settings.workSchedule'),
+      control: toggleHTML({ on: enabled, id: 'toggle-schedule', label: t('settings.workSchedule') }),
+    })}
+    <div id="schedule-editor" class="set-sub" style="display:${enabled ? 'block' : 'none'};">
       <div class="segment-list" id="segment-list">${segRows}</div>
-      <button class="cfg-btn cfg-btn-add" id="btn-add-segment">${t('settings.addSegment')}</button>
-      <div class="cfg-hint">${t('settings.workScheduleOnHint')}</div>
+      <button class="cfg-btn cfg-btn-add set-btn set-btn-block" id="btn-add-segment">${t('settings.addSegment')}</button>
+      <div class="set-row-hint">${t('settings.workScheduleOnHint')}</div>
     </div>
     <!-- Dirty hint + action row live OUTSIDE #schedule-editor so they stay
          visible even when the editor is display:none — a toggled-OFF draft
          must remain committable (Save) / abandonable (Reset). The segments
          themselves stay in the DOM (renderScheduleEditorRows rebuilds from
          the draft on re-enable), so nothing is cleared on toggle-off. -->
-    <div class="cfg-hint" id="schedule-dirty-hint" style="display:${scheduleDraft !== null ? 'block' : 'none'};margin-top:var(--ds-space-1h);color:var(--color-text-muted)">${t('settings.scheduleDirtyHint')}</div>
-    <div style="display:${scheduleDraft !== null ? 'flex' : 'none'};gap:var(--ds-space-2);margin-top:var(--ds-space-2)" id="schedule-actions">
-      <button class="cfg-btn cfg-btn-primary" id="btn-save-schedule">${t('settings.scheduleSave')}</button>
-      <button class="cfg-btn" id="btn-reset-schedule">${t('settings.scheduleReset')}</button>
+    <div class="set-row-hint" id="schedule-dirty-hint" style="display:${scheduleDraft !== null ? 'block' : 'none'}">${t('settings.scheduleDirtyHint')}</div>
+    <div class="set-actions" style="display:${scheduleDraft !== null ? 'flex' : 'none'}" id="schedule-actions">
+      <button class="cfg-btn cfg-btn-primary set-btn" id="btn-save-schedule">${t('settings.scheduleSave')}</button>
+      <button class="cfg-btn set-btn" id="btn-reset-schedule">${t('settings.scheduleReset')}</button>
     </div>
-    <div class="cfg-hint" id="schedule-off-hint" style="display:${enabled ? 'none' : 'block'};margin-top:-2px">${t('settings.workScheduleOffHint')}</div>`;
+    <div class="set-row-hint" id="schedule-off-hint" style="display:${enabled ? 'none' : 'block'}">${t('settings.workScheduleOffHint')}</div>`;
 }
 
 /**
@@ -550,26 +553,29 @@ function renderTtlSection() {
       <div class="cfg-form-group">
         <label class="cfg-label" for="${id}">${t(labelKey)}</label>
         <input class="cfg-input" id="${id}" type="number" inputmode="numeric" value="${Number(value)}" ${enabled ? '' : 'disabled'} autocomplete="off">
-        <div class="cfg-hint">${t(hintKey)}</div>
+        <div class="set-row-hint">${t(hintKey)}</div>
       </div>`;
+  // settings-ios-rows 批：原地展开头行 = 同一套可点进行（setNavRow expand，chevron
+  // 下转表达开合），主体 = .set-collapse-body；开关/保存按钮取同一行网格与尺寸令牌。
   return `
-    <div class="settings-row stt-advance-toggle-row">
-      <button type="button" class="settings-collapse-toggle" id="ttl-advance-toggle"
-              aria-expanded="${ttlAdvanceExpanded}" aria-controls="ttl-advance-body">
-        <span class="settings-label">${t('settings.ttlAdvanceTitle')}</span>
-        <span class="settings-collapse-chevron" aria-hidden="true"></span>
-      </button>
-    </div>
-    <div class="settings-collapse-body" id="ttl-advance-body" ${ttlAdvanceExpanded ? '' : 'hidden'}>
-      <div class="settings-row">
-        <span class="settings-label">${t('settings.ttlEnabled')}</span>
-        ${toggleHTML({ on: enabled, id: 'toggle-ttl-enabled', label: t('settings.ttlEnabled') })}
-      </div>
-      <div class="cfg-hint">${t('settings.ttlEnabledHint')}</div>
-      ${rowHtml('settings.ttlMinutesLabel', 'settings.ttlMinutesHint', 'ttl-minutes', cfg.ttlMinutes ?? TTL_DEFAULTS.ttlMinutes)}
-      ${rowHtml('settings.keepRecentLabel', 'settings.keepRecentHint', 'ttl-keep-recent', cfg.keepRecent ?? TTL_DEFAULTS.keepRecent)}
-      <div style="display:flex;gap:var(--ds-space-2);margin-top:var(--ds-space-2)">
-        <button class="cfg-btn cfg-btn-primary" id="btn-save-ttl">${t('settings.ttlSave')}</button>
+    ${setNavRow({
+      icon: statusIcon('timer', 16),
+      title: t('settings.ttlAdvanceTitle'),
+      id: 'ttl-advance-toggle',
+      expand: true,
+      expanded: ttlAdvanceExpanded,
+      controls: 'ttl-advance-body',
+    })}
+    <div class="set-collapse-body" id="ttl-advance-body" ${ttlAdvanceExpanded ? '' : 'hidden'}>
+      ${setRow({
+        title: t('settings.ttlEnabled'),
+        control: toggleHTML({ on: enabled, id: 'toggle-ttl-enabled', label: t('settings.ttlEnabled') }),
+        hint: t('settings.ttlEnabledHint'),
+      })}
+      ${setGroup(rowHtml('settings.ttlMinutesLabel', 'settings.ttlMinutesHint', 'ttl-minutes', cfg.ttlMinutes ?? TTL_DEFAULTS.ttlMinutes))}
+      ${setGroup(rowHtml('settings.keepRecentLabel', 'settings.keepRecentHint', 'ttl-keep-recent', cfg.keepRecent ?? TTL_DEFAULTS.keepRecent))}
+      <div class="set-actions">
+        <button class="cfg-btn cfg-btn-primary set-btn" id="btn-save-ttl">${t('settings.ttlSave')}</button>
       </div>
     </div>`;
 }
@@ -695,21 +701,26 @@ function renderSttSection() {
     : configured
       ? t('settings.sttConfiguredStatus', { endpoint: escapeHtml(endpoint), model: escapeHtml(model) })
       : t('settings.sttUnconfiguredStatus');
+  // settings-ios-rows 批：头行与 TTL 节同一套可点进行（原地展开 = setNavRow expand），
+  // 右侧只放一个状态读数（.set-nav-val），不再有第二种行壳。
   return `
-    <div class="settings-row stt-advance-toggle-row">
-      <button type="button" class="settings-collapse-toggle" id="stt-advance-toggle"
-              aria-expanded="${sttAdvanceExpanded}" aria-controls="stt-advance-body">
-        <span class="settings-label">${t('settings.sttAdvanceTitle')}</span>
-        <span class="settings-collapse-chevron" aria-hidden="true"></span>
-      </button>
-      <span class="cfg-hint stt-status" id="stt-status-hint">${status}</span>
-    </div>
-    <div class="settings-collapse-body" id="stt-advance-body" ${sttAdvanceExpanded ? '' : 'hidden'}>
-      <div class="settings-row">
-        <span class="settings-label">${t('settings.sttEnabled')}</span>
-        ${toggleHTML({ on: enabled, id: 'toggle-stt-enabled', label: t('settings.sttEnabled') })}
-      </div>
-      <div class="cfg-hint">${t('settings.sttEnabledHint')}</div>
+    ${setNavRow({
+      icon: statusIcon('mic', 16),
+      title: t('settings.sttAdvanceTitle'),
+      id: 'stt-advance-toggle',
+      expand: true,
+      expanded: sttAdvanceExpanded,
+      controls: 'stt-advance-body',
+      value: status,
+      valueTitle: status.replace(/<[^>]*>/g, ''),
+      valueId: 'stt-status-hint',
+    })}
+    <div class="set-collapse-body" id="stt-advance-body" ${sttAdvanceExpanded ? '' : 'hidden'}>
+      ${setRow({
+        title: t('settings.sttEnabled'),
+        control: toggleHTML({ on: enabled, id: 'toggle-stt-enabled', label: t('settings.sttEnabled') }),
+        hint: t('settings.sttEnabledHint'),
+      })}
       <div class="cfg-form-group">
         <label class="cfg-label" for="stt-endpoint">${t('settings.sttEndpoint')}</label>
         <input class="cfg-input" id="stt-endpoint" type="text" value="${escapeHtml(endpoint)}" placeholder="https://api.example.com/v1/audio/transcriptions" autocomplete="off" spellcheck="false" ${enabled ? '' : 'disabled'}>
@@ -721,10 +732,10 @@ function renderSttSection() {
         <!-- 密钥字段关拼写检查（input-focus-ring 批 2026-11-05）：浏览器会把 key 当
              单词画红波浪线，且部分实现会把值送拼写服务 ⇒ 一并关自动大写/自动更正。 -->
         <input class="cfg-input" id="stt-apikey" type="password" value="" placeholder="${t(configured ? 'settings.sttApiKeyConfiguredPlaceholder' : 'settings.sttApiKeyPlaceholder')}" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" ${enabled ? '' : 'disabled'}>
-        <div class="cfg-hint">${t('settings.sttHint')}</div>
-        <div style="display:flex;gap:var(--ds-space-2);margin-top:var(--ds-space-2)">
-          <button class="cfg-btn cfg-btn-primary" id="btn-save-stt">${t('settings.sttSave')}</button>
-          <button class="cfg-btn" id="btn-clear-stt">${t('settings.sttClear')}</button>
+        <div class="set-row-hint">${t('settings.sttHint')}</div>
+        <div class="set-actions">
+          <button class="cfg-btn cfg-btn-primary set-btn" id="btn-save-stt">${t('settings.sttSave')}</button>
+          <button class="cfg-btn set-btn" id="btn-clear-stt">${t('settings.sttClear')}</button>
         </div>
       </div>
     </div>`;
@@ -1314,72 +1325,71 @@ export function renderSettings() {
   // 点胶囊 = App 内个人资料面；点头像 = 换头像流程 / 未登录登录卡（activityBar
   // 既有委托统一承担，本文件不绑任何点击）。
   const mobileLayer = typeof document !== 'undefined' && document.body.classList.contains('mobile-layer');
+  // ── settings-ios-rows 批（2026-11-06 作者令「能点击下一个面板的样式都统一成苹果的
+  // 这种样式 然后 底部的重启服务去掉 并且这些可点击的按钮 布局规整一点」）──────────
+  // 全页结构单点 = js/settingsRows.js（setCard / setGroup / setNavRow / setRow）；
+  // 造型单点 = css/settingsRows.css（令牌 --set-* 落在 css/stand-tokens.css）。
+  // 「能进下一面板」的行一律 setNavRow（图标位 + 主标题 + 单个副值 + chevron），
+  // 读数/控件行一律 setRow（同一高度网格）；动作按钮一律 .set-btn（同尺寸令牌）。
   content.innerHTML = `
-    <div class="settings-section">
-      <div class="settings-section-title">${t('settings.account')}</div>
+    ${setCard({ title: t('settings.account'), body: `
       ${settingsIdentityCardHTML()}
       ${neblinkSettingsHTML()}
-      ${mobileLayer ? '' : '<div id="settings-devices-slot"></div>'}
-    </div>
-    <div class="settings-section">
-      <div class="settings-section-title">${t('settings.runtime')}</div>
-      <div class="settings-row">
-        <span class="settings-label">${t('settings.thinkingMode')}</span>
-        <select class="cfg-select" id="cfg-thinking-effort" style="width:auto">
-          ${['off','low','medium','high'].map(lvl => `<option value="${lvl}"${effortFromConfig() === lvl ? ' selected' : ''}>${t('settings.thinkingEffort.' + lvl)}</option>`).join('')}
-        </select>
-      </div>
-      <div class="settings-row">
-        <span class="settings-label">${t('settings.llmLog')}</span>
-        ${toggleHTML({ on: state.llmLogEnabled !== false, id: 'toggle-llm-log', label: t('settings.llmLog') })}
-      </div>
+      ${mobileLayer ? '' : '<div id="settings-devices-slot"></div>'}` })}
+    ${setCard({ title: t('settings.runtime'), body: `
+      ${setGroup(
+        setRow({
+          title: t('settings.thinkingMode'),
+          control: `<select class="cfg-select set-field" id="cfg-thinking-effort" style="width:auto">
+            ${['off','low','medium','high'].map(lvl => `<option value="${lvl}"${effortFromConfig() === lvl ? ' selected' : ''}>${t('settings.thinkingEffort.' + lvl)}</option>`).join('')}
+          </select>`,
+        })
+        + setRow({
+          title: t('settings.llmLog'),
+          control: toggleHTML({ on: state.llmLogEnabled !== false, id: 'toggle-llm-log', label: t('settings.llmLog') }),
+        })
+      )}
       ${renderWorkScheduleSection()}
       ${renderSttSection()}
       <div id="ttl-section-wrap">${renderTtlSection()}</div>
-      <div class="settings-row">
-        <span class="settings-label">${t('settings.language')}</span>
-        <select class="cfg-select" id="cfg-language" style="width:auto">${langOpts}</select>
-      </div>
-      <div class="settings-row">
-        <span class="settings-label">${t('settings.autostart')}</span>
-        ${toggleHTML({ on: !!(state.autostartStatus && state.autostartStatus.enabled), id: 'toggle-autostart', label: t('settings.autostart'), disabled: !!(state.autostartStatus && !state.autostartStatus.supported) })}
-      </div>
-      <div class="cfg-hint" id="autostart-hint" style="display:${state.autostartStatus && !state.autostartStatus.supported ? 'block' : 'none'};margin-top:-4px">${escapeHtml(state.autostartStatus?.reason || t('settings.autostartUnsupported'))}</div>
-    </div>
-    ${ORB_SETTINGS_VISIBLE ? `
-    <div class="settings-section">
-      <div class="settings-section-title">${t('settings.appearance')}</div>
-      ${renderAppearanceSection()}
-    </div>` : ''}
-    <div class="settings-section">
-      <div class="settings-section-title">${t('settings.providers')}</div>
+      ${setGroup(
+        setRow({
+          title: t('settings.language'),
+          control: `<select class="cfg-select set-field" id="cfg-language" style="width:auto">${langOpts}</select>`,
+        })
+        + setRow({
+          title: t('settings.autostart'),
+          control: toggleHTML({ on: !!(state.autostartStatus && state.autostartStatus.enabled), id: 'toggle-autostart', label: t('settings.autostart'), disabled: !!(state.autostartStatus && !state.autostartStatus.supported) }),
+          hint: escapeHtml(state.autostartStatus?.reason || t('settings.autostartUnsupported')),
+          hintId: 'autostart-hint',
+          hintStyle: `display:${state.autostartStatus && !state.autostartStatus.supported ? 'block' : 'none'}`,
+        })
+      )}` })}
+    ${ORB_SETTINGS_VISIBLE ? setCard({ title: t('settings.appearance'), body: renderAppearanceSection() }) : ''}
+    ${setCard({ title: t('settings.providers'), body: `
       <div id="provider-list">
         ${providerNames.map(name => renderProviderCard(name, providers[name])).join('')}
       </div>
-      <button class="cfg-btn cfg-btn-add" id="btn-add-provider">${t('settings.addProvider')}</button>
-    </div>
-    <div class="cfg-hint" id="model-chain-hint">${t('settings.modelChainHint')}</div>
-    <div class="settings-section" id="model-chain-section">
+      <button class="cfg-btn cfg-btn-add set-btn set-btn-block" id="btn-add-provider">${t('settings.addProvider')}</button>` })}
+    <div class="set-row-hint" id="model-chain-hint">${t('settings.modelChainHint')}</div>
+    ${setCard({ title: t('settings.modelChainTitle'), id: 'model-chain-section', body: `
       <!-- 模型回退链节（配置面风格统一批②，2026-10-31 作者令：/model 里的回退
            顺序调整页在设置页原样再放一份，不用打 /model；两份共享同一份状态/
            保存通道，改哪边都即时同步）。内容面 = modelPanel.js 的
            buildNebulaChainFace 同款（seed 态 / 拖拽排序链编辑器，逐动作即存）；
            /model 原入口保留不动（上方 model-chain-hint 照旧指路）。 -->
-      <div class="settings-section-title">${t('settings.modelChainTitle')}</div>
-      <div class="cfg-hint">${t('settings.modelChainSectionHint')}</div>
-      <div id="model-chain-section-body"></div>
-    </div>
-    <div class="settings-section">
+      <div class="set-row-hint">${t('settings.modelChainSectionHint')}</div>
+      <div id="model-chain-section-body"></div>` })}
+    ${setCard({ title: t('settings.jev'), body: `
       <!-- Jev allocation section — 风格统一重排（settings-panel 批 C 件，
            2026-10-28 作者令：「JeV 插件分配那部分的风格，与『STT 高级设置』区的
            风格保持一致——以 STT 高级设置的风格为基准（布局/间距/控件形态/分组
            样式逐项对齐）」）。组件族与 STT 高级设置逐项同源：
-           · 头行   .settings-row.stt-advance-toggle-row + .settings-collapse-toggle
-                    （标题+chevron）+ 右侧状态位（分配通道健康，同 stt-status 位）；
-           · 折叠体 .settings-collapse-body（层级下钻的收编内容面，见批注下）；
-           · 开关行 .settings-row + .settings-label + toggleHTML（启用 JeV——
-                    旧卡头行内开关随重排迁入折叠体首行，STT enabled 行同款）；
-           · 字段组 .cfg-form-group 纵排 label+input（旧 cfg-row 横排退役）；
+           · 头行 = settings-ios-rows 批后的唯一可点进行 setNavRow（图标位 + 标题 +
+             健康徽标 + chevron）；
+           · 折叠体 .set-collapse-body（层级下钻的收编内容面）；
+           · 开关行 setRow + toggleHTML（启用 JeV）；
+           · 字段组 .cfg-form-group 纵排 label+input；
            · 保存行 显式保存 + inline-state（#334 语义不变）。
            功能零删减：分配通道健康 legs 分腿徽标（三改③）、PUT /api/config/jev
            保存全保留。
@@ -1392,27 +1402,25 @@ export function renderSettings() {
            下钻入口（chevron 右转），点按桌面开浮层玻璃面板（js/configDrill.js）
            /手机 push 层级子页（mobile/settingsSub.js）；同一 #jev-advance-body
            节点两端收编，内容面/绑定零副本。「展开式配置」退役后端内联不渲染。-->
-      <div class="settings-row stt-advance-toggle-row">
-        <button type="button" class="settings-collapse-toggle settings-drill-toggle" id="jev-advance-toggle"
-                aria-haspopup="dialog" aria-controls="jev-advance-body">
-          <span class="settings-label">${t('settings.jev')}</span>
-          <span class="settings-collapse-chevron" aria-hidden="true"></span>
-        </button>
-        <span class="cfg-hint stt-status" id="jev-status-hint"><span class="st-badge" data-tone="mut" id="settings-jev-health">…</span></span>
-      </div>
-      <div class="settings-collapse-body" id="jev-advance-body" hidden>
-        <div class="settings-row">
-          <span class="settings-label">${t('settings.jevEnabled')}</span>
-          ${toggleHTML({ on: !!(cfg.jev && cfg.jev.enabled), id: 'toggle-jev', label: t('settings.jevEnabled') })}
-        </div>
+      ${setNavRow({
+        icon: statusIcon('sparkles', 16),
+        title: t('settings.jev'),
+        id: 'jev-advance-toggle',
+        attrs: 'aria-haspopup="dialog" aria-controls="jev-advance-body"',
+        extra: `<span class="cfg-hint stt-status" id="jev-status-hint"><span class="st-badge" data-tone="mut" id="settings-jev-health">…</span></span>`,
+      })}
+      <div class="set-collapse-body" id="jev-advance-body" hidden>
+        ${setRow({
+          title: t('settings.jevEnabled'),
+          control: toggleHTML({ on: !!(cfg.jev && cfg.jev.enabled), id: 'toggle-jev', label: t('settings.jevEnabled') }),
+        })}
         <!-- 内容面（jev-imagegen-align-llm 批 · jevpanel 件，2026-11-02 作者令）：
              已配置以卡片列表呈现（可并存/可单删）、空态起步零预填、密钥直接录入走
              secrets。唯一绘制点 = jevSectionHTML()，数据源 = GET /api/config/jev
              （bindJevSection 拉取后原位重画——首帧即空态，零造假数据）。 -->
         <div id="jev-section-wrap">${jevSectionHTML()}</div>
-      </div>
-    </div>
-    <div class="settings-section">
+      </div>` })}
+    ${setCard({ title: t('settings.imagegenTitle'), body: `
       <!-- 生图（imagegen）设置节（settings-panel 批 ②③件，2026-10-28 作者令；
            功能开放批 2026-10-30：正式开放、调试中徽标退役）。
            两形态由 sidebar/imagegenSection.js 单点渲染：seal=OFF（显式剔除构建）
@@ -1424,79 +1432,64 @@ export function renderSettings() {
            浮层玻璃面板（js/configDrill.js）/手机 push 层级子页（mobile/
            settingsSub.js settings-imagegen 路由）；同一 #imagegen-advance-body
            节点两端收编，模块渲染面 #imagegen-section-wrap 住在其中随节点走。-->
-      <div class="settings-row stt-advance-toggle-row">
-        <button type="button" class="settings-collapse-toggle settings-drill-toggle" id="imagegen-advance-toggle"
-                aria-haspopup="dialog" aria-controls="imagegen-advance-body">
-          <span class="settings-label">${t('settings.imagegenTitle')}</span>
-          <span class="settings-collapse-chevron" aria-hidden="true"></span>
-        </button>
-      </div>
-      <div class="settings-collapse-body" id="imagegen-advance-body" hidden>
+      ${setNavRow({
+        icon: statusIcon('image', 16),
+        title: t('settings.imagegenTitle'),
+        id: 'imagegen-advance-toggle',
+        attrs: 'aria-haspopup="dialog" aria-controls="imagegen-advance-body"',
+      })}
+      <div class="set-collapse-body" id="imagegen-advance-body" hidden>
         <div id="imagegen-section-wrap"><div class="cfg-hint">${t('settings.imagegenLoading')}</div></div>
-      </div>
-    </div>
-    <div class="settings-section">
+      </div>` })}
+    ${setCard({ title: t('settings.secrets'), body: `
       <!-- Secrets entry (secrets-frontend batch, 2026-09-27, author ruling
            2026-09-27 19:20): one row only — the list itself lives in the
            standalone dedicated dialog (#secrets-overlay, owned by
-           js/secretsPanel.js), not inside #settings-modal. Placement per
-           brief §三: after MODEL PRESETS, before ADVANCED.
-           secrets-ui-redesign 2026-10-08: the dashed full-width cfg-btn-add
-           becomes a glass row-card entry (key icon + row name + "{n} secrets"
-           subtitle + count pill + chevron). The count is the length of
-           GET /api/secrets — metadata only (the contract has no read-value
-           face); read via refreshSecretsEntryCount() below (module cache +
-           the 'secrets-changed' nudge from secretsPanel.js). -->
-      <div class="settings-section-title">${t('settings.secrets')}</div>
-      <button type="button" class="secrets-entry" id="btn-open-secrets">
-        ${statusIcon('key-round', 16)}
-        <span class="entry-name">${t('settings.secretsManage')}</span>
-        <span class="entry-sub" id="secrets-entry-sub">…</span>
-        <span class="count-pill" id="secrets-entry-pill">…</span>
-        ${statusIcon('chevron-right', 14)}
-      </button>
-    </div>
-    <div class="settings-section">
-      <div class="settings-section-title">${t('settings.advanced')}</div>
-      <button class="cfg-btn" id="btn-toggle-json">${t('settings.editRawJson')}</button>
-      ${SHOW_RERUN_ONBOARDING ? `<button class="cfg-btn" id="btn-rerun-onboarding" style="margin-left:var(--ds-space-2)">${t('settings.rerunOnboarding')}</button>` : ''}
+           js/secretsPanel.js), not inside #settings-modal.
+           settings-ios-rows 批 2026-11-06：原来的「密钥管理 + 14 个密钥 + [14] 胶囊
+           + chevron」四件行卡收编为本页唯一可点进行 setNavRow —— 副值只剩**一个**
+           计数读数（设置项是图标位，不再是重复图标），不再有第二份数字。 -->
+      ${setNavRow({
+        icon: statusIcon('key-round', 16),
+        title: t('settings.secretsManage'),
+        id: 'btn-open-secrets',
+        value: '…',
+        valueTitle: '',
+        attrs: 'data-set-nav-val-id="secrets-entry-sub"',
+      })}` })}
+    ${setCard({ title: t('settings.advanced'), body: `
+      <div class="set-actions">
+        <button class="cfg-btn set-btn" id="btn-toggle-json">${t('settings.editRawJson')}</button>
+        ${SHOW_RERUN_ONBOARDING ? `<button class="cfg-btn set-btn" id="btn-rerun-onboarding">${t('settings.rerunOnboarding')}</button>` : ''}
+      </div>
       <!-- 文件缓存行（M2 · 设计 v1 §6.4/§7 表5）：占用读数（nfCacheStats 同步 seam，
            分桶明细进 title）+ 清空键（nfCacheReset seam，两段式确认 = 按钮第二击
-           即确认位，同 btn-restart-gateway 先例——共用 #delete-box 弹窗其确认键
-           文案是「删除」，复用会把本键错标成删除）。 -->
-      <div class="settings-row" id="nf-cache-row">
-        <span class="settings-label">${t('settings.fileCache')}</span>
-        <span style="display:flex;align-items:center;gap:var(--ds-space-2)">
-          <span id="nf-cache-usage" role="status" style="font-size:var(--mfs-min, 12px);color:var(--color-text-secondary)">…</span>
-          <button class="cfg-btn cfg-btn-sm" id="btn-clear-nf-cache" type="button">${t('settings.fileCacheClear')}</button>
-        </span>
-      </div>
-    </div>
-    <div class="settings-section" id="json-editor-section" style="display:${state.settingsShowJson ? 'block' : 'none'}">
+           即确认位）。settings-ios-rows 批：清空键与上方行为按钮同一尺寸令牌
+           .set-btn，右缘与全页 chevron 列同 x。 -->
+      ${setRow({
+        title: t('settings.fileCache'),
+        control: `<span id="nf-cache-usage" role="status" class="set-row-val">…</span><button class="cfg-btn set-btn" id="btn-clear-nf-cache" type="button">${t('settings.fileCacheClear')}</button>`,
+      })}` })}
+    ${setCard({ hidden: !state.settingsShowJson, id: 'json-editor-section', body: `
       <div class="config-editor-wrap">
         <textarea id="config-editor" spellcheck="false">${escapeHtml(state.configText)}</textarea>
         <div class="config-actions">
           <button class="btn-save" id="btn-save-config">${t('settings.save')}</button>
           <button id="btn-reload-config">${t('settings.reload')}</button>
         </div>
-      </div>
-    </div>
-    <div class="settings-section">
-      <div class="settings-section-title">${t('settings.about')}</div>
+      </div>` })}
+    ${/* 「重启服务」整件已由 settings-ios-rows 批（2026-11-06 作者令「底部的重启服务去掉」）
+          移除：按钮 + 两段式确认逻辑 + #restart-status 状态行 + restartStatus/restartResult
+          两个模块级订阅全删（前端零发射面）；后端 WS `restart` 命令保留不动（其余消费方
+          仍在）。更新功能已随 auth-trim 批（2026-10-20 作者令）退役。 */ ''}
+    ${setCard({ title: t('settings.about'), body: `
       <div class="about-info">
         <div>${brand.productName} ${state.serverVersion || '...'}</div>
-        <div style="margin-top:var(--ds-space-1);font-size:var(--mfs-min, 12px);color:var(--color-text-secondary)">${t('settings.connection')}: ${state.connected
+        <div class="about-conn">${t('settings.connection')}: ${state.connected
           ? statusIcon('circle-check', 14, 'st-ok') + ' <span style="color:var(--status-word)">' + t('settings.connected') + '</span>'
           : statusIcon('wifi-off', 14, 'st-err') + ' <span style="color:var(--status-word)">' + t('settings.disconnected') + '</span>'}</div>
-        <div style="margin-top:var(--ds-space-stack-gap);display:flex;align-items:center;gap:var(--ds-space-2)">
-          <button class="cfg-btn cfg-btn-sm" id="btn-restart-gateway">${t('settings.restart')}</button>
-          <span id="restart-status" role="status" style="font-size:var(--mfs-min, 12px);line-height:18px;min-height:18px;flex:1;min-width:0;color:var(--color-text-muted)"></span>
-        </div>
-        <!-- 更新功能已随 auth-trim 批（2026-10-20 作者令）退役：检查更新/立即更新/
-             进度面/绿点整链移除，未来由官网统一检测更新取代。重启（restartStatus/
-             restartResult 帧）状态行 = 上方 #restart-status，消费订阅见模块级。 -->
       </div>
-    </div>`;
+    ` })}`;
 
   paintSettingsIdentity();
   bindSettingsEvents(content, cfg);
@@ -1667,21 +1660,20 @@ onMessage('autostartStatusResult', (msg) => {
 /** @type {{n: number|null, at: number}} */
 let secretsCountCache = { n: null, at: 0 };
 
-/** Paint a known count onto the entry row (0 = the "no secrets yet" wording). */
+/** Paint a known count onto the entry row (0 = the "no secrets yet" wording).
+ *  settings-ios-rows 批 2026-11-06：**只画一处**读数（行右副值 #secrets-entry-sub）
+ *  —— 修前「{n} 个密钥」与计数胶囊两件并排，同一数字说了两遍，作者实拍点名。 */
 function paintSecretsEntryCount(n) {
-  const pill = document.getElementById('secrets-entry-pill');
   const sub = document.getElementById('secrets-entry-sub');
-  if (!pill || !sub) return;
-  pill.textContent = String(n);
+  if (!sub) return;
   sub.textContent = n > 0 ? t('settings.secretsCount', { n }) : t('settings.secretsNone');
 }
 
 /** Read the count (cached ≤60s) and paint it; a failure keeps the "…"
  *  placeholder — the same silent-catch convention as the health probe below. */
 function refreshSecretsEntryCount() {
-  const pill = document.getElementById('secrets-entry-pill');
   const sub = document.getElementById('secrets-entry-sub');
-  if (!pill || !sub) return;
+  if (!sub) return;
   if (secretsCountCache.n !== null && Date.now() - secretsCountCache.at < 60000) {
     paintSecretsEntryCount(secretsCountCache.n);
     return;
@@ -1691,7 +1683,7 @@ function refreshSecretsEntryCount() {
     .then(data => {
       const rows = Array.isArray(data && data.secrets) ? data.secrets : [];
       secretsCountCache = { n: rows.length, at: Date.now() };
-      if (!pill.isConnected || !sub.isConnected) return;
+      if (!sub.isConnected) return;
       paintSecretsEntryCount(rows.length);
     })
     .catch(() => {});
@@ -2033,35 +2025,11 @@ function bindSettingsEvents(content, cfg) {
   // 设置页更新功能退役（入口 + checkUpdate/doUpdate 发送 + updateCheck.js 消费链），
   // 未来由官网统一检测更新取代。
 
-  // --- Restart the gateway (hotupdate 批 3 · G6 后半：界面重启触发补齐) ---
-  // 🔴 沿用**既有** WS 命令 `restart`（`WebSocketRoutes.scala:1585-1619` 的 `case "restart"`）,
-  //    禁新造重启命令、禁新造第二套重启面。
-  // 🔴 载荷只带 `confirm: true`：**不传** `waitTimeoutMs`/`waitIdle` ⇒ 引擎侧沿用既有默认
-  //    （等待上限 600 秒、等待空闲模式），本批对该默认值零改动。
-  // 确认形态 = **两段式**（第二击即确认位）：强制确认位语义要求「用户的确认动作」，
-  // 而共用的 `#delete-box` 确认弹窗其确认键文案是「删除」（`modal.deleteConfirm`），
-  // 复用它会把中文/英文界面都写成错标签 ⇒ 按钮自身两段式，5 秒无第二击自动复位。
-  const restartBtn = /** @type {HTMLButtonElement|null} */ (document.getElementById('btn-restart-gateway'));
-  if (restartBtn) {
-    let armed = false;
-    let armTimer = null;
-    const disarm = () => {
-      armed = false;
-      if (armTimer) { clearTimeout(armTimer); armTimer = null; }
-      restartBtn.textContent = t('settings.restart');
-    };
-    restartBtn.addEventListener('click', () => {
-      if (!armed) {
-        armed = true;
-        restartBtn.textContent = t('settings.restartConfirm');
-        armTimer = setTimeout(disarm, 5000);
-        return;
-      }
-      disarm();
-      sendWs({ type: 'restart', confirm: true });
-    });
-  }
-
+  // --- 「重启服务」按钮：已随 settings-ios-rows 批（2026-11-06 作者令「底部的重启
+  //     服务去掉」）**整件移除** —— 按钮 + 两段式确认逻辑 + #restart-status 状态行
+  //     + restartStatus/restartResult 两个模块级订阅（原在文件尾部）全删，前端
+  //     对 WS `restart` 零发射面。后端 `case "restart"`（WebSocketRoutes）保留不动：
+  //     它是引擎侧通用能力，其余消费方仍在，本批只摘 UI 入口。
   // --- 文件缓存：占用读数入画 + 清空入口（M2 · 设计 v1 §6.4/§7 表5） ---
   // 清空 = nfCacheReset()（索引 + Cache Storage 字节 + 会话内存 blob 全清；已铸的
   // blob URL 不受影响——URL 与字节源解耦，活动 viewer 继续渲染，下轮打开重新取数
@@ -2094,26 +2062,11 @@ function bindSettingsEvents(content, cfg) {
   }
 }
 
-// ── 重启进度面（auth-trim 批迁址）────────────────────────────────────────────
-// 原 updateCheck.js 的 restartStatus/restartResult 订阅（hotupdate 批 3 · G6）随该文件
-// 整体退役；「重启服务」按钮（btn-restart-gateway，本文件 bindSettingsEvents 内）
-// 仍需可见反馈 ⇒ 订阅迁到本模块**模块级**（import 时恰好一次，settings 面板重渲不重复订阅）。
-// 消费元素 = About 区的 #restart-status；面板关闭时元素不存在 ⇒ 静默（既有口径）。
-// 相位文案仍由 `restart.phase.*` locale 表解析（🔴 不写字面）。
-onMessage('restartStatus', (msg) => {
-  const el = document.getElementById('restart-status');
-  if (!el) return;
-  const key = msg && msg.phase ? 'restart.phase.' + msg.phase : '';
-  el.textContent = key ? t(key, { detail: (msg && msg.detail) || '' }) : '';
-});
-
-onMessage('restartResult', (msg) => {
-  const el = document.getElementById('restart-status');
-  if (!el) return;
-  el.textContent = (msg && msg.ok)
-    ? t('settings.restartAccepted')
-    : t('settings.restartFailed', { error: (msg && msg.error) || '' });
-});
+// ── 重启进度面：整体退役（settings-ios-rows 批 2026-11-06）────────────────────
+// 原 updateCheck.js 的两条订阅随该文件退役后迁到本文件模块级；「重启服务」入口
+// 本轮被作者明令删除 ⇒ 唯一消费元素（#restart-status）不复存在，两条订阅
+// （restartStatus / restartResult）随之整段删除，前端零消费面。WS 端
+// `restartStatus`/`restartResult` 广播帧本身不受影响（引擎侧照旧发，只是没人听）。
 
 // Delegated segment-editor listeners — bound ONCE at module scope, NOT inside
 // bindSettingsEvents. renderSettings() re-runs on every serverConfig echo while

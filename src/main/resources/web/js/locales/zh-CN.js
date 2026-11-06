@@ -1421,24 +1421,15 @@ export default {
   // update.impact/update.receipt.*/update.reason.*/update.source.*）已随 auth-trim 批
   // （2026-10-20 作者令）整体删除：设置页「更新」功能退役，未来由官网统一检测更新取代。
 
-  // 既有重启进度帧（`restartStatus`）的相位文案（设置页「重启服务」状态行消费）。
-  'restart.phase.quiesce': '等待在飞工作结束',
-  'restart.phase.draining': '正在冻结并落盘',
-  'restart.phase.spawning': '正在派生新进程',
-  'restart.phase.handing-over': '交接中，旧进程即将退出',
-  'restart.phase.completed': '重启完成',
-  'restart.phase.failed': '重启中止',
-
-  // 设置页重启触发（hotupdate 批 3 · G6 后半）——沿用既有 'restart' WS 命令，
-  // 界面侧两段式确认（第二击即确认位）。
-  'settings.restart': '重启服务',
-  'settings.restartConfirm': '确认重启？',
+  // 「重启服务」整链文案已随 settings-ios-rows 批（2026-11-06 作者令「底部的重启
+  // 服务去掉」）删除：restart.phase.*（restartStatus 相位）与 settings.restart /
+  // settings.restartConfirm / settings.restartAccepted / settings.restartFailed
+  // 十键零消费（唯一消费者 #restart-status 状态行同批移除）。后端 WS `restart`
+  // 命令保留（其余消费方仍在），前端零发射面。
   'settings.fileCache': '文件缓存',
   'settings.fileCacheClear': '清空文件缓存',
   'settings.fileCacheClearConfirm': '确认清空？',
   'settings.fileCacheEntries': '条',
-  'settings.restartAccepted': '重启已受理——完成后界面会自动重连',
-  'settings.restartFailed': '重启未受理：{error}',
 
   // Provider card fields
   'provider.baseUrl': 'Base URL',
