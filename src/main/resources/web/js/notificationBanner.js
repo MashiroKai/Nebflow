@@ -6,6 +6,7 @@ import state from './state.js';
 import { statusIcon } from './utils.js';
 
 let notificationIdCounter = 0;
+const notificationTimers = new Map();
 
 /** Add a notification to the persistent banner.
  *  @param {string} type  family tag — 'skill' | 'reminder' | 'task' | 'conn' | 'device-mail' (styling + dedup key, values are open)
@@ -33,11 +34,20 @@ export function addNotification(type, text, opts = {}) {
   renderNotifications();
 
   if (opts.dismissAfter > 0) {
-    setTimeout(() => dismissNotification(id), opts.dismissAfter);
+    const timer = setTimeout(() => {
+      notificationTimers.delete(id);
+      dismissNotification(id);
+    }, opts.dismissAfter);
+    notificationTimers.set(id, timer);
   }
 }
 
 export function dismissNotification(id) {
+  const timer = notificationTimers.get(id);
+  if (timer !== undefined) {
+    clearTimeout(timer);
+    notificationTimers.delete(id);
+  }
   const el = document.querySelector(`.notif-item[data-id="${id}"]`);
   if (el) {
     el.classList.add('dismissing');
