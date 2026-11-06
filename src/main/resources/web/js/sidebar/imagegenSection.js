@@ -46,6 +46,7 @@ import { paintTestingLine, paintTestResultLine } from './modelTestButton.js';
 // §A.1/§A.4：import 区接在 modelTestButton 之后）：生图卡片与 LLM / Jev 两面
 // 同组件、同层级（.cfg-card-header / .cfg-card-meta / .cfg-model-list）、同交互。
 import { providerCardHTML, addProviderButtonHTML, bindCardRemove, bindCardSelect } from '../cfgProviderCard.js';
+import { setRow } from '../settingsRows.js';
 
 // 适配器协议面三态（镜像 ImageGenAdapters.All 的 `type` 注册表——前端无后端
 // 常量导入面，此处是唯一拼写点；引擎侧以 byType 校验，typos 400 不落盘）。
@@ -210,11 +211,11 @@ export function renderCompiledFace() {
   const enabled = draftEnabled === null ? !!(lastStatus && lastStatus.enabled) : draftEnabled;
   return `
     <div class="imagegen-face" data-form="compiled">
-      <div class="settings-row">
-        <span class="settings-label">${escapeHtml(t('settings.imagegenEnabled'))}</span>
-        ${toggleHTML({ on: enabled, id: 'toggle-imagegen', label: t('settings.imagegenEnabled') })}
-      </div>
-      <div class="cfg-hint">${escapeHtml(t('settings.imagegenShortHint'))}</div>
+      ${setRow({
+        title: escapeHtml(t('settings.imagegenEnabled')),
+        control: toggleHTML({ on: enabled, id: 'toggle-imagegen', label: t('settings.imagegenEnabled') }),
+        hint: escapeHtml(t('settings.imagegenShortHint')),
+      })}
       <div id="imagegen-provider-list">${providerListHTML()}</div>
       ${addProviderButtonHTML({ id: 'btn-add-imagegen-provider', face: 'imagegen' })}
       <div id="imagegen-provider-fields">${providerFieldsHTML()}</div>

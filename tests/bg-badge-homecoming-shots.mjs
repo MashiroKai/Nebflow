@@ -143,7 +143,7 @@ async function auditAndShoot(page, label, file) {
       kidWords: kids.map((k) => word(k)),
       topForbidden: [...list.querySelectorAll(':scope > .bg-task-row:not(.bg-task-row-child) .bg-task-kind')]
         .map((el) => el.textContent)
-        .filter((w) => w === 'Delegate' || w === 'Subagent'),
+        .filter((w) => w === 'delegate' || w === 'subagent'),
     };
   });
   ok(`${label}: 顶层无 Delegate/Subagent 字样`, a.topForbidden.length === 0, a.topForbidden.join(',') || 'clean');
@@ -154,7 +154,7 @@ async function auditAndShoot(page, label, file) {
   ok(`${label}: dispatcher 批顶层徽标 = dispatcher`, dispHead === 'delegate-bbh-dispatch=dispatcher', dispHead);
   ok(`${label}: 旧盘批（mode 缺席）顶层无徽标（不回退 Subagent）`, legacyHead === 'delegate-bbh-legacy=', legacyHead);
   ok(`${label}: 子层 subagent/agentflow 词在场`,
-    a.kidWords.includes('Subagent') && a.kidWords.includes('AgentFlow'), a.kidWords.join(','));
+    a.kidWords.includes('subagent') && a.kidWords.includes('AgentFlow'), a.kidWords.join(','));
   await page.screenshot({ path: file });
   console.log(`shot → ${file}`);
 }

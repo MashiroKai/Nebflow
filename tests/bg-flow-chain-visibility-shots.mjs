@@ -143,7 +143,7 @@ async function auditActiveChain(page, tag) {
   ok(`A badge=4 (${tag})`, a.badge === '4', a.badge);
   ok(`A head 链运行中 amber (${tag})`, a.headState === '链运行中' && a.headChain, a.headState);
   ok(`A head mode=dispatcher (${tag})`, a.headMode === 'dispatcher', a.headMode);
-  ok(`A kids=3 分发器置顶 (${tag})`, a.kidCount === 3 && a.kidKinds[0] === '分发器' && a.kidKinds[1] === '节点', a.kidKinds.join('|'));
+  ok(`A kids=3 分发器置顶 (${tag})`, a.kidCount === 3 && a.kidKinds[0] === 'dispatcher' && a.kidKinds[1] === 'node', a.kidKinds.join('|'));
   ok(`A child indent (${tag})`, a.kidPad > a.headPad, `${a.kidPad} > ${a.headPad}`);
   ok(`A section label · 4 (${tag})`, a.sectionLabel.includes('· 4'), a.sectionLabel);
 }

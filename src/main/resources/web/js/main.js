@@ -225,6 +225,9 @@ import { applyLocalFreeze, setFrozenBarState, skipCurrentFreeze } from './main/f
 import { showHistoryLoader, hideHistoryLoader, showHistoryEnd, clearHistoryIndicators } from './main/historyIndicators.js';
 import { showGlobalPermissionToast, dismissGlobalPermissionToasts } from './main/permToast.js';
 import { updateBgAgentIndicator, bgAgentKindFromSession, renderBgAgentDropdown, armBgUptimeTick, fetchActiveAgentsOnOpen, clearBgStuck, bgScopeRootForBucket, refreshAllBgAgentIndicators } from './main/bgAgents.js';
+// 术语统一批（2026-11-06 作者令「统一 根据英文」）：身份/类型徽标词只从单源词表取
+// （js/termWords.js）——后台任务面板的 mode chip 不再走 locale 键。
+import { badgeWord } from './termWords.js';
 // uifix 批（2026-10-22 作者令「附件放在对话框上面，不要遮挡文字」）：附件条 in-flow
 // 独立行的溢出折叠腿（+N 收展）—— 桌面/手机层共用单点，桌面启动即挂观察链（幂等）。
 import { watchAttachmentStrip } from './attachStripFold.js';
@@ -3634,11 +3637,12 @@ function renderBgDropdown() {
           escapeHtml(originTitle) + '">' + escapeHtml(chainText) + '</span>'
         : '<span class="bg-task-origin bg-origin-' + cat + '" title="' +
           escapeHtml(originTitle) + '">' + escapeHtml(label) + '</span>';
-    // 任务模式标注批（2026-10-30 作者令）：开启任务的 delegate 会话生效执行形态
-    // （kernel 极简内核 / dispatcher 分发器，注册帧 + 快照帧 ownerMode 字段）。
-    // 空/脏值（旧后端/非 delegate/双模式闸关）零渲染——与 origin chip 同纪律。
+    // 任务模式标注批（2026-10-30 作者令）+ 术语统一批（2026-11-06 作者令「统一 根据
+    // 英文」）：开启任务的 delegate 会话生效执行形态（注册帧 + 快照帧 ownerMode 字段）。
+    // 词面 = 单源徽标词表（js/termWords.js）；空/脏值（旧后端/非 delegate/双模式闸关）
+    // 零渲染——与 origin chip 同纪律。样式类读数据值，不读词面。
     const modeWord = (task.ownerMode === 'kernel' || task.ownerMode === 'dispatcher')
-      ? t('task.mode.' + task.ownerMode) : '';
+      ? badgeWord(task.ownerMode) : '';
     const modePart = modeWord
       ? '<span class="bg-task-mode bg-mode-' + task.ownerMode + '" title="' +
         escapeHtml(t('bg.modeTitle', { mode: modeWord })) + '">' + escapeHtml(modeWord) + '</span>'

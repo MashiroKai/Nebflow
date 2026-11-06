@@ -947,6 +947,11 @@ export default {
   // status surface: "needs you" word + reason code + auto-resume count + wake entry.
   'subagents.frozenAwaitingYou': 'Frozen · {reason} (needs you)',
   'subagents.frozenAwaitingYouNoReason': 'Frozen · needs you',
+  // Fix batch 2026-11-06: recoverable freezes (llm-failure / quota) are NOT your todo —
+  // their word is "Recovering", kept visually distinct from real failures (needs you).
+  'subagents.freezeRecovering': 'Recovering',
+  'subagents.freezeRecoveringReason': 'Recovering · {reason}',
+  'subagents.freezeRecoveringTip': 'The provider is temporarily unavailable (not a task failure, and nothing for you to do): the engine keeps retrying with backoff and switches to a usable provider, then resumes in the same session — finished work is not redone. Nothing is reported upward and no wake is needed.',
   'subagents.frozenInfraTip': 'Provider fault (NOT a task failure): the engine probes for recovery and resumes the SAME session by itself once a provider is serving again (from the checkpoint, finished work is not redone, capped attempts with growing gaps); press Wake to resume it right now. Nothing is reported upward — this panel is its status surface.',
   'subagents.frozenAutoResumes': 'auto-resumed {n} time(s)',
   'subagents.frozenAutoResumesSpent': 'auto-resume budget spent — needs you: top up / switch model / cancel',
@@ -996,19 +1001,15 @@ export default {
   // text (flips with the collapsed state).
   'subagents.collapseGroup': 'Collapse subtasks',
   'subagents.expandGroup': 'Expand subtasks',
-  // Flow-session visibility batch (2026-11-01): kind chips for dispatcher-*/
-  // node-* rows (the engine protocol kind is uniformly "Flow" — display words
-  // are resolved per session-id prefix) + the continuation badge for a
-  // terminal delegate whose chain is still running (amber word + workflow
-  // icon; tooltip carries the live session count).
-  'subagents.kindDispatcher': 'Dispatcher',
-  'subagents.kindNode': 'Node',
-  // Term layering batch (2026-11-05, author order): agentflow = the name of the
-  // whole organised behaviour (one orchestration = one agentflow) and the ONE
-  // identity word of an overall row (delegate group head / synthesized
-  // continuation head); the members inside it are nodes (subagents.kindNode
-  // family). Same word face in both locales.
-  'subagents.kindAgentflow': 'AgentFlow',
+  // Term-unification batch (2026-11-06, author order "统一 根据英文"): the kind
+  // chip word family is RETIRED — subagents.kindDispatcher / kindNode /
+  // kindAgentflow are deleted. Identity/type badge words are author terms and
+  // are not localised; single source = js/termWords.js (BADGE_WORDS). A locale
+  // entry per language is exactly the second word table this batch removes
+  // (that is how zh-CN ended up with its own translations). Gate:
+  // scripts/check-badge-words.mjs.
+  // Kept: the continuation badge for a terminal delegate whose chain is still
+  // running (amber word + workflow icon; tooltip carries the live session count).
   'subagents.chainRunning': 'Chain running',
   'subagents.chainRunningTip': 'Delegate delivered, chain still running · {n} session(s)',
   // Task attribution badge (2026-09-27 taskbadge batch): hover tooltip of the
@@ -1467,25 +1468,15 @@ export default {
   // removed with the auth-trim batch (2026-10-20 author ruling): the settings-page
   // update feature is retired; unified update detection moves to the website later.
 
-  // Phase text for the existing restart progress frame (`restartStatus`, consumed by
-  // the settings "Restart Service" status line).
-  'restart.phase.quiesce': 'Waiting for in-flight work to finish',
-  'restart.phase.draining': 'Freezing and flushing to disk',
-  'restart.phase.spawning': 'Launching the successor process',
-  'restart.phase.handing-over': 'Handing over — the old process is about to exit',
-  'restart.phase.completed': 'Restart completed',
-  'restart.phase.failed': 'Restart aborted',
-
-  // Settings-page restart trigger (hotupdate batch 3 · G6 second half) — reuses the
-  // existing 'restart' WS command; the UI confirms in two steps (2nd click = confirm bit).
-  'settings.restart': 'Restart Service',
-  'settings.restartConfirm': 'Confirm restart?',
+  // The whole "Restart Service" copy chain was removed with the settings-ios-rows
+  // batch (2026-11-06 author ruling): restart.phase.* and the four settings.restart*
+  // keys have zero consumers left (the sole consumer, the #restart-status line, was
+  // removed in the same batch). The backend WS `restart` command stays (other
+  // consumers remain); the frontend has no emit face for it.
   'settings.fileCache': 'File cache',
   'settings.fileCacheClear': 'Clear file cache',
   'settings.fileCacheClearConfirm': 'Confirm clear?',
   'settings.fileCacheEntries': 'items',
-  'settings.restartAccepted': 'Restart admitted — the UI reconnects automatically once it is up',
-  'settings.restartFailed': 'Restart not admitted: {error}',
 
   // Provider card fields
   'provider.baseUrl': 'Base URL',
@@ -2399,10 +2390,11 @@ export default {
   'todo.edit': 'Edit',
   // Task-mode badge batch (2026-10-30 author order "show dispatch execution mode"):
   // delegate/node tasks carry their execution-mode badge — kernel vs dispatcher.
-  // task.mode.* consumers: task cards (taskList row badge) + bg-panel row mode chip
-  // (bgAgents group-head badge word uses the raw data word, not i18n).
-  'task.mode.kernel': 'Kernel',
-  'task.mode.dispatcher': 'Dispatcher',
+  // Task mode badge batch (2026-10-30) + term-unification batch (2026-11-06):
+  // the mode chip word no longer comes from a locale key — task.mode.kernel /
+  // task.mode.dispatcher are deleted; single source = js/termWords.js
+  // (kernel / dispatcher verbatim, same string in every language face).
+  // Visual classes still keyed on the data value (.bg-mode-kernel / -dispatcher).
   // Base-drift state slot (`[base-moved]` noise-reduction batch 2026-11-05): how many
   // times the base branch advanced since this task was dispatched — a STATE FACT only
   // ("base moved" belongs on the panel, not in the message stream). No mechanism talk.

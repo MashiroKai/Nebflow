@@ -156,11 +156,11 @@ async function shoot(colorScheme, narrow) {
   // 形态 1：本机 + delegate 短名 + 内核（设备同级：本机 = 设备名，无「本地」）。
   ok(`delegate row device=本机设备名 (${tag})`, audit.delegate?.devices?.[0] === 'Mashiros-MacBook-Pro', JSON.stringify(audit.delegate));
   ok(`delegate row chips = [设备, 短名, 内核] (${tag})`,
-    JSON.stringify(audit.delegate?.chips) === JSON.stringify(['Mashiros-MacBook-Pro', '模型链面板精简', '内核']), JSON.stringify(audit.delegate?.chips));
+    JSON.stringify(audit.delegate?.chips) === JSON.stringify(['Mashiros-MacBook-Pro', '模型链面板精简', 'kernel']), JSON.stringify(audit.delegate?.chips));
   // 形态 2：远程 = 对端设备名 + 内核（无「远程」字样，单设备 chip）。
   ok(`remote row device=对端设备名 (${tag})`, audit.remote?.devices?.[0] === 'DESKTOP-IJBBEOT', JSON.stringify(audit.remote));
   ok(`remote row chips = [设备, 内核] (${tag})`,
-    JSON.stringify(audit.remote?.chips) === JSON.stringify(['DESKTOP-IJBBEOT', '内核']), JSON.stringify(audit.remote?.chips));
+    JSON.stringify(audit.remote?.chips) === JSON.stringify(['DESKTOP-IJBBEOT', 'kernel']), JSON.stringify(audit.remote?.chips));
   // 形态 3：本机 + 谁开启（主 agent）——设备 chip 与来源 chip 并列；来源 chip 的
   // 名字 = 显示名权威读数（用户起的名 Spider；Nebula 退役批，机制名不上屏）。
   ok(`plain row chips = [设备, 显示名] (${tag})`,

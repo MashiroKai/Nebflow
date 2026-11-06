@@ -905,6 +905,12 @@ export default {
   // 原因码 + 自动续跑次数 + 唤醒入口。
   'subagents.frozenAwaitingYou': '已冻结 · {reason}（待你处理）',
   'subagents.frozenAwaitingYouNoReason': '已冻结 · 待你处理',
+  // 修复批 2026-11-06（作者原话「llm 不稳定 不需要向上通知…原地等待恢复就行」）：
+  // 可恢复冻结（llm-failure / 额度）**不再是你的待办**——词从「待你处理」改成
+  // 「等待恢复中」，与真失败（tool-failure / engine-fault）在视觉与文案上分开。
+  'subagents.freezeRecovering': '等待恢复中',
+  'subagents.freezeRecoveringReason': '等待恢复中 · {reason}',
+  'subagents.freezeRecoveringTip': '供应商暂时不可用（不是任务失败，也不需要你做什么）：引擎正在退避重试 / 换可用的供应商，恢复后在原会话上接着跑——已完成的不重做。不向上汇报，也不需要唤醒。',
   'subagents.frozenInfraTip': '供应商故障（不是任务失败）：引擎自己探测恢复，恢复后自动续跑同一会话（续在检查点、已完成的不重做，有次数上限与递增间隔）；也可以现在点「唤醒」立即续跑。不向上级汇报——本面板就是它的状态面。',
   'subagents.frozenAutoResumes': '已自动续跑 {n} 次',
   'subagents.frozenAutoResumesSpent': '自动续跑次数已用尽——需要你：充值 / 换模型 / 取消',
@@ -954,15 +960,12 @@ export default {
   // 面板层级批（2026-10-31 ①）：组头折叠 caret 的无障碍/悬停文案（随折叠态翻转）。
   'subagents.collapseGroup': '收起子任务',
   'subagents.expandGroup': '展开子任务',
-  // Flow 会话可见性批（2026-11-01）：dispatcher-*/node-* 行 kind 徽标（引擎协议
-  // kind 一律 "Flow" 无区分度——显示词按前缀单点判读）＋ delegate 已终态而链仍在
-  // 跑的延续态徽标（琥珀词 + workflow 图标；tooltip 带链会话数）。
-  'subagents.kindDispatcher': '分发器',
-  'subagents.kindNode': '节点',
-  // 术语分层批（2026-11-05 作者令）：agentflow = 整个组织行为的代称（一次编排 =
-  // 一个 agentflow），只作**整体行**（delegate 组头 / 合成延续组头）的身份词；
-  // 该编排里的成员是节点（词走 subagents.kindNode 族）。zh/en 同词面。
-  'subagents.kindAgentflow': 'AgentFlow',
+  // 术语统一批（2026-11-06 作者令逐字「统一 根据英文」）：kind 徽标词**整族退役**
+  // ——subagents.kindDispatcher / kindNode / kindAgentflow 三键随本批删除。身份/类型
+  // 徽标词面（kernel / dispatcher / node / subagent / delegate / AgentFlow）是作者
+  // 术语、不本地化，单源 = js/termWords.js（BADGE_WORDS）；放语言包等于给同一概念
+  // 造第二张词表（中文面「分发器 / 节点」就是这么来的）。判据 = scripts/check-badge-words.mjs。
+  // 保留：delegate 已终态而链仍在跑的延续态徽标（琥珀词 + workflow 图标）。
   'subagents.chainRunning': '链运行中',
   'subagents.chainRunningTip': '委托已交付，链仍在运行 · {n} 个会话',
   // 面板行说明批（2026-10-29 ②）：任务摘要次行无文案键（原文上屏）。
@@ -1418,24 +1421,15 @@ export default {
   // update.impact/update.receipt.*/update.reason.*/update.source.*）已随 auth-trim 批
   // （2026-10-20 作者令）整体删除：设置页「更新」功能退役，未来由官网统一检测更新取代。
 
-  // 既有重启进度帧（`restartStatus`）的相位文案（设置页「重启服务」状态行消费）。
-  'restart.phase.quiesce': '等待在飞工作结束',
-  'restart.phase.draining': '正在冻结并落盘',
-  'restart.phase.spawning': '正在派生新进程',
-  'restart.phase.handing-over': '交接中，旧进程即将退出',
-  'restart.phase.completed': '重启完成',
-  'restart.phase.failed': '重启中止',
-
-  // 设置页重启触发（hotupdate 批 3 · G6 后半）——沿用既有 'restart' WS 命令，
-  // 界面侧两段式确认（第二击即确认位）。
-  'settings.restart': '重启服务',
-  'settings.restartConfirm': '确认重启？',
+  // 「重启服务」整链文案已随 settings-ios-rows 批（2026-11-06 作者令「底部的重启
+  // 服务去掉」）删除：restart.phase.*（restartStatus 相位）与 settings.restart /
+  // settings.restartConfirm / settings.restartAccepted / settings.restartFailed
+  // 十键零消费（唯一消费者 #restart-status 状态行同批移除）。后端 WS `restart`
+  // 命令保留（其余消费方仍在），前端零发射面。
   'settings.fileCache': '文件缓存',
   'settings.fileCacheClear': '清空文件缓存',
   'settings.fileCacheClearConfirm': '确认清空？',
   'settings.fileCacheEntries': '条',
-  'settings.restartAccepted': '重启已受理——完成后界面会自动重连',
-  'settings.restartFailed': '重启未受理：{error}',
 
   // Provider card fields
   'provider.baseUrl': 'Base URL',
@@ -2319,12 +2313,11 @@ export default {
   'todo.filterUngrouped': '未分组',
   'todo.projectPlaceholder': '项目（可选）',
   'todo.edit': '编辑',
-  // 任务模式标注批（2026-10-30 作者令「派发任务显示执行模式」）：
-  // 派发任务（delegate/节点）的执行形态徽标——极简内核（kernel）/ 分发器（dispatcher）。
-  // task.mode.* 三处消费：任务卡（taskList 行内徽标）+ 后台任务面板行 mode chip +
-  // 面板组头徽标词（bgAgents 用原始数据词，不经 i18n）。
-  'task.mode.kernel': '内核',
-  'task.mode.dispatcher': '分发器',
+  // 任务模式标注批（2026-10-30 作者令「派发任务显示执行模式」）+ 术语统一批
+  // （2026-11-06 作者令「统一 根据英文」）：执行形态徽标的词面**不再走 locale**——
+  // task.mode.kernel / task.mode.dispatcher 两键随本批删除，词面单源 =
+  // js/termWords.js（kernel / dispatcher 逐字英文，中文面同串）。
+  // 视觉类名仍由数据值给（.bg-mode-kernel / .bg-mode-dispatcher）。
   // base 漂移状态位（`[base-moved]` 降噪重写批 2026-11-05）：基分支自本任务派发以来
   // 前进的次数——**只陈述状态事实**（作者令「base 动了放面板可见即可，不进消息流」），
   // 不解释机制、不给建议。

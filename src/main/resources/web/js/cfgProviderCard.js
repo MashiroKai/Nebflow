@@ -85,7 +85,9 @@ export function providerCardHTML(spec) {
 export function addProviderButtonHTML(opts) {
   const id = escapeHtml(String(opts.id));
   const faceAttr = opts.face ? ` data-face="${escapeHtml(String(opts.face))}"` : '';
-  return `<button class="cfg-btn cfg-btn-add" id="${id}" data-component="cfg-add-provider"${faceAttr}>${escapeHtml(t('settings.cfgCard.addProvider'))}</button>`;
+  // settings-ios-rows 批 2026-11-06：加 set-btn/set-btn-block —— 新增钮与设置页
+  // 其它动作钮同一尺寸令牌（--set-btn-h）、满宽成块（同 .cfg-btn-add 虚线语言）。
+  return `<button class="cfg-btn cfg-btn-add set-btn set-btn-block" id="${id}" data-component="cfg-add-provider"${faceAttr}>${escapeHtml(t('settings.cfgCard.addProvider'))}</button>`;
 }
 
 /**
