@@ -199,6 +199,19 @@ let sentinelObserver = null;
  *   renderStreamFresh/renderMediaGrid 各管各的，切换时先 disconnect）。 */
 let mediaGridObserver = null;
 
+// ── 会话内独立搜索（3(b) 会话内独立搜索批 2026-11-06 作者令）────────────────
+// 「会话窗内搜索只搜当前会话（scope 隔离，不串全局）」。`convScope` 非空时：
+//   · 数据源 = 好友/群会话消息（`/api/conversations/{id}/messages`，friendsApi
+//     单点），**不是** agent 会话 history；FTS 索引快路（/api/search/chat 只索引
+//     agent 会话）整体跳过，恒走全量拉取路径；
+//   · 范围/agent 两枚 select 语义不存在 ⇒ overlay 挂 `data-conv-scope="1"`
+//     （modal.css 折叠），`isGrouped` 恒 false（单会话无分组头）；
+//   · 状态行前缀 = 会话名（scope 隔离可见化）；
+//   · 结果跳转 = 打开该会话窗 + `messages.revealMessage`（会话窗既有跳转缝）。
+// 清档点只有 `closeSearchModal`——主对话搜索钮 / 手机搜索页不带 scope ⇒ 恒 null。
+/** @type {{id:string, name:string}|null} */
+let convScope = null;
+
 /**
  * Typed element lookups (getElementById returns bare HTMLElement).
  * @param {string} id
@@ -211,7 +224,8 @@ const inputById = (id) => /** @type {HTMLInputElement|null} */ (document.getElem
  */
 const selectById = (id) => /** @type {HTMLSelectElement|null} */ (document.getElementById(id));
 
-const isGrouped = () => (selectById('search-scope')?.value || 'current') === 'all';
+// 会话档（convScope）恒单会话 ⇒ 无分组形态（与 scope=current 同视）。
+const isGrouped = () => !convScope && (selectById('search-scope')?.value || 'current') === 'all';
 
 // ── Init ───────────────────────────────────────────────────
 export function initChatSearch() {
@@ -366,9 +380,51 @@ export function initChatSearch() {
 }
 
 // ── Modal open/close ───────────────────────────────────────
-export function openSearchModal() {
+/**
+ * 会话档装填（3(b)：唯一写点）。`scope = {convId, convName}` ⇒ 只搜该会话；
+ * null/缺 convId ⇒ 清档（主对话搜索钮 / 手机搜索页的既有全局形态零变化）。
+ * overlay 的 `data-conv-scope` = modal.css 折叠范围/agent select 的判定锚 +
+ * QA 断言面。
+ * @param {{convId: string, convName?: string}|null} [scope]
+ */
+function setConvScope(scope) {
+  convScope = scope && scope.convId
+    ? { id: String(scope.convId), name: String(scope.convName || scope.convId) }
+    : null;
   const overlay = document.getElementById('search-overlay');
   if (!overlay) return;
+  if (convScope) overlay.dataset.convScope = '1';
+  else delete overlay.dataset.convScope;
+  // 🔴 内容面同挂（收编批对账）：手机层页面化后 **#search-modal 被移入页面体**
+  //（navController overlayFaceByPage.search）——overlay 载体原地留作状态源，但
+  // CSS 选择器以载体为锚的后代匹配会随收编断链 ⇒ 落位属性必须**双写**（载体 =
+  // QA/桌面 z 档锚；内容面 = 收编后仍跟随面走的样式锚）。
+  const modal = document.getElementById('search-modal');
+  if (modal) {
+    if (convScope) modal.dataset.convScope = '1';
+    else delete modal.dataset.convScope;
+  }
+}
+
+/** 手机层「页面化入口」的会话档暂存（3(b)）：pushPage('search') 没有**参数通道**
+ *  （navController `case 'search'` 无参调 openSearchModal()），而手机层 body 级
+ *  overlay 在页面世界是 pointer-events:none 的状态载体（mobileLayer.css「遮罩/
+ *  指针全退」族）⇒ 直接开面板 = 面可见但点不可交互。profileFace therefore：
+ *  stageConvScope(scope) + pushPage('search')，页面激活时 openSearchModal() 在此
+ *  **一次性消费**暂存（显式参优先；主入口无暂存 ⇒ 行为与改前逐字一致）。 */
+let pendingConvScope = null;
+
+/** 暂存会话档（单发；下一次 openSearchModal() 消费后清零）。 */
+export function stageConvScope(scope) {
+  pendingConvScope = scope && scope.convId ? scope : null;
+}
+
+export function openSearchModal(scope = null) {
+  const overlay = document.getElementById('search-overlay');
+  if (!overlay) return;
+  const eff = scope || pendingConvScope || null; // 手机页面化入口的暂存消费（见上）
+  pendingConvScope = null;
+  setConvScope(eff || null); // 3(b)：会话档先落位（resetSearchState 不清它）
   resetSearchState();   // Spotlight mode: every open is a fresh session
   renderStaticLabels();
   syncTabsUI();
@@ -398,6 +454,7 @@ export function closeSearchModal() {
   const ov = document.getElementById('search-overlay');
   if (ov) popLayer(ov); // B4：出栈 + 回焦（同一落点：打开它的按钮）
   ov?.classList.remove('on');
+  setConvScope(null); // 3(b)：会话档随面板关闭清档 ⇒ 主对话入口恒全局形态
   document.getElementById('search-btn')?.focus();   // return focus to the opener
 }
 
@@ -956,6 +1013,82 @@ async function fetchHistory(sessionId, signal, cursor = {}) {
   return data.messages;
 }
 
+// ── 会话消息源（3(b) 会话内独立搜索批 2026-11-06）──────────────────────────
+// 好友/群会话的消息**不住** agent 会话 history 里——唯一取数点 = friendsApi 的
+// `getMessages`（`GET /api/conversations/{id}/messages`，id-keyset 前向分页，
+// 服务端 clamp 1..200）。动态 import：chatSearch 不新增对 friendsApi 的静态边
+// （静态图闸 check-circular 的既有形态；运行期才需要）。
+//
+// 适配纪律：wire 行 `{id, senderId, kind, body, createdAt, attachments?}` →
+// UiMessage 形 `{type, text, timestamp, attachments}`，让 normalizeMessage /
+// indexMedia / buildView **零改动**复用（单一渲染管线，禁第二套归一化）：
+//   · type 恒 'user' —— 人类会话两条腿都是人，kind 徽标只有 user|agent|ai|tool
+//     四档，对方标 ai/agent 是撒谎 ⇒ 全部按「用户」档（方向信息由会话窗本面承载，
+//     搜索行不再重复一套方向词汇）；
+//   · 附件类型由**文件名**判（messages.js mediaFaceKindOf 同判据：图片/视频扩展名
+//     ⇒ image/video，其余 file）——wire 行没有独立类型字段，名字就是判据；
+//   · timestamp = createdAt 的 epoch ms（ISO/数字都吃；解析不动 = 0，排序面兜底）。
+function convRowToUiMessage(m) {
+  const ts = Date.parse(m && m.createdAt);
+  const atts = (Array.isArray(m && m.attachments) ? m.attachments : []).map((a) => {
+    const name = String((a && a.name) || '');
+    const type = isVideoAttachmentName(name) ? 'video'
+      : (isImageAttachmentName(name) ? 'image' : 'file');
+    return { type, name };
+  }).filter((a) => a.type === 'image' || a.type === 'video' || a.name);
+  // 🔴 wire id 必须随行透传（normalizeConv 把 ord 换回真实消息 id 的数据源）——
+  // 会话窗跳转缝 revealMessage 认的是 `data-message-id`（= wire id），丢了 id
+  // 就只能落回数组下标 ⇒ 跳转永不命中。
+  return { id: m && m.id, type: 'user', text: String((m && m.body) || ''), timestamp: Number.isFinite(ts) ? ts : 0, attachments: atts };
+}
+
+/** 会话行名判据（与 messages.js mediaFaceKindOf 同源的两把刷子；本地实现避免
+ *  静态引 messages.js——它静态引本仓最重的模块图）。 */
+const CONV_IMG_RE = /\.(jpe?g|png|gif|webp|bmp|heic|heif|avif|svg)$/i;
+const CONV_VID_RE = /\.(mp4|mov|m4v|webm|avi|mkv)$/i;
+const isImageAttachmentName = (n) => CONV_IMG_RE.test(n || '');
+const isVideoAttachmentName = (n) => CONV_VID_RE.test(n || '');
+
+/**
+ * 全量拉一个会话的消息（升序），翻页到尽（50×200=10000 行硬顶——单会话检索
+ * 足够；到顶即停）。非 2xx 由 friendsApi req() 抛 ⇒ runStream/runSearch 既有
+ * catch ⇒ showError 渲染失败态（与 fetchHistory 同律）。
+ * @param {string} conversationId
+ * @param {AbortSignal} [_signal] 占位（friendsApi req 无信号位；seq 守卫弃陈旧跑）
+ * @returns {Promise<any[]>} UiMessage 形数组（文档序）
+ */
+async function fetchConvHistory(conversationId, _signal) {
+  const api = await import('./friendsApi.js');
+  const out = [];
+  let after = 0;
+  const LIMIT = 200;
+  for (let page = 0; page < 50; page++) {
+    const batch = await api.getMessages(conversationId, { after, limit: LIMIT });
+    if (!Array.isArray(batch)) throw new Error('malformed conversation payload');
+    out.push(...batch.map(convRowToUiMessage));
+    if (batch.length < LIMIT) break;
+    const next = Number(batch[batch.length - 1] && batch[batch.length - 1].id);
+    if (!Number.isFinite(next) || next <= after) break; // id 不前进 ⇒ 防死循环
+    after = next;
+  }
+  return out;
+}
+
+/**
+ * 会话档归一（normalizeAll 的 conv 包装）：归一后把每行的 `ord` 换回**真实消息
+ * id**——normalizeMessage 的 ord = 数组下标，而会话窗跳转缝（messages.revealMessage）
+ * 认的是 `data-message-id`（= wire id）。适配器 1:1 保序（convRowToUiMessage 恒
+ * 产出非空行 ⇒ norm.all 与 raw 同长同序），长度不齐 = 适配器回归 ⇒ 保下标不换
+ * （fail-safe，宁可用下标也不贴错 id）。
+ */
+function normalizeConv(raw, meta) {
+  const norm = normalizeAll(raw, meta);
+  if (norm.all.length === raw.length) {
+    norm.all.forEach((n, i) => { n.ord = Number(raw[i] && raw[i].id) || n.ord; });
+  }
+  return norm;
+}
+
 /** Run async tasks with a concurrency limit. */
 async function mapLimit(items, limit, fn, onProgress) {
   const out = [];
@@ -1150,7 +1283,11 @@ async function runStream() {
 
   try {
     let sessions;
-    if (scope === 'current') {
+    if (convScope) {
+      // 3(b)：会话档 = 只搜当前会话（scope 隔离）。数据源 = 会话消息 API
+      // （fetchConvHistory 适配），agent 会话清单完全不进视野。
+      sessions = [{ id: convScope.id, name: convScope.name, convSource: true }];
+    } else if (scope === 'current') {
       const sid = state.activeSessionId;
       if (!sid) {
         if (mySeq !== searchSeq) return;
@@ -1178,9 +1315,15 @@ async function runStream() {
       // Anchor page: newest page at or below the anchor day's end. Browse
       // page: newest page from the latest. Params are the cursor contract;
       // today's backend ignores them and returns everything.
-      const raw = await fetchHistory(s.id, ac.signal,
-        anchorEnd ? { before: anchorEnd, limit: FETCH_PAGE } : { limit: FETCH_PAGE });
-      const norm = normalizeAll(raw, { sessionId: s.id, sessionName: s.name || s.id });
+      // 3(b)：会话档（convSource）= 全量拉取（会话消息 API 是 id-keyset 前向分页，
+      // fetchConvHistory 一次性翻完），游标参数不适用。
+      const raw = s.convSource
+        ? await fetchConvHistory(s.id, ac.signal)
+        : await fetchHistory(s.id, ac.signal,
+            anchorEnd ? { before: anchorEnd, limit: FETCH_PAGE } : { limit: FETCH_PAGE });
+      const norm = s.convSource
+        ? normalizeConv(raw, { sessionId: s.id, sessionName: s.name || s.id })
+        : normalizeAll(raw, { sessionId: s.id, sessionName: s.name || s.id });
       const all = norm.all;
       const view = buildView(all);
       let start = 0;
@@ -1192,7 +1335,10 @@ async function runStream() {
       }
       return {
         id: s.id, name: s.name || s.id, all, view, entries: norm.entries,
-        start, end: Math.min(view.length, start + FETCH_PAGE),
+        convSource: !!s.convSource,
+        start,
+        // 3(b)：会话档已全量在手 ⇒ end 一次到位（分页加载器对 conv 档也另有守卫）。
+        end: s.convSource ? view.length : Math.min(view.length, start + FETCH_PAGE),
         el: null, headerEl: null,
       };
     }, showProgress ? (done, total) => {
@@ -1228,7 +1374,9 @@ function onSentinel() {
 
 /** Older page(s): extend each session window downward (before cursor). */
 async function loadBeforePages() {
-  const targets = streamSessions.filter(s => s.end < s.view.length);
+  // 3(b)：会话档（convSource）全量已在手 ⇒ 永不进入 agent 会话分页（守卫防回归
+  // ——conv id 误进 fetchHistory 会打到不存在的会话路由上）。
+  const targets = streamSessions.filter(s => !s.convSource && s.end < s.view.length);
   if (!targets.length) return;
   pageInFlight = true;
   const mySeq = searchSeq;
@@ -1259,7 +1407,8 @@ async function loadBeforePages() {
  *  cursor) and PREPEND, preserving the scroll position. Existing entries
  *  stay put (zero removal, zero reorder - spec B13). */
 async function loadAfterPages() {
-  const targets = streamSessions.filter(s => s.start > 0);
+  // 3(b)：会话档守卫（同 loadBeforePages——全量在手，永不分页）。
+  const targets = streamSessions.filter(s => !s.convSource && s.start > 0);
   if (!targets.length) return;
   pageInFlight = true;
   const mySeq = searchSeq;
@@ -1483,13 +1632,18 @@ async function runSearch() {
   try {
     // C3：索引快路优先——成功（或已被更新的查询取代/中止）⇒ handled；
     // 索引不可用（503/5xx/网络错）⇒ false，继续旧全扫路径（§4.6 R4 保底）。
-    if (SEARCH_API_ENABLED && kw) {
+    // 3(b)：会话档恒跳过索引快路——FTS 索引只覆盖 agent 会话，会话消息不在
+    // 索引里；跳过 = 直接走全量拉取路径（fetchConvHistory），scope 零泄漏。
+    if (SEARCH_API_ENABLED && kw && !convScope) {
       const handled = await runSearchIndex(kw, scope, agentSel, ac, mySeq, statusEl, resultsEl);
       if (handled) return;
     }
 
     let sessions;
-    if (scope === 'current') {
+    if (convScope) {
+      // 3(b)：会话档 = 只搜当前会话。agent 会话清单不进视野（scope 隔离）。
+      sessions = [{ id: convScope.id, name: convScope.name, convSource: true }];
+    } else if (scope === 'current') {
       const sid = state.activeSessionId;
       if (!sid) {
         if (mySeq !== searchSeq) return;
@@ -1513,8 +1667,12 @@ async function runSearch() {
 
     const showProgress = sessions.length > 1;
     const perSession = await mapLimit(sessions, FETCH_CONCURRENCY, async (s) => {
-      const raw = await fetchHistory(s.id, ac.signal);
-      const norm = normalizeAll(raw, { sessionId: s.id, sessionName: s.name || s.id });
+      const raw = s.convSource
+        ? await fetchConvHistory(s.id, ac.signal)
+        : await fetchHistory(s.id, ac.signal);
+      const norm = s.convSource
+        ? normalizeConv(raw, { sessionId: s.id, sessionName: s.name || s.id })
+        : normalizeAll(raw, { sessionId: s.id, sessionName: s.name || s.id });
       return { session: s, all: norm.all, entries: norm.entries };
     }, showProgress ? (done, total) => {
       if (mySeq === searchSeq) statusEl.textContent = t('search.progress', { done, total });
@@ -1771,9 +1929,13 @@ function updateStatus() {
 
 /** Status line: result count (+ truncation notice in search mode only). */
 function statusSummary() {
-  // 手机层 P2 计数行（v3.6 作者裁定②）：带「主会话」前缀；桌面路径零改动。
-  const base = document.body.classList.contains('mobile-layer')
-    ? `${t('search.scopeMain')} · ${t('search.results', { n: lastTotal })}`
+  // 3(b) 会话档：前缀 = 会话名（scope 隔离可见化——「只搜当前会话」要读得出来）。
+  // 手机层 P2 计数行（v3.6 作者裁定②）全局档仍带「主会话」前缀；桌面全局档零改动。
+  const prefix = convScope
+    ? convScope.name
+    : (document.body.classList.contains('mobile-layer') ? t('search.scopeMain') : '');
+  const base = prefix
+    ? `${prefix} · ${t('search.results', { n: lastTotal })}`
     : t('search.results', { n: lastTotal });
   return streamMode === 'search' && lastTotal > MAX_RESULTS
     ? `${base} (${t('search.truncated', { n: MAX_RESULTS })})`
@@ -2371,6 +2533,8 @@ const JUMP_MAX_PAGES = 40;        // 40 × 50 = 2000 messages of lookback
 const JUMP_DEADLINE_MS = 25000;   // overall budget
 
 function jumpToResult(res) {
+  // 3(b)：会话档行跳会话窗（jumpToConvResult）——主会话锚点/分页机制全不适用。
+  if (convScope) { jumpToConvResult(res); return; }
   // 跳转回位胶囊（作者令 2026-11-01）：先于任何 DOM/滚动变更捕获跳转前锚点
   // （跨会话跳转在模块内主动清锚 = 不设胶囊，锚住在另一条会话流里无法保真）。
   captureReturnAnchor(res);
@@ -2389,6 +2553,34 @@ function jumpToResult(res) {
     }).catch(() => { /* 切换失败：scrollToMessage 的同会话守卫会静默收口 */ });
   }
   scrollToMessage(res, { pages: 0, start: Date.now(), settleTicks: 0 });
+}
+
+/**
+ * 3(b) 会话档跳转：关闭面板 → 开该会话窗（messages.openConversation，好友/群/
+ * 设备三窗同一入口；手机层 watchChatModal 收编链自动接管）→ `revealMessage`
+ * （会话窗既有跳转缝，2026-10-31 搜索批：自带 keyset 翻旧页 + 滚动居中 + 闪烁）。
+ * 跳转回位胶囊不设——锚住在另一条会话流里无法保真（jumpToResult 跨会话裁定同源）。
+ * `res.ord` = 真实消息 id（normalizeConv 覆写）；定位失败 = 可见 toast，不静默。
+ * @param {any} res 会话档结果行（{sessionId: conversationId, ord: messageId}）
+ */
+async function jumpToConvResult(res) {
+  closeSearchModal();
+  // 🔴 会话档跳转**不走 goHome**（2026-11-06 C5 实证批）：面板是从**会话窗**（手机
+  // 「会话」页）里调起的——closeSearchModal 摘 .on ⇒ CLOSE_WATCH 弹回「会话」页，
+  // 窗还开着（同一会话）。jumpToResult 的 goHome 腿在这里是**复制错位**：它把
+  // 「会话」页一并弹掉 ⇒ closePageFace('conversation') 的异步 closeChat 链与紧接着
+  // 的 openConversation 赛跑（closeChat 摘 overlay ⇒ watchChatModal 对账「弹页」
+  // ⇒ 又一轮 closePageFace ⇒ closeChat 落在**新窗**头上把整窗摘除，实测
+  // reveal=true 后整窗消失）。跳转 = 直接 openConversation（幂等整建）+ revealMessage。
+  try {
+    const msg = await import('./messages.js');
+    await msg.openConversation(res.sessionId);
+    const ok = await msg.revealMessage(res.ord);
+    if (!ok) window.__showToast?.(t('search.jumpFailed'), 'error');
+  } catch (e) {
+    console.debug('[chatSearch] conv jump failed', e && e.message);
+    window.__showToast?.(t('search.jumpFailed'), 'error');
+  }
 }
 
 /** @param {HTMLElement} el */

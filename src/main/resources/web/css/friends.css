@@ -1075,6 +1075,21 @@ button.fm-req-decline:focus-visible {
 .fm-msg { max-width: var(--ds-bubble-max-w); }
 .fm-msg > .bubble { max-width: 100%; }
 
+/* ── 跨天居中日期行（日期行上移批 2026-11-06 作者令②）─────────────────────────
+   「跨天只显示一次」：日期层从每条 footer（formatFooterTime 分层档，每条都显）
+   上移到本行——同一天的消息不再重复日期。壳 = 主会话 footer **同一枚**
+   `.duration-badge`（chat.css 单源，零第二套 pill 实现）；本文件只给「居中」
+   与行距两个宿主档，禁另造日期行样式。label 单点 = `formatFooterDay`
+   （timeFormat.js，与主会话 footer 同一桶梯）。今天 = 纯时钟档无日期行（改前
+   亦如此，行为零变化）。 */
+.fm-day-sep {
+  align-self: center;
+  flex: none;
+}
+/* 日期行不是时钟切换热区（无时刻可切）⇒ 摘掉 badge-time 的 pointer 档，
+   其余（字号/字色/字距档）全部继承主会话 footer 同款。 */
+.fm-day-sep .duration-badge-time { cursor: default; }
+
 /* ── 附件卡（fm-att-card-unify 批 2026-11-02 · fm-att-component-lib 批同日换代）─────
    卡面本体 = 主会话卡语言（chat.css 的 `.file-card` / `.pop-media-flat` /
    `.pop-stack-area` 家族），渲染出口 = popArtifacts 标准组件（`buildMediaFlat` /
@@ -1767,6 +1782,11 @@ body:not(.mobile-layer) #profile-face-overlay {
   line-height: 16px;
   white-space: nowrap;
 }
+/* ── 三态同步徽标（profile-sync 徽标批 2026-11-06 作者令 3(a)）─────────────────
+   壳 = 既有 `.pf-cache-hint` 一枚（同一实现，零第二套 chip）；态只换**文字**，
+   色彩零新增（三态词汇 = 已同步/待同步/仅本地，语言包单源）。空档 = 读失败/未知
+   （`data-sync-state=""`）⇒ 折叠隐藏——「读不到」不冒充任何一态。 */
+.pf-sync-badge:empty { display: none; }
 .pf-save {
   flex: none;
   font: inherit;

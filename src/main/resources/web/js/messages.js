@@ -67,7 +67,10 @@ import { withFocusKey } from './focusTrap.js';
 // 该模块零 import ⇒ 无环）。
 import { readPreviewField, previewDataUrlOf } from './attachPreviewField.js';
 // 时制（12h/24h）：与主对话框/设备对话框共享同一偏好与同一实现。
-import { formatHm, formatFooterTime, bindTimeToggle, TIME_FORMAT_CHANGED } from './timeFormat.js';
+// 日期行上移批（2026-11-06 作者令②）：footer 时间回归纯时钟 formatHm（日期层
+// 上移到跨天居中日期行 fm-day-sep，formatFooterDay 单点）——formatFooterTime 的
+// 分层日期档不再进本文件。
+import { formatHm, formatFooterDay, bindTimeToggle, TIME_FORMAT_CHANGED } from './timeFormat.js';
 // ⑩ 合并期滚动位保持（与 Dropbox 面**共用一份实现**，无第二个公式）。
 // follow 批（2026-10-08）：贴底判定 `isAtBottom`（AT_BOTTOM_PX 单源）也从这一份
 // 实现出 —— 到达跟随、锚点补偿、回底胶囊三处共用同一判据，本面内禁第二个数。
@@ -3355,20 +3358,19 @@ export function bubbleEl(m, conv) {
   }
   if (hasForwarded(fwdKeyOf(conv, m.id))) meta.appendChild(el('span', 'fm-msg-forwarded-badge', t('messages.forwarded')));
   const timeMs = toEpochMs(m.createdAt);
-  // 时间档 = 主会话 footer **同一 formatter**（footer-time 批 2026-10-06 的分层
-  // label：今天 = 纯时钟 / 昨天 = 「昨天 hh:mm」/ 本周 = 星期 + 时钟 / 更早 = 日期
-  // + 时钟）—— fm-footer-align 批 2026-11-02（作者令「消息 footer 参考主会话设计
-  // 对齐：同构同语言」）。与主会话 `.duration-badge-time` 逐项同款：
-  //   · 文本来源 = `formatFooterTime`（**非**列表行用的 `fmtTime` 薄版）；
-  //   · `data-ts-text` + `data-ts-text-format="day"` = 12/24 切换按**同一**分层
-  //     formatter 就地重排（旧形态只在同日的裸时钟上挂 data-ts-text，昨天的
-  //     「昨天」文本切制后就与 renderer 脱钩）；
+  // 日期行上移批（2026-11-06 作者令②「会话流里日期行每条都显……跨天只显示一次」）：
+  //   · footer 时间 = **纯时钟** `formatHm`（12/24 偏好同档）——日期层不再落在
+  //     每条 footer 上（旧 formatFooterTime 分层档：昨天/星期X/M月D日会逐条重复，
+  //     正是作者点名要退役的形态）；
+  //   · 日期层上移到跨天**居中日期行** `.fm-day-sep`（`syncDayLines` 每天只插一条，
+  //     label 单点 = `formatFooterDay`，与主会话 footer 同一 formatter 家族）；
+  //   · `data-ts`（跳转锚）+ `data-ts-text`（时钟就地重排）两契约保留；去掉
+  //     `data-ts-text-format="day"` ⇒ 12/24 切换按纯时钟重排（timeFormat 契约）；
   //   · `bindTimeToggle` 恒绑（主会话恒绑 ⇒ 热区/键盘/aria 语义三面同款）。
-  const timeSpan = el('span', 'fm-msg-time duration-badge-time', timeMs ? formatFooterTime(timeMs) : '');
+  const timeSpan = el('span', 'fm-msg-time duration-badge-time', timeMs ? formatHm(timeMs) : '');
   if (timeMs) {
     timeSpan.setAttribute('data-ts', String(timeMs));
     timeSpan.setAttribute('data-ts-text', String(timeMs));
-    timeSpan.setAttribute('data-ts-text-format', 'day');
     bindTimeToggle(timeSpan);
   }
   meta.appendChild(timeSpan);
@@ -3423,6 +3425,75 @@ export function bubbleEl(m, conv) {
   return wrap;
 }
 
+// ── 跨天居中日期行（日期行上移批 2026-11-06 作者令②「跨天只显示一次」）──────
+// 唯一实现 = `syncDayLines(flow)`：按 flow 内消息出现顺序逐条比对本地日历日
+// （`data-ts` 锚），跨天处插一条居中日期行；三面（首帧 diff / 追加 / 前插更早）
+// 共用同一函数，禁第二套插入逻辑。
+//   · label 单点 = `formatFooterDay`（timeFormat.js，与主会话 footer 同一桶梯：
+//     昨天 / 星期X / M月D日(+年)；今天 = 纯时钟档 ⇒ 无日期行）；
+//   · 壳 = 主会话 footer 同一枚 `.duration-badge`（chat.css 单源）；本文件只负责
+//     「居中放行」，样式宿主档在 friends.css `.fm-day-sep`；
+//   · 节点身份 = `data-day-key`（本地 Y-M-D），同日重复插入被幂等吸收；消息撤走
+//     后不再被任何日期行引用 ⇒ 顺带清掉孤儿行。
+/** 本地日历日键（Y-M-D 元组串；时区安全——永不过 UTC）。 */
+function dayKeyOf(ms) {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+}
+
+/** 日期行节点（壳 = 主会话 `.duration-badge` 同一枚；非时钟切换热区）。 */
+function daySepEl(dayKey, label) {
+  const row = el('div', 'fm-day-sep duration-badge');
+  row.dataset.dayKey = dayKey;
+  row.appendChild(el('span', 'duration-badge-time', label));
+  return row;
+}
+
+/** 按 flow 内消息序收敛日期行（幂等；无 `data-ts` 的行不参与、不改动前序键）。 */
+function syncDayLines(flow) {
+  if (!flow) return;
+  const existing = new Map();
+  for (const node of [...flow.children]) {
+    if (node.classList && node.classList.contains('fm-day-sep')) {
+      existing.set(node.dataset.dayKey, node);
+    }
+  }
+  // ① 期望集：逐消息取日键；跨天处（含首条非今天）登记一行。
+  const wanted = new Map(); // dayKey → { label, anchor(其后的首条消息节点) }
+  let prevKey = null;
+  for (const node of flow.children) {
+    if (!(node.classList && node.classList.contains('fm-msg'))) continue;
+    const tsEl = node.querySelector('[data-ts]');
+    const ms = tsEl ? (Number(tsEl.getAttribute('data-ts')) || 0) : 0;
+    if (!ms) continue;
+    const dayKey = dayKeyOf(ms);
+    const label = formatFooterDay(ms);
+    if (label && dayKey !== prevKey && !wanted.has(dayKey)) {
+      wanted.set(dayKey, { label, anchor: node });
+    }
+    prevKey = dayKey;
+  }
+  // ② 孤儿清理：不再被期望集引用的旧日期行摘除。
+  for (const [dayKey, node] of [...existing]) {
+    if (!wanted.has(dayKey)) {
+      node.remove();
+      existing.delete(dayKey);
+    }
+  }
+  // ③ 落位：新建或复用，锚在各自首条消息之前。
+  for (const [dayKey, { label, anchor }] of wanted) {
+    let sep = existing.get(dayKey);
+    if (!sep) {
+      sep = daySepEl(dayKey, label);
+      existing.set(dayKey, sep);
+    } else {
+      const txt = sep.querySelector('.duration-badge-time');
+      if (txt && txt.textContent !== label) txt.textContent = label;
+    }
+    if (sep.nextSibling !== anchor) flow.insertBefore(sep, anchor);
+  }
+}
+
 /**
  * ⑨-E keyed diff 渲染（方案 §2.3 案 E）：按 `data-message-id` 复用既有气泡节点，
  * 只增删差集、只移动错位节点 —— 不再 `innerHTML=''` 全量重建，因此刷新/增量补齐
@@ -3431,6 +3502,9 @@ export function bubbleEl(m, conv) {
  * 不变量：`flow` 下 `.fm-load-more-row`（若有）恒为首个子节点，消息节点按
  * `msgs` 顺序排在其后，且每个 message id **至多一个**节点（M5 一致性门：
  * 渲染 id 序列无重复、严格升序）。
+ * 日期行上移批（2026-11-06）补充：`.fm-day-sep` 行**参与排序但不参与消息身份**
+ * （同 `.fm-flow-status` 的待遇）——由 `syncDayLines` 在 diff 后统一收敛，位置
+ * 恒为「各自当天首条消息之前」。
  */
 function keyedDiff(flow, msgs, conv) {
   const loadMore = flow.querySelector('.fm-load-more-row');
@@ -3524,6 +3598,7 @@ function renderMessages(msgs, { stickBottom = true } = {}) {
     updateLoadMoreRow();
     renderFlowStatus(msgs.length > 0, false); // 内容到位 ⇒ 撤加载态；确为空 ⇒ 换空态
     keyedDiff(flow, msgs, conv);
+    syncDayLines(flow); // 日期行上移批：diff 后统一收敛（位置 = 当天首条消息之前）
     // 附件上传卡（attachcl 批）：**好友窗 / 群窗 / 设备窗的唯一挂载点**（本函数服务三种
     // 会话面）⇒ 三面共用同一渲染器（`attachUpload.renderUploadCards`）。
     // 📌 uxconsist Phase B（§4.1-#4）：挂载判据**放开到设备窗**（改前设备窗不挂 ⇒ 动作面
@@ -3763,6 +3838,9 @@ function prependMessages(older) {
   for (const m of older) frag.appendChild(bubbleEl(m, conv));
   const anchor = flow.querySelector('.fm-load-more-row');
   flow.insertBefore(frag, anchor ? anchor.nextSibling : flow.firstChild);
+  // 日期行上移批：前插的更早消息可能跨天 ⇒ 与首帧/追加共用同一收敛点（滚动补偿
+  // 之前跑，行高差一并计入补偿量）。
+  syncDayLines(flow);
   createIconsIn(flow);
   flow.scrollTop = flow.scrollHeight - prevHeight + prevTop;
 }
@@ -3823,6 +3901,7 @@ function appendMessage(m, ours = false) {
   // （非乐观腿的自播帧）仍恒回底 —— 主窗裁定（2026-09-11 A-branch）同向。
   const atBottom = isAtBottom(modalEls.flow);
   modalEls.flow.appendChild(bubbleEl(m, conv));
+  syncDayLines(modalEls.flow); // 日期行上移批：新到消息跨天 ⇒ 当天首条前落一行
   createIconsIn(modalEls.flow);
   if (atBottom || ours) fmFollowBottom();
   else { fmUnseenCount++; fmSyncFollowPill(); }

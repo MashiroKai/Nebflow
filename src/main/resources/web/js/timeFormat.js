@@ -123,6 +123,33 @@ export function formatFooterTime(ms, now = new Date()) {
   return t('time.footerDate', { date: d.toLocaleDateString(getLocale(), opts), time });
 }
 
+// ── Day-layered date LINE label (日期行上移批 2026-11-06, author order ②) ────
+// The conversation window stops repeating the date layer on EVERY message
+// footer: the date moves up into a centered per-day line (`.fm-day-sep`,
+// messages.js), shown once per local calendar day. The bucket ladder is THE
+// SAME as formatFooterTime minus the time half — same isSameLocalDay /
+// localWeekStart / Intl composition, so the two faces can never drift:
+//   today             → '' (今天本就是纯时钟档，无日期行——与改前 footer 一致)
+//   yesterday         → 昨天 / Yesterday        ('time.yesterday',既有键)
+//   this local week   → 星期X / Weekday          ('time.dayWeekday',新键)
+//   earlier           → M月D日 / MMM D (+YYYY cross-year) — Intl,同 formatter。
+// @param {number} ms epoch millis (local timezone)
+// @param {Date} [now] injectable clock — evidence harness / tests only
+// @returns {string} label ('' = no date line for this day)
+export function formatFooterDay(ms, now = new Date()) {
+  const d = new Date(ms);
+  if (isSameLocalDay(d, now)) return '';
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (isSameLocalDay(d, yesterday)) return t('time.yesterday');
+  if (d >= localWeekStart(now)) {
+    return t('time.dayWeekday', { weekday: t('time.weekday.' + WEEKDAY_KEY[d.getDay()]) });
+  }
+  const opts = /** @type {Intl.DateTimeFormatOptions} */ ({ month: 'short', day: 'numeric' });
+  if (d.getFullYear() !== now.getFullYear()) opts.year = 'numeric';
+  return d.toLocaleDateString(getLocale(), opts);
+}
+
 /**
  * Re-format every declared clock text node under `root` in place.
  *

@@ -1,0 +1,13 @@
+✓ scroll-pill centering gate passed — 形态单源 css/chat.css:4407，居中锚 left: 50% + translateX(-50%) 在册，全族 46 个 css 内 0 处靠边手法/丢态
+node scripts/check-input-surface.mjs
+input-surface: OK — 输入面造型单源（css/inputSurface.css），零第二套（豁免 1 条已具名登记）
+node scripts/check-mobile-canvas-strip.mjs
+✓ mobile-canvas-strip gate passed — 环带面键 14 个（玻璃成员 2）· 水平 mask 0 处 · 非主胶囊材质 0 处 · 下缘渐隐 28px（玻璃带 64px）
+node scripts/check-panel-unify.mjs
+✓ panel-unify gate passed — 面板标题登记 5 槽全取规定令牌、按钮去重登记 9 面（dom-guard 4 / css-hide 2 / record 3）、例外 3 条、未收编清查 6 处（盘点项）
+node scripts/check-settings-ios-rows.mjs
+settings-ios-rows：web 树 = /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/contact-panel-unify/src/main/resources/web
+  R1 重启服务零痕 · R2 可点进行唯一样式+chevron · R3 行内右侧不重复数值 · R4 动作钮走令牌
+PASS: 设置行只有一套实现（setNavRow / setRow / set-btn），chevron 单点，计数只说一遍，动作钮走令牌。
+Frontend static gates passed (design-tokens msgstyle bubble-side self-explaining circular fixture-secrets api-routes freeze-state freeze-silence flat-buttons glass canvas-hint toggle scroll-pill input-surface mobile-canvas-strip badge-words settings-ios-rows panel-unify).
+GATES_EXIT=0

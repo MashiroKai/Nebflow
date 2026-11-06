@@ -398,7 +398,14 @@ export default {
   'profile.groupRemarkPlaceholder': 'Remark you gave this group (empty clears)',
   'profile.groupDescriptionLabel': 'Group description',
   'profile.groupDescriptionPlaceholder': 'Group description (empty clears)',
-  'profile.localCacheHint': 'Local cache · not synced',
+  // Cross-device sync badge, tri-state (profile-sync badge batch 2026-11-06,
+  // author order 3(a)): the old hardcoded 「本地缓存·未同步」 chip is replaced by
+  // the REAL state from GET /api/profile/sync-status (ProfileSync.status),
+  // re-read on open / after save / on the profileDescriptionsChanged frame.
+  // Honest-first: no evidence of a successful push ⇒ never claim synced.
+  'profile.sync.synced': 'Synced',
+  'profile.sync.syncing': 'Pending sync',
+  'profile.sync.localOnly': 'Local only',
   'profile.friendNote': 'Your remark stays on this device; upstream sync for self-introductions and group descriptions is not available yet, so those are cached locally. Both fields are included in search.',
   'profile.groupNote': 'Your group remark stays on this device; upstream sync for group descriptions is not available yet, so it is cached locally. Both fields are included in search.',
   'contacts.deleteTitle': 'Delete friend',
@@ -2024,6 +2031,11 @@ export default {
   'time.footerYesterday': 'Yesterday {time}',
   'time.footerWeekday': '{weekday} {time}',
   'time.footerDate': '{date} {time}',
+  // Weekday bucket of the conversation window's once-per-day centered date
+  // line (formatFooterDay — same bucket ladder as the footer labels, time half
+  // removed). {weekday} = time.weekday.*; yesterday / date buckets reuse
+  // time.yesterday and Intl respectively.
+  'time.dayWeekday': '{weekday}',
   'time.weekday.sun': 'Sunday',
   'time.weekday.mon': 'Monday',
   'time.weekday.tue': 'Tuesday',
@@ -2567,8 +2579,11 @@ export default {
   'dropbox.noMessages': 'No messages',
 
   // === Chat History Search ===
-  'search.btnTitle': 'Search chat history',
-  'search.title': 'Search Messages',
+  // Two-character title ruling (author order 2026-11-06, verbatim 「不要有省略
+  // 那就用搜索两个字吧」): the whole 「搜索聊天记录」-family wording retires —
+  // the search page title and the opener tooltip are just 「搜索」/「Search」.
+  'search.btnTitle': 'Search',
+  'search.title': 'Search',
   'search.placeholder': 'Keyword…',
   'search.scopeCurrent': 'Current session',
   'search.scopeAll': 'All sessions',
