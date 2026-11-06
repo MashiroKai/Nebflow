@@ -127,13 +127,25 @@ class OpenAiAdapter(
     if text != null && text.nonEmpty then Some(Json.obj("role" -> "system".asJson, "content" -> text.asJson))
     else None
 
-  /** Shared by streaming and non-streaming sends; context follows all tool results. */
+  /** Shared by streaming and non-streaming sends; context follows all tool results.
+   *
+   * cache-warmup 批（2026-11-06）：临时段顺序 = REQUEST-ONLY 提醒段 → systemDynamic，
+   * 一律排在持久历史之后（OpenAI 兼容面是隐式前缀缓存：拼在尾部即保前缀逐字节
+   * 不变；语义与 Anthropic 面一致，CachePrefixAssemblySpec 判据⑤钉两面）。
+   */
   private[providers] def requestMessages(params: SendMessageParams, passback: Boolean): List[Json] =
     val history = buildSystemMessage(params).toList ++ toOpenAiMessages(params.messages, passback)
+    val roTail = params.requestOnlyContext.map(_.textContent).filter(_.nonEmpty).map { text =>
+      Json.obj("role" -> "user".asJson, "content" -> text.asJson)
+    }
     val tail = params.systemDynamic.filter(_.nonEmpty).map { text =>
       Json.obj("role" -> "user".asJson, "content" -> text.asJson)
     }
-    history ++ tail.toList
+    val ephemeral = roTail ++ tail.toList
+    // 可归因观测（cache-warmup 批）：最终 wire 装配点采指纹（sessionId=None 的
+    // 辅助面在 observeWire 内零采集；指纹无正文）。
+    CacheAttribution.observeWire("openai", params, providerId, history, ephemeral)
+    history ++ ephemeral
 
   private[providers] def toOpenAiMessages(
     messages: List[Message],

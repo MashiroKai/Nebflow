@@ -124,7 +124,9 @@ class DevicesDeltaBaselineSpec extends CatsEffectSuite:
    * this reads the rendered request the model sees). Empty = no devices reminder.
    */
   private def deviceDeltaLines(req: LlmRequest): List[String] =
-    val lines = req.messages.map(_.textContent).mkString("\n").split("\n").toList
+    // cache-warmup 批（2026-11-06）：devices 差量提示行是 REQUEST-ONLY——
+    // 走 requestOnlyContext（适配器排在持久历史断点之后），不在 messages 里。
+    val lines = req.requestOnlyContext.map(_.textContent).mkString("\n").split("\n").toList
     val idx = lines.indexWhere(_.contains(DeviceMarker))
     if idx < 0 then Nil
     else lines.drop(idx + 1).takeWhile(l => l.startsWith("+") || l.startsWith("-"))
@@ -217,7 +219,7 @@ class DevicesDeltaBaselineSpec extends CatsEffectSuite:
         lines3 = deviceDeltaLines(req3)
       yield
         // ── P2(b) 真变更仍提示：成员增 / 成员删 / 条目文本变更各一例 ──
-        assert(lines2.nonEmpty, s"真实 roster 变更必须仍注入 devices 提示行:\n${req2.messages.map(_.textContent).mkString("\n")}")
+        assert(lines2.nonEmpty, s"真实 roster 变更必须仍注入 devices 提示行（requestOnlyContext）:\n${req2.requestOnlyContext.map(_.textContent).mkString("\n")}")
         assert(lines2.exists(l => l.contains("DEVZ")), s"成员增（+Z）缺失: $lines2")
         assert(lines2.exists(l => l.contains("DEVY")), s"成员删（-Y）缺失: $lines2")
         assert(lines2.exists(l => l.contains("cwd=/p2")), s"条目文本变更（新画像后缀）缺失: $lines2")
@@ -375,11 +377,11 @@ class DevicesDeltaBaselineSpec extends CatsEffectSuite:
           val linesB = deviceDeltaLines(reqB2)
           assert(
             linesA.nonEmpty,
-            s"会话 A 必须被告知这次 roster 变化（注入是每会话的）: ${reqA2.messages.map(_.textContent).mkString("\n")}"
+            s"会话 A 必须被告知这次 roster 变化（注入是每会话的; requestOnlyContext）: ${reqA2.requestOnlyContext.map(_.textContent).mkString("\n")}"
           )
           assert(
             linesB.nonEmpty,
-            s"会话 B 必须被告知这次 roster 变化（注入是每会话的）: ${reqB2.messages.map(_.textContent).mkString("\n")}"
+            s"会话 B 必须被告知这次 roster 变化（注入是每会话的; requestOnlyContext）: ${reqB2.requestOnlyContext.map(_.textContent).mkString("\n")}"
           )
           assert(
             linesA.exists(_.contains("PEERP2")) && linesB.exists(_.contains("PEERP2")),

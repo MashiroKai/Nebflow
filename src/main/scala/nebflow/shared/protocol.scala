@@ -123,7 +123,20 @@ case class LlmRequest(
    * `UTSC/glm-5.3-flash SILENTLY EXCLUDED` 反复出现）。缺省 Nil = 未钉/无剔除
    * （既有构造点逐字零改动）。
    */
-  pinSkips: List[(String, CandidateSkipCause)] = Nil
+  pinSkips: List[(String, CandidateSkipCause)] = Nil,
+  /**
+   * REQUEST-ONLY 装配段（cache-warmup 批 2026-11-06，作者补充令 §二）：
+   * 请求级环境/分支/维护提醒（contextMsg/branchMsg/maintenanceMsg）。
+   *
+   * 为什么必须与 [[messages]] 分离：这些提醒**不持久化**——下一轮真实历史是
+   * 「H + assistant/tool_result」，不含 R。若把它们拼进 messages，适配器的
+   * 消息尾缓存断点就会落在 R 上 ⇒ 缓存写到「H+R」，而 H+R 不是任何新请求的
+   * 前缀 ⇒ 保证性 miss（CachePrefixAssemblySpec 判据①②的红）。修复后两适配器
+   * 都把本段排在**持久历史断点之后**再上线（Anthropic 面断点钉 H 尾；OpenAI 面
+   * 拼在历史尾部保持前缀），语义与 [[systemDynamic]] 同族但保持提醒的
+   * 消息边界（两发送面、两协议、流/非流一致）。缺省 Nil = 既有构造点逐字零改动。
+   */
+  requestOnlyContext: List[Message] = Nil
 )
 
 case class TokenUsage(
