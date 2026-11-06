@@ -225,13 +225,33 @@ object PerceptionStore:
       val jp = p.toNIO
       val bytes = json.asJson.noSpaces.getBytes(StandardCharsets.UTF_8)
       if Files.exists(jp) then
-        restrictFile(jp) // narrow BEFORE new bytes (same order as SecretsStore discipline)
-        Files.write(jp, bytes, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE)
+        // Replace the directory entry, never follow a pre-existing symlink. The
+        // temporary file is owner-only before its first byte; rename keeps the
+        // old complete value visible until the new complete value is ready.
+        replacePrivate(jp, bytes)
       else
         writePrivateNew(jp, bytes)
       restrictFile(jp)
       Right(())
     catch case e: Throwable => Left(s"${p.last}: ${e.getClass.getSimpleName}: ${e.getMessage}")
+
+  /** Replace through a same-directory, owner-only file, so the target path is never followed. */
+  private[perception] def replacePrivate(jp: JPath, bytes: Array[Byte]): Unit =
+    val parent = jp.getParent
+    val tmp = Files.createTempFile(parent, s".${jp.getFileName.toString}.", ".tmp", filePerms)
+    try
+      val ch = Files.newByteChannel(tmp, java.util.Set.of(StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING))
+      try
+        val buffer = java.nio.ByteBuffer.wrap(bytes)
+        while buffer.hasRemaining do ch.write(buffer)
+      finally ch.close()
+      try
+        Files.move(tmp, jp, java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE)
+      catch
+        case _: java.nio.file.AtomicMoveNotSupportedException =>
+          Files.move(tmp, jp, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+    finally
+      Files.deleteIfExists(tmp)
 
   /** CREATE_NEW with 0600 from the first byte (mode from the creation attribute). */
   private[perception] def writePrivateNew(jp: JPath, bytes: Array[Byte]): Unit =
