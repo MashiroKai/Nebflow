@@ -223,6 +223,23 @@ class PerceptionCoreSpec extends FunSuite:
 
   // ── PerceptionStore ────────────────────────────────────────────────────
 
+  test("store: saveAccounts replaces a symlink without overwriting its target") {
+    val tmp = Files.createTempDirectory("perception-symlink-spec")
+    val root = os.Path(tmp)
+    val store = new PerceptionStore(root)
+    store.ensureDirs()
+    val outside = Files.createTempFile("perception-outside", ".json")
+    Files.writeString(outside, "sentinel")
+    Files.createSymbolicLink((root / "accounts.json").toNIO, outside)
+
+    val result = store.saveAccounts(Nil)
+
+    assert(result.isRight)
+    assertEquals(Files.readString(outside), "sentinel")
+    assert(!Files.isSymbolicLink((root / "accounts.json").toNIO))
+    assertEquals(store.loadAccounts(), Nil)
+  }
+
   test("store: 账户落盘无授权码值；草稿/审计/spool/账单缓冲全链路") {
     val tmp = Files.createTempDirectory("perception-spec")
     val store = new PerceptionStore(os.Path(tmp))
