@@ -197,6 +197,11 @@ for (const scheme of ['light', 'dark']) {
         ? +((dock.querySelector('.ask-input') || { getBoundingClientRect: () => ({ top: 0 }) }).getBoundingClientRect().top - cols.getBoundingClientRect().bottom).toFixed(2)
         : null,
       dockRowGap: dock ? parseFloat(getComputedStyle(dock).rowGap) || 0 : 0,
+      // 毛玻璃批（2026-11-06）读数：mask 退役 ⇒ 列 padding-bottom 即收口净空，
+      // 内容最低可达位 = 列盒底 − padding（= 输入条顶缘上方一个列缝）。
+      colPadBottom: cols ? parseFloat(getComputedStyle(cols).paddingBottom) || 0 : 0,
+      colUnder: dock ? parseFloat(getComputedStyle(dock).getPropertyValue('--ask-under')) || 0 : 0,
+      lastBubToInputGap: (lastBub && dock) ? +( (dock.querySelector('.ask-input') || { getBoundingClientRect: () => ({ top: 0 }) }).getBoundingClientRect().top - lastBub.getBoundingClientRect().bottom).toFixed(2) : null,
       colwrapRect: (() => {
         const w = dock && dock.querySelector('.ask-colwrap');
         const b = w ? w.getBoundingClientRect() : null;
@@ -233,10 +238,12 @@ for (const scheme of ['light', 'dark']) {
     // C4 改判（作者令 2026-11-05 09:32「调整窗口大小会导致对话框和内容直接有一大段
     // 空白」）：12:52 令的「中线截断（--ask-trunc-h = 面板高 × 50%）」退役——那条线
     // 画在列上、基准却是面板高（列 + 缝 + 输入条），列的下半段恒被 alpha 0 遮掉。
-    // 新法 = 底缘收口锚在列自己的盒上（mask 末停 100%，尾部渐出 --ask-col-tail 落
-    // 在列 padding-bottom 之内）⇒ 判据换成三件：① 列内 mask 末停 = 100%（锚列盒，
-    // 不是中途某个 px）；② colwrap 仍 overflow:visible；③ 列底与输入条的间距 = dock
-    // 的 row-gap（几何上真的贴住，不留空白带）。
+    // C4 再改判（毛玻璃批 2026-11-06，作者令「ask 气泡用真毛玻璃」）：mask 载体
+    // 整体退役（mask 是 backdrop root，架空子气泡 backdrop-filter = 半透明假玻璃，
+    // 改前像素实证 diff ≈ 0.22）⇒ 底缘收口改 **列 padding-bottom = --ask-under +
+    // --ds-space-1h**：① 列零 mask-image；② colwrap 仍 overflow:visible；③ 内容
+    // 最低可达位 = 输入条顶缘上方一个列缝（最新气泡完全在聊天框之上，作者同日令
+    // ②「可以拉动到聊天框之上」；改前最新气泡底边扎进输入条 17px）。
     // 几何腿只在列**真的被布局出来**时才算数：本夹具的亮档里 canvas 面是 0×0
     // （C1 的 send/top 读数同为 0 ⇒ 该档整体不可测），这时「列底贴 row-gap」拿
     // 不到数据。旧 C4 在这种状态下是 0 对 0 的**空过**（Math.abs(0−0)≤2），本批
@@ -245,9 +252,11 @@ for (const scheme of ['light', 'dark']) {
     // （L6a 桌面三档 / L6h 手机两档）。
     const geomMeasurable = !!(m.colwrapRect && m.colwrapRect.colH > 0);
     const gapOk = !geomMeasurable || Math.abs(m.colToInputGap - m.dockRowGap) <= 0.6;
-    ok('C4 底缘收口锚在列自身的盒（mask 末停 100%）+ colwrap overflow:visible + 列底贴输入条 row-gap（12:52「中线截断」已由 11-05 令退役；几何腿不可测时只判 CSS 形）',
-      m.colMaskEndsAt100 && m.colOverflow === 'visible' && gapOk,
-      JSON.stringify({ maskEnd100: m.colMaskEndsAt100, overflow: m.colOverflow, gap: m.colToInputGap, rowGap: m.dockRowGap, geomMeasurable, wrap: m.colwrapRect, mask: m.colMask && String(m.colMask).slice(0, 130), lastStop }));
+    const contentOk = !geomMeasurable || (m.lastBubToInputGap !== null && Math.abs(m.lastBubToInputGap - m.dockRowGap) <= 1.5);
+    const padOk = !geomMeasurable || (m.colPadBottom > 0 && Math.abs(m.colPadBottom - (m.colUnder + m.dockRowGap)) <= 1.5);
+    ok('C4 底缘收口锚在列 padding（列零 mask + padding-bottom = --ask-under + row-gap + 最新气泡在输入条之上；mask 载体已随毛玻璃批 2026-11-06 退役；几何腿不可测时只判 CSS 形）',
+      String(m.colMask || 'none') === 'none' && m.colOverflow === 'visible' && gapOk && contentOk && padOk,
+      JSON.stringify({ mask: String(m.colMask), overflow: m.colOverflow, padBottom: m.colPadBottom, under: m.colUnder, rowGap: m.dockRowGap, gap: m.colToInputGap, bubGap: m.lastBubToInputGap, geomMeasurable, wrap: m.colwrapRect }));
     ok('C5 截断由内容 mask 承担、零可见遮罩条（dock 内无 .ds-edge-fade / .ask-veil 元素）',
       await page.evaluate(() => document.querySelectorAll('.ask-dock .ds-edge-fade, .ask-dock .ask-veil').length === 0),
       'verdict=veil 计数');
