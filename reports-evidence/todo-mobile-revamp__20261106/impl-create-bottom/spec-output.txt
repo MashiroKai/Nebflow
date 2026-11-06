@@ -8,7 +8,7 @@ PASS  A2c 列表 scrollTop/scrollHeight/clientHeight 不变  — {"top":0,"sh":6
 PASS  A2d document.scrollingElement scrollTop/scrollHeight 恒定 + window.scrollY 0  — {"top":0,"sh":812,"ch":812} → {"top":0,"sh":812,"ch":812} / winY 0→0
 PASS  A3 抽屉不撑高页面（页体与列表内层 scrollHeight 逐值不变）  — {"body":750,"bodyCh":750,"inner":151} → {"body":750,"bodyCh":750,"inner":151}
 PASS  A4a 开合过渡串 = 液态形变单源（morphTransition(transform+opacity, slow) 原文）  — {"got":{"props":"transform, opacity","dur":"0.4s, 0.4s","ease":"cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1)","transform":"none","opacity":"1"},"want":"transform 400ms cubic-bezier(0.4, 0, 0.2, 1), opacity 400ms cubic-bezier(0.4, 0, 0.2, 1)"}
-PASS  A4b 开合中位移只吃 transform（中间帧 = 纯平移矩阵 ty>0，盒 x/宽 = 终态，y = 终态y − ty）  — frames=47 (settled-leg 4) settledY=547.42 sections=0/375 ty=1.95→1.35→0.83→0.49 yErr=0.00
+PASS  A4b 开合中位移只吃 transform（中间帧 = 纯平移矩阵 ty>0，盒 x/宽 = 终态，y = 终态y − ty）  — frames=47 (settled-leg 4) settledY=547.47 sections=0/375 ty=1.83→1.32→0.86→0.49 yErr=0.00
 PASS  A4c 落位终态：transform=none / opacity=1  — {"tf":"none","op":"1"}
 PASS  G0 读数口径校验：UA 默认焦点环 ≠ 蓝（蓝 = 作者环；本面 outlineStyle 只能 none/auto）  — {"style":"none","color":"rgb(27, 30, 38)"}
 PASS  G1 标题框蓝边 0 条（指针点入：作者 outline = none / 四边宽 0 / 非蓝）  — {"active":true,"modality":"pointer","outlineStyle":"none","outlineWidth":"3px","outlineColor":"rgb(27, 30, 38)","borderWidths":["0px","0px","0px","0px"],"borderColors":["color(srgb 0.105882 0.117647 0.14902 / 0.26)","color(srgb 0.105882 0.117647 0.14902 / 0.26)","color(srgb 0.105882 0.117647 0.14902 / 0.26)","color(srgb 0.105882 0.117647 0.14902 / 0.26)"],"boxShadow":"none"}
@@ -19,9 +19,9 @@ PASS  A2f dock / 列表滚区 / 文档滚轴关后与开前逐值相同  — doc
 PASS  A7b 遮罩点击 ⇒ 抽屉收起（两条关闭路径都在）
 PASS  G3 暗主题：标题框蓝边同为 0 条  — {"outlineStyle":"none","outlineWidth":"3px","outlineColor":"rgb(232, 234, 237)","borderWidths":["0px","0px","0px","0px"],"borderColors":["color(srgb 0.909804 0.917647 0.929412 / 0.26)","color(srgb 0.909804 0.917647 0.929412 / 0.26)","color(srgb 0.909804 0.917647 0.929412 / 0.26)","color(srgb 0.909804 0.917647 0.929412 / 0.26)"]}
 PASS  S0 定时任务页点加号 ⇒ 抽屉开（可见），且挂在页面壳上（与待办页同一包含块）  — {"drawers":1,"hosts":[{"hidden":false,"parentId":"mobile-page live","isPageShell":true}]}
-PASS  S1 定时任务页：新建抽屉贴页底（盒底 = 页壳底 ≤0.5px）且表单在抽屉体内  — box={"x":0,"y":543.81,"w":375,"h":206.19,"top":543.81,"bottom":750} page={"x":0,"y":0,"w":375,"h":750,"top":0,"bottom":750} shape={"drawers":1,"drawerTop":0,"body":1,"inlineRows":3,"hidden":false}
-PASS  S2 定时任务页：.mf-drawer-top 零残留（与待办页同一套底抽屉）  — {"drawers":1,"drawerTop":0,"body":1,"inlineRows":3,"hidden":false}
+PASS  S1 定时任务页：新建抽屉贴页底（盒底 = 页壳底 ≤0.5px）且表单在抽屉体内  — box={"x":0,"y":512.81,"w":375,"h":237.19,"top":512.81,"bottom":750} page={"x":0,"y":0,"w":375,"h":750,"top":0,"bottom":750} shape={"drawers":1,"drawerTop":0,"body":1,"inlineRows":4,"hidden":false}
+PASS  S2 定时任务页：.mf-drawer-top 零残留（与待办页同一套底抽屉）  — {"drawers":1,"drawerTop":0,"body":1,"inlineRows":4,"hidden":false}
 PASS  S3 定时任务页：开合过渡串同为液态形变 slow 档（transform+opacity / 唯一曲线）  — {"got":{"props":"transform, opacity","dur":"0.4s, 0.4s","ease":"cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1)","transform":"none","opacity":"1"},"want":"transform 400ms cubic-bezier(0.4, 0, 0.2, 1), opacity 400ms cubic-bezier(0.4, 0, 0.2, 1)"}
-PASS  S4 定时任务页：开合零位移（首行 rect / dock / 列表滚区 / 文档滚轴 / 各层 scrollHeight 不变）  — row {"x":16,"y":128,"w":343,"h":60,"top":128,"bottom":188}→{"x":16,"y":128,"w":343,"h":60,"top":128,"bottom":188} / list {"top":0,"sh":650,"ch":650,"st":{"x":16,"y":100,"w":343,"h":650,"top":100,"bottom":750}}→{"top":0,"sh":650,"ch":650,"st":{"x":16,"y":100,"w":343,"h":650,"top":100,"bottom":750}} / h {"body":750,"bodyCh":750,"inner":650}→{"body":750,"bodyCh":750,"inner":650}
-PASS  S5 定时任务页：关后首行 / dock 仍原位、抽屉 hidden  — row {"x":16,"y":128,"w":343,"h":60,"top":128,"bottom":188} dock {"x":12,"y":750,"w":351,"h":54,"top":750,"bottom":804}
+PASS  S4 定时任务页：开合零位移（首行 rect / dock / 列表滚区 / 文档滚轴 / 各层 scrollHeight 不变）  — row {"x":16,"y":110,"w":343,"h":92,"top":110,"bottom":202}→{"x":16,"y":110,"w":343,"h":92,"top":110,"bottom":202} / list {"top":0,"sh":668,"ch":668,"st":{"x":16,"y":82,"w":343,"h":668,"top":82,"bottom":750}}→{"top":0,"sh":668,"ch":668,"st":{"x":16,"y":82,"w":343,"h":668,"top":82,"bottom":750}} / h {"body":750,"bodyCh":750,"inner":668}→{"body":750,"bodyCh":750,"inner":668}
+PASS  S5 定时任务页：关后首行 / dock 仍原位、抽屉 hidden  — row {"x":16,"y":110,"w":343,"h":92,"top":110,"bottom":202} dock {"x":12,"y":750,"w":351,"h":54,"top":750,"bottom":804}
 PASS  26 passed, 0 failed

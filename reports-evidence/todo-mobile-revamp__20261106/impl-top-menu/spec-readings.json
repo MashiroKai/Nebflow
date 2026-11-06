@@ -242,15 +242,15 @@
         "selector": "button.mf-drawer-cancel-btn",
         "w": 44,
         "h": 44,
-        "hitW": 44,
-        "hitH": 44
+        "hitW": 48,
+        "hitH": 48
       },
       {
         "selector": "button.mf-drawer-done-btn",
         "w": 44,
         "h": 44,
-        "hitW": 44,
-        "hitH": 44
+        "hitW": 48,
+        "hitH": 48
       },
       {
         "selector": "input.tfl-row-title-input",
