@@ -210,10 +210,13 @@ private object MainBoot:
     // 首读即定档：PathUtil.resolvedLayer 的进程级快照（RootLadder.resolve 跑一次）。
     val root = PathUtil.dataRoot
     val rootLayer = nebflow.core.root.RootLadder.current
-    // [b2-owner 占位] OwnerGuard 接线调用位（下一节点实现判定，本节点不接任何判定）：
-    //   ownerGate 应挂在 GatewayMain.runGateway 开头（真实 boot 面）——
-    //   OwnerGuard.check(账号档 accountSub（RootLadder.current）, OwnerIdentity.localAnchor)，
-    //   拒启不静默；判定逻辑只在 core/root/Guards.scala（守卫单点铁律）。
+    // [b2-owner 占位] → 已落地（b1-guards 批）：ownerGate 挂在 GatewayMain.runGateway 开头
+    //   （真实 boot 面，即本占位自带的指引；全部启动臂经 bootGateway ⇒ GatewayMain.run(Nil)
+    //   汇聚到 runGateway，同一 JVM 本行已定根定档）。OwnerGuard.check(账号档 accountSub
+    //   （RootLadder.current）, OwnerIdentity.localAnchor)，拒启不静默（raise 浮出，先于一切
+    //   HTTP 面）；判定逻辑只在 core/root/Guards.scala（守卫单点铁律）。CLI 面（CliRoute
+    //   分发）不挂闸 —— stand logout / stand login 正是 owner-mismatch 的救济路径。
+    //   spec：OwnerGateBootSpec（启动闸拒启行为）+ OwnerGuardSpec（纯判定）。
     // 后台任务输出落盘（输出查看补全批 2026-10-25 作者令需求④）：数据根在此
     // 定案后一次性开启（`<dataRoot>/bg-task-logs/`）——只在真实 boot 面开启，
     // CLI 路由与 spec（不跑 Main.run）保持纯内存，零测试污染。

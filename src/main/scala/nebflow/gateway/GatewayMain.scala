@@ -17,6 +17,7 @@ import nebflow.agent.*
 import nebflow.bridge.*
 import nebflow.core.*
 import nebflow.core.boot.ProcessSeal
+import nebflow.core.root.{OwnerGuard, RootLadder, RootLayer}
 import nebflow.core.daemon.{DaemonService, DaemonStore}
 import nebflow.core.hooks.*
 import nebflow.core.mcp.*
@@ -445,11 +446,54 @@ object GatewayMain extends IOApp:
           IO.pure(ExitCode.Error)
   end run
 
+  /**
+   * == owner 双点名校验闸（三层数据根批 · b1-guards；设计 §8.1(c)「owner 锁定面」行 / T2）==
+   *
+   * 挂载点：[[runGateway]] 第一句 —— Main.run 已定根（`setMachineRoot` + 阶梯定档，同一 JVM：
+   * 全部启动臂经 `bootGateway ⇒ GatewayMain.run(Nil)` 汇聚到这里，Main.scala:533），而
+   * Ember 的 server 在 runGateway 尾部才 build ⇒ 拒绝发生在任何 HTTP 面出现之前
+   * （拒启 = raise 浮出 ⇒ IOApp 退出码 ≠ 0）。CLI 面（CliRoute 分发）**不挂本闸**：
+   * `stand logout` / `stand login` 正是 owner-mismatch 的救济路径。
+   *
+   * 判据：本引擎服务的账号（有效根 = 账号档时取 `RootLayer.Account.accountSub`）vs 凭据里的
+   * owner（`OwnerIdentity.localAnchor` —— 与 /api/neblink/status 同一族取数：凭据文件里
+   * TLS 信任链落盘的 Logto id_token 的 `sub` 声明）。两者不等 ⇒ **拒启**并双点名 +
+   * 给 `stand logout` 行动建议（`OwnerGuard.check` 逐字模板，稳定码 owner-account-mismatch）。
+   * 判定逻辑只在 core/root/Guards.scala（守卫单点铁律），本 def 是调用点胶水：
+   * 取层 + 取锚 + 按层路由（层与锚走参数 = spec 注入面，OwnerGateBootSpec 直驱）。
+   *
+   * 为什么绝不静默降级：账号 A 的凭据跑在账号 B 的账号根上 = 数据面串号（B 的项目/secret/
+   * 会话用的是 A 的服务器身份）。宁可起不来并说清楚，也不许起得来但说错话。
+   * 无锚（读不到凭据 / 旧凭据无 id_token）⇒ fail-open；平铺档 / 未登录层没有「本引擎
+   * 服务的账号」可对 ⇒ 跳过不拒（不新增拒绝面 —— 与 `OwnerGuard` 的
+   * `credentialSub = None ⇒ Right` 同一条纪律）。
+   */
+  private[gateway] def ownerGate(layer: RootLayer, credentialAnchor: IO[Option[OwnerAnchor]]): IO[Unit] =
+    layer match
+      case RootLayer.Account(_, servedSub, accountRoot) =>
+        credentialAnchor.flatMap { anchor =>
+          OwnerGuard.check(servedSub, anchor.map(_.sub)) match
+            case Right(_) =>
+              logger.info(
+                s"[root] owner check passed for account '$servedSub' (root $accountRoot, " +
+                  s"credential ${anchor.map(a => s"owner '${a.sub}'").getOrElse("no anchor — fail-open")})"
+              )
+            case Left(refusal) =>
+              logger.error(s"[root] REFUSING to start: ${refusal.message}") *>
+                IO.raiseError(new IllegalStateException(refusal.message))
+        }
+      case other =>
+        // 平铺档 / 未登录层：没有「本引擎服务的账号」可对，不新增拒绝面
+        logger.info(s"[root] owner check skipped (root layer=${other.name})")
+
   private def runGateway: IO[Unit] =
-    // Team #11 ④: log which Windows toolchain pieces (Git Bash / rg)
-    // resolved at boot — missing pieces must be loud up front, not discovered
-    // later inside a failing tool call. No-op off Windows.
-    nebflow.core.WindowsDepProbe.warnIfMissing *>
+    // 三层数据根批（b1-guards）：owner 闸先于一切 HTTP 面（T2 拒启 —— 占位注释
+    // Main.scala:189-193 的落地，真实 boot 面就是这里）。
+    ownerGate(RootLadder.current, OwnerIdentity.localAnchor) *>
+      // Team #11 ④: log which Windows toolchain pieces (Git Bash / rg)
+      // resolved at boot — missing pieces must be loud up front, not discovered
+      // later inside a failing tool call. No-op off Windows.
+      nebflow.core.WindowsDepProbe.warnIfMissing *>
       // Read port from config first, then run the boot entry gate on that port
       GatewayConfig.load.flatMap { cfg =>
         entryGate(cfg) *> GatewayConfig.load.flatMap { cfg =>
@@ -501,16 +545,18 @@ object GatewayMain extends IOApp:
               // 目录文件缺席 ⇒ 全腿 no-op。失败不阻断启动（与上两行迁移同款纪律）。
             try nebflow.core.ModelChainMigration.migrateLegacyPresetRefs()
             catch case e: Exception => logger.warn(s"preset→chain migration failed: ${e.getMessage}")
-            // config-single-source batch (author rulings ①–④, 2026-11-05) — boot face:
-            //  · the config-file rename migration (`nebflow.json` → `stand.json`) runs
-            //    inside PathUtil.configJsonPath on first touch and logs one line;
-            //  · `llm.fallback` is seeded from the CURRENT effective chain the first
-            //    time, so the chain is visible/editable in the file (one truth);
-            //  · unresolvable refs in that section are reported as WARNINGS (never a
-            //    silent skip) and the effective candidate plan is logged once — the
-            //    observability the author asked for. Failures never block boot.
+              // config-single-source batch (author rulings ①–④, 2026-11-05) — boot face:
+              //  · the config-file rename migration (`nebflow.json` → `stand.json`) runs
+              //    inside PathUtil.configJsonPath on first touch and logs one line;
+              //  · `llm.fallback` is seeded from the CURRENT effective chain the first
+              //    time, so the chain is visible/editable in the file (one truth);
+              //  · unresolvable refs in that section are reported as WARNINGS (never a
+              //    silent skip) and the effective candidate plan is logged once — the
+              //    observability the author asked for. Failures never block boot.
             try nebflow.service.ConfigService.ensureConfigConvergence().unsafeRunSync()
-            catch case e: Exception => logger.warn(s"config convergence (llm.fallback / unavailable windows) failed: ${e.getMessage}")
+            catch
+              case e: Exception =>
+                logger.warn(s"config convergence (llm.fallback / unavailable windows) failed: ${e.getMessage}")
             try
               val checked = Config.loadServiceConfig()
               nebflow.shared.FallbackChain.logValidation(checked)
@@ -2035,7 +2081,9 @@ object GatewayMain extends IOApp:
                                                         .prepare(DaemonStore(), cfg.port.value)
                                                         .handleErrorWith(e =>
                                                           logger
-                                                            .warn(s"perception daemon dock prepare failed: ${e.getMessage}")
+                                                            .warn(
+                                                              s"perception daemon dock prepare failed: ${e.getMessage}"
+                                                            )
                                                             .as(None)
                                                         )
                                                         .flatMap(up =>
@@ -2047,7 +2095,8 @@ object GatewayMain extends IOApp:
                                                               daemonService
                                                                 .autoStart(DaemonStore())
                                                                 .handleErrorWith(e =>
-                                                                  logger.warn(s"Daemon auto-start failed: ${e.getMessage}")
+                                                                  logger
+                                                                    .warn(s"Daemon auto-start failed: ${e.getMessage}")
                                                                 )
                                                                 .as(true)
                                                             )

@@ -7,6 +7,8 @@ import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
 
+import nebflow.core.root.{LoginGuard, Refusal}
+
 /**
  * headless 登录三命令 —— `login`（统一登录·路径② 无头密码登录）/ `logout` /
  * `whoami`（台账 #924, 2026-10-26 统一登录批）。
@@ -104,9 +106,7 @@ private[cli] object LoginCopy:
   val PromptAccount = "Account: "
   val PromptPassword = "Password: "
 
-  /**
-   * 无终端（管道/测试）时的如实降级警告：读得到输入但**关不掉回显**——不谎称隐藏。
-   */
+  /** 无终端（管道/测试）时的如实降级警告：读得到输入但**关不掉回显**——不谎称隐藏。 */
   val PromptNonInteractiveWarning =
     "[login] no terminal detected — password input will not be hidden (piped input)"
 
@@ -166,6 +166,22 @@ private[cli] object SignInFailure:
   val StatusUnreadable = Failure("status_unreadable", "the gateway returned no usable account status")
   val SignOutFailed = Failure("sign_out_failed", "the gateway rejected the sign-out request")
 
+  /**
+   * 三层数据根批（b1-guards；设计 §8.1(c)「换账号硬拒」行 / §4.4）：本机已有活实例且目标
+   * 账号 ≠ 当前账号 ⇒ 拒绝登录（先登出）。单实例单端口 = 登录即换根，不登出就登录只会得到
+   * 「旧实例还占着端口」的谎话报错 —— 前置门把真正的原因说出来。判定面 =
+   * `LoginGuard.checkLoginAllowed`（复用 `SingleInstanceGuard.checkPort`，不新增端口、不改 6138）。
+   * 码形态注意：`SignInFailure` 闭集的稳定码按本仓 CLI 约定是 **snake_case**
+   * （`LoginCommandSpec` 的 `[a-z0-9_]+` 断言）⇒ 本码位落 `account_switch_requires_logout`；
+   * `LoginGuard` 侧的连字符形态（`account-switch-requires-logout`，OwnerGuard 族风格）保留为
+   * **底层码**，两值同源（`snake_case` 化由本闭集完成），语义只有一个。
+   */
+  val AccountSwitchRequiresLogout =
+    Failure(
+      LoginGuard.LoginCode.replace('-', '_'),
+      "this machine already serves a different account — run 'stand logout' first"
+    )
+
   /** 闭集全量（供 spec 断言：码非空、无重复、reason 非空）。 */
   val all: List[Failure] = List(
     InvalidCredentials,
@@ -179,7 +195,8 @@ private[cli] object SignInFailure:
     NoInput,
     LoginFailed,
     StatusUnreadable,
-    SignOutFailed
+    SignOutFailed,
+    AccountSwitchRequiresLogout
   )
 end SignInFailure
 
@@ -263,8 +280,7 @@ private[cli] object LoginFlow:
     val d = detail.toLowerCase
     if d.contains("invalid_credentials") then SignInFailure.InvalidCredentials
     else if d.contains("rate_limited") then SignInFailure.RateLimited
-    else if d.contains("logto-not-configured") || d.contains("logto_not_configured") then
-      SignInFailure.LogtoUnavailable
+    else if d.contains("logto-not-configured") || d.contains("logto_not_configured") then SignInFailure.LogtoUnavailable
     else if d.contains("transport_failed") then SignInFailure.TransportFailed
     else if d.contains("protocol_error") then SignInFailure.ProtocolError
     else if d.contains("register_failed") || d.contains("device_bound_other_account") ||
@@ -273,6 +289,8 @@ private[cli] object LoginFlow:
     else if d.contains("neblink not enabled") || d.contains("neblink service not initialized") then
       SignInFailure.NeblinkUnavailable
     else unknown
+
+  end failureOfDetail
 
   /**
    * 异常 → 失败分类。有网关包装 ⇒ 按 detail 分类（未识别落 `contextFallback`）；
@@ -322,13 +340,29 @@ private[cli] object LoginFlow:
 
   /**
    * 注入面（spec 直测）：`post` = 出站腿（路径 + 体 → 结果或异常）；
-   * `readAccount` / `readPassword` = 输入腿。
+   * `readAccount` / `readPassword` = 输入腿；`loginGate` = **登录前置门**（b1-guards 批；
+   * 生产默认 = `LoginGuard.checkLoginAllowed` —— 单实例单端口判定，复用
+   * `SingleInstanceGuard.checkPort`，不新增端口机制；spec 注入假门直测装配面，
+   * 见 `LoginGateCliSpec`）。
+   *
+   * == 登录前置门（三层数据根批 b1-guards；设计 §8.1(c)「换账号硬拒」行 / §4.4）==
+   * 输入校验之后、出站 POST 之前：机器层指针已有账号且端口上有本品牌活实例 ⇒ 拒绝并提示
+   * 先登出（单实例单端口 = 登录即换根，不登出就登录只会得到「旧实例还占着端口」的谎话
+   * 报错 —— 前置门把真正的原因说出来）。拒绝时守卫文案（双点名 + `stand logout` /
+   * `stand login` 建议 + 底层连字符码）**全透传**进 H3 失败行，闭集码位 =
+   * `account_switch_requires_logout`。目标账号位取**用户输入的账号标识**（登录前拿不到
+   * id_token 的 `sub`，与指针 `accountSub` 的精确同/异判定只能落到网关登录路由的后续腿）；
+   * 保守拒语义与参考实现（5ae680e99 的 `checkLoginAllowedOn(port, None)`）同形：
+   * 「已登录 + 活实例 ⇒ 先登出」，绝不产生假放行。
+   * 注意顺序：先校验输入（NoInput 语义不变），再做前置门判定，最后才出站 ——
+   * 端口探测有 1.5s 连接超时，绝不让它在输入都没给的情况下白跑。
    */
   def signInWith(
     ctx: CliContext,
     post: (String, Json) => IO[Either[Throwable, Json]],
     readAccount: IO[Option[String]],
-    readPassword: IO[Option[String]]
+    readPassword: IO[Option[String]],
+    loginGate: String => IO[Either[Refusal, Unit]] = LoginGuard.checkLoginAllowed
   ): IO[CliResult] =
     readAccount.flatMap {
       case None => IO.pure(signInFailure(ctx, SignInFailure.NoInput))
@@ -338,15 +372,22 @@ private[cli] object LoginFlow:
           case None => IO.pure(signInFailure(ctx, SignInFailure.NoInput))
           case Some(pw) if pw.isEmpty => IO.pure(signInFailure(ctx, SignInFailure.NoInput))
           case Some(pw) =>
-            // post 已是 IO[Either[Throwable, Json]]（attempt 由生产装配/注入面决定）。
-            post(LoginPath, Json.obj("account" -> account.asJson, "password" -> pw.asJson)).flatMap {
-              case Right(json) if !json.hcursor.downField("error").succeeded => signInSuccess(ctx, post)
-              case Right(json) =>
-                // 2xx 但带 error 字段 = 防御性出口（旧 pollStep 同口径）。
-                val detail = json.hcursor.downField("error").as[String].toOption.getOrElse("unexpected success-shape error")
-                IO.pure(signInFailure(ctx, failureOfDetail(detail)))
-              case Left(e) =>
-                IO.pure(signInFailure(ctx, failureOfMessage(Option(e.getMessage), SignInFailure.LoginFailed)))
+            // 前置门（单实例单端口）：已登录其它账号且有本品牌活实例 ⇒ 拒，守卫文案全透传
+            loginGate(account).flatMap {
+              case Left(refusal) =>
+                IO.pure(signInFailure(ctx, SignInFailure.AccountSwitchRequiresLogout.copy(reason = refusal.message)))
+              case Right(_) =>
+                // post 已是 IO[Either[Throwable, Json]]（attempt 由生产装配/注入面决定）。
+                post(LoginPath, Json.obj("account" -> account.asJson, "password" -> pw.asJson)).flatMap {
+                  case Right(json) if !json.hcursor.downField("error").succeeded => signInSuccess(ctx, post)
+                  case Right(json) =>
+                    // 2xx 但带 error 字段 = 防御性出口（旧 pollStep 同口径）。
+                    val detail =
+                      json.hcursor.downField("error").as[String].toOption.getOrElse("unexpected success-shape error")
+                    IO.pure(signInFailure(ctx, failureOfDetail(detail)))
+                  case Left(e) =>
+                    IO.pure(signInFailure(ctx, failureOfMessage(Option(e.getMessage), SignInFailure.LoginFailed)))
+                }
             }
         }
     }
@@ -370,7 +411,9 @@ private[cli] object LoginFlow:
     if ctx.json then CliResult.Exit(1, Json.obj("error" -> f.reason.asJson, "code" -> f.code.asJson).spaces2)
     else CliResult.Error(LoginCopy.signInFailedLine(f.reason, f.code), 1)
 
-  private def readStatusVia(post: (String, Json) => IO[Either[Throwable, Json]]): IO[Either[SignInFailure.Failure, AccountStatus]] =
+  private def readStatusVia(
+    post: (String, Json) => IO[Either[Throwable, Json]]
+  ): IO[Either[SignInFailure.Failure, AccountStatus]] =
     post(StatusPath, Json.obj()).flatMap {
       case Right(json) => IO.pure(parseStatus(json))
       case Left(e) => IO.pure(Left(failureOfMessage(Option(e.getMessage), SignInFailure.StatusUnreadable)))
@@ -413,7 +456,8 @@ private[cli] object LoginFlow:
           case Right(json) =>
             parseStatus(json) match
               case Left(f) =>
-                if ctx.json then CliResult.Exit(1, Json.obj("error" -> f.reason.asJson, "code" -> f.code.asJson).spaces2)
+                if ctx.json then
+                  CliResult.Exit(1, Json.obj("error" -> f.reason.asJson, "code" -> f.code.asJson).spaces2)
                 else CliResult.Error(LoginCopy.statusFailedLine(f.reason, f.code), 1)
               case Right(st) if !st.loggedIn =>
                 if ctx.json then CliResult.Exit(1, Json.obj("loggedIn" -> false.asJson).spaces2)
