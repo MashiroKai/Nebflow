@@ -101,7 +101,7 @@ case class LlmRequest(
   thinking: Option[io.circe.Json] = None,
   /** Stable system prompt (e.g. system.md) — can be cached by the provider. */
   systemStable: Option[String] = None,
-  /** Dynamic system content (env info, reminders) — changes frequently, placed after cache breakpoint. */
+  /** Ephemeral request context, appended after history on the wire to preserve cached prefixes. */
   systemDynamic: Option[String] = None,
   /**
    * Per-agent model configuration (preferred + fallbacks). When set, the

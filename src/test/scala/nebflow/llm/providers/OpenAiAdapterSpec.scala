@@ -127,13 +127,14 @@ class OpenAiAdapterSpec extends CatsEffectSuite:
 
   // ====== buildSystemMessage ======
 
-  test("buildSystemMessage: combines stable + dynamic") {
+  test("buildSystemMessage: request clock stays out of the system prefix") {
     val params =
       SendMessageParams(Nil, "gpt-4o", systemStable = Some("Be helpful."), systemDynamic = Some("Time: 12:00"))
     val result = adapter.buildSystemMessage(params)
     assert(result.isDefined)
     val content = result.get.hcursor.downField("content").as[String].toOption.getOrElse("")
-    assert(content.contains("Be helpful.") && content.contains("Time: 12:00"))
+    assert(content.contains("Be helpful."))
+    assert(!content.contains("Time: 12:00"))
   }
 
   // ====== extractToolCalls (non-streaming) ======

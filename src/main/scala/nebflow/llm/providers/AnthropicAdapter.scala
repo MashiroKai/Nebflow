@@ -216,13 +216,9 @@ class AnthropicAdapter(
   /** Build the system field as content blocks with cache_control on the stable prefix. */
   private def buildSystemBlocks(params: SendMessageParams): Json =
     val stableOpt = params.systemStable.filter(_.nonEmpty)
-    // 路由自述（protocol-compat 批）：`provider=<id> model=<id>` 拼在 dynamic
-    // 段尾部——稳定前缀（cache breakpoint）逐字节不变，换腿只改尾巴。
-    val dynamicOpt = Some(
-      List(params.systemDynamic.filter(_.nonEmpty), Some(WireShape.routeBanner(providerId, params.model)))
-        .flatten
-        .mkString("\n\n")
-    ).filter(_.nonEmpty)
+    // Route identity stays constant within a provider/model cache domain.
+    // Per-request context belongs after the history, never in this prefix.
+    val dynamicOpt = Some(WireShape.routeBanner(providerId, params.model)).filter(_.nonEmpty)
     // Fallback: if systemParts not provided, extract from messages (backward compat)
     val fallbackSystem = params.messages.find(_.role == MessageRole.System).map(_.textContent).filter(_.nonEmpty)
 
@@ -239,7 +235,7 @@ class AnthropicAdapter(
         )
       }
       dynamicOpt.foreach { text =>
-        // Dynamic part (env info, reminders) — no cache_control, changes every turn
+        // Route identity is stable for consecutive requests in the same cache domain
         blocks += Json.obj(
           "type" -> "text".asJson,
           "text" -> text.asJson
@@ -251,21 +247,9 @@ class AnthropicAdapter(
 
   // ── 消息尾 cache 断点（cache-hit 批 2026-11-06）────────────────────────
   //
-  // 实测读数（2026-11-06 stand 日志 1574 单 / 202.7M input tokens）：命中率
-  // 4.83%；命中请求的 cacheRead 中位数 13,056 / p90 19,392 / max 33,152，
-  // **无一单 >50k**，而请求 input 中位数 ≈119k——供应商（GLM/Zai anthropic
-  // 兼容端点等）只缓存到**显式 cache_control 断点**为止，而旧断点只钉在
-  // system 稳定段 + 末尾 tool schema（≈13-19k），会话历史（~106k）结构性
-  // 不可缓存 ⇒ 「缓存面积」只覆盖每请求 ~11%。
-  //
-  // 修法 = Claude Code 同款「消息尾增量断点」：每请求把断点钉在最后一条消息的
-  // 最后一个可标块上。第 N 轮写入的缓存条目前缀，第 N+1 轮（历史只增不改时）
-  // 逐字节相同 ⇒ 整段命中；新增的尾段本轮写入。断点预算：Anthropic 上限 4
-  // ——system 稳定段(1) + 末 tool(1) + 消息尾(1) = 3 ≤ 4。
-  //
-  // 红线（回归闸 CacheBreakpointSpec）：①同会话连续请求，除最后一条消息外
-  // 的序列化必须逐字节稳定（断点只影响最后一条）；②全 thinking/image 块的
-  // 尾消息不标（安全退化，不 400）；③断点总数 ≤ 4。
+  // Cache the reusable history before appending any per-request context.
+  // A changing system block would invalidate every message-level breakpoint.
+  // Budget: stable system + tools + history tail = 3 (provider limit: 4).
   private val CacheControlEphemeral: Json = Json.obj("type" -> "ephemeral".asJson)
 
   // 可标 cache_control 的块型（thinking/image 不标：Anthropic 对 thinking 块
@@ -279,6 +263,21 @@ class AnthropicAdapter(
       val init   = messages.init
       val marked = markLastCacheableBlock(messages.last)
       if marked == messages.last then messages else init :+ marked
+
+  /** Append ephemeral request context after the cached history without persisting it.
+   * Tool results must remain the first blocks in their user message.
+   */
+  private def appendRequestContext(messages: List[Json], dynamic: Option[String]): List[Json] =
+    dynamic.filter(_.nonEmpty) match
+      case None => messages
+      case Some(text) =>
+        val block = Json.obj("type" -> "text".asJson, "text" -> text.asJson)
+        messages.lastOption match
+          case Some(last) if last.hcursor.get[String]("role").toOption.contains("user") =>
+            val blocks = last.hcursor.get[Vector[Json]]("content").getOrElse(Vector.empty)
+            messages.init :+ last.mapObject(_.add("content", Json.fromValues(blocks :+ block)))
+          case _ =>
+            messages :+ Json.obj("role" -> "user".asJson, "content" -> Json.arr(block))
 
   /**
    * 把最后一条消息的最后一个可标块钉上 cache_control。
@@ -592,7 +591,9 @@ class AnthropicAdapter(
       "model" -> params.model.asJson,
       // cache-hit 批（2026-11-06）：消息尾增量 cache 断点（见
       // [[withTailCacheBreakpoint]]）——这是「同会话连续请求必须命中」判据的装配点。
-      "messages" -> Json.fromValues(withTailCacheBreakpoint(toAnthropicMessages(params.messages))),
+      "messages" -> Json.fromValues(
+        appendRequestContext(withTailCacheBreakpoint(toAnthropicMessages(params.messages)), params.systemDynamic)
+      ),
       "max_tokens" -> maxTokensFor(params).asJson
     )
     val withStream = if streaming then base.deepMerge(Json.obj("stream" -> true.asJson)) else base
