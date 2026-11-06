@@ -118,7 +118,9 @@ async function openSettings(page) {
     (await import('/js/sidebar.js')).openSettingsPanel();
     document.getElementById('settings-overlay')?.classList.add('on');
   });
-  await page.waitForSelector('#provider-panel-host .nf-provider-panel', { timeout: 15000 });
+  // 双树兼容：新树（本批）等统一面板；旧树（NB_WEB_ROOT=/tmp/nf-old-web 对照，
+  // 改前形态）面板不存在——等旧设置节在场即可（截图腿照常落盘，用作改前对照）。
+  await page.waitForSelector('#provider-panel-host .nf-provider-panel, #settings-content .settings-section', { timeout: 15000 });
   await page.waitForTimeout(500);
 }
 
@@ -145,6 +147,9 @@ test('shot tab states + add form @ 375-light', async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 812 });
   await bootApp(page, 'light');
   await openSettings(page);
+  // 旧树（NB_WEB_ROOT 对照）无统一面板与类型标签——本腿只对新树有意义。
+  const hasPanel = await page.evaluate(() => !!document.getElementById('provider-panel-host'));
+  test.skip(!hasPanel, 'old-tree comparison: no unified panel (new-face-only leg)');
   const ids = await page.evaluate(() => [...document.querySelectorAll('.nf-ptab')].map((b) => b.dataset.providerType || ''));
   for (const id of ids) {
     await page.evaluate((tid) => document.querySelector(`.nf-ptab[data-provider-type="${tid}"]`)?.click(), id);
