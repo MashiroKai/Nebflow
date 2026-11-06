@@ -7,8 +7,9 @@
  * 形态 = 样张 v2.1（docs/design/20261028_canvas-ask-mode-mockup-v2.html，作者八条令
  * 2026-10-28 17:5x + v2.1 减法令 22:42「简约一点。不需要两个箭头，就右侧一个发送
  * 按钮」）→ canvas 右下角入口钮 → 点击输入条从按钮位置向上长出（输入 + 右侧唯一
- * 发送钮）→ 气泡列升腾按龄渐隐 → 列顶内容级 mask 渐隐（ask-fade-content-opacity
- * 批 2026-11-04：消息 alpha 渐到 0，零遮罩条/零底色/零边框）→ 零面板/零弹窗/零遮罩。
+ * 发送钮）→ 气泡列升腾按龄渐隐 → 列顶内容级渐隐（ask-fade-content-opacity 批
+ * 2026-11-04：消息 alpha 渐到 0，零遮罩条/零底色/零边框；毛玻璃批 2026-11-06
+ * 载体改逐泡 opacity，见 .ask-col 块）→ 零面板/零弹窗/零遮罩。
  *
  * 三修③（作者令 2026-10-29「ask 输入条/气泡对齐 canvas 统一风格，不新造风格」）：
  * 自造毛玻璃材质（--ask-bub-* 与 --ask-input-* 两族、品牌蓝渐变面 + 自带外投影）
@@ -70,7 +71,9 @@
   /* 记事本批（2026-11-05）：记事本窗高（拖拽状态机写这条 —— 与 --ask-col-maxh
    * 同档位、同一份 resizeLimits；默认高取「一页便签」量级，不遮挡文档主体）。 */
   --note-h: 240px;
-  /* 顶缘渐隐衰减区高（内容级 mask：transparent 0 → currentColor 本值）。
+  /* 顶缘渐隐衰减区高（毛玻璃批 2026-11-06 起载体 = askDock.js syncAskFade 逐泡
+   * opacity：泡顶到列顶的距离在 --ask-fade-h 内线性落 alpha；mask 载体已退役
+   * —— mask 是 backdrop root，会架空子气泡的 backdrop-filter）。
    * ── 短渐隐批（作者令 2026-11-05 09:32「顶部的渐隐效果要非常端距离完成」）──
    * 值 64px（手机 56px）→ **12px**。理由与选值：
    *   · 64px ≈ 3 行正文（行高 1.6 × 13.5px = 21.6px），衰减区比一行字还高两倍，
@@ -79,14 +82,14 @@
    *     直接落 --ds-space-3（不写裸像素：本批起间距/长度一律走 --ds-space-* 档位，
    *     与作者 2026-11-05 09:40 token 裁定同口径），≈ 0.55 行高：衰减在**半个字行
    *     之内**结束，滚动穿过时读起来是一条硬边而不是一片雾；
-   *   · 下限不再往 8px 落：mask 是抗锯齿渐变，8px 以下在 2× 屏上会看到阶梯；
+   *   · 下限不再往 8px 落：渐变是抗锯齿过渡，8px 以下在 2× 屏上会看到阶梯；
    *   · 只作用于滚出列顶的那一小条：衰减区在滚动容器之内（padding-top 让开
    *     它），静态首条完整清晰，正文可读区零影响。 */
   --ask-fade-h: var(--ds-space-3);   /* 12px = 4px 栅格第 3 档 */
-  /* 底缘渐出尾（同一 12px 刻度）：只在**内容滚出列底**时吃掉这一小条 alpha，
-   * 与顶缘同一档短渐隐；静态（会话短）时它落在列的 padding-bottom 里，
-   * 一条字都不碰（见 .ask-col 的 mask 与 padding 注释）。 */
-  --ask-col-tail: var(--ds-space-3); /* 12px，与顶缘同档 */
+  /* 毛玻璃批（2026-11-06）：`--ask-col-tail`（底缘 12px 渐出尾）随列 mask 一并退役
+   * —— mask 是 backdrop root，会架空子气泡的 backdrop-filter（改前实证：摘 blur
+   * 前后气泡实拍 mean|Δlum| = 0.22 ≈ 0 = 模糊死）；底缘收口改列 padding（下方
+   * .ask-col 块）。防复活钉：tests/ask-glass-drag.spec.mjs G2/D1。 */
   --z-ask-dock: 24;              /* < 顶行 30（排他 z 序：永不入顶行） */
   --ask-dot-ring: rgba(255, 255, 255, 0.9);  /* 通知点描边圈（暗档翻 #0b0e14） */
   --ask-link: #1d4ed8;           /* cite 徽标链色（亮档） */
@@ -317,35 +320,36 @@ body.mobile-layer .note-dock .ds-resize-handle {
  * 背后是文档正文 ⇒ veil 渐层把背后内容洗成一条可见的乳白横带（作者看到的「过渡
  * 条」）；气泡跨带沿 = 一条被切掉的卡片边。这不是「消息透明度渐到 0」，是「盖一层
  * 渐变色块」——与本令逐字相悖。
- * 本批改法：**渐隐带元素整体退役**（.ask-veil 不再渲染，面板内零 .ds-edge-fade
- * 成员），渐隐本体 = 滚动容器自身绘制结果的 mask（作用在内容层：.ask-col 无背景
- * 无边框，其绘制输出只有气泡 ⇒ mask 只吃内容 alpha，不碰任何容器底色）：
- *   · mask 起点 transparent → --ask-fade-h 处全实：消息滚近列顶时自身 alpha 线性
- *     渐到 0，「降低透明度到 0 的过程」逐字落地；
- *   · 列 padding-top ≥ --ask-fade-h（衰减区在滚动容器之内）：静态（会话短）首条
- *     落在衰减区之下完整清晰；滚动时消息穿区自然淡出；
- *   · 交互不受影响（Chromium/WebKit 实证：mask 不参与 hit-test/滚动手势裁剪——
- *     spec B1/B2 同一断言改前改后均绿）；输入条在 dock 布局里位于列外，天然在
- *     衰减层之外不受渐变影响。
+ * 该批改法：渐隐带元素整体退役（.ask-veil 不再渲染），渐隐本体改挂滚动容器。
+ *
+ * ── 毛玻璃批（作者令 2026-11-06 09:57：「ask 的聊天气泡使用我们的毛玻璃效果
+ *    显然它使用错了 现在是半透明的效果」）──
+ * mask 载体再退役：mask 使 .ask-col 成为 **backdrop root**，子气泡的
+ * backdrop-filter 只能采样本子树（= 透明）⇒ 真模糊被架空，气泡只剩 α 洗色
+ * （作者指认的「半透明效果」；改前像素实证：气泡元素实拍摘 blur 前后
+ * mean|Δlum| = 0.22 ≈ 0）。渐隐载体改 **askDock.js syncAskFade 逐泡 opacity**
+ * ——「降低透明度到 0 的过程」语义逐字保留（2026-11-04 令不撤，只换载体），
+ * 且 opacity 是「内容本体透明度」的最后一种无 backdrop-root 形态。
+ *   · 顶缘 --ask-fade-h 衰减档不变：泡顶到列顶的距离线性落 alpha；
+ *   · 交互不受影响（opacity 不参与 hit-test）；输入条在列外不受影响；
+ *   · 防复活钉：tests/ask-glass-drag.spec.mjs G2（像素）+ ask-sheet-fade-height
+ *     A0b/D3（源码面：.ask-col 零 mask、syncAskFade 单实现）。
  * 本文件零 veil 材质残留（--ds-fade-veil / backdrop-filter 一概不引）；主对话窗
- * #g2-edge-fade 的遮罩条手法照旧（本批只改 Ask，爆炸半径不扩大）。
+ * #g2-edge-fade 的遮罩条手法照旧（爆炸半径不扩大）。
  *
  * ── 缩放空白批（作者令 2026-11-05 09:32「现在调整窗口大小会导致对话框和内容
  *    直接有一大段空白」）──
- * 病根不是缓存，是**几何基准错**：旧 mask 的第三个停点是 JS 写的
+ * 病根不是缓存，是**几何基准错**：旧形态的收口线是 JS 写的
  * `--ask-trunc-h = 面板高 × 50%`，而面板高 = 列 + 缝 + 输入条 —— 这条线被画在
  * **列**上，于是「列的下半段」恒被 alpha 0 遮掉：默认档面板高 ≈348 ⇒ 截断线
  * 174，列高 316 ⇒ 列底 142px 永远透明，而最新气泡锚在列底（flex-end）⇒ 内容
  * 与输入条之间恒有一大段空白（本批改前实测：截断线 108px / 列高 316px / 空白
  * 208px，且 108 是首帧缓存值，窗口放大后要等下一次 RO 才被改写）。
- * 本批改法：**把底缘收口从「面板高的一半」改成「列自己的盒」**——
- *   · 两个停点全部用百分比锚在列的 border box 上（100% = 列底 = 输入条上方
- *     --ds-space-1h 处），不再有任何 JS 缓存的 px；
- *   · 尾部渐出长度 = --ask-col-tail（12px，与顶缘同一短档）**且落在列的
- *     padding-bottom 之内**：静态（会话短）时最新一条的底正好在 padding 上沿，
- *     一条字都不被吃掉；滚动时内容穿过这 12px 自然淡出；
- *   · 于是「输入条顶边 − 列底边」恒等于 dock 的 row-gap（--ds-space-1h = 6px），
- *     与窗口尺寸/内容多少彻底解耦（五档机械断言见 tests/canvas-ask-legibility.spec.mjs）。 */
+ * 该批改法：底缘收口锚回「列自己的盒」（不再有任何 JS 缓存的 px）。
+ * 毛玻璃批（2026-11-06）续：收口本体从 mask 改列 padding-bottom（见 .ask-col
+ * 块），「输入条顶边 − 最新气泡底边」恒 = dock 的 row-gap（--ds-space-1h =
+ * 6px），与窗口尺寸/内容多少彻底解耦（五档机械断言见
+ * tests/canvas-ask-legibility.spec.mjs）。 */
 .ask-colwrap {
   position: relative; width: 100%;
   max-height: var(--ask-col-maxh);
@@ -366,26 +370,30 @@ body.mobile-layer .note-dock .ds-resize-handle {
   /* 列可视高 = 总档（衰减区净空在滚动容器之内，见上 —— 不再从列高里扣）。 */
   width: 100%; max-height: var(--ask-col-maxh); overflow-y: auto;
   display: flex; flex-direction: column; gap: var(--ds-space-1h); align-items: flex-end;
-  /* 内容级渐隐（本批关键改动）：mask 作用在滚动容器自身绘制结果上（本元素无
-   * 背景/边框 ⇒ 输出 = 气泡内容），顶缘 --ask-fade-h 内内容 alpha 渐到 0。
-   * mask 颜色只取 alpha 通道 ⇒ 用 currentColor（无裸色值，GU2-7 同律）。
-   * 四停点：顶缘短渐隐 → 全实 → 底缘前 --ask-col-tail 起坡 → 列底（100%）归零。
-   * 零 px 缓存值：两个端点都是百分比锚在列自己的盒上（缩放免疫）。 */
-  -webkit-mask-image: linear-gradient(to bottom,
-    transparent 0,
-    currentColor var(--ask-fade-h),
-    currentColor calc(100% - var(--ask-col-tail)),
-    transparent 100%);
-  mask-image: linear-gradient(to bottom,
-    transparent 0,
-    currentColor var(--ask-fade-h),
-    currentColor calc(100% - var(--ask-col-tail)),
-    transparent 100%);
-  /* 衰减区净空（保留①-批几何）：内容静态在衰减区之下起排 = 首条完整清晰；
-   * 滚动时内容穿进衰减区被 mask 洗掉。横 padding 归零（文档会话批②：气泡区
-   * 左右缘与输入条逐像素对齐）；底 padding = --ask-col-tail（尾部渐出区就落在
-   * 这一条净空里 ⇒ 静态档最新一条不被吃字）。 */
-  padding: calc(var(--ask-fade-h) + var(--ds-space-1h)) 0 var(--ask-col-tail);
+  /* ── 毛玻璃批（作者令 2026-11-06 09:57「ask 的聊天气泡使用我们的毛玻璃效果
+   *    显然它使用错了 现在是半透明的效果」）──
+   * 本元素**禁挂 mask-image / filter / opacity<1 / 任何 backdrop-root 形态**：
+   * mask 使本元素成为 backdrop root，子气泡的 backdrop-filter 只能采样本子树
+   * （= 透明），模糊被架空 ⇒ 气泡只剩 α 洗色 = 作者指认的「半透明效果」。
+   * 改前实证（dec-maskOn vs dec-blurOff 元素实拍）：mean|Δlum| = 0.22 ≈ 0（模糊
+   * 死）；摘 mask 后 11.9（模糊活）。顶缘渐隐改由 askDock.js syncAskFade 逐泡
+   * opacity 承担（同一 12px 衰减档，内容本体透明度渐到 0 —— ask-fade-content-
+   * opacity 批 2026-11-04 的语义不变，只换实现载体）；底缘不再渐隐：气泡滑入
+   * 输入条带时由输入条自身的玻璃模糊软化（「穿过玻璃」的正确形态）。
+   * 防复活钉：tests/ask-glass-drag.spec.mjs G2（像素）+ ask-sheet-fade-height
+   * A0b（源码面）。 */
+  /* 底缘净空（作者令同日②「让 ask 的聊天 可以拉动到聊天框之上 现在被聊天框
+   * 挡住了一部分」）：padding-bottom = 输入条半高 + 列缝。列盒底被穿入批钉在
+   * 输入条垂直中线（上方 colwrap 的负 margin，几何不动），旧档内容可直达中线
+   * ⇒ 最新气泡底部恒被输入条上半盖住 ~29px 且任何滚动都拉不出来。给列一段
+   * 与被盖带等高的 padding 后，内容最低可达位 = 输入条顶缘上方一个列缝：
+   *   滚动尽头（拉动到底）⇒ 最新气泡完全在聊天框之上（可读全行）；
+   *   滚动途中 ⇒ 气泡仍从输入条玻璃底下穿过（z 1 < 2 不变，16:50 令的「穿过」
+   *   形态保留在运动态）。
+   * 静态（内容短、无滚动）同理：padding 直接把内容底抬到输入条上缘之外。
+   * --ask-under 由 askDock.js ResizeObserver 实测输入条半高写入（textarea 会长
+   * 高、手机档钮更大 ⇒ 不写死 px）。 */
+  padding: calc(var(--ask-fade-h) + var(--ds-space-1h)) 0 calc(var(--ask-under, 29px) + var(--ds-space-1h));
   scrollbar-width: none; touch-action: pan-y; /* #988：列内纵滚原生，手势零劫持 */
 }
 .ask-col::-webkit-scrollbar { display: none; }
@@ -437,7 +445,9 @@ body.mobile-layer .note-dock .ds-resize-handle {
    其他前面的消息又是半透明的了」的**根因就是这一条**：α 直接压在本体 opacity 上，
    毛玻璃底随之一起变透，底下的文档正文透上来。
    与「毛玻璃一律不透底」（作者 2026-11-05 16:46 令）正面冲突 ⇒ 整条规则删除，
-   气泡本体的 opacity 恒为 1。**顶缘 12px 内容级 mask 渐隐保留**（作者 2026-11-04
+   气泡本体的 opacity 恒为 1（毛玻璃批 2026-11-06 后的窄例外：顶缘 12px 位置
+   渐隐由 syncAskFade 写 opacity —— 只作用于滚出列顶的内容）。**顶缘 12px 位置
+   渐隐保留**（作者 2026-11-04
    09:22 明令要的「消息自身 alpha 渐到 0」，是位置渐隐、只作用于滚出列顶的内容），
    两者不是一回事：前者让整条历史消息发虚且可读性塌，后者只在滚出边界处淡出。 */
 
@@ -546,16 +556,19 @@ body.mobile-layer .note-dock .ds-resize-handle {
    sapphire.css 的令牌注。本文件不再声明任何气泡材质属性（GU2-7 同律：
    材质单源，几何/年龄渐隐留本面）。 */
 
-/* ═══ 底缘收口（作者令 2026-11-04 12:52 ③ → 2026-11-05 09:32 改判）═══
+/* ═══ 底缘收口（作者令 2026-11-04 12:52 ③ → 2026-11-05 09:32 改判 → 2026-11-06 再改判）═══
    12:52 令的形态 = 「列盒下越 + 中线（面板高 50%）截断」，由 JS 写三条 px
    变量（--ask-trunc-from / --ask-trunc-h / --ask-col-overhang）。09:32 令
    「调整窗口大小会导致对话框和内容直接有一大段空白」把这条形态判死：截断线
    画在列上、基准却是面板高（列 + 缝 + 输入条），列的下半段恒被 alpha 0 遮
-   掉，最新气泡锚在列底 ⇒ 内容与输入条之间恒有一大段空白（改前实测 208px）。
-   本批三条全部退役，底缘收口归 mask 自己的百分比停点（见上方 .ask-col 的
-   注释与 mask 四停点）——**零 JS、零缓存 px、缩放免疫**。
+   掉，最新气泡锚在列底 ⇒ 内容与输入条之间恒有一大段空白（改前实测 208px）；
+   三条 px 变量全部退役，收口锚回列自己的盒。
+   2026-11-06 毛玻璃批再改判：收口本体从 mask 百分比停点改 **列 padding-bottom
+   = --ask-under + --ds-space-1h**（mask 随批退役，成因见 .ask-col 块与上方
+   大注释）——「输入条顶边 − 最新气泡底边」恒 = 列缝 6px，拉动尽头最新气泡
+   完全在聊天框之上（作者同日令②）。
    唯一保留 = colwrap 的 overflow:visible（12:52 令「穿过底缘」的可见性前提；
-   收口改由 mask 承担后它不再产生越界绘制，但保留它可让列内溢出不被上级
+   滚动途中气泡仍从输入条玻璃底下穿过，保留它可让列内溢出不被上级
    硬裁——两道保险，且 tests/console-ask-grow C4 的 overflow 判据照旧成立）。 */
 .ask-colwrap { overflow: visible; }
 

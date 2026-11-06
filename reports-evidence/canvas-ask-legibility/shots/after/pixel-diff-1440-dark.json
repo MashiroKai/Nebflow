@@ -5,15 +5,15 @@
       "w": 336,
       "h": 126,
       "pixels": 42336,
-      "maxDiff": 0,
-      "over": 0
+      "maxDiff": 27,
+      "over": 39315
     },
     {
       "w": 344,
       "h": 30,
       "pixels": 10320,
-      "maxDiff": 0,
-      "over": 0
+      "maxDiff": 16,
+      "over": 8978
     }
   ]
 }

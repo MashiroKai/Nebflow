@@ -16,13 +16,16 @@
 // 渐到 0**：mask 作用在滚动容器（= 内容层）自身的绘制结果上，零背景/零边框/零浮影/
 // 零 backdrop-filter ⇒ 面板整体透明无边框、没有任何可见过渡元素。
 //
-// 判据（同脚本同判据，改前必红 / 改后必绿）：
-//   A 渐隐本体 = 内容级 mask —— A0 面板内**零**渐隐带元素（.ds-edge-fade / .ask-veil
-//     计数 0；①-批形态必红）；A0b mask 作用在滚动容器内容层（.ask-col 计算样式
-//     mask-image = to bottom 渐变、起点 transparent、终点 = --ask-fade-h；.ask-colwrap
-//     零 mask）；A1 带内亮度剖面从顶到底变深且跨度 ≥60（有真渐隐）；A2 带内相邻采样行
-//     跳变 ≤45（无可见直线边界）；A3 带顶内容 alpha≈0（深色探针在带顶被吃到只剩背景）；
-//     A5 带底沿两侧亮度差 ≤30（无硬切缝）。
+// 判据（同脚本同判据，改前必红 / 改后必绿；A 组 2026-11-06 毛玻璃批换代 —— 列 mask
+// 退役（backdrop root 架空子泡玻璃 = 半透明洗色），载体 = askDock.js syncAskFade
+// 逐泡 opacity）：
+//   A 渐隐本体 = 内容本体透明度 —— A0 面板内**零**渐隐带元素（.ds-edge-fade / .ask-veil
+//     计数 0；①-批形态必红）；A0d 面板内零带渐变背景的元素；A0b 列零 mask-image
+//     （backdrop root 根因摘除）+ 载体在场（askDock.js 源含 syncAskFade）；A0c 外框
+//     零 mask；A1 双探针两点亮度跨度 ≥60（带顶探针被洗近背景、带外探针全实 = 渐隐
+//     真实存在）；A3 带顶探针区亮度 ≥190（深色探针洗到只剩背景）。〔A2/A2b/A5
+//     连续剖面/单调/接缝判据随列 mask 载体退役：逐泡 opacity 是泡级 alpha，带内
+//     无连续渐变剖面形态。〕
 //   B 渐隐不影响交互 —— B1 带内 elementFromPoint 命中滚动容器/内容（mask 不裁 hit-test）；
 //     B2 带内滚轮真的滚得动；B3 内容宿主 mask 存在但 pointer-events 正常（auto）。
 //   T 整体透明无边框 —— T1 面板/滚动容器（dock / colwrap / col）背景透明（background-color
@@ -32,7 +35,7 @@
 //     热区 ≥44；C3 背后文档仍留可读区（面板顶距视口顶 ≥28%）；C4 内容真的溢出可滚。
 //   D 爆炸半径 —— D1 主对话窗 #g2-edge-fade 仍在且仍挂 .ds-edge-fade（本批只改 Ask，
 //     主窗不动）；D2 ask.css 源零 veil 材质（无 .ask-veil / --ds-fade-veil / 列与柱元素上
-//     零 backdrop-filter；轮钮与气泡的玻璃档是 11-04 12:52 令显式授权的材质面，不算残留）；D3 ask.css .ask-col 块内有内容级 mask-image（唯一实现）；
+//     零 backdrop-filter；轮钮与气泡的玻璃档是 11-04 12:52 令显式授权的材质面，不算残留）；D3 ask.css 源（剥注释）零 mask-image + askDock.js 源含 syncAskFade（渐隐唯一实现，防列 mask 复活）；
 //     D4 glass.css #g2-edge-fade 块内零材质（主窗单源纪律不变）；D5 design-system.css
 //     .ds-edge-fade 配方完整（主窗材质单源不破）；D6 askDock.js 源不再渲染渐隐带元素。
 //   E 同族竖排 bug（实拍表格首列「还挂旧数／不需动／待办」逐字竖排）—— E1 窄列短标签
@@ -128,25 +131,18 @@ function decodePng(buf) {
   return { W, H, ch, out };
 }
 
-/** 带内亮度剖面：每行取 [x0..x1] 均值，再用 win 窗口平滑（跨过行距周期）。 */
-function bandProfile(png, { x0, x1, yTop, yBottom, win = 8 }) {
+/** 矩形平均亮度（毛玻璃批 2026-11-06 两点采样用；连续剖面 bandProfile 随列 mask
+ * 载体退役删除 —— 逐泡 opacity 无带内连续渐变形态可采样）。 */
+function meanLum(png, rc) {
   const { W, H, ch, out } = decodePng(png);
-  const lum = (x, y) => { const i = (y * W + x) * ch; return 0.299 * out[i] + 0.587 * out[i + 1] + 0.114 * out[i + 2]; };
-  const xa = Math.max(0, Math.round(x0)), xb = Math.min(W - 1, Math.round(x1));
-  const rowMean = (y) => {
-    let s = 0, n = 0;
-    const yy = Math.min(H - 1, Math.max(0, Math.round(y)));
-    for (let x = xa; x <= xb; x++) { s += lum(x, yy); n++; }
-    return n ? s / n : 0;
-  };
-  const winMean = (y) => {
-    let s = 0, n = 0;
-    for (let dy = 0; dy < win; dy++) { const yy = Math.round(y) + dy; if (yy >= 0 && yy < H) { s += rowMean(yy); n++; } }
-    return n ? s / n : 0;
-  };
-  const series = [];
-  for (let y = yTop; y <= yBottom; y += 2) series.push([y, +winMean(y).toFixed(1)]);
-  return { series, winMean };
+  const xa = Math.max(0, Math.round(rc.left + 6)), xb = Math.min(W - 1, Math.round(rc.right - 6));
+  const ya = Math.max(0, Math.round(rc.top + 6)), yb = Math.min(H - 1, Math.round(rc.bottom - 6));
+  let s = 0, n = 0;
+  for (let y = ya; y <= yb; y++) for (let x = xa; x <= xb; x++) {
+    const i = (y * W + x) * ch;
+    s += 0.299 * out[i] + 0.587 * out[i + 1] + 0.114 * out[i + 2]; n++;
+  }
+  return n ? +(s / n).toFixed(1) : 0;
 }
 
 test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, colorScheme: 'light' });
@@ -315,25 +311,16 @@ test.describe('doc ask sheet · top fade + message area height', () => {
     check('A0d 面板内零带渐变背景的元素（无任何过渡条/色块层；①-批 veil 必红）',
       (geo.gradientLayers || []).length === 0,
       JSON.stringify(geo.gradientLayers));
-    // A0b「渐隐作用在内容层」：mask-image 挂在滚动容器（内容）本体上，起点 transparent、
-    // 终点 = --ask-fade-h；外框 colwrap 零 mask（不许在容器/伪元素上再垫一层）。
-    // 注：Chromium 计算值会省略默认方向 "to bottom"（= 竖直向下），故按「起点透明 @0
-    // → 终点不透明 @--ask-fade-h」判形，不硬要求字面 "to bottom"。
-    const maskOfCol = String(geo.colMask || 'none').replace(/\s+/g, ' ');
-    // A0b 改判（作者令 2026-11-05 09:32）：渐隐本体仍是内容级 mask，但形态从两停点
-    // （transparent 0 → 全实 @--ask-fade-h）扩成四停点：顶缘短渐隐 → 全实 → 列底前
-    // --ask-col-tail 起坡 → 列底（100%）归零。**末停 100% 是本批的关键**：底缘收口锚在
-    // 列自己的 box 上（不再有 JS 写的 --ask-trunc-h 中线），所以 mask 必须止于 100%，
-    // 而不是止于某个 px（止于 px 就等于把列的下半段整段遮掉 = 作者报的「一大段空白」）。
-    const fadeStop = (maskOfCol.match(/rgb\([^)]*\)\s+([\d.]+)px/g) || [])
-      .map((x) => parseFloat(String(x).match(/([\d.]+)px/)[1]));
-    check('A0b mask 作用在内容层（.ask-col mask-image：起点 transparent 0 → 全实 @--ask-fade-h → 列底前起坡 → 100% 归零，锚列自身的盒）',
-      /linear-gradient\(/.test(maskOfCol)
-      && /(rgba\(0, 0, 0, 0\)|transparent) 0px/.test(maskOfCol)
-      && fadeStop[0] === Math.round(geo.fadeH)
-      && /calc\(100% - [\d.]+px\)/.test(maskOfCol)
-      && /(rgba\(0, 0, 0, 0\)|transparent) 100%\)$/.test(maskOfCol),
-      JSON.stringify({ mask: maskOfCol, fadeH: geo.fadeH, fadeStop }));
+    // A0b 再改判（毛玻璃批 2026-11-06，作者令「聊天气泡使用我们的毛玻璃效果 显然
+    // 它使用错了 现在是半透明的效果」）：列 mask **整体退役** —— mask 使 .ask-col
+    // 成为 backdrop root，子气泡的 backdrop-filter 只能采样本子树（=透明），模糊
+    // 被架空 =「半透明洗色」假玻璃（改前像素实证 diff=0.22，改后 11.9）。判据换成
+    // 双面钉：运行时 .ask-col 计算样式 mask-image = none；实现载体在场 = askDock.js
+    // 源含 syncAskFade（逐泡 opacity：泡顶到列顶距离在 --ask-fade-h 内线性落 alpha）。
+    const askDockSrc = readFileSync(join(WEB, 'js', 'askDock.js'), 'utf8');
+    check('A0b 列零 mask（backdrop root 根因摘除，.ask-col 计算样式 mask-image = none）+ 渐隐载体在场（askDock.js syncAskFade 逐泡 opacity）',
+      String(geo.colMask || 'none') === 'none' && /syncAskFade/.test(askDockSrc),
+      JSON.stringify({ colMask: String(geo.colMask || 'none'), syncAskFadeInSrc: /syncAskFade/.test(askDockSrc) }));
     check('A0c 外框零 mask（渐隐不在容器上另垫一层）', String(geo.colwrapMask || 'none') === 'none', String(geo.colwrapMask));
 
     /* ── T 整体透明无边框（②-批：面板本体零底色/零边框/零分隔线/零内阴影）──── */
@@ -393,39 +380,66 @@ test.describe('doc ask sheet · top fade + message area height', () => {
     const shotTop = Math.max(0, Math.round((geo.dock ? geo.dock.top : 200) - 28));
     await page.screenshot({ path: join(OUT, 'ask-sheet-realistic-band.png'), clip: { x: 0, y: shotTop, width: 390, height: Math.min(240, 844 - shotTop) } });
 
-    /* ── A/B 渐隐带（注入深色探针块 + 滚到带区，量带内亮度剖面）──────── */
+    /* ── A/B 渐隐带（毛玻璃批 2026-11-06 判据换代：双探针两点跨度）────────
+       渐隐载体已从列 mask 换成**逐泡 opacity**（askDock.js syncAskFade）——
+       mask 的「带内连续 alpha 剖面」概念随之消失：单条气泡在带内是**整条统一
+       alpha**（泡顶深度决定），不存在泡内渐变。等义判据 =
+       「深度浅的探针被洗到近背景（alpha→0）、深度深的探针全实（alpha=1）」
+       两点亮度跨度 ≥60（渐隐真实存在且非 0/1 两态）+ 带顶探针 ≥190（洗到只剩
+       背景）。探针必须挂 `.ask-bub` 类（syncAskFade 只 fade 气泡族）。 */
     await page.evaluate(() => {
       const col = document.querySelector('.ask-col');
-      const d = document.createElement('div');
-      d.id = '__fade_probe';
-      d.setAttribute('data-test-fixture', 'fade-band-ink');
-      // 块高 > 列可视高 ⇒ 滚到底时块顶必然落在可视口之上，整个渐隐带都压在深色块
-      // 上（量带自身的 alpha 剖面；切缘被 overflow 裁在带顶之上 = 截断是否被吃掉的
-      // 真实形态）。
-      d.style.cssText = 'flex:none;width:100%;height:' + (col.clientHeight + 180) + 'px;background:#1f242b;border-radius:8px;';
-      col.appendChild(d);
-      col.scrollTop = 1e6;   // 落到底（= 最大值），深色块吃满整列
+      const mk = (id) => {
+        const d = document.createElement('div');
+        d.id = id;
+        d.className = 'ask-bub';            // 载体换代：探针 = 泡形（syncAskFade 的作用域）
+        d.setAttribute('data-test-fixture', 'fade-band-ink');
+        d.style.cssText = 'flex:none;width:100%;height:30px;background:#1f242b;border-radius:8px;';
+        return d;
+      };
+      const pb = mk('__fade_probe_b');
+      const pa = mk('__fade_probe_a');
+      // 探针铺**顶**（列 mask 时代的尾插法够不着顶带：尾插探针在滚动尽头也只能停在
+      // 列底净空之上，永远进不了顶部衰减档）。DOM 序 A 在前 B 在后。
+      col.insertBefore(pb, col.firstChild);
+      col.insertBefore(pa, pb);
+      col.scrollTop = 0;                    // 先归零（开场 render 滚在最大值）⇒ scroll 事件先算一拍
     });
-    await page.waitForTimeout(250);
+    await page.waitForTimeout(160);         // 渐隐 rAF 拍（scrollTop=0 → syncAskFade）
+    // 对表滚动：探针 a 顶 = 列顶 + 2px（带内浅层 ⇒ alpha = 2/12 ≈ 0.17）；探针 b 顶 =
+    // 列顶 + 38px（30px 泡高 + 6px 列缝，带外 ⇒ alpha = 1）。
+    await page.evaluate(() => {
+      const col = document.querySelector('.ask-col');
+      const pa = document.getElementById('__fade_probe_a');
+      const ct = col.getBoundingClientRect().top;
+      const pt = pa.getBoundingClientRect().top;
+      col.scrollTop += (pt - (ct + 2));
+    });
+    await page.waitForTimeout(600);   // 渐隐 rAF 拍落定 + 版面稳定
 
     const geo2 = await page.evaluate(() => {
       const r = (el) => { if (!el) return null; const b = el.getBoundingClientRect(); return { top: +b.top.toFixed(1), bottom: +b.bottom.toFixed(1), left: +b.left.toFixed(1), right: +b.right.toFixed(1), w: +b.width.toFixed(1), h: +b.height.toFixed(1) }; };
       const col = document.querySelector('.ask-col');
       const fadeH = parseFloat(getComputedStyle(col).getPropertyValue('--ask-fade-h')) || 0;
+      const oA = document.getElementById('__fade_probe_a');
+      const oB = document.getElementById('__fade_probe_b');
       return {
-        col: r(col), fadeH, probeEl: r(document.getElementById('__fade_probe')),
+        col: r(col), fadeH,
+        probeA: r(oA), probeB: r(oB),
+        opacityA: oA ? getComputedStyle(oA).opacity : null,
+        opacityB: oB ? getComputedStyle(oB).opacity : null,
         scrollTop: col.scrollTop, scrollH: col.scrollHeight, clientH: col.clientHeight,
       };
     });
     readings.geo2 = geo2;
 
-    // A3-结构：深色探针确实铺满渐隐衰减区（探针顶 ≤ 列顶 + fadeH ⇒ 剖面量的是
-    // 「探针本体被内容级 mask 洗掉」的过程，不是空白）
+    // A3-结构：浅层探针确实铺住衰减带顶（probeA.top ≤ 列顶 + fadeH ⇒ 量的是
+    // 「泡形内容被逐泡 opacity 洗掉」的过程，不是空白）
     const bandTop = geo2.col.top;
     const bandH = geo2.fadeH;
-    check('A3-结构 深色探针铺满衰减区（probe.top ≤ col.top + fadeH；量的是内容被洗掉的过程）',
-      !!geo2.probeEl && geo2.probeEl.top <= bandTop + bandH + 1,
-      JSON.stringify({ probeTop: geo2.probeEl && geo2.probeEl.top, bandTop, bandH }));
+    check('A3-结构 浅层探针铺住衰减带顶（probeA.top ∈ [col.top, col.top + fadeH]）',
+      !!geo2.probeA && geo2.probeA.top >= bandTop - 1 && geo2.probeA.top <= bandTop + bandH + 1,
+      JSON.stringify({ probeATop: geo2.probeA && geo2.probeA.top, bandTop, bandH }));
 
     // 渐隐衰减区 = 列顶 fadeH（内容级 mask 起点透明 → fadeH 处全实）。
     // 面板整体透明（T1）⇒ 衰减区背后透出文档正文文字 —— 为让亮度剖面只反映
@@ -443,53 +457,23 @@ test.describe('doc ask sheet · top fade + message area height', () => {
     });
     await page.waitForTimeout(120);
 
-    const band = { top: bandTop, bottom: bandTop + bandH, h: bandH, left: geo2.col.left, right: geo2.col.right };
-    const clipY = Math.max(0, band.top - 12);
-    const clipH = Math.min(844 - clipY, Math.ceil(band.h) + 60);
-    const buf = await page.screenshot({ clip: { x: 0, y: clipY, width: 390, height: clipH } });
-    writeFileSync(join(OUT, 'ask-sheet-fade-band.png'), buf);
-    const x0 = Math.max(0, (geo2.col ? geo2.col.left : 12) + 16);
-    const x1 = Math.min(389, (geo2.col ? geo2.col.right : 378) - 16);
-    // 采样窗口按带高自适应（短渐隐批 2026-11-05：带高 64/56 → 12px，固定 win=8 会把
-  // 「带顶已洗到只剩背景」这件事平滑掉）。判据语义不变，只是分辨率跟随带宽。
-  const bandWin = Math.max(2, Math.round(bandH / 6));
-  const { series } = bandProfile(buf, {
-    x0, x1,
-    yTop: Math.max(0, band.top - clipY),
-    yBottom: Math.min(clipH - 1, band.bottom - clipY),
-    win: bandWin,
-  });
-    const L_top = series[0][1];
-    const L_bot = series[series.length - 1][1];
-    const span = +(L_top - L_bot).toFixed(1);   // 顶 = 探针被洗掉（≈背景亮色），底 = 深色探针全实
-    let maxJump = 0, maxAt = 0, inversions = 0;
-    for (let i = 1; i < series.length; i++) {
-      const d = series[i][1] - series[i - 1][1];   // 向下变深 ⇒ 负值
-      if (Math.abs(d) > maxJump) { maxJump = +Math.abs(d).toFixed(1); maxAt = series[i][0]; }
-      if (d > 8) inversions++;   // 向下反而变亮 = 逆序
-    }
-    // 带底沿两侧连续性（短渐隐批改判）：窗口 = 带高的 1/6（≥2px），判据从「绝对跳变
-    // ≤30」改成「接缝处的亮度斜率不超过带内斜率的 1.8 倍 + 4」——语义仍是「没有硬
-    // 切」，但不再用按 56px 带标定的绝对阈值去误杀 12px 带（带宽缩短后每像素斜率
-    // 天然变大，绝对阈值失去可比性；硬切（1px 内 0→全实）在任何带宽下都会红）。
-    const seamWin = bandWin;
-    const seamY = Math.max(0, band.bottom - seamWin);
-    const seamBuf = await page.screenshot({ clip: { x: 0, y: seamY, width: 390, height: seamWin * 3 + 8 } });
-    const seamProf = bandProfile(seamBuf, { x0, x1, yTop: 0, yBottom: seamWin * 2, win: seamWin });
-    const seamFirst = seamProf.series[0] ? seamProf.series[0][1] : 0;
-    const seamLast = seamProf.series[seamProf.series.length - 1] ? seamProf.series[seamProf.series.length - 1][1] : 0;
-    const seamJump = +Math.abs(seamFirst - seamLast).toFixed(1);
-    const seamSpanPx = Math.max(1, (seamProf.series.length - 1) * 2);
-    const seamSlope = +(seamJump / seamSpanPx).toFixed(2);
-    const bandSlope = +(span / Math.max(1, bandH)).toFixed(2);
-    const seamBound = +(bandSlope * 1.8 + 4).toFixed(2);
-    readings.fade = { L_top, L_bot, span, maxJump, maxAt, inversions, seamJump, seamSlope, bandSlope, seamBound, bandWin, series, band, clipY };
-
-    check('A1 衰减区内亮度剖面有真渐隐（顶 ≈ 背景亮、底 = 探针全实，跨度 ≥60；无渐隐/硬切必红）', span >= 60, `span=${span} top=${L_top} bottom=${L_bot}`);
-    check('A2 衰减区内无可见直线边界（相邻采样行跳变 ≤45）', maxJump <= 45, `maxJump=${maxJump}@y${maxAt}`);
-    check('A2b 剖面单调（向下变深的逆序步数 ≤2）', inversions <= 2, `inversions=${inversions}`);
-    check('A3 衰减区顶内容 alpha≈0（顶部亮度 ≥190 = 深色探针被洗到只剩背景）', L_top >= 190, `L_top=${L_top}`);
-    check('A5 衰减区底沿两侧连续（接缝亮度斜率 ≤ 带内斜率×1.8+4；硬切必红）', seamSlope <= seamBound, `seamJump=${seamJump} seamSlope=${seamSlope} bound=${seamBound} bandSlope=${bandSlope}`);
+    // 两点采样（判据换代见上）：底色板垫底 ⇒ 亮度只反映探针本体 alpha。整屏实拍
+    // 一次，对两个探针矩形（meanLum 收 6px 避开圆角抗锯齿）各取平均亮度：探针
+    // #1f242b（暗 ≈35）在板 #f5f6f8（亮 ≈246）上 —— alpha→0 ⇒ ≈246；alpha=1 ⇒ ≈35。
+    const shot = await page.screenshot();
+    writeFileSync(join(OUT, 'ask-sheet-fade-probes.png'), shot);
+    const L_A = meanLum(shot, geo2.probeA);
+    const L_B = meanLum(shot, geo2.probeB);
+    // 跨度方向：亮板（#f5f6f8）上「被洗掉的探针」= 亮（≈板色 246）、全实探针 = 暗
+    // （≈泡色 35）⇒ 跨度 = L_A − L_B（带顶探针 − 带外探针）。
+    const span = +(L_A - L_B).toFixed(1);
+    // A2/A2b/A5（带内连续剖面/单调性/接缝斜率）随列 mask 载体退役：逐泡 opacity 是
+    // 泡级 alpha —— 单条泡在带内整条统一透明度（泡顶深度决定），不存在带内连续
+    // 渐变剖面，「直线边界/接缝」在新载体里没有对应物理形态（毛玻璃批 2026-11-06）。
+    readings.fade = { L_A, L_B, span, opacityA: geo2.opacityA, opacityB: geo2.opacityB };
+    check('A1 渐隐两点亮度跨度 ≥60（带顶探针近背景亮 L_A − 带外探针全实暗 L_B；渐隐真实存在必绿）', span >= 60,
+      `L_A=${L_A} L_B=${L_B} span=${span} opacityA=${geo2.opacityA} opacityB=${geo2.opacityB}`);
+    check('A3 带顶探针被洗到只剩背景（探针区亮度 ≥190 = 深色泡在带顶 alpha→0）', L_A >= 190, `L_A=${L_A}`);
 
     /* ── B 渐隐不影响交互 ─────────────────────────────────────────────── */
     const hits = await page.evaluate(() => {
@@ -551,7 +535,8 @@ test.describe('doc ask sheet · top fade + message area height', () => {
     /* ── 实况截图：面板滚到中段（气泡接近上缘自然淡出、无条无色块）────────
        先拆夹具（探针 + 底色板），回到真实透底状态。 */
     await page.evaluate(() => {
-      document.getElementById('__fade_probe')?.remove();
+      document.getElementById('__fade_probe_a')?.remove();
+      document.getElementById('__fade_probe_b')?.remove();
       document.getElementById('__fade_backdrop')?.remove();
       const c = document.querySelector('.ask-col');
       c.scrollTop = Math.max(0, Math.round((c.scrollHeight - c.clientHeight) / 2));
@@ -618,9 +603,12 @@ test.describe('doc ask sheet · top fade + message area height', () => {
     check('D2 ask.css 实现面零 veil 材质（无 .ask-veil / 无 --ds-fade-veil / 列与柱元素上零 backdrop-filter）',
       !/\.ask-veil/.test(askCssCode) && !/--ds-fade-veil/.test(askCssCode) && !bfOnColumn,
       JSON.stringify({ askVeilSelector: /\.ask-veil/.test(askCssCode), veilTok: /--ds-fade-veil/.test(askCssCode), bfOnColumn, bfAnywhere: /backdrop-filter/.test(askCssCode) }));
-    check('D3 ask.css .ask-col 块承载内容级 mask-image（渐变 + transparent 起点）',
-      !!askColBlock && /mask-image/.test(askColBlock) && /linear-gradient/.test(askColBlock) && /transparent/.test(askColBlock),
-      askColBlock.replace(/\s+/g, ' ').slice(0, 160));
+    // D3 判据换代（毛玻璃批 2026-11-06）：渐隐唯一实现 = askDock.js syncAskFade
+    // 逐泡 opacity；ask.css 源（剥注释）零 mask-image —— 防「列 mask」复活（复活即
+    // 重新架空气泡玻璃 = 缺陷①回归）。
+    check('D3 ask.css 源零 mask-image（列 mask 退役不复活）+ askDock.js syncAskFade 在场（渐隐唯一实现）',
+      !/mask-image/.test(askCssCode) && /syncAskFade/.test(askDockJsCode),
+      JSON.stringify({ askCssMaskImage: /mask-image/.test(askCssCode), syncAskFade: /syncAskFade/.test(askDockJsCode) }));
     check('D4 glass.css #g2-edge-fade 块内零材质声明（主窗材质只在 .ds-edge-fade 一处）',
       !!g2Block && !/backdrop-filter/.test(g2Block) && !/gradient/.test(g2Block),
       g2Block.replace(/\s+/g, ' ').slice(0, 120));
