@@ -107,19 +107,30 @@ object InjectionTiming:
    * 为什么是这三条而不是「所有真人 UserInput」：
    *  - `clientMessageId.isDefined` = 客户端投递的真人件（服务端注入件不带幂等键；
    *    `MailTool` 的 pending 补发腿显式钉同一形也无妨 —— 它另命中 mail 豁免）；
-   *  - `blocks.nonEmpty` = **附件 / 引用 / 引言**承载形（`WebSocketRoutes` 的
-   *    typeless 腿先把 refs/attachments 解析成块，再 `Some(blocksList).filter(_.nonEmpty)`
-   *    投 `UserInput`）。纯文本真人件的引擎承载形早已是 `ImmediateInput`（腿①，
-   *    既有绿），而**不带块**的 `UserInput`（queue 旧轨 / `fromUser = true` 的
-   *    直投形）逐字保留 2026-09-15「逐条独立 turn」裁定面 —— 见
-   *    `BusyConsoleInputInjectionSpec` W3 负对照（必须仍绿）；
+   *  - `blocks.nonEmpty` = **块承载形**。⚠️ 口径修正（2026-11-05，按代码实测；旧注释
+   *    称「收窄为显式 queue 模式的纯文本件」与代码相反，已作废）：`WebSocketRoutes.scala:2044`
+   *    对**任何带正文**的 typeless 帧都产出一块 `ContentBlock.Text(content)`
+   *    （`:2234-2240` 投 `UserInput(content, None, clientMessageId, Some(blocks).filter(_.nonEmpty), w)`），
+   *    而前端 queue 模式 drain 腿（`input.js:1345` `dispatchQueuedItemNow(sessionId, item)`
+   *    无 opts → `:1427` `wire==='immediate'` 不成立 → `:1430` `dispatchUserMessageFrames`
+   *    默认用户帧）与直投帧**同形** ⇒ **queue 模式的纯文本件同样带块、同样在工具边界注入**。
+   *    本判据覆盖的不是「附件/引用专有形」，而是「一切带正文的 typeless 帧」；
+   *  - 于是 2026-09-15「排队消息逐条独立 turn」裁定的**残余面只剩零块 `UserInput`**：
+   *    `content` 空 ∧ 无附件/引用 ⇒ 网关准入谓词（`content.nonEmpty || attachments.nonEmpty`，
+   *    `WebSocketRoutes.scala:2009`）直接拒收，**WS 前端从不产生该形**，仅协议层可手工构造
+   *    （`BusyConsoleInputInjectionSpec` W3 夹具即该形 ⇒ 其绿只钉协议残余面、不覆盖
+   *    queue 路径）；生产形（纯文本块 `ContentBlock.Text`，与 queue drain 帧逐字段同形）
+   *    由既有 `MidTurnInjectionTimingSpec` **L1b**（`:283-289`）钉住且已绿
+   *    ⇒ **不变量：带正文的 typeless 真人帧必带块 ⇒ 必在工具边界注入**；
    *  - `replyTo.isEmpty` = 无完成结算目标，边界注入不会让 supervisor 的
    *    `AgentEvent.Completed` 搁浅（带 replyTo 的件仍只走全元数据 head-forward）。
    *
-   * 🔴 政策边界（如实记，不假装统一）：前端 queue 模式 drain 腿带附件时与直投帧
-   * **逐字节同形**，引擎侧不可区分 ⇒ 本判据也覆盖它，等于把 2026-09-15 裁定
-   * 「排队消息逐条独立 turn」的适用范围**收窄为「显式 queue 模式的纯文本件」**。
-   * 该收窄是政策裁定、非技术不确定，已记入 facts.md 增补节待作者确认。
+   * 🔴 政策面（如实记，不假装统一；已报作者待裁定）：本判据实质上是把 2026-09-15 裁定的
+   * 适用范围退到「零块 `UserInput`」这一 WS 前端不产生的形态 —— 生产面上 queue 模式的
+   * 纯文本件已改为工具边界注入。若要保留 queue 模式逐条独立 turn 语义，需前端在默认用户
+   * 帧上加**可判别标记**（如 `queued: true`）并由 `AgentCommand.UserInput` 承载，判据改为
+   * 显式标记而非「有块」（协议增量，本轮未做）。证据口径见
+   * `reports-evidence/midturn-injection-timing/facts.md` §8.4①②。
    */
   def isHumanFrame(ui: AgentCommand.UserInput): Boolean =
     ui.clientMessageId.isDefined && ui.blocks.exists(_.nonEmpty) && ui.replyTo.isEmpty
