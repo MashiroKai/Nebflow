@@ -395,6 +395,8 @@ export default {
   // 群组一期（friendgroups 客户端腿）：建群/群邀请（契约 = 主卡案1② + A-4）。
   'contacts.createGroup': '发起群聊',
   'contacts.createGroupTitle': '发起群聊',
+  // 统一面板批（2026-11-06）：顶栏返回圆钮的读屏/悬浮文案（原右上 X 无文案面）。
+  'contacts.back': '返回',
   'contacts.createGroupName': '群名称',
   // 建群面板骨架四段（2026-09-16 视觉重做）：输入区示例占位 / 列表区章节标签 /
   // 空态引导。三键与 en 同批落地（禁死键）。

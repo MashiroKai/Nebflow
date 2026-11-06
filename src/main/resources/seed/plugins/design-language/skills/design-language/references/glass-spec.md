@@ -127,9 +127,15 @@ status: active
 
 | 选择器片段 | 判据号 | 理由 |
 |---|---|---|
-| `.mf-strip-chip::after` | G7a | 邻签白玻璃层**technically 不能带 blur**：同元素上 `mask-image` × `backdrop-filter` 并存时合成器按未裁剪输出（2026-11-03 headless 软渲染最小复现：mask 被架空、整条签不渐隐），而「越靠边越模糊」是作者 2026-11-02 21:47 的原令。取舍 = blur 只留给无 mask 的中签（`.on::after`，成员表已供 blur），邻签靠 α .549 白玻璃 + 环位姿缩径/透明度渐隐承担「绕到圈后」语义；中签恒在环心、恒全不透明。 |
 | `.fm-avatar` | G7a | 身份头里的圆头像底：α .04 etched 环只是头像的一圈边缘感，头像图 100% cover 铺满该盒 —— 环下没有任何可读内容可「透上来」，加模糊只增加采样成本。 |
 | `.ghead` | G7a | 堆叠视角卡片的**缩略图骨架**里的窗口标题条（α .10 sapphire 示意色块）：它是卡片快照的示意图形，不是产品面，背后没有内容。 |
+
+> 退役一条例外（mobile-canvas-tabs-c 批 2026-11-06）：旧表里的
+> `.mf-strip-chip::after` 例外（「邻签 mask × backdrop 合成器限制」）随方案 C 落地
+> **整条消失** —— 作者令「文字两边不要渐隐」把环带上的水平 mask 全族退役，mask ×
+> backdrop 的冲突前提不复存在；同时「背景的文字不使用胶囊」把两侧签改成零材质
+> （α = 0，本来就不是可透出面）。相邻签也不再需要豁免：它们没有面，只有环位姿与
+> 环邻位模糊（`--ds-ring-blur`）。
 
 ## 7. 顶部悬浮面 = 毛玻璃（G7）
 
@@ -180,8 +186,8 @@ status: active
 | T8 | 桌面网络横幅 | `#conn-banner` | 毛玻璃 | 顶部 fixed 横幅，成员表在册 |
 | T9 | 手机搜索带 | `.mh-search-dock` | 零画 | 带离流贴页顶、手势穿透，内容从带内穿行（2026-11-05 17:34 批） |
 | T10 | 手机搜索条 | `.mh-search-bar` | 毛玻璃@nf-glass | 消息/联系人两页常驻搜索条（作者点名面，2026-11-06） |
-| T11 | 手机 canvas 环带 | `.mf-strip` | 零画 | 环签定位带，本体零底 |
-| T12 | 手机 canvas 环签 | `.mf-strip-chip::after` | 例外 | 邻签 mask × backdrop 合成限制，见 §6 |
+| T11 | 手机 canvas 环带 | `.mf-strip` | 零画 | 环签定位带，本体零底（方案 C 落地批：带子里真正的玻璃是 `::before` 那层 64px，见 T21；下缘 28px 是 `::after` 渐层，零 backdrop） |
+| T12 | 手机 canvas 主胶囊 | `.mf-strip-chip.on::after` | 毛玻璃 | 三签里**唯一带材质**的那一枚（作者令 2026-11-06「主胶囊要采用毛玻璃底」），成员表在册。两侧签同批零材质（「背景的文字不使用胶囊」）⇒ 不是「半透明但没走玻璃」，而是根本没有面 |
 | T13 | 手机身份头 | `.mh-idhead` | 零画 | 「不得有横贯顶栏带」原令：头本体零底零描边，只有头像与名字胶囊接事件 |
 | T14 | 手机身份名胶囊 | `.mh-idhead-name` | 毛玻璃 | 四种会话同一枚 |
 | T15 | 手机页标题胶囊 | `.mobile-page-title::before` | 毛玻璃 | 单元素连续变形的壳层（--mtitle-p 驱动 opacity） |
@@ -190,6 +196,7 @@ status: active
 | T18 | 手机聊天钮带 | `#mobile-fab-layer` | 零画 | `.ds-chrome-band` 族：零画 + 手势落穿 |
 | T19 | 手机 canvas 工具带 | `.mf-cv-toolbar` | 零画 | 同上，子件是 `.g2-fab` 圆钮 |
 | T20 | 手机图谱 pane 条 | `.wg-panebar` | 零画 | 同上，子件是 `.wg-search`/`.wg-chip`（成员表在册） |
+| T21 | 手机 canvas 玻璃带 | `.mf-strip::before` | 毛玻璃 | 方案 C 的 64px 顶栏玻璃面（成员表在册）：正文滚进带里只剩色块，滚出 64px 交给 28px 渐隐带化开（厚度与单源另由 `scripts/check-mobile-canvas-strip.mjs` 的 S1/S4 钉死） |
 
 ### 7.3 零画带（为什么 α = 0 不算违规）
 

@@ -201,6 +201,30 @@ jobs:
         # tests/scroll-pill-family.spec.mjs.
         # Same logic locally: node scripts/check-scroll-pill-center.mjs (or `make frontend-gates`)
         run: node scripts/check-scroll-pill-center.mjs
+      - name: Mobile canvas top strip (glass band / no horizontal fade / no pill / 28px edge)
+        # mobile-canvas-tabs-c gate (author order 2026-11-06 08:33 verbatim: "采用方案c
+        # 主胶囊要采用毛玻璃底 然后背景的文字不使用胶囊 但是还有电脑端hover 上下选项
+        # 的那种模糊效果 文字两边不要渐隐"). The mobile canvas top strip grew five
+        # mutually-exclusive visual systems in six months (52->64 side feathering ->
+        # per-chip directional mask -> mask moved onto ::after -> flat chips -> plan C).
+        # Two of the author's clauses are PROHIBITIONS and must be machine-checked,
+        # otherwise the next refactor silently restores them:
+        #   S1 glass single source: any translucent (alpha in (0,.90)) face on the strip
+        #      must be a css/glass.css member; the 64px glass band (`.mf-strip::before`)
+        #      and the main capsule (`.mf-strip-chip.on::after`) must exist and be glassed.
+        #   S2 no horizontal fade: any 90deg/270deg/to-left/to-right mask-image on the
+        #      strip, ANY non-none mask on a label, or JS writing mask/--rfade => RED.
+        #   S3 background text carries no capsule: the shared chip visual layer must be
+        #      zero-material (pill material only under `.on`); content hosts
+        #      (.canvas-md-scroll / .mf-cv-host / .canvas-tab-pane) zero background,
+        #      never pill-shaped.
+        #   S4 bottom fade thickness = 28px: `.mf-strip::after` present, painting
+        #      var(--ds-fade-veil), height token arithmetic exactly 28px, top exactly the
+        #      64px glass height (--mchrome-clear 72 - --ds-space-2 8).
+        # Static, zero-port (no browser). Real-render readings (375/1440 x light/dark)
+        # live in scripts/capture-mobile-canvas-tabs.mjs and the paired spec.
+        # Same logic locally: node scripts/check-mobile-canvas-strip.mjs (or `make frontend-gates`)
+        run: node scripts/check-mobile-canvas-strip.mjs
       - name: Design spec scale sync (spec table <-> token source)
         # design-scale gate (author order 2026-11-04: "把我们对圆角 边距 文字离边缘
         # 的距离 各文字的大小 写进spec和前端开发包"): the four scales (radius /

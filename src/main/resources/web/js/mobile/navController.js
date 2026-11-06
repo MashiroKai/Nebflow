@@ -775,12 +775,12 @@ const RING_VISIBLE = 1;
 // 连续曲线（作者令「越到边缘越模糊」+「不用…号」）：三条量全按 t = min(|k|,2)/2
 // ∈ [0,1] 连续单调取值，不再分三档跳；k 取整数，故实际采样点 = |k| 0/1/2，
 // 其余行只为证明曲线连续（拖动换签的过渡帧即落在这些 t 上）。
-//   t   |k|   scale           opacity        blur        rotY
-//   0    0    1.100           1.000          0.00px      0.0°
-//   0.25 0.5  0.988           0.951          0.10px      −12.0°
-//   0.5  1    0.870           0.901          0.40px      −24.0°  ← 邻签（唯一可见的非中签）
-//   0.75 1.5  0.735           0.772          1.05px      −36.0°
-//   1    2    0.600           0.000          2.40px      −48.0°  ← 与 .is-far 的无缝点
+//   t   |k|   scale           opacity        blur 系数     rotY
+//   0    0    1.100           1.000          0.00         0.0°
+//   0.25 0.5  0.988           0.951          0.50         −12.0°
+//   0.5  1    0.870           0.901          1.00         −24.0°  ← 邻签（唯一可见的非中签）
+//   0.75 1.5  0.735           0.772          1.50         −36.0°
+//   1    2    0.600           0.000          2.00         −48.0°  ← 与 .is-far 的无缝点
 // 三条曲线（**可读字批 2026-11-03 12:59 作者令**重定 —— 「两边的标签尽量能清晰
 // 显现」+「切换要有旋转感」）：
 //   · scale 用 (1−t)^0.889：邻签 0.87（旧 0.80）—— 字号档 × 0.87 ≥13px 可读
@@ -788,8 +788,13 @@ const RING_VISIBLE = 1;
 //   · op 用 (1−t)^0.15：邻签 0.901（旧 0.66 —— 作者判「近乎不可见」的根因面）——
 //     指数 < 0.2 ⇒ 前段几乎平坦（邻签保持全可见），只在 |k| 1→2 的最后一段
 //     陡降到 0，与 .is-far 无缝衔接（可见集恒 = |k| ≤ 1）；
-//   · blur 用 t^2.6（MAX 2.40）：邻签 0.40px（旧 0.70 —— 糊字半边来源），
-//     边缘 2.40px 仍「糊成一团」＝越靠边越糊的读感保留；
+//   · blur **系数** = min(|k|, 2)：本文件不再写模糊半径（方案 C 落地批 2026-11-06，
+//     作者令「还有电脑端hover 上下选项的那种模糊效果」）。半径与饱和的唯一出生地
+//     = design-system.css ⑯b 槽的 `--ds-ring-blur`（1.6px）/ `--ds-ring-saturate`
+//     （1.25）—— 与桌面 hover 环 `.cr-capsule.is-edge` 同两枚令牌；本文件只写
+//     「拿几档」这枚系数（|k|=1 恰拿满一档 = 桌面 hover 上下选项的同一档）。
+//     旧档（MAX 2.40、指数 2.6 ⇒ |k|=1 只有 0.40px）退役：数值自拟 + 邻位被压到
+//     1/4 档，正是作者实拍「手机端没有电脑端那种糊感」的根因。
 //   · rotY = −24°·k：**转盘位姿**（见 layoutRing 的 --rrot）。环是横向圆环，
 //     邻签绕圆心转到侧面 ⇒ 环绕 Y 轴转 24°（左邻右缘退到纸面里、右邻对称），
 //     换签时 k 变动 ⇒ 位移 + 缩径 + 旋转三者同步插值 = 「转盘转过去」的动效
@@ -798,8 +803,9 @@ const RING_SCALE_ON = 1.10;      // 中签缩径（旧 1.14：与邻签 0.87 的
 const RING_SCALE_MIN = 0.60;     // 环外下限（|k| ≥ 2）
 const RING_SCALE_POW = 0.889;    // s = MIN + (ON − MIN)·(1−t)^P ⇒ |k|=1 恰 0.870
 const RING_OP_POW = 0.15;        // op = (1−t)^P ⇒ |k|=1 0.901、|k|=2 恰 0
-const RING_BLUR_MAX = 2.40;      // blur = MAX·t^P ⇒ |k|=1 0.40px、|k|=2 2.40px
-const RING_BLUR_POW = 2.6;
+/** 环邻位模糊系数上限 = 2（|k| 钳到 2；1 = 拿满 `--ds-ring-blur` 那一档）。
+ *  CSS 侧只做一次乘法（blur: calc(--ds-ring-blur × 本系数)）⇒ 半径值的家仍在令牌层。 */
+const RING_BLUR_FACTOR_MAX = 2;
 /** 邻签绕 Y 轴转角（转盘位姿；单位 °，符号 = 环形偏移 k 的负值）。 */
 const RING_ROT_Y_DEG = 24;
 
@@ -959,16 +965,17 @@ function ringOffset(d, n) {
   return k;
 }
 
-/** chip 位姿四值（k → dx/scale/opacity/blur）。三条曲线均按
+/** chip 位姿四值（k → dx/scale/opacity/blur 系数）。三条曲线均按
  *  t = min(|k|,2)/2 ∈ [0,1] 连续单调；数值表见文件头 RING_* 常量注释。
- *  @returns {{dx: number, s: number, op: number, blur: number}} */
+ *  `blurf` 是**系数**不是半径（半径 = `--ds-ring-blur` × 本系数，配方在令牌层）。
+ *  @returns {{dx: number, s: number, op: number, blurf: number}} */
 function ringPose(k) {
   const t = Math.min(Math.abs(k), 2) / 2;
   return {
     dx: RING_DX1 * k,
     s: RING_SCALE_MIN + (RING_SCALE_ON - RING_SCALE_MIN) * (1 - t) ** RING_SCALE_POW,
     op: (1 - t) ** RING_OP_POW,
-    blur: RING_BLUR_MAX * t ** RING_BLUR_POW,
+    blurf: Math.min(Math.abs(k), RING_BLUR_FACTOR_MAX),
   };
 }
 
@@ -991,7 +998,10 @@ function layoutRing() {
     el.style.setProperty('--rdx', `${p.dx.toFixed(1)}px`);
     el.style.setProperty('--rsc', p.s.toFixed(3));
     el.style.setProperty('--rop', p.op.toFixed(2));
-    el.style.setProperty('--rbl', `${p.blur.toFixed(2)}px`);
+    /* 环邻位模糊 = 系数（方案 C 落地批 2026-11-06）：半径与饱和由 CSS 取
+       `--ds-ring-blur` / `--ds-ring-saturate`（与桌面 hover 上下选项同两枚令牌），
+       本文件只写「拿几档」。--rbl（半径字面量）同批退役。 */
+    el.style.setProperty('--rblf', p.blurf.toFixed(2));
     /* 转盘位姿（可读字批 2026-11-03）：邻签绕 Y 轴 −24°×k —— 环是横向圆环，
        邻签绕到圆心侧面 ⇒ 左邻右缘退进纸面、右邻对称；换签时 k 变 ⇒ 位移 +
        缩径 + 旋转同步插值（CSS transform 过渡）＝「转盘转过去」。中签 k=0
@@ -999,23 +1009,17 @@ function layoutRing() {
     el.style.setProperty('--rrot', `${(-RING_ROT_Y_DEG * k).toFixed(1)}deg`);
     el.classList.toggle('on', k === 0);
     el.classList.toggle('is-far', Math.abs(k) > RING_VISIBLE);
-    /* 胶囊边缘渐隐批（作者令 2026-11-02 21:47 §一）：**朝中心一侧清晰、朝外
-       一侧化开**——方向由环形偏移 k 的符号决定（k<0 = 在中心左侧 ⇒ 左为外）。
-       中签两向都清晰（不挂任何 side 类 ⇒ 无 mask）。淡化宽度随 |k| 连续增大
-       （见 CSS --rfade 档），与 --rbl 的连续模糊同族，读作「越靠边越模糊」。
-       只用视觉层（mask），不动 DOM 文本 ⇒ 读屏/title 拿到的仍是全名。 */
+    /* 环方向类（k 的符号）：保留为**环位语义**（「这枚签绕到了哪一侧」），判据与
+       手势腿都读它。**水平渐隐的 CSS 消费已整条退役**（方案 C 落地批 2026-11-06，
+       作者令「文字两边不要渐隐」）—— 旧档 `--rfade` 宽度同步停写：化开这件事不再
+       存在，留着它只会让下一个人以为还有一条水平遮罩在跑。 */
     el.classList.toggle('side-l', k < 0);
     el.classList.toggle('side-r', k > 0);
-    /* 可读字批（2026-11-03 12:59 作者令「希望两边标签的文字尽量能清晰显现」）：
-       朝外渐隐带宽 55% → 18% —— 旧值把邻签朝外半边**连同文字**整块吃掉（作者
-       实拍「2026…」近乎不可见的主因之一）；18% 只羽化最外缘（约 10px），文字
-       主体恒实色，与字色档（--ds-text）/不透明度 0.901 三件一起构成 ≥4.5:1。 */
-    el.style.setProperty('--rfade', `${Math.min(1, Math.abs(k)) * 18}%`);
     el.setAttribute('aria-selected', k === 0 ? 'true' : 'false');
     el.tabIndex = Math.abs(k) <= 1 ? 0 : -1;
   }
-  // 环带渐隐门控：2 签起双侧渐隐（单签居中无需遮，中心签恒完整）。
-  strip.classList.toggle('fade', docs.length > 1);
+  // 环带渐隐门控退役（方案 C 落地批）：旧档 2 签起给带子挂 `.fade`（双侧 14px
+  // 羽化 mask）。水平渐隐整族退役后 `.fade` 无消费面 ⇒ 不再挂类（带子恒无 mask）。
   fitRingLabels();
 }
 
@@ -1079,20 +1083,23 @@ function fitProbeEl(label) {
  *  `querySelectorAll('.mf-strip-chip')` 的既有判据面（T13 / 手势腿 / 小点对账）。
  *  @returns {number} */
 function chipInnerWidth(chip) {
-  const prev = chip.style.transition;
-  chip.style.transition = 'none';
+  /* 陷阱（方案 C 落地批实测，别再加回来）：旧档为了拿**目标档** max-width 会先
+     `chip.style.transition = 'none'`、读一次计算值、再复原。收束面从「只收中签」
+     扩到「全组」以后，这一手会落在**正在切签的那几枚签**身上 —— 掐过渡的那次强制
+     重算把**终点位姿**提前提交，整段切签动画就静默消失（实测：L3③ 无任何
+     transitionend、L5 连拍零中间帧，且不影响任何静态判据 ⇒ 只有动的腿才看得见）。
+     故此处只读不算：切签瞬间可能读到过渡起点档（比目标窄一档），稳态由下面
+     `transitionend` 自校补齐。 */
   const cs = getComputedStyle(chip);
   const cap = parseFloat(cs.maxWidth);
-  const inner = Number.isFinite(cap)
+  return Number.isFinite(cap)
     ? cap - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0)
       - (parseFloat(cs.borderLeftWidth) || 0) - (parseFloat(cs.borderRightWidth) || 0)
     : 0;
-  chip.style.transition = prev;
-  return inner;
 }
 
-/** 把中签 label 收到整字边界（幂等：先回原始态再量，收束只压绘制宽）。 */
-function fitCenterLabel(chip) {
+/** 把某枚签的 label 收到整字边界（幂等：先回原始态再量，收束只压绘制宽）。 */
+function fitChipLabel(chip) {
   const label = /** @type {HTMLElement|null} */ (chip.querySelector('.mf-strip-label'));
   if (!label) return;
   label.style.maxWidth = '';                    // 回原始态：量到的是「未收束」的真实排版
@@ -1118,16 +1125,18 @@ function fitCenterLabel(chip) {
   label.style.maxWidth = `${Math.ceil(keepW * 100) / 100}px`;
 }
 
-/** 全体签的收束对账：中签收束，非中签复原（邻签的 mask 渐隐因此零影响）。 */
+/** 全体签的收束对账（方案 C 落地批 2026-11-06：**全组生效**，不再只收中签）。
+ *  理由 = 水平渐隐整族退役（作者令「文字两边不要渐隐」）—— 旧档邻签超宽时靠
+ *  方向 mask 化开兜底，mask 一去，若仍只收中签，邻签右端就会**硬裁半个字**。
+ *  改为每枚签都把 label 收到字界（不出现半个字、不出省略号、不越签盒），
+ *  代价是邻签可能比旧档少显示一个字（旧档那一个字本来也是半透明的）。 */
 function fitRingLabels() {
   const strip = canvasUI?.strip;
   if (!strip) return;
   for (const chip of strip.querySelectorAll('.mf-strip-chip')) {
     const el = /** @type {HTMLElement} */ (chip);
-    const label = /** @type {HTMLElement|null} */ (el.querySelector('.mf-strip-label'));
-    if (!label) continue;
-    if (el.classList.contains('on')) fitCenterLabel(el);
-    else if (label.style.maxWidth) label.style.maxWidth = '';
+    if (!el.querySelector('.mf-strip-label')) continue;
+    fitChipLabel(el);
   }
 }
 
@@ -1797,6 +1806,13 @@ function buildCanvasPage(body) {
   host.className = 'mf-cv-host';
   bindDocSwipe(host);
   bindStripSwipe(strip);
+  /* 整字收束的**稳态自校**（方案 C 落地批 2026-11-06）：切签瞬间签的 max-width
+     正在 220ms 过渡里，`chipInnerWidth` 直读到的是过渡起点档（比目标窄一档）。
+     过渡一落定就再收一次 —— 稳态恒落在整字边界，且**不碰过渡**（本腿只读）。
+     代价只有 220ms 内可能早收一个字（旧档那一个字本来也是半透明的边缘字）。 */
+  strip.addEventListener('transitionend', (ev) => {
+    if (/** @type {TransitionEvent} */ (ev).propertyName === 'max-width') fitRingLabels();
+  });
   const dots = document.createElement('div');
   dots.className = 'mf-dots';
   dots.hidden = true;

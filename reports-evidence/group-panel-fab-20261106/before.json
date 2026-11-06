@@ -1,0 +1,937 @@
+{
+  "tag": "before",
+  "webRoot": "/tmp/group-panel-before/web",
+  "browser": "chromium-151",
+  "runs": [
+    {
+      "viewport": "375",
+      "theme": "light",
+      "mobileLayer": true,
+      "disabled": {
+        "overlayPresent": true,
+        "modalPresent": true,
+        "mobileLayer": true,
+        "closeXCount": 1,
+        "titleLeafCount": 1,
+        "titleTexts": [
+          "发起群聊"
+        ],
+        "fab": null,
+        "back": null,
+        "name": {
+          "rect": {
+            "x": 20,
+            "y": 78.5,
+            "w": 59.41,
+            "h": 21
+          },
+          "fontSize": "15px",
+          "fontWeight": "600",
+          "lineHeight": "normal",
+          "color": "rgb(27, 30, 38)",
+          "letterSpacing": "-0.15px",
+          "text": "发起群聊"
+        },
+        "titleBase": {
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "w": 60,
+            "h": 21
+          },
+          "fontSize": "15px",
+          "fontWeight": "600",
+          "lineHeight": "normal",
+          "color": "rgb(27, 30, 38)",
+          "letterSpacing": "normal"
+        },
+        "askRef": {
+          "rect": {
+            "x": 311,
+            "y": 686,
+            "w": 48,
+            "h": 48
+          },
+          "width": "48px",
+          "height": "48px",
+          "borderRadius": "50%",
+          "backdropFilter": "blur(40px) saturate(1.4)",
+          "boxShadow": "none",
+          "background": "rgba(255, 255, 255, 0.55) none repeat scroll 0% 0% / auto padding-box border-box",
+          "border": "1px solid rgba(255, 255, 255, 0.35)",
+          "color": "rgb(27, 30, 38)",
+          "opacity": "1",
+          "zIndex": "260",
+          "position": "fixed",
+          "right": "16px",
+          "bottom": "78px",
+          "cursor": "pointer",
+          "padding": "0px"
+        },
+        "askIcon": {
+          "width": "18px",
+          "height": "18px"
+        },
+        "modalRect": {
+          "x": 0,
+          "y": 0,
+          "w": 375,
+          "h": 812
+        },
+        "headerRect": {
+          "x": 0,
+          "y": 65,
+          "w": 375,
+          "h": 48,
+          "padding": "12px 16px 12px 20px",
+          "borderBottom": "0px none rgb(27, 30, 38)"
+        },
+        "tokens": {
+          "sizeCircle": "40px",
+          "cvIcon": "18px",
+          "askGap": "14px",
+          "askBottom": "24px",
+          "fsTitle": "15px"
+        }
+      },
+      "enabled": {
+        "overlayPresent": true,
+        "modalPresent": true,
+        "mobileLayer": true,
+        "closeXCount": 1,
+        "titleLeafCount": 1,
+        "titleTexts": [
+          "发起群聊"
+        ],
+        "fab": null,
+        "back": null,
+        "name": {
+          "rect": {
+            "x": 20,
+            "y": 78.5,
+            "w": 59.41,
+            "h": 21
+          },
+          "fontSize": "15px",
+          "fontWeight": "600",
+          "lineHeight": "normal",
+          "color": "rgb(27, 30, 38)",
+          "letterSpacing": "-0.15px",
+          "text": "发起群聊"
+        },
+        "titleBase": {
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "w": 60,
+            "h": 21
+          },
+          "fontSize": "15px",
+          "fontWeight": "600",
+          "lineHeight": "normal",
+          "color": "rgb(27, 30, 38)",
+          "letterSpacing": "normal"
+        },
+        "askRef": {
+          "rect": {
+            "x": 311,
+            "y": 686,
+            "w": 48,
+            "h": 48
+          },
+          "width": "48px",
+          "height": "48px",
+          "borderRadius": "50%",
+          "backdropFilter": "blur(40px) saturate(1.4)",
+          "boxShadow": "none",
+          "background": "rgba(255, 255, 255, 0.55) none repeat scroll 0% 0% / auto padding-box border-box",
+          "border": "1px solid rgba(255, 255, 255, 0.35)",
+          "color": "rgb(27, 30, 38)",
+          "opacity": "1",
+          "zIndex": "260",
+          "position": "fixed",
+          "right": "16px",
+          "bottom": "78px",
+          "cursor": "pointer",
+          "padding": "0px"
+        },
+        "askIcon": {
+          "width": "18px",
+          "height": "18px"
+        },
+        "modalRect": {
+          "x": 0,
+          "y": 0,
+          "w": 375,
+          "h": 812
+        },
+        "headerRect": {
+          "x": 0,
+          "y": 65,
+          "w": 375,
+          "h": 48,
+          "padding": "12px 16px 12px 20px",
+          "borderBottom": "0px none rgb(27, 30, 38)"
+        },
+        "tokens": {
+          "sizeCircle": "40px",
+          "cvIcon": "18px",
+          "askGap": "14px",
+          "askBottom": "24px",
+          "fsTitle": "15px"
+        }
+      },
+      "disabledClick": {
+        "apiCallsDelta": [],
+        "overlayStillPresent": true,
+        "toastDelta": 0,
+        "toastAppeared": false,
+        "clickErr": null
+      },
+      "rowClicked": true,
+      "apiCalls": [
+        "GET /api/delegates",
+        "GET /api/nf-asset-stamp",
+        "GET /api/projects",
+        "GET /api/agents/Nebula/avatar/meta",
+        "GET /api/neblink/status",
+        "GET /api/canvas-tabs",
+        "GET /api/neblink/status",
+        "GET /api/nf-authcheck",
+        "GET /api/chains",
+        "GET /api/plugins",
+        "GET /api/plugins/updates",
+        "GET /api/portal/status",
+        "GET /api/health/loopback-info",
+        "GET /api/neblink/status",
+        "GET /api/neblink/status",
+        "POST /api/health/nearpath-event",
+        "GET /api/neblink/nearpath",
+        "GET /api/neblink/status",
+        "GET /api/delegates",
+        "GET /api/agents/Nebula/avatar/meta",
+        "GET /api/chains",
+        "GET /api/friends",
+        "GET /api/conversations",
+        "GET /api/friends",
+        "GET /api/groups",
+        "GET /api/groups/invites",
+        "GET /api/groups",
+        "GET /api/groups/invites",
+        "PUT /api/canvas-tabs",
+        "GET /api/friends"
+      ]
+    },
+    {
+      "viewport": "375",
+      "theme": "dark",
+      "mobileLayer": true,
+      "disabled": {
+        "overlayPresent": true,
+        "modalPresent": true,
+        "mobileLayer": true,
+        "closeXCount": 1,
+        "titleLeafCount": 1,
+        "titleTexts": [
+          "发起群聊"
+        ],
+        "fab": null,
+        "back": null,
+        "name": {
+          "rect": {
+            "x": 20,
+            "y": 78.5,
+            "w": 59.41,
+            "h": 21
+          },
+          "fontSize": "15px",
+          "fontWeight": "600",
+          "lineHeight": "normal",
+          "color": "rgb(232, 234, 237)",
+          "letterSpacing": "-0.15px",
+          "text": "发起群聊"
+        },
+        "titleBase": {
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "w": 60,
+            "h": 21
+          },
+          "fontSize": "15px",
+          "fontWeight": "600",
+          "lineHeight": "normal",
+          "color": "rgb(232, 234, 237)",
+          "letterSpacing": "normal"
+        },
+        "askRef": {
+          "rect": {
+            "x": 311,
+            "y": 686,
+            "w": 48,
+            "h": 48
+          },
+          "width": "48px",
+          "height": "48px",
+          "borderRadius": "50%",
+          "backdropFilter": "blur(40px) saturate(1.4)",
+          "boxShadow": "none",
+          "background": "rgba(24, 28, 38, 0.68) none repeat scroll 0% 0% / auto padding-box border-box",
+          "border": "1px solid rgba(255, 255, 255, 0.06)",
+          "color": "rgb(232, 234, 237)",
+          "opacity": "1",
+          "zIndex": "260",
+          "position": "fixed",
+          "right": "16px",
+          "bottom": "78px",
+          "cursor": "pointer",
+          "padding": "0px"
+        },
+        "askIcon": {
+          "width": "18px",
+          "height": "18px"
+        },
+        "modalRect": {
+          "x": 0,
+          "y": 0,
+          "w": 375,
+          "h": 812
+        },
+        "headerRect": {
+          "x": 0,
+          "y": 65,
+          "w": 375,
+          "h": 48,
+          "padding": "12px 16px 12px 20px",
+          "borderBottom": "0px none rgb(232, 234, 237)"
+        },
+        "tokens": {
+          "sizeCircle": "40px",
+          "cvIcon": "18px",
+          "askGap": "14px",
+          "askBottom": "24px",
+          "fsTitle": "15px"
+        }
+      },
+      "enabled": {
+        "overlayPresent": true,
+        "modalPresent": true,
+        "mobileLayer": true,
+        "closeXCount": 1,
+        "titleLeafCount": 1,
+        "titleTexts": [
+          "发起群聊"
+        ],
+        "fab": null,
+        "back": null,
+        "name": {
+          "rect": {
+            "x": 20,
+            "y": 78.5,
+            "w": 59.41,
+            "h": 21
+          },
+          "fontSize": "15px",
+          "fontWeight": "600",
+          "lineHeight": "normal",
+          "color": "rgb(232, 234, 237)",
+          "letterSpacing": "-0.15px",
+          "text": "发起群聊"
+        },
+        "titleBase": {
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "w": 60,
+            "h": 21
+          },
+          "fontSize": "15px",
+          "fontWeight": "600",
+          "lineHeight": "normal",
+          "color": "rgb(232, 234, 237)",
+          "letterSpacing": "normal"
+        },
+        "askRef": {
+          "rect": {
+            "x": 311,
+            "y": 686,
+            "w": 48,
+            "h": 48
+          },
+          "width": "48px",
+          "height": "48px",
+          "borderRadius": "50%",
+          "backdropFilter": "blur(40px) saturate(1.4)",
+          "boxShadow": "none",
+          "background": "rgba(24, 28, 38, 0.68) none repeat scroll 0% 0% / auto padding-box border-box",
+          "border": "1px solid rgba(255, 255, 255, 0.06)",
+          "color": "rgb(232, 234, 237)",
+          "opacity": "1",
+          "zIndex": "260",
+          "position": "fixed",
+          "right": "16px",
+          "bottom": "78px",
+          "cursor": "pointer",
+          "padding": "0px"
+        },
+        "askIcon": {
+          "width": "18px",
+          "height": "18px"
+        },
+        "modalRect": {
+          "x": 0,
+          "y": 0,
+          "w": 375,
+          "h": 812
+        },
+        "headerRect": {
+          "x": 0,
+          "y": 65,
+          "w": 375,
+          "h": 48,
+          "padding": "12px 16px 12px 20px",
+          "borderBottom": "0px none rgb(232, 234, 237)"
+        },
+        "tokens": {
+          "sizeCircle": "40px",
+          "cvIcon": "18px",
+          "askGap": "14px",
+          "askBottom": "24px",
+          "fsTitle": "15px"
+        }
+      },
+      "disabledClick": {
+        "apiCallsDelta": [],
+        "overlayStillPresent": true,
+        "toastDelta": 0,
+        "toastAppeared": false,
+        "clickErr": null
+      },
+      "rowClicked": true,
+      "apiCalls": [
+        "GET /api/delegates",
+        "GET /api/nf-asset-stamp",
+        "GET /api/projects",
+        "GET /api/agents/Nebula/avatar/meta",
+        "GET /api/neblink/status",
+        "GET /api/canvas-tabs",
+        "GET /api/neblink/status",
+        "GET /api/nf-authcheck",
+        "GET /api/chains",
+        "GET /api/plugins",
+        "GET /api/plugins/updates",
+        "GET /api/portal/status",
+        "GET /api/health/loopback-info",
+        "GET /api/neblink/status",
+        "GET /api/neblink/status",
+        "POST /api/health/nearpath-event",
+        "GET /api/neblink/nearpath",
+        "GET /api/neblink/status",
+        "GET /api/delegates",
+        "GET /api/agents/Nebula/avatar/meta",
+        "GET /api/chains",
+        "GET /api/friends",
+        "GET /api/conversations",
+        "GET /api/friends",
+        "GET /api/groups",
+        "GET /api/groups/invites",
+        "GET /api/groups",
+        "GET /api/groups/invites",
+        "PUT /api/canvas-tabs",
+        "GET /api/friends"
+      ]
+    },
+    {
+      "viewport": "1440",
+      "theme": "light",
+      "mobileLayer": false,
+      "disabled": {
+        "overlayPresent": true,
+        "modalPresent": true,
+        "mobileLayer": false,
+        "closeXCount": 1,
+        "titleLeafCount": 1,
+        "titleTexts": [
+          "发起群聊"
+        ],
+        "fab": null,
+        "back": null,
+        "name": {
+          "rect": {
+            "x": 531,
+            "y": 273.3,
+            "w": 59.41,
+            "h": 21
+          },
+          "fontSize": "15px",
+          "fontWeight": "600",
+          "lineHeight": "normal",
+          "color": "rgb(27, 30, 38)",
+          "letterSpacing": "-0.15px",
+          "text": "发起群聊"
+        },
+        "titleBase": {
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "w": 60,
+            "h": 21
+          },
+          "fontSize": "15px",
+          "fontWeight": "600",
+          "lineHeight": "normal",
+          "color": "rgb(27, 30, 38)",
+          "letterSpacing": "normal"
+        },
+        "askRef": {
+          "rect": {
+            "x": 1386,
+            "y": 836,
+            "w": 40,
+            "h": 40
+          },
+          "width": "40px",
+          "height": "40px",
+          "borderRadius": "50%",
+          "backdropFilter": "blur(40px) saturate(1.4)",
+          "boxShadow": "none",
+          "background": "rgba(255, 255, 255, 0.55) none repeat scroll 0% 0% / auto padding-box border-box",
+          "border": "1px solid rgba(255, 255, 255, 0.35)",
+          "color": "rgb(27, 30, 38)",
+          "opacity": "1",
+          "zIndex": "25",
+          "position": "absolute",
+          "right": "14px",
+          "bottom": "24px",
+          "cursor": "pointer",
+          "padding": "0px"
+        },
+        "askIcon": {
+          "width": "18px",
+          "height": "18px"
+        },
+        "modalRect": {
+          "x": 510,
+          "y": 258.8,
+          "w": 420,
+          "h": 382.39
+        },
+        "headerRect": {
+          "x": 511,
+          "y": 259.8,
+          "w": 418,
+          "h": 48,
+          "padding": "12px 16px 12px 20px",
+          "borderBottom": "0px none rgb(27, 30, 38)"
+        },
+        "tokens": {
+          "sizeCircle": "40px",
+          "cvIcon": "18px",
+          "askGap": "14px",
+          "askBottom": "24px",
+          "fsTitle": "15px"
+        }
+      },
+      "enabled": {
+        "overlayPresent": true,
+        "modalPresent": true,
+        "mobileLayer": false,
+        "closeXCount": 1,
+        "titleLeafCount": 1,
+        "titleTexts": [
+          "发起群聊"
+        ],
+        "fab": null,
+        "back": null,
+        "name": {
+          "rect": {
+            "x": 531,
+            "y": 273.3,
+            "w": 59.41,
+            "h": 21
+          },
+          "fontSize": "15px",
+          "fontWeight": "600",
+          "lineHeight": "normal",
+          "color": "rgb(27, 30, 38)",
+          "letterSpacing": "-0.15px",
+          "text": "发起群聊"
+        },
+        "titleBase": {
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "w": 60,
+            "h": 21
+          },
+          "fontSize": "15px",
+          "fontWeight": "600",
+          "lineHeight": "normal",
+          "color": "rgb(27, 30, 38)",
+          "letterSpacing": "normal"
+        },
+        "askRef": {
+          "rect": {
+            "x": 1386,
+            "y": 836,
+            "w": 40,
+            "h": 40
+          },
+          "width": "40px",
+          "height": "40px",
+          "borderRadius": "50%",
+          "backdropFilter": "blur(40px) saturate(1.4)",
+          "boxShadow": "none",
+          "background": "rgba(255, 255, 255, 0.55) none repeat scroll 0% 0% / auto padding-box border-box",
+          "border": "1px solid rgba(255, 255, 255, 0.35)",
+          "color": "rgb(27, 30, 38)",
+          "opacity": "1",
+          "zIndex": "25",
+          "position": "absolute",
+          "right": "14px",
+          "bottom": "24px",
+          "cursor": "pointer",
+          "padding": "0px"
+        },
+        "askIcon": {
+          "width": "18px",
+          "height": "18px"
+        },
+        "modalRect": {
+          "x": 510,
+          "y": 258.8,
+          "w": 420,
+          "h": 382.39
+        },
+        "headerRect": {
+          "x": 511,
+          "y": 259.8,
+          "w": 418,
+          "h": 48,
+          "padding": "12px 16px 12px 20px",
+          "borderBottom": "0px none rgb(27, 30, 38)"
+        },
+        "tokens": {
+          "sizeCircle": "40px",
+          "cvIcon": "18px",
+          "askGap": "14px",
+          "askBottom": "24px",
+          "fsTitle": "15px"
+        }
+      },
+      "disabledClick": {
+        "apiCallsDelta": [],
+        "overlayStillPresent": true,
+        "toastDelta": 0,
+        "toastAppeared": false,
+        "clickErr": null
+      },
+      "rowClicked": true,
+      "apiCalls": [
+        "GET /api/delegates",
+        "GET /api/nf-asset-stamp",
+        "GET /api/projects",
+        "GET /api/agents/Nebula/avatar/meta",
+        "GET /api/neblink/status",
+        "GET /api/canvas-tabs",
+        "GET /api/neblink/status",
+        "GET /api/nf-authcheck",
+        "GET /api/chains",
+        "GET /api/plugins",
+        "GET /api/plugins/updates",
+        "GET /api/portal/status",
+        "GET /api/health/loopback-info",
+        "GET /api/neblink/status",
+        "POST /api/health/nearpath-event",
+        "GET /api/neblink/status",
+        "GET /api/neblink/nearpath",
+        "GET /api/delegates",
+        "GET /api/agents/Nebula/avatar/meta",
+        "GET /api/chains",
+        "GET /api/friends",
+        "GET /api/conversations",
+        "GET /api/friends",
+        "GET /api/groups",
+        "GET /api/groups/invites",
+        "GET /api/groups",
+        "GET /api/groups/invites",
+        "PUT /api/canvas-tabs",
+        "GET /api/friends"
+      ]
+    },
+    {
+      "viewport": "1440",
+      "theme": "dark",
+      "mobileLayer": false,
+      "disabled": {
+        "overlayPresent": true,
+        "modalPresent": true,
+        "mobileLayer": false,
+        "closeXCount": 1,
+        "titleLeafCount": 1,
+        "titleTexts": [
+          "发起群聊"
+        ],
+        "fab": null,
+        "back": null,
+        "name": {
+          "rect": {
+            "x": 531,
+            "y": 273.3,
+            "w": 59.41,
+            "h": 21
+          },
+          "fontSize": "15px",
+          "fontWeight": "600",
+          "lineHeight": "normal",
+          "color": "rgb(232, 234, 237)",
+          "letterSpacing": "-0.15px",
+          "text": "发起群聊"
+        },
+        "titleBase": {
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "w": 60,
+            "h": 21
+          },
+          "fontSize": "15px",
+          "fontWeight": "600",
+          "lineHeight": "normal",
+          "color": "rgb(232, 234, 237)",
+          "letterSpacing": "normal"
+        },
+        "askRef": {
+          "rect": {
+            "x": 1386,
+            "y": 836,
+            "w": 40,
+            "h": 40
+          },
+          "width": "40px",
+          "height": "40px",
+          "borderRadius": "50%",
+          "backdropFilter": "blur(40px) saturate(1.4)",
+          "boxShadow": "none",
+          "background": "rgba(24, 28, 38, 0.68) none repeat scroll 0% 0% / auto padding-box border-box",
+          "border": "1px solid rgba(255, 255, 255, 0.06)",
+          "color": "rgb(232, 234, 237)",
+          "opacity": "1",
+          "zIndex": "25",
+          "position": "absolute",
+          "right": "14px",
+          "bottom": "24px",
+          "cursor": "pointer",
+          "padding": "0px"
+        },
+        "askIcon": {
+          "width": "18px",
+          "height": "18px"
+        },
+        "modalRect": {
+          "x": 510,
+          "y": 258.8,
+          "w": 420,
+          "h": 382.39
+        },
+        "headerRect": {
+          "x": 511,
+          "y": 259.8,
+          "w": 418,
+          "h": 48,
+          "padding": "12px 16px 12px 20px",
+          "borderBottom": "0px none rgb(232, 234, 237)"
+        },
+        "tokens": {
+          "sizeCircle": "40px",
+          "cvIcon": "18px",
+          "askGap": "14px",
+          "askBottom": "24px",
+          "fsTitle": "15px"
+        }
+      },
+      "enabled": {
+        "overlayPresent": true,
+        "modalPresent": true,
+        "mobileLayer": false,
+        "closeXCount": 1,
+        "titleLeafCount": 1,
+        "titleTexts": [
+          "发起群聊"
+        ],
+        "fab": null,
+        "back": null,
+        "name": {
+          "rect": {
+            "x": 531,
+            "y": 273.3,
+            "w": 59.41,
+            "h": 21
+          },
+          "fontSize": "15px",
+          "fontWeight": "600",
+          "lineHeight": "normal",
+          "color": "rgb(232, 234, 237)",
+          "letterSpacing": "-0.15px",
+          "text": "发起群聊"
+        },
+        "titleBase": {
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "w": 60,
+            "h": 21
+          },
+          "fontSize": "15px",
+          "fontWeight": "600",
+          "lineHeight": "normal",
+          "color": "rgb(232, 234, 237)",
+          "letterSpacing": "normal"
+        },
+        "askRef": {
+          "rect": {
+            "x": 1386,
+            "y": 836,
+            "w": 40,
+            "h": 40
+          },
+          "width": "40px",
+          "height": "40px",
+          "borderRadius": "50%",
+          "backdropFilter": "blur(40px) saturate(1.4)",
+          "boxShadow": "none",
+          "background": "rgba(24, 28, 38, 0.68) none repeat scroll 0% 0% / auto padding-box border-box",
+          "border": "1px solid rgba(255, 255, 255, 0.06)",
+          "color": "rgb(232, 234, 237)",
+          "opacity": "1",
+          "zIndex": "25",
+          "position": "absolute",
+          "right": "14px",
+          "bottom": "24px",
+          "cursor": "pointer",
+          "padding": "0px"
+        },
+        "askIcon": {
+          "width": "18px",
+          "height": "18px"
+        },
+        "modalRect": {
+          "x": 510,
+          "y": 258.8,
+          "w": 420,
+          "h": 382.39
+        },
+        "headerRect": {
+          "x": 511,
+          "y": 259.8,
+          "w": 418,
+          "h": 48,
+          "padding": "12px 16px 12px 20px",
+          "borderBottom": "0px none rgb(232, 234, 237)"
+        },
+        "tokens": {
+          "sizeCircle": "40px",
+          "cvIcon": "18px",
+          "askGap": "14px",
+          "askBottom": "24px",
+          "fsTitle": "15px"
+        }
+      },
+      "disabledClick": {
+        "apiCallsDelta": [],
+        "overlayStillPresent": true,
+        "toastDelta": 0,
+        "toastAppeared": false,
+        "clickErr": null
+      },
+      "rowClicked": true,
+      "apiCalls": [
+        "GET /api/delegates",
+        "GET /api/nf-asset-stamp",
+        "GET /api/projects",
+        "GET /api/agents/Nebula/avatar/meta",
+        "GET /api/neblink/status",
+        "GET /api/canvas-tabs",
+        "GET /api/neblink/status",
+        "GET /api/nf-authcheck",
+        "GET /api/chains",
+        "GET /api/plugins",
+        "GET /api/plugins/updates",
+        "GET /api/portal/status",
+        "GET /api/health/loopback-info",
+        "GET /api/neblink/status",
+        "GET /api/neblink/status",
+        "POST /api/health/nearpath-event",
+        "GET /api/neblink/nearpath",
+        "GET /api/delegates",
+        "GET /api/agents/Nebula/avatar/meta",
+        "GET /api/chains",
+        "GET /api/friends",
+        "GET /api/conversations",
+        "GET /api/friends",
+        "GET /api/groups",
+        "GET /api/groups/invites",
+        "GET /api/groups",
+        "GET /api/groups/invites",
+        "PUT /api/canvas-tabs",
+        "GET /api/friends"
+      ]
+    }
+  ],
+  "checks": [
+    {
+      "id": "C1",
+      "name": "顶栏不再有右上 X 关闭件",
+      "ok": false,
+      "reading": "overlay 内 .fm-modal-close = 1"
+    },
+    {
+      "id": "C2",
+      "name": "主操作为悬浮圆钮类且走玻璃单源",
+      "ok": false,
+      "reading": "未找到 .fm-pick-fab"
+    },
+    {
+      "id": "C3",
+      "name": "标题只出现一次",
+      "ok": true,
+      "reading": "等于「发起群聊」的叶子节点 = 1"
+    },
+    {
+      "id": "C4",
+      "name": "禁用态点击零副作用（无请求/面板不关/无 toast）",
+      "ok": false,
+      "reading": "未找到 .fm-pick-fab"
+    },
+    {
+      "id": "C4b",
+      "name": "勾选 1 人后转可点",
+      "ok": false,
+      "reading": "未找到 .fm-pick-fab"
+    },
+    {
+      "id": "C5",
+      "name": "关闭键 = 左上返回圆钮（原生 button + g2-fab + 返回语义）",
+      "ok": false,
+      "reading": "未找到 .fm-pick-back"
+    },
+    {
+      "id": "C6",
+      "name": "标题字阶 = 项目面板（.wsp-title）同一套",
+      "ok": true,
+      "reading": "面板=15px/600/rgb(27, 30, 38) · 项目面板基准=15px/600/rgb(27, 30, 38)"
+    }
+  ],
+  "failures": 5,
+  "consistency": [],
+  "backResult": {
+    "present": false
+  },
+  "tokens": {
+    "sizeCircle": "40px",
+    "cvIcon": "18px",
+    "askGap": "14px",
+    "askBottom": "24px",
+    "fsTitle": "15px"
+  }
+}

@@ -1,6 +1,6 @@
 .PHONY: compile run assembly clean install \
   lint fmt fix fmt-check check quality-gate check-visual visual-baseline frontend-gates component-contract \
-  flat-buttons glass toggle toggle-geometry scroll-pill input-surface badge-words \
+  flat-buttons glass toggle toggle-geometry scroll-pill input-surface mobile-canvas-strip badge-words \
   plugin-seed-parity
 
 # Auto-detect fastest Maven mirror (Aliyun for China, Maven Central otherwise)
@@ -103,7 +103,7 @@ quality-gate:
 # = 后端把 `GET /api/conversations` 的 case 误删，前端 404 被吞成「暂无会话」，
 # **没有任何断言发现「前端调了但后端没有」**。本闸静态对照两侧（前端 /api 字面量
 # 集合 × 网关路由注册面），前端调了后端没有 ⇒ 红。
-FRONTEND_GATES := design-tokens msgstyle bubble-side self-explaining circular fixture-secrets api-routes freeze-state freeze-silence flat-buttons glass canvas-hint toggle scroll-pill input-surface badge-words
+FRONTEND_GATES := design-tokens msgstyle bubble-side self-explaining circular fixture-secrets api-routes freeze-state freeze-silence flat-buttons glass canvas-hint toggle scroll-pill input-surface mobile-canvas-strip badge-words
 
 frontend-gates:
 	@command -v node >/dev/null 2>&1 || { echo "node not found — 前端门禁需要 node"; exit 2; }
@@ -191,6 +191,21 @@ frontend-gates:
 	@# 在规范文件 input-surface-spec.md 的例外清单里具名登记（空理由 = 红）。
 	@# 盘点：node scripts/check-input-surface.mjs --inventory；机器读：--json。
 	node scripts/check-input-surface.mjs
+	@# 手机 canvas 顶部环带（方案 C）门禁（mobile-canvas-tabs-c 批 2026-11-06；作者 08:33
+	@# 逐字「采用方案c 主胶囊要采用毛玻璃底 然后背景的文字不使用胶囊 但是还有电脑端
+	@# hover 上下选项的那种模糊效果 文字两边不要渐隐」）四条判据：
+	@#   S1 玻璃单源 —— 环带脸上任何 α ∈ (0,.90) 的可透出面必须进 glass.css 成员表；
+	@#      且玻璃带层 `.mf-strip::before` 与主胶囊 `.mf-strip-chip.on::after` 必须
+	@#      在场且走玻璃（半透明但没走玻璃 ⇒ 红）；
+	@#   S2 禁止水平渐隐 mask —— 环带脸上出现 90deg/270deg/to left/to right 的
+	@#      mask-image、或 label 上任何非 none 的 mask、或 JS 写 mask/--rfade ⇒ 红；
+	@#   S3 背景的文字不使用胶囊 —— 签视觉层基础档必须零材质（胶囊只在 .on 档）、
+	@#      正文宿主（.canvas-md-scroll / .mf-cv-host / .canvas-tab-pane）零底零 pill；
+	@#   S4 下边缘渐隐厚度 = 28px —— `.mf-strip::after` 在场、取 --ds-fade-veil、
+	@#      height 的**令牌算术**恰好 28px、top 恰好等于玻璃带高 64px。
+	@# 改前/改后同一份脚本：node scripts/check-mobile-canvas-strip.mjs --root=<改前树>；
+	@# 机器读：--json。真渲染读数（375/1440 × 亮暗）另跑 scripts/capture-mobile-canvas-tabs.mjs。
+	node scripts/check-mobile-canvas-strip.mjs
 	@echo "Frontend static gates passed ($(FRONTEND_GATES))."
 
 # ── 身份/类型徽标词单源：单闸入口（术语统一批 2026-11-06）────────────────────
@@ -211,6 +226,10 @@ glass:
 # ── 会话面胶囊居中：单闸入口（与 flat-buttons / glass 同形）────────────────────
 scroll-pill:
 	node scripts/check-scroll-pill-center.mjs
+
+# ── 手机 canvas 顶部环带（方案 C）：单闸入口（与 flat-buttons / glass 同形）─────
+mobile-canvas-strip:
+	node scripts/check-mobile-canvas-strip.mjs
 
 # ── Canvas 提示文字：单闸入口（静态腿）+ 真几何腿 ────────────────────────────
 # 静态腿 = 令牌唯一性（零依赖零端口）；几何腿 = 逐面 getBoundingClientRect 零交叠
