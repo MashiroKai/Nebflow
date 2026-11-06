@@ -384,9 +384,13 @@ test('H3 反向门：整体行徽标不含 节点 / Node 字样（zh-CN 与 en �
   }
 });
 
-// ── H4：kernel / dispatcher 逐字保留 ────────────────────────────────────────
+// ── H4：kernel / dispatcher 逐字保留 + agentflow 徽标按来源字段定 ——───────────
+// 作者令（2026-11-06）：agentflow 徽标只准标 dispatcher 派生出来的行；kernel 实例
+// （Delegate(mode="kernel") 起的最小单会话执行器）不得带它。判据 = **来源字段**
+// DelegateRegistry.Record.mode（provider 镜像 row.mode）——不看会话 id 前缀、
+// 不看名字、不看 orchestrationMode（spawn 副产品，惰性升级）。
 
-test('H4 kernel / dispatcher 词在 row.mode 在场时逐字仍在（本批不许抹掉）', async ({ page }) => {
+test('H4 kernel 行：身份词逐字 kernel，且无 agentflow 徽标 / 无整体行实体锚', async ({ page }) => {
   const errors = trackErrors(page);
   await bootApp(page, 'zh-CN');
   const KERNEL_SID = 'delegate-terms-kernel-01';
@@ -408,18 +412,128 @@ test('H4 kernel / dispatcher 词在 row.mode 在场时逐字仍在（本批不�
   const d = headOf(DISP_SID);
   expect(k).toBeTruthy();
   expect(d).toBeTruthy();
-  // 作者术语逐字（不改名、不翻译、不本地化）。
+  // 作者术语逐字（不改名、不翻译、不本地化）——kernel 保留自己的身份词。
   expect(k.kindText).toBe('kernel');
   expect(d.kindText).toBe('dispatcher');
-  // 同一行上整体词与形态词各在其位（两个显示词位并存）。
-  expect(k.entity).toBe('agentflow');
-  expect(d.entity).toBe('agentflow');
-  expect(k.entityText).toBe('AgentFlow');
+  // kernel 行：**零** agentflow 徽标（词面与结构锚都不得出现）。
+  expect(k.entityText).toBe('');
+  expect(k.entity).toBe('');
+  // dispatcher 行：agentflow 徽标 + 实体锚同在（dispatcher 派生的编排才带）。
   expect(d.entityText).toBe('AgentFlow');
+  expect(d.entity).toBe('agentflow');
   expect(errors).toEqual([]);
 });
 
-// ── H5：词源单点（静态读源码）────────────────────────────────────────────
+test('H4b kernel 徽标面（en）同样零 agentflow；dispatcher 面同样带', async ({ page }) => {
+  const errors = trackErrors(page);
+  await bootApp(page, 'en');
+  const KERNEL_SID = 'delegate-terms-kernel-01';
+  const DISP_SID = 'delegate-terms-disp-02';
+  await setFixture(page, {
+    rows: [
+      mirrorRow({ taskNo: '92', delegateId: KERNEL_SID, title: 'kernel batch', mode: 'kernel' }),
+      mirrorRow({ taskNo: '93', delegateId: DISP_SID, title: 'dispatcher batch', mode: 'dispatcher' }),
+    ],
+  });
+  await inject(page, rootStart(KERNEL_SID, { name: 'KernelBatch', taskDescription: 'kernel batch' }));
+  await inject(page, rootStart(DISP_SID, { name: 'DispBatch', taskDescription: 'dispatcher batch' }));
+  await openPanel(page);
+
+  const rows = await dumpRows(page);
+  console.log('[H4b dump] ' + JSON.stringify(rows.map((r) => ({ sid: r.nodeSid, kindText: r.kindText, entityText: r.entityText, entity: r.entity }))));
+  const headOf = (sid) => rows.find((r) => r.level === 'head' && r.nodeSid === sid);
+  expect(headOf(KERNEL_SID).kindText).toBe('kernel');
+  expect(headOf(KERNEL_SID).entityText).toBe('');
+  expect(headOf(KERNEL_SID).entity).toBe('');
+  expect(headOf(DISP_SID).entityText).toBe('AgentFlow');
+  expect(errors).toEqual([]);
+});
+
+test('H6 mode 缺席（旧盘 / 外部腿）：无来源证据 ⇒ 不落 agentflow 徽标，也不落形态词', async ({ page }) => {
+  const errors = trackErrors(page);
+  await bootApp(page, 'zh-CN');
+  const LEGACY_SID = 'delegate-terms-legacy-03';
+  await setFixture(page, {
+    rows: [mirrorRow({ taskNo: '94', delegateId: LEGACY_SID, title: '旧盘批次', mode: '' })],
+  });
+  await inject(page, rootStart(LEGACY_SID, { name: 'LegacyBatch', taskDescription: '旧盘批次' }));
+  await openPanel(page);
+
+  const rows = await dumpRows(page);
+  console.log('[H6 dump] ' + JSON.stringify(rows.map((r) => ({ sid: r.nodeSid, level: r.level, kindText: r.kindText, entityText: r.entityText, entity: r.entity }))));
+  const head = rows.find((r) => r.level === 'head');
+  expect(head).toBeTruthy();
+  // 无信息胜过错信息：不拿「组头」当「dispatcher 派生」的证据。
+  expect(head.entityText).toBe('');
+  expect(head.entity).toBe('');
+  expect(head.kindText).toBe('');
+  expect(errors).toEqual([]);
+});
+
+// ── H8：行类型 → 徽标对照表（一张表钉死所有行型的徽标来源）─────────────────────
+
+test('H8 行类型 → 徽标对照表：只有 dispatcher 派生的整体行带 agentflow 词', async ({ page }) => {
+  const errors = trackErrors(page);
+  await bootApp(page, 'zh-CN');
+  const K = 'delegate-terms-h8-kernel';
+  const D = 'delegate-terms-h8-disp';
+  const inD = (sid, over = {}) => ({
+    type: 'agentStart',
+    sessionId: D, rootSessionId: D,
+    agentId: sid, nodeSessionId: sid, name: sid, taskDescription: '',
+    project: 'Nebflow', ...over,
+  });
+  await setFixture(page, {
+    rows: [
+      mirrorRow({ taskNo: '95', delegateId: K, title: '内核批次', mode: 'kernel' }),
+      mirrorRow({
+        taskNo: '96', delegateId: D, title: '分发器批次', mode: 'dispatcher',
+      }),
+    ],
+    children: {
+      [D]: [
+        { taskId: 'store-subagent-h8', source: 'subagent', status: 'completed', agentName: 'stand', description: '侦察' },
+        { taskId: 'store-subtask-h8', source: 'subtask', status: 'completed', agentName: 'stand', description: '收编' },
+        { taskId: 'store-delegate-h8', source: 'delegate', status: 'completed', agentName: 'stand', description: '委托' },
+      ],
+    },
+  });
+  await inject(page, rootStart(K, { name: 'KernelBatch', taskDescription: '内核批次' }));
+  await inject(page, rootStart(D, { name: 'DispBatch', taskDescription: '分发器批次' }));
+  await inject(page, inD('dispatcher-h8aaaa', { status: 'Processing', name: 'dispatcher/Nebflow' }));
+  await inject(page, inD('node-h8bbbb', { status: 'Processing', name: 'stand' }));
+  await inject(page, inD('subagent-h8cccc', { status: 'Processing', name: '侦察' }));
+  await inject(page, inD('subtask-h8dddd', { status: 'Processing', name: '收编' }));
+  await openPanel(page);
+
+  const rows = await dumpRows(page);
+  const table = rows.map((r) => ({ sid: r.nodeSid, level: r.level, kind: r.kindText, entity: r.entityText }));
+  console.log('[H8 table] ' + JSON.stringify(table, null, 0));
+
+  const at = (sid) => rows.find((r) => r.nodeSid === sid);
+  const badges = (sid) => [at(sid).kindText, at(sid).entityText].filter(Boolean);
+  const words = await localeWords(page);
+
+  // ① kernel 实例（最小单会话执行器）：只有身份词 kernel，零 agentflow。
+  expect(badges(K)).toEqual(['kernel']);
+  // ② dispatcher 编排整体行：形态词 + agentflow 词（唯一允许同时两词的位）。
+  expect(badges(D)).toEqual(['dispatcher', words.agentflow]);
+  // ③ 成员行：各自 kind，零 agentflow。
+  expect(badges('dispatcher-h8aaaa')).toEqual([words.dispatcher]);
+  expect(badges('node-h8bbbb')).toEqual([words.node]);
+  expect(badges('subagent-h8cccc')).toEqual(['Subagent']);
+  expect(badges('subtask-h8dddd')).toEqual(['Delegate']);
+  expect(badges('store-subagent-h8')).toEqual(['Subagent']);
+  expect(badges('store-subtask-h8')).toEqual(['Delegate']);
+  expect(badges('store-delegate-h8')).toEqual(['Delegate']);
+  // ④ 全表机械禁令：除 dispatcher 整体行外，任何行都不得出现 agentflow 词。
+  for (const r of rows) {
+    if (r.level === 'head' && r.nodeSid === D) continue;
+    expect(r.entityText).toBe('');
+    expect(/agentflow/i.test(r.kindText)).toBe(false);
+  }
+  expect(errors).toEqual([]);
+});
 
 test('H5 词源单点：两个显示词只在 bgAgents.js 一处消费，其它 web 模块不硬编码同批词', async () => {
   const read = (p) => readFileSync(p, 'utf8');
@@ -487,4 +601,36 @@ test('H5 词源单点：两个显示词只在 bgAgents.js 一处消费，其它 
     expect(m[1]).toBe('AgentFlow');
     expect(/'subagents\.kindNode':\s*'[^']+'/.test(src)).toBe(true);
   }
+});
+
+// ── H7：来源字段门（静态读源码）——agentflow 徽标由 row.mode 判定，不靠猜 ──────
+
+test('H7 agentflow 徽标判据 = 来源字段 dispatcher；head 行不无条件渲染实体徽标/实体锚', async () => {
+  const read = (p) => readFileSync(p, 'utf8');
+  const bgSrc = read(join(WEB, 'js', 'main', 'bgAgents.js'));
+  const slice = (name, endName) => bgSrc.slice(bgSrc.indexOf('function ' + name), bgSrc.indexOf('function ' + endName));
+
+  // ① 词源函数体 = 来源字段判定：逐字比较 'dispatcher'，并**只**认这一个词。
+  const wordBody = slice('bgAgentflowWord', 'bgMemberKindWord');
+  expect(wordBody.length).toBeGreaterThan(0);
+  expect(/===\s*'dispatcher'/.test(wordBody)).toBe(true);
+  // 不许字符串猜来源（前缀 / 包含 / 名字）——来源只认字段。
+  for (const guess of ['startsWith', 'endsWith', '.includes(', 'indexOf(', /name\s*===/]) {
+    expect(typeof guess === 'string' ? wordBody.includes(guess) : guess.test(wordBody)).toBe(false);
+  }
+
+  // ② 行构造器里实体徽标是**条件**渲染（entityWord 在场才出 span），实体锚同样按同一
+  //    读数条件化——旧「headLevel ⇒ 恒 data-bg-entity」形态退役（错标根因那条判据）。
+  const rowBody = slice('bgTaskRowHtml', 'bgStoreChildHtml');
+  expect(/<span class="bg-task-entity">/.test(rowBody)).toBe(true);
+  expect(/const entityPart = entityWord\s*\?/.test(rowBody)).toBe(true);
+  expect(/entityWord \? ' data-bg-entity="agentflow"' : ''/.test(rowBody)).toBe(true);
+  expect(rowBody.includes('data-bg-row-level="head" data-bg-entity="agentflow"')).toBe(false);
+
+  // ③ 执行形态单一提取点：row.mode → kernel|dispatcher（值域外的词一律 ''）。
+  expect(/function bgDelegateExecMode\s*\(/.test(bgSrc)).toBe(true);
+  const modeBody = slice('bgDelegateExecMode', 'bgDelegateBadgeWord');
+  expect(/row\s*&&\s*row\.mode/.test(modeBody)).toBe(true);
+  expect(/===\s*'kernel'/.test(modeBody)).toBe(true);
+  expect(/===\s*'dispatcher'/.test(modeBody)).toBe(true);
 });
