@@ -42,7 +42,10 @@ case class ScheduledTask(
    *   · `content` 仍是必填的**注入文本**（每日摘要、done/cancel 回执、Schedule
    *     list 都读它）——两段化不改它对既有读者的语义，只把"给人看的标题"从
    *     content 里分出来。只传 content 的旧调用方行为逐字不变。
-   *   · `kind="task"` 面**零改动**：detail 恒 None（定时任务没有两段语义）。
+   *   · `kind="task"` 面：schedule-todo-unify 批（2026-11-06 作者令「定时任务也要
+   *     按 name description 来添加 点击展开可以查看细节」）起 detail = **description
+   *     第二段**（首行 = name 的展示约定在 UI 侧）；不传 ⇒ None，旧调用方逐字节不变。
+   *     （本节此前写「task 面 detail 恒 None」，由本批改写，口径随真源。）
    */
   detail: Option[String] = None,
   /**
@@ -180,8 +183,10 @@ object ScheduledTask:
     /** 重要度 0..3（越界钳位，见 [[ScheduledTask.clampPriority]]）；kind=todo 的
      *  唯一创建点即此处，定时任务面调用方不传 = 0（逐字节现状）。 */
     priority: Int = 0,
-    /** 待办第二段 detail（两段化批 2026-11-05）：**只对待办面生效**——定时任务面
-     *  一律归 None（不看入参，杜绝"任务也长出一段 detail"的隐性行为变化）。
+    /** 第二段 detail（两段化批 2026-11-05；定时任务面启用 = schedule-todo-unify
+     *  批 2026-11-06 作者令「定时任务也要按 name description 来添加 点击展开可以
+     *  查看细节」）：待办面 = detail（2026-11-05 起），定时任务面 = description。
+     *  **缺键/空白 ⇒ None**（旧调用方不传 = 逐字节现状，零迁移）。
      *  末位默认参数 ⇒ 全部既有位置/命名调用零改动。 */
     detail: Option[String] = None
   ): ScheduledTask =
@@ -198,8 +203,8 @@ object ScheduledTask:
       // 待办无 repeat 语义（浮出周期是引擎侧固定策略：每日 09:00）。
       repeat = if isTodo then None else repeat,
       name = name.map(_.trim).filter(_.nonEmpty),
-      // 只对待办面收 detail；空白串归一为 None（不留"空的第二段"）。
-      detail = if isTodo then detail.map(_.trim).filter(_.nonEmpty) else None,
+      // 两面都收 detail（schedule-todo-unify 批）：空白串归一为 None（不留"空的第二段"）。
+      detail = detail.map(_.trim).filter(_.nonEmpty),
       kind = normalizedKind.filter(_ == KindTodo), // 非 "todo" 值一律归定时任务面
       condition = condition.map(_.trim).filter(_.nonEmpty),
       project = project.map(_.trim).filter(_.nonEmpty),

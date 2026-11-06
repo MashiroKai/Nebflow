@@ -271,8 +271,51 @@ function applyRoll(section, scroller) {
   // （css/mobileLayer.css .mobile-page-title）。类本身保留，供标题几何/探针按
   // 「是否钳宽」分档读数。进度写盘后同帧读 scrollWidth（样式落定后读布局量会
   // 同步重排，无滞后帧），不误伤装得下的页名。
-  const title = section.querySelector('.mobile-page-title');
+  const title = /** @type {HTMLElement|null} */ (section.querySelector('.mobile-page-title'));
   if (title) title.classList.toggle('mtitle-clip', title.scrollWidth > title.clientWidth + 1);
+  measureTitleStill(section, title);
+}
+
+/**
+ * 大标题档内容宽实测（schedule-todo-unify 批 2026-11-06「顶栏标题被截成『定时任...』」
+ * 修复的读数腿）：
+ *  · CSS 侧大标题宽度 = calc(100% − (100% − var(--mtitle-w-still)) × 进度)，即
+ *    静止档吃满两端内缩带；内容宽只能在**进度 0** 时测（进度 >0 时盒已被收窄，
+ *    scrollWidth 会自己钳住 —— 那样测出来的值会随滚动变化，不是内容宽）。
+ *  · 故把进度暂时打到 0、测 `scrollWidth`，再还原进度 —— 全部在同一次样式落定内
+ *    完成，不产生可见帧。只在文字可能变了的时候重测（首帧 / 换页 / locale 重绘 /
+ *    窗口宽度变），拖动滚动时不重测（内容宽与滚动无关，省掉每帧强制布局）。
+ * @param {HTMLElement} section
+ * @param {HTMLElement|null} title
+ */
+function measureTitleStill(section, title) {
+  if (!title) return;
+  const cs = getComputedStyle(title);
+  const mcapPad = parseFloat(cs.getPropertyValue('--mcap-pad')) || 12;
+  const prevP = section.style.getPropertyValue('--mtitle-p') || '0';
+  const oldW = title.style.getPropertyValue('--mtitle-w-still');
+  // 静止档实测：进度 0 + 拔 max-width ⇒ scrollWidth = 纯文字宽（静止档水平内距
+  // 已归 0 —— 内缩由盒宽钳制承担，见 mobileLayer.css .mobile-page-title 注）。
+  const oldMax = title.style.maxWidth;
+  title.style.maxWidth = 'none';
+  section.style.setProperty('--mtitle-p', '0');
+  const textW = title.scrollWidth;
+  title.style.maxWidth = oldMax;
+  section.style.setProperty('--mtitle-p', prevP);
+  // 胶囊终态盒 = 文字 + 2×胶囊内距（贴字收紧）；超长页名钳到「满宽 − 2×胶囊内距」
+  // （胶囊永不贴屏幕边；bodyW = 页体内容宽 = 视口 − 页体内距，实测不按页写死）。
+  const body = title.parentElement;
+  let bodyW = 0;
+  if (body) {
+    const bcs = getComputedStyle(body);
+    bodyW = body.clientWidth - (parseFloat(bcs.paddingLeft) || 0) - (parseFloat(bcs.paddingRight) || 0);
+  }
+  const still = Math.min(textW + 2 * mcapPad, Math.max(0, bodyW - 2 * mcapPad));
+  title.style.setProperty('--mtitle-w-still', `${still}px`);
+  if (oldW !== `${still}px`) {
+    // 文字变了才重算截断标记（同一帧内读，不额外起帧）。
+    title.classList.toggle('mtitle-clip', title.scrollWidth > title.clientWidth + 1);
+  }
 }
 /** 滚动收缩探针：section 上挂捕获相位监听（scroll 不冒泡但走捕获，页内一切
  *  滚动容器——页体自身/pane 内部 .team-scroll、#settings-content、.todo-page-body
@@ -308,6 +351,7 @@ function refreshRoll(section) {
     }
   }
   applyRoll(section, primary || body);
+  measureTitleStill(section, /** @type {HTMLElement|null} */ (section.querySelector('.mobile-page-title')));
 }
 
 // ── 页面壳构建 ───────────────────────────────────────────────────────
@@ -2307,6 +2351,23 @@ function backOut() {
   if (stack.length > 1) popPage();
   else if (stack[0] !== 'chat') goHome();
 }
+
+// 大标题内容宽在「文字 / 视口宽」变化时重测（schedule-todo-unify 批）：
+// locale 重绘（i18n 改 .mobile-page-title 文本）与视口变化（横竖屏）都会让静止档
+// 内容宽变化，而这两个事件不经过 renderPages —— 只挂在 document 上一次监听，
+// 按当前可见页重测，零逐面接线。
+window.addEventListener('locale-changed', () => {
+  const top = stack[stack.length - 1];
+  const section = sections.get(top);
+  if (!section) return;
+  measureTitleStill(section, /** @type {HTMLElement|null} */ (section.querySelector('.mobile-page-title')));
+});
+window.addEventListener('resize', () => {
+  const top = stack[stack.length - 1];
+  const section = sections.get(top);
+  if (!section) return;
+  measureTitleStill(section, /** @type {HTMLElement|null} */ (section.querySelector('.mobile-page-title')));
+});
 
 /** 页面面关闭（出栈/换根时归位桌面开/关态）。 */
 function closePageFace(pageId) {

@@ -904,17 +904,29 @@ body.mobile-layer .mobile-page-title {
   position: sticky;
   top: calc((var(--mtitle-h) - var(--mcap-h)) * var(--mtitle-p));
   display: block;
-  /* 宽度由内容撑（max-content + 水平 auto 居中）—— 缩字后盒宽连续跟随，
-     零留白跳变；超宽被 max-width 钳到 inset 带。 */
-  width: max-content;
-  max-width: calc(100% - 2 * var(--mtitle-inset));
+  /* 宽度（schedule-todo-unify 批 2026-11-06 修「顶栏标题被截成『定时任...』」）：
+     改前恒 max-content + max-width(100%−2×inset) + 水平内距 72×2 —— 三者**双重
+     计入两端内缩**：盒钳到 231 后再扣 144 内距，文字区只剩 87px，四字页名
+     （112px @28px 字号）必然截成「定时任...」。现在内缩只落在**一处**（盒宽钳制）：
+     · 静止档 width = 满宽 → max-width 钳到内缩带（100%−2×72）→ 内距 0 →
+       文字区 = 整条内缩带（375 档 = 231px），四字/八字页名都放得下；
+     · 吸附档 width → --mtitle-w-still（= 文字 + 2×胶囊内距，navController 实测）、
+       max-width 放宽到满宽 − 2×胶囊内距、水平内距 → 胶囊内距 —— 胶囊贴着
+       文字收紧，超长页名钳到「不贴屏幕边」。
+     width / max-width / padding-x 三个几何量都由 --mtitle-p 同步驱动（仅白名单
+     属性），两态之间连续插值。 */
+  width: calc(100% - (100% - var(--mtitle-w-still, 100%)) * var(--mtitle-p));
+  max-width: calc(100% - 2 * var(--mtitle-inset)
+    + 2 * (var(--mtitle-inset) - var(--mcap-pad)) * var(--mtitle-p));
   /* 盒下呼吸缝由收编面自带 padding-top 承担（B 批口径不变）。上下外边距承担
      流内占位收缩：52 → 0 连续归零 —— 顶 +4p 把盒底缘钉在 64，底 −52p 把占位
      还给页体（吸附态内容满铺到胶囊之下，与旧收高终态同布局）。 */
   margin: calc((var(--mtitle-h) - var(--mcap-h)) * var(--mtitle-p)) auto
     calc(var(--mtitle-h) * var(--mtitle-p) * -1);
+  /* 水平内距：静止档 0（内缩已由盒宽钳制承担，双重计入 = 截断根因，见上）；
+     吸附档 = 胶囊内距 --mcap-pad（文字到胶囊缘的呼吸缝）。 */
   padding: calc(var(--mtitle-pad-t) + (var(--mcap-vpad) - var(--mtitle-pad-t)) * var(--mtitle-p))
-    calc(var(--mtitle-inset) + (var(--mcap-pad) - var(--mtitle-inset)) * var(--mtitle-p))
+    calc(var(--mcap-pad) * var(--mtitle-p))
     calc(var(--mtitle-pad-b) + (var(--mcap-vpad) - var(--mtitle-pad-b)) * var(--mtitle-p));
   height: calc(var(--mtitle-h) + (var(--mcap-h) - var(--mtitle-h)) * var(--mtitle-p));
   font-size: calc(var(--mfs-title) + (var(--mfs-title-mini) - var(--mfs-title)) * var(--mtitle-p));
@@ -943,6 +955,12 @@ body.mobile-layer .mobile-page-title {
      全额归 min-height:0 的滚动面（流内占位的进退由上面的 margin 对承担）。 */
   flex: none;
 }
+/* 大标题档的**内容宽**（--mtitle-w-still）：上面 width 的两端差 = 100% − 内容宽，
+   由 navController.applyRoll 在首帧/换页/locale 重绘后实测一次写入（内容宽与
+   滚动进度无关，只在文字变了才变）。未写 ⇒ 缺省 100%（= 满宽，不截断）；
+   内容超过 inset 带 ⇒ 写 100%（max-width 钳宽 + 省略号兜底）。
+   为什么不在 CSS 里用 max-content：width 两端都含 max-content 时会按内容解析，
+   var() 跨属性/函数层不支持该关键字，实测会被当作 0 宽。 */
 /* 超宽页名钳宽后的截断（作者令 2026-11-05 09:28「那个字的右侧有渐隐的效果，
    这个不要」）：右缘 78%→97% 的 alpha 渐隐**撤除**，改**可见省略号**——
    .mtitle-clip 仍由 applyRoll 按 scrollWidth > clientWidth 翻写（钳宽态才挂），
@@ -5233,8 +5251,17 @@ body.mobile-layer #mobile-pages .mobile-page-body > #reminder-panel {
 body.mobile-layer #reminder-panel .reminder-panel-header {
   padding: var(--ds-space-2) 0 var(--ds-space-1h);
 }
+/* 标题不重复（schedule-todo-unify 批 2026-11-06 作者令「定时任务这个标题不要重复了」）：
+   手机页面态里页名已由页面壳唯一节点头 `.mobile-page-title` 出（作者实拍：顶栏
+   「定时任...」= 壳标题被截断，而正文又重复一行「定时任务」）。处置 = 正文那行**退场**
+   （它在这个面是第二份标题，不是内容），同时给计数一个独立的右缘落位，不在页头摆空行。 */
 body.mobile-layer #reminder-panel .reminder-panel-title {
-  font-size: var(--mfs-callout);
+  display: none;
+}
+body.mobile-layer #reminder-panel .reminder-panel-header {
+  justify-content: flex-end;
+  min-height: 0;
+  padding: var(--ds-space-1) 0 var(--ds-space-hair);
 }
 /* 页头「+」退场（22px 小钮 → 右下 48 悬浮加号；同一条新建路径，不留两个入口）。 */
 body.mobile-layer #reminder-panel .reminder-create-btn { display: none; }
@@ -5348,5 +5375,19 @@ body.mobile-layer #reminder-panel .reminder-fab-add {
 }
 .mf-drawer-cancel-btn { color: color-mix(in srgb, var(--color-text) 55%, transparent); }
 .mf-drawer-done-btn { color: var(--color-primary); font-weight: 600; }
+/* 命中盒 ≥ 48（schedule-todo-unify 批；--ds-hit-box-min 外扩、零视觉变化）：
+   抽屉头两键视觉 44 已达标，外扩兜底两端表单同一触控档。 */
+.mf-drawer-cancel-btn::after,
+.mf-drawer-done-btn::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: max(100%, var(--ds-hit-box-min));
+  height: max(100%, var(--ds-hit-box-min));
+  transform: translate(-50%, -50%);
+}
+.mf-drawer-cancel-btn,
+.mf-drawer-done-btn { position: relative; }
 .mf-drawer-cancel-btn:active,
 .mf-drawer-done-btn:active { opacity: 0.65; }

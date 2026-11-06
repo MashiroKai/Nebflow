@@ -1,0 +1,37 @@
+{
+  "colorPairs": {
+    "rowText": [
+      "rgb(27, 30, 38)",
+      "rgb(27, 30, 38)"
+    ],
+    "rowTime": [
+      "rgb(91, 127, 191)",
+      "color(srgb 0.105882 0.117647 0.14902 / 0.4)"
+    ],
+    "rowBg": [
+      "rgba(0, 0, 0, 0)",
+      "color(srgb 0.105882 0.117647 0.14902 / 0.04)"
+    ],
+    "doneCircle": [
+      "rgb(91, 127, 191)",
+      "rgba(52, 199, 89, 0.85)"
+    ]
+  },
+  "todoFormPrimary": {
+    "color": "rgb(7, 193, 96)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "h": 44,
+    "shadow": "none",
+    "bgImage": "none",
+    "rightmost": true,
+    "rightGap": 8
+  },
+  "remFormPrimary": {
+    "color": "rgb(7, 193, 96)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "radius": "999px",
+    "fs": "13px",
+    "fw": "600",
+    "minH": "44px"
+  }
+}
