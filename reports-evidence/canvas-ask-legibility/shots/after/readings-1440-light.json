@@ -7,66 +7,66 @@
     },
     "dock": {
       "x": 1043,
-      "y": 557.03125,
+      "y": 573.03125,
       "w": 372,
-      "h": 253.96875,
-      "top": 557.03125,
-      "bottom": 811,
+      "h": 241.96875,
+      "top": 573.03125,
+      "bottom": 815,
       "left": 1043,
       "right": 1415,
       "r": 0
     },
     "col": {
       "x": 1043,
-      "y": 557.03125,
+      "y": 573.03125,
       "w": 372,
-      "h": 189.96875,
-      "top": 557.03125,
-      "bottom": 747,
+      "h": 212.96875,
+      "top": 573.03125,
+      "bottom": 786,
       "left": 1043,
       "right": 1415,
       "r": 0
     },
     "wrap": {
       "x": 1043,
-      "y": 557.03125,
+      "y": 573.03125,
       "w": 372,
-      "h": 189.96875,
-      "top": 557.03125,
-      "bottom": 747,
+      "h": 212.96875,
+      "top": 573.03125,
+      "bottom": 786,
       "left": 1043,
       "right": 1415,
       "r": 0
     },
     "input": {
       "x": 1043,
-      "y": 753,
+      "y": 757,
       "w": 372,
       "h": 58,
-      "top": 753,
-      "bottom": 811,
+      "top": 757,
+      "bottom": 815,
       "left": 1043,
       "right": 1415,
       "r": 12
     },
     "lastBub": {
       "x": 1043,
-      "y": 620.625,
+      "y": 636.625,
       "w": 372,
       "h": 114.375,
-      "top": 620.625,
-      "bottom": 735,
+      "top": 636.625,
+      "bottom": 751,
       "left": 1043,
       "right": 1415,
       "r": 16
     },
     "aiBub": {
       "x": 1043,
-      "y": 620.625,
+      "y": 636.625,
       "w": 372,
       "h": 114.375,
-      "top": 620.625,
-      "bottom": 735,
+      "top": 636.625,
+      "bottom": 751,
       "left": 1043,
       "right": 1415,
       "r": 16
@@ -74,37 +74,17 @@
     "nBub": 2,
     "rowGap": "6px",
     "fadeH": "12px",
-    "tail": "12px",
+    "tail": "",
+    "under": "29.00px",
     "colPadTop": "18px",
-    "colPadBottom": "12px",
-    "colMask": "linear-gradient(rgba(0, 0, 0, 0) 0px, rgb(27, 30, 38) 12px, rgb(27, 30, 38) calc(100% - 12px), rgba(0, 0, 0, 0) 100%)",
-    "maskStops": [
-      {
-        "color": "rgba(0, 0, 0, 0)",
-        "v": 0,
-        "unit": "px"
-      },
-      {
-        "color": "rgb(27, 30, 38)",
-        "v": 12,
-        "unit": "px"
-      },
-      {
-        "color": "rgb(27, 30, 38)",
-        "v": 100,
-        "unit": "%"
-      },
-      {
-        "color": "rgba(0, 0, 0, 0)",
-        "v": 100,
-        "unit": "%"
-      }
-    ],
+    "colPadBottom": "35px",
+    "colMask": "none",
+    "maskStops": [],
     "matBubAi": {
-      "bg": "rgb(250, 251, 252)",
+      "bg": "rgba(255, 255, 255, 0.55)",
       "bgImage": "none",
       "border": "rgba(255, 255, 255, 0.35)",
-      "blur": "blur(24px) saturate(1.15)",
+      "blur": "blur(40px) saturate(1.4)",
       "color": "rgb(27, 30, 38)",
       "radius": "16px",
       "shadow": "rgba(255, 255, 255, 0.25) 0px 1px 0px 0px inset, rgba(0, 0, 0, 0.04) 0px 2px 8px 0px, rgba(0, 0, 0, 0.06) 0px 8px 24px 0px",
@@ -112,10 +92,10 @@
       "refractionHeight": "1px"
     },
     "matBubUser": {
-      "bg": "rgb(250, 251, 252)",
-      "bgImage": "linear-gradient(rgba(91, 127, 191, 0.18), rgba(91, 127, 191, 0.18)), none",
-      "border": "rgba(91, 127, 191, 0.35)",
-      "blur": "blur(24px) saturate(1.15)",
+      "bg": "rgba(255, 255, 255, 0.55)",
+      "bgImage": "none",
+      "border": "rgba(255, 255, 255, 0.35)",
+      "blur": "blur(40px) saturate(1.4)",
       "color": "rgb(27, 30, 38)",
       "radius": "16px",
       "shadow": "rgba(255, 255, 255, 0.25) 0px 1px 0px 0px inset, rgba(0, 0, 0, 0.04) 0px 2px 8px 0px, rgba(0, 0, 0, 0.06) 0px 8px 24px 0px",
@@ -123,10 +103,10 @@
       "refractionHeight": "1px"
     },
     "matInput": {
-      "bg": "rgb(250, 251, 252)",
+      "bg": "rgba(255, 255, 255, 0.55)",
       "bgImage": "none",
-      "border": "rgba(91, 127, 191, 0.45)",
-      "blur": "blur(24px) saturate(1.15)",
+      "border": "rgba(255, 255, 255, 0.35)",
+      "blur": "blur(40px) saturate(1.4)",
       "color": "rgb(27, 30, 38)",
       "radius": "12px",
       "shadow": "rgba(255, 255, 255, 0.25) 0px 1px 0px 0px inset, rgba(0, 0, 0, 0.04) 0px 2px 8px 0px, rgba(0, 0, 0, 0.06) 0px 8px 24px 0px",
@@ -137,7 +117,7 @@
       "bg": "rgba(255, 255, 255, 0.55)",
       "bgImage": "linear-gradient(90deg, rgba(0, 0, 0, 0) 10%, rgba(255, 255, 255, 0.45) 50%, rgba(0, 0, 0, 0) 90%), none",
       "border": "rgba(255, 255, 255, 0.35)",
-      "blur": "blur(24px) saturate(1.15)",
+      "blur": "blur(40px) saturate(1.4)",
       "color": "rgb(27, 30, 38)",
       "radius": "20px",
       "shadow": "rgba(255, 255, 255, 0.25) 0px 1px 0px 0px inset",
@@ -162,33 +142,33 @@
       "b": 252
     },
     "opaqueTok": {
-      "r": 250,
-      "g": 251,
-      "b": 252,
-      "a": 1
+      "r": 255,
+      "g": 255,
+      "b": 255,
+      "a": 0.55
     },
     "cvOpaque": {
-      "r": 250,
-      "g": 251,
-      "b": 252,
-      "a": 1
+      "r": 255,
+      "g": 255,
+      "b": 255,
+      "a": 0.55
     },
     "legacy": {
       "truncH": "",
       "truncFrom": "",
       "overhang": "",
-      "inlineStyle": ""
+      "inlineStyle": "--ask-under: 29.00px;"
     },
     "handle": {
       "childCount": 0,
       "gripSelectorHits": 0,
       "hit": {
         "x": 1029,
-        "y": 543.03125,
+        "y": 559.03125,
         "w": 44,
         "h": 44,
-        "top": 543.03125,
-        "bottom": 587.03125,
+        "top": 559.03125,
+        "bottom": 603.03125,
         "left": 1029,
         "right": 1073,
         "r": 0
@@ -207,10 +187,10 @@
   "lct": {
     "bub": {
       "bg": {
-        "r": 250,
-        "g": 251,
-        "b": 252,
-        "a": 1
+        "r": 255,
+        "g": 255,
+        "b": 255,
+        "a": 0.55
       },
       "fg": {
         "r": 27,
@@ -218,15 +198,15 @@
         "b": 38,
         "a": 1
       },
-      "alpha": 1,
-      "ratio": 16.08
+      "alpha": 0.55,
+      "ratio": 16.66
     },
     "input": {
       "bg": {
-        "r": 250,
-        "g": 251,
-        "b": 252,
-        "a": 1
+        "r": 255,
+        "g": 255,
+        "b": 255,
+        "a": 0.55
       },
       "fg": {
         "r": 27,
@@ -234,8 +214,8 @@
         "b": 38,
         "a": 1
       },
-      "alpha": 1,
-      "ratio": 16.08
+      "alpha": 0.55,
+      "ratio": 16.66
     }
   }
 }

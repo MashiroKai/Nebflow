@@ -62,7 +62,19 @@ class AnthropicAdapter(
 
       msg.content match
         case Left(text) =>
-          Json.obj("role" -> Json.fromString(role), "content" -> Json.fromString(text))
+          // cache-hit 批（2026-11-06）：字符串 content 规范化为单 text 块数组
+          // （wire 语义等价——Anthropic 协议里 string 是块的 shorthand，端点本就
+          // 同请求混收两种形态：tool 消息今日已是块数组）。
+          // 为什么必须：尾断点（[[withTailCacheBreakpoint]]）给最后一条消息补
+          // cache_control，补键只能发生在块形态上。若保留字符串形态，上一轮尾
+          // 消息（块+marker）到下一轮变回纯字符串 ⇒ 同一会话相邻两轮 wire 结构
+          // 抖动 ⇒ 供应商前缀匹配在该消息处断链，「不该 miss 的场景」miss。
+          Json.obj(
+            "role" -> Json.fromString(role),
+            "content" -> Json.fromValues(
+              List(Json.obj("type" -> "text".asJson, "text" -> text.asJson))
+            )
+          )
         case Right(blocks) =>
           val content = blocks.map {
             case ContentBlock.Text(text) =>
@@ -236,6 +248,83 @@ class AnthropicAdapter(
       Json.fromValues(blocks.toList)
     end if
   end buildSystemBlocks
+
+  // ── 消息尾 cache 断点（cache-hit 批 2026-11-06）────────────────────────
+  //
+  // 实测读数（2026-11-06 stand 日志 1574 单 / 202.7M input tokens）：命中率
+  // 4.83%；命中请求的 cacheRead 中位数 13,056 / p90 19,392 / max 33,152，
+  // **无一单 >50k**，而请求 input 中位数 ≈119k——供应商（GLM/Zai anthropic
+  // 兼容端点等）只缓存到**显式 cache_control 断点**为止，而旧断点只钉在
+  // system 稳定段 + 末尾 tool schema（≈13-19k），会话历史（~106k）结构性
+  // 不可缓存 ⇒ 「缓存面积」只覆盖每请求 ~11%。
+  //
+  // 修法 = Claude Code 同款「消息尾增量断点」：每请求把断点钉在最后一条消息的
+  // 最后一个可标块上。第 N 轮写入的缓存条目前缀，第 N+1 轮（历史只增不改时）
+  // 逐字节相同 ⇒ 整段命中；新增的尾段本轮写入。断点预算：Anthropic 上限 4
+  // ——system 稳定段(1) + 末 tool(1) + 消息尾(1) = 3 ≤ 4。
+  //
+  // 红线（回归闸 CacheBreakpointSpec）：①同会话连续请求，除最后一条消息外
+  // 的序列化必须逐字节稳定（断点只影响最后一条）；②全 thinking/image 块的
+  // 尾消息不标（安全退化，不 400）；③断点总数 ≤ 4。
+  private val CacheControlEphemeral: Json = Json.obj("type" -> "ephemeral".asJson)
+
+  // 可标 cache_control 的块型（thinking/image 不标：Anthropic 对 thinking 块
+  // 的 cache_control 无契约，image 块前缀稳定性无意义）。
+  private val MarkableBlockTypes = Set("text", "tool_result", "tool_use")
+
+  private[providers] def withTailCacheBreakpoint(messages: List[Json]): List[Json] =
+    // 不用 `init :+ last` 模式：Scala 3 判不全该模式（E029）→ -Werror 红。
+    if messages.isEmpty then Nil
+    else
+      val init   = messages.init
+      val marked = markLastCacheableBlock(messages.last)
+      if marked == messages.last then messages else init :+ marked
+
+  /**
+   * 把最后一条消息的最后一个可标块钉上 cache_control。
+   *
+   * 键序纪律：**不得用 deepMerge**——circe deepMerge 会重排对象键序，同一消息
+   * 在「带 marker 的那一轮」与「marker 挪走的下一轮」就会只剩键序差 ⇒ 前缀
+   * 字节抖动（CacheBreakpointSpec ② 的红就出在这里）。这里手工重建 object：
+   * 原键序原样保留，只替换 content 的值。
+   */
+  private def markLastCacheableBlock(msg: Json): Json =
+    def withContentReplaced(newContent: Json): Json =
+      Json.fromJsonObject(
+        JsonObject.fromIterable(
+          msg.asObject.map(_.toList).getOrElse(Nil).map {
+            case ("content", _) => "content" -> newContent
+            case (k, v)         => k         -> v
+          }
+        )
+      )
+
+    msg.hcursor.downField("content").focus match
+      case Some(text) if text.asString.isDefined =>
+        // 字符串 content（防退化路径；toAnthropicMessages 已规范化为块数组）
+        withContentReplaced(
+          Json.fromValues(
+            List(
+              Json.obj(
+                "type" -> "text".asJson,
+                "text" -> text.asString.get.asJson,
+                "cache_control" -> CacheControlEphemeral
+              )
+            )
+          )
+        )
+      case Some(blocks) if blocks.isArray =>
+        val arr = blocks.asArray.getOrElse(Vector.empty)
+        val idx = arr.lastIndexWhere(b => b.hcursor.get[String]("type").toOption.exists(MarkableBlockTypes.contains))
+        if idx < 0 then msg // 全不可标（全 thinking/image）⇒ 本请求不标
+        else
+          withContentReplaced(
+            Json.fromValues(
+              arr.updated(idx, arr(idx).deepMerge(Json.obj("cache_control" -> CacheControlEphemeral))).toList
+            )
+          )
+      case _ => msg // 无 content / 非 block 非串 ⇒ 原样返回（不构造坏 wire）
+  end markLastCacheableBlock
 
   /**
    * 跨 provider thinking 重放适配（审计 20260903 子项④，flap 风暴底层缺陷）。
@@ -496,12 +585,14 @@ class AnthropicAdapter(
   /** Window-leg floor — the pre-raise serving cap (see [[windowOutputCap]]). */
   private val WindowFloorTokens = Defaults.ProbeMaxTokens
 
-  /** 请求体裁剪：engine 侧唯一的 body 装配点（两发送面共用同一形状）。 */
-  private def bodyOf(params: SendMessageParams, streaming: Boolean): Json =
+  /** 请求体裁剪：engine 侧唯一的 body 装配点（两发送面共用同一形状）。private[providers] = CacheBreakpointSpec 直接钉全 body 断点预算。 */
+  private[providers] def bodyOf(params: SendMessageParams, streaming: Boolean): Json =
     val systemBlocks = buildSystemBlocks(params)
     val base = Json.obj(
       "model" -> params.model.asJson,
-      "messages" -> Json.fromValues(toAnthropicMessages(params.messages)),
+      // cache-hit 批（2026-11-06）：消息尾增量 cache 断点（见
+      // [[withTailCacheBreakpoint]]）——这是「同会话连续请求必须命中」判据的装配点。
+      "messages" -> Json.fromValues(withTailCacheBreakpoint(toAnthropicMessages(params.messages))),
       "max_tokens" -> maxTokensFor(params).asJson
     )
     val withStream = if streaming then base.deepMerge(Json.obj("stream" -> true.asJson)) else base

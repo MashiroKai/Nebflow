@@ -867,7 +867,9 @@ function wireGlobals(ctx) {
   // 持久化缺陷批：页面关闭/隐藏前把最后一段输入同步落本地镜像（服务端推送会随
   // 连接一起走，下次打开由「本地 ts 更新 ⇒ 回推」对账补齐，不丢字）。
   ctx.on(window, 'pagehide', () => { flushNote(); });
-  ctx.on(window, 'resize', () => { syncSeat(); reclampSize(); });
+  ctx.on(window, 'resize', () => { syncSeat(); reclampSize(); syncAskFade(); });
+  // 毛玻璃批：列滚动即渐隐拍（opacity 逐泡重算；rAF 节流在 syncAskFade 内）。
+  el.col.addEventListener('scroll', syncAskFade, { passive: true });
   // 批⑨：手机层根页切换（nf:mobile-nav）重落可见性闸——离开 canvas 页即隐。
   ctx.on(document, 'nf:mobile-nav', () => syncGate());
   // 批⑩：阅读器底栏挂载完成 → 座位重算（底栏入角落浮件占用集，见 syncSeat）。
@@ -1468,12 +1470,38 @@ function render() {
     // 设计意图「弹幕感」与作者新令「毛玻璃一律不透底」的正面冲突，按**后者胜**
     // 处理：整条年龄透明度腿删除（不写 --ask-age-alpha、不写 data-age）。
     // 与「顶缘 12px 内容级渐隐」不冲突：那是作者 2026-11-04 09:22 明确要的
-    // 「滚到列顶时自身的 alpha 渐到 0」，作用在滚动容器 mask 上且只有 12px 高，
-    // 不是「每条历史消息整体降透明度」。两者被本批区分为「位置渐隐」vs「年龄渐隐」，
-    // 只保留前者。tests/canvas-ask-legibility.spec.mjs 的 mask 断言不受影响。
+    // 「滚到列顶时自身的 alpha 渐到 0」，毛玻璃批（2026-11-06）起作用在**逐泡
+    // opacity**（syncAskFade）且只有 12px 高，不是「每条历史消息整体降透明度」。
+    // 两者被本批区分为「位置渐隐」vs「年龄渐隐」，只保留前者。
     el.col.appendChild(b);
   });
-  requestAnimationFrame(() => { el.col.scrollTop = el.col.scrollHeight; });
+  requestAnimationFrame(() => { el.col.scrollTop = el.col.scrollHeight; syncAskFade(); });
+}
+
+// ── 顶缘渐隐（毛玻璃批 2026-11-06）─────────────────────────────────────────
+// 载体换代：列 mask 退役（css/ask.css .ask-col 块注：mask 使 .ask-col 成为
+// backdrop root，子气泡的 backdrop-filter 采样被架空 = 「半透明洗色」假毛玻璃，
+// 改前像素实证 diff(maskOn, blurOff) = 0.22 ≈ 0）。「消息 alpha 渐到 0」的
+// 2026-11-04 令语义不变，载体改**逐泡 opacity**：泡顶到列顶的距离在
+// --ask-fade-h（12px）内线性落 alpha，带外恒 1。opacity 不产生 backdrop root、
+// 不参与 hit-test，与真模糊并存。单实现（本函数是全站唯一写泡 opacity 的地方；
+// CSS 零 mask-image，防复活钉 = tests/ask-sheet-fade-height A0b/D3 +
+// tests/ask-glass-drag G2）。
+let fadeRaf = 0;
+function syncAskFade() {
+  if (!el || !el.col || !el.col.isConnected) return;
+  if (fadeRaf) return; // 一拍合一：滚动高频触发只排一帧
+  fadeRaf = requestAnimationFrame(() => {
+    fadeRaf = 0;
+    const col = el.col;
+    if (!col || !col.isConnected || col.classList.contains('closed')) return;
+    const fadeH = dsPx(el.askSurface, '--ask-fade-h', 12) || 12;
+    const colTop = col.getBoundingClientRect().top;
+    for (const bub of col.querySelectorAll('.ask-bub')) {
+      const d = bub.getBoundingClientRect().top - colTop;
+      bub.style.opacity = String(Math.max(0, Math.min(1, d / fadeH)));
+    }
+  });
 }
 
 /** 流式增量更新（不整列重渲——textDelta 高频）。 */
@@ -1489,6 +1517,7 @@ function updateStreamingBubble(s) {
   // （同一 HTML 落点：markdown 渲染腿，见 render() 的注释。）
   node.innerHTML = last ? renderMarkdownWithMath(last.text, true, { cache: false }) : '';
   el.col.scrollTop = el.col.scrollHeight;
+  syncAskFade();
 }
 
 // ── 后端 WS 域（发 + 收）───────────────────────────────────────────────────
@@ -1572,6 +1601,7 @@ function appendTyping() {
   const tp = h('div', { class: 'ask-bub typing' }, [h('i'), h('i'), h('i')]);
   el.col.appendChild(tp);
   el.col.scrollTop = el.col.scrollHeight;
+  syncAskFade();
   typingNode = tp;
 }
 function removeTyping() {

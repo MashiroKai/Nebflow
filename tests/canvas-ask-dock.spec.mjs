@@ -481,11 +481,13 @@ try {
     return b ? { n: nodes.length, table: !!b.querySelector('table td'), pre: !!b.querySelector('pre') } : null;
   });
   ok('F2-b done 定稿：markdown 渲染保持 + ai 泡总数稳定（无空泡残留）', !!f2final && f2final.n === aiCountBefore + 1 && f2final.table && f2final.pre, JSON.stringify(f2final));
-  // F3 顶缘渐隐 = 内容级 mask（ask-fade-content-opacity 批 2026-11-04，作者令「渐隐
-  //    应该是对消息降低透明度到 0 的过程，而不是放一个过渡的条在哪，整体透明无边框」）：
-  //    ① 面板内零渐隐带遮罩元素（①-批 .ask-veil / .ds-edge-fade 成员退役）；
-  //    ② 渐隐本体 = .ask-col 自身的 mask-image（起点 transparent → fade-h）；
-  //    ③ 面板/滚动容器零背景/零边框/零浮影/零 backdrop-filter。
+  // F3 顶缘渐隐（毛玻璃批 2026-11-06 载体换代 —— 作者令「聊天气泡使用我们的毛玻璃
+  //    效果 显然它使用错了 现在是半透明的效果」）：列 mask 使 .ask-col 成为 backdrop
+  //    root，架空子气泡 backdrop-filter（= 半透明洗色假玻璃）⇒ mask 整体退役，
+  //    载体 = askDock.js syncAskFade 逐泡 opacity（泡顶到列顶距离在 --ask-fade-h 内
+  //    线性落 alpha）。判据：① 面板内零渐隐带遮罩元素；② .ask-col 计算样式
+  //    mask-image = none + askDock.js 源含 syncAskFade（ask-fade-content-opacity 批
+  //    2026-11-04「内容本体 alpha 渐到 0」令语义不变，只换实现载体）。
   const f3 = await page.evaluate(() => {
     const wrap = document.querySelector('.ask-colwrap');
     const col = document.querySelector('.ask-col');
@@ -506,11 +508,11 @@ try {
       dockFilter: dcs.backdropFilter || dcs.webkitBackdropFilter,
     };
   });
-  ok('F3 顶缘渐隐 = 内容级 mask（面板内零遮罩条元素；.ask-col mask 起点 transparent → fade-h；'
-    + '作者令 12:52 ③ 追加的中线截断同为同一层 mask 的第二段）',
-    f3.fadeLayers === 0 && /linear-gradient/.test(f3.colMask) && /transparent|rgba\(0, 0, 0, 0\)/.test(f3.colMask)
-      && f3.fadeH > 0 && new RegExp(`\\b${Math.round(f3.fadeH)}px\\b`).test(f3.colMask),
-    JSON.stringify({ layers: f3.fadeLayers, mask: f3.colMask, fadeH: f3.fadeH }));
+  const askDockSrc = readFileSync(join(WEB_DIR, 'js', 'askDock.js'), 'utf8');
+  ok('F3 顶缘渐隐 = 逐泡 opacity（面板内零遮罩条元素；.ask-col 零 mask（backdrop root 摘除）'
+    + '+ askDock.js syncAskFade 载体在场；--ask-fade-h 衰减档保留）',
+    f3.fadeLayers === 0 && f3.colMask === 'none' && f3.fadeH > 0 && /syncAskFade/.test(askDockSrc),
+    JSON.stringify({ layers: f3.fadeLayers, mask: f3.colMask, fadeH: f3.fadeH, syncAskFade: /syncAskFade/.test(askDockSrc) }));
   ok('F3-b 整体透明无边框（dock 零背景/零边框/零浮影/零 backdrop-filter；外框零 mask）',
     f3.dockBg === 'rgba(0, 0, 0, 0)' && parseFloat(f3.dockBorder) === 0 && f3.dockShadow === 'none'
       && /^none$/.test(String(f3.dockFilter)) && f3.colwrapMask === 'none' && /^none$/.test(String(f3.colwrapMask)),
