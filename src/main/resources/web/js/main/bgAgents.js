@@ -959,6 +959,16 @@ function bgRowOrderCmp(a, b) {
  * 元素不许为了腾地方而消失）。成树只在**同一整体行内**（跨组父链接是组间关系，
  * 不是该组内的层）。
  *
+ * 面板三代层级批（2026-11-06 · 作者令「root → dispatcher → node 三级真缩进——每一层
+ * 都是上一层的缩进」）：顶层行（leftover——dispatcher-*/node-* 等 flow 行的主脸）参与
+ * 父链接，父键装配单点 = `bgTreeParentKeyOf`（白名单 + deps 显式判定，见其注释）。
+ * **属主边（parentSessionId 来的父子）不受同组约束限制，跨组照挂**：顶层行的父锚可以
+ * 是 root 锚（属主=桶根——锚无组）、另一条顶层行（dispatcher → node）、合成延续组头
+ * （父行在场的情形）；同组约束 `cand.group === row.group` 原样留在**成员行**挂接路径
+ * （delegate 域零回归——design 残差②/⑨）。组头与 root 锚是根位两档，永不挂父（组头
+ * 恒 depth 0 的既有帽不回退既有形态）。deps 仍不算父子：该口径从注释升级为代码结论
+ * （bgDepsParentPolicy——作者令「不许只有注释」），deps/chain 结构字段不进白名单。
+ *
  * @param {Array<any>} rows 行计划项（bgRowPlan 基座序）
  * @returns {{order: Array<any>, roots: Array<any>, parentOf: Map<any, any>, kids: Map<any, Array<any>>, depth: Map<any, number>}}
  */
@@ -974,19 +984,28 @@ function bgRowTree(rows) {
   const parentOf = new Map();
   for (const row of list) {
     parentOf.set(row, null);
-    if (!row || row.level !== 'child') continue;
+    // 根位两档永不挂父：组头（既有帽：组头恒 depth 0——delegate 域零回归）与
+    // root 锚（树 depth 0 基座本身，三代层级批）。
+    if (!row || row.level === 'head' || row.level === 'root') continue;
     const self = bgRowSessionKey(row);
-    const info = row.info || {};
-    const c = row.child || {};
-    const groupKey = bgRowLocatorKey({ id: row.group && row.group.id, info: row.group && row.group.info });
-    // ①②③：真实父链接（store 子条目无 info，父链接落在 G3 条目自身上）。
-    let pk = String(info.parentSessionId || '').replace(/^team-/, '');
-    if (!pk && c.type === 'store') pk = String((c.child && c.child.parentSessionId) || '').replace(/^team-/, '');
-    // ④：无父链接的成员行（flow 结构投影等）挂所属整体行。
-    if (!pk) pk = groupKey;
+    // ①②③④ 父键装配单点（bgTreeParentKeyOf：白名单 + deps 显式判定）。
+    const pk = bgTreeParentKeyOf(row);
     const cand = (pk && pk !== self) ? byKey.get(pk) : null;
-    if (cand && cand !== row && cand.group === row.group) { parentOf.set(row, cand); continue; }
-    // 回落：所属整体行下一格（父不在行集 / 跨组父 / 自指）。
+    if (cand && cand !== row) {
+      if (row.level === 'top') {
+        // 属主边（parentSessionId 来的父子）不受同组约束限制，跨组照挂——顶层行的
+        // 父锚：root 锚（锚无组）、另一条顶层行（dispatcher → node）、合成延续组头
+        // （父行在场的情形）。作者令逐字「每一层都是上一层的缩进」。
+        parentOf.set(row, cand);
+        continue;
+      }
+      // 成员行（delegate 域）：同组约束原样（design 残差②/⑨——delegate 域零回归）。
+      if (cand.group === row.group) { parentOf.set(row, cand); continue; }
+    }
+    // 回落：所属整体行下一格（成员行：父不在行集 / 跨组父 / 自指——既有兜底原样；
+    // 顶层行无组 ⇒ head 恒空，父缺席 = 留在根位，不伪造深度）。
+    const g = row.group;
+    const groupKey = bgRowLocatorKey({ id: g && g.id, info: g && g.info });
     const head = groupKey ? byKey.get(groupKey) : null;
     if (head && head !== row && head.group === row.group) parentOf.set(row, head);
   }
@@ -1025,23 +1044,76 @@ function bgRowTree(rows) {
   return { order, roots, parentOf, kids, depth };
 }
 
-/** 行父键（野节点判定式的输入面单点）：一行「挂在谁下面」——与 bgRowTree 的父链接
- *  四源**同一批源**（live/快照 parentSessionId → store 子条目自身 parentSessionId →
- *  所属整体行定位键），不另立第五套口径。顶层 leftover 行没有 group ⇒ 只剩
- *  parentSessionId 一源（无该字段 = 无父，不是「父是空串」）。
- *  @param {any} row @returns {string} */
-function bgRowParentKeyOf(row) {
+/**
+ * deps 父子边显式判定（面板三代层级批 2026-11-06 · 作者令「立一个具名函数，返回显式
+ * 结论，渲染只读它；不许只有注释」）：bgRowTree 源注释旧 ：949-955 明文「deps 是 DAG
+ * 依赖边不是父子链接，不据此加层」——本批把这句话升级为**代码判定**。
+ *
+ * 结论（显式对象，一句话理由随结论携带）：
+ *   `parentEdgeFromDeps: false` —— deps（flow-step 的 DAG 依赖字段）**不产生**父子
+ *   缩进边。理由：deps 是执行结算顺序事实（谁先谁后跑），不是会话属主关系；面板树
+ *   的父子唯一来源 = 注册属主边 `parentSessionId`（成员行另有「所属整体行」兜底）；
+ *   按 deps 连边会造出假层级与环（A deps B 且 B deps A 的 DAG 合法），且 deps 增删
+ *   会拖动行深度——树的形状必须只随属主事实走。
+ *
+ * 渲染面消费点：`bgTreeParentKeyOf`（白名单装配单点）在装配前读本结论——白名单扩容
+ * 必须先改这份判定，不许在第二处内联放行。
+ * @returns {{parentEdgeFromDeps: boolean, reason: string}}
+ */
+export function bgDepsParentPolicy() {
+  return {
+    parentEdgeFromDeps: false,
+    reason: 'deps 是 DAG 执行依赖边（结算顺序事实），不是会话属主关系；树父子唯一来源 = 注册属主边 parentSessionId（成员行另有「所属整体行」兜底）。按 deps 连边会造出假层级与环。',
+  };
+}
+
+/**
+ * 行树父键白名单单点（面板三代层级批 2026-11-06 · design 残差⑤）：一行「挂在谁下面」
+ * 的**唯一**装配点——bgRowTree 的挂父路径与 bgRowParentKeyOf（野判定输入面）都只读它，
+ * 不留第二套内联装配（防「第二套深度口径」）。
+ *
+ * 白名单（正序短路；deps/chain 结构字段**不进白名单**——准入与否由 bgDepsParentPolicy()
+ * 结论判定，本函数在装配前读它）：
+ *   ① live / 快照行 `info.parentSessionId`（注册属主边——各 spawn 路由单点注入 +
+ *      快照出帧）；
+ *   ② G3 store 子条目自身 `parentSessionId`（终态子行，无 info 的结构行）；
+ *   ③ 成员行（level='child'）①②皆空 ⇒ 所属整体行定位键（flow 结构投影等无父字段
+ *      成员行的既有兜底——「挂所属整体行」口径原样）；
+ *   ④ 顶层行 ①空 ⇒ null（无父字段 = 无父——不是「父是根」；落野判定面处置）。
+ * @param {any} row @returns {string|null} 父定位键；null = 无父
+ */
+export function bgTreeParentKeyOf(row) {
   const info = (row && row.info) || {};
   const c = (row && row.child) || {};
+  // deps 显式判定（作者令「渲染只读它的结论」）：白名单装配前先读——结论为 false 时
+  // deps 分支不可达，deps/chain 字段永不充当父子键。
+  const policy = bgDepsParentPolicy();
+  if (policy.parentEdgeFromDeps) {
+    // 白名单扩容位：结论放行时才允许读 deps 形字段（今天不可达——结论恒 false）。
+    const deps = (c.type === 'flow' && Array.isArray(c.node && c.node.deps))
+      ? c.node.deps.map((d) => String(d || '').replace(/^team-/, '').trim()).filter(Boolean)
+      : [];
+    if (deps.length) return deps[0];
+  }
   let pk = String(info.parentSessionId || '').replace(/^team-/, '').trim();
   if (!pk && c.type === 'store') {
     pk = String((c.child && c.child.parentSessionId) || '').replace(/^team-/, '').trim();
   }
-  if (!pk) {
-    const g = row && row.group;
+  if (!pk && row && row.level === 'child') {
+    const g = row.group;
     pk = bgRowLocatorKey({ id: g && g.id, info: g && g.info });
   }
-  return pk;
+  return pk || null;
+}
+
+/** 行父键（野节点判定式的输入面单点）：一行「挂在谁下面」——与 bgRowTree 的父链接
+ *  同源（bgTreeParentKeyOf 白名单装配：live/快照 parentSessionId → store 子条目自身
+ *  parentSessionId → 所属整体行定位键），不另立口径。顶层 leftover 行没有 group ⇒
+ *  只剩 parentSessionId 一源（无该字段 = 无父，不是「父是空串」）。字符串返回形
+ *  （'' = 无父）由本包装维护——树面用 bgTreeParentKeyOf 的 null 形。
+ *  @param {any} row @returns {string} */
+function bgRowParentKeyOf(row) {
+  return bgTreeParentKeyOf(row) || '';
 }
 
 /**
@@ -1070,13 +1142,16 @@ function bgRowParentKeyOf(row) {
  * @param {Array<any>} rows 行计划项（bgRowPlan 的 items：已收敛、已树序）
  * @returns {Set<string>} 野行的定位键（bgRowSessionKey 值）
  */
-export function bgOrphanRowKeys(rows) {
+export function bgOrphanRowKeys(rows, bucketSid) {
   const list = Array.isArray(rows) ? rows : [];
   const byKey = new Map();
   for (const row of list) {
     const k = bgRowSessionKey(row);
     if (k && !byKey.has(k)) byKey.set(k, row);
   }
+  // 三代层级批（2026-11-06）：桶根键（root 锚 = 树 depth 0 基座，恒在——见 bgRowPlan
+  // 锚合成）。属主 = 桶根的行（dispatcher 行等）永不野。
+  const bucketKey = String(bucketSid || '').replace(/^team-/, '');
   // ③ 的在册面：注册行镜像按 delegate id 索引（同 bgDelegateGroups 的 rowByDelegate）。
   const regBySid = new Map();
   for (const r of listDelegateRows()) {
@@ -1085,6 +1160,7 @@ export function bgOrphanRowKeys(rows) {
   }
   const resolvable = (pk, self) => {
     if (!pk || pk === self) return false;   // 自指 / 无父字段 ⇒ 不可解析
+    if (bucketKey && pk === bucketKey) return true; // root 锚恒在：属主=桶根 ⇒ 可解析
     if (byKey.has(pk)) return true;         // ① ②：父行在本轮行集里（整体行或成员行）
     const reg = regBySid.get(pk);           // ③：父会话在册
     if (!reg) return false;
@@ -1094,7 +1170,7 @@ export function bgOrphanRowKeys(rows) {
   };
   const wild = new Set();
   for (const row of list) {
-    if (!row || row.level === 'head') continue; // 整体行是根，永非野
+    if (!row || row.level === 'head' || row.level === 'root') continue; // 整体行 / root 锚是根，永非野
     if (row.level === 'child') continue;        // 成员行的父 = 所属整体行（在行集里）
     const self = bgRowSessionKey(row);
     if (resolvable(bgRowParentKeyOf(row), self)) continue;
@@ -1110,11 +1186,19 @@ export function bgOrphanRowKeys(rows) {
  * 野节点归置批（2026-11-05 腿③）：另返回 `orphanCount` = 归置面上的野行数（判定式
  * 单点 `bgOrphanRowKeys` 的结论计数）；它与 `total` 不同源不冲突——`total` 计全部
  * 行（野行照旧计入、一行不丢），`orphanCount` 只计其中换面出镜的那部分。
+ * 面板三代层级批（2026-11-06 · 作者令「root → dispatcher → node 三级真缩进」）：
+ * root 锚合成（design 残差①）——桶根会话（顶层会话）作树的 **depth 0 基座**。判定 =
+ * 行集中确有属主边指向桶根的**顶层行**（bgTreeParentKeyOf === bucketSid）才出锚
+ * （锚有子树才出镜——空树不出空锚，既有形态零回归）。锚是**标签面行**：不入行集
+ * 计数（total 排除 level='root'）、不占 data-bg-row-total、不入头部计数（先例 =
+ * 野分组头 bgOrphanGroupHeadHtml 的「组头不是行」纪律）；锚有子树 ⇒ caret 合法。
+ * 与真行同键（桶根自身在册的畸形帧）⇒ 让位真行、不出锚（防御）。
  *
  * @param {{groups: Array<Object>, leftovers: Array<Array<any>>, orphanBy: Map<string, any>}} model
+ * @param {string} [bucketSid] 桶根会话 id（root 锚合成判据 + 野判定桶根条款）
  * @returns {{items: Array<Object>, total: number, tree: {order: Array<any>, roots: Array<any>, parentOf: Map<any, any>, kids: Map<any, Array<any>>, depth: Map<any, number>}, orphanCount: number}}
  */
-function bgRowPlan(model) {
+function bgRowPlan(model, bucketSid) {
   const groups = (model && model.groups) || [];
   const leftovers = (model && model.leftovers) || [];
   const orphanBy = (model && model.orphanBy) || new Map();
@@ -1169,6 +1253,26 @@ function bgRowPlan(model) {
   }
   items.push(...topRows);
   for (const r of topRows) placed.add(r);
+  // ⑥ root 锚合成（面板三代层级批 2026-11-06，见函数头注）：锚先行入列（树序 =
+  // 锚子树打头——渲染循环前出镜），已入 placed 防止尾兜底重排。
+  const bucketKey = String(bucketSid || '').replace(/^team-/, '');
+  let anchorRow = null;
+  if (bucketKey) {
+    const hasRootChildren = kept.some((r) => r.level === 'top'
+      && bgTreeParentKeyOf(r) === bucketKey);
+    const keyTaken = kept.some((r) => bgRowSessionKey(r) === bucketKey);
+    if (hasRootChildren && !keyTaken) {
+      anchorRow = {
+        level: 'root',
+        id: 'bg-root:' + bucketKey,
+        identity: bucketKey,
+        // 标签面行：渲染走 bgRootAnchorHtml，info 仅承载定位键（状态/主名语义无消费面）。
+        info: { sessionId: bucketKey },
+        group: null,
+      };
+    }
+  }
+  if (anchorRow) { placed.add(anchorRow); items.unshift(anchorRow); }
   for (const r of kept) if (!placed.has(r)) items.push(r);
   // ④ 层级缩进批（2026-11-05 腿②）：基座序 → **树序**（父行后紧跟整棵子树，同父兄弟
   // 保持基座序；无嵌套时与基座序逐位相同——既有行序零回归）。深度/子树同点产出，
@@ -1177,9 +1281,14 @@ function bgRowPlan(model) {
   // ⑤ 野节点归置批（2026-11-05 腿③）：判定式单点（bgOrphanRowKeys）在**收敛+树序之后**
   // 跑一次，结论写到 row.wild——渲染面只读这个布尔，不在渲染分支里自算野性。行集与
   // 计数（total）**不因归置而变**：野行照旧计入（一行不丢），只是换一个归置面出镜。
-  const wildKeys = bgOrphanRowKeys(tree.order);
+  // 三代层级批：bucketSid 随参下传（桶根条款——属主=桶根的行永不野，root 锚恒在）。
+  const wildKeys = bgOrphanRowKeys(tree.order, bucketSid);
   for (const row of tree.order) row.wild = wildKeys.has(bgRowSessionKey(row));
-  return { items: tree.order, total: tree.order.length, tree, orphanCount: wildKeys.size };
+  // total = 行集长度，root 锚除外（锚是标签面行，不是行——「签 == 实际 .bg-task-row
+  // 行数」口径不破；锚子树里的行照常计入）。
+  let total = 0;
+  for (const row of tree.order) if (!row || row.level !== 'root') total += 1;
+  return { items: tree.order, total, tree, orphanCount: wildKeys.size };
 }
 
 /**
@@ -1196,7 +1305,8 @@ function bgPanelModel(bucketSid) {
   const bgAgents = (bucketSid && state.sessionBgAgents[bucketSid]) || {};
   const entries = visibleBgAgentEntries(bgAgents);
   const { groups, leftovers, orphanBy } = bgDelegateGroups(entries, bucketSid);
-  const plan = bgRowPlan({ groups, leftovers, orphanBy });
+  // 面板三代层级批（2026-11-06）：bucketSid 随计划下传（root 锚合成 + 野判定桶根条款）。
+  const plan = bgRowPlan({ groups, leftovers, orphanBy }, bucketSid);
   return {
     bgAgents, entries, groups, leftovers, orphanBy,
     rows: plan.items,
@@ -1318,6 +1428,32 @@ function bgOrphanGroupHeadHtml(count) {
   return '<div class="bg-orphan-group" data-bg-orphan-group="1" data-bg-depth="0" role="presentation" aria-label="' +
     escapeHtml(t('subagents.orphanGroup') + ' · ' + n) + '">' +
     '<span class="bg-orphan-group-name">' + escapeHtml(t('subagents.orphanGroup')) + '</span>' +
+  '</div>';
+}
+
+/**
+ * root 锚（面板三代层级批 2026-11-06 · 作者令「root → dispatcher → node 三级真缩进」，
+ * design 残差①）：桶根会话（顶层会话）的**标签面行**——树的 depth 0 基座，属主=桶根
+ * 的行（dispatcher 行等）挂它下面 depth 1。纪律沿用野分组头先例：
+ *   · **标签不是行**——不带 .bg-task-row 类、不进 data-bg-row-total、不入头部计数
+ *     （「签 == 实际 .bg-task-row 行数」口径不破；行集里没有它）；
+ *   · **锚有子树 ⇒ caret 合法**（bgCaretHtml 已放宽到任意有子行行；野组头「无 caret」
+ *     纪律不适用于锚——锚是树基座，收起 = 根下整棵子树跟随隐藏）；
+ *   · 折叠偏好走同一 localStorage 缝（键 = 桶根会话 id，bgCollapseGet/Set 单点），
+ *     刷新后保持；默认展开（偏好 true 才收——基座不该替用户做主）。
+ * 机器锚：`data-bg-root-anchor="1"` + `data-bg-depth="0"` + `data-bg-collapsed`。
+ * @param {string} key 行定位键（= 桶根会话 id；data-bg-caret 值 = 折叠偏好持久化键）
+ * @param {number} childCount 根下子行数（0 = 不带 caret 与折叠锚）
+ * @param {boolean} collapsed @returns {string}
+ */
+function bgRootAnchorHtml(key, childCount, collapsed) {
+  const word = t('subagents.rootAnchor');
+  return '<div class="bg-root-anchor" data-bg-root-anchor="1" data-bg-depth="0" role="presentation"' +
+    bgCollapseAttrs(childCount, collapsed) +
+    ' aria-label="' + escapeHtml(word) + '">' +
+    (Number(childCount) > 0 ? bgCaretHtml(key, collapsed) : '') +
+    '<span class="bg-root-anchor-name" title="' + escapeHtml(String(key || '')) + '">' +
+      escapeHtml(word) + '</span>' +
   '</div>';
 }
 
