@@ -459,19 +459,39 @@ html[data-theme="light"] {
  *   「品牌绿 ON 档 vs 浅灰轨道 = 2.02:1」——状态**不能靠颜色单独读**，只能靠
  *   圆钮位移（40px 轨道里走 18px）读。作者已在 2026-11-05 19:55 选择 A 并接受
  *   该取舍，本批不擅自改色；对比度实测表见落地报告 §对比度。
+ *
+ * ── 居中 = 几何推导，不是手填值（toggle-center 批 2026-11-06）──────────────
+ *   作者原话：「我们的toggle按钮需要重新设计 中间的按钮相对于边框都没有居中」。
+ *   上一批的四个数（轨道 40×22 / 圆钮 16 / 内衬 2 / 行程 18）**各自自洽**，
+ *   但「内衬」写在 `top/left` 上时，absolute 子件是相对**padding box**（描边内侧）
+ *   定位的 —— 于是「缝」被 1px 描边重复记了一次账：桌面档恰好抵消（22−2×1−16 =
+ *   4 = 2×2），手机档（51×31 / 圆钮 27 / 内衬 2）却不抵消，屏幕实测
+ *   上 3 / 下 1、开档右缝 1（关档左缝 3）—— 2px 偏心。
+ *   所以本段把「居中」改成**推导量**：缝只准由 (轨高 − 钮径)/2 算出，`top/left`
+ *   再减掉描边，行程由「轨宽 − 2×缝 − 钮径」算出。四个方向同源 ⇒ 任何尺寸组合
+ *   都居中，手填值这个错误类别被消掉（机检：`scripts/check-toggle-geometry.mjs`）。
+ *   实测：桌面档四向 3/3/3/3（与上一批同像素，零视觉变更）；手机档 3/1/3/1 → 2/2/2/2。
  * ══════════════════════════════════════════════════════════════════════════ */
 :root,
 html[data-theme="light"] {
-  /* 几何（A 组实测值：轨道 40×22、圆钮 16、内衬 2、圆角全圆） */
+  /* 几何（A 组：轨道 40×22、圆钮 16、圆角全圆）
+     缝 / 偏移 / 行程三枚**全部由轨道与圆钮推导**（禁手填：手填值正是上一批
+     「设计值自洽、屏幕不居中」的根因）。 */
   --nf-toggle-w: 40px;
   --nf-toggle-h: 22px;
   --nf-toggle-radius: 999px;
   --nf-toggle-border: 1px;
   --nf-toggle-knob: 16px;
-  --nf-toggle-inset: 2px;
-  /* 行程恒按公式算（禁手抄数值）：40 − 2×1(border) − 16 − 2×2 = 18px
-     ⇒ OFF 左缝 2px == ON 右缝 2px（border-box 下 absolute 子件相对 padding box 定位）。 */
-  --nf-toggle-travel: calc(var(--nf-toggle-w) - var(--nf-toggle-border) * 2 - var(--nf-toggle-knob) - var(--nf-toggle-inset) * 2);
+  --nf-toggle-knob-radius: 50%;     /* 圆钮恒为圆（A 组形态语汇：胶囊轨道 + 圆钮） */
+  /* 圆钮到轨道**外缘**的四向缝 —— 居中即四向同值：(22 − 16)/2 = 3px。
+     上=下=左(关)=右(开)=本值；这是肉眼与机检共用的一把尺。 */
+  --nf-toggle-inset: calc((var(--nf-toggle-h) - var(--nf-toggle-knob)) / 2);
+  /* absolute 子件的 top/left 相对 **padding box**（描边内侧）⇒ 外缘缝先减描边：
+     3 − 1 = 2px（= 上一批写在 `top/left` 上的那个 2px，像素级等价）。 */
+  --nf-toggle-offset: calc(var(--nf-toggle-inset) - var(--nf-toggle-border));
+  /* 行程恒按公式算（禁手抄数值）：40 − 2×3(缝) − 16(钮) = 18px
+     ⇒ 关档左缝 3 == 开档右缝 3（外缘尺）；手机档同一条公式 = 20px。 */
+  --nf-toggle-travel: calc(var(--nf-toggle-w) - var(--nf-toggle-inset) * 2 - var(--nf-toggle-knob));
   --nf-toggle-hit: 44px;            /* 命中盒边长（WCAG 2.5.5 目标尺寸） */
   /* 动效（A 组实测：180ms + cubic-bezier(0.2,0,0,1)；两条 y 控制点 0/1，曲线单调
      不过冲 —— 没有回弹段，所以「不过冲、不弹跳」是曲线性质而不是手感描述） */

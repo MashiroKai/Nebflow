@@ -43,9 +43,15 @@
 //
 // Style: css/sidebar.css «nb-toggle — shared switch component» section（唯一造型点）;
 // tokens: css/stand-tokens.css «--nf-toggle-*» section（唯一数值出生地）。
-// Geometry (作者裁定 A 组, 2026-11-05): border-box track 40×22, radius 999px,
-// knob 16×16 at top:2px/left:2px, ON translateX(18px) — 18px 是公式算出来的
-// （40 − 2×1 border − 16 − 2×2 inset），不是手抄值；侧缝 2/2 镜像，垂直缝 2/2。
+// Geometry (作者裁定 A 组, 2026-11-05；居中改推导 2026-11-06 toggle-center 批):
+// border-box track 40×22 (手机档 body.mobile-layer 51×31), radius 999px, knob 16×16
+// (手机 27)。圆钮落位 = --nf-toggle-offset = 缝(3) − 描边(1) = 2px（padding box
+// 坐标；缝 = (轨高 − 钮径)/2 由令牌算出），ON translateX(--nf-toggle-travel = 18px，
+// 手机 20px) ⇒ **外缘四向缝恒相等**（桌面 3/3/3/3，手机 2/2/2/2）。
+// 手填「内衬」是本批消灭的错误类别：absolute 伪元素的 top/left 相对 padding box，
+// 手填值会把 1px 描边重复记账（手机档旧写法的 3/1 偏心即由此而来）。
+// 机检：scripts/check-toggle-geometry.mjs（像素级：|上−下| ≤ 0.5、|左(关)−右(开)| ≤ 0.5，
+// 桌面 + 手机 × 亮/暗）；令牌形态：scripts/check-toggle-unify.mjs T3。
 // Motion: 180ms cubic-bezier(0.2,0,0,1) — 单调不过冲（无回弹段）；
 // prefers-reduced-motion: reduce ⇒ 0.01ms 瞬间落位。
 

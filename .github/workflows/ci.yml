@@ -798,6 +798,22 @@ jobs:
           # （/Users/dev/...），ubuntu 上必须覆盖到可写目录。
           ARCHIVE_SHOT_DIR: ${{ runner.temp }}/archive-shots
         run: PW_SELFCONTAINED_ONLY=1 npx playwright test
+      - name: Toggle knob centered (pixel-level four-way gaps)
+        # toggle-center 批 2026-11-06（作者原话逐字：「我们的toggle按钮需要重新设计
+        # 中间的按钮相对于边框都没有居中」）。上一批交的是**设计值**（轨道 40×22 /
+        # 圆钮 16 / 内衬 2 / 行程 18），四个数各自自洽，但 `top/left` 写在 absolute
+        # 伪元素上是相对 **padding box** 的 —— 手填的「缝」于是把 1px 描边记了两次账：
+        # 桌面档恰好抵消（22−2−16 = 4 = 2×2），手机档（51×31 / 钮 27）没有 ⇒ 屏幕上
+        # 上 3 / 下 1、开档右缝 1（关档左缝 3）= 2px 偏心。
+        # 判据（CSS px，**浏览器实测**，不读声明值）：|上距−下距| ≤ 0.5、
+        # |左距(关)−右距(开)| ≤ 0.5，覆盖桌面（40×22）+ 手机（body.mobile-layer，
+        # 51×31）× 亮/暗；两路读数（CDP 伪元素 border box + DSF=4 哨兵色像素包围盒）
+        # 必须互相吻合 ≤ 0.5。
+        # 只在本 job 跑（唯一装了 chromium 的静态面 job）；本机同逻辑：
+        # node scripts/check-toggle-geometry.mjs（或 `make toggle-geometry`）。
+        # 静态形态腿（居中三式必须是推导式、禁手填）在 js-types job 的
+        # check-toggle-unify.mjs 里，与字节级漂移一起挡。
+        run: node scripts/check-toggle-geometry.mjs
       # （CI 迁移批 2026-10-24）失败 trace 上传步骤已删：账号 Artifact 存储
       # 配额已耗尽（二轮实测 Failed to CreateArtifact: Artifact storage quota
       # has been hit）——保留只会把 job 染红且传不上去。失败判据走 playwright
