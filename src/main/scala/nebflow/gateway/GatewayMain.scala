@@ -2388,6 +2388,18 @@ object GatewayMain extends IOApp:
                                                                 .getOrElse(nebflow.shared.Defaults.StuckThresholdMs)
                                                             )
                                                             .start
+                                                          // --- Background: 合并队列自驱拍（P2 QueueActor 批 2026-11-06）---
+                                                          // 队列状态机搬进 actor 之后，**队列自己的看护拍归队列自己**
+                                                          // （`ActorContext.scheduleOnce` → `QueueMsg.Tick`，零 IO.sleep
+                                                          // 轮询）：持窗尸体判死、账实核对、补一拍放行都在 Tick 里做，
+                                                          // 不再依赖「宿主扫描拍顺带捎一脚」的搭车关系。
+                                                          // TaskStuckWatcher 那一拍保留（幂等，且它还有别的腿）；
+                                                          // 队列只是不再只能靠它。
+                                                          _ <- IO.blocking(
+                                                            nebflow.core.delegate.MergeQueue.enableSelfTick(
+                                                              nebflow.core.delegate.MergeQueue.SelfTickMs
+                                                            )
+                                                          )
                                                           // --- Background: FreezeScheduler (freeze-schedule) ---
                                                           // 冻结恢复扫描：周期向 Frozen 态 agent 发 CheckFreezeGate，
                                                           // 出冻结段则恢复挂起的 dispatch（仿 TaskStuckWatcher 模式：
