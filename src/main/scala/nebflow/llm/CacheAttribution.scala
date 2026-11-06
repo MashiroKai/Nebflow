@@ -36,6 +36,7 @@ import scala.collection.mutable
 object CacheAttribution:
 
   private val logger = NebflowLogger.forName("nebflow.llm.cache-attribution")
+  @volatile private[llm] var attributionLogSink: String => Unit = logger.infoSync
 
   /** 每进程随机盐（指纹去内容化；跨实例不可比是特性不是缺陷）。 */
   private val salt: Long = scala.util.Random.nextLong()
@@ -263,7 +264,9 @@ object CacheAttribution:
       }
     }
     record.foreach { r =>
-      logger.info(
+      // observeUsage is a synchronous Unit API; NebflowLogger.info returns a lazy IO,
+      // so discarding it silently suppressed every attribution event in production logs.
+      attributionLogSink(
         s"cache-attribution: category=${r.category.name} session=${r.sessionId} domain=$providerId/$model " +
           s"firstDiff=${r.firstDiffIdx.getOrElse("-")} input=${r.inputTokens} read=${r.cacheReadTokens} detail=${r.detail}"
       )
