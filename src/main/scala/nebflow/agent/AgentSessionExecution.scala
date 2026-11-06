@@ -488,6 +488,19 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
       id -> s"#$id $rest".trim
     }.toMap
 
+  /**
+   * 派发时刻链快照下发（provider-concurrency 批，2026-11-06）：pin 存在 ⇒ agentModel
+   * = 快照物化 `(preferred=链首, fallbacks=尾链)`（走 registry 同一条既有解析——
+   * 零新选择路径）；pin = None（未钉：无上限满载路径/既有构造/测试字面量）⇒ base
+   * 原值透传 = 既有行为逐字节不变。🔴 禁止把快照写回 agent.json 的 model 键——
+   * `AgentLibrary.loadFromDir` 每 turn 现读，那会把快照变成「每 turn 重算」。
+   */
+  private def agentModelWithPin(
+    base: Option[nebflow.shared.AgentModelConfig],
+    pin: Option[nebflow.llm.PinnedChain]
+  ): Option[nebflow.shared.AgentModelConfig] =
+    pin.fold(base)(p => Some(p.toAgentModelConfig))
+
   /** Full / delta / unchanged task text for this turn's reminder. */
   private def renderTasksForTurn(
     resources: SharedResources,
@@ -1068,7 +1081,11 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             // 🔴 不得改成 systemStable/任何缓存字段：那份字符串只在生命周期节点重建，
             // 固化进去 = 时间冻结（本批要修的正是这一类）。
             systemDynamic = Some(TimeAnchor.block()),
-            agentModel = freshDef.model,
+            // 派发时刻链快照下发（provider-concurrency 批，2026-11-06）：本 actor 的
+            // agentModel = spawn 时钉死的 (preferred=链首, fallbacks=尾链)——运行期
+            // llm.fallback / agent.json 变化 / 储备层追加都**不再改变链首**（缓存键
+            // 稳定）。pin = None ⇒ 原值透传 = 既有行为逐字节不变。
+            agentModel = agentModelWithPin(freshDef.model, stateForLlm.providerChainPin),
             // WebSearch P0: housekeeping turns (compact/ask) opt out of
             // provider-native search injection — a server-side search tool
             // must never leak into summarization loops.

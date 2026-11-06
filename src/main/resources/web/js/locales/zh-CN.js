@@ -1460,6 +1460,9 @@ export default {
   // 事实句（「无限制」），解释收进 `?` 悬停提示（裁定⑤）。
   'provider.unavailableWindows': '不可用时段',
   'provider.unavailableWindowsHint': '该服务商全部模型统一生效；跨午夜写 23:00-07:00',
+  'provider.maxConcurrentActors': '同时派发上限',
+  'provider.maxConcurrentActorsPh': '留空 = 不限',
+  'provider.maxConcurrentActorsInvalid': '同时派发上限须为正整数',
   'provider.unavailableWindowsPlaceholder': 'HH:mm-HH:mm',
   'provider.unavailableWindowsInvalid': '不可用时段格式错误：「{value}」（需 HH:mm-HH:mm，且开始≠结束）',
   'provider.unavailableWindowsEmpty': '无限制',

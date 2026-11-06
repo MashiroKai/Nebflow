@@ -352,6 +352,15 @@ function showProviderModal(existingName, existingData, onSave) {
         value: uwList,
         hint: 'provider.unavailableWindowsHint',
       },
+      {
+        // provider 并发上限（provider-concurrency 批，2026-11-06）：同时派发到该
+        // 服务商的 agent 上限；超限 ⇒ 新派发 actor 的链首顺延下一档。空 = 不限。
+        key: 'maxConcurrentActors',
+        label: t('provider.maxConcurrentActors'),
+        type: 'text',
+        value: p.maxConcurrentActors ?? '',
+        placeholder: t('provider.maxConcurrentActorsPh'),
+      },
     ],
     onConfirm(values) {
       const name = values.name.trim();
@@ -421,12 +430,20 @@ function showProviderModal(existingName, existingData, onSave) {
         }
       }
       const uwOut = uwIn.length ? uwIn : null;
+      // provider 并发上限（provider-concurrency 批）：空 → null（删键 = 不限）；
+      // 正整数 → 上限；其余（负数/小数/非数）→ undefined = 拒存 toast。
+      const actorsCap = parseActorsCap(values.maxConcurrentActors);
+      if (actorsCap === undefined) {
+        window.__showToast?.(t('provider.maxConcurrentActorsInvalid'), 'error');
+        return;
+      }
       onSave(name, {
         baseUrl,
         apiKey,
         protocol: values.protocol,
         models: modelsOut,
         unavailableWindows: uwOut,
+        maxConcurrentActors: actorsCap,
       });
       if (clampedRows.length) {
         for (const c of clampedRows) {
@@ -444,6 +461,15 @@ function showProviderModal(existingName, existingData, onSave) {
 }
 
 // --- Generic modal ---
+
+/** provider 并发上限输入解析（provider-concurrency 批）：
+ *  空/纯空白 → null（不限）；正整数 → 数值；其余 → undefined（调用方拒存）。 */
+function parseActorsCap(raw) {
+  const s = String(raw ?? '').trim();
+  if (!s) return null;
+  const n = Number(s);
+  return Number.isInteger(n) && n > 0 ? n : undefined;
+}
 
 /** 一段「不可用时段」行（原子段字段 + 按星期徽标 + 删除）。
  *  值域 = 触发钮 dataset（data-start / data-end / data-days），wire 形状仍 {from,to,days?}。

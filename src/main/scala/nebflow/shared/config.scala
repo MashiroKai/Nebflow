@@ -157,6 +157,19 @@ case class ProviderConfig(
    */
   disabled: Option[Boolean] = None,
   /**
+   * 该 provider 可同时「占坑」的 actor 上限（provider-concurrency 批，作者令
+   * 2026-11-06：并发按 **actor** 计、在**派发那一刻**算一次——actor 的 fallback 链
+   * 首落在本 provider 的在用 actor 数达到本上限时，下一个派发的 actor 链首顺延到
+   * 链上的下一个 provider；此后该 actor 的链快照终生不重算，见
+   * [[nebflow.llm.ProviderConcurrency]]）。缺省 None = **不限**（零行为变化：
+   * 任何非 None 缺省都会改变既有部署的派发链首）。`<= 0` 非法 ⇒ 判定时当作
+   * 不限（不许静默当 0 = 全拒，那会让链首永远落二档）。
+   * 🔴 形状纪律同上：Option 形（deriveDecoder 不认默认值）。
+   * 🔴 深合并存活面：同上方 unavailableWindows——provider 对象键，
+   * `ConfigService.mergeConfig` 天然保留；前端 provider 编辑弹窗须显式携带。
+   */
+  maxConcurrentActors: Option[Int] = None,
+  /**
    * provider 级额外 HTTP 头（protocol-compat 批，2026-11-01，作者实测令）。
    *
    * 事故：cmdcode 端点挂在 Cloudflare 后面，**无 User-Agent 的请求被边缘直接
@@ -372,6 +385,8 @@ case class JevConfig(
    * defaults true — there the safe direction is the other way.)
    */
   def isEnabled: Boolean = enabled.getOrElse(false)
+
+end JevConfig
 
 object JevConfig:
   given Decoder[JevConfig] = deriveDecoder[JevConfig]

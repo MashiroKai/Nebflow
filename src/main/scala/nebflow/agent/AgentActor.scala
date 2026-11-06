@@ -39,10 +39,10 @@ object AgentActor extends AgentCore with AgentSession:
     case e: FallbackExhaustedError =>
       e.attempts.forall(a =>
         a.reason.exists(isOverloadReason)
-          // 5xx 归批（2026-11-05）：上游暂时不可用（500/502/503/504/550）可重试。
-          // 对 root/team agent 它先被 AgentProcessing 的 waiting-network 分支接走
-          // （退避等待，不烧重试预算）；本行真正生效的面是 **flow 节点**
-          // （等待语义豁免 ⇒ AgentError.retryable 决定 flow executor 是否 Restart）。
+        // 5xx 归批（2026-11-05）：上游暂时不可用（500/502/503/504/550）可重试。
+        // 对 root/team agent 它先被 AgentProcessing 的 waiting-network 分支接走
+        // （退避等待，不烧重试预算）；本行真正生效的面是 **flow 节点**
+        // （等待语义豁免 ⇒ AgentError.retryable 决定 flow executor 是否 Restart）。
           || (a.reason.contains(FailoverReason.ServerError) && a.permanence.contains(ErrorPermanence.Transient))
           || (a.reason.contains(FailoverReason.Timeout) && a.permanence.contains(ErrorPermanence.Transient))
       )
@@ -1053,7 +1053,9 @@ object AgentActor extends AgentCore with AgentSession:
      * 会话默认设备的 workspace（设备本盘绝对路径）：Bash 设备腿下发时注入为对端
      * 会话初始 cwd。详见 SessionContext.sessionDeviceWorkspace。
      */
-    sessionDeviceWorkspace: Option[String] = None
+    sessionDeviceWorkspace: Option[String] = None,
+    /** 派发时刻钉定的模型链快照（provider-concurrency 批）。None = 不钉（既有行为）。唯一写入点 = SharedResources.spawnAgentActor。 */
+    providerChainPin: Option[nebflow.llm.PinnedChain] = None
   ): Behavior[AgentCommand] =
     Behaviors.setup { ctx =>
       val effectiveRootSessionId =
@@ -1125,7 +1127,8 @@ object AgentActor extends AgentCore with AgentSession:
               projectSession = projectSession,
               compactThresholdRatio = compactThresholdRatio,
               sessionDevice = sessionDevice,
-              sessionDeviceWorkspace = sessionDeviceWorkspace
+              sessionDeviceWorkspace = sessionDeviceWorkspace,
+              providerChainPin = providerChainPin
             )
           )(using ctx)
         )
@@ -1749,8 +1752,6 @@ object AgentActor extends AgentCore with AgentSession:
         val idx = pending.indexWhere(e => escalationEventKey(e).contains(key))
         if idx < 0 then pending :+ incoming
         else pending.updated(idx, incoming)
-
-
 
   /**
    * 反查 ActorRef → registry 中对应 sessionId（升级链「父存活」判定）。

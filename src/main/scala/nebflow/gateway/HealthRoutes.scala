@@ -70,9 +70,16 @@ private[gateway] object HealthRoutes:
               )
               .getOrElse(Json.obj())
             sharedResources.providerRegistry.throttleHealthJson.flatMap { throttleKey =>
-              val extraAll =
-                throttleKey.fold(updateKey)(t => updateKey.deepMerge(Json.obj("throttle" -> t)))
-              HealthPayload.build(sharedResources.healthMonitor, extraAll.deepMerge(fleetKey))
+              // provider 并发占坑（provider-concurrency 批，2026-11-06）：`providerConcurrency`
+              // 键 =「有状态才出现」纪律同 throttle——registry 未装配（测试/极早期）⇒
+              // Null ⇒ 键不出现，默认载荷逐字节不变。
+              sharedResources.providerConcurrencyJson.flatMap { concKey =>
+                val concStateKey = if concKey.isNull then Json.obj() else Json.obj("providerConcurrency" -> concKey)
+                val extraAll =
+                  throttleKey.fold(updateKey)(t => updateKey.deepMerge(Json.obj("throttle" -> t)))
+                    .deepMerge(concStateKey)
+                HealthPayload.build(sharedResources.healthMonitor, extraAll.deepMerge(fleetKey))
+              }
             }
           }
           .flatMap(nearPathProbePayload(req, _))
