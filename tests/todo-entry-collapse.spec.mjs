@@ -288,7 +288,7 @@ test('②③④⑤ 手机 375×812：待办入口 = 左上悬浮圆钮（端区�
   expect(bb.y).toBeLessThan(48);                       // 顶缘（16 + safe）
   expect(bb.width).toBeGreaterThanOrEqual(44);         // 触控档（48 g2-fab）
   expect(bb.height).toBeGreaterThanOrEqual(44);
-  await expect(taskBtn.locator('.mh-chrome-badge')).toHaveText('4');   // = 未完成 4
+  await expect(taskBtn.locator('.mh-chrome-badge')).toHaveCount(0);   // 计数只在待办面板
 
   // ── ③ 胶囊在手机层**退场**（端区分的另一半：桌面才有胶囊）──
   expect(await page.evaluate(() => getComputedStyle(document.getElementById('task-list')).display)).toBe('none');

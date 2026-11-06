@@ -7,7 +7,7 @@
 //   · 左右悬浮圆钮：任务/搜索迁入自建的 #mobile-fab-layer（48px v2 液体玻璃
 //     正圆 = .g2-fab 共享材质：blur/sat 双档、上半镜面高光、spring 按压回弹、
 //     边缘光折射；liquid-glass.css），top:16px 左右 16px，z 高于顶缘渐隐带；
-//    任务键徽标 = taskBadgeCount 镜像（dock 批机制零变化）；
+//    任务键只保留待办入口；数字计数在待办面板内显示，不挂消息/入口徽标；
 //    端区分批（作者令 2026-11-05 09:28，逐字）：「手机端的待办…跟电脑端的区分开，
 //    电脑端是一个胶囊，手机端还是需要是之前那个左上角的一个悬浮的待办按钮」
 //    ⇒ 左上「任务」圆钮**恢复**（入口收敛批 2026-11-04 撤过、本批反转），手机端
@@ -45,7 +45,6 @@
 
 import { t } from '../i18n.js';
 import { createIconsIn } from '../utils.js';
-import { todoStore } from '../todoStore.js';
 import { pushPage, touchLayer } from './navController.js';
 // 层事件流水（循环门禁修复批 2026-11-04）：事件走叶子 navEvents.js 单点。
 import { logEvent } from './navEvents.js';
@@ -144,15 +143,7 @@ function badgePulse(el) {
 
 function syncTaskBadge() {
   if (!taskBtn) return;
-  const n = todoStore.openCount();
-  const b = /** @type {HTMLElement|null} */ (taskBtn.querySelector('.mh-chrome-badge'));
-  if (!b) return;
-  const next = n > 99 ? '99+' : String(n);
-  const changed = b.textContent !== next;
-  b.hidden = n === 0;
-  b.textContent = next;
   taskBtn.title = t('taskpanel.title');
-  if (changed && n > 0) badgePulse(b); // 数字变化 = 同一条弹簧（不瞬跳、不跳帧）
 }
 
 export function activateChatChrome() {
@@ -260,7 +251,7 @@ export function activateChatChrome() {
   taskBtn.title = t('taskpanel.title');
   taskBtn.setAttribute('aria-label', t('taskpanel.title'));
   taskBtn.innerHTML =
-    '<i data-lucide="list-todo"></i><span class="mh-chrome-badge" hidden></span>';
+    '<i data-lucide="list-todo"></i>';
   taskBtn.addEventListener('click', (e) => {
     // 桌面面 outside-close 监听 document 冒泡 —— 入口键停冒泡防误关（hub 行同款）。
     e.stopPropagation();
@@ -288,14 +279,6 @@ export function activateChatChrome() {
   main.appendChild(fabLayer);
   if (typeof lucide !== 'undefined') createIconsIn(fabLayer);
 
-  /* 徽标同步三腿（恢复：2026-11-05 09:28）：
-     ① 首刷；② 委托链镜像 / 会话切换事件；③ todoStore 订阅（真源回执与写口
-     乐观更新到达即跟新 —— 只接一条订阅，零 DOM/CSS/结构改动）。 */
-  syncTaskBadge();
-  const onMirror = () => syncTaskBadge();
-  window.addEventListener('delegate-chain-mirror-updated', onMirror);
-  window.addEventListener('nebflow-session-change', onMirror);
-  unsubs.push(todoStore.subscribe(syncTaskBadge));
   const onLocale = () => {
     syncTaskBadge();
     if (searchBtn) searchBtn.title = t('search.placeholder') || '搜索聊天记录';

@@ -213,26 +213,9 @@ class TodoScheduleSpec extends CatsEffectSuite:
       _ <- svc.fireDueTasks
       stored <- taskStore.loadTasks("s1")
     yield
-      // 一条汇总注入（不是逐条轰炸），内容带全部未完成待办 + id + 销账口径
-      assertEquals(events.size, 1, s"exactly one digest, got ${events.size}")
-      val e = events.head
-      assertEquals(e.source, "todo-surface")
-      assertEquals(e.eventType, "digest")
-      assert(e.payload.contains("待办A：review PR #42"), e.payload)
-      assert(e.payload.contains("待办B：还没到点"), "digest covers ALL unfinished todos")
-      assert(e.payload.contains(due.id), e.payload)
-      assert(e.payload.toLowerCase.contains("done"), "must carry the write-off instruction")
-      // 落历史（压缩不丢的另一半：注入以真实 user 消息持久化）
-      assertEquals(appendedUi.map(_._1).toList, List("s1"))
-      // 单口合并（2026-10-29）语义：待办 digest 与定时任务同款**注入标记**纪律——
-      // 未标记的裸 user 行会被前端历史恢复渲染成绿泡（schedcard 批修掉的退化态）。
-      // source="todo" 与 source="schedule" 分名：digest 走通用注入泡，不串专属卡。
-      assert(
-        appendedUi.head._2.head match
-          case u: UiMessage.User => u.text.contains("待办A") && u.injected && u.source.contains("todo")
-          case _ => false,
-        s"digest 落盘行必须带注入标记且 source=todo，got ${appendedUi.head._2.head}"
-      )
+      // 每日浮出只落用户收件箱消息，不产生外部 agent event。
+      assertEquals(events.size, 0, "personal todo content must not be routed into an agent turn")
+      assertEquals(appendedUi.size, 0, "todo digest must not enter chat history/prompt")
       // 到期的顺延到下一次 09:00（> now），未到期的首次浮出时间不动
       val dueAfter = stored.find(_.id == due.id).get
       val notDueAfter = stored.find(_.id == notDue.id).get
@@ -243,14 +226,8 @@ class TodoScheduleSpec extends CatsEffectSuite:
         "bump target is the daily 09:00 digest"
       )
       assertEquals(notDueAfter.triggerAt, notDue.triggerAt, "not-yet-due todo keeps its first surface time")
-      // 前端广播：注入 `user` 帧（schedcard 收口令后死帧 userMessage 零残留）+ 面板帧
-      assert(
-        broadcasted.exists(j =>
-          j.hcursor.downField("type").as[String].toOption.contains("user") &&
-            j.hcursor.downField("source").as[String].toOption.contains("todo")
-        ),
-        s"digest 广播帧必须是注入 user 帧（source=todo），got $broadcasted"
-      )
+      // 用户待办页仍收到 surfacing 事件，无 chat user-message 帧。
+      assert(!broadcasted.exists(j => j.hcursor.downField("type").as[String].toOption.contains("user")))
       assert(broadcasted.exists(_.hcursor.downField("type").as[String].toOption.contains("todoSurfaced")))
 
   test("period honored: after surfacing, next cycle injects nothing until due again (next day)"):
@@ -268,9 +245,9 @@ class TodoScheduleSpec extends CatsEffectSuite:
       _ <- svc.fireDueTasks
       countAfterNextDay = events.size
     yield
-      assertEquals(countAfterFirst, 1)
-      assertEquals(countAfterIdle, 1, "not due again => must NOT re-inject")
-      assertEquals(countAfterNextDay, 2, "due again => re-injects (periodic re-surfacing)")
+      assertEquals(countAfterFirst, 0)
+      assertEquals(countAfterIdle, 0, "not due again => no user-context route")
+      assertEquals(countAfterNextDay, 0, "due again => user inbox only")
 
   // ==================================================================
   // 断言 3：销账后不再注入
@@ -327,14 +304,11 @@ class TodoScheduleSpec extends CatsEffectSuite:
       _ <- svc.fireDueTasks
       stored <- taskStore.loadTasks("s1")
     yield
-      assertEquals(events.size, 2)
+      assertEquals(events.size, 1, "only scheduled task reaches the agent")
       val bySource = events.groupBy(_.source)
-      // 残稿勘误（2026-10-29 复活批）：原断言 take(5) 对「定时：」3 字符恒红
-      // （WIP 停机落盘前从未跑绿）——content 前 7 字符 = 「定时：汇报进度」。
+      // 定时任务 trigger 面保留原有到点注入语义。
       assertEquals(bySource("scheduled-task").map(_.payload.take(7)), List("定时：汇报进度"))
       assertEquals(bySource("scheduled-task").map(_.eventType), List("trigger"))
-      assertEquals(bySource("todo-surface").size, 1)
-      assert(bySource("todo-surface").head.payload.contains("待办：买牛奶"))
       // 定时任务 one-shot 已删；待办仍在（顺延到明晨）
       assertEquals(stored.map(_.id), List(todo.id), "todo survives the cycle; task consumed")
       assert(stored.head.triggerAt > System.currentTimeMillis())
@@ -347,8 +321,9 @@ class TodoScheduleSpec extends CatsEffectSuite:
       svc = mkService(metaIds = Set.empty, activeId = "s-live")
       _ <- svc.fireDueTasks
     yield
-      assertEquals(routed.map(_._1).toList, List("s-live"), "digest must follow the live session")
-      assertEquals(appendedUi.map(_._1).toList, List("s-live"))
+      assertEquals(routed.size, 0, "todo content must not be routed to any agent session")
+      assertEquals(appendedUi.size, 0, "todo digest must not enter chat history")
+      assert(broadcasted.exists(_.hcursor.downField("type").as[String].toOption.contains("todoSurfaced")))
 
   test("digestPayload: empty -> empty string; non-empty -> count + ids + done/cancel guidance"):
     val now = System.currentTimeMillis()
@@ -500,7 +475,7 @@ class TodoScheduleSpec extends CatsEffectSuite:
   // 提醒面（root agent schedule reminder 双节化）
   // ==================================================================
 
-  test("root schedule reminder carries a todos section with ids; task-only session keeps the legacy header"):
+  test("ordinary root schedule reminder includes timed schedules only, never personal todo content"):
     for
       _ <- reset()
       _ <- taskStore.addTask(ScheduledTask.create("s1", "整理记忆", future))
@@ -515,10 +490,13 @@ class TodoScheduleSpec extends CatsEffectSuite:
         ScheduledTask.create("s1", "记得买牛奶", future, None, None, None, Some(ScheduledTask.KindTodo))
       )
       reminders2 <- nebflow.core.SystemReminders.collectAllIO(true, taskStore, Some("s1"), isRootAgent = true)
+      persistedTodos <- taskStore.getAllTodos
     yield
       val sched2 = reminders2.find(_.category == "schedule").get
       assert(sched2.content.contains("Pending schedules (1)"), sched2.content)
-      assert(sched2.content.contains("Pending todos (1)"), sched2.content)
-      assert(sched2.content.contains("买牛奶"), sched2.content)
+      assert(!sched2.content.contains("Pending todos"), sched2.content)
+      assert(!sched2.content.contains("买牛奶"), sched2.content)
+      // Persistence/query path remains intact for explicit Schedule tool access.
+      assertEquals(persistedTodos.map(_.content), List("记得买牛奶"))
 
 end TodoScheduleSpec
