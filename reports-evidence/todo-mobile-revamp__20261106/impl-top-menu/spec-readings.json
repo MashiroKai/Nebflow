@@ -150,7 +150,7 @@
     "outlineStyle": "none",
     "outlineWidth": "3px",
     "outlineColor": "rgb(27, 30, 38)",
-    "borderColor": "rgba(0, 0, 0, 0)",
+    "borderColor": "color(srgb 0.105882 0.117647 0.14902 / 0.26)",
     "borderWidth": "0px"
   },
   "tapPage": {
