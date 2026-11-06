@@ -1,7 +1,7 @@
 {
   "batch": "mobile-canvas-tabs",
   "title": "手机端 Canvas 顶部标签页 · 毛玻璃三方案",
-  "generatedAt": "2026-11-06T00:20:14.650Z",
+  "generatedAt": "2026-11-06T00:27:44.089Z",
   "base": {
     "width": 375,
     "height": 812,
@@ -77,7 +77,7 @@
       "themes": {
         "light": {
           "shot": "shots/variant-a-light.png",
-          "shotAbs": "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/mobile-canvas-tabs-design/design/mobile-canvas-tabs/shots/variant-a-light.png",
+          "shotAbs": "/Users/kaiyu/Claude code/Stand/design/mobile-canvas-tabs/shots/variant-a-light.png",
           "strip": {
             "w": 375,
             "h": 72,
@@ -137,7 +137,7 @@
         },
         "dark": {
           "shot": "shots/variant-a-dark.png",
-          "shotAbs": "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/mobile-canvas-tabs-design/design/mobile-canvas-tabs/shots/variant-a-dark.png",
+          "shotAbs": "/Users/kaiyu/Claude code/Stand/design/mobile-canvas-tabs/shots/variant-a-dark.png",
           "strip": {
             "w": 375,
             "h": 72,
@@ -216,7 +216,7 @@
       "themes": {
         "light": {
           "shot": "shots/variant-b-light.png",
-          "shotAbs": "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/mobile-canvas-tabs-design/design/mobile-canvas-tabs/shots/variant-b-light.png",
+          "shotAbs": "/Users/kaiyu/Claude code/Stand/design/mobile-canvas-tabs/shots/variant-b-light.png",
           "strip": {
             "w": 231,
             "h": 44,
@@ -276,7 +276,7 @@
         },
         "dark": {
           "shot": "shots/variant-b-dark.png",
-          "shotAbs": "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/mobile-canvas-tabs-design/design/mobile-canvas-tabs/shots/variant-b-dark.png",
+          "shotAbs": "/Users/kaiyu/Claude code/Stand/design/mobile-canvas-tabs/shots/variant-b-dark.png",
           "strip": {
             "w": 231,
             "h": 44,
@@ -354,7 +354,7 @@
       "themes": {
         "light": {
           "shot": "shots/variant-c-light.png",
-          "shotAbs": "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/mobile-canvas-tabs-design/design/mobile-canvas-tabs/shots/variant-c-light.png",
+          "shotAbs": "/Users/kaiyu/Claude code/Stand/design/mobile-canvas-tabs/shots/variant-c-light.png",
           "strip": {
             "w": 375,
             "h": 96,
@@ -414,7 +414,7 @@
         },
         "dark": {
           "shot": "shots/variant-c-dark.png",
-          "shotAbs": "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/mobile-canvas-tabs-design/design/mobile-canvas-tabs/shots/variant-c-dark.png",
+          "shotAbs": "/Users/kaiyu/Claude code/Stand/design/mobile-canvas-tabs/shots/variant-c-dark.png",
           "strip": {
             "w": 375,
             "h": 96,
@@ -476,13 +476,13 @@
     }
   },
   "overview": {
-    "pageAbs": "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/mobile-canvas-tabs-design/design/mobile-canvas-tabs/overview.html",
-    "shotAbs": "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/mobile-canvas-tabs-design/design/mobile-canvas-tabs/shots/overall.png",
+    "pageAbs": "/Users/kaiyu/Claude code/Stand/design/mobile-canvas-tabs/overview.html",
+    "shotAbs": "/Users/kaiyu/Claude code/Stand/design/mobile-canvas-tabs/shots/overall.png",
     "pageRel": "overview.html",
     "shotRel": "shots/overall.png"
   },
   "comparePage": {
-    "localPath": "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/mobile-canvas-tabs-design/design/mobile-canvas-tabs/index.html",
+    "localPath": "/Users/kaiyu/Claude code/Stand/design/mobile-canvas-tabs/index.html",
     "sizeMB": 1.61,
     "selfContained": true,
     "offline": true,

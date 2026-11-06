@@ -46,7 +46,8 @@ const META = {
   },
 };
 
-const BASE = '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/mobile-canvas-tabs-design/design/mobile-canvas-tabs';
+// 本目录的绝对路径（worktree 与主仓各自成立：不写死某一处）
+const BASE = HERE;
 
 // ── 现状（产品当前渲染）──────────────────────────────────────────────────
 const P = read('shots/probe.json');
