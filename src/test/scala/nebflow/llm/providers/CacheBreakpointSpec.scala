@@ -1,15 +1,21 @@
 package nebflow.llm.providers
 
 import cats.effect.IO
+import ch.qos.logback.classic.Level
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.classic.{Logger as JbLogger}
+import ch.qos.logback.core.read.ListAppender
 import io.circe.Json
 import io.circe.JsonObject
 import munit.FunSuite
 import nebflow.llm.{CacheStats, SendMessageParams}
 import nebflow.shared.*
+import org.slf4j.LoggerFactory
 import sttp.capabilities.fs2.Fs2Streams
 import sttp.client4.StreamBackend
 
 import scala.concurrent.duration.*
+import scala.jdk.CollectionConverters.*
 
 /**
  * cache-hit 批（2026-11-06）回归闸：**「不该 miss 的场景」钉死**。
@@ -291,4 +297,62 @@ class CacheStatsSpec extends FunSuite:
     CacheStats.record("zai", "glm-5.3-flash", Some(u))
     CacheStats.maybeEmit() // 第 200 单 ⇒ 落行（同样只验证不抛）
     assertEquals(CacheStats.totalSnapshot.requests, 200L)
+  }
+
+  // ── 冷启动发射闸（2026-11-06 小修批）─────────────────────────────────
+  //
+  // 缺陷：`lastEmitAtMs` 初始 0L，时间窗腿带 `lastEmitAtMs > 0L` 前置 ⇒ 首次
+  // 发生前永不激活 → 实例生命周期内总请求 <200（低峰期/刚重启）一条聚合行都
+  // 不发，可观测面自哑。修法：首单落账时把窗口锚在当下，语义 =「实例有流量
+  // 后 15 分钟内必见第一条聚合行」。时间模拟 = clock 注入点 `CacheStats.clockMs`
+  // （private[llm]，范围只此一处）；发射断言面 = 真实 logback 事件流（非「预计」）。
+
+  /** 在 cache-stats logger 上抓 logback INFO 行（临时调级，抓完复原；同 TransportLogSpec 手法）。 */
+  private def captureStats(body: => Unit): List[String] =
+    val jb        = LoggerFactory.getLogger("nebflow.llm.cache-stats").asInstanceOf[JbLogger]
+    val appender  = new ListAppender[ILoggingEvent]()
+    appender.start()
+    val prevLevel = jb.getLevel
+    jb.addAppender(appender)
+    jb.setLevel(Level.DEBUG)
+    try
+      body
+      appender.list.asScala.toList.filter(_.getLevel == Level.INFO).map(_.getMessage)
+    finally
+      jb.detachAppender(appender)
+      jb.setLevel(prevLevel)
+      appender.stop()
+
+  test("①冷启动 <200 单 + 距首单 ≥15min ⇒ 恰发射一条聚合行（时钟注入模拟）") {
+    val t0    = 1_700_000_000_000L
+    val saved = CacheStats.clockMs
+    try
+      CacheStats.clockMs = () => t0
+      CacheStats.record("zai", "glm-5.3-flash", Some(zaiRead)) // 首单落账 ⇒ 窗口锚定 T0
+      assertEquals(captureStats(CacheStats.maybeEmit()).size, 0, "锚定后窗口未满不许提前发")
+      CacheStats.clockMs = () => t0 + CacheStats.EmitWindowMs + 1_000L // 距首单 ≥15min
+      val rows = captureStats {
+        CacheStats.record("zai", "glm-5.3-flash", Some(zaiRead)) // 有新单 ⇒ 时间窗腿激活
+        CacheStats.maybeEmit()
+      }
+      assertEquals(rows.size, 1, s"冷启动 <200 单、15 分钟窗满 ⇒ 恰一条聚合行，实际 ${rows.size} 条: $rows")
+      assert(rows.head.contains("cache-stats: window(n=2)"), rows.head)
+      assert(rows.head.contains("zai/glm-5.3-flash n=2"), rows.head)
+    finally CacheStats.clockMs = saved
+  }
+
+  test("②冷启动 <200 单 + 距首单 <15min ⇒ 零发射（闸不许提前开）") {
+    val t0    = 1_700_000_000_000L
+    val saved = CacheStats.clockMs
+    try
+      CacheStats.clockMs = () => t0
+      val rows = captureStats {
+        CacheStats.record("zai", "glm-5.3-flash", Some(zaiRead))
+        CacheStats.record("zai", "glm-5.3-flash", Some(zaiRead))
+        CacheStats.record("zai", "glm-5.3-flash", Some(zaiRead))
+        CacheStats.clockMs = () => t0 + CacheStats.EmitWindowMs - 1_000L // 仍差 1s 才满 15min
+        CacheStats.maybeEmit()
+      }
+      assertEquals(rows.size, 0, s"<15min 且 <200 单必须零行: $rows")
+    finally CacheStats.clockMs = saved
   }
