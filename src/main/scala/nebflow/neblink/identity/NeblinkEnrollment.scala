@@ -7,7 +7,8 @@ import nebflow.neblink.social.*
 import nebflow.neblink.logto.*
 import cats.effect.IO
 import io.circe.Json
-import nebflow.shared.NebflowLogger
+import nebflow.core.root.{AccountProfile, AccountRoot, ActiveAccount, RootLadder, RootLayer, RootLayout}
+import nebflow.shared.{NebflowLogger, PathUtil}
 
 /**
  * Enrollment persistence shared by every login path (device flow poll,
@@ -205,6 +206,12 @@ object NeblinkEnrollment:
       // 零删除纪律：字段既不删、旧文件也照旧可解码（读侧只忽略）。
       cred = DeviceCredential(resolvedUrl, networkId, identity.deviceId, tok, logtoBlock)
       _ <- DeviceCredential.save(cred)
+      // 三层数据根批（b1-ladder；契约 design-api.md §4.1 (a)）：登录成功 ⇒ 机器层写
+      // active-account 指针 + 账号根 + profile.json。平铺机器（阶梯判 flat）先
+      // `RootLayout.migrate`（复制 + 逐条 sha256 记账，原件不动）再写指针；迁移流程失败 ⇒
+      // `RootLayout.rollback`（旧根字节不变 + 指针清空，下次启动回到 flat）。
+      // 凭据已落地后才走这一步（凭据落地在前、指针在后 —— 契约 §4.1 的次序）。
+      _ <- writeActiveAccountPointer(logtoIdToken, storedBlock)
       newConfig = NeblinkServerConfig(
         url = resolvedUrl,
         networkId = networkId,
@@ -266,6 +273,124 @@ object NeblinkEnrollment:
       // Persist GitHub user info (avatar + login) from server response.
       _ <- ms.updateDeviceInfo(avatarUrl = avatarUrl, githubLogin = githubLogin)
     yield Right(tok)
+
+  // ── 三层数据根 · 登录腿建层（b1-ladder，契约 design-api.md §4.1 (a)）───────────
+  //
+  // 登录成功 ⇒ 机器层写 active-account 指针 + 账号根 + profile.json。**触发点 = 显式动作
+  // （登录），绝不在 boot / RootLadder.resolve 里自动跑** —— 兼容红线：无 layout.json 的
+  // 平铺根升级后第一次启动必须仍是 flat + 零写盘；启动序（Main）只负责把登录腿写下的
+  // 迁移产出（layout.json + 指针）经阶梯解析成账号档。
+  // 失败纪律（b1-ladder 派单）：迁移后置步骤失败 ⇒ `RootLayout.rollback`（按 manifest 校验
+  // 后删副本 + `clearPointer` + 删 layout.json ⇒ 旧根字节不变 + 指针清空，下次启动回到 flat；
+  // RootLayout.scala:185 的 clearPointer 回滚用法）。
+
+  /**
+   * 登录腿的根布局建立（纯阻塞编排，spec 直测面 —— `StartupLadderSpec`；IO 胶水见
+   * [[writeActiveAccountPointer]]）。分岔（契约 §4.1 + LegacyRootMigrationSpec V4 次序）：
+   *  - 平铺档（`RootLayer.Flat`，无 layout 标记的老根 / 悬档指针）：
+   *    1. 账号根先就位（含 profile.json，**指针不写**）—— migrate 的 firstAccountRoot 由此
+   *       认得目标 ⇒ 平铺内容**一次性归入该账号目录**（pendingClaim=false；若先迁移后建根，
+   *       migrate 找不到任何账号 ⇒ 内容落 pending-claim 待认领区而账号根空着，与 V4
+   *       「一次性归入首个账号目录」相悖）；
+   *    2. `RootLayout.migrate`（复制 + 逐条 sha256 记账，原件不动）；
+   *    3. 写指针（先迁移再写指针）；**迁移流程的任何后置失败 ⇒ `RootLayout.rollback` 后
+   *       原样浮出异常**（绝不半迁移：要么整体就位、要么回到 flat）。
+   *  - 其余档（账号档二次登录 / 未登录档登录 ⇒ 写指针晋升）：直接就位账号根 + 写指针。
+   * 返回本次登录就位的账号根。`accountSub` 目录名经 `AccountRoot.dirNameOf` 映射，原文
+   * 只留 `profile.json` / `active-account`。`writePointer` 步可注入（spec 直测「迁移成功后
+   * 写指针失败 ⇒ 回滚」腿）；生产默认 = `AccountRoot.writePointer`。
+   */
+  def establishAccountRootAfterSignIn(
+    machineRoot: os.Path,
+    accountSub: String,
+    email: String,
+    switchedAt: String,
+    writePointer: (os.Path, ActiveAccount) => Unit = AccountRoot.writePointer
+  ): os.Path =
+    val acct = ActiveAccount(accountSub, email, switchedAt)
+    RootLadder.resolve(machineRoot) match
+      case RootLayer.Flat(mr, _) =>
+        // 平铺机器首次登录（契约 §4.1）：先建账号根（指针不写）→ 迁移（复制记账，原件不动）
+        // → 写指针。
+        establishAccountDirAndProfile(mr, acct)
+        val report = RootLayout.migrate(mr)
+        try writePointer(mr, acct)
+        catch
+          case e: Throwable =>
+            // 迁移流程失败 ⇒ 回滚：按账校验后删副本 + clearPointer + 删 layout.json ⇒
+            // 旧根字节不变（migrate 本就只复制不动源）、指针清空，下次进程起来回到 flat。
+            RootLayout.rollback(report)
+            throw e
+        AccountRoot.accountRoot(mr, acct.accountSub)
+      case _ =>
+        // 账号档（二次登录 / 换号）/ 未登录档（首次登录晋升）：无平铺数据可迁，直接就位
+        establishPointerAndProfile(machineRoot, acct, writePointer)
+
+  /** 账号根就位 + profile（幂等：同 sub 的既有档案原样保留）。**不写 layout 与指针**。 */
+  private def establishAccountDirAndProfile(machineRoot: os.Path, acct: ActiveAccount): os.Path =
+    val dir = AccountRoot.ensureAccountDir(machineRoot, acct.accountSub)
+    val existing = AccountRoot.readProfile(dir)
+    if !existing.exists(_.accountSub == acct.accountSub) then
+      AccountRoot.writeProfile(
+        dir,
+        AccountProfile(acct.accountSub, acct.email, acct.switchedAt, None)
+      )
+    dir
+
+  /** 就位 + layout 标记 + 指针（账号档二次登录 / 未登录档晋升的完整步）。 */
+  private def establishPointerAndProfile(
+    machineRoot: os.Path,
+    acct: ActiveAccount,
+    writePointer: (os.Path, ActiveAccount) => Unit
+  ): os.Path =
+    val dir = establishAccountDirAndProfile(machineRoot, acct)
+    AccountRoot.writeLayoutMarker(machineRoot)
+    writePointer(machineRoot, acct)
+    dir
+
+  /**
+   * 指针写的 IO 胶水（契约 §4.1 (a) 的生产入口）。账号身份来源（优先级）：
+   *   1. 本次登录的 id_token 的 `sub` / `email` 声明（`LogtoAuthCode.decodeIdTokenClaims`，
+   *      与 OwnerIdentity 同一解码单点）；
+   *   2. 已存凭据里的 id_token（merge 后的 `logtoBlock`）。
+   * 两者都拿不到 sub ⇒ 不写指针（没有任何可指的账号），打 INFO 留痕。
+   * 失败**不拦登录**（凭据已落盘，登录确实成功）：打 WARN 留痕，根层晋升留给下次登录。
+   */
+  private def writeActiveAccountPointer(
+    incomingIdToken: Option[String],
+    storedBlock: Option[LogtoRefresh]
+  ): IO[Unit] =
+    IO.blocking {
+      val sub = incomingIdToken
+        .flatMap(t => LogtoAuthCode.decodeIdTokenClaims(t, Seq("sub")).get("sub").map(_.trim).filter(_.nonEmpty))
+        .orElse(
+          storedBlock.flatMap(_.idToken).flatMap(t =>
+            LogtoAuthCode.decodeIdTokenClaims(t, Seq("sub")).get("sub").map(_.trim).filter(_.nonEmpty)
+          )
+        )
+      sub match
+        case None =>
+          logger.infoSync("[root] no account sub available — active-account pointer not written")
+        case Some(accountSub) =>
+          val email = incomingIdToken
+            .flatMap(t => LogtoAuthCode.decodeIdTokenClaims(t, Seq("email")).get("email"))
+            .getOrElse("")
+          val now = java.time.format.DateTimeFormatter
+            .ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'")
+            .withZone(java.time.ZoneId.of("UTC"))
+            .format(java.time.Instant.now())
+          // 机器层根与 Main 启动序同一解析链（PathUtil.machineRoot），不引入第二套 home 解析
+          val dir = establishAccountRootAfterSignIn(PathUtil.machineRoot, accountSub, email, now)
+          logger.infoSync(
+            s"[root] active-account pointer -> '$accountSub' ($dir); takes effect on next process start"
+          )
+    }.handleErrorWith(e =>
+      logger.warn(
+        s"[root] could not write the active-account pointer (${e.getClass.getSimpleName}: " +
+          s"${Option(e.getMessage).getOrElse("")}) — the credential is saved; the root layer may not " +
+          "advance on next boot"
+      )
+    )
 
   /**
    * 停摆门的**证据式**解除（kaiauth 修法批 ①配套，2026-09-16）。
