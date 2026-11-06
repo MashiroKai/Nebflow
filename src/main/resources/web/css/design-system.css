@@ -572,7 +572,7 @@
        transition-timing-function: var(--lm-ease); */
   --lm-props: width, height, margin-left, margin-right, padding-left, padding-right,
     border-radius, border-color, background-color, box-shadow, backdrop-filter,
-    opacity, max-width, transform;
+    opacity, max-width, transform, padding-top, padding-bottom;
 }
 /* reduced-motion：二值语义保留、过渡压近零（与原型 :210 的 1ms 同值同语义）。
    JS 侧同口径 = liquidMorph.js 的 reducedMotion() + morphTransition(..., {reduced:true})。 */
@@ -621,7 +621,6 @@
 :root {
   --ds-hit-tap-min: var(--ds-hit-tap-lg);  /* 48px 视觉档（= g2-fab 手机档实测量，glass.css:717-720） */
   --ds-hit-box-min: var(--ds-hit-tap-min); /* 48px 命中盒档（外扩后 ≥ 本值才算达标；默认同值） */
-}
 
 @media (hover: hover) {
   

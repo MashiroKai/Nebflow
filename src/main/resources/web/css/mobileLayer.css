@@ -904,17 +904,29 @@ body.mobile-layer .mobile-page-title {
   position: sticky;
   top: calc((var(--mtitle-h) - var(--mcap-h)) * var(--mtitle-p));
   display: block;
-  /* 宽度由内容撑（max-content + 水平 auto 居中）—— 缩字后盒宽连续跟随，
-     零留白跳变；超宽被 max-width 钳到 inset 带。 */
-  width: max-content;
-  max-width: calc(100% - 2 * var(--mtitle-inset));
+  /* 宽度（schedule-todo-unify 批 2026-11-06 修「顶栏标题被截成『定时任...』」）：
+     改前恒 max-content + max-width(100%−2×inset) + 水平内距 72×2 —— 三者**双重
+     计入两端内缩**：盒钳到 231 后再扣 144 内距，文字区只剩 87px，四字页名
+     （112px @28px 字号）必然截成「定时任...」。现在内缩只落在**一处**（盒宽钳制）：
+     · 静止档 width = 满宽 → max-width 钳到内缩带（100%−2×72）→ 内距 0 →
+       文字区 = 整条内缩带（375 档 = 231px），四字/八字页名都放得下；
+     · 吸附档 width → --mtitle-w-still（= 文字 + 2×胶囊内距，navController 实测）、
+       max-width 放宽到满宽 − 2×胶囊内距、水平内距 → 胶囊内距 —— 胶囊贴着
+       文字收紧，超长页名钳到「不贴屏幕边」。
+     width / max-width / padding-x 三个几何量都由 --mtitle-p 同步驱动（仅白名单
+     属性），两态之间连续插值。 */
+  width: calc(100% - (100% - var(--mtitle-w-still, 100%)) * var(--mtitle-p));
+  max-width: calc(100% - 2 * var(--mtitle-inset)
+    + 2 * (var(--mtitle-inset) - var(--mcap-pad)) * var(--mtitle-p));
   /* 盒下呼吸缝由收编面自带 padding-top 承担（B 批口径不变）。上下外边距承担
      流内占位收缩：52 → 0 连续归零 —— 顶 +4p 把盒底缘钉在 64，底 −52p 把占位
      还给页体（吸附态内容满铺到胶囊之下，与旧收高终态同布局）。 */
   margin: calc((var(--mtitle-h) - var(--mcap-h)) * var(--mtitle-p)) auto
     calc(var(--mtitle-h) * var(--mtitle-p) * -1);
+  /* 水平内距：静止档 0（内缩已由盒宽钳制承担，双重计入 = 截断根因，见上）；
+     吸附档 = 胶囊内距 --mcap-pad（文字到胶囊缘的呼吸缝）。 */
   padding: calc(var(--mtitle-pad-t) + (var(--mcap-vpad) - var(--mtitle-pad-t)) * var(--mtitle-p))
-    calc(var(--mtitle-inset) + (var(--mcap-pad) - var(--mtitle-inset)) * var(--mtitle-p))
+    calc(var(--mcap-pad) * var(--mtitle-p))
     calc(var(--mtitle-pad-b) + (var(--mcap-vpad) - var(--mtitle-pad-b)) * var(--mtitle-p));
   height: calc(var(--mtitle-h) + (var(--mcap-h) - var(--mtitle-h)) * var(--mtitle-p));
   font-size: calc(var(--mfs-title) + (var(--mfs-title-mini) - var(--mfs-title)) * var(--mtitle-p));
@@ -943,6 +955,12 @@ body.mobile-layer .mobile-page-title {
      全额归 min-height:0 的滚动面（流内占位的进退由上面的 margin 对承担）。 */
   flex: none;
 }
+/* 大标题档的**内容宽**（--mtitle-w-still）：上面 width 的两端差 = 100% − 内容宽，
+   由 navController.applyRoll 在首帧/换页/locale 重绘后实测一次写入（内容宽与
+   滚动进度无关，只在文字变了才变）。未写 ⇒ 缺省 100%（= 满宽，不截断）；
+   内容超过 inset 带 ⇒ 写 100%（max-width 钳宽 + 省略号兜底）。
+   为什么不在 CSS 里用 max-content：width 两端都含 max-content 时会按内容解析，
+   var() 跨属性/函数层不支持该关键字，实测会被当作 0 宽。 */
 /* 超宽页名钳宽后的截断（作者令 2026-11-05 09:28「那个字的右侧有渐隐的效果，
    这个不要」）：右缘 78%→97% 的 alpha 渐隐**撤除**，改**可见省略号**——
    .mtitle-clip 仍由 applyRoll 按 scrollWidth > clientWidth 翻写（钳宽态才挂），
@@ -1130,6 +1148,22 @@ body.mobile-layer #fm-chat-overlay {
 }
 /* 会话窗（.fm-modal）：窗头收缩进页头之下（页面壳已有返回/标题），窗体吃满。
    输入行贴页面底缘（dock 让位由页面底缘承担）。 */
+/* ── 桌面「窗头悬浮 + 无边缘」批在手机层的落点（contact-panel-unify 链 2026-11-06）──
+   桌面档两件事在手机层必须改写，否则会「带过来一个错位的让位」：
+     ① 桌面的窗头让位 `.fm-flow{padding-top:--fm-head-clear}` 在这里**不成立** ——
+        手机层的 `.fm-modal-header` 是零高占位（见下方 ⑥，身份头改由 `.mh-idhead`
+        悬浮承担），页体顶让位由 `.mobile-page-body` 的 `--mtitle-lead` 负责 ⇒
+        这里把它压回一档普通呼吸，禁双份让位（否则首条消息凭空下移 72px）。
+     ② 输入条在桌面上已改「悬浮毛玻璃条」（材质/圆角/内距全在 css/friends.css，
+        `.nf-glass` 由 js/messages/fmComposer.js 挂类）—— 手机层只补**落位**：
+        左右 12（与 dock 胶囊同轴）+ 底 12（页面壳已让 safe-area 与 dock 足迹），
+        宽度不溢出 375。材质与圆角**不在这里重写**（禁第二套读数）。 */
+body.mobile-layer .mobile-page[data-page='conversation'] .fm-flow {
+  padding-top: var(--ds-space-2);
+}
+body.mobile-layer .mobile-page[data-page='conversation'] .fm-input-bar {
+  margin-bottom: var(--ds-space-3);
+}
 
 /* ── 任务页面板（taskPanel.js 数据/卡渲染同源；浮层几何退役）────────── */
 body.mobile-layer .mh-tpanel[hidden] { display: none; }
@@ -5312,8 +5346,17 @@ body.mobile-layer #mobile-pages .mobile-page-body > #reminder-panel {
 body.mobile-layer #reminder-panel .reminder-panel-header {
   padding: var(--ds-space-2) 0 var(--ds-space-1h);
 }
+/* 标题不重复（schedule-todo-unify 批 2026-11-06 作者令「定时任务这个标题不要重复了」）：
+   手机页面态里页名已由页面壳唯一节点头 `.mobile-page-title` 出（作者实拍：顶栏
+   「定时任...」= 壳标题被截断，而正文又重复一行「定时任务」）。处置 = 正文那行**退场**
+   （它在这个面是第二份标题，不是内容），同时给计数一个独立的右缘落位，不在页头摆空行。 */
 body.mobile-layer #reminder-panel .reminder-panel-title {
-  font-size: var(--mfs-callout);
+  display: none;
+}
+body.mobile-layer #reminder-panel .reminder-panel-header {
+  justify-content: flex-end;
+  min-height: 0;
+  padding: var(--ds-space-1) 0 var(--ds-space-hair);
 }
 /* 页头「+」退场（22px 小钮 → 右下 48 悬浮加号；同一条新建路径，不留两个入口）。 */
 body.mobile-layer #reminder-panel .reminder-create-btn { display: none; }
@@ -5427,6 +5470,20 @@ body.mobile-layer #reminder-panel .reminder-fab-add {
 }
 .mf-drawer-cancel-btn { color: color-mix(in srgb, var(--color-text) 55%, transparent); }
 .mf-drawer-done-btn { color: var(--color-primary); font-weight: 600; }
+/* 命中盒 ≥ 48（schedule-todo-unify 批；--ds-hit-box-min 外扩、零视觉变化）：
+   抽屉头两键视觉 44 已达标，外扩兜底两端表单同一触控档。 */
+.mf-drawer-cancel-btn::after,
+.mf-drawer-done-btn::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: max(100%, var(--ds-hit-box-min));
+  height: max(100%, var(--ds-hit-box-min));
+  transform: translate(-50%, -50%);
+}
+.mf-drawer-cancel-btn,
+.mf-drawer-done-btn { position: relative; }
 .mf-drawer-cancel-btn:active,
 .mf-drawer-done-btn:active { opacity: 0.65; }
 
@@ -5854,3 +5911,204 @@ body.mobile-layer .tfl-hit-reply {
 }
 body.mobile-layer .tfl-hit-reply::placeholder { color: color-mix(in srgb, var(--color-text, #000) 35%, transparent); }
 body.mobile-layer .tfl-hit-send { color: var(--color-primary); font-weight: 600; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   后台 agent 对话框手机简化批（作者令 2026-11-06 10:00/12:03 附实拍
+   1079617902519958_IMG_1766.jpg「状态显示放顶部 不要有重复的叉号…顶部中间胶囊
+   就显示当前状态 右下角的终止按钮也改为右下角悬浮 让整体界面简洁」）。
+   JS 半边 = js/bgAgentMobileChrome.js（手机层 chrome 化，六条口径见文件头）；
+   本块 = CSS 半边。作用域恒 body.mobile-layer .bgagent-overlay —— 姊妹弹窗
+   flowAgentPopup 与桌面形态零波及。单源纪律：圆钮材质/四态 = .g2-fab（glass.css
+   圆钮级浮件档）；玻璃 = .nf-glass；状态色调 = bgRowStatus 表的 .bg-status-*
+   类（chat.css 单块给色，本块零色值）；离边距令牌 = --ask-fab-gap/--ask-fab-bottom
+   （与「发起群聊」批同一落位令牌）；尺寸档 = --mtap-lg 48（统一悬浮钮批基准）。
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── ① 顶带简洁：标题行（名字/模型/✕）整条退役 —— 关闭路径只留 popSheet 左上
+   返回圆钮（删重复叉号），状态进胶囊，名字/模型/任务全文进 ⋯ 详情。 */
+body.mobile-layer .bgagent-overlay .flow-agent-header { display: none; }
+/* ── ④ 底部状态条退役：只留顶带胶囊（状态词面+时长）+ 消息流 + 右下悬浮终止钮。
+   管理条节点已由 JS 迁出（stopBtn → 悬浮钮 / retry+chip → ⋯ 详情），隐藏不伤线。 */
+body.mobile-layer .bgagent-overlay .flow-agent-footer { display: none; }
+
+/* ── ① 状态胶囊（顶带中）：只显示当前状态（词面 + 时长），不带任务标题全文。
+   几何 = 聊天 chrome 带（top 16+safe；48px 钮带内垂直居中 = +10）；材质 =
+   .mobile-page-title 胶囊同款（--cv-bg 底 / --cv-border 描边 / 零投影，无独立
+   backdrop——悬浮钮统一批的标题胶囊语言，零新配方）。只读面：不拦交互。 */
+body.mobile-layer .bgagent-overlay .bgagent-status-pill {
+  position: absolute;
+  top: calc(16px + env(safe-area-inset-top, 0px) + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: calc(100vw - 152px); /* 两侧钮（16+48）各留 12px 呼吸 ⇒ 76×2 */
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: var(--cv-bg, var(--glass-bg));
+  border: 1px solid var(--cv-border, var(--glass-border));
+  font-size: var(--ds-fs-hint);
+  font-weight: var(--ds-fw-btn);
+  color: var(--color-frame-text, var(--color-text));
+  white-space: nowrap;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+  z-index: 40;
+}
+body.mobile-layer .bgagent-overlay .bgagent-pill-status {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  line-height: 0;
+}
+body.mobile-layer .bgagent-overlay .bgagent-pill-status .st-ic { width: 12px; height: 12px; }
+body.mobile-layer .bgagent-overlay .bgagent-pill-word {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+body.mobile-layer .bgagent-overlay .bgagent-pill-dur {
+  color: var(--color-frame-text-muted, var(--ds-text-muted));
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+/* ── ③ 右上 ⋯ 键：48px g2-fab 圆钮，几何 = 会话页三点键 .mh-sess-more 同一条档
+   （top 16+safe / right 16；材质与四态全在 .g2-fab 基类，本块只声明落位与图标）。 */
+body.mobile-layer .bgagent-overlay .bgagent-more {
+  position: absolute;
+  top: calc(16px + env(safe-area-inset-top, 0px));
+  right: 16px;
+  width: var(--mtap-lg, 48px);
+  height: var(--mtap-lg, 48px);
+  z-index: 40;
+}
+body.mobile-layer .bgagent-overlay .bgagent-more svg {
+  display: block;
+  width: var(--micon-sm, 20px);
+  height: var(--micon-sm, 20px);
+}
+
+/* ── ③ ⋯ 详情浮层：菜单形态（无暗幕，点外即收）+ nf-glass 毛玻璃卡（唯一玻璃
+   配方，glass-unify 批工具类）。二级可叠 = 卡内摘要条自身的收起/展开（同一
+   toggle 路径）。 */
+body.mobile-layer .bgagent-overlay .bgagent-more-sheet {
+  position: absolute;
+  inset: 0;
+  z-index: 60;
+}
+body.mobile-layer .bgagent-overlay .bgagent-more-sheet[hidden] { display: none; }
+body.mobile-layer .bgagent-overlay .bgagent-sheet-scrim {
+  position: absolute;
+  inset: 0;
+  background: transparent;
+}
+body.mobile-layer .bgagent-overlay .bgagent-sheet-card {
+  position: absolute;
+  top: calc(72px + env(safe-area-inset-top, 0px)); /* 顶带（16+48+8 呼吸）之下 */
+  right: 16px;
+  width: min(320px, calc(100vw - 32px));
+  max-height: calc(100% - 96px - env(safe-area-inset-bottom, 0px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-radius: var(--ds-radius-xl);
+  padding: var(--ds-space-3);
+}
+body.mobile-layer .bgagent-overlay .bgagent-sheet-title {
+  font-size: var(--ds-fs-body);
+  font-weight: var(--ds-fw-title);
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-bottom: var(--ds-space-1);
+}
+body.mobile-layer .bgagent-overlay .bgagent-sheet-title[hidden] { display: none; }
+/* meta 行（来源/创建/工作树/插件）：左标签右值两段，值单行截断 + title 全文。 */
+body.mobile-layer .bgagent-overlay .bgagent-meta-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--ds-space-2);
+  min-width: 0;
+  padding: var(--ds-space-hair) 0;
+  font-size: var(--ds-fs-meta);
+  line-height: var(--ds-lh-body);
+}
+body.mobile-layer .bgagent-overlay .bgagent-meta-label {
+  flex: 0 0 3.5em;
+  color: var(--ds-text-dim);
+  font-weight: var(--ds-fw-title);
+}
+body.mobile-layer .bgagent-overlay .bgagent-meta-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--ds-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 迁入的摘要条/「会话在做什么」条：卡内块化——弹窗头下窄条时代的通栏
+   border-bottom 与卡面语言不搭，摘除；插件行由 meta 行承担（同一 G4 数据，
+   禁二次上屏）。 */
+body.mobile-layer .bgagent-overlay .bgagent-sheet-card .bgagent-delegate-strip,
+body.mobile-layer .bgagent-overlay .bgagent-sheet-card .bgws {
+  border-bottom: none;
+  padding: var(--ds-space-2) 0 0;
+  max-height: none;
+  overflow: visible;
+  font-size: var(--ds-fs-meta);
+}
+body.mobile-layer .bgagent-overlay .bgagent-sheet-card .bgagent-strip-plugins { display: none; }
+
+/* ── ⑥ 动作区（恢复入口）：retry + 重试计数 chip 迁入卡底；可见性仍由
+   syncManageControls 单点驱动（JS 迁移同一节点，线路零复制）。 */
+body.mobile-layer .bgagent-overlay .bgagent-sheet-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  margin-top: var(--ds-space-2);
+  padding-top: var(--ds-space-2);
+  border-top: var(--ds-border-width) dashed var(--ds-border-hairline);
+}
+body.mobile-layer .bgagent-overlay .bgagent-sheet-actions[hidden] { display: none; }
+body.mobile-layer .bgagent-overlay .bgagent-sheet-actions .fa-mgmt-btn {
+  width: var(--ds-hit-row);
+  height: var(--ds-hit-row);
+  border: 1px solid var(--glass-border);
+  background: var(--glass-control-bg);
+}
+body.mobile-layer .bgagent-overlay .bgagent-sheet-actions .fa-mgmt-btn svg { width: 16px; height: 16px; }
+body.mobile-layer .bgagent-overlay .bgagent-sheet-actions .fa-mgmt-retry { color: rgb(var(--sapphire)); }
+body.mobile-layer .bgagent-overlay .bgagent-sheet-actions .fa-mgmt-btn.readonly { opacity: 0.35; }
+body.mobile-layer .bgagent-overlay .bgagent-sheet-retries {
+  font-size: var(--ds-fs-meta);
+  font-weight: var(--ds-fw-btn);
+  color: var(--status-warn-icon);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── ⑤ 右下悬浮终止钮：g2-fab 圆钮（材质/四态 = glass.css 圆钮级浮件档单源）+
+   危险档配色（--color-error，与行内小方块时代同一 token）。落位 = 「发起群聊」
+   批同一令牌（--ask-fab-gap/--ask-fab-bottom + 安全区）；手机档 48 = --mtap-lg
+   （与返回钮/⋯ 键同一尺寸真源）。命中盒 ≥ 40（48 档）。 */
+body.mobile-layer .bgagent-overlay .bgagent-stop-fab {
+  position: absolute;
+  right: var(--ds-space-4);
+  bottom: calc(var(--ask-fab-bottom, 24px) + env(safe-area-inset-bottom, 0px));
+  width: var(--mtap-lg, 48px);
+  height: var(--mtap-lg, 48px);
+  color: var(--color-error);
+  z-index: 40;
+}
+body.mobile-layer .bgagent-overlay .bgagent-stop-fab svg {
+  display: block;
+  width: var(--micon-sm, 20px);
+  height: var(--micon-sm, 20px);
+}
+/* 只读 kinds（Team/Root）灰档：权限矩阵语义照旧（syncManageControls 挂 readonly）。 */
+body.mobile-layer .bgagent-overlay .bgagent-stop-fab.readonly {
+  opacity: 0.35;
+  cursor: not-allowed;
+}

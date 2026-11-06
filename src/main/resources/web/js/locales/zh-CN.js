@@ -1894,6 +1894,13 @@ export default {
   'bgws.noData': '暂无状态数据（快照未覆盖）',
   'bgws.noBgTasks': '本会话无后台任务',
   'bgws.moreTasks': '还有 {count} 个后台任务（主窗口面板查看）',
+  // 手机端后台 agent 对话框简化批（2026-11-06）：⋯ 详情浮层的 meta 行标签。
+  'bgagent.more': '任务详情',
+  'bgagent.detail.source': '来源',
+  'bgagent.detail.created': '创建',
+  'bgagent.detail.worktree': '工作树',
+  'bgagent.detail.plugins': '插件',
+  'bgagent.detail.noWorktree': '就地（未分配工作树）',
   'bg.sectionAgents': '智能体',
   'bg.empty': '当前无运行中的后台任务',
   // 设备同级批（作者令 2026-11-01「本地/远程这组徽标整对退役」）：bg.kind.local /
@@ -1958,8 +1965,8 @@ export default {
   // sectionProgress/pendingShort/globalSource 键随退役路径一并清除；节点视图
   // 键（nodePending/nodeBlocked/inProgressShort/statsProgress/expand/
   // collapse/justNow/progressEmpty）保留。
-  'task.expand': '展开',
-  'task.collapse': '收起',
+  'task.expand': '展开详情',
+  'task.collapse': '收起详情',
   // progressEmpty：空态兜底键（builder 保留未接主路径，无节点时面板收起）
   'task.progressEmpty': '暂无任务',
   'task.justNow': '刚刚',
@@ -2258,7 +2265,14 @@ export default {
   'task.sheetTitle': '新建定时任务',
   'task.sheetCancel': '取消',
   'task.sheetDone': '创建',
-  'task.inputPlaceholder': '输入任务内容...',
+  // schedule-todo-unify 批 2026-11-06：新建/编辑面拆 name + description 两段
+  // （数据面约定 = content 首行 name、其余行 description，见 scheduled-task.js nameOf/descriptionOf）。
+  'task.inputPlaceholder': '任务名称',
+  'task.descPlaceholder': '描述（可选）',
+  'task.editTitle': '编辑定时任务',
+  'task.nameRequired': '名称不能为空',
+  'task.detailTitle': '详情',
+  'task.detailEmpty': '无描述',
   'task.triggerTime': '触发时间',
   'task.triggered': '已触发',
   'task.triggerTitle': '定时任务已触发',

@@ -1,0 +1,9 @@
+{
+  "createFrame": {
+    "type": "createScheduledTask",
+    "sessionId": "sched-todo-spec-session",
+    "content": "晨间巡检\n九点巡检一次在飞批次，异常直接重跑。",
+    "triggerAt": 1793948280000,
+    "detail": "九点巡检一次在飞批次，异常直接重跑。"
+  }
+}

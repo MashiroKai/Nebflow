@@ -1895,6 +1895,19 @@ object GatewayMain extends IOApp:
                                                 (json: io.circe.Json) => wsHub.broadcast(json)
                                               )
 
+                                              // profile-sync 批（2026-11-06，作者令「描述信息需要
+                                              // 支持云同步」）：四条描述（好友 bio 缓存 / 我的群备注 /
+                                              // 群介绍缓存 / selfBio）的跨设备收敛通道——数据通道
+                                              // handler + peer 变化对账推。与 AgentIdentitySync /
+                                              // AgentSessionSync 同缝同序；Ref 由 FriendService 构造
+                                              // 体内自注册（`ProfileSync.attachDescriptions`），本行只
+                                              // 接收发面。未接线（NebLink 未配置）⇒ initialize 内显式
+                                              // WARN + 跳过（状态出口全报 local-only）。
+                                              nebflow.neblink.ProfileSync.initialize(
+                                                Some(neblinkService),
+                                                (json: io.circe.Json) => wsHub.broadcast(json)
+                                              )
+
                                               // --- Daemon Service (external process lifecycle) ---
                                               val daemonService = new DaemonService(dispatcher)
                                               val sharedResourcesWithDaemon = sharedResourcesFinal.copy(

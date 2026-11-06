@@ -1,0 +1,29 @@
+[
+  {
+    "id": "fx-1",
+    "firstLine": "夜间监工\n每小时巡检在飞批次，失败则在原分支重跑并把读数写进当批证据目录。",
+    "nameOverflow": true,
+    "descInBody": false,
+    "descText": null,
+    "clipVisible": null,
+    "expandBtn": false
+  },
+  {
+    "id": "fx-2",
+    "firstLine": "夜间实施汇总\n给作者的晨间一页：汇总今晚落地的合并、未决项与风险。",
+    "nameOverflow": true,
+    "descInBody": false,
+    "descText": null,
+    "clipVisible": null,
+    "expandBtn": false
+  },
+  {
+    "id": "fx-3",
+    "firstLine": "周报数据源刷新",
+    "nameOverflow": false,
+    "descInBody": false,
+    "descText": null,
+    "clipVisible": null,
+    "expandBtn": false
+  }
+]

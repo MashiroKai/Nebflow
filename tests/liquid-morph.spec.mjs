@@ -43,11 +43,11 @@ eq('A2 DURATION = {fast:160, base:280, slow:400}（三档各有既有读数锚�
 ok('A3 DURATION 冻结（不可被消费面改写）', Object.isFrozen(M.DURATION));
 eq('A4 EASING = cubic-bezier(0.4, 0, 0.2, 1)', M.EASING, 'cubic-bezier(0.4, 0, 0.2, 1)');
 
-eq('A5 PROPERTY_WHITELIST 逐项（原型清单顺序 + 末位 transform）',
+eq('A5 PROPERTY_WHITELIST 逐项（原型清单顺序 + 末三项 transform/padding-top/padding-bottom）',
   M.PROPERTY_WHITELIST,
   ['width', 'height', 'margin-left', 'margin-right', 'padding-left', 'padding-right',
     'border-radius', 'border-color', 'background-color', 'box-shadow', 'backdrop-filter',
-    'opacity', 'max-width', 'transform']);
+    'opacity', 'max-width', 'transform', 'padding-top', 'padding-bottom']);
 ok('A6 白名单冻结', Object.isFrozen(M.PROPERTY_WHITELIST));
 ok('A7 白名单不含不可插值/布局级属性（display/visibility/height auto/max-height/all）',
   ['display', 'visibility', 'max-height', 'content', 'all'].every((p) => !M.PROPERTY_WHITELIST.includes(p)));
@@ -129,8 +129,10 @@ ok('B12 ㉒ 组 reduced-motion 降级为 1ms（三档全压近零）',
 // ── C. 原型锚（原型动了 = 回来重新对锚）──────────────────────────────
 eq('C1 原型时长读数 --mhsc-dur = DURATION.base', first(protoCss, 'mhsc-dur'), `${M.DURATION.base}ms`);
 eq('C2 原型曲线读数 --mhsc-ease = EASING', first(protoCss, 'mhsc-ease'), M.EASING);
-ok('C3 原型 transition 清单覆盖 12 项（transform 为追加项，原型无）',
-  M.PROPERTY_WHITELIST.filter((p) => p !== 'transform').every((p) => new RegExp(`${p.replace(/-/g, '\\-')} var\\(--mhsc-dur\\)`).test(protoCss)));
+// 原型之外的**申报追加项**（每一项都要在 DESIGN.md §3 有申报行；改这个集合 = 改语言）。
+const APPENDED = ['transform', 'padding-top', 'padding-bottom'];
+ok(`C3 原型 transition 清单覆盖其余 ${M.PROPERTY_WHITELIST.length - APPENDED.length} 项（追加项 ${APPENDED.join('/')} 原型无）`,
+  M.PROPERTY_WHITELIST.filter((p) => !APPENDED.includes(p)).every((p) => new RegExp(`${p.replace(/-/g, '\\-')} var\\(--mhsc-dur\\)`).test(protoCss)));
 ok('C4 原型 reduced-motion 降级仍为 1ms', /@media \(prefers-reduced-motion: reduce\)[\s\S]*?--mhsc-dur:\s*1ms/.test(protoCss));
 
 // ── 汇总 ─────────────────────────────────────────────────────────────

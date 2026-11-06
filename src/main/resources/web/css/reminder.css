@@ -158,7 +158,7 @@
   border: none;
   border-radius: var(--ds-radius-chip);
   background: transparent;
-  color: rgb(91, 127, 191);
+  color: var(--color-info);
   cursor: pointer;
   transition: all 0.15s;
   opacity: 0.7;
@@ -194,7 +194,7 @@
   border: none;
   border-radius: var(--ds-radius-chip);
   background: transparent;
-  color: rgb(91, 127, 191);
+  color: var(--color-info);
   cursor: pointer;
   transition: all 0.15s;
   opacity: 0.7;
@@ -323,8 +323,8 @@
 
 /* completing animation (delete) */
 .reminder-circle.completing {
-  border-color: rgb(91, 127, 191);
-  background: rgb(91, 127, 191);
+  border-color: var(--color-info);
+  background: var(--color-info);
   animation: reminderCompletePop 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 .reminder-circle.completing svg {
@@ -339,8 +339,8 @@
 
 /* completed state (triggered) */
 .reminder-circle.completed {
-  border-color: rgb(91, 127, 191);
-  background: rgb(91, 127, 191);
+  border-color: var(--color-info);
+  background: var(--color-info);
   border-width: 0;
   cursor: default;
 }

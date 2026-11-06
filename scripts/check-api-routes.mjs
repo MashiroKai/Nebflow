@@ -118,6 +118,10 @@ const CRITICAL = [
   // sessions 族
   ['GET', '/api/sessions'],
   ['GET', '/api/sessions/:id/history'],
+  // profile 族（profile-sync 批 2026-11-06）：描述跨设备收敛的**只读状态出口**
+  // （前端徽标读它）。先注册后端、前端随后消费 ⇒ 本条是「徽标腿不会因后端掉路由
+  // 而静默空白」的第二道保险。
+  ['GET', '/api/profile/sync-status'],
 ];
 
 // ── 工具 ───────────────────────────────────────────────────────────

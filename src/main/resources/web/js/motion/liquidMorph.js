@@ -69,8 +69,9 @@ export const EASING = 'cubic-bezier(0.4, 0, 0.2, 1)';
 /**
  * 可过渡属性白名单 —— 逐项抄自原型 transition 清单，顺序与原文件一致：
  * 条本体 mobileSearchFlat.css:150-161 的 11 条 → 图标 :166-168（width/height 已含）
- * → 输入行 :173-175（opacity / max-width）。最后一项 `transform` 是**原型之外唯一追加项**，
- * 追加理由见下。
+ * → 输入行 :173-175（opacity / max-width）。原型之外**追加两项**（各自申报理由，见下）：
+ * `transform`（浮件宿主位移腿）与 `padding-top` / `padding-bottom`（同框同边的行 ⇄ 详情框
+ * 形变腿，schedule-todo-unify 批 2026-11-06 按 DESIGN.md §3 的「加项须申报」流程补入）。
  * @type {ReadonlyArray<string>}
  */
 export const PROPERTY_WHITELIST = Object.freeze([
@@ -99,6 +100,14 @@ export const PROPERTY_WHITELIST = Object.freeze([
   //    的手机档面板形变腿就是 transform + --dur-2。transform 两端均可插值
   //    （translate/scale/rotate 同族），且不与 whitelist 内任何属性冲突。
   'transform',
+  // ⑥ 追加项②（schedule-todo-unify 批 2026-11-06；申报理由见 DESIGN.md §3「追加项」）：
+  //    复用面⑤「条目行 → 带详情的互动框」是同**框同边**长大 —— 行内距两端都由
+  //    padding 承担（收起 = 单行内距、展开 = 详情框内距）。原型只有水平内距腿
+  //    （padding-left/right :155-156），缺竖直档；两端都是长度、逐帧可插值，
+  //    且宿主几何变化被「同一条内距」吸收（不新增布局通道，不触发布局抖动 ——
+  //    触发布局 ≠ 不可插值，本项在两端之间只改内边距，浏览器按布局动画处理）。
+  'padding-top',
+  'padding-bottom',
 ]);
 
 /** 降级时长（与原型 :210 同值：二值语义保留，过渡压近零）。 */

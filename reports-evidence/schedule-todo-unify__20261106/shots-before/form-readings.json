@@ -1,0 +1,67 @@
+{
+  "hasName": true,
+  "hasDesc": false,
+  "namePh": "输入任务内容...",
+  "form": {
+    "x": 18,
+    "right": 357,
+    "w": 339,
+    "h": 164,
+    "y": 568
+  },
+  "host": {
+    "x": 0,
+    "right": 375,
+    "w": 375,
+    "h": 238,
+    "y": 512
+  },
+  "actions": {
+    "x": 0,
+    "right": 375,
+    "w": 375,
+    "h": 45,
+    "y": 513
+  },
+  "cancel": {
+    "x": 275,
+    "right": 319,
+    "w": 44,
+    "h": 44,
+    "y": 513
+  },
+  "confirm": {
+    "x": 323,
+    "right": 367,
+    "w": 44,
+    "h": 44,
+    "y": 513
+  },
+  "confirmStyle": {
+    "color": "rgb(7, 193, 96)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "radius": "999px",
+    "fs": "13px",
+    "fw": "600",
+    "minH": "44px"
+  },
+  "cancelStyle": {
+    "color": "color(srgb 0.105882 0.117647 0.14902 / 0.55)",
+    "radius": "999px"
+  },
+  "flatConfirm": {
+    "shadow": "none",
+    "bgImage": "none",
+    "transform": "none"
+  },
+  "flatCancel": {
+    "shadow": "none",
+    "bgImage": "none",
+    "transform": "none"
+  },
+  "hitConfirm": {
+    "h": null
+  },
+  "leg": "drawer-head",
+  "inMobile": true
+}

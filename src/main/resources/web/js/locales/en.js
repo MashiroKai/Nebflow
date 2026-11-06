@@ -1956,6 +1956,13 @@ export default {
   'bgws.noData': 'no status data (snapshot not covering)',
   'bgws.noBgTasks': 'no background tasks for this session',
   'bgws.moreTasks': '{count} more background tasks (see the main window panel)',
+  // Mobile bg-agent dialog simplification (2026-11-06): ⋯ details sheet meta labels.
+  'bgagent.more': 'Task details',
+  'bgagent.detail.source': 'Source',
+  'bgagent.detail.created': 'Created',
+  'bgagent.detail.worktree': 'Worktree',
+  'bgagent.detail.plugins': 'Plugins',
+  'bgagent.detail.noWorktree': 'In place (no worktree)',
   'bg.sectionAgents': 'Sub-agents',
   'bg.empty': 'No background tasks running',
   // 设备同级批（作者令 2026-11-01「本地/远程这组徽标整对退役」）：bg.kind.local /
@@ -2021,8 +2028,8 @@ export default {
   // Task panel = pure Flow Map node view (2026-09-05 10:54 ruling): the old
   // task area is retired; sectionProgress/pendingShort/globalSource keys
   // removed with their retired paths. Node-view keys kept.
-  'task.expand': 'Expand',
-  'task.collapse': 'Collapse',
+  'task.expand': 'Show details',
+  'task.collapse': 'Hide details',
   // progressEmpty: empty-state fallback key (builder kept, not wired into
   // the main path — the panel collapses when there are no nodes)
   'task.progressEmpty': 'No active tasks',
@@ -2331,7 +2338,13 @@ export default {
   'task.sheetTitle': 'New scheduled task',
   'task.sheetCancel': 'Cancel',
   'task.sheetDone': 'Create',
-  'task.inputPlaceholder': 'Enter task...',
+  // schedule-todo-unify 2026-11-06: name + description split (content line 1 = name).
+  'task.inputPlaceholder': 'Task name',
+  'task.descPlaceholder': 'Description (optional)',
+  'task.editTitle': 'Edit scheduled task',
+  'task.nameRequired': 'Name cannot be empty',
+  'task.detailTitle': 'Details',
+  'task.detailEmpty': 'No description',
   'task.triggerTime': 'Trigger time',
   'task.triggered': 'Triggered',
   'task.triggerTitle': 'Scheduled Task Triggered',

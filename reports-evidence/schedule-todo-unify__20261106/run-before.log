@@ -1,0 +1,32 @@
+(node:61117) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/schedule-todo-unify/src/main/resources/web/js/motion/liquidMorph.js is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/schedule-todo-unify/package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+FAIL  T1 页名完整显示（未截断：文字不溢出）  — {"text":"定时任务","w":231,"band":375,"scrollW":255,"clientW":231,"fs":"28px","overflow":true}
+PASS  T2 页名主档吃满内缩带（宽 ≥ band − 2×72）  — w=231 band=375
+FAIL  T3 正文里那行重复标题已退场（.reminder-panel-title 不可见，页面内只剩壳标题）  — {"hit":1,"display":"block"}
+FAIL  N1 行首文本 = name（不含 description 全文）  — ["夜间监工\n每小时巡检在飞批次，失败则在原分支重跑并把读数写进当批证据目录。","夜间实施汇总\n给作者的晨间一页：汇总今晚落地的合并、未决项与风险。","周报数据源刷新"]
+FAIL  N2 详情体在行内、收起态零宽（不占行）  — [null,null,null]
+FAIL  N3 行尾展开键在场
+FAIL  L1 展开过渡属性全部在液态形变白名单内  — null
+FAIL  L2 宿主 = base 档（280ms）+ 唯一曲线  — null
+FAIL  L3 详情体 = slow 档（400ms）+ 唯一曲线  — null
+FAIL  L4 展开后详情体占满行宽并显示 description + 事实行  — null
+FAIL  N4 表单两字段：name + description（各自的占位文案）  — ["输入任务内容...",null]
+PASS  B1 确认键在取消键右边  — {"cancel":275,"confirm":323}
+PASS  B2 按钮行右对齐（确认右缘距表单右缘 ≤ 内距档 14px）  — rightGap=-10
+PASS  B3 扁平：确认/取消零投影零渐变  — {"c":{"shadow":"none","bgImage":"none","transform":"none"},"x":{"shadow":"none","bgImage":"none","transform":"none"}}
+PASS  B4 视觉高 ≥ 44（--ds-hit-row）  — {"c":44,"x":44}
+FAIL  B5 命中盒 ≥ 48（--ds-hit-box-min）  — {"h":null}
+FAIL  N5 创建帧带两段：content = 首行名 + 描述，detail = description  — {"content":"晨间巡检"}
+PASS  C0 待办页行在场（对照读数）  — {"n":2,"insetLeft":22,"insetRight":22}
+PASS  C1 两页行首文字颜色同值（基准 = 定时任务页 --color-text）  — ["rgb(27, 30, 38)","rgb(27, 30, 38)"]
+FAIL  C2 两页时刻字颜色同值（--color-info 定时任务蓝）  — ["rgb(91, 127, 191)","color(srgb 0.105882 0.117647 0.14902 / 0.4)"]
+FAIL  C3 两页行底色同值（静息透明基准）  — ["rgba(0, 0, 0, 0)","color(srgb 0.105882 0.117647 0.14902 / 0.04)"]
+FAIL  C6 完成圈同色（--color-info：定时任务 completed 圆 ⇄ 待办打卡 fill）  — ["rgb(91, 127, 191)","rgba(52, 199, 89, 0.85)"]
+PASS  C5 两页确认键同规格（--color-primary 同源、扁平、≥44、done 恒最右）  — {"todo":{"color":"rgb(7, 193, 96)","bg":"rgba(0, 0, 0, 0)","h":44,"shadow":"none","bgImage":"none","rightmost":true,"rightGap":8},"rem":"rgb(7, 193, 96)"}
+PASS  S1 页面零脚本错误
+PASS  D1 桌面腿：定时任务仍是顶栏下拉（页面态未生效、面板可见、行在场）  — {"open":true,"w":360,"h":209.89,"x":482,"y":56,"titleVisible":true,"rows":3,"mobileLayer":false}
+PASS  D2 桌面腿：下拉页头标题保留（手机页面态的「去重」不下溢到桌面）
+
+schedule-todo-unify: PASS 11 · FAIL 15

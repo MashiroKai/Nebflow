@@ -1,0 +1,6 @@
+{
+  "type": "createScheduledTask",
+  "sessionId": "sched-todo-spec-session",
+  "content": "晨间巡检",
+  "triggerAt": 1793948220000
+}

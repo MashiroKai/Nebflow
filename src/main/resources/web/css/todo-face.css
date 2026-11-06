@@ -9,12 +9,19 @@
   --tfl-rt: 16px;
   --tfl-rb: 16px;
   /* 复刻常量（SF 系统色等价值；数据面同源 todoStore.PRIORITY_COLORS） */
-  --tfl-red: rgb(255, 59, 48);
-  --tfl-red-o: rgba(255, 59, 48, 0.9);
-  --tfl-cyan: rgb(50, 173, 230);
+  /* ── 配色收编（schedule-todo-unify 批 2026-11-06 作者令「待办的配色风格和
+     定时任务统一 以定时任务为准 …不许各留一套」）：本组的**值**不再是第二套
+     色板 —— 全部别名到定时任务页同款单源 token，本文件 6 处消费点零改动：
+       red/red-o  → --status-error-icon（定时任务页逾期行同款红）
+       cyan       → --color-info（定时任务蓝；原 cyan 50,173,230 退场）
+       green(-solid) → --color-primary（完成/确认绿，定时任务页主键同源）
+       yellow     → 无消费点（死 token，留档不派新消费）。 */
+  --tfl-red: var(--status-error-icon);
+  --tfl-red-o: color-mix(in srgb, var(--status-error-icon) 90%, transparent);
+  --tfl-cyan: var(--color-info);
   --tfl-yellow: rgb(255, 204, 0);
-  --tfl-green: rgba(52, 199, 89, 0.85);
-  --tfl-green-solid: rgb(52, 199, 89);
+  --tfl-green: var(--color-primary);
+  --tfl-green-solid: var(--color-primary);
   /* 黑底胶囊 token（原名取自教学气泡；气泡已于 2026-11-04 R05 批退役，现唯一
      消费方 = 完成后撤回条 `.tfl-undo`。名字未改 = 零值漂移，只如实记来源迁移） */
   --tfl-hint-bg: rgba(0, 0, 0, 0.75);
@@ -781,7 +788,10 @@
   gap: var(--ds-space-half);
   font: 400 var(--ds-fs-meta)/1.3 ui-monospace, SFMono-Regular, monospace;
   font-variant-numeric: tabular-nums;
-  color: color-mix(in srgb, var(--color-text, #000) 40%, transparent);
+  /* 时刻字 = 定时任务蓝（schedule-todo-unify 批「配色统一以定时任务为准」：
+     reminder-row-time 同款 --color-info；逾期红 = --tfl-red-o 已别名到
+     --status-error-icon，见文件头 tfl 组注）。 */
+  color: var(--color-info);
 }
 .tfl-row-due svg { width: 9px; height: 9px; opacity: 0.8; }
 .tfl-row-due.overdue, .tfl-row-due .overdue { color: var(--tfl-red-o); }
@@ -826,7 +836,9 @@
   position: absolute;
   inset: 7px;
   border-radius: 50%;
-  background: var(--tfl-green);
+  /* 打卡完成圈 = 定时任务页 completed 圆同款（--color-info 蓝，schedule-todo-unify
+     批「以定时任务为准」：同一语义一个颜色，绿档只留给完成/确认动作）。 */
+  background: var(--color-info);
   display: flex;
   align-items: center;
   justify-content: center;

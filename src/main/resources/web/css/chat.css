@@ -56,19 +56,13 @@
    mobileLayer.css 覆盖同名 padding-left/right），且 #header 在手机层整体不渲染
    （同文件 display:none 档）⇒ 本槽只在桌面档生效，无手机分叉。 */
 #header {
-  /* 折射线层提成 token（--glass-refraction-line，sapphire.css 出生行）：
-     值与改前逐字相同（同一 gradient + center top / 80% 1px no-repeat），
-     改的是「谁拥有这一层」——面级浮件复用它时不再抄一遍字面量。 */
-  background:
-    var(--glass-refraction-line,
-      linear-gradient(90deg, transparent 10%, var(--sapphire-refraction) 50%, transparent 90%)) center top / 80% 1px no-repeat,
-    var(--glass-bg);
-  border: 1px solid var(--glass-border);
-  /* Header 底缘零边界批（2026-10-22 作者追加令「Header 下面有一个边缘…要移除」）：
-     消息气泡上滑穿入 Header 下时，底缘 1px border 在泡上衬出一条横向灰线。
-     底边框透明化（保留 1px 盒尺寸，布局零移）；顶/侧 border 与顶缘 sapphire
-     折射细线不动（作者只裁底缘）。 */
-  border-bottom-color: transparent;
+  /* 🔴 材质（玻璃底 + 顶缘折射线 + 描边 + 顶缘内高光 + 零下边缘 + 圆角 + 内距）
+     已**收编**到 css/glass.css 的「顶部悬浮头」共享声明（contact-panel-unify
+     收编批 2026-11-06）：本块只留**落位与内部件**。改一面必须回共享块对账，
+     收编文件清单 = css/glass.css / css/stand-tokens.css / css/chat.css（本块）/
+     css/friends.css。令牌段 = stand-tokens.css 的 `--nf-head-*`。
+     历史沿革保留在共享块头注：底缘零边界批 2026-10-22（外投影在泡上压出
+     「裙边」）⇒ 两面现在共用同一条「只留顶缘 inset 高光」的口径。 */
   color: var(--color-frame-text-bright);
   /* 宽度还原批（header-input-width-align 2026-11-05）：水平内距回到 16px 栅格档、
      水平外距归零 —— 玻璃盒铺满 #main 全宽（= 历史正常宽度，作者令「找到以前正常
@@ -76,9 +70,7 @@
      内容盒起点不变（改前：外距 16 + 内距 0；改后：外距 0 + 内距 16 ⇒ 顶栏内件
      仍在 #main 左缘 +16px 那一像素上），故顶栏内件（标题/搜索/按钮簇）零位移。
      垂直内距走 main 侧档位 --ds-space-block-y，本批不动它。 */
-  padding: var(--ds-space-block-y) var(--ds-space-4);
   margin: var(--ds-space-4) var(--ds-main-col-edge-x) 0;
-  border-radius: var(--ds-radius-shell);
   font-size: var(--ds-fs-subtitle);
   font-weight: 500;
   display: flex;
@@ -88,15 +80,6 @@
   left: 0;
   right: 0;
   z-index: 30;
-  /* ── #header 豁免于 --frost-shadow 单源（合并裁定 2026-10-22）─────────
-     frost-shadow 的外投影分量（暗档 0 2px 8px .20 / 0 8px 24px .35）在穿入
-     气泡上压出一条紧贴底缘的深色带 + ~20px 渐变裙影（像素实测 #0e1014 对
-     #87d65f）——即作者点名移除的「裙边/border/阴影」边界线本体（Header 底缘
-     零边界批）。该裁定后于 frosted 单源令，生效优先：#header 只留顶缘 inset
-     高光（frost 顶缘特征），底缘 = 毛玻璃 tint/blur 自身边界，零附加线。
-     其余 frosted 面（面板/胶囊环）仍走 token 单源。 */
-  box-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.25);
 }
 #header .header-left { flex: 0 0 auto; display: flex; align-items: center; gap: var(--ds-space-1h); }
 #header .header-brand { color: var(--color-frame-text-bright); font-weight: 600; font-size: var(--ds-fs-title); }
