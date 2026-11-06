@@ -26,7 +26,9 @@ import nebflow.shared.*
  */
 class CacheAttributionSpec extends FunSuite:
 
-  override def beforeEach(context: BeforeEach): Unit = CacheAttribution.resetForTest()
+  override def beforeEach(context: BeforeEach): Unit =
+    CacheAttribution.resetForTest()
+    CacheAttribution.attributionLogSink = _ => ()
 
   // ── fixtures ──────────────────────────────────────────────────────────
 
@@ -112,6 +114,18 @@ class CacheAttributionSpec extends FunSuite:
     CacheAttribution.observeWire("anthropic", paramsOf("s1"), "Zai", persistedWire(1), clockWire(1))
     val rec = CacheAttribution.observeUsage("s1", "Zai", "glm-5.3-flash", Some(miss))
     assertEquals(rec.map(_.category.name), Some("new-session"))
+
+  test("⑧ attribution event is synchronously observable and carries no prompt content"):
+    var emitted = List.empty[String]
+    CacheAttribution.attributionLogSink = line => emitted = emitted :+ line
+    val secret = "PROMPT-CONTENT-MUST-NOT-LOG"
+    CacheAttribution.observeWire("anthropic", paramsOf("log-s"), "Zai",
+      List(wireMsg("user", secret), wireMsg("assistant", "ok", marker = true)), clockWire(1))
+    CacheAttribution.observeUsage("log-s", "Zai", "glm-5.3-flash", Some(miss))
+    assertEquals(emitted.length, 1)
+    assert(emitted.head.contains("cache-attribution: category=new-session"))
+    assert(emitted.head.contains("input=1000 read=0"))
+    assert(!emitted.head.contains(secret))
 
   test("⑧ healthy appending turns produce NO attribution record"):
     CacheAttribution.observeWire("anthropic", paramsOf("s2"), "Zai", persistedWire(1), clockWire(1))
