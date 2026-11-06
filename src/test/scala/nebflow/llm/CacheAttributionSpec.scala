@@ -16,7 +16,8 @@ import nebflow.shared.*
  *   C-OBS-3 warmup 类账目与业务类分列——保温次数/成本永不混入业务率；
  *   C-OBS-4 归因类别受控样本：NewSession / ConfigChanged（tools 轴）/ 
  *      HistoryChanged（首个差异块位）/ CompactionRebuild（前部重建签名）/
- *      EphemeralMarked（断点不在持久尾——旧装配缺陷签名）/ DomainSwitched /
+ *      EphemeralMarkerMisplaced（marker 出现在临时段）/ PersistentBreakpointMissing（非空持久历史无 marker）/
+ *      PersistentBreakpointMisplaced（持久 marker 不在尾块）/ DomainSwitched /
  *      Unknown（客户端未观测到变化 ⇒ 供应商侧，不谎称驱逐）；
  *   C-OBS-5 有界性：miss 环封顶；摘要无正文（机密样文本不落任何记录字段）；
  *   C-OBS-6 混合长短会话：整体与单会话拆分可对账（sum 守恒）。
@@ -159,15 +160,33 @@ class CacheAttributionSpec extends FunSuite:
     val rec = CacheAttribution.observeUsage("s5", "Zai", "glm-5.3-flash", Some(miss))
     assertEquals(rec.map(_.category.name), Some("compaction-rebuild"))
 
-  test("⑧ marker leaked into the ephemeral section → ephemeral-marked (old-assembly defect signature)"):
-    // 正常持久历史（断点在尾块）+ 旧装配形态：提醒块带 marker 漏进临时段
+  test("⑧ marker leaked into the ephemeral section → ephemeral-marker-misplaced"):
+    // 持久尾有合法 marker，但临时提醒也错误带 marker：要准确归为 ephemeral marker 错位。
     CacheAttribution.observeWire("anthropic", paramsOf("s6"), "Zai", persistedWire(1), clockWire(1))
     assertEquals(CacheAttribution.observeUsage("s6", "Zai", "glm-5.3-flash", Some(hit)), None)
     CacheAttribution.observeWire("anthropic", paramsOf("s6"), "Zai", persistedWire(1),
       clockWire(2) :+ wireMsg("user", "EPHEMERAL-REMINDER", marker = true))
     val rec2 = CacheAttribution.observeUsage("s6", "Zai", "glm-5.3-flash", Some(miss))
-    assertEquals(rec2.map(_.category.name), Some("ephemeral-marked"))
-    assert(rec2.get.detail.contains("ephemeralMarked=true"))
+    assertEquals(rec2.map(_.category.name), Some("ephemeral-marker-misplaced"))
+    assert(rec2.get.detail.contains("ephemeral blocks"))
+
+  test("⑧ non-empty persistent history without a marker → persistent-breakpoint-missing"):
+    CacheAttribution.observeWire("anthropic", paramsOf("s6-missing"), "Zai", persistedWire(1), clockWire(1))
+    assertEquals(CacheAttribution.observeUsage("s6-missing", "Zai", "glm-5.3-flash", Some(hit)), None)
+    CacheAttribution.observeWire("anthropic", paramsOf("s6-missing"), "Zai",
+      persistedWire(1, markTail = false), clockWire(2))
+    val rec = CacheAttribution.observeUsage("s6-missing", "Zai", "glm-5.3-flash", Some(miss))
+    assertEquals(rec.map(_.category.name), Some("persistent-breakpoint-missing"))
+    assert(rec.get.detail.contains("no cache marker"))
+
+  test("⑧ persistent marker before the tail → persistent-breakpoint-misplaced"):
+    val misplaced = List(wireMsg("user", "old", marker = true), wireMsg("assistant", "tail"))
+    CacheAttribution.observeWire("anthropic", paramsOf("s6-misplaced"), "Zai", persistedWire(1), clockWire(1))
+    assertEquals(CacheAttribution.observeUsage("s6-misplaced", "Zai", "glm-5.3-flash", Some(hit)), None)
+    CacheAttribution.observeWire("anthropic", paramsOf("s6-misplaced"), "Zai", misplaced, clockWire(2))
+    val rec = CacheAttribution.observeUsage("s6-misplaced", "Zai", "glm-5.3-flash", Some(miss))
+    assertEquals(rec.map(_.category.name), Some("persistent-breakpoint-misplaced"))
+    assert(rec.get.detail.contains("not at history tail"))
 
   test("⑧ pure append + fingerprints identical + zero hit → unknown (provider-side, not claimed as eviction)"):
     CacheAttribution.observeWire("anthropic", paramsOf("s7"), "Zai", persistedWire(1), clockWire(1))
@@ -204,7 +223,7 @@ class CacheAttributionSpec extends FunSuite:
     // 同内容但 marker 挪位（滑动断点的中间形态）⇒ 指纹不变 ⇒ 不产生 config/history 归因
     CacheAttribution.observeWire("anthropic", paramsOf("s9"), "Zai", persistedWire(1, markTail = false), clockWire(2))
     CacheAttribution.observeUsage("s9", "Zai", "glm-5.3-flash", Some(TokenUsage(600, 5, Some(0)))) // miss，但历史指纹全同
-    // 若 marker 参与指纹，这里会误报 ephemeral-marked（marker 从尾块消失 = 尾块指纹变）
+    // 若 marker 参与指纹，这里会误报 marker 错位（marker 从尾块消失 = 尾块指纹变）
     val names = CacheAttribution.snapshot.recentMisses.map(_.category.name)
     assert(!names.contains("history-changed"), "marker metadata movement must not be classified as history change")
 
