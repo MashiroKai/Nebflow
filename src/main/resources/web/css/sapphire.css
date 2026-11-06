@@ -884,11 +884,10 @@ button.glass-control.fm-login-btn:disabled {
   color: var(--color-text, #000);
 }
 .dropbox-msg.out .dropbox-msg-bubble {
-  background: var(--sapphire-tint-15);
+  /* 底色归 glass.css「气泡归属方底色单点」块（--nf-bub-ours-bg）；本行只留尾角。 */
   border-bottom-right-radius: 4px;
 }
 .dropbox-msg.in .dropbox-msg-bubble {
-  background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
   border-bottom-left-radius: 4px;
 }

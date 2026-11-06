@@ -392,8 +392,9 @@ body.mobile-layer .note-dock .ds-resize-handle {
 
 /* 玻璃气泡（三修③：材质 = canvas --cv-* 单源）。统一按钮玻璃批 2026-11-01：
  * 气泡禁独立 backdrop-filter（滚动性能纪律）⇒ 消费 glass.css 气泡半透明实底
- * 档（--glass-bub-*，color-mix 从单源色出 α，无 blur；用户侧 = sapphire tint
- * 复合层压半透明实底 --glass-bub-active-bg，可读性不靠透底）。几何/入场动画
+ * 档（--glass-bub-*，color-mix 从单源色出 α，无 blur）；bubble-side-color 批
+ * （2026-11-06）起 ask 气泡再不按问/答分色相 —— 全部落毛玻璃面，问我方/答我方
+ * 同材质。几何/入场动画
  * 留本文件；浮影 = --cv-shadow 三档栈保留（glass.css .ask-bub 块）。
  * 文档会话批②（2026-11-01）：max-width 306 档退役 = 100%（列满档）——宽内容
  * （表格/代码块/长行）左右缘与输入条一致；窄内容仍右贴自然宽（两族气泡形态
@@ -411,9 +412,9 @@ body.mobile-layer .note-dock .ds-resize-handle {
   animation: askBubIn 0.34s cubic-bezier(0.16, 1, 0.3, 1);
 }
 @keyframes askBubIn { from { opacity: 0; transform: translateY(12px) scale(0.9); } }
-.ask-bub.user {
-  border-color: rgb(var(--sapphire) / 0.35);
-}
+/* bubble-side-color 批（2026-11-06）：`.ask-bub.user { border-color: rgb(var(--sapphire)
+   / 0.35) }` 已退役 —— ask 面全部消息都代表本机账号，按「问/答」分色相即按
+   「消息类型」另开配色（作者令禁）。左右识别由贴靠侧承担。 */
 /* cite 徽标（组件化范式试点批）：字档 10.5px 低于 11px 可读下限（门禁 R3 绝对
    判据）⇒ 落最近的 --ds-fs-meta 11px；圆角 5px 不在阶梯 ⇒ --ds-radius-badge 4px
    （「徽标 pill / 行内 code」档，与本件语义同族）。洗蓝底/描边原为 rgb(96 165 250)

@@ -1025,8 +1025,8 @@ button.fm-req-decline:focus-visible {
 
 /* ── 气泡族改挂主会话（四会话统一批 2026-11-05）─────────────────────────────
    气泡本体 = 主会话**同一个类族** `.bubble`（chat.css 单点：内距 10-14 / 圆角 16
-   / 字阶 --ds-fs-bubble / 行高 1.55 / 出向 --glass-bub-user-bg / 入向
-   --glass-bub-ai-bg + 1px 描边 + 柔影 / 方向尾角 4px）。本文件只留**行壳**与主
+   / 字阶 --ds-fs-bubble / 行高 1.55 / 出向 --nf-bub-ours-bg / 入向
+   --nf-bub-theirs-bg + 1px 描边 + 柔影 / 方向尾角 4px）。本文件只留**行壳**与主
    会话 `.row` 的关系差：
      · 主会话：`.row`（全宽）> `.bubble`（max-width 80%）；
      · 会话窗：`.fm-msg`（= 行壳，max-width 80%）> `.bubble`（100% of 行壳）。
