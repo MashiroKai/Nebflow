@@ -146,15 +146,15 @@ object ProfileSync:
     keys.map { k =>
       meta.get(k) match
         case Some(m) => Entry(k, content.getOrElse(k, ""), m.updatedAt, m.originDeviceId)
-        case None    => Entry(k, content.getOrElse(k, ""), 0L, "")
+        case None => Entry(k, content.getOrElse(k, ""), 0L, "")
     }
 
   /** 本机状态 → **未签名**载荷（无任何描述键 ⇒ None：无可外推）。 */
   def buildPayload(
-      d: ProfileDescriptions,
-      meta: Map[String, SyncMeta],
-      fromDeviceId: String,
-      nowMs: Long
+    d: ProfileDescriptions,
+    meta: Map[String, SyncMeta],
+    fromDeviceId: String,
+    nowMs: Long
   ): Option[ProfilePayload] =
     val entries = entriesOf(d, meta)
     if entries.isEmpty then None
@@ -226,7 +226,7 @@ object ProfileSync:
     if !DeviceHmac.tsFresh(p.tsSec.toString, nowMs) then Some(s"stale ts (${p.tsSec})")
     else
       DeviceRegistry.secretForSync(p.fromDeviceId) match
-        case None    => Some(s"sender device '${p.fromDeviceId}' not paired")
+        case None => Some(s"sender device '${p.fromDeviceId}' not paired")
         case Some("") => Some("empty shared key")
         case Some(key) =>
           if DeviceHmac.verify(key, canonicalOf(p), p.sig) then None
@@ -244,9 +244,9 @@ object ProfileSync:
    *   ④ 其余 ⇒ `applied`（远端严格更新 / 首见）。
    */
   def decide(
-      localContent: Map[String, String],
-      localMeta: Map[String, SyncMeta],
-      entries: List[Entry]
+    localContent: Map[String, String],
+    localMeta: Map[String, SyncMeta],
+    entries: List[Entry]
   ): List[Outcome] =
     entries.map { e =>
       if !isValidKey(e.key) then Outcome(e.key, Verdict.Rejected, "unknown key shape")
@@ -274,11 +274,9 @@ object ProfileSync:
       case KindGroupRemark =>
         d.copy(groupRemark = if value.isEmpty then d.groupRemark - id else d.groupRemark + (id -> value))
       case KindGroupDescription =>
-        d.copy(groupDescription =
-          if value.isEmpty then d.groupDescription - id else d.groupDescription + (id -> value)
-        )
+        d.copy(groupDescription = if value.isEmpty then d.groupDescription - id else d.groupDescription + (id -> value))
       case KindSelfBio => d.copy(selfBio = value)
-      case _           => d
+      case _ => d
 
   /** 把已裁定为 applied 的条目写进描述（纯函数，全量折叠）。 */
   def applyEntries(d: ProfileDescriptions, entries: List[Entry]): ProfileDescriptions =
@@ -289,8 +287,10 @@ object ProfileSync:
   @volatile private[neblink] var sendFn: (String, Json) => IO[Boolean] = null
   @volatile private[neblink] var selfIdFn: IO[String] = IO.pure("")
   @volatile private[neblink] var panelBroadcastFn: Json => IO[Unit] = null
+
   /** 描述面的**同一 Ref**（与 `FriendService` 的写面同源；未挂 = 单机形态）。 */
   @volatile private[neblink] var descRef: Ref[IO, ProfileDescriptions] = null
+
   /** 最近一次外推是否全部送达（`None` = 本进程还没推过；状态出口读它）。 */
   @volatile private[neblink] var lastPushOk: Option[Boolean] = None
 
@@ -329,13 +329,17 @@ object ProfileSync:
         selfIdFn = svc.identity.map(_.deviceId)
         panelBroadcastFn = panelBroadcast
         // 收件面：unsafeRunSync 注册（DeviceDelegate/AgentIdentitySync 同款纪律）。
-        svc.addDataHandler(payload => handlePayload(payload)).unsafeRunSync()(
-          using cats.effect.unsafe.implicits.global
-        )
+        svc
+          .addDataHandler(payload => handlePayload(payload))
+          .unsafeRunSync()(using
+            cats.effect.unsafe.implicits.global
+          )
         // 对账推：peer 集合变化（boot 后首联/重连/新配对）⇒ 全量描述外推。
-        svc.addPeerChangeCallback(pushAllProfile()).unsafeRunSync()(
-          using cats.effect.unsafe.implicits.global
-        )
+        svc
+          .addPeerChangeCallback(pushAllProfile())
+          .unsafeRunSync()(using
+            cats.effect.unsafe.implicits.global
+          )
         logger.infoSync(s"ProfileSync receive face armed (channel: $ChannelName, kind: $KindSync)")
 
   /** DeviceDelegate.sendToDevice 同款双腿：presence 优先（送达判真），relay 兜底。 */
@@ -422,6 +426,8 @@ object ProfileSync:
       yield ())
         .handleErrorWith(e => logger.warn(s"profile-sync push failed: ${e.getMessage}"))
         .guarantee(IO(pushInFlight.set(false)))
+    end if
+  end pushAllProfile
 
   // ── 收件面（对端帧落地：验签 → 逐键 LWW → 落盘 → 审计 → 广播；零回推）──────
 
@@ -443,8 +449,7 @@ object ProfileSync:
   /** 已验签帧的收敛面（**不触发任何外推**——回声抑制靠结构）。 */
   private[neblink] def applyVerified(p: ProfilePayload): IO[List[Outcome]] =
     val ref = descRef
-    if ref == null then
-      logger.warn("profile-sync frame dropped: descriptions ref not attached").as(Nil)
+    if ref == null then logger.warn("profile-sync frame dropped: descriptions ref not attached").as(Nil)
     else
       for
         cur <- ref.get
@@ -473,7 +478,9 @@ object ProfileSync:
           val src = p.entries.find(_.key == o.key)
           audit(
             o.key,
-            src.map(e => if e.originDeviceId.nonEmpty then e.originDeviceId else p.fromDeviceId).getOrElse(p.fromDeviceId),
+            src
+              .map(e => if e.originDeviceId.nonEmpty then e.originDeviceId else p.fromDeviceId)
+              .getOrElse(p.fromDeviceId),
             src.map(_.updatedAt).getOrElse(0L),
             o.result,
             o.reason
@@ -482,11 +489,15 @@ object ProfileSync:
         _ <- if applied.isEmpty then IO.unit else broadcastChanged()
       yield outcomes
 
+    end if
+
+  end applyVerified
+
   /** 描述被远端改动：面板立即重读（不等刷新/重启）。未装配 = no-op。 */
   private def broadcastChanged(): IO[Unit] =
     Option(panelBroadcastFn) match
       case Some(broadcast) => broadcast(Json.obj("type" -> FrameType.asJson)).handleError(_ => IO.unit)
-      case None            => IO.unit
+      case None => IO.unit
 
   // ── 审计（结构化；**描述正文永不入日志**）────────────────────────────────
 
@@ -500,8 +511,8 @@ object ProfileSync:
     )
     result match
       case Verdict.Applied => logger.info("profile-sync audit", kv*)
-      case Verdict.Stale   => logger.debug("profile-sync audit", kv*) // 旧戳丢弃：debug（不含内容）
-      case _               => logger.warn("profile-sync audit", kv*)
+      case Verdict.Stale => logger.debug("profile-sync audit", kv*) // 旧戳丢弃：debug（不含内容）
+      case _ => logger.warn("profile-sync audit", kv*)
 
   // ── 只读状态出口（前端徽标读它；未配置 NebLink ⇒ 全 local-only）───────────
 
@@ -573,7 +584,9 @@ object ProfileSyncMetaStore:
   def all(): IO[Map[String, ProfileSync.SyncMeta]] = IO.blocking(readSync())
 
   /** 原子读-改-写（返回改后的全量；落盘失败只留 WARN，不砸调用方）。 */
-  def update(f: Map[String, ProfileSync.SyncMeta] => Map[String, ProfileSync.SyncMeta]): IO[Map[String, ProfileSync.SyncMeta]] =
+  def update(
+    f: Map[String, ProfileSync.SyncMeta] => Map[String, ProfileSync.SyncMeta]
+  ): IO[Map[String, ProfileSync.SyncMeta]] =
     IO.blocking {
       lock.synchronized {
         val next = f(readSync())
@@ -610,9 +623,12 @@ object ProfileSyncMetaStore:
             case Some(o) =>
               o.toMap.flatMap { case (k, v) =>
                 val c = v.hcursor
-                c.downField("updatedAt").as[Long].toOption.map(ts =>
-                  k -> ProfileSync.SyncMeta(ts, c.downField("originDeviceId").as[String].toOption.getOrElse(""))
-                )
+                c.downField("updatedAt")
+                  .as[Long]
+                  .toOption
+                  .map(ts =>
+                    k -> ProfileSync.SyncMeta(ts, c.downField("originDeviceId").as[String].toOption.getOrElse(""))
+                  )
               }
 
 end ProfileSyncMetaStore

@@ -59,15 +59,17 @@ class ProfileSyncSpec extends CatsEffectSuite:
     )
     os.write(dir / "devices.json", json.noSpaces)
 
+  end writePairing
+
   private def entry(key: String, value: String, ts: Long, origin: String = "peer"): ProfileSync.Entry =
     ProfileSync.Entry(key, value, ts, origin)
 
   /** 已签名的上机帧（`peer` 的名字在配对表里 ⇒ 收端验签读同一把 key）。 */
   private def signedFrame(
-      entries: List[ProfileSync.Entry],
-      from: String = "peer",
-      nowMs: Long = System.currentTimeMillis(),
-      nonce: String = scala.util.Random.alphanumeric.take(12).mkString
+    entries: List[ProfileSync.Entry],
+    from: String = "peer",
+    nowMs: Long = System.currentTimeMillis(),
+    nonce: String = scala.util.Random.alphanumeric.take(12).mkString
   ): Json =
     val unsigned = ProfileSync.ProfilePayload(entries, from, nowMs / 1000L, nonce, "")
     ProfileSync.encodePayload(ProfileSync.signedFor(unsigned, from))
@@ -207,6 +209,8 @@ class ProfileSyncSpec extends CatsEffectSuite:
       assertEquals(meta.get("groupRemark:g1"), Some(ProfileSync.SyncMeta(500L, "peer")))
       assertEquals(sent.toList, Nil, "回声抑制靠结构：收帧路径绝不外推")
 
+    end for
+
   test("P3 旧戳帧：本地逐字不动（stale，零写入、零推送）"):
     writePairing("peer" -> "k1", "self" -> "k-self")
     val sent = scala.collection.mutable.ListBuffer.empty[(String, Json)]
@@ -229,6 +233,8 @@ class ProfileSyncSpec extends CatsEffectSuite:
       assertEquals(disk, ProfileDescriptions.empty, "stale 帧零写入（磁盘不该被碰）")
       assertEquals(sent.toList, Nil)
 
+    end for
+
   test("P2 伪造帧经 handlePayload：拒收且零写入"):
     writePairing("peer" -> "k1", "self" -> "k-self")
     for
@@ -247,6 +253,7 @@ class ProfileSyncSpec extends CatsEffectSuite:
       _ <- ProfileSync.handlePayload(forged)
       snap <- ref.get
     yield assertEquals(snap, ProfileDescriptions.empty)
+    end for
 
   // ── P5 版本兼容 ────────────────────────────────────────────────────────────
 
@@ -272,6 +279,7 @@ class ProfileSyncSpec extends CatsEffectSuite:
       assertEquals(outcomes.map(_.result), List("applied"))
       assertEquals(snap.friendBio, Map("u1" -> "新介绍"))
       assertEquals(snap.groupRemark, Map("g1" -> "球局群"), "未在本帧的键不得被碰")
+    end for
 
   // ── P6 状态出口 ────────────────────────────────────────────────────────────
 
@@ -319,6 +327,7 @@ class ProfileSyncSpec extends CatsEffectSuite:
       )
       assertEquals(state(badJson), Some("local-only"), "送达失败绝不说 synced")
       assertEquals(state(unwired), Some("local-only"))
+    end for
 
   // ── 写后外推 ───────────────────────────────────────────────────────────────
 
@@ -346,3 +355,5 @@ class ProfileSyncSpec extends CatsEffectSuite:
       val stamp = meta.get("groupRemark:g1")
       assert(stamp.isDefined && stamp.get.updatedAt > 0L, "本地写必须打网关时钟戳")
       assertEquals(stamp.map(_.originDeviceId), Some("self"))
+    end for
+end ProfileSyncSpec
