@@ -1,6 +1,6 @@
 ---
 name: stand-dev
-description: stand 本体开发六章总纲——方法章（需求拆解/技术调研/trade-off/并行调研）、设计章（UI/UX 设计规格书/视觉评审）、前端章（vanilla JS 规范/Sapphire Glass/视觉裁定铁律/范式案例库）、后端章（Scala actor 分层/sbt/prompt cache/工具设计）、qa 验证章（五维审核/隔离冒烟/自验 harness/验红实证）、引擎章（合并发版审查/技术文档/提示词工程/插件封装）。Use when 开发 stand 本体：需求拆解、技术调研与选型、写设计规格书、视觉评审、改 web/ 前端、写 src/main/scala/ 后端、交付前验证、合并分支、发版、写文档与系统提示词、封装插件；按任务域进对应章读 references 深件。
+description: stand 本体开发六章总纲——方法章（需求拆解/技术调研/trade-off/并行调研）、设计章（UI/UX 设计规格书/视觉评审）、前端章（vanilla JS 规范/Sapphire Glass/视觉裁定铁律/范式案例库）、后端章（Scala actor 分层/sbt/prompt cache/工具设计/工具链全谱/最小可信基）、qa 验证章（五维审核/隔离冒烟/自验 harness/验红实证）、引擎章（合并发版审查/技术文档/提示词工程/插件封装）。Use when 开发 stand 本体：需求拆解、技术调研与选型、写设计规格书、视觉评审、改 web/ 前端、写 src/main/scala/ 后端、交付前验证、合并分支、发版、写文档与系统提示词、封装插件；按任务域进对应章读 references 深件。
 audience: nebflow-project
 language: zh
 status: active
@@ -76,6 +76,7 @@ status: active
 - 技术栈：Scala 3 / 自研 actor / http4s / cats-effect。
 - **架构铁律**：Actor 与 IO 分层（互不越界）；编码规范：最小改动、向后兼容。
 - sbt 实践（`-batch`/锁冲突/注释坑）；worktree 纪律；交付口径（自测后交 QA，不自行合并）。
+- **工具链全谱与最小可信基（2026-11-04 作者裁定）**：全谱 = 构建/编译 + 测试 + 格式化/质量（sbt 1.10.10 / Scala 3.5.2 钉版 / JDK 21 LTS / MUnit + munit-cats-effect（非 ScalaTest）/ scalafmt 2.5.2 / `-Xfatal-warnings`；scala-cli 未装，本仓口径 = sbt）；可信基两定义——安全性 = 过我们设计的测试、完备性 = 上层单向引用不引入新基础件（db/pilogic 即重筑实例）；接线分歧分级：技术等价自决、语义分歧上报作者；Rust 仅对照（triple-v2 四件套落地中），不扩域。
 - 上游衔接：方案与技术选型方法见方法章 `grill`（`_ARCH_SPEC.md` 是实现输入，任务清单即验收对照物）。
 
 ### nebflow-cache — prompt cache 命中率
@@ -159,7 +160,7 @@ status: active
 - 任务是**查证据**（多视角、来源可验证的深度调研/文献调研/事实核查）→ **方法章** parallel-research。
 - 任务是**出设计**（新 UI/交互要设计规格书；实现完成要视觉评审/设计走查）→ **设计章** design-spec。
 - 改 `src/main/resources/web/` 页面/组件/样式 → **前端章**（visual-style 终裁视觉冲突）。
-- 写/改 `src/main/scala/`、调 flow engine、设计工具 → **后端章**。
+- 写/改 `src/main/scala/`、调 flow engine、设计工具、定工具链口径 / 可信基接线 → **后端章**。
 - 交付前验证、verify 节点、验收核对 → **qa 章**（后端交付→nebflow-qa-backend；前端交付→nebflow-qa-frontend；修 bug→verification-rigor 验红）。
 - 合并分支 / 发版 / 代码审查 → **引擎章**（merge-pipeline / release-pipeline / review）。
 - 写文档 / 改系统提示词 / agent 体检 → **引擎章**（nebflow-docs / nebflow-prompt-engineering）。

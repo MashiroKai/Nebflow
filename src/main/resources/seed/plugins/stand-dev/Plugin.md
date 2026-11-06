@@ -10,7 +10,7 @@ stand-dev 是 **stand 本体开发统一知识包**（2026-10-31 作者令「开
 - **设计章**——`skills/stand-dev/references/design/`（1 份）：设计规格书四道防线（只设计不实现）与视觉评审（design-spec）。
 - **qa 章**——`skills/stand-dev/references/qa/`（5 份）：前后端五维审核、隔离真实例冒烟、自验 harness、验红实证。
 - **前端章**——`skills/stand-dev/references/frontend/`（3 份）：web/ 实现规范、用户视觉裁定铁律、UI/UX 范式案例库。
-- **后端章**——`skills/stand-dev/references/backend/`（3 份）：Scala 技术栈与分层铁律、sbt 实践、prompt cache、工具系统设计。
+- **后端章**——`skills/stand-dev/references/backend/`（3 份）：Scala 技术栈与分层铁律、sbt 实践、prompt cache、工具系统设计、工具链全谱与最小可信基口径（2026-11-04 裁定）。
 - **引擎章**——`skills/stand-dev/references/engine/`（7 份）：合并/发版/三维审查、技术文档、提示词工程、插件封装与描述规范。
 
 **包纪律一句话**：六章不混装——按任务域进对应章，章内 references 深件按需 Read；「选题/调研/方案」（方法章）→「设计先行」（设计章）→「写」（前端/后端章）→「验」（qa 章）→「闸」（引擎章 pipelines）是五道关卡，不自行跳关；方法章/设计章不写生产代码（示例代码、规格书、评审报告除外），交付自测完成后交 QA 验收、审查前置再合并。
@@ -56,7 +56,7 @@ stand-dev/                              （包根）
 | 设计 | 写设计规格书 / 视觉评审 / 设计走查 | 只设计不写产品代码；四道防线（设计先行→规格化实现→双重验收→教训沉淀）；视觉评审绝不裸看图下结论（截图＋DOM 断言交叉验证） | `references/design/*.md` |
 | qa | 交付前验证 / 合并前把关 / verify 节点 | 后端五维全覆盖（compile/test/验收逐项/质量/回归）；前端隔离真实例三步缺一不可、禁静态替身；修 bug 必做验红实证 | `references/qa/*.md` |
 | 前端 | 改 `src/main/resources/web/` | 无构建 vanilla JS；CSS 禁裸 hex 一律 `var(--color-*)`；视觉冲突以 visual-style 铁律终裁；实现以设计规格书为唯一依据 | `references/frontend/*.md` |
-| 后端 | 改 `src/main/scala/` / 调 flow engine / 建工具 | Actor 与 IO 分层铁律；最小改动/向后兼容；system prompt 前缀改动前必读 nebflow-cache | `references/backend/*.md` |
+| 后端 | 改 `src/main/scala/` / 调 flow engine / 建工具 / 定工具链口径与可信基接线 | Actor 与 IO 分层铁律；最小改动/向后兼容；system prompt 前缀改动前必读 nebflow-cache；工具链全谱（MUnit/scalafmt/-Xfatal-warnings）与最小可信基（上层单向引用 db/pilogic）系 2026-11-04 裁定 | `references/backend/*.md` |
 | 引擎 | 合并 / 发版 / 审查 / 文档 / 提示词 / 封装插件 | 合并 `--no-ff` + go/no-go 三判据；tag 打在 release 分支 merge commit；review 三维评分 check-fix ≤3 轮；插件封装落盘即生效、自检后冻结 | `references/engine/*.md` |
 
 - **关卡顺序**：选题与方案（方法章）→ 设计先行（设计章）→ 写（前端/后端章）→ 自验（qa 章 frontend-verification）→ 交付 QA（qa 章 nebflow-qa-*）→ 审查（引擎章 review）→ 合并（引擎章 merge-pipeline）→ 需要发版时（引擎章 release-pipeline）。
@@ -77,7 +77,7 @@ stand-dev/                              （包根）
 | `frontend/nebflow-frontend.md` | frontend-dev/nebflow-frontend | web/ 结构、Sapphire Glass 设计系统、硬约束、截图驱动验证流 |
 | `frontend/visual-style.md` | frontend-dev/visual-style | 用户视觉裁定铁律：弹窗毛玻璃无 overlay、控件玻璃质感、中度字重 |
 | `frontend/design-system.md` | frontend-dev/design-system | 功能类型→成熟范式→适配规则案例库（软参考，冲突以 visual-style 为准） |
-| `backend/nebflow-backend.md` | backend-dev/nebflow-backend | Scala 3/actor/http4s 技术栈、Actor/IO 分层、编码规范、sbt、worktree 纪律 |
+| `backend/nebflow-backend.md` | backend-dev/nebflow-backend | Scala 3/actor/http4s 技术栈、Actor/IO 分层、编码规范、sbt、工具链全谱与最小可信基（2026-11-04 裁定）、worktree 纪律 |
 | `backend/nebflow-cache.md` | backend-dev/nebflow-cache | prompt cache 命中率：指标/数据源/间隔悬崖/共享前缀维护纪律 |
 | `backend/nebflow-tool-dev.md` | backend-dev/nebflow-tool-dev | 工具管线/权限模型/六条设计原则/新建工具流程 |
 | `engine/merge-pipeline.md` | pipelines/merge-pipeline | 分支四事实扫描→go/no-go→`--no-ff` 合并→报告，不 push |
@@ -94,7 +94,7 @@ stand-dev/                              （包根）
 - 任务是**查证据**（多视角、来源可验证的深度调研）→ 方法章（parallel-research）。
 - 任务是**出设计**（新 UI/交互要设计规格书；实现完成要视觉评审/设计走查）→ 设计章（design-spec）。
 - 任务是**改 web/ 前端页面/组件/样式** → 前端章（nebflow-frontend + visual-style；设计新 UI 前先查 design-system 案例库）。
-- 任务是**写/改 Scala 后端、调 flow engine、建工具** → 后端章（nebflow-backend / nebflow-tool-dev；cache 指标相关加读 nebflow-cache）。
+- 任务是**写/改 Scala 后端、调 flow engine、建工具、定工具链口径/可信基接线** → 后端章（nebflow-backend / nebflow-tool-dev；cache 指标相关加读 nebflow-cache）。
 - 任务是**交付 QA、验证、verify 节点** → qa 章（后端交付→nebflow-qa-backend；前端交付→nebflow-qa-frontend；修 bug 必附 verification-rigor 验红；跨 agent 行为→isolated-smoke-verification）。
 - 任务是**合并分支** → 引擎章 merge-pipeline；**发版** → release-pipeline；**代码审查/review** → review。
 - 任务是**写文档/改系统提示词/体检 agent 定义** → 引擎章 nebflow-docs / nebflow-prompt-engineering。

@@ -2,11 +2,11 @@
 
 ---
 name: nebflow-backend
-description: Nebflow Scala 后端开发域知识——Scala 3/自研 actor/http4s/cats-effect 技术栈、Actor 与 IO 分层铁律、最小改动/向后兼容编码规范、sbt 编译测试实践（-batch/锁冲突/注释坑）、worktree 纪律。Use when 在 Nebflow 主仓或其 worktree 实现/修复/重构 Scala 后端代码，或排查 sbt 构建问题。
-when_to_use: Nebflow 主仓 Scala 后端任务（src/main/scala/ 下功能实现、bug 修复、重构、测试编写、构建配置）；与同包 qa 章 verification-rigor（验证方法论）互补——本 skill 管"怎么写"，那边管"怎么验证"。
+description: Nebflow Scala 后端开发域知识——Scala 3/自研 actor/http4s/cats-effect 技术栈、Actor 与 IO 分层铁律、最小改动/向后兼容编码规范、sbt 编译测试实践（-batch/锁冲突/注释坑）、工具链全谱（MUnit/scalafmt/-Xfatal-warnings）、最小可信基构建原则、worktree 纪律。Use when 在 Nebflow 主仓或其 worktree 实现/修复/重构 Scala 后端代码，或排查 sbt 构建问题。
+when_to_use: Nebflow 主仓 Scala 后端任务（src/main/scala/ 下功能实现、bug 修复、重构、测试编写、构建配置、工具链口径与可信基接线）；与同包 qa 章 verification-rigor（验证方法论）互补——本 skill 管"怎么写"，那边管"怎么验证"。
 language: zh
 status: active
-last_verified: 2026-09-03
+last_verified: 2026-11-04
 ---
 
 # Nebflow Backend — Scala 后端开发域知识
@@ -16,6 +16,40 @@ last_verified: 2026-09-03
 - Scala 3, 自研 actor, http4s, cats-effect
 - 构建 sbt；测试 `sbt test`；源码在 `src/main/scala/`
 - 主仓 = 任务书给定的 worktree 座位（禁写死机器路径）；Rust 版（`nebflow-rs/`、`/tmp/nebflow-rust`）禁触
+
+## 工具链全谱与最小可信基（2026-11-04 作者裁定）
+
+> 三条口径均为作者 2026-11-04 裁定注入（19:54 裁定/20:06 定义/20:12 全谱口径）；「」内为原话逐字，不带引号文字为执行侧整理，语义以原话为准。
+
+### 口径一：最小可信基构建原则（19:54 裁定，20:06 定义）
+
+- 作者原话：「所有仓库代码编写保持最小可信基构建原则。有限确保底层逻辑的正确性」。
+- **「可信」两定义（20:06）**：
+  - **安全性可信** =「能够通过我们设计的测试」。
+  - **功能完备性可信** =「这个可信基能够让上层代码构建时不会引入新的基础性代码，上层单方向引用下层」。
+- 当前实例：stand-scala 的 `src/main/scala/nebflow/db/` 与 `src/main/scala/nebflow/pilogic/` 两模块（2026-11-04 落地）即一次可信基重新构筑——上层（主链/工具/界面）**单向引用**它们，不在上层另写基础性代码。
+- **接线分歧分级制**：技术等价（实现选型不影响语义）→ 执行侧自决；语义分歧（影响行为/契约/依赖方向）→ 上报作者裁定。
+
+### 口径二：工具链标准 = 全谱口径（20:12）
+
+- 作者原话：「不仅仅是项目管理工具和编译器（sbt，cargo，scala-cli，rustc），我还希望有标准化测试工具（scalaTest，Munit），代码风格和质量工具（scalafmt，rustfmt，clippy等）这些标准也很重要」。
+- stand-scala 全谱现状（2026-11-04 20:12 实测）：
+
+| 层位 | 工具 | 版本 / 口径 |
+|---|---|---|
+| 构建 / 项目管理 | sbt | 1.10.10 |
+| 语言 / 编译器 | Scala | 3.5.2（ThisBuild 钉版） |
+| JDK | Eclipse Temurin | 21.0.12.1 LTS |
+| 测试框架 | MUnit + munit-cats-effect | 仓内 build.sbt 实测在用；**不是 ScalaTest** |
+| 代码格式化 | scalafmt | `.scalafmt.conf` + sbt-scalafmt 2.5.2 |
+| 质量线 | `-Xfatal-warnings` | 编译警告即错 |
+| scala-cli | —（未装） | 2026-11-04 本机 PATH 实测未装；本仓构建口径 = sbt |
+
+### 口径三：Rust 侧对照（跨线参考，不扩域）
+
+- Rust 测试框架为**语言内建**：`#[test]` + `cargo test` + `#[cfg(test)]` 单测 + `tests/` 目录集成测试 + doc test——无第三方测试框架选型问题；事实标准第三方（proptest / criterion / mockall）按需引入。
+- triple-v2 线（`D:/workspace@zcode/nebflow/开发区/triple-v2`，stand-rust 的可信基）四件套——toolchain 钉版 / `rustfmt.toml` / clippy `-D warnings` 门 / `.cargo/config.toml`——**落地中**（截至 2026-11-04；未完成态，勿写成已完成）。
+- 域声明：本节仅作跨线对照参考；本包域 = stand 本体（scala + web），Rust 内容不入包域。
 
 ## 架构铁律
 
