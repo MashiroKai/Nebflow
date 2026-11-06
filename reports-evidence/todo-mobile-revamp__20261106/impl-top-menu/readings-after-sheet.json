@@ -1,0 +1,110 @@
+{
+  "count": 15,
+  "items": [
+    {
+      "selector": "button.mobile-back-btn.g2-fab",
+      "w": 48,
+      "h": 48,
+      "hitW": 48,
+      "hitH": 48
+    },
+    {
+      "selector": "div.tfl-row",
+      "w": 331,
+      "h": 50.83,
+      "hitW": 331,
+      "hitH": 50.83
+    },
+    {
+      "selector": "button.tfl-complete",
+      "w": 28,
+      "h": 28,
+      "hitW": 48,
+      "hitH": 48
+    },
+    {
+      "selector": "button.tfl-del",
+      "w": 18,
+      "h": 18,
+      "hitW": 48,
+      "hitH": 48
+    },
+    {
+      "selector": "button.tfl-fab-add.g2-fab",
+      "w": 48,
+      "h": 48,
+      "hitW": 48,
+      "hitH": 48
+    },
+    {
+      "selector": "button.mf-drawer-cancel-btn",
+      "w": 44,
+      "h": 44,
+      "hitW": 48,
+      "hitH": 48
+    },
+    {
+      "selector": "button.mf-drawer-done-btn",
+      "w": 44,
+      "h": 44,
+      "hitW": 48,
+      "hitH": 48
+    },
+    {
+      "selector": "input.tfl-row-title-input",
+      "w": 319,
+      "h": 16.19,
+      "hitW": 319,
+      "hitH": 16.19
+    },
+    {
+      "selector": "input.tfl-edit-notes",
+      "w": 331,
+      "h": 23.39,
+      "hitW": 331,
+      "hitH": 23.39
+    },
+    {
+      "selector": "button.tfl-edit-prio-btn.selected",
+      "w": 32,
+      "h": 26,
+      "hitW": 32,
+      "hitH": 26
+    },
+    {
+      "selector": "button.tfl-edit-prio-btn",
+      "w": 32,
+      "h": 26,
+      "hitW": 32,
+      "hitH": 26
+    },
+    {
+      "selector": "button.tfl-edit-prio-btn",
+      "w": 32,
+      "h": 26,
+      "hitW": 32,
+      "hitH": 26
+    },
+    {
+      "selector": "button.tfl-edit-prio-btn",
+      "w": 32,
+      "h": 26,
+      "hitW": 32,
+      "hitH": 26
+    },
+    {
+      "selector": "button.nb-toggle",
+      "w": 51,
+      "h": 31,
+      "hitW": 51,
+      "hitH": 46
+    },
+    {
+      "selector": "button.tfl-topmenu-btn.g2-fab",
+      "w": 48,
+      "h": 48,
+      "hitW": 48,
+      "hitH": 48
+    }
+  ]
+}

@@ -3301,6 +3301,15 @@ export default {
   'todoface.tagDeleteTitle': 'Delete tag',
   'todoface.tagDeleteConfirm': 'Deleting “{name}” removes it from every todo. This cannot be undone.',
   'todoface.colorN': 'Color {n}',
+  // Top floating "⋯" two-level menu (todo-mobile-topmenu batch 2026-11-06)
+  'todoface.menu': 'Menu',
+  'todoface.menuView': 'Tags',
+  'todoface.menuPrio': 'Priority',
+  'todoface.menuNoTags': 'No tags yet',
+  // item box (impl-row-reply batch 2026-11-06)
+  'todoface.edit': 'Edit',
+  'todoface.replyPh': 'Reply to this todo…',
+  'todoface.send': 'Send',
   // ── Perception domain (mail-perception-impl batch) ──
   'perception.title': 'Perception',
   'perception.close': 'Close',

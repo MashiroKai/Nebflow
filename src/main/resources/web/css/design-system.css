@@ -621,6 +621,7 @@
 :root {
   --ds-hit-tap-min: var(--ds-hit-tap-lg);  /* 48px 视觉档（= g2-fab 手机档实测量，glass.css:717-720） */
   --ds-hit-box-min: var(--ds-hit-tap-min); /* 48px 命中盒档（外扩后 ≥ 本值才算达标；默认同值） */
+
 @media (hover: hover) {
   
   /* ══ 组件类层（`.ds-*`）══════════════════════════════════════════════
