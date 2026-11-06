@@ -1,124 +1,56 @@
 
-Running 30 tests using 1 worker
+Running 12 tests using 1 worker
 
-[1/30] tests/bg-agentflow-layering.spec.mjs:223:1 › ① ② 三层深度：depth(A) = depth(整体行)+1，depth(A 的子) = depth(A)+1
-tests/bg-agentflow-layering.spec.mjs:223:1 › ① ② 三层深度：depth(A) = depth(整体行)+1，depth(A 的子) = depth(A)+1
-[①② dump] [{"level":"head","sid":"delegate-layer-a1b2c3d4","depth":"0","padLeft":12,"name":"层级批"},{"level":"child","sid":"node-layer-11112222","depth":"1","padLeft":16,"name":"节点A"},{"level":"child","sid":"node-layer-33334444","depth":"2","padLeft":28,"name":"A的子"}]
-
-[2/30] tests/bg-agentflow-layering.spec.mjs:255:1 › ⑤ 反向门：不折叠时三层行全在（不裁行）+ padding-left 严格递增 + 深行可读
-tests/bg-agentflow-layering.spec.mjs:255:1 › ⑤ 反向门：不折叠时三层行全在（不裁行）+ padding-left 严格递增 + 深行可读
-[⑤ dump] [{"sid":"delegate-layer-a1b2c3d4","depth":"0","padLeft":12,"scrollHeight":69,"name":"层级批","nameWidth":39},{"sid":"node-layer-11112222","depth":"1","padLeft":16,"scrollHeight":71,"name":"节点A","nameWidth":32},{"sid":"node-layer-33334444","depth":"2","padLeft":28,"scrollHeight":71,"name":"A的子","nameWidth":32}]
-
-[⑤] domRows=3 data-bg-row-total=3
-
-[⑤] pads=[[0,12],[1,16],[2,28]]
-
-[3/30] tests/bg-agentflow-layering.spec.mjs:299:1 › ⑥ N 层：四层链（整体行 → A → A 的子 → A 的孙）逐层 +1 且全在 DOM
-tests/bg-agentflow-layering.spec.mjs:299:1 › ⑥ N 层：四层链（整体行 → A → A 的子 → A 的孙）逐层 +1 且全在 DOM
-[⑥ dump] [{"sid":"delegate-layer-a1b2c3d4","depth":"0","padLeft":12,"name":"层级批"},{"sid":"node-layer-11112222","depth":"1","padLeft":16,"name":"节点A"},{"sid":"node-layer-33334444","depth":"2","padLeft":28,"name":"A的子"},{"sid":"node-layer-55556666","depth":"3","padLeft":40,"name":"A的孙"}]
-
-[4/30] tests/bg-agentflow-layering.spec.mjs:338:1 › ③ 折叠 A ⇒ A 子树整行数 = 0，整体行与 A 行仍在
-tests/bg-agentflow-layering.spec.mjs:338:1 › ③ 折叠 A ⇒ A 子树整行数 = 0，整体行与 A 行仍在
-[③ before] [{"sid":"delegate-layer-a1b2c3d4","depth":"0","collapsed":"false"},{"sid":"node-layer-11112222","depth":"1","collapsed":"false"},{"sid":"node-layer-33334444","depth":"2","collapsed":null}]
-
-[③ after] [{"sid":"delegate-layer-a1b2c3d4","depth":"0","collapsed":"false","caretCollapsed":false},{"sid":"node-layer-11112222","depth":"1","collapsed":"true","caretCollapsed":true}]
-
-[5/30] tests/bg-agentflow-layering.spec.mjs:367:1 › ④ reload + 同 fixture 重种 ⇒ 折叠状态仍在（不需要重新点）
-tests/bg-agentflow-layering.spec.mjs:367:1 › ④ reload + 同 fixture 重种 ⇒ 折叠状态仍在（不需要重新点）
-[④ localStorage] {"nebflow.bgAgents.collapsed.v1":"{\"node-layer-11112222\":true}"}
-
-[④ after reload] [{"sid":"delegate-layer-a1b2c3d4","depth":"0","collapsed":"false"},{"sid":"node-layer-11112222","depth":"1","collapsed":"true"}]
-
-[④ before reload] [{"sid":"delegate-layer-a1b2c3d4","collapsed":"false"},{"sid":"node-layer-11112222","collapsed":"true"}]
-
-[6/30] tests/bg-agentflow-orphans.spec.mjs:245:1 › ① ② ③ 野分组恰好 3 行（depth 0 / 带 data-bg-orphan / 不带归属锚）；2 条有父行仍在树里
-tests/bg-agentflow-orphans.spec.mjs:245:1 › ① ② ③ 野分组恰好 3 行（depth 0 / 带 data-bg-orphan / 不带归属锚）；2 条有父行仍在树里
-[①②③ dump] {"rows":[{"idx":0,"level":"head","depth":"0","orphan":null,"agentflow":null,"entity":"agentflow","sid":"delegate-orphan-a1b2c3d4","name":"野批","origin":"","buttons":1,"padLeft":12},{"idx":1,"level":"child","depth":"1","orphan":null,"agentflow":"delegate-orphan-a1b2c3d4","entity":"","sid":"node-orphan-11112222","name":"节点A","origin":"","buttons":0,"padLeft":16},{"idx":2,"level":"child","depth":"1","orphan":null,"agentflow":"delegate-orphan-a1b2c3d4","entity":"","sid":"node-orphan-33334444","name":"节点B","origin":"","buttons":0,"padLeft":16},{"idx":4,"level":"top","depth":"0","orphan":"1","agentflow":null,"entity":"","sid":"subagent-orphan-55556666","name":"野一","origin":"来自 AgentFlow 节点","buttons":0,"padLeft":12},{"idx":5,"level":"top","depth":"0","orphan":"1","agentflow":null,"entity":"","sid":"node-orphan-88889999","name":"野二","origin":"","buttons":0,"padLeft":12},{"idx":6,"level":"top","depth":"0","orphan":"1","agentflow":null,"entity":"","sid":"dd-orphan-99990000","name":"野三","origin":"来自已结束的委托","buttons":0,"padLeft":12}],"group":{"idx":3,"depth":"0","text":"无父节点","buttons":0,"isRow":false},"listTotal":"6"}
-
-[① ] group={"idx":3,"depth":"0","text":"无父节点","buttons":0,"isRow":false} wildRows=3 sids=["subagent-orphan-55556666","node-orphan-88889999","dd-orphan-99990000"]
-
-[③ ] parented=[{"sid":"node-orphan-11112222","level":"child","depth":"1","agentflow":"delegate-orphan-a1b2c3d4"},{"sid":"node-orphan-33334444","level":"child","depth":"1","agentflow":"delegate-orphan-a1b2c3d4"}]
-
-[7/30] tests/bg-agentflow-orphans.spec.mjs:290:1 › ④ 面板头计数 == 实际渲染行数（野行计入，一行不丢）
-tests/bg-agentflow-orphans.spec.mjs:290:1 › ④ 面板头计数 == 实际渲染行数（野行计入，一行不丢）
-[④] renderedRows=6 headerTotal=6 badge="6" section="智能体 · 6" rowTotal=6
-
-[④ sids] ["delegate-orphan-a1b2c3d4","node-orphan-11112222","node-orphan-33334444","subagent-orphan-55556666","node-orphan-88889999","dd-orphan-99990000"]
-
-[8/30] tests/bg-agentflow-orphans.spec.mjs:318:1 › ⑤ 反向门：野行排在分组头之后（不与正常树混排），既有「来自 …」角标保留
-tests/bg-agentflow-orphans.spec.mjs:318:1 › ⑤ 反向门：野行排在分组头之后（不与正常树混排），既有「来自 …」角标保留
-[⑤ order] groupIdx=3 wild=[["subagent-orphan-55556666",4],["node-orphan-88889999",5],["dd-orphan-99990000",6]] tree=[["delegate-orphan-a1b2c3d4",0],["node-orphan-11112222",1],["node-orphan-33334444",2]]
-
-[⑤ origin] subagent-orphan-55556666 → "来自 AgentFlow 节点"
-
-[9/30] tests/bg-agentflow-orphans.spec.mjs:353:1 › ⑥ 回收规则：野分组内零关闭/回收动作（引擎侧无明确判据 ⇒ 只展示）
-tests/bg-agentflow-orphans.spec.mjs:353:1 › ⑥ 回收规则：野分组内零关闭/回收动作（引擎侧无明确判据 ⇒ 只展示）
-[⑥] groupButtons=0 rowButtons=[["subagent-orphan-55556666",0],["node-orphan-88889999",0],["dd-orphan-99990000",0]]
-
-[⑥ static block] "function bgOrphanGroupHeadHtml(count) { const n = Number(count) || 0; return '<div class=\"bg-orphan-group\" data-bg-orphan-group=\"1\" data-bg-depth=\"0\" role=\"pres"
-
-[10/30] tests/bg-agentflow-orphans.spec.mjs:381:1 › ⑦ 判定式单点（bgOrphanRowKeys 一个函数）且组头文案 = locale 事实词（zh/en 同键）
-tests/bg-agentflow-orphans.spec.mjs:381:1 › ⑦ 判定式单点（bgOrphanRowKeys 一个函数）且组头文案 = locale 事实词（zh/en 同键）
-[⑦ words] {"orphanGroup":"无父节点","locale":"zh-CN"} groupText="无父节点"
-
-[⑦ counts] defs=1 mentions=2
-
-[⑦ anchor writes] 1
-
-[11/30] tests/bg-agentflow-orphans.spec.mjs:416:1 › ⑦ en 组头文案：同一个 locale 键（en 一键，非硬编码）
-tests/bg-agentflow-orphans.spec.mjs:416:1 › ⑦ en 组头文案：同一个 locale 键（en 一键，非硬编码）
-[⑦ en] {"orphanGroup":"No parent","locale":"en"} groupText="No parent"
-
-[12/30] tests/bg-agentflow-terms.spec.mjs:216:1 › H1 整体行（zh-CN）：data-bg-entity=agentflow 且显示词 = agentflow 词
+[1/12] tests/bg-agentflow-terms.spec.mjs:216:1 › H1 整体行（zh-CN）：data-bg-entity=agentflow 且显示词 = agentflow 词
 tests/bg-agentflow-terms.spec.mjs:216:1 › H1 整体行（zh-CN）：data-bg-entity=agentflow 且显示词 = agentflow 词
 [H1 zh dump] [{"level":"head","bgKey":"delegate-terms-a1b2c3d4","entity":"agentflow","entityText":"AgentFlow","kindText":"dispatcher"},{"level":"child","bgKey":"","entity":"","entityText":"","kindText":"Subagent"},{"level":"child","bgKey":"dispatcher-000bda27","entity":"","entityText":"","kindText":"分发器"},{"level":"child","bgKey":"node-aaaa1111","entity":"","entityText":"","kindText":"节点"},{"level":"child","bgKey":"node-bbbb2222","entity":"","entityText":"","kindText":"节点"},{"level":"child","bgKey":"subagent-4bf18f29","entity":"","entityText":"","kindText":"Subagent"},{"level":"child","bgKey":"subtask-5c6d7e8f","entity":"","entityText":"","kindText":"Delegate"},{"level":"child","bgKey":"dag-9a8b7c6d","entity":"","entityText":"","kindText":"节点"}]
 
 [H1 zh locale] {"agentflow":"AgentFlow","node":"节点","dispatcher":"分发器","locale":"zh-CN"}
 
-[13/30] tests/bg-agentflow-terms.spec.mjs:239:1 › H1 整体行（en）：data-bg-entity=agentflow 且显示词 = agentflow 词
+[2/12] tests/bg-agentflow-terms.spec.mjs:239:1 › H1 整体行（en）：data-bg-entity=agentflow 且显示词 = agentflow 词
 tests/bg-agentflow-terms.spec.mjs:239:1 › H1 整体行（en）：data-bg-entity=agentflow 且显示词 = agentflow 词
 [H1 en dump] [{"level":"head","entity":"agentflow","entityText":"AgentFlow"},{"level":"child","entity":"","entityText":""},{"level":"child","entity":"","entityText":""},{"level":"child","entity":"","entityText":""},{"level":"child","entity":"","entityText":""},{"level":"child","entity":"","entityText":""},{"level":"child","entity":"","entityText":""},{"level":"child","entity":"","entityText":""}]
 
 [H1 en locale] {"agentflow":"AgentFlow","node":"Node","dispatcher":"Dispatcher","locale":"en"}
 
-[14/30] tests/bg-agentflow-terms.spec.mjs:260:1 › H1b 合成延续组头（live 行已离场）同样是整体行：data-bg-entity=agentflow + agentflow 词
+[3/12] tests/bg-agentflow-terms.spec.mjs:260:1 › H1b 合成延续组头（live 行已离场）同样是整体行：data-bg-entity=agentflow + agentflow 词
 tests/bg-agentflow-terms.spec.mjs:260:1 › H1b 合成延续组头（live 行已离场）同样是整体行：data-bg-entity=agentflow + agentflow 词
 [H1b dump] [{"level":"head","bgKey":"chain:delegate-terms-a1b2c3d4","entity":"agentflow","entityText":"AgentFlow","agentflow":""},{"level":"child","bgKey":"dispatcher-000bda27","entity":"","entityText":"","agentflow":"delegate-terms-a1b2c3d4"},{"level":"child","bgKey":"node-aaaa1111","entity":"","entityText":"","agentflow":"delegate-terms-a1b2c3d4"}]
 
-[15/30] tests/bg-agentflow-terms.spec.mjs:293:1 › H2 成员行：data-bg-agentflow 全部 == 整体行 key，且成员徽标不含 agentflow/AgentFlow/Flow
+[4/12] tests/bg-agentflow-terms.spec.mjs:293:1 › H2 成员行：data-bg-agentflow 全部 == 整体行 key，且成员徽标不含 agentflow/AgentFlow/Flow
 tests/bg-agentflow-terms.spec.mjs:293:1 › H2 成员行：data-bg-agentflow 全部 == 整体行 key，且成员徽标不含 agentflow/AgentFlow/Flow
 [H2 dump] [{"level":"head","bgKey":"delegate-terms-a1b2c3d4","sid":"delegate-terms-a1b2c3d4","agentflow":"","kindText":"dispatcher"},{"level":"child","bgKey":"","sid":"subagent-store-7f8e9d0c","agentflow":"delegate-terms-a1b2c3d4","kindText":"Subagent"},{"level":"child","bgKey":"dispatcher-000bda27","sid":"dispatcher-000bda27","agentflow":"delegate-terms-a1b2c3d4","kindText":"分发器"},{"level":"child","bgKey":"node-aaaa1111","sid":"node-aaaa1111","agentflow":"delegate-terms-a1b2c3d4","kindText":"节点"},{"level":"child","bgKey":"node-bbbb2222","sid":"node-bbbb2222","agentflow":"delegate-terms-a1b2c3d4","kindText":"节点"},{"level":"child","bgKey":"subagent-4bf18f29","sid":"subagent-4bf18f29","agentflow":"delegate-terms-a1b2c3d4","kindText":"Subagent"},{"level":"child","bgKey":"subtask-5c6d7e8f","sid":"subtask-5c6d7e8f","agentflow":"delegate-terms-a1b2c3d4","kindText":"Delegate"},{"level":"child","bgKey":"dag-9a8b7c6d","sid":"dag-9a8b7c6d","agentflow":"delegate-terms-a1b2c3d4","kindText":"节点"}]
 
 [H2 words] {"subagent-store-7f8e9d0c":"Subagent","dispatcher-000bda27":"分发器","node-aaaa1111":"节点","node-bbbb2222":"节点","subagent-4bf18f29":"Subagent","subtask-5c6d7e8f":"Delegate","dag-9a8b7c6d":"节点"}
 
-[16/30] tests/bg-agentflow-terms.spec.mjs:334:1 › H2b flow 结构投影成员行（chain.nodes flow-step）：徽标 = 节点词，不再是 AgentFlow
+[5/12] tests/bg-agentflow-terms.spec.mjs:334:1 › H2b flow 结构投影成员行（chain.nodes flow-step）：徽标 = 节点词，不再是 AgentFlow
 tests/bg-agentflow-terms.spec.mjs:334:1 › H2b flow 结构投影成员行（chain.nodes flow-step）：徽标 = 节点词，不再是 AgentFlow
 [H2b dump] [{"level":"head","name":"术语批","agentflow":"","kindText":"dispatcher"},{"level":"child","name":"步骤一","agentflow":"delegate-terms-a1b2c3d4","kindText":"节点"},{"level":"child","name":"步骤二","agentflow":"delegate-terms-a1b2c3d4","kindText":"节点"}]
 
-[17/30] tests/bg-agentflow-terms.spec.mjs:367:1 › H3 反向门：整体行徽标不含 节点 / Node 字样（zh-CN 与 en 双验）
+[6/12] tests/bg-agentflow-terms.spec.mjs:367:1 › H3 反向门：整体行徽标不含 节点 / Node 字样（zh-CN 与 en 双验）
 tests/bg-agentflow-terms.spec.mjs:367:1 › H3 反向门：整体行徽标不含 节点 / Node 字样（zh-CN 与 en 双验）
 [H3 zh-CN] badges=["dispatcher","AgentFlow"]
 
 [H3 en] badges=["dispatcher","AgentFlow"]
 
-[18/30] tests/bg-agentflow-terms.spec.mjs:393:1 › H4 kernel 行：身份词逐字 kernel，且无 agentflow 徽标 / 无整体行实体锚
+[7/12] tests/bg-agentflow-terms.spec.mjs:393:1 › H4 kernel 行：身份词逐字 kernel，且无 agentflow 徽标 / 无整体行实体锚
 tests/bg-agentflow-terms.spec.mjs:393:1 › H4 kernel 行：身份词逐字 kernel，且无 agentflow 徽标 / 无整体行实体锚
 [H4 dump] [{"sid":"delegate-terms-kernel-01","level":"head","kindText":"kernel","entityText":"","entity":""},{"sid":"delegate-terms-disp-02","level":"head","kindText":"dispatcher","entityText":"AgentFlow","entity":"agentflow"}]
 
-[19/30] tests/bg-agentflow-terms.spec.mjs:427:1 › H4b kernel 徽标面（en）同样零 agentflow；dispatcher 面同样带
-tests/bg-agentflow-terms.spec.mjs:427:1 › H4b kernel 徽标面（en）同样零 agentflow；dispatcher 面同样带
+[8/12] tests/bg-agentflow-terms.spec.mjs:429:1 › H4b kernel 徽标面（en）同样零 agentflow；dispatcher 面同样带
+tests/bg-agentflow-terms.spec.mjs:429:1 › H4b kernel 徽标面（en）同样零 agentflow；dispatcher 面同样带
 [H4b dump] [{"sid":"delegate-terms-kernel-01","kindText":"kernel","entityText":"","entity":""},{"sid":"delegate-terms-disp-02","kindText":"dispatcher","entityText":"AgentFlow","entity":"agentflow"}]
 
-[20/30] tests/bg-agentflow-terms.spec.mjs:452:1 › H6 mode 缺席（旧盘 / 外部腿）：无来源证据 ⇒ 不落 agentflow 徽标，也不落形态词
-tests/bg-agentflow-terms.spec.mjs:452:1 › H6 mode 缺席（旧盘 / 外部腿）：无来源证据 ⇒ 不落 agentflow 徽标，也不落形态词
+[9/12] tests/bg-agentflow-terms.spec.mjs:454:1 › H6 mode 缺席（旧盘 / 外部腿）：无来源证据 ⇒ 不落 agentflow 徽标，也不落形态词
+tests/bg-agentflow-terms.spec.mjs:454:1 › H6 mode 缺席（旧盘 / 外部腿）：无来源证据 ⇒ 不落 agentflow 徽标，也不落形态词
 [H6 dump] [{"sid":"delegate-terms-legacy-03","level":"head","kindText":"","entityText":"","entity":""}]
 
-[21/30] tests/bg-agentflow-terms.spec.mjs:475:1 › H8 行类型 → 徽标对照表：只有 dispatcher 派生的整体行带 agentflow 词
-tests/bg-agentflow-terms.spec.mjs:475:1 › H8 行类型 → 徽标对照表：只有 dispatcher 派生的整体行带 agentflow 词
-[H8 table] [{"sid":"delegate-terms-h8-kernel","level":"head","kind":"kernel","entity":""},{"sid":"delegate-terms-h8-disp","level":"head","kind":"dispatcher","entity":"AgentFlow"},{"sid":"store-subagent-h8","level":"child","kind":"Subagent","entity":""},{"sid":"store-subtask-h8","level":"child","kind":"Delegate","entity":""},{"sid":"store-delegate-h8","level":"child","kind":"Delegate","entity":""},{"sid":"dispatcher-h8aaaa","level":"child","kind":"分发器","entity":""},{"sid":"node-h8bbbb","level":"child","kind":"节点","entity":""},{"sid":"subagent-h8cccc","level":"child","kind":"Subagent","entity":""},{"sid":"subtask-h8dddd","level":"child","kind":"Delegate","entity":""}]
+[10/12] tests/bg-agentflow-terms.spec.mjs:477:1 › H8 行类型 → 徽标对照表：只有 dispatcher 派生的整体行带 agentflow 词
+tests/bg-agentflow-terms.spec.mjs:477:1 › H8 行类型 → 徽标对照表：只有 dispatcher 派生的整体行带 agentflow 词
+[H8 table] [{"sid":"delegate-terms-h8-kernel","level":"head","kind":"kernel","entity":""},{"sid":"delegate-terms-h8-disp","level":"head","kind":"dispatcher","entity":"AgentFlow"},{"sid":"store-subagent-h8","level":"child","kind":"Subagent","entity":""},{"sid":"store-subtask-h8","level":"child","kind":"Delegate","entity":""},{"sid":"store-delegate-h8","level":"child","kind":"Delegate","entity":""},{"sid":"dispatcher-h8aaaa","level":"child","kind":"分发器","entity":""},{"sid":"node-h8bbbb","level":"child","kind":"节点","entity":""},{"sid":"subagent-h8cccc","level":"child","kind":"Subagent","entity":""},{"sid":"subtask-h8dddd","level":"child","kind":"Delegate","entity":""},{"sid":"delegate-terms-h8-disp-nocchain","level":"head","kind":"dispatcher","entity":""}]
 
-[22/30] tests/bg-agentflow-terms.spec.mjs:538:1 › H5 词源单点：两个显示词只在 bgAgents.js 一处消费，其它 web 模块不硬编码同批词
-tests/bg-agentflow-terms.spec.mjs:538:1 › H5 词源单点：两个显示词只在 bgAgents.js 一处消费，其它 web 模块不硬编码同批词
+[11/12] tests/bg-agentflow-terms.spec.mjs:546:1 › H5 词源单点：两个显示词只在 bgAgents.js 一处消费，其它 web 模块不硬编码同批词
+tests/bg-agentflow-terms.spec.mjs:546:1 › H5 词源单点：两个显示词只在 bgAgents.js 一处消费，其它 web 模块不硬编码同批词
 [H5 counts] kindAgentflow=1 kindNode=1 kindDispatcher=1
 
 [H5 offenders] []
@@ -127,12 +59,5 @@ tests/bg-agentflow-terms.spec.mjs:538:1 › H5 词源单点：两个显示词只
 
 [H5 locale en.js] AgentFlow
 
-[23/30] tests/bg-agentflow-terms.spec.mjs:608:1 › H7 agentflow 徽标判据 = 来源字段 dispatcher；head 行不无条件渲染实体徽标/实体锚
-[24/30] tests/bg-flow-chain-visibility.spec.mjs:169:1 › T1 溯源分组：作用域桶链行挂组头子行（分发器置顶 + 分发器/节点徽标 + 运行时长）＋计数含链行
-[25/30] tests/bg-flow-chain-visibility.spec.mjs:209:1 › T2 延续态（live 行终态在场）：delegate done 而链仍活 → 琥珀「链运行中」非灰化 + 子行在列
-[26/30] tests/bg-flow-chain-visibility.spec.mjs:237:1 › T3 延续态（live 行已离场）：主桶空 + 注册行镜像 → 快照恢复链行合成延续组头「链运行中」，徽标计数 > 0
-[27/30] tests/bg-flow-chain-visibility.spec.mjs:276:1 › T4 链全终态：合成组头消失、面板回空——延续徽标绝不滞留死链
-[28/30] tests/bg-flow-chain-visibility.spec.mjs:298:1 › T5 无主 Flow 行顶层直显：分发器/节点 kind 徽标 + 计数照计（C1 过滤退役）
-[29/30] tests/bg-mode-badge.spec.mjs:119:1 › ①② 实时帧：ownerMode ⇒ mode chip（内核/分发器样式类）；缺席 ⇒ 零渲染
-[30/30] tests/bg-mode-badge.spec.mjs:140:1 › ③ 快照帧（activeBgTasks 刷新恢复路径）：ownerMode 同行下发 ⇒ chip 渲染
-  30 passed (38.7s)
+[12/12] tests/bg-agentflow-terms.spec.mjs:616:1 › H7 agentflow 徽标判据 = 来源字段两轴（mode=dispatcher + orchestrationMode=agentflow）；head 行不无条件渲染实体徽标/实体锚
+  12 passed (14.2s)

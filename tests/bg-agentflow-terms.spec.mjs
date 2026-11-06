@@ -397,8 +397,10 @@ test('H4 kernel 行：身份词逐字 kernel，且无 agentflow 徽标 / 无整�
   const DISP_SID = 'delegate-terms-disp-02';
   await setFixture(page, {
     rows: [
-      mirrorRow({ taskNo: '92', delegateId: KERNEL_SID, title: '内核批次', mode: 'kernel' }),
-      mirrorRow({ taskNo: '93', delegateId: DISP_SID, title: '分发器批次', mode: 'dispatcher' }),
+      // kernel 的真实数据形：mode=kernel，orchestrationMode 最多少到 subagent-star
+      //（R-3a 只放行只读侦察腿；kernelFace 摘掉 NodeTools 四件 ⇒ 结构上无 ChainWrite）。
+      mirrorRow({ taskNo: '92', delegateId: KERNEL_SID, title: '内核批次', mode: 'kernel', orchestrationMode: 'subagent-star' }),
+      mirrorRow({ taskNo: '93', delegateId: DISP_SID, title: '分发器批次', mode: 'dispatcher', orchestrationMode: 'agentflow' }),
     ],
   });
   await inject(page, rootStart(KERNEL_SID, { name: 'KernelBatch', taskDescription: '内核批次' }));
@@ -431,8 +433,8 @@ test('H4b kernel 徽标面（en）同样零 agentflow；dispatcher 面同样带'
   const DISP_SID = 'delegate-terms-disp-02';
   await setFixture(page, {
     rows: [
-      mirrorRow({ taskNo: '92', delegateId: KERNEL_SID, title: 'kernel batch', mode: 'kernel' }),
-      mirrorRow({ taskNo: '93', delegateId: DISP_SID, title: 'dispatcher batch', mode: 'dispatcher' }),
+      mirrorRow({ taskNo: '92', delegateId: KERNEL_SID, title: 'kernel batch', mode: 'kernel', orchestrationMode: 'subagent-star' }),
+      mirrorRow({ taskNo: '93', delegateId: DISP_SID, title: 'dispatcher batch', mode: 'dispatcher', orchestrationMode: 'agentflow' }),
     ],
   });
   await inject(page, rootStart(KERNEL_SID, { name: 'KernelBatch', taskDescription: 'kernel batch' }));
@@ -454,7 +456,7 @@ test('H6 mode 缺席（旧盘 / 外部腿）：无来源证据 ⇒ 不落 agentf
   await bootApp(page, 'zh-CN');
   const LEGACY_SID = 'delegate-terms-legacy-03';
   await setFixture(page, {
-    rows: [mirrorRow({ taskNo: '94', delegateId: LEGACY_SID, title: '旧盘批次', mode: '' })],
+    rows: [mirrorRow({ taskNo: '94', delegateId: LEGACY_SID, title: '旧盘批次', mode: '', orchestrationMode: '' })],
   });
   await inject(page, rootStart(LEGACY_SID, { name: 'LegacyBatch', taskDescription: '旧盘批次' }));
   await openPanel(page);
@@ -477,6 +479,7 @@ test('H8 行类型 → 徽标对照表：只有 dispatcher 派生的整体行带
   await bootApp(page, 'zh-CN');
   const K = 'delegate-terms-h8-kernel';
   const D = 'delegate-terms-h8-disp';
+  const D0 = 'delegate-terms-h8-disp-nocchain'; // dispatcher 形态但从未登记过链
   const inD = (sid, over = {}) => ({
     type: 'agentStart',
     sessionId: D, rootSessionId: D,
@@ -485,10 +488,12 @@ test('H8 行类型 → 徽标对照表：只有 dispatcher 派生的整体行带
   });
   await setFixture(page, {
     rows: [
-      mirrorRow({ taskNo: '95', delegateId: K, title: '内核批次', mode: 'kernel' }),
-      mirrorRow({
-        taskNo: '96', delegateId: D, title: '分发器批次', mode: 'dispatcher',
-      }),
+      // kernel：mode=kernel + orchestrationMode=subagent-star（真实数据上限）。
+      mirrorRow({ taskNo: '95', delegateId: K, title: '内核批次', mode: 'kernel', orchestrationMode: 'subagent-star' }),
+      // dispatcher 且真的登记过链（orchestrationMode=agentflow）= 唯一该带 agentflow 的行。
+      mirrorRow({ taskNo: '96', delegateId: D, title: '分发器批次', mode: 'dispatcher', orchestrationMode: 'agentflow' }),
+      // dispatcher 形态但没登记过链（orchestrationMode=single）：没有派生事实。
+      mirrorRow({ taskNo: '97', delegateId: D0, title: '分发器空转批次', mode: 'dispatcher', orchestrationMode: 'single' }),
     ],
     children: {
       [D]: [
@@ -500,6 +505,7 @@ test('H8 行类型 → 徽标对照表：只有 dispatcher 派生的整体行带
   });
   await inject(page, rootStart(K, { name: 'KernelBatch', taskDescription: '内核批次' }));
   await inject(page, rootStart(D, { name: 'DispBatch', taskDescription: '分发器批次' }));
+  await inject(page, rootStart(D0, { name: 'DispIdle', taskDescription: '分发器空转批次' }));
   await inject(page, inD('dispatcher-h8aaaa', { status: 'Processing', name: 'dispatcher/Nebflow' }));
   await inject(page, inD('node-h8bbbb', { status: 'Processing', name: 'stand' }));
   await inject(page, inD('subagent-h8cccc', { status: 'Processing', name: '侦察' }));
@@ -516,8 +522,10 @@ test('H8 行类型 → 徽标对照表：只有 dispatcher 派生的整体行带
 
   // ① kernel 实例（最小单会话执行器）：只有身份词 kernel，零 agentflow。
   expect(badges(K)).toEqual(['kernel']);
-  // ② dispatcher 编排整体行：形态词 + agentflow 词（唯一允许同时两词的位）。
+  // ② dispatcher + 登记过链：形态词 + agentflow 词（唯一允许同时两词的位）。
   expect(badges(D)).toEqual(['dispatcher', words.agentflow]);
+  // ③ dispatcher 形态但没登记过链：只有形态词，没有编排事实就不落 agentflow。
+  expect(badges(D0)).toEqual(['dispatcher']);
   // ③ 成员行：各自 kind，零 agentflow。
   expect(badges('dispatcher-h8aaaa')).toEqual([words.dispatcher]);
   expect(badges('node-h8bbbb')).toEqual([words.node]);
@@ -603,17 +611,21 @@ test('H5 词源单点：两个显示词只在 bgAgents.js 一处消费，其它 
   }
 });
 
-// ── H7：来源字段门（静态读源码）——agentflow 徽标由 row.mode 判定，不靠猜 ──────
+// ── H7：来源字段门（静态读源码）——agentflow 徽标由来源字段判定，不靠猜 ────────
 
-test('H7 agentflow 徽标判据 = 来源字段 dispatcher；head 行不无条件渲染实体徽标/实体锚', async () => {
+test('H7 agentflow 徽标判据 = 来源字段两轴（mode=dispatcher + orchestrationMode=agentflow）；head 行不无条件渲染实体徽标/实体锚', async () => {
   const read = (p) => readFileSync(p, 'utf8');
   const bgSrc = read(join(WEB, 'js', 'main', 'bgAgents.js'));
   const slice = (name, endName) => bgSrc.slice(bgSrc.indexOf('function ' + name), bgSrc.indexOf('function ' + endName));
 
-  // ① 词源函数体 = 来源字段判定：逐字比较 'dispatcher'，并**只**认这一个词。
+  // ① 词源函数体 = 来源字段判定：形态轴逐字比较 'dispatcher'，编排事实轴逐字比较
+  //    'agentflow'——两轴都从注册行镜像读，一个词都不猜。
   const wordBody = slice('bgAgentflowWord', 'bgMemberKindWord');
   expect(wordBody.length).toBeGreaterThan(0);
+  expect(/bgDelegateExecMode\(\s*row\s*\)/.test(wordBody)).toBe(true);
   expect(/===\s*'dispatcher'/.test(wordBody)).toBe(true);
+  expect(/row\.orchestrationMode/.test(wordBody)).toBe(true);
+  expect(/===\s*'agentflow'/.test(wordBody)).toBe(true);
   // 不许字符串猜来源（前缀 / 包含 / 名字）——来源只认字段。
   for (const guess of ['startsWith', 'endsWith', '.includes(', 'indexOf(', /name\s*===/]) {
     expect(typeof guess === 'string' ? wordBody.includes(guess) : guess.test(wordBody)).toBe(false);
@@ -627,7 +639,12 @@ test('H7 agentflow 徽标判据 = 来源字段 dispatcher；head 行不无条件
   expect(/entityWord \? ' data-bg-entity="agentflow"' : ''/.test(rowBody)).toBe(true);
   expect(rowBody.includes('data-bg-row-level="head" data-bg-entity="agentflow"')).toBe(false);
 
-  // ③ 执行形态单一提取点：row.mode → kernel|dispatcher（值域外的词一律 ''）。
+  // ③ 来源对象单一入口：组头行的注册行镜像经 opts.registryRow 下传，渲染面不从
+  //    info/会话 id 另拼一份来源。
+  expect(/const registryRow = opts\.headLevel \? \(opts\.registryRow \|\| null\) : null;/.test(rowBody)).toBe(true);
+  expect(/registryRow: g\.row \|\| null/.test(bgSrc)).toBe(true);
+
+  // ④ 执行形态单一提取点：row.mode → kernel|dispatcher（值域外的词一律 ''）。
   expect(/function bgDelegateExecMode\s*\(/.test(bgSrc)).toBe(true);
   const modeBody = slice('bgDelegateExecMode', 'bgDelegateBadgeWord');
   expect(/row\s*&&\s*row\.mode/.test(modeBody)).toBe(true);

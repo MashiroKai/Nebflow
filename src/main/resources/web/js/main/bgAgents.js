@@ -610,24 +610,34 @@ function bgKindDisplayWord(kind) {
  *
  *  agentflow 错标修复批（2026-11-06 · 作者令逐字「kernel 被标记 agentflow？agentflow
  *  是用来标记 dispatcher 派生出来的节点的」）：**本词 = dispatcher 派生的编排身份词**，
- *  判据 = 来源字段 [[bgDelegateExecMode]]（`DelegateRegistry.Record.mode`）逐字等于
- *  `dispatcher`。三种行因此不落本词：
+ *  判据 = 来源字段**两轴**（同一个注册行镜像）：`DelegateRegistry.Record.mode` 逐字等于
+ *  `dispatcher`（有编排资格）且 `orchestrationMode` 逐字等于 `agentflow`（真的登记过链
+ *  = 真的派生过节点；唯一写点 `ChainWriteTool.registerChain`）。三种行因此不落本词：
  *    · `kernel`——最小单会话执行器本体（actor-tree spec v1 §13.2 R-3a：kernel 不派生，
- *      只放行只读侦察腿），它不是任何编排；它的身份词 = 逐字 `kernel`；
- *    · mode 缺席（旧盘 / 外部腿 / 非 delegate 会话）——无来源证据，不猜（无信息胜过错信息）；
- *    · 成员行——成员是节点，见 bgMemberKindWord（反向门同批保留）。
+ *      只放行只读侦察腿；`kernelFace` 摘掉 NodeTools 四件 ⇒ 结构上也没有 ChainWrite，
+ *      其 `orchestrationMode` 最多少到 `subagent-star`），它不是任何编排；身份词 = 逐字 `kernel`；
+ *    · dispatcher 但尚未登记过链（`orchestrationMode` 仍是 `single`）——没有派生事实；
+ *    · mode 缺席（旧盘 / 外部腿 / 非 delegate 会话）——无来源证据，不猜（无信息胜过错信息）。
+ *    成员行同样不落本词——成员是节点，见 bgMemberKindWord（反向门同批保留）。
  *  错标根因（旧实现）：本词的发射条件是「这一行是组头（headLevel）」——层级是**排布
  *  事实**，不是来源事实；组头判据把 kernel / 旧盘行一并算进了 agentflow。修法 = 判据
  *  换回来源字段，渲染面只消费同一读数，不做字符串猜（无前缀/名字/包含判读）。
  *
  *  与两个作者术语的分工：kernel / dispatcher 是**执行形态词**（逐字保留、不改名、
  *  不翻译），本词是**层级词**（这一行代表一次 dispatcher 编排）。
- * @param {string} execMode [[bgDelegateExecMode]] 的读数
+ * @param {any} row 注册行镜像（DelegateRow；缺行 ⇒ 零徽标）
  * @returns {string} 空串 = 本行不是 dispatcher 派生的编排（零徽标）
  */
-function bgAgentflowWord(execMode) {
-  const mode = String(execMode || '');
-  if (mode === 'dispatcher') return t('subagents.kindAgentflow');
+function bgAgentflowWord(row) {
+  // 两轴同读**注册行镜像**（DelegateRegistry.Record 的 provider 镜像）：
+  //   ① 执行形态 = dispatcher（`mode`）——编排的**资格**面；
+  //   ② 编排形态 = agentflow（`orchestrationMode`，唯一写点 = ChainWriteTool.registerChain
+  //      的成功回执）——真的登记过链 = 真的派生过节点。
+  // kernel 结构上到不了 ②（kernelFace 摘掉 NodeTools 四件 ⇒ 没有 ChainWrite），
+  // ① 再钉一道：两条来源都指向「dispatcher 派生的编排」才落词。
+  const execMode = bgDelegateExecMode(row);
+  const orchestrationMode = String((row && row.orchestrationMode) || '');
+  if (execMode === 'dispatcher' && orchestrationMode === 'agentflow') return t('subagents.kindAgentflow');
   return '';
 }
 
@@ -1339,7 +1349,7 @@ function bgOrphanRowHtml(row, bucketSid) {
 
 /**
  * 面板行 HTML（原 renderBgAgentDropdown map 体原样抽出——行渲染语义零改动；新增
- * opts.childLevel/headLevel 两级锚与 opts.execMode（执行形态来源读数）两个纯呈现参数）。
+ * opts.childLevel/headLevel 两级锚与 opts.registryRow（注册行镜像来源对象）两个纯呈现参数）。
  * 显示名契约批（2026-10-22）：delegate 组头行（opts.headLevel）新增
  * opts.rowTitle（DelegateRegistry.Record.title 的 provider 镜像——spawn 落盘、
  * 跨重启存活），主名 = 批次标题/任务描述首行（全生命周期稳定，不再收缩成
@@ -1361,15 +1371,15 @@ function bgOrphanRowHtml(row, bucketSid) {
  * 普通终态样式（既有 done 灰化/点形）。
  * 术语分层批（2026-11-05）：opts.agentflowKey——成员行的归属锚（所属整体行定位键，
  * 与 data-bg-key / bgRowLocatorKey 同口径）；整体行由 opts.headLevel 自动带实体锚
- * （agentflow 错标修复批 2026-11-06：实体锚改为**来源条件**——只有 opts.execMode =
- * dispatcher 的整体行才带，见 bgAgentflowWord）。
+ * （agentflow 错标修复批 2026-11-06：实体锚改为**来源条件**——只有 opts.registryRow
+ * 判定为 dispatcher 派生的编排才带，见 bgAgentflowWord）。
  * 层级缩进批（2026-11-05 腿②）：opts.depth——**真实父子链接**算出的深度（整体行 0、
  * 成员行 = 父行 +1，任意层数）；输出 data-bg-depth + --bg-row-depth 视觉缩进。
  * opts.childCount/opts.collapsed 随之从「组头专属」放宽到**任意有子行的行**（caret 形态
  * 与热区照旧），收起即隐藏整棵子树（剪枝在渲染循环里做，行集合/计数不受影响）。
  * 野节点归置批（2026-11-05 腿③）：opts.wild——野节点行（父不可解析）的归置锚
  * `data-bg-orphan="1"`（判定式单点见 bgOrphanRowKeys；行构造器只负责把结论上锚）。
- * @param {string} id @param {any} info @param {{childLevel?: boolean, headLevel?: boolean, execMode?: string, agentflowKey?: string, depth?: number, rowTitle?: string, shortName?: string, childCount?: number, collapsed?: boolean, wild?: boolean, orphanFrom?: string, orphanTitle?: string, bucketSid?: string, chainContinued?: boolean, chainCount?: number}} [opts]
+ * @param {string} id @param {any} info @param {{childLevel?: boolean, headLevel?: boolean, registryRow?: any, agentflowKey?: string, depth?: number, rowTitle?: string, shortName?: string, childCount?: number, collapsed?: boolean, wild?: boolean, orphanFrom?: string, orphanTitle?: string, bucketSid?: string, chainContinued?: boolean, chainCount?: number}} [opts]
  * @returns {string}
  */
 /** Mail 续传地址 chip（AgentControl name/address 批 2026-11-05 · 作者令「agentcontrol
@@ -1419,13 +1429,13 @@ function bgTaskRowHtml(id, info, opts = {}) {
   //     （bgDelegateBadgeWord：kernel / dispatcher，作者术语逐字保留）＋ 整体词
   //     .bg-task-entity（bgAgentflowWord）；
   //   · 成员行（编排里的节点）⇒ bgMemberKindWord（成员位绝不落整体词）。
-  // agentflow 错标修复批（2026-11-06）：两个词**同读一个来源读数** opts.execMode
-  // （调用方经 bgDelegateExecMode 从 row.mode 提取；kid 行恒 ''）——组头层级不再自己
-  // 决定身份词，kernel / 旧盘行因此拿不到 agentflow 词。
+  // agentflow 错标修复批（2026-11-06）：两个词**同读一个来源对象** opts.registryRow
+  // （注册行镜像；成员行恒 null）——组头层级不再自己决定身份词，kernel / 旧盘行因此
+  // 拿不到 agentflow 词。
   // 修订批九点②补漏：快照 kind（AgentKind.SubTask）同走显示词归一（数据面不动）。
-  const execMode = opts.headLevel ? String(opts.execMode || '') : '';
+  const registryRow = opts.headLevel ? (opts.registryRow || null) : null;
   const kind = opts.headLevel
-    ? bgDelegateBadgeWord(execMode)
+    ? bgDelegateBadgeWord(bgDelegateExecMode(registryRow))
     : bgMemberKindWord({ info, sessionId: info.sessionId || id, id });
   // 徽标归位批（2026-10-31 23:02 作者裁定）：**顶层行**（组头 + 未被认领的 leftover/
   //  孤儿行，即一切非 childLevel 行）不渲染 Delegate/Subagent 字样——层级锚不是历史
@@ -1434,9 +1444,9 @@ function bgTaskRowHtml(id, info, opts = {}) {
   const kindWord = (!opts.childLevel && (kind === 'Delegate' || kind === 'Subagent')) ? '' : kind;
   const kindPart = kindWord ? '<span class="bg-task-kind">' + escapeHtml(kindWord) + '</span>' : '';
   // 整体行实体词（术语分层批 + agentflow 错标修复批）：**只有 dispatcher 派生的编排**
-  // 才带本词（bgAgentflowWord 的来源判定）；kernel 行 / mode 缺席行 = 零徽标。成员行
-  // 永不出现（反向门：整体行也不出现节点词，两词位互斥）。
-  const entityWord = opts.headLevel ? bgAgentflowWord(execMode) : '';
+  // 才带本词（bgAgentflowWord 的两轴来源判定）；kernel 行 / 未登记链的行 / mode 缺席行
+  // = 零徽标。成员行永不出现（反向门：整体行也不出现节点词，两词位互斥）。
+  const entityWord = opts.headLevel ? bgAgentflowWord(registryRow) : '';
   const entityPart = entityWord
     ? '<span class="bg-task-entity">' + escapeHtml(entityWord) + '</span>'
     : '';
@@ -1961,10 +1971,10 @@ export function renderBgAgentDropdown() {
       htmlParts.push(bgTaskRowHtml(g.id, g.info, {
         headLevel: true,
         depth,
-        // 执行形态唯一来源读数（DelegateRegistry.Record.mode 的 provider 镜像）：
-        // 身份词（kernel/dispatcher 逐字）与 agentflow 徽标都由它定——一处提取，
-        // 渲染面不再各自读 row（agentflow 错标修复批 2026-11-06）。
-        execMode: bgDelegateExecMode(g.row),
+        // 来源对象（注册行镜像 = DelegateRegistry.Record 的 provider 镜像）：身份词
+        // （kernel/dispatcher 逐字）读其 mode，agentflow 徽标读其 mode + orchestrationMode
+        // ——一处给源，渲染面不各自读（agentflow 错标修复批 2026-11-06）。
+        registryRow: g.row || null,
         // 显示名契约批（2026-10-22）：组头注册行标题（DelegateRegistry.Record.title
         // 的 provider 镜像——跨重启存活，存量记录自带）透传为主名第一源。
         rowTitle: (g.row && g.row.title) || '',
