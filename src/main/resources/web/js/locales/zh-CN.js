@@ -395,6 +395,8 @@ export default {
   // 群组一期（friendgroups 客户端腿）：建群/群邀请（契约 = 主卡案1② + A-4）。
   'contacts.createGroup': '发起群聊',
   'contacts.createGroupTitle': '发起群聊',
+  // 统一面板批（2026-11-06）：顶栏返回圆钮的读屏/悬浮文案（原右上 X 无文案面）。
+  'contacts.back': '返回',
   'contacts.createGroupName': '群名称',
   // 建群面板骨架四段（2026-09-16 视觉重做）：输入区示例占位 / 列表区章节标签 /
   // 空态引导。三键与 en 同批落地（禁死键）。
@@ -1595,8 +1597,8 @@ export default {
   'chat.retry': '重试',
   // A 支 · 滚动跟随收敛：新增消息胶囊（计数 = 自离开底部以来新增的消息行数）
   'chat.newMessages': '↓ {n} 条新消息',
-  // 回到底部胶囊（四会话统一批 2026-11-05，js/scrollBackPill.js）：无未读、只是
-  // 往上翻得够远（距底 ≥ SHOW_AFTER_PX）时的文案 —— 与上面计数档同一枚胶囊。
+  // 回到底部（单实现批 2026-11-06，js/scrollPill.js）：无未读、只是往上翻得够远
+  // （距底 ≥ SHOW_AFTER_PX）时的文案 —— 与上面计数档**同一枚**胶囊的第二个档。
   'chat.backToBottom': '回到底部',
   // 搜索跳转回位胶囊（作者令 2026-11-01，searchReturnPill.js）：锚在 ⇒ 回跳转前
   // 位置；锚失 ⇒ 诚实降级回最新。

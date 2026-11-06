@@ -190,12 +190,9 @@
   box-sizing: border-box;
   padding: var(--ds-space-1h) var(--ds-space-2);
   font: 400 var(--ds-fs-hint) -apple-system, BlinkMacSystemFont, sans-serif;
-  border-radius: var(--ds-radius-input);
-  border: 1px solid var(--glass-border);
-  background: var(--glass-etched-bg);
   color: var(--color-frame-input-text, var(--color-frame-text));
 }
-/* 焦点态：.social-input 已收编 css/inputFocus.css（2026-11-05）。 */
+/* 造型 + 焦点态：归 css/inputSurface.css（输入面唯一标准批 2026-11-06）。 */
 .social-secret-state { font-size: var(--ds-fs-meta); color: var(--color-frame-text-dim); }
 
 /* Wrong configuration hint (W9) — ui-status-redesign：11px 通知句转中性字，

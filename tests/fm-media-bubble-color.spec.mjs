@@ -22,21 +22,22 @@
 // 判据（每条二值）：
 //   C1 出向同色  `.fm-msg.out .fm-att-list` 下媒体面容器（平面 `.pop-media-flat` /
 //       叠卡 `.pop-stack-view .media-layer`）computed backgroundColor **逐字等于**
-//       `.fm-msg.out .fm-msg-bubble` 的 computed backgroundColor（= --sapphire-tint-15）。
-//   C2 入向同色  同法镜像到 `.fm-msg.in`（= --glass-etched-bg，须压过 .pop-media-flat
-//       基座 #17191f / .ds-media-card 的 --ds-media-letterbox / 暗档 #101318）。
+//       `.fm-msg.out .fm-msg-bubble` 的 computed backgroundColor（= --nf-bub-ours-bg）。
+//   C2 入向同色  同法镜像到 `.fm-msg.in`（= --nf-bub-theirs-bg，须压过 .pop-media-flat
+//       基座 #17191f 与暗档 #101318）。
 //   C3 媒体元素透明  `.pop-img` / `.pop-video` 自身底色 = transparent（字节未到 / 失败态
 //       直接透出容器底色，不叠一道留黑）。
-//   C4 零品牌绿   fm 面任何容器 / 媒体元素 / 下载角标底色都不得落在品牌绿族
-//       （#95ec69 149,236,105 / #07c160 7,193,96 一族；判据 = 高饱和绿通道）。
+//   C4 归属方色族 出向容器必须落**我方绿族**（g≥150 且双通道差 ≥55），入向容器
+//       **零品牌绿**（对方永远不绿）；媒体元素自身零色相。
+//       ⚠ bubble-side-color 批（2026-11-06）改判：本条此前是「fm 面一律零品牌绿」——
+//       作者新令「我们这方发的……一律绿」把 fm 出向也归入我方，旧口径作废。
 //   C5 几何不动   出向媒体面仍是气泡剪影 16px + border-bottom-right-radius 4px +
 //       box-shadow none + 零边框；**入向不加边框**（作者令「圆角内裁、不额外加框」，
 //       媒体面不吃入向文字气泡那 1px etched 边）。
-//   C6 主会话不动 `.row.user-media .pop-media-flat` 仍走 --glass-bub-user-bg（绿），
-//       且与 fm 出向 token **不同值**——证明本批没有把 fm 改判外溢到主会话。
-//   C7 文字气泡不动 出/入向 `.fm-msg-bubble` 的 computed 底色仍为
-//       rgba(91,127,191,0.15) 亮档 / 入向 rgba(0,0,0,0.025) 亮档、rgba(255,255,255,0.04)
-//       暗档——本批只改媒体面，文字气泡本体零改动。
+//   C6 两面同族   `.row.user-media .pop-media-flat`（主会话）与 fm 出向底色**逐字相等**
+//       —— 同一枚 --nf-bub-ours-bg（旧口径「两面必须不同值」随 2026-11-06 判据作废）。
+//   C7 文字气泡  出向 = 我方绿（#95ec69 97%）、入向 = 对方白（亮 #fff / 暗 #1c1f27，97%）
+//       —— 与 js/bubbleSide.js + css/glass.css 单点块同源。
 //   C8 下载角标  `.pop-media-canvas` 保留中性半透明墨（rgba(0,0,0,0.45)），非饱和品牌色。
 //
 // 覆盖矩阵 = 出入双向（out / in）× 四形态（平面图 / 平面视频 / 叠卡前卡 / 叠卡中背层）
@@ -72,10 +73,12 @@ const FORMS = ['flatImg', 'flatVideo', 'stackFront', 'stackBack'];
 // 四态（亮/暗各一趟 ⇒ 见 THEMES）
 const STATES = ['loaded', 'placeholder', 'failed'];
 
-// C7 钉死值（文字气泡本体零改动）。值 = token 原值；比对走容差（见 closeColor：
-// Chromium 把 alpha 0.025 量化成 6/255 ≈ 0.024，逐字比会被量化器误伤）。
-const BUBBLE_LIGHT = { out: [91, 127, 191, 0.15], in: [0, 0, 0, 0.025] };
-const BUBBLE_DARK = { out: [91, 127, 191, 0.15], in: [255, 255, 255, 0.04] };
+// C7 钉死值。bubble-side-color 批（2026-11-06）改判后的口径：
+//   出向 = 我方绿（--nf-bub-ours-bg = --color-bubble-user #95ec69 97%）
+//   入向 = 对方白（--nf-bub-theirs-bg = --color-bubble-ai；亮 #fff / 暗 #1c1f27，各 97%）
+// 比对走容差（见 closeColor：Chromium 会把 α 量化，逐字比会被量化器误伤）。
+const BUBBLE_LIGHT = { out: [149, 236, 105, 0.97], in: [255, 255, 255, 0.97] };
+const BUBBLE_DARK = { out: [149, 236, 105, 0.97], in: [28, 31, 39, 0.97] };
 const CANVAS_CHIP_BG = 'rgba(0, 0, 0, 0.45)';
 const TRANSPARENT = 'rgba(0, 0, 0, 0)';
 
@@ -129,7 +132,7 @@ function messageRow(side, state) {
     </div>`;
   return `
   <div class="fm-msg ${side}" id="msg-${p}">
-    <div class="fm-msg-bubble" id="bub-${p}">测试文字气泡</div>
+    <div class="fm-msg-bubble bubble ${side === 'out' ? 'user ours' : 'peer theirs'}" id="bub-${p}" data-bubble-side="${side === 'out' ? 'ours' : 'theirs'}">测试文字气泡</div>
     <div class="fm-att-list">${flatImg}${flatVideo}${stack}</div>
   </div>`;
 }
@@ -296,9 +299,15 @@ async function main() {
         `container=${f.container && f.container.bg} bubble=${want}`);
       // C3 媒体元素自身透明（字节未到/失败态直接透出容器底色）
       check(f.media && f.media.bg === TRANSPARENT, `C3 媒体元素透明（${label}）`, `media=${f.media && f.media.bg}`);
-      // C4 零品牌绿
-      check(!isBrandGreen(f.container && f.container.bg), `C4 容器零品牌绿（${label}）`, `container=${f.container && f.container.bg}`);
-      check(!isBrandGreen(f.media && f.media.bg), `C4 媒体元素零品牌绿（${label}）`, `media=${f.media && f.media.bg}`);
+      // C4 归属方色族（bubble-side-color 批 2026-11-06 改判）：
+      //   出向 = 我方绿族（#95ec69 族，g≥150 且双通道差 ≥55）；
+      //   入向 = 对方白/暗白（零品牌绿 —— 对方永远不许绿）。
+      if (f.side === 'out') {
+        check(isBrandGreen(f.container && f.container.bg), `C4 出向容器 = 我方绿族（${label}）`, `container=${f.container && f.container.bg}`);
+      } else {
+        check(!isBrandGreen(f.container && f.container.bg), `C4 入向容器零品牌绿（${label}）`, `container=${f.container && f.container.bg}`);
+      }
+      check(!isBrandGreen(f.media && f.media.bg), `C4 媒体元素零色相（${label}）`, `media=${f.media && f.media.bg}`);
       // C5 几何：入向不加边框（两向都不许长框）
       check(f.container && f.container.borderW === '0px', `C5 零边框（${label}）`,
         `border=${f.container && `${f.container.borderW} ${f.container.borderS}`}`);
@@ -310,14 +319,16 @@ async function main() {
     }
   }
 
-  // ── C6 主会话不动：仍绿族，且 ≠ fm 出向 token ──
+  // ── C6 主会话与 fm 出向**同族同值**（bubble-side-color 批 2026-11-06 改判：
+  //    "我们这方发的一律绿" 不分面；主会话用户媒体面与 fm 出向媒体面现在共吃
+  //    同一枚 --nf-bub-ours-bg）──
   for (const theme of ['light', 'dark']) {
     const main = readings[theme].controls.mainFlat;
     check(!!main, `C6 主会话媒体面对照组存在（${theme}）`, 'missing #ctl-main-flat');
-    check(!!main && !closeColor(main.bg, [91, 127, 191, 0.15]), `C6 主会话媒体面未被改成 fm 出向 token（${theme}）`, `bg=${main && main.bg}`);
-    check(!!main && main.bg !== readings[theme].bubbles['out-loaded'].bg, `C6 主会话媒体面 ≠ fm 出向底色（${theme}）`,
+    check(!!main && !closeColor(main.bg, [91, 127, 191, 0.15]), `C6 主会话媒体面不再走旧 sapphire tint（${theme}）`, `bg=${main && main.bg}`);
+    check(!!main && main.bg === readings[theme].bubbles['out-loaded'].bg, `C6 主会话媒体面 ≡ fm 出向底色（${theme}，同一枚我方令牌）`,
       `main=${main && main.bg} fmOut=${readings[theme].bubbles['out-loaded'].bg}`);
-    check(!!main && isBrandGreen(main.bg), `C6 主会话媒体面仍是用户气泡绿族（${theme}）`, `bg=${main && main.bg}`);
+    check(!!main && isBrandGreen(main.bg), `C6 主会话媒体面仍是我方气泡绿族（${theme}）`, `bg=${main && main.bg}`);
     // 主会话媒体元素透明腿（2026-10-20 批既有）不得因本次选择器改写而丢失。
     const mm = readings[theme].controls.mainMedia;
     check(!!mm && mm.bg === TRANSPARENT, `C6 主会话媒体元素仍透明（${theme}）`, `media=${mm && mm.bg}`);

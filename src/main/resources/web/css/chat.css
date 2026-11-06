@@ -1271,22 +1271,16 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   word-break: break-word;
 }
 .bubble.user {
-  /* 统一按钮玻璃批 2026-11-01：气泡禁独立 backdrop-filter ⇒ 消费 glass.css
-     半透明实底档（--glass-bub-user-bg = color-mix(--color-bubble-user 90%)，
-     色相单源不变、主题自适应、滚动零 backdrop 成本） */
-  background: var(--glass-bub-user-bg);
+  /* 底色不在本文件：bubble-side-color 批（2026-11-06）把「归属方 → 底色」全站
+     收成单点 = glass.css「气泡归属方底色单点」块（--nf-bub-ours-bg /
+     --nf-bub-theirs-bg 两枚令牌）。本文件只留几何/字阶/尾向。 */
   color: var(--color-text);
   border-bottom-right-radius: 4px;
 }
-/* Injected bubble (task P+Q): tool-injected prompts & result notifications.
-   Light sapphire blue — distinct from user green and AI default.
-   Same silhouette as .bubble.user (no border) — only the color differs,
-   so injected messages read as ordinary bubbles, not framed cards.
-   NOTE: --sapphire is a space-separated RGB triplet, so the alpha form must
-   use the modern rgb(... / alpha) syntax; rgba(var(--sapphire), a) is
-   INVALID and silently dropped by the browser. */
+/* Injected bubble（工具/Delegate/节点/后台任务注入行）：same silhouette as
+   `.bubble.user` —— 它在归属上就是**我方**（代表本机账号发出），故底色与
+   `.bubble.user` 同档（绿），不再自带第三色。色值归宿见 glass.css 单点块。 */
 .bubble.injected {
-  background: rgb(var(--sapphire) / 0.12);
   color: var(--color-text);
   border-bottom-right-radius: 4px;
 }
@@ -1359,8 +1353,10 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   content: '· ';
 }
 .bubble.user.att-bubble {
-  background: rgba(0,0,0,0.04);
-  color: #888;
+  /* 底色 = 我方绿（glass.css 单点块）。bubble-side-color 批前这里是
+     rgba(0,0,0,0.04) 灰 —— 同一族气泡的第二/第三种底色，按 2026-11-06
+     作者令收编。 */
+  color: var(--color-text);
   font-size: var(--ds-fs-meta);
   padding: var(--ds-space-1) var(--ds-space-2);
   border-radius: var(--ds-radius-input);
@@ -1530,15 +1526,17 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 
 .bubble.ai,
 .bubble.peer {
-  /* 统一按钮玻璃批 2026-11-01：面/边/柔影走 glass.css 气泡档 token（亮暗
-     双档随包解析；底色仍以 --color-bubble-ai 为色相单源 color-mix 出 α）
+  /* 材质面（描边/柔影/尾角）—— **不含底色**：bubble-side-color 批（2026-11-06）
+     起底色由归属方决定（glass.css 单点块）：`.ai`（我方 Agent 回复）与
+     `.user`/`.injected` 同取 --nf-bub-ours-bg（绿），只有 `.peer`（对方）
+     取 --nf-bub-theirs-bg（白）。
      ── 四会话统一批 2026-11-05：**同一个声明块**同时服务两个说话人角色：
         `.ai`   = 主会话里 agent 的回复（入向左贴）；
         `.peer` = 好友/群/设备会话窗里**对方**的消息（入向左贴）。
      人物不同、脸相同（作者令「自己的与他人气泡……与主 agent 面同款」）；
      起 `.peer` 这个角色名而**不直接复用 `.ai`**，是因为把人类说成 ai 会在
-     徽章/转发/统计类判据里留下语义坑。本块是两者唯一的形态来源 ⇒ 禁再写第二份。 */
-  background: var(--glass-bub-ai-bg);
+     徽章/转发/统计类判据里留下语义坑。本块是两者唯一的**几何/材质**来源 ⇒
+     禁再写第二份。 */
   color: var(--color-text);
   /* Whisper edge — separates bubble from background without feeling deliberate */
   border: 1px solid var(--glass-bub-ai-border);
@@ -1717,8 +1715,17 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .bubble.ai th, .bubble.injected th, .ask-bub.ai th { background: #f5f5f5; }
 /* 2026-10-30 按钮量产批登记收敛项：chat 链接全面蓝化 —— 设计系统蓝
    rgb(var(--sapphire))（#5b7fbf 单源 triplet，亮暗同值可读），原
-   var(--color-primary) 品牌绿退役为链接色（绿保留给主操作/通知点族）。 */
-.bubble.ai a, .bubble.injected a, .ask-bub.ai a { color: rgb(var(--sapphire)); }
+   var(--color-primary) 品牌绿退役为链接色（绿保留给主操作/通知点族）。
+   🔴 bubble-side-color 批（2026-11-06）改判：`.ai` / `.injected` / `.user`
+   现为**我方绿底**，蓝 #5b7fbf 在 #95ec69 上只有 2.76:1（远低于 AA）⇒ 我方
+   气泡内链接改走墨色正文 + 下划线（11.49:1 亮 / 13.63:1 暗，零新色值）；
+   蓝链只留在**对方白底**气泡（`.peer` / `.theirs`）上。 */
+.bubble.theirs a, .bubble.peer a, .ask-bub.theirs a { color: rgb(var(--sapphire)); }
+.bubble.ours a, .bubble.user a, .bubble.ai a, .bubble.injected a {
+  color: var(--color-text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
 .bubble.ai hr, .bubble.injected hr, .ask-bub.ai hr { border: none; border-top: 1px solid #eee; margin: var(--ds-space-2) 0; }
 .bubble.ai strong, .bubble.injected strong, .ask-bub.ai strong { font-weight: 600; }
 
@@ -1955,11 +1962,14 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
     border-color: rgba(255, 255, 255, 0.04);
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
   }
-  .bubble.user { color: #111; }
-  .bubble.injected {
-    background: rgb(var(--sapphire) / 0.20);
-  }
-  .bubble.user.att-bubble { background: rgba(255,255,255,0.08); color: #7b7e88; }
+  /* bubble-side-color 批（2026-11-06）：暗档里**我方**气泡同样是绿底（色相
+     单源 #95ec69 亮暗同值）⇒ 正文必须压暗：#111 在 #95ec69 上 = 13.63:1 ✔；
+     若沿用暗档正文 --color-text #e8eaed，落在绿底上只有 1.29:1（远低于 AA）。
+     对方气泡仍是暗档白底 #1c1f27 ⇒ 正文维持 --color-text（13.94:1 ✔）。 */
+  .bubble.user,
+  .bubble.ai,
+  .bubble.injected,
+  .bubble.ours { color: #111; }
   .bubble.ai .file-tag { background: rgba(255,255,255,0.08); }
   .bubble.ai pre, .bubble.injected pre, .ask-bub.ai pre {
     background: #111419;
@@ -2021,7 +2031,10 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   }
   .duration-badge-time { opacity: 0.28; }
 
-  .retry-status { background: rgba(217,165,65,0.12); color: #d4a030; }
+  /* 顶部悬浮批 2026-11-06：暗档只换**洗色层**的力度，玻璃底由复合背景里的
+     var(--nf-glass-bg) 随主题自翻转 —— 这里若再写一条裸 background，会把
+     玻璃底整层冲掉（= 暗档退回单层 α .12 透底，G7 判红）。 */
+  .retry-status { --retry-tint: rgba(217,165,65,0.12); }
 }
 
 /* ── askuser-hybrid 浮层卡 token（light 档）───────────────────────────────
@@ -2188,21 +2201,17 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   width: 100%;
   margin-top: var(--ds-space-2);
   padding: var(--ds-space-2) var(--ds-space-3);
-  border: 1px solid var(--ask-line-strong);
-  border-radius: var(--ds-radius-input);
   font-size: var(--ds-fs-body); /* 13.5px 半档判偏整改（设计语言批 2026-10-21）：正文/输入同档 13px */
-  outline: none;
   box-sizing: border-box;
   resize: none;
   overflow-y: auto;
   max-height: 100px;
   font-family: inherit;
   line-height: 1.55;
-  background: transparent;
   color: var(--color-text);
 }
-/* 焦点态：已收编 css/inputFocus.css（input-focus-ring 批 2026-11-05，
-   单一令牌 --nf-field-focus-*；原「绿环 + 外发光」是本批要去的那类外部环）。 */
+/* 造型 + 焦点态：输入面唯一标准批（2026-11-06）起归 css/inputSurface.css
+   （底/边/圆角/影/指针态/键盘环单源）。本文件只留几何与字档。 */
 
 /* ── AskUser 密钥请求行（设计语言批 2026-10-21 整改落地）─────────────────
    askuser-secret 批（规格 §1/§3）的实现原是 chat.js 内联样式 + 「显示」文字
@@ -2226,18 +2235,13 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   flex: 1;
   min-width: 0;
   padding: var(--ds-space-2) var(--ds-space-3);
-  border: 1px solid var(--ask-line-strong);
-  border-radius: var(--ds-radius-input);
   font-size: var(--ds-fs-body);
   font-family: inherit;
   line-height: 1.55;
-  background: transparent;
   color: var(--color-text);
-  outline: none;
   box-sizing: border-box;
-  transition: border-color var(--dur-2) ease, box-shadow var(--dur-2) ease;
 }
-/* 焦点态：已收编 css/inputFocus.css（input-focus-ring 批 2026-11-05）。 */
+/* 造型 + 焦点态：归 css/inputSurface.css（输入面唯一标准批 2026-11-06）。 */
 .option-secret-eye {
   flex-shrink: 0;
   width: 24px;
@@ -2869,15 +2873,11 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .option-input {
   flex: 1;
   padding: var(--ds-space-2) var(--ds-space-3);
-  border: 1px solid var(--ask-line-strong);
-  border-radius: var(--ds-radius-input);
   font-size: var(--ds-fs-row);
-  outline: none;
   box-sizing: border-box;
-  background: transparent;
   color: var(--color-text);
 }
-/* 焦点态：已收编 css/inputFocus.css（input-focus-ring 批 2026-11-05）。 */
+/* 造型 + 焦点态：归 css/inputSurface.css（输入面唯一标准批 2026-11-06）。 */
 .option-input.mono {
   font-family: ui-monospace, 'SF Mono', Menlo, monospace;
   font-size: var(--ds-fs-hint);
@@ -2967,7 +2967,9 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    旧「15px 内容轴」对齐（HYBRID §4.2）随题文入泡让位（作者令优先）。 */
 .bubble.ai.ob-ghost-seat .ob-body {
   padding: var(--ds-space-block-y) 14px;
-  background: var(--glass-bub-ai-bg);
+  /* bubble-side-color 批（2026-11-06）：onboarding 题文由我方 Agent 出题 ⇒
+     我方绿（glass.css 单点块的 --nf-bub-ours-bg），不再是白底第三档。 */
+  background: var(--nf-bub-ours-bg);
   border: 1px solid var(--glass-bub-ai-border);
   border-radius: var(--ds-radius-card-lg);
   border-bottom-left-radius: 4px;
@@ -3592,17 +3594,34 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 
 /* ---------- Retry status ---------- */
+/* 顶部悬浮批（glass-top-overlays 2026-11-06，作者令逐字：「所有悬浮在顶部 可以
+   透出背景的 都用毛玻璃效果……这个要成为标准」）：
+   本档是 `position: sticky; top: 8px` —— 钉在消息滚区顶缘、气泡从它底下滚过，
+   正是「顶部悬浮 + 背景可透出」的定义面。改前材质 = rgba(217,165,65,.15) 单层
+   洗色：底下的气泡正文以 85% 强度直接穿上来（规范判死的「内容透底」端）。
+   改法 = 唯一标准的两件套，**语义色不丢**：
+     · 玻璃本体 → glass.css 成员登记表「.retry-status」供给 blur(40px) saturate(1.4)；
+     · 等待色 → 15% warning 洗色层**压在玻璃底之上**（复合背景，与 .ask-bub.user
+       的 sapphire tint 同一手法），α = .15 + .55×.85 ≈ .617 落进 [0.45, 0.75]；
+     · 描边/内高光 → --nf-glass-border / --nf-glass-shadow（面级浮件档同值）。
+   语义色值收成本地变量 --retry-tint（亮/暗两档各一处字面量，净新增 0）。
+   字色同步收回中性（`--color-frame-text`）：改前 `#b8941e` 压在洗色底上实测
+   WCAG 2.78（亮档）/ 4.0 上下（暗档），两个档都不达 AA 4.5 —— 而语义本来就
+   不靠字色承担（15% warning 洗色层已经在说「等等」）。中性正文色实测 10.4 / 9.7，
+   与 design-language §1.3「语义色只上载体、不上正文」同向。 */
 .retry-status {
   position: sticky;
   top: 8px;
-  background: rgba(217,165,65,0.15);
-  color: #b8941e;
+  --retry-tint: rgba(217,165,65,0.15);
+  background: linear-gradient(var(--retry-tint), var(--retry-tint)), var(--nf-glass-bg);
+  border: var(--nf-glass-border);
+  box-shadow: var(--nf-glass-shadow);
+  color: var(--color-frame-text);
   padding: var(--ds-space-1h) 14px;
   font-size: var(--ds-fs-hint);
   border-radius: var(--ds-radius-chip);
   margin-bottom: var(--ds-space-stack-gap);
   z-index: 20;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.1);
 }
 
 /* ===== NebLink tool row ===== */
@@ -4149,15 +4168,10 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .wsp-mkdir-input {
   flex: 1;
   min-width: 0;
-  background: var(--glass-etched-bg);
   color: var(--color-frame-input-text);
-  border: 1px solid var(--glass-etched-border);
-  border-radius: var(--ds-radius-input);
   padding: var(--ds-space-1) var(--ds-space-inline-x);
   font-size: var(--ds-fs-hint);
   font-family: inherit;
-  outline: none;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 /* 焦点态：已收编 css/inputFocus.css（input-focus-ring 批 2026-11-05；
    原「2px + 4px 两圈外发光」正是作者要去的「外部蓝框」）。 */
@@ -4266,12 +4280,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   padding: var(--ds-space-1h) var(--ds-space-inline-x);
   font-size: var(--ds-fs-hint);
   font-family: inherit;
-  border-radius: var(--ds-radius-input);
-  border: 1px solid var(--glass-border);
-  background: var(--glass-etched-bg);
   color: var(--color-frame-text);
-  outline: none;
-  transition: border-color 0.15s ease;
 }
 /* 焦点态：.wsp-goto-input / .wsp-search-input 已收编 css/inputFocus.css
    （input-focus-ring 批 2026-11-05）。 */
@@ -4373,11 +4382,18 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
      values); both themes follow the global variables automatically. */
 }
 
-/* ---------- "↓ N new messages" pill (A-branch, 2026-09-11) ----------
-   Raised when message rows arrive while the user is reading history (see
-   utils.js syncScrollPill for the row-level counter). One element per
-   ChatView, positioned absolutely in #main (primary) or .flow-agent-modal
-   (agent popups) and parked just above the input bar / footer by JS.
+/* ---------- 会话面浮条胶囊 = 全族唯一一枚（本段 = 唯一形态声明）----------
+   作者令 2026-11-06 07:39 逐字：「我们消息框的回到底部的按钮不要自己造 要跟
+   新消息通知 搜索聊天记录跳转 使用同一套」。
+   ⇒ 三种消费 = 同一枚胶囊，只有文案与点击行为不同：
+     ① 新消息通知「↓ N 条新消息」 utils.js syncScrollPill（主窗 + 每个 agent 弹窗）
+     ② 回到底部「回到底部」        同一处（无未读、距底 ≥ 320px 时）+ 好友/群/设备
+                                   messages.js fmSyncFollowPill
+     ③ 搜索回跳「回到跳转前位置」  searchReturnPill.js
+   本体 = js/scrollPill.js 的 createScrollPill（**唯一实现**，三处 import 同一工厂）；
+   落位 = 组件按视口矩形反算的 bottom（宿主底缘 − 输入区顶缘 + 12）。
+   本段以外的第二份胶囊形态（曾有的 .scroll-back-pill）已整件退役 ——
+   改形态只改这里，三消费同时生效。
    Zero new colors: the pill is the existing glass material + text tokens. */
 .scroll-new-pill {
   position: absolute;
@@ -4428,59 +4444,12 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   .scroll-new-pill:hover, .scroll-new-pill:active { transform: translateX(-50%); }
 }
 
-/* ---------- 「回到底部」胶囊（四会话统一批 2026-11-05）----------
-   作者令逐字：「主会话/群/设备/好友的消息 往上放太多了之后，应该有一个胶囊按钮
-   点击可回到底部。正好我们这批要做的就是他们三者的统一」。
-   · 唯一实现 = js/scrollBackPill.js（四处消费：主会话 + 好友/群/设备会话窗）；
-     本块是它的**唯一形态声明**，消费面零样式分叉。
-   · 落位 = 消息区**右下**、输入区之上（`right:16` + JS 反算 `bottom`），
-     与上面横居中的 `.scroll-new-pill`（搜索返回胶囊专用）锚点不同 ⇒ 分家。
-   · 材质 = 扁平：`--color-surface` 实底 + 1px `--glass-border` 发丝环。
-     **零 box-shadow / 零渐变 / 零 backdrop-filter**（check-flat-buttons F1/F3 的
-     正面形态；作者令「胶囊扁平风；若需要毛玻璃只许用唯一 .nf-glass」——本件不需要
-     毛玻璃：它浮在消息流之上，实底比玻璃更易读且滚动零合成成本）。
-   · 尺寸走既有令牌：高 28 / 内距 12 / 圆角 --ds-radius-pill / 字档 --ds-fs-hint
-     （与 `.scroll-new-pill` 同一档，两枚胶囊视觉体重一致）。 */
-.scroll-back-pill {
-  position: absolute;
-  right: 16px;
-  z-index: 25; /* 同族：在 #chat / .fm-flow 之上，在输入条（20）之下 */
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--ds-space-1);
-  height: 28px;
-  padding: 0 var(--ds-space-3);
-  font: 500 var(--ds-fs-hint)/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  letter-spacing: 0;
-  color: var(--color-text);
-  background: var(--color-surface);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--ds-radius-pill);
-  cursor: pointer;
-  white-space: nowrap;
-  animation: nf-sbp-in 0.18s ease;
-}
-/* 扁平三态（F1/F5 正面形态）：反馈只改底色阶，不位移、不投影。 */
-@media (hover: hover) {
-  .scroll-back-pill:hover { background: var(--glass-control-bg-hover); }
-}
-.scroll-back-pill:active {
-  background: var(--btn-press-bg);
-  transform: scale(var(--btn-press-scale));
-}
-.scroll-back-pill.hidden { display: none; }
-.scroll-back-pill:focus-visible { outline: 2px solid var(--sapphire-refraction); outline-offset: 2px; }
-
-@keyframes nf-sbp-in {
-  from { opacity: 0; }
-  to   { opacity: 1; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .scroll-back-pill { animation: none; transition: none; }
-  .scroll-back-pill:active { transform: none; }
-}
+/* 已收编（单实现批 2026-11-06）：四会话统一批 2026-11-05 新造的 `.scroll-back-pill`
+   段（右下定位 / --color-surface 实底 / nf-sbp-in / 无 transition / reduced-motion
+   三行）**整段删除**——它是第四套胶囊，作者令「回到底部的按钮不要自己造 要跟新消息
+   通知 搜索聊天记录跳转 使用同一套」。现在「回到底部」= 上面 `.scroll-new-pill`
+   那枚的第二个文案档（同一工厂 js/scrollPill.js、同一类名、同一动效），
+   本文件不再有第二段胶囊形态。 */
 
 /* ---------- the turn line (stream-ux redesign, 2026-10-03) ----------
    ONE single-line stage that plays the running turn's process: tool running =
@@ -5334,18 +5303,19 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    （fm-att-component-lib 2026-11-02）把主会话那条绿色规则**作用域外扩**地逐字复制
    进 `.fm-msg.out` 卡区，于是社交通道出现「绿色媒体卡 + 蓝灰文字气泡」的双色对话。
    本批改判（事实陈述，勿再照抄旧口径）：
-     · 主会话 `.row.user-media` —— 继续走 --glass-bub-user-bg（用户气泡绿，**原本就对，
-       本批不动**）；
-     · 社交通道 `.fm-msg.out` —— 镜像**出向**文字气泡 token var(--sapphire-tint-15)；
-     · 社交通道 `.fm-msg.in`  —— 镜像**入向**文字气泡 token var(--glass-etched-bg)
-       （须压过 .pop-media-flat 基座 #17191f 与暗档 #101318）。
+     · 主会话 `.row.user-media` —— 继续走我方绿；
+     · 社交通道 `.fm-msg.out` —— 我方绿（--nf-bub-ours-bg）；
+     · 社交通道 `.fm-msg.in`  —— 对方白（--nf-bub-theirs-bg）。
+   🔴 bubble-side-color 批（2026-11-06，作者令「我们这方发的……一律绿，对方发过来
+   的白」）：上面三条**底色声明已整段迁入 glass.css「气泡归属方底色单点」块** ——
+   媒体面与文字气泡现在共用**同一对**归属方令牌，本文件零底色字面量；
+   --sapphire-tint-15 / --glass-etched-bg 不再是任何气泡或媒体面的底色。
    几何一律不动：出向媒体面仍是气泡剪影（16px + 4px 右下尾角 + 零阴影零边框）；
    入向媒体面保持 Pop 板卡族几何（14px + 卡影，既有「入向维持板卡族」口径不变），
    本批只收敛**底色**这一个维度。
 
-   Theme note: no token above has a per-theme literal in this file — --sapphire-tint-15
-   亮暗同值，--glass-etched-bg / --glass-bub-user-bg 各自在 sapphire.css / glass.css
-   里亮暗对定义，媒体面与**同向**文字气泡因此逐值同源、逐字同色。
+   Theme note: 归属方令牌各自在 glass.css / base.css 里亮暗对定义（绿亮暗同值、
+   白暗档翻 #1c1f27），媒体面与**同向**文字气泡因此逐值同源、逐字同色。
    ═══════════════════════════════════════════════════════════════════════════ */
 
 /* Width cap = the bubble's own cap (.bubble max-width 80%), not the artifact
@@ -5364,12 +5334,11 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   box-shadow: none;
 }
 
-/* Media face paint — 各面 = 本向文字气泡 token（零字面量，值单源在 token 层）。
+/* Media face paint — 各面 = 本向**气泡归属方** token（bubble-side-color 批
+   2026-11-06：出向 = 我方绿 --nf-bub-ours-bg、入向 = 对方白 --nf-bub-theirs-bg，
+   单点在 glass.css；本文件不再持有任何气泡/媒体面底色字面量）。
    可见性：字节未到时容器底色直接透出；加载成功时媒体元素自身 transparent（下条）；
    失败态 .nf-img-failed 也是 transparent（见上方既有规则）⇒ 三种字节态同底色。 */
-.row.user-media .pop-media-flat { background: var(--glass-bub-user-bg); }
-.fm-msg.out .fm-att-list .pop-media-flat { background: var(--sapphire-tint-15); }
-.fm-msg.in .fm-att-list .pop-media-flat { background: var(--glass-etched-bg); }
 
 /* 媒体元素自身必须透明 —— 覆盖 `.pop-img,.pop-video{background:#17191f}` 基座与
    暗档 #101318（chat.css 上方两处），否则容器底色被一道留黑盖住，占位/失败/加载
@@ -5389,10 +5358,8 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   border-bottom-right-radius: 4px;
   box-shadow: none;
 }
-.row.user-media .pop-stack-view .media-layer { background: var(--glass-bub-user-bg); }
-.fm-msg.out .fm-att-list .pop-stack-view .media-layer { background: var(--sapphire-tint-15); }
-/* 入向叠卡层：只改底色（压过 .ds-media-card 的 --ds-media-letterbox 留黑底）。 */
-.fm-msg.in .fm-att-list .pop-stack-view .media-layer { background: var(--glass-etched-bg); }
+/* 入向叠卡层：底色同样归 glass.css 单点块（对方白）；本行只保留「媒体元素自身
+   透明」的说明位，防止有人在此再补一条字面量。 */
 
 /* File card — 统一 chip 族（2026-10-22 作者令「附件卡=统一 chip 族」：与 AskUser
    附件卡 / Pop 文件卡同族的紧凑 chip——底 = AskUser 附件卡同款 --color-surface-2
@@ -5922,14 +5889,10 @@ body:not(.mobile-layer) #agent-avatar-btn .agent-avatar-logo-img {
   min-width: 0;
   height: 34px;
   padding: 0 var(--ds-space-inline-x);
-  border-radius: var(--ds-radius-input);
-  border: 1px solid var(--glass-border);
-  background: var(--glass-etched-bg, rgba(0, 0, 0, 0.025));
   color: var(--color-text);
   font-size: var(--ds-fs-body);
-  outline: none;
 }
-/* 焦点态：.ap-pane .ap-name-input 已收编 css/inputFocus.css（2026-11-05）。 */
+/* 造型 + 焦点态：归 css/inputSurface.css（输入面唯一标准批 2026-11-06）。 */
 .ap-pane .ap-note {
   font-size: var(--ds-fs-meta);
   color: var(--color-frame-text-muted, #98a2b3);

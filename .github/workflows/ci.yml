@@ -92,6 +92,16 @@ jobs:
         # miss the other" drift that ③A1/③A3/③A5 exist to prevent).
         # Same logic locally: node scripts/check-msgstyle-single-source.mjs
         run: node scripts/check-msgstyle-single-source.mjs
+      - name: Bubble side color (our side = green / peer = white, no third)
+        # bubble-side-color batch (author ruling 2026-11-06): bubble background is
+        # decided by SENDER SIDE ONLY - ours (author + our agents/delegates/nodes/
+        # bg-tasks/injected/system) = green, theirs (friends/group peers/external) =
+        # white. No third rung: the old sapphire tint / etched grey / neutral grey
+        # bubble backgrounds are banned on any bubble face. Single decision point =
+        # css/glass.css block (--nf-bub-ours-bg / --nf-bub-theirs-bg) plus
+        # js/bubbleSide.js for the side computation.
+        # Same logic locally: node scripts/check-bubble-side.mjs
+        run: node scripts/check-bubble-side.mjs
       - name: Design tokens (literal -> var(--ds-*) sentinel)
         # Design-token gate (design-system-token-batch 2026-11-02): every design
         # literal has exactly one home. Two tiers - a per-file baseline that may
@@ -165,6 +175,45 @@ jobs:
         # --nf-toggle-* block in stand-tokens.css, component must consume them.
         # Same logic locally: node scripts/check-toggle-unify.mjs (or `make frontend-gates`)
         run: node scripts/check-toggle-unify.mjs
+      - name: Conversation pill centering (family single form, horizontally centered)
+        # scroll-pill-centering gate (author ruling 2026-11-06 08:05 verbatim:
+        # "你现在是把之前居中的 新消息通知的胶囊全部靠边了 不要靠边 就保持之前的
+        #  居中"). The conversation-face pill is ONE component with THREE consumers
+        # (new-message notification / back-to-bottom / search return jump); its form
+        # is declared exactly once, in css/chat.css `.scroll-new-pill`, anchored
+        # `left: 50%` + `transform: translateX(-50%)`. Fails on: a second form block,
+        # a missing centering anchor, ANY state (hover/active/focus/reduced-motion)
+        # that drops the centering transform, right-side alignment devices
+        # (right:/justify-self:end/margin-left:auto/text-align) on the family, or a
+        # second `scroll-*-pill` form class reappearing. Geometric truth (horizontal
+        # center delta <= 0.5px at 1440 and 375) lives in
+        # tests/scroll-pill-family.spec.mjs.
+        # Same logic locally: node scripts/check-scroll-pill-center.mjs (or `make frontend-gates`)
+        run: node scripts/check-scroll-pill-center.mjs
+      - name: Mobile canvas top strip (glass band / no horizontal fade / no pill / 28px edge)
+        # mobile-canvas-tabs-c gate (author order 2026-11-06 08:33 verbatim: "采用方案c
+        # 主胶囊要采用毛玻璃底 然后背景的文字不使用胶囊 但是还有电脑端hover 上下选项
+        # 的那种模糊效果 文字两边不要渐隐"). The mobile canvas top strip grew five
+        # mutually-exclusive visual systems in six months (52->64 side feathering ->
+        # per-chip directional mask -> mask moved onto ::after -> flat chips -> plan C).
+        # Two of the author's clauses are PROHIBITIONS and must be machine-checked,
+        # otherwise the next refactor silently restores them:
+        #   S1 glass single source: any translucent (alpha in (0,.90)) face on the strip
+        #      must be a css/glass.css member; the 64px glass band (`.mf-strip::before`)
+        #      and the main capsule (`.mf-strip-chip.on::after`) must exist and be glassed.
+        #   S2 no horizontal fade: any 90deg/270deg/to-left/to-right mask-image on the
+        #      strip, ANY non-none mask on a label, or JS writing mask/--rfade => RED.
+        #   S3 background text carries no capsule: the shared chip visual layer must be
+        #      zero-material (pill material only under `.on`); content hosts
+        #      (.canvas-md-scroll / .mf-cv-host / .canvas-tab-pane) zero background,
+        #      never pill-shaped.
+        #   S4 bottom fade thickness = 28px: `.mf-strip::after` present, painting
+        #      var(--ds-fade-veil), height token arithmetic exactly 28px, top exactly the
+        #      64px glass height (--mchrome-clear 72 - --ds-space-2 8).
+        # Static, zero-port (no browser). Real-render readings (375/1440 x light/dark)
+        # live in scripts/capture-mobile-canvas-tabs.mjs and the paired spec.
+        # Same logic locally: node scripts/check-mobile-canvas-strip.mjs (or `make frontend-gates`)
+        run: node scripts/check-mobile-canvas-strip.mjs
       - name: Design spec scale sync (spec table <-> token source)
         # design-scale gate (author order 2026-11-04: "把我们对圆角 边距 文字离边缘
         # 的距离 各文字的大小 写进spec和前端开发包"): the four scales (radius /
@@ -798,6 +847,22 @@ jobs:
           # （/Users/dev/...），ubuntu 上必须覆盖到可写目录。
           ARCHIVE_SHOT_DIR: ${{ runner.temp }}/archive-shots
         run: PW_SELFCONTAINED_ONLY=1 npx playwright test
+      - name: Toggle knob centered (pixel-level four-way gaps)
+        # toggle-center 批 2026-11-06（作者原话逐字：「我们的toggle按钮需要重新设计
+        # 中间的按钮相对于边框都没有居中」）。上一批交的是**设计值**（轨道 40×22 /
+        # 圆钮 16 / 内衬 2 / 行程 18），四个数各自自洽，但 `top/left` 写在 absolute
+        # 伪元素上是相对 **padding box** 的 —— 手填的「缝」于是把 1px 描边记了两次账：
+        # 桌面档恰好抵消（22−2−16 = 4 = 2×2），手机档（51×31 / 钮 27）没有 ⇒ 屏幕上
+        # 上 3 / 下 1、开档右缝 1（关档左缝 3）= 2px 偏心。
+        # 判据（CSS px，**浏览器实测**，不读声明值）：|上距−下距| ≤ 0.5、
+        # |左距(关)−右距(开)| ≤ 0.5，覆盖桌面（40×22）+ 手机（body.mobile-layer，
+        # 51×31）× 亮/暗；两路读数（CDP 伪元素 border box + DSF=4 哨兵色像素包围盒）
+        # 必须互相吻合 ≤ 0.5。
+        # 只在本 job 跑（唯一装了 chromium 的静态面 job）；本机同逻辑：
+        # node scripts/check-toggle-geometry.mjs（或 `make toggle-geometry`）。
+        # 静态形态腿（居中三式必须是推导式、禁手填）在 js-types job 的
+        # check-toggle-unify.mjs 里，与字节级漂移一起挡。
+        run: node scripts/check-toggle-geometry.mjs
       # （CI 迁移批 2026-10-24）失败 trace 上传步骤已删：账号 Artifact 存储
       # 配额已耗尽（二轮实测 Failed to CreateArtifact: Artifact storage quota
       # has been hit）——保留只会把 job 染红且传不上去。失败判据走 playwright

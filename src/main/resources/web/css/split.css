@@ -81,16 +81,15 @@
 .explorer-name-input {
   flex: 1;
   min-width: 0;
-  border: 1px solid var(--color-primary, #3b82f6);
-  border-radius: var(--ds-radius-badge);
-  background: var(--color-bg, #fff);
   color: var(--color-text);
   font-size: var(--ds-fs-hint);
   font-family: inherit;
   padding: var(--ds-space-half) var(--ds-space-1h);
-  outline: none;
   margin-left: var(--ds-space-1);
 }
+/* 造型 + 焦点态：归 css/inputSurface.css（输入面唯一标准批 2026-11-06 ——
+   修前这条自带 1px 品牌色描边（--color-primary，#3b82f6 兜底），是作者实拍
+   「到处是蓝框」之外另一处自写边；本次收编为标准的灰调边）。 */
 .explorer-creating {
   display: flex;
   align-items: center;
@@ -1452,7 +1451,7 @@ body.canvas-deck-narrow .canvas-title { max-width: none; }
   /* 作者令「动画放慢、自然、流畅」与本批缓动族一致：0.36s 温和缓出
      （cubic-bezier(0.22,0.61,0.36,1)），透明度 0.32s —— 竖向换选的位姿迁移
      不再是旧 0.22s 硬切。 */
-  transition: transform 0.36s cubic-bezier(0.22, 0.61, 0.36, 1), opacity 0.32s ease, filter 0.36s cubic-bezier(0.22, 0.61, 0.36, 1);
+  transition: transform var(--ds-ring-dur) var(--ds-ring-ease), opacity 0.32s ease, filter var(--ds-ring-dur) var(--ds-ring-ease);
 }
 /* 真越出批：显隐选择器随环层本位（环挂 body，标题头后代选择器够不到）。
    可点性走 .steady 门（openRing 在 0.36s 展开过渡后加）——环层如今叠在标题头
@@ -1520,11 +1519,16 @@ body.canvas-deck-narrow .canvas-title { max-width: none; }
 .cr-capsule.is-center:active { --cr-press: 0.96; filter: brightness(0.92); }
 /* 缘位 = 竖向 cover-flow（对称批 2026-10-23：上 −edgeY / 下 +edgeY 真对称，
    几何值见 canvas.js layout()）：沿弧后仰 + 模糊扭曲 +
-   半透（毛玻璃照挂 —— 模糊叠加在 backdrop 之上，曲率感来自 rotateX 透视） */
+   半透（毛玻璃照挂 —— 模糊叠加在 backdrop 之上，曲率感来自 rotateX 透视）
+   环邻位深度配方（mobile-canvas-tabs-c 批 2026-11-06）：**数值改取令牌单源**
+   `--ds-ring-blur` / `--ds-ring-saturate`（design-system.css ⑯b 槽）—— 本条就是
+   作者点名的「电脑端 hover 上下选项的那种模糊效果」的出生实现，手机层横向环带
+   的两侧签按同两枚令牌取值（`filter: blur(calc(…·系数))`），一处定义两处生效。
+   恒值不变（1.6px / 1.25），可见像素零漂移。 */
 .cr-capsule.is-edge {
   z-index: 2;
   opacity: 0.82;
-  filter: blur(1.6px) saturate(1.25);
+  filter: blur(var(--ds-ring-blur)) saturate(var(--ds-ring-saturate));
 }
 .cr-capsule.is-edge:active { --cr-press: 0.96; }
 /* 弧外位（|rel|≥2）：不可见不可点，保留位姿让收放有连续轨迹 */
@@ -1558,6 +1562,11 @@ body.canvas-deck-narrow .canvas-title { max-width: none; }
   }
   .cr-capsule.is-edge {
     opacity: 0.9;
+    /* 收档说明（mobile-canvas-tabs-c 批 2026-11-06 复核）：本条 = **触屏横排腿的
+       可读性收档**，不是第二份配方 —— 横排档旋转角只有 24°、字要当场读清，故半径
+       取 `--ds-ring-blur` 的 3/8（0.6px）、饱和取同间段（1.15）。竖环腿（真
+       hover 上下展开，作者点名的那个效果）硬取令牌原值，两条腿的差异只此一处，
+       改档先改这里的注释与 `canvas-capsule-touch-row.spec` 读数。 */
     filter: blur(0.6px) saturate(1.15);
   }
   /* 邻签朝外一侧连续化开：面板窄时邻签会探出可见区，硬裁边缘读作「破版」，
@@ -2573,13 +2582,11 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   min-width: 56px;
   height: 30px;
   padding: 0 var(--ds-space-2);
-  border-radius: var(--ds-radius-input);
-  border: 1px solid var(--glass-control-border);
-  background: var(--glass-control-bg);
   color: var(--color-text);
   font-size: var(--ds-fs-hint);
   box-sizing: border-box;
 }
+/* 造型 + 焦点态：归 css/inputSurface.css（输入面唯一标准批 2026-11-06）。 */
 /* TOC 抽屉（§2.1：桌面左侧毛玻璃抽屉；移动底部弹出；无 overlay 暗化） */
 .epub-toc {
   position: absolute;
@@ -2769,14 +2776,12 @@ mark.nf-anno[data-anno-stale] {
   box-sizing: border-box;
   margin: var(--ds-space-1h) 0;
   padding: var(--ds-space-2);
-  border-radius: var(--ds-radius-input);
-  border: 1px solid var(--glass-control-border);
-  background: var(--color-frame-input-bg, rgba(127, 127, 127, 0.08));
   color: var(--color-text);
   font-size: var(--ds-fs-body);
   font-family: inherit;
   resize: vertical;
 }
+/* 造型 + 焦点态：归 css/inputSurface.css（输入面唯一标准批 2026-11-06）。 */
 .epub-anno-item { display: flex; align-items: center; gap: var(--ds-space-1h); text-align: start; }
 .epub-anno-dot {
   flex: none;
@@ -3700,10 +3705,12 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="markdown"] .canvas-find-togg
   to   { opacity: 1; transform: translateY(0); }
 }
 .nf-findbar-input {
-  width: var(--cv-findbar-w, 200px); border: none; outline: none; background: transparent;
+  width: var(--cv-findbar-w, 200px);
   color: var(--color-text); font-size: var(--ds-fs-body);
   font-family: inherit;
 }
+/* 裸件（无底/无边/无环）：归 css/inputSurface.css 的裸件成员表（输入面唯一
+   标准批 2026-11-06 —— 查找条整体是玻璃浮件，内件只留字）。 */
 /* ── 搜索面提示文字（canvas-hint-text 批 2026-11-05：占位 + 计数字档统一）──
    形态 placeholder：占位与输入本体同档（--cv-hint-fs-placeholder 13）且色走
    dim 令牌；修前 `color: var(--color-text-muted); opacity: .7` = 令牌 + 透明度
@@ -4158,14 +4165,13 @@ body.wg-side-active #panel-sessions #explorer-section { display: none; }
 .wg-switch { margin-top: var(--ds-space-1h); }
 .wg-switch-select {
   width: 100%;
-  border: 1px solid var(--glass-border); background: var(--glass-bg);
-  /* 扁平契约：`--frost-shadow`（外投影 = 厚度）撤掉；可点击感由玻璃底 + 1px 描边
-     + 原生下拉箭头承担（与 .wg-search 同一族材质，零影）。 */
   color: var(--color-frame-text); font: inherit; font-size: var(--ds-fs-hint);
-  border-radius: var(--ds-radius-button); padding: var(--ds-space-1h) var(--ds-space-2); outline: none; cursor: pointer;
+  padding: var(--ds-space-1h) var(--ds-space-2);
+  cursor: pointer;
   appearance: none;
 }
-/* 焦点态：.wg-switch-select 已收编 css/inputFocus.css（2026-11-05）。 */
+/* 造型 + 焦点态 + 原生下拉箭头：归 css/inputSurface.css（输入面唯一标准批
+   2026-11-06；`.wg-switch-select` 登记在标准的下拉成员表里）。 */
 .wg-switch-select option { color: var(--color-frame-text); background: var(--color-surface, #fff); }
 
 /* Breadcrumb row (#744-B drill-in views): X › sub › …, last crumb static. */
@@ -4191,12 +4197,15 @@ body.wg-side-active #panel-sessions #explorer-section { display: none; }
   border-radius: var(--ds-radius-button); padding: var(--ds-space-1h) var(--ds-space-inline-x);
   box-shadow: var(--frost-shadow);
 }
-.wg-search:focus-within { border-color: var(--glass-etched-border-focus, var(--color-frame-active)); }
+/* 焦点态：输入面唯一标准批（2026-11-06）—— 容器不再变蓝边。此前
+   `:focus-within` 把整条搜索胶囊的描边换成 --glass-etched-border-focus（蓝族
+   rgba(91,127,191)），是作者实拍「到处是蓝框」的一处；现在焦点可见性由内层
+   裸件在标准里拿键盘环承担，外壳保持玻璃静息态。 */
 .wg-search svg { flex: none; color: var(--color-frame-text-muted); }
 .wg-search-input {
-  border: 0; outline: 0; background: transparent;
   color: var(--color-frame-text); font: inherit; font-size: var(--ds-fs-hint); width: 100%;
 }
+/* 裸件（无底/无边/无环）：归 css/inputSurface.css 的裸件成员表。 */
 /* 占位（placeholder 形态）：色走 dim 令牌、透明度归 1（修前只写 muted，暗档
    与输入本体几乎同色 ⇒ 占位不像占位）。 */
 .wg-search-input::placeholder { font-size: var(--cv-hint-fs-placeholder); font-weight: var(--cv-hint-fw); color: var(--cv-hint-color-dim); opacity: 1; }

@@ -992,13 +992,12 @@
 .tfl-row-title-input {
   flex: 1 1 auto;
   min-width: 0;
-  border: none;
-  outline: none;
-  background: transparent;
   padding: 0;
   font: 500 var(--ds-fs-hint)/1.35 ui-monospace, SFMono-Regular, monospace;
   color: var(--color-text, #000);
 }
+/* 裸件（无底/无边/无环）：归 css/inputSurface.css 的裸件成员表（输入面唯一
+   标准批 2026-11-06）。 */
 .tfl-row-title-input::placeholder { color: color-mix(in srgb, var(--color-text, #000) 30%, transparent); }
 
 /* 行内创建行 */

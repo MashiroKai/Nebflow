@@ -85,18 +85,13 @@
 #memory-content-input,
 #rules-input {
   width: 100%;
-  background: var(--glass-etched-bg);
   color: var(--color-frame-input-text);
-  border: 1px solid var(--glass-etched-border);
-  border-radius: var(--ds-radius-input);
   padding: var(--ds-space-2) var(--ds-space-3);
   font-size: var(--ds-fs-body);
   font-family: ui-monospace, SFMono-Regular, monospace;
   line-height: 1.5;
   resize: vertical;
-  outline: none;
   box-sizing: border-box;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 #modal-input {
   font-family: inherit;
@@ -253,7 +248,6 @@
   margin-bottom: var(--ds-space-4);
 }
 #modal-input {
-  border-radius: var(--ds-radius-xl);
   padding: var(--ds-space-block-y) 14px;
   font-size: var(--ds-fs-subtitle);
   font-family: inherit;
@@ -478,20 +472,15 @@
 /* ---------- Settings: Config ---------- */
 .cfg-input {
   width: 100%;
-  background: var(--ds-etched-bg);
   color: var(--color-frame-input-text);
-  border: 1px solid var(--ds-etched-border);
-  border-radius: var(--ds-radius-input);
   padding: var(--ds-input-pad);
   /* 设计语言批整改判例③：面板输入 = 正文同档 13px（本批落令牌）。 */
   font-size: var(--ds-fs-body);
   font-family: var(--ds-font-mono);
-  outline: none;
-  transition: border-color var(--ds-dur-hover) var(--ds-ease-std),
-              box-shadow var(--ds-dur-hover) var(--ds-ease-std);
   box-sizing: border-box;
 }
-/* 焦点态：.cfg-input / .cfg-select 已收编 css/inputFocus.css（2026-11-05）。 */
+/* 造型 + 焦点态：归 css/inputSurface.css（输入面唯一标准批 2026-11-06 ——
+   全站输入件只有一种底/边/圆角/影与一种焦点态；本文件不再写第二套）。 */
 .cfg-eye-btn {
   background: none;
   border: none;
@@ -1409,17 +1398,12 @@
   flex: 1;
   min-width: 170px;
   height: 28px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--ds-radius-input);
-  background: rgba(0, 0, 0, 0.02);
   color: var(--color-text);
   font: 500 var(--ds-fs-meta) -apple-system, sans-serif;
   padding: 0 var(--ds-space-2);
   cursor: pointer;
-  outline: none;
-  transition: border-color 0.15s;
 }
-/* 焦点态：.mp-add-select 已收编 css/inputFocus.css（2026-11-05）。 */
+/* 造型 + 焦点态：归 css/inputSurface.css（输入面唯一标准批 2026-11-06）。 */
 /* ui-status-redesign（盘点 #38，S9 同族）：11.5px 红字 → 中性正文 + 行首
    circle-alert 红图标（modelPanel.js 注入）。 */
 .mp-inline-err {

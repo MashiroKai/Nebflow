@@ -435,6 +435,65 @@ html[data-theme="light"] {
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
+ * Input field（输入面）—— 全站唯一输入造型的令牌段
+ *   （input-surface-unify 批 2026-11-06；作者裁定逐字：
+ *    「这个蓝色输入框怎么到处在显示 我不是说去掉吗 就采用我们主对话窗口这种
+ *      灰色圆角阴影」+「输入框的这个样式也要成为统一标准 不可以出现第二种」）
+ *
+ * 参照物 = 主会话输入框 `#input-bar`（标准，不是被改对象）。逐项对齐关系：
+ *   · 背景  = `--nf-glass-bg`（与 #input-bar 同一个玻璃底；逐值同源不是我抄的值）
+ *   · 圆角  = `--nf-field-radius`（--ds-radius-xl 12px；#input-bar 是外壳 20px，
+ *             本档取「条状容器」档 —— 20px 落在 32px 高的单行输入上会读成胶囊，
+ *             尺寸不匹配的圆角不是「同一形态」，故按下表档位取值，读数见规范 §1）
+ *   · 阴影  = `--nf-field-shadow`（= 参照物 --nf-glass-shadow 三档栈逐字）
+ *   · 边框  = 中性灰（参照物的细边是白光边，落在面板上不可见；按作者「灰调」要求
+ *             换成正文色 14% 混色，两主题自适应，且**永不是品牌蓝**）
+ *   · 内距  = 6px / 12px（与 #input-bar 的 --ds-space-1h / --ds-space-3 逐值同）
+ *   · 字号  = --ds-fs-row 13.5px（与 #input-bar 内层 #input 同档）
+ *
+ * ── 三层职责（改输入面只改这三处）──────────────────────────────────────────
+ *   ① 令牌 = 本段（造型数值的唯一出生地；别的文件出现 --nf-field-* 定义 ⇒ 门禁红）
+ *   ② 类/规则 = `css/inputSurface.css`（`.nf-field` / `--bare` / `--select` 三个
+ *      声明过的变体 + 元素级兜底；**全站唯一**允许写输入面造型的文件）
+ *   ③ 机检 = `scripts/check-input-surface.mjs`（I1 令牌单源 / I2 造型单源 /
+ *      I3 数值单源 / I4 蓝不进输入面 / I5 JS 注入面 / I6 豁免清单在规范里）
+ * 规范正文 = `seed/plugins/design-language/skills/design-language/references/
+ *   input-surface-spec.md`（与 flat-button-spec / glass-spec 同族）。
+ * ══════════════════════════════════════════════════════════════════════════ */
+:root {
+  --nf-field-bg: var(--nf-glass-bg);                  /* = #input-bar 玻璃底 */
+  --nf-field-bg-hover: var(--nf-glass-bg-hover);
+  /* 边框：中性灰（正文色 14%）——作者要的「灰调」，两主题自适应，零品牌蓝 */
+  --nf-field-border-color: color-mix(in srgb, var(--color-text) 14%, transparent);
+  --nf-field-border: 1px solid var(--nf-field-border-color);
+  /* 聚焦（指针态）：同一根灰线压深一档 + 阴影略抬，形态不变 */
+  --nf-field-border-focus: color-mix(in srgb, var(--color-text) 26%, transparent);
+  --nf-field-radius: var(--ds-radius-xl);             /* 12px 条状容器档 */
+  --nf-field-shadow: var(--nf-glass-shadow);          /* = #input-bar 三档栈 */
+  --nf-field-pad-y: var(--ds-space-1h);               /* 6px  = #input-bar */
+  --nf-field-pad-x: var(--ds-space-3);                /* 12px = #input-bar */
+  --nf-field-fs: var(--ds-fs-row);                    /* 13.5px = #input 同档 */
+  --nf-field-line: 1.4;
+  /* 裸件（嵌在已成形的容器里，如主会话输入条 / 记事本 / 搜索胶囊）：
+     背景/边框/阴影全让位给外壳，只保留字与色 */
+  --nf-field-bare-bg: transparent;
+  /* 键盘可见焦点环：唯一允许出现「蓝」的地方 —— 且是压灰的蓝族混色
+     （品牌蓝 45% + 正文色），不是整块品牌蓝框；对比度见规范 §3 */
+  --nf-field-ring: color-mix(in srgb, var(--btn-focus-ring) 45%, var(--color-text));
+  --nf-field-ring-w: 2px;
+  --nf-field-ring-offset: -1px;                       /* 内缩：压在框体自己的边上 */
+  /* 输入条外壳档（.ask-input 等「装着输入件的条」）：与 #input-bar 同族圆角 */
+  --nf-field-shell-radius: var(--ds-radius-xl);
+  /* 错误态边（同一种形态的状态档，不是第二套形态） */
+  --nf-field-border-invalid: var(--color-error);
+  /* 原生下拉箭头（.nf-field--select）：只由 currentColor 组成，不引入第二色 */
+  --nf-field-caret: linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  --nf-field-caret-pos: calc(100% - 12px) 55%, calc(100% - 8px) 55%;
+  --nf-field-caret-size: 4px 4px;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
  * Toggle（开关）—— 全站唯一开关形态的令牌段
  *   （toggle-unify 批 2026-11-05；作者裁定 2026-11-05 19:55「A 胶囊滑块」）
  *
@@ -459,19 +518,39 @@ html[data-theme="light"] {
  *   「品牌绿 ON 档 vs 浅灰轨道 = 2.02:1」——状态**不能靠颜色单独读**，只能靠
  *   圆钮位移（40px 轨道里走 18px）读。作者已在 2026-11-05 19:55 选择 A 并接受
  *   该取舍，本批不擅自改色；对比度实测表见落地报告 §对比度。
+ *
+ * ── 居中 = 几何推导，不是手填值（toggle-center 批 2026-11-06）──────────────
+ *   作者原话：「我们的toggle按钮需要重新设计 中间的按钮相对于边框都没有居中」。
+ *   上一批的四个数（轨道 40×22 / 圆钮 16 / 内衬 2 / 行程 18）**各自自洽**，
+ *   但「内衬」写在 `top/left` 上时，absolute 子件是相对**padding box**（描边内侧）
+ *   定位的 —— 于是「缝」被 1px 描边重复记了一次账：桌面档恰好抵消（22−2×1−16 =
+ *   4 = 2×2），手机档（51×31 / 圆钮 27 / 内衬 2）却不抵消，屏幕实测
+ *   上 3 / 下 1、开档右缝 1（关档左缝 3）—— 2px 偏心。
+ *   所以本段把「居中」改成**推导量**：缝只准由 (轨高 − 钮径)/2 算出，`top/left`
+ *   再减掉描边，行程由「轨宽 − 2×缝 − 钮径」算出。四个方向同源 ⇒ 任何尺寸组合
+ *   都居中，手填值这个错误类别被消掉（机检：`scripts/check-toggle-geometry.mjs`）。
+ *   实测：桌面档四向 3/3/3/3（与上一批同像素，零视觉变更）；手机档 3/1/3/1 → 2/2/2/2。
  * ══════════════════════════════════════════════════════════════════════════ */
 :root,
 html[data-theme="light"] {
-  /* 几何（A 组实测值：轨道 40×22、圆钮 16、内衬 2、圆角全圆） */
+  /* 几何（A 组：轨道 40×22、圆钮 16、圆角全圆）
+     缝 / 偏移 / 行程三枚**全部由轨道与圆钮推导**（禁手填：手填值正是上一批
+     「设计值自洽、屏幕不居中」的根因）。 */
   --nf-toggle-w: 40px;
   --nf-toggle-h: 22px;
   --nf-toggle-radius: 999px;
   --nf-toggle-border: 1px;
   --nf-toggle-knob: 16px;
-  --nf-toggle-inset: 2px;
-  /* 行程恒按公式算（禁手抄数值）：40 − 2×1(border) − 16 − 2×2 = 18px
-     ⇒ OFF 左缝 2px == ON 右缝 2px（border-box 下 absolute 子件相对 padding box 定位）。 */
-  --nf-toggle-travel: calc(var(--nf-toggle-w) - var(--nf-toggle-border) * 2 - var(--nf-toggle-knob) - var(--nf-toggle-inset) * 2);
+  --nf-toggle-knob-radius: 50%;     /* 圆钮恒为圆（A 组形态语汇：胶囊轨道 + 圆钮） */
+  /* 圆钮到轨道**外缘**的四向缝 —— 居中即四向同值：(22 − 16)/2 = 3px。
+     上=下=左(关)=右(开)=本值；这是肉眼与机检共用的一把尺。 */
+  --nf-toggle-inset: calc((var(--nf-toggle-h) - var(--nf-toggle-knob)) / 2);
+  /* absolute 子件的 top/left 相对 **padding box**（描边内侧）⇒ 外缘缝先减描边：
+     3 − 1 = 2px（= 上一批写在 `top/left` 上的那个 2px，像素级等价）。 */
+  --nf-toggle-offset: calc(var(--nf-toggle-inset) - var(--nf-toggle-border));
+  /* 行程恒按公式算（禁手抄数值）：40 − 2×3(缝) − 16(钮) = 18px
+     ⇒ 关档左缝 3 == 开档右缝 3（外缘尺）；手机档同一条公式 = 20px。 */
+  --nf-toggle-travel: calc(var(--nf-toggle-w) - var(--nf-toggle-inset) * 2 - var(--nf-toggle-knob));
   --nf-toggle-hit: 44px;            /* 命中盒边长（WCAG 2.5.5 目标尺寸） */
   /* 动效（A 组实测：180ms + cubic-bezier(0.2,0,0,1)；两条 y 控制点 0/1，曲线单调
      不过冲 —— 没有回弹段，所以「不过冲、不弹跳」是曲线性质而不是手感描述） */

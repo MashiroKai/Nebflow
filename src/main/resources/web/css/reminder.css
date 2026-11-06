@@ -505,15 +505,14 @@
 }
 .reminder-inline-input {
   flex: 1;
-  border: none;
-  background: transparent;
   font-size: var(--ds-fs-body);
   color: var(--color-text);
-  outline: none;
   font-family: inherit;
   padding: var(--ds-space-1) 0;
   letter-spacing: -0.01em;
 }
+/* 裸件（无底/无边/无环）：归 css/inputSurface.css 的裸件成员表（输入面唯一
+   标准批 2026-11-06）。 */
 .reminder-inline-input::placeholder {
   color: var(--color-text);
   opacity: 0.25;
@@ -941,17 +940,13 @@ nf-sched-card { display: contents; }
   box-sizing: border-box;
   width: 100%;
   padding: var(--ds-input-pad-lg);
-  border: 1px solid var(--glass-etched-border);
-  border-radius: var(--ds-radius-input);
-  background: var(--glass-etched-bg);
   color: var(--color-text);
   font-family: inherit;
   font-size: var(--ds-fs-body);
   line-height: var(--ds-lh-body);
   resize: vertical;
 }
-/* 焦点态：.schedule-card-input 已收编 css/inputFocus.css（2026-11-05；
-   原 2px 外描边环随批摘除）。 */
+/* 造型 + 焦点态：归 css/inputSurface.css（输入面唯一标准批 2026-11-06）。 */
 
 /* ── Dark Theme ───────────────────────────────────────────────────────── */
 @media (prefers-color-scheme: dark) {

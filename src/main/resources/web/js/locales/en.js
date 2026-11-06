@@ -721,6 +721,8 @@ export default {
   // (contract = main card case-1 interface list + A-4).
   'contacts.createGroup': 'New Group',
   'contacts.createGroupTitle': 'Start a group chat',
+  // Unified-panel batch (2026-11-06): label for the top-left back round button.
+  'contacts.back': 'Back',
   'contacts.createGroupName': 'Group name',
   // Create-group panel skeleton, 4 sections (2026-09-16 visual rework): input
   // placeholder example / list section label / empty-state guidance. Landed in
@@ -1648,9 +1650,9 @@ export default {
   // A-branch scroll-follow convergence: new-message pill (N = message rows
   // added since the user left the bottom).
   'chat.newMessages': '↓ {n} new messages',
-  // Back-to-bottom pill (four-session unification batch 2026-11-05,
-  // js/scrollBackPill.js): no unread, just scrolled far enough up
-  // (distance-to-bottom >= SHOW_AFTER_PX) — same pill, count-less arm.
+  // Back-to-bottom (single-implementation batch 2026-11-06, js/scrollPill.js):
+  // no unread, just scrolled far enough up (distance-to-bottom >= SHOW_AFTER_PX)
+  // — the same pill's second arm.
   'chat.backToBottom': 'Back to bottom',
   // Search jump return pill (author order 2026-11-01, searchReturnPill.js):
   // anchor live => back to the pre-jump reading spot; anchor gone => honest

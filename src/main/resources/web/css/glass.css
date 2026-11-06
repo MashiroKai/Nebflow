@@ -112,6 +112,11 @@
 .ask-pending-row, .ask-pending-next,
 .ws-pick-target,
 .scroll-new-pill,
+/* 顶部悬浮批（glass-top-overlays 2026-11-06）：聊天气泡流上方的 sticky 等待条
+   —— 作者令「所有悬浮在顶部 可以透出背景的 都用毛玻璃效果」。本表只供 blur；
+   玻璃底 / 描边 / 内高光与 15% warning 语义洗色层在 chat.css 的 `.retry-status`
+   块里合成（复合背景，合成后 α ≈ .617，落进玻璃带）。 */
+.retry-status,
 .dvp-nd,
 .ds-edge-fade,
 .fcv-headpill,
@@ -124,6 +129,12 @@
 #conn-banner,
 body.mobile-layer #mobile-dock,
 body.mobile-layer .mobile-page-title::before,
+/* 手机 canvas 顶部环带（mobile-canvas-tabs-c 批 2026-11-06，方案 C 落地）：
+   玻璃带层 `.mf-strip::before` = 整条 64px 顶栏一枚玻璃面（正文从底下滚过、
+   被「化掉」的第一档）；主胶囊 `.mf-strip-chip.on::after` = 三签里唯一带材质的
+   那一枚（作者令「主胶囊要采用毛玻璃底」）。两侧签同批改零材质（「背景的文字
+   不使用胶囊」）⇒ 不再进本表，深度只留环邻位模糊（--ds-ring-blur）。 */
+body.mobile-layer .mf-strip::before,
 body.mobile-layer .mf-strip-chip.on::after,
 body.mobile-layer .mf-dots,
 body.mobile-layer .mf-swipe-ring,
@@ -244,20 +255,30 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .flowmap-nav-bar,
 }
 
 /* ── ① 气泡半透明实底档（气泡禁独立 backdrop-filter）────────────────────
-   聊天气泡全族（主会话 .bubble.* + canvas ask 列 .ask-bub.*）消费本档：
-   实底以 color-mix 从既有单源色 token 出 α（零新色值、双主题自适应——
-   --color-bubble-user 亮暗同值 / --color-bubble-ai 暗档走 base.css 翻色），
-   阅读对比度 ≈ 原实色（90%+ 不透明度），滚动零 backdrop 成本。
-   --glass-bub-active-bg = canvas 活性语言用户侧变体（sapphire tint 复合层
-   压在半透明实底上——tint 无 blur 时直接裸铺会漏底纹，复合保证可读）。 */
+   🔴 气泡**底色**单点（bubble-side-color 批 2026-11-06；作者令逐字「正常应该
+   我们这方发过去的是绿色，对方发过来的是白色。我们这方发的，不管是我发的还是
+   Agent 发的，都算我们这方发」）：
+     · 归属方**只有两档**——我方（作者本人 + 我方 Agent / delegate / 节点 /
+       后台任务 / 工具注入 / 系统生成）⇒ 绿；对方（好友 / 群内他人 / 外部
+       通道 / 对方 AI）⇒ 白。**不准有第三档**，也不准按「消息类型 / sender
+       种类 / 是否有工具结果 / 是否系统生成」另开配色。
+     · 色相单源不变（本批**零新色值**）：--color-bubble-user = 微信绿 #95ec69
+       （亮暗同值）、--color-bubble-ai = 亮 #fff / 暗 #1c1f27（暗档翻色在
+       base.css）。
+     · 全站**唯一**一处把「归属方 → 底色」落到 CSS = 本文件下方
+       「气泡归属方底色单点」块。其它任何文件再给气泡面写一条背景色即违规
+       （门禁 scripts/check-bubble-side.mjs 的 R1–R3 逐条钉死）。
+   实底以 color-mix 从单源色出 α（≈ 原实色，阅读对比度不掉档），滚动零
+   backdrop 成本。 */
 :root {
-  --glass-bub-user-bg: color-mix(in srgb, var(--color-bubble-user) 97%, transparent);
-  --glass-bub-ai-bg: color-mix(in srgb, var(--color-bubble-ai) 97%, transparent);
+  /* 归属方两档 = 全站唯一的两个气泡底色令牌 */
+  --nf-bub-ours-bg: color-mix(in srgb, var(--color-bubble-user) 97%, transparent);
+  --nf-bub-theirs-bg: color-mix(in srgb, var(--color-bubble-ai) 97%, transparent);
+  /* 兼容别名：旧 token 名一律**指向**上面两档（禁再写第二份色值） */
+  --glass-bub-user-bg: var(--nf-bub-ours-bg);
+  --glass-bub-ai-bg: var(--nf-bub-theirs-bg);
   --glass-bub-ai-border: rgba(0, 0, 0, 0.04);
   --glass-bub-ai-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
-  --glass-bub-active-bg:
-    linear-gradient(rgb(var(--sapphire) / 0.18), rgb(var(--sapphire) / 0.18)),
-    var(--glass-bub-ai-bg);
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -275,26 +296,39 @@ html[data-theme="light"] {
   --glass-bub-ai-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 
-/* 主会话气泡（chat.css 保留几何/字号；材质面走本包 token） */
-.bubble.user {
-  background: var(--glass-bub-user-bg);
-}
-.bubble.ai {
-  background: var(--glass-bub-ai-bg);
-  border-color: var(--glass-bub-ai-border);
-  box-shadow: var(--glass-bub-ai-shadow);
-}
-
-/* canvas ask 列气泡（ask.css 保留几何；原 --cv-* 玻璃档退役：独立
-   backdrop-filter 随气泡禁令摘除，浮影保留 --cv-shadow 三档栈） */
-.ask-bub {
-  background: var(--glass-bub-ai-bg);
-  border-color: var(--glass-bub-ai-border);
-}
-.ask-bub.user {
-  background: var(--glass-bub-active-bg);
-  border-color: rgb(var(--sapphire) / 0.35);
-}
+/* ══ 气泡归属方底色单点（全站唯一决策处）════════════════════════════════
+   判据一句话：**气泡底色只由「消息归属方」决定**。
+     · 缺省 = 我方（绿）：`.bubble` 基类不带任何角色类时也落我方 —— 渲染路径
+       哪怕忘挂角色类，也只会得到「我方绿」，绝不会漏成透明或第三色。
+     · 只有 `.theirs` 才白。`.theirs` 与 `data-bubble-side="theirs"` 由
+       js/bubbleSide.js 的唯一函数 bubbleSide()/bubbleClass() 写入。
+     · 角色类（user / ai / peer / injected）**不再各自配色**：它们只承载几何、
+       圆角尾向与语义；底色归宿统一在下面这条规则族里点名。
+   本块之外任何文件给气泡面写背景色 = 违规（门禁 R2/R3）。 */
+.bubble { background: var(--nf-bub-ours-bg); }
+.bubble.theirs { background: var(--nf-bub-theirs-bg); }
+/* 旧角色类名 → 归属方：`peer` = 对方（会话窗入向）；`user`/`ai`/`injected`
+   一律我方（`.ai` = 我方 Agent 回复、`.injected` = 工具/delegate/节点/后台
+   任务注入，两者都代表本机账号发出 ⇒ 绿）。 */
+.bubble.user,
+.bubble.ai,
+.bubble.injected { background: var(--nf-bub-ours-bg); }
+.bubble.peer { background: var(--nf-bub-theirs-bg); }
+/* dropbox 面（自有类族，未挂 .bubble）：同一判据的镜像——`.out` = 我方。 */
+.dropbox-msg .dropbox-msg-bubble { background: var(--nf-bub-ours-bg); }
+.dropbox-msg.in .dropbox-msg-bubble { background: var(--nf-bub-theirs-bg); }
+/* 媒体卡面镜像**本向**气泡（作者令 2026-11-04「社交窗口对话 气泡颜色不统一
+   应该和文字的气泡一个颜色」；本批再收一档：出向 = 我方绿）。 */
+.row.user-media .pop-media-flat,
+.fm-msg .fm-att-list .pop-media-flat { background: var(--nf-bub-ours-bg); }
+.fm-msg.in .fm-att-list .pop-media-flat { background: var(--nf-bub-theirs-bg); }
+.row.user-media .pop-stack-view .media-layer,
+.fm-msg .fm-att-list .pop-stack-view .media-layer { background: var(--nf-bub-ours-bg); }
+.fm-msg.in .fm-att-list .pop-stack-view .media-layer { background: var(--nf-bub-theirs-bg); }
+/* canvas ask 气泡 = **毛玻璃面**（作者 2026-11-05 16:50 令「这三处全部吃唯一
+   毛玻璃标准」），无色相 ⇒ 不属于绿/白两档的第三种「色」，材质单点是
+   --glass-bg（下方 .ask-dock 块给完整材质；这里给非 dock 兜底同一底）。 */
+.ask-bub { background: var(--glass-bg); }
 
 /* ── ② 面级浮件档（材质三件套 + 顶缘折射线）──────────────────────────── */
 
@@ -408,13 +442,13 @@ html[data-theme="light"] {
   border: var(--ds-border-width) solid var(--cv-border, var(--glass-border));
   box-shadow: var(--cv-shadow);
 }
-/* 用户侧气泡 = 同一玻璃底 + sapphire tint 复合层（= 既有 --glass-bub-active-bg
-   的复合结构，tint 比例不变）。 */
+/* 用户侧气泡：bubble-side-color 批（2026-11-06）摘除 sapphire tint 复合层 ——
+   ask 面全部消息都代表本机账号（我方），再按「问/答」分两个色相即等于按
+   「消息类型」另开配色（作者令禁）。两向同材质；左右识别改由气泡自身几何
+   （.ask-bub.user 的右侧贴靠，见 askDock.js）承担。 */
 .ask-dock .ask-bub.user {
-  background:
-    linear-gradient(rgb(var(--sapphire) / 0.18), rgb(var(--sapphire) / 0.18)),
-    var(--glass-bg);
-  border-color: rgb(var(--sapphire) / 0.35);
+  background: var(--glass-bg);
+  border-color: var(--cv-border, var(--glass-border));
 }
 /* 顶缘折射线（面级浮件的第三件）：几何与 #input-bar::before 逐值相同
    （top:0 / 左右各 10% / 高 1px / border-radius inherit），色值 = 同一个

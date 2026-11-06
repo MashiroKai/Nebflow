@@ -274,6 +274,8 @@ const chipInfo = (page) => page.evaluate(() => {
         radius: cs.borderRadius, bgImage: acs.backgroundImage, bgColor: acs.backgroundColor,
         borderTop: acs.borderTopColor, borderBottom: acs.borderBottomColor, borderWidth: acs.borderTopWidth,
         shadow: acs.boxShadow, weight: cs.fontWeight, size: cs.fontSize, family: cs.fontFamily, color: cs.color,
+        // 深度键（方案 C 落地批）：环邻位模糊 —— 邻签有、中签无。
+        filter: cs.filter,
       },
     };
   });
@@ -480,8 +482,15 @@ try {
     for (const nb of nbs) {
       const m = await contrastOf(page, nb.id);
       read.contrast.push(m);
-      check(`L1 邻签文字对比度 ≥4.5:1 · ${nb.id}`,
-        m.glyphPixels > 0 && m.sample && m.sample.ratio >= 4.5 && m.coreMedian >= 4.5,
+      // 裁定变更（方案 C 落地批 mobile-canvas-tabs-c，作者 2026-11-06 08:33）：
+      // 「但是还有电脑端hover 上下选项的那种模糊效果」—— 邻签改吃桌面 hover 环的
+      // 同一档模糊（--ds-ring-blur 1.6px / --ds-ring-saturate 1.25，旧档 JS 自拟
+      // 0.40px）。**模糊本身就是这条判据的输入**：邻签文字不再满足 4.5:1（实测
+      // 亮 2.78:1 / 暗 4.52:1，读数照旧落盘），可读性的承载面移到主胶囊
+      // （L1b 仍硬 4.5:1）。此处保留一条**可辨识下限** 2.5:1：低于它就不是「模糊的
+      // 另一枚签」而是「几乎看不见」，那条街仍然判红。拨回可读档 = 改一枚令牌。
+      check(`L1 邻签文字对比度 ≥2.5:1（模糊档；读数落盘）· ${nb.id}`,
+        m.glyphPixels > 0 && m.sample && m.sample.ratio >= 2.5 && m.coreMedian >= 2.5,
         m.glyphPixels
           ? `代表点(设备px ${m.sample.devicePx.join(',')} / CSS ${m.sample.cssPx.join(',')}) `
             + `fg=${m.sample.fgHex} bg=${m.sample.bgHex} 比值=${m.sample.ratio}:1；`
@@ -512,9 +521,12 @@ try {
     check('L2③ 渐隐只落在 label / 签 ::after 的 mask 上（+ 条边 14px 羽化），宿主签本体零 mask',
       legalMasks && hostMasks.length === 0,
       `带 mask 面：${maskHosts.map((b) => `${b.label}${b.pseudo}`).join(' / ')}；宿主带 mask 的签=${hostMasks.length}`);
-    const nbMaskKept = nbs.every((c) => /linear-gradient/.test(c.labelMask) && /linear-gradient/.test(c.afterMask));
-    check('L2④ 邻签渐隐在内容层（label 与 ::after 都是方向 linear-gradient），非覆盖条',
-      nbMaskKept, nbs.map((c) => `${c.id} label=${/linear-gradient/.test(c.labelMask) ? 'lg' : c.labelMask} after=${/linear-gradient/.test(c.afterMask) ? 'lg' : c.afterMask}`).join(' / '));
+    // 裁定变更（方案 C 落地批，作者 2026-11-06 08:33「文字两边不要渐隐」）：
+    // 邻签的方向 mask（label + ::after 两层）**整族退役** —— 旧判据反向钉死：
+    // 邻签 label 与 ::after 都必须无 mask（水平渐隐零残留）。
+    const nbMaskGone = nbs.every((c) => c.labelMask === 'none' && c.afterMask === 'none');
+    check('L2④ 邻签无水平 mask（label 与 ::after 均 none —— 「文字两边不要渐隐」）',
+      nbMaskGone, nbs.map((c) => `${c.id} label=${c.labelMask} after=${c.afterMask}`).join(' / '));
     check('L2⑤ 中签两向都清晰（label mask=none，11:23 既有裁定不破）', on.labelMask === 'none', `中签 labelMask=${on.labelMask}`);
     const feather = 14;
     const intersect = audit.visibleChips.filter((c) => c.x < feather || c.right > 375 - feather);
@@ -585,11 +597,32 @@ try {
       `${mids.length} 帧中间态 / 共连拍 ${seq.frames.length} 帧：`
       + read.midFrames.map((f) => `${f.atMs}ms(起${f.vsBeforePct}%/落${f.vsSettledPct}%)`).join(' '));
 
-    // ── L6 同源复核（中/邻 11 键相等；T13 承担主断言）────────────────────────
-    const diffKeys = Object.keys(on.visual).filter((k) => on.visual[k] !== nbs[0].visual[k]);
-    read.visualDiffKeys = diffKeys;
-    check('L6 中/邻签 11 项视觉属性逐项相等（样式同源，唯一差异面 = 渐隐 mask）',
-      diffKeys.length === 0, `差异键=${diffKeys.length ? diffKeys.join(',') : '无'}`);
+    // ── L6 同源复核（方案 C 落地批 2026-11-06：几何/字体同源 + 材质分层）──────
+    // 裁定变更：旧断言「中/邻 11 项视觉属性逐项相等，唯一差异面 = 渐隐 mask」被
+    // 作者 08:33 口径推翻 ——「主胶囊要采用毛玻璃底 然后背景的文字不使用胶囊」+
+    // 「文字两边不要渐隐」：邻签 mask 整族退役，**材质**成为新的（且是唯一的）
+    // 差异面：主胶囊有玻璃底/细边/浮影，邻签零材质；深度改由环邻位模糊承担。
+    // 同源的意思现在落在「几何 + 字体 + 色」八项上（圆角/字重/字号/字族/字色），
+    // 不是「连材质都必须一样」—— 旧口径恰恰是作者这次要拆掉的那个形态。
+    const GEOM_KEYS = ['radius', 'weight', 'size', 'family', 'color'];
+    const geomDiff = GEOM_KEYS.filter((k) => on.visual[k] !== nbs[0].visual[k]);
+    read.visualDiffKeys = Object.keys(on.visual).filter((k) => on.visual[k] !== nbs[0].visual[k]);
+    check('L6a 中/邻签几何与字体逐项相等（圆角/字重/字号/字族/字色 —— 样式同源面）',
+      geomDiff.length === 0, `差异键=${geomDiff.length ? geomDiff.join(',') : '无'}`);
+    const zeroMat = (v) => (v.bgImage === 'none' || v.bgImage === '')
+      && v.bgColor === 'rgba(0, 0, 0, 0)' && v.borderWidth === '0px'
+      && (v.shadow === 'none' || v.shadow === '');
+    check('L6b 材质只在主胶囊（邻签零底/零边/零影 —— 「背景的文字不使用胶囊」）',
+      zeroMat(nbs[0].visual) && zeroMat(nbs[1].visual)
+      && !zeroMat(on.visual) && on.visual.bgColor !== 'rgba(0, 0, 0, 0)',
+      `中签 bg=${on.visual.bgColor} img=${on.visual.bgImage.slice(0, 28)} 边=${on.visual.borderWidth} 影=${on.visual.shadow.slice(0, 24)}`
+      + `｜邻签 bg=${nbs[0].visual.bgColor} img=${nbs[0].visual.bgImage} 边=${nbs[0].visual.borderWidth} 影=${nbs[0].visual.shadow}`);
+    // 中签的 filter 是「零档」而不是字面 none（blur(0px) saturate(1) 逐值恒等，
+    // 与 none 视觉等价、但省掉一次材质切换）—— 故判据读**半径值**，不读字面。
+    const blurPx = (f) => { const m = /blur\(([\d.]+)px\)/.exec(f || ''); return m ? parseFloat(m[1]) : 0; };
+    check('L6c 深度分层：邻签有环邻位模糊、中签零模糊（电脑端 hover 同一配方）',
+      blurPx(on.visual.filter) === 0 && nbs.every((n) => blurPx(n.visual.filter) > 0),
+      `中签=${on.visual.filter}（半径 ${blurPx(on.visual.filter)}px）｜邻签=${nbs.map((n) => `${n.visual.filter}（半径 ${blurPx(n.visual.filter)}px）`).join(' / ')}`);
 
     check('E 零 pageerror', pageErrors.length === 0, pageErrors.length ? pageErrors.slice(0, 3).join(' | ') : '0');
     read.pageErrors = pageErrors;

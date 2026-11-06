@@ -460,10 +460,24 @@ function bgRowCollapseDefault(row) {
   return bgRowTerminal(r.info || {});
 }
 
+/** 执行形态提取单点（来源字段 = `DelegateRegistry.Record.mode` 的 provider 镜像
+ *  `row.mode`；值域 kernel | dispatcher，`''` = 旧盘 / 外部腿 / 非 delegate 会话）。
+ *  形态判定**只认这一个字段**：不看会话 id 前缀、不看显示名、不看
+ *  `orchestrationMode`（后者是 spawn 副产品、惰性升级：「这行代表什么」不能由
+ *  「它派生过没有」反推）。值域外的词一律归一为 `''`（无信息胜过错信息）。
+ *  @param {any} row @returns {'kernel'|'dispatcher'|''} */
+function bgDelegateExecMode(row) {
+  const mode = String((row && row.mode) || '');
+  if (mode === 'kernel' || mode === 'dispatcher') return mode;
+  return '';
+}
+
 /** 徽标归位批（2026-10-31 23:02 作者令 + 实拍截图）：**顶层 delegate 组头行只标一个
  *  徽标 = delegate 执行形态 `row.mode`（kernel / dispatcher，即 delegate:type）**——
  *  Delegate/Subagent/Flow 字样一律不上顶层；子级行的徽标 = 自身 kind（subagent /
  *  agentflow 等，视实际类型，渲染在 childLevel 分支）。
+ *  agentflow 错标修复批（2026-11-06 作者令「kernel 被标记 agentflow」）：本函数的
+ *  输入统一为 [[bgDelegateExecMode]] 的读数——形态词逐字上屏，徽标与形态同源。
  *  考古（顶层为何会标上 Subagent——徽章来源字段取错）：旧实现以 `orchestrationMode`
  *  兜底（subagent-star → Subagent / agentflow → Flow），再退快照 kind / 会话 id
  *  前缀（SubTask → Delegate）。这三个字段全是**历史类型残留**——编排形态随子代理
@@ -474,10 +488,12 @@ function bgRowCollapseDefault(row) {
  *  （总闸关/旧盘）⇒ **无徽标**（绝不回退残留词——无信息胜过错信息；子级 kind 词
  *  的显示词归一仍走 bgMemberKindWord，渲染点不动数据面）。
  *  术语分层批（2026-11-05）：本函数产出的是**执行形态词**，与整体行身份词
- *  （bgAgentflowWord）同行并存——两者不是同一个词位，也不许互相顶替。 */
-function bgDelegateBadgeWord(info, row) {
-  const execMode = String((row && row.mode) || '');
-  if (execMode === 'kernel' || execMode === 'dispatcher') return execMode;
+ *  （bgAgentflowWord）同行并存——两者不是同一个词位，也不许互相顶替。
+ *  @param {string} execMode [[bgDelegateExecMode]] 的读数
+ *  @returns {string} */
+function bgDelegateBadgeWord(execMode) {
+  const mode = String(execMode || '');
+  if (mode === 'kernel' || mode === 'dispatcher') return mode;
   return '';
 }
 
@@ -590,13 +606,39 @@ function bgKindDisplayWord(kind) {
  *  agentflow），节点 = agentflow 里的成员，成员分层」）：**整体行身份词单点**。
  *  取值只来自 locale 键 `subagents.kindAgentflow`（zh/en 同词面）——唯一渲染点是
  *  bgTaskRowHtml 的 headLevel 分支（组头行 / 合成延续组头行）；别的 web 模块不得再写
- *  这个词面（回归 spec bg-agentflow-terms H5 静态钉）。与两个作者术语的分工：
- *  kernel / dispatcher 是**执行形态词**（row.mode，逐字保留、不改名、不翻译），本词是
- *  **层级词**（这一行代表一次编排）。成员行绝不用本词——成员是节点，见 bgMemberKindWord。
- * @returns {string}
+ *  这个词面（回归 spec bg-agentflow-terms H5 静态钉）。
+ *
+ *  agentflow 错标修复批（2026-11-06 · 作者令逐字「kernel 被标记 agentflow？agentflow
+ *  是用来标记 dispatcher 派生出来的节点的」）：**本词 = dispatcher 派生的编排身份词**，
+ *  判据 = 来源字段**两轴**（同一个注册行镜像）：`DelegateRegistry.Record.mode` 逐字等于
+ *  `dispatcher`（有编排资格）且 `orchestrationMode` 逐字等于 `agentflow`（真的登记过链
+ *  = 真的派生过节点；唯一写点 `ChainWriteTool.registerChain`）。三种行因此不落本词：
+ *    · `kernel`——最小单会话执行器本体（actor-tree spec v1 §13.2 R-3a：kernel 不派生，
+ *      只放行只读侦察腿；`kernelFace` 摘掉 NodeTools 四件 ⇒ 结构上也没有 ChainWrite，
+ *      其 `orchestrationMode` 最多少到 `subagent-star`），它不是任何编排；身份词 = 逐字 `kernel`；
+ *    · dispatcher 但尚未登记过链（`orchestrationMode` 仍是 `single`）——没有派生事实；
+ *    · mode 缺席（旧盘 / 外部腿 / 非 delegate 会话）——无来源证据，不猜（无信息胜过错信息）。
+ *    成员行同样不落本词——成员是节点，见 bgMemberKindWord（反向门同批保留）。
+ *  错标根因（旧实现）：本词的发射条件是「这一行是组头（headLevel）」——层级是**排布
+ *  事实**，不是来源事实；组头判据把 kernel / 旧盘行一并算进了 agentflow。修法 = 判据
+ *  换回来源字段，渲染面只消费同一读数，不做字符串猜（无前缀/名字/包含判读）。
+ *
+ *  与两个作者术语的分工：kernel / dispatcher 是**执行形态词**（逐字保留、不改名、
+ *  不翻译），本词是**层级词**（这一行代表一次 dispatcher 编排）。
+ * @param {any} row 注册行镜像（DelegateRow；缺行 ⇒ 零徽标）
+ * @returns {string} 空串 = 本行不是 dispatcher 派生的编排（零徽标）
  */
-function bgAgentflowWord() {
-  return t('subagents.kindAgentflow');
+function bgAgentflowWord(row) {
+  // 两轴同读**注册行镜像**（DelegateRegistry.Record 的 provider 镜像）：
+  //   ① 执行形态 = dispatcher（`mode`）——编排的**资格**面；
+  //   ② 编排形态 = agentflow（`orchestrationMode`，唯一写点 = ChainWriteTool.registerChain
+  //      的成功回执）——真的登记过链 = 真的派生过节点。
+  // kernel 结构上到不了 ②（kernelFace 摘掉 NodeTools 四件 ⇒ 没有 ChainWrite），
+  // ① 再钉一道：两条来源都指向「dispatcher 派生的编排」才落词。
+  const execMode = bgDelegateExecMode(row);
+  const orchestrationMode = String((row && row.orchestrationMode) || '');
+  if (execMode === 'dispatcher' && orchestrationMode === 'agentflow') return t('subagents.kindAgentflow');
+  return '';
 }
 
 /**
@@ -1307,7 +1349,7 @@ function bgOrphanRowHtml(row, bucketSid) {
 
 /**
  * 面板行 HTML（原 renderBgAgentDropdown map 体原样抽出——行渲染语义零改动；新增
- * opts.childLevel/headLevel 两级锚与 opts.badgeWord 徽标覆写两个纯呈现参数）。
+ * opts.childLevel/headLevel 两级锚与 opts.registryRow（注册行镜像来源对象）两个纯呈现参数）。
  * 显示名契约批（2026-10-22）：delegate 组头行（opts.headLevel）新增
  * opts.rowTitle（DelegateRegistry.Record.title 的 provider 镜像——spawn 落盘、
  * 跨重启存活），主名 = 批次标题/任务描述首行（全生命周期稳定，不再收缩成
@@ -1328,14 +1370,16 @@ function bgOrphanRowHtml(row, bucketSid) {
  * ≠ 死行），行不加 .done 灰化（链活着）；链全终态后覆写入参自然缺席 → 行回
  * 普通终态样式（既有 done 灰化/点形）。
  * 术语分层批（2026-11-05）：opts.agentflowKey——成员行的归属锚（所属整体行定位键，
- * 与 data-bg-key / bgRowLocatorKey 同口径）；整体行由 opts.headLevel 自动带实体锚。
+ * 与 data-bg-key / bgRowLocatorKey 同口径）；整体行由 opts.headLevel 自动带实体锚
+ * （agentflow 错标修复批 2026-11-06：实体锚改为**来源条件**——只有 opts.registryRow
+ * 判定为 dispatcher 派生的编排才带，见 bgAgentflowWord）。
  * 层级缩进批（2026-11-05 腿②）：opts.depth——**真实父子链接**算出的深度（整体行 0、
  * 成员行 = 父行 +1，任意层数）；输出 data-bg-depth + --bg-row-depth 视觉缩进。
  * opts.childCount/opts.collapsed 随之从「组头专属」放宽到**任意有子行的行**（caret 形态
  * 与热区照旧），收起即隐藏整棵子树（剪枝在渲染循环里做，行集合/计数不受影响）。
  * 野节点归置批（2026-11-05 腿③）：opts.wild——野节点行（父不可解析）的归置锚
  * `data-bg-orphan="1"`（判定式单点见 bgOrphanRowKeys；行构造器只负责把结论上锚）。
- * @param {string} id @param {any} info @param {{childLevel?: boolean, headLevel?: boolean, badgeWord?: string, agentflowKey?: string, depth?: number, rowTitle?: string, shortName?: string, childCount?: number, collapsed?: boolean, wild?: boolean, orphanFrom?: string, orphanTitle?: string, bucketSid?: string, chainContinued?: boolean, chainCount?: number}} [opts]
+ * @param {string} id @param {any} info @param {{childLevel?: boolean, headLevel?: boolean, registryRow?: any, agentflowKey?: string, depth?: number, rowTitle?: string, shortName?: string, childCount?: number, collapsed?: boolean, wild?: boolean, orphanFrom?: string, orphanTitle?: string, bucketSid?: string, chainContinued?: boolean, chainCount?: number}} [opts]
  * @returns {string}
  */
 /** Mail 续传地址 chip（AgentControl name/address 批 2026-11-05 · 作者令「agentcontrol
@@ -1381,13 +1425,17 @@ function bgTaskRowHtml(id, info, opts = {}) {
   const statusTone = (freezeKind && freezeKind !== FREEZE_KIND.manual) ? 'frozen-auto' : '';
   // 术语分层批（2026-11-05 作者令「整体行 vs 成员行」）：身份词分两个显示位，各由一个
   // 函数定词，没有一个构造器自带词表——
-  //   · 整体行（opts.headLevel：一次编排 = 一个 agentflow）⇒ 形态词 .bg-task-kind
+  //   · 整体行（opts.headLevel：dispatcher 派生的一次编排）⇒ 形态词 .bg-task-kind
   //     （bgDelegateBadgeWord：kernel / dispatcher，作者术语逐字保留）＋ 整体词
   //     .bg-task-entity（bgAgentflowWord）；
   //   · 成员行（编排里的节点）⇒ bgMemberKindWord（成员位绝不落整体词）。
+  // agentflow 错标修复批（2026-11-06）：两个词**同读一个来源对象** opts.registryRow
+  // （注册行镜像；成员行恒 null）——组头层级不再自己决定身份词，kernel / 旧盘行因此
+  // 拿不到 agentflow 词。
   // 修订批九点②补漏：快照 kind（AgentKind.SubTask）同走显示词归一（数据面不动）。
+  const registryRow = opts.headLevel ? (opts.registryRow || null) : null;
   const kind = opts.headLevel
-    ? String((opts && opts.badgeWord) || '')
+    ? bgDelegateBadgeWord(bgDelegateExecMode(registryRow))
     : bgMemberKindWord({ info, sessionId: info.sessionId || id, id });
   // 徽标归位批（2026-10-31 23:02 作者裁定）：**顶层行**（组头 + 未被认领的 leftover/
   //  孤儿行，即一切非 childLevel 行）不渲染 Delegate/Subagent 字样——层级锚不是历史
@@ -1395,10 +1443,12 @@ function bgTaskRowHtml(id, info, opts = {}) {
   //  兜底摘掉 leftover 行的 kind 残留词（「来自 …」孤儿角标/任务归属徽标不受影响）。
   const kindWord = (!opts.childLevel && (kind === 'Delegate' || kind === 'Subagent')) ? '' : kind;
   const kindPart = kindWord ? '<span class="bg-task-kind">' + escapeHtml(kindWord) + '</span>' : '';
-  // 整体行实体词（术语分层批）：一次编排的身份词——只出现在整体行；成员行永不出现
-  // （反向门：整体行也不出现节点词，两词位互斥）。
-  const entityPart = opts.headLevel
-    ? '<span class="bg-task-entity">' + escapeHtml(bgAgentflowWord()) + '</span>'
+  // 整体行实体词（术语分层批 + agentflow 错标修复批）：**只有 dispatcher 派生的编排**
+  // 才带本词（bgAgentflowWord 的两轴来源判定）；kernel 行 / 未登记链的行 / mode 缺席行
+  // = 零徽标。成员行永不出现（反向门：整体行也不出现节点词，两词位互斥）。
+  const entityWord = opts.headLevel ? bgAgentflowWord(registryRow) : '';
+  const entityPart = entityWord
+    ? '<span class="bg-task-entity">' + escapeHtml(entityWord) + '</span>'
     : '';
   // Project attribution (2026-09-06 author ruling): Flow rows carry the
   // owning project's name next to the kind chip — muted plain text,
@@ -1670,16 +1720,20 @@ function bgTaskRowHtml(id, info, opts = {}) {
   // 行集收敛批（2026-11-02 · RCA 必须修③）：行层级稳定 DOM 标识——组头 head /
   // 子行 child / 顶层 top 三档（CSS 视觉档随 .bg-task-row-head/-child 两级类；
   // 本属性 = 回归 dump 与读屏之外的第③个可辨锚，class 之外的机器可读面）。
+  // 实体锚（agentflow 错标修复批 2026-11-06）：与实体徽标同源同条件——属性是「这一行
+  // 代表一次 dispatcher 编排」的机器可读面，徽标没有的事实不许由属性编出来（层级锚
+  // data-bg-row-level="head" 恒在场，两者不是一回事）。
   const levelAttr = opts.headLevel
-    ? ' data-bg-row-level="head" data-bg-entity="agentflow"'
+    ? ' data-bg-row-level="head"' + (entityWord ? ' data-bg-entity="agentflow"' : '')
     : opts.childLevel ? ' data-bg-row-level="child"' : ' data-bg-row-level="top"';
   // 野节点归置批（2026-11-05 腿③）：野行只多一个归置锚——`data-bg-orphan="1"`
   // （over 锚面：这一行在独立归置分组里）。野行**不带** data-bg-agentflow（归属锚是
   // 「我属于哪次编排」的事实，野行的父不可解析 ⇒ 没有这个事实，不许凭空编一个）。
   const wildAttr = opts.wild ? ' data-bg-orphan="1"' : '';
   // 归属锚（术语分层批 2026-11-05 · 铁律 8「归属靠结构，不写解释句」）：成员行带**所属
-  // 整体行的定位键**（与 data-bg-key / bgRowLocatorKey 同一条缝），整体行带实体锚
-  // data-bg-entity="agentflow"。归属是结构事实，渲染面不写任何一句术语关系说明。
+  // 整体行的定位键**（与 data-bg-key / bgRowLocatorKey 同一条缝）；整体行的实体锚
+  // data-bg-entity="agentflow" 见上（来源条件，非层级恒真）。归属是结构事实，渲染面
+  // 不写任何一句术语关系说明。
   const agentflowAttr = (opts.childLevel && opts.agentflowKey)
     ? ' data-bg-agentflow="' + escapeHtml(String(opts.agentflowKey)) + '"'
     : '';
@@ -1694,7 +1748,8 @@ function bgTaskRowHtml(id, info, opts = {}) {
   //    （用图标显示）· time。第二行 Badge。第三行 当前动作」）──────────────────
   //   · L1 `.bg-task-main`：name · 状态图标（bgRowStatus 单点发射，中文状态词转
   //     sr-only/aria-label，不再上屏）· uptime（margin-left:auto 钉右）；
-  //   · L2 `.bg-task-badges`：身份/归属徽标（entity AgentFlow / kind kernel·dispatcher /
+  //   · L2 `.bg-task-badges`：身份/归属徽标（entity AgentFlow——仅 dispatcher 派生的整体行
+  //     / kind kernel·dispatcher /
   //     Mail 地址 / 项目 / 孤儿来源 / 任务徽标 / 重试 ×N）——独立成行、允许换行；
   //   · L3 `.bg-task-subline`：当前动作（↳ 工具 / 空闲 N 分钟 / 等待合并轮 / 冻结原因 /
   //     卡死原因）＋任务摘要（有则跟随，muted；全文 tooltip）。L3 无内容 ⇒ 零渲染
@@ -1916,7 +1971,10 @@ export function renderBgAgentDropdown() {
       htmlParts.push(bgTaskRowHtml(g.id, g.info, {
         headLevel: true,
         depth,
-        badgeWord: bgDelegateBadgeWord(g.info, g.row),
+        // 来源对象（注册行镜像 = DelegateRegistry.Record 的 provider 镜像）：身份词
+        // （kernel/dispatcher 逐字）读其 mode，agentflow 徽标读其 mode + orchestrationMode
+        // ——一处给源，渲染面不各自读（agentflow 错标修复批 2026-11-06）。
+        registryRow: g.row || null,
         // 显示名契约批（2026-10-22）：组头注册行标题（DelegateRegistry.Record.title
         // 的 provider 镜像——跨重启存活，存量记录自带）透传为主名第一源。
         rowTitle: (g.row && g.row.title) || '',

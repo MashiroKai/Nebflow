@@ -437,6 +437,26 @@
   --ds-shadow-deck-card: 0 14px 38px rgb(8 10 16 / 0.34); /* 堆叠卡浮影 */
   --ds-scrim-stack: rgb(12 15 22 / 0.34);        /* 堆叠视角背景压暗层 */
 
+  /* ── ⑯b 环邻位深度配方槽（mobile-canvas-tabs-c 批 2026-11-06 出生）────────
+     作者令逐字：「还有电脑端hover 上下选项的那种模糊效果」+ 本批口径 4「复用同源
+     效果（同一配方、同一时长曲线，不重写一份）」。
+     唯一语义 = **环里「非当前位」那一档的模糊深度**：桌面 `#canvas-capsule-ring`
+     hover 展开后上下两项（`.cr-capsule.is-edge`）与手机横向环带的两侧签
+     （`.mf-strip-chip` 非 `.on`）是同一件事的两种排布轴，配方必须同源。
+     出生理由：该配方此前在 split.css 硬写 `blur(1.6px) saturate(1.25)`、在手机
+     环带由 navController.js 写 `--rbl`（2.40px 曲线，|k|=1 只有 0.40px）—— 同一
+     语义两套数值，作者实拍读作「手机端没有电脑端那种糊感」。本槽收编为单一出生地：
+       · 半径档 = 1.6px（桌面 hover 缘位实测档，即作者点名的那个效果）；
+       · 饱和档 = 1.25（模糊会降饱和，补回一点点让底色不发灰）；
+       · 时长曲线 = --ds-ring-dur / --ds-ring-ease（桌面 0.36s 温和缓出，
+         手机端 transform 另有「切签 ≤300ms」的既有裁定，查文件内注）。
+     消费面：split.css `.cr-capsule.is-edge`（硬取本槽）、mobileLayer.css
+     `.mf-strip-chip`（按位姿系数取本槽）。**不许再在消费面写字面量。** */
+  --ds-ring-blur: 1.6px;                          /* 邻位模糊半径（桌面 hover 缘位档） */
+  --ds-ring-saturate: 1.25;                       /* 邻位补饱和（抵消模糊降饱和） */
+  --ds-ring-dur: 360ms;                           /* 邻位过渡时长（桌面环同值） */
+  --ds-ring-ease: cubic-bezier(0.22, 0.61, 0.36, 1); /* 邻位过渡曲线（桌面环同值） */
+
   /* ── ⑰ 转回合按钮槽（send / stop 单源；ui-unification-20261103-canvas-ask-resize）──
      作者令（逐字）：「发送按钮与终止按钮样式与主会话**完全统一**（同一组件/同一
      design-system 令牌，不得另做一套）」。此前同一对按钮在两条腿各长一套几何：
@@ -871,7 +891,8 @@
 .ds-badge[data-tone="warn"] { border-color: rgb(var(--amber) / 0.25); background: rgb(var(--amber) / 0.12); }
 .ds-badge[data-tone="err"] { border-color: rgb(var(--sapphire) / 0.20); background: var(--ds-etched-bg); }
 
-/* ④ 输入：etched 材质，focus = 1px 强边 + 2px 环（面板档灰环）。 */
+/* ④ 输入：形态 + 焦点态归 css/inputSurface.css（输入面唯一标准批 2026-11-06；
+   令牌 = stand-tokens.css 的 --nf-field-*）。本文件只留字档与宽度。 */
 .ds-input {
   width: 100%;
   padding: var(--ds-input-pad);
@@ -879,14 +900,8 @@
   font-size: var(--ds-fs-body);
   line-height: var(--ds-lh-body);
   color: var(--ds-text);
-  background: var(--ds-etched-bg);
-  border: 1px solid var(--ds-etched-border);
-  border-radius: var(--ds-radius-input);
-  transition: border-color var(--ds-dur-hover) var(--ds-ease-std),
-              box-shadow var(--ds-dur-hover) var(--ds-ease-std);
 }
 .ds-input::placeholder { color: var(--ds-text-muted); }
-/* 焦点态：.ds-input 已收编 css/inputFocus.css（input-focus-ring 批 2026-11-05）。 */
 
 /* ⑤ 卡：平面族面板内卡（radius 14，无影，hairline 边）。 */
 .ds-card {

@@ -1,0 +1,169 @@
+
+Running 12 tests using 1 worker
+
+[1/12] tests/bg-agentflow-terms.spec.mjs:216:1 › H1 整体行（zh-CN）：data-bg-entity=agentflow 且显示词 = agentflow 词
+tests/bg-agentflow-terms.spec.mjs:216:1 › H1 整体行（zh-CN）：data-bg-entity=agentflow 且显示词 = agentflow 词
+[H1 zh dump] [{"level":"head","bgKey":"delegate-terms-a1b2c3d4","entity":"agentflow","entityText":"AgentFlow","kindText":"dispatcher"},{"level":"child","bgKey":"","entity":"","entityText":"","kindText":"Subagent"},{"level":"child","bgKey":"dispatcher-000bda27","entity":"","entityText":"","kindText":"分发器"},{"level":"child","bgKey":"node-aaaa1111","entity":"","entityText":"","kindText":"节点"},{"level":"child","bgKey":"node-bbbb2222","entity":"","entityText":"","kindText":"节点"},{"level":"child","bgKey":"subagent-4bf18f29","entity":"","entityText":"","kindText":"Subagent"},{"level":"child","bgKey":"subtask-5c6d7e8f","entity":"","entityText":"","kindText":"Delegate"},{"level":"child","bgKey":"dag-9a8b7c6d","entity":"","entityText":"","kindText":"节点"}]
+
+[H1 zh locale] {"agentflow":"AgentFlow","node":"节点","dispatcher":"分发器","locale":"zh-CN"}
+
+[2/12] tests/bg-agentflow-terms.spec.mjs:239:1 › H1 整体行（en）：data-bg-entity=agentflow 且显示词 = agentflow 词
+tests/bg-agentflow-terms.spec.mjs:239:1 › H1 整体行（en）：data-bg-entity=agentflow 且显示词 = agentflow 词
+[H1 en dump] [{"level":"head","entity":"agentflow","entityText":"AgentFlow"},{"level":"child","entity":"","entityText":""},{"level":"child","entity":"","entityText":""},{"level":"child","entity":"","entityText":""},{"level":"child","entity":"","entityText":""},{"level":"child","entity":"","entityText":""},{"level":"child","entity":"","entityText":""},{"level":"child","entity":"","entityText":""}]
+
+[H1 en locale] {"agentflow":"AgentFlow","node":"Node","dispatcher":"Dispatcher","locale":"en"}
+
+[3/12] tests/bg-agentflow-terms.spec.mjs:260:1 › H1b 合成延续组头（live 行已离场）同样是整体行：data-bg-entity=agentflow + agentflow 词
+tests/bg-agentflow-terms.spec.mjs:260:1 › H1b 合成延续组头（live 行已离场）同样是整体行：data-bg-entity=agentflow + agentflow 词
+[H1b dump] [{"level":"head","bgKey":"chain:delegate-terms-a1b2c3d4","entity":"agentflow","entityText":"AgentFlow","agentflow":""},{"level":"child","bgKey":"dispatcher-000bda27","entity":"","entityText":"","agentflow":"delegate-terms-a1b2c3d4"},{"level":"child","bgKey":"node-aaaa1111","entity":"","entityText":"","agentflow":"delegate-terms-a1b2c3d4"}]
+
+[4/12] tests/bg-agentflow-terms.spec.mjs:293:1 › H2 成员行：data-bg-agentflow 全部 == 整体行 key，且成员徽标不含 agentflow/AgentFlow/Flow
+tests/bg-agentflow-terms.spec.mjs:293:1 › H2 成员行：data-bg-agentflow 全部 == 整体行 key，且成员徽标不含 agentflow/AgentFlow/Flow
+[H2 dump] [{"level":"head","bgKey":"delegate-terms-a1b2c3d4","sid":"delegate-terms-a1b2c3d4","agentflow":"","kindText":"dispatcher"},{"level":"child","bgKey":"","sid":"subagent-store-7f8e9d0c","agentflow":"delegate-terms-a1b2c3d4","kindText":"Subagent"},{"level":"child","bgKey":"dispatcher-000bda27","sid":"dispatcher-000bda27","agentflow":"delegate-terms-a1b2c3d4","kindText":"分发器"},{"level":"child","bgKey":"node-aaaa1111","sid":"node-aaaa1111","agentflow":"delegate-terms-a1b2c3d4","kindText":"节点"},{"level":"child","bgKey":"node-bbbb2222","sid":"node-bbbb2222","agentflow":"delegate-terms-a1b2c3d4","kindText":"节点"},{"level":"child","bgKey":"subagent-4bf18f29","sid":"subagent-4bf18f29","agentflow":"delegate-terms-a1b2c3d4","kindText":"Subagent"},{"level":"child","bgKey":"subtask-5c6d7e8f","sid":"subtask-5c6d7e8f","agentflow":"delegate-terms-a1b2c3d4","kindText":"Delegate"},{"level":"child","bgKey":"dag-9a8b7c6d","sid":"dag-9a8b7c6d","agentflow":"delegate-terms-a1b2c3d4","kindText":"节点"}]
+
+[H2 words] {"subagent-store-7f8e9d0c":"Subagent","dispatcher-000bda27":"分发器","node-aaaa1111":"节点","node-bbbb2222":"节点","subagent-4bf18f29":"Subagent","subtask-5c6d7e8f":"Delegate","dag-9a8b7c6d":"节点"}
+
+[5/12] tests/bg-agentflow-terms.spec.mjs:334:1 › H2b flow 结构投影成员行（chain.nodes flow-step）：徽标 = 节点词，不再是 AgentFlow
+tests/bg-agentflow-terms.spec.mjs:334:1 › H2b flow 结构投影成员行（chain.nodes flow-step）：徽标 = 节点词，不再是 AgentFlow
+[H2b dump] [{"level":"head","name":"术语批","agentflow":"","kindText":"dispatcher"},{"level":"child","name":"步骤一","agentflow":"delegate-terms-a1b2c3d4","kindText":"节点"},{"level":"child","name":"步骤二","agentflow":"delegate-terms-a1b2c3d4","kindText":"节点"}]
+
+[6/12] tests/bg-agentflow-terms.spec.mjs:367:1 › H3 反向门：整体行徽标不含 节点 / Node 字样（zh-CN 与 en 双验）
+tests/bg-agentflow-terms.spec.mjs:367:1 › H3 反向门：整体行徽标不含 节点 / Node 字样（zh-CN 与 en 双验）
+[H3 zh-CN] badges=["dispatcher","AgentFlow"]
+
+[H3 en] badges=["dispatcher","AgentFlow"]
+
+[7/12] tests/bg-agentflow-terms.spec.mjs:393:1 › H4 kernel 行：身份词逐字 kernel，且无 agentflow 徽标 / 无整体行实体锚
+tests/bg-agentflow-terms.spec.mjs:393:1 › H4 kernel 行：身份词逐字 kernel，且无 agentflow 徽标 / 无整体行实体锚
+[H4 dump] [{"sid":"delegate-terms-kernel-01","level":"head","kindText":"kernel","entityText":"AgentFlow","entity":"agentflow"},{"sid":"delegate-terms-disp-02","level":"head","kindText":"dispatcher","entityText":"AgentFlow","entity":"agentflow"}]
+
+  1) tests/bg-agentflow-terms.spec.mjs:393:1 › H4 kernel 行：身份词逐字 kernel，且无 agentflow 徽标 / 无整体行实体锚 ──
+
+    Error: expect(received).toBe(expected) // Object.is equality
+
+    Expected: ""
+    Received: "AgentFlow"
+
+      419 |   expect(d.kindText).toBe('dispatcher');
+      420 |   // kernel 行：**零** agentflow 徽标（词面与结构锚都不得出现）。
+    > 421 |   expect(k.entityText).toBe('');
+          |                        ^
+      422 |   expect(k.entity).toBe('');
+      423 |   // dispatcher 行：agentflow 徽标 + 实体锚同在（dispatcher 派生的编排才带）。
+      424 |   expect(d.entityText).toBe('AgentFlow');
+        at /private/tmp/nf-base2/tests/bg-agentflow-terms.spec.mjs:421:24
+
+    Error Context: test-results/bg-agentflow-terms-H4-kern-98eb8-nel，且无-agentflow-徽标-无整体行实体锚/error-context.md
+
+
+[8/12] tests/bg-agentflow-terms.spec.mjs:429:1 › H4b kernel 徽标面（en）同样零 agentflow；dispatcher 面同样带
+tests/bg-agentflow-terms.spec.mjs:429:1 › H4b kernel 徽标面（en）同样零 agentflow；dispatcher 面同样带
+[H4b dump] [{"sid":"delegate-terms-kernel-01","kindText":"kernel","entityText":"AgentFlow","entity":"agentflow"},{"sid":"delegate-terms-disp-02","kindText":"dispatcher","entityText":"AgentFlow","entity":"agentflow"}]
+
+  2) tests/bg-agentflow-terms.spec.mjs:429:1 › H4b kernel 徽标面（en）同样零 agentflow；dispatcher 面同样带 ─────
+
+    Error: expect(received).toBe(expected) // Object.is equality
+
+    Expected: ""
+    Received: "AgentFlow"
+
+      446 |   const headOf = (sid) => rows.find((r) => r.level === 'head' && r.nodeSid === sid);
+      447 |   expect(headOf(KERNEL_SID).kindText).toBe('kernel');
+    > 448 |   expect(headOf(KERNEL_SID).entityText).toBe('');
+          |                                         ^
+      449 |   expect(headOf(KERNEL_SID).entity).toBe('');
+      450 |   expect(headOf(DISP_SID).entityText).toBe('AgentFlow');
+      451 |   expect(errors).toEqual([]);
+        at /private/tmp/nf-base2/tests/bg-agentflow-terms.spec.mjs:448:41
+
+    Error Context: test-results/bg-agentflow-terms-H4b-ker-09a80-零-agentflow；dispatcher-面同样带/error-context.md
+
+
+[9/12] tests/bg-agentflow-terms.spec.mjs:454:1 › H6 mode 缺席（旧盘 / 外部腿）：无来源证据 ⇒ 不落 agentflow 徽标，也不落形态词
+tests/bg-agentflow-terms.spec.mjs:454:1 › H6 mode 缺席（旧盘 / 外部腿）：无来源证据 ⇒ 不落 agentflow 徽标，也不落形态词
+[H6 dump] [{"sid":"delegate-terms-legacy-03","level":"head","kindText":"","entityText":"AgentFlow","entity":"agentflow"}]
+
+  3) tests/bg-agentflow-terms.spec.mjs:454:1 › H6 mode 缺席（旧盘 / 外部腿）：无来源证据 ⇒ 不落 agentflow 徽标，也不落形态词 ─
+
+    Error: expect(received).toBe(expected) // Object.is equality
+
+    Expected: ""
+    Received: "AgentFlow"
+
+      467 |   expect(head).toBeTruthy();
+      468 |   // 无信息胜过错信息：不拿「组头」当「dispatcher 派生」的证据。
+    > 469 |   expect(head.entityText).toBe('');
+          |                           ^
+      470 |   expect(head.entity).toBe('');
+      471 |   expect(head.kindText).toBe('');
+      472 |   expect(errors).toEqual([]);
+        at /private/tmp/nf-base2/tests/bg-agentflow-terms.spec.mjs:469:27
+
+    Error Context: test-results/bg-agentflow-terms-H6-mode-cbc4b-证据-⇒-不落-agentflow-徽标，也不落形态词/error-context.md
+
+
+[10/12] tests/bg-agentflow-terms.spec.mjs:477:1 › H8 行类型 → 徽标对照表：只有 dispatcher 派生的整体行带 agentflow 词
+tests/bg-agentflow-terms.spec.mjs:477:1 › H8 行类型 → 徽标对照表：只有 dispatcher 派生的整体行带 agentflow 词
+[H8 table] [{"sid":"delegate-terms-h8-kernel","level":"head","kind":"kernel","entity":"AgentFlow"},{"sid":"delegate-terms-h8-disp","level":"head","kind":"dispatcher","entity":"AgentFlow"},{"sid":"store-subagent-h8","level":"child","kind":"Subagent","entity":""},{"sid":"store-subtask-h8","level":"child","kind":"Delegate","entity":""},{"sid":"store-delegate-h8","level":"child","kind":"Delegate","entity":""},{"sid":"dispatcher-h8aaaa","level":"child","kind":"分发器","entity":""},{"sid":"node-h8bbbb","level":"child","kind":"节点","entity":""},{"sid":"subagent-h8cccc","level":"child","kind":"Subagent","entity":""},{"sid":"subtask-h8dddd","level":"child","kind":"Delegate","entity":""},{"sid":"delegate-terms-h8-disp-nocchain","level":"head","kind":"dispatcher","entity":"AgentFlow"}]
+
+  4) tests/bg-agentflow-terms.spec.mjs:477:1 › H8 行类型 → 徽标对照表：只有 dispatcher 派生的整体行带 agentflow 词 ────
+
+    Error: expect(received).toEqual(expected) // deep equality
+
+    - Expected  - 0
+    + Received  + 1
+
+      Array [
+        "kernel",
+    +   "AgentFlow",
+      ]
+
+      522 |
+      523 |   // ① kernel 实例（最小单会话执行器）：只有身份词 kernel，零 agentflow。
+    > 524 |   expect(badges(K)).toEqual(['kernel']);
+          |                     ^
+      525 |   // ② dispatcher + 登记过链：形态词 + agentflow 词（唯一允许同时两词的位）。
+      526 |   expect(badges(D)).toEqual(['dispatcher', words.agentflow]);
+      527 |   // ③ dispatcher 形态但没登记过链：只有形态词，没有编排事实就不落 agentflow。
+        at /private/tmp/nf-base2/tests/bg-agentflow-terms.spec.mjs:524:21
+
+    Error Context: test-results/bg-agentflow-terms-H8-行类型--a4fe9-patcher-派生的整体行带-agentflow-词/error-context.md
+
+
+[11/12] tests/bg-agentflow-terms.spec.mjs:546:1 › H5 词源单点：两个显示词只在 bgAgents.js 一处消费，其它 web 模块不硬编码同批词
+tests/bg-agentflow-terms.spec.mjs:546:1 › H5 词源单点：两个显示词只在 bgAgents.js 一处消费，其它 web 模块不硬编码同批词
+[H5 counts] kindAgentflow=1 kindNode=1 kindDispatcher=1
+
+[H5 offenders] []
+
+[H5 locale zh-CN.js] AgentFlow
+
+[H5 locale en.js] AgentFlow
+
+[12/12] tests/bg-agentflow-terms.spec.mjs:616:1 › H7 agentflow 徽标判据 = 来源字段两轴（mode=dispatcher + orchestrationMode=agentflow）；head 行不无条件渲染实体徽标/实体锚
+  5) tests/bg-agentflow-terms.spec.mjs:616:1 › H7 agentflow 徽标判据 = 来源字段两轴（mode=dispatcher + orchestrationMode=agentflow）；head 行不无条件渲染实体徽标/实体锚 
+
+    Error: expect(received).toBe(expected) // Object.is equality
+
+    Expected: true
+    Received: false
+
+      623 |   const wordBody = slice('bgAgentflowWord', 'bgMemberKindWord');
+      624 |   expect(wordBody.length).toBeGreaterThan(0);
+    > 625 |   expect(/bgDelegateExecMode\(\s*row\s*\)/.test(wordBody)).toBe(true);
+          |                                                            ^
+      626 |   expect(/===\s*'dispatcher'/.test(wordBody)).toBe(true);
+      627 |   expect(/row\.orchestrationMode/.test(wordBody)).toBe(true);
+      628 |   expect(/===\s*'agentflow'/.test(wordBody)).toBe(true);
+        at /private/tmp/nf-base2/tests/bg-agentflow-terms.spec.mjs:625:60
+
+    Error Context: test-results/bg-agentflow-terms-H7-agen-a4a96-tflow）；head-行不无条件渲染实体徽标-实体锚/error-context.md
+
+
+  5 failed
+    tests/bg-agentflow-terms.spec.mjs:393:1 › H4 kernel 行：身份词逐字 kernel，且无 agentflow 徽标 / 无整体行实体锚 ───
+    tests/bg-agentflow-terms.spec.mjs:429:1 › H4b kernel 徽标面（en）同样零 agentflow；dispatcher 面同样带 ──────
+    tests/bg-agentflow-terms.spec.mjs:454:1 › H6 mode 缺席（旧盘 / 外部腿）：无来源证据 ⇒ 不落 agentflow 徽标，也不落形态词 ──
+    tests/bg-agentflow-terms.spec.mjs:477:1 › H8 行类型 → 徽标对照表：只有 dispatcher 派生的整体行带 agentflow 词 ─────
+    tests/bg-agentflow-terms.spec.mjs:616:1 › H7 agentflow 徽标判据 = 来源字段两轴（mode=dispatcher + orchestrationMode=agentflow）；head 行不无条件渲染实体徽标/实体锚 
+  7 passed (16.4s)

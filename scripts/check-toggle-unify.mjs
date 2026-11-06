@@ -262,16 +262,28 @@ function lineOfMatch(src, re) {
 }
 
 // ── T3：数值唯一 ────────────────────────────────────────────────────────
+// 尺寸四枚仍是常量（A 组规格），但「缝 / 偏移 / 行程」三枚自 toggle-center 批
+// （2026-11-06）起**必须是推导式**：手填值正是上一批「设计值自洽、屏幕不居中」
+// 的根因（缝写在 top/left 上会被 1px 描边重复记账）。判据因此从「值等于 2px」
+// 收紧为「形态等于居中公式」——写死数值、少减描边、少减两倍缝，三种漂移都会红。
 const REQUIRED_TOKENS = [
   ['--nf-toggle-w', '40px'],
   ['--nf-toggle-h', '22px'],
   ['--nf-toggle-knob', '16px'],
   ['--nf-toggle-radius', '999px'],
-  ['--nf-toggle-inset', '2px'],
   ['--nf-toggle-hit', '44px'],
   ['--nf-toggle-dur', '180ms'],
 ];
 const REQUIRED_EASE = 'cubic-bezier(0.2, 0, 0, 1)';
+
+/** 令牌值归一（去空白 + 归一乘号两侧，便于逐字比对公式骨架）。 */
+const normCalc = (v) => String(v).replace(/\s+/g, '').replace(/\*/g, '*');
+/** 居中缝公式骨架：(轨高 − 钮径)/2 —— 四个方向同源的那把尺。 */
+const INSET_FORM = /^calc\(\(var\(--nf-toggle-h\)-var\(--nf-toggle-knob\)\)\/2\)$/;
+/** 圆钮实取偏移公式骨架：缝 − 描边（absolute 子件相对 padding box）。 */
+const OFFSET_FORM = /^calc\(var\(--nf-toggle-inset\)-var\(--nf-toggle-border\)\)$/;
+/** 行程公式骨架：轨宽 − 2×缝 − 钮径。 */
+const TRAVEL_FORM = /^calc\(var\(--nf-toggle-w\)-var\(--nf-toggle-inset\)\*2-var\(--nf-toggle-knob\)\)$/;
 
 function checkTokens() {
   const hits = [];
@@ -279,34 +291,76 @@ function checkTokens() {
     return [{ file: rel(TOKENS), line: 0, why: '令牌段缺失：stand-tokens.css 不存在' }];
   }
   const src = readFileSync(TOKENS, 'utf8');
-  for (const [name, want] of REQUIRED_TOKENS) {
+  const tokOf = (name) => {
     const m = src.match(new RegExp(`${name}\\s*:\\s*([^;]+);`));
-    if (!m) hits.push({ file: rel(TOKENS), line: 0, why: `缺令牌 ${name}（应 = ${want}）` });
-    else if (m[1].trim() !== want) {
-      hits.push({ file: rel(TOKENS), line: 0, why: `令牌 ${name} = ${m[1].trim()}，应 = ${want}（规格漂移）` });
+    return m ? m[1].trim() : null;
+  };
+  for (const [name, want] of REQUIRED_TOKENS) {
+    const got = tokOf(name);
+    if (!got) hits.push({ file: rel(TOKENS), line: 0, why: `缺令牌 ${name}（应 = ${want}）` });
+    else if (got !== want) {
+      hits.push({ file: rel(TOKENS), line: 0, why: `令牌 ${name} = ${got}，应 = ${want}（规格漂移）` });
     }
   }
-  const ease = src.match(/--nf-toggle-ease\s*:\s*([^;]+);/);
+  const ease = tokOf('--nf-toggle-ease');
   if (!ease) hits.push({ file: rel(TOKENS), line: 0, why: '缺令牌 --nf-toggle-ease' });
-  else if (!ease[1].includes(REQUIRED_EASE)) {
-    hits.push({ file: rel(TOKENS), line: 0, why: `--nf-toggle-ease = ${ease[1].trim()}，应含 ${REQUIRED_EASE}` });
+  else if (!ease.includes(REQUIRED_EASE)) {
+    hits.push({ file: rel(TOKENS), line: 0, why: `--nf-toggle-ease = ${ease}，应含 ${REQUIRED_EASE}` });
   }
-  const travel = src.match(/--nf-toggle-travel\s*:\s*([^;]+);/);
-  if (!travel) hits.push({ file: rel(TOKENS), line: 0, why: '缺令牌 --nf-toggle-travel（行程必须公式算出）' });
 
-  // 组件节必须消费令牌，不许写死几何
+  // 居中三式：缝 = (轨高−钮径)/2、偏移 = 缝−描边、行程 = 轨宽−2×缝−钮径
+  const inset = tokOf('--nf-toggle-inset');
+  if (!inset) hits.push({ file: rel(TOKENS), line: 0, why: '缺令牌 --nf-toggle-inset（居中缝必须由 (轨高−钮径)/2 算出）' });
+  else if (!INSET_FORM.test(normCalc(inset))) {
+    hits.push({ file: rel(TOKENS), line: 0, why: `--nf-toggle-inset = ${inset}，应是居中推导式 (轨高−钮径)/2（手填值会偏心）` });
+  }
+  const offset = tokOf('--nf-toggle-offset');
+  if (!offset) hits.push({ file: rel(TOKENS), line: 0, why: '缺令牌 --nf-toggle-offset（圆钮 top/left = 缝 − 描边）' });
+  else if (!OFFSET_FORM.test(normCalc(offset))) {
+    hits.push({ file: rel(TOKENS), line: 0, why: `--nf-toggle-offset = ${offset}，应 = inset − border（absolute 子件相对 padding box）` });
+  }
+  const travel = tokOf('--nf-toggle-travel');
+  if (!travel) hits.push({ file: rel(TOKENS), line: 0, why: '缺令牌 --nf-toggle-travel（行程必须公式算出）' });
+  else if (!TRAVEL_FORM.test(normCalc(travel))) {
+    hits.push({ file: rel(TOKENS), line: 0, why: `--nf-toggle-travel = ${travel}，应 = 轨宽 − 2×缝 − 钮径（少减一项就会 ON 出界）` });
+  }
+
+  // 组件节必须消费令牌，不许写死几何；圆钮落位只准取 offset，行程只准取 travel
   if (existsSync(SKIN_FILE)) {
     const css = readFileSync(SKIN_FILE, 'utf8');
     for (const rule of walkRules(css)) {
       const first = subjectCompound(rule.selector.split(',')[0] || '');
-      if (first !== '.nb-toggle') continue;
+      const isKnob = first === '.nb-toggle::after';
+      if (first !== '.nb-toggle' && !isKnob) continue;
       for (const d of rule.decls) {
-        if (!['width', 'height', 'border-radius'].includes(d.prop)) continue;
+        if (!['width', 'height', 'border-radius', 'top', 'left'].includes(d.prop)) continue;
         if (!d.value.includes('var(--nf-toggle-')) {
           hits.push({
             file: rel(SKIN_FILE),
             line: d.line,
             why: `组件节写死了 ${d.prop}: ${d.value}（几何必须走 var(--nf-toggle-*)）`,
+          });
+        } else if (isKnob && (d.prop === 'top' || d.prop === 'left')
+          && !d.value.includes('var(--nf-toggle-offset)')) {
+          hits.push({
+            file: rel(SKIN_FILE),
+            line: d.line,
+            why: `圆钮 ${d.prop} 取了 ${d.value}，只许取 var(--nf-toggle-offset)（缝−描边，居中的唯一落位）`,
+          });
+        }
+      }
+    }
+    // ON 行程只准取 travel 令牌
+    for (const rule of walkRules(css)) {
+      const first = subjectCompound(rule.selector.split(',')[0] || '');
+      if (first !== '.nb-toggle.on::after') continue;
+      for (const d of rule.decls) {
+        if (d.prop !== 'transform') continue;
+        if (!d.value.includes('var(--nf-toggle-travel)')) {
+          hits.push({
+            file: rel(SKIN_FILE),
+            line: d.line,
+            why: `ON 行程写了 ${d.value}，只许取 var(--nf-toggle-travel)`,
           });
         }
       }
@@ -369,5 +423,6 @@ if (total) {
 }
 
 console.log('✓ toggle-unify gate passed — 行为单点 js/toggle.js、造型单点 css/sidebar.css `.nb-toggle`、'
-  + `数值单点 stand-tokens.css --nf-toggle-*（${REQUIRED_TOKENS.length + 2} 枚令牌逐值符合 A 组规格）`);
+  + `数值单点 stand-tokens.css --nf-toggle-*（${REQUIRED_TOKENS.length} 枚常量令牌 + 缓动 + 居中三式`
+  + '（缝=(轨高−钮径)/2 / 偏移=缝−描边 / 行程=轨宽−2×缝−钮径）逐项符合 A 组规格）');
 process.exit(0);

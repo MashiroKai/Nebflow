@@ -280,12 +280,15 @@ html.mobile-html-layer {
    ── 开关（iOS 尺寸语言）────────────────────────────────────────────
      --msw-w           51px 轨道宽（iOS 开关标准宽）
      --msw-h           31px 轨道高
-     --msw-knob        27px 圆钮直径（轨道高 − 2×2px 内衬）
-     --msw-inset       2px  圆钮内衬（轨道与钮的四边等距）
-     --msw-travel      20px 圆钮行程（= 轨道宽 − 钮径 − 2×内衬；**由 calc 算出**，
-                       见下方 --msw-travel 定义。三点入口批 2026-11-05 修正：旧值 22px
-                       与本行公式不符 ⇒ ON 态圆钮右缘越过轨道右缘 2px（OFF 左缝 2px、
-                       ON 右缝 0px 的不对称）。
+     --msw-knob        27px 圆钮直径（轨道高 − 2×2px 外缘缝）
+     --msw-inset       2px  圆钮到**轨道外缘**的四向缝 = (轨高 − 钮径)/2（calc 推导，
+                       四向同值才叫居中；toggle-center 批 2026-11-06）
+     --msw-offset      1px  圆钮 top/left 的实取值 = 缝 − 轨道描边（absolute 子件
+                      相对 padding box 定位，描边不在坐标系里）
+     --msw-travel      20px 圆钮行程 = 轨道宽 − 钮径 − 2×缝（**由 calc 算出**）。
+                       2026-11-05 修正过手抄 22px；2026-11-06 本批把「缝」改写为
+                       外缘尺并补 --msw-offset —— 旧写法（缝直接当 padding box 内距）
+                       在 31×31 档上实渲染 上3/下1、开档右缝1 ⇒ 2px 偏心。
    颜色沿用回绿后的既有 token（--glass-control-* 材质 + rgb(var(--brand-green)))
    ——本块只定几何与字阶，零新色值。
    ═══════════════════════════════════════════════════════════════════════ */
@@ -416,20 +419,27 @@ body.mobile-layer {
   --micon: 22px;
   --micon-sm: 20px;
   --micon-lg: 24px;
-  /* 开关几何 */
+  /* 开关几何（与桌面档同一套推导，见 stand-tokens.css 的「居中 = 几何推导」注） */
   --msw-w: 51px;
   --msw-h: 31px;
   --msw-knob: 27px;
-  --msw-inset: 2px;
-  /* 行程恒按公式算出（禁手抄数值）：51 − 27 − 2×2 = 20px ⇒ OFF 左缝 2px == ON 右缝 2px。
-     旧值 22px 是手抄错值（ON 态圆钮右出 2px，实测见 batch 报告 C4 节）。 */
-  --msw-travel: calc(var(--msw-w) - var(--msw-knob) - var(--msw-inset) * 2);
+  /* 圆钮到轨道**外缘**的四向缝 —— 居中即四向同值：(31 − 27)/2 = 2px。
+     旧值写死 2px 又被 `top/left`（相对 padding box）当内距用 ⇒ 屏幕上
+     上 3 / 下 1、开档右缝 1（关档左缝 3）：2px 偏心（toggle-center 批实测）。 */
+  --msw-inset: calc((var(--msw-h) - var(--msw-knob)) / 2);
+  /* absolute 子件的 top/left 相对 padding box ⇒ 减掉轨道描边：2 − 1 = 1px */
+  --msw-offset: calc(var(--msw-inset) - var(--nf-toggle-border));
+  /* 行程恒按公式算出（禁手抄数值）：51 − 2×2(缝) − 27(钮) = 20px
+     ⇒ 关档左缝 2 == 开档右缝 2（外缘尺，与桌面档同构）。 */
+  --msw-travel: calc(var(--msw-w) - var(--msw-inset) * 2 - var(--msw-knob));
 }
 
 /* ── 手机端开关 = iOS 尺寸语言（作者令 2026-11-02「toggle 改成 iOS 尺寸语言」）
-   `.nb-toggle` 基座（sidebar.css，36×20 桌面档）在手机层整族换几何：轨道
-   51×31、圆钮 27、内衬 2、行程 22 —— 全部取自上方 token 单源，颜色沿用回绿
-   后的既有配方（--glass-control-* 材质 + rgb(var(--brand-green))) 零新色值。
+   `.nb-toggle` 基座（sidebar.css，40×22 桌面档）在手机层整族换几何：轨道
+   51×31、圆钮 27、外缘缝 2（= (31−27)/2）、行程 20 —— 全部取自上方 token 单源，
+   颜色沿用回绿后的既有配方（--glass-control-* 材质 + rgb(var(--brand-green)))
+   零新色值。圆钮落位取 `--msw-offset`（缝 − 描边），四向缝实测 2/2/2/2
+   （toggle-center 批 2026-11-06：旧版 3/1/3/1 偏心 2px）。
    热区：本体 51×31 已达 --mtap 高度的一档但**宽高均需 ≥44**——31px 高不足，
    故 ::before 外扩命中盒补到 --mhit（44×44），视觉形态不变、触控达 Apple 档。
    桌面（>768px 非手机层）逐字节不变：全部规则挂 body.mobile-layer。 */
@@ -440,8 +450,8 @@ body.mobile-layer .nb-toggle {
   border-radius: calc(var(--msw-h) / 2);
 }
 body.mobile-layer .nb-toggle::after {
-  top: var(--msw-inset);
-  left: var(--msw-inset);
+  top: var(--msw-offset);
+  left: var(--msw-offset);
   width: var(--msw-knob);
   height: var(--msw-knob);
 }
@@ -1658,12 +1668,39 @@ body.mobile-layer .mf-canvas-page {
    z 序：签组 z 20 压过 pane 内容（旧形态靠流内位置天然在上，离流后必须显式）；
    工具条（节根 z 20，DOM 在后）压过签组；堆叠视角 .mf-stack-view z 40 全盖。
    桌面零触碰：全部 body.mobile-layer 限定。 */
+   ══ 方案 C 落地批（mobile-canvas-tabs-c 2026-11-06；作者 08:33 逐字
+   「采用方案c 主胶囊要采用毛玻璃底 然后背景的文字不使用胶囊 但是还有电脑端
+   hover 上下选项的那种模糊效果 文字两边不要渐隐」）════════════════════════
+   本批把环带从「72px 零底带 + 双侧水平羽化」换成方案 C 的**无下边缘**形态：
+     ① **玻璃带 64px**（`::before`，材质 = `--nf-glass-*` 单源、成员登记表在册）——
+        正文滚到带里只剩色块，读作「化掉」的第一档；
+     ② **下边缘渐隐带 28px**（`::after`，`--ds-fade-veil` 渐层、零 backdrop）——
+        64..92 这一段正文从「半洗」回到「清晰」，**没有一条硬边**；
+     ③ **水平方向零渐隐**：`.fade` 的双侧 14px 羽化、邻签 `::after` 的方向 mask、
+        label 的 9px 两端淡化**整族退役**（作者令「文字两边不要渐隐」）—— 全脸
+        只剩一条纵向（下缘）渐隐，横向 mask 一个不留；
+     ④ **主胶囊真毛玻璃**：`.mf-strip-chip.on::after` 吃成员表 blur（`--nf-glass-filter`），
+        两侧签**不再带胶囊包层**（作者令「背景的文字不使用胶囊」——方案 C 的扁平签
+        原样保留，视觉只给环位姿），它们的「糊感」改由**环邻位深度令牌**
+        `--ds-ring-blur` / `--ds-ring-saturate` 承担（与桌面 hover 上下选项同源）。
+   几何单源仍是 navController.js 的 RING_*（签心恒 y=40，仍在 64px 玻璃带内）；
+   `--mf-strip-*` 三枚局部量由 `.mf-canvas-page` 出生（带上量 + 正文初态让位共用
+   一把尺），禁各写裸值。 */
+body.mobile-layer .mf-canvas-page {
+  /* 玻璃带高 = 簇净空（--mchrome-clear 72）收一档气隙（--ds-space-2 8）= 64 */
+  --mf-strip-glass-h: calc(var(--mchrome-clear) - var(--ds-space-2));
+  /* 下缘渐隐 = 一档留白（--ds-space-6 24）+ 一档缝（--ds-space-1 4）= **28px**
+     （作者口径 ④「下边缘渐隐厚度 = 28px」；本行是唯一出生地） */
+  --mf-strip-fade-h: calc(var(--ds-space-6) + var(--ds-space-1));
+  /* 带总高 = 64 + 28 = 92（正文初态让位 = 同值，见下方 canvas 正文块） */
+  --mf-strip-h: calc(var(--mf-strip-glass-h) + var(--mf-strip-fade-h));
+}
 body.mobile-layer .mf-strip {
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
-  height: 72px;
+  height: var(--mf-strip-h, calc(var(--mchrome-clear) + var(--ds-space-6) - var(--ds-space-1)));
   z-index: 20;
   overflow: visible;
   touch-action: pan-y;
@@ -1673,20 +1710,64 @@ body.mobile-layer .mf-strip {
      近缘只放大约 1.01 倍，不啃两边浮钮的净空）。 */
   perspective: 1200px;
 }
+/* ── 玻璃带层（0..64）：整条顶栏一枚玻璃面 ─────────────────────────────────
+   材质逐项取 `--nf-glass-*`（底 + 顶缘折射线 + 顶缘细边）；**下缘不画细边、
+   不投影**——外投影会在 64px 处画出一条硬边，正是本方案要消灭的东西。
+   blur 由 css/glass.css 成员登记表供给（G2：值只准 `var(--nf-glass-filter)`）。
+   成员 = 带本体（z-index:-1 负层）：带本体零视觉（G7b 登记为「零画」），画的是本层。 */
+body.mobile-layer .mf-strip::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  z-index: -1;
+  height: var(--mf-strip-glass-h, calc(var(--mchrome-clear) - var(--ds-space-2)));
+  background:
+    var(--nf-glass-refraction) center top / 80% var(--ds-space-hair) no-repeat,
+    var(--nf-glass-bg);
+  border-top: var(--nf-glass-border);
+  pointer-events: none;
+}
+/* ── 下边缘渐隐层（64..92，28px）：零 backdrop ─────────────────────────────
+   与玻璃层**分家**：mask/渐层 × backdrop-filter 落在同一元素上会被合成器架空
+   （本仓实证注释见 `.ds-edge-fade` 已知坑①，也是旧邻签没有 blur 的根因）。
+   故本层只铺页面底色族的洗层（`--ds-fade-veil`，与主对话窗顶缘渐隐同一枚
+   令牌），把「滚走的行」从半洗洗到清晰 —— 语义 = 继续化开，不是盖一条色带。 */
+body.mobile-layer .mf-strip::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: var(--mf-strip-glass-h, calc(var(--mchrome-clear) - var(--ds-space-2)));
+  z-index: -1;
+  height: var(--mf-strip-fade-h, calc(var(--ds-space-6) + var(--ds-space-1)));
+  background: var(--ds-fade-veil);
+  pointer-events: none;
+}
 /* 签本体接回点击/手势（带 pointer-events:none 不下传 —— 上方透传悬浮批②）。 */
 body.mobile-layer .mf-strip-chip { pointer-events: auto; }
-/* 环带双侧渐隐（2 签起挂 .fade —— 单签居中无需遮）。
-   胶囊边缘渐隐批（作者令 2026-11-02 21:47 §一「靠近中间胶囊的部分要能清晰
-   显示包括文字，然后越靠边越模糊，可以是胶囊只显示一半的那种圆环感」）：
-   **主渐隐下沉到每一枚签自己身上**（下方 .mf-strip-chip 的 mask，朝中心一侧
-   清晰、朝外一侧化开），环带这一层只留**视口边缘的极窄羽化**（0→14px）——
-   它不再是「把两侧签整块啃掉」的硬闸（旧 52→64 那条会连朝中心的半枚签一起
-   抹掉，正是作者报障的「边界生硬」根因）。
-   浮钮面上零墨仍机械保证：可见签的最小左缘 = 390/2 − 95 − 54.4/2 = 72.8px，
-   远在 14px 羽化带之外（375 基线为 65.3px，同样在外）—— 不靠遮罩挡，靠几何。 */
+/* ── canvas 正文初态让位 = 带总高（92）────────────────────────────────────
+   旧值 = `--cv-safe-top`（= --mchrome-clear 72，语义「首条内容落在按钮/胶囊正下方」）。
+   方案 C 落地后带子长到 92（玻璃 64 + 渐隐 28），若仍让 72，首行正好落在**渐隐带
+   里**（64..92 的第 8px 处，veil α ≈ .55）—— 一进页面就被洗掉半行，读作「内容
+   顶栏压住了」。故让位跟着带高走：首行落在渐隐带下沿之外（= 「一开始第一条消息
+   放在顶栏下面」的原语义，只是顶栏变高了）。
+   特异性注：split.css 的同源规则是 `#canvas-content .canvas-md-scroll.canvas-viewer-
+   safe-top`（(1,2,0)），本条带 id + 类链 (1,4,0) 才压得住；别把它降成无 id 形态。 */
+body.mobile-layer #canvas-content .canvas-md-scroll.canvas-viewer-safe-top,
+body.mobile-layer .mf-canvas-page .canvas-viewer-safe-top {
+  padding-top: var(--mf-strip-h, calc(var(--mchrome-clear) + var(--ds-space-6) - var(--ds-space-1)));
+}
+/* 环带水平渐隐**整条退役**（方案 C 落地批，作者令「文字两边不要渐隐」）：
+   旧档 = `.mf-strip.fade` 的 14px 双侧 alpha mask。它同时是 hit-test 裁剪源
+   （mask 的 alpha≈0 段整块 pointer-events 透传），退役后带区两侧手感反而更实。
+   **防复活钉**：本块保留一条显式 `mask-image: none` —— 任何后来者想再给带加
+   水平羽化，必须先删这条并说明理由（scripts/check-mobile-canvas-strip.mjs S2 同时会红）。 */
+body.mobile-layer .mf-strip,
 body.mobile-layer .mf-strip.fade {
-  -webkit-mask-image: linear-gradient(90deg, transparent 0, black 14px, black calc(100% - 14px), transparent 100%);
-  mask-image: linear-gradient(90deg, transparent 0, black 14px, black calc(100% - 14px), transparent 100%);
+  -webkit-mask-image: none;
+  mask-image: none;
 }
 body.mobile-layer .mf-strip[hidden] { display: none; }
 /* chip = 电脑端胶囊（.canvas-header）同族小档：材质 = --glass-bg 底 +
@@ -1778,11 +1859,25 @@ body.mobile-layer .mf-strip-chip {
      无手势时 --sdx 缺省 0px（渲染与改前逐位一致）。 */
   transform: translate(calc(-50% + var(--rdx, 0px) + var(--sdx, 0px)), -50%) scale(var(--rsc, 1)) rotateY(var(--rrot, 0deg));
   opacity: var(--rop, 1);
-  filter: blur(var(--rbl, 0px));
+  /* 环邻位深度（方案 C 落地批，作者令「还有电脑端hover 上下选项的那种模糊效果」）：
+     配方**不在这里自拟** —— 半径与饱和取 design-system.css ⑯b 槽的两枚令牌
+     （`--ds-ring-blur` 1.6px / `--ds-ring-saturate` 1.25，即桌面 hover 上下选项
+     `.cr-capsule.is-edge` 的实测档），本档只乘一枚**位姿系数** `--rblf`
+     （0 = 环心全清、1 = 邻位拿满一档；由 layoutRing 按 |k| 写）。
+     于是「模糊感应」与桌面同源、同一份数值、同一时长曲线（--ds-ring-dur/ease），
+     手机端零新配方；旧档 `--rbl`（MAX 2.40、|k|=1 只有 0.40px）退役 ——
+     作者实拍读作「手机端没有电脑端那种糊感」的根因就是它把邻位压到了 1/4 档。 */
+  filter:
+    blur(calc(var(--ds-ring-blur) * var(--rblf, 0)))
+    saturate(calc(1 + (var(--ds-ring-saturate) - 1) * var(--rblf, 0)));
   transition:
+    /* 切签位移/旋转仍取 280ms（既有裁定「旋转过渡 ≤300ms、不阻塞输入」，
+       见下方 --dur-switch 注释）；**模糊与透明两条腿照抄桌面环的时长曲线**
+       （--ds-ring-dur 360ms + 同一缓出曲线 / opacity 320ms ease）——
+       作者口径 ④「同一配方、同一时长曲线，不重写一份」。 */
     transform var(--dur-switch, 280ms) cubic-bezier(0.22, 0.61, 0.36, 1),
-    opacity 220ms ease,
-    filter 220ms ease,
+    opacity 320ms ease,
+    filter var(--ds-ring-dur) var(--ds-ring-ease),
     max-width 220ms ease;
   will-change: transform, opacity;
 }
@@ -1794,35 +1889,40 @@ body.mobile-layer .mf-strip-chip { --dur-switch: 280ms; }
    过渡关零（指到哪跟到哪）；摘类后恢复 280ms 过渡再写 --sdx:0 ⇒ 端点阻尼段的
    越界偏移与松手归零都读作**真回弹**（位移归零可机械断言）。 */
 body.mobile-layer .mf-strip.is-swiping .mf-strip-chip { transition: none; }
-/* 玻璃视觉层（::after 迁移承载面）：宿主的材质四件套全部落在这里 —— 玻璃底
-   （顶缘折射线渐变 + --glass-bg）、描边（--glass-border，底缘透明化）、
-   box-shadow。`inset:0` 贴齐宿主盒（尺寸随 max-width 档 68/112 与展开钳制
-   自动跟随）；`border-radius:inherit` 同族圆角；`pointer-events:none` 让命中
-   穿透到宿主（热区 = ::before，见下）。
-   mask 的 alpha≈0 段从此只裁这一层的绘制 —— 邻签朝外半边「视觉化开」的同时，
-   宿主热区（::before）照常吃 pointer（I3 的 elementFromPoint 判据）。
-   **backdrop-filter 不落本层**（渐隐热区修复批，headless 软渲染 A/B 实证）：
-   同一元素上 mask-image × backdrop-filter 并存时，合成器把描边/毛玻璃面按
-   未裁剪输出（最小复现：wrapper opacity .55 + backdrop + mask，左端描边仍
-   全亮环——mask 被架空；去掉 backdrop 后同一 mask 干净化开）。故 blur 只留
-   给中签（.on::after，无 mask，渲染安全）；邻签材质 = 底色+描边+阴影+折射线，
-   视觉语族不变（55% 透明度档下 blur 本就不可辨）。 */
+/* ── 签视觉层分工（方案 C 落地批 2026-11-06）────────────────────────────────
+   作者令逐字：「主胶囊要采用毛玻璃底 然后背景的文字不使用胶囊」。
+   · **主胶囊**（`.on`）= 唯一带材质的签 = 一枚真毛玻璃胶囊：底/顶缘折射线/细边/
+     浮影四件逐项取 `--nf-glass-*` 与同族令牌，blur 由 css/glass.css 成员登记表
+     供给（`var(--nf-glass-filter)`，G2 单源）。它没有 mask ⇒ 「mask × backdrop
+     架空合成器」那条坑天然不成立（旧档把 blur 只留给中签正是因为这个）。
+   · **两侧签**（背景那一层）= **零材质**：不套胶囊、不铺底、不描边、不投影
+     （方案 C 的扁平签）。它们的深度语言只剩环位姿（位移/缩径/旋转/透明）+
+     环邻位模糊（--ds-ring-blur，与桌面 hover 上下选项同源）—— 正文从玻璃带上
+     滚过时读作「绕到圈后的字」，而不是「三枚浮着的胶囊」。
+   · 视觉层仍落 `::after`（不是宿主）：宿主恒零视觉零 mask，44×44 热区（::before）
+     零波及；`inset:0` 贴齐宿主盒，`border-radius:inherit` 同族圆角，
+     `pointer-events:none` 命中穿透到宿主。 */
 body.mobile-layer .mf-strip-chip::after {
   content: '';
   position: absolute;
   inset: 0;
   z-index: -1;
   border-radius: inherit;
+  /* 零材质（背景文字不使用胶囊）：底 transparent + 零描边 + 零投影。
+     保留本层的唯一理由 = 主胶囊档（下方 .on 规则）复用它，一处几何两档材质。 */
+  background: none;
+  border: 0;
+  box-shadow: none;
+  pointer-events: none;
+}
+/* 主胶囊 = 完整毛玻璃档（材质四件套；blur 由 glass.css 成员表供给）。 */
+body.mobile-layer .mf-strip-chip.on::after {
   border: 1px solid var(--glass-border);
   border-bottom-color: transparent;
   background:
     linear-gradient(90deg, transparent 10%, var(--sapphire-refraction) 50%, transparent 90%) center top / 80% 1px no-repeat,
     var(--glass-bg);
   box-shadow: var(--cv-shadow);
-  pointer-events: none;
-}
-/* 中签玻璃层 = 完整毛玻璃档（毛玻璃 blur 只在无 mask 的层上安全 —— 见上）。 */
-body.mobile-layer .mf-strip-chip.on::after {
 }
 /* 环外（|k| > 露出半径）：位姿仍算（换签轨迹连续），命中与可见双关。 */
 body.mobile-layer .mf-strip-chip.is-far { pointer-events: none; }
@@ -1868,87 +1968,24 @@ body.mobile-layer .mf-strip-label {
   overflow: hidden;
   text-overflow: clip;
   white-space: nowrap;
-  -webkit-mask-image: linear-gradient(90deg, transparent 0, black 9px, black calc(100% - 9px), transparent 100%);
-  mask-image: linear-gradient(90deg, transparent 0, black 9px, black calc(100% - 9px), transparent 100%);
-}
-/* 中签（前置显示的那一枚）两端**零虚化渐隐**（作者令 2026-11-02 11:23「前置显示的
-   那个标签，两端不要有虚化渐隐」）：撤掉 label 的水平 alpha mask —— 文字左右端点
-   是实色硬边，不化开、不淡化。两侧邻签的 mask **原样保留**（上一批「越到边缘越
-   模糊」那条不撤，见上方基础档）。
-   撤了 mask 之后超宽文字怎么办 —— **不出省略号 / 不溢出签盒 / 不切半个字**：
-   改由 navController.js `fitRingLabels()` 做「整字收束」，label 的 max-width 收到
-   「能完整容纳的最大整字前缀」上（字界处收住，不出现半个字），多出来的部分照既有
-   展开腿承载（点活签 → 全名，2600ms 自动收）；全名三处保留不变（DOM 文本 / title /
-   展开腿），收束只压**绘制宽**。圆角 / 底色 / 玻璃 / 内距 / 字重 / 字号本档零改动
-   （机械断言 T13⑥ 逐项钉死）。 */
-body.mobile-layer .mf-strip-chip.on .mf-strip-label {
+  /* ── 水平渐隐**整条退役**（方案 C 落地批 2026-11-06；作者令「文字两边不要渐隐」）
+     旧档 = 两端各 9px 的 alpha 淡化（中签 2026-11-02 11:23 批已先撤一段），本批
+     把邻签那一段一并撤掉：文字左右端点是**实色硬边** —— 不化开、不淡化、不模糊，
+     全脸只剩一条纵向（下缘 28px）渐隐。
+     超宽文字怎么办（不出省略号 / 不越签盒 / 不切半个字）：`navController.js`
+     `fitRingLabels()` 的「整字收束」本批对**全组签**生效（旧档只收中签，邻签
+     靠 mask 化开兜底）—— label 的 max-width 收到「能完整放下的最大整字前缀」，
+     截断点恒落在字界。全名三处保留（DOM 文本 / title / 展开腿），收束只压绘制宽。
+     text-overflow 显式钉 clip：任何继承或浏览器默认都不会再画「…」。 */
   -webkit-mask-image: none;
   mask-image: none;
 }
-/* ── 胶囊边缘渐隐（作者令 2026-11-02 21:47 §一）───────────────────────────
-   「两边的两个小的，靠近中间胶囊的部分要能清晰显示包括文字，然后越靠边越
-   模糊，可以是胶囊只显示一半的那种圆环感」。
-   实现 = **签本体的 mask-image**（不是视口遮罩）：
-   · 朝中心一侧（内端）零淡化 —— 文字最靠近中心胶囊的那部分完全清晰可读
-     （作者令 I2 的载体）；
-   · 朝外一侧连续化开，宽度 = --rfade（layoutRing 按 |k| 写：|k|=1 恰 55%，
-     即约半枚签化开 = 「只显示一半的那种圆环感」；|k|≥2 已被 .is-far 收走，
-     变量只是过渡中的轨迹值）；
-   · 方向 = 环形偏移的符号（k<0 = 签在中心左侧 ⇒ 左端为外）。
-   与 label 文本层无关（DOM 零动 ⇒ 读屏全名 / title / 展开腿三处保真不变）；
-   热区照旧（::before 命中盒在 mask 之外 —— mask 只影响绘制，命中盒几何不变，
-   「看不见 ≠ 点不到」由 I3 的 elementFromPoint 机械证明）。
-   取舍说明（对照作者给的两条候选路线）：视口整体渐隐遮罩方案一行 CSS 就能做，
-   但它是**无差别横切** —— 中心签、邻签、展开腿谁靠边谁被抹，且把「清晰区」
-   钉死在固定像素带上（窄屏上会啃到邻签的朝中心半边，正是上一版 52→64 mask
-   被作者判「边界生硬」的同型问题）。签本体 mask 的实现面稍宽（方向变量 +
-   JS 写宽度），换来的是**每枚签自己的朝中心半边恒定清晰**，与浮钮、屏宽、
-   签宽解耦 —— 按效果与复杂度综合取后者。
-   渐隐热区修复批：方向 mask **只挂 ::after**（视觉层）—— mask 的 hit-test
-   裁剪随之只作用在玻璃层，宿主（::before 热区）零波及；本体的 mask 档整条
-   退役（宿主零 mask 是热区修复的前提，防复活钉）。 */
-body.mobile-layer .mf-strip-chip.side-l::after {
-  -webkit-mask-image: linear-gradient(90deg, transparent 0, black var(--rfade, 55%), black 100%);
-  mask-image: linear-gradient(90deg, transparent 0, black var(--rfade, 55%), black 100%);
-}
-body.mobile-layer .mf-strip-chip.side-r::after {
-  -webkit-mask-image: linear-gradient(270deg, transparent 0, black var(--rfade, 55%), black 100%);
-  mask-image: linear-gradient(270deg, transparent 0, black var(--rfade, 55%), black 100%);
-}
-/* 展开腿（点活签看全名）不吃方向 mask：全名时签被加宽到近全幅，方向化开会
-   把展开的两端也吃掉（与 11:23 批「中签两端零虚化渐隐」同语义冲突）。展开腿
-   挂在 .on 签上（k=0 ⇒ 本就不带 side-l/side-r），此条是防复活钉。 */
-body.mobile-layer .mf-strip-chip.is-expanded::after {
-  -webkit-mask-image: none;
-  mask-image: none;
-}
-/* 宿主本体恒零 mask（渐隐热区修复批防复活钉：mask 若回到本体，hit-test
-   裁剪立即随行 —— 两端渐隐区点不到的缺陷原样复发）。 */
-body.mobile-layer .mf-strip-chip {
-  -webkit-mask-image: none;
-  mask-image: none;
-}
-/* 邻签文本层也**方向化**（作者令 §一「靠近中间胶囊的部分要能清晰显示**包括
-   文字**」）：基础档的 label mask 是两端各淡 9px（对称），会顺手把**朝中心
-   一侧**的文字端点也化掉。本档把邻签的 label mask 改成**只淡朝外一侧**，朝
-   中心一侧零淡化 —— 与签级 mask 同向、互补。
-   渐隐热区修复批（::after 迁移）补：**淡化宽度同步取 --rfade（55%）**，与
-   ::after 玻璃层同一条曲线 —— 迁移前 chip 的 mask 会连子元素（label）一起裁，
-   文字与玻璃同步化开；迁到 ::after 后 mask 只作用于玻璃层，若 label 仍按 9px
-   淡化，文字就会「玻璃已化开、字还实色」两层脱节（像素剖面实证：外/内半边
-   墨迹比 0.91，判据要求 ≤0.85）。取同一 --rfade 即恢复「半枚圆环」读感，
-   且文字淡化**不进 hit-test**（label 只是绘制层，热区在宿主/::before）。
-   中签（.on）不受影响：它在上面那条 `.on .mf-strip-label { mask: none }` 档里，
-   两端恒实色硬边（11:23 批语义原样保留）。 */
-body.mobile-layer .mf-strip-chip.side-l .mf-strip-label {
-  -webkit-mask-image: linear-gradient(90deg, transparent 0, black var(--rfade, 55%), black 100%);
-  mask-image: linear-gradient(90deg, transparent 0, black var(--rfade, 55%), black 100%);
-}
-body.mobile-layer .mf-strip-chip.side-r .mf-strip-label {
-  -webkit-mask-image: linear-gradient(270deg, transparent 0, black var(--rfade, 55%), black 100%);
-  mask-image: linear-gradient(270deg, transparent 0, black var(--rfade, 55%), black 100%);
-}
-/* 展开腿上的 label 恒无 mask（全名腿优先于上面的方向化档 —— 展开时两向都清晰）。 */
+/* 防复活钉（水平渐隐）：签视觉层 / 展开腿在旧档里各挂过方向 mask，本批一并归零。
+   scripts/check-mobile-canvas-strip.mjs S2 同时会红 —— 想再加水平羽化，先改本块
+   注释、再改规范，别在实现面偷偷加。 */
+body.mobile-layer .mf-strip-chip::after,
+body.mobile-layer .mf-strip-chip.is-expanded::after,
+body.mobile-layer .mf-strip-chip .mf-strip-label,
 body.mobile-layer .mf-strip-chip.is-expanded .mf-strip-label {
   -webkit-mask-image: none;
   mask-image: none;
@@ -3151,6 +3188,30 @@ body.mobile-layer .ask-fab {
   height: 48px;
   right: 16px;
 }
+/* ── 建群面板（统一面板批 2026-11-06）：顶栏返回圆钮 / 右下悬浮加号 = 手机 48 档 ──
+   尺寸档与页面壳返回钮 `.mobile-back-btn`、手机 `.ask-fab` 同一档
+   （48 = --mtap-lg / 图标 20 = --micon-sm）；桌面档 40 由 `.g2-fab` 基准承担
+   ⇒ 同一套 DOM、同一套类，只换尺寸档（无第二份实现）。
+   顶垫：弹窗退场批给 `.cfg-modal` 的 64px 顶垫是给**浮动**返回钮让位的；本面板
+   的返回钮在顶栏**流内**，顶垫收回一档（8 + safe）⇒ 顶栏与页面壳同缘，
+   不再留一条空带。 */
+body.mobile-layer #fm-group-create-overlay .fm-pick-modal {
+  padding-top: calc(var(--ds-space-2) + env(safe-area-inset-top, 0px));
+}
+body.mobile-layer .fm-pick-back,
+body.mobile-layer .fm-pick-fab {
+  width: var(--mtap-lg, 48px);
+  height: var(--mtap-lg, 48px);
+}
+body.mobile-layer .fm-pick-back svg,
+body.mobile-layer .fm-pick-fab svg {
+  width: var(--micon-sm, 20px);
+  height: var(--micon-sm, 20px);
+}
+body.mobile-layer .fm-pick-fab { right: var(--ds-space-4); }
+body.mobile-layer .fm-pick-modal .fm-pick-body {
+  padding-bottom: calc(var(--ask-fab-bottom, 24px) + var(--mtap-lg, 48px) + var(--ds-space-3));
+}
 body.mobile-layer .canvas-source-toggle,
 body.mobile-layer .canvas-ref-select,
 body.mobile-layer .canvas-find-toggle,
@@ -3260,12 +3321,11 @@ body.mobile-layer .mh-search-bar:not(.g2-fab) {
   height: 44px;
   flex: none;
   border-radius: var(--ds-radius-pill);
-  background: var(--glass-control-bg);
-  border: 1px solid var(--glass-control-border);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge),
-    0 1px 3px var(--glass-control-glow);
+  /* 材质（底 / 描边 / 投影 / 模糊）**不在这里写**：
+     glass-top-overlays 批 2026-11-06 起整件由唯一工具类 `.nf-glass` 供给
+     （css/glass.css；DOM 侧 socialSearch.js 建条时挂类）。本块只留几何。
+     改前这里的 --glass-control-bg + 三段 inset 高光/暗边 + 外发光是「玻璃控制档」
+     自造厚度的写法，与玻璃单源和扁平纪律都冲突，随批退役。 */
 }
 /* 展开态图标档（16px / muted）。收起态（.g2-fab 圆钮）图标几何与字色整件归
    glass.css 的 `.g2-fab svg`（手机档 `body.mobile-layer .g2-fab svg` = 20px）
@@ -3281,13 +3341,12 @@ body.mobile-layer .mh-search-bar:not(.g2-fab) > i svg {
 body.mobile-layer .mh-search-input {
   flex: 1;
   min-width: 0;
-  border: none;
-  outline: none;
-  background: transparent;
   color: var(--color-frame-text);
   font-size: var(--mfs-callout);
   font-family: inherit;
 }
+/* 裸件（无底/无边/无环）：归 css/inputSurface.css 的裸件成员表（输入面唯一
+   标准批 2026-11-06）—— 手机层与桌面同一份形态，不另写一套。 */
 body.mobile-layer .mh-search-input::placeholder { color: var(--color-frame-text-muted); }
 body.mobile-layer .mh-search-clear {
   flex: none;
@@ -3459,10 +3518,12 @@ body.mobile-layer #mobile-pages .mobile-page[data-page="contacts"] .fm-search-bl
   display: none;
 }
 
-/* ── ④ 搜索回跳胶囊的手机层抬层（js/searchReturnPill.js）─────────────────
-   胶囊挂 #main（桌面聊天根），手机层页面容器 #mobile-pages（156）整层压在它
-   上面 ⇒ 会话页（收编窗）里胶囊被页面遮住。抬到 170：> 页面容器 156、< dock
-   200 与桌面模态族 310+（层序表见文件头注释）。桌面零改动。 */
+/* ── ④ 搜索回跳胶囊的手机层抬层（js/scrollPill.js 一族，仅回跳消费）────────
+   搜索回跳胶囊挂 #main（桌面聊天根），跳转期间手机层页面容器 #mobile-pages
+   （156）可能整层压在它上面 ⇒ 抬到 170（> 页面容器 156、< dock 200 与桌面
+   模态族 310+）。**只对回跳消费开口**：↓N / 回到底部两档住在聊天根，聊天根
+   可以被 dock 页压住（那是正确的：根页不在场时它的胶囊不该浮在别人页面上），
+   故不抬层。桌面零改动（挂 body.mobile-layer）。 */
 body.mobile-layer #main [data-nf-search-return="1"] { z-index: 170; }
 
 /* ═══════════════════════════════════════════════════════════════════════

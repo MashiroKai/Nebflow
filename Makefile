@@ -1,6 +1,6 @@
 .PHONY: compile run assembly clean install \
   lint fmt fix fmt-check check quality-gate check-visual visual-baseline frontend-gates component-contract \
-  flat-buttons glass toggle \
+  flat-buttons glass toggle toggle-geometry scroll-pill input-surface mobile-canvas-strip \
   plugin-seed-parity
 
 # Auto-detect fastest Maven mirror (Aliyun for China, Maven Central otherwise)
@@ -103,12 +103,17 @@ quality-gate:
 # = 后端把 `GET /api/conversations` 的 case 误删，前端 404 被吞成「暂无会话」，
 # **没有任何断言发现「前端调了但后端没有」**。本闸静态对照两侧（前端 /api 字面量
 # 集合 × 网关路由注册面），前端调了后端没有 ⇒ 红。
-FRONTEND_GATES := design-tokens msgstyle self-explaining circular fixture-secrets api-routes freeze-state freeze-silence flat-buttons glass canvas-hint toggle
+FRONTEND_GATES := design-tokens msgstyle bubble-side self-explaining circular fixture-secrets api-routes freeze-state freeze-silence flat-buttons glass canvas-hint toggle scroll-pill input-surface mobile-canvas-strip
 
 frontend-gates:
 	@command -v node >/dev/null 2>&1 || { echo "node not found — 前端门禁需要 node"; exit 2; }
 	node scripts/check-design-tokens.mjs
 	node scripts/check-msgstyle-single-source.mjs
+	@# 气泡归属方底色门禁（bubble-side-color 批 2026-11-06，作者令「我们这方发的……
+	@# 一律绿，对方发过来的白」）：气泡底色只准两档（--nf-bub-ours-bg 我方绿 /
+	@# --nf-bub-theirs-bg 对方白），第三色（sapphire 蓝 tint / etched 灰 / 中性灰）
+	@# 在气泡面上零命中；单点 = css/glass.css 单块 + js/bubbleSide.js 单函数。
+	node scripts/check-bubble-side.mjs
 	node scripts/check-self-explaining.mjs
 	node scripts/check-circular.mjs
 	@# 证据/夹具是高熵长令牌的落点（2026-11-04 两小件批 · 件三）：`tests/fixtures/` 与
@@ -134,6 +139,12 @@ frontend-gates:
 	@# --nf-glass-bg 的 α 必须落在 [0.45, 0.75]（低了内容透底、高了死白，两端都红）；
 	@# --nf-glass-blur ≥ 32px 且 --nf-glass-saturate ≥ 1.3（配方不许被降档）；
 	@# --nf-glass-* 只许在 stand-tokens.css 定义；canvas ask 的气泡/输入条必须挂 .nf-glass。
+	@# glass-top-overlays 批 2026-11-06 加 G7（作者令「所有悬浮在顶部 可以透出背景的
+	@# 都用毛玻璃效果 比如消息和联系人的手机端的搜索框 这个要成为标准」）：
+	@# G7a 顶部悬浮 + 半透明（α ∈ (0,.90)）+ 无模糊的面 ⇒ 红（sticky 带 top / 顶带 /
+	@# 顶带子件三类锚定）；G7b 规范 §7.1「顶部悬浮面清单」逐行机检材质漂移；
+	@# G7c 例外清单理由为空或指向已不存在的面 ⇒ 红。手机搜索条与聊天气泡上方的
+	@# sticky 等待条即本批由 G7 抓出并整改的两面。
 	@# 规范正文与例外登记：web/.../design-language/references/glass-spec.md。
 	@# A/B 证据装置：node scripts/capture-glass-ab.mjs --root <web> --tag <before|after>。
 	@# 盘点模式：node scripts/check-glass-unify.mjs --inventory；机器读：--json。
@@ -160,6 +171,37 @@ frontend-gates:
 	@# 18 行程 / 180ms 曲线，组件节不许写死几何）。
 	@# 盘点：node scripts/check-toggle-unify.mjs --inventory；机器读：--json。
 	node scripts/check-toggle-unify.mjs
+	@# 会话面胶囊居中几何门禁（作者令 2026-11-06 08:05「不要靠边 就保持之前的居中」）：
+	@# 一族三消费（新消息通知 / 回到底部 / 搜索回跳）共用 .scroll-new-pill，形态单源
+	@# = chat.css 该段；缺 left:50% + translateX(-50%)、任一态丢居中位移、出现
+	@# right:/justify-self:end 之类右靠边手法、或冒出第二套 scroll-*-pill 形态类 ⇒ 红。
+	@# 几何真值（水平中心偏差 ≤0.5px）由 tests/scroll-pill-family.spec.mjs 的
+	@# S1/S2/S4/S5 四条实测腿给出（需浏览器，不在静态门禁里跑）。
+	@# 盘点：node scripts/check-scroll-pill-center.mjs --json。
+	node scripts/check-scroll-pill-center.mjs
+	@# 输入面唯一性门禁（input-surface-unify 批 2026-11-06；作者裁定「输入框的这个
+	@# 样式也要成为统一标准 不可以出现第二种」）：① --nf-field-* 只在 stand-tokens.css
+	@# 定义；② 输入面选择器上的底/边/圆角/影/描边只许在 css/inputSurface.css；
+	@# ③ 标准文件里的造型值必须取 var(--nf-field-*)；④ 蓝族令牌不许进输入面（唯一
+	@# 开口是 keyboard 模式下的压灰环）；⑤ JS 不许内联给输入件写造型；⑥ 豁免只能
+	@# 在规范文件 input-surface-spec.md 的例外清单里具名登记（空理由 = 红）。
+	@# 盘点：node scripts/check-input-surface.mjs --inventory；机器读：--json。
+	node scripts/check-input-surface.mjs
+	@# 手机 canvas 顶部环带（方案 C）门禁（mobile-canvas-tabs-c 批 2026-11-06；作者 08:33
+	@# 逐字「采用方案c 主胶囊要采用毛玻璃底 然后背景的文字不使用胶囊 但是还有电脑端
+	@# hover 上下选项的那种模糊效果 文字两边不要渐隐」）四条判据：
+	@#   S1 玻璃单源 —— 环带脸上任何 α ∈ (0,.90) 的可透出面必须进 glass.css 成员表；
+	@#      且玻璃带层 `.mf-strip::before` 与主胶囊 `.mf-strip-chip.on::after` 必须
+	@#      在场且走玻璃（半透明但没走玻璃 ⇒ 红）；
+	@#   S2 禁止水平渐隐 mask —— 环带脸上出现 90deg/270deg/to left/to right 的
+	@#      mask-image、或 label 上任何非 none 的 mask、或 JS 写 mask/--rfade ⇒ 红；
+	@#   S3 背景的文字不使用胶囊 —— 签视觉层基础档必须零材质（胶囊只在 .on 档）、
+	@#      正文宿主（.canvas-md-scroll / .mf-cv-host / .canvas-tab-pane）零底零 pill；
+	@#   S4 下边缘渐隐厚度 = 28px —— `.mf-strip::after` 在场、取 --ds-fade-veil、
+	@#      height 的**令牌算术**恰好 28px、top 恰好等于玻璃带高 64px。
+	@# 改前/改后同一份脚本：node scripts/check-mobile-canvas-strip.mjs --root=<改前树>；
+	@# 机器读：--json。真渲染读数（375/1440 × 亮暗）另跑 scripts/capture-mobile-canvas-tabs.mjs。
+	node scripts/check-mobile-canvas-strip.mjs
 	@echo "Frontend static gates passed ($(FRONTEND_GATES))."
 
 # ── 按钮扁平化：单闸入口（CI 同名 step 调的就是它，单一真源别在 CI 里另抄一遍）──
@@ -169,6 +211,14 @@ flat-buttons:
 # ── 毛玻璃：单闸入口（与 flat-buttons 同形；CI 同名 step 调的就是它）──────────
 glass:
 	node scripts/check-glass-unify.mjs
+
+# ── 会话面胶囊居中：单闸入口（与 flat-buttons / glass 同形）────────────────────
+scroll-pill:
+	node scripts/check-scroll-pill-center.mjs
+
+# ── 手机 canvas 顶部环带（方案 C）：单闸入口（与 flat-buttons / glass 同形）─────
+mobile-canvas-strip:
+	node scripts/check-mobile-canvas-strip.mjs
 
 # ── Canvas 提示文字：单闸入口（静态腿）+ 真几何腿 ────────────────────────────
 # 静态腿 = 令牌唯一性（零依赖零端口）；几何腿 = 逐面 getBoundingClientRect 零交叠
@@ -181,8 +231,31 @@ canvas-hint-geometry:
 	node tests/canvas-hint-safe-area.spec.mjs
 
 # ── 开关唯一性：单闸入口（与 flat-buttons / glass 同形）──────────────────────
+# 静态腿（本 target）= 行为/造型/数值唯一性 + 「居中三式必须是推导式」（禁手填）。
 toggle:
 	node scripts/check-toggle-unify.mjs
+
+# ── 开关居中：真几何腿（像素级）───────────────────────────────────────────────
+# toggle-center 批 2026-11-06（作者原话：「中间的按钮相对于边框都没有居中」）。
+# 判据：|上距−下距| ≤ 0.5px、|左距(关)−右距(开)| ≤ 0.5px；覆盖桌面档（40×22）
+# + 手机档（body.mobile-layer，51×31）× 亮/暗两主题；读数两路互校（浏览器布局盒
+# 经 CDP 取伪元素 border box + DSF=4 哨兵色像素包围盒）。
+# 需 playwright（与 canvas-hint-geometry 同一编排口径：不在默认 check 里跑）。
+# 验红：--mutate=prev-mobile-inset|travel-ignores-inset（判据必须转红，否则 exit 3）。
+toggle-geometry:
+	node scripts/check-toggle-geometry.mjs
+
+# ── 输入面唯一性（input-surface-unify 批 2026-11-06；作者裁定「输入框的这个样式
+#    也要成为统一标准 不可以出现第二种」）──────────────────────────────────────
+# 造型单源 = css/inputSurface.css + stand-tokens.css 的 --nf-field-*；
+# 别处写底/边/圆角/影/描边 ⇒ 红（I2）；蓝族令牌不许进输入面（I4）；
+# 豁免只在规范文件例外清单里登记（I6）。盘点：--inventory；机器读：--json。
+input-surface:
+	node scripts/check-input-surface.mjs
+
+# 真几何腿（零端口、真 Chromium，改前/改后对照 + 指针态/键盘态双通道读数）
+input-surface-geometry:
+	node tests/input-surface.spec.mjs
 
 # ── 路由存在性：运行期腿（empty-state-must-not-lie 批 · 件三②，2026-11-05）──────
 # 静态腿判「源码里注册了没」，运行期腿判「启动后真的答不答」——后者才是事故的

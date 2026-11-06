@@ -1,0 +1,1050 @@
+{
+  "generatedAt": "2026-11-06T00:08:03.523Z",
+  "browser": "chromium-151",
+  "viewport": [
+    375,
+    812
+  ],
+  "dsf": 2,
+  "panels": {
+    "a-light": {
+      "file": "shots/variant-a-light.png",
+      "px": [
+        750,
+        1624
+      ]
+    },
+    "a-dark": {
+      "file": "shots/variant-a-dark.png",
+      "px": [
+        750,
+        1624
+      ]
+    },
+    "b-light": {
+      "file": "shots/variant-b-light.png",
+      "px": [
+        750,
+        1624
+      ]
+    },
+    "b-dark": {
+      "file": "shots/variant-b-dark.png",
+      "px": [
+        750,
+        1624
+      ]
+    },
+    "c-light": {
+      "file": "shots/variant-c-light.png",
+      "px": [
+        750,
+        1624
+      ]
+    },
+    "c-dark": {
+      "file": "shots/variant-c-dark.png",
+      "px": [
+        750,
+        1624
+      ]
+    }
+  },
+  "contrast": {
+    "a-light": [
+      {
+        "text": "设计规格.md",
+        "on": false,
+        "fontSize": "15px",
+        "chip": {
+          "w": 79.7,
+          "h": 32
+        },
+        "glyphPixels": 1569,
+        "sample": {
+          "fgHex": "#1b1e26",
+          "bgHex": "#fafbfc",
+          "ratio": 16.08
+        },
+        "coreMedian": 16.08,
+        "coreMin": 15.97,
+        "coreMax": 16.08
+      },
+      {
+        "text": "批报告.md",
+        "on": false,
+        "fontSize": "15px",
+        "chip": {
+          "w": 79.7,
+          "h": 32
+        },
+        "glyphPixels": 1521,
+        "sample": {
+          "fgHex": "#1b1e26",
+          "bgHex": "#fafafb",
+          "ratio": 15.97
+        },
+        "coreMedian": 16.08,
+        "coreMin": 15.97,
+        "coreMax": 16.08
+      },
+      {
+        "text": "验收记录.md",
+        "on": true,
+        "fontSize": "15px",
+        "chip": {
+          "w": 79.7,
+          "h": 32
+        },
+        "glyphPixels": 1842,
+        "sample": {
+          "fgHex": "#1b1e26",
+          "bgHex": "#dbdbdc",
+          "ratio": 12.04
+        },
+        "coreMedian": 12.04,
+        "coreMin": 12.04,
+        "coreMax": 12.04
+      }
+    ],
+    "a-dark": [
+      {
+        "text": "设计规格.md",
+        "on": false,
+        "fontSize": "15px",
+        "chip": {
+          "w": 79.7,
+          "h": 32
+        },
+        "glyphPixels": 1628,
+        "sample": {
+          "fgHex": "#e8eaed",
+          "bgHex": "#161a23",
+          "ratio": 14.45
+        },
+        "coreMedian": 14.45,
+        "coreMin": 14.45,
+        "coreMax": 14.45
+      },
+      {
+        "text": "批报告.md",
+        "on": false,
+        "fontSize": "15px",
+        "chip": {
+          "w": 79.7,
+          "h": 32
+        },
+        "glyphPixels": 1571,
+        "sample": {
+          "fgHex": "#e8eaed",
+          "bgHex": "#161a24",
+          "ratio": 14.43
+        },
+        "coreMedian": 14.45,
+        "coreMin": 14.43,
+        "coreMax": 14.45
+      },
+      {
+        "text": "验收记录.md",
+        "on": true,
+        "fontSize": "15px",
+        "chip": {
+          "w": 79.7,
+          "h": 32
+        },
+        "glyphPixels": 1877,
+        "sample": {
+          "fgHex": "#e8eaed",
+          "bgHex": "#32343b",
+          "ratio": 10.31
+        },
+        "coreMedian": 10.31,
+        "coreMin": 10.2,
+        "coreMax": 10.31
+      }
+    ],
+    "b-light": [
+      {
+        "text": "设计规格.md",
+        "on": false,
+        "fontSize": "15px",
+        "chip": {
+          "w": 71,
+          "h": 32
+        },
+        "glyphPixels": 1544,
+        "sample": {
+          "fgHex": "#1b1e26",
+          "bgHex": "#fafafb",
+          "ratio": 15.97
+        },
+        "coreMedian": 15.97,
+        "coreMin": 15.97,
+        "coreMax": 15.98
+      },
+      {
+        "text": "批报告.md",
+        "on": false,
+        "fontSize": "15px",
+        "chip": {
+          "w": 71,
+          "h": 32
+        },
+        "glyphPixels": 1526,
+        "sample": {
+          "fgHex": "#1b1e26",
+          "bgHex": "#fafafb",
+          "ratio": 15.97
+        },
+        "coreMedian": 16.08,
+        "coreMin": 15.97,
+        "coreMax": 16.08
+      },
+      {
+        "text": "验收记录.md",
+        "on": true,
+        "fontSize": "15px",
+        "chip": {
+          "w": 71,
+          "h": 32
+        },
+        "glyphPixels": 1844,
+        "sample": {
+          "fgHex": "#1b1e26",
+          "bgHex": "#dbdbdc",
+          "ratio": 12.04
+        },
+        "coreMedian": 12.04,
+        "coreMin": 12.04,
+        "coreMax": 12.04
+      }
+    ],
+    "b-dark": [
+      {
+        "text": "设计规格.md",
+        "on": false,
+        "fontSize": "15px",
+        "chip": {
+          "w": 71,
+          "h": 32
+        },
+        "glyphPixels": 1598,
+        "sample": {
+          "fgHex": "#e8eaed",
+          "bgHex": "#171a24",
+          "ratio": 14.4
+        },
+        "coreMedian": 14.4,
+        "coreMin": 14.3,
+        "coreMax": 14.4
+      },
+      {
+        "text": "批报告.md",
+        "on": false,
+        "fontSize": "15px",
+        "chip": {
+          "w": 71,
+          "h": 32
+        },
+        "glyphPixels": 1576,
+        "sample": {
+          "fgHex": "#e8eaed",
+          "bgHex": "#161a24",
+          "ratio": 14.43
+        },
+        "coreMedian": 14.45,
+        "coreMin": 14.43,
+        "coreMax": 14.45
+      },
+      {
+        "text": "验收记录.md",
+        "on": true,
+        "fontSize": "15px",
+        "chip": {
+          "w": 71,
+          "h": 32
+        },
+        "glyphPixels": 1878,
+        "sample": {
+          "fgHex": "#e8eaed",
+          "bgHex": "#32343b",
+          "ratio": 10.31
+        },
+        "coreMedian": 10.31,
+        "coreMin": 10.2,
+        "coreMax": 10.31
+      }
+    ],
+    "c-light": [
+      {
+        "text": "设计规格.md",
+        "on": false,
+        "fontSize": "15px",
+        "chip": {
+          "w": 57.4,
+          "h": 27.8
+        },
+        "glyphPixels": 799,
+        "sample": {
+          "fgHex": "#32343c",
+          "bgHex": "#fafbfc",
+          "ratio": 11.98
+        },
+        "coreMedian": 9.73,
+        "coreMin": 7,
+        "coreMax": 11.98
+      },
+      {
+        "text": "批报告.md",
+        "on": false,
+        "fontSize": "15px",
+        "chip": {
+          "w": 57.4,
+          "h": 27.8
+        },
+        "glyphPixels": 981,
+        "sample": {
+          "fgHex": "#32363d",
+          "bgHex": "#fafbfc",
+          "ratio": 11.71
+        },
+        "coreMedian": 8.81,
+        "coreMin": 7.04,
+        "coreMax": 11.98
+      },
+      {
+        "text": "验收记录.md",
+        "on": true,
+        "fontSize": "15px",
+        "chip": {
+          "w": 123.2,
+          "h": 35.2
+        },
+        "glyphPixels": 3179,
+        "sample": {
+          "fgHex": "#1b1e26",
+          "bgHex": "#dbdbdc",
+          "ratio": 12.04
+        },
+        "coreMedian": 12.04,
+        "coreMin": 12.04,
+        "coreMax": 12.04
+      }
+    ],
+    "c-dark": [
+      {
+        "text": "设计规格.md",
+        "on": false,
+        "fontSize": "15px",
+        "chip": {
+          "w": 57.4,
+          "h": 27.8
+        },
+        "glyphPixels": 853,
+        "sample": {
+          "fgHex": "#d3d5d8",
+          "bgHex": "#161a23",
+          "ratio": 11.84
+        },
+        "coreMedian": 11.01,
+        "coreMin": 9.06,
+        "coreMax": 11.84
+      },
+      {
+        "text": "批报告.md",
+        "on": false,
+        "fontSize": "15px",
+        "chip": {
+          "w": 57.4,
+          "h": 27.8
+        },
+        "glyphPixels": 1017,
+        "sample": {
+          "fgHex": "#d3d5d8",
+          "bgHex": "#161a23",
+          "ratio": 11.84
+        },
+        "coreMedian": 10.5,
+        "coreMin": 9.04,
+        "coreMax": 11.84
+      },
+      {
+        "text": "验收记录.md",
+        "on": true,
+        "fontSize": "15px",
+        "chip": {
+          "w": 123.2,
+          "h": 35.2
+        },
+        "glyphPixels": 3293,
+        "sample": {
+          "fgHex": "#e8eaed",
+          "bgHex": "#32343b",
+          "ratio": 10.31
+        },
+        "coreMedian": 10.31,
+        "coreMin": 10.2,
+        "coreMax": 10.31
+      }
+    ]
+  },
+  "geometry": {
+    "a-light": {
+      "strip": {
+        "x": 0,
+        "y": 0,
+        "w": 375,
+        "h": 72,
+        "cx": 187.5,
+        "cy": 36,
+        "right": 375,
+        "bottom": 72
+      },
+      "stripStyle": {
+        "backdrop": "blur(40px) saturate(1.4)",
+        "mask": "none",
+        "bg": "rgba(255, 255, 255, 0.55)",
+        "radius": "0px 0px 18px 18px",
+        "height": "72px",
+        "z": "20"
+      },
+      "chips": [
+        {
+          "text": "设计规格.md",
+          "on": false,
+          "box": {
+            "x": 64,
+            "y": 23.5,
+            "w": 79.66,
+            "h": 32,
+            "cx": 103.83,
+            "cy": 39.5,
+            "right": 143.66,
+            "bottom": 55.5
+          },
+          "radius": "10px",
+          "hit": {
+            "w": 79.6562,
+            "h": 44
+          }
+        },
+        {
+          "text": "批报告.md",
+          "on": false,
+          "box": {
+            "x": 147.66,
+            "y": 23.5,
+            "w": 79.67,
+            "h": 32,
+            "cx": 187.49,
+            "cy": 39.5,
+            "right": 227.33,
+            "bottom": 55.5
+          },
+          "radius": "10px",
+          "hit": {
+            "w": 79.6719,
+            "h": 44
+          }
+        },
+        {
+          "text": "验收记录.md",
+          "on": true,
+          "box": {
+            "x": 231.33,
+            "y": 23.5,
+            "w": 79.67,
+            "h": 32,
+            "cx": 271.16,
+            "cy": 39.5,
+            "right": 311,
+            "bottom": 55.5
+          },
+          "radius": "10px",
+          "hit": {
+            "w": 79.6719,
+            "h": 44
+          }
+        }
+      ],
+      "fabs": [
+        {
+          "x": 16,
+          "y": 16,
+          "w": 48,
+          "h": 48,
+          "cx": 40,
+          "cy": 40,
+          "right": 64,
+          "bottom": 64
+        },
+        {
+          "x": 311,
+          "y": 16,
+          "w": 48,
+          "h": 48,
+          "cx": 335,
+          "cy": 40,
+          "right": 359,
+          "bottom": 64
+        }
+      ],
+      "fabRef": {
+        "left": [
+          16,
+          64
+        ],
+        "right": [
+          311,
+          359
+        ],
+        "y": [
+          16,
+          64
+        ]
+      }
+    },
+    "a-dark": {
+      "strip": {
+        "x": 0,
+        "y": 0,
+        "w": 375,
+        "h": 72,
+        "cx": 187.5,
+        "cy": 36,
+        "right": 375,
+        "bottom": 72
+      },
+      "stripStyle": {
+        "backdrop": "blur(40px) saturate(1.4)",
+        "mask": "none",
+        "bg": "rgba(24, 28, 38, 0.68)",
+        "radius": "0px 0px 18px 18px",
+        "height": "72px",
+        "z": "20"
+      },
+      "chips": [
+        {
+          "text": "设计规格.md",
+          "on": false,
+          "box": {
+            "x": 64,
+            "y": 23.5,
+            "w": 79.66,
+            "h": 32,
+            "cx": 103.83,
+            "cy": 39.5,
+            "right": 143.66,
+            "bottom": 55.5
+          },
+          "radius": "10px",
+          "hit": {
+            "w": 79.6562,
+            "h": 44
+          }
+        },
+        {
+          "text": "批报告.md",
+          "on": false,
+          "box": {
+            "x": 147.66,
+            "y": 23.5,
+            "w": 79.67,
+            "h": 32,
+            "cx": 187.49,
+            "cy": 39.5,
+            "right": 227.33,
+            "bottom": 55.5
+          },
+          "radius": "10px",
+          "hit": {
+            "w": 79.6719,
+            "h": 44
+          }
+        },
+        {
+          "text": "验收记录.md",
+          "on": true,
+          "box": {
+            "x": 231.33,
+            "y": 23.5,
+            "w": 79.67,
+            "h": 32,
+            "cx": 271.16,
+            "cy": 39.5,
+            "right": 311,
+            "bottom": 55.5
+          },
+          "radius": "10px",
+          "hit": {
+            "w": 79.6719,
+            "h": 44
+          }
+        }
+      ],
+      "fabs": [
+        {
+          "x": 16,
+          "y": 16,
+          "w": 48,
+          "h": 48,
+          "cx": 40,
+          "cy": 40,
+          "right": 64,
+          "bottom": 64
+        },
+        {
+          "x": 311,
+          "y": 16,
+          "w": 48,
+          "h": 48,
+          "cx": 335,
+          "cy": 40,
+          "right": 359,
+          "bottom": 64
+        }
+      ],
+      "fabRef": {
+        "left": [
+          16,
+          64
+        ],
+        "right": [
+          311,
+          359
+        ],
+        "y": [
+          16,
+          64
+        ]
+      }
+    },
+    "b-light": {
+      "strip": {
+        "x": 72,
+        "y": 18,
+        "w": 231,
+        "h": 44,
+        "cx": 187.5,
+        "cy": 40,
+        "right": 303,
+        "bottom": 62
+      },
+      "stripStyle": {
+        "backdrop": "blur(40px) saturate(1.4)",
+        "mask": "none",
+        "bg": "rgba(255, 255, 255, 0.55)",
+        "radius": "999px",
+        "height": "44px",
+        "z": "20"
+      },
+      "chips": [
+        {
+          "text": "设计规格.md",
+          "on": false,
+          "box": {
+            "x": 77,
+            "y": 24,
+            "w": 71,
+            "h": 32,
+            "cx": 112.5,
+            "cy": 40,
+            "right": 148,
+            "bottom": 56
+          },
+          "radius": "999px",
+          "hit": {
+            "w": 71,
+            "h": 44
+          }
+        },
+        {
+          "text": "批报告.md",
+          "on": false,
+          "box": {
+            "x": 152,
+            "y": 24,
+            "w": 71,
+            "h": 32,
+            "cx": 187.5,
+            "cy": 40,
+            "right": 223,
+            "bottom": 56
+          },
+          "radius": "999px",
+          "hit": {
+            "w": 71,
+            "h": 44
+          }
+        },
+        {
+          "text": "验收记录.md",
+          "on": true,
+          "box": {
+            "x": 227,
+            "y": 24,
+            "w": 71,
+            "h": 32,
+            "cx": 262.5,
+            "cy": 40,
+            "right": 298,
+            "bottom": 56
+          },
+          "radius": "999px",
+          "hit": {
+            "w": 71,
+            "h": 44
+          }
+        }
+      ],
+      "fabs": [],
+      "fabRef": {
+        "left": [
+          16,
+          64
+        ],
+        "right": [
+          311,
+          359
+        ],
+        "y": [
+          16,
+          64
+        ]
+      }
+    },
+    "b-dark": {
+      "strip": {
+        "x": 72,
+        "y": 18,
+        "w": 231,
+        "h": 44,
+        "cx": 187.5,
+        "cy": 40,
+        "right": 303,
+        "bottom": 62
+      },
+      "stripStyle": {
+        "backdrop": "blur(40px) saturate(1.4)",
+        "mask": "none",
+        "bg": "rgba(24, 28, 38, 0.68)",
+        "radius": "999px",
+        "height": "44px",
+        "z": "20"
+      },
+      "chips": [
+        {
+          "text": "设计规格.md",
+          "on": false,
+          "box": {
+            "x": 77,
+            "y": 24,
+            "w": 71,
+            "h": 32,
+            "cx": 112.5,
+            "cy": 40,
+            "right": 148,
+            "bottom": 56
+          },
+          "radius": "999px",
+          "hit": {
+            "w": 71,
+            "h": 44
+          }
+        },
+        {
+          "text": "批报告.md",
+          "on": false,
+          "box": {
+            "x": 152,
+            "y": 24,
+            "w": 71,
+            "h": 32,
+            "cx": 187.5,
+            "cy": 40,
+            "right": 223,
+            "bottom": 56
+          },
+          "radius": "999px",
+          "hit": {
+            "w": 71,
+            "h": 44
+          }
+        },
+        {
+          "text": "验收记录.md",
+          "on": true,
+          "box": {
+            "x": 227,
+            "y": 24,
+            "w": 71,
+            "h": 32,
+            "cx": 262.5,
+            "cy": 40,
+            "right": 298,
+            "bottom": 56
+          },
+          "radius": "999px",
+          "hit": {
+            "w": 71,
+            "h": 44
+          }
+        }
+      ],
+      "fabs": [],
+      "fabRef": {
+        "left": [
+          16,
+          64
+        ],
+        "right": [
+          311,
+          359
+        ],
+        "y": [
+          16,
+          64
+        ]
+      }
+    },
+    "c-light": {
+      "strip": {
+        "x": 0,
+        "y": 0,
+        "w": 375,
+        "h": 96,
+        "cx": 187.5,
+        "cy": 48,
+        "right": 375,
+        "bottom": 96
+      },
+      "stripStyle": {
+        "backdrop": "none",
+        "mask": "linear-gradient(90deg, rgba(0, 0, 0, 0) 0px, rgb(0, 0, 0) 14px, rgb(0, 0, 0) calc(100% - 14px), rgba(0, 0, 0, 0) 100%)",
+        "bg": "rgba(0, 0, 0, 0)",
+        "radius": "0px",
+        "height": "96px",
+        "z": "20"
+      },
+      "chips": [
+        {
+          "text": "设计规格.md",
+          "on": false,
+          "box": {
+            "x": 252.29,
+            "y": 26.08,
+            "w": 57.42,
+            "h": 27.84,
+            "cx": 281,
+            "cy": 40,
+            "right": 309.71,
+            "bottom": 53.92
+          },
+          "radius": "999px",
+          "hit": {
+            "w": 66,
+            "h": 44
+          }
+        },
+        {
+          "text": "批报告.md",
+          "on": false,
+          "box": {
+            "x": 65.29,
+            "y": 26.08,
+            "w": 57.42,
+            "h": 27.84,
+            "cx": 94,
+            "cy": 40,
+            "right": 122.71,
+            "bottom": 53.92
+          },
+          "radius": "999px",
+          "hit": {
+            "w": 66,
+            "h": 44
+          }
+        },
+        {
+          "text": "验收记录.md",
+          "on": true,
+          "box": {
+            "x": 125.9,
+            "y": 22.4,
+            "w": 123.2,
+            "h": 35.2,
+            "cx": 187.5,
+            "cy": 40,
+            "right": 249.1,
+            "bottom": 57.6
+          },
+          "radius": "999px",
+          "hit": {
+            "w": 112,
+            "h": 44
+          }
+        }
+      ],
+      "fabs": [],
+      "fabRef": {
+        "left": [
+          16,
+          64
+        ],
+        "right": [
+          311,
+          359
+        ],
+        "y": [
+          16,
+          64
+        ]
+      }
+    },
+    "c-dark": {
+      "strip": {
+        "x": 0,
+        "y": 0,
+        "w": 375,
+        "h": 96,
+        "cx": 187.5,
+        "cy": 48,
+        "right": 375,
+        "bottom": 96
+      },
+      "stripStyle": {
+        "backdrop": "none",
+        "mask": "linear-gradient(90deg, rgba(0, 0, 0, 0) 0px, rgb(0, 0, 0) 14px, rgb(0, 0, 0) calc(100% - 14px), rgba(0, 0, 0, 0) 100%)",
+        "bg": "rgba(0, 0, 0, 0)",
+        "radius": "0px",
+        "height": "96px",
+        "z": "20"
+      },
+      "chips": [
+        {
+          "text": "设计规格.md",
+          "on": false,
+          "box": {
+            "x": 252.29,
+            "y": 26.08,
+            "w": 57.42,
+            "h": 27.84,
+            "cx": 281,
+            "cy": 40,
+            "right": 309.71,
+            "bottom": 53.92
+          },
+          "radius": "999px",
+          "hit": {
+            "w": 66,
+            "h": 44
+          }
+        },
+        {
+          "text": "批报告.md",
+          "on": false,
+          "box": {
+            "x": 65.29,
+            "y": 26.08,
+            "w": 57.42,
+            "h": 27.84,
+            "cx": 94,
+            "cy": 40,
+            "right": 122.71,
+            "bottom": 53.92
+          },
+          "radius": "999px",
+          "hit": {
+            "w": 66,
+            "h": 44
+          }
+        },
+        {
+          "text": "验收记录.md",
+          "on": true,
+          "box": {
+            "x": 125.9,
+            "y": 22.4,
+            "w": 123.2,
+            "h": 35.2,
+            "cx": 187.5,
+            "cy": 40,
+            "right": 249.1,
+            "bottom": 57.6
+          },
+          "radius": "999px",
+          "hit": {
+            "w": 112,
+            "h": 44
+          }
+        }
+      ],
+      "fabs": [],
+      "fabRef": {
+        "left": [
+          16,
+          64
+        ],
+        "right": [
+          311,
+          359
+        ],
+        "y": [
+          16,
+          64
+        ]
+      }
+    }
+  },
+  "fade": {
+    "a-light": {
+      "w0_24": 57.85,
+      "w24_48": 6.79,
+      "w48_64": 14.83,
+      "w64_80": 71.21,
+      "w80_96": 74.12,
+      "w96_132": 80.42
+    },
+    "a-dark": {
+      "w0_24": 7.11,
+      "w24_48": 5.33,
+      "w48_64": 11.41,
+      "w64_80": 64.86,
+      "w80_96": 72.15,
+      "w96_132": 86.37
+    },
+    "b-light": {
+      "w0_24": 83.95,
+      "w24_48": 13.02,
+      "w48_64": 69.49,
+      "w64_80": 70.28,
+      "w80_96": 73.36,
+      "w96_132": 80.35
+    },
+    "b-dark": {
+      "w0_24": 84.93,
+      "w24_48": 10.26,
+      "w48_64": 51.19,
+      "w64_80": 72.94,
+      "w80_96": 79.8,
+      "w96_132": 86.13
+    },
+    "c-light": {
+      "w0_24": 60.52,
+      "w24_48": 32.42,
+      "w48_64": 34.39,
+      "w64_80": 27.07,
+      "w80_96": 48.5,
+      "w96_132": 80.42
+    },
+    "c-dark": {
+      "w0_24": 26.15,
+      "w24_48": 24.72,
+      "w48_64": 26.06,
+      "w64_80": 32.43,
+      "w80_96": 56.3,
+      "w96_132": 86.37
+    }
+  },
+  "errors": []
+}
