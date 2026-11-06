@@ -488,11 +488,19 @@ class OpenAiAdapter(
                         val reply = textOfMessage(json)
                         val toolCalls = extractToolCalls(json)
                         val usage = json.hcursor.downField("usage").as[Json].toOption.map { u =>
+                          // cache-hit 批（2026-11-06）：非流腿此前丢 cached_tokens（只有流腿解析
+                          // prompt_tokens_details）——命中率聚合读数要求两腿同口径。
+                          val cachedTokens =
+                            u.hcursor.downField("prompt_tokens_details").downField("cached_tokens").as[Option[Int]].toOption.flatten
                           TokenUsage(
                             inputTokens = u.hcursor.downField("prompt_tokens").as[Int].getOrElse(0),
-                            outputTokens = u.hcursor.downField("completion_tokens").as[Int].getOrElse(0)
+                            outputTokens = u.hcursor.downField("completion_tokens").as[Int].getOrElse(0),
+                            cacheReadTokens = cachedTokens,
+                            cacheWriteTokens = None
                           )
                         }
+                        // cache-hit 批（2026-11-06）：聚合读数的 record 单点在
+                        // interface.scala（真实候选腿；adapter 内 record 会与流腿双记）。
                         // Thinking models (GLM-5.2, DeepSeek reasoning) may return a
                         // response whose `content` is empty because all tokens went to
                         // reasoning (reasoning_content / thinking fields). That is NOT

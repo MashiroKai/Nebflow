@@ -770,6 +770,9 @@ object LlmInterface extends LlmRuntime:
                     )
                   else None
 
+                // cache-hit 批（2026-11-06）：非流腿命中率聚合读数（面板同口径）。
+                CacheStats.record(result.usedCandidate.providerId, result.usedCandidate.model, result.data.usage)
+
                 IO.pure(
                   LlmResponse(
                     reply = result.data.reply,
@@ -1165,6 +1168,12 @@ object LlmInterface extends LlmRuntime:
                                               // from the candidate so the frontend shows correct provider name.
                                               val fixedMeta =
                                                 done.meta.map(_.copy(providerId = candidate.providerId))
+                                              // cache-hit 批（2026-11-06）：命中率聚合读数单点
+                                              // （非流腿在同函数 send 的 LlmResponse 装配处，两腿
+                                              // 各记一次、不双记）。放在真实候选腿上——adapter 内
+                                              // 的 providerId 是硬编码协议名（如 "anthropic"），
+                                              // 域分列（failover 换域=物理性）必须以真实腿为准。
+                                              CacheStats.record(candidate.providerId, candidate.model, done.usage)
                                               // visionfix (甲): the oscillation-fix bookkeeping
                                               // (`resetOnSuccess` with `hadImage`) is gone with the
                                               // tracker — there is no demotion state left to lift.
