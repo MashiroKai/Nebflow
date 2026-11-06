@@ -760,6 +760,29 @@ object GatewayMain extends IOApp:
                                     ),
                                     sandboxConfig = sandboxCfg
                                   )
+                                  // ── provider 并发占坑装配（provider-concurrency 批，2026-11-06）──
+                                  // ① 终态释放钩子：actor 退出的唯一收尸点 = actorLoop.guarantee
+                                  //   （正常自停 / 外部 stop / 崩溃 / TTL / cancel 全走它）；钩子
+                                  //   默认 no-op，生产在此赋值。② boot reconcile：计数表投影为
+                                  //   「原表 ∩ 活 actor 集」（活集 = agentRegistry 键集——agent
+                                  //   记录唯一权威），清跨进程幽灵占坑；排在收殓 sweep（
+                                  //   subagentCrashSweep/mailboxBootSweep）之后、startupMount
+                                  //   （任何会话 actor spawn）之前，与既有 boot sweep 同款
+                                  //   「失败只 WARN 绝不阻塞启动」纪律。
+                                  actorSystem.asInstanceOf[nebflow.actor.LocalActorSystem].providerSlotRelease =
+                                    name => nebflow.llm.ProviderConcurrency.release(sharedResources.providerConcurrency, name)
+                                  val providerSlotReconcile: IO[Unit] =
+                                    sharedResources.agentRegistry.get
+                                      .flatMap(live =>
+                                        nebflow.llm.ProviderConcurrency
+                                          .reconcile(sharedResources.providerConcurrency, live.keySet)
+                                      )
+                                      .attempt
+                                      .flatMap {
+                                        case Right(_) => IO.unit
+                                        case Left(e) =>
+                                          logger.warn(s"provider-slot boot reconcile failed: ${e.getMessage}").void
+                                      }
                                   // P2: spawn the global InteractionHub and publish its ref.
                                   // Every agent's permission/AskUser requests and every frontend
                                   // interaction answer route through this single actor.
@@ -1221,7 +1244,7 @@ object GatewayMain extends IOApp:
                                   // daemonService autoStart 块（构造序：dock 依赖
                                   // DaemonService 实例）。失败只 WARN 绝不阻塞启动的
                                   // 契约由 dock 腿逐字保持。
-                                  actorSystem.replayWatches *> hubSetup *> recorderSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> subagentCrashSweep *> mailboxBootSweep *> taskIndexBackfill *> seedMinimalSet *> sourcePluginHeal *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> mergeQueueBootSweep *> msgTokensBootReconcile *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> memoryRecallDaemon *> succeedPortGate(
+                                  actorSystem.replayWatches *> hubSetup *> recorderSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> subagentCrashSweep *> mailboxBootSweep *> providerSlotReconcile *> taskIndexBackfill *> seedMinimalSet *> sourcePluginHeal *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> mergeQueueBootSweep *> msgTokensBootReconcile *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> memoryRecallDaemon *> succeedPortGate(
                                     cfg,
                                     sharedResources.healthMonitor
                                   ) *> {

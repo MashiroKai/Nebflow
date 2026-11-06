@@ -7,7 +7,18 @@ import cats.syntax.all.*
 import fs2.Stream
 import io.circe.Json
 import munit.CatsEffectSuite
-import nebflow.actor.{ActorContext, ActorPath, ActorSystem, AgentCommand, AgentDef, AgentKind, AgentRecord, Behavior, Behaviors, LocalActorSystem}
+import nebflow.actor.{
+  ActorContext,
+  ActorPath,
+  ActorSystem,
+  AgentCommand,
+  AgentDef,
+  AgentKind,
+  AgentRecord,
+  Behavior,
+  Behaviors,
+  LocalActorSystem
+}
 import nebflow.agent.{AgentActor, AgentLibrary, SharedResources, SubAgentTaskStore}
 import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.shared.*
@@ -82,12 +93,18 @@ class ProviderConcurrencyFallbackSpec extends CatsEffectSuite:
 
   private val agentChain: Option[AgentModelConfig] = Some(AgentModelConfig(Some("a/m1"), List("b/m1")))
 
+  /** T1b 的 z-配置链源（cfg0/cfgNeg 里没有 provider a——链必须与配置同源，镜像真实 spawn 路径）。 */
+  private val zChain: Option[AgentModelConfig] = Some(AgentModelConfig(Some("z/m1"), List("b/m1")))
+
   private def mkRegistry(c: NebflowServiceConfig): IO[ProviderRegistry] =
     Ref.of[IO, NebflowServiceConfig](c).map(ref => new ProviderRegistry(ref, NullBackend))
 
   /** 链源单点：与请求路径 / 壳方法（assignFallbackChain）同一个解析函数（契约 §3b）。 */
-  private def orderedChainOf(reg: ProviderRegistry): IO[List[(String, String)]] =
-    reg.getCandidatesForAgentUnfiltered(agentChain).map(cs => cs.map(c => c.providerId -> c.model))
+  private def orderedChainOf(
+    reg: ProviderRegistry,
+    ch: Option[AgentModelConfig] = agentChain
+  ): IO[List[(String, String)]] =
+    reg.getCandidatesForAgentUnfiltered(ch).map(cs => cs.map(c => c.providerId -> c.model))
 
   private def countsRef: IO[Ref[IO, ProviderConcurrency.Counts]] =
     Ref.of[IO, ProviderConcurrency.Counts](ProviderConcurrency.empty)
@@ -120,6 +137,7 @@ class ProviderConcurrencyFallbackSpec extends CatsEffectSuite:
   /** 请求捕获 LLM（先例 ToolResultTtlSpec:278-284）：记录每个 LlmRequest 后立即回一段文本。 */
   private class CaptureLlm(requests: Ref[IO, List[LlmRequest]]) extends LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(req: LlmRequest, onAttempt: Option[FallbackAttempt => IO[Unit]] = None): Stream[IO, StreamChunk] =
       Stream.eval(requests.update(_ :+ req)).drain ++
         Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
@@ -169,7 +187,11 @@ class ProviderConcurrencyFallbackSpec extends CatsEffectSuite:
       // 上限恢复：新派发回第一档，尾链 = 链首之后全部
       assertEquals(p12.map(_.headRef), Some("a/m1"), "A 回到 3/10 后新派发的 actor-12 必须能用回第一档")
       assertEquals(p12.map(_.orderedRefs), Some(List("b/m1", "c/m2")), "actor-12 的尾链 = 链首之后的全部")
-      assertEquals(countsEnd.byProvider.get("a"), Some(Set("actor-8", "actor-9", "actor-10", "actor-12")), "a 最终占坑 = 存活 3 + actor-12")
+      assertEquals(
+        countsEnd.byProvider.get("a"),
+        Some(Set("actor-8", "actor-9", "actor-10", "actor-12")),
+        "a 最终占坑 = 存活 3 + actor-12"
+      )
       assertEquals(countsEnd.byProvider.get("b"), Some(Set("actor-11")), "b 最终占坑 = actor-11")
 
   test("T1b: cap ≤ 0 非法 ⇒ 当不限（不得静默当 0 全拒——否则链首永远落二档）"):
@@ -184,12 +206,12 @@ class ProviderConcurrencyFallbackSpec extends CatsEffectSuite:
     )
     for
       reg0 <- mkRegistry(cfg0)
-      chain0 <- orderedChainOf(reg0)
+      chain0 <- orderedChainOf(reg0, zChain)
       counts0 <- countsRef
       ps0 <- (1 to 3).toList.traverse(i => ProviderConcurrency.assign(counts0, cfg0, s"zc-$i", chain0))
       c0 <- counts0.get
       regNeg <- mkRegistry(cfgNeg)
-      chainNeg <- orderedChainOf(regNeg)
+      chainNeg <- orderedChainOf(regNeg, zChain)
       countsNeg <- countsRef
       psNeg <- (1 to 3).toList.traverse(i => ProviderConcurrency.assign(countsNeg, cfgNeg, s"zn-$i", chainNeg))
       cNeg <- countsNeg.get
@@ -198,6 +220,8 @@ class ProviderConcurrencyFallbackSpec extends CatsEffectSuite:
       assertEquals(c0.byProvider.get("z"), Some(Set("zc-1", "zc-2", "zc-3")), "cap=0 ⇒ 3 个 actor 全部占上 z")
       psNeg.foreach(p => assertEquals(p.map(_.headRef), Some("z/m1"), "cap=-7 同法（非法 ⇒ 不限）"))
       assertEquals(cNeg.byProvider.get("z"), Some(Set("zn-1", "zn-2", "zn-3")), "cap=-7 ⇒ 同不限")
+
+    end for
 
   test("T1c: 全部 provider 满载 ⇒ assign = None（不钉、回落既有全局行为）；释放后坑可复用"):
     val cfgFull = NebflowServiceConfig(
@@ -223,6 +247,8 @@ class ProviderConcurrencyFallbackSpec extends CatsEffectSuite:
       assertEquals(p3, None, "第 3 个：全满 ⇒ None（无可用 provider ⇒ 不钉，回落既有行为）")
       assertEquals(countsAtFull.byProvider.get("a"), Some(Set("x1", "x2")), "失败的 assign 不得加计数")
       assertEquals(p3retry.map(_.headRef), Some("a/m1"), "释放 x1 后 x3 必须能复用坑位")
+
+    end for
 
   test("T1d: 空链 ⇒ assign = None（空链/全灭由既有全局链兜底，分配器不编造）"):
     for
@@ -313,13 +339,14 @@ class ProviderConcurrencyFallbackSpec extends CatsEffectSuite:
           midCounts <- counts.get
           // 命中 provider 序列：经同一条公共缝解析每个捕获请求的链首
           seq <- reqs.traverse(r =>
-            reg.getCandidatesForAgentUnfiltered(r.agentModel).map(cs => cs.headOption.map(_.providerId)))
+            reg.getCandidatesForAgentUnfiltered(r.agentModel).map(cs => cs.headOption.map(_.providerId))
+          )
           _ <- sys0.stop(ref)
           _ <- waitUntil("stop 后占坑未释放", 30000L)(counts.get.map(_.byProvider.isEmpty))
           endCounts <- counts.get
         yield
           assert(pin.isDefined, "派发时刻必须拿到钉定快照（a 空闲 ⇒ 链首 a/m1）")
-          assertEquals(pin.flatMap(_.headRef), Some("a/m1"), "a 空闲时快照链首 = a/m1")
+          assertEquals(pin.map(_.headRef), Some("a/m1"), "a 空闲时快照链首 = a/m1")
           assert(reqs.size >= 5, s"至少 5 次 LLM 请求，实际 ${reqs.size}")
           reqs.zipWithIndex.foreach { case (r, i) =>
             assertEquals(
@@ -440,9 +467,11 @@ class ProviderConcurrencyFallbackSpec extends CatsEffectSuite:
       _ <- (1 to 5).toList.traverse { r =>
         ProviderConcurrency
           .assign(counts, capCfg, s"round-$r", chain)
-          .flatMap(p => ProviderConcurrency.release(counts, s"round-$r") *> IO {
-            assert(p.isDefined, s"第 $r 轮 assign 必须成功")
-          })
+          .flatMap(p =>
+            ProviderConcurrency.release(counts, s"round-$r") *> IO {
+              assert(p.isDefined, s"第 $r 轮 assign 必须成功")
+            }
+          )
       }
       mid <- counts.get
       _ <- ProviderConcurrency.release(counts, "round-1") // 已释放 ⇒ no-op
@@ -462,10 +491,12 @@ class ProviderConcurrencyFallbackSpec extends CatsEffectSuite:
       counts <- countsRef
       // 直造重启残留：上一进程留下 a 满 10 + b 2 个占坑
       _ <- counts.set(
-        ProviderConcurrency.Counts(Map(
-          "a" -> (1 to 10).map(i => s"actor-$i").toSet,
-          "b" -> Set("actor-11", "actor-13")
-        ))
+        ProviderConcurrency.Counts(
+          Map(
+            "a" -> (1 to 10).map(i => s"actor-$i").toSet,
+            "b" -> Set("actor-11", "actor-13")
+          )
+        )
       )
       // 重启后只有这些 actor 还活着
       _ <- ProviderConcurrency.reconcile(counts, Set("actor-1", "actor-2", "actor-11"))
@@ -490,10 +521,12 @@ class ProviderConcurrencyFallbackSpec extends CatsEffectSuite:
   test("T4c: snapshot 可观测面 —— assignable/inUse/cap/full/totalActors 形状（契约 §3h；cap 不限 = 显式 null）"):
     for
       counts <- Ref.of[IO, ProviderConcurrency.Counts](
-        ProviderConcurrency.Counts(Map(
-          "a" -> (1 to 10).map(i => s"actor-$i").toSet,
-          "b" -> Set("actor-11")
-        ))
+        ProviderConcurrency.Counts(
+          Map(
+            "a" -> (1 to 10).map(i => s"actor-$i").toSet,
+            "b" -> Set("actor-11")
+          )
+        )
       )
       json <- ProviderConcurrency.snapshot(counts, capCfg)
     yield
@@ -507,7 +540,11 @@ class ProviderConcurrencyFallbackSpec extends CatsEffectSuite:
       assertEquals(numAt(b, "inUse"), Some(1L), "b.inUse = 1")
       assertEquals(capAt(b), Some(None), "cap 不限必须编码为显式 null（键存在、值 null，不得缺键）")
       assertEquals(boolAt(b, "full"), Some(false), "cap null ⇒ full 恒 false")
-      assertEquals(json.hcursor.downField("totalActors").as[Long].toOption, Some(11L), "totalActors = 占坑 actor 数（跨 provider 去重）")
+      assertEquals(
+        json.hcursor.downField("totalActors").as[Long].toOption,
+        Some(11L),
+        "totalActors = 占坑 actor 数（跨 provider 去重）"
+      )
 
   // ── snapshot JSON 读数助手（§3h 形状） ────────────────────────────────────
 

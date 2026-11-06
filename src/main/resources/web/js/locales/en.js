@@ -1507,6 +1507,9 @@ export default {
   // fact ("No restriction"); the explanation lives in the `?` hover hint (⑤).
   'provider.unavailableWindows': 'Unavailable windows',
   'provider.unavailableWindowsHint': 'Applies to every model of this provider; cross-midnight as 23:00-07:00',
+  'provider.maxConcurrentActors': 'Max concurrent actors',
+  'provider.maxConcurrentActorsPh': 'Empty = unlimited',
+  'provider.maxConcurrentActorsInvalid': 'Max concurrent actors must be a positive integer',
   'provider.unavailableWindowsPlaceholder': 'HH:mm-HH:mm',
   'provider.unavailableWindowsInvalid': 'Invalid unavailable window: "{value}" (expected HH:mm-HH:mm, start ≠ end)',
   'provider.unavailableWindowsEmpty': 'No restriction',

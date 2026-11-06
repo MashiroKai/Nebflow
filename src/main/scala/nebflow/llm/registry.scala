@@ -45,6 +45,15 @@ class ProviderRegistry(
   private val adaptersRef: Ref[IO, Map[String, ProviderAdapter[IO]]] = Ref.unsafe(Map.empty)
 
   /**
+   * 配置热读单点（provider-concurrency 批，契约 §3b 实现必读 1）：派发时刻分配
+   * （`SharedResources.assignFallbackChain` → `ProviderConcurrency.assign`）要拿
+   * `NebflowServiceConfig` 判 cap/语义——**只准读本 registry 的这一份 configRef**
+   * （与请求路径同一真相，热重载即时生效）。禁止调用方另开 `Config.loadServiceConfig()`
+   * （那会成为第二份配置真相）。可见性 private[nebflow]：调用方在 nebflow.agent。
+   */
+  private[nebflow] def currentConfig: IO[NebflowServiceConfig] = configRef.get
+
+  /**
    * LLM provider 自适应并发限流器（429 反应式并发闸批，作者令 2026-10-29 21:32）。
    * 每 registry 一实例（= 每网关一份），键 = provider.baseUrl（账户键）；
    * 总闸 `llm.adaptiveThrottle.enabled` 缺省关 = 零行为变化；状态与闸机制见
@@ -88,6 +97,10 @@ class ProviderRegistry(
           providerId = providerId,
           providerHeaders = provider.headers
         )
+
+    end match
+
+  end createAdapter
 
   /**
    * 过闸适配器视图（429 反应式并发闸批）：返回的 adapter 每次 sendMessage /
@@ -149,8 +162,10 @@ class ProviderRegistry(
       configRef.get.map(config => dropScheduleRestricted(candidates, config))
     }
 
-  /** 未过滤全局链（/model 主链为锚，缺省降级 seed 链 + 首 provider 兜底——见
-    * model-chain anchor 批）——请求路径专用（LlmInterface 时段闸输入）。 */
+  /**
+   * 未过滤全局链（/model 主链为锚，缺省降级 seed 链 + 首 provider 兜底——见
+   * model-chain anchor 批）——请求路径专用（LlmInterface 时段闸输入）。
+   */
   def getCandidatesUnfiltered(): IO[List[ModelCandidate]] =
     configRef.get.map { config =>
       // 🔴 config-single-source batch (author rulings ①③ 2026-11-05): the
@@ -273,6 +288,7 @@ class ProviderRegistry(
         )
       }
     }
+  end candidatePlan
 
   // ============================================================
   // 模型不可用时段闸（model-schedule-unavailable 批，2026-10-29 作者令 17:44）
@@ -591,8 +607,10 @@ class ProviderRegistry(
               s"Config hot-reloaded: providers=[${newConfig.llm.providers.keys.toList.sorted.mkString(",")}] " +
                 s"candidateChain=${cs.map(c => s"${c.providerId}/${c.model}").mkString(" -> ")}"
             )
-          ).attempt.void
-        case Left(e) => IO.delay(logger.warnSync(s"Candidate-chain snapshot after reload failed: ${e.getMessage}")).attempt.void
+          ).attempt
+            .void
+        case Left(e) =>
+          IO.delay(logger.warnSync(s"Candidate-chain snapshot after reload failed: ${e.getMessage}")).attempt.void
       }
       staleIds <- overridesRef match
         case Some(ref) =>
@@ -658,9 +676,9 @@ class ProviderRegistry(
       config.llm.providers.toList.sortBy(_._1).flatMap { case (providerId, provider) =>
         if !isDisabled(provider) then Nil
         else
-          provider.models.sortBy(_.id).map(mc =>
-            s"$providerId/${mc.id}" -> CandidateSkipCause.NotConfigured("provider disabled")
-          )
+          provider.models
+            .sortBy(_.id)
+            .map(mc => s"$providerId/${mc.id}" -> CandidateSkipCause.NotConfigured("provider disabled"))
       }
     }
 

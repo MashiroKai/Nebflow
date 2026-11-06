@@ -1,0 +1,27 @@
+sbt scalafmtCheckAll
+[info] welcome to sbt 1.10.10 (Homebrew Java 23.0.2)
+[info] loading settings for project provider-concurrency-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/provider-concurrency/project
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/provider-concurrency/)
+[info] scalafmt: Checking 772 Scala sources (/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/provider-concurrency)...
+[info] scalafmt: Checking 1102 Scala sources (/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/provider-concurrency)...
+[warn] scalafmt: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/provider-concurrency/src/test/scala/nebflow/llm/HealthHalfOpenSpec.scala isn't formatted properly!
+[warn] scalafmt: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/provider-concurrency/src/main/scala/nebflow/neblink/AgentSessionSync.scala isn't formatted properly!
+[warn] scalafmt: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/provider-concurrency/src/main/scala/nebflow/shared/TransportLog.scala isn't formatted properly!
+[warn] scalafmt: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/provider-concurrency/src/main/scala/nebflow/cli/LogsCommand.scala isn't formatted properly!
+[warn] scalafmt: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/provider-concurrency/src/test/scala/nebflow/perception/MailClientImapSpec.scala isn't formatted properly!
+[error] org.scalafmt.sbt.ScalafmtSbtReporter$ScalafmtSbtError: scalafmt: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/provider-concurrency/src/main/scala/nebflow/perception/PerceptionService.scala:1211: error: [dialect scala3] `;` expected but `else` found
+[error]       val size = if exists then try java.nio.file.Files.size(f) catch case _: Throwable => 0L else 0L
+[error]                                                                                               ^ [/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/provider-concurrency/src/main/scala/nebflow/perception/PerceptionService.scala]
+[error] org.scalafmt.sbt.ScalafmtSbtReporter$ScalafmtSbtError: scalafmt: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/provider-concurrency/src/test/scala/nebflow/gateway/PerceptionDaemonLifecycleSpec.scala:62: error: [dialect scala3] Non-zero integral values may not have a leading zero.
+[error]     catch case _: Throwable => (000, "")
+[error]                                 ^ [/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/provider-concurrency/src/test/scala/nebflow/gateway/PerceptionDaemonLifecycleSpec.scala]
+[error] (Compile / scalafmtCheck) org.scalafmt.sbt.ScalafmtSbtReporter$ScalafmtSbtError: scalafmt: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/provider-concurrency/src/main/scala/nebflow/perception/PerceptionService.scala:1211: error: [dialect scala3] `;` expected but `else` found
+[error]       val size = if exists then try java.nio.file.Files.size(f) catch case _: Throwable => 0L else 0L
+[error]                                                                                               ^ [/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/provider-concurrency/src/main/scala/nebflow/perception/PerceptionService.scala]
+[error] (Test / scalafmtCheck) org.scalafmt.sbt.ScalafmtSbtReporter$ScalafmtSbtError: scalafmt: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/provider-concurrency/src/test/scala/nebflow/gateway/PerceptionDaemonLifecycleSpec.scala:62: error: [dialect scala3] Non-zero integral values may not have a leading zero.
+[error]     catch case _: Throwable => (000, "")
+[error]                                 ^ [/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/provider-concurrency/src/test/scala/nebflow/gateway/PerceptionDaemonLifecycleSpec.scala]
+[error] Total time: 59 s, completed 2026年11月6日 19:04:47
+make: *** [fmt-check] Error 1
