@@ -88,17 +88,32 @@ object TimeAnchor:
    * 每回合时间锚（**持久化**进会话历史的形态）。`Current time:` 前缀是既有契约：
    * `SystemReminders.isTimeReminderMessage` / `pruneTimeReminders` 靠它识别，
    * 勿改前缀。
+   *
+   * ⚠ 时钟简化批（作者令 2026-11-06 22:26/22:29）起，本形态只余两个消费面：
+   *  - 旧会话历史里已持久化的旧锚（仍可被识别/裁剪，防历史膨胀）；
+   *  - `ScheduleTool.parseTimeString` 的报错示例文本。
+   * 真用户轮的新时钟行走 [[userLine]]（极简形），不再用本形态。
    */
   def line(at: ZonedDateTime = now()): String = s"Current time: ${stamp(at)}"
 
   /**
-   * 每请求时间锚（**请求级、不落盘**；进 `LlmRequest.systemDynamic`）。
+   * 真用户轮极简时钟行（时钟简化批，作者令 2026-11-06 22:26「时钟应该是只放进
+   * 用户输入的消息 随用户消息注入 永不主动注入」+ 22:29「内容要简单一点 让能读懂
+   * 是时间就行」）：
+   * {{{
+   * Now: 2026-11-06 22:29:36 +08:00 周五 | epoch_ms 1793975376978
+   * }}}
    *
-   * 适配器把本段放在历史末尾、缓存断点之后，不写入顶层 system 或会话历史。
-   * 每次工具往返都重新读到「现在」，同时保留此前历史的完整缓存前缀。
+   * 机器可读字段全保（本地时间 + UTC 偏移 + 星期 + epoch 毫秒 = 换算底盘齐备），
+   * 推导说明/行为文案一律不带——那类纪律由 systemStable 的既有时间纪律段
+   * （`PromptCatalog.Shared.TimeDisciplineRule`）承担，不逐消息重复。时区名与英文
+   * 星期按作者极简令省去（偏移已够换算；epoch_ms 是唯一精确时间基）。
+   *
+   * 🔴 本形态**不以 `Current time:` 开头** ⇒ `isTimeReminderMessage` 不识别它——
+   * 新时钟行随用户消息 **append-only 持久化**（随消息进历史，永不裁剪、永不主动
+   * 重注入）；旧裁剪闸只管旧形态，两者互不干扰。
+   *
+   * 🔴 取值每次现取（[[now]]），永不缓存——与全对象纪律一致。
    */
-  def block(at: ZonedDateTime = now()): String =
-    "── Clock (authoritative; re-read on every request) ──\n" +
-      s"Now: ${stamp(at)}\n" +
-      "Derive every relative date (today / yesterday / N minutes ago / last time) and every absolute " +
-      "date from this line by arithmetic — never from memory, feeling or a training prior."
+  def userLine(at: ZonedDateTime = now()): String =
+    s"Now: ${StampFormatter.format(at)} ${ZhWeekday.getOrElse(at.getDayOfWeek, "")} | epoch_ms ${at.toInstant.toEpochMilli}"

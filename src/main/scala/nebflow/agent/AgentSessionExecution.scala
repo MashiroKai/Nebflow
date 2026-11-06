@@ -461,13 +461,15 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
    * 的旧锚。这正是「10 天前的提交被说成两年」那类系统性误判的入口：模型没有可信锚就
    * 只能猜。
    *
-   * 现行判据 = **每一个起始轮（isUserTurn）都注入**（[[SystemReminders.collectAllIO]]
-   * 内的 `isUserTurn` 闸），不再有 gap 计时器——**全仓不再持有任何「上次注入时刻」
-   * 状态**（那本身也是一份会被长生命周期对象冻住的「现在」）。
+   * 现行判据（时钟简化批，作者令 2026-11-06 22:26/22:29）= **只随真用户轮**
+   * （`isRealUserTurn`：source=None 的真人输入）注入（[[SystemReminders.collectAllIO]]
+   * 内的 `isRealUserTurn` 闸）——Mail / 节点消息 / 定时任务 / 外部事件驱动的
+   * system-event 轮与工具往返轮**零时钟**（「永不主动注入」）。
    *
-   * 长回合中途（工具往返轮，`!isUserTurn`）的新鲜度由**请求级**锚负责：
-   * `LlmRequest.systemDynamic = TimeAnchor.block()`，每次请求现取现发。两条腿同源
-   * （[[nebflow.shared.TimeAnchor]]），不同粒度。
+   * 请求级锚已**整体退役**（原 `LlmRequest.systemDynamic = TimeAnchor.block()`，
+   * 2026-11-05 批引入）：空转/pingpong 轮被每请求时钟反复叫醒、无法收轮是本批病根
+   * （多租户 delegate 实证）。全仓唯一注入面 = 真用户轮的持久化时钟行
+   * （[[nebflow.shared.TimeAnchor.userLine]]，append-only 进历史）。
    */
 
   /**
@@ -903,13 +905,8 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
               )
             case None => IO.unit
           loggedReminders <- SystemReminders.logAndReturn(reminders ++ msgTokenReminder.toList)
-          // The time reminder is PERSISTED as a real User message in the
-          // session history: folded into the working state so it flows into
-          // the persisted history (persistIfSession saves state.messages) and
-          // into the LLM request. Older time reminders are pruned to bound
-          // history growth. Dynamic context (peak/idle windows, pending
-          // schedules) stays request-only — injected per-turn, never persisted.
-          timeReminders = loggedReminders.filter(_.category == "time")
+          // Clock is attached once at explicit real-user input conversion; this
+          // request/reminder assembly path never creates or injects one.
           // Plugins-live (2026-09-12): the plugin-surface reminder is PERSISTED (like
           // the time reminder) instead of request-only — the stale catalog sits in
           // the first message for the whole session, so the retraction has to stay
@@ -919,9 +916,6 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
           contextReminders = loggedReminders.filterNot(r =>
             r.category == "time" || r.category == SystemReminders.PluginSurfaceCategory
           )
-          timeMsg =
-            if isCompactTurn || isAskTurn || timeReminders.isEmpty then Nil
-            else List(Message(MessageRole.User, Left(SystemReminder.renderAll(timeReminders))))
           pluginSurfaceMsg =
             if isCompactTurn || isAskTurn || pluginSurfaceReminders.isEmpty then Nil
             else List(Message(MessageRole.User, Left(SystemReminder.renderAll(pluginSurfaceReminders))))
@@ -932,19 +926,10 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             if isCompactTurn || isAskTurn then Nil
             else turnCtx.branchChange.toList.map(r => Message(MessageRole.User, Left(r.render)))
           stateWithReminder =
-            if pluginSurfaceMsg.isEmpty && timeMsg.isEmpty then stateForLlm
-            else
-              val withPluginSurface =
-                if pluginSurfaceMsg.isEmpty then stateForLlm.messages
-                else SystemReminders.prunePluginSurfaceReminders(stateForLlm.messages ++ pluginSurfaceMsg)
-              // 时间锚插在**触发输入之前**（时间感知修复批 2026-11-05）：语义上「先有时刻、
-              // 后有此轮输入」，并且保住既有不变量「最后一条 user 消息 = 本轮输入」——
-              // 注入源归因（`QueueDirectPassSourceSpec` ②③ 的 lastUserSource）与任何
-              // 「谁叫醒的这一轮」的读法都靠它；锚若追加在尾部，那条不变量就被一条
-              // source=None 的系统提醒顶掉（本批实测打挂两条既有用例）。
-              stateForLlm.withMessages(
-                SystemReminders.pruneTimeReminders(SystemReminders.insertAnchor(withPluginSurface, timeMsg))
-              )
+            if pluginSurfaceMsg.isEmpty then stateForLlm
+            else stateForLlm.withMessages(
+              SystemReminders.prunePluginSurfaceReminders(stateForLlm.messages ++ pluginSurfaceMsg)
+            )
           // Cache v2: persist the rebuilt systemStable + snapshot in state at
           // lifecycle nodes (next turns reuse it). Non-lifecycle turns keep the
           // existing cache untouched — except the per-axis baselines that advance
@@ -1079,9 +1064,12 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             tools = freshTools,
             thinking = Some(askThinkingJson),
             systemStable = Some(systemStable),
-            // Fresh request context is appended by the adapters after the cached history.
-            // Keep it out of systemStable and out of persisted session messages.
-            systemDynamic = Some(TimeAnchor.block()),
+            // 时钟简化批（作者令 2026-11-06 22:26/22:29）：动态段时钟整体退役——
+            // **永不主动注入**（空转/pingpong/工具往返轮被每请求时钟反复叫醒、无法
+            // 收轮是本批病根，多租户 delegate 实证）。时钟只随真用户轮的消息持久化
+            // 进历史（SystemReminders time 提醒，append-only）；requestOnlyContext
+            // 临时段保持 REQUEST-ONLY 提醒语义，断点位置与命中率不受影响。
+            systemDynamic = None,
             // 派发时刻链快照下发（provider-concurrency 批，2026-11-06）：本 actor 的
             // agentModel = spawn 时钉死的 (preferred=链首, fallbacks=尾链)——运行期
             // llm.fallback / agent.json 变化 / 储备层追加都**不再改变链首**（缓存键

@@ -70,9 +70,10 @@ class CachePrefixAssemblySpec extends FunSuite:
   private val r2 = List(contextReminder("schedule: 2 pending tasks (report at 22:00, backup at 23:00)"))
   private val r3 = List.empty[Message]
 
-  /** 每轮真实换 epoch 的时间锚（禁固定字符串夹具）。 */
+  /** 每轮真实换 epoch 的临时动态串（禁固定字符串夹具）。时钟简化批（2026-11-06）：
+    * 动态段时钟退役后 TimeAnchor.block 不复存在，夹具改等价字面串（仍逐轮换 epoch）。 */
   private def clock(turn: Int): Option[String] =
-    Some(TimeAnchor.block(TimeAnchor.at(1793970000000L + turn * 61000L)))
+    Some(s"[request-level dynamic ctx turn $turn] epoch_ms ${1793970000000L + turn * 61000L}")
 
   /** 生产装配形态：持久历史与 REQUEST-ONLY 提醒段分离（本批修复后的形状）。 */
   private def production(h: List[Message], r: List[Message], turn: Int): SendMessageParams =

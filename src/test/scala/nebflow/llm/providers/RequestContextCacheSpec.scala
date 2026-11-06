@@ -8,8 +8,10 @@ import nebflow.shared.*
 class RequestContextCacheSpec extends FunSuite:
   private val anthropic = new AnthropicAdapter("http://localhost:0", "k", null)
   private val openai = new OpenAiAdapter("http://localhost:0", "k", null)
-  private val clock1 = TimeAnchor.block(TimeAnchor.at(1793920000000L))
-  private val clock2 = TimeAnchor.block(TimeAnchor.at(1793920060000L))
+  // 时钟简化批（2026-11-06）：动态段时钟退役（TimeAnchor.block 已删）——本 spec
+  // 验证的是「每轮变化的临时尾段」装配语义，夹具改等价字面串（仍带 epoch_ms）。
+  private val clock1 = "[request clock] Now: 2026-11-05 22:13:20 +08:00 周四 | epoch_ms 1793920000000"
+  private val clock2 = "[request clock] Now: 2026-11-05 22:14:20 +08:00 周四 | epoch_ms 1793920060000"
   private val history = List(
     Message(MessageRole.User, Left("inspect file")),
     Message(MessageRole.Assistant, Right(List(ContentBlock.ToolUse("c1", "Read", JsonObject.empty)))),

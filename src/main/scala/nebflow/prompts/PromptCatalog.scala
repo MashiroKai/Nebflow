@@ -398,24 +398,29 @@ Read / Glob / Grep / WebSearch / WebFetch. You have NO write tools, no shell: if
       """Knowledge-graph landing discipline (KG audit ①, 2026-10-28; location ruling 2026-11-03): knowledge documents (designs, audits, research, conclusions) MUST land in the project's REGISTRATION dir vault `<dataRoot>/projects/<project>/.stand/docs/` — next to `project.json`, NOT in the project workspace repo's `docs/` — Obsidian format: YAML frontmatter (`type:` / `status:`) plus at least one `[[wikilink]]`; `reports/` takes pure process files (batch / terminal reports) only. Validate the vault before closing: `python3 <dataRoot>/plugins/visual-report/skills/wiki-docs/scripts/check_wiki_docs.py --project <project>` (exit 0 = compliant)."""
 
     /**
-     * 时间纪律（时间感知修复批，作者指令 2026-11-05 18:48「修复你的时间感知问题」）。
+     * 时间纪律（时间感知修复批，作者指令 2026-11-05 18:48；时钟简化批改写
+     * 2026-11-06 22:26/22:29）。
      *
-     * 病根不是「没有时间」而是「有时间也不用 / 不在场」：引擎每回合都发一条时间锚，
-     * 模型仍按印象推算相对时间（实录：把 10 天前的两次提交说成「两年」）。故本段是
+     * 病根不是「没有时间」而是「有时间也不用 / 不在场」：引擎发时间锚，模型仍按
+     * 印象推算相对时间（实录：把 10 天前的两次提交说成「两年」）。故本段是
      * **输出纪律**，与锚本身（[[nebflow.shared.TimeAnchor]]）分工：
-     *  - 锚 = 引擎面（取值 + 格式，单源，每请求现取）；
-     *  - 本段 = 模型面（怎么用这条锚：换算，不许计算；没锚不许说绝对日期）。
+     *  - 锚 = 引擎面（取值 + 格式，单源；时钟简化批起**只随真用户轮的消息持久化
+     *    注入**——`Now: … | epoch_ms …` 极简形 append-only 进历史，动态段请求级
+     *    时钟已整体退役「永不主动注入」）；
+     *  - 本段 = 模型面（怎么用历史里最新的锚：换算，不许计算；没锚不许说绝对日期）。
      *
      * 注入面：`PromptSections` order-379 **always** 段（所有 agent 会话——相对时间
      * 误判不分角色：root / 分发器 / delegate / 节点 / team 成员 / 子代理都会输出
      * 「刚才/昨天」）。静态体落 systemStable（生命周期节点重建时携带，前缀缓存友好）。
+     * 行为文案只在本段（system prompt）出现一次，不逐消息重复——这正是时钟简化批
+     * 把锚内容砍到极简形的前提。
      */
     val TimeDisciplineRule: String =
       """── Time discipline (iron rule) ──
-        |Every request carries an authoritative clock line in the dynamic system segment (it survives outside the cached prefix): `── Clock (authoritative; re-read on every request) ──` followed by `Now: <local time and UTC offset> | <zone name> | <weekday> | epoch_ms <ms>`. Your history also keeps one `Current time:` line at the start of each turn. That clock line is the ONLY source of "now".
-        |- Relative wording (`today/今天`, `yesterday/昨天`, `just now/刚才`, `N minutes ago/N 分钟前`, `last time/上次`, `this week/本周`) and EVERY absolute date, weekday or duration you write MUST be derived from that anchor — or from a timestamp that already exists on the object you are discussing (a commit, a file, a message, a report) — by arithmetic. Never from memory, never from feeling, never from a training prior.
-        |- No anchor and no object timestamp ⇒ you may NOT state an absolute date, a weekday, or an elapsed duration ("two years ago"). The clock line is always present in the dynamic segment: read it first; if it genuinely is not there, say plainly that you do not know the date instead of guessing one.
-        |- A long turn does not freeze time: the `Now:` line is re-read on every request, so a later request legitimately shows a later value. Trust the newest one; never assume the turn's first value still holds.
+        |Every real-user input turn carries a clock line in the conversation history: a `<system-reminder>` reading `Now: <local time and UTC offset> <weekday> | epoch_ms <ms>` (older sessions may keep legacy `Current time:` lines). The NEWEST clock line in history is the ONLY source of "now" — there is no per-request clock; with no fresh input, the last clock in history is the freshest there is.
+        |- Relative wording (`today/今天`, `yesterday/昨天`, `just now/刚才`, `N minutes ago/N 分钟前`, `last time/上次`, `this week/本周`) and EVERY absolute date, weekday or duration you write MUST be derived from that anchor — or from a timestamp that already exists on the object you are discussing (a commit, a file, a message, a report) — by arithmetic (epoch_ms is the single time base). Never from memory, never from feeling, never from a training prior.
+        |- No anchor and no object timestamp ⇒ you may NOT state an absolute date, a weekday, or an elapsed duration ("two years ago"). Read the newest clock line first; if the history genuinely has none, say plainly that you do not know the date instead of guessing one.
+        |- A long turn does not freeze time: each new user turn brings a fresh clock line. Trust the newest one; never assume an earlier value still holds.
         |- Never turn "how it feels" into "how long ago". If you did mis-state a date or a duration, correct it explicitly in the next message — do not silently continue as if it were right.""".stripMargin
 
   end Shared

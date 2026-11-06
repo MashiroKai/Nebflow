@@ -65,8 +65,10 @@ class CacheBreakpointSpec extends FunSuite:
   )
 
   test("changing request clocks must not change system or the cached history prefix") {
-    val t1 = TimeAnchor.block(TimeAnchor.at(1793920000000L))
-    val t2 = TimeAnchor.block(TimeAnchor.at(1793920001000L))
+    // 时钟简化批（2026-11-06）：动态段时钟退役（TimeAnchor.block 已删）——夹具改
+    // 等价字面串；装配契约（临时段随轮变化、稳定前缀不变）断言不变。
+    val t1 = "[request clock] Now: 2026-11-05 22:13:20 +08:00 周四 | epoch_ms 1793920000000"
+    val t2 = "[request clock] Now: 2026-11-05 22:13:21 +08:00 周四 | epoch_ms 1793920001000"
     val before = adapter.bodyOf(params(conversation).copy(systemDynamic = Some(t1)), streaming = false)
     val after = adapter.bodyOf(params(conversation).copy(systemDynamic = Some(t2)), streaming = true)
     assertEquals(before.hcursor.downField("system").focus, after.hcursor.downField("system").focus)

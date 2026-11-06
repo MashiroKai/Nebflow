@@ -268,7 +268,8 @@ class AnthropicAdapter(
    * Tool results must remain the first blocks in their user message.
    *
    * cache-warmup 批（2026-11-06）：临时段 = requestOnlyContext（REQUEST-ONLY 提醒）
-   * + systemDynamic（请求级时间锚）。调用点保证断点已先钉在**持久历史**最后一块
+   * + systemDynamic（请求级临时上下文；时钟简化批 2026-11-06 后全仓无写入点，
+   * 字段保留为机制）。调用点保证断点已先钉在**持久历史**最后一块
    * （[[withTailCacheBreakpoint]]），本函数只做纯尾追加——临时段永不携带 marker，
    * 永不进持久历史（CachePrefixAssemblySpec 契约 C1/C4）。
    */

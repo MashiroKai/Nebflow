@@ -19,59 +19,23 @@ case class PluginSurfaceChange(previous: String, current: String)
 
 object SystemReminders:
 
-  /**
-   * 每回合时间锚。
-   *
-   * 格式**不再在本文件定义**——时间感知修复批（作者指令 2026-11-05 18:48）把全仓
-   * 唯一的时间锚渲染收进 [[nebflow.shared.TimeAnchor]]：本地时间 + UTC 偏移 +
-   * 时区名 + 星期几（英/中）+ epoch 毫秒。本函数只负责给它套上 `time` 提醒类别与
-   * `Current time:` 前缀（后者是持久化/裁剪契约的识别串，勿改，见
-   * [[isTimeReminderMessage]]）。
-   *
-   * 🔴 取值必须**每次现取**（[[nebflow.shared.TimeAnchor.now]]），不得缓存：缓存
-   * 的「现在」会让长回合/长会话读到冻结的时间，比没有时间锚更坏。
-   */
-  private def currentTime(): SystemReminder =
-    SystemReminder("time", TimeAnchor.line())
-
   private val logger = NebflowLogger.forName("nebflow.reminders")
 
-  /**
-   * Collect per-turn system reminders.
-   *
-   * The time reminder is PERSISTED as a real User message in the session
-   * history (injected into state.messages by AgentCore.pipeLlmCall) so it
-   * survives restarts and compaction. Other reminder types (save-memory,
-   * compact prompts, branch-change) stay non-persistent — injected per-turn,
-   * never saved to profile.
-   */
-  def collectAll(isUserTurn: Boolean = true): List[SystemReminder] =
-    val reminders = scala.collection.mutable.ListBuffer.empty[SystemReminder]
-
-    // Current time — only on user input turns
-    if isUserTurn then reminders += currentTime()
-
-    reminders.toList
-  end collectAll
+  /** Clock injection is retired here: only real input → Message conversion attaches it. */
+  def collectAll(isUserTurn: Boolean = true): List[SystemReminder] = Nil
 
   /**
    * Collect per-turn reminders including a summary of pending scheduled
    * tasks for this session. IO because it queries the scheduled-task store.
    *
-   * Cache-optimization v2: dynamic values that were moved OUT of
-   * the per-turn system prompt are injected here instead — request-level
-   * reminders (never persisted). The time reminder keeps its persisted
-   * semantics (任务 O).
+ * Cache-optimization v2: dynamic values moved OUT of the per-turn system
+ * prompt are injected here instead — request-level reminders (never persisted).
+ * Clock injection is not a reminder: only real-user input conversion attaches it.
    *
    * Reminder refactor (audit
    * finding: system reminders wasted a large token share per half-day):
-   *  - time: **每一个回合起始轮（isUserTurn）都注入**——时间感知修复批（2026-11-05）
-   *    取消了旧的「system-event 轮最多每小时一次」闸：那道闸的代价是让交给模型的
-   *    一部分新输入完全不带「现在」（节点消息 / Mail / 定时事件 / 外部事件驱动
-   *    的回合最多可读到 59 分钟前的时间锚，甚至一个都没读到），省下的 token 远小于
-   *    它造成的相对时间系统性误判。噪声面由「只在真有新输入时注入」本身兜住
-   *    （工具往返轮 `!isUserTurn` 不注入；长回合的新鲜度由请求级锚
-   *    `LlmRequest.systemDynamic` = [[nebflow.shared.TimeAnchor.block]] 每请求现取负责）。
+ *  - time: 不属于 reminder collection；时钟只在真实用户输入转消息时附加。
+ *    Mail / 节点消息 / 定时事件 / 外部事件 / 工具往返与空转轮均不产生时钟。
    *  - tasks: team sessions only, real-user turns only (task redesign
    *    — moved from Nebula to team members); the caller supplies
    *    pre-rendered full/delta/unchanged text (change detection lives in
@@ -149,9 +113,7 @@ object SystemReminders:
               projectsReminder(mountedProjectsDelta),
               identityReminder(identityDelta)
             ).flatten
-        reminders = collectAll(isUserTurn = true) ++
-          contextReminders ++
-          pluginSurfaceReminder(pluginSurfaceChange)
+        reminders = contextReminders ++ pluginSurfaceReminder(pluginSurfaceChange)
       yield reminders
 
   /**

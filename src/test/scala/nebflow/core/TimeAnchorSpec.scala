@@ -20,7 +20,9 @@ import java.time.format.DateTimeFormatter
  *      诱人猜测的格式；
  *   ③ 必须**每次现取**：不得有任何缓存把「现在」冻在长生命周期对象里；
  *   ④ 跨时区：同一 instant 在两地必须渲染出不同的本地时间且 epoch 相同；
- *   ⑤ 时间**只准出现在请求级/回合级**，绝不出现在 systemStable（缓存前缀）里——
+ *   ⑤ 时间**只准出现在回合级持久化消息**（时钟简化批 2026-11-06：真用户轮的
+ *      `Now:` 极简时钟行 append-only 进历史；原「请求级动态段时钟」整体退役
+ *      「永不主动注入」），绝不出现在 systemStable（缓存前缀）里——
  *      写进稳定前缀 = 时间冻结，比没有更坏。
  */
 class TimeAnchorSpec extends FunSuite:
@@ -152,13 +154,32 @@ class TimeAnchorSpec extends FunSuite:
       "pruneTimeReminders / isTimeReminderMessage 必须仍能识别新格式"
     )
 
-  test("the request-level block carries the anchor plus the arithmetic-only instruction"):
-    val block = nebflow.shared.TimeAnchor.block(fixed(SampleMs, ZoneId.of("Asia/Shanghai")))
-    assert(block.contains("Clock (authoritative; re-read on every request)"), block)
-    assert(block.contains(s"Now:"), block)
-    assert(block.contains(s"epoch_ms $SampleMs"), block)
-    assert(block.contains("never from memory"), block)
-    assert(hasStamp(block), block)
+  test("the real-user-turn clock line is minimal and machine-readable (时钟简化批 2026-11-06)"):
+    val line = nebflow.shared.TimeAnchor.userLine(fixed(SampleMs, ZoneId.of("Asia/Shanghai")))
+    // 极简形（作者令「内容要简单一点 让能读懂是时间就行」）：
+    // `Now: yyyy-MM-dd HH:mm:ss +08:00 周一 | epoch_ms <ms>` —— 无推导文案、无时区名、无英文星期
+    assert(line.startsWith("Now: "), line)
+    assert(StampRe.findFirstIn(line).isDefined, line)
+    assert(line.contains("周一"), line)
+    assert(line.contains(s"epoch_ms $SampleMs"), line)
+    assert(!line.contains("| Asia/Shanghai"), s"极简形不带时区名: $line")
+    assert(!line.toLowerCase.contains("derive"), s"极简形不带推导文案: $line")
+    // append-only 保证：新形态不以 Current time: 开头 ⇒ 不被旧裁剪闸识别
+    assert(!line.startsWith("Current time: "), line)
+    assert(hasStamp(line), line)
+
+  test("userLine is not recognized as a legacy prunable time reminder (append-only contract)"):
+    val line = nebflow.shared.TimeAnchor.userLine(fixed(SampleMs, ZoneId.of("Asia/Shanghai")))
+    val msg = nebflow.shared.Message(nebflow.shared.MessageRole.User, Left(s"<system-reminder>\n$line\n</system-reminder>"))
+    assert(!SystemReminders.isTimeReminderMessage(msg), "新形态必须不被识别 ⇒ 永不裁剪")
+    // 旧形态仍被识别（旧会话历史的裁剪契约不变）
+    val legacy = nebflow.shared.TimeAnchor.line(fixed(SampleMs, ZoneId.of("Asia/Shanghai")))
+    assert(
+      SystemReminders.isTimeReminderMessage(
+        nebflow.shared.Message(nebflow.shared.MessageRole.User, Left(s"<system-reminder>\n$legacy\n</system-reminder>"))
+      ),
+      "旧形态识别契约不变"
+    )
 
   // ============================================================
   // ⑥ 时间纪律规则本体（模型面）：禁止无依据的日期推断
@@ -167,7 +188,8 @@ class TimeAnchorSpec extends FunSuite:
   test("TimeDisciplineRule forbids unfounded date inference and points at the anchor"):
     val rule = nebflow.shared.Defaults.TimeDisciplineRule
     // 允许引用锚
-    assert(rule.contains("Clock (authoritative; re-read on every request)"), "必须指名字段级锚")
+    assert(rule.contains("<system-reminder>"), "必须指向 system-reminder 包裹的时钟行")
+    assert(rule.contains("Now: <local time and UTC offset> <weekday> | epoch_ms <ms>"), "必须点明极简时钟行格式")
     assert(rule.contains("Current time:"), "必须点明历史里的回合锚")
     assert(rule.contains("epoch_ms"), "必须点明算术底座")
     // 禁止无依据推断（硬规则原文）
@@ -184,14 +206,13 @@ class TimeAnchorSpec extends FunSuite:
   // ⑦ 活体读数（本批报告里的「改后样例行」由本用例直接产出）
   // ============================================================
 
-  test("live sample: the two anchor forms the model actually reads (taken from the running clock)"):
+  test("live sample: the anchor forms the model actually reads (taken from the running clock)"):
     val line = nebflow.shared.TimeAnchor.line()
-    val block = nebflow.shared.TimeAnchor.block()
+    val user = nebflow.shared.TimeAnchor.userLine()
     assert(line.startsWith("Current time: "), line)
     assert(hasStamp(line), line)
-    assert(hasStamp(block) && block.contains("Now: "), block)
-    println(s"[time-anchor-sample/persisted] $line")
-    println("[time-anchor-sample/request-level]")
-    println(block)
+    assert(user.startsWith("Now: ") && hasStamp(user), user)
+    println(s"[time-anchor-sample/legacy-persisted] $line")
+    println(s"[time-anchor-sample/user-turn-minimal] $user")
 
 end TimeAnchorSpec

@@ -140,10 +140,13 @@ private[agent] object AgentIdle:
             else injectionSourceFor(fromUser, source.orElse(inferInjectionSource(state.sessionId, replyTo)))
           val enrichedBlocks: Option[List[ContentBlock]] = blocks.filter(_.nonEmpty)
           val stateWithFlush = stateWithWidth
-          val userMsg = (enrichedBlocks match
-            case Some(bl) => Message(MessageRole.User, Right(bl))
-            case None => Message(MessageRole.User, Left(text))
-          ).copy(source = injectionSource)
+          val userMsg = withUserClock(
+            (enrichedBlocks match
+              case Some(bl) => Message(MessageRole.User, Right(bl))
+              case None => Message(MessageRole.User, Left(text))
+            ).copy(source = injectionSource),
+            fromUser || clientMessageId.isDefined
+          )
           // ── Held-receipt 先补注入（平台修复批 fix 1 第三腿，2026-10-21）────────
           // 有被子代理批屏障扣留的已产出回执（pendingEvents 非空）⇒ 本回合**先**
           // 注入回执（reminder 合批一件、前置于本输入）、再处理本输入——「父会话

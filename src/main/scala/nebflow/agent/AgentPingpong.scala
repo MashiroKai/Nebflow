@@ -308,10 +308,10 @@ private[agent] object AgentPingpong:
         tools = None, // §B1：影子腿无工具
         thinking = None,
         systemStable = Some(ShadowSystemFrame),
-        // 每请求时间锚（时间感知修复批 2026-11-05）：影子摘要腿产出的 summary 会
-        // 顶替会话历史，摘要里若出现「今天/昨天/几天前」而不带当刻锚，误判会随
-        // 压缩被写进后文。动态段 = cache breakpoint 之后，与会话面同一生成源。
-        systemDynamic = Some(TimeAnchor.block()),
+        // 时钟简化批（作者令 2026-11-06 22:26）：动态段时钟整体退役，**永不主动
+        // 注入**——影子摘要腿同样零时钟（空转/摘要轮被每请求时钟反复叫醒、无法
+        // 收轮正是本批病根）。摘要里的相对时间由 systemStable 时间纪律段兜底。
+        systemDynamic = None,
         agentModel = shadowModel
           .map(m => AgentModelConfig(preferred = Some(m), fallbacks = Nil))
           .orElse(agentDef.model), // §B3：缺省与主腿同模型链；点名则钉死摘要模型
