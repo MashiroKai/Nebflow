@@ -55,6 +55,11 @@ class SystemRemindersSpec extends FunSuite:
       .collectAllIO(isUserTurn = true, taskStore = taskStore, sessionId = None)
       .unsafeRunSync()
     assert(!reminders.exists(_.category == "time"), s"clock is attached only during real input conversion: $reminders")
+    // 工具往返 / delegate 续轮 / 空转轮（!isUserTurn）：收集面直接短路 Nil——零时钟
+    val continuation = SystemReminders
+      .collectAllIO(isUserTurn = false, taskStore = taskStore, sessionId = None)
+      .unsafeRunSync()
+    assertEquals(continuation, Nil, "continuation/tool rounds: collection must short-circuit to Nil (zero clock)")
 
   test("isTimeReminderMessage matches persisted time-reminder format (legacy face)"):
     val reminder =
