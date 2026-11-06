@@ -45,6 +45,10 @@ import { todoStore, TAG_COLOR_PRESETS, PRIORITY_COLORS, PRIORITY_LABEL_KEYS } fr
 // saveCreate 读面零改）。
 import { pointTriggerHTML, attachTimeTriggers, msToLocalInput } from './timeWheel.js';
 import { createToggle, setToggleState } from './toggle.js';
+// 液态形变动效语言单源（todo-mobile-topmenu 批 · 2026-11-06）：顶部两级菜单的
+// 展开/叠出、新建表单的自顶展开全部只吃这一条时长/曲线/属性白名单；reduced-motion
+// 由同一模块降级（1ms），本文件不另写第二份毫秒数、不另造第二条曲线。
+import { morphTransition, reducedMotion as lmReducedMotion } from './motion/liquidMorph.js';
 
 /** 截止时间开关的无障碍标签 id 序号（同一面板可能同时挂编辑行与创建行两枚开关）。 */
 let dueToggleSeq = 0;
@@ -429,7 +433,11 @@ class TodoFace {
     // 面板（展开态 = ReminderListView 整体）
     this.panel = el('div', 'tfl-panel');
     this.buildHeader();
-    this.buildFilterBar();
+    // 筛选栏（All + 标签 chips + 垃圾桶 + 重要度四签）= **仅桌面腿**构建。
+    // 手机页面态（todo-mobile-topmenu 批 2026-11-06）：`.tfl-filter-toggle` /
+    // `.tfl-collapse-btn` / chipsRow / prioRow 整族**不建**（不是隐藏）—— 顶部
+    // 控制改由一枚悬浮「⋯」菜单承载（buildTopMenu），旧入口真退役、不留两套。
+    if (!this.mobile) this.buildFilterBar();
     // 列表包裹层（胶囊面交互批 2026-11-04）：列表 + 右下角新建加号 + 撤回条
     // 三者共一个定位祖先 —— 加号压不到列表末行（列表内距让位由 CSS 承担），
     // 撤回条浮在列表底部中央而不是页面级 absolute（手机页面态无定位卡容器）。
@@ -445,16 +453,21 @@ class TodoFace {
     this.buildFab();
     this.buildUndoBar();
     this.footer = el('div', 'tfl-footer');
-    this.panel.append(this.header, this.filterWrap, this.listWrap, this.footer);
+    if (this.filterWrap) this.panel.append(this.header, this.filterWrap, this.listWrap, this.footer);
+    else this.panel.append(this.header, this.listWrap, this.footer);
     // 岛 = 骨架；两个内容层（胶囊 / 面板）都在它内部 —— 骨架是唯一的形状载体。
     this.card.appendChild(this.panel);
     // 胶囊（收起态内容层）= 岛骨架里的第二个内容层（灵动岛批 2026-11-05）：
     // 收起态显示它、展开态显示上面的 panel，两者都在 .tfl-card 内部切换。
     this.card.appendChild(this.capsule);
-    // 新建抽屉（todo-fullbleed 批 2026-11-05）：**手机页面态**把新建表单从列表
-    // 流内搬到页面底部抽屉 —— 页面铺满时表单一常驻就把列表挤成一条（作者实拍
-    // 「新建卡片浮在中间、下面一大片白板」）。桌面胶囊浮层腿原样保留流内创建行。
-    if (this.mobile) this.buildCreateSheet();
+    // 新建表单（todo-mobile-topmenu 批 2026-11-06：承载从底部抽屉改为**顶部**，
+    // 表单本体/写口零改动；`.mf-drawer` 一族与定时任务页共用，顶部形态走
+    // `.mf-drawer-top` 修饰类 —— 那一路（js/scheduled-task.js 的底抽屉）零改动）。
+    if (this.mobile) {
+      this.buildCreateSheet();
+      // 顶部悬浮「⋯」+ 两级菜单（同一批）：手机页面态顶部唯一入口。
+      this.buildTopMenu();
+    }
     // 空白区建（作者令 2026-11-04 ②）：列表空白 / footer 空白点击 ⇒ 行内新建
     this.bindBlankCreate();
     this.mount.appendChild(this.card);
@@ -477,6 +490,9 @@ class TodoFace {
     this.header.appendChild(this.headerCount);
     const spacer = el('span', 'tfl-header-spacer');
     this.header.appendChild(spacer);
+    // 手机页面态：本行只剩计数 —— 筛选/收起两枚旧入口不建（顶部控制收敛到
+    // 悬浮「⋯」菜单，见 buildTopMenu；桌面腿零改动）。
+    if (this.mobile) return;
     // 筛选开关（28×24 点击区；ReminderIsland compactHeader 同几何）
     this.filterToggle = el('button', 'tfl-icon-btn tfl-filter-toggle');
     this.filterToggle.type = 'button';
@@ -599,19 +615,19 @@ class TodoFace {
     this.listWrap.appendChild(fab);
   }
 
-  /* ── 新建抽屉（todo-fullbleed 批 · 作者令 2026-11-05 17:33）─────────────────
-     为什么是**底部抽屉**而不是「浮层/气泡」：新建表单是**写入口**，手机端写入口
-     的既有语言就是底部抽屉（键盘弹起时贴底、不与列表抢视觉、关闭路径唯一 =
-     点遮罩或「取消」）；气泡式浮层在 375 宽上要么盖住半屏列表、要么被键盘顶出
-     屏幕，且没有自然的关闭手势。抽屉本体 = **扁平实底**（全站毛玻璃只许
-     `.nf-glass` 一枚，本文件不出第二套模糊面）。
-     落位：`.tfl-card` 在手机腿是定位静态件 ⇒ 本节点的包含块 = 页面壳
-     `.mobile-page`（absolute + overflow:hidden），抽屉因此覆盖**整页内容区**
-     （标题栏下沿 → Tab 栏上缘），滚动的列表不会带着它跑。
-     表单本体复用既有 `buildCreateRow()`（标题/备注/优先级/截止时间同一条 DOM、
-     同一条 saveCreate 写口），抽屉只是换宿主，零第二套表单。 */
+  /* ── 新建表单：**顶部**承载（todo-mobile-topmenu 批 · 2026-11-06）─────────
+     上一批（todo-fullbleed 2026-11-05）把新建入口做成底部抽屉；本批按作者令
+     改为**从页顶下滑展开**：表单覆盖在内容之上，**不占文档流、不改滚区高度**
+     （`.mf-drawer` 仍是 absolute + inset:0，包含块 = 页面壳 `.mobile-page`；
+     列表首条 rect / 页面壳滚动容器 / `.tfl-list` 的 scrollTop·scrollHeight 在
+     开合前后逐值不变 —— 机械读数见 tests/todo-mobile-topmenu.spec.mjs ①）。
+     结构 = 与定时任务页**同一族** `.mf-drawer`，本面加 `.mf-drawer-top` 修饰类
+     把 flex 主轴从 bottom 翻到 top、盒圆角翻到下沿；`js/scheduled-task.js` 那一路
+     （底部抽屉）类名/几何零改动，共用面不受影响。
+     表单本体复用 `buildCreateRow()`（标题/备注/优先级/截止时间同一条 DOM、
+     同一条 saveCreate 写口），零第二套表单。 */
   buildCreateSheet() {
-    const sheet = el('div', 'mf-drawer');
+    const sheet = el('div', 'mf-drawer mf-drawer-top');
     sheet.hidden = true;
     sheet.setAttribute('role', 'dialog');
     sheet.setAttribute('aria-modal', 'true');
@@ -635,7 +651,285 @@ class TodoFace {
     box.append(head, this.sheetBody);
     sheet.append(scrim, box);
     this.sheetEl = sheet;
+    this.sheetBox = box;
     this.card.appendChild(sheet);
+  }
+
+  /** 表单开合（单一状态位 = `creating`，本函数是唯一显隐写口）。
+   *  `hidden` 不能参与过渡（display:none）⇒ 先摘 hidden、下一帧再翻 `.is-open`，
+   *  起点/终点几何全在 CSS（`.mf-drawer-top .mf-drawer-box`）；过渡串由液态形变
+   *  单源生成（属性白名单 transform/opacity，slow 档 = 大位移腿，reduced ⇒ 1ms）。 */
+  setSheetOpen(open) {
+    const sheet = this.sheetEl;
+    const box = this.sheetBox;
+    if (!sheet || !box) return;
+    clearTimeout(this.sheetTimer);
+    const reduced = lmReducedMotion();
+    box.style.transition = morphTransition(['transform', 'opacity'], { duration: 'slow', reduced });
+    if (open) {
+      const wasHidden = sheet.hidden;
+      sheet.hidden = false;
+      if (wasHidden || !box.classList.contains('is-open')) {
+        box.classList.remove('is-open');
+        void box.offsetHeight; // 强制回流：display 翻转后的起始帧必须被采纳
+        requestAnimationFrame(() => {
+          if (this.sheetBox === box && this.creating) box.classList.add('is-open');
+        });
+      }
+      return;
+    }
+    if (sheet.hidden) return;
+    box.classList.remove('is-open');
+    // 收尾 = 过渡结束后再 hidden（进位一帧），reduced-motion 走 1ms 档。
+    this.sheetTimer = setTimeout(() => { sheet.hidden = true; }, reduced ? 8 : 420);
+  }
+
+  /* ── 顶部悬浮「⋯」+ 两级菜单（todo-mobile-topmenu 批 · 2026-11-06）─────────
+     形态（作者图2 / 图3）：
+       ① 顶部**唯一**入口 = 一枚 48px 悬浮圆钮「⋯」（`.g2-fab` 圆钮级浮件档：
+          材质/六态/按压全来自 css/glass.css 单源；视觉 48 = --ds-hit-tap-min，
+          命中盒 ≥ --ds-hit-box-min）。落位镜像页面壳返回钮（top 16+safe / 右 16）。
+       ② 一级 = 浮起的圆角**毛玻璃**面板（`.nf-glass` 单源，不另造模糊面）：
+          图标+文字行、组间分隔线、危险项红字（--color-danger 既有语义色）、
+          点面板外收起。
+       ③ 二级 = 在**同一个菜单根**里叠出第二块玻璃面板（右缘对齐、左移一档压住
+          一级面板下沿）：一级面板变暗后退（`.is-back`），条目带 ✓ 选中态，
+          选中即回写 store 并整菜单收起 —— 是「叠出」不是「替换」，不跳页。
+     动效 = js/motion/liquidMorph.js 单源（base 档 280ms / 唯一曲线 / 属性白名单
+     transform+opacity）；reduced-motion 同源降级 1ms。
+     与旧顶部控制的关系：`.tfl-filter-toggle` / `.tfl-collapse-btn` / chipsRow /
+     prioRow 在手机腿**不建**（buildHeader / buildDom 早退）—— 本菜单是它们唯一
+     的替代面，两者不并存。 */
+
+  buildTopMenu() {
+    const btn = el('button', 'tfl-topmenu-btn g2-fab');
+    btn.type = 'button';
+    btn.title = t('todoface.menu');
+    btn.setAttribute('aria-label', t('todoface.menu'));
+    btn.setAttribute('aria-haspopup', 'menu');
+    btn.setAttribute('aria-expanded', 'false');
+    btn.appendChild(lucideIcon('more-horizontal'));
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.toggleMenu();
+    });
+    this.menuBtn = btn;
+
+    const root = el('div', 'tfl-menu');
+    root.hidden = true;
+    // 点外部收起：透明幕布铺满页面壳（图2 里一级面板之外的内容不变暗、但要能
+    // 一击收起 ⇒ 幕布零底色，只吃指针）。
+    const scrim = el('div', 'tfl-menu-scrim');
+    scrim.addEventListener('click', () => this.closeMenu());
+    const panel = el('div', 'tfl-menu-panel nf-glass');
+    panel.setAttribute('role', 'menu');
+    panel.setAttribute('aria-label', t('todoface.menu'));
+    const sub = el('div', 'tfl-menu-sub nf-glass');
+    sub.hidden = true;
+    sub.setAttribute('role', 'menu');
+    root.append(scrim, panel, sub);
+    this.menuRoot = root;
+    this.menuPanel = panel;
+    this.menuSub = sub;
+    this.card.append(btn, root);
+  }
+
+  toggleMenu() {
+    if (this.menuOpen) this.closeMenu(); else this.openMenu();
+  }
+
+  openMenu() {
+    if (!this.menuRoot || this.destroyed) return;
+    clearTimeout(this.menuTimer);
+    this.menuOpen = true;
+    this.menuSubKind = null;
+    this.menuRoot.hidden = false;
+    this.menuRoot.style.pointerEvents = '';
+    this.menuBtn.setAttribute('aria-expanded', 'true');
+    this.menuSub.hidden = true;
+    this.menuPanel.classList.remove('is-back');
+    this.renderMenu();
+    const p = this.menuPanel;
+    p.style.transition = morphTransition(['transform', 'opacity'], { duration: 'base', reduced: lmReducedMotion() });
+    p.classList.remove('is-open');
+    void p.offsetHeight;
+    requestAnimationFrame(() => { if (this.menuOpen) p.classList.add('is-open'); });
+  }
+
+  closeMenu() {
+    if (!this.menuOpen) return;
+    this.menuOpen = false;
+    this.menuSubKind = null;
+    this.menuBtn.setAttribute('aria-expanded', 'false');
+    const reduced = lmReducedMotion();
+    const sub = this.menuSub;
+    if (sub && !sub.hidden) {
+      sub.classList.remove('is-open');
+      clearTimeout(this.subTimer);
+      this.subTimer = setTimeout(() => { sub.hidden = true; }, reduced ? 8 : 300);
+    }
+    this.menuPanel.classList.remove('is-back', 'is-open');
+    // 收场期间不拦点击（面板在淡出，用户可能已点向别处）
+    this.menuRoot.style.pointerEvents = 'none';
+    clearTimeout(this.menuTimer);
+    this.menuTimer = setTimeout(() => {
+      if (!this.menuOpen && this.menuRoot) this.menuRoot.hidden = true;
+    }, reduced ? 8 : 300);
+  }
+
+  /** 一级面板内容（每次打开 / store 变化时重画，读数永远新鲜）。 */
+  renderMenu() {
+    const panel = this.menuPanel;
+    if (!panel) return;
+    panel.textContent = '';
+    const rows = [
+      this.menuRow({
+        icon: 'plus-circle', label: t('todoface.sheetTitle'),
+        onTap: () => { this.closeMenu(); this.startCreate(); },
+      }),
+      this.menuRow({
+        icon: 'tag', label: t('todoface.menuView'), sub: this.viewLabel(), chevron: true, sep: true,
+        onTap: (row) => this.openMenuSub('tags', row),
+      }),
+      this.menuRow({
+        icon: 'arrow-up-down', label: t('todoface.menuPrio'), sub: this.prioLabel(), chevron: true,
+        onTap: (row) => this.openMenuSub('prio', row),
+      }),
+      this.menuRow({
+        icon: 'tags', label: t('todoface.tagNew'), sep: true,
+        onTap: () => { this.closeMenu(); this.openTagPopover(null, this.menuBtn); },
+      }),
+      this.menuRow({
+        icon: 'trash-2', label: t('todoface.tagDeleteTitle'), danger: true, sep: true,
+        onTap: (row) => this.openMenuSub('deleteTags', row),
+      }),
+    ];
+    panel.append(...rows);
+    if (typeof createIconsIn === 'function') createIconsIn(panel);
+  }
+
+  /** 菜单行（一级/二级同一构造：图标 + 主文 + 可选次文 + 右侧 ›；
+   *  二级可选态行在最左留出 ✓ 槽 —— 选中/未选中同宽，零跳动）。 */
+  menuRow({ icon, label, sub, chevron, danger, sep, check, onTap }) {
+    const row = el('button', 'tfl-menu-row'
+      + (danger ? ' is-danger' : '') + (sep ? ' is-sep' : ''));
+    row.type = 'button';
+    row.setAttribute('role', 'menuitem');
+    // 勾选槽（图3：✓ 在文字左侧，未选中行留同宽空槽）
+    if (check !== undefined) {
+      const slot = el('span', 'tfl-menu-check' + (check ? ' is-on' : ''));
+      if (check) slot.appendChild(lucideIcon('check'));
+      row.appendChild(slot);
+      row.setAttribute('role', 'menuitemradio');
+      row.setAttribute('aria-checked', String(!!check));
+    }
+    if (icon) row.appendChild(lucideIcon(icon));
+    const body = el('span', 'tfl-menu-row-body');
+    body.appendChild(el('span', 'tfl-menu-row-label', label));
+    if (sub) body.appendChild(el('span', 'tfl-menu-row-sub', sub));
+    row.appendChild(body);
+    if (chevron) {
+      row.appendChild(lucideIcon('chevron-right'));
+      row.setAttribute('aria-haspopup', 'true');
+    }
+    row.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      onTap(row);
+    });
+    return row;
+  }
+
+  /** 一级面板里「标签」「重要度」的次行读数（与二级面板选中态同源）。 */
+  viewLabel() {
+    const tag = todoStore.activeTagId == null ? null : todoStore.tagById(todoStore.activeTagId);
+    return tag ? tag.name : t('todoface.all');
+  }
+
+  prioLabel() {
+    const sel = [...todoStore.selectedPriorities].sort((a, b) => a - b);
+    if (!sel.length) return t('todoface.all');
+    return sel.map((p) => t(PRIORITY_LABEL_KEYS[p])).join(' · ');
+  }
+
+  /** 二级面板：叠在一级面板下沿（对齐被点那一行），一级变暗后退。 */
+  openMenuSub(kind, anchorRow) {
+    if (!this.menuSub || !anchorRow) return;
+    this.menuSubKind = kind;
+    const sub = this.menuSub;
+    this.paintSub(kind);
+    const rootR = this.menuRoot.getBoundingClientRect();
+    const r = anchorRow.getBoundingClientRect();
+    const height = sub.offsetHeight;
+    const rootH = rootR.height;
+    let top = Math.round(r.top - rootR.top - 8);
+    const maxTop = Math.round(rootH - height - 16);
+    if (top > maxTop) top = Math.max(8, maxTop);
+    sub.style.top = `${top}px`;
+    sub.hidden = false;
+    this.menuPanel.classList.add('is-back');
+    const reduced = lmReducedMotion();
+    sub.style.transition = morphTransition(['transform', 'opacity'], { duration: 'base', reduced });
+    sub.classList.remove('is-open');
+    void sub.offsetHeight;
+    requestAnimationFrame(() => {
+      if (this.menuSubKind === kind && this.menuOpen) sub.classList.add('is-open');
+    });
+  }
+
+  /** 二级面板内容（kind：tags / prio / deleteTags）。 */
+  paintSub(kind) {
+    const sub = this.menuSub;
+    if (!sub) return;
+    sub.textContent = '';
+    const meta = {
+      tags: { icon: 'tag', title: t('todoface.menuView'), value: this.viewLabel() },
+      prio: { icon: 'arrow-up-down', title: t('todoface.menuPrio'), value: this.prioLabel() },
+      deleteTags: { icon: 'trash-2', title: t('todoface.tagDeleteTitle'), value: '', danger: true },
+    }[kind];
+    if (!meta) return;
+    const head = el('div', 'tfl-menu-sub-head' + (meta.danger ? ' is-danger' : ''));
+    head.appendChild(lucideIcon(meta.icon));
+    const body = el('span', 'tfl-menu-row-body');
+    body.appendChild(el('span', 'tfl-menu-row-label', meta.title));
+    if (meta.value) body.appendChild(el('span', 'tfl-menu-row-sub', meta.value));
+    head.appendChild(body);
+    head.appendChild(lucideIcon('chevron-down'));
+    sub.appendChild(head);
+
+    const list = el('div', 'tfl-menu-sub-list');
+    if (kind === 'tags') {
+      list.append(
+        this.menuRow({
+          label: t('todoface.all'), check: todoStore.isAllView(),
+          onTap: () => { this.closeMenu(); this.switchView(null); },
+        }),
+        ...todoStore.tags.map((tag) => this.menuRow({
+          label: tag.name, check: todoStore.activeTagId === tag.id,
+          onTap: () => { this.closeMenu(); this.switchView(tag.id); },
+        })),
+      );
+    } else if (kind === 'prio') {
+      const sel = todoStore.selectedPriorities;
+      for (let p = 0; p <= 3; p++) {
+        list.appendChild(this.menuRow({
+          label: t(PRIORITY_LABEL_KEYS[p]), check: sel.has(p),
+          onTap: () => { this.closeMenu(); todoStore.togglePriority(p); },
+        }));
+      }
+    } else if (kind === 'deleteTags') {
+      const tags = todoStore.tags;
+      if (!tags.length) list.appendChild(el('div', 'tfl-menu-empty', t('todoface.menuNoTags')));
+      for (const tag of tags) {
+        list.appendChild(this.menuRow({
+          icon: 'trash-2', label: tag.name, danger: true,
+          onTap: () => { this.closeMenu(); todoStore.deleteTag(tag.id); },
+        }));
+      }
+    }
+    sub.appendChild(list);
+    if (typeof createIconsIn === 'function') createIconsIn(sub);
   }
 
   /* ── 撤回条（完成后的撤销路径；作者令 2026-11-04 ④「取消完成必须可达」）────
@@ -755,6 +1049,11 @@ class TodoFace {
     if (this.destroyed) return;
     this.renderAll();
     if (this.expanded && !this.mobile && !this.outsideBound) this.bindOutsideClose();
+    // 菜单开着时重画两级读面（勾选态/次行读数跟随 store；面板状态类不重播动画）
+    if (this.menuOpen) {
+      this.renderMenu();
+      if (this.menuSubKind) this.paintSub(this.menuSubKind);
+    }
   }
 
   /** 胶囊渲染 = 翻面语义（待办胶囊重做批 2026-11-02 11:52）。
@@ -821,11 +1120,14 @@ class TodoFace {
     const od = todoStore.overdueCount();
     this.headerCount.classList.toggle('is-overdue', od > 0);
     this.headerCount.classList.toggle('has-count', n > 0);
-    this.filterToggle.classList.toggle('active', this.showFilterBar);
-    this.collapseBtn.hidden = this.mobile; // 手机页面由页面框架收回
+    // 手机页面态两枚旧控件不建（buildHeader 早退）—— 这里只镜像桌面腿状态。
+    if (this.filterToggle) this.filterToggle.classList.toggle('active', this.showFilterBar);
+    if (this.collapseBtn) this.collapseBtn.hidden = this.mobile; // 手机页面由页面框架收回
   }
 
   renderFilterBar() {
+    // 手机页面态无筛选栏（buildDom 不建）：视图/重要度搬进 ⋯ 菜单二级面板。
+    if (!this.filterWrap) return;
     this.filterWrap.style.display = this.showFilterBar ? '' : 'none';
     if (!this.showFilterBar) return;
     // All chip 选中态
@@ -972,8 +1274,8 @@ class TodoFace {
       createIconsIn(this.listInner);
       if (this.mobile && this.sheetBody) createIconsIn(this.sheetBody);
     }
-    // 抽屉开合随 creating 单一状态位（无第二处显隐写口）
-    if (this.mobile && this.sheetEl) this.sheetEl.hidden = !this.creating;
+    // 表单开合随 creating 单一状态位（唯一显隐写口 = setSheetOpen）
+    if (this.mobile) this.setSheetOpen(this.creating);
     // 编辑面板/创建面板高度过渡：先关后开（下一拍加 open 类，0fr→1fr 播动画）
     requestAnimationFrame(() => {
       const scope = [this.listInner];
@@ -1294,8 +1596,14 @@ class TodoFace {
       this.saveCreate();
     });
     // 展开后聚焦标题（ReminderIsland onAppear 聚焦等价：web 无懒实例化竞态，
-    // 一档聚焦即落地——对照表申报简化）
-    setTimeout(() => { if (this.creating && this.createTitle) this.createTitle.focus(); }, 60);
+    // 一档聚焦即落地——对照表申报简化）。手机顶部表单腿必须 preventScroll：
+    // 表单位于页面壳顶部、DOM 上却在页体滚动容器内 ⇒ 缺省聚焦可能把页体往上
+    // 拽（= 内容位移，违反「新建零位移」硬验收）。
+    setTimeout(() => {
+      if (!this.creating || !this.createTitle) return;
+      if (this.mobile) this.createTitle.focus({ preventScroll: true });
+      else this.createTitle.focus();
+    }, 60);
     setTimeout(() => { // 滚进可视区（scrollTo anchor 等价，instant 不带动画）
       // 手机抽屉腿不滚：表单本就在抽屉可视区内，scrollIntoView 只会把页面/列表
       // 顺带蹭动一下（抽屉外的滚动容器与行不同链）。
@@ -1957,7 +2265,7 @@ class TodoFace {
 
   // ── 标签 popover（CalendarChipPopover 复刻：名 + 十色 5 列网格）─────────
 
-  openTagPopover(editTagId) {
+  openTagPopover(editTagId, anchorEl = null) {
     this.closeTagPopover(false);
     const editing = editTagId != null;
     const tag = editing ? todoStore.tagById(editTagId) : null;
@@ -1988,10 +2296,12 @@ class TodoFace {
       grid.appendChild(dot);
     });
     pop.appendChild(grid);
-    // 锚定 chip 下方（arrowEdge .bottom 等价；近底翻转向上）
-    let anchor = null;
-    if (editing && this.chipEls) anchor = this.chipEls.get(editTagId);
-    if (!anchor) anchor = this.chipsTrack.querySelector('.tfl-chip-add');
+    // 锚定 chip 下方（arrowEdge .bottom 等价；近底翻转向上）。
+    // 手机页面态没有 chips 行（本批退役）⇒ 由调用点把锚点**以节点传入**
+    // （顶部「⋯」钮），本函数不跨面查 DOM（组件契约 R2）。
+    let anchor = anchorEl;
+    if (!anchor && editing && this.chipEls) anchor = this.chipEls.get(editTagId);
+    if (!anchor && this.chipsTrack) anchor = this.chipsTrack.querySelector('.tfl-chip-add');
     document.body.appendChild(pop);
     this.tagPopover = pop;
     if (anchor) {
@@ -2039,6 +2349,11 @@ class TodoFace {
 
   destroy() {
     this.destroyed = true;
+    this.menuOpen = false;
+    this.menuSubKind = null;
+    clearTimeout(this.menuTimer);
+    clearTimeout(this.subTimer);
+    clearTimeout(this.sheetTimer);
     this.unsub();
     this.unbindOutsideClose();
     if (this.cancelMorph) this.cancelMorph();

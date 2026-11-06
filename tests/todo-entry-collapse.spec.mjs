@@ -315,9 +315,22 @@ test('②③④⑤ 手机 375×812：待办入口 = 左上悬浮圆钮（端区�
   await expect(page.locator('#mobile-task-panel .tp-stats')).toHaveText('4 待办');
   await expect(page.locator('#mobile-task-panel .tfl-row')).toHaveCount(4);
   await expect(page.locator('#mobile-task-panel .tfl-capsule-overdue').first()).toHaveText('1 逾期');
-  await page.locator('#mobile-task-panel .tfl-filter-toggle').click();
-  await expect(page.locator('#mobile-task-panel .tfl-prio-row .tfl-chip-prio')).toHaveCount(4);
-  await expect(page.locator('#mobile-task-panel .tfl-chip-tag')).toHaveCount(2);
+  // 顶部控制口径换代（todo-mobile-topmenu 批 2026-11-06）：筛选钮 / chips 行 /
+  // 四签在手机页**退役**（DOM 不建），视图与重要度搬进悬浮「⋯」的两级面板 ——
+  // 本腿断言改为新入口，信息面（四签 / 分组）在同一条链上仍可达、不丢。
+  await expect(page.locator('#mobile-task-panel .tfl-filter-toggle')).toHaveCount(0);
+  await expect(page.locator('#mobile-task-panel .tfl-chips-row')).toHaveCount(0);
+  await expect(page.locator('#mobile-task-panel .tfl-prio-row')).toHaveCount(0);
+  const menuBtn = page.locator('#mobile-task-panel .tfl-topmenu-btn');
+  await expect(menuBtn).toHaveCount(1);
+  await menuBtn.click();
+  await expect(page.locator('.tfl-menu-panel.is-open')).toHaveCount(1);
+  await page.locator('.tfl-menu-panel .tfl-menu-row', { hasText: '重要度' }).first().click();
+  await expect(page.locator('.tfl-menu-sub.is-open .tfl-menu-row')).toHaveCount(4);   // 无/低/中/高
+  await page.locator('.tfl-menu-panel .tfl-menu-row', { hasText: '标签' }).first().click();
+  await expect(page.locator('.tfl-menu-sub.is-open .tfl-menu-row')).toHaveCount(3);   // 全部 + 2 枚标签
+  await page.locator('.tfl-menu-scrim').click({ position: { x: 8, y: 600 } });
+  await expect(page.locator('.tfl-menu')).toBeHidden();
   // 返回钮（页面壳左上）在安全区内且可点：整页不压刘海
   const back = page.locator('.mobile-page[data-page="tasks"] .mobile-back-btn');
   await expect(back).toHaveCount(1);

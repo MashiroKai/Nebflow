@@ -2810,10 +2810,12 @@ body.mobile-layer .tfl-del { opacity: 1; position: relative; }
 body.mobile-layer .tfl-del::after {
   content: '';
   position: absolute;
-  top: -13px;
-  bottom: -13px;
-  left: -13px;
-  right: -13px;
+  /* 命中盒 = 48（18 本体 + 15 × 2）= --ds-hit-box-min 档（todo-mobile-topmenu 批
+     2026-11-06 顺带对齐：原 -13px 只到 44，低于最小可点尺寸令牌）。 */
+  top: calc((var(--ds-hit-box-min) - 100%) / -2);
+  bottom: calc((var(--ds-hit-box-min) - 100%) / -2);
+  left: calc((var(--ds-hit-box-min) - 100%) / -2);
+  right: calc((var(--ds-hit-box-min) - 100%) / -2);
 }
 
 /* ── 面板合并批沿袭：profile 面板独立面退役；手机记忆键退场 ────────── */
@@ -4402,6 +4404,13 @@ body.mobile-layer #reminder-create-btn::after {
 }
 /* 图标本体随字号档（11 → --micon-sm 的 0.6 档，线框图标在 24px 圆内仍清透）。 */
 body.mobile-layer .tfl-icon-btn svg { width: 16px; height: 16px; }
+/* 标记完成钮的命中盒升到最小可点尺寸令牌档（todo-mobile-topmenu 批 2026-11-06）：
+   本件 28×28 本体 + 44 外扩 = 44 < 48（foundation-tap 批 --ds-hit-box-min）。
+   只改本件（族内其余图标键的 --mhit 44 档属同批后续铺面，不一刀切）。 */
+body.mobile-layer .tfl-complete::after {
+  width: max(100%, var(--ds-hit-box-min));
+  height: max(100%, var(--ds-hit-box-min));
+}
 
 /* ── 用量面受控件：范围段（1天/7天…）与色模段（消耗量/命中率）──────────
    42×44 / 56×40 —— 高度或宽度差一两像素，统一补到 --mtap 双维。 */
@@ -5340,3 +5349,279 @@ body.mobile-layer #reminder-panel .reminder-fab-add {
 .mf-drawer-done-btn { color: var(--color-primary); font-weight: 600; }
 .mf-drawer-cancel-btn:active,
 .mf-drawer-done-btn:active { opacity: 0.65; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ⑤ 待办页顶部「⋯」两级菜单 + 新建表单顶部承载（todo-mobile-topmenu 批 · 2026-11-06）
+   作者令（逐字）：「新建待办从顶部来」「手机待办页顶部就一个⋯按钮」「点标签/
+   重要度在右边叠一块面板，下面那块还在、变暗」。
+
+   ① 顶部唯一入口 = 一枚 48px 悬浮圆钮（`.tfl-topmenu-btn` 挂 `.g2-fab`）：
+      材质/六态/按压全部来自 css/glass.css 圆钮级浮件档（Canvas 工具钮 / 页面壳
+      返回钮 / ask 钮同一基准类）；本块只声明落位与命中盒。视觉 48 =
+      `--ds-hit-tap-min`，命中盒 ≥ `--ds-hit-box-min`（最小可点尺寸令牌单源，
+      foundation-tap 批 2026-11-06）——本页不再写第二把按钮尺。
+      旧顶部控制（`.tfl-filter-toggle` / `.tfl-collapse-btn` / chipsRow /
+      prioRow）在手机腿**DOM 层就不建**（js/todoFace.js buildHeader / buildDom
+      早退），本块无它们的显示声明 = 无「两套并存」的中间态。
+
+   ② 一级菜单 = 浮起圆角**毛玻璃**面板：材质只吃 `.nf-glass`（玻璃配方单源，
+      本文件零 backdrop-filter 声明 —— check-glass-unify G1）；行 = 图标 + 文字
+      （可选次行 = 当前值）+ 右侧 ›，组间分隔线用 1px 伪元素（不吃盒），危险项
+      红字吃既有语义色 `--color-danger`（亮/暗两档都在 base.css 里）。
+      面板之外 = 透明幕布（零底色、只吃指针）⇒ 点外部一击收起。
+
+   ③ 二级面板 = 在同一个菜单根里**叠出第二块**玻璃面板（右缘对齐、左移一档
+      压住一级面板下沿，对齐被点那一行）；一级面板 `.is-back`（opacity .45 +
+      scale .98）变暗后退 —— 是叠出不是替换，不跳页。行最左 = ✓ 勾选槽
+      （选中/未选中同宽，零跳动），选中即回写 store 且整菜单收起。
+
+   ④ 新建表单从**页顶**进入：`.mf-drawer` 一族（与定时任务页共用）加
+      `.mf-drawer-top` 修饰类 —— 主轴翻到 top、盒圆角翻到下沿；仍是 absolute
+      inset:0 覆盖层 ⇒ 不占文档流、不改滚区高度（零位移验收见 spec ①）。
+      定时任务页那一路（js/scheduled-task.js 建的底抽屉）**无该修饰类**，
+      几何/材质零改动。
+
+   ⑤ 动效 = js/motion/liquidMorph.js 单源：本块**不写 transition**（时长/曲线/
+      属性白名单由 JS 侧 morphTransition() 逐次写入，属性只取白名单内的
+      transform + opacity）；reduced-motion 由同一模块降级到 1ms ⇒ 本块不再写
+      第二份 @media 降级（旧的 `.mf-drawer-box` 也无过渡，天然零降级面）。
+   ⑥ 标题框蓝边退役：病因 = css/inputFocus.css:66-79 的统一焦点规则
+      （元素种类级，不可按面豁免）⇒ 本面在同一令牌体系内把它替换成「容器底色
+      一档」（`--color-text` 9% 底，零颜色字面量、零外圈），见块尾。
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── ① 顶部悬浮「⋯」（落位镜像页面壳返回钮：top 16+safe / 右 16）───────── */
+body.mobile-layer .tfl-topmenu-btn {
+  position: absolute;
+  top: calc(var(--mchrome-top) + env(safe-area-inset-top, 0px));
+  right: var(--mpage-fab-inset);
+  width: var(--ds-hit-tap-min);
+  height: var(--ds-hit-tap-min);
+  min-width: var(--ds-hit-box-min);
+  min-height: var(--ds-hit-box-min);
+  padding: 0;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-frame-text-bright, var(--color-frame-text));
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  z-index: 6;
+}
+body.mobile-layer .tfl-topmenu-btn svg {
+  display: block;
+  width: var(--micon-sm);
+  height: var(--micon-sm);
+}
+
+/* ── ② 菜单根 + 一级面板 ─────────────────────────────────────────────── */
+body.mobile-layer .tfl-menu {
+  position: absolute;
+  inset: 0;
+  z-index: 25;
+}
+body.mobile-layer .tfl-menu[hidden] { display: none !important; }
+/* 幕布：零底色（图2 里面板之外不变暗），只吃指针 ⇒ 点外部收起 */
+body.mobile-layer .tfl-menu-scrim {
+  position: absolute;
+  inset: 0;
+}
+body.mobile-layer .tfl-menu-panel,
+body.mobile-layer .tfl-menu-sub {
+  position: absolute;
+  right: var(--mpage-fab-inset);
+  width: min(304px, calc(100% - 2 * var(--mpage-fab-inset)));
+  padding: var(--ds-space-1) 0;
+  border-radius: var(--ds-radius-card-lg);
+  overflow: hidden;
+  transform-origin: top right;
+  /* 起点几何：面板收起态（展开由 JS 翻 .is-open；过渡串由液态形变单源写入） */
+  transform: translateY(-6px) scale(0.96);
+  opacity: 0;
+}
+body.mobile-layer .tfl-menu-panel.is-open,
+body.mobile-layer .tfl-menu-sub.is-open {
+  transform: none;
+  opacity: 1;
+}
+body.mobile-layer .tfl-menu-panel {
+  top: calc(var(--mchrome-top) + var(--mchrome-btn) + var(--ds-space-1) + env(safe-area-inset-top, 0px));
+}
+/* 一级面板在被二级压住时「变暗后退」（仍是同一块面板，位置不跳） */
+body.mobile-layer .tfl-menu-panel.is-back {
+  opacity: 0.45;
+  transform: translateY(-2px) scale(0.98);
+}
+body.mobile-layer .tfl-menu-sub {
+  /* 落位（top/宽度缩放）由 JS 按被点那一行实测写入；右缘比一级再内收一档，
+     叠出来的两块面板读作「一前一后」（图3）。 */
+  right: calc(var(--mpage-fab-inset) + var(--ds-space-1h));
+  max-height: calc(100% - 2 * var(--mpage-fab-inset));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  transform-origin: top right;
+  transform: translateY(10px) scale(0.96);
+}
+
+/* ── 行（一级/二级共用）─────────────────────────────────────────────── */
+body.mobile-layer .tfl-menu-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  width: 100%;
+  min-height: var(--ds-hit-box-min);
+  padding: var(--ds-space-1) var(--mpad-x);
+  border: none;
+  background: transparent;
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: var(--mfs-body);
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+body.mobile-layer .tfl-menu-row svg {
+  display: block;
+  width: var(--micon-sm);
+  height: var(--micon-sm);
+  flex: none;
+}
+body.mobile-layer .tfl-menu-row-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+body.mobile-layer .tfl-menu-row-label {
+  font-size: var(--mfs-body);
+  font-weight: 500;
+  line-height: 1.25;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+body.mobile-layer .tfl-menu-row-sub {
+  font-size: var(--mfs-sub);
+  font-weight: 400;
+  line-height: 1.2;
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+body.mobile-layer .tfl-menu-row .lucide-chevron-right {
+  margin-left: auto;
+  color: color-mix(in srgb, var(--color-text) 40%, transparent);
+}
+@media (hover: hover) {
+  body.mobile-layer .tfl-menu-row:hover {
+    background: color-mix(in srgb, var(--color-text) 7%, transparent);
+  }
+}
+body.mobile-layer .tfl-menu-row:active { opacity: 0.6; }
+body.mobile-layer .tfl-menu-row:focus-visible {
+  outline: 2px solid var(--ds-focus-ring);
+  outline-offset: -2px;
+}
+/* 危险项（删除类）：红字走既有语义色令牌（base.css 亮/暗两档） */
+body.mobile-layer .tfl-menu-row.is-danger,
+body.mobile-layer .tfl-menu-row.is-danger svg,
+body.mobile-layer .tfl-menu-sub-head.is-danger,
+body.mobile-layer .tfl-menu-sub-head.is-danger svg { color: var(--color-danger); }
+/* 组间分隔线：1px 伪元素（内缩一行内距），不吃盒、不吃指针 */
+body.mobile-layer .tfl-menu-row.is-sep::before {
+  content: '';
+  position: absolute;
+  left: var(--mpad-x);
+  right: var(--mpad-x);
+  top: 0;
+  height: 1px;
+  background: color-mix(in srgb, var(--color-text) 12%, transparent);
+  pointer-events: none;
+}
+
+/* ── 二级面板头（图标 + 标题 + 当前值 + ⌄；图3 的「Sort By / Manual」行）─── */
+body.mobile-layer .tfl-menu-sub-head {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  min-height: var(--ds-hit-box-min);
+  padding: var(--ds-space-1) var(--mpad-x);
+  color: var(--color-text);
+}
+body.mobile-layer .tfl-menu-sub-head svg {
+  display: block;
+  width: var(--micon-sm);
+  height: var(--micon-sm);
+  flex: none;
+}
+body.mobile-layer .tfl-menu-sub-head .tfl-menu-row-body { flex: 1 1 auto; }
+body.mobile-layer .tfl-menu-sub-head .tfl-menu-row-label { font-size: var(--mfs-body); font-weight: 600; }
+body.mobile-layer .tfl-menu-sub-head .lucide-chevron-down {
+  color: color-mix(in srgb, var(--color-text) 40%, transparent);
+}
+body.mobile-layer .tfl-menu-sub-list {
+  border-top: 1px solid color-mix(in srgb, var(--color-text) 12%, transparent);
+}
+/* ✓ 勾选槽：选中/未选中同宽（零跳动），对齐二级面板头的图标列 */
+body.mobile-layer .tfl-menu-check {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: var(--micon-sm);
+  flex: none;
+  color: var(--color-text);
+}
+body.mobile-layer .tfl-menu-empty {
+  padding: var(--ds-space-2) var(--mpad-x);
+  font-size: var(--mfs-sub);
+  color: color-mix(in srgb, var(--color-text) 45%, transparent);
+}
+
+/* ── ④ 新建表单：顶部承载（`.mf-drawer` 族的顶部变体）──────────────────── */
+body.mobile-layer .mf-drawer.mf-drawer-top {
+  justify-content: flex-start;
+  padding-top: env(safe-area-inset-top, 0px);
+}
+body.mobile-layer .mf-drawer-top .mf-drawer-box {
+  max-height: 88%;
+  border-top: none;
+  border-bottom: 1px solid var(--color-frame-border);
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  border-bottom-left-radius: var(--ds-radius-card-lg);
+  border-bottom-right-radius: var(--ds-radius-card-lg);
+  /* 起点 = 屏上方外（页面壳 overflow:hidden 裁掉）；.is-open = 落位零变换 */
+  transform: translateY(-100%);
+  opacity: 0;
+}
+body.mobile-layer .mf-drawer-top .mf-drawer-box.is-open {
+  transform: none;
+  opacity: 1;
+}
+
+/* ── ⑥ 表单标题框：外部蓝框退役（焦点态 = 容器底色一档）────────────────
+   病因 file:line = css/inputFocus.css:66-79（`:is(input:not(…), textarea,
+   select):focus` 的统一规则：`outline: var(--nf-field-focus-w) solid
+   var(--nf-field-focus-line)` + `border-color` 同色）。该规则按**元素种类**
+   命中，组件侧 `.tfl-row-title-input { outline:none }`（todo-face.css:992-1000）
+   特异度不够（(0,1,0) < (0,2,1)）⇒ 聚焦时整圈蓝线照画。
+   本面做法：在同一 focus 令牌体系内换形态 —— 不画圈，把所在行的底色加深一档
+   （`--color-text` 9% 合成，零颜色字面量）；输入件本身的字/光标不变。 */
+body.mobile-layer .mf-drawer-top .tfl-row-title-input:focus,
+body.mobile-layer .mf-drawer-top .tfl-edit-notes:focus {
+  outline: none;
+  border-color: transparent;
+}
+body.mobile-layer .mf-drawer-top .tfl-create-head:focus-within {
+  background: color-mix(in srgb, var(--color-text) 9%, transparent);
+}

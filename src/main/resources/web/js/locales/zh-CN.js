@@ -3204,6 +3204,11 @@ export default {
   'todoface.tagDeleteTitle': '删除标签',
   'todoface.tagDeleteConfirm': '删除「{name}」后，该标签下的待办不再带此标签。此操作不可撤销。',
   'todoface.colorN': '颜色 {n}',
+  // 顶部悬浮「⋯」两级菜单（todo-mobile-topmenu 批 2026-11-06）
+  'todoface.menu': '菜单',
+  'todoface.menuView': '标签',
+  'todoface.menuPrio': '重要度',
+  'todoface.menuNoTags': '暂无标签',
   // ── 感知域（mail-perception-impl 批）──
   'perception.title': '感知',
   'perception.close': '关闭',

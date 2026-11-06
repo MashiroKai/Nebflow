@@ -1,0 +1,313 @@
+{
+  "media": {
+    "DURATION": {
+      "fast": 160,
+      "base": 280,
+      "slow": 400
+    },
+    "EASING": "cubic-bezier(0.4, 0, 0.2, 1)"
+  },
+  "before": {
+    "firstRow": {
+      "x": 22,
+      "y": 90.59,
+      "w": 331,
+      "h": 52.08
+    },
+    "dock": {
+      "x": 12,
+      "y": 750,
+      "w": 351,
+      "h": 54
+    },
+    "page": {
+      "x": 0,
+      "y": 0,
+      "w": 375,
+      "h": 750
+    },
+    "list": {
+      "top": 0,
+      "sh": 661,
+      "ch": 661
+    },
+    "doc": {
+      "top": 0,
+      "sh": 812
+    },
+    "winY": 0
+  },
+  "after": {
+    "firstRow": {
+      "x": 22,
+      "y": 90.59,
+      "w": 331,
+      "h": 52.08
+    },
+    "dock": {
+      "x": 12,
+      "y": 750,
+      "w": 351,
+      "h": 54
+    },
+    "page": {
+      "x": 0,
+      "y": 0,
+      "w": 375,
+      "h": 750
+    },
+    "list": {
+      "top": 0,
+      "sh": 661,
+      "ch": 661
+    },
+    "doc": {
+      "top": 0,
+      "sh": 812
+    },
+    "winY": 0
+  },
+  "geo": {
+    "firstRow": {
+      "x": 22,
+      "y": 90.59,
+      "w": 331,
+      "h": 50.83
+    },
+    "dock": {
+      "x": 12,
+      "y": 750,
+      "w": 351,
+      "h": 54
+    },
+    "page": {
+      "x": 0,
+      "y": 0,
+      "w": 375,
+      "h": 750
+    },
+    "list": {
+      "top": 0,
+      "sh": 661,
+      "ch": 661
+    },
+    "doc": {
+      "top": 0,
+      "sh": 812
+    },
+    "winY": 0
+  },
+  "oldCounts": {
+    ".tfl-filter-toggle": 0,
+    ".tfl-collapse-btn": 0,
+    ".tfl-chips-row": 0,
+    ".tfl-prio-row": 0
+  },
+  "panelInfo": {
+    "glass": true,
+    "rows": 5,
+    "radius": "16px",
+    "filter": "blur(40px) saturate(1.4)",
+    "w": 304,
+    "h": 250.5,
+    "transitionProperty": "transform, opacity",
+    "transitionDuration": "0.28s, 0.28s",
+    "transitionTiming": "cubic-bezier(0.4, 0, 0.2, 1), cubic-bezier(0.4, 0, 0.2, 1)"
+  },
+  "stacked": {
+    "panelVisible": true,
+    "panelBack": true,
+    "panelOpacity": 0.45,
+    "subVisible": true,
+    "subGlass": true,
+    "overlap": true,
+    "subHead": "标签 全部"
+  },
+  "checked": {
+    "on": [
+      "工作"
+    ],
+    "all": [
+      {
+        "t": "全部",
+        "on": "false",
+        "check": false
+      },
+      {
+        "t": "工作",
+        "on": "true",
+        "check": true
+      },
+      {
+        "t": "生活",
+        "on": "false",
+        "check": false
+      }
+    ]
+  },
+  "focusState": {
+    "isActive": true,
+    "outlineStyle": "none",
+    "outlineWidth": "3px",
+    "outlineColor": "rgb(27, 30, 38)",
+    "borderColor": "rgba(0, 0, 0, 0)",
+    "borderWidth": "0px"
+  },
+  "tapPage": {
+    "count": 6,
+    "items": [
+      {
+        "selector": "button.mobile-back-btn.g2-fab",
+        "w": 48,
+        "h": 48,
+        "hitW": 48,
+        "hitH": 48
+      },
+      {
+        "selector": "div.tfl-row",
+        "w": 331,
+        "h": 50.83,
+        "hitW": 331,
+        "hitH": 50.83
+      },
+      {
+        "selector": "button.tfl-complete",
+        "w": 28,
+        "h": 28,
+        "hitW": 48,
+        "hitH": 48
+      },
+      {
+        "selector": "button.tfl-del",
+        "w": 18,
+        "h": 18,
+        "hitW": 48,
+        "hitH": 48
+      },
+      {
+        "selector": "button.tfl-fab-add.g2-fab",
+        "w": 48,
+        "h": 48,
+        "hitW": 48,
+        "hitH": 48
+      },
+      {
+        "selector": "button.tfl-topmenu-btn.g2-fab",
+        "w": 48,
+        "h": 48,
+        "hitW": 48,
+        "hitH": 48
+      }
+    ]
+  },
+  "tapping": {
+    "count": 15,
+    "items": [
+      {
+        "selector": "button.mobile-back-btn.g2-fab",
+        "w": 48,
+        "h": 48,
+        "hitW": 48,
+        "hitH": 48
+      },
+      {
+        "selector": "div.tfl-row",
+        "w": 331,
+        "h": 50.83,
+        "hitW": 331,
+        "hitH": 50.83
+      },
+      {
+        "selector": "button.tfl-complete",
+        "w": 28,
+        "h": 28,
+        "hitW": 48,
+        "hitH": 48
+      },
+      {
+        "selector": "button.tfl-del",
+        "w": 18,
+        "h": 18,
+        "hitW": 48,
+        "hitH": 48
+      },
+      {
+        "selector": "button.tfl-fab-add.g2-fab",
+        "w": 48,
+        "h": 48,
+        "hitW": 48,
+        "hitH": 48
+      },
+      {
+        "selector": "button.mf-drawer-cancel-btn",
+        "w": 44,
+        "h": 44,
+        "hitW": 44,
+        "hitH": 44
+      },
+      {
+        "selector": "button.mf-drawer-done-btn",
+        "w": 44,
+        "h": 44,
+        "hitW": 44,
+        "hitH": 44
+      },
+      {
+        "selector": "input.tfl-row-title-input",
+        "w": 319,
+        "h": 16.19,
+        "hitW": 319,
+        "hitH": 16.19
+      },
+      {
+        "selector": "input.tfl-edit-notes",
+        "w": 331,
+        "h": 23.39,
+        "hitW": 331,
+        "hitH": 23.39
+      },
+      {
+        "selector": "button.tfl-edit-prio-btn.selected",
+        "w": 32,
+        "h": 26,
+        "hitW": 32,
+        "hitH": 26
+      },
+      {
+        "selector": "button.tfl-edit-prio-btn",
+        "w": 32,
+        "h": 26,
+        "hitW": 32,
+        "hitH": 26
+      },
+      {
+        "selector": "button.tfl-edit-prio-btn",
+        "w": 32,
+        "h": 26,
+        "hitW": 32,
+        "hitH": 26
+      },
+      {
+        "selector": "button.tfl-edit-prio-btn",
+        "w": 32,
+        "h": 26,
+        "hitW": 32,
+        "hitH": 26
+      },
+      {
+        "selector": "button.nb-toggle",
+        "w": 51,
+        "h": 31,
+        "hitW": 51,
+        "hitH": 46
+      },
+      {
+        "selector": "button.tfl-topmenu-btn.g2-fab",
+        "w": 48,
+        "h": 48,
+        "hitW": 48,
+        "hitH": 48
+      }
+    ]
+  }
+}
