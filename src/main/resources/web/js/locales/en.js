@@ -994,19 +994,15 @@ export default {
   // text (flips with the collapsed state).
   'subagents.collapseGroup': 'Collapse subtasks',
   'subagents.expandGroup': 'Expand subtasks',
-  // Flow-session visibility batch (2026-11-01): kind chips for dispatcher-*/
-  // node-* rows (the engine protocol kind is uniformly "Flow" — display words
-  // are resolved per session-id prefix) + the continuation badge for a
-  // terminal delegate whose chain is still running (amber word + workflow
-  // icon; tooltip carries the live session count).
-  'subagents.kindDispatcher': 'Dispatcher',
-  'subagents.kindNode': 'Node',
-  // Term layering batch (2026-11-05, author order): agentflow = the name of the
-  // whole organised behaviour (one orchestration = one agentflow) and the ONE
-  // identity word of an overall row (delegate group head / synthesized
-  // continuation head); the members inside it are nodes (subagents.kindNode
-  // family). Same word face in both locales.
-  'subagents.kindAgentflow': 'AgentFlow',
+  // Term-unification batch (2026-11-06, author order "统一 根据英文"): the kind
+  // chip word family is RETIRED — subagents.kindDispatcher / kindNode /
+  // kindAgentflow are deleted. Identity/type badge words are author terms and
+  // are not localised; single source = js/termWords.js (BADGE_WORDS). A locale
+  // entry per language is exactly the second word table this batch removes
+  // (that is how zh-CN ended up with its own translations). Gate:
+  // scripts/check-badge-words.mjs.
+  // Kept: the continuation badge for a terminal delegate whose chain is still
+  // running (amber word + workflow icon; tooltip carries the live session count).
   'subagents.chainRunning': 'Chain running',
   'subagents.chainRunningTip': 'Delegate delivered, chain still running · {n} session(s)',
   // Task attribution badge (2026-09-27 taskbadge batch): hover tooltip of the
@@ -2397,10 +2393,11 @@ export default {
   'todo.edit': 'Edit',
   // Task-mode badge batch (2026-10-30 author order "show dispatch execution mode"):
   // delegate/node tasks carry their execution-mode badge — kernel vs dispatcher.
-  // task.mode.* consumers: task cards (taskList row badge) + bg-panel row mode chip
-  // (bgAgents group-head badge word uses the raw data word, not i18n).
-  'task.mode.kernel': 'Kernel',
-  'task.mode.dispatcher': 'Dispatcher',
+  // Task mode badge batch (2026-10-30) + term-unification batch (2026-11-06):
+  // the mode chip word no longer comes from a locale key — task.mode.kernel /
+  // task.mode.dispatcher are deleted; single source = js/termWords.js
+  // (kernel / dispatcher verbatim, same string in every language face).
+  // Visual classes still keyed on the data value (.bg-mode-kernel / -dispatcher).
   // Base-drift state slot (`[base-moved]` noise-reduction batch 2026-11-05): how many
   // times the base branch advanced since this task was dispatched — a STATE FACT only
   // ("base moved" belongs on the panel, not in the message stream). No mechanism talk.

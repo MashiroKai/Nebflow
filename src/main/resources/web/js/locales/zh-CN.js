@@ -952,15 +952,12 @@ export default {
   // 面板层级批（2026-10-31 ①）：组头折叠 caret 的无障碍/悬停文案（随折叠态翻转）。
   'subagents.collapseGroup': '收起子任务',
   'subagents.expandGroup': '展开子任务',
-  // Flow 会话可见性批（2026-11-01）：dispatcher-*/node-* 行 kind 徽标（引擎协议
-  // kind 一律 "Flow" 无区分度——显示词按前缀单点判读）＋ delegate 已终态而链仍在
-  // 跑的延续态徽标（琥珀词 + workflow 图标；tooltip 带链会话数）。
-  'subagents.kindDispatcher': '分发器',
-  'subagents.kindNode': '节点',
-  // 术语分层批（2026-11-05 作者令）：agentflow = 整个组织行为的代称（一次编排 =
-  // 一个 agentflow），只作**整体行**（delegate 组头 / 合成延续组头）的身份词；
-  // 该编排里的成员是节点（词走 subagents.kindNode 族）。zh/en 同词面。
-  'subagents.kindAgentflow': 'AgentFlow',
+  // 术语统一批（2026-11-06 作者令逐字「统一 根据英文」）：kind 徽标词**整族退役**
+  // ——subagents.kindDispatcher / kindNode / kindAgentflow 三键随本批删除。身份/类型
+  // 徽标词面（kernel / dispatcher / node / subagent / delegate / AgentFlow）是作者
+  // 术语、不本地化，单源 = js/termWords.js（BADGE_WORDS）；放语言包等于给同一概念
+  // 造第二张词表（中文面「分发器 / 节点」就是这么来的）。判据 = scripts/check-badge-words.mjs。
+  // 保留：delegate 已终态而链仍在跑的延续态徽标（琥珀词 + workflow 图标）。
   'subagents.chainRunning': '链运行中',
   'subagents.chainRunningTip': '委托已交付，链仍在运行 · {n} 个会话',
   // 面板行说明批（2026-10-29 ②）：任务摘要次行无文案键（原文上屏）。
@@ -2317,12 +2314,11 @@ export default {
   'todo.filterUngrouped': '未分组',
   'todo.projectPlaceholder': '项目（可选）',
   'todo.edit': '编辑',
-  // 任务模式标注批（2026-10-30 作者令「派发任务显示执行模式」）：
-  // 派发任务（delegate/节点）的执行形态徽标——极简内核（kernel）/ 分发器（dispatcher）。
-  // task.mode.* 三处消费：任务卡（taskList 行内徽标）+ 后台任务面板行 mode chip +
-  // 面板组头徽标词（bgAgents 用原始数据词，不经 i18n）。
-  'task.mode.kernel': '内核',
-  'task.mode.dispatcher': '分发器',
+  // 任务模式标注批（2026-10-30 作者令「派发任务显示执行模式」）+ 术语统一批
+  // （2026-11-06 作者令「统一 根据英文」）：执行形态徽标的词面**不再走 locale**——
+  // task.mode.kernel / task.mode.dispatcher 两键随本批删除，词面单源 =
+  // js/termWords.js（kernel / dispatcher 逐字英文，中文面同串）。
+  // 视觉类名仍由数据值给（.bg-mode-kernel / .bg-mode-dispatcher）。
   // base 漂移状态位（`[base-moved]` 降噪重写批 2026-11-05）：基分支自本任务派发以来
   // 前进的次数——**只陈述状态事实**（作者令「base 动了放面板可见即可，不进消息流」），
   // 不解释机制、不给建议。

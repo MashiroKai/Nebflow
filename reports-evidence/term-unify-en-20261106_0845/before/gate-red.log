@@ -1,0 +1,24 @@
+check-badge-words: 身份/类型徽标词单源门禁（A 单源 / B 槽零字面量 / C 生产者收敛 / D 译名退役 / E 概念单面）
+  单源 = src/main/resources/web/js/termWords.js → {"kernel":"kernel","dispatcher":"dispatcher","node":"node","subagent":"subagent","delegate":"delegate","agentflow":"AgentFlow"}
+  ❌ [A1] src/main/resources/web/js/termWords.js — 徽标词单源模块缺失：js/termWords.js 必须存在（徽标词只从这里取）
+  ❌ [C1] src/main/resources/web/js/main/bgAgents.js — bgDelegateBadgeWord() 未从单源取词（缺 badgeWord()/badgeFaceOfKind() 调用）
+  ❌ [C1] src/main/resources/web/js/main/bgAgents.js — bgAgentflowWord() 未从单源取词（缺 badgeWord()/badgeFaceOfKind() 调用）
+  ❌ [C1] src/main/resources/web/js/main/bgAgents.js — bgMemberKindWord() 未从单源取词（缺 badgeWord()/badgeFaceOfKind() 调用）
+  ❌ [C3] src/main/resources/web/js/taskList.js — 本文件渲染徽标槽但未从单源取词（无 badgeWord()/badgeFaceOfKind()）
+  ❌ [C3] src/main/resources/web/js/main.js — 本文件渲染徽标槽但未从单源取词（无 badgeWord()/badgeFaceOfKind()）
+  ❌ [C3] src/main/resources/web/js/main/bgAgents.js — 本文件渲染徽标槽但未从单源取词（无 badgeWord()/badgeFaceOfKind()）
+  ❌ [D1] src/main/resources/web/js/locales/zh-CN.js:958 — 退役键族仍在场（徽标词不再走 locale：task.mode.* / subagents.kind*）
+  ❌ [D2] src/main/resources/web/js/locales/zh-CN.js:958 — 徽标键 subagents.kindDispatcher 把词译成了「分发器」（徽标词面 = 英文原词）
+  ❌ [D1] src/main/resources/web/js/locales/zh-CN.js:959 — 退役键族仍在场（徽标词不再走 locale：task.mode.* / subagents.kind*）
+  ❌ [D2] src/main/resources/web/js/locales/zh-CN.js:959 — 徽标键 subagents.kindNode 把词译成了「节点」（徽标词面 = 英文原词）
+  ❌ [D1] src/main/resources/web/js/locales/zh-CN.js:963 — 退役键族仍在场（徽标词不再走 locale：task.mode.* / subagents.kind*）
+  ❌ [D1] src/main/resources/web/js/locales/zh-CN.js:2324 — 退役键族仍在场（徽标词不再走 locale：task.mode.* / subagents.kind*）
+  ❌ [D2] src/main/resources/web/js/locales/zh-CN.js:2324 — 徽标键 task.mode.kernel 把词译成了「内核」（徽标词面 = 英文原词）
+  ❌ [D1] src/main/resources/web/js/locales/zh-CN.js:2325 — 退役键族仍在场（徽标词不再走 locale：task.mode.* / subagents.kind*）
+  ❌ [D2] src/main/resources/web/js/locales/zh-CN.js:2325 — 徽标键 task.mode.dispatcher 把词译成了「分发器」（徽标词面 = 英文原词）
+  ❌ [D1] src/main/resources/web/js/locales/en.js:1002 — 退役键族仍在场（徽标词不再走 locale：task.mode.* / subagents.kind*）
+  ❌ [D1] src/main/resources/web/js/locales/en.js:1003 — 退役键族仍在场（徽标词不再走 locale：task.mode.* / subagents.kind*）
+  ❌ [D1] src/main/resources/web/js/locales/en.js:1009 — 退役键族仍在场（徽标词不再走 locale：task.mode.* / subagents.kind*）
+  ❌ [D1] src/main/resources/web/js/locales/en.js:2402 — 退役键族仍在场（徽标词不再走 locale：task.mode.* / subagents.kind*）
+  ❌ [D1] src/main/resources/web/js/locales/en.js:2403 — 退役键族仍在场（徽标词不再走 locale：task.mode.* / subagents.kind*）
+  21 条违规

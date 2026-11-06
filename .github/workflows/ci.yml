@@ -129,6 +129,17 @@ jobs:
         # step / tooltip fact). Only shrinks; a new locale file tolerates zero.
         # Same logic locally: node scripts/check-self-explaining.mjs (or `make frontend-gates`)
         run: node scripts/check-self-explaining.mjs
+      - name: Badge words single source (identity/type words = English, one table)
+        # Term-unification batch 2026-11-06 (author order verbatim: "统一 根据英文").
+        # Identity/type badge words (kernel / dispatcher / node / subagent /
+        # delegate / AgentFlow) must come from ONE table = js/termWords.js: no
+        # badge slot may hard-code a face, no locale pack may translate it
+        # (task.mode.* / subagents.kind* families are retired - that is how the
+        # zh face ended up with its own 内核/分发器/节点 words), and one concept
+        # may not have two faces. Narrative copy is out of scope by design (the
+        # boundary is documented in the script header).
+        # Same logic locally: node scripts/check-badge-words.mjs (or `make frontend-gates`)
+        run: node scripts/check-badge-words.mjs
       - name: API route existence (frontend calls x gateway route registry)
         # Route-existence sentinel (empty-state-must-not-lie batch, 2026-11-05, item 3).
         # The 2026-11-05 incident: the `GET /api/conversations` route case was deleted
