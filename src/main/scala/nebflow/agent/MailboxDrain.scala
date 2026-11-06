@@ -191,6 +191,92 @@ private[agent] object MailboxDrain:
       case None => IO.unit
     )
 
+  /** Presentation-only terminal digest. Original events still feed the model,
+    * barrier accounting and mailbox unlink; panel/ledger detail is never coalesced.
+    * File state (no process cache) mirrors frozen-waiting announce suppression.
+    */
+  def terminalNotifications(
+    events: List[AgentCommand.ExternalEvent],
+    ledger: os.Path
+  ): IO[List[AgentCommand.ExternalEvent]] = IO.blocking {
+    def terminal(e: AgentCommand.ExternalEvent): Boolean =
+      e.source == "delegate" && Set("completed", "failed", "cancelled", "crashed").contains(e.eventType)
+    def str(e: AgentCommand.ExternalEvent, key: String): Option[String] =
+      e.metadata(key).flatMap(_.asString).filter(_.nonEmpty)
+    def safeSeg(id: String): String =
+      val cleaned = id.map(c => if c.isLetterOrDigit || c == '-' || c == '.' || c == '_' then c else '_')
+      if cleaned.nonEmpty then cleaned.take(120) else "anon"
+    def family(e: AgentCommand.ExternalEvent): String = e.eventType
+    def member(e: AgentCommand.ExternalEvent): String =
+      str(e, "taskId").orElse(str(e, "failedSessionId")).orElse(e.correlationId).getOrElse(e.payload)
+    val terminals = events.filter(terminal)
+    if terminals.isEmpty then events
+    else
+      val previous: Map[String, List[String]] =
+        if !os.exists(ledger) then Map.empty
+        else
+          io.circe.parser.parse(os.read(ledger)).toOption
+            .flatMap(_.hcursor.get[Map[String, List[String]]]("families").toOption)
+            .getOrElse(Map.empty)
+      val currentMembers =
+        terminals.groupBy(family).view.mapValues(_.map(member).distinct.sorted).toMap
+      // Delta semantics: a member announces exactly once ever (one-shot fact).
+      // Crash-window replays and boot sweeps of already-announced members stay
+      // silent; the ledger accumulates announced members across restarts.
+      val delta = currentMembers.map { case (fam, ids) =>
+        fam -> ids.filterNot(previous.getOrElse(fam, Nil).contains)
+      }
+      val deltaMembers = delta.filter(_._2.nonEmpty)
+      val announce = terminals.filter(e =>
+        deltaMembers.get(family(e)).exists(_.contains(member(e))))
+      val output =
+        if announce.isEmpty then events.filterNot(terminal)
+        else
+          val unique = announce.distinctBy(e => (family(e), member(e)))
+          val merged =
+            if unique.size == 1 then unique.head
+            else
+              val counts = unique.groupBy(_.eventType).toList.sortBy(_._1)
+                .map((status, rows) => s"${status.toUpperCase}: ${rows.size}").mkString(" · ")
+              val details = unique.map(e => s"### ${e.eventType.toUpperCase} · ${member(e)}\n${e.payload}").mkString("\n\n")
+              val base = unique.find(e => Set("failed", "crashed").contains(e.eventType)).getOrElse(unique.head)
+              base.copy(
+                payload = s"Delegate terminal notifications · ${unique.size} ($counts)\n\n$details",
+                metadata = base.metadata.remove("fileChanges").add("terminalCount", unique.size.asJson),
+                correlationId = None
+              )
+          val first = events.indexWhere(terminal)
+          events.zipWithIndex.flatMap { case (e, i) =>
+            if i == first then List(merged) else if terminal(e) then Nil else List(e)
+          }
+      val nextLedger = (previous.keySet ++ currentMembers.keySet).iterator.map { fam =>
+        fam -> (previous.getOrElse(fam, Nil) ++ currentMembers.getOrElse(fam, Nil)).distinct.sorted
+      }.toMap
+      os.makeDir.all(ledger / os.up)
+      nebflow.core.AtomicJson.writeSync(ledger,
+        io.circe.Json.obj("v" -> 1.asJson, "families" -> nextLedger.asJson).noSpaces)
+      output
+  }.handleErrorWith { error =>
+    logger.warn(s"terminal notification ledger unavailable: ${error.getMessage}").as(events)
+  }
+
+  private def safeSessionSegment(sid: String): String =
+    val cleaned = sid.map(c => if c.isLetterOrDigit || c == '-' || c == '.' || c == '_' then c else '_')
+    if cleaned.nonEmpty then cleaned.take(120) else "anon"
+
+  private def terminalLedger(sid: String): os.Path =
+    nebflow.shared.PathUtil.dataRoot / "sessions" / safeSessionSegment(sid) / "delegate-terminal-announce.json"
+
+  /** All mailbox wake points use this presentation face; raw delivery remains intact. */
+  def notifyBatch(
+    resources: SharedResources,
+    state: AgentState,
+    events: List[AgentCommand.ExternalEvent],
+    depth: Int
+  )(using ActorContext[AgentCommand]): IO[Unit] =
+    terminalNotifications(events, terminalLedger(state.sessionId.getOrElse("anon")))
+      .flatMap(_.traverse_(e => visibility(resources, state, e, depth, waitingForBatch = false)))
+
   /** 子代理屏障会计：取走集占用的槽数（恰一次——只在取走拍减）。 */
   def takenSubagentSlots(events: List[AgentCommand.ExternalEvent]): Int =
     events.count(isSubagentEvent)
@@ -240,7 +326,7 @@ private[agent] object MailboxDrain:
       continuationReplyTo.flatMap { contReplyTo =>
           for
             _ <- if depth == 0 then sid.fold(IO.unit)(s => emitSessionBusy(baseState.wsSend, s, busy = true)) else IO.unit
-            _ <- events.traverse_(e => visibility(resources, baseState, e, depth, waitingForBatch = false))
+            _ <- notifyBatch(resources, baseState, events, depth)
             _ <- touchBarrierSnapshot(resources, sid, newOutstanding, 0)
             _ <- unlinkConsumed(sid.getOrElse(""), events)
             result <- pipeLlmCall(
@@ -320,7 +406,7 @@ private[agent] object MailboxDrain:
             )
           )
         )
-        _ <- events.traverse_(e => visibility(resources, state, e, depth, waitingForBatch = false))
+        _ <- notifyBatch(resources, state, events, depth)
         _ <- unlinkConsumed(sid, events)
         takenSub = takenSubagentSlots(events)
       yield

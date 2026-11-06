@@ -1072,7 +1072,15 @@ button.fm-req-decline:focus-visible {
    两者等效上限都是「消息列宽的 80%」，且泡本体永远吃满行壳（内容自适应）。
    80% 的**值的家** = design-system.css `--ds-bubble-max-w`（与主会话同 token）
    —— 会话窗不再从 `--msg-bubble-max-w`（78%，现仅 dropbox 面消费）取数。 */
-.fm-msg { max-width: var(--ds-bubble-max-w); }
+/* Row-shell direction was accidentally removed from sapphire.css by the
+   four-thread unification. Shared bubble styling does not replace row layout. */
+.fm-msg {
+  display: flex;
+  flex-direction: column;
+  max-width: var(--ds-bubble-max-w);
+}
+.fm-msg.out { align-self: flex-end; align-items: flex-end; }
+.fm-msg.in { align-self: flex-start; align-items: flex-start; }
 .fm-msg > .bubble { max-width: 100%; }
 
 /* ── 跨天居中日期行（日期行上移批 2026-11-06 作者令②）─────────────────────────

@@ -1,0 +1,128 @@
+[
+  {
+    "theme": "light",
+    "reading": {
+      "bar": {
+        "background-color": "rgba(255, 255, 255, 0.97)",
+        "backdrop-filter": "blur(24px) saturate(1.15)",
+        "border-radius": "20px",
+        "border-color": "rgb(27, 30, 38)",
+        "box-shadow": "none",
+        "padding": "6px 12px"
+      },
+      "wrap": {
+        "background-color": "rgba(0, 0, 0, 0)",
+        "border": "0px none rgb(27, 30, 38)",
+        "border-radius": "0px",
+        "box-shadow": "none"
+      },
+      "input": {
+        "background-color": "rgba(0, 0, 0, 0)",
+        "border-radius": "0px",
+        "font-size": "14.5px",
+        "padding": "6px 14px"
+      },
+      "send": {
+        "background-color": "rgb(7, 193, 96)",
+        "width": "36px",
+        "height": "36px",
+        "border-radius": "50%"
+      },
+      "rects": {
+        "bar": {
+          "x": 310,
+          "y": 814,
+          "width": 548,
+          "height": 76
+        },
+        "wrap": {
+          "x": 394,
+          "y": 835.84375,
+          "width": 364,
+          "height": 32.296875
+        },
+        "area": {
+          "x": 310,
+          "y": 814,
+          "width": 548,
+          "height": 76
+        },
+        "input": {
+          "x": 394,
+          "y": 835.84375,
+          "width": 364,
+          "height": 32.296875
+        }
+      },
+      "focusState": {
+        "outline": "none",
+        "outlineWidth": "3px",
+        "boxShadow": "none",
+        "borderColor": "rgb(27, 30, 38)"
+      }
+    }
+  },
+  {
+    "theme": "dark",
+    "reading": {
+      "bar": {
+        "background-color": "rgba(24, 28, 38, 0.94)",
+        "backdrop-filter": "blur(24px) saturate(1.15)",
+        "border-radius": "20px",
+        "border-color": "rgb(232, 234, 237)",
+        "box-shadow": "rgba(255, 255, 255, 0.04) 0px 1px 0px 0px inset, rgba(0, 0, 0, 0.2) 0px 2px 8px 0px, rgba(0, 0, 0, 0.35) 0px 8px 24px 0px",
+        "padding": "6px 12px"
+      },
+      "wrap": {
+        "background-color": "rgba(0, 0, 0, 0)",
+        "border": "0px none rgb(232, 234, 237)",
+        "border-radius": "0px",
+        "box-shadow": "none"
+      },
+      "input": {
+        "background-color": "rgba(0, 0, 0, 0)",
+        "border-radius": "0px",
+        "font-size": "14.5px",
+        "padding": "6px 14px"
+      },
+      "send": {
+        "background-color": "rgb(7, 193, 96)",
+        "width": "36px",
+        "height": "36px",
+        "border-radius": "50%"
+      },
+      "rects": {
+        "bar": {
+          "x": 310,
+          "y": 814,
+          "width": 548,
+          "height": 76
+        },
+        "wrap": {
+          "x": 394,
+          "y": 835.84375,
+          "width": 364,
+          "height": 32.296875
+        },
+        "area": {
+          "x": 310,
+          "y": 814,
+          "width": 548,
+          "height": 76
+        },
+        "input": {
+          "x": 394,
+          "y": 835.84375,
+          "width": 364,
+          "height": 32.296875
+        }
+      },
+      "focusState": {
+        "outline": "none",
+        "outlineWidth": "3px",
+        "boxShadow": "none",
+        "borderColor": "rgb(224, 226, 229)"
+      }
+    }
+  }
+]

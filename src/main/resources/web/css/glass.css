@@ -311,12 +311,14 @@ html[data-theme="light"] {
    本块之外任何文件给气泡面写背景色 = 违规（门禁 R2/R3）。 */
 .bubble { background: var(--nf-bub-ours-bg); }
 .bubble.theirs { background: var(--nf-bub-theirs-bg); }
-/* 旧角色类名 → 归属方：`peer` = 对方（会话窗入向）；`user`/`ai`/`injected`
-   一律我方（`.ai` = 我方 Agent 回复、`.injected` = 工具/delegate/节点/后台
-   任务注入，两者都代表本机账号发出 ⇒ 绿）。 */
+/* 旧角色类名 → 归属方：`peer` = 对方（会话窗入向）；`user`/`ai` 一律我方
+   （`.ai` = 我方 Agent 回复 ⇒ 绿）。`.injected` 注入行是**通知面**不是「我发
+   出去的话」——作者 2026-11-06 20:09 令（终态通知 FAILED 也绿=成功色，语义即错）
+   回归改前 sapphire tint（原值原样，非第三种对话底色；门禁 carve 在
+   check-bubble-side.mjs R2 精确点名该选择器）。 */
 .bubble.user,
-.bubble.ai,
-.bubble.injected { background: var(--nf-bub-ours-bg); }
+.bubble.ai { background: var(--nf-bub-ours-bg); }
+.bubble.injected { background: rgb(var(--sapphire) / 0.12); }
 .bubble.peer { background: var(--nf-bub-theirs-bg); }
 /* dropbox 面（自有类族，未挂 .bubble）：同一判据的镜像——`.out` = 我方。 */
 .dropbox-msg .dropbox-msg-bubble { background: var(--nf-bub-ours-bg); }
@@ -376,11 +378,14 @@ html[data-theme="light"] {
 }
 
 /* 主会话输入框（基准件 C 原配方回归 = v2 改皮撤销，设计稿 D10；几何/状态
-   过渡留在 input.css，frozen/disconnected/voice 高特异态不受影响） */
+   过渡留在 input.css，frozen/disconnected/voice 高特异态不受影响）
+   2026-11-06 20:12 作者令「主会话输入框的样式也变了，之前的就很好了」⇒ 基准件
+   回归 recalibrate 前原配方（--nf-glass-input-*，stand-tokens.css 单源）；全局
+   玻璃档（--nf-glass-*/--glass-bg）不动 —— 基准件是参照物本身，不随全局档走。 */
 #input-bar {
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: var(--nf-glass-filter);
-  backdrop-filter: var(--nf-glass-filter);
+  background: var(--nf-glass-input-bg);
+  -webkit-backdrop-filter: var(--nf-glass-input-filter);
+  backdrop-filter: var(--nf-glass-input-filter);
   border: 1px solid var(--glass-border);
   box-shadow: var(--cv-shadow);
 }
@@ -401,11 +406,11 @@ html[data-theme="light"] {
   border-radius: inherit;
 }
 
-/* 队列条（镜像 #input-bar 材质；几何在 input.css） */
+/* 队列条（镜像 #input-bar 材质——含基准件原配方档；几何在 input.css） */
 #queue-bar.visible {
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: var(--nf-glass-filter);
-  backdrop-filter: var(--nf-glass-filter);
+  background: var(--nf-glass-input-bg);
+  -webkit-backdrop-filter: var(--nf-glass-input-filter);
+  backdrop-filter: var(--nf-glass-input-filter);
   border: 1px solid var(--glass-border);
   box-shadow: var(--cv-shadow);
 }
@@ -914,8 +919,6 @@ body.mobile-layer #g2-edge-fade {
   /* 渐隐带降级档随 doc-ask-fade 批收编到 design-system.css `.ds-edge-fade`
      （@supports / html.no-backdrop 两处），此处不再单列 —— 防双源漂移。 */
 }
-html.no-backdrop #input-bar,
-html.no-backdrop #queue-bar.visible,
 html.no-backdrop #modal-box,
 html.no-backdrop #delete-box,
 html.no-backdrop #conflict-box,
@@ -946,5 +949,23 @@ html.no-backdrop body.mobile-layer .mh-idhead-name,html.no-backdrop body.mobile-
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
   background: var(--glass-bg);
+}
+/* The composer is the glass reference face; degraded engines lose blur but retain
+   its original near-opaque base instead of reverting it to the translucent global
+   overlay token. */
+html.no-backdrop #input-bar,
+html.no-backdrop #queue-bar.visible {
+  background: var(--nf-glass-input-bg);
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+/* The composer is the baseline face, not a consumer of the translucent global
+   fallback. Keep its reference material after grouped modal fallbacks in both
+   supporting and degraded engines (unsupported backdrop-filter is ignored). */
+#input-bar,
+#queue-bar.visible {
+  background: var(--nf-glass-input-bg);
+  -webkit-backdrop-filter: var(--nf-glass-input-filter);
+  backdrop-filter: var(--nf-glass-input-filter);
 }
 /* 渐隐带降级档：见上一条 @supports 块同注（收编到 .ds-edge-fade 单源）。 */

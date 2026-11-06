@@ -387,6 +387,14 @@ html[data-theme="dark"] {
  *        （内容残留/色彩承接两个方向同时被稀释）。
  * ══════════════════════════════════════════════════════════════════════════ */
 :root {
+  /* ── 输入基准件（主会话 #input-bar / #queue-bar）专属配方 ─────────────────
+     作者 2026-11-06 20:12 令「主会话输入框的样式也变了，之前的就很好了」：
+     recalibrate（11-05 19:33）把全局玻璃重定标为 40px/1.4 时，作为参照物的
+     基准件自身也被换档（#ffffffF7 → #ffffff8C、blur 24 → 40、saturate 1.15 → 1.4）。
+     本组 = recalibrate 前基准件原配方逐值恢复，只服务输入基准件两块
+     （glass.css #input-bar / #queue-bar.visible），全局 --nf-glass-* 档不动。 */
+  --nf-glass-input-bg: #ffffffF7;            /* 原配方亮档 α=.968（近实底白） */
+  --nf-glass-input-filter: blur(24px) saturate(1.15); /* 原配方唯一模糊配方 */
   --nf-glass-bg: #ffffff8C;          /* 唯一玻璃底（亮档）α=.549 = 参照物 rgba(255,255,255,.55) */
   --nf-glass-bg-hover: #ffffff9E;    /* hover 升一档 α=.620（只提不透、不改形态） */
   --nf-glass-blur: 40px;                             /* 唯一模糊半径（内容残留腰斩点） */
@@ -408,6 +416,7 @@ html[data-theme="dark"] {
 }
 
 html[data-theme="dark"] {
+  --nf-glass-input-bg: #181c26F0;            /* 原配方暗档 α=.941（近实底深） */
   --nf-glass-bg: #181c26AD;          /* 暗档 α=.678 = 参照物 rgba(24,28,38,.68) */
   --nf-glass-bg-hover: #181c26B8;    /* 暗档 hover α=.722 */
   --nf-glass-border-color: #ffffff0F;      /* 参照物暗档细边 rgba(255,255,255,.06) */
@@ -416,6 +425,7 @@ html[data-theme="dark"] {
 }
 @media (prefers-color-scheme: dark) {
   html:not([data-theme="light"]):not([data-theme="dark"]) {
+    --nf-glass-input-bg: #181c26F0;
     --nf-glass-bg: #181c26AD;
     --nf-glass-bg-hover: #181c26B8;
     --nf-glass-border-color: #ffffff0F;
@@ -424,6 +434,7 @@ html[data-theme="dark"] {
   }
 }
 html[data-theme="light"] {
+  --nf-glass-input-bg: #ffffffF7;
   --nf-glass-bg: #ffffff8C;
   --nf-glass-bg-hover: #ffffff9E;
   --nf-glass-border-color: #ffffff59;

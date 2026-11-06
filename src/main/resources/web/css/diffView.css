@@ -377,6 +377,12 @@
   letter-spacing: 0.04em;
   color: var(--color-text-muted);
 }
+/* Terminal notification verdicts use existing semantic colors, never success
+   styling for a failed result. Text remains the non-color status channel. */
+.nf-rcpt-badge[data-verdict='failed'],
+.nf-rcpt-badge[data-verdict='crashed'] { color: var(--status-error-icon); }
+.nf-rcpt-badge[data-verdict='completed'],
+.nf-rcpt-badge[data-verdict='merged'] { color: var(--status-success-icon); }
 /* 单行字面「|」分隔段（只在 diff 统计块在场时出现）：块间「|」相邻分隔（版式批
    ②——22:29 批的 margin-left:auto 右缘贴卡口径退役）。aria-hidden——纯视觉分隔，
    可及名零感知。 */
