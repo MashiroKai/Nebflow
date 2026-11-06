@@ -960,7 +960,7 @@ function bgRowOrderCmp(a, b) {
  * 不是该组内的层）。
  *
  * 面板三代层级批（2026-11-06 · 作者令「root → dispatcher → node 三级真缩进——每一层
- * 都是上一层的缩进」）：顶层行（leftover——dispatcher-*/node-* 等 flow 行的主脸）参与
+ * 都是上一层的缩进」）：顶层行（leftover——dispatcher-、node- 等 flow 行的主脸）参与
  * 父链接，父键装配单点 = `bgTreeParentKeyOf`（白名单 + deps 显式判定，见其注释）。
  * **属主边（parentSessionId 来的父子）不受同组约束限制，跨组照挂**：顶层行的父锚可以
  * 是 root 锚（属主=桶根——锚无组）、另一条顶层行（dispatcher → node）、合成延续组头
