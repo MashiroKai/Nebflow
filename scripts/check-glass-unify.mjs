@@ -257,14 +257,21 @@ for (const f of readdirSync(CSS_DIR).filter((x) => x.endsWith('.css')).sort()) {
         continue;
       }
       if (!ALLOWED_FILTER_VALUES.has(value)) {
-        add({
-          rule: 'G2',
-          file: rel(path),
-          line: d.line,
-          selector: rule.selector,
-          detail: `${d.prop}: ${value}`,
-          why: '配方走样：唯一合法值是 var(--nf-glass-filter)',
-        });
+        // 基准件 carve（作者 2026-11-06 20:12 令「主会话输入框…之前的就很好了」）：
+        // #input-bar / #queue-bar.visible 消费 recalibrate 前原配方
+        // var(--nf-glass-input-filter)（blur 24px / saturate 1.15，stand-tokens.css
+        // 单源定义）。仅此两选择器合法；其他面出现即仍按 G2 判红。
+        const composerFace = /#input-bar|#queue-bar/.test(rule.selector);
+        if (!(composerFace && value === 'var(--nf-glass-input-filter)')) {
+          add({
+            rule: 'G2',
+            file: rel(path),
+            line: d.line,
+            selector: rule.selector,
+            detail: `${d.prop}: ${value}`,
+            why: '配方走样：唯一合法值是 var(--nf-glass-filter)（基准件两选择器可用原配方 var(--nf-glass-input-filter)）',
+          });
+        }
       }
     }
   }

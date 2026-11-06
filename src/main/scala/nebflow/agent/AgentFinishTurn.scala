@@ -597,24 +597,7 @@ private[agent] object AgentFinishTurn:
         // P2 邮箱化：邮箱件消费完成清除（taken → unlink =「已投递」物理事实，幂等）
         // + 气泡面（邮箱件没有 arrive 时点，注入点即可见面——与 W2a 同点）。
         _ <- MailboxDrain.unlinkConsumed(state.sessionId.getOrElse(""), mailboxTaken)
-        _ <- mailboxTaken.traverse_(e =>
-          AgentActor.visibleExternalEventSource(e.source, e.eventType) match
-            case Some(src) =>
-              AgentActor.emitInjectedUserEvent(
-                resources,
-                state.wsSend,
-                state.sessionId,
-                e.payload,
-                src,
-                Some(e.eventType),
-                e.metadata("agentName").flatMap(_.asString),
-                fileChanges = e.metadata("fileChanges"),
-                sessionProject = state.projectName,
-                // 外部注入统一通道批（2026-11-05）：外部事件气泡的呈现级去重。
-                dedup = true
-              )
-            case None => IO.unit
-        )
+        _ <- MailboxDrain.notifyBatch(resources, state, mailboxTaken, depth)
         // 台账对账 + 徽标帧（平台修复批 fix 1/3）：drainBarrier 投递面——已投递回执
         // 出账、余件保簿记；held 计数下降随行。
         _ <- syncHeldReceipts(resources, state.sessionId, remainingEvents).flatMap((h, u) =>

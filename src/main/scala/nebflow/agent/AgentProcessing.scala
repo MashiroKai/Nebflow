@@ -1027,24 +1027,7 @@ private[agent] object AgentProcessing:
                   // P2 邮箱化：邮箱件消费完成清除（taken → unlink =「已投递」物理事实；
                   // 幂等）；气泡面与既有 drainedEvents 同点补发（邮箱件没有 arrive 时点）。
                   _ <- MailboxDrain.unlinkConsumed(state.sessionId.getOrElse(""), mailboxTaken)
-                  _ <- mailboxTaken.traverse_(e =>
-                    visibleExternalEventSource(e.source, e.eventType) match
-                      case Some(src) =>
-                        emitInjectedUserEvent(
-                          resources,
-                          state.wsSend,
-                          state.sessionId,
-                          e.payload,
-                          src,
-                          Some(e.eventType),
-                          e.metadata("agentName").flatMap(_.asString),
-                          fileChanges = e.metadata("fileChanges"),
-                          sessionProject = state.projectName,
-                          // 外部注入统一通道批（2026-11-05）：外部事件气泡的呈现级去重。
-                          dedup = true
-                        )
-                      case None => IO.unit
-                  )
+                  _ <- MailboxDrain.notifyBatch(resources, state, mailboxTaken, depth)
               result <- pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, tc.replyTo)
             yield result
         end match

@@ -604,6 +604,7 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
       pill.appendChild(document.createTextNode(' · '));
       const badge = document.createElement('span');
       badge.className = 'nf-rcpt-badge';
+      badge.dataset.verdict = verdict.toLowerCase();
       badge.textContent = verdict;
       pill.appendChild(badge);
     }

@@ -1,0 +1,150 @@
+[
+  {
+    "theme": "light",
+    "width": 1440,
+    "checks": {
+      "notificationBaseline": true,
+      "verdictSemantics": true,
+      "sentRightReceivedLeft": true,
+      "receivedNotGreen": true
+    },
+    "reading": {
+      "notificationBg": [
+        "rgba(91, 127, 191, 0.12)",
+        "rgba(91, 127, 191, 0.12)"
+      ],
+      "expectedBg": "rgba(91, 127, 191, 0.12)",
+      "verdictColors": [
+        "rgb(214, 69, 69)",
+        "rgb(46, 125, 50)"
+      ],
+      "expectedVerdicts": [
+        "rgb(214, 69, 69)",
+        "rgb(46, 125, 50)"
+      ],
+      "out": {
+        "left": 735.890625,
+        "right": 858
+      },
+      "incoming": {
+        "left": 310,
+        "right": 464.375
+      },
+      "messageColors": [
+        "color(srgb 0.584314 0.92549 0.411765 / 0.97)",
+        "color(srgb 1 1 1 / 0.97)"
+      ]
+    }
+  },
+  {
+    "theme": "light",
+    "width": 375,
+    "checks": {
+      "notificationBaseline": true,
+      "verdictSemantics": true,
+      "sentRightReceivedLeft": true,
+      "receivedNotGreen": true
+    },
+    "reading": {
+      "notificationBg": [
+        "rgba(91, 127, 191, 0.12)",
+        "rgba(91, 127, 191, 0.12)"
+      ],
+      "expectedBg": "rgba(91, 127, 191, 0.12)",
+      "verdictColors": [
+        "rgb(214, 69, 69)",
+        "rgb(46, 125, 50)"
+      ],
+      "expectedVerdicts": [
+        "rgb(214, 69, 69)",
+        "rgb(46, 125, 50)"
+      ],
+      "out": {
+        "left": 223.171875,
+        "right": 359
+      },
+      "incoming": {
+        "left": 16,
+        "right": 188.5
+      },
+      "messageColors": [
+        "color(srgb 0.584314 0.92549 0.411765 / 0.97)",
+        "color(srgb 1 1 1 / 0.97)"
+      ]
+    }
+  },
+  {
+    "theme": "dark",
+    "width": 1440,
+    "checks": {
+      "notificationBaseline": true,
+      "verdictSemantics": true,
+      "sentRightReceivedLeft": true,
+      "receivedNotGreen": true
+    },
+    "reading": {
+      "notificationBg": [
+        "rgba(91, 127, 191, 0.12)",
+        "rgba(91, 127, 191, 0.12)"
+      ],
+      "expectedBg": "rgba(91, 127, 191, 0.12)",
+      "verdictColors": [
+        "rgb(242, 107, 107)",
+        "rgb(102, 187, 106)"
+      ],
+      "expectedVerdicts": [
+        "rgb(242, 107, 107)",
+        "rgb(102, 187, 106)"
+      ],
+      "out": {
+        "left": 735.890625,
+        "right": 858
+      },
+      "incoming": {
+        "left": 310,
+        "right": 464.375
+      },
+      "messageColors": [
+        "color(srgb 0.584314 0.92549 0.411765 / 0.97)",
+        "color(srgb 0.109804 0.121569 0.152941 / 0.97)"
+      ]
+    }
+  },
+  {
+    "theme": "dark",
+    "width": 375,
+    "checks": {
+      "notificationBaseline": true,
+      "verdictSemantics": true,
+      "sentRightReceivedLeft": true,
+      "receivedNotGreen": true
+    },
+    "reading": {
+      "notificationBg": [
+        "rgba(91, 127, 191, 0.12)",
+        "rgba(91, 127, 191, 0.12)"
+      ],
+      "expectedBg": "rgba(91, 127, 191, 0.12)",
+      "verdictColors": [
+        "rgb(242, 107, 107)",
+        "rgb(102, 187, 106)"
+      ],
+      "expectedVerdicts": [
+        "rgb(242, 107, 107)",
+        "rgb(102, 187, 106)"
+      ],
+      "out": {
+        "left": 223.171875,
+        "right": 359
+      },
+      "incoming": {
+        "left": 16,
+        "right": 188.5
+      },
+      "messageColors": [
+        "color(srgb 0.584314 0.92549 0.411765 / 0.97)",
+        "color(srgb 0.109804 0.121569 0.152941 / 0.97)"
+      ]
+    }
+  }
+]

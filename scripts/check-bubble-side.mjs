@@ -23,9 +23,11 @@
 //                 {var(--nf-bub-ours-bg), var(--nf-bub-theirs-bg)}；豁免表（带理由，
 //                 每次运行打印）外出现任何其它值（含颜色字面量、其它 token、
 //                 transparent / none）即红。
-//   R3 禁第三色   已知第三色字面量在**气泡面**上零命中：--sapphire-tint-15、
+//   R3 禁第三色   已知第三色字面量在**归属方对话气泡**上零命中：--sapphire-tint-15、
 //                 rgb(var(--sapphire) / …) 系蓝 tint、rgba(0,0,0,0.04) 灰、
-//                 --glass-etched-bg 灰（这些都是本批收编掉的老底色）。
+//                 --glass-etched-bg 灰。精确 `.bubble.injected` 通知面 carve（作者
+//                 2026-11-06 20:09 令：通知非出向消息）在 R2 登记原值原样恢复，
+//                 不吃本条；除此之外的老第三色一律零容忍。
 //   R4 JS 零色值  气泡底色从不由 JS 计算：任何 JS 文件里同一行同时出现 bubble 与
 //                 `.style.background` ⇒ 红；归属方词汇（'theirs'）只准出现在
 //                 js/bubbleSide.js；js/messages.js 必须消费 bubbleClass()。
@@ -82,6 +84,8 @@ const CARD_SEAT_SELECTORS = new Set([
   '.bubble.schedule-card',
   '.bubble.injected.schedule-card',
 ]);
+const INJECTED_NOTICE_SELECTOR = '.bubble.injected';
+
 
 const KNOWN_THIRDS = [
   { re: /--sapphire-tint-15/, label: '--sapphire-tint-15（sapphire 蓝 tint，旧出向气泡底色）' },
@@ -211,6 +215,17 @@ for (const f of cssFiles) {
     const bg = rule.decls.filter((d) => d.prop === 'background' || d.prop === 'background-color');
     if (bg.length === 0) continue;
     faceRules++;
+    // Legacy notification surface: injected rows are persistent notices, not sent speech.
+    // The pre-2026-11-06 color is intentionally restored and pinned to the exact selector.
+    if (rule.selector === INJECTED_NOTICE_SELECTOR) {
+      for (const d of bg) {
+        if (d.value.replace(/\s+/g, ' ').trim() !== 'rgb(var(--sapphire) / 0.12)') {
+          violations.push(`R2 ${rel}:${d.line} 注入通知底色偏离改前 sapphire tint：${d.value}`);
+        }
+      }
+      notes.push(`R2 carve ${rel}:${rule.line} \`.bubble.injected\` —— 通知非出向消息；恢复改前 sapphire tint（仅此面）`);
+      continue;
+    }
     // 承卡泡：整条规则豁免（卡体材质自管，见豁免理由）
     if (CARD_SEAT_SELECTORS.has(rule.selector)) {
       notes.push(`R2 豁免 ${rel}:${rule.line} \`${rule.selector}\` —— ${EXEMPT.get('__card-seat').reason}`);
