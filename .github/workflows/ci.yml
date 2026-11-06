@@ -165,6 +165,21 @@ jobs:
         # --nf-toggle-* block in stand-tokens.css, component must consume them.
         # Same logic locally: node scripts/check-toggle-unify.mjs (or `make frontend-gates`)
         run: node scripts/check-toggle-unify.mjs
+      - name: Conversation pill centering (family single form, horizontally centered)
+        # scroll-pill-centering gate (author ruling 2026-11-06 08:05 verbatim:
+        # "你现在是把之前居中的 新消息通知的胶囊全部靠边了 不要靠边 就保持之前的
+        #  居中"). The conversation-face pill is ONE component with THREE consumers
+        # (new-message notification / back-to-bottom / search return jump); its form
+        # is declared exactly once, in css/chat.css `.scroll-new-pill`, anchored
+        # `left: 50%` + `transform: translateX(-50%)`. Fails on: a second form block,
+        # a missing centering anchor, ANY state (hover/active/focus/reduced-motion)
+        # that drops the centering transform, right-side alignment devices
+        # (right:/justify-self:end/margin-left:auto/text-align) on the family, or a
+        # second `scroll-*-pill` form class reappearing. Geometric truth (horizontal
+        # center delta <= 0.5px at 1440 and 375) lives in
+        # tests/scroll-pill-family.spec.mjs.
+        # Same logic locally: node scripts/check-scroll-pill-center.mjs (or `make frontend-gates`)
+        run: node scripts/check-scroll-pill-center.mjs
       - name: Design spec scale sync (spec table <-> token source)
         # design-scale gate (author order 2026-11-04: "把我们对圆角 边距 文字离边缘
         # 的距离 各文字的大小 写进spec和前端开发包"): the four scales (radius /

@@ -331,7 +331,7 @@ async function measure(page, kind) {
       inputBar: read0(q(kind === 'agent' ? '#input-bar' : '.fm-input-bar')),
       cardFile: read0(q(kind === 'agent' ? '#chat .file-card' : '.file-card')),
       cardMedia: read0(q(kind === 'agent' ? '#chat .pop-media-flat' : '.pop-media-flat')),
-      pill: read0(q(kind === 'agent' ? '.scroll-back-pill' : '.scroll-back-pill')),
+      pill: read0(q('.scroll-new-pill')),   // 一族三消费同一枚（单实现批 2026-11-06）
       // 状态气泡（液态光球）存在性 —— 四种会话面各自的「本面作用域」内计数：
       // 主会话 = #main；会话窗 = 其 .fm-modal（不含 #main）。话筒键同理。
       orb: kind === 'agent'
@@ -395,7 +395,7 @@ async function pillRead(page, kind) {
     const scrollEl = k === 'agent' ? document.querySelector('#chat') : (fm ? fm.querySelector('.fm-flow') : null);
     if (!scrollEl) return { error: 'no scroll element' };
     const host = k === 'agent' ? document.querySelector('#main') : fm;
-    const pill = host ? host.querySelector('.scroll-back-pill') : null;
+    const pill = host ? host.querySelector('.scroll-new-pill') : null;
     const read = () => {
       if (!pill) return null;
       const b = pill.getBoundingClientRect();
@@ -425,7 +425,7 @@ async function pillMetrics(page, kind) {
     const fm = document.querySelector('.mobile-page[data-page="conversation"] .fm-modal')
       || document.querySelector('#fm-chat-overlay .fm-modal');
     const host = k === 'agent' ? document.querySelector('#main') : fm;
-    const pill = host ? host.querySelector('.scroll-back-pill') : null;
+    const pill = host ? host.querySelector('.scroll-new-pill') : null;
     const overlaps = (a, b) => {
       if (!a || !b) return null;
       const x = Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left));
@@ -455,7 +455,7 @@ async function pillClick(page, kind) {
       || document.querySelector('#fm-chat-overlay .fm-modal');
     const scrollEl = k === 'agent' ? document.querySelector('#chat') : (fm ? fm.querySelector('.fm-flow') : null);
     const host = k === 'agent' ? document.querySelector('#main') : fm;
-    const pill = host ? host.querySelector('.scroll-back-pill') : null;
+    const pill = host ? host.querySelector('.scroll-new-pill') : null;
     if (!pill) return { error: 'no pill' };
     const max = scrollEl.scrollHeight - scrollEl.clientHeight;
     pill.click();

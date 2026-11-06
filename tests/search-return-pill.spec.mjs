@@ -229,6 +229,10 @@ const pillState = (page) => page.evaluate((sel) => {
     inViewport: r.top >= 0 && r.left >= 0 && r.right <= innerWidth && r.bottom <= innerHeight,
     hitSelf: at === el || !!(at && el.contains(at)),
     bottomGapToInput: (inputArea ? inputArea.getBoundingClientRect().top : innerHeight) - r.bottom,
+    // 单实现批（2026-11-06）：同宿主另一枚同族胶囊（↓N / 回到底部）在场时，
+    // 本枚按 STACK_STEP=40 上抬一格 —— 判据因此要能区分「独占槽位」与「堆叠位」。
+    siblingPillVisible: !!document.querySelector(
+      '#main .scroll-new-pill:not(.hidden):not([data-nf-search-return="1"])'),
     horizontallyCentered: Math.abs((r.left + r.right) / 2 - (chat.getBoundingClientRect().left + chat.getBoundingClientRect().right) / 2),
     rect: { w: Math.round(r.width), h: Math.round(r.height) },
   };
@@ -296,8 +300,13 @@ async function fullChainLeg(browser, ENGINE, { viewport, theme, touch = false, s
   check('浮层三连（有面积/视口内/elementFromPoint 命中）',
     !!st && st.rect.w > 0 && st.rect.h > 0 && st.inViewport && st.hitSelf,
     JSON.stringify(st && { inViewport: st.inViewport, hitSelf: st.hitSelf }));
-  check('落位 = #input-area 上缘 +12px（新消息胶囊同式）',
-    !!st && Math.abs(st.bottomGapToInput - 12) <= 2, st && `gap=${Math.round(st.bottomGapToInput * 10) / 10}`);
+  // 单实现批 2026-11-06：本胶囊与「↓N / 回到底部」是同一枚组件的两种消费，
+  // 同宿主共存时必须错开一格（否则两枚同槽叠成一枚）。故期望值 = 12（独占）
+  // 或 12+40（堆叠），且堆叠必须**有因**：另一枚确实在场。
+  const expGap = 12 + (st && st.siblingPillVisible ? 40 : 0);
+  check(`落位 = #input-area 上缘 +12px（${st && st.siblingPillVisible ? '同族并存 ⇒ 堆叠位 52' : '独占槽位 12'}）`,
+    !!st && Math.abs(st.bottomGapToInput - expGap) <= 2,
+    st && `gap=${Math.round(st.bottomGapToInput * 10) / 10} exp=${expGap} sibling=${st.siblingPillVisible}`);
   check('水平居中（流下沿同位）', !!st && st.horizontallyCentered <= 2, st && `dx=${Math.round(st.horizontallyCentered * 10) / 10}`);
 
   await page.click(pillSel);

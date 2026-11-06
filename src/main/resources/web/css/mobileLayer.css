@@ -3467,10 +3467,12 @@ body.mobile-layer #mobile-pages .mobile-page[data-page="contacts"] .fm-search-bl
   display: none;
 }
 
-/* ── ④ 搜索回跳胶囊的手机层抬层（js/searchReturnPill.js）─────────────────
-   胶囊挂 #main（桌面聊天根），手机层页面容器 #mobile-pages（156）整层压在它
-   上面 ⇒ 会话页（收编窗）里胶囊被页面遮住。抬到 170：> 页面容器 156、< dock
-   200 与桌面模态族 310+（层序表见文件头注释）。桌面零改动。 */
+/* ── ④ 搜索回跳胶囊的手机层抬层（js/scrollPill.js 一族，仅回跳消费）────────
+   搜索回跳胶囊挂 #main（桌面聊天根），跳转期间手机层页面容器 #mobile-pages
+   （156）可能整层压在它上面 ⇒ 抬到 170（> 页面容器 156、< dock 200 与桌面
+   模态族 310+）。**只对回跳消费开口**：↓N / 回到底部两档住在聊天根，聊天根
+   可以被 dock 页压住（那是正确的：根页不在场时它的胶囊不该浮在别人页面上），
+   故不抬层。桌面零改动（挂 body.mobile-layer）。 */
 body.mobile-layer #main [data-nf-search-return="1"] { z-index: 170; }
 
 /* ═══════════════════════════════════════════════════════════════════════
