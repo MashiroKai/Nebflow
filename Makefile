@@ -103,12 +103,17 @@ quality-gate:
 # = 后端把 `GET /api/conversations` 的 case 误删，前端 404 被吞成「暂无会话」，
 # **没有任何断言发现「前端调了但后端没有」**。本闸静态对照两侧（前端 /api 字面量
 # 集合 × 网关路由注册面），前端调了后端没有 ⇒ 红。
-FRONTEND_GATES := design-tokens msgstyle self-explaining circular fixture-secrets api-routes freeze-state freeze-silence flat-buttons glass canvas-hint toggle scroll-pill input-surface
+FRONTEND_GATES := design-tokens msgstyle bubble-side self-explaining circular fixture-secrets api-routes freeze-state freeze-silence flat-buttons glass canvas-hint toggle scroll-pill input-surface
 
 frontend-gates:
 	@command -v node >/dev/null 2>&1 || { echo "node not found — 前端门禁需要 node"; exit 2; }
 	node scripts/check-design-tokens.mjs
 	node scripts/check-msgstyle-single-source.mjs
+	@# 气泡归属方底色门禁（bubble-side-color 批 2026-11-06，作者令「我们这方发的……
+	@# 一律绿，对方发过来的白」）：气泡底色只准两档（--nf-bub-ours-bg 我方绿 /
+	@# --nf-bub-theirs-bg 对方白），第三色（sapphire 蓝 tint / etched 灰 / 中性灰）
+	@# 在气泡面上零命中；单点 = css/glass.css 单块 + js/bubbleSide.js 单函数。
+	node scripts/check-bubble-side.mjs
 	node scripts/check-self-explaining.mjs
 	node scripts/check-circular.mjs
 	@# 证据/夹具是高熵长令牌的落点（2026-11-04 两小件批 · 件三）：`tests/fixtures/` 与
