@@ -524,6 +524,45 @@
   --ds-fade-sat: var(--g2-fade-sat);       /* backdrop 饱和倍率 */
   --ds-fade-height: var(--g2-fade-height); /* 聊天根带高（88）；面板档另由消费面声明 */
 }
+
+/* ── ㉒ 液态形变（Liquid Morph）动效语言槽（liquid-morph 批 2026-11-06）──
+   语言本体与复用清单 = design/liquid-morph__20261106/DESIGN.md；JS 单源 =
+   js/motion/liquidMorph.js；术语 = GLOSSARY.md §14。
+   原型（唯一灵感来源，不许另造缓动）= css/mobileSearchFlat.css 的手机搜索
+   「扁平长条 ⇄ 右上角圆钮」一次性形变：:74-75 时长/曲线出生点、:149-176
+   transition 属性清单、:207-212 reduced-motion 降级、:214-227 实测验收读数。
+   **本组零新造值**：能别名的全部别名；只有 280ms 在本层出生（与 ④ 的
+   --ds-dur-slow 同款理由 —— 原型读数是 mobileSearchFlat.css 的**局部**变量
+   --mhsc-dur，全局无同名令牌，故在此立槽；它是时长出生点，不是新规范值）。
+   本组与 js/motion/liquidMorph.js **逐值镜像**：tests/liquid-morph.spec.mjs 有断言
+   把两侧钉死（改一边不改另一边即红）。消费面不得再写第二份 280ms、第二条曲线、
+   第二份属性清单 —— 这就是「单源」。 */
+:root {
+  --lm-dur-fast: var(--dur-2);        /* 160ms 子腿：opacity / border-color / 底色 / 浮影（= --ds-dur-hover） */
+  --lm-dur: 280ms;                    /* 280ms 主腿（几何形变；原型 :74 --mhsc-dur 读数出生点） */
+  --lm-dur-slow: var(--ds-dur-slow);  /* 400ms 大位移腿：整块浮起 / 从顶部展开（默认不用） */
+  --lm-ease: var(--ease-std);         /* 唯一曲线 cubic-bezier(0.4, 0, 0.2, 1)（base.css:186，原型 :75 同值） */
+  /* 可过渡属性清单：顺序 = 原型 transition 清单顺序（条本体 11 条 + 输入行 2 条）
+     + 末位 transform 追加项（理由见 DESIGN.md §3；原型是流内单节点，位移由 margin
+     表达，浮件宿主只能走 transform）。
+     消费方式（三件套，别塞进 `transition:` 简写 —— var() 无法把一个逗号清单展开成
+     逐属性 timing）：
+       transition-property: var(--lm-props);
+       transition-duration: var(--lm-dur);
+       transition-timing-function: var(--lm-ease); */
+  --lm-props: width, height, margin-left, margin-right, padding-left, padding-right,
+    border-radius, border-color, background-color, box-shadow, backdrop-filter,
+    opacity, max-width, transform;
+}
+/* reduced-motion：二值语义保留、过渡压近零（与原型 :210 的 1ms 同值同语义）。
+   JS 侧同口径 = liquidMorph.js 的 reducedMotion() + morphTransition(..., {reduced:true})。 */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --lm-dur-fast: 1ms;
+    --lm-dur: 1ms;
+    --lm-dur-slow: 1ms;
+  }
+}
 @media (hover: hover) {
   
   /* ══ 组件类层（`.ds-*`）══════════════════════════════════════════════
