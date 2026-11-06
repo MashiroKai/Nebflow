@@ -33,6 +33,10 @@ import { bindImeGuard, isImeComposing } from './imeGuard.js';
 // 定时任务的触发时刻从裸 `<input type="datetime-local">` 收编为同款点选面
 // （日期列 + 时/分滚轮）。交互单源 = ./timeWheel.js（禁第二份实现）。
 import { pointTriggerHTML, paintPointTrigger, attachTimeTriggers, msToLocalInput } from './timeWheel.js';
+// 液态形变动效语言单源（create-bottom-restore 批 · 2026-11-06）：新建抽屉开合的
+// 时长/曲线/属性白名单只吃这一条（与待办页 js/todoFace.js 的 setSheetOpen 同源
+// 同档；本文件不另写毫秒数、不另造曲线）。
+import { morphTransition, reducedMotion as lmReducedMotion } from './motion/liquidMorph.js';
 
 // Inline locale getter to avoid caching issues with module imports
 function getLocale() {
@@ -309,15 +313,27 @@ function renderReminderPanel() {
   // 2026-11-05 17:33）；桌面腿 = 列表尾部流内一行（原样）。
   if (mobileLayerOn()) {
     const sheet = ensureMobileChrome(body.parentElement);
-    if (mDrawerBody) mDrawerBody.replaceChildren();
-    if (sheet) {
-      if (isCreating && mDrawerBody) {
-        mDrawerBody.appendChild(buildInlineCreate());
-        sheet.hidden = false;
-      } else {
-        sheet.hidden = true;
+    // 首拍面板尚未收编时抽屉只能挂面板内（页面壳还没找到）；面板进页面壳后
+    // 用同一锚函数再搬一次 —— 之后恒为页面壳（与待办页同包含块）。
+    if (sheet && !mDrawerHosted) {
+      const host = drawerAnchor(sheet.parentElement);
+      if (host !== sheet.parentElement && host !== document.body) {
+        host.append(sheet);
+        mDrawerHosted = true;
       }
     }
+    // create 开合**不再整面重渲行区**（零位移硬验收，S4 实测驱动 2026-11-06）：
+    // 旧写法每次 renderReminderPanel 都 replaceChildren 抽屉体 + setDrawerOpen，
+    // 开抽屉的第一次渲染会抽掉行区一段内容 ⇒ 页面壳滚动量收钳 + 标题带收高
+    // 级联，整页内容位移（首行 rect 128→78）。现在行区 DOM 在本分支**原样保留**
+    // （数据刷新路径照常走上面的行重建），抽屉体只在开新单时填一次、关闭收场
+    // 时清（写口在 setDrawerOpen 的收尾计时器）—— 表单还在输入中时到达的
+    // listScheduledTasks 刷新帧不再抹掉输入值（旧写法会抹，顺手修掉的暗坑）。
+    const wantOpen = !!(isCreating && mDrawerBody);
+    if (sheet && mDrawerBody && wantOpen && !mDrawerBody.children.length) {
+      mDrawerBody.appendChild(buildInlineCreate());
+    }
+    setDrawerOpen(wantOpen);
   } else if (isCreating) {
     body.appendChild(buildInlineCreate());
   }
@@ -334,7 +350,13 @@ function renderReminderPanel() {
   if (isCreating) {
     const host = mobileLayerOn() ? mDrawerBody : body;
     const input = host ? /** @type {HTMLInputElement|null} */ (host.querySelector('.reminder-inline-input')) : null;
-    if (input) requestAnimationFrame(() => input.focus());
+    // preventScroll（S4 实测驱动 2026-11-06）：开抽屉的首拍抽屉盒还在
+    // translateY(100%) 场外（is-open 下一帧才翻类），此刻 focus 会触发浏览器的
+    // focus-scroll 去页面壳上把场外输入件滚进可视区 —— 页面壳 scrollTop 被写、
+    // 标题带收高级联、整页内容位移（首行 rect 128→78 实测）。表单落位后本就
+    // 在抽屉可视区内，滚不滚都不需要：preventScroll 直接掐掉这条位移源
+    // （与待办页 todoFace.js:1941 的手机腿同口径）。
+    if (input) requestAnimationFrame(() => input.focus({ preventScroll: true }));
   }
 }
 
@@ -968,12 +990,79 @@ let mDrawer = null;
 let mDrawerBody = null;
 /** @type {HTMLElement|null} */
 let mFab = null;
+/** @type {HTMLElement|null} */
+let mDrawerBox = null;
+/** 抽屉是否已挂到页面壳（首拍面板还没收编时退回面板内，收编后再搬一次）。 */
+let mDrawerHosted = false;
+/** 抽屉开合定时器（收尾 hidden 用；单一）。 */
+let mDrawerTimer = 0;
+
+/** 新建抽屉开合（唯一显隐写口）。`hidden` 不能参与过渡（display:none）⇒ 先摘
+ *  hidden、下一帧再翻 `.is-open`；起点/终点几何全在 css/mobileLayer.css
+ *  （`.mf-drawer-box`：translateY(100%) → 0）；过渡串由液态形变单源生成
+ *  （属性白名单 transform/opacity、slow 档 = 大位移腿、reduced ⇒ 1ms）。
+ *  create-bottom-restore 批（作者裁定 2026-11-06 09:44）：与待办页
+ *  js/todoFace.js 的 setSheetOpen 同形 —— 位移只吃 transform ⇒ 开合零 reflow，
+ *  列表/页体滚动读数不动。 */
+function setDrawerOpen(open) {
+  const sheet = mDrawer;
+  const box = mDrawerBox;
+  if (!sheet || !box) return;
+  clearTimeout(mDrawerTimer);
+  const reduced = lmReducedMotion();
+  box.style.transition = morphTransition(['transform', 'opacity'], { duration: 'slow', reduced });
+  if (open) {
+    // 钉住可视框（S1 实测驱动，2026-11-06）：页面壳 `.mobile-page` 是
+    // overflow:hidden 的**程序滚容器**（大标题收高级联 / 聚焦滚动会给它留
+    // scrollTop，实测过 206），而抽屉 inset:0 锚在**内容坐标** —— 滚动非零时
+    // 整块抽屉随内容上提（盒底 722 ≠ 页壳底 750）。开启瞬间以
+    // translateY(scrollTop) 把抽屉平移回可视框；壳 overflow:hidden 锁死用户
+    // 滚动 ⇒ 开启期间位移源恒定，钉一次即全程贴合。只写 transform ⇒ 零 reflow
+    // （与下方 box 位移腿同一条白名单）。关闭时复位（关闭后抽屉不可见，余量
+    // 无所谓）。与待办页 js/todoFace.js 的 setSheetOpen 同形同注。
+    const page = sheet.parentElement && sheet.parentElement.closest
+      ? sheet.parentElement.closest('.mobile-page') : null;
+    const st = page ? page.scrollTop : 0;
+    sheet.style.transform = st > 0 ? `translateY(${st}px)` : '';
+    const wasHidden = sheet.hidden;
+    sheet.hidden = false;
+    if (wasHidden || !box.classList.contains('is-open')) {
+      box.classList.remove('is-open');
+      void box.offsetHeight; // 强制回流：display 翻转后的起始帧必须被采纳
+      requestAnimationFrame(() => { if (isCreating) box.classList.add('is-open'); });
+    }
+    return;
+  }
+  sheet.style.transform = '';
+  if (sheet.hidden) return;
+  box.classList.remove('is-open');
+  mDrawerTimer = setTimeout(() => {
+    sheet.hidden = true;
+    // 收场清体（下开重建）：表单值随抽屉退场丢弃（与底部抽屉交互语义一致：
+    // 「取消」即弃稿；save 路径在触发 close 前已同步取走值）。
+    if (mDrawerBody) mDrawerBody.replaceChildren();
+  }, reduced ? 8 : 420);
+}
 
 /** `<i data-lucide>` 图标件（与站内 lucide 装配口径一致；纯建节点，不渲）。 */
 function lucideIconEl(name) {
   const i = document.createElement('i');
   i.setAttribute('data-lucide', name);
   return i;
+}
+
+/** 新建抽屉的挂载点 = 面板所在的**页面壳** `.mobile-page`（手机腿它是
+ *  `position:absolute` + `overflow:hidden` 的页面容器，与待办页 `.mf-drawer`
+ *  的包含块逐值相同）。页面壳还没被收编（面板仍在原 overlay 位）时退回面板本身
+ *  —— 此时抽屉不可见，下一次渲染面板已进页面壳，自然落到同一锚上。
+ *  为什么不挂 `body`：`body` 上带 `canvas-overlay` 一族浮层类，按视口铺底会跨到
+ *  页面栈之外（2026-11-06 实测盒底 812 ≠ 页壳底 750）。 */
+function drawerAnchor(panel) {
+  if (panel && panel.closest) {
+    const page = panel.closest('.mobile-page');
+    if (page) return page;
+  }
+  return panel || document.body;
 }
 
 /** 惰性建「悬浮加号 + 底部抽屉」一组（面板节点在，就只建一次）。
@@ -1029,8 +1118,17 @@ function ensureMobileChrome(panel) {
   mDrawerBody.className = 'mf-drawer-body';
   box.append(head, mDrawerBody);
   sheet.append(scrim, box);
-  panel.append(fab, sheet);
+  // 加号留在面板里（落位吃页面壳）；抽屉挂到页面壳上、而不是面板里 ——
+  // 面板在桌面腿是 `position:absolute`（css/reminder.css:55-78），抽屉若挂在
+  // 面板内会被它抢走包含块：桌面样式带过来的 top/right/width 把整块抽屉钉在
+  // 360px 的小盒里（2026-11-06 spec S1 实测盒底 722 ≠ 页壳底 750）。
+  // 挂到页面壳 = 与待办页的包含块逐值相同（js/todoFace.js 的 .mf-drawer 同源）。
+  panel.append(fab);
+  const host = drawerAnchor(panel);
+  host.append(sheet);
+  if (host !== panel) mDrawerHosted = true;   // 已落在页面壳上：后续不再搬
   mDrawer = sheet;
+  mDrawerBox = box;
   mFab = fab;
   return sheet;
 }
@@ -1488,7 +1586,14 @@ export function initScheduledTask() {
     // 取消 → 重渲 → 面板被误关）。真·面外点击目标恒在树内，守卫不影响。
     if (!(e.target instanceof Node) || !e.target.isConnected) return;
     const hit = /** @type {Element} */ (e.target);
-    if (panel && panelOpen && !panel.contains(hit) && !hit.closest('#reminder-btn')) {
+    // `.mf-drawer` 并入「面内」口径（S5 实测驱动 2026-11-06）：手机页抽屉挂在
+    // **页面壳**上（drawerAnchor：面板在桌面腿是 absolute，抽屉挂面板内会被抢
+    // 包含块钉进 360px 小盒）——面板 contains() 对它恒 false，点「取消/完成」
+    // 会被这里误读成面外点击 ⇒ closePanel 摘 .open ⇒ navController CLOSE_WATCH
+    // 对账弹页（reminder 页整页退场）。抽屉与面板同属提醒面 ⇒ 与 #reminder-btn
+    // 同一条豁免；桌面浮层腿抽屉也在面板内（contains 命中），本豁免对桌面无感。
+    if (panel && panelOpen && !panel.contains(hit) && !hit.closest('#reminder-btn')
+        && !hit.closest('.mf-drawer')) {
       closePanel();
     }
     // 改版批：待办页同款 outside-close（手机层页被收编进页面体且满铺——

@@ -5284,6 +5284,13 @@ body.mobile-layer .tfl-mobile .tfl-empty {
 body.mobile-layer #mobile-pages .mobile-page-body > #reminder-panel {
   flex: 1 1 auto;
   min-height: 0;
+  /* 层序校正（S-点击实测驱动 2026-11-06）：桌面浮层的 z300（css/reminder.css:71，
+     360px 右上浮层的原语义）随收编带进了页面态 ⇒ 面板子树压在共用底抽屉
+     （z30，本文件 .mf-drawer 块「< 模态层 300+」的既有口径）之上 —— 取消/
+     完成键被 reminder-panel-body 拦截（Playwright hit-test 实测复现，截图合成
+     后必现）。页面态的面板是**流内收编面**、不再是浮层 ⇒ 层序交还 auto；
+     桌面腿的 :300 原样保留（本规则带 body.mobile-layer 作用域，桌面零感知）。 */
+  z-index: auto;
   /* 横向安全边距落在**面**上（不是落在滚动体上）：.reminder-panel-body 本身是
      滚动容器，把内距写在它身上时它的 border-box 仍满宽 ⇒ 容器 rect 左右贴屏、
      判据「左右只差安全边距」不成立。内距写在外层 ⇒ 列表容器的 rect 就是
@@ -5337,7 +5344,7 @@ body.mobile-layer #reminder-panel .reminder-fab-add {
    不与列表抢视觉）；浮层/气泡在 375 宽上要么盖掉半屏列表、要么被键盘顶出屏。
    材质 = **扁平实底**：全站毛玻璃只许唯一的 `.nf-glass`（另一批正在立标准），
    本组件不出第二套模糊面 —— 底面 --color-bg + 一道 1px 分隔线，零投影零渐变。
-   落位：包含块 = 页面壳（`.mobile-page`，两个宿主在手机腿都是定位静态件）⇒
+   落位：包含块 = 页面壳（`.mobile-page`，两页的宿主在手机腿都是 `position:static`
    覆盖整页内容区（标题栏下沿 → Tab 栏上缘），列表滚动不会带着抽屉跑。 */
 .mf-drawer {
   position: absolute;
@@ -5411,10 +5418,40 @@ body.mobile-layer #reminder-panel .reminder-fab-add {
 .mf-drawer-cancel-btn:active,
 .mf-drawer-done-btn:active { opacity: 0.65; }
 
+/* ── ④ 底抽屉开合腿（create-bottom-restore 批 · 作者裁定 2026-11-06 09:44）──────
+   两页共用的底抽屉开合 = 液态形变单源（js/motion/liquidMorph.js）：位移只走
+   transform（`translateY(100%)` → `0`）+ 同段 opacity，时长/曲线由 JS 逐次写
+   `style.transition`（slow 档 400ms / 唯一曲线 cubic-bezier(0.4,0,0.2,1) /
+   reduced-motion 1ms）—— 本文件不写第二份毫秒数、不写第二条曲线。
+   两端几何：抽屉 `inset:0` + `justify-content:flex-end`（基态已在块首声明）⇒
+   box 贴页底；`.is-open` = 零变换落位，未翻类时整块下移一屏高（页面壳
+   overflow:hidden 裁掉，不可见、不吃指针：抽屉本身 `[hidden]` 时 display:none）。
+   transform/opacity 都是合成器腿 ⇒ 开合期间不触发布局，列表/页体滚动读数不动。 */
+body.mobile-layer .mf-drawer-box {
+  transform: translateY(100%);
+  opacity: 0;
+  will-change: transform;
+}
+body.mobile-layer .mf-drawer-box.is-open {
+  transform: none;
+  opacity: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  /* 降级只落 will-change 摘除（时长降级在 JS 侧同源：reducedMotion() ⇒ 1ms；
+     本文件不写第二份 @media 时长，免两份降级口径打架）。 */
+  body.mobile-layer .mf-drawer-box { will-change: auto; }
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
-   ⑤ 待办页顶部「⋯」两级菜单 + 新建表单顶部承载（todo-mobile-topmenu 批 · 2026-11-06）
-   作者令（逐字）：「新建待办从顶部来」「手机待办页顶部就一个⋯按钮」「点标签/
-   重要度在右边叠一块面板，下面那块还在、变暗」。
+   ⑤ 待办页顶部「⋯」两级菜单（todo-mobile-topmenu 批 · 2026-11-06）
+   作者令（逐字）：「手机待办页顶部就一个⋯按钮」「点标签/重要度在右边叠一块
+   面板，下面那块还在、变暗」。
+
+   ★ 承载改回底部（create-bottom-restore 批 · 作者裁定 2026-11-06 09:44，覆盖本批
+     原先的「新建从顶部」条）：待办页新建表单**恢复页底弹出**，`.mf-drawer-top`
+     修饰类连同其几何/标题框覆盖**整块退役**（全仓零残留，新 spec 有机械断言）。
+     新建承载回到 `.mf-drawer` 一族的**未修饰形态**（与定时任务页逐字同形）；
+     唯一新增的是开合腿 = 液态形变单源（见本块末尾「④ 底抽屉开合」）。
 
    ① 顶部唯一入口 = 一枚 48px 悬浮圆钮（`.tfl-topmenu-btn` 挂 `.g2-fab`）：
       材质/六态/按压全部来自 css/glass.css 圆钮级浮件档（Canvas 工具钮 / 页面壳
@@ -5436,19 +5473,20 @@ body.mobile-layer #reminder-panel .reminder-fab-add {
       scale .98）变暗后退 —— 是叠出不是替换，不跳页。行最左 = ✓ 勾选槽
       （选中/未选中同宽，零跳动），选中即回写 store 且整菜单收起。
 
-   ④ 新建表单从**页顶**进入：`.mf-drawer` 一族（与定时任务页共用）加
-      `.mf-drawer-top` 修饰类 —— 主轴翻到 top、盒圆角翻到下沿；仍是 absolute
-      inset:0 覆盖层 ⇒ 不占文档流、不改滚区高度（零位移验收见 spec ①）。
-      定时任务页那一路（js/scheduled-task.js 建的底抽屉）**无该修饰类**，
-      几何/材质零改动。
+   ④ 新建表单承载 = **页底抽屉**（撤回批前条；上一批的 `.mf-drawer-top` 页顶形态
+      已整块撤除）。形态与定时任务页（js/scheduled-task.js 的 ensureMobileChrome）
+      逐字同形：`.mf-drawer` absolute + inset:0 + flex-end，包含块 = 页面壳
+      `.mobile-page`（absolute + overflow:hidden）⇒ 覆盖层，不占文档流、不改滚区
+      高度（零位移三组读数见 tests/todo-create-bottom.spec.mjs A 组）。开合的位移
+      腿只写 transform（见上方「④ 底抽屉开合腿」）。
 
    ⑤ 动效 = js/motion/liquidMorph.js 单源：本块**不写 transition**（时长/曲线/
       属性白名单由 JS 侧 morphTransition() 逐次写入，属性只取白名单内的
-      transform + opacity）；reduced-motion 由同一模块降级到 1ms ⇒ 本块不再写
-      第二份 @media 降级（旧的 `.mf-drawer-box` 也无过渡，天然零降级面）。
-   ⑥ 标题框蓝边退役：病因 = css/inputFocus.css:66-79 的统一焦点规则
-      （元素种类级，不可按面豁免）⇒ 本面在同一令牌体系内把它替换成「容器底色
-      一档」（`--color-text` 9% 底，零颜色字面量、零外圈），见块尾。
+      transform + opacity）；reduced-motion 由同一模块降级到 1ms ⇒ 本块不写
+      第二份时长降级（只留一条 will-change 摘除的 @media）。
+   ⑥ 标题框蓝边：**复核**（不再由本块覆盖）—— 焦点态唯一来源 = css/
+      inputSurface.css:116-164（指针零环 / 键盘内缩压灰环 / 裸件成员表），
+      本面读数见块尾 ⑤。
    ═══════════════════════════════════════════════════════════════════════════ */
 
 /* ── ① 顶部悬浮「⋯」（落位镜像页面壳返回钮：top 16+safe / 右 16）───────── */
@@ -5648,41 +5686,20 @@ body.mobile-layer .tfl-menu-empty {
   color: color-mix(in srgb, var(--color-text) 45%, transparent);
 }
 
-/* ── ④ 新建表单：顶部承载（`.mf-drawer` 族的顶部变体）──────────────────── */
-body.mobile-layer .mf-drawer.mf-drawer-top {
-  justify-content: flex-start;
-  padding-top: env(safe-area-inset-top, 0px);
-}
-body.mobile-layer .mf-drawer-top .mf-drawer-box {
-  max-height: 88%;
-  border-top: none;
-  border-bottom: 1px solid var(--color-frame-border);
-  border-top-left-radius: 0;
-  border-top-right-radius: 0;
-  border-bottom-left-radius: var(--ds-radius-card-lg);
-  border-bottom-right-radius: var(--ds-radius-card-lg);
-  /* 起点 = 屏上方外（页面壳 overflow:hidden 裁掉）；.is-open = 落位零变换 */
-  transform: translateY(-100%);
-  opacity: 0;
-}
-body.mobile-layer .mf-drawer-top .mf-drawer-box.is-open {
-  transform: none;
-  opacity: 1;
-}
-
-/* ── ⑥ 表单标题框：外部蓝框退役（焦点态 = 容器底色一档）────────────────
-   病因 file:line = css/inputFocus.css:66-79（`:is(input:not(…), textarea,
-   select):focus` 的统一规则：`outline: var(--nf-field-focus-w) solid
-   var(--nf-field-focus-line)` + `border-color` 同色）。该规则按**元素种类**
-   命中，组件侧 `.tfl-row-title-input { outline:none }`（todo-face.css:992-1000）
-   特异度不够（(0,1,0) < (0,2,1)）⇒ 聚焦时整圈蓝线照画。
-   本面做法：在同一 focus 令牌体系内换形态 —— 不画圈，把所在行的底色加深一档
-   （`--color-text` 9% 合成，零颜色字面量）；输入件本身的字/光标不变。 */
-body.mobile-layer .mf-drawer-top .tfl-row-title-input:focus,
-body.mobile-layer .mf-drawer-top .tfl-edit-notes:focus {
-  outline: none;
-  border-color: transparent;
-}
-body.mobile-layer .mf-drawer-top .tfl-create-head:focus-within {
-  background: color-mix(in srgb, var(--color-text) 9%, transparent);
-}
+/* ── ⑤ 表单标题框：蓝边复核（create-bottom-restore 批 · 2026-11-06）──────────
+   底部腿**不写**任何焦点覆盖：`.mf-drawer-top` 的「容器底色一档」形态随该修饰
+   类一并退役（撤回批只撤形态，不新增第二套焦点语言）。
+   蓝边零条的成因链（file:line 逐条）：
+     · 焦点环唯一来源 = css/inputSurface.css:138-150（`:focus-visible` ⇒
+       `outline: var(--nf-field-ring-w) solid var(--nf-field-ring)`，2px 内缩，
+       令牌在 css/stand-tokens.css:482-484）；`css/inputFocus.css` 已于
+       input-surface-unify 批整文件退役（inputSurface.css:31）。
+     · 指针压回中性 = css/inputSurface.css:153-164（`html[data-nf-modality=
+       "pointer"]` ⇒ `outline: none`；js/focusModality.js 在 pointerdown 挂位）。
+     · 盒线加深 = 同一文件 :116-127 的 `border-color: var(--nf-field-border-focus)`，
+       而标题件在裸件成员表内（css/inputSurface.css:74-90：`border: none;
+       border-radius: 0; …背景/边框/阴影全裸`）⇒ 无处可画，读数恒透明。
+   实测（tests/todo-create-bottom.spec.mjs G1，指针点入 + 键盘 Tab 两腿，亮/暗
+   两主题）：outlineStyle=none / outlineWidth=0px / borderColor=rgba(0,0,0,0)
+   ⇒ 蓝边 0 条。日后谁改了这三条之一，G1 立刻变红。
+   ═══════════════════════════════════════════════════════════════════════════ */

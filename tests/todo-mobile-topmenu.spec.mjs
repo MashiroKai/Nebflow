@@ -14,6 +14,10 @@
 // 判据（逐条对应任务书验收）：
 //   A ① 零位移（三组读数）：新建开合前后 — 列表首条 rect 位移 ≤0.5px、dock 位置不变、
 //      document.scrollingElement 与 .tfl-list 的 scrollTop/scrollHeight 逐一不变。
+//      ★ create-bottom-restore 批（作者裁定 2026-11-06 09:44）：新建承载由本批原先的
+//      「页顶」改回**页底**，故 A0（菜单首行仍是新建入口）保留、A5（顶部落位）改写为
+//      「页面壳内无 .mf-drawer-top」「表单落在页底」，选择器去掉 .mf-drawer-top 段。
+//      底腿的独立自证 = tests/todo-create-bottom.spec.mjs（本文件只守菜单与零位移）。
 //   B ② 顶部唯一入口：.tfl-topmenu-btn 在场且 48 视觉 / ≥48 命中盒；
 //      .tfl-filter-toggle / .tfl-collapse-btn / .tfl-chips-row / .tfl-prio-row
 //      在手机页 DOM 里**零命中**（旧入口真退役，不并存）。
@@ -171,6 +175,21 @@ const visible = (sel) => `(() => {
 })()`;
 
 const near = (a, b, tol = 0.5) => a != null && b != null && Math.abs(a - b) <= tol;
+/** 蓝主导判据（G1 专用）：css 颜色串里蓝通道显著压过红/绿 ⇒ 蓝（旧 sapphire 焦点
+ *  环必命中；中性 ink color(srgb 0.106 0.118 0.149)/26% ≈ rgb(27,30,38) 不命中）。
+ *  支持 rgb()/rgba()（0-255）与 color(srgb …)（0-1 浮点）两族序列化；其余 ⇒ 非蓝。 */
+const isBlueish = (cssColor) => {
+  if (!cssColor || /transparent|none/.test(cssColor)) return false;
+  let r; let g; let b;
+  const srgb = cssColor.match(/color\(\s*srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
+  if (srgb) { r = srgb[1] * 255; g = srgb[2] * 255; b = srgb[3] * 255; }
+  else {
+    const m = cssColor.match(/rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/);
+    if (!m) return false;
+    [r, g, b] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  }
+  return b > r + 60 && b > g + 40;
+};
 
 /* 可点元素读数（与 reports-evidence/…/shots-before/capture-before.mjs 同一口径：
    元素盒 ∪ 吃指针的绝对定位伪元素外扩；供 scripts/check-mobile-tap.mjs --readings
@@ -285,9 +304,9 @@ try {
   // 菜单首行 = 新建待办（页顶入口）
   const firstMenuRow = page.locator(".tfl-menu-panel .tfl-menu-row").first();
   const firstRowText = (await firstMenuRow.innerText()).trim();
-  ok('A0 一级菜单首行 = 新建待办（顶部入口）', firstRowText.includes('新建待办'), firstRowText);
+  ok('A0 一级菜单首行 = 新建待办（入口仍在菜单里，承载已按撤回批回页底）', firstRowText.includes('新建待办'), firstRowText);
   await firstMenuRow.click();
-  await page.waitForSelector(".mobile-page[data-page='tasks'] .mf-drawer-top:not([hidden])", { timeout: 5000 });
+  await page.waitForSelector(".mobile-page[data-page='tasks'] .mf-drawer:not([hidden])", { timeout: 5000 });
   await page.waitForTimeout(700); // 400ms 大位移腿 + 聚焦延时 60ms
   const after = await page.evaluate(RECTS);
 
@@ -308,14 +327,15 @@ try {
     && before.winY === after.winY,
     `${JSON.stringify(before.doc)} → ${JSON.stringify(after.doc)} / winY ${before.winY}→${after.winY}`);
 
-  const sheetTop = await page.evaluate(rectOf(".mobile-page[data-page='tasks'] .mf-drawer-top .mf-drawer-box"));
+  const sheetTop = await page.evaluate(rectOf(".mobile-page[data-page='tasks'] .mf-drawer .mf-drawer-box"));
   const pageTop = await page.evaluate(rectOf(".mobile-page[data-page='tasks']"));
-  ok('A5 表单落在页面顶缘（顶承载，非底抽屉）',
-    sheetTop != null && pageTop != null && sheetTop.y - pageTop.y <= 8,
-    `box.y=${sheetTop?.y} page.y=${pageTop?.y}`);
+  ok('A5 表单落在页面底缘（底承载；.mf-drawer-top 修饰类零残留）',
+    sheetTop != null && pageTop != null && pageTop.bottom - sheetTop.bottom <= 8
+    && (await page.locator('.mf-drawer-top').count()) === 0,
+    `box.bottom=${sheetTop?.bottom} page.bottom=${pageTop?.bottom} top-style=${await page.locator('.mf-drawer-top').count()}`);
 
   /* ── G 标题框蓝边退役 ────────────────────────────────────────────────── */
-  const titleSel = ".mobile-page[data-page='tasks'] .mf-drawer-top .tfl-row-title-input";
+  const titleSel = ".mobile-page[data-page='tasks'] .mf-drawer .tfl-row-title-input";
   await page.locator(titleSel).click();
   await page.waitForTimeout(250);
   const focusState = await page.evaluate((sel) => {
@@ -330,14 +350,22 @@ try {
   }, titleSel);
   const noBlue = focusState
     && (focusState.outlineStyle === 'none' || parseFloat(focusState.outlineWidth) === 0)
-    && /rgba\(0, 0, 0, 0\)|transparent/.test(focusState.borderColor);
-  ok('G1 标题框聚焦无蓝边（outline 退役 + 边界无色）', !!focusState?.isActive && noBlue,
+    && !isBlueish(focusState.outlineColor) && !isBlueish(focusState.borderColor);
+  // ★ G1 判据改写（input-surface-unify 批语义重写，2026-11-06）：旧断言要求
+  //   borderColor transparent —— 那是 918846c0f 批在 todo 面上覆盖出来的旧形态。
+  //   main 的 inputSurface.css（inputFocus.css 已整文件退役）统一焦点语言 =
+  //   指针零环 + 边界「中性 ink 26%」（非蓝）—— create-bottom-restore 批撤掉
+  //   .mf-drawer-top 修饰类后，标题件回到 inputSurface 裸件表/标准档，聚焦边界
+  //   = 中性 ink（非蓝）是**现行 sanctioned 形态**。判据回到语义本身：「无蓝」
+  //   = outline 不画 + outline/border 都非蓝主导（蓝主导判据 b>r+60 && b>g+40，
+  //   中性 ink rgb(27,30,38)/26% 不命中；旧 sapphire 蓝必命中）。
+  ok('G1 标题框聚焦无蓝边（outline 退役 + outline/border 均非蓝主导）', !!focusState?.isActive && noBlue,
     JSON.stringify(focusState));
 
   /* 关闭表单（取消键 = 单一写口之一） */
-  await page.locator(".mobile-page[data-page='tasks'] .mf-drawer-top .mf-drawer-cancel-btn").click();
+  await page.locator(".mobile-page[data-page='tasks'] .mf-drawer .mf-drawer-cancel-btn").click();
   await page.waitForTimeout(600);
-  const closed = await page.evaluate(visible(".mobile-page[data-page='tasks'] .mf-drawer-top"));
+  const closed = await page.evaluate(visible(".mobile-page[data-page='tasks'] .mf-drawer"));
   ok('A6 取消后表单收起', closed === false);
 
   /* ── C ③ 一级菜单（毛玻璃 / 行 / 危险项 / 动效单源）─────────────────── */
@@ -511,7 +539,7 @@ try {
   await page.waitForSelector(".tfl-menu-panel.is-open", { timeout: 5000 });
   await sleep(250);
   await page.locator('.tfl-menu-panel .tfl-menu-row').first().click();
-  await page.waitForSelector(".mobile-page[data-page='tasks'] .mf-drawer-top:not([hidden])", { timeout: 5000 });
+  await page.waitForSelector(".mobile-page[data-page='tasks'] .mf-drawer:not([hidden])", { timeout: 5000 });
   await sleep(700);
   await page.screenshot({ path: join(OUT, 'create-from-top.png') });
   const geo = await page.evaluate(RECTS);

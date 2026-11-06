@@ -475,9 +475,11 @@ class TodoFace {
     // 胶囊（收起态内容层）= 岛骨架里的第二个内容层（灵动岛批 2026-11-05）：
     // 收起态显示它、展开态显示上面的 panel，两者都在 .tfl-card 内部切换。
     this.card.appendChild(this.capsule);
-    // 新建表单（todo-mobile-topmenu 批 2026-11-06：承载从底部抽屉改为**顶部**，
-    // 表单本体/写口零改动；`.mf-drawer` 一族与定时任务页共用，顶部形态走
-    // `.mf-drawer-top` 修饰类 —— 那一路（js/scheduled-task.js 的底抽屉）零改动）。
+    // 新建表单（create-bottom-restore 批 2026-11-06：承载**恢复为页底弹出** ——
+    // 作者令「不管是定时任务还是待办 手机端的创建 还是从底部弹出吧 方便一点」。
+    // 上一批（todo-mobile-topmenu）的顶部 `.mf-drawer-top` 形态已撤；表单本体 /
+    // 写口 / 动效单源零改动，`.mf-drawer` 一族回到与定时任务页逐字同形。
+    // ⋯ 菜单（：同批产物）不动，仍随手机页面态建出。
     if (this.mobile) {
       this.buildCreateSheet();
       // 顶部悬浮「⋯」+ 两级菜单（同一批）：手机页面态顶部唯一入口。
@@ -630,19 +632,24 @@ class TodoFace {
     this.listWrap.appendChild(fab);
   }
 
-  /* ── 新建表单：**顶部**承载（todo-mobile-topmenu 批 · 2026-11-06）─────────
-     上一批（todo-fullbleed 2026-11-05）把新建入口做成底部抽屉；本批按作者令
-     改为**从页顶下滑展开**：表单覆盖在内容之上，**不占文档流、不改滚区高度**
-     （`.mf-drawer` 仍是 absolute + inset:0，包含块 = 页面壳 `.mobile-page`；
-     列表首条 rect / 页面壳滚动容器 / `.tfl-list` 的 scrollTop·scrollHeight 在
-     开合前后逐值不变 —— 机械读数见 tests/todo-mobile-topmenu.spec.mjs ①）。
-     结构 = 与定时任务页**同一族** `.mf-drawer`，本面加 `.mf-drawer-top` 修饰类
-     把 flex 主轴从 bottom 翻到 top、盒圆角翻到下沿；`js/scheduled-task.js` 那一路
-     （底部抽屉）类名/几何零改动，共用面不受影响。
+  /* ── 新建表单：**底部**弹出（create-bottom-restore 批 · 作者裁定 2026-11-06 09:44）─
+     形态 = 与定时任务页（js/scheduled-task.js 的 ensureMobileChrome）**逐字同形**的
+     底抽屉：`.mf-drawer` 一族一个类都不加修饰类（上一批的 `.mf-drawer-top` 已撤，
+     全仓零残留）。作者原话：「然后撤回一下 不管是定时任务还是待办 手机端的创建
+     还是从底部弹出吧 方便一点」。
+     为什么是底抽屉而不是浮层/气泡：新建表单是**写入口**，手机端写入口的既有语言
+     就是底部抽屉（键盘弹起时贴底、不与列表抢视觉、关闭路径唯一 = 点遮罩或「取消」）；
+     气泡式浮层在 375 宽上要么盖住半屏列表、要么被键盘顶出屏幕。
+     零位移：`.mf-drawer` = absolute + inset:0，包含块 = 页面壳 `.mobile-page`
+     （absolute + overflow:hidden）⇒ 抽屉是覆盖层，不占文档流、不撑高滚区；
+     列表首条 rect / dock / `.tfl-list` 与文档滚轴的 scrollTop·scrollHeight 在
+     开·开时·关后三组读数逐值不变（机械读数见 tests/todo-create-bottom.spec.mjs A 组）。
+     动效 = js/motion/liquidMorph.js 单源（transform translateY(100%)→0 + opacity，
+     slow 档 400ms / 唯一曲线 / reduced-motion 1ms），开合期间零 reflow（只走合成器腿）。
      表单本体复用 `buildCreateRow()`（标题/备注/优先级/截止时间同一条 DOM、
      同一条 saveCreate 写口），零第二套表单。 */
   buildCreateSheet() {
-    const sheet = el('div', 'mf-drawer mf-drawer-top');
+    const sheet = el('div', 'mf-drawer');
     sheet.hidden = true;
     sheet.setAttribute('role', 'dialog');
     sheet.setAttribute('aria-modal', 'true');
@@ -672,8 +679,9 @@ class TodoFace {
 
   /** 表单开合（单一状态位 = `creating`，本函数是唯一显隐写口）。
    *  `hidden` 不能参与过渡（display:none）⇒ 先摘 hidden、下一帧再翻 `.is-open`，
-   *  起点/终点几何全在 CSS（`.mf-drawer-top .mf-drawer-box`）；过渡串由液态形变
-   *  单源生成（属性白名单 transform/opacity，slow 档 = 大位移腿，reduced ⇒ 1ms）。 */
+   *  起点/终点几何全在 CSS（`.mf-drawer-box`：translateY(100%) → 0）；过渡串由
+   *  液态形变单源生成（属性白名单 transform/opacity，slow 档 = 大位移腿，
+   *  reduced ⇒ 1ms）。位移只吃 transform ⇒ 开合期间不触发布局（零 reflow）。 */
   setSheetOpen(open) {
     const sheet = this.sheetEl;
     const box = this.sheetBox;
@@ -682,6 +690,14 @@ class TodoFace {
     const reduced = lmReducedMotion();
     box.style.transition = morphTransition(['transform', 'opacity'], { duration: 'slow', reduced });
     if (open) {
+      // 钉住可视框（与 js/scheduled-task.js setDrawerOpen 同形同注，2026-11-06）：
+      // 页面壳 `.mobile-page` 是 overflow:hidden 的程序滚容器，抽屉 inset:0 锚在
+      // 内容坐标 —— 滚动非零时抽屉随内容上提。开启瞬间 translateY(scrollTop)
+      // 平移回可视框，关闭复位；只写 transform ⇒ 零 reflow。
+      const page = (sheet.parentElement && sheet.parentElement.closest)
+        ? sheet.parentElement.closest('.mobile-page') : null;
+      const st = page ? page.scrollTop : 0;
+      sheet.style.transform = st > 0 ? `translateY(${st}px)` : '';
       const wasHidden = sheet.hidden;
       sheet.hidden = false;
       if (wasHidden || !box.classList.contains('is-open')) {
@@ -693,6 +709,7 @@ class TodoFace {
       }
       return;
     }
+    sheet.style.transform = '';
     if (sheet.hidden) return;
     box.classList.remove('is-open');
     // 收尾 = 过渡结束后再 hidden（进位一帧），reduced-motion 走 1ms 档。
@@ -1915,9 +1932,10 @@ class TodoFace {
       this.saveCreate();
     });
     // 展开后聚焦标题（ReminderIsland onAppear 聚焦等价：web 无懒实例化竞态，
-    // 一档聚焦即落地——对照表申报简化）。手机顶部表单腿必须 preventScroll：
-    // 表单位于页面壳顶部、DOM 上却在页体滚动容器内 ⇒ 缺省聚焦可能把页体往上
-    // 拽（= 内容位移，违反「新建零位移」硬验收）。
+    // 一档聚焦即落地——对照表申报简化）。手机底部抽屉腿同样 preventScroll：
+    // 抽屉是覆盖层、DOM 上却挂在页体滚动容器内 ⇒ 缺省聚焦可能把页体/列表往上
+    // 拽（= 内容位移，违反「新建零位移」硬验收；create-bottom-restore 批 2026-11-06
+    // 把这档从顶部腿原样带到恢复后的底部腿）。
     setTimeout(() => {
       if (!this.creating || !this.createTitle) return;
       if (this.mobile) this.createTitle.focus({ preventScroll: true });
