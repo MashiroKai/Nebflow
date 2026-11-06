@@ -1470,12 +1470,13 @@ class TodoFace {
          morphTransition()（base 280ms / 唯一曲线 / 属性白名单内），reduced-motion
          由同一模块降到 1ms —— 本文件不写第二份毫秒数、不写第二份曲线。
        · 位移腿只走 transform（不写 top 补间）⇒ 插值段里零布局跳变。
-     零位移不变量：框是**绝对定位浮件**（定位盒 = 手机页面壳 `.mobile-page`，
-     absolute + overflow:hidden），全程不参与列表布局 ⇒ 开合前后首条行 rect、
-     `.tfl-list` 的 scrollTop/scrollHeight、页面壳滚轴逐值不变（spec A 组）。
-     材质 / 尺寸：面 = `.nf-glass`（毛玻璃单源，本文件零 backdrop-filter）；
-     圆角吃既有 `--ds-radius-card-lg`；输入面 = `.nf-textarea`（css/input.css 与
-     主输入框同一份声明，本批只补几何），不新造第二套输入框。 */
+       零位移不变量：框是**绝对定位浮件**（定位盒 = 手机页面壳 `.mobile-page`，
+       absolute + overflow:hidden），全程不参与列表布局 ⇒ 开合前后首条行 rect、
+       `.tfl-list` 的 scrollTop/scrollHeight、页面壳滚轴逐值不变（spec A 组）。
+       材质 / 尺寸：面 = `.nf-glass`（毛玻璃单源，本文件零 backdrop-filter）；
+       圆角吃既有 `--ds-radius-card-lg`；输入面 = `.tfl-hit-reply`（css/
+       mobileLayer.css ⑥ 块：`.tfl-edit-notes` 同族表面——无环裸件，正文用
+       bubble 字号），不新造第二套输入框。 */
 
   /** 互动框的定位盒 = 手机页面壳；取不到时回落 body（两种口径同一套相对坐标）。 */
   itemBoxShell() {
@@ -1613,7 +1614,7 @@ class TodoFace {
 
     // ④ 多行输入：回车 = 换行（不发送）、内容自增高到上限后内部滚动、发送 = 独立钮
     const replyRow = el('div', 'tfl-hit-replyrow');
-    const ta = el('textarea', 'nf-textarea tfl-hit-reply');
+    const ta = el('textarea', 'tfl-hit-reply');
     ta.rows = 1;
     ta.placeholder = t('todoface.replyPh');
     ta.setAttribute('aria-label', t('todoface.replyPh'));

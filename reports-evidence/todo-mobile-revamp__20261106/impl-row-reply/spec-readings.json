@@ -1,0 +1,15 @@
+{
+  "at": "2026-11-06T06:30:35.110Z",
+  "viewport": "375x812@2",
+  "mobile": true,
+  "shots": [
+    "box-open.png",
+    "reply-multiline.png",
+    "after-send.png"
+  ],
+  "pass": 16,
+  "fail": 0,
+  "frames": [
+    "#3d打印模型上色 第一行\n第二行"
+  ]
+}

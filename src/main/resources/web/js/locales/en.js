@@ -3293,6 +3293,10 @@ export default {
   'todoface.menuView': 'Tags',
   'todoface.menuPrio': 'Priority',
   'todoface.menuNoTags': 'No tags yet',
+  // item box (impl-row-reply batch 2026-11-06)
+  'todoface.edit': 'Edit',
+  'todoface.replyPh': 'Reply to this todo…',
+  'todoface.send': 'Send',
   // ── Perception domain (mail-perception-impl batch) ──
   'perception.title': 'Perception',
   'perception.close': 'Close',

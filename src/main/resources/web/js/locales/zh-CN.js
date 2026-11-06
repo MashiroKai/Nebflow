@@ -3204,6 +3204,10 @@ export default {
   'todoface.menuView': '标签',
   'todoface.menuPrio': '重要度',
   'todoface.menuNoTags': '暂无标签',
+  // 互动框（impl-row-reply 批 2026-11-06）
+  'todoface.edit': '编辑',
+  'todoface.replyPh': '回复这个待办…',
+  'todoface.send': '发送',
   // ── 感知域（mail-perception-impl 批）──
   'perception.title': '感知',
   'perception.close': '关闭',

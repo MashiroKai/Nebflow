@@ -5715,3 +5715,142 @@ body.mobile-layer .tfl-menu-empty {
    两主题）：outlineStyle=none / outlineWidth=0px / borderColor=rgba(0,0,0,0)
    ⇒ 蓝边 0 条。日后谁改了这三条之一，G1 立刻变红。
    ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ⑥ 行互动框（impl-row-reply 批 · 2026-11-06）
+   点待办行**原位浮出**的互动框（图3「浮起 + 轻微上移」层级感）——手机腿行点击
+   = toggleItemBox（桌面腿仍走 startEditing，本块不参与桌面）。
+   结构契约（js/todoFace.js buildItemBox / 本块声明零 JS 重复）：
+     · 材质只吃 `.nf-glass`（玻璃配方单源；本块零 backdrop-filter —— glass-unify
+       G1 同律）。起点态 = 行盒（badge 圆角、无浮影），`.is-open` 终点态 = 浮层卡
+       （--ds-radius-card-lg + 玻璃浮影）——圆角/浮影两腿由 JS 的 morphTransition
+       白名单（height+border-radius+box-shadow+transform）插值，本块只声明两端值；
+     · 定位盒 = 页面壳 `.mobile-page`（absolute 浮件，不参与列表布局 ⇒ 开合零位
+       移，读数断言 tests/todo-row-reply.spec.mjs A 组）；z 在行/fab（z6）之上、
+       顶部菜单（z25）之下；
+     · 开合过渡串**不在此写**（时长/曲线/属性白名单 = js/motion/liquidMorph.js
+       单源，JS 逐次写入）；reduced-motion 由同一模块降级 1ms；
+     · 输入面 = `.tfl-hit-reply`（`.tfl-edit-notes` 同族裸件表面：无环无边、
+       tinted 底 —— 与主输入框的 inputSurface 统一语言不冲突；本块补几何：自增
+       高上限唯一一份 max-height、`resize:none`）；回车 = 换行**不发送**（JS 只
+       放行默认换行），发送 = 独立钮，命中盒 ≥ --ds-hit-tap-min（最小可点尺寸
+       令牌单源 —— 本块不写第二把按钮尺）；
+     · 完成钮 = 主色文字钮、编辑钮 = 中性文字钮（语言镜像 .mf-drawer-done-btn /
+       .mf-drawer-cancel-btn 同款：透明底 + pill + 令牌字号，零新造第二套钮）。
+   ═══════════════════════════════════════════════════════════════════════════ */
+body.mobile-layer .mobile-page .tfl-hit {
+  position: absolute;
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  overflow: hidden;
+  border-radius: var(--ds-radius-badge);   /* 起点 = 行盒圆角 */
+  box-shadow: none;                         /* 起点 = 行（无浮影） */
+}
+body.mobile-layer .mobile-page .tfl-hit.is-open {
+  border-radius: var(--ds-radius-card-lg);  /* 终点 = 浮层卡 */
+  box-shadow: var(--nf-glass-shadow);
+}
+body.mobile-layer .tfl-hit-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-3);
+  min-height: 0;
+}
+body.mobile-layer .tfl-hit-head {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  min-width: 0;
+}
+body.mobile-layer .tfl-hit-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+body.mobile-layer .tfl-hit-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--mfs-body);
+  font-weight: 600;
+  color: var(--color-text);
+}
+body.mobile-layer .tfl-hit-prio {
+  flex: none;
+  font-size: var(--mfs-sub);
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+}
+body.mobile-layer .tfl-hit-tag {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--mfs-sub);
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  padding: 2px var(--ds-space-1);
+  border-radius: var(--ds-radius-badge);
+  background: color-mix(in srgb, var(--tag-color, var(--color-text)) 12%, transparent);
+  border: 0.5px solid color-mix(in srgb, var(--tag-color, var(--color-text)) 25%, transparent);
+}
+body.mobile-layer .tfl-hit-detail {
+  font-size: var(--mfs-sub);
+  line-height: 1.45;
+  color: color-mix(in srgb, var(--color-text) 65%, transparent);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+body.mobile-layer .tfl-hit-acts {
+  display: flex;
+  gap: var(--ds-space-2);
+}
+body.mobile-layer .tfl-hit-done,
+body.mobile-layer .tfl-hit-edit,
+body.mobile-layer .tfl-hit-send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--ds-hit-tap-min);
+  min-height: var(--ds-hit-tap-min);
+  padding: 0 var(--ds-space-2);
+  border: none;
+  background: transparent;
+  border-radius: var(--ds-radius-pill);
+  font-size: var(--ds-fs-body);
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+body.mobile-layer .tfl-hit-done { color: var(--color-primary); font-weight: 600; }
+body.mobile-layer .tfl-hit-edit { color: color-mix(in srgb, var(--color-text) 55%, transparent); }
+body.mobile-layer .tfl-hit-replyrow {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--ds-space-2);
+}
+body.mobile-layer .tfl-hit-reply {
+  flex: 1 1 auto;
+  min-width: 0;
+  box-sizing: border-box;
+  border: none;
+  outline: none;            /* 裸件无环（.tfl-edit-notes 同族；G1 非蓝语义同源） */
+  border-radius: var(--ds-radius-input);
+  background: color-mix(in srgb, var(--color-text, #000) 6%, transparent);
+  padding: var(--ds-space-1) var(--ds-space-1h);
+  font: 400 var(--ds-fs-bubble)/1.4 inherit;
+  color: var(--color-text);
+  max-height: 120px;        /* 自增高上限唯一一份（autosizeReply 按此钳，超出内部滚） */
+  resize: none;
+}
+body.mobile-layer .tfl-hit-reply::placeholder { color: color-mix(in srgb, var(--color-text, #000) 35%, transparent); }
+body.mobile-layer .tfl-hit-send { color: var(--color-primary); font-weight: 600; }
