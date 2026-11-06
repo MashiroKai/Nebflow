@@ -83,21 +83,49 @@ class FallbackChainCandidateSpec extends CatsEffectSuite:
     yield assertEquals(refs(cs), List("a/m1"), s"不可解析的链引用必须跳过且不留空位，实际 = ${refs(cs)}")
   }
 
-  test("C-5: 候选集只来自配置实存的 provider/model（不凭空造；储备层只追加）") {
-    val chain = Some(AgentModelConfig(Some("a/m1"), Nil))
-    for cs <- mkRegistry(cfg(chain, "a" -> provider("m1"), "b" -> provider("m2")))
-        .flatMap(_.getCandidatesForAgentUnfiltered(None))
-    yield assertEquals(refs(cs), List("a/m1", "b/m2"), "链顺序在前，储备层按 providerId 字典序追加")
+  test("C-5: agent 显式链是资格边界；配置但未列入的模型不进候选") {
+    val agent = Some(AgentModelConfig(Some("a/m1"), Nil))
+    for cs <- mkRegistry(cfg(None, "a" -> provider("m1"), "b" -> provider("m2")))
+        .flatMap(_.getCandidatesForAgentUnfiltered(agent))
+    yield assertEquals(refs(cs), List("a/m1"), "reserveTier 不得扩张 agent allowlist")
+  }
+
+  test("C-5a: provider/model 只有列入 agent allowlist 后才可选") {
+    val agent = Some(AgentModelConfig(Some("a/m1"), List("b/m2")))
+    for cs <- mkRegistry(cfg(None, "a" -> provider("m1"), "b" -> provider("m2")))
+        .flatMap(_.getCandidatesForAgentUnfiltered(agent))
+    yield assertEquals(refs(cs), List("a/m1", "b/m2"))
+  }
+
+  test("C-5b: agent 链空时走全局默认链，不将其它已配置模型作为储备候选") {
+    val agent = Some(AgentModelConfig(None, Nil))
+    val global = Some(AgentModelConfig(Some("a/m1"), Nil))
+    for cs <- mkRegistry(cfg(global, "a" -> provider("m1"), "b" -> provider("m2")))
+        .flatMap(_.getCandidatesForAgentUnfiltered(agent))
+    yield assertEquals(refs(cs), List("a/m1"))
+  }
+
+  test("C-5c: 显式链无法解析时 fail-closed，不回退全局/储备模型") {
+    val agent = Some(AgentModelConfig(Some("ghost/missing"), Nil))
+    val global = Some(AgentModelConfig(Some("a/m1"), Nil))
+    for cs <- mkRegistry(cfg(global, "a" -> provider("m1"), "b" -> provider("m2")))
+        .flatMap(_.getCandidatesForAgentUnfiltered(agent))
+    yield assertEquals(refs(cs), Nil)
   }
 
   test("C-6: candidatePlan 可观测面列出「这次调用会试哪些、按什么顺序、哪些被跳过」") {
     val staleChain = Some(AgentModelConfig(Some("ghost/m1"), List("a/m1")))
-    for plan <- mkRegistry(cfg(staleChain, "a" -> provider("m1"))).flatMap(_.candidatePlan())
+    for plan <- mkRegistry(cfg(staleChain, "a" -> provider("m1"), "b" -> provider("m2"))).flatMap(_.candidatePlan())
     yield
       assertEquals(plan.hcursor.downField("source").as[String].toOption, Some("llm.fallback"))
       assertEquals(plan.hcursor.downField("chain").as[List[String]].toOption, Some(List("ghost/m1", "a/m1")))
       assertEquals(plan.hcursor.downField("skipped").as[List[String]].toOption, Some(List("ghost/m1")))
       assertEquals(plan.hcursor.downField("candidates").as[List[String]].toOption, Some(List("a/m1")))
+      assertEquals(plan.hcursor.downField("excluded").as[List[String]].toOption, Some(List("b/m2")))
+      assertEquals(
+        plan.hcursor.downField("exclusionReasons").downField("b/m2").as[String].toOption,
+        Some("not in selected chain (provider config is not authorization)")
+      )
       assert(
         plan.hcursor.downField("warnings").as[List[String]].toOption.exists(_.exists(_.contains("ghost"))),
         "可观测面必须带上链校验告警"

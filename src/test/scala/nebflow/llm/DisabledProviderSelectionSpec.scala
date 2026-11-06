@@ -55,9 +55,7 @@ class DisabledProviderSelectionSpec extends CatsEffectSuite:
              )))
     yield
       val r = refs(cs)
-      assert(!r.exists(_.startsWith("cmdcode/")), s"disabled provider 不得进链，实际链 = $r")
-      assert(r.contains("zhipu/glm-5.3-flash"), s"未 disabled 的储备层项必须照常进链，实际链 = $r")
-      assertEquals(r.head, "kimi/kimi-for-coding", s"主链前缀不变，实际链 = $r")
+      assertEquals(r, List("kimi/kimi-for-coding"), s"agent allowlist 外模型（含未 disabled）不得进入候选，实际链 = $r")
   }
 
   test("T2: agent 显式 ref 指向 disabled provider ⇒ 不可被选，链落到其余候选") {
