@@ -94,7 +94,14 @@ object MailboxBootSweep:
       rows <- terminalDelegateRows(store)
       candidates =
         if epoch.lastBootMs <= 0 || epoch.thisBootMs <= 0 then Nil // 空窗安全侧
-        else rows.filter(t => t.completedAt.exists(c => c > epoch.lastBootMs && c <= epoch.thisBootMs))
+        else
+          rows.filter { t =>
+            // TTL 静默闸（终态 7 天 TTL 批 2026-11-06）：超期终态行（终态时刻 ≥
+            // Defaults.DelegateTerminalTtlMs 前）绝不合成补投——长停机后的宽对账窗
+            // 也不把远古死会话翻出来重报；7 天内的终态照旧合成。
+            t.completedAt.exists(c => c > epoch.lastBootMs && c <= epoch.thisBootMs) &&
+            !nebflow.core.delegate.DelegateTerminalTtl.rowExpired(t, epoch.thisBootMs)
+          }
       _ <-
         if candidates.nonEmpty then
           logger.info(

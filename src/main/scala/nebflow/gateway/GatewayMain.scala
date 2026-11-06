@@ -904,6 +904,21 @@ object GatewayMain extends IOApp:
                                             .void
                                         case _ => IO.unit
                                       }
+                                  // ═══ 死 delegate TTL 清理（终态 7 天 TTL 批 2026-11-06）═══
+                                  // 到期死条目（终态/保存态 ≥ 7 天）的登记移除 + 任务行剪行
+                                  // + worktree 联动回收；在飞守卫在 sweep 内（活体/合并队列
+                                  // 零触碰）。链位在 subagentCrashSweep **之前**——先把名单外
+                                  // 的远古尸体清走，收殓/标记/对账腿对已清条目天然零视野
+                                  // （通知源永久沉默）；候重启窗生效（boot 恰一次）。失败只 WARN。
+                                  val delegateTtlSweep: IO[Unit] =
+                                    nebflow.agent.DelegateTtlSweep
+                                      .run(sharedResources)
+                                      .attempt
+                                      .flatMap {
+                                        case Right(r) if r.hasWork =>
+                                          logger.info(s"Delegate TTL sweep: ${r.summary}").void
+                                        case _ => IO.unit
+                                      }
                                   // ═══ 邮箱 boot 对账（终态通知 actor 邮箱化批 P1/P2）═══
                                   // tmp 残片清理 + 账面合成缺失条目（mailbox-reconcile
                                   // 纪元窗内的「账已终、信没到」delegate 终态行）+ 积压
@@ -1244,7 +1259,7 @@ object GatewayMain extends IOApp:
                                   // daemonService autoStart 块（构造序：dock 依赖
                                   // DaemonService 实例）。失败只 WARN 绝不阻塞启动的
                                   // 契约由 dock 腿逐字保持。
-                                  actorSystem.replayWatches *> hubSetup *> recorderSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> subagentCrashSweep *> mailboxBootSweep *> providerSlotReconcile *> taskIndexBackfill *> seedMinimalSet *> sourcePluginHeal *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> mergeQueueBootSweep *> msgTokensBootReconcile *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> memoryRecallDaemon *> succeedPortGate(
+                                  actorSystem.replayWatches *> hubSetup *> recorderSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> delegateTtlSweep *> subagentCrashSweep *> mailboxBootSweep *> providerSlotReconcile *> taskIndexBackfill *> seedMinimalSet *> sourcePluginHeal *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> mergeQueueBootSweep *> msgTokensBootReconcile *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> memoryRecallDaemon *> succeedPortGate(
                                     cfg,
                                     sharedResources.healthMonitor
                                   ) *> {

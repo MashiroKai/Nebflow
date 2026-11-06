@@ -255,6 +255,18 @@ object DelegateRegistry:
         else io.circe.parser.parse(os.read(p)).toOption.flatMap(_.as[Record].toOption)
       catch case _: Throwable => None
 
+  /** Remove one registry entry after its terminal TTL has elapsed. */
+  def remove(id: String): Either[String, Unit] =
+    if !validId(id) then Left(s"delegate registry: invalid session id '$id'")
+    else
+      writeLock.synchronized {
+        try
+          val file = fileOf(id)
+          if os.exists(file) then os.remove(file)
+          Right(())
+        catch case e: Throwable => Left(s"delegate registry remove failed for '$id': ${e.getMessage}")
+      }
+
   /** 全量列出（按 createdAt 倒序；坏文件跳过）。 */
   def list(): List[Record] =
     try

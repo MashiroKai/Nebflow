@@ -90,30 +90,55 @@ object PostMergeCleanup:
    *                       不是「在飞」）——跳过在飞守卫，行为与本批前逐字节相同；
    *                       false（缺省）= 队列侧/扫描侧调用 → 先查在飞（见类注）。
    */
-  def run(rec: Option[DelegateRegistry.Record], allowLiveOwner: Boolean = false): IO[Boolean] =
+  def run(
+    rec: Option[DelegateRegistry.Record],
+    allowLiveOwner: Boolean = false,
+    expiredTerminal: Boolean = false
+  ): IO[Boolean] =
     rec match
       case None => IO.pure(false)
       case Some(r) =>
         (r.worktree, r.branch, r.baseBranch) match
           case (Some(wt), Some(branch), Some(baseBranch)) =>
-            val guard: IO[Option[String]] = if allowLiveOwner then IO.pure(None) else inFlightReason(r)
+            // TTL 清理腿可以消费超期 standby/frozen 记录（它们是用户新规指定的
+            // 有限期保存态，不再无限保留）；但即便如此，活体 actor 仍绝对不可清。
+            val guard: IO[Option[String]] =
+              if allowLiveOwner then IO.pure(None)
+              else if expiredTerminal then
+                WorktreeCandidates.LiveSessions.liveAmong(List(r.id)).map { live =>
+                  Option.when(live.contains(r.id))(
+                    s"$InFlightGuardReason: the owner session '${r.id}' is LIVE in the session registry"
+                  )
+                }
+              else inFlightReason(r)
             guard.flatMap {
               case Some(reason) => IO.blocking(keep(r, wt, branch, reason))
-              case None         => IO.blocking(reclaim(r, wt, branch, baseBranch))
+              case None         => IO.blocking(reclaim(r, wt, branch, baseBranch, expiredTerminal))
             }
           case _ =>
             // 无 worktree / 无分支锚 = 非合并现场（就地腿 / 非 git）——零动作
             IO.pure(false)
 
   /** 零领先守卫 + 移除腿（在飞守卫通过后的既有本体，逐字保留）。 */
-  private def reclaim(r: DelegateRegistry.Record, wt: String, branch: String, baseBranch: String): Boolean =
+  private def reclaim(
+    r: DelegateRegistry.Record,
+    wt: String,
+    branch: String,
+    baseBranch: String,
+    expiredTerminal: Boolean = false
+  ): Boolean =
     Try(os.Path(r.projectWorkspace.getOrElse(r.cwd))).toOption match
       case None =>
         keep(r, wt, branch, "base workspace path unresolvable")
       case Some(ws) =>
         val ahead    = GitWorktrees.commitsAhead(ws, baseBranch, branch)
         val ancestor = GitWorktrees.isAncestor(ws, branch, baseBranch)
-        if ahead > 0 || !ancestor.contains(true) then
+        val zeroAhead = ahead == 0 && ancestor.contains(true)
+        // TTL 回收腿（expiredTerminal=true，终态 7 天 TTL 批 2026-11-06）：树按 git
+        // 本体纪律移除（无 --force——脏/锁定树被 git 拒绝 = 现场保留）；**分支删除
+        // 仍守零领先**——未落地提交绝不因 TTL 消失（树清走、分支留档）。既有合并腿
+        // （expiredTerminal=false）行为逐字节不变（整场守卫在前）。
+        if !expiredTerminal && (ahead > 0 || !ancestor.contains(true)) then
           keep(
             r,
             wt,
@@ -127,12 +152,15 @@ object PostMergeCleanup:
           // fail-soft，绝不阻断清理）——只挂在移除分支，kept 现场不经此。
           val rescue = WorktreeRescue.rescue(ws, wt)
           val rm      = GitWorktrees.removeWorktree(ws, wt)
-          val bd      = if rm.isRight then GitWorktrees.deleteBranch(ws, branch) else Right("")
-          val removed = rm.isRight && bd.isRight
+          val bd      = if rm.isRight && (zeroAhead || !expiredTerminal) then GitWorktrees.deleteBranch(ws, branch) else Right("")
+          // 既有合并腿语义逐字节保留：removed = 树与分支都清走才 true；TTL 回收腿
+          // 的分支删除可以合法跳过（未领先守卫拦下）⇒ 树清走即 removed。
+          val removed = if expiredTerminal then rm.isRight else rm.isRight && bd.isRight
           row(
             r,
             if removed then "removed" else "kept",
             s"worktree=$wt branch=$branch base=$baseBranch " +
+              (if expiredTerminal then s"leg=terminal-ttl-expired zeroAhead=$zeroAhead " else "") +
               s"worktreeRemove=${rm.fold(e => e.take(160), _ => "ok")} " +
               s"branchDelete=${bd.fold(e => e.take(160), _ => "ok")}" +
               (if rescue.isEmpty then "" else s" ${rescue.summary}")
