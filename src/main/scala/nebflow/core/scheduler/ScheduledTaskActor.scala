@@ -21,10 +21,9 @@ import scala.concurrent.duration.*
 // Design:
 //   - start() launches a background fiber that polls every 10 seconds.
 //   - Due tasks are fired, then deleted (one-shot) or rescheduled (recurring).
-//   - Due TODOS (kind=todo, 2026-10-24 双面化) are aggregated into ONE digest
-//     ExternalEvent (busy → queued at next turn boundary, idle → immediate),
-//     then each due todo's surface time is bumped to tomorrow 09:00. A done /
-//     cancel removes the todo from storage ⇒ never surfaces again.
+//   - Due TODOS (kind=todo) are surfaced to the user todo UI only (ids-only frame),
+//     not copied into agent prompt/chat history; each due todo's surface time is
+//     bumped to tomorrow 09:00. A done/cancel removes it from storage.
 //   - notifyTaskChange() triggers an immediate check (best-effort, non-blocking).
 //   - Simpler and more reliable than the old Deferred-based approach, which had
 //     a race condition between consuming the old signal and setting the new one.
@@ -286,36 +285,9 @@ class ScheduledTaskService(
     yield ()
 
   /**
-   * 待办浮出腿注入（双面化面）——同款标记纪律，但 `source="todo"`：
-   * 待办 digest 与定时任务触发**呈现语义不同**（前者是「今天要办的事」汇总，
-   * 后者是到点触发的单卡），故不串到定时任务专属卡，走通用注入泡
-   * （「Todo · Digest」标签）。未标记的裸 `UiMessage.User` 行会被前端历史恢复
-   * 渲染成绿色用户气泡（= schedcard 批修掉的退化态）⇒ 本腿同样必须标记 +
-   * 广播注入 `user` 帧（刷新前后一致）。
+   * 到期待办的周期提醒只在用户待办 UI 体现，不建立 chat user 消息或 agent turn。
+   * 待办正文保留在 Schedule 工具可按需查询的持久存储中。
    */
-  private def injectTodoDigest(
-    resolvedSessionId: String,
-    payload: String,
-    event: AgentCommand.ExternalEvent
-  ): IO[Unit] =
-    val now = System.currentTimeMillis()
-    // 外部注入统一通道批（2026-11-05）：同 [[injectScheduleCard]]——第三份手写投递腿
-    // 收口到 [[InjectionChannel.deliver]]（`extra` 只带本腿的 `timestamp` 帧键）。
-    val row = UiMessage.User(
-      payload,
-      injected = true,
-      timestamp = now,
-      source = Some("todo"),
-      eventType = Some("digest")
-    )
-    val extra = io.circe.JsonObject("timestamp" -> now.asJson)
-    for
-      _ <- InjectionChannel.deliver(sessionStore, broadcast, resolvedSessionId, row, extra = extra)
-      _ <- routeToAgent(resolvedSessionId, event).handleErrorWith(e =>
-        logger.warn(s"Failed to route todo digest to agent: ${e.getMessage}")
-      )
-    yield ()
-
   // ------------------------------------------------------------
   // Face 1: 定时任务（现状 + 主动性增强①条件触发/②错过补偿）
   // ------------------------------------------------------------
@@ -659,48 +631,22 @@ class ScheduledTaskService(
     val dueTodos = ScheduledTaskService.surfacedTodos(dueTodosRaw)
     if dueTodos.isEmpty then IO.unit
     else
+      val now = System.currentTimeMillis()
       for
-        allTodos <- taskStore.getAllTodos
-        now = System.currentTimeMillis()
+        // The user todo surface carries ids only; do not assemble personal content here.
         // 缺卡调整流：先给到期待办 +1 缺卡计数，计数达阈值的进 missStreak
         // （浮出文案附调整建议）。计数与顺延同事务序（store 锁串行），重启不丢。
         _ <- dueTodos.traverse_(t =>
           taskStore.updateTask(t.sessionId, t.id)(x => x.copy(missCount = x.missCount + 1)).void
         )
-        missStreak = dueTodos.filter(_.missCount + 1 >= ScheduledTaskService.MissThreshold).map(_.id).toSet
-        payload = ScheduledTaskService.digestPayloadWithStreak(allTodos, missStreak, now)
-        _ <- if payload.isEmpty then IO.unit else surfaceDigest(dueTodos, allTodos, payload, now)
+        _ <- surfaceDigest(dueTodos, now)
       yield ()
 
-  private def surfaceDigest(
-    dueTodos: List[ScheduledTask],
-    allTodos: List[ScheduledTask],
-    payload: String,
-    now: Long
-  ): IO[Unit] =
+  private def surfaceDigest(dueTodos: List[ScheduledTask], now: Long): IO[Unit] =
     for
-      _ <- logger.info(
-        s"Surfacing ${dueTodos.size} due todo(s), digest covers ${allTodos.size} unfinished: " +
-          dueTodos.map(_.id).mkString(", ")
-      )
-      // 与定时任务同款会话兜底：原会话不在（重启/重开）⇒ 活跃会话接手，
-      // 待办不因会话消亡而烂在库里。
-      resolvedSessionId <- resolveSession(dueTodos.head.sessionId)
-      event = AgentCommand.ExternalEvent(
-        source = "todo-surface",
-        eventType = "digest",
-        payload = payload,
-        metadata = io.circe.JsonObject(
-          "todoIds" -> dueTodos.map(_.id).asJson,
-          "digestTodoIds" -> allTodos.map(_.id).asJson,
-          "surfacedAt" -> now.asJson
-        ),
-        // 同 [[ScheduledTaskService.firingKey]] 的身份口径：待办每天浮出一次，身份
-        // 必须逐次唯一——旧形态用 `dueTodos.head.id`（同一待办次日的浮出撞键 ⇒
-        // 天天只浮出第一天那次）。同一次浮出的重复投递仍按本键去重。
-        correlationId = Some(ScheduledTaskService.firingKey("todo-digest", now))
-      )
-      _ <- injectTodoDigest(resolvedSessionId, payload, event)
+      _ <- logger.info(s"Surfacing ${dueTodos.size} due todo(s) in the user inbox: " + dueTodos.map(_.id).mkString(", "))
+      resolvedSessionId = dueTodos.head.sessionId
+      // No prompt/chat message is emitted; the UI notification below carries ids only.
       // 只顺延**到期**的待办（未到期的首次浮出时间不动——它明晨自会浮出）。
       nextAt = ScheduledTask.nextTodoSurfaceAt(now, ZoneId.systemDefault())
       _ <- dueTodos.traverse_(t => taskStore.rescheduleTask(t.sessionId, t.id, nextAt))

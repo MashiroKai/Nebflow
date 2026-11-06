@@ -240,7 +240,7 @@ test('T2 to-do entry per-end: mobile top-left tasks key opens the tasks page, ca
   const taskBtn = page.locator('.mh-chrome-btn[data-chrome="tasks"]');
   await expect(taskBtn).toHaveCount(1);
   await expect(taskBtn).toBeVisible();
-  await expect(taskBtn.locator('.mh-chrome-badge')).toHaveCount(1);
+  await expect(taskBtn.locator('.mh-chrome-badge')).toHaveCount(0);
   // 悬浮钮层 = 双键（左任务 / 右搜索）
   await expect(page.locator('#mobile-fab-layer .mh-chrome-btn')).toHaveCount(2);
   await expect(page.locator('.mh-chrome-btn[data-chrome="search"]')).toBeVisible();

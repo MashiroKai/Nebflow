@@ -348,7 +348,9 @@ object SystemReminders:
   private def pendingScheduleReminder(pending: List[ScheduledTask]): Option[SystemReminder] =
     val now = System.currentTimeMillis()
     val sched = pending.filter(t => !t.isTodo && t.enabled && !t.triggered && t.triggerAt > now)
-    val todos = pending.filter(t => t.isTodo && t.enabled && !t.triggered)
+    // Personal todos remain available to the user-facing inbox/tool on demand, but
+    // must never be copied into ordinary agent context reminders.
+    val todos: List[ScheduledTask] = Nil
     val schedPart =
       if sched.isEmpty then None
       else
