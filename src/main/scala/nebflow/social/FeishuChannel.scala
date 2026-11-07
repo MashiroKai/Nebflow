@@ -561,13 +561,74 @@ object FeishuChannel:
                 .getOrElse(Left(s"token response was not JSON (http=$status, ${bytes.length}B)"))
     }
 
+  // ───── 入站消息资源下载（feishu-image-endpoint 批，2026-11-07）: 两条腿与诊断 ─────
+  //
+  // 官方文档（2026-11-07 核对，飞书开放平台纯 markdown 版）钉死两条腿不是一回事：
+  //   · 「下载图片」GET /open-apis/im/v1/images/:image_key
+  //     https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/image/get
+  //     使用限制原文：「只能下载由当前机器人上传的图片，且上传时图片类型为
+  //     **用于发送消息**」——并明确指路：「如果你需要下载用户发送消息内的资源
+  //     文件，可使用[获取消息中的资源文件]接口」。错误码 234008 =「当前应用不是
+  //     资源的所有者」，234001 = Invalid request param。
+  //   · 「获取消息中的资源文件」GET /open-apis/im/v1/messages/:message_id/resources/:file_key
+  //     https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/message-resource/get
+  //     查询参数 `type` 必填（image | file），路径参数 message_id 与 file_key
+  //     「需要匹配」（否则 234003 File not in message）。
+  //
+  // 入站事件（im.message.receive_v1）里的 image_key/file_key 属于**后一条**腿。
+  // 2026-11-07 作者报障 —— code=234001 Invalid request param
+  // (endpoint=im/v1/images/:image_key, message_id=om_x100b61de7010653cb09af6a3e618fef,
+  // image_key=img_v3_02177_7c134581-...-8b29f82f1b5g) —— 就是拿错腿的必然结果:
+  // 那个 key 不是本机器人上传的，第一条腿无从匹配参数。本批把默认腿改成
+  // messages/resources（见 [[getInboundResourceVia]]），旧腿降级为无 message_id
+  // 时的受控回退。
+
+  /** 旧腿（机器人自传图）在诊断里的接口标签。 */
+  val ImageEndpoint: String = "im/v1/images/:image_key"
+
+  /** 正确腿（消息内资源）在诊断里的接口标签。 */
+  val MessageResourceEndpoint: String = "im/v1/messages/:message_id/resources/:file_key"
+
   /**
-   * The readable refusal out of a non-2xx `im/v1/images` body — feishu's own
+   * 「获取消息中的资源文件」接受的资源类型——官方查询参数 `type` 的仅有两个
+   * 合法值。按消息类型映射：图片消息 → image；文件/语音/视频消息 → file
+   * （视频按官方口径归入 file 一类）。未知类型 ⇒ None（不猜）。
+   */
+  object ResourceKind:
+    val Image = "image"
+    val File = "file"
+    val Allowed: Seq[String] = Seq(Image, File)
+
+    def ofMessageType(messageType: String): Option[String] =
+      messageType match
+        case "image"                    => Some(Image)
+        case "file" | "audio" | "media" => Some(File)
+        case _                          => None
+
+  /**
+   * 诊断里使用的 key 截断：key 不是凭据，但它又长又吵，报障只需要头尾特征。
+   * ≤16 字符原样保留（短 key 的可读性），更长的截成 `头8…尾4`。
+   */
+  def maskKey(key: String): String =
+    val k = Option(key).getOrElse("").trim
+    if k.length <= 16 then k else s"${k.take(8)}…${k.takeRight(4)}"
+
+  /** feishu 的 msg 若回显完整 key，替换成截断形（完整 key 永不出现在读数里）。 */
+  private def scrubKey(msg: String, key: String): String =
+    val k = Option(key).getOrElse("").trim
+    if k.nonEmpty && msg.contains(k) then msg.replace(k, maskKey(k)) else msg
+
+  /**
+   * The readable refusal out of a non-2xx resource body — feishu's own
    * `code`/`msg` when the body is the error JSON, an honest shape note when it
    * is not. Pure, so the offline spec pins the exact reading (the SDK used to
    * mask ALL of these behind a JsonIOException — the 2026-10-24 incident).
+   *
+   * feishu-image-endpoint 批: `api` / `endpoint` are the LEG's own labels, so a
+   * reading always says WHICH interface answered — the 2026-11-07 incident was
+   * a leg mix-up, so an endpoint-less reading is worthless for next time.
    */
-  def imageErrorReading(status: Int, body: Array[Byte]): (Int, String) =
+  private def resourceErrorReading(status: Int, body: Array[Byte], api: String, endpoint: String): (Int, String) =
     io.circe.parser.parse(new String(body, java.nio.charset.StandardCharsets.UTF_8)).toOption
       .flatMap { j =>
         val cursor = j.hcursor
@@ -581,10 +642,26 @@ object FeishuChannel:
           .orElse(cursor.downField("code").as[String].toOption.flatMap(s => scala.util.Try(s.toInt).toOption))
         code.map { c =>
           val msg = cursor.downField("msg").as[String].toOption.getOrElse("")
-          (c, s"Feishu image API refused (http=$status endpoint=im/v1/images/:image_key fields=code:${rawCode.isDefined},msg:${rawMsg.isDefined}; code=$c msg=$msg)")
+          (
+            c,
+            s"Feishu $api refused (http=$status endpoint=$endpoint fields=code:${rawCode.isDefined},msg:${rawMsg.isDefined}; code=$c msg=$msg)"
+          )
         }
       }
-      .getOrElse((status, s"Feishu image API refused (http=$status endpoint=im/v1/images/:image_key fields=code:false,msg:false; non-JSON body ${body.length}B)"))
+      .getOrElse(
+        (
+          status,
+          s"Feishu $api refused (http=$status endpoint=$endpoint fields=code:false,msg:false; non-JSON body ${body.length}B)"
+        )
+      )
+
+  /** 旧腿（im/v1/images）的读数——cd68b495e 加的诊断，字段与措辞逐字保留。 */
+  def imageErrorReading(status: Int, body: Array[Byte]): (Int, String) =
+    resourceErrorReading(status, body, "image API", ImageEndpoint)
+
+  /** 正确腿（im/v1/messages/.../resources）的读数——同一套 http/code/msg/endpoint 字段。 */
+  def messageResourceErrorReading(status: Int, body: Array[Byte]): (Int, String) =
+    resourceErrorReading(status, body, "message-resource API", MessageResourceEndpoint)
 
   /** Encode arbitrary input as one RFC 3986 path segment, never as URL syntax. */
   private def encodePathSegment(value: String): String =
@@ -596,8 +673,14 @@ object FeishuChannel:
     }.mkString
 
   /**
-   * `im/v1/images/:image_key` — download one message image by its key
-   * (feishu-inbound-image batch). The bot credential pair rides the SAME face
+   * `im/v1/images/:image_key` — download one image the BOT ITSELF uploaded
+   * (feishu-inbound-image batch). 🔴 feishu-image-endpoint 批（2026-11-07）: this
+   * is no longer the inbound leg — official docs limit it to「只能下载由当前机器
+   * 人上传的图片」, so inbound user-sent images ride
+   * [[getMessageResourceVia]] instead. It survives as (a) the public bot-upload
+   * download face and (b) the controlled fallback of [[getInboundResourceVia]]
+   * for an event that carries no message_id.
+   * The bot credential pair rides the SAME face
    * as [[sendText]] (the region base URL); a null response, a channel refusal
    * and a thrown exception all become explicit readings — never a raise, never
    * a silent empty.
@@ -632,10 +715,107 @@ object FeishuChannel:
               else ImageResult(ok = false, None, status, "download succeeded but returned no bytes")
             else
               val (code, msg) = imageErrorReading(status, bytes)
-              val safeMsg = if imageKey.nonEmpty then msg.replace(imageKey, "[redacted-image-key]") else msg
-              ImageResult(ok = false, None, code, safeMsg)
+              // feishu-image-endpoint 批: 完整 key 不进读数——回显时替换为截断形
+              // （cd68b495e 的「不泄露完整 key」要求保留，形态收窄为 maskKey）。
+              ImageResult(ok = false, None, code, scrubKey(msg, imageKey))
 
   end getImageVia
+
+  /**
+   * `GET /open-apis/im/v1/messages/:message_id/resources/:file_key?type=<image|file>`
+   * — 下载**某条消息里**的资源（音频/视频/图片/文件）。这是入站事件资源的正确
+   * 腿：事件里的 `image_key`/`file_key` 只在「该 message_id + 该 file_key」这一
+   * 组合下成立（官方原文：「路径参数 file_key 和 message_id 需要匹配」）。
+   *
+   * 官方文档：https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/message-resource/get
+   * 鉴权沿用本类既有的 tenant_access_token 腿（[[tenantToken]]，2h token 缓存
+   * per (appId, region)），传输走同一 [[RawHttp]] 缝——不另造一套。
+   *
+   * 三个前置检查（message_id 空 / file_key 空 / type 不在 image|file）在**发起
+   * 请求之前**就返回显式读数：不浪费一次网络往返，也不把 feishu 的 234001 浪费
+   * 在本地就能判断的错误上。
+   */
+  def getMessageResource(
+    appId: String,
+    appSecret: String,
+    region: String,
+    messageId: String,
+    fileKey: String,
+    resourceType: String
+  ): ImageResult =
+    getMessageResourceVia(rawHttpLive())(appId, appSecret, region, messageId, fileKey, resourceType)
+
+  /** The [[RawHttp]]-seamed core — the offline spec injects the transport here. */
+  private[social] def getMessageResourceVia(
+    http: RawHttp
+  )(appId: String, appSecret: String, region: String, messageId: String, fileKey: String, resourceType: String): ImageResult =
+    val base = baseOriginOf(region)
+    val mid = Option(messageId).map(_.trim).getOrElse("")
+    val key = Option(fileKey).map(_.trim).getOrElse("")
+    val kind = Option(resourceType).map(_.trim).getOrElse("")
+    if mid.isEmpty then ImageResult(ok = false, None, -1, s"message_id missing (endpoint=$MessageResourceEndpoint)")
+    else if key.isEmpty then ImageResult(ok = false, None, -1, s"file_key missing (endpoint=$MessageResourceEndpoint)")
+    else if !ResourceKind.Allowed.contains(kind) then
+      ImageResult(
+        ok = false,
+        None,
+        -1,
+        s"unsupported resource type '$kind' (endpoint=$MessageResourceEndpoint; expected ${ResourceKind.Allowed.mkString("|")})"
+      )
+    else
+      tenantToken(appId, appSecret, base, http) match
+        case Left(reason) => ImageResult(ok = false, None, -1, reason)
+        case Right(token) =>
+          // message_id / file_key 各是**一个**路径段（RFC 3986 单段编码，绝不
+          // 让 key 里的 / ? 之类的字符撕开路径）；type 取自白名单枚举，直接拼接。
+          val url =
+            s"$base/open-apis/im/v1/messages/${encodePathSegment(mid)}/resources/${encodePathSegment(key)}?type=$kind"
+          http(url, Map("Authorization" -> s"Bearer $token"), None) match
+            case Left(_) =>
+              ImageResult(ok = false, None, -1, s"resource GET transport failed (endpoint=$MessageResourceEndpoint)")
+            case Right((status, bytes)) =>
+              if status >= 200 && status < 300 then
+                if bytes.nonEmpty then ImageResult(ok = true, Some(bytes), status, "ok")
+                else ImageResult(ok = false, None, status, "download succeeded but returned no bytes")
+              else
+                val (code, msg) = messageResourceErrorReading(status, bytes)
+                ImageResult(ok = false, None, code, scrubKey(msg, key))
+
+  end getMessageResourceVia
+
+  /**
+   * 入站消息资源的下载腿策略（feishu-image-endpoint 批，2026-11-07）——
+   * **默认走 messages/{message_id}/resources/{file_key}?type=…**；`im/v1/images/
+   * :image_key` 只作为「事件没带 message_id」时的受控回退保留（那条腿只认机器人
+   * 自己上传的图，用它取入站消息的图必然 234001）。
+   *
+   * 读数里的 `leg=` 标记是硬要求：故障报告必须能说明这次走的是哪条腿，否则下一
+   * 次报障还是分不清「拿错腿」还是「真失败」。`ImageResult.msg` 在成功时也带
+   * 标记，失败时标记置于最前。
+   */
+  def getInboundResource(
+    appId: String,
+    appSecret: String,
+    region: String,
+    messageId: String,
+    fileKey: String,
+    resourceType: String
+  ): ImageResult =
+    getInboundResourceVia(rawHttpLive())(appId, appSecret, region, messageId, fileKey, resourceType)
+
+  /** The [[RawHttp]]-seamed core — the offline spec pins both legs here. */
+  private[social] def getInboundResourceVia(
+    http: RawHttp
+  )(appId: String, appSecret: String, region: String, messageId: String, fileKey: String, resourceType: String): ImageResult =
+    if Option(messageId).map(_.trim).exists(_.nonEmpty) then
+      val r = getMessageResourceVia(http)(appId, appSecret, region, messageId, fileKey, resourceType)
+      if r.ok then r.copy(msg = "ok (leg=message-resources)") else r.copy(msg = s"leg=message-resources ${r.msg}")
+    else
+      val r = getImageVia(http)(appId, appSecret, region, fileKey)
+      if r.ok then r.copy(msg = "ok (leg=legacy-images; no message_id on the event)")
+      else r.copy(msg = s"leg=legacy-images (no message_id on the event) ${r.msg}")
+
+  end getInboundResourceVia
 
   /**
    * Send one interactive card (askuser batch, 2026-10-01).
