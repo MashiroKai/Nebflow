@@ -285,7 +285,9 @@
    files 和回落）；②归因+状态「DELEGATE · INTERNAL · COMPLETED」合成一颗胶囊芯片
    （.nf-rcpt-pill），diff 统计旁边单独一颗块（.nf-rcpt-note），两块之间「|」分隔；
    ③+ 绿 / − 红语义 token 双主题达标；④两块各有 hover 态（本批样式家族：
-   块底 sapphire tint + 描边微变）。
+   块底 sapphire tint + 描边微变）。**单框批（作者令 2026-11-07）**：④的「行底」
+   层整条退役——卡头行 .nf-rcpt-head:hover 的背景/描边撤除（它与内层胶囊的
+   hover 框嵌套，hover 同屏两圈外框），只留块级 hover，见下。
    视觉语言逐字对齐现行注入泡：卡头来源名同 .injected-source-label 族（10px
    小号大写、sapphire 0.85）；判词 muted 单色（completed/merged/failed 同色，
    无色相语义）。摘要行收进展开态（点开详情语义不动）；展开态正文与卡面的间距
@@ -293,7 +295,8 @@
 .nf-rcpt-top {
   min-width: 0;
   /* 卡头行 = 折叠切换面（role=button 由 bindCollapsibleToggle 打上）：手型常驻
-     提示可点（hover 视觉反馈在下层 .nf-rcpt-head 上，避免展开态摘要区也泛蓝）。 */
+     提示可点（hover 视觉反馈在胶囊块 .nf-rcpt-pill 上，单框批 2026-11-07 后
+     卡头行自身无 hover 框；展开态摘要区因此也不会泛蓝）。 */
   cursor: pointer;
 }
 .nf-rcpt-top:focus-visible {
@@ -301,9 +304,14 @@
   outline-offset: 2px;
   border-radius: var(--ds-radius-chip);
 }
-/* 单行卡面行：弹性一行不换行；整条 hover = 可点击反馈——sapphire 微底 +
-   inset hairline 描边微变（克制档，给块级 hover 留层次；不糊满整条）。负边距补偿
-   内边距 ⇒ 布局零位移；行底延伸进泡 padding 缘构成整行热区感。 */
+/* 单行卡面行：弹性一行不换行。负边距补偿内边距 ⇒ 布局零位移；行底延伸进泡
+   padding 缘构成整行热区感（手型 = 可点感，行本身恒零底零影）。
+   单框批（作者令 2026-11-07「现在 delegate 的气泡 hover，会同时显示外框和内框，
+   只显示内框就行了」）：本行原自带**外框** hover（sapphire 0.08 底 + inset
+   hairline 0.22），它把内层胶囊 .nf-rcpt-pill 的**内框** hover 整个圈在里面 ⇒
+   hover 同屏两圈框。现整条退役：hover 视觉只剩内框（胶囊块底 tint + 描边微变，
+   见下条），本行 hover 零视觉、零过渡；可点感由 cursor:pointer 与胶囊/徽标各自
+   的 hover 承担，键盘 focus ring 走 .nf-rcpt-top:focus-visible（不动）。 */
 .nf-rcpt-head {
   display: flex;
   align-items: center;
@@ -313,11 +321,6 @@
   padding: var(--ds-space-half) var(--ds-space-1h);
   border-radius: var(--ds-radius-chip);
   cursor: pointer;
-  transition: background-color 0.15s ease, box-shadow 0.15s ease;
-}
-.nf-rcpt-head:hover {
-  background: rgb(var(--sapphire) / 0.08);
-  box-shadow: inset 0 0 0 1px rgb(var(--sapphire) / 0.22);
 }
 .nf-rcpt-head:focus-visible {
   outline: 2px solid var(--btn-focus-ring);
@@ -326,8 +329,10 @@
 /* 块一：归因+状态胶囊芯片（版式批②）——短名 + 字面 ' · ' + 判词同块，pill
    textContent 逐字「DELEGATE · INTERNAL · COMPLETED」口径。胶囊语言 = hairline
    边框 + 全圆角 + 横向呼吸 padding；rest 零底安静，hover = 块底 sapphire tint +
-   描边微变（家族档：比行底 0.08 深一档，行反馈与块反馈同屏可辨）。收缩段 =
-   内部 .nf-rcpt-name（ellipsis 让位 pipe/diff 块，窄面板判词/统计不坠行）。 */
+   描边微变。单框批（2026-11-07）后这是卡头行**唯一**的 hover 框：外框
+   （.nf-rcpt-head:hover）整条退役，故本档不再需要「比行底深一档」的区分，
+   它就是 hover 反馈本身。收缩段 = 内部 .nf-rcpt-name（ellipsis 让位
+   pipe/diff 块，窄面板判词/统计不坠行）。 */
 .nf-rcpt-pill {
   display: inline-flex;
   align-items: center;

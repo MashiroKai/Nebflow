@@ -27,7 +27,8 @@
 //      ——版式批「单独一颗块」口径；22:29 批零构造/右缘贴卡口径随批退役）；
 //   B1 单行化：卡面行高 ≤24px；pill/pipe/note 同带不坠行；字面次序
 //      「胶囊 | 统计块」相邻（pipe 无 auto 边距——右对齐口径退役）；
-//   B2 整条 hover 可点击感：cursor:pointer + sapphire 微底 + inset 描边微变；
+//   B2 整条 hover 可点击感：cursor:pointer（单框批 2026-11-07 起行级微底/描边退役，
+//      hover 视觉只剩块级——见 B3）；
 //   B3 块级 hover 隔离：hover pill ⇒ 仅 pill 亮、note 不亮；hover note ⇒ 仅 note
 //      亮、pill 不亮；hover 不褪 +/− 语义色（恒驻——22:29 批褪色口径退役）；
 //   A7 窄 200px：短名省略号截断、pipe/note 不坠行；
@@ -485,10 +486,12 @@ const TRANSPARENT = (v) => v === 'rgba(0, 0, 0, 0)' || v === 'transparent';
   });
   readings.tiers.rowHover = { rest, hover: rowHover };
   ok('B2 行 hover 手型（cursor:pointer）', rowHover.cursor === 'pointer', `cursor=${rowHover.cursor}`);
-  ok('B2 行 hover 背景微变（透明 → sapphire 微底）',
-    rowHover.bg !== rest.headBg && rowHover.bg !== 'rgba(0, 0, 0, 0)' && rowHover.bg !== 'transparent',
-    `rest=${rest.headBg} hover=${rowHover.bg}`);
-  ok('B2 行 hover 描边微变（inset hairline 出场）', rowHover.shadow !== 'none', `shadow=${rowHover.shadow.slice(0, 60)}`);
+  // 单框批（作者令 2026-11-07「hover 同时显示外框和内框，只显示内框就行了」）：
+  // 行级 hover 框（本批 ④ 的「行底 0.08 + inset hairline」那层）整条退役，可见反馈
+  // 只剩 B3 的块级胶囊/统计块——行 hover 恒零底零影。
+  ok('B2 行 hover 零外框（背景恒透明——单框批：行底那层退役）',
+    TRANSPARENT(rowHover.bg), `rest=${rest.headBg} hover=${rowHover.bg}`);
+  ok('B2 行 hover 零外框（inset hairline 退役，shadow 恒 none）', rowHover.shadow === 'none', `shadow=${rowHover.shadow.slice(0, 60)}`);
   await page.locator('.bubble.injected').nth(0).screenshot({ path: join(SHOTS, `${PHASE}-4-hover-row-dark.png`) });
 
   // ── B3 块级 hover 隔离（版式④）：hover 胶囊 ⇒ 仅胶囊亮；hover 统计块 ⇒ 仅块亮；
@@ -586,8 +589,8 @@ const TRANSPARENT = (v) => v === 'rgba(0, 0, 0, 0)' || v === 'transparent';
     const cs = getComputedStyle(el);
     return { cursor: cs.cursor, bg: cs.backgroundColor, shadow: cs.boxShadow };
   });
-  ok('A8/B2 亮档行 hover 反馈在场（手型+微底+描边）',
-    lightHover.cursor === 'pointer' && lightHover.bg !== 'rgba(0, 0, 0, 0)' && lightHover.bg !== 'transparent' && lightHover.shadow !== 'none',
+  ok('A8/B2 亮档行 hover 手型在场且外框零视觉（单框批：只剩块级 hover）',
+    lightHover.cursor === 'pointer' && TRANSPARENT(lightHover.bg) && lightHover.shadow === 'none',
     JSON.stringify(lightHover));
   await page.locator('.bubble.injected').nth(0).locator('.nf-rcpt-pill').hover();
   await settle(page);
