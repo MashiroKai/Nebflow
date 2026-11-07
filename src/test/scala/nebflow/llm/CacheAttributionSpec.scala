@@ -68,6 +68,54 @@ class CacheAttributionSpec extends FunSuite:
   private val hit  = TokenUsage(inputTokens = 1000, outputTokens = 10, cacheReadTokens = Some(900)) // 90% 正常带
   private val miss = TokenUsage(inputTokens = 1000, outputTokens = 10, cacheReadTokens = Some(0)) // 0% 归因带
 
+  test("stream usage is accounted once after all Done events, matching persisted selection"):
+    import cats.effect.unsafe.implicits.global
+    val doneWithout = StreamChunk.Done(None, None, None, None)
+    val doneWith = StreamChunk.Done(None, Some(miss), None, None)
+    val input = List(doneWithout, doneWith, doneWith)
+    val output = CacheAttribution.accountStream(fs2.Stream.emits(input).covary[cats.effect.IO], "s", "p", "m", Some("r"))
+      .compile.toList.unsafeRunSync()
+    assertEquals(output, input)
+    assertEquals(CacheAttribution.snapshot.business.requests, 1L)
+    assertEquals(CacheAttribution.snapshot.missCounts.get("usage-missing"), None)
+    assertEquals(CacheAttribution.snapshot.recentMisses.last.requestId, Some("r"))
+
+  test("completed stream with genuinely missing usage is counted once"):
+    import cats.effect.unsafe.implicits.global
+    val done = StreamChunk.Done(None, None, None, None)
+    CacheAttribution.accountStream(fs2.Stream.emits(List(done, done)).covary[cats.effect.IO], "s", "p", "m", Some("missing"))
+      .compile.drain.unsafeRunSync()
+    assertEquals(CacheAttribution.snapshot.missCounts.get("usage-missing"), Some(1))
+    assertEquals(CacheAttribution.snapshot.recentMisses.last.requestId, Some("missing"))
+
+  test("delayed usage is not classified missing before the stream completes"):
+    import cats.effect.{Deferred, IO}
+    import cats.effect.unsafe.implicits.global
+    val program = for
+      gate <- Deferred[IO, Unit]
+      delivered <- Deferred[IO, Unit]
+      first = StreamChunk.Done(None, None, None, None)
+      last = StreamChunk.Done(None, Some(hit), None, None)
+      source = fs2.Stream.emit(first).covary[IO] ++ fs2.Stream.exec(delivered.complete(()).map(_ => ())) ++
+        fs2.Stream.exec(gate.get) ++ fs2.Stream.emit(last)
+      fiber <- CacheAttribution.accountStream(source, "s", "p", "m", Some("delayed")).compile.drain.start
+      _ <- delivered.get
+      _ = assertEquals(CacheAttribution.snapshot.missCounts.get("usage-missing"), None)
+      _ <- gate.complete(())
+      _ <- fiber.joinWithNever
+      _ = assertEquals(CacheAttribution.snapshot.business.requests, 1L)
+      _ = assertEquals(CacheAttribution.snapshot.missCounts.get("usage-missing"), None)
+    yield ()
+    program.unsafeRunSync()
+
+  test("aborted stream does not create a missing usage record"):
+    import cats.effect.IO
+    import cats.effect.unsafe.implicits.global
+    val source = fs2.Stream.emit(StreamChunk.Done(None, None, None, None)).covary[IO] ++
+      fs2.Stream.raiseError[IO](new RuntimeException("synthetic failure"))
+    assert(CacheAttribution.accountStream(source, "s", "p", "m", None).compile.drain.attempt.unsafeRunSync().isLeft)
+    assertEquals(CacheAttribution.snapshot.missCounts.get("usage-missing"), None)
+
   // ── C-OBS-1：总率口径 ─────────────────────────────────────────────────
 
   test("⑦ total rate = sum(read)/sum(input), never per-request average"):
@@ -125,6 +173,7 @@ class CacheAttributionSpec extends FunSuite:
     val requestId = "request-123"
     val record = CacheAttribution.observeUsage("log-s", "Zai", "glm-5.3-flash", Some(miss), requestId = Some(requestId))
     assertEquals(record.flatMap(_.requestId), Some(requestId))
+    assertEquals(CacheAttribution.snapshot.recentMisses.last.requestId, Some(requestId))
     assertEquals(emitted.length, 1)
     assert(emitted.head.contains(s"request_id=$requestId"))
     assert(emitted.head.contains("cache-attribution: category=new-session"))

@@ -1171,7 +1171,7 @@ object LlmInterface extends LlmRuntime:
                                           )
                                         }
                                       }
-                                    (stream
+                                    CacheAttribution.accountStream((stream
                                       // Per-provider two-phase watchdog: detects both
                                       // dead connections (no first token) and mid-stream stalls.
                                       // Applied per-provider so a timeout on one allows fallback.
@@ -1213,20 +1213,6 @@ object LlmInterface extends LlmRuntime:
                                               // from the candidate so the frontend shows correct provider name.
                                               val fixedMeta =
                                                 done.meta.map(_.copy(providerId = candidate.providerId))
-                                              // cache-hit 批（2026-11-06）：命中率聚合读数单点
-                                              // （非流腿在同函数 send 的 LlmResponse 装配处，两腿
-                                              // 各记一次、不双记）。放在真实候选腿上——adapter 内
-                                              // 的 providerId 是硬编码协议名（如 "anthropic"），
-                                              // 域分列（failover 换域=物理性）必须以真实腿为准。
-                                              CacheStats.record(candidate.providerId, candidate.model, done.usage)
-                                              // cache-warmup 批（2026-11-06）：同点位归因落账（流腿）。
-                                              CacheAttribution.observeUsage(
-                                                req.sessionId,
-                                                candidate.providerId,
-                                                candidate.model,
-                                                done.usage,
-                                                requestId = req.requestId
-                                              )
                                               // visionfix (甲): the oscillation-fix bookkeeping
                                               // (`resetOnSuccess` with `hadImage`) is gone with the
                                               // tracker — there is no demotion state left to lift.
@@ -1260,7 +1246,7 @@ object LlmInterface extends LlmRuntime:
                                             else IO.unit
                                           }
                                         )
-                                        .drain)
+                                        .drain), req.sessionId, candidate.providerId, candidate.model, req.requestId)
                                       // visionfix (甲): the former PostEmptyRecovery branch lived
                                       // here. It detected "empty completion with an image on a model
                                       // believed non-vision" and answered by stripping the image and

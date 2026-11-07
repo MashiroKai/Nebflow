@@ -179,6 +179,57 @@ class VisionWireCaptureSpec extends CatsEffectSuite:
         }
     yield result
 
+  test("OpenAI-compatible real sendStream and send account synthetic usage once") {
+    val program = for
+      server <- IO.blocking {
+        val s = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0)
+        s.createContext("/chat/completions", (exchange: HttpExchange) => {
+          val body = new String(exchange.getRequestBody.readAllBytes(), StandardCharsets.UTF_8)
+          val streaming = parser.parse(body).toOption.exists(_.hcursor.get[Boolean]("stream").getOrElse(false))
+          val payload = if streaming then
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":null}]}\n\n" +
+            "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n" +
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":2,\"prompt_tokens_details\":{\"cached_tokens\":0}}}\n\n" +
+            "data: [DONE]\n\n"
+          else
+            "{\"id\":\"synthetic\",\"model\":\"m1\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"ok\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":2}}"
+          val bytes = payload.getBytes(StandardCharsets.UTF_8)
+          exchange.getResponseHeaders.add("Content-Type", if streaming then "text/event-stream" else "application/json")
+          exchange.sendResponseHeaders(200, bytes.length)
+          val out = exchange.getResponseBody
+          out.write(bytes); out.close(); exchange.close()
+        })
+        s.start(); s
+      }
+      result <- (for
+        config <- IO.pure(NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map("v" -> ProviderConfig(
+          baseUrl = s"http://127.0.0.1:${server.getAddress.getPort}", apiKey = "synthetic",
+          protocol = LlmProtocol.OpenAI, models = List(ModelConfig("m1")))))))
+        configRef <- Ref.of[IO, NebflowServiceConfig](config)
+        overrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
+        _ <- IO(CacheAttribution.resetForTest())
+        results <- LlmInterface.createLlm(overrides, None, Some(configRef)).flatMap { case (handle, _, _, release) =>
+          val streamReq = imageRequest.copy(requestId = Some("synthetic-stream"))
+          val normalReq = imageRequest.copy(requestId = Some("synthetic-normal"))
+          (for
+            chunks <- handle.sendStream(streamReq).compile.toList
+            streamed = CacheAttribution.snapshot
+            response <- handle.send(normalReq)
+            normal = CacheAttribution.snapshot
+          yield (chunks, streamed, response, normal)).guarantee(release)
+        }
+      yield results).guarantee(IO.blocking(server.stop(0)))
+    yield result
+    val (chunks, streamed, response, normal) = program.unsafeRunSync()
+    assert(chunks.collect { case d: StreamChunk.Done => d }.size >= 2)
+    assertEquals(streamed.business.requests, 1L)
+    assertEquals(streamed.missCounts.get("usage-missing"), None)
+    assertEquals(streamed.recentMisses.last.requestId, Some("synthetic-stream"))
+    assert(response.usage.isDefined)
+    assertEquals(normal.business.requests, 2L)
+    assertEquals(normal.recentMisses.last.requestId, Some("synthetic-normal"))
+  }
+
   // ============================================================
   // O7 main criterion C — the model really receives the image block
   // ============================================================
