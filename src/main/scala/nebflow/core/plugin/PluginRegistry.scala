@@ -152,6 +152,19 @@ object PluginRegistry:
   val PluginPlaceholderEnvKeys: Set[String] = Set("PLUGIN_ROOT", "PLUGIN_DATA")
 
   /**
+   * mcp.json 单个 server entry 的**已知字段集**（unknown-field 告警的白名单）。
+   *
+   * 缺陷②（2026-11-02）：此集此前只有 `type/command/args/env/cwd/url/headers`，
+   * 于是 `timeoutMs`（本引擎 R3 扩展字段，= [[nebflow.shared.McpServerConfig.timeoutMs]]
+   * 的 per-server tools/call 上限）在装载层被 report-and-ignore 丢掉 /api/plugins
+   * 报 `unknown field 'timeoutMs' ignored`，插件面永远拿不到 600s 调用预算。
+   * `timeoutMs` 自此为受控的引擎扩展键：解析 + 透传（见 validateServerEntry），
+   * 其余未知键仍是 report-and-ignore。
+   */
+  val McpEntryKnownFields: Set[String] =
+    Set("type", "command", "args", "env", "cwd", "url", "headers", "timeoutMs")
+
+  /**
    * §B.3 红标启发式：凭据类 env 键名（仅红标提示，不拒载——信任门审批清单的
    * 「审什么」辅助，非装载规则）。
    */
@@ -1058,8 +1071,12 @@ object PluginRegistry:
     else
       val c = sj.hcursor
       // entry 内未知字段 → 告警 + 忽略（前向兼容，§7.2.2 report-and-ignore 语义）
+      // `timeoutMs` 是本引擎扩展（R3 wait-timeout-fix：per-server tool-call 上限，
+      // 见 McpServerConfig.timeoutMs / McpManager.connectServer），上游 1.0.0
+      // mcp.schema.json 未收录——插件面在此开一个受控口子：解析 + 透传，否则
+      // 插件侧永远拿不到调用预算（缺陷②：`unknown field 'timeoutMs' ignored`）。
       sj.asObject.foreach(_.keys.foreach { k =>
-        if !Set("type", "command", "args", "env", "cwd", "url", "headers").contains(k) then
+        if !McpEntryKnownFields.contains(k) then
           warnings += s"mcp server '$name' unknown field '$k' ignored (forward-compat)"
       })
       val tpe = c.downField("type").as[String].toOption
@@ -1126,6 +1143,17 @@ object PluginRegistry:
               case w if w.startsWith("./") => s"${"$"}{PLUGIN_ROOT}/${w.stripPrefix("./")}"
               case w => w
             }
+            // 缺陷②：per-server tools/call 上限（引擎扩展键）。0/负数会让每次
+            // tools/call 立刻超时 ⇒ 语义无意义，按 invalid 拒（不是告警忽略）。
+            timeoutRaw <- c.downField("timeoutMs").as[Option[Long]] match
+              case Right(v) => Some(v)
+              case Left(_) => reject[Option[Long]]("'timeoutMs' must be an integer (milliseconds)")
+            timeoutMs <-
+              timeoutRaw match
+                case None => Some(None)
+                case Some(ms) if ms <= 0 =>
+                  invalid(s"'timeoutMs' must be positive (got $ms)"); None
+                case Some(ms) => Some(Some(ms))
           yield McpServerConfig(
             command = Some(resolvedCommand),
             args = args,
@@ -1133,7 +1161,7 @@ object PluginRegistry:
             url = None,
             headers = None,
             enabled = None,
-            timeoutMs = None,
+            timeoutMs = timeoutMs,
             cwd = cwd
           )
           end for
@@ -1158,6 +1186,16 @@ object PluginRegistry:
             headers <- c.downField("headers").as[Option[Map[String, String]]] match
               case Right(v) => Some(v)
               case Left(_) => reject[Option[Map[String, String]]]("'headers' must be an object of string values")
+            // 缺陷②：HTTP 传输同样透传（sse/streamable-http 的 tools/call 上限）。
+            timeoutRaw <- c.downField("timeoutMs").as[Option[Long]] match
+              case Right(v) => Some(v)
+              case Left(_) => reject[Option[Long]]("'timeoutMs' must be an integer (milliseconds)")
+            timeoutMs <-
+              timeoutRaw match
+                case None => Some(None)
+                case Some(ms) if ms <= 0 =>
+                  invalid(s"'timeoutMs' must be positive (got $ms)"); None
+                case Some(ms) => Some(Some(ms))
           yield McpServerConfig(
             command = None,
             args = None,
@@ -1165,7 +1203,7 @@ object PluginRegistry:
             url = Some(url),
             headers = headers,
             enabled = None,
-            timeoutMs = None,
+            timeoutMs = timeoutMs,
             cwd = None
           )
           end for

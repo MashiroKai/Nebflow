@@ -1,5 +1,8 @@
 package nebflow.neblink
 
+import nebflow.neblink.core.*
+import nebflow.neblink.identity.*
+
 import munit.FunSuite
 import io.circe.parser.decode
 import io.circe.syntax.*
@@ -228,30 +231,30 @@ class DeviceIdentitySpec extends FunSuite:
   test("acceptance 4 (negative control): isolated root + prod host refused; switch / other hosts pass") {
     val prod = "https://neblink.nebflow.space"
     // isolated data root + production host + no switch -> REFUSED
-    assert(nebflow.neblink.EnrollGuard.enrollRefusal(prod, true, false).isDefined)
+    assert(nebflow.neblink.identity.EnrollGuard.enrollRefusal(prod, true, false).isDefined)
     // apex domain and subdomains both count as production
-    assert(nebflow.neblink.EnrollGuard.enrollRefusal("https://nebflow.space", true, false).isDefined)
-    assert(nebflow.neblink.EnrollGuard.enrollRefusal("http://auth.nebflow.space:443", true, false).isDefined)
+    assert(nebflow.neblink.identity.EnrollGuard.enrollRefusal("https://nebflow.space", true, false).isDefined)
+    assert(nebflow.neblink.identity.EnrollGuard.enrollRefusal("http://auth.nebflow.space:443", true, false).isDefined)
     // the current brand/relay family counts as production too (apex + subdomains)
-    assert(nebflow.neblink.EnrollGuard.enrollRefusal("https://link.mystand.space", true, false).isDefined)
-    assert(nebflow.neblink.EnrollGuard.enrollRefusal("https://console.mystand.space", true, false).isDefined)
-    assert(nebflow.neblink.EnrollGuard.enrollRefusal("https://mystand.space", true, false).isDefined)
+    assert(nebflow.neblink.identity.EnrollGuard.enrollRefusal("https://link.mystand.space", true, false).isDefined)
+    assert(nebflow.neblink.identity.EnrollGuard.enrollRefusal("https://console.mystand.space", true, false).isDefined)
+    assert(nebflow.neblink.identity.EnrollGuard.enrollRefusal("https://mystand.space", true, false).isDefined)
     // explicit switch -> allowed (old behaviour)
-    assertEquals(nebflow.neblink.EnrollGuard.enrollRefusal(prod, true, true), None)
+    assertEquals(nebflow.neblink.identity.EnrollGuard.enrollRefusal(prod, true, true), None)
     // default data root -> allowed (zero behaviour change)
-    assertEquals(nebflow.neblink.EnrollGuard.enrollRefusal(prod, false, false), None)
+    assertEquals(nebflow.neblink.identity.EnrollGuard.enrollRefusal(prod, false, false), None)
     // local / custom host -> allowed (small blast radius)
-    assertEquals(nebflow.neblink.EnrollGuard.enrollRefusal("http://127.0.0.1:8095", true, false), None)
-    assertEquals(nebflow.neblink.EnrollGuard.enrollRefusal("https://nb.example.com", true, false), None)
+    assertEquals(nebflow.neblink.identity.EnrollGuard.enrollRefusal("http://127.0.0.1:8095", true, false), None)
+    assertEquals(nebflow.neblink.identity.EnrollGuard.enrollRefusal("https://nb.example.com", true, false), None)
     // live read: the default data root must never be refused (author's client)
     withDataRoot(os.home / nebflow.shared.Branding.homeDirName) {
-      assertEquals(nebflow.neblink.EnrollGuard.enrollRefusal(prod), None)
+      assertEquals(nebflow.neblink.identity.EnrollGuard.enrollRefusal(prod), None)
     }
     // live read: a redirected root is refused for production…
     withDataRoot(os.temp.dir()) {
-      assert(nebflow.neblink.EnrollGuard.enrollRefusal(prod).isDefined)
+      assert(nebflow.neblink.identity.EnrollGuard.enrollRefusal(prod).isDefined)
       // …and the refusal is loud, not silent
-      assert(nebflow.neblink.EnrollGuard.enrollRefusal(prod).exists(_.contains("NEBFLOW_ALLOW_PROD_ENROLL")))
+      assert(nebflow.neblink.identity.EnrollGuard.enrollRefusal(prod).exists(_.contains("NEBFLOW_ALLOW_PROD_ENROLL")))
     }
   }
 

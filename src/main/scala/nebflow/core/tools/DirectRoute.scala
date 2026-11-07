@@ -3,7 +3,7 @@ package nebflow.core.tools
 import cats.effect.IO
 import io.circe.parser.parse as parseJson
 import io.circe.Json
-import nebflow.neblink.EndpointPreference
+import nebflow.neblink.core.EndpointPreference
 import nebflow.shared.NebflowLogger
 
 import java.nio.charset.StandardCharsets

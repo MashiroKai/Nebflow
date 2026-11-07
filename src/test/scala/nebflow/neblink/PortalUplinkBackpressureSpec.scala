@@ -1,11 +1,14 @@
 package nebflow.neblink
 
+import nebflow.neblink.core.*
+import nebflow.neblink.portal.*
+
 import cats.effect.IO
 import cats.effect.std.Dispatcher
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import munit.CatsEffectSuite
-import nebflow.neblink.PortalWireCodec.*
+import nebflow.neblink.portal.PortalWireCodec.*
 import nebflow.shared.PathUtil
 import org.http4s.HttpApp
 

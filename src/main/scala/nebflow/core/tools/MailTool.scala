@@ -1,5 +1,7 @@
 package nebflow.core.tools
 
+import nebflow.neblink.social.*
+
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.syntax.*
@@ -1997,7 +1999,7 @@ $message"""
    * 返回 0 或 ≥2 项都由调用方判为「解析不出」——**绝不**静默挑一条。
    *
    * Visibility `private` -> `private[nebflow]` —— the former
-   * device-mail intake leg (`nebflow.neblink.DeviceMailInbox`) injected into this machine's
+   * device-mail intake leg (`nebflow.neblink.social.DeviceMailInbox`) injected into this machine's
    * Nebula session through this **single resolution point**.
    *  that intake leg is retired with the tunnel face
    * (the tunnel side logs WARN and ignores `agent_mail` frames), but the **visibility is not

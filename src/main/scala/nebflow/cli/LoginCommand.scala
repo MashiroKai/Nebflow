@@ -1,5 +1,7 @@
 package nebflow.cli
 
+import nebflow.neblink.identity.*
+
 import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.Json

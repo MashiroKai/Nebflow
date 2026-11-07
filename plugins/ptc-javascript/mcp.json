@@ -1,0 +1,11 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "ptc": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["${PLUGIN_ROOT}/skills/ptc-javascript/dist/ptc_executor.js"],
+      "timeoutMs": 600000
+    }
+  }
+}

@@ -3,7 +3,10 @@ package nebflow.core.project
 import cats.effect.IO
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.shared.PathUtil
+import nebflow.shared.{NebflowLogger, PathUtil}
+
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Flow Map 调整事件审计日志（blocked 反馈重入设计 §4.4）。
@@ -978,5 +981,54 @@ object FlowMapEventLog:
       // createFolders：`.nebflow/` 缺席（未挂载工作区/测试新目录）时自建——审计写永不
       // 因目录缺失整条丢失（既有写点均在已挂载项目内，本参数对其零行为变化）。
       os.write.append(os.Path(workspace, PathUtil.dataRoot) / ".nebflow" / FileName, line + "\n", createFolders = true)
+      // ── db 接线第一阶 C5/P5：事件流 db 影子写（D-12 对拍形）─────────────────
+      // 存储层外层 envelope {seq, checksum, dedupKey} 由 db 库自加（appendEvent），
+      // 内层 event = pilogic KernelEvent **原样**（type/occurredAt/sessionId/
+      // seqInSession/payload——wire 字段名对拍 db 报告 §5，pilogic 包零改动，只
+      // import 使用）。dedupKey = project:node:type:ts（重放去重锚，D-12 样例同形）。
+      // 激活口径 = DbHost.peek（只查不开）：本 object 无实例态、装配点不在解禁面
+      // ⇒ 仅当生产宿主（boot 期 SessionStore/PendingAskLedger 自开）已注册共享
+      // 句柄时写影子；测试 JVM 永不因静态 lookup 开真实数据根。
+      shadowAppendEvent(project, nodeId, typ, ts, summary, chainId)
     }.void
+  end append
+
+  /**
+   * db 事件流影子写（C5）。best-effort 铁律：影子面任何失败 ⇒ WARN，**旧 JSONL
+   * 主档已落**，审计语义零损失。seqInSession 进程内计数（对拍样例从 1 起；重启
+   * 归零属内核 envelope 会话序的宽松语义——全局序在存储层 seq，重放锚在 dedupKey）。
+   */
+  private val shadowLog = NebflowLogger.forName("nebflow.project.event-log")
+  private val sessionSeqs = new ConcurrentHashMap[String, AtomicLong]()
+
+  private def shadowAppendEvent(project: String, nodeId: String, typ: String,
+    ts: Long, summary: String, chainId: Option[String]): Unit =
+    import cats.effect.unsafe.implicits.global // 影子写执行体（先例：ScheduledTaskStore.scala:34）
+    nebflow.db.DbHost.peek(PathUtil.dataRoot.toNIO).foreach { db =>
+      try
+        // 内核 envelope.payload 对拍 db 报告 §5 样例：{summary, chainId, subject}
+        // （KernelEvent 裁定 subject 归 payload；project 面在存储层 source/dedupKey 里
+        // 不重复入载荷——sessionId=project 已承载归属）。
+        val payload = Json.obj(
+          "summary" -> summary.asJson,
+          "chainId" -> chainId.asJson,
+          "subject" -> nodeId.asJson
+        )
+        val seqInSession = sessionSeqs
+          .computeIfAbsent(project, _ => new AtomicLong(0))
+          .incrementAndGet()
+        val event = nebflow.pilogic.KernelEvent(
+          eventType = typ,
+          occurredAt = ts,
+          sessionId = project,
+          seqInSession = seqInSession,
+          payload = payload
+        )
+        val dedupKey = s"$project:$nodeId:$typ:$ts"
+        db.appendEvent(event.asJson, Some(dedupKey)).unsafeRunSync()
+      catch
+        case e: Throwable =>
+          // best-effort：影子失败不动主档、不上抛（主链零回归纪律）。
+          shadowLog.warnSync(s"db event shadow append failed (project=$project type=$typ): ${e.getMessage}")
+    }
 end FlowMapEventLog

@@ -1,5 +1,7 @@
 package nebflow.social
 
+import nebflow.neblink.core.*
+
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
@@ -1459,7 +1461,7 @@ object FeishuBridgePlugin:
    * session-scoped — the same face the web leg's paste-save writes
    * (`uploads/<sid>/…`, WebSocketRoutes) and the uploads serve route reads
    * (StaticRoutes.uploadsRoutes), and the whole tree the egress whitelist
-   * already covers ([[nebflow.neblink.EgressWhitelist.uploadsRoot]]).
+   * already covers ([[nebflow.neblink.core.EgressWhitelist.uploadsRoot]]).
    */
   def uploadsDir(root: os.Path, sessionId: String): os.Path = root / "uploads" / sessionId
 

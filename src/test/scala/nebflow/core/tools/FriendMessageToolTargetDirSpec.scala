@@ -1,5 +1,7 @@
 package nebflow.core.tools
 
+import nebflow.neblink.core.*
+
 import cats.effect.std.Dispatcher
 import cats.effect.unsafe.implicits.global
 import cats.effect.{IO, Ref}
@@ -14,7 +16,7 @@ import nebflow.core.{FileChangeTracker, RateLimiter, SessionStore}
 import nebflow.dropbox.DropboxService
 import nebflow.gateway.WsHub
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
-import nebflow.neblink.NeblinkService
+import nebflow.neblink.core.NeblinkService
 import nebflow.shared.{PathUtil, PeerInfo, ThinkingConfig}
 
 import scala.concurrent.duration.*

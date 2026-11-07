@@ -762,8 +762,17 @@ private[agent] object AgentIdle:
       // 应用级持久值，WS/REST 写入口直接落盘 + 热读，无需通知活 agent 改副本）；
       // 由下方 catch-all 兜底为状态不变。三处（idle/processing/frozen）同。
 
-      case _: AgentCommand.LlmComplete | _: AgentCommand.LlmFailed | _: AgentCommand.ToolsComplete |
-          _: AgentCommand.SetPermissionDeferred =>
+      case late @ (_: AgentCommand.LlmComplete | _: AgentCommand.LlmFailed | _: AgentCommand.ToolsComplete |
+          _: AgentCommand.SetPermissionDeferred) =>
+        // ── pi-logic 接线点 7（轮 A 织入）：idle 静默吞分支显式留痕（病灶 #3——
+        //     现状零日志零回执；丢弃语义不变，可观测性升）。──
+        PiLoopWiring.bridge(state, state.pilogicLedger)((ev, d) =>
+          logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, ev, d))
+          .lateDiscarded("idle", late match
+            case AgentCommand.LlmComplete(_, _, t)  => s"llm-complete turnId=$t current=${state.execution.currentTurnId}"
+            case AgentCommand.LlmFailed(_, _, t, _) => s"llm-failed turnId=$t current=${state.execution.currentTurnId}"
+            case _: AgentCommand.ToolsComplete      => "tools-complete"
+            case _                                  => "set-permission-deferred")
         IO.pure(idle(agentDef, resources, depth, parentRef, state))
 
       // F2 (2026-08-30): replay persisted injection queues after a crash.

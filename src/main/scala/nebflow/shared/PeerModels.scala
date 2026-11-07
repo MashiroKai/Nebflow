@@ -1,6 +1,9 @@
 /* 严格DAG第⑥步第二批裁定(2026-09-27):本文件为 shared 承载件——R9 自 nebflow/neblink/NeblinkModel.scala 剪出下沉的 PeerInfo(含伴生 codec)/FriendSummary/FriendRequestSummary/OutgoingRequestSummary/FriendListResponse/GroupSummary(整块逐字,含伴生与字段注释);R6 的 Protocol.DeviceHeader 与 R7 的 DefaultRelayTimeout、R8 的 RelayMailResult 亦并落本文件(各自剪出点留裁定注释)。斩断 core→neblink / core→dropbox / dropbox→neblink 边;neblink/dropbox/core 内引用改指本包。 */
 package nebflow.shared
 
+import nebflow.neblink.core.*
+import nebflow.neblink.social.*
+
 import io.circe.*
 import io.circe.generic.semiauto.*
 
@@ -130,7 +133,7 @@ end PeerInfo
  *  `bio`（2026-11-02 件一「好友/群 Profile 双描述」）：**对方的自我介绍**——与
  *  `remark`（我给对方写的备注）**语义正交**，不可混用。真源在**上游**（neblink-server
  *  目前**尚无**该字段）⇒ 本仓这份是**本地缓存 + 回显**（`profile-descriptions.json`
- *  的 `friendBio`，见 `nebflow.neblink.ProfileDescriptions`），UI 必须显式标注
+ *  的 `friendBio`，见 `nebflow.neblink.social.ProfileDescriptions`），UI 必须显式标注
  *  「本地缓存·未同步」。加性纪律与 `remark` 逐字同形：形参置末 + 默认值 ⇒ 既有
  *  构造点零改动；Decoder 上游带了就吃，Encoder 恒出该键（`None` ⇒ `null`）。
  *

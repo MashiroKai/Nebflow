@@ -7,7 +7,7 @@
   "required": ["code"],
   "properties": {
     "contract": { "const": "ptc/v1" },
-    "language": { "enum": ["python", "typescript"] },
+    "language": { "enum": ["python", "typescript", "javascript"] },
     "code": { "type": "string", "minLength": 1, "maxLength": 262144 },
     "profile": { "enum": ["readonly", "readwrite"], "default": "readonly" },
     "allowed_tools": {

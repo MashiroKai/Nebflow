@@ -1,5 +1,8 @@
 package nebflow.neblink
 
+import nebflow.neblink.core.*
+import nebflow.neblink.misc.*
+
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import munit.CatsEffectSuite
@@ -46,7 +49,7 @@ class FileTransferActionListSpec extends CatsEffectSuite:
   test("direction=list (scope=browse, whitelisted root): metadata entries only, dirs first, zero content") {
     val result = FileTransferAction
       .handle(JsonObject("direction" -> "list".asJson, "path" -> share.toString.asJson, "scope" -> "browse".asJson))
-      .map(_.fold(l => fail(s"list failed: $l"), identity))
+      .map(_.fold(l => fail(s"list failed: $l"), x => x))
       .unsafeRunSync()
 
     assertEquals(result.hcursor.downField("content").focus.isEmpty, true) // 零字节流动
@@ -94,7 +97,7 @@ class FileTransferActionListSpec extends CatsEffectSuite:
     os.write.over(outside, "legacy-bytes")
     val result = FileTransferAction
       .handle(JsonObject("direction" -> "get".asJson, "path" -> outside.toString.asJson))
-      .map(_.fold(l => fail(s"get failed: $l"), identity))
+      .map(_.fold(l => fail(s"get failed: $l"), x => x))
       .unsafeRunSync()
 
     val b64 = result.hcursor.downField("content").as[String].getOrElse("")

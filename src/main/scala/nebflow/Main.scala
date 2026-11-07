@@ -1,18 +1,32 @@
 package nebflow
 
 import cats.effect.{ExitCode, IO, IOApp}
-import cats.syntax.all.*
 import nebflow.cli.*
 import nebflow.gateway.GatewayConfig
 import nebflow.shared.{Branding, Config, Defaults, PathUtil}
 
 import scala.util.Try
 
+// ── 文件布局（Python 惯例：先定义，后执行）────────────────────────────────
+//
+// 本文件按 "definitions first, entry point last" 排列，从上往下读就是
+// 一个完整的启动故事：
+//
+//   1. Dispatch ADT       —— 决策结果（sealed：子类型封闭、match 可穷尽）
+//   2. MainDispatch       —— 纯决策函数（无 IO、无盘、spec 可直驱）
+//   3. MainBoot           —— 真正的启动编排（全部 IO 副作用都在这一段）
+//   4. Main extends IOApp —— 文件最底部的入口壳（只把 run 转给 MainBoot）
+//
+// Scala 与 Python 的差别要说明白：Scala 声明顺序不影响语义（object 可前向
+// 引用），所以"入口放最后"是**可读性约定**，不是编译要求。Python 的
+// `if __name__ == "__main__": main()` 则是语法必需（模块顶层代码在 import
+// 时就会执行）。此处照搬的是阅读节奏，不是运行时约束。
+//
 // ── Dispatch decision core (phase 2 daemon plan §1.1, F-6) ───────────────
 //
 // Pure, IO-free, disk-free: the whole start-path decision tree lives here so
 // the spec can drive the full matrix (flags x commands) without booting a
-// Main. `Main.run` only orchestrates IO per the returned Dispatch.
+// Main. `MainBoot.run` only orchestrates IO per the returned Dispatch.
 
 sealed trait Dispatch
 
@@ -123,8 +137,18 @@ object MainDispatch:
 
 end MainDispatch
 
-object Main extends IOApp:
+private object MainBoot:
 
+  /**
+   * 启动编排（真正的执行部分）。
+   *
+   * 顺序即语义，勿重排：旗标解析 → 数据根定案 → logback 桥接 → 端口覆盖 →
+   * 前台判定 → 六态分发。返回 `IO[ExitCode]`，由文件底部的 [[Main]] 执行。
+   *
+   * 与 [[MainDispatch]] 的分工是刻意的：`MainDispatch` 只回答「该走哪条路」
+   * （纯函数，spec 可直接驱动）；本方法只回答「这条路怎么走」（IO 与进程
+   * 副作用）。本对象**不实现** `IOApp` —— 把退出码交给 JVM 是入口壳的职责。
+   */
   def run(args: List[String]): IO[ExitCode] =
     // Phase 1: Parse global flags before any dispatching
     val (homeOpt, portOpt, succeedOpt, daemonChild, explicitForeground, remaining) = parseGlobalFlags(args)
@@ -494,4 +518,15 @@ object Main extends IOApp:
       .run(Nil)
       .guarantee(IO.blocking(ProcessManager.removePid()))
   end bootGateway
+end MainBoot
+
+// ── 入口（文件末尾，对应 Python 的 `if __name__ == "__main__": main()`）──────
+//
+// JVM 侧链路：`Main-Class: nebflow.Main`（build.sbt:243）→ `IOApp` 提供的
+// `public static void main(String[])` 静态转发器 → 下面的 `run`。
+//
+// 本对象刻意只做一件事：把参数转交 [[MainBoot]]。任何启动逻辑都不写在这里
+// —— 它是开关，不是电路。
+object Main extends IOApp:
+  def run(args: List[String]): IO[ExitCode] = MainBoot.run(args)
 end Main

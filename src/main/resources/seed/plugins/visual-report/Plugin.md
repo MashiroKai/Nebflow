@@ -19,7 +19,8 @@ visual-report 是可视化报告包：节点按场景出图与人读报告。共
   `.../design-language/references/glass-spec.md`。为 Stand 出**界面截图/UI 图**
   时必须按这一档画，不许自拟第二档。
 - **样张与验收基准**：`skills/core/references/demos/`（场景示例落此）。
-- **文档批纪律**：凡交付属于项目知识库的 markdown/HTML 文档（报告/设计稿/复盘），必读 `skills/wiki-docs/SKILL.md` 的「Mandatory clauses」节（强制条款清单与原文以该文件为准，本文件不重复条款数与条文），交付前跑 `skills/wiki-docs/scripts/check_wiki_docs.py` 校验。
+- **文档批纪律**：凡交付属于项目知识库的 markdown/HTML 文档（报告/设计稿/复盘），必读 `skills/wiki-docs/SKILL.md` 三条强制条款，交付前跑 `skills/wiki-docs/scripts/check_wiki_docs.py` 校验。
+- **词条检索/构建**：查已有概念与实体、登记新词条、查反向引用、一次摊开一致性 → 走包根 `mcp.json` 声明的 MCP 面（六个 `glossary_*` 工具，见 §8），别用 grep 硬找。
 - **冲突裁决**：图表生成层各场景表述不一致时以 `skills/core/SKILL.md` 为准；人读交付体例以既有 visual-report skill 为准。
 
 ## 2. 安装与启用
@@ -34,7 +35,10 @@ visual-report 是可视化报告包：节点按场景出图与人读报告。共
 ```
 visual-report/           （包根）
   plugin.json
-  Plugin.md              ← 本文件（包根使用指导件：速览 / 安装启用 / 工具验证 / 总目录 / 决策树）
+  Plugin.md              ← 本文件（包根使用指导件：速览 / 安装启用 / 工具验证 / 总目录 / 决策树 / MCP 面）
+  mcp.json               ← MCP 面声明（serverId `plugin_visual-report_glossary`，stdio；见 §8）
+  mcp/                   ← MCP server 实现（glossary_server.py 协议面 + glossary_vault.py 词条层 +
+                            selftest_stdio.py 不经引擎的冒烟脚本；纯标准库，索引落 ${PLUGIN_DATA}/index/）
   skills/
     visual-report/SKILL.md  ← 注入面体例件（人读交付体例唯一来源）
     core/SKILL.md        ← 全场景公共规范（铁律 / 嵌入路径 / 暗色 / 渲染器兼容 / 自检模板）
@@ -130,7 +134,40 @@ visual-report/           （包根）
 - **降级链（一句话）**：Remotion 失败 ⇒ matplotlib FuncAnimation + imageio-ffmpeg 出 MP4 ⇒ PillowWriter 出 GIF ⇒ 静态多帧 PNG；three.js 失败 ⇒ `--cdn` 版 ⇒ matplotlib 静态分步图——任何一步不许空转。
 - **环境口径**：三栈的安装源、渲染浏览器与编码后端等环境口径，以 `skills/motion-toolkit/SKILL.md` 为唯一来源（本文件不重复环境细节，防漂移）。
 
-## 8. 扩展位（未来候选）
+## 8. MCP 面：词条构建与检索（`mcp.json`）
+
+- **何时用**：任务涉及「文档里的名词概念/具名对象要查、要新建、要查引用关系、要一次把一致性摊开」。典型触发：写新文档前查「这词我们怎么定义的」；调查/复盘里出现新实体（人名/机构/系统/产品）要登记；想知道某词条被哪几篇文档引用；交付前想看断链/孤儿/概念首现/命名空间混用。**检索文档正文目前只有这个面**（`stand-recall` 与 `/api/search/chat` 都是对话库，不是文档）。
+- **不用它的时候**：纯看图（图谱视图走 `GET /api/wiki/graph`）、写报告排版（走各场景 skill）、条款机械校验单独跑（`skills/wiki-docs/scripts/check_wiki_docs.py`，本 MCP 的 `glossary_validate` 只是把它包了一层并加了词条层两项）。
+- **装载形态**：包根 `mcp.json`（装载器只读插件根的这一份）→ serverId `plugin_visual-report_glossary` → 工具名形如 `mcp__plugin_visual-report_glossary__glossary_search`。`command` 是绝对路径 `C:/Users/Administrator/AppData/Local/Programs/Python/Python312/python.exe`（Windows 上裸 `python` 命中 Microsoft Store 转发桩；装载器**不展开** `command`，只展开 args/env/cwd 里的 `${PLUGIN_ROOT}`/`${PLUGIN_DATA}`）。实现只用 Python 3.12 标准库（`sqlite3` 自带 FTS5），无第三方依赖。
+
+**五个工具（+1 个维护工具）**：
+
+| 工具 | 干什么 | 返回要点 |
+|---|---|---|
+| `glossary_search(query, limit?, kind?)` | 全文/模糊检索词条（中文按子串、英文按词、另有 difflib 兜底） | slug、规范名、一句话定义、别名、命中片段、`file:line`、反向引用计数、`kind` |
+| `glossary_lookup(slug)` | 精确取一条（slug / 块锚 / 规范名 / 别名，多命中不猜回候选） | 完整定义 + 反向链接清单（哪些文档哪一行引用） |
+| `glossary_put(slug, kind, name, definition, aliases?, source?)` | 新建或更新词条——**写进 markdown**，同 slug 只替换那一段 | `action`(created/updated)、落盘 `file:line`、块锚 |
+| `glossary_links(slug? \| doc?)` | 双向：给 slug 查引用它的文档；给文档查它用到的词条 + 全部出链解析状态 | 二选一，`mode` 字段区分 |
+| `glossary_validate()` | 一致性检查，清单可定位到 `file:line` | ① 权威校验器 R1-R4（断链/缺 front-matter/概念首现/孤儿文档/词条格式，直接调 `check_wiki_docs.py --json`，不改它的判定）；② 词条层新增：孤儿词条（定义存在但零引用）、命名空间混用（概念/实体同名、实体落到登记表外等） |
+| `glossary_reindex()` | 强制重建索引（一般不用手动跑） | 重建耗时 + 条目/文档/引用统计 |
+
+**两层命名空间（不合并）**：概念 → `docs/glossary.md` 块锚 `^slug`；实体（人名/机构/系统/产品）→ `docs/entities.md` 块锚 `^ent-<slug>`，刻意避开 `^term-`（那是校验器 R4 的注册面）。合表会让实体名进概念消歧链、让 R3 要求每次提人都解释（实测：把一个实体名塞进词表后，同一 vault 的 R3 报红从 0 涨到 54 行），且实体必然合并拆分、装不进「只增不改」的容器——理由详见仓内调研稿 `docs/20261102_180500_doc-and-term-system-survey.md` §3.2。
+
+**声明格式**（`glossary_put` 就按这个写，别名塞进同一个尾括号组、内部 ` / ` 分隔）：
+
+```
+规范名（别名1 / 别名2） — 一句话定义 ^slug          ← 概念层
+规范名（别名1 / 别名2） — 一句话身份 ^ent-slug      ← 实体层
+来源：<文档路径 / URL / 证据锚>                      ← 可选第二行（put 的 source 参数）
+```
+
+**索引怎么重建（单一纪律：文件是唯一真相源）**：
+- DB 落 `${PLUGIN_DATA}/index/glossary-<sha1(vault)[:12]>.db`（`${PLUGIN_DATA}` = `<数据根>/plugin-data/visual-report/`）——**不落插件目录**，插件包更新覆盖不到它。
+- 每次工具调用前比对 vault 文件树签名（文件数 + 总字节 + 最新 mtime），签名一变就在下次调用时整库重建（约 100 ms / 130 文件量级）；`glossary_reindex` 强制重建。**库随时可删**（`rm -rf ${PLUGIN_DATA}/index`），删了自动重建，内容零影响。
+- vault 根解析顺序：工具参数 `vault=`（docs 目录或工作区根皆可）→ env `GLOSSARY_VAULT_ROOT` → `${PLUGIN_DATA}/config.json` 的 `{"vaultRoot": ...}`。一个实例下多个项目各写自己的 vault，用哪个显式传。
+- 写入只用 `glossary_put`（或宿主侧 `Write`/`Edit`，等价）——两者都改 markdown；**不要手改 DB**。
+
+## 9. 扩展位（未来候选）
 
 | 未来场景 | 候选工具 | 前置条件 | 备注 |
 |---|---|---|---|
@@ -141,7 +178,7 @@ visual-report/           （包根）
 
 > 只登记候选与前置条件；候选落地后迁出本表、入 §5 总目录。
 
-## 9. 维护约定
+## 10. 维护约定
 
 - **新增场景**：`skills/` 新建 `<scene>/SKILL.md` ＋ 样张落 `skills/core/references/demos/<scene>.md` → 补入 §5 总目录表与 §6 决策树。
 - **新增工具**：先过 `skills/core/SKILL.md` 自检模板（检测 ＋ 降级策略），再同步对应场景 SKILL 与 §5 总目录表。

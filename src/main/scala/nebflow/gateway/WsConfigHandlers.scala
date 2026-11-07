@@ -1,6 +1,8 @@
 /* 从 WebSocketRoutes 迁出(行为保持重构,2026-09-24)。 */
 package nebflow.gateway
 
+import nebflow.neblink.core.*
+
 import cats.effect.std.{Dispatcher, Queue}
 import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.all.*
@@ -663,7 +665,7 @@ private[gateway] object WsConfigHandlers:
               // 恒非「local」字样）。原值直出（含隔离 `-iso-<hex8>` 后缀）——剥后缀
               // 是前端显示面职责，身份面保真。
               "selfDevice" -> io.circe.Json.obj(
-                "name" -> nebflow.neblink.DeviceIdentity.selfDeviceNameOrHost.asJson
+                "name" -> nebflow.neblink.core.DeviceIdentity.selfDeviceNameOrHost.asJson
               )
             )
           )

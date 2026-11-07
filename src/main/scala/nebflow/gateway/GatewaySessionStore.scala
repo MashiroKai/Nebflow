@@ -1,5 +1,7 @@
 package nebflow.gateway
 
+import nebflow.neblink.portal.*
+
 import cats.effect.{IO, Ref}
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
@@ -64,7 +66,7 @@ final case class SessionView(
 /**
  * In-process store for gateway console sessions (phase 3b session rail).
  *
- * Shape discipline copied from [[nebflow.neblink.ConsoleTicketStore]] (which
+ * Shape discipline copied from [[nebflow.neblink.portal.ConsoleTicketStore]] (which
  * itself mirrors [[NfTicketStore]]): a `Ref[IO, Map]` behind a private
  * constructor, ALL state transitions inside a single `Ref.modify` (concurrent
  * creates / verifications cannot double-spend), and an opportunistic expiry

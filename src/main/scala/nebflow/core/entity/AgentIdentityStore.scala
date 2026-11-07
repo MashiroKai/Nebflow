@@ -1,5 +1,7 @@
 package nebflow.core.entity
 
+import nebflow.neblink.sync.*
+
 import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*
@@ -27,7 +29,7 @@ import java.nio.charset.StandardCharsets
  * 两台机器各自跑一个引擎实例，A 机写入对 B 机引擎永不可见；同引擎多浏览器形态
  * 下前端又是「localStorage 优先、缺键才回填」，旧本地键永远遮住服务端新值。
  * 本批把展示面变为 **LWW 可收敛状态**（时间戳 + 内容 sha），由
- * `nebflow.neblink.AgentIdentitySync` 经既有设备数据通道（presence sendData /
+ * `nebflow.neblink.sync.AgentIdentitySync` 经既有设备数据通道（presence sendData /
  * relay Notify 双腿）在写入时外推、在对端按戳收敛。
  *
  * 红线：头像字节**永不入日志**（日志面只出现 名字/sha 前 8 位/字节长度）。

@@ -31,7 +31,7 @@ const OUT = path.resolve(arg('out', path.join(ROOT, 'reports', '20261102_ptc-evi
 
 const PLUGIN = {
   python: { dir: path.join(ROOT, 'plugins/ptc-python'), name: 'ptc-python', command: process.env.PTC_PYTHON || null },
-  typescript: { dir: path.join(ROOT, 'plugins/ptc-typescript'), name: 'ptc-typescript', command: process.env.PTC_NODE || null },
+  typescript: { dir: path.join(ROOT, 'plugins/ptc-javascript'), name: 'ptc-javascript', command: process.env.PTC_NODE || null },
 }[LANG];
 if (!PLUGIN) throw new Error(`unknown --lang '${LANG}' (python|typescript)`);
 

@@ -1,5 +1,7 @@
 package nebflow.neblink
 
+import nebflow.neblink.portal.*
+
 import io.circe.{HCursor, Json, JsonObject}
 import io.circe.parser.parse
 import munit.FunSuite
@@ -570,19 +572,19 @@ class PortalWireContractV1Spec extends FunSuite:
     )
     try
       parse(new String(in.readAllBytes(), UTF_8))
-        .fold(e => fail(s"$res is not valid JSON: ${e.getMessage}"), identity)
+        .fold(e => fail(s"$res is not valid JSON: ${e.getMessage}"), x => x)
     finally in.close()
 
   private lazy val vectorsDoc: Json = parseResource("neblink/portal-wire-vectors-v1.3.json")
 
   private def cursorString(c: HCursor, name: String): String =
-    c.get[String](name).fold(e => fail(s"vector field '$name' unreadable: ${e.getMessage}"), identity)
+    c.get[String](name).fold(e => fail(s"vector field '$name' unreadable: ${e.getMessage}"), x => x)
 
   private lazy val entries: List[VectorEntry] =
     vectorsDoc.hcursor
       .downField("vectors")
       .as[List[Json]]
-      .fold(e => fail(s"vector list unreadable: ${e.getMessage}"), identity)
+      .fold(e => fail(s"vector list unreadable: ${e.getMessage}"), x => x)
       .map { j =>
         VectorEntry(
           id = cursorString(j.hcursor, "id"),
@@ -644,10 +646,10 @@ class PortalWireContractV1Spec extends FunSuite:
     // clarifications (40 total). Comparing canonical per-entry serializations
     // of both frozen files pins that mechanically.
     val v1Doc = parseResource("neblink/portal-wire-vectors-v1.json")
-    val v1 = v1Doc.hcursor.downField("vectors").as[List[Json]].fold(e => fail(s"v1 vectors unreadable: $e"), identity)
+    val v1 = v1Doc.hcursor.downField("vectors").as[List[Json]].fold(e => fail(s"v1 vectors unreadable: $e"), x => x)
     assertEquals(v1.length, 28, "the frozen v1 set is 28 vectors")
     val v11 = parseResource("neblink/portal-wire-vectors-v1.1.json")
-    val v11Vecs = v11.hcursor.downField("vectors").as[List[Json]].fold(e => fail(s"v1.1 vectors unreadable: $e"), identity)
+    val v11Vecs = v11.hcursor.downField("vectors").as[List[Json]].fold(e => fail(s"v1.1 vectors unreadable: $e"), x => x)
     assertEquals(
       v11Vecs.take(v1.length).map(_.noSpaces),
       v1.map(_.noSpaces),
@@ -659,9 +661,9 @@ class PortalWireContractV1Spec extends FunSuite:
     // v1/v1.1 vectors byte-for-byte, in order, and only APPENDS the
     // ws_data_frame vectors (50 total).
     val v11 = parseResource("neblink/portal-wire-vectors-v1.1.json")
-    val v11Vecs = v11.hcursor.downField("vectors").as[List[Json]].fold(e => fail(s"v1.1 vectors unreadable: $e"), identity)
+    val v11Vecs = v11.hcursor.downField("vectors").as[List[Json]].fold(e => fail(s"v1.1 vectors unreadable: $e"), x => x)
     assertEquals(v11Vecs.length, 40, "the frozen v1.1 set is 40 vectors")
-    val v13Vecs = vectorsDoc.hcursor.downField("vectors").as[List[Json]].fold(e => fail(s"v1.3 vectors unreadable: $e"), identity)
+    val v13Vecs = vectorsDoc.hcursor.downField("vectors").as[List[Json]].fold(e => fail(s"v1.3 vectors unreadable: $e"), x => x)
     assertEquals(v13Vecs.length, 50, "the v1.3 set is 40 preserved + 10 ws_data_frame vectors")
     assertEquals(
       v13Vecs.take(v11Vecs.length).map(_.noSpaces),

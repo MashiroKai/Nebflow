@@ -53,12 +53,12 @@ const WHITELIST = [
   'src/test/resources/official-fixtures/', // a) 官方第三方插件夹具（parser 回归）
   'scripts/rebrand.sh',           // b) 换域工具自身：旧域是其替换源模式
   'scripts/coldstart.sh',         // b) 生产域拒注清单注释（mystand/nebflow 双域）
-  'src/main/scala/nebflow/neblink/EnrollGuard.scala',       // b) ProdDomains：旧中继安装仍须被拦
+  'src/main/scala/nebflow/neblink/identity/EnrollGuard.scala',       // b) ProdDomains：旧中继安装仍须被拦
   // b) 旧**服务子域族**（2026-11-04 旧域 301 批）：`AvatarProxy.RetiredServiceHostFamily`
   //    是头像代理腿的**跳转白名单**——旧域今天 301 到 staging.mystand.space，不认这一族
   //    就回到「301 ⇒ 502 ⇒ 字节缓存永远建不起来」。它是只读跟随面，不产出任何对外链接
   //    （浏览器入口仍由本门禁护住：白名单之外一个裸域都不许出现）。
-  'src/main/scala/nebflow/neblink/AvatarProxy.scala',
+  'src/main/scala/nebflow/neblink/misc/AvatarProxy.scala',
   'src/test/scala/nebflow/neblink/DeviceIdentitySpec.scala', // b) 钉住旧域命中闸的语义锚
   'tests/branding-migration.spec.mjs',  // b) rename-day 旧品牌启动夹具（迁移测试）
   'tests/plugins-panel-pure-plugins.spec.mjs', // b) ⑦ 品牌清扫门禁自身（模式字面）

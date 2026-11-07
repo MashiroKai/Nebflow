@@ -1,6 +1,8 @@
 /* 从 WebSocketRoutes 迁出(行为保持重构,2026-09-24)。 */
 package nebflow.gateway
 
+import nebflow.neblink.core.*
+
 import cats.effect.std.{Dispatcher, Queue}
 import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.all.*
@@ -544,6 +546,40 @@ private[gateway] object WsSystemHandlers:
           clientRequestId.map(id => "clientRequestId" -> io.circe.Json.fromString(id))
       io.circe.Json.obj(all*)
 
+    def tryRelayUpdate(
+      ns: nebflow.neblink.core.NeblinkService,
+      peer: nebflow.shared.PeerInfo,
+      beta: Boolean,
+      p2pError: String
+    ): IO[Unit] =
+      ns.relayClientOpt match
+        case Some(client) =>
+          logger.info(s"P2P update failed ($p2pError), trying relay to ${peer.deviceName}") *>
+            client.relayUpdate(peer.deviceId, beta).flatMap {
+              case Right(msg) =>
+                wsSend(
+                  resultFrame(
+                    "success" -> true.asJson,
+                    "device" -> peer.deviceName.asJson,
+                    "message" -> msg.asJson
+                  )
+                )
+              case Left(err) =>
+                wsSend(
+                  resultFrame(
+                    "success" -> false.asJson,
+                    "error" -> s"P2P: $p2pError; Relay: $err".asJson
+                  )
+                )
+            }
+        case None =>
+          wsSend(
+            resultFrame(
+              "success" -> false.asJson,
+              "error" -> p2pError.asJson
+            )
+          )
+
     if targetDevice.isEmpty then
       wsSend(
         resultFrame(
@@ -562,10 +598,10 @@ private[gateway] object WsSystemHandlers:
           )
         case Some(neblinkService) =>
           // fleet 批（2026-11-01）收口：P2P → 中继的派发**唯一实现**在
-          // [[nebflow.neblink.RemoteUpdateDispatch]]（批量推送与单点点击同一腿）；
+          // [[nebflow.neblink.relay.RemoteUpdateDispatch]]（批量推送与单点点击同一腿）；
           // 本分支只把 `Either` 翻译成既有 `remoteUpdateResult` 帧（字段与改前逐字
           // 相同，含 `clientRequestId` 回显；`device` 用**对端自报名**，与改前同口径）。
-          nebflow.neblink.RemoteUpdateDispatch
+          nebflow.neblink.relay.RemoteUpdateDispatch
             .dispatchByNameResolved(neblinkService, targetDevice, beta, clientRequestId)
             .flatMap {
               case Right((deviceName, msg)) =>

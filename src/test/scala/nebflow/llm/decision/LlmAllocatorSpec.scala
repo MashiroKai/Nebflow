@@ -330,4 +330,47 @@ class LlmAllocatorSpec extends CatsEffectSuite:
     }
   }
 
+  test("chainCall: 超时类失败 ⇒ 同一候选先重试一次（缺陷① 2026-11-02），重试成功即答") {
+    // 第一次超时（sttp 60s 掐断的同类形状），第二次答出：重试必须发生在**同一候选**上
+    // ——单候选部署下「换下一候选」等于没有重试。
+    var calls = 0
+    val flaky = new nebflow.llm.ProviderAdapter[IO]:
+      def sendMessage(params: SendMessageParams): IO[nebflow.llm.AdapterResponse] =
+        IO {
+          calls += 1
+          if calls == 1 then throw new java.util.concurrent.TimeoutException("Request timed out after 60s")
+          nebflow.llm.AdapterResponse(reply = """{"plugins":["stand-dev"]}""", toolCalls = Nil)
+        }
+      def sendMessageStream(params: SendMessageParams): fs2.Stream[IO, nebflow.shared.StreamChunk] =
+        fs2.Stream.raiseError[IO](new RuntimeException("stream face not expected in this spec"))
+    val registry = new PerProviderRegistry(Map("slow" -> flaky))
+    val call = LlmAllocator.chainCall(registry, List(cand("slow", "m-slow")))
+    call(paramsFor).map { reply =>
+      assertEquals(reply, Some("""{"plugins":["stand-dev"]}"""), "the retry answered")
+      assertEquals(calls, 2, "exactly one retry on the same candidate")
+    }
+  }
+
+  test("chainCall: 超时重试仍败 ⇒ 落下一候选（重试不是死循环）") {
+    val attempts = TrieMap.empty[String, String]
+    var calls = 0
+    val alwaysSlow = new nebflow.llm.ProviderAdapter[IO]:
+      def sendMessage(params: SendMessageParams): IO[nebflow.llm.AdapterResponse] =
+        IO {
+          calls += 1
+          throw new java.util.concurrent.TimeoutException("Request timed out")
+        }
+      def sendMessageStream(params: SendMessageParams): fs2.Stream[IO, nebflow.shared.StreamChunk] =
+        fs2.Stream.raiseError[IO](new RuntimeException("stream face not expected in this spec"))
+    val registry = new PerProviderRegistry(Map(
+      "slow" -> alwaysSlow,
+      "good" -> ScriptedAdapter(Set.empty, """{"plugins":["qa"]}""", attempts)
+    ))
+    val call = LlmAllocator.chainCall(registry, List(cand("slow", "m-slow"), cand("good", "m-good")))
+    call(paramsFor).map { reply =>
+      assertEquals(reply, Some("""{"plugins":["qa"]}"""), "the healthy candidate still answers")
+      assertEquals(calls, 2, "the failing candidate was tried exactly twice (one retry, then move on)")
+    }
+  }
+
 end LlmAllocatorSpec

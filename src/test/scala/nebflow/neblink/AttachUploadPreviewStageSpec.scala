@@ -1,5 +1,7 @@
 package nebflow.neblink
 
+import nebflow.neblink.attachment.*
+
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import io.circe.parser.parse
@@ -19,7 +21,7 @@ import munit.FunSuite
 class AttachUploadPreviewStageSpec extends FunSuite:
 
   private def jsonOf(s: String) =
-    parse(s).fold(e => fail(s"bad test json: ${e.getMessage}"), identity)
+    parse(s).fold(e => fail(s"bad test json: ${e.getMessage}"), x => x)
 
   private val b64Nine = "AQIDBAUGBwgJ"
   private val sha64 = "a" * 64

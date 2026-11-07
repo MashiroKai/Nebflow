@@ -22,10 +22,24 @@ final case class Counters(
   streakFp: String = "",
   streakErrHash: String = "",
   streakCount: Int = 0,
+  /**
+   * S1：当前 streak 的工具名（Warn/终止文案用）。此前文案里印的是 fp 哈希
+   * （`tool 'a1b2c3d4e5f6'`），模型看不出被卡住的是哪个工具 —— 见
+   * [[LoopGuard]]「warn 档修正」。
+   */
+  streakTool: String = "",
+  /**
+   * S1：当前 streak 的失败是否**全部**属于暂时性故障类（超时/网络抖动/远端
+   * 临时不可用）。true ⇒ hard 阈按 `transientFactor` 放大（重试是正确行为，
+   * 见 [[LoopGuard.isTransientError]]）。
+   */
+  streakTransient: Boolean = false,
   /** R-call：上一支调用（连续同参计数；不同 fp 即刷新）。 */
   lastCallFp: String = "",
   lastCallTool: String = "",
   lastCallCount: Int = 0,
+  /** R-call：上一支调用是否为暂时性故障失败（true ⇒ hard 阈放大）。 */
+  lastCallTransient: Boolean = false,
   /** R-text：上一轮助手文本（连续逐字相同计数；不同文本即刷新）。 */
   lastTextHash: String = "",
   lastTextCount: Int = 0,
@@ -33,6 +47,19 @@ final case class Counters(
   terminatedFps: Set[String] = Set.empty,
   /** fp → 失败过的 turn 集合（S3；该 fp 任一次成功即整条清除）。 */
   crossTurn: Map[String, Set[String]] = Map.empty,
+  /**
+   * S3：失败记录**全部**是暂时性故障的 fp（true ⇒ crossTurn 阈放大）。
+   * 同 fp 出现一次非暂时性失败即移出（还原为真死循环判据）。
+   */
+  transientFps: Set[String] = Set.empty,
+  /**
+   * grace 记账（warn-before-terminate 阶梯）：已对哪些「轴:键」发过 Warn。
+   * 键形态 `s1:<fp>` / `call:<fp>` / `text:<hash>` / `cross:<fp>`。
+   * 任一轴首次触阈只发 Warn（模型获得一次自纠机会），**第二次触阈才终止**
+   * ——由挂载点 [[LoopGuard.Config.requireWarnBeforeTerminate]] 控制。
+   * 会话级（不随 turn 边界清）。
+   */
+  warnedKeys: Set[String] = Set.empty,
   /**
    * T3（bash overhaul 2026-11-04）：同 fp 的 **非 Work** 类调用（LoopGuard
    * 的 `CallKind.Query` / `CallKind.Wait`）连续计数。纯**正向指标**数据面——

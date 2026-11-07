@@ -92,17 +92,28 @@ private[agent] object AgentFrozen:
           s"reason=${reasonStr(reason)} err=${Option(error.getMessage).getOrElse("unknown").take(80)} resumeIn=${resumeInMs}ms"
         )
       }
-      result <- enterFrozen(
-        agentDef,
-        resources,
-        depth,
-        parentRef,
-        state,
-        replyTo,
-        Some(System.currentTimeMillis() + resumeInMs),
-        reason,
-        Some(Option(error.getMessage).getOrElse("unknown").take(200))
-      )
+      // ── pi-logic 接线点 1/④（轮 A 织入）：错误冻结 = run 收口（error-frozen 形；
+      //     账本关 run 随 state 值传递进 frozen——冻结唤醒续跑若 bump loopTurnKey 则
+      //     自然开新 run）。──
+      result <- {
+        val piLedgerFrozen =
+          if state.pilogicLedger.runId.nonEmpty then
+            PiLoopWiring.bridge(state, state.pilogicLedger)((ev, d) =>
+              logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, ev, d))
+              .runEnd("error-frozen", state.pilogicLedger)
+          else state.pilogicLedger
+        enterFrozen(
+          agentDef,
+          resources,
+          depth,
+          parentRef,
+          state.copy(pilogicLedger = piLedgerFrozen),
+          replyTo,
+          Some(System.currentTimeMillis() + resumeInMs),
+          reason,
+          Some(Option(error.getMessage).getOrElse("unknown").take(200))
+        )
+      }
     yield result
 
   /**
@@ -948,9 +959,14 @@ private[agent] object AgentFrozen:
             frozen(agentDef, resources, depth, parentRef, st, replyTo, resumeAt, reason, retryCount, escalation)
           )
 
-      case _ =>
+      case late =>
         // stale LlmComplete/LlmFailed/ToolsComplete/TriggerCompaction 等 → 丢弃
         // 留在 frozen（这些消息属于被 gate 拦下的 turn，没有 fiber 在等待它们）。
+        // pi-logic 接线点 7（轮 A 织入）：frozen 吞分支显式留痕（病灶 #3 可观测性
+        // 补面——现状零日志；丢弃语义不变）。
+        PiLoopWiring.bridge(state, state.pilogicLedger)((ev, d) =>
+          logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, ev, d))
+          .lateDiscarded("frozen", s"reason=${reasonStr(reason)} msg=${late.getClass.getSimpleName}")
         IO.pure(frozen(agentDef, resources, depth, parentRef, state, replyTo, resumeAt, reason, retryCount, escalation))
 
   end frozen

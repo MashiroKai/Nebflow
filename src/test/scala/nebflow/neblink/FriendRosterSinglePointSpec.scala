@@ -1,5 +1,8 @@
 package nebflow.neblink
 
+import nebflow.neblink.core.*
+import nebflow.neblink.social.*
+
 import munit.FunSuite
 
 /**
@@ -9,13 +12,13 @@ import munit.FunSuite
  * 存在理由：好友面历史上出现过**两份独立实现**（`FriendMessageTool` 的
  * `displayName (username)` 与 `TransferFileTool` 的 `displayName [username …]`，
  * 方案 §7.2 M-8 登记的既成分叉）。⑩ 把好友消息支收归到
- * `nebflow.neblink.FriendRoster` 单点；⑦ 又在其上加了 L0 备注层与候选行备注渲染
+ * `nebflow.neblink.social.FriendRoster` 单点；⑦ 又在其上加了 L0 备注层与候选行备注渲染
  * ⇒ 若将来有人再复制一份候选文案，模型会学到**第二套词表**（同一个 query 两条
  * 失败路径给不同候选），而这是**代码评审看不出来、只有机制能拦**的漂移。
  *
  * 判据（本 spec 即机制）：扫描 `src/main/scala/nebflow/` 全树（**不含测试**）里两个
  * 候选文案字面量的**每一处出现文件**，必须 ∈ 允许集：
- *   - `nebflow/neblink/FriendRoster.scala`（好友面唯一实现点），或
+ *   - `nebflow/neblink/social/FriendRoster.scala`（好友面唯一实现点），或
  *   - `nebflow/core/tools/FriendMessageTool.scala`（**设备面字面量**——2026-09-14
  *     #145 批把退役的 `TransferFileTool` 设备解析原样迁入此处；设备名册与好友名册
  *     是**正交信任域**，⑦/⑩ 的收归范围只覆盖好友面。好友面解析本工具**零实现**，
@@ -36,7 +39,7 @@ class FriendRosterSinglePointSpec extends FunSuite:
   /** 允许清单：相对 `src/main/scala/` 的路径（`/` 分隔，平台无关）。 */
   private val allowed: Set[String] = Set(
     // 唯一实现点（⑩ 收归 + ⑦ 的 L0/备注渲染都在这里）
-    "nebflow/neblink/FriendRoster.scala",
+    "nebflow/neblink/social/FriendRoster.scala",
     // 设备面字面量（#145 2026-09-14：退役的 TransferFileTool 设备解析原样迁入；
     // 正交信任域，好友面零实现——委托关系由下方「委托仍在」测试钉住）
     "nebflow/core/tools/FriendMessageTool.scala"
@@ -89,7 +92,7 @@ class FriendRosterSinglePointSpec extends FunSuite:
       assert(
         offenders.isEmpty,
         s"新增候选文案实现点（第二个分叉！）：${offenders.toList.sorted.mkString(", ")} —— " +
-          s"候选文案/解析必须收归 nebflow.neblink.FriendRoster（命中原样见下）\n" +
+          s"候选文案/解析必须收归 nebflow.neblink.social.FriendRoster（命中原样见下）\n" +
           found.map((f, l) => s"  $f:$l").mkString("\n")
       )
     }
@@ -104,7 +107,7 @@ class FriendRosterSinglePointSpec extends FunSuite:
     val code = stripComments(src)
     assert(
       // 严格DAG第⑥步第二批(2026-09-27):委托面改经 core.FriendRosterPort 注册器(实现仍单点
-      // nebflow.neblink.FriendRoster,经 NeblinkWiring boot 段落注册)——钉死文本随之同步,判据语义不变。
+      // nebflow.neblink.social.FriendRoster,经 NeblinkWiring boot 段落注册)——钉死文本随之同步,判据语义不变。
       code.contains("FriendRosterPort.resolve"),
       "FriendMessageTool 不再委托 FriendRosterPort.resolve(FriendRoster 单点的注册器投影) —— 好友面出现第二实现，请回改实现并同步本登记"
     )
@@ -115,7 +118,7 @@ class FriendRosterSinglePointSpec extends FunSuite:
   }
 
   test("唯一实现点仍在 FriendRoster（解析与候选文案都在，未搬空）") {
-    val src = os.read(scalaRoot / "nebflow" / "neblink" / "FriendRoster.scala")
+    val src = os.read(scalaRoot / "nebflow" / "neblink" / "social" / "FriendRoster.scala")
     assert(src.contains("def resolve("), "FriendRoster.resolve 不在——解析单点被搬走")
     assert(src.contains("def candidateLine("), "FriendRoster.candidateLine 不在——候选文案单点被搬走")
     assert(src.contains("def availableHint("), "FriendRoster.availableHint 不在")

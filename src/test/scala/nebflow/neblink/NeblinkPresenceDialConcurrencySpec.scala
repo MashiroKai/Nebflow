@@ -1,5 +1,23 @@
 package nebflow.neblink
 
+import nebflow.neblink.relay.PresenceDialThreadViolation
+
+import nebflow.neblink.relay.PresenceDialPool
+
+import nebflow.neblink.relay.PresenceDialSchedule
+
+import nebflow.neblink.relay.DialAddressClass
+
+import nebflow.neblink.relay.EvictionPolicy
+
+import nebflow.neblink.relay.PresenceDialRound
+
+import nebflow.neblink.relay.NeblinkPresenceService
+
+import nebflow.neblink.core.NeblinkService
+
+import nebflow.neblink.relay.DialBudget
+
 import cats.effect.IO
 import cats.effect.std.Dispatcher
 import cats.effect.unsafe.implicits.global
@@ -148,7 +166,7 @@ class NeblinkPresenceDialConcurrencySpec extends CatsEffectSuite:
     val needle = "reachLedger = Some(nebflow.core.tools.P2pReachability.current)"
     assert(src.contains(needle), "GatewayMain 未接共用可达性真源 ⇒ 探测税/拨号税会重新各付一遍（P3 破防）")
     val at = src.indexOf(needle)
-    val ctorAt = src.lastIndexOf("new nebflow.neblink.NeblinkPresenceService", at)
+    val ctorAt = src.lastIndexOf("new nebflow.neblink.relay.NeblinkPresenceService", at)
     assert(
       ctorAt >= 0 && (at - ctorAt) < 600,
       "reachLedger 装配点必须落在 NeblinkPresenceService 的构造调用里"
@@ -157,8 +175,8 @@ class NeblinkPresenceDialConcurrencySpec extends CatsEffectSuite:
   }
 
   test("P2 护栏：拨号体只有 dialBlocking 一个线程归属收口点，且不许直连 IO.blocking") {
-    val src = sourceOf("src/main/scala/nebflow/neblink/NeblinkPresenceService.scala")
-    val poolSrc = sourceOf("src/main/scala/nebflow/neblink/PresenceDialPool.scala")
+    val src = sourceOf("src/main/scala/nebflow/neblink/relay/NeblinkPresenceService.scala")
+    val poolSrc = sourceOf("src/main/scala/nebflow/neblink/relay/PresenceDialPool.scala")
     assert(src.contains("private def dialBlocking"), "拨号线程归属的单一收口点缺失")
     assert(src.contains("PresenceDialPool.run(where)(guarded())"), "生产拨号体必须提交 PresenceDialPool")
     assert(

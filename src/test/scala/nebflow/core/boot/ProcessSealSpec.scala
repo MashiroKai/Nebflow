@@ -7,7 +7,7 @@ import ch.qos.logback.core.read.ListAppender
 import munit.FunSuite
 import nebflow.core.tools.MailWindowProbe
 import nebflow.gateway.PerceptionDaemonDock
-import nebflow.neblink.DeviceMailAck
+import nebflow.neblink.social.DeviceMailAck
 import nebflow.shared.Defaults
 import org.slf4j.LoggerFactory
 

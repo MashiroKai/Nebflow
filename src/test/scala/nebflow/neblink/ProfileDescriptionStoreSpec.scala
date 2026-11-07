@@ -1,5 +1,17 @@
 package nebflow.neblink
 
+import nebflow.neblink.social.ProfileDescriptionStore
+
+import nebflow.neblink.social.ProfileDescriptions
+
+import nebflow.neblink.core.NeblinkServerConfig
+
+import nebflow.neblink.core.AgentMessagingConfig
+
+import nebflow.neblink.social.FriendService
+
+import nebflow.neblink.core.NeblinkClient
+
 import cats.effect.{IO, Ref}
 import cats.effect.unsafe.implicits.global
 import munit.CatsEffectSuite

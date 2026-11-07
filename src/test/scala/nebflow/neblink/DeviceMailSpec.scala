@@ -1,5 +1,9 @@
 package nebflow.neblink
 
+import nebflow.neblink.core.*
+import nebflow.neblink.relay.*
+import nebflow.neblink.social.*
+
 import cats.effect.std.Dispatcher
 import cats.effect.unsafe.implicits.global
 import cats.effect.{IO, Ref}
@@ -56,7 +60,7 @@ class DeviceMailSpec extends FunSuite:
     """{"type":"agent_mail","from_device":"KAI-MBP","from_device_id":"dev-a","to_nebula":true,"text":"hello B"}"""
 
   private def contractPayload: Json =
-    parse(contractPayloadText).fold(e => fail(s"contract literal must parse: ${e.getMessage}"), identity)
+    parse(contractPayloadText).fold(e => fail(s"contract literal must parse: ${e.getMessage}"), x => x)
 
   // ============================================================
   // ① 契约载荷（五键逐字）

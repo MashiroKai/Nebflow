@@ -234,4 +234,44 @@ class PluginMcpProtocolSpec extends CatsEffectSuite:
     }
   }
 
+  // ── 缺陷②（2026-11-02）：timeoutMs 透传 ────────────────────────────────
+
+  test("缺陷②: entry 的 timeoutMs 解析并透传到 McpServerConfig（不再告警 ignored）") {
+    mkPlugin(
+      "mcp-timeout",
+      mcp("\"a\":{\"type\":\"stdio\",\"command\":\"python3\",\"timeoutMs\":600000}")
+    )
+    loaded("mcp-timeout").map { p =>
+      val plugin = p.getOrElse(fail("plugin must load"))
+      val cfg = plugin.mcpServers.getOrElse("a", fail("server 'a' must be loaded"))
+      assertEquals(cfg.timeoutMs, Some(600000L), "timeoutMs must reach McpServerConfig (R3 tool-call ceiling)")
+      assert(
+        !plugin.warnings.exists(_.contains("timeoutMs")),
+        s"timeoutMs must not be reported as unknown any more: ${plugin.warnings}"
+      )
+    }
+  }
+
+  test("缺陷②: timeoutMs 非正数 / 非整数 → entry invalid（0 会让每次 tools/call 立刻超时）") {
+    mkPlugin("mcp-timeout-zero", mcp("\"a\":{\"type\":\"stdio\",\"command\":\"python3\",\"timeoutMs\":0}"))
+    mkPlugin("mcp-timeout-str", mcp("\"a\":{\"type\":\"stdio\",\"command\":\"python3\",\"timeoutMs\":\"60s\"}"))
+    for
+      zero <- warningsOf("mcp-timeout-zero")
+      str <- warningsOf("mcp-timeout-str")
+    yield
+      assert(zero.contains("timeoutMs") && zero.contains("positive"), s"got: $zero")
+      assert(str.contains("timeoutMs") && str.contains("integer"), s"got: $str")
+  }
+
+  test("缺陷②: http 传输同样透传 timeoutMs") {
+    mkPlugin(
+      "mcp-timeout-http",
+      mcp("\"a\":{\"type\":\"streamable-http\",\"url\":\"https://example.com/mcp\",\"timeoutMs\":1234}")
+    )
+    loaded("mcp-timeout-http").map { p =>
+      val cfg = p.getOrElse(fail("plugin must load")).mcpServers.getOrElse("a", fail("server 'a' must be loaded"))
+      assertEquals(cfg.timeoutMs, Some(1234L))
+    }
+  }
+
 end PluginMcpProtocolSpec

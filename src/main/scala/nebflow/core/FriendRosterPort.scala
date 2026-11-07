@@ -1,6 +1,9 @@
 /* 严格DAG第⑥步第二批:FriendRoster 的解析/候选文案用面倒置为注册器(行为保持,2026-09-27)。 */
 package nebflow.core
 
+import nebflow.neblink.core.*
+import nebflow.neblink.social.*
+
 import nebflow.core.tools.ToolError
 import nebflow.shared.{FriendSummary, GroupSummary}
 

@@ -2,8 +2,11 @@ package nebflow.llm
 
 import cats.effect.IO
 import cats.effect.kernel.{Deferred, Ref}
+import cats.effect.std.Mutex
 import cats.syntax.all.*
 import nebflow.core.ProviderHealthPort
+import nebflow.db.format.GuardDocs
+import nebflow.db.{DbHandle, DbHost}
 import nebflow.shared.*
 
 import scala.concurrent.duration.*
@@ -97,8 +100,115 @@ object ProviderHealthMonitor:
  * Up providers are never probed proactively — the first real request after
  * a provider comes back online will naturally discover if it is still healthy.
  */
-final class ProviderHealthMonitor(registry: ProviderRegistry) extends ProviderHealthPort:
+/**
+ * db 接线二阶 B2（D-10 + M37 教训）：构造缝 `db`（测试注入）；生产激活 = `DbHost.peek`
+ * **只查不开**（C5 FlowMapEventLog 先例——createLlm 被 8+ 测试直调，openBestEffort 会
+ * 令测试 JVM 开真实数据根，禁；boot 序已验证 sessionStore:547 生产根自开先于
+ * createLlm:555 ⇒ peek 稳定命中）。
+ */
+final class ProviderHealthMonitor(registry: ProviderRegistry, db: Option[DbHandle] = None)
+    extends ProviderHealthPort:
   private val logger = NebflowLogger.forName("nebflow.llm.health")
+
+  /**
+   * guard 档句柄（lazy：首用一次求值）。None = 未接线（全部落盘腿 no-op，现状行为）。
+   * 坏档写拒绝（V3）在 writeAvoidGuard 内——hydration 先行隔离后写腿自然恢复。
+   */
+  private lazy val guardDb: Option[DbHandle] =
+    db.orElse(DbHost.peek(PathUtil.dataRoot.toNIO))
+
+  /**
+   * 窗口态写穿串行闸：快照两 ref → 整档五步写，防止并发转换交错丢更新
+   * （advisory 面：丢一档的代价 = 下次转换重写自愈）。
+   */
+  private lazy val guardWriteLock: Mutex[IO] =
+    import cats.effect.unsafe.implicits.global
+    Mutex[IO].unsafeRunSync()
+
+  /** 首用一次性重水合门（DispatchNotify C2 同形）：started 单飞 + gate 等待。 */
+  private val guardsHydrated: Ref[IO, Boolean] = Ref.unsafe(false)
+  private val hydrateStarted: Ref[IO, Boolean] = Ref.unsafe(false)
+  private val hydrateGate: Deferred[IO, Unit] = Deferred.unsafe[IO, Unit]
+
+  private def ensureGuards: IO[Unit] =
+    guardsHydrated.get.flatMap { done =>
+      if done then IO.unit
+      else
+        hydrateStarted.getAndSet(true).flatMap { started =>
+          if started then hydrateGate.get
+          else hydrateGuards.guarantee(hydrateGate.complete(()).attempt.void)
+        } *> guardsHydrated.set(true)
+    }
+
+  /**
+   * 重水合（§3.11 步 5，D-10）：Present ⇒ 避坑窗 + 熔断面回填（运行时已有键优先——
+   * 内存态比盘新）；Absent ⇒ 空；Corrupt ⇒ 保守向（有界全避 + 隔离，库侧腿）。
+   * best-effort：db 故障 ⇒ WARN + 现状内存起步（绝不阻断）。
+   */
+  private def hydrateGuards: IO[Unit] =
+    guardDb match
+      case None => IO.unit
+      case Some(h) =>
+        // IO.defer：getCandidates 可能在**构造期**同步抛（registry 的 configRef 为 null 的
+        // 测试桩/子类），defer 把它转成 IO 错误再降级为 Nil——guard 重水合是 best-effort，
+        // 绝不允许把「候选键源不可得」升级成调用方（markDown/softAvoid/filter）的失败。
+        val candidates: IO[List[ModelCandidate]] =
+          if registry == null then IO.pure(Nil)
+          else IO.defer(registry.getCandidates()).handleErrorWith(_ => IO.pure(Nil))
+        (for
+          now <- IO(System.currentTimeMillis())
+          keys <- candidates.map(_.map(c => key(c.providerId, c.model)).distinct)
+          doc <- h.recoverAvoidGuardConservative(now, keys, Defaults.QuotaAvoidWindowMs)
+          _ <- avoidUntilRef.update(m =>
+            m ++ doc.avoidUntil.filter((_, until) => until > System.currentTimeMillis())
+              .filterNot((k, _) => m.contains(k)))
+          existing <- statesRef.get
+          // 只有「本次新回填」的 Down 才初始化半开账本：已存在（含 Up）的键不动。
+          newlyDown = doc.down.filterNot((k, _) => existing.contains(k))
+          _ <- statesRef.update(s =>
+            doc.down.foldLeft(s) { (acc, kv) =>
+              acc.get(kv._1) match
+                case Some(HealthState.Down(_, _)) | Some(HealthState.Up) => acc
+                case None => acc.updated(kv._1, HealthState.Down(
+                  s"recovered from guard (persisted down since ${kv._2})", kv._2))
+            })
+          // 回填的 Down 必须等自己的退避窗才被真实试一次：没有 trials 账目时
+          // filterCandidatesDetailed 会把它当「窗已到」立刻放回链（观测面还会报可用），
+          // 等于把第 60s 的退避直接跳过——首用即补一条 trial(now, 0)。
+          _ <- halfOpenRef.update(m =>
+            newlyDown.foldLeft(m) { case (acc, (k, _)) =>
+              if acc.contains(k) then acc else acc.updated(k, ProviderHealthMonitor.HalfOpenTrial(now, 0))
+            })
+        yield ()).handleErrorWith { e =>
+          logger.warn(s"provider-avoid guard hydration failed (degrade to in-memory): ${e.getMessage}")
+        }
+
+  /**
+   * 窗口态写穿（best-effort：db 故障只 WARN，回落「本进程内窗口仍有效」——与
+   * DispatchNotify.persistGuard 同形）。avoid 档写过期窗剪枝（防无界增长）。
+   */
+  private def persistGuardDoc(): IO[Unit] =
+    guardDb match
+      case None => IO.unit
+      case Some(h) =>
+        guardWriteLock.lock.surround {
+          for
+            now <- IO(System.currentTimeMillis())
+            avoids <- avoidUntilRef.get.map(_.filter((_, until) => until > now))
+            downs <- statesRef.get.map(_.collect {
+              case (k, HealthState.Down(_, since)) => k -> since
+            })
+            _ <- h.writeAvoidGuard(GuardDocs.AvoidGuardDoc(
+              version = 1,
+              source = nebflow.db.Db.AvoidGuardSource,
+              avoidUntil = avoids,
+              updatedAt = now,
+              down = downs
+            )).handleErrorWith { e =>
+              logger.warn(s"provider-avoid guard persist failed: ${e.getMessage}")
+            }
+          yield ()
+        }
 
   private val statesRef: Ref[IO, Map[String, HealthState]] = Ref.unsafe(Map.empty)
 
@@ -192,7 +302,7 @@ final class ProviderHealthMonitor(registry: ProviderRegistry) extends ProviderHe
   def markDown(providerId: String, model: String, reason: String): IO[Unit] =
     val k = key(providerId, model)
     val now = System.currentTimeMillis()
-    statesRef.get.flatMap { states =>
+    ensureGuards *> statesRef.get.flatMap { states =>
       states.get(k) match
         case Some(HealthState.Down(_, since)) =>
           statesRef
@@ -207,9 +317,9 @@ final class ProviderHealthMonitor(registry: ProviderRegistry) extends ProviderHe
               )
             )
             .*>(logger.warn(s"Provider $k marked DOWN: $reason"))
-    }
+    }.flatTap(_ => persistGuardDoc())
 
-  /** Mark a candidate as Up and wake waiters. No-op if already Up. */
+  /** Mark a candidate as Up and wake waiters. No-op if already Up. Persisted（B2）. */
   def markUp(providerId: String, model: String): IO[Unit] =
     val k = key(providerId, model)
     // 5xx 归批（2026-11-05）：一次真实成功 = 冷却计数清零（半开试探成功的判据），
@@ -219,7 +329,7 @@ final class ProviderHealthMonitor(registry: ProviderRegistry) extends ProviderHe
     // 从第一档 60s 重新起步（阶梯是「本次故障」的账，不是终身黑历史）。
     val clearLedgers = halfOpenRef.update(m => if m.contains(k) then m - k else m) *>
       probeFailSigRef.update(m => if m.contains(k) then m - k else m)
-    statesRef.get.flatMap { states =>
+    ensureGuards *> statesRef.get.flatMap { states =>
       states.get(k) match
         case Some(HealthState.Down(_, _)) =>
           clearStrikes *> clearLedgers *> statesRef
@@ -227,7 +337,7 @@ final class ProviderHealthMonitor(registry: ProviderRegistry) extends ProviderHe
             .*>(logger.info(s"Provider $k recovered (UP)"))
             .*>(signalRecovery())
         case _ => clearStrikes *> clearLedgers
-    }
+    }.flatTap(_ => persistGuardDoc())
 
   /**
    * 5xx 冷却（5xx 归批 2026-11-05，作者令「deepseek 抖一下不能把 agent 冻掉」）：
@@ -277,13 +387,16 @@ final class ProviderHealthMonitor(registry: ProviderRegistry) extends ProviderHe
    * spec 可缩窗模拟（生产值见 Defaults）。
    */
   def softAvoid(providerId: String, model: String, windowMs: Long, label: String = "timeout"): IO[Unit] =
-    val k = key(providerId, model)
-    avoidUntilRef
-      .update(_.updated(k, System.currentTimeMillis() + windowMs))
-      .*>(logger.warn(s"Provider $k soft-avoided for ${windowMs}ms ($label — NOT evicted, no probe)"))
+    ensureGuards *> {
+      val k = key(providerId, model)
+      avoidUntilRef
+        .update(_.updated(k, System.currentTimeMillis() + windowMs))
+        .*>(logger.warn(s"Provider $k soft-avoided for ${windowMs}ms ($label — NOT evicted, no probe)"))
+        .*>(persistGuardDoc())
+    }
 
   /** 当前软回避截止时刻（观测 / spec 断言用）。 */
-  private[llm] def getAvoidUntil: IO[Map[String, Long]] = avoidUntilRef.get
+  private[llm] def getAvoidUntil: IO[Map[String, Long]] = ensureGuards *> avoidUntilRef.get
 
   /**
    * Partition candidates into (up, down) based on current health state.
@@ -300,8 +413,9 @@ final class ProviderHealthMonitor(registry: ProviderRegistry) extends ProviderHe
     // `claim = false` ⇒ **不消费**半开试探名额。否则一次面板刷新会把退避窗内的
     // 候选放回链又被别人跳过，或者反过来把「本次该被真实试一次」的名额提前烧掉
     // （→ 下一个真实请求反而被跳过）。只有真正要发请求的调用点才 claim。
-    filterCandidatesDetailed(candidates, claim = false).map { case (eligible, skipped) =>
-      (eligible, skipped.collect { case (c, CandidateSkipCause.HealthDown(_)) => c })
+    ensureGuards *> filterCandidatesDetailed(candidates, claim = false).map {
+      case (eligible, skipped) =>
+        (eligible, skipped.collect { case (c, CandidateSkipCause.HealthDown(_)) => c })
     }
 
   /**
@@ -452,7 +566,7 @@ final class ProviderHealthMonitor(registry: ProviderRegistry) extends ProviderHe
 
   /** Snapshot of all health states (for UI / logging). */
   def getStates: IO[Map[String, HealthState]] =
-    statesRef.get
+    ensureGuards *> statesRef.get
 
   /**
    * 半开试探账本快照：key → (最近放行时刻, 已放行次数)。面板/diagnose 用；
@@ -514,9 +628,11 @@ final class ProviderHealthMonitor(registry: ProviderRegistry) extends ProviderHe
    * restart). Refs whose provider/model was removed from config are skipped.
    */
   private[llm] def downCandidates(): IO[List[ModelCandidate]] =
-    statesRef.get.flatMap { states =>
-      states.collect { case (k, HealthState.Down(_, _)) => k }.toList.flatTraverse { k =>
-        registry.getCandidateForRef(k).map(_.toList)
+    ensureGuards *> {
+      statesRef.get.flatMap { states =>
+        states.collect { case (k, HealthState.Down(_, _)) => k }.toList.flatTraverse { k =>
+          registry.getCandidateForRef(k).map(_.toList)
+        }
       }
     }
 

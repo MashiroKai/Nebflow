@@ -81,6 +81,9 @@ class McpManager private (
     // R3 (wait-timeout-fix): per-server optional tool-call ceiling from the
     // server's `timeoutMs` config field — None (absent) = unbounded, replacing
     // the removed blanket 120s client hard top.
+    // 缺陷②（2026-11-02）：插件 mcp.json 的 `timeoutMs` 现在一路透传到此处
+    // （装载器白名单此前把它当未知字段丢掉 ⇒ 插件自带的 600s 预算形同虚设）。
+    // connectWithTransport 的 budget INFO 行是透传生效的可观测证据。
     val callTimeout = cfg.timeoutMs.map(_.millis)
     (cfg.command, cfg.url) match
       case (Some(cmd), _) =>
@@ -99,6 +102,9 @@ class McpManager private (
   private def connectWithTransport(id: String, transport: McpTransport, callTimeout: Option[FiniteDuration]): IO[Unit] =
     val client = new McpClient(id, transport, callTimeout = callTimeout)
     for
+      _ <- logger.info(
+        s"MCP server '$id' tools/call budget: ${callTimeout.map(t => s"${t.toMillis}ms (from config timeoutMs)").getOrElse("none (unbounded)")}"
+      )
       _ <- client.initialize()
       tools <- client.listTools()
       wrapped = tools.map(t => createMcpToolWrapper(id, t, client))

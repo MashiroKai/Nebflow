@@ -1,5 +1,8 @@
 package nebflow.neblink
 
+import nebflow.neblink.core.*
+import nebflow.neblink.relay.*
+
 import cats.effect.IO
 import cats.effect.std.Dispatcher
 import munit.CatsEffectSuite

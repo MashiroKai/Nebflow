@@ -1,10 +1,13 @@
 /* 从 RestApiRoutes 迁出(行为保持重构,2026-09-24)。 */
 package nebflow.gateway
 
+import nebflow.neblink.core.*
+import nebflow.neblink.identity.*
+
 import cats.effect.IO
 import cats.syntax.all.*
 import fs2.Stream
-import nebflow.neblink.*
+import nebflow.neblink.logto.*
 import nebflow.shared.Branding
 import org.http4s.*
 import org.http4s.dsl.io.*
@@ -202,9 +205,9 @@ private[gateway] object AuthRoutes:
               // （原因 + 动作 + 稳定诊断码）进页面，原始细节（异常类名 / 路径 / URL）
               // **只**进 WARN。页面的其它语义（headline / 状态码 / 单窗口续登契约）零改动。
               .handleErrorWith { e =>
-                val diagnostic = nebflow.neblink.CredentialDiagnostics.classifyFailure(
+                val diagnostic = nebflow.neblink.identity.CredentialDiagnostics.classifyFailure(
                   e,
-                  nebflow.neblink.CredentialFailure.Unclassified
+                  nebflow.neblink.identity.CredentialFailure.Unclassified
                 )
                 logger.warn(diagnostic.logLine("switch continue login failed"), "code" -> diagnostic.code) *>
                   htmlResponse(
@@ -283,8 +286,8 @@ private[gateway] object AuthRoutes:
     LogtoAuthCode.parseCallbackError(query) match
       case Some(cb) =>
         val raw = s"${cb.error}${cb.description.fold("")(d => s": $d")}"
-        val diagnostic = nebflow.neblink.CredentialDiagnostics.diagnosticOf(
-          nebflow.neblink.CredentialFailure.ProviderError,
+        val diagnostic = nebflow.neblink.identity.CredentialDiagnostics.diagnosticOf(
+          nebflow.neblink.identity.CredentialFailure.ProviderError,
           raw
         )
         logger.warn(diagnostic.logLine("provider error redirect"), "code" -> diagnostic.code) *>
@@ -300,8 +303,8 @@ private[gateway] object AuthRoutes:
             htmlResponse(
               callbackPage(
                 ok = false,
-                nebflow.neblink.CredentialDiagnostics
-                  .diagnosticOf(nebflow.neblink.CredentialFailure.CallbackStateInvalid)
+                nebflow.neblink.identity.CredentialDiagnostics
+                  .diagnosticOf(nebflow.neblink.identity.CredentialFailure.CallbackStateInvalid)
                   .message
               ),
               Status.BadRequest
@@ -309,8 +312,8 @@ private[gateway] object AuthRoutes:
           case Some(verifier) =>
             neblinkService match
               case None =>
-                val diagnostic = nebflow.neblink.CredentialDiagnostics.diagnosticOf(
-                  nebflow.neblink.CredentialFailure.ServiceUnavailable,
+                val diagnostic = nebflow.neblink.identity.CredentialDiagnostics.diagnosticOf(
+                  nebflow.neblink.identity.CredentialFailure.ServiceUnavailable,
                   "NebLink service not initialized"
                 )
                 pkceLogin.failDiagnosed(diagnostic) *>
@@ -366,7 +369,7 @@ private[gateway] object AuthRoutes:
                                     identity.deviceId,
                                     identity.deviceName,
                                     identity.platform,
-                                    nebflow.neblink.DeviceIdentity.machineFingerprint()
+                                    nebflow.neblink.core.DeviceIdentity.machineFingerprint()
                                   )
                                   .flatMap {
                                     case Right(json) =>
@@ -411,9 +414,9 @@ private[gateway] object AuthRoutes:
                                                 Status.BadGateway
                                               )
                                           case Left(e) =>
-                                            val diagnostic = nebflow.neblink.CredentialDiagnostics.classifyFailure(
+                                            val diagnostic = nebflow.neblink.identity.CredentialDiagnostics.classifyFailure(
                                               e,
-                                              nebflow.neblink.CredentialFailure.Unclassified
+                                              nebflow.neblink.identity.CredentialFailure.Unclassified
                                             )
                                             logger.warn(
                                               diagnostic.logLine("auth callback enrollment failed"),
@@ -443,8 +446,8 @@ private[gateway] object AuthRoutes:
                                   }
                             }
                           case Left(err) =>
-                            val diagnostic = nebflow.neblink.CredentialDiagnostics.diagnosticOf(
-                              nebflow.neblink.CredentialFailure.TokenExchangeFailed,
+                            val diagnostic = nebflow.neblink.identity.CredentialDiagnostics.diagnosticOf(
+                              nebflow.neblink.identity.CredentialFailure.TokenExchangeFailed,
                               err
                             )
                             logger.warn(diagnostic.logLine("token exchange failed"), "code" -> diagnostic.code) *>
@@ -456,7 +459,7 @@ private[gateway] object AuthRoutes:
                         // 案 b①：无目标 —— 隔离实例不得把生产默认当入网目标。失败文案 =
                         // 护栏原文（`EnrollRefusedIsolatedHome` 的例外分支把**干净**原文
                         // 逐字送上回调页与 /auth/state 面板；见 CredentialDiagnostics）。
-                        val diagnostic = nebflow.neblink.CredentialDiagnostics.diagnosticOf(
+                        val diagnostic = nebflow.neblink.identity.CredentialDiagnostics.diagnosticOf(
                           CredentialFailure.EnrollRefusedIsolatedHome,
                           EnrollGuard.prodFallbackRefusalReason
                         )
@@ -471,8 +474,8 @@ private[gateway] object AuthRoutes:
                         // logto block exists but lacks pkceClientId (the
                         // embedded default carries one; a missing block falls
                         // back to it). Name the actual misconfiguration.
-                        val diagnostic = nebflow.neblink.CredentialDiagnostics.diagnosticOf(
-                          nebflow.neblink.CredentialFailure.LogtoNotConfigured,
+                        val diagnostic = nebflow.neblink.identity.CredentialDiagnostics.diagnosticOf(
+                          nebflow.neblink.identity.CredentialFailure.LogtoNotConfigured,
                           "logto-pkce-client-not-configured"
                         )
                         pkceLogin.failDiagnosed(diagnostic) *>
@@ -493,8 +496,9 @@ private[gateway] object AuthRoutes:
    */
   private def classifyRegisterRejection(
     rejection: LogtoTransport.RegisterRejection
-  ): nebflow.neblink.CredentialDiagnostics.Diagnostic =
-    import nebflow.neblink.{CredentialDiagnostics as CD, CredentialFailure as CF}
+  ): nebflow.neblink.identity.CredentialDiagnostics.Diagnostic =
+    import nebflow.neblink.identity.CredentialDiagnostics as CD
+    import nebflow.neblink.identity.CredentialFailure as CF
     val failure = rejection.reason match
       case Some(r) if r == CF.DeviceBoundOtherAccount.code => CF.DeviceBoundOtherAccount
       case Some(r) if r == CF.DeviceAlreadyLoggedIn.code => CF.DeviceAlreadyLoggedIn
@@ -517,9 +521,10 @@ private[gateway] object AuthRoutes:
   private def classifyEnrollFailure(
     serverUrl: String,
     err: String
-  ): nebflow.neblink.CredentialDiagnostics.Diagnostic =
-    import nebflow.neblink.{CredentialDiagnostics as CD, CredentialFailure as CF}
-    nebflow.neblink.EnrollGuard.enrollRefusal(serverUrl) match
+  ): nebflow.neblink.identity.CredentialDiagnostics.Diagnostic =
+    import nebflow.neblink.identity.CredentialDiagnostics as CD
+    import nebflow.neblink.identity.CredentialFailure as CF
+    nebflow.neblink.identity.EnrollGuard.enrollRefusal(serverUrl) match
       case Some(reason) if reason == err => CD.diagnosticOf(CF.EnrollRefusedIsolatedHome, err)
       case _ =>
         CD.byVisibleMessage(err).map(f => CD.diagnosticOf(f)).getOrElse(CD.diagnosticOf(CF.Unclassified, err))

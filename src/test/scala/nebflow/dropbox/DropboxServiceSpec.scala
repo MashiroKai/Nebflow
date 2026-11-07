@@ -1,5 +1,7 @@
 package nebflow.dropbox
 
+import nebflow.neblink.core.*
+
 import cats.effect.std.Dispatcher
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
@@ -7,7 +9,9 @@ import io.circe.Json
 import io.circe.parser.parse
 import munit.CatsEffectSuite
 import nebflow.gateway.WsHub
-import nebflow.neblink.{NeblinkClient, NeblinkServerConfig, NeblinkService}
+import nebflow.neblink.core.NeblinkClient
+import nebflow.neblink.core.NeblinkServerConfig
+import nebflow.neblink.core.NeblinkService
 import nebflow.shared.{DropboxMessage, PathUtil, PeerInfo}
 
 import scala.concurrent.duration.*

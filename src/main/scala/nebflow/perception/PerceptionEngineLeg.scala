@@ -1,5 +1,7 @@
 package nebflow.perception
 
+import nebflow.neblink.core.*
+
 import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.Json

@@ -1,13 +1,19 @@
 /* 从 RestApiRoutes 迁出(行为保持重构,2026-09-24)。 */
 package nebflow.gateway
 
+import nebflow.neblink.core.*
+import nebflow.neblink.identity.*
+import nebflow.neblink.portal.*
+import nebflow.neblink.relay.*
+import nebflow.neblink.social.*
+
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, parser}
 import nebflow.agent.SharedResources
 import nebflow.core.SessionStore
-import nebflow.neblink.*
+import nebflow.neblink.logto.*
 import nebflow.shared.{NebflowLogger, NebflowServiceConfig, PeerInfo}
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
@@ -50,7 +56,7 @@ final class RestApiCtx(
   val wsRoutes: WebSocketRoutes,
   val neblinkService: Option[NeblinkService],
   val ttsService: Option[TtsService],
-  val neblinkDiscovery: Option[nebflow.neblink.NeblinkDiscovery],
+  val neblinkDiscovery: Option[nebflow.neblink.relay.NeblinkDiscovery],
   val gatewayPort: Int,
   val wsHub: WsHub,
   val connGuard: ConnGuard,
@@ -218,7 +224,7 @@ final class RestApiCtx(
    * Identity claimed by the peer opening a presence WS upgrade.
    *
    * A1 (2026-09-20 device-face hardening batch): the handshake HEADER
-   * ([[nebflow.neblink.Protocol.DeviceHeader]] — the same channel
+   * ([[nebflow.neblink.core.Protocol.DeviceHeader]] — the same channel
    * [[verifyPeerAccess]] already reads on the REST peer face) is the primary
    * carrier, so deviceId stops travelling in the URL. The legacy `?deviceId=`
    * query param stays as the FALLBACK: dialers built before the change send
