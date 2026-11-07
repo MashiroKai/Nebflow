@@ -974,25 +974,36 @@ private[gateway] object PresenceRoutes:
       // 视图②④星型区数据缝）：数据源 = SubAgentTaskStore.findByParent 单点（按父分
       // 文件整表读——条目 source 自带形态 subagent/subtask/delegate，过滤归消费端）。
       // agentflow 的 flow 子结构不走本面（= /api/chains/:key 的 chain.nodes 投影）。
-      // 404 = 父无记录；400 = 非法 id；查无文件 = 空集（count 0，非 404）。
+      // 404 = 父无记录；400 = 非法 id；查无文件 = 空集（count 0）。
       case req @ GET -> Root / "delegates" / id / "children" =>
         withAuth(req) {
           if !nebflow.core.delegate.DelegateRegistry.validId(id) then
             BadRequest(Json.obj("error" -> "invalid delegate id".asJson))
           else
             IO.blocking(nebflow.core.delegate.DelegateRegistry.find(id)).flatMap {
-              case None =>
-                NotFound(Json.obj("error" -> s"no delegate record for id '$id'".asJson))
+              case None => NotFound(Json.obj("error" -> s"no delegate record for id '$id'".asJson))
               case Some(_) =>
                 sharedResources.subAgentTaskStore.findByParent(id).flatMap { children =>
-                  Ok(
-                    Json.obj(
-                      "delegateId" -> id.asJson,
-                      "count" -> children.size.asJson,
-                      "children" -> children.asJson
-                    )
-                  )
+                  Ok(Json.obj("delegateId" -> id.asJson, "count" -> children.size.asJson, "children" -> children.asJson))
                 }
+            }
+        }
+
+      // Session-scoped hierarchy projection: never expose prompts or errors on this new read face.
+      case req @ GET -> Root / "session-children" / id =>
+        withAuth(req) {
+          if !nebflow.core.delegate.DelegateRegistry.validId(id) ||
+              !(id.startsWith("node-") || id.startsWith("dispatcher-")) then
+            BadRequest(Json.obj("error" -> "invalid session id".asJson))
+          else
+            sharedResources.subAgentTaskStore.findByParent(id).flatMap { children =>
+              val projected = children.map { c =>
+                Json.obj("taskId" -> c.taskId.asJson, "parentSessionId" -> c.parentSessionId.asJson,
+                  "agentName" -> c.agentName.asJson, "status" -> c.status.asJson,
+                  "source" -> c.source.asJson, "spawnedAt" -> c.spawnedAt.asJson,
+                  "completedAt" -> c.completedAt.asJson, "retryCount" -> c.retryCount.asJson)
+              }
+              Ok(Json.obj("children" -> projected.asJson))
             }
         }
 

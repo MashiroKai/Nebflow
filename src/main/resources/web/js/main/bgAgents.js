@@ -24,6 +24,9 @@ import { openStepPopup as openBgAgentPopup } from '../bgAgentPopup.js';
 import { listDelegateRows, listDelegateChildren, getChainByTask } from '../delegateChainStub.js';
 // 模型粒度批（作者令 2026-11-06 20:36）：手动恢复两档的 REST 缝（逐个 / 一键全部）。
 import { restoreDelegate, restoreAllDelegates } from '../delegateApi.js';
+// 节点子智能体可见性批（2026-11-07）：节点父的 store 子条目补拉（provider 镜像的唯一
+// 补拉口——读面仍是 delegateChainStub.listDelegateChildren 那一个）。
+import { ensureChildren } from '../delegateChainProvider.js';
 // panel-merge-status 批（2026-10-25）：候合并行队列细节（位次/重试/拒绝摘要）——
 // /api/merge-queue 只读状态面单点（叶子模块，事件驱动 + 节流退避，禁空转轮询）。
 import { ensureMergeQueueStatus, mergeQueueEntryFor } from '../mergeQueueStatus.js';
@@ -664,6 +667,24 @@ function bgMemberKindWord(member) {
   // 契约）——词面同样来自单源表。
   if (isDispatcherSession(sid)) return badgeWord('dispatcher');
   if (sid.startsWith('node-')) return badgeWord('node');
+  // 子智能体标签批（2026-11-07 · 作者报障「kernel 下面有个 delegate 标签，kernel 下面
+  // 不应该是 subagent 吗」）：**`subagent-` 会话是 Subagent 工具腿的执行单元**——它是
+  // kernel/执行体的**只读侦察子代理本体**（BlockingSubagent.scala:81 的唯一 spawn 点，
+  // 机制固定 = AgentCore.SubagentFixedTools，叶子不派生），身份词 = `subagent`。
+  // 为什么必须在这里抢先（不能靠 info.kind / source 链）：引擎把这条腿**按控制面
+  // 归组**注册成 `AgentKind.SubTask`（BlockingSubagent.scala 的 registerAgent(kind=
+  // AgentKind.SubTask)——为了 AgentControl 的 cancel/restart 白名单与无 Mail 面的语义），
+  // 快照面 `kind` 因此逐字是 "SubTask"（WebSocketRoutes.activeAgentEntryJson 的
+  // `"kind" -> rec.kind.toString`）；而术语统一批把 `SubTask` 归一成 `delegate`
+  // （termWords.badgeFaceOfKind）——于是**真的子智能体在面板上被贴上了 delegate 标签**
+  // （作者截图实证：kernel「节点卡点审计」下的两个子行，store 证据 = subagent-tasks/
+  // delegate-nebflow-94ce9d8e.json 的 source:"subagent" + taskId "subagent-*"）。
+  // 判据边界（防止把别的 delegate 混改）：只认会话 id 前缀 `subagent-`——`subtask-*`
+  // （SubTaskTool 的并行工人）与 `delegate-*`（Delegate 批次）逐字不动，`SubTask`
+  // 数据词在 store source / 协议 kind 两条既有路径上仍归一为 `delegate`。
+  // 真实身份与路由零改动：本函数只产**显示词**，AgentKind / MailAddress / 控制面
+  // 白名单全在原处（SubTask 依旧无 Mail 面、依旧可 cancel/restart）。
+  if (sid.startsWith('subagent-')) return badgeWord('subagent');
   const source = String(m.source || '');
   const word = source || String(info.kind || '') || bgAgentKindFromSession(sid);
   return badgeFaceOfKind(word);
@@ -705,6 +726,58 @@ function bgDelegateScopeChainRows(delegateSid) {
 function bgRowTerminal(info) {
   const st = bgRowState(info);
   return st === 'done' || st === 'error';
+}
+
+// ── 节点子智能体可见性批（2026-11-07 · 作者报障「dispatcher 的 agentflow 也就是 node
+//    的子智能体好像没显示在上面」）────────────────────────────────────────────
+// 数据面事实（引擎侧，逐条可核）：
+//   ① node-/dispatcher- 会话的**子代理**同样是 BlockingSubagent 的唯一 spawn 点产物
+//      （session id `subagent-*`、AgentKind.SubTask、store 条目 source `subagent`、
+//      parentSessionId = 该 node 会话 id）——磁盘实据：<dataRoot>/subagent-tasks/
+//      node-<uuid>.json（22 个文件，条目 source 逐字 `subagent`）。
+//   ② **live 面**：这类会话的 WS 归桶键 = 节点上下文的 rootSessionId（= 项目 root），
+//      因此进行中的子智能体行**已经**会进主桶、经 parentSessionId 挂到 node 行下
+//      （既有三代层级批的属主边路径）。
+//   ③ **终态面缺口**（本批修的漏显示）：BlockingSubagent 终态即 reap（registry 条目
+//      移除、live 行随 2s 清理消失），结构只剩 store 条目；而面板的 store 子行只读
+//      **组头（delegate 组）** 的子集（bgDelegateGroups Pass 3 的 listDelegateChildren(g.sid)）
+//      ——node/dispatcher 行不是组头 ⇒ 它们的 store 子条目**没有任何读口**，终态后
+//      从面板消失。这不是「确实没创建」，是 UI 漏显示。
+// 读口：**沿用既有唯一读口** listDelegateChildren（delegateChainStub → provider 镜像；
+//   夹具态读夹具，产品态读 /api/session-children/:id 镜像）。节点父的缺口只在
+//   「provider 从不为 node-/dispatcher- 父拉这一拉」——每次读取时通过 provider 的
+//   TTL 闸门按需补拉（ensureChildren，自带 60s TTL/在飞闸门），镜像
+//   到达后由 'delegate-chain-mirror-updated' 触发重渲染。读面仍只有一个读口。
+const BG_SCOPE_CHILD_TTL_MS = 60 * 1000;
+
+/** 取某 node/dispatcher 会话的 store 子条目（缺缓存 ⇒ 触发一次补拉并返回当前读数）。
+ *  **展示专用**：不改行集判据、不参与去重决策（去重仍在 bgRowPlan 收敛单点）。
+ *  @param {string} sid 父会话 id @returns {Array<any>} */
+function bgScopeStoreChildren(sid) {
+  const key = String(sid || '').replace(/^team-/, '');
+  if (!key) return [];
+  const rows = listDelegateChildren(key);
+  ensureChildren(key, BG_SCOPE_CHILD_TTL_MS);
+  return Array.isArray(rows) ? rows : [];
+}
+
+/** store 条目 → 行计划 info 形（供树/去重/点击锚共用；渲染面走 bgStoreChildHtml 的
+ *  store 分支，status 词/恢复 chip 仍由该构造器单点给）。缺键容忍、零臆造。
+ *  @param {any} child @param {string} parentSid @returns {any} */
+function bgScopeStoreInfo(child, parentSid) {
+  const c = child && typeof child === 'object' ? child : {};
+  const status = String(c.status || '');
+  return {
+    sessionId: String(c.taskId || ''),
+    parentSessionId: String(c.parentSessionId || parentSid || ''),
+    name: String(c.agentName || ''),
+    task: String(c.description || c.prompt || ''),
+    kind: String(c.source || ''),
+    status: status === 'failed' ? 'Error' : (status === 'completed' || status === 'cancelled') ? 'Idle' : 'Processing',
+    done: status === 'completed' || status === 'cancelled',
+    startedAt: Number(c.spawnedAt) || 0,
+    retryCount: Number(c.retryCount) || 0,
+  };
 }
 
 /** flow 节点状态 → 面板状态词键（ROW_STATUS 值域；既有键复用，零新键）。 */
@@ -1316,6 +1389,29 @@ function bgRowPlan(model, bucketSid) {
       orphan: orphanBy.get(String((info && info.sessionId) || id || '').replace(/^team-/, '')) || null,
     });
   }
+  // 节点子智能体可见性批（2026-11-07）：node-/dispatcher- 作用域会话的 store 子条目
+  // （= 终态后的子智能体结构面，见 bgScopeStoreChildren 头注的引擎侧事实）在这里并成
+  // 顶层候选行——父键 = 该 node 会话 id（属主边照旧由 bgRowTree 装配 ⇒ 挂在 node 行
+  // 下真缩进）。两条防重铁律：①已在本轮行集里的会话（live/快照/组内子行）不重复出；
+  // ②同一父的多条 store 子条目之间也不重复（present 集合同点维护）。
+  const presentSid = new Set();
+  for (const row of raw) {
+    const k = bgRowSessionKey(row);
+    if (k) presentSid.add(k);
+  }
+  for (const row of raw.slice()) {
+    const sid = bgRowSessionKey(row);
+    if (!sid || !/^(node-|dispatcher-)/.test(sid)) continue;
+    for (const child of bgScopeStoreChildren(sid)) {
+      const cid = String((child && child.taskId) || '');
+      if (!cid || presentSid.has(cid)) continue;
+      presentSid.add(cid);
+      raw.push({
+        level: 'top', id: cid, info: bgScopeStoreInfo(child, sid),
+        storeChild: child, orphan: null,
+      });
+    }
+  }
   // ① 收敛：sessionId → 胜出行（先去重再定序——否则并列裁决会做在重复行上）。
   const bySid = new Map();
   for (const row of raw) {
@@ -1505,7 +1601,44 @@ function bgAbsentParentChipHtml(parentSid) {
  */
 function bgDepthAttrs(depth) {
   const d = Math.max(0, Math.floor(Number(depth) || 0));
+  // listitem does not support aria-level; retain the machine-readable visual depth only.
   return ' data-bg-depth="' + d + '"' + (d > 0 ? ' style="--bg-row-depth:' + d + '"' : '');
+}
+
+/** 是否父行的末位子行（转折角 `└` 与延续列 `│` 的判据）——直接读 bgRowTree 的兄弟表
+ *  （同父兄弟序 = 基座序；渲染面不另算顺序）。 @param {any} row @param {any} tree
+ *  @returns {boolean} */
+function bgIsLastSibling(row, tree) {
+  if (!row || !tree || !tree.kids) return true;
+  const parent = tree.parentOf.get(row) || null;
+  if (!parent) return true;
+  const kids = tree.kids.get(parent) || [];
+  return kids.length === 0 || kids[kids.length - 1] === row;
+}
+
+/**
+ * 层级连接符（视觉导轨）单点——行首的「转折号」（2026-11-07 · 作者令逐字「这里的
+ * 缩减显示还不够明显，最好有转折号来在前面」）。
+ *
+ * 每行用本级转折角（`└` 末位子 / `├` 非末位）加 CSS 深度缩进。
+ * 纪律（逐条，本批成立的全部理由）：
+ *   · **唯一产点**：树形/深度/兄弟序全部读 bgRowTree 的那一份（`tree.parentOf` /
+ *     `tree.kids`）——渲染面不重算第二种深度（第二套口径 = 层级与折叠打架的温床）；
+ *   · **纯装饰**：`aria-hidden="true"`；data-bg-depth 供机器读取视觉深度。
+ *   · **零新增色值**：字形走 currentColor + 既有 muted 色阶——亮/暗两档自动跟随主题，
+ *     不加任何 hex；
+ *   · **不改行集**：本函数只产前缀字符串，行/计数/折叠剪枝全在既有单点上；
+ *   · **depth 0 零字节**（顶层行/整体行/root 锚/野组头形态逐字不变）。
+ * @param {any} row 行计划项 @param {any} tree bgRowTree 产出
+ * @returns {string} HTML（'' = 无导轨）
+ */
+function bgTreeRailHtml(row, tree) {
+  if (!row || !tree || !tree.depth) return '';
+  const depth = Number(tree.depth.get(row) || 0);
+  if (!(depth > 0)) return '';
+  // 缩进由 CSS 单独负责；只画本级转折，避免祖先字符叠加缩进造成列错位。
+  const elbow = (bgIsLastSibling(row, tree) ? '└' : '├') + '─';
+  return '<span class="bg-tree-rail" aria-hidden="true">' + escapeHtml(elbow) + '</span>';
 }
 
 /**
@@ -1706,7 +1839,12 @@ function bgTaskRowHtml(id, info, opts = {}) {
   //  兜底摘掉 leftover 行的 kind 残留词（「来自 …」孤儿角标/任务归属徽标不受影响）。
   //  术语统一批（2026-11-06）：判据读单源表（isMemberOnlyBadge），不再写死词面字面量
   //  ——词面换了（Subagent→subagent、Delegate→delegate）摘词行为逐位不变。
-  const kindWord = (!opts.childLevel && isMemberOnlyBadge(kind)) ? '' : kind;
+  //  子智能体标签批（2026-11-07 · 作者报障「node 的子智能体没显示」）：摘词门补一个
+  //  例外 opts.member——**父行在场（真子行）的顶层行也是成员**，它挂在可见父行下、
+  //  有真实 depth，「这一行是子智能体/批次」正是它该说的话（node 派生的 subagent 行
+  //  此前因此丢了徽标，面板上只剩一个无名缩进行）。孤儿行（父不可见）不带本旗，
+  //  摘词门逐字不变（「来自 …」角标形态零回归）。
+  const kindWord = (!opts.childLevel && !opts.member && isMemberOnlyBadge(kind)) ? '' : kind;
   const kindPart = kindWord ? '<span class="bg-task-kind">' + escapeHtml(kindWord) + '</span>' : '';
   // 整体行实体词（术语分层批 + agentflow 错标修复批）：**只有 dispatcher 派生的编排**
   // 才带本词（bgAgentflowWord 的两轴来源判定）；kernel 行 / 未登记链的行 / mode 缺席行
@@ -2021,6 +2159,9 @@ function bgTaskRowHtml(id, info, opts = {}) {
   const childCount = Number(opts.childCount) || 0;
   const collapsedNow = !!(childCount > 0 && opts.collapsed);
   const caretPart = childCount > 0 ? bgCaretHtml(sid || id, collapsedNow) : '';
+  // 层级连接符批（2026-11-07）：导轨（转折号）在 caret 之前——`│  └─ ▾ 名字` 是树形
+  // 的常规读法；导轨本身 aria-hidden。
+  const railPart = String(opts.railHtml || '');
   // ── 三行结构（UI 批 2026-11-05 · 作者令逐字「分三行显示。第一行 name · 状态
   //    （用图标显示）· time。第二行 Badge。第三行 当前动作」）──────────────────
   //   · L1 `.bg-task-main`：name · 状态图标（bgRowStatus 单点发射，中文状态词转
@@ -2039,7 +2180,8 @@ function bgTaskRowHtml(id, info, opts = {}) {
   const line3 = (actionPart || summaryPart)
     ? '<div class="bg-task-line bg-task-row-line3 bg-task-subline">' + actionPart + summaryPart + '</div>'
     : '';
-  return '<div class="bg-task-row' + (rawState === 'done' && !chainContinued ? ' done' : '') + levelCls + '"' + levelAttr + wildAttr + absentAttr + agentflowAttr + bgDepthAttrs(Number(opts.depth) || 0) + bgCollapseAttrs(childCount, collapsedNow) + ' role="listitem" tabindex="0" ' + clickAttr + '>' +
+  return    '<div class="bg-task-row' + (rawState === 'done' && !chainContinued ? ' done' : '') + levelCls + '"' + levelAttr + wildAttr + absentAttr + agentflowAttr + bgDepthAttrs(Number(opts.depth) || 0) + bgCollapseAttrs(childCount, collapsedNow) + ' role="listitem" tabindex="0" ' + clickAttr + '>' +
+    railPart +
     caretPart +
     '<div class="bg-task-info">' +
       '<div class="bg-task-line bg-task-main bg-task-row-line1">' +
@@ -2098,7 +2240,11 @@ function bgStoreChildHtml(child, agentflowKey, opts = {}) {
   const childCount = Number(opts.childCount) || 0;
   const collapsedNow = !!(childCount > 0 && opts.collapsed);
   const caretPart = childCount > 0 ? bgCaretHtml(sid, collapsedNow) : '';
+  // 层级连接符批（2026-11-07）：store 成员行同款导轨（构造器各带一行，产点仍唯一——
+  // 字符串由 bgTreeRailHtml 一处生成，本处只消费）。
+  const railPart = String(opts.railHtml || '');
   return '<div class="bg-task-row bg-task-row-child" data-bg-row-level="child" data-bg-agentflow="' + escapeHtml(String(agentflowKey || '')) + '"' + bgDepthAttrs(opts.depth) + bgCollapseAttrs(childCount, collapsedNow) + ' role="listitem" tabindex="0" data-child-session="' + escapeHtml(sid) + '">' +
+    railPart +
     caretPart +
     '<div class="bg-task-info">' +
       // 三行结构批：members 行同款（L1 名·状态图标·空 time 槽 / L2 kind+重试 / L3 摘要）。
@@ -2141,7 +2287,10 @@ function bgFlowChildHtml(node, delegateKey, agentflowKey, opts = {}) {
   const childCount = Number(opts.childCount) || 0;
   const collapsedNow = !!(childCount > 0 && opts.collapsed);
   const caretPart = childCount > 0 ? bgCaretHtml(String(n.id || ''), collapsedNow) : '';
+  // 层级连接符批（2026-11-07）：flow 结构行同款导轨（产点仍唯一 = bgTreeRailHtml）。
+  const railPart = String(opts.railHtml || '');
   return '<div class="bg-task-row bg-task-row-child" data-bg-row-level="child" data-bg-agentflow="' + escapeHtml(String(agentflowKey || '')) + '"' + bgDepthAttrs(opts.depth) + bgCollapseAttrs(childCount, collapsedNow) + ' role="listitem" tabindex="0" data-flow-delegate-key="' + escapeHtml(String(delegateKey || '')) + '" title="' + escapeHtml(label) + '">' +
+    railPart +
     caretPart +
     '<div class="bg-task-info">' +
       '<div class="bg-task-line bg-task-main bg-task-row-line1">' +
@@ -2282,7 +2431,9 @@ export function renderBgAgentDropdown() {
     const collapsed = childCount > 0 && (pref !== undefined ? pref : bgRowCollapseDefault(row));
     if (collapsed) hidden.add(row);
     // 深度/子树/折叠三锚（成员行与顶层行共用同一入参形；标签页与层级无关）。
-    const rowOpts = { depth, childCount, collapsed };
+    // 层级连接符批（2026-11-07）：导轨字符串同点产出（背景：作者令「缩进不明显，要有
+    // 转折号」）——树形/深度一处算（bgTreeRailHtml 读同一份 tree），渲染面只消费。
+    const rowOpts = { depth, childCount, collapsed, railHtml: bgTreeRailHtml(row, tree) };
     if (row.level === 'head') {
       const g = row.group;
       const continued = !!(g.chainLive && (bgRowState(g.info) === 'done' || bgRowState(g.info) === 'error'));
@@ -2322,6 +2473,13 @@ export function renderBgAgentDropdown() {
     }
     // root 锚（三代层级批）：标签面行——bgRootAnchorHtml 出镜（不带 .bg-task-row，
     // 不进行集/计数）；caret/折叠走同一把缝（键 = 桶根会话 id），收起 = 根下整棵子树隐藏。
+    // 节点子智能体可见性批（2026-11-07）：store 子条目行（终态子智能体的结构面）先于
+    // root/顶层分支——渲染走 bgStoreChildHtml 的 store 形态（状态词/恢复 chip/描述主名
+    // 仍是该构造器单点），层级/导轨/折叠照树走（深度已由 bgRowTree 按属主边算出）。
+    if (row.storeChild) {
+      htmlParts.push(bgStoreChildHtml(row.storeChild, '', rowOpts));
+      continue;
+    }
     if (row.level === 'root') {
       htmlParts.push(bgRootAnchorHtml(bgRowSessionKey(row), childCount, collapsed));
       continue;
@@ -2338,14 +2496,25 @@ export function renderBgAgentDropdown() {
       htmlParts.push(bgTaskRowHtml(row.id, row.info, { ...rowOpts, absentParent: row.absentParent || null }));
       continue;
     }
+    // 子智能体标签批（2026-11-07）：父行在场（判定单点结论 = attached）的顶层行**是
+    // 成员**——它挂在可见父行下，身份词该上屏（node 派生的 subagent 行此前被摘词门
+    // 当孤儿处理，面板上只剩缩进没有徽标）。attached 之外的形态（野/在册缺席）不
+    // 带本旗：摘词门逐字不变。
     htmlParts.push(bgTaskRowHtml(row.id, row.info, (row.orphan && row.parentState !== 'attached')
       ? { orphanFrom: row.orphan.parentSid, orphanTitle: row.orphan.parentTitle, bucketSid: sid, ...rowOpts }
-      : rowOpts));
+      : { ...rowOpts, member: row.parentState === 'attached' }));
   }
   // 野节点独立归置分组（组头标签 → 组内行；组头不是行，不入行集与计数）。
   if (wildRows.length) {
     htmlParts.push(bgOrphanGroupHeadHtml(wildRows.length));
-    for (const row of wildRows) htmlParts.push(bgOrphanRowHtml(row, sid));
+    for (const row of wildRows) {
+      // 节点子智能体可见性批：父 node 行不在场（跨桶/竞态）的 store 子条目仍按 store
+      // 形态出镜（不伪造深度、不带导轨——与野行同档；「来自 …」角标对 store 行无
+      // 意义：它的父键就在 store 条目里，tooltip 已由构造器给）。
+      htmlParts.push(row.storeChild
+        ? bgStoreChildHtml(row.storeChild, '', { depth: 0, childCount: 0, collapsed: false })
+        : bgOrphanRowHtml(row, sid));
+    }
   }
   // 台账 #929：远端投影行缀尾（本地行为主的合并语义——本地空时本组独立成面）。
   // 行集收敛批：远端行是**跨会话集**（不入 per-session 计数，见 main.js 红线注），
@@ -2567,4 +2736,14 @@ export function clearBgStuck(msg) {
     entry.stuck = null;
     updateBgAgentIndicator(sid);
   }
+}
+
+// 节点子智能体可见性批（2026-11-07）：provider 镜像补拉到达 ⇒ 面板在开时重渲染
+// （帧只当触发器，零帧解读——与 delegateChainView / taskList 的同名监听同园口径）。
+// 只在合并载体开着时刷：关着不打扰（下一次打开会读到新镜像）。
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+  window.addEventListener('delegate-chain-mirror-updated', () => {
+    const dd = activeView && activeView.dom && activeView.dom.bgDropdownEl;
+    if (dd && !dd.classList.contains('hidden')) renderBgAgentDropdown();
+  });
 }

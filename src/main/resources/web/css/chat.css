@@ -354,17 +354,39 @@
 .bg-dropdown-list .bg-task-row-head:first-child { border-top: none; }
 /* 双类锚（0,2,0）压过 .bg-task-row 的 padding 简写（源序在后——单类锚必输）。
    层级缩进批（2026-11-05 腿②）：缩进从「两级帽的单格」升级为**按真实深度累加**——
-   每深一层再加一格（--ds-space-3 / 12px），档值全部取自既有间距令牌（零新增档、
-   零新增色值字面量）。--bg-row-depth 由行构造器内联写入（data-bg-depth 同源）；
-   缺席时按 1 档算 = 既有单格缩进（远端投影行 / 无深度锚的行视觉零回归）。
-   depth1 = 16px（既有档），depth2 = 28px，depth3 = 40px …… 严格单调，任何层数都不裁行。
+   每深一层再加一格，档值全部取自既有间距令牌（零新增档、零新增色值字面量）。
+   --bg-row-depth 由行构造器内联写入（data-bg-depth 同源）；缺席时按 1 档算 = 既有
+   单格缩进（远端投影行 / 无深度锚的行视觉零回归）。
+   层级连接符批（2026-11-07 · 作者令「缩进不够明显，最好有转折号」）：每层步长
+   12px → 16px（--ds-space-3 → --ds-space-4，仍是既有令牌档，未新增刻度）：
+   depth1 = 16px，depth2 = 32px，depth3 = 48px …… 严格单调，任何层数都不裁行；
+   与行首导轨（.bg-tree-rail）合成树形表（缩进给「量」，转折号给「形」）。
    面板三代层级批（2026-11-06）：缩进面从 child 类扩为「任意带深度锚的行」——
    dispatcher 行（depth1）/ node 行（depth2）是顶层行不是 child 类，同一公式逐字
    不动（选择器并集：带 data-bg-depth 且非 0 的行 = 带 --bg-row-depth 内联变量的行）。
    引导竖线仍跟 child 类走不变（dispatcher/node 顶层行不加左条——design 残差④）。 */
 .bg-task-row.bg-task-row-child,
 .bg-task-row[data-bg-depth]:not([data-bg-depth="0"]) {
-  padding-left: calc(var(--ds-space-4) + (var(--bg-row-depth, 1) - 1) * var(--ds-space-3));
+  padding-left: calc(var(--ds-space-4) + (var(--bg-row-depth, 1) - 1) * var(--ds-space-4));
+}
+/* 层级连接符批（2026-11-07 · 作者令逐字「这里的缩减显示还不够明显，最好有转折号来
+   在前面」）：行首视觉导轨（`│ └─`）＝ 层级本身的可视形状，①缩进档同步加深（每层
+   12px → 16px，仍取既有 --ds-space 档、零新增档位），②导轨字形走 monospace +
+   currentColor + 既有 muted 色阶（亮/暗两档自动跟随，零新增色值字面量）。
+   三条读屏/形变纪律：导轨 aria-hidden；导轨不参与行
+   点击热区（pointer-events:none）；每行仅画本级转折，深度由缩进表示。 */
+.bg-tree-rail {
+  flex: 0 0 auto;
+  display: inline-block;
+  white-space: pre;
+  font-family: var(--ds-font-mono);
+  font-size: var(--ds-fs-meta);
+  line-height: 1;
+  color: var(--ds-text-muted);
+  opacity: 0.8;
+  pointer-events: none;
+  user-select: none;
+  margin-right: var(--ds-space-1);
 }
 .bg-task-row.bg-task-row-child {
   border-left: 2px solid var(--color-frame-border);

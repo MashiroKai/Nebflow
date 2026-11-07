@@ -3,7 +3,7 @@
 //
 // 作者令（复活续作令 2026-11-06 14:1x 摘要重申）：
 //   G1 三层夹具（root 锚 + dispatcher + node，parentSessionId 属主边）depth=0/1/2，
-//      getComputedStyle padding-left 与令牌公式一致（chat.css：16 + (depth-1)*12 px
+//      getComputedStyle padding-left 与令牌公式一致（chat.css：16 + (depth-1)*16 px
 //      ——375 / 1440 各读一次）；
 //   G2 真实形夹具（同结构但 dispatcher-*/node-* **无 parentSessionId**——现网数据面
 //      形状）行一行不少、depth 不伪造（野组归置既有口径）；
@@ -238,14 +238,14 @@ function trackErrors(page) {
 // 收编进后台页（overlayFaceByPage.background = '#bg-dropdown'，同一实现只改一份），
 // 该腿 = 手机档矩阵抽查：缩进随手机档公式（mpad-x 基准 + 逐层 --ds-space-3）。
 
-test('G1 三层夹具：root 锚 depth0 + dispatcher depth1 + node depth2，1440 桌面 16/28px + 375 手机档同构', async ({ page }) => {
+test('G1 三层夹具：root 锚 depth0 + dispatcher depth1 + node depth2，1440 桌面 16/32px + 375 手机档同构', async ({ page }) => {
   const errors = trackErrors(page);
   await page.setViewportSize({ width: 1440, height: 900 });
   await bootApp(page);
   await seedThreeGen(page);
   await openPanel(page);
 
-  // 1440 桌面读数：公式 = --ds-space-4 + (depth-1)*--ds-space-3 ⇒ depth1=16px、depth2=28px。
+  // 1440 桌面读数：公式 = --ds-space-4 + (depth-1)*--ds-space-4 ⇒ depth1=16px、depth2=32px。
   const dump1440 = await dumpPanel(page);
   const disp1440 = dump1440.rows.find((r) => r.sid === DISP_SID);
   const node1440 = dump1440.rows.find((r) => r.sid === NODE_SID);
@@ -260,11 +260,11 @@ test('G1 三层夹具：root 锚 depth0 + dispatcher depth1 + node depth2，1440
   expect(disp1440.level).toBe('top');
   expect(disp1440.depth).toBe('1');
   expect(disp1440.padLeft).toBe(16);
-  // node 行：depth 2，padding-left = 16 + 12 = 28px（同一公式，零新几何常量）。
+  // node 行：depth 2，padding-left = 16 + 16 = 32px（同一公式，零新几何常量）。
   expect(node1440).toBeTruthy();
   expect(node1440.level).toBe('top');
   expect(node1440.depth).toBe('2');
-  expect(node1440.padLeft).toBe(28);
+  expect(node1440.padLeft).toBe(32);
   // 树序：dispatcher 先于 node（父行后紧跟子树）。
   expect(dump1440.rows.findIndex((r) => r.sid === DISP_SID))
     .toBeLessThan(dump1440.rows.findIndex((r) => r.sid === NODE_SID));
