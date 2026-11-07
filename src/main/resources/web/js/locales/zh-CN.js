@@ -65,7 +65,7 @@ export default {
   'project.unmountBtn': '取消加载',
   'project.unmountTitle': '取消加载「{name}」？',
   'project.unmountInflight': '当前在飞工作：{chains} 条链、{nodes} 个节点、{sessions} 个会话——取消加载会先把它们全部停止。',
-  'project.unmountConfirm': '确认后：「{name}」将从项目列表与 Agent 上下文中消失，不能再派活；本地文件全部保留（零删除）。之后可在「已卸载」分组里重新加载。',
+  'project.unmountConfirm': '确认后：「{name}」将从项目列表与 Agent 上下文中消失，不能再派活；本地文件全部保留（零删除）。',
   'project.unmountConfirmGo': '取消加载',
   'project.unmountFail': '取消加载「{name}」失败：{detail}',
   'project.unmountedGroup': '已卸载',

@@ -32,7 +32,7 @@ import { onMinuteTick, statusIcon } from './utils.js';
 import { t } from './i18n.js';
 import { rootNameParams } from './rootName.js';
 import { contentText } from './contentI18n.js';
-import { fetchProjectsRaw, fetchFlowMap, summarize, unmountProject, remountProject, fetchProjectInflight } from './nodeData.js';
+import { fetchProjectsRaw, fetchFlowMap, summarize, unmountProject, fetchProjectInflight } from './nodeData.js';
 // 🔴 flowmaptab-retire（#1228 两裁② 停用清单面 1）：per-project Flow Map 就地视图停用，
 // 对 flowMapTab 渲染入口的静态 import 随之摘除——flowMapTab.js 自此脱离模块图
 // （build-web ORPHAN_EXEMPTIONS 在案），文件留盘候 #1229 per-project REST/WS 退役批
@@ -747,13 +747,10 @@ async function renderProjectsInto(scroll) {
     scroll.innerHTML = `<div class="flowmap-loading">${esc(t('project.loading'))}</div>`;
   }
   let projects;
-  let unmountedRows;
   try {
-    // unmount-console 面板批 2026-11-02：取数改走 fetchProjectsRaw（additive
-    // `unmounted` 数组——「已卸载」分组数据源；旧后端无该键 ⇒ []，零分组零破坏）。
+    // Only mounted projects are shown; the API retains its unmounted data for remount.
     const raw = await fetchProjectsRaw();
     projects = raw.projects;
-    unmountedRows = raw.unmounted;
   } catch (e) {
     if (stale()) return;
     // 已有卡片 ⇒ **保留现列表**（一次刷新失败不该把可见列表换成错误页——兜底 C 的
@@ -781,8 +778,6 @@ async function renderProjectsInto(scroll) {
     } else {
       renderEmptyState(scroll);
     }
-    // 挂载名单为空 ≠ 面板无事可看：卸载态项目仍有「已卸载」分组的可见去处。
-    renderUnmountedGroup(scroll, unmountedRows);
     return;
   }
   scroll.dataset.projectsState = 'ready';
@@ -795,8 +790,6 @@ async function renderProjectsInto(scroll) {
   // 逐项目到齐后就地填入。单项目 flow-map 慢/悬挂只影响它自己的槽（旧实现会把整列
   // 钉在旧内容上）。
   for (const p of projects) loadCardSummary(scroll, p.name);
-  // 「已卸载」分组（unmount-console 面板批）：卸载态项目的可见去处 + 「重新加载」动作。
-  renderUnmountedGroup(scroll, unmountedRows);
 }
 
 /** 卡节点集合（文档顺序）。 */
@@ -815,12 +808,10 @@ function cardByName(scroll, name) {
   return projectCards(scroll).find((el) => el.dataset.project === name) || null;
 }
 
-/** 清掉占位件（loading / empty / error 三个分支留下的非卡子节点）。
- *  🔴 unmount-console 面板批：「已卸载」分组（.project-unmounted-group）是列表的
- *  **常驻内容**（卸载态项目的可见去处），不是占位件——原样保留。 */
+/** 清掉 loading / empty / error 占位件。 */
 function clearPlaceholders(scroll) {
   for (const el of [...scroll.children]) {
-    if (!el.classList.contains('project-card') && !el.classList.contains('project-unmounted-group')) el.remove();
+    if (!el.classList.contains('project-card')) el.remove();
   }
 }
 
@@ -954,9 +945,6 @@ function afterCardsChanged(scroll) {
  *  材质不在此写——按现行单源 `.glass-control`（sapphire.css:147 基类 + `button.glass-control`
  *  四态）；样式在 flowCss.js 限布局/排版。 */
 function renderEmptyState(scroll) {
-  // unmount-console 面板批：innerHTML 重建**保「已卸载」分组节点**（摘下再挂回，
-  // 分组内部行/焦点零重建——空态文案只替换 mounted 列表的占位面）。
-  const group = scroll.querySelector('.project-unmounted-group');
   scroll.dataset.projectsState = 'empty';
   scroll.dataset.projectCount = '0';
   scroll.innerHTML = `<div class="team-empty">
@@ -965,7 +953,6 @@ function renderEmptyState(scroll) {
       <button class="glass-control team-empty-cta" type="button" data-projects-empty-cta="1"><i data-lucide="message-circle"></i>${esc(t('project.emptyCta', rootNameParams()))}</button>
       <div class="hint team-empty-cta-note">${esc(t('project.emptyCtaHint'))}</div>
     </div>`;
-  if (group) scroll.appendChild(group);
   bindEmptyCta(scroll);
   import('./utils.js').then(({ createIconsIn }) => createIconsIn(scroll));
 }
@@ -995,94 +982,6 @@ const UNMOUNT_BTN_SVG =
   '<path d="M6.3 20.3a2.4 2.4 0 0 0 3.4 0L12 18l-6-6-2.3 2.3a2.4 2.4 0 0 0 0 3.4Z"/>' +
   '<path d="M7.5 13.5 10 11"/><path d="M10.5 16.5 13 14"/>' +
   '<path d="m12 6 6 6 2.3-2.3a2.4 2.4 0 0 0 0-3.4l-2.6-2.6a2.4 2.4 0 0 0-3.4 0Z"/></svg>';
-
-/** 「已卸载」分组容器（幂等创建：head 文案静态，rows 由 renderUnmountedGroup 管理）。
- *
- * 🔴 作者令 2026-11-05 08:26「已卸载的项目不要有这个提示」：head 里的灰字解释句
- * （`project.unmountedGroupHint`：「项目已从上下文卸载，本地文件原样保留；重新加载
- * 即可恢复。」/ en 孪生句）已删——按铁律 8「自解释」判据属**重复说明 + 行为教学**：
- * 标题「已卸载」已表达状态，「重新加载」按钮已表达出路，「本地文件原样保留」是能力
- * 保证式说明。head 只留状态事实（标题），行里只留事实（名字 + 工作区）与动作（重载钮）。 */
-function ensureUnmountedGroup(scroll) {
-  let group = scroll.querySelector('.project-unmounted-group');
-  if (!group) {
-    group = document.createElement('div');
-    group.className = 'project-unmounted-group';
-    const head = document.createElement('div');
-    head.className = 'project-unm-head';
-    const title = document.createElement('span');
-    title.className = 'project-unm-title';
-    title.textContent = t('project.unmountedGroup');
-    head.append(title);
-    group.appendChild(head);
-    scroll.appendChild(group);
-  }
-  return group;
-}
-
-/** 灰态行（名字 + 工作区 + 重新加载钮）。事件随行绑一次（createIconsIn 异步换图标）。 */
-function createUnloadedRow(r) {
-  const row = document.createElement('div');
-  row.className = 'project-unm-row';
-  row.dataset.project = r.name;
-  const name = document.createElement('span');
-  name.className = 'project-unm-name';
-  name.textContent = contentText('project', r.name, 'name', r.name);
-  name.title = t('project.unmountedRowTitle', { name: r.name, at: String(r.unmountedAt || '') });
-  const ws = document.createElement('span');
-  ws.className = 'project-unm-ws mono';
-  ws.textContent = r.workspace || '';
-  ws.title = r.workspace || '';
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'project-unm-remount glass-control';
-  btn.innerHTML = t('project.remountBtn');
-  btn.setAttribute('aria-label', t('project.remountBtn') + ' ' + r.name);
-  btn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    doRemountProject(r.name, btn);
-  });
-  row.append(name, ws, btn);
-  return row;
-}
-
-/** 「已卸载」分组渲染（名单差集：head 节点身份恒保持，行按名定点增删；
- *  空名单 ⇒ 整组摘除）。行序随服务端（unmountedAt 倒序），新行尾插。 */
-function renderUnmountedGroup(scroll, rows) {
-  if (!scroll || !scroll.isConnected) return;
-  const valid = Array.isArray(rows) ? rows.filter((r) => r && typeof r.name === 'string' && r.name) : [];
-  if (!valid.length) {
-    scroll.querySelector('.project-unmounted-group')?.remove();
-    return;
-  }
-  const group = ensureUnmountedGroup(scroll);
-  const wanted = new Set(valid.map((r) => r.name));
-  for (const row of [...group.querySelectorAll('.project-unm-row')]) {
-    if (!wanted.has(row.dataset.project)) row.remove();
-  }
-  let anchor = null;
-  for (const r of valid) {
-    let row = [...group.querySelectorAll('.project-unm-row')].find((el) => el.dataset.project === r.name);
-    if (!row) {
-      row = createUnloadedRow(r);
-      if (anchor && anchor.isConnected) anchor.after(row);
-      else group.appendChild(row);
-      import('./utils.js').then(({ createIconsIn }) => createIconsIn(row));
-    }
-    anchor = row;
-  }
-}
-
-/** 按名摘一张灰态行（remount 成功回声 / 手动清理路径共用）。 */
-function removeUnloadedRow(scroll, name) {
-  if (!scroll || !name) return;
-  const group = scroll.querySelector('.project-unmounted-group');
-  if (!group) return;
-  for (const row of [...group.querySelectorAll('.project-unm-row')]) {
-    if (row.dataset.project === name) row.remove();
-  }
-  if (!group.querySelector('.project-unm-row')) group.remove();
-}
 
 /** 「取消加载」确认卡：先拉在飞计数（失败 = 计 0 但文案如实声明），再走既有
  *  #delete-box（tone:'neutral'）。确认后才发 POST——零确认零请求。 */
@@ -1123,32 +1022,6 @@ async function doUnmountProject(name) {
     // 失败回声兜底：若卸载其实已发生（帧丢失），下一次兜底重拉会纠正名单。
     rerenderProjectsTab();
   }
-}
-
-/** 执行重新加载：POST 走引擎单点（校验定义→摘卸载标记→挂载）。成功腿回声 =
- *  projectRemounted 帧（定点恢复卡片 + 摘灰态行）；alreadyMounted 幂等腿不发帧
- *  ⇒ 本地直接摘行 + 防抖重拉对账。按钮期间禁用 + 「正在重新加载…」。 */
-async function doRemountProject(name, btn) {
-  if (!btn || btn.dataset.busy === '1') return;
-  btn.dataset.busy = '1';
-  btn.disabled = true;
-  const original = btn.textContent;
-  btn.textContent = t('project.remounting');
-  const res = await remountProject(name);
-  btn.dataset.busy = '0';
-  btn.disabled = false;
-  btn.textContent = original;
-  if (res.state !== 'ok') {
-    const detail = res.state === 'http' ? String(res.data?.error || res.status) : 'network';
-    window.__showToast?.(t('project.remountFail', { name, detail }), 'error');
-    return;
-  }
-  const scroll = projectsListScroll();
-  if (res.data?.alreadyMounted === true) {
-    removeUnloadedRow(scroll, name);
-    rerenderProjectsTab();
-  }
-  // 成功腿（非幂等）：等 projectRemounted 帧定点恢复；帧丢失时兜底重拉会补。
 }
 
 // ── 面C · 项目卡设备徽标（ui-device-faces 批 2026-10-10 · 设计稿 §3）────────────
@@ -1696,7 +1569,7 @@ function onProjectUnmountedFrame(msg) {
   const card = cardByName(scroll, name);
   if (card) startCardExit(scroll, card); // 已不在列表 / 面板未展示该项目 ⇒ 跳过退场，仍走重拉补分组
   announceProjects(scroll, t('project.unmountedAnnounce', { name }));
-  rerenderProjectsTab(); // 防抖 200ms：刷新「已卸载」分组（unmounted 名单面）
+  rerenderProjectsTab(); // 对账已挂载项目名单
 }
 
 /** 重新加载回声（unmount-console 面板批 2026-11-02）：remount 成功腿（控制台 REST
@@ -1710,7 +1583,6 @@ function onProjectRemountedFrame(msg) {
   if (state !== 'ready' && state !== 'empty') { rerenderProjectsTab(); return; }
   const row = normalizeProjectRow(msg);
   if (!row) { rerenderProjectsTab(); return; }
-  removeUnloadedRow(scroll, row.name);
   const existing = cardByName(scroll, row.name);
   if (!existing) {
     if (state === 'empty') { clearPlaceholders(scroll); scroll.dataset.projectsState = 'ready'; }

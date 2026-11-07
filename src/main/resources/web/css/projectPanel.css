@@ -123,67 +123,6 @@
   outline: var(--btn-ring-w) solid var(--btn-ring);
   outline-offset: var(--btn-ring-offset); }
 
-/* ── 已卸载分组（unmount-console 面板批 2026-11-02）：卸载态项目的可见去处 ──
-   列表尾部一组灰态行（名字 + 工作区 + 「重新加载」）。灰态 = 减淡（muted），
-   不抢 mounted 卡的视觉权重；分组头只有一行小标题（作者令 2026-11-05 08:26 删掉
-   了原先并列的灰字解释句 `.project-unm-hint`——自解释铁律 8 的重复说明）。
-   深浅主题全走 var(--color-*) token，零裸 hex。 */
-.project-unmounted-group {
-  margin: 14px var(--ds-space-half) var(--ds-space-1);
-  padding-top: var(--ds-space-block-y);
-  border-top: 1px dashed var(--color-border);
-}
-.project-unm-head {
-  display: flex;
-  align-items: baseline;
-  gap: var(--ds-space-2);
-  padding: 0 var(--ds-space-3) var(--ds-space-1h);
-  min-width: 0;
-}
-.project-unm-title {
-  flex: 0 0 auto;
-  font: 600 var(--ds-fs-meta)/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  color: var(--color-text-muted);
-  letter-spacing: 0.02em;
-}
-.project-unm-row {
-  display: flex;
-  align-items: center;
-  gap: var(--ds-space-inline-gap);
-  padding: var(--ds-space-2) var(--ds-space-3);
-  border-radius: var(--ds-radius-button);
-}
-.project-unm-row + .project-unm-row { margin-top: var(--ds-space-half); }
-.project-unm-name {
-  flex: 0 1 auto;
-  min-width: 0;
-  font: 500 var(--ds-fs-hint)/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  color: var(--color-text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  cursor: default;
-}
-.project-unm-ws {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-size: var(--ds-fs-meta);
-  color: var(--color-text-muted);
-  opacity: 0.7;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  text-align: right;
-}
-.project-unm-remount {
-  flex: 0 0 auto;
-  padding: var(--ds-space-1) var(--ds-space-inline-x);
-  font: 500 var(--ds-fs-meta)/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  cursor: pointer;
-}
-.project-unm-remount:disabled { opacity: 0.55; cursor: default; }
-.project-unm-remount:focus-visible { box-shadow: 0 0 0 2px var(--glass-control-border); }
-
 /* ── Flow Map 就地视图（同标签页切换，projectTab.openFlowMapInPlace）────────── */
 
 /* 顶部导航条：左上角「← 项目名」单元素返回入口（20260905 作者报告合并：

@@ -66,7 +66,7 @@ export default {
   'project.unmountBtn': 'Unload',
   'project.unmountTitle': 'Unload "{name}"?',
   'project.unmountInflight': 'In-flight right now: {chains} chain(s), {nodes} node(s), {sessions} session(s) — unloading stops all of them first.',
-  'project.unmountConfirm': 'Once confirmed, "{name}" disappears from the Projects list and the agent context and can no longer receive dispatches; every local file is kept (zero deletion). You can reload it later from the "Unloaded" group.',
+  'project.unmountConfirm': 'Once confirmed, "{name}" disappears from the Projects list and the agent context and can no longer receive dispatches; every local file is kept (zero deletion). ',
   'project.unmountConfirmGo': 'Unload',
   'project.unmountFail': 'Failed to unload "{name}": {detail}',
   'project.unmountedGroup': 'Unloaded',
