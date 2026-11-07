@@ -1562,6 +1562,12 @@ body.mobile-layer #mobile-pages .mobile-page-body > #bg-dropdown::-webkit-scroll
   display: none;
 }
 
+/* 极小视口或极大字号下，即使编辑器缩到下限也可能装不下全部控件；
+   仅编辑态允许页面容器滚动兜底，避免页面化几何的 overflow:hidden 裁掉操作。 */
+body.mobile-layer.mh-memory-editing #mobile-pages .mobile-page-body > #memory-modal[data-pane='memory'] {
+  overflow-y: auto;
+}
+
 /* P5 记忆/智能体合并面板：手机读态件（卡读态/编辑钮/分区显隐）。 */
 /* 编辑态：卡读态隐、textarea + Save/Cancel 显（默认读态反之；态类挂在 body）。 */
 body.mobile-layer #memory-modal #memory-modal-body { display: none; }

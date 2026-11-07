@@ -56,6 +56,23 @@
   mask-image: linear-gradient(to bottom, #000 0%, transparent 100%);
 }
 
+/* ── 滚动容器上的裙边幻影：关掉裙边（memory-panel-scroll 批 2026-11-07 实测归因）──
+   作者报障「记忆面板外部多了一个滚动条 有些多余」。四类对照改法逐一读数后定位：
+   #memory-modal 的 scrollHeight − clientHeight = **28px 恒值**（与视口 1440×900 /
+   1024×640 / 900×560、字号 ×1/×1.5/×2 全部无关）= --sug-fade 全额；把本条 ::after
+   的 content 置 none 后该差值精确归零 —— 真凶就是这条裙边。
+
+   机制：裙边是挂在面板盒**外**的绝对定位伪元素（top:100% / high = --sug-fade）。
+   绝对定位后代的 border box 计入**块流末端方向**的可滚溢出区 ⇒ 只要面板本体是
+   滚动容器，就凭空多出 28px 可滚量：overflow-y:auto 立刻画出滚动槽（本次报障），
+   overflow:hidden 则白吞一段永远到不了的假滚动。
+
+   记忆弹窗会把盒外裙边裁掉；控制实验关掉它后假溢出消失。只修改记忆面板，
+   其他面板及其裙边保持原样，避免影响并行的设置工作。 */
+#memory-modal::after {
+  content: none;
+}
+
 /* ── 降级态：机制自选（js/scrollUnderGlass.js 探测器 + CSS.supports 特性检测）──
    只摘 backdrop-filter，tint + mask 渐隐原样保留（几何零变）。 */
 html.no-backdrop .scroll-under-glass::after,
