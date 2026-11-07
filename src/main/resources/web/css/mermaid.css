@@ -6,25 +6,153 @@
    令牌纪律：本文件零裸色值（色/尺寸一律 --* 变量）；新增面必须同纪律。 */
 
 /* ── 块级围栏（图）：mermaid / svg 同一几何 ───────────────────────────── */
+/* 图槽（mermaid-viewer-stability 批 2026-11-06）——作者报障逐字「canvas渲染的
+   框图…渲染的时候有可能会导致canvas窗口异常 突然变大变小」。
+
+   实测结论（before 读数见 tests/mermaid-viewer-stability.spec.mjs 报告）：
+   外层 #canvas-panel / #main / #chat / .canvas-tab-pane / 文档滚动器在图渲染
+   前后零变化 —— 跳变不来自外壳；跳变来自**图槽没有高度上界**：`.canvas-md-viewer`
+   一帧内 40 → 406.5 → 1608.5 px，一张纵向长图能把文档/卡片撑到数千 px。
+
+   本块是图槽几何的唯一来源，三条纪律（改这里 = 改全部图面，禁逐面重写）：
+     ① 上界硬约束：槽高 ≤ --nf-figure-max-h。图再长也只能把**槽内**撑出滚动，
+        不能把外层窗口/卡片撑大（作者令「稳定外层窗口/卡片尺寸，图形在内容区适配，
+        必要的内容区滚动/缩放允许」；滚动 = 不裁图，不是遮丑）。
+     ② 不外溢布局：contain: layout paint —— 槽内任何尺寸变化都不参与外部排版，
+        结构上不可能与任何 ResizeObserver 形成回环（本文件零观测代码）。
+     ③ 不写死像素：上界是一个具名 token，改档只改这一处。 */
+:root {
+  /* 图槽高度上界。取视口比例 + 绝对上限的较小者：手机上 58vh 落在拇指可及范围，
+     桌面上 480px 不挤掉同屏其它内容。 */
+  --nf-figure-max-h: min(58vh, 480px);
+  /* 「看大图」角标图标（矢量，经 mask 着色；见下 `.nf-figure-open-ico`）。 */
+  --nf-ico-expand: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15 3h6v6'/%3E%3Cpath d='M9 21H3v-6'/%3E%3Cpath d='M21 3l-7 7'/%3E%3Cpath d='M3 21l7-7'/%3E%3C/svg%3E");
+}
+
+/* ── 离屏测量舞台（js/mermaidRenderer.js `stageFor` 的唯一宿主）─────────
+   为什么存在：mermaid 12.2.0 的 `render()` 在没拿到容器参数时会往 `<body>`
+   直接挂一枚不带定位样式的测量岛 `<div id="dnf-mermaid-svg-N">`（内含
+   width="100%" 的 svg），它在**文档流里占位** —— 应用主 flex 行被挤窄，渲完
+   再撤回来，肉眼即「窗口突然变大变小」。渲染器现在把容器参数交给它，测量岛
+   只落在这个 fixed、离屏、零尺寸的宿主里，永远不参与应用布局。
+   下面两条 selector 是**同一条纪律的 CSS 兜底**：万一还有哪条腿走默认路径把
+   测量岛挂回 body，它在这里被钉成离屏 fixed。 */
+#nf-mermaid-stage {
+  position: fixed;
+  left: -100000px;
+  top: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+body > [id^='dnf-mermaid-svg-'] {
+  position: fixed;
+  left: -100000px;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0;
+}
+
 .nf-mermaid,
 .nf-svg {
   margin: var(--ds-space-1h) 0;
+  position: relative;      /* 「看大图」角标的定位上下文（不随槽内滚动移动） */
+  max-width: 100%;
 }
 
 .nf-mermaid .nf-mermaid-body,
 .nf-svg .nf-svg-body {
   position: relative;
   min-height: 72px; /* reserved slot: 库装载/渲染期间布局不塌 */
+  display: block;   /* 定宽块：滚动面从左上起算，居中交给 svg 的 auto 外边距 */
+  max-width: 100%;
+  max-height: var(--nf-figure-max-h);
+  overflow: auto;                 /* 内容区滚动 = 允许（不裁图） */
+  overscroll-behavior: contain;   /* 槽内滚到头不把滚动链传给外层 */
+  contain: layout paint;
+  scrollbar-color: var(--color-frame-border) transparent;
+}
+
+/* 图本体：始终落在槽宽内，比例由源图决定。cursor 明示可点开看大图。 */
+.nf-mermaid svg,
+.nf-svg svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin-inline: auto;
+}
+.nf-fence-done .nf-mermaid-body svg,
+.nf-fence-done .nf-svg-body svg {
+  cursor: zoom-in;
+}
+
+/* 「看大图」角标：真 <button>（键盘 Tab/Enter 可达；不靠 SVG 上的伪交互）。
+   静默态常隐，悬停/含焦/触摸档常显 —— 与既有浮动无边框语言一致，不加框不加底。 */
+.nf-figure-open {
+  position: absolute;
+  top: var(--ds-space-1);
+  right: var(--ds-space-1);
+  z-index: 2;
   display: flex;
   align-items: center;
   justify-content: center;
-  overflow-x: auto;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: var(--ds-radius-chip);
+  background: none;
+  color: var(--color-text-muted);
+  cursor: zoom-in;
+  opacity: 0;
+  transition: opacity 150ms ease, color 150ms ease, background 150ms ease;
+}
+.nf-fence-done:hover > .nf-figure-open,
+.nf-fence-done:focus-within > .nf-figure-open {
+  opacity: 0.75;
+}
+.nf-figure-open:hover {
+  opacity: 1;
+  color: var(--color-text);
+  background: var(--glass-control-bg-hover, var(--color-frame-hover));
+}
+.nf-figure-open:focus-visible {
+  opacity: 1;
+  outline: 2px solid rgb(var(--sapphire) / 0.7);
+  outline-offset: 2px;
+}
+/* 触摸档（无 hover 的设备）：角标常显 —— 手机上「悬停才出现」等于不存在。 */
+@media (hover: none) {
+  .nf-fence-done > .nf-figure-open { opacity: 0.72; }
+}
+/* 角标图标：CSS mask 载一枚 data-URI SVG（对角展开箭头）。
+   为什么不用内联 <svg>：图槽「恰好一个 svg = 那一张图」是既有验收依赖的不变量
+   （rich-render ③「完成后 svg 恰好 1 个」、mermaid-md R1 按索引取 SVG），内联图标
+   会被当成第二个图（实测 sequenceDiagram 读出 13x13 的 lucide 图标尺寸）。 */
+.nf-figure-open-ico {
+  display: block;
+  width: 13px;
+  height: 13px;
+  background-color: currentColor;
+  -webkit-mask-image: var(--nf-ico-expand);
+  mask-image: var(--nf-ico-expand);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: 13px 13px;
+  mask-size: 13px 13px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .nf-figure-open { transition: none; }
 }
 
 /* 外来 SVG 的「纸面」：作者自带配色，暗色底下深墨会糊掉 —— 统一给一档面板底，
    墨色由 svgFence.js 的墨色归一转成主题正文色（README 口径见该文件头注）。 */
 .nf-svg .nf-svg-body {
-  display: block;
   border-radius: var(--ds-radius-input);
   background: var(--color-surface);
   padding: var(--ds-space-2) var(--ds-space-3);
@@ -35,6 +163,7 @@
 .nf-svg .nf-svg-ph {
   width: 72%;
   min-height: 56px;
+  margin-inline: auto;   /* 槽是块级滚动面 ⇒ 骨架靠 auto 外边距居中 */
   border-radius: var(--ds-radius-input);
   background: var(--color-frame-hover);
   animation: nfMermaidPulse 1.2s ease-in-out infinite;
@@ -43,13 +172,9 @@
   0%, 100% { opacity: 0.45; }
   50%      { opacity: 1; }
 }
-
-/* Rendered diagram: mermaid emits max-width'd svg (useMaxWidth) — keep it
-   inside the reading column and on the app background. */
-.nf-mermaid svg,
-.nf-svg svg {
-  max-width: 100%;
-  height: auto;
+@media (prefers-reduced-motion: reduce) {
+  .nf-mermaid .nf-mermaid-ph,
+  .nf-svg .nf-svg-ph { animation: none; opacity: 0.6; }
 }
 
 /* 净化读数行（确有剥离时的状态事实，不是解释句）。 */

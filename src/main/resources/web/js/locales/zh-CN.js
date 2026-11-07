@@ -1824,6 +1824,7 @@ export default {
   'fence.svgRootRequired': '根元素不是 svg',
   'fence.svgNothingLeft': '无可绘制内容',
   'fence.mathFailed': '公式渲染失败',
+  'fence.openViewer': '看大图',
   'mermaid.showSource': '查看源码',
   'mermaid.hideSource': '收起源码',
   'chat.copyFailed': '复制失败',
@@ -2735,6 +2736,11 @@ export default {
   'lightbox.loading': '加载中…',
   'lightbox.loadError': '图片加载失败',
   'lightbox.clickHint': '点击查看大图',
+  // 框图大图查看（mermaid-viewer-stability 批 2026-11-06）
+  'lightbox.diagramLabel': '框图查看',
+  'lightbox.zoomIn': '放大',
+  'lightbox.zoomOut': '缩小',
+  'lightbox.zoomFit': '适应视图',
 
   // === Usage dashboard（Token 消耗看板，spec token-dashboard-spec.md §7.5） ===
   'usage.title': '用量看板',

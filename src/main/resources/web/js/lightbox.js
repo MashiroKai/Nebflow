@@ -1,4 +1,4 @@
-// lightbox.js — Click-to-zoom image preview for chat bubbles and Canvas viewers.
+// lightbox.js — Click-to-zoom preview for chat bubbles and Canvas viewers.
 //
 // Trigger surfaces:
 //   1. Markdown images tagged .nf-zoom-img by renderMarkdownWithMath
@@ -6,11 +6,32 @@
 //   2. Frames this app renders — the Canvas HTML viewer and the chat Card
 //      (both inject viewers/shared.js `imgClickScript()`) — post
 //      { _nfImagePreview: { src, path, alt } } to the parent window.
+//   3. mermaid / inline-SVG fence diagrams (mermaid-viewer-stability 批
+//      2026-11-06，作者令逐字「你气泡里渲染的 要点击能变成大图查看 canvas里的
+//      也要能支持」) — the ONE fence slot (js/fenceKit.js) marks itself
+//      `.nf-fence-done` and carries a real `.nf-figure-open` button; clicking the
+//      diagram body goes through the same delegation with a drag/selection guard.
+//      Both faces (chat bubble + Canvas document) ride the SAME fence renderer,
+//      so this is one entry point, not two components.
 // Close: ESC / backdrop click / close button.
+//
+// ── 两种内容模式，一个组件（不造第二个查看器）───────────────────────────
+//   mode 'img'  —— 图片：既有路径逐字保留（账本单点取字节 / 票据纪律 / 失败面）。
+//   mode 'svg'  —— 框图：**克隆**已经消毒并落在 DOM 里的那枚 SVG（矢量，零二次
+//                  传输、零重新渲染），提供缩放 / 平移 / 复位 / 关闭。克隆时把
+//                  mermaid 内部 `<style>` 与 `url(#id)` 引用的 id 整体改名，
+//                  避免与文档里那一份撞 id（同一 id 的 CSS 会命中两份，且原图
+//                  卸载后 marker 引用会断）。
+// 缩放手势与控件刻意自成一套（不复用 viewers/zoom.js）：那是 Canvas 窗格内的
+// 悬挂工具条 + ctrl/cmd+滚轮语义（普通滚轮留给文档滚动）；全屏浮层的语义相反
+// ——浮层里没有别的可滚内容，普通滚轮/捏合/拖动都该直接作用于图。两套语义共存
+// 于不同宿主，互不覆盖。
 
 import { t } from './i18n.js';
 import { pushLayer, popLayer } from './focusTrap.js';
+import { createIconsIn } from './utils.js';
 import { reMint, decodePathParam } from './nfTicket.js';
+import { figureSize } from './fenceKit.js';
 // 二次加载清剿批（2026-10-24 · #816 同法）：本地路径的字节改经 **nfFileCache 账本
 // 单点**先行——`nf:<path>` 命中零抓取直显（气泡/文档渲染已入账的同件）；未命中 =
 // 账本票据链取数 + 入账（恰一次）。失败回落既有 reMint 直取腿（下方逐字保留）。
@@ -26,6 +47,35 @@ let lastFocus = null;   // focus restore target
 // open-sequence guard so a slow fetch cannot paint over a newer open.
 let objectUrl = null;
 let openSeq = 0;
+/** 本次打开的递增序号（落成 overlay 上的 data-nf-open-seq 读数）：验收据此断言
+ *  「一次点击只开一次」——重复绑定会跳过两次。 */
+let openCount = 0;
+
+/* ── 图形（SVG 框图）模式的状态 ─────────────────────────────────────── */
+/** 当前内容模式：'img' | 'svg'。 */
+let lmode = 'img';
+let stageEl = null;      // .nf-lightbox-stage —— 图形舞台（平移/缩放的作用面）
+let canvasEl = null;     // .nf-lightbox-canvas —— 承载 scale/translate 的容器
+let barEl = null;        // 缩放控件条
+let pctEl = null;
+/** @type {{scale: number, tx: number, ty: number, min: number, max: number}|null} */
+let figState = null;
+/** 拖动/捏合的指针登记（pointerId → 坐标）。 */
+/** @type {Map<number, {x: number, y: number}>} */
+const pointers = new Map();
+/** 主指针拖动起点；移动超过 DRAG_SLOP 记为「拖动过」（用于抑制误触打开）。 */
+let figDrag = null;
+/** 文档级「起手→落点」位移登记（框图误触闸②的数据面）。 */
+/** @type {{x: number, y: number, moved: number, hadSelection: boolean}|null} */
+let pendingFigClick = null;
+/** 全局委托只装一次（见 initLightbox 的幂等闸）。 */
+let initDone = false;
+/** 舞台拖动累计位移（用于「拖完松手那一下不许关浮层」）。 */
+let stageDragMoved = 0;
+const FIG_MIN = 0.3;
+const FIG_MAX = 6;
+/** 拖动容差（px）：起手在图上滑一下不等于点开（作者令「避免…拖动误触打开」）。 */
+const DRAG_SLOP = 8;
 
 /** The proxied local path behind an /api/nf-file URL ('' when not one). */
 function nfPathOf(src) {
@@ -151,6 +201,252 @@ function ensureDom() {
   document.body.appendChild(overlayEl);
 }
 
+/* ── 图形模式：DOM / 缩放 / 平移 / 指针手势 ──────────────────────────── */
+
+/** 图形模式的舞台与控件（惰性建一次，随后复用；不随图片模式出现）。 */
+function ensureFigureDom() {
+  ensureDom();
+  if (stageEl) return;
+  stageEl = document.createElement('div');
+  stageEl.className = 'nf-lightbox-stage';
+  stageEl.setAttribute('aria-hidden', 'false');
+  canvasEl = document.createElement('div');
+  canvasEl.className = 'nf-lightbox-canvas';
+  stageEl.appendChild(canvasEl);
+
+  barEl = document.createElement('div');
+  barEl.className = 'nf-lightbox-bar';
+  const mkBtn = (icon, label, fn) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'nf-lightbox-ctl';
+    b.title = label;
+    b.setAttribute('aria-label', label);
+    const i = document.createElement('i');
+    i.setAttribute('data-lucide', icon);
+    b.appendChild(i);
+    b.addEventListener('click', fn);
+    return b;
+  };
+  pctEl = document.createElement('span');
+  pctEl.className = 'nf-lightbox-pct';
+  pctEl.textContent = '100%';
+  barEl.appendChild(mkBtn('zoom-out', t('lightbox.zoomOut'), () => figZoomAt(1 / 1.25)));
+  barEl.appendChild(pctEl);
+  barEl.appendChild(mkBtn('zoom-in', t('lightbox.zoomIn'), () => figZoomAt(1.25)));
+  barEl.appendChild(mkBtn('maximize-2', t('lightbox.zoomFit'), figFit));
+
+  overlayEl.append(stageEl, barEl);
+  createIconsIn(barEl);
+  bindFigureGestures();
+}
+
+/** 把一段 SVG 克隆进舞台：id 整体改名（防与文档里那份撞 id），尺寸交给舞台盒。 */
+function mountDiagram(/** @type {Element} */ svg) {
+  const size = figureSize(svg);
+  const clone = /** @type {Element} */ (svg.cloneNode(true));
+  const oldId = clone.getAttribute('id') || '';
+  if (oldId) retargetIds(clone, oldId, oldId + '-lb');
+  clone.removeAttribute('style');           // mermaid 的 max-width 是给行内槽的
+  clone.removeAttribute('height');
+  clone.setAttribute('width', '100%');
+  clone.setAttribute('height', '100%');
+  clone.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+  clone.removeAttribute('data-probe-k');
+  canvasEl.replaceChildren(clone);
+
+  // 100% = 「整幅可见」这一档（拟合盒），缩放从这个基准往上走。
+  const maxW = Math.min(window.innerWidth * 0.9, 1280);
+  const maxH = Math.min(window.innerHeight * 0.78, 960);
+  let w = maxW;
+  let h = maxH;
+  if (size && size.w > 0 && size.h > 0) {
+    const ar = size.w / size.h;
+    w = Math.min(maxW, maxH * ar);
+    h = w / ar;
+  }
+  canvasEl.style.width = Math.round(w) + 'px';
+  canvasEl.style.height = Math.round(h) + 'px';
+}
+
+/** 克隆树里的 id 全部改名，并同步改 `<style>` 文本与 `url(#…)` / `href="#…"` 引用。 */
+function retargetIds(/** @type {Element} */ root, /** @type {string} */ oldId, /** @type {string} */ newId) {
+  const walk = (el) => {
+    for (const at of Array.from(el.attributes)) {
+      if (at.value.indexOf(oldId) === -1) continue;
+      el.setAttribute(at.name, at.value.split(oldId).join(newId));
+    }
+    if (el.localName === 'style') {
+      const txt = el.textContent || '';
+      if (txt.indexOf(oldId) !== -1) el.textContent = txt.split(oldId).join(newId);
+    }
+    for (const c of Array.from(el.children)) walk(c);
+  };
+  walk(root);
+}
+
+function figApply() {
+  if (!canvasEl || !figState) return;
+  canvasEl.style.transform = `translate3d(${figState.tx}px, ${figState.ty}px, 0) scale(${figState.scale})`;
+  if (pctEl) pctEl.textContent = Math.round(figState.scale * 100) + '%';
+}
+
+/** @param {number} factor @param {number} [cx] @param {number} [cy] 锚点（视口坐标） */
+function figZoomAt(factor, cx, cy) {
+  if (!figState || !stageEl) return;
+  const next = Math.min(FIG_MAX, Math.max(FIG_MIN, figState.scale * factor));
+  if (next === figState.scale) return;
+  const r = stageEl.getBoundingClientRect();
+  const ox = r.left + r.width / 2;
+  const oy = r.top + r.height / 2;
+  const ax = typeof cx === 'number' ? cx : ox;
+  const ay = typeof cy === 'number' ? cy : oy;
+  // 光标下的内容点保持不动（CAD 式锚点缩放）。
+  const px = (ax - ox - figState.tx) / figState.scale;
+  const py = (ay - oy - figState.ty) / figState.scale;
+  figState.scale = next;
+  figState.tx = ax - ox - px * next;
+  figState.ty = ay - oy - py * next;
+  figApply();
+}
+
+function figFit() {
+  if (!figState) return;
+  figState.scale = 1;
+  figState.tx = 0;
+  figState.ty = 0;
+  figApply();
+}
+
+function bindFigureGestures() {
+  // 滚轮：浮层里没有别的可滚内容 ⇒ 普通滚轮直接缩放（与 Canvas 窗格的
+  // ctrl/cmd 语义刻意不同，理由见文件头注）。
+  stageEl.addEventListener('wheel', (e) => {
+    if (lmode !== 'svg') return;
+    e.preventDefault();
+    figZoomAt(Math.pow(1.0015, -e.deltaY), e.clientX, e.clientY);
+  }, { passive: false });
+
+  const pinch = () => {
+    const list = [...pointers.values()];
+    if (list.length < 2) return null;
+    return {
+      d: Math.hypot(list[0].x - list[1].x, list[0].y - list[1].y),
+      cx: (list[0].x + list[1].x) / 2,
+      cy: (list[0].y + list[1].y) / 2,
+    };
+  };
+  let pinchBase = null;
+
+  stageEl.addEventListener('pointerdown', (e) => {
+    if (lmode !== 'svg') return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    try { stageEl.setPointerCapture(e.pointerId); } catch (err) { /* 已释放 */ }
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 2) { pinchBase = { ...pinch(), scale: figState ? figState.scale : 1 }; return; }
+    if (pointers.size === 1) figDrag = { x: e.clientX, y: e.clientY, moved: 0 };
+  });
+  stageEl.addEventListener('pointermove', (e) => {
+    if (lmode !== 'svg' || !pointers.has(e.pointerId) || !figState) return;
+    const prev = pointers.get(e.pointerId);
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size >= 2 && pinchBase) {
+      const now = pinch();
+      if (!now || !now.d) return;
+      const next = Math.min(FIG_MAX, Math.max(FIG_MIN, pinchBase.scale * (now.d / (pinchBase.d || now.d))));
+      if (next === figState.scale) return;
+      const r = stageEl.getBoundingClientRect();
+      const ox = r.left + r.width / 2;
+      const oy = r.top + r.height / 2;
+      const px = (now.cx - ox - figState.tx) / figState.scale;
+      const py = (now.cy - oy - figState.ty) / figState.scale;
+      figState.scale = next;
+      figState.tx = now.cx - ox - px * next;
+      figState.ty = now.cy - oy - py * next;
+      figApply();
+      return;
+    }
+    const dx = e.clientX - prev.x;
+    const dy = e.clientY - prev.y;
+    figState.tx += dx;
+    figState.ty += dy;
+    if (figDrag) figDrag.moved += Math.abs(dx) + Math.abs(dy);
+    stageDragMoved += Math.abs(dx) + Math.abs(dy);
+    figApply();
+  });
+  const endPointer = (e) => {
+    pointers.delete(e.pointerId);
+    if (pointers.size < 2) pinchBase = null;
+    if (pointers.size === 0) figDrag = null;
+  };
+  stageEl.addEventListener('pointerup', endPointer);
+  stageEl.addEventListener('pointercancel', endPointer);
+  stageEl.addEventListener('lostpointercapture', endPointer);
+
+  // 空白处关闭：舞台铺满全屏，所以「点空白」落在舞台自己身上（不是 overlay）。
+  // 拖完松手那一下不算 —— 平移结束时手指抬起同样会派发 click。
+  stageEl.addEventListener('click', (e) => {
+    if (lmode !== 'svg') return;
+    if (stageDragMoved > DRAG_SLOP) return;
+    if (e.target !== stageEl) return;
+    closeLightbox();
+  });
+}
+
+/** 图形模式下的键盘面：+/−/0 缩放复位，方向键平移（与 ESC 关闭并存）。 */
+function onFigureKey(e) {
+  if (lmode !== 'svg' || !overlayEl || !overlayEl.classList.contains('on')) return;
+  if (!figState) return;
+  const step = 40;
+  if (e.key === '+' || e.key === '=') { e.preventDefault(); figZoomAt(1.25); return; }
+  if (e.key === '-' || e.key === '_') { e.preventDefault(); figZoomAt(1 / 1.25); return; }
+  if (e.key === '0') { e.preventDefault(); figFit(); return; }
+  if (e.key === 'ArrowLeft') { e.preventDefault(); figState.tx += step; figApply(); return; }
+  if (e.key === 'ArrowRight') { e.preventDefault(); figState.tx -= step; figApply(); return; }
+  if (e.key === 'ArrowUp') { e.preventDefault(); figState.ty += step; figApply(); return; }
+  if (e.key === 'ArrowDown') { e.preventDefault(); figState.ty -= step; figApply(); }
+}
+
+/** 切内容模式（图片 / 图形）。两模式共用同一个浮层节点 —— 不造第二个查看器。 */
+function setMode(/** @type {'img'|'svg'} */ next) {
+  lmode = next;
+  if (!overlayEl) return;
+  overlayEl.setAttribute('data-nf-lb-mode', next);
+  if (imgEl) imgEl.style.display = next === 'img' ? '' : 'none';
+  if (stageEl) stageEl.style.display = next === 'svg' ? '' : 'none';
+  if (barEl) barEl.style.display = next === 'svg' ? '' : 'none';
+  if (next === 'img' && canvasEl) canvasEl.replaceChildren();
+}
+
+/**
+ * 打开框图大图查看（气泡 / Canvas 文档同一入口）。
+ * @param {Element} svg 已经消毒并落在 DOM 里的那枚 SVG（克隆进浮层，零二次传输）
+ */
+export function openDiagramLightbox(svg) {
+  if (!svg) return;
+  ensureFigureDom();
+  const wasOn = overlayEl.classList.contains('on');
+  if (!wasOn) lastFocus = document.activeElement;
+  openCount += 1;
+  overlayEl.setAttribute('data-nf-open-seq', String(openCount));
+  overlayEl.setAttribute('aria-label', t('lightbox.diagramLabel'));
+  setMode('svg');
+  overlayEl.classList.add('on');
+  if (statusEl) statusEl.style.display = 'none';
+  imgEl.classList.remove('loaded');
+  imgEl.removeAttribute('src');
+  releaseObjectUrl();
+  openSeq += 1;               // 作废任何在飞的图片取字节
+  mountDiagram(svg);
+  figState = { scale: 1, tx: 0, ty: 0, min: FIG_MIN, max: FIG_MAX };
+  figApply();
+  if (!wasOn) {
+    pushLayer(overlayEl, { name: 'lightbox' });
+    document.body.classList.add('nf-lightbox-open');
+  }
+  overlayEl.querySelector('.nf-lightbox-close').focus();
+}
+
 /**
  * @param {string} src
  * @param {string} [alt]
@@ -159,6 +455,9 @@ function ensureDom() {
 export function openLightbox(src, alt, path) {
   if (!src || typeof src !== 'string') return;
   ensureDom();
+  setMode('img');
+  openCount += 1;
+  overlayEl.setAttribute('data-nf-open-seq', String(openCount));
   overlayEl.setAttribute('aria-label', t('lightbox.ariaLabel'));
   lastFocus = document.activeElement;
 
@@ -254,17 +553,74 @@ export function closeLightbox() {
   imgEl.onerror = null;
   imgEl.removeAttribute('src');   // stop any in-flight load
   releaseObjectUrl();             // and drop the blob behind it
+  // 图形模式收尾：克隆撤掉、变换归零、指针登记清空（下次打开是全新一档）。
+  pointers.clear();
+  figDrag = null;
+  if (canvasEl) { canvasEl.replaceChildren(); canvasEl.style.transform = ''; }
+  if (figState) { figState.scale = 1; figState.tx = 0; figState.ty = 0; }
+  figState = null;
+  if (pctEl) pctEl.textContent = '100%';
   if (lastFocus && lastFocus.focus) lastFocus.focus();
   lastFocus = null;
 }
 
 export function initLightbox() {
+  // 幂等（把「重复绑定」变成结构上不可能）：本函数是全局委托的安装点，重复调用
+  // （模块重入、宿主重初始化）不得叠第二份监听——叠了就会一次点击开两次。
+  if (initDone) return;
+  initDone = true;
   // 1. Delegated click on tagged markdown images (chat + canvas md viewer)
   document.addEventListener('click', (e) => {
     const img = /** @type {HTMLImageElement|null} */ ((/** @type {Element} */ (e.target)).closest('img.nf-zoom-img'));
     if (!img) return;
     e.preventDefault();
     openLightbox(img.currentSrc || img.src, img.alt);
+  });
+
+  // 1b. 框图（mermaid / 内联 SVG 围栏）→ 看大图。**一处接线覆盖气泡与 Canvas
+  //     文档两面**：两面走同一条围栏渲染（js/fenceKit.js），DOM 形态一致，所以
+  //     这里不需要按面分支。三条防误触闸（作者令「避免链接节点、图内交互与拖动
+  //     误触打开」）：
+  //       ① 命中链接/表单类节点 ⇒ 交给它们自己（图内链接、按钮不打开浮层）；
+  //       ② 起手到落点移动超过 DRAG_SLOP ⇒ 是拖动/平移，不是点击；
+  //       ③ 有文本选区 ⇒ 用户在选字，不是点击。
+  document.addEventListener('pointerdown', (e) => {
+    // 选区状态必须在 mousedown 的默认动作（清选区）之前读 —— 落到 click 上再读，
+    // 用户在图上选完字的那一次点击永远读到「空选区」，闸就形同虚设（实测踩过）。
+    const sel = window.getSelection && window.getSelection();
+    const hadSelection = !!sel && !sel.isCollapsed && String(sel).length > 0;
+    pendingFigClick = { x: e.clientX, y: e.clientY, moved: 0, hadSelection };
+    stageDragMoved = 0;
+  }, true);
+  document.addEventListener('pointermove', (e) => {
+    if (!pendingFigClick) return;
+    pendingFigClick.moved = Math.hypot(e.clientX - pendingFigClick.x, e.clientY - pendingFigClick.y);
+  }, true);
+  document.addEventListener('pointerup', (e) => {
+    if (!pendingFigClick) return;
+    pendingFigClick.moved = Math.hypot(e.clientX - pendingFigClick.x, e.clientY - pendingFigClick.y);
+  }, true);
+  document.addEventListener('click', (e) => {
+    const target = /** @type {Element} */ (e.target);
+    // 角标钮：真按钮，键盘 Enter/Space 与点击都走这里（无障碍唯一入口）。
+    const btn = target.closest('.nf-figure-open');
+    if (btn) {
+      const block = btn.closest('.nf-mermaid, .nf-svg');
+      const svg = block ? block.querySelector('.nf-mermaid-body svg, .nf-svg-body svg') : null;
+      if (svg) { e.preventDefault(); openDiagramLightbox(svg); }
+      return;
+    }
+    const svg = target.closest('.nf-mermaid-body svg, .nf-svg-body svg');
+    if (!svg) return;
+    // ① 图内链接/交互节点自己处理。
+    if (target.closest('a, button, input, textarea, select')) return;
+    // ② 拖动/滑动起手 ⇒ 不打开。
+    const move = pendingFigClick ? pendingFigClick.moved : 0;
+    if (move > DRAG_SLOP) return;
+    // ③ 起手时正在选字 ⇒ 用户在选，不是点击。
+    if (pendingFigClick && pendingFigClick.hadSelection) return;
+    e.preventDefault();
+    openDiagramLightbox(svg);
   });
 
   // 2. Image clicks forwarded from the frames this app renders: the Canvas HTML
@@ -294,4 +650,7 @@ export function initLightbox() {
       closeLightbox();
     }
   }, true);
+
+  // 4. 图形模式的键盘缩放/平移（ESC 已在上方统一处理）。
+  document.addEventListener('keydown', onFigureKey);
 }

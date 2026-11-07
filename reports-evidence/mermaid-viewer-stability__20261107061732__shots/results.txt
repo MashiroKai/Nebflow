@@ -1,0 +1,58 @@
+PASS  S1 气泡面首次异步渲染全过程（65 帧）外层 canvas 面板零变化  — bounds [878,16,552,874] 全程 maxDelta=0px 
+PASS  S1b 同一过程 #main / #chat 列盒零变化  — main maxDelta=0px / chat maxDelta=0px
+PASS  S2a 纵向长图渲染成功（state=done）
+PASS  S2b 纵向长图槽高有硬上界（实测 480px ≤ 上界 480px / token=min(58vh, 480px)）
+PASS  S3 长图未被裁掉：槽内可滚到整图（槽内容 1862px > 槽视口 480px；svg 168x1862）
+PASS  S4 横向宽图落在内容列宽内（图 300px ≤ 槽 300px）
+PASS  S2c 图块（含四邻留白）不超上界（480px ≤ 520px）
+PASS  S2e 上界确实是那条分界（同一页去掉 token 槽高 480px → 1862px）
+PASS  S 坏图仍是可见错误态 + 回退原码（state=error）
+PASS  S 错误态不挂「看大图」角标
+PASS  V1 气泡内图点击 ⇒ 查看器打开且内容是矢量 SVG（mode=svg svg=1 矢量=true）
+PASS  V1b 浮层是单例且图片面无残影（实例 1）
+PASS  V1c 起始档 = 整幅可见 100%（读数 100%）
+PASS  V1d 起始档图形落在舞台内（图 [616,702] / 舞台 [1100,810]）
+PASS  V3a 控件放大生效（100%→125%，scale 1→1.25）
+PASS  V3b 控件缩小生效（125%→100%）
+PASS  V4 拖动平移生效（translate 0,0 → 90,40）
+PASS  V5 滚轮缩放生效（100%→143%）
+PASS  V3c 复位回整幅档（scale=1 tx=0 ty=0）
+PASS  V11 打开查看器零新增网络请求（0）
+PASS  V6a ESC 关闭生效（on=false）
+PASS  V6b 每次打开独立计次（seq=2）
+PASS  V6c 关闭钮生效
+PASS  V6d 点击浮层空白处关闭
+PASS  V7a 图角标是真按钮且可聚焦（aria-label="看大图"）
+PASS  V7b Enter 可打开查看器
+PASS  V7c ESC 可关闭查看器
+PASS  V8a 图上拖动（>8px）不打开查看器
+PASS  V8b 文本选区状态下点击不打开查看器
+PASS  V10a 重渲染后图自动恢复且角标重建（state=done btn=true）
+PASS  V10b 重渲染后图仍有可点面
+PASS  V10b 一次点击恰好开一次（seq 5→6，重复绑定会跳 2）
+PASS  R1 既有图片查看器入口（img.nf-zoom-img）仍在
+PASS  R1b 图片仍走 img 模式（mode=img）
+PASS  S1c Canvas 文档面渲染全过程（59 帧）外层面板/页签/内容区零变化  — panel bounds [878,16,552,874] maxDelta=0px
+PASS  S2d Canvas 文档面长图槽高同样受限（480px ≤ 480px）
+PASS  V2 Canvas 文档内图点击 ⇒ 同一个浮层组件打开（实例 1 / svg 1）
+PASS  S5a 连渲 6 张全部落定（6）
+PASS  S5b 连渲全过程外层面板零变化（67 帧 maxDelta=0px）
+PASS  S6a 主题翻转确实重画了（mermaid render 调用 10→19）
+PASS  S6a2 水合/主题换图腿确实 armed（族=mermaid,svg,math / 换图触发 1 次）
+PASS  S6b 主题切换重画全过程外层面板零变化（maxDelta=0px / 196 帧）
+PASS  S6c 重画后图块高度零变化（最大 Δ=0px / before=[72,72,72,72,72,72] after=[72,72,72,72,72,72]）
+PASS  S6d 重画期间每块槽高不塌（最差块 flowchart TD A[Unc 最小 157px / 自身稳定 175px，10 块）
+PASS  S7 字体加载完成后图块高度零变化（最大 Δ=0px）
+PASS  S8a 零 ResizeObserver 回环告警（0）
+PASS  S8b 零未捕获异常（0）
+PASS  S8c 零 console error（0）
+PASS  S9 375 档亮：长图槽高受限（471px ≤ 471px）
+PASS  V9a 375 档亮：真实触摸点开查看器（mode=svg svg=1）
+PASS  V9b 375 档亮：缩放控件可点（[30,30,115,756]）
+PASS  V9c 375 档亮：触摸缩放生效（100%→80%）
+PASS  V9d 375 档亮：可关闭返回
+PASS  S9 375 档暗：长图槽高受限（471px ≤ 471px）
+PASS  V9a 375 档暗：真实触摸点开查看器（mode=svg svg=1）
+PASS  V9b 375 档暗：缩放控件可点（[30,30,115,756]）
+PASS  V9c 375 档暗：触摸缩放生效（100%→80%）
+PASS  V9d 375 档暗：可关闭返回

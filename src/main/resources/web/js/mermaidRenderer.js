@@ -23,7 +23,7 @@
 // 库 PIN：vendored mermaid 12.2.0（vendor/mermaid/README.md 台账，
 // sha256 a8a6a6f805b074a8261a2825c86f99c8054acb3b35f50bb7e24a4f9f2c3c3b9f）。
 
-import { armFenceAutoHydrate, fenceDone, fenceError, fenceBody, fenceSource, hydrateFencesIn, registerFence } from './fenceKit.js';
+import { armFenceAutoHydrate, armThemeRequeue, fenceDone, fenceError, fenceBody, fenceSource, figureSize, hydrateFencesIn, registerFence } from './fenceKit.js';
 import { normalizeComputedInk } from './svgInk.js';
 
 const MERMAID_SCRIPT = '/vendor/mermaid/mermaid.min.js';
@@ -54,11 +54,17 @@ let renderUid = 0;
 /** @type {Map<string, Node>} */
 const svgCache = new Map();
 
-const darkMQ = /** @type {MediaQueryList} */ (
-  typeof window !== 'undefined' && window.matchMedia
-    ? window.matchMedia('(prefers-color-scheme: dark)')
-    : { matches: false, addEventListener() {} });
-const themeKey = () => (darkMQ.matches ? 'dark' : 'light');
+/** 主题判据：**每次现读**，不缓存 MediaQueryList。
+ *  mermaid-modern 批（2026-11-06）实测：模块加载期建好、缓存在模块作用域的 MQL
+ *  在宿主只改「模拟媒体」（DevTools 的 Emulation.setEmulatedMedia、自动化套件的
+ *  emulateMedia）时不跟随 —— 图因此按旧主题键命中缓存，主题翻转后视觉不换色，
+ *  且「重画确实发生过」这件事在计数上不可见。现读没有这个盲区。 */
+function prefersDark() {
+  return typeof window !== 'undefined' && window.matchMedia
+    ? window.matchMedia('(prefers-color-scheme: dark)').matches
+    : false;
+}
+const themeKey = () => (prefersDark() ? 'dark' : 'light');
 
 /** Sapphire accent read straight from the design-system token (single source:
  *  the value is an `r g b` triplet in both themes). */
@@ -86,7 +92,7 @@ function themeConfig() {
     flowchart: { htmlLabels: false, useMaxWidth: true },
     class: { htmlLabels: false },
   };
-  if (darkMQ.matches) {
+  if (prefersDark()) {
     return {
       ...base,
       theme: 'dark',
@@ -172,6 +178,38 @@ function svgToNode(/** @type {string} */ svg) {
   return /** @type {Node} */ (document.importNode(root, true));
 }
 
+/** 离屏舞台根（lazy）：`mermaid.render` 的第 3 参必须是一个**在文档里、可布局**
+ *  的容器。不传它时 mermaid 会把测量岛挂到 `<body>` 上 —— vendored 12.2.0
+ *  `appendDivSvgG`（mermaid.min.js 偏移 5486635）`t.append("div").attr("id", "d"+id)`
+ *  **不带任何定位样式**，所以那枚 `<div id="dnf-mermaid-svg-N">`（内含
+ *  `width="100%"` 的 svg）就按文档流占位，把应用主 flex 行挤窄。
+ *
+ *  这正是作者报障「canvas 渲染框图时窗口突然变大变小」的**真实触发链**：
+ *  mermaid-viewer-stability 批逐帧实测 —— 气泡面第 4 帧、主题换图面第 1 帧，
+ *  `#canvas-panel` x 878→578、`#chat`/`#main` 宽度 −300px，右缘取样点命中的
+ *  元素链就是 `div#dnf-mermaid-svg-1 < body`；图槽与外层都没坏，坏的是「谁在
+ *  文档流里」。渲染结束（`removeTempElements`）后布局又跳回来 —— 所以肉眼看到
+ *  的是「突然变大变小」，且只在渲染的那几帧里。
+ *
+ *  修法：给一次离屏 fixed 舞台，逐次调用**各自**建一个子容器传给 render（不能
+ *  共用：render 开头 `a.innerHTML=""` 会清掉并发那一次的测量岛），渲完即删。 */
+let stageRoot = null;
+function stageFor(/** @type {number} */ width) {
+  if (!stageRoot) {
+    stageRoot = document.createElement('div');
+    stageRoot.id = 'nf-mermaid-stage';
+    stageRoot.setAttribute('aria-hidden', 'true');
+    stageRoot.style.cssText = 'position:fixed;left:-100000px;top:0;width:0;height:0;pointer-events:none;';
+    document.body.appendChild(stageRoot);
+  }
+  const host = document.createElement('div');
+  // 宽度 = 内容列宽（不是 100% 或 0）：mermaid 的 useMaxWidth 产物按容器宽测量，
+  // 量在与真实槽同宽的盒子里，落到槽里才不会被二次缩放。
+  host.style.cssText = 'width:' + Math.max(160, Math.min(1400, Math.round(width) || 640)) + 'px;';
+  stageRoot.appendChild(host);
+  return host;
+}
+
 /** Render one `.nf-mermaid` block. Generation-guarded: a theme flip bumps
  *  `_mermaidGen` and drops in-flight writes from the previous theme. */
 async function renderBlock(/** @type {HTMLElement} */ el) {
@@ -186,14 +224,25 @@ async function renderBlock(/** @type {HTMLElement} */ el) {
       // Re-initialize per render batch so a theme flip after library load is
       // picked up (initialize merges into the live config).
       mermaid.initialize(themeConfig());
-      const out = await mermaid.render('nf-mermaid-svg-' + (++renderUid), src);
+      const host = stageFor(el.clientWidth || 640);
+      let out;
+      try {
+        out = await mermaid.render('nf-mermaid-svg-' + (++renderUid), src, host);
+      } finally {
+        host.remove();   // 测量岛与舞台子容器一起撤，交付后不留 DOM 残渣
+      }
       node = svgToNode(String(out.svg || ''));
       svgCache.set(key, node);
       if (svgCache.size > SVG_CACHE_CAP) svgCache.delete(svgCache.keys().next().value);
     }
     if (anyEl._mermaidGen !== gen) return; // superseded mid-render
+    // 槽高稳定性（mermaid-viewer-stability 批 2026-11-06）：把产物的内禀纵横比
+    // 一起交给 fenceDone —— 槽高因此**一次落定**并被逐次重渲染复用，外层高度不
+    // 再随「骨架 → 半高 → 全高」连跳（实测跳变链见 fenceKit.figureSize 头注）。
+    const size = figureSize(/** @type {Node} */ (node));
+    const aspect = size ? `${Math.round(size.w)} / ${Math.round(size.h)}` : null;
     // 缓存节点可能已被上一处挂载消费 ⇒ 克隆再挂（replaceChildren 会移动原节点）。
-    fenceDone(el, MERMAID_KIND, /** @type {Node} */ (node).cloneNode(true));
+    fenceDone(el, MERMAID_KIND, /** @type {Node} */ (node).cloneNode(true), { aspect });
     // 墨色归一必须**挂载之后**做：mermaid 把自己的配色写在 svg 内部的 `<style>`
     // 里，只有 getComputedStyle 才读得到；暗档实测有文本仍是纯黑（对比度
     // 1.16:1，肉眼不可读），这条 belt 把它换成主题正文墨色（行内 style 压过内部
@@ -216,6 +265,8 @@ export function hydrateMermaidIn(/** @type {Element} */ root) {
 export function armMermaidAutoHydrate() {
   registerFence(MERMAID_KIND);
   armFenceAutoHydrate();
+  // 主题换图：图自带配色，翻主题必须重画（见 fenceKit.armThemeRequeue 头注）。
+  armThemeRequeue(bumpMermaidGeneration);
 }
 
 /** 主题翻转时丢弃在飞渲染（换图由 fenceKit.requeueSettledFences 驱动）。 */
