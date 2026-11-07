@@ -1446,8 +1446,14 @@ body.canvas-deck-narrow .canvas-title { max-width: none; }
   -webkit-user-select: none;
   opacity: 0;
   pointer-events: none;                     /* 收起态不拦 hover 命中 */
-  transform: translate(-50%, -50%) translateY(var(--cr-y, 0px)) translateZ(var(--cr-z, 0px))
-    rotateX(var(--cr-rx, 0deg)) scale(var(--cr-press, 1));
+  /* 转盘批（作者令 2026-11-07 12:15「我要那种转盘的感觉 在左右滚动选择」）：位姿
+     轴由**竖环**换成**横排转盘** —— 位移取 --cr-x（连续：JS 盘面游标 pos × 步距，
+     跟手/吸附/边界回弹都落在这一条上），曲率取 rotateY；纵向两件（--cr-y / --cr-rx）
+     仍留在链上但恒 0（读屏/既有读数面不拆，axis 换向由 JS 单点完成）。
+     透视仍由 .capsule-ring 自身 perspective 提供。 */
+  transform: translate(-50%, -50%) translateX(var(--cr-x, 0px)) translateY(var(--cr-y, 0px))
+    translateZ(var(--cr-z, 0px)) rotateY(var(--cr-ry, 0deg)) rotateX(var(--cr-rx, 0deg))
+    scale(var(--cr-press, 1));
   /* 作者令「动画放慢、自然、流畅」与本批缓动族一致：0.36s 温和缓出
      （cubic-bezier(0.22,0.61,0.36,1)），透明度 0.32s —— 竖向换选的位姿迁移
      不再是旧 0.22s 硬切。 */
@@ -1469,6 +1475,14 @@ body.canvas-deck-narrow .canvas-title { max-width: none; }
 #canvas-capsule-ring.open.steady .cr-capsule {
   transition-duration: 0.18s;
 }
+/* 转盘批（作者令 2026-11-07 12:15）：吸附/跟手帧期间 JS 逐帧写位姿（盘面游标
+   pos 的小数位），**必须关掉胶囊自身的 transition** —— 否则每一帧都从当前值
+   重新起一段补间，读作「慢半拍 + 打滑」，转盘的手感荡然无存。开环/收环（没有
+   body.cr-spinning）照旧走上面的过渡档。
+   标记挂 **body** 而不是环层自身：环层是 MutationObserver 观察的宿主（观测面
+   = 胶囊 class），在它自己身上挂/摘类会污染「中心位易主」这一外部读数
+   （实测：阈下 12px 预转被读成一次换选）。 */
+body.cr-spinning #canvas-capsule-ring .cr-capsule { transition: none; }
 /* 中心位落穿（双态全钉，特异性压过上方 steady 全开 (1,3,0)）：环层叠在标题头
    之上，中心位事件必须落穿到标题头手势链（按压/竖滑换卡/横滑关卡/右键引用）。 */
 #canvas-capsule-ring .cr-capsule.is-center,

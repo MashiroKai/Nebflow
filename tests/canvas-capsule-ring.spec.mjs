@@ -184,6 +184,8 @@ const ringInfo = (page) => page.evaluate(() => {
     edgeRx: caps.find((c) => c.classList.contains('is-edge'))?.style.getPropertyValue('--cr-rx') || null,
     edgeRxs: caps.filter((c) => c.classList.contains('is-edge')).map((c) => c.style.getPropertyValue('--cr-rx')),
     edgeYs: caps.filter((c) => c.classList.contains('is-edge')).map((c) => c.style.getPropertyValue('--cr-y')),
+    edgeXs: caps.filter((c) => c.classList.contains('is-edge')).map((c) => c.style.getPropertyValue('--cr-x')),
+    edgeRys: caps.filter((c) => c.classList.contains('is-edge')).map((c) => c.style.getPropertyValue('--cr-ry')),
     edgeBlur: caps.find((c) => c.classList.contains('is-edge')) ? cs(caps.find((c) => c.classList.contains('is-edge'))).filter : null,
     farCount: caps.filter((c) => c.classList.contains('is-far')).length,
     titleOpacity: getComputedStyle(document.querySelector('.canvas-title .t-inner')).opacity,
@@ -228,15 +230,15 @@ const ringInfo = (page) => page.evaluate(() => {
     hov.open && hov.n === 3 && hov.farCount === 0, `open=${hov.open} n=${hov.n} far=${hov.farCount}`);
   ok('CR2-2 中心 = 激活页签（charlie）+ 零旋转',
     hov.centerId === 'file:/tmp/cr-fixture/charlie.md' && hov.centerRx === '0deg', `center=${hov.centerId} rx=${hov.centerRx}`);
-  const eysSorted = hov.edgeYs.map(parseFloat).sort((a, b) => a - b);   // [上(负), 下(正)]
-  const rxsSorted = hov.edgeRxs.map(parseFloat).sort((a, b) => a - b);  // [下(负), 上(正)]
-  ok('CR2-3 缘位上下真对称（作者令 2026-10-23）：一上一下、|y| 严格相等、rotateX 反号等幅（±34°）+ 模糊扭曲',
-    hov.edges.length === 2 && eysSorted.length === 2
-    && eysSorted[0] < 0 && eysSorted[1] > 0
-    && approx(-eysSorted[0], eysSorted[1], 0.5)
-    && approx(Math.abs(rxsSorted[0]), rxsSorted[1], 0.5) && Math.abs(rxsSorted[1]) === 34
+  const xsSorted = hov.edgeXs.map(parseFloat).sort((a, b) => a - b);   // [左(负), 右(正)]
+  const rysSorted = hov.edgeRys.map(parseFloat).sort((a, b) => a - b);
+  ok('CR2-3 缘位左右真对称（转盘批 2026-11-07 12:15 改轴：作者令「我要那种转盘的感觉 在左右滚动选择」——取代 2026-10-23 的上下对称）：一左一右、|x| 严格相等、rotateY 反号等幅（±24°）+ 模糊扭曲',
+    hov.edges.length === 2 && xsSorted.length === 2
+    && xsSorted[0] < 0 && xsSorted[1] > 0
+    && approx(-xsSorted[0], xsSorted[1], 0.5)
+    && approx(Math.abs(rysSorted[0]), rysSorted[1], 0.5) && Math.abs(rysSorted[1]) === 24
     && /blur/.test(hov.edgeBlur || ''),
-    `ys=${hov.edgeYs.join('/')} rxs=${hov.edgeRxs.join('/')} filter=${hov.edgeBlur}`);
+    `xs=${hov.edgeXs.join('/')} rys=${hov.edgeRys.join('/')} filter=${hov.edgeBlur}`);
 
   /* ② E 令·顶部越出克制（修正批；固定尺寸批 2026-10-25 重钉）：环锚常驻顶带
      —— 上缘位允许略微越出面板顶缘（负向超出正常且允许），下缘位仍全在面板内。
@@ -245,19 +247,24 @@ const ringInfo = (page) => page.evaluate(() => {
      = 28px 确定档 —— 「顶部超出不要太多」的语义从「≤ 0.5×胶囊高」（24px 面代
      界）换代为「≤ 全高−6」（28 ≤ 30，2px 舍入余量）；公式与 JS 零改动，界随
      token 档走。 */
+  /* 转盘批（作者令 2026-11-07 12:15）：位姿轴换横排后，「顶部越出」这一整类几何
+     不再存在（竖弧的上缘位才会越过面板顶缘）。改判据 = **同一水平带**（三枚胶囊
+     中心同 y，±1.5px）+ 全部落在面板上下界内 —— 这是转盘读作「一排可转的签」的
+     必要几何，也是旧「不要超出太多」那条令在横轴上的等价形态。 */
   const clip = await page.evaluate(() => {
     const p = document.getElementById('canvas-panel').getBoundingClientRect();
-    const rs = [...document.querySelectorAll('#canvas-capsule-ring .cr-capsule.is-edge')]
+    const rs = [...document.querySelectorAll('#canvas-capsule-ring .cr-capsule')]
       .map((c) => c.getBoundingClientRect());
     const cap = document.querySelector('#canvas-capsule-ring .cr-capsule.is-center');
-    return { pTop: p.top, pBottom: p.bottom, minTop: Math.min(...rs.map((r) => r.top)),
-             maxBottom: Math.max(...rs.map((r) => r.bottom)), n: rs.length,
+    return { pTop: p.top, pBottom: p.bottom, n: rs.length,
+             minTop: Math.min(...rs.map((r) => r.top)), maxBottom: Math.max(...rs.map((r) => r.bottom)),
+             cys: rs.map((r) => r.top + r.height / 2),
              capH: cap ? cap.offsetHeight : 28 };
   });
-  const topOut = clip.pTop - clip.minTop;
-  ok('CR2-6 顶部越出克制（固定尺寸批重钉：36px 面 ⇒ 越出 = h−8 ≤ 全高−6）+ 下缘位不越底缘',
-    clip.n === 2 && topOut > 0 && topOut <= clip.capH - 6 && clip.maxBottom <= clip.pBottom - 1,
-    `out=${topOut.toFixed(1)}px (cap ${clip.capH}px) / maxBottom=${clip.maxBottom.toFixed(1)} vs ${clip.pBottom.toFixed(1)}`);
+  const bandSpread = Math.max(...clip.cys) - Math.min(...clip.cys);
+  ok('CR2-6 同一条水平带（转盘批改轴：三签中心 y 极差 ≤1.5px）+ 上下均不越面板界',
+    clip.n >= 3 && bandSpread <= 1.5 && clip.maxBottom <= clip.pBottom - 1 && clip.minTop >= clip.pTop - 0.5,
+    `spread=${bandSpread.toFixed(2)} minTop=${clip.minTop.toFixed(1)} vs ${clip.pTop.toFixed(1)} / maxBottom=${clip.maxBottom.toFixed(1)} vs ${clip.pBottom.toFixed(1)}`);
 
   /* ② E 令·真越出（六项批 2026-10-23「顶部越出去掉截断感」）：环层挂 body ——
      面板 overflow:hidden 裁不到，上缘位探出段真实渲染在 canvas 顶缘外（修前
@@ -274,12 +281,19 @@ const ringInfo = (page) => page.evaluate(() => {
       ringParent: ring ? ring.parentElement.id || ring.parentElement.tagName : null,
       panelContainsRing: panel.contains(ring),
       edgeAbovePanel: er ? er.top < pTop - 0.5 : null,
+      edgeSideX: (() => {
+        const e2 = document.querySelector('#canvas-capsule-ring .cr-capsule.is-edge');
+        if (!e2) return null;
+        const x = parseFloat(e2.style.getPropertyValue('--cr-x') || '0');
+        const y = parseFloat(e2.style.getPropertyValue('--cr-y') || '0');
+        return Math.abs(x) > 1 && Math.abs(y) < 0.5;
+      })(),
       centerPe: center ? getComputedStyle(center).pointerEvents : null,
     };
   });
-  ok('CR2-9 真越出（六项②）：环层在面板外（body 层 —— overflow:hidden 裁切盒失效）+ 上缘位 rect 真实高于面板顶缘',
-    real.ringParent === 'BODY' && real.panelContainsRing === false && real.edgeAbovePanel === true,
-    `parent=${real.ringParent} contains=${real.panelContainsRing} edgeAbove=${real.edgeAbovePanel}`);
+  ok('CR2-9 真越出（六项②）：环层在面板外（body 层 —— overflow:hidden 裁切盒失效）+ 缘位水平外展（横轴位移非零，纵轴零位移）',
+    real.ringParent === 'BODY' && real.panelContainsRing === false && real.edgeSideX === true,
+    `parent=${real.ringParent} contains=${real.panelContainsRing} edgeSideX=${real.edgeSideX}`);
   ok('CR2-9b 中心位落穿（六项②配套）：is-center pointer-events none（标题头手势链不受环层遮蔽）',
     real.centerPe === 'none', `centerPe=${real.centerPe}`);
 
@@ -319,7 +333,9 @@ const ringInfo = (page) => page.evaluate(() => {
       return { bg: c.backgroundColor, blur: c.backdropFilter || c.webkitBackdropFilter, border: c.borderColor, shadow: c.boxShadow };
     };
     const cap = document.querySelector('#canvas-capsule-ring .cr-capsule.is-edge');
-    return { ref: pick(document.getElementById('input-bar')), capsule: cap ? pick(cap) : null };
+    return { ref: pick(document.getElementById('input-bar')), capsule: cap ? pick(cap) : null,
+             capCls: cap ? cap.className : null,
+             allCls: [...document.querySelectorAll('#canvas-capsule-ring .cr-capsule')].map((c) => c.className) };
   });
   const borderOk = !!mat.capsule && (() => {
     const parts = mat.capsule.border.match(/rgba\([^)]*\)/g) || [];
@@ -327,7 +343,7 @@ const ringInfo = (page) => page.evaluate(() => {
   })();
   ok('CR2-5 材质 = 全站统一 frosted（bg/blur/shadow 与 #input-bar 逐项相等 + 底缘透明钉，冷启动批③改锚）',
     !!mat.capsule && mat.ref.bg === mat.capsule.bg && mat.ref.blur === mat.capsule.blur && mat.ref.shadow === mat.capsule.shadow && borderOk,
-    JSON.stringify({ ref: mat.ref, capsule: mat.capsule }).slice(0, 700));
+    JSON.stringify({ ref: mat.ref, capsule: mat.capsule, capCls: mat.capCls, allCls: mat.allCls }).slice(0, 900));
 
   /* 证据截图：环开态（环锚顶带 —— 上缘位真实越出顶缘渲染（真越出批，无裁切
    *  线）+ 下缘位下垂；clip 取面板顶外扩，含顶缘外探出段全貌） */
@@ -617,23 +633,24 @@ const ringInfo = (page) => page.evaluate(() => {
     s2.tabCount === 2 && open2.open && open2.n === 2 && open2.edges.length === 1 && open2.farCount === 0,
     `n=${s2.tabCount} caps=${open2.n} edges=${open2.edges.length} far=${open2.farCount}`);
 
-  // 上滚一格（-200）：bravo→alpha 居中，非游标（bravo）翻到上方（--cr-y < 0）
+  // 上滚一格（-200）：bravo→alpha 居中，非游标（bravo）翻到**左**侧（--cr-x < 0；转盘批
+  // 2026-11-07 改轴前是「上方 --cr-y < 0」，方向感知契约本身不变）
   await page.mouse.wheel(0, -200);
   await sleep(300);
   const up = await ringInfo(page);
-  const upY = parseFloat(up.edgeYs[0]);
-  ok('CR9-2 双卡上滚：换选生效（alpha 居中）+ 非游标胶囊翻到上方（来向侧，不再恒驻下方）',
-    up.centerId === 'file:/tmp/cr-fixture/alpha.md' && upY < 0,
-    `center=${up.centerId} edgeY=${upY}px`);
+  const upX = parseFloat(up.edgeXs[0]);
+  ok('CR9-2 双卡上滚：换选生效（alpha 居中）+ 非游标胶囊翻到左来向侧（方向感知，不再恒驻同侧）',
+    up.centerId === 'file:/tmp/cr-fixture/alpha.md' && upX < 0,
+    `center=${up.centerId} edgeX=${upX}px`);
 
-  // 下滚一格（+200）：回 bravo 居中，非游标（alpha）落下方（--cr-y > 0）
+  // 下滚一格（+200）：回 bravo 居中，非游标（alpha）落右侧（--cr-x > 0）
   await page.mouse.wheel(0, 200);
   await sleep(300);
   const down = await ringInfo(page);
-  const downY = parseFloat(down.edgeYs[0]);
-  ok('CR9-3 双卡下滚：换选生效（bravo 居中）+ 非游标胶囊回落下方（方向感知随动）',
-    down.centerId === 'file:/tmp/cr-fixture/bravo.md' && downY > 0,
-    `center=${down.centerId} edgeY=${downY}px`);
+  const downX = parseFloat(down.edgeXs[0]);
+  ok('CR9-3 双卡下滚：换选生效（bravo 居中）+ 非游标胶囊回落右侧（方向感知随动）',
+    down.centerId === 'file:/tmp/cr-fixture/bravo.md' && downX > 0,
+    `center=${down.centerId} edgeX=${downX}px`);
 
   // 缘位点击照旧切换（<3 卡交互面完备）
   const edgeId2 = await page.evaluate(() => {
@@ -663,25 +680,27 @@ const ringInfo = (page) => page.evaluate(() => {
   });
   await hoverCapsule(page);
   const hovL = await ringInfo(page);
-  const eys = hovL.edgeYs.map(parseFloat).sort((a, b) => a - b);
+  const eys = hovL.edgeXs.map(parseFloat).sort((a, b) => a - b);   // 转盘批 2026-11-07 改轴：看横轴
   const clipL = await page.evaluate(() => {
     const p = document.getElementById('canvas-panel').getBoundingClientRect();
-    const rs = [...document.querySelectorAll('#canvas-capsule-ring .cr-capsule.is-edge')]
+    const rs = [...document.querySelectorAll('#canvas-capsule-ring .cr-capsule')]
       .map((c) => c.getBoundingClientRect());
     const cap = document.querySelector('#canvas-capsule-ring .cr-capsule.is-center');
-    return { pTop: p.top, minTop: Math.min(...rs.map((r) => r.top)), capH: cap ? cap.offsetHeight : 28 };
+    return { pTop: p.top, minTop: Math.min(...rs.map((r) => r.top)), n: rs.length,
+             spread: Math.max(...rs.map((r) => r.top + r.height / 2)) - Math.min(...rs.map((r) => r.top + r.height / 2)),
+             capH: cap ? cap.offsetHeight : 28 };
   });
   const topOutL = clipL.pTop - clipL.minTop;
-  ok('L1 亮色：环展开上下对称（|y| 相等一上一下）+ 顶部越出克制（固定尺寸批重钉 ≤ 全高−6）+ 环锚顶带零沉降',
+  ok('L1 亮色：环展开左右对称（|x| 相等一左一右，转盘批改轴）+ 同一水平带（≤1.5px，替代旧「顶部越出克制」）+ 环锚顶带零沉降',
     hovL.open && hovL.n === 3 && eys[0] < 0 && eys[1] > 0 && approx(-eys[0], eys[1], 0.5)
-    && topOutL > 0 && topOutL <= clipL.capH - 6
+    && clipL.spread <= 1.5 && topOutL <= 0.5
     && await page.evaluate(() => {
       const hdr = document.querySelector('#canvas-panel .canvas-header').getBoundingClientRect();
       const slide = document.getElementById('canvas-slide').getBoundingClientRect();
       return Math.abs((hdr.left + hdr.width / 2) - (slide.left + slide.width / 2)) <= 2
         && (hdr.top + hdr.height / 2) < (slide.top + slide.height / 2);
     }),
-    `ys=${hovL.edgeYs.join('/')} out=${topOutL.toFixed(1)}px (cap ${clipL.capH}px)`);
+    `xs=${hovL.edgeXs.join('/')} spread=${clipL.spread.toFixed(2)} topOut=${topOutL.toFixed(1)}px (cap ${clipL.capH}px)`);
   await page.screenshot({
     path: join(HERE, '../evidence/20261023_capsule-six/shots/3-ring-open-light.png'),
     clip: shotBoxL,
