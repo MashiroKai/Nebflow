@@ -1706,7 +1706,32 @@ body.canvas-overlay #deck-layer.over { z-index: 245; }
 #deck-layer.collapse { opacity: 0; }
 body.mobile-layer #deck-layer,
 body.mobile-layer #deck-fab,
-body.mobile-layer #canvas-head-close { display: none !important; }
+body.mobile-layer #canvas-head-close,
+/* canvas 工具条泄漏批（作者报障 2026-11-07 14:36「canvas 的图标/按钮串到其他
+   页面上了 … canvas 面板不在了，但它的工具条还在显示」）：本族守卫原先只列
+   deck-layer / deck-fab / canvas-head-close 三名成员 —— 漏了同属「body 级
+   fixed 画布浮件」的胶囊环。环层的显隐由 JS syncCoarseRow()（canvas.js）
+   在**若干触发点**上按 `!isMobileLayer()` 决定，而手机层类是异步激活
+   （mobile/bootstrap.js activate 内多枚动态 import 完成后才落类），
+   `body.canvas-open` / `body.mobile-layer` 任何一次变化都**不会**重跑该同步
+   ⇒ 任一时刻判过的「非手机层」结论就永久留着：手机首屏（页签恢复 → openCanvas
+   → renderCanvasHeader → syncCoarseRow，全程早于手机层激活）与「面板已关但
+   环未收」两个态都能让环层带 3 枚胶囊（中心签 + 左右邻签，z-246）浮在任何
+   页面之上。判据补在本族守卫里 = 与 #canvas-panel 挂载同源（手机层面板恒
+   display:none，环层随同一条件退场），不是 z-index 遮盖。
+   铁律：body 级 canvas 浮件新增成员必须并入本族守卫（JS 侧的条件同步永不能
+   替代显隐守卫 —— 它只在被调用的那一刻成立）。 */
+body.mobile-layer #canvas-capsule-ring { display: none !important; }
+
+/* 面板不在场 ⇒ 环层不在场。判据与 #canvas-panel 的可见性**同一枚**
+   （本文件上方 `body.canvas-open #canvas-panel { flex-basis: …; opacity: 1 }`
+   —— 面板唯一挂载源就是 body.canvas-open），故「工具条显隐 = canvas 面挂载」
+   在本条上成立：closeCanvas() 摘类即整族退场，不依赖任何 JS 事后同步
+   （canvas.js 的 syncCoarseRow 只在 resize / 换签 / 面板 class 变更时被调用，
+   关面板走的是 body 类 + 内联 flex，三处触发点一个都不命中 —— 改前实测：
+   关面板后 3 枚胶囊 opacity 仍为 1 且留在视口内）。卡片窗态无环（canvas.js
+   initCapsuleRing 早退），本条对它零影响。 */
+body:not(.canvas-open) #canvas-capsule-ring { display: none !important; }
 
 /* ── 整区缩放（v4①）：唯一整区 scale 变换，落 canvas 根。
    uifix ③a：叠卡态投影 = 前景档 token（随 look 三版联动）。
