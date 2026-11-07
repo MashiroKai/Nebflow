@@ -1,0 +1,602 @@
+{
+ "assets": {
+  "total": 54,
+  "missingVersion": 0,
+  "mismatched": [],
+  "notOk": [],
+  "rows": [
+   {
+    "url": "vendor/highlight-github.min.css",
+    "declared": "3a9a5def8b9c311e",
+    "real": "3a9a5def8b9c311e",
+    "ok": true,
+    "status": 200,
+    "bytes": 1309,
+    "cc": "no-cache"
+   },
+   {
+    "url": "vendor/highlight-github-dark.min.css",
+    "declared": "9f208d022102b1d0",
+    "real": "9f208d022102b1d0",
+    "ok": true,
+    "status": 200,
+    "bytes": 1315,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/base.css",
+    "declared": "b9bb87d7c867fb90",
+    "real": "b9bb87d7c867fb90",
+    "ok": true,
+    "status": 200,
+    "bytes": 18338,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/nav.css",
+    "declared": "5f627f9d334d380d",
+    "real": "5f627f9d334d380d",
+    "ok": true,
+    "status": 200,
+    "bytes": 10264,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/sidebar.css",
+    "declared": "f8a4a9cc78e2d19b",
+    "real": "f8a4a9cc78e2d19b",
+    "ok": true,
+    "status": 200,
+    "bytes": 109988,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/chat.css",
+    "declared": "e267fe5a11b7cabe",
+    "real": "e267fe5a11b7cabe",
+    "ok": true,
+    "status": 200,
+    "bytes": 269474,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/modal.css",
+    "declared": "702f0cba6ecedb43",
+    "real": "702f0cba6ecedb43",
+    "ok": true,
+    "status": 200,
+    "bytes": 51601,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/input.css",
+    "declared": "aa22f2d97b59262f",
+    "real": "aa22f2d97b59262f",
+    "ok": true,
+    "status": 200,
+    "bytes": 66089,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/taskList.css",
+    "declared": "03b17a1824963bd9",
+    "real": "03b17a1824963bd9",
+    "ok": true,
+    "status": 200,
+    "bytes": 25341,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/todo-face.css",
+    "declared": "06455f60a8d2c426",
+    "real": "06455f60a8d2c426",
+    "ok": true,
+    "status": 200,
+    "bytes": 56144,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/scrollUnderGlass.css",
+    "declared": "118809077c6910ed",
+    "real": "118809077c6910ed",
+    "ok": true,
+    "status": 200,
+    "bytes": 4859,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/reminder.css",
+    "declared": "d6f696cb5620eb41",
+    "real": "d6f696cb5620eb41",
+    "ok": true,
+    "status": 200,
+    "bytes": 31840,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/todo-page.css",
+    "declared": "7903ea4b40c6d181",
+    "real": "7903ea4b40c6d181",
+    "ok": true,
+    "status": 200,
+    "bytes": 9933,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/schedule-todo.css",
+    "declared": "f09c6f936b800d4b",
+    "real": "f09c6f936b800d4b",
+    "ok": true,
+    "status": 200,
+    "bytes": 10190,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/neblink.css",
+    "declared": "edf0f3ce26c89a84",
+    "real": "edf0f3ce26c89a84",
+    "ok": true,
+    "status": 200,
+    "bytes": 11341,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/dropbox.css",
+    "declared": "571e08a5b0d03f71",
+    "real": "571e08a5b0d03f71",
+    "ok": true,
+    "status": 200,
+    "bytes": 10766,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/projectPanel.css",
+    "declared": "5b65538d0f437c50",
+    "real": "5b65538d0f437c50",
+    "ok": true,
+    "status": 200,
+    "bytes": 47575,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/delegatePanorama.css",
+    "declared": "606976335cd30b99",
+    "real": "606976335cd30b99",
+    "ok": true,
+    "status": 200,
+    "bytes": 23296,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/flowMap.css",
+    "declared": "bc025f7bcddf0f7b",
+    "real": "bc025f7bcddf0f7b",
+    "ok": true,
+    "status": 200,
+    "bytes": 75573,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/friends.css",
+    "declared": "dbc7fd81fc61646f",
+    "real": "dbc7fd81fc61646f",
+    "ok": true,
+    "status": 200,
+    "bytes": 127055,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/split.css",
+    "declared": "06d16a72631837c5",
+    "real": "06d16a72631837c5",
+    "ok": true,
+    "status": 200,
+    "bytes": 220096,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/ask.css",
+    "declared": "87044bd6bce23a23",
+    "real": "87044bd6bce23a23",
+    "ok": true,
+    "status": 200,
+    "bytes": 50779,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/voice.css",
+    "declared": "bfe0ce4c2ea62a18",
+    "real": "bfe0ce4c2ea62a18",
+    "ok": true,
+    "status": 200,
+    "bytes": 1614,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/mermaid.css",
+    "declared": "67690ce5a682eedb",
+    "real": "67690ce5a682eedb",
+    "ok": true,
+    "status": 200,
+    "bytes": 4071,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/humanFace.css",
+    "declared": "74200e2b0d08c01c",
+    "real": "74200e2b0d08c01c",
+    "ok": true,
+    "status": 200,
+    "bytes": 3012,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/voiceMode.css",
+    "declared": "0746cc03ce5615d3",
+    "real": "0746cc03ce5615d3",
+    "ok": true,
+    "status": 200,
+    "bytes": 8195,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/lightbox.css",
+    "declared": "5834de5510a011c7",
+    "real": "5834de5510a011c7",
+    "ok": true,
+    "status": 200,
+    "bytes": 2298,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/usage.css",
+    "declared": "51d15234e9a6f6e2",
+    "real": "51d15234e9a6f6e2",
+    "ok": true,
+    "status": 200,
+    "bytes": 16962,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/social.css",
+    "declared": "108fb09f319c9a88",
+    "real": "108fb09f319c9a88",
+    "ok": true,
+    "status": 200,
+    "bytes": 23707,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/secrets.css",
+    "declared": "82d8cab2d6110fc7",
+    "real": "82d8cab2d6110fc7",
+    "ok": true,
+    "status": 200,
+    "bytes": 21562,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/stand-tokens.css",
+    "declared": "34e8457490a5068f",
+    "real": "34e8457490a5068f",
+    "ok": true,
+    "status": 200,
+    "bytes": 43464,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/perception.css",
+    "declared": "1b24cbaf0fd081eb",
+    "real": "1b24cbaf0fd081eb",
+    "ok": true,
+    "status": 200,
+    "bytes": 27825,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/executors.css",
+    "declared": "484d09d8a75ea210",
+    "real": "484d09d8a75ea210",
+    "ok": true,
+    "status": 200,
+    "bytes": 3885,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/diffView.css",
+    "declared": "a59d9b7df886b51c",
+    "real": "a59d9b7df886b51c",
+    "ok": true,
+    "status": 200,
+    "bytes": 22970,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/design-system.css",
+    "declared": "56b86fe940924ba1",
+    "real": "56b86fe940924ba1",
+    "ok": true,
+    "status": 200,
+    "bytes": 97112,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/sapphire.css",
+    "declared": "0808c0a6807e96f3",
+    "real": "0808c0a6807e96f3",
+    "ok": true,
+    "status": 200,
+    "bytes": 82464,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/glass.css",
+    "declared": "4f58bdfffd7a34c0",
+    "real": "4f58bdfffd7a34c0",
+    "ok": true,
+    "status": 200,
+    "bytes": 43958,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/settingsRows.css",
+    "declared": "d822fd6a1b9701db",
+    "real": "d822fd6a1b9701db",
+    "ok": true,
+    "status": 200,
+    "bytes": 13352,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/cards.css",
+    "declared": "a2f023357471a91b",
+    "real": "a2f023357471a91b",
+    "ok": true,
+    "status": 200,
+    "bytes": 21676,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/mobile.css",
+    "declared": "cfdcd9c9a0dea148",
+    "real": "cfdcd9c9a0dea148",
+    "ok": true,
+    "status": 200,
+    "bytes": 3407,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/mobileLayer.css",
+    "declared": "9c5489534e59ba2b",
+    "real": "9c5489534e59ba2b",
+    "ok": true,
+    "status": 200,
+    "bytes": 339670,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/mobileSearchFlat.css",
+    "declared": "c35c6441862b035a",
+    "real": "c35c6441862b035a",
+    "ok": true,
+    "status": 200,
+    "bytes": 17142,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/timeWheel.css",
+    "declared": "b7da43203b8c9970",
+    "real": "b7da43203b8c9970",
+    "ok": true,
+    "status": 200,
+    "bytes": 14741,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/liveness.css",
+    "declared": "717389e5004f18aa",
+    "real": "717389e5004f18aa",
+    "ok": true,
+    "status": 200,
+    "bytes": 1530,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/keyboard.css",
+    "declared": "8955f6d2ff03d4aa",
+    "real": "8955f6d2ff03d4aa",
+    "ok": true,
+    "status": 200,
+    "bytes": 11089,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/inputSurface.css",
+    "declared": "267c766bf63fb5d8",
+    "real": "267c766bf63fb5d8",
+    "ok": true,
+    "status": 200,
+    "bytes": 12005,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/flatButtons.css",
+    "declared": "5dc13a8379d64a08",
+    "real": "5dc13a8379d64a08",
+    "ok": true,
+    "status": 200,
+    "bytes": 12743,
+    "cc": "no-cache"
+   },
+   {
+    "url": "css/canvasHint.css",
+    "declared": "aa9db36d396d5404",
+    "real": "aa9db36d396d5404",
+    "ok": true,
+    "status": 200,
+    "bytes": 11585,
+    "cc": "no-cache"
+   },
+   {
+    "url": "vendor/lucide.min.js",
+    "declared": "e70a1fa6680b5228",
+    "real": "e70a1fa6680b5228",
+    "ok": true,
+    "status": 200,
+    "bytes": 355285,
+    "cc": "no-cache"
+   },
+   {
+    "url": "vendor/lottie.min.js",
+    "declared": "a0757321f974527b",
+    "real": "a0757321f974527b",
+    "ok": true,
+    "status": 200,
+    "bytes": 305543,
+    "cc": "no-cache"
+   },
+   {
+    "url": "vendor/marked.min.js",
+    "declared": "15fabce5b65898b3",
+    "real": "15fabce5b65898b3",
+    "ok": true,
+    "status": 200,
+    "bytes": 35479,
+    "cc": "no-cache"
+   },
+   {
+    "url": "vendor/highlight.min.js",
+    "declared": "471ef9ae90c407af",
+    "real": "471ef9ae90c407af",
+    "ok": true,
+    "status": 200,
+    "bytes": 124980,
+    "cc": "no-cache"
+   },
+   {
+    "url": "js/main.js",
+    "declared": "b5a3533abee189b0",
+    "real": "b5a3533abee189b0",
+    "ok": true,
+    "status": 200,
+    "bytes": 316557,
+    "cc": "no-cache"
+   },
+   {
+    "url": "js/mobile/bootstrap.js",
+    "declared": "4478c0e73e50b676",
+    "real": "4478c0e73e50b676",
+    "ok": true,
+    "status": 200,
+    "bytes": 6133,
+    "cc": "no-cache"
+   }
+  ]
+ },
+ "compare": {
+  "warm1_vs_warm2": {
+   "identicalBytes": false,
+   "sizeA": 309140,
+   "sizeB": 309159
+  },
+  "warm2_vs_cold": {
+   "identicalBytes": false,
+   "sizeA": 309159,
+   "sizeB": 309165
+  },
+  "skinsWarm": {
+   "body": "rgb(245, 246, 248)|rgb(27, 30, 38)|16px|0px|0px|1440px|900px|auto",
+   "bar": "rgba(255, 255, 255, 0.55)|rgb(27, 30, 38)|16px|20px|10px 0px|48px|874px|auto",
+   "sidebar": "rgba(255, 255, 255, 0.55)|rgb(27, 30, 38)|16px|20px|0px|236px|874px|auto",
+   "chat": "rgba(0, 0, 0, 0)|rgb(27, 30, 38)|16px|0px|122px 0px 78px|548px|890px|auto",
+   "input": "rgba(255, 255, 255, 0.97)|rgb(27, 30, 38)|16px|20px|6px 12px|548px|76px|auto",
+   "header": "rgba(255, 255, 255, 0.55)|rgb(27, 30, 38)|14px|20px|10px 16px|548px|50px|30"
+  },
+  "skinsCold": {
+   "body": "rgb(245, 246, 248)|rgb(27, 30, 38)|16px|0px|0px|1440px|900px|auto",
+   "bar": "rgba(255, 255, 255, 0.55)|rgb(27, 30, 38)|16px|20px|10px 0px|48px|874px|auto",
+   "sidebar": "rgba(255, 255, 255, 0.55)|rgb(27, 30, 38)|16px|20px|0px|236px|874px|auto",
+   "chat": "rgba(0, 0, 0, 0)|rgb(27, 30, 38)|16px|0px|122px 0px 78px|548px|890px|auto",
+   "input": "rgba(255, 255, 255, 0.97)|rgb(27, 30, 38)|16px|20px|6px 12px|548px|76px|auto",
+   "header": "rgba(255, 255, 255, 0.55)|rgb(27, 30, 38)|14px|20px|10px 16px|548px|50px|30"
+  },
+  "resourcesWarm": 250,
+  "resourcesCold": 250,
+  "missingInWarm": [
+   "/js/attachPreviewField.js@61",
+   "/js/attachUpload.js@62",
+   "/js/attachmentPreview.js@59",
+   "/js/bubbleSide.js@56",
+   "/js/mdLinkGate.js@56",
+   "/js/messages/elements.js@62",
+   "/js/messages/fmComposer.js@59",
+   "/js/messages/friendCopy.js@63",
+   "/js/messages/friendTrust.js@62",
+   "/js/messages/timeFmt.js@62",
+   "/js/mobile/sessionHead.js@59",
+   "/js/sendState.js@59"
+  ],
+  "missingInCold": [
+   "/js/mergeQueueStatus.js@51",
+   "/js/viewers/docx.js@47",
+   "/js/viewers/epub.js@47",
+   "/js/viewers/html.js@46",
+   "/js/viewers/image.js@46",
+   "/js/viewers/markdown.js@45",
+   "/js/viewers/monaco.js@43",
+   "/js/viewers/pdf.js@44",
+   "/js/viewers/pptx.js@46",
+   "/js/viewers/textReader.js@44",
+   "/js/viewers/xlsx.js@47",
+   "/js/viewers/yaml.js@44"
+  ],
+  "swWarm": {
+   "controlled": true
+  },
+  "swCold": {
+   "controlled": true
+  }
+ },
+ "warm": [
+  {
+   "run": 1,
+   "shot": "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/ui-audit/reports-evidence/ui-audit-post-restart/00-cache/light-desktop__warm-run1.png",
+   "cacheInfo": {
+    "names": [
+     "nfsw-index-v1",
+     "nfsw-v1"
+    ],
+    "detail": {
+     "nfsw-index-v1": 2,
+     "nfsw-index-v1:hash": "e9ff64ce8323756992246911ceec29d4",
+     "nfsw-v1": 3
+    }
+   },
+   "nodes": 4000
+  },
+  {
+   "run": 2,
+   "shot": "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/ui-audit/reports-evidence/ui-audit-post-restart/00-cache/light-desktop__warm-run2.png",
+   "cacheInfo": {
+    "names": [
+     "nfsw-index-v1",
+     "nfsw-v1"
+    ],
+    "detail": {
+     "nfsw-index-v1": 2,
+     "nfsw-index-v1:hash": "e9ff64ce8323756992246911ceec29d4",
+     "nfsw-v1": 290
+    }
+   },
+   "nodes": 4000
+  }
+ ],
+ "indexHash": {
+  "live": "e9ff64ce8323756992246911ceec29d4",
+  "swRecorded": {
+   "nfsw-index-v1": 2,
+   "nfsw-index-v1:hash": "e9ff64ce8323756992246911ceec29d4",
+   "nfsw-v1": 290
+  }
+ }
+}

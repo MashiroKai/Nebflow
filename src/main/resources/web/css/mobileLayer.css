@@ -1052,8 +1052,23 @@ body.mobile-layer .mobile-page-body {
 /* 合流批注（顶栏批 15:19 ∪ 悬浮钮批 16:03）：dock 根页顶栏整体退役
    （.mobile-page-nohead，无 chrome 带可让位）——页体顶归零（安全区顶距由
    壳块自管），canvas 标签条/根页内容上移吃回顶带空间；详情页（带「<」/
-   标题胶囊）仍吃上行 72px 让位。 */
-body.mobile-layer .mobile-page-nohead .mobile-page-body { padding-top: 0; }
+   标题胶囊）仍吃上行 72px 让位。
+   🔴 mobile-top-clearance 批 2026-11-07 推翻「顶归零」：作者令逐字「顶部胶囊
+   与页面标题重叠（"acto"/"通知"被压在按钮下）」「消息记录搜索按钮压在消息上」
+   ——根页（消息记录 / 画布 / 联系人 / 看板 / 工作台）正是 nohead 页，顶归零
+   让首行直接落到 48px 悬浮钮命中区里。现改为与详情页同档让位（--mtitle-lead
+   + safe-area），浮钮仍在内容之上，但静止态首行不再钻到钮下。 */
+body.mobile-layer .mobile-page-nohead .mobile-page-body {
+  padding-top: calc(var(--mtitle-lead) + env(safe-area-inset-top, 0px));
+}
+/* 底部安全底距（mobile-top-clearance 批 2026-11-07；作者令逐字「底部悬浮导航
+   必须给正文留安全底距，不得压住最后一行内容」）。.mobile-page 的 bottom 已按
+   dock 几何收回，但正文末行仍与胶囊上缘零缝贴合（设置页「文件缓存」行、画布
+   正文末段被压的实拍见 reports-evidence/ui-audit-post-restart/20-fixes/）。
+   这里补胶囊高 + 呼吸缝 + 底缘内距的净空，保证滚到底时末行完整可见。 */
+body.mobile-layer .mobile-page-body {
+  padding-bottom: calc(var(--dock-h) + var(--dock-gap) + var(--dock-inset-b));
+}
 body.mobile-layer .mobile-page-body::-webkit-scrollbar { display: none; }
 /* 设备平级批 2026-10-31（作者令：会话窗 = 单一固定对话窗「像微信聊天页」，禁横向
    滚动——截图②实锤消息可左右滑）。根因：`.mobile-page-body` / `.fm-flow` 都只声明

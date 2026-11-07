@@ -1,0 +1,419 @@
+{
+ "before": {
+  "settingsOverlay": {
+   "sel": "#settings-overlay",
+   "z": "310",
+   "pos": "fixed",
+   "display": "none",
+   "opacity": "1",
+   "pe": "auto",
+   "box": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "domOrder": 11466
+  },
+  "modal": {
+   "sel": "#settings-modal",
+   "z": "auto",
+   "pos": "relative",
+   "display": "none",
+   "opacity": "1",
+   "pe": "auto",
+   "box": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "domOrder": 11467
+  },
+  "inputBar": {
+   "sel": "#input-bar",
+   "z": "auto",
+   "pos": "relative",
+   "display": "flex",
+   "opacity": "1",
+   "pe": "auto",
+   "box": [
+    310,
+    814,
+    548,
+    76
+   ],
+   "domOrder": 3943
+  },
+  "inputArea": {
+   "sel": "#input-area",
+   "z": "20",
+   "pos": "absolute",
+   "display": "block",
+   "opacity": "1",
+   "pe": "none",
+   "box": [
+    310,
+    814,
+    548,
+    76
+   ],
+   "domOrder": 3932
+  },
+  "canvas": {
+   "sel": "#canvas-panel",
+   "z": "auto",
+   "pos": "relative",
+   "display": "flex",
+   "opacity": "1",
+   "pe": "auto",
+   "box": [
+    878,
+    16,
+    552,
+    874
+   ],
+   "domOrder": 3982
+  },
+  "header": {
+   "sel": "#header",
+   "z": "30",
+   "pos": "absolute",
+   "display": "flex",
+   "opacity": "1",
+   "pe": "auto",
+   "box": [
+    310,
+    16,
+    548,
+    50
+   ],
+   "domOrder": 1018
+  },
+  "sidebar": {
+   "sel": "#sidebar",
+   "z": "auto",
+   "pos": "static",
+   "display": "flex",
+   "opacity": "1",
+   "pe": "auto",
+   "box": [
+    60,
+    16,
+    236,
+    874
+   ],
+   "domOrder": 159
+  },
+  "bar": {
+   "sel": "#activity-bar",
+   "z": "auto",
+   "pos": "static",
+   "display": "flex",
+   "opacity": "1",
+   "pe": "auto",
+   "box": [
+    4,
+    16,
+    48,
+    874
+   ],
+   "domOrder": 110
+  }
+ },
+ "settingsAndCanvas": {
+  "settingsOverlay": {
+   "sel": "#settings-overlay",
+   "z": "310",
+   "pos": "fixed",
+   "display": "flex",
+   "opacity": "1",
+   "pe": "auto",
+   "box": [
+    0,
+    0,
+    1440,
+    900
+   ],
+   "domOrder": 11466
+  },
+  "modal": {
+   "sel": "#settings-modal",
+   "z": "auto",
+   "pos": "relative",
+   "display": "flex",
+   "opacity": "1",
+   "pe": "auto",
+   "box": [
+    440,
+    68,
+    560,
+    765
+   ],
+   "domOrder": 11467
+  },
+  "inputBar": {
+   "sel": "#input-bar",
+   "z": "auto",
+   "pos": "relative",
+   "display": "flex",
+   "opacity": "1",
+   "pe": "auto",
+   "box": [
+    310,
+    814,
+    1098,
+    76
+   ],
+   "domOrder": 3943
+  },
+  "inputArea": {
+   "sel": "#input-area",
+   "z": "20",
+   "pos": "absolute",
+   "display": "block",
+   "opacity": "1",
+   "pe": "none",
+   "box": [
+    310,
+    814,
+    1098,
+    76
+   ],
+   "domOrder": 3932
+  },
+  "canvas": {
+   "sel": "#canvas-panel",
+   "z": "auto",
+   "pos": "relative",
+   "display": "flex",
+   "opacity": "0",
+   "pe": "auto",
+   "box": [
+    1428,
+    16,
+    2,
+    874
+   ],
+   "domOrder": 3982
+  },
+  "header": {
+   "sel": "#header",
+   "z": "30",
+   "pos": "absolute",
+   "display": "flex",
+   "opacity": "1",
+   "pe": "auto",
+   "box": [
+    310,
+    16,
+    1098,
+    50
+   ],
+   "domOrder": 1018
+  },
+  "sidebar": {
+   "sel": "#sidebar",
+   "z": "auto",
+   "pos": "static",
+   "display": "flex",
+   "opacity": "1",
+   "pe": "auto",
+   "box": [
+    60,
+    16,
+    236,
+    874
+   ],
+   "domOrder": 159
+  },
+  "bar": {
+   "sel": "#activity-bar",
+   "z": "auto",
+   "pos": "static",
+   "display": "flex",
+   "opacity": "1",
+   "pe": "auto",
+   "box": [
+    4,
+    16,
+    48,
+    874
+   ],
+   "domOrder": 110
+  }
+ },
+ "hits": [
+  {
+   "label": "模态右上（右侧栏区域）",
+   "at": [
+    970,
+    188
+   ],
+   "hit": "div#modal-overlay.ds-overlay ds-overlay--top on take"
+  },
+  {
+   "label": "模态右下角",
+   "at": [
+    940,
+    813
+   ],
+   "hit": "div#modal-overlay.ds-overlay ds-overlay--top on take"
+  },
+  {
+   "label": "模态左下角（输入条区域）",
+   "at": [
+    480,
+    813
+   ],
+   "hit": "div#modal-overlay.ds-overlay ds-overlay--top on take"
+  },
+  {
+   "label": "模态底边中部",
+   "at": [
+    720,
+    821
+   ],
+   "hit": "div#modal-overlay.ds-overlay ds-overlay--top on take"
+  }
+ ],
+ "canvasOnly": {
+  "settingsOverlay": {
+   "sel": "#settings-overlay",
+   "z": "310",
+   "pos": "fixed",
+   "display": "none",
+   "opacity": "1",
+   "pe": "auto",
+   "box": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "domOrder": 11466
+  },
+  "modal": {
+   "sel": "#settings-modal",
+   "z": "auto",
+   "pos": "relative",
+   "display": "none",
+   "opacity": "1",
+   "pe": "auto",
+   "box": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "domOrder": 11467
+  },
+  "inputBar": {
+   "sel": "#input-bar",
+   "z": "auto",
+   "pos": "relative",
+   "display": "flex",
+   "opacity": "1",
+   "pe": "auto",
+   "box": [
+    310,
+    814,
+    1098,
+    76
+   ],
+   "domOrder": 3943
+  },
+  "inputArea": {
+   "sel": "#input-area",
+   "z": "20",
+   "pos": "absolute",
+   "display": "block",
+   "opacity": "1",
+   "pe": "none",
+   "box": [
+    310,
+    814,
+    1098,
+    76
+   ],
+   "domOrder": 3932
+  },
+  "canvas": {
+   "sel": "#canvas-panel",
+   "z": "auto",
+   "pos": "relative",
+   "display": "flex",
+   "opacity": "0",
+   "pe": "auto",
+   "box": [
+    1428,
+    16,
+    2,
+    874
+   ],
+   "domOrder": 3982
+  },
+  "header": {
+   "sel": "#header",
+   "z": "30",
+   "pos": "absolute",
+   "display": "flex",
+   "opacity": "1",
+   "pe": "auto",
+   "box": [
+    310,
+    16,
+    1098,
+    50
+   ],
+   "domOrder": 1018
+  },
+  "sidebar": {
+   "sel": "#sidebar",
+   "z": "auto",
+   "pos": "static",
+   "display": "flex",
+   "opacity": "1",
+   "pe": "auto",
+   "box": [
+    60,
+    16,
+    236,
+    874
+   ],
+   "domOrder": 159
+  },
+  "bar": {
+   "sel": "#activity-bar",
+   "z": "auto",
+   "pos": "static",
+   "display": "flex",
+   "opacity": "1",
+   "pe": "auto",
+   "box": [
+    4,
+    16,
+    48,
+    874
+   ],
+   "domOrder": 110
+  }
+ },
+ "canvasHits": [
+  {
+   "label": "画布左上（顶栏区域）",
+   "hit": null
+  },
+  {
+   "label": "画布左下（输入条区域）",
+   "hit": null
+  }
+ ],
+ "scroll": {
+  "host": "settings-content",
+  "st": 1361,
+  "sh": 2075,
+  "ch": 714,
+  "reachable": true
+ }
+}

@@ -23,7 +23,18 @@
   --color-danger: #c0392b;
   --color-success: #4caf50;
   --color-warning: #ff9800;
-  --color-bubble-user: #95ec69;
+  /* 我方气泡底色（bubble-palette 批 2026-11-07；作者令逐字「你的聊天气泡也是
+     绿色的…禁止出现微信式高饱和绿；该颜色应是会话气泡组件的单点 token，好友页/
+     群页/主会话三处同源」）。
+     · 改的是**色相来源**，不是结构：归属方两档（我方/对方）与单点纪律照旧
+       （glass.css「气泡归属方底色单点」块消费本令牌，check-bubble-side.mjs
+       R1–R5 判据不动）。
+     · 旧值 = 微信绿 #95ec69（旧注释自己就写着「微信绿」）；新值 = 设计语言
+       sapphire 淡染（与 --sapphire tint 族同相），亮档深字可读，暗档翻深见
+       下方 dark 块，与对方白底/暗底仍可区分。
+     · 正文色不在此处：.bubble.user 仍吃 --color-text（亮档深字 / 暗档浅字），
+       两种主题下对比度随主题自动成立。 */
+  --color-bubble-user: #cdd9ec;
 
   /* ── 状态载体 token（ui-status-redesign 批，2026-10-05 作者拍板分叉①=A）──
      铁律一「语义色只上载体，不上正文」：红/黄/绿仅允许出现在图标/圆点/描边/
@@ -118,6 +129,10 @@ body {
     --color-bg: #13161c;
     --color-surface: #1c1f27;
     --color-bubble-ai: #1c1f27;
+    /* 我方气泡暗档（bubble-palette 批 2026-11-07，同亮档出处）：sapphire 深染，
+       与对方暗底 #1c1f27 可区分；正文吃 --color-text=#e8eaed（浅字），
+       对比度 ≈ 9:1。 */
+    --color-bubble-user: #29354d;
     --color-text: #e8eaed;
     --color-text-muted: #7b7e88;
     --color-text-dim: #9ba0aa;
