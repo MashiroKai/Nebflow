@@ -23,6 +23,20 @@
 //     （下一次 scheduleReconnect 自增），直到 MAX 封顶
 //   · 用户显式动作（forceReconnect）仍直接归零 —— 那是人的意图，不是机器行为
 
+/** Only numeric/boolean close facts; never copy reason, URL or event properties. */
+export function closeDiagnostic(event, opened, lifetimeMs, localAction) {
+  const code = Number.isInteger(event?.code) && event.code >= 0 && event.code <= 4999 ? event.code : null;
+  const durationSeconds = opened && Number.isFinite(lifetimeMs) && lifetimeMs >= 0
+    ? Math.floor(lifetimeMs / 10000) * 10 : null;
+  return {
+    code,
+    clean: typeof event?.wasClean === 'boolean' ? event.wasClean : null,
+    opened: opened === true,
+    durationSeconds,
+    localAction: ['heartbeat', 'wake'].includes(localAction) ? localAction : 'none-observed',
+  };
+}
+
 /** 退避基值（ms）。 */
 export const BASE_RECONNECT_DELAY = 2000;
 /** 退避上限（ms）。flap 形态下应能在若干拍内吃到这个上限。 */

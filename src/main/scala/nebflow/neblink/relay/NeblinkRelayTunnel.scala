@@ -1960,6 +1960,8 @@ private final class RelayWsListener(
         )
 
   override def onClose(ws: WebSocket, statusCode: Int, reason: String): CompletionStage[?] =
+    // Numeric code only: the peer-supplied reason may contain sensitive data.
+    logger.infoSync(s"Relay WS close code=$statusCode")
     // 有界性腿③（连接终结）：缓冲随连接消亡，不跨连接存活（半成品即弃并计数）。
     reassembler.reset()
     dispatcher.unsafeRunAndForget(closed.complete(()).void)
