@@ -4103,17 +4103,8 @@ function ringClickCenter() {
   setActiveTab(id);                                  // canvas-tab-switched 收环
   return true;
 }
-/** 环游标当前指的页签 id（环闭 = null）。转盘批（2026-11-07 12:15）：游标取
- *  **盘面当前位置**（最近整格）而不是 committed cursor —— 吸附动画在途时盘面已经
- *  显示新签，此时点中心位必须选到「看得见的那一枚」（否则落定前点击会打到上一签，
- *  读作「点了没反应」）。 */
-function ringCursorId() {
-  if (!ringState) return null;
-  const n = ringState.ids.length;
-  if (!n) return null;
-  const idx = ((Math.round(ringState.pos == null ? ringState.cursor : ringState.pos) % n) + n) % n;
-  return ringState.ids[idx] || null;
-}
+/** 环游标当前指的页签 id（环闭 = null）。@returns {string|null} */
+function ringCursorId() { return ringState ? ringState.ids[ringState.cursor] || null : null; }
 
 function initCapsuleRing() {
   const hdr = /** @type {HTMLElement|null} */ (document.querySelector('#canvas-panel .canvas-header'));
@@ -4239,235 +4230,109 @@ function initCapsuleRing() {
     root.style.setProperty('--cr-popw', on ? '32px' : '0px');
   };
 
-  /** 粗指针（触屏）腿的行宽预算（原 layout() 内联块整体抽出，数值逐字不变 ——
-   *  §位姿三档：①理想 180 + 邻签 0.72×；②图标档；③只留中心签。）
-   *  @returns {{centerW: number, edgeW: number, iconOnly: boolean, stepX: number, band: number}} */
-  const coarseMetrics = () => {
-    const panelW = panelEl.clientWidth || window.innerWidth;
-    const GAP = 8;                                        // 胶囊件缝
-    const ICON_CHIP = 40;                                 // 图标档邻签宽（14 图标 + 内衬）
-    const TEXT_EDGE = 72;                                 // 文字档邻签下限（够放图标 + 3 字）
-    /* 行宽只吃「面板左右浮钮带之间」的净空（✕ / 堆叠钮各 40 + 边距 12 + 呼吸 6
-       = 单侧 58）：横排档与桌面浮钮同处一条顶带，压上去就是作者第⑤条说的那种
-       「叠在一起」。 */
-    const band = Math.max(96, Math.min(panelW - 2 * 58, panelW - 24));
-    let centerW = 180;
-    let edgeW = 0;
-    let iconOnly = false;
-    if (band >= 180 + 2 * TEXT_EDGE + 2 * GAP) {
-      // ① 理想档：中心签 = 桌面原寸 180，邻签文字档（收在剩余净空内）
-      edgeW = Math.min(Math.round(centerW * 0.72), Math.round((band - centerW) / 2 - GAP));
-    } else {
-      // ② 图标档：净空只够塞两枚图标签 ⇒ 邻签转图标，中心签吃满余量（≥96）
-      iconOnly = true;
-      edgeW = ICON_CHIP;
-      centerW = Math.max(96, Math.min(180, Math.round(band - 2 * edgeW - 2 * GAP)));
-      // ③ 兜底档：净空连「中心签 96 + 两枚图标签」都不够 ⇒ 只留中心签
-      if (band < 96 + 2 * ICON_CHIP + 2 * GAP) { edgeW = 0; centerW = Math.min(180, band); }
-    }
-    return { centerW, edgeW, iconOnly, stepX: centerW / 2 + edgeW / 2 + GAP, band, textEdge: TEXT_EDGE };
-  };
-
-  /* ── 转盘游标（作者令 2026-11-07 12:15 逐字：「canvas顶部胶囊的动画不是很好看
-   *    我要那种转盘的感觉 在左右滚动选择」）──────────────────────────────────
-   * 形态：环不再是「离散换选的上下弧」，而是**一枚可转的横排转盘** —— 胶囊中心距
-   * = step（核算见 layout），位姿由**连续游标 pos**（小数 = 当前盘面角度）逐帧算
-   * 出：pos 走到 0.37 格时签们就整体左移 0.37×step（跟手），不是等跨阈值才一次
-   * 跳位。旧「上下弧 rank+rotateX/edgeY」随本令整条退役（作者 2026-10-23 的
-   * 「hover 要在上下显示」被这条 2026-11-07 的「在左右滚动选择」取代；轴换了，
-   * 位姿变量名 --cr-x/--cr-ry 与触屏横排腿同一套，两档只剩尺寸/深度/模糊档差）。
-   * 手感三件 = 作者「转盘的感觉」的全部内容：
-   *   ① 跟手预转：滚轮/横滑累积**未过阈**时先给 lead 预转量（≤ RING_DIAL_LEAD_MAX
-   *      格）——盘面随滚轮走，这就是「在左右滚动选择」的读感；松手（120ms 无事件）
-   *      回正。
-   *   ② 吸附落定：过阈 ⇒ 定向吸附（pos 缓出到整数格，RING_DIAL_SNAP_MS 档）；吸附
-   *      中途再滚 = 从当前 pos 接着吸附下一格（不重置相位 ⇒ 连拨不断链）。落定只
-   *      对齐**游标**、不切页签 —— 环是预览选择器（CR3-1「滚动≠切换」既有裁定），
-   *      真正切换由点中心位/缘位承接。
-   *   ③ 环形盘面（无端点）：pos 跨尾自动接回头，转到最后一签继续滚 = 从第一签那侧
-   *      接上 —— 「转盘」本来就是个无端的圆盘；「回弹」形态只出现在两处：预转松手
-   *      回正（120ms 无事件）与吸附落定点收口。
-   * reduced-motion：不跑动画帧，阈值一到直接落整格（设了少动效就不给补间）。
-   * 与旧「离散 + 冷却」的关系：阈值/冷却常量逐字保留（RING_WHEEL_STEP_MOUSE /
-   * RING_WHEEL_STEP_TRACKPAD / RING_MOUSE_DELTA / RING_WHEEL_COOLDOWN_MS）—— 变
-   * 的是**过阈之后怎么动**（cursor 直接跳变 → pos 吸附），不是灵敏度。 */
-  const RING_DIAL_SNAP_MS = 240;      // 吸附档时长（快跟手；展开/收起仍走 --ds-ring-dur）
-  const RING_DIAL_LEAD_MAX = 0.26;    // 未过阈预转上限（格）
-  const RING_DIAL_LEAD_IDLE_MS = 120; // 预转回正延时（松手读感）
-  let dialRaf = 0;
-  let leadTimer = 0;
-  const reduceMotion = () => {
-    try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; }
-  };
-  const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
-  /** 当前盘面位置（小数格）。 */
-  const dialPos = () => (ringState ? ringState.pos : 0);
-  /** 停一切转盘帧（收环 / 重建 / 外部换签时调）。 */
-  const stopDial = () => {
-    if (dialRaf) { cancelAnimationFrame(dialRaf); dialRaf = 0; }
-    if (leadTimer) { clearTimeout(leadTimer); leadTimer = 0; }
-    if (ringState) { ringState.anim = null; ringState.lead = 0; }
-    document.body.classList.remove('cr-spinning');
-  };
-  /** 预转（未过阈的跟手量，格；符号 = 方向）。 */
-  const setDialLead = (lead) => {
-    if (!ringState || ringState.anim) return;
-    ringState.lead = Math.max(-RING_DIAL_LEAD_MAX, Math.min(RING_DIAL_LEAD_MAX, lead));
-    ringState.pos = ringState.cursor + ringState.lead;
-    layout();
-    if (leadTimer) clearTimeout(leadTimer);
-    leadTimer = setTimeout(() => {
-      leadTimer = 0;
-      if (!ringState || ringState.anim) return;
-      ringState.lead = 0;
-      ringState.pos = ringState.cursor;
-      layout();
-    }, RING_DIAL_LEAD_IDLE_MS);
-  };
-  /** 落定：把游标对齐到整数格（**不切页签** —— 环是「预览选择器」，滚轮只移动
-   *  盘面/游标，真正的切换由点中心位（ringClickCenter）/缘位点击承接；这是
-   *  canvas-capsule-ring.spec CR3-1「滚动≠切换」既有裁定，转盘批不改它）。 */
-  const commitDial = (idx) => {
-    if (!ringState) return;
-    const n = ringState.ids.length;
-    if (!n) return;
-    const wrapped = ((idx % n) + n) % n;
-    ringState.cursor = wrapped;
-    ringState.pos = wrapped;     // 盘面归一到 [0,n)：位姿取模，视觉零跳变
-    ringState.lead = 0;
-  };
-  /** 吸附一步（dir = ±1，从当前游标算目标格；**环形**：滚到尾接回开头 ——
-   *  转盘本就是无端的圆盘，作者「在左右滚动选择」的连续性正是这条）。 */
-  const dialSnap = (dir) => {
-    if (!ringState || !dir) return;
-    const from = dialPos();
-    /* 基准 = **盘面当前所处的整格**（不是 committed cursor）：连拨时第二挥常常落在
-       上一段吸附动画中途，用 cursor 当基准会把两段动画指向同一目标 —— 读作「甩了
-       两下只走一格」。 */
-    const n0 = ringState.ids.length;
-    const base = n0 ? ((Math.round(from) % n0) + n0) % n0 : 0;
-    const target = base + dir;               // 连续 ≠ 取模：动画跨格方向要一致
-    if (reduceMotion()) {
-      ringState.anim = null;
-      ringState.lead = 0;
-      commitDial(target);
-      layout();
-      return;
-    }
-    ringState.lead = 0;
-    ringState.anim = { from, to: target, t0: performance.now(), dur: RING_DIAL_SNAP_MS };
-    document.body.classList.add('cr-spinning');
-    if (!dialRaf) dialRaf = requestAnimationFrame(dialTick);
-  };
-  /** 吸附积分器：缓出到落点（过快跟手档；边界/端点不存在 —— 环形盘面，越界即绕回，
-   *  故此处没有回弹段，回弹只出现在「预转松手回正」与「吸附落定点收口」两处）。 */
-  const dialTick = (now) => {
-    dialRaf = 0;
-    if (!ringState || !ringState.anim) { document.body.classList.remove('cr-spinning'); return; }
-    const a = ringState.anim;
-    const p = Math.min(1, Math.max(0, (now - a.t0) / a.dur));
-    if (p >= 1) {
-      ringState.anim = null;
-      document.body.classList.remove('cr-spinning');
-      commitDial(a.to);
-      layout();
-      return;
-    }
-    ringState.pos = a.from + (a.to - a.from) * easeOutCubic(p);
-    layout();
-    dialRaf = requestAnimationFrame(dialTick);
-  };
-
   const layout = () => {
     if (!ringState) return;
     anchor();                                        // 真越出批：先回锚（环开中窗口尺寸变化随动）
     syncCenterInset();                               // #926 件1：中心覆层右内缝随 pop 钮实占同步
-    const n = ringState.ids.length;                  // 盘面格数（取模基准）
+    const { ids, cursor } = ringState;
+    const n = ids.length;
     const kids = /** @type {HTMLElement[]} */ ([...root.children]);
-    /* 盘面步距（格 = 签中心距）：粗指针腿沿用行宽预算（下面 coarseMetrics），细指针
-       腿 = 胶囊实宽 + 件缝 12（桌面胶囊 180 ⇒ 192）。两者都按面板/视口实宽钳制，
-       不写死。 */
-    const metrics = coarsePointer() ? coarseMetrics() : null;
-    const fineKid = kids[Math.min(kids.length - 1, Math.max(0, ringState.cursor))];
-    /* 细指针腿的步距：胶囊实宽 + 件缝 12（180 ⇒ 192），再按**环锚实际可用的左右净空**
-       收口 —— 横排档的邻签不许探出面板（面板外就是聊天列/侧栏，读作破版；本批实测：
-       550px 窄面板 + 锚偏左 89px 时 192 步距会把左邻签推出面板左缘 34px）。净空按
-       「锚 → 面板左/右缘」两侧取小，留半签宽；下限 48（再窄就允许探出，由 CSS 的
-       cr-side 渐隐化开 —— 触屏腿那条语言在桌面档不启用，故这里只保几何不破版）。 */
-    const fineStep = (() => {
-      const cw = fineKid ? fineKid.offsetWidth : 180;
-      const pr0 = panelEl.getBoundingClientRect();
-      const ax = parseFloat(root.style.left) || (pr0.left + pr0.width / 2);
-      const room = Math.min(ax - pr0.left, pr0.right - ax);
-      return Math.max(48, Math.min(cw + 12, Math.round(room - cw / 2)));
-    })();
-    const stepPx = metrics
-      ? Math.max(48, metrics.stepX)
-      : fineStep;
+    const centerKid = cursor >= 0 && cursor < n ? kids[cursor] : null;
+    const h = centerKid ? centerKid.offsetHeight : 28;
+    const out = Math.max(8, Math.min(24, h * RING_TOP_OUT));
+    // 环锚面板纵深（真越出批视口版）= 锚视口 y − 面板视口顶（getBoundingClientRect，
+    // 对 offsetParent 链免疫，语义与旧 hdr.offsetTop + root.offsetTop 同一）；
+    // edgeY 反解自「上缘位顶 = 锚 − edgeY − h/2 = 面板顶 − out」。
+    const pr = panelEl.getBoundingClientRect();
+    const ay = parseFloat(root.style.top) || 0;
+    const edgeY = Math.max(h + 2, ay - pr.top - h / 2 + out);
     for (let i = 0; i < kids.length; i++) {
-      /* 弧距 = 有符号的**最短环距**（转盘批 2026-11-07）：pos 是连续盘面位置（整数 =
-         正对某签，小数 = 转盘角度），这里按卡数取模到 (−n/2, n/2] —— 盘面无端，
-         转到尾自然接回头（作者「在左右滚动选择」的连续感就来自这条连续量：pos 是
-         0.37 时签就横移 0.37 格，而不是等跨阈值才跳一格）。 */
-      const relRaw = (i - dialPos()) % n;
-      let rel = relRaw > n / 2 ? relRaw - n : relRaw < -n / 2 ? relRaw + n : relRaw;
-      /* 双卡方向感知（作者令 2026-10-26「卡片数 <3 也要能正常滚动/切换」，轴换横排
-         后语义逐字保留）：n=2 时环距取模恒落同一侧 ⇒ 换选前后位姿集合不变，读作
-         「弹回自己」。改：非游标签驻 lastDir 侧（滚回来 = 它从那一侧来），单步即
-         真「滚一格」。≥3 卡取模本就覆盖两侧，不走本档。 */
-      if (n === 2 && rel !== 0 && ringState.lastDir) rel = ringState.lastDir === -1 ? -1 : 1;
+      let rel = (i - cursor + n) % n;
+      if (rel > n / 2) rel -= n;
+      /* 双卡方向感知档（作者令 2026-10-26「卡片数 <3 也要能正常滚动/切换」）：
+       * n=2 时环距取模恒落 +1（下方）——两卡来回换选的位姿集合不变，视觉读作
+       * 「弹回自己」。改：非游标胶囊驻 lastDir 侧（滚上来 = 它从上方来，滚下去
+       * = 从下方来），单步动画 = 真「滚一格」；≥3 卡模运算本就覆盖上下两侧，不
+       * 走本档（动画按实际卡数退化，不强求三卡）。 */
+      if (n === 2 && rel !== 0) rel = ringState.lastDir === -1 ? -1 : 1;
       const ar = Math.abs(rel);
       const k = kids[i];
-      /* 档位类（is-center/is-edge/is-far 与触屏腿的 cr-side-*）按**整数盘位**判，
-         不按小数位姿判（转盘批 2026-11-07 手感收口）：盘面在跟手/吸附途中是连续
-         小数，若这些类也跟着连续翻转，「哪一枚是中心」会在旋转中途闪断一次、邻签
-         宽度也会跳档（实测：阈下 0.065 格的预转就翻了一次 is-edge→is-far）。档位
-         归位到最近的整格 = 只在吸附落点换挡；位姿（--cr-x/--cr-ry/--cr-z）照旧走
-         连续值，转动本身仍是逐帧连续的。 */
-      const posInt = Math.round(dialPos());
-      const relIntRaw = (i - posInt) % n;
-      let relInt = relIntRaw > n / 2 ? relIntRaw - n : relIntRaw < -n / 2 ? relIntRaw + n : relIntRaw;
-      if (n === 2 && relInt !== 0 && ringState.lastDir) relInt = ringState.lastDir === -1 ? -1 : 1;
-      const arInt = Math.abs(relInt);
-      const setCls = (el, name, on) => { if (el.classList.contains(name) !== on) el.classList.toggle(name, on); };
-      setCls(k, 'is-center', arInt < 0.5);
-      setCls(k, 'is-edge', arInt >= 0.5 && arInt < 1.5);
-      setCls(k, 'is-far', arInt >= 1.5);
+      k.classList.toggle('is-center', rel === 0);
+      k.classList.toggle('is-edge', ar === 1);
+      k.classList.toggle('is-far', ar > 1);
       const side = rel < 0 ? -1 : 1;
+      /* ── 位姿两档（作者令 2026-11-05 12:10：上下展开 → 横向展开）────────────
+       * 细指针 = 竖环（旧腿逐字不变）：--cr-y / --cr-rx / 弧深 edgeY。
+       * 粗指针 = 横排（触屏腿）：--cr-x / --cr-ry，纵向恒 0 —— 整排与标题头
+       *   同一条水平带（与手机层 `.mf-strip` 的「全组纸签严格同一水平线」同规），
+       *   相邻签的中心距 = stepX（= 胶囊宽 + 件缝，受视口宽钳制：极窄横屏
+       *   （768 宽）时 stepX 收到 120，保证 3 枚 180 胶囊不出视口）。
+       * rotateY 反号等幅 = 横圆柱同侧曲率（左邻右缘退后、右邻对称），与竖环的
+       * rotateX 反号同构；透视仍由 .capsule-ring 自身 perspective 提供。
+       * --cr-z 横排档只留 −40/−90（竖环的 −110/−230 配 rotateX 34° 的深度语言，
+       * 横排放大后会把邻签压得过小，字读不清 —— 与手机层「邻签有效字号 ≥13px」
+       * 的同一条可读性下限对齐）。 */
       if (coarsePointer()) {
-        const { centerW, edgeW, iconOnly } = metrics;
-        const w = arInt < 0.5 ? centerW : edgeW;
+        /* 横排档的**行宽预算**（按面板实宽，不是视口宽 —— 面板常与聊天列分屏，
+           844 横屏下实测只剩 ~315px）。三级降级（作者第④条「宽度不够时的降级
+           策略写明」，与标签截断降级同向）：
+             ① 理想档：中心签 180（= 桌面胶囊原寸）+ 邻签 0.72 × 中心 = 130；
+             ② 面板不够 ⇒ 先压**邻签**（下限 56 = 够放图标 + 2 字），中心签不动
+                —— 中心签是辨识主体（与手机层「中签大、邻签小」同比例语义）；
+             ③ 仍不够 ⇒ 再压中心签（下限 120），保证整排落在面板内。
+           落到面板缘外的邻签段由 CSS 横排档的**方向渐隐**（cr-side-l/r）化开，
+           读作「环还在往两边排」而不是被硬裁 —— 与手机层 `.mf-strip` 邻签
+           「朝外一侧连续化开」的既有语言同源（作者令 2026-11-02 21:47）。
+           中心签永不越出面板，故「当前文档名」这一枚在任何宽度下都完整可点。 */
+        const panelW = panelEl.clientWidth || window.innerWidth;
+        const GAP = 8;                                        // 胶囊件缝
+        const ICON_CHIP = 40;                                 // 图标档邻签宽（14 图标 + 内衬）
+        const TEXT_EDGE = 72;                                 // 文字档邻签下限（够放图标 + 3 字）
+        /* 行宽只吃「面板左右浮钮带之间」的净空（✕ / 堆叠钮各 40 + 边距 12 + 呼吸 6
+           = 单侧 58）：横排档与桌面浮钮同处一条顶带，压上去就是作者第⑤条说的那种
+           「叠在一起」。 */
+        const band = Math.max(96, Math.min(panelW - 2 * 58, panelW - 24));
+        let centerW = 180;
+        let edgeW = 0;
+        let iconOnly = false;
+        if (band >= 180 + 2 * TEXT_EDGE + 2 * GAP) {
+          // ① 理想档：中心签 = 桌面原寸 180，邻签文字档（收在剩余净空内）
+          edgeW = Math.min(Math.round(centerW * 0.72), Math.round((band - centerW) / 2 - GAP));
+        } else {
+          // ② 图标档：净空只够塞两枚图标签 ⇒ 邻签转图标，中心签吃满余量（≥96）
+          iconOnly = true;
+          edgeW = ICON_CHIP;
+          centerW = Math.max(96, Math.min(180, Math.round(band - 2 * edgeW - 2 * GAP)));
+          // ③ 兜底档：净空连「中心签 96 + 两枚图标签」都不够 ⇒ 只留中心签
+          if (band < 96 + 2 * ICON_CHIP + 2 * GAP) { edgeW = 0; centerW = Math.min(180, band); }
+        }
+        const stepX = centerW / 2 + edgeW / 2 + GAP;
+        const w = ar === 0 ? centerW : edgeW;
         k.style.setProperty('--cr-w', w + 'px');
-        setCls(k, 'cr-icon-only', arInt >= 0.5 && arInt < 1.5 && (iconOnly || edgeW < metrics.textEdge));
-        setCls(k, 'cr-side-l', arInt >= 0.5 && arInt < 1.5 && side < 0);
-        setCls(k, 'cr-side-r', arInt >= 0.5 && arInt < 1.5 && side > 0);
+        k.classList.toggle('cr-icon-only', ar === 1 && (iconOnly || edgeW < TEXT_EDGE));
+        k.classList.toggle('cr-side-l', ar === 1 && side < 0);
+        k.classList.toggle('cr-side-r', ar === 1 && side > 0);
+        const x = rel === 0 ? 0 : side * (ar === 1 ? stepX : stepX * 2);
+        k.style.setProperty('--cr-x', x.toFixed(1) + 'px');
+        k.style.setProperty('--cr-y', '0px');
+        k.style.setProperty('--cr-rx', '0deg');
+        k.style.setProperty('--cr-ry', String(rel === 0 ? 0 : -side * (ar === 1 ? 24 : 38)) + 'deg');
+        k.style.setProperty('--cr-z', (ar === 0 ? 0 : ar === 1 ? -40 : -90) + 'px');
       } else {
         k.style.removeProperty('--cr-w');
-        /* 桌面腿：只清触屏腿专属类，且**只在真的带着时才清** —— 无条件
-           classList.remove(...) 在部分引擎上会写一次同值 class 属性，惊动
-           MutationObserver（实测：阈下 12px 预转被判成「换选了一次」）。 */
-        if (k.classList.contains('cr-side-l') || k.classList.contains('cr-side-r')
-          || k.classList.contains('cr-icon-only')) {
-          k.classList.remove('cr-side-l', 'cr-side-r', 'cr-icon-only');
-        }
+        k.classList.remove('cr-side-l', 'cr-side-r', 'cr-icon-only');
+        const y = rel === 0 ? 0 : side * (ar === 1 ? edgeY : edgeY * 2);
+        k.style.setProperty('--cr-x', '0px');
+        k.style.setProperty('--cr-y', y.toFixed(1) + 'px');
+        k.style.setProperty('--cr-z', (ar === 0 ? 0 : ar === 1 ? -110 : -230) + 'px');
+        /* rotateX(+θ) = 顶边远离视者（CSS y 轴向下 ⇒ 顶部 y<0 ⇒ z' = y·sinθ < 0）：
+           上缘位（侧 −1）取 +34°（顶边后仰 = 竖圆柱外侧曲率），下缘位取 −34°
+           （底边后仰）—— 反号等幅，双缘同读作「圆柱外侧」。 */
+        k.style.setProperty('--cr-rx', String(rel === 0 ? 0 : -side * (ar === 1 ? 34 : 44)) + 'deg');
+        k.style.setProperty('--cr-ry', '0deg');
       }
-      /* 位姿两档同轴（转盘批 2026-11-07）：横轴 = 连续距离 × 步距（跟手/吸附/回弹
-         全部落在这一条式子上 —— 盘面转多少，签就横移多少）；rotateY 反号等幅 =
-         横圆柱同侧曲率；深度/模糊/透明度档由 CSS 分腿给（触屏腿可读性收档，细指针
-         腿取令牌原值）。纵向位姿恒 0（--cr-y / --cr-rx 保留变量名但落零：旧竖环
-         的读数面不被拆掉，axis 换向由本条单点完成）。 */
-      const clampRel = Math.max(-1, Math.min(1, rel));
-      k.style.setProperty('--cr-x', (rel * stepPx).toFixed(1) + 'px');
-      k.style.setProperty('--cr-y', '0px');
-      k.style.setProperty('--cr-rx', '0deg');
-      k.style.setProperty('--cr-ry', (ar < 0.5 ? 0 : -clampRel * 24).toFixed(1) + 'deg');
-      k.style.setProperty('--cr-z', (ar < 0.5 ? 0 : ar < 1.5 ? -40 : -90) + 'px');
     }
     fillCapsuleNames();
-    /* 盘面位置回显（转盘批 2026-11-07 12:15）：把连续游标写到环层 data-pos 上，
-       供取证/机械断言逐帧读数（成因同 body.cr-spinning —— 只在环层写属性，不碰
-       胶囊 class，不惊动观察胶囊 class 的既有探针）。 */
-    root.dataset.pos = dialPos().toFixed(3);
   };
 
   /** 粗指针腿的标签填充：按**实时可用宽**切「头 … 尾」（切法单源 = capsuleLabel.js）。
@@ -4593,19 +4458,12 @@ function initCapsuleRing() {
       if (accY >= thr) dir = 1; else if (accY <= -thr) dir = -1;
       if (dir) accY = 0;
     }
-    if (dir) {                                // 单次过阈恰转一格（余量清零 —— 事件不跨账）
-      ringState.lastDir = dir;
+    if (dir) {                                // 单次过阈恰切一格（余量清零 —— 事件不跨账）
+      ringState.cursor = (ringState.cursor + dir + n) % n;
+      ringState.lastDir = dir;                // 双卡方向感知档：非游标胶囊驻来向侧（layout 消费）
       wheelLockUntil = now + RING_WHEEL_COOLDOWN_MS;
-      dialSnap(dir);                          // 转盘吸附（落定即选，见 dialSnap 注）
-      return;
+      layout();
     }
-    /* 未过阈：**跟手预转**（「转盘的感觉」①件，作者令 2026-11-07 12:15）—— 盘面
-       按累积方向/比例先走一段（上限 RING_DIAL_LEAD_MAX 格），滚轮未过阈就有「在转」
-       的读感；120ms 无新事件即回正（松手回弹）。反向清账由上面的 acc/accY 归零
-       逻辑承担，吸附动画进行中不抢相位。 */
-    if (ringState.anim) return;
-    const main = Math.abs(dx) > Math.abs(dy) ? acc : accY;
-    setDialLead((main / thr) * RING_DIAL_LEAD_MAX);
   };
   const onDocPointerLeft = (e) => { if (ringState && !e.relatedTarget) closeRing(); }; // 离窗即收
 
@@ -4614,10 +4472,7 @@ function initCapsuleRing() {
     if (deck.open) return;                         // deck 态：叠卡有自己的环卡滚轮语义，不开环
     if (tabs.size < 2) return;                     // 单胶囊：平时态即全部，无环可展
     const all = [...tabs.keys()];
-    const cur0 = Math.max(0, all.indexOf(activeTabId));
-    // 转盘批（2026-11-07 12:15）：游标附带**连续盘面位置** pos（= 小数格）、预转量
-    // lead 与吸附动画槽 anim —— 开环即落在当前激活签上（pos = cursor，零漂移）。
-    ringState = { ids: all, cursor: cur0, lastDir: 1, pos: cur0, lead: 0, anim: null, spinCommit: false };
+    ringState = { ids: all, cursor: Math.max(0, all.indexOf(activeTabId)), lastDir: 1 };
     acc = 0;
     accY = 0;
     wheelLockUntil = 0;                            // 新环新账：开环清冷却（上次环的余威不作废新环第一挥）
@@ -4655,7 +4510,6 @@ function initCapsuleRing() {
   };
   const closeRing = () => {
     if (!ringState) return;
-    stopDial();                 // 转盘批：收环即停吸附帧/预转回正定时（无悬挂 rAF）
     ringState = null;
     hdr.classList.remove('ring-open');
     root.classList.remove('open');
@@ -4707,12 +4561,6 @@ function initCapsuleRing() {
       ringState.ids = ids;
     }
     ringState.cursor = Math.max(0, ids.indexOf(activeTabId));
-    // 转盘批（2026-11-07 12:15）：常驻档的重绘出口把盘面重钉到激活签（同
-    // canvas-tab-switched 口径：外部换签 ⇒ pos = cursor，零残余预转/吸附）。
-    if (!ringState.spinCommit) {
-      stopDial();
-      ringState.pos = ringState.cursor;
-    }
     root.classList.add('steady');
     anchor();
     layout();
@@ -4749,14 +4597,6 @@ function initCapsuleRing() {
     if (pt && !deck.open && tabs.size >= 2 && inHoverZone(pt.x, pt.y)) {
       ringState.ids = [...tabs.keys()];
       ringState.cursor = Math.max(0, ringState.ids.indexOf(activeTabId));
-      // 转盘批（2026-11-07 12:15）：外部换签（点击/手势/dispatch）⇒ 盘面直接归位到
-      // 新签（pos = cursor），并停掉在跑的吸附帧 —— 本环自己吸附落定引发的切换
-      // （spinCommit）已在 commitDial 里把 pos 写成整数目标，这里只做一致性收口，
-      // 不再二次重置（否则落定最后一帧会被打回原位，读作「弹回上一个」）。
-      if (!ringState.spinCommit) {
-        stopDial();
-        ringState.pos = ringState.cursor;
-      }
       acc = 0;
       accY = 0;
       wheelLockUntil = 0;      // 点击/手势换签 = 明确意图：清冷却，滚轮即时可再换选
@@ -4775,11 +4615,6 @@ function initCapsuleRing() {
       if (!ringState) return;
       if (tabs.size < 2) { closeRing(); return; }
       ringState.cursor = Math.min(ringState.cursor, tabs.size - 1);
-      // 转盘批（2026-11-07 12:15）：关签 = 页签集重建，盘面位置随之重钉到游标
-      //（pos 若停在旧格数上，重建后余下的签会被读成「转盘停在半格」）。
-      stopDial();
-      ringState.pos = ringState.cursor;
-      ringState.lead = 0;
       build();
       anchor();
       layout();
