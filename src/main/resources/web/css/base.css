@@ -37,7 +37,13 @@
        柔影**（对方 = --color-bubble-ai 亮 #fff / 暗 #1c1f27）。
      · 正文色不在此处：.bubble.user 仍吃 --color-text（亮档深字 / 暗档浅字），
        两种主题下对比度随主题自动成立。 */
-  --color-bubble-user: #ecebe7;
+  --color-bubble-user: #95ec69;
+  /* 我方气泡**正文色**（bubble-contrast 批 2026-11-07 14:37，作者令逐字「气泡的
+     样式就换成之前的助手白色 用户绿色不行吗 现在太难看清楚了」）：
+     绿底 (#95ec69, L≈0.673) 上放本主题的浅字（暗档 --color-text #e8eaed）对比只有
+     1.21:1 —— 这正是「看不清」的机械原因。故我方气泡正文**两档一律深墨绿字**，
+     不随主题翻浅；对方白气泡仍吃 --color-text（亮深/暗浅，各自成立）。 */
+  --nf-bub-ours-ink: var(--color-text);
 
   /* ── 状态载体 token（ui-status-redesign 批，2026-10-05 作者拍板分叉①=A）──
      铁律一「语义色只上载体，不上正文」：红/黄/绿仅允许出现在图标/圆点/描边/
@@ -132,9 +138,12 @@ body {
     --color-bg: #13161c;
     --color-surface: #1c1f27;
     --color-bubble-ai: #1c1f27;
-    /* 我方气泡暗档（bubble-palette 批 2026-11-07，同亮档出处）：中性深档（无蓝调），
-       比对方暗底 #1c1f27 亮一档，靠明度差/位置区分；正文吃 --color-text=#e8eaed。 */
-    --color-bubble-user: #33312d;
+    /* 我方气泡暗档（bubble-contrast 批 2026-11-07）：绿值与亮档**同值**（回到改动前
+       那套，作者第三次指令「用户绿色」）；不刺眼靠 97% α 实底与小面积气泡本身，
+       不改色相/不换档。正文改深墨绿字（下方 --nf-bub-ours-ink）——暗档若沿用
+       #e8eaed 浅字，绿底对比只有 1.21:1（就是作者说的看不清）。 */
+    --color-bubble-user: #95ec69;
+    --nf-bub-ours-ink: #12240d;
     --color-text: #e8eaed;
     --color-text-muted: #7b7e88;
     --color-text-dim: #9ba0aa;

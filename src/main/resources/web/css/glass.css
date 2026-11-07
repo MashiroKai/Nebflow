@@ -311,18 +311,18 @@ html[data-theme="light"] {
    本块之外任何文件给气泡面写背景色 = 违规（门禁 R2/R3）。 */
 .bubble { background: var(--nf-bub-ours-bg); }
 .bubble.theirs { background: var(--nf-bub-theirs-bg); }
-/* 旧角色类名 → 归属方：`peer` = 对方（会话窗入向）；`user`/`ai` 一律我方
-   （`.ai` = 我方 Agent 回复 ⇒ 绿）。`.injected` 注入行是**通知面**不是「我发
-   出去的话」——作者 2026-11-06 20:09 令（终态通知 FAILED 也绿=成功色，语义即错）
-   回归改前 sapphire tint（原值原样，非第三种对话底色；门禁 carve 在
-   check-bubble-side.mjs R2 精确点名该选择器）。 */
-.bubble.user,
-.bubble.ai { background: var(--nf-bub-ours-bg); }
+/* 旧角色类名 → 归属方（bubble-final 批 2026-11-07 14:37 作者令逐字「气泡的样式就
+   换成之前的助手白色 用户绿色不行吗 现在太难看清楚了」——这是对本块 2026-11-06
+   「Agent 也算我方」口径的**直接推翻**：现在归属 = **作者本人（用户）vs 助手**，
+   用户绿、助手白。`peer`（好友/群/设备会话窗的对方）仍 = 白，与助手同档；
+   `injected` 注入行是通知面，仍走 sapphire 淡染（门禁 carve 在 R2 精确点名）。 */
+.bubble.user { background: var(--nf-bub-ours-bg); }
 .bubble.injected { background: rgb(var(--sapphire) / 0.12); }
+.bubble.ai,
 .bubble.peer { background: var(--nf-bub-theirs-bg); }
 /* dropbox 面（自有类族，未挂 .bubble）：同一判据的镜像——`.out` = 我方。 */
-.dropbox-msg .dropbox-msg-bubble { background: var(--nf-bub-ours-bg); }
-.dropbox-msg.in .dropbox-msg-bubble { background: var(--nf-bub-theirs-bg); }
+.dropbox-msg .dropbox-msg-bubble { background: var(--nf-bub-ours-bg); color: var(--nf-bub-ours-ink); }
+.dropbox-msg.in .dropbox-msg-bubble { background: var(--nf-bub-theirs-bg); color: var(--color-text); }
 /* 媒体卡面镜像**本向**气泡（作者令 2026-11-04「社交窗口对话 气泡颜色不统一
    应该和文字的气泡一个颜色」；本批再收一档：出向 = 我方绿）。 */
 .row.user-media .pop-media-flat,

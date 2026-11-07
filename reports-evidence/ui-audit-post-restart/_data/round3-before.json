@@ -1,0 +1,146 @@
+{
+ "label": "before",
+ "route": false,
+ "runs": {
+  "light-mobile": {
+   "pageBg": "rgb(245, 246, 248)",
+   "ours": {
+    "sel": ".bubble.user",
+    "text": "现在怎么一直在弹这个啊，还有审计一下",
+    "fg": "rgb(27, 30, 38)",
+    "bg": "rgb(149, 236, 105)",
+    "fontSize": "17px",
+    "weight": "400",
+    "contrast": 11.49,
+    "box": [
+     85,
+     -8022,
+     274,
+     152
+    ]
+   },
+   "theirs": {
+    "sel": ".bubble.ai",
+    "text": "",
+    "fg": "rgb(27, 30, 38)",
+    "bg": "rgb(245, 246, 248)",
+    "fontSize": "17px",
+    "weight": "400",
+    "contrast": 15.41,
+    "box": [
+     16,
+     -8875,
+     76,
+     33
+    ]
+   },
+   "inner": {},
+   "meta": null
+  },
+  "light-desktop": {
+   "pageBg": "rgb(245, 246, 248)",
+   "ours": {
+    "sel": ".bubble.user",
+    "text": "现在怎么一直在弹这个啊，还有审计一下",
+    "fg": "rgb(27, 30, 38)",
+    "bg": "rgb(149, 236, 105)",
+    "fontSize": "14.5px",
+    "weight": "400",
+    "contrast": 11.49,
+    "box": [
+     420,
+     -5294,
+     438,
+     87
+    ]
+   },
+   "theirs": {
+    "sel": ".bubble.ai",
+    "text": "",
+    "fg": "rgb(27, 30, 38)",
+    "bg": "rgb(245, 246, 248)",
+    "fontSize": "13px",
+    "weight": "400",
+    "contrast": 15.41,
+    "box": [
+     310,
+     -5818,
+     76,
+     33
+    ]
+   },
+   "inner": {},
+   "meta": null
+  },
+  "dark-mobile": {
+   "pageBg": "rgb(19, 22, 28)",
+   "ours": {
+    "sel": ".bubble.user",
+    "text": "现在怎么一直在弹这个啊，还有审计一下",
+    "fg": "rgb(17, 17, 17)",
+    "bg": "rgb(149, 236, 105)",
+    "fontSize": "17px",
+    "weight": "400",
+    "contrast": 13.02,
+    "box": [
+     85,
+     -8022,
+     274,
+     152
+    ]
+   },
+   "theirs": {
+    "sel": ".bubble.ai",
+    "text": "",
+    "fg": "rgb(17, 17, 17)",
+    "bg": "rgb(19, 22, 28)",
+    "fontSize": "17px",
+    "weight": "400",
+    "contrast": 1.04,
+    "box": [
+     16,
+     -8875,
+     76,
+     33
+    ]
+   },
+   "inner": {},
+   "meta": null
+  },
+  "dark-desktop": {
+   "pageBg": "rgb(19, 22, 28)",
+   "ours": {
+    "sel": ".bubble.user",
+    "text": "现在怎么一直在弹这个啊，还有审计一下",
+    "fg": "rgb(17, 17, 17)",
+    "bg": "rgb(149, 236, 105)",
+    "fontSize": "14.5px",
+    "weight": "400",
+    "contrast": 13.02,
+    "box": [
+     420,
+     -5294,
+     438,
+     87
+    ]
+   },
+   "theirs": {
+    "sel": ".bubble.ai",
+    "text": "",
+    "fg": "rgb(17, 17, 17)",
+    "bg": "rgb(19, 22, 28)",
+    "fontSize": "13px",
+    "weight": "400",
+    "contrast": 1.04,
+    "box": [
+     310,
+     -5818,
+     76,
+     33
+    ]
+   },
+   "inner": {},
+   "meta": null
+  }
+ }
+}
