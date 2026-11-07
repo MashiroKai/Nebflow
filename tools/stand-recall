@@ -402,11 +402,17 @@ CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
 """
 
 
-def open_db(db_path: str) -> sqlite3.Connection:
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
-    con = sqlite3.connect(db_path, timeout=10)
+def open_db(db_path: str, readonly: bool = False) -> sqlite3.Connection:
+    if readonly:
+        if not os.path.isfile(db_path):
+            raise FileNotFoundError(f"read-only history index does not exist: {db_path}")
+        uri = "file:" + os.path.abspath(db_path).replace("?", "%3f") + "?mode=ro"
+        con = sqlite3.connect(uri, uri=True, timeout=10)
+    else:
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        con = sqlite3.connect(db_path, timeout=10)
+        con.executescript(DDL)
     con.row_factory = sqlite3.Row
-    con.executescript(DDL)
     con.execute("PRAGMA busy_timeout=10000")
     return con
 
@@ -695,6 +701,7 @@ def main(argv=None):
                     help="关闭近因加权（纯 BM25 排序，A/B 对照用）")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--db", help="库路径（默认 <data-root>/memory-db/memory.db）")
+    ap.add_argument("--readonly", action="store_true", help="以 SQLite 只读方式打开现有索引；不建库、不写入")
     ap.add_argument("--data-root", help="数据根（默认 STAND_DATA_ROOT env，再默认 ~/.stand）")
     ap.add_argument("--source", choices=["manual", "auto"], default="manual",
                     help="更新来源标记（auto=引擎守护自动触发；只写元数据，--stats 可见）")
@@ -704,7 +711,11 @@ def main(argv=None):
         args.data_root or os.environ.get("STAND_DATA_ROOT") or "~/.stand"
     )
     db_path = os.path.expanduser(args.db) if args.db else os.path.join(data_root, "memory-db", "memory.db")
-    con = open_db(db_path)
+    if args.readonly and (args.update or args.rebuild or args.stats or args.doctor):
+        ap.error("--readonly is only valid for query-only searches")
+    if args.readonly and not os.path.isfile(db_path):
+        ap.error("--readonly requires an existing history index")
+    con = open_db(db_path, readonly=args.readonly)
     try:
         if args.rebuild or args.update:
             if args.rebuild:

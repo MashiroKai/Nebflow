@@ -188,6 +188,8 @@ object ToolRegistry:
       // RootOrchestrationTools 单点 + RootExclusiveTools 防声明逃逸；插件白名单
       // 与 remoteableTools 均不含本件。
       "TaskSearch" -> TaskSearchTool,
+      // Nebula-root-only on-demand history lookup; no plugin or remoteable authorization.
+      "ConversationSearch" -> ConversationSearchTool,
       // ── Canvas ask mode（2026-10-28 实施批，机制稿 §5；2026-10-31 换装批）───
       // ask 会话白名单封闭枚举（AskSessions.AllowedTools = ask 专属两件 + 只读
       // 五件 Read/Glob/Grep/WebSearch/WebFetch——后者即 SubagentFixedTools 同源，
