@@ -16,8 +16,9 @@
 //     S1 首次异步渲染全过程逐帧采样：外层 #canvas-panel / #canvas-slide /
 //        #canvas-content / .canvas-tab-pane / #main / #chat **零变化**（Δ=0），
 //        并打印 before/after bounds 读数
-//     S2 图槽高度有硬上界（≤ --nf-figure-max-h）：长图不许把文档/卡片撑大
-//     S3 长图未被裁掉（槽内可滚到整图）
+//     S2 图槽＝图片位（mermaid-inline-center 批 2026-11-07 改制）：长图整幅落在
+//        槽内、槽内零滚动；外壳高度仍然零变化（S1/S5）
+//     S3 长图未被裁掉且槽内零滚动（scrollH == clientH）
 //     S4 宽图落在内容列宽内
 //     S5 连渲（一次 6 张）+ 主题切换后：外层零变化；图块高度零变化
 //     S6 主题切换确实重画了（旧主题产物不得残留），且重画期间槽高不塌
@@ -371,7 +372,6 @@ const SLOT_READ = (needle) => {
   const br = el.getBoundingClientRect();
   const bb = body ? body.getBoundingClientRect() : null;
   const sr = svg ? svg.getBoundingClientRect() : null;
-  const tok = getComputedStyle(document.documentElement).getPropertyValue('--nf-figure-max-h').trim();
   return {
     state: el.getAttribute('data-mermaid-state'),
     blockH: Math.round(br.height),
@@ -382,20 +382,9 @@ const SLOT_READ = (needle) => {
     svgW: sr ? Math.round(sr.width) : 0,
     svgH: sr ? Math.round(sr.height) : 0,
     svgAspect: sr && sr.height ? Math.round((sr.width / sr.height) * 100) / 100 : 0,
-    token: tok,
     openBtn: !!el.querySelector('.nf-figure-open'),
     hasSvg: !!svg,
   };
-};
-
-/** --nf-figure-max-h 的像素真值（用于「上界」断言）。 */
-const MAXH_PX = () => {
-  const probe = document.createElement('div');
-  probe.style.cssText = 'position:absolute;visibility:hidden;height:var(--nf-figure-max-h);';
-  document.body.appendChild(probe);
-  const v = probe.getBoundingClientRect().height;
-  probe.remove();
-  return Math.round(v);
 };
 
 const browser = await chromium.launch();
@@ -404,7 +393,6 @@ try {
   /* ══════════════ 桌面 1440：气泡面 + Canvas 面 ══════════════ */
   const { ctx, page, pageErrors, consoleErrors, reqs, sendHistory } = await boot(browser, { width: 1440, height: 900, dark: false, recordVideo: true });
   await settleLayout(page);
-  const maxH = await page.evaluate(MAXH_PX);
   await page.evaluate(INSTALL_SAMPLER);
 
   /* ── S1 气泡面首次异步渲染：外层逐帧零变化 ───────────────────────── */
@@ -429,21 +417,25 @@ try {
     'S1b 同一过程 #main / #chat 列盒零变化',
     `main maxDelta=${chatMain.maxDelta}px / chat maxDelta=${chatCol.maxDelta}px`);
 
-  /* ── S2/S3/S4 气泡面：长图/宽图槽几何 ────────────────────────────── */
+  /* ── S2/S3/S4 气泡面：长图/宽图槽几何 ──────────────────────────────
+     mermaid-inline-center 批 2026-11-07：图槽＝图片位（作者令「直接像个图片一样
+     嵌入在文档里，不需要可以上下滚动」）⇒ 上一批的 `--nf-figure-max-h` 上界与
+     `overflow:auto` 已退役。同一条稳定判据改成「整幅在槽内、槽内零滚动」：
+     裁图与内滚都不许出现，高度随图展开（外壳仍由 S1/S5 钉零变化）。 */
   const tallSlot = await page.evaluate(SLOT_READ, '步骤 0] --> T1');
   const wideSlot = await page.evaluate(SLOT_READ, '环节 0] --> W1');
   ok(!!tallSlot && tallSlot.state === 'done' && tallSlot.hasSvg, `S2a 纵向长图渲染成功（state=${tallSlot && tallSlot.state}）`);
-  ok(!!tallSlot && tallSlot.slotH > 0 && tallSlot.slotH <= maxH + 1,
-    `S2b 纵向长图槽高有硬上界（实测 ${tallSlot && tallSlot.slotH}px ≤ 上界 ${maxH}px / token=${tallSlot && tallSlot.token}）`);
-  ok(!!tallSlot && tallSlot.slotScrollH > tallSlot.slotClientH + 2,
-    `S3 长图未被裁掉：槽内可滚到整图（槽内容 ${tallSlot && tallSlot.slotScrollH}px > 槽视口 ${tallSlot && tallSlot.slotClientH}px；svg ${tallSlot && tallSlot.svgW}x${tallSlot && tallSlot.svgH}）`);
+  ok(!!tallSlot && tallSlot.slotH > 0 && Math.abs(tallSlot.slotH - tallSlot.svgH) <= 1,
+    `S2b 纵向长图整幅落在槽内（槽 ${tallSlot && tallSlot.slotH}px = 图 ${tallSlot && tallSlot.svgH}px）`);
+  ok(!!tallSlot && Math.abs(tallSlot.slotScrollH - tallSlot.slotClientH) <= 1,
+    `S3 长图未被裁掉且槽内零滚动（槽内容 ${tallSlot && tallSlot.slotScrollH}px = 槽视口 ${tallSlot && tallSlot.slotClientH}px；svg ${tallSlot && tallSlot.svgW}x${tallSlot && tallSlot.svgH}）`);
   ok(!!wideSlot && wideSlot.svgW > 0 && wideSlot.slotW > 0 && wideSlot.svgW <= wideSlot.slotW + 1,
     `S4 横向宽图落在内容列宽内（图 ${wideSlot && wideSlot.svgW}px ≤ 槽 ${wideSlot && wideSlot.slotW}px）`);
-  ok(!!tallSlot && tallSlot.blockH <= maxH + 40, `S2c 图块（含四邻留白）不超上界（${tallSlot && tallSlot.blockH}px ≤ ${maxH + 40}px）`);
+  ok(!!tallSlot && tallSlot.blockH >= tallSlot.slotH, `S2c 图块含整幅图（块 ${tallSlot && tallSlot.blockH}px ≥ 槽 ${tallSlot && tallSlot.slotH}px）`);
 
-  /* ── 取证：修前/修后对照（同一页、同一张图、只切「槽高上界」这一条）───────
-     不做两套环境：把 token 换成 none = 修前的无上界几何，同一渲染链路上拍第二张，
-     差别只可能来自这条修复。同时拍一张「角标悬停可见」的近景。 */
+  /* ── 取证：修前/修后对照（同一页、同一张图、只切「槽内滚动」这一条）──────
+     不做两套环境：临时把内滚盒扣回槽上（max-height + overflow:auto = 上一批的
+     几何），同一渲染链路上拍第二张，差别只可能来自这条改动。 */
   const chatClip = await page.evaluate(() => {
     const el = [...document.querySelectorAll('#chat .nf-mermaid')].find((b) => (b.getAttribute('data-mermaid-src') || '').includes('步骤 0] --> T1'));
     if (!el) return null;
@@ -453,17 +445,33 @@ try {
   });
   await page.waitForTimeout(300);
   if (chatClip) {
-    await page.screenshot({ path: join(SHOTS_DIR, 'after-chat-capped.png'), clip: chatClip });
-    const beforeH = await page.evaluate(() => { const el = [...document.querySelectorAll('#chat .nf-mermaid')].find((b) => (b.getAttribute('data-mermaid-src') || '').includes('步骤 0] --> T1')); const b = el.querySelector('.nf-mermaid-body'); return Math.round(b.getBoundingClientRect().height); });
-    await page.evaluate(() => { document.documentElement.style.setProperty('--nf-figure-max-h', 'none'); });
+    await page.screenshot({ path: join(SHOTS_DIR, 'after-chat-inline.png'), clip: chatClip });
+    const beforeH = await page.evaluate(() => {
+      const el = [...document.querySelectorAll('#chat .nf-mermaid')].find((b) => (b.getAttribute('data-mermaid-src') || '').includes('步骤 0] --> T1'));
+      const b = el.querySelector('.nf-mermaid-body');
+      return Math.round(b.getBoundingClientRect().height);
+    });
+    await page.evaluate(() => {
+      const el = [...document.querySelectorAll('#chat .nf-mermaid')].find((b) => (b.getAttribute('data-mermaid-src') || '').includes('步骤 0] --> T1'));
+      const b = el.querySelector('.nf-mermaid-body');
+      b.style.maxHeight = '480px'; b.style.overflow = 'auto';
+    });
     await page.waitForTimeout(400);
-    const uncappedH = await page.evaluate(() => { const el = [...document.querySelectorAll('#chat .nf-mermaid')].find((b) => (b.getAttribute('data-mermaid-src') || '').includes('步骤 0] --> T1')); const b = el.querySelector('.nf-mermaid-body'); return Math.round(b.getBoundingClientRect().height); });
-    await page.screenshot({ path: join(SHOTS_DIR, 'before-chat-uncapped.png'), clip: chatClip });
-    await page.evaluate(() => { document.documentElement.style.removeProperty('--nf-figure-max-h'); });
+    const cappedH = await page.evaluate(() => {
+      const el = [...document.querySelectorAll('#chat .nf-mermaid')].find((b) => (b.getAttribute('data-mermaid-src') || '').includes('步骤 0] --> T1'));
+      const b = el.querySelector('.nf-mermaid-body');
+      return Math.round(b.getBoundingClientRect().height);
+    });
+    await page.screenshot({ path: join(SHOTS_DIR, 'before-chat-scrollbox.png'), clip: chatClip });
+    await page.evaluate(() => {
+      const el = [...document.querySelectorAll('#chat .nf-mermaid')].find((b) => (b.getAttribute('data-mermaid-src') || '').includes('步骤 0] --> T1'));
+      const b = el.querySelector('.nf-mermaid-body');
+      b.style.maxHeight = ''; b.style.overflow = '';
+    });
     await page.waitForTimeout(300);
-    summary.stability.gallery = { cappedSlotH: beforeH, uncappedSlotH: uncappedH, field: '--nf-figure-max-h' };
-    ok(uncappedH > beforeH + 100,
-      `S2e 上界确实是那条分界（同一页去掉 token 槽高 ${beforeH}px → ${uncappedH}px）`);
+    summary.stability.gallery = { inlineSlotH: beforeH, scrollBoxSlotH: cappedH, field: 'max-height/overflow' };
+    ok(beforeH > cappedH + 100,
+      `S2e 图槽确实是图片位而不是内滚盒（同一页：内滚盒 ${cappedH}px → 整幅 ${beforeH}px）`);
   }
   const badgePt = await page.evaluate(() => {
     const el = [...document.querySelectorAll('#chat .nf-mermaid')].find((b) => (b.getAttribute('data-mermaid-src') || '').includes('开始 START'));
@@ -732,8 +740,11 @@ try {
     `panel bounds ${JSON.stringify(rectOf(cvPanel.first))} maxDelta=${cvPanel.maxDelta}px`);
 
   const cvTall = await page.evaluate(SLOT_READ, '步骤 0] --> T1');
-  ok(!!cvTall && cvTall.state === 'done' && cvTall.slotH <= maxH + 1 && cvTall.slotH > 0,
-    `S2d Canvas 文档面长图槽高同样受限（${cvTall && cvTall.slotH}px ≤ ${maxH}px）`);
+  // mermaid-inline-center 批：Canvas 面同一张图槽＝图片位（整幅在槽内、槽内零滚动），
+  // 不再是上一批的「槽高受限 + 槽内滚动」。
+  ok(!!cvTall && cvTall.state === 'done' && cvTall.slotH > 0 && Math.abs(cvTall.slotH - cvTall.svgH) <= 1
+    && Math.abs(cvTall.slotScrollH - cvTall.slotClientH) <= 1,
+    `S2d Canvas 文档面长图整幅落在槽内且零内滚（槽 ${cvTall && cvTall.slotH}px = 图 ${cvTall && cvTall.svgH}px）`);
 
   const cvPoint = await page.evaluate(() => {
     const el = [...document.querySelectorAll('.canvas-tab-pane.active .nf-mermaid')].find((b) => (b.getAttribute('data-mermaid-src') || '').includes('开始 START'));
@@ -831,10 +842,10 @@ try {
     await m.page.waitForSelector('#chat .row', { timeout: 30000, state: 'attached' });
     await sweep(m.page, '#chat');
     await settle(m.page, '#chat');
-    const mMaxH = await m.page.evaluate(MAXH_PX);
     const mobileSlot = await m.page.evaluate(SLOT_READ, '步骤 0] --> T1');
-    ok(!!mobileSlot && mobileSlot.slotH > 0 && mobileSlot.slotH <= mMaxH + 1,
-      `S9 375 档${dark ? '暗' : '亮'}：长图槽高受限（${mobileSlot && mobileSlot.slotH}px ≤ ${mMaxH}px）`);
+    ok(!!mobileSlot && mobileSlot.slotH > 0 && Math.abs(mobileSlot.slotH - mobileSlot.svgH) <= 1
+      && Math.abs(mobileSlot.slotScrollH - mobileSlot.slotClientH) <= 1,
+      `S9 375 档${dark ? '暗' : '亮'}：长图整幅落在槽内且零内滚（槽 ${mobileSlot && mobileSlot.slotH}px = 图 ${mobileSlot && mobileSlot.svgH}px）`);
     const mPt = await m.page.evaluate(() => {
       const el = [...document.querySelectorAll('#chat .nf-mermaid')].find((b) => (b.getAttribute('data-mermaid-src') || '').includes('开始 START'));
       const svg = el ? el.querySelector('.nf-mermaid-body svg') : null;

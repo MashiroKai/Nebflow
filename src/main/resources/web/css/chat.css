@@ -5203,7 +5203,14 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 /* UI-G: the subagent window gate removes animation chrome via .nf-static on
    the VIEW container; the lightbox mounts on document.body — clamp it there. */
 .nf-static .nf-lightbox.nf-lightbox--media, body .nf-static ~ .nf-lightbox.nf-lightbox--media { animation: none; }
-.nf-lightbox-stage {
+/* ⚠ 作用域（mermaid-inline-center 批 2026-11-07）：本块以下四条声明**必须**挂在
+   `.nf-lightbox--media` 里。`.nf-lightbox-stage` / `.nf-lightbox-canvas` 这两个类名
+   与看图浮层（css/lightbox.css）同名 —— 裸选择器会把竖排 flex、max-width:
+   min(92vw,1100px)、max-height:90vh 一起压到看图浮层的舞台上：绝对定位 + inset:0
+   与 max-* 过约束，舞台被钉在左上角 1100×810（手机 358.8×759.6），图在舞台里居中
+   ⇒ 视觉中心相对屏幕中心左移 90 / 上移 45px = 作者报障「点开后有点歪」。
+   收进修饰类后媒体灯箱逐条不变，看图浮层的舞台回到整屏。 */
+.nf-lightbox--media .nf-lightbox-stage {
   display: flex; flex-direction: column; gap: var(--ds-space-inline-gap);
   max-width: min(92vw, 1100px);
   max-height: 90vh;
@@ -5218,7 +5225,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   min-width: 0;
 }
-.nf-lightbox-canvas {
+.nf-lightbox--media .nf-lightbox-canvas {
   flex-shrink: 0;
   display: flex; align-items: center; gap: var(--ds-space-1h);
   border: none; border-radius: var(--ds-radius-pill);
@@ -5227,8 +5234,8 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   cursor: pointer;
   transition: background 0.15s;
 }
-.nf-lightbox-canvas:hover { background: rgba(255, 255, 255, 0.24); }
-.nf-lightbox-canvas svg { width: 13px; height: 13px; }
+.nf-lightbox--media .nf-lightbox-canvas:hover { background: rgba(255, 255, 255, 0.24); }
+.nf-lightbox--media .nf-lightbox-canvas svg { width: 13px; height: 13px; }
 .nf-lightbox-media {
   display: block;
   max-width: 100%;

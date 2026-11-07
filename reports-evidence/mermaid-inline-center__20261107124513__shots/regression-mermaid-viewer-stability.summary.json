@@ -1,0 +1,200 @@
+{
+  "counts": {
+    "pass": 58,
+    "fail": 0,
+    "total": 58
+  },
+  "stability": {
+    "chatFrames": 71,
+    "chatPanel": {
+      "stable": true,
+      "maxDelta": 0,
+      "distinct": 1,
+      "first": [
+        878,
+        16,
+        552,
+        874
+      ],
+      "last": [
+        878,
+        16,
+        552,
+        874
+      ]
+    },
+    "chatMain": {
+      "stable": true,
+      "maxDelta": 0
+    },
+    "chatDrift": {
+      "changedAtFrame": -1,
+      "ofFrames": 71,
+      "from": [
+        878,
+        16,
+        552,
+        874
+      ],
+      "to": null,
+      "rightBefore": "div#plugins-content.canvas-safe-top.cv-safe-pad < div.canvas-tab-pane.active < div#canvas-content < div#canvas-slide < div#canvas-panel < body.deck-look-v2.canvas-open",
+      "rightAfter": null,
+      "sidebar": [
+        60,
+        16,
+        236,
+        874
+      ],
+      "act": [
+        4,
+        16,
+        48,
+        874
+      ]
+    },
+    "gallery": {
+      "inlineSlotH": 1862,
+      "scrollBoxSlotH": 480,
+      "field": "max-height/overflow"
+    },
+    "canvasFrames": 71,
+    "canvasPanel": {
+      "stable": true,
+      "maxDelta": 0,
+      "distinct": 1,
+      "first": [
+        878,
+        16,
+        552,
+        874
+      ],
+      "last": [
+        878,
+        16,
+        552,
+        874
+      ]
+    },
+    "theme": {
+      "callsBefore": 10,
+      "callsAfter": 19,
+      "blocksBefore": [
+        72,
+        72,
+        72,
+        72,
+        72,
+        72
+      ],
+      "blocksAfter": [
+        72,
+        72,
+        72,
+        72,
+        72,
+        72
+      ],
+      "collapse": [
+        {
+          "key": "flowchart TD A[开始 ",
+          "min": 342,
+          "max": 342,
+          "samples": 176
+        },
+        {
+          "key": "flowchart TD T0[步骤",
+          "min": 1862,
+          "max": 1862,
+          "samples": 176
+        },
+        {
+          "key": "flowchart LR W0[环节",
+          "min": 72,
+          "max": 72,
+          "samples": 176
+        },
+        {
+          "key": "flowchart TD A[Unc",
+          "min": 157,
+          "max": 175,
+          "samples": 176
+        },
+        {
+          "key": "flowchart LR S0[连渲",
+          "min": 72,
+          "max": 72,
+          "samples": 176
+        },
+        {
+          "key": "flowchart LR S1[连渲",
+          "min": 72,
+          "max": 72,
+          "samples": 176
+        },
+        {
+          "key": "flowchart LR S2[连渲",
+          "min": 72,
+          "max": 72,
+          "samples": 176
+        },
+        {
+          "key": "flowchart LR S3[连渲",
+          "min": 72,
+          "max": 72,
+          "samples": 176
+        },
+        {
+          "key": "flowchart LR S4[连渲",
+          "min": 72,
+          "max": 72,
+          "samples": 176
+        },
+        {
+          "key": "flowchart LR S5[连渲",
+          "min": 72,
+          "max": 72,
+          "samples": 176
+        }
+      ],
+      "panelStable": true,
+      "panelMaxDelta": 0,
+      "drift": {
+        "changedAtFrame": -1,
+        "ofFrames": 176,
+        "from": [
+          878,
+          16,
+          552,
+          874
+        ],
+        "to": null,
+        "rightBefore": "div.canvas-md-viewer < div.canvas-md-scroll.canvas-viewer-safe-top < div.canvas-tab-pane.active < div#canvas-content < div#canvas-slide < div#canvas-panel",
+        "rightAfter": null,
+        "sidebar": [
+          60,
+          16,
+          236,
+          874
+        ],
+        "act": [
+          4,
+          16,
+          48,
+          874
+        ]
+      },
+      "frames": 176
+    },
+    "wiring": {
+      "kinds": [
+        "mermaid",
+        "svg",
+        "math"
+      ],
+      "requeues": 1
+    }
+  },
+  "shots": "/tmp/nfprobe/mvs-final",
+  "consoleErrors": [],
+  "video": "/tmp/nfprobe/mvs-final/video/page@f132754ef2247b7617d1b9639ca7c275.webm"
+}

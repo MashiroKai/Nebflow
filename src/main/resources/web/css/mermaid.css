@@ -6,25 +6,25 @@
    令牌纪律：本文件零裸色值（色/尺寸一律 --* 变量）；新增面必须同纪律。 */
 
 /* ── 块级围栏（图）：mermaid / svg 同一几何 ───────────────────────────── */
-/* 图槽（mermaid-viewer-stability 批 2026-11-06）——作者报障逐字「canvas渲染的
-   框图…渲染的时候有可能会导致canvas窗口异常 突然变大变小」。
+/* 图槽**就是图片位**（mermaid-inline-center 批 2026-11-07）。作者令逐字：
+   「Mermaid 就直接像个图片一样嵌入在文档里，不需要可以上下滚动。然后使用跟图片
+   一样的点击打开后的查看逻辑。」
 
-   实测结论（before 读数见 tests/mermaid-viewer-stability.spec.mjs 报告）：
-   外层 #canvas-panel / #main / #chat / .canvas-tab-pane / 文档滚动器在图渲染
-   前后零变化 —— 跳变不来自外壳；跳变来自**图槽没有高度上界**：`.canvas-md-viewer`
-   一帧内 40 → 406.5 → 1608.5 px，一张纵向长图能把文档/卡片撑到数千 px。
+   所以本块与「文档里的普通图片」同一套几何：整幅图按源图比例铺在内容列宽内，
+   **槽内零滚动条**，图有多高就让文档多高（滚动交给文档本身）。
+   上一批（mermaid-viewer-stability 2026-11-06）的 `--nf-figure-max-h` 上界 +
+   `overflow:auto` 是把长图关进 480px 高内滚盒子的做法；那正是作者这次点掉的
+   「可以上下滚动」——已退役，**不是**回归：那一批真正的稳定修法（离屏测量舞台
+   `stageFor()`，见 js/mermaidRenderer.js 与下方 `#nf-mermaid-stage` 块）原样在位；
+   窗口突变来自测量岛进文档流，与槽高上界无关。
 
-   本块是图槽几何的唯一来源，三条纪律（改这里 = 改全部图面，禁逐面重写）：
-     ① 上界硬约束：槽高 ≤ --nf-figure-max-h。图再长也只能把**槽内**撑出滚动，
-        不能把外层窗口/卡片撑大（作者令「稳定外层窗口/卡片尺寸，图形在内容区适配，
-        必要的内容区滚动/缩放允许」；滚动 = 不裁图，不是遮丑）。
-     ② 不外溢布局：contain: layout paint —— 槽内任何尺寸变化都不参与外部排版，
-        结构上不可能与任何 ResizeObserver 形成回环（本文件零观测代码）。
-     ③ 不写死像素：上界是一个具名 token，改档只改这一处。 */
+   本块是图槽几何的唯一来源（改这里 = 改全部图面，禁逐面重写）：
+     ① 无内滚：overflow visible —— 图槽高度 = 图自身高度，不出滚动条、不裁图。
+     ② 比例与内容完整：max-width:100% + height:auto，纵横比由源图 viewBox 决定
+        （读数 `--nf-fig-ar` 见 fenceKit.fenceDone）；宽图缩到列宽、长图自然长出来。
+     ③ 不外溢布局：contain: layout paint —— 槽内任何尺寸变化都不参与外部排版，
+        结构上不可能与任何 ResizeObserver 形成回环（本文件零观测代码）。 */
 :root {
-  /* 图槽高度上界。取视口比例 + 绝对上限的较小者：手机上 58vh 落在拇指可及范围，
-     桌面上 480px 不挤掉同屏其它内容。 */
-  --nf-figure-max-h: min(58vh, 480px);
   /* 「看大图」角标图标（矢量，经 mask 着色；见下 `.nf-figure-open-ico`）。 */
   --nf-ico-expand: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15 3h6v6'/%3E%3Cpath d='M9 21H3v-6'/%3E%3Cpath d='M21 3l-7 7'/%3E%3Cpath d='M3 21l7-7'/%3E%3C/svg%3E");
 }
@@ -67,13 +67,10 @@ body > [id^='dnf-mermaid-svg-'] {
 .nf-svg .nf-svg-body {
   position: relative;
   min-height: 72px; /* reserved slot: 库装载/渲染期间布局不塌 */
-  display: block;   /* 定宽块：滚动面从左上起算，居中交给 svg 的 auto 外边距 */
+  display: block;   /* 定宽块：居中交给 svg 的 auto 外边距 */
   max-width: 100%;
-  max-height: var(--nf-figure-max-h);
-  overflow: auto;                 /* 内容区滚动 = 允许（不裁图） */
-  overscroll-behavior: contain;   /* 槽内滚到头不把滚动链传给外层 */
+  overflow: visible;              /* 无内滚（见上方批次注：整幅图随文档流展开） */
   contain: layout paint;
-  scrollbar-color: var(--color-frame-border) transparent;
 }
 
 /* 图本体：始终落在槽宽内，比例由源图决定。cursor 明示可点开看大图。 */

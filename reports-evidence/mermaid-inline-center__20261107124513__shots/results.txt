@@ -1,0 +1,70 @@
+PASS  C1a Canvas 面首次异步渲染：#canvas-panel 逐帧零变化（Δ 0×0px / 39 帧）
+PASS  C1b #main 宽度逐帧零变化（Δ 0px）
+PASS  C1c #chat 宽度逐帧零变化（Δ 0px）
+PASS  C1d #sidebar 逐帧零变化（Δ 0×0px）
+PASS  C1e 右缘命中链零测量岛（0/39 帧出现 div#dnf-mermaid-svg-*）
+PASS  I1a 长图槽内零滚动（scroll 422×1862 = client 422×1862）
+PASS  I1b 图槽不是滚动容器（overflow-y=visible max-height=none）
+PASS  I2 长图整幅在图槽里（图 1862px / 槽 1862px，旧 480px 封顶已退役）
+PASS  I2b 长图不再被 480px 封顶（槽高 1862px）
+PASS  I3a 长图比例与源图一致（渲染 0.1 vs viewBox 0.1）
+PASS  I4 宽图落在内容列宽内（图 422px ≤ 槽 422px）
+PASS  I1c 宽图槽内零滚动（scroll 422×72）
+PASS  I5 滚动交给文档（文档 2682px vs 视口 864px）
+PASS  I6 每张图都挂着「看大图」真按钮
+PASS  V2pre 长图可点开（点 1034,450）
+PASS  V1a 框图点开进同一浮层（mode=svg）
+PASS  V1b 全文档只有一枚浮层实例（1）
+PASS  V2a 桌面打开后相对屏幕居中（纸面中心偏差 [0,0]px）
+PASS  V2b 图的几何中心同屏幕中心（偏差 [0,0]px）
+PASS  V5a 打开的是真矢量 SVG（text/tspan 92 个，非位图）
+PASS  V5b 浮层无障碍面在位（role=dialog aria-modal=true）
+PASS  V5c 缩放控件是真按钮且都有 aria-label（["缩小","放大","适应视图"]）
+PASS  V5d 缩放生效（100% → 156%）
+PASS  V2c 放大后仍相对屏幕居中（偏差 [0,0]px）
+PASS  V5e 放大后仍是矢量（零位图替换）
+PASS  V2d 复位回到 100% 且仍居中（100% / [0,0]）
+PASS  V5f ESC 关闭浮层
+PASS  V5i 关闭钮可被真实点击（命中 close，浮层已关=true）
+PASS  C2a 气泡面首次异步渲染：#chat 逐帧零变化（Δ 0×0px / 27 帧）
+PASS  C2b #main 宽度逐帧零变化（Δ 0px）
+PASS  I7 气泡面同一几何（槽 1862px = 图 1862px，无内滚）
+PASS  V5g 「看大图」角标是可真聚焦的 button（看大图）
+PASS  V5h 键盘 Enter 可打开浮层
+PASS  V1c 图片走同一浮层实例（mode=img）
+PASS  V4a 图片打开后同样相对屏幕居中（偏差 [0,0]px）
+PASS  V1d 图片与框图共用同一档适配盒（token 92%/88% = img max 92%/88%）
+PASS  V6a 点图内链接不打开浮层（命中 <a>，浮层=false）
+PASS  V6b 拖动超阈不打开浮层（浮层=false）
+PASS  V7a 零 pageerror（）
+PASS  V7b 零 console error（）
+PASS  I8 390x844：长图槽内零滚动（scroll 1862 = client 1862）
+PASS  I8b 390x844：长图整幅在图槽里（1862px）
+PASS  I8c 390x844：每张图都挂着真按钮
+PASS  V3a 390x844：真触摸点开浮层（mode=svg）
+PASS  V3b 390x844：打开后相对屏幕居中（纸面偏差 [0,0]px）
+PASS  V3c 390x844：图的几何中心同屏幕中心（偏差 [0,0]px）
+PASS  V4b 390x844：可视视口与布局视口一致时不加内联盒（pinned=0）
+PASS  V3d 390x844：触摸放大生效（156%）
+PASS  V3e 390x844：放大后仍居中（偏差 [0,0]px）
+PASS  V3f 390x844：可关闭返回
+PASS  V4c 390x844：可视视口内缩时浮层改钉可视区域（pinned=1）
+PASS  V4d 390x844：浮层盒 == 可视区域（实测 [0,44,390,700] / 应有 [0,44,390,700]）
+PASS  V4e 390x844：内容中心 == 可视屏幕中心（纸面 [15.6,191.3,358.8,405.3] / 可视中心 {"x":195,"y":394}）
+PASS  V7c 390x844：零 pageerror（）
+PASS  V7d 390x844：零 console error（）
+PASS  I8 375x812：长图槽内零滚动（scroll 1862 = client 1862）
+PASS  I8b 375x812：长图整幅在图槽里（1862px）
+PASS  I8c 375x812：每张图都挂着真按钮
+PASS  V3a 375x812：真触摸点开浮层（mode=svg）
+PASS  V3b 375x812：打开后相对屏幕居中（纸面偏差 [0,0]px）
+PASS  V3c 375x812：图的几何中心同屏幕中心（偏差 [0,0]px）
+PASS  V4b 375x812：可视视口与布局视口一致时不加内联盒（pinned=0）
+PASS  V3d 375x812：触摸放大生效（156%）
+PASS  V3e 375x812：放大后仍居中（偏差 [0,0]px）
+PASS  V3f 375x812：可关闭返回
+PASS  V4c 375x812：可视视口内缩时浮层改钉可视区域（pinned=1）
+PASS  V4d 375x812：浮层盒 == 可视区域（实测 [0,44,375,668] / 应有 [0,44,375,668]）
+PASS  V4e 375x812：内容中心 == 可视屏幕中心（纸面 [15,183.2,345,389.6] / 可视中心 {"x":187.5,"y":378}）
+PASS  V7c 375x812：零 pageerror（）
+PASS  V7d 375x812：零 console error（）
