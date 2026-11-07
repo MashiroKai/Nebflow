@@ -5,9 +5,22 @@
 // 是绿色，对方发过来的是白色。我们这方发的，不管是我发的还是 Agent 发的，都算我们
 // 这方发，」
 //
-// 判据一句话：气泡底色只由「消息归属方」决定 —— 我方（作者本人 + 我方 Agent /
-// delegate / 节点 / 后台任务 / 工具注入 / 系统生成）绿；对方（好友 / 群内他人 /
-// 设备对端 / 外部通道）白。**没有第三档**。
+// 判据一句话：气泡底色只由「消息归属方」决定 —— 我方（作者本人）取**单点令牌
+// `--color-bubble-user` 的当前值**；对方（好友 / 群内他人 / 设备对端）白。
+//
+// 🔴 色相不再写死在本文件（bubble-lightblue 批 2026-11-07 改）：本文件此前把「我方」
+//   钉成字面量 #95ec69（GREEN），于是作者每改一次底色（11:10 禁绿→浅蓝、12:25→近白、
+//   14:37→绿、本批→浅蓝）这条断言就假红一次 —— 它断言的本该是「哪一方吃什么令牌」，
+//   不是「那个色是什么」。现改为**从页面读 --color-bubble-user 的计算值**：令牌一变
+//   断言跟着变，色相裁定留在 base.css 单点，本文件只验归因与结构。
+//
+// 🔴 两处历史口径已在断言里改为**当下事实**（同一批，均带出处；不改就是留假红）：
+//   · A2 我方 Agent —— 作者令 2026-11-07 14:37（bubble-final 批 a62dd7300）把配色
+//     模型从「我方/对方」改成「作者本人 vs 助手」：`.bubble.ai` = 助手白档，
+//     **不再是我方档**；归属方判定（side）仍是 ours（Agent 代表本机账号发出），
+//     两者分属不同轴，断言按当前事实分开写。
+//   · A3 节点注入行 —— 同批将 `.injected` 定为通知面 carve（sapphire 淡染，
+//     glass.css R2 精确点名），不再是第三档对话底色。
 //
 // 🔴 这不是静态断言：页面 = 真 web 树（真模块图、真 CSS、真 index.html）+ WS 帧桩，
 //   气泡由**真渲染器**产出（主会话 = chat.js 的 renderUserBubble/appendAiText/finishAi；
@@ -16,15 +29,15 @@
 //   不是我们抄的颜色）。零宿主实例依赖：不碰 :6138 / :8080 / :8097。
 //
 // 判据（二值）：
-//   A1 主会话·作者本人      `.row.user .bubble`         → 我方绿
-//   A2 主会话·我方 Agent    `.row.ai  .bubble`          → 我方绿
-//   A3 主会话·节点/注入行    `.bubble.injected`          → 我方绿
-//   B1 联系人·我方发出      `.fm-msg.out .bubble`       → 我方绿
+//   A1 主会话·作者本人      `.row.user .bubble`         → 我方档（--color-bubble-user 当前值）
+//   A2 主会话·我方 Agent    `.row.ai  .bubble`          → 助手白档（14:37 起，归属仍 ours）
+//   A3 主会话·节点/注入行    `.bubble.injected`          → 通知面 carve（sapphire 淡染）
+//   B1 联系人·我方发出      `.fm-msg.out .bubble`       → 我方档（同上）
 //   B2 联系人·对方发来      `.fm-msg.in  .bubble`       → 对方白
-//   C1 群聊·我方发出        `.fm-msg.out .bubble`       → 我方绿
+//   C1 群聊·我方发出        `.fm-msg.out .bubble`       → 我方档（同上）
 //   C2 群聊·他人发来        `.fm-msg.in  .bubble`       → 对方白
-//   D1 全站只有两种底色      全体气泡 backgroundColor 去重后 == 2 档
-//   E1 对比度 AA           绿底正文 ≥ 4.5:1；白底正文 ≥ 4.5:1（亮暗各一档）
+//   D1 底色档数封闭           全体气泡 backgroundColor 去重后 ≤ 3 档（作者/对方/注入 carve）
+//   E1 对比度 AA           我方档正文 ≥ 4.5:1；白底正文 ≥ 4.5:1（亮暗各一档）
 //
 // Run: node tests/bubble-side-color.spec.mjs            （退出码 0 = 全绿）
 //      node tests/bubble-side-color.spec.mjs --json     （机器可读读数）
@@ -76,9 +89,13 @@ const over = (c, base) => ({
 const near = (c, want, tol = 3) => !!c && Math.abs(c.r - want.r) <= tol
   && Math.abs(c.g - want.g) <= tol && Math.abs(c.b - want.b) <= tol;
 
-const GREEN = { r: 149, g: 236, b: 105 };     // --color-bubble-user #95ec69（我方）
+// 我方底色**不写字面量**：运行时从页面读 --color-bubble-user 的计算值（见文件头
+// 「色相不再写死在本文件」）。WHITE / DARK_WHITE 仍是对方白档的期望（= --color-bubble-ai
+// 亮 #fff / 暗 #1c1f27），色相裁定同样在 base.css 单点。
 const WHITE = { r: 255, g: 255, b: 255 };     // --color-bubble-ai 亮档 #fff（对方）
 const DARK_WHITE = { r: 28, g: 31, b: 39 };   // --color-bubble-ai 暗档 #1c1f27（对方）
+// 注入行 = 通知面 carve（glass.css R2 精确点名 .bubble.injected，sapphire 12% 淡染）。
+const INJECT_CARVE = { r: 91, g: 127, b: 191 };
 const PAGE_LIGHT = { r: 245, g: 246, b: 248, a: 1 };
 const PAGE_DARK = { r: 19, g: 22, b: 28, a: 1 };
 
@@ -174,6 +191,19 @@ for (const theme of ['light', 'dark']) {
   const find = (face, sender) => dump.find((d) => d.face === face && d.sender === sender);
   const theirsWant = theme === 'dark' ? DARK_WHITE : WHITE;
   const pageBg = theme === 'dark' ? PAGE_DARK : PAGE_LIGHT;
+  /* 我方期望色 = 页面里 --color-bubble-user 的**计算值**（本主题解析后的实值）。
+     读数路径：把令牌值挂到一个临时节点上取 computed color —— 令牌若是 color-mix()
+     这类函数值，这步会得到浏览器解析后的最终色，比字符串比较稳。 */
+  const oursCss = await page.evaluate(() => {
+    const probe = document.createElement('div');
+    probe.style.color = getComputedStyle(document.documentElement)
+      .getPropertyValue('--color-bubble-user').trim();
+    document.body.appendChild(probe);
+    const v = getComputedStyle(probe).color;
+    probe.remove();
+    return v;
+  });
+  const oursWant = parseColor(oursCss) || { r: -1, g: -1, b: -1 };
 
   const checkOne = (label, face, sender, want, wantSide) => {
     const d = find(face, sender);
@@ -183,17 +213,20 @@ for (const theme of ['light', 'dark']) {
     ok(`${label}  [${d.side}] → ${d.bg}`, hit && d.side === wantSide, `期望 ${wantSide}（${theme}）`);
   };
 
-  checkOne('A1 主会话·作者本人 = 我方绿', 'main', 'author', GREEN, 'ours');
-  checkOne('A2 主会话·我方 Agent = 我方绿', 'main', 'our-agent', GREEN, 'ours');
-  checkOne('A3 主会话·节点注入行 = 我方绿', 'main', 'node/injected', GREEN, 'ours');
-  checkOne('B1 联系人·我方发出 = 我方绿', 'direct', 'author', GREEN, 'ours');
+  /* 我方/对方 = 令牌归因（色相来自 --color-bubble-user / --color-bubble-ai 单点，
+     本文件不写字面量）。A2/A3 按 2026-11-07 14:37 起的当下事实断言（见文件头）。 */
+  checkOne('A1 主会话·作者本人 = 我方档', 'main', 'author', oursWant, 'ours');
+  checkOne('A2 主会话·我方 Agent = 助手白档（作者令 2026-11-07 14:37）', 'main', 'our-agent', theirsWant, 'ours');
+  checkOne('A3 主会话·节点注入行 = 通知面 carve（sapphire 淡染）', 'main', 'node/injected', INJECT_CARVE, 'ours');
+  checkOne('B1 联系人·我方发出 = 我方档', 'direct', 'author', oursWant, 'ours');
   checkOne('B2 联系人·对方发来 = 对方白', 'direct', 'peer', theirsWant, 'theirs');
-  checkOne('C1 群聊·我方发出 = 我方绿', 'group', 'author', GREEN, 'ours');
+  checkOne('C1 群聊·我方发出 = 我方档', 'group', 'author', oursWant, 'ours');
   checkOne('C2 群聊·他人发来 = 对方白', 'group', 'peer', theirsWant, 'theirs');
 
-  // D1 全站只有两种底色
+  /* D1 底色档数封闭：作者档 / 对方白档 / 注入 carve 三档封顶（carve 是通知面，
+     2026-11-07 14:37 起的既有裁定，不再是「第三档对话底色」）。 */
   const uniq = [...new Set(dump.map((d) => d.bg))];
-  ok(`D1 全部气泡底色去重 == 2 档（${theme}）`, uniq.length === 2, uniq.join(' | '));
+  ok(`D1 全部气泡底色去重 ≤ 3 档（作者/对方/注入 carve，${theme}）`, uniq.length <= 3, uniq.join(' | '));
 
   // E1 对比度（真实计算值：前景 color 合成在气泡底 + 页面底上）
   const contrastOf = (d) => {
@@ -201,11 +234,14 @@ for (const theme of ['light', 'dark']) {
     const fg = over(parseColor(d.color), bg);
     return contrast(fg, bg);
   };
-  const oursRow = dump.find((d) => d.side === 'ours');
+  /* E1 = 我方档与对方档的正文对比度。取「底色确实落在该档令牌值上」的那一行 ——
+     不能再取「side === ours 的第一行」：2026-11-07 14:37 起我方 Agent 虽仍归属 ours，
+     底色却是助手白档，按 side 取会拿白底读成「我方档对比度」（修前读数即此形态）。 */
+  const oursRow = dump.find((d) => d.side === 'ours' && near(parseColor(d.bg), oursWant));
   const theirsRow = dump.find((d) => d.side === 'theirs');
   const cOurs = oursRow ? contrastOf(oursRow) : 0;
   const cTheirs = theirsRow ? contrastOf(theirsRow) : 0;
-  ok(`E1a 我方绿底正文 ≥ 4.5:1（${theme}）`, cOurs >= 4.5, `${cOurs.toFixed(2)}:1（${oursRow && oursRow.color} on ${oursRow && oursRow.bg}）`);
+  ok(`E1a 我方档正文 ≥ 4.5:1（${theme}）`, cOurs >= 4.5, `${cOurs.toFixed(2)}:1（${oursRow && oursRow.color} on ${oursRow && oursRow.bg}）`);
   ok(`E1b 对方白底正文 ≥ 4.5:1（${theme}）`, cTheirs >= 4.5, `${cTheirs.toFixed(2)}:1（${theirsRow && theirsRow.color} on ${theirsRow && theirsRow.bg}）`);
   results[`${theme}Contrast`] = { ours: +cOurs.toFixed(2), theirs: +cTheirs.toFixed(2) };
 
@@ -224,7 +260,7 @@ if (JSON_OUT) {
   }
   const lc = results.lightContrast || {};
   const dc = results.darkContrast || {};
-  console.log(`\n对比度实测：我方绿底 亮 ${lc.ours}:1 / 暗 ${dc.ours}:1；对方白底 亮 ${lc.theirs}:1 / 暗 ${dc.theirs}:1`);
+  console.log(`\n对比度实测：我方档 亮 ${lc.ours}:1 / 暗 ${dc.ours}:1；对方白底 亮 ${lc.theirs}:1 / 暗 ${dc.theirs}:1`);
   console.log(`\nbubble-side-color: ${checks} checks, ${failures} failures.`);
 }
 process.exit(failures === 0 ? 0 : 1);
