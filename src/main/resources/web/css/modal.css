@@ -363,7 +363,21 @@
   width: 520px;
   max-height: 80vh;
 }
-#memory-modal.show { display: block; }
+/* 外滚动条退役批（2026-11-07 作者报障「记忆面板外部多了一个滚动条」）：面板改
+   纵列 flex —— 头部（页签/标题）与动作行固定，内容面可收缩（min-height:0），
+   长文本的真滚动只在编辑器 #memory-content-input 自身。
+   实测口径（tests/memory-panel-scroll.spec.mjs，桌面 1440×900/1280×720/1024×640/
+   900×560 × 亮暗 × 字号 ×1/×1.5/×2、手机 375×812/320×568）：
+     · 内容装得下 ⇒ 与改前逐像素同形（可滚量 0，视觉零变化）；
+     · 小屏/放大字体/编辑器被拖高 ⇒ 编辑器按三行地板收缩，Save/Cancel 恒在面板内
+       可点（改前：动作行被顶到 80vh 之外，只能靠那条外滚动条去找）。
+   面板自身的 overflow-y:auto（上方弹窗共享档）留作极端兜底，矩阵内不会触发。 */
+#memory-modal.show { display: flex; flex-direction: column; }
+#memory-content-input {
+  /* 三行地板：行高 1.5 与本面一致 ⇒ 放大字体时地板同比放大，永不成一条缝。 */
+  flex: 0 1 auto;
+  min-height: calc(3 * 1.5 * var(--ds-fs-body));
+}
 #memory-modal-title {
   font-size: var(--ds-fs-title);
   font-weight: 600;
@@ -435,12 +449,16 @@
   display: flex;
   flex-direction: column;
   gap: var(--ds-space-inline-gap);
+  /* 可收缩（不长大）：内容面让出溢出的高度给动作行，见上方「外滚动条退役批」。 */
+  flex: 0 1 auto;
+  min-height: 0;
 }
 #memory-modal-actions {
   display: flex;
   justify-content: flex-end;
   gap: var(--ds-space-2);
   margin-top: 14px;
+  flex: 0 0 auto;
 }
 
 /* ---------- Rules Editor Modal ---------- */
