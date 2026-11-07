@@ -67,13 +67,16 @@ if (!/def\s+onIdentify\s*\(/.test(takeoverSrc)) {
 if (!/ConsoleTakeover\.isIdentifyFrame\s*\(/.test(wsRoutesSrc)) {
   fail('B: WebSocketRoutes no longer intercepts the identify frame — declared identity is silently discarded');
 }
-if (!/takeover\.onIdentify\s*\(/.test(wsRoutesSrc)) {
+if (!/takeover\.onIdentify(Declared)?\s*\(/.test(wsRoutesSrc)) {
   fail('B: WebSocketRoutes does not call takeover.onIdentify — declared identity never reaches the registry');
 }
 
 // ── C. ws.js emits the SAME literal with the shared identity source ──
+// 同端判据批（2026-11-07）：声明帧多带一个 `automated`（navigator.webdriver），因此
+// 发出点的形状从「sendWs 直接嵌字面量」变成了「条件表达式的对象字面量」——断言改
+// 钉**对象字面量**本身（帧型 + clientId 两键必须在场），并要求同一窗口内有 sendWs 调用。
 const emitRe = new RegExp(
-  `sendWs\\(\\{\\s*type:\\s*['"]${frameType.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"]\\s*,\\s*clientId:`
+  `\\{\\s*type:\\s*['"]${frameType.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"]\\s*,\\s*clientId:`
 );
 const emitMatch = emitRe.exec(wsJs);
 if (!emitMatch) {
@@ -81,10 +84,26 @@ if (!emitMatch) {
 } else {
   // 身份源必须与握手腿同一个（deviceClientId）——在发出点前后各留一窗，避免只命中
   // 注释里的字面量（本批注释刻意引用了帧型）。
-  const identifyBlock = wsJs.slice(Math.max(0, emitMatch.index - 400), emitMatch.index + 400);
+  const identifyBlock = wsJs.slice(Math.max(0, emitMatch.index - 500), emitMatch.index + 500);
   if (!/deviceClientId\(\)/.test(identifyBlock)) {
     fail('C: the identify frame must take its value from deviceClientId() (the same localStorage key as the handshake rail — a second identity source would re-open the false-positive face)');
   }
+  if (!/sendWs\(/.test(identifyBlock)) {
+    fail('C: the identify frame literal is built but never sent with sendWs(…)');
+  }
+}
+
+// ── F. automation declaration stays in lockstep（同端判据批 C，2026-11-07） ──
+// 客户端声明 navigator.webdriver、服务端有 declaredAutomated 解析：任一侧改名或掉线，
+// 自动化验跑就会重新顶掉作者的手机端（本批报障的直接成因）。
+if (!/navigator\.webdriver/.test(wsJs)) {
+  fail('F: ws.js no longer reports navigator.webdriver — automated browsers would claim the console again');
+}
+if (!/def\s+declaredAutomated\s*\(/.test(takeoverSrc)) {
+  fail('F: ConsoleTakeover.declaredAutomated is missing — the server can no longer read the automation declaration');
+}
+if (!/def\s+endprintOf\s*\(/.test(takeoverSrc) || !/def\s+sameEnd\s*\(/.test(takeoverSrc)) {
+  fail('F: the same-end fingerprint core (endprintOf/sameEnd) is missing — same-device clientId churn would prompt itself again');
 }
 
 // ── D. the handshake rail must stay (direct face: no extra round-trip) ──

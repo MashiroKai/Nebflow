@@ -1403,7 +1403,12 @@ export function connect() {
     // 老引擎把未知帧型走既有回退，零破坏。
     try {
       const cid = deviceClientId();
-      if (cid) sendWs({ type: 'takeoverIdentify', clientId: cid });
+      // 同端判据批（2026-11-07）：声明帧同时上报「本页是不是自动化浏览器」——
+      // Playwright/Puppeteer/Selenium 会把 navigator.webdriver 置 true，服务端据此让
+      // 自动化验跑落**观察位**（看得见内容但不夺作者手机端的控制权，不弹接管框）；
+      // 缺这个位，每次临时 profile 的新 clientId 都会把作者顶出去一次。
+      const automated = (typeof navigator !== 'undefined' && navigator.webdriver === true) ? true : undefined;
+      if (cid) sendWs(automated ? { type: 'takeoverIdentify', clientId: cid, automated } : { type: 'takeoverIdentify', clientId: cid });
     } catch (_) { /* 取不到身份 ⇒ 省略该帧（服务端落会话退路，行为同本批之前） */ }
     // 离线期间入队的 WS 命令按序补发（观察项① 收口；先于以下引导命令）。
     flushPendingSends();
