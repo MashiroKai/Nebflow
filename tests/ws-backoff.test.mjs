@@ -37,10 +37,21 @@ import assert from "node:assert/strict";
 import {
   backoffDelayMs,
   attemptsAfterClose,
+  closeDiagnostic,
   BASE_RECONNECT_DELAY,
   MAX_RECONNECT_DELAY,
   STABLE_CONN_MS,
 } from "../src/main/resources/web/js/wsBackoff.js";
+
+test('close diagnostics whitelist facts and discard arbitrary sensitive event data', () => {
+  const event = { code: 1006, wasClean: false, reason: 'secret', url: 'secret' };
+  assert.deepEqual(closeDiagnostic(event, true, 123456, 'heartbeat'), {
+    code: 1006, clean: false, opened: true, durationSeconds: 120, localAction: 'heartbeat',
+  });
+  assert.deepEqual(closeDiagnostic({ code: 'secret', wasClean: 'secret' }, false, -1, 'secret'), {
+    code: null, clean: null, opened: false, durationSeconds: null, localAction: 'none-observed',
+  });
+});
 
 /** 固定随机源（0.5 ⇒ 抖动系数 1.0），让档位可逐字断言。 */
 const noJitter = () => 0.5;

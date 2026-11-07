@@ -26,6 +26,7 @@ import { refreshAutoBinding, deviceClientId } from './deviceIdentity.js';
 import {
   backoffDelayMs,
   attemptsAfterClose,
+  closeDiagnostic,
   BASE_RECONNECT_DELAY,
   MAX_RECONNECT_DELAY,
 } from './wsBackoff.js';
@@ -1270,6 +1271,7 @@ function hbProbe() {
     hbMisses++;
     if (hbMisses >= HB_MAX_MISSES) {
       console.log(`[ws] heartbeat: no pong after ${HB_MAX_MISSES} consecutive misses, closing dead connection`);
+      state.ws._nfCloseAction = 'heartbeat';
       state.ws.close();
     }
   }, hbGraceMs());
@@ -1292,6 +1294,7 @@ function probeSocketAfterWake(maxMisses) {
       misses++;
       if (misses >= maxMisses) {
         console.log('[ws] no pong after wake: consecutive misses, force reconnect');
+        state.ws._nfCloseAction = 'wake';
         state.ws.close();                                              // onclose → scheduleReconnect
         return;
       }
@@ -1449,7 +1452,11 @@ export function connect() {
     hasConnectedBefore = true;
   };
 
-  state.ws.onclose = () => {
+  const observedSocket = state.ws;
+  state.ws.onclose = (event) => {
+    const observedLifetimeMs = opened && connOpenedAt ? Date.now() - connOpenedAt : -1;
+    // Local console only; no reason, URL, stable ID, or automatic upload.
+    console.info('[ws] close diagnostic', closeDiagnostic(event, opened, observedLifetimeMs, observedSocket._nfCloseAction));
     state.connected = false;
     syncSendButtonConnState();
     // 断连风暴修复批（2026-11-04）：退避归零的判据 = 这条连接**活够了**才归零。
