@@ -135,6 +135,39 @@ const MUTEX_STALE_MS = 120_000; // > 3× live cycle; heartbeat refreshes EVERY c
 const MUTEX_RETRY_MS = 60_000;
 const FIXTURE_POLL_GAP_MS = 1_000;
 const ACCOUNT_RECHECK_MS = 5 * 60_000; // self-heal: index re-read throttle while polling (pause wakes re-read on EVERY ≤60s wake)
+const LOOP_REARM_MS = 5_000; // 微信入站静默死亡批：re-arm backoff after an unexpected loop exit
+const ALIVE_LOG_MS = 10 * 60_000; // 心跳日志上限（alive 行每 10 分钟至多一条，安静的账号也有正向信号）
+
+// ─────────────────── inbound activity ledger（入站活性账本） ───────────────────
+/**
+ * 微信入站静默死亡批（2026-11-07，作者报障「我微信发消息你怎么收不到了」）：
+ * the ONE truth about the inbound loop — is it running, how many polls, how many
+ * inbound messages, how many exits and why. Before this ledger nothing could
+ * answer "is inbound alive?" from outside: the send leg and the shim's `/healthz`
+ * both read a hardcoded `() => false` / a session phase, and the loop's own end
+ * was silent. A dead inbound leg therefore looked exactly like a quiet account.
+ *
+ * Read-only snapshot for callers (never hand out the object itself): the shim
+ * wires it into `inboundActive` and `/healthz`, and an operator reads one JSON
+ * blob instead of reconstructing a three-day outage from a 60 MB log.
+ */
+const inboundLedger = {
+  active: false,
+  starts: 0,
+  polls: 0,
+  msgs: 0,
+  exits: 0,
+  lastPollAt: 0,
+  lastMsgsAt: 0,
+  lastExitReason: null,
+  lastExitAt: 0,
+  lastStartAt: 0,
+};
+
+/** Snapshot of the inbound loop's activity (fresh object; mutation-free). */
+export function inboundLoopState() {
+  return { ...inboundLedger };
+}
 
 // ── ingress backoff (2026-10-25 tcp_refused-storm batch) ──
 const INGRESS_BACKOFF_BASE_MS = 1_000; // first failure → 1s
@@ -696,7 +729,13 @@ function acquireMutex(accountId, stop) {
 
 /** Refresh the heartbeat — EVERY cycle (quiet accounts stay protected too). */
 function heartbeatMutex(accountId) {
-  if (!lockTakenAt) return false;
+  if (!lockTakenAt) {
+    // 微信入站静默死亡批（2026-11-07）：this arm used to be a bare `return
+    // false` — an ownership check that could fail with no owner marker at all
+    // and leave no trace. Named now: the loop is about to end, the log says so.
+    warn("mutex: heartbeat with no ownership marker — treating as ownership loss");
+    return false;
+  }
   try {
     const p = lockPathOf(accountId);
     const cur = JSON.parse(fs.readFileSync(p, "utf-8"));
@@ -708,8 +747,17 @@ function heartbeatMutex(accountId) {
     cur.heartbeat = Date.now();
     fs.writeFileSync(p, JSON.stringify(cur));
     return true;
-  } catch {
-    return false; // unreadable/gone: treated as lost ownership
+  } catch (e) {
+    // 微信入站静默死亡批（2026-11-07 incident root): the incident's opening
+    // move was here — one transient fs fault on the lock (file gone, half read,
+    // EACCES) collapsed into an anonymous `false`, which the live loop turned
+    // into `return` and `startMsgLoop` turned into a permanent `return;`. The
+    // inbound leg then died for the life of the shim process while launchd saw
+    // a healthy process. The fault is named now; the caller re-arms.
+    warn(
+      `mutex: heartbeat failed (${e?.code ?? e?.name ?? e?.message ?? "unknown"}) — treating as ownership loss`,
+    );
+    return false;
   }
 }
 
@@ -936,6 +984,7 @@ async function liveLoop(accountId, stop) {
   let pollTimeoutMs = LONG_POLL_TIMEOUT_MS;
   let ingressFailures = 0; // consecutive transport-class ingress delivery failures (backoff schedule)
   let lastAccountCheckAt = 0; // self-heal throttle (0 ⇒ first cycle re-reads at once)
+  let lastAliveLogAt = 0; // 心跳日志节流（ALIVE_LOG_MS）
   /** the one self-heal re-read (pure core; ids normalized like startup selection):
    *  a switch verdict carries the trigger and IS the handoff; a keep verdict
    *  comes back with its reason so the caller logs exactly why it held. */
@@ -943,6 +992,11 @@ async function liveLoop(accountId, stop) {
     const d = decideAccountSwitch(accountId, listIndexedAccountIds().map(normalizeAccountId), loadAccount);
     return d.action === "switch" ? { ...d, trigger } : d;
   };
+  inboundLedger.active = true;
+  // NB: `lastExitReason` is deliberately NOT cleared here — it is the history of
+  // the previous exit and the only clue a later reader has (cleared only by a
+  // newer exit overwriting it).
+
   while (!stop?.aborted) {
     const paused = Date.now() < pausedUntil;
     if (paused || Date.now() - lastAccountCheckAt >= ACCOUNT_RECHECK_MS) {
@@ -951,7 +1005,12 @@ async function liveLoop(accountId, stop) {
       if (heal.action === "switch") return heal;
     }
     if (paused) { await sleep(Math.min(pausedUntil - Date.now(), 60_000), stop); continue; }
-    if (!heartbeatMutex(accountId)) return;
+    if (!heartbeatMutex(accountId)) {
+      // The reason was logged by heartbeatMutex (2026-11-07 batch: it used to be
+      // silent). Record WHY the loop ends so the caller's re-arm line can say it.
+      inboundLedger.lastExitReason = "mutex ownership lost (see the preceding mutex warning)";
+      return;
+    }
     const acct = loadAccount(accountId);
     const token = acct?.token?.trim();
     if (!token) {
@@ -973,6 +1032,19 @@ async function liveLoop(accountId, stop) {
     }
     if (typeof resp.longpolling_timeout_ms === "number" && resp.longpolling_timeout_ms > 0) {
       pollTimeoutMs = resp.longpolling_timeout_ms; // monitor.js server-driven pacing
+    }
+    // 入站活性账本（2026-11-07）：every completed poll is counted, and a quiet
+    // account still emits ONE alive line per ALIVE_LOG_MS — the positive signal
+    // whose absence was the whole problem (three days of silence read exactly
+    // like a quiet channel).
+    inboundLedger.polls += 1;
+    inboundLedger.lastPollAt = Date.now();
+    if (Date.now() - lastAliveLogAt >= ALIVE_LOG_MS) {
+      lastAliveLogAt = Date.now();
+      info(
+        `live: alive — polls=${inboundLedger.polls} inbound=${inboundLedger.msgs} ` +
+          `lastMsgs=${inboundLedger.lastMsgsAt ? `${Math.round((Date.now() - inboundLedger.lastMsgsAt) / 1000)}s ago` : "none yet"}`,
+      );
     }
     // 入站图片必达批（2026-10-24）: a client-side long-poll timeout is NOT an
     // empty poll — it means the iLink poll layer returned nothing at all. An
@@ -1015,6 +1087,8 @@ async function liveLoop(accountId, stop) {
     let failStatus = 0; // the deliver leg's HTTP status at the breaking failure (0 = fetch threw)
     for (const m of resp.msgs ?? []) {
       info(`live: inbound from=${String(m?.from_user_id ?? "") || "unresolved"} body=${shape(messageBody(m))}`);
+      inboundLedger.msgs += 1; // 入站账本：投递口径见下（delivered 与否另计，这里先记「到达本机」）
+      inboundLedger.lastMsgsAt = Date.now();
       const r = await deliverToIngress(m, accountId);
       if (!r.delivered) { allDelivered = false; failStatus = r.status; break; }
       info(`live: verdict ${JSON.stringify(r.verdict)}`);
@@ -1058,8 +1132,12 @@ async function fixtureLoop(accountId, stop) {
   info(`fixture: tailing ${FIXTURE} from offset ${offset}`);
   let ingressFailures = 0; // consecutive transport-class ingress delivery failures (backoff schedule)
   let pending = ""; // bytes read from `offset` not yet delivered; invariant: pending === file[offset..size)
+  inboundLedger.active = true; // 入站活性账本（2026-11-07）：fixture 腿同一账本
   for (;;) {
-    if (!heartbeatMutex(accountId)) return;
+    if (!heartbeatMutex(accountId)) {
+      inboundLedger.lastExitReason = "fixture: mutex ownership lost (see the preceding mutex warning)";
+      return;
+    }
     let size = 0;
     try { size = fs.statSync(FIXTURE).size; } catch { await sleep(FIXTURE_POLL_GAP_MS, stop); continue; }
     if (!pending && size > offset) { // read only consumed bytes — a held line must not be re-read
@@ -1116,20 +1194,27 @@ async function fixtureLoop(accountId, stop) {
 
 let loopAccount = "";
 
-/** shim.mjs boot hook. No-ops (with a visible reason) unless fully configured. */
+/**
+ * shim.mjs boot hook. No-ops (with a visible reason) unless fully configured.
+ *
+ * Returns the loop's `AbortController` so a caller (and the offline spec) can
+ * stop it deterministically — a stopped loop releases the lock and does NOT
+ * count as an exit (2026-11-07 batch; the return value is additive and ignored
+ * by the production boot path).
+ */
 export function startMsgLoop() {
   if (!INGRESS_URL) {
     info("idle — WEIXIN_MSGLOOP_INGRESS_URL not set (kill switch 3); login-only shim");
-    return;
+    return null;
   }
   if (FIXTURE && !path.isAbsolute(FIXTURE)) {
     warn(`fixture path must be absolute: ${FIXTURE}`);
-    return;
+    return null;
   }
   let accountId = normalizeAccountId(ACCOUNT_OVERRIDE || listIndexedAccountIds().at(-1) || (FIXTURE ? "fixture-im-bot" : ""));
   if (!accountId) {
     error("no bot account resolvable (index empty; set WEIXIN_MSGLOOP_ACCOUNT_ID)");
-    return;
+    return null;
   }
   loopAccount = accountId;
   const stop = new AbortController();
@@ -1146,10 +1231,13 @@ export function startMsgLoop() {
       if (stop.signal.aborted) return;
       const held = accountId; // the account THIS iteration's mutex/cursor belong to
       if (acquireMutex(held, stop.signal)) {
+        inboundLedger.starts += 1;
+        inboundLedger.lastStartAt = Date.now();
         let next = null;
         try {
           next = await (FIXTURE ? fixtureLoop(held, stop.signal) : liveLoop(held, stop.signal));
         } finally {
+          inboundLedger.active = false;
           releaseMutex(held); // owner-checked; always the account we held
         }
         // Self-heal switch: loopAccount flips AFTER the release (a signal in
@@ -1161,11 +1249,29 @@ export function startMsgLoop() {
           info(`self-heal: account ${held} → ${accountId} (${next.reason}; trigger: ${next.trigger}) — same process, fresh cursor`);
           continue;
         }
-        return; // loop exited: ownership lost or stop signalled
+        if (stop.signal.aborted) return; // a stop is not an exit — no re-arm churn
+        // 微信入站静默死亡批（2026-11-07，作者报障「我微信发消息你怎么收不到了」）：
+        // THIS `return;` was the incident. Any unexpected end of the live loop
+        // (a transient lock fault above all) used to end the inbound leg for the
+        // life of the shim process: no log, no restart, launchd sees a healthy
+        // process, and every later send prints the same 「inbound loop not
+        // active」 line that was hardcoded false. The exit is NAMED and the loop
+        // RE-ARMS on a bounded backoff instead — a genuinely held account still
+        // shows up as acquireMutex's 「mutex: refused … retrying every 60s」, so
+        // the single-consumer invariant is unchanged and now visible.
+        inboundLedger.exits += 1;
+        inboundLedger.lastExitAt = Date.now();
+        inboundLedger.lastExitReason ??= "loop ended without a reason";        warn(
+          `loop: exited (${inboundLedger.lastExitReason}) — INBOUND IS DOWN until re-acquired; ` +
+            `re-arming in ${LOOP_REARM_MS / 1000}s (starts=${inboundLedger.starts} exits=${inboundLedger.exits})`,
+        );
+        await sleep(LOOP_REARM_MS, stop.signal);
+        continue;
       }
       await sleep(MUTEX_RETRY_MS, stop.signal);
     }
   })().catch((e) => error(`loop crashed: ${e.message} (mutex released; shim continues login-only)`));
+  return stop;
 }
 
 // Direct-run entry (`node msgloop.mjs`) — for ops and the fixture rig. The
