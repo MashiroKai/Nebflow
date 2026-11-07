@@ -1,5 +1,6 @@
 import { key } from './branding.js'; // MUST be first: storage-key migration runs at module init, before state.js/i18n.js read localStorage.
 import state from './state.js';
+import { installPanelBackSwipeWire as initBackSwipe, hasBackHandler, topBackHandler } from './gesture/backSwipe.js';
 import { initBranding, brand } from './brand.js';
 
 // ask-paradigm-a（2026-11-03）：vanilla 组件范式基座三件（dom / events / component）
@@ -4671,6 +4672,16 @@ initMemory();
 initBgMergedPanel(); // 后台合并批（2026-10-23 ⑥）：子智能体列表收编进 #bg-dropdown 单面板
 initExplorer();
 initCanvas();
+// 滑返批（作者令 2026-11-07 12:17「全局次级面板的ui交互 都应该要能支持从左向右滑返回
+// 上一层」）：装**单点**次级面板滑返层（登记面 + 手势面 + Esc 通路）。本行只做装配，
+// 各面板由清单自动接线（js/gesture/backSwipe.js 的 PANELS），零第二套关闭逻辑。
+initBackSwipe();
+// 只读探针（滑返批取证用：机械断言登记栈深度/栈顶面板 id，零行为副作用）。
+window.__backSwipeProbe = () => ({
+  has: hasBackHandler(),
+  top: topBackHandler()?.id || null,
+  depth: Number(document.documentElement.dataset.backSwipeDepth || 0),
+});
 initAskDock(); // canvas ask mode 批（2026-10-28）：右下角入口 + 每文件独立会话气泡列
 initColResizers();
 // #27: Project 标签页按钮（取代 Team/Flow 主导位置）——打开发布 projects 标签页
