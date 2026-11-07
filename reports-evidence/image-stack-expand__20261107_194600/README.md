@@ -32,6 +32,7 @@
 | `existing-specs-before.log` / `existing-specs-after.log` | 既有媒体组件 spec 两棵树对照：改前 **8 failed / 44 passed**（pop-stack-fan 展开腿、pop-artifacts U3/U4、quote-media-stack、pop-media-alignment），改后 **52 passed / 0 failed** |
 | `spec-history-bisect.log` | 历史定位原始日志：`5545b1d4f` 6 passed → `1a8182372` / `f9630aa8c` / `3dc6c9885` 各 3 failed → 反事实（坏树只补一个 `}`）6 passed |
 | `runtime-state.md` | 运行态核对：宿主实例 PID/启动时刻、main 与 `target/classes` 上该文件的 mtime 与块平衡 |
+| `specificity-before.json` / `specificity-after.json` | 级联取证（`tests/css-cascade-probe.mjs` 产出）：两棵树该表顶层规则数、命中展开列的选择器文本与先后、计算值 |
 
 ## 三、历史定位：回归是哪一个 commit 引进的（实证，不是相关性）
 
@@ -57,6 +58,19 @@
 4. 收尾：折叠面此时已被 `setExpanded` 写成 inline `display:none`，两面俱隐 ⇒ 只剩胶囊。
 
 > 反例校准（避免把相关性当因果）：`3e1577be9f`（contact-panel-unify 分支，15:04）该文件块平衡显示 depth=0，看着像「已经修好」，实际是**它的分支线里根本没有 `--ds-hit-tap-*` 这一段**（`tap=False`）。块平衡只在同一谱系上可比 —— 这正是不能用「depth 归零」当修复凭据的原因。
+
+### 3.3 级联胜负的现场取证（`specificity-before.json` / `specificity-after.json`）
+
+用 `tests/css-cascade-probe.mjs` 在真浏览器里读 Chrome DevTools Protocol 的两份表：
+
+| 读数 | 改前树 | 改后树 |
+|---|---|---|
+| `design-system.css` 该表**顶层规则数** | **6**（全部是文件开头的 `:root` 块） | **137** |
+| 命中展开列规则的选择器文本 | `.pop-expand-view.show`（flex）与 **`& .ds-media-stack__expand`**（none） | `.ds-media-stack__expand`（none）与 `.pop-expand-view.show`（flex） |
+| 匹配表里的先后 | `& .ds-media-stack__expand` **在后** ⇒ 打平后按文档序胜出 | `.pop-expand-view.show` 在后 ⇒ 按特异性胜出 |
+| `#chat .pop-expand-view` 计算值 | `display: none` | `display: flex` |
+
+「选择器文本带前导 `&`」是浏览器把规则当嵌套规则解析的直接物证：改前树里它被挂在 `:root` 之下，`getMatchedStylesForNode` 就照原样把它吐回来。探针夹具用 1×1 像素图（只关心级联，不关心几何），所以它报的容器高度不代表真实几何 —— 真实几何读数看 `reading-*.json`。
 
 ## 四、既有测试为什么没拦住（三层，逐层有据）
 
