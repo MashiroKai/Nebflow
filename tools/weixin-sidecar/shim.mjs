@@ -519,9 +519,17 @@ function sendJson(res, code, obj) {
 
 // weixin-outbound batch: the send-leg handler, assembled once with this file's
 // shared helpers (send.mjs stays importable standalone for unit tests).
-// `inboundActive` reports the inbound loop state; this side-car ships none yet
-// (the inbound batch owns that half) so it is constantly false for now — the
-// send leg logs its observability WARN on that, per the send contract.
+//
+// 微信入站静默死亡批（2026-11-07，作者报障「我微信发消息你怎么收不到了」）:
+// `inboundActive` used to be a hardcoded `() => false` — the inbound batch's
+// 「候与入站批对账归一」 reconciliation never happened. Consequence: every send
+// printed the same 「inbound loop not active」 WARN (5651 of them), so the ONE
+// line that could have said "inbound is dead" was permanently true-by-default
+// and therefore carried no information; a three-day inbound outage read exactly
+// like a quiet channel. The indirection below is filled in by the msgloop boot
+// further down with the loop's REAL ledger (msgloop.inboundLoopState()).
+let inboundActive = () => false;
+let inboundSnapshot = () => null;
 const handleSend = makeSendHandler({
   info,
   warn,
@@ -535,7 +543,7 @@ const handleSend = makeSendHandler({
   ILINK_APP_ID,
   ILINK_APP_CLIENT_VERSION,
   ILINK_DEFAULT_BASE: FIXED_BASE_URL,
-  inboundActive: () => false, // 候与入站批对账归一: the inbound batch flips this to its loop state
+  inboundActive: () => inboundActive(),
 });
 
 const server = http.createServer((req, res) => {
@@ -571,7 +579,12 @@ const server = http.createServer((req, res) => {
   }
 
   if (p === "/healthz") {
-    sendJson(res, 200, { ok: true, state: session?.phase ?? "idle", gen: session?.gen ?? 0 });
+    // 微信入站静默死亡批（2026-11-07）：`inbound` is the loop's real ledger —
+    // active / polls / msgs / exits / lastExitReason. One GET now answers "is
+    // inbound alive, and if not, where did it stop", instead of leaving the
+    // answer to a 60 MB log reconstruction. The `ok`/`state`/`gen` shape is
+    // unchanged (liveness probes keep working).
+    sendJson(res, 200, { ok: true, state: session?.phase ?? "idle", gen: session?.gen ?? 0, inbound: inboundSnapshot() });
     return;
   }
 
@@ -600,7 +613,15 @@ if (process.env.WEIXIN_MSGLOOP_OFF === "1") {
   info("msgloop: disabled by WEIXIN_MSGLOOP_OFF (kill switch 2)");
 } else {
   import("./msgloop.mjs")
-    .then((m) => m.startMsgLoop())
+    .then((m) => {
+      // 微信入站静默死亡批（2026-11-07）：the inbound leg's state was never
+      // reachable from here (see the `inboundActive` note above the send
+      // handler). Wiring it now: the send leg's observability WARN tells the
+      // truth, and `/healthz` carries the loop's ledger.
+      inboundActive = () => m.inboundLoopState().active === true;
+      inboundSnapshot = () => m.inboundLoopState();
+      m.startMsgLoop();
+    })
     .catch((e) => warn(`msgloop: not loaded (${e.message}) — login-only shim (kill switch 1)`));
 }
 
