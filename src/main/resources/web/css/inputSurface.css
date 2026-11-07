@@ -68,7 +68,9 @@
    `.nf-field--bare` 是显式类；下面这串选择器是**已登记的成员**（都是嵌在
    成形容器里的输入：主会话输入条 / ask 输入条 / 记事本 / 画布查找条 /
    wiki 搜索胶囊 / 邮件收件人与主题行 / 提醒行内输入 / todo 行标题 / 移动端
-   搜索框 / delegate 弹窗头部模型下拉）。成员只拿「裸」，几何仍归各自文件。 */
+   搜索框 / delegate 弹窗头部模型下拉）。成员只拿「裸」，几何仍归各自文件。
+   提醒行内**描述**（`.reminder-inline-desc`）同属「提醒行内」这一面：它和同行
+   的 name 输入件在同一个成形容器里，故并入本成员表。 */
 .nf-field--bare,
 #input,
 .ask-input textarea,
@@ -79,6 +81,7 @@
 .to-input,
 .subject-input,
 .reminder-inline-input,
+.reminder-inline-desc,
 .reminder-inline-project input,
 .tfl-row-title-input,
 .bgagent-model-switch {

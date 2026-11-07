@@ -464,6 +464,53 @@ html.no-backdrop .tw-panel { background: var(--color-surface); }
   border-left: 2px solid var(--glass-etched-border);
 }
 
+/* ══ 宿主适配档（窄宿主面板内的弹窗）══════════════════════════════════════
+   2026-11-07 作者报障：「这个界面也是，感觉大小比例失衡了。弹窗的内容比主界面
+   还大。」实拍复核（桌面 1280/1440 真实 Chromium）：定时任务面与待办面的宿主
+   面板分别是 360 / 420 宽，弹窗却是 300×278 的定尺 —— 高 278 > 待办宿主整面
+   273，且右缘越出宿主 6px（848 vs 842），滚轮 20px 数字 / 40px 行高 / 200px
+   列高，字号比宿主正文（13）大两档。它不是「另一个面」，是**同一个选择器在
+   小宿主里的唯一一档**：
+     · 触发钮所在宿主面板宽 < 480（= 面板档浮层：定时任务 360 / 待办 420）⇒
+       js/timeWheel.js place() 挂 `.host-fit`，弹窗按宿主尺度收档（下述）；
+     · 宿主是大面（设置页 / provider 弹窗 ≥ 480）⇒ 维持原档，桌面其它落点零感知；
+     · 手机层是另一条皮（`.tw-panel.sheet`，底部抽屉），本块零命中 —— 触控尺寸
+       （列 ≥44、钮 44、胶囊 44）原样保留。
+   值的出处：圆角/间距/字号全部取设计刻度表（--ds-space-* / --ds-fs-*），
+   列宽/行高/列高是本组件自己的三档几何（与 base 档同语义同源，只是收一档）。 */
+.tw-panel.popover.host-fit {
+  width: 264px;
+  padding: var(--ds-space-2) var(--ds-space-3) var(--ds-space-3);
+}
+.tw-panel.popover.host-fit .tw-head {
+  gap: var(--ds-space-1h);
+  padding: 0 0 var(--ds-space-1);
+}
+.tw-panel.popover.host-fit .tw-title { font-size: var(--ds-fs-body); }
+.tw-panel.popover.host-fit .tw-btn {
+  padding: 0 var(--ds-space-2);
+  font-size: var(--ds-fs-body);
+}
+/* 滚轮列：46/96 宽 × 150 高（5 档可见），行高 30 —— 与下方 JS 的量测口径一致
+   （js/timeWheel.js 的 Wheel 几何从**计算样式**读，禁第二份常数）。 */
+.tw-panel.popover.host-fit .tw-col {
+  width: 46px;
+  height: 150px;
+}
+.tw-panel.popover.host-fit .tw-col-date { width: 96px; }
+.tw-panel.popover.host-fit .tw-item {
+  height: 30px;
+  font-size: var(--ds-fs-lead);
+}
+.tw-panel.popover.host-fit .tw-col-date .tw-item { font-size: var(--ds-fs-hint); }
+.tw-panel.popover.host-fit .tw-band {
+  height: 30px;
+  margin-top: -15px;
+}
+.tw-panel.popover.host-fit .tw-sep { padding: 0 var(--ds-space-1); }
+/* 段列表行（range 腿落在窄宿主时的兜底）：行内控件保持 44 命中盒，横距收一档。 */
+.tw-panel.popover.host-fit .tw-row { gap: var(--ds-space-1h); }
+
 /* ══ 手机层（body.mobile-layer）局部适配：列宽与胶囊随屏宽铺开 ═══════════ */
 body.mobile-layer .tw-panel.sheet .tw-col { width: 62px; }
 body.mobile-layer .tw-panel.sheet .tw-col-date { width: 120px; }

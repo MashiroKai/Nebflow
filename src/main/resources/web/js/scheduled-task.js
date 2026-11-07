@@ -1166,6 +1166,22 @@ function startInlineCreate() {
   editingTask = null;       // 新建 = 清编辑态（否则抽屉标题/预填会带着上一条）
   currentRepeat = 'once';   // fresh form → one-shot by default
   renderList();
+  revealInlineCreate();
+}
+
+/**
+ * 桌面腿：行内创建表单落在**列表尾部**（流内一行）。列表非空时它在滚动体可见区
+ * 之外 —— 开单后一次「即时」滚动把它带到位（不播动画：面板体的
+ * scroll-behavior:smooth 只对用户发起的滚动友好，开单这一下必须是即刻的终态）。
+ * 手机层是底部抽屉皮，表单本就在抽屉可视区内 ⇒ 本函数在手机层直接返回
+ *（抽屉批的「新建零位移」硬验收不受影响）。
+ */
+function revealInlineCreate() {
+  if (mobileLayerOn()) return;
+  const body = $('#reminder-panel .reminder-panel-body');
+  if (!body || !body.querySelector('.reminder-inline-create')) return;
+  // 滚到列表尾部 = 表单整块（含「取消 / 创建」）进可视区；体不可滚时是无操作。
+  body.scrollTo({ top: body.scrollHeight, behavior: 'instant' });
 }
 
 /** 待办面内联创建开/关（待办分家批，与提醒面 isCreating 互不干扰）。 */
@@ -1195,6 +1211,7 @@ function startTaskEdit(r) {
   isCreating = true;
   currentRepeat = r.repeat || 'once';
   renderList();
+  revealInlineCreate();
 }
 
 /* ── 手机页面态：右下悬浮加号 + 新建抽屉（todo-fullbleed 批 · 作者令 2026-11-05
@@ -1849,7 +1866,7 @@ export function initScheduledTask() {
   const body = $('#reminder-panel .reminder-panel-body');
   if (body) {
     body.addEventListener('click', (e) => {
-      if (e.target.closest('button, input, a, .reminder-row')) return;
+      if (e.target.closest('button, input, textarea, a, .reminder-row')) return;
       if (isCreating) saveInlineTask();
       else startInlineCreate();
     });

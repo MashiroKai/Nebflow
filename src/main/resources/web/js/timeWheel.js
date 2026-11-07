@@ -87,6 +87,12 @@ export class Wheel {
     this.digitBuf = '';
     this.digitTimer = null;
     this.locked = false;
+    // 滚轮几何 = **量测出来的**（css/timeWheel.css 是唯一真源；base 档 40/200、
+    // 宿主适配档 .host-fit 30/150）。下面的常量只是「还没量到」时的初值：
+    // 2026-11-07 宿主适配批之前这里只有模块常量，CSS 改一档滚轮就会错位
+    //（yFor / 拖拽 / 甩动速度全按 40 换算）。
+    this.itemH = ITEM_H;
+    this.colH = COL_H;
 
     const strip = document.createElement('div');
     strip.className = 'tw-strip';
@@ -121,7 +127,25 @@ export class Wheel {
   mod(i) { return ((i % this.N) + this.N) % this.N; }
   value() { return this.values[this.mod(Math.round(this.pos))]; }
   valueIdx() { return this.mod(Math.round(this.pos)); }
-  yFor(p) { return COL_H / 2 - (p + this.N + 0.5) * ITEM_H; }
+  yFor(p) { return this.colH / 2 - (p + this.N + 0.5) * this.itemH; }
+
+  /**
+   * 几何跟随样式（唯一真源 = css/timeWheel.css 的首轮/宿主适配档）。
+   * 调用点只有 place()：开合时按**当前皮**量一次，档位切换（popover ⇄ host-fit
+   * ⇄ sheet）后滚轮位置立即按新行高重算，不残留旧档。
+   * @param {number} itemH 单档行高（px）
+   * @param {number} colH 列高（px）
+   * @returns {void}
+   */
+  setGeometry(itemH, colH) {
+    const ih = Number(itemH);
+    const ch = Number(colH);
+    if (!(ih > 0) || !(ch > 0)) return;
+    if (ih === this.itemH && ch === this.colH) return;
+    this.itemH = ih;
+    this.colH = ch;
+    this.render();
+  }
 
   render() {
     this.strip.style.transform = 'translateY(' + this.yFor(this.pos).toFixed(2) + 'px)';
@@ -218,7 +242,7 @@ export class Wheel {
     if (this.state !== 'drag') return;
     const dy = e.clientY - this._lastY;
     this._lastY = e.clientY;
-    this.pos -= dy / ITEM_H;
+    this.pos -= dy / this.itemH;
     this._samples.push([e.clientY, performance.now()]);
     while (this._samples.length > 2 && performance.now() - this._samples[0][1] > 100) this._samples.shift();
     this.render();
@@ -232,7 +256,7 @@ export class Wheel {
     if (s && s.length >= 2) {
       const dy = s[0][0] - s[s.length - 1][0];
       const dt = Math.max(1, s[s.length - 1][1] - s[0][1]);
-      v = Math.max(-2.5, Math.min(2.5, (dy / ITEM_H) / dt));   // 钳 ±2.5 档/ms 防甩飞
+      v = Math.max(-2.5, Math.min(2.5, (dy / this.itemH) / dt));   // 钳 ±2.5 档/ms 防甩飞
     }
     if (Math.abs(v) < 0.004 || REDUCED.matches) this.snapTo(Math.round(this.pos), 180);
     else { this.state = 'coast'; this.v = v; }
@@ -646,12 +670,50 @@ function setPointValue(date, time, animate) {
   wheels.pm.setTo(snapMin5(parts[1] || 0) / 5, animate);
 }
 
-/** 面板定位（popover 锚定整段字段下方 6px，视口钳位 8px，空间不足翻转上方）。 */
+/** 宿主面（窄宿主判定的唯一入口）。
+ *  触发钮所在的「面」= 面板档浮层（定时任务面 #reminder-panel / 待办面 .tfl-card /
+ *  设置·provider 弹窗）。宿主只用来做两件事：**是否收档**（宽 < HOST_NARROW_MAX）
+ *  与**定位钳位**（弹窗不出宿主横界）——它不是第二种皮，皮仍只有 popover/sheet 两种。
+ *  @param {HTMLElement} trigger
+ *  @returns {{el:Element, rect:DOMRect}|null} */
+const HOST_FACE_SELECTOR = '#reminder-panel, .tfl-card, .cfg-modal, .scroll-under-glass';
+const HOST_NARROW_MAX = 480;
+function hostFaceOf(trigger) {
+  const host = trigger && trigger.closest ? trigger.closest(HOST_FACE_SELECTOR) : null;
+  if (!host) return null;
+  const rect = host.getBoundingClientRect();
+  if (!(rect.width > 0 && rect.height > 0)) return null;
+  return { el: host, rect };
+}
+
+/** 滚轮几何跟随样式（唯一真源 = css/timeWheel.css 的当前档）。
+ *  量测口径 = 当前可见体的真实布局盒（`.tw-item` 行高 / `.tw-col` 列高）：
+ *  JS 里不再出现第二份 40/200 常数（改 CSS 不会让滚轮错位）。 */
+function syncWheelGeometry() {
+  const body = panel && panel.querySelector(session && session.mode === 'point' ? '.tw-body-point' : '.tw-body-range');
+  if (!body) return;
+  const item = /** @type {HTMLElement|null} */ (body.querySelector('.tw-item'));
+  const col = /** @type {HTMLElement|null} */ (body.querySelector('.tw-col'));
+  if (!item || !col) return;
+  // 必须读 **布局盒**（offsetHeight）：滚轮自己会给非中档项写 scale(0.94)，
+  // getBoundingClientRect 读到的是缩放后的 28.2 而不是 30 —— 量错一次，整个
+  // 滚轮的行程就与 CSS 档位错位（本批实测抓出）。
+  const ih = item.offsetHeight;
+  const ch = col.offsetHeight;
+  for (const w of Object.values(wheels)) w.setGeometry(ih, ch);
+}
+
+/** 面板定位（popover 锚定整段字段下方 6px，视口钳位 8px，空间不足翻转上方；
+ *  宿主面在内时：横不出宿主、竖在宿主放得下时留在宿主体内 —— 2026-11-07 宿主适配批）。 */
 function place(trigger) {
   const el = /** @type {HTMLElement} */ (panel);
   const sheet = isSheetMode();
   el.classList.toggle('popover', !sheet);
   el.classList.toggle('sheet', sheet);
+  // 宿主适配档：窄宿主面板（< 480，见 css/timeWheel.css 同名块）里按宿主尺度收档；
+  // 大宿主（设置页 / provider 弹窗）与手机 sheet 腿零命中。判定必须在量尺寸之前。
+  const hostFace = sheet ? null : hostFaceOf(trigger);
+  el.classList.toggle('host-fit', !!(hostFace && hostFace.rect.width < HOST_NARROW_MAX));
   const sep = sepText();
   const ws = el.querySelector('.tw-wheel-sep');
   const is = el.querySelector('.tw-in-sep');
@@ -670,16 +732,46 @@ function place(trigger) {
 
   if (!sheet) {
     const r = trigger.getBoundingClientRect();
-    const W = 300;
-    const x = Math.min(Math.max(8, r.left), window.innerWidth - W - 8);
-    let y = r.bottom + 6;
+    // 量测前先让它可布局：面板 base 规则是 display:none，此时 offsetWidth/Height
+    // 恒为 0 —— 旧代码因此把宽度写死 300、高度退化成一个假值 400 去做翻面判断
+    //（档位一改，定位就与真实盒子脱钩）。
+    el.style.display = 'block';
+    el.style.visibility = 'hidden';
+    const W = el.offsetWidth || 300;
     const ph = el.offsetHeight || 400;
+    let x = Math.min(Math.max(8, r.left), Math.max(8, window.innerWidth - W - 8));
+    if (hostFace && hostFace.rect.width >= W + 16) {
+      // 横界钳位：弹窗右缘不得越过宿主右缘（报障实拍：848 vs 宿主 842）。
+      const lo = hostFace.rect.left + 8;
+      const hi = Math.max(lo, hostFace.rect.right - W - 8);
+      x = Math.min(Math.max(lo, x), hi);
+    }
+    let y = r.bottom + 6;
+    if (hostFace && hostFace.rect.height >= ph + 16) {
+      // 宿主放得下 ⇒ 弹窗留在宿主体内（不再挂到面板外半截）。
+      const lo = hostFace.rect.top + 8;
+      const hi = Math.max(lo, hostFace.rect.bottom - ph - 8);
+      y = Math.min(Math.max(lo, y), hi);
+    }
     if (y + ph > window.innerHeight - 8) y = Math.max(8, r.top - ph - 6);
+    y = Math.max(8, Math.min(y, Math.max(8, window.innerHeight - ph - 8)));
     el.style.left = x + 'px';
     el.style.top = y + 'px';
+    // 几何量测必须在**强制布局还活着**的时候做（这里 display 仍是 block）：
+    // 一旦收回 display（面板 base 规则是 none），offset* 立刻回 0。
+    syncWheelGeometry();
+    el.style.visibility = '';
+    el.style.display = '';
   } else {
     el.style.left = '';
     el.style.top = '';
+    // sheet 皮同样要按当前档量一次几何（上一次若是 host-fit 开的，行高会残留
+    // 30 —— 手机层触控档必须回到自己的 40/200）。
+    el.style.display = 'block';
+    el.style.visibility = 'hidden';
+    syncWheelGeometry();
+    el.style.visibility = '';
+    el.style.display = '';
   }
   el.classList.add('in');
   trigger.classList.add('open');
