@@ -10,6 +10,6 @@ target/scala-3.5.2/classes/web/css/design-system.css     mtime=Nov  6 19:16:25 2
 
 ## 结论
 - 运行中的实例启动于 2026-11-07 15:26:58（早于修复提交 41fb6c313 / 20:37）
-- main 源码与 target/classes 副本都仍是 depth=1（未闭合）⇒ 现在浏览器拿到的仍是坏 CSS
-- 修复只在分支 delegate/image-expand-disappears 上；合并 main 后需重新编译/重启实例，target/classes 副本才会被覆盖
+- main 源码与 target/classes 副本均为 depth=1（未闭合）；未连接宿主控制台，不能证明浏览器实际收到的字节或缓存状态。
+- 修复仅在分支 delegate/image-expand-disappears；合并后需确认运行实例资源已更新及浏览器取到新样式。是否需要编译或重启须依部署方式核实，本次未重启。
 - main HEAD = eec7cbf40 Merge branch 'delegate/desktop-social-canvas-blue'
