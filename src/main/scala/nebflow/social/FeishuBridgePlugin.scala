@@ -112,17 +112,21 @@ final class FeishuBridgePlugin(
    */
   sendCard: FeishuBridgePlugin.SendCard = FeishuBridgePlugin.defaultSendCard,
   /**
-   * Inbound image fetch seam (feishu-inbound-image batch, 2026-10-11):
-   * `(appId, appSecret, region, imageKey) → bytes | reason`. Production =
-   * [[FeishuBridgePlugin.defaultFetchImage]] — the bot credential face
-   * ([[FeishuChannel.getImage]], `im/v1/images/:image_key`), the SAME stored
-   * pair the listener connects with, read through [[FeishuCredentials]]; the
-   * SecretsStore storage structure is untouched (a read, never a write). The
-   * offline spec injects a fake, so no test opens a socket. A `Left(reason)`
-   * names why the bytes could not be obtained — the image arm turns it into
-   * an honest session-visible failure line, never a silent drop.
+   * Inbound message-resource fetch seam (feishu-inbound-image batch 2026-10-11;
+   * re-shaped by the feishu-image-endpoint batch 2026-11-07):
+   * `ResourceRequest(appId, appSecret, region, messageId, fileKey, resourceType)`
+   * → bytes | reason. Production = [[FeishuBridgePlugin.defaultFetchResource]] —
+   * the bot credential face ([[FeishuChannel.getInboundResource]]:
+   * `im/v1/messages/:message_id/resources/:file_key?type=…`, with the legacy
+   * `im/v1/images/:image_key` leg kept ONLY as a controlled fallback for an event
+   * that carries no message_id), the SAME stored pair the listener connects with,
+   * read through [[FeishuCredentials]]; the SecretsStore storage structure is
+   * untouched (a read, never a write). The offline spec injects a fake, so no test
+   * opens a socket. A `Left(reason)` names why the bytes could not be obtained
+   * AND which leg was ridden — the arm turns it into an honest session-visible
+   * failure line, never a silent drop.
    */
-  fetchImage: FeishuBridgePlugin.FetchImage = FeishuBridgePlugin.defaultFetchImage,
+  fetchResource: FeishuBridgePlugin.FetchResource = FeishuBridgePlugin.defaultFetchResource,
   /**
    * output 块总闸缝（output-block-gate 批，作者令「把 output 块相关的内容先
    * 关闭……」）：每次出站 flush 执行期求值。生产缺省 = 热读 nebflow.json 顶层
@@ -292,8 +296,11 @@ final class FeishuBridgePlugin(
       // unrecognised-type placeholder instead of vanishing.
       // feishu-inbound-image batch (2026-10-11): `image` left the placeholder
       // class — the parse layer answers `None` for it and the fourth selector
-      // element routes it to the IMAGE ARM (fetch by image_key → land under
-      // uploads → inject the media line), ahead of the no-body drop.
+      // element routes it to the IMAGE ARM (fetch the message's own resource →
+      // land under uploads → inject the media line), ahead of the no-body drop.
+      // feishu-image-endpoint 批（2026-11-07）: 那次取用走的是
+      // `im/v1/messages/:message_id/resources/:file_key?type=image`,不再是
+      // 只认机器人自传图的 `im/v1/images/:image_key`。
       body = renderedBody(in)
       _ <- (
         allowed.isEmpty || in.senderId.exists(allowed.contains),
@@ -482,21 +489,29 @@ final class FeishuBridgePlugin(
   // ───────── feishu-inbound-image batch (2026-10-11): the image arm (intake 前置臂) ─────────
 
   /**
-   * The IMAGE ARM: a `message_type=image` event fetches its bytes by
-   * `image_key` through the [[fetchImage]] seam (production = the bot
-   * credential face [[FeishuChannel.getImage]]; the SecretsStore storage
-   * structure is untouched — a read through [[FeishuCredentials]] only), lands
-   * them under `<root>/uploads/<sessionId>/`, and injects the SAME one-line
+   * The IMAGE ARM: a `message_type=image` event fetches its bytes by the
+   * message's own resource key through the [[fetchResource]] seam (production =
+   * the bot credential face [[FeishuChannel.getInboundResource]] →
+   * `im/v1/messages/:message_id/resources/:file_key?type=image`; the SecretsStore
+   * storage structure is untouched — a read through [[FeishuCredentials]] only),
+   * lands them under `<root>/uploads/<sessionId>/`, and injects the SAME one-line
    * form the weixin leg's media arm injects
    * ([[WeixinIlinkBridgePlugin.mediaLine]] — one authority, never a second
    * wording; the agent Reads the file itself, exactly like the weixin arm).
    *
+   * 🔴 feishu-image-endpoint 批（2026-11-07）: the request carries the message id
+   * and the resource type, because an inbound `image_key` is a key INTO a specific
+   * message — the old key-only shape (`im/v1/images/:image_key`) downloads only
+   * images the bot itself uploaded and answered `234001 Invalid request param` for
+   * every user-sent photo (the author's report).
+   *
    * Every failure has an HONEST session-visible face — the line names what
-   * failed, the message id and the image key — plus a WARN log line:
+   * failed (including which download leg was ridden), the message id and the
+   * truncated resource key — plus a WARN log line:
    *
    *   · no credential resolved  → 「渠道凭据未就绪」
-   *   · no image_key on the wire → 「事件未携带 image_key」
-   *   · the fetch failed         → 「下载失败（code=… msg=…）」
+   *   · no resource key on the wire → 「事件未携带 image_key」
+   *   · the fetch failed         → 「下载失败（leg=… http=… code=… msg=…）」
    *   · over [[FeishuBridgePlugin.MaxInboundImageBytes]] → 「大小超限」，not landed
    *
    * The unrecognised-type placeholder is unreachable for image by construction
@@ -511,15 +526,24 @@ final class FeishuBridgePlugin(
         logger.warn(s"feishu bridge: image $mid not fetched — no credential resolved") *>
           inject(s"[图片未取得] 渠道凭据未就绪，message_id=$mid")
       case Some(c) =>
-        FeishuBridgePlugin.imageKeyOf(in.contentRaw) match
+        FeishuBridgePlugin.resourceKeyOf(in.messageType, in.contentRaw) match
           case None =>
             logger.warn(s"feishu bridge: image $mid carries no image_key — nothing to fetch") *>
               inject(s"[图片未取得] 事件未携带 image_key，message_id=$mid")
           case Some(key) =>
-            fetchImage(c.appId, c.appSecret, region, key).flatMap {
+            val safeKey = FeishuChannel.maskKey(key)
+            val req = FeishuBridgePlugin.ResourceRequest(
+              c.appId,
+              c.appSecret,
+              region,
+              mid,
+              key,
+              FeishuBridgePlugin.resourceTypeOf(in.messageType)
+            )
+            fetchResource(req).flatMap {
               case Left(reason) =>
                 logger.warn(s"feishu bridge: image $mid download failed ($reason)") *>
-                  inject(s"[图片未取得] 下载失败（$reason），message_id=$mid，image_key=$key")
+                  inject(s"[图片未取得] 下载失败（$reason），message_id=$mid，image_key=$safeKey")
               case Right(bytes) =>
                 if bytes.length.toLong > FeishuBridgePlugin.MaxInboundImageBytes then
                   logger.warn(
@@ -528,7 +552,7 @@ final class FeishuBridgePlugin(
                   ) *>
                     inject(
                       s"[图片未保存] 大小超限（${bytes.length} 字节 > 上限 ${FeishuBridgePlugin.MaxInboundImageBytes} 字节），" +
-                        s"message_id=$mid，image_key=$key"
+                        s"message_id=$mid，image_key=$safeKey"
                     )
                 else
                   IO.blocking(FeishuBridgePlugin.landInboundImage(root, sessionId, mid, bytes)).flatMap { path =>
@@ -1415,24 +1439,75 @@ object FeishuBridgePlugin:
   // ───────── feishu-inbound-image batch (2026-10-11): the image arm's pure face ─────────
 
   /**
-   * The inbound image fetch seam. `Left(reason)` = the bytes could not be
-   * obtained — the reason is mechanism detail for the log, and the arm
-   * renders the honest session-visible line from it (the secret never enters
-   * either: the pair feeds the SDK client only).
+   * 一次入站消息资源下载请求（feishu-image-endpoint 批，2026-11-07）：
+   * `messageId` 是该资源所属的消息（官方「获取消息中的资源文件」要求 message_id
+   * 与 file_key 匹配），`resourceType` 是官方 `type` 查询参数（image | file），
+   * `fileKey` 是事件内容里的 image_key/file_key。凭据对随请求走，绝不进日志。
    */
-  type FetchImage = (String, String, String, String) => IO[Either[String, Array[Byte]]]
+  final case class ResourceRequest(
+    appId: String,
+    appSecret: String,
+    region: String,
+    messageId: String,
+    fileKey: String,
+    resourceType: String
+  )
 
   /**
-   * Production fetch — [[FeishuChannel.getImage]] (the `im/v1/images/:image_key`
-   * download leg) wrapped in IO. Every failure mode of the SDK leg already
-   * arrives as an explicit reading; this wrapper only re-shapes it into
-   * `Either[String, Array[Byte]]`.
+   * The inbound message-resource fetch seam. `Left(reason)` = the bytes could
+   * not be obtained — the reason is mechanism detail for the log, and the arm
+   * renders the honest session-visible line from it (the secret never enters
+   * either: the pair feeds the transport only). The reason always carries the
+   * `leg=` marker the production seam stamps ([[defaultFetchResource]]).
    */
-  def defaultFetchImage(appId: String, appSecret: String, region: String, imageKey: String): IO[Either[String, Array[Byte]]] =
-    IO.blocking(FeishuChannel.getImage(appId, appSecret, region, imageKey)).map { r =>
+  type FetchResource = ResourceRequest => IO[Either[String, Array[Byte]]]
+
+  /**
+   * Production fetch — [[FeishuChannel.getInboundResource]]：默认腿是
+   * `im/v1/messages/:message_id/resources/:file_key?type=…`（入站消息资源的
+   * 正确接口），`im/v1/images/:image_key` 只在事件无 message_id 时受控回退。
+   *
+   * 2026-11-07 根因（作者报障 code=234001）：入站图片一直走的是「下载图片」
+   * 腿，而那条腿官方限定「只能下载由当前机器人上传的图片」——拿它取用户发的
+   * 图，参数天然不匹配。改腿是本批的实质修复；`leg=` 标记进读数，故障复盘能
+   * 直接看出走的是哪条腿。
+   */
+  def defaultFetchResource(req: ResourceRequest): IO[Either[String, Array[Byte]]] =
+    IO.blocking(
+      FeishuChannel.getInboundResource(req.appId, req.appSecret, req.region, req.messageId, req.fileKey, req.resourceType)
+    ).map { r =>
       if r.ok then r.bytes.map(Right(_)).getOrElse(Left(s"code=${r.code} msg=${r.msg}"))
       else Left(s"code=${r.code} msg=${r.msg}")
     }
+
+  /**
+   * 资源类型（官方 `type` 查询参数）：图片消息 = image，文件/语音/视频消息 =
+   * file。未知类型退回 image —— 本臂的触发条件本身就是 message_type=image，
+   * 这里只做显式化，不引入第二种猜测。
+   */
+  def resourceTypeOf(messageType: String): String =
+    FeishuChannel.ResourceKind.ofMessageType(messageType).getOrElse(FeishuChannel.ResourceKind.Image)
+
+  /**
+   * The `file_key` of a non-image media message's content (`{"file_key": …}`).
+   * Absent, blank or a non-JSON payload ⇒ `None`.
+   */
+  def fileKeyOf(contentRaw: String): Option[String] =
+    io.circe.parser
+      .parse(contentRaw)
+      .toOption
+      .flatMap(_.hcursor.downField("file_key").as[String].toOption)
+      .map(_.trim)
+      .filter(_.nonEmpty)
+
+  /**
+   * 一条入站媒体消息的资源 key：图片消息取 `image_key`，其余媒体消息取
+   * `file_key`（再退回 `image_key`，兼容历史上把图片放在非 image 类型里的
+   * 形状）。都没有 ⇒ None，臂据此说「事件未携带 image_key」而不是空拉一次。
+   */
+  def resourceKeyOf(messageType: String, contentRaw: String): Option[String] =
+    if messageType == "image" then imageKeyOf(contentRaw)
+    else fileKeyOf(contentRaw).orElse(imageKeyOf(contentRaw))
 
   /**
    * The `image_key` of an image event's content (`{"image_key": …}`). Absent,

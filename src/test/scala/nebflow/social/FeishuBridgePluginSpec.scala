@@ -122,25 +122,30 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
 
   /**
    * Recording fetch seam (feishu-inbound-image batch) — the spec never touches
-   * the network. Records `(appId, imageKey)` per call (the secret is never
-   * recorded — same zero-secret discipline as production logs) and answers
-   * with the behavior seeded per image key.
+   * the network. Records `(messageId, fileKey, resourceType)` per call (the
+   * secret is never recorded — same zero-secret discipline as production logs)
+   * and answers with the behavior seeded per resource key.
+   *
+   * feishu-image-endpoint 批（2026-11-07）: the recorded triple IS the fix's
+   * assertion surface — an inbound resource must be requested WITH its message
+   * id and its resource type (`im/v1/messages/:message_id/resources/:file_key`
+   * shape), never by the bare key.
    */
   private final class FakeFetch(behavior: String => Either[String, Array[Byte]]):
-    val calls: Ref[IO, List[(String, String)]] = Ref.unsafe[IO, List[(String, String)]](Nil)
+    val calls: Ref[IO, List[(String, String, String)]] = Ref.unsafe[IO, List[(String, String, String)]](Nil)
 
-    val fn: FeishuBridgePlugin.FetchImage = (appId, _appSecret, region, imageKey) =>
-      calls.update(_ :+ ((appId, imageKey))).as(behavior(imageKey))
+    val fn: FeishuBridgePlugin.FetchResource = req =>
+      calls.update(_ :+ ((req.messageId, req.fileKey, req.resourceType))).as(behavior(req.fileKey))
 
   object FakeFetch:
     /** The default for specs that exercise no image: any accidental fetch fails loudly. */
-    val never: FeishuBridgePlugin.FetchImage = (_, _, _, _) => IO.pure(Left("spec: no fetch expected"))
+    val never: FeishuBridgePlugin.FetchResource = _ => IO.pure(Left("spec: no fetch expected"))
   end FakeFetch
 
   private def plugin(
     send: FeishuBridgePlugin.Send,
     allowed: Option[List[String]] = None,
-    fetch: FeishuBridgePlugin.FetchImage = FakeFetch.never
+    fetch: FeishuBridgePlugin.FetchResource = FakeFetch.never
   ): FeishuBridgePlugin =
     new FeishuBridgePlugin(
       tmpRoot(),
@@ -148,7 +153,7 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
       pinnedAllowedOpenIds = allowed,
       pinnedCreds = Some(FeishuCredentials.Credential("test-app", "test-secret", "spec")),
         outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
-      fetchImage = fetch
+      fetchResource = fetch
     )
 
   private def delta(sessionId: String, text: String): Json =
@@ -217,7 +222,7 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
       send = RecordingSend().fn,
       pinnedCreds = Some(FeishuCredentials.Credential("test-app", "test-secret", "spec")),
         outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
-      fetchImage = fetch.fn
+      fetchResource = fetch.fn
     )
     val image = inbound("oc_bound", None, messageType = "image", contentRaw = """{"image_key":"img_v3_abc"}""")
     for
@@ -226,7 +231,11 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
       got <- injected.get
       calls <- fetch.calls.get
     yield
-      assertEquals(calls, List(("test-app", "img_v3_abc")), "the fetch rode the pinned credential face, keyed by image_key")
+      assertEquals(
+        calls,
+        List(("om_1", "img_v3_abc", "image")),
+        "the fetch rode the pinned credential face AND carried the message id + resource type (messages/resources leg)"
+      )
       assertEquals(got.map(_._1), List("s1"), "the message reaches the bound session")
       val body = got.head._2
       assert(
@@ -252,7 +261,7 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
       send = RecordingSend().fn,
       pinnedCreds = Some(FeishuCredentials.Credential("test-app", "test-secret", "spec")),
         outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
-      fetchImage = fetch.fn
+      fetchResource = fetch.fn
     )
     for
       _ <- p.rebuildRoutes(ctx)
@@ -282,7 +291,7 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
       send = RecordingSend().fn,
       pinnedCreds = Some(FeishuCredentials.Credential("test-app", "test-secret", "spec")),
         outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
-      fetchImage = fetch.fn
+      fetchResource = fetch.fn
     )
     for
       _ <- p.rebuildRoutes(ctx)
@@ -305,7 +314,7 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
       send = RecordingSend().fn,
       pinnedCreds = Some(FeishuCredentials.Credential("test-app", "test-secret", "spec")),
         outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
-      fetchImage = fetch.fn
+      fetchResource = fetch.fn
     )
     for
       _ <- p.rebuildRoutes(ctx)
@@ -749,7 +758,7 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
       pinnedCreds = Some(FeishuCredentials.Credential("test-app", "test-secret", "spec")),
         outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
       readDefaultSession = _ => Some("s_default"),
-      fetchImage = fetch.fn
+      fetchResource = fetch.fn
     )
     for
       _ <- p.rebuildRoutes(ctx)
@@ -791,6 +800,28 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
     assertEquals(FeishuBridgePlugin.imageKeyOf("{}"), None)
     assertEquals(FeishuBridgePlugin.imageKeyOf("not-json"), None)
     assertEquals(FeishuBridgePlugin.imageKeyOf(""), None)
+  }
+
+  // feishu-image-endpoint 批（2026-11-07）: the official `type` query param and the
+  // resource-key extraction that feed the messages/resources leg.
+  test("FB-IP1b resourceTypeOf: image → image, file/audio/video → file, unknown rides the arm's own default") {
+    assertEquals(FeishuBridgePlugin.resourceTypeOf("image"), "image")
+    assertEquals(FeishuBridgePlugin.resourceTypeOf("file"), "file")
+    assertEquals(FeishuBridgePlugin.resourceTypeOf("audio"), "file")
+    assertEquals(FeishuBridgePlugin.resourceTypeOf("media"), "file")
+    assertEquals(FeishuBridgePlugin.resourceTypeOf("share_chat"), "image", "unknown types never invent a third kind")
+  }
+
+  test("FB-IP1c resourceKeyOf: image messages read image_key, other media read file_key, absent answers None") {
+    assertEquals(FeishuBridgePlugin.resourceKeyOf("image", """{"image_key":"img_v3_x"}"""), Some("img_v3_x"))
+    assertEquals(FeishuBridgePlugin.resourceKeyOf("file", """{"file_key":"file_v3_y"}"""), Some("file_v3_y"))
+    assertEquals(
+      FeishuBridgePlugin.resourceKeyOf("audio", """{"image_key":"img_v3_z"}"""),
+      Some("img_v3_z"),
+      "a media message carrying an image_key is still fetchable"
+    )
+    assertEquals(FeishuBridgePlugin.resourceKeyOf("file", "{}"), None)
+    assertEquals(FeishuBridgePlugin.resourceKeyOf("image", "not-json"), None)
   }
 
   test("FB-IP2 imageExtOf: magic bytes decide the extension; unknown falls back to .jpg") {
