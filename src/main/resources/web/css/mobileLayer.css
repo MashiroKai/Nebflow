@@ -3579,8 +3579,24 @@ body.mobile-layer .mh-sr-row {
   cursor: pointer;
   touch-action: manipulation;
 }
-body.mobile-layer .mh-sr-row:active { transform: scale(0.97); }
-body.mobile-layer .mh-sr-row + .mh-sr-row { border-top: 1px solid var(--color-border); }
+body.mobile-layer .mh-sr-row:active { transform: scale(0.97); }body.mobile-layer .mh-sr-row + .mh-sr-row { border-top: 1px solid var(--color-border); }
+/* 检索续取段尾（检索全覆盖批 2026-11-07）：本会话「加载更多」——分段加载的显式
+   续取点。旧实现每会话只看 1000 条消息 / 30 条命中就停，更早的命中永远看不到；
+   现在段尾就在原位续扫，能一路查到最早一条。 */
+body.mobile-layer .mh-sr-more {
+  flex: none;
+  width: 100%;
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
+  border: 1px solid var(--color-border);
+  border-radius: var(--ds-radius-button);
+  background: var(--color-frame-hover);
+  color: var(--color-frame-text-muted);
+  font-family: inherit;
+  font-size: var(--mfs-min);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+body.mobile-layer .mh-sr-more:disabled { opacity: 0.6; }
 body.mobile-layer .mh-sr-meta {
   display: flex;
   align-items: baseline;

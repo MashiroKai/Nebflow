@@ -174,4 +174,59 @@ class SearchIndexServiceSpec extends CatsEffectSuite:
     }
   }
 
+  /**
+   * 检索全覆盖批 2026-11-07 的**后端判据**（作者报障「搜全部的内容 … 我要能查看」）：
+   * 1200 条命中（跨 4 个月、跨「压缩前/回放」两种来源形状）必须能逐页取尽，页与页
+   * 零重叠，且**最后一页确实包含最早那一条** —— 也就是「能一直往下翻到最早一条」
+   * 在服务端成立（前端只是把这串 offset 走完）。
+   */
+  test("全史续取：1200 条命中逐页取尽、页零重叠、末页取到最早一条") {
+    val total = 1200
+    val docs = (0 until total).toList.map { i =>
+      // ts 递增（i=0 最早）——排序口径 = ts DESC，故最早那条必须落在末页。
+      doc("full", total - i, "message", 1_760_000_000_000L + i * 60_000L, s"fullhistory $i")
+    }
+    SearchIndexService.unsafeInsertDocs(face, docs)
+    val page = 200
+    def loop(offset: Int, acc: List[(String, Int)], seen: Set[String]): cats.effect.IO[List[(String, Int)]] =
+      if offset >= total then cats.effect.IO.pure(acc)
+      else
+        SearchIndexService.query(face, q("fullhistory", kinds = List("message"), limit = page, offset = offset))
+          .flatMap { r =>
+            val res  = r.toOption.get
+            val keys = res.hits.map(h => (h.sid, h.ord))
+            assertEquals(res.total, total, s"total 恒为未截断命中数（offset=$offset）")
+            keys.foreach { k =>
+              assert(!seen.contains(s"${k._1}:${k._2}"), s"页间不得重叠：$k @ offset=$offset")
+            }
+            loop(offset + page, acc ++ keys, seen ++ keys.map(k => s"${k._1}:${k._2}"))
+          }
+    loop(0, Nil, Set.empty).map { acc =>
+      assertEquals(acc.length, total, "逐页取尽 ⇒ 与 total 一致（无静默丢失）")
+      assertEquals(acc.map(_._2).distinct.length, total, "行身份唯一")
+      assert(acc.exists(_._2 == total), "最早一条（i=0 ⇒ ord=1200 ⇒ 排序末位）必须出现在末页")
+    }
+  }
+
+  /**
+   * 压缩前归档段（`monthKey=Some("")`）不得被时间窗月桶粗筛误杀：查询带 since 时
+   * 服务端的 monthPreFilter 只保留「窗口月 / current / 空桶」三档，归档行落在空桶
+   * ⇒ 恒保留（这正是 adapter 里归档行写空桶的原因）。
+   */
+  test("月桶覆盖：归档行（空桶）在带时间窗的查询里不被粗筛误杀") {
+    // 三行 ts 都在查询窗口内（since 之下），差别只在月桶：
+    //   ord 0 = 归档行，显式空桶（''）⇒ 粗筛「未知/旧桶，保留」⇒ 必须命中；
+    //   ord 1 = 会话桶（默认 current）⇒ 保留 ⇒ 命中；
+    //   ord 2 = 显式非窗口月桶 ⇒ 被粗筛砍掉（证明粗筛确实在工作，不是恒真）。
+    SearchIndexService.unsafeInsertDocs(face, List(
+      SearchIndexService.IndexDoc("arc", 0, "message", 1_795_000_000_000L, "archived needle", "", Some("")),
+      SearchIndexService.IndexDoc("arc", 1, "message", 1_796_000_000_000L, "archived needle", "", None),
+      SearchIndexService.IndexDoc("arc", 2, "message", 1_797_000_000_000L, "archived needle", "", Some("199901"))
+    ))
+    SearchIndexService.query(face, q("archived", kinds = List("message"), since = Some(1_790_000_000_000L))).map { r =>
+      val res = r.toOption.get
+      assertEquals(res.hits.map(_.ord).sorted, List(0, 1))
+    }
+  }
+
 end SearchIndexServiceSpec

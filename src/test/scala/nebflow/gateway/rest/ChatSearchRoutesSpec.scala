@@ -188,4 +188,40 @@ class ChatSearchRoutesSpec extends CatsEffectSuite:
     assertEquals(resp.status, Status.Forbidden)
   }
 
+  /**
+   * 检索全覆盖批 2026-11-07 的**端点判据**：`limit/offset` 是真分页——620 条命中逐页
+   * 取尽、页零重叠、末页真的到最早一条。前端此前只发 limit 不发 offset ⇒ 只有第一页
+   * （200 条）可见，这就是作者报障「搜不全」的网络面证据；本测试钉住服务端这一侧
+   * 本来就能取全（修复落点在前端的续取腿上，不靠放宽 clamp）。
+   */
+  test("分页续取：620 条命中逐页取尽、末页到最早一条（offset 真分页）") {
+    val total = 620
+    val docs = (0 until total).toList.map { i =>
+      // i=0 ⇒ 最早（最小 ts）+ ord=620：排序 ts DESC ⇒ 它必须落在最后一页。
+      SearchIndexService.IndexDoc("pagewalk-sid", total - i, "message",
+        1_760_000_000_000L + i * 1_000L, s"pagewalk hit $i")
+    }
+    SearchIndexService.unsafeInsertDocs("chat", docs)
+    def page(offset: Int): (Int, List[(String, Int)]) =
+      val resp = serve(req(s"/api/search/chat?q=pagewalk&kinds=message&limit=200&offset=$offset"))
+      assertEquals(resp.status, Status.Ok)
+      val json = bodyJson(resp)
+      val hits = json.hcursor.downField("hits").as[List[Json]].getOrElse(Nil)
+      val keys = hits.map { h =>
+        (h.hcursor.downField("sid").as[String].getOrElse(""),
+         h.hcursor.downField("ord").as[Int].getOrElse(-1))
+      }
+      (json.hcursor.downField("total").as[Int].getOrElse(-1), keys)
+
+    val (t0, p0) = page(0)
+    val (t1, p1) = page(200)
+    val (t2, p2) = page(400)
+    val (t3, p3) = page(600)
+    assertEquals(List(t0, t1, t2, t3), List(total, total, total, total), "total 逐页恒定（不随页缩水）")
+    assertEquals(List(p0.length, p1.length, p2.length, p3.length), List(200, 200, 200, 20))
+    val all = p0 ++ p1 ++ p2 ++ p3
+    assertEquals(all.distinct.length, total, "逐页取尽 = 无重叠无遗漏")
+    assert(all.exists(_._2 == total), "最早一条（ord=620）必须出现在末页")
+  }
+
 end ChatSearchRoutesSpec

@@ -52,10 +52,14 @@ import { logEvent } from './navEvents.js';
 // （桌面联系人本地过滤与手机常驻条共用同一份，禁各写一套 includes）。
 import { descMatches, convDescribeFields } from '../descSearch.js';
 
-/** 检索纪律（沿用旧批 §2.3）：每会话前向翻页上限 / 页大小 / 单会话命中上限。 */
-const PAGE_CAP = 20;
+/** 检索纪律（检索全覆盖批 2026-11-07 放宽：作者「可以分段显示，但要能查看」）：
+ *   · PAGE_SIZE = 单次取数页（服务端 keyset clamp ≤200 内）；
+ *   · CHUNK_PAGES = **每次揭示**最多扫多少页（20×50 = 1000 条/段），扫到即停、
+ *     段尾给「加载更多（本会话）」继续从游标往下扫——不再是「每会话只看前 1000
+ *     条就永远看不到更早」的硬顶；
+ *   · 命中采集不再设每会话上限（旧 MATCH_CAP_PER_CONV=30 会静默丢命中）。 */
 const PAGE_SIZE = 50;
-const MATCH_CAP_PER_CONV = 30;
+const CHUNK_PAGES = 20;
 const DEBOUNCE_MS = 300;
 /** 联系人页 = 远程用户名检索，去抖略长（桌面提交键另有 1s 最小间隔，同源）。 */
 const CONTACTS_DEBOUNCE_MS = 450;
@@ -396,30 +400,94 @@ function buildSnippet(body, q) {
   return frag;
 }
 
-/** 单会话翻页检索（前向 keyset；上限 PAGE_CAP 页）。@returns 命中数组（升序原序） */
-async function scanConversation(conv, q, mySeq, signal) {
-  const ql = q.toLowerCase();
-  const matches = [];
-  let after = 0;
-  for (let page = 0; page < PAGE_CAP; page++) {
-    if (mySeq !== seq || signal.aborted) return null;
-    let msgs = [];
-    try { msgs = await api.getMessages(conv.conversationId, { after, limit: PAGE_SIZE }); }
-    catch { return matches.length ? matches : null; } // 单会话取数失败不拖垮全局
-    if (!Array.isArray(msgs) || !msgs.length) break;
-    for (const m of msgs) {
-      const body = typeof m.body === 'string' ? m.body : '';
-      if (body && body.toLowerCase().includes(ql)) {
-        matches.push(m);
-        if (matches.length >= MATCH_CAP_PER_CONV) return matches;
+/**
+ * 单会话检索**段**（检索全覆盖批 2026-11-07）：从 `cur.after` 游标起扫最多
+ * CHUNK_PAGES 页，命中全收（**不设每会话命中上限**）；扫到会话尾 / 预算耗尽即停。
+ * 段尾由 [[syncConvMore]] 挂「加载更多（本会话）」继续从游标往下扫 —— 于是可以
+ * 一路查到最早一条（旧实现是两处静默截断：PAGE_CAP×PAGE_SIZE=1000 条 + 每会话
+ * 30 命中，作者的「搜不全」在会话档同样成立）。
+ * @param {{conv:any, q:string, after:number, matches:any[], done:boolean, scanning:boolean}} cur
+ * @returns {Promise<boolean>} false = 竞态丢弃（弃画，UI 归新查询）
+ */
+async function scanConversationChunk(cur, mySeq, signal) {
+  const ql = cur.q.toLowerCase();
+  cur.scanning = true;
+  try {
+    for (let page = 0; page < CHUNK_PAGES; page++) {
+      if (mySeq !== seq || signal.aborted) return false;
+      let msgs = [];
+      try { msgs = await api.getMessages(cur.conv.conversationId, { after: cur.after, limit: PAGE_SIZE }); }
+      catch { cur.done = true; return true; } // 单会话取数失败 = 本会话收口，不拖垮全局
+      if (!Array.isArray(msgs) || !msgs.length) { cur.done = true; break; }
+      for (const m of msgs) {
+        const body = typeof m.body === 'string' ? m.body : '';
+        if (body && body.toLowerCase().includes(ql)) cur.matches.push(m);
       }
+      if (msgs.length < PAGE_SIZE) { cur.done = true; break; }
+      const lastId = Number(msgs[msgs.length - 1].id);
+      if (!Number.isFinite(lastId) || lastId <= cur.after) { cur.done = true; break; } // id 不前进 ⇒ 防死循环
+      cur.after = lastId;
     }
-    if (msgs.length < PAGE_SIZE) break;
-    const lastId = Number(msgs[msgs.length - 1].id);
-    if (!Number.isFinite(lastId) || lastId <= after) break;
-    after = lastId;
+    return true;
+  } finally {
+    cur.scanning = false;
   }
-  return matches;
+}
+
+/** 组头文案（会话标签 · 已加载命中数）——计数随续段更新，禁只报首段数。 */
+function convGroupLabel(conv, n) {
+  return `${convLabel(conv)} · ${t('mhsearch.resultCount', { n })}`;
+}
+
+/**
+ * 揭示本会话**新增**命中行（分段揭示：已画过的 painted 部分不重画）。
+ * @param {any} cur 会话检索游标
+ * @param {string} q 关键词（高亮用）
+ * @returns {number} 本次新增行数
+ */
+function paintConvMatches(cur, q) {
+  if (!cur.host) return 0;
+  let added = 0;
+  for (let i = cur.painted; i < cur.matches.length; i++) {
+    cur.host.appendChild(buildResultRow(cur.conv, cur.matches[i], q));
+    added++;
+  }
+  cur.painted = cur.matches.length;
+  if (cur.headerEl) cur.headerEl.textContent = convGroupLabel(cur.conv, cur.matches.length);
+  return added;
+}
+
+/**
+ * 段尾「加载更多（本会话）」（检索全覆盖批 2026-11-07）：还有未扫的页 ⇒ 挂按钮，
+ * 点它从游标续扫下一段（最多 CHUNK_PAGES 页）并揭示新增命中；扫尽 ⇒ 摘按钮。
+ * 这就是会话档「能一直往下查看到最早一条」的落点（旧实现到顶即停，更早的永远
+ * 看不到）。
+ * @param {any} cur 会话检索游标
+ * @param {(added:number)=>void} onMore 续段后回调（调用方更新总计数/状态行）
+ */
+function syncConvMore(cur, onMore) {
+  cur.moreBtn?.remove();
+  cur.moreBtn = null;
+  if (cur.done || !cur.host) return;
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'mh-sr-more';
+  btn.textContent = t('mhsearch.loadMore');
+  btn.addEventListener('click', async () => {
+    if (cur.scanning) return;
+    btn.disabled = true;
+    const mySeq = seq;
+    const signal = abortCtl?.signal || new AbortController().signal;
+    const ok = await scanConversationChunk(cur, mySeq, signal);
+    if (!ok || mySeq !== seq) return;
+    const added = paintConvMatches(cur, cur.q);
+    btn.remove();
+    cur.moreBtn = null;
+    if (!cur.done) syncConvMore(cur, onMore);
+    onMore(added);
+  });
+  cur.host.appendChild(btn);
+  cur.moreBtn = btn;
 }
 
 /** 范围过滤（friend = 缺省非 group/device 行，convRow 判据同源）。 */
@@ -529,17 +597,28 @@ async function runSearch() {
     while (cursor < convs.length) {
       if (mySeq !== seq || signal.aborted) return;
       const conv = convs[cursor++];
-      const matches = await scanConversation(conv, q, mySeq, signal);
-      if (matches === null || mySeq !== seq || signal.aborted) return;
-      if (matches.length && msgResults) {
-        total += matches.length;
-        const group = document.createElement('div');
-        group.className = 'mh-sr-group';
-        group.textContent = `${convLabel(conv)} · ${t('mhsearch.resultCount', { n: matches.length })}`;
-        msgResults.appendChild(group);
-        for (const m of matches) msgResults.appendChild(buildResultRow(conv, m, q));
+      /** @type {any} */
+      const cur = {
+        conv, q, after: 0, matches: [], painted: 0, done: false, scanning: false,
+        headerEl: null, host: null, moreBtn: null,
+      };
+      const ok = await scanConversationChunk(cur, mySeq, signal);
+      if (!ok || mySeq !== seq || signal.aborted) return;
+      if (!cur.matches.length && cur.done) continue;  // 扫尽且零命中：不占行
+      if (!msgResults) return;
+      // 组头（会话标签 · 命中数）与行同层兄弟——形态与旧版逐字一致，续段只往后追加。
+      const header = document.createElement('div');
+      header.className = 'mh-sr-group';
+      header.textContent = convGroupLabel(conv, cur.matches.length);
+      msgResults.appendChild(header);
+      cur.headerEl = header;
+      cur.host = msgResults;
+      total += paintConvMatches(cur, q);
+      if (!cur.done) syncConvMore(cur, (added) => {
+        total += added;
         setStatus(t('mhsearch.resultCount', { n: total }));
-      }
+      });
+      setStatus(t('mhsearch.resultCount', { n: total }));
     }
   });
   await Promise.all(workers);
