@@ -43,6 +43,35 @@ import nebflow.shared.{Branding, NebflowLogger}
  * 安全边界声明：`clientId` 是**UX 级身份键**，不是鉴权凭据（鉴权仍由 HttpOnly
  * 会话 cookie 决定）——伪造 clientId 最坏只是「不弹提示」，拿不到任何数据面。
  *
+ * == 同端判据批（2026-11-07 作者报障「手机这一个端反复弹控制台已在其他位置打开」） ==
+ * 报障根因（`stand.log` 2026-11-07 10:36–10:53 实证，见批文档）：`clientId` 是
+ * **per-origin / per-浏览器进程** 的 `crypto.randomUUID()`（`deviceIdentity.js`
+ * [[deviceClientId]] 存 localStorage），于是「同一台物理设备」在下面三种情形下
+ * 会得到**新 clientId**，旧口径 `verdict` 把它当作「可证不同的第二个端」⇒ 弹窗：
+ *   ① 每一次 Playwright/headless 自动化运行（临时 profile ⇒ 空 localStorage ⇒
+ *      新 UUID）——当日 24 条 `origin=local-ticket ua=…HeadlessChrome` 控制台会话，
+ *      每一条都顶掉作者手机端的控制权；
+ *   ② 同一台手机走另一条入口（`link.mystand.space` 与直连 `:6138` 是**不同
+ *      origin** ⇒ 不同 localStorage ⇒ 不同 clientId）；
+ *   ③ 浏览器清理存储 / 换浏览器外壳。
+ * 以及一个「没有可见活动也弹」的缺口：翻位推送不看被顶端**是否真的还在看**。
+ *
+ * 本批三条判据（[[ConsoleTakeover.verdict]] / [[ConsoleTakeover.settle]] 单源）：
+ *   A. **同端判据**：实例身份除 clientId 外再带一枚**端指纹**
+ *      ([[ConsoleTakeover.endprintOf]]，= 握手 UA 规范化后的短哈希)。双方指纹
+ *      在场且相等 ⇒ `Verdict.SameEnd` ⇒ **静默让位/并账**：owner 翻到新键、
+ *      零出帧、零弹窗（"同 ua + 同 device" 的重连必须静默 —— 作者令）。
+ *   B. **可见活动闸**：向被顶端推 `takeover` 只推给**此刻真有可见活动**
+ *      （存在活连接且 [[ConsoleTakeover.ActivityTtlMs]] 内有过入站帧）的实例；
+ *      已死/僵尸/静默的旧端 ⇒ 静默让位（它下次回连按 pastOwners 走同一条同端
+ *      判据，不会平白弹窗）。
+ *   C. **自动化端不夺权**：声明了 `navigator.webdriver`（Playwright/Puppeteer）
+ *      或 UA 带 `Headless` 的实例落**观察位**（spectator）：不翻 owner、不收帧、
+ *      内容闸对它放行（测试要看得见内容），只有无人持有或它自己显式 retake 时
+ *      才拿座位。开关 `CONSOLE_AUTOMATION_SPECTATOR=off` 回退旧行为。
+ * 判据只增不减：指纹缺席（老缓存页/spec 构造面）⇒ 退回 clientId 口径，行为逐字
+ * 同上一批（零漂移）。
+ *
  * == claim 规则（互斥权写入点只有两个） ==
  *   1. fresh claim：owner==None ⇒ 即位；owner==他会话 且 本实例 ∉ pastOwners ⇒
  *      接管（owner 翻位 + 向旧主全部活跃连接推 `takeover` 帧，尽力送达）。
@@ -91,7 +120,11 @@ final class ConsoleTakeover(
   /** 总闸读数（进程级常量，boot 一次）：false = 全 no-op。路由侧读此值决定是否拦截 retake 帧。 */
   val enabled: Boolean = ConsoleTakeover.defaultEnabled,
   /** 实例账陈旧窗（零活连接 + 超此窗无入账 ⇒ 摘账；owner 随之清空）。 */
-  staleTtlMs: Long = ConsoleTakeover.StaleTtlMs
+  staleTtlMs: Long = ConsoleTakeover.StaleTtlMs,
+  /** 可见活动窗（同端判据批 B；spec 注入短窗以钉「静默让位」判据）。 */
+  activityTtlMs: Long = ConsoleTakeover.ActivityTtlMs,
+  /** 自动化端观察位开关（同端判据批 C；缺省读 env，spec 可显式开/关）。 */
+  automationSpectator: Boolean = ConsoleTakeover.automationSpectator
 ):
   /** 拥有控制权的实例（全局唯一——控制台是每引擎一个的互斥资源）；值是 holder 键。 */
   private val ownerRef: Ref[IO, Option[String]] = Ref.unsafe(None)
@@ -129,16 +162,30 @@ final class ConsoleTakeover(
         case Some(o) if o == holder => IO.pure(true)
         case Some(o) =>
           instancesRef.get.map { m =>
+            val mine = m.get(holder)
+            val theirs = m.get(o)
+            // 观察位/自动化端永不断喂（同端判据批 C：测试页要看得见内容，且它不参与
+            // 互斥，断喂只会让自动化验证据失真）。
+            val spectator = mine.exists(_.spectator) || mine.exists(_.automated) || theirs.exists(_.automated)
+            // 同端判据（批 A）：同一物理端的两个标签/两条入口/换 clientId 的自我顶替
+            // 不是「闯进来的人」，内容照喂——否则会退化成「不弹窗但全白」。
+            val sameEnd =
+              for
+                a <- mine.flatMap(_.endprint)
+                b <- theirs.flatMap(_.endprint)
+              yield a == b
             val provenDifferent =
               for
-                mine <- m.get(holder).flatMap(_.clientId)
-                theirs <- m.get(o).flatMap(_.clientId)
-              yield mine != theirs
-            provenDifferent match
-              // 可证不同：superseded ⇒ 只放行接管协议帧。
-              case Some(true) => ConsoleTakeover.isProtocolFrame(text)
-              // 不可证（身份不明/账已被清扫）⇒ 放行：宁可少断喂，不可把同一个人误判成闯入者。
-              case _ => true
+                a <- mine.flatMap(_.clientId)
+                b <- theirs.flatMap(_.clientId)
+              yield a != b
+            if spectator || sameEnd.contains(true) then true
+            else
+              provenDifferent match
+                // 可证不同：superseded ⇒ 只放行接管协议帧。
+                case Some(true) => ConsoleTakeover.isProtocolFrame(text)
+                // 不可证（身份不明/账已被清扫）⇒ 放行：宁可少断喂，不可把同一个人误判成闯入者。
+                case _ => true
           }
       }
 
@@ -155,15 +202,19 @@ final class ConsoleTakeover(
    *
    * `clientId` = 握手上的浏览器稳定身份（缺省 None = 老缓存页/无身份，落 session 退路）。
    */
-  def onConnect(sessionId: String, connId: String, clientId: Option[String] = None): IO[Unit] =
+  def onConnect(sessionId: String, connId: String, clientId: Option[String]): IO[Unit] =
+    onConnect(sessionId, connId, ConsoleTakeover.ClientMeta(clientId = clientId))
+
+  /** 握手腿入账（同端判据批：带端指纹/UA 类/来源 IP/自动化标记的完整身份）。 */
+  def onConnect(sessionId: String, connId: String, meta: ConsoleTakeover.ClientMeta): IO[Unit] =
     if !enabled then IO.unit
     else
-      val key = ConsoleTakeover.holderOf(sessionId, clientId)
+      val key = ConsoleTakeover.holderOf(sessionId, meta.clientId)
       IO.uncancelable { _ =>
         for
           now <- nowMs()
           _ <- sweepStale(now)
-          _ <- addConn(key, sessionId, clientId, connId, now)
+          _ <- addConn(key, sessionId, meta, connId, now)
           _ <- settle(key, connId)
         yield ()
       }
@@ -187,9 +238,14 @@ final class ConsoleTakeover(
    * 返回值 = 本连接此后应使用的 holder 键（`WebSocketRoutes` 的 content-gate 读数）。
    */
   def onIdentify(sessionId: String, connId: String, clientId: Option[String]): IO[Option[String]] =
-    if !enabled then IO.pure(Some(ConsoleTakeover.holderOf(sessionId, clientId)))
+    onIdentifyDeclared(sessionId, connId, clientId.map(cid => ConsoleTakeover.ClientMeta(clientId = Some(cid))))
+
+  /** 在带声明腿（带端指纹/自动化声明的完整身份形态；`None` = 声明缺席）。 */
+  def onIdentifyDeclared(sessionId: String, connId: String, meta: Option[ConsoleTakeover.ClientMeta]): IO[Option[String]] =
+    if !enabled then
+      IO.pure(Some(ConsoleTakeover.holderOf(sessionId, meta.flatMap(_.clientId))))
     else
-      clientId match
+      meta.flatMap(_.clientId) match
         case None =>
           instancesRef.get.map { m =>
             Some(
@@ -198,18 +254,20 @@ final class ConsoleTakeover(
             )
           }
         case Some(cid) =>
+          val full = meta.getOrElse(ConsoleTakeover.ClientMeta(clientId = Some(cid)))
           val key = ConsoleTakeover.holderOf(sessionId, Some(cid))
           IO.uncancelable { _ =>
             def migrateNote(moved: Boolean): IO[Unit] =
               if moved then
-                logger.info(
+                logWith(
                   s"console-takeover: ${label(key)} declared identity in-band — " +
-                    s"instance account migrated (handshake carried no clientId)"
+                    s"instance account migrated (handshake carried no clientId)",
+                  key
                 )
               else IO.unit
             for
               now <- nowMs()
-              moved <- migrateConn(connId, key, sessionId, Some(cid), now)
+              moved <- migrateConn(connId, key, sessionId, full, now)
               cur <- ownerRef.get
               _ <- if moved && !cur.contains(key) then settle(key, connId) else IO.unit
               _ <- migrateNote(moved)
@@ -254,9 +312,10 @@ final class ConsoleTakeover(
                   case _ =>
                     for
                       _ <- claimAndReverseKick(key, cur)
-                      _ <- logger.info(
+                      _ <- logWith(
                         s"console-takeover: ${label(key)} retook console control (ws leg)" +
-                          cur.fold("")(p => s" — reverse takeover pushed to ${label(p)}")
+                          cur.fold("")(p => s" — reverse takeover pushed to ${label(p)}"),
+                        (key +: cur.toList)*
                       )
                     yield ()
                 // 统一回执（already-owner 竞态腿同为幂等 ok；ok:false 只在未注册腿发）。
@@ -291,10 +350,11 @@ final class ConsoleTakeover(
             case _ =>
               for
                 kicked <- claimAndReverseKick(key, cur)
-                _ <- logger.info(
+                _ <- logWith(
                   s"console-takeover: ${label(key)} retook console control (http leg) — " +
                     s"reverse takeover pushed to $kicked conn(s)" +
-                    cur.fold("")(p => s" of ${label(p)}")
+                    cur.fold("")(p => s" of ${label(p)}"),
+                  (key +: cur.toList)*
                 )
               yield kicked
         yield ConsoleTakeover.RetakeOutcome.Ok(kicked)
@@ -306,54 +366,98 @@ final class ConsoleTakeover(
    * 入账后的 claim 裁决（握手腿 `onConnect` 与在带声明腿 `onIdentify` 单源）：
    *   无主 ⇒ 首实例即位（零帧）；
    *   本键即 owner ⇒ 静默续位（刷新/多标签/重连/静默重座，零帧）；
+   *   **自动化端 + 人类活跃主** ⇒ 观察位（同端判据批 C：不夺权、零帧）；
+   *   **同端指纹** ⇒ 静默让位（同端判据批 A：换 clientId / 换入口的一次自我顶替）；
    *   本键 ∈ pastOwners ⇒ 旧主回连，向本连接推 superseded 通知，owner 不动；
-   *   否则按 [[ConsoleTakeover.verdict]]：可证不同 ⇒ 翻位 + 向旧主全部活跃连接尽力送达；
+   *   否则按 [[ConsoleTakeover.verdict]]：可证不同 ⇒ 翻位 + 向旧主**仍有可见活动**的
+   *   连接尽力送达（同端判据批 B：已死/静默的旧端静默让位，不弹）；
    *   不可证 ⇒ 既不提示也不踢（假阴性可接受，假阳性不可接受）。
    */
   private def settle(key: String, connId: String): IO[Unit] =
-    ownerRef.get.flatMap {
-      case None =>
-        // 首实例即位：无事件。
-        claim(key) *> logger.info(
-          s"console-takeover: ${label(key)} claimed console control (first instance)"
-        )
-      case Some(c) if c == key =>
-        // 刷新 / 同浏览器第二标签 / 掉线重连 / 静默重座（同 clientId）：静默续位，零帧。
-        IO.unit
-      case Some(prevOwner) =>
-        pastOwnersRef.get.flatMap { past =>
-          if past.exists(_._1 == key) then
-            // 旧主回连不反抢：owner 不动，向回连方本连接推 superseded 通知。
-            nowMs().flatMap(now => sendTo(connId, ConsoleTakeover.takeoverFrame(now))) *>
-              logger.info(
-                s"console-takeover: ${label(key)} reconnected as non-owner — " +
-                  s"superseded notice sent to its connection (owner ${label(prevOwner)} untouched)"
+    for
+      now <- nowMs()
+      m <- instancesRef.get
+      cur <- ownerRef.get
+      _ <- cur match
+        case None =>
+          // 首实例即位：无事件。
+          claim(key) *> logWith(
+            s"console-takeover: ${label(key)} claimed console control (first instance)",
+            key
+          )
+        case Some(c) if c == key =>
+          // 刷新 / 同浏览器第二标签 / 掉线重连 / 静默重座（同 clientId）：静默续位，零帧。
+          IO.unit
+        case Some(prevOwner) =>
+          val me = m.get(key)
+          val prev = m.get(prevOwner)
+          val automatedMe = me.exists(_.automated)
+          val prevHumanLive = prev.exists(p => !p.automated && ConsoleTakeover.isLive(p, now, activityTtlMs))
+          pastOwnersRef.get.flatMap { past =>
+            if automationSpectator && automatedMe && prevHumanLive then
+              // 批 C：自动化端（Playwright/headless）不夺人类端的座位——落观察位。
+              markSpectator(key) *> logWith(
+                s"console-takeover: ${label(key)} joined as SPECTATOR (automated client never " +
+                  s"displaces a live human console) — owner ${label(prevOwner)} untouched, zero frames",
+                key,
+                prevOwner
               )
-          else
-            instancesRef.get.flatMap { m =>
-              ConsoleTakeover.verdict(m.get(key).flatMap(_.clientId), m.get(prevOwner).flatMap(_.clientId)) match
+            else if ConsoleTakeover.sameEnd(me.flatMap(_.endprint), prev.flatMap(_.endprint)) then
+              // 批 A：同端让位——同一物理端换了 clientId/换了入口，不是第二个端。
+              claim(key) *> logWith(
+                s"console-takeover: ${label(key)} same-end handover from ${label(prevOwner)} " +
+                  s"(identical end fingerprint — clientId churn or a second origin of ONE device); " +
+                  s"silent, zero frames",
+                key,
+                prevOwner
+              )
+            else if past.exists(_._1 == key) then
+              // 旧主回连不反抢：owner 不动，向回连方本连接推 superseded 通知。
+              sendTo(connId, ConsoleTakeover.takeoverFrame(now)) *> logWith(
+                s"console-takeover: ${label(key)} reconnected as non-owner — " +
+                  s"superseded notice sent to its connection (owner ${label(prevOwner)} untouched)",
+                key,
+                prevOwner
+              )
+            else
+              ConsoleTakeover.verdict(me.flatMap(_.clientId), prev.flatMap(_.clientId),
+                me.flatMap(_.endprint), prev.flatMap(_.endprint)) match
+                case ConsoleTakeover.Verdict.SameEnd =>
+                  claim(key) *> logWith(
+                    s"console-takeover: ${label(key)} same-end handover from ${label(prevOwner)} " +
+                      s"(identical end fingerprint); silent, zero frames",
+                    key,
+                    prevOwner
+                  )
                 case ConsoleTakeover.Verdict.Conflict =>
-                  // 真并发两个不同控制端：互斥权最后写入者胜；旧主活连接尽力送达
-                  // （无活连接则旧主下次重连按 pastOwners 规则落被踢面——最终一致）。
-                  val targets = m.get(prevOwner).map(_.conns.toList).getOrElse(Nil)
+                  // 批 B：只推给「此刻真有可见活动」的旧主连接；自动化/观察位不接弹窗帧
+                  // （它们不看控制台，弹窗只会污染自动化验证据）。
+                  val prevConns = prev.map(_.conns.toList.sorted).getOrElse(Nil)
+                  val targets =
+                    if prev.exists(p => !p.automated && ConsoleTakeover.isLive(p, now, activityTtlMs)) then prevConns
+                    else Nil
                   for
                     n <- nowMs()
                     _ <- claim(key)
                     _ <- targets.traverse_(cid => sendTo(cid, ConsoleTakeover.takeoverFrame(n)))
-                    _ <- logger.info(
-                      s"console-takeover: ${label(key)} took over from " +
-                        s"${label(prevOwner)} — takeover pushed to ${targets.size} conn(s)"
+                    _ <- logWith(
+                      s"console-takeover: ${label(key)} took over from ${label(prevOwner)} — " +
+                        s"takeover pushed to ${targets.size}/${prevConns.size} live conn(s)" +
+                        (if targets.size < prevConns.size then " (idle/dead conns silently superseded)" else ""),
+                      key,
+                      prevOwner
                     )
                   yield ()
                 case ConsoleTakeover.Verdict.Undecidable(why) =>
                   // 身份不可证 ⇒ 既不提示也不踢（假阴性可接受，假阳性不可接受）。
-                  logger.info(
+                  logWith(
                     s"console-takeover: ${label(key)} joined — no takeover ($why); " +
-                      s"owner ${label(prevOwner)} untouched, zero frames"
+                      s"owner ${label(prevOwner)} untouched, zero frames",
+                    key,
+                    prevOwner
                   )
-            }
-        }
-    }
+          }
+    yield ()
 
   /**
    * 连接账迁移（在带声明腿）：把 `connId` 从它当前所在的实例账（退路键 = sessionId）
@@ -365,10 +469,10 @@ final class ConsoleTakeover(
    * 返回 true = 键确实变了（调用方据此跑一次重裁决）；false = 握手已带同一身份
    * （直连脸/老路径），零重复裁决。
    */
-  private def migrateConn(connId: String, key: String, sessionId: String, clientId: Option[String], now: Long): IO[Boolean] =
+  private def migrateConn(connId: String, key: String, sessionId: String, meta: ConsoleTakeover.ClientMeta, now: Long): IO[Boolean] =
     instancesRef.get.flatMap { m =>
       val oldKey = m.collectFirst { case (k, i) if i.conns.contains(connId) => k }
-      if oldKey.contains(key) then addConn(key, sessionId, clientId, connId, now).as(false)
+      if oldKey.contains(key) then addConn(key, sessionId, meta, connId, now).as(false)
       else
         for
           _ <- instancesRef.update { m2 =>
@@ -379,12 +483,8 @@ final class ConsoleTakeover(
                   val left = inst.copy(conns = inst.conns - connId)
                   if left.conns.isEmpty then m2 - old else m2.updated(old, left)
             }
-            val prev = pruned.get(key).getOrElse(ConsoleTakeover.Instance(key, sessionId, clientId, Set.empty, now))
-            pruned.updated(
-              key,
-              prev.copy(sessionId = sessionId, clientId = clientId.orElse(prev.clientId),
-                conns = prev.conns + connId, lastSeen = now)
-            )
+            val prev = pruned.get(key).getOrElse(ConsoleTakeover.Instance(key, sessionId, None, Set.empty, now))
+            pruned.updated(key, ConsoleTakeover.merged(prev, sessionId, meta, Set(connId), now))
           }
           // 所有权与历史随标签走：迁移不是身份变化，不得把 owner 让给一个已不存在的键。
           _ <- oldKey.traverse_(old => ownerRef.update(o => if o.contains(old) then Some(key) else o))
@@ -399,12 +499,44 @@ final class ConsoleTakeover(
         yield true
     }
 
-  private def addConn(key: String, sessionId: String, clientId: Option[String], connId: String, now: Long): IO[Unit] =
+  private def addConn(key: String, sessionId: String, meta: ConsoleTakeover.ClientMeta, connId: String, now: Long): IO[Unit] =
     instancesRef.update { m =>
-      val prev = m.get(key).getOrElse(ConsoleTakeover.Instance(key, sessionId, clientId, Set.empty, now))
-      // 身份以最近一次入账为准（clientId 只在有值时覆盖：退路连接不清空已知身份）。
-      m.updated(key, prev.copy(sessionId = sessionId, clientId = clientId.orElse(prev.clientId),
-        conns = prev.conns + connId, lastSeen = now))
+      val prev = m.get(key).getOrElse(ConsoleTakeover.Instance(key, sessionId, None, Set.empty, now))
+      m.updated(key, ConsoleTakeover.merged(prev, sessionId, meta, Set(connId), now))
+    }
+
+  /**
+   * 控制台可见活动戳（同端判据批 B）：入站帧（含心跳 ping）证明「这一端此刻真在看」。
+   * 只更新本连接所属实例的 `lastActivity`；调用侧节流（最密 5s 一次），这里不做判断。
+   */
+  def noteActivity(connId: String): IO[Unit] =
+    if !enabled then IO.unit
+    else
+      nowMs().flatMap(now =>
+        instancesRef.update { m =>
+          m.map { case (k, i) => if i.conns.contains(connId) then k -> i.copy(lastActivity = now) else k -> i }
+        }
+      )
+
+  /** 观察位（同端判据批 C）：自动化端不得夺权，但内容闸对它放行。 */
+  private def markSpectator(key: String): IO[Unit] =
+    instancesRef.update { m =>
+      m.get(key).fold(m)(i => m.updated(key, i.copy(spectator = true, automated = true)))
+    }
+
+  /** 显式 retake 解除观察位（用户/自动化端主动要座位时按普通实例对待）。 */
+  private def clearSpectator(key: String): IO[Unit] =
+    instancesRef.update { m =>
+      m.get(key).fold(m)(i => if i.spectator then m.updated(key, i.copy(spectator = false)) else m)
+    }
+
+  /** 日志附加面（同端判据批③：补齐「谁顶了谁」的证据位——sid/ip/ua 类/端指纹/自动化）。 */
+  private def logWith(msg: String, keys: String*): IO[Unit] =
+    instancesRef.get.flatMap { m =>
+      val suffix = keys.distinct
+        .map(k => s"${ConsoleTakeover.maskHolder(k)}=${ConsoleTakeover.describe(m.get(k))}")
+        .mkString(" ")
+      logger.info(if suffix.isEmpty then msg else s"$msg [$suffix]")
     }
 
   /**
@@ -436,13 +568,14 @@ final class ConsoleTakeover(
    */
   private def claimAndReverseKick(key: String, prevOwner: Option[String]): IO[Int] =
     for
-      targets <- prevOwner
-        .traverse(p => instancesRef.get.map(_.get(p).map(_.conns.toList).getOrElse(Nil)))
-        .map(_.getOrElse(Nil))
       now <- nowMs()
+      prevInst <- prevOwner.flatTraverse(p => instancesRef.get.map(_.get(p)))
+      _ <- clearSpectator(key) // 显式 retake = 用户意志：观察位解除
       _ <- claim(key)
-      _ <- targets.traverse_(cid => sendTo(cid, ConsoleTakeover.takeoverFrame(now)))
-    yield targets.size
+      _ <- prevInst
+        .filter(p => ConsoleTakeover.isLive(p, now, activityTtlMs) && !p.automated)
+        .traverse_(p => p.conns.toList.sorted.traverse_(cid => sendTo(cid, ConsoleTakeover.takeoverFrame(now))))
+    yield prevInst.map(_.conns.size).getOrElse(0)
 
   /** 记 owner + pastOwners 账（LRU 帽内淘汰最旧）。 */
   private def claim(key: String): IO[Unit] =
@@ -464,14 +597,106 @@ end ConsoleTakeover
 
 object ConsoleTakeover:
 
-  /** 实例账（holder → 活跃连接 + 身份 + 最后入账时刻）。 */
+  /**
+   * 实例账（holder → 活跃连接 + 身份 + 最后入账时刻 + 端指纹 + 可见活动戳）。
+   *
+   * 同端判据批（2026-11-07）新增字段全部带缺省值：既有 spec 的构造面逐字不变
+   * （`Instance(holder, sessionId, clientId, conns, lastSeen)` 仍编译且语义同旧）。
+   *   · `endprint` —— 端指纹（UA 规范化短哈希）：同端的第二判据（批 A）；
+   *   · `uaClass` / `ip` —— 日志证据位（批③：谁顶了谁，一眼可判）；
+   *   · `automated` —— 自动化端标记（webdriver/headless UA，批 C）；
+   *   · `spectator` —— 观察位（自动化端不夺权，见 [[ConsoleTakeover.settle]]）；
+   *   · `lastActivity` —— 最近一次入站帧时刻（可见活动闸，批 B）。
+   */
   final case class Instance(
     holder: String,
     sessionId: String,
     clientId: Option[String],
     conns: Set[String],
-    lastSeen: Long
+    lastSeen: Long,
+    endprint: Option[String] = None,
+    uaClass: String = "-",
+    ip: Option[String] = None,
+    automated: Boolean = false,
+    spectator: Boolean = false,
+    lastActivity: Long = 0L
   )
+
+  /**
+   * 连接身份声明（握手腿/在带声明腿同一形态）：clientId + 端指纹素材 + 来源 IP +
+   * 自动化声明。`automatedDeclared` 由客户端 `navigator.webdriver` 上报（批 C），
+   * `ua` 侧另有兜底判据（headless UA）——两条任一命中即自动化端。
+   */
+  final case class ClientMeta(
+    clientId: Option[String] = None,
+    ua: Option[String] = None,
+    ip: Option[String] = None,
+    automatedDeclared: Boolean = false
+  ):
+    def endprint: Option[String] = ConsoleTakeover.endprintOf(ua)
+    def uaClass: String = ConsoleTakeover.uaClass(ua)
+    def automated: Boolean = automatedDeclared || ConsoleTakeover.uaLooksAutomated(ua)
+
+  /** 实例账的字段合并核（入账/迁移单源）：身份以最近一次入账为准，连接集只增。 */
+  def merged(prev: Instance, sessionId: String, meta: ClientMeta, added: Set[String], now: Long): Instance =
+    prev.copy(
+      sessionId = sessionId,
+      clientId = meta.clientId.orElse(prev.clientId),
+      endprint = meta.endprint.orElse(prev.endprint),
+      uaClass = if meta.uaClass == "-" then prev.uaClass else meta.uaClass,
+      ip = meta.ip.orElse(prev.ip),
+      automated = prev.automated || meta.automated,
+      conns = prev.conns ++ added,
+      lastSeen = now,
+      lastActivity = now
+    )
+
+  /** 「此刻真有可见活动」：存在活连接 且 `ttlMs` 内有过入站帧（同端判据批 B 的唯一判据）。 */
+  def isLive(inst: Instance, nowMs: Long, ttlMs: Long): Boolean =
+    inst.conns.nonEmpty && (nowMs - inst.lastActivity) <= ttlMs
+
+  /** 可见活动窗（缺省 120s）：手机端心跳 30s 一拍 ⇒ 连续两拍丢失才算「没在看」。 */
+  val ActivityTtlMs: Long = 120L * 1000L
+
+  /** 端指纹：UA 规范化（trim + 折叠空白）后的 SHA-256 前 6 字节十六进制。 */
+  def endprintOf(ua: Option[String]): Option[String] =
+    ua.map(_.trim.replaceAll("\\s+", " ")).filter(_.nonEmpty).map { u =>
+      val md = java.security.MessageDigest.getInstance("SHA-256")
+      md.digest(u.getBytes(java.nio.charset.StandardCharsets.UTF_8)).take(6).map(b => f"${b & 0xff}%02x").mkString
+    }
+
+  /** UA 类（日志证据位；判不出 = `-`）。只做可读分类，不作身份键。 */
+  def uaClass(ua: Option[String]): String =
+    ua.getOrElse("") match
+      case u if u.isEmpty => "-"
+      case u if uaLooksAutomated(Some(u)) =>
+        if u.contains("iPhone") || u.contains("Android") then "mobile-headless" else "headless-browser"
+      case u if u.contains("iPhone") => "iphone"
+      case u if u.contains("iPad") => "ipad"
+      case u if u.contains("Android") => "android"
+      case u if u.contains("Macintosh") => "mac"
+      case u if u.contains("Windows") => "windows"
+      case _ => "other"
+
+  /** 自动化端判据（批 C 兜底腿）：UA 带 Headless / PhantomJS / 无 head 时仍可判。 */
+  def uaLooksAutomated(ua: Option[String]): Boolean =
+    ua.exists(u => u.contains("Headless") || u.contains("PhantomJS") || u.contains("Electron/"))
+
+  /** 同端判据（批 A 单源）：两枚端指纹都在场且相等。任一缺席 ⇒ false（退回 clientId 口径）。 */
+  def sameEnd(mine: Option[String], prev: Option[String]): Boolean =
+    (mine, prev) match
+      case (Some(a), Some(b)) => a == b
+      case _ => false
+
+  /** 日志证据位（批③：补最小埋点——sid/ip/ua 类/端指纹/自动化，永不含 token）。 */
+  def describe(inst: Option[Instance]): String =
+    inst match
+      case None => "sid=? ip=? ua=? end=? auto=?"
+      case Some(i) =>
+        val sid = i.sessionId.take(8)
+        s"sid=$sid ip=${i.ip.filter(_.nonEmpty).getOrElse("-")} ua=${i.uaClass} " +
+          s"end=${i.endprint.getOrElse("-")} auto=${if i.automated then "yes" else "no"}" +
+          (if i.spectator then " spectator=yes" else "")
 
   /** 【重新接管】HTTP 腿的裁决（`retakeBySession`）：Ok 带反向踢送达连接数；Disabled = 总闸关。 */
   sealed trait RetakeOutcome extends Product with Serializable
@@ -480,20 +705,25 @@ object ConsoleTakeover:
     case object Disabled extends RetakeOutcome
 
   /**
-   * 接管判定（误报根修批单源）：**只有双方身份都可证且不同**才算冲突。
+   * 接管判定（单源）：
+   *   SameEnd                      —— **同端指纹**（批 A）⇒ 静默让位/并账，零帧零弹窗；
    *   Conflict                     —— 两个可证不同的客户端（真并发抢占）；
    *   Undecidable(why)             —— 任一方 clientId 不明 ⇒ 不提示不踢（假阴性可接受）。
    */
   enum Verdict:
+    case SameEnd
     case Conflict
     case Undecidable(why: String)
 
-  def verdict(mine: Option[String], prev: Option[String]): Verdict =
-    (mine, prev) match
-      case (Some(a), Some(b)) if a != b => Verdict.Conflict
-      case (Some(_), Some(_))           => Verdict.Undecidable("same client id (refresh / second tab / reseat)")
-      case (None, _)                    => Verdict.Undecidable("joining page carries no client id (legacy cache)")
-      case (_, None)                    => Verdict.Undecidable("incumbent carries no client id (legacy cache)")
+  def verdict(mine: Option[String], prev: Option[String],
+              mineEnd: Option[String] = None, prevEnd: Option[String] = None): Verdict =
+    if sameEnd(mineEnd, prevEnd) then Verdict.SameEnd
+    else
+      (mine, prev) match
+        case (Some(a), Some(b)) if a != b => Verdict.Conflict
+        case (Some(_), Some(_))           => Verdict.Undecidable("same client id (refresh / second tab / reseat)")
+        case (None, _)                    => Verdict.Undecidable("joining page carries no client id (legacy cache)")
+        case (_, None)                    => Verdict.Undecidable("incumbent carries no client id (legacy cache)")
 
   /** pastOwners 账帽（淘汰最旧）：内存态、会话 ≤30d 寿命，64 富余。 */
   val PastOwnerCap: Int = 64
@@ -503,6 +733,16 @@ object ConsoleTakeover:
 
   /** 总闸 env 名（裸后缀；`Branding.env` 补品牌前缀/NEBFLOW_ 回退）。 */
   val EnvName: String = "CONSOLE_SINGLE_INSTANCE"
+
+  /** 自动化端观察位开关（同端判据批 C，裸后缀）：`off/0/false/no` = 回退旧行为（自动化端照常夺权）。 */
+  val AutomationEnvName: String = "CONSOLE_AUTOMATION_SPECTATOR"
+
+  /** 观察位开关读数（boot 一次）：缺省开——自动化验跑不该顶掉作者的控制台。 */
+  lazy val automationSpectator: Boolean =
+    Branding
+      .env(AutomationEnvName)
+      .map(v => !OffValues.contains(v.trim.toLowerCase))
+      .getOrElse(true)
 
   /** 关闭值集合（大小写不敏感）；缺省与其余值 = 启用。 */
   private val OffValues: Set[String] = Set("off", "0", "false", "no")
@@ -587,5 +827,17 @@ object ConsoleTakeover:
   /** 在带身份声明帧（客户端 → 服务端；`ConsoleTakeover.onIdentify` 消费）。 */
   def identifyFrame(clientId: String): Json =
     Json.obj("type" -> IdentifyFrameType.asJson, "clientId" -> clientId.asJson)
+
+  /**
+   * 声明帧的自动化标记（同端判据批 C，客户端腿）：`{"automated":true}` = 本页由
+   * `navigator.webdriver` 判定为自动化（Playwright/Puppeteer/Selenium）。坏体/缺席
+   * ⇒ false（只有真声明才算，绝不按缺席推定）。
+   */
+  def declaredAutomated(text: String): Boolean =
+    io.circe.parser
+      .parse(text)
+      .toOption
+      .flatMap(_.hcursor.downField("automated").as[Boolean].toOption)
+      .getOrElse(false)
 
 end ConsoleTakeover

@@ -27,6 +27,7 @@ import org.http4s.dsl.io.*
 import org.http4s.headers.`Content-Type`
 import org.http4s.server.websocket.WebSocketBuilder2
 import org.http4s.websocket.WebSocketFrame
+import org.typelevel.ci.CIString
 
 import scala.concurrent.duration.*
 import scala.io.Source
@@ -1061,6 +1062,13 @@ class WebSocketRoutes(
               // GatewayAuth 的会话 cookie 决定，伪造 clientId 最坏只是不弹提示。
               val takeoverClient: Option[String] =
                 req.params.get("clientId").map(_.trim).filter(id => id.nonEmpty && id.length <= 128)
+              // 同端判据批（2026-11-07 作者报障「手机端反复弹已被其他位置打开」）：接管的
+              // 实例身份除 clientId 外还带**端指纹素材**（握手 UA）+ 来源 IP——
+              // clientId 是 per-origin/per-profile 的随机 UUID（设备清存储、换入口、
+              // 每次 Playwright 临时 profile 都会重新生成），单凭它判「另一处」必然误报。
+              // UA 只做端指纹与日志证据位，不参与鉴权（安全边界同 clientId 声明）。
+              val wsUa: Option[String] =
+                req.headers.get(CIString("User-Agent")).map(_.head.value.take(256)).filter(_.nonEmpty)
               // 门户身份透传批（方案 A1，2026-10-28）：会话身份快照——session 轨
               // 连接把 SessionRecord 投影（accountSub/origin/sessionId）随接管入账
               // 一起穿进收流管（下方 receivePipe 同一闭包作用域）；Bearer 轨连接恒
@@ -1182,6 +1190,21 @@ class WebSocketRoutes(
                         }
                       else perConnWsSend(json.noSpaces, WsHub.isStreamFrame(json))
 
+                    // 可见活动闸（同端判据批 B）：本连接的最近入站时刻（最密 5s 一次写，
+                    // 节流在客户端侧同款纪律）——「被顶的端是不是真的还在看」只认这个证据，
+                    // 不认「连接还挂在账上」（僵尸连接不算在看）。
+                    lastNoteMs = new java.util.concurrent.atomic.AtomicLong(0L)
+                    noteConsoleActivity: IO[Unit] =
+                      if takeoverSession.isEmpty then IO.unit
+                      else
+                        IO {
+                          val now = System.currentTimeMillis()
+                          if now - lastNoteMs.get() >= 5000L then
+                            lastNoteMs.set(now)
+                            true
+                          else false
+                        }.flatMap(fire => if fire then takeover.noteActivity(hubConnId) else IO.unit)
+
                     // explorer-rt (chain-n-1981ce87): one watch-subscription table per
                     // connection. Chained into the finalizer below — a dropped
                     // connection releases every WatchService it registered.
@@ -1202,7 +1225,7 @@ class WebSocketRoutes(
                           // 控制台在用判据（2026-11-05）：页面上有任何交互流量 ⇒ 作者
                           // 此刻就在用控制台（比「连接还在」更硬——僵尸连接不算在用）。
                           // 节流写（最密 5s 一次），绝不失败、绝不拦帧。
-                          ConsoleActivity.touch("ws-frame") *>
+                          ConsoleActivity.touch("ws-frame") *> noteConsoleActivity *>
                           {
                           // 控制台单实例批：retake 帧前置拦截——连接身份（connId→session）
                           // 只在本管上有（WsDispatchCtx 不携带），故不走 WsDispatch 注册表。
@@ -1219,7 +1242,15 @@ class WebSocketRoutes(
                                 case (Some(cid), Some(sid)) =>
                                   // 迁移 + 重裁决（kick 与否在 ConsoleTakeover.settle 内定），
                                   // 再把本连接实例键写回闸读数（闸随之换轨）。
-                                  takeover.onIdentify(sid, hubConnId, Some(cid)).flatMap { h =>
+                                  // 同端判据批：身份帧同时带自动化声明（webdriver）与握手 UA/
+                                  // 来源 IP——无它们则「同端」与「谁顶了谁」都判不出。
+                                  val meta = ConsoleTakeover.ClientMeta(
+                                    clientId = Some(cid),
+                                    ua = wsUa,
+                                    ip = Some(wsIp),
+                                    automatedDeclared = ConsoleTakeover.declaredAutomated(text)
+                                  )
+                                  takeover.onIdentifyDeclared(sid, hubConnId, Some(meta)).flatMap { h =>
                                     IO(takeoverHolderRef.set(h))
                                   }
                                 // 坏体/无身份/Bearer 轨 ⇒ 静默空转（声明是加速面，不是语义面）。
@@ -1366,7 +1397,20 @@ class WebSocketRoutes(
                     // takeoverSession=None 直通。事件面只有 fresh-claim 翻位与旧主回连
                     // superseded 通知；断线/判死回收路径（onFinalize ⇒ onDisconnect）
                     // 零出帧——掉线 ≠ 让位（设计稿 §7 边界）。
-                    _ <- takeoverSession.traverse_(sid => takeover.onConnect(sid, hubConnId, takeoverClient))
+                    _ <- takeoverSession.traverse_(sid =>
+                      takeover.onConnect(
+                        sid,
+                        hubConnId,
+                        ConsoleTakeover.ClientMeta(
+                          clientId = takeoverClient,
+                          ua = wsUa,
+                          ip = Some(wsIp),
+                          // 握手腿无法自带 webdriver（那是页面事实，见在带声明腿）；
+                          // 这里只有 UA 兜底判据（headless UA）。
+                          automatedDeclared = false
+                        )
+                      )
+                    )
                     // R-960：入账/回减已移入收流管会话 scope（上方 guardedReceive）——
                     // build 前不再预占槽位；升级会话未起跑 ⇒ 计数未发生（幽灵洞封死）。
                     ws <- wsb.build(sendStream, receivePipe)
