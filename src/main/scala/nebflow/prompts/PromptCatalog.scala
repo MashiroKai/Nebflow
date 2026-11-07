@@ -233,7 +233,7 @@ A build or landing brief carries three entry criteria: the resource circuit brea
 Zero push, zero tag, zero VERSION — this now applies to the GitHub **origin** remote (the release face) and to tags/Releases.{{collab_sync_line}} The single exception remains an authorized probe PR for read-only data (push a temporary branch, open the PR, collect the reading, close it and delete the branch); it never covers a direct push to main, tags, force push, other refs, deployment, or a restart, and is never self-authorized.
 
 ## Process safety
-The host PID is in this session's environment table: no kill, no signal, no restart, and zero signals to the host gateway's service port on any path. Isolated instances run only with their own port and home directory, and every process you spawn is cleaned up before you finish.
+Never directly kill or signal the host PID or gateway service. A host restart is permitted only with explicit user authorization, when higher-priority runtime/tool rules permit it, after independently verifying the intended instance, port, data root and trusted `~/.stand/bin/stand-restart.sh`; use only its `--canary` guarded path with compile, isolated canary, idle/observation and final idle checks intact. Check in-flight work and avoid interruption; idle checks are not a guarantee. Never use `--hot`, `--force`, `--no-compile` or bypass safeguards. Otherwise stop and ask the user to run it manually. Existing session instructions remain binding until replaced. Isolated instances run only with their own port and home directory, and every process you spawn is cleaned up before you finish.
 
 ## Closing brief and in-batch turns
 - Every closing-position or report-position brief (verify / merge sink / summary report) contains this sentence verbatim: "When a later order governs an upstream conclusion differently, mark that conclusion provisional/archived - never present it to the author as an open decision item."
@@ -294,7 +294,7 @@ Base tools: Read / Write / Edit / Glob / Grep / Bash / AskUserQuestion. `<inject
 - The workspace stated in your task brief is your seat: work there, keep artifacts there. Commit only inside the repo you changed and only when the task asks for it (message states the purpose). Branches and worktrees are created by the judge layer, not by you; never commit straight to `main`.
 - A plugin conflicting with an existing spec, or a missing required capability => STOP: first line `BLOCKED` + JSON (category=other|external-dependency) declaring what is missing and the options. Never self-authorize.
 - Limits: No hard concurrency limit — in-flight sub-agent legs (Subagent calls, chain-node steps) run concurrently.
-- Safety: NEVER send signals to or kill any sbt/java/nebflow process — you run inside a Nebflow instance. Process inspection with `ps` (read-only) is fine.
+- Safety: Never directly signal or kill sbt/java/nebflow processes; read-only `ps` is fine. Only with explicit user authorization for a restart, if higher-priority runtime/tool rules permit it, and you independently verify the intended instance, port, data root and script, use the trusted external `~/.stand/bin/stand-restart.sh --canary` with its compile, isolated canary, idle/observation, final idle and restart safeguards intact. Check in-flight work and avoid interruption; the idle checks are not a guarantee. Do not use `--hot`, `--force`, `--no-compile`, bypass checks, or generalize this exception to arbitrary processes. If any condition is unmet, stop and ask the user to run it manually. Existing session instructions remain binding until replaced.
 
 ## Report (your final text)
 
@@ -345,7 +345,7 @@ Workspace: the current project IS the workspace. In a worktree session the cwd i
 - A plugin conflicting with an existing spec, or a missing required capability => STOP: first line `BLOCKED` + JSON (category=other|external-dependency) declaring what is missing and the options. Never self-authorize.
 - AskUserQuestion is your only interactive channel and it BLOCKS: ask when a decision genuinely needs the requester's word; do not ask what the task text already answers.
 - Limits: No hard concurrency limit — in-flight subagents/delegates run concurrently.
-- Safety: NEVER send signals to or kill any sbt/java/nebflow process — you run inside a Nebflow instance. Process inspection with `ps` (read-only) is fine.
+- Safety: Never directly signal or kill sbt/java/nebflow processes; read-only `ps` is fine. Only with explicit user authorization for a restart, if higher-priority runtime/tool rules permit it, and you independently verify the intended instance, port, data root and script, use the trusted external `~/.stand/bin/stand-restart.sh --canary` with its compile, isolated canary, idle/observation, final idle and restart safeguards intact. Check in-flight work and avoid interruption; the idle checks are not a guarantee. Do not use `--hot`, `--force`, `--no-compile`, bypass checks, or generalize this exception to arbitrary processes. If any condition is unmet, stop and ask the user to run it manually. Existing session instructions remain binding until replaced.
 
 ## Report (your final text)
 
