@@ -84,3 +84,9 @@ commit `9158a5fab`（UI 巡检批 2026-11-07 11:10，作者令「禁止出现微
 | check-component-contract | FAIL 73 项 —— chatSearch.js / sidebar / bgAgentMobileChrome.js（**基线既有红**，均为 JS 侧，本批零 JS 结构改动） |
 | canvas-capsule-ring.spec | 42 PASS / 1 FAIL —— 唯一 FAIL = CR2-5（胶囊材质与 #input-bar 逐项相等），**父提交同一脚本同读数复现**（`ref.blur=blur(24px) saturate(1.15)` vs `capsule.blur=blur(40px) saturate(1.4)`），属 USTC main 合流后的令牌漂移，非本批引入 |
 | canvas-capsule-touch-row.spec / capsule-trackpad-feel.spec | 26 PASS / 0 FAIL、16 PASS / 0 FAIL |
+| bubble-side-color.spec | 22 checks / **0 failures**（父提交基线 6 failures）。E1a 我方档正文实测 **亮 11.79:1 / 暗 10.34:1**（#1b1e26 on #cdd9ec·97% / #e8eaed on #29354d·97%）—— 浅蓝档两主题各自过 AA 的机械证据 |
+| contact-shell.spec | 60 项 · FAIL 0 项（窗壳/窗头/输入条零回归） |
+
+`bubble-side-color.spec` 的期望色已从硬编码 `#95ec69` 改为**运行时读
+`--color-bubble-user` 令牌计算值**（见 `test(web): 气泡归属方 spec…` 提交）：该断言
+验的是「哪一方吃哪枚令牌」，钉死色相会让每次作者改色都假红。
