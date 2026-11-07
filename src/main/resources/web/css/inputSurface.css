@@ -68,7 +68,7 @@
    `.nf-field--bare` 是显式类；下面这串选择器是**已登记的成员**（都是嵌在
    成形容器里的输入：主会话输入条 / ask 输入条 / 记事本 / 画布查找条 /
    wiki 搜索胶囊 / 邮件收件人与主题行 / 提醒行内输入 / todo 行标题 / 移动端
-   搜索框）。成员只拿「裸」，几何仍归各自文件。 */
+   搜索框 / delegate 弹窗头部模型下拉）。成员只拿「裸」，几何仍归各自文件。 */
 .nf-field--bare,
 #input,
 .ask-input textarea,
@@ -80,7 +80,8 @@
 .subject-input,
 .reminder-inline-input,
 .reminder-inline-project input,
-.tfl-row-title-input {
+.tfl-row-title-input,
+.bgagent-model-switch {
   background: var(--nf-field-bare-bg);
   border: none;
   border-radius: 0;
@@ -92,13 +93,20 @@
 /* ── 下拉档：盒式 + 原生箭头 ─────────────────────────────────────────────
    箭头 = 两条 currentColor 渐变（4px 角），不新增色相；取消原生外观后
    才由本文件画箭头（`appearance:none` 只能在这里写）。
-   成员表：`.nf-field--select` 显式类 + 三个既有的原生下拉（都是 `<select>`，
-   造型与别的输入件没有任何理由不同）。 */
+   成员表：`.nf-field--select` 显式类 + 四个既有的原生下拉（都是 `<select>`，
+   造型与别的输入件没有任何理由不同）。
+   `.bgagent-model-switch`（下拉收编批 2026-11-07，作者报障「选择模式的下拉有bug，
+   不美观」）：delegate 会话弹窗头部的会话级模型切换。它此前自己画了一套脸
+   （透明底 + bare hairline 边框 + 8px 圆角 + 零字族 + 零内距 ⇒ 16px 高、原生
+   箭头与自画边框并存），因为类名末段是 `switch`，既没进本文件的元素级兜底补不
+   上的类名成员表、也没进裸件表 —— 典型的「换个类名再画一套」。现按**裸件 + 下拉**
+   双登记收编：无底无边（外壳 = 弹窗头已给材质），只留字与标准箭头。 */
 .nf-field--select,
 .ud-select,
 .wg-switch-select,
 .cfg-select,
-.mp-add-select {
+.mp-add-select,
+.bgagent-model-switch {
   appearance: none;
   -webkit-appearance: none;
   cursor: pointer;

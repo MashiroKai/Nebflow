@@ -60,13 +60,27 @@ if (typeof document !== 'undefined' && !document.getElementById('bgagent-delegat
 }
 /* 模型粒度批（作者令 2026-11-06 20:36「点击具体的对话框里去选择切换」）：弹窗头
    模型**单切**下拉（会话级 override，WS setSessionModel 单点）——类切 = 同类全部
-   会话一起变（/model 面板 / 设置面）；这里是单会话粒度。材质走 --ds-* 槽。 */
+   会话一起变（/model 面板 / 设置面）；这里是单会话粒度。
+   ── 下拉收编批（作者令 2026-11-07「选择模式的下拉有bug，不美观」）────────────
+   断因：本块自己画了一套原生 select 的脸（透明底 + 裸 hairline 边 + 8px 圆角 +
+   零字族 + 零上下内距），类名末段是 switch ⇒ 没进任何输入面成员表 ⇒
+   全站唯一输入面标准（css/inputSurface.css）根本管不到它：实测 16px 高、11px 字、
+   原生箭头 + 自画边框两套箭头语言并存，这就是作者看到的「不美观」。
+   修法：造型全部交还标准（裸件档 + 下拉档，本类已登记进
+   css/inputSurface.css 的两个成员表），本块**只留几何**（flex/宽度上限/字档/
+   纵向内距）——底/边/圆角/影/箭头/焦点环一处都不许在这里写（I2 判据）。 */
 .bgagent-model-switch {
-  max-width: 16rem; min-width: 0; padding: 0 var(--ds-space-2);
+  flex: 0 1 auto;
+  min-width: 0; max-width: 14rem;
+  padding-block: var(--ds-space-half); padding-left: var(--ds-space-2);
   font-size: var(--ds-fs-meta); color: var(--ds-text-muted);
-  background: transparent; border: var(--ds-border-width) solid var(--ds-border-hairline);
-  border-radius: var(--ds-radius-input); cursor: pointer;
+  text-overflow: ellipsis;
 }
+/* 头部布局（作者令 2026-11-07「窗口关闭按钮应该靠右」）：名字槽吃掉全部剩余宽度，
+   模型控件与关闭键因此被推到行尾（右缘对齐）。只挂 .bgagent-overlay 作用域——
+   姊妹弹窗 flowAgentPopup 的头部（有 .flow-agent-subtitle 自带 margin-right:auto）
+   逐像素不变。 */
+.bgagent-overlay .flow-agent-header .flow-agent-name { margin-right: auto; }
 /* 收起式摘要条（WF-01）：默认收起 = 一行（任务 chip + brief 摘要 + 结果词 +
    展开 chevron）；点开 = 任务 brief 全文 + 判词 + 报告全文（九点⑦正文不丢）。 */
 .bgagent-strip-toggle {
@@ -112,9 +126,11 @@ if (typeof document !== 'undefined' && !document.getElementById('bgagent-delegat
 }
 /* hidden 属性守卫（修订批截图期发现）：author display 规则会压过 UA 的
    [hidden]{display:none}——结果区（在飞无判词）收起时以空壳区透出。零空区
-   纪律（数据到位才显）靠本守卫成立。 */
+   纪律（数据到位才显）靠本守卫成立。toggle 亦在册（任务面去重批 2026-11-07：
+   桌面结果条在飞期整行缺席，flex 声明同样会压掉 [hidden]）。 */
 .bgagent-strip-sec[hidden],
-.bgagent-strip-verdict[hidden] { display: none; }
+.bgagent-strip-verdict[hidden],
+.bgagent-strip-toggle[hidden] { display: none; }
 .bgagent-strip-sec-label {
   font-weight: var(--ds-fw-title); font-size: var(--ds-fs-meta);
   letter-spacing: var(--ds-ls-body);
@@ -163,23 +179,33 @@ const STRIP_CHEV_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColo
  * → 条整体缺席（fail-soft）。brief 正文 = 会话历史首条注入行（getHistoryPage 回执
  * 侧 fillStripTaskBody 单点回填——G4 task 键只有台账标题截断形，正文唯一权威在历史）。
  * @param {string} nodeSessionId @param {Element} modal @param {Element} chatContainer
+ * @param {{ hideTask?: boolean }} [opts] 任务面去重批（作者令 2026-11-07「顶部的任务
+ *   可以不显示，因为蓝色气泡里已经包含了」）：桌面头部**不再承载任务**——任务全文的
+ *   权威呈现面 = 会话流里的注入气泡（点来源行可展开逐字全文，见
+ *   js/chat/injectedRows.js「Default-collapsed」段）+ 页脚 .fa-task 单行。桌面条因此
+ *   收成**结果条**（判词/报告/批次 plugins），在飞期（无判词无报告）整条缺席 =
+ *   作者要的「顶部不显示任务」形态。手机层不动（⋯ 详情里的任务全文是 2026-11-06
+ *   手机简化批口径③的载力面，收进详情正是为了不在主界面重复）。
  */
-function mountDelegateStrip(nodeSessionId, modal, chatContainer) {
+function mountDelegateStrip(nodeSessionId, modal, chatContainer, opts) {
   if (!isDelegateDomainId(nodeSessionId)) return;
+  const hideTask = !!(opts && opts.hideTask);
   const strip = document.createElement('div');
   strip.className = 'bgagent-delegate-strip';
   strip.dataset.delegateStrip = nodeSessionId;
+  if (hideTask) strip.dataset.taskFace = 'hidden'; // 任务面去重批：桌面条不承载任务
   strip.hidden = true; // 数据到位才显（零空条）
   modal.insertBefore(strip, chatContainer);
 
-  // 收起态一行：任务 chip + brief 摘要 + 结果词 + chevron。
+  // 收起态一行：任务 chip + brief 摘要 + 结果词 + chevron（手机层）；
+  // 桌面（hideTask）= 结果 chip + 结果词 + chevron（任务面整体不建）。
   const toggle = document.createElement('button');
   toggle.type = 'button';
   toggle.className = 'bgagent-strip-toggle';
   toggle.setAttribute('aria-expanded', 'false');
   const chip = document.createElement('span');
   chip.className = 'bgagent-strip-chip';
-  chip.textContent = t('flowmap.archive.taskLabel'); // 「任务」——节点详情同键
+  chip.textContent = t(hideTask ? 'flowmap.archive.resultLabel' : 'flowmap.archive.taskLabel');
   const briefLine = document.createElement('span');
   briefLine.className = 'bgagent-strip-briefline';
   const resultWord = document.createElement('span');
@@ -190,12 +216,13 @@ function mountDelegateStrip(nodeSessionId, modal, chatContainer) {
   chev.innerHTML = STRIP_CHEV_SVG;
   chev.setAttribute('aria-hidden', 'true');
   toggle.appendChild(chip);
-  toggle.appendChild(briefLine);
+  if (!hideTask) toggle.appendChild(briefLine);
   toggle.appendChild(resultWord);
   toggle.appendChild(chev);
+  if (hideTask) toggle.hidden = true; // 有结果才出（在飞期整条缺席）
   strip.appendChild(toggle);
 
-  // 展开态正文：plugins 数据行（G4）+ 任务 brief 全文 + 结果（判词/报告）。
+  // 展开态正文：plugins 数据行（G4）+ 任务 brief 全文（仅手机层）+ 结果（判词/报告）。
   const body = document.createElement('div');
   body.className = 'bgagent-strip-body';
   body.hidden = true; // 默认收起（WF-01）
@@ -203,17 +230,20 @@ function mountDelegateStrip(nodeSessionId, modal, chatContainer) {
   plugins.className = 'bgagent-strip-plugins';
   body.appendChild(plugins);
 
-  const taskSec = document.createElement('div');
-  taskSec.className = 'bgagent-strip-sec';
-  const taskLabel = document.createElement('span');
-  taskLabel.className = 'bgagent-strip-sec-label';
-  taskLabel.textContent = t('flowmap.archive.taskLabel');
-  taskSec.appendChild(taskLabel);
-  const taskText = document.createElement('div');
-  taskText.className = 'bgagent-strip-tasktext';
-  taskText.hidden = true; // 正文到位才显（零空区）
-  taskSec.appendChild(taskText);
-  body.appendChild(taskSec);
+  let taskText = null; // 桌面 hideTask ⇒ null（fillStripTaskBody 侧零写点）
+  if (!hideTask) {
+    const taskSec = document.createElement('div');
+    taskSec.className = 'bgagent-strip-sec';
+    const taskLabel = document.createElement('span');
+    taskLabel.className = 'bgagent-strip-sec-label';
+    taskLabel.textContent = t('flowmap.archive.taskLabel');
+    taskSec.appendChild(taskLabel);
+    taskText = document.createElement('div');
+    taskText.className = 'bgagent-strip-tasktext';
+    taskText.hidden = true; // 正文到位才显（零空区）
+    taskSec.appendChild(taskText);
+    body.appendChild(taskSec);
+  }
 
   const resultSec = document.createElement('div');
   resultSec.className = 'bgagent-strip-sec';
@@ -257,13 +287,14 @@ function mountDelegateStrip(nodeSessionId, modal, chatContainer) {
     } else {
       plugins.hidden = true;
     }
-    // 任务 brief：G4 task 键 = 台账标题（截断形）——先占位（收起行 + 全文同源），
-    // 正文由历史回执回填（fillStripTaskBody 单点；历史不可达时标题即诚实降级面）。
+    // 任务 brief（手机层承载；桌面 hideTask ⇒ 三处写点全空转）：G4 task 键 =
+    // 台账标题（截断形）——先占位（收起行 + 全文同源），正文由历史回执回填
+    // （fillStripTaskBody 单点；历史不可达时标题即诚实降级面）。
     // 回执竞态守卫：历史 brief 已到（briefSource=history）→ 台账标题不再回写
     // （正文唯一权威在历史——台账标题只是历史不可达时的降级占位）。
     const ledgerTask = detail && detail.task && typeof detail.task === 'object' ? detail.task : null;
     const ledgerTitle = String((ledgerTask && ledgerTask.title) || (record && record.title) || '');
-    if (ledgerTitle && strip.dataset.briefSource !== 'history') {
+    if (!hideTask && ledgerTitle && strip.dataset.briefSource !== 'history') {
       briefLine.textContent = ledgerTitle;
       briefLine.title = ledgerTitle;
       taskText.textContent = ledgerTitle;
@@ -291,7 +322,15 @@ function mountDelegateStrip(nodeSessionId, modal, chatContainer) {
     }
     // 归档态回显随头部归档小图标一并退役（规格 §A 移除清单 4）——G6 单旗仍在
     // 引擎侧（自动归档写），弹窗零归档件。
-    strip.hidden = false;
+    // 任务面去重批（作者令 2026-11-07）：桌面条现在只有「结果」一件事可承载 ⇒
+    // 无判词无报告时整条缺席（在飞期 = 顶部落空，零空条纪律）；有结果才出。
+    if (hideTask) {
+      const hasResult = !resultSec.hidden;
+      toggle.hidden = !hasResult;
+      strip.hidden = !hasResult;
+    } else {
+      strip.hidden = false;
+    }
   }).catch(() => { /* fail-soft：条缺席，弹窗主体不受影响 */ });
 }
 
@@ -299,6 +338,8 @@ function mountDelegateStrip(nodeSessionId, modal, chatContainer) {
  * 任务 brief 正文回填（九点⑦单点）：getHistoryPage 首刷回执里首条 delegate 注入行
  * = 派发 brief 全文（引擎侧唯一持久正文面）。弹窗已切走 → 静默弃；条缺席 → 弃。
  * 回填双写点 = 收起态一行摘要 + 展开态正文（同一文本，两层呈现）。
+ * 任务面去重批（2026-11-07）：桌面条不建这两处 DOM（hideTask）⇒ 查询全落空、
+ * 本函数在桌面是空转（数据集位 briefSource 照旧写，G4 侧竞态守卫口径不变）。
  * @param {string} nodeSessionId @param {Array<any>} messages */
 function fillStripTaskBody(nodeSessionId, messages) {
   if (currentStepId !== nodeSessionId) return;
@@ -512,6 +553,12 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
   // 全挂 body.mobile-layer .bgagent-overlay —— 姊妹弹窗 flowAgentPopup 零波及）。
   popupOverlay.className = 'flow-agent-overlay fullscreen bgagent-overlay';
   lastModelBadgeHtml = null; // fresh badge element — force first render on open
+  // 下拉收编批（2026-11-07 作者报障「选择模式的下拉有bug」= 关一次再开下拉全空）：
+  // 根因 = 本守卫是**模块级**的，open 时不复位 ⇒ 第二个弹窗拿到新 <select>（零选项）
+  // 却因 sig 与上个弹窗相同而整段跳过填充，下拉表 empty。开窗即复位（与上行
+  // lastModelBadgeHtml 同一纪律：新 DOM 必须重绘一次）。
+  lastModelSwitchSig = null;
+  popupModelCfg = null; // 配置属于本次会话，不能沿用上一个窗口的异步结果
 
   // Mount on document.body for bg-agent popups (not inside a flow card)
   // panel-ia 批（2026-11-03 · 作者报障「信息太多、太杂」+ 竖排字实拍）：弹窗头收敛为
@@ -525,13 +572,19 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
   // 再放叉号键（X）」）；桌面层无返回键 ⇒ ✕ 保留（点外关闭路径不变）。模板每次
   // open 重建 ⇒ 守卫逐次评估。🔴 守卫与 ✕ 同行相邻（机检 P2 = scripts/
   // check-panel-unify.mjs；判定单源 = popSheet.isMobileLayer，禁自写）。
+  // 手机端 chrome 化批同期口径（3(d) 按钮去重）不变；下拉收编批（作者令
+  // 2026-11-07）另补两条：① ✕ 由 `<div>` 改 `<button>`（键盘可达 = Tab 到 +
+  // Enter/Space 触发，焦点环取 --ds-focus-ring 单源；此前是纯点击件，键盘用户
+  // 关不掉窗口）；② 靠右改由 `.flow-agent-name { margin-right: auto }` 实现
+  // （见上方注入样式块），关闭键因此贴行尾右缘。`id` 不变 ⇒ 既有点击腿、
+  // 探针与规格（bg-merged-panel / subagent-panel-open-geometry）零改动。
   popupOverlay.innerHTML = `
     <div class="flow-agent-modal">
       <div class="flow-agent-header">
         <span class="flow-agent-name">${esc(agentName || entry.meta.agentName || 'Sub-agent')}</span>
         <span class="flow-agent-model" id="bgagent-model"></span>
-        <select class="bgagent-model-switch" id="bgagent-model-switch" title="${esc(t('delegate.modelSwitch'))}"></select>
-        ${isMobileLayer() ? '' : '<div class="flow-agent-close" id="bgagent-close">✕</div>'}
+        <select class="bgagent-model-switch" id="bgagent-model-switch" aria-label="${esc(t('delegate.modelSwitch'))}" title="${esc(t('delegate.modelSwitch'))}"></select>
+        ${isMobileLayer() ? '' : `<button type="button" class="flow-agent-close" id="bgagent-close" aria-label="${esc(t('modal.close'))}" title="${esc(t('modal.close'))}">✕</button>`}
       </div>
       <div class="flow-agent-footer" id="bgagent-footer">
         <span class="fa-status-dot"></span>
@@ -548,6 +601,7 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
   }
 
   document.body.appendChild(popupOverlay);
+  renderModelBadge(); // 即使没有 agentName 或模型配置请求失败，也先建立可操作的选项表
   mobileSheetBack(popupOverlay, closeStepPopup);
 
   const modal = popupOverlay.querySelector('.flow-agent-modal');
@@ -572,13 +626,16 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
   });
 
   // delegate 收起式摘要条（两层架构批 WF-01：brief 摘要一行 + 点开 brief/结果
-  // 全文）——桌面挂弹窗头与聊天体之间（原位零变化）；手机层迁入 ⋯ 详情浮层
+  // 全文）——桌面挂弹窗头与聊天体之间；手机层迁入 ⋯ 详情浮层
   // （口径③任务内容全文在详情里；自动展开一次，二级折叠保留）。
+  // 任务面去重批（作者令 2026-11-07「顶部的任务可以不显示，因为蓝色气泡里已经
+  // 包含了」）：桌面传 hideTask（条收成结果条，任务只由蓝色气泡 + 页脚承载）；
+  // 手机层不传（⋯ 详情里的任务全文是口径③的载力面，主界面本来就没有它）。
   // #752「会话在做什么」条同迁（口径⑥：灰行——最近动作 / 本会话无后台任务——
   // 收进 ⋯ 详情，主界面只留顶栏 + 消息流 + 悬浮终止钮）。15s 自刷新拍、关闭即停。
   const stripHost = bgMobileChromeApi ? bgMobileChromeApi.sheetBody : modal;
   const stripAnchor = bgMobileChromeApi ? bgMobileChromeApi.sheetAnchor : entry.container;
-  mountDelegateStrip(nodeSessionId, stripHost, stripAnchor);
+  mountDelegateStrip(nodeSessionId, stripHost, stripAnchor, { hideTask: !bgMobileChromeApi });
   if (bgMobileChromeApi) bgMobileChromeApi.autoExpandStrip(bgMobileChromeApi.sheetBody, nodeSessionId);
   if (stripHost instanceof HTMLElement) {
     mountSessionWorkStrip(nodeSessionId, stripHost, stripAnchor);
@@ -711,6 +768,8 @@ function enforceStepViewCap() {
 // 防复活钉：tests/remove-context-usage.spec.mjs。)
 onMessage('usageUpdate', () => { if (popupOverlay) renderModelBadge(); });
 onMessage('done', () => { if (popupOverlay) renderModelBadge(); });
+// main.js 保存 modelOptions；等同一帧的所有监听器执行后再读取，避免打开时选项迟到而不刷新。
+onMessage('modelOptions', () => { queueMicrotask(() => { if (popupOverlay) renderModelBadge(); }); });
 
 // ── WS event interception ────────────────────────────────
 
@@ -1104,10 +1163,13 @@ export function cleanupBgAgentView(nodeSessionId) {
 }
 
 // ── Utils ────────────────────────────────────────────────
+// 转义（下拉收编批 2026-11-07 顺带修）：原实现五条 replace 全都把字符换成**它自己**
+// （`&` → `&`、`<` → `<`…），等于什么都没转义——agent 名/任务行里出现 `<` 时
+// 模板串 innerHTML 会被它截断。按 HTML 文本/属性双料口径补齐实体，`&` 先行。
 function esc(str) {
   if (!str) return '';
-  return String(str).replace(/&/g, '&').replace(/</g, '<').replace(/>/g, '>')
-    .replace(/"/g, '"').replace(/'/g, '&#039;');
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
 }
 
 // #308 actual-model display: the header badge shows the model this agent
@@ -1132,7 +1194,16 @@ function renderModelBadge() {
   const live = currentStepId ? state.sessionModelInfo[currentStepId]?.model : null;
   const cfg = popupModelCfg || {};
   const current = live || cfg.current || cfg.preferred || '';
-  const html = modelBadgeHtml(current, cfg.preferred);
+  let html = modelBadgeHtml(current, cfg.preferred);
+  // 一并收掉重复串（下拉收编批 2026-11-07 作者报障「不美观」的实拍构成）：下拉
+  // 选的当前值本身就等于 current（选项表由 current 领衔）⇒ 徽标再印一遍同一串
+  // 就是同一个模型名在标题行出现两次。徽标只在**它说的是另一件事**时出现：
+  // 会话实际在用 B 而下拉已指向 C（下一 turn 才生效 / 引擎回落），此时 B 是有
+  // 增量的信息（#308 口径：不许把配置值当实际值展示）。
+  const shown = popupOverlay?.querySelector('#bgagent-model-switch')?.value || '';
+  if (shown && current === shown) html = '';
+  // 空徽标不留位（flex gap 会给零宽件也留一格缝）：徽标是条件件，无内容即隐形。
+  el.hidden = !html;
   if (html === lastModelBadgeHtml) return; // unchanged — no DOM write
   lastModelBadgeHtml = html;
   el.innerHTML = html;
@@ -1155,7 +1226,9 @@ function renderModelSwitch() {
   const refs = (state.allModelRefs || []).slice();
   if (current && !refs.includes(current)) refs.unshift(current);
   const sig = current + '|' + refs.join(',');
-  if (sig === lastModelSwitchSig) return;
+  // 守卫双条件：sig 未变**且**这个 DOM 实例已经填过选项。只看 sig 会在「换到另一个
+  // 同模型同选项表的会话」时把新 <select> 留成空壳（与 open 复位互为冗余防线）。
+  if (sig === lastModelSwitchSig && el.options.length) return;
   lastModelSwitchSig = sig;
   // DOM 构建器写法（component-contract R5：不裸写 innerHTML——选项文本全部
   // textContent，无净化面绕过）。
@@ -1187,12 +1260,16 @@ function renderModelSwitch() {
 
 /** Fetch agent model config and render a badge in the popup header. */
 async function fetchAgentModelBadge(agentName) {
+  const requestedOverlay = popupOverlay;
+  const requestedSession = currentStepId;
   try {
     const token = localStorage.getItem(key('token')) || '';
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
     const resp = await fetch(`/api/agents/${encodeURIComponent(agentName)}/model`, { headers });
     if (!resp.ok) return;
-    popupModelCfg = await resp.json();
+    const cfg = await resp.json();
+    if (popupOverlay !== requestedOverlay || currentStepId !== requestedSession) return;
+    popupModelCfg = cfg;
     renderModelBadge();
   } catch (e) { /* non-critical */ }
 }
