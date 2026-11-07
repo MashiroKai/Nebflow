@@ -3,17 +3,21 @@ package nebflow.core
 import cats.effect.std.Semaphore
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
+import io.circe.parser
 import io.circe.parser.decode
 import io.circe.syntax.*
 import io.circe.{Decoder, Encoder, Json}
 import nebflow.actor.RootAgentIdentity
 import nebflow.core.flow.TurnStateStore
 import nebflow.core.{AtomicJson, SessionStorePort}
+import nebflow.db.format.SessionEnvelope
+import nebflow.db.{DbHandle, DbHost, Quarantine, ReadResult}
 import nebflow.shared.{*, given}
 
 import java.util.UUID
 
 import scala.concurrent.duration.*
+import scala.util.{Failure, Success, Try}
 
 // 严格DAG第④步裁定(2026-09-26):export shim 随迁即删,SessionMeta 统一改指 nebflow.shared
 
@@ -114,9 +118,121 @@ class SessionStore(
   sessionsDir: os.Path,
   tasksDir: os.Path,
   uiCacheMaxEntries: Int = Defaults.UiCacheMaxEntries,
-  uiCacheMaxBytes: Long = Defaults.UiCacheMaxBytes
+  uiCacheMaxBytes: Long = Defaults.UiCacheMaxBytes,
+  /** db 接线第一阶（C8/D-11）：影子面注入缝（测试/隔离实例显式传句柄；缺省按
+   *  生产默认根判别自开——临时根测试构造 ⇒ 永不开生产根）。 */
+  dbOverride: Option[DbHandle] = None
 ) extends SessionStorePort:
   private val logger = nebflow.shared.NebflowLogger.forName("nebflow.session")
+
+  // ── db 接线第一阶（C4 九静默面收编 / D-5；C8 UI 面影子双读 / D-11）───────────
+  //
+  // 三态读（[[nebflow.db.ReadResult]]：Absent / Corrupt / Present）收编「坏==无」
+  // 折叠形：Corrupt ⇒ ① Quarantine 就地隔离（.corrupt-<ts> 全字节保留）+ ② WARN
+  // （不再静默）+ ③ 按三标签处置：
+  //   - 取证面②（消息史/ui 史）：隔离后 UI 面先走 db 影子恢复读，无影子按缺席；
+  //   - 派生面③（_index.json 整档族）：隔离后按空索引起步——孤儿恢复腿
+  //     （recoverOrphans）从盘重建，索引本就是可重建派生件；
+  //   - 旧隔离形 `.corrupted.<ts>`（loadSessionMessages）收编为同一 helper（R31
+  //     三先例归一，本仓第 1 处）。
+  /** 默认生产 sessions 根（GatewayMain:509 装配值——构造期求值，换根后不复用）。 */
+  private val isProductionRoot: Boolean =
+    sessionsDir == nebflow.shared.PathUtil.dataRoot / "sessions"
+
+  /** db 句柄（C8 影子面用）：注入 > 默认根自开（best-effort）> None。 */
+  private val dbHandle: Option[DbHandle] =
+    dbOverride.orElse(
+      if isProductionRoot then DbHost.openBestEffort(nebflow.shared.PathUtil.dataRoot.toNIO) else None
+    )
+
+  /** 坏档处置单点：隔离（.corrupt-<ts>）+ WARN；返回隔离副本路径（缺=未能动）。 */
+  private def quarantineEvidence(f: os.Path, face: String, why: String): Option[os.Path] =
+    try
+      Quarantine.quarantine(f.toNIO, System.currentTimeMillis())
+        .map { p =>
+          logger.warnSync(s"db-wiring(D-5): $face corrupted ($why) — quarantined to ${p.getFileName}, bytes preserved (坏≠无，处置见各面标签)")
+          os.Path(p)
+        }
+    catch
+      case e: Throwable =>
+        logger.warnSync(s"db-wiring(D-5): $face corrupted ($why) AND quarantine FAILED (${e.getMessage}) — file left in place, treated as absent")
+        None
+
+  /** 整档 JSON 三态读：坏 ⇒ 隔离+WARN ⇒ 调用方缺省值（派生面③起步形）。 */
+  private def readJsonDocThreeState(f: os.Path, face: String,
+    default: => Json = Json.obj()): Json =
+    if !os.exists(f) then default
+    else
+      Try(parser.parse(os.read(f))) match
+        case Success(Right(j)) => j
+        case Success(Left(err)) =>
+          quarantineEvidence(f, face, s"parse: ${err.getMessage}")
+          default
+        case Failure(e) =>
+          quarantineEvidence(f, face, s"read: ${e.getMessage}")
+          default
+
+  /** JSONL 消息列表三态读：坏 ⇒ 隔离+WARN ⇒ Nil（取证面②起步形——字节已保全）。 */
+  private def readMessagesDocThreeState[A](f: os.Path, face: String)(using
+    Decoder[A]): List[A] =
+    if !os.exists(f) then Nil
+    else
+      Try(os.read(f)) match
+        case Success(raw) =>
+          decode[List[A]](raw) match
+            case Right(xs) => xs
+            case Left(err) =>
+              quarantineEvidence(f, face, s"decode: ${err.getMessage}")
+              Nil
+        case Failure(e) =>
+          // 不可读（权限/IO）同样坏≠无：隔离动作可能也失败——helper 内已 WARN。
+          quarantineEvidence(f, face, s"read: ${e.getMessage}")
+          Nil
+
+  /** 旧档 ui.json 的 db 影子恢复读（C8）：影子面 Present ⇒ 全帧 UiMessage 列表。 */
+  private def uiShadow(sessionId: String): IO[List[UiMessage]] =
+    dbHandle match
+      case Some(h) =>
+        h.readSession(sessionId, SessionEnvelope.StreamUi).map {
+          case ReadResult.Present(sr) =>
+            val frames = sr.records.flatMap(_.payload.as[UiMessage].toOption)
+            // 连续同帧折叠：跨实例（重启）影子基线是进程内的，新实例首刷可能把
+            // 已有帧重追一份——append-log 里相邻重复 = 重追工件，非新信息（已知
+            // 边界：全字段逐字相同且相邻的真实重复会被折叠，UI 语义无损）。
+            val collapsed = frames.foldLeft(List.empty[UiMessage]) { (acc, m) =>
+              if acc.lastOption.contains(m) then acc else acc :+ m
+            }
+            if frames.nonEmpty then
+              logger.warnSync(s"db-wiring(D-11): ui history for $sessionId recovered from db shadow " +
+                s"(${collapsed.size} frame(s), ${frames.size - collapsed.size} re-append artifact(s) folded)")
+            collapsed
+          case ReadResult.Corrupt(kind, ev) =>
+            logger.warnSync(s"db-wiring(D-5): db ui shadow itself corrupt ($kind @ ${ev.getFileName}) — proceeding without shadow")
+            Nil
+          case ReadResult.Absent() => Nil
+        }.handleErrorWith(e =>
+          logger.warn(s"db-wiring: ui shadow read failed for $sessionId: ${e.getMessage}").as(Nil))
+      case None => IO.pure(Nil)
+
+  /** UI 帧写穿（C8）：只追加缓存增量（相对上次影子基线）；best-effort。 */
+  private def shadowUiAppend(sessionId: String, msgs: List[UiMessage]): IO[Unit] =
+    dbHandle match
+      case Some(h) =>
+        uiShadowBaseline.get.flatMap { base =>
+          val n = base.getOrElse(sessionId, 0)
+          val fresh = msgs.drop(n)
+          if fresh.isEmpty then IO.unit
+          else
+            fresh.traverse_(m =>
+              h.appendMessage(sessionId, SessionEnvelope.StreamUi, m.asJson)).void
+              .handleErrorWith(e =>
+                logger.warn(s"db-wiring(C8): ui shadow append failed for $sessionId: ${e.getMessage}"))
+              *> uiShadowBaseline.set(base.updated(sessionId, msgs.size))
+        }
+      case None => IO.unit
+
+  /** 影子追加基线（sessionId → 已影子化帧数；纯进程内，坏时重对齐即可）。 */
+  private val uiShadowBaseline: Ref[IO, Map[String, Int]] = Ref.unsafe(Map.empty)
 
   // (activeId, metas sorted by updatedAt desc, folders)
   private val indexRef: Ref[IO, (String, List[SessionMeta], List[Folder])] =
@@ -391,8 +507,19 @@ class SessionStore(
 
   private def loadFromIndex: IO[Unit] =
     IO.blocking {
-      val raw = os.read(indexFile)
-      val json = decode[Json](raw).getOrElse(Json.obj())
+      // db 接线收编（D-5 三连面，实测行号 395/397/398）：旧形 `decode[Json](raw)
+      // .getOrElse(Json.obj())` + 字段级 getOrElse(Nil) 把「坏档」折叠成「空索引」
+      // ——整档族坏==无 ⇒ 列表静默缩水。三态化后：坏档整档隔离（派生面③——索引
+      // 可由孤儿恢复腿从盘重建），字段级缺省只在 Present 档内生效（部分字段缺失
+      // 属形状容错，非坏==无折叠）。
+      val json: Json =
+        if !os.exists(indexFile) then Json.obj()
+        else
+          parser.parse(os.read(indexFile)) match
+            case Right(j) => j
+            case Left(err) =>
+              quarantineEvidence(indexFile, "sessions/_index.json", s"parse: ${err.getMessage}")
+              Json.obj()
       val activeId = json.hcursor.downField("activeId").as[String].getOrElse("")
       val sessions = json.hcursor.downField("sessions").as[List[SessionMeta]].getOrElse(Nil)
       val folders = json.hcursor.downField("folders").as[List[Folder]].getOrElse(Nil)
@@ -508,12 +635,10 @@ class SessionStore(
             IO.blocking {
               val mtime = os.mtime(f)
               // Try to extract name from first user message
-              val name =
-                try
-                  val msgs = decode[List[Message]](os.read(f)).getOrElse(Nil)
-                  msgs.find(_.role == MessageRole.User).map(_.textContent.take(50)).getOrElse("Recovered Session")
-                catch
-                  case _: Exception => "Recovered Session"
+              // db 接线收编（D-5 实测 :513 形）：坏档不再静默取 Nil——三态读
+              // （取证面②：隔离后按缺席 ⇒ "Recovered Session" 命名，字节已保全）。
+              val name = readMessagesDocThreeState[Message](f, s"orphan-recovery ${f.last}")
+                .find(_.role == MessageRole.User).map(_.textContent.take(50)).getOrElse("Recovered Session")
               // Restore folderId from sidecar (if it exists)
               val folderId = readMetaSidecar(id)
               // T-2/R1 = C（2026-09-12 作者裁定 + 设计 §10 #13 / A-10）：恢复路径
@@ -553,7 +678,9 @@ class SessionStore(
       else None
     }.flatMap {
       case Some(raw) =>
-        val msgs = decode[List[Message]](raw).getOrElse(Nil)
+        // db 接线收编（D-5 实测 :556 形）：坏==无 ⇒ legacy 整档坏则迁移出空会话
+        // （旧历史实质销毁）。三态读：坏档隔离+WARN，旁档可查后再迁。
+        val msgs = readMessagesDocThreeState[Message](legacyPath, "legacy web.json")
         val id = UUID.randomUUID().toString
         val now = System.currentTimeMillis()
         val meta = SessionMeta(id, "Default Session", now, now, hasUnread = false)
@@ -600,12 +727,9 @@ class SessionStore(
   /** Read folderId from sidecar file (if it exists). Used by orphan recovery. */
   private def readMetaSidecar(id: String): Option[String] =
     val f = metaSidecarFile(id)
-    if os.exists(f) then
-      try
-        val json = decode[Json](os.read(f)).getOrElse(Json.obj())
-        json.hcursor.downField("folderId").as[String].toOption
-      catch case _: Exception => None
-    else None
+    // db 接线收编（D-5 实测 :605 形）：旧形 `decode[Json].getOrElse(Json.obj())` +
+    // catch 吞 ⇒ 坏==无（folder 归属静默丢失）。三态读：坏档隔离+WARN 后按缺席。
+    readJsonDocThreeState(f, s"meta-sidecar $id").hcursor.downField("folderId").as[String].toOption
 
   private def loadSessionMessages(id: String): IO[List[Message]] =
     // Check pending (debounced, most recent) writes first — mirrors the UI
@@ -624,11 +748,11 @@ class SessionStore(
                   // Corruption detected (e.g. power loss mid-write). Back up the
                   // corrupt file rather than silently returning Nil, so history is
                   // recoverable and the problem is visible.
-                  val backup = sessionsDir / s"$id.json.corrupted.${System.currentTimeMillis()}"
-                  os.move.over(f, backup, replaceExisting = true)
-                  logger.warn(
-                    s"Session messages corrupted for $id, backed up to ${backup.last}: ${err.getMessage}"
-                  )
+                  // db 接线收编（R31 三先例归一，本仓第 1 处）：旧形 `.corrupted.<ts>`
+                  // 手搬 + `os.move.over`（可覆盖既有隔离档 = 二次销毁风险）改为共用
+                  // [[Quarantine]] helper（`.corrupt-<ts>`、绝不覆盖绝不删除）。
+                  // 取证面②：隔离后按缺席续跑（原字节全保全于旁档）。
+                  quarantineEvidence(f, s"session-messages $id", s"decode: ${err.getMessage}")
                   Nil
           }
     }
@@ -1531,11 +1655,28 @@ class SessionStore(
       .flatMap {
         case Some(cached) => IO.pure(cached)
         case None =>
+          // db 接线收编（D-5 R1 病灶本体，实测 :1480 形）：旧形
+          // `decode.getOrElse(Nil)` ⇒ 坏档折空 → 回填缓存 → debounce 整档覆盖
+          // = 渲染史永久销毁。三态化：坏档先隔离（字节保全，坏≠无）；隔离后
+          // 若有 db 影子面（C8）⇒ 从影子恢复（销毁改判为可恢复）；无影子 ⇒
+          // 按缺席起步（旁档可查）。
           IO.blocking {
             val f = uiFile(id)
-            if os.exists(f) then decode[List[UiMessage]](os.read(f)).getOrElse(Nil)
-            else Nil
-          }.flatTap(msgs => updateUiCache(id, msgs, dirty = false))
+            if !os.exists(f) then Right(Nil)
+            else
+              decode[List[UiMessage]](os.read(f)) match
+                case Right(msgs) => Right(msgs)
+                case Left(err) =>
+                  quarantineEvidence(f, s"ui-messages $id", s"decode: ${err.getMessage}")
+                  Left(()) // Corrupt（已隔离）：走影子恢复腿
+          }.flatMap {
+            case Right(msgs) => IO.pure(msgs)
+            case Left(_)     => uiShadow(id)
+          }.flatTap(msgs =>
+            // 影子基线随读面回填：跨实例（重启/新 SessionStore）从盘上 Present 值
+            // 续追 ⇒ 不把已影子化帧二次追加（幂等基线，非全量重写）。
+            uiShadowBaseline.update(_.updated(id, msgs.size))
+          ).flatTap(msgs => updateUiCache(id, msgs, dirty = false))
       }
 
   /**
@@ -1565,7 +1706,9 @@ class SessionStore(
    * provided list so callers control what gets persisted.
    */
   private def writeUiMessagesToDisk(id: String, msgs: List[UiMessage]): IO[Unit] =
-    AtomicJson.write(uiFile(id), msgs.asJson.noSpaces)
+    // db 接线第一阶（C8）：单点写穿影子（saveUiMessages 直写路与 scheduleFlush
+    // debounce 路都过这里）。基线增量追加 ⇒ 幂等；db 故障 WARN 不拦主写。
+    AtomicJson.write(uiFile(id), msgs.asJson.noSpaces) *> shadowUiAppend(id, msgs)
 
   /**
    * Eager cache update + immediate disk write. Used by paths that need the

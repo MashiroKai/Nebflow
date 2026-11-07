@@ -31,6 +31,20 @@ object PluginsConfig:
   def autoAllocate: IO[Boolean] =
     IO.blocking(readBool("autoAllocate", default = true))
 
+  /**
+   * 热读 `plugins.failOpenOnAllocationError`（缺陷①，2026-11-02）。
+   *
+   * 缺省 **false = fail-closed**：分配腿（Jev/LLM）故障时派发显式失败并在错误里
+   * 点名模式词与真因，**不再静默降级成 `plugins=[]`**（旧行为：慢模型 60s 超时 ⇒
+   * 模型拿不到 ptc_run 却"看起来正常完成"）。
+   *
+   * `true` = 回到旧语义（空集照派，只留 WARN + 分配台账）——给「分配面故障不该
+   * 阻塞派发」的部署留一键回退位。缺省方向与 enabled/autoAllocate 相反是**故意的**：
+   * 静默降级是缺陷本身，不是可接受的降级。
+   */
+  def failOpenOnAllocationError: IO[Boolean] =
+    IO.blocking(readBool("failOpenOnAllocationError", default = false))
+
   /** plugins.<key> 单布尔热读单点（absent / 非法 / 文件缺失 → default）。 */
   private def readBool(key: String, default: Boolean): Boolean =
     val configPath = PathUtil.configJsonReadPath(PathUtil.dataRoot)

@@ -44,13 +44,24 @@ import nebflow.shared.{NebflowLogger, PathUtil}
  * 未注册——未装配环境）／`auto-off`（#523 补齐批：`plugins.autoAllocate=false`——
  * 声明集照常注入，空声明不再问模型；惰性态，与 disabled/off 同族）。
  *
- * 失败语义分层（与节点路径同款，2026-09-13 无审批批口径）：**分配**失败 = fail-open
- * （空集，派发绝不阻塞）；**解析/注入**失败（选中包被封禁/技能文件不可读）= `Left`
- * （调用方 failNode / 显式拒 spawn——分配失败是节点级失败，不静默降级）。
+ * 失败语义分层（2026-09-13 无审批批口径 ＋ 缺陷① 2026-11-02 修订）：**解析/注入**
+ * 失败（选中包被封禁/技能文件不可读）= `Left`（调用方 failNode / 显式拒 spawn）；
+ * **分配**失败（llm-error / parse-fail / fail-open 三个失败模式词）自 2026-11-02 起
+ * 同样落 `Left`——分配超时/调用层失败**绝不静默降级成 `plugins=[]`**（缺陷①：慢模型
+ * 60s 被掐 ⇒ 模型拿不到 ptc_run，却把任务用内置工具做完并"看起来正常完成"）。
+ * 部署若确需旧语义（空集照派），置 `plugins.failOpenOnAllocationError=true` 一键回退。
  */
 object PluginInjection:
 
   private val logger = NebflowLogger.forName("nebflow.core.plugin.injection")
+
+  /** 分配「失败」模式词（缺陷①：三者都代表「能力集未知」，不再等价于「无需插件」）。 */
+  private val FailureModes: Set[String] = Set("llm-error", "parse-fail", "fail-open")
+
+  /** 失败模式词的配套原因（JevFallback 记账里已有真因——错误消息逐字带上）。 */
+  private def failureReason(a: JevAllocation): String = a match
+    case JevAllocation.FellBack(_, reason) => reason
+    case _ => "unknown allocation failure"
 
   /** 分配产出（记账/结构帧承载）：集合 + 三态模式词。 */
   final case class AllocatedSet(names: List[String], mode: String):
@@ -106,6 +117,32 @@ object PluginInjection:
                   logDuty(subject, result)
                   if InertModes.contains(mode) then
                     IO.pure(Right(NodeEngine.PluginPreparation.empty -> AllocatedSet(Nil, mode)))
+                  else if FailureModes.contains(mode) then
+                    // 缺陷①（2026-11-02）：分配失败**不再**静默成 plugins=[]。
+                    // fail-closed（缺省）= 显式 Left，派发失败并点名模式词 + 真因；
+                    // `plugins.failOpenOnAllocationError=true` 才回到旧语义（空集照派，
+                    // 但至少留一条 WARN，不再无声无息）。
+                    val reason = failureReason(result.allocation)
+                    PluginsConfig.failOpenOnAllocationError.flatMap {
+                      case true =>
+                        logger
+                          .warn(
+                            s"plugin allocation '$subject': $mode — fail-open OPTED IN " +
+                              "(plugins.failOpenOnAllocationError=true), dispatch continues with an EMPTY plugin set. " +
+                              s"Reason: $reason"
+                          )
+                          .as(Right(NodeEngine.PluginPreparation.empty -> AllocatedSet(Nil, mode)))
+                      case false =>
+                        IO.pure(
+                          Left(
+                            s"plugin allocation failed ($mode) for '$subject' — the capability set is unknown, " +
+                              "refusing to dispatch with an empty plugin set (no silent degradation). " +
+                              s"Reason: $reason. " +
+                              "Fix the allocator model/provider, or set plugins.failOpenOnAllocationError=true " +
+                              "in nebflow.json to restore the old empty-set behaviour."
+                          )
+                        )
+                    }
                   else if names.isEmpty then IO.pure(Right(NodeEngine.PluginPreparation.empty -> AllocatedSet(Nil, mode)))
                   else resolvePreparation(names).map(_.map(prep => (prep, AllocatedSet(names, mode))))
                 }

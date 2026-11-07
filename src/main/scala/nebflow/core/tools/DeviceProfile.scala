@@ -1,5 +1,7 @@
 package nebflow.core.tools
 
+import nebflow.neblink.core.*
+
 import cats.effect.IO
 import io.circe.parser.decode
 import io.circe.syntax.*

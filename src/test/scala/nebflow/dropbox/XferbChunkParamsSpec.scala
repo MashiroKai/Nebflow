@@ -1,5 +1,7 @@
 package nebflow.dropbox
 
+import nebflow.neblink.misc.*
+
 import cats.effect.IO
 import munit.CatsEffectSuite
 import nebflow.shared.{AttachContract, FileTransfer}
@@ -467,7 +469,7 @@ class XferbChunkParamsSpec extends CatsEffectSuite:
           "wholeSha256" -> io.circe.Json.fromString("deadbeef"),
           "transferId" -> io.circe.Json.fromString("tid-e")
         )
-        res <- nebflow.neblink.FileTransferAction.handle(params)
+        res <- nebflow.neblink.misc.FileTransferAction.handle(params)
       yield res match
         case Left(raw) =>
           val json = io.circe.parser.parse(raw).getOrElse(fail(s"结构化错误体必须是可解析 JSON：$raw"))
@@ -508,7 +510,7 @@ class XferbChunkParamsSpec extends CatsEffectSuite:
           "wholeSha256" -> io.circe.Json.fromString("deadbeef"),
           "transferId" -> io.circe.Json.fromString("tid-e2")
         )
-        res <- nebflow.neblink.FileTransferAction.handle(params)
+        res <- nebflow.neblink.misc.FileTransferAction.handle(params)
         onDisk <- IO.blocking(os.size(path))
       yield res match
         case Right(json) =>

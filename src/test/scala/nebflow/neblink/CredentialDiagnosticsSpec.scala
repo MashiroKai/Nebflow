@@ -1,5 +1,8 @@
 package nebflow.neblink
 
+import nebflow.neblink.identity.*
+import nebflow.neblink.logto.*
+
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
 import nebflow.shared.PathUtil

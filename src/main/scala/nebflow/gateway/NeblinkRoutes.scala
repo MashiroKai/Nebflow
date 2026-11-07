@@ -1,12 +1,20 @@
 /* 从 RestApiRoutes 迁出(行为保持重构,2026-09-24)。 */
 package nebflow.gateway
 
+import nebflow.neblink.misc.AvatarByteCache
+
+import nebflow.neblink.core.*
+import nebflow.neblink.identity.*
+import nebflow.neblink.misc.*
+import nebflow.neblink.relay.*
+import nebflow.neblink.social.*
+
 import cats.effect.IO
 import cats.syntax.all.*
 import fs2.Stream
 import io.circe.syntax.*
 import io.circe.{Json, parser}
-import nebflow.neblink.*
+import nebflow.neblink.logto.*
 import nebflow.shared.{Branding, PathUtil, PeerInfo}
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
@@ -97,7 +105,7 @@ private[gateway] object NeblinkRoutes:
             // trust fallback. Malformed bodies from untrusted callers are still
             // rejected as "not a trusted peer" rather than leaking a 400.
             req.as[Json].flatMap { body =>
-              io.circe.parser.decode[nebflow.neblink.DeviceDiscoveryInfo](body.noSpaces) match
+              io.circe.parser.decode[nebflow.neblink.core.DeviceDiscoveryInfo](body.noSpaces) match
                 case Right(info) =>
                   val port = body.hcursor.downField("port").as[Int].getOrElse(nebflow.shared.Defaults.brandDefaultPort)
                   isKnownNetworkDevice(ms, info.deviceId, remoteIp).flatMap { known =>
@@ -230,7 +238,7 @@ private[gateway] object NeblinkRoutes:
             // 2026-09-14（踢旧批案 B）：再补本地已判定的「已在别处登录」态
             // （`disconnect` 帧 → 停摆）——**加法字段，本地网关↔浏览器侧**，服务端
             // wire 零变化（见 NeblinkRelayTunnel.statusJson 注释）。
-            relayStatus = nebflow.neblink.NeblinkRelayTunnel.statusJson(
+            relayStatus = nebflow.neblink.relay.NeblinkRelayTunnel.statusJson(
               relayAvailable,
               ms.relayTunnelOpt.flatMap(_.authStatus),
               ms.relayTunnelOpt.map(_.signedOutElsewhereAt).getOrElse(0L)
@@ -612,9 +620,9 @@ private[gateway] object NeblinkRoutes:
                 // 意外失败（拆除腿异常等）⇒ **可判读的失败页**：三段式文案，绝不再把裸异常
                 // 变成无解释的 500（`getMessage` 直出 = 上游 §4 第 3 处丢失点）。
                 run.handleErrorWith { e =>
-                  val diagnostic = nebflow.neblink.CredentialDiagnostics.classifyFailure(
+                  val diagnostic = nebflow.neblink.identity.CredentialDiagnostics.classifyFailure(
                     e,
-                    nebflow.neblink.CredentialFailure.Unclassified
+                    nebflow.neblink.identity.CredentialFailure.Unclassified
                   )
                   logger.warn(diagnostic.logLine("end-session failed"), "code" -> diagnostic.code) *>
                     AuthRoutes.htmlResponse(
@@ -1008,14 +1016,14 @@ private[gateway] object NeblinkRoutes:
               // with the relay tunnel so P2P and relay paths behave identically.
               action match
                 case "FileTransfer" =>
-                  nebflow.neblink.FileTransferAction.handle(params).flatMap {
+                  nebflow.neblink.misc.FileTransferAction.handle(params).flatMap {
                     case Right(json) => Ok(Json.obj("output" -> json.noSpaces.asJson))
                     case Left(err) => Ok(Json.obj("error" -> err.asJson, "output" -> "".asJson))
                   }
                 case "BgCancel" =>
                   // P2 单任务取消远端腿（bg-cancel）：与 FileTransfer 同表同安全面
                   // （verifyPeerAccess 设备鉴权——与下发远端 Bash 同一通道）。
-                  nebflow.neblink.BgCancelAction.handle(params).flatMap {
+                  nebflow.neblink.misc.BgCancelAction.handle(params).flatMap {
                     case Right(json) => Ok(Json.obj("output" -> json.noSpaces.asJson))
                     case Left(err) => Ok(Json.obj("error" -> err.asJson, "output" -> "".asJson))
                   }
@@ -1295,7 +1303,7 @@ private[gateway] object NeblinkRoutes:
    * ——隧道动作 `RemoteUpdate` 的参数集由跨仓契约钉死（契约 §B.1.3），本批零越仓。
    */
   private def doRemoteUpdate(
-    ns: nebflow.neblink.NeblinkService,
+    ns: nebflow.neblink.core.NeblinkService,
     targetDevice: String,
     beta: Boolean,
     clientRequestId: Option[String] = None
@@ -1303,11 +1311,25 @@ private[gateway] object NeblinkRoutes:
     import ctx.*
 
     // fleet 批（2026-11-01）收口：P2P → 中继的派发**唯一实现**在
-    // [[nebflow.neblink.RemoteUpdateDispatch]]（批量推送与单台点击共用同一腿）。
+    // [[nebflow.neblink.relay.RemoteUpdateDispatch]]（批量推送与单台点击共用同一腿）。
     // 本方法保留为薄壳：调用方（REST 路由此处）零改动，派发语义逐字不变。
-    nebflow.neblink.RemoteUpdateDispatch.dispatchByName(ns, targetDevice, beta, clientRequestId)
+    nebflow.neblink.relay.RemoteUpdateDispatch.dispatchByName(ns, targetDevice, beta, clientRequestId)
 
   end doRemoteUpdate
+
+  private def relayUpdateFallback(
+    ns: nebflow.neblink.core.NeblinkService,
+    peer: nebflow.shared.PeerInfo,
+    beta: Boolean,
+    p2pError: String
+  )(using ctx: RestApiCtx): IO[Either[String, String]] =
+    import ctx.*
+
+    ns.relayClientOpt match
+      case Some(client) =>
+        logger.info(s"P2P update failed ($p2pError), trying relay to ${peer.deviceName}") *>
+          client.relayUpdate(peer.deviceId, beta)
+      case None => IO.pure(Left(p2pError))
 
   /** Run block only if NeblinkService is available and request is authenticated. */
   private def withNeblink(req: Request[IO])(f: NeblinkService => IO[Response[IO]])(using
@@ -1530,11 +1552,11 @@ private[gateway] object NeblinkRoutes:
   )(using ctx: RestApiCtx): IO[Either[String, Json]] =
     import ctx.*
 
-    nebflow.neblink.EnrollGuard.enrollRefusal(serverUrl, explicitUserAction) match
+    nebflow.neblink.identity.EnrollGuard.enrollRefusal(serverUrl, explicitUserAction) match
       case Some(reason) =>
         logger.warn(s"enroll refused by the isolation guard: $reason").as(Left(reason))
       case None =>
-        proxyPost(serverUrl, nebflow.neblink.Protocol.DeviceApi.enroll, body)
+        proxyPost(serverUrl, nebflow.neblink.core.Protocol.DeviceApi.enroll, body)
 
   /**
    * Shared completion for BOTH login paths (headless password login's Logto

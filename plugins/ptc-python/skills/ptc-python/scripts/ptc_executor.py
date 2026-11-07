@@ -62,7 +62,39 @@ PLUGIN_DATA = os.path.realpath(
     or os.path.join(os.environ.get("TEMP") or os.environ.get("TMP") or "/tmp", "ptc-plugin-data", "ptc-python"))
 os.makedirs(PLUGIN_DATA, exist_ok=True)
 DEFAULT_CWD = expand(PTC["workspace"]["default_cwd"], PLUGIN_DATA)
-DEFAULT_ROOTS = [os.path.realpath(r) for r in expand(PTC["workspace"]["fs_roots"], PLUGIN_DATA)]
+
+# ── fs_roots 覆盖（缺陷③，2026-11-02）──────────────────────────────────────
+# 缺省（不设任何覆盖变量）：唯一可写根 = `${PLUGIN_DATA}/workspace`（**插件自己的**
+# 沙盒目录）。这在 delegate 会话里不够用——delegate 的工作区是它的 worktree，模型要读
+# 自己工作区的 notes/ 时会全量 PolicyDenied，得先探出插件 workspace 才能干活。
+# 覆盖面（按优先级，全部显式，缺省不放开）：
+#   PTC_FS_ROOTS        pathsep 分隔的额外根清单（并入缺省根，成为新的上界）
+#   PTC_FS_ROOTS_OPEN=1 允许**请求级** `fs_roots` 指定任意已存在目录（per-call 收窄，
+#                       宿主 McpToolGate 审批仍在每一次 ptc_run 上）
+#   PTC_CWD             缺省 cwd 覆盖（须落在最终 fs_roots 内）
+# mcp.json 的 env 同样可承载三者（装载器展开 ${PLUGIN_ROOT}/${PLUGIN_DATA}）。
+def _env_roots():
+    raw = os.environ.get("PTC_FS_ROOTS", "")
+    out = []
+    for part in raw.split(os.pathsep):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            out.append(os.path.realpath(part))
+        except OSError:
+            continue
+    return out
+
+
+EXTRA_ROOTS = _env_roots()
+ROOTS_OPEN = os.environ.get("PTC_FS_ROOTS_OPEN", "0").strip() in ("1", "true", "TRUE", "yes")
+DEFAULT_ROOTS = [os.path.realpath(r) for r in expand(PTC["workspace"]["fs_roots"], PLUGIN_DATA)] + EXTRA_ROOTS
+# 去重保序（同一根既能来自 manifest 也能来自 env）
+_seen = set()
+DEFAULT_ROOTS = [r for r in DEFAULT_ROOTS if not (r in _seen or _seen.add(r))]
+_env_cwd = os.environ.get("PTC_CWD", "").strip()
+DEFAULT_CWD = os.path.realpath(_env_cwd) if _env_cwd else DEFAULT_CWD
 os.makedirs(DEFAULT_CWD, exist_ok=True)
 RUNNER = os.path.join(HERE, "ptc_runner.py")
 
@@ -345,10 +377,27 @@ def validate(args, tool_profile):
         if not isinstance(roots, list) or not all(isinstance(r, str) for r in roots) or not roots:
             raise Invalid("fs_roots must be a non-empty string array")
         roots = [os.path.realpath(r) for r in roots]
-        if not all(_subset_subtree(r, DEFAULT_ROOTS) for r in roots):
-            raise Invalid("fs_roots must stay inside the manifest roots %s" % DEFAULT_ROOTS)
+        # 缺陷③：默认仍要求「请求级 fs_roots ⊆ 已知根」；只有显式 PTC_FS_ROOTS_OPEN=1
+        # 才允许点名任意**已存在目录**（delegate 用来自助声明自己的工作区）。不存在的
+        # 目录一律拒——它只可能是笔误，而放行等于把后面的 cwd/写入错误推到更远处。
+        if not ROOTS_OPEN:
+            if not all(_subset_subtree(r, DEFAULT_ROOTS) for r in roots):
+                raise Invalid("fs_roots must stay inside the manifest roots %s "
+                              "(set PTC_FS_ROOTS=<path> to add a root, or PTC_FS_ROOTS_OPEN=1 to let the "
+                              "request declare its own)" % (DEFAULT_ROOTS,))
+        else:
+            missing = [r for r in roots if not os.path.isdir(r)]
+            if missing:
+                raise Invalid("fs_roots entries must be existing directories: %s" % (missing,))
 
-    cwd = args.get("cwd") or DEFAULT_CWD
+    # cwd：显式 > 请求自带 fs_roots 的首个根（缺陷③：声明了根就该能直接在里面干活，
+    # 不必再抄一遍 cwd） > 缺省 cwd（插件 workspace / PTC_CWD）。
+    if args.get("cwd"):
+        cwd = args["cwd"]
+    elif args.get("fs_roots"):
+        cwd = roots[0]
+    else:
+        cwd = DEFAULT_CWD
     if not _subset_subtree(cwd, roots):
         raise Invalid("cwd %r is outside fs_roots" % cwd)
     if not os.path.isdir(cwd):

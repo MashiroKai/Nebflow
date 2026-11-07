@@ -38,3 +38,32 @@ description: PTC（Programmatic Tool Calling）Python 承载件的作业指令�
 # 直接用 MCP client 打一次（仓内 harness）
 node scripts/ptc/run-conformance.mjs --only ptc-python
 ```
+
+## 5. fs_roots 与工作区（缺陷③，2026-11-02）
+
+缺省只有一个根：`${PLUGIN_DATA}/workspace`（插件自己的沙盒），cwd 也在其中。delegate
+会话的工作区是它的 worktree，**不在**这个根下 ⇒ 缺省配置读自己工作区的 `notes/` 会全量
+`PTC_POLICY_FS`。三档显式覆盖（写进 mcp.json 的 `env`，或引擎进程环境；`${PLUGIN_DATA}`
+/`${PLUGIN_ROOT}` 由装载器展开）：
+
+| 变量 | 作用 |
+|---|---|
+| `PTC_FS_ROOTS` | pathsep 分隔的额外根，并入缺省根成为新上界 |
+| `PTC_FS_ROOTS_OPEN=1` | 允许请求级 `fs_roots` 点名任意**已存在目录**（每次 `ptc_run` 仍过 `McpToolGate`）；请求给了 `fs_roots` 没给 `cwd` 时 cwd 缺省取第一个根 |
+| `PTC_CWD` | 缺省 cwd 覆盖（须在最终 `fs_roots` 内） |
+
+插件 MCP server 是**多会话共享进程**（引用计数），env 是静态值——要 per-session 边界
+用 `PTC_FS_ROOTS_OPEN=1` + 每次请求自带 `fs_roots`。
+
+## 6. 两侧工具语义（缺陷⑤，2026-11-02 对齐）
+
+`ptc-python` 与 `ptc-javascript` 的 `ptc_tools_fs` **行为逐字一致**，由
+`scripts/ptc/fs-contract.mjs`（同一 fixture、同一用例、两侧输出逐字比对）把守：
+
+- `read`：`text` = 按行切片的**原始子串**，行终止符随行保留（读整文件与文件内容逐字
+  相等；旧实现 `splitlines()` 吃行尾 ⇒ 138 vs 141）。
+- `glob`：段式 shell glob，`**` 跨段（含零段）、`*` 段内、`?` 单字符、`[..]` 类；
+  返回相对 `base` 的 `/` 路径，排序后取前 200，`truncated` = 命中数>200。
+- `grep`：返回 `{path,line,text}`，path 相对 base、按 (path,line) 排序、text 去掉
+  行终止符（含尾随 `\r`）；命中超 `max_results` 时 `count` 为截断后条数 + `truncated`。
+- `bytes`：value 的**紧凑 JSON** 字节数（两侧同一算式）。

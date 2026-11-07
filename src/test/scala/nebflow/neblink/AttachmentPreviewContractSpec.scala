@@ -1,11 +1,14 @@
 package nebflow.neblink
 
+import nebflow.neblink.attachment.*
+import nebflow.neblink.core.*
+
 import io.circe.Json
 import io.circe.parser.parse
 import io.circe.syntax.*
 import munit.FunSuite
 
-import nebflow.neblink.FriendCodecs.given
+import nebflow.neblink.core.FriendCodecs.given
 
 /**
  * 附件预览字段 · **契约编解码单测** —— **字段方言双兼容批**（2026-09-22）。

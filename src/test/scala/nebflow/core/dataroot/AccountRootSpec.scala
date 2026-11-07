@@ -132,7 +132,7 @@ class AccountRootSpec extends munit.FunSuite:
       // §6.2 唯一守卫：未登录层不铸 deviceId —— 抛，不静默返回临时 id
       // （静默返回一次，服务端就留一条幽灵设备行：NeblinkModel.scala:178-212 的历史病根）
       val thrown = intercept[IllegalStateException] {
-        nebflow.neblink.DeviceIdentity.loadOrCreate.unsafeRunSync()
+        nebflow.neblink.core.DeviceIdentity.loadOrCreate.unsafeRunSync()
       }
       assert(
         Option(thrown.getMessage).exists(_.contains("UNAUTHENTICATED-LAYER")),
@@ -140,7 +140,7 @@ class AccountRootSpec extends munit.FunSuite:
       )
       // §6.2：只读面同样不得在未登录层给出 id
       assertEquals(
-        nebflow.neblink.DeviceIdentity.readDeviceIdOnly,
+        nebflow.neblink.core.DeviceIdentity.readDeviceIdOnly,
         None,
         "readDeviceIdOnly 在未登录层必须返回 None（不铸造、不读别的层的 id）"
       )
@@ -168,7 +168,7 @@ class AccountRootSpec extends munit.FunSuite:
       // 阶梯仍判未登录层：账号目录存在但没有指针 ≠ 已登录
       assertEquals(RootLadder.current.name, "unauthenticated", "有账号目录但无指针 ⇒ 仍是未登录层")
       assertEquals(
-        nebflow.neblink.DeviceIdentity.readDeviceIdOnly,
+        nebflow.neblink.core.DeviceIdentity.readDeviceIdOnly,
         None,
         "未登录层不得借用账号层/平铺面的 device.json（有效根 = machineRoot/unauthenticated，读不到就 None）"
       )

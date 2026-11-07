@@ -1,10 +1,12 @@
 package nebflow.neblink
 
+import nebflow.neblink.core.*
+
 import io.circe.Json
 import io.circe.parser.parse
 import io.circe.syntax.*
 import munit.FunSuite
-import nebflow.neblink.FriendCodecs.given
+import nebflow.neblink.core.FriendCodecs.given
 
 /**
  * 4b 腿 A-1 的**前红后绿探针**（信息包 C1/C2/C3 的现读病灶本体）。
@@ -25,7 +27,7 @@ class FriendAttachMirrorProbeSpec extends FunSuite:
       | "sha256":"ab12","state":"ready"}]}""".stripMargin
 
   private def roundTrip(json: String): Json =
-    val decoded = parse(json).flatMap(_.as[List[MessageSummary]]).fold(e => fail(s"decode failed: $e"), identity)
+    val decoded = parse(json).flatMap(_.as[List[MessageSummary]]).fold(e => fail(s"decode failed: $e"), x => x)
     decoded.asJson
 
   test("A-1 (red nail): attachments survive the gateway re-encode (decode -> asJson)") {

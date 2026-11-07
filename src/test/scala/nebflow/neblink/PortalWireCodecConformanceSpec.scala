@@ -1,5 +1,8 @@
 package nebflow.neblink
 
+import nebflow.neblink.portal.*
+import nebflow.neblink.relay.*
+
 import io.circe.{HCursor, Json, JsonObject}
 import io.circe.parser.parse
 import munit.FunSuite
@@ -74,17 +77,17 @@ class PortalWireCodecConformanceSpec extends FunSuite:
     )
     try
       parse(new String(in.readAllBytes(), UTF_8))
-        .fold(e => fail(s"$res is not valid JSON: ${e.getMessage}"), identity)
+        .fold(e => fail(s"$res is not valid JSON: ${e.getMessage}"), x => x)
     finally in.close()
 
   private def cursorString(c: HCursor, name: String): String =
-    c.get[String](name).fold(e => fail(s"vector field '$name' unreadable: ${e.getMessage}"), identity)
+    c.get[String](name).fold(e => fail(s"vector field '$name' unreadable: ${e.getMessage}"), x => x)
 
   private lazy val entries: List[VectorEntry] =
     vectorsDoc.hcursor
       .downField("vectors")
       .as[List[Json]]
-      .fold(e => fail(s"vector list unreadable: ${e.getMessage}"), identity)
+      .fold(e => fail(s"vector list unreadable: ${e.getMessage}"), x => x)
       .map { j =>
         VectorEntry(
           id = cursorString(j.hcursor, "id"),

@@ -1,5 +1,7 @@
 package nebflow.cli
 
+import nebflow.neblink.core.*
+
 import cats.effect.{ExitCode, IO}
 import cats.syntax.all.*
 
@@ -173,7 +175,7 @@ object DaemonSpawn:
       .flatMap {
         case Launched(childPid) =>
           nebflow.gateway.PortalUrl
-            .openUrl(nebflow.neblink.DeviceIdentity.readDeviceIdOnly)
+            .openUrl(nebflow.neblink.core.DeviceIdentity.readDeviceIdOnly)
             .map(_.getOrElse(s"http://localhost:$port"))
             .map(readyLine(childPid, _))
             .flatMap(IO.println)

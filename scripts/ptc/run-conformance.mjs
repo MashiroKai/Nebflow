@@ -25,7 +25,7 @@ const asJson = args.includes('--json');
 
 const PLUGINS = [
   { name: 'ptc-python', dir: path.join(ROOT, 'plugins/ptc-python'), dirName: 'skills/ptc-python', language: 'python', command: process.env.PTC_PYTHON || null },
-  { name: 'ptc-typescript', dir: path.join(ROOT, 'plugins/ptc-typescript'), dirName: 'skills/ptc-typescript', language: 'typescript', command: process.env.PTC_NODE || null },
+  { name: 'ptc-javascript', dir: path.join(ROOT, 'plugins/ptc-javascript'), dirName: 'skills/ptc-javascript', language: 'javascript', command: process.env.PTC_NODE || null },
 ];
 
 function get(obj, dotted) {

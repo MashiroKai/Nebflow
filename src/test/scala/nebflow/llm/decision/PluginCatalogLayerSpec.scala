@@ -35,63 +35,11 @@ class PluginCatalogLayerSpec extends FunSuite:
 
   // ── T4 validate_plugin.py 增量软检查（子进程真跑脚本）───────────────────────
 
-  private val tmp: os.Path = os.temp.dir(prefix = "nb-desc-layer-py")
-  private val script: os.Path =
-    os.pwd / "src" / "main" / "resources" / "seed" / "plugins" / "nebflow-plugin-creator" / "skills" / "plugin-packaging" / "scripts" / "validate_plugin.py"
-
-  override def afterAll(): Unit =
-    os.remove.all(tmp)
-
-  /** 最小合规包（M1-M9 骨架——本 spec 只读 C17/C18 行）。 */
-  private def mkPkg(name: String, description: String, pluginMd: Option[String]): os.Path =
-    val d = tmp / name
-    os.makeDir.all(d / "skills" / "s")
-    os.write.over(
-      d / "plugin.json",
-      s"""{"$$schema":"https://agent-plugins.org/schemas/1.0.0/plugin.schema.json","name":"$name",
-         |"version":"1.0.0","description":"$description","author":{"name":"N"}}""".stripMargin
-    )
-    os.write.over(d / "skills" / "s" / "SKILL.md", "---\nname: s\ndescription: fixture\n---\nbody")
-    pluginMd.foreach(md => os.write.over(d / "Plugin.md", md))
-    d
-
-  private def runValidator(pkg: os.Path): String =
-    os.proc("python3", script.toString, pkg.toString, "--profile", "creator")
-      .call(stdout = os.Pipe, stderr = os.Pipe, check = false)
-      .out
-      .text()
-
-  test("T4a C17: description>200 chars lands a WARN (never a FAIL); ≤200 stays PASS") {
-    val longDesc = "定位句——节点获得能力。" + "细节" * 98 + "。适用于测试。" // 200+ chars
-    val out = runValidator(mkPkg("c17-long", longDesc, None))
-    assert(out.contains("[WARN] C17"), s"the soft WARN must appear: ${out.linesIterator.filter(_.contains("C17")).mkString("\n")}")
-    val shortDesc = "短包——节点获得能力。适用于测试。不适用于生产。内含 skills：s。"
-    val out2 = runValidator(mkPkg("c17-short", shortDesc, None))
-    assert(
-      !out2.linesIterator.exists(l => l.startsWith("[WARN] C17") || l.startsWith("[FAIL] C17")),
-      "a short description must not trip C17"
-    )
-  }
-
-  test("T4b C18: a broken SKILL.md reference in Plugin.md lands a WARN; live refs and no-Plugin.md pass") {
-    val broken = mkPkg(
-      "c18-broken",
-      "引用断链包——节点获得能力。适用于测试。不适用于生产。内含 skills：s。",
-      Some("See [s](skills/s/SKILL.md) and also skills/ghost/SKILL.md for details.")
-    )
-    val out = runValidator(broken)
-    assert(out.contains("[WARN] C18") && out.contains("skills/ghost/SKILL.md"), out.linesIterator.filter(_.contains("C18")).mkString("\n"))
-
-    val live = mkPkg(
-      "c18-live",
-      "引用完好包——节点获得能力。适用于测试。不适用于生产。内含 skills：s。",
-      Some("See skills/s/SKILL.md for details.")
-    )
-    val out2 = runValidator(live)
-    assert(out2.contains("[PASS] C18"), out2.linesIterator.filter(_.contains("C18")).mkString("\n"))
-
-    val bare = mkPkg("c18-bare", "无 Plugin.md 包——节点获得能力。适用于测试。不适用于生产。内含 skills：s。", None)
-    val out3 = runValidator(bare)
-    assert(out3.contains("[PASS] C18"), out3.linesIterator.filter(_.contains("C18")).mkString("\n"))
-  }
+  // ── T4 validate_plugin.py C17/C18 —— 本线已退役（2026-11-07 合并对账）──────────
+  // USTC 线新带入的 T4a/T4b 钉的是 `nebflow-plugin-creator/.../validate_plugin.py` 的
+  // C17/C18 软检查，但该脚本随「开发插件统一批·六包合并为 stand-dev」（`c9dff9829`，
+  // 2026-10-31 作者令）在本线退役：现种子 `src/main/resources/seed/plugins/` 下已无任何
+  // .py 脚本，`nebflow-plugin-creator` 目录也并入 `stand-dev`（只剩 SKILL.md + references）。
+  // 全仓仅旧 delegate worktree 里还留有副本 ⇒ 本线属「钉已退役产物」，按仓内先例
+  // （MemoryNoteToolSpec 退役同批复删）删除这两条；T3a/T3b（catalogText 渲染）保留。
 end PluginCatalogLayerSpec

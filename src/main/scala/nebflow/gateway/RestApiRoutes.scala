@@ -1,10 +1,15 @@
 package nebflow.gateway
 
+import nebflow.neblink.core.*
+import nebflow.neblink.portal.*
+import nebflow.neblink.relay.*
+
 import cats.effect.IO
 import cats.syntax.all.*
 import nebflow.agent.SharedResources
 import nebflow.core.SessionStore
-import nebflow.neblink.{NeblinkService, PortalHostFaces}
+import nebflow.neblink.core.NeblinkService
+import nebflow.neblink.portal.PortalHostFaces
 import nebflow.shared.{NebflowServiceConfig, PeerInfo}
 import org.http4s.server.websocket.WebSocketBuilder2
 import org.http4s.{HttpRoutes, Request}
@@ -37,7 +42,7 @@ class RestApiRoutes(
   wsRoutes: WebSocketRoutes,
   neblinkService: Option[NeblinkService] = None,
   ttsService: Option[TtsService] = None,
-  neblinkDiscovery: Option[nebflow.neblink.NeblinkDiscovery] = None,
+  neblinkDiscovery: Option[nebflow.neblink.relay.NeblinkDiscovery] = None,
   gatewayPort: Int = nebflow.shared.Defaults.brandDefaultPort,
   wsHub: WsHub = new WsHub,
   /**

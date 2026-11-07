@@ -1,5 +1,8 @@
 package nebflow.neblink
 
+import nebflow.neblink.core.*
+import nebflow.neblink.social.*
+
 import cats.effect.IO
 import nebflow.agent.SendConfirm
 import nebflow.core.tools.ToolContext

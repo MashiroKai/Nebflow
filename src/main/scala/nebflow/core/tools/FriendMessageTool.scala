@@ -1,5 +1,8 @@
 package nebflow.core.tools
 
+import nebflow.neblink.core.*
+import nebflow.neblink.social.*
+
 import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*
@@ -48,7 +51,7 @@ import java.time.format.DateTimeFormatter
  * （大小写不敏感，服务端唯一性口径一致）→ L2 昵称精确 → L3 昵称唯一前缀 →
  * **L4 邮箱 α**（前四级全未命中时走一次上游搜索回落，按命中卡 `userId` 精确回映射
  * 好友表）。多命中/零命中一律返回候选列表让模型自行纠错。解析 L0–L3 与候选文案的
- * **唯一实现点** = `nebflow.neblink.FriendRoster`——本工具
+ * **唯一实现点** = `nebflow.neblink.social.FriendRoster`——本工具
  * 只委托；L4 是数据面回落（见 `lookupFriendBySearch`）。
  *
  * 设备解析（自已退役的**跨设备文件搬运工具**原样迁入，能力并入本工具设备腿）：deviceId 精确 →

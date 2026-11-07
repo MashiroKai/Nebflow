@@ -1,5 +1,7 @@
 package nebflow.neblink
 
+import nebflow.neblink.portal.*
+
 import cats.effect.IO
 import munit.CatsEffectSuite
 

@@ -1,11 +1,13 @@
 package nebflow.neblink
 
+import nebflow.neblink.core.*
+import nebflow.neblink.social.*
+
 import cats.effect.{IO, Ref}
 import io.circe.JsonObject
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.core.tools.*
-import nebflow.neblink.*
 import nebflow.shared.FriendSummary
 
 /**

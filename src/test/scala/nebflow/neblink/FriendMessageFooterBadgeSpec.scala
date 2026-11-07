@@ -1,9 +1,11 @@
 package nebflow.neblink
 
+import nebflow.neblink.core.*
+
 import io.circe.parser.parse
 import io.circe.syntax.*
 import munit.FunSuite
-import nebflow.neblink.FriendCodecs.given
+import nebflow.neblink.core.FriendCodecs.given
 
 import scala.io.Source
 
@@ -46,7 +48,7 @@ class FriendMessageFooterBadgeSpec extends FunSuite:
   private val Legacy5Key = """{"id":1,"senderId":"u1","kind":"text","body":"b","createdAt":1}"""
 
   private def decodeMessage(json: String): MessageSummary =
-    parse(json).flatMap(_.as[MessageSummary]).fold(e => fail(s"decode failed: $e"), identity)
+    parse(json).flatMap(_.as[MessageSummary]).fold(e => fail(s"decode failed: $e"), x => x)
 
   // ===== (A) 网关模型 / codec（REST 出参面）=====
 

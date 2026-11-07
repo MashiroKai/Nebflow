@@ -1,5 +1,7 @@
 package nebflow.dropbox
 
+import nebflow.neblink.core.*
+
 import cats.effect.std.Dispatcher
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
@@ -8,7 +10,7 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.gateway.WsHub
-import nebflow.neblink.NeblinkService
+import nebflow.neblink.core.NeblinkService
 import nebflow.shared.{AttachContract, PathUtil}
 
 import java.time.ZonedDateTime

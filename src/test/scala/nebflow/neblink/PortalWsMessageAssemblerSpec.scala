@@ -1,5 +1,7 @@
 package nebflow.neblink
 
+import nebflow.neblink.portal.*
+
 import munit.FunSuite
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets.UTF_8

@@ -80,6 +80,10 @@ object InteractionHub:
     Behaviors.setup { ctx =>
       val pending: Ref[IO, Map[String, PendingRequest]] = Ref.unsafe(Map.empty)
       val rootWsSend: Ref[IO, Map[String, Json => IO[Unit]]] = Ref.unsafe(Map.empty)
+      // db 接线第一阶（D-8 permission 重装腿）：hub 把自身注册进台账，boot 对账
+      // 时未闭 permission 单经此槽重装回 pending map（数据面恢复——卡可答、答则
+      // 闭单）。装配序保证：GatewayMain 上 hub spawn(:737) 先于 bootReconcile(:838)。
+      ledger.foreach(_.attachReinstallSink(ctx.self))
       // Hub behavior never changes state internally — the two Refs hold all
       // mutable state — so the same behavior object is returned for every msg.
       lazy val behavior: Behavior[InteractionHubCommand] =

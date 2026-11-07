@@ -1,5 +1,7 @@
 package nebflow.neblink
 
+import nebflow.neblink.relay.RelayTunnelDiagnostics
+
 import munit.FunSuite
 
 /**

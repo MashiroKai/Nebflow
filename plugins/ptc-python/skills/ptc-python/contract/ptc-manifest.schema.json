@@ -12,7 +12,7 @@
       "additionalProperties": false,
       "required": ["kind", "min_version", "entry", "self_exec"],
       "properties": {
-        "kind": { "enum": ["python", "typescript"] },
+        "kind": { "enum": ["python", "typescript", "javascript"] },
         "min_version": { "type": "string" },
         "entry": { "type": "string", "description": "Path (relative to the plugin root) of the executor script/entry." },
         "self_exec": { "type": "boolean", "description": "true = tool server command ${RUNTIME_SELF} resolves to the executor's own interpreter." }

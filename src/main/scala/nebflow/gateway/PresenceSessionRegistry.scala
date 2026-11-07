@@ -1,5 +1,7 @@
 package nebflow.gateway
 
+import nebflow.neblink.relay.*
+
 import cats.effect.{IO, Ref}
 
 import java.util.concurrent.atomic.AtomicLong

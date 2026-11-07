@@ -1,6 +1,8 @@
 /* 从 RestApiRoutes 迁出(行为保持重构,2026-09-24)。 */
 package nebflow.gateway
 
+import nebflow.neblink.core.*
+
 import cats.effect.IO
 import cats.syntax.all.*
 import fs2.Stream
@@ -128,7 +130,7 @@ private[gateway] object HealthRoutes:
       //     「环回腿 ∧ expect 全等」——猜不到 deviceId 的进程只能拿 404；
       //   · no-store：身份换了必须立刻看到新答案（尺寸哨兵见 [[LoopbackPixel]]）。
       case req @ GET -> Root / "health" / "loopback-pixel.png" =>
-        IO.blocking(nebflow.neblink.DeviceIdentity.readDeviceIdOnly)
+        IO.blocking(nebflow.neblink.core.DeviceIdentity.readDeviceIdOnly)
           .flatMap(own => LoopbackPixel.reply(req, own))
 
       // 像素臂的预检腿：若某浏览器版本对「公网 origin → 环回」的 image 请求发 PNA
@@ -260,7 +262,7 @@ private[gateway] object HealthRoutes:
   private def nearPathProbePayload(req: Request[IO], base: Json): IO[Json] =
     if !LoopbackLeg.isLoopback(req) then IO.pure(base)
     else
-      IO.blocking(nebflow.neblink.DeviceIdentity.readDeviceIdOnly).flatMap {
+      IO.blocking(nebflow.neblink.core.DeviceIdentity.readDeviceIdOnly).flatMap {
         case None => IO.pure(base)
         case Some(id) => IO.pure(base.deepMerge(Json.obj("deviceId" -> id.asJson)))
       }

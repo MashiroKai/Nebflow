@@ -83,7 +83,7 @@
 
 | 字段 | 含义 |
 |---|---|
-| `runtime.kind` | `python` \| `typescript`。**必须是插件自己实现的运行时**，rust 侧照此值选 runner。 |
+| `runtime.kind` | `python` \| `typescript` \| `javascript`。**必须是插件自己实现的运行时**，rust 侧照此值选 runner。 |
 | `runtime.self_exec` | `true` = 工具 server 的 `command` 用 `${RUNTIME_SELF}`（执行器用自己的解释器路径替换）。 |
 | `tools[]` | 本插件暴露给宿主的 MCP 工具名 ↔ 授权的档位（profile）。**一个档位 = 一份能力集**。 |
 | `profiles` | 档位 → 允许的工具名闭集。执行器**只认**这里列过的工具名。 |
@@ -135,7 +135,7 @@ hits = tools.grep({"pattern": "TODO", "path": "."})
 |---|---|---|---|
 | `code` | string | ✅ | 要执行的代码（≤ 256 KiB）。 |
 | `contract` | `"ptc/v1"` | | 缺省视为 `ptc/v1`；不匹配 → `INVALID_REQUEST`。 |
-| `language` | `python`\|`typescript` | | 可与插件运行时不同 → `INVALID_REQUEST`（防串用）。 |
+| `language` | `python`\|`typescript`\|`javascript` | | 可与插件运行时不同 → `INVALID_REQUEST`（防串用）。 |
 | `profile` | `readonly`\|`readwrite` | | 缺省 `readonly`。由工具名（`ptc_run` / `ptc_run_rw`）或请求给出，二者冲突以**更窄者**为准。 |
 | `allowed_tools` | string[] | | 缺省 = 档位全集；只能**取子集**。 |
 | `timeout_ms` | int | | 缺省 `limits.default_timeout_ms`；上限 `limits.max_timeout_ms`（超出即钳到上限并记 `clamped`）。 |

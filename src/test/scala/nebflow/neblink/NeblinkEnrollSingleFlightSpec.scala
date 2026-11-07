@@ -1,5 +1,10 @@
 package nebflow.neblink
 
+import nebflow.neblink.core.*
+import nebflow.neblink.identity.*
+import nebflow.neblink.logto.*
+import nebflow.neblink.relay.*
+
 import cats.effect.{Deferred, IO}
 import cats.effect.std.Dispatcher
 import cats.effect.unsafe.implicits.global
@@ -116,7 +121,7 @@ class NeblinkEnrollSingleFlightSpec extends CatsEffectSuite:
           )
           registers <- IO(fix.registerCount)
           _ <- IO {
-            assert(outs.forall(identity), s"两个自愈入口都必须报告成功：$outs")
+            assert(outs.forall(x => x), s"两个自愈入口都必须报告成功：$outs")
             assertEquals(
               registers,
               1,

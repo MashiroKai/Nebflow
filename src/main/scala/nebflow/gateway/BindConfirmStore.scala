@@ -1,5 +1,7 @@
 package nebflow.gateway
 
+import nebflow.neblink.portal.*
+
 import cats.effect.IO
 import cats.effect.Ref
 
@@ -20,7 +22,7 @@ import java.security.SecureRandom
  * working confirm-code path anyway (the plan routes that case to the 72h
  * grace branch, which the server-side guard owns).
  *
- * Shape discipline mirrors [[nebflow.neblink.ConsoleTicketStore]]: a `Ref`
+ * Shape discipline mirrors [[nebflow.neblink.portal.ConsoleTicketStore]]: a `Ref`
  * behind a private constructor, every transition inside a single `modify`,
  * an opportunistic expiry sweep on the read path, no background fiber. One
  * pending slot (not a map): a fresh arm REPLACES the previous code — the

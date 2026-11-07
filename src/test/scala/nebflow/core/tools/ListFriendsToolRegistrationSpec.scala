@@ -1,5 +1,8 @@
 package nebflow.core.tools
 
+import nebflow.neblink.core.*
+import nebflow.neblink.social.*
+
 import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
@@ -7,7 +10,6 @@ import munit.CatsEffectSuite
 import nebflow.actor.AgentDef
 import nebflow.agent.{AgentCore, SharedResources}
 import nebflow.core.FriendRosterPort
-import nebflow.neblink.*
 import nebflow.shared.{FriendListResponse, FriendSummary}
 
 /**

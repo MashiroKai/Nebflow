@@ -1,5 +1,7 @@
 package nebflow.gateway
 
+import nebflow.neblink.portal.*
+
 import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.Json

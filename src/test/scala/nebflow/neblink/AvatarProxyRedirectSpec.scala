@@ -1,5 +1,9 @@
 package nebflow.neblink
 
+import nebflow.neblink.misc.AvatarByteCache
+
+import nebflow.neblink.misc.AvatarProxy
+
 import cats.effect.IO
 import com.sun.net.httpserver.{HttpExchange, HttpServer}
 import munit.CatsEffectSuite

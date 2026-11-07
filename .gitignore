@@ -38,6 +38,34 @@ tmp/
 # `scripts/wiki-docs-migration/migrate_docs_to_ledger.py` 负责把存量搬去新家。
 /docs/
 test-envs.sh
+# --- 过程产物不入库（与协作方对齐批 2026-11-03）-------------------------------
+# docs/ 一条在上面（沿用原位置，语义与本批一致）。docs/ reports/ evidence/ 曾靠
+# `git add -f` 强塞成跟踪态（162 + 504 + 2140 文件），规则与事实自相矛盾，每次
+# 与协作方合并反复拉锯。本批只从索引移除（git rm -r --cached，磁盘零删除），
+# 历史对象保留 —— 止损非回滚，clone 体积不变。
+# 执法面：scripts/check-no-tracked-artifacts.sh（CI gate）。新增产物目录时两处
+# 同步：本文件 + 该脚本的 ARTIFACT_SPECS。
+# 刻意根锚定（前导 /）：仓库内另有 scripts/data-root-migration/evidence/ 等嵌套
+# 目录仍被跟踪，无锚定规则会把它们变成「已忽略但仍跟踪」的新矛盾态。
+/reports/
+/evidence/
+/reports-evidence/
+# --- 过程产物不入库 · 续（同一裁定批，第二批）--------------------------------
+# 上一批只清了 docs/ reports/ evidence/ reports-evidence/ 四大目录；本批补三组：
+#   design/                              —— 38 个设计草稿与对照截图（过程材料）
+#   scripts/data-root-migration/evidence/ —— 6 个迁移执行日志（一次操作的终端输出）
+#   根目录 5 个 2026102*__flow-*.md      —— workflow 运行器回传的批次报告
+# 同样只移索引（git rm -r --cached），磁盘文件零删除，历史对象保留。
+# 写法纪律（三条都是根锚定，避免误伤子目录里的同名路径）：
+#   - /design/ 只锚仓库根的 design/，不碰任何子目录下的 design/（docs/design 等）；
+#   - 嵌套路径写成完整根相对路径，不用「*/evidence/」这类会误伤
+#     reports/*/evidence/ 的宽泛规则；
+#   - 根目录报告用 /*__flow-*.md：精确到文件名形态且只匹配根层（规则里含 /
+#     即锚定到仓库根，* 不跨目录分隔符）；刻意不加 *.md 这类宽泛形式，否则会
+#     吞掉 README 等真实文档。
+/design/
+/scripts/data-root-migration/evidence/
+/*__flow-*.md
 # CHANGELOG.md / CODEBASE.md are kept OUT of git tracking by author ruling
 # 2026-09-17 (they were tracked between 2026-09-14 and that ruling): their
 # content is archived at ~/.nebflow/docs/Nebflow/20260917_changelog-codebase-removal/,

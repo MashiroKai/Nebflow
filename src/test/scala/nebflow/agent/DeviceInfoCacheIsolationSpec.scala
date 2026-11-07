@@ -1,5 +1,7 @@
 package nebflow.agent
 
+import nebflow.neblink.core.*
+
 import cats.effect.std.Dispatcher
 import cats.effect.unsafe.implicits.global
 import cats.effect.{IO, Ref}
@@ -12,7 +14,7 @@ import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, RemoteExecutor}
 import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
-import nebflow.neblink.NeblinkService
+import nebflow.neblink.core.NeblinkService
 import nebflow.shared.*
 
 import scala.concurrent.duration.*

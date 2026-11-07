@@ -1,5 +1,7 @@
 package nebflow.core.hotupdate
 
+import nebflow.neblink.core.*
+
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import munit.CatsEffectSuite
@@ -7,8 +9,8 @@ import munit.CatsEffectSuite
 import scala.concurrent.duration.*
 
 import io.circe.Json
-import nebflow.neblink.NeblinkUpdateTarget
-import nebflow.neblink.NeblinkUpdateConvergence
+import nebflow.neblink.core.NeblinkUpdateTarget
+import nebflow.neblink.core.NeblinkUpdateConvergence
 
 /**
  * 统一更新系统 M3 ③ 定向验收：**采纳闸（领账）** + **校验失败拒装**。

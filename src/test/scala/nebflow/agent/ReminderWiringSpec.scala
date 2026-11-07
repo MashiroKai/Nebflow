@@ -1,5 +1,7 @@
 package nebflow.agent
 
+import nebflow.neblink.core.*
+
 import cats.effect.{IO, Ref}
 import cats.effect.std.Dispatcher
 import cats.effect.unsafe.implicits.global

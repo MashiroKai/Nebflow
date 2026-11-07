@@ -1,7 +1,7 @@
 package nebflow.perception
 
 /**
- * 发送草稿编解码（r2 §7.2，落盘形态；UI 永不露出——画布面走结构化编辑器）。
+ * §7.2，落盘形态；UI 永不露出——画布面走结构化编辑器）。
  *
  * 文件 = front-matter + 正文。front-matter 字段：
  *   draft / to / cc / bcc / subject / attach（可多行）

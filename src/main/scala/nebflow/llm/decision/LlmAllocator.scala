@@ -146,6 +146,31 @@ end LlmAllocator
 object LlmAllocator:
 
   /**
+   * 超时/传输类异常判定（缺陷① 重试闸，2026-11-02）：只有「这次调用根本没拿到
+   * 回文，且原因在传输层」才值得原样重试一次；解析类/鉴权类失败重试无益。
+   * 沿 cause 链查（sttp 常把 `HttpTimeoutException` 包在 `IOException` 里）。
+   */
+  private[decision] def isTimeoutOrTransport(e: Throwable): Boolean =
+    def chain(t: Throwable, depth: Int): List[Throwable] =
+      if t == null || depth > 8 then Nil
+      else t :: Option(t.getCause).map(c => chain(c, depth + 1)).getOrElse(Nil)
+    chain(e, 0).exists { t =>
+      val cls = t.getClass.getName.toLowerCase
+      val msg = Option(t.getMessage).getOrElse("").toLowerCase
+      cls.contains("timeout") ||
+      msg.contains("timed out") || msg.contains("timeout") ||
+      t.isInstanceOf[java.io.IOException] ||
+      t.isInstanceOf[java.net.SocketException] ||
+      t.isInstanceOf[java.util.concurrent.TimeoutException]
+    }
+
+  /** 异常的一行可归因描述（类名 + 截断的 message）——WARN 行要能被 grep 到真因。 */
+  private[decision] def describe(e: Throwable): String =
+    val msg = Option(e.getMessage).getOrElse("")
+    val head = if msg.length > 180 then msg.take(180) + "…" else msg
+    if head.isEmpty then e.getClass.getSimpleName else s"${e.getClass.getSimpleName}: $head"
+
+  /**
    * 生产装配：模型候选解析（`judge.utilityModel` ref → 候选；缺省 = 全局候选链——
    * 判定机 utilityCandidates 同口径，fail-open 根因修复批 2026-10-29 起两腿同一
    * 整链遍历模板）＋ **整链遍历调用缝**（fail-open 根因修复批 2026-10-29）。
@@ -235,27 +260,48 @@ object LlmAllocator:
                   )
                 ).as(None)
               case Right(adapter) =>
-                adapter
-                  .sendMessage(params.copy(model = cand.model))
-                  .attempt
-                  .flatMap {
-                    // 空回文（HTTP 200 但 body 空）= provider 侧故障，与传输错同侧
-                    // 处理：试下一候选，不落 parse-fail（parse-fail 只收「有回文但
-                    // 不可用」的模型行为面）。
-                    case Right(resp) if resp.reply.trim.isEmpty =>
-                      IO(
-                        log.warnSync(
-                          s"llm allocator: candidate ${cand.providerId}/${cand.model} replied empty — trying next candidate"
-                        )
-                      ).as(None)
-                    case Right(resp) => IO.pure(Some(resp.reply))
-                    case Left(e) =>
-                      IO(
-                        log.warnSync(
-                          s"llm allocator: candidate ${cand.providerId}/${cand.model} errored (${e.getClass.getSimpleName}) — trying next candidate"
-                        )
-                      ).as(None)
-                  }
+                val oneShot: IO[Either[Throwable, String]] =
+                  adapter
+                    .sendMessage(params.copy(model = cand.model))
+                    .attempt
+                    .map {
+                      // 空回文（HTTP 200 但 body 空）= provider 侧故障，与传输错同侧
+                      // 处理：试下一候选，不落 parse-fail（parse-fail 只收「有回文但
+                      // 不可用」的模型行为面）。
+                      case Right(resp) if resp.reply.trim.isEmpty =>
+                        Left(new RuntimeException("empty reply (HTTP 200, empty body)"))
+                      case Right(resp) => Right(resp.reply)
+                      case Left(e) => Left(e)
+                    }
+                oneShot.flatMap {
+                  case Right(reply) => IO.pure(Some(reply))
+                  case Left(e) if LlmAllocator.isTimeoutOrTransport(e) =>
+                    // 🔴 缺陷① 第二半（2026-11-02）：超时/传输类失败**先重试一次同一
+                    // 候选**，不直接降到下一候选（候选链可能只有一个）；重试仍败才
+                    // 落 LlmError，由 PluginInjection 显式失败（不再静默成 plugins=[]）。
+                    IO(
+                      log.warnSync(
+                        s"llm allocator: candidate ${cand.providerId}/${cand.model} failed on a " +
+                          s"timeout/transport error (${LlmAllocator.describe(e)}) — retrying the same candidate once"
+                      )
+                    ) *> oneShot.flatMap {
+                      case Right(reply) => IO.pure(Some(reply))
+                      case Left(e2) =>
+                        IO(
+                          log.warnSync(
+                            s"llm allocator: candidate ${cand.providerId}/${cand.model} failed again after retry " +
+                              s"(${LlmAllocator.describe(e2)}) — trying next candidate"
+                          )
+                        ).as(None)
+                    }
+                  case Left(e) =>
+                    IO(
+                      log.warnSync(
+                        s"llm allocator: candidate ${cand.providerId}/${cand.model} errored " +
+                          s"(${LlmAllocator.describe(e)}) — trying next candidate"
+                      )
+                    ).as(None)
+                }
             }
         }
       }

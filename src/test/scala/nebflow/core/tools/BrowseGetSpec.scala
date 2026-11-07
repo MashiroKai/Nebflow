@@ -1,5 +1,7 @@
 package nebflow.core.tools
 
+import nebflow.neblink.misc.*
+
 import cats.effect.IO
 import cats.syntax.all.*
 import munit.CatsEffectSuite

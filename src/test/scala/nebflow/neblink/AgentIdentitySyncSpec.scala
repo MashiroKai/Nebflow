@@ -1,5 +1,7 @@
 package nebflow.neblink
 
+import nebflow.neblink.sync.*
+
 import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.Json

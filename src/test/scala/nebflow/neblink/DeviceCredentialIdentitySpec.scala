@@ -1,5 +1,8 @@
 package nebflow.neblink
 
+import nebflow.neblink.identity.*
+import nebflow.neblink.logto.*
+
 import cats.effect.unsafe.implicits.global
 import io.circe.Decoder
 import io.circe.parser.{decode, parse}

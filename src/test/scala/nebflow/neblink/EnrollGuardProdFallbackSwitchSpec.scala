@@ -1,5 +1,8 @@
 package nebflow.neblink
 
+import nebflow.neblink.core.*
+import nebflow.neblink.identity.*
+
 import munit.FunSuite
 import nebflow.shared.{Branding, PathUtil}
 

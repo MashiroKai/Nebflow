@@ -1,5 +1,7 @@
 package nebflow.agent
 
+import nebflow.neblink.core.*
+
 import cats.effect.IO
 import cats.effect.std.Dispatcher
 import cats.effect.unsafe.implicits.global
@@ -8,7 +10,7 @@ import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import munit.CatsEffectSuite
 import nebflow.core.tools.{RemoteExecutor, ToolContext}
-import nebflow.neblink.NeblinkService
+import nebflow.neblink.core.NeblinkService
 import nebflow.shared.*
 
 import java.net.InetSocketAddress

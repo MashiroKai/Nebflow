@@ -91,6 +91,7 @@ lazy val root = (project in file("."))
       fs2Core,
       // Effect
       catsEffect,
+      catsCore,
       // JSON
       circeCore,
       circeParser,
@@ -172,6 +173,20 @@ lazy val root = (project in file("."))
     // 分组无成员 ⇒ 整块移除。**其余 suite 的执行形态零变化**：原 `rest` 组本就是
     // 「除该 spec 外的全部 suite + InProcess」，使 in-process 组的成员集合与顺序
     // 在删除前后逐一相同。
+    // db 接线二阶 B4（OS 级 kill -9 chaos 批）恢复同一先例形态：DbKill9ChaosSpec
+    // 需要真实子 JVM（`java -cp <java.class.path>` 直启 DbChaosChild），而 in-process
+    // sbt 分层 classloader 的 java.class.path 不含测试依赖 jar——forked 测试 JVM 才
+    // 携带完整 classpath ⇒ 该 spec 独占 SubProcess 组；其余 suite 维持 InProcess 单
+    // 组，成员集合与顺序零变化（空组无成员时 sbt 自然跳过）。
+    Test / testGrouping := {
+      val tests = (Test / definedTests).value
+      val chaos = tests.filter(_.name == "nebflow.db.chaos.DbKill9ChaosSpec")
+      val rest = tests.filterNot(_.name == "nebflow.db.chaos.DbKill9ChaosSpec")
+      Seq(
+        Tests.Group("in-process-suites", rest, Tests.InProcess),
+        Tests.Group("db-kill9-chaos-isolated", chaos, Tests.SubProcess(ForkOptions()))
+      )
+    },
 
     // Java options —— 本工程 JVM 选项的唯一来源（🔴 禁在第二处散落同名选项）。
     // JVM 不会自建 -Xlog:gc:file / -XX:HeapDumpPath 的父目录，而 fork 的 JVM 是在

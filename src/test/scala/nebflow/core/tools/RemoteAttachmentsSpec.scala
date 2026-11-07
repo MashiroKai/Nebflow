@@ -6,7 +6,7 @@ import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.core.delegate.{DelegateAttachments, RemoteAttachments}
-import nebflow.neblink.FileTransferAction
+import nebflow.neblink.misc.FileTransferAction
 import nebflow.shared.{AttachContract, PeerInfo}
 
 import java.nio.file.{Files, Path}
@@ -19,7 +19,7 @@ import java.util.Base64
  * ## 桩/真跑边界（报告里逐条申报）
  *
  * - **假的**：网线。[[LoopbackPeer]] 只是把设备面入参原样交给仓库里**真实的接收端实现**
- *   （[[nebflow.neblink.FileTransferAction]]，线上 P2P/relay 两条腿都路由到它）。
+ *   （[[nebflow.neblink.misc.FileTransferAction]]，线上 P2P/relay 两条腿都路由到它）。
  * - **真的**：接收端的块摘要自算、整件摘要自算、offset 追加、归属判据、结构化错误体、
  *   探针回执——全部是被测代码对面那份真实现算出来的；发送侧也是真代码（真分块、真比对）。
  * - **没有跑的**：真设备（`KAI` / `DESKTOP-IJBBEOT`）。新代码要跑在设备腿上必须重启引擎，
