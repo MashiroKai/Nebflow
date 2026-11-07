@@ -218,6 +218,22 @@ function trackErrors(page) {
   return errors;
 }
 
+test('grouped node retains historical subagent under its real parent', async ({ page }) => {
+  await bootApp(page);
+  await seedTree(page);
+  await setFixture(page, { rows: [mirrorRow()], children: { [NODE_A]: [{
+    taskId: 'subagent-history123', parentSessionId: NODE_A, agentName: 'subagent',
+    source: 'subagent', status: 'completed', spawnedAt: 3000,
+  }] } });
+  await openPanel(page);
+  const rows = await dumpRows(page);
+  expect(rows.filter(r => r.sid === 'subagent-history123')).toHaveLength(1);
+  expect(rows.find(r => r.sid === 'subagent-history123').depthNum)
+    .toBe(rows.find(r => r.sid === NODE_A).depthNum + 1);
+  await page.locator(`[data-bg-caret="${NODE_A}"]`).click();
+  expect((await dumpRows(page)).some(r => r.sid === 'subagent-history123')).toBe(false);
+});
+
 // ── ① + ②：深度按真实父子链接算（三层）────────────────────────────────────
 
 test('① ② 三层深度：depth(A) = depth(整体行)+1，depth(A 的子) = depth(A)+1', async ({ page }) => {

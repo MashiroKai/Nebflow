@@ -53,6 +53,10 @@ const emptyKeys = new Set();
 /** 星型子代理镜像（G3；delegateId → children[]）。refresh 臂随行集刷新逐父拉取；
  *  fail-soft：单父失败保留旧值（与链镜像同纪律），首刷前 = 空集。 */
 const childrenMirror = new Map();
+/** 子镜像取回时刻（节点子智能体可见性批 2026-11-07：ensureChildren 的 60s TTL 判据）。 */
+const childrenFetchedAt = new Map();
+/** 在飞父（防同一父并发打点；同 refreshChildren 的单飞闸门）。 */
+const childrenInflight = new Set();
 
 async function fetchJson(url) {
   const r = await fetch(url, { headers: authHeaders() });
@@ -171,13 +175,49 @@ function projectChild(c) {
 
 /** 拉某父的星型子代理入镜像（fail-soft：任何失败保留旧值；404 = 父无记录 → 清空）。 */
 async function refreshChildren(delegateId) {
-  const body = await fetchJson(DELEGATE_API.children(delegateId));
+  const url = /^(node-|dispatcher-)/.test(delegateId)
+    ? `/api/session-children/${encodeURIComponent(delegateId)}`
+    : DELEGATE_API.children(delegateId);
+  const body = await fetchJson(url);
   if (!body) {
     if (!childrenMirror.has(delegateId)) childrenMirror.set(delegateId, []);
+    childrenFetchedAt.set(delegateId, Date.now());
     return;
   }
   const kids = Array.isArray(body.children) ? body.children.map(projectChild) : [];
   childrenMirror.set(delegateId, kids);
+  childrenFetchedAt.set(delegateId, Date.now());
+}
+
+/**
+ * 按需补拉某父的星型子代理（节点子智能体可见性批 2026-11-07 · 作者报障「node 的子
+ * 智能体没显示」）：refresh 臂只逐 **delegate 行** 拉子集，而子代理的父也可以是
+ * Project 的 node-/dispatcher- 会话（引擎侧 SubAgentTaskStore 按父会话 id 分区，见
+ * <dataRoot>/subagent-tasks/node-*.json）⇒ 这些父此前永远不进镜像，终态子智能体在
+ * 面板上零读数。本函数是**唯一补拉口**（渲染面仍只读 listDelegateChildren 那一个读口）：
+ *   · TTL 闸门：同一父 ttlMs 内不重复请求（默认 60s；空集也记时刻——「确实没有子」
+ *     不该每帧打点）；
+ *   · 在飞闸门：同父并发请求只发一次；
+ *   · 到达即广播 delegate-chain-mirror-updated（帧只当触发器，与 refresh 同园口径）。
+ * fail-soft：任何失败都不抛（渲染面下一帧再试，不影响行集）。
+ * @param {string} id 父会话 id（delegate / subtask / subagent / node / dispatcher 皆可）
+ * @param {number} [ttlMs] @returns {Promise<void>}
+ */
+export function ensureChildren(id, ttlMs = 60000) {
+  const key = String(id == null ? '' : id).replace(/^team-/, '');
+  if (!key) return Promise.resolve();
+  const at = childrenFetchedAt.get(key) || 0;
+  if (at && (Date.now() - at) < ttlMs) return Promise.resolve();
+  if (childrenInflight.has(key)) return Promise.resolve();
+  childrenInflight.add(key);
+  return refreshChildren(key)
+    .catch(() => { childrenFetchedAt.set(key, Date.now()); })
+    .then(() => {
+      childrenInflight.delete(key);
+      if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+        window.dispatchEvent(new CustomEvent('delegate-chain-mirror-updated'));
+      }
+    });
 }
 
 /** 全量刷新：行投影 + 各行键链视图（并发逐键、单键失败不连累）＋ G3 星型子代理
@@ -295,6 +335,11 @@ const DELEGATE_TRIGGER_RE = /^(delegate|external)-/;
 function onDelegateLifecycle(msg) {
   const nsid = String((msg && (msg.nodeSessionId || msg.agentId)) || '');
   if (DELEGATE_TRIGGER_RE.test(nsid)) scheduleRefresh();
+  const parent = String((msg && msg.parentSessionId) || '').replace(/^team-/, '');
+  if (/^(node-|dispatcher-)/.test(parent)) {
+    childrenFetchedAt.delete(parent);
+    ensureChildren(parent);
+  }
 }
 for (const evt of ['agentStart', 'agentDone', 'agentEnd']) {
   onMessage(evt, onDelegateLifecycle);
