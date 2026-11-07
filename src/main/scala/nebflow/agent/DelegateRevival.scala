@@ -9,6 +9,7 @@ import io.circe.JsonObject
 import io.circe.syntax.*
 import nebflow.actor.{ActorRef, ActorSystem, AgentCommand, AgentDef, AgentEvent, AgentKind}
 import nebflow.core.SessionStore
+import nebflow.core.ResumeHandoff
 import nebflow.core.delegate.{ChainStore, DelegateRegistry}
 import nebflow.core.executor.ExecutorRegistry
 import nebflow.core.node.NodeRunner
@@ -371,6 +372,37 @@ object DelegateRevival:
           //    ⇒ 复活后模型能机械区分「已完成/待做」，不重做已完成步骤的副作用。
           //    fail-soft：写失败只 WARN，复活照常（救命腿不被台账拖死）。
           checkpoint <- RevivalCheckpoint.write(task.taskId, transcript, nextCount, now)
+          // ②c 续跑交接单（无感恢复批 2026-11-07）：断点处若停在工具调用中途，模型
+          //    拿到的**是那次调用的结果**（tool_result），而不是一条系统提示——
+          //    单点 = [[ResumeHandoff]]，本腿不自行拼注入文案。
+          //    `legacyNudge` 逐字保留改前的提示文案：仅当没有工具边界（普通中断 /
+          //    旧格式会话）时才注入它，行为与改前一字不差。
+          handoff =
+            val ckLine = checkpoint
+              .map(f =>
+                s"\n\nCompleted-work checkpoint (machine-readable ledger `sessions/${task.taskId}/${RevivalCheckpoint.FileName}`): " +
+                  s"${f.describe} — those steps must NOT be redone; resume at the first unfinished step."
+              )
+              .getOrElse("")
+            val wakeInstr = if instruction.trim.isEmpty then "" else s"\n\n$instruction"
+            ResumeHandoff.plan(
+              transcript = transcript,
+              cause =
+                if frozen.isDefined then ResumeHandoff.Cause.Freeze else ResumeHandoff.Cause.EngineRestart,
+              instruction =
+                (if instruction.trim.isEmpty then "" else instruction) + ckLine,
+              legacyText =
+                if frozen.isDefined then
+                  val banner =
+                    nebflow.core.delegate.DelegateFreeze.wakeBanner(task.taskId, frozenReason, frozenDetail)
+                  if transcript.nonEmpty then
+                    s"$banner\n\nYour work so far (${transcript.size} transcript messages) is loaded above — continue from there.$ckLine$wakeInstr"
+                  else s"$banner\n\n${task.prompt}$wakeInstr"
+                else if transcript.nonEmpty then
+                  s"[system] The engine process restarted while your task was in flight. Your work so far (${transcript.size} transcript messages) is loaded below — continue the task from where you left off.$ckLine$wakeInstr"
+                else s"${task.prompt}$wakeInstr"
+            )
+          _ <- IO(ResumeHandoff.logPlan(task.taskId, handoff, if frozen.isDefined then ResumeHandoff.Cause.Freeze else ResumeHandoff.Cause.EngineRestart))
           // ③ 父会话活引用（Mail 续聊腿 resolveContinuationParentRef 同款判读）；
           //    不 live = None ⇒ 终态走监督者 F2 队列兜底（notifyParentAndStop 的
           //    parentRef=None 分支，本批加持久投递腿）。
@@ -404,7 +436,9 @@ object DelegateRevival:
             // actor 以空历史起跑（日志 msgs=0），首个回合收尾的
             // `saveMessagesForSession(sid, newMessages)` 会把盘上的历史**整段覆盖**
             // 成「唤醒横幅 + 残留 1 条」= 唤醒即焚毁现场。冻结唤醒与 boot 复活同源。
-            initialMessages = transcript
+            // 无感恢复批 2026-11-07：历史经 [[ResumeHandoff]] 交接（已配对消息零改；
+            // 中段悬挂就地修补），断点处的工具调用结果由注入块承担。
+            initialMessages = handoff.transcript
           )
           // ⑤ spawn 双件套（spawnWithPlugins 同点）+ 活体回写。
           subagentRef <- deps.resources.spawnAgentActor(deps.system, params)
@@ -484,26 +518,11 @@ object DelegateRevival:
           //    横幅（原因在场、明确「已完成的不重做、别从头重规划」），并在注入之后
           //    清冻结槽 + 合并队列重排（[[DelegateFreeze.onWoken]]）——唤醒 = 冻结
           //    生命周期的唯一出口。
-          nudge =
-            val wakeInstr = if instruction.trim.isEmpty then "" else s"\n\n$instruction"
-            // 断点句（机器可读台账的一句话版）：模型拿到的不是「请继续」的人话，
-            // 而是「已完成的 N 个回合 / M 个工具回合 / 转录游标 K，别重做」。
-            val ckLine = checkpoint
-              .map(f =>
-                s"\n\nCompleted-work checkpoint (machine-readable ledger `sessions/${task.taskId}/${RevivalCheckpoint.FileName}`): " +
-                  s"${f.describe} — those steps must NOT be redone; resume at the first unfinished step."
-              )
-              .getOrElse("")
-            if frozen.isDefined then
-              val banner =
-                nebflow.core.delegate.DelegateFreeze.wakeBanner(task.taskId, frozenReason, frozenDetail)
-              if transcript.nonEmpty then
-                s"$banner\n\nYour work so far (${transcript.size} transcript messages) is loaded above — continue from there.$ckLine$wakeInstr"
-              else s"$banner\n\n${task.prompt}$wakeInstr"
-            else if transcript.nonEmpty then
-              s"[system] The engine process restarted while your task was in flight. Your work so far (${transcript.size} transcript messages) is loaded below — continue the task from where you left off.$ckLine$wakeInstr"
-            else s"${task.prompt}$wakeInstr"
-          _ <- subagentRef ! AgentCommand.UserInput(nudge, Some(adapterRef))
+          // ⑨ 注入：**单点载荷**（[[ResumeHandoff.userInput]]）。断点停在工具调用中途时，
+          //    模型收到的是那次调用的 tool_result（无感续跑）；否则逐字回落改前的提示文案。
+          //    冻结腿（frozen 在场）注完之后清冻结槽 + 合并队列重排
+          //    （[[DelegateFreeze.onWoken]]）——唤醒 = 冻结生命周期的唯一出口。
+          _ <- subagentRef ! ResumeHandoff.userInput(handoff, replyTo = Some(adapterRef))
           _ <-
             if frozen.isDefined then
               nebflow.core.delegate.DelegateFreeze.onWoken(

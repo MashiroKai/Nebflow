@@ -5,8 +5,9 @@ import cats.syntax.all.*
 import io.circe.Json
 import io.circe.JsonObject
 import io.circe.syntax.*
-import nebflow.actor.{ActorRef, ActorSystem, AgentCommand, AgentEvent, AgentKind}
+import nebflow.actor.{ActorRef, ActorSystem, AgentEvent, AgentKind}
 import nebflow.core.executor.ExecutorRegistry
+import nebflow.core.ResumeHandoff
 import nebflow.core.node.NodeRunner
 import nebflow.core.project.DelegateFlowHosts
 import nebflow.shared.{NebflowLogger, SubAgentTask}
@@ -249,6 +250,19 @@ object SessionResumption:
                   .get
               )
               effectiveDef <- nebflow.agent.DelegateRevival.regrantPlugins(deps.resources, id, record, baseDef)
+              // ②' 续跑交接单（无感恢复批 2026-11-07）：断点停在工具调用中途 ⇒ 模型
+              //    收到那次调用的 tool_result（不是一条系统提示）；其余形态逐字回落
+              //    既有文案。单点 = [[nebflow.core.ResumeHandoff]]。
+              handoff = ResumeHandoff.plan(
+                transcript = transcript,
+                cause = ResumeHandoff.Cause.Continuation,
+                instruction = message,
+                legacyText =
+                  s"[system] A supplement arrived while no live actor was holding this session. " +
+                    s"Your full history (${transcript.size} transcript messages) is loaded above — this is the SAME session " +
+                    s"(id unchanged, the batch's chain nodes still belong to it). Treat the following as your next input; " +
+                    s"do not re-plan from scratch and do not redo finished work.\n\n$message"
+              )
               childWsSend = nebflow.core.tools.DelegateTool.routeWsSendFor(id, Some(parentSid), deps.wsSend)
               params = NodeRunner.SpawnParams(
                 agentDef = effectiveDef,
@@ -260,7 +274,7 @@ object SessionResumption:
                 wsSend = childWsSend,
                 projectRoot = Some(record.cwd),
                 rootSessionId = if parentSid.nonEmpty then parentSid else id,
-                initialMessages = transcript
+                initialMessages = handoff.transcript
               )
               subagentRef <- deps.resources.spawnAgentActor(deps.system, params)
               adapterRef <- deps.resources.spawnSupervisedAdapter(
@@ -355,12 +369,9 @@ object SessionResumption:
                   .void
               )
               // ⑦c 输入注入：**转录在下、补充在上**——同一会话的下一轮。
-              nudge =
-                s"[system] A supplement arrived while no live actor was holding this session. " +
-                  s"Your full history (${transcript.size} transcript messages) is loaded above — this is the SAME session " +
-                  s"(id unchanged, the batch's chain nodes still belong to it). Treat the following as your next input; " +
-                  s"do not re-plan from scratch and do not redo finished work.\n\n$message"
-              _ <- subagentRef ! AgentCommand.UserInput(nudge, Some(adapterRef))
+              // 无感恢复批 2026-11-07：载荷由 [[ResumeHandoff]] 出（上方 ②'），本处只投递。
+              _ <- IO(ResumeHandoff.logPlan(id, handoff, ResumeHandoff.Cause.Continuation))
+              _ <- subagentRef ! ResumeHandoff.userInput(handoff, replyTo = Some(adapterRef))
               _ <- logger.info(
                 s"[session-resume] resumed IN PLACE $id (transcript=${transcript.size} msgs, parentLive=${parentRef.isDefined}, " +
                   s"scopeMounted=${mounted.isDefined}, title='$title') — same session id, chain ownership untouched"
