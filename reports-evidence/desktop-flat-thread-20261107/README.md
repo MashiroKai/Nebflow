@@ -33,6 +33,8 @@ SHOTS_STATE=after  node tests/thread-ui-unify-shots.mjs            # → reports
 |---|---|
 | `capsule-hover__before-desktop-dark.png` | 改前（转盘批 afcd09575）：邻签**左右**排开（横排转盘） |
 | `capsule-hover__after-desktop-dark.png` | 改后：邻签**上下**排开（竖弧 + rotateX 反号等幅）＝ 2026-11-07 12:15 之前的原形态 |
+| `capsule-hover__after-desktop-vertical-light.png` | 改后桌面 hover 环（亮色腿，1440×900）—— 上下两枚邻签与中心签同列 |
+| `capsule-touch__after-phone-landscape-horizontal.png` | 改后**触屏腿**（844×390 横屏，`pointer: coarse`）：仍是常驻横排 + 图标档邻签 ⇒ 手机/平板腿未受本批影响 |
 
 机械读数（`canvas-capsule-touch-row.spec.mjs` G2 项，改后）：邻签位姿 `y=±38.0px`、
 `x=0px`、`rx=∓34deg` —— 纵向分离、横轴恒 0。手机/触屏腿（`@media (pointer: coarse)
