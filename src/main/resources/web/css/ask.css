@@ -256,9 +256,14 @@ nf-ask-dock { display: contents; }
 .ask-dock.closed .ask-input > * { visibility: hidden; }
 .ask-dock.closed .ds-resize-handle,
 .note-dock.closed .ds-resize-handle { visibility: hidden; }
-/* 玻璃面本体的形变过渡（属性集与 --lm-* 令牌见上注；容器不参与）。 */
+/* 玻璃面本体的形变过渡（属性集与 --lm-* 令牌见上注；容器不参与）。
+   `transform-origin: 100% 100%` = 旧开合曲线的锚点（fab 侧、面板右下角）跟着
+   **形变载体**搬到玻璃面上：容器已零 transform，锚点留在容器上就是死属性；种子
+   位移是纯 translateY（origin 不改变结果），这条只是把「锚在钮那一角」的语义
+   钉在新的载体上（T2b 判据由 dock 改读本体）。 */
 .ask-dock .ask-input,
 .note-dock .note-body {
+  transform-origin: 100% 100%;
   transition-property: width, height, border-radius, transform, padding;
   transition-duration: var(--lm-dur);
   transition-timing-function: var(--lm-ease);
