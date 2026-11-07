@@ -856,7 +856,12 @@ export function renderSettings() {
   // 读数/控件行一律 setRow（同一高度网格）；动作按钮一律 .set-btn（同尺寸令牌）。
   content.innerHTML = `
     ${setCard({ title: t('settings.account'), body: `
-      ${settingsIdentityCardHTML()}
+      ${/* account-hero-dedupe 批（2026-11-07 作者令逐字「手机端工作台上面的账户 做出
+           hero 那种感觉 并且去重 把设置的统一到这里」）：设置页**不再重复身份信息**
+           —— 头像 / 用户名 / 邮箱 / 退出登录的权威展示只有一处 = 工作台顶部 hero
+           （.mf-me-entry）。这里保留账号段的**功能分项**（连接/服务/退出等），
+           只留一行指路，不复述身份读数。 */ ''}
+      <div class="set-row-hint" data-acct-dedup-hint>身份与头像在工作台顶部</div>
       ${neblinkSettingsHTML()}
       ${mobileLayer ? '' : '<div id="settings-devices-slot"></div>'}` })}
     ${setCard({ title: t('settings.runtime'), body: `

@@ -28,6 +28,10 @@
   display: flex;
   flex-direction: column;
   gap: var(--set-group-gap);
+  /* settings-whitespace 批（作者令 2026-11-07「设置面板的边距也没有考虑留白」）：
+     内容面统一安全区 —— 卡不再整宽贴屏幕边，四周留白由 --set-panel-pad-* 单源给出。 */
+  padding: var(--set-panel-pad-y) var(--set-panel-pad-x) var(--set-panel-pad-b);
+  box-sizing: border-box;
 }
 
 /* ── 分组卡 ────────────────────────────────────────────────────────────── */
@@ -274,10 +278,25 @@
 #settings-content .about-info { padding: 0 var(--set-row-pad-x) var(--ds-space-2); }
 #settings-content .about-conn { margin-top: var(--ds-space-1); }
 
+/* 账号段的退出登录钮：随面板安全区一起内缩并圆角化 —— 之前它是一条贴满卡宽的
+   方角白条，压在卡底圆角上（settings-whitespace 批实拍发现，2026-11-07）。 */
+#settings-content .neblink-account-actions {
+  padding: 0 var(--set-row-pad-x) var(--ds-space-2);
+}
+#settings-content .neblink-logout-btn {
+  width: 100%;
+  border-radius: var(--ds-radius-input);
+}
+
 /* ── 移动端尺寸档（同一形态、换档；桌面零命中）─────────────────────────────
    手机层：正文 17 / 图标 22 / 行高 max(50, 44) —— 数值来自 mobileLayer.css 既有
    移动令牌（--mfs-body / --micon / --mrow），本批只把行族接上，不新立第二套。 */
 @media (max-width: 768px) {
+  /* 手机设置页：面板底部安全区再叠一层 dock 净空 —— 滚到底时末行不被悬浮
+     导航压住（作者令 2026-11-07「滚动到底部时最后一行不被悬浮导航压住」）。 */
+  body.mobile-layer #settings-content {
+    padding-bottom: calc(var(--set-panel-pad-b) + var(--dock-h) + var(--dock-gap) + var(--dock-inset-b));
+  }
   body.mobile-layer .set-nav,
   body.mobile-layer .set-row {
     /* 与 mf-hub-row 同一条热区表达式（44 触控下限，工作台行族实测 50 档）。 */

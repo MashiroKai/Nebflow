@@ -1,0 +1,612 @@
+{
+ "label": "before",
+ "route": false,
+ "runs": {
+  "light-mobile": {
+   "bubble": {
+    "ours": {
+     "sel": ".bubble.user",
+     "bg": "color(srgb 0.584314 0.92549 0.411765 / 0.97)",
+     "color": "rgb(27, 30, 38)",
+     "border": "rgb(27, 30, 38)",
+     "bw": "0px"
+    },
+    "theirs": {
+     "sel": ".bubble.ai, .bubble.peer",
+     "bg": "rgba(0, 0, 0, 0)",
+     "color": "rgb(27, 30, 38)",
+     "border": "rgba(0, 0, 0, 0.04)",
+     "bw": "1px"
+    },
+    "sameNode": false,
+    "token": "rgba(0, 0, 0, 0)"
+   },
+   "pill": {
+    "0-已在底部": {
+     "before": []
+    },
+    "1-无新消息但滚离底部": {
+     "visible": [
+      {
+       "txt": "回到底部",
+       "box": [
+        151,
+        644,
+        74,
+        28
+       ]
+      }
+     ],
+     "expect": "只 1 枚 回到底部"
+    },
+    "2-新消息到达且不在底部": {
+     "visible": [
+      {
+       "txt": "↓ 1 条新消息",
+       "box": [
+        140,
+        644,
+        96,
+        28
+       ]
+      }
+     ],
+     "expect": "只 1 枚 ↓1 条新消息"
+    },
+    "3-连续第2条新消息": {
+     "visible": [
+      {
+       "txt": "↓ 2 条新消息",
+       "box": [
+        139,
+        644,
+        97,
+        28
+       ]
+      }
+     ],
+     "expect": "只 1 枚 ↓2 条新消息（计数更新）"
+    },
+    "4-点击后归位": {
+     "visible": [],
+     "scrollTop": 15702,
+     "expect": "0 枚（已回底）"
+    },
+    "5-回到已底部": {
+     "visible": [],
+     "expect": "0 枚"
+    }
+   },
+   "hero": {
+    "hero": null
+   },
+   "settingsTop": {
+    "content": {
+     "sel": "#settings-content",
+     "box": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "paddingTop": "16px",
+     "paddingLeft": "16px",
+     "paddingRight": "16px",
+     "paddingBottom": "16px",
+     "gap": "24px"
+    },
+    "card": null,
+    "row": null,
+    "cardRects": [],
+    "cardCount": 0,
+    "rowHeights": [],
+    "identityCardPresent": false,
+    "dedupHintPresent": false,
+    "dockOverlapLastCard": null
+   },
+   "settingsBottom": {
+    "content": {
+     "sel": "#settings-content",
+     "box": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "paddingTop": "16px",
+     "paddingLeft": "16px",
+     "paddingRight": "16px",
+     "paddingBottom": "16px",
+     "gap": "24px"
+    },
+    "card": null,
+    "row": null,
+    "cardRects": [],
+    "cardCount": 0,
+    "rowHeights": [],
+    "identityCardPresent": false,
+    "dedupHintPresent": false,
+    "dockOverlapLastCard": null
+   }
+  },
+  "light-desktop": {
+   "bubble": {
+    "ours": {
+     "sel": ".bubble.user",
+     "bg": "color(srgb 0.584314 0.92549 0.411765 / 0.97)",
+     "color": "rgb(27, 30, 38)",
+     "border": "rgb(27, 30, 38)",
+     "bw": "0px"
+    },
+    "theirs": {
+     "sel": ".bubble.ai, .bubble.peer",
+     "bg": "rgba(0, 0, 0, 0)",
+     "color": "rgb(27, 30, 38)",
+     "border": "rgba(0, 0, 0, 0.04)",
+     "bw": "1px"
+    },
+    "sameNode": false,
+    "token": "rgba(0, 0, 0, 0)"
+   },
+   "settingsTop": {
+    "content": {
+     "sel": "#settings-content",
+     "box": [
+      441,
+      118,
+      558,
+      714
+     ],
+     "paddingTop": "16px",
+     "paddingLeft": "16px",
+     "paddingRight": "16px",
+     "paddingBottom": "16px",
+     "gap": "24px"
+    },
+    "card": {
+     "sel": ".set-card",
+     "box": [
+      457,
+      134,
+      526,
+      387
+     ],
+     "paddingTop": "6px",
+     "paddingBottom": "6px",
+     "paddingLeft": "0px",
+     "marginLeft": "0px",
+     "borderRadius": "16px"
+    },
+    "row": {
+     "sel": ".set-row, .set-nav",
+     "box": [
+      457,
+      555,
+      526,
+      44
+     ],
+     "paddingTop": "6px",
+     "paddingBottom": "6px",
+     "paddingLeft": "16px",
+     "minHeight": "44px"
+    },
+    "cardRects": [
+     [
+      457,
+      134,
+      526
+     ],
+     [
+      457,
+      545,
+      526
+     ],
+     [
+      457,
+      923,
+      526
+     ]
+    ],
+    "cardCount": 8,
+    "rowHeights": [
+     [
+      44
+     ],
+     [
+      44
+     ],
+     [
+      44
+     ],
+     [
+      44
+     ]
+    ],
+    "identityCardPresent": true,
+    "dedupHintPresent": false,
+    "dockOverlapLastCard": null
+   },
+   "settingsBottom": {
+    "content": {
+     "sel": "#settings-content",
+     "box": [
+      441,
+      90,
+      558,
+      714
+     ],
+     "paddingTop": "16px",
+     "paddingLeft": "16px",
+     "paddingRight": "16px",
+     "paddingBottom": "16px",
+     "gap": "24px"
+    },
+    "card": {
+     "sel": ".set-card",
+     "box": [
+      457,
+      -1399,
+      526,
+      387
+     ],
+     "paddingTop": "6px",
+     "paddingBottom": "6px",
+     "paddingLeft": "0px",
+     "marginLeft": "0px",
+     "borderRadius": "16px"
+    },
+    "row": {
+     "sel": ".set-row, .set-nav",
+     "box": [
+      457,
+      -978,
+      526,
+      44
+     ],
+     "paddingTop": "6px",
+     "paddingBottom": "6px",
+     "paddingLeft": "16px",
+     "minHeight": "44px"
+    },
+    "cardRects": [
+     [
+      457,
+      -1399,
+      526
+     ],
+     [
+      457,
+      -988,
+      526
+     ],
+     [
+      457,
+      -610,
+      526
+     ]
+    ],
+    "cardCount": 8,
+    "rowHeights": [
+     [
+      44
+     ],
+     [
+      44
+     ],
+     [
+      44
+     ],
+     [
+      44
+     ]
+    ],
+    "identityCardPresent": true,
+    "dedupHintPresent": false,
+    "dockOverlapLastCard": null
+   }
+  },
+  "dark-mobile": {
+   "bubble": {
+    "ours": {
+     "sel": ".bubble.user",
+     "bg": "color(srgb 0.584314 0.92549 0.411765 / 0.97)",
+     "color": "rgb(17, 17, 17)",
+     "border": "rgb(17, 17, 17)",
+     "bw": "0px"
+    },
+    "theirs": {
+     "sel": ".bubble.ai, .bubble.peer",
+     "bg": "rgba(0, 0, 0, 0)",
+     "color": "rgb(17, 17, 17)",
+     "border": "rgba(255, 255, 255, 0.04)",
+     "bw": "1px"
+    },
+    "sameNode": false,
+    "token": "rgba(0, 0, 0, 0)"
+   },
+   "pill": {
+    "0-已在底部": {
+     "before": []
+    },
+    "1-无新消息但滚离底部": {
+     "visible": [
+      {
+       "txt": "回到底部",
+       "box": [
+        151,
+        644,
+        74,
+        28
+       ]
+      }
+     ],
+     "expect": "只 1 枚 回到底部"
+    },
+    "2-新消息到达且不在底部": {
+     "visible": [
+      {
+       "txt": "↓ 1 条新消息",
+       "box": [
+        140,
+        644,
+        96,
+        28
+       ]
+      }
+     ],
+     "expect": "只 1 枚 ↓1 条新消息"
+    },
+    "3-连续第2条新消息": {
+     "visible": [
+      {
+       "txt": "↓ 2 条新消息",
+       "box": [
+        139,
+        644,
+        97,
+        28
+       ]
+      }
+     ],
+     "expect": "只 1 枚 ↓2 条新消息（计数更新）"
+    },
+    "4-点击后归位": {
+     "visible": [],
+     "scrollTop": 15702,
+     "expect": "0 枚（已回底）"
+    },
+    "5-回到已底部": {
+     "visible": [],
+     "expect": "0 枚"
+    }
+   },
+   "hero": {
+    "hero": null
+   },
+   "settingsTop": {
+    "content": {
+     "sel": "#settings-content",
+     "box": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "paddingTop": "16px",
+     "paddingLeft": "16px",
+     "paddingRight": "16px",
+     "paddingBottom": "16px",
+     "gap": "24px"
+    },
+    "card": null,
+    "row": null,
+    "cardRects": [],
+    "cardCount": 0,
+    "rowHeights": [],
+    "identityCardPresent": false,
+    "dedupHintPresent": false,
+    "dockOverlapLastCard": null
+   },
+   "settingsBottom": {
+    "content": {
+     "sel": "#settings-content",
+     "box": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "paddingTop": "16px",
+     "paddingLeft": "16px",
+     "paddingRight": "16px",
+     "paddingBottom": "16px",
+     "gap": "24px"
+    },
+    "card": null,
+    "row": null,
+    "cardRects": [],
+    "cardCount": 0,
+    "rowHeights": [],
+    "identityCardPresent": false,
+    "dedupHintPresent": false,
+    "dockOverlapLastCard": null
+   }
+  },
+  "dark-desktop": {
+   "bubble": {
+    "ours": {
+     "sel": ".bubble.user",
+     "bg": "color(srgb 0.584314 0.92549 0.411765 / 0.97)",
+     "color": "rgb(17, 17, 17)",
+     "border": "rgb(17, 17, 17)",
+     "bw": "0px"
+    },
+    "theirs": {
+     "sel": ".bubble.ai, .bubble.peer",
+     "bg": "rgba(0, 0, 0, 0)",
+     "color": "rgb(17, 17, 17)",
+     "border": "rgba(255, 255, 255, 0.04)",
+     "bw": "1px"
+    },
+    "sameNode": false,
+    "token": "rgba(0, 0, 0, 0)"
+   },
+   "settingsTop": {
+    "content": {
+     "sel": "#settings-content",
+     "box": [
+      441,
+      118,
+      558,
+      714
+     ],
+     "paddingTop": "16px",
+     "paddingLeft": "16px",
+     "paddingRight": "16px",
+     "paddingBottom": "16px",
+     "gap": "24px"
+    },
+    "card": {
+     "sel": ".set-card",
+     "box": [
+      457,
+      134,
+      526,
+      387
+     ],
+     "paddingTop": "6px",
+     "paddingBottom": "6px",
+     "paddingLeft": "0px",
+     "marginLeft": "0px",
+     "borderRadius": "16px"
+    },
+    "row": {
+     "sel": ".set-row, .set-nav",
+     "box": [
+      457,
+      555,
+      526,
+      44
+     ],
+     "paddingTop": "6px",
+     "paddingBottom": "6px",
+     "paddingLeft": "16px",
+     "minHeight": "44px"
+    },
+    "cardRects": [
+     [
+      457,
+      134,
+      526
+     ],
+     [
+      457,
+      545,
+      526
+     ],
+     [
+      457,
+      923,
+      526
+     ]
+    ],
+    "cardCount": 8,
+    "rowHeights": [
+     [
+      44
+     ],
+     [
+      44
+     ],
+     [
+      44
+     ],
+     [
+      44
+     ]
+    ],
+    "identityCardPresent": true,
+    "dedupHintPresent": false,
+    "dockOverlapLastCard": null
+   },
+   "settingsBottom": {
+    "content": {
+     "sel": "#settings-content",
+     "box": [
+      441,
+      90,
+      558,
+      714
+     ],
+     "paddingTop": "16px",
+     "paddingLeft": "16px",
+     "paddingRight": "16px",
+     "paddingBottom": "16px",
+     "gap": "24px"
+    },
+    "card": {
+     "sel": ".set-card",
+     "box": [
+      457,
+      -1399,
+      526,
+      387
+     ],
+     "paddingTop": "6px",
+     "paddingBottom": "6px",
+     "paddingLeft": "0px",
+     "marginLeft": "0px",
+     "borderRadius": "16px"
+    },
+    "row": {
+     "sel": ".set-row, .set-nav",
+     "box": [
+      457,
+      -978,
+      526,
+      44
+     ],
+     "paddingTop": "6px",
+     "paddingBottom": "6px",
+     "paddingLeft": "16px",
+     "minHeight": "44px"
+    },
+    "cardRects": [
+     [
+      457,
+      -1399,
+      526
+     ],
+     [
+      457,
+      -988,
+      526
+     ],
+     [
+      457,
+      -610,
+      526
+     ]
+    ],
+    "cardCount": 8,
+    "rowHeights": [
+     [
+      44
+     ],
+     [
+      44
+     ],
+     [
+      44
+     ],
+     [
+      44
+     ]
+    ],
+    "identityCardPresent": true,
+    "dedupHintPresent": false,
+    "dockOverlapLastCard": null
+   }
+  }
+ }
+}

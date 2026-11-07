@@ -568,12 +568,19 @@ html[data-theme="light"] {
  *   行左缘 + 48（分隔线的左缩进也取这一条）。
  * ══════════════════════════════════════════════════════════════════════════ */
 :root {
-  --set-group-gap: var(--ds-space-6);          /* 24px 组与组之间留白（iOS 分组卡节奏） */
-  --set-card-pad-y: var(--ds-space-1h);        /* 卡纵向内距 6（行自带 11/12 内距） */
+  /* settings-whitespace 批（2026-11-07 作者令逐字「设置面板的边距也没有考虑
+     留白」）：留白三档独立成令牌 —— ① 面板安全区（内容面离开屏幕边缘，不再
+     让每行撑满整宽）② 组间层次（明显分组呼吸）③ 卡内/行内距（行不再挤）。
+     改留白只改这四行，别在各面写零散 padding。 */
+  --set-panel-pad-x: var(--ds-space-4);        /* 16 面板左右安全区（行/卡全体缩进） */
+  --set-panel-pad-y: var(--ds-space-4);        /* 16 面板顶部安全区（离屏幕/顶栏呼吸） */
+  --set-panel-pad-b: var(--ds-space-6);        /* 24 面板底部安全区（末行不贴底） */
+  --set-group-gap: calc(var(--ds-space-6) + var(--ds-space-3)); /* 36 组与组之间留白（分组层次） */
+  --set-card-pad-y: calc(var(--ds-space-1h) + var(--ds-space-1)); /* 10 卡纵向内距（卡内留白） */
   --set-card-pad-x: var(--ds-space-4);         /* 16 卡横向内距（组标题用） */
   --set-row-h: var(--ds-hit-row);              /* 44 行高下限（触控档） */
   --set-row-pad-x: var(--ds-space-4);          /* 16 行左右内距（Apple 版式边距） */
-  --set-row-pad-y: var(--ds-space-1h);         /* 6 行纵向内距（行高由 min-height 兜） */
+  --set-row-pad-y: calc(var(--ds-space-1h) + var(--ds-space-1)); /* 10 行纵向内距（行间呼吸） */
   --set-row-gap: var(--ds-space-3);            /* 12 图标位与文案之间的间隙 */
   --set-icon-box: 20px;                        /* 20 图标位固定盒（图标本体 16 居中） */
   --set-icon-size: 16px;                       /* 16 图标本体 */
