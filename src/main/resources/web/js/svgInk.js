@@ -54,7 +54,10 @@ export function contrastRatio(a, b) {
   return (hi + 0.05) / (lo + 0.05);
 }
 
-export const MIN_CONTRAST = 3;
+/** 可读性门槛：WCAG AA 正文文本 4.5:1（原为 3，实测太宽 —— 暗档 mermaid 的
+ *  `#ccc` 落在节点填充 `rgb(88,88,88)` 上只有 4.43:1，3 的闸放它过去，而有验收
+ *  （rich-render ④）正是按 4.5 断言的：闸比验收松，等于没有闸）。 */
+export const MIN_CONTRAST = 4.5;
 
 /** 读主题 token 的计算色值（不写死颜色）。 @param {string} token @returns {string} */
 export function tokenColor(token) {

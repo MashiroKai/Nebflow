@@ -31,7 +31,7 @@
 //
 // 依赖：零（浏览器原生 DOMParser）——本围栏不新增任何第三方依赖。
 
-import { armFenceAutoHydrate, fenceDone, fenceError, fenceNotice, fenceSource, hydrateFencesIn, registerFence } from './fenceKit.js';
+import { armFenceAutoHydrate, armThemeRequeue, fenceDone, fenceError, fenceNotice, fenceSource, figureSize, hydrateFencesIn, registerFence } from './fenceKit.js';
 import { t } from './i18n.js';
 import { normalizeAttrInk } from './svgInk.js';
 
@@ -197,7 +197,11 @@ async function renderBlock(el) {
     if (!hasDrawable(root)) throw new Error(t('fence.svgNothingLeft'));
     normalizeAttrInk(root);
     if (anyEl._svgGen !== gen) return;
-    fenceDone(el, SVG_KIND, /** @type {Node} */ (document.importNode(root, true)));
+    // 图槽稳定性（mermaid-viewer-stability 批）：内禀纵横比一并交给 fenceDone，
+    // 槽高一次落定并被重渲染复用（同 mermaid 族；理由见 fenceKit.figureSize 头注）。
+    const size = figureSize(/** @type {Node} */ (root));
+    const aspect = size ? `${Math.round(size.w)} / ${Math.round(size.h)}` : null;
+    fenceDone(el, SVG_KIND, /** @type {Node} */ (document.importNode(root, true)), { aspect });
     if (strikes > 0) fenceNotice(el, SVG_KIND.bodyClass, t('fence.sanitized', { n: String(strikes) }));
   } catch (e) {
     if (anyEl._svgGen !== gen) return;
@@ -214,6 +218,8 @@ export function hydrateSvgIn(root) {
 export function armSvgFenceHydrate() {
   registerFence(SVG_KIND);
   armFenceAutoHydrate();
+  // 主题换图：外来 SVG 的墨色归一是按主题算的，翻主题必须重算。
+  armThemeRequeue(bumpSvgGeneration);
 }
 
 /** 主题翻转：丢弃在飞渲染。 */

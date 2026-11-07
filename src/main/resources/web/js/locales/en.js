@@ -1885,6 +1885,7 @@ export default {
   'fence.svgRootRequired': 'Root element is not svg',
   'fence.svgNothingLeft': 'Nothing drawable left',
   'fence.mathFailed': 'Formula failed to render',
+  'fence.openViewer': 'Open full size',
   'mermaid.showSource': 'Show source',
   'mermaid.hideSource': 'Hide source',
   'chat.copyFailed': 'Copy failed',
@@ -2813,6 +2814,11 @@ export default {
   'lightbox.loading': 'Loading…',
   'lightbox.loadError': 'Failed to load image',
   'lightbox.clickHint': 'Click to view the full-size image',
+  // Diagram viewer (mermaid-viewer-stability batch 2026-11-06)
+  'lightbox.diagramLabel': 'Diagram viewer',
+  'lightbox.zoomIn': 'Zoom in',
+  'lightbox.zoomOut': 'Zoom out',
+  'lightbox.zoomFit': 'Fit to view',
 
   // === Usage dashboard (token consumption dashboard, spec §7.5) ===
   'usage.title': 'Usage Dashboard',

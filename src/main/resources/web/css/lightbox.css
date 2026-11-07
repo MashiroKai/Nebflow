@@ -83,3 +83,88 @@ body.nf-lightbox-open { overflow: hidden; }
 
 /* Visual hint: images tagged .nf-zoom-img are clickable (open lightbox) */
 img.nf-zoom-img { cursor: pointer; }
+
+/* ── 图形（SVG 框图）模式 ────────────────────────────────────────────────
+   mermaid-viewer-stability 批 2026-11-06（作者令「你气泡里渲染的 要点击能变成
+   大图查看 canvas里的也要能支持」）。同一个浮层节点、同一个关闭/焦点/返回链路，
+   只多一层内容面 —— 图片模式与图形模式是同一组件的两个 mode，不是两个查看器。
+
+   交互语义（与 Canvas 窗格里的 viewers/zoom.js **刻意不同**，理由见 js/lightbox.js
+   头注）：全屏浮层里没有别的可滚内容，所以普通滚轮 = 缩放、拖动 = 平移、双指 =
+   捏合缩放，都直接作用于图。 */
+.nf-lightbox[data-nf-lb-mode="svg"] { cursor: default; }
+
+.nf-lightbox-stage {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  touch-action: none;          /* 手势自己接管（捏合/平移），不交给浏览器滚动 */
+  cursor: grab;
+}
+.nf-lightbox-stage:active { cursor: grabbing; }
+
+.nf-lightbox-canvas {
+  transform-origin: center center;
+  will-change: transform;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* 纸面：框图自带配色，浮层底是深色半透明 —— 给一档表面底，亮暗都可读。 */
+  background: var(--color-surface);
+  border-radius: var(--ds-radius-input);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.24), 0 2px 8px rgba(0, 0, 0, 0.16);
+  padding: var(--ds-space-3);
+  overflow: hidden;
+}
+.nf-lightbox-canvas > svg { width: 100%; height: 100%; display: block; }
+
+.nf-lightbox-bar {
+  position: absolute;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-1);
+  padding: var(--ds-space-1) var(--ds-space-2);
+  border-radius: var(--ds-radius-pill);
+  background: var(--glass-control-bg, rgba(24, 27, 34, 0.56));
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  z-index: 2;
+}
+/* 浮层底是深色半透明（亮暗同款）⇒ 控件用固定浅色，与关闭钮同一处置。 */
+.nf-lightbox-ctl {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: var(--ds-radius-chip);
+  background: transparent;
+  color: rgba(255, 255, 255, 0.86);
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease;
+}
+.nf-lightbox-ctl:hover { background: rgba(255, 255, 255, 0.14); color: #fff; }
+.nf-lightbox-ctl:focus-visible {
+  outline: 2px solid rgb(var(--sapphire) / 0.7);
+  outline-offset: 2px;
+}
+.nf-lightbox-ctl svg { width: 15px; height: 15px; }
+.nf-lightbox-pct {
+  min-width: 44px;
+  text-align: center;
+  font-size: var(--ds-fs-meta);
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, 0.86);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nf-lightbox-canvas { transition: none; }
+  .nf-lightbox-ctl { transition: none; }
+}
