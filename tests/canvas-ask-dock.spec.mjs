@@ -364,12 +364,22 @@ try {
   const inputFocused = await page.evaluate(() => document.activeElement === document.querySelector('.ask-dock textarea'));
   ok('T2a 点击入口开：dock 摘 .closed + fab.open + 输入聚焦', !g2.dockClosed && fabOpen && inputFocused, `closed=${g2.dockClosed} open=${fabOpen} focus=${inputFocused}`);
   const anchored = await page.evaluate(() => {
+    // 液态形变批（2026-11-07 12:22）：形变载体从容器搬到**玻璃面本体**
+    // （.ask-input），锚点语义不变（锚在 fab 那一角 = 本体右下角）；容器侧
+    // 改为断言「零 transform / 零 opacity」——那正是 ①/② 两条病根的判据。
     const d = document.querySelector('.ask-dock');
-    const [ox, oy] = getComputedStyle(d).transformOrigin.split(' ').map(parseFloat);
-    return { ox, oy, w: d.offsetWidth, h: d.offsetHeight };
+    const f = document.querySelector('.ask-dock .ask-input');
+    const [ox, oy] = getComputedStyle(f).transformOrigin.split(' ').map(parseFloat);
+    const cs = getComputedStyle(d);
+    return {
+      ox, oy, w: f.offsetWidth, h: f.offsetHeight,
+      dockTransform: cs.transform, dockOpacity: cs.opacity,
+    };
   });
-  ok('T2b transform-origin 锚定按钮圆心（100% 100% ⇒ 锚在 dock 右下角）',
-    Math.abs(anchored.ox - anchored.w) < 2 && Math.abs(anchored.oy - anchored.h) < 2, JSON.stringify(anchored));
+  ok('T2b 形变锚点 = 玻璃面本体右下角（100% 100% ⇒ 锚在 fab 侧）+ 容器零 transform/零 opacity（不成 backdrop root）',
+    Math.abs(anchored.ox - anchored.w) < 2 && Math.abs(anchored.oy - anchored.h) < 2
+      && (anchored.dockTransform === 'none' || anchored.dockTransform === 'matrix(1, 0, 0, 1, 0, 0)')
+      && anchored.dockOpacity === '1', JSON.stringify(anchored));
   await page.keyboard.press('Escape');
   await sleep(400);
   g2 = await geo(page);

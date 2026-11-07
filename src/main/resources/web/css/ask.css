@@ -211,11 +211,77 @@ nf-ask-dock { display: contents; }
   z-index: var(--z-ask-dock, 24);
   width: var(--ask-dock-w);
   display: flex; flex-direction: column; align-items: flex-end; gap: var(--ds-space-1h);
-  transform-origin: 100% 100%; /* ⑧ 锚定 = 右下角按钮圆心方向，开合同一曲线 */
-  transition: transform var(--panel-duration, 0.32s) var(--panel-ease, cubic-bezier(0.32, 0.72, 0, 1)), opacity 0.24s ease;
+  /* 液态形变批（作者令 2026-11-07 12:22）：容器层**零过渡**——形变与材质全在
+     玻璃面本体上（见下方「液态形变开合」块），容器只负责座位与 z 序。
+     旧 `transform-origin: 100% 100%` + `transition: transform …` 随 opacitiy/
+     transform 收放档一并退役（本块即开合曲线的唯一出处，改前值可 git 查）。 */
 }
+/* ── 液态形变开合（作者令 2026-11-07 12:22 逐字：「我们canvas的按钮 note 和 ask
+ *    展开的面板要使用液态形变的效果 自然展开 而且原生就是毛玻璃效果 现在会有个先
+ *    透明后毛玻璃的过程」）────────────────────────────────────────────────
+ * 病根（改前实证，两条都在本仓有同型先例）：
+ *   ① 收起态把 `opacity: 0` + `transform` 挂在**浮窗容器** .ask-dock/.note-dock 上。
+ *      opacity<1 与 transform 都会让该元素成为 **backdrop root**（本仓实证：
+ *      ask.css「毛玻璃批」2026-11-06 记录 mask 令 .ask-col 成为 backdrop root ⇒
+ *      子气泡 backdrop-filter 只能采样子树 = 采不到背景，模糊被架空）。玻璃子件
+ *      （.ask-input / .note-body / .ask-bub）在容器半透明的 240ms 里因此只能采到
+ *      空背景 ⇒ 首段读作「全透明」，容器 opacity 触到 1 的那一帧 backdrop 采样
+ *      才恢复 = 作者报的「先透明后毛玻璃」两段式；
+ *   ② 动画本体是 `translateY(16px) scale(0.6)`：与「从一个圆钮连续长成面板」的
+ *      液态形变无关（缩放还把毛玻璃的采样尺度一起缩放，模糊半径在过程中变粗）。
+ * 改法（单点，两个浮窗同源）：
+ *   · 容器**恒 opacity:1 / 零 transform / 零 mask** ⇒ backdrop root 消失，玻璃面
+ *     从隐藏态起就是真毛玻璃（材质在 .ask-input / .note-body 自身，二者本就是
+ *     glass.css 面级浮件档成员）；
+ *   · 形变载体 = **玻璃面本体自己**：收起态 = 一枚 --ask-fab-size 正圆 + 位移到
+ *     fab 圆心（dock z-24 < fab z-25 ⇒ 种子沉在钮之下，闭态零多绘、展开即「钮
+ *     长成面板」）；展开态 = 原面板几何。两端都是长度/比例 ⇒ 逐帧可插值；
+ *   · 属性集 ⊆ js/motion/liquidMorph.js 的 PROPERTY_WHITELIST（width / height /
+ *     border-radius / transform / padding）；时长与曲线只取 --lm-*（design-
+ *     system.css 单源；prefers-reduced-motion ⇒ --lm-dur 1ms 直接成型，:601-603）；
+ *   · 过程全程零 `backdrop-filter` 插值、零 `filter`/`mask` 参与 ⇒ 不出现模糊
+ *     闪断或合成跳变（作者③）。
+ * 内容（气泡列 / 文本域 / 状态行）只做**显隐**不参与材质：收起态整列
+ * `visibility: hidden`（不靠 opacity 渐隐 —— 渐隐会把 .ask-col 变成 backdrop root，
+ * 正是毛玻璃批定的禁忌）；展开时各气泡自身的 askBubIn 入场动画（.ask-bub 上，
+ * 动的是气泡自己的 opacity，不影响其 backdrop 采样）承担「自然长出」的读感。
+ * ⚠ 已知几何限制（如实记录）：`.ask-input` 的展开高度是**内容自适应（auto）**，
+ * auto 不与 40px 插值 ⇒ 它的 height 在开合首帧是一步离散值（此刻宽度只有 40px，
+ * 视觉不可辨）；记事本 .note-body 的高度两端都是 px（--note-h），是全插值形变。 */
 .ask-dock.closed,
-.note-dock.closed { opacity: 0; transform: translateY(16px) scale(0.6); pointer-events: none; }
+.note-dock.closed { pointer-events: none; }
+.ask-dock.closed .ask-colwrap,
+.note-dock.closed .note-status,
+.note-dock.closed .note-body > *,
+.ask-dock.closed .ask-input > * { visibility: hidden; }
+.ask-dock.closed .ds-resize-handle,
+.note-dock.closed .ds-resize-handle { visibility: hidden; }
+/* 玻璃面本体的形变过渡（属性集与 --lm-* 令牌见上注；容器不参与）。
+   `transform-origin: 100% 100%` = 旧开合曲线的锚点（fab 侧、面板右下角）跟着
+   **形变载体**搬到玻璃面上：容器已零 transform，锚点留在容器上就是死属性；种子
+   位移是纯 translateY（origin 不改变结果），这条只是把「锚在钮那一角」的语义
+   钉在新的载体上（T2b 判据由 dock 改读本体）。 */
+.ask-dock .ask-input,
+.note-dock .note-body {
+  transform-origin: 100% 100%;
+  transition-property: width, height, border-radius, transform, padding;
+  transition-duration: var(--lm-dur);
+  transition-timing-function: var(--lm-ease);
+}
+/* 收起态种子形态：fab 尺寸正圆 + 位移（10px 座缝 + 种子直径）落到 fab 圆心方向。
+   种子直径单源 = --ask-seed-size（桌面 = --ask-fab-size / 手机档 = --mtap-lg 48，
+   见 mobileLayer.css 的同名覆盖 —— 种子形态必须与那一档的入口钮同尺寸，否则
+   「钮长成面板」的起手帧会比钮大一圈）。 */
+.ask-dock,
+.note-dock { --ask-seed-size: var(--ask-fab-size); }
+.ask-dock.closed .ask-input,
+.note-dock.closed .note-body {
+  width: var(--ask-seed-size);
+  height: var(--ask-seed-size);
+  border-radius: 50%;
+  padding: 0;
+  transform: translateY(calc(10px + var(--ask-seed-size)));
+}
 
 /* ═══ 可拖拽改尺寸（作者令 2026-11-04「允许用户交互拖拽调整对话框大小（拖柄
  *     可见、热区 ≥44px，按 Apple HIG）」）════════════════════════════════
@@ -244,6 +310,15 @@ body.mobile-layer .note-dock .ds-resize-handle {
 /* 拖拽中：跟手（面板尺寸过渡关掉，不加任何补间），抓手由 [data-resizing] 提亮。 */
 .ask-dock.is-resizing,
 .note-dock.is-resizing { transition: none; }
+/* 拖拽中：**玻璃面本体的液态形变过渡同样关掉**。液态形变批把 width/height 的
+   过渡从容器搬到了玻璃面（.ask-input / .note-body）上；拖柄写的是 `--ask-dock-w`
+   / `--note-h` 两条变量 = 这两个面的下游尺寸 —— 若仍带 --lm-dur 补间，每次
+   pointermove 都从当前值重新起补，跟手就变成「永远慢半拍」，落手实测几何也还是
+   中途值（改前实证：canvas-note-panel N4e 拖 −120/−140 读到的增量不足阈值）。
+   拖拽是用户直接操作 ⇒ 必须逐帧直落，故在此与容器一起关掉（与上面那条
+   「.is-resizing 期零补间」同一纪律，覆盖到面本体）。 */
+.ask-dock.is-resizing .ask-input,
+.note-dock.is-resizing .note-body { transition: none; }
 /* 直角弧的臂原点（作者令 2026-11-04 12:52 ④）：桌面把手外挂 14px ⇒ 臂落
    14/14（正好压在面板左上角的圆角边上，视觉与玻璃面板一体）；手机内挂 ⇒ 0/0。
    ── 单小边框批（作者令 2026-11-05 09:32「左上角那个拖动按钮，只要一个小边框

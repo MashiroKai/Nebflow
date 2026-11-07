@@ -151,16 +151,17 @@ async function installProbe(page) {
       setTimeout(() => { window.__bubble.push({ prevented: e.defaultPrevented, dy: deltaY, t: performance.now() }); }, 0);
     }, true);
     if (window.__mo) window.__mo.disconnect();
-    window.__mo = new MutationObserver(() => {
+    window.__mo = new MutationObserver((muts) => {
       const c = ring.querySelector('.cr-capsule.is-center');
       const id = c ? c.dataset.tabId : null;
       const arr = window.__steps;
-      if (!arr.length || arr[arr.length - 1].id !== id) arr.push({ id, t: performance.now() });
+      if (!arr.length || arr[arr.length - 1].id !== id) arr.push({ id, t: performance.now(), via: muts.map((m) => (m.oldValue || '(null)') + '→' + (m.target.className || '')).join(' ;; ').slice(0, 300) });
     });
-    window.__mo.observe(ring, { subtree: true, attributes: true, attributeFilter: ['class'] });
+    window.__mo.observe(ring, { subtree: true, attributes: true, attributeOldValue: true, attributeFilter: ['class'] });
   });
 }
 const stepCount = (page) => page.evaluate(() => window.__steps.length);
+const stepIds = (page) => page.evaluate(() => window.__steps.map((s) => (s.id || 'null').split('/').pop() + '@' + Math.round(s.t) + ' via:' + (s.via || '')));
 const bubbleTail = (page, k) => page.evaluate((n) => window.__bubble.slice(-n), k);
 
 /** 页内合成 wheel 序列（真时序：事件间 setTimeout 真等待 —— 冷却语义按真实
@@ -203,7 +204,7 @@ mkdirSync(SHOTS, { recursive: true });
   await sleep(260);
   ok('TC1 单个小 delta（12px < 48 累积阈）不换选：轻扫要「挥」不是「抖」',
     (await stepCount(page)) === 0 && (await ringSnap(page)).center === 'file:/tmp/ct-fixture/delta.md',
-    `steps=${await stepCount(page)}`);
+    `steps=${await stepCount(page)} ids=${(await stepIds(page)).join(',')}`);
 
   /* ── TC2 轻扫序列恰切 1 次（8 × 12px @14ms ≈ 一挥轻扫 + 微惯性尾）── */
   await fireWheel(page, [12, 12, 12, 12, 12, 12, 12, 12], 14, cap);
@@ -211,7 +212,7 @@ mkdirSync(SHOTS, { recursive: true });
   r = await ringSnap(page);
   ok('TC2 轻扫序列（8 小 delta）恰切 1 次：delta → alpha（+1 环绕），惯性尾被冷却吞掉',
     (await stepCount(page)) === 1 && r.center === 'file:/tmp/ct-fixture/alpha.md' && r.open,
-    `steps=${await stepCount(page)} center=${r.center}`);
+    `steps=${await stepCount(page)} center=${r.center} ids=${(await stepIds(page)).join(' >> ')}`);
   await page.screenshot({ path: join(SHOTS, '1-ring-after-swipe-dark.png'), clip: await page.evaluate(() => {
     const p = document.getElementById('canvas-panel').getBoundingClientRect();
     return { x: Math.max(0, p.left), y: Math.max(0, p.top - 56), width: p.width, height: 300 };
@@ -287,20 +288,26 @@ mkdirSync(SHOTS, { recursive: true });
     css.dur.startsWith('0.18s') && /(^|,\s*)transform(\s*,|$)/.test(css.prop) && /(^|,\s*)opacity(\s*,|$)/.test(css.prop),
     `dur=${css.dur} prop=${css.prop}`);
 
-  /* ── TC8 游标步进真滑（0.18s 过渡在途 = transform 非终值，丝滑可观测）── */
+  /* ── TC8 游标步进真滑（吸附动画在途 = 位姿非终值，丝滑可观测）──
+     转盘批 2026-11-07 改轴：取**固定页签**的胶囊横坐标（旧判据取 is-center 的
+     rect.top —— 横排档纵向不动，且 is-center 会随落点换主，那个量测不到「在途」）。 */
   await sleep(500);
+  const probeTab = await page.evaluate(() => {
+    const c = document.querySelector('#canvas-capsule-ring .cr-capsule.is-center');
+    return c ? c.dataset.tabId : null;
+  });
   await fireWheel(page, [120], 0, cap);
-  await sleep(55);                                  // 0.18s 过渡中段采样
-  const midT = await page.evaluate(() => {
-    const el = document.querySelector('#canvas-capsule-ring .cr-capsule.is-center');
-    return el ? el.getBoundingClientRect().top : null;
-  });
-  await sleep(400);                                 // 过渡落定
-  const endT = await page.evaluate(() => {
-    const el = document.querySelector('#canvas-capsule-ring .cr-capsule.is-center');
-    return el ? el.getBoundingClientRect().top : null;
-  });
-  ok('TC8 步进过渡真滑（在途中段 ≠ 落定位；0.18s 平滑迁移非瞬跳）',
+  await sleep(55);                                  // 吸附档 240ms 的在途中段采样
+  const midT = await page.evaluate((id) => {
+    const el = document.querySelector(`#canvas-capsule-ring .cr-capsule[data-tab-id="${id}"]`);
+    return el ? el.getBoundingClientRect().left : null;
+  }, probeTab);
+  await sleep(400);                                 // 吸附落定
+  const endT = await page.evaluate((id) => {
+    const el = document.querySelector(`#canvas-capsule-ring .cr-capsule[data-tab-id="${id}"]`);
+    return el ? el.getBoundingClientRect().left : null;
+  }, probeTab);
+  ok('TC8 步进过渡真滑（在途中段 ≠ 落定位；吸附档 240ms 平滑迁移非瞬跳）',
     midT !== null && endT !== null && Math.abs(midT - endT) > 2,
     `mid=${midT?.toFixed(1)} end=${endT?.toFixed(1)} Δ=${(midT - endT).toFixed(1)}px`);
 

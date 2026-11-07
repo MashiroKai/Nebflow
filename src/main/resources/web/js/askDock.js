@@ -778,7 +778,15 @@ function bindResize(surface) {
       try { handle.releasePointerCapture(e.pointerId); } catch { /* 已释放 */ }
     }
     delete handle.dataset.resizing;
-    surface.panel.classList.remove('is-resizing');
+    // 液态形变批（作者令 2026-11-07 12:22）：`is-resizing` 的摘除必须**推迟一帧**。
+    // 本帧内 pointermove 已经把 --ask-dock-w / --note-h 写到落定值；若在同一帧里
+    // 把类摘掉，样式重算只会看到「过渡属性已恢复 + 尺寸变了一大段」这一个事实 ——
+    // 浏览器于是补一段开合过渡（实测：canvas-note-panel N4e 拖 −120/−140 后 140ms
+    // 读到 358.9 而非落定的 380，增量-100 判据忽绿忽红）。推迟到下一帧：本帧重算
+    // 仍命中「.is-resizing 期零补间」，尺寸直落；下一帧摘类时值不再变化 ⇒ 不起补间。
+    // 期间若又开始新一次拖拽（active 复位为 true），本 rAF 让位不摘。
+    const panel = surface.panel;
+    requestAnimationFrame(() => { if (!active) panel.classList.remove('is-resizing'); });
     persistSize(surface); // 持久化缺陷批：拖拽落定即存尺寸偏好（拖拽中不写）
   };
   handle.addEventListener('pointerup', end);
@@ -923,10 +931,15 @@ function wireObserversOnce() {
       // 量到的是半成品高度（实测 34.8 而非 58 ⇒ 中线偏 6px）。
       requestAnimationFrame(() => {
         // ⚠ 必须用 offsetHeight（布局高度），不能用 getBoundingClientRect()：
-        // 收起态 `.ask-dock.closed` 带 `transform: scale(0.6)`，bbox 返回的是**变换后**
-        // 的 34.8px 而不是 58px ⇒ 中线偏 11.6px（实测 colBottom 774.4 vs inputMid 786）。
-        // 而且 ResizeObserver 观察的是 border-box（不受 transform 影响），高度不会
+        // 偏移/位移腿（液态形变批起：收起态玻璃面 = 位移到 fab 圆心的种子）会让
+        // bbox 返回**变换后**的几何，量到的不是输入条布局高 ⇒ 中线偏。
+        // 而 ResizeObserver 观察的是 border-box（不受 transform 影响），高度不会
         // 再变 ⇒ 这个错值不会被第二次回调纠正。布局高度对此免疫。
+        //
+        // 液态形变批（作者令 2026-11-07 12:22）：收起态输入条 = --ask-fab-size
+        // 正圆种子，展开首帧还在形变中途 —— 这两段量到的都不是稳态输入条高度，
+        // 写了会把气泡列底缘垫错。稳态（无 .closed）才写，形变结束后 RO 会再响。
+        if (!el || !el.dock || el.dock.classList.contains('closed')) return;
         const h = el.inputRow.offsetHeight;
         if (h > 0) el.dock.style.setProperty('--ask-under', (h / 2).toFixed(2) + 'px');
       });

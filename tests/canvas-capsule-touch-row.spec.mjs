@@ -292,10 +292,11 @@ for (const vp of [{ width: 800, height: 360 }, { width: 812, height: 375 }, { wi
   await page.screenshot({ path: join(OUT, `desktop-${tag}-hover.png`) });
   const hCenter = hov.caps.filter((c) => c.cls.includes('is-center'))[0];
   const hEdges = hov.caps.filter((c) => c.cls.includes('is-edge'));
-  ok('G2 桌面 hover 仍是**竖环**（邻签纵向分离、横轴 --cr-x 恒 0）—— 零回归',
+  ok('G2 桌面 hover 与触屏腿**同轴**（转盘批 2026-11-07 12:15：作者令「我要那种转盘的感觉 在左右滚动选择」——桌面也从竖环换成横排转盘，故邻签横向分离、纵轴 --cr-y 恒 0）',
     hov.open && hEdges.length >= 1
-    && hEdges.every((e) => e.varX === '0px' && Math.abs(e.cy - hCenter.cy) > 8),
-    `open=${hov.open} edges=${JSON.stringify(hEdges.map((e) => ({ x: e.varX, y: e.varY, dy: +(e.cy - hCenter.cy).toFixed(1) })))}`);
+    && hEdges.every((e) => e.varY === '0px' && e.varX !== '0px' && Math.abs(e.cx - hCenter.cx) > 8)
+    && Math.abs(hCenter.cy - hEdges[0].cy) <= 1.5,
+    `open=${hov.open} edges=${JSON.stringify(hEdges.map((e) => ({ x: e.varX, y: e.varY, dx: +(e.cx - hCenter.cx).toFixed(1), dy: +(e.cy - hCenter.cy).toFixed(1) })))}`);
   const activeTitle = await page.evaluate((list) => {
     const act = document.querySelector('#canvas-capsule-ring .cr-capsule.is-center')?.dataset.tabId;
     const hit = list.find(([id]) => id === act);

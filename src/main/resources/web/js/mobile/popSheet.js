@@ -14,6 +14,7 @@
 // 模块纪律：叶子模块——只 import utils/branding，禁回边（各弹窗模块单向
 // import 本模块），与 navController 零耦合。
 
+import { registerOverlayBack } from '../gesture/backSwipe.js';
 import { createIconsIn } from '../utils.js';
 import { key } from '../branding.js';
 
@@ -77,5 +78,9 @@ export function mobileSheetBack(overlay, onBack) {
   };
   /** @type {any} */ (back)._mfsOnBack = handler;
   back.addEventListener('click', handler);
+  // 滑返批（作者令 2026-11-07 12:17「全局次级面板…从左向右滑返回上一层」）：
+  // 弹层的返回钮同时登记进**单点手势层** —— 右滑与点这颗「<」走同一条 onBack
+  // （不写第二套关闭逻辑；同一 overlay 重复调用 = 幂等换绑，栈里挪到顶）。
+  registerOverlayBack('sheet:' + (overlay.id || 'anonymous'), () => onBack(), overlay);
   return back;
 }

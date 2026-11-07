@@ -52,6 +52,7 @@ import {
   // 手机层只负责缓存与挂载。
   canvasSnapshotFor, canvasSnapshotStamp,
 } from '../canvas.js';
+import { hasBackHandler } from '../gesture/backSwipe.js';
 import { key } from '../branding.js';
 import { openSettingsPanel, closeSettingsPanel, isSettingsPanelActive } from '../sidebar.js';
 import { createIconsIn } from '../utils.js';
@@ -2218,6 +2219,11 @@ function bindEdgeBack(root) {
     }
     if (!document.body.classList.contains('mobile-layer')) return;
     if (stack.length <= 1) return;                       // 一级面（dock 根/聊天根）不认领
+    // 滑返批（作者令 2026-11-07 12:17）：**浮层优先** —— 次级面板（设置/搜索/记忆/
+    // 规则/确认框/pop sheet 详情）登记了滑返登记项时，右滑属于那一层（关面板），
+    // 页面栈本腿让路；面板关完登记项清空，这条腿自然恢复（主会话/页面栈语义优先
+    // 于「没有浮层」的那个常态）。
+    if (hasBackHandler()) return;
     if (e.clientX > EDGE_BAND_PX) return;
     if (/** @type {Element} */ (e.target).closest('button, input, textarea, select, a')) return;
     edgeBack = {
