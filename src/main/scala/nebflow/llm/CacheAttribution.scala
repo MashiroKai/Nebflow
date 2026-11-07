@@ -2,7 +2,8 @@ package nebflow.llm
 
 import io.circe.Json
 import nebflow.shared.NebflowLogger
-import nebflow.shared.TokenUsage
+import nebflow.shared.{TokenUsage, StreamChunk}
+import cats.syntax.functor.*
 
 import scala.collection.mutable
 
@@ -253,7 +254,7 @@ object CacheAttribution:
           if kind == "business" then
             Some(
               bump(
-                MissRecord(UsageMissing, sessionId, providerId, model, None, "usage absent (failed request)", 0, 0, nowMs)
+                MissRecord(UsageMissing, sessionId, providerId, model, None, "usage absent in completed response", 0, 0, nowMs)
                   .copy(requestId = requestId)
               )
             )
@@ -262,7 +263,7 @@ object CacheAttribution:
         case Some(u) =>
           val ratio = if u.inputTokens <= 0 then 1.0 else u.cacheReadTokens.getOrElse(0).toDouble / u.inputTokens
           if ratio >= MissThreshold then None // 正常命中带
-          else Some(classify(prevAndCur, sessionId, providerId, model, u, nowMs).copy(requestId = requestId))
+          else Some(classify(prevAndCur, sessionId, providerId, model, u, nowMs, requestId))
     }
     usage.foreach { u =>
       synchronized {
@@ -296,8 +297,10 @@ object CacheAttribution:
     providerId: String,
     model: String,
     u: TokenUsage,
-    nowMs: Long
+    nowMs: Long,
+    requestId: Option[String]
   ): MissRecord =
+    def remember(record: MissRecord): MissRecord = bump(record.copy(requestId = requestId))
     val pair: Option[(WireFingerprint, WireFingerprint)] =
       prevAndCur.flatMap(dq => if dq.length >= 2 then Some((dq(0), dq(dq.length - 1))) else None)
     val (inTok, readTok) = (u.inputTokens.toLong, u.cacheReadTokens.getOrElse(0).toLong)
@@ -311,30 +314,30 @@ object CacheAttribution:
           sameSess && otherDom
         }
         val cat = if switched then DomainSwitched else NewSession
-        bump(MissRecord(cat, sessionId, providerId, model, None,
+        remember(MissRecord(cat, sessionId, providerId, model, None,
           if switched then "same session, different provider/model domain" else "no prior fingerprint in this cache domain",
           inTok, readTok, nowMs))
       case Some((p, cur)) =>
         // ① 分开报告线上的三个不同形状；空历史（0 块）不判（首轮前无历史可钉）。
         if cur.ephemeralMarked then
-          bump(MissRecord(EphemeralMarkerMisplaced, sessionId, providerId, model, Some(cur.breakpointIdx),
+          remember(MissRecord(EphemeralMarkerMisplaced, sessionId, providerId, model, Some(cur.breakpointIdx),
             s"cache marker present in ephemeral blocks: persistedIdx=${cur.breakpointIdx} blocks=${cur.historyBlocks}",
             inTok, readTok, nowMs))
         else if cur.historyBlocks > 0 && cur.breakpointIdx < 0 then
-          bump(MissRecord(PersistentBreakpointMissing, sessionId, providerId, model, Some(cur.breakpointIdx),
+          remember(MissRecord(PersistentBreakpointMissing, sessionId, providerId, model, Some(cur.breakpointIdx),
             s"persistent history has no cache marker: persistedIdx=${cur.breakpointIdx} blocks=${cur.historyBlocks}",
             inTok, readTok, nowMs))
         else if cur.historyBlocks > 0 && cur.breakpointIdx != cur.historyBlocks - 1 then
-          bump(MissRecord(PersistentBreakpointMisplaced, sessionId, providerId, model, Some(cur.breakpointIdx),
+          remember(MissRecord(PersistentBreakpointMisplaced, sessionId, providerId, model, Some(cur.breakpointIdx),
             s"persistent cache marker is not at history tail: persistedIdx=${cur.breakpointIdx} blocks=${cur.historyBlocks}",
             inTok, readTok, nowMs))
         // ② 配置面变化（tools/system/thinking 任一轴——首个变化轴即报）
         else if cur.toolsFp != p.toolsFp || cur.toolsCount != p.toolsCount then
-          bump(MissRecord(ConfigChanged, sessionId, providerId, model, None, "tools schema/order fingerprint changed", inTok, readTok, nowMs))
+          remember(MissRecord(ConfigChanged, sessionId, providerId, model, None, "tools schema/order fingerprint changed", inTok, readTok, nowMs))
         else if cur.systemFp != p.systemFp then
-          bump(MissRecord(ConfigChanged, sessionId, providerId, model, None, "system fingerprint changed", inTok, readTok, nowMs))
+          remember(MissRecord(ConfigChanged, sessionId, providerId, model, None, "system fingerprint changed", inTok, readTok, nowMs))
         else if cur.thinkingFp != p.thinkingFp then
-          bump(MissRecord(ConfigChanged, sessionId, providerId, model, None, "thinking config fingerprint changed", inTok, readTok, nowMs))
+          remember(MissRecord(ConfigChanged, sessionId, providerId, model, None, "thinking config fingerprint changed", inTok, readTok, nowMs))
         // ③ 历史内容变化
         else
           val shared    = cur.historyBlockFps.zip(p.historyBlockFps).takeWhile { case (a, b) => a == b }.length
@@ -342,15 +345,39 @@ object CacheAttribution:
           val firstDiff = if shared < minBlocks then Some(shared) else None
           if firstDiff.isEmpty && cur.historyBlocks >= p.historyBlocks then
             // 纯追加 + 指纹全同仍 miss ⇒ 客户端未观测到变化（不谎称驱逐）
-            bump(MissRecord(Unknown, sessionId, providerId, model, None,
+            remember(MissRecord(Unknown, sessionId, providerId, model, None,
               "no client-observed change; provider-side (not claimed as eviction)", inTok, readTok, nowMs))
           else if firstDiff.contains(0) && cur.historyBlocks < p.historyBlocks then
-            bump(MissRecord(CompactionRebuild, sessionId, providerId, model, firstDiff,
+            remember(MissRecord(CompactionRebuild, sessionId, providerId, model, firstDiff,
               "front rebuilt and shrunk (compaction/lifecycle signature)", inTok, readTok, nowMs))
           else
-            bump(MissRecord(HistoryChanged, sessionId, providerId, model, firstDiff,
+            remember(MissRecord(HistoryChanged, sessionId, providerId, model, firstDiff,
               s"history content/order changed at block ${firstDiff.getOrElse(-1)} (persisted=${cur.historyBlocks} prev=${p.historyBlocks})",
               inTok, readTok, nowMs))
+
+  /** Account only after normal stream completion. Match AgentStreamPipelines' selection:
+    * first positive-input usage, otherwise the first Done's usage. Done frames pass through unchanged.
+    */
+  private[llm] def accountStream(
+    source: fs2.Stream[cats.effect.IO, StreamChunk],
+    sessionId: String, providerId: String, model: String, requestId: Option[String]
+  ): fs2.Stream[cats.effect.IO, StreamChunk] =
+    fs2.Stream.eval(cats.effect.IO.ref((false, Option.empty[TokenUsage], Option.empty[TokenUsage]))).flatMap { state =>
+      source.evalTap {
+        case StreamChunk.Done(_, usage, _, _) =>
+          state.update { case (seen, first, positive) =>
+            (true, if seen then first else usage, positive.orElse(usage.filter(_.inputTokens > 0)))
+          }
+        case _ => cats.effect.IO.unit
+      } ++ fs2.Stream.eval(state.get.flatMap { case (seen, first, positive) =>
+        cats.effect.IO {
+          if seen then
+            val usage = positive.orElse(first)
+            CacheStats.record(providerId, model, usage)
+            observeUsage(sessionId, providerId, model, usage, requestId = requestId)
+        }.void
+      }).drain
+    }
 
   // ── 读数面 ────────────────────────────────────────────────────────────
 
