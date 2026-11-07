@@ -877,6 +877,24 @@
   font-size: var(--ds-fs-hint);
   color: var(--color-frame-text-muted);
 }
+/* 检索续取尾钮（检索全覆盖批 2026-11-07）：结果流尾部的「加载更多」入口。
+   消息流档走 .search-sentinel 无限滚动（滚到底即续取，无需按钮）；本钮只服务
+   媒体网格档（网格自带哨兵渲染，续取需要一个显式落点）与手动触发的兜底。
+   文案含「已加载 n/m 条」——分段加载如实读数，禁静默截断。 */
+.search-more-tail {
+  display: block;
+  margin: var(--ds-space-3) auto var(--ds-space-2);
+  padding: var(--ds-space-1) var(--ds-space-4);
+  font-size: var(--ds-fs-hint);
+  color: var(--color-frame-text-muted);
+  background: var(--color-frame-hover);
+  border: 1px solid var(--color-frame-border);
+  border-radius: var(--ds-radius-button);
+  cursor: pointer;
+  transition: color 0.12s, background 0.12s;
+}
+.search-more-tail:hover { color: var(--color-frame-text-bright); }
+.search-more-tail:disabled { opacity: 0.6; cursor: default; }
 .search-result {
   padding: var(--ds-space-2) var(--ds-space-inline-x);
   border-radius: var(--ds-radius-button);

@@ -70,7 +70,15 @@ import { expandGroupContaining } from './turnGroup.js';
 // （.scroll-new-pill 同家族），锚点/降级/消失时机契约见 searchReturnPill.js 头注。
 import { captureReturnAnchor, armReturnPill } from './searchReturnPill.js';
 
-const MAX_RESULTS = 200;      // search-mode cap (v2.1 one-shot query)
+// 检索全覆盖批（2026-11-07，作者报障「搜索为什么不是搜全部的内容，可以分段显示
+// 但是我要能查看」）：**取消「前 200 条」硬顶**。搜索模式改为「首屏一页 + 滚到底
+// 续取下一页」——服务端 `GET /api/search/chat?limit&offset` 本就是真分页（total +
+// offset），前端此前只取了第一页就没有下文，于是 200 条以外的历史命中「存在但永远
+// 看不到」。现在续取直到 total 取尽，可一路翻到最早一条；渲染仍走
+// RENDER_BATCH + 哨兵懒渲染（手机不会一次渲染上千行），状态行恒报
+// 「已加载 N/M 条」（search.loadedOf）。
+const SEARCH_PAGE = 50;       // 首屏/每页命中数（服务端 limit clamp ≤200）
+const SEARCH_PAGE_MAX = 200;  // 单页上限（与服务端 clamp 同一口径）
 const FETCH_PAGE = 100;       // stream page size (spec §6.3 caps a page at ≤200;
                               // 100 keeps cursor pagination reachable for B9's ≥120-seed)
 const RENDER_BATCH = 50;      // lazy-render batch (spec §6.1)
@@ -84,7 +92,6 @@ const PAGE_JUMP = 5;
 // 灰度零风险：新旧并行，旧路径保底可回退）。游空档（无关键词）维持既有
 // 全量拉取流——设计稿 C3 只切搜索模式。
 const SEARCH_API_ENABLED = true;
-const SEARCH_API_LIMIT = 200;         // 与 MAX_RESULTS 同档
 /** 五 tab → 索引类型片谓词（media/files/links 用 TAB_KINDS）。 */
 const TAB_KINDS = { media: ['media'], files: ['file'], links: ['link'] };
 /** all/date tab 的索引类型片：只搜对话（2026-10-30 作者令①——tool call/result
@@ -187,7 +194,7 @@ let calStaged = null;
 let pillListboxEl = null;    // open year/month listbox element
 
 // ── Stream state (browse/anchor modes) ─────────────────────
-/** @type {Array<{id:string, name:string, all:any[], view:any[], entries:any[], start:number, end:number, el:HTMLElement|null, headerEl:HTMLElement|null}>} */
+/** @type {Array<{id:string, name:string, all:any[], view:any[], entries:any[], start:number, end:number, el:HTMLElement|null, headerEl:HTMLElement|null, convSource?:boolean}>} */
 let streamSessions = [];
 /** @type {Array<any>} sessions with non-empty windows, in display order */
 let streamGroups = [];
@@ -211,6 +218,32 @@ let mediaGridObserver = null;
 // 清档点只有 `closeSearchModal`——主对话搜索钮 / 手机搜索页不带 scope ⇒ 恒 null。
 /** @type {{id:string, name:string}|null} */
 let convScope = null;
+
+// ── 检索分页状态（检索全覆盖批 2026-11-07）────────────────────────────────
+// 搜索模式的「已取到第几页 / 还有没有下一页」唯一状态点。两种源：
+//   · mode='index'：服务端索引真分页（url 里带 limit/offset，续取即 offset+=page）；
+//   · mode='local'：数据已全量在手（旧全扫回落路径、好友/群/设备会话档），
+//     续取 = 逐段揭示内存里的命中（零请求），revealed 记录已揭示条数。
+// `total` 恒为**命中总数**（索引给 total；本地路径 = 命中数组长度），UI 据此报
+// 「已加载 N/M 条」，more=false 才停（= 已翻到最早一条）。
+/**
+ * @typedef {{mode:'index'|'local', url:string, offset:number, total:number,
+ *   loaded:number, revealed:number, pageSize:number, more:boolean,
+ *   loading:boolean, failed:boolean}} SearchPager
+ */
+/** @type {SearchPager|null} */
+let searchPager = null;
+/** 索引分页腿的查询基址（q/kinds/sid——续取页由它 + offset 现造，禁另存一份）。 */
+let searchIndexPages = null;
+/** 索引分页腿的会话名表（首页一次性装填，续取页沿用——名字口径恒定）。 */
+let searchNameById = new Map();
+/** 本地分页源（mode='local'）的**全量**命中数组（排序后）；index 模式恒空。 */
+let searchAllRows = [];
+/** 续取尾钮节点（媒体网格档；模块内持有引用 ⇒ 不再跨面 getElementById 直查）。 */
+let searchTailEl = null;
+/** 结果面/状态面的现役节点（续取腿要用；renderStreamFresh 现装 ⇒ 零新增跨面直查）。 */
+let searchResultsEl = /** @type {HTMLElement|null} */ (null);
+let searchStatusEl = /** @type {HTMLElement|null} */ (null);
 
 /**
  * Typed element lookups (getElementById returns bare HTMLElement).
@@ -478,6 +511,12 @@ function resetSearchState() {
   streamGroups = [];
   streamMode = 'browse';
   pageInFlight = false;
+  searchPager = null;
+  searchAllRows = [];
+  searchIndexPages = null;
+  searchNameById = new Map();
+  searchTailEl?.remove();
+  searchTailEl = null;
   sentinelObserver?.disconnect();
   sentinelEl = null;
   const resultsEl = document.getElementById('search-results');
@@ -1368,7 +1407,12 @@ function onSentinel() {
     updateStatus();
     return;
   }
-  if (streamMode === 'search') return;   // one-shot mode never paginates
+  if (streamMode === 'search') {
+    // 检索全覆盖批 2026-11-07：渲染批次耗尽且还有未取命中 ⇒ 续取下一页（无限
+    // 滚动——这就是「一直往下翻到最早一条」的实现，取代原来的「前 200 条」硬顶）。
+    if (searchPager && searchPager.more) loadMoreSearch();
+    return;
+  }
   loadBeforePages();
 }
 
@@ -1474,6 +1518,21 @@ async function loadAfterPages() {
  * C6：同查询二次发起带 If-None-Match（searchEtagCache 按规范化 url 存
  * 凭证）；304 ⇒ 零重发，缓存体直接渲染；200 ⇒ 新凭证+新体覆缓存。
  */
+/**
+ * 索引检索的分页 URL 构造（分页腿唯一构造点：首屏与续取页同源，禁第二套拼装）。
+ * @param {{q:string, kinds:string[], sid:string}} base 查询基址
+ * @param {number} offset 已取条数（下一页起点）
+ * @returns {string}
+ */
+function indexPageUrl(base, offset) {
+  const params = new URLSearchParams({
+    q: base.q, kinds: base.kinds.join(','),
+    limit: String(SEARCH_PAGE), offset: String(Math.max(0, offset)),
+  });
+  if (base.sid) params.set('sid', base.sid);
+  return `/api/search/chat?${params.toString()}`;
+}
+
 async function runSearchIndex(kw, scope, agentSel, ac, mySeq, statusEl, resultsEl) {
   try {
     let sessions;
@@ -1503,18 +1562,27 @@ async function runSearchIndex(kw, scope, agentSel, ac, mySeq, statusEl, resultsE
     }
 
     const kinds = MEDIA_TABS.includes(currentTab) ? (TAB_KINDS[currentTab] || []) : SEARCH_KINDS_ALL;
-    const params = new URLSearchParams({ q: kw, kinds: kinds.join(','), limit: String(SEARCH_API_LIMIT) });
-    if (scope === 'current') params.set('sid', state.activeSessionId);
-    const url = `/api/search/chat?${params.toString()}`;
+    const pages = { q: kw, kinds, sid: scope === 'current' ? (state.activeSessionId || '') : '' };
+    const url = indexPageUrl(pages, 0);
 
     // C6 条件请求：缓存凭证命中 ⇒ 带 If-None-Match，304 零重发。
     const cached = searchEtagCache.get(url);
     const headers = { ...authHeaders() };
     if (cached) headers['If-None-Match'] = cached.etag;
     const resp = await fetch(url, { headers, signal: ac.signal });
-    if (resp.status === 304 && cached) {
-      return applyIndexResults(cached.body, sessions, sessionNameById, mySeq, statusEl, resultsEl);
-    }
+    /** 首页到手 ⇒ 落分页档（续取基址/已取偏移/命中总数/是否还有下一页）。 */
+    const take = (body) => {
+      const n = Array.isArray(body.hits) ? body.hits.length : 0;
+      const total = Number(body.total) || 0;
+      searchPager = {
+        mode: 'index', url, offset: n, total, loaded: 0, revealed: 0,
+        pageSize: SEARCH_PAGE, loading: false, failed: false, more: n < total,
+      };
+      searchIndexPages = pages;
+      searchNameById = sessionNameById;
+      return applyIndexResults(body, sessions, sessionNameById, mySeq, statusEl, resultsEl, false);
+    };
+    if (resp.status === 304 && cached) return take(cached.body);
     if (!resp.ok) return false;          // 503 降级面 / 5xx ⇒ 回落旧全扫
     const etag = resp.headers.get('ETag') || '';
     const body = await resp.json();
@@ -1522,7 +1590,7 @@ async function runSearchIndex(kw, scope, agentSel, ac, mySeq, statusEl, resultsE
     // 不是合法索引响应 ⇒ 回落旧全扫（与 fetchHistory 的 malformed 同律）。
     if (!body || !Array.isArray(body.hits) || typeof body.total !== 'number') return false;
     if (etag) searchEtagCache.set(url, { etag, body });
-    return applyIndexResults(body, sessions, sessionNameById, mySeq, statusEl, resultsEl);
+    return take(body);
   } catch (e) {
     if (e.name === 'AbortError') throw e;   // runSearch 既有 catch 静默处理
     if (mySeq !== searchSeq) return true;   // 已被取代：UI 归新查询，勿回落
@@ -1535,9 +1603,12 @@ async function runSearchIndex(kw, scope, agentSel, ac, mySeq, statusEl, resultsE
  * 模型，渲染/键盘/浮窗零分叉）。媒体三 tab 用 hit.extra 的 popMediaIndex
  * 条目形状直渲染（C4——免重抽）；all/date tab 补 wrapItem 同款字段面。
  */
-function applyIndexResults(body, sessions, sessionNameById, mySeq, statusEl, resultsEl) {
+function applyIndexResults(body, sessions, sessionNameById, mySeq, statusEl, resultsEl, append = false) {
   if (mySeq !== searchSeq) return true;
-  const hits = (body && Array.isArray(body.hits)) ? body.hits : [];
+  // 旧库残留兜底（与服务端同口径）：tool 片不入对话检索结果，前端再滤一层防御。
+  const hits = ((body && Array.isArray(body.hits)) ? body.hits : []).filter(h => h.kind !== 'tool');
+  const pager = searchPager;
+  const nameOf = (sid) => sessionNameById?.get(sid) || searchNameById.get(sid) || sid;
 
   if (MEDIA_TABS.includes(currentTab)) {
     const entries = [];
@@ -1547,7 +1618,7 @@ function applyIndexResults(body, sessions, sessionNameById, mySeq, statusEl, res
         ...extra,
         id: extra.id || `${h.sid}:${h.ord}`,
         sessionId: h.sid,
-        sessionName: sessionNameById.get(h.sid) || h.sid,
+        sessionName: nameOf(h.sid),
         msgOrd: typeof extra.msgOrd === 'number' ? extra.msgOrd : h.ord,
         ts: h.ts || extra.ts || 0,
       };
@@ -1555,24 +1626,37 @@ function applyIndexResults(body, sessions, sessionNameById, mySeq, statusEl, res
       entries.push(e);
     }
     entries.sort((a, b) => (b.ts - a.ts) || (b.msgOrd - a.msgOrd));
+    if (append) {
+      // 续取页：尾部追加（不重排已渲染面、不重置滚动位）。
+      mergeMediaEntries(entries);
+      appendMediaGrid(entries, resultsEl);
+      if (pager) { pager.loaded += entries.length; }
+      syncSearchTail(resultsEl);
+      updateStatus();
+      return true;
+    }
     streamSessions = sessions.map(s => {
       const mine = entries.filter(e => e.sessionId === s.id);
       return { id: s.id, name: s.name || s.id, all: [], view: mine, entries: mine,
                start: 0, end: mine.length, el: null, headerEl: null };
     });
+    if (pager) pager.loaded = entries.length;
     buildModel();          // message view empty under grid tabs — keep state coherent
     renderStreamFresh(resultsEl, statusEl);
+    syncSearchTail(resultsEl);
     return true;
   }
 
   // all/date tab：message 行（作者令①后 tool 片不再出现在命中里——服务端
-  // 剥除/过滤；下面的 tool 分支仅为兼容旧索引体的防御，永不触发）。
+  // 剥除/过滤；上面的 tool 过滤分支仅为兼容旧索引体的防御，永不触发）。
   // tool 过滤/手机角色筛选沿用既有前端谓词。
-  populateToolFilter(
-    [{ all: hits.map(h => ({ kind: h.kind, tool: (h.extra && h.extra.tool) || '' })) }],
-    selectById('search-tool')?.value || '');
+  if (!append) {
+    populateToolFilter(
+      [{ all: hits.map(h => ({ kind: h.kind, tool: (h.extra && h.extra.tool) || '' })) }],
+      selectById('search-tool')?.value || '');
+  }
   const toolSel = activeToolFilter();
-  const results = [];
+  const rows = [];
   for (const h of hits) {
     // kind 词汇对齐前端 messageKind（user|agent|ai|tool）——索引片只有
     // message|tool 两档，message 的角色由 extra.role 投影（adapter 同源）。
@@ -1580,9 +1664,9 @@ function applyIndexResults(body, sessions, sessionNameById, mySeq, statusEl, res
     const m = { kind, tool: (h.extra && h.extra.tool) || '' };
     if (!matchesTool(m, toolSel)) continue;
     if (!matchesKind(m)) continue; // 手机层角色筛选缝（桌面恒真）
-    results.push({
+    rows.push({
       sessionId: h.sid,
-      sessionName: sessionNameById.get(h.sid) || h.sid,
+      sessionName: nameOf(h.sid),
       kind,
       tool: m.tool,
       input: '',
@@ -1593,14 +1677,27 @@ function applyIndexResults(body, sessions, sessionNameById, mySeq, statusEl, res
       content: '',
       ts: h.ts,
       ord: h.ord,
+      // 压缩前归档段（adapter 的 origin='archive'）：回放窗口外的老消息，命中
+      // 行照常出结果与排序，跳转退化为「归档提示」（见 jumpToResult 注释）。
+      origin: (h.extra && h.extra.origin) || '',
       attachments: [],
     });
   }
-  results.sort((a, b) => ((b.ts || 0) - (a.ts || 0)) || (b.ord - a.ord));
-  lastTotal = typeof body.total === 'number' ? body.total : results.length;
-  const capped = results.slice(0, MAX_RESULTS);
+  rows.sort((a, b) => ((b.ts || 0) - (a.ts || 0)) || (b.ord - a.ord));
+  if (pager) pager.loaded += rows.length;
+
+  if (append) {
+    if (rows.length) mergeSearchRows(rows);
+    buildModel();
+    renderNextBatch();
+    syncSearchTail(resultsEl);
+    updateStatus();
+    return true;
+  }
+
+  lastTotal = typeof body.total === 'number' ? body.total : rows.length;
   streamSessions = sessions.map(s => {
-    const view = capped.filter(r => r.sessionId === s.id);
+    const view = rows.filter(r => r.sessionId === s.id);
     return {
       id: s.id, name: s.name || s.id, all: [], view,
       start: 0, end: view.length, el: null, headerEl: null,
@@ -1608,8 +1705,198 @@ function applyIndexResults(body, sessions, sessionNameById, mySeq, statusEl, res
   });
   buildModel();
   renderStreamFresh(resultsEl, statusEl);
+  syncSearchTail(resultsEl);
   if (anchorDate) scrollToAnchorInResults();
   return true;
+}
+
+/**
+ * 续取页命中并入现有会话窗口（检索全覆盖批）：新会话（首页没出现过的 sid）现建
+ * 窗口 + 分组头，渲染侧 renderNextBatch 再按需开组（组序 = 队尾，与「命中按时间
+ * 降序」一致：后续页恒为更旧的行）。
+ * @param {any[]} rows 已排序的新命中行
+ */
+function mergeSearchRows(rows) {
+  const bySid = new Map(streamSessions.map(s => [s.id, s]));
+  for (const r of rows) {
+    let s = bySid.get(r.sessionId);
+    if (!s) {
+      s = { id: r.sessionId, name: r.sessionName || r.sessionId, all: [], view: [],
+            entries: [], start: 0, end: 0, el: null, headerEl: null };
+      bySid.set(r.sessionId, s);
+      streamSessions.push(s);
+    }
+    s.view.push(r);
+  }
+  for (const s of streamSessions) {
+    if (!s.view.length) continue;
+    s.view.sort((a, b) => ((b.ts || 0) - (a.ts || 0)) || ((b.ord || 0) - (a.ord || 0)));
+    s.end = s.view.length;
+  }
+}
+
+/** 续取页媒体条目并入现有网格视图（免重抽的条目形状原样入列）。 */
+function mergeMediaEntries(entries) {
+  const bySid = new Map(streamSessions.map(s => [s.id, s]));
+  for (const e of entries) {
+    let s = bySid.get(e.sessionId);
+    if (!s) {
+      s = { id: e.sessionId, name: e.sessionName || e.sessionId, all: [], view: [],
+            entries: [], start: 0, end: 0, el: null, headerEl: null };
+      bySid.set(e.sessionId, s);
+      streamSessions.push(s);
+    }
+    s.entries.push(e);
+    s.view.push(e);
+    s.end = s.entries.length;
+  }
+  if (entries.length) {
+    entries.forEach((e) => {
+      if (modelKeys.has(e.id)) return;
+      modelKeys.set(e.id, lastResults.length);
+      lastResults.push(e);
+    });
+    renderedCount = lastResults.length;
+  }
+}
+
+/** 媒体网格续取页：按时间分组续开组（同标签的连续组并进上一格），卡片逐张追加。 */
+function appendMediaGrid(entries, resultsEl) {
+  if (!resultsEl || !entries.length) return;
+  const tail = searchTailEl;
+  const frag = document.createDocumentFragment();
+  const groups = groupEntriesByTime(entries, new Date());
+  let gridEl = null;
+  let lastLabel = '';
+  const lastHeader = resultsEl.querySelector('.search-media-group-header:last-of-type');
+  const lastGrid = resultsEl.querySelector('.search-media-grid:last-of-type');
+  if (lastHeader && lastGrid) { lastLabel = lastHeader.textContent || ''; gridEl = lastGrid; }
+  for (const g of groups) {
+    const label = g.key === 'undated' ? '' : (g.key === 'week'
+      ? t('search.groupThisWeek') : t('search.groupMonth', { n: g.m0 + 1 }));
+    if (label && label !== lastLabel) {
+      const header = document.createElement('div');
+      header.className = 'search-media-group-header';
+      header.textContent = label;
+      frag.appendChild(header);
+      gridEl = document.createElement('div');
+      gridEl.className = 'search-media-grid';
+      frag.appendChild(gridEl);
+      lastLabel = label;
+    } else if (!gridEl) {
+      gridEl = document.createElement('div');
+      gridEl.className = 'search-media-grid';
+      frag.appendChild(gridEl);
+    }
+    for (const en of g.entries) gridEl.appendChild(mediaEntryCard(en));
+  }
+  if (tail) resultsEl.insertBefore(frag, tail);
+  else resultsEl.appendChild(frag);
+}
+
+/** 续取尾钮（媒体网格档；消息流档走 .search-sentinel 无限滚动）。 */
+function syncSearchTail(resultsEl) {
+  if (!resultsEl) return;
+  const p = searchPager;
+  if (!p || !p.more) {
+    searchTailEl?.remove();
+    searchTailEl = null;
+    return;
+  }
+  let el = searchTailEl;
+  if (!el || !el.isConnected) {
+    el = document.createElement('button');
+    el.type = 'button';
+    el.className = 'search-more-tail';
+    el.addEventListener('click', () => { loadMoreSearch(); });
+    resultsEl.appendChild(el);
+    searchTailEl = el;
+  }
+  el.textContent = t('search.loadMore', { n: p.loaded, m: p.total });
+  el.disabled = false;
+}
+
+/**
+ * 检索续取（检索全覆盖批 2026-11-07，作者报障「为什么不是搜全部的内容，可以
+ * 分段显示但是我要能查看」）：把下一页命中并入结果面，直到 total 取尽。
+ *   · mode='local'：旧全扫回落路径 / 好友·群·设备会话档——全量命中已在内存，
+ *     续取 = 逐段揭示（零请求、零重复扫描）；
+ *   · mode='index'：服务端索引真分页（offset 续取，服务端 limit clamp ≤200）。
+ * 失败只落 pager.failed（尾钮重试），不打断已上屏的结果。
+ */
+async function loadMoreSearch() {
+  const p = searchPager;
+  if (!p || !p.more || p.loading) return;
+  const resultsEl = searchResultsEl;
+  const statusEl = searchStatusEl;
+  if (!resultsEl || !statusEl) return;
+  const mySeq = searchSeq;
+  p.loading = true;
+  p.failed = false;
+  try {
+    if (p.mode === 'local') {
+      p.revealed = Math.min(p.total, p.revealed + SEARCH_PAGE);
+      p.more = p.revealed < p.total;
+      p.loaded = p.revealed;
+      streamSessions = buildLocalSearchWindows(searchAllRows, p.revealed);
+      buildModel();
+      renderNextBatch();
+      syncSearchTail(resultsEl);
+      updateStatus();
+      return;
+    }
+    if (!searchIndexPages) { p.more = false; return; }
+    const url = indexPageUrl(searchIndexPages, p.offset);
+    const cached = searchEtagCache.get(url);
+    const headers = { ...authHeaders() };
+    if (cached) headers['If-None-Match'] = cached.etag;
+    const resp = await fetch(url, { headers, signal: searchAbort?.signal });
+    let body = null;
+    if (resp.status === 304 && cached) body = cached.body;
+    else if (resp.ok) {
+      body = await resp.json();
+      const etag = resp.headers.get('ETag') || '';
+      if (etag && body) searchEtagCache.set(url, { etag, body });
+    }
+    if (mySeq !== searchSeq) return;
+    if (!body || !Array.isArray(body.hits) || typeof body.total !== 'number') {
+      p.failed = true;
+      return;
+    }
+    const n = body.hits.length;
+    p.offset += n;
+    p.total = body.total;
+    // n === 0 或 offset 已过 total ⇒ 收口（禁死循环）；服务端 total 变小时同收口。
+    p.more = n > 0 && p.offset < p.total;
+    applyIndexResults(body, [], new Map(), mySeq, statusEl, resultsEl, true);
+  } catch (e) {
+    if (e.name === 'AbortError') return;
+    p.failed = true;
+  } finally {
+    if (mySeq === searchSeq) { p.loading = false; updateStatus(); }
+  }
+}
+
+/**
+ * 本地分页源的会话窗口构造：view 按**全局名次**升序（新→旧），end = 该会话落在
+ * 「已揭示名次」内的条数——揭示边界按全局名次切一刀，禁逐会话各切一刀（否则
+ * 各会话进度不一，「已加载 N/M」读数与可见面会对不上）。
+ * @param {any[]} rows 全量命中（已排序）
+ * @param {number} revealed 已揭示的全局条数
+ */
+function buildLocalSearchWindows(rows, revealed) {
+  const bySid = new Map();
+  rows.forEach((r, i) => {
+    let s = bySid.get(r.sessionId);
+    if (!s) {
+      s = { id: r.sessionId, name: r.sessionName || r.sessionId, all: [], view: [],
+            entries: [], start: 0, end: 0, el: null, headerEl: null };
+      bySid.set(r.sessionId, s);
+    }
+    s.view.push(r);
+    if (i < revealed) s.end += 1;
+  });
+  return [...bySid.values()];
 }
 
 async function runSearch() {
@@ -1628,6 +1915,13 @@ async function runSearch() {
   streamMode = 'search';
   resultsEl.dataset.loading = 'true';
   statusEl.textContent = t('search.searching');
+  // 每次新查询清零分页档（续取腿只能挂在本次查询的档上）。
+  searchPager = null;
+  searchAllRows = [];
+  searchIndexPages = null;
+  searchNameById = new Map();
+  searchTailEl?.remove();
+  searchTailEl = null;
 
   try {
     // C3：索引快路优先——成功（或已被更新的查询取代/中止）⇒ handled；
@@ -1740,19 +2034,23 @@ async function runSearch() {
 
     // Newest first (timestamped), untimestamped last
     results.sort((a, b) => ((b.ts || 0) - (a.ts || 0)) || (b.ord - a.ord));
-    const capped = results.slice(0, MAX_RESULTS);
+    // 检索全覆盖批 2026-11-07：不再截断前 N 条——全量命中进分页档（mode='local'，
+    // 数据已在手 ⇒ 续取 = 逐段揭示，零请求），首段揭示 SEARCH_PAGE 条，滚到底续揭示。
+    searchAllRows = results;
+    searchIndexPages = null;
     lastTotal = results.length;
+    const firstReveal = Math.min(results.length, SEARCH_PAGE);
+    searchPager = {
+      mode: 'local', url: '', offset: firstReveal, total: results.length,
+      loaded: firstReveal, revealed: firstReveal, pageSize: SEARCH_PAGE,
+      loading: false, failed: false, more: firstReveal < results.length,
+    };
 
     // Reuse the stream render pipeline: one pseudo window per session.
-    streamSessions = sessions.map(s => {
-      const view = capped.filter(r => r.sessionId === s.id);
-      return {
-        id: s.id, name: s.name || s.id, all: [], view,
-        start: 0, end: view.length, el: null, headerEl: null,
-      };
-    });
+    streamSessions = buildLocalSearchWindows(results, firstReveal);
     buildModel();
     renderStreamFresh(resultsEl, statusEl);
+    syncSearchTail(resultsEl);
     if (anchorDate) scrollToAnchorInResults();
   } catch (e) {
     if (e.name === 'AbortError' || mySeq !== searchSeq) return;
@@ -1836,6 +2134,8 @@ function clearResults(resultsEl) {
 
 /** Fresh full render of the current window (initial load / mode switch). */
 function renderStreamFresh(resultsEl, statusEl) {
+  searchResultsEl = resultsEl;
+  searchStatusEl = statusEl;
   resultsEl.removeAttribute('data-loading');
   sentinelObserver?.disconnect();
   sentinelEl = null;
@@ -1911,14 +2211,42 @@ function renderNextBatch() {
     const el = resultElement(item);
     if (grouped) {
       const s = bySid.get(item.sessionId);
-      s?.el?.appendChild(el);
+      if (s && s.el) s.el.appendChild(el);
+      else if (s) {
+        // 续取页带来的**新会话**（首页没出现过的 sid）：组容器现建、落在队尾
+        // ——命中按时间降序，后续页恒更旧，组序与既有面一致。
+        s.el = appendGroupShell(resultsEl, s);
+        s.el.appendChild(el);
+      } else {
+        resultsEl.insertBefore(el, sentinelEl);
+      }
     } else {
       resultsEl.insertBefore(el, sentinelEl);
     }
     appended++;
   }
   renderedCount += appended;
+  if (grouped) for (const s of streamGroups) updateGroupHeader(s);
   return appended > 0;
+}
+
+/**
+ * 分组壳（组容器 + 头）现建并挂到结果流尾部（续取页新会话 / 首屏分组共用形态）。
+ * @param {HTMLElement} resultsEl
+ * @param {{id:string, name:string, end:number, start:number, el:HTMLElement|null, headerEl:HTMLElement|null}} s
+ * @returns {HTMLElement} 组容器
+ */
+function appendGroupShell(resultsEl, s) {
+  const g = document.createElement('div');
+  g.className = 'search-group';
+  const header = document.createElement('div');
+  header.className = 'search-group-header';
+  g.appendChild(header);
+  if (sentinelEl && sentinelEl.parentNode === resultsEl) resultsEl.insertBefore(g, sentinelEl);
+  else resultsEl.appendChild(g);
+  s.headerEl = header;
+  updateGroupHeader(s);
+  return g;
 }
 
 function updateStatus() {
@@ -1927,19 +2255,21 @@ function updateStatus() {
   if (isGrouped()) for (const s of streamGroups) updateGroupHeader(s);
 }
 
-/** Status line: result count (+ truncation notice in search mode only). */
+/** Status line: 已加载/总数（检索全覆盖批——不再有「仅显示前 N 条」的截断尾注）。 */
 function statusSummary() {
   // 3(b) 会话档：前缀 = 会话名（scope 隔离可见化——「只搜当前会话」要读得出来）。
   // 手机层 P2 计数行（v3.6 作者裁定②）全局档仍带「主会话」前缀；桌面全局档零改动。
   const prefix = convScope
     ? convScope.name
     : (document.body.classList.contains('mobile-layer') ? t('search.scopeMain') : '');
-  const base = prefix
-    ? `${prefix} · ${t('search.results', { n: lastTotal })}`
-    : t('search.results', { n: lastTotal });
-  return streamMode === 'search' && lastTotal > MAX_RESULTS
-    ? `${base} (${t('search.truncated', { n: MAX_RESULTS })})`
-    : base;
+  const pager = streamMode === 'search' ? searchPager : null;
+  const total = pager ? pager.total : lastTotal;
+  const loaded = pager ? pager.loaded : lastTotal;
+  // 还有未取命中 ⇒ 报「已加载 N/M 条」（可继续下翻到最早一条）；取尽 ⇒ 报总数。
+  const count = (pager && total > loaded)
+    ? t('search.loadedOf', { n: loaded, m: total })
+    : t('search.results', { n: total });
+  return prefix ? `${prefix} · ${count}` : count;
 }
 
 /** Error state: message + an inline retry button (glass control). */
@@ -2662,11 +2992,15 @@ function scrollToMessage(res, st) {
     // History fully loaded and still no match — allow a few settle ticks for
     // deferred markdown rendering, then give up.
     if (++st.settleTicks > 4) {
-      (/** @type {any} */ (window)).__showToast?.(t('search.jumpFailed'), 'error');
+      // 压缩前归档段的命中（origin='archive'）：消息本体不在回放窗口里（.ui.json
+      // 只留最新段），定位必然落空 ⇒ 报「归档」而非「没找到」（不撒谎的失败态）。
+      (/** @type {any} */ (window)).__showToast?.(
+        t(res.origin === 'archive' ? 'search.jumpArchived' : 'search.jumpFailed'), 'error');
       return;
     }
   } else if (expired) {
-    (/** @type {any} */ (window)).__showToast?.(t('search.jumpFailed'), 'error');
+    (/** @type {any} */ (window)).__showToast?.(
+      t(res.origin === 'archive' ? 'search.jumpArchived' : 'search.jumpFailed'), 'error');
     return;
   }
   setTimeout(() => scrollToMessage(res, st), JUMP_TICK_MS);
