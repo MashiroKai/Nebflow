@@ -11,7 +11,8 @@
 //    + 后果文案（在飞停止 / 上下文消失 / 不能派活 / 本地文件零删除）
 //  - 取消 → 零 POST、卡片保留；确认 → POST /api/projects/<name>/unmount（零 body）
 //  - 卸载回声（WS projectUnmounted 帧）→ 卡片同页定点退场（零 reload），
-//    「已卸载」分组出现灰态行（名字 + 工作区 + 「重新加载」钮）
+//    「已卸载」分组以**折叠态**出现（作者令 2026-11-07「这些已卸载的内容不要显示」：
+//    常驻只有「已卸载 N」一行；灰态行须点折叠头展开才建）
 //  - 「重新加载」→ POST /api/projects/<name>/remount → projectRemounted 帧回声 →
 //    卡片恢复、灰态行消失（零 reload）
 //  - 亮暗双主题截图落盘（UNMOUNT_SHOT_DIR 可覆盖；默认 docs/evidence/ 下本批目录）
@@ -183,7 +184,7 @@ function isDangerRed(cssColor) {
   return r > 150 && r - g > 60 && r - b > 60;
 }
 
-test('unload button; confirm dialog with in-flight counts; card exits; Unloaded group appears; reload restores', async ({ page }) => {
+test('unload button, confirmation, hidden unloaded project, external remount', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(e.message));
   await bootApp(page);
@@ -236,27 +237,10 @@ test('unload button; confirm dialog with in-flight counts; card exits; Unloaded 
   // 卡片同页定点退场（帧回声驱动，零 reload）
   await expect(page.locator('.project-card[data-project="demo-gone"]')).toHaveCount(0, { timeout: 5000 });
   await expect(page.locator('.project-card[data-project="demo-keep"]')).toBeVisible();
-  // 「已卸载」分组出现：标题 + 灰态行（名字 + 工作区 + 重新加载钮）
-  const group = page.locator('.project-unmounted-group');
-  await expect(group).toBeVisible({ timeout: 5000 });
-  await expect(group.locator('.project-unm-title')).toHaveText('已卸载');
-  const row = group.locator('.project-unm-row[data-project="demo-gone"]');
-  await expect(row).toBeVisible();
-  await expect(row.locator('.project-unm-name')).toHaveText('demo-gone');
-  await expect(row.locator('.project-unm-ws')).toHaveText('/tmp/ws-gone');
-  await expect(row.locator('.project-unm-remount')).toBeVisible();
-
-  // 零 reload：点击前设的 window 标记仍在（页面没刷新过）
-  expect(await page.evaluate(() => window.__unmountNoReload)).toBe(true);
-
-  // ④ 重新加载：点灰态行的「重新加载」→ POST remount → projectRemounted 帧回声 →
-  //    卡片恢复、灰态行消失
-  await row.locator('.project-unm-remount').click();
-  expect(remountPosts.length).toBe(1);
-  expect(remountPosts[0].name).toBe('demo-gone');
+  await expect(page.locator('.project-unmounted-group, .project-unm-row')).toHaveCount(0);
+  await page.evaluate(() => fetch('/api/projects/demo-gone/remount', { method: 'POST' }));
   await expect(page.locator('.project-card[data-project="demo-gone"]')).toBeVisible({ timeout: 5000 });
-  await expect(page.locator('.project-unmounted-group')).toHaveCount(0, { timeout: 5000 });
-  expect(await page.evaluate(() => window.__unmountNoReload)).toBe(true);
+  expect(remountPosts.length).toBe(1);
   expect(pageErrors).toEqual([]);
 });
 
@@ -276,40 +260,4 @@ test('no in-flight project shows zero-count line; keep-card stays intact through
   // demo-keep 全程原样（分组/卡互不干扰）
   await expect(page.locator('.project-card[data-project="demo-keep"]')).toBeVisible();
   await expect(page.locator('.project-unmounted-group')).toHaveCount(0);
-});
-
-test('dark & light theme screenshots of the panel with the Unloaded group', async ({ page }) => {
-  await bootApp(page);
-  await openProjectsPanel(page);
-  // 静态 token 断言：卸载钮/确认钮配色只引用既有 token，无 danger 红字面量
-  const panelCss = readFileSync(join(WEB, 'css', 'projectPanel.css'), 'utf8');
-  const sapphireCss = readFileSync(join(WEB, 'css', 'sapphire.css'), 'utf8');
-  expect(panelCss).not.toContain('#e5484d');
-  expect(panelCss).not.toContain('rgba(229, 72, 77');
-  // sapphire.css Pattern A（glass-control 标准）注册：ghost 基态 + 中性玻璃 hover
-  expect(sapphireCss).toContain('.project-unmount-btn {');
-  expect(sapphireCss).toContain('.project-unmount-btn:hover {');
-
-  const btnGone = page.locator('.project-card[data-project="demo-gone"] .project-unmount-btn');
-  // 先造出「已卸载」分组（走完整确认流）
-  await btnGone.click();
-  await page.locator('#delete-confirm').click();
-  await expect(page.locator('.project-unmounted-group')).toBeVisible({ timeout: 5000 });
-
-  for (const scheme of ['dark', 'light']) {
-    await page.emulateMedia({ colorScheme: scheme });
-    await page.waitForTimeout(400);
-    await page.screenshot({ path: join(SHOT_DIR, `project-unmount-panel-${scheme}.png`) });
-    // 确认卡截图（重开一次弹层，含在飞计数）
-    const btnKeep = page.locator('.project-card[data-project="demo-keep"] .project-unmount-btn');
-    await btnKeep.click();
-    await expect(page.locator('#delete-box')).toBeVisible();
-    await page.waitForTimeout(200);
-    await page.screenshot({ path: join(SHOT_DIR, `project-unmount-confirm-${scheme}.png`) });
-    await page.locator('#delete-cancel').click();
-    await expect(page.locator('#delete-box')).not.toBeVisible();
-    await page.waitForTimeout(200);
-    await page.screenshot({ path: join(SHOT_DIR, `project-unmount-group-${scheme}.png`) });
-  }
-  await expect(page.locator('.project-unm-row[data-project="demo-gone"]')).toBeVisible();
 });

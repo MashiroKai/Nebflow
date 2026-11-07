@@ -4399,14 +4399,6 @@ body.mobile-layer #mobile-pages .project-desc-edit-btn svg {
   width: var(--micon-sm);
   height: var(--micon-sm);
 }
-/* 已卸载分组的「重新加载」键。 */
-body.mobile-layer #mobile-pages .project-unm-remount {
-  display: inline-flex;
-  align-items: center;
-  min-height: var(--mtap);
-  padding: 0 var(--mpad-x);
-}
-
 /* 设置：主/次操作钮 44 热区（cfg-btn 族）；折叠下钻行 44；模型测试钮 44。 */
 body.mobile-layer #settings-modal .cfg-btn,
 body.mobile-layer #settings-modal .cfg-btn-primary {
