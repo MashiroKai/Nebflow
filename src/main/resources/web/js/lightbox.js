@@ -167,6 +167,78 @@ function releaseObjectUrl() {
   objectUrl = null;
 }
 
+/* ── 可视屏幕对位（mermaid-inline-center 批 2026-11-07）─────────────────
+   作者令逐字：「使用跟图片一样的点击打开后的查看逻辑。然后点开后要相对屏幕居中，
+   现在有点歪。」
+
+   两件事，一件是根因修复（不在这里 —— 舞台被 css/chat.css 的同名裸选择器钉成
+   1100×810 左上角，见 css/lightbox.css 的批次注），另一件是「屏幕」到底指哪个
+   屏幕：手机上 `position:fixed; inset:0` 盖的是**布局视口**，而用户看到的是
+   **可视视口**（浏览器栏展开、地址栏收起、软键盘弹起时两者差几十至几百 px）。
+   按布局视口居中 = 图在可视屏幕里偏上/被浏览器栏吃掉。
+
+   所以浮层的盒改成读 `visualViewport` 的真值：可视视口相对布局视口有偏移或内缩
+   时，把浮层的四边钉到可视区域（`syncViewportPin`），图仍然由舞台 flex 居中 ——
+   中心 = 可视屏幕中心。桌面与「两者完全一致」的场合一律清掉内联盒，走 CSS
+   （零行为变化，也不引入每帧计算）。 */
+let viewportArmed = false;
+
+/** 可视视口相对布局视口的真实盒；一致（桌面常态）时返回 null。 */
+function visualBox() {
+  const vv = typeof window !== 'undefined' ? window.visualViewport : null;
+  if (!vv) return null;
+  const w = Number(vv.width);
+  const h = Number(vv.height);
+  if (!(w > 0 && h > 0)) return null;
+  const inset =
+    Math.abs(w - window.innerWidth) > 1 ||
+    Math.abs(h - window.innerHeight) > 1 ||
+    Math.abs(Number(vv.offsetLeft) || 0) > 0.5 ||
+    Math.abs(Number(vv.offsetTop) || 0) > 0.5 ||
+    Math.abs((Number(vv.scale) || 1) - 1) > 0.01;
+  return inset
+    ? { left: Number(vv.offsetLeft) || 0, top: Number(vv.offsetTop) || 0, width: w, height: h }
+    : null;
+}
+
+/** 把浮层钉到可视视口（或清空内联盒回到 CSS 整屏）。读数落 data-*，供验收断言。 */
+function syncViewportPin() {
+  if (!overlayEl) return;
+  const box = visualBox();
+  if (!box) {
+    overlayEl.style.left = '';
+    overlayEl.style.top = '';
+    overlayEl.style.width = '';
+    overlayEl.style.height = '';
+    overlayEl.setAttribute('data-nf-vv-pinned', '0');
+    return;
+  }
+  overlayEl.style.left = box.left + 'px';
+  overlayEl.style.top = box.top + 'px';
+  overlayEl.style.width = box.width + 'px';
+  overlayEl.style.height = box.height + 'px';
+  overlayEl.setAttribute('data-nf-vv-pinned', '1');
+}
+
+/** 视口变化（旋转 / 浏览器栏 / 键盘 / 页面捏合）：重钉浮层，图形模式重算图纸盒。 */
+function armViewportPin() {
+  if (viewportArmed || typeof window === 'undefined') return;
+  viewportArmed = true;
+  const on = () => {
+    syncViewportPin();
+    // 只在「图形模式且浮层真的开着」时重算图纸盒：关着时舞台盒是 0，重算没意义。
+    if (lmode === 'svg' && overlayEl && overlayEl.classList.contains('on')) fitDiagramCanvas();
+  };
+  window.addEventListener('resize', on);
+  window.addEventListener('orientationchange', on);
+  const vv = window.visualViewport;
+  if (vv && vv.addEventListener) {
+    vv.addEventListener('resize', on);
+    vv.addEventListener('scroll', on);
+  }
+  syncViewportPin();
+}
+
 function ensureDom() {
   if (overlayEl) return;
   overlayEl = document.createElement('div');
@@ -199,6 +271,8 @@ function ensureDom() {
   });
   mobileSheetBack(overlayEl, closeLightbox);
   document.body.appendChild(overlayEl);
+  // 浮层落 DOM 后再对位：`syncViewportPin` 只改内联盒，无观测、无回环。
+  armViewportPin();
 }
 
 /* ── 图形模式：DOM / 缩放 / 平移 / 指针手势 ──────────────────────────── */
@@ -241,9 +315,59 @@ function ensureFigureDom() {
   bindFigureGestures();
 }
 
-/** 把一段 SVG 克隆进舞台：id 整体改名（防与文档里那份撞 id），尺寸交给舞台盒。 */
+/** 适配盒分数（`--nf-lb-fit-w/h`，单源在 css/lightbox.css —— 图片模式与图形模式
+ *  同一档；这里只读，不另写一套数）。读不到时回落到同值。 */
+function fitFractions() {
+  const cs = overlayEl ? getComputedStyle(overlayEl) : null;
+  const frac = (raw, fallback) => {
+    const m = /^([\d.]+)%$/.exec(String(raw || '').trim());
+    if (!m) return fallback;
+    const v = Number(m[1]) / 100;
+    return v > 0 && v <= 1 ? v : fallback;
+  };
+  return {
+    w: frac(cs && cs.getPropertyValue('--nf-lb-fit-w'), 0.92),
+    h: frac(cs && cs.getPropertyValue('--nf-lb-fit-h'), 0.88),
+  };
+}
+
+/**
+ * 把图纸盒按「舞台实盒 × 适配盒分数」摆正（居中由舞台 flex 完成，不写死坐标）。
+ *
+ * 与图片模式同一条规则：整幅可见、比例不变、相对可视屏幕居中（作者令「使用跟图片
+ * 一样的点击打开后的查看逻辑」「点开后要相对屏幕居中」）。
+ * 舞台盒读的是**实测**矩形而不是 `innerWidth/innerHeight`：浮层会被
+ * `syncViewportPin()` 钉到可视视口（手机浏览器栏/键盘），按布局视口算就会算出屏幕
+ * 外的高宽 —— 旧实现既有这一条，也同时在横向超出舞台（实测 1152 > 1100）。
+ * 图纸 padding 从计算样式读回来并扣掉：否则纸面内距会把图二次缩小、还让纸面
+ * 越过适配盒。
+ */
+function fitDiagramCanvas() {
+  if (!canvasEl || !stageEl) return;
+  const size = figureSize(canvasEl.firstElementChild);
+  const r = stageEl.getBoundingClientRect();
+  const f = fitFractions();
+  const padX = parseFloat(getComputedStyle(canvasEl).paddingLeft || '0') * 2 || 0;
+  const padY = parseFloat(getComputedStyle(canvasEl).paddingTop || '0') * 2 || 0;
+  const boxW = Math.max(1, r.width * f.w - padX);
+  const boxH = Math.max(1, r.height * f.h - padY);
+  let w = boxW;
+  let h = boxH;
+  if (size && size.w > 0 && size.h > 0) {
+    const ar = size.w / size.h;
+    if (boxW / boxH > ar) h = boxH, w = h * ar;   // 盒比图宽 ⇒ 高度受限
+    else w = boxW, h = w / ar;                     // 盒比图高 ⇒ 宽度受限
+  }
+  // 不取整：像素取整会把纸面中心推离屏幕中心（±0.5px 的肉眼「歪」，验收是 1px 级）。
+  // 纸面是 border-box（css/base.css 全局）⇒ 写回去的是「内容盒 + padding」；
+  // 只写内容尺寸会让 padding 吃掉高度（实测 36:1 的宽图内容高被压成 0）。
+  canvasEl.style.width = (w + padX) + 'px';
+  canvasEl.style.height = (h + padY) + 'px';
+}
+
+/** 把一段 SVG 克隆进舞台：id 整体改名（防与文档里那份撞 id），尺寸交给舞台盒。
+ *  矢量克隆 = 零二次传输、零重新渲染，放大不糊（作者令「保留 SVG 清晰度」）。 */
 function mountDiagram(/** @type {Element} */ svg) {
-  const size = figureSize(svg);
   const clone = /** @type {Element} */ (svg.cloneNode(true));
   const oldId = clone.getAttribute('id') || '';
   if (oldId) retargetIds(clone, oldId, oldId + '-lb');
@@ -256,17 +380,7 @@ function mountDiagram(/** @type {Element} */ svg) {
   canvasEl.replaceChildren(clone);
 
   // 100% = 「整幅可见」这一档（拟合盒），缩放从这个基准往上走。
-  const maxW = Math.min(window.innerWidth * 0.9, 1280);
-  const maxH = Math.min(window.innerHeight * 0.78, 960);
-  let w = maxW;
-  let h = maxH;
-  if (size && size.w > 0 && size.h > 0) {
-    const ar = size.w / size.h;
-    w = Math.min(maxW, maxH * ar);
-    h = w / ar;
-  }
-  canvasEl.style.width = Math.round(w) + 'px';
-  canvasEl.style.height = Math.round(h) + 'px';
+  fitDiagramCanvas();
 }
 
 /** 克隆树里的 id 全部改名，并同步改 `<style>` 文本与 `url(#…)` / `href="#…"` 引用。 */
@@ -437,6 +551,8 @@ export function openDiagramLightbox(svg) {
   imgEl.removeAttribute('src');
   releaseObjectUrl();
   openSeq += 1;               // 作废任何在飞的图片取字节
+  // 先对位（浮层 = 可视屏幕），再算图纸盒 —— 顺序反了就会按旧舞台尺寸摆图。
+  syncViewportPin();
   mountDiagram(svg);
   figState = { scale: 1, tx: 0, ty: 0, min: FIG_MIN, max: FIG_MAX };
   figApply();
@@ -456,6 +572,7 @@ export function openLightbox(src, alt, path) {
   if (!src || typeof src !== 'string') return;
   ensureDom();
   setMode('img');
+  syncViewportPin();          // 浮层先对位到可视屏幕（图片模式同一处入口）
   openCount += 1;
   overlayEl.setAttribute('data-nf-open-seq', String(openCount));
   overlayEl.setAttribute('aria-label', t('lightbox.ariaLabel'));

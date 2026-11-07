@@ -1,0 +1,1091 @@
+{
+  "counts": {
+    "pass": 70,
+    "fail": 0,
+    "total": 70
+  },
+  "shots": "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/mermaid-inline-center/reports-evidence/mermaid-inline-center__20261107124513__shots",
+  "inline": {
+    "canvas": {
+      "figs": [
+        {
+          "i": 0,
+          "slotW": 422,
+          "slotH": 1862,
+          "scrollW": 422,
+          "scrollH": 1862,
+          "clientW": 422,
+          "clientH": 1862,
+          "overflowX": "visible",
+          "overflowY": "visible",
+          "maxH": "none",
+          "svgW": 168,
+          "svgH": 1862,
+          "vbRatio": 0.1,
+          "svgRatio": 0.1,
+          "clipBottom": 0,
+          "openBtn": true
+        },
+        {
+          "i": 1,
+          "slotW": 422,
+          "slotH": 72,
+          "scrollW": 422,
+          "scrollH": 72,
+          "clientW": 422,
+          "clientH": 72,
+          "overflowX": "visible",
+          "overflowY": "visible",
+          "maxH": "none",
+          "svgW": 422,
+          "svgH": 11.7,
+          "vbRatio": 36,
+          "svgRatio": 36,
+          "clipBottom": 60.3,
+          "openBtn": true
+        },
+        {
+          "i": 2,
+          "slotW": 422,
+          "slotH": 410,
+          "scrollW": 422,
+          "scrollH": 410,
+          "clientW": 422,
+          "clientH": 410,
+          "overflowX": "visible",
+          "overflowY": "visible",
+          "maxH": "none",
+          "svgW": 360,
+          "svgH": 410,
+          "vbRatio": 0.9,
+          "svgRatio": 0.9,
+          "clipBottom": 0,
+          "openBtn": true
+        }
+      ],
+      "docScrollH": 2682,
+      "docClientH": 864
+    },
+    "chat": {
+      "figs": [
+        {
+          "i": 0,
+          "slotW": 300,
+          "slotH": 341.6,
+          "scrollW": 300,
+          "scrollH": 342,
+          "clientW": 300,
+          "clientH": 342,
+          "overflowX": "visible",
+          "overflowY": "visible",
+          "maxH": "none",
+          "svgW": 300,
+          "svgH": 341.6,
+          "vbRatio": 0.9,
+          "svgRatio": 0.9,
+          "clipBottom": 0,
+          "openBtn": true
+        },
+        {
+          "i": 1,
+          "slotW": 168,
+          "slotH": 1862,
+          "scrollW": 168,
+          "scrollH": 1862,
+          "clientW": 168,
+          "clientH": 1862,
+          "overflowX": "visible",
+          "overflowY": "visible",
+          "maxH": "none",
+          "svgW": 168,
+          "svgH": 1862,
+          "vbRatio": 0.1,
+          "svgRatio": 0.1,
+          "clipBottom": 0,
+          "openBtn": true
+        },
+        {
+          "i": 2,
+          "slotW": 299.8,
+          "slotH": 72,
+          "scrollW": 300,
+          "scrollH": 72,
+          "clientW": 300,
+          "clientH": 72,
+          "overflowX": "visible",
+          "overflowY": "visible",
+          "maxH": "none",
+          "svgW": 299.8,
+          "svgH": 8.3,
+          "vbRatio": 36,
+          "svgRatio": 36,
+          "clipBottom": 63.7,
+          "openBtn": true
+        },
+        {
+          "i": 3,
+          "slotW": 168,
+          "slotH": 140,
+          "scrollW": 168,
+          "scrollH": 140,
+          "clientW": 168,
+          "clientH": 140,
+          "overflowX": "visible",
+          "overflowY": "visible",
+          "maxH": "none",
+          "svgW": 168,
+          "svgH": 140,
+          "vbRatio": 1.2,
+          "svgRatio": 1.2,
+          "clipBottom": 0,
+          "openBtn": true
+        },
+        {
+          "i": 4,
+          "slotW": 422,
+          "slotH": 1862,
+          "scrollW": 422,
+          "scrollH": 1862,
+          "clientW": 422,
+          "clientH": 1862,
+          "overflowX": "visible",
+          "overflowY": "visible",
+          "maxH": "none",
+          "svgW": 168,
+          "svgH": 1862,
+          "vbRatio": 0.1,
+          "svgRatio": 0.1,
+          "clipBottom": 0,
+          "openBtn": true
+        },
+        {
+          "i": 5,
+          "slotW": 422,
+          "slotH": 72,
+          "scrollW": 422,
+          "scrollH": 72,
+          "clientW": 422,
+          "clientH": 72,
+          "overflowX": "visible",
+          "overflowY": "visible",
+          "maxH": "none",
+          "svgW": 422,
+          "svgH": 11.7,
+          "vbRatio": 36,
+          "svgRatio": 36,
+          "clipBottom": 60.3,
+          "openBtn": true
+        },
+        {
+          "i": 6,
+          "slotW": 422,
+          "slotH": 410,
+          "scrollW": 422,
+          "scrollH": 410,
+          "clientW": 422,
+          "clientH": 410,
+          "overflowX": "visible",
+          "overflowY": "visible",
+          "maxH": "none",
+          "svgW": 360,
+          "svgH": 410,
+          "vbRatio": 0.9,
+          "svgRatio": 0.9,
+          "clipBottom": 0,
+          "openBtn": true
+        }
+      ],
+      "docScrollH": 2682,
+      "docClientH": 864
+    },
+    "m_390x844": {
+      "figs": [
+        {
+          "i": 0,
+          "slotW": 256.4,
+          "slotH": 292,
+          "scrollW": 256,
+          "scrollH": 292,
+          "clientW": 256,
+          "clientH": 292,
+          "overflowX": "visible",
+          "overflowY": "visible",
+          "maxH": "none",
+          "svgW": 256.4,
+          "svgH": 292,
+          "vbRatio": 0.9,
+          "svgRatio": 0.9,
+          "clipBottom": 0,
+          "openBtn": true
+        },
+        {
+          "i": 1,
+          "slotW": 168,
+          "slotH": 1862,
+          "scrollW": 168,
+          "scrollH": 1862,
+          "clientW": 168,
+          "clientH": 1862,
+          "overflowX": "visible",
+          "overflowY": "visible",
+          "maxH": "none",
+          "svgW": 168,
+          "svgH": 1862,
+          "vbRatio": 0.1,
+          "svgRatio": 0.1,
+          "clipBottom": 0,
+          "openBtn": true
+        },
+        {
+          "i": 2,
+          "slotW": 256.4,
+          "slotH": 72,
+          "scrollW": 256,
+          "scrollH": 72,
+          "clientW": 256,
+          "clientH": 72,
+          "overflowX": "visible",
+          "overflowY": "visible",
+          "maxH": "none",
+          "svgW": 256.4,
+          "svgH": 7.1,
+          "vbRatio": 36,
+          "svgRatio": 36.1,
+          "clipBottom": 64.9,
+          "openBtn": true
+        },
+        {
+          "i": 3,
+          "slotW": 168,
+          "slotH": 140,
+          "scrollW": 168,
+          "scrollH": 140,
+          "clientW": 168,
+          "clientH": 140,
+          "overflowX": "visible",
+          "overflowY": "visible",
+          "maxH": "none",
+          "svgW": 168,
+          "svgH": 140,
+          "vbRatio": 1.2,
+          "svgRatio": 1.2,
+          "clipBottom": 0,
+          "openBtn": true
+        }
+      ],
+      "docScrollH": null,
+      "docClientH": null
+    },
+    "m_375x812": {
+      "figs": [
+        {
+          "i": 0,
+          "slotW": 244.4,
+          "slotH": 278.3,
+          "scrollW": 244,
+          "scrollH": 278,
+          "clientW": 244,
+          "clientH": 278,
+          "overflowX": "visible",
+          "overflowY": "visible",
+          "maxH": "none",
+          "svgW": 244.4,
+          "svgH": 278.3,
+          "vbRatio": 0.9,
+          "svgRatio": 0.9,
+          "clipBottom": 0,
+          "openBtn": true
+        },
+        {
+          "i": 1,
+          "slotW": 168,
+          "slotH": 1862,
+          "scrollW": 168,
+          "scrollH": 1862,
+          "clientW": 168,
+          "clientH": 1862,
+          "overflowX": "visible",
+          "overflowY": "visible",
+          "maxH": "none",
+          "svgW": 168,
+          "svgH": 1862,
+          "vbRatio": 0.1,
+          "svgRatio": 0.1,
+          "clipBottom": 0,
+          "openBtn": true
+        },
+        {
+          "i": 2,
+          "slotW": 244.4,
+          "slotH": 72,
+          "scrollW": 244,
+          "scrollH": 72,
+          "clientW": 244,
+          "clientH": 72,
+          "overflowX": "visible",
+          "overflowY": "visible",
+          "maxH": "none",
+          "svgW": 244.4,
+          "svgH": 6.8,
+          "vbRatio": 36,
+          "svgRatio": 36,
+          "clipBottom": 65.2,
+          "openBtn": true
+        },
+        {
+          "i": 3,
+          "slotW": 168,
+          "slotH": 140,
+          "scrollW": 168,
+          "scrollH": 140,
+          "clientW": 168,
+          "clientH": 140,
+          "overflowX": "visible",
+          "overflowY": "visible",
+          "maxH": "none",
+          "svgW": 168,
+          "svgH": 140,
+          "vbRatio": 1.2,
+          "svgRatio": 1.2,
+          "clipBottom": 0,
+          "openBtn": true
+        }
+      ],
+      "docScrollH": null,
+      "docClientH": null
+    }
+  },
+  "stability": {
+    "canvas": {
+      "frames": 39,
+      "panel": {
+        "dw": 0,
+        "dh": 0,
+        "n": 39,
+        "first": [
+          472,
+          874
+        ]
+      },
+      "main": {
+        "dw": 0,
+        "dh": 0,
+        "n": 39,
+        "first": [
+          468,
+          890
+        ]
+      },
+      "chat": {
+        "dw": 0,
+        "dh": 0,
+        "n": 39,
+        "first": [
+          468,
+          890
+        ]
+      },
+      "sidebar": {
+        "dw": 0,
+        "dh": 0,
+        "n": 39,
+        "first": [
+          236,
+          874
+        ]
+      },
+      "islandFrames": 0
+    },
+    "chat": {
+      "frames": 27,
+      "chat": {
+        "dw": 0,
+        "dh": 0,
+        "n": 27,
+        "first": [
+          468,
+          890
+        ]
+      },
+      "main": {
+        "dw": 0,
+        "dh": 0,
+        "n": 27,
+        "first": [
+          468,
+          890
+        ]
+      }
+    }
+  },
+  "viewer": {
+    "desktopTall": {
+      "on": true,
+      "overlays": 1,
+      "mode": "svg",
+      "seq": "1",
+      "pinned": "0",
+      "overlay": [
+        0,
+        0,
+        1280,
+        900
+      ],
+      "stage": [
+        0,
+        0,
+        1280,
+        900
+      ],
+      "canvas": [
+        593.4,
+        54,
+        93.3,
+        792
+      ],
+      "svg": [
+        605.4,
+        66,
+        69.3,
+        768
+      ],
+      "img": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "canvasOff": [
+        0,
+        0
+      ],
+      "svgOff": [
+        0,
+        0
+      ],
+      "imgOff": [
+        -640,
+        -450
+      ],
+      "vv": {
+        "w": 1280,
+        "h": 900,
+        "ox": 0,
+        "oy": 0
+      },
+      "win": [
+        1280,
+        900
+      ],
+      "pct": "100%",
+      "transform": "translate3d(0px, 0px, 0px) scale(1)",
+      "svgTexts": 92,
+      "svgIsVector": true,
+      "imgIsRaster": false,
+      "a11y": {
+        "role": "dialog",
+        "modal": "true",
+        "closeLabel": "关闭预览",
+        "ctls": [
+          "缩小",
+          "放大",
+          "适应视图"
+        ]
+      }
+    },
+    "desktopTallZoom": {
+      "on": true,
+      "overlays": 1,
+      "mode": "svg",
+      "seq": "1",
+      "pinned": "0",
+      "overlay": [
+        0,
+        0,
+        1280,
+        900
+      ],
+      "stage": [
+        0,
+        0,
+        1280,
+        900
+      ],
+      "canvas": [
+        567.1,
+        -168.7,
+        145.8,
+        1237.5
+      ],
+      "svg": [
+        585.9,
+        -150,
+        108.3,
+        1200
+      ],
+      "img": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "canvasOff": [
+        0,
+        0
+      ],
+      "svgOff": [
+        0,
+        0
+      ],
+      "imgOff": [
+        -640,
+        -450
+      ],
+      "vv": {
+        "w": 1280,
+        "h": 900,
+        "ox": 0,
+        "oy": 0
+      },
+      "win": [
+        1280,
+        900
+      ],
+      "pct": "156%",
+      "transform": "translate3d(0px, 0px, 0px) scale(1.5625)",
+      "svgTexts": 92,
+      "svgIsVector": true,
+      "imgIsRaster": false,
+      "a11y": {
+        "role": "dialog",
+        "modal": "true",
+        "closeLabel": "关闭预览",
+        "ctls": [
+          "缩小",
+          "放大",
+          "适应视图"
+        ]
+      }
+    },
+    "desktopImg": {
+      "on": true,
+      "overlays": 1,
+      "mode": "img",
+      "seq": "4",
+      "pinned": "0",
+      "overlay": [
+        0,
+        0,
+        1280,
+        900
+      ],
+      "stage": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "canvas": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "svg": null,
+      "img": [
+        639.5,
+        449.5,
+        1,
+        1
+      ],
+      "canvasOff": [
+        -640,
+        -450
+      ],
+      "svgOff": null,
+      "imgOff": [
+        0,
+        0
+      ],
+      "vv": {
+        "w": 1280,
+        "h": 900,
+        "ox": 0,
+        "oy": 0
+      },
+      "win": [
+        1280,
+        900
+      ],
+      "pct": "100%",
+      "transform": "",
+      "svgTexts": 0,
+      "svgIsVector": false,
+      "imgIsRaster": true,
+      "a11y": {
+        "role": "dialog",
+        "modal": "true",
+        "closeLabel": "关闭预览",
+        "ctls": [
+          "缩小",
+          "放大",
+          "适应视图"
+        ]
+      }
+    },
+    "sharedBox": {
+      "fw": "92%",
+      "fh": "88%",
+      "mw": "92%",
+      "mh": "88%"
+    },
+    "desktopErrors": {
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    "mobile_390x844": {
+      "on": true,
+      "overlays": 1,
+      "mode": "svg",
+      "seq": "1",
+      "pinned": "0",
+      "overlay": [
+        0,
+        0,
+        390,
+        844
+      ],
+      "stage": [
+        0,
+        0,
+        390,
+        844
+      ],
+      "canvas": [
+        15.6,
+        219.3,
+        358.8,
+        405.3
+      ],
+      "svg": [
+        27.6,
+        231.3,
+        334.8,
+        381.3
+      ],
+      "img": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "canvasOff": [
+        0,
+        0
+      ],
+      "svgOff": [
+        0,
+        0
+      ],
+      "imgOff": [
+        -195,
+        -422
+      ],
+      "vv": {
+        "w": 390,
+        "h": 844,
+        "ox": 0,
+        "oy": 0
+      },
+      "win": [
+        390,
+        844
+      ],
+      "pct": "100%",
+      "transform": "translate3d(0px, 0px, 0px) scale(1)",
+      "svgTexts": 20,
+      "svgIsVector": true,
+      "imgIsRaster": false,
+      "a11y": {
+        "role": "dialog",
+        "modal": "true",
+        "closeLabel": "关闭预览",
+        "ctls": [
+          "缩小",
+          "放大",
+          "适应视图"
+        ]
+      }
+    },
+    "mobile_390x844_zoom": {
+      "on": true,
+      "overlays": 1,
+      "mode": "svg",
+      "seq": "1",
+      "pinned": "0",
+      "overlay": [
+        0,
+        0,
+        390,
+        844
+      ],
+      "stage": [
+        0,
+        0,
+        390,
+        844
+      ],
+      "canvas": [
+        -85.3,
+        105.4,
+        560.6,
+        633.3
+      ],
+      "svg": [
+        -66.6,
+        124.1,
+        523.1,
+        595.8
+      ],
+      "img": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "canvasOff": [
+        0,
+        0
+      ],
+      "svgOff": [
+        0,
+        0
+      ],
+      "imgOff": [
+        -195,
+        -422
+      ],
+      "vv": {
+        "w": 390,
+        "h": 844,
+        "ox": 0,
+        "oy": 0
+      },
+      "win": [
+        390,
+        844
+      ],
+      "pct": "156%",
+      "transform": "translate3d(0px, 0px, 0px) scale(1.5625)",
+      "svgTexts": 20,
+      "svgIsVector": true,
+      "imgIsRaster": false,
+      "a11y": {
+        "role": "dialog",
+        "modal": "true",
+        "closeLabel": "关闭预览",
+        "ctls": [
+          "缩小",
+          "放大",
+          "适应视图"
+        ]
+      }
+    },
+    "dyn_390x844": {
+      "on": true,
+      "overlays": 1,
+      "mode": "svg",
+      "seq": "2",
+      "pinned": "1",
+      "overlay": [
+        0,
+        44,
+        390,
+        700
+      ],
+      "stage": [
+        0,
+        44,
+        390,
+        700
+      ],
+      "canvas": [
+        15.6,
+        191.3,
+        358.8,
+        405.3
+      ],
+      "svg": [
+        27.6,
+        203.3,
+        334.8,
+        381.3
+      ],
+      "img": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "canvasOff": [
+        0,
+        -28
+      ],
+      "svgOff": [
+        0,
+        -28
+      ],
+      "imgOff": [
+        -195,
+        -422
+      ],
+      "vv": {
+        "w": 390,
+        "h": 700,
+        "ox": 0,
+        "oy": 44
+      },
+      "win": [
+        390,
+        844
+      ],
+      "pct": "100%",
+      "transform": "translate3d(0px, 0px, 0px) scale(1)",
+      "svgTexts": 20,
+      "svgIsVector": true,
+      "imgIsRaster": false,
+      "a11y": {
+        "role": "dialog",
+        "modal": "true",
+        "closeLabel": "关闭预览",
+        "ctls": [
+          "缩小",
+          "放大",
+          "适应视图"
+        ]
+      }
+    },
+    "mobile_375x812": {
+      "on": true,
+      "overlays": 1,
+      "mode": "svg",
+      "seq": "1",
+      "pinned": "0",
+      "overlay": [
+        0,
+        0,
+        375,
+        812
+      ],
+      "stage": [
+        0,
+        0,
+        375,
+        812
+      ],
+      "canvas": [
+        15,
+        211.2,
+        345,
+        389.6
+      ],
+      "svg": [
+        27,
+        223.2,
+        321,
+        365.6
+      ],
+      "img": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "canvasOff": [
+        0,
+        0
+      ],
+      "svgOff": [
+        0,
+        0
+      ],
+      "imgOff": [
+        -187.5,
+        -406
+      ],
+      "vv": {
+        "w": 375,
+        "h": 812,
+        "ox": 0,
+        "oy": 0
+      },
+      "win": [
+        375,
+        812
+      ],
+      "pct": "100%",
+      "transform": "translate3d(0px, 0px, 0px) scale(1)",
+      "svgTexts": 20,
+      "svgIsVector": true,
+      "imgIsRaster": false,
+      "a11y": {
+        "role": "dialog",
+        "modal": "true",
+        "closeLabel": "关闭预览",
+        "ctls": [
+          "缩小",
+          "放大",
+          "适应视图"
+        ]
+      }
+    },
+    "mobile_375x812_zoom": {
+      "on": true,
+      "overlays": 1,
+      "mode": "svg",
+      "seq": "1",
+      "pinned": "0",
+      "overlay": [
+        0,
+        0,
+        375,
+        812
+      ],
+      "stage": [
+        0,
+        0,
+        375,
+        812
+      ],
+      "canvas": [
+        -82,
+        101.6,
+        539.1,
+        608.7
+      ],
+      "svg": [
+        -63.3,
+        120.4,
+        501.6,
+        571.2
+      ],
+      "img": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "canvasOff": [
+        0,
+        0
+      ],
+      "svgOff": [
+        0,
+        0
+      ],
+      "imgOff": [
+        -187.5,
+        -406
+      ],
+      "vv": {
+        "w": 375,
+        "h": 812,
+        "ox": 0,
+        "oy": 0
+      },
+      "win": [
+        375,
+        812
+      ],
+      "pct": "156%",
+      "transform": "translate3d(0px, 0px, 0px) scale(1.5625)",
+      "svgTexts": 20,
+      "svgIsVector": true,
+      "imgIsRaster": false,
+      "a11y": {
+        "role": "dialog",
+        "modal": "true",
+        "closeLabel": "关闭预览",
+        "ctls": [
+          "缩小",
+          "放大",
+          "适应视图"
+        ]
+      }
+    },
+    "dyn_375x812": {
+      "on": true,
+      "overlays": 1,
+      "mode": "svg",
+      "seq": "2",
+      "pinned": "1",
+      "overlay": [
+        0,
+        44,
+        375,
+        668
+      ],
+      "stage": [
+        0,
+        44,
+        375,
+        668
+      ],
+      "canvas": [
+        15,
+        183.2,
+        345,
+        389.6
+      ],
+      "svg": [
+        27,
+        195.2,
+        321,
+        365.6
+      ],
+      "img": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "canvasOff": [
+        0,
+        -28
+      ],
+      "svgOff": [
+        0,
+        -28
+      ],
+      "imgOff": [
+        -187.5,
+        -406
+      ],
+      "vv": {
+        "w": 375,
+        "h": 668,
+        "ox": 0,
+        "oy": 44
+      },
+      "win": [
+        375,
+        812
+      ],
+      "pct": "100%",
+      "transform": "translate3d(0px, 0px, 0px) scale(1)",
+      "svgTexts": 20,
+      "svgIsVector": true,
+      "imgIsRaster": false,
+      "a11y": {
+        "role": "dialog",
+        "modal": "true",
+        "closeLabel": "关闭预览",
+        "ctls": [
+          "缩小",
+          "放大",
+          "适应视图"
+        ]
+      }
+    }
+  }
+}

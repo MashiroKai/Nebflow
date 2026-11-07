@@ -2,14 +2,26 @@
 
 :root {
   --nf-lightbox-backdrop: rgba(27, 30, 38, 0.55); /* #1b1e26 ink @ 55% */
+  /* 内容适配盒 = 「图片/框图铺满多少屏幕」，**看图与看图解同一档**（作者令
+     2026-11-07「使用跟图片一样的点击打开后的查看逻辑」）。相对**浮层**取百分比，
+     不是 vw/vh：浮层在手机上会被 `syncViewportPin()` 钉到**可视视口**（动态视口 /
+     键盘弹起时都比布局视口小），用视口单位就会算出屏幕外的高度 ⇒ 内容偏上、被
+     浏览器栏吃掉 —— 这正是作者报障的「点开后有点歪」。同一份分数也是
+     js/lightbox.js `fitDiagramCanvas()` 的唯一来源（读 CSS，不在 JS 里另写一套）。 */
+  --nf-lb-fit-w: 92%;
+  --nf-lb-fit-h: 88%;
 }
 @media (prefers-color-scheme: dark) {
   :root { --nf-lightbox-backdrop: rgba(0, 0, 0, 0.72); }
 }
 
+/* 浮层 = 可视屏幕（默认整屏；`syncViewportPin()` 在可视视口被内缩/平移时改写成
+   内联盒，四边归位到可视区域）。`height:100dvh` 是 CSS 侧兜底：动态视口里
+   100% 会跟着「最大视口」走，dvh 跟的是当前可视高度。 */
 .nf-lightbox {
   position: fixed;
   inset: 0;
+  height: 100dvh;
   z-index: 400;              /* above modal-overlay (300/310) */
   display: none;
   align-items: center;
@@ -23,8 +35,8 @@
 body.nf-lightbox-open { overflow: hidden; }
 
 .nf-lightbox-img {
-  max-width: 92vw;
-  max-height: 88vh;
+  max-width: var(--nf-lb-fit-w);
+  max-height: var(--nf-lb-fit-h);
   border-radius: var(--ds-radius-input);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.24), 0 2px 8px rgba(0, 0, 0, 0.16);
   cursor: default;
@@ -41,6 +53,11 @@ body.nf-lightbox-open { overflow: hidden; }
   position: absolute;
   top: 16px;
   right: 16px;
+  /* 层级：舞台（.nf-lightbox-stage，inset:0）在 DOM 里排在关闭钮之后 ⇒ 无 z-index
+     时它会盖住右上角这枚钮（mermaid-inline-center 批实测：图形模式下真实点击落到
+     舞台身上，关闭钮永远收不到 click）。看图模式因此显式抬到舞台之上（缩放条
+     z-index:2 同理，本钮在它之上）。 */
+  z-index: 3;
   width: 30px;
   height: 30px;
   display: flex;
@@ -88,6 +105,19 @@ img.nf-zoom-img { cursor: pointer; }
    mermaid-viewer-stability 批 2026-11-06（作者令「你气泡里渲染的 要点击能变成
    大图查看 canvas里的也要能支持」）。同一个浮层节点、同一个关闭/焦点/返回链路，
    只多一层内容面 —— 图片模式与图形模式是同一组件的两个 mode，不是两个查看器。
+   mermaid-inline-center 批 2026-11-07：内容面几何与图片模式统一（适配盒 = 上面那
+   一档 --nf-lb-fit-*），并把「偏屏」的机制根因修掉。
+
+   ⚠ 偏屏机制根因（本批实测，非推断）：`.nf-lightbox-stage` / `.nf-lightbox-canvas`
+   这两个类名**同时属于两个组件** —— 看图浮层（本文件）与 popArtifacts 的媒体灯箱
+   （css/chat.css「the in-stream lightbox」块，stage = 竖排 flex + max-width:
+   min(92vw,1100px) + max-height:90vh，canvas = 一粒「打开画板」药丸按钮）。两套声明
+   同权重叠在一起后：绝对定位 + inset:0 与 max-width/max-height 过约束 ⇒ 舞台被钉成
+   左上角 1100×810（手机 358.8×759.6），而不是整屏；图在舞台内居中 ⇒ 视觉中心相对
+   屏幕中心左移 90 / 上移 45px（手机 15.6 / 42.2px）= 作者报障的「现在有点歪」。
+   修法：chat.css 那四条声明**收进 `.nf-lightbox--media` 作用域**（媒体灯箱独有），
+   看图浮层的舞台回到整屏。本文件的 `.nf-lightbox-canvas` 也因此重新成为唯一的
+   「纸面」声明。
 
    交互语义（与 Canvas 窗格里的 viewers/zoom.js **刻意不同**，理由见 js/lightbox.js
    头注）：全屏浮层里没有别的可滚内容，所以普通滚轮 = 缩放、拖动 = 平移、双指 =
@@ -106,6 +136,10 @@ img.nf-zoom-img { cursor: pointer; }
 }
 .nf-lightbox-stage:active { cursor: grabbing; }
 
+/* 图纸（= 图形模式的内容盒）。宽高由 js/lightbox.js `fitDiagramCanvas()` 按**舞台
+   实盒 × --nf-lb-fit-***算出来（居中交给舞台 flex，不写坐标）；这里只留材质与
+   padding —— padding 是真值，JS 会从计算样式读回来从适配盒里扣掉，保证图**恰好**
+   落在适配盒内、不被 padding 二次缩放。 */
 .nf-lightbox-canvas {
   transform-origin: center center;
   will-change: transform;
