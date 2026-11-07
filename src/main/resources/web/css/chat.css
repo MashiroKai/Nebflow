@@ -1728,9 +1728,11 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    rgb(var(--sapphire))（#5b7fbf 单源 triplet，亮暗同值可读），原
    var(--color-primary) 品牌绿退役为链接色（绿保留给主操作/通知点族）。
    🔴 bubble-side-color 批（2026-11-06）改判：`.ai` / `.injected` / `.user`
-   现为**我方绿底**，蓝 #5b7fbf 在 #95ec69 上只有 2.76:1（远低于 AA）⇒ 我方
-   气泡内链接改走墨色正文 + 下划线（11.49:1 亮 / 13.63:1 暗，零新色值）；
-   蓝链只留在**对方白底**气泡（`.peer` / `.theirs`）上。 */
+   曾为我方绿底，蓝 #5b7fbf 在 #95ec69 上只有 2.76:1（远低于 AA）⇒ 我方
+   气泡内链接改走墨色正文 + 下划线（零新色值）；bubble-lightblue 批
+   （2026-11-07）底色回浅蓝档后本条**继续保留**（蓝 #5b7fbf 落在浅蓝档上
+   实测 2.8:1 亮 / 3.0:1 暗，仍不达 AA，判定未翻转，不改回蓝链）；蓝链只留在
+   **对方白底**气泡（`.peer` / `.theirs`）上。 */
 .bubble.theirs a, .bubble.peer a, .ask-bub.theirs a { color: rgb(var(--sapphire)); }
 .bubble.ours a, .bubble.user a, .bubble.ai a, .bubble.injected a {
   color: var(--color-text);
@@ -1973,14 +1975,14 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
     border-color: rgba(255, 255, 255, 0.04);
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
   }
-  /* bubble-side-color 批（2026-11-06）：暗档里**我方**气泡同样是绿底（色相
-     单源 #95ec69 亮暗同值）⇒ 正文必须压暗：#111 在 #95ec69 上 = 13.63:1 ✔；
-     若沿用暗档正文 --color-text #e8eaed，落在绿底上只有 1.29:1（远低于 AA）。
-     🔴 bubble-contrast 批（2026-11-07 14:37，作者逐字「现在太难看清楚了」）：
-     旧选择器把 `.bubble.ai` / `.bubble.injected` 也一起压成 #111 —— 对方气泡是
-     暗档深底 #1c1f27，深字压在上面 = **1.04:1（正文几乎不可见）**，这就是看不清的
-     机械原因（实测见 _data/round3-before.json）。现在只给**我方绿底**压暗，
-     对方深底回到 --color-text（≈13:1），注入行（sapphire 淡染深底）同样回到浅字。 */
+  /* bubble-side-color 批（2026-11-06）立、bubble-lightblue 批（2026-11-07）收口：
+     我方气泡底色现为**浅蓝档**（亮 #cdd9ec / 暗 #29354d，见 base.css 令牌注释），
+     正文按本主题 --color-text 即可（亮档深字 11.7:1 / 暗档浅字 10.0:1，均远过 AA）。
+     历史：绿档（#95ec69）时代暗档必须压深墨绿字（浅字 1.21:1 不可读）—— 该压暗
+     随底色回浅蓝**一并取消**，故本块与我方气泡正文都不再写死字色。
+     🔴 bubble-contrast 批（2026-11-07 14:37）的另一半判据**保留不动**：对方气泡
+     （`.bubble.ai` / `.bubble.injected`）在暗档深底上必须吃 --color-text 浅字 ——
+     当年把它们一起压成 #111 = 1.04:1 不可见，那才是「看不清」的真正病根。 */
   .bubble.user,
   .bubble.ours { color: var(--nf-bub-ours-ink); }
   .bubble.ai .file-tag { background: rgba(255,255,255,0.08); }
