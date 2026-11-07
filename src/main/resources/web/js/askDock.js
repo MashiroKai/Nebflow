@@ -1499,7 +1499,13 @@ function syncAskFade() {
     const colTop = col.getBoundingClientRect().top;
     for (const bub of col.querySelectorAll('.ask-bub')) {
       const d = bub.getBoundingClientRect().top - colTop;
-      bub.style.opacity = String(Math.max(0, Math.min(1, d / fadeH)));
+      // ask-fade-floor 批 2026-11-07（作者令逐字「ask对话框的消息会突然透明」）：
+      // 旧式 ratio = clamp(d/fadeH) ⇒ 泡顶一旦越过列顶就落 0，整条消息**完全
+      // 消失**（12px 衰减带的注释假设与真实渲染不符：泡顶越顶后 d<0 恒 0）。
+      // 现改为「边缘提示」而非「隐形」：底限 0.55，衰减带内线性升到 1。
+      // 效果 = 顶缘仍有一档柔化提示，但任何仍然可见的消息都不会突然变透明。
+      const ratio = Math.max(0, Math.min(1, d / fadeH));
+      bub.style.opacity = String(0.55 + 0.45 * ratio);
     }
   });
 }

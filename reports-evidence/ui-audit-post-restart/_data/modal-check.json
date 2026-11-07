@@ -1,0 +1,262 @@
+{
+ "mobile-light": {
+  "afterLoad": {
+   "overlay": {
+    "cls": "ds-overlay ds-overlay--top",
+    "display": "none",
+    "visibility": "visible",
+    "opacity": "1",
+    "pe": "auto",
+    "z": "11000",
+    "bg": "rgb(245, 246, 248)",
+    "rect": [
+     0,
+     0
+    ]
+   },
+   "kids": [
+    {
+     "id": "modal-box",
+     "cls": "ds-layer",
+     "box": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "vis": "block/visible"
+    },
+    {
+     "id": "delete-box",
+     "cls": "ds-layer",
+     "box": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "vis": "none/visible"
+    },
+    {
+     "id": "conflict-box",
+     "cls": "ds-layer",
+     "box": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "vis": "none/visible"
+    },
+    {
+     "id": "takeover-box",
+     "cls": "nfc",
+     "box": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "vis": "none/visible"
+    }
+   ],
+   "hitCenter": "div#.row user",
+   "hitSettingsBtn": "div#chat.",
+   "settingsBtnVisible": false
+  },
+  "afterCanvasToggle": {
+   "overlay": {
+    "cls": "ds-overlay ds-overlay--top",
+    "display": "none",
+    "visibility": "visible",
+    "opacity": "1",
+    "pe": "auto",
+    "z": "11000",
+    "bg": "rgb(245, 246, 248)",
+    "rect": [
+     0,
+     0
+    ]
+   },
+   "kids": [
+    {
+     "id": "modal-box",
+     "cls": "ds-layer",
+     "box": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "vis": "block/visible"
+    },
+    {
+     "id": "delete-box",
+     "cls": "ds-layer",
+     "box": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "vis": "none/visible"
+    },
+    {
+     "id": "conflict-box",
+     "cls": "ds-layer",
+     "box": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "vis": "none/visible"
+    },
+    {
+     "id": "takeover-box",
+     "cls": "nfc",
+     "box": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "vis": "none/visible"
+    }
+   ],
+   "hitCenter": "div#.row user",
+   "hitSettingsBtn": "div#chat.",
+   "settingsBtnVisible": false
+  }
+ },
+ "desktop-light": {
+  "afterLoad": {
+   "overlay": {
+    "cls": "ds-overlay ds-overlay--top",
+    "display": "none",
+    "visibility": "visible",
+    "opacity": "1",
+    "pe": "auto",
+    "z": "11000",
+    "bg": "rgba(0, 0, 0, 0)",
+    "rect": [
+     0,
+     0
+    ]
+   },
+   "kids": [
+    {
+     "id": "modal-box",
+     "cls": "ds-layer",
+     "box": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "vis": "block/visible"
+    },
+    {
+     "id": "delete-box",
+     "cls": "ds-layer",
+     "box": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "vis": "none/visible"
+    },
+    {
+     "id": "conflict-box",
+     "cls": "ds-layer",
+     "box": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "vis": "none/visible"
+    },
+    {
+     "id": "takeover-box",
+     "cls": "nfc",
+     "box": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "vis": "none/visible"
+    }
+   ],
+   "hitCenter": "p#.",
+   "hitSettingsBtn": "svg#.[object SVGAnimatedString]",
+   "settingsBtnVisible": true
+  },
+  "afterCanvasToggle": {
+   "overlay": {
+    "cls": "ds-overlay ds-overlay--top",
+    "display": "none",
+    "visibility": "visible",
+    "opacity": "1",
+    "pe": "auto",
+    "z": "11000",
+    "bg": "rgba(0, 0, 0, 0)",
+    "rect": [
+     0,
+     0
+    ]
+   },
+   "kids": [
+    {
+     "id": "modal-box",
+     "cls": "ds-layer",
+     "box": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "vis": "block/visible"
+    },
+    {
+     "id": "delete-box",
+     "cls": "ds-layer",
+     "box": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "vis": "none/visible"
+    },
+    {
+     "id": "conflict-box",
+     "cls": "ds-layer",
+     "box": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "vis": "none/visible"
+    },
+    {
+     "id": "takeover-box",
+     "cls": "nfc",
+     "box": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "vis": "none/visible"
+    }
+   ],
+   "hitCenter": "div#.bubble ai",
+   "hitSettingsBtn": "svg#.[object SVGAnimatedString]",
+   "settingsBtnVisible": true
+  }
+ }
+}
