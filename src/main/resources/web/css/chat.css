@@ -1282,8 +1282,10 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .bubble.user {
   /* 底色不在本文件：bubble-side-color 批（2026-11-06）把「归属方 → 底色」全站
      收成单点 = glass.css「气泡归属方底色单点」块（--nf-bub-ours-bg /
-     --nf-bub-theirs-bg 两枚令牌）。本文件只留几何/字阶/尾向。 */
-  color: var(--color-text);
+     --nf-bub-theirs-bg 两枚令牌）。本文件只留几何/字阶/尾向。
+     字色（bubble-contrast 批 2026-11-07）：我方绿底正文吃 --nf-bub-ours-ink
+     （两档深墨绿字），不吃 --color-text —— 暗档浅字在绿底只有 1.21:1。 */
+  color: var(--nf-bub-ours-ink);
   border-bottom-right-radius: 4px;
 }
 /* Injected bubble（工具/Delegate/节点/后台任务注入行）：same silhouette as
@@ -1974,11 +1976,13 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   /* bubble-side-color 批（2026-11-06）：暗档里**我方**气泡同样是绿底（色相
      单源 #95ec69 亮暗同值）⇒ 正文必须压暗：#111 在 #95ec69 上 = 13.63:1 ✔；
      若沿用暗档正文 --color-text #e8eaed，落在绿底上只有 1.29:1（远低于 AA）。
-     对方气泡仍是暗档白底 #1c1f27 ⇒ 正文维持 --color-text（13.94:1 ✔）。 */
+     🔴 bubble-contrast 批（2026-11-07 14:37，作者逐字「现在太难看清楚了」）：
+     旧选择器把 `.bubble.ai` / `.bubble.injected` 也一起压成 #111 —— 对方气泡是
+     暗档深底 #1c1f27，深字压在上面 = **1.04:1（正文几乎不可见）**，这就是看不清的
+     机械原因（实测见 _data/round3-before.json）。现在只给**我方绿底**压暗，
+     对方深底回到 --color-text（≈13:1），注入行（sapphire 淡染深底）同样回到浅字。 */
   .bubble.user,
-  .bubble.ai,
-  .bubble.injected,
-  .bubble.ours { color: #111; }
+  .bubble.ours { color: var(--nf-bub-ours-ink); }
   .bubble.ai .file-tag { background: rgba(255,255,255,0.08); }
   .bubble.ai pre, .bubble.injected pre, .ask-bub.ai pre {
     background: #111419;
@@ -2976,9 +2980,9 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    旧「15px 内容轴」对齐（HYBRID §4.2）随题文入泡让位（作者令优先）。 */
 .bubble.ai.ob-ghost-seat .ob-body {
   padding: var(--ds-space-block-y) 14px;
-  /* bubble-side-color 批（2026-11-06）：onboarding 题文由我方 Agent 出题 ⇒
-     我方绿（glass.css 单点块的 --nf-bub-ours-bg），不再是白底第三档。 */
-  background: var(--nf-bub-ours-bg);
+  /* bubble-final 批（2026-11-07）：助手气泡 = 白档（--nf-bub-theirs-bg），
+     onboarding 题文由助手出题 ⇒ 同档，不再是我方绿。 */
+  background: var(--nf-bub-theirs-bg);
   border: 1px solid var(--glass-bub-ai-border);
   border-radius: var(--ds-radius-card-lg);
   border-bottom-left-radius: 4px;
