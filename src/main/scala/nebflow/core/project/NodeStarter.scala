@@ -441,7 +441,20 @@ private[project] trait NodeStarter:
                         workerSessionId,
                         node.name,
                         projectRoot,
-                        initialMessages = resume.fold(List.empty[Message])(_.recoveredMessages),
+                        // 无感恢复批 2026-11-07：worker 会话水合历史经同一单点交接
+                        // （断点处的工具调用结果由本轮注入块承担，见 NodeLoopRunner）。
+                        initialMessages = resume
+                          .map(r =>
+                            nebflow.core.ResumeHandoff
+                              .plan(
+                                r.recoveredMessages,
+                                nebflow.core.ResumeHandoff.Cause.NodeRecovery,
+                                instruction = r.resumePrompt,
+                                legacyText = r.resumePrompt
+                              )
+                              .transcript
+                          )
+                          .getOrElse(List.empty[Message]),
                         // TaskBoard 批 2（§1d）：loop worker/verify 会话同属该
                         // loop 节点——flowNodeId 身份与普通节点同源（权限矩阵
                         // 同面：仅自己名下任务 status+note）。
@@ -594,6 +607,22 @@ private[project] trait NodeStarter:
     // 读到 cancelSig 执行 cleanupRunTables 三表对称移除（防泄漏「假活 canary」）。
     // cancelSig 未创建（for 前崩溃）→ None → 无登记可清，no-op。
     val runSig = Ref.unsafe[IO, Option[Deferred[IO, Unit]]](None)
+    // 无感恢复批 2026-11-07：崩溃/挂死恢复的续跑载荷单点（[[ResumeHandoff]]）。
+    // 断点停在工具调用中途 ⇒ 模型收到**那次调用的 tool_result**（无感续跑），恢复
+    // 提示（hard-recovery 的产物核验告知）作为其后的 Text 块保留、不丢信息；
+    // 无悬挂 ⇒ 逐字回落原 resume prompt（改前行为）。
+    val resumeHandoff: Option[nebflow.core.ResumeHandoff.Plan] =
+      resume.map(r =>
+        nebflow.core.ResumeHandoff.plan(
+          r.recoveredMessages,
+          nebflow.core.ResumeHandoff.Cause.NodeRecovery,
+          instruction = inputText,
+          legacyText = inputText
+        )
+      )
+    val deliveredInput: String = resumeHandoff.map(_.injectText).getOrElse(inputText)
+    val deliveredBlocks: Option[List[nebflow.shared.ContentBlock]] =
+      resumeHandoff.flatMap(_.injectBlocks)
     (for
       // 在飞登记先行（清场 c-① liveness 误杀防护 20260903）：running 表先于
       // status=Running 翻转——NodeList liveness / abandon / NodeCancel 收殓判定
@@ -774,7 +803,9 @@ private[project] trait NodeStarter:
           // crash-recovery 批 D3：恢复续跑时水合磁盘 transcript（NodeRunner.
           // initialMessages 通道，BackoffSupervisor respawn 同款）；spawn 时
           // RecoverPersistedQueues 自动重放该会话崩溃前排队中的 F2 注入。
-          initialMessages = resume.fold(List.empty[Message])(_.recoveredMessages),
+          // 无感恢复批 2026-11-07：水合历史经 [[nebflow.core.ResumeHandoff]] 交接
+          // （已配对消息零改；中段悬挂就地修补；断点处的工具调用结果由注入块承担）。
+          initialMessages = resumeHandoff.map(_.transcript).getOrElse(List.empty[Message]),
           // 跨设备批（2026-10-25）：设备项目节点会话的默认设备上下文——Bash/文件
           // 六件未显式带 device 时默认路由到该设备（cwd 注入 = 设备盘 workspace）。
           // None = 本机项目（现状零变化）。
@@ -1161,7 +1192,11 @@ private[project] trait NodeStarter:
           )
         )
       )
-      _ <- (ref ! AgentCommand.UserInput(text = inputText, replyTo = Some(bridgeRef))).void
+      _ <- (ref ! AgentCommand.UserInput(
+        text = deliveredInput,
+        replyTo = Some(bridgeRef),
+        blocks = deliveredBlocks
+      )).void
       // 等待完成——不设超时（硬约束）；唯一竞争事件 = NodeCancel 信号。
       outcome <- IO.race(resultDeferred.get, cancelSig.get)
       // P2（R-1=B）：挂起腿识别。桥送来的 Cancelled 若带 [[NodeEngine.SuspendReasonPrefix]]

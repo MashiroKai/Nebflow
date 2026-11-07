@@ -4,10 +4,11 @@ package nebflow.core.project
 import cats.effect.*
 import cats.syntax.all.*
 import nebflow.actor.*
+import nebflow.core.ResumeHandoff
 import nebflow.core.node.NodeRunner
 import nebflow.core.plugin.PluginMcpManager
 import nebflow.core.tools.BgTaskRegistry
-import nebflow.shared.Message
+import nebflow.shared.{ContentBlock, Message}
 
 private[project] trait NodeLoopRunner:
   self: NodeEngine =>
@@ -296,11 +297,17 @@ private[project] trait NodeLoopRunner:
      * 单会话单轮注入：置新 Deferred → 发 UserInput → race(本轮产出, node cancelSig)。
      * cancelSig 赢 → Left(cancelled)（整 Loop cancelled），否则返回本轮产物。
      */
-    def step(ses: LoopSession, input: String): IO[Either[String, List[Message]]] =
+    def step(
+      ses: LoopSession,
+      input: String,
+      blocks: Option[List[ContentBlock]] = None
+    ): IO[Either[String, List[Message]]] =
       for
         d <- Deferred[IO, Either[String, List[Message]]]
         _ <- ses.round.set(d)
-        _ <- (ses.agentRef ! AgentCommand.UserInput(text = input, replyTo = Some(ses.bridgeRef))).void
+        // 无感恢复批 2026-11-07：blocks 在场 = 工具边界续跑（断点那次调用的
+        // tool_result；单点 [[ResumeHandoff]]），None = 既有纯文本注入。
+        _ <- (ses.agentRef ! AgentCommand.UserInput(text = input, replyTo = Some(ses.bridgeRef), blocks = blocks)).void
         r <- IO.race(d.get, cancelSig.get).map {
           case Left(res) => res
           case Right(_) => Left("cancelled by NodeCancel")
@@ -431,7 +438,8 @@ private[project] trait NodeLoopRunner:
     def loopRound(
       roundNum: Int,
       lastFail: Option[VerdictReader.Verdict.Fail],
-      overrideWorkerInput: Option[String] = None
+      overrideWorkerInput: Option[String] = None,
+      overrideWorkerBlocks: Option[List[ContentBlock]] = None
     ): IO[Unit] =
       if roundNum > maxRounds then
         // 达 K 轮仍未 PASS → 轮级兜底终态（§2.5 划界：maxRounds 是轮帽，非内容检测）
@@ -448,7 +456,7 @@ private[project] trait NodeLoopRunner:
         }
         for
           _ <- goto(nodeId, NodeEngine.LoopPhaseWorker, roundNum)
-          wOut <- step(worker, workerInput)
+          wOut <- step(worker, workerInput, overrideWorkerBlocks)
           _ <- wOut match
             case Left(err) => failOrCancel(nodeId, s"worker round $roundNum: $err")
             case Right(wMsgs) =>
@@ -517,8 +525,16 @@ private[project] trait NodeLoopRunner:
           case Some(NodeEngine.LoopPhaseVerify) => resumeVerifyRound(r)
           case _ =>
             // worker 相位（或轮前崩溃 loopRound=0/phase=None）：本轮 worker 输入 =
-            // resume prompt，完成后照常进 verify 轮。
-            loopRound(roundNum, None, Some(r.resumePrompt))
+            // resume prompt，完成后照常进 verify 轮。无感恢复批 2026-11-07：worker
+            // 会话的落盘历史停在工具调用中途时，本轮实测载荷 = 那次调用的 tool_result
+            // （单点 [[ResumeHandoff]]），resume prompt 作为其后的文本块保留。
+            val h = ResumeHandoff.plan(
+              r.recoveredMessages,
+              ResumeHandoff.Cause.NodeRecovery,
+              instruction = r.resumePrompt,
+              legacyText = r.resumePrompt
+            )
+            loopRound(roundNum, None, Some(h.injectText), h.injectBlocks)
   end runLoopNode
 
   // ── verdict 选通与 loop 预算熔断（nrloop 一期 2026-09-12；执行腿二期 2026-09-14）──

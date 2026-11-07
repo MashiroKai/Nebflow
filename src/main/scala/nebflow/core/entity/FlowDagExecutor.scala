@@ -6,10 +6,11 @@ import io.circe.Json
 import io.circe.syntax.given
 import nebflow.actor.*
 import nebflow.core.AgentRuntimePort
+import nebflow.core.ResumeHandoff
 import nebflow.core.flow.{NodeStatus, VerdictFamily}
 import nebflow.core.node.NodeRunner
 import nebflow.core.tools.FlowReportStore
-import nebflow.shared.{Message, MessageRole, NebflowLogger}
+import nebflow.shared.{ContentBlock, Message, MessageRole, NebflowLogger}
 
 import scala.concurrent.duration.*
 
@@ -382,11 +383,18 @@ object FlowDagExecutor:
                           // input. No checkpoint (fresh attempt OR empty session) →
                           // original input, initialMessages=Nil.
                           val resuming = recoveredMsgs.nonEmpty
-                          val effectiveInput =
-                            if resuming then
+                          // 无感恢复批 2026-11-07：续跑载荷单点 = [[ResumeHandoff]]。
+                          // 断点停在工具调用中途 ⇒ 模型收到那次调用的 tool_result（无感
+                          // 续跑）；无悬挂 ⇒ 逐字回落改前的 continue 文案。
+                          val handoff = ResumeHandoff.plan(
+                            recoveredMsgs,
+                            ResumeHandoff.Cause.UpstreamFailure,
+                            legacyText =
                               "[system] Your previous turn was interrupted by an upstream failure. " +
                                 "Please continue your task from where you left off."
-                            else inputText0
+                          )
+                          val effectiveInput = if resuming then handoff.injectText else inputText0
+                          val effectiveBlocks = if resuming then handoff.injectBlocks else None
                           val resumeLog =
                             if resuming then
                               logger.info(
@@ -410,7 +418,8 @@ object FlowDagExecutor:
                             parentAgentRef,
                             rootSessionId,
                             sessionId = sid,
-                            initialMessages = recoveredMsgs,
+                            initialMessages = if resuming then handoff.transcript else recoveredMsgs,
+                            inputBlocks = effectiveBlocks,
                             keepSessionOnFailure = restartAllowed,
                             userFacing = node.userFacing,
                             // 面板树批（2026-10-29 ①）：触发本 flow 的宿主会话随行——
@@ -1146,6 +1155,9 @@ object FlowDagExecutor:
     // Checkpoint recovery: previously persisted messages for this node's
     // session (Nil on a fresh first attempt).
     initialMessages: List[Message] = Nil,
+    // 无感恢复批 2026-11-07：续跑注入的**结构块**（断点停在工具调用中途时 =
+    // 那次调用的 tool_result；见 [[nebflow.core.ResumeHandoff]]）。None = 纯文本注入。
+    inputBlocks: Option[List[ContentBlock]] = None,
     // Preserve the failed node's session (AgentActor already persisted its
     // history before failing) so a Restart resumes from the checkpoint
     // instead of a fresh re-run. Terminal outcomes always clean up.
@@ -1254,10 +1266,11 @@ object FlowDagExecutor:
         parentRef = parentAgentRef,
         parentSessionId = callerSessionId
       )
-      // Send input with the bridge actor as replyTo
+      // Send input with the bridge actor as replyTo（无感恢复批：blocks 在场 = 工具边界续跑）
       _ <- (ref ! AgentCommand.UserInput(
         text = inputText,
-        replyTo = Some(bridgeRef)
+        replyTo = Some(bridgeRef),
+        blocks = inputBlocks
       )).void
       // Wait for completion — no wall-clock timeout (see method doc). The only
       // competing events are the user's cancel signal and the internal

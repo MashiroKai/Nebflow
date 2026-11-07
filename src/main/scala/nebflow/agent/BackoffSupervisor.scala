@@ -1475,18 +1475,18 @@ object BackoffSupervisor:
           //      result（恢复会话看见失败事实，自行重试该步或绕行）；
           //   ③ registry 恢复记录清幽灵工具相位（下方 refreshed 处）。
           _ <- SubagentCrashRecovery.disposeOrphanChildren(resources, subagentId)
-          (repairedMessages, terminatedCalls) = SubagentCrashRecovery.terminateDanglingToolCalls(recoveredMessages)
-          _ <-
-            if terminatedCalls.nonEmpty then
-              logger
-                .info(
-                  s"BackoffSupervisor: $subagentId checkpoint repair — terminated ${terminatedCalls.size} dangling " +
-                    s"tool call(s) at the recovery point [${terminatedCalls.map(_._1).mkString(", ")}] " +
-                    s"(${SubagentCrashRecovery.RecoveredAfterCrashToken})"
-                )
-                .void
-            else IO.unit
-          newChild <- childSpawnFn(ctx.system, repairedMessages)
+          // ② 续跑交接单（无感恢复批 2026-11-07，单点 [[nebflow.core.ResumeHandoff]]）：
+          //    断点停在工具调用中途时，模型收到的是**那次调用的 tool_result**（无感续跑，
+          //    作者令「把那一轮的工具调用结果发过去」）；中段悬挂就地修补；无悬挂 ⇒
+          //    逐字回落改前文案（`nudgeText`）。改写前此处手写的
+          //    `terminateDanglingToolCalls` + 尾部提示注入两段。
+          handoff = nebflow.core.ResumeHandoff.plan(
+            recoveredMessages,
+            nebflow.core.ResumeHandoff.Cause.Crash,
+            legacyText = nudgeText
+          )
+          _ <- IO(nebflow.core.ResumeHandoff.logPlan(subagentId, handoff, nebflow.core.ResumeHandoff.Cause.Crash))
+          newChild <- childSpawnFn(ctx.system, handoff.transcript)
           _ <- ctx.watch(newChild)
           // Spec C2: 回写 registry（新 ref + supervisor 指向自己 + 活动时
           // 间刷新）。无旧记录（ghost respawn）时按 source 重建最小条目。
@@ -1521,12 +1521,13 @@ object BackoffSupervisor:
             // running 655s" 跨两代 respawn 追杀）。
             registry.updated(subagentId, SubagentCrashRecovery.staleToolPhaseCleared(refreshed))
           }
-          // If we recovered messages, send a "continue" instruction so the
-          // child picks up where it left off (crash: plain continue; empty
-          // burn: the four-fix ① nudge — act with tools, produce output).
-          // Otherwise re-inject the original prompt (fresh start fallback).
+          // If we recovered messages, hand the round back at the tool boundary
+          // (crash: the interrupted call's result; empty burn: the four-fix ①
+          // nudge — act with tools, produce output). Otherwise re-inject the
+          // original prompt (fresh start fallback).
           _ <-
-            if recoveredMessages.nonEmpty then newChild ! AgentCommand.UserInput(nudgeText, Some(ctx.self))
+            if recoveredMessages.nonEmpty then
+              newChild ! nebflow.core.ResumeHandoff.userInput(handoff, replyTo = Some(ctx.self))
             else newChild ! AgentCommand.UserInput(initialPrompt, Some(ctx.self))
           // D3-②（steward 批 2026-10-23）：合并队列条目不再绑活体引用——崩溃重启
           // 换新子 actor 后把该 delegate 的排队条目原地换绑（事件驱动），待重试
