@@ -11,12 +11,17 @@ import sttp.client4.StreamBackend
  * disabled provider 链 tiering 语义 spec（reserveTier 语义修复批，2026-10-30）——
  * 生图批侦察实证的引擎缺口（docs/20261030_cmdcode-provider-removal.md §5）：摘除
  * 时配置增补 `disabled: true`，但引擎不读该标记 ⇒ 已摘除 provider 仍可能被链
- * tiering 选中。本批修复 = fail-closed：链 tiering 全路径（全局链腿 / seed 兜底 /
- * agent 显式 ref 腿 / 储备层）一律不可被选；未 disabled 的 provider 不受影响。
+ * tiering 选中。本批修复 = fail-closed：链 tiering 全路径一律不可被选；未 disabled
+ * 的 provider 不受影响。
  *
- * 断言纪律：agent 链断言只经 `getCandidatesForAgent` / `getCandidateForRef`（真实
- * 调用链）；储备层直调 `reserveTier`（private[llm]，同包内合法）。配置全部在 spec
- * 内构造，不读/不写真实 HOME（不触发 `getCandidatesUnfiltered` 的默认 preset 面）。
+ * **fallback 废除批改写（作者令 2026-11-06 20:36「不再支持模型fallback」，如实申报）**：
+ * 原 T4/T5 直调 `reserveTier`（储备层）——储备层本身就是 fallback，随本批**退役**；
+ * 两条 fail-closed 断言按新语义**重写**到链构建面（链深恒 1：disabled provider 不得
+ * 经任何腿进链；全 disabled 时链构建不凭空造候选）。原断言的逐字内容见 git 历史。
+ *
+ * 断言纪律：全部经 `getCandidatesForAgent(Unfiltered)` / `getCandidateForRef` /
+ * `getCandidatesUnfiltered`（真实调用链）。配置全部在 spec 内构造，不读/不写真实
+ * HOME（不触发 `getCandidatesUnfiltered` 的默认 preset 面）。
  */
 class DisabledProviderSelectionSpec extends CatsEffectSuite:
 
@@ -45,7 +50,7 @@ class DisabledProviderSelectionSpec extends CatsEffectSuite:
       "zhipu"   -> mkProvider(List("glm-5.3-flash"))
     )))
 
-  test("T1: disabled provider 不进储备层（fail-closed），未 disabled 的照常进链") {
+  test("T1(重写): disabled provider 不进链（fail-closed），链深恒 1 = preferred 单候选") {
     val cfg = removalLikeConfig
     for
       reg <- mkRegistry(cfg)
@@ -56,8 +61,9 @@ class DisabledProviderSelectionSpec extends CatsEffectSuite:
     yield
       val r = refs(cs)
       assert(!r.exists(_.startsWith("cmdcode/")), s"disabled provider 不得进链，实际链 = $r")
-      assert(r.contains("zhipu/glm-5.3-flash"), s"未 disabled 的储备层项必须照常进链，实际链 = $r")
-      assertEquals(r.head, "kimi/kimi-for-coding", s"主链前缀不变，实际链 = $r")
+      // fallback 废除批：链 = preferred 单候选（储备层退役 ⇒ 不再追加 zhipu 等
+      // 未 disabled 项——原「储备层项照常进链」断言随该面退役）。
+      assertEquals(r, List("kimi/kimi-for-coding"), s"链深恒 1，实际链 = $r")
   }
 
   test("T2: agent 显式 ref 指向 disabled provider ⇒ 不可被选，链落到其余候选") {
@@ -86,29 +92,32 @@ class DisabledProviderSelectionSpec extends CatsEffectSuite:
       assertEquals(one.map(_.providerId), Some("zhipu"))
   }
 
-  test("T4: reserveTier 直调——disabled provider 全部剔除，链上已有项原样保留") {
+  test("T4(重写): 链深恒 1——disabled provider 不得进链，且链上不追加任何其它候选") {
     val cfg = NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map(
       "cmdcode" -> mkProvider(List("a1", "a2"), disabled = Some(true)),
       "kimi"    -> mkProvider(List("k1"))
     )))
-    val base = List(
-      ModelCandidate("kimi", mkProvider(List("k1")), "k1")
-    )
     for
       reg <- mkRegistry(cfg)
-      chain = reg.reserveTier(cfg, base)
+      chain <- reg.getCandidatesForAgentUnfiltered(
+        Some(AgentModelConfig(preferred = Some("kimi/k1"), fallbacks = Nil))
+      )
     yield
       val r = refs(chain)
-      assertEquals(r, List("kimi/k1"), s"disabled provider 的 model 不得进储备层，实际链 = $r")
+      assertEquals(
+        r,
+        List("kimi/k1"),
+        s"disabled provider 的 model 不得进链；链深恒 1 不追加储备层，实际链 = $r"
+      )
   }
 
-  test("T5: 全 provider disabled 时 reserveTier 不凭空造候选（fail-closed 不反转为编造）") {
+  test("T5(重写): 全 provider disabled 时链构建不凭空造候选（fail-closed 不反转为编造）") {
     val cfg = NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map(
       "cmdcode" -> mkProvider(List("a1"), disabled = Some(true))
     )))
     for
       reg <- mkRegistry(cfg)
-      chain = reg.reserveTier(cfg, Nil)
-    yield assertEquals(refs(chain), Nil, "全 disabled 时储备层 = 空，不得编造候选")
+      chain <- reg.getCandidatesUnfiltered()
+    yield assertEquals(refs(chain), Nil, "全 disabled 时链 = 空，不得编造候选")
   }
 end DisabledProviderSelectionSpec

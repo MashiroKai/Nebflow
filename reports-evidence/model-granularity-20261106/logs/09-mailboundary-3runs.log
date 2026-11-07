@@ -1,0 +1,9 @@
+=== RUN 1 ===
+==> X nebflow.agent.MailBoundaryInjectionSpec.W1: Processing 中到达的 mail 件在工具边界并入续轮请求（而非干等 turn 末）  1.936s munit.FailException: src/test/scala/nebflow/agent/MailBoundaryInjectionSpec.scala:321
+[error] Failed: Total 8, Failed 1, Errors 0, Passed 7
+=== RUN 2 ===
+==> X nebflow.agent.MailBoundaryInjectionSpec.W1: Processing 中到达的 mail 件在工具边界并入续轮请求（而非干等 turn 末）  1.915s munit.FailException: src/test/scala/nebflow/agent/MailBoundaryInjectionSpec.scala:321
+[error] Failed: Total 8, Failed 1, Errors 0, Passed 7
+=== RUN 3 ===
+==> X nebflow.agent.MailBoundaryInjectionSpec.W1: Processing 中到达的 mail 件在工具边界并入续轮请求（而非干等 turn 末）  1.969s munit.FailException: src/test/scala/nebflow/agent/MailBoundaryInjectionSpec.scala:321
+[error] Failed: Total 8, Failed 1, Errors 0, Passed 7

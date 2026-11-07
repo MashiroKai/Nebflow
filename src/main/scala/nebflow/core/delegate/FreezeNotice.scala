@@ -189,51 +189,32 @@ object FreezeNotice:
   def isSilentReceipt(e: AgentCommand.ExternalEvent): Boolean =
     e.source == "delegate" && e.eventType == "frozen" && receiptSilent(e.payload)
 
-  /** 返回 (保留集, 被合并掉的静默回执数)。 */
+  /**
+   * 返回 (保留集, 被丢弃的静默回执数)。
+   *
+   * **fallback 废除批改语义（2026-11-06 20:36 作者令「只在子agent面板里显示……
+   * 不再向上通知」）**：静默族回执不再折叠成 frozen-waiting 状态行（那仍是一条向上
+   * 注入/冒泡的件），而是**整段丢弃**——provider 故障族的呈现面只有子 agent 面板，
+   * 父会话上下文零注入。非静默事件原样保序。真失败（确定性缺陷）回执逐条保留。
+   *
+   * 历史（保留供追溯）：本函数曾把 N 条静默回执收成「每族一条」的 frozen-waiting
+   * 行（frozen-waiting 播报面 ⑦ 的前身）；该面随本批退役——`suppressRepeatedWaiting`
+   * 仍在 `MailboxDrain` 两腿在位，只为吸收**存量盘面**里已落账的 frozen-waiting 行
+   * （生产路径本批起不再产生新行，该闸就此空转）。
+   */
   def collapseSilentReceipts(
     events: List[AgentCommand.ExternalEvent]
   ): (List[AgentCommand.ExternalEvent], Int) =
     val quietIdxs = events.zipWithIndex.collect { case (e, i) if isSilentReceipt(e) => i }
     if quietIdxs.isEmpty then (events, 0)
     else
-      val quiet = quietIdxs.map(events(_))
       val gone = quietIdxs.toSet
-      val groups: List[(String, List[AgentCommand.ExternalEvent])] =
-        quiet.zipWithIndex
-          .groupBy { case (e, _) => receiptFamilyOf(e.payload).getOrElse(UnclassifiedProviderFamily) }
-          .toList
-          .map { case (f, es) => (f, es.sortBy(_._2).map(_._1)) }
-          .sortBy { case (_, es) => quiet.indexOf(es.head) }
-      // 每个族一条状态行，落回该族**最后**一条的位置之后（相对序不乱）。
-      val insertAfter: Map[Int, AgentCommand.ExternalEvent] = groups.flatMap { case (f, es) =>
-        val at = quietIdxs(quiet.indexOf(es.head))
-        Some(at -> collapsedReceipt(f, es))
-      }.toMap
-      val out = events.zipWithIndex.flatMap { case (e, i) =>
-        val kept = if gone.contains(i) then Nil else List(e)
-        insertAfter.get(i) match
-          case Some(c) => List(c) ++ kept
-          case None => kept
-      }
-      (out, quiet.size - groups.size)
+      (events.zipWithIndex.flatMap { case (e, i) => if gone.contains(i) then Nil else List(e) }, quietIdxs.size)
   end collapseSilentReceipts
 
-  /** 静默族回执的合并件：改派为 `frozen-waiting`（呈现面据此不逐个冒泡，视觉走「等待恢复中」）。 */
-  private def collapsedReceipt(family: String, es: List[AgentCommand.ExternalEvent]): AgentCommand.ExternalEvent =
-    val first = es.head
-    val ids = es.flatMap(_.metadata("frozenDelegateId").flatMap(_.asString)).distinct
-    val parents = es.flatMap(_.metadata("parentSessionId").flatMap(_.asString)).distinct
-    first.copy(
-      eventType = "frozen-waiting",
-      payload = quietReceiptText(family, es),
-      metadata = first.metadata
-        .add("quietReceipt", Json.fromBoolean(true))
-        .add("quietFamily", Json.fromString(family))
-        .add("quietCount", Json.fromInt(es.size))
-        .add("quietDelegateIds", Json.fromValues(ids.map(Json.fromString)))
-        .deepMerge(if parents.isEmpty then JsonObject.empty else JsonObject("parentSessionId" -> parents.head.asJson)),
-      correlationId = Some(s"frozen-waiting-$family-${ids.hashCode.abs}")
-    )
+  // （原 collapsedReceipt——静默回执的 frozen-waiting 合并件——已退役：fallback 废除
+  //  批（2026-11-06 20:36 作者令「不再向上通知」）改静默回执为整段丢弃，不再折叠
+  //  出任何父可见行。quietReceiptText 保留为公开函数面（存量盘面历史行正文仍可读）。）
 
   /**
    * 静默回执的状态行正文：一条说完「在等什么 / 谁 / 会不会自己好」。
@@ -623,54 +604,35 @@ object FreezeNotice:
   /**
    * 告警计划（纯函数）：
    *   - **缺陷腿**（`tool-failure` / `engine-fault`，或正文判为确定性缺陷的静默条）⇒
-   *     **立即**进告警，按父会话聚合，同批一条；不受 30 分钟时限与合并窗约束。
-   *   - **provider 腿**（可恢复族）⇒ 只有该类型里至少一条**本轮冻结超过升级时限**
-   *     （[[escalateDue]]，缺省 30 分钟）才成计划；一类型 = 一条，窗内同类**全部并入**
-   *     （含尚未到时限的同类型新冻结——它们属于同一个事件，不该另发一条）。
+   *     **立即**进告警，按父会话聚合，同批一条；不受时限与合并窗约束。
+   *   - **provider 腿已退役**（fallback 废除批，2026-11-06 20:36 作者令逐字「模型失效
+   *     了，只在子agent面板里显示……否则就是静默等待，不再向上通知」）：quota /
+   *     upstream-5xx / auth-subscription / connect-timeout 等 provider 族**不再产生
+   *     任何告警**（原「30 分钟升级为一条摘要」面随之退役——它就是一条向上通知）。
+   *     provider 族的呈现面 = 子 agent 面板的失效/待恢复态；引擎侧自动续跑（退避 +
+   *     恢复即续）不变 = 「静默等待」的机制面。
    */
   def planAlerts(d: Digest): List[Alert] =
-    val (defectish, providerish) =
-      d.items.partition(i => i.tier == Tier.Escalate || familyOfItem(i) == DeterministicFamily)
-    val defectAlerts =
-      defectish
-        .groupBy(_.parentSessionId)
-        .toList
-        .sortBy(_._1)
-        .map { case (parent, items) =>
-          Alert(
-            parent,
-            DeterministicFamily,
-            items,
-            windowOf(DeterministicFamily).getOrElse(emptyWindow(DeterministicFamily, d.now))
-          )
-        }
-    val dueFamilies =
-      providerish
-        .filter(i => escalateDue(i.delegateId, i.frozenSince, d.now))
-        .map(familyOfItem)
-        .distinct
-        .sorted
-    val providerAlerts =
-      providerish
-        .filter(i => dueFamilies.contains(familyOfItem(i)))
-        .groupBy(familyOfItem)
-        .toList
-        .sortBy(_._1)
-        .map { case (fam, items) =>
-          val anchor = items.minBy(_.frozenSince) // 最早冻住的那个父会话收这条汇总
-          Alert(anchor.parentSessionId, fam, items, windowOf(fam).getOrElse(deriveWindow(fam, items, d.now)))
-        }
-    defectAlerts ++ providerAlerts
+    d.items
+      .filter(i => i.tier == Tier.Escalate || familyOfItem(i) == DeterministicFamily)
+      .groupBy(_.parentSessionId)
+      .toList
+      .sortBy(_._1)
+      .map { case (parent, items) =>
+        Alert(
+          parent,
+          DeterministicFamily,
+          items,
+          windowOf(DeterministicFamily).getOrElse(emptyWindow(DeterministicFamily, d.now))
+        )
+      }
 
   end planAlerts
 
-  /** 台账缺位时的窗口读数（进程刚起/刚清理，按当前项推一份，保证汇报字段不缺）。 */
-  private def deriveWindow(family: String, items: List[Item], now: Long): FamilyWindow =
-    if items.isEmpty then emptyWindow(family, now)
-    else
-      val firsts = items.map(_.frozenSince)
-      FamilyWindow(family, now, firsts.min, firsts.max, items.map(i => i.delegateId -> i.frozenSince).toMap, Map.empty)
+  // （原 deriveWindow——provider 族摘要告警的窗口推演——已随 fallback 废除批的零
+  //  通知语义退役：provider 族不再产生任何告警。2026-11-06 20:36 作者令。）
 
+  /** 缺陷腿告警的窗口读数（进程刚起/刚清理时的空窗兜底；仅缺陷腿使用）。 */
   private def emptyWindow(family: String, now: Long): FamilyWindow =
     FamilyWindow(family, now, now, now, Map.empty, Map.empty)
 

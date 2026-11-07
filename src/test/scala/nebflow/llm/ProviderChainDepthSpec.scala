@@ -17,6 +17,16 @@ import sttp.client4.StreamBackend
  * 429-1308 5h 使用上限、deepseek/deepseek-flash 18:47/18:59 传输层失联）⇒ 17:54
  * 起链上只剩 deepseek 单点 ⇒ 全灭闸阻塞（AllProvidersDownTimeout）。
  *
+ * **fallback 废除批改写（作者令 2026-11-06 20:36「不再支持模型fallback」，逐条申报）**：
+ * 本 spec 的原目的（「链深恒 1 在结构上不可达」+ 储备层补尾）随 fallback 退役**整体
+ * 反转**——链深恒 1 = preferred 单候选重新成为**既定语义**（`reserveTier` 已从
+ * ProviderRegistry 移除）：
+ *   - T1 **重写**：候选链恰 = preferred 单根；未引用 provider 一根都不进链（原
+ *     「未引用三根必须进链」断言反转申报）；
+ *   - T2 **重写**：储备层链尾 = 空（原「未引用项纳入储备层」面退役）；
+ *   - T3 / T4 断言原样保留（单根链的确定序判据在新语义下依然成立）。
+ * 原断言逐字内容见 git 历史。
+ *
  * 断言纪律：本 spec 只经 `getCandidatesForAgent`（真实调用链）断言，不引用实现
  * 新增的内部符号；配置全部在 spec 内构造，不读/不写真实 HOME（`getCandidates()`
  * 的默认 preset 面会读写真实 HOME，故本 spec 不触发该分支）。
@@ -64,34 +74,29 @@ class ProviderChainDepthSpec extends CatsEffectSuite:
   private def refs(cs: List[ModelCandidate]): List[String] =
     cs.map(c => s"${c.providerId}/${c.model}")
 
-  test("T1: 未引用的三根 provider/model 进链 ⇒ 链深 ≥3（单点在结构上不可达）") {
+  test("T1(重写): 链深恒 1 = preferred 单根；未引用 provider 一根都不进链（fallback 废除）") {
     for
       reg <- mkRegistry(liveLikeConfig)
       cs <- reg.getCandidatesForAgent(Some(generalChain))
     yield
       val r = refs(cs)
-      // 预设链前缀原样、不插队（REST「当前模型」显示取 healthy.head）
-      assertEquals(r.take(3), presetRefs, s"预设链前缀必须原样保留，实际链 = $r")
-      // 改前读数：链 = 恰 3 条 preset ⇒ 下面三条全部缺
-      unreferencedRefs.foreach { u =>
-        assert(r.contains(u), s"$u 必须进候选链（改前读数 = 链深 3 且缺此三条），实际链 = $r")
+      // fallback 废除批：候选链恰 = preferred 单根（原「链深 ≥3 且未引用三根进链」
+      // 的补深面随储备层退役——单点重新成为既定语义）。
+      assertEquals(r, List("kimi/kimi-k3"), s"链必须恰 = preferred 单根，实际链 = $r")
+      // 未引用 provider/model 一根都不进链（不暗中回补——作者令「不再支持模型fallback」）。
+      (unreferencedRefs :+ "zhipu/GLM-5.3").foreach { u =>
+        assert(!r.contains(u), s"未引用的 $u 不得进链（fallback 废除），实际链 = $r")
       }
-      assert(r.size >= 3, s"链深必须 ≥3，实际 ${r.size}: $r")
-      assertEquals(r.size, r.distinct.size, s"候选链不得出现重复项: $r")
   }
 
-  test("T2: 储备层追加在链尾、且不重复链上已有项（含其它未引用 model）") {
+  test("T2(重写): 储备层链尾 = 空——链上没有「已引用项再补尾」这回事（该面退役）") {
     for
       reg <- mkRegistry(liveLikeConfig)
       cs <- reg.getCandidatesForAgent(Some(generalChain))
     yield
       val r = refs(cs)
-      val tail = r.drop(presetRefs.size)
-      presetRefs.foreach { p =>
-        assert(!tail.contains(p), s"已引用的 $p 不得再进储备层尾部，实际尾部 = $tail")
-      }
-      // 同一「未被引用」规则也覆盖 zhipu/GLM-5.3（nebflow.json 已存在、三 preset 未引用）
-      assert(tail.contains("zhipu/GLM-5.3"), s"未引用项 zhipu/GLM-5.3 应一并纳入储备层，实际尾部 = $tail")
+      assertEquals(r.drop(1), Nil, s"链尾必须为空（储备层退役，链深恒 1），实际链 = $r")
+      assertEquals(r.size, r.distinct.size, s"候选链不得出现重复项: $r")
   }
 
   test("T3: 配置实存 model 少于 3 根时链深不虚增（储备层只取配置实存项，禁编造）") {

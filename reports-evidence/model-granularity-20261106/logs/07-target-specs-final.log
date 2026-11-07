@@ -1,0 +1,65 @@
+[sbt-gate] gate acquired after 0s
+[sbt-gate] heap cap not injected: SBT_OPTS already carries -Xmx (explicit wins)
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project model-granularity-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/model-granularity/project
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/model-granularity/)
+[info] compiling 2 Scala sources to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/model-granularity/target/scala-3.5.2/classes ...
+[info] done compiling
+[info] compiling 2 Scala sources to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/model-granularity/target/scala-3.5.2/test-classes ...
+[info] done compiling
+[success] Total time: 13 s, completed 2026年11月7日 10:39:04
+[warn] javaOptions will be ignored, fork is set to false
+10:39:05.688 [36mINFO [0m nebflow.config.fallback - [fallback-chain] llm.fallback written: zhipu/GLM-5.3-Flash
+10:39:05.701 [36mINFO [0m nebflow.config.fallback - [fallback-chain] llm.fallback written: test/main-model
+10:39:05.718 [36mINFO [0m nebflow.config.fallback - [fallback-chain] llm.fallback written: test/main-model
+10:39:05.777 [36mINFO [0m nebflow.config.fallback - [fallback-chain] llm.fallback removed (chain follows the sidecar/seed legs again)
+[32mnebflow.gateway.ModelChainRoutesSpec:[0m
+[32m  + [0m[32mGET /agents/Nebula/model → explicit shape with the own chain and its resolution source[0m [90m0.996s[0m
+[32m  + [0m[32mGET follower (kernel) → mode=follow, chain null, effectiveChain = Nebula's chain[0m [90m0.012s[0m
+[32m  + [0m[32mPUT /agents/kernel/model → fork; a second GET reports the fork; null returns to follow[0m [90m0.021s[0m
+[32m  + [0m[32mPUT accepts a bare chain body (no model wrapper) — same write[0m [90m0.009s[0m
+[32m  + [0m[32mPUT hot-applies: class change retains matching pins, purges out-of-chain pins; fallback is not a member[0m [90m0.019s[0m
+[32m  + [0m[32mall five class slots are writable and a class-chain update is visible to every session in that slot[0m [90m0.022s[0m
+[32m  + [0m[32mwire spellings (main / dispatcher) are normalized to the slot sidecar — a class write never lands in an unread sidecar[0m [90m0.027s[0m
+[32m  + [0m[32msession-level switch is isolated to that session; it does not mutate class slots or sibling sessions[0m [90m0.004s[0m
+[32m  + [0m[32mPUT empty chain ({preferred: null, fallbacks: []}) normalizes to follow[0m [90m0.013s[0m
+[32m  + [0m[32mwrite gate: a non-role agent is refused with 400 and its data stays untouched[0m [90m0.007s[0m
+[32m  + [0m[32mGET non-role agent → follow with the Nebula chain (stored refs are not resolution input)[0m [90m0.007s[0m
+[32m  + [0m[32mPUT unconfigured Nebula chain → follow = seed-chain degradation, never a 500[0m [90m0.008s[0m
+[32m  + [0m[32mPUT a settable name with no agent dir → in-place sidecar + 200 (builtin-def); a non-settable name → 400 gate first[0m [90m0.01s[0m
+[32mnebflow.core.ModelRolesSpec:[0m
+[32m  + [0m[32m五槽 wire 名 = main/kernel/dispatcher/node/subagent；sidecar 槽名与 wire 名解耦[0m [90m0.0s[0m
+[32m  + [0m[32m虚拟槽 = kernel/node/subagent；isSlot 覆盖 wire 名与槽名双拼写，不收编陌生名[0m [90m0.001s[0m
+[32m  + [0m[32mslotOfSessionId：五类生产 id 形状逐条归槽（delegate-kernel- 压过 delegate-；返回值是槽目录名）；未命中/空/None ⇒ None[0m [90m0.001s[0m
+[32m  + [0m[32meffectiveModel：槽未命中 ⇒ base 原样透传（不改写、不造候选；槽已配置腿依赖真实 dataRoot，运行时单点见头注）[0m [90m0.0s[0m
+[32m  + [0m[32m写闸面：五类槽全部进入 SettableAgents（/model 与设置面板按类切的写闸判据）[0m [90m0.0s[0m
+10:39:06.051 [36mINFO [0m nebflow.agent.startup-recovery - [startup-recovery] MANUAL recovery mode: 1 row(s) → pending-recovery (no auto-revive / no terminalize / zero parent notify): delegate-nebflow-mr1-rtm
+10:39:06.053 [36mINFO [0m nebflow.agent.startup-recovery - [startup-recovery] MANUAL recovery mode: 1 row(s) → pending-recovery (no auto-revive / no terminalize / zero parent notify): delegate-nebflow-mr1-run
+10:39:06.166 [36mINFO [0m nebflow.agent.startup-recovery - [startup-recovery] MANUAL recovery mode: 1 row(s) → pending-recovery (no auto-revive / no terminalize / zero parent notify): delegate-nebflow-mr2
+10:39:06.257 [36mINFO [0m nebflow.agent.startup-recovery - [startup-recovery] MANUAL recovery mode: 2 row(s) → pending-recovery (no auto-revive / no terminalize / zero parent notify): delegate-nebflow-mr3-a, delegate-nebflow-mr3-b
+10:39:06.262 [36mINFO [0m nebflow.agent.manual-revival - [manual-revival] restore-all: 2 restorable row(s) — delegate-nebflow-mr3-a(pending-recovery), delegate-nebflow-mr3-b(pending-recovery)
+10:39:06.293 [33mWARN [0m nebflow.llm.provider-concurrency - [provider-concurrency] no-pin actor=delegate-nebflow-mr3-a agent=nebflow reason=registry-absent chainHead=-
+10:39:06.293 [33mWARN [0m nebflow.llm.provider-concurrency - [provider-concurrency] no-pin actor=delegate-nebflow-mr3-b agent=nebflow reason=registry-absent chainHead=-
+10:39:06.313 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35mmanual-revival-delegate-nebflow-mr3-b/delegate[0m event=spawn detail=parent=- msgs=2
+10:39:06.313 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35mmanual-revival-delegate-nebflow-mr3-a/delegate[0m event=spawn detail=parent=- msgs=2
+10:39:06.331 [36mINFO [0m nebflow.agent.supervisor - BackoffSupervisor: watching delegate-nebflow-mr3-a for crash recovery (maxRestarts=2)
+10:39:06.331 [36mINFO [0m nebflow.agent.supervisor - BackoffSupervisor: watching delegate-nebflow-mr3-b for crash recovery (maxRestarts=2)
+10:39:06.403 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] mounted scope 'delegate-nebflow-mr3-b' (project=-, map=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/manual-revival-seat-mr313049382424603453822/.nebflow/flow-maps/delegate-nebflow-mr3-b, seat=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/manual-revival-seat-mr313049382424603453822, root=self) — one delegate one map
+10:39:06.403 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] mounted scope 'delegate-nebflow-mr3-a' (project=-, map=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/manual-revival-seat-mr313049382424603453822/.nebflow/flow-maps/delegate-nebflow-mr3-a, seat=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/manual-revival-seat-mr313049382424603453822, root=self) — one delegate one map
+10:39:06.410 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35mmanual-revival-delegate-nebflow-mr3-a/delegate[0m event=start detail=msgs=2
+10:39:06.410 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35mmanual-revival-delegate-nebflow-mr3-b/delegate[0m event=start detail=msgs=2
+10:39:06.411 [36mINFO [0m nebflow.agent.delegate-revival - [delegate-revival] revived delegate-nebflow-mr3-b (agent=nebflow, revival #1, seat=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/manual-revival-seat-mr313049382424603453822, transcript=2 msgs, parentLive=false) — supervision chain rebuilt (BackoffSupervisor watching again)
+10:39:06.411 [36mINFO [0m nebflow.agent.delegate-revival - [delegate-revival] revived delegate-nebflow-mr3-a (agent=nebflow, revival #1, seat=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/manual-revival-seat-mr313049382424603453822, transcript=2 msgs, parentLive=false) — supervision chain rebuilt (BackoffSupervisor watching again)
+[32mnebflow.agent.ManualRevivalSpec:[0m
+[32m  + [0m[32mMR1: manual boot sweep saves state — in-flight orphan + queue-less ready-to-merge zombie → pending-recovery, zero revive, zero terminalize, zero upward notify[0m [90m0.247s[0m
+[32m  + [0m[32mMR2: a second boot does not disturb pending rows (idempotent save; never auto-terminalizes behind the user's back)[0m [90m0.095s[0m
+[32m  + [0m[32mMR3: restoreAll (panel 一键全部恢复) revives every eligible pending row in place — same id, resumed transcript, row back to running[0m [90m0.262s[0m
+[32m  + [0m[32mMR4: restoreOne — unknown id and non-restorable rows are refused with panel-readable reasons (no spawn attempted)[0m [90m0.003s[0m
+[32m  + [0m[32mMR5: recovery view = pending-recovery / frozen / restart-fingerprint failed rows; honest failed and completed rows stay out[0m [90m0.001s[0m
+[32m  + [0m[32mMR6: ManualRevivalHost is a one-slot assembly holder — install/current/reset, absent deps is a readable None (never an NPE)[0m [90m0.0s[0m
+[32m  + [0m[32mMR7: Defaults.RestartRecoveryManual defaults to manual (true); the system prop is the single rollback switch[0m [90m0.0s[0m
+[info] Passed: Total 25, Failed 0, Errors 0, Passed 25
+[success] Total time: 2 s, completed 2026年11月7日 10:39:06
+EXIT=0

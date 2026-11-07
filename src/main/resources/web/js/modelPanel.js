@@ -137,17 +137,24 @@ export function modelSourceNoteKey(model) {
 // 插件面板三处过滤已落库（RegistryRoutes GET /api/agents 第二过滤点 + plugins.js
 // 第三过滤点），本面板是同族第四处消费位：角色枚举先过同一张隐藏名表，面板只留
 // 现役可配角色。藏的是可见性不是生命：单取 GET /api/agents/:name/model 读写链
-// 零触碰（本面板对隐藏角色零枚举即零读取）。
-const PANEL_HIDDEN_ROLES = ['project-dispatcher'];
-const ALL_ROLES = ['Nebula', 'project-dispatcher', 'nebflow'];
+// 模型粒度批（作者令 2026-11-06 20:36「按主agent/ kernel /dispatcher/node/subagent
+// 这几类分」）：面板/设置面 = **五类槽**——main(Nebula) / kernel / dispatcher / node /
+// subagent。kernel/node/subagent 是引擎侧虚拟模型槽（nebflow.core.ModelRoles：
+// 只有 model sidecar、不是完整 agent）；dispatcher 由隐藏态转正（五类之一）。
+// 原「执行 agent(nebflow)」不再是配置类——它的 sidecar 仍是 kernel/node/subagent
+// 槽为空时的兜底链（引擎面兼容），但面板不再提供入口。
+const PANEL_HIDDEN_ROLES = [];
+const ALL_ROLES = ['Nebula', 'kernel', 'project-dispatcher', 'node', 'subagent'];
 const ROLES = ALL_ROLES.filter((r) => !PANEL_HIDDEN_ROLES.includes(r));
 const FOLLOWER_ROLES = ROLES.filter((r) => r !== 'Nebula');
 /** Frontend mirror of SchemePolicy.SettableAgents (the /model write gate). */
 export const SETTABLE_ROLES = new Set(ROLES);
 const ROLE_KEY = {
   'Nebula': 'model.roleNebula',
+  'kernel': 'model.roleKernel',
   'project-dispatcher': 'model.roleDispatcher',
-  'nebflow': 'model.roleExecutor',
+  'node': 'model.roleNode',
+  'subagent': 'model.roleSubagent',
 };
 
 // 配置面风格统一批②（2026-10-31 作者令）：设置页「模型选择顺序」节与 /model
@@ -278,6 +285,10 @@ function refPartsHtml(ref) {
 }
 
 function chainRowsHtml(refs, currentRef, restricted = null) {
+  // fallback 废除批（作者令 2026-11-06 20:36「不再支持模型fallback」）：链深恒 1
+  // ⇒ 行面只剩**当前模型展示**（provider/model + 时段窗徽标）——排序手柄、
+  // 首选/回退位次、行内删除一并退役（换模型 = 下方下拉单选；回跟随 = follower
+  // 的「恢复跟随」钮）。
   const headIdx = currentRef ? refs.indexOf(currentRef) : -1;
   return refs.map((ref, i) => {
     const dim = headIdx > -1 && i < headIdx;
@@ -290,11 +301,8 @@ function chainRowsHtml(refs, currentRef, restricted = null) {
     const title = [dim ? t('model.unavailable', { reason: t('model.healthFiltered') }) : '', resTitle]
       .filter(Boolean).join('；');
     return `<div class="agent-detail-model-row mp-row${dim || schedDim ? ' mp-row-unavailable' : ''}" data-idx="${i}"${title ? ` title="${esc(title)}"` : ''}>
-      <span class="agent-detail-grip mp-drag" aria-hidden="true">⠿</span>
       ${refPartsHtml(ref)}
       ${res ? `<span class="mp-window">${esc(res.windows.join(', '))}</span>` : ''}
-      <span class="mp-pos">${i === 0 ? esc(t('model.chainHead')) : esc(t('model.chainFallback'))}</span>
-      <span class="agent-detail-model-remove mp-remove" data-idx="${i}" title="×">×</span>
     </div>`;
   }).join('');
 }
@@ -343,88 +351,18 @@ function buildChainEditor(container, role, commit) {
       ${addSelectHtml(allRefs, chain, restricted)}
     </div>
     <div class="mp-inline-err" role="alert"></div>
-    ${chain.length === 1 ? `<div class="mp-note">${esc(t('model.singleModelNote'))}</div>` : ''}`;
+    <div class="mp-note">${esc(t('model.singleModelNote'))}</div>`;
 
-  // 拖拽排序（首行 = preferred）——指针事件版。HTML5 DnD（draggable=true）
-  // 触屏端从不派发 dragstart，且 iOS WebKit 上触点落在 draggable 行上连祖先
-  // 滚动都被吞（行铺满整面 ⇒ 2026-10-31 作者报障「/model 配置面手机端无法
-  // 推动」根因：滚动/拖动双双失效）。指针版语义：
-  //   · 手柄（.mp-drag，touch-action:none）pointerdown 起拖——行体其余部分
-  //     保留原生滚动；setPointerCapture 手指出框不丢事件；
-  //   · 6px 位移阈值后才算拖（点按手柄零动作）；拖行 .dragging、悬停目标
-  //     .drag-over——与旧 DnD 同类名，CSS 零变化；
-  //   · pointerup 落点 splice（与旧 drop 同语义）→ commit(role)。
-  let dragIdx = null;
-  editor.querySelectorAll('.mp-row').forEach(row => {
-    const el = /** @type {HTMLElement} */ (row);
-    const grip = /** @type {HTMLElement|null} */ (el.querySelector('.mp-drag'));
-    if (!grip) return;
-    let startY = 0;
-    let active = false;
-    const clearMarks = () => {
-      editor.querySelectorAll('.mp-row').forEach(r => r.classList.remove('drag-over'));
-    };
-    grip.addEventListener('pointerdown', (e) => {
-      if (e.pointerType === 'mouse' && e.button !== 0) return;
-      dragIdx = Number(el.dataset.idx);
-      startY = e.clientY;
-      active = false;
-      /** @type {HTMLElement} */ (grip).setPointerCapture(e.pointerId);
-      e.preventDefault(); // 手柄面不启原生滚动/文本选择
-    });
-    grip.addEventListener('pointermove', (e) => {
-      if (dragIdx === null) return;
-      if (!active && Math.abs(e.clientY - startY) < 6) return;
-      active = true;
-      el.classList.add('dragging');
-      clearMarks();
-      const over = document.elementFromPoint(e.clientX, e.clientY)?.closest('.mp-row') || null;
-      if (over && over !== el) over.classList.add('drag-over');
-    });
-    grip.addEventListener('pointerup', (e) => {
-      if (dragIdx === null) return;
-      const over = active
-        ? (document.elementFromPoint(e.clientX, e.clientY)?.closest('.mp-row') || null)
-        : null;
-      const from = dragIdx;
-      dragIdx = null; active = false;
-      el.classList.remove('dragging');
-      clearMarks();
-      if (!over || over === el) return;
-      const to = Number((/** @type {HTMLElement} */ (over)).dataset.idx);
-      if (to === from) return;
-      const [moved] = chain.splice(from, 1);
-      chain.splice(to, 0, moved);
-      commit(role);
-    });
-    grip.addEventListener('pointercancel', () => {
-      if (dragIdx === null) return;
-      dragIdx = null; active = false;
-      el.classList.remove('dragging');
-      clearMarks();
-    });
-  });
-
-  // Remove — the last remaining row cannot be deleted (a chain keeps at least
-  // one model). 精简批 2026-11-01：清空链钮退役后，回 seed 态的入口只剩
-  // follower 侧的「恢复跟随」（Nebula 侧不再有清除钮）。
-  editor.querySelectorAll('.mp-remove').forEach(btn => {
-    (/** @type {HTMLElement} */ (btn)).addEventListener('click', (e) => {
-      e.stopPropagation();
-      if (chain.length <= 1) { flashInline(editor, t('model.errMinOne')); return; }
-      chain.splice(Number((/** @type {HTMLElement} */ (btn)).dataset.idx), 1);
-      commit(role);
-    });
-  });
-
-  // Add from the provider-grouped dropdown — the single write action here
-  // (精简批 2026-11-01：刷新列表 / 手动输入 两路已退役，链行只管排序与删除)。
+  // fallback 废除批（作者令 2026-11-06 20:36「不再支持模型fallback」）：编辑面 =
+  // **单模型**——下拉单选即整链替换（preferred = 选中项，fallbacks = 空）。原
+  // 「拖拽排序（指针版）+ 行内删除」两块随链深 1 退役（单行无序可排、无行可删；
+  // follower 回跟随走既有「恢复跟随」钮）。
   const addSel = /** @type {HTMLSelectElement|null} */ (editor.querySelector('.mp-add-select'));
   addSel?.addEventListener('change', () => {
     const ref = addSel.value;
     if (!ref) return;
     if (chain.includes(ref)) { flashInline(editor, t('model.errDuplicate')); addSel.value = ''; return; }
-    chain.push(ref);
+    chain.splice(0, chain.length, ref); // 整链替换（链深恒 1）
     commit(role);
   });
 
@@ -458,7 +396,7 @@ function buildForkButton(body, role, commit) {
   } else {
     btn.addEventListener('click', () => {
       const st = roleState.get(role);
-      st.chain = refs.slice();
+      st.chain = refs.slice(0, 1); // fallback 废除批：fork 起点也只取主链首根（链深恒 1）
       commit(role);
     });
   }

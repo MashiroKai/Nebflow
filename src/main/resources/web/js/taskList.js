@@ -168,12 +168,19 @@ export const DELEGATE_WORD_KEY = {
   cancelled: 'flowmap.st.cancelled',
   'ready-to-merge': 'delegate.readyToMerge',
   interrupted: 'task.nodeInterrupted',
+  // 手动恢复批（作者令 2026-11-06 20:36）：失效态两档——模型失效（frozen：静默
+  // 等待恢复）与重启中断（pending-recovery：待手动恢复），子代理面板独立呈现。
+  frozen: 'delegate.invalidWaiting',
+  'pending-recovery': 'delegate.pendingRecovery',
 };
 
 /** Star-child store status → row status domain (conservative: unknown = running). */
 function childRowStatus(status) {
   if (status === 'completed') return 'completed';
   if (status === 'failed') return 'failed';
+  // 手动恢复批：失效/待恢复两态独立成行态（不再折进 running 的黑箱）。
+  if (status === 'frozen') return 'frozen';
+  if (status === 'pending-recovery') return 'pending-recovery';
   return 'running'; // running | restarting | unknown
 }
 

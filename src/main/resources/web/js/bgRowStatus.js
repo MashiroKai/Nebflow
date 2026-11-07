@@ -42,6 +42,10 @@ export const BG_STATUS_VISUAL = {
   done: { icon: 'circle-check', tone: 'done', labelKey: 'subagents.status.done' },
   cancelling: { icon: 'circle-slash', tone: 'cancelling', labelKey: 'bg.cancelling' },
   chain: { icon: 'workflow', tone: 'chain', labelKey: 'subagents.chainRunning' },
+  // 模型粒度批（作者令 2026-11-06 20:36）：重启/崩溃中断行（后端
+  // SubAgentStartupRecovery 标 `pending-recovery`，零通知 + 不自动恢复）——
+  // 等你的恢复动作，不是错误也不是进行中；色调复用 waiting（不新增 CSS 色）。
+  'pending-recovery': { icon: 'hourglass', tone: 'waiting', labelKey: 'delegate.pendingRecovery' },
 };
 
 /** 未知状态回落档（脏数据/旧后端）：不崩、不空、最保守 = 空闲中性色。 */

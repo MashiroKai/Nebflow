@@ -227,7 +227,12 @@ class DelegateRevivalSpec extends CatsEffectSuite:
     }
   }
 
-  test("V2: revival budget exhausted → salvage chain (failed + parent notified), zero spawn") {
+  // 重写（fallback 废除批，作者令 2026-11-06 20:36「不用向上通知……由用户手动恢复」）：
+  // 收殓链的四条投递腿（跨设备待发区/持久邮箱/F2 注入队/持久提醒账）全部摘除——
+  // 预算耗尽的收殓面 = 任务行 failed + 指纹 + 「parent NOT notified」诚实文案；
+  // 复活入口 = ManualRevival（面板逐个/一键）。原「parent notified via the persistent
+  // mailbox」断言随批退役（原断言逐字见 git 历史）。
+  test("V2(重写): revival budget exhausted → salvage chain (failed, zero notify), zero spawn") {
     withFx("v2") { fx =>
       for
         parent <- fx.sessionStore.createSession("Nebula", agentName = Some("Nebula"))
@@ -243,9 +248,14 @@ class DelegateRevivalSpec extends CatsEffectSuite:
         live <- fx.resources.agentRegistry.get.map(_.contains(child))
         _ = assert(!live, "budget-exhausted orphan must not be spawned")
         events <- mailboxEvents(fx, parent.id)
+        _ = assertEquals(
+          events.filter(e => e.correlationId.contains(child)),
+          Nil,
+          "zero-notify: the parent mailbox carries nothing (panel + ManualRevival are the only faces)"
+        )
         _ = assert(
-          events.exists(e => e.correlationId.contains(child) && e.eventType == "failed"),
-          "parent notified via the persistent mailbox (delegate-track sole delivery face)"
+          row.lastError.exists(_.contains("parent NOT notified")),
+          s"the row states the zero-notify ruling honestly: ${row.lastError}"
         )
       yield ()
     }

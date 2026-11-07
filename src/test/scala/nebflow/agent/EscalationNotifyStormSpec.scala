@@ -114,7 +114,7 @@ class EscalationNotifyStormSpec extends CatsEffectSuite:
 
   // ── ①销账 + ②同级去重（陈旧 Escalate 丢弃）：同一真实场景钉两面 ─────────────
 
-  test("STORM-1/2: chain entry notifies once (L1); stale Escalate dropped; wake closes the chain (销账)") {
+  test("STORM-1/2 (重写): provider failures never enter or notify escalation; recovery still closes cleanly") {
     val system = ActorSystem("escalation-storm")
     val tmp = os.temp.dir()
     val prevRoot = PathUtil.dataRoot
@@ -142,7 +142,10 @@ class EscalationNotifyStormSpec extends CatsEffectSuite:
           sid
         )
         _ <- resources.agentRegistry.update(_ + (sid -> AgentRecord(sid, ref, AgentKind.Team, sid, Some(parentRef))))
-        // 驱动同 reason 连续冻结 ≥3（ER-3 节奏：失败→冻结→退避 kick→再失败…）
+        // fallback 废除批（作者令 2026-11-06「不再向上通知」）：429 是 provider 家族
+        // 冻结（llm-transient，呈现面 autoRecoverable）——冻结/退避循环照旧，但
+        // **永不进升级链、永不向父会话发 error-escalated**。原「连续 ≥3 ⇒ L1 链 +
+        // 恰好一条通知」面退役；陈旧 Escalate 丢弃与销账语义改按零链零通知判据重钉。
         _ <- ref ! AgentCommand.UserInput("keep failing")
         _ <- waitUntil(System.currentTimeMillis() + 30000)(
           resources.agentRegistry.get.map(_.get(sid).exists(_.status == AgentStatus.Frozen))
@@ -154,43 +157,34 @@ class EscalationNotifyStormSpec extends CatsEffectSuite:
         _ <- IO.sleep(6500.millis)
         _ <- ref ! AgentCommand.CheckFreezeGate
         _ <- waitUntil(System.currentTimeMillis() + 30000)(counter.get.map(_ >= 4))
-        // 升级链 L1：registry 快照 + 父收恰好一条通知
-        _ <- waitUntil(System.currentTimeMillis() + 30000)(
-          resources.agentRegistry.get.map(_.get(sid).flatMap(_.escalation).isDefined)
-        )
-        _ <- waitUntil(System.currentTimeMillis() + 30000)(
-          parentEvents.get.map(escalationLevels(_).contains(1))
-        )
-        esc0 <- resources.agentRegistry.get.map(_.get(sid).flatMap(_.escalation))
-        _ = assert(esc0.isDefined, "chain entry must snapshot escalation into the registry")
-        _ = assertEquals(esc0.map(_.level), Some(1))
-        levelsAfterEntry <- parentEvents.get.map(escalationLevels(_))
-        _ = assertEquals(levelsAfterEntry, List(1), "chain entry must notify exactly once (L1)")
+        // 升级链整体缺席：registry 无 escalation 快照、父零通知
+        _ <- IO.sleep(1000.millis)
+        escAfterWave <- resources.agentRegistry.get.map(_.get(sid).flatMap(_.escalation))
+        _ = assert(escAfterWave.isEmpty, "provider family must never enter the escalation chain")
+        levelsAfterWave <- parentEvents.get.map(escalationLevels(_))
+        _ = assertEquals(levelsAfterWave, Nil, "provider family freezes must not notify the parent")
 
-        // ②同级去重：升级窗内（escalateAt 未来）到达的陈旧 Escalate ⇒ 丢弃
-        // （零通知零升级，registry 快照原样）——模拟 actor 忙期间邮箱积压的
-        // 扫描器重发在冻结后被逐条消费的场景
+        // ②陈旧 Escalate 丢弃：无链状态下到达的 Escalate 不得凭空开链、不得通知
         _ <- ref ! AgentCommand.Escalate
         _ <- IO.sleep(800.millis)
         _ <- ref ! AgentCommand.Escalate
         _ <- IO.sleep(800.millis)
         levelsAfterStale <- parentEvents.get.map(escalationLevels(_))
-        _ = assertEquals(levelsAfterStale, List(1), "stale Escalate within window must NOT notify again")
+        _ = assertEquals(levelsAfterStale, Nil, "stale Escalate without a chain must NOT notify")
         escAfterStale <- resources.agentRegistry.get.map(_.get(sid).flatMap(_.escalation))
-        _ = assertEquals(escAfterStale.map(_.level), Some(1), "stale Escalate must NOT bump the level")
-        _ = assertEquals(escAfterStale.map(_.escalateAt), esc0.map(_.escalateAt))
+        _ = assert(escAfterStale.isEmpty, "stale Escalate must not open a chain on a provider-family freeze")
 
-        // ①销账：父裁定（唤醒=决策出口）即关闭升级链——provider 同时恢复（决策
-        // 生效），会话完成 turn 回 idle；registry escalation 保持 None，零新增通知
+        // ①销账：provider 恢复（succeedRef=true）→ 冻结退避到期后自动续跑完成回合；
+        // 全程零升级通知
         _ <- succeedRef.set(true)
         _ <- ref ! AgentCommand.UserInput("parent decision: taking over", None, Some("storm-wake-1"))
         _ <- waitUntil(System.currentTimeMillis() + 30000)(
           resources.agentRegistry.get.map(_.get(sid).exists(_.status == AgentStatus.Idle))
         )
         escAfterWake <- resources.agentRegistry.get.map(_.get(sid).flatMap(_.escalation))
-        _ = assert(escAfterWake.isEmpty, "wake (parent decision) must close the escalation chain (销账)")
+        _ = assert(escAfterWake.isEmpty, "recovery must leave the (absent) chain closed")
         levelsAfterWake <- parentEvents.get.map(escalationLevels(_))
-        _ = assertEquals(levelsAfterWake, List(1), "close-on-decision must not emit extra notifications")
+        _ = assertEquals(levelsAfterWake, Nil, "recovery must not emit escalation notifications")
       yield ()
       program.unsafeRunSync()
     finally

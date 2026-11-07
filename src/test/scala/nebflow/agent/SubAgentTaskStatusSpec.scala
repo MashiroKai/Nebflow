@@ -119,6 +119,7 @@ class SubAgentTaskStatusSpec extends CatsEffectSuite:
     val childSid = "delegate-child-1"
     for
       resources <- mkResources(system, tmp)
+      _ <- IO(nebflow.core.delegate.DelegateJudge.DelegateJudgePort.clear())
       _ <- resources.subAgentTaskStore.recordTask(mkTask(parentSid, childSid))
       child <- system.spawn(ignoreChild, "fake-child-1")
       supervisor <- system.spawn(
@@ -133,7 +134,7 @@ class SubAgentTaskStatusSpec extends CatsEffectSuite:
           parentSessionId = parentSid,
           resources = resources,
           initialPrompt = "do the thing",
-          source = "delegate"
+          source = "subtask"
         ),
         "supervisor-1"
       )
@@ -167,6 +168,7 @@ class SubAgentTaskStatusSpec extends CatsEffectSuite:
     val childSid = "delegate-child-2"
     for
       resources <- mkResources(system, tmp)
+      _ <- IO(nebflow.core.delegate.DelegateJudge.DelegateJudgePort.clear())
       _ <- resources.subAgentTaskStore.recordTask(mkTask(parentSid, childSid))
       child <- system.spawn(ignoreChild, "fake-child-2")
       supervisor <- system.spawn(
@@ -181,7 +183,7 @@ class SubAgentTaskStatusSpec extends CatsEffectSuite:
           parentSessionId = parentSid,
           resources = resources,
           initialPrompt = "do the thing",
-          source = "delegate"
+          source = "subtask"
         ),
         "supervisor-2"
       )
@@ -191,8 +193,10 @@ class SubAgentTaskStatusSpec extends CatsEffectSuite:
           agentId = childSid,
           agentName = "Worker",
           depth = 1,
-          errorType = AgentErrorType.LlmFailed,
-          message = "boom: provider down",
+          // This spec verifies task-store terminal status; use a deterministic tool failure so
+          // the current provider-freeze policy does not park the delegate before terminalization.
+          errorType = AgentErrorType.ToolFailed,
+          message = "boom: tool pipeline failed",
           cause = None
         )
       )

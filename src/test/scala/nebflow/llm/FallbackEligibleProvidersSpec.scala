@@ -37,6 +37,20 @@ import scala.concurrent.duration.*
  *   T6 反向：配置可见的候选被人为排除 ⇒ `silentExclusions` 必须检出（render 报警），
  *      且有原因的排除不得误报。
  *
+ * **fallback 废除批改写（作者令 2026-11-06 20:36「不再支持模型fallback」，逐条申报）**：
+ *   - A1 / A2 / A4 **重写**为链深恒 1 = preferred 单候选的耗尽语义：唯一根必败 ⇒
+ *     all-providers-failed 处置表如实；核心新断言 = 配置里未被引用的 provider
+ *     **一根请求都不许收到**（不暗中回补）；
+ *   - A5 **重写**为「唯一候选被健康面跳过」⇒ all-skipped（不许说 All providers
+ *     failed）+ 静默排除审计基准收窄的回归面（未引用 provider 不得误报）——原
+ *     「partially-tried」多根形态随 fallback 退役；
+ *   - A7 **整条删除**：派发钉链剔除（pinSkips / preExcluded）只在链深 > 1 时产生，
+ *     链深恒 1 后结构性不可达（满 ⇒ None 无账）；原断言逐字见 git 历史；
+ *   - A8 **整条删除**：储备层回补（reserveTier）本身就是 fallback，面已退役；
+ *   - A3 / A6 断言原样保留（判据在新语义下依然成立：all-skipped 面 / 纯账本逻辑）；
+ *   - 引擎配套：静默排除审计基准从「配置可见全集」收窄为「已解析候选集」
+ *     （interface.scala 两处 `expected`）——未引用 provider 是有意不试，不是静默排除。
+ *
  * 端口：全部 port 0（内核分配），互不冲突；收尾 guarantee 停 server。
  */
 class FallbackEligibleProvidersSpec extends CatsEffectSuite:
@@ -113,19 +127,13 @@ class FallbackEligibleProvidersSpec extends CatsEffectSuite:
       )
     }))
 
-  private def req(
-    sessionId: String,
-    chain: Option[AgentModelConfig],
-    pinSkips: List[(String, CandidateSkipCause)] = Nil
-  ): LlmRequest =
+  /** A7/A8 删除后 pinSkips 不再被本 spec 使用（该面链深恒 1 后结构性不可达，申报见头注）。 */
+  private def req(sessionId: String, chain: Option[AgentModelConfig]): LlmRequest =
     LlmRequest(
       messages = List(Message(MessageRole.User, Left("hi"))),
       sessionId = sessionId,
       agentId = s"$sessionId-agent",
-      agentModel = chain,
-      // 派发钉链剔除账本（缺陷批 2026-11-06）：模拟 spawn 侧（AgentSessionExecution
-      // 单点）随请求下发的 `PinnedChain.preExcluded`。
-      pinSkips = pinSkips
+      agentModel = chain
     )
 
   /** 跑一次非流面调用，连同 registry（读链）/ monitor（造健康面现状）一起回。 */
@@ -146,59 +154,57 @@ class FallbackEligibleProvidersSpec extends CatsEffectSuite:
     yield (res, chain.map(c => s"${c.providerId}/${c.model}"))
 
   // =====================================================================
-  // 验收 1：4 候选（2 必败 + 2 正常）⇒ 成功，前两个 failed、第三个 tried 成功
+  // 验收 1（重写，fallback 废除批）：链深恒 1——唯一候选必败 ⇒ all-providers-failed；
+  // 配置里未被引用的 provider 不得被暗中启用（核心新断言）；静默排除审计按
+  // 「已解析候选集」收窄后不得误报未引用 provider（引擎配套面回归）。
   // =====================================================================
-  test("A1: 4 候选（2 必败 + 2 正常）⇒ 换链成功，第 3 根交付；前两根如实记为 failed") {
+  test("A1(重写): 唯一候选必败 ⇒ all-providers-failed 处置表如实；其余配置 provider 零请求（不暗中回补）") {
     val spec = List("p1" -> "fail404", "p2" -> "fail404", "p3" -> "ok", "p4" -> "ok")
-    val chain = AgentModelConfig(
-      preferred = Some("p1/m1"),
-      fallbacks = List("p2/m1", "p3/m1", "p4/m1")
-    )
+    val chain = AgentModelConfig(preferred = Some("p1/m1"), fallbacks = Nil)
     withFarm(spec) { (ports, hits) =>
       runOnce(mkConfig(ports), req("eligible-a1", Some(chain))).map { case (res, chainRefs) =>
         assertEquals(
           chainRefs,
-          List("p1/m1", "p2/m1", "p3/m1", "p4/m1"),
-          "候选链必须是用户选的四根（不许静默缩水）"
+          List("p1/m1"),
+          "候选链必须恰 = preferred 单根（fallbacks 数组退役，不追加任何候选）"
         )
-        val resp = res.getOrElse(fail(s"A1 必须成功，实际 = ${res.left.map(e => e.getMessage)}"))
-        assertEquals(resp.meta.providerId, "p3", "第 3 根（p3）必须承接本次请求")
-        val steps = resp.meta.fallbackChain.getOrElse(Nil)
-        val failedRefs = steps.filter(_.reason.isDefined).map(s => s"${s.providerId}/${s.model}")
+        val err = res.left.getOrElse(fail(s"A1 必须失败（唯一候选必败且无 fallback 可换），实际 = ${res}")
+        )
+        val msg = err.getMessage
+        assert(msg.startsWith("All providers failed"), s"唯一根被真实试过且全败才允许这句话：\n$msg")
+        assert(msg.contains("reason: all-providers-failed"), msg)
+        assert(msg.contains("[tried]   p1/m1 — model ModelNotFound"), s"唯一根必须带处置进表：\n$msg")
+        assert(msg.contains("chain 1: tried 1, skipped 0"), s"处置表计数必须如实：\n$msg")
         assert(
-          failedRefs.take(2) == List("p1/m1", "p2/m1"),
-          s"前两根必须如实记为 failed（实际 $failedRefs）"
+          msg.contains("expected from config: 1 ref(s) — none silently excluded"),
+          s"审计基准 = 已解析候选集（1 根），未引用的 p2-p4 不得被误报成静默排除：\n$msg"
         )
-        assert(
-          steps.exists(s => s.providerId == "p3" && s.reason.isEmpty),
-          s"第 3 根必须是成功那根（实际 $steps）"
-        )
-        assertEquals(hits("p1").get(), 1, "p1 应恰好被尝试 1 次（404 = Permanent，不重试同一根）")
-        assertEquals(hits("p2").get(), 1, "p2 应恰好被尝试 1 次")
-        assertEquals(hits("p3").get(), 1, "p3 应恰好被尝试 1 次并成功")
-        assertEquals(hits("p4").get(), 0, "p4 不该被用到（前面已经成功）")
+        assert(!msg.contains("SILENTLY EXCLUDED"), msg)
+        assertEquals(hits("p1").get(), 1, "p1 恰好被尝试 1 次（404 = Permanent，不重试同一根）")
+        List("p2", "p3", "p4").foreach { p =>
+          assertEquals(hits(p).get(), 0, s"$p 不在链上 ⇒ 一根请求都不该收到（fallback 废除）")
+        }
       }
     }
   }
 
   // =====================================================================
-  // 验收 2：1 个 auth 403 + 3 正常 ⇒ 成功（auth 不许终止整链）
+  // 验收 2（重写，fallback 废除批）：唯一候选 auth 403 ⇒ all-providers-failed。
+  // 原「auth 只降级该候选、不终止整链」面随 fallback 退役——没有下一根可换。
   // =====================================================================
-  test("A2: 1 个 auth 403 + 3 个正常 ⇒ 必须成功（auth 只降级该候选，不终止整链）") {
+  test("A2(重写): 唯一候选 auth 403 ⇒ all-providers-failed（Auth 族如实进表）；其余配置 provider 零请求") {
     val spec = List("k1" -> "auth403", "k2" -> "ok", "k3" -> "ok", "k4" -> "ok")
-    val chain = AgentModelConfig(
-      preferred = Some("k1/m1"),
-      fallbacks = List("k2/m1", "k3/m1", "k4/m1")
-    )
+    val chain = AgentModelConfig(preferred = Some("k1/m1"), fallbacks = Nil)
     withFarm(spec) { (ports, hits) =>
       runOnce(mkConfig(ports), req("eligible-a2", Some(chain))).map { case (res, _) =>
-        val resp = res.getOrElse(fail(s"A2 必须成功（403 只降级该候选），实际 = ${res.left.map(_.getMessage)}"))
-        assertEquals(resp.meta.providerId, "k2", "k1 auth 失败后必须由 k2 承接")
-        val steps = resp.meta.fallbackChain.getOrElse(Nil)
-        val k1 = steps.find(_.providerId == "k1").getOrElse(fail(s"k1 必须出现在失败记录里：$steps"))
-        assertEquals(k1.reason, Some("Auth"))
-        assertEquals(hits("k1").get(), 1, "403 是 Permanent（配额窗换链），不该重试同一根")
-        assertEquals(hits("k2").get(), 1, "k2 必须被尝试并成功")
+        val err = res.left.getOrElse(fail("A2 必须失败（唯一候选 auth 死，无下一根可换）"))
+        val msg = err.getMessage
+        assert(msg.startsWith("All providers failed"), s"唯一根被真实试过且全败：\n$msg")
+        assert(msg.contains("[tried]   k1/m1 — auth Auth"), s"k1 必须以 auth 族进处置表：\n$msg")
+        assertEquals(hits("k1").get(), 1, "403 是 Permanent（不重试同一根）")
+        List("k2", "k3", "k4").foreach { p =>
+          assertEquals(hits(p).get(), 0, s"$p 不得被暗中启用（fallback 废除）")
+        }
       }
     }
   }
@@ -230,61 +236,65 @@ class FallbackEligibleProvidersSpec extends CatsEffectSuite:
   }
 
   // =====================================================================
-  // 验收 4：真全败 ⇒ all-providers-failed + 完整处置表
+  // 验收 4（重写，fallback 废除批）：单根形态的真全败 ⇒ all-providers-failed + 处置表
   // =====================================================================
-  test("A4: 链上每根都被试过且全败 ⇒ all-providers-failed，通知带完整候选处置表") {
+  test("A4(重写): 唯一根被真实试过且 404 全败 ⇒ all-providers-failed，处置表如实（chain 1: tried 1, skipped 0）") {
     val spec = List("f1" -> "fail404", "f2" -> "fail404", "f3" -> "fail404")
-    val chain = AgentModelConfig(preferred = Some("f1/m1"), fallbacks = List("f2/m1", "f3/m1"))
+    val chain = AgentModelConfig(preferred = Some("f1/m1"), fallbacks = Nil)
     withFarm(spec) { (ports, hits) =>
       runOnce(mkConfig(ports), req("eligible-a4", Some(chain))).map { case (res, chainRefs) =>
-        assertEquals(chainRefs, List("f1/m1", "f2/m1", "f3/m1"))
+        assertEquals(chainRefs, List("f1/m1"), "链深恒 1 = preferred 单根")
         val err = res.left.getOrElse(fail("A4 必须全败"))
         val msg = err.getMessage
         assert(msg.startsWith("All providers failed"), s"真全败才允许这句话：\n$msg")
         assert(msg.contains("reason: all-providers-failed"), msg)
-        List("f1/m1", "f2/m1", "f3/m1").foreach { ref =>
-          assert(msg.contains(s"[tried]   $ref — model ModelNotFound"), s"$ref 必须带处置进表：\n$msg")
-        }
-        assert(msg.contains("chain 3: tried 3, skipped 0"), s"处置表计数必须如实：\n$msg")
-        assert(msg.contains("expected from config: 3 ref(s) — none silently excluded"), msg)
+        assert(msg.contains("[tried]   f1/m1 — model ModelNotFound"), s"唯一根必须带处置进表：\n$msg")
+        assert(msg.contains("chain 1: tried 1, skipped 0"), s"处置表计数必须如实：\n$msg")
+        assert(msg.contains("expected from config: 1 ref(s) — none silently excluded"), msg)
         assert(!msg.contains("SILENTLY EXCLUDED"), msg)
-        List("f1", "f2", "f3").foreach(p => assertEquals(hits(p).get(), 1, s"$p 必须恰好被尝试 1 次"))
+        assertEquals(hits("f1").get(), 1, "f1 必须恰好被尝试 1 次")
+        List("f2", "f3").foreach { p =>
+          assertEquals(hits(p).get(), 0, s"$p 未被链引用 ⇒ 零请求（fallback 废除，不得回补试根）")
+        }
       }
     }
   }
 
   // =====================================================================
-  // T5：今天事故形态（试了一部分 + 跳了一部分）⇒ partially-tried
+  // 验收 5（重写，fallback 废除批）：唯一候选被健康面跳过 ⇒ all-skipped（不许说
+  // 全败）+ 半开试探读数进表；同时 = 静默排除审计基准收窄的回归面（配置里未被
+  // 引用的 mx 不得被误报成 SILENTLY EXCLUDED——原「partially-tried」多根形态随
+  // fallback 退役，重写申报见头注）。
   // =====================================================================
-  test("A5(事故形态): 3 根里只试了 2 根、1 根被健康面跳过 ⇒ partially-tried + 跳过原因进表，禁说全败") {
-    val spec = List("m1p" -> "fail404", "m2p" -> "fail404", "m3p" -> "ok", "m4p" -> "ok")
-    val chain = AgentModelConfig(
-      preferred = Some("m1p/m1"),
-      fallbacks = List("m2p/m1", "m3p/m1", "m4p/m1")
-    )
+  test("A5(重写): 唯一候选被健康面跳过 ⇒ all-skipped + 跳过原因进表，禁说全败；未引用 provider 零请求零误报") {
+    val spec = List("m1p" -> "ok", "mx" -> "ok")
+    val chain = AgentModelConfig(preferred = Some("m1p/m1"), fallbacks = Nil)
     withFarm(spec) { (ports, hits) =>
       runOnce(
         mkConfig(ports),
         req("eligible-a5", Some(chain)),
-        // 事故形态复刻：zhipu 类候选早间被 markDown，整天没被任何 delegate 试过
-        preDown = List("m3p" -> "m1", "m4p" -> "m1")
+        // 唯一候选早间被 markDown（事故形态的单根版：整天没被任何会话试过）
+        preDown = List("m1p" -> "m1")
       ).map { case (res, chainRefs) =>
-        assertEquals(chainRefs.size, 4, "链上仍是四根（健康面过滤发生在请求闸，不是链构建）")
-        val err = res.left.getOrElse(fail("A5 必须失败（两根必败 + 两根被跳过）"))
+        assertEquals(chainRefs, List("m1p/m1"), "链深恒 1 = preferred 单根（健康面过滤发生在请求闸，不是链构建）")
+        val err = res.left.getOrElse(fail("A5 必须失败（唯一候选被健康面跳过）"))
         val msg = err.getMessage
         assert(
-          !msg.startsWith("All providers failed"),
-          s"只试了 2/4 根时**不许**说 All providers failed（今天报障的误导源头）：\n$msg"
+          !msg.contains("All providers failed"),
+          s"一根都没试时**不许**说 All providers failed（报障的误导源头）：\n$msg"
         )
-        assert(msg.contains("reason: partially-tried"), msg)
-        assert(msg.contains("2 candidate(s) were skipped WITHOUT being tried"), msg)
-        assert(msg.contains("[skipped] m3p/m1 — health-down (simulated 429"), msg)
-        assert(msg.contains("[skipped] m4p/m1 — health-down (simulated 429"), msg)
-        // 假 DOWN 批（2026-11-05）：跳过原因现在必须写明「还差多久才被真实试一次」
-        // ——「不许否决」的可读面（标签/原因不变，只是追加了半开试探读数）。
+        assert(msg.contains("reason: all-skipped"), msg)
+        assert(msg.contains("every candidate was skipped"), msg)
+        assert(msg.contains("[skipped] m1p/m1 — health-down (simulated 429"), msg)
+        // 假 DOWN 批（2026-11-05）：跳过原因现在必须写明「还差多久才被真实试一次」。
         assert(msg.contains("half-open trial #1 in 60s"), msg)
-        assert(msg.contains("[tried]   m1p/m1"), msg)
-        assertEquals(hits("m3p").get(), 0, "退避窗内被跳过的候选不该收到请求（不许把不否决做成永远重试）")
+        assert(
+          msg.contains("expected from config: 1 ref(s) — none silently excluded"),
+          s"审计基准 = 已解析候选集：未引用的 mx 不得被误报成静默排除：\n$msg"
+        )
+        assert(!msg.contains("SILENTLY EXCLUDED"), msg)
+        assertEquals(hits("m1p").get(), 0, "退避窗内被跳过的候选不该收到请求（不许把不否决做成永远重试）")
+        assertEquals(hits("mx").get(), 0, "mx 未被链引用 ⇒ 零请求（fallback 废除）")
       }
     }
   }
@@ -326,84 +336,14 @@ class FallbackEligibleProvidersSpec extends CatsEffectSuite:
   }
 
   // =====================================================================
-  // A7（派发钉链剔除，缺陷批 2026-11-06）：provider-concurrency 批移交的
-  // `UTSC/glm-5.3-flash SILENTLY EXCLUDED（无原因剔除）` 家族——派发时刻因满载
-  // 被链首扫描剔出的候选必须带 provider-full 原因进终局账本，不许静默消失。
-  // 语义边界（如实钉死）：pin 剔的是**链首优先级**——reserveTier 会把被剔 ref
-  // 追加回链尾当最后手段；账本记的是「派发那一刻它被跳过」这个事实（seeded
-  // 层 first-wins：同一 ref 即使后来又被健康面挡住，原因仍 = provider-full）。
+  // A7 / A8 **整条删除**（fallback 废除批 2026-11-06，逐条申报）：
+  //   · A7（派发钉链剔除，缺陷批 2026-11-06「满载被剔的候选带 provider-full 原因
+  //     进终局账本」）：剔除账（pinSkips / preExcluded）只在「链深 > 1 且链首被链首
+  //     扫描剔过」时产生——链深恒 1 后结构性不可达（满 ⇒ assign = None 无账、闲 ⇒
+  //     钉无剔）；provider-concurrency 侧的对应申报见 ProviderConcurrencyFallbackSpec
+  //     PE1–PE3 头注。原断言逐字内容见 git 历史。
+  //   · A8（钉链回补·正向）：被剔候选经 reserveTier 回补链尾当最后手段——储备层
+  //     本身就是 fallback，随「不再支持模型fallback」整面退役（`reserveTier` 已从
+  //     ProviderRegistry 移除）。原断言逐字内容见 git 历史。
   // =====================================================================
-  test("A7(派发钉链): 满载被剔的候选带 provider-full 原因进终局账本——不再 SILENTLY EXCLUDED") {
-    val spec = List("p1" -> "ok", "p2" -> "fail404", "p3" -> "fail404")
-    // 钉链物化形态（PinnedChain.toAgentModelConfig）：链首 = p2（p1 在派发时刻
-    // 因满载被剔），尾链 = p3；请求时 reserveTier 把 p1 追加回链尾（最后手段）
-    val pinnedChain = AgentModelConfig(preferred = Some("p2/m1"), fallbacks = List("p3/m1"))
-    withFarm(spec) { (ports, hits) =>
-      runOnce(
-        mkConfig(ports),
-        req(
-          "eligible-a7",
-          Some(pinnedChain),
-          pinSkips = List("p1/m1" -> CandidateSkipCause.ProviderFull(10, 10))
-        ),
-        // p1/p3 健康面判死 ⇒ 三根里只有 p2 被真实尝试且败（partially-tried 形态）
-        preDown = List("p1" -> "m1", "p3" -> "m1")
-      ).map { case (res, chainRefs) =>
-        assertEquals(
-          chainRefs,
-          List("p2/m1", "p3/m1", "p1/m1"),
-          "链 = 钉链物化形态 + 储备层回补（pin 剔的是优先级，不是资格）"
-        )
-        val err = res.left.getOrElse(fail("A7 必须失败（p2 必败 + p1/p3 health-down）"))
-        val msg = err.getMessage
-        assert(
-          !msg.startsWith("All providers failed"),
-          s"只试了 1/3 根时不许说全败:\n$msg"
-        )
-        assert(msg.contains("reason: partially-tried"), s"试 1 跳 2 ⇒ partially-tried:\n$msg")
-        assert(
-          msg.contains("[skipped] p1/m1 — provider-full (10 of 10 actor slots in use at dispatch"),
-          s"派发钉链剔除必须带原因进表（UTSC 形态根治判据）；且 seeded 层 first-wins，" +
-            s"不被后来的 health-down 改写:\n$msg"
-        )
-        assert(!msg.contains("[skipped] p1/m1 — health-down"), s"first-wins：p1 的原因必须是 provider-full:\n$msg")
-        assert(
-          msg.contains("[skipped] p3/m1 — health-down (simulated 429"),
-          s"健康面剔除带原因（半开试探倒数随时刻浮动，断言稳定前缀）:\n$msg"
-        )
-        assert(msg.contains("[tried]   p2/m1"), s"试过的候选进 tried 表:\n$msg")
-        assert(msg.contains("chain 3: tried 1, skipped 2"), s"处置表计数必须如实:\n$msg")
-        assert(msg.contains("expected from config: 3 ref(s) — none silently excluded"), s"三根全有账，无一静默:\n$msg")
-        assert(!msg.contains("SILENTLY EXCLUDED"), s"有原因的剔除不得误报成静默排除:\n$msg")
-        assertEquals(hits("p1").get(), 0, "被健康面跳过的 p1 不该收到请求（尽管它在链尾）")
-        assertEquals(hits("p3").get(), 0, "被健康面跳过的 p3 不该收到请求")
-        assertEquals(hits("p2").get(), 1, "链首 p2 必须被真实尝试（404 Permanent 不重试同一根）")
-      }
-    }
-  }
-
-  // =====================================================================
-  // A8（钉链语义边界·正向）：pin 剔的是链首优先级——满载 provider 的候选经
-  // reserveTier 回补链尾，前面的根全败时它仍被真实尝试并承接（最后手段）。
-  // =====================================================================
-  test("A8(钉链回补): 派发时满载被剔的候选回补链尾——前面的根全败时它仍被真实尝试") {
-    val spec = List("p1" -> "ok", "p2" -> "fail404", "p3" -> "fail404")
-    val pinnedChain = AgentModelConfig(preferred = Some("p2/m1"), fallbacks = List("p3/m1"))
-    withFarm(spec) { (ports, hits) =>
-      runOnce(
-        mkConfig(ports),
-        req(
-          "eligible-a8",
-          Some(pinnedChain),
-          pinSkips = List("p1/m1" -> CandidateSkipCause.ProviderFull(10, 10))
-        )
-      ).map { case (res, _) =>
-        val resp = res.getOrElse(fail(s"A8 必须成功（p1 经储备层回补承接），实际 = ${res.left.map(_.getMessage)}"))
-        assertEquals(resp.meta.providerId, "p1", "p2/p3 全败后必须由链尾回补的 p1 承接")
-        assertEquals(hits("p1").get(), 1, "p1 必须被真实尝试恰 1 次")
-        assertEquals(hits("p2").get(), 1, "链首 p2 先试")
-        assertEquals(hits("p3").get(), 1, "尾链 p3 次之")
-      }
-    }
-  }
 end FallbackEligibleProvidersSpec

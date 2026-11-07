@@ -1080,7 +1080,15 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             // agentModel = spawn 时钉死的 (preferred=链首, fallbacks=尾链)——运行期
             // llm.fallback / agent.json 变化 / 储备层追加都**不再改变链首**（缓存键
             // 稳定）。pin = None ⇒ 原值透传 = 既有行为逐字节不变。
-            agentModel = agentModelWithPin(freshDef.model, stateForLlm.providerChainPin),
+            // 模型粒度批（2026-11-06 20:36 作者令，五类槽）：会话命中 kernel/node/
+            // subagent 槽且**槽已配置** ⇒ 槽链压过钉链（类切换要「同类会话都变」，
+            // 快照让位——切类是显式用户动作）；槽空 ⇒ 钉链照旧（零行为变化）。
+            // 🔴 组合序 = 槽链 > 钉链 > base：slotChainOf 槽未配置时返回 None，
+            // 钉链照常物化（T2 快照稳定面不回归的判据）。
+            agentModel =
+              nebflow.core.ModelRoles
+                .slotChainOf(stateForLlm.sessionId)
+                .orElse(agentModelWithPin(freshDef.model, stateForLlm.providerChainPin)),
             // 派发钉链剔除账本（缺陷批 2026-11-06）：spawn 时因满载被链首扫描剔出的
             // 候选连原因随请求下发——进候选账本 seeded 层。没有它，这些候选既不在链上
             // 也没有原因 ⇒ `SILENTLY EXCLUDED`（现网实证 UTSC/glm-5.3-flash）。缺省 Nil。

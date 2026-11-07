@@ -30,6 +30,19 @@ import scala.concurrent.duration.*
  *      与 `updateConfig` 交叉时能把刚删掉的 provider 整块写回 ⇒
  *      `ConfigService.undeletedProviders` 守卫逐名核对并上浮失败。
  *
+ * **fallback 废除批改写（作者令 2026-11-06 20:36「不再支持模型fallback」，逐条申报）**：
+ *   - R1 **重写**：`reserveTier` 已随 fallback 退役 ⇒ 「未引用 provider 进候选集」的
+ *     原断言反转——候选集恰 = 链单根，未引用 provider 留在**配置面**（configProviders
+ *     诚实可读），不再进候选面；
+ *   - A2 **重写**：加回 provider 热生效的落点改为配置面（原「立刻进候选集」随储备层
+ *     退役——链未引用 ⇒ 候选集不含）；
+ *   - R2 **重写**：守卫上浮断言原样；复活病征的落点改为配置面（原「复活后进候选集」
+ *     随储备层退役）；
+ *   - A1 / A3 / A4 / R3 断言原样保留（drift 基准已随本批在引擎侧从「候选 refs」改锚
+ *     **配置面 refs**——registry.candidateReport，链深恒 1 后原判据恒 false）；
+ *   - 引擎配套：registry.candidateReport 的 drift 基准改锚配置面 refs（申报见该处注释）。
+ * 原断言逐字内容见 git 历史。
+ *
  * 全程隔离 `PathUtil.setDataRoot(临时目录)`，不读不写真实 `~/.stand`，不碰 6138。
  */
 class ProviderCandidateConfigSyncSpec extends CatsEffectSuite:
@@ -98,8 +111,8 @@ class ProviderCandidateConfigSyncSpec extends CatsEffectSuite:
       "cmdcode" -> List("deepseek/deepseek-v4.1-flash")
     )
 
-  // ── R1：reserveTier —— 「链里删了」不等于「删了」──────────────
-  test("R1 配置里存在但链未引用的 provider 仍进候选集（reserve），origin 可区分") {
+  // ── R1（重写）：reserveTier 已随 fallback 废除退役 ───────────────
+  test("R1(重写) 配置里存在但链未引用的 provider 不进候选集；配置面诚实可读") {
     withTempRoot { root =>
       IO {
         writeConfig(root, prodLike)
@@ -107,13 +120,13 @@ class ProviderCandidateConfigSyncSpec extends CatsEffectSuite:
       } *> mkRegistryFromDisk.flatMap { reg =>
         reg.candidateReport().map { j =>
           val refs = reportRefs(j)
-          assertEquals(refs.head, "zhipu/glm-5.3-flash", s"链头必须排第一，实际 $refs")
-          assert(
-            refs.contains("kimi/kimi-for-coding"),
-            s"配置里存在的 kimi 即使没被链引用也会被 reserveTier 追加，实际 $refs"
-          )
-          assertEquals(originOf(j, "kimi/kimi-for-coding"), Some("reserve"), "kimi 的来源应标 reserve")
+          assertEquals(refs, List("zhipu/glm-5.3-flash"), s"候选集必须恰 = 链单根（fallback 废除：不追加储备层），实际 $refs")
           assertEquals(originOf(j, "zhipu/glm-5.3-flash"), Some("chain"), "链头来源应标 chain")
+          assertEquals(
+            strList(j, "configProviders").sorted,
+            List("cmdcode", "kimi", "zhipu"),
+            "配置面仍持有全部 provider（链面 ≠ 配置面，drift 基准 = 配置面）"
+          )
         }
       }
     }
@@ -151,8 +164,8 @@ class ProviderCandidateConfigSyncSpec extends CatsEffectSuite:
     }
   }
 
-  // ── A2：加回 ⇒ 立刻生效 ────────────────────────────────────
-  test("A2 加回 kimi ⇒ 候选集立刻含 kimi（热生效，不重启）") {
+  // ── A2（重写）：加回 ⇒ 配置面热生效；候选集只认链引用 ────────────
+  test("A2(重写) 加回 kimi ⇒ 配置面立刻含 kimi（热生效，不重启）；候选集仍不含（链未引用，fallback 废除）") {
     withTempRoot { root =>
       IO {
         writeConfig(root, List("zhipu" -> List("glm-5.3-flash")))
@@ -165,7 +178,14 @@ class ProviderCandidateConfigSyncSpec extends CatsEffectSuite:
           after <- reg.candidateReport()
         yield
           assert(!reportRefs(before).exists(_.startsWith("kimi/")), "加回前不得有 kimi（前置条件）")
-          assert(reportRefs(after).contains("kimi/kimi-for-coding"), s"加回后必须立刻进候选集，实际 ${reportRefs(after)}")
+          assert(
+            strList(after, "configProviders").contains("kimi"),
+            s"加回后 provider 必须立刻进配置面，实际 ${strList(after, "configProviders")}"
+          )
+          assert(
+            !reportRefs(after).exists(_.startsWith("kimi/")),
+            s"链未引用 ⇒ 候选集不含 kimi（fallback 废除：不暗中回补），实际 ${reportRefs(after)}"
+          )
       }
     }
   }
@@ -238,7 +258,16 @@ class ProviderCandidateConfigSyncSpec extends CatsEffectSuite:
           assert(!afterDelete, "删除当时必须真的不在盘上")
           assert(resurrected, "旁路旧底稿回写后 kimi 必须复活（本通道的实证）")
           assertEquals(leftover, List("kimi"), "守卫必须点名未落地的 kimi ⇒ 调用方上浮失败，禁止静默")
-          assert(reportRefs(report).exists(_.startsWith("kimi/")), "复活后的配置会重新进入候选集（这就是今天的病症）")
+          // fallback 废除批申报：复活病征的落点改为**配置面**（原「复活后进候选集」
+          // 随储备层退役——链未引用 ⇒ 候选集不含复活的 kimi，不再被调用）。
+          assert(
+            strList(report, "configProviders").contains("kimi"),
+            s"复活后的配置重新进入配置面，实际 ${strList(report, "configProviders")}"
+          )
+          assert(
+            !reportRefs(report).exists(_.startsWith("kimi/")),
+            s"链未引用 ⇒ 候选集不含复活的 kimi（fallback 废除），实际 ${reportRefs(report)}"
+          )
       }
     }
   }

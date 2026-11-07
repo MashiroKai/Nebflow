@@ -882,28 +882,42 @@ object GatewayMain extends IOApp:
                                   // transcript checkpoint 续跑，父会话最终收续作结果；
                                   // 复活慢段 fork（并发护栏），收殓同步段不变。
                                   val subagentCrashSweep: IO[Unit] =
-                                    nebflow.agent.SubAgentStartupRecovery
-                                      .sweep(
-                                        sharedResources.subAgentTaskStore,
-                                        sessionStore,
-                                        Some(
-                                          nebflow.agent.SubAgentStartupRecovery.RevivalDeps(
-                                            resources = sharedResources,
-                                            system = actorSystem,
-                                            wsSend = Some(json => wsHub.broadcast(json))
-                                          )
-                                        )
+                                    // 手动恢复批（2026-11-06 20:36 作者令「不自动恢复…由用户手动恢复」）：
+                                    // manual = true（缺省）⇒ 在飞孤儿标 pending-recovery、零复活零收殓零
+                                    // 通知；恢复入口 = /api/delegates/restore{,-all}（ManualRevivalHost）。
+                                    // 恢复依赖在此安装（ActorSystem 已建成；REST 臂现读）。
+                                    IO(nebflow.gateway.ManualRevivalHost.install(
+                                      nebflow.agent.DelegateRevival.Deps(
+                                        resources = sharedResources,
+                                        system = actorSystem,
+                                        wsSend = Some(json => wsHub.broadcast(json))
                                       )
-                                      .attempt
-                                      .flatMap {
-                                        case Right(report) if report.terminalized.nonEmpty || report.revived.nonEmpty =>
-                                          logger
-                                            .info(
-                                              s"Subagent crash sweep: ${report.summary} — terminalized: ${report.terminalized.mkString(",")}"
+                                    )).flatMap { _ =>
+                                      nebflow.agent.SubAgentStartupRecovery
+                                        .sweep(
+                                          sharedResources.subAgentTaskStore,
+                                          sessionStore,
+                                          Some(
+                                            nebflow.agent.SubAgentStartupRecovery.RevivalDeps(
+                                              resources = sharedResources,
+                                              system = actorSystem,
+                                              wsSend = Some(json => wsHub.broadcast(json))
                                             )
-                                            .void
-                                        case _ => IO.unit
-                                      }
+                                          ),
+                                          manual = nebflow.shared.Defaults.RestartRecoveryManual
+                                        )
+                                        .attempt
+                                        .flatMap {
+                                          case Right(report)
+                                              if report.terminalized.nonEmpty || report.revived.nonEmpty || report.pended.nonEmpty =>
+                                            logger
+                                              .info(
+                                                s"Subagent crash sweep: ${report.summary} — terminalized: ${report.terminalized.mkString(",")}"
+                                              )
+                                              .void
+                                          case _ => IO.unit
+                                        }
+                                    }
                                   // ═══ 邮箱 boot 对账（终态通知 actor 邮箱化批 P1/P2）═══
                                   // tmp 残片清理 + 账面合成缺失条目（mailbox-reconcile
                                   // 纪元窗内的「账已终、信没到」delegate 终态行）+ 积压

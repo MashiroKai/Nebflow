@@ -549,7 +549,7 @@ class FreezeSilenceSpec extends CatsEffectSuite:
   }
 
   test(
-    "escalation horizon: a provider freeze inside 30 minutes stays silent even after many resumes; past it, ONE digest alert"
+    "escalation horizon (重写, fallback 废除批): a provider freeze stays silent inside AND past the 30-minute horizon — provider digest leg retired (zero upward notify)"
   ) {
     val system = ActorSystem(s"fsz-6-${scala.util.Random.nextInt(100000)}")
     val tmp = os.temp.dir(prefix = "nb-fsz6-")
@@ -582,7 +582,7 @@ class FreezeSilenceSpec extends CatsEffectSuite:
       inside = FreezeNotice.planAlerts(FreezeNotice.digestOf(DelegateRegistry.list(), System.currentTimeMillis()))
       _ <- FreezeAlertSweep.alertTick(resources)
       eventsInside <- mailboxEvents(parentSid)
-      // 时限到（把时限压到 1ms，等价于「本轮冻结已超 30 分钟」）⇒ 才有一条摘要。
+      // 时限到（把时限压到 1ms，等价于「本轮冻结已超 30 分钟」）。
       _ <- IO(sys.props("nebflow.delegate.freeze.escalateAfterMs") = "1")
       _ <- IO(Thread.sleep(5))
       outside = FreezeNotice.planAlerts(FreezeNotice.digestOf(DelegateRegistry.list(), System.currentTimeMillis()))
@@ -596,16 +596,19 @@ class FreezeSilenceSpec extends CatsEffectSuite:
         Nil,
         s"inside the horizon: zero messages, got ${eventsInside.map(_.eventType)}"
       )
-      assertEquals(outside.size, 1, "past the escalation horizon it becomes ONE digest alert")
+      // fallback 废除批（作者令 2026-11-06 20:36「只在子agent面板里显示……不再向上通知」）：
+      // 「超 30 分钟升级为一条摘要」本身就是一条向上通知 ⇒ provider 腿整体退役——时限
+      // 内/外都零告警，呈现面只有子 agent 面板。原断言「时限外恰 1 条 digest」随批退役。
+      assertEquals(
+        outside,
+        Nil,
+        "past the horizon TOO: zero alerts (the 30-minute provider digest was itself an upward notify — retired)"
+      )
       val alerts = eventsOutside.filter(_.eventType == "freeze-alert")
       assertEquals(
         alerts.size,
-        1,
-        s"exactly one aggregated alert past the horizon, got ${eventsOutside.map(_.eventType)}"
-      )
-      assert(
-        alerts.head.payload.contains("horizon") || alerts.head.payload.contains("时限"),
-        s"the alert states the horizon: ${alerts.head.payload.take(300)}"
+        0,
+        s"zero digest alerts past the horizon (provider family), got ${eventsOutside.map(_.eventType)}"
       )
     end for
   }

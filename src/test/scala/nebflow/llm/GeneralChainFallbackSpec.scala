@@ -120,7 +120,7 @@ class GeneralChainFallbackSpec extends CatsEffectSuite:
   // T1：链头（zhipu）429-1308 配额死 ⇒ 答案由后备（kimi）交付
   // ============================================================
 
-  test("T1 general 链头失败走后备：zhipu 配额死 ⇒ kimi-for-coding 交付，头至少被尝试一次") {
+  test("T1(重写) general 链头配额死 ⇒ 静默等待恢复（有界终局），后备不暗中承接（fallback 废除）") {
     val hitsHead = new AtomicInteger(0)
     val hitsBackup = new AtomicInteger(0)
     var s1: HttpServer = null
@@ -140,9 +140,20 @@ class GeneralChainFallbackSpec extends CatsEffectSuite:
             messages = List(Message(MessageRole.User, Left("hi"))),
             sessionId = "general-fallback-t1",
             agentId = "general-fallback-t1-agent",
+            // generalChain 的 fallbacks 数组已是**死数据**（引擎只读 preferred）——
+            // 保留它正证明旧链写的兼容容忍；生效链 = zhipu 单根。
             agentModel = Some(generalChain)
           )
+          // fallback 废除批申报：单候选配额死 ⇒ 静默等待恢复（作者令「否则就是静默
+          // 等待」）——本测试给 8s 有界上界取终局，不无限等。
           res <- handle.sendStream(req).compile.toList.attempt
+            .timeoutTo(
+              8.seconds,
+              // 哨兵以 Left 捕获（raiseError 会让 IO 失败、下方断言面走不到）
+              IO.pure(
+                Left(new RuntimeException("all-down gate exceeded test bound")): Either[Throwable, List[StreamChunk]]
+              )
+            )
           _ <- release
         yield res)
           .guarantee(stopAll(List(s1, s2)))
@@ -150,30 +161,33 @@ class GeneralChainFallbackSpec extends CatsEffectSuite:
 
     program.flatMap {
       case Right(chunks) =>
+        IO(fail(s"唯一候选配额死 ⇒ 不得有根交付（后备已随 fallback 退役），实际成功 = ${textOf(chunks)}"))
+      case Left(e) =>
         IO {
-          assertEquals(textOf(chunks), "KIMI-BACKUP", "链头失败必须由 kimi 后备交付答案")
-          assert(hitsHead.get() >= 1, s"链头必须被尝试过（失败→换链，而非绕过头），实际 ${hitsHead.get()} 次")
-          assert(hitsBackup.get() >= 1, s"后备必须承接，实际 ${hitsBackup.get()} 次")
+          assert(hitsHead.get() >= 1, s"链头必须被真实尝试过（失败→静默等待，而非绕过头），实际 ${hitsHead.get()} 次")
+          assertEquals(hitsBackup.get(), 0, s"未引用的后备必须零命中（fallback 废除：不暗中回补），实际 ${hitsBackup.get()} 次")
+          assert(
+            e.isInstanceOf[AllProvidersDownTimeout] || e.getMessage.contains("all-down gate"),
+            s"终局应为静默等待形态（全灭闸/等待恢复），实际 ${e.getClass.getName}: ${e.getMessage}"
+          )
         }
-      case Left(e) => IO(fail(s"链头配额死 + 后备可用必须成功；实际失败 = ${e.getClass.getName}: ${e.getMessage}"))
     }
   }
 
   // ============================================================
-  // T2：spec 级候选序——同一链解析为 [zhipu 头, kimi 后备…] 有序链
+  // T2（重写）：spec 级候选序——同一链解析为单根 [zhipu 头]
   // ============================================================
 
-  test("T2 候选序：general 链解析为有序候选 [zhipu 头, kimi-for-coding, kimi-for-coding-highspeed, …储备层]") {
+  test("T2(重写) 候选序：general 链解析为单根 [zhipu 头]——后备/储备层不再进链（fallback 废除）") {
     val ref = Ref.unsafe[IO, NebflowServiceConfig](mkConfig)
     val registry = new ProviderRegistry(ref, null.asInstanceOf[sttp.client4.StreamBackend[IO, sttp.capabilities.fs2.Fs2Streams[IO]]])
     registry.getCandidatesForAgent(Some(generalChain)).map { cs =>
       val refs = cs.map(c => s"${c.providerId}/${c.model}")
       assertEquals(
-        refs.take(3),
-        List("zhipu/glm-5.3-flash", "kimi/kimi-for-coding", "kimi/kimi-for-coding-highspeed"),
-        s"链序 = failover 序：头在前、后备依声明序跟随，实际链 = $refs"
+        refs,
+        List("zhipu/glm-5.3-flash"),
+        s"链深恒 1 = preferred 单根（fallbacks 数组退役为死数据、储备层移除），实际链 = $refs"
       )
-      assert(refs.size >= 3, s"链深必须 ≥3（头 + 双后备），实际 ${refs.size}: $refs")
       assertEquals(refs.size, refs.distinct.size, s"候选链不得重复: $refs")
     }
   }

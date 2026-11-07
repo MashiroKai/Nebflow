@@ -29,17 +29,17 @@ import nebflow.shared.*
 import scala.concurrent.duration.*
 
 /**
- * provider 冻结告警合并窗批（2026-11-05 19:08 作者裁定逐字：「**30分钟才提醒，而且是
- * 有一个合并窗口，把同类型的错误合并后一起汇报，不要分开汇报**」）。
+ * provider 冻结告警策略批（2026-11-05）之后续改（fallback 废除批，作者令 2026-11-06
+ * 20:36「只在子agent面板里显示……不再向上通知」）。
  *
- * 钉死的断言（任务书验收逐条对应）：
- *   ① 阈值是**时间口径**：本轮冻结 ≥ 升级时限（缺省 30 分钟）才提醒；29:59 静默。
- *   ② 归并键 = **错误类型族**（`ProviderFault.familyWire`）：同类型窗内多次冻结合并成
- *      一条；不同类型各一条；窗内新增同类**不另发**（旧键含 id 集 ⇒ 每冻一条发一条）。
- *   ③ 时长实证：< 时限 ⇒ **零通知**；> 时限 ⇒ **一条**。
- *   ④ 滚动 = **tumbling**（锚点 = 上次发出）：同类每窗最多一条，不刷屏、也不永远推迟。
- *   ⑤ `deterministic-defect`（真失败）**不被合并窗吞掉**：即时、单独、按父会话一批一条。
- *   ⑥ 汇报可读：类型 / 影响的会话数 / 时间跨度（首次—末次）/ 已自动恢复 / 仍待人工。
+ * **fallback 废除批改写（逐条申报）**：provider 家族从不向上告警；本 spec 原①时间
+ * 阈值后升级、②按类型合并汇报、③超时产生一条、④滚动窗口重发、⑥摘要正文读数均
+ * 属于已退役的 provider 通知面，相关旧断言改为零告警判据。原⑤确定性缺陷即时告警
+ * 是真失败，与 provider 故障正交，完整保留。摘要数据模型与 `trackWave` 仅在别处
+ * 作为非通知统计读数保留；本 spec 不再把它验证成父会话通知。原断言逐字见 git 历史。
+ *
+ * 保留判据：ProviderFault 族分类仍有效；provider 在时限内/外都不向上通知；
+ * deterministic-defect 仍即时且独立通知。
  */
 class FreezeAlertWindowSpec extends CatsEffectSuite:
 
@@ -275,36 +275,27 @@ class FreezeAlertWindowSpec extends CatsEffectSuite:
     assertNotEquals(fam("kimi/k3: 403 no subscription"), fam("kimi/k3: insufficient balance"))
   }
 
-  // ── ② 阈值是时间口径（缺省 30 分钟），不是续跑次数 ─────────────────────────
+  // ── ②（重写）provider 告警时限完全退役 ────────────────────────────────────
 
-  test("threshold reads the 30-minute episode age (default), not the auto-resume count") {
+  test("provider-family freezes stay silent inside AND past the former horizon") {
     val horizon = Defaults.DelegateFreezeEscalateAfterMs
-    assertEquals(horizon, 30L * 60 * 1000, "the default horizon is 30 minutes")
+    assertEquals(horizon, 30L * 60 * 1000, "the former horizon value remains config data only")
     val now = 10_000_000L
-    def planned(items: List[FreezeNotice.Item]) =
-      FreezeNotice.planAlerts(FreezeNotice.Digest(now, 0L, items)).map(a => a.family -> a.items.size)
+    def planned(items: List[FreezeNotice.Item]) = FreezeNotice.planAlerts(FreezeNotice.Digest(now, 0L, items))
 
     val young = mkItem("a1", "kimi/k3: 403 no subscription", now - horizon + 1_000L, now)
-    assertEquals(planned(List(young)), Nil, "29:59 old ⇒ still silent")
-
     val due = mkItem("a2", "kimi/k3: 403 no subscription", now - horizon, now)
-    assertEquals(planned(List(due)), List("auth-subscription" -> 1), "exactly at the horizon ⇒ one digest")
-
-    // 同类型里一条到时限、一条还没到 ⇒ 仍是**一条**（同一个事件，全部并入）。
-    val younger = mkItem("a3", "kimi/k3: 403 no subscription", now - 10_000L, now)
-    assertEquals(
-      planned(List(due, younger)),
-      List("auth-subscription" -> 2),
-      "same type joins the SAME digest even if its own age is inside the horizon"
-    )
-    // 时限内的同类冻结**一条都不发**（全静默）。
-    assertEquals(planned(List(young, younger)), Nil, "every freeze inside the horizon ⇒ zero messages")
+    val older = mkItem("a3", "kimi/k3: 403 no subscription", now - 2 * horizon, now)
+    assertEquals(planned(List(young)), Nil, "inside the former horizon ⇒ zero provider alerts")
+    assertEquals(planned(List(due)), Nil, "at the former horizon ⇒ still zero provider alerts")
+    assertEquals(planned(List(older)), Nil, "past the former horizon ⇒ still zero provider alerts")
+    assertEquals(planned(List(due, young, older)), Nil, "provider family aggregation no longer produces alerts")
   }
 
-  // ── ③ 合并窗实证：同类型合并一条，异类型各一条 ───────────────────────────
+  // ── ③（重写）provider 同类冻结不汇总成父通知 ───────────────────────────────
 
   test(
-    "empirical: 3 same-type freezes (same window) ⇒ exactly ONE message; a 4th from ANOTHER parent joins it; a second type ⇒ a SECOND message"
+    "provider freezes of same and different families never create parent alerts (panel digest remains available)"
   ) {
     val system = ActorSystem(s"faw-3-${scala.util.Random.nextInt(100000)}")
     val tmp = os.temp.dir(prefix = "nb-faw3-")
@@ -372,39 +363,15 @@ class FreezeAlertWindowSpec extends CatsEffectSuite:
       digest = FreezeNotice.fullDigest(DelegateRegistry.list(), System.currentTimeMillis())
       _ <- system.stopAll
     yield
-      assertEquals(
-        afterFirst.map(_.metadata("family").flatMap(_.asString)),
-        List(Some("auth-subscription")),
-        s"3 same-type freezes ⇒ exactly ONE report, got ${afterFirst.map(_.payload.take(80))}"
-      )
-      assertEquals(
-        afterFirst.head.metadata("count").flatMap(_.asNumber).flatMap(_.toInt),
-        Some(3),
-        "the single report carries all 3 freezes"
-      )
-      assertEquals(afterSecond.size, 1, "the next 30s tick must not repeat the same digest")
-      assertEquals(
-        afterFourth.size,
-        1,
-        s"a 4th same-type freeze (other parent) joins the SAME report — the id set must not create a new message, got ${afterFourth.size}"
-      )
-      assertEquals(
-        windowAfterFourth.map(_.affected),
-        Some(4),
-        "the merge ledger now reads 4 affected sessions for that type (next window's digest carries it)"
-      )
-      assertEquals(
-        afterFourth.head.metadata("affectedSessions").flatMap(_.asNumber).flatMap(_.toInt),
-        Some(3),
-        "the already-sent report is never retro-edited (its id set was 3 at send time)"
-      )
-      assertEquals(
-        afterSecondType.map(_.metadata("family").flatMap(_.asString)).sorted,
-        List(Some("auth-subscription"), Some("quota-balance")).sorted,
-        s"a second type ⇒ a SECOND report (different types are never merged), got ${afterSecondType.map(_.metadata("family"))}"
-      )
-      assertEquals(afterSecondType.size, 2, "two types ⇒ two reports, no more")
-      assert(digest.total >= 5, s"all freezes are on the panel: ${digest.total}")
+      // fallback 废除批：原「同族合并一条、异族再一条父摘要」断言整体退役。
+      // provider 告警腿已删除，因此首拍/复拍/新增成员/新增族一律零父通知；
+      // 面板统计独立保留，仍能看到所有冻结项与类型归属。
+      assertEquals(afterFirst, Nil, s"provider family freezes never create parent alerts: $afterFirst")
+      assertEquals(afterSecond, Nil, "repeated sweep stays silent")
+      assertEquals(afterFourth, Nil, "another parent and same family still produce no upward digest")
+      assertEquals(afterSecondType, Nil, "a different provider family also produces no upward digest")
+      assertEquals(windowAfterFourth.map(_.affected), Some(4), "non-notifying panel statistics still track all four auth sessions")
+      assert(digest.total >= 5, s"all freezes remain on the panel: ${digest.total}")
       stamp(
         "final",
         s"同类合并读数：afterFirst=${afterFirst.size}, afterSecondTick=${afterSecond.size}, " +
@@ -414,9 +381,9 @@ class FreezeAlertWindowSpec extends CatsEffectSuite:
     end for
   }
 
-  // ── ④ 时长实证：< 时限零通知；> 时限一条 ────────────────────────────────
+  // ── ④（重写）曾用时限前后都零 provider 通知 ───────────────────────────────
 
-  test("empirical: a freeze younger than 30 minutes sends ZERO messages; the same freeze past 30 minutes sends exactly ONE") {
+  test("empirical (重写): a provider freeze sends ZERO messages both younger and older than the former 30-minute horizon") {
     val system = ActorSystem(s"faw-4-${scala.util.Random.nextInt(100000)}")
     val tmp = os.temp.dir(prefix = "nb-faw4-")
     val parentSid = "faw-parent-h"
@@ -459,20 +426,17 @@ class FreezeAlertWindowSpec extends CatsEffectSuite:
       pastAgain <- alertsOf(List(parentSid))
       _ <- system.stopAll
     yield
-      assertEquals(insideAlerts, Nil, s"inside the 30-minute horizon: ZERO messages, got ${insideAlerts.map(_.eventType)}")
-      assertEquals(pastAlerts.size, 1, s"past the horizon: exactly ONE message, got ${pastAlerts.size}")
-      assertEquals(pastAlerts.head.metadata("family").flatMap(_.asString), Some("upstream-5xx"))
-      assert(
-        pastAlerts.head.payload.contains("30"),
-        s"the digest states the horizon: ${pastAlerts.head.payload.take(200)}"
-      )
-      assertEquals(pastAgain.size, 1, "the next tick does not repeat it (tumbling window)")
+      // fallback 废除批（作者令「只在子agent面板里显示……不再向上通知」）：
+      // 原「>30 分钟转一条摘要」面退役，时限内外均不得产生 provider 家族通知。
+      assertEquals(insideAlerts, Nil, s"inside the former horizon: zero messages, got ${insideAlerts.map(_.eventType)}")
+      assertEquals(pastAlerts, Nil, s"past the former horizon too: zero messages, got ${pastAlerts.map(_.eventType)}")
+      assertEquals(pastAgain, Nil, "every subsequent sweep remains silent (provider digest leg retired)")
     end for
   }
 
-  // ── ⑤ 滚动：tumbling，同类型每窗最多一条 ────────────────────────────────
+  // ── ⑤（重写）provider 告警滚动窗退役 ──────────────────────────────────────
 
-  test("rolling: the same type speaks at most once per merge window, and speaks again only after the window elapses (tumbling)") {
+  test("rolling (重写): provider family remains silent on every tick, before and after the former merge window") {
     val system = ActorSystem(s"faw-5-${scala.util.Random.nextInt(100000)}")
     val tmp = os.temp.dir(prefix = "nb-faw5-")
     val parentSid = "faw-parent-r"
@@ -505,19 +469,14 @@ class FreezeAlertWindowSpec extends CatsEffectSuite:
       _ = stamp("after-window", s"滚过一窗 ⇒ 累计 ${afterWindow.size} 条")
       _ <- system.stopAll
     yield
-      assertEquals(within.size, 1, s"4 ticks inside one window ⇒ exactly ONE report, got ${within.size}")
-      assertEquals(afterWindow.size, 2, s"after the window elapses the same type reports once more, got ${afterWindow.size}")
-      assertEquals(
-        afterWindow.map(_.metadata("family").flatMap(_.asString)).distinct,
-        List(Some("upstream-5xx")),
-        "the rolling report stays one per type"
-      )
+      assertEquals(within, Nil, s"provider family is silent even within the former merge window, got $within")
+      assertEquals(afterWindow, Nil, s"provider family remains silent after the former merge window, got $afterWindow")
     end for
   }
 
   // ── ⑥ 真失败不被吞 ──────────────────────────────────────────────────────
 
-  test("deterministic-defect still notifies immediately and separately — it is never merged away by the provider window") {
+  test("deterministic-defect still notifies immediately; provider family stays silent even after the former horizon (重写)") {
     val system = ActorSystem(s"faw-6-${scala.util.Random.nextInt(100000)}")
     val tmp = os.temp.dir(prefix = "nb-faw6-")
     val parentSid = "faw-parent-d"
@@ -553,7 +512,7 @@ class FreezeAlertWindowSpec extends CatsEffectSuite:
         "defect-immediate",
         s"时限内：provider 冻结静默，确定性缺陷 ⇒ ${firstPass.size} 条（family=${firstPass.map(_.metadata("family").flatMap(_.asString)).mkString(",")}）"
       )
-      // 再让 provider 那一族也过时限 ⇒ 额外一条类型摘要，缺陷不重发、也不被吞掉。
+      // provider 告警腿已退役：再把时限压过，仍不产生第二条父可见件；缺陷也不重发。
       _ <- IO(sys.props("nebflow.delegate.freeze.escalateAfterMs") = "1")
       _ <- IO.sleep(10.millis)
       _ <- FreezeAlertSweep.alertTick(resources)
@@ -571,17 +530,17 @@ class FreezeAlertWindowSpec extends CatsEffectSuite:
         s"the defect alert says it is a defect: ${firstPass.head.payload.take(200)}"
       )
       assertEquals(
-        secondPass.map(_.metadata("family").flatMap(_.asString)).sorted,
-        List(Some("auth-subscription"), Some("deterministic-defect")).sorted,
-        s"the provider family digest comes later as its OWN message; the defect is not swallowed, got ${secondPass.map(_.metadata("family"))}"
+        secondPass.map(_.metadata("family").flatMap(_.asString)),
+        List(Some("deterministic-defect")),
+        s"only the deterministic defect is visible; provider family remains silent and defect is not re-sent: ${secondPass.map(_.metadata("family"))}"
       )
-      assertEquals(secondPass.size, 2, "two families ⇒ two messages, the defect one was not re-sent")
+      assertEquals(secondPass.size, 1, "the deterministic alert is not re-sent; provider digest stays absent")
     end for
   }
 
-  // ── ⑦ 汇报内容：类型 / 会话数 / 跨度 / 已恢复 / 仍待人工 ─────────────────
+  // ── ⑦（重写）统计仍供面板读取，不向父会话生成摘要 ─────────────────────────
 
-  test("the digest reads type + affected sessions + span + auto-recovered + still-needs-you (sample below)") {
+  test("panel digest retains provider freeze statistics without producing a parent alert (重写)") {
     val system = ActorSystem(s"faw-7-${scala.util.Random.nextInt(100000)}")
     val tmp = os.temp.dir(prefix = "nb-faw7-")
     val parentSid = "faw-parent-s"
@@ -631,29 +590,18 @@ class FreezeAlertWindowSpec extends CatsEffectSuite:
       out <- alertsOf(List(parentSid))
       _ <- system.stopAll
     yield
-      assertEquals(tracked, Nil, "inside the horizon nothing is reported")
+      assertEquals(tracked, Nil, "the first sweep remains silent")
       assertEquals(unfrozen.isRight, true, s"the recovery fixture must land: $unfrozen")
       assertEquals(stillFrozenB, false, "the recovered delegate is no longer frozen")
-      assertEquals(out.size, 1, s"one type ⇒ one digest, got ${out.size}")
-      val a = out.head
-      assertEquals(a.metadata("family").flatMap(_.asString), Some("upstream-5xx"))
-      assertEquals(a.metadata("affectedSessions").flatMap(_.asNumber).flatMap(_.toInt), Some(2), "2 sessions affected")
-      assertEquals(a.metadata("stillFrozen").flatMap(_.asNumber).flatMap(_.toInt), Some(1), "1 still frozen")
-      assertEquals(a.metadata("autoRecovered").flatMap(_.asNumber).flatMap(_.toInt), Some(1), "1 auto-recovered")
-      assert(a.metadata("spanMs").flatMap(_.asNumber).flatMap(_.toLong).exists(_ >= 100L), s"span is read: ${a.metadata}")
-      assertEquals(a.metadata("needsHuman").flatMap(_.asBoolean), Some(true))
-      List("类型", "影响的会话数", "时间跨度", "已自动恢复", "仍待人工").foreach { k =>
-        assert(a.payload.contains(k), s"the digest must read '$k': ${a.payload.take(400)}")
-      }
-      println("──── 示例摘要文本（原样，即作者收到的唯一一条）────")
-      println(a.payload)
-      println("──── 示例摘要文本结束 ────")
+      assertEquals(out, Nil, s"provider statistics must not become parent alerts: $out")
+      val panelDigest = FreezeNotice.fullDigest(DelegateRegistry.list(), System.currentTimeMillis())
+      assert(panelDigest.total >= 1, s"frozen delegate remains represented in panel statistics: ${panelDigest.total}")
     end for
   }
 
-  // ── ⑧ 示例摘要（**生产缺省参数**原样渲染：30 分钟时限 / 30 分钟合并窗）──────────
+  // ── ⑧（重写）生产缺省值不再驱动 provider 父通知 ───────────────────────────
 
-  test("sample digest with production defaults (30-minute horizon, 30-minute merge window)") {
+  test("production-default provider digest planning is silent; panel statistics and ledger remain readable (重写)") {
     val now = 1_800_000_000_000L
     val min = 60_000L
     val a = mkItem(
@@ -668,20 +616,12 @@ class FreezeAlertWindowSpec extends CatsEffectSuite:
     FreezeNotice.trackWave(List(a, b), now - 5 * min)
     FreezeNotice.trackWave(List(a), now) // b 在本窗内被自动续跑救回来了
     val alerts = FreezeNotice.planAlerts(FreezeNotice.Digest(now, 0L, List(a)))
-    assertEquals(alerts.size, 1, "one type ⇒ one digest")
-    assertEquals(alerts.head.family, "upstream-5xx")
-    assertEquals(alerts.head.rearmMs, 30L * min, "the merge window is the 30-minute default")
-    val text = FreezeNotice.alertText(alerts.head)
-    assert(text.contains("30 分钟合并窗内只发这一条"), s"the text states the merge window: ${text.take(400)}")
-    assert(text.contains("仍待人工：1"), s"still-needs-you is read: ${text.take(400)}")
-    assert(text.contains("已自动恢复：1"), s"auto-recovered is read: ${text.take(400)}")
-    assert(text.contains("时间跨度"), "the span is read")
-    assert(text.contains("超过 30 分钟时限才汇报"), "the horizon prints as the real 30-minute default")
-    println("──── 示例摘要文本（生产缺省参数）────")
-    println(text)
-    println("──── 示例摘要文本结束 ────")
-    // 分桶不串味：a/b 是同一族的两次冻结，但旧账没被 reset 掉时 firstFrozenAt 仍应取最早。
-    assert(FreezeNotice.windowOf("upstream-5xx").exists(_.firstFrozenAt <= old + 1), "the window keeps the earliest freeze")
+    assertEquals(alerts, Nil, "provider-family planning never yields parent alerts, regardless of production defaults")
+    assertEquals(Defaults.DelegateFreezeEscalateAfterMs, 30L * min)
+    assertEquals(Defaults.DelegateFreezeAlertReArmMs, 30L * min)
+    val digest = FreezeNotice.fullDigest(List.empty, now)
+    assertEquals(digest.total, 0, "empty registry has no panel entries")
+    assert(FreezeNotice.windowOf("upstream-5xx").exists(_.firstFrozenAt <= old + 1), "non-notifying statistics retain earliest freeze")
   }
 
 end FreezeAlertWindowSpec

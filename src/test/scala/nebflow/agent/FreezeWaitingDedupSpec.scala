@@ -16,21 +16,21 @@ import nebflow.shared.PathUtil
  * 作者令逐字：「FROZEN-WAITING · NEBFLOW · FROZEN-WAITING 这种通知 只准去重通知一次，
  * 而且要几个同类型的聚合成一个蓝色气泡通知。」
  *
- * 现网实证（15:29→16:14）：同一组 frozen-waiting 摘要每 4 分钟重发一次，每次固定 3 行
- * （quota-balance 2 / upstream-5xx 1 / auth-subscription 12），内容逐字相同。机械根因：
- * 静默族冻结回执留在邮箱 taken/ 段随每拍重放，`collapseSilentReceipts` 只把 N 条收成
- * **每族一条**——族与族之间、拍与拍之间没有「同一状态只播一次」的抑制，也没有跨因聚合。
+ * **fallback 废除批改写（作者令 2026-11-06 20:36「只在子agent面板里显示……不再向上
+ * 通知」，逐条申报）**：frozen-waiting 行本身是一条父可见件 ⇒ 该播报面随批退役——
+ * `collapseSilentReceipts` 改为**整段丢弃**静默回执，生产路径零 frozen-waiting 行
+ * （原 A 用例「3 族同拍合一条蓝气泡」面退役）。`suppressRepeatedWaiting` 判据**原样
+ * 保留**：只为吸收**存量盘面**里已落账的 frozen-waiting 行（本批起生产不再产新行，
+ * 该闸就此空转）——原 B/C/D 用例改以**手造存量行**直喂 `suppressRepeatedWaiting`，
+ * 继续钉死该吸收闸的判据。原断言逐字内容见 git 历史。
  *
- * 钉死的断言（与 `FreezeNotice.suppressRepeatedWaiting` 判据一一对应）：
- *   - **A 跨因合泡**：3 个族同拍 ⇒ **恰一条** frozen-waiting 事件（一个蓝气泡），
- *     正文逐族分行；台账落盘（`freeze-waiting-announce.json`）。
- *   - **B 同因集合未变 ⇒ 零重播**：同一批回执多次 pump ⇒ 只播一次，其后每拍
- *     frozen-waiting 行数为 **0**（抑制读数在解冻日志可复盘）。
- *   - **C 成员增减 ⇒ 恰再播一次**：新成员入族 ⇒ 恰一条新播报，且只带**变化的族**；
- *     再下一拍复归零重播。
- *   - **D 解冻恢复 ⇒ 清账**：成员全部不在冻 ⇒ 行静默清账；同成员再冻 = 新事件，允许再播。
- *   - **E 重启不重置**：抑制态是**纯文件台账**（无进程内缓存），重启（= 新进程再调）
- *     后同集合依旧零重播——由 B 的纯文件读路径 + A 的落盘断言共同钉死。
+ * 钉死的断言：
+ *   - **A 生产面（新语义）**：种子 15 条静默回执 ⇒ pump **整段丢弃**（dropped=15），
+ *     零 frozen 回执、零 frozen-waiting 行；重复 pump 同读数（taken 重放不产新行）。
+ *   - **B 存量吸收·跨因合泡**：3 族存量行同拍 ⇒ 恰一条合泡（逐族分行），台账落盘。
+ *   - **C 存量吸收·同集合零重播**：同批行重复喂 ⇒ 只播一次，其后零行（纯文件台账）。
+ *   - **D 存量吸收·成员增减**：新成员 ⇒ 恰再播一次且只带**变化的族**。
+ *   - **E 存量吸收·恢复清账**：成员全部不在冻 ⇒ 清账；同成员再冻 = 新事件，允许再播。
  */
 class FreezeWaitingDedupSpec extends CatsEffectSuite:
 
@@ -108,16 +108,15 @@ class FreezeWaitingDedupSpec extends CatsEffectSuite:
         .as(())
     )
 
-  /** 一拍 pump = 与 `MailboxDrain` W1/W4 同取数、同装配：taken 重放 ++ pending 全取 →
-    * collapse（每族一条）→ suppress（同因只播一次 + 跨因合一条）。 */
-  private def pump(parent: String): IO[(List[AgentCommand.ExternalEvent], Int)] =
+  /** 一拍生产 pump = 与 `MailboxDrain` W1/W4 同取数：taken 重放 ++ pending 全取 →
+    * collapse（fallback 废除批起 = **整段丢弃**，不再折叠出任何 frozen-waiting 行）。 */
+  private def pumpProd(parent: String): IO[(List[AgentCommand.ExternalEvent], Int)] =
     for
       replayed <- SessionMailbox.scanTaken(parent)
       pending <- SessionMailbox.scanPending(parent)
       drained <- SessionMailbox.take(parent, pending)
-      (collapsed, _) = FreezeNotice.collapseSilentReceipts(replayed.map(_.event) ++ drained.map(_.event))
-      suppressed <- FreezeNotice.suppressRepeatedWaiting(collapsed)
-    yield suppressed
+      (events, dropped) = FreezeNotice.collapseSilentReceipts(replayed.map(_.event) ++ drained.map(_.event))
+    yield (events, dropped)
 
   private def waitingRows(events: List[AgentCommand.ExternalEvent]): List[AgentCommand.ExternalEvent] =
     events.filter(e => e.source == "delegate" && e.eventType == "frozen-waiting")
@@ -141,31 +140,75 @@ class FreezeWaitingDedupSpec extends CatsEffectSuite:
 
   private val now0 = System.currentTimeMillis()
 
-  // ── A 跨因合泡：3 族同拍 ⇒ 恰一条蓝气泡 + 台账落盘 ─────────────────────────
+  /** 存量盘面形态的 frozen-waiting 行（本批前 collapse 的产出物；手造用于直喂吸收闸）。 */
+  private def legacyWaitingRow(
+    parent: String,
+    family: String,
+    ids: List[String]
+  ): AgentCommand.ExternalEvent =
+    AgentCommand.ExternalEvent(
+      source = "delegate",
+      eventType = "frozen-waiting",
+      payload = s"[frozen-waiting] legacy row ($family)",
+      metadata = JsonObject(
+        "parentSessionId" -> parent.asJson,
+        "quietFamily" -> family.asJson,
+        "quietDelegateIds" -> ids.asJson
+      ),
+      correlationId = Some(s"legacy-waiting-$family")
+    )
 
-  test("A. cross-family: 3 families in one pump ⇒ exactly ONE frozen-waiting event, per-family lines, ledger on disk") {
+  private def waveIds(prefix: String, n: Int): List[String] = (1 to n).map(i => s"dlg-$prefix-$i").toList
+
+  // ── A 生产面（新语义）：静默回执整段丢弃，零行产出 ──────────────────────────
+
+  test("A(重写). production face: 15 silent receipts in one pump are dropped WHOLESALE — zero frozen receipts, zero frozen-waiting rows") {
     val parent = freshParent("a")
     for
       _ <- seed(parent, seedAuthorWave(parent, now0))
-      (events1, suppressed1) <- pump(parent)
+      (events1, dropped1) <- pumpProd(parent)
+      (events2, dropped2) <- pumpProd(parent) // taken 段重放 ⇒ 每拍同读数、零新行
     yield
-      val rows = waitingRows(events1)
-      // ① 跨因合成一条：3 个族同拍 ⇒ **恰一条** frozen-waiting（不是 3 条）。
-      assertEquals(rows.size, 1, s"3 families must merge into ONE bubble, got ${rows.size}")
-      // ② 底下的逐条冻结回执一条都不冒泡。
+      assertEquals(dropped1, 15, "all 15 silent receipts dropped wholesale (no per-family folding anymore)")
       assertEquals(events1.count(_.eventType == "frozen"), 0, "no raw frozen receipt may bubble")
-      // ③ 首播抑制读数 = 0（这一拍是播报，不是抑制）。
+      assertEquals(waitingRows(events1).size, 0, "production never creates frozen-waiting rows")
+      assertEquals(dropped2, 15, "replayed taken segment drops the same 15 every pump")
+      assertEquals(waitingRows(events2).size, 0, "still zero rows on the next pump")
+    end for
+  }
+
+  // ── B 存量吸收·跨因合泡：3 族存量行同拍 ⇒ 恰一条蓝气泡 + 台账落盘 ────────────
+
+  test("B(重写·存量吸收). cross-family: 3 legacy families in one feed ⇒ exactly ONE frozen-waiting event, per-family lines, ledger on disk") {
+    val parent = freshParent("b")
+    val quotaIds = waveIds("quota", 2)
+    val xxIds = List("dlg-5xx-1")
+    val authIds = waveIds("auth", 12)
+    for
+      _ <- IO(seedAuthorWave(parent, now0)) // 注册表在冻（frozenNow 判据的数据源）
+      (rows, suppressed1) <- FreezeNotice.suppressRepeatedWaiting(
+        List(
+          legacyWaitingRow(parent, "quota-balance", quotaIds),
+          legacyWaitingRow(parent, "upstream-5xx", xxIds),
+          legacyWaitingRow(parent, "auth-subscription", authIds)
+        )
+      )
+    yield
+      val rowsOut = waitingRows(rows)
+      // ① 跨因合成一条：3 个族同拍 ⇒ **恰一条** frozen-waiting（不是 3 条）。
+      assertEquals(rowsOut.size, 1, s"3 families must merge into ONE bubble, got ${rowsOut.size}")
+      // ② 首播抑制读数 = 0（这一拍是播报，不是抑制）。
       assertEquals(suppressed1, 0, "first announce is not a suppression")
-      // ④ 正文逐族分行列明细（quota-balance / upstream-5xx / auth-subscription）。
-      val text = rows.head.payload
+      // ③ 正文逐族分行列明细。
+      val text = rowsOut.head.payload
       assert(text.startsWith("[frozen-waiting]"), s"marker: ${text.take(40)}")
       for fam <- List("quota-balance", "upstream-5xx", "auth-subscription") do
         assert(text.contains(s"- `$fam`"), s"per-family line missing for $fam in:\n$text")
-      // ⑤ 合并件标记 + 成员并集（2 + 1 + 12 = 15）。
-      assertEquals(rows.head.metadata("quietMerged").flatMap(_.asBoolean), Some(true), "quietMerged marker")
-      val ids = rows.head.metadata("quietDelegateIds").flatMap(_.asArray).getOrElse(Vector.empty).flatMap(_.asString).toList
+      // ④ 合并件标记 + 成员并集（2 + 1 + 12 = 15）。
+      assertEquals(rowsOut.head.metadata("quietMerged").flatMap(_.asBoolean), Some(true), "quietMerged marker")
+      val ids = rowsOut.head.metadata("quietDelegateIds").flatMap(_.asArray).getOrElse(Vector.empty).flatMap(_.asString).toList
       assertEquals(ids.size, 15, "union of member ids across families")
-      // ⑥ 抑制态落盘：台账文件在场，3 个族各有 members。
+      // ⑤ 抑制态落盘：台账文件在场，3 个族各有 members。
       val ledgerPath = FreezeNotice.waitingAnnouncePath(parent)
       assert(os.exists(ledgerPath), s"ledger file must exist at $ledgerPath (重启不重置的载体)")
       val families = FreezeNotice.readWaitingAnnounces(parent)
@@ -175,41 +218,65 @@ class FreezeWaitingDedupSpec extends CatsEffectSuite:
     end for
   }
 
-  // ── B 同因集合未变 ⇒ 零重播（多次 pump 只出一条）───────────────────────────
+  // ── C 存量吸收·同集合零重播 ────────────────────────────────────────────────
 
-  test("B. same member set: announce ONCE, then 4 more pumps produce ZERO frozen-waiting rows (suppression from disk)") {
-    val parent = freshParent("b")
+  test("C(重写·存量吸收). same member set: announce ONCE, then repeated feeds produce ZERO rows (suppression from disk)") {
+    val parent = freshParent("c")
+    val rows = List(
+      legacyWaitingRow(parent, "quota-balance", waveIds("quota", 2)),
+      legacyWaitingRow(parent, "upstream-5xx", List("dlg-5xx-1")),
+      legacyWaitingRow(parent, "auth-subscription", waveIds("auth", 12))
+    )
     for
-      _ <- seed(parent, seedAuthorWave(parent, now0))
-      _ <- pump(parent) // 首播
-      p2 <- pump(parent)
-      p3 <- pump(parent)
-      p4 <- pump(parent)
-      p5 <- pump(parent)
+      _ <- IO(seedAuthorWave(parent, now0))
+      _ <- FreezeNotice.suppressRepeatedWaiting(rows) // 首播
+      p2 <- FreezeNotice.suppressRepeatedWaiting(rows)
+      p3 <- FreezeNotice.suppressRepeatedWaiting(rows)
+      p4 <- FreezeNotice.suppressRepeatedWaiting(rows)
     yield
       val rows2 = waitingRows(p2._1)
       assertEquals(rows2.size, 0, s"same member set must NOT re-announce, got ${rows2.map(_.payload.take(50))}")
-      assertEquals(p2._2, 3, "all 3 family rows suppressed in one pump")
-      List(p3, p4, p5).zipWithIndex.foreach { case ((events, sup), i) =>
-        assertEquals(waitingRows(events).size, 0, s"pump ${i + 3} still quiet")
-        assertEquals(sup, 3, s"pump ${i + 3} suppression count")
+      assertEquals(p2._2, 3, "all 3 family rows suppressed in one feed")
+      List(p3, p4).zipWithIndex.foreach { case ((events, sup), i) =>
+        assertEquals(waitingRows(events).size, 0, s"feed ${i + 3} still quiet")
+        assertEquals(sup, 3, s"feed ${i + 3} suppression count")
       }
       // 重启不重置的机制面：抑制态只在盘上（进程内零缓存）——台账仍带 3 族成员集。
       val families = FreezeNotice.readWaitingAnnounces(parent)
-      assertEquals(families.size, 3, "ledger persists across pumps (file-backed, no in-memory reset)")
+      assertEquals(families.size, 3, "ledger persists across feeds (file-backed, no in-memory reset)")
     end for
   }
 
-  // ── C 成员增减 ⇒ 恰再播一次，且只带变化的族 ────────────────────────────────
+  // ── D 存量吸收·成员增减 ⇒ 恰再播一次，且只带变化的族 ────────────────────────
 
-  test("C. member added ⇒ exactly one re-announce carrying ONLY the changed family, then quiet again") {
-    val parent = freshParent("c")
+  test("D(重写·存量吸收). member added ⇒ exactly one re-announce carrying ONLY the changed family, then quiet again") {
+    val parent = freshParent("d")
+    val quotaIds = waveIds("quota", 2)
+    val xxIds = List("dlg-5xx-1")
+    val authIds = waveIds("auth", 12)
+    def baseRows: List[AgentCommand.ExternalEvent] = List(
+      legacyWaitingRow(parent, "quota-balance", quotaIds),
+      legacyWaitingRow(parent, "upstream-5xx", xxIds),
+      legacyWaitingRow(parent, "auth-subscription", authIds)
+    )
     for
-      _ <- seed(parent, seedAuthorWave(parent, now0))
-      _ <- pump(parent) // 首播：quota {q1,q2} / 5xx {x1} / auth {a1..a12}
-      _ <- seed(parent, List(registryAdd(parent, "dlg-quota-3", now0)))
-      (events2, sup2) <- pump(parent) // quota 成员 2→3 ⇒ 播；其余两族不变 ⇒ 抑制
-      p3 <- pump(parent)
+      _ <- IO(seedAuthorWave(parent, now0))
+      _ <- FreezeNotice.suppressRepeatedWaiting(baseRows) // 首播：quota {q1,q2} / 5xx {x1} / auth {a1..a12}
+      _ <- IO(registryFrozen("dlg-quota-3", frozen = true, now0)) // 新成员入族（注册表在冻）
+      (events2, sup2) <- FreezeNotice.suppressRepeatedWaiting(
+        List(
+          legacyWaitingRow(parent, "quota-balance", quotaIds :+ "dlg-quota-3"),
+          legacyWaitingRow(parent, "upstream-5xx", xxIds),
+          legacyWaitingRow(parent, "auth-subscription", authIds)
+        )
+      ) // quota 成员 2→3 ⇒ 播；其余两族不变 ⇒ 抑制
+      p3 <- FreezeNotice.suppressRepeatedWaiting(
+        List(
+          legacyWaitingRow(parent, "quota-balance", quotaIds :+ "dlg-quota-3"),
+          legacyWaitingRow(parent, "upstream-5xx", xxIds),
+          legacyWaitingRow(parent, "auth-subscription", authIds)
+        )
+      )
     yield
       val rows2 = waitingRows(events2)
       assertEquals(rows2.size, 1, s"member change ⇒ exactly one bubble, got ${rows2.size}")
@@ -220,33 +287,33 @@ class FreezeWaitingDedupSpec extends CatsEffectSuite:
       assertEquals(sup2, 2, "the two unchanged family rows count as suppressed")
       val ids = rows2.head.metadata("quietDelegateIds").flatMap(_.asArray).getOrElse(Vector.empty).flatMap(_.asString).toList
       assert(ids.contains("dlg-quota-3"), "new member carried")
-      assertEquals(waitingRows(p3._1).size, 0, "next pump is quiet again")
+      assertEquals(waitingRows(p3._1).size, 0, "next feed is quiet again")
     end for
   }
 
-  /** C 用件：第三条 quota 冻结回执 + 注册表在冻（成员集 2→3）。 */
-  private def registryAdd(parent: String, id: String, now: Long): AgentCommand.ExternalEvent =
-    registryFrozen(id, frozen = true, now)
-    receipt(parent, id, DelegateFreeze.Reason.CancelledByQuota, s"zhipu/glm: insufficient balance (new $id)")
+  // ── E 存量吸收·恢复清账；同成员再冻 = 新事件允许再播 ────────────────────────
 
-  // ── D 解冻恢复 ⇒ 清账；同成员再冻 = 新事件允许再播 ──────────────────────────
-
-  test("D. recovery clears the ledger (rows dropped while recovered); same members re-freezing announces again") {
-    val parent = freshParent("d")
+  test("E(重写·存量吸收). recovery clears the ledger (rows dropped while recovered); same members re-freezing announces again") {
+    val parent = freshParent("e")
     val wave = seedAuthorWave(parent, now0)
+    val allIds = wave.map(r => r.metadata("frozenDelegateId").flatMap(_.asString).getOrElse(""))
+    def rows: List[AgentCommand.ExternalEvent] = List(
+      legacyWaitingRow(parent, "quota-balance", allIds.filter(_.startsWith("dlg-quota"))),
+      legacyWaitingRow(parent, "upstream-5xx", allIds.filter(_ == "dlg-5xx-1")),
+      legacyWaitingRow(parent, "auth-subscription", allIds.filter(_.startsWith("dlg-auth")))
+    )
     for
-      _ <- seed(parent, wave)
-      _ <- pump(parent) // 首播
+      _ <- FreezeNotice.suppressRepeatedWaiting(rows) // 首播
       _ <- IO { wave.foreach(r =>
         registryFrozen(r.metadata("frozenDelegateId").flatMap(_.asString).getOrElse(""), frozen = false, now0)
       ) } // 全员解冻恢复
-      (events2, sup2) <- pump(parent)
-      // 清账断言必须在再冻**之前**读（pump3 的再播报会合法地写入新台账）。
+      (events2, sup2) <- FreezeNotice.suppressRepeatedWaiting(rows)
+      // 清账断言必须在再冻**之前**读（再播报会合法地写入新台账）。
       _ <- IO(assertEquals(FreezeNotice.readWaitingAnnounces(parent), Nil, "ledger cleared on recovery"))
       _ <- IO { wave.foreach(r =>
         registryFrozen(r.metadata("frozenDelegateId").flatMap(_.asString).getOrElse(""), frozen = true, now0)
       ) } // 同成员再冻
-      (events3, sup3) <- pump(parent)
+      (events3, sup3) <- FreezeNotice.suppressRepeatedWaiting(rows)
     yield
       assertEquals(waitingRows(events2).size, 0, "recovered family must not bubble")
       assertEquals(sup2, 0, "recovery is not counted as suppression")

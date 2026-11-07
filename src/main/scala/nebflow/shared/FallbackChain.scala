@@ -1,14 +1,18 @@
 package nebflow.shared
 
 /**
- * Fallback-chain config section — SINGLE SOURCE of "which provider/model does a
- * call try, in which order" (config-single-source batch, author rulings ①③
- * 2026-11-05).
+ * Global-model config section — SINGLE SOURCE of "which provider/model does a
+ * call try" (config-single-source batch, author rulings ①③ 2026-11-05).
+ *
+ * **fallback 废除批（作者令 2026-11-06 20:36 逐字「不再支持模型fallback」）**：
+ * 本段退役为「全局默认模型」段——链深恒 1。`preferred` 仍是全局默认模型；
+ * `fallbacks` 数组**不再被读取**（存量文件兼容：键留在盘上无害，引擎面零消费）。
+ * 请求链的收口在 `ProviderRegistry.getCandidatesForAgentUnfiltered`（preferred
+ * 单候选）与 `reserveTier` 的删除。
  *
  * Storage: `<dataRoot>/<brand configFileName>` (now `stand.json`) →
- * `llm.fallback` = `{"preferred": "<provider>/<model>", "fallbacks": [...]}` —
- * the SAME shape as an agent's own chain (`agent.json` → `model`), so the panel,
- * the file and the engine all read one vocabulary.
+ * `llm.fallback` = `{"preferred": "<provider>/<model>", "fallbacks": [...]}`
+ * (the `fallbacks` half is retired — see above).
  *
  * Why the section exists at all (事故面): the chain used to live nowhere in the
  * config file — it was assembled from code seeds / per-agent sidecars. The
@@ -16,10 +20,10 @@ package nebflow.shared
  * provider "deleted" in the panel could keep being called because nothing in the
  * file said which refs were authoritative. Rule now:
  *
- *   1. `llm.fallback` (when it carries at least one ref) is THE global chain —
+ *   1. `llm.fallback.preferred` (when non-empty) is THE global default model —
  *      [[nebflow.llm.ProviderRegistry.getCandidatesUnfiltered]] reads it first
  *      and only falls back to the Nebula sidecar / seed when it is absent;
- *   2. every ref must resolve against a provider that actually exists in
+ *   2. the ref must resolve against a provider that actually exists in
  *      `llm.providers`. Unresolvable refs are NOT silently skipped —
  *      [[validate]] returns a readable warning per bad ref and the gateway logs
  *      them at boot ([[logValidation]]);
@@ -33,9 +37,12 @@ object FallbackChain:
 
   private val logger = NebflowLogger.forName("nebflow.config.fallback")
 
-  /** Non-empty refs of a chain, `preferred` first, blank/duplicate removed by the caller's needs. */
+  /**
+   * Refs of the section — **preferred only**（fallback 废除批：`fallbacks` 数组
+   * 退役，链深恒 1；本函数是「引擎实际会试哪些 ref」的唯一答案）。
+   */
   def refs(chain: Option[AgentModelConfig]): List[String] =
-    chain.toList.flatMap(c => c.preferred.toList ++ c.fallbacks).map(_.trim).filter(_.nonEmpty)
+    chain.toList.flatMap(c => c.preferred.toList).map(_.trim).filter(_.nonEmpty)
 
   /** The configured global chain (empty = section absent / carries no ref). */
   def configured(config: NebflowServiceConfig): List[String] = refs(config.llm.fallback)

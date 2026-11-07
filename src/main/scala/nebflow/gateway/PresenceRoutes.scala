@@ -857,6 +857,51 @@ private[gateway] object PresenceRoutes:
             }
         }
 
+      // POST /delegates/restore — 手动恢复单个子代理会话（重启手动恢复批，作者令
+      // 2026-11-06 20:36「由用户手动恢复，粒度可以是逐个点击」）：body
+      // `{"taskId": "<delegate-id>"}` → [[nebflow.agent.ManualRevival.restoreOne]]
+      // （同 id 续原转录；资格闸/墓碑/预算照守）。零向上通知——结果只回本响应，
+      // 面板行状态随 revive 自身翻新。恢复依赖缺席（boot 装配前调用）⇒ 503。
+      case req @ POST -> Root / "delegates" / "restore" =>
+        withAuth(req) {
+          nebflow.gateway.ManualRevivalHost.current match
+            case None =>
+              InternalServerError(Json.obj("error" -> "manual-revival deps not installed yet".asJson))
+            case Some(deps) =>
+              req.as[Json].flatMap { body =>
+                val taskId = body.hcursor.downField("taskId").as[String].getOrElse("").trim
+                if taskId.isEmpty then
+                  BadRequest(Json.obj("error" -> "missing taskId".asJson))
+                else
+                  nebflow.agent.ManualRevival.restoreOne(deps, sharedResources.subAgentTaskStore, taskId).flatMap {
+                    case Right(()) => Ok(Json.obj("ok" -> true.asJson, "taskId" -> taskId.asJson))
+                    case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
+                  }
+              }
+        }
+
+      // POST /delegates/restore-all — 一键全部恢复（同批作者令「也可以是子agent面板
+      // 一键全部恢复」）：扫描 pending-recovery / frozen / 重启丢失行 → 资格过滤 →
+      // 并发护栏批量复活。返回 {revived:[...], skipped:[[taskId, reason]...]}。
+      case req @ POST -> Root / "delegates" / "restore-all" =>
+        withAuth(req) {
+          nebflow.gateway.ManualRevivalHost.current match
+            case None =>
+              InternalServerError(Json.obj("error" -> "manual-revival deps not installed yet".asJson))
+            case Some(deps) =>
+              nebflow.agent.ManualRevival
+                .restoreAll(deps, sharedResources.subAgentTaskStore)
+                .flatMap { case (revived, skipped) =>
+                  Ok(
+                    Json.obj(
+                      "ok" -> true.asJson,
+                      "revived" -> revived.map(_.asJson).asJson,
+                      "skipped" -> skipped.map { case (id, r) => Json.arr(id.asJson, r.asJson) }.asJson
+                    )
+                  )
+                }
+        }
+
       // GET /delegates — delegate 列表读面（delegate 视图重设计实施批 2026-10-21 ·
       // 引擎 UI 最小集）：行投影与 /api/chains 同源同语义（rowsJson 单点——live/
       // verdict/taskStatus/mergeQueue/mergeQueuePos + G1 merging taskStatus 覆写），
@@ -1082,16 +1127,25 @@ private[gateway] object PresenceRoutes:
         withAuth(req) {
           if !isValidAgentName(agentName) then BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
           else
+            // 模型粒度批：wire 拼写（main / dispatcher）归一到槽目录名，读面与写面
+            // 同点（`agents/<槽>/agent.json` 是唯一被引擎读取的位置——不归一 ⇒
+            // `PUT /agents/main/model` 静默写进没人读的 agents/main/）。
+            val slotName = nebflow.core.ModelRoles.canonicalSlotName(agentName)
             for
-              agentOpt <- EntityLoader.findAgentByName(agentName)
-              result <- agentOpt match
-                case None => NotFound(Json.obj("error" -> s"Agent '$agentName' not found".asJson))
-                case Some(_) =>
+              // 模型粒度批（2026-11-06 20:36 作者令五类槽）：kernel/node/subagent 是
+              // **虚拟模型槽**（nebflow.core.ModelRoles——只有 model sidecar、不是完整
+              // agent 实体），EntityLoader 查无此人是正常态 ⇒ 槽名跳过存在性闸，
+              // 直接进解析面（own chain 现读 + follow 语义与实体 agent 完全一致）。
+              exists <- if nebflow.core.ModelRoles.isVirtualSlot(slotName) then IO.pure(true)
+                        else EntityLoader.findAgentByName(slotName).map(_.isDefined)
+              result <-
+                if !exists then NotFound(Json.obj("error" -> s"Agent '$agentName' not found".asJson))
+                else {
                   val policy = nebflow.core.SchemePolicy
-                  val own = policy.ownChainOf(agentName).filter(policy.hasChain)
-                  val (effective, resolvedFrom) = policy.resolveModel(agentName, own)
+                  val own = policy.ownChainOf(slotName).filter(policy.hasChain)
+                  val (effective, resolvedFrom) = policy.resolveModel(slotName, own)
                   val mode = if own.isDefined then "explicit" else "follow"
-                  for
+                  (for
                     candidates <- sharedResources.providerRegistry.getCandidatesForAgent(Some(effective))
                     (healthy, _) <- sharedResources.healthMonitor.filterCandidates(candidates)
                     current = healthy.headOption.map(c => s"${c.providerId}/${c.model}")
@@ -1099,10 +1153,12 @@ private[gateway] object PresenceRoutes:
                     // effectiveChain 逐 ref 的不可用窗口声明（active = 当前在窗内）
                     // ——/model 面板据此灰显 + 说明；`current` 经链出口过滤后天然
                     // 只反映未受限模型。
+                    // fallback 废除批：窗口声明只覆盖 preferred（fallbacks 不再被
+                    // 请求链读取，声明它们的窗口是死数据）。
                     scheduleRestricted <- sharedResources.providerRegistry.scheduleWindowsByRef(
-                      effective.preferred.toList ++ effective.fallbacks
+                      effective.preferred.toList
                     )
-                    result <- Ok(
+                    body <- Ok(
                       Json.obj(
                         "name" -> agentName.asJson,
                         "mode" -> mode.asJson,
@@ -1122,8 +1178,8 @@ private[gateway] object PresenceRoutes:
                           .asJson
                       )
                     )
-                  yield result
-                  end for
+                  yield body)
+                }
             yield result
         }
 
@@ -1136,8 +1192,11 @@ private[gateway] object PresenceRoutes:
       // reload.
       case req @ PUT -> Root / "agents" / agentName / "model" =>
         withAuth(req) {
+          // 模型粒度批：写面同样归一到槽目录名（判定/落盘/热应用全用规范形；不归一
+          // ⇒ wire 拼写会就地建出没人读的 agents/main/ sidecar——静默空写）。
+          val slotName = nebflow.core.ModelRoles.canonicalSlotName(agentName)
           if !isValidAgentName(agentName) then BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
-          else if !nebflow.core.SchemePolicy.isSettable(agentName) then
+          else if !nebflow.core.SchemePolicy.isSettable(slotName) then
             BadRequest(
               Json.obj(
                 "error" ->
@@ -1169,22 +1228,22 @@ private[gateway] object PresenceRoutes:
                   // normalize it to key removal so agent.json carries no dead data.
                   val own = chainOpt.filter(nebflow.core.SchemePolicy.hasChain)
                   for
-                    dirOpt <- EntityLoader.findAgentDir(agentName)
+                    dirOpt <- EntityLoader.findAgentDir(slotName)
                     // builtin-def 批（2026-10-03）：builtin 名的 agent.json 是纯
                     // model-chain sidecar——新 home 上不存在 ⇒ 就地建最小 sidecar
                     // （{"name": ...}），再走既有 merge 写。模型链是用户设置，
                     // 依旧可写（SchemePolicy.SettableAgents 闸不变）。
                     resolvedDirOpt <- dirOpt match
                       case Some(dir) => IO.pure(Some(dir))
-                      case None if nebflow.core.SchemePolicy.isSettable(agentName) =>
+                      case None if nebflow.core.SchemePolicy.isSettable(slotName) =>
                         IO.blocking {
-                          val dir = nebflow.shared.PathUtil.dataRoot / "agents" / agentName
+                          val dir = nebflow.shared.PathUtil.dataRoot / "agents" / slotName
                           os.makeDir.all(dir)
                           val jsonPath = dir / "agent.json"
                           if !os.exists(jsonPath) then
                             AtomicJson.writeSync(
                               jsonPath,
-                              io.circe.Json.obj("name" -> agentName.asJson).noSpaces
+                              io.circe.Json.obj("name" -> slotName.asJson).noSpaces
                             )
                           Some(dir)
                         }
@@ -1206,7 +1265,7 @@ private[gateway] object PresenceRoutes:
                             case Left(_) => false
                         }.flatMap {
                           case true =>
-                            val (effective, resolvedFrom) = nebflow.core.SchemePolicy.resolveModel(agentName, own)
+                            val (effective, resolvedFrom) = nebflow.core.SchemePolicy.resolveModel(slotName, own)
                             val mode = if own.isDefined then "explicit" else "follow"
                             // 模型链热应用（2026-10-31 作者报障②「fallback 链加了新模型
                             // 不立即生效」）：链面保存后清掉**链外**的会话驻留旧链引用。
@@ -1219,8 +1278,9 @@ private[gateway] object PresenceRoutes:
                             // 清除，该会话下一请求即吃新链。spec 守卫：部分 route spec 臂以
                             // sessionStore=null 组装（ModelChainRoutesSpec.mkResources），
                             // 持久腿 null 下跳过，内存腿恒跑。
-                            val chainRefs =
-                              (effective.preferred.toList ++ effective.fallbacks).toSet
+                            // fallback 废除批：链成员资格 = preferred 一根（fallbacks
+                            // 不再进请求链，驻留 pin 对着死数据判断成员会误清/误留）。
+                            val chainRefs = effective.preferred.toList.toSet
                             sharedResources.sessionModelOverrides.modify { overrides =>
                               val (keep, drop) =
                                 overrides.partition((_, c) => chainRefs.contains(s"${c.providerId}/${c.model}"))
@@ -1237,9 +1297,14 @@ private[gateway] object PresenceRoutes:
                               // first) never serves a stale order. Failure is loud but
                               // non-fatal for the sidecar write that already landed.
                               val configLeg =
-                                if agentName != nebflow.core.SchemePolicy.NebulaName then IO.unit
+                                if slotName != nebflow.core.SchemePolicy.NebulaName then IO.unit
                                 else
-                                  nebflow.service.ConfigService.setFallbackChain(own).attempt.flatMap {
+                                  // fallback 废除批：镜像进 llm.fallback 的链只带 preferred
+                                  // （该段已退役为「全局默认模型」面，fallbacks 不再被读——
+                                  // 不再往盘上写死数据）。
+                                  nebflow.service.ConfigService
+                                    .setFallbackChain(own.map(c => c.copy(fallbacks = Nil)))
+                                    .attempt.flatMap {
                                     case Right(_) => IO.unit
                                     case Left(e) =>
                                       IO.delay(

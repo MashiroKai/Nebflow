@@ -25,6 +25,16 @@ import scala.jdk.CollectionConverters.*
  * 下一 provider。Auth/404/配额仍驱逐（确证死亡，T3/T4 回归）。
  *
  * 变异验红：classifyError 400 分支还原 evict=true → T1 红（a/m1 变 Down）。
+ *
+ * **fallback 废除批改写（作者令 2026-11-06 20:36「不再支持模型fallback」，逐条申报）**：
+ *   - T1 **重写**为单候选语义：链深恒 1（b/m1 不进链）⇒ 400 Format 的就地降级重试
+ *     面原样保留（恰好 2 次命中后），终局 = FallbackExhaustedError（无下一根可换）；
+ *     「不驱逐」核心断言原样保留；b 零命中为新增废除断言；
+ *   - T3 **重写**：401 驱逐面（markDown）原样钉死，但单候选链驱逐后进入「全灭闸
+ *     等待恢复」（作者令「静默等待」语义面）——改给**有界上界**取终局，不再无限等；
+ *     「401 恰 1 次命中」与「b 零命中」新增；
+ *   - T2 / T4 断言原样保留（与链深无关）。
+ * 原断言逐字内容见 git 历史。
  */
 class FormatErrorNoEvictSpec extends CatsEffectSuite:
 
@@ -146,14 +156,14 @@ class FormatErrorNoEvictSpec extends CatsEffectSuite:
         messages = List(Message(MessageRole.User, Left("hi"))),
         sessionId = "format-e2e",
         agentId = "format-spec-agent",
-        agentModel = Some(AgentModelConfig(preferred = Some("a/m1"), fallbacks = List("b/m1")))
+        agentModel = Some(AgentModelConfig(preferred = Some("a/m1"), fallbacks = Nil)) // 链深恒 1（fallback 废除）
       )
       chunks <- handle.sendStream(req).compile.toList.attempt
       states <- monitor.getStates
       _ <- release
     yield (chunks, states, 0)
 
-  test("T1: 400 (thinking-passback shape) gets ONE in-place degrade retry then skips — provider NOT evicted") {
+  test("T1(重写): 400 (thinking-passback shape) gets ONE in-place degrade retry then exhausted — provider NOT evicted") {
     val hitsA = new java.util.concurrent.atomic.AtomicInteger(0)
     val hitsB = new java.util.concurrent.atomic.AtomicInteger(0)
     var serverA: HttpServer = null
@@ -168,10 +178,21 @@ class FormatErrorNoEvictSpec extends CatsEffectSuite:
       yield result
       val (chunks, states, _) = program.guarantee(IO.blocking { serverA.stop(0); serverB.stop(0) }).unsafeRunSync()
       chunks match
+        case Left(e: FallbackExhaustedError) =>
+          val atts = e.attempts
+          // fallback 废除批：单候选链（b/m1 不进链）⇒ 所有 attempt 都必须落在 a/m1
+          // 本身（就地降级重试面原样保留），终局 = 显式耗尽。
+          assert(
+            atts.nonEmpty && atts.forall(x => x.providerId == "a" && x.model == "m1"),
+            s"单候选链的 attempt 必须都在 a/m1（就地降级重试），实际 ${atts.map(x => s"${x.providerId}/${x.model}")}"
+          )
+          assert(
+            atts.forall(_.reason.contains(FailoverReason.Format)),
+            s"每个 attempt 都应是 Format（400），实际 ${atts.map(_.reason)}"
+          )
+        case Left(e) => fail(s"400 with evict=false must exhaust the single-candidate chain, got $e")
         case Right(list) =>
-          val text = list.collect { case StreamChunk.TextDelta(d) => d }.mkString
-          assertEquals(text, "BB", s"fallback must serve b's answer, got '$text'")
-        case Left(e) => fail(s"400 with evict=false must skip to next provider, got $e")
+          fail(s"唯一候选恒 400 ⇒ 必须失败退出（无下一根可换），实际成功 ${list.size} chunk")
       // 核心断言（旧行为：a/m1 Down("...thinking must be passed back...")）：
       assert(
         !states.contains("a/m1"),
@@ -179,13 +200,18 @@ class FormatErrorNoEvictSpec extends CatsEffectSuite:
       )
       // protocol-compat 批 2026-11-01 口径变更（降级旁路 §4.4）：passback 形状 400
       // 先就地降级重试一次（thinking 显式关态），换腿前零块已发（接缝安全）。
-      // mock 恒 400 ⇒ 第二发仍 400 才跳 b。hits==2 同时钉死两面：
-      // ①降级重试确实发生了（旧行为 = 1）②重试有界、绝不循环（≠ 3+）。
-      // 可观测结论与旧行为一致：b 服务 "BB"、a/m1 不驱逐（Format 不参与驱逐）。
+      // **fallback 废除批（单候选）读数修正**：「恰 1 次就地降级重试」面保留在**每轮**
+      // 内，但换腿面退役 ⇒ 有界循环由 MaxChainRounds=2 封顶（AllCandidatesFormatLoopSpec
+      // 同款），总命中 = 2 轮 ×（1 试 + 1 降级重试）= 4。仍钉死「每轮恰 2 发、有界不循环」。
       assertEquals(
         hitsA.get(),
-        2,
-        "passback-shaped 400 gets exactly ONE in-place degrade retry, then skips (bounded: 2 hits)"
+        2 * Fallback.MaxChainRounds,
+        "per round: 1 try + 1 in-place degrade retry, capped by MaxChainRounds rounds (bounded, never 3+ per round)"
+      )
+      assertEquals(
+        hitsB.get(),
+        0,
+        "b/m1 未被链引用 ⇒ 零命中（fallback 废除：不暗中回补）"
       )
     finally
       if serverA != null then serverA.stop(0)
@@ -219,7 +245,7 @@ class FormatErrorNoEvictSpec extends CatsEffectSuite:
     assertEquals(notFound.evict, true, "404 remains a confirmed-death eviction")
   }
 
-  test("T3-regression: 401 Auth still evicts via markDown (确证死亡不回归)") {
+  test("T3(重写): 401 Auth still evicts via markDown (确证死亡不回归；单候选链终局 = 有界全灭闸)") {
     val hitsA = new java.util.concurrent.atomic.AtomicInteger(0)
     val hitsB = new java.util.concurrent.atomic.AtomicInteger(0)
     var serverA: HttpServer = null
@@ -230,18 +256,53 @@ class FormatErrorNoEvictSpec extends CatsEffectSuite:
         _ = serverA = a
         b <- startMock(PortOk, "ok", hitsB)
         _ = serverB = b
-        result <- runTurn(mkConfig(Port401, "401", PortOk))
-      yield result
-      val (chunks, states, _) = program.guarantee(IO.blocking { serverA.stop(0); serverB.stop(0) }).unsafeRunSync()
+        configRef <- Ref.of[IO, NebflowServiceConfig](mkConfig(Port401, "401", PortOk))
+        sessionOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
+        triple <- LlmInterface.createLlm(sessionOverrides, None, Some(configRef))
+        (handle, _, monitor, release) = triple
+        req = LlmRequest(
+          messages = List(Message(MessageRole.User, Left("hi"))),
+          sessionId = "format-e2e-401",
+          agentId = "format-spec-agent",
+          agentModel = Some(AgentModelConfig(preferred = Some("a/m1"), fallbacks = Nil)) // 链深恒 1（fallback 废除）
+        )
+        // fallback 废除批申报：单候选链 401 驱逐后链空 ⇒ 进入「全灭闸等待恢复」
+        //（作者令「静默等待」语义面）——本测试给 8s 有界上界取终局，不无限等探测。
+        chunks <- handle
+          .sendStream(req)
+          .compile
+          .toList
+          .attempt
+          .timeoutTo(
+            8.seconds,
+            // 哨兵以 Left 捕获（raiseError 会让 IO 失败、下方断言面走不到）
+            IO.pure(
+              Left(new RuntimeException("all-down gate exceeded test bound")): Either[Throwable, List[StreamChunk]]
+            )
+          )
+        states <- monitor.getStates
+        _ <- release
+      yield (chunks, states)
+      val (chunks, states) = program.guarantee(IO.blocking { serverA.stop(0); serverB.stop(0) }).unsafeRunSync()
       chunks match
         case Right(list) =>
-          val text = list.collect { case StreamChunk.TextDelta(d) => d }.mkString
-          assertEquals(text, "BB")
-        case Left(e) => fail(s"401 must fall back to b, got $e")
-      // 旧行为保持：Auth → markDown。
+          fail(s"唯一候选 401 驱逐后必须终局（无下一根可换），实际成功 ${list.size} chunk")
+        case Left(e) =>
+          // 终局形态 = 全灭闸的探测超时（AllProvidersDownTimeout）或本测试上界哨兵；
+          // 无论哪条，驱逐面必须已发生（下方 states 断言钉死）。
+          assert(
+            e.isInstanceOf[AllProvidersDownTimeout] || e.getMessage.contains("all-down gate"),
+            s"终局应为全灭闸超时（探测窗），实际 ${e.getClass.getName}: ${e.getMessage}"
+          )
+      // 旧行为保持（本测试的钉版点）：Auth → markDown。
       states.get("a/m1") match
         case Some(HealthState.Down(_, _)) => () // evicted as before
         case other => fail(s"401 must still mark the provider Down (confirmed death), got $other")
+      // **fallback 废除批（单候选）读数修正**：401「恰 1 次命中、不重试同一根」原样
+      // 成立（Permanent 无就地重试）；驱逐后链空 ⇒ 全灭闸先 probeNow(dead) 烧一发
+      // 探测（401 仍失败 ⇒ Down 保持），故 mock 总命中 = 1 试 + 1 探测 = 2。
+      assertEquals(hitsA.get(), 2, "1 initial try (Permanent never retried in place) + 1 gate probe burn")
+      assertEquals(hitsB.get(), 0, "b/m1 未被链引用 ⇒ 零命中（fallback 废除）")
     finally
       if serverA != null then serverA.stop(0)
       if serverB != null then serverB.stop(0)

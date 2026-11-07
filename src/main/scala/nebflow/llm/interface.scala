@@ -639,7 +639,13 @@ object LlmInterface extends LlmRuntime:
                 schedRes <- applyScheduleGateDetailed(filtered, registry)
                 (schedAvailable, schedSkips) = schedRes
                 configSkips <- registry.configLevelExclusions()
-                expected <- registry.expectedCandidateRefs()
+                // fallback 废除批（作者令 2026-11-06「不再支持模型fallback」）：静默排除
+                // 审计基准从「配置可见全集」收窄为「本请求已解析的候选集」——链深恒 1
+                // 后，配置里未被引用的 provider 是**有意不试**（不是被谁偷偷扔掉），仍按
+                // 全集审计会把每次单模型失败都误报成 SILENTLY EXCLUDED (this is a bug)。
+                // 审计对象 = 已解析候选在入口各闸（配置/时段/钉链/健康面）之间无原因
+                // 消失——各闸全带记账后结构上为空，保留为 fail-closed 护栏。
+                expected = candidates.map(c => s"${c.providerId}/${c.model}")
                 // 派发钉链剔除账本（缺陷批 2026-11-06）：`req.pinSkips` = spawn 时因
                 // provider 满载被链首扫描剔出的候选（`PinnedChain.preExcluded`，本就是
                 // 请求前的事实）——并入 seeded 层。没有它，这些候选既不在链上也没有
@@ -837,7 +843,10 @@ object LlmInterface extends LlmRuntime:
                         schedRes <- applyScheduleGateDetailed(filtered, registry)
                         (schedAvailable, schedSkips) = schedRes
                         configSkips <- registry.configLevelExclusions()
-                        expected <- registry.expectedCandidateRefs()
+                        // fallback 废除批（作者令 2026-11-06）：审计基准同非流面——收窄为
+                        // 「本请求已解析的候选集」（配置里未被引用的 provider 是有意不试，
+                        // 不是静默排除；全集审计在链深恒 1 后只会误报）。
+                        expected = candidates.map(c => s"${c.providerId}/${c.model}")
                         // 派发钉链剔除账本（缺陷批 2026-11-06）：`req.pinSkips` = spawn
                         // 时因 provider 满载被链首扫描剔出的候选（`PinnedChain.preExcluded`，
                         // 请求前的事实）——并入 seeded 层，不静默（UTSC 现网形态根治）。

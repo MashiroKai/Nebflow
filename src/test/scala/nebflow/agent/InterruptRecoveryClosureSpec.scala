@@ -313,13 +313,17 @@ class InterruptRecoveryClosureSpec extends CatsEffectSuite:
     }
   }
 
-  test("D1/receipt: the salvage leg records the delivered notice in the ledger (re-perception carrier) and reports the delivery honestly") {
+  // 重写（fallback 废除批，作者令 2026-11-06 20:36「不用向上通知……由用户手动恢复」）：
+  // 收殓链的父投递腿 + 持久提醒账（RestartLossLedger.record）随零通知语义整体摘除——
+  // 父邮箱零条目、台账零记录；呈现面 = 任务行（failed + 指纹 + 「parent NOT notified」
+  // 诚实文案）。原「delivered notice + ledger 记录」断言随批退役（原断言逐字见 git 历史）。
+  test("D1/receipt(重写): the salvage leg terminalizes honestly — zero parent notify, zero ledger notice, the row says so") {
     withFx("d1r") { fx =>
       val child = "delegate-nebflow-d1-salvage"
       val lost = s"${SubAgentStartupRecovery.RestartLossFingerprint} — partial result salvaged"
       for
         parent <- fx.sessionStore.createSession("Nebula", agentName = Some("Nebula"))
-        // 收殓轨（不做复活）：预算耗尽 ⇒ 走 recoverOne（邮箱投递 + 回执 + 落账）。
+        // 收殓轨（不做复活）：预算耗尽 ⇒ 走 recoverOne（终态化 + 零通知）。
         _ <- fx.store.recordTask(mkTask(child, parent.id, revivalCount = Some(2)).copy(lastError = Some(lost)))
         _ <- IO(DelegateRegistry.put(mkRecord(child, parent.id, fx.seat.toString)))
         _ <- fx.sessionStore.saveMessagesForSession(
@@ -331,14 +335,23 @@ class InterruptRecoveryClosureSpec extends CatsEffectSuite:
         events <- mailboxEvents(fx, parent.id).map(_.filter(_.correlationId.contains(child)))
         ledger = RestartLossLedger.readSync(parent.id)
         _ = assert(report.terminalized.contains(child), s"budget exhausted ⇒ salvage: ${report.summary}")
-        _ = assert(events.exists(_.eventType == "failed"), "the parent mailbox carries the loss notice")
-        _ = assert(
-          ledger.exists(_.taskId == child),
-          s"the delivered notice must be recorded in the re-perception ledger; ledger=$ledger"
+        _ = assertEquals(events, Nil, "zero-notify: the parent mailbox carries nothing (was: the loss notice)")
+        _ = assertEquals(
+          ledger,
+          Nil,
+          "the re-perception ledger leg is retired together with the notify legs"
         )
         _ = assert(
-          row.lastError.exists(_.contains("delivered to parent")),
-          s"with a successful mailbox delivery the row says so honestly (D1 文案与事实同源): ${row.lastError}"
+          row.lastError.exists(_.contains(SubAgentStartupRecovery.RestartLossFingerprint)),
+          s"the row keeps the restart-loss fingerprint: ${row.lastError}"
+        )
+        _ = assert(
+          row.lastError.exists(_.contains("parent NOT notified")),
+          s"the row states the zero-notify ruling honestly (D1 文案与事实同源): ${row.lastError}"
+        )
+        _ = assert(
+          !row.lastError.exists(_.contains("delivered to parent")),
+          s"the row must NOT claim a delivery that no longer happens: ${row.lastError}"
         )
       yield ()
     }

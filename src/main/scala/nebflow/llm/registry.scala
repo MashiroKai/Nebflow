@@ -445,18 +445,14 @@ class ProviderRegistry(
   /**
    * Get candidate list customized for an agent's model configuration.
    *
-   * The agent declares a `preferred` primary and an ordered `fallbacks` list.
-   * We build the candidate chain as `[preferred, ...fallbacks]`, resolving each
-   * ref gracefully (invalid/unknown refs are skipped). If every ref fails to
-   * resolve, we fall back to the global candidate list so the agent still has
-   * something to use. No capability filtering is performed — the user picks the
-   * models, and fallback stays within that user-chosen set.
+   * **fallback 废除批（作者令 2026-11-06 20:36「不再支持模型fallback」）**：链 =
+   * `preferred` **单候选**——`fallbacks` 尾链与储备层（原 `reserveTier`）双双退役：
+   * 模型失效不再换链，会话进失效态（子 agent 面板可见），请求静默等待恢复
+   * （`LlmInterface` 既有等待/冻结判据不变）。
    *
-   * 链尾再追加**储备层**（[[reserveTier]]）——配置里已存在但 preset 未引用的
-   * provider/model。动因（事故教训，档位细节不录）：候选链曾在故障日退化为单点
-   * ⇒「有效链深 1」；储备层使该形态在结构上不可达。
-   * 链序语义不变：储备层只是**追加**，不会插到 preferred/fallbacks 之前
-   * （REST 的「当前模型」显示取 healthy.head，故主用模型面零改）。
+   * If the preferred ref fails to resolve, we fall back to the global candidate
+   * list so the agent still has something to use. No capability filtering is
+   * performed — the user picks the model.
    */
   def getCandidatesForAgent(agentModel: Option[nebflow.shared.AgentModelConfig]): IO[List[ModelCandidate]] =
     // 模型不可用时段闸（model-schedule-unavailable 批，2026-10-29）：读面出口
@@ -472,75 +468,28 @@ class ProviderRegistry(
 
   end getCandidatesForAgent
 
-  /** 未过滤 agent 链（含储备层）——请求路径专用（LlmInterface 时段闸的单点输入）。 */
+  /**
+   * 未过滤 agent 链（**单候选**，fallback 废除批）——请求路径专用（LlmInterface
+   * 时段闸的单点输入）。
+   */
   def getCandidatesForAgentUnfiltered(agentModel: Option[nebflow.shared.AgentModelConfig]): IO[List[ModelCandidate]] =
-    val base = agentModel match
-      case None | Some(nebflow.shared.AgentModelConfig(None, Nil)) =>
-        getCandidatesUnfiltered() // no config → global list
+    agentModel match
+      case None | Some(nebflow.shared.AgentModelConfig(None, _)) =>
+        getCandidatesUnfiltered() // no preferred → global default
       case Some(cfg) =>
-        // Build agent chain: [preferred, ...fallbacks]
-        val agentChain = cfg.preferred.toList ++ cfg.fallbacks
-        for
-          resolved <- agentChain.traverse(ref => getCandidateForRef(ref))
-          agentCandidates = resolved.flatten
-          b <- if agentCandidates.nonEmpty then IO.pure(agentCandidates) else getCandidatesUnfiltered()
-        yield b
-    for
-      candidates <- base
-      config <- configRef.get
-    yield reserveTier(config, candidates)
+        // fallback 废除批：链 = preferred 一根（cfg.fallbacks 不再读取）。
+        cfg.preferred.toList.filter(_.trim.nonEmpty).traverse(ref => getCandidateForRef(ref)).flatMap {
+          resolved =>
+            val agentCandidates = resolved.flatten
+            if agentCandidates.nonEmpty then IO.pure(agentCandidates) else getCandidatesUnfiltered()
+        }
+    // 时段闸在此**不过滤**（本出口 = 未滤；过滤在 LlmInterface.applyScheduleGate 单点）。
 
   end getCandidatesForAgentUnfiltered
 
-  /**
-   * 储备层（腿 a）：把 `config.llm.providers` 里**已存在但当前链未引用**的
-   * provider/model 按确定序（providerId → model id 字典序，非 Map 迭代序）
-   * 追加到链尾。
-   *
-   * 语义边界（逐条申报）：
-   *   - 只取配置**实存**项（provider 与 model 都必须已在 `nebflow.json` 里），
-   *     绝不凭空造候选；配置不足时链深照实（1 根就是 1 根）；
-   *   - 只**追加**、不重排、不去重已引用项之外的东西：与已引用 ref 相同的项被剔除；
-   *   - 字典序保证同配置下链序可复现（Map 迭代序不保证），便于取证与断言；
-   *   - 与 [[filterKnownProviders]] 正交（储备层全部来自当前 config，必然存活）；
-   *   - `disabled: true` 的 provider 一律不进储备层（fail-closed；reserveTier 语义
-   *     修复批 2026-10-30）。
-   */
-  private[llm] def reserveTier(
-    config: NebflowServiceConfig,
-    chain: List[ModelCandidate]
-  ): List[ModelCandidate] =
-    if config.llm.providers.isEmpty then chain
-    else
-      val referred = chain.map(c => s"${c.providerId}/${c.model}").toSet
-      // 摘除标记守卫（reserveTier 语义修复批，2026-10-30）：disabled provider 一律
-      // 不可被选（fail-closed）——与 docs/20261030_cmdcode-provider-removal.md §5 对齐。
-      val reserve = config.llm.providers.toList.sortBy(_._1).flatMap { case (providerId, provider) =>
-        if isDisabled(provider) then Nil
-        else
-          provider.models
-            .sortBy(_.id)
-            .filterNot(mc => referred.contains(s"$providerId/${mc.id}"))
-            .map { mc =>
-              val caps = resolveCapabilities(providerId, mc.id, Some(mc))
-              // 案② B2 同点（**第四处构造点**——provchain 腿 a 储备层，晚于卡文成文合入
-              // main；与上面三处同形收口，储备层不得成为「绕过 clamp」的通道——见报告
-              // 「偏离登记」）：
-              ModelCandidate(
-                providerId,
-                provider,
-                mc.id,
-                effectiveContextWindow(mc.contextWindow, mc.modelMaxContext),
-                caps,
-                mc.modelMaxContext,
-                mc.thinking,
-                mc.thinkingKind
-              )
-            }
-      }
-      // 同 (providerId, model) 只保留一次（配置里重复声明 model 时也不得重复进链）
-      chain ++ reserve.distinctBy(c => s"${c.providerId}/${c.model}")
-  end reserveTier
+  // 储备层（原 reserveTier）已随 fallback 废除批（2026-11-06 20:36 作者令）退役：
+  // 「把配置里未引用的 provider/model 追加到链尾」本身就是 fallback——链深恒 1 后
+  // 该形态不再存在。模型失效的处置 = 会话失效态 + 静默等待 + 面板显式换模型。
 
   /**
    * Resolve capabilities for a model.
@@ -744,7 +693,6 @@ class ProviderRegistry(
       val (effective, resolvedFrom) =
         policy.resolveModel(agentName, agentModel.orElse(policy.ownChainOf(agentName)))
       val chainRefs = effective.preferred.toList ++ effective.fallbacks
-      val runtimeRefs = candidates.map(c => s"${c.providerId}/${c.model}").toSet
       val dropped = chainRefs.filter { ref =>
         try
           val (pid, mid) = Config.parseModelRef(ref)
@@ -756,7 +704,15 @@ class ProviderRegistry(
       val drift = disk match
         case None => io.circe.Json.obj("known" -> false.asJson)
         case Some(d) =>
-          val active = runtimeRefs.filterNot(r => d.disabled.contains(r.takeWhile(_ != '/')))
+          // fallback 废除批（作者令 2026-11-06 20:36「不再支持模型fallback」）：
+          // 运行期候选集 = 链面的真子集（链深恒 1 = preferred 单候选），不再是
+          // 「配置全集」的代理 ⇒ drift 基准从「候选 refs」改锚**配置面 refs**
+          //（内存 config vs 盘上 config 的逐 ref 差集）——原判据（候选 refs ==
+          // 盘 activeRefs）在链深恒 1 后会把每个未引用 provider 都误报成
+          // drift（inSync 恒 false，ProviderCandidateConfigSyncSpec.A3 实证）。
+          val active = config.llm.providers.toList.flatMap { case (pid, p) =>
+            if isDisabled(p) then Nil else p.models.map(m => s"$pid/${m.id}")
+          }.toSet
           val runtimeProviders = config.llm.providers.keySet
           io.circe.Json.obj(
             "known" -> true.asJson,

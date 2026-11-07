@@ -28,6 +28,14 @@ import scala.concurrent.duration.*
  * 缩窗模拟：watchdog 窗口经 streamInactivityOverride 注入（800ms 首token），
  * 软回避窗经 HealthMonitor 单元测试直接传参（300ms）——严禁真实等待 45s。
  * 变异验红：interface.scala 超时分支还原为 markDown → T1 红（a/m1 变 Down）。
+ *
+ * **fallback 废除批改写（作者令 2026-11-06 20:36「不再支持模型fallback」，逐条申报）**：
+ *   T1 **重写**为单候选语义：链深恒 1（`fallbacks = Nil`，b/m1 不进链）⇒ 首 token
+ *   超时软回避后进入静默等待恢复面（全灭闸，预算 ProbeIntervalSec=120s），给 8s
+ *   有界上界取终局（哨兵以 Left 捕获，不使 IO 失败）；「软回避不 markDown / 不烧
+ *   探测 / avoid 记录」判据原样钉死 + 新增 b 零命中（不暗中承接）。「falls back to b」
+ *   交付面随 fallback 退役。T1u/T2u/T3u/T4-regression 与链深无关，一字未动。
+ *   原断言逐字内容见 git 历史。
  */
 class TimeoutSoftAvoidSpec extends CatsEffectSuite:
 
@@ -170,10 +178,11 @@ class TimeoutSoftAvoidSpec extends CatsEffectSuite:
   }
 
   // ============================================================
-  // interface E2E：首 token 超时 → 软下线（不驱逐）+ fallback 成功
+  // interface E2E（重写，fallback 废除批）：首 token 超时 → 软下线（不驱逐）；
+  // 单候选终局 = 有界静默等待。「falls back to b」交付面随 fallback 退役。
   // ============================================================
 
-  test("T1: first-token timeout soft-avoids provider a (NOT Down) and falls back to b") {
+  test("T1(重写): first-token timeout soft-avoids provider a (NOT Down) — 单候选静默等待（有界终局）；b 零命中（fallback 废除）") {
     val prev = LlmInterface.streamInactivityOverride
     // first-token 800ms < 120s header park；nothing emitted → locked=false.
     LlmInterface.streamInactivityOverride = Some((800.millis, 30.seconds))
@@ -196,23 +205,32 @@ class TimeoutSoftAvoidSpec extends CatsEffectSuite:
             messages = List(Message(MessageRole.User, Left("hi"))),
             sessionId = "softavoid-e2e",
             agentId = "softavoid-spec-agent",
-            agentModel = Some(AgentModelConfig(preferred = Some("a/m1"), fallbacks = List("b/m1")))
+            agentModel = Some(AgentModelConfig(preferred = Some("a/m1"), fallbacks = Nil)) // 链深恒 1（fallback 废除）
           )
+          // fallback 废除批申报：唯一候选超时软回避 ⇒ 静默等待恢复面（全灭闸，预算
+          // ProbeIntervalSec=120s）——8s 有界上界取终局；哨兵以 Left 捕获（不使 IO 失败）。
           chunks <- handle.sendStream(req).compile.toList.attempt
+            .timeoutTo(
+              8.seconds,
+              IO.pure(
+                Left(new RuntimeException("all-down gate exceeded test bound")): Either[Throwable, List[StreamChunk]]
+              )
+            )
           statesAfter <- monitor.getStates
           (upA, downA) <- monitor.filterCandidates(
             List(ModelCandidate("a", ProviderConfig("http://x", "k", LlmProtocol.Anthropic), "m1"))
           )
           avoids <- monitor.getAvoidUntil
+          _ <- release
         yield (chunks, statesAfter, upA, downA, avoids)).guarantee(IO.blocking { serverA.stop(0); serverB.stop(0) })
       yield result
       val (chunks, statesAfter, upA, downA, avoids) = program.unsafeRunSync()
-      // Fallback succeeded via b.
+      // fallback 废除批：唯一候选 ⇒ 无下一根可换，终局 = 静默等待（不得有根交付）
       chunks match
         case Right(list) =>
           val text = list.collect { case StreamChunk.TextDelta(d) => d }.mkString
-          assertEquals(text, "BB", s"fallback output must be provider b's answer, got '$text'")
-        case Left(e) => fail(s"timeout with locked=false must fall back and succeed, got $e")
+          fail(s"唯一候选超时 ⇒ 不得有根交付（b 已随 fallback 退役），实际成功 = '$text'")
+        case Left(_) => () // 终局 = 单候选静默等待（全灭闸/测试上界哨兵）
       // 核心断言（旧行为：a/m1 会出现在 states 里 Down(...)）：
       assert(
         !statesAfter.contains("a/m1"),
@@ -222,6 +240,8 @@ class TimeoutSoftAvoidSpec extends CatsEffectSuite:
       assertEquals(upA, List.empty[ModelCandidate], "within the avoid window provider a is skipped")
       assertEquals(downA, List.empty[ModelCandidate], "soft-avoided provider must not enter the probe set")
       assert(avoids.contains("a/m1"), "avoid deadline must be recorded for a/m1")
+      // fallback 废除断言：b 活着但零命中（不暗中承接）
+      assertEquals(hitsB.get(), 0, "provider b must NOT be contacted (fallback abolished)")
     finally
       LlmInterface.streamInactivityOverride = prev
       if serverA != null then serverA.stop(0)

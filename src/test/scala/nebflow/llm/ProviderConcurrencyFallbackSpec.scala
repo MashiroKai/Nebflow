@@ -61,6 +61,18 @@ import sttp.client4.StreamBackend
  * TTL / stopAll）；「正常完成不释放」由 T2 的 5-turn 保留断言承接；Frozen 保留属装配
  * 面（actor 不死 ⇒ 钩子不触发），不另设夹具。任务简报 T3 行内「正常完成/冻结各自减
  * 计数」按契约裁定修正为上述形态。
+ *
+ * **fallback 废除批改写（作者令 2026-11-06 20:36「不再支持模型fallback」，逐条申报）**：
+ *   - 链源恒 1 = preferred 单候选（`reserveTier` 已从 ProviderRegistry 退役）；
+ *   - T1 **重写**：占满 ⇒ assign = None（原「第 11 个 actor 链首落第二档 b/m1」的
+ *     多档面随 fallback 退役）；「存活者不迁移、释放后新 actor 回第一档」面保留；
+ *   - PE1 / PE2 / PE3 **整条删除**：剔除账（preExcluded / pinExclusions）只在
+ *     「链深 > 1 且链首被剔」时产生——链深恒 1 后**结构性不可达**（满 ⇒ None 无账、
+ *     闲 ⇒ 钉无剔）；引擎侧账本机制保留但为死面（本批不扩大删除面）；原断言逐字见
+ *     git 历史；
+ *   - PE4 **重写**为单候选耗尽语义：链未引用的 provider 不得被暗中回补；
+ *   - T1b / T1c / T1d / T2 / T3a–f / T4a–c 断言原样保留（判据在新语义下依然成立；
+ *     T2 的链深随 capCfg 变 1，逐字快照断言不受影响）。
  */
 class ProviderConcurrencyFallbackSpec extends CatsEffectSuite:
 
@@ -78,7 +90,7 @@ class ProviderConcurrencyFallbackSpec extends CatsEffectSuite:
 
   private def withCap(p: ProviderConfig, cap: Option[Int]): ProviderConfig = p.copy(maxConcurrentActors = cap)
 
-  /** T1/T2 主配置：a cap=10；b 不限；c/m2 未被链引用 ⇒ 储备层（reserveTier）追加链尾。 */
+  /** T1/T2 主配置：a cap=10；b/c 在 providers 里但链未引用（fallback 废除 ⇒ 不回补）。 */
   private val capCfg: NebflowServiceConfig =
     NebflowServiceConfig(
       llm = ServiceLlmConfig(
@@ -87,14 +99,14 @@ class ProviderConcurrencyFallbackSpec extends CatsEffectSuite:
           "b" -> provider("m1"),
           "c" -> provider("m2")
         ),
-        fallback = Some(AgentModelConfig(Some("a/m1"), List("b/m1")))
+        fallback = Some(AgentModelConfig(Some("a/m1"), Nil))
       )
     )
 
-  private val agentChain: Option[AgentModelConfig] = Some(AgentModelConfig(Some("a/m1"), List("b/m1")))
+  private val agentChain: Option[AgentModelConfig] = Some(AgentModelConfig(Some("a/m1"), Nil))
 
   /** T1b 的 z-配置链源（cfg0/cfgNeg 里没有 provider a——链必须与配置同源，镜像真实 spawn 路径）。 */
-  private val zChain: Option[AgentModelConfig] = Some(AgentModelConfig(Some("z/m1"), List("b/m1")))
+  private val zChain: Option[AgentModelConfig] = Some(AgentModelConfig(Some("z/m1"), Nil))
 
   private def mkRegistry(c: NebflowServiceConfig): IO[ProviderRegistry] =
     Ref.of[IO, NebflowServiceConfig](c).map(ref => new ProviderRegistry(ref, NullBackend))
@@ -144,55 +156,50 @@ class ProviderConcurrencyFallbackSpec extends CatsEffectSuite:
 
   // ── T1 ────────────────────────────────────────────────────────────────────
 
-  test("T1: cap=10 占满 ⇒ 第 11 个 actor 链首落第二档；A 释放到只剩 3 ⇒ 第 11 个 actor 的链首仍不变"):
+  test("T1(重写): cap=10 占满 ⇒ 第 11 个 actor assign = None（链上无第二档可落）；A 释放到 3 ⇒ 新 actor 回第一档；存活 actor 链首不变"):
     for
       reg <- mkRegistry(capCfg)
       chain <- orderedChainOf(reg)
       counts <- countsRef
-      // 10 个 actor 依次占坑 ⇒ 全部钉在第一档
+      // 10 个 actor 依次占坑 ⇒ 全部钉在链首（唯一档）
       first10 <- (1 to 10).toList.traverse(i => ProviderConcurrency.assign(counts, capCfg, s"actor-$i", chain))
       p11 <- ProviderConcurrency.assign(counts, capCfg, "actor-11", chain)
+      countsAtFull <- counts.get
       // 占用释放：a1..a7 退出 ⇒ a 只剩 {actor-8, actor-9, actor-10} = 3
       _ <- (1 to 7).toList.traverse_(i => ProviderConcurrency.release(counts, s"actor-$i"))
       // 已派发 actor 重复询问（幂等面）：链首必须原样（不重算 / 不迁移 / 不加计数）
-      p11Again <- ProviderConcurrency.assign(counts, capCfg, "actor-11", chain)
       survivors <- (8 to 10).toList.traverse(i => ProviderConcurrency.assign(counts, capCfg, s"actor-$i", chain))
       countsMid <- counts.get
       // 上限恢复面：释放后新派发的 actor 回第一档
       p12 <- ProviderConcurrency.assign(counts, capCfg, "actor-12", chain)
       countsEnd <- counts.get
     yield
-      // 链源先验：储备层 c/m2 必须追加链尾（同配置下确定序）
-      assertEquals(chain, List(("a", "m1"), ("b", "m1"), ("c", "m2")), "orderedChain 先验：a/m1 → b/m1 + 储备层 c/m2")
+      // 链源先验：fallback 废除 ⇒ 链深恒 1 = preferred 单候选（b/c 未引用，不追加）
+      assertEquals(chain, List(("a", "m1")), "orderedChain 先验：链深恒 1 = a/m1 单候选")
       first10.zipWithIndex.foreach { case (p, i) =>
-        assertEquals(p.map(_.headRef), Some("a/m1"), s"actor-${i + 1} 必须钉在第一档 a/m1")
+        assertEquals(p.map(_.headRef), Some("a/m1"), s"actor-${i + 1} 必须钉在链首 a/m1")
         assertEquals(p.map(_.pinnedProviderId), Some("a"), s"actor-${i + 1} 的占坑 provider = a")
       }
-      // 第 11 个：链首换档（改前引擎无占坑概念，恒 a/m1 —— 行为红镜像 = BR-1）
-      assertEquals(p11.map(_.headRef), Some("b/m1"), "第 11 个 actor 的链首必须落第二档 b/m1")
-      // 作者最在意的一条：A 释放到 3 后，第 11 个 actor 的链首仍不变（整链快照相等 = 幂等不迁移）
-      assertEquals(p11Again, p11, "已派发 actor 重复 assign 必须原样返回同一快照（不重算、不迁移、不加计数）")
-      assertEquals(p11Again.map(_.headRef), Some("b/m1"), "释放到 3/10 后 actor-11 的链首仍必须是 b/m1")
-      // 尾链策略（契约 §3d）：只取被选中下标之后（含储备层），不回绕被跳过的前段
-      assertEquals(p11.map(_.orderedRefs), Some(List("c/m2")), "actor-11 的尾链 = b 之后（含储备层）")
-      assert(!p11.exists(_.orderedRefs.contains("a/m1")), "尾链不得回绕第一档 a/m1")
-      assertEquals(p11.map(_.refs), Some(List(("b", "m1"), ("c", "m2"))), "refs = head 之后的有序 (providerId, model)")
-      // 存活 actor 链首不变
+      // 第 11 个：10/10 全满 ⇒ assign = None（原「链首落第二档 b/m1」随 fallback 废除退役——
+      // 耗尽语义 = None，静默等待由上层承接，改前行为红镜像 = BR-1）
+      assertEquals(p11, None, "第 11 个 actor：占满且链上无第二档 ⇒ None（不钉，零新失败模式）")
+      assertEquals(
+        countsAtFull.byProvider.get("a"),
+        Some((1 to 10).map(i => s"actor-$i").toSet),
+        "失败的 assign 不得加计数"
+      )
+      // 存活 actor 链首不变（幂等 re-assign 不加计数）
       survivors.zipWithIndex.foreach { case (p, i) =>
         assertEquals(p.map(_.headRef), Some("a/m1"), s"存活 actor-${i + 8} 重复 assign 链首必须仍是 a/m1")
       }
-      // 幂等 re-assign 不得加计数
       assertEquals(countsMid.byProvider.get("a"), Some(Set("actor-8", "actor-9", "actor-10")), "a 恰 = 存活 3 个")
-      assertEquals(countsMid.byProvider.get("b"), Some(Set("actor-11")), "b 恰 = actor-11")
-      // 上限恢复：新派发回第一档，尾链 = 链首之后全部
-      assertEquals(p12.map(_.headRef), Some("a/m1"), "A 回到 3/10 后新派发的 actor-12 必须能用回第一档")
-      assertEquals(p12.map(_.orderedRefs), Some(List("b/m1", "c/m2")), "actor-12 的尾链 = 链首之后的全部")
+      // 上限恢复：新派发回链首
+      assertEquals(p12.map(_.headRef), Some("a/m1"), "A 回到 3/10 后新派发的 actor-12 必须能用回链首")
       assertEquals(
         countsEnd.byProvider.get("a"),
         Some(Set("actor-8", "actor-9", "actor-10", "actor-12")),
         "a 最终占坑 = 存活 3 + actor-12"
       )
-      assertEquals(countsEnd.byProvider.get("b"), Some(Set("actor-11")), "b 最终占坑 = actor-11")
 
   test("T1b: cap ≤ 0 非法 ⇒ 当不限（不得静默当 0 全拒——否则链首永远落二档）"):
     val cfg0 = NebflowServiceConfig(
@@ -563,124 +570,39 @@ class ProviderConcurrencyFallbackSpec extends CatsEffectSuite:
     e.flatMap(_.hcursor.downField(f).as[Boolean].toOption)
 
   // ── 派发钉链剔除账本（缺陷批 2026-11-06，provider-concurrency 批移交）─────────
-  // 现网实证：`UTSC/glm-5.3-flash SILENTLY EXCLUDED（无原因剔除）` 反复出现——
-  // provider 满载被链首扫描剔出的候选没有入账面。收口判据：assign 的快照必须携带
-  // `preExcluded`（ref → ProviderFull(inUse, cap)），release/reconcile 清账，
-  // 幂等 re-assign 不丢账。
+  // **fallback 废除批申报（2026-11-06）**：PE1 / PE2 / PE3 整条删除——剔除账
+  // （preExcluded / pinExclusions）只在「链深 > 1 且链首被剔」时产生，链深恒 1 后
+  // 结构性不可达（满 ⇒ None 无账、闲 ⇒ 钉无剔）；引擎侧账本机制保留但为死面，
+  // 本批不扩大删除面。原三条断言逐字内容见 git 历史。PE4 按单候选耗尽语义重写。
 
-  test("PE1: 满载 provider 的候选在派发钉链时被剔，且带 provider-full 原因进 preExcluded（不再无账消失）"):
-    val cfg1 = NebflowServiceConfig(
-      llm = ServiceLlmConfig(
-        providers = Map("a" -> withCap(provider("m1"), Some(1)), "b" -> provider("m1")),
-        fallback = Some(AgentModelConfig(Some("a/m1"), List("b/m1")))
-      )
-    )
-    for
-      reg <- mkRegistry(cfg1)
-      chain <- orderedChainOf(reg, Some(AgentModelConfig(Some("a/m1"), List("b/m1"))))
-      counts <- countsRef
-      p1 <- ProviderConcurrency.assign(counts, cfg1, "actor-1", chain)
-      p2 <- ProviderConcurrency.assign(counts, cfg1, "actor-2", chain)
-      c <- counts.get
-    yield
-      assertEquals(chain, List(("a", "m1"), ("b", "m1")), "先验：a/m1 → b/m1")
-      assertEquals(p1.map(_.headRef), Some("a/m1"), "actor-1 钉链首 a/m1")
-      assertEquals(p1.map(_.preExcluded), Some(Nil), "链首本身无剔除")
-      assertEquals(p2.map(_.headRef), Some("b/m1"), "actor-2 链首落第二档 b/m1")
-      assertEquals(
-        p2.map(_.preExcluded),
-        Some(List("a/m1" -> CandidateSkipCause.ProviderFull(1, 1))),
-        "被剔的 a/m1 必须带 provider-full(1 of 1) 原因进账——不许无账消失（UTSC 形态根治判据）"
-      )
-      assertEquals(c.byProvider.get("a"), Some(Set("actor-1")), "a 占坑 = actor-1")
-      assertEquals(c.byProvider.get("b"), Some(Set("actor-2")), "b 占坑 = actor-2")
-
-    end for
-
-  test("PE2: 幂等 re-assign 不丢 preExcluded（重 spawn 场景：取首钉那一刻的账，不随现读计数漂移）"):
-    val cfg1 = NebflowServiceConfig(
-      llm = ServiceLlmConfig(
-        providers = Map("a" -> withCap(provider("m1"), Some(1)), "b" -> provider("m1")),
-        fallback = Some(AgentModelConfig(Some("a/m1"), List("b/m1")))
-      )
-    )
-    for
-      reg <- mkRegistry(cfg1)
-      chain <- orderedChainOf(reg, Some(AgentModelConfig(Some("a/m1"), List("b/m1"))))
-      counts <- countsRef
-      _ <- ProviderConcurrency.assign(counts, cfg1, "actor-1", chain)
-      p2 <- ProviderConcurrency.assign(counts, cfg1, "actor-2", chain)
-      // a 的坑释放（现读 a 已空闲）——已钉 actor-2 重复询问不得因漂移改判/丢账
-      _ <- ProviderConcurrency.release(counts, "actor-1")
-      p2Again <- ProviderConcurrency.assign(counts, cfg1, "actor-2", chain)
-    yield
-      assertEquals(p2Again, p2, "整快照相等（含 preExcluded）——幂等不迁移不丢账")
-      assertEquals(
-        p2Again.map(_.preExcluded),
-        Some(List("a/m1" -> CandidateSkipCause.ProviderFull(1, 1))),
-        "剔除原因必须保持首钉时刻的账（a 此刻已空闲也不改写历史）"
-      )
-
-    end for
-
-  test("PE3: release / reconcile 清剔除账（不留僵尸条目）"):
-    val cfg1 = NebflowServiceConfig(
-      llm = ServiceLlmConfig(
-        providers = Map("a" -> withCap(provider("m1"), Some(1)), "b" -> provider("m1")),
-        fallback = Some(AgentModelConfig(Some("a/m1"), List("b/m1")))
-      )
-    )
-    for
-      reg <- mkRegistry(cfg1)
-      chain <- orderedChainOf(reg, Some(AgentModelConfig(Some("a/m1"), List("b/m1"))))
-      counts <- countsRef
-      _ <- ProviderConcurrency.assign(counts, cfg1, "actor-1", chain)
-      _ <- ProviderConcurrency.assign(counts, cfg1, "actor-2", chain)
-      withBoth <- counts.get
-      _ <- ProviderConcurrency.release(counts, "actor-2")
-      afterRelease <- counts.get
-      _ <- ProviderConcurrency.reconcile(counts, Set("actor-1"))
-      afterReconcile <- counts.get
-    yield
-      assert(withBoth.pinExclusions.contains("actor-2"), "actor-2 被剔时必须入账")
-      assertEquals(
-        afterRelease.pinExclusions.get("actor-2"),
-        None,
-        "release 必须连剔除账一起清（不留僵尸条目）"
-      )
-      assertEquals(afterRelease.pinExclusions.get("actor-1"), Some(Nil), "actor-1 无剔除 ⇒ 账为空表但保留")
-      assertEquals(
-        afterReconcile.pinExclusions.keySet,
-        Set("actor-1"),
-        "reconcile 以活集裁账（死 actor 的剔除账不复活）"
-      )
-
-    end for
-
-  test("PE4: 全满 ⇒ assign = None 且剔除账作废（无 pin 就无账，回落既有全局行为）"):
+  test("PE4(重写): 单候选满 ⇒ assign = None——链未引用的 provider 不得被暗中回补（无 fallback），无 pin 就无账"):
     val cfgFull = NebflowServiceConfig(
       llm = ServiceLlmConfig(
         providers = Map(
           "a" -> withCap(provider("m1"), Some(1)),
           "b" -> withCap(provider("m1"), Some(1))
         ),
-        fallback = Some(AgentModelConfig(Some("a/m1"), List("b/m1")))
+        fallback = Some(AgentModelConfig(Some("a/m1"), Nil))
       )
     )
     for
       reg <- mkRegistry(cfgFull)
-      chain <- orderedChainOf(reg, Some(AgentModelConfig(Some("a/m1"), List("b/m1"))))
+      chain <- orderedChainOf(reg, Some(AgentModelConfig(Some("a/m1"), Nil)))
       counts <- countsRef
       p1 <- ProviderConcurrency.assign(counts, cfgFull, "actor-1", chain)
       p2 <- ProviderConcurrency.assign(counts, cfgFull, "actor-2", chain)
       p3 <- ProviderConcurrency.assign(counts, cfgFull, "actor-3", chain)
       c <- counts.get
     yield
-      assertEquals(p1.map(_.headRef), Some("a/m1"), "actor-1 钉 a/m1")
-      assertEquals(p2.map(_.headRef), Some("b/m1"), "actor-2 钉 b/m1（a 已满）")
-      assertEquals(p2.flatMap(_.preExcluded.headOption.map(_._1)), Some("a/m1"), "actor-2 的剔除账 = a/m1")
-      assertEquals(p3, None, "全满 ⇒ None（不钉，零新失败模式）")
-      assertEquals(c.pinExclusions.get("actor-3"), None, "不钉的 actor 不得留剔除账")
+      assertEquals(chain, List(("a", "m1")), "先验：链深恒 1 = a/m1 单候选")
+      assertEquals(p1.map(_.headRef), Some("a/m1"), "actor-1 钉链首 a/m1")
+      assertEquals(p1.map(_.preExcluded), Some(Nil), "链首无剔除")
+      assertEquals(p2, None, "a 满 ⇒ None——b 虽空闲但链未引用，fallback 废除后不得暗中回补")
+      assertEquals(p3, None, "actor-3 同法（None 不做记忆化，重复询问按现读现判）")
+      assertEquals(c.byProvider.get("a"), Some(Set("actor-1")), "a 占坑 = actor-1")
+      assertEquals(c.byProvider.get("b"), None, "b 全程无占坑（未回补的直接证据）")
+      assertEquals(c.pinExclusions.get("actor-2"), None, "不钉的 actor 不得留剔除账")
+      assertEquals(c.pinExclusions.get("actor-3"), None, "同上")
 
     end for
 

@@ -108,8 +108,12 @@ class FreezeReplaySilenceSpec extends CatsEffectSuite:
   private def freshParent(tag: String): String = s"replay-parent-$tag-${scala.util.Random.nextInt(100000)}"
 
   // ── 用例 A：可恢复冻结（llm-failure ×12 + quota ×3）────────────────────────
+  // 重写（fallback 废除批，作者令 2026-11-06 20:36「只在子agent面板里显示……不再
+  // 向上通知」）：原断言「同因收成一条 frozen-waiting 状态行」——状态行仍是一条向上
+  // 注入的父可见件 ⇒ 该面退役；collapseSilentReceipts 改为**整段丢弃**静默回执，
+  // 生产路径零 frozen-waiting 行，呈现面只有子 agent 面板。原断言逐字见 git 历史。
 
-  test("A. recoverable freeze replay: ZERO user-facing receipts, ONE status row per cause, state = waiting-recovery") {
+  test("A(重写). recoverable freeze replay: ZERO user-facing receipts AND zero status rows — silent receipts dropped wholesale, panel is the only surface") {
     val parent = freshParent("a")
     val llmFails = (1 to 12).toList.map(i =>
       receipt(
@@ -139,32 +143,25 @@ class FreezeReplaySilenceSpec extends CatsEffectSuite:
       // 现网形态先量一遍（同一个「解冻重放面」，判据未加时）：15 条回执条条冒泡。
       assertEquals(before.size, 16, "the queue really holds 16 entries before the fix")
       assertEquals(beforeBubbles, 15, s"REGRESSION BASELINE: today all 15 receipts bubble (got $beforeBubbles)")
-      val (after, collapsed) = afterTried
-      // ① 用户面零冻结回执：剩下的冻结行只能是「状态行」，不是逐条回执。
+      val (after, dropped) = afterTried
+      // ① 用户面零冻结回执：逐条回执一条不冒泡。
       val receipts = after.filter(e => e.eventType == "frozen")
       assertEquals(receipts.size, 0, s"no per-delegate frozen receipt may bubble, got ${receipts.map(_.payload.take(60))}")
-      // ② 同因只记一条：一族一条状态行 ⇒ 恰 2 条（llm + quota）。
+      // ② fallback 废除批：静默回执**整段丢弃**——15 条全丢，连状态行也不产（状态行
+      //    本身是父可见件，随批退役）。原「collapsed == 13（折成 2 行）」面退役。
+      assertEquals(dropped, 15, "all 15 silent receipts are dropped wholesale (no per-family folding anymore)")
       val statuses = after.filter(e => e.eventType == "frozen-waiting")
-      assertEquals(statuses.size, 2, s"one status row per cause family, got ${statuses.size}")
-      assertEquals(collapsed, 13, "15 receipts collapsed into 2 status rows")
-      assertEquals(statuses.map(e => e.metadata("quietFamily").flatMap(_.asString)).flatten.sorted,
-        List("quota-balance", "upstream-5xx").sorted, "families carried on the status rows")
-      // ③ 正文不再逐条拼接：状态行说「等待恢复」且不带唤醒地址（不是待办）。
-      statuses.foreach { s =>
-        assert(s.payload.startsWith("[frozen-waiting]"), s"status row marker: ${s.payload.take(40)}")
-        assert(!s.payload.contains("HOW TO WAKE"), "no wake instruction — the engine resumes by itself")
-        assert(s.payload.contains("等待恢复"), "the row is a status, not an alert")
-      }
-      // ④ 状态 = 等待恢复（不是「失败 / 待你处理」）。
+      assertEquals(statuses.size, 0, s"production never creates frozen-waiting rows, got ${statuses.size}")
+      // ③ 面板级分类保持：冻结呈现面 = waiting-recovery（子 agent 面板词面）。
       assertEquals(freezeKindOfWire("delegate-frozen:llm-failure"), "waiting-recovery")
       assertEquals(freezeKindOfWire("delegate-frozen:cancelled-by-quota"), "waiting-recovery")
-      // ⑤ 非回执事件原样保留（作者的 Mail 不许被吞）。
+      // ④ 非回执事件原样保留（作者的 Mail 不许被吞）。
       assert(after.exists(e => e.source == "mail" && e.payload == "hello from the author"), "user mail survives")
-      // ⑥ 进 LLM 的那条消息里没有任何一条回执正文。
+      // ⑤ 进 LLM 的那条消息里没有任何一条回执正文、也没有状态行。
       val msg = MailboxDrain.mailboxMessage(after)
       val text = msg.content.fold(identity, blocks => blocks.toString)
       assert(!text.contains("[delegate-frozen]"), "no receipt body in the model-facing message")
-      assert(text.contains("[frozen-waiting]"), "the model sees one status line per cause instead")
+      assert(!text.contains("[frozen-waiting]"), "no status row either — zero provider-freeze noise upward")
     end for
   }
 

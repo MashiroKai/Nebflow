@@ -44,8 +44,28 @@ object SchemePolicy:
    */
   val ExecutorName: String = nebflow.core.entity.BuiltinAgents.ExecutorName
 
-  /** Roles whose model chain is user-settable (the /model write gate). */
-  val SettableAgents: Set[String] = Set(NebulaName, DispatcherName, ExecutorName)
+  /**
+   * Roles whose model chain is user-settable (the /model write gate).
+   *
+   * 模型粒度批（2026-11-06 20:36 作者令）：五类槽 = main(Nebula) / dispatcher /
+   * kernel / node / subagent ——后三者是**虚拟模型槽**（`ModelRoles`），只有
+   * model sidecar、不是完整 agent；写闸对它们开放（/model 面板与设置面板按类切
+   * ⇒ 同类全部会话一起变）。kernel 曾是本集合成员、builtin-merge 批并进执行
+   * agent——本批起 `kernel` 以**独立槽**身份回归（与 2026-10-03 的角色合并不冲突：
+   * 那次合并的是运行身份/提示词，这次拆的是模型配置粒度）。
+   */
+  /**
+   * 🔴 `lazy val` 是**初始化顺序纪律**，不是风格选择（模型粒度批实证，2026-11-07）：
+   * 本集合要点 [[ModelRoles.Slots]]，而 `ModelRoles.Slots` 的槽名取自本对象的
+   * [[NebulaName]] / [[DispatcherName]] ⇒ 若两侧都在 `<clinit>` 里急切求值，谁先被
+   * 触达就成环：`SchemePolicy.<clinit>` → `ModelRoles.Slots`（此刻仍 null）→ NPE →
+   * `ExceptionInInitializerError`，整个进程的 SchemePolicy/ModelRoles 双双判废
+   * （ModelChainRoutesSpec 首轮实跑即此形态，日志 02-modelchain-routes.log）。两侧
+   * 同时改 `lazy val`（见 `ModelRoles.Slots`）：任一侧先初始化时都不会在 `<clinit>`
+   * 期间反向触达对方，单点真源（槽名不复制字面量）得以保留。
+   */
+  lazy val SettableAgents: Set[String] =
+    Set(NebulaName, DispatcherName, ExecutorName) ++ ModelRoles.Slots.map(_._1)
 
   /**
    * Settability, with the retired names resolved through the single rename table
@@ -105,15 +125,20 @@ object SchemePolicy:
       val fromLlmModel = readGlobalChainDefault()
       if fromLlmModel.nonEmpty then fromLlmModel else readFromProviders()
 
-  /** `llm.fallback` of the config file (empty when absent / malformed). Hot-read. */
+  /**
+   * `llm.fallback` of the config file (empty when absent / malformed). Hot-read.
+   *
+   * **fallback 废除批（2026-11-06 20:36 作者令「不再支持模型fallback」）**：本段
+   * 退役为「全局默认模型」读面——只取 `preferred` 一根；`fallbacks` 数组**不再被
+   * 读取**（存量文件兼容：键还在盘上也不会再喂进任何请求链）。同一裁定的引擎面
+   * 见 `FallbackChain.refs`。
+   */
   private def readFallbackSection(): List[String] =
     readConfigJson()
       .flatMap(_.hcursor.downField("llm").downField("fallback").focus)
       .map { node =>
         val preferred = node.hcursor.downField("preferred").as[Option[String]].toOption.flatten.getOrElse("")
-        val fallbacks =
-          node.hcursor.downField("fallbacks").as[Option[List[String]]].toOption.flatten.getOrElse(Nil)
-        (preferred :: fallbacks).map(_.trim).filter(_.nonEmpty)
+        List(preferred.trim).filter(_.nonEmpty)
       }
       .getOrElse(Nil)
 
