@@ -194,7 +194,7 @@ class ImageGenSpec extends munit.FunSuite:
     assert(!nebflow.agent.AgentCore.fixedToolsFor(execDef).contains("generate_image"))
   }
 
-  test("seal: 期望常量 = 静态集大小（19，imagegen 双层批按面变更）") {
-    assertEquals(nebflow.agent.AgentCore.RootOrchestrationToolsExpectedSize, 19)
+  test("seal: 期望常量 = 静态集大小（20，ConversationSearch 按面变更）") {
+    assertEquals(nebflow.agent.AgentCore.RootOrchestrationToolsExpectedSize, 20)
   }
 end ImageGenSpec

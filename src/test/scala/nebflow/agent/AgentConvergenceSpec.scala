@@ -281,6 +281,7 @@ class AgentConvergenceSpec extends FunSuite:
         "Subagent",
         "ChainWrite",
         "TaskSearch",
+        "ConversationSearch",
         // imagegen 双层批（2026-10-24）resume 合入适配：Nebula 专属防声明逃逸
         // 条目——剥除名单静态在场，编译期 seal 两形态不变（名单≠注册面）。
         "generate_image"
@@ -310,6 +311,7 @@ class AgentConvergenceSpec extends FunSuite:
         "Subagent",
         "ChainWrite",
         "TaskSearch",
+        "ConversationSearch",
         "generate_image" // imagegen 双层批 2026-10-24 resume 合入适配（仅 Nebula）
       ),
       "dream 剥十二件（原八件 + builtin-merge 批 Subagent + ChainWrite 新增 + task-rag 批 #1227 TaskSearch + taskunify 合一 Task/TaskInfo 随名 + imagegen 双层批 2026-10-24 generate_image；tool-face-agentflow-retire 批 2026-11-05 −AgentFlow——工具退役、名字离开防逃逸集——防声明逃逸，执行 agent/delegate 单点授能，dream 不在授权面）"

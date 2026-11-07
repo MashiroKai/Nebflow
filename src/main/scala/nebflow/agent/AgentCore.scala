@@ -250,6 +250,8 @@ object AgentCore:
     // 同享本集【防声明逃逸】通道：agent.json/插件声明（含 "*"）对一切非 Nebula
     // 身份不授能（真实授能 = RootOrchestrationTools 单点；TaskList 同域纪律）。
     "TaskSearch",
+    // ConversationSearch is Nebula-root-only and read-only; block agent/plugin declaration escape.
+    "ConversationSearch",
     // generate_image（imagegen 双层批 2026-10-24，调试状态）：Nebula 专属生图件——
     // 同享本集【防声明逃逸】通道（真实授能 = RootOrchestrationTools 单点；编译期
     // seal 关时经 imageGenSealedStrip 从交付面剥除且本集条目随之不可达）。
@@ -432,6 +434,8 @@ object AgentCore:
     // 续派（Mail(address="delegate:<id>")）。本集件数 17 → 18（见
     // RootOrchestrationToolsExpectedSize）。
     "TaskSearch",
+    // Root Nebula on-demand history search, restricted by ConversationSearchTool to current data-root index.
+    "ConversationSearch",
     // 通信（好友功能非旧体系）
     "SendMessage",
     // ListFriends（好友消息改造批 ⑩，2026-09-12）：SendMessage 的**只读**前置——
@@ -611,7 +615,7 @@ object AgentCore:
    * 注册表（删 `"AgentFlow"` 注册项）、墓碑表（"Workflow" 指路改 ChainWrite
    * ＋"AgentFlow" 条目复活）与 orchestrationMode 的升级写点（迁入 ChainWriteTool）。
    */
-  val RootOrchestrationToolsExpectedSize: Int = 19
+  val RootOrchestrationToolsExpectedSize: Int = 20
 
   /**
    * 退役工具迁移指引表（R2「一个 Mail 统一」批，2026-09-12；设计件 §A.3 C-1）。
