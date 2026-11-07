@@ -433,7 +433,15 @@ class FreezeSilenceSpec extends CatsEffectSuite:
         Some(s"frozen-wake:$childSid:$frozenSinceBefore"),
         "idempotent wake key"
       )
-      assertEquals(w.source, Some("delegate-wake"))
+      // 苏醒载荷的 source 标签：本用例要钉的是「这是一次 delegate 苏醒（不是 RestartAgent）」，
+      // 不是某个字面量。标签单一真源在代码侧——旧腿 = `DelegateWakeLeg.LiveSource`
+      // ("delegate-wake")，resume-transparent 批（2026-11-07）后统一走
+      // `nebflow.core.ResumeHandoff.Source` ("resume")。两值都接受，避免标签换代把
+      // 这条语义用例变成假红。
+      assert(
+        Set("delegate-wake", "resume").contains(w.source.getOrElse("")),
+        s"the wake must carry a delegate-wake/resume source label, got ${w.source}"
+      )
       // 不花 supervisor 重启预算：没有任何 RestartAgent / respawn 指令。
       assert(
         !cmdsAfterUp.exists { case _: AgentCommand.RestartAgent => true; case _ => false },
