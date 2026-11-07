@@ -106,6 +106,7 @@
   font-size: var(--ds-fs-meta);
   letter-spacing: -0.01em;
 }
+.reminder-row-fact > svg,
 .reminder-row-fact > i[data-lucide] {
   width: 13px;
   height: 13px;
@@ -184,8 +185,17 @@
   align-items: flex-start;
   gap: var(--ds-space-1h);
   margin-top: var(--ds-space-1);
-  padding-left: 26px;      /* 与 .reminder-inline-detail 的左缩进同档（圆钮 18 + 间距） */
+  /* 图标槽与 .reminder-inline-detail 同一条（28）：三行图标（描述/时刻/重复）
+     落成一列，行内控件也就跟着对齐成一列。原写 26 = 与钟/重复行差 2px 的
+     视觉错位（2026-11-07 报障复核项）。 */
+  padding-left: 28px;
 }
+/* 图标选择器必须写**两态**（`> svg` + `> i[data-lucide]`）：lucide 换装会把
+   `<i data-lucide>` **替换成 `<svg>`**，只写 `> i[data-lucide]` 的那条在换装后
+   恒不命中 ⇒ 图标回落到 lucide 默认 24×24 / 不透明度 1（2026-11-07 作者报障：
+   描述行那个「三横」大图标 = 这条规则在换装后失效；同批同形的钟/重复图标规则
+   一直带 `> svg` 故未中招）。新写图标规则一律照此双写。 */
+.reminder-inline-desc-row > svg,
 .reminder-inline-desc-row > i[data-lucide] {
   width: 12px;
   height: 12px;
@@ -226,9 +236,12 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  /* 横内距 = 按钮「面板档」横距（16，见设计刻度 §4；原文 8 让两个汉字的键
+     只剩 min-width 44 撑宽 ⇒ 44×44 圆 = 一颗绿球，2026-11-07 作者报障
+     「大小比例失衡」）。竖内距由 min-height 承担，扁平契约不变。 */
   min-width: var(--ds-hit-row);
   min-height: var(--ds-hit-row);
-  padding: 0 var(--ds-space-2);
+  padding: 0 var(--ds-space-4);
   border: none;
   background: transparent;
   border-radius: var(--ds-radius-pill);

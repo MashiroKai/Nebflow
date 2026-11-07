@@ -46,7 +46,7 @@ status: active
 | 变体 | 用于 | 拿到什么 |
 |---|---|---|
 | `.nf-field`（盒式） | 独立输入件：设置项、表单、弹窗输入、卡片输入 | 完整的底 + 边 + 圆角 + 影 + 内距 + 字档 |
-| `.nf-field--bare`（裸件） | 嵌在**已成形的容器**里的输入：主会话输入条、ask 输入条、记事本、画布查找条、wiki 搜索胶囊、邮件收件人/主题行、提醒行内输入、todo 行标题、移动端搜索框 | 无底、无边、无圆角、无影、无环（外壳给材质，内件只留字） |
+| `.nf-field--bare`（裸件） | 嵌在**已成形的容器**里的输入：主会话输入条、ask 输入条、记事本、画布查找条、wiki 搜索胶囊、邮件收件人/主题行、提醒行内输入与描述（`.reminder-inline-input` / `.reminder-inline-desc`）、todo 行标题、移动端搜索框 | 无底、无边、无圆角、无影、无环（外壳给材质，内件只留字） |
 | `.nf-field--select`（下拉） | 原生 `<select>`：`.ud-select` / `.wg-switch-select` / `.cfg-select` / `.mp-add-select` | 盒式 + 原生箭头（`--nf-field-caret`，只由 `currentColor` 组成，不引入第二色） |
 
 **元素级兜底**：`css/inputSurface.css` 的第一条规则按**元素种类**收编全部文本输入件

@@ -72,6 +72,14 @@
   visibility: hidden;
   opacity: 0;
   pointer-events: none;
+  /* 面板是**受高约束的滚动容器**（max-height 480/70vh 就在上方）：头部/体/页脚
+     三段全部按 flex 语义书写（header/footer flex-shrink:0、body flex:1），
+     缺 display 时它们全落空 ⇒ body 长到内容高度、超出面板被 overflow:hidden
+     硬裁，且 body 自己量不出滚动（scrollHeight == clientHeight）——列表一有
+     条目，行内创建表单的「取消 / 创建」就落在面板可视区之外且**无法滚到**
+     （2026-11-07 作者报障「控件错位、挤压」的桌面实拍复核：1440 视口、
+     1 条任务时 actions 行 top 597 > 面板底 536）。 */
+  display: flex;
   flex-direction: column;
   overflow: hidden;
   transition: opacity 0.15s, visibility 0.15s;
