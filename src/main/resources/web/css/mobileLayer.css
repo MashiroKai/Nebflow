@@ -3242,6 +3242,12 @@ body.mobile-layer .ask-fab {
   height: 48px;
   right: 16px;
 }
+/* 液态形变批（作者令 2026-11-07 12:22）：note/ask 浮窗的**收起态种子**直径必须与
+   本档入口钮同尺寸（桌面 40 = --ask-fab-size / 手机 48 = --mtap-lg）—— 种子是
+   「钮长成面板」的起手形态，比钮大一圈就露馅。尺寸单源仍是 ask.css 那两条
+   （桌面 --ask-fab-size），本档只改这一枚变量，零第二套几何。 */
+body.mobile-layer .ask-dock,
+body.mobile-layer .note-dock { --ask-seed-size: var(--mtap-lg, 48px); }
 /* ── 建群面板（统一面板批 2026-11-06）：顶栏返回圆钮 / 右下悬浮加号 = 手机 48 档 ──
    尺寸档与页面壳返回钮 `.mobile-back-btn`、手机 `.ask-fab` 同一档
    （48 = --mtap-lg / 图标 20 = --micon-sm）；桌面档 40 由 `.g2-fab` 基准承担
