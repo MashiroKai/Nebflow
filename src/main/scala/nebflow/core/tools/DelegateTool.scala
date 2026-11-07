@@ -93,7 +93,7 @@ object DelegateTool extends Tool:
 - The ack is not the result.
 - Landing discipline (KG audit ①, author ruling 2026-11-03): when the task produces knowledge documents (designs, audits, research, conclusions), state in the brief that they land in the project's REGISTRATION dir vault `<dataRoot>/projects/<project>/.stand/docs/` — next to `project.json`, NOT in the project workspace repo's `docs/` (Obsidian format: frontmatter + ≥1 wikilink); `reports/` is for pure process files (batch run reports) only. Validation command for the closing report: `python3 <dataRoot>/plugins/visual-report/skills/wiki-docs/scripts/check_wiki_docs.py --project <project>`.
 - **Limits:** No hard concurrency limit — in-flight delegates run concurrently.
-- **Safety**: NEVER send signals to or kill any sbt/java/nebflow process — you run inside a Nebflow instance; killing it kills you and the user's session. Process inspection with `ps` (read-only) is fine."""
+- **Safety**: Never directly signal or kill sbt/java/nebflow processes; read-only `ps` is fine. Only with explicit user authorization, higher-priority runtime/tool permission, verified instance/port/data root and trusted script, a guarded restart may use `~/.stand/bin/stand-restart.sh --canary` with compile, isolated canary, idle/observation and final idle checks intact. Check in-flight work; idle checks are not a guarantee. Never use `--hot`, `--force`, `--no-compile` or bypass safeguards. Otherwise stop and ask the user to run it manually; existing session instructions remain binding until replaced."""
 
   def inputSchema = JsonObject.fromIterable(
     List(

@@ -40,6 +40,19 @@ class PromptFaceSplitSpec extends FunSuite:
       .map(_.systemPrompt)
       .getOrElse(fail(s"BuiltinAgents must resolve '$executorName' via delegateEntry"))
 
+  test("restart exception is narrow on role and tool prompt surfaces"):
+    val surfaces = Seq(
+      nodePrompt, delegatePrompt,
+      nebflow.prompts.PromptCatalog.Roles.DispatcherPromptTemplate,
+      nebflow.core.tools.DelegateTool.description,
+      nebflow.core.tools.SubTaskTool.description
+    )
+    for text <- surfaces do
+      for required <- Seq("explicit user authorization", "higher-priority runtime/tool", "--canary", "--hot", "--force", "--no-compile", "idle", "not a guarantee", "manually") do
+        assert(text.contains(required), s"missing restart safety requirement: $required")
+      assert(!text.contains("NEVER send signals to or kill any sbt/java/nebflow process"))
+      assert(text.contains("Never directly"), "direct process signalling remains prohibited")
+
   test("delegate 面系统提示词 = delegate_report 纪律在位（两态值域 + 配套指令；#566 起 blocked 类别退役）"):
     val text = delegatePrompt
     assert(text.contains("delegate_report"), "delegate_report 申报义务在位")

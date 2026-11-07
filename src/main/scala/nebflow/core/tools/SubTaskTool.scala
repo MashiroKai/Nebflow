@@ -69,7 +69,7 @@ A task with 2+ independent parts — different file domains, or different nature
 - State what "done" looks like (e.g. "Report findings — do not modify files").
 - Do NOT duplicate the worker's work — work on non-overlapping files or topics.
 - Images: optional `images` parameter attaches up to 5 absolute local image paths to the prompt — the worker sees them directly. For other files, reference paths in the prompt text.
-- **Safety**: NEVER send signals to or kill any sbt/java/nebflow process — you run inside a Nebflow instance; killing it kills you and the user's session. Process inspection with `ps` (read-only) is fine; any write operation (signals, kills) is strictly forbidden."""
+- **Safety**: Never directly signal or kill sbt/java/nebflow processes; read-only `ps` is fine. Only with explicit user authorization, higher-priority runtime/tool permission, verified instance/port/data root and trusted script, a guarded restart may use `~/.stand/bin/stand-restart.sh --canary` with compile, isolated canary, idle/observation and final idle checks intact. Check in-flight work; idle checks are not a guarantee. Never use `--hot`, `--force`, `--no-compile` or bypass safeguards. Otherwise stop and ask the user to run it manually; existing session instructions remain binding until replaced."""
 
   /**
    * Dynamic preset parameter doc — same live-catalog rendering as
