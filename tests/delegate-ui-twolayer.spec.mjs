@@ -404,7 +404,7 @@ test('T4 星型子代理链块（链结构行脸）：头行折叠默认 + 展�
   expect(pageErrors).toEqual([]);
 });
 
-test('T5 弹窗净化（§A/WF-01）：收起式摘要条（任务 chip+brief+结果词+chevron）＋ 展开态（plugins/brief/结果分区）＋ 移除件全数退役（子代理×N 标题/星型子行族/头部归档图标）', async ({ page }) => {
+test('T5 弹窗净化（§A/WF-01 桌面结果条形态）：任务面退役（作者令 2026-11-07 顶部不显示任务——蓝色气泡已含全文）＋ 结果条收起/展开（plugins/判词/报告）＋ 移除件全数退役（子代理×N 标题/星型子行族/头部归档图标）', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(e.message));
   await bootApp(page);
@@ -416,8 +416,12 @@ test('T5 弹窗净化（§A/WF-01）：收起式摘要条（任务 chip+brief+�
     return route.fulfill({
       status: 200, contentType: 'application/json',
       body: JSON.stringify({
-        record: { id: 'delegate-nebflow-d1', executor: 'nebflow', plugins: ['visual-report', 'slideblocks'], archivedAt: null, title: '两层架构批任务' },
-        live: { status: 'running' }, verdict: null, task: { title: '两层架构批任务' }, childrenCount: 2,
+        record: {
+          id: 'delegate-nebflow-d1', executor: 'nebflow', plugins: ['visual-report', 'slideblocks'],
+          archivedAt: null, title: '两层架构批任务', reportDetail: '报告全文：闸全绿，已申报合并轮。',
+        },
+        live: { status: 'done' }, verdict: { verdict: 'completed', reason: '合并轮完成' },
+        task: { title: '两层架构批任务' }, childrenCount: 2,
       }),
     });
   });
@@ -441,25 +445,31 @@ test('T5 弹窗净化（§A/WF-01）：收起式摘要条（任务 chip+brief+�
   await expect(strip.locator('.bgagent-archive-btn')).toHaveCount(0);
   await expect(page.locator('.flow-agent-header [data-testid="delegate-archive"]')).toHaveCount(0);
   await expect(page.locator('.flow-agent-header .flow-agent-archive')).toHaveCount(0);
-  // ── WF-01 收起态：toggle aria-expanded=false + body hidden；任务 chip +
-  // brief 一行（历史回执回填 = 派发 brief 全文）＋ 在飞无判词 → 结果词缺席。
+  // ── 任务面去重批（作者令 2026-11-07「顶部的任务可以不显示，因为蓝色气泡里已经
+  // 包含了」）：桌面条**不再承载任务**——无「任务」chip、无 briefline、无 tasktext；
+  // 任务全文的权威呈现面 = 会话流里的注入气泡（同批机检
+  // tests/bgagent-header-window.spec.mjs 的 H2 钉「点开气泡 = 逐字全文含
+  // [workspace] 行」，本用例只钉「条里没有任务面」）。
+  await expect(strip.locator('.bgagent-strip-chip')).toHaveText('结果');
+  await expect(strip.locator('.bgagent-strip-briefline')).toHaveCount(0);
+  await expect(strip.locator('.bgagent-strip-tasktext')).toHaveCount(0);
+  await expect(strip.locator('.bgagent-strip-sec-label')).toHaveCount(1);
+  // ── 收起态：toggle aria-expanded=false + body hidden + 结果词在位（有判词）。
   const toggle = strip.locator('.bgagent-strip-toggle');
   await expect(toggle).toHaveAttribute('aria-expanded', 'false');
-  await expect(toggle.locator('.bgagent-strip-chip')).toHaveText('任务');
-  await expect(toggle.locator('.bgagent-strip-briefline')).toHaveText('实现批：delegate/flowmap 两层架构');
+  await expect(toggle.locator('.bgagent-strip-result')).toBeVisible();
   await expect(strip.locator('.bgagent-strip-body')).toBeHidden();
-  await expect(strip.locator('.bgagent-strip-result')).toBeHidden();
-  // ── 展开态（点 toggle）：plugins 数据原文 + 任务/结果分区骨架；无判词无报告
-  // → 结果区缺席（在飞常态）。
+  // ── 展开态（点 toggle）：plugins 数据原文 + 判词 + 报告全文（「不删除数据」：
+  // 任务数据仍在（历史/气泡），结果数据仍在（本条展开体））。
   await toggle.click();
   await expect(toggle).toHaveAttribute('aria-expanded', 'true');
   const body = strip.locator('.bgagent-strip-body');
   await expect(body).toBeVisible();
   await expect(body.locator('.bgagent-strip-plugins')).toHaveText('plugins: visual-report, slideblocks');
-  await expect(body.locator('.bgagent-strip-tasktext')).toHaveText('实现批：delegate/flowmap 两层架构');
-  await expect(body.locator('.bgagent-strip-sec-label').nth(0)).toHaveText('任务');
-  await expect(body.locator('.bgagent-strip-sec-label').nth(1)).toHaveText('结果');
-  await expect(body.locator('.bgagent-strip-sec').nth(1)).toBeHidden();
+  await expect(body.locator('.bgagent-strip-sec-label').nth(0)).toHaveText('结果');
+  await expect(body.locator('.bgagent-strip-verdict')).toBeVisible();
+  await expect(body.locator('.bgagent-strip-verdict-reason')).toHaveText('合并轮完成');
+  await expect(body.locator('.bgagent-strip-report')).toHaveText('报告全文：闸全绿，已申报合并轮。');
   // 再点 = 收回（单条内切换，对话流不受影响）。
   await toggle.click();
   await expect(toggle).toHaveAttribute('aria-expanded', 'false');

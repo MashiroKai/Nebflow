@@ -140,6 +140,10 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
 .flow-agent-model .flow-agent-subtitle,
 .flow-agent-model .flow-agent-model-badge { margin: 0; min-width: 0; }
 /* 弹窗头部用量环样式已随 2026-10-23 上下文用量显示退役批删除。 */
+/* 关闭键（两个弹窗共用：flowAgentPopup 的 ✕ 是纯点击件，bgAgentPopup 的是
+   <button>——下拉收编批 2026-11-07 键盘可达口径）。两条底线在这里一次写清：
+   ① 元素复位（button 的 UA 边框/底色/字族不外泄成「第二套按钮脸」）；
+   ② 键盘可见焦点环（--ds-focus-ring 单源，Tab 到必须看得见）。 */
 .flow-agent-close {
   cursor: pointer; font-size: var(--ds-fs-title); line-height: var(--ds-lh-tight);
   opacity: 0.7; transition: opacity var(--ds-dur-hover) var(--ds-ease-std);
@@ -147,8 +151,13 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   z-index: 10;
   flex: 0 0 auto;
   border-radius: var(--ds-radius-badge);
+  /* 元素复位（button 形态时生效；div 形态下这几条空转） */
+  border: 0; background: transparent; font-family: var(--ds-font-ui);
 }
 .flow-agent-close:hover { opacity: 1; background: var(--ds-control-bg-hover); }
+.flow-agent-close:focus-visible {
+  outline: 2px solid var(--ds-focus-ring); outline-offset: 2px;
+}
 /* Code copy buttons inside popup: shift left to avoid overlapping close button */
 .flow-agent-modal .code-copy-btn { right: 40px; }
 
