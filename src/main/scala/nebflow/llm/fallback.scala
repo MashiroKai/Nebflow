@@ -289,6 +289,28 @@ object Fallback:
   def isWaitingRetryableExhaustion(error: Throwable): Boolean =
     isNetworkUnreachableExhaustion(error) || isUpstreamUnavailableExhaustion(error)
 
+  /**
+   * **驱逐判据单点**（「这次失败要不要把该 provider/model 记进健康 Down」）：回答
+   * 「provider 本身是不是坏了」。
+   *
+   * | 形状 | evict | 理由 |
+   * |---|---|---|
+   * | 400 非 context-overflow | false | provider 秒回 400 恰证明它活着（请求形状问题）|
+   * | 5xx（500/502/503/504/550）| false | 当下供不出服务，但下一发可能就好——走冷却窗，不走死亡判定 |
+   * | **404 model_not_found** | **false** | provider 活着，**我们指的模型不存在/不属于该分组**（配置失效）|
+   * | 其余（401/403/429/超时/连接）| true | 确证死亡 / 需要退避或换链 |
+   *
+   * 404 一格是 model-404-freeze 批（2026-11-07）新增：旧表单把 404 当「确证死亡」
+   * ⇒ markDown ⇒ 下一次请求落进 120s 全灭闸 ⇒ `AllProvidersDownTimeout` ⇒ 冻结
+   * `reason=provider-down`（可自动恢复）⇒ 无限重试同一个不存在的模型。
+   * 纯函数、无 IO，判据可单测。
+   */
+  private[llm] def evictOnStatus(code: Int, reason: FailoverReason, isContextOverflow: Boolean): Boolean =
+    if code == 400 && !isContextOverflow then false
+    else if UpstreamUnavailable.isStatus(code) then false
+    else if code == 404 || reason == FailoverReason.ModelNotFound then false
+    else true
+
   private def classifyBase(error: Throwable): ErrorClassification =
     // Check for structured sttp4 HttpError first
     error match
@@ -322,7 +344,15 @@ object Fallback:
         // = provider 级**冷却窗 + 指数退避**（[[ProviderHealthMonitor.coolDown]]，
         // 窗到期自动半开试探），不进健康 Down 状态、不进探测集。归类表见
         // [[UpstreamUnavailable]]。
-        val evict = !(c == 400 && !isContextOverflow) && !UpstreamUnavailable.isStatus(c)
+        //
+        // 404 模型不存在（model-404-freeze 批 2026-11-07）⇒ 同样**不参与驱逐**：
+        // 现场（`delegate-nebflow-5c905a1d` 12:38:51）`Irical/gpt-6.1-terra` 回
+        // `404 model_not_found`，旧判据 evict=true ⇒ 该 (provider, model) 被
+        // markDown ⇒ 下个请求走全灭闸等 120s ⇒ `AllProvidersDownTimeout` ⇒
+        // `FreezeReason.ProviderDown`（面板「自动重试中（供应商不可用）」+ 无限
+        // 自动重试）。真相是**我们指错了模型名**，provider 一直活着。
+        // 判据统一收敛到 [[evictOnStatus]]（单点、可测）。
+        val evict = evictOnStatus(c, reason, isContextOverflow)
         if c == 400 && !isContextOverflow then
           // 案① A4（chain-llmstall-fix）：结构化 400-Format 与下方 stringly 残余路径
           // **同源收口**——两者都经 [[formatClassification]]，终局语义（Format /

@@ -75,6 +75,14 @@ object DelegateFreeze:
     /** LLM 层故障（provider 报错 / 全候选耗尽 / 鉴权/格式错误等）。 */
     case LlmFailure
 
+    /**
+     * **配置失效**：模型对该供应商/分组不存在（404 model_not_found /
+     * `not available for this group`）——重试不会自己好（model-404-freeze 批
+     * 2026-11-07）。与 [[LlmFailure]] 的分界就是本批的核心：provider 活着，错的是
+     * 我们指的模型，所以要**人改配置**，不许无限自动重试。
+     */
+    case ModelUnavailable
+
     /** 工具层不可恢复错误（工具管道异常、工具侧硬失败）。 */
     case ToolFailure
 
@@ -85,11 +93,13 @@ object DelegateFreeze:
     case CancelledByQuota
 
   /** 全部原因（枚举序；重放面识别回执原因用——Scala 3 `enum` 无反射式 `values`）。 */
-  val All: List[Reason] = List(Reason.LlmFailure, Reason.ToolFailure, Reason.EngineFault, Reason.CancelledByQuota)
+  val All: List[Reason] =
+    List(Reason.LlmFailure, Reason.ModelUnavailable, Reason.ToolFailure, Reason.EngineFault, Reason.CancelledByQuota)
 
   /** 原因 → 线值（落盘/帧字段；短横线小写，与既有 frozenReason 词表同规格）。 */
   def wire(r: Reason): String = r match
     case Reason.LlmFailure => "llm-failure"
+    case Reason.ModelUnavailable => "model-unavailable"
     case Reason.ToolFailure => "tool-failure"
     case Reason.EngineFault => "engine-fault"
     case Reason.CancelledByQuota => "cancelled-by-quota"
@@ -111,6 +121,7 @@ object DelegateFreeze:
     else
       s.stripPrefix(WirePrefix).stripPrefix(":") match
         case "llm-failure" => Some(Reason.LlmFailure)
+        case "model-unavailable" => Some(Reason.ModelUnavailable)
         case "tool-failure" => Some(Reason.ToolFailure)
         case "engine-fault" => Some(Reason.EngineFault)
         case "cancelled-by-quota" => Some(Reason.CancelledByQuota)
@@ -128,6 +139,11 @@ object DelegateFreeze:
    *
    *   1. `cancelled-by-quota`：消息命中配额/余额族（额度耗尽属 provider 侧可恢复，
    *      线值 `cancelled-by-quota` 本身就在 `FreezeDisplay.InfraReasonCodes` 里）；
+   *   1'. `model-unavailable`（model-404-freeze 批 2026-11-07）：消息命中**配置失效族**
+   *      （404 model_not_found / `not available for this group`）。这一条必须排在 ③ 之前
+   *      ——旧判据里这类正文带着 `upstream` / `provider` 字样会命中上游 5xx 族（可恢复），
+   *      于是「模型名指错」被当成「供应商临时挂了」，冻结后无限自动重试（作者
+   *      2026-11-07 12:26 报障「一直卡住没跑完」的根因）；
    *   2. `tool-failure`：`ToolFailed` 或消息含工具管道标记 —— **确定性缺陷优先**，
    *      工具侧 bug 哪怕正文带着网络字样也照常通知；
    *   3. `llm-failure`：消息命中 [[ProviderFault.Table]] 的任一**可恢复族**
@@ -144,6 +160,7 @@ object DelegateFreeze:
     val t = Option(errorType).getOrElse("")
     if ml.contains("quota") || ml.contains("额度") || ml.contains("insufficient_quota") then Reason.CancelledByQuota
     else if t == "ToolFailed" || ml.contains("toolpipeline") || ml.contains("tool pipeline") then Reason.ToolFailure
+    else if ProviderFault.isConfigInvalid(m) then Reason.ModelUnavailable
     else if ProviderFault.isRecoverable(m) && !ProviderFault.isRealFailure(m) then Reason.LlmFailure
     else if t == "LlmFailed" then Reason.LlmFailure
     else Reason.EngineFault
@@ -166,6 +183,7 @@ object DelegateFreeze:
   /** 原因的中文短名（面板/回执用；双语载荷里两语齐备）。 */
   def reasonLabelZh(r: Reason): String = r match
     case Reason.LlmFailure => "模型层故障"
+    case Reason.ModelUnavailable => "模型不可用（配置失效）"
     case Reason.ToolFailure => "工具层故障"
     case Reason.EngineFault => "引擎侧故障"
     case Reason.CancelledByQuota => "配额耗尽取消"
@@ -173,6 +191,7 @@ object DelegateFreeze:
   /** 原因的英文短名（回执/日志用）。 */
   def reasonLabelEn(r: Reason): String = r match
     case Reason.LlmFailure => "LLM-layer failure"
+    case Reason.ModelUnavailable => "model unavailable (config error)"
     case Reason.ToolFailure => "tool-layer failure"
     case Reason.EngineFault => "engine fault"
     case Reason.CancelledByQuota => "quota-exhausted cancel"
