@@ -350,8 +350,32 @@ case class SharedResources(
         )
       yield pin
 
-  /** 可观测面投影（§3h）：/api/models/candidates 与 /api/health 共用的 providerConcurrency 键。 */
-  def providerConcurrencyJson: IO[io.circe.Json] =
+  /**
+   * 钉链失效判读（model-404-freeze 批 2026-11-07）——纯判据在
+   * `ProviderConcurrency.pinVerdict`，本方法只负责把「现配置」喂进去：
+   * 钉链首这个 `provider/model` 是否仍在当前配置清单里 + 现配置链首（回落目标）。
+   * registry 未装配（测试面）/ 读配置失败 ⇒ 判为「仍有效」（Keep = 零行为变化）。
+   */
+  private[agent] def pinVerdictFor(
+    pin: Option[nebflow.llm.PinnedChain],
+    agentModel: Option[nebflow.shared.AgentModelConfig]
+  ): IO[nebflow.llm.ProviderConcurrency.PinVerdict] =
+    pin match
+      case None => IO.pure(nebflow.llm.ProviderConcurrency.PinVerdict.Keep)
+      case Some(p) =>
+        if providerRegistry == null then IO.pure(nebflow.llm.ProviderConcurrency.PinVerdict.Keep)
+        else
+          (for
+            cfg <- providerRegistry.currentConfig
+            chain <- providerRegistry.getCandidatesForAgentUnfiltered(agentModel)
+          yield nebflow.llm.ProviderConcurrency.pinVerdict(
+            pin,
+            headStillConfigured =
+              nebflow.llm.ProviderConcurrency.refConfigured(p.headRef, cfg.llm.providers),
+            currentChain = chain.map(c => s"${c.providerId}/${c.model}")
+          )).handleErrorWith(_ => IO.pure(nebflow.llm.ProviderConcurrency.PinVerdict.Keep))
+
+  /** 可观测面投影（§3h）：/api/models/candidates 与 /api/health 共用的 providerConcurrency 键。 */  def providerConcurrencyJson: IO[io.circe.Json] =
     providerRegistry match
       case null => IO.pure(io.circe.Json.Null)
       case _ =>

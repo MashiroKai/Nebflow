@@ -56,6 +56,63 @@ object ProviderConcurrency:
   private val logger = NebflowLogger.forName("nebflow.llm.provider-concurrency")
 
   /**
+   * 钉链**失效回落**判读结果（model-404-freeze 批 2026-11-07，纯函数可测）。
+   *
+   * 钉链是 spawn 时刻的链快照（[[PinnedChain]]，缓存键稳定面），可配置是热读的。
+   * 两者一旦漂移——现场实证 `delegate-nebflow-5c905a1d`：10:04 spawn 时链首 =
+   * `Irical/gpt-6.1-terra`，11:59–12:50 配置把该模型移到 `IricalGpt` 分组下 ⇒ 钉链
+   * 指向一个在自己的 provider 上已经不存在的 ref ⇒ 每个请求都吃
+   * `404 model_not_found`，冻结后无限自动重试（作者「一直卡住没跑完」）。
+   *
+   * 处置规则（写死、不猜，判据 = **该 ref 是否仍在当前配置里**）：
+   *   - 钉链首仍在当前配置的 provider/model 清单里 ⇒ [[Keep]]（快照语义不回归；
+   *     「配了但不在链首」不算失效——那是合法 pin，不得静默降级）；
+   *   - 钉链首已不在配置里（provider 删了/disabled/模型从该 provider 的清单里移走）
+   *     ⇒ [[Drop]]，回落该会话现配置链（`to` = 现配置链首；None = 连链都没有，交给
+   *     既有空链 fail-fast，不猜模型）。
+   *
+   * 🔴 为什么不拿「钉链首是否等于现配置链首」当判据：链深恒 1 后任何合法 pin 都会
+   * 不等于链首以外的东西……反过来，一个**配了却不在链上**的合法模型会被误判失效而
+   * 静默降级（连带 provider 并发占坑迁移）——所以判据必须是「还在不在配置里」。
+   */
+  enum PinVerdict:
+    /** 钉链仍有效（或本就没有钉链）⇒ 原样使用。 */
+    case Keep
+    /** 钉链首已不在当前配置里 ⇒ 弃用；`to` = 现配置链首（None = 连链都没有，交给空链 fail-fast）。 */
+    case Drop(from: String, to: Option[String])
+
+  /**
+   * 钉链失效判读（纯函数）。
+   *
+   * @param pin 该 actor 的钉链快照（None = 没钉）
+   * @param headStillConfigured 钉链首这个 `provider/model` 是否仍在当前配置里
+   *        （provider 存在、未 `disabled`、且该 model id 在其 models 清单里）
+   * @param currentChain 现配置下该会话会走的 `provider/model` 序列（只用于给出回落目标）
+   */
+  def pinVerdict(
+    pin: Option[PinnedChain],
+    headStillConfigured: Boolean,
+    currentChain: List[String]
+  ): PinVerdict =
+    pin match
+      case None => PinVerdict.Keep
+      case Some(p) =>
+        if headStillConfigured then PinVerdict.Keep
+        else PinVerdict.Drop(p.headRef, currentChain.headOption)
+
+  /** `provider/model` ref 是否仍在当前配置里（口径同 [[pinVerdict]] 的 `headStillConfigured`）。 */
+  def refConfigured(ref: String, providers: Map[String, nebflow.shared.ProviderConfig]): Boolean =
+    val parts = Option(ref).getOrElse("").split('/')
+    if parts.length < 2 then false
+    else
+      val pid = parts.head
+      val mid = parts.tail.mkString("/")
+      providers.get(pid) match
+        case Some(p) if p.disabled.getOrElse(false) => false
+        case Some(p) => p.models.exists(_.id == mid)
+        case None => false
+
+  /**
    * 计数表：providerId -> 该 provider 上占坑的 actorId 集合；`pinExclusions` =
    * actorId -> 派发时刻被链首扫描剔出的候选与原因（缺陷批 2026-11-06 收口）——
    * 与占坑同一张表、同一次原子 modify 读写（单一真相；release/reconcile 随占坑

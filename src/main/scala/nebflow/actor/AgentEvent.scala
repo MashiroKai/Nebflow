@@ -269,8 +269,33 @@ object FreezeDisplay:
     "the engine resumes it on its own once a provider is serving again (same session, from the checkpoint, " +
       "finished work is not redone, capped attempts with growing gaps) — or wake it now"
 
+  /**
+   * **配置失效**族的动作说明（model-404-freeze 批 2026-11-07）：说清三件事——谁错了
+   * （模型名/分组不匹配，不是供应商挂了）、为什么等不来（同一个 404 会一直回）、
+   * 该怎么办（改配置指对模型再唤醒）。旧文案说「引擎会自动续跑」在这里是假话：
+   * 自动续跑只会把同一个 404 再打一遍。
+   */
+  val ConfigHintZh: String =
+    "重试不会自己好：模型在供应商侧不存在或不属于该分组——改配置里的模型（或换 provider）后再唤醒它接着做"
+
+  val ConfigHintEn: String =
+    "retrying will not fix it: the model does not exist for that provider/group — point the config at a real model " +
+      "(or another provider), then wake it to continue"
+
   /** provider 故障族（基础设施故障，非任务失败）的 delegate 冻结原因码。 */
   val InfraReasonCodes: Set[String] = Set("llm-failure", "cancelled-by-quota")
+
+  /**
+   * **配置失效族**（model-404-freeze 批 2026-11-07）：模型对该供应商/分组不存在
+   * （404 model_not_found）——provider 活着，错的是我们指的模型，**重试不会自己好**
+   * ⇒ 不承诺自动恢复，面板直说「改配置」，并照常通知（与 [[InfraReasonCodes]]
+   * 互斥：同时出现在两表里 = 判定自相矛盾，`FreezeDisplaySpec` 判红钉住）。
+   */
+  val ConfigInvalidReasonCodes: Set[String] = Set("model-unavailable")
+
+  /** 该 delegate 冻结原因码是否属配置失效族（需人改配置，重试不会好）。 */
+  def isConfigInvalidReasonCode(code: String): Boolean =
+    ConfigInvalidReasonCodes.contains(Option(code).getOrElse("").trim)
 
   /** 该 delegate 冻结原因码是否属 provider 故障族（基础设施故障，不是任务失败）。 */
   def isInfraReasonCode(code: String): Boolean = InfraReasonCodes.contains(Option(code).getOrElse("").trim)
@@ -283,6 +308,7 @@ object FreezeDisplay:
    */
   private val DelegateReasonLabels: Map[String, String] = Map(
     "llm-failure" -> "模型层故障",
+    "model-unavailable" -> "模型不可用（配置失效）",
     "tool-failure" -> "工具层故障",
     "engine-fault" -> "引擎侧故障",
     "cancelled-by-quota" -> "配额耗尽取消"
@@ -391,12 +417,25 @@ object FreezeDisplay:
     if w.startsWith("delegate-frozen") then
       val code = w.stripPrefix("delegate-frozen").stripPrefix(":")
       val label = DelegateReasonLabels.getOrElse(code, if code.isEmpty then "原因未记录" else code)
+      // 配置失效族（model-404-freeze 批 2026-11-07）：**先于** provider 故障族判定——
+      // 两族互斥，且这一族的判词必须直说「重试不会好、去改配置」，不许承诺自动恢复。
+      if isConfigInvalidReasonCode(code) then
+        FreezeDisplay(
+          FreezeKind.NeedsHuman,
+          w,
+          needsHuman = true,
+          autoRecoverable = false,
+          s"已冻结 · $label（需改配置 · 重试不会自己好）",
+          s"Frozen — $label (fix the config; retrying will not help)",
+          ConfigHintZh,
+          ConfigHintEn
+        )
       // provider 故障族（2026-11-05 10:36 作者令）：provider 故障 = **基础设施故障**，
       // 不是任务失败 ⇒ 不向上汇报、面板标「待你处理」、但引擎自己探测恢复后续跑。
       // 因此这一族 `autoRecoverable=true`（`kind` 保持 NeedsHuman 只为面板措辞与
       // 「唤醒」入口在场；耗 supervisor 重启预算的 RestartAgent 腿对它一律不提供——
       // 唤醒走带 clientMessageId 的 UserInput 幂等腿）。
-      if isInfraReasonCode(code) then
+      else if isInfraReasonCode(code) then
         FreezeDisplay(
           FreezeKind.NeedsHuman,
           w,

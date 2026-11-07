@@ -26,6 +26,13 @@ import scala.jdk.CollectionConverters.*
  *
  * 变异验红：classifyError 400 分支还原 evict=true → T1 红（a/m1 变 Down）。
  *
+ * **model-404-freeze 批改写（2026-11-07，逐条申报）**：T2 里「404 remains a
+ * confirmed-death eviction」一条**反转**为 `evict=false`——404 model_not_found 是
+ * **配置失效**（模型对该供应商/分组不存在），provider 活着；旧语义把它当「确证死亡」
+ * 驱逐 ⇒ 下一次请求落进全灭闸 ⇒ `AllProvidersDownTimeout` ⇒ `FreezeReason.ProviderDown`
+ * ⇒ 冻结后无限自动重试一个不存在的模型（现网 `delegate-nebflow-5c905a1d` 实证）。
+ * 新增判据与两侧用例见 `ModelNotFoundNoEvictSpec`。其余断言逐字未改。
+ *
  * **fallback 废除批改写（作者令 2026-11-06 20:36「不再支持模型fallback」，逐条申报）**：
  *   - T1 **重写**为单候选语义：链深恒 1（b/m1 不进链）⇒ 400 Format 的就地降级重试
  *     面原样保留（恰好 2 次命中后），终局 = FallbackExhaustedError（无下一根可换）；
@@ -242,7 +249,12 @@ class FormatErrorNoEvictSpec extends CatsEffectSuite:
 
     val notFound = Fallback.classifyError(sttp.client4.HttpError("model gone", sttp.model.StatusCode(404)))
     assertEquals(notFound.reason, FailoverReason.ModelNotFound)
-    assertEquals(notFound.evict, true, "404 remains a confirmed-death eviction")
+    // model-404-freeze 批改写（2026-11-07）：404 不再是「确证死亡」——它说的是
+    // **我们指的模型不存在/不属于该分组**（配置失效），provider 一直活着。旧断言
+    // `evict=true` 正是现网 `reason=provider-down` 无限自动重试的入口：markDown ⇒
+    // 全灭闸等 120s ⇒ AllProvidersDownTimeout ⇒ 冻结可自动恢复。判据与现场取证见
+    // `ModelNotFoundNoEvictSpec`（本批新增）。
+    assertEquals(notFound.evict, false, "404 = 配置失效（模型名/分组不对），不驱逐 provider")
   }
 
   test("T3(重写): 401 Auth still evicts via markDown (确证死亡不回归；单候选链终局 = 有界全灭闸)") {

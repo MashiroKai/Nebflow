@@ -13,6 +13,7 @@ package nebflow.core.delegate
  *
  * | 族 | 观测形状（举例） | 处置 |
  * |---|---|---|
+ * | `model-unavailable` | 404 model_not_found / `is not available for this group` / 模型不存在（配置失效） | [[Verdict.ConfigInvalid]] |
  * | `auth-subscription` | 401 / 403 / no subscription / invalid api key / 鉴权 / 无订阅 | [[Verdict.Recoverable]] |
  * | `quota-balance` | 402 / 429+1308·1310 / insufficient_quota / 余额 / 欠费 / 额度 / billing | Recoverable |
  * | `upstream-5xx` | 500 / 502 / 503 / 504 / **550** / 529 / overloaded / server error | Recoverable |
@@ -38,6 +39,17 @@ object ProviderFault:
 
   /** 故障族（写进日志/审计行；词表是状态面的一部分）。 */
   enum Family:
+    /**
+     * 模型对该供应商/分组不存在（404 model_not_found / `not available for this group`）
+     * ——**配置失效**，不是供应商挂了（model-404-freeze 批 2026-11-07）。
+     *
+     * 现场（`delegate-nebflow-5c905a1d`，2026-11-07 12:38:51）：钉住的
+     * `Irical/gpt-6.1-terra` 在 Irical 分组根本不可见（该模型只在 IricalGpt 分组下），
+     * 上游回 `404 Model "gpt-6.1-terra" is not available for this group`。旧判据因为
+     * 正文里有 `upstream` / `provider` 字样把它算进 [[Family.Upstream5xx]]（= 可恢复）
+     * ⇒ 冻结后无限自动重试，作者看到的就是「一直卡住没跑完」。
+     */
+    case ModelUnavailable
     /** 鉴权 / 订阅（401 / 403 / 无订阅 / 无效 key）——充值或换链即恢复。 */
     case AuthSubscription
     /** 配额 / 余额（402 / 429+额度码 / insufficient_quota / 余额不足）——等重置或充值。 */
@@ -57,11 +69,20 @@ object ProviderFault:
   enum Verdict:
     /** provider 侧可恢复故障：零通知、原地冻结、退避重试至恢复。 */
     case Recoverable
+    /**
+     * **配置失效**（model-404-freeze 批 2026-11-07）：这句正文说的是「你指的模型在
+     * 这个供应商/分组里不存在」，重试一百次也是同一个 404 —— 既不是 provider 挂了
+     * （[[Recoverable]] 的无限自动重试会把会话永久钉死），也不是代码缺陷
+     * （[[RealFailure]] 的判词会把责任推给 agent）。正确处置 = **fail-fast + 指名改
+     * 配置**，并照常通知（人来换模型）。
+     */
+    case ConfigInvalid
     /** 真失败：照常通知作者（判据代码 bug / 越权 / 数据损坏 / 显式业务失败）。 */
     case RealFailure
 
   /** 线值（日志/审计行）。 */
   def familyWire(f: Family): String = f match
+    case Family.ModelUnavailable => "model-unavailable"
     case Family.AuthSubscription => "auth-subscription"
     case Family.QuotaBalance => "quota-balance"
     case Family.Upstream5xx => "upstream-5xx"
@@ -112,6 +133,30 @@ object ProviderFault:
       ),
       Nil,
       "确定性缺陷 ⇒ 真失败：照常通知（聚合后一条），不静默"
+    ),
+    Row(
+      Family.ModelUnavailable,
+      Verdict.ConfigInvalid,
+      List(
+        // 结构化分类产物（`[model]` 行由 FallbackExhaustedError 的族标签给出）
+        "modelnotfound",
+        "model_not_found",
+        "model not found",
+        // 上游原话（Irical/OpenAI 兼容面实测形状，2026-11-07 12:38:51）
+        "is not available for this group",
+        "available for this group",
+        "no such model",
+        "unknown model",
+        "does not exist",
+        "not a valid model",
+        "invalid model",
+        // 中文面
+        "模型不存在",
+        "模型不可用"
+      ),
+      List(404),
+      "模型对该供应商/分组不存在（404 model_not_found）⇒ 配置失效：fail-fast + 指名改配置；" +
+        "**不**归 provider-down、**不**自动重试、**不**驱逐 provider（它活着，只是没有这个模型）"
     ),
     Row(
       Family.QuotaBalance,
@@ -255,6 +300,16 @@ object ProviderFault:
 
   /** 这段失败正文是否属**确定性缺陷**（真失败 ⇒ 照常通知）。 */
   def isRealFailure(detail: String): Boolean = verdictOfDetail(detail).contains(Verdict.RealFailure)
+
+  /**
+   * 这段失败正文是否属**配置失效**（模型对该供应商/分组不存在 ⇒ 重试不会自己好）。
+   *
+   * 单点判据，两个消费者：
+   *   - [[DelegateFreeze.classify]] ⇒ 归 `model-unavailable`（不进 provider 故障族 ⇒
+   *     **不** autoRecoverable，「冻结后无限自动重试」正是在这里断掉的）；
+   *   - `Fallback.classifyBase` 的驱逐面 ⇒ 404 不 markDown（provider 活着）。
+   */
+  def isConfigInvalid(detail: String): Boolean = verdictOfDetail(detail).contains(Verdict.ConfigInvalid)
 
   /**
    * 「这段失败该不该静默」的唯一入口（通知面 / flow-notify 闸共用）：

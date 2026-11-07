@@ -1063,6 +1063,29 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             else if nebflow.core.ask.AskSessions.isAskSession(stateForLlm.sessionId) then
               base.deepMerge(Json.obj("effort" -> nebflow.shared.ThinkingEffort.Low.wireName.asJson))
             else base
+          // 钉链失效回落（model-404-freeze 批 2026-11-07）：钉链是 spawn 时刻的链快照，
+          // 配置是热读的——钉链首一旦在当前配置里不再存在（现场：`Irical/gpt-6.1-terra`
+          // 12:50 被从 `Irical` 的模型清单移走、只剩在 `IricalGpt` 分组下），每个请求都会
+          // 照旧打那个 ref 并吃 `404 model_not_found`。判据单点 =
+          // ProviderConcurrency.pinVerdict（纯函数，可测）；「还在不在配置里」由本方法
+          // 喂配置回答：失效 ⇒ 弃用钉链、回落该会话现配置链；仍配置 ⇒ 原样保留
+          // （快照语义不回归）。
+          pinVerdict <- resources.pinVerdictFor(stateForLlm.providerChainPin, freshDef.model)
+          effectivePin = pinVerdict match
+            case nebflow.llm.ProviderConcurrency.PinVerdict.Drop(_, _) => None
+            case nebflow.llm.ProviderConcurrency.PinVerdict.Keep => stateForLlm.providerChainPin
+          _ = pinVerdict match
+            case nebflow.llm.ProviderConcurrency.PinVerdict.Drop(from, to) =>
+              logAgentEvent(
+                agentDef,
+                depth,
+                state.sessionId,
+                state.sessionName,
+                "pin-stale",
+                s"pinned chain head $from no longer in the current config — pin dropped, " +
+                  s"falling back to the configured chain (head=${to.getOrElse("none")})"
+              )
+            case _ => ()
           request = LlmRequest(
             // cache-warmup 批（2026-11-06）：messages 只装**持久历史**（会与
             // stateWithReminder 一起落盘/下一轮重放的序列），REQUEST-ONLY 提醒段
@@ -1095,11 +1118,11 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             agentModel =
               nebflow.core.ModelRoles
                 .slotChainOf(stateForLlm.sessionId)
-                .orElse(agentModelWithPin(freshDef.model, stateForLlm.providerChainPin)),
+                .orElse(agentModelWithPin(freshDef.model, effectivePin)),
             // 派发钉链剔除账本（缺陷批 2026-11-06）：spawn 时因满载被链首扫描剔出的
             // 候选连原因随请求下发——进候选账本 seeded 层。没有它，这些候选既不在链上
             // 也没有原因 ⇒ `SILENTLY EXCLUDED`（现网实证 UTSC/glm-5.3-flash）。缺省 Nil。
-            pinSkips = stateForLlm.providerChainPin.map(_.preExcluded).getOrElse(Nil),
+            pinSkips = effectivePin.map(_.preExcluded).getOrElse(Nil),
             // WebSearch P0: housekeeping turns (compact/ask) opt out of
             // provider-native search injection — a server-side search tool
             // must never leak into summarization loops.
