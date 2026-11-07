@@ -104,10 +104,18 @@ quality-gate:
 # **没有任何断言发现「前端调了但后端没有」**。本闸静态对照两侧（前端 /api 字面量
 # 集合 × 网关路由注册面），前端调了后端没有 ⇒ 红。
 # （Makefile 热点区口径：合并两边门禁并列保留——mobile-canvas-strip / badge-words / settings-ios-rows / panel-unify 来自 main 侧批次，provider-panel 来自 provider-add-tabs 批。）
-FRONTEND_GATES := design-tokens msgstyle bubble-side self-explaining circular fixture-secrets api-routes freeze-state freeze-silence flat-buttons glass canvas-hint toggle scroll-pill input-surface mobile-canvas-strip badge-words settings-ios-rows panel-unify provider-panel
+FRONTEND_GATES := css-structure design-tokens msgstyle bubble-side self-explaining circular fixture-secrets api-routes freeze-state freeze-silence flat-buttons glass canvas-hint toggle scroll-pill input-surface mobile-canvas-strip badge-words settings-ios-rows panel-unify provider-panel
 
 frontend-gates:
 	@command -v node >/dev/null 2>&1 || { echo "node not found — 前端门禁需要 node"; exit 2; }
+	@# CSS 结构完整性门禁（image-expand-disappears 批 2026-11-07 · 作者报障
+	@# 「为什么现在图片一点展开，就消失了？」）：css/*.css 必须块闭合、注释闭合、且
+	@# **零意外嵌套** —— 事故形态 = design-system.css 的 `:root {` 漏了收括号，其后
+	@# 全部规则被浏览器按 CSS 嵌套解析（`& .ds-*`），全文件特异性凭空 +1 类名，压过了
+	@# chat.css 的态规则 ⇒ 叠卡「展开 N」点下去两面俱隐、图片整组消失。既有 CSS 门禁
+	@# 全按选择器字面量判，无人看块结构，故整整一天全绿。判据 S1/S2/S3 + --selftest
+	@# 自证 4/4；改前/改后同一份脚本：--root=<另一棵 web 树>。
+	node scripts/check-css-structure.mjs
 	node scripts/check-design-tokens.mjs
 	node scripts/check-msgstyle-single-source.mjs
 	@# 气泡归属方底色门禁（bubble-side-color 批 2026-11-06，作者令「我们这方发的……
