@@ -102,7 +102,10 @@ const HUB_ROWS = [
   { page: 'reminder',   icon: 'alarm-clock',     zh: '定时任务',  en: 'Scheduled' },
   { page: 'daemon',     icon: 'heart-pulse',     zh: '心跳',      en: 'Daemons' },
   { page: 'background', icon: 'square-terminal', zh: '后台任务',  en: 'Background' },
-  { page: 'settings',   icon: 'settings',        zh: '设置',      en: 'Settings' },
+  // account-hero 批（2026-11-07）：设置**不再是**工作台列表的一员 —— 它已升到
+  // hero 的独立入口（buildWorkbenchMeEntry 的 [data-hero-settings]）。同一功能
+  // 两个入口会打架（作者令「把设置的统一到这里」），故此行删除；PAGES 里的
+  // 'settings' 页注册保留（pushPage('settings') 仍走同一详情页壳）。
 ];
 
 /** 页面注册表。dock: true = 底栏根页；其余 = push 详情页。route id 稳定。
@@ -470,12 +473,20 @@ function buildHub(body) {
 let workbenchMeEntry = null;
 
 function buildWorkbenchMeEntry() {
+  // account-hero 批（2026-11-07 作者令逐字「手机端工作台上面的账户 做出 hero 那种
+  // 感觉 并且去重 把设置的统一到这里」）：工作台顶部 = **身份 hero**（头像 88 /
+  // 名 / 邮箱为主体，大面积留白），且是「账号 + 设置」的**唯一入口**：
+  //   · 整块点击 = 个人主页（既有 me 层级面，含用户名/头像/绑定子页）；
+  //   · hero 内独立「设置」钮 = 设置页（原先工作台列表里那一行 settings 已从
+  //     HUB_ROWS 移除，避免同一功能两个入口打架）；
+  //   · 设置页不再重复身份信息（见 js/sidebar.js 账号段去重注）。
   const entry = document.createElement('button');
   entry.type = 'button';
   entry.className = 'mf-me-entry';
   entry.setAttribute('data-me-entry', '1'); // QA 断言面：工作台头像入口机械定位
+  entry.setAttribute('data-hero', 'account'); // hero 化断言面（本批新增）
   entry.innerHTML = `
-    <span class="mf-me-avatar-frame">
+    <span class="mf-me-avatar-frame huge">
       <picture>
         <source media="(prefers-color-scheme: dark)" srcset="${brand.logoDarkUrl}">
         <img class="mf-me-avatar-logo" src="${brand.logoUrl}" alt="">
@@ -485,8 +496,29 @@ function buildWorkbenchMeEntry() {
     <span class="mf-me-meta">
       <span class="mf-me-name"></span>
       <span class="mf-me-sub"></span>
+      <span class="mf-me-tagline">我的空间 · 账号与设置</span>
     </span>
-    <i data-lucide="chevron-right" class="mf-hub-chev"></i>`;
+    <span class="mf-me-actions">
+      <span class="mf-me-settings" role="button" tabindex="0" data-hero-settings="1">
+        <i data-lucide="settings" class="mf-me-settings-ic"></i>
+        <span class="mf-me-settings-label">设置</span>
+      </span>
+    </span>`;
+  // hero 内设置钮（子元素上的 click 冒泡到 entry，必须先 stopPropagation 并
+  // 自己 push settings —— 两个入口语义分离，互不触发的另一个）。
+  const settingsBtn = entry.querySelector('[data-hero-settings]');
+  if (settingsBtn) {
+    const openSettings = (e) => {
+      e.stopPropagation();
+      touchLayer();
+      logEvent('hub-open', { page: 'settings' });
+      pushPage('settings');
+    };
+    settingsBtn.addEventListener('click', openSettings);
+    settingsBtn.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') openSettings(e);
+    });
+  }
   entry.addEventListener('click', (e) => {
     e.stopPropagation();
     touchLayer();

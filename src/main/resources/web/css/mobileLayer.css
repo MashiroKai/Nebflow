@@ -2637,34 +2637,99 @@ body.mobile-layer .mf-hub-chev { opacity: 0.45; color: var(--color-text-muted); 
 body.mobile-layer .mf-hub-chev svg { width: 16px; height: 16px; }
 
 /* ── 工作台顶头像入口 + 个人主页层级面（手机顶栏批 2026-10-31 作者令②④）── */
-/* 头像入口卡：与 hub 行卡同族（白卡 r16 轻阴影），圆形头像 + 名/副行 + chevron；
-   头像双态骨架与设置页同源（.mf-me-avatar-logo 品牌标 / .mf-me-avatar-photo
-   账号照片，paintAvatarSlot 就绪门翻面）。 */
+/* ── 工作台 hero（account-hero 批 2026-11-07，作者令逐字「手机端工作台上面的账户
+   做出 hero 那种感觉 并且去重 把设置的统一到这里」）────────────────────
+   形态：大面积身份区（头像 88 / 名 / 邮箱为主体）+ 独立设置入口，与下方
+   `.mf-hub` 列表**不同构**——不是一行卡，是一块「我的空间」的封面：
+     · 悬浮无边框（border: none）、无分隔条、无 chevron 尾巴；圆角走卡族令牌；
+     · 留白 = hero 自己的节奏（上方 20 / 下缘 28），不靠 hub 行卡的内距；
+     · 亮暗两套成立：亮 = 纸面浅浮 + 柔影；暗 = 深面 + 深影（同 token 翻档）。
+   唯一身份展示处：设置页账号段的身份卡已撤（js/sidebar.js 去重注）。 */
 body.mobile-layer .mf-me-entry {
+  position: relative;
   display: flex;
-  align-items: center;
-  gap: var(--ds-space-3);
-  margin: var(--ds-space-3) 14px 0;
-  min-height: 64px;
-  padding: var(--ds-space-block-y) var(--ds-space-4);
+  align-items: flex-end;
+  gap: var(--ds-space-4);
+  margin: var(--ds-space-5) var(--mpad-x) 0;
+  min-height: 148px;
+  padding: var(--ds-space-4) var(--ds-space-4) calc(var(--ds-space-4) + var(--ds-space-1));
   border: none;
-  border-radius: var(--ds-radius-card-lg);
-  background: var(--color-surface);
-  box-shadow: var(--ds-shadow-card);
+  border-radius: calc(var(--ds-radius-card-lg) + 6px);
+  background-color: var(--color-surface);
+  background-image:
+    radial-gradient(120% 140% at 8% 0%,
+      color-mix(in srgb, var(--sapphire) 12%, transparent) 0%,
+      transparent 62%);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.06);
   color: var(--color-text);
   font-size: var(--mfs-body);
   text-align: left;
   cursor: pointer;
   touch-action: manipulation;
+  overflow: hidden;
 }
 @media (prefers-color-scheme: dark) {
   body.mobile-layer .mf-me-entry {
-    box-shadow: var(--ds-shadow-card-dark);
+    background-color: var(--color-surface);
+    background-image:
+      radial-gradient(120% 140% at 8% 0%,
+        color-mix(in srgb, var(--sapphire) 18%, transparent) 0%,
+        transparent 62%);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.36);
   }
 }
 body.mobile-layer .mf-me-entry:active {
   background: color-mix(in srgb, var(--color-text) 6%, var(--color-surface));
 }
+/* hero 的身份文字块：名 22/600、邮箱 13 muted、tagline 11（末行不再跟 chevron）。 */
+body.mobile-layer .mf-me-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1 1 auto;
+  padding-bottom: 2px;
+}
+body.mobile-layer .mf-me-name {
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--color-frame-text-bright);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+body.mobile-layer .mf-me-sub {
+  font-size: var(--mfs-min);
+  color: var(--color-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+body.mobile-layer .mf-me-tagline {
+  margin-top: 2px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: color-mix(in srgb, var(--color-text-muted) 78%, transparent);
+}
+/* hero 内设置入口（唯一设置入口；独立可点，不与整块点击冲突）。 */
+body.mobile-layer .mf-me-actions { flex: none; display: flex; align-items: center; }
+body.mobile-layer .mf-me-settings {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 var(--ds-space-3);
+  border-radius: var(--ds-radius-pill, 999px);
+  background: color-mix(in srgb, var(--color-text) 8%, transparent);
+  color: var(--color-text);
+  font-size: var(--mfs-min);
+  cursor: pointer;
+}
+body.mobile-layer .mf-me-settings:hover {
+  background: color-mix(in srgb, var(--color-text) 12%, transparent);
+}
+body.mobile-layer .mf-me-settings-ic { width: 16px; height: 16px; }
 /* 圆形头像框（登录态照片 / 未登录品牌标双态；几何 = 设置页头像框同族缩档）。 */
 body.mobile-layer .mf-me-avatar-frame {
   position: relative;

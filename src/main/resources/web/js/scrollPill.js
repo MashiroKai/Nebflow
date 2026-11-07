@@ -147,11 +147,51 @@ export function createScrollPill(opts) {
 
   function show() {
     if (visible) return;
+    // ── 单槽互斥（pill-dedupe 批 2026-11-07，作者令逐字「回到底部和新消息 这俩
+    // 会同时出现 这俩功能是一样的 应该去重」）：
+    // 同一宿主里**永远只有一枚提示胶囊可见**。优先级 =
+    //   ② 未读计数「↓ N 条新消息」（count>0，可点击回底并清零）
+    //   > ① 搜索回跳位（stack:'above' 的消费）
+    //   > ⓪ 无未读的「回到底部」
+    // 高优先级的出现 ⇒ 低优先级的就地收起（保留其内部计数，不清零）；低优先级的
+    // 想出现时若已有更高优先级在场 ⇒ 让位（不 show）。两枚永不并列，也不再有
+    // 「谁先出现谁说了算」的几何不确定。 */
+    const mine = prec();
+    for (const p of livePills) {
+      if (p === api || p.el.parentElement !== host || p.el.classList.contains('hidden')) continue;
+      if (p.prec() > mine) return;            // 更高优先级在场 ⇒ 本枚让位
+      p.hideKeepCount();                      // 更低优先级 ⇒ 收起
+    }
     visible = true;
     paint();
     park();
     el.classList.remove('hidden');
     reparkHost(host);   // 兄弟（堆叠位）跟着重排，两枚永不叠成一枚
+  }
+
+  /** 本枚当前的优先级档（见 show() 的互斥表）。 */
+  function prec() {
+    if (stack === 'above') return 1;
+    return count > 0 ? 2 : 0;
+  }
+
+  /** 收起但**不清零**（互斥让位用；hide() 是语义收起，会清计数）。 */
+  function hideKeepCount() {
+    if (!visible) return;
+    visible = false;
+    el.classList.add('hidden');
+    reparkHost(host);
+    resyncHost(host);
+  }
+
+  /** 同宿主兄弟重新自判（本枚让位/收起后，被压住的另一枚要能按自己的状态
+   *  重新出现 —— 否则「新消息」收起后「回到底部」会一直不回来）。
+   *  递归安全：兄弟 show() 撞到更高优先级就返回，不会乒乓。 */
+  function resyncHost(h) {
+    for (const p of livePills) {
+      if (p === api || p.el.parentElement !== h) continue;
+      if (p.el.classList.contains('hidden')) p.sync({});
+    }
   }
 
   function hide() {
@@ -160,6 +200,7 @@ export function createScrollPill(opts) {
     visible = false;
     el.classList.add('hidden');
     reparkHost(host);
+    resyncHost(host);
   }
 
   /**
@@ -203,6 +244,9 @@ export function createScrollPill(opts) {
     label() { if (visible) paint(); },
     scrollToBottom,
     count: () => count,
+    /** 互斥档（show() 的让位判据；QA 脚本用它断言「同宿主只有一枚可见」）。 */
+    prec,
+    hideKeepCount,
     destroy() { el.remove(); visible = false; count = 0; livePills.delete(api); },
   };
   livePills.add(api);
