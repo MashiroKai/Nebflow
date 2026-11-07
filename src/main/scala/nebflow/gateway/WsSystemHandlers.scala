@@ -598,10 +598,10 @@ private[gateway] object WsSystemHandlers:
           )
         case Some(neblinkService) =>
           // fleet 批（2026-11-01）收口：P2P → 中继的派发**唯一实现**在
-          // [[nebflow.neblink.RemoteUpdateDispatch]]（批量推送与单点点击同一腿）；
+          // [[nebflow.neblink.relay.RemoteUpdateDispatch]]（批量推送与单点点击同一腿）；
           // 本分支只把 `Either` 翻译成既有 `remoteUpdateResult` 帧（字段与改前逐字
           // 相同，含 `clientRequestId` 回显；`device` 用**对端自报名**，与改前同口径）。
-          nebflow.neblink.RemoteUpdateDispatch
+          nebflow.neblink.relay.RemoteUpdateDispatch
             .dispatchByNameResolved(neblinkService, targetDevice, beta, clientRequestId)
             .flatMap {
               case Right((deviceName, msg)) =>

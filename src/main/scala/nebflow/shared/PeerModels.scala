@@ -133,7 +133,7 @@ end PeerInfo
  *  `bio`（2026-11-02 件一「好友/群 Profile 双描述」）：**对方的自我介绍**——与
  *  `remark`（我给对方写的备注）**语义正交**，不可混用。真源在**上游**（neblink-server
  *  目前**尚无**该字段）⇒ 本仓这份是**本地缓存 + 回显**（`profile-descriptions.json`
- *  的 `friendBio`，见 `nebflow.neblink.ProfileDescriptions`），UI 必须显式标注
+ *  的 `friendBio`，见 `nebflow.neblink.social.ProfileDescriptions`），UI 必须显式标注
  *  「本地缓存·未同步」。加性纪律与 `remark` 逐字同形：形参置末 + 默认值 ⇒ 既有
  *  构造点零改动；Decoder 上游带了就吃，Encoder 恒出该键（`None` ⇒ `null`）。
  *

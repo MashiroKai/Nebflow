@@ -115,9 +115,16 @@ class HealthMonitorGuardPersistenceSpec extends CatsEffectSuite:
 
   test("B2 无 db 注入 = 现状行为（纯内存，零档面）"):
     val root = Files.createTempDirectory("hm-guard-nodb")
-    val m = ProviderHealthMonitor(null)
-    m.softAvoid("p", "m", 45_000L).unsafeRunSync()
-    m.markDown("p", "m", "r").unsafeRunSync()
-    assert(!Files.exists(root.resolve("db")), "未接线 ⇒ 不建 db 树")
-    assertEquals(m.getAvoidUntil.unsafeRunSync().keySet, Set("p/m"))
-    assert(m.getStates.unsafeRunSync().contains("p/m"))
+    // 隔离 dataRoot：guardDb = db.orElse(DbHost.peek(dataRoot))——本机真实数据根里
+    // 若有 guard 档（应用在跑/别的套件写过），peek 会把它当「已接线」，B2 的「零档面」
+    // 前提就被环境污染。B2 断的是「db=None 的纯内存路径」，必须自带干净根。
+    val savedRoot = PathUtil.dataRoot
+    PathUtil.setDataRoot(os.Path(root, os.pwd))
+    try
+      val m = ProviderHealthMonitor(null)
+      m.softAvoid("p", "m", 45_000L).unsafeRunSync()
+      m.markDown("p", "m", "r").unsafeRunSync()
+      assert(!Files.exists(root.resolve("db")), "未接线 ⇒ 不建 db 树")
+      assertEquals(m.getAvoidUntil.unsafeRunSync().keySet, Set("p/m"))
+      assert(m.getStates.unsafeRunSync().contains("p/m"))
+    finally PathUtil.setDataRoot(savedRoot)

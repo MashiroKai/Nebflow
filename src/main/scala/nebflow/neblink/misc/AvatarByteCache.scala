@@ -1,4 +1,4 @@
-package nebflow.neblink
+package nebflow.neblink.misc
 
 import nebflow.neblink.misc.AvatarProxy
 

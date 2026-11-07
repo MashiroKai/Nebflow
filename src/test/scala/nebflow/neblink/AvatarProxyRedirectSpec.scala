@@ -1,5 +1,7 @@
 package nebflow.neblink
 
+import nebflow.neblink.misc.AvatarByteCache
+
 import nebflow.neblink.misc.AvatarProxy
 
 import cats.effect.IO

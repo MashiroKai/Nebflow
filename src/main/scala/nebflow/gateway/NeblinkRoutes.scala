@@ -1,7 +1,7 @@
 /* 从 RestApiRoutes 迁出(行为保持重构,2026-09-24)。 */
 package nebflow.gateway
 
-import nebflow.neblink.AvatarByteCache
+import nebflow.neblink.misc.AvatarByteCache
 
 import nebflow.neblink.core.*
 import nebflow.neblink.identity.*
@@ -1311,9 +1311,9 @@ private[gateway] object NeblinkRoutes:
     import ctx.*
 
     // fleet 批（2026-11-01）收口：P2P → 中继的派发**唯一实现**在
-    // [[nebflow.neblink.RemoteUpdateDispatch]]（批量推送与单台点击共用同一腿）。
+    // [[nebflow.neblink.relay.RemoteUpdateDispatch]]（批量推送与单台点击共用同一腿）。
     // 本方法保留为薄壳：调用方（REST 路由此处）零改动，派发语义逐字不变。
-    nebflow.neblink.RemoteUpdateDispatch.dispatchByName(ns, targetDevice, beta, clientRequestId)
+    nebflow.neblink.relay.RemoteUpdateDispatch.dispatchByName(ns, targetDevice, beta, clientRequestId)
 
   end doRemoteUpdate
 

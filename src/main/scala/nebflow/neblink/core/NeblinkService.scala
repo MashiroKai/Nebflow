@@ -1,6 +1,6 @@
 package nebflow.neblink.core
 
-import nebflow.neblink.PresenceCandidateProbe
+import nebflow.neblink.relay.PresenceCandidateProbe
 
 import nebflow.neblink.identity.*
 import nebflow.neblink.relay.*

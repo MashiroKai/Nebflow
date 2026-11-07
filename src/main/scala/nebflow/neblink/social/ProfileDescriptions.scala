@@ -1,4 +1,4 @@
-package nebflow.neblink
+package nebflow.neblink.social
 
 import cats.effect.IO
 import io.circe.{Decoder, Encoder, Json}

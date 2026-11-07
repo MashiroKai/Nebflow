@@ -1,5 +1,9 @@
 package nebflow.neblink
 
+import nebflow.neblink.social.ProfileDescriptionStore
+
+import nebflow.neblink.social.ProfileDescriptions
+
 import nebflow.neblink.core.NeblinkServerConfig
 
 import nebflow.neblink.core.AgentMessagingConfig

@@ -1,4 +1,4 @@
-package nebflow.neblink
+package nebflow.neblink.relay
 
 import nebflow.neblink.core.NeblinkEndpoint
 

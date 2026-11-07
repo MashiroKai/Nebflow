@@ -1,6 +1,6 @@
 package nebflow.neblink.core
 
-import nebflow.neblink.ProfileDescriptions
+import nebflow.neblink.social.ProfileDescriptions
 
 import nebflow.neblink.identity.*
 import nebflow.neblink.relay.*

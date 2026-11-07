@@ -481,7 +481,7 @@ class SendMessageAskConfirmSpec extends CatsEffectSuite:
 
   test("⑥ 装配缝可达性：GatewayMain 经 NeblinkWiring.friendService 传的就是 SendConfirm.production") {
     val gateway = os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "gateway" / "GatewayMain.scala")
-    val wiring = os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "neblink" / "NeblinkWiring.scala")
+    val wiring = os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "neblink" / "core" / "NeblinkWiring.scala")
     val tool = os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "tools" / "FriendMessageTool.scala")
     // 严格DAG第⑥步第三批A裁定(2026-09-27,dwfq-5c7a31ea-1 R-C 合并镜像):挂靶收拢为
     // SendConfirmPort 注册器(FriendMessageTool 调用面),组合实现在 SharedResources 构造行

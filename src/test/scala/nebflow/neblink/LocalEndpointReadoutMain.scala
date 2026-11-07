@@ -1,5 +1,7 @@
 package nebflow.neblink
 
+import nebflow.neblink.relay.PresenceCandidateProbe
+
 import nebflow.neblink.core.EndpointPreference
 
 import nebflow.neblink.core.NeblinkServerConfig

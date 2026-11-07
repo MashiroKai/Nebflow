@@ -428,7 +428,7 @@ class GroupSendMessageSpec extends CatsEffectSuite:
       }
     assertEquals(
       hits.map(_._1).distinct,
-      List("nebflow/neblink/FriendService.scala"),
+      List("nebflow/neblink/social/FriendService.scala"),
       s"agent 标识写点必须只在 FriendService 单点，实际 = $hits"
     )
     assertEquals(hits.size, 3, s"单聊文本 + 单聊附件 + 群发 = 3（禁第四处），实际 = $hits")

@@ -523,7 +523,7 @@ class DeviceMailAckHonestySpec extends CatsEffectSuite:
         n
       val main = os.pwd / "src" / "main" / "scala" / "nebflow"
       val gateway = os.read(main / "gateway" / "GatewayMain.scala")
-      val tunnel = os.read(main / "neblink" / "NeblinkRelayTunnel.scala")
+      val tunnel = os.read(main / "neblink" / "relay" / "NeblinkRelayTunnel.scala")
       val gatewaySites = count(gateway, "NeblinkRelayTunnel.sendAckLive(")
       val directSendAck = count(gateway, ".sendAck(")
       val helperDefs = count(tunnel, "def sendAckLive(")

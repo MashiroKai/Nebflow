@@ -1,10 +1,10 @@
 package nebflow.neblink.social
 
-import nebflow.neblink.ProfileDescriptionStore
+import nebflow.neblink.social.ProfileDescriptionStore
 
-import nebflow.neblink.ProfileSync
+import nebflow.neblink.social.ProfileSync
 
-import nebflow.neblink.ProfileDescriptions
+import nebflow.neblink.social.ProfileDescriptions
 
 import nebflow.neblink.attachment.*
 import nebflow.neblink.core.*

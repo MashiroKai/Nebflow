@@ -1,5 +1,11 @@
 package nebflow.neblink
 
+import nebflow.neblink.relay.PresenceDialThreadViolation
+
+import nebflow.neblink.relay.PresenceDialPool
+
+import nebflow.neblink.relay.PresenceDialSchedule
+
 import nebflow.neblink.relay.DialAddressClass
 
 import nebflow.neblink.relay.EvictionPolicy
@@ -169,8 +175,8 @@ class NeblinkPresenceDialConcurrencySpec extends CatsEffectSuite:
   }
 
   test("P2 护栏：拨号体只有 dialBlocking 一个线程归属收口点，且不许直连 IO.blocking") {
-    val src = sourceOf("src/main/scala/nebflow/neblink/NeblinkPresenceService.scala")
-    val poolSrc = sourceOf("src/main/scala/nebflow/neblink/PresenceDialPool.scala")
+    val src = sourceOf("src/main/scala/nebflow/neblink/relay/NeblinkPresenceService.scala")
+    val poolSrc = sourceOf("src/main/scala/nebflow/neblink/relay/PresenceDialPool.scala")
     assert(src.contains("private def dialBlocking"), "拨号线程归属的单一收口点缺失")
     assert(src.contains("PresenceDialPool.run(where)(guarded())"), "生产拨号体必须提交 PresenceDialPool")
     assert(

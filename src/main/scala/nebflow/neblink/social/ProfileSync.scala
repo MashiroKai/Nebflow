@@ -1,4 +1,4 @@
-package nebflow.neblink
+package nebflow.neblink.social
 
 import nebflow.neblink.core.NeblinkService
 

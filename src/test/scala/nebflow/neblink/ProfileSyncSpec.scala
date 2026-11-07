@@ -1,5 +1,13 @@
 package nebflow.neblink
 
+import nebflow.neblink.social.ProfileSyncMetaStore
+
+import nebflow.neblink.social.ProfileDescriptionStore
+
+import nebflow.neblink.social.ProfileDescriptions
+
+import nebflow.neblink.social.ProfileSync
+
 import cats.effect.{IO, Ref}
 import io.circe.Json
 import io.circe.syntax.*

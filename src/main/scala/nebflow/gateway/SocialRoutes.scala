@@ -1,7 +1,7 @@
 /* 从 RestApiRoutes 迁出(行为保持重构,2026-09-24)。 */
 package nebflow.gateway
 
-import nebflow.neblink.ProfileSync
+import nebflow.neblink.social.ProfileSync
 
 import nebflow.neblink.attachment.*
 import nebflow.neblink.core.*

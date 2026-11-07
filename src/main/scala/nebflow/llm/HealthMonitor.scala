@@ -149,8 +149,12 @@ final class ProviderHealthMonitor(registry: ProviderRegistry, db: Option[DbHandl
     guardDb match
       case None => IO.unit
       case Some(h) =>
+        // IO.defer：getCandidates 可能在**构造期**同步抛（registry 的 configRef 为 null 的
+        // 测试桩/子类），defer 把它转成 IO 错误再降级为 Nil——guard 重水合是 best-effort，
+        // 绝不允许把「候选键源不可得」升级成调用方（markDown/softAvoid/filter）的失败。
         val candidates: IO[List[ModelCandidate]] =
-          if registry == null then IO.pure(Nil) else registry.getCandidates()
+          if registry == null then IO.pure(Nil)
+          else IO.defer(registry.getCandidates()).handleErrorWith(_ => IO.pure(Nil))
         (for
           now <- IO(System.currentTimeMillis())
           keys <- candidates.map(_.map(c => key(c.providerId, c.model)).distinct)
@@ -158,12 +162,22 @@ final class ProviderHealthMonitor(registry: ProviderRegistry, db: Option[DbHandl
           _ <- avoidUntilRef.update(m =>
             m ++ doc.avoidUntil.filter((_, until) => until > System.currentTimeMillis())
               .filterNot((k, _) => m.contains(k)))
+          existing <- statesRef.get
+          // 只有「本次新回填」的 Down 才初始化半开账本：已存在（含 Up）的键不动。
+          newlyDown = doc.down.filterNot((k, _) => existing.contains(k))
           _ <- statesRef.update(s =>
             doc.down.foldLeft(s) { (acc, kv) =>
               acc.get(kv._1) match
                 case Some(HealthState.Down(_, _)) | Some(HealthState.Up) => acc
                 case None => acc.updated(kv._1, HealthState.Down(
                   s"recovered from guard (persisted down since ${kv._2})", kv._2))
+            })
+          // 回填的 Down 必须等自己的退避窗才被真实试一次：没有 trials 账目时
+          // filterCandidatesDetailed 会把它当「窗已到」立刻放回链（观测面还会报可用），
+          // 等于把第 60s 的退避直接跳过——首用即补一条 trial(now, 0)。
+          _ <- halfOpenRef.update(m =>
+            newlyDown.foldLeft(m) { case (acc, (k, _)) =>
+              if acc.contains(k) then acc else acc.updated(k, ProviderHealthMonitor.HalfOpenTrial(now, 0))
             })
         yield ()).handleErrorWith { e =>
           logger.warn(s"provider-avoid guard hydration failed (degrade to in-memory): ${e.getMessage}")

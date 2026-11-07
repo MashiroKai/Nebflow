@@ -18,7 +18,7 @@ import munit.FunSuite
  *
  * 判据（本 spec 即机制）：扫描 `src/main/scala/nebflow/` 全树（**不含测试**）里两个
  * 候选文案字面量的**每一处出现文件**，必须 ∈ 允许集：
- *   - `nebflow/neblink/FriendRoster.scala`（好友面唯一实现点），或
+ *   - `nebflow/neblink/social/FriendRoster.scala`（好友面唯一实现点），或
  *   - `nebflow/core/tools/FriendMessageTool.scala`（**设备面字面量**——2026-09-14
  *     #145 批把退役的 `TransferFileTool` 设备解析原样迁入此处；设备名册与好友名册
  *     是**正交信任域**，⑦/⑩ 的收归范围只覆盖好友面。好友面解析本工具**零实现**，
@@ -39,7 +39,7 @@ class FriendRosterSinglePointSpec extends FunSuite:
   /** 允许清单：相对 `src/main/scala/` 的路径（`/` 分隔，平台无关）。 */
   private val allowed: Set[String] = Set(
     // 唯一实现点（⑩ 收归 + ⑦ 的 L0/备注渲染都在这里）
-    "nebflow/neblink/FriendRoster.scala",
+    "nebflow/neblink/social/FriendRoster.scala",
     // 设备面字面量（#145 2026-09-14：退役的 TransferFileTool 设备解析原样迁入；
     // 正交信任域，好友面零实现——委托关系由下方「委托仍在」测试钉住）
     "nebflow/core/tools/FriendMessageTool.scala"
@@ -118,7 +118,7 @@ class FriendRosterSinglePointSpec extends FunSuite:
   }
 
   test("唯一实现点仍在 FriendRoster（解析与候选文案都在，未搬空）") {
-    val src = os.read(scalaRoot / "nebflow" / "neblink" / "FriendRoster.scala")
+    val src = os.read(scalaRoot / "nebflow" / "neblink" / "social" / "FriendRoster.scala")
     assert(src.contains("def resolve("), "FriendRoster.resolve 不在——解析单点被搬走")
     assert(src.contains("def candidateLine("), "FriendRoster.candidateLine 不在——候选文案单点被搬走")
     assert(src.contains("def availableHint("), "FriendRoster.availableHint 不在")

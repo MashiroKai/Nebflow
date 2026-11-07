@@ -122,14 +122,14 @@ class DeviceFlowRetiredSpec extends FunSuite:
 
   test("两路径注册汇聚点：登录面词表存在性（正面断言，防误删活面）") {
     // 路径① 浏览器 PKCE 链仍在（不受本批影响）
-    assert(read("src/main/scala/nebflow/neblink/LogtoAuthCode.scala").contains("def authorizeUrl"))
+    assert(read("src/main/scala/nebflow/neblink/logto/LogtoAuthCode.scala").contains("def authorizeUrl"))
     assert(read("src/main/scala/nebflow/gateway/AuthRoutes.scala").contains("beginPkceLogin"))
     // 路径② 无头密码链在位
-    assert(read("src/main/scala/nebflow/neblink/LogtoPasswordFlow.scala").contains("def signIn"))
+    assert(read("src/main/scala/nebflow/neblink/logto/LogtoPasswordFlow.scala").contains("def signIn"))
     assert(read("src/main/scala/nebflow/gateway/NeblinkRoutes.scala").contains("\"neblink\" / \"auth\" / \"password\""))
     assert(read("src/main/scala/nebflow/cli/LoginCommand.scala").contains("/api/neblink/auth/password"))
     // 汇聚点：同一 register 面（两路径共用）
-    assert(read("src/main/scala/nebflow/neblink/LogtoTransport.scala").contains("/api/device/register"))
+    assert(read("src/main/scala/nebflow/neblink/logto/LogtoTransport.scala").contains("/api/device/register"))
   }
 
 end DeviceFlowRetiredSpec

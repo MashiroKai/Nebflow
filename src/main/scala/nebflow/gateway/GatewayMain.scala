@@ -1537,11 +1537,11 @@ object GatewayMain extends IOApp:
                                         // 「读失败折空 + WARN」口径：描述是**可丢弃的本地态**，
                                         // 最坏情况 = 用户重写一次，绝不允许掀翻 boot 装配链）。
                                         val profileDescriptions =
-                                          nebflow.neblink.ProfileDescriptionStore.load
+                                          nebflow.neblink.social.ProfileDescriptionStore.load
                                             .handleErrorWith { e =>
                                               logger.warn(
                                                 s"profile-descriptions load failed (falling back to empty): ${e.getMessage}"
-                                              ) *> IO.pure(nebflow.neblink.ProfileDescriptions.empty)
+                                              ) *> IO.pure(nebflow.neblink.social.ProfileDescriptions.empty)
                                             }
                                             .unsafeRunSync()
                                         val friendService = nebflow.neblink.core.NeblinkWiring.friendService(
@@ -1764,7 +1764,7 @@ object GatewayMain extends IOApp:
                                                           )
                                                       ),
                                                   pushRemote = (peer, beta, clientRequestId) =>
-                                                    nebflow.neblink.RemoteUpdateDispatch
+                                                    nebflow.neblink.relay.RemoteUpdateDispatch
                                                       .dispatchToPeer(
                                                         neblinkService,
                                                         nebflow.shared.PeerInfo(
@@ -1933,7 +1933,7 @@ object GatewayMain extends IOApp:
                                               // 体内自注册（`ProfileSync.attachDescriptions`），本行只
                                               // 接收发面。未接线（NebLink 未配置）⇒ initialize 内显式
                                               // WARN + 跳过（状态出口全报 local-only）。
-                                              nebflow.neblink.ProfileSync.initialize(
+                                              nebflow.neblink.social.ProfileSync.initialize(
                                                 Some(neblinkService),
                                                 (json: io.circe.Json) => wsHub.broadcast(json)
                                               )
