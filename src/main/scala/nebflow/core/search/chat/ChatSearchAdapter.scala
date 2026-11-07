@@ -67,7 +67,33 @@ final class ChatSearchAdapter(sessionsDir: os.Path) extends SearchIndexAdapter:
       val f = uiFile(sid)
       if os.exists(f) then Some(os.mtime(f)) else None
 
-  override def sessionMtimeOpt(sid: String): Option[Long] = sessionMtime(sid)
+  override def sessionMtimeOpt(sid: String): Option[Long] =
+    // 检索真源不止 `.ui.json`（检索全覆盖批 2026-11-07）：压缩前归档快照
+    // `sessions/<sid>/compaction/<ts>-before.json` 也进索引 ⇒ 对账水位取两者较新者，
+    // 否则「只新增了归档快照」的会话会被 upToDate 快路判成最新而漏更。
+    if !inScope(sid) then None
+    else Seq(sessionMtime(sid), archiveStamp(sid).map(_._1)).flatten.maxOption
+
+  /**
+   * 压缩前归档快照的指纹/水位（(mtime, size)）：回放窗口外的老消息唯一在盘来源。
+   * 目录不存在 ⇒ None（绝大多数会话没有压缩过，零成本）。
+   */
+  private def archiveStamp(sid: String): Option[(Long, Long)] =
+    archiveFile(sid).map(p => (os.mtime(p), os.size(p)))
+
+  /**
+   * 最新一份「压缩前」快照 = `sessions/<sid>/compaction/<ts>-before.json` 里 mtime 最大者。
+   *
+   * 语义（判据见 [[extractArchiveDocs]]）：每次压缩都留一份**当次压缩前**的 LLM
+   * 侧全量消息，故最新那份覆盖「会话起点 → 最近一次压缩」的连续区间 —— 取它就把
+   * 老段一次拿全，且不产生跨快照重复（旧的 before 是它自己的前缀）。
+   */
+  private def archiveFile(sid: String): Option[os.Path] =
+    val d = sessionsDir / sid / "compaction"
+    if !os.exists(d) then None
+    else
+      val files = os.list(d).filter(p => p.last.endsWith("-before.json"))
+      if files.isEmpty then None else Some(files.maxBy(p => os.mtime(p)))
 
   /** 月桶键（§4.2）：文件 mtime 落桶；当月 = "current"（开口增量桶）。 */
   override def monthKey(sid: String): String =
@@ -92,7 +118,13 @@ final class ChatSearchAdapter(sessionsDir: os.Path) extends SearchIndexAdapter:
     if !inScope(sid) then None
     else
       val f = uiFile(sid)
-      if os.exists(f) then Some(s"${os.mtime(f)}:${os.size(f)}") else None
+      if !os.exists(f) then None
+      else
+        // 归档快照也进指纹（检索全覆盖批）：归档新增/更新 ⇒ 指纹变 ⇒ 重建。
+        val arch = archiveStamp(sid) match
+          case Some((mt, sz)) => s"$mt:$sz"
+          case None           => "-"
+        Some(s"${os.mtime(f)}:${os.size(f)}:$arch")
 
   override def extractSession(sid: String, forceFull: Boolean): Option[List[SearchIndexService.IndexDoc]] =
     if !inScope(sid) then None
@@ -102,7 +134,7 @@ final class ChatSearchAdapter(sessionsDir: os.Path) extends SearchIndexAdapter:
       else
         val msgs = decode[List[UiMessage]](os.read(f)).getOrElse(Nil)
         if msgs.isEmpty then None
-        else Some(extractDocs(sid, msgs))
+        else Some(extractDocs(sid, msgs) ++ extractArchiveDocs(sid, msgs))
 
   // ── 抽取（与 chatSearch.js/popMediaIndex.js 同源口径）────────────────────
 
@@ -156,6 +188,72 @@ final class ChatSearchAdapter(sessionsDir: os.Path) extends SearchIndexAdapter:
     case u: UiMessage.User => u.timestamp
     case a: UiMessage.Ai   => a.timestamp
     case _                 => 0L
+
+  /**
+   * 压缩前归档段抽取（检索全覆盖批 2026-11-07，作者报障「搜索为什么不是搜全部的
+   * 内容 …… 我要能查看」）。
+   *
+   * == 为什么需要这一腿 ==
+   * 回放文件 `<sid>.ui.json` 只保留最新 `MaxStoredUiMessages` 条（裁剪点在
+   * [[nebflow.core.SessionStore]] 的 trimUiMessages），被裁掉的老消息**从盘上
+   * 回放面消失**；而压缩（pingpong/context-compact）把 LLM 侧老消息换成了摘要。
+   * 唯一还在盘上的老消息来源 = 每次压缩落的 `compaction/<ts>-before.json`
+   * （压缩前 LLM 侧全量快照）。不抽它，「压缩前 / 归档 / 旧分段」的内容永远搜不到。
+   *
+   * == 口径（与主腿的边界、去重、行号）==
+   *   - 只抽 **ts 严格早于回放窗口起点** 的消息（cutoff = 回放里最早带时间戳的行）：
+   *     回放窗口内的消息由主腿负责，归档段若整段无脑并入 ⇒ 同一条消息双命中；
+   *   - 角色映射与主腿同口径：user ⇒ role=user，assistant ⇒ role=ai；tool/system
+   *     不抽（2026-10-30 作者令①：关键词搜索只搜对话）；extra 追加
+   *     `origin:"archive"`（前端据此把定位失败报成「压缩前归档」而不是「没找到」）；
+   *   - 行号取**负值**：与回放行（ord ≥ 0）天然不撞键，前端 (sid,ord) 定位/键值
+   *     不受影响；排序仍按 ts，负行号只作身份位；
+   *   - 文本按 [[SearchIndexService.IndexTextCapChars]] 截断（老消息常含整段
+   *     上下文注入，全量入索引会把库撑爆；回放腿**不**截断，行为不变）；
+   *   - month_key 留空（''）：查询侧时间窗粗筛把 '' 当「未知/旧桶」保留，否则归档
+   *     行会因会话桶月份与查询窗口不符而被粗筛误杀（SearchIndexService 同注）。
+   */
+  private def extractArchiveDocs(sid: String, replay: List[UiMessage]): List[SearchIndexService.IndexDoc] =
+    val cutoff = replay.flatMap(m => Option(msgTs(m)).filter(_ > 0L)).minOption
+    cutoff match
+      case None => Nil   // 回放无时间锚：无从判定「窗口外」，不冒险重复入库
+      case Some(cut) =>
+        archiveFile(sid) match
+          case None => Nil
+          case Some(f) =>
+            val raw = io.circe.parser.parse(os.read(f)).toOption
+              .flatMap(_.asArray).getOrElse(Vector.empty)
+            val out = scala.collection.mutable.ListBuffer.empty[SearchIndexService.IndexDoc]
+            raw.foreach { j =>
+              val c      = j.hcursor
+              val ts     = c.downField("timestamp").as[Long].toOption.getOrElse(0L)
+              val role   = c.downField("role").as[String].getOrElse("")
+              val text   = c.downField("content").as[String].getOrElse("")
+              val mapped = role match
+                case "user"      => Some("user")
+                case "assistant" => Some("ai")
+                case _           => None   // tool / system：不入对话检索
+              mapped match
+                case Some(r) if ts > 0L && ts < cut && text.trim.nonEmpty =>
+                  out += SearchIndexService.IndexDoc(
+                    sid      = sid,
+                    ord      = -(out.size + 1),
+                    kind     = "message",
+                    ts       = ts,
+                    text     = text.take(SearchIndexService.IndexTextCapChars),
+                    extra    = archiveExtra(r),
+                    monthKey = Some("")   // 旧桶行：查询侧粗筛恒保留
+                  )
+                case _ => ()
+            }
+            out.toList
+
+  /** 归档段角色投影（含 origin 标记——前端据此区分「归档命中」与回放命中）。 */
+  private def archiveExtra(role: String): String =
+    io.circe.Json.obj(
+      "role"   -> io.circe.Json.fromString(role),
+      "origin" -> io.circe.Json.fromString("archive")
+    ).noSpaces
 
   /** message 片的角色投影：前端 messageKind 同款词汇（user|agent|ai——
    *  浮窗 (sid,ord) 直定位的 typeMatches 快路靠它对齐；injected user ⇒

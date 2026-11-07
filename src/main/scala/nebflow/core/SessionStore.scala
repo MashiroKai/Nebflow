@@ -103,12 +103,27 @@ object SessionStore:
    * the cold-read decode cost on session switch — without affecting the LLM
    * (whose full history lives in `<id>.json`).
    *
+   * 🔴 检索全覆盖批 2026-11-07（作者报障「搜索为什么不是搜全部的内容」）：这个
+   * 上限是「搜不全」的**第二个**机制——检索面（FTS 索引与旧全扫 history API）
+   * 的唯一数据源就是 `.ui.json`，被裁掉的最早那批消息从盘上回放面消失，于是
+   * 搜索与跳转都查不到（实测本机 30 个主会话已顶到 800）。默认 800 → 1600，
+   * 并且开 sys-prop 逃生门 `-Dnebflow.session.maxStoredUiMessages=N`
+   * （禁改代码即可调档；下限 200 防止误配把回放面削到不可用）。
+   * 说明：本批之前已经裁掉的老消息不可恢复；压缩前的 LLM 侧老段由
+   * [[nebflow.core.search.chat.ChatSearchAdapter]] 从 `compaction/<ts>-before.json`
+   * 补检索（压缩前归档段）。
+   *
    * Picked so the median session (~90 messages) is never trimmed, while the
    * largest sessions (~1600 messages) shrink ~2x, cutting their ~100ms cold
    * decode roughly in half. Users who scroll past the retained window see the
    * existing "history end" indicator.
    */
-  private val MaxStoredUiMessages: Int = 800
+  private val MaxStoredUiMessages: Int =
+    sys.props
+      .get("nebflow.session.maxStoredUiMessages")
+      .flatMap(v => scala.util.Try(v.trim.toInt).toOption)
+      .map(n => math.max(200, n))
+      .getOrElse(1600)
 
 end SessionStore
 

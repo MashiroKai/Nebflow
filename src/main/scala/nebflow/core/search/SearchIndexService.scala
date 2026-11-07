@@ -58,7 +58,12 @@ object SearchIndexService:
     kind: String,
     ts: Long,
     text: String,
-    extra: String = ""
+    extra: String = "",
+    /** 月桶覆盖（检索全覆盖批 2026-11-07）：None = 用会话桶（历史行为）；Some(v) =
+     *  逐文档写死（`Some("")` = 空桶）。压缩前归档段（来源不在回放窗口内、时间跨
+     *  多月）必须写空桶，否则会被查询侧的时间窗月桶粗筛按会话当前桶误杀
+     *  （见 runQuery 的 monthPreFilter 注：'' 被视作「未知/旧桶行，保留」）。 */
+    monthKey: Option[String] = None
   )
 
   /** 一条命中（查询返回面）。 */
@@ -307,7 +312,8 @@ object SearchIndexService:
             ins.setInt(2, d.ord)
             ins.setString(3, d.kind)
             ins.setLong(4, d.ts)
-            ins.setString(5, mk)
+            // 月桶：逐文档覆盖优先（归档段恒空桶），否则用会话桶（历史行为不变）。
+            ins.setString(5, d.monthKey.getOrElse(mk))
             ins.setString(6, d.text)
             ins.setString(7, "")          // idx 列废弃——FTS 影子表承载 bigram
             ins.setString(8, d.extra)

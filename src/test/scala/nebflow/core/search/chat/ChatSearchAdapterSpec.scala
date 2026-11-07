@@ -161,4 +161,58 @@ class ChatSearchAdapterSpec extends CatsEffectSuite:
     assertEquals(adapter.extractSession("s9"), None)
   }
 
+  // ── 压缩前归档段（检索全覆盖批 2026-11-07）────────────────────────────────
+  // 作者报障「搜索为什么不是搜全部的内容 …… 我要能查看」：回放文件只留最新
+  // MaxStoredUiMessages 条，压缩又把 LLM 侧老消息换成摘要，老段唯一在盘来源 =
+  // `sessions/<sid>/compaction/*-before.json`。本组钉住三件事：抽得到、不重复、
+  // 指纹随归档变化（否则归档新增后永不重建 = 静默漏索引）。
+
+  /** 写一份压缩前快照（LLM 侧 Message 形状：{timestamp, role, content}）。 */
+  private def writeArchive(sid: String, stamp: String, rows: List[(Long, String, String)]): os.Path =
+    val d = dir / sid / "compaction"
+    os.makeDir.all(d)
+    val f = d / s"$stamp-before.json"
+    val json = rows.map { case (ts, role, content) =>
+      io.circe.Json.obj(
+        "timestamp" -> io.circe.Json.fromLong(ts),
+        "role"      -> io.circe.Json.fromString(role),
+        "content"   -> io.circe.Json.fromString(content)
+      )
+    }
+    os.write(f, io.circe.Json.arr(json*).noSpaces)
+    f
+
+  test("压缩前归档段：窗口外的 user/assistant 入索引（origin=archive、负行号），tool 不抽") {
+    writeUi("s10", List(
+      UiMessage.User(text = "recent question", timestamp = 9_000L),
+      UiMessage.Ai(text = "recent answer", timestamp = 9_500L)
+    ))
+    writeArchive("s10", "20260101-000000", List(
+      (1_000L, "user", "ancient question about 归档段"),
+      (2_000L, "assistant", "ancient answer about 归档段"),
+      (3_000L, "tool", "tool output should NOT be indexed"),
+      (9_800L, "assistant", "in-window duplicate must be skipped")
+    ))
+    val docs = adapter.extractSession("s10").getOrElse(Nil)
+    val arc  = docs.filter(d => d.extra.contains("\"origin\":\"archive\""))
+    assertEquals(arc.length, 2, clue(arc.map(d => (d.ord, d.ts, d.text))))
+    assert(arc.forall(_.ord < 0), "归档段行号取负值（与回放 ord ≥ 0 不撞键）")
+    assert(arc.forall(_.monthKey.contains("")), "归档段写空月桶（防时间窗粗筛误杀）")
+    assert(arc.forall(_.ts < 9_000L), "只抽回放窗口起点之前的消息（不重复入库）")
+    assert(arc.exists(d => d.text.contains("archived") || d.text.contains("ancient")), clue(arc.map(_.text)))
+    // 回放腿不受影响
+    assertEquals(docs.count(d => d.kind == "message" && !d.extra.contains("origin")), 2)
+  }
+
+  test("压缩前归档段：指纹/水位随归档快照变化（新增快照 ⇒ 必重建）") {
+    writeUi("s11", List(UiMessage.User(text = "recent", timestamp = 9_000L)))
+    val fpBefore = adapter.sessionFingerprint("s11")
+    val mtBefore = adapter.sessionMtimeOpt("s11")
+    writeArchive("s11", "20260101-000000", List((1_000L, "user", "old")))
+    val fpAfter = adapter.sessionFingerprint("s11")
+    assert(fpBefore.isDefined && fpAfter.isDefined)
+    assert(fpBefore != fpAfter, s"归档快照进指纹（$fpBefore → $fpAfter）")
+    assert(adapter.sessionMtimeOpt("s11").getOrElse(0L) >= mtBefore.getOrElse(0L))
+  }
+
 end ChatSearchAdapterSpec
