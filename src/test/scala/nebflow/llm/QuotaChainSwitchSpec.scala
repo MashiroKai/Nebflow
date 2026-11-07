@@ -123,10 +123,12 @@ class QuotaChainSwitchSpec extends CatsEffectSuite:
     avoids.get(k).map(_ - System.currentTimeMillis()).getOrElse(0L)
 
   // ============================================================
-  // T1：配额类 429(1308) ⇒ 不睡 60s 退避，立即换链
+  // T1（重写，fallback 废除批 2026-11-06 20:36）：配额类 429(1308) ⇒ 单候选软回避
+  // + 静默等待（有界终局）；同 provider 不重试、后备不暗中承接。原「立即换链到 qb」
+  // 的多根面随 fallback 退役（原断言逐字见 git 历史）。
   // ============================================================
 
-  test("T1: 429 + code 1308（配额类）⇒ 立即换链，不阻塞在 overload 退避（同 provider 重试）") {
+  test("T1(重写): 429 + code 1308（配额类）⇒ 单候选软回避窗（≫瞬时窗）+ 静默等待终局；同 provider 不重试，后备零命中") {
     val hitsQuota = new AtomicInteger(0)
     val hitsOk = new AtomicInteger(0)
     var s1: HttpServer = null
@@ -150,10 +152,18 @@ class QuotaChainSwitchSpec extends CatsEffectSuite:
             messages = List(Message(MessageRole.User, Left("hi"))),
             sessionId = "provchain-quota-t1",
             agentId = "provchain-quota-t1-agent",
-            agentModel = Some(AgentModelConfig(preferred = Some("qa/m1"), fallbacks = List("qb/m1")))
+            agentModel = Some(AgentModelConfig(preferred = Some("qa/m1"), fallbacks = Nil)) // 链深恒 1
           )
           t0 <- IO.monotonic
+          // fallback 废除批申报：单候选配额死 ⇒ 静默等待恢复面——给 8s 有界上界取终局。
           res <- handle.sendStream(req).compile.toList.attempt
+            .timeoutTo(
+              8.seconds,
+              // 哨兵以 Left 捕获（raiseError 会让 IO 失败、下方断言面走不到）
+              IO.pure(
+                Left(new RuntimeException("all-down gate exceeded test bound")): Either[Throwable, List[StreamChunk]]
+              )
+            )
           t1 <- IO.monotonic
           states <- monitor.getStates
           avoids <- monitor.getAvoidUntil
@@ -166,18 +176,15 @@ class QuotaChainSwitchSpec extends CatsEffectSuite:
     program.map { case (elapsedMs, res, states, avoids, (upQa, downQa)) =>
       res match
         case Right(chunks) =>
-          assertEquals(textOf(chunks), "BB", "必须由 qb 交付答案（换链成功）")
-        case Left(e) =>
-          fail(
-            s"配额类 429(1308) 必须立即换链成功；实际失败 = ${e.getClass.getName}: ${e.getMessage}"
-          )
-      // 改前读数：elapsed >= 60_000（睡满 OverloadBackoffMinMs 才换链）
+          fail(s"唯一候选配额死 ⇒ 不得有根交付（后备已随 fallback 退役），实际成功 = ${textOf(chunks)}")
+        case Left(_) => () // 终局形态 = 静默等待（全灭闸/测试上界）——下方软回避面钉死
+      // 防阻塞面原样钉死：不睡 60s overload 退避（配额类 ⇒ 软回避窗立即生效）
       assert(
-        elapsedMs < 3_000L,
-        s"配额类必须在首次失败后立即换链（改前读数 = 睡 60s 退避后重试同一 provider）；实际 elapsed=${elapsedMs}ms"
+        elapsedMs < 9_000L,
+        s"配额类不得阻塞在 60s 同 provider 退避（软回避立即生效 + 有界等待）；实际 elapsed=${elapsedMs}ms"
       )
-      assert(hitsQuota.get() >= 1, s"配额死的 qa 必须被尝试过（实际 ${hitsQuota.get()} 次）")
-      assert(hitsOk.get() >= 1, s"qb 必须承接本次请求（实际 ${hitsOk.get()} 次）")
+      assertEquals(hitsQuota.get(), 1, s"配额死的 qa 恰好被尝试 1 次（配额类不同 provider 重试，实际 ${hitsQuota.get()} 次）")
+      assertEquals(hitsOk.get(), 0, s"未引用的 qb 必须零命中（fallback 废除：不暗中回补，实际 ${hitsOk.get()} 次）")
       assert(
         !states.contains("qa/m1"),
         s"配额类不进健康状态（不 markDown ⇒ 不进探测集）；实际 ${states.get("qa/m1")}"
@@ -195,10 +202,11 @@ class QuotaChainSwitchSpec extends CatsEffectSuite:
   }
 
   // ============================================================
-  // T2：链上全部配额死 ⇒ 不得阻塞全灭闸，必须换链到储备层
+  // T2（重写，fallback 废除批 2026-11-06 20:36）：403 驱逐面原样钉死 + 单候选链
+  // 有界静默等待；未引用的 qb/qc 不再承接（原「换链到储备层第三根」面退役）。
   // ============================================================
 
-  test("T2: 403 + 429-1308 全配额死（预设链深 2）⇒ 不阻塞全灭闸(120s)，换链到储备层第三根") {
+  test("T2(重写): 403 配额形态 ⇒ qa 软回避（不 markDown）+ 单候选链有界静默等待；qb/qc 零命中（fallback 废除）") {
     val hitsQuota403 = new AtomicInteger(0)
     val hitsQuota429 = new AtomicInteger(0)
     val hitsOk = new AtomicInteger(0)
@@ -210,7 +218,8 @@ class QuotaChainSwitchSpec extends CatsEffectSuite:
       ("qb", PortQuota429b, List("m1")),
       ("qc", PortOk2, List("m1"))
     )
-    val agentChain = AgentModelConfig(preferred = Some("qa/m1"), fallbacks = List("qb/m1"))
+    // 链深恒 1：qb/qc 不再被链引用（fallbacks 数组退役为死数据）
+    val agentChain = AgentModelConfig(preferred = Some("qa/m1"), fallbacks = Nil)
     val program =
       for
         a <- startMock(PortQuota403, "quota403", "unused", hitsQuota403)
@@ -231,7 +240,16 @@ class QuotaChainSwitchSpec extends CatsEffectSuite:
             agentModel = Some(agentChain)
           )
           t0 <- IO.monotonic
+          // fallback 废除批申报：单候选 403 驱逐后链空 ⇒ 静默等待（全灭闸）——给 8s
+          // 有界上界取终局（原 T2 阻塞的 120s 全灭闸预算不再由测试承担）。
           res <- handle.sendStream(req).compile.toList.attempt
+            .timeoutTo(
+              8.seconds,
+              // 哨兵以 Left 捕获（raiseError 会让 IO 失败、下方断言面走不到）
+              IO.pure(
+                Left(new RuntimeException("all-down gate exceeded test bound")): Either[Throwable, List[StreamChunk]]
+              )
+            )
           t1 <- IO.monotonic
           chain <- registry.getCandidatesForAgent(Some(agentChain))
           states <- monitor.getStates
@@ -248,34 +266,31 @@ class QuotaChainSwitchSpec extends CatsEffectSuite:
     program.map { case (elapsedMs, res, chain, states, avoids) =>
       res match
         case Right(chunks) =>
-          assertEquals(textOf(chunks), "CC", "必须由储备层 qc 交付答案（换链成功）")
-        case Left(e) =>
-          fail(
-            s"全配额死时必须换链到储备层；实际失败 = ${e.getClass.getName}: ${e.getMessage}" +
-              "（改前读数 = AllProvidersDownTimeout: all providers down: none recovered within 120000ms）"
-          )
-      // 改前读数：elapsed >= 120_000（全灭闸等满预算）
+          fail(s"唯一候选配额死 ⇒ 不得有根交付（储备层已退役），实际成功 = ${textOf(chunks)}")
+        case Left(_) => () // 终局形态 = 静默等待（全灭闸/测试上界）——下方驱逐面钉死
+      // 防阻塞面原样钉死：403-配额类立即软回避（不重试同一根），有界等待不吞测试
       assert(
-        elapsedMs < 3_000L,
-        s"配额类必须立即换链（改前读数 = 全灭闸 waitForAnyUp 等满 120s 预算）；实际 elapsed=${elapsedMs}ms"
+        elapsedMs < 9_000L && hitsQuota403.get() == 1,
+        s"配额类 403 必须立即软回避（恰 1 次命中）且不长时间占测试；实际 elapsed=${elapsedMs}ms hits=${hitsQuota403.get()}"
       )
-      assert(hitsQuota403.get() >= 1, "配额死的 qa 必须被尝试过")
-      assert(hitsQuota429.get() >= 1, "配额死的 qb 必须被尝试过")
-      assert(hitsOk.get() >= 1, s"储备层 qc 必须承接本次请求（实际 ${hitsOk.get()} 次）")
-      // 腿 a 判据：链深 ≥3（含新纳入的储备层）⇒ 单点在结构上不可达
+      // 腿 a 判据反转（fallback 废除）：链深恒 1 = preferred 单根（原「链深 ≥3 且含
+      // 储备层」的多根面退役）
+      assertEquals(chain, List("qa/m1"), s"候选链必须恰 = preferred 单根，实际链 = $chain")
+      // 配额类面原样钉死（mock quota403 = 403 载配额体 ⇒ 引擎判配额类）：不 markDown
+      //（不进探测集），软回避窗 ≫ 瞬时窗。
       assert(
-        chain.size >= 3 && chain.contains("qc/m1"),
-        s"候选链必须 ≥3 且含储备层 qc/m1（改前读数 = 链恰 2 条，储备层从未被咨询）；实际链 = $chain"
+        !states.contains("qa/m1"),
+        s"配额类 403 不进健康状态（不 markDown ⇒ 不进探测集）；实际 ${states.get("qa/m1")}"
       )
-      List("qa/m1", "qb/m1").foreach { k =>
-        assert(!states.contains(k), s"配额类不进健康状态（不 markDown）；实际 $k = ${states.get(k)}")
-        assert(
-          remainingAvoidMs(avoids, k) > Defaults.TimeoutAvoidWindowMs * 3,
-          s"$k 的配额窗必须 ≫ 瞬时窗（${Defaults.TimeoutAvoidWindowMs}ms）；实际 ${remainingAvoidMs(avoids, k)}ms"
-        )
-      }
-      assert(!avoids.contains("qc/m1"), "健康的储备层不得被软回避")
-      assert(!states.contains("qc/m1"), "成功的储备层不得进健康状态")
+      assert(
+        remainingAvoidMs(avoids, "qa/m1") > Defaults.TimeoutAvoidWindowMs * 3,
+        s"qa/m1 的配额窗必须 ≫ 瞬时窗（${Defaults.TimeoutAvoidWindowMs}ms）；实际 ${remainingAvoidMs(avoids, "qa/m1")}ms"
+      )
+      // fallback 废除：未引用的 qb/qc 全程零参与
+      assertEquals(hitsQuota429.get(), 0, "qb 未被链引用 ⇒ 零命中（fallback 废除）")
+      assertEquals(hitsOk.get(), 0, "qc 未被链引用 ⇒ 零命中（fallback 废除）")
+      assert(!avoids.contains("qb/m1") && !avoids.contains("qc/m1"), "未引用 provider 不得被软回避")
+      assert(!states.contains("qb/m1") && !states.contains("qc/m1"), "未引用 provider 不得进健康状态")
     }
   }
 end QuotaChainSwitchSpec

@@ -1623,6 +1623,18 @@ object Defaults:
     sys.props.getOrElse("nebflow.delegate.revival.enabled", "true").toBoolean
 
   /**
+   * 重启/崩溃恢复**手动模式**（重启手动恢复批，作者令 2026-11-06 20:36 逐字「由于
+   * 重启/软件崩溃导致的错误，不用向上通知，不自动恢复，保存状态后，由用户手动恢复，
+   * 粒度可以是逐个点击，也可以是子agent面板一键全部恢复」）：true（缺省）= boot
+   * sweep 不自动复活、不收殓判死、零向上通知——在飞孤儿一律标
+   * `pending-recovery`（失效/待恢复态，子 agent 面板可见），由用户经
+   * `ManualRevival`（逐个 / 一键全部）手动复活。false = 既有自动复活腿逐字节不变
+   * （测试/回退开关）。system prop `nebflow.startup.recovery.manual`（每次调用现读）。
+   */
+  def RestartRecoveryManual: Boolean =
+    sys.props.getOrElse("nebflow.startup.recovery.manual", "true").toBoolean
+
+  /**
    * 单 delegate 复活次数上限（判据 §2.2 #6）：达限后不再复活、落收殓链。
    * system prop `nebflow.delegate.revival.maxPerTask` 可调。
    */

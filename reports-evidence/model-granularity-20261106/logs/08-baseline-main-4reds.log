@@ -1,0 +1,303 @@
+[sbt-gate] gate acquired after 0s
+[sbt-gate] heap cap not injected: SBT_OPTS already carries -Xmx (explicit wins)
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project stand-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/project
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/)
+[warn] javaOptions will be ignored, fork is set to false
+10:39:43.355 [36mINFO [0m nebflow.agent.lifecycle - [32mMailBoundaryProbe-mail-bou[0m [35mMailBoundaryProbe/mail-bou[0m event=spawn detail=parent=- msgs=0
+10:39:43.375 [36mINFO [0m nebflow.agent.lifecycle - [32mMailBoundaryProbe-mail-bou[0m [35mMailBoundaryProbe/mail-bou[0m event=start detail=msgs=0
+10:39:43.738 [36mINFO [0m nebflow.handlers - [32mMailBoundaryProbe[0m [35mMailBoundaryProbe[0m Tool Bash START: while [ ! -f '/Users/kaiyu/Claude code/Stand/target/test-mail-boundary-injection/w1/release-gate' ];
+10:39:43.979 [36mINFO [0m nebflow.agent.lifecycle - [32mMailBoundaryProbe-mail-bou[0m [35mMailBoundaryProbe/mail-bou[0m event=user-input-queued detail=textLen=29 pending=1 source=mail
+10:39:43.979 [36mINFO [0m nebflow.agent.lifecycle - [32mMailBoundaryProbe-mail-bou[0m [35mMailBoundaryProbe/mail-bou[0m event=user-input-queued detail=textLen=15 pending=2
+10:39:44.612 [36mINFO [0m nebflow.handlers - [32mMailBoundaryProbe[0m [35mMailBoundaryProbe[0m Tool Bash
+  (while [ ! -f '/Users/kaiyu/Claude code/Stand/target/test-mail-boundary-injection/w1/release-gate' ]; do sleep 0.05; d...) OK (893ms)
+10:39:44.615 [36mINFO [0m nebflow.tools.logger - Tools log retention: pruned files older than 2026-11-04
+10:39:44.626 [36mINFO [0m nebflow.agent.lifecycle - [32mMailBoundaryProbe-mail-bou[0m [35mMailBoundaryProbe/mail-bou[0m event=mail-injected-at-tools-complete detail=items=1 blocks=0 agesMs=648ms textLen=29 remainingUserInputs=1
+10:39:44.647 [36mINFO [0m nebflow.agent.lifecycle - [32mMailBoundaryProbe-mail-bou[0m [35mMailBoundaryProbe/mail-bou[0m event=turn-complete detail=msgs=4 textLen=19 textStreamed=true thinking=0 model=-
+10:39:44.654 [36mINFO [0m nebflow.agent.lifecycle - [32mMailBoundaryProbe-mail-bou[0m [35mMailBoundaryProbe/mail-bou[0m event=start detail=msgs=5
+10:39:44.666 [36mINFO [0m nebflow.agent.lifecycle - [32mMailBoundaryProbe-mail-bou[0m [35mMailBoundaryProbe/mail-bou[0m event=llm-fail detail=err=unexpected stream call #2
+10:39:44.672 [36mINFO [0m nebflow.agent.lifecycle - [32mMailBoundaryProbe-mail-bou[0m [35mMailBoundaryProbe/mail-bou[0m event=error-freeze detail=reason=llm-transient err=unexpected stream call #2 resumeIn=5249ms
+10:39:44.677 [36mINFO [0m nebflow.agent.lifecycle - [32mMailBoundaryProbe-mail-bou[0m [35mMailBoundaryProbe/mail-bou[0m event=freeze-state detail=running->frozen kind=auto-recovering needsHuman=false autoRecoverable=true reason=llm-transient by=error-backoff resumeAt=in5245ms
+10:39:45.044 [36mINFO [0m nebflow.agent.lifecycle - [32mMailBoundaryProbe-mail-bou[0m [35mMailBoundaryProbe/mail-bou[0m event=spawn detail=parent=- msgs=0
+10:39:45.044 [36mINFO [0m nebflow.agent.lifecycle - [32mMailBoundaryProbe-mail-bou[0m [35mMailBoundaryProbe/mail-bou[0m event=start detail=msgs=0
+10:39:45.055 [36mINFO [0m nebflow.handlers - [32mMailBoundaryProbe[0m [35mMailBoundaryProbe[0m Tool Bash START: while [ ! -f '/Users/kaiyu/Claude code/Stand/target/test-mail-boundary-injection/w2/release-gate' ];
+10:39:45.373 [36mINFO [0m nebflow.agent.lifecycle - [32mMailBoundaryProbe-mail-bou[0m [35mMailBoundaryProbe/mail-bou[0m event=user-input-queued detail=textLen=33 pending=1 source=mail
+10:39:46.148 [36mINFO [0m nebflow.handlers - [32mMailBoundaryProbe[0m [35mMailBoundaryProbe[0m Tool Bash
+  (while [ ! -f '/Users/kaiyu/Claude code/Stand/target/test-mail-boundary-injection/w2/release-gate' ]; do sleep 0.05; d...) OK (1093ms)
+10:39:46.150 [36mINFO [0m nebflow.agent.lifecycle - [32mMailBoundaryProbe-mail-bou[0m [35mMailBoundaryProbe/mail-bou[0m event=mail-injected-at-tools-complete detail=items=1 blocks=0 agesMs=778ms textLen=33 remainingUserInputs=0
+10:39:46.161 [36mINFO [0m nebflow.agent.lifecycle - [32mMailBoundaryProbe-mail-bou[0m [35mMailBoundaryProbe/mail-bou[0m event=turn-complete detail=msgs=4 textLen=19 textStreamed=true thinking=0 model=-
+10:39:46.404 [36mINFO [0m nebflow.agent.lifecycle - [32mIdleProbe-mail-bou[0m [35mIdleProbe/mail-bou[0m event=spawn detail=parent=- msgs=0
+10:39:46.405 [36mINFO [0m nebflow.agent.lifecycle - [32mIdleProbe-mail-bou[0m [35mIdleProbe/mail-bou[0m event=start detail=msgs=0
+10:39:46.412 [36mINFO [0m nebflow.agent.lifecycle - [32mIdleProbe-mail-bou[0m [35mIdleProbe/mail-bou[0m event=turn-complete detail=msgs=1 textLen=11 textStreamed=true thinking=0 model=-
+[32mnebflow.agent.MailBoundaryInjectionSpec:[0m
+[32m  + [0m[32m判据单点：mail 来源件 = 非真人 + source=mail；真人/其它来源一律不算[0m [90m0.005s[0m
+[32m  + [0m[32m摘取：mail 件全部摘出且到达序保持；真人件与其它命令原样留队（去重不重复）[0m [90m0.003s[0m
+[32m  + [0m[32mcompaction 挂起 ⇒ 零消费（持久化不丢的守卫面：注入进将被摘要替换的历史 = 丢失）[0m [90m0.0s[0m
+[32m  + [0m[32m合并窗口：单件 = idle 等价形（正文原样；带块件不重复正文）；多件 = 批头 + 逐件分节保序[0m [90m0.004s[0m
+[32m  + [0m[32m完成债原料：摘出件携带 replyTo 供 owedCompletion 并入（结算不搁浅的判据面）[0m [90m0.064s[0m
+[32m  + [0m[32mW1: Processing 中到达的 mail 件在工具边界并入续轮请求（而非干等 turn 末）[0m [90m2.176s[0m
+[32m  + [0m[32mW2: 边界注入的 mail 件 replyTo 在 turn 末收付 Completed（结算不搁浅）[0m [90m1.331s[0m
+[32m  + [0m[32mW3: idle 会话的 mail 件走既有即时腿（新 turn 立即开——降级语义逐字不变）[0m [90m0.246s[0m
+10:39:46.504 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-console-fastpath-spec3624827377082249663/device.json — minted deviceId=70c39eb1-39d5-549e-931f-7e309af90d4e (scope=home|9b0d00a3-06ab-540f-91da-0481a96f5b06, machine-code derived) and persisted
+10:39:47.014 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-console-fastpath-spec16856469660023717035/device.json — minted deviceId=a0fe616f-7374-5b9a-b3ed-525a2c6f415e (scope=home|ce4bf2ae-16d7-59e0-a3b3-2c8f30b7a62e, machine-code derived) and persisted
+10:39:47.017 [36mINFO [0m nebflow.rest-api - nearpath probe miss: enrolled=false bound=no-such-… (no roster match; self=a0fe616f… peers=0)
+10:39:47.039 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-console-fastpath-spec16127976350569908645/device.json — minted deviceId=ed8e26a0-7bb5-54ee-b953-959cace148b2 (scope=home|8f68153b-fe31-5f3e-b0a0-1ba193301eef, machine-code derived) and persisted
+[32mnebflow.gateway.ConsoleFastpathSpec:[0m
+[32m  + [0m[32m① nearpath：bound 命中本机身份 ⇒ enrolled=true + lanAddresses 数组 + port[0m [90m0.529s[0m
+[32m  + [0m[32m① nearpath：bound 未命中 ⇒ enrolled=false 且 lanAddresses 恒空（不走快速通道，服务端强制）[0m [90m0.028s[0m
+[32m  + [0m[32m① nearpath：匿名 ⇒ 401/403（近路识别面不开引导腿）[0m [90m0.024s[0m
+[32m  + [0m[32m② console-assets：白名单 css 入账，字节与 classpath 源逐字节一致，contentType 正确[0m [90m0.144s[0m
+[32m  + [0m[32m② console-assets：traversal / 超前缀 / 超体积一律 missing，无存在性预言面[0m [90m0.005s[0m
+[32m  + [0m[32m② console-assets：请求数护栏 >64 截断[0m [90m0.006s[0m
+[32m  + [0m[32m② console-assets：vendor 脚本与根 favicon 也在白名单内[0m [90m0.009s[0m
+[91m==> X [0m[91mnebflow.gateway.ConsoleFastpathSpec[0m.[91m③ packedIndexHtml：stylesheet link 全部内联、media 保留、url() 重写、module/favicon 逐字保留[0m  [90m0.053s[0m munit.FailException: src/test/scala/nebflow/gateway/ConsoleFastpathSpec.scala:229 relative css url() must be rewritten absolute against the asset dir
+228:    assert(packed.contains("url(/vendor/fonts/KaTeX_AMS-Regular.woff2)"),
+[7m229:      "relative css url() must be rewritten absolute against the asset dir")[0m
+230:    // module 脚本与 favicon 链接逐字保留。
+[90m    at [0m[90mmunit.FunSuite.assert[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.gateway.ConsoleFastpathSpec.$init$$$anonfun$8[0m[1m([0m[1mConsoleFastpathSpec.scala[0m:[1m229[0m[1m)[0m
+[32m  + [0m[32m③ packedIndexHtml：5 个 vendor defer script 全部内联（首开瀑布 45→1 的机械保证）[0m [90m0.037s[0m
+[32m  + [0m[32m③ rewriteCssUrls：相对引用重写、绝对/data/http 引用不碰[0m [90m0.001s[0m
+[32mnebflow.gateway.OpenAiChatShimSpec:[0m
+[32m  + [0m[32mrequest: OpenAI body maps to LlmRequest (messages / model / identity)[0m [90m0.003s[0m
+[32m  + [0m[32mrequest: the OpenAI model IS carried — it becomes the request's agent-model chain[0m [90m0.001s[0m
+[32m  + [0m[32mrequest: a body with no model field is refused, never silently defaulted[0m [90m0.0s[0m
+[32m  + [0m[32mrequest: content parts — text + inline image data URL become blocks[0m [90m0.001s[0m
+[32m  + [0m[32mrequest: pure sampling knobs are accepted and declared not-carried[0m [90m0.0s[0m
+[32m  + [0m[32mrefusal: every other value of stream is refused, not dropped[0m [90m0.001s[0m
+[32m  + [0m[32mrefusal: absent session_id / agent_id — no invented placeholder identity[0m [90m0.0s[0m
+[32m  + [0m[32mrefusal: empty-string identity is refused the same as an absent one[0m [90m0.001s[0m
+[32m  + [0m[32mrefusal: missing or empty messages[0m [90m0.0s[0m
+[32m  + [0m[32mrefusal: model form — absent, blank, or a bare OpenAI name[0m [90m0.001s[0m
+[32m  + [0m[32mrefusal: stream=true (SSE is out of this face's scope)[0m [90m0.0s[0m
+[32m  + [0m[32mrefusal: tools / tool_choice / legacy functions[0m [90m0.001s[0m
+[32m  + [0m[32mrefusal: n > 1 and response_format / logprobs[0m [90m0.001s[0m
+[32m  + [0m[32mrefusal: role=tool and assistant tool_calls (no in-tree carrier on this face)[0m [90m0.0s[0m
+[32m  + [0m[32mrefusal: remote image URL is not fetched (only inline data: URLs are carried)[0m [90m0.0s[0m
+[32m  + [0m[32mrefusal: unknown content part type[0m [90m0.001s[0m
+[32m  + [0m[32mrefusal: error envelope is OpenAI-shaped and carries the field pointer[0m [90m0.0s[0m
+[32m  + [0m[32mresponse: LlmResponse maps to choices[] with the serving model and usage[0m [90m0.002s[0m
+[32m  + [0m[32mresponse: tool calls render as function tool_calls with a JSON-string arguments[0m [90m0.001s[0m
+[32m  + [0m[32mresponse: absent usage omits the field instead of inventing zeros[0m [90m0.0s[0m
+[32m  + [0m[32mroute: alias path requires auth exactly like the in-tree paths[0m [90m0.004s[0m
+[32m  + [0m[32mroute: with a valid token the alias answers 200 in the OpenAI shape[0m [90m0.018s[0m
+[32m  + [0m[32mroute: the alias hands the caller's model to the LLM handle (end to end)[0m [90m0.002s[0m
+[32m  + [0m[32mroute: a refused body answers 400 with the OpenAI error envelope[0m [90m0.008s[0m
+[32m  + [0m[32mroute: a non-JSON body answers 400 with the invalid_json envelope[0m [90m0.003s[0m
+[91m==> X [0m[91mnebflow.gateway.OpenAiChatShimSpec[0m.[91mroute: the in-tree path keeps its own semantics (no OpenAI keys added)[0m  [90m0.016s[0m munit.ComparisonFailException: src/test/scala/nebflow/gateway/OpenAiChatShimSpec.scala:616
+615:      case Some(resp) =>
+[7m616:        assertEquals(resp.status, Status.Ok)[0m
+617:        respJson(resp).map { json =>
+values are not the same
+[1m=> Obtained[0m
+Status(
+  code = 500
+)
+[1m=> Diff[0m ([91m- expected[0m, [92m+ obtained[0m)
+ Status(
+[91m-  code = 200[0m
+[92m+  code = 500[0m
+ )
+[90m    at [0m[90mmunit.FunSuite.assertEquals[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.gateway.OpenAiChatShimSpec.$init$$$anonfun$26$$anonfun$1[0m[1m([0m[1mOpenAiChatShimSpec.scala[0m:[1m616[0m[1m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mrethrow$extension @ fs2.Compiler$Target.compile$$anonfun$1[0m[90m([0m[90mCompiler.scala[0m:[90m157[0m[90m)[0m
+[90m    at [0m[90mget @ nebflow.actor.LocalActorSystem.stopAll[0m[90m([0m[90mActorSystem.scala[0m:[90m190[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Pull$.goCloseScope$1$$anonfun$1$$anonfun$3[0m[90m([0m[90mPull.scala[0m:[90m1216[0m[90m)[0m
+[90m    at [0m[90mupdate @ nebflow.actor.LocalActorSystem.actorLoop[0m[90m([0m[90mActorSystem.scala[0m:[90m352[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[32m  + [0m[32mroute: an unknown path under /v1/chat is still a fall-through (404)[0m [90m0.001s[0m
+10:39:47.393 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=6138
+10:39:47.395 [36mINFO [0m nebflow.nearpath - nearpath event: miss reason=pna-blocked port=6138
+10:39:47.396 [36mINFO [0m nebflow.nearpath - nearpath event: miss reason=pna-blocked port=-
+10:39:47.397 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.398 [36mINFO [0m nebflow.nearpath - nearpath event: miss reason=other port=-
+10:39:47.399 [36mINFO [0m nebflow.nearpath - nearpath event: miss reason=other port=-
+10:39:47.400 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.400 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.401 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.402 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.402 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.402 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.403 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.403 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.404 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.404 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.405 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.405 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.406 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.406 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.407 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.407 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.408 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.408 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.409 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.409 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.410 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.410 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.410 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.411 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.411 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.411 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.412 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.412 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.413 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.413 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.414 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.414 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.415 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.415 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.416 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.416 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.416 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.417 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.417 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.418 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.418 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.418 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.419 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.419 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.420 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.420 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.420 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.421 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.421 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.422 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.422 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.422 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.423 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.423 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.423 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.424 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.424 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.425 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.425 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.425 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.426 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.426 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.426 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.427 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.427 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.428 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.428 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.428 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.429 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.429 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.429 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.430 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.430 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.430 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.431 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.431 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.432 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.432 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.433 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.433 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.433 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.434 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.434 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.434 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.435 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.435 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.435 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.436 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.436 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.436 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.436 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.437 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.437 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.438 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.438 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.438 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.439 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.439 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.439 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.440 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.440 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.441 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.441 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.441 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.442 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.442 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.442 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.443 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.443 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.443 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.444 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.444 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.444 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.445 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.445 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.445 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.445 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.446 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.446 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.446 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.448 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.450 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=other port=-
+10:39:47.452 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.452 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.453 [36mINFO [0m nebflow.nearpath - nearpath event: miss reason=tunnel-leg port=-
+10:39:47.454 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.454 [36mINFO [0m nebflow.nearpath - nearpath event: miss reason=tunnel-leg port=-
+10:39:47.455 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.455 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.456 [36mINFO [0m nebflow.nearpath - nearpath event: hit reason=direct port=-
+10:39:47.471 [36mINFO [0m nebflow.rest-api - nearpath: loopback-pixel served (identity match; same-machine proof for the passive leg)
+[32mnebflow.gateway.NearPathStatsSpec:[0m
+[32m  + [0m[32mdefault state: hit=0 miss=0 reasons={} hitLastAt=null missLastAt=null redeemedLoopback=0[0m [90m0.001s[0m
+[32m  + [0m[32mhit / miss increment independently with their own lastAt and reason buckets[0m [90m0.006s[0m
+[32m  + [0m[32mzero-credential face: no Authorization header => still 204 (never 403)[0m [90m0.001s[0m
+[32m  + [0m[32mreason normalization: lowercase kept; junk / oversized / empty / case-only-uppercase -> other[0m [90m0.002s[0m
+[32m  + [0m[32mper-IP per-minute cap: events above the cap are silently dropped (204, no count, no reason)[0m [90m0.049s[0m
+[32m  + [0m[32mmalformed body / unknown event: 204 and NO count (never a 4xx on the observation face)[0m [90m0.002s[0m
+[32m  + [0m[32mGET /api/health/nearpath: exactly the contracted key set, no-store, unauthenticated, read-only[0m [90m0.001s[0m
+[32m  + [0m[32mredeemedLoopback is orthogonal: only the loopback redemption counter moves it[0m [90m0.001s[0m
+[32m  + [0m[32mCORS: whitelisted portal/relay origins may POST the event on BOTH legs; foreign origins get nothing[0m [90m0.004s[0m
+[32m  + [0m[32mCORS on the read face + OPTIONS preflight for both new paths (else the browser cannot read/post at all)[0m [90m0.002s[0m
+[91m==> X [0m[91mnebflow.gateway.NearPathStatsSpec[0m.[91m/api/health payload unchanged: base keys only on a non-loopback leg; nearpath keys never leak in[0m  [90m0.012s[0m munit.ComparisonFailException: src/test/scala/nebflow/gateway/NearPathStatsSpec.scala:279
+278:    assertEquals(lanKeys, Set("product", "status", "version", "providers", "search"),
+[7m279:      "the LAN/relay payload must stay exactly the baseline payload (no new keys from this batch)")[0m
+280:    // 环回腿只允许多 deviceId 一个键（本地加速批 ② 既有语义）；本批零新增键
+the LAN/relay payload must stay exactly the baseline payload (no new keys from this batch)
+[1m=> Obtained[0m
+HashSet(
+  "providers",
+  "version",
+  "status",
+  "providerConcurrency",
+  "product",
+  "search"
+)
+[1m=> Diff[0m ([91m- expected[0m, [92m+ obtained[0m)
+   "status",
+[92m+  "providerConcurrency",[0m
+   "product",
+[90m    at [0m[90mmunit.FunSuite.assertEquals[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.gateway.NearPathStatsSpec.$init$$$anonfun$13[0m[1m([0m[1mNearPathStatsSpec.scala[0m:[1m279[0m[1m)[0m
+[32m  + [0m[32m/api/health/loopback-info keeps its existing behaviour (session gate, unchanged by this batch)[0m [90m0.0s[0m
+[32m  + [0m[32midentity pixel: loopback leg + expect == own deviceId => 200 PNG with the sentinel dimensions[0m [90m0.002s[0m
+[32m  + [0m[32midentity pixel: expect mismatch / missing expect / no minted identity => 404 (never a body)[0m [90m0.001s[0m
+[32m  + [0m[32midentity pixel: NON-loopback sources never get the image (remote device / other account / tunnel bridge)[0m [90m0.0s[0m
+[error] Failed: Total 60, Failed 3, Errors 0, Passed 57
+[error] Failed tests:
+[error] 	nebflow.gateway.NearPathStatsSpec
+[error] 	nebflow.gateway.OpenAiChatShimSpec
+[error] 	nebflow.gateway.ConsoleFastpathSpec
+[error] (Test / testOnly) sbt.TestsFailedException: Tests unsuccessful
+[error] Total time: 6 s, completed 2026年11月7日 10:39:47
+
+real	0m10.006s
+user	0m21.165s
+sys	0m2.876s
+EXIT=1

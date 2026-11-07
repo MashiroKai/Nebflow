@@ -124,7 +124,7 @@ class AllCandidatesFormatLoopSpec extends CatsEffectSuite:
         messages = List(Message(MessageRole.User, Left("hi"))),
         sessionId = "format-loop",
         agentId = "format-loop-agent",
-        agentModel = Some(AgentModelConfig(preferred = Some("a/m1"), fallbacks = List("b/m1")))
+        agentModel = Some(AgentModelConfig(preferred = Some("a/m1"), fallbacks = Nil)) // 链深恒 1（fallback 废除）
       )
       // 关键：**不给被测代码加任何外部中断兜底**——被测流要么自己终止（绿），要么
       // 撞上本 spec 自设的终止上界（红），绝无第三种「挂着不动」的结局。
@@ -169,7 +169,9 @@ class AllCandidatesFormatLoopSpec extends CatsEffectSuite:
         )
         val attempts = e.asInstanceOf[FallbackExhaustedError].attempts
         // ② 轮次数 ≤ 上限（attempt 计数 = 候选数 × 轮数，每个候选每轮恰好一次命中）。
-        val candidates = 2 // a/m1 + b/m1
+        // fallback 废除批（作者令 2026-11-06 20:36）：链深恒 1 ⇒ 候选数 = 1（原
+        // a/m1 + b/m1 两根；b 未引用不进链）。
+        val candidates = 1 // a/m1（b/m1 未引用，fallback 废除后不进链）
         assert(
           attempts.size <= candidates * Fallback.MaxChainRounds,
           s"attempt 数 ${attempts.size} 超过 候选数($candidates) × 轮次上限(${Fallback.MaxChainRounds})"
@@ -180,7 +182,7 @@ class AllCandidatesFormatLoopSpec extends CatsEffectSuite:
         )
         // ③ 每候选命中数 == 上限 —— 证明确实循环过（不是「根本没试」）。
         assertEquals(hitsA.get(), Fallback.MaxChainRounds, s"a/m1 命中数应恰好等于轮次上限（证明循环过且被上限截断）")
-        assertEquals(hitsB.get(), Fallback.MaxChainRounds, s"b/m1 命中数应恰好等于轮次上限（证明循环过且被上限截断）")
+        assertEquals(hitsB.get(), 0, s"b/m1 未被链引用 ⇒ 零命中（fallback 废除：不暗中回补）")
         assertEquals(attempts.size, candidates * Fallback.MaxChainRounds, "attempt 记录数应等于 候选数 × 轮次上限（每候选每轮一条）")
     }
   }

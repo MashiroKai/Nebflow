@@ -1,0 +1,361 @@
+[sbt-gate] gate acquired after 0s
+[sbt-gate] heap cap not injected: SBT_OPTS already carries -Xmx (explicit wins)
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project model-granularity-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/model-granularity/project
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/model-granularity/)
+[info] compiling 2 Scala sources to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/model-granularity/target/scala-3.5.2/test-classes ...
+[info] done compiling
+[warn] javaOptions will be ignored, fork is set to false
+22:39:04.964 [36mINFO [0m nebflow.agent.lifecycle - [32mpconc-pin-agent-53bfcc01[0m [35mpconc-t2/53bfcc01[0m event=spawn detail=parent=- msgs=0
+22:39:04.993 [36mINFO [0m nebflow.agent.lifecycle - [32mpconc-pin-agent-53bfcc01[0m [35mpconc-t2/53bfcc01[0m event=start detail=msgs=0
+22:39:05.256 [36mINFO [0m nebflow.reminders - [time] Current time: 2026-11-06 22:39:05 +08:00 | Asia/Shanghai | Friday 周五 | epoch_ms 1793975945249
+22:39:05.384 [36mINFO [0m nebflow.agent.lifecycle - [32mpconc-pin-agent-53bfcc01[0m [35mpconc-t2/53bfcc01[0m event=turn-complete detail=msgs=2 textLen=2 textStreamed=true thinking=0 model=-
+22:39:05.399 [36mINFO [0m nebflow.agent.lifecycle - [32mpconc-pin-agent-53bfcc01[0m [35mpconc-t2/53bfcc01[0m event=start detail=msgs=3
+22:39:05.461 [36mINFO [0m nebflow.agent.lifecycle - [32mpconc-pin-agent-53bfcc01[0m [35mpconc-t2/53bfcc01[0m event=turn-complete detail=msgs=5 textLen=2 textStreamed=true thinking=0 model=-
+22:39:05.484 [36mINFO [0m nebflow.agent.lifecycle - [32mpconc-pin-agent-53bfcc01[0m [35mpconc-t2/53bfcc01[0m event=start detail=msgs=6
+22:39:05.515 [36mINFO [0m nebflow.agent.lifecycle - [32mpconc-pin-agent-53bfcc01[0m [35mpconc-t2/53bfcc01[0m event=turn-complete detail=msgs=8 textLen=2 textStreamed=true thinking=0 model=-
+22:39:05.586 [36mINFO [0m nebflow.agent.lifecycle - [32mpconc-pin-agent-53bfcc01[0m [35mpconc-t2/53bfcc01[0m event=start detail=msgs=9
+22:39:05.615 [36mINFO [0m nebflow.agent.lifecycle - [32mpconc-pin-agent-53bfcc01[0m [35mpconc-t2/53bfcc01[0m event=turn-complete detail=msgs=11 textLen=2 textStreamed=true thinking=0 model=-
+22:39:05.687 [36mINFO [0m nebflow.agent.lifecycle - [32mpconc-pin-agent-53bfcc01[0m [35mpconc-t2/53bfcc01[0m event=start detail=msgs=12
+22:39:05.716 [36mINFO [0m nebflow.agent.lifecycle - [32mpconc-pin-agent-53bfcc01[0m [35mpconc-t2/53bfcc01[0m event=turn-complete detail=msgs=14 textLen=2 textStreamed=true thinking=0 model=-
+java.lang.RuntimeException: boom: boom
+	at nebflow.llm.ProviderConcurrencyFallbackSpec$$anon$1.receive(ProviderConcurrencyFallbackSpec.scala:403)
+	at nebflow.llm.ProviderConcurrencyFallbackSpec$$anon$1.receive(ProviderConcurrencyFallbackSpec.scala:402)
+	at nebflow.actor.LocalActorSystem.loop$1$$anonfun$1$$anonfun$1(ActorSystem.scala:335)
+	at handleErrorWith @ nebflow.actor.LocalActorSystem.processMessageOrSignal$1(ActorSystem.scala:320)
+	at flatMap @ nebflow.actor.LocalActorSystem.processMessageOrSignal$1(ActorSystem.scala:321)
+	at map @ nebflow.actor.LocalActorSystem.loop$1$$anonfun$1$$anonfun$1(ActorSystem.scala:335)
+	at get @ nebflow.llm.ProviderRegistry.getCandidateForRef(registry.scala:417)
+	at flatMap @ nebflow.actor.LocalActorSystem.loop$1$$anonfun$1(ActorSystem.scala:334)
+	at unsafeToFuture @ munit.CatsEffectSuite$$anon$1.applyOrElse(CatsEffectSuite.scala:82)
+	at traverse_ @ nebflow.llm.ProviderConcurrencyFallbackSpec.$init$$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1(ProviderConcurrencyFallbackSpec.scala:156)
+[32mnebflow.llm.ProviderConcurrencyFallbackSpec:[0m
+[91m==> X [0m[91mnebflow.llm.ProviderConcurrencyFallbackSpec[0m.[91mT1: cap=10 占满 ⇒ 第 11 个 actor 链首落第二档；A 释放到只剩 3 ⇒ 第 11 个 actor 的链首仍不变[0m  [90m0.254s[0m munit.ComparisonFailException: src/test/scala/nebflow/llm/ProviderConcurrencyFallbackSpec.scala:166
+165:      // 链源先验：储备层 c/m2 必须追加链尾（同配置下确定序）
+[7m166:      assertEquals(chain, List(("a", "m1"), ("b", "m1"), ("c", "m2")), "orderedChain 先验：a/m1 → b/m1 + 储备层 c/m2")[0m
+167:      first10.zipWithIndex.foreach { case (p, i) =>
+orderedChain 先验：a/m1 → b/m1 + 储备层 c/m2
+[1m=> Obtained[0m
+List(
+  Tuple2(
+    _1 = "a",
+    _2 = "m1"
+  )
+)
+[1m=> Diff[0m ([91m- expected[0m, [92m+ obtained[0m)
+     _2 = "m1"
+[91m-  ),[0m
+[91m-  Tuple2([0m
+[91m-    _1 = "b",[0m
+[91m-    _2 = "m1"[0m
+[91m-  ),[0m
+[91m-  Tuple2([0m
+[91m-    _1 = "c",[0m
+[91m-    _2 = "m2"[0m
+   )
+[90m    at [0m[90mmunit.FunSuite.assertEquals[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.llm.ProviderConcurrencyFallbackSpec.$init$$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$1[0m[1m([0m[1mProviderConcurrencyFallbackSpec.scala[0m:[1m166[0m[1m)[0m
+[90m    at [0m[90mget @ nebflow.llm.ProviderRegistry.getCandidateForRef[0m[90m([0m[90mregistry.scala[0m:[90m417[0m[90m)[0m
+[1m    at [0m[1mmap @ nebflow.llm.ProviderConcurrencyFallbackSpec.$init$$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$1[0m[1m([0m[1mProviderConcurrencyFallbackSpec.scala[0m:[1m163[0m[1m)[0m
+[90m    at [0m[90mmodify @ nebflow.llm.ProviderConcurrency$.assign[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m99[0m[90m)[0m
+[90m    at [0m[90mflatMap @ nebflow.llm.ProviderConcurrency$.assign[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m119[0m[90m)[0m
+[1m    at [0m[1mflatMap @ nebflow.llm.ProviderConcurrencyFallbackSpec.$init$$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$2$$anonfun$1[0m[1m([0m[1mProviderConcurrencyFallbackSpec.scala[0m:[1m162[0m[1m)[0m
+[90m    at [0m[90mget @ nebflow.llm.ProviderRegistry.getCandidateForRef[0m[90m([0m[90mregistry.scala[0m:[90m417[0m[90m)[0m
+[1m    at [0m[1mflatMap @ nebflow.llm.ProviderConcurrencyFallbackSpec.$init$$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$2[0m[1m([0m[1mProviderConcurrencyFallbackSpec.scala[0m:[1m160[0m[1m)[0m
+[90m    at [0m[90mget @ nebflow.llm.ProviderRegistry.getCandidateForRef[0m[90m([0m[90mregistry.scala[0m:[90m417[0m[90m)[0m
+[90m    at [0m[90mmap @ nebflow.llm.ProviderConcurrency$.assign$$anonfun$2[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m122[0m[90m)[0m
+[90m    at [0m[90mmodify @ nebflow.llm.ProviderConcurrency$.assign[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m99[0m[90m)[0m
+[90m    at [0m[90mflatMap @ nebflow.llm.ProviderConcurrency$.assign[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m119[0m[90m)[0m
+[90m    at [0m[90mget @ nebflow.llm.ProviderRegistry.getCandidateForRef[0m[90m([0m[90mregistry.scala[0m:[90m417[0m[90m)[0m
+[90m    at [0m[90mmap @ nebflow.llm.ProviderConcurrency$.assign$$anonfun$2[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m122[0m[90m)[0m
+[90m    at [0m[90mmodify @ nebflow.llm.ProviderConcurrency$.assign[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m99[0m[90m)[0m
+[90m    at [0m[90mflatMap @ nebflow.llm.ProviderConcurrency$.assign[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m119[0m[90m)[0m
+[32m  + [0m[32mT1b: cap ≤ 0 非法 ⇒ 当不限（不得静默当 0 全拒——否则链首永远落二档）[0m [90m0.003s[0m
+[32m  + [0m[32mT1c: 全部 provider 满载 ⇒ assign = None（不钉、回落既有全局行为）；释放后坑可复用[0m [90m0.002s[0m
+[32m  + [0m[32mT1d: 空链 ⇒ assign = None（空链/全灭由既有全局链兜底，分配器不编造）[0m [90m0.001s[0m
+[32m  + [0m[32mT2: 同一 actor 连续 5 turn —— 每请求 agentModel 逐字 = 派发时刻快照，命中 provider 序列全同；正常完成不释放；stop 才释放[0m [90m1.082s[0m
+[32m  + [0m[32mT3a: 终态·外部停止（system.stop ⇒ loop.guarantee）⇒ 占坑释放、计数归零[0m [90m0.003s[0m
+[32m  + [0m[32mT3b: 终态·异常退出（receive 抛错且 onError 逃逸 ⇒ fiber 崩溃）⇒ 占坑释放[0m [90m0.104s[0m
+[32m  + [0m[32mT3c: 终态·自行停止（behavior 回 Behaviors.stopped ⇒ loop 正常退出）⇒ 占坑释放[0m [90m0.104s[0m
+[32m  + [0m[32mT3d: 终态·TTL 到期 ⇒ 占坑释放[0m [90m0.407s[0m
+[32m  + [0m[32mT3e: 终态·stopAll ⇒ 全部占坑释放[0m [90m0.01s[0m
+[32m  + [0m[32mT3f: 跑 N 轮释放后计数回 0；重复 release / 未占坑 id release 幂等（无负数、无双减）[0m [90m0.007s[0m
+[32m  + [0m[32mT4: 重启自愈 —— reconcile 以存活 actor 集重建计数（原表 ∩ 活集），新 actor 能用回第一档（无永久占坑）[0m [90m0.011s[0m
+[32m  + [0m[32mT4b: 活集为空（全新进程 boot）⇒ reconcile 清空整表[0m [90m0.002s[0m
+[32m  + [0m[32mT4c: snapshot 可观测面 —— assignable/inUse/cap/full/totalActors 形状（契约 §3h；cap 不限 = 显式 null）[0m [90m0.005s[0m
+[91m==> X [0m[91mnebflow.llm.ProviderConcurrencyFallbackSpec[0m.[91mPE1: 满载 provider 的候选在派发钉链时被剔，且带 provider-full 原因进 preExcluded（不再无账消失）[0m  [90m0.004s[0m munit.ComparisonFailException: src/test/scala/nebflow/llm/ProviderConcurrencyFallbackSpec.scala:586
+585:    yield
+[7m586:      assertEquals(chain, List(("a", "m1"), ("b", "m1")), "先验：a/m1 → b/m1")[0m
+587:      assertEquals(p1.map(_.headRef), Some("a/m1"), "actor-1 钉链首 a/m1")
+先验：a/m1 → b/m1
+[1m=> Obtained[0m
+List(
+  Tuple2(
+    _1 = "a",
+    _2 = "m1"
+  )
+)
+[1m=> Diff[0m ([91m- expected[0m, [92m+ obtained[0m)
+     _2 = "m1"
+[91m-  ),[0m
+[91m-  Tuple2([0m
+[91m-    _1 = "b",[0m
+[91m-    _2 = "m1"[0m
+   )
+[90m    at [0m[90mmunit.FunSuite.assertEquals[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.llm.ProviderConcurrencyFallbackSpec.$init$$$anonfun$15$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1[0m[1m([0m[1mProviderConcurrencyFallbackSpec.scala[0m:[1m586[0m[1m)[0m
+[90m    at [0m[90mget @ nebflow.llm.ProviderRegistry.getCandidateForRef[0m[90m([0m[90mregistry.scala[0m:[90m417[0m[90m)[0m
+[1m    at [0m[1mmap @ nebflow.llm.ProviderConcurrencyFallbackSpec.$init$$$anonfun$15$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1[0m[1m([0m[1mProviderConcurrencyFallbackSpec.scala[0m:[1m584[0m[1m)[0m
+[90m    at [0m[90mupdate @ nebflow.llm.ProviderConcurrency$.assign$$anonfun$2[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m129[0m[90m)[0m
+[90m    at [0m[90mas @ nebflow.llm.ProviderConcurrency$.assign$$anonfun$2[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m129[0m[90m)[0m
+[90m    at [0m[90mmodify @ nebflow.llm.ProviderConcurrency$.assign[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m99[0m[90m)[0m
+[90m    at [0m[90mflatMap @ nebflow.llm.ProviderConcurrency$.assign[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m119[0m[90m)[0m
+[1m    at [0m[1mflatMap @ nebflow.llm.ProviderConcurrencyFallbackSpec.$init$$$anonfun$15$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1[0m[1m([0m[1mProviderConcurrencyFallbackSpec.scala[0m:[1m583[0m[1m)[0m
+[90m    at [0m[90mmodify @ nebflow.llm.ProviderConcurrency$.assign[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m99[0m[90m)[0m
+[90m    at [0m[90mflatMap @ nebflow.llm.ProviderConcurrency$.assign[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m119[0m[90m)[0m
+[1m    at [0m[1mflatMap @ nebflow.llm.ProviderConcurrencyFallbackSpec.$init$$$anonfun$15$$anonfun$1$$anonfun$1$$anonfun$1[0m[1m([0m[1mProviderConcurrencyFallbackSpec.scala[0m:[1m582[0m[1m)[0m
+[1m    at [0m[1mof @ nebflow.llm.ProviderConcurrencyFallbackSpec.mkRegistry[0m[1m([0m[1mProviderConcurrencyFallbackSpec.scala[0m:[1m100[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.llm.ProviderConcurrencyFallbackSpec.$init$$$anonfun$15$$anonfun$1$$anonfun$1[0m[1m([0m[1mProviderConcurrencyFallbackSpec.scala[0m:[1m581[0m[1m)[0m
+[90m    at [0m[90mget @ nebflow.llm.ProviderRegistry.getCandidateForRef[0m[90m([0m[90mregistry.scala[0m:[90m417[0m[90m)[0m
+[90m    at [0m[90mmap @ nebflow.llm.ProviderRegistry.getCandidateForRef[0m[90m([0m[90mregistry.scala[0m:[90m417[0m[90m)[0m
+[90m    at [0m[90mtraverse @ nebflow.llm.ProviderRegistry.getCandidatesForAgentUnfiltered[0m[90m([0m[90mregistry.scala[0m:[90m481[0m[90m)[0m
+[91m==> X [0m[91mnebflow.llm.ProviderConcurrencyFallbackSpec[0m.[91mPE2: 幂等 re-assign 不丢 preExcluded（重 spawn 场景：取首钉那一刻的账，不随现读计数漂移）[0m  [90m0.003s[0m munit.ComparisonFailException: src/test/scala/nebflow/llm/ProviderConcurrencyFallbackSpec.scala:617
+616:    yield
+[7m617:      assertEquals(p2Again, p2, "整快照相等（含 preExcluded）——幂等不迁移不丢账")[0m
+618:      assertEquals(
+整快照相等（含 preExcluded）——幂等不迁移不丢账
+[1m=> Obtained[0m
+Some(
+  value = PinnedChain(
+    headRef = "a/m1",
+    orderedRefs = Nil,
+    refs = List(
+      Tuple2(
+        _1 = "a",
+        _2 = "m1"
+      )
+    ),
+    pinnedProviderId = "a",
+    preExcluded = Nil
+  )
+)
+[1m=> Diff[0m ([91m- expected[0m, [92m+ obtained[0m)
+[91m-None[0m
+[92m+Some([0m
+[92m+  value = PinnedChain([0m
+[92m+    headRef = "a/m1",[0m
+[92m+    orderedRefs = Nil,[0m
+[92m+    refs = List([0m
+[92m+      Tuple2([0m
+[92m+        _1 = "a",[0m
+[92m+        _2 = "m1"[0m
+[92m+      )[0m
+[92m+    ),[0m
+[92m+    pinnedProviderId = "a",[0m
+[92m+    preExcluded = Nil[0m
+[92m+  )[0m
+[92m+)[0m
+[90m    at [0m[90mmunit.FunSuite.assertEquals[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.llm.ProviderConcurrencyFallbackSpec.$init$$$anonfun$16$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1[0m[1m([0m[1mProviderConcurrencyFallbackSpec.scala[0m:[1m617[0m[1m)[0m
+[90m    at [0m[90mmodify @ nebflow.llm.ProviderConcurrency$.assign[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m99[0m[90m)[0m
+[90m    at [0m[90mflatMap @ nebflow.llm.ProviderConcurrency$.assign[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m119[0m[90m)[0m
+[1m    at [0m[1mmap @ nebflow.llm.ProviderConcurrencyFallbackSpec.$init$$$anonfun$16$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1[0m[1m([0m[1mProviderConcurrencyFallbackSpec.scala[0m:[1m615[0m[1m)[0m
+[90m    at [0m[90mupdate @ nebflow.llm.ProviderConcurrency$.assign$$anonfun$2[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m129[0m[90m)[0m
+[1m    at [0m[1mflatMap @ nebflow.llm.ProviderConcurrencyFallbackSpec.$init$$$anonfun$16$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1[0m[1m([0m[1mProviderConcurrencyFallbackSpec.scala[0m:[1m614[0m[1m)[0m
+[90m    at [0m[90mupdate @ nebflow.llm.ProviderConcurrency$.assign$$anonfun$2[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m129[0m[90m)[0m
+[90m    at [0m[90mas @ nebflow.llm.ProviderConcurrency$.assign$$anonfun$2[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m129[0m[90m)[0m
+[90m    at [0m[90mmodify @ nebflow.llm.ProviderConcurrency$.assign[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m99[0m[90m)[0m
+[90m    at [0m[90mflatMap @ nebflow.llm.ProviderConcurrency$.assign[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m119[0m[90m)[0m
+[1m    at [0m[1mflatMap @ nebflow.llm.ProviderConcurrencyFallbackSpec.$init$$$anonfun$16$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1[0m[1m([0m[1mProviderConcurrencyFallbackSpec.scala[0m:[1m612[0m[1m)[0m
+[90m    at [0m[90mmodify @ nebflow.llm.ProviderConcurrency$.assign[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m99[0m[90m)[0m
+[90m    at [0m[90mflatMap @ nebflow.llm.ProviderConcurrency$.assign[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m119[0m[90m)[0m
+[1m    at [0m[1mflatMap @ nebflow.llm.ProviderConcurrencyFallbackSpec.$init$$$anonfun$16$$anonfun$1$$anonfun$1$$anonfun$1[0m[1m([0m[1mProviderConcurrencyFallbackSpec.scala[0m:[1m611[0m[1m)[0m
+[1m    at [0m[1mof @ nebflow.llm.ProviderConcurrencyFallbackSpec.mkRegistry[0m[1m([0m[1mProviderConcurrencyFallbackSpec.scala[0m:[1m100[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.llm.ProviderConcurrencyFallbackSpec.$init$$$anonfun$16$$anonfun$1$$anonfun$1[0m[1m([0m[1mProviderConcurrencyFallbackSpec.scala[0m:[1m610[0m[1m)[0m
+[90m    at [0m[90mget @ nebflow.llm.ProviderRegistry.getCandidateForRef[0m[90m([0m[90mregistry.scala[0m:[90m417[0m[90m)[0m
+[91m==> X [0m[91mnebflow.llm.ProviderConcurrencyFallbackSpec[0m.[91mPE3: release / reconcile 清剔除账（不留僵尸条目）[0m  [90m0.002s[0m munit.FailException: src/test/scala/nebflow/llm/ProviderConcurrencyFallbackSpec.scala:645 actor-2 被剔时必须入账
+644:    yield
+[7m645:      assert(withBoth.pinExclusions.contains("actor-2"), "actor-2 被剔时必须入账")[0m
+646:      assertEquals(
+[90m    at [0m[90mmunit.FunSuite.assert[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.llm.ProviderConcurrencyFallbackSpec.$init$$$anonfun$17$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1[0m[1m([0m[1mProviderConcurrencyFallbackSpec.scala[0m:[1m645[0m[1m)[0m
+[90m    at [0m[90mget @ nebflow.llm.ProviderRegistry.getCandidateForRef[0m[90m([0m[90mregistry.scala[0m:[90m417[0m[90m)[0m
+[1m    at [0m[1mmap @ nebflow.llm.ProviderConcurrencyFallbackSpec.$init$$$anonfun$17$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1[0m[1m([0m[1mProviderConcurrencyFallbackSpec.scala[0m:[1m643[0m[1m)[0m
+[90m    at [0m[90mupdate @ nebflow.llm.ProviderConcurrency$.assign$$anonfun$2[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m129[0m[90m)[0m
+[1m    at [0m[1mflatMap @ nebflow.llm.ProviderConcurrencyFallbackSpec.$init$$$anonfun$17$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1[0m[1m([0m[1mProviderConcurrencyFallbackSpec.scala[0m:[1m642[0m[1m)[0m
+[90m    at [0m[90mget @ nebflow.llm.ProviderRegistry.getCandidateForRef[0m[90m([0m[90mregistry.scala[0m:[90m417[0m[90m)[0m
+[1m    at [0m[1mflatMap @ nebflow.llm.ProviderConcurrencyFallbackSpec.$init$$$anonfun$17$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1[0m[1m([0m[1mProviderConcurrencyFallbackSpec.scala[0m:[1m641[0m[1m)[0m
+[90m    at [0m[90mupdate @ nebflow.llm.ProviderConcurrency$.assign$$anonfun$2[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m129[0m[90m)[0m
+[1m    at [0m[1mflatMap @ nebflow.llm.ProviderConcurrencyFallbackSpec.$init$$$anonfun$17$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1[0m[1m([0m[1mProviderConcurrencyFallbackSpec.scala[0m:[1m640[0m[1m)[0m
+[90m    at [0m[90mget @ nebflow.llm.ProviderRegistry.getCandidateForRef[0m[90m([0m[90mregistry.scala[0m:[90m417[0m[90m)[0m
+[1m    at [0m[1mflatMap @ nebflow.llm.ProviderConcurrencyFallbackSpec.$init$$$anonfun$17$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1[0m[1m([0m[1mProviderConcurrencyFallbackSpec.scala[0m:[1m639[0m[1m)[0m
+[90m    at [0m[90mupdate @ nebflow.llm.ProviderConcurrency$.assign$$anonfun$2[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m129[0m[90m)[0m
+[90m    at [0m[90mas @ nebflow.llm.ProviderConcurrency$.assign$$anonfun$2[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m129[0m[90m)[0m
+[90m    at [0m[90mmodify @ nebflow.llm.ProviderConcurrency$.assign[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m99[0m[90m)[0m
+[90m    at [0m[90mflatMap @ nebflow.llm.ProviderConcurrency$.assign[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m119[0m[90m)[0m
+[1m    at [0m[1mflatMap @ nebflow.llm.ProviderConcurrencyFallbackSpec.$init$$$anonfun$17$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1[0m[1m([0m[1mProviderConcurrencyFallbackSpec.scala[0m:[1m638[0m[1m)[0m
+[90m    at [0m[90mmodify @ nebflow.llm.ProviderConcurrency$.assign[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m99[0m[90m)[0m
+[91m==> X [0m[91mnebflow.llm.ProviderConcurrencyFallbackSpec[0m.[91mPE4: 全满 ⇒ assign = None 且剔除账作废（无 pin 就无账，回落既有全局行为）[0m  [90m0.002s[0m munit.ComparisonFailException: src/test/scala/nebflow/llm/ProviderConcurrencyFallbackSpec.scala:680
+679:      assertEquals(p1.map(_.headRef), Some("a/m1"), "actor-1 钉 a/m1")
+[7m680:      assertEquals(p2.map(_.headRef), Some("b/m1"), "actor-2 钉 b/m1（a 已满）")[0m
+681:      assertEquals(p2.flatMap(_.preExcluded.headOption.map(_._1)), Some("a/m1"), "actor-2 的剔除账 = a/m1")
+actor-2 钉 b/m1（a 已满）
+[1m=> Obtained[0m
+None
+[1m=> Diff[0m ([91m- expected[0m, [92m+ obtained[0m)
+[91m-Some([0m
+[91m-  value = "b/m1"[0m
+[91m-)[0m
+[92m+None[0m
+[90m    at [0m[90mmunit.FunSuite.assertEquals[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.llm.ProviderConcurrencyFallbackSpec.$init$$$anonfun$18$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1[0m[1m([0m[1mProviderConcurrencyFallbackSpec.scala[0m:[1m680[0m[1m)[0m
+[90m    at [0m[90mget @ nebflow.llm.ProviderRegistry.getCandidateForRef[0m[90m([0m[90mregistry.scala[0m:[90m417[0m[90m)[0m
+[1m    at [0m[1mmap @ nebflow.llm.ProviderConcurrencyFallbackSpec.$init$$$anonfun$18$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1[0m[1m([0m[1mProviderConcurrencyFallbackSpec.scala[0m:[1m677[0m[1m)[0m
+[90m    at [0m[90mupdate @ nebflow.llm.ProviderConcurrency$.assign$$anonfun$2[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m129[0m[90m)[0m
+[90m    at [0m[90mas @ nebflow.llm.ProviderConcurrency$.assign$$anonfun$2[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m129[0m[90m)[0m
+[90m    at [0m[90mmodify @ nebflow.llm.ProviderConcurrency$.assign[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m99[0m[90m)[0m
+[90m    at [0m[90mflatMap @ nebflow.llm.ProviderConcurrency$.assign[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m119[0m[90m)[0m
+[1m    at [0m[1mflatMap @ nebflow.llm.ProviderConcurrencyFallbackSpec.$init$$$anonfun$18$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1[0m[1m([0m[1mProviderConcurrencyFallbackSpec.scala[0m:[1m676[0m[1m)[0m
+[90m    at [0m[90mupdate @ nebflow.llm.ProviderConcurrency$.assign$$anonfun$2[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m129[0m[90m)[0m
+[90m    at [0m[90mas @ nebflow.llm.ProviderConcurrency$.assign$$anonfun$2[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m129[0m[90m)[0m
+[90m    at [0m[90mmodify @ nebflow.llm.ProviderConcurrency$.assign[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m99[0m[90m)[0m
+[90m    at [0m[90mflatMap @ nebflow.llm.ProviderConcurrency$.assign[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m119[0m[90m)[0m
+[1m    at [0m[1mflatMap @ nebflow.llm.ProviderConcurrencyFallbackSpec.$init$$$anonfun$18$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1[0m[1m([0m[1mProviderConcurrencyFallbackSpec.scala[0m:[1m675[0m[1m)[0m
+[90m    at [0m[90mmodify @ nebflow.llm.ProviderConcurrency$.assign[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m99[0m[90m)[0m
+[90m    at [0m[90mflatMap @ nebflow.llm.ProviderConcurrency$.assign[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m119[0m[90m)[0m
+[1m    at [0m[1mflatMap @ nebflow.llm.ProviderConcurrencyFallbackSpec.$init$$$anonfun$18$$anonfun$1$$anonfun$1$$anonfun$1[0m[1m([0m[1mProviderConcurrencyFallbackSpec.scala[0m:[1m674[0m[1m)[0m
+[1m    at [0m[1mof @ nebflow.llm.ProviderConcurrencyFallbackSpec.mkRegistry[0m[1m([0m[1mProviderConcurrencyFallbackSpec.scala[0m:[1m100[0m[1m)[0m
+22:39:06.759 [33mWARN [0m nebflow.llm.health - Provider p1/m1 marked DOWN: provider exhausted (ModelNotFound): statusCode: 404, response: [wire] HTTP 404 provider=p1 model=m1 | request=u:t | response=error/not_found_error(code=-) | upstream=model not found | raw={"type":"error","error":{"type":"not_found_error","message":"model not found"}}
+22:39:06.777 [33mWARN [0m nebflow.llm.health - Provider k1/m1 marked DOWN: provider exhausted (Auth): statusCode: 403, response: [wire] HTTP 403 provider=k1 model=m1 | request=u:t | response=error/permission_error(code=-) | upstream=Invalid API key | raw={"type":"error","error":{"type":"permission_error","message":"Invalid API key"}}
+22:39:06.790 [33mWARN [0m nebflow.llm - candidate ledger session=eligible-a3 — chain=0 tried=0 skipped=2 [d1/m1(not-configured), d2/m1(not-configured)]
+22:39:06.799 [33mWARN [0m nebflow.llm.health - Provider f1/m1 marked DOWN: provider exhausted (ModelNotFound): statusCode: 404, response: [wire] HTTP 404 provider=f1 model=m1 | request=u:t | response=error/not_found_error(code=-) | upstream=model not found | raw={"type":"error","error":{"type":"not_found_error","message":"model not found"}}
+22:39:06.804 [33mWARN [0m nebflow.llm.health - Provider m3p/m1 marked DOWN: simulated 429
+22:39:06.804 [33mWARN [0m nebflow.llm.health - Provider m4p/m1 marked DOWN: simulated 429
+22:39:06.807 [33mWARN [0m nebflow.llm.health - Provider m1p/m1 marked DOWN: provider exhausted (ModelNotFound): statusCode: 404, response: [wire] HTTP 404 provider=m1p model=m1 | request=u:t | response=error/not_found_error(code=-) | upstream=model not found | raw={"type":"error","error":{"type":"not_found_error","message":"model not found"}}
+22:39:06.818 [33mWARN [0m nebflow.llm.health - Provider p1/m1 marked DOWN: simulated 429
+22:39:06.818 [33mWARN [0m nebflow.llm.health - Provider p3/m1 marked DOWN: simulated 429
+22:39:06.818 [33mWARN [0m nebflow.llm - candidate ledger session=eligible-a7 — chain=1 tried=0 skipped=1 [p1/m1(provider-full)]
+22:39:06.821 [33mWARN [0m nebflow.llm.health - Provider p2/m1 marked DOWN: provider exhausted (ModelNotFound): statusCode: 404, response: [wire] HTTP 404 provider=p2 model=m1 | request=u:t | response=error/not_found_error(code=-) | upstream=model not found | raw={"type":"error","error":{"type":"not_found_error","message":"model not found"}}
+22:39:06.825 [33mWARN [0m nebflow.llm - candidate ledger session=eligible-a8 — chain=1 tried=0 skipped=1 [p1/m1(provider-full)]
+22:39:06.828 [33mWARN [0m nebflow.llm.health - Provider p2/m1 marked DOWN: provider exhausted (ModelNotFound): statusCode: 404, response: [wire] HTTP 404 provider=p2 model=m1 | request=u:t | response=error/not_found_error(code=-) | upstream=model not found | raw={"type":"error","error":{"type":"not_found_error","message":"model not found"}}
+[32mnebflow.llm.FallbackEligibleProvidersSpec:[0m
+[91m==> X [0m[91mnebflow.llm.FallbackEligibleProvidersSpec[0m.[91mA1: 4 候选（2 必败 + 2 正常）⇒ 换链成功，第 3 根交付；前两根如实记为 failed[0m  [90m0.267s[0m munit.ComparisonFailException: src/test/scala/nebflow/llm/FallbackEligibleProvidersSpec.scala:163
+162:          "候选链必须是用户选的四根（不许静默缩水）"
+[7m163:        )[0m
+164:        val resp = res.getOrElse(fail(s"A1 必须成功，实际 = ${res.left.map(e => e.getMessage)}"))
+候选链必须是用户选的四根（不许静默缩水）
+[1m=> Obtained[0m
+List(
+  "p1/m1"
+)
+[1m=> Diff[0m ([91m- expected[0m, [92m+ obtained[0m)
+ List(
+[91m-  "p1/m1",[0m
+[91m-  "p2/m1",[0m
+[91m-  "p3/m1",[0m
+[91m-  "p4/m1"[0m
+[92m+  "p1/m1"[0m
+ )
+[90m    at [0m[90mmunit.FunSuite.assertEquals[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.llm.FallbackEligibleProvidersSpec.$init$$$anonfun$1$$anonfun$1$$anonfun$1[0m[1m([0m[1mFallbackEligibleProvidersSpec.scala[0m:[1m163[0m[1m)[0m
+[90m    at [0m[90mas @ nebflow.llm.ProviderConcurrency$.assign$$anonfun$2[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m129[0m[90m)[0m
+[90m    at [0m[90munsafeToFuture @ munit.CatsEffectSuite$$anon$1.applyOrElse[0m[90m([0m[90mCatsEffectSuite.scala[0m:[90m82[0m[90m)[0m
+[91m==> X [0m[91mnebflow.llm.FallbackEligibleProvidersSpec[0m.[91mA2: 1 个 auth 403 + 3 个正常 ⇒ 必须成功（auth 只降级该候选，不终止整链）[0m  [90m0.015s[0m munit.FailException: src/test/scala/nebflow/llm/FallbackEligibleProvidersSpec.scala:195
+194:      runOnce(mkConfig(ports), req("eligible-a2", Some(chain))).map { case (res, _) =>
+[7m195:        val resp = res.getOrElse(fail(s"A2 必须成功（403 只降级该候选），实际 = ${res.left.map(_.getMessage)}"))[0m
+196:        assertEquals(resp.meta.providerId, "k2", "k1 auth 失败后必须由 k2 承接")
+A2 必须成功（403 只降级该候选），实际 = Left(All providers failed (1 attempt(s); families: auth):
+  [auth] k1/m1: Auth — statusCode: 403, response: [wire] HTTP 403 provider=k1 model=m1 | request=u:t | response=error/permission_error(code=-) | upstream=Invalid API key | raw={"type":"error","error":{"type":"permission_error","message":"Invalid API key"}}
+reason: all-providers-failed  (chain 1: tried 1, skipped 0)
+  [tried]   k1/m1 — auth Auth
+expected from config: 1 ref(s) — none silently excluded)
+[90m    at [0m[90mmunit.Assertions.fail[0m[90m([0m[90mAssertions.scala[0m:[90m274[0m[90m)[0m
+[90m    at [0m[90mmunit.Assertions.fail$[0m[90m([0m[90mAssertions.scala[0m:[90m24[0m[90m)[0m
+[90m    at [0m[90mmunit.FunSuite.fail[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.llm.FallbackEligibleProvidersSpec.$anonfun$5[0m[1m([0m[1mFallbackEligibleProvidersSpec.scala[0m:[1m195[0m[1m)[0m
+[90m    at [0m[90mscala.util.Either.getOrElse[0m[90m([0m[90mEither.scala[0m:[90m289[0m[90m)[0m
+[1m    at [0m[1mnebflow.llm.FallbackEligibleProvidersSpec.$init$$$anonfun$2$$anonfun$1$$anonfun$1[0m[1m([0m[1mFallbackEligibleProvidersSpec.scala[0m:[1m195[0m[1m)[0m
+[90m    at [0m[90mas @ nebflow.llm.ProviderConcurrency$.assign$$anonfun$2[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m129[0m[90m)[0m
+[90m    at [0m[90munsafeToFuture @ munit.CatsEffectSuite$$anon$1.applyOrElse[0m[90m([0m[90mCatsEffectSuite.scala[0m:[90m82[0m[90m)[0m
+[32m  + [0m[32mA3: 全部候选都被跳过（provider 全 disabled）⇒ all-skipped，且不许说 All providers failed[0m [90m0.01s[0m
+[91m==> X [0m[91mnebflow.llm.FallbackEligibleProvidersSpec[0m.[91mA4: 链上每根都被试过且全败 ⇒ all-providers-failed，通知带完整候选处置表[0m  [90m0.008s[0m munit.ComparisonFailException: src/test/scala/nebflow/llm/FallbackEligibleProvidersSpec.scala:240
+239:      runOnce(mkConfig(ports), req("eligible-a4", Some(chain))).map { case (res, chainRefs) =>
+[7m240:        assertEquals(chainRefs, List("f1/m1", "f2/m1", "f3/m1"))[0m
+241:        val err = res.left.getOrElse(fail("A4 必须全败"))
+values are not the same
+[1m=> Obtained[0m
+List(
+  "f1/m1"
+)
+[1m=> Diff[0m ([91m- expected[0m, [92m+ obtained[0m)
+ List(
+[91m-  "f1/m1",[0m
+[91m-  "f2/m1",[0m
+[91m-  "f3/m1"[0m
+[92m+  "f1/m1"[0m
+ )
+[90m    at [0m[90mmunit.FunSuite.assertEquals[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.llm.FallbackEligibleProvidersSpec.$init$$$anonfun$4$$anonfun$1$$anonfun$1[0m[1m([0m[1mFallbackEligibleProvidersSpec.scala[0m:[1m240[0m[1m)[0m
+[90m    at [0m[90mas @ nebflow.llm.ProviderConcurrency$.assign$$anonfun$2[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m129[0m[90m)[0m
+[90m    at [0m[90munsafeToFuture @ munit.CatsEffectSuite$$anon$1.applyOrElse[0m[90m([0m[90mCatsEffectSuite.scala[0m:[90m82[0m[90m)[0m
+[91m==> X [0m[91mnebflow.llm.FallbackEligibleProvidersSpec[0m.[91mA5(事故形态): 3 根里只试了 2 根、1 根被健康面跳过 ⇒ partially-tried + 跳过原因进表，禁说全败[0m  [90m0.008s[0m munit.ComparisonFailException: src/test/scala/nebflow/llm/FallbackEligibleProvidersSpec.scala:272
+271:      ).map { case (res, chainRefs) =>
+[7m272:        assertEquals(chainRefs.size, 4, "链上仍是四根（健康面过滤发生在请求闸，不是链构建）")[0m
+273:        val err = res.left.getOrElse(fail("A5 必须失败（两根必败 + 两根被跳过）"))
+链上仍是四根（健康面过滤发生在请求闸，不是链构建）
+[1m=> Obtained[0m
+1
+[1m=> Diff[0m ([91m- expected[0m, [92m+ obtained[0m)
+[91m-4[0m
+[92m+1[0m
+[90m    at [0m[90mmunit.FunSuite.assertEquals[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.llm.FallbackEligibleProvidersSpec.$init$$$anonfun$5$$anonfun$1$$anonfun$1[0m[1m([0m[1mFallbackEligibleProvidersSpec.scala[0m:[1m272[0m[1m)[0m
+[90m    at [0m[90mas @ nebflow.llm.ProviderConcurrency$.assign$$anonfun$2[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m129[0m[90m)[0m
+[90m    at [0m[90munsafeToFuture @ munit.CatsEffectSuite$$anon$1.applyOrElse[0m[90m([0m[90mCatsEffectSuite.scala[0m:[90m82[0m[90m)[0m
+[32m  + [0m[32mA6: 配置可见的候选被人为排除 ⇒ silentExclusions 检出并报警；有原因的排除不误报[0m [90m0.006s[0m
+[91m==> X [0m[91mnebflow.llm.FallbackEligibleProvidersSpec[0m.[91mA7(派发钉链): 满载被剔的候选带 provider-full 原因进终局账本——不再 SILENTLY EXCLUDED[0m  [90m0.007s[0m munit.ComparisonFailException: src/test/scala/nebflow/llm/FallbackEligibleProvidersSpec.scala:356
+355:          "链 = 钉链物化形态 + 储备层回补（pin 剔的是优先级，不是资格）"
+[7m356:        )[0m
+357:        val err = res.left.getOrElse(fail("A7 必须失败（p2 必败 + p1/p3 health-down）"))
+链 = 钉链物化形态 + 储备层回补（pin 剔的是优先级，不是资格）
+[1m=> Obtained[0m
+List(
+  "p2/m1"
+)
+[1m=> Diff[0m ([91m- expected[0m, [92m+ obtained[0m)
+ List(
+[91m-  "p2/m1",[0m
+[91m-  "p3/m1",[0m
+[91m-  "p1/m1"[0m
+[92m+  "p2/m1"[0m
+ )
+[90m    at [0m[90mmunit.FunSuite.assertEquals[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.llm.FallbackEligibleProvidersSpec.$init$$$anonfun$7$$anonfun$1$$anonfun$1[0m[1m([0m[1mFallbackEligibleProvidersSpec.scala[0m:[1m356[0m[1m)[0m
+[90m    at [0m[90mas @ nebflow.llm.ProviderConcurrency$.assign$$anonfun$2[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m129[0m[90m)[0m
+[90m    at [0m[90munsafeToFuture @ munit.CatsEffectSuite$$anon$1.applyOrElse[0m[90m([0m[90mCatsEffectSuite.scala[0m:[90m82[0m[90m)[0m
+[91m==> X [0m[91mnebflow.llm.FallbackEligibleProvidersSpec[0m.[91mA8(钉链回补): 派发时满载被剔的候选回补链尾——前面的根全败时它仍被真实尝试[0m  [90m0.008s[0m munit.FailException: src/test/scala/nebflow/llm/FallbackEligibleProvidersSpec.scala:401
+400:      ).map { case (res, _) =>
+[7m401:        val resp = res.getOrElse(fail(s"A8 必须成功（p1 经储备层回补承接），实际 = ${res.left.map(_.getMessage)}"))[0m
+402:        assertEquals(resp.meta.providerId, "p1", "p2/p3 全败后必须由链尾回补的 p1 承接")
+A8 必须成功（p1 经储备层回补承接），实际 = Left(All providers failed (1 attempt(s); families: model):
+  [model] p2/m1: ModelNotFound — statusCode: 404, response: [wire] HTTP 404 provider=p2 model=m1 | request=u:t | response=error/not_found_error(code=-) | upstream=model not found | raw={"type":"error","error":{"type":"not_found_error","message":"model not found"}}
+reason: all-providers-failed  (chain 1: tried 1, skipped 1)
+  [tried]   p2/m1 — model ModelNotFound
+  [skipped] p1/m1 — provider-full (10 of 10 actor slots in use at dispatch — chain pinned to start past it)
+expected from config: 1 ref(s) — none silently excluded)
+[90m    at [0m[90mmunit.Assertions.fail[0m[90m([0m[90mAssertions.scala[0m:[90m274[0m[90m)[0m
+[90m    at [0m[90mmunit.Assertions.fail$[0m[90m([0m[90mAssertions.scala[0m:[90m24[0m[90m)[0m
+[90m    at [0m[90mmunit.FunSuite.fail[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.llm.FallbackEligibleProvidersSpec.$anonfun$13[0m[1m([0m[1mFallbackEligibleProvidersSpec.scala[0m:[1m401[0m[1m)[0m
+[90m    at [0m[90mscala.util.Either.getOrElse[0m[90m([0m[90mEither.scala[0m:[90m289[0m[90m)[0m
+[1m    at [0m[1mnebflow.llm.FallbackEligibleProvidersSpec.$init$$$anonfun$8$$anonfun$1$$anonfun$1[0m[1m([0m[1mFallbackEligibleProvidersSpec.scala[0m:[1m401[0m[1m)[0m
+[90m    at [0m[90mas @ nebflow.llm.ProviderConcurrency$.assign$$anonfun$2[0m[90m([0m[90mProviderConcurrency.scala[0m:[90m129[0m[90m)[0m
+[90m    at [0m[90munsafeToFuture @ munit.CatsEffectSuite$$anon$1.applyOrElse[0m[90m([0m[90mCatsEffectSuite.scala[0m:[90m82[0m[90m)[0m
+[error] Failed: Total 26, Failed 11, Errors 0, Passed 15
+[error] Failed tests:
+[error] 	nebflow.llm.FallbackEligibleProvidersSpec
+[error] 	nebflow.llm.ProviderConcurrencyFallbackSpec
+[error] (Test / testOnly) sbt.TestsFailedException: Tests unsuccessful
+[error] Total time: 11 s, completed 2026年11月6日 22:39:06

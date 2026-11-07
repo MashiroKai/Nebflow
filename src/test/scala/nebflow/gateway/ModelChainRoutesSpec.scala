@@ -48,6 +48,8 @@ class ModelChainRoutesSpec extends CatsEffectSuite:
         """{"name":"Nebula","description":"fixture nebula","model":{"preferred":"zhipu/GLM-5.3-Flash","fallbacks":["kimi/kimi-k3"]}}"""
       )
       os.write(tmp / "agents" / "Nebula" / "system.md", "n")
+      os.makeDir.all(tmp / "agents" / "project-dispatcher")
+      os.write(tmp / "agents" / "project-dispatcher" / "agent.json", """{"name":"project-dispatcher","description":"fixture dispatcher","model":{"preferred":"test/dispatcher-model","fallbacks":[]}}""")
       os.makeDir.all(tmp / "agents" / "kernel")
       os.write(tmp / "agents" / "kernel" / "agent.json", """{"name":"kernel","description":"fixture kernel"}""")
       os.write(tmp / "agents" / "kernel" / "system.md", "k")
@@ -213,18 +215,18 @@ class ModelChainRoutesSpec extends CatsEffectSuite:
         )
     }
 
-  test("PUT hot-applies: session-resident pins OUTSIDE the new chain are purged, in-chain pins survive"):
-    // 模型链热应用批（2026-10-31 作者报障②「fallback 链加了新模型不立即生效」）：
-    // 链面保存后，会话驻留的旧链引用（in-memory sessionModelOverrides；盘上
-    // modelRef 腿在本 spec 的 sessionStore=null 装配下按守卫跳过）按**新生效链
-    // 成员资格**清理——链外 pin 清除（下一请求即吃新链），链上 pin 保留。
+  test("PUT hot-applies: class change retains matching pins, purges out-of-chain pins; fallback is not a member"):
+    // 模型粒度批：slot PUT 是类级更新。链内 pin 判据只接受 preferred（fallback 已废除），
+    // 因而同类所有 session 的 matching pins 保留，链外 pin 清除。
     withFixture { () =>
       // null provider cast：清除判据只读 (providerId, model)——与 NullBackend 同款
       // spec-only 形态，provider 对象永不解引用。
       val nul = null.asInstanceOf[ProviderConfig]
       val seeded = Map(
-        "s-in" -> ModelCandidate("kimi", nul, "kimi-k3"),
-        "s-out" -> ModelCandidate("anon", nul, "anon-gone")
+        "delegate-a" -> ModelCandidate("zhipu", nul, "GLM-5.3-Flash"),
+        "delegate-b" -> ModelCandidate("zhipu", nul, "GLM-5.3-Flash"),
+        "delegate-c" -> ModelCandidate("kimi", nul, "kimi-k3"),
+        "session-unrelated" -> ModelCandidate("anon", nul, "anon-gone")
       )
       val resources = mkResources(seeded)
       val routes = mkRoutes(resources)
@@ -244,10 +246,112 @@ class ModelChainRoutesSpec extends CatsEffectSuite:
         _ = assertEquals(resp.status, Status.Ok)
         overrides <- resources.sessionModelOverrides.get
       yield
-        assert(!overrides.contains("s-out"), s"out-of-chain pin must be purged: ${overrides.keys}")
-        assert(overrides.contains("s-in"), s"in-chain pin must survive: ${overrides.keys}")
+        assert(!overrides.contains("session-unrelated"), s"out-of-chain pin must be purged: ${overrides.keys}")
+        assert(overrides.contains("delegate-a"), s"matching pin on one class session survives: ${overrides.keys}")
+        assert(overrides.contains("delegate-b"), s"matching pin on another class session survives: ${overrides.keys}")
+        assert(!overrides.contains("delegate-c"), s"fallback-only ref is outside preferred-only chain: ${overrides.keys}")
       end for
     }
+
+  test("all five class slots are writable and a class-chain update is visible to every session in that slot"):
+    withFixture { () =>
+      val slots = List(
+        "Nebula" -> "main-model",
+        "kernel" -> "kernel-model",
+        "project-dispatcher" -> "dispatcher-model",
+        "node" -> "node-model",
+        "subagent" -> "subagent-model"
+      )
+      slots.traverse_ { case (slot, model) =>
+        putJson(
+          s"/agents/$slot/model",
+          io.circe.Json.obj("model" -> io.circe.Json.obj("preferred" -> s"test/$model".asJson, "fallbacks" -> io.circe.Json.arr()))
+        ).flatMap { resp =>
+          resp.as[io.circe.Json].map { json =>
+            assertEquals(resp.status, Status.Ok, s"slot $slot accepts class-level writes")
+            assertEquals(json.hcursor.downField("mode").as[String], Right("explicit"))
+          }
+        }
+      }.map { _ =>
+        val sessions = List(
+          "main" -> List("main-session-a", "main-session-b"),
+          // 生产 id 形状（逐条锚见 ModelRoles 头注「分类判据」）：kernel 会话 = delegate-kernel-<8hex>。
+          "kernel" -> List("delegate-kernel-a1b2c3d4", "delegate-kernel-e5f6a7b8"),
+          "dispatcher" -> List("dispatcher-1a2b3c4d", "dispatcher-5e6f7a8b"),
+          "node" -> List("dag-orders-1-123456", "dag-orders-2-123457"),
+          "subagent" -> List("delegate-a", "delegate-b")
+        )
+        sessions.foreach { case (slot, ids) =>
+          val sidecarSlot = nebflow.core.ModelRoles.Slots.find(_._1 == slot).get._3
+          val configured = nebflow.core.ModelRoles.ownChainOfSlot(sidecarSlot).flatMap(_.preferred)
+          val expectedModel = slot match
+            case "main" => "main-model"
+            case "kernel" => "kernel-model"
+            case "dispatcher" => "dispatcher-model"
+            case "node" => "node-model"
+            case _ => "subagent-model"
+          assertEquals(configured, Some(s"test/$expectedModel"))
+          if slot != "main" then
+            ids.foreach { id =>
+              // 归槽返回值 = 槽目录名（slots 表第三列），不是 wire 名——dispatcher 的
+              // wire 名在 agents/ 下没有目录（首轮实跑把它直接喂 ownChainOf ⇒ 类切换静默失效）。
+              assertEquals(nebflow.core.ModelRoles.slotOfSessionId(Some(id)), Some(sidecarSlot))
+              assertEquals(nebflow.core.ModelRoles.slotChainOf(Some(id)).flatMap(_.preferred), configured)
+            }
+        }
+      }
+    }
+
+  test("wire spellings (main / dispatcher) are normalized to the slot sidecar — a class write never lands in an unread sidecar") {
+    // 模型粒度批回归：`ModelRoles.isSlot` 允许 wire 拼写（main/dispatcher），但只有
+    // 槽目录名对应 agents/<dir>/agent.json。不归一时 `PUT /agents/main/model` 会就地
+    // 建 agents/main/agent.json，而引擎只读 agents/Nebula/ ⇒ 静默空写（五类粒度
+    // 「可配置」在该拼写下失效）。本用例钉住归一：写落 Nebula 槽、读走 project-dispatcher 槽。
+    withFixture { () =>
+      for
+        wrote <- putJson(
+          "/agents/main/model",
+          io.circe.Json.obj("model" -> io.circe.Json.obj("preferred" -> "test/main-model".asJson, "fallbacks" -> io.circe.Json.arr()))
+        )
+        wroteJson <- wrote.as[io.circe.Json]
+        dispatcher <- getJson("/agents/dispatcher/model")
+        dispatcherJson <- dispatcher.as[io.circe.Json]
+      yield
+        assertEquals(wrote.status, Status.Ok)
+        assertEquals(wroteJson.hcursor.downField("mode").as[String], Right("explicit"))
+        assert(
+          os.read(PathUtil.dataRoot / "agents" / "Nebula" / "agent.json").contains("test/main-model"),
+          "the wire spelling 'main' must land in the Nebula slot sidecar (the only one the engine reads)"
+        )
+        assert(
+          !os.exists(PathUtil.dataRoot / "agents" / "main"),
+          "no phantom agents/main/ sidecar may be created"
+        )
+        // 读面同归一：dispatcher（wire）→ project-dispatcher（槽）的既有链。
+        assertEquals(dispatcherJson.hcursor.downField("mode").as[String], Right("explicit"))
+        assertEquals(
+          dispatcherJson.hcursor.downField("chain").downField("preferred").as[String],
+          Right("test/dispatcher-model"),
+          "the wire spelling 'dispatcher' must read the project-dispatcher slot sidecar"
+        )
+    }
+  }
+
+  test("session-level switch is isolated to that session; it does not mutate class slots or sibling sessions"):
+    val overrides = cats.effect.Ref.unsafe[IO, Map[String, ModelCandidate]](Map.empty)
+    val nul = null.asInstanceOf[ProviderConfig]
+    val target = ModelCandidate("private", nul, "one-session-only")
+    val siblingBefore = ModelCandidate("private", nul, "sibling-default")
+    val slotChain = nebflow.shared.AgentModelConfig(Some("class/model"), Nil)
+    for
+      _ <- overrides.update(_ + ("delegate-session-a" -> target))
+      after <- overrides.get
+    yield
+      assertEquals(after.get("delegate-session-a"), Some(target))
+      assertEquals(after.get("delegate-session-b"), None, "session switch does not pin a sibling")
+      assertEquals(siblingBefore.model, "sibling-default")
+      assertEquals(nebflow.core.ModelRoles.slotChainOf(Some("delegate-session-b")), None, "no class sidecar is changed by a session override")
+      assertEquals(slotChain.preferred, Some("class/model"))
 
   test("PUT empty chain ({preferred: null, fallbacks: []}) normalizes to follow"):
     withFixture { () =>
@@ -311,6 +415,10 @@ class ModelChainRoutesSpec extends CatsEffectSuite:
 
   test("PUT a settable name with no agent dir → in-place sidecar + 200 (builtin-def); a non-settable name → 400 gate first"):
     withFixture { () =>
+      // 本用例的前提是「该角色在盘上没有 agent 目录」——fixture 为五类槽用例
+      // 预置了 project-dispatcher 的 sidecar（模型粒度批），这里先摘掉它还原前提
+      // （否则读到既有 {"name","description",...} 而不是就地新建的 {"name"}）。
+      os.remove.all(PathUtil.dataRoot / "agents" / "project-dispatcher")
       for
         fresh <- putJson("/agents/project-dispatcher/model", io.circe.Json.obj("model" -> io.circe.Json.Null))
         json <- fresh.as[io.circe.Json]

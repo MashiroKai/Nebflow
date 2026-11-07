@@ -78,7 +78,12 @@ class OrphanDelegateRecoverySpec extends FunSuite:
       PathUtil.setDataRoot(originalRoot)
       os.remove.all(tmp)
 
-  test("R1: orphan sweep terminalizes + notifies parent with salvaged partial result") {
+  // 重写（fallback 废除批，作者令 2026-11-06 20:36「不用向上通知……由用户手动恢复」）：
+  // 收殓链的四条父投递腿（跨设备待发区/持久邮箱/F2 注入队/持久提醒账）全部摘除 ⇒
+  // 零通知事件；任务行 = failed + 重启打断指纹 + 「parent NOT notified」诚实文案。
+  // 原「one notification event per orphan + payload 断言」面随批退役（原断言逐字见
+  // git 历史）；部分结果仍在子会话转录里（面板/弹窗可读）——零通知不等于丢证据。
+  test("R1(重写): orphan sweep terminalizes with zero upward notify; partial result stays readable in the transcript") {
     withFixture("r1") { (store, sessionStore, tmp) =>
       val io = for
         parent <- sessionStore.createSession("Nebula", agentName = Some("Nebula"))
@@ -97,29 +102,31 @@ class OrphanDelegateRecoverySpec extends FunSuite:
         recovered <- SubAgentStartupRecovery.recoverOrphans(store, sessionStore)
         running <- store.findRunningTasks
         events <- CompactionQueueStore.load(parent.id)
-      yield (parent.id, recovered, running, events, childA, childB)
+        partialSalvaged <- sessionStore.loadMessagesForSession(childA).map(
+          _.exists(_.textContent.contains("V2_PARTIAL_RESULT_TEXT"))
+        )
+      yield (parent.id, recovered, running, events, childA, childB, partialSalvaged)
 
-      val (parentSid, recovered, running, events, childA, childB) = io.unsafeRunSync()
+      val (parentSid, recovered, running, events, childA, childB, partialSalvaged) = io.unsafeRunSync()
       assertEquals(clue(recovered.sorted), List(childA, childB), "both orphans recovered")
       assert(clue(running).isEmpty, "no running tasks remain after the sweep")
       val evts = clue(events.map(_.events).getOrElse(Nil))
-      assertEquals(evts.size, 2, "one notification event per orphan")
-      val evtA = evts.find(_.correlationId.contains(childA)).getOrElse(fail(s"no event for $childA"))
-      assertEquals(evtA.eventType, "failed")
-      assert(evtA.payload.contains("task lost: crash"), s"payload must carry the loss note: ${evtA.payload}")
-      assert(evtA.payload.contains("V2_PARTIAL_RESULT_TEXT"), s"partial result must be salvaged: ${evtA.payload}")
-      val evtB = evts.find(_.correlationId.contains(childB)).getOrElse(fail(s"no event for $childB"))
-      assert(evtB.payload.contains("No recoverable result"), s"unsalvageable task must say so: ${evtB.payload}")
-      // Terminalized with a loss note.
+      assertEquals(evts.size, 0, "zero-notify: the sweep delivers nothing upward (was: one event per orphan)")
+      assert(clue(partialSalvaged), "the partial result stays readable in the child transcript (panel face)")
+      // Terminalized with the restart-loss fingerprint + the zero-notify honesty line.
       val tasks = store.loadTasks(parentSid).unsafeRunSync()
       assert(
-        tasks.forall(t => t.status == "failed" && t.lastError.exists(_.contains("startup recovery"))),
+        tasks.forall(t => t.status == "failed" && t.lastError.exists(_.contains("process restart during in-flight task"))),
+        clue(tasks).toString
+      )
+      assert(
+        tasks.forall(t => t.lastError.exists(_.contains("parent NOT notified"))),
         clue(tasks).toString
       )
     }
   }
 
-  test("R2: sweep is idempotent across repeated runs (no duplicate notify, no re-terminalize)") {
+  test("R2(重写): sweep is idempotent across repeated runs (zero notify both times, no re-terminalize)") {
     withFixture("r2") { (store, sessionStore, tmp) =>
       val io = for
         parent <- sessionStore.createSession("Nebula", agentName = Some("Nebula"))
@@ -133,8 +140,11 @@ class OrphanDelegateRecoverySpec extends FunSuite:
       yield (eventsAfterFirst, eventsAfterSecond, running)
 
       val (first, second, running) = io.unsafeRunSync()
-      assertEquals(first.map(_.events).map(_.size), Some(1))
-      assertEquals(second.map(_.events).map(_.size), Some(1), "second sweep must NOT append a duplicate notification")
+      // 零通知 ⇒ 投递队条目根本不会创建（load 可能返回 None）——None 与空 events 同读数。
+      val firstN = first.map(_.events).map(_.size).getOrElse(0)
+      val secondN = second.map(_.events).map(_.size).getOrElse(0)
+      assertEquals(firstN, 0, "zero-notify on the first sweep")
+      assertEquals(secondN, 0, "second sweep: still zero (no duplicate, none at all)")
       assert(clue(running).isEmpty, "terminalized tasks are not re-found")
     }
   }

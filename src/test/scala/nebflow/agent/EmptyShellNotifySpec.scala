@@ -7,12 +7,14 @@ import cats.syntax.all.*
 import munit.CatsEffectSuite
 import nebflow.actor.*
 import nebflow.core.FileChangeTracker
+import nebflow.core.mail.SessionMailbox
 import nebflow.core.compact.HistoryArchiver
+import nebflow.core.delegate.{DelegateJudge, DelegateRegistry}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
 import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
-import nebflow.shared.{ContentBlock, Message, MessageRole, PathUtil, ThinkingConfig}
+import nebflow.shared.{ContentBlock, Message, MessageRole, PathUtil, SubAgentTask, ThinkingConfig}
 
 import scala.concurrent.duration.*
 
@@ -106,6 +108,39 @@ class EmptyShellNotifySpec extends CatsEffectSuite:
       val captured = cats.effect.Ref.unsafe[IO, List[String]](Nil)
       val program = for
         resources <- mkResources(system, tmp)
+        _ <- IO {
+          DelegateJudge.DelegateJudgePort.clear()
+          DelegateRegistry.put(
+            DelegateRegistry.Record(
+              id = s"$testName-child",
+              executor = "nebflow",
+              cwd = os.pwd.toString,
+              project = None,
+              taskId = None,
+              parentSessionId = s"$testName-parent-session",
+              title = "empty shell test",
+              createdAt = System.currentTimeMillis(),
+              reportStatus = Some("finish")
+            )
+          )
+        }
+        _ <- resources.sessionStore.getOrCreateSession(s"$testName-parent-session", "parent")
+        _ <- resources.sessionStore.getOrCreateSession(s"$testName-child", "child")
+        _ <- resources.subAgentTaskStore.recordTask(
+          SubAgentTask(
+            taskId = s"$testName-child",
+            parentSessionId = s"$testName-parent-session",
+            agentName = "Worker",
+            prompt = "ignored",
+            description = "empty shell test",
+            status = "running",
+            retryCount = 0,
+            spawnedAt = System.currentTimeMillis(),
+            completedAt = None,
+            lastError = None,
+            source = "delegate"
+          )
+        )
         parent <- system.spawn(spyParent(captured), s"$testName-parent")
         child <- system.spawn(completingChild(messages), s"$testName-child")
         supervisor <- system.spawn(
@@ -128,13 +163,15 @@ class EmptyShellNotifySpec extends CatsEffectSuite:
         )
         // Trigger: child gets UserInput with replyTo = supervisor, replies Completed.
         _ <- child ! AgentCommand.UserInput("go", Some(supervisor))
-        // 20s (was 5s): under full-suite parallel load the actor round-trip
-        // (UserInput → Completed → supervisor forward) can exceed 5s of CPU
-        // contention — known flake, green path returns in <1s so the longer
-        // ceiling costs nothing unloaded. Kept below munit's 30s test timeout.
-        _ <- waitUntil(20.seconds)(captured.get.map(_.nonEmpty))
-        payloads <- captured.get
-      yield payloads.head
+        // Delegate terminal delivery moved from parentRef push to the parent's durable
+        // SessionMailbox. Wait on the authoritative event row, not the legacy actor spy.
+        _ <- waitUntil(20.seconds)(
+          SessionMailbox.scanPending(s"$testName-parent-session").map(
+            _.exists(_.event.eventType == "completed")
+          )
+        )
+        events <- SessionMailbox.scanPending(s"$testName-parent-session")
+      yield events.find(_.event.eventType == "completed").get.event.payload
 
       program.unsafeRunSync()
     finally

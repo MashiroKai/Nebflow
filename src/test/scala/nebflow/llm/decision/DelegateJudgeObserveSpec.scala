@@ -164,8 +164,19 @@ class DelegateJudgeObserveSpec extends CatsEffectSuite:
             models = List(ModelConfig("m1"))
           )
         )
+        // 合并批（2026-11-07）：全局链必须显式声明——config-single-source 批之后
+        // 「provider inventory 推导种子链」已废，无 `llm.fallback` 且临时 dataRoot
+        // 无 Nebula 侧车 ⇒ 链 fail-closed 为空 ⇒ 判定机一次 HTTP 都不发（本 spec
+        // 的 hits==1 断言即该空洞的钉子）。
         val registry = new ProviderRegistry(
-          CatsRef.unsafe[IO, NebflowServiceConfig](NebflowServiceConfig(llm = ServiceLlmConfig(providers = providers))),
+          CatsRef.unsafe[IO, NebflowServiceConfig](
+            NebflowServiceConfig(
+              llm = ServiceLlmConfig(
+                providers = providers,
+                fallback = Some(nebflow.shared.AgentModelConfig(Some("fakeprov/m1"), Nil))
+              )
+            )
+          ),
           backend = backend
         )
         val call = DelegateJudgeMachine.face(registry).judgeTerminal(judgeInput("delegate-observe-2"))

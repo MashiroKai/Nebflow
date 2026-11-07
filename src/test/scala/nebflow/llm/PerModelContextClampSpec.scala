@@ -28,6 +28,11 @@ class PerModelContextClampSpec extends CatsEffectSuite:
   private def configWith(configured: Int, modelMax: Option[Int]): NebflowServiceConfig =
     NebflowServiceConfig(
       llm = ServiceLlmConfig(
+        // 合并批（2026-11-07）：全局链腿必须显式配置——config-single-source 批之后
+        // 「provider inventory 推导种子链」已废（见 `getCandidatesUnfiltered`），
+        // 无 `llm.fallback` 且侧车为空 ⇒ 全局链 fail-closed 为空，本 spec 的
+        // 「两腿读数必须一致」断言会退化成空腿比较（无效断言而非真通过）。
+        fallback = Some(AgentModelConfig(preferred = Some("p/m"), fallbacks = Nil)),
         providers = Map(
           "p" -> ProviderConfig(
             baseUrl = "http://127.0.0.1:1",
@@ -92,10 +97,13 @@ class PerModelContextClampSpec extends CatsEffectSuite:
     }
   }
 
-  test("T5: 储备层（第四构造点）同受 clamp——provchain 腿 a 追加腿不得绕过真值上界") {
-    // 第四构造点 = registry.reserveTier（provchain 腿 a，晚于卡文成文合入 main；
-    // 卡文 B2 只点名两处 ⇒ 本测试是「偏离登记」的钉版：任何后续构造点绕过
-    // effectiveContextWindow 都会在这里红。
+  test("T5(重写): 储备层（第四构造点）已随 fallback 废除退役——未引用 model 不进链，链上唯一候选照带 clamp 真值"):
+    // 原断言面：registry.reserveTier（provchain 腿 a）把未引用的 m2 追加进链尾，
+    // 且同受 effectiveContextWindow 约束（「偏离登记」钉版）。fallback 废除批
+    // （作者令 2026-11-06 20:36「不再支持模型fallback」）把 reserveTier 从
+    // ProviderRegistry 移除 ⇒ 第四构造点整体消失，原断言结构性不可达（逐字内容
+    // 见 git 历史）。本测试改钉：未引用 model 不进链 + 链上唯一候选照带 clamp
+    // 真值——任何新构造点绕开 clamp 仍会在这里红。
     for
       configRef <- Ref.of[IO, NebflowServiceConfig](
         NebflowServiceConfig(
@@ -106,7 +114,7 @@ class PerModelContextClampSpec extends CatsEffectSuite:
                 apiKey = "test",
                 protocol = LlmProtocol.Anthropic,
                 models = List(
-                  // agent 链只引 m1 ⇒ m2 不被引用 ⇒ 经储备层（reserveTier）追加进链尾
+                  // agent 链只引 m1 ⇒ m2 不被引用 ⇒（原经储备层追加；现已退役）不进链
                   ModelConfig("m1", contextWindow = 1000000),
                   ModelConfig("m2", contextWindow = 1000000, modelMaxContext = Some(200000))
                 )
@@ -123,18 +131,13 @@ class PerModelContextClampSpec extends CatsEffectSuite:
       )
       _ <- triple._4
     yield
-      val reserve = chain.find(c => c.providerId == "p" && c.model == "m2")
-      assert(
-        reserve.isDefined,
-        s"m2 应经储备层进链（agent 链未引用它），实际链：${chain.map(c => s"${c.providerId}/${c.model}")}"
-      )
+      val pRefs = chain.filter(c => c.providerId == "p").map(_.model)
+      assertEquals(pRefs, List("m1"), s"链深恒 1：只含被引用的 m1，未引用的 m2 不得进链，实际链：$pRefs")
       assertEquals(
-        reserve.get.contextWindow,
-        200000,
-        "储备层候选必须同受 min(configured, modelMaxContext) 约束（绕过 = clamp 有洞）"
+        chain.headOption.map(_.contextWindow),
+        Some(1000000),
+        "链上唯一候选仍带 clamp 真值（clamp 面不随储备层退役而失效）"
       )
-      assertEquals(reserve.get.modelMaxContext, Some(200000), "真值随候选保留")
-  }
 
   /**
    * 建一个注册表实例供纯算式读数用。注意 `effectiveContextWindow` 是 **class

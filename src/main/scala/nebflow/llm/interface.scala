@@ -641,8 +641,14 @@ object LlmInterface extends LlmRuntime:
                 (schedAvailable, schedSkips) = schedRes
                 configSkips <- registry.configLevelExclusions()
                 requestConfig <- registry.currentConfig
-                chainRefs = requestConfig.llm.fallback.toList.flatMap(c => c.preferred.toList ++ c.fallbacks)
+                // fallback 废除批（作者令 2026-11-06 20:36「不再支持模型fallback」）：
+                // 链成员 = preferred 一根——`fallbacks` 是死数据，声明它们的授权/审计面
+                // 只会产生噪音（model-eligibility 批的 not-in-selected-chain 记账同理）。
+                chainRefs = requestConfig.llm.fallback.toList.flatMap(c => c.preferred.toList)
                 globalAllowlistSkips <- registry.allowlistExclusionsFor(chainRefs, req.agentModel)
+                // 审计基准 = 配置可见全集（model-eligibility 批）：未授权 ref 由
+                // globalAllowlistSkips 逐条带原因进账本，因此「配置里有、本请求没试」
+                // 不再沉默——不需要把基准收窄成已解析候选集（收窄反而看不见真丢件）。
                 expected <- registry.expectedCandidateRefs()
                 // 派发钉链剔除账本（缺陷批 2026-11-06）：`req.pinSkips` = spawn 时因
                 // provider 满载被链首扫描剔出的候选（`PinnedChain.preExcluded`，本就是
@@ -854,6 +860,8 @@ object LlmInterface extends LlmRuntime:
                         schedRes <- applyScheduleGateDetailed(filtered, registry)
                         (schedAvailable, schedSkips) = schedRes
                         configSkips <- registry.configLevelExclusions()
+                        // 审计基准同非流面 = 配置可见全集（model-eligibility 批；
+                        // fallback 废除批不改该基准——未授权/未配置 ref 各有带原因记账）。
                         expected <- registry.expectedCandidateRefs()
                         // 派发钉链剔除账本（缺陷批 2026-11-06）：`req.pinSkips` = spawn
                         // 时因 provider 满载被链首扫描剔出的候选（`PinnedChain.preExcluded`，

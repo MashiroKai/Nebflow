@@ -40,6 +40,14 @@ export const DELEGATE_API = {
   // 归档历史窗（delegate-ui 修订批 2026-10-09 九点⑧：S11 右上角归档 FAB 的清单源；
   // 与 /api/chains 在册窗互补零重叠——G6 双窗口径）。
   archived: () => '/api/chains?archived=1',
+  // 手动恢复（重启手动恢复批，作者令 2026-11-06 20:36「由用户手动恢复，粒度可以
+  // 是逐个点击，也可以是子agent面板一键全部恢复」）：
+  //   POST /api/delegates/restore       — body {taskId}；逐个恢复（同 id 续原转录）
+  //   POST /api/delegates/restore-all   — 一键全部恢复（pending-recovery/frozen/重启
+  //                                       丢失行 → 资格过滤 → 批量复活）
+  // 零向上通知——结果只在本响应；面板行状态随引擎翻新（delegate-chain-mirror-updated）。
+  restore: () => '/api/delegates/restore',
+  restoreAll: () => '/api/delegates/restore-all',
   // delegates 列表读面（delegate 视图重设计实施批 2026-10-21 · 引擎 UI 最小集）：
   // /api/chains 行投影同源（含 G1 taskStatus=merging 覆写 + mergeQueue/mergeQueuePos）
   // + `?project=` 过滤参数 + 行内 `topology` 子过程拓扑载荷（children=星扇全集 /
@@ -180,6 +188,46 @@ export async function archiveDelegate(id) {
 export async function unarchiveDelegate(id) {
   try {
     const r = await fetch(DELEGATE_API.unarchive(id), {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+    });
+    let data = null;
+    try { data = await r.json(); } catch (_) { data = null; }
+    if (!r.ok) return { state: 'http', status: r.status, data };
+    return { state: 'ok', data };
+  } catch (_) {
+    return { state: 'network' };
+  }
+}
+
+/**
+ * 模型粒度批（作者令 2026-11-06 20:36）：重启/崩溃后**手动恢复**两档的引擎缝。
+ * 后端零通知 + 不自动恢复（`SubAgentStartupRecovery` 标 pending-recovery，由用户
+ * 在子 agent 面板里手动恢复），本件只做 REST 绑定：
+ *   restoreDelegate(id)      — POST /api/delegates/restore   body {taskId}（逐个点击）
+ *   restoreAllDelegates()    — POST /api/delegates/restore-all（面板一键全部）
+ * 返回可判别结果对象（archiveDelegate 同形；不抛异常）。501/500 = 恢复宿主缺席
+ * （网关未装配 ManualRevivalHost）。
+ */
+export async function restoreDelegate(taskId) {
+  try {
+    const r = await fetch(DELEGATE_API.restore(), {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ taskId: String(taskId || '') }),
+    });
+    let data = null;
+    try { data = await r.json(); } catch (_) { data = null; }
+    if (!r.ok) return { state: 'http', status: r.status, data };
+    return { state: 'ok', data };
+  } catch (_) {
+    return { state: 'network' };
+  }
+}
+
+export async function restoreAllDelegates() {
+  try {
+    const r = await fetch(DELEGATE_API.restoreAll(), {
       method: 'POST',
       headers: { ...authHeaders(), 'Content-Type': 'application/json' },
     });

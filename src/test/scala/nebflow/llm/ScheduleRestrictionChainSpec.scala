@@ -17,6 +17,15 @@ import java.time.ZoneId
  *   - 储备层照旧追加且未受限者可承接（链深不因时段塌成 0）；
  *   - 全受限 ⇒ 链出口给空链（终局报错单点在 LlmInterface，spec2 端到端腿覆盖）。
  *
+ * **fallback 废除批改写（作者令 2026-11-06 20:36「不再支持模型fallback」，逐条申报）**：
+ * 链深恒 1 = preferred 单候选（fallbacks 数组与储备层退役）——
+ *   - T1/T2/T3/T4 **重写**到单候选语义（窗内 = 唯一候选被剔 ⇒ 空链；窗外 = 零行为
+ *     变化铁律保留；provider/模型级粒度判据保留）；原「其余候选保持原链序」的多根
+ *     面随 fallback 退役；
+ *   - T5 **整条删除**：储备层承接面已退役（`reserveTier` 移除）；原断言逐字见
+ *     git 历史；
+ *   - T6-T10 断言原样保留（判据与链深无关）。
+ *
  * 时钟注入 = 覆写 [[ProviderRegistry.nowMillis]]（观测缝），固定时刻构造 ⇒ 判据
  * 不依赖跑测时刻。配置全在 spec 内构造，不读/不写真实 HOME。
  */
@@ -59,27 +68,23 @@ class ScheduleRestrictionChainSpec extends CatsEffectSuite:
 
   private val Window14to18 = UnavailableWindow("14:00", "18:00")
 
-  // ── T1：窗内剔除、窗序不变 ────────────────────────────────
+  // ── T1（重写）：窗内剔除唯一候选 ⇒ 空链 ────────────────────
 
-  test("T1 窗内：受限 provider 的候选被剔除，其余保持原链序") {
+  test("T1(重写) 窗内：唯一候选（受限 provider）被剔除 ⇒ 链出口给空链；未引用 provider 不承接（fallback 废除）") {
     val cfg = NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map(
       "zhipu" -> providerWith(List(ModelConfig("glm")), windows = List(Window14to18)),
       "kimi" -> providerWith(List(ModelConfig("kimi-for-coding")), windows = List(Window14to18)),
       "cmdcode" -> providerWith(List(ModelConfig("deepseek-flash")))
     )))
-    val chain = AgentModelConfig(
-      preferred = Some("zhipu/glm"),
-      fallbacks = List("kimi/kimi-for-coding", "cmdcode/deepseek-flash")
-    )
+    // 链深恒 1：fallbacks 数组退役 ⇒ 链 = preferred 单根
+    val chain = AgentModelConfig(preferred = Some("zhipu/glm"), fallbacks = Nil)
     mkRegistry(cfg, ThuInsideWindow).flatMap(_.getCandidatesForAgent(Some(chain))).map { cs =>
       val r = refs(cs)
-      assert(!r.contains("zhipu/glm"), s"zhipu 在窗内必须被剔除；实际链 = $r")
-      assert(!r.contains("kimi/kimi-for-coding"), s"kimi 在窗内必须被剔除；实际链 = $r")
-      assertEquals(r.headOption, Some("cmdcode/deepseek-flash"), s"承接方 = 未受限的 cmdcode；实际 = $r")
+      assertEquals(r, Nil, s"窗内唯一候选必须被剔除（空链；终局报错单点在 LlmInterface）；实际链 = $r")
     }
   }
 
-  test("T2 窗外：同一配置链**逐字等于**无窗口配置的链（零行为变化铁律）") {
+  test("T2(重写) 窗外：同一配置链**逐字等于**无窗口配置的链（零行为变化铁律，单根形）") {
     val baseModels = Map(
       "zhipu" -> providerWith(List(ModelConfig("glm"))),
       "kimi" -> providerWith(List(ModelConfig("kimi-for-coding"))),
@@ -90,10 +95,7 @@ class ScheduleRestrictionChainSpec extends CatsEffectSuite:
       "kimi" -> providerWith(List(ModelConfig("kimi-for-coding")), windows = List(Window14to18)),
       "cmdcode" -> providerWith(List(ModelConfig("deepseek-flash")))
     )
-    val chain = AgentModelConfig(
-      preferred = Some("zhipu/glm"),
-      fallbacks = List("kimi/kimi-for-coding", "cmdcode/deepseek-flash")
-    )
+    val chain = AgentModelConfig(preferred = Some("zhipu/glm"), fallbacks = Nil)
     for
       plain <- mkRegistry(NebflowServiceConfig(llm = ServiceLlmConfig(providers = baseModels)), ThuOutsideWindow)
         .flatMap(_.getCandidatesForAgent(Some(chain)))
@@ -101,50 +103,43 @@ class ScheduleRestrictionChainSpec extends CatsEffectSuite:
         .flatMap(_.getCandidatesForAgent(Some(chain)))
     yield
       assertEquals(refs(gated), refs(plain), "窗外必须逐字等于无窗口配置的链")
-      assertEquals(refs(gated).take(3), List("zhipu/glm", "kimi/kimi-for-coding", "cmdcode/deepseek-flash"))
+      assertEquals(refs(gated), List("zhipu/glm"), "链深恒 1 = preferred 单根")
   }
 
-  // ── T3/T4：provider 级 vs 模型级 ────────────────────────────
+  // ── T3/T4（重写）：provider 级 vs 模型级 ────────────────────
 
-  test("T3 provider 级窗口对该 provider 全部模型生效") {
+  test("T3(重写) provider 级窗口对该 provider 全部模型生效（唯一候选被剔 ⇒ 空链）") {
     val cfg = NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map(
       "kimi" -> providerWith(List(ModelConfig("a"), ModelConfig("b")), windows = List(Window14to18)),
       "ok" -> providerWith(List(ModelConfig("m")))
     )))
-    val chain = AgentModelConfig(preferred = Some("kimi/a"), fallbacks = List("kimi/b", "ok/m"))
+    val chain = AgentModelConfig(preferred = Some("kimi/a"), fallbacks = Nil)
     mkRegistry(cfg, ThuInsideWindow).flatMap(_.getCandidatesForAgent(Some(chain))).map { cs =>
-      assertEquals(refs(cs), List("ok/m"), "provider 级窗口下 kimi 的两个模型都必须被剔除")
+      assertEquals(refs(cs), Nil, "provider 级窗口下 kimi/a（唯一候选）必须被剔除")
     }
   }
 
-  test("T4 模型级窗口只影响该模型，同 provider 其它模型照常") {
+  test("T4(重写) 模型级窗口只影响该模型——受限根被剔（空链）、未受限根照常在链") {
     val cfg = NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map(
       "kimi" -> providerWith(List(
         ModelConfig("hit", unavailableWindows = Some(List(Window14to18))),
         ModelConfig("free")
       ))
     )))
-    val chain = AgentModelConfig(preferred = Some("kimi/hit"), fallbacks = List("kimi/free"))
-    mkRegistry(cfg, ThuInsideWindow).flatMap(_.getCandidatesForAgent(Some(chain))).map { cs =>
-      assertEquals(refs(cs).headOption, Some("kimi/free"), s"模型级窗口只剔该模型；实际 = ${refs(cs)}")
-      assert(!refs(cs).contains("kimi/hit"))
-    }
+    for
+      hit <- mkRegistry(cfg, ThuInsideWindow)
+        .flatMap(_.getCandidatesForAgent(Some(AgentModelConfig(preferred = Some("kimi/hit"), fallbacks = Nil))))
+      free <- mkRegistry(cfg, ThuInsideWindow)
+        .flatMap(_.getCandidatesForAgent(Some(AgentModelConfig(preferred = Some("kimi/free"), fallbacks = Nil))))
+    yield
+      assertEquals(refs(hit), Nil, "模型级窗口剔掉受限的 kimi/hit（唯一候选）")
+      assertEquals(refs(free), List("kimi/free"), "同 provider 未受限模型照常在链（模型级粒度判据保留）")
   }
 
-  // ── T5：储备层承接（链深不因时段塌成 0）────────────────────
-
-  test("T5 储备层：预设链两根全受限 ⇒ 未受限的储备模型承接（链非空）") {
-    val cfg = NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map(
-      "zhipu" -> providerWith(List(ModelConfig("glm")), windows = List(Window14to18)),
-      "kimi" -> providerWith(List(ModelConfig("kimi")), windows = List(Window14to18)),
-      "cmdcode" -> providerWith(List(ModelConfig("deepseek-flash")))
-    )))
-    val chain = AgentModelConfig(preferred = Some("zhipu/glm"), fallbacks = List("kimi/kimi"))
-    mkRegistry(cfg, ThuInsideWindow).flatMap(_.getCandidatesForAgent(Some(chain))).map { cs =>
-      val r = refs(cs)
-      assertEquals(r, List("cmdcode/deepseek-flash"), s"只有未受限的储备模型留链；实际 = $r")
-    }
-  }
+  // ── T5 **整条删除**（fallback 废除批申报）：储备层承接面已退役
+  // （`reserveTier` 从 ProviderRegistry 移除）——「预设链两根全受限 ⇒ 未受限的
+  // 储备模型承接」结构性不可达；全受限 ⇒ 空链的判据由 T6 保留。原断言逐字见
+  // git 历史。
 
   // ── T6：全受限 ⇒ 空链（终局报错单点在 LlmInterface）────────
 

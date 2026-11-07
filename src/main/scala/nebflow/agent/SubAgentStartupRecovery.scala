@@ -90,6 +90,14 @@ object SubAgentStartupRecovery:
   /** 重启打断指纹（[[recoverOne]] 终态化写下的 lastError 前缀；回溯标记腿的判据）。 */
   val RestartLossFingerprint = "process restart during in-flight task"
 
+  /**
+   * 失效/待恢复态（重启手动恢复批，作者令 2026-11-06 20:36「保存状态后，由用户手动
+   * 恢复」）：手动模式下在飞孤儿 / ready-to-merge 僵尸 / 重启丢失行的落点状态——
+   * 不判死（failed）、不复活（running），面板按「失效 · 待恢复」呈现，恢复入口 =
+   * [[ManualRevival.restoreOne]] / [[ManualRevival.restoreAll]]。
+   */
+  val PendingRecoveryStatus = "pending-recovery"
+
   /** 在飞孤儿资格：running ＋ restarting（supervisor 退避态——进程死亡时同样在飞）。 */
   private val InFlightStatuses = Set("running", "restarting")
 
@@ -113,8 +121,9 @@ object SubAgentStartupRecovery:
    * 同串）：冻结行**单独分诊**——不进在飞收殓视野（不能把冻结当在飞孤儿终态化），
    * 有复活腿 ⇒ 判复活（同 id 续原上下文）；无复活腿 ⇒ 原样留着（用户仍可 Mail
    * `delegate:<id>` 唤醒；长期无人唤醒由 DelegateFreeze.dormantSweep 兜底提示/归档）。
+   * 手动恢复批（2026-11-06）：改 public——[[ManualRevival]] 可恢复状态集引用它。
    */
-  private val FrozenStatus = "frozen"
+  val FrozenStatus = "frozen"
 
   // ── 监督链自动恢复批（2026-10-22 作者令）：boot 复活腿 ────────────────────
   //
@@ -138,11 +147,13 @@ object SubAgentStartupRecovery:
       terminalized: List[String] = Nil,
       revived: List[String] = Nil,
       /** (taskId, 不可复活原因)——资格不满足/预算耗尽/boot cap 超额而走收殓的孤儿。 */
-      revivalSkipped: List[(String, String)] = Nil
+      revivalSkipped: List[(String, String)] = Nil,
+      /** 手动模式：被标 `pending-recovery` 的行（不判死不复活，待用户手动恢复）。 */
+      pended: List[String] = Nil
   ):
     def summary: String =
       s"terminalized=${terminalized.size} revived=${revived.size} (${revived.mkString(",")}) " +
-        s"revivalSkipped=${revivalSkipped.size}"
+        s"revivalSkipped=${revivalSkipped.size} pendedRecovery=${pended.size}"
 
   /** Legacy 签名（收殓 id 列表）——零复活依赖形态，既有调用面/测试零改动。 */
   def recoverOrphans(store: SubAgentTaskStore, sessionStore: SessionStore): IO[List[String]] =
@@ -155,8 +166,22 @@ object SubAgentStartupRecovery:
    * 收尾跑标记回溯腿。无复活依赖（deps=None）= 全员收殓（本批前现状逐字节）。
    * 台账↔面板对账批（增补）：三条路径统一收尾 [[DelegateLedgerReconcile.reconcileInterruptedRecords]]
    * （假中断候选的逐条裁定——旗先落、对账后收敛；fail-soft 绝不阻断 boot）。
+   *
+   * **手动模式（重启手动恢复批，作者令 2026-11-06 20:36 逐字「由于重启/软件崩溃
+   * 导致的错误，不用向上通知，不自动恢复，保存状态后，由用户手动恢复」）**：
+   * `manual = true`（生产缺省 [[Defaults.RestartRecoveryManual]]）⇒ 在飞孤儿与
+   * ready-to-merge 僵尸**不复活、不收殓、零向上通知**——一律标
+   * [[PendingRecoveryStatus]]（失效/待恢复态，子 agent 面板可见），现场四件
+   * （任务行/registry 记录/转录/worktree 指针）原样在盘；用户经 `ManualRevival`
+   * 逐个或一键全部复活。冻结行维持既有「原样保留」处置；完成未报告收尾腿
+   * （finalizeCompletedUnreported）保留——完成交付不是错误通知。
    */
-  def sweep(store: SubAgentTaskStore, sessionStore: SessionStore, revival: Option[RevivalDeps]): IO[Report] =
+  def sweep(
+    store: SubAgentTaskStore,
+    sessionStore: SessionStore,
+    revival: Option[RevivalDeps],
+    manual: Boolean = false
+  ): IO[Report] =
     def settle(): IO[Unit] =
       // 完成未报告收尾腿（本批 V5/审计 D8）先于标记/对账：干完不报的会话在
       // 「重启打断旗」落旗之前就被收尾，不会被误标成「中断」。
@@ -262,7 +287,59 @@ object SubAgentStartupRecovery:
                   logger.warn(s"[startup-recovery] recovery failed for task ${t.taskId}: ${e.getMessage}").as(t.taskId)
                 }
               )
-        frozenNote *> (revival match
+        // ── 手动模式腿（重启手动恢复批 2026-11-06 20:36 作者令）：标 pending-recovery，
+        // 不复活、不收殓、零向上通知（recoverOne 的通知链本批已整体摘除，本腿根本不进它）。
+        def markPending(tasks: List[SubAgentTask]): IO[List[String]] =
+          if tasks.isEmpty then IO.pure(Nil)
+          else
+            logger
+              .info(
+                s"[startup-recovery] MANUAL recovery mode: ${tasks.size} row(s) → pending-recovery " +
+                  s"(no auto-revive / no terminalize / zero parent notify): ${tasks.map(_.taskId).mkString(", ")}"
+              )
+              .as(()) *> tasks
+              .traverse(t =>
+                store
+                  .updateStatus(t.parentSessionId, t.taskId, PendingRecoveryStatus)
+                  .handleErrorWith(e =>
+                    logger
+                      .warn(s"[startup-recovery] pending-recovery mark failed for ${t.taskId}: ${e.getMessage}")
+                      .as(())
+                  )
+                  .as(t.taskId)
+              )
+        // 手动模式下的 ready-to-merge 分诊：有合并队列成员的行零触碰（合并轮对账
+        // 照旧）；无成员的僵尸不收殓（那是判死+通知）→ 标 pending-recovery 待手动恢复。
+        def rtmManual(): IO[List[String]] =
+          if rtmRows.isEmpty then IO.pure(Nil)
+          else
+            IO
+              .blocking(nebflow.core.delegate.MergeQueue.openSnapshot.map(_.delegateId).toSet)
+              .handleErrorWith(e =>
+                logger
+                  .warn(s"[startup-recovery] merge-queue snapshot read failed (treating as empty): ${e.getMessage}")
+                  .as(Set.empty[String])
+              )
+              .flatMap { queued =>
+                val (queuedRows, zombies) = rtmRows.partition(t => queued.contains(t.taskId))
+                val noteQueued =
+                  if queuedRows.isEmpty then IO.unit
+                  else
+                    logger
+                      .info(
+                        s"[startup-recovery] ${queuedRows.size} ready-to-merge row(s) left to the merge-queue boot reconcile: ${queuedRows.map(_.taskId).mkString(", ")}"
+                      )
+                noteQueued *> markPending(zombies)
+              }
+        frozenNote *> (
+          if manual then
+            rtmManual().flatMap { pendedRtm =>
+              markPending(orphans).flatMap { pendedOrphans =>
+                settle().as(Report(pended = pendedRtm ++ pendedOrphans))
+              }
+            }
+          else
+            revival match { // 手动模式分支包裹（最小 diff：花括号界定既有 case 缩进）
           case None =>
             salvageAll(orphans).flatMap(ids =>
               rtmSettled.flatMap(rtm => settle().as(Report(terminalized = rtm ++ ids)))
@@ -320,6 +397,7 @@ object SubAgentStartupRecovery:
               revived = revivedNow ++ revivedFrozen,
               revivalSkipped = skipped
             )
+            }
         )
     }
 
@@ -617,107 +695,31 @@ object SubAgentStartupRecovery:
       parentExists <- resources match
         case Some(rs) => SessionLiveness.alive(rs, task.parentSessionId)
         case None     => SessionLiveness.recordAlive(sessionStore, task.parentSessionId)
-      payload =
-        partial match
-          case Some(text) =>
-            s"$head Partial result recovered from the child's disk transcript:\n$text"
-          case None =>
-            s"$head No recoverable result on disk — the task is marked failed. " +
-              s"Original prompt: ${task.prompt.take(500)}"
-      event = AgentCommand.ExternalEvent(
-        source = if task.source == "subtask" then "subtask" else "delegate",
-        eventType = "failed",
-        payload = payload,
-        metadata = JsonObject(
-          "taskId" -> task.taskId.asJson,
-          "agentName" -> task.agentName.asJson,
-          "description" -> task.description.asJson,
-          lostMarkerKey -> true.asJson,
-          "recoveredBy" -> "startup-recovery".asJson
-        ),
-        correlationId = Some(task.taskId)
-      )
-      // 2. Notify the parent via its F2 injection-queue file (idempotent on
-      // correlationId — see object doc).
-      //
-      // 台账 #944（跨设备回报丢件腿）**收口修正**：改前判据是
-      // `sessionStore.listSessions.exists(_.id == parentSessionId)`——即「父会话
-      // 在本机」。对 **device-delegate**（跨设备腿）这是恒假命题：父会话永远在
-      // 对端设备的盘上，本机 sessionStore 里根本没有它。后果 = 通知腿被当成
-      // 「父会话已删」整条跳过，而第 3 步仍写下「partial result salvaged and
-      // delivered to parent」的 lastError —— **写了「已通知」，实际零投递**
-      // （2026-10-26 实证：KAI 14:39:04 boot 收殓 6 件，日志逐字 6 行
-      // `parent=... exists=false`，Mac 侧一件都没收到）。
-      //
-      // 修正：跨设备腿走**设备待发区**（[[nebflow.core.delegate.DeviceResultOutbox]]）
-      // ——那是本机唯一能表达「这件要送到对端设备」的持久面，relay（重）连时按序
-      // 补投，宿主侧按 spawnId 判重。本机会话腿语义逐字不变。
+      // （原 payload/event 构造已随零通知腿摘除——事件只服务于父投递，本批起
+      // 收殓链不再构造任何父可见事件。）
+      // ═══ 零向上通知（重启手动恢复批，作者令 2026-11-06 20:36 逐字「由于重启/软件
+      // 崩溃导致的错误，不用向上通知，不自动恢复，保存状态后，由用户手动恢复」）═══
+      // 改前这里构造 delegate-terminal 失败事件并经三条腿投递父会话：跨设备待发区
+      // （DeviceDelegate.enqueueLostResultNotice）、持久邮箱（MailboxProducer.deliver）、
+      // F2 注入队（notifyOnce），另落持久提醒账（RestartLossLedger.record，压缩时向
+      // 父上下文重述）。四腿**全部摘除**：子代理的失败呈现面 = 子 agent 面板（任务行
+      // failed + lastError 指纹，[[ManualRevival]] 手动复活）；部分结果仍在子会话转录
+      // 里（面板/弹窗可读），父会话上下文零注入。完成腿（finalizeOne 的交付）不在本
+      // 判据内——完成交付不是错误通知，保持原样。
       rec = nebflow.core.delegate.DelegateRegistry.find(task.taskId)
       hostDeviceId = rec.flatMap(_.delegatedBy)
-      // 投递结果（审计 D1 修复腿）：改前 `.void` 把 MailResult.Failed / AlreadyPresent
-      // 一律当成功，而第 3 步无论哪条支路都写「delivered to parent」——文案与两侧可
-      // 感知事实脱节（作者实证：09:09 两条通知注入后 7 分钟被压缩抹除，父会话零记忆）。
-      // 本批起投递结果**如实回传**：进 lastError 文案 + 落一条可观测回执（日志行 +
-      // ChainStore 台账行 + 持久提醒账），判词节点可机械核对。
-      delivery: Either[String, String] <-
-        hostDeviceId match
-          case Some(host) =>
-            // 跨设备腿：落待发区（幂等键 = taskId；内容 = 收殓形态的 delegate-result，
-            // 形态与 resultProxyBehavior 的真终态件同构，宿主 handleResult 同一入口）。
-            nebflow.core.delegate.DeviceDelegate
-              .enqueueLostResultNotice(task, host, partial, head)
-              .attempt
-              .map(_.fold(e => Left(s"device-outbox:${Option(e.getMessage).getOrElse("error")}"), _ => Right(s"device-outbox:$host")))
-          case None =>
-            // ═══ P2 邮箱化（终态通知 actor 邮箱化批）：收殓报父改走持久邮箱 ═══
-            // delegate 轨：mailOnce 幂等入箱（写成功=必达；门铃 best-effort）——
-            // 通知不再依赖父会话 F2 注入队（旧链保留给 subtask 轨与旧队列重放，
-            // delegate 轨双发=事故）。resources 缺席（legacy 无 SharedResources
-            // 载体场——既有测试形态）= 逐字回退 F2 老链。
-            if task.source != "subtask" && parentExists then
-              resources match
-                case Some(rs) =>
-                  MailboxProducer
-                    .deliver(
-                      rs,
-                      task.parentSessionId,
-                      event,
-                      identity = task.taskId,
-                      kind = "delegate-terminal",
-                      coalesce = false,
-                      producer = "startup-recovery"
-                    )
-                    .attempt
-                    .map {
-                      case Right(nebflow.core.mail.SessionMailbox.MailResult.Failed(cause)) => Left(s"mailbox:$cause")
-                      case Right(nebflow.core.mail.SessionMailbox.MailResult.AlreadyPresent) => Right("mailbox:AlreadyPresent")
-                      case Right(_) => Right("mailbox:Enqueued")
-                      case Left(e) => Left(s"mailbox:${Option(e.getMessage).getOrElse("error")}")
-                    }
-                case None =>
-                  notifyOnce(task.parentSessionId, event)
-                    .attempt
-                    .map(_.fold(e => Left(s"f2-queue:${Option(e.getMessage).getOrElse("error")}"), _ => Right("f2-queue")))
-            // subtask 轨：既有 F2 注入队通知腿逐字保持（P3 全通知面迁移另批）。
-            else if parentExists then
-              notifyOnce(task.parentSessionId, event)
-                .attempt
-                .map(_.fold(e => Left(s"f2-queue:${Option(e.getMessage).getOrElse("error")}"), _ => Right("f2-queue")))
-            else IO.pure(Left("parent-session-gone"))
-      // 2b. 可观测回执（日志行 + 台账行）+ 持久提醒账（D1「未确认」维度载体）：
-      //     仅邮箱轨落账（生产唯一投递面；F2/跨设备轨不产生本机账目）。账目在
-      //     上下文压缩完成处被重述（`RestartLossLedger.restatementSync`），
-      //     ⇒ 收殓通知在压缩后仍可被父会话重新感知。
+      // 投递结果面（保留字段形状供 ChainStore 台账行与日志读面）：本批起恒为
+      // suppressed——「零通知」是语义裁定，不是投递失败，台账行如实记之。
+      delivery: Either[String, String] = Right("suppressed:zero-notify-by-author-order")
+      // 2b. 可观测回执（日志行 + 台账行）：台账行 = 审计（落 ChainStore，不是用户
+      // 可见通知）。原「持久提醒账」腿（RestartLossLedger.record → 压缩时向父上下文
+      // 重述收殓通知）随零通知语义一并摘除（重启手动恢复批 2026-11-06 20:36）。
       _ <- delivery match
         case Right(ok) =>
-          logger.info(s"[startup-recovery] notify receipt ${task.taskId} → parent ${task.parentSessionId.take(16)}: $ok") *>
-            IO.whenA(ok.startsWith("mailbox"))(
-              RestartLossLedger.record(
-                task.parentSessionId,
-                task.taskId,
-                s"${task.description} — $head".take(240)
-              )
-            )
+          logger.info(
+            s"[startup-recovery] zero-notify receipt ${task.taskId} → parent ${task.parentSessionId.take(16)}: $ok " +
+              "(panel display + manual revival only — no parent mailbox / F2 / device-outbox / ledger notice)"
+          )
         case Left(err) =>
           logger.error(
             s"[startup-recovery] notify DELIVERY FAILED ${task.taskId} → parent ${task.parentSessionId.take(16)}: $err " +
@@ -750,23 +752,23 @@ object SubAgentStartupRecovery:
           // 文案与事实同源（D1）：`delivered` 为 Left 时必须写「投递失败」，绝不写
           // 「delivered to parent」——任务行是面板/对账/晨报的读面，撒谎会误导排障。
           // 前缀恒为 [[RestartLossFingerprint]]（failed 行复活腿的判据依赖它）。
+          // 零通知语义（重启手动恢复批 2026-11-06 20:36）：文案如实写「未通知父会话
+          // （零通知裁定）」——绝不写「delivered to parent」。
           partial match
             case Some(_) =>
               if lostMarkerKey == "lostToWatchdog" then
                 "restarting-barrier stall: no live actor for the in-flight task — watchdog force-terminalized, partial result salvaged" +
-                  (if delivery.isRight then " and delivered to parent" else s"; parent notification FAILED (${delivery.fold(c => c, _ => "?")})")
+                  "; parent NOT notified (zero-notify by author order 2026-11-06 — sub-agent panel shows the state; restore via ManualRevival)"
               else
                 s"$RestartLossFingerprint — partial result salvaged" +
-                  (if delivery.isRight then " and delivered to parent (startup recovery V2)"
-                   else s"; parent notification FAILED (${delivery.fold(c => c, _ => "?")}) — startup recovery V2")
+                  "; parent NOT notified (zero-notify by author order 2026-11-06 — sub-agent panel shows the state; restore via ManualRevival)"
             case None =>
               if lostMarkerKey == "lostToWatchdog" then
                 "restarting-barrier stall: no live actor for the in-flight task — watchdog force-terminalized, result lost" +
-                  (if delivery.isRight then ", parent notified" else s"; parent notification FAILED (${delivery.fold(c => c, _ => "?")})")
+                  "; parent NOT notified (zero-notify by author order 2026-11-06 — sub-agent panel shows the state; restore via ManualRevival)"
               else
                 s"$RestartLossFingerprint — result lost" +
-                  (if delivery.isRight then ", parent notified (startup recovery V2)"
-                   else s"; parent notification FAILED (${delivery.fold(c => c, _ => "?")}) — startup recovery V2")
+                  "; parent NOT notified (zero-notify by author order 2026-11-06 — sub-agent panel shows the state; restore via ManualRevival)"
         ),
         completedAt = Some(now)
       )
@@ -778,19 +780,8 @@ object SubAgentStartupRecovery:
       )
     yield task.taskId
 
-  /**
-   * Append the event to the parent's persisted injection queue, unless an
-   * event with the same correlationId (taskId) is already queued — the
-   * crash-between-steps guard that keeps notification at-most-once.
-   */
-  private def notifyOnce(parentSessionId: String, event: AgentCommand.ExternalEvent): IO[Unit] =
-    CompactionQueueStore.load(parentSessionId).flatMap { existing =>
-      val already = existing.exists(_.events.exists(_.correlationId.contains(event.correlationId.getOrElse(""))))
-      if already then IO.unit
-      else
-        val q = existing.getOrElse(CompactionQueueStore.PersistedQueues())
-        CompactionQueueStore.save(parentSessionId, q.copy(events = q.events :+ event))
-    }
+  // （原 notifyOnce——父会话 F2 注入队的幂等追加——已随零通知腿整体摘除：
+  //  重启手动恢复批 2026-11-06 20:36 作者令「不用向上通知」。）
 
   /**
    * Last non-empty assistant text from the child transcript (same extraction

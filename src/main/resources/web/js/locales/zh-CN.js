@@ -1355,13 +1355,14 @@ export default {
   'settings.secretsCount': '{n} 个密钥',
   'settings.secretsNone': '尚无密钥',
   'settings.addProvider': '+ 添加服务商',
-  'settings.modelChainHint': '在输入框输入 /model 命令，以统一/分开两种模式配置各角色的模型链。',
+  // fallback 废除批（2026-11-06 20:36）：按会话类别单模型配置。
+  'settings.modelChainHint': '在输入框输入 /model 命令，按会话类别（主agent/kernel/dispatcher/node/subagent）配置各自的单个模型。',
   // 配置面风格统一批②（2026-10-31 作者令）：设置页顺序节（/model 顺序编辑器
   // 同款内容面，两份共享同一状态/保存通道）。
   // 精简批（作者令 2026-11-01）：标题「模型回退链」→「模型选择顺序」；说明
   // 压到一行以内（超长删繁就简，不再折行）。
-  'settings.modelChainTitle': '模型选择顺序',
-  'settings.modelChainSectionHint': '首选在前，拖动排序即存，与 /model 同步。',
+  'settings.modelChainTitle': '模型（按会话类别）',
+  'settings.modelChainSectionHint': '每类会话一个模型，选择即存，与 /model 同步；切换某类，同类会话下一轮一起生效。',
   // /model 面板文案（modelcfg Phase 1）
   'model.title': '模型配置',
   'model.modeUnified': '统一配置',
@@ -1371,7 +1372,9 @@ export default {
   'model.chainHead': '首选',
   'model.chainFallback': '备用',
   'model.addModel': '添加模型',
-  'model.orderNote': '顺序 = 出错时自动切换的先后次序',
+  // fallback 废除批（2026-11-06 20:36 作者令「不再支持模型fallback」）：顺序面退役
+  // ——每类恒单模型；失效 = 失效态静默等待 + 面板显式切换。
+  'model.orderNote': '每类会话固定一个模型——出错不再自动切换（模型失效在子代理面板标失效、静默等待）',
   'model.followers': '跟随方',
   'model.followsNebula': '跟随 {agent}',
   'model.independent': '已独立配置',
@@ -1391,7 +1394,7 @@ export default {
   'model.divergedBar': '{roles} 已独立配置，不受主链影响',
   'model.divergedView': '查看',
   'model.seedNote': '未配置，将使用首个可用模型',
-  'model.singleModelNote': '仅 1 个模型，无备用——出错将直接使用储备层',
+  'model.singleModelNote': '单模型：模型失效时会话进入失效态、静默等待恢复；可在子代理面板或具体对话框里切换模型',
   'model.loadFailed': '加载失败',
   // 台账 #937：面板级降级面（全角色读数失败 —— 静默僵面修复）。提示给全
   // 真因两支 + 恢复路径。
@@ -1405,6 +1408,10 @@ export default {
   // 按本批口径登记并延后到注释/文本清理批删除。
   'model.roleKernel': 'kernel',
   'model.roleGeneral': '节点',
+  // 模型粒度批（2026-11-06 20:36 作者令五类槽）：kernel/node/subagent 三个虚拟
+  // 模型槽的显示名（原 P1-2 的「零消费点」登记就此解除——kernel 以独立槽身份回归）。
+  'model.roleNode': 'node（节点）',
+  'model.roleSubagent': 'subagent（子代理）',
   'model.viaSlash': '用 /model 命令编辑',
   'model.currentRun': '当前运行',
   // jev-imagegen-align-llm 批（2026-11-02，契约 §D.4）：/model 里 Jev / 生图
@@ -2012,6 +2019,15 @@ export default {
   // ① ready-to-merge 状态词（delegate 行状态列；#1224 判词语义：
   //    「有分支产物、入 FIFO 候合并」）
   'delegate.readyToMerge': '待合并',
+  // 手动恢复批（作者令 2026-11-06 20:36）：失效态两档 + 恢复动作（子代理面板）。
+  'delegate.invalidWaiting': '失效 · 静默等待恢复',
+  'delegate.pendingRecovery': '重启中断 · 待恢复',
+  'delegate.restore': '恢复',
+  'delegate.restoreAll': '一键全部恢复',
+  'delegate.restoreDone': '已恢复 {count} 个会话',
+  'delegate.restoreFailed': '恢复失败：{error}',
+  'delegate.modelSwitch': '切换模型',
+  'delegate.modelFollowSlot': '跟随类别（默认）',
   // ② S10 per-task 链视图顶栏返回钮
   'delegate.backToTasks': '返回任务列表',
   // ③ S11 结构总视图头

@@ -29,8 +29,15 @@ import scala.jdk.CollectionConverters.*
  *   T4 550 + **空响应体** ⇒ 同 T3（非标准码走同一族）
  *   T5 连续 3 次 5xx ⇒ 冷却窗 15s→30s→60s（指数）+ 冷却期内候选被剔出链
  *   T6 冷却后一次成功 ⇒ strikes 清零（半开试探恢复）
- *   T7 403 ⇒ 不重试、直接换、markDown（确证死亡不回归）
+ *   T7 403 ⇒ 不重试、配额软回避（不 markDown、不落 5xx 冷却）
  *   T8 429 + 上游 code 1310（zhipu 周/月额度实测）⇒ 配额族，不落 5xx 冷却
+ *
+ * **fallback 废除批改写（作者令 2026-11-06 20:36「不再支持模型fallback」，逐条申报）**：
+ *   runTurn 链深恒 1（`fallbacks = Nil`，b/m1 不再被链引用）；单候选终局 = 全灭闸
+ *   静默等待（预算 ProbeIntervalSec=120s），测试给 8s 有界上界取终局（哨兵以 Left
+ *   捕获，不使 IO 失败）。T3/T4/T7 **重写**：「换 provider」交付面随 fallback 退役，
+ *   判据收窄为「冷却/软回避 + 不 markDown + 有界静默等待 + 未引用 b 零命中」；
+ *   T1/T2/T5/T6/T8 与链深无关，一字未动。原断言逐字内容见 git 历史。
  */
 class UpstreamUnavailableSpec extends CatsEffectSuite:
 
@@ -136,7 +143,7 @@ class UpstreamUnavailableSpec extends CatsEffectSuite:
       )
     )
 
-  /** 一次真实流式 turn（a/m1 首选、b/m1 兜底）+ 健康态 + 冷却计数 + 软回避窗。 */
+  /** 一次真实流式 turn（a/m1 首选、链深恒 1）+ 健康态 + 冷却计数 + 软回避窗。 */
   private def runTurn(
     config: NebflowServiceConfig
   ): IO[(Either[Throwable, String], Map[String, HealthState], Map[String, Int], Map[String, Long])] =
@@ -149,14 +156,24 @@ class UpstreamUnavailableSpec extends CatsEffectSuite:
         messages = List(Message(MessageRole.User, Left("hi"))),
         sessionId = "upstream-5xx",
         agentId = "upstream-5xx-agent",
-        agentModel = Some(AgentModelConfig(preferred = Some("a/m1"), fallbacks = List("b/m1")))
+        // fallback 废除批（作者令 2026-11-06 20:36）：链深恒 1（b/m1 不再被链引用）
+        agentModel = Some(AgentModelConfig(preferred = Some("a/m1"), fallbacks = Nil))
       )
+      // fallback 废除批申报：单候选失败 ⇒ 静默等待恢复面（全灭闸，预算
+      // ProbeIntervalSec=120s）——给 8s 有界上界取终局，不无限等。哨兵以 **Left
+      // 捕获**（raiseError 会让整个 IO 失败、下方断言面根本走不到）。
       chunks <- handle
         .sendStream(req)
         .collect { case StreamChunk.TextDelta(d) => d }
         .compile
         .toList
         .attempt
+        .timeoutTo(
+          8.seconds,
+          IO.pure(
+            Left(new RuntimeException("all-down gate exceeded test bound")): Either[Throwable, List[String]]
+          )
+        )
       states <- monitor.getStates
       strikes <- monitor.getCooldownStrikes
       avoids <- monitor.getAvoidUntil
@@ -231,13 +248,16 @@ class UpstreamUnavailableSpec extends CatsEffectSuite:
   }
 
   // ── T3 500 ⇒ 换 provider，不冻结（不 markDown） ──────────────────────────
-  test("T3: 500 ⇒ 兜底 provider 服务、本家不进 Down（冷却窗替代驱逐）") {
+  test("T3(重写): 500 ⇒ 冷却窗替代驱逐（本家不进 Down）+ 单候选静默等待（有界终局）；后备不承接（fallback 废除）") {
     withServers(List(Port500 -> "500", PortOk -> "ok")) {
       runTurn(mkConfig(Port500, PortOk)).map { case (chunks, states, strikes, avoids) =>
-        assertEquals(chunks, Right("BB"), "the next provider must serve the turn")
+        chunks match
+          case Right(text) =>
+            fail(s"唯一候选 500 ⇒ 不得有根交付（后备已随 fallback 退役），实际成功 = $text")
+          case Left(_) => () // 终局 = 静默等待（全灭闸/测试上界）——下方冷却面钉死
         assert(!states.contains("a/m1"), s"5xx must NOT markDown (frozen-agent root cause), got ${states.get("a/m1")}")
         // 同 provider 会先就地重试一次（Transient + retriesLeft>0）⇒ 两条失败各记一次
-        assertEquals(strikes.get("a/m1"), Some(2), "5xx retried once in place ⇒ two strikes before the switch")
+        assertEquals(strikes.get("a/m1"), Some(2), "5xx retried once in place ⇒ two strikes before the wait")
         assert(
           avoids.get("a/m1").exists(_ > System.currentTimeMillis()),
           "the provider must be cooled down (soft-avoid window is live)"
@@ -247,10 +267,13 @@ class UpstreamUnavailableSpec extends CatsEffectSuite:
   }
 
   // ── T4 550 + 空响应体 ⇒ 同族同处置 ──────────────────────────────────────
-  test("T4: 550 + 空响应体（现场形态）⇒ 兜底 provider 服务、本家不进 Down") {
+  test("T4(重写): 550 + 空响应体（现场形态）⇒ 冷却替代驱逐 + 单候选静默等待（有界终局）") {
     withServers(List(Port550 -> "550", PortOk -> "ok")) {
       runTurn(mkConfig(Port550, PortOk)).map { case (chunks, states, strikes, avoids) =>
-        assertEquals(chunks, Right("BB"), "550 with an empty body must fall through, not abort")
+        chunks match
+          case Right(text) =>
+            fail(s"唯一候选 550 ⇒ 不得有根交付（后备已随 fallback 退役），实际成功 = $text")
+          case Left(_) => () // 终局 = 静默等待（全灭闸/测试上界）
         assert(!states.contains("a/m1"), s"550 must NOT markDown, got ${states.get("a/m1")}")
         assertEquals(strikes.get("a/m1"), Some(2), "one in-place retry ⇒ two strikes")
         assert(avoids.get("a/m1").exists(_ > System.currentTimeMillis()))
@@ -336,19 +359,26 @@ class UpstreamUnavailableSpec extends CatsEffectSuite:
     }.unsafeRunSync()
   }
 
-  // ── T7 403 回归：确证死亡仍驱逐 ─────────────────────────────────────────
-  test("T7: 403（配额闸形态）⇒ 不重试、直接换 provider、走配额软回避而不是 5xx 冷却") {
+  // ── T7（重写，fallback 废除批）403 配额闸形态 ───────────────────────────
+  // 原 T7：「不重试、直接换 provider、走配额软回避」——「直接换」面随 fallback
+  // 退役（唯一候选后无下一根可换，后备不暗中承接）；「不重试 / 配额软回避 /
+  // 不 markDown / 不落 5xx 冷却」判据原样钉死 + 新增 b 零命中。原断言逐字见 git 历史。
+  test("T7(重写): 403（配额闸形态）⇒ 不重试、配额软回避而非 5xx 冷却、不 markDown；单候选静默等待（有界终局）；b 零命中（fallback 废除）") {
     val hits403 = new java.util.concurrent.atomic.AtomicInteger(0)
     val hitsOk = new java.util.concurrent.atomic.AtomicInteger(0)
     val program = for
       s403 <- startMock(Port403, "403", hits403)
       sOk <- startMock(PortOk, "ok", hitsOk)
       result <- runTurn(mkConfig(Port403, PortOk)).guarantee(IO.blocking { s403.stop(0); sOk.stop(0) })
-    yield (result, hits403.get())
-    val ((chunks, states, strikes, avoids), hits) = program.unsafeRunSync()
-    assertEquals(chunks, Right("BB"), "403 must fall through to the next provider")
-    // 403 = 配额闸形态（plan quota）⇒ 软回避窗 + 立即换链，**不重试**（Auth/Permanent）
+    yield (result, hits403.get(), hitsOk.get())
+    val ((chunks, states, strikes, avoids), hits, hitsOkN) = program.unsafeRunSync()
+    chunks match
+      case Right(text) =>
+        fail(s"唯一候选 403 ⇒ 不得有根交付（无下一根可换，后备已随 fallback 退役），实际成功 = $text")
+      case Left(_) => () // 终局 = 单候选静默等待（全灭闸/测试上界哨兵）
+    // 403 = 配额闸形态（plan quota）⇒ 软回避窗 + **不重试**（Permanent 拒绝，无就地重试）
     assertEquals(hits, 1, "403 is not retried in place (permanent rejection)")
+    assertEquals(hitsOkN, 0, "未引用的 b 必须零命中（fallback 废除：不暗中承接）")
     assert(
       avoids.get("a/m1").exists(_ > System.currentTimeMillis()),
       "403 lands in the quota soft-avoid window"

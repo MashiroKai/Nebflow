@@ -1398,13 +1398,14 @@ export default {
   'settings.secretsCount': '{n} secrets',
   'settings.secretsNone': 'No secrets yet',
   'settings.addProvider': '+ Add Provider',
-  'settings.modelChainHint': 'Type the /model command to configure per-role model chains in unified or per-role mode.',
+  // fallback-abolition batch (2026-11-06 20:36): one model per session class.
+  'settings.modelChainHint': 'Type the /model command to configure one model per session class (main agent / kernel / dispatcher / node / subagent).',
   // 配置面风格统一批②（2026-10-31 作者令）：设置页顺序节（/model 顺序编辑器
   // 同款内容面，两份共享同一状态/保存通道）。
   // 精简批（作者令 2026-11-01）：标题「模型回退链」→「模型选择顺序」；说明
   // 压到一行以内（超长删繁就简，不再折行）。
-  'settings.modelChainTitle': 'Model selection order',
-  'settings.modelChainSectionHint': 'First row is primary — drag to reorder, saves on change.',
+  'settings.modelChainTitle': 'Model (per session class)',
+  'settings.modelChainSectionHint': 'One model per class, saves on change, synced with /model; switching a class applies to all its sessions next turn.',
   // /model panel (modelcfg Phase 1)
   'model.title': 'Model Configuration',
   'model.modeUnified': 'Unified',
@@ -1414,7 +1415,9 @@ export default {
   'model.chainHead': 'Primary',
   'model.chainFallback': 'Fallback',
   'model.addModel': 'Add model',
-  'model.orderNote': 'Order = automatic failover sequence',
+  // fallback-abolition batch (author order 2026-11-06 20:36): the order face is
+  // retired — one model per class; failure = invalid state + silent wait.
+  'model.orderNote': 'One model per class — no automatic failover (a failed model marks the session invalid; it waits silently)',
   'model.followers': 'Followers',
   'model.followsNebula': 'Follows {agent}',
   'model.independent': 'Independently configured',
@@ -1434,7 +1437,7 @@ export default {
   'model.divergedBar': '{roles} configured independently; unaffected by the primary chain',
   'model.divergedView': 'View',
   'model.seedNote': 'Not configured — the first available model will be used',
-  'model.singleModelNote': 'Only 1 model and no fallback — errors go straight to the reserve tier',
+  'model.singleModelNote': 'Single model: on failure the session is marked invalid and waits silently — switch it from the sub-agent panel or the dialog',
   'model.loadFailed': 'Failed to load',
   // Ledger #937: panel-wide degraded face (all role reads failed — silent-dead
   // panel fix). Hint names the two real causes + the recovery path.
@@ -1449,6 +1452,11 @@ export default {
   // context), so they are registered and deferred to the comment/text cleanup batch.
   'model.roleKernel': 'kernel',
   'model.roleGeneral': 'Node',
+  // Model-granularity batch (author order 2026-11-06 20:36, five class slots):
+  // display names for the three virtual model slots (kernel/node/subagent) —
+  // the P1-2 "zero consumers" registration is lifted: kernel returns as a slot.
+  'model.roleNode': 'Node',
+  'model.roleSubagent': 'Subagent',
   'model.viaSlash': 'Edit with the /model command',
   'model.currentRun': 'Running',
   // jev-imagegen-align-llm batch (2026-11-02, contract §D.4): two new /model
@@ -2078,6 +2086,16 @@ export default {
   // ① ready-to-merge status word (delegate row status column; #1224 verdict semantics:
   //    "has branch artifacts, entered the FIFO awaiting merge")
   'delegate.readyToMerge': 'Ready to merge',
+  // Manual-recovery batch (author order 2026-11-06 20:36): the two invalid
+  // states + restore actions (sub-agent panel).
+  'delegate.invalidWaiting': 'Invalid · waiting for recovery',
+  'delegate.pendingRecovery': 'Restart-interrupted · pending recovery',
+  'delegate.restore': 'Restore',
+  'delegate.restoreAll': 'Restore all',
+  'delegate.restoreDone': 'Restored {count} session(s)',
+  'delegate.restoreFailed': 'Restore failed: {error}',
+  'delegate.modelSwitch': 'Switch model',
+  'delegate.modelFollowSlot': 'Follow class (default)',
   // ② S10 per-task chain view top bar back button
   'delegate.backToTasks': 'Back to tasks',
   // ③ S11 structure overview header

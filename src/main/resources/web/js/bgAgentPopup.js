@@ -58,6 +58,15 @@ if (typeof document !== 'undefined' && !document.getElementById('bgagent-delegat
   padding: var(--ds-space-2) var(--ds-space-3);
   font-size: var(--ds-fs-hint);
 }
+/* 模型粒度批（作者令 2026-11-06 20:36「点击具体的对话框里去选择切换」）：弹窗头
+   模型**单切**下拉（会话级 override，WS setSessionModel 单点）——类切 = 同类全部
+   会话一起变（/model 面板 / 设置面）；这里是单会话粒度。材质走 --ds-* 槽。 */
+.bgagent-model-switch {
+  max-width: 16rem; min-width: 0; padding: 0 var(--ds-space-2);
+  font-size: var(--ds-fs-meta); color: var(--ds-text-muted);
+  background: transparent; border: var(--ds-border-width) solid var(--ds-border-hairline);
+  border-radius: var(--ds-radius-input); cursor: pointer;
+}
 /* 收起式摘要条（WF-01）：默认收起 = 一行（任务 chip + brief 摘要 + 结果词 +
    展开 chevron）；点开 = 任务 brief 全文 + 判词 + 报告全文（九点⑦正文不丢）。 */
 .bgagent-strip-toggle {
@@ -521,6 +530,7 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
       <div class="flow-agent-header">
         <span class="flow-agent-name">${esc(agentName || entry.meta.agentName || 'Sub-agent')}</span>
         <span class="flow-agent-model" id="bgagent-model"></span>
+        <select class="bgagent-model-switch" id="bgagent-model-switch" title="${esc(t('delegate.modelSwitch'))}"></select>
         ${isMobileLayer() ? '' : '<div class="flow-agent-close" id="bgagent-close">✕</div>'}
       </div>
       <div class="flow-agent-footer" id="bgagent-footer">
@@ -1116,6 +1126,7 @@ function modelBadgeHtml(current, preferred) {
 }
 
 function renderModelBadge() {
+  renderModelSwitch(); // 模型粒度批：单切下拉与徽标同帧刷新（自带值变化守卫）
   const el = popupOverlay?.querySelector('#bgagent-model');
   if (!el) return;
   const live = currentStepId ? state.sessionModelInfo[currentStepId]?.model : null;
@@ -1125,6 +1136,53 @@ function renderModelBadge() {
   if (html === lastModelBadgeHtml) return; // unchanged — no DOM write
   lastModelBadgeHtml = html;
   el.innerHTML = html;
+}
+
+// 模型粒度批（作者令 2026-11-06 20:36）：弹窗头**单切**下拉 = 单会话模型切换的
+// 承载面（「点击具体的对话框里去选择切换」）。选项 = state.allModelRefs（WS
+// modelOptions 帧，main.js 单点落 state）∪ 当前生效值；空值项 = 「跟随类别（默认）」
+// ⇒ modelRef null（清会话 override，回落类别槽链/派发钉链/agent 自身链的既有
+// 优先级）。发送 = WS `setSessionModel`（引擎 WsConfigHandlers 单点：解析 ref →
+// sessionModelOverrides；模型失效时只在面板显示 + 静默等待，零向上通知）。
+let lastModelSwitchSig = null; // value-change guard — keep DOM stable
+
+function renderModelSwitch() {
+  const el = popupOverlay?.querySelector('#bgagent-model-switch');
+  if (!el) return;
+  const live = currentStepId ? state.sessionModelInfo[currentStepId]?.model : null;
+  const cfg = popupModelCfg || {};
+  const current = live || cfg.current || cfg.preferred || '';
+  const refs = (state.allModelRefs || []).slice();
+  if (current && !refs.includes(current)) refs.unshift(current);
+  const sig = current + '|' + refs.join(',');
+  if (sig === lastModelSwitchSig) return;
+  lastModelSwitchSig = sig;
+  // DOM 构建器写法（component-contract R5：不裸写 innerHTML——选项文本全部
+  // textContent，无净化面绕过）。
+  el.textContent = '';
+  const def = document.createElement('option');
+  def.value = '';
+  def.textContent = t('delegate.modelFollowSlot');
+  if (!current) def.selected = true;
+  el.appendChild(def);
+  for (const r of refs) {
+    const opt = document.createElement('option');
+    opt.value = r;
+    opt.textContent = r;
+    if (r === current) opt.selected = true;
+    el.appendChild(opt);
+  }
+  el.onchange = () => {
+    const v = el.value || '';
+    if (!currentStepId) return;
+    sendWs({ type: 'setSessionModel', sessionId: currentStepId, modelRef: v || null });
+    // 乐观反馈（权威 live 值随下一 turn 的 modelChanged 帧覆盖）：
+    if (v) {
+      const prev = state.sessionModelInfo[currentStepId] || {};
+      state.sessionModelInfo[currentStepId] = { ...prev, model: v };
+    }
+    renderModelBadge();
+  };
 }
 
 /** Fetch agent model config and render a badge in the popup header. */

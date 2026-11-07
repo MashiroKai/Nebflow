@@ -882,34 +882,51 @@ object GatewayMain extends IOApp:
                                   // transcript checkpoint 续跑，父会话最终收续作结果；
                                   // 复活慢段 fork（并发护栏），收殓同步段不变。
                                   val subagentCrashSweep: IO[Unit] =
-                                    nebflow.agent.SubAgentStartupRecovery
-                                      .sweep(
-                                        sharedResources.subAgentTaskStore,
-                                        sessionStore,
-                                        Some(
-                                          nebflow.agent.SubAgentStartupRecovery.RevivalDeps(
-                                            resources = sharedResources,
-                                            system = actorSystem,
-                                            wsSend = Some(json => wsHub.broadcast(json))
-                                          )
-                                        )
+                                    // 手动恢复批（2026-11-06 20:36 作者令「不自动恢复…由用户手动恢复」）：
+                                    // manual = true（缺省）⇒ 在飞孤儿标 pending-recovery、零复活零收殓零
+                                    // 通知；恢复入口 = /api/delegates/restore{,-all}（ManualRevivalHost）。
+                                    // 恢复依赖在此安装（ActorSystem 已建成；REST 臂现读）。
+                                    IO(nebflow.gateway.ManualRevivalHost.install(
+                                      nebflow.agent.DelegateRevival.Deps(
+                                        resources = sharedResources,
+                                        system = actorSystem,
+                                        wsSend = Some(json => wsHub.broadcast(json))
                                       )
-                                      .attempt
-                                      .flatMap {
-                                        case Right(report) if report.terminalized.nonEmpty || report.revived.nonEmpty =>
-                                          logger
-                                            .info(
-                                              s"Subagent crash sweep: ${report.summary} — terminalized: ${report.terminalized.mkString(",")}"
+                                    )).flatMap { _ =>
+                                      nebflow.agent.SubAgentStartupRecovery
+                                        .sweep(
+                                          sharedResources.subAgentTaskStore,
+                                          sessionStore,
+                                          Some(
+                                            nebflow.agent.SubAgentStartupRecovery.RevivalDeps(
+                                              resources = sharedResources,
+                                              system = actorSystem,
+                                              wsSend = Some(json => wsHub.broadcast(json))
                                             )
-                                            .void
-                                        case _ => IO.unit
-                                      }
+                                          ),
+                                          manual = nebflow.shared.Defaults.RestartRecoveryManual
+                                        )
+                                        .attempt
+                                        .flatMap {
+                                          case Right(report)
+                                              if report.terminalized.nonEmpty || report.revived.nonEmpty || report.pended.nonEmpty =>
+                                            logger
+                                              .info(
+                                                s"Subagent crash sweep: ${report.summary} — terminalized: ${report.terminalized.mkString(",")}"
+                                              )
+                                              .void
+                                          case _ => IO.unit
+                                        }
+                                    }
                                   // ═══ 死 delegate TTL 清理（终态 7 天 TTL 批 2026-11-06）═══
                                   // 到期死条目（终态/保存态 ≥ 7 天）的登记移除 + 任务行剪行
                                   // + worktree 联动回收；在飞守卫在 sweep 内（活体/合并队列
                                   // 零触碰）。链位在 subagentCrashSweep **之前**——先把名单外
                                   // 的远古尸体清走，收殓/标记/对账腿对已清条目天然零视野
                                   // （通知源永久沉默）；候重启窗生效（boot 恰一次）。失败只 WARN。
+                                  // 手动恢复批（2026-11-06 20:36）：sweep 只标 pending-recovery、
+                                  // 不清名单——TTL 清理的在飞守卫因此仍能看到待恢复行（活体/合并
+                                  // 队列零触碰语义不变）。
                                   val delegateTtlSweep: IO[Unit] =
                                     nebflow.agent.DelegateTtlSweep
                                       .run(sharedResources)

@@ -21,8 +21,10 @@ import scala.concurrent.duration.*
  * 确定在窗内，且判据不依赖跑测时刻。
  *
  * 判据（三条）：
- *   T1 窗内 + 链 = [受限, 不受限] ⇒ 已运行 mock 的 **HTTP 命中数 = 0**（决定性
- *      读数：绕过而非「打了再失败」），答案由不受限方交付；
+ *   T1（**重写**，fallback 废除批 2026-11-06 20:36「不再支持模型fallback」）窗内 +
+ *      链 = 单根受限 ⇒ 受限根 **HTTP 命中数 = 0** 且以 ModelScheduleRestrictedError
+ *      快失败；**未引用的 open provider 零命中**（不暗中回补——原「答案由未受限方
+ *      交付」的多根面随 fallback 退役）；T2/T3 断言原样保留。
  *   T2 全受限 ⇒ <3s 快失败（不进 120s 全灭闸），错误消息带原因（窗口 + 受限清单，
  *      不静默）；
  *   T3 窗口设成窗外（now+2h）⇒ 受限方照常承接（零行为变化腿 / 负控：证明 T1 的
@@ -103,10 +105,11 @@ class ScheduleChainSwitchSpec extends CatsEffectSuite:
     IO.blocking(servers.filter(_ != null).foreach(_.stop(0)))
 
   // ============================================================
-  // T1：窗内 ⇒ 受限 provider **零 HTTP 命中**，答案由未受限方交付
+  // T1（重写，fallback 废除批）：窗内 ⇒ 受限根零 HTTP 命中 + 受限错误快失败；
+  // 未引用的 open provider 同样零命中（不暗中回补）
   // ============================================================
 
-  test("T1 时段闸绕过：窗口 = 当前时刻±10 分钟 ⇒ 受限 provider 命中数 = 0，答案由未受限方交付") {
+  test("T1(重写) 时段闸绕过：窗口 = 当前时刻±10 分钟 ⇒ 受限根零命中并以受限错误快失败；未引用 provider 零命中") {
     val hitsRestricted = new AtomicInteger(0)
     val hitsOpen = new AtomicInteger(0)
     var s1: HttpServer = null
@@ -116,7 +119,8 @@ class ScheduleChainSwitchSpec extends CatsEffectSuite:
       ("zhipu", PortRestricted, List("glm"), List(win)),
       ("cmdcode", PortOpen, List("deepseek-flash"), Nil)
     )
-    val chain = AgentModelConfig(preferred = Some("zhipu/glm"), fallbacks = List("cmdcode/deepseek-flash"))
+    // 链深恒 1：cmdcode 不再被链引用（原「答案由未受限方交付」面随 fallback 退役）
+    val chain = AgentModelConfig(preferred = Some("zhipu/glm"), fallbacks = Nil)
     val program =
       for
         a <- startMock(PortRestricted, "RESTRICTED-SHOULD-NOT-RUN", hitsRestricted)
@@ -142,14 +146,17 @@ class ScheduleChainSwitchSpec extends CatsEffectSuite:
 
     program.flatMap {
       case Right(chunks) =>
+        IO(fail(s"窗内唯一候选受限 ⇒ 必须快失败（不得有根交付），实际成功 = ${textOf(chunks)}"))
+      case Left(_: ModelScheduleRestrictedError) =>
         IO {
-          assertEquals(textOf(chunks), "OPEN", "必须由未受限的 cmdcode 交付答案")
           // 决定性读数：受限方连一个请求都不该收到（绕过，而非「打了再失败」）
           assertEquals(hitsRestricted.get(), 0, s"受限 provider 必须零命中（实际 ${hitsRestricted.get()} 次）")
-          assert(hitsOpen.get() >= 1, s"未受限方必须承接（实际 ${hitsOpen.get()} 次）")
+          // fallback 废除：未引用的 cmdcode 同样零命中（不暗中回补）
+          assertEquals(hitsOpen.get(), 0, s"未引用 provider 必须零命中（fallback 废除，实际 ${hitsOpen.get()} 次）")
           assert(ModelAvailability.isUnavailable(List(win), System.currentTimeMillis()))
         }
-      case Left(e) => IO(fail(s"窗内必须绕过受限 provider 并成功；实际失败 = ${e.getClass.getName}: ${e.getMessage}"))
+      case Left(e) =>
+        IO(fail(s"窗内必须以 ModelScheduleRestrictedError 终局；实际 = ${e.getClass.getName}: ${e.getMessage}"))
     }
   }
 

@@ -1,0 +1,1051 @@
+[sbt-gate] gate acquired after 0s
+[sbt-gate] heap cap not injected: SBT_OPTS already carries -Xmx (explicit wins)
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project model-granularity-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/model-granularity/project
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/model-granularity/)
+[warn] javaOptions will be ignored, fork is set to false
+10:29:37.937 [33mWARN [0m nebflow.llm.anthropic - thinking mode dropped for this request: provider=deepseek model=deepseek-flash requires thinking passback but session history contains assistant messages without thinking blocks (cross-provider replay) — replaying would 400 (audit 20260903 #4); request=u:t,a:t,u:t
+10:29:38.018 [33mWARN [0m nebflow.llm.anthropic - thinking mode dropped for this request: provider=deepseek model=deepseek-flash requires thinking passback but session history contains assistant messages without thinking blocks (cross-provider replay) — replaying would 400 (audit 20260903 #4); request=u:t,a:t,u:t
+10:29:38.022 [33mWARN [0m nebflow.llm.anthropic - thinking mode dropped for this request: provider=deepseek model=deepseek-flash requires thinking passback but session history contains assistant messages without thinking blocks (cross-provider replay) — replaying would 400 (audit 20260903 #4); request=u:t,a:t,u:t
+10:29:38.026 [33mWARN [0m nebflow.llm.anthropic - thinking mode dropped for this request: provider=deepseek model=deepseek-flash requires thinking passback but session history contains assistant messages without thinking blocks (cross-provider replay) — replaying would 400 (audit 20260903 #4); request=u:t,a:t,u:t
+10:29:38.028 [33mWARN [0m nebflow.llm.anthropic - thinking mode dropped for this request: provider=deepseek model=deepseek-flash requires thinking passback but session history contains assistant messages without thinking blocks (cross-provider replay) — replaying would 400 (audit 20260903 #4); request=u:t,a:t,u:t
+10:29:38.032 [33mWARN [0m nebflow.llm.anthropic - thinking mode dropped for this request: provider=deepseek model=deepseek-flash requires thinking passback but session history contains assistant messages without thinking blocks (cross-provider replay) — replaying would 400 (audit 20260903 #4); request=u:t,a:t,u:t
+10:29:38.032 [33mWARN [0m nebflow.llm.anthropic - thinking-passback rejection — degraded retry with thinking disabled: provider=deepseek model=deepseek-flash
+10:29:38.036 [33mWARN [0m nebflow.llm.anthropic - thinking mode dropped for this request: provider=deepseek model=deepseek-flash requires thinking passback but session history contains assistant messages without thinking blocks (cross-provider replay) — replaying would 400 (audit 20260903 #4); request=u:t,a:t,u:t
+10:29:38.095 [33mWARN [0m nebflow.llm.anthropic - thinking mode dropped for this request: provider=deepseek model=deepseek-flash requires thinking passback but session history contains assistant messages without thinking blocks (cross-provider replay) — replaying would 400 (audit 20260903 #4); request=u:t,a:t,u:t
+10:29:38.104 [33mWARN [0m nebflow.llm.anthropic - thinking-passback rejection — degraded retry with thinking disabled: provider=deepseek model=deepseek-flash
+10:29:38.106 [33mWARN [0m nebflow.llm.anthropic - thinking mode dropped for this request: provider=deepseek model=deepseek-flash requires thinking passback but session history contains assistant messages without thinking blocks (cross-provider replay) — replaying would 400 (audit 20260903 #4); request=u:t,a:t,u:t
+10:29:38.126 [36mINFO [0m nebflow.llm.anthropic - message_start: model=deepseek-flash usage_json={"input_tokens":5} inputTokens=5 cacheRead=None cacheWrite=None
+10:29:38.127 [33mWARN [0m nebflow.llm.anthropic - skipped unmodelled content block type 'text' (no text/reasoning payload): provider=deepseek model=deepseek-flash
+10:29:38.130 [36mINFO [0m nebflow.llm.anthropic - message_delta: model=deepseek-flash deltaInput=None stored_input=5 final_input=5 cacheRead=None cacheWrite=None totalInput=5 outputTokens=2 stopReason=Some(end_turn)
+10:29:38.133 [33mWARN [0m nebflow.llm.anthropic - thinking mode dropped for this request: provider=deepseek model=deepseek-flash requires thinking passback but session history contains assistant messages without thinking blocks (cross-provider replay) — replaying would 400 (audit 20260903 #4); request=u:t,a:t,u:t
+10:29:38.135 [33mWARN [0m nebflow.llm.anthropic - thinking mode dropped for this request: provider=deepseek model=deepseek-flash requires thinking passback but session history contains assistant messages without thinking blocks (cross-provider replay) — replaying would 400 (audit 20260903 #4); request=u:t,a:t,u:t
+10:29:38.137 [33mWARN [0m nebflow.llm.anthropic - thinking mode dropped for this request: provider=deepseek model=deepseek-flash requires thinking passback but session history contains assistant messages without thinking blocks (cross-provider replay) — replaying would 400 (audit 20260903 #4); request=u:t,a:t,u:t
+10:29:38.139 [33mWARN [0m nebflow.llm.anthropic - thinking mode dropped for this request: provider=deepseek model=deepseek-flash requires thinking passback but session history contains assistant messages without thinking blocks (cross-provider replay) — replaying would 400 (audit 20260903 #4); request=u:t,a:t,u:t
+10:29:38.140 [36mINFO [0m nebflow.llm.anthropic - message_start: model=deepseek-flash usage_json={"input_tokens":5} inputTokens=5 cacheRead=None cacheWrite=None
+10:29:38.140 [36mINFO [0m nebflow.llm.anthropic - message_delta: model=deepseek-flash deltaInput=None stored_input=5 final_input=5 cacheRead=None cacheWrite=None totalInput=5 outputTokens=2 stopReason=Some(end_turn)
+10:29:38.142 [33mWARN [0m nebflow.llm.anthropic - thinking mode dropped for this request: provider=deepseek model=deepseek-flash requires thinking passback but session history contains assistant messages without thinking blocks (cross-provider replay) — replaying would 400 (audit 20260903 #4); request=u:t,a:t,u:t
+10:29:38.143 [36mINFO [0m nebflow.llm.anthropic - message_start: model=deepseek-flash usage_json={"input_tokens":5} inputTokens=5 cacheRead=None cacheWrite=None
+10:29:38.144 [36mINFO [0m nebflow.llm.anthropic - message_delta: model=deepseek-flash deltaInput=None stored_input=5 final_input=5 cacheRead=None cacheWrite=None totalInput=5 outputTokens=2 stopReason=Some(end_turn)
+10:29:38.145 [33mWARN [0m nebflow.llm.anthropic - thinking mode dropped for this request: provider=deepseek model=deepseek-flash requires thinking passback but session history contains assistant messages without thinking blocks (cross-provider replay) — replaying would 400 (audit 20260903 #4); request=u:t,a:t,u:t
+10:29:38.146 [36mINFO [0m nebflow.llm.anthropic - message_start: model=deepseek-flash usage_json={"input_tokens":5} inputTokens=5 cacheRead=None cacheWrite=None
+10:29:38.147 [36mINFO [0m nebflow.llm.anthropic - message_delta: model=deepseek-flash deltaInput=None stored_input=5 final_input=5 cacheRead=None cacheWrite=None totalInput=5 outputTokens=2 stopReason=Some(end_turn)
+[32mnebflow.llm.providers.AnthropicCompatSpec:[0m
+[32m  + [0m[32mA1: strip leg sends thinking:{type:disabled} — the ONLY shape DeepSeek accepts as 'off'[0m [90m0.253s[0m
+[32m  + [0m[32mA2: strip leg no longer OMITS the thinking key for the deepseek family[0m [90m0.002s[0m
+[32m  + [0m[32mA3: history WITH thinking blocks keeps thinking:enabled and replays the block[0m [90m0.003s[0m
+[32m  + [0m[32mA4: the route banner reaches the wire (provider/model readable by the session)[0m [90m0.001s[0m
+[32m  + [0m[32mA5: every request carries a User-Agent (Cloudflare-1010 root cause)[0m [90m0.003s[0m
+[32m  + [0m[32mB1: a passback 400 is repaired in place — one retry with thinking disabled, then success[0m [90m0.008s[0m
+[32m  + [0m[32mB2: a NON-passback 400 is NOT retried (no blind retry on shape errors)[0m [90m0.002s[0m
+[32m  + [0m[32mB3: streaming retry emits ZERO chunks before the repair (seam-safe, no stitched output)[0m [90m0.096s[0m
+[32m  + [0m[32mB4: the 400 diagnostic names provider, model, request shape and response types[0m [90m0.002s[0m
+[32m  + [0m[32mB5: an edge/WAF 403 diagnostic says header problem, not credential problem[0m [90m0.002s[0m
+[32m  + [0m[32mC1: a non-streaming response starting with a thinking block parses (no Format, no crash)[0m [90m0.001s[0m
+[32m  + [0m[32mC2: an UNKNOWN delta type carrying text still yields TextDelta (text never dropped)[0m [90m0.003s[0m
+[32m  + [0m[32mC3: an UNKNOWN content block carrying reasoning becomes ThinkingDelta[0m [90m0.003s[0m
+[32m  + [0m[32mC4: thinking-first interleaving with an unknown event does not break the stream[0m [90m0.003s[0m
+10:29:38.422 [36mINFO [0m nebflow.llm.anthropic - message_start: model=deepseek-flash usage_json={"input_tokens":1,"output_tokens":0} inputTokens=1 cacheRead=None cacheWrite=None
+[32mnebflow.llm.providers.AdapterWireContentTypeSpec:[0m
+[32m  + [0m[32manthropic adapter (non-stream) sends exactly one content-type[0m [90m0.232s[0m
+[32m  + [0m[32manthropic adapter (stream) sends exactly one content-type[0m [90m0.01s[0m
+[32m  + [0m[32mopenai adapter (non-stream) sends exactly one content-type[0m [90m0.01s[0m
+[32m  + [0m[32mopenai adapter (stream) sends exactly one content-type[0m [90m0.007s[0m
+[32mnebflow.llm.HardRecoveryTransportSpec:[0m
+[32m  + [0m[32mtransport abort unwedges a parked body read (T1 counterfactual)[0m [90m1.051s[0m
+[32m  + [0m[32mtransportAbortFor for an unknown session is a no-op returning 0[0m [90m0.001s[0m
+[32m  + [0m[32mRecoverableAbort: stream-level Fatal + no evict; agent-level retryable (P6 dual semantics)[0m [90m0.05s[0m
+10:29:39.565 [36mINFO [0m nebflow.llm.toolargs - tool 'Schedule': rescued unquoted ISO-8601 literal in arguments (direct parse error: expected } or , got '-08-18...' (line 1, column 37))
+10:29:39.575 [36mINFO [0m nebflow.llm.toolargs - tool 'Schedule': rescued unquoted ISO-8601 literal in arguments (direct parse error: expected } or , got '-08-18...' (line 1, column 32))
+10:29:39.580 [33mWARN [0m nebflow.llm.openai - orphan empty-id/name continuation frame dropped (no valid start for index 0): {"index":0,"id":"","type":"function","function":{"name":"","arguments":"{\"command\":\"echo test\",\"description\":\"probe\"}"}}
+10:29:39.585 [33mWARN [0m nebflow.llm.openai - empty-id/name continuation frames merged into tool Bash (index 0): 1 frames, 1 arg chars, merged args 21 chars (parsed OK), session - agent -; first frames: {"index":0,"id":"","type":"function","function":{"name":"","arguments":"}"}}
+10:29:39.586 [33mWARN [0m nebflow.llm.openai - dropped tool call with empty name (degenerate provider frame): {"id":"call_1","type":"function","function":{"name":"","arguments":"{\"command\":\"ls\"}"}}
+10:29:39.588 [33mWARN [0m nebflow.llm.openai - empty-id/name continuation frames merged into tool Read (index 0): 5 frames, 36 arg chars, merged args 36 chars (parsed OK), session sess-agg-1 agent visual-reviewer; first frames: {"index":0,"id":"","type":"function","function":{"name":"","arguments":"{\"command\":\"ec"}} | {"index":0,"id":"","type":"function","function":{"name":"","arguments":"ho hel"}} | {"index":0,"id":"","type":"function","function":{"name":"","arguments":"lo\",\"fl"}}
+10:29:39.595 [33mWARN [0m nebflow.llm.openai - empty-id/name continuation frames merged into tool Bash (index 0): 3 frames, 24 arg chars, merged args 24 chars (parsed OK), session sess-e2e agent vr; first frames: {"index":0,"id":"","type":"function","function":{"name":"","arguments":"{\"command\":\"ec"}} | {"index":0,"id":"","type":"function","function":{"name":"","arguments":"ho hel"}} | {"index":0,"id":"","type":"function","function":{"name":"","arguments":"lo\"}"}}
+10:29:39.600 [33mWARN [0m nebflow.llm.openai - empty-id/name continuation frames merged into tool Bash (index 0): 2 frames, 17 arg chars, merged args 17 chars (not strict JSON (rescue path)), session sess-e2e-err agent vr; first frames: {"index":0,"id":"","type":"function","function":{"name":"","arguments":"{\"command\":\"ec"}} | {"index":0,"id":"","type":"function","function":{"name":"","arguments":"ho "}}
+[32mnebflow.llm.providers.OpenAiAdapterSpec:[0m
+[32m  + [0m[32mtoOpenAiMessages: simple text message[0m [90m0.0s[0m
+[32m  + [0m[32mtoOpenAiMessages: system messages filtered[0m [90m0.0s[0m
+[32m  + [0m[32mtoOpenAiMessages: tool_use -> tool_calls array, content=null[0m [90m0.002s[0m
+[32m  + [0m[32mtoOpenAiMessages: text + tool_use[0m [90m0.0s[0m
+[32m  + [0m[32mtoOpenAiMessages: CRITICAL - multiple tool_results => SEPARATE tool messages[0m [90m0.001s[0m
+[32m  + [0m[32mtoOpenAiMessages: full multi-turn conversation[0m [90m0.001s[0m
+[32m  + [0m[32mbuildSystemMessage: request clock stays out of the system prefix[0m [90m0.001s[0m
+[32m  + [0m[32mextractToolCalls: single tool call[0m [90m0.001s[0m
+[32m  + [0m[32mextractToolCalls: unquoted ISO-8601 literal in arguments is rescued (issue #18)[0m [90m0.002s[0m
+[32m  + [0m[32mextractToolCalls: multiple tool calls[0m [90m0.001s[0m
+[32m  + [0m[32mprocessOpenAiData: tool call start[0m [90m0.003s[0m
+[32m  + [0m[32mprocessOpenAiData: CRITICAL - empty delta + finish_reason=tool_calls flushes state[0m [90m0.002s[0m
+[32m  + [0m[32mprocessOpenAiData: finish_reason=tool_calls with tool_calls in delta[0m [90m0.002s[0m
+[32m  + [0m[32mprocessOpenAiData: usage-only chunk[0m [90m0.0s[0m
+[32m  + [0m[32mprocessOpenAiData: text delta[0m [90m0.001s[0m
+[32m  + [0m[32mprocessOpenAiData: reasoning_content => ThinkingDelta[0m [90m0.0s[0m
+[32m  + [0m[32mprocessOpenAiData: unquoted ISO arguments rescued at finish flush (issue #18)[0m [90m0.002s[0m
+[32m  + [0m[32mprocessOpenAiData: providers repeating id+name per fragment accumulate all fragments[0m [90m0.001s[0m
+[32m  + [0m[32mhasReasoningContent: empty content + reasoning_content is NOT an empty response[0m [90m0.0s[0m
+[32m  + [0m[32mhasReasoningContent: empty content + thinking field is NOT an empty response[0m [90m0.0s[0m
+[32m  + [0m[32mhasReasoningContent: whitespace-only reasoning counts as empty[0m [90m0.0s[0m
+[32m  + [0m[32mhasReasoningContent: truly empty response (no content, no reasoning)[0m [90m0.001s[0m
+[32m  + [0m[32mprocessOpenAiData: degenerate qwen start (id="" and name=""") never creates a tool call[0m [90m0.003s[0m
+[32m  + [0m[32mprocessOpenAiData: late degenerate fragment does NOT clobber a valid started call[0m [90m0.004s[0m
+[32m  + [0m[32mextractToolCalls: non-streaming response with empty-name tool call is dropped[0m [90m0.0s[0m
+[32m  + [0m[32mprocessOpenAiData: empty-id/name frames aggregate into ONE summary WARN per call at flush[0m [90m0.004s[0m
+[32m  + [0m[32mprocessOpenAiData: compliant continuation frames (id/name absent) stay silent — no WARN[0m [90m0.001s[0m
+[32m  + [0m[32msendMessageStream: production qwen frame replay aggregates to ONE summary and merges args[0m [90m0.006s[0m
+[32m  + [0m[32msendMessageStream: stream dies mid-args — onFinalize flushes the counted summary[0m [90m0.004s[0m
+10:29:39.770 [33mWARN [0m nebflow.llm.health - Provider b/m1 marked DOWN: concurrent failure verdict (mid-flight)
+10:29:40.139 [36mINFO [0m nebflow.llm.anthropic - message_start: model=m1 usage_json={"input_tokens":10,"output_tokens":0} inputTokens=10 cacheRead=None cacheWrite=None
+10:29:40.145 [36mINFO [0m nebflow.llm.health - Provider b/m1 recovered (UP)
+10:29:40.150 [36mINFO [0m nebflow.llm.anthropic - message_delta: model=m1 deltaInput=None stored_input=10 final_input=10 cacheRead=None cacheWrite=None totalInput=10 outputTokens=2 stopReason=Some(end_turn)
+10:29:40.234 [33mWARN [0m nebflow.llm.health - Provider b/m1 marked DOWN: concurrent failure verdict (mid-flight)
+10:29:40.508 [36mINFO [0m nebflow.llm.health - Provider b/m1 recovered (UP)
+[32mnebflow.llm.CallSuccessRecoverySpec:[0m
+[32m  + [0m[32mT1: streaming winner clears a mid-flight Down marker at success time[0m [90m0.561s[0m
+[32m  + [0m[32mT2: non-streaming send clears a mid-flight Down marker at success time[0m [90m0.343s[0m
+[32mnebflow.llm.FallbackChainCandidateSpec:[0m
+[32m  + [0m[32mB/C-1(重写): llm.fallback 的 preferred 就是运行期唯一候选（链深恒 1）[0m [90m0.004s[0m
+[32m  + [0m[32mC-2(重写): 改 llm.fallback.preferred ⇒ 运行期候选随之改变（同配置其余不动）[0m [90m0.002s[0m
+[32m  + [0m[32mC-3: 删掉 provider ⇒ 候选集不含它；加回 ⇒ 立刻含它（断言正反两面）[0m [90m0.002s[0m
+[32m  + [0m[32mC-4: 链里残留已删 provider 的 ref ⇒ 该 ref 被跳过（绝不真实调用）[0m [90m0.001s[0m
+[32m  + [0m[32mC-5(重写): 候选集只来自链 preferred（配置实存；不追加储备层——该面已退役）[0m [90m0.0s[0m
+[32m  + [0m[32mC-6(重写): candidatePlan 可观测面列出「这次调用会试哪个、哪个被跳过」[0m [90m0.005s[0m
+[32m  + [0m[32mC-8: disabled:true 的 provider 一律不进候选集（fail-closed 不回退）[0m [90m0.001s[0m
+[32mnebflow.llm.providers.AnthropicPairingDefenseSpec:[0m
+[32m  + [0m[32morphaned head tool_result (no preceding tool_use) is replaced, not sent[0m [90m0.001s[0m
+[32m  + [0m[32mpaired tool_result immediately after its tool_use is untouched[0m [90m0.001s[0m
+[32m  + [0m[32mmultiple tool_results in one message keep only the paired ones[0m [90m0.0s[0m
+[32m  + [0m[32mtext-only history and assistant-head history pass through unchanged[0m [90m0.0s[0m
+10:29:40.563 [33mWARN [0m nebflow.jev.alloc - need question 'need_visual-report' has no answer in the response — treated as not required
+10:29:40.563 [33mWARN [0m nebflow.jev.alloc - need question 'need_mail-ops' has no answer in the response — treated as not required
+10:29:40.563 [33mWARN [0m nebflow.jev.alloc - need question 'need_backend-dev' answered without a probabilities[yes] read — treated as not required
+10:29:40.564 [33mWARN [0m nebflow.jev.alloc - need question 'need_visual-report' has no answer in the response — treated as not required
+10:29:40.564 [33mWARN [0m nebflow.jev.alloc - need question 'need_mail-ops' has no answer in the response — treated as not required
+10:29:40.564 [33mWARN [0m nebflow.jev.alloc - need question 'need_backend-dev' has no answer in the response — treated as not required
+10:29:40.564 [33mWARN [0m nebflow.jev.alloc - need question 'need_visual-report' has no answer in the response — treated as not required
+10:29:40.564 [33mWARN [0m nebflow.jev.alloc - need question 'need_mail-ops' has no answer in the response — treated as not required
+10:29:40.582 [33mWARN [0m nebflow.jev - jev allocation failure for 'allocation' (decision API server error: HTTP 500) — falling back to the dispatcher default mount so dispatch never blocks
+10:29:40.585 [33mWARN [0m nebflow.jev - jev allocation timeout for 'allocation' (decision API timeout: read timed out) — falling back to the dispatcher default mount so dispatch never blocks
+10:29:40.587 [33mWARN [0m nebflow.jev - jev allocation failure for 'allocation' (decision API server error: upstream timeout while reading) — falling back to the dispatcher default mount so dispatch never blocks
+10:29:40.588 [33mWARN [0m nebflow.jev - jev allocation timeout for 'allocation' (decision API timeout: read deadline exceeded) — falling back to the dispatcher default mount so dispatch never blocks
+10:29:40.590 [33mWARN [0m nebflow.jev - jev allocation failure for 'allocation' (RuntimeException) — falling back to the dispatcher default mount so dispatch never blocks
+10:29:40.594 [33mWARN [0m nebflow.jev.alloc - need question 'need_backend-dev' has no answer in the response — treated as not required
+10:29:40.595 [33mWARN [0m nebflow.jev.alloc - need question 'need_visual-report' has no answer in the response — treated as not required
+10:29:40.595 [33mWARN [0m nebflow.jev.alloc - need question 'need_mail-ops' has no answer in the response — treated as not required
+10:29:40.596 [33mWARN [0m nebflow.jev.alloc - need question 'need_backend-dev' has no answer in the response — treated as not required
+10:29:40.597 [33mWARN [0m nebflow.jev.alloc - need question 'need_visual-report' has no answer in the response — treated as not required
+10:29:40.597 [33mWARN [0m nebflow.jev.alloc - need question 'need_mail-ops' has no answer in the response — treated as not required
+10:29:40.598 [33mWARN [0m nebflow.jev.alloc - need question 'need_backend-dev' has no answer in the response — treated as not required
+10:29:40.598 [33mWARN [0m nebflow.jev.alloc - need question 'need_visual-report' has no answer in the response — treated as not required
+10:29:40.598 [33mWARN [0m nebflow.jev.alloc - need question 'need_mail-ops' has no answer in the response — treated as not required
+10:29:40.601 [33mWARN [0m nebflow.jev.alloc - need question 'need_backend-dev' has no answer in the response — treated as not required
+10:29:40.601 [33mWARN [0m nebflow.jev.alloc - need question 'need_visual-report' has no answer in the response — treated as not required
+10:29:40.601 [33mWARN [0m nebflow.jev.alloc - need question 'need_mail-ops' has no answer in the response — treated as not required
+[32mnebflow.llm.decision.JevAllocatorSpec:[0m
+[32m  + [0m[32mthe question set is one batched call with need_/fit_ pairs[0m [90m0.004s[0m
+[32m  + [0m[32mthe whole set rides ONE request (the batch property)[0m [90m0.003s[0m
+[32m  + [0m[32mmembership is probabilities[yes] >= 0.5 and is read from the choice answer[0m [90m0.001s[0m
+[32m  + [0m[32ma fit score is never used as a membership threshold[0m [90m0.001s[0m
+[32m  + [0m[32ma noul answer can never satisfy a need_ question[0m [90m0.001s[0m
+[32m  + [0m[32ma missing need_ answer shrinks the set conservatively rather than granting[0m [90m0.0s[0m
+[32m  + [0m[32man empty catalog yields the empty set without spending a call[0m [90m0.015s[0m
+[32m  + [0m[32ma provider failure falls back and never escapes as an exception[0m [90m0.005s[0m
+[32m  + [0m[32ma provider timeout is classified as a timeout fallback[0m [90m0.002s[0m
+[32m  + [0m[32mfallback kind is decided by the typed error, not by matching its wording[0m [90m0.003s[0m
+[32m  + [0m[32ma thrown defect still lands on the fallback rather than the caller[0m [90m0.002s[0m
+[32m  + [0m[32ma successful allocation records the chosen set (the #8 'action happened' evidence)[0m [90m0.002s[0m
+[32m  + [0m[32mthe state carries the capability catalog, each entry as name + description[0m [90m0.003s[0m
+[32m  + [0m[32mthe catalog keeps catalog order and both section headers are present[0m [90m0.002s[0m
+[32m  + [0m[32mthe brief cap bounds the BRIEF and cannot crowd out the catalog[0m [90m0.002s[0m
+[32m  + [0m[32mthe question instructions are the transferred scorer's words, character for character[0m [90m0.0s[0m
+[32m  + [0m[32mthe need_ criteria label is the transferred scorer's wording, not a paraphrase[0m [90m0.0s[0m
+[32m  + [0m[32mthe state handed over is capped so a huge task cannot blow the budget[0m [90m0.002s[0m
+[32mnebflow.llm.providers.RequestContextCacheSpec:[0m
+[32m  + [0m[32mAnthropic: changing clocks follow the cached tool result, preserving pairing and all history blocks[0m [90m0.002s[0m
+[32m  + [0m[32mAnthropic: assistant tail keeps its breakpoint before a separate clock message[0m [90m0.001s[0m
+[32m  + [0m[32mOpenAI: both reasoning passback modes preserve the entire prefix before the current clock[0m [90m0.001s[0m
+[32m  + [0m[32mempty history and absent/empty clocks do not lose context or add blank messages[0m [90m0.001s[0m
+10:29:40.634 [33mWARN [0m nebflow.llm.health - Provider p1/m1 marked DOWN: provider exhausted (ModelNotFound): statusCode: 404, response: [wire] HTTP 404 provider=p1 model=m1 | request=u:t | response=error/not_found_error(code=-) | upstream=model not found | raw={"type":"error","error":{"type":"not_found_error","message":"model not found"}}
+10:29:40.657 [33mWARN [0m nebflow.llm.health - Provider k1/m1 marked DOWN: provider exhausted (Auth): statusCode: 403, response: [wire] HTTP 403 provider=k1 model=m1 | request=u:t | response=error/permission_error(code=-) | upstream=Invalid API key | raw={"type":"error","error":{"type":"permission_error","message":"Invalid API key"}}
+10:29:40.670 [33mWARN [0m nebflow.llm - candidate ledger session=eligible-a3 — chain=0 tried=0 skipped=2 [d1/m1(not-configured), d2/m1(not-configured)]
+10:29:40.683 [33mWARN [0m nebflow.llm.health - Provider f1/m1 marked DOWN: provider exhausted (ModelNotFound): statusCode: 404, response: [wire] HTTP 404 provider=f1 model=m1 | request=u:t | response=error/not_found_error(code=-) | upstream=model not found | raw={"type":"error","error":{"type":"not_found_error","message":"model not found"}}
+10:29:40.689 [33mWARN [0m nebflow.llm.health - Provider m1p/m1 marked DOWN: simulated 429
+10:29:40.692 [33mWARN [0m nebflow.llm - candidate ledger session=eligible-a5 — chain=1 tried=0 skipped=1 [m1p/m1(health-down)]
+[32mnebflow.llm.FallbackEligibleProvidersSpec:[0m
+[32m  + [0m[32mA1(重写): 唯一候选必败 ⇒ all-providers-failed 处置表如实；其余配置 provider 零请求（不暗中回补）[0m [90m0.024s[0m
+[32m  + [0m[32mA2(重写): 唯一候选 auth 403 ⇒ all-providers-failed（Auth 族如实进表）；其余配置 provider 零请求[0m [90m0.019s[0m
+[32m  + [0m[32mA3: 全部候选都被跳过（provider 全 disabled）⇒ all-skipped，且不许说 All providers failed[0m [90m0.014s[0m
+[32m  + [0m[32mA4(重写): 唯一根被真实试过且 404 全败 ⇒ all-providers-failed，处置表如实（chain 1: tried 1, skipped 0）[0m [90m0.012s[0m
+[32m  + [0m[32mA5(重写): 唯一候选被健康面跳过 ⇒ all-skipped + 跳过原因进表，禁说全败；未引用 provider 零请求零误报[0m [90m0.008s[0m
+[32m  + [0m[32mA6: 配置可见的候选被人为排除 ⇒ silentExclusions 检出并报警；有原因的排除不误报[0m [90m0.008s[0m
+[32mnebflow.llm.StreamWatchdogSpec:[0m
+[32m  + [0m[32mfirst-token timeout fires when stream never emits[0m [90m0.506s[0m
+[32m  + [0m[32mfirst-token timeout fires when stream is slow to start[0m [90m1.004s[0m
+[32m  + [0m[32minactivity timeout fires when stream stalls after first chunk[0m [90m1.003s[0m
+[32m  + [0m[32muses longer subsequent timeout after first chunk arrives[0m [90m0.404s[0m
+[32m  + [0m[32mdoes not timeout when stream emits continuously[0m [90m0.508s[0m
+[32m  + [0m[32mdoes not timeout when stream emits slowly but within limits[0m [90m0.905s[0m
+[32m  + [0m[32mcompletes normally for a fast stream[0m [90m0.001s[0m
+[32m  + [0m[32mhandles empty stream without timeout[0m [90m0.001s[0m
+[32m  + [0m[32mresets timer on each chunk[0m [90m0.807s[0m
+[32m  + [0m[32mproduces different error messages for first-token vs inactivity[0m [90m2.013s[0m
+10:29:47.870 [36mINFO [0m nebflow.llm.toolargs - tool 'Schedule': rescued unquoted ISO-8601 literal in arguments (direct parse error: expected } or , got '-08-18...' (line 1, column 35))
+10:29:47.873 [33mWARN [0m nebflow.llm.toolargs - tool 'Schedule': arguments are not valid JSON and could not be repaired (expected null got 'never-...' (line 1, column 28)); raw={"content":"x","triggerAt":never-gonna-parse}
+[32mnebflow.llm.providers.AnthropicToolArgsSpec:[0m
+[32m  + [0m[32munquoted ISO triggerAt fragments are repaired at content_block_stop (issue #18)[0m [90m0.005s[0m
+[32m  + [0m[32mhealthy quoted fragments pass through unchanged[0m [90m0.001s[0m
+[32m  + [0m[32munrepairable arguments surface the marker instead of {}[0m [90m0.002s[0m
+[32m  + [0m[32mempty fragment stream (provider sent nothing) stays a zero-arg call[0m [90m0.001s[0m
+10:29:47.905 [36mINFO [0m nebflow.llm.anthropic - message_start: model=m1 usage_json={"input_tokens":10,"output_tokens":0} inputTokens=10 cacheRead=None cacheWrite=None
+10:29:47.906 [36mINFO [0m nebflow.llm.anthropic - message_delta: model=m1 deltaInput=None stored_input=10 final_input=10 cacheRead=None cacheWrite=None totalInput=10 outputTokens=2 stopReason=Some(end_turn)
+10:29:47.927 [36mINFO [0m nebflow.llm.anthropic - message_start: model=m1 usage_json={"input_tokens":10,"output_tokens":0} inputTokens=10 cacheRead=None cacheWrite=None
+10:29:47.927 [36mINFO [0m nebflow.llm.anthropic - message_delta: model=m1 deltaInput=None stored_input=10 final_input=10 cacheRead=None cacheWrite=None totalInput=10 outputTokens=2 stopReason=Some(end_turn)
+[32mnebflow.llm.VisionIntentMarkerSpec:[0m
+[32m  + [0m[32mmarker: a request carrying an image logs vision_intent with hadImage=true[0m [90m0.032s[0m
+[32m  + [0m[32mmarker: a text-only request logs hadImage=false[0m [90m0.02s[0m
+10:29:47.948 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test downgrade concurrency limit unlimited -> 9 (rung 90%, inFlight=10, trigger=account-level 429: "statusCode: 429, response: {"type":"error","error":{"type":"rate_limit_error","code":"1302","message":"[1302][您的账户已达到速率限制，请您控制请求频率]"}}")
+10:29:48.036 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test downgrade concurrency limit 9 -> 7 (rung 70%, inFlight=0, trigger=account-level 429: "statusCode: 429, response: {"type":"error","error":{"type":"rate_limit_error","code":"1302","message":"[1302][您的账户已达到速率限制，请您控制请求频率]"}}")
+10:29:48.036 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test downgrade concurrency limit 7 -> 5 (rung 50%, inFlight=0, trigger=account-level 429: "statusCode: 429, response: {"type":"error","error":{"type":"rate_limit_error","code":"1302","message":"[1302][您的账户已达到速率限制，请您控制请求频率]"}}")
+10:29:48.037 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test downgrade concurrency limit 5 -> 2 (rung floor(2), inFlight=0, trigger=account-level 429: "statusCode: 429, response: {"type":"error","error":{"type":"rate_limit_error","code":"1302","message":"[1302][您的账户已达到速率限制，请您控制请求频率]"}}")
+10:29:48.039 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test downgrade concurrency limit unlimited -> 9 (rung 90%, inFlight=10, trigger=account-level 429: "statusCode: 429, response: {"type":"error","error":{"type":"rate_limit_error","code":"1302","message":"[1302][您的账户已达到速率限制，请您控制请求频率]"}}")
+10:29:48.040 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test downgrade concurrency limit 9 -> 7 (rung 70%, inFlight=10, trigger=account-level 429: "statusCode: 429, response: {"type":"error","error":{"type":"rate_limit_error","code":"1302","message":"[1302][您的账户已达到速率限制，请您控制请求频率]"}}")
+10:29:48.040 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test downgrade concurrency limit 7 -> 5 (rung 50%, inFlight=10, trigger=account-level 429: "statusCode: 429, response: {"type":"error","error":{"type":"rate_limit_error","code":"1302","message":"[1302][您的账户已达到速率限制，请您控制请求频率]"}}")
+10:29:48.040 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test downgrade concurrency limit 5 -> 2 (rung floor(2), inFlight=10, trigger=account-level 429: "statusCode: 429, response: {"type":"error","error":{"type":"rate_limit_error","code":"1302","message":"[1302][您的账户已达到速率限制，请您控制请求频率]"}}")
+10:29:48.043 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test loosen concurrency limit 2 -> 5 (rung 50%, quiet=60000ms)
+10:29:48.043 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test loosen concurrency limit 5 -> 7 (rung 70%, quiet=60000ms)
+10:29:48.043 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test downgrade concurrency limit 7 -> 5 (rung 50%, inFlight=0, trigger=account-level 429: "statusCode: 429, response: {"type":"error","error":{"type":"rate_limit_error","code":"1302","message":"[1302][您的账户已达到速率限制，请您控制请求频率]"}}")
+10:29:48.044 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test loosen concurrency limit 9 -> unlimited (rung 100%, quiet=60000ms)
+10:29:48.044 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test loosen concurrency limit 7 -> 9 (rung 90%, quiet=60000ms)
+10:29:48.044 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test loosen concurrency limit 5 -> 7 (rung 70%, quiet=60000ms)
+10:29:48.046 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test downgrade concurrency limit unlimited -> 1 (rung 90%, inFlight=0, trigger=account-level 429: "statusCode: 429, response: {"type":"error","error":{"type":"rate_limit_error","code":"1302","message":"[1302][您的账户已达到速率限制，请您控制请求频率]"}}")
+10:29:48.046 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test downgrade concurrency limit 1 -> 1 (rung 70%, inFlight=0, trigger=account-level 429: "statusCode: 429, response: {"type":"error","error":{"type":"rate_limit_error","code":"1302","message":"[1302][您的账户已达到速率限制，请您控制请求频率]"}}")
+10:29:48.046 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test downgrade concurrency limit 1 -> 1 (rung 50%, inFlight=0, trigger=account-level 429: "statusCode: 429, response: {"type":"error","error":{"type":"rate_limit_error","code":"1302","message":"[1302][您的账户已达到速率限制，请您控制请求频率]"}}")
+10:29:48.046 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test downgrade concurrency limit 1 -> 1 (rung floor(1), inFlight=0, trigger=account-level 429: "statusCode: 429, response: {"type":"error","error":{"type":"rate_limit_error","code":"1302","message":"[1302][您的账户已达到速率限制，请您控制请求频率]"}}")
+10:29:49.075 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test downgrade concurrency limit unlimited -> 2 (rung 90%, inFlight=0, trigger=account-level 429: "statusCode: 429, response: {"type":"error","error":{"type":"rate_limit_error","code":"1302","message":"[1302][您的账户已达到速率限制，请您控制请求频率]"}}")
+10:29:49.236 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test downgrade concurrency limit unlimited -> 4 (rung 90%, inFlight=5, trigger=account-level 429: "statusCode: 429, response: {"type":"error","error":{"type":"rate_limit_error","code":"1302","message":"[1302][您的账户已达到速率限制，请您控制请求频率]"}}")
+10:29:49.539 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test downgrade concurrency limit unlimited -> 5 (rung 90%, inFlight=6, trigger=account-level 429: "statusCode: 429, response: {"type":"error","error":{"type":"rate_limit_error","code":"1302","message":"[1302][您的账户已达到速率限制，请您控制请求频率]"}}")
+10:29:49.547 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test downgrade concurrency limit unlimited -> 2 (rung 90%, inFlight=3, trigger=account-level 429: "statusCode: 429, response: {"type":"error","error":{"type":"rate_limit_error","code":"1302","message":"[1302][您的账户已达到速率限制，请您控制请求频率]"}}")
+[32mnebflow.llm.AdaptiveThrottleSpec:[0m
+[32m  + [0m[32mT1 状态机：429 连续触发 → 90%/70%/50% → 硬下限；基线取首刀在飞数，档内不回升[0m [90m0.002s[0m
+[32m  + [0m[32mT1b 运行面：在飞 10 收 429 → cap 9；新请求排队受 cap 约束；再收 429 → 7 → 5 → floor[0m [90m0.099s[0m
+[32m  + [0m[32mT2 回松：静默窗逐档升（floor→50→70→90→不限）每档消耗一窗；中途 429 立即再降[0m [90m0.006s[0m
+[32m  + [0m[32mT2b 状态机：静默窗钟面消耗语义（quietSince += window，非静默重置为 now）[0m [90m0.001s[0m
+[32m  + [0m[32mT3 FIFO：满闸下按到达顺序放行，全部请求最终完成（零拒绝）[0m [90m1.011s[0m
+[32m  + [0m[32mT4 非账户级 429、配额体 429、非 RateLimit 分类 → 一律不降档[0m [90m0.005s[0m
+[32m  + [0m[32mT4b 判定单点：账户级码/文本命中，裸数字不误报[0m [90m0.003s[0m
+[32m  + [0m[32mT5 总闸关 = 纯透传零行为（acquire 不排队、429 不建状态、健康面零键）[0m [90m0.005s[0m
+[32m  + [0m[32mT6 热读：enabled 翻转即刻生效（关→开→关，无重启）[0m [90m0.01s[0m
+[32m  + [0m[32mT7 GatedAdapter：降档后并发 ≤ cap 且全部请求完成（排队而非拒绝）[0m [90m0.456s[0m
+[32m  + [0m[32mT8 多 provider（账户键）：A 账户 429 降档不影响 B 账户[0m [90m0.009s[0m
+[32m  + [0m[32mT9 healthJson：有闸才有键；载荷含 limit/rung/inFlight/queued[0m [90m0.113s[0m
+[32m  + [0m[32mT10 配置：llm.adaptiveThrottle 半节解码为缺省而非抛；缺节 = None[0m [90m0.006s[0m
+10:29:49.679 [33mWARN [0m nebflow.llm.health - Provider dead/m1 marked DOWN: statusCode: 401
+10:29:49.682 [33mWARN [0m nebflow.llm.health - Provider flaky/m1 marked DOWN: Exception when sending request: POST https://api.deepseek.com/anthropic/v1/messages
+10:29:49.685 [36mINFO [0m nebflow.llm.health - Provider flaky/m1 half-open trial: backoff expired, trying for real (was DOWN: Exception when sending request: POST https://api.deepseek.com/anthropic/v1/messages)
+10:29:49.688 [33mWARN [0m nebflow.llm.health - Provider flaky/m1 marked DOWN: outage
+10:29:49.689 [36mINFO [0m nebflow.llm.health - Provider flaky/m1 half-open trial: backoff expired, trying for real (was DOWN: outage)
+10:29:49.691 [33mWARN [0m nebflow.llm.health - Provider dead/m1 marked DOWN: auth
+10:29:49.692 [36mINFO [0m nebflow.llm.health - Provider dead/m1 half-open trial: backoff expired, trying for real (was DOWN: auth)
+10:29:49.692 [33mWARN [0m nebflow.llm.health - Provider dead/m1 still DOWN (fresh reason): auth (trial #1 really failed)
+10:29:49.693 [36mINFO [0m nebflow.llm.health - Provider dead/m1 half-open trial: backoff expired, trying for real (was DOWN: auth (trial #1 really failed))
+10:29:49.695 [33mWARN [0m nebflow.llm.health - Provider svc/m1 marked DOWN: outage
+10:29:49.695 [36mINFO [0m nebflow.llm.health - Provider svc/m1 half-open trial: backoff expired, trying for real (was DOWN: outage)
+10:29:49.695 [36mINFO [0m nebflow.llm.health - Provider svc/m1 recovered (UP)
+10:29:49.696 [33mWARN [0m nebflow.llm.health - Provider svc/m1 marked DOWN: outage 2
+10:29:49.698 [33mWARN [0m nebflow.llm.health - Provider ghost/gone marked DOWN: provider renamed away
+10:29:49.698 [33mWARN [0m nebflow.llm.health - Provider kept/m1 marked DOWN: real outage
+10:29:49.701 [33mWARN [0m nebflow.llm.health - health table: dropped 1 unresolvable DOWN entr(ies): ghost/gone
+10:29:49.702 [33mWARN [0m nebflow.llm.health - Provider Deepseek/deepseek-flash marked DOWN: Exception when sending request: POST https://api.deepseek.com/anthropic/v1/messages
+10:29:49.706 [33mWARN [0m nebflow.llm.health - Probe failed for Deepseek/deepseek-flash: IOException: Exception when sending request: POST https://api.deepseek.com/anthropic/v1/messages | SocketException: Connection reset
+10:29:49.708 [33mWARN [0m nebflow.llm.health - Provider x/m1 marked DOWN: outage
+10:29:49.709 [33mWARN [0m nebflow.llm.health - health probe loop iteration failed (continuing): RuntimeException: config ref resolution exploded
+[32mnebflow.llm.HealthHalfOpenSpec:[0m
+[32m  + [0m[32mT1: a Down candidate inside the backoff window is still SKIPPED — with the wait spelled out[0m [90m0.003s[0m
+[32m  + [0m[32mT2: once the backoff expires the candidate is put back on the chain for a REAL try (half-open)[0m [90m0.007s[0m
+[32m  + [0m[32mT2b: the READ faces (panel current / waitForAnyUp) never consume a half-open slot[0m [90m0.002s[0m
+[32m  + [0m[32mT3: real failures re-arm a LONGER backoff each time (60s → 120s → 240s → 480s → 600s cap)[0m [90m0.004s[0m
+[32m  + [0m[32mT4: a successful half-open trial clears the ladder — the next Down starts again at base[0m [90m0.002s[0m
+[32m  + [0m[32mT5: DOWN entries whose ref left the config are dropped (phantom DOWN must not accumulate)[0m [90m0.005s[0m
+[32m  + [0m[32mT6: a probe failure REFRESHES the Down reason and carries the full cause chain (class names included)[0m [90m0.004s[0m
+[32m  + [0m[32mT7: the probe loop survives a throwing cycle instead of dying silently (the only passive recovery path)[0m [90m0.605s[0m
+[32mnebflow.llm.FallbackRetryPolicySpec:[0m
+[32m  + [0m[32mTurnBudgetExceeded is classified Permanent (llm-fail retry must not fire)[0m [90m0.006s[0m
+[32m  + [0m[32moverload-class errors are classified Transient (retryable at fallback layer)[0m [90m0.003s[0m
+[32m  + [0m[32moverload retry delay is always ≥60s (rate window), regardless of backoff ramp[0m [90m0.001s[0m
+[32m  + [0m[32mnon-overload transients keep the normal exponential ramp[0m [90m0.0s[0m
+[32m  + [0m[32mretry delay is capped at MaxBackoffMs for overload class when floor < MaxBackoffMs[0m [90m0.0s[0m
+[32m  + [0m[32mgate-wedge: StuckAbort is classified Fatal — no provider fallback, no markDown[0m [90m0.001s[0m
+10:29:50.364 [36mINFO [0m nebflow.llm.anthropic - message_start: model=m1 usage_json={"input_tokens":10,"output_tokens":0} inputTokens=10 cacheRead=None cacheWrite=None
+10:29:53.379 [33mWARN [0m nebflow.llm - Stream aborted after partial content (a/m1): inactivity timeout — provider switch suppressed (emitted chunks cannot be recalled; stitched-output guard)
+10:29:54.428 [33mWARN [0m nebflow.llm - Stream: a/m1 permanent error (Timeout) — provider response: timeout [status=n/a, evict=true, round=1/2]
+10:29:54.429 [33mWARN [0m nebflow.llm.health - Provider a/m1 soft-avoided for 45000ms (timeout — NOT evicted, no probe)
+[32mnebflow.llm.FallbackSeamSpec:[0m
+[32m  + [0m[32mseam guard: mid-stream timeout AFTER emitted content fails the whole stream — no provider switch, no stitched output[0m [90m3.049s[0m
+[32m  + [0m[32mseam guard does not over-block (重写): first-token timeout with NO emitted content soft-avoids — 单候选有界静默等待；b 零命中（fallback 废除）[0m [90m8.022s[0m
+10:30:01.438 [33mWARN [0m nebflow.llm.health - Provider glm/glm-5 marked DOWN: server error
+10:30:01.441 [33mWARN [0m nebflow.llm.health - Provider glm/glm-5 marked DOWN: error1
+10:30:01.442 [33mWARN [0m nebflow.llm.health - Provider glm/glm-5 still DOWN (fresh reason): error2
+10:30:01.446 [33mWARN [0m nebflow.llm.health - Provider glm/glm-5 marked DOWN: server error
+10:30:01.446 [36mINFO [0m nebflow.llm.health - Provider glm/glm-5 recovered (UP)
+10:30:01.448 [33mWARN [0m nebflow.llm.health - Provider glm/glm-5 marked DOWN: model error
+10:30:01.449 [33mWARN [0m nebflow.llm.health - Provider glm/glm-5 marked DOWN: down
+10:30:01.953 [36mINFO [0m nebflow.llm.health - Provider glm/glm-5 recovered (UP)
+10:30:01.957 [33mWARN [0m nebflow.llm.health - Provider glm/glm-5 marked DOWN: down
+10:30:01.957 [36mINFO [0m nebflow.llm.health - Provider glm/glm-5 recovered (UP)
+10:30:01.960 [33mWARN [0m nebflow.llm.health - Provider glm/glm-5 marked DOWN: timeout
+10:30:01.960 [36mINFO [0m nebflow.llm.health - Provider glm/glm-5 recovered (UP)
+10:30:01.962 [33mWARN [0m nebflow.llm.health - Provider glm/glm-5 marked DOWN: down
+10:30:02.166 [36mINFO [0m nebflow.llm.health - Provider glm/glm-5 recovered (UP)
+10:30:02.172 [33mWARN [0m nebflow.llm.health - Provider glm/glm-5 marked DOWN: down
+10:30:02.375 [36mINFO [0m nebflow.llm.health - Provider glm/glm-5 recovered (UP)
+10:30:07.178 [33mWARN [0m nebflow.llm.health - Provider glm/glm-5 marked DOWN: error
+10:30:07.179 [33mWARN [0m nebflow.llm.health - Provider deepseek/deepseek-v4 marked DOWN: error
+10:30:07.181 [33mWARN [0m nebflow.llm.health - Provider glm/glm-5 marked DOWN: error
+10:30:07.182 [33mWARN [0m nebflow.llm.health - Provider kimi/moonshot-v1 marked DOWN: error
+10:30:07.186 [33mWARN [0m nebflow.llm.health - Provider glm/glm-5-107 marked DOWN: first-token timeout
+10:30:07.191 [36mINFO [0m nebflow.llm.health - Provider glm/glm-5-107 recovered (UP)
+10:30:07.195 [33mWARN [0m nebflow.llm.health - Provider glm/glm-5-107 marked DOWN: first-token timeout
+10:30:07.197 [33mWARN [0m nebflow.llm.health - Probe failed for glm/glm-5-107: RuntimeException: probe error
+10:30:07.200 [33mWARN [0m nebflow.llm.health - Provider glm/glm-5-107 marked DOWN: timeout
+10:30:07.201 [33mWARN [0m nebflow.llm.health - Probe failed for glm/glm-5-107: NoSuchElementException
+10:30:07.204 [33mWARN [0m nebflow.llm.health - Provider glm/glm-5-107 marked DOWN: timeout
+10:30:08.206 [33mWARN [0m nebflow.llm.health - Probe failed for glm/glm-5-107: TimeoutException: 1 second
+10:30:08.211 [33mWARN [0m nebflow.llm.health - Provider glm/glm-5 marked DOWN: outage
+10:30:08.215 [36mINFO [0m nebflow.llm.health - Provider glm/glm-5 recovered (UP)
+10:30:08.218 [33mWARN [0m nebflow.llm.health - Provider kimi/k3-256k marked DOWN: timeout
+10:30:08.221 [36mINFO [0m nebflow.llm.health - Provider kimi/k3-256k recovered (UP)
+10:30:08.224 [33mWARN [0m nebflow.llm.health - Provider ghost/gone marked DOWN: error
+[32mnebflow.llm.HealthMonitorSpec:[0m
+[32m  + [0m[32mfresh monitor: all candidates are Up[0m [90m0.002s[0m
+[32m  + [0m[32mmarkDown removes candidate from Up list[0m [90m0.004s[0m
+[32m  + [0m[32mmarkDown keeps ONE entry per candidate and REFRESHES the reason to the latest failure[0m [90m0.005s[0m
+[32m  + [0m[32mmarkUp restores candidate to Up list[0m [90m0.002s[0m
+[32m  + [0m[32mmarkUp is no-op if already Up[0m [90m0.001s[0m
+[32m  + [0m[32mmarkDown is per provider+model, not per provider[0m [90m0.001s[0m
+[32m  + [0m[32mwaitForAnyUp blocks until markUp wakes it[0m [90m0.506s[0m
+[32m  + [0m[32mwaitForAnyUp returns immediately if a signal was already fired[0m [90m0.002s[0m
+[32m  + [0m[32mlate waiter after an early waiter consumed the signal must not hang[0m [90m0.003s[0m
+[32m  + [0m[32mtwo parked waiters both released by one markUp signal[0m [90m0.208s[0m
+[32m  + [0m[32mwaiter blocked on an orphaned Deferred escapes via tick re-check[0m [90m5.005s[0m
+[32m  + [0m[32mfilterCandidates preserves priority order[0m [90m0.004s[0m
+[32m  + [0m[32mfull chain down returns empty Up list[0m [90m0.003s[0m
+[32m  + [0m[32mprobe clears at the FIRST serving event — a slow thinking provider (never completes) still recovers[0m [90m0.01s[0m
+[32m  + [0m[32mprobe keeps Down when the stream errors before any serving event[0m [90m0.005s[0m
+[32m  + [0m[32mprobe keeps Down on a Done-only stream (no content — the real path fails the same shape)[0m [90m0.003s[0m
+[32m  + [0m[32mprobe budget shrinks via nebflow.health.probeTimeoutSec (read at probe, never a startup constant)[0m [90m1.007s[0m
+[32m  + [0m[32mprobeNow → 现读回绿: filterCandidates (the /model panel read face) reflects the clear immediately[0m [90m0.008s[0m
+[32m  + [0m[32mdownCandidates includes Down candidates outside the default chain (kimi fix)[0m [90m0.005s[0m
+[32m  + [0m[32mdownCandidates skips refs whose provider was removed from config[0m [90m0.002s[0m
+10:30:08.262 [33mWARN [0m nebflow.llm - Stream: zhipu/glm-5.3-flash permanent error (RateLimit) — provider response: statusCode: 429, response: [wire] HTTP 429 provider=zhipu model=glm-5.3-flash | request=u:t | response=error/rate_limit_error(code=1308) | upstream=[1308][已达到 5 小时的使用上限。您的限额将在当前 5 小时窗口结束后重置。] | raw={"type":"error","error":{"type":"rate_limit_error","code":"1308","message":"[1308][已达到 5 小时的使用上限。您的限额将在当前 5 小时窗口结束后重置。]"},"request_id":"mock1308"} [status=429, evict=true, round=1/2]
+10:30:08.264 [33mWARN [0m nebflow.llm.health - Provider zhipu/glm-5.3-flash soft-avoided for 300000ms (quota exhausted — NOT evicted, no probe)
+[32mnebflow.llm.GeneralChainFallbackSpec:[0m
+[32m  + [0m[32mT1(重写) general 链头配额死 ⇒ 静默等待恢复（有界终局），后备不暗中承接（fallback 废除）[0m [90m8.014s[0m
+[32m  + [0m[32mT2(重写) 候选序：general 链解析为单根 [zhipu 头]——后备/储备层不再进链（fallback 废除）[0m [90m0.001s[0m
+10:30:16.259 [33mWARN [0m nebflow.index.rerank - jev rerank allocate failed (RuntimeException) — skipped
+[32mnebflow.llm.decision.JevTaskSearchRerankSpec:[0m
+[32m  + [0m[32msanitizeName: entryId stripped to question-id-safe chars[0m [90m0.001s[0m
+[32m  + [0m[32mskipFace: always None (the off shape registered when Jev is unconfigured)[0m [90m0.001s[0m
+[32m  + [0m[32mface with an allocator: selected candidates lead (original order kept), rest follow; no hits dropped[0m [90m0.001s[0m
+[32m  + [0m[32mface with an allocator: FellBack and exceptions yield None (skip, keep incoming order)[0m [90m0.002s[0m
+[32m  + [0m[32mface from live config on an unconfigured dataRoot: skip shape (Jev 未配)[0m [90m0.001s[0m
+10:30:16.271 [36mINFO [0m nebflow.llm.registry - Config hot-reloaded: providers=[b] candidateChain=b/m1
+10:30:16.277 [36mINFO [0m nebflow.llm.registry - Config hot-reloaded: providers=[b] candidateChain=b/m1
+10:30:16.284 [36mINFO [0m nebflow.llm.anthropic - message_start: model=m1 usage_json={"input_tokens":10,"output_tokens":0} inputTokens=10 cacheRead=None cacheWrite=None
+10:30:16.284 [33mWARN [0m nebflow.llm.anthropic - skipped unmodelled content block type 'text' (no text/reasoning payload): provider=b model=m1
+10:30:16.284 [36mINFO [0m nebflow.llm.anthropic - message_delta: model=m1 deltaInput=None stored_input=10 final_input=10 cacheRead=None cacheWrite=None totalInput=10 outputTokens=2 stopReason=Some(end_turn)
+10:30:16.293 [33mWARN [0m nebflow.llm - candidate ledger session=s1 — chain=2 tried=0 skipped=1 [a/m1(not-configured)]
+10:30:16.297 [36mINFO [0m nebflow.llm.anthropic - message_start: model=m1 usage_json={"input_tokens":10,"output_tokens":0} inputTokens=10 cacheRead=None cacheWrite=None
+10:30:16.297 [33mWARN [0m nebflow.llm.anthropic - skipped unmodelled content block type 'text' (no text/reasoning payload): provider=b model=m1
+10:30:16.298 [36mINFO [0m nebflow.llm.anthropic - message_delta: model=m1 deltaInput=None stored_input=10 final_input=10 cacheRead=None cacheWrite=None totalInput=10 outputTokens=2 stopReason=Some(end_turn)
+[32mnebflow.llm.ReloadStaleSessionModelSpec:[0m
+[32m  + [0m[32mreloadConfig drops session overrides whose provider was removed (#33)[0m [90m0.01s[0m
+[32m  + [0m[32mE2E: stale session override after reload gracefully skips to the new chain (#33)[0m [90m0.016s[0m
+[32m  + [0m[32mrequest-time filter: stale override is skipped even without a reload (#33)[0m [90m0.012s[0m
+10:30:16.307 [36mINFO [0m nebflow.llm.cache-stats - cache-stats: window(n=1) input=1.0k read=100 write=0 hit=10.0% | cumulative(n=1) input=1.0k read=100 hit=10.0% | domains: zai/glm-5.3-flash n=1 hit=10.0%
+10:30:16.308 [36mINFO [0m nebflow.llm.cache-stats - cache-stats: window(n=200) input=2.0k read=0 write=0 hit=0.0% | cumulative(n=200) input=2.0k read=0 hit=0.0% | domains: zai/glm-5.3-flash n=200 hit=0.0%
+10:30:16.309 [36mINFO [0m nebflow.llm.cache-stats - cache-stats: window(n=2) input=2.0k read=200 write=0 hit=10.0% | cumulative(n=2) input=2.0k read=200 hit=10.0% | domains: zai/glm-5.3-flash n=2 hit=10.0%
+[32mnebflow.llm.providers.CacheStatsSpec:[0m
+[32m  + [0m[32mrecord aggregates per (provider,model) domain and total with panel-identical denominators[0m [90m0.001s[0m
+[32m  + [0m[32mNone usage (failed request) never enters the denominator[0m [90m0.0s[0m
+[32m  + [0m[32mmaybeEmit(force=true) emits and checkpoints the window without throwing[0m [90m0.002s[0m
+[32m  + [0m[32mdomain rows make failover cache-domain flips visible (physical, not a regression)[0m [90m0.0s[0m
+[32m  + [0m[32memission gate fires on the 200th request without force[0m [90m0.0s[0m
+[32m  + [0m[32m①冷启动 <200 单 + 距首单 ≥15min ⇒ 恰发射一条聚合行（时钟注入模拟）[0m [90m0.001s[0m
+[32m  + [0m[32m②冷启动 <200 单 + 距首单 <15min ⇒ 零发射（闸不许提前开）[0m [90m0.0s[0m
+10:30:16.320 [36mINFO [0m nebflow.llm.anthropic - message_start: model=m1 usage_json={"input_tokens":10,"output_tokens":0} inputTokens=10 cacheRead=None cacheWrite=None
+10:30:16.320 [36mINFO [0m nebflow.llm.anthropic - message_delta: model=m1 deltaInput=None stored_input=10 final_input=10 cacheRead=None cacheWrite=None totalInput=10 outputTokens=2 stopReason=Some(end_turn)
+10:30:16.320 [36mINFO [0m nebflow.llm.cache-stats - cache-stats: window(n=4) input=3.0k read=300 write=0 hit=10.0% | cumulative(n=4) input=3.0k read=300 hit=10.0% | domains: zai/glm-5.3-flash n=3 hit=10.0% | v/m1 n=1 hit=0.0%
+10:30:16.331 [36mINFO [0m nebflow.llm.anthropic - message_start: model=m1 usage_json={"input_tokens":10,"output_tokens":0} inputTokens=10 cacheRead=None cacheWrite=None
+10:30:16.331 [36mINFO [0m nebflow.llm.anthropic - message_delta: model=m1 deltaInput=None stored_input=10 final_input=10 cacheRead=None cacheWrite=None totalInput=10 outputTokens=2 stopReason=Some(end_turn)
+[32mnebflow.llm.VisionWireCaptureSpec:[0m
+[32m  + [0m[32mC: outbound wire body carries the image block (no pre-send strip)[0m [90m0.013s[0m
+[32m  + [0m[32mC-negative: the placeholder text never reaches the wire[0m [90m0.01s[0m
+[32mnebflow.llm.decision.DelegateJudgeInputHardeningSpec:[0m
+[32m  + [0m[32m① structural delimiters wrap the result text (fake in-result headers stay INSIDE the fence)[0m [90m0.004s[0m
+[32m  + [0m[32m② result text is truncated to 4000 chars with a truncation note; short text passes verbatim[0m [90m0.001s[0m
+[32m  + [0m[32m③ untrusted-source labels: RESULT marked UNTRUSTED; git digest section carries the untrusted-source annotation[0m [90m0.0s[0m
+[32m  + [0m[32m④ merge-round flag and context keys pass through (regression anchor)[0m [90m0.0s[0m
+[32mnebflow.llm.QuotaClassificationSpec:[0m
+[32m  + [0m[32mT1: 429 + 上游 code 1308（配额类）⇒ 不可自愈（Permanent ⇒ 立即换链，不睡退避）[0m [90m0.0s[0m
+[32m  + [0m[32mT2: 403（LLM 面唯一实证形态 = 5h 额度闸）⇒ 确证下线但归入配额分层[0m [90m0.001s[0m
+[32m  + [0m[32mT3（反向臂）: 频率类 429 code 1302 保持 Transient ⇒ 仍走 >=60s 退避等待[0m [90m0.0s[0m
+[32m  + [0m[32mT4（反向臂）: 超时 / 连接类保持现形态（软回避 + 探测路径不变）[0m [90m0.0s[0m
+[32m  + [0m[32mT5: 配额标志面——403 / 429-1308 = true；频率类 / 超时 / 连接 / 401 / 400 = false[0m [90m0.001s[0m
+10:30:16.377 [36mINFO [0m nebflow.llm.registry - Config hot-reloaded: providers=[cmdcode,zhipu] candidateChain=zhipu/glm-5.3-flash
+10:30:16.384 [36mINFO [0m nebflow.llm.registry - Config hot-reloaded: providers=[kimi,zhipu] candidateChain=zhipu/glm-5.3-flash
+10:30:16.389 [36mINFO [0m nebflow.llm.registry - Config hot-reloaded: providers=[cmdcode,zhipu] candidateChain=zhipu/glm-5.3-flash
+10:30:16.397 [36mINFO [0m nebflow.llm.registry - Config hot-reloaded: providers=[cmdcode,kimi,zhipu] candidateChain=zhipu/glm-5.3-flash
+[32mnebflow.llm.ProviderCandidateConfigSyncSpec:[0m
+[32m  + [0m[32mR1(重写) 配置里存在但链未引用的 provider 不进候选集；配置面诚实可读[0m [90m0.007s[0m
+[32m  + [0m[32mA1 删掉 kimi ⇒ 运行期候选集立刻不含 kimi（无重启）[0m [90m0.024s[0m
+[32m  + [0m[32mA2(重写) 加回 kimi ⇒ 配置面立刻含 kimi（热生效，不重启）；候选集仍不含（链未引用，fallback 废除）[0m [90m0.007s[0m
+[32m  + [0m[32mA3 盘上配置被旁路改掉 ⇒ drift.inSync=false 且点名（可见，不静默沿用旧快照）[0m [90m0.004s[0m
+[32m  + [0m[32mA4 配置里只剩 1 个可用 provider ⇒ 候选集恰为那一个[0m [90m0.002s[0m
+[32m  + [0m[32mR2 无锁旁路写者把已删 provider 写回 ⇒ undeletedProviders 点名上浮（不静默）[0m [90m0.007s[0m
+[32m  + [0m[32mR3 disabled:true 的 provider 不进候选集（配置面内的显式摘除同样生效）[0m [90m0.002s[0m
+10:30:16.407 [36mINFO [0m nebflow.llm.anthropic - message_start: model=GLM-5.3 usage_json={"input_tokens":10,"output_tokens":0} inputTokens=10 cacheRead=None cacheWrite=None
+10:30:16.407 [33mWARN [0m nebflow.llm.anthropic - dropped SSE frame with empty event type (data line without a preceding 'event:' line): frame_type=content_block_delta payloadChars=102 model=GLM-5.3 sessionId=sess-256 agentId=ag-256
+10:30:16.408 [36mINFO [0m nebflow.llm.anthropic - message_delta: model=GLM-5.3 deltaInput=None stored_input=10 final_input=10 cacheRead=None cacheWrite=None totalInput=10 outputTokens=3 stopReason=Some(end_turn)
+10:30:16.411 [36mINFO [0m nebflow.llm.anthropic - message_start: model=GLM-5.3 usage_json={"input_tokens":10,"output_tokens":0} inputTokens=10 cacheRead=None cacheWrite=None
+10:30:16.411 [36mINFO [0m nebflow.llm.anthropic - message_delta: model=GLM-5.3 deltaInput=None stored_input=10 final_input=10 cacheRead=None cacheWrite=None totalInput=10 outputTokens=3 stopReason=Some(end_turn)
+10:30:16.412 [33mWARN [0m nebflow.llm.anthropic - dropped SSE frame with empty event type (data line without a preceding 'event:' line): frame_type=content_block_delta payloadChars=102 model=GLM-5.3 sessionId=sess-256 agentId=ag-256
+[32mnebflow.llm.providers.AnthropicEmptyEventWarnSpec:[0m
+[32m  + [0m[32mdata frame without an `event:` line: WARN fires, frame still contributes zero chunks[0m [90m0.005s[0m
+[32m  + [0m[32mnegative control: frames carrying their `event:` line (known, unknown, ping) never warn[0m [90m0.003s[0m
+[32m  + [0m[32mdrop site: empty event type warns and still returns Nil; named-but-unknown event types stay silent[0m [90m0.0s[0m
+10:30:16.423 [33mWARN [0m nebflow.jev - jev allocation timeout for 'delegate-x' (decision API timeout: allocation deadline exceeded) — falling back to the dispatcher default mount so dispatch never blocks
+10:30:16.424 [36mINFO [0m nebflow.llm.plugin-alloc - plugin allocation 'delegate-x': llm fallback leg (jev leg fell back (timeout))
+10:30:16.424 [33mWARN [0m nebflow.llm.plugin-alloc - plugin allocation 'delegate-x': jev leg unavailable (decision API timeout: allocation deadline exceeded) — falling back to the llm leg (allocation preserved)
+10:30:16.431 [33mWARN [0m nebflow.jev - jev allocation failure for 'delegate-x' (decision API auth failed: 401 unauthorized) — falling back to the dispatcher default mount so dispatch never blocks
+10:30:16.432 [36mINFO [0m nebflow.llm.plugin-alloc - plugin allocation 'delegate-x': llm fallback leg (jev leg fell back (failure))
+10:30:16.432 [33mWARN [0m nebflow.llm.plugin-alloc - plugin allocation 'delegate-x': jev leg unavailable (decision API auth failed: 401 unauthorized) — falling back to the llm leg (allocation preserved)
+10:30:16.434 [33mWARN [0m nebflow.jev - jev allocation timeout for 'delegate-x' (decision API timeout: boom) — falling back to the dispatcher default mount so dispatch never blocks
+10:30:16.435 [36mINFO [0m nebflow.llm.plugin-alloc - plugin allocation 'delegate-x': llm fallback leg (jev leg fell back (timeout))
+10:30:16.435 [33mWARN [0m nebflow.llm.plugin-alloc - plugin allocation 'delegate-x': jev leg unavailable (decision API timeout: boom) — falling back to the llm leg (allocation preserved)
+10:30:16.441 [33mWARN [0m nebflow.jev - jev allocation failure for 'delegate-x' (decision API auth failed: 401) — falling back to the dispatcher default mount so dispatch never blocks
+10:30:16.442 [36mINFO [0m nebflow.llm.plugin-alloc - plugin allocation 'delegate-x': llm fallback leg (jev leg fell back (failure))
+10:30:16.442 [33mWARN [0m nebflow.llm.plugin-alloc - plugin allocation 'delegate-x': jev leg unavailable (decision API auth failed: 401) — falling back to the llm leg (allocation preserved)
+10:30:16.444 [33mWARN [0m nebflow.jev - jev allocation failure for 'delegate-x' (decision API transport error: net down) — falling back to the dispatcher default mount so dispatch never blocks
+10:30:16.445 [36mINFO [0m nebflow.llm.plugin-alloc - plugin allocation 'delegate-x': llm fallback leg (jev leg fell back (failure))
+10:30:16.445 [33mWARN [0m nebflow.llm.plugin-alloc - plugin allocation 'delegate-x': jev leg unavailable (decision API transport error: net down) — falling back to the llm leg (allocation preserved)
+10:30:16.445 [33mWARN [0m nebflow.jev - jev allocation llm-error for 'delegate-x' (llm allocator: call failed (candidate chain exhausted — see per-candidate WARN lines)) — falling back to the dispatcher default mount so dispatch never blocks
+10:30:16.447 [36mINFO [0m nebflow.llm.plugin-alloc - plugin allocation 'delegate-x': llm fallback leg (jev gate off (jev block absent))
+[32mnebflow.llm.decision.PluginAllocatorFallbackSpec:[0m
+[32m  + [0m[32mfallback on timeout: jev leg times out → llm leg takes over, the allocation is NOT lost[0m [90m0.013s[0m
+[32m  + [0m[32mfallback on auth failure: jev leg 401s → llm leg takes over (超时/网络/鉴权一视同仁)[0m [90m0.003s[0m
+[32m  + [0m[32mleg bookkeeping: jev down + llm took over → channel Up but legs show jev Down + llm Up[0m [90m0.008s[0m
+[32m  + [0m[32mleg bookkeeping in toJson: the fallback story reaches the REST face (设置面「已回退 llm」数据源)[0m [90m0.002s[0m
+[32m  + [0m[32mfallback then llm leg fails too → channel Down with the llm reason; both legs recorded down[0m [90m0.003s[0m
+[32m  + [0m[32mgate off → only the llm leg is recorded (the jev leg never ran); the channel stays Up on llm success[0m [90m0.002s[0m
+[32m  + [0m[32mjev leg healthy → legs record jev Up only; the llm leg is never consulted[0m [90m0.002s[0m
+[32m  + [0m[32mlegacy faces unaffected: a plain success/failure write keeps the tri-state semantics (transport write path)[0m [90m0.001s[0m
+[32mnebflow.llm.NetworkUnreachableWaitSpec:[0m
+[32m  + [0m[32m10-21 incident shape [Timeout(Permanent), Unknown(Transient)] is waitable[0m [90m0.001s[0m
+[32m  + [0m[32mpure connect-refused chain is waitable[0m [90m0.0s[0m
+[32m  + [0m[32mconnection-reset chain is waitable[0m [90m0.0s[0m
+[32m  + [0m[32m401/403 auth in the chain is NOT waitable — explicit rejection waits for no one[0m [90m0.0s[0m
+[32m  + [0m[32mpure auth chain is NOT waitable[0m [90m0.0s[0m
+[32m  + [0m[32mformat(400) in the chain is NOT waitable[0m [90m0.0s[0m
+[32m  + [0m[32mmodel-not-found(404) in the chain is NOT waitable[0m [90m0.0s[0m
+[32m  + [0m[32mpure overload chain is NOT network-waitable (existing LlmTransient freeze owns it)[0m [90m0.0s[0m
+[32m  + [0m[32mempty attempt list is not waitable (nothing known — conservative)[0m [90m0.0s[0m
+[32m  + [0m[32mtyped JDK network exceptions are detected through the cause chain[0m [90m0.001s[0m
+[32m  + [0m[32mplain SocketException stays OUT of the typed set (mid-stream reset keeps the short-freeze path)[0m [90m0.0s[0m
+[32m  + [0m[32mnon-network errors are not typed network-unreachable[0m [90m0.0s[0m
+[32m  + [0m[32mclassifyError maps typed network failures to NetworkUnreachable/Transient[0m [90m0.001s[0m
+10:30:16.469 [33mWARN [0m nebflow.llm - Stream: qa/m1 permanent error (RateLimit) — provider response: statusCode: 429, response: [wire] HTTP 429 provider=qa model=m1 | request=u:t | response=error/rate_limit_error(code=1308) | upstream=[1308][已达到 5 小时的使用上限。您的限额将在 2026-09-21 19:46:31 重置。] | raw={"type":"error","error":{"type":"rate_limit_error","code":"1308","message":"[1308][已达到 5 小时的使用上限。您的限额将在 2026-09-21 19:46:31 重置。]"},"request_id":"20260921175458ae12"} [status=429, evict=true, round=1/2]
+10:30:16.470 [33mWARN [0m nebflow.llm.health - Provider qa/m1 soft-avoided for 300000ms (quota exhausted — NOT evicted, no probe)
+10:30:24.508 [33mWARN [0m nebflow.llm - Stream: qa/m1 permanent error (Auth) — provider response: statusCode: 403, response: [wire] HTTP 403 provider=qa model=m1 | request=u:t | response=error/permission_error(code=-) | upstream=You've reached your 5-hour usage limit. Your quota will reset when the current 5-hour window ends. | raw={"error":{"type":"permission_error","message":"You've reached your 5-hour usage limit. Your quota will reset when the current 5-hour window ends."}} [status=403, evict=true, round=1/2]
+10:30:24.511 [33mWARN [0m nebflow.llm.health - Provider qa/m1 soft-avoided for 300000ms (quota exhausted — NOT evicted, no probe)
+[32mnebflow.llm.QuotaChainSwitchSpec:[0m
+[32m  + [0m[32mT1(重写): 429 + code 1308（配额类）⇒ 单候选软回避窗（≫瞬时窗）+ 静默等待终局；同 provider 不重试，后备零命中[0m [90m8.018s[0m
+[32m  + [0m[32mT2(重写): 403 配额形态 ⇒ qa 软回避（不 markDown）+ 单候选链有界静默等待；qb/qc 零命中（fallback 废除）[0m [90m8.028s[0m
+10:30:32.543 [33mWARN [0m nebflow.llm - Stream: a/m1 permanent error (Format) — provider response: statusCode: 400, response: [wire] HTTP 400 provider=a model=m1 | request=u:t | response=error/invalid_request_error(code=-) | upstream=enable_search is not supported by this endpoint | raw={"type":"error","error":{"type":"invalid_request_error","message":"enable_search is not supported by this endpoint"}} [status=400, evict=false, round=1/2]
+10:30:32.554 [33mWARN [0m nebflow.llm - Stream: a/m1 permanent error (Format) — provider response: statusCode: 400, response: [wire] HTTP 400 provider=a model=m1 | request=u:t | response=error/invalid_request_error(code=-) | upstream=enable_search is not supported by this endpoint | raw={"type":"error","error":{"type":"invalid_request_error","message":"enable_search is not supported by this endpoint"}} [status=400, evict=false, round=2/2]
+10:30:32.557 [33mWARN [0m nebflow.llm - Stream: candidate chain exhausted after 2 round(s) (cap 2) — failing fast instead of re-entering the health-check loop [providers attempted: 2 attempt(s), reason=all-providers-failed, chain=1 tried=1 skipped=0]
+reason: all-providers-failed  (chain 1: tried 1, skipped 0)
+  [tried]   a/m1
+expected from config: 1 ref(s) — none silently excluded
+[32mnebflow.llm.AllCandidatesFormatLoopSpec:[0m
+[32m  + [0m[32mT1: 全链 400（evict=false ⇒ 无人被驱逐）在有界轮次内以 FallbackExhaustedError 终止[0m [90m0.047s[0m
+[32m  + [0m[32mT2: 上限常量本身 ≥ 2（既有 FormatErrorNoEvictSpec T1 的轮内语义共存硬约束）[0m [90m0.0s[0m
+nebflow.llm.ShutdownAbort: stand shutting down: LLM request aborted
+	at nebflow.llm.LlmInterface$.cancelAllInflight$$anonfun$1$$anonfun$1(interface.scala:249)
+	at cats.Traverse$.traverseVoidDirectly$$anonfun$1(Traverse.scala:306)
+	at scala.collection.IterableOnceOps.foldLeft(IterableOnce.scala:727)
+	at scala.collection.IterableOnceOps.foldLeft$(IterableOnce.scala:721)
+	at scala.collection.AbstractIterator.foldLeft(Iterator.scala:1303)
+	at cats.Traverse$.traverseVoidDirectly(Traverse.scala:305)
+	at cats.instances.ListInstances$$anon$1.traverseVoid(list.scala:139)
+	at cats.instances.ListInstances$$anon$1.traverseVoid(list.scala:137)
+	at cats.Foldable$Ops.traverseVoid(Foldable.scala:1073)
+	at cats.Foldable$Ops.traverseVoid$(Foldable.scala:1028)
+	at cats.Foldable$ToFoldableOps$$anon$6.traverseVoid(Foldable.scala:1105)
+	at cats.Foldable$Ops.traverse_(Foldable.scala:1075)
+	at cats.Foldable$Ops.traverse_$(Foldable.scala:1028)
+	at cats.Foldable$ToFoldableOps$$anon$6.traverse_(Foldable.scala:1105)
+	at nebflow.llm.LlmInterface$.cancelAllInflight$$anonfun$1(interface.scala:249)
+	at get @ fs2.internal.Scope.openScope(Scope.scala:275)
+	at flatMap @ fs2.Compiler$Target.flatMap(Compiler.scala:163)
+	at flatMap @ fs2.Pull$.goCloseScope$1$$anonfun$1$$anonfun$3(Pull.scala:1216)
+	at update @ fs2.internal.Scope.releaseChildScope(Scope.scala:227)
+	at flatMap @ fs2.Compiler$Target.flatMap(Compiler.scala:163)
+	at flatMap @ fs2.Compiler$Target.flatMap(Compiler.scala:163)
+	at flatMap @ fs2.Compiler$Target.flatMap(Compiler.scala:163)
+	at flatMap @ fs2.Compiler$Target.flatMap(Compiler.scala:163)
+	at flatMap @ fs2.Compiler$Target.flatMap(Compiler.scala:163)
+	at flatMap @ fs2.Compiler$Target.flatMap(Compiler.scala:163)
+	at modify @ fs2.internal.Scope.close(Scope.scala:262)
+	at flatMap @ fs2.Compiler$Target.flatMap(Compiler.scala:163)
+	at flatMap @ fs2.Pull$.goCloseScope$1$$anonfun$1(Pull.scala:1217)
+	at handleErrorWith @ fs2.Compiler$Target.handleErrorWith(Compiler.scala:161)
+	at flatMap @ fs2.Pull$.goCloseScope$1(Pull.scala:1224)
+	at get @ fs2.internal.Scope.openScope(Scope.scala:275)
+[32mnebflow.llm.LlmInflightAbortSpec:[0m
+[32m  + [0m[32mcancelAllInflight aborts a registered stream with ShutdownAbort[0m [90m0.207s[0m
+[32m  + [0m[32mmultiple registered streams are all aborted[0m [90m0.205s[0m
+[32m  + [0m[32munregisterInflight removes a stream from the abort set[0m [90m0.004s[0m
+[32m  + [0m[32mgate-wedge P1-1: cancelInflightFor aborts only the target session's requests[0m [90m0.007s[0m
+[32m  + [0m[32mgate-wedge P1-1: cancelInflightFor returns 0 when nothing is registered[0m [90m0.002s[0m
+[32m  + [0m[32mgate-wedge P1-1: unregister removes the entry so cancelInflightFor misses it[0m [90m0.001s[0m
+[32m  + [0m[32mcancelAllInflightSync (hook entry) does not throw when idle[0m [90m0.001s[0m
+10:30:33.085 [33mWARN [0m nebflow.imagegen - imagegen keyRef 'no-such-secret-anywhere' has no secret file — provider leg closed
+10:30:33.087 [33mWARN [0m nebflow.imagegen - imagegen keyRef 'imagegen-no-such-provider-either-key' has no secret file — provider leg closed
+[32mnebflow.llm.imagegen.ImageGenProbeSpec:[0m
+[32m  + [0m[32mlightCall: GET {base}/models + 适配器鉴权头；2xx = Ok[0m [90m0.033s[0m
+[32m  + [0m[32mlightCall: 401 = Failed（死 key，状态码原样可见 + 🔴 脱敏）[0m [90m0.005s[0m
+[32m  + [0m[32mlightCall: 404/405 = models 面缺失 → Ok + modelsFaceAbsent 带回（不谎报鉴权已验证）[0m [90m0.004s[0m
+[32m  + [0m[32mgenerateCall: 最小生成体经适配器拼装（cogview size 吸附枚举、quality 进请求面预留）[0m [90m0.006s[0m
+[32m  + [0m[32mgenerateCall: 2xx + url 产物 = Generated（真实字节 + 临时目录落盘 + dataUrl）[0m [90m0.011s[0m
+[32m  + [0m[32mgenerateCall: 非 2xx = Failed 状态码原样（🔴 脱敏）[0m [90m0.003s[0m
+[32m  + [0m[32mdataUrlOf: ≤ 上限带 dataUrl，超上限只报字节（None）[0m [90m0.018s[0m
+[32m  + [0m[32mresolveToken: 覆写 key > 存储 keyRef > 派生名（缺件 = Left 带可行动文案）[0m [90m0.003s[0m
+[32m  + [0m[32mmimeOf: 嗅探扩展名 → data URL mime（未知扩展照 image/* 透传）[0m [90m0.0s[0m
+10:30:33.095 [33mWARN [0m nebflow.llm.delegate-judge - delegate-judge: small-judge candidate bad/m-bad errored (RuntimeException) — trying next candidate
+10:30:33.099 [33mWARN [0m nebflow.llm.delegate-judge - delegate-judge: small-judge candidate a/m-a errored (RuntimeException) — trying next candidate
+10:30:33.099 [33mWARN [0m nebflow.llm.delegate-judge - delegate-judge: small-judge candidate b/m-b errored (RuntimeException) — trying next candidate
+10:30:33.101 [33mWARN [0m nebflow.llm.delegate-judge - delegate-judge: small-judge candidate mute/m-mute replied empty — trying next candidate
+10:30:33.106 [33mWARN [0m nebflow.llm.delegate-judge - delegate-judge: small-judge candidate bad/m-bad errored (RuntimeException) — trying next candidate
+10:30:33.110 [33mWARN [0m nebflow.llm.delegate-judge - delegate-judge: small-judge candidate a/m-a errored (RuntimeException) — trying next candidate
+10:30:33.110 [33mWARN [0m nebflow.llm.delegate-judge - delegate-judge: small-judge candidate b/m-b errored (RuntimeException) — trying next candidate
+10:30:33.110 [33mWARN [0m nebflow.llm.delegate-judge - delegate-judge: small-judge verdict call failed (candidate chain exhausted — see per-candidate WARN lines)
+10:30:33.110 [33mWARN [0m nebflow.llm.delegate-judge - delegate-judge: terminal verdict unavailable on both legs for delegate-chain-2 — falling back to self-report/legacy
+[32mnebflow.llm.decision.DelegateJudgeChainSpec:[0m
+[32m  + [0m[32mchainCall: 头候选传输错 ⇒ WARN 落真因（provider/model/异常类）并落到第二候选[0m [90m0.006s[0m
+[32m  + [0m[32mchainCall: 全链败 ⇒ None（链耗尽语义），每个候选都留有可归因的尝试痕迹[0m [90m0.003s[0m
+[32m  + [0m[32mchainCall: 空回文候选不截链（provider 侧故障同侧处理，下一候选照答）[0m [90m0.002s[0m
+[32m  + [0m[32mutilityCandidates: ref 可解 ⇒ 钉首位＋链内重复候选去重（后备不重复烧调用）[0m [90m0.002s[0m
+[32m  + [0m[32mface.judgeTerminal: 链头候选坏 ⇒ 判词由链上后备答出（兜底腿整链遍历）[0m [90m0.005s[0m
+[32m  + [0m[32mface.judgeTerminal: 全链坏 ⇒ None 且腿级 WARN 落「candidate chain exhausted」可恢复归因词（不冒充结构态措辞）[0m [90m0.002s[0m
+[32mnebflow.llm.providers.WireShapeSpec:[0m
+[32m  + [0m[32mR1: routeBanner carries provider AND model, readable in the system prompt[0m [90m0.001s[0m
+[32m  + [0m[32mR2: routeBanner/routeLine degrade blanks to 'unknown' instead of empty fields[0m [90m0.0s[0m
+[32m  + [0m[32mN1: unknown block type carrying text degrades to Text (content never dropped)[0m [90m0.0s[0m
+[32m  + [0m[32mN2: unknown block carrying reasoning_content degrades to Thinking[0m [90m0.0s[0m
+[32m  + [0m[32mN3: redacted_thinking carries no readable body → Opaque, never fabricated text[0m [90m0.001s[0m
+[32m  + [0m[32mN4: tool_use / image are NEVER degraded to text (tool pairing + image channel intact)[0m [90m0.0s[0m
+[32m  + [0m[32mN5: a block with no type but with text is still readable[0m [90m0.0s[0m
+[32m  + [0m[32mS1: requestShape renders the per-message block alphabet (thinking+tool turns)[0m [90m0.0s[0m
+[32m  + [0m[32mS2: responseShape names the thinking-first success sequence (the格式事故形态)[0m [90m0.0s[0m
+[32m  + [0m[32mS3: responseShape names an anthropic error body with its error type and code[0m [90m0.0s[0m
+[32m  + [0m[32mS4: responseShape distinguishes an openai non-stream message from a stream delta[0m [90m0.001s[0m
+[32m  + [0m[32mS5: responseShape survives a non-JSON gateway page (keeps a length + head)[0m [90m0.0s[0m
+[32m  + [0m[32mS6: diagnose puts route + request shape + response shape in ONE line[0m [90m0.001s[0m
+[32m  + [0m[32mP1: the real deepseek passback body is recognised as repairable[0m [90m0.0s[0m
+[32m  + [0m[32mP2: other 400s are NOT repairable (no blind retry storm)[0m [90m0.0s[0m
+[32m  + [0m[32mP3: upstreamExcerpt surfaces the provider's own sentence, whitespace-collapsed[0m [90m0.0s[0m
+[32mnebflow.llm.DeepseekDirectLiveE2ESpec:[0m
+[33m==> s [0m[33mnebflow.llm.DeepseekDirectLiveE2ESpec[0m.[33mcmdcode 不可用 ⇒ 链真的落到 Deepseek 直连并出结果（假 DOWN 不再否决候选）[0m[33m skipped[0m [90m0.003s[0m
+[32mnebflow.llm.providers.OpenAiThinkingEffortSpec:[0m
+[32m  + [0m[32mO1: effort configured → direct tier on reasoning_effort (deepseek openai face)[0m [90m0.0s[0m
+[32m  + [0m[32mO1b: medium maps to high client-side (three-tier face; GLM/DeepSeek official mapping, Kimi author ruling)[0m [90m0.001s[0m
+[32m  + [0m[32mO2: no effort configured → legacy budget conversion unchanged (budgetToEffort boundaries)[0m [90m0.0s[0m
+[32m  + [0m[32mO3: glm on the openai face keeps the native thinking shape (no reasoning_effort)[0m [90m0.0s[0m
+[32m  + [0m[32mO4: kimi builtin search still forces thinking disabled (interplay unchanged)[0m [90m0.0s[0m
+[32m  + [0m[32mO5: off (Some(Json.Null)) → empty fragment (no reasoning_effort)[0m [90m0.0s[0m
+[32mnebflow.llm.ProviderChainDepthSpec:[0m
+[32m  + [0m[32mT1(重写): 链深恒 1 = preferred 单根；未引用 provider 一根都不进链（fallback 废除）[0m [90m0.001s[0m
+[32m  + [0m[32mT2(重写): 储备层链尾 = 空——链上没有「已引用项再补尾」这回事（该面退役）[0m [90m0.001s[0m
+[32m  + [0m[32mT3: 配置实存 model 少于 3 根时链深不虚增（储备层只取配置实存项，禁编造）[0m [90m0.0s[0m
+[32m  + [0m[32mT4: 储备层顺序确定（providerId → model 字典序），同配置两次调用链序一致[0m [90m0.0s[0m
+10:30:33.135 [36mINFO [0m nebflow.llm.openai - provider search armed: ZhipuWebSearchTool (session - agent -)
+10:30:33.136 [36mINFO [0m nebflow.llm.openai - provider search armed: ZhipuWebSearchTool (session - agent -)
+10:30:33.136 [36mINFO [0m nebflow.llm.openai - provider search armed: QwenEnableSearch (session - agent -)
+10:30:33.137 [36mINFO [0m nebflow.llm.openai - provider search armed: KimiBuiltinWebSearch (session - agent -)
+[32mnebflow.llm.providers.OpenAiAdapterSearchSpec:[0m
+[32m  + [0m[32mzhipu: web_search appended AFTER agent tools — originals not clobbered (deepMerge order regression)[0m [90m0.002s[0m
+[32m  + [0m[32mzhipu: no agent tools → web_search becomes the sole tools entry (executor sub-request shape)[0m [90m0.001s[0m
+[32m  + [0m[32mqwen: enable_search:true present; tools array untouched[0m [90m0.001s[0m
+[32m  + [0m[32mkimi: thinking FORCED disabled (reasoning_effort absent) even with enabled thinking; builtin_function appended[0m [90m0.0s[0m
+[32m  + [0m[32mno search: request shape unchanged (tools intact, no enable_search, thinking normal)[0m [90m0.001s[0m
+[32m  + [0m[32mextractSearchInfo: zhipu web_search array[0m [90m0.0s[0m
+[32m  + [0m[32mextractSearchInfo: qwen search_info object[0m [90m0.0s[0m
+[32m  + [0m[32mextractSearchInfo: absent on ordinary responses[0m [90m0.001s[0m
+[32m  + [0m[32mextractSearchInfo: DashScope nests search_info under choices[0].message[0m [90m0.0s[0m
+[32m  + [0m[32mextractToolCalls: rawArguments preserved byte-faithful[0m [90m0.0s[0m
+10:30:33.143 [33mWARN [0m nebflow.llm.search - search config references unsupported standalone provider 'bocha' — Tier 2a skipped
+10:30:33.159 [33mWARN [0m nebflow.llm.search - Tier 2a standalone search failed (zhipu): standalone search API quota/rate limited (HTTP 429): {"error":{"code":"1113","message":"余额不足或无可用资源包,请充值。"}} — degrading to Tier 2b (provider builtin)
+10:30:33.162 [33mWARN [0m nebflow.llm.search - Tier 2a standalone search failed (zhipu): standalone search API server error (HTTP 500) — degrading to Tier 2b (provider builtin)
+[32mnebflow.llm.StandaloneSearchSpec:[0m
+[32m  + [0m[32mP2-4: standaloneConfigFrom maps the nebflow.json search block (zhipu, overrides honored)[0m [90m0.001s[0m
+[32m  + [0m[32mP2-4: standaloneConfigFrom defaults (endpoint + engine) when only provider/apiKey given[0m [90m0.0s[0m
+[32m  + [0m[32mP2-4: standaloneConfigFrom degrades to None — disabled / empty key / unknown provider[0m [90m0.0s[0m
+[32m  + [0m[32mP2-4: resolveStandalone route table[0m [90m0.001s[0m
+[32m  + [0m[32mP2-4: standaloneRequestBody carries search_query/search_engine/count (wire contract)[0m [90m0.0s[0m
+[32m  + [0m[32mP2-5: classifyStandaloneError — auth / quota / server / timeout, body never swallowed[0m [90m0.001s[0m
+[32m  + [0m[32mP2-5: parseStandaloneResults — zhipu envelope, URL-less entries dropped[0m [90m0.0s[0m
+[32m  + [0m[32mP2-1: standalone search returns results while the model pipeline is dead — zero LlmHandle sends[0m [90m0.005s[0m
+[32m  + [0m[32mP2-1: standalone works even with llm=None (no model handle at all)[0m [90m0.002s[0m
+[32m  + [0m[32mP2-1: no standalone config → graceful degrade to Tier 2b (model builtin), llm called once[0m [90m0.004s[0m
+[32m  + [0m[32mP2-5: standalone API failure (429) → degrades to 2b with diagnostic, health records Down[0m [90m0.004s[0m
+[32m  + [0m[32mP2-5: standalone API failure AND 2b incapable (deepseek chain) → None, not a crash[0m [90m0.002s[0m
+[32m  + [0m[32mP2-6: fresh monitor search health = Unconfigured; success records Up[0m [90m0.0s[0m
+[32m  + [0m[32mP2-6: recordSearchFailure stores the classified reason + timestamp[0m [90m0.001s[0m
+10:30:33.165 [36mINFO [0m nebflow.llm.toolargs - tool 'Schedule': rescued unquoted ISO-8601 literal in arguments (direct parse error: expected } or , got '-08-18...' (line 1, column 39))
+10:30:33.166 [36mINFO [0m nebflow.llm.toolargs - tool 'Schedule': rescued unquoted ISO-8601 literal in arguments (direct parse error: expected } or , got '-08-18...' (line 1, column 35))
+10:30:33.173 [36mINFO [0m nebflow.llm.toolargs - tool 'Schedule': rescued unquoted ISO-8601 literal in arguments (direct parse error: expected } or , got '-08-18...' (line 1, column 18))
+10:30:33.173 [36mINFO [0m nebflow.llm.toolargs - tool 'Schedule': rescued unquoted ISO-8601 literal in arguments (direct parse error: expected } or , got '-08-18...' (line 1, column 19))
+10:30:33.173 [36mINFO [0m nebflow.llm.toolargs - tool 'Schedule': rescued unquoted ISO-8601 literal in arguments (direct parse error: expected } or , got '-08-18...' (line 1, column 18))
+10:30:33.174 [36mINFO [0m nebflow.llm.toolargs - tool 'Schedule': rescued unquoted ISO-8601 literal in arguments (direct parse error: expected } or , got '-08-18...' (line 1, column 18))
+10:30:33.174 [33mWARN [0m nebflow.llm.toolargs - tool 'Schedule': arguments are not valid JSON and could not be repaired (expected null got 'not-a-...' (line 1, column 28)); raw={"content":"x","triggerAt":not-a-time-at-all}
+10:30:33.175 [33mWARN [0m nebflow.llm.toolargs - tool 'Write': arguments are not valid JSON and could not be repaired (expected json value got '@@@}' (line 1, column 10024)); raw={"data":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+10:30:33.177 [33mWARN [0m nebflow.llm.toolargs - tool 'Read': arguments are not valid JSON and could not be repaired (DecodingFailure at : Got value '42' with wrong type, expecting object); raw=42
+[32mnebflow.llm.providers.ToolInputJsonSpec:[0m
+[32m  + [0m[32mrescues unquoted ISO-8601 with offset — exact issue #18 shape[0m [90m0.001s[0m
+[32m  + [0m[32mrescued triggerAt is directly consumable by ScheduleTool[0m [90m0.007s[0m
+[32m  + [0m[32mrescues date-only literal[0m [90m0.0s[0m
+[32m  + [0m[32mrescues space-separated datetime literal[0m [90m0.0s[0m
+[32m  + [0m[32mrescues Z-suffix datetime literal[0m [90m0.0s[0m
+[32m  + [0m[32mrescues compact +hhmm offset literal[0m [90m0.001s[0m
+[32m  + [0m[32mvalid JSON is returned untouched — numeric triggerAt stays a number[0m [90m0.0s[0m
+[32m  + [0m[32mvalid JSON with quoted ISO is returned untouched[0m [90m0.0s[0m
+[32m  + [0m[32mblank arguments mean zero-arg call — empty object, no marker[0m [90m0.0s[0m
+[32m  + [0m[32munrepairable arguments produce the marker, not a silent {}[0m [90m0.001s[0m
+[32m  + [0m[32mhealthy input never produces malformedDetails[0m [90m0.0s[0m
+[32m  + [0m[32mmarker raw text is capped for context safety[0m [90m0.001s[0m
+[32m  + [0m[32mvalid non-object JSON (bare scalar) is marked, not silently dropped[0m [90m0.001s[0m
+[32mnebflow.llm.PerModelContextClampSpec:[0m
+[32m  + [0m[32mT1: configured=1000000 + modelMax=200000 ⇒ 生效窗口被 clamp 到 200000[0m [90m0.004s[0m
+[32m  + [0m[32mT2: modelMax=None（旧配置 / provider 未上报）⇒ 逐字等于配置值（禁顺手收紧）[0m [90m0.003s[0m
+[32m  + [0m[32mT2b: clamp 只可能压低、不可能放大（configured < modelMax ⇒ 取 configured）[0m [90m0.002s[0m
+[32m  + [0m[32mT3: 压缩门限按 clamped 值取（1M→200k 的门限 = 160k，而非 1M 档的 256k）[0m [90m0.003s[0m
+[32m  + [0m[32mT5(重写): 储备层（第四构造点）已随 fallback 废除退役——未引用 model 不进链，链上唯一候选照带 clamp 真值[0m [90m0.002s[0m
+[32m  + [0m[32mT4: 纯算式单点（effectiveContextWindow）——与候选构造读数一致[0m [90m0.002s[0m
+10:30:33.200 [33mWARN [0m nebflow.llm.decision - jev.keyRef 'obs-key' has no secret file under secrets/ — decision calls will fail auth
+10:30:33.200 [33mWARN [0m nebflow.llm.decision - jev.keyRef 'obs-key' secret absent — decision leg CLOSED (fallback leg takes over); restoring the secret re-opens the leg on the next call (hot read)
+10:30:33.201 [33mWARN [0m nebflow.llm.decision - jev.keyRef 'obs-key' has no secret file under secrets/ — decision calls will fail auth
+10:30:33.201 [33mWARN [0m nebflow.llm.decision - jev.keyRef 'obs-key' secret absent — decision leg CLOSED (fallback leg takes over); restoring the secret re-opens the leg on the next call (hot read)
+10:30:33.203 [33mWARN [0m nebflow.llm.decision - jev.keyRef 'empty-key' resolves to an empty secret — decision calls will fail auth
+10:30:33.203 [33mWARN [0m nebflow.llm.decision - jev.keyRef 'empty-key' secret absent — decision leg CLOSED (fallback leg takes over); restoring the secret re-opens the leg on the next call (hot read)
+10:30:33.204 [33mWARN [0m nebflow.llm.delegate-judge - delegate-judge: small-judge verdict leg unavailable — utility model resolves to no candidate (judge.utilityModel unresolved AND root candidate chain empty)
+10:30:33.204 [33mWARN [0m nebflow.llm.delegate-judge - delegate-judge: terminal verdict unavailable on both legs for delegate-observe-1 — falling back to self-report/legacy
+10:30:33.209 [33mWARN [0m nebflow.llm.delegate-judge - delegate-judge: small-judge verdict parse FAILED (raw head: I judged it mentally: all good.) — leg yields None, fallback/self-report takes over
+10:30:33.209 [33mWARN [0m nebflow.llm.delegate-judge - delegate-judge: terminal verdict unavailable on both legs for delegate-observe-2 — falling back to self-report/legacy
+[32mnebflow.llm.decision.DelegateJudgeObserveSpec:[0m
+[32m  + [0m[32mkeyRef names an absent secret ⇒ the jev leg is CLOSED (resolve=None); restoring the secret re-opens it on the next hot read[0m [90m0.004s[0m
+[32m  + [0m[32mno keyRef = no credential expected: the leg stays open (existing semantics); empty/unreadable secrets also close it[0m [90m0.001s[0m
+[32m  + [0m[32msmallJudgeVerdict with no candidates anywhere ⇒ None (empty candidate chain WARN path), zero HTTP[0m [90m0.001s[0m
+[32m  + [0m[32msmallJudgeVerdict with a real adapter returning non-JSON ⇒ None (parseVerdict-failure WARN path) — None semantics unchanged[0m [90m0.005s[0m
+[32mnebflow.llm.ScheduleRestrictionChainSpec:[0m
+[32m  + [0m[32mT1(重写) 窗内：唯一候选（受限 provider）被剔除 ⇒ 链出口给空链；未引用 provider 不承接（fallback 废除）[0m [90m0.002s[0m
+[32m  + [0m[32mT2(重写) 窗外：同一配置链**逐字等于**无窗口配置的链（零行为变化铁律，单根形）[0m [90m0.0s[0m
+[32m  + [0m[32mT3(重写) provider 级窗口对该 provider 全部模型生效（唯一候选被剔 ⇒ 空链）[0m [90m0.0s[0m
+[32m  + [0m[32mT4(重写) 模型级窗口只影响该模型——受限根被剔（空链）、未受限根照常在链[0m [90m0.001s[0m
+[32m  + [0m[32mT6 全受限（含储备层）⇒ 链出口给空链，不静默回退到受限模型[0m [90m0.0s[0m
+[32m  + [0m[32mT7 跨午夜窗：23:30 与 06:59 受限、07:00 与 22:59 不受限（filterScheduleRestricted 同一谓词）[0m [90m0.001s[0m
+[32m  + [0m[32mT8 可见性读数：ref 当前受限原因 + 声明窗口 + active 双态[0m [90m0.001s[0m
+[32m  + [0m[32mT9 getCandidateForRef 保持纯构造不过滤——HealthMonitor 探测集不被时段闸打穿[0m [90m0.001s[0m
+[32m  + [0m[32mT10 decode：存量配置（无 unavailableWindows）解析不变；新键两层解析；缺字段容忍[0m [90m0.0s[0m
+10:30:33.220 [33mWARN [0m nebflow.llm.plugin-alloc - llm allocator: unknown package 'no-such-pkg' dropped (not in catalog)
+10:30:33.223 [36mINFO [0m nebflow.llm.plugin-alloc - plugin allocation 'delegate-x': llm fallback leg (jev gate off (jev block absent))
+10:30:33.225 [33mWARN [0m nebflow.jev - jev allocation timeout for 'delegate-x' (decision API timeout: boom) — falling back to the dispatcher default mount so dispatch never blocks
+10:30:33.225 [36mINFO [0m nebflow.llm.plugin-alloc - plugin allocation 'delegate-x': llm fallback leg (jev leg fell back (timeout))
+10:30:33.225 [33mWARN [0m nebflow.llm.plugin-alloc - plugin allocation 'delegate-x': jev leg unavailable (decision API timeout: boom) — falling back to the llm leg (allocation preserved)
+10:30:33.226 [33mWARN [0m nebflow.jev - jev allocation failure for 'delegate-x' (decision API transport error: down) — falling back to the dispatcher default mount so dispatch never blocks
+10:30:33.227 [36mINFO [0m nebflow.llm.plugin-alloc - plugin allocation 'delegate-x': llm fallback leg (jev leg fell back (failure))
+10:30:33.227 [33mWARN [0m nebflow.llm.plugin-alloc - plugin allocation 'delegate-x': jev leg unavailable (decision API transport error: down) — falling back to the llm leg (allocation preserved)
+10:30:33.227 [33mWARN [0m nebflow.jev - jev allocation llm-error for 'delegate-x' (llm allocator: call failed (candidate chain exhausted — see per-candidate WARN lines)) — falling back to the dispatcher default mount so dispatch never blocks
+10:30:33.229 [36mINFO [0m nebflow.llm.plugin-alloc - plugin allocation 'd': llm fallback leg (jev gate off (jev block absent))
+10:30:33.229 [36mINFO [0m nebflow.llm.plugin-alloc - plugin allocation 'd': llm fallback leg (jev gate off (jev block absent))
+10:30:33.230 [33mWARN [0m nebflow.jev - jev allocation llm-error for 'd' (llm allocator: call failed (candidate chain exhausted — see per-candidate WARN lines)) — falling back to the dispatcher default mount so dispatch never blocks
+10:30:33.233 [33mWARN [0m nebflow.llm.plugin-alloc - llm allocator: candidate bad/m-bad errored (RuntimeException) — trying next candidate
+10:30:33.233 [33mWARN [0m nebflow.llm.plugin-alloc - llm allocator: candidate a/m-a errored (RuntimeException) — trying next candidate
+10:30:33.234 [33mWARN [0m nebflow.llm.plugin-alloc - llm allocator: candidate b/m-b errored (RuntimeException) — trying next candidate
+10:30:33.234 [33mWARN [0m nebflow.llm.plugin-alloc - llm allocator: candidate ghost/m-ghost adapter unavailable (RuntimeException) — trying next candidate
+10:30:33.234 [33mWARN [0m nebflow.llm.plugin-alloc - llm allocator: candidate mute/m-mute replied empty — trying next candidate
+[32mnebflow.llm.decision.LlmAllocatorSpec:[0m
+[32m  + [0m[32mparsePlugins: bare, fenced and prose-wrapped JSON all parse; catalog order-preserving dedup[0m [90m0.001s[0m
+[32m  + [0m[32mparsePlugins: unknown names are dropped (hallucinated packages never reach the injection face)[0m [90m0.0s[0m
+[32m  + [0m[32mparsePlugins: missing key / non-array / non-string members / non-JSON are all refusals (never a fabricated success)[0m [90m0.001s[0m
+[32m  + [0m[32mthree states ① jev: gate applied + jev leg allocates — the llm leg is never consulted[0m [90m0.002s[0m
+[32m  + [0m[32mthree states ② llm-fallback: gate off → the llm leg decides directly (原文: 未配 Jev → LlmAllocator)[0m [90m0.001s[0m
+[32m  + [0m[32mthree states ②b llm-fallback: jev leg ran but fell back → the llm leg catches (判定机同族: 失败也兜)[0m [90m0.002s[0m
+[32m  + [0m[32mthree states ③ llm leg exhausted → typed LlmError fallback (归因精确化批), never a throw[0m [90m0.002s[0m
+[32m  + [0m[32mempty catalog short-circuits: zero model calls on both legs, an explicit empty allocation[0m [90m0.001s[0m
+[32m  + [0m[32mhealth write legs: a success turns the monitor Up; a total failure turns it Down with the classified reason[0m [90m0.001s[0m
+[32m  + [0m[32mthe llm prompt carries the catalog and the membership rule (state template single source)[0m [90m0.001s[0m
+[32m  + [0m[32mchainCall: 头候选传输错 ⇒ WARN 试下一候选，第二候选答出（主 agent 能用 ⇒ 兜底能用）[0m [90m0.002s[0m
+[32m  + [0m[32mchainCall: 全链败 ⇒ None（链耗尽语义），每个失败候选都留有尝试痕迹[0m [90m0.001s[0m
+[32m  + [0m[32mchainCall: 未知 provider 的候选被跳过（adapter 解析失败不炸整缝）[0m [90m0.0s[0m
+[32m  + [0m[32mchainCall: 空回文候选不截链（provider 侧故障同侧处理，下一候选照答）[0m [90m0.001s[0m
+[32mnebflow.llm.DisabledProviderSelectionSpec:[0m
+[32m  + [0m[32mT1(重写): disabled provider 不进链（fail-closed），链深恒 1 = preferred 单候选[0m [90m0.001s[0m
+[32m  + [0m[32mT2: agent 显式 ref 指向 disabled provider ⇒ 不可被选，链落到其余候选[0m [90m0.001s[0m
+[32m  + [0m[32mT3: disabled 不影响未 disabled 的解析（零行为变化对照腿）[0m [90m0.0s[0m
+[32m  + [0m[32mT4(重写): 链深恒 1——disabled provider 不得进链，且链上不追加任何其它候选[0m [90m0.001s[0m
+[32m  + [0m[32mT5(重写): 全 provider disabled 时链构建不凭空造候选（fail-closed 不反转为编造）[0m [90m0.0s[0m
+[32mnebflow.llm.providers.LiveProviderSmokeSpec:[0m
+[32m  + [0m[32mL1: one live turn returns non-empty text[0m [90m0.0s[0m
+[32m  + [0m[32mL2: a live turn performs a tool call (name + arguments present)[0m [90m0.0s[0m
+[32m  + [0m[32mL3: streaming carries reasoning/thinking AND text (cmdcode's content-empty shape)[0m [90m0.001s[0m
+[32m  + [0m[32mL4: multi-turn replay (assistant tool_calls + tool result) is acknowledged[0m [90m0.0s[0m
+10:30:33.281 [36mINFO [0m nebflow.llm.anthropic - message_start: model=glm usage_json={"input_tokens":10,"output_tokens":0} inputTokens=10 cacheRead=None cacheWrite=None
+10:30:33.281 [36mINFO [0m nebflow.llm.anthropic - message_delta: model=glm deltaInput=None stored_input=10 final_input=10 cacheRead=None cacheWrite=None totalInput=10 outputTokens=2 stopReason=Some(end_turn)
+[32mnebflow.llm.ScheduleChainSwitchSpec:[0m
+[32m  + [0m[32mT1(重写) 时段闸绕过：窗口 = 当前时刻±10 分钟 ⇒ 受限根零命中并以受限错误快失败；未引用 provider 零命中[0m [90m0.015s[0m
+[32m  + [0m[32mT2 全受限：<3s 快失败（不进 120s 全灭闸）+ 错误带「受限」原因与窗口[0m [90m0.006s[0m
+[32m  + [0m[32mT3 窗外负控：窗口 = 当前 +2h 起 ⇒ 同一根的 provider 照常承接（零行为变化）[0m [90m0.021s[0m
+[32mnebflow.llm.AllProvidersDownTimeoutSpec:[0m
+[32m  + [0m[32mAllProvidersDownTimeout is classified Transient so the fallback chain keeps going[0m [90m0.0s[0m
+[32m  + [0m[32mplain TimeoutException stays Permanent (stream timeout skips retry by design)[0m [90m0.001s[0m
+[32m  + [0m[32mAllProvidersDownTimeout does not match the TimeoutException branch even by message[0m [90m0.0s[0m
+[32m  + [0m[32mAgentActor llm-fail-retry does NOT fire for AllProvidersDownTimeout[0m [90m0.0s[0m
+10:30:33.290 [33mWARN [0m nebflow.llm.health - Provider glm/glm-5 soft-avoided for 60000ms (timeout — NOT evicted, no probe)
+10:30:33.291 [33mWARN [0m nebflow.llm.health - Provider glm/glm-5 soft-avoided for 300ms (timeout — NOT evicted, no probe)
+10:30:33.696 [33mWARN [0m nebflow.llm.health - Provider glm/glm-5 marked DOWN: auth failed
+10:30:33.696 [33mWARN [0m nebflow.llm.health - Provider glm/glm-5 soft-avoided for 60000ms (timeout — NOT evicted, no probe)
+10:30:33.800 [33mWARN [0m nebflow.llm.health - Provider glm/glm-5 marked DOWN: auth failed
+10:30:33.801 [33mWARN [0m nebflow.llm.health - Provider glm/glm-5 soft-avoided for 50ms (timeout — NOT evicted, no probe)
+10:30:34.909 [33mWARN [0m nebflow.llm - Stream: a/m1 permanent error (Timeout) — provider response: timeout [status=n/a, evict=true, round=1/2]
+10:30:34.909 [33mWARN [0m nebflow.llm.health - Provider a/m1 soft-avoided for 45000ms (timeout — NOT evicted, no probe)
+10:30:41.911 [33mWARN [0m nebflow.llm.health - Provider glm/glm-5 marked DOWN: auth failed
+[32mnebflow.llm.TimeoutSoftAvoidSpec:[0m
+[32m  + [0m[32mT1u: softAvoid excludes the candidate from up WITHOUT marking it Down[0m [90m0.0s[0m
+[32m  + [0m[32mT2u: avoided candidate returns to the candidate chain after the window expires[0m [90m0.405s[0m
+[32m  + [0m[32mT3u: softAvoid on an already-Down candidate keeps it Down (eviction is stronger)[0m [90m0.192s[0m
+[32m  + [0m[32mT1(重写): first-token timeout soft-avoids provider a (NOT Down) — 单候选静默等待（有界终局）；b 零命中（fallback 废除）[0m [90m8.023s[0m
+[32m  + [0m[32mT4-regression: Auth-class failure (401) still marks Down (确证死亡驱逐不回归)[0m [90m0.004s[0m
+10:30:41.926 [33mWARN [0m nebflow.llm.anthropic - thinking mode dropped for this request: provider=unknown model=deepseek-v4-flash requires thinking passback but session history contains assistant messages without thinking blocks (cross-provider replay) — replaying would 400 (audit 20260903 #4); request=u:t,a:t,u:t
+10:30:41.946 [33mWARN [0m nebflow.llm.anthropic - thinking mode dropped for this request: provider=deepseek model=deepseek-v4-flash requires thinking passback but session history contains assistant messages without thinking blocks (cross-provider replay) — replaying would 400 (audit 20260903 #4); request=u:t,a:t,u:t
+10:30:41.952 [36mINFO [0m nebflow.llm.anthropic - message_start: model=deepseek-v4-flash usage_json={"input_tokens":10,"output_tokens":0} inputTokens=10 cacheRead=None cacheWrite=None
+10:30:41.952 [36mINFO [0m nebflow.llm.anthropic - message_delta: model=deepseek-v4-flash deltaInput=None stored_input=10 final_input=10 cacheRead=None cacheWrite=None totalInput=10 outputTokens=2 stopReason=Some(end_turn)
+10:30:41.983 [36mINFO [0m nebflow.llm.anthropic - message_start: model=deepseek-v4-flash usage_json={"input_tokens":10,"output_tokens":0} inputTokens=10 cacheRead=None cacheWrite=None
+10:30:41.984 [36mINFO [0m nebflow.llm.anthropic - message_delta: model=deepseek-v4-flash deltaInput=None stored_input=10 final_input=10 cacheRead=None cacheWrite=None totalInput=10 outputTokens=2 stopReason=Some(end_turn)
+[32mnebflow.llm.providers.AnthropicThinkingReplaySpec:[0m
+[32m  + [0m[32mT1: passback + thinking requested + history WITHOUT thinking blocks → strip (None)[0m [90m0.001s[0m
+[32m  + [0m[32mT2: passback + thinking requested + history WITH thinking blocks → keep (conversion passes)[0m [90m0.001s[0m
+[32m  + [0m[32mT3: non-passback (real Anthropic) is unaffected by history shape[0m [90m0.0s[0m
+[32m  + [0m[32mT4: no thinking param → None regardless (baseline)[0m [90m0.001s[0m
+[32m  + [0m[32mT5: E2E — zhipu-shaped history replayed to deepseek sends an EXPLICIT off, never an omitted key[0m [90m0.029s[0m
+[32m  + [0m[32mT6: E2E — deepseek-native history (unsigned thinking) keeps thinking param AND replays blocks[0m [90m0.031s[0m
+[MAXCFG-TRACE] openai/thinking-off streamOutcome=OK:2
+[MAXCFG-TRACE] openai/thinking-off nonStreamOutcome=OK:1
+[MAXCFG-TRACE] openai/thinking-off body={"metadata":{"session_id":"maxcfg-face-spec","agent_id":"maxcfg-face-spec"},"model":"m1","messages":[{"role":"system","content":"## Active route\n- provider=p model=m1"},{"role":"user","content":"hi"}],"stream":true,"stream_options":{"include_usage":true}}
+[MAXCFG-TRACE] openai/thinking-off body={"metadata":{"session_id":"maxcfg-face-spec","agent_id":"maxcfg-face-spec"},"model":"m1","messages":[{"role":"system","content":"## Active route\n- provider=p model=m1"},{"role":"user","content":"hi"}]}
+[MAXCFG-TRACE] openai/thinking-high streamOutcome=OK:2
+[MAXCFG-TRACE] openai/thinking-high nonStreamOutcome=OK:1
+[MAXCFG-TRACE] openai/thinking-high body={"metadata":{"session_id":"maxcfg-face-spec","agent_id":"maxcfg-face-spec"},"reasoning_effort":"high","model":"m1","messages":[{"role":"system","content":"## Active route\n- provider=p model=m1"},{"role":"user","content":"hi"}],"stream":true,"stream_options":{"include_usage":true}}
+[MAXCFG-TRACE] openai/thinking-high body={"metadata":{"session_id":"maxcfg-face-spec","agent_id":"maxcfg-face-spec"},"reasoning_effort":"high","model":"m1","messages":[{"role":"system","content":"## Active route\n- provider=p model=m1"},{"role":"user","content":"hi"}]}
+10:30:42.046 [36mINFO [0m nebflow.llm.anthropic - message_start: model=m1 usage_json={"input_tokens":10,"output_tokens":0} inputTokens=10 cacheRead=None cacheWrite=None
+10:30:42.046 [36mINFO [0m nebflow.llm.anthropic - message_delta: model=m1 deltaInput=None stored_input=10 final_input=10 cacheRead=None cacheWrite=None totalInput=10 outputTokens=2 stopReason=Some(end_turn)
+[MAXCFG-TRACE] anthropic/thinking-off streamOutcome=OK:2
+[MAXCFG-TRACE] anthropic/thinking-off nonStreamOutcome=OK:1
+[MAXCFG-TRACE] anthropic/thinking-off body={"metadata":{"session_id":"maxcfg-face-spec","agent_id":"maxcfg-face-spec"},"system":[{"type":"text","text":"## Active route\n- provider=p model=m1"}],"stream":true,"model":"m1","messages":[{"role":"user","content":[{"cache_control":{"type":"ephemeral"},"type":"text","text":"hi"}]}],"max_tokens":128000}
+[MAXCFG-TRACE] anthropic/thinking-off body={"metadata":{"session_id":"maxcfg-face-spec","agent_id":"maxcfg-face-spec"},"system":[{"type":"text","text":"## Active route\n- provider=p model=m1"}],"model":"m1","messages":[{"role":"user","content":[{"cache_control":{"type":"ephemeral"},"type":"text","text":"hi"}]}],"max_tokens":128000}
+10:30:42.062 [36mINFO [0m nebflow.llm.anthropic - message_start: model=m1 usage_json={"input_tokens":10,"output_tokens":0} inputTokens=10 cacheRead=None cacheWrite=None
+10:30:42.062 [36mINFO [0m nebflow.llm.anthropic - message_delta: model=m1 deltaInput=None stored_input=10 final_input=10 cacheRead=None cacheWrite=None totalInput=10 outputTokens=2 stopReason=Some(end_turn)
+[MAXCFG-TRACE] anthropic/thinking-high streamOutcome=OK:2
+[MAXCFG-TRACE] anthropic/thinking-high nonStreamOutcome=OK:1
+[MAXCFG-TRACE] anthropic/thinking-high body={"metadata":{"session_id":"maxcfg-face-spec","agent_id":"maxcfg-face-spec"},"thinking":{"type":"enabled","budget_tokens":32768},"system":[{"type":"text","text":"## Active route\n- provider=p model=m1"}],"stream":true,"model":"m1","messages":[{"role":"user","content":[{"cache_control":{"type":"ephemeral"},"type":"text","text":"hi"}]}],"max_tokens":160768}
+[MAXCFG-TRACE] anthropic/thinking-high body={"metadata":{"session_id":"maxcfg-face-spec","agent_id":"maxcfg-face-spec"},"thinking":{"type":"enabled","budget_tokens":32768},"system":[{"type":"text","text":"## Active route\n- provider=p model=m1"}],"model":"m1","messages":[{"role":"user","content":[{"cache_control":{"type":"ephemeral"},"type":"text","text":"hi"}]}],"max_tokens":160768}
+10:30:42.075 [36mINFO [0m nebflow.llm.anthropic - message_start: model=m1 usage_json={"input_tokens":10,"output_tokens":0} inputTokens=10 cacheRead=None cacheWrite=None
+10:30:42.076 [36mINFO [0m nebflow.llm.anthropic - message_delta: model=m1 deltaInput=None stored_input=10 final_input=10 cacheRead=None cacheWrite=None totalInput=10 outputTokens=2 stopReason=Some(end_turn)
+[MAXCFG-TRACE] anthropic/thinking-legacy-huge streamOutcome=OK:2
+[MAXCFG-TRACE] anthropic/thinking-legacy-huge nonStreamOutcome=OK:1
+[MAXCFG-TRACE] anthropic/thinking-legacy-huge body={"metadata":{"session_id":"maxcfg-face-spec","agent_id":"maxcfg-face-spec"},"thinking":{"budget_tokens":32768,"type":"enabled"},"system":[{"type":"text","text":"## Active route\n- provider=p model=m1"}],"stream":true,"model":"m1","messages":[{"role":"user","content":[{"cache_control":{"type":"ephemeral"},"type":"text","text":"hi"}]}],"max_tokens":160768}
+[MAXCFG-TRACE] anthropic/thinking-legacy-huge body={"metadata":{"session_id":"maxcfg-face-spec","agent_id":"maxcfg-face-spec"},"thinking":{"budget_tokens":32768,"type":"enabled"},"system":[{"type":"text","text":"## Active route\n- provider=p model=m1"}],"model":"m1","messages":[{"role":"user","content":[{"cache_control":{"type":"ephemeral"},"type":"text","text":"hi"}]}],"max_tokens":160768}
+[MAXCFG-TRACE] openai/thinking-legacy-huge streamOutcome=OK:2
+[MAXCFG-TRACE] openai/thinking-legacy-huge nonStreamOutcome=OK:1
+[MAXCFG-TRACE] openai/thinking-legacy-huge body={"metadata":{"session_id":"maxcfg-face-spec","agent_id":"maxcfg-face-spec"},"reasoning_effort":"high","model":"m1","messages":[{"role":"system","content":"## Active route\n- provider=p model=m1"},{"role":"user","content":"hi"}],"stream":true,"stream_options":{"include_usage":true}}
+[MAXCFG-TRACE] openai/thinking-legacy-huge body={"metadata":{"session_id":"maxcfg-face-spec","agent_id":"maxcfg-face-spec"},"reasoning_effort":"high","model":"m1","messages":[{"role":"system","content":"## Active route\n- provider=p model=m1"},{"role":"user","content":"hi"}]}
+[MAXCFG-TRACE] legacy-config-decode=OK models=List((m1,8192))
+10:30:42.100 [36mINFO [0m nebflow.llm.anthropic - message_start: model=m1 usage_json={"input_tokens":10,"output_tokens":0} inputTokens=10 cacheRead=None cacheWrite=None
+10:30:42.101 [36mINFO [0m nebflow.llm.anthropic - message_delta: model=m1 deltaInput=None stored_input=10 final_input=10 cacheRead=None cacheWrite=None totalInput=10 outputTokens=2 stopReason=Some(end_turn)
+[MAXCFG-TRACE] anthropic/legacy-key-in-config streamOutcome=OK:2
+[MAXCFG-TRACE] anthropic/legacy-key-in-config nonStreamOutcome=OK:1
+[MAXCFG-TRACE] anthropic/legacy-key-in-config body={"metadata":{"session_id":"maxcfg-face-spec","agent_id":"maxcfg-face-spec"},"system":[{"type":"text","text":"## Active route\n- provider=p model=m1"}],"stream":true,"model":"m1","messages":[{"role":"user","content":[{"cache_control":{"type":"ephemeral"},"type":"text","text":"hi"}]}],"max_tokens":16384}
+[MAXCFG-TRACE] anthropic/legacy-key-in-config body={"metadata":{"session_id":"maxcfg-face-spec","agent_id":"maxcfg-face-spec"},"system":[{"type":"text","text":"## Active route\n- provider=p model=m1"}],"model":"m1","messages":[{"role":"user","content":[{"cache_control":{"type":"ephemeral"},"type":"text","text":"hi"}]}],"max_tokens":16384}
+[32mnebflow.llm.MaxTokensRequestFaceSpec:[0m
+[32m  + [0m[32mP1/P2: OpenAI face sends no max_tokens key (stream + non-stream, thinking on and off)[0m [90m0.045s[0m
+[32m  + [0m[32mP3/P4: Anthropic face sends a legal max_tokens = Defaults.MaxTokens (128000) with thinking off[0m [90m0.017s[0m
+[32m  + [0m[32mP5: Anthropic high thinking -> budget 32768 unclamped AND max_tokens raised above it[0m [90m0.014s[0m
+[32m  + [0m[32mP6: legacy budget 100000 -> clamped to 32768, OpenAI reasoning_effort stays 'high'[0m [90m0.025s[0m
+[32m  + [0m[32mP7: legacy config JSON carrying maxTokens decodes (no error) and does not steer the cap[0m [90m0.0s[0m
+[32m  + [0m[32mP8: legacy maxTokens:4096 entry on a tiny window → cap = 16384 window-clamp floor (key dead)[0m [90m0.013s[0m
+[32mnebflow.llm.decision.PluginCatalogLayerSpec:[0m
+[32m  + [0m[32mT3a catalogText 缺席增量键 = 旧块形逐字节[0m [90m0.0s[0m
+[32m  + [0m[32mT3b catalogText 在键 = keywords/use when 增量行随块[0m [90m0.0s[0m
+[91m==> X [0m[91mnebflow.llm.decision.PluginCatalogLayerSpec[0m.[91mT4a C17: description>200 chars lands a WARN (never a FAIL); ≤200 stays PASS[0m  [90m0.043s[0m munit.FailException: src/test/scala/nebflow/llm/decision/PluginCatalogLayerSpec.scala:67 the soft WARN must appear: 
+66:    val out = runValidator(mkPkg("c17-long", longDesc, None))
+[7m67:    assert(out.contains("[WARN] C17"), s"the soft WARN must appear: ${out.linesIterator.filter(_.contains("C17")).mkString("\n")}")[0m
+68:    val shortDesc = "短包——节点获得能力。适用于测试。不适用于生产。内含 skills：s。"
+[90m    at [0m[90mmunit.FunSuite.assert[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.llm.decision.PluginCatalogLayerSpec.$init$$$anonfun$3[0m[1m([0m[1mPluginCatalogLayerSpec.scala[0m:[1m67[0m[1m)[0m
+[91m==> X [0m[91mnebflow.llm.decision.PluginCatalogLayerSpec[0m.[91mT4b C18: a broken SKILL.md reference in Plugin.md lands a WARN; live refs and no-Plugin.md pass[0m  [90m0.027s[0m munit.FailException: src/test/scala/nebflow/llm/decision/PluginCatalogLayerSpec.scala:83
+82:    val out = runValidator(broken)
+[7m83:    assert(out.contains("[WARN] C18") && out.contains("skills/ghost/SKILL.md"), out.linesIterator.filter(_.contains("C18")).mkString("\n"))[0m
+84:
+[90m    at [0m[90mmunit.FunSuite.assert[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.llm.decision.PluginCatalogLayerSpec.$init$$$anonfun$4[0m[1m([0m[1mPluginCatalogLayerSpec.scala[0m:[1m83[0m[1m)[0m
+10:30:42.202 [33mWARN [0m nebflow.llm.health - Provider a/m1 cooled down for 15000ms (upstream 5xx (500) — strike 1/5, NOT evicted, no probe; half-open on expiry)
+10:30:42.202 [33mWARN [0m nebflow.llm - Stream retry a/m1: ServerError (1 left, 1624ms)
+10:30:43.850 [33mWARN [0m nebflow.llm - Stream fallback: a/m1 retries exhausted
+10:30:43.851 [33mWARN [0m nebflow.llm.health - Provider a/m1 cooled down for 30000ms (upstream 5xx (500) — strike 2/5, NOT evicted, no probe; half-open on expiry)
+10:30:50.231 [33mWARN [0m nebflow.llm.health - Provider a/m1 cooled down for 15000ms (upstream 5xx (550) — strike 1/5, NOT evicted, no probe; half-open on expiry)
+10:30:50.233 [33mWARN [0m nebflow.llm - Stream retry a/m1: ServerError (1 left, 1773ms)
+10:30:52.012 [33mWARN [0m nebflow.llm - Stream fallback: a/m1 retries exhausted
+10:30:52.013 [33mWARN [0m nebflow.llm.health - Provider a/m1 cooled down for 30000ms (upstream 5xx (550) — strike 2/5, NOT evicted, no probe; half-open on expiry)
+10:30:58.221 [33mWARN [0m nebflow.llm.health - Provider a/m1 cooled down for 15000ms (strike 1 — strike 1/5, NOT evicted, no probe; half-open on expiry)
+10:30:58.222 [33mWARN [0m nebflow.llm.health - Provider a/m1 cooled down for 30000ms (strike 2 — strike 2/5, NOT evicted, no probe; half-open on expiry)
+10:30:58.222 [33mWARN [0m nebflow.llm.health - Provider a/m1 cooled down for 60000ms (strike 3 — strike 3/5, NOT evicted, no probe; half-open on expiry)
+10:30:58.223 [33mWARN [0m nebflow.llm.health - Provider a/m1 cooled down for 120000ms (cap — strike 4/5, NOT evicted, no probe; half-open on expiry)
+10:30:58.223 [33mWARN [0m nebflow.llm.health - Provider a/m1 cooled down for 240000ms (cap — strike 5/5, NOT evicted, no probe; half-open on expiry)
+10:30:58.223 [33mWARN [0m nebflow.llm.health - Provider a/m1 cooled down for 240000ms (cap — strike 5/5, NOT evicted, no probe; half-open on expiry)
+10:30:58.223 [33mWARN [0m nebflow.llm.health - Provider a/m1 cooled down for 240000ms (cap — strike 5/5, NOT evicted, no probe; half-open on expiry)
+10:30:58.223 [33mWARN [0m nebflow.llm.health - Provider a/m1 cooled down for 240000ms (cap — strike 5/5, NOT evicted, no probe; half-open on expiry)
+10:30:58.229 [33mWARN [0m nebflow.llm.health - Provider a/m1 soft-avoided for 1ms (unit-test 1ms window — NOT evicted, no probe)
+10:30:58.291 [33mWARN [0m nebflow.llm - Stream: a/m1 permanent error (Auth) — provider response: statusCode: 403, response: [wire] HTTP 403 provider=a model=m1 | request=u:t | response=error/permission_error(code=-) | upstream=5-hour usage limit | raw={"type":"error","error":{"type":"permission_error","message":"5-hour usage limit"}} [status=403, evict=true, round=1/2]
+10:30:58.292 [33mWARN [0m nebflow.llm.health - Provider a/m1 soft-avoided for 300000ms (quota exhausted — NOT evicted, no probe)
+[32mnebflow.llm.UpstreamUnavailableSpec:[0m
+[32m  + [0m[32mT1: 500/502/503/504/550 ⇒ server 族 + Transient + evict=false（非标准码同一族）[0m [90m0.001s[0m
+[32m  + [0m[32mT2: 全 5xx 链 ⇒ 可等待；含 403 的混合链 ⇒ 不可等待（拒绝等不来）[0m [90m0.0s[0m
+[32m  + [0m[32mT3(重写): 500 ⇒ 冷却窗替代驱逐（本家不进 Down）+ 单候选静默等待（有界终局）；后备不承接（fallback 废除）[0m [90m8.015s[0m
+[32m  + [0m[32mT4(重写): 550 + 空响应体（现场形态）⇒ 冷却替代驱逐 + 单候选静默等待（有界终局）[0m [90m8.016s[0m
+[32m  + [0m[32mT5: 连续 3 次 5xx ⇒ 冷却窗 15s/30s/60s 指数增长，冷却期内候选被剔出链[0m [90m0.008s[0m
+[32m  + [0m[32mT6: 冷却窗到期后候选自动回链（无探测、无人工动作）[0m [90m0.055s[0m
+[32m  + [0m[32mT7(重写): 403（配额闸形态）⇒ 不重试、配额软回避而非 5xx 冷却、不 markDown；单候选静默等待（有界终局）；b 零命中（fallback 废除）[0m [90m8.011s[0m
+[32m  + [0m[32mT8: 429 + code 1310（周/月额度实测）⇒ quota 族软回避，不落 5xx 冷却[0m [90m0.002s[0m
+10:31:06.582 [36mINFO [0m nebflow.agent.lifecycle - [32mpconc-pin-agent-085ff1f2[0m [35mpconc-t2/085ff1f2[0m event=spawn detail=parent=- msgs=0
+10:31:06.611 [36mINFO [0m nebflow.agent.lifecycle - [32mpconc-pin-agent-085ff1f2[0m [35mpconc-t2/085ff1f2[0m event=start detail=msgs=0
+10:31:06.814 [36mINFO [0m nebflow.reminders - [time] Current time: 2026-11-07 10:31:06 +08:00 | Asia/Shanghai | Saturday 周六 | epoch_ms 1794018666811
+10:31:06.839 [36mINFO [0m nebflow.agent.lifecycle - [32mpconc-pin-agent-085ff1f2[0m [35mpconc-t2/085ff1f2[0m event=turn-complete detail=msgs=2 textLen=2 textStreamed=true thinking=0 model=-
+10:31:06.898 [36mINFO [0m nebflow.agent.lifecycle - [32mpconc-pin-agent-085ff1f2[0m [35mpconc-t2/085ff1f2[0m event=start detail=msgs=3
+10:31:06.926 [36mINFO [0m nebflow.agent.lifecycle - [32mpconc-pin-agent-085ff1f2[0m [35mpconc-t2/085ff1f2[0m event=turn-complete detail=msgs=5 textLen=2 textStreamed=true thinking=0 model=-
+10:31:06.999 [36mINFO [0m nebflow.agent.lifecycle - [32mpconc-pin-agent-085ff1f2[0m [35mpconc-t2/085ff1f2[0m event=start detail=msgs=6
+10:31:07.029 [36mINFO [0m nebflow.agent.lifecycle - [32mpconc-pin-agent-085ff1f2[0m [35mpconc-t2/085ff1f2[0m event=turn-complete detail=msgs=8 textLen=2 textStreamed=true thinking=0 model=-
+10:31:07.100 [36mINFO [0m nebflow.agent.lifecycle - [32mpconc-pin-agent-085ff1f2[0m [35mpconc-t2/085ff1f2[0m event=start detail=msgs=9
+10:31:07.133 [36mINFO [0m nebflow.agent.lifecycle - [32mpconc-pin-agent-085ff1f2[0m [35mpconc-t2/085ff1f2[0m event=turn-complete detail=msgs=11 textLen=2 textStreamed=true thinking=0 model=-
+10:31:07.202 [36mINFO [0m nebflow.agent.lifecycle - [32mpconc-pin-agent-085ff1f2[0m [35mpconc-t2/085ff1f2[0m event=start detail=msgs=12
+10:31:07.232 [36mINFO [0m nebflow.agent.lifecycle - [32mpconc-pin-agent-085ff1f2[0m [35mpconc-t2/085ff1f2[0m event=turn-complete detail=msgs=14 textLen=2 textStreamed=true thinking=0 model=-
+java.lang.RuntimeException: boom: boom
+	at nebflow.llm.ProviderConcurrencyFallbackSpec$$anon$1.receive(ProviderConcurrencyFallbackSpec.scala:410)
+	at nebflow.llm.ProviderConcurrencyFallbackSpec$$anon$1.receive(ProviderConcurrencyFallbackSpec.scala:409)
+	at nebflow.actor.LocalActorSystem.loop$1$$anonfun$1$$anonfun$1(ActorSystem.scala:335)
+	at handleErrorWith @ nebflow.actor.LocalActorSystem.processMessageOrSignal$1(ActorSystem.scala:320)
+	at flatMap @ nebflow.actor.LocalActorSystem.processMessageOrSignal$1(ActorSystem.scala:321)
+	at map @ nebflow.actor.LocalActorSystem.loop$1$$anonfun$1$$anonfun$1(ActorSystem.scala:335)
+	at get @ fs2.internal.Scope.openScope(Scope.scala:275)
+	at flatMap @ nebflow.actor.LocalActorSystem.loop$1$$anonfun$1(ActorSystem.scala:334)
+	at unsafeRunSync @ nebflow.llm.providers.AnthropicCompatSpec.$init$$$anonfun$1(AnthropicCompatSpec.scala:115)
+	at *> @ nebflow.llm.providers.AnthropicAdapter.sendMessage$$anonfun$1(AnthropicAdapter.scala:710)
+[32mnebflow.llm.ProviderConcurrencyFallbackSpec:[0m
+[32m  + [0m[32mT1(重写): cap=10 占满 ⇒ 第 11 个 actor assign = None（链上无第二档可落）；A 释放到 3 ⇒ 新 actor 回第一档；存活 actor 链首不变[0m [90m0.016s[0m
+[32m  + [0m[32mT1b: cap ≤ 0 非法 ⇒ 当不限（不得静默当 0 全拒——否则链首永远落二档）[0m [90m0.003s[0m
+[32m  + [0m[32mT1c: 全部 provider 满载 ⇒ assign = None（不钉、回落既有全局行为）；释放后坑可复用[0m [90m0.002s[0m
+[32m  + [0m[32mT1d: 空链 ⇒ assign = None（空链/全灭由既有全局链兜底，分配器不编造）[0m [90m0.001s[0m
+[32m  + [0m[32mT2: 同一 actor 连续 5 turn —— 每请求 agentModel 逐字 = 派发时刻快照，命中 provider 序列全同；正常完成不释放；stop 才释放[0m [90m0.975s[0m
+[32m  + [0m[32mT3a: 终态·外部停止（system.stop ⇒ loop.guarantee）⇒ 占坑释放、计数归零[0m [90m0.003s[0m
+[32m  + [0m[32mT3b: 终态·异常退出（receive 抛错且 onError 逃逸 ⇒ fiber 崩溃）⇒ 占坑释放[0m [90m0.103s[0m
+[32m  + [0m[32mT3c: 终态·自行停止（behavior 回 Behaviors.stopped ⇒ loop 正常退出）⇒ 占坑释放[0m [90m0.106s[0m
+[32m  + [0m[32mT3d: 终态·TTL 到期 ⇒ 占坑释放[0m [90m0.408s[0m
+[32m  + [0m[32mT3e: 终态·stopAll ⇒ 全部占坑释放[0m [90m0.008s[0m
+[32m  + [0m[32mT3f: 跑 N 轮释放后计数回 0；重复 release / 未占坑 id release 幂等（无负数、无双减）[0m [90m0.005s[0m
+[32m  + [0m[32mT4: 重启自愈 —— reconcile 以存活 actor 集重建计数（原表 ∩ 活集），新 actor 能用回第一档（无永久占坑）[0m [90m0.006s[0m
+[32m  + [0m[32mT4b: 活集为空（全新进程 boot）⇒ reconcile 清空整表[0m [90m0.002s[0m
+[32m  + [0m[32mT4c: snapshot 可观测面 —— assignable/inUse/cap/full/totalActors 形状（契约 §3h；cap 不限 = 显式 null）[0m [90m0.005s[0m
+[32m  + [0m[32mPE4(重写): 单候选满 ⇒ assign = None——链未引用的 provider 不得被暗中回补（无 fallback），无 pin 就无账[0m [90m0.003s[0m
+[32mnebflow.llm.providers.CacheBreakpointSpec:[0m
+[32m  + [0m[32mchanging request clocks must not change system or the cached history prefix[0m [90m0.002s[0m
+[32m  + [0m[32m① tail breakpoint lands on the last markable block of the last message only[0m [90m0.001s[0m
+[32m  + [0m[32m① tail breakpoint lands on tool_result when the agent loop ends with a tool result[0m [90m0.0s[0m
+[32m  + [0m[32m① plain-string message canonicalizes to a one-block array; marker lands on that block[0m [90m0.001s[0m
+[32m  + [0m[32m② appending one message leaves every earlier message byte-identical (modulo the moved marker)[0m [90m0.002s[0m
+[32m  + [0m[32m② full body of consecutive same-session requests differs only inside the last message[0m [90m0.002s[0m
+[32m  + [0m[32m③ all-thinking tail message (unsigned, no passback → blank string) gets a safe text-block marker[0m [90m0.0s[0m
+[32m  + [0m[32m③ thinking+text tail puts the marker on the text block, never on thinking[0m [90m0.0s[0m
+[32m  + [0m[32m③ empty message list is a no-op (no crash, no phantom marker)[0m [90m0.0s[0m
+[32m  + [0m[32m④ full body carries at most 4 cache_control markers (system 1 + tools 1 + tail 1)[0m [90m0.005s[0m
+[32mnebflow.llm.imagegen.ImageGenSpec:[0m
+[32m  + [0m[32mparseSize: 缺省/合法/非法形态[0m [90m0.0s[0m
+[32m  + [0m[32mcogviewSize: cogview-4 任意分辨率原样传，flash 吸附枚举[0m [90m0.0s[0m
+[32m  + [0m[32mopenAiImagesSize: gpt-image-1 三档按长宽比吸附[0m [90m0.0s[0m
+[32m  + [0m[32mimagenAspect: 长宽比换 aspectRatio 枚举[0m [90m0.001s[0m
+[32m  + [0m[32mCogView.buildBody: 自家 size 枚举 + response_format，body 无凭据位[0m [90m0.0s[0m
+[32m  + [0m[32mOpenAiImages.buildBody: n=1 + size 吸附 + 无凭据位[0m [90m0.006s[0m
+[32m  + [0m[32mImagen.buildBody: instances/parameters 双段协议[0m [90m0.0s[0m
+[32m  + [0m[32mendpointFor: 协议决定路径形态[0m [90m0.001s[0m
+[32m  + [0m[32mCogView.parseResult: 优先 url，兼容 b64[0m [90m0.001s[0m
+[32m  + [0m[32mOpenAiImages.parseResult: gpt-image-1 b64 形态 + 空数据错误面[0m [90m0.001s[0m
+[32m  + [0m[32mImagen.parseResult: bytesBase64Encoded + 缺字段错误面[0m [90m0.001s[0m
+[32m  + [0m[32mmaterialize: b64 解码、非法 b64、空载荷三面[0m [90m0.001s[0m
+[32m  + [0m[32msniffExt: magic bytes 定格式（cogview 实测回 JPEG——不臆造 PNG）[0m [90m0.0s[0m
+[32m  + [0m[32mImageGenConfig decode: 全节[0m [90m0.001s[0m
+[32m  + [0m[32mImageGenConfig decode: 半节 graceful degrade（缺省关、空 providers 合法）[0m [90m0.0s[0m
+[32m  + [0m[32mImageGenJobs: register → complete/fail 翻转 + get/snapshot + 未知 job[0m [90m0.005s[0m
+[32m  + [0m[32mseal: generate_image 在注册表 iff 编译进产物[0m [90m0.0s[0m
+[32m  + [0m[32mseal: Nebula 固定面交付 iff 编译进产物（静态集与件数常量不动）[0m [90m0.0s[0m
+[32m  + [0m[32mseal: 非 Nebula 身份永不获得 generate_image（防声明逃逸面）[0m [90m0.0s[0m
+[32m  + [0m[32mseal: 期望常量 = 静态集大小（19，imagegen 双层批按面变更）[0m [90m0.0s[0m
+10:31:08.021 [36mINFO [0m nebflow.llm.search - provider search produced no search evidence (provider=zhipu, searchInfo=false, kimiRoundTrip=false) — degrading to builtin aggregation
+10:31:08.025 [33mWARN [0m nebflow.llm.search - provider search exceeded round budget (3) — degrading to builtin
+10:31:08.032 [33mWARN [0m nebflow.llm.search - provider search failed (provider down) — degrading to builtin aggregation
+[32mnebflow.llm.SearchProviderResolverSpec:[0m
+[32m  + [0m[32mresolve: five-provider table (zhipu/kimi/qwen → Tier 2; deepseek/unknown → Tier 3)[0m [90m0.002s[0m
+[32m  + [0m[32mcapabilityFor: baseUrl host is the stronger signal (custom provider ids)[0m [90m0.0s[0m
+[32m  + [0m[32mcapabilityFor: id family tokens (interception path has no baseUrl)[0m [90m0.001s[0m
+[32m  + [0m[32mchainHeadProviderId: preferred, else first fallback[0m [90m0.0s[0m
+[32m  + [0m[32msearchOrderedModel: search-capable providers lead, original relative order preserved[0m [90m0.0s[0m
+[32m  + [0m[32msearchOrderedModel: chain head already capable → head unchanged (zero behavior change)[0m [90m0.0s[0m
+[32m  + [0m[32msearchOrderedModel: no search-capable member → chain unchanged (still Tier 3 via head)[0m [90m0.0s[0m
+[32m  + [0m[32mkimiEchoContent: raw arguments preserved byte-identically (formatting, order)[0m [90m0.0s[0m
+[32m  + [0m[32mkimiEchoContent: malformed raw arguments still echo verbatim (no rescue degradation)[0m [90m0.001s[0m
+[32m  + [0m[32mkimiEchoContent: no raw string → compact re-serialization fallback[0m [90m0.0s[0m
+[32m  + [0m[32msearchInjectionFor: all gates[0m [90m0.0s[0m
+[32m  + [0m[32mexecutor: zhipu structured searchInfo → Some with provenance + URL; sub-request armed with empty tools[0m [90m0.004s[0m
+[32m  + [0m[32mexecutor: qwen search_info object shape → normalized entries[0m [90m0.001s[0m
+[32m  + [0m[32msearchEntries: zhipu real-entry shape (link field, not url)[0m [90m0.001s[0m
+[32m  + [0m[32mexecutor: NO evidence (no searchInfo, no kimi round-trip) → None (anti-hallucination)[0m [90m0.001s[0m
+[32m  + [0m[32mexecutor: kimi round-trip — echo byte-identical, reply accepted as evidence[0m [90m0.003s[0m
+[32m  + [0m[32mexecutor: kimi round-trip budget — model re-issuing $web_search forever degrades to None[0m [90m0.001s[0m
+[32m  + [0m[32mexecutor: incapable chain head (deepseek) → None, LLM never called[0m [90m0.001s[0m
+[32m  + [0m[32m#356: deepseek-headed chain with kimi fallback → routed to kimi (builtin search), real result[0m [90m0.002s[0m
+[32m  + [0m[32m#356: only non-search providers in chain → Tier 3 directly, LLM never called[0m [90m0.001s[0m
+[32m  + [0m[32m#356: chain head already capable → sub-request on the ORIGINAL head (regression-free)[0m [90m0.001s[0m
+[32m  + [0m[32mexecutor: llm=None → None[0m [90m0.001s[0m
+[32m  + [0m[32mexecutor: LLM error degrades to None (never fails the WebSearch tool)[0m [90m0.001s[0m
+[32mnebflow.llm.providers.AnthropicThinkingPassbackSpec:[0m
+[32m  + [0m[32mdefault (passback=false) drops unsigned thinking blocks[0m [90m0.001s[0m
+[32m  + [0m[32mpassback=true keeps unsigned thinking blocks without a signature field[0m [90m0.0s[0m
+[32m  + [0m[32msigned thinking blocks replay with signature in both modes[0m [90m0.0s[0m
+[32mnebflow.llm.providers.OpenAiNormalizationSpec:[0m
+[32m  + [0m[32mO1: passback=true replays reasoning_content on the assistant turn[0m [90m0.001s[0m
+[32m  + [0m[32mO1b: passback=false leaves the openai wire byte-identical to the old shape[0m [90m0.0s[0m
+[32m  + [0m[32mO2: a message carrying BOTH tool_result and text keeps the text[0m [90m0.001s[0m
+[32m  + [0m[32mO3: a non-streaming `content` array is read as text (compat endpoints)[0m [90m0.0s[0m
+[32m  + [0m[32mO3b: tool call `arguments` sent as an OBJECT is still parsed (not silently {})[0m [90m0.0s[0m
+[32m  + [0m[32mO4: the openai system message carries provider/model (route readable by the batch)[0m [90m0.001s[0m
+10:31:09.583 [36mINFO [0m nebflow.llm.anthropic - message_start: model=m1 usage_json={"input_tokens":10,"output_tokens":0} inputTokens=10 cacheRead=None cacheWrite=None
+10:31:09.584 [36mINFO [0m nebflow.llm.anthropic - message_delta: model=m1 deltaInput=None stored_input=10 final_input=10 cacheRead=None cacheWrite=None totalInput=10 outputTokens=2 stopReason=Some(end_turn)
+[32mnebflow.llm.SendStreamNoProgressSpec:[0m
+[32m  + [0m[32mFix B: provider never responds → whole stream fails with TimeoutException within the window[0m [90m1.516s[0m
+[32m  + [0m[32mFix B: well-behaved stream completes untouched (no false positive)[0m [90m0.029s[0m
+10:31:09.599 [33mWARN [0m nebflow.llm.anthropic - thinking mode dropped for this request: provider=unknown model=deepseek-v4.1-flash requires thinking passback but session history contains assistant messages without thinking blocks (cross-provider replay) — replaying would 400 (audit 20260903 #4); request=u:t,a:t,u:t
+10:31:09.599 [33mWARN [0m nebflow.llm.anthropic - thinking mode dropped for this request: provider=unknown model=claude-opus-4 requires thinking passback but session history contains assistant messages without thinking blocks (cross-provider replay) — replaying would 400 (audit 20260903 #4); request=u:t,a:t,u:t
+10:31:09.614 [36mINFO [0m nebflow.llm.anthropic - message_start: model=kimi-for-coding usage_json={"input_tokens":10,"output_tokens":0} inputTokens=10 cacheRead=None cacheWrite=None
+10:31:09.614 [36mINFO [0m nebflow.llm.anthropic - message_delta: model=kimi-for-coding deltaInput=None stored_input=10 final_input=10 cacheRead=None cacheWrite=None totalInput=10 outputTokens=2 stopReason=Some(end_turn)
+10:31:09.643 [36mINFO [0m nebflow.llm.anthropic - message_start: model=k3.1-pro-highspeed usage_json={"input_tokens":10,"output_tokens":0} inputTokens=10 cacheRead=None cacheWrite=None
+10:31:09.643 [36mINFO [0m nebflow.llm.anthropic - message_delta: model=k3.1-pro-highspeed deltaInput=None stored_input=10 final_input=10 cacheRead=None cacheWrite=None totalInput=10 outputTokens=2 stopReason=Some(end_turn)
+10:31:09.655 [36mINFO [0m nebflow.llm.anthropic - message_start: model=m1 usage_json={"input_tokens":10,"output_tokens":0} inputTokens=10 cacheRead=None cacheWrite=None
+10:31:09.655 [36mINFO [0m nebflow.llm.anthropic - message_delta: model=m1 deltaInput=None stored_input=10 final_input=10 cacheRead=None cacheWrite=None totalInput=10 outputTokens=2 stopReason=Some(end_turn)
+10:31:09.666 [36mINFO [0m nebflow.llm.anthropic - message_start: model=k3.1-pro-highspeed usage_json={"input_tokens":10,"output_tokens":0} inputTokens=10 cacheRead=None cacheWrite=None
+10:31:09.666 [36mINFO [0m nebflow.llm.anthropic - message_delta: model=k3.1-pro-highspeed deltaInput=None stored_input=10 final_input=10 cacheRead=None cacheWrite=None totalInput=10 outputTokens=2 stopReason=Some(end_turn)
+[32mnebflow.llm.providers.AnthropicThinkingWireSpec:[0m
+[32m  + [0m[32mW1: budget kind + enabled → legacy {type:enabled,budget_tokens} verbatim[0m [90m0.001s[0m
+[32m  + [0m[32mW2: budget kind + off → EMPTY fragment (thinking key omitted, never null)[0m [90m0.0s[0m
+[32m  + [0m[32mW3: toggle (glm) + enabled → {type:enabled} with NO budget_tokens[0m [90m0.0s[0m
+[32m  + [0m[32mW3b: toggle (kimi-for-coding) + enabled → {type:enabled} with NO budget_tokens[0m [90m0.0s[0m
+[32m  + [0m[32mW4: toggle + off → falls back to enabled (forced-thinking off is an error path)[0m [90m0.001s[0m
+[32m  + [0m[32mW5: toggle + explicit clearThinking=false → {type:enabled,clear_thinking:false}[0m [90m0.0s[0m
+[32m  + [0m[32mW6: k3.1 + enabled → NO thinking key at all (official: remove thinking config)[0m [90m0.0s[0m
+[32m  + [0m[32mW6b: k3.1 + off → NO thinking key[0m [90m0.0s[0m
+[32m  + [0m[32mW7: deepseek + enabled → {type:enabled}, NO budget_tokens, NO output_config (gate closed)[0m [90m0.001s[0m
+[32m  + [0m[32mW8: passback strip on the deepseek family emits thinking:disabled (NOT an omitted key)[0m [90m0.0s[0m
+[32m  + [0m[32mW8b: passback strip on the Budget family still omits the key (no regression)[0m [90m0.0s[0m
+[32m  + [0m[32mW9: k3.1 + effort high → top-level reasoning_effort:high, still NO thinking key[0m [90m0.001s[0m
+[32m  + [0m[32mW10: medium maps to high on three-tier faces (k3.1 and glm)[0m [90m0.0s[0m
+[32m  + [0m[32mW11: kimi-for-coding has NO effort face — effort config never reaches the wire[0m [90m0.0s[0m
+[32m  + [0m[32mW12: deepseek family effort gate closed → no output_config even with effort configured[0m [90m0.0s[0m
+[32m  + [0m[32mW13: family heuristic defaults match the capability table[0m [90m0.001s[0m
+[32m  + [0m[32mW14: explicit thinkingKind always wins over the family heuristic[0m [90m0.0s[0m
+[32m  + [0m[32mE1: kimi-for-coding candidate → wire thinking is exactly {type:enabled} (no budget)[0m [90m0.018s[0m
+[32m  + [0m[32mE2: k3.1 candidate → wire carries NO thinking key at all[0m [90m0.027s[0m
+[32m  + [0m[32mE3: global off (Some(Json.Null)) → wire carries NO thinking key (null-shape regression pin)[0m [90m0.012s[0m
+[32m  + [0m[32mE4: model layer effort=high flows through the full chain to reasoning_effort[0m [90m0.011s[0m
+[32mnebflow.llm.decision.DelegateJudgeMachineSpec:[0m
+[32m  + [0m[32mparseVerdict: bare, fenced and prose-wrapped JSON all parse; verdict+reason land[0m [90m0.001s[0m
+[32m  + [0m[32mparseVerdict: unknown verdict values and non-JSON text are rejected (None = fallback leg, never a fabricated verdict)[0m [90m0.0s[0m
+[32m  + [0m[32mextractJsonObject: first {...} to last } wins (tolerates leading/trailing prose)[0m [90m0.001s[0m
+[32m  + [0m[32mverdictFromChoice: legal labels map to the verdict domain; blocked = completed+note with the mergeRound marker[0m [90m0.001s[0m
+[32m  + [0m[32mVerdictWire: the noted completion encodes 'completed' (no blocked wire word); engine payload writes true terminal values[0m [90m0.002s[0m
+10:31:09.690 [33mWARN [0m nebflow.llm.anthropic - thinking-passback rejection — degraded retry with thinking disabled: provider=a model=m1
+10:31:09.694 [33mWARN [0m nebflow.llm - Stream: a/m1 permanent error (Format) — provider response: statusCode: 400, response: [wire] HTTP 400 provider=a model=m1 | request=u:t | response=error/invalid_request_error(code=-) | upstream=The content[].thinking in the thinking mode must be passed back to the API | raw={"type":"error","error":{"type":"invalid_request_error","message":"The content[].thinking in the thinking mode must be passed back to the API"}} [status=400, evict=false, round=1/2]
+10:31:09.699 [33mWARN [0m nebflow.llm.anthropic - thinking-passback rejection — degraded retry with thinking disabled: provider=a model=m1
+10:31:09.702 [33mWARN [0m nebflow.llm - Stream: a/m1 permanent error (Format) — provider response: statusCode: 400, response: [wire] HTTP 400 provider=a model=m1 | request=u:t | response=error/invalid_request_error(code=-) | upstream=The content[].thinking in the thinking mode must be passed back to the API | raw={"type":"error","error":{"type":"invalid_request_error","message":"The content[].thinking in the thinking mode must be passed back to the API"}} [status=400, evict=false, round=2/2]
+10:31:09.702 [33mWARN [0m nebflow.llm - Stream: candidate chain exhausted after 2 round(s) (cap 2) — failing fast instead of re-entering the health-check loop [providers attempted: 2 attempt(s), reason=all-providers-failed, chain=1 tried=1 skipped=0]
+reason: all-providers-failed  (chain 1: tried 1, skipped 0)
+  [tried]   a/m1
+expected from config: 1 ref(s) — none silently excluded
+10:31:09.712 [33mWARN [0m nebflow.llm - Stream: a/m1 permanent error (Auth) — provider response: statusCode: 401, response: [wire] HTTP 401 provider=a model=m1 | request=u:t | response=error/authentication_error(code=-) | upstream=invalid api-key | raw={"type":"error","error":{"type":"authentication_error","message":"invalid api-key"}} [status=401, evict=true, round=1/2]
+10:31:09.713 [33mWARN [0m nebflow.llm.health - Provider a/m1 marked DOWN: HttpError: statusCode: 401, response: [wire] HTTP 401 provider=a model=m1 | request=u:t | response=error/authentication_error(code=-) | upstream=invalid api-key | raw={"type":"error","error":{"type":"authentication_error","message":"invalid api-key"}}
+10:31:09.715 [33mWARN [0m nebflow.llm.health - Probe failed for a/m1: HttpError: statusCode: 401, response: [wire] HTTP 401 provider=a model=m1 | request=u:t | response=error/authentication_error(code=-) | upstream=invalid api-key | raw={"type":"error","error":{"type":"authentication_error","message":"invalid api-key"}}
+[32mnebflow.llm.FormatErrorNoEvictSpec:[0m
+[32m  + [0m[32mT1(重写): 400 (thinking-passback shape) gets ONE in-place degrade retry then exhausted — provider NOT evicted[0m [90m0.024s[0m
+[32m  + [0m[32mT2: classifyError unit — 400 Format evict=false; context-overflow 400 stays Fatal/evict=true[0m [90m0.001s[0m
+[32m  + [0m[32mT3(重写): 401 Auth still evicts via markDown (确证死亡不回归；单候选链终局 = 有界全灭闸)[0m [90m8.009s[0m
+[32mnebflow.llm.providers.HttpHeadersSpec:[0m
+[32m  + [0m[32mH1: defaults always carry a non-empty, identifiable User-Agent[0m [90m0.002s[0m
+[32m  + [0m[32mH2: provider headers override the defaults case-insensitively (no duplicate header)[0m [90m0.001s[0m
+[32m  + [0m[32mH3: a provider that supplies headers can also override accept[0m [90m0.001s[0m
+[32m  + [0m[32mH4: a cloudflare 1010 page produces a header-problem hint, not an auth story[0m [90m0.001s[0m
+10:31:17.766 [33mWARN [0m nebflow.llm.decision - jev.provider 'nope' is not a known decision provider — decision face skipped
+10:31:17.767 [33mWARN [0m nebflow.llm.decision - jev.keyRef 'no-such-secret' has no secret file under secrets/ — decision calls will fail auth
+10:31:17.767 [33mWARN [0m nebflow.llm.decision - jev.keyRef 'no-such-secret' secret absent — decision leg CLOSED (fallback leg takes over); restoring the secret re-opens the leg on the next call (hot read)
+10:31:17.767 [33mWARN [0m nebflow.llm.decision - jev.keyRef 'no-such-secret' has no secret file under secrets/ — decision calls will fail auth
+10:31:17.770 [33mWARN [0m nebflow.llm.decision - jev.keyRef 'empty-key' resolves to an empty secret — decision calls will fail auth
+10:31:17.773 [33mWARN [0m nebflow.llm.decision.laya - choice question 'wide' has 25 options (> 20); LAYA precision degrades at high cardinality
+[32mnebflow.llm.decision.DecisionProviderSpec:[0m
+[32m  + [0m[32mrequest body renders choice criteria as a map with a null-valued entry (#2)[0m [90m0.005s[0m
+[32m  + [0m[32mscore criteria renders as an ordered array and noul carries no criteria[0m [90m0.0s[0m
+[32m  + [0m[32mrequest body carries exactly state/model/questions at top level[0m [90m0.001s[0m
+[32m  + [0m[32mcaptured response parses into canonical answers with usage[0m [90m0.007s[0m
+[32m  + [0m[32mP(yes) of a choice question reads probabilities[yes]; of a noul, the scalar (#7)[0m [90m0.001s[0m
+[32m  + [0m[32man integral-float score position is accepted rather than discarded[0m [90m0.001s[0m
+[32m  + [0m[32ma fractional score position is coerced to the nearest position, not a batch failure[0m [90m0.002s[0m
+[32m  + [0m[32mmalformed envelopes and answers fail loudly with a specific reason[0m [90m0.002s[0m
+[32m  + [0m[32mHTTP status classification mirrors the standalone-search buckets[0m [90m0.003s[0m
+[32m  + [0m[32ma partial jev block decodes through the production loader (seed intermediate state must not fail)[0m [90m0.001s[0m
+[32m  + [0m[32man absent jev block decodes to None and the face resolves to off (zero migration)[0m [90m0.001s[0m
+[32m  + [0m[32man unknown provider id is refused rather than silently defaulted[0m [90m0.001s[0m
+[32m  + [0m[32msettings apply the documented defaults (zero-timeout: no allocation deadline exists)[0m [90m0.0s[0m
+[32m  + [0m[32mthe LAYA provider defaults to its loopback endpoint[0m [90m0.0s[0m
+[32m  + [0m[32mkeyRef is a pointer: an absent secret CLOSES the leg (four-fix ③) and never a value in diagnostics[0m [90m0.002s[0m
+[32m  + [0m[32ma present secret resolves to its value and the empty case resolves to none[0m [90m0.003s[0m
+[32m  + [0m[32mLAYA adaptation downgrades a null label, keeps the key set, and warns above capacity[0m [90m0.002s[0m
+[32m  + [0m[32mmin_confidence is only added when configured[0m [90m0.002s[0m
+[32m  + [0m[32mjev section write updates named keys, preserves the rest, and refuses unknown keys[0m [90m0.005s[0m
+[32m  + [0m[32mTypesafeJevProvider performs one batched call and parses the answers[0m [90m0.006s[0m
+[32m  + [0m[32ma non-2xx status classifies and does not parse[0m [90m0.003s[0m
+[32m  + [0m[32ma slow endpoint is awaited, never timer-killed (zero-timeout, 2026-10-19 author decision)[0m [90m2.508s[0m
+[32m  + [0m[32mthe health channel records success and failure independently of model health[0m [90m0.017s[0m
+[32m  + [0m[32mLayaProvider posts an adapted body and reads 503 Retry-After as a capacity signal[0m [90m0.009s[0m
+[32mnebflow.llm.providers.MaxTokensClampSpec:[0m
+[32m  + [0m[32mT1: 辅面 override 逐字上线，绕过家族帽/窗口腿/thinking 抬高[0m [90m0.001s[0m
+[32m  + [0m[32mT2: 无窗口无 thinking ⇒ 常量 128000 逐字上线[0m [90m0.0s[0m
+[32m  + [0m[32mT3: glm 家族帽 32768（大小写/前缀变体皆中），非家族模型不受影响[0m [90m0.0s[0m
+[32m  + [0m[32mT4: cw=128000 ⇒ 119808（留 8192 输入余量）[0m [90m0.0s[0m
+[32m  + [0m[32mT5: 极小窗 cw=8192 ⇒ 地板 16384（升额前服务值）[0m [90m0.001s[0m
+[32m  + [0m[32mT6: budget 32768 + cw=32768 ⇒ 32769（budget_tokens < max_tokens 硬不变量胜出）[0m [90m0.0s[0m
+[32m  + [0m[32mT7: 100k 拉丁字符输入（≈25k tokens）⇒ cw=131072 时上限 97880[0m [90m0.003s[0m
+[32m  + [0m[32mT8: system 4000 拉丁字符（≈1k tokens）⇒ 128000 − 9192 = 118808[0m [90m0.0s[0m
+[32m  + [0m[32mT9: high thinking + 钳制休眠 ⇒ 32768 + 128000 = 160768（抬高腿原形）[0m [90m0.0s[0m
+[error] Failed: Total 528, Failed 2, Errors 0, Passed 525, Skipped 1
+[error] Failed tests:
+[error] 	nebflow.llm.decision.PluginCatalogLayerSpec
+[error] (Test / testOnly) sbt.TestsFailedException: Tests unsuccessful
+[error] Total time: 104 s (0:01:44.0), completed 2026年11月7日 10:31:20
+
+real	1m48.106s
+user	0m25.617s
+sys	0m3.003s
+EXIT=1

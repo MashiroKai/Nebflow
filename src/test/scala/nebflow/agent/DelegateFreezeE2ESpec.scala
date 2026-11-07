@@ -274,7 +274,14 @@ class DelegateFreezeE2ESpec extends CatsEffectSuite:
             .findByTaskId(childSid)
             .map(_.exists(_.status == DelegateFreeze.TaskStatus))
         )
-        _ <- waitUntil(30.seconds)(mailboxEvents(parentSid).map(_.exists(_.eventType == "frozen")))
+        // fallback 废除批（作者令 2026-11-06 20:36「只在子agent面板里显示……不再向上
+        // 通知」）：冻结回执不再投父邮箱——面板帧（delegateFrozen）是唯一即时呈现面。
+        // 原「等父邮箱出现 frozen 回执」面随批退役（原断言逐字见 git 历史）。
+        _ <- waitUntil(30.seconds)(
+          fx.frames.get.map(
+            _.exists(_.hcursor.get[String]("type").toOption.contains("delegateFrozen"))
+          )
+        )
         _ <- IO.sleep(300.millis) // 沉降：确认没有第二件终态悄悄落地
         frozenRecord <- IO(DelegateRegistry.find(childSid).get)
         frozenRow <- fx.resources.subAgentTaskStore.findByTaskId(childSid)
@@ -329,10 +336,12 @@ class DelegateFreezeE2ESpec extends CatsEffectSuite:
         )
         val terminals = frozenMail.map(_.eventType).filter(t => Set("failed", "completed", "cancelled").contains(t))
         assertEquals(terminals, Nil, s"a frozen delegate must never produce a failure terminal, got: ${frozenMail.map(_.eventType)}")
-        val freezeReceipt = frozenMail.filter(_.eventType == "frozen")
-        assertEquals(freezeReceipt.size, 1, s"exactly one frozen receipt, got: ${frozenMail.map(_.eventType)}")
-        assert(freezeReceipt.head.payload.contains("NOT a failure verdict"), "honest wording in the receipt")
-        assert(freezeReceipt.head.payload.contains(s"delegate:$childSid"), "the wake address is printed")
+        // fallback 废除批：父邮箱零条目——冻结回执不再投递（面板帧是唯一即时面）。
+        assertEquals(
+          frozenMail.map(_.eventType),
+          Nil,
+          s"zero-notify: no frozen receipt in the parent mailbox, got: ${frozenMail.map(_.eventType)}"
+        )
         assert(
           frozenFrames.exists(_.hcursor.get[String]("type").toOption.contains("delegateFrozen")),
           s"a delegateFrozen panel frame must be emitted, got: ${frozenFrames.map(_.hcursor.get[String]("type").toOption)}"

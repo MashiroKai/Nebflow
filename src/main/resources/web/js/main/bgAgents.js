@@ -22,6 +22,8 @@ import { openStepPopup as openBgAgentPopup } from '../bgAgentPopup.js';
 // 两级面板数据侧 stub 读取口（delegate-ui 批：rows/children/chain——provider 镜像；
 // liveSource 挂载在 delegateChainProvider.js，由 main.js 侧 import 触发）。
 import { listDelegateRows, listDelegateChildren, getChainByTask } from '../delegateChainStub.js';
+// 模型粒度批（作者令 2026-11-06 20:36）：手动恢复两档的 REST 缝（逐个 / 一键全部）。
+import { restoreDelegate, restoreAllDelegates } from '../delegateApi.js';
 // panel-merge-status 批（2026-10-25）：候合并行队列细节（位次/重试/拒绝摘要）——
 // /api/merge-queue 只读状态面单点（叶子模块，事件驱动 + 节流退避，禁空转轮询）。
 import { ensureMergeQueueStatus, mergeQueueEntryFor } from '../mergeQueueStatus.js';
@@ -509,6 +511,9 @@ function bgDelegateBadgeWord(execMode) {
 function bgStoreChildState(status) {
   if (status === 'completed') return 'done';
   if (status === 'failed') return 'error';
+  // 模型粒度批（作者令 2026-11-06 20:36）：重启/崩溃中断 = 待手动恢复（后端零通知、
+  // 不自动恢复；`pending-recovery` 由 SubAgentStartupRecovery 标记）——不是进行中。
+  if (status === 'pending-recovery') return 'pending-recovery';
   return 'active';
 }
 
@@ -2062,7 +2067,17 @@ function bgStoreChildHtml(child, agentflowKey, opts = {}) {
   const c = child && typeof child === 'object' ? child : {};
   const sid = String(c.taskId || '');
   const state = bgStoreChildState(String(c.status || ''));
-  const statusLabel = t('subagents.status.' + (state === 'active' ? 'running' : state));
+  // 模型粒度批（作者令 2026-11-06 20:36）：待恢复行 = 「重启中断 · 待恢复」词 +
+  // **逐个恢复**按钮（REST POST /api/delegates/restore，body {taskId}）——作者令
+  // 「粒度可以是逐个点击」；点击不冒泡（行体点击仍是开详情）。
+  const pendingRecovery = state === 'pending-recovery';
+  const statusLabel = pendingRecovery
+    ? t('delegate.pendingRecovery')
+    : t('subagents.status.' + (state === 'active' ? 'running' : state));
+  const restoreChip = pendingRecovery
+    ? '<button class="bg-task-wake" type="button" data-bg-restore="' + escapeHtml(sid) +
+      '" title="' + escapeHtml(t('delegate.restore')) + '">' + escapeHtml(t('delegate.restore')) + '</button>'
+    : '';
   const kindWord = bgMemberKindWord({ source: String(c.source || ''), sessionId: sid });
   const rawName = String(c.agentName || '') || sid;
   const desc = String(c.description || c.prompt || '');
@@ -2090,6 +2105,7 @@ function bgStoreChildHtml(child, agentflowKey, opts = {}) {
       '<div class="bg-task-line bg-task-main bg-task-row-line1">' +
         namePart +
         bgStatusHtml(state === 'active' ? 'active' : state, { label: statusLabel }) +
+        restoreChip +
       '</div>' +
       '<div class="bg-task-line bg-task-row-line2 bg-task-badges">' + kindPart + retriesPart + '</div>' +
       (taskSummary
@@ -2139,6 +2155,22 @@ function bgFlowChildHtml(node, delegateKey, agentflowKey, opts = {}) {
   '</div>';
 }
 
+/** 待恢复行计数（面板模型单点扫描）：store 子行 `status=pending-recovery` ∪ live 行
+ *  同名状态位。冻结行不算（它有自己的 WS 唤醒腿 `data-bg-wake`）；本计数只服务
+ *  「一键全部恢复」按钮的显隐（模型粒度批 2026-11-06，作者令两档恢复）。 */
+function countPendingRecovery(model) {
+  let n = 0;
+  for (const [, info] of (model.entries || [])) {
+    if (info && info.status === 'pending-recovery') n += 1;
+  }
+  for (const g of (model.groups || [])) {
+    for (const c of (g.children || [])) {
+      if (c.type === 'store' && String((c.child && c.child.status) || '') === 'pending-recovery') n += 1;
+    }
+  }
+  return n;
+}
+
 export function renderBgAgentDropdown() {
   if (!activeView) return;
   const dropdownEl = activeView.dom.bgagentDropdownEl;
@@ -2185,7 +2217,21 @@ export function renderBgAgentDropdown() {
       }
       digestText = ' · ' + segs.join(' · ');
     }
+    // 模型粒度批（作者令 2026-11-06 20:36）：面板有重启中断行（pending-recovery）
+    // ⇒ 头部给**一键全部恢复**按钮（「也可以是子agent面板一键全部恢复」）。行内逐个
+    // 恢复 chip 在 bgStoreChildHtml；两档共用同一 REST 缝（delegateApi.restore*）。
+    // DOM 构建器写法（component-contract R5：不裸写 innerHTML——文本全 textContent）。
+    const pendingCount = countPendingRecovery(model);
     headerEl.textContent = t('subagents.header', { count: model.total }) + digestText;
+    if (pendingCount > 0) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'bg-task-wake bg-restore-all';
+      btn.setAttribute('data-bg-restore-all', '');
+      btn.title = t('delegate.restoreAll');
+      btn.textContent = t('delegate.restoreAll');
+      headerEl.appendChild(btn);
+    }
   }
   if (model.total === 0 && remoteHtml === '') {
     // 空态自动收起（修订批九点⑤ · 2026-10-09）：无内容不渲染空态区块——列表留白，
@@ -2393,6 +2439,45 @@ export function renderBgAgentDropdown() {
       sendWs({ type: 'delegateWake', sessionId: sid });
     });
   });
+
+  // 模型粒度批（作者令 2026-11-06 20:36）：手动恢复两档的接线——
+  //   · 逐个：待恢复行 chip（`data-bg-restore` = taskId）→ POST /api/delegates/restore
+  //     body {taskId}（同 id 续原转录；资格闸/墓碑/预算照守）；
+  //   · 一键全部：头部按钮（`data-bg-restore-all`）→ POST /api/delegates/restore-all。
+  // 后端零通知（作者令「不自动恢复…我们只需要把状态保存做好」）：结果只回本响应
+  // （toast），面板行状态随 revive 自身与下一次快照翻新。停冒泡：行体点击仍是开详情。
+  listEl.querySelectorAll('[data-bg-restore]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const taskId = btn.getAttribute('data-bg-restore');
+      if (!taskId) return;
+      btn.disabled = true;
+      restoreDelegate(taskId).then((r) => {
+        import('../modal.js').then((m) => {
+          if (r && r.state === 'ok') m.showToast(t('delegate.restoreDone', { count: 1 }));
+          else m.showToast(t('delegate.restoreFailed', { error: String((r && r.data && r.data.error) || (r && r.status) || 'network') }), 'error');
+        }).catch(() => {});
+        renderBgAgentDropdown();
+      }).catch(() => {});
+    });
+  });
+  const restoreAllBtn = headerEl ? headerEl.querySelector('[data-bg-restore-all]') : null;
+  if (restoreAllBtn) {
+    restoreAllBtn.addEventListener('click', () => {
+      restoreAllBtn.disabled = true;
+      restoreAllDelegates().then((r) => {
+        import('../modal.js').then((m) => {
+          if (r && r.state === 'ok') {
+            const revived = Array.isArray(r && r.data && r.data.revived) ? r.data.revived.length : 0;
+            m.showToast(t('delegate.restoreDone', { count: revived }));
+          } else {
+            m.showToast(t('delegate.restoreFailed', { error: String((r && r.data && r.data.error) || (r && r.status) || 'network') }), 'error');
+          }
+        }).catch(() => {});
+        renderBgAgentDropdown();
+      }).catch(() => {});
+    });
+  }
 
   // delegate-ui 批（C2/R5）：store 子条目行（不在注册表的终态子）点击 = 同一套详情
   // 承载（bgAgentPopup 历史恢复）；agentflow flow 行点击 = S10 per-task 链视图

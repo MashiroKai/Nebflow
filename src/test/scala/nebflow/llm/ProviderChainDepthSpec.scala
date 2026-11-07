@@ -17,6 +17,16 @@ import sttp.client4.StreamBackend
  * 429-1308 5h 使用上限、deepseek/deepseek-flash 18:47/18:59 传输层失联）⇒ 17:54
  * 起链上只剩 deepseek 单点 ⇒ 全灭闸阻塞（AllProvidersDownTimeout）。
  *
+ * **fallback 废除批改写（作者令 2026-11-06 20:36「不再支持模型fallback」，逐条申报）**：
+ * 本 spec 的原目的（「链深恒 1 在结构上不可达」+ 储备层补尾）随 fallback 退役**整体
+ * 反转**——链深恒 1 = preferred 单候选重新成为**既定语义**（`reserveTier` 已从
+ * ProviderRegistry 移除）：
+ *   - T1 **重写**：候选链恰 = preferred 单根；未引用 provider 一根都不进链（原
+ *     「未引用三根必须进链」断言反转申报）；
+ *   - T2 **重写**：储备层链尾 = 空（原「未引用项纳入储备层」面退役）；
+ *   - T3 / T4 断言原样保留（单根链的确定序判据在新语义下依然成立）。
+ * 原断言逐字内容见 git 历史。
+ *
  * 断言纪律：本 spec 只经 `getCandidatesForAgent`（真实调用链）断言，不引用实现
  * 新增的内部符号；配置全部在 spec 内构造，不读/不写真实 HOME（`getCandidates()`
  * 的默认 preset 面会读写真实 HOME，故本 spec 不触发该分支）。
@@ -51,8 +61,15 @@ class ProviderChainDepthSpec extends CatsEffectSuite:
       fallbacks = List("zhipu/GLM-5.3-Flash", "deepseek/deepseek-flash")
     )
 
+  // 授权链（fallback 废除批，作者令 2026-11-06 20:36「不再支持模型fallback」）：
+  // `generalChain` 里声明过的 fallbacks 两根是**死数据**——本 spec 把它们留在判床里
+  // 正是为了钉「声明了也不进请求链」这条不变量。
   private val presetRefs =
-    List("kimi/kimi-k3", "zhipu/GLM-5.3-Flash", "deepseek/deepseek-flash")
+    List("kimi/kimi-k3")
+
+  /** `generalChain` 声明过、但 fallback 废除后**不得进入**请求链的两根。 */
+  private val declaredOnlyRefs =
+    List("zhipu/GLM-5.3-Flash", "deepseek/deepseek-flash")
 
   /** 三个 preset 均未引用、但 `nebflow.json` 已存在的三根（令面 §二 腿 a）。 */
   private val unreferencedRefs =
@@ -64,30 +81,32 @@ class ProviderChainDepthSpec extends CatsEffectSuite:
   private def refs(cs: List[ModelCandidate]): List[String] =
     cs.map(c => s"${c.providerId}/${c.model}")
 
-  test("T1: agent 显式链外的配置模型不得被 reserveTier 扩权") {
+  test("T1(重写): 链深恒 1 = preferred 单根；未引用 provider 与已声明 fallback 一根都不进链（fallback 废除）") {
     for
       reg <- mkRegistry(liveLikeConfig)
       cs <- reg.getCandidatesForAgent(Some(generalChain))
     yield
       val r = refs(cs)
-      // 预设链前缀原样、不插队（REST「当前模型」显示取 healthy.head）
-      assertEquals(r.take(3), presetRefs, s"预设链前缀必须原样保留，实际链 = $r")
-      // 只有 general preset 明确列出的三条属于该 agent；储备/provider inventory 不得扩权。
+      // fallback 废除批：候选链恰 = preferred 单根（授权边界 + 链深恒 1）。
+      assertEquals(r, List("kimi/kimi-k3"), s"链必须恰 = preferred 单根，实际链 = $r")
+      // 未引用 provider/model 一根都不进链（储备层退役——不暗中回补）。
       unreferencedRefs.foreach { u =>
         assert(!r.contains(u), s"$u 未列入 agent allowlist，不得进候选链，实际链 = $r")
       }
-      assertEquals(r, presetRefs, s"候选只能由明确链授权，实际 ${r.size}: $r")
-      assertEquals(r.size, r.distinct.size, s"候选链不得出现重复项: $r")
+      // 声明的 fallbacks 是死数据：它们不再进请求链（作者令「不再支持模型fallback」）。
+      declaredOnlyRefs.foreach { u =>
+        assert(!r.contains(u), s"已声明但未授权的 $u 不得进链（链深恒 1），实际链 = $r")
+      }
   }
 
-  test("T2: 未引用配置项不得追加到 agent 链尾") {
+  test("T2(重写): 储备层链尾 = 空——链上没有「已引用项再补尾」这回事（该面退役）") {
     for
       reg <- mkRegistry(liveLikeConfig)
       cs <- reg.getCandidatesForAgent(Some(generalChain))
     yield
       val r = refs(cs)
-      val tail = r.drop(presetRefs.size)
-      assertEquals(tail, Nil, s"未明确列入的模型不得作为储备链，实际尾部 = $tail")
+      assertEquals(r.drop(presetRefs.size), Nil, s"链尾必须为空（储备层退役，链深恒 1），实际链 = $r")
+      assertEquals(r.size, r.distinct.size, s"候选链不得出现重复项: $r")
   }
 
   test("T3: 配置实存 model 少于 3 根时链深不虚增（储备层只取配置实存项，禁编造）") {
