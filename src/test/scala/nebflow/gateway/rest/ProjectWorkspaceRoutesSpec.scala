@@ -323,7 +323,8 @@ class ProjectWorkspaceRoutesSpec extends CatsEffectSuite:
             "broken",
             "example",
             WorkspaceLedger.repositoryKey(root / "repo"),
-            (root / "missing-tree").toNIO.toRealPath().toString,
+            // The path does not exist: toRealPath() would throw, so register the raw path string.
+            (root / "missing-tree").toNIO.toString,
             "delegate/broken",
             "main",
             "0" * 40,
