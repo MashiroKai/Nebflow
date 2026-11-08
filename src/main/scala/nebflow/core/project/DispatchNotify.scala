@@ -390,10 +390,10 @@ final class DispatchNotify(
             val nodes = entries.map(_._1)
             // P0：投递结果（探针 true/false）决定「照旧 markSent」还是「滞留」。
             //  - `deliveryTarget=None`（缺省 / per-project）= **唯一**投递腿仍是 `trigger`
-            //    （project dispatcher 链），其结果语义恒 true ⇒ 旧行为逐字节不变。
+            //    (project dispatcher): successful completion acknowledges the attempt.
             //  - `Some(t)` = **只**走 `t.deliver`，项目 dispatcher 链在这条 flushBatch
             //    腿上完全不被调用（不旁路：作用域件绝不进项目分发器）。
-            // 抛错一律按「已尝试投递（true）」处理 = 旧行为（WARN 后照旧 markSent）。
+            // Failed delivery stays unacknowledged and eligible for redelivery.
             val send: IO[Boolean] = deliveryTarget match
               case Some(t) =>
                 t.deliver(mergedText(entries.map(_._2))).handleErrorWith { e =>
@@ -401,16 +401,16 @@ final class DispatchNotify(
                     .warn(
                       s"dispatch-notify delivery failed (target=${t.label}, reason=${key}, batch=${entries.size}): ${e.getMessage}"
                     )
-                    .as(true)
+                    .as(false)
                 }
               case None =>
                 trigger(mergedText(entries.map(_._2)))
+                  .as(true)
                   .handleErrorWith(e =>
                     logger
                       .warn(s"dispatch-notify trigger failed (reason=${key}, batch=${entries.size}): ${e.getMessage}")
-                      .void
+                      .as(false)
                   )
-                  .as(true)
             send.flatMap {
               case true =>
                 nodes.traverse_(node =>
@@ -458,7 +458,7 @@ final class DispatchNotify(
                   ) *>
                     logger.warn(
                       s"Project '$projectName' dispatch-notify PARKED: target=${deliveryTarget.map(_.label).getOrElse("-")} " +
-                        s"reason=$key node=${node.id} ('${node.name}') batch=${entries.size} — target not live, " +
+                        s"reason=$key node=${node.id} ('${node.name}') batch=${entries.size} — target unavailable or delivery failed, " +
                         "notifySentAt NOT set (stays a redelivery candidate; no bypass to the project dispatcher)"
                     )
                 )
@@ -696,21 +696,21 @@ final class DispatchNotify(
           NotifyPolicy.completionNotifiesDispatcher(n) &&
             n.status == NodeLifecycle.Completed &&
             n.notifySentAt.isEmpty &&
-            n.result.exists(_.trim.nonEmpty)
+            n.result.isDefined
         )
         .toList
       val failures = s.nodes.values
         .filter(n =>
           n.status == NodeLifecycle.Failed &&
             n.notifySentAt.isEmpty &&
-            n.result.exists(_.trim.nonEmpty)
+            n.result.isDefined
         )
         .toList
       val cancellations = s.nodes.values
         .filter(n =>
           n.status == NodeLifecycle.Cancelled &&
             n.notifySentAt.isEmpty &&
-            n.result.exists(_.trim.nonEmpty)
+            n.result.isDefined
         )
         .toList
       (completions.traverse_(n => notifyTerminal(n, NotifyReason.Completion)) *>

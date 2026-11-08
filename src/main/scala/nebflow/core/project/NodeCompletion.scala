@@ -410,7 +410,7 @@ private[project] trait NodeCompletion:
               if n.deliveredTo.contains(upId) then IO.pure(None)
               else
                 store.findNode(upId).flatMap {
-                  case Some(up) if up.status == NodeLifecycle.Completed && up.result.exists(_.trim.nonEmpty) =>
+                  case Some(up) if up.status == NodeLifecycle.Completed && up.result.isDefined =>
                     deliverOutTo(up, n.id, up.result.get)
                       .as(
                         Some(n.id -> s"orphan barrier healed: redelivered completed upstream '${up.name}' (${up.id})")
@@ -727,10 +727,10 @@ private[project] trait NodeCompletion:
   ): IO[Boolean] =
     for
       now <- IO(System.currentTimeMillis())
-      s <- store.mutate { st =>
+      transition <- store.mutateWithResult { st =>
         st.nodes.get(nodeId) match
           case Some(fresh) if fresh.status == NodeLifecycle.Running =>
-            st.copy(nodes =
+            val updated = st.copy(nodes =
               st.nodes.updated(
                 nodeId,
                 withoutReportPending(
@@ -745,10 +745,11 @@ private[project] trait NodeCompletion:
                 )
               )
             )
-          case _ => st // 节点已消失 / 状态已变 → 拒写（R2 竞态纪律）
+            (updated, updated.nodes.get(nodeId))
+          case _ => (st, None) // Only the transition winner may emit feedback.
       }
-      landed <- s.nodes.get(nodeId) match
-        case Some(bn) if bn.status == NodeLifecycle.Blocked =>
+      landed <- transition._2 match
+        case Some(bn) =>
           val summary = s"round ${bn.blockCount}: [${feedback.category}] ${feedback.detail.take(160)}"
           emitWithChain("nodeUpdated", nodeId, NodePayload.buildNodeJson(bn, now)) *>
             logger.warn(s"Node '${bn.name}' blocked — $summary") *>
@@ -759,13 +760,8 @@ private[project] trait NodeCompletion:
             scheduleDestroy(bn.id, destroyTargetSessions(bn), "blocked") *>
             feedbackRouter.route(bn, feedback) *>
             IO.pure(true)
-        case Some(other) =>
-          logger.info(
-            s"Node '$nodeId' state changed to '${other.status}' before blocked finalize — refused (fresh-read discipline)"
-          ) *>
-            IO.pure(false)
         case None =>
-          logger.warn(s"Node '$nodeId' vanished before blocked finalize — feedback not persisted") *>
+          logger.info(s"Node '$nodeId' did not transition from running to blocked — duplicate/stale feedback refused") *>
             IO.pure(false)
     yield landed
 

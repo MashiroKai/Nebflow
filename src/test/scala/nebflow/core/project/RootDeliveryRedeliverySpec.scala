@@ -67,7 +67,7 @@ class RootDeliveryRedeliverySpec extends FunSuite:
       createdAt = System.currentTimeMillis() - 60_000L
     )
 
-  private def withFixture(name: String)(
+  private def withFixture(name: String, delegateScope: Boolean = false)(
     body: (
       FlowMapStore,
       NodeEngine,
@@ -146,7 +146,8 @@ class RootDeliveryRedeliverySpec extends FunSuite:
           // （`markSent` → store mutate、事件审计 append）的晚解析写入者。
           notifyTriggerOverride = Some(_ => IO.unit),
           // noderpt 批 A 段：本 fixture 主题 = 未消费结果重投 ⇒ 显式关腿 2（生产默认开）。
-          reportGateHold = Some(false)
+          reportGateHold = Some(false),
+          delegateScope = delegateScope
         )
       yield (store, engine, resources, recorded, rootSid, rootRef)
       val (store, engine, resources, recorded, rootSid, rootRef) = io.unsafeRunSync()
@@ -460,6 +461,65 @@ class RootDeliveryRedeliverySpec extends FunSuite:
         Some(List.empty[String]),
         "cancelled source never delivers (no input semantics)"
       )
+    }
+  }
+
+  test("blocked feedback is emitted only by the running-to-blocked transition winner") {
+    withFixture("blocked-duplicate") { (store, engine, _, _, _, _, _) =>
+      val node = completedNode("n-block", NodeLifecycle.Running, "")
+      val feedback = BlockedFeedback("other", "needs input", "ask dispatcher")
+      val io = for
+        _ <- store.mutate(s => s.copy(nodes = Map(node.id -> node)))
+        first <- engine.blockedNodeR(node.id, feedback)
+        duplicate <- engine.blockedNodeR(node.id, feedback)
+        saved <- store.getNode(node.id)
+      yield (first, duplicate, saved)
+      val (first, duplicate, saved) = io.unsafeRunSync()
+      assert(first)
+      assert(!duplicate)
+      assertEquals(saved.map(_.blockCount), Some(1))
+    }
+  }
+
+  test("root redelivery retains empty recorded results but excludes absent results") {
+    withFixture("empty-result") { (store, engine, resources, _, _, rootSid, rootRef) =>
+      val io = for
+        _ <- registerRoot(resources, rootSid, rootRef)
+        _ <- store.mutate(s => s.copy(nodes = Map(
+          "empty" -> completedNode("empty", NodeLifecycle.Completed, ""),
+          "blank" -> completedNode("blank", NodeLifecycle.Completed, "  \n"),
+          "absent" -> completedNode("absent", NodeLifecycle.Completed, "").copy(result = None)
+        )))
+        count <- engine.redeliverUnconsumedRootResults()
+        _ <- engine.flushRootNotify()
+        snapshot <- store.snapshot
+      yield (count, snapshot)
+      val (count, snapshot) = io.unsafeRunSync()
+      assertEquals(count, 2)
+      assert(snapshot.nodes("empty").nebulaDeliveredAt.isDefined)
+      assert(snapshot.nodes("blank").nebulaDeliveredAt.isDefined)
+      assertEquals(snapshot.nodes("absent").nebulaDeliveredAt, None)
+    }
+  }
+
+  test("scoped blocked feedback returns to the owning delegate instead of project dispatcher reentry") {
+    withFixture("scoped-blocked", delegateScope = true) { (store, engine, resources, _, recorded, rootSid, rootRef) =>
+      val node = completedNode("n-scoped-block", NodeLifecycle.Running, "")
+      val feedback = BlockedFeedback("other", "scope-specific blocker", "owner must handle")
+      val io = for
+        _ <- registerRoot(resources, rootSid, rootRef)
+        _ <- store.mutate(s => s.copy(nodes = Map(node.id -> node)))
+        first <- engine.blockedNodeR(node.id, feedback)
+        duplicate <- engine.blockedNodeR(node.id, feedback)
+        _ <- engine.flushRootNotify()
+        msgs <- awaitImms(recorded, min = 1)
+      yield (first, duplicate, msgs)
+      val (first, duplicate, msgs) = io.unsafeRunSync()
+      assert(first)
+      assert(!duplicate)
+      val imms = msgs.collect { case m: AgentCommand.ImmediateInput => m }
+      assertEquals(imms.size, 1)
+      assert(imms.head.text.contains("scope-specific blocker"))
     }
   }
 

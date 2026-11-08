@@ -336,7 +336,9 @@ class NodeEngine(
   private[project] val feedbackRouter: FeedbackRouter = new FeedbackRouter(
     projectName = projectName,
     workspace = workspace,
-    feedbackMode = feedbackMode,
+    // Scoped chains report blockers to their owning delegate via the root channel.
+    // Legacy project reentry resolves a different dispatcher and must not be used here.
+    feedbackMode = if delegateScope then FeedbackRouter.ModeEscalateOnly else feedbackMode,
     escalate = (text, nodeName) => enqueueRootNotify(text, nodeName, NodeLifecycle.Blocked),
     escalateFailed = Some((text, nodeName) => enqueueRootNotify(text, nodeName, NodeLifecycle.Failed))
   )
@@ -1428,7 +1430,7 @@ class NodeEngine(
                 // 语义与今天逐字相同）；legacy 节点的 completed 判据退化为同一个边的
                 // 存在性判据 ⇒ 存量补投行为字节级零漂移。
                 (n.status != NodeLifecycle.Completed || NotifyPolicy.completedRootVisible(n)) &&
-                n.result.exists(_.trim.nonEmpty) &&
+                n.result.isDefined &&
                 n.nebulaDeliveredAt.isEmpty
             )
           // 缺口3（2026-09-04 夹具信封排除）：名字命中夹具家族 ∧ 任务载荷带夹具
