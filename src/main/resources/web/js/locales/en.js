@@ -32,6 +32,8 @@ export default {
   'project.workspaceIdle': 'Idle',
   'project.workspaceFrozen': 'Needs manual recovery',
   'project.mergeRequest': 'Merge request',
+  'project.requestOriginPanel': 'user-manual',
+  'project.requestOriginAgent': 'agent-submitted',
   'project.mergeSelected': 'Merge selected workspaces',
   'project.mergeSubmitted': 'Merge request submitted',
   'project.mergeNeedsResume': 'Queued; manually resume the project merger to continue',

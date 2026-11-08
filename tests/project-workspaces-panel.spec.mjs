@@ -27,6 +27,7 @@ try {
             owner: 'delegate-working', baseBranch: 'main', baseCommit: 'a'.repeat(40) },
         ], mergeRequests: [{ id: 'request-1', status: 'paused', items: [{ workspaceId: 'previous',
           phase: 'merged-cleanup-pending', mergeCommit: 'b'.repeat(40) }] }],
+        mergeRequestOrigins: { 'request-1': 'panel' },
       } });
       else if (path.endsWith('/flow-map')) await route.fulfill({ json: { nodes: [{ id: 'n-1', name: 'existing-task', status: 'completed' }], worktrees: [], meta: {} } });
       else if (path === '/api/projects') await route.fulfill({ json: { projects: [{ name: 'example', workspace: '/isolated/example', agentFile: 'AGENTS.md',
@@ -62,6 +63,9 @@ try {
     assert(await idleRow.getByRole('button', { name: '继续工作', exact: true }).isVisible(), `continue-work entry ${width}/${theme}`);
     const busyRow = section.locator('.project-workspaces-row', { hasText: 'delegate/working' });
     assert((await busyRow.textContent()).includes('可续处理'), `reconcile badge ${width}/${theme}`);
+    // Request rows carry their server-derived origin chip (panel selection here).
+    const requestSummary = section.locator('summary', { hasText: 'request-1' });
+    assert((await requestSummary.textContent()).includes('用户手动'), `request origin chip ${width}/${theme}`);
     const geometry = await section.evaluate(element => ({ width: element.clientWidth, scroll: element.scrollWidth,
       visible: element.getBoundingClientRect().width > 0 }));
     assert(geometry.visible && geometry.scroll <= geometry.width + 2, `overflow ${width}/${theme}: ${JSON.stringify(geometry)}`);

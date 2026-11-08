@@ -255,6 +255,10 @@ object AgentCore:
     "TaskSearch",
     // ConversationSearch is Nebula-root-only and read-only; block agent/plugin declaration escape.
     "ConversationSearch",
+    // workspace_summary (worktree-merger delivery, Priority E): Nebula-root-only
+    // workspace coordination picture + dismiss-suggestion; blocks declaration
+    // escape for agent/plugin declarations (MergerRequestTool same-slot precedent).
+    "workspace_summary",
     // generate_image（imagegen 双层批 2026-10-24，调试状态）：Nebula 专属生图件——
     // 同享本集【防声明逃逸】通道（真实授能 = RootOrchestrationTools 单点；编译期
     // seal 关时经 imageGenSealedStrip 从交付面剥除且本集条目随之不可达）。
@@ -429,6 +433,13 @@ object AgentCore:
     // workspace; merger-mode sessions get the same tool through the merger
     // mount face.
     "worktree_context",
+    // workspace_summary (worktree-merger delivery, Priority E): the main
+    // agent's per-project coordination picture — workspaces with live Git
+    // facts, pending merge requests with origins, advisor suggestions with
+    // states, merger initialization — plus the dismiss-suggestion action.
+    // Root-only (RootExclusiveTools blocks declaration escape); the advisor
+    // itself never merges and never touches manual merge requests.
+    "workspace_summary",
     // 任务编排（taskunify 合一批 2026-09-24 `75fddc5db`：TaskList/TaskBoard 双件
     // 合一 ⇒ 本集成员一对一改名 `TaskList` → `Task`，件数不变）。`TaskList` 名已
     // 删净退役（registry 不注册 ⇒ 调用走 RetiredToolGuides 墓碑指引）；`Task` 是
@@ -629,8 +640,13 @@ object AgentCore:
    * 工作区全景上下文只读件（主 agent 面；merger 模式会话经挂载面同享）。本增量
    * 属「按面变更」（新增成员），非「凑数字」；ConversationSearch 批 +1 时常量
    * 未随动，本批一并把常量钉回实测件数。
+   *
+   * **worktree-merger 交付批（Priority E）：+`workspace_summary` ⇒ 23**——主 agent
+   * 的工作区协调读面 + dismiss-suggestion（RootOrchestrationTools + RootExclusive
+   * Tools 双集，MergerRequestTool 同槽先例）。本增量属「按面变更」（新增成员），
+   * 非「凑数字」。
    */
-  val RootOrchestrationToolsExpectedSize: Int = 22
+  val RootOrchestrationToolsExpectedSize: Int = 23
 
   /**
    * 退役工具迁移指引表（R2「一个 Mail 统一」批，2026-09-12；设计件 §A.3 C-1）。

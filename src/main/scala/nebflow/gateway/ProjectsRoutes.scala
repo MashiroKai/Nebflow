@@ -92,6 +92,10 @@ private[gateway] object ProjectsRoutes:
                 // Workspace facts (ahead/dirty/HEAD, verification, reconcile) are
                 // fail-soft per workspace: one broken seat never fails the endpoint.
                 val facts = nebflow.core.delegate.WorkspaceFacts.forRepository(repository, snapshot)
+                // Priority E: advisor suggestions (durable rows with their states)
+                // ride the same snapshot; a corrupt store degrades to an empty list
+                // plus an explicit error marker instead of failing the endpoint.
+                val advisorRows = nebflow.core.delegate.WorkspaceAdvisor.default.rows()
                 Json.obj(
                   "revision" -> snapshot.revision.asJson,
                   "baseline" -> ledger.baseline(repository).asJson,
@@ -101,6 +105,13 @@ private[gateway] object ProjectsRoutes:
                   "workspaces" -> snapshot.workspaces.filter(_.repository == repository).asJson,
                   "facts" -> facts,
                   "mergeRequests" -> snapshot.requests.filter(_.repository == repository).asJson,
+                  "mergeRequestOrigins" -> snapshot.requests
+                    .filter(_.repository == repository)
+                    .map(r => r.id -> nebflow.core.tools.WorkspaceSummaryTool.requestOrigin(r))
+                    .toMap
+                    .asJson,
+                  "suggestions" -> advisorRows.fold(_ => Nil, rows => rows.filter(_.repository == repository)).asJson,
+                  "advisorError" -> advisorRows.left.toOption.asJson,
                   "merger" -> snapshot.mergers.find(_.repository == repository).asJson,
                   "mergerInitialization" -> snapshot.mergers
                     .find(_.repository == repository)

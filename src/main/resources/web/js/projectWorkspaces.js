@@ -291,7 +291,15 @@ export function mountProjectWorkspaces(card, name) {
         requests.set(request.id, row);
         requestList.appendChild(element);
       }
-      row.summary.textContent = `${t('project.mergeRequest')} · ${request.id} · ${phaseLabel(request.status)}`;
+      // Origin provenance chip (Priority E): the server derives each request's
+      // origin (panel selection vs agent submission); unknown/missing degrades
+      // to no chip. Advisor suggestions carry their own `origin: "advisor"` row
+      // field in data.suggestions (read face only here).
+      const origin = data.mergeRequestOrigins?.[request.id];
+      const originChip = origin === 'panel' || origin === 'agent'
+        ? [h('span', { class: 'project-ws-chip' }, t(origin === 'panel' ? 'project.requestOriginPanel' : 'project.requestOriginAgent'))]
+        : [];
+      row.summary.replaceChildren(...originChip, `${t('project.mergeRequest')} · ${request.id} · ${phaseLabel(request.status)}`);
       row.items.replaceChildren(...(request.items || []).map(item => h('li', {}, `${item.workspaceId} · ${phaseLabel(item.phase)} · ${item.mergeCommit || ''}`)));
       row.stop.hidden = ['completed', 'cancelled'].includes(request.status);
       row.stop.disabled = !!request.cancelRequested;

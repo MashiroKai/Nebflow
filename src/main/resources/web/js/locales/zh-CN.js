@@ -32,6 +32,8 @@ export default {
   'project.workspaceIdle': '空闲',
   'project.workspaceFrozen': '待手动恢复',
   'project.mergeRequest': '合并记录',
+  'project.requestOriginPanel': '用户手动',
+  'project.requestOriginAgent': '主 agent 提交',
   'project.mergeSelected': '合并所选工作区',
   'project.mergeSubmitted': '已提交合并请求',
   'project.mergeNeedsResume': '已登记，请手动恢复工程 merger 后继续',

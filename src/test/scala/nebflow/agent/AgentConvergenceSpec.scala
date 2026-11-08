@@ -287,9 +287,13 @@ class AgentConvergenceSpec extends FunSuite:
         "ConversationSearch",
         // imagegen 双层批（2026-10-24）resume 合入适配：Nebula 专属防声明逃逸
         // 条目——剥除名单静态在场，编译期 seal 两形态不变（名单≠注册面）。
-        "generate_image"
+        "generate_image",
+        // worktree-merger delivery (workspace_summary, Priority E): Nebula-root-only
+        // coordination read face + dismiss-suggestion, same anti-declaration-escape
+        // channel — dream never gains it either.
+        "workspace_summary"
       ),
-      "dream 豁免面 = 仅 MemoryNote（builtin-merge 批 +Subagent＋新增 ChainWrite；tool-face-agentflow-retire 批 2026-11-05 −AgentFlow〔工具退役〕；task-rag 批 #1227 +TaskSearch；taskunify 合一 2026-09-24 TaskList/TaskBoard → Task/TaskInfo——防声明逃逸条目同样剥离；TaskInfo/node_report/Pop/ListFriends 对 dream 同样剥离，真实授能在 project 会话身份末段追加 / Pop 仅 Nebula / ListFriends 仅 Nebula / TaskSearch 仅 Nebula / generate_image 仅 Nebula〔imagegen 双层批 resume 合入〕）"
+      "dream 豁免面 = 仅 MemoryNote（builtin-merge 批 +Subagent＋新增 ChainWrite；tool-face-agentflow-retire 批 2026-11-05 −AgentFlow〔工具退役〕；task-rag 批 #1227 +TaskSearch；taskunify 合一 2026-09-24 TaskList/TaskBoard → Task/TaskInfo——防声明逃逸条目同样剥离；TaskInfo/node_report/Pop/ListFriends 对 dream 同样剥离，真实授能在 project 会话身份末段追加 / Pop 仅 Nebula / ListFriends 仅 Nebula / TaskSearch 仅 Nebula / generate_image 仅 Nebula〔imagegen 双层批 resume 合入〕/ workspace_summary 仅 Nebula〔Priority E〕）"
     )
     val sneakyDream =
       CoreProbe.allowed(mkDef("dream", List("Schedule", "Delegate", "AgentControl", "Task", "TaskInfo")))
@@ -316,9 +320,10 @@ class AgentConvergenceSpec extends FunSuite:
         "ChainWrite",
         "TaskSearch",
         "ConversationSearch",
-        "generate_image" // imagegen 双层批 2026-10-24 resume 合入适配（仅 Nebula）
+        "generate_image", // imagegen 双层批 2026-10-24 resume 合入适配（仅 Nebula）
+        "workspace_summary" // worktree-merger delivery (Priority E): Nebula-root-only read face, dream stripped too
       ),
-      "dream 剥十三件（原八件 + builtin-merge 批 Subagent + ChainWrite 新增 + task-rag 批 #1227 TaskSearch + taskunify 合一 Task/TaskInfo 随名 + worktree-merger 交付批 merger_request + imagegen 双层批 2026-10-24 generate_image；tool-face-agentflow-retire 批 2026-11-05 −AgentFlow——工具退役、名字离开防逃逸集——防声明逃逸，执行 agent/delegate 单点授能，dream 不在授权面）"
+      "dream 剥十四件（原八件 + builtin-merge 批 Subagent + ChainWrite 新增 + task-rag 批 #1227 TaskSearch + taskunify 合一 Task/TaskInfo 随名 + worktree-merger 交付批 merger_request + imagegen 双层批 2026-10-24 generate_image + Priority E workspace_summary；tool-face-agentflow-retire 批 2026-11-05 −AgentFlow——工具退役、名字离开防逃逸集——防声明逃逸，执行 agent/delegate 单点授能，dream 不在授权面）"
     )
     // 2026-09-10 作者裁定：Pop 收归 Nebula 专属——dream（及一切非 Nebula 身份）
     // 拿不到 Pop：不在 DreamAdmittedTools 豁免面内

@@ -2462,7 +2462,22 @@ object GatewayMain extends IOApp:
                                                             )
                                                             .start
                                                           // Publish durable workspace revisions; clients fetch scoped snapshots.
+                                                          // Priority E: the same committed-ledger seam also drives the
+                                                          // workspace advisor — one fail-soft evaluation per change that
+                                                          // may deliver a workspace-suggestion mail to the responsible
+                                                          // main session. It never throws into this broadcast path and
+                                                          // never writes the ledger.
                                                           _ <- IO {
+                                                            val advisor =
+                                                              nebflow.core.delegate.WorkspaceAdvisor.withDoorbell(sid =>
+                                                                sharedResources.agentRegistry.get.flatMap { live =>
+                                                                  live
+                                                                    .get(sid)
+                                                                    .fold(IO.unit)(r =>
+                                                                      (r.ref ! AgentCommand.MailboxArrived).attempt.void
+                                                                    )
+                                                                }
+                                                              )
                                                             nebflow.core.delegate.WorkspaceLedger.onChanged {
                                                               (path, revision) =>
                                                                 if path == nebflow.shared.PathUtil.dataRoot / "workspaces" / "ledger.json"
@@ -2474,6 +2489,26 @@ object GatewayMain extends IOApp:
                                                                         "revision" -> revision.asJson
                                                                       )
                                                                     )
+                                                                  )
+                                                                  sharedResources.dispatcher.unsafeRunAndForget(
+                                                                    advisor
+                                                                      .evaluate(
+                                                                        nebflow.core.delegate.WorkspaceLedger.default
+                                                                      )
+                                                                      .attempt
+                                                                      .flatMap {
+                                                                        case Right(reading) =>
+                                                                          IO.whenA(reading.errors.nonEmpty)(
+                                                                            logger.warn(
+                                                                              s"workspace advisor evaluation carried errors (fail-closed): ${reading.errors.mkString("; ")}"
+                                                                            )
+                                                                          )
+                                                                        case Left(error) =>
+                                                                          logger.warn(
+                                                                            s"workspace advisor evaluation failed (fail-soft): ${error.getMessage}"
+                                                                          )
+                                                                      }
+                                                                      .void
                                                                   )
                                                             }
                                                           }
