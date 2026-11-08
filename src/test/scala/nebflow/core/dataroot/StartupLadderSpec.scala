@@ -4,7 +4,7 @@ import java.nio.file.Files
 import java.security.MessageDigest
 
 import nebflow.core.root.{AccountProfile, AccountRoot, ActiveAccount, RootLadder, RootLayer}
-import nebflow.neblink.NeblinkEnrollment
+import nebflow.neblink.identity.NeblinkEnrollment
 import nebflow.shared.PathUtil
 
 /**

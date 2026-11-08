@@ -12,6 +12,9 @@ import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
 import nebflow.llm.ModelCandidate
 import nebflow.neblink.*
+import nebflow.neblink.core.*
+import nebflow.neblink.identity.*
+import nebflow.neblink.relay.*
 import nebflow.shared.*
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
@@ -178,7 +181,7 @@ class LogoutAccountSurfaceSpec extends CatsEffectSuite:
   private def outboxEntries: List[String] =
     val dir = os.Path(tmpDir, os.pwd) / OutboxDirName
     if !os.exists(dir) then Nil
-    else os.list(dir).filter(_.ext == "json").toList.map(os.read(_)).sortBy(identity)
+    else os.list(dir).filter(_.ext == "json").toList.map(os.read(_)).sorted
 
   /** 拿一个当前空闲的临时端口（用后本用例独占它）。 */
   private def freePort(): Int =
@@ -234,7 +237,26 @@ class LogoutAccountSurfaceSpec extends CatsEffectSuite:
               assertEquals(sessAAfter, None, "被登出账号的控制台会话必须吊销（现状仍活 = T3 红）")
               assert(sessBAfter.isDefined, "他账号的控制台会话不受累 —— 按账号吊销，不是全清")
               assert(os.isDir(dirA), "登出 ≠ 删数据：账号目录必须保留（设计 §3.5）")
-              assertEquals(entries, Nil, "活通知已证实送达 ⇒ 排队点零新增（排队点只记未送达，不是事件日志）")
+              assertEquals(entries.length, 1, "设备登出确认不等于账号域确认，必须保留账号通知")
+              assert(entries.head.contains(SubA), "账号通知必须带已登出账号")
+          }.guarantee(IO.blocking(server.stop(0)))
+        }
+      }
+    }
+
+  test("无设备会话时仍保留账号域登出通知"):
+    Dispatcher.parallel[IO].use { dispatcher =>
+      startMockServer.flatMap { (server, url) =>
+        GatewaySessionStore.create().flatMap { sessions =>
+          mkStack(url, dispatcher, sessions).flatMap { st =>
+            for
+              _ <- IO(seedSignedInAs(os.Path(tmpDir, os.pwd), SubA, "a@example.com"))
+              resp <- st.routes.routes(logoutRequest).value.map(_.getOrElse(fail("route fell through")))
+              entries <- IO(outboxEntries)
+            yield
+              assertEquals(resp.status, Status.Ok)
+              assertEquals(entries.length, 1)
+              assert(entries.head.contains(SubA))
           }.guarantee(IO.blocking(server.stop(0)))
         }
       }

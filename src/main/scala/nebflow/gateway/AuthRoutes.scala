@@ -236,15 +236,11 @@ private[gateway] object AuthRoutes:
       //    must ALWAYS succeed locally. Uses the discovery's live client:
       //    enrollment hot-swap replaces it without updating ms.relayClientOpt,
       //    which may hold a stale instance.
-      //    登出收尾批（logout-fin）：`NeblinkClient.logout` 现在回报送达真值
-      //    （true = server 已确认 / 本无会话可撤；false = 传输失败未送达）——
-      //    该真值喂给第 11 步的上行排队点（设计 §3.5.2 ⑤「离线也记账」），
-      //    传输失败不再被静默当成「已通知」。
+      //    This acknowledgement concerns the device session only; it cannot
+      //    acknowledge the separate account-domain notification below.
       liveClient <- neblinkDiscovery.fold(IO.pure(Option.empty[NeblinkClient]))(_.currentClient)
-      serverAcked <- liveClient.fold(IO.pure(true))(_.logout)
-      notifyWhy =
-        if liveClient.isEmpty then LogoutNotifyOutbox.ReasonNoLiveClient
-        else LogoutNotifyOutbox.ReasonLiveNotifyFailed
+      _ <- liveClient.fold(IO.pure(false))(_.logout)
+      notifyWhy = LogoutNotifyOutbox.ReasonAccountTransportPending
       // 2. Stop the relay tunnel — drops the local WS so no reconnect
       //    loop keeps the device visible server-side after logout.
       _ <- ms.relayTunnelOpt.fold(IO.unit)(t => t.stop().handleErrorWith(_ => IO.unit))
@@ -275,13 +271,12 @@ private[gateway] object AuthRoutes:
       //    清机器层 active-account 指针 + 按账号吊销控制台会话。账号目录一律保留
       //    （登出 ≠ 删数据，设计 §3.5）；「Always completes locally」纪律由 seam 兜底。
       clearedAccount <- clearAccountSurface(sessions, PathUtil.machineRoot)
-      // 11. 上行排队点（设计 §3.5.2 ⑤「离线也记账」）：第 1 步的活通知未证实送达
-      //     ⇒ 机器层落一条账号域待发记录（LogoutNotifyOutbox —— stand 侧发送接口
-      //     + 排队点；传输面在中继仓，跨仓对接点见该对象的头注）。指针缺失 ⇒
-      //     无账号域身份可记（身份单源 = 指针），no-op。
-      _ <- IO.unlessA(serverAcked)(clearedAccount match
+      // 11. Device DELETE is not an account-domain acknowledgement. Until an
+      //     authenticated account transport exists, every identified logout
+      //     stays pending, regardless of device notification outcome.
+      _ <- clearedAccount match
         case Some(acct) => LogoutNotifyOutbox.enqueue(acct.accountSub, acct.email, notifyWhy)
-        case None => IO.unit)
+        case None => IO.unit
     yield ()
 
     end for

@@ -20,8 +20,8 @@ import java.util.concurrent.atomic.AtomicLong
  * 是跨仓面（设计 §8.3(e)【link-server】行）；隧道帧面走 portal-wire 契约
  * （v1.3 冻结的 14 帧，`PortalWireCodec.FrameInventory`）—— 新增帧类型必须先
  * 契约重冻结，本批不动契约。因此本仓（stand）落的是：
- *   - **发送接口** = [[enqueue]]（`performLocalLogout` 第 11 步在活通知未证实
- *     送达时记一件）+ [[drain]]（传输面就位后按入队序 at-least-once 补投，
+ *   - **发送接口** = [[enqueue]]（账号域传输尚未接入，已识别账号登出均记一件）
+ *     + [[drain]]（传输面就位后 at-least-once 补投，
  *     `send` 注入 —— spec 用纯桩驱动，生产装配点留给跨仓对接腿）；以及
  *   - **排队点** = 机器层 `<machineRoot>/[[PendingDirName]]/`，一条一件。
  *
@@ -45,8 +45,8 @@ import java.util.concurrent.atomic.AtomicLong
  *  - **有序**：id 以 20 位零填充序号开头 ⇒ 字典序 = 入队序（补投按序）；
  *  - **at-least-once**：drain 成功才出队，失败留盘 + `attempts` 计数（纯读数，
  *    不参与判死）；
- *  - **只记未送达**：活通知已证实送达 ⇒ 不记 —— 排队点是「未送达」账，不是
- *    事件日志；`accountSub` 为空 ⇒ 无账号域身份 ⇒ no-op（不记假账）。
+ *  - **只记账号域未送达**：设备通知成功不能证明账号域通知送达；账号传输尚未接入，
+ *    所有已识别账号均须排队。`accountSub` 为空 ⇒ 无账号域身份 ⇒ no-op。
  *
  * 设备域与账号域的边界：`performLocalLogout` 第 1 步的活通知
  * （DELETE /api/device/logout）只覆盖**设备会话面**；排队记录携带的是**账号域**
@@ -60,9 +60,10 @@ object LogoutNotifyOutbox:
   /** 排队目录名（机器层下）。单源 = 本常量（route 级 spec 按契约字面读盘 + 本件交叉钉）。 */
   val PendingDirName: String = "logout-notify-pending"
 
-  /** 入队原因闭集：活通知打了但未证实送达 / 根本没有活客户端可打。 */
+  /** 入队原因；设备域确认不代表账号域通知送达。 */
   val ReasonLiveNotifyFailed: String = "live-notify-failed"
   val ReasonNoLiveClient: String = "no-live-client"
+  val ReasonAccountTransportPending: String = "account-transport-pending"
 
   /** 一件待发记录。`id` = 幂等键（20 位序号 + accountSub 尾）。 */
   final case class Entry(
