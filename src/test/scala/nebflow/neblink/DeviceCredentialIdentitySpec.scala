@@ -124,6 +124,22 @@ class DeviceCredentialIdentitySpec extends FunSuite:
       yield DeviceCredential(serverUrl, networkId, deviceId, "", logto)
     }
 
+  test("root-explicit staging writes only the target root and leaves process root unchanged") {
+    val source = PathUtil.dataRoot
+    val target = os.Path(tmpDir, os.pwd) / "account-target"
+    val cred = baseCred(None)
+    val cfg = nebflow.neblink.core.NeblinkConfig()
+    DeviceCredential.saveAt(target, cred).unsafeRunSync()
+    nebflow.neblink.core.NeblinkConfig.saveAt(target, cfg).unsafeRunSync()
+    assertEquals(PathUtil.dataRoot, source)
+    assert(!os.exists(source / "neblink" / "device.json"))
+    assert(!os.exists(source / "neblink" / "config.json"))
+    assert(decode[DeviceCredential](os.read(target / "neblink" / "device.json")).isRight)
+    assert(decode[nebflow.neblink.core.NeblinkConfig](os.read(target / "neblink" / "config.json")).isRight)
+    if !scala.util.Properties.isWin then
+      assertEquals(Files.getPosixFilePermissions((target / "neblink" / "device.json").toNIO), PosixFilePermissions.fromString("rw-------"))
+  }
+
   // ── R1 身份面 ──────────────────────────────────────────────────────────
 
   test("R1 identity-only block (id_token, no refresh token) round-trips and feeds the production reader expression") {

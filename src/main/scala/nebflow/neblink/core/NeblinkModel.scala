@@ -917,6 +917,16 @@ object NeblinkConfig:
    * device credentials and was measured `0755`; the write path binds owner-only
    * access to both the file and that directory (see [[CredentialWriteAcl]]).
    */
+  /** Write staged configuration to an explicit root without changing the
+    * running process's data root or activating its networking. */
+  private[nebflow] def saveAt(root: os.Path, config: NeblinkConfig): IO[Unit] =
+    IO.blocking {
+      val dir = root / "neblink"
+      os.makeDir.all(dir)
+      nebflow.core.CredentialFileAcl.restrictDirectory(dir.toNIO)
+      AtomicJson.writeSyncRestricted(dir / "config.json", config.asJson.spaces2)
+    }
+
   def save(config: NeblinkConfig): IO[Unit] =
     IO.blocking {
       os.write.over(configPath, config.asJson.spaces2, createFolders = true)
