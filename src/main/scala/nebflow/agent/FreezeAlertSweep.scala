@@ -49,7 +49,7 @@ object FreezeAlertSweep:
   /** 统计签名（用于「只在变化时广播」）。 */
   private def signature(d: FreezeNotice.Digest): String =
     d.items
-      .map(i => s"${i.delegateId}:${i.reason}:${i.tier}:${i.frozenSince}:${i.autoResumes}")
+      .map(i => s"${i.delegateId}:${i.reason}:${i.tier}:${i.frozenSince}:${i.autoResumes}:${i.detail}")
       .sorted
       .mkString("|")
 
@@ -60,7 +60,7 @@ object FreezeAlertSweep:
     if !Defaults.DelegateFreezeEnabled then IO.unit
     else
       records().flatMap { recs =>
-        val d = FreezeNotice.digestOf(recs, System.currentTimeMillis())
+        val d = FreezeNotice.fullDigest(recs, System.currentTimeMillis())
         val sig = signature(d)
         if sig == lastDigestSig then IO.unit
         else

@@ -357,6 +357,7 @@ object FreezeNotice:
       "items" -> d.items.map { i =>
         Json.obj(
           "sessionId" -> i.delegateId.asJson,
+          "title" -> i.title.asJson,
           "parentSessionId" -> i.parentSessionId.asJson,
           "reason" -> i.reason.asJson,
           "detail" -> nebflow.shared.ProviderFailureDetail.sanitize(i.detail).asJson,

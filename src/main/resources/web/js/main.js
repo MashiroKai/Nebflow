@@ -1,3 +1,4 @@
+import { renderProviderFailureStatus } from './providerFailureStatus.js';
 import { key } from './branding.js'; // MUST be first: storage-key migration runs at module init, before state.js/i18n.js read localStorage.
 import state from './state.js';
 import { installPanelBackSwipeWire as initBackSwipe, hasBackHandler, topBackHandler } from './gesture/backSwipe.js';
@@ -2685,6 +2686,10 @@ onMessage('delegateFreezeDigest', (msg) => {
       autoResumes: Number(it.autoResumes) || 0,
       autoResumesExhausted: !!it.autoResumesExhausted,
     });
+  }
+  for (const view of Object.values(chatViews)) {
+    renderProviderFailureStatus(view, state.freezeDigest, (id) =>
+      import('./bgAgentPopup.js').then(m => m.openStepPopup(id)));
   }
   renderBgAgentDropdown && renderBgAgentDropdown();
 });
