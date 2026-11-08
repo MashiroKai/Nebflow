@@ -135,6 +135,24 @@ class LogoutNotifyOutboxSpec extends CatsEffectSuite:
       yield ()).guarantee(IO.blocking(process.getOutputStream.close()).handleErrorWith(_ => IO.unit))
     yield result
 
+  test("发送后出队失败保留同一幂等键，恢复后再次投递"):
+    for
+      _ <- LogoutNotifyOutbox.enqueue("first", "", "test")
+      rows <- LogoutNotifyOutbox.pending
+      first = rows.head
+      file = LogoutNotifyOutbox.dir / s"${first.enqueuedAt}-${first.id}.json"
+      backup = LogoutNotifyOutbox.dir / "held"
+      seen <- cats.effect.Ref.of[IO, List[String]](Nil)
+      failed <- LogoutNotifyOutbox.drain(e => seen.update(_ :+ e.id) *> IO.blocking(os.move(file, backup)))
+      _ = assertEquals(failed.replayed, Nil)
+      _ = assertEquals(failed.kept.size, 1)
+      _ <- IO.blocking { if os.exists(file) then os.remove(file); os.move(backup, file) }
+      retried <- LogoutNotifyOutbox.drain(e => seen.update(_ :+ e.id))
+      ids <- seen.get
+      _ = assertEquals(ids, List(first.id, first.id))
+      _ = assertEquals(retried.replayed, List(first.id))
+    yield ()
+
   test("损坏记录不会被伪报为空队列"):
     for
       _ <- LogoutNotifyOutbox.enqueue("first", "", "test")

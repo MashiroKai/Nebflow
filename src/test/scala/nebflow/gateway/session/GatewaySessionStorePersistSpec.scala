@@ -112,6 +112,24 @@ class GatewaySessionStorePersistSpec extends CatsEffectSuite:
       _ = restored.shutdown()
     yield ()
 
+  test("marker creation failure rejects revocation before mutating sessions"):
+    val f = tempFile
+    val marker = f / os.up / os.RelPath(f.last + ".revocation-pending")
+    for
+      store <- GatewaySessionStore.create(persistenceFile = Some(f))
+      rec <- store.create("u", "relay-mint", "net")
+      _ <- IO(os.makeDir(marker))
+      result <- store.revokeByAccount("u").attempt
+      hit <- store.verifyAndTouch(rec.sessionId)
+      _ = assert(result.isLeft)
+      _ = assert(hit.isDefined, "failed marker must not claim in-memory revocation")
+      _ = store.shutdown()
+      restored <- GatewaySessionStore.create(persistenceFile = Some(f))
+      restoredHit <- restored.verifyAndTouch(rec.sessionId)
+      _ = assertEquals(restoredHit, None, "existing marker of any type blocks stale snapshot")
+      _ = restored.shutdown()
+    yield ()
+
   test("crash after failed snapshot write fails closed on restore"):
     val f = tempFile
     for
