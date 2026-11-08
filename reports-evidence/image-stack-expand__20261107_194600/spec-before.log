@@ -1,0 +1,82 @@
+== 验红：改前树（HEAD 版 design-system.css，未修复） ==
+CHATFACE_WEB_ROOT=/tmp/web-prefix/src/main/resources/web
+
+
+Running 6 tests using 1 worker
+
+  ✘  1 tests/image-stack-expand.spec.mjs:199:3 › C1 桌面亮档 · 三图叠卡展开后图片必须可见（报障主腿） › 展开 → 三行出图；收起 → 复原；再展开 → 同结果 (2.9s)
+  ✘  2 tests/image-stack-expand.spec.mjs:247:3 › C2 暗档 · 同判据 › 暗档展开后三行同样可见 (2.5s)
+  ✘  3 tests/image-stack-expand.spec.mjs:267:3 › C3 手机层 375×812 · 同一条展开链 › 手机档展开后图片可见且不横向溢出 (2.8s)
+  ✓  4 tests/image-stack-expand.spec.mjs:300:3 › C4 单张图 · 平铺面 › 无展开钮；单张图可见；整面点击 = Canvas 打开单点（事件契约） (1.4s)
+  ✓  5 tests/image-stack-expand.spec.mjs:340:3 › C5 Canvas 图片面不回归 › Canvas 打开图片页签后图可见 (1.4s)
+  ✓  6 tests/image-stack-expand.spec.mjs:395:1 › harness self-check: 被测 web 树存在 (0ms)
+
+
+  1) tests/image-stack-expand.spec.mjs:199:3 › C1 桌面亮档 · 三图叠卡展开后图片必须可见（报障主腿） › 展开 → 三行出图；收起 → 复原；再展开 → 同结果 
+
+    Error: 首次展开: 展开列 display
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: "flex"
+    Received: "none"
+
+      156 | function expectExpandedVisible(st, label) {
+      157 |   expect(st, `${label}: stack area present`).toBeTruthy();
+    > 158 |   expect(st.expand.display, `${label}: 展开列 display`).toBe('flex');
+          |                                                      ^
+      159 |   expect(st.rows.length, `${label}: 每张一行`).toBe(3);
+      160 |   expect(st.area.h, `${label}: 容器高度须容下三行（报障态 = 40/38）`).toBeGreaterThan(400);
+      161 |   for (const [i, r] of st.rows.entries()) {
+        at expectExpandedVisible (/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/image-expand-disappears/tests/image-stack-expand.spec.mjs:158:54)
+        at /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/image-expand-disappears/tests/image-stack-expand.spec.mjs:219:5
+
+    Error Context: test-results/image-stack-expand-C1-桌面亮档-10c70-展开-→-三行出图；收起-→-复原；再展开-→-同结果/error-context.md
+
+  2) tests/image-stack-expand.spec.mjs:247:3 › C2 暗档 · 同判据 › 暗档展开后三行同样可见 ───────────────────────────
+
+    Error: 暗档展开: 展开列 display
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: "flex"
+    Received: "none"
+
+      156 | function expectExpandedVisible(st, label) {
+      157 |   expect(st, `${label}: stack area present`).toBeTruthy();
+    > 158 |   expect(st.expand.display, `${label}: 展开列 display`).toBe('flex');
+          |                                                      ^
+      159 |   expect(st.rows.length, `${label}: 每张一行`).toBe(3);
+      160 |   expect(st.area.h, `${label}: 容器高度须容下三行（报障态 = 40/38）`).toBeGreaterThan(400);
+      161 |   for (const [i, r] of st.rows.entries()) {
+        at expectExpandedVisible (/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/image-expand-disappears/tests/image-stack-expand.spec.mjs:158:54)
+        at /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/image-expand-disappears/tests/image-stack-expand.spec.mjs:259:5
+
+    Error Context: test-results/image-stack-expand-C2-暗档-·-同判据-暗档展开后三行同样可见/error-context.md
+
+  3) tests/image-stack-expand.spec.mjs:267:3 › C3 手机层 375×812 · 同一条展开链 › 手机档展开后图片可见且不横向溢出 ──────────
+
+    Error: 手机层展开: 展开列 display
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: "flex"
+    Received: "none"
+
+      156 | function expectExpandedVisible(st, label) {
+      157 |   expect(st, `${label}: stack area present`).toBeTruthy();
+    > 158 |   expect(st.expand.display, `${label}: 展开列 display`).toBe('flex');
+          |                                                      ^
+      159 |   expect(st.rows.length, `${label}: 每张一行`).toBe(3);
+      160 |   expect(st.area.h, `${label}: 容器高度须容下三行（报障态 = 40/38）`).toBeGreaterThan(400);
+      161 |   for (const [i, r] of st.rows.entries()) {
+        at expectExpandedVisible (/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/image-expand-disappears/tests/image-stack-expand.spec.mjs:158:54)
+        at /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/image-expand-disappears/tests/image-stack-expand.spec.mjs:287:5
+
+    Error Context: test-results/image-stack-expand-C3-手机层-375×812-·-同一条展开链-手机档展开后图片可见且不横向溢出/error-context.md
+
+  3 failed
+    tests/image-stack-expand.spec.mjs:199:3 › C1 桌面亮档 · 三图叠卡展开后图片必须可见（报障主腿） › 展开 → 三行出图；收起 → 复原；再展开 → 同结果 
+    tests/image-stack-expand.spec.mjs:247:3 › C2 暗档 · 同判据 › 暗档展开后三行同样可见 ────────────────────────────
+    tests/image-stack-expand.spec.mjs:267:3 › C3 手机层 375×812 · 同一条展开链 › 手机档展开后图片可见且不横向溢出 ───────────
+  3 passed (13.8s)

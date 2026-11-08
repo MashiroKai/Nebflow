@@ -641,6 +641,16 @@
 :root {
   --ds-hit-tap-min: var(--ds-hit-tap-lg);  /* 48px 视觉档（= g2-fab 手机档实测量，glass.css:717-720） */
   --ds-hit-box-min: var(--ds-hit-tap-min); /* 48px 命中盒档（外扩后 ≥ 本值才算达标；默认同值） */
+}
+/* 🔴 本行的 `}` 是**结构命门**（2026-11-07 修，作者报障「图片一点展开就消失」）：
+   定时任务/待办统一批 1a8182372 把 §㉓ 的 `:root` 块重贴进来时漏掉了这个收括号，
+   于是本文件其后的**全部**规则被当成 CSS 嵌套规则挂进 `:root` 内（`& .ds-*`），
+   每条规则凭空多出 1 个类名的特异性（0,2,0 而非 0,1,0）。本文件在 index.html 中
+   后于 chat.css 装载 ⇒ 特异性打平后按文档序胜出，chat.css 的态规则（如
+   `.pop-expand-view.show{display:flex}`）被 `.ds-media-stack__expand{display:none}`
+   压掉：叠卡「展开 N」一点，折叠面被 inline display:none 藏起、展开列又不显示
+   ⇒ 图片整组消失只剩钮。诊断与回归 = tests/image-stack-expand.spec.mjs，
+   机检 = scripts/check-css-structure.mjs（禁再出现未闭合块）。 */
 
 @media (hover: hover) {
   

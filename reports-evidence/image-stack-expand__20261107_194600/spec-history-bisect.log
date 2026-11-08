@@ -1,0 +1,60 @@
+######## 5545b1d4f ########
+  ✓  1 tests/image-stack-expand.spec.mjs:199:3 › C1 桌面亮档 · 三图叠卡展开后图片必须可见（报障主腿） › 展开 → 三行出图；收起 → 复原；再展开 → 同结果 (5.0s)
+  ✓  2 tests/image-stack-expand.spec.mjs:247:3 › C2 暗档 · 同判据 › 暗档展开后三行同样可见 (2.6s)
+  ✓  3 tests/image-stack-expand.spec.mjs:267:3 › C3 手机层 375×812 · 同一条展开链 › 手机档展开后图片可见且不横向溢出 (2.7s)
+  ✓  4 tests/image-stack-expand.spec.mjs:300:3 › C4 单张图 · 平铺面 › 无展开钮；单张图可见；整面点击 = Canvas 打开单点（事件契约） (1.4s)
+  ✓  5 tests/image-stack-expand.spec.mjs:340:3 › C5 Canvas 图片面不回归 › Canvas 打开图片页签后图可见 (1.4s)
+  ✓  6 tests/image-stack-expand.spec.mjs:395:1 › harness self-check: 被测 web 树存在 (0ms)
+  6 passed (14.3s)
+######## 1a8182372 ########
+  ✘  1 tests/image-stack-expand.spec.mjs:199:3 › C1 桌面亮档 · 三图叠卡展开后图片必须可见（报障主腿） › 展开 → 三行出图；收起 → 复原；再展开 → 同结果 (2.8s)
+  ✘  2 tests/image-stack-expand.spec.mjs:247:3 › C2 暗档 · 同判据 › 暗档展开后三行同样可见 (2.6s)
+  ✘  3 tests/image-stack-expand.spec.mjs:267:3 › C3 手机层 375×812 · 同一条展开链 › 手机档展开后图片可见且不横向溢出 (2.9s)
+  ✓  4 tests/image-stack-expand.spec.mjs:300:3 › C4 单张图 · 平铺面 › 无展开钮；单张图可见；整面点击 = Canvas 打开单点（事件契约） (1.4s)
+  ✓  5 tests/image-stack-expand.spec.mjs:340:3 › C5 Canvas 图片面不回归 › Canvas 打开图片页签后图可见 (1.4s)
+  ✓  6 tests/image-stack-expand.spec.mjs:395:1 › harness self-check: 被测 web 树存在 (0ms)
+    Error: 首次展开: 展开列 display
+    > 158 |   expect(st.expand.display, `${label}: 展开列 display`).toBe('flex');
+      159 |   expect(st.rows.length, `${label}: 每张一行`).toBe(3);
+      160 |   expect(st.area.h, `${label}: 容器高度须容下三行（报障态 = 40/38）`).toBeGreaterThan(400);
+      161 |   for (const [i, r] of st.rows.entries()) {
+    Error: 暗档展开: 展开列 display
+    > 158 |   expect(st.expand.display, `${label}: 展开列 display`).toBe('flex');
+      159 |   expect(st.rows.length, `${label}: 每张一行`).toBe(3);
+######## f9630aa8c ########
+  ✘  1 tests/image-stack-expand.spec.mjs:199:3 › C1 桌面亮档 · 三图叠卡展开后图片必须可见（报障主腿） › 展开 → 三行出图；收起 → 复原；再展开 → 同结果 (2.8s)
+  ✘  2 tests/image-stack-expand.spec.mjs:247:3 › C2 暗档 · 同判据 › 暗档展开后三行同样可见 (2.5s)
+  ✘  3 tests/image-stack-expand.spec.mjs:267:3 › C3 手机层 375×812 · 同一条展开链 › 手机档展开后图片可见且不横向溢出 (2.8s)
+  ✓  4 tests/image-stack-expand.spec.mjs:300:3 › C4 单张图 · 平铺面 › 无展开钮；单张图可见；整面点击 = Canvas 打开单点（事件契约） (1.6s)
+  ✓  5 tests/image-stack-expand.spec.mjs:340:3 › C5 Canvas 图片面不回归 › Canvas 打开图片页签后图可见 (1.5s)
+  ✓  6 tests/image-stack-expand.spec.mjs:395:1 › harness self-check: 被测 web 树存在 (0ms)
+    Error: 首次展开: 展开列 display
+    > 158 |   expect(st.expand.display, `${label}: 展开列 display`).toBe('flex');
+      159 |   expect(st.rows.length, `${label}: 每张一行`).toBe(3);
+      160 |   expect(st.area.h, `${label}: 容器高度须容下三行（报障态 = 40/38）`).toBeGreaterThan(400);
+      161 |   for (const [i, r] of st.rows.entries()) {
+    Error: 暗档展开: 展开列 display
+    > 158 |   expect(st.expand.display, `${label}: 展开列 display`).toBe('flex');
+      159 |   expect(st.rows.length, `${label}: 每张一行`).toBe(3);
+######## 3dc6c9885 ########
+  ✘  1 tests/image-stack-expand.spec.mjs:199:3 › C1 桌面亮档 · 三图叠卡展开后图片必须可见（报障主腿） › 展开 → 三行出图；收起 → 复原；再展开 → 同结果 (2.8s)
+  ✘  2 tests/image-stack-expand.spec.mjs:247:3 › C2 暗档 · 同判据 › 暗档展开后三行同样可见 (2.6s)
+  ✘  3 tests/image-stack-expand.spec.mjs:267:3 › C3 手机层 375×812 · 同一条展开链 › 手机档展开后图片可见且不横向溢出 (2.8s)
+  ✓  4 tests/image-stack-expand.spec.mjs:300:3 › C4 单张图 · 平铺面 › 无展开钮；单张图可见；整面点击 = Canvas 打开单点（事件契约） (1.5s)
+  ✓  5 tests/image-stack-expand.spec.mjs:340:3 › C5 Canvas 图片面不回归 › Canvas 打开图片页签后图可见 (1.3s)
+  ✓  6 tests/image-stack-expand.spec.mjs:395:1 › harness self-check: 被测 web 树存在 (0ms)
+    Error: 首次展开: 展开列 display
+    > 158 |   expect(st.expand.display, `${label}: 展开列 display`).toBe('flex');
+      159 |   expect(st.rows.length, `${label}: 每张一行`).toBe(3);
+      160 |   expect(st.area.h, `${label}: 容器高度须容下三行（报障态 = 40/38）`).toBeGreaterThan(400);
+      161 |   for (const [i, r] of st.rows.entries()) {
+    Error: 暗档展开: 展开列 display
+    > 158 |   expect(st.expand.display, `${label}: 展开列 display`).toBe('flex');
+      159 |   expect(st.rows.length, `${label}: 每张一行`).toBe(3);
+  ✓  1 tests/image-stack-expand.spec.mjs:199:3 › C1 桌面亮档 · 三图叠卡展开后图片必须可见（报障主腿） › 展开 → 三行出图；收起 → 复原；再展开 → 同结果 (4.7s)
+  ✓  2 tests/image-stack-expand.spec.mjs:247:3 › C2 暗档 · 同判据 › 暗档展开后三行同样可见 (2.5s)
+  ✓  3 tests/image-stack-expand.spec.mjs:267:3 › C3 手机层 375×812 · 同一条展开链 › 手机档展开后图片可见且不横向溢出 (2.8s)
+  ✓  4 tests/image-stack-expand.spec.mjs:300:3 › C4 单张图 · 平铺面 › 无展开钮；单张图可见；整面点击 = Canvas 打开单点（事件契约） (1.3s)
+  ✓  5 tests/image-stack-expand.spec.mjs:340:3 › C5 Canvas 图片面不回归 › Canvas 打开图片页签后图可见 (1.4s)
+  ✓  6 tests/image-stack-expand.spec.mjs:395:1 › harness self-check: 被测 web 树存在 (0ms)
+  6 passed (13.9s)
