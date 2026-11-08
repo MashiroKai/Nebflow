@@ -134,8 +134,10 @@ object SubAgentStartupRecovery:
   // 阻塞，ProjectCrashRecovery 慢段同款纪律），spawn 并发信号量护栏；复活失败
   // （spawn 链错误）的孤儿在 fork 内落回收殓链——绝不静默悬挂。
 
-  /** 复活腿依赖（GatewayMain boot 装配点传入；None = 复活腿整体旁路——legacy 形态，
-    * 既有测试/无 ActorSystem 载体场的诚实缺省）。 */
+  /**
+   * 复活腿依赖（GatewayMain boot 装配点传入；None = 复活腿整体旁路——legacy 形态，
+   * 既有测试/无 ActorSystem 载体场的诚实缺省）。
+   */
   final case class RevivalDeps(
     resources: SharedResources,
     system: nebflow.actor.ActorSystem,
@@ -144,13 +146,14 @@ object SubAgentStartupRecovery:
 
   /** sweep 汇总（boot 日志行 + 测试断言面）。 */
   final case class Report(
-      terminalized: List[String] = Nil,
-      revived: List[String] = Nil,
-      /** (taskId, 不可复活原因)——资格不满足/预算耗尽/boot cap 超额而走收殓的孤儿。 */
-      revivalSkipped: List[(String, String)] = Nil,
-      /** 手动模式：被标 `pending-recovery` 的行（不判死不复活，待用户手动恢复）。 */
-      pended: List[String] = Nil
+    terminalized: List[String] = Nil,
+    revived: List[String] = Nil,
+    /** (taskId, 不可复活原因)——资格不满足/预算耗尽/boot cap 超额而走收殓的孤儿。 */
+    revivalSkipped: List[(String, String)] = Nil,
+    /** 手动模式：被标 `pending-recovery` 的行（不判死不复活，待用户手动恢复）。 */
+    pended: List[String] = Nil
   ):
+
     def summary: String =
       s"terminalized=${terminalized.size} revived=${revived.size} (${revived.mkString(",")}) " +
         s"revivalSkipped=${revivalSkipped.size} pendedRecovery=${pended.size}"
@@ -188,17 +191,14 @@ object SubAgentStartupRecovery:
       finalizeCompletedUnreported(store, sessionStore, revival.map(_.resources)).void *>
         markInterruptedRecords(store).void *>
         nebflow.core.delegate.DelegateLedgerReconcile.reconcileInterruptedRecords(store).void
-    inFlightTasks(store, includeRestartLost = revival.isDefined && Defaults.DelegateRevivalEnabled).flatMap {
+    val metadata = revival.fold(IO.unit)(deps => nebflow.core.delegate.MergerInitialization.repairAll(deps.resources))
+    val tasks =
+      metadata *> inFlightTasks(store, includeRestartLost = revival.isDefined && Defaults.DelegateRevivalEnabled)
+    tasks.flatMap {
       case Nil => settle().as(Report())
       case allOrphans =>
         // ── 会话死亡台账结算（2026-10-28 · R1 同族监督持久性面）────────────────
-        // ready-to-merge 行的分诊（旧 sweep 视野只有 running/restarting——已停靠
-        // 合并轮的行死后永远无人终态化，实证四行僵尸面板挂 进行中/待合并 1-2d）：
-        //  ① 有开放合并队列成员 = 合并轮在管（MergeQueueBootSweep 稍后对账：
-        //     已并关账 / 无可并物关账 / owner-gone 关账+任务行 failed）——**零触碰**；
-        //  ② 无成员 =「ready 前被杀连账本条目都没有」的僵尸形态（报告二 R5 后半
-        //     的行面后果）→ 本 sweep 直接落终态（recoverOne：interrupted 指纹 +
-        //     F2 幂等父通知 + registry 重启打断旗——与墓碑同族持久性面）。
+        // ready-to-merge 行（legacy 状态值）单独分诊：终态化/待恢复见 rtmSettled。
         val (rtmRows, rest1) = allOrphans.partition(_.status == "ready-to-merge")
         // 错误冻结批（2026-11-01）：冻结行单独分诊——**绝不进收殓链**（冻结不是
         // 在飞孤儿，忠实终态化 = 把作者要保留的现场判死）。有复活腿 ⇒ 与在飞孤儿
@@ -215,64 +215,57 @@ object SubAgentStartupRecovery:
             )
         // 冻结行的复活 = 可选腿（有 deps 才做）：冻结行不参与「在飞孤儿」的收殓分流，
         // 复活失败也只回原状（行仍 frozen、待作者唤醒）。
+        val automaticFrozenRows = frozenRows.filterNot(t =>
+          nebflow.core.delegate.WorkspaceLedger.default.snapshot.mergerBootstraps
+            .get(t.taskId)
+            .exists(_.status != "ready")
+        )
         def reviveFrozen(): IO[List[String]] =
           if frozenRows.isEmpty || revival.isEmpty || !Defaults.DelegateRevivalEnabled then IO.pure(Nil)
           else
-            frozenRows
+            automaticFrozenRows
               .traverse(t =>
-                DelegateRevival.eligibility(sessionStore, t).flatMap {
-                  case Some(_) => IO.pure(None)
-                  case None =>
-                    DelegateRevival
-                      .revive(DelegateRevival.Deps(revival.get.resources, revival.get.system, revival.get.wsSend), t)
-                      .map {
-                        case Right(()) => Some(t.taskId)
-                        case Left(err) =>
-                          logger.warn(s"[startup-recovery] frozen wake failed for ${t.taskId}: $err — left frozen")
-                          None
-                      }
-                }.handleErrorWith(e =>
-                  logger.warn(s"[startup-recovery] frozen wake errored for ${t.taskId}: ${e.getMessage}").as(None)
-                )
+                DelegateRevival
+                  .eligibility(sessionStore, t)
+                  .flatMap {
+                    case Some(_) => IO.pure(None)
+                    case None =>
+                      DelegateRevival
+                        .revive(DelegateRevival.Deps(revival.get.resources, revival.get.system, revival.get.wsSend), t)
+                        .map {
+                          case Right(()) => Some(t.taskId)
+                          case Left(err) =>
+                            logger.warn(s"[startup-recovery] frozen wake failed for ${t.taskId}: $err — left frozen")
+                            None
+                        }
+                  }
+                  .handleErrorWith(e =>
+                    logger.warn(s"[startup-recovery] frozen wake errored for ${t.taskId}: ${e.getMessage}").as(None)
+                  )
               )
               .map(_.flatten)
+        // ready-to-merge 行（legacy 状态值，现行引擎不再写入）：没有合并队列可再
+        // 授予合并轮 ⇒ 全部按「重启丢失」终态化（branch/worktree 原样保留；集成走
+        // 项目 merger 的授权请求）。
         val rtmSettled: IO[List[String]] =
           if rtmRows.isEmpty then IO.pure(Nil)
           else
-            IO
-              .blocking(nebflow.core.delegate.MergeQueue.openSnapshot.map(_.delegateId).toSet)
-              .handleErrorWith(e =>
-                logger
-                  .warn(s"[startup-recovery] merge-queue snapshot read failed (treating as empty): ${e.getMessage}")
-                  .as(Set.empty[String])
+            logger
+              .warn(
+                s"[startup-recovery] ${rtmRows.size} ready-to-merge row(s) survived a restart — settling to interrupted: ${rtmRows.map(_.taskId).mkString(", ")}"
               )
-              .flatMap { queued =>
-                val (queuedRows, zombies) = rtmRows.partition(t => queued.contains(t.taskId))
-                val noteQueued =
-                  if queuedRows.isEmpty then IO.unit
-                  else
+              .as(()) *> rtmRows
+              .traverse { t =>
+                val head =
+                  s"[task lost: crash] Delegate \"${t.description}\" (agent=${t.agentName}, session=${t.taskId}) " +
+                    "had reached ready-to-merge under a previous engine version; no merge round can be granted for it anymore — " +
+                    "the row is settled to interrupted (branch/worktree kept as-is; integration goes through an authorized merger request)."
+                recoverOne(store, sessionStore, t, head, "lostToCrash", revival.map(_.resources))
+                  .handleErrorWith { e =>
                     logger
-                      .info(
-                        s"[startup-recovery] ${queuedRows.size} ready-to-merge row(s) left to the merge-queue boot reconcile: ${queuedRows.map(_.taskId).mkString(", ")}"
-                      )
-                val settled: IO[List[String]] =
-                  if zombies.isEmpty then IO.pure(Nil)
-                  else
-                    logger
-                      .warn(
-                        s"[startup-recovery] ${zombies.size} ready-to-merge row(s) with NO merge-queue membership survived a restart — settling to interrupted: ${zombies.map(_.taskId).mkString(", ")}"
-                      )
-                      .as(()) *> zombies
-                      .traverse { t =>
-                        val head =
-                          s"[task lost: crash] Delegate \"${t.description}\" (agent=${t.agentName}, session=${t.taskId}) " +
-                            "had reached ready-to-merge but NO merge-queue membership survived the restart — " +
-                            "the merge round can never run; the row is settled to interrupted (branch/worktree kept as-is)."
-                        recoverOne(store, sessionStore, t, head, "lostToCrash", revival.map(_.resources)).handleErrorWith { e =>
-                          logger.warn(s"[startup-recovery] rtm settle failed for ${t.taskId}: ${e.getMessage}").as(t.taskId)
-                        }
-                      }
-                noteQueued *> settled
+                      .warn(s"[startup-recovery] rtm settle failed for ${t.taskId}: ${e.getMessage}")
+                      .as(t.taskId)
+                  }
               }
         def salvageAll(tasks: List[SubAgentTask]): IO[List[String]] =
           if tasks.isEmpty then IO.pure(Nil)
@@ -308,29 +301,9 @@ object SubAgentStartupRecovery:
                   )
                   .as(t.taskId)
               )
-        // 手动模式下的 ready-to-merge 分诊：有合并队列成员的行零触碰（合并轮对账
-        // 照旧）；无成员的僵尸不收殓（那是判死+通知）→ 标 pending-recovery 待手动恢复。
-        def rtmManual(): IO[List[String]] =
-          if rtmRows.isEmpty then IO.pure(Nil)
-          else
-            IO
-              .blocking(nebflow.core.delegate.MergeQueue.openSnapshot.map(_.delegateId).toSet)
-              .handleErrorWith(e =>
-                logger
-                  .warn(s"[startup-recovery] merge-queue snapshot read failed (treating as empty): ${e.getMessage}")
-                  .as(Set.empty[String])
-              )
-              .flatMap { queued =>
-                val (queuedRows, zombies) = rtmRows.partition(t => queued.contains(t.taskId))
-                val noteQueued =
-                  if queuedRows.isEmpty then IO.unit
-                  else
-                    logger
-                      .info(
-                        s"[startup-recovery] ${queuedRows.size} ready-to-merge row(s) left to the merge-queue boot reconcile: ${queuedRows.map(_.taskId).mkString(", ")}"
-                      )
-                noteQueued *> markPending(zombies)
-              }
+        // 手动模式下的 ready-to-merge 行：不收殓（那是判死+通知）→ 标
+        // pending-recovery 待手动恢复。
+        def rtmManual(): IO[List[String]] = markPending(rtmRows)
         frozenNote *> (
           if manual then
             rtmManual().flatMap { pendedRtm =>
@@ -339,82 +312,84 @@ object SubAgentStartupRecovery:
               }
             }
           else
-            revival match { // 手动模式分支包裹（最小 diff：花括号界定既有 case 缩进）
-          case None =>
-            salvageAll(orphans).flatMap(ids =>
-              rtmSettled.flatMap(rtm => settle().as(Report(terminalized = rtm ++ ids)))
-            )
-          case Some(deps) if !Defaults.DelegateRevivalEnabled =>
-            logger
-              .info("[delegate-revival] kill-switch off — all orphans fall through to the salvage chain")
-              .as(())
-              .flatMap(_ =>
+            revival match // 手动模式分支包裹（最小 diff：花括号界定既有 case 缩进）
+              case None =>
                 salvageAll(orphans).flatMap(ids =>
                   rtmSettled.flatMap(rtm => settle().as(Report(terminalized = rtm ++ ids)))
                 )
-              )
-          case Some(deps) =>
-            for
-              rtm <- rtmSettled
-              // 冻结行复活腿（错误冻结批）：先于在飞孤儿判据——冻结行的 eligibility
-              // 走冻结预算/保留期，与在飞孤儿的年龄预算分道。
-              revivedFrozen <- reviveFrozen()
-              judged <- orphans.traverse { t =>
-                DelegateRevival.eligibility(sessionStore, t).map(reason => (t, reason))
-              }
-              eligible = judged.collect { case (t, None) => t }.sortBy(-_.spawnedAt) // 新者优先（设计 §2.2 #8）
-              cap = math.max(0, Defaults.DelegateRevivalBootCap)
-              reviveSet = eligible.take(cap)
-              skipped =
-                judged.collect { case (t, Some(reason)) => (t.taskId, reason) } ++
-                  eligible.drop(cap).map(t => (t.taskId, s"boot revival cap exhausted ($cap)"))
-              _ <-
-                if reviveSet.isEmpty then IO.unit
-                else
-                  logger.info(
-                    s"[delegate-revival] ${reviveSet.size} eligible orphan(s) queued for revival: " +
-                      reviveSet.map(t => s"${t.taskId}(rev=${t.revivalCount.getOrElse(0)})").mkString(", ") +
-                      skipped.map((id, r) => s"; skip $id: $r").mkString
+              case Some(deps) if !Defaults.DelegateRevivalEnabled =>
+                logger
+                  .info("[delegate-revival] kill-switch off — all orphans fall through to the salvage chain")
+                  .as(())
+                  .flatMap(_ =>
+                    salvageAll(orphans)
+                      .flatMap(ids => rtmSettled.flatMap(rtm => settle().as(Report(terminalized = rtm ++ ids))))
                   )
-              // 慢段：fork 复活（并发护栏；spawn 失败的单条 fork 内落回收殓链）。
-              revivedRef <-
-                if reviveSet.isEmpty then Ref.of[IO, List[String]](Nil)
-                else
-                  DelegateRevival.reviveAll(
-                    DelegateRevival.Deps(deps.resources, deps.system, deps.wsSend),
-                    reviveSet,
-                    salvage = t => recoverOne(store, sessionStore, t, revival.map(_.resources)).as(())
-                  )
-              // 同步段：复活集之外的孤儿收殓（F2 队列单写者纪律——复活 fork 零触碰
-              // 队列文件，收殓全部在本同步段串行完成，无并发写）。
-              reviveIds = reviveSet.map(_.taskId).toSet
-              rest = orphans.filterNot(o => reviveIds.contains(o.taskId))
-              terminalized <- salvageAll(rest)
-              _ <- settle()
-              revivedNow <- revivedRef.get
-            yield Report(
-              terminalized = rtm ++ terminalized,
-              revived = revivedNow ++ revivedFrozen,
-              revivalSkipped = skipped
-            )
-            }
+              case Some(deps) =>
+                for
+                  rtm <- rtmSettled
+                  // 冻结行复活腿（错误冻结批）：先于在飞孤儿判据——冻结行的 eligibility
+                  // 走冻结预算/保留期，与在飞孤儿的年龄预算分道。
+                  revivedFrozen <- reviveFrozen()
+                  judged <- orphans.traverse { t =>
+                    DelegateRevival.eligibility(sessionStore, t).map(reason => (t, reason))
+                  }
+                  eligible = judged.collect { case (t, None) => t }.sortBy(-_.spawnedAt) // 新者优先（设计 §2.2 #8）
+                  cap = math.max(0, Defaults.DelegateRevivalBootCap)
+                  reviveSet = eligible.take(cap)
+                  skipped =
+                    judged.collect { case (t, Some(reason)) => (t.taskId, reason) } ++
+                      eligible.drop(cap).map(t => (t.taskId, s"boot revival cap exhausted ($cap)"))
+                  _ <-
+                    if reviveSet.isEmpty then IO.unit
+                    else
+                      logger.info(
+                        s"[delegate-revival] ${reviveSet.size} eligible orphan(s) queued for revival: " +
+                          reviveSet.map(t => s"${t.taskId}(rev=${t.revivalCount.getOrElse(0)})").mkString(", ") +
+                          skipped.map((id, r) => s"; skip $id: $r").mkString
+                      )
+                  // 慢段：fork 复活（并发护栏；spawn 失败的单条 fork 内落回收殓链）。
+                  revivedRef <-
+                    if reviveSet.isEmpty then Ref.of[IO, List[String]](Nil)
+                    else
+                      DelegateRevival.reviveAll(
+                        DelegateRevival.Deps(deps.resources, deps.system, deps.wsSend),
+                        reviveSet,
+                        salvage = t => recoverOne(store, sessionStore, t, revival.map(_.resources)).as(())
+                      )
+                  // 同步段：复活集之外的孤儿收殓（F2 队列单写者纪律——复活 fork 零触碰
+                  // 队列文件，收殓全部在本同步段串行完成，无并发写）。
+                  reviveIds = reviveSet.map(_.taskId).toSet
+                  rest = orphans.filterNot(o => reviveIds.contains(o.taskId))
+                  terminalized <- salvageAll(rest)
+                  _ <- settle()
+                  revivedNow <- revivedRef.get
+                yield Report(
+                  terminalized = rtm ++ terminalized,
+                  revived = revivedNow ++ revivedFrozen,
+                  revivalSkipped = skipped
+                )
         )
     }
 
-  /** 在飞任务全量（running/restarting/ready-to-merge/frozen；单遍 findAllTasks 后过滤——boot 一次性）。
-    * [合并融合] 标记腿与 #692 收宽同向：本 helper 服务 boot sweep（一次性全量），
-    * 运行期视野走 watchdogSweep 的 findRunningTasks（已加宽 running∨restarting）。
-    * [会话死亡台账结算 2026-10-28] ready-to-merge 收入视野——旧视野只有
-    * running/restarting，停靠合并轮的行死后永远无人终态化（四行僵尸实证）；
-    * sweep 内按「有无开放合并队列成员」分诊（见 sweep 注）。
-    * [中断恢复批 2026-11-04] `includeRestartLost`：failed ∧ 重启指纹行进复活视野
-    * （任务②）；仅复活腿开启时收（legacy / kill-switch off = 逐字节回本批前现状，
-    * failed 行不进任何处置面）。 */
+  end sweep
+
+  /**
+   * 在飞任务全量（running/restarting/ready-to-merge/frozen；单遍 findAllTasks 后过滤——boot 一次性）。
+   * ready-to-merge = legacy 状态值（现行引擎不再写入）；旧盘残留行收入视野，sweep
+   * 内统一终态化或标待恢复（见 sweep 注）。
+   * [中断恢复批 2026-11-04] `includeRestartLost`：failed ∧ 重启指纹行进复活视野
+   * （任务②）；仅复活腿开启时收（legacy / kill-switch off = 逐字节回本批前现状，
+   * failed 行不进任何处置面）。
+   */
   private def inFlightTasks(store: SubAgentTaskStore, includeRestartLost: Boolean = false): IO[List[SubAgentTask]] =
-    store.findAllTasks()
+    store
+      .findAllTasks()
       .map { all =>
         val inFlight =
-          all.filter(t => InFlightStatuses.contains(t.status) || t.status == "ready-to-merge" || t.status == FrozenStatus)
+          all.filter(t =>
+            InFlightStatuses.contains(t.status) || t.status == "ready-to-merge" || t.status == FrozenStatus
+          )
         // TTL 静默闸（终态 7 天 TTL 批 2026-11-06 · 通知源永久沉默）：超期死亡行
         // （终态时刻 ≥ Defaults.DelegateTerminalTtlMs 前）绝不进复活/收殓视野——
         // 重启收殓不再把远古死会话翻出来报 FAILED；在飞行（非终态）永不受此闸。
@@ -434,7 +409,8 @@ object SubAgentStartupRecovery:
    */
   private def markInterruptedRecords(store: SubAgentTaskStore): IO[Int] =
     for
-      tasks <- store.findAllTasks()
+      tasks <- store
+        .findAllTasks()
         .map(_.filter(t => t.lastError.exists(_.startsWith(RestartLossFingerprint))))
         .handleErrorWith(e => logger.warn(s"[startup-recovery] fingerprint scan failed: ${e.getMessage}").as(Nil))
       lostIds = tasks.map(_.taskId).collect { case id if id.nonEmpty => id }.toSet
@@ -463,8 +439,7 @@ object SubAgentStartupRecovery:
                 .map(_.count(identity))
             }
       _ <-
-        if marked > 0 then
-          logger.info(s"[startup-recovery] restart-interruption marked on $marked delegate record(s)")
+        if marked > 0 then logger.info(s"[startup-recovery] restart-interruption marked on $marked delegate record(s)")
         else IO.unit
     yield marked
 
@@ -476,8 +451,7 @@ object SubAgentStartupRecovery:
    * ——在飞视野只有 running/restarting/ready-to-merge/frozen，completed 行永远轮不到
    * 任何人收敛，父会话静默不知道结果已到。
    *
-   * 机械判据（盘上可求值，与验收台架 README §3 同口径——刻意**不用**「分支已合并」，
-   * 那需要 git 上下文且会与 MergeQueueBootSweep 的分诊抢判）：
+   * 机械判据（盘上可求值，与验收台架 README §3 同口径）：
    * {{{
    *   任务行 status == "completed" ∧ source != "subtask"
    *   ∧ registry.workReport 非空          （工作轮终稿在盘 = 活真干完了）
@@ -505,12 +479,15 @@ object SubAgentStartupRecovery:
     resources match
       case None => IO.pure(Nil)
       case Some(rs) =>
-        store.findAllTasks()
+        store
+          .findAllTasks()
           .map { rows =>
             // TTL 静默闸（终态 7 天 TTL 批 2026-11-06）：超期 completed 行（终态时刻
             // ≥ 7 天前）不再被自动收尾——远古收尾报告绝不重投；7 天内的收尾照旧。
             val now = System.currentTimeMillis()
-            rows.filter(t => t.status == "completed" && t.source != "subtask" && !DelegateTerminalTtl.rowExpired(t, now))
+            rows.filter(t =>
+              t.status == "completed" && t.source != "subtask" && !DelegateTerminalTtl.rowExpired(t, now)
+            )
           }
           .handleErrorWith(e => logger.warn(s"[startup-recovery] completed-row scan failed: ${e.getMessage}").as(Nil))
           .flatMap(_.traverseFilter(t => finalizeOne(sessionStore, rs, t)))
@@ -531,84 +508,86 @@ object SubAgentStartupRecovery:
     resources: SharedResources,
     t: SubAgentTask
   ): IO[Option[String]] =
-    IO.blocking(DelegateRegistry.find(t.taskId)).flatMap {
-      case Some(rec) if rec.workReport.exists(_.trim.nonEmpty) && rec.reportStatus.isEmpty =>
-        val report = rec.workReport.map(_.trim).getOrElse("")
-        val head =
-          s"[completed · closing report delivered by boot sweep] Delegate \"${t.description}\" " +
-            s"(agent=${t.agentName}, session=${t.taskId}) finished its work in an earlier engine lifetime but never " +
-            s"delivered a closing report, so nothing ever converged it. The restart sweep is closing it now — the work " +
-            s"report recorded on its delegate record follows verbatim."
-        val event = AgentCommand.ExternalEvent(
-          source = "delegate",
-          eventType = "completed",
-          payload = s"$head\n$report",
-          metadata = JsonObject(
-            "taskId" -> t.taskId.asJson,
-            "agentName" -> t.agentName.asJson,
-            "description" -> t.description.asJson,
-            "workReport" -> true.asJson,
-            "recoveredBy" -> "completion-finalize".asJson
-          ),
-          correlationId = Some(t.taskId)
-        )
-        for
-          // 父会话在场判据 = [[SessionLiveness]]（活体 actor ∪ 索引/盘上记录）。改前读
-          // `sessionStore.listSessions`（只读索引）⇒ delegate 父会话恒判「已删」，
-          // 收殓回执被静默跳过（OWNER-GONE 误判修复批 2026-11-06；2026-11-06 07:38
-          // 日志实证 `parent=delegate-nebflow exists=false` 的正是这条腿）。
-          parentExists <- SessionLiveness.alive(resources, t.parentSessionId).handleErrorWith(_ =>
-            IO.pure(false)
+    IO.blocking(DelegateRegistry.find(t.taskId))
+      .flatMap {
+        case Some(rec) if rec.workReport.exists(_.trim.nonEmpty) && rec.reportStatus.isEmpty =>
+          val report = rec.workReport.map(_.trim).getOrElse("")
+          val head =
+            s"[completed · closing report delivered by boot sweep] Delegate \"${t.description}\" " +
+              s"(agent=${t.agentName}, session=${t.taskId}) finished its work in an earlier engine lifetime but never " +
+              s"delivered a closing report, so nothing ever converged it. The restart sweep is closing it now — the work " +
+              s"report recorded on its delegate record follows verbatim."
+          val event = AgentCommand.ExternalEvent(
+            source = "delegate",
+            eventType = "completed",
+            payload = s"$head\n$report",
+            metadata = JsonObject(
+              "taskId" -> t.taskId.asJson,
+              "agentName" -> t.agentName.asJson,
+              "description" -> t.description.asJson,
+              "workReport" -> true.asJson,
+              "recoveredBy" -> "completion-finalize".asJson
+            ),
+            correlationId = Some(t.taskId)
           )
-          delivered <-
-            if !parentExists then IO.pure(Left("parent-session-gone"))
-            else
-              MailboxProducer
-                .deliver(
-                  resources,
-                  t.parentSessionId,
-                  event,
-                  identity = t.taskId,
-                  kind = "delegate-terminal",
-                  coalesce = false,
-                  producer = "completion-finalize"
+          for
+            // 父会话在场判据 = [[SessionLiveness]]（活体 actor ∪ 索引/盘上记录）。改前读
+            // `sessionStore.listSessions`（只读索引）⇒ delegate 父会话恒判「已删」，
+            // 收殓回执被静默跳过（OWNER-GONE 误判修复批 2026-11-06；2026-11-06 07:38
+            // 日志实证 `parent=delegate-nebflow exists=false` 的正是这条腿）。
+            parentExists <- SessionLiveness.alive(resources, t.parentSessionId).handleErrorWith(_ => IO.pure(false))
+            delivered <-
+              if !parentExists then IO.pure(Left("parent-session-gone"))
+              else
+                MailboxProducer
+                  .deliver(
+                    resources,
+                    t.parentSessionId,
+                    event,
+                    identity = t.taskId,
+                    kind = "delegate-terminal",
+                    coalesce = false,
+                    producer = "completion-finalize"
+                  )
+                  .attempt
+                  .map {
+                    case Right(nebflow.core.mail.SessionMailbox.MailResult.Failed(cause)) => Left(cause)
+                    case Right(nebflow.core.mail.SessionMailbox.MailResult.AlreadyPresent) => Right("AlreadyPresent")
+                    case Right(other) => Right(other.toString)
+                    case Left(e) => Left(Option(e.getMessage).getOrElse("deliver-error"))
+                  }
+            // 落「已交付」态：报告内容留在 workReport（updateReport 的 preserve-before-
+            // overwrite 保证它不被顶掉），reportStatus=finish ⇒ 本腿一次性。
+            marked <- delivered match
+              case Right(_) =>
+                IO.blocking(DelegateRegistry.updateReport(t.taskId, DelegateReportTool.FinishValue, report, "")).attempt
+              case Left(_) => IO.pure(Right(()))
+            _ <- IO
+              .blocking(
+                ChainStore.appendSync(
+                  ChainStore.keyFor(rec.taskId, t.taskId),
+                  "delegate-completion-finalize",
+                  io.circe.Json.obj(
+                    "action" -> "finalized".asJson,
+                    "delegateId" -> t.taskId.asJson,
+                    "delivery" -> delivered.fold(c => s"FAILED:$c", ok => s"$ok").asJson,
+                    "workReportChars" -> report.length.asJson,
+                    "parentSessionId" -> t.parentSessionId.asJson
+                  )
                 )
-                .attempt
-                .map {
-                  case Right(nebflow.core.mail.SessionMailbox.MailResult.Failed(cause)) => Left(cause)
-                  case Right(nebflow.core.mail.SessionMailbox.MailResult.AlreadyPresent) => Right("AlreadyPresent")
-                  case Right(other) => Right(other.toString)
-                  case Left(e) => Left(Option(e.getMessage).getOrElse("deliver-error"))
-                }
-          // 落「已交付」态：报告内容留在 workReport（updateReport 的 preserve-before-
-          // overwrite 保证它不被顶掉），reportStatus=finish ⇒ 本腿一次性。
-          marked <- delivered match
-            case Right(_) =>
-              IO.blocking(DelegateRegistry.updateReport(t.taskId, DelegateReportTool.FinishValue, report, "")).attempt
-            case Left(_) => IO.pure(Right(()))
-          _ <- IO.blocking(
-            ChainStore.appendSync(
-              ChainStore.keyFor(rec.taskId, t.taskId),
-              "delegate-completion-finalize",
-              io.circe.Json.obj(
-                "action" -> "finalized".asJson,
-                "delegateId" -> t.taskId.asJson,
-                "delivery" -> delivered.fold(c => s"FAILED:$c", ok => s"$ok").asJson,
-                "workReportChars" -> report.length.asJson,
-                "parentSessionId" -> t.parentSessionId.asJson
               )
+              .handleErrorWith(e =>
+                logger.warn(s"[startup-recovery] completion-finalize audit row failed for ${t.taskId}: ${e.getMessage}")
+              )
+            _ <- logger.info(
+              s"[startup-recovery] completion-finalize ${t.taskId}: delivery=${delivered.fold(c => s"FAILED($c)", s => s)} " +
+                s"reportStatus=${if delivered.isRight then "finish" else "<unchanged>"} workReportChars=${report.length}" +
+                (marked.fold(m => s" markError=${m.getMessage}", _ => ""))
             )
-          ).handleErrorWith(e =>
-            logger.warn(s"[startup-recovery] completion-finalize audit row failed for ${t.taskId}: ${e.getMessage}")
-          )
-          _ <- logger.info(
-            s"[startup-recovery] completion-finalize ${t.taskId}: delivery=${delivered.fold(c => s"FAILED($c)", s => s)} " +
-              s"reportStatus=${if delivered.isRight then "finish" else "<unchanged>"} workReportChars=${report.length}" +
-              (marked.fold(m => s" markError=${m.getMessage}", _ => ""))
-          )
-        yield if delivered.isRight then Some(t.taskId) else None
-      case _ => IO.pure(None)
-    }
+          yield if delivered.isRight then Some(t.taskId) else None
+          end for
+        case _ => IO.pure(None)
+      }
       .handleErrorWith(e =>
         logger.warn(s"[startup-recovery] completion-finalize errored for ${t.taskId}: ${e.getMessage}").as(None)
       )
@@ -656,7 +635,13 @@ object SubAgentStartupRecovery:
    */
   def run(resources: SharedResources, interval: FiniteDuration, stallMs: Long): IO[Unit] =
     def loop: IO[Unit] =
-      watchdogSweep(resources.subAgentTaskStore, resources.agentRegistry, resources.sessionStore, stallMs, Some(resources))
+      watchdogSweep(
+        resources.subAgentTaskStore,
+        resources.agentRegistry,
+        resources.sessionStore,
+        stallMs,
+        Some(resources)
+      )
         .handleErrorWith(e =>
           logger.warn(s"[restarting-watchdog] sweep failed (will retry next cycle): ${e.getMessage}").as(Nil)
         ) *> IO.sleep(interval) >> loop
@@ -694,7 +679,7 @@ object SubAgentStartupRecovery:
       // 时用「活体 actor ∪ 记录」双源，legacy 无载体场退回记录面（索引 ∪ 盘上）。
       parentExists <- resources match
         case Some(rs) => SessionLiveness.alive(rs, task.parentSessionId)
-        case None     => SessionLiveness.recordAlive(sessionStore, task.parentSessionId)
+        case None => SessionLiveness.recordAlive(sessionStore, task.parentSessionId)
       // （原 payload/event 构造已随零通知腿摘除——事件只服务于父投递，本批起
       // 收殓链不再构造任何父可见事件。）
       // ═══ 零向上通知（重启手动恢复批，作者令 2026-11-06 20:36 逐字「由于重启/软件
@@ -725,22 +710,24 @@ object SubAgentStartupRecovery:
             s"[startup-recovery] notify DELIVERY FAILED ${task.taskId} → parent ${task.parentSessionId.take(16)}: $err " +
               "(the task row will record the failure honestly; the payload remains in the delegate transcript)"
           )
-      _ <- IO.blocking(
-        ChainStore.appendSync(
-          ChainStore.keyFor(rec.flatMap(_.taskId), task.taskId),
-          "delegate-terminal-delivery",
-          io.circe.Json.obj(
-            "delegateId" -> task.taskId.asJson,
-            "parentSessionId" -> task.parentSessionId.asJson,
-            "delivery" -> delivery.fold(c => s"FAILED:$c", ok => ok).asJson,
-            "delivered" -> delivery.isRight.asJson,
-            "partialResult" -> partial.isDefined.asJson,
-            "lostMarker" -> lostMarkerKey.asJson
+      _ <- IO
+        .blocking(
+          ChainStore.appendSync(
+            ChainStore.keyFor(rec.flatMap(_.taskId), task.taskId),
+            "delegate-terminal-delivery",
+            io.circe.Json.obj(
+              "delegateId" -> task.taskId.asJson,
+              "parentSessionId" -> task.parentSessionId.asJson,
+              "delivery" -> delivery.fold(c => s"FAILED:$c", ok => ok).asJson,
+              "delivered" -> delivery.isRight.asJson,
+              "partialResult" -> partial.isDefined.asJson,
+              "lostMarker" -> lostMarkerKey.asJson
+            )
           )
         )
-      ).handleErrorWith(e =>
-        logger.warn(s"[startup-recovery] delivery receipt row failed for ${task.taskId}: ${e.getMessage}")
-      )
+        .handleErrorWith(e =>
+          logger.warn(s"[startup-recovery] delivery receipt row failed for ${task.taskId}: ${e.getMessage}")
+        )
       // 3. Terminalize — after the notify append, so a crash anywhere leaves
       // either (task running + event queued) [retry, no duplicate] or
       // (task failed + event queued) [done]. Never a lost notification.

@@ -37,7 +37,7 @@ object AgentActor extends AgentCore with AgentSession:
    */
   def llmFailureRetryable(error: Throwable): Boolean = error match
     case e: FallbackExhaustedError =>
-      e.attempts.forall(a =>
+      e.attempts.nonEmpty && e.attempts.forall(a =>
         a.reason.exists(isOverloadReason)
         // 5xx 归批（2026-11-05）：上游暂时不可用（500/502/503/504/550）可重试。
         // 对 root/team agent 它先被 AgentProcessing 的 waiting-network 分支接走

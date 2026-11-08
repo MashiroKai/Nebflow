@@ -54,11 +54,7 @@ import java.util.concurrent.atomic.AtomicLong
  *   `projectBootWake` 腿对每个在册项目做一次唤醒判定，写点 = `BootDispatcherWake.record`
  *   ——「谁 / 何时 / 结果」的正向留痕，取代此前「零动作 boot 零日志行、只能靠缺失行
  *   推断」的取证面；summary 见 [[dispatcherWakeSummary]]，nodeId 字段承载项目名）/
- *   merge-queue（**mergefifo-engine 批** 2026-09-13：合并窗 FIFO 互斥闸的停等留痕
- *   （`kind=hold`）+ **O-1 已知缺口告警**（`kind=same-git-dir-multi-project`：两项目
- *   共用同一 git 目录 ⇒ 引擎侧漏互斥，本批只检测告警不实现 claim；写点 =
- *    `NodeEngine.logMutexHold` / `NodeEngine.alarmSameGitDirProjects`，summary 见
- *   [[mergeQueueHoldSummary]] / [[mergeQueueSameGitDirSummary]]）/
+ *   abandoned-detach（**cancelled 滞留主图修复批 · 案 A** 2026-09-14：存量回填腿
  *   abandoned-detach（**cancelled 滞留主图修复批 · 案 A** 2026-09-14：存量回填腿
  *   对被 retired 却仍挂在活链上的 cancelled 节点补做摘边时的留痕，写点 =
  *   `NodeEngine.backfillAbandonedDetach`；见 [[AbandonedDetachType]]）/
@@ -850,45 +846,10 @@ object FlowMapEventLog:
       s" wallMs=$wallMs nanoMs=$nanoMs slopMs=$slopMs"
 
   /**
-   * 合并窗 FIFO 互斥闸事件类型（**mergefifo-engine 批** 2026-09-13，作者 A-4 裁决）。
-   *
-   * 写点 = `NodeEngine` 的 merge 互斥闸判定位（[[logMutexHold]] 与
-   * `alarmSameGitDirProjects`）。两种 summary（`k=v` 单行）：
-   *   - `kind=hold`：本 merge 被同键更高优先者挡住（闸停等留痕，单发=持有者集合变化时
-   *     才写，禁每轮刷屏）；
-   *   - `kind=same-git-dir-multi-project`：**O-1 已知缺口告警**——检测到另一在册项目
-   *     与本项目**同键**（`realpath(git-common-dir)` 相等）⇒ 引擎侧持有者派生自本项目
-   *     store，此形态**漏互斥**（本批不实现 claim/抢占，作者令）；只做「发生即告警」。
-   * 设计件 §7.2 规划的第三种 summary（等待超预算）**引擎侧不写**：等待超预算的上报按
-   * SEM-3 由 sink 自身承担（引擎不自动上报，与既有「合法等待」口径一致）。
-   * `nodeId` 字段对 hold 形态承载节点 id；对相同 git 目录形态承载**项目名**（与
-   * [[DispatcherWakeType]] 同款先例：该字段承载发起者标识）。不写 `chainId`。
-   */
-  val MergeQueueType: String = "merge-queue"
-
-  /**
    * k=v 值归一（空白 → `_`，与 [[dispatcherWakeSummary]] 同款；防 `k=v` 解析被注释
    * 或路径中的空白破坏——真实键是绝对路径，本仓工作区含空格）。
    */
   def noWs(s: String): String = s.replaceAll("\\s+", "_")
-
-  /** `merge-queue` / hold 形态 summary：本 merge 被同键更高优先者挡住。 */
-  def mergeQueueHoldSummary(where: String, holders: List[String]): String =
-    s"kind=hold at=${noWs(where)} holders=${holders.mkString(",")}"
-
-  /**
-   * `merge-queue` / 同键多项目形态 summary（O-1 告警；键按 k=v 纪律归一，原始键
-   * 全文在同期 WARN 日志行里，取证走日志面）。`foreignRunning` = 他项目中此刻处于
-   * running 的 merge 节点数（>0 = 真实并发争用，而非静态配置问题）。
-   */
-  def mergeQueueSameGitDirSummary(
-    key: String,
-    foreign: List[String],
-    foreignRunning: Int,
-    mineRunning: Int
-  ): String =
-    s"kind=same-git-dir-multi-project key=${noWs(key)} foreign=${foreign.mkString(",")} " +
-      s"foreignRunning=$foreignRunning mineRunning=$mineRunning"
 
   /**
    * 归档事件结构化 summary（`k=v` 单空格分隔，值不含空白；消费者侧解析单点
@@ -1001,8 +962,14 @@ object FlowMapEventLog:
   private val shadowLog = NebflowLogger.forName("nebflow.project.event-log")
   private val sessionSeqs = new ConcurrentHashMap[String, AtomicLong]()
 
-  private def shadowAppendEvent(project: String, nodeId: String, typ: String,
-    ts: Long, summary: String, chainId: Option[String]): Unit =
+  private def shadowAppendEvent(
+    project: String,
+    nodeId: String,
+    typ: String,
+    ts: Long,
+    summary: String,
+    chainId: Option[String]
+  ): Unit =
     import cats.effect.unsafe.implicits.global // 影子写执行体（先例：ScheduledTaskStore.scala:34）
     nebflow.db.DbHost.peek(PathUtil.dataRoot.toNIO).foreach { db =>
       try
@@ -1031,4 +998,5 @@ object FlowMapEventLog:
           // best-effort：影子失败不动主档、不上抛（主链零回归纪律）。
           shadowLog.warnSync(s"db event shadow append failed (project=$project type=$typ): ${e.getMessage}")
     }
+  end shadowAppendEvent
 end FlowMapEventLog

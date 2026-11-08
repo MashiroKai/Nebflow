@@ -85,7 +85,10 @@ private[agent] object MailboxProducer:
     producer: String,
     attemptNo: Int
   ): IO[SessionMailbox.MailResult] =
-    SessionMailbox.mailOnce(parentSessionId, event, kind, identity, coalesce = coalesce, producer = producer).flatMap {
+    SessionMailbox.mailOnce(
+      parentSessionId, event, kind, identity, coalesce = coalesce, producer = producer,
+      deduplicateReceipts = !coalesce
+    ).flatMap {
       case r @ (SessionMailbox.MailResult.Enqueued(_) | SessionMailbox.MailResult.Coalesced(_)) =>
         MailboxDrain.doorbell(resources, parentSessionId).as(r)
       case SessionMailbox.MailResult.AlreadyPresent => IO.pure(SessionMailbox.MailResult.AlreadyPresent)

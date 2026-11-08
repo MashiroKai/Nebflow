@@ -29,14 +29,14 @@ class NetworkUnreachableWaitSpec extends FunSuite:
 
   // ── ① 链穷尽形状判据（agent 层等待分支的输入）─────────────────────────
 
-  test("10-21 incident shape [Timeout(Permanent), Unknown(Transient)] is waitable") {
+  test("mixed timeout and unknown is not automatically treated as network failure") {
     val err = new FallbackExhaustedError(
       List(
         attempt(FailoverReason.Timeout, ErrorPermanence.Permanent),
         attempt(FailoverReason.Unknown, ErrorPermanence.Transient)
       )
     )
-    assert(Fallback.isNetworkUnreachableExhaustion(err), "zhipu timeout + kimi unknown = network outage shape, must wait")
+    assert(!Fallback.isNetworkUnreachableExhaustion(err), "unknown failure must not be inferred to be network outage")
   }
 
   test("pure connect-refused chain is waitable") {

@@ -11,117 +11,82 @@ import nebflow.shared.NebflowLogger
 import scala.util.Try
 
 /**
- * DelegateTerminal —— delegate 终态判定钩子（R6 终态判定 + S12 合并轮；worktree
- * -judge-fifo 批 #1224 增补 §3.1/§3.3；#566 修复批 2026-10-19：blocked 判词退役）.
+ * DelegateTerminal —— delegate 终态判定钩子（状态矩阵批 2026-11-01；开放身份语义批）.
  *
  * 消费点 = `BackoffSupervisor` 的 `AgentEvent.Completed`（gate source="delegate"）。
- * 三个出口：
+ * 出口：
  *   - [[Outcome.Release]] —— 判词 completed（含注记形）：报 Nebula（既有父回投链，
- *     payload 携带判词行）+ MergeQueue 出队（notifyParentAndStop 的清理面统一跑）；
- *   - [[Outcome.HoldForMerge]] —— 判词 ready-to-merge：**不报 Nebula、不停
- *     actor**（合并轮需要 delegate 活着自执行合并）：任务库状态改
- *     `ready-to-merge`（completedAt = FIFO 排序锚）→ MergeQueue 入队轮转 →
- *     监督者保活（预算重挂——合并窗的 3600s 新窗口，超时走既有 Cancelled 链）。
+ *     payload 携带判词行）；
+ *   - [[Outcome.WorkComplete]] —— 开放身份收口：工作轮完成，workspace 与属主身份
+ *     保留（不终判、不停会话；集成走项目 merger 的授权请求，delegate 永不自并）；
+ *   - [[Outcome.Standby]] —— 待命停靠（显式申报）：任务行保持 running、会话停靠
+ *     Waiting，Mail 唤醒续跑；
+ *   - [[Outcome.NudgeIdle]] —— 未申报空等：system reminder 提醒其申报 standby 或
+ *     finish，不终判。
  *
- * 判定机两层全败的回落（fail-open）：delegate_report 自申报（finish→completed /
- * 旧 blocked 申报→completed＋注记）→ 都没有 = 引擎既有完成语义（completed）。判
- * ready-to-merge 但无可合并产物（非 git 工作区 / 分支缺失 / 零领先提交——A5
- * 步1：判否腿改只读座位后全员有分支，空分支凭 commitsAhead==0 降级，防空合并
- * 轮）= 降级 completed（诚实终态）。
- *
- * 四修②（2026-10-07 修复令「判词诚实化」）：自申报也缺失时，completed 判词行
- * 诚实标注 `completed (unjudged — judge unavailable)`（ChainStore 行 source=
- * `unjudged`）——「判过」与「没判成」审计可分；确定性预检（resultText 空＋
- * 零工具调用，`sessionToolCalls = Some(0)`）⇒ 判 completed＋注记（#566：原
- * blocked），不依赖 LLM 判（source=`precheck`）。
- *
- * #566 修复批（作者令逐字：「delegate 是不应该有 blocked 型状态的，直接上报就
- * 行了，blocked 是给 agentflow 用的」）：判官/预检/漂移闸/机械验收的「没做成」
- * 判词一律折 `CompletedNote`（wire 仍编 completed）——注记随交付尾注走，delegate
- * 面零 blocked 状态；failed 保留给引擎真失败（`onTerminalCleanup` 的 failed/
- * cancelled 腿，判词行写真值）。终态自动归档豁免随之整条退役（陈旧行根因）。
+ * 判定机两层全败的回落（fail-open）：delegate_report 自申报（finish→completed）→
+ * 都没有 = 引擎既有完成语义（completed）。判词诚实化：自申报也缺失时，completed
+ * 判词行标注 `completed (unjudged — judge unavailable)`（ChainStore 行 source=
+ * `unjudged`）；确定性预检（resultText 空＋零工具调用，`sessionToolCalls =
+ * Some(0)`）⇒ 判 completed＋注记，不依赖 LLM 判（source=`precheck`）。failed
+ * 保留给引擎真失败（`onTerminalCleanup` 的 failed/cancelled 腿，判词行写真值）。
  */
 object DelegateTerminal:
 
   private val logger = NebflowLogger.forName("nebflow.core.delegate.terminal")
 
-  /** 任务库的 ready-to-merge 状态值（SubAgentTask.status；"restarting" 先例：自定义值合法）。 */
-  val ReadyToMergeStatus: String = "ready-to-merge"
-
   sealed trait Outcome
 
   object Outcome:
 
-    /**
-     * 判词完成（payload 后缀携带判词行——🔴 模型/用户可见文案，§16 待过目）。
-     * `mergeOutcome`（台账 #896 交通引导员制 2026-10-26）：合并轮终态结论——
-     * Some(Merged) = 机械验收通过（关账 merged）；Some(Refused(reason)) = 合并轮
-     * 被拒（关账 failed，无重试无 park）；None = 非合并轮完成（队列成员若在账则
-     * 走账实核对回落）。默认 None。
-     */
-    final case class Release(verdictSuffix: String, mergeOutcome: Option[MergeQueue.RoundOutcome] = None)
-        extends Outcome
+    /** 判词完成（payload 后缀携带判词行——🔴 模型/用户可见文案，§16 待过目）。 */
+    final case class Release(verdictSuffix: String) extends Outcome
 
-    /** ready-to-merge：保活等合并轮（预算重挂由监督者执行）。 */
-    case object HoldForMerge extends Outcome
+    /** A completed development round retains its workspace owner and session. */
+    case object WorkComplete extends Outcome
 
     /**
-     * 待命挂起（案A 实施批 2026-10-31 · 作者 11:40 拍板显式待命态为主干；状态矩阵
-     * 批 2026-11-01 收编为矩阵组合 **complete × standby**）：回合收尾**不终判**
-     * ——无判词、无父投递、无合并触发；任务行保持 running、会话停靠 Waiting
+     * 待命挂起（状态矩阵组合 **complete × standby**）：回合收尾**不终判**
+     * ——无判词、无父投递；任务行保持 running、会话停靠 Waiting
      * （监督者执行，UI 显「待命」），registry 落 standbySince；Mail 到达唤醒后
-     * 续跑照常走矩阵。`declared` = true 显式申报腿。防退化：分支有未并交付提交
-     * 时闸拒（回落判词链，合并义务由 queueFlip/ready-to-merge 强制）。
+     * 续跑照常走矩阵。`declared` = true 显式申报腿。
      */
     final case class Standby(detail: String, declared: Boolean) extends Outcome
 
     /**
-     * 未申报空等提醒（状态矩阵批 2026-11-01 · 作者令「complete × idle（未申报）
-     * ⇒ system reminder 提醒其调整状态（报 standby 或 finish），不终判」——
-     * JeV 单问句兜底（案B2）本轮作者未点名，由 DelegateStandbyCare 的
-     * IdleNudge 型承担）：零判词、零父投递、零 terminal-verdict 行、不停 actor；
-     * 任务行诚实回 running。**防退化**：分支有未并交付提交时本组合闸不接——落
-     * 判词链（queueFlip 翻转入队，交付绝不静默丢失）。`chainsInFlight`/`emptyTurn`
-     * = 提醒文案的形态锚（等上游链 / 空烧轮——链在飞也必须申报，不许裸等）。
+     * 未申报空等提醒（矩阵组合 complete × idle（未申报）⇒ system reminder 提醒其
+     * 调整状态（报 standby 或 finish），不终判——DelegateStandbyCare 的 IdleNudge
+     * 型承担）：零判词、零父投递、零 terminal-verdict 行、不停 actor；任务行诚实回
+     * running。`chainsInFlight`/`emptyTurn` = 提醒文案的形态锚（等上游链 / 空烧轮
+     * ——链在飞也必须申报，不许裸等）。
      */
     final case class NudgeIdle(chainsInFlight: Boolean, emptyTurn: Boolean) extends Outcome
-
-    /**
-     * 道忙重排（投递可靠性批 2026-10-29 · 病灶②，作者令 23:57 范围补充②）：
-     * 合并轮拒绝的原因是**道被占**（他批合法占道解冲突 / 孤儿未收殓 / 外来手工
-     * 合并）——不是本批的失败。成员资格保留（MergeQueue.requeueForLane 退回
-     * waiting），会话停靠保活，道净后 careTick 放行腿自动重排。只有道净/己方
-     * 残留的拒绝才走 Release+Refused 关账 failed。
-     */
-    final case class RequeueForLane(reason: String) extends Outcome
   end Outcome
 
   /**
-   * Completed 终态的判定与分流（状态矩阵批 2026-11-01 改序）。签名全部取自监督者
-   * 现场（无第二份状态源）。
+   * Completed 终态的判定与分流（状态矩阵批改序）。签名全部取自监督者现场（无第二份
+   * 状态源）。
    *
-   * **判定序（作者令状态矩阵）**：状态槽闸（矩阵四组合分流——standby ⇒ 待命停靠 /
-   * 未申报 ⇒ 提醒不终判 / merge ⇒ FIFO / finish ⇒ 唯一终判组合）＞ [[verdictChain]]
-   * 全序（漂移闸＞确定性预检＞判定机＞自申报＞默认 completed——仅在 finish/merge
-   * 组合、合并轮豁免、以及「未申报 × 有未并交付提交」防退化回落时运行）。
+   * **判定序（作者令状态矩阵）**：状态槽闸（矩阵三组合分流——standby ⇒ 待命停靠 /
+   * 未申报 ⇒ 提醒不终判 / finish ⇒ 唯一终判组合）＞ [[verdictChain]]
+   * 全序（漂移闸＞确定性预检＞判定机＞自申报＞默认 completed——仅在 finish 申报
+   * 组合时运行）。
    *
    * 四修②（2026-10-07 修复令「判词诚实化」）：
    *   - **确定性预检**（不依赖 LLM 判）：`sessionToolCalls = Some(0)` 且终文
    *     空/空烧 stub（[[nebflow.shared.Defaults.MaxTokensStubText]]）⇒ 判
-     *     completed＋注记（#566：原 blocked——判定机两层连问都不问，空烧形态没有
-     *     可判之物）；状态矩阵批：未申报空烧被槽位闸先行接住（提醒腿），预检在
-     *     finish/merge 申报组合与合并轮内继续承担诚实判；
+   *     completed＋注记；状态矩阵批：未申报空烧被槽位闸先行接住（提醒腿），预检在
+   *     finish 申报组合内继续承担诚实判；
    *   - **诚实未判**：判定机两层全败＋自申报缺失 ⇒ 仍落既有 completed 语义
-   *     （fail-open 不变——矩阵批注：仅 finish/merge 组合可达），但判词行诚实标注
+   *     （fail-open 不变——矩阵批注：仅 finish 组合可达），但判词行诚实标注
    *     `completed (unjudged — judge unavailable)`，ChainStore 行 source=`unjudged`
    *     （审计可分「判过」与「没判成」）。
    *
-   * A5 步2（2026-10-08）：判词链内的**确定性漂移闸**（[[driftPrecheck]]）——
-   * 确证基分支漂移（支零 × 基动 × 不可归属 × 共享检出区座位）⇒ completed＋注记
-   * （source=`drift`；#566：原硬阻断 Blocked 退役——证据随注记交付）；漂移信号
-   * 成立但座位为 worktree ⇒ 只注记并入 gitDigest 判词输入不罚；读数不可确证 ⇒
-   * fail-open 不罚只 WARN。standby 申报腿在停靠前另过同一漂移闸（保护性闸不
-   * defer——确证漂移的证据不因待命延后交付）。
+   * A5 步2：判词链内的**确定性漂移闸**（[[driftPrecheck]]）——确证基分支漂移
+   * （支零 × 基动 × 不可归属 × 共享检出区座位）⇒ completed＋注记
+   * （source=`drift`）；漂移信号成立但座位为 worktree ⇒ 只注记并入 gitDigest 判词
+   * 输入不罚；读数不可确证 ⇒ fail-open 不罚只 WARN。standby 申报腿在停靠前另过同一
+   * 漂移闸（保护性闸不 defer——确证漂移的证据不因待命延后交付）。
    */
   def onCompleted(
     resources: AgentRuntimePort,
@@ -135,15 +100,40 @@ object DelegateTerminal:
     sessionToolCalls: Option[Int] = None
   ): IO[Outcome] =
     val record = DelegateRegistry.find(delegateId)
+    // Managed workspace rounds settle through the open-identity gate below, so
+    // this block MUST early-return: falling through would run the verdict chain
+    // over a round that has to keep its ledger workspace and live owner (the
+    // supervisor's WorkComplete leg reports the round, parks standby and settles
+    // the ledger; the chain only produces terminal Release). The gate is keyed
+    // on WorkspaceLedger ownership (dispatch registers every managed worktree)
+    // plus the merger identity; a delegate without a ledger workspace (external
+    // executor / legacy row) keeps the verdict-chain semantics.
+    val managedRound = WorkspaceLedger.default.owned(delegateId).isDefined ||
+      record.exists(r => r.mode.contains(DualModeConfig.ModeMerger))
+    if managedRound then
+      val declared = record.flatMap(_.reportStatus)
+      return DelegateInflightGate.check(delegateId).flatMap { inflight =>
+        if declared.contains(nebflow.core.tools.DelegateReportTool.StandbyValue) then
+          parkStandbyOutcome(delegateId, record.flatMap(_.taskId), record.flatMap(_.reportDetail).getOrElse(""))
+            .flatTap(_ =>
+              if inflight.isEmpty then IO.blocking(WorkspaceLedger.default.settle(delegateId, frozen = false))
+              else IO.unit
+            )
+        else if declared.contains(nebflow.core.tools.DelegateReportTool.FinishValue) && inflight.isEmpty then
+          val clean =
+            record.flatMap(_.worktree).forall(path => nebflow.core.GitWorktrees.dirtyPaths(os.Path(path)).contains(Nil))
+          if !clean then IO.pure(Outcome.NudgeIdle(chainsInFlight = false, emptyTurn = true))
+          else IO.pure(Outcome.WorkComplete)
+        else IO.pure(Outcome.NudgeIdle(chainsInFlight = inflight.nonEmpty, emptyTurn = resultText.trim.isEmpty))
+      }
+    end if
     val taskId = record.flatMap(_.taskId)
     val branch = record.flatMap(_.branch)
-    // 台账 #896：合并轮在飞判据单点 = 账本 turn-granted（放行 = 通知已送达）。
-    val mergeRound = MergeQueue.isMergeRound(delegateId)
     val selfReport = record.flatMap(r => r.reportStatus.map(s => (s, r.reportDetail.getOrElse(""))))
     // N1 刀2 ⑸：在飞链计数（fail-soft 0——宿主/快照任何一步失败都不拖判词）。
     // 判据 = 该 delegate 作用域图内「存在非终态成员」的链数（chainIdView 值集合去重
-    // 后逐链看成员终态）。状态矩阵批：兼作未申报提醒腿的文案锚（链在飞 × 未申报
-    // 也被矩阵接住——提醒补报 standby，绝不裸等）。
+    // 后逐链看成员终态）。兼作未申报提醒腿的文案锚（链在飞 × 未申报也被矩阵接住
+    // ——提醒补报 standby，绝不裸等）。
     val inFlightChains: IO[Int] =
       nebflow.core.project.DelegateFlowHosts
         .get(delegateId)
@@ -162,187 +152,131 @@ object DelegateTerminal:
         }
         .handleErrorWith(_ => IO.pure(0))
 
-    // ── 完成判定状态矩阵（作者令 2026-11-01 · delegate 状态矩阵批）─────────────
+    // ── 完成判定状态矩阵（作者令 · delegate 状态矩阵批）─────────────────────────
     // 引擎侧 complete（回合结束）只是**触发判定的事件**，绝不直接等于完成——
-    // 先查 delegate_report 状态槽，按矩阵取交集分流（判定序改造锚：
-    // 状态槽闸 ＞ 漂移闸 ＞ 确定性预检 ＞ 判定机 ＞ 自申报 ＞ 默认 completed；
-    // 「兜底 completed」只允许在 finish 组合或矩阵明确放行的分支里出现）：
+    // 先查 delegate_report 状态槽，按矩阵取交集分流（判定序：状态槽闸 ＞ 漂移闸 ＞
+    // 确定性预检 ＞ 判定机 ＞ 自申报 ＞ 默认 completed；「兜底 completed」只允许在
+    // finish 组合里出现）：
     //
     //   | complete | standby（申报） | 等待：跳过终判、保活、任务行显「待命」；Mail/续聊唤醒续跑 |
     //   | complete | idle（未申报）  | system reminder 提醒其调整状态（报 standby 或 finish），不终判 |
-    //   | complete | merge         | 排队等合并（走既有 MergeQueue FIFO） |
     //   | complete | finish        | **唯一允许判完成的组合**（判词链全序在此运行） |
     //
-    // 合并轮豁免：引擎授命的合并执行窗——槽位不得拦截（合并义务当场兑现，机械
-    // 验收闸照常）。两个活体旧病灶（作者 Mail 停手回执被判 completed / 停手回执
-    // 自发触发合并轮）分别被 standby 组与未申报组的槽位门槛挡下。
-    // 防退化（两腿同闸）：分支有未并交付提交（ahead > 0）⇒ 槽位门槛不接——落判词
-    // 链由 queueFlip/ready-to-merge 强制合并义务（交付绝不静默丢失；既有状态翻转
-    // 与零领先降级规则原样保留，作者令「不许静默丢失」）。
+    // 两个活体旧病灶（作者 Mail 停手回执被判 completed / 停手回执自发触发合并轮）
+    // 分别被 standby 组与未申报组的槽位门槛挡下。集成面 = 项目 merger 的授权请求
+    // （MergeRequests/merger_report）——delegate 永不自并，未并提交不构成合并义务。
     inFlightChains.flatMap { chains0 =>
-    val chain: IO[Outcome] =
-      verdictChain(
-        resources = resources,
-        delegateId = delegateId,
-        parentSessionId = parentSessionId,
-        initialPrompt = initialPrompt,
-        resultText = resultText,
-        childRef = childRef,
-        supervisorRef = supervisorRef,
-        sessionToolCalls = sessionToolCalls,
-        record = record,
-        taskId = taskId,
-        branch = branch,
-        mergeRound = mergeRound,
-        selfReport = selfReport,
-        chains = chains0
-      )
+      val chain: IO[Outcome] =
+        verdictChain(
+          resources = resources,
+          delegateId = delegateId,
+          parentSessionId = parentSessionId,
+          initialPrompt = initialPrompt,
+          resultText = resultText,
+          childRef = childRef,
+          supervisorRef = supervisorRef,
+          sessionToolCalls = sessionToolCalls,
+          record = record,
+          taskId = taskId,
+          branch = branch,
+          selfReport = selfReport,
+          chains = chains0
+        )
 
-    // 显式申报腿（矩阵组合 complete × standby）：申报槽 = standby ∧ 非合并轮
-    // （合并轮 = 引擎授命的终态执行窗，合并义务优先，不接纳待命）。
-    // detail = 模型申报的「在等什么」（等作者令、等上游、等合并窗都算）。
-    val standbyDeclared: Option[String] =
-      selfReport
-        .filter(_._1 == nebflow.core.tools.DelegateReportTool.StandbyValue)
-        .map(_._2)
-        .filterNot(_ => mergeRound)
+      // 防退化闸读数：分支领先提交数（fail-soft——无分支/缺锚/读失败 = None ⇒ 采纳）。
+      // 工作分支上有未并交付提交时，停靠/提醒两腿都不接——落判词链做诚实终判
+      // （completed ＋ unmerged-work 注记随行；集成走项目 merger 的授权请求，
+      // 交付绝不静默丢失）。
+      def unmergedAheadOf(): Option[Int] =
+        record.flatMap(rec =>
+          branch.flatMap(b =>
+            rec.baseBranch
+              .flatMap(bb => Try(os.Path(rec.cwd)).toOption.map(ws => GitWorktrees.commitsAhead(ws, bb, b)))
+          )
+        )
 
-    val standbyDecision: IO[Option[Outcome]] =
-      standbyDeclared match
-        case None => IO.pure(None)
-        case Some(detail) =>
-          // 漂移闸确证优先：保护性确定性闸不 defer——证据随注记立即交付（回落链）。
-          driftPrecheck(record, mergeRound).flatMap { earlyDrift =>
-            logDrift(delegateId, earlyDrift)
-            DriftResult.verdictOf(earlyDrift) match
-              case Some(_) => IO.pure(None)
-              case None =>
-                standbyGate(record, branch).flatMap {
-                  case false =>
-                    IO(
-                      logger.warn(
-                        s"delegate $delegateId: standby declared but " +
-                          s"${unmergedAheadOf(record, branch).getOrElse("?")} deliverable commit(s) sit unmerged — " +
-                          "standby NOT honored (merge obligations come first); falling through to the verdict chain"
-                      )
-                    ).as(None)
-                  case true => parkStandbyOutcome(delegateId, taskId, detail).map(Some(_))
-                }
-          }
+      // 显式申报腿（矩阵组合 complete × standby）：申报槽 = standby。
+      // detail = 模型申报的「在等什么」（等作者令、等上游都算）。
+      val standbyDeclared: Option[String] =
+        selfReport
+          .filter(_._1 == nebflow.core.tools.DelegateReportTool.StandbyValue)
+          .map(_._2)
 
-    // 未申报腿（矩阵组合 complete × idle）：system reminder 提醒其调整状态
-    // （报 standby 或 finish），不终判——DelegateStandbyCare.IdleNudge 承担提醒
-    // （JeV 兜底按作者令退役）。链在飞 × 未申报也归本腿接住（S3/D1 对账：
-    // dispatcher 断供场景的引擎侧兜底）。
-    val idleDecision: IO[Option[Outcome]] =
-      if selfReport.isDefined || mergeRound then IO.pure(None)
-      else
-        standbyGate(record, branch).map {
-          case true =>
+      val standbyDecision: IO[Option[Outcome]] =
+        standbyDeclared match
+          case None => IO.pure(None)
+          case Some(detail) =>
+            if unmergedAheadOf().exists(_ > 0) then
+              IO(
+                logger.warn(
+                  s"delegate $delegateId: standby declared but " +
+                    s"${unmergedAheadOf().getOrElse("?")} deliverable commit(s) sit unmerged on the working branch — " +
+                    "standby NOT honored (the honest verdict settles first); falling through to the verdict chain"
+                )
+              ).as(None)
+            else
+              // 漂移闸确证优先：保护性确定性闸不 defer——证据随注记立即交付（回落链）。
+              driftPrecheck(record).flatMap { earlyDrift =>
+                logDrift(delegateId, earlyDrift)
+                DriftResult.verdictOf(earlyDrift) match
+                  case Some(_) => IO.pure(None)
+                  case None => parkStandbyOutcome(delegateId, taskId, detail).map(Some(_))
+              }
+
+      // 未申报腿（矩阵组合 complete × idle）：system reminder 提醒其调整状态
+      // （报 standby 或 finish），不终判——DelegateStandbyCare.IdleNudge 承担提醒。
+      // 链在飞 × 未申报也归本腿接住（dispatcher 断供场景的引擎侧兜底）；未申报 ×
+      // 工作分支有未并交付提交 = 防退化回落——落判词链诚实终判（交付绝不静默丢失）。
+      val idleDecision: IO[Option[Outcome]] =
+        if selfReport.isDefined || unmergedAheadOf().exists(_ > 0) then IO.pure(None)
+        else
+          IO.pure(
             Some(
               Outcome.NudgeIdle(
                 chainsInFlight = chains0 > 0,
                 emptyTurn = sessionToolCalls.contains(0) && !hasRealOutput(resultText)
               )
             )
-          case false => None
+          )
+
+      // 就地写盘护栏（补充令第 2 条）：先检后交付——命中即回执标红（Release 腿），
+      // 只读任务零误报（判据见 [[inPlaceWriteAlarm]]）。命中同时写三处：WARN 日志、
+      // ChainStore `in-place-write-alarm` 行、交付正文首行（「不许只在日志里留一行」）。
+      val inPlaceAlarm: IO[Option[String]] =
+        inPlaceWriteAlarm(record).flatTap {
+          case None => IO.unit
+          case Some(a) =>
+            IO.blocking(
+              ChainStore.appendSync(
+                ChainStore.keyFor(taskId, delegateId),
+                "in-place-write-alarm",
+                Json.obj(
+                  "delegateId" -> Json.fromString(delegateId),
+                  "taskId" -> taskId.map(Json.fromString).getOrElse(Json.Null),
+                  "alarm" -> Json.fromString(a)
+                )
+              )
+            ).handleErrorWith(e => logger.warn(s"in-place-write-alarm chain line failed: ${e.getMessage}")) *>
+              IO(logger.warn(s"delegate $delegateId: in-place write alarm — $a"))
         }
 
-    // 就地写盘护栏（补充令第 2 条）：先检后交付——命中即回执标红（Release 腿），
-    // 只读任务零误报（判据见 [[inPlaceWriteAlarm]]）。命中同时写三处：WARN 日志、
-    // ChainStore `in-place-write-alarm` 行、交付正文首行（「不许只在日志里留一行」）。
-    val inPlaceAlarm: IO[Option[String]] =
-      inPlaceWriteAlarm(record).flatTap {
-        case None => IO.unit
-        case Some(a) =>
-          IO.blocking(
-            ChainStore.appendSync(
-              ChainStore.keyFor(taskId, delegateId),
-              "in-place-write-alarm",
-              Json.obj(
-                "delegateId" -> Json.fromString(delegateId),
-                "taskId" -> taskId.map(Json.fromString).getOrElse(Json.Null),
-                "alarm" -> Json.fromString(a)
-              )
-            )
-          ).handleErrorWith(e => logger.warn(s"in-place-write-alarm chain line failed: ${e.getMessage}")) *>
-            IO(logger.warn(s"delegate $delegateId: in-place write alarm — $a"))
+      inPlaceAlarm.flatMap { alarm =>
+        standbyDecision.flatMap {
+          case Some(outcome) => IO.pure(withInPlaceAlarm(outcome, alarm))
+          case None =>
+            idleDecision.flatMap {
+              case Some(outcome) => IO.pure(withInPlaceAlarm(outcome, alarm))
+              case None => chain.map(o => withInPlaceAlarm(o, alarm))
+            }
+        }
       }
-
-    inPlaceAlarm.flatMap { alarm =>
-      standbyDecision.flatMap {
-        case Some(outcome) => IO.pure(withInPlaceAlarm(outcome, alarm))
-        case None =>
-          idleDecision.flatMap {
-            case Some(outcome) => IO.pure(withInPlaceAlarm(outcome, alarm))
-            case None          => chain.map(o => withInPlaceAlarm(o, alarm))
-          }
-      }
-    }
     }
   end onCompleted
 
   /**
-   * 待命防退化闸读数：分支领先提交数（与判词链 [[verdictChain]] 的 aheadOfBase
-   * 同款读法——fail-soft：无分支/缺锚/读失败 = None）。None ⇒ 采纳（显式意图
-   * 优先 / 未申报腿照常提醒；合并义务在真终态由既有机制强制——交付绝不静默丢失）。
-   */
-  private def unmergedAheadOf(record: Option[DelegateRegistry.Record], branch: Option[String]): Option[Int] =
-    record.flatMap(rec =>
-      branch.flatMap(b =>
-        rec.baseBranch
-          .flatMap(bb => Try(os.Path(rec.cwd)).toOption.map(ws => GitWorktrees.commitsAhead(ws, bb, b)))
-      )
-    )
-
-  /** 防退化闸：有未并交付提交（>0）⇒ 拒绝停靠/提醒（true = 矩阵组合可接）。 */
-  private def standbyGate(record: Option[DelegateRegistry.Record], branch: Option[String]): IO[Boolean] =
-    IO.blocking(unmergedAheadOf(record, branch)).map(ahead => !ahead.exists(_ > 0))
-
-  /**
-   * 待命采纳落点（standby 组）：parkStandby 落停靠时刻 → ChainStore `standby`
-   * 审计行（非终态——terminal-verdict 行只在真终态写）→ Outcome.Standby 交监督者
-   * 停靠（registry Waiting + WS「待命」帧 + caretaker 武装）。
-   */
-  private def parkStandbyOutcome(
-    delegateId: String,
-    taskId: Option[String],
-    detail: String
-  ): IO[Outcome] =
-    val now = System.currentTimeMillis()
-    IO.blocking(DelegateRegistry.parkStandby(delegateId))
-      .attempt
-      .flatMap {
-        case Left(e) =>
-          IO(logger.warn(s"delegate $delegateId: parkStandby failed (standby proceeds without the dock timestamp): ${e.getMessage}"))
-        case Right(_) => IO.unit
-      } *>
-      IO
-        .blocking(
-          ChainStore.appendSync(
-            ChainStore.keyFor(taskId, delegateId),
-            "standby",
-            Json.obj(
-              "delegateId" -> Json.fromString(delegateId),
-              "taskId" -> taskId.map(Json.fromString).getOrElse(Json.Null),
-              "detail" -> Json.fromString(detail),
-              "declared" -> Json.fromBoolean(true),
-              "at" -> Json.fromLong(now)
-            )
-          )
-        )
-        .handleErrorWith(e => IO(logger.warn(s"standby chain line failed for $delegateId: ${e.getMessage}"))) *>
-      IO(
-        logger.info(
-          s"delegate standby: $delegateId (task=${taskId.getOrElse("-")}) parked — self-declared (matrix complete×standby): ${detail.take(200)}"
-        )
-      ).as(Outcome.Standby(detail, declared = true))
-
-  /**
-   * 判词链本体（案A 批拆分；状态矩阵批：仅 finish/merge 申报组合、合并轮豁免、
-   * 以及「未申报 × 有未并交付提交」的防退化回落在此运行——原 [[onCompleted]]
-   * for-体逐字迁入，全序零改动：漂移闸＞确定性预检＞判定机＞自申报＞默认
-   * completed。`chains` 由矩阵前置段单次求值传入）。
+   * 判词链本体（状态矩阵批拆分；仅 finish 申报组合在此运行——原 [[onCompleted]]
+   * for-体迁入，全序：漂移闸＞确定性预检＞判定机＞自申报＞默认 completed。`chains`
+   * 由矩阵前置段单次求值传入）。
    */
   private def verdictChain(
     resources: AgentRuntimePort,
@@ -356,22 +290,20 @@ object DelegateTerminal:
     record: Option[DelegateRegistry.Record],
     taskId: Option[String],
     branch: Option[String],
-    mergeRound: Boolean,
     selfReport: Option[(String, String)],
     chains: Int
   ): IO[Outcome] =
     val gitDigest = IO.blocking(digestFor(record))
     for
-      // A5 步2 确定性漂移闸（先于判定机：确证 = 硬阻断零 LLM；不罚但有信号 =
-      // 注记并入判词输入；不可确证 = fail-open 只 WARN）。#566：Penalty 判词退役
-      // blocked——确证漂移 = completed＋注记（source=drift），不再是独立状态。
-      drift <- driftPrecheck(record, mergeRound)
+      // A5 步2 确定性漂移闸（先于判定机：确证 = 注记形；不罚但有信号 =
+      // 注记并入判词输入；不可确证 = fail-open 只 WARN）。
+      drift <- driftPrecheck(record)
       _ = logDrift(delegateId, drift)
       driftVerdict = DriftResult.verdictOf(drift)
       digest0 <- gitDigest
       digest = DriftResult.noteOf(drift).map(n => if digest0.isEmpty then n else s"$digest0\n$n").getOrElse(digest0)
-      // 四修② 确定性预检（纯函数，先于判定机——空烧形态零 LLM 消耗）。#566：
-      // 预检产出 = completed＋注记（不再是 blocked 状态）。
+      // 四修② 确定性预检（纯函数，先于判定机——空烧形态零 LLM 消耗）。预检产出 =
+      // completed＋注记。
       precheck = deterministicPrecheck(resultText, sessionToolCalls)
       judged <-
         if precheck.isDefined || driftVerdict.isDefined then IO.pure(None)
@@ -383,7 +315,6 @@ object DelegateTerminal:
               resultText = resultText,
               gitDigest = digest,
               selfReport = selfReport,
-              mergeRound = mergeRound,
               inFlightChains = chains,
               sessionToolCalls = sessionToolCalls
             )
@@ -391,15 +322,22 @@ object DelegateTerminal:
       // 四修② 诚实未判标记：判定机 None＋自申报 None＋预检未中 ⇒ 判词行标注。
       // （漂移闸确证 = 确定性判过，非「没判成」——不计入 unjudged。）
       unjudged = driftVerdict.isEmpty && precheck.isEmpty && judged.isEmpty && selfReport.isEmpty
-      // 判词序：漂移闸（A5 步2 确证——#566 起为注记形）＞ 确定性预检 ＞ 判定机 ＞
-      // 自申报回落。#566：自申报 blocked（退役前旧值域）折 completed＋注记——
-      // 「直接上报就行了」，申报内容是报告注记，不是状态。
+      // 判词序：漂移闸（确证——注记形）＞ 确定性预检 ＞ 判定机 ＞ 自申报回落。
+      // 自申报 `merge` = 退役值（旧盘/旧 brief 在飞会话残留）→ 折 completed＋注记
+      // （集成是项目 merger 的授权任务，不是 delegate 的状态）；`blocked` = 退役值，
+      // 同折 completed＋注记。
       verdict = driftVerdict
         .orElse(precheck)
         .orElse(judged)
         .orElse(selfReport.flatMap {
-          case ("merge", _) => Some(DelegateJudge.Verdict.ReadyToMerge) // ③：merge 态自申报 → 入 MergeQueue（无分支由下方降级兜住）
           case ("finish", _) => Some(DelegateJudge.Verdict.Completed)
+          case ("merge", d) =>
+            Some(
+              DelegateJudge.Verdict.CompletedNote(
+                if d.nonEmpty then s"delegate self-reported the retired 'merge' state (reported as completed): $d"
+                else "delegate self-reported the retired 'merge' state (reported as completed)"
+              )
+            )
           case ("blocked", d) =>
             Some(
               DelegateJudge.Verdict.CompletedNote(
@@ -410,19 +348,11 @@ object DelegateTerminal:
           case _ => None
         })
         .getOrElse(DelegateJudge.Verdict.Completed)
-      // MergeQueue 入队条件（② + A5 步1 扩展 + 引擎加固批 P2-3）：ready-to-merge
-      // 且确有可合并产物。
-      //   - 既有：无分支（非 git / 建败降级）⇒ 降级 completed；
-      //   - 步1：判否腿也建分支+worktree（只读座位）后全员有分支 ⇒ 增「领先提交
-      //     数==0」判（[[GitWorktrees.commitsAhead]]，fail-soft——git 面任何一步
-      //     不可读也计 0）：零领先提交的 ready-to-merge 只会产出空合并轮（`git
-      //     merge --no-ff` 对祖先分支 = Already up-to-date，无产物）⇒ 降级
-      //     completed（诚实终态：无可合并产物）；
-      //   - P2-3（2026-10-09 只读座位诚实化）：**判否（只读座位）终态 completed
-      //     但分支上确有领先提交 ⇒ 判词翻转 ready-to-merge 自动入队**——交付绝不
-      //     静默丢失；工作座位同形态 = 只注记不阻断（判词归判定机）。
+      // 工作座位注记（不阻断）：completed 判词 + 工作分支确有领先提交——诚实化
+      // 注记（判词归判定机，引擎只记账；集成走项目 merger 的授权请求，交付不会
+      // 因注记丢失——分支与 workspace 原样保留）。
       aheadOfBase <-
-        if verdict == DelegateJudge.Verdict.ReadyToMerge || record.flatMap(_.worktree).isDefined then
+        if record.flatMap(_.worktree).isDefined then
           IO.blocking {
             record.flatMap(rec =>
               branch.flatMap(b =>
@@ -432,143 +362,42 @@ object DelegateTerminal:
             )
           }
         else IO.pure(None)
-      // 无可并产物的 ready-to-merge 降级（A5 步1 既有判据）：空分支凭零领先降级，
-      // 防空合并轮（诚实终态）。
-      finalVerdict0 = verdict match
-        case DelegateJudge.Verdict.ReadyToMerge if branch.isEmpty || aheadOfBase.contains(0) =>
-          DelegateJudge.Verdict.Completed
-        case other => other
-      // 台账 #896（交通引导员制 2026-10-26）：引擎侧自动合并执行已整体退役
-      // （DelegateAutoMerge 删除——引擎永不自己跑 git merge）。completed 判词 ×
-      // worktree 座位 × 分支确有领先提交 ⇒ **翻转 ready-to-merge 入队**（放行 =
-      // 通知属主自己合并；交付绝不静默丢失）。分支锚缺失/零领先 = 降级 completed
-      // （下方 finalVerdict0 与既有注记路径兜底）。
-      queueFlip = finalVerdict0 == DelegateJudge.Verdict.Completed &&
-        !mergeRound &&
-        record.flatMap(_.worktree).isDefined &&
-        aheadOfBase.exists(_ > 0)
-      finalVerdict0b = if queueFlip then DelegateJudge.Verdict.ReadyToMerge else finalVerdict0
-      // P1-1① 机械验收闸（2026-10-09）：合并轮 completed 判词的 Release 前置闸
-      // ——确定性 git 校验（双亲 merge ＋祖先真），不满足 ⇒ 拒绝 Release 回落
-      // 注记形 completed（#566：不再是 blocked 状态——拒绝证据随注记交付）。
-      // 绝不凭自申报放行；读数不可确证 = fail-closed（留现场）。
-      acceptance <-
-        if mergeRound && finalVerdict0b.isCompletedShaped then
-          IO.blocking(MergeAcceptance.verifyRecord(record)).map(Some(_): Option[MergeAcceptance.Result])
-        else IO.pure(None: Option[MergeAcceptance.Result])
-      finalVerdict = acceptance match
-        case Some(r) if !r.ok =>
-          DelegateJudge.Verdict.CompletedNote(
-            s"mechanical merge acceptance refused the release (the delegate/verdict claimed a completed merge): ${r.evidence}"
-          )
-        case _ => finalVerdict0b
-      // 病灶②（投递可靠性批 2026-10-29，作者令 23:57「道忙应 REQUEUE」）：机械
-      // 验收拒绝 × 道被占（非己残留、非道净真拒绝）⇒ 判定改走 RequeueForLane——
-      // 成员资格保留 + 会话停靠保活，道净自动重排；不写 terminal-verdict 行
-      // （非终态；审计行由 MergeQueue.requeueForLane 的 lane-requeued 承担）。
-      laneRequeueReason <-
-        if mergeRound && acceptance.exists(!_.ok) then
-          IO.blocking {
-            MergeQueue
-              .find(delegateId)
-              .filter(m => m.open && m.state == MergeQueue.State.TurnGranted)
-              .map { m =>
-                MergeQueue.laneVerdictFor(m) match
-                  case MergeQueue.LaneVerdict.Clear | MergeQueue.LaneVerdict.OwnLeftover => None // 真拒绝（道净/己方残留）
-                  case other => Some(MergeQueue.laneBlockReason(other))
-              }
-              .getOrElse(None)
-          }.handleErrorWith(e => IO(logger.warn(s"lane requeue classification failed: ${e.getMessage}")).as(None))
-        else IO.pure(None: Option[String])
-      // P2-3 工作座位注记（不阻断）：completed 判词 + 领先提交且未入队——诚实化
-      // 注记（判词归判定机，引擎只记账）。worktree 座位已被 queueFlip 翻转入队；
-      // 本注记只剩就地座位与翻转降级形态（合并轮的同形态已被上方验收闸拦下）。
       _ <- IO
         .blocking {
-          if finalVerdict == DelegateJudge.Verdict.Completed && !mergeRound &&
-            aheadOfBase.exists(_ > 0)
+          if verdict == DelegateJudge.Verdict.Completed && aheadOfBase.exists(_ > 0)
           then noteUnmergedWork(delegateId, taskId, branch, aheadOfBase)
           else ()
         }
         .handleErrorWith(e => IO(logger.warn(s"unmerged-work note failed: ${e.getMessage}")))
-      // delegate-finish-report 修复批 2026-10-25：合并轮 Release 的工作结果附页
-      // （[[DelegateWorkReport]]——merge status 一行 + workReport 保真段 + REPORT.md
-      // 摘要段；三段全空 = ""，老 delegate 逐字退化现状文本）。只挂合并轮（非合并
-      // 轮的终文即工作结果本体，零附页）；fail-soft：附页任何故障 = 空串，绝不拖
-      // 垮终态投递。
-      workAppendix <-
-        if mergeRound then
-          IO.blocking(DelegateWorkReport.appendixFor(record))
-            .handleErrorWith(e => IO(logger.warn(s"work-result appendix failed: ${e.getMessage}")).as(""))
-        else IO.pure("")
-      // ChainStore 行 source：drift（A5 步2 漂移闸确证——#566 起注记形）/ precheck（确定性
-      // 预检——#566 起注记形）/ merge-verify（P1-1① 机械验收拒绝——#566 起注记形）/
-      // unjudged（两层全败诚实态）/ judge（判定机或自申报回落——既有口径）。
+      // ChainStore 行 source：drift（漂移闸确证——注记形）/ precheck（确定性
+      // 预检——注记形）/ unjudged（两层全败诚实态）/ judge（判定机或自申报回落
+      // ——既有口径）。
       source =
         if driftVerdict.isDefined then "drift"
         else if precheck.isDefined then "precheck"
-        else if acceptance.exists(!_.ok) then "merge-verify"
         else if unjudged then "unjudged"
         else "judge"
-      // 终态判词行（审计）。病灶②重排腿不写（非终态——lane-requeued 行由
-      // MergeQueue.requeueForLane 承担）。
+      // 终态判词行（审计）。
       _ <- IO
-        .whenA(laneRequeueReason.isEmpty)(
-          IO.blocking(
-            ChainStore.appendSync(
-              ChainStore.keyFor(taskId, delegateId),
-              "terminal-verdict",
-              DelegateJudge.verdictPayload(delegateId, taskId, finalVerdict, source = source)
-            )
-          ).handleErrorWith(e => IO(logger.warn(s"terminal-verdict chain line failed: ${e.getMessage}")))
+        .blocking(
+          ChainStore.appendSync(
+            ChainStore.keyFor(taskId, delegateId),
+            "terminal-verdict",
+            DelegateJudge.verdictPayload(delegateId, taskId, verdict, source = source)
+          )
         )
-      _ = logVerdict(delegateId, taskId, finalVerdict, unjudged)
-      outcome <- finalVerdict match
-        case DelegateJudge.Verdict.ReadyToMerge =>
-          holdForMerge(
-            resources,
-            record,
-            delegateId,
-            parentSessionId,
-            childRef,
-            supervisorRef,
-            resultText,
-            ownerDeclared = selfReport.exists(_._1 == "merge")
-          )
+        .handleErrorWith(e => IO(logger.warn(s"terminal-verdict chain line failed: ${e.getMessage}")))
+      _ = logVerdict(delegateId, taskId, verdict, unjudged)
+      outcome <- verdict match
         case DelegateJudge.Verdict.Completed =>
-          // P2-4 合并后清理：机械验收通过的合并 Release 前回收现场（守卫在
-          // [[PostMergeCleanup.run]]——零领先 + 祖先真 + 绝不 force；失败仅 WARN
-          // 保留现场）。非合并完成绝不清理（防丢工作）。
-          val cleanup =
-            // 属主终态腿：allowLiveOwner=true（本序列内会话仍在 agentRegistry 是常态）
-            if mergeRound && acceptance.exists(_.ok) then PostMergeCleanup.run(record, allowLiveOwner = true)
-            else IO.pure(false)
-          // 台账 #896：合并轮终态结论随行（队列关账输入）。非合并轮 = None。
-          val roundOutcome =
-            if mergeRound && acceptance.exists(_.ok) then Some(MergeQueue.RoundOutcome.Merged)
-            else None
-          // 修复批 2026-10-25：工作结果附页随后（合并轮）。
-          cleanup *> IO.pure(
-            Outcome.Release(verdictLineCompleted(unjudged) + workAppendix, roundOutcome)
-          )
+          IO.pure(Outcome.Release(verdictLineCompleted(unjudged)))
         case DelegateJudge.Verdict.CompletedNote(note) =>
-          // #566：退役 blocked 的唯一残留出口——completed 判词＋注记交付（注记 =
-          // 报告内容，不是状态）。合并轮上的注记形 = 合并未干净落地（机械验收
-          // 拒绝等）。病灶②（投递可靠性批 2026-10-29）：拒绝原因是道忙 ⇒ 不关账
-          // 不停会话——成员资格保留重排（RequeueForLane），道净后自动重排；
-          // 道净/己方残留的真拒绝照旧关账 failed——无重试（处置归 dispatcher）。
-          if laneRequeueReason.isDefined then
-            IO.pure(Outcome.RequeueForLane(laneRequeueReason.get + s" [mechanical-acceptance note: ${note.take(300)}]"))
-          else
-            val refused =
-              if mergeRound && acceptance.exists(!_.ok) then Some(MergeQueue.RoundOutcome.Refused(note))
-              else None
-            IO.pure(
-              Outcome.Release(
-                s"${verdictLineCompleted(unjudged = false)}\n[delegate-judge] note: $note" + workAppendix,
-                refused
-              )
+          // 注记形 = completed 判词＋注记交付（注记 = 报告内容，不是状态）。
+          IO.pure(
+            Outcome.Release(
+              s"${verdictLineCompleted(unjudged = false)}\n[delegate-judge] note: $note"
             )
+          )
     yield outcome
     end for
   end verdictChain
@@ -585,7 +414,7 @@ object DelegateTerminal:
   ): Unit =
     logger.warn(
       s"delegate $delegateId completed with $aheadOfBase commit(s) still ahead on '${branch.getOrElse("-")}' — " +
-        s"judge said completed; noting only (merge queue NOT engaged)"
+        s"judge said completed; noting only (integration is a separate authorized merger request)"
     )
     ChainStore.appendSync(
       ChainStore.keyFor(taskId, delegateId),
@@ -595,7 +424,8 @@ object DelegateTerminal:
         "branch" -> io.circe.Json.fromString(branch.getOrElse("")),
         "commitsAhead" -> io.circe.Json.fromInt(aheadOfBase.getOrElse(0)),
         "note" -> io.circe.Json.fromString(
-          "completed verdict with unmerged commits on the working branch — noted, not blocked"
+          "completed verdict with unmerged commits on the working branch — noted, not blocked; " +
+            "integration requires a separately authorized merger request"
         )
       )
     )
@@ -605,8 +435,8 @@ object DelegateTerminal:
   /**
    * 四修② 确定性预检（纯函数——spec 判红锚）：全会话零工具调用（`Some(0)`；
    * `None` = 调用方未计数，预检跳过）且终文为空/空烧 stub ⇒ completed＋注记
-   * （#566：原 blocked 判词退役——「判未完成」是交付注记，不是状态）。与监督者
-   * 空轮判据同串（[[nebflow.shared.Defaults.MaxTokensStubText]]）。
+   * （「判未完成」是交付注记，不是状态）。与监督者空轮判据同串
+   * （[[nebflow.shared.Defaults.MaxTokensStubText]]）。
    */
   private[delegate] def deterministicPrecheck(
     resultText: String,
@@ -623,7 +453,7 @@ object DelegateTerminal:
     val t = resultText.trim
     t.nonEmpty && t != nebflow.shared.Defaults.MaxTokensStubText
 
-  // ── A5 步2 确定性漂移闸（评审 20261008 §三候选② / §六步2 · 罚则=硬阻断，作者裁定 2026-10-08）──
+  // ── A5 步2 确定性漂移闸（评审 20261008 §三候选② / §六步2 · 罚则=注记形）──
 
   /**
    * 漂移闸只读读数。每槽 None = 该步不可确证（fail-open 通道）；`baseAdvances` /
@@ -640,12 +470,9 @@ object DelegateTerminal:
     isAncestorOf: (String, String) => Option[Boolean]
   )
 
-  /** 漂移闸结论（spec 判红锚四态；#566：Penalty 判词退役 blocked——注记形）。 */
+  /** 漂移闸结论（spec 判红锚四态；注记形）。 */
   enum DriftResult:
-    /**
-     * 确证（支零 × 基动 × 不可归属 × 共享检出区座位 × 非合并轮）⇒ completed＋注记
-     *  （原「硬阻断」——作者令 #566：delegate 面无 blocked 状态，证据随注记交付）。
-     */
+    /** 确证（支零 × 基动 × 不可归属 × 共享检出区座位）⇒ completed＋注记。 */
     case Penalty(reason: String)
 
     /** 漂移信号成立但座位为 worktree ⇒ 只注记不罚（并入 gitDigest 判词输入）。 */
@@ -654,13 +481,13 @@ object DelegateTerminal:
     /** 读数不可确证 ⇒ fail-open 不罚只 WARN（🔴 禁假阻塞）。 */
     case Warn(detail: String)
 
-    /** 无信号 / 闸盲（无锚、非 git）/ 合并轮豁免。 */
+    /** 无信号 / 闸盲（无锚、非 git）。 */
     case Clear
   end DriftResult
 
   object DriftResult:
 
-    /** Penalty 形态的判词（completed＋注记——#566 起 blocked 判词退役），其余形态 None。 */
+    /** Penalty 形态的判词（completed＋注记），其余形态 None。 */
     def verdictOf(d: DriftResult): Option[DelegateJudge.Verdict] = d match
       case DriftResult.Penalty(reason) => Some(DelegateJudge.Verdict.CompletedNote(reason))
       case _ => None
@@ -675,32 +502,31 @@ object DelegateTerminal:
    * A5 步2 确定性漂移闸（评审 §六步2；只读读数＋纯归类，零 LLM，先于判定机）。
    *
    * 判据（评审 §三候选②）：锚 `fork = merge-base(baseBranch, branch)`（≈spawn 时
-   * 基 tip；A5 步1 全员有分支后免费获得——🔴 不为此扩 Record schema）；D1 基动
-   * `rev-parse(baseBranch) ≠ fork`；D2 支零 `rev-parse(branch) == fork`；归因排除
-   * = `fork..baseTip` 全为「合并自其他 `delegate/<id>` 分支的 merge 提交」且有
-   * ChainStore `merge-queue` 账本行对应（进程内队列条目合并轮终态即出队，落地
-   * 合并只能查账本；账本行缺失 = 不可确证，不罚）；合并轮豁免 = `mergeRound`
-   * （本 delegate 自己的 A4 合并轮，先于一切读数豁免）。
+   * 基 tip）；D1 基动 `rev-parse(baseBranch) ≠ fork`；D2 支零 `rev-parse(branch) ==
+   * fork`；归因排除 = `fork..baseTip` 全为「合并自其他 `delegate/<id>` 分支的 merge
+   * 提交」（delegate 分支并入基分支只能由项目 merger 的授权请求产生——结构性判据，
+   * 无需账本行；命中非 delegate ref ⇒ 证据，无 ref 对应 ⇒ 不可确证）；单亲提交可达
+   * 某 attributable tip = 随并搭载归属，否则 = 直写证据。任一环不可确证压过一切证据
+   * （fail-open）。
    *
    * 座位判据：worktree=None（共享检出区/建败回落腿）⇒ 可罚；worktree 座位 ⇒
    * 自然形态机械不可直改基分支（git 拒绝同分支双检出），漂移只注记不罚；无绑定
    * /非 git ⇒ 闸盲不罚。fail-open：git 读数任何一步不可确证 ⇒ 不罚只 WARN
-   * （🔴 禁假阻塞，与合并窗协议「无法确证禁假阻塞」同族姿态）。确证 ⇒
-   * CompletedNote(reason 携证据三件：baseTip / fork / 不可归属提交列表——#566：
-   * 原 Blocked 判词退役)，判词 payload source=`drift`。
+   * （🔴 禁假阻塞）。确证 ⇒ CompletedNote(reason 携证据三件：baseTip / fork /
+   * 不可归属提交列表)，判词 payload source=`drift`。
    *
    * 🔴 覆盖面注记：外部执行器腿不在本闸覆盖面（externalSpawn 不经 prepare、无分
-   * 支锚；作者裁定步3只注记，本批不实现）。
+   * 支锚；外部腿只注记，见 [[externalDriftNote]]）。
    *
-   * 残余误伤类（评审 §三诚实登记、作者硬阻断裁定接受）：「共享检出区座位 × 窗口
-   * 内基分支第三方直写（人/根会话/其他非 delegate 会话）」交集——git 形态学无法
-   * 区分作者，误伤概率低但非零。
+   * 残余误伤类（评审 §三诚实登记）：「共享检出区座位 × 窗口内基分支第三方直写
+   * （人/根会话/其他非 delegate 会话）」交集——git 形态学无法区分作者，误伤概率低
+   * 但非零。
    */
-  private def driftPrecheck(record: Option[DelegateRegistry.Record], mergeRound: Boolean): IO[DriftResult] =
+  private def driftPrecheck(record: Option[DelegateRegistry.Record]): IO[DriftResult] =
     IO.blocking {
       record match
         case None => DriftResult.Clear
-        case Some(rec) if mergeRound || rec.branch.isEmpty || rec.baseBranch.isEmpty => DriftResult.Clear
+        case Some(rec) if rec.branch.isEmpty || rec.baseBranch.isEmpty => DriftResult.Clear
         case Some(rec) =>
           // 漂移读数取基工作区视角（worktree 腿 = projectWorkspace；共享座位 = cwd）
           val repo = Try(os.Path(rec.projectWorkspace.getOrElse(rec.cwd))).toOption
@@ -715,23 +541,22 @@ object DelegateTerminal:
                 branchTips = () => GitWorktrees.branchTips(ws),
                 isAncestorOf = (c, t) => GitWorktrees.isAncestor(ws, c, t)
               )
-              classifyDrift(rec, mergeRound, readings, mergeQueueFootprint)
+              classifyDrift(rec, readings)
     }
 
   /**
-   * 纯归类（spec 判红锚——读数显式入参，自身零 git 调用）。判据序：合并轮豁免 →
-   * 锚缺失闸盲 → D1∧D2 漂移信号 → 区间两遍归因（第一遍：merge 提交——被并 tip 命中
-   * delegate/ 前缀分支且有账本行 ⇒ attributable tip，命中非 delegate ref ⇒ 证据，
-   * 无 ref 对应/无账本行 ⇒ 不可确证；第二遍：单亲提交——可达某 attributable tip =
-   * 随并搭载归属，否则 = 直写证据）——任一环不可确证压过一切证据（fail-open）。
+   * 纯归类（spec 判红锚——读数显式入参，自身零 git 调用）。判据序：锚缺失闸盲 →
+   * D1∧D2 漂移信号 → 区间两遍归因（第一遍：merge 提交——被并 tip 命中 `delegate/`
+   * 前缀分支 ⇒ attributable tip（delegate 分支的落地只能经项目 merger 的授权请求），
+   * 命中非 delegate ref ⇒ 证据，无 ref 对应 ⇒ 不可确证；第二遍：单亲提交——可达某
+   * attributable tip = 随并搭载归属，否则 = 直写证据）——任一环不可确证压过一切证据
+   * （fail-open，短路）。
    */
   private[delegate] def classifyDrift(
     rec: DelegateRegistry.Record,
-    mergeRound: Boolean,
-    r: DriftReadings,
-    queueFootprint: String => Boolean
+    r: DriftReadings
   ): DriftResult =
-    if mergeRound || rec.branch.isEmpty || rec.baseBranch.isEmpty then DriftResult.Clear
+    if rec.branch.isEmpty || rec.baseBranch.isEmpty then DriftResult.Clear
     else
       (r.fork, r.baseTip, r.branchTip) match
         case (Some(fork), Some(baseTip), Some(branchTip)) if baseTip != fork && branchTip == fork =>
@@ -758,8 +583,7 @@ object DelegateTerminal:
                         val mergedTip = m.parents(1)
                         tips.find(_._2 == mergedTip) match
                           case Some((name, _)) if name.startsWith("delegate/") =>
-                            if queueFootprint(name) then attribTips += mergedTip // 归属其他 delegate 合法合并轮 ⇒ 豁免
-                            else unverifiable = Some(s"merge of delegate branch '$name' has no merge-queue ledger row")
+                            attribTips += mergedTip // 归属其他 delegate 的合法落地（merger 授权请求）⇒ 豁免
                           case Some((name, _)) =>
                             evidence += s"""${m.sha} (merge of non-delegate ref '$name': "${m.subject}")"""
                           case None =>
@@ -800,24 +624,11 @@ object DelegateTerminal:
                       DriftResult.Penalty(
                         s"deterministic drift gate: delegate branch '${rec.branch.get}' has zero commits ahead of its spawn fork while $facts — " +
                           s"this delegate's seat was the shared checkout (no worktree), so the unattributable advance is attributed " +
-                          s"to this delegate; noted before the merge queue (no separate blocked state)"
+                          s"to this delegate; noted as a delivery annotation (no separate blocked state)"
                       )
               end match
         case (Some(_), Some(_), Some(_)) => DriftResult.Clear // D1 ∨ D2 不成立 ⇒ 无漂移信号
         case _ => DriftResult.Warn("fork/baseTip/branchTip unreadable — attribution impossible (fail-open, no penalty)")
-
-  /**
-   * ChainStore `merge-queue` 账本面按分支查询（跨键全量扫——归因行落在被合并
-   * delegate 自己的键下，漂移侧无键可直达；fail-soft：listSync 自吞 IO 故障）。
-   */
-  private def mergeQueueFootprint(branch: String): Boolean =
-    ChainStore
-      .listSync()
-      .exists(rec =>
-        rec.entries.exists(e =>
-          e.kind == MergeQueue.EntryKind && e.payload.hcursor.get[String]("branch").toOption.contains(branch)
-        )
-      )
 
   /** 漂移闸观测面（WARN 通道：罚则确证 / 注记 / fail-open 三态全过 log）。 */
   private def logDrift(delegateId: String, d: DriftResult): Unit = d match
@@ -830,14 +641,13 @@ object DelegateTerminal:
   /**
    * 外部执行器腿的漂移**注记级**覆盖（引擎加固批 2026-10-09，P1-2）：外部腿终态
    * 判定（ExternalSessionRunner.settle → ExternalJudgeHook）没有内部腿的
-   * [[driftPrecheck]] 硬阻断面——本 helper 复用同一套漂移读数，把结论**降级为
+   * [[driftPrecheck]] 覆盖——本 helper 复用同一套漂移读数，把结论**降级为
    * 纯注记文本**（Penalty/NoteOnly → `[base-drift note]` 行；Warn/Clear → None）
-   * 并入判定输入的 git 摘要。零罚则面（外部腿终态罚则不在本批范围——保护等级
-   * 注记级，交付报告显式标注）。fail-open：git 读数任何一步不可确证 / 读数 IO
-   * 失败 = None。
+   * 并入判定输入的 git 摘要。零罚则面（保护等级注记级，交付报告显式标注）。
+   * fail-open：git 读数任何一步不可确证 / 读数 IO 失败 = None。
    */
   def externalDriftNote(rec: Option[DelegateRegistry.Record]): IO[Option[String]] =
-    driftPrecheck(rec, mergeRound = false).attempt.map {
+    driftPrecheck(rec).attempt.map {
       case Right(DriftResult.Penalty(reason)) =>
         Some(
           s"[base-drift note] (annotation only — external executor leg has no drift PENALTY face this batch) $reason"
@@ -854,27 +664,23 @@ object DelegateTerminal:
 
   /**
    * 任意终态的统一清理（BackoffSupervisor.notifyParentAndStop 内，gate
-   * source="delegate"）：MergeQueue 关账（幂等）＋ failed/cancelled 的补判词行
-   * （completed 腿的判词行已由 [[onCompleted]] 写，此处不重复）。
-   * `mergeOutcome`（台账 #896 交通引导员制）：合并轮终态结论——Some(Merged) /
-   * Some(Refused(reason)) 关账 merged / failed；None = 回合外终态（取消/超时/
-   * 会话死亡）→ 队列账实核对后落 owner-gone（无重试无 park）。
+   * source="delegate"）：failed/cancelled 的补判词行（completed 腿的判词行已由
+   * [[onCompleted]] 写，此处不重复）。
    */
   def onTerminalCleanup(
     resources: AgentRuntimePort,
     delegateId: String,
     parentSessionId: String,
     taskStatus: String,
-    eventType: String,
-    mergeOutcome: Option[MergeQueue.RoundOutcome] = None
+    eventType: String
   ): IO[Unit] =
     val record = DelegateRegistry.find(delegateId)
     val taskId = record.flatMap(_.taskId)
     val verdictLine =
       if eventType == "completed" then IO.unit
       else
-        // #566：failed/cancelled 终态判词行写真值（verdict=failed/cancelled，
-        // source=engine——原 blocked 冒充退役）。真实失败归 failed（作者令）。
+        // failed/cancelled 终态判词行写真值（verdict=failed/cancelled，
+        // source=engine）。真实失败归 failed（作者令）。
         IO.blocking(
           ChainStore.appendSync(
             ChainStore.keyFor(taskId, delegateId),
@@ -889,8 +695,7 @@ object DelegateTerminal:
         ).handleErrorWith(e => IO(logger.warn(s"terminal-verdict chain line (engine) failed: ${e.getMessage}")))
     // N1 刀1（v3 §6/A3 宿主生命周期）：delegate 终态 ⇒ 作用域宿主实例灭（盘面状态存，
     // write-through 已持久——「会话终→引擎实例灭＋落盘状态存」）。幂等：外部执行器腿
-    // / 未挂载 id = 零动作。ready-to-merge 停靠（HoldForMerge）不经本清理面 ⇒ 宿主照常
-    // 存活等合并轮，合并轮终态仍走这里统一卸载。
+    // / 未挂载 id = 零动作。
     // 双模式批（2026-10-28 · 设计 §6 第 4 步）：dispatcher 腿追加速度摘要先行——
     // 宿主仍在册时收口三段（sweep 出库 + chain-archived 审计落定；R3 批增：在飞链
     // 台账 cancelled 处置 + chain-cancelled 审计——取消链走同一收口；台账收敛拍），
@@ -914,15 +719,12 @@ object DelegateTerminal:
         .handleErrorWith(e => IO(logger.warn(s"delegate plugin MCP release failed: ${e.getMessage}")))
     // delegate/flowmap 两层架构批（2026-10-09 · 规格 §D 自动归档 + H.1 缺口 G4 收口，
     // 引擎单点）：终态（completed/failed/cancelled）自动写 `archivedAt` 旗——项目流程
-    // 图 L2 的唯一归档面从「手动」变「自动+抽屉管理」。**#566 修复批：blocked 判词
-    // 豁免整条退役**——delegate 面已无 blocked 状态（判官注记只是报告内容），原豁免
-    // 正是「任务面板陈旧行」的根因（豁免行滞留现役窗 × reportStatus/live 双缺席 ⇒
-    // 前端回落 running 渲染 ⇒ 终态行永远「进行中」）；#566 起一切引擎终态照归。
-    // completed 终态的判词读数 = ChainStore 最新 terminal-verdict 行（onCompleted 已
-    // 在本序列前落行，现读即得；engine 判词行的 failed/cancelled 腿同面）。幂等：已
-    // 归档零重写；查无记录（外部腿/旧盘）= 零动作。已推渠道通知（上方 verdictLine/
-    // notify）等旁路面**零触碰**——旗写是清理序列最后一环，fail-soft 只 WARN（绝不
-    // 拖垮终态交付）。
+    // 图 L2 的唯一归档面从「手动」变「自动+抽屉管理」。delegate 面已无 blocked 状态
+    // （判官注记只是报告内容）。completed 终态的判词读数 = ChainStore 最新
+    // terminal-verdict 行（onCompleted 已在本序列前落行，现读即得；engine 判词行的
+    // failed/cancelled 腿同面）。幂等：已归档零重写；查无记录（外部腿/旧盘）= 零动作。
+    // 已推渠道通知（上方 verdictLine/notify）等旁路面**零触碰**——旗写是清理序列最后
+    // 一环，fail-soft 只 WARN（绝不拖垮终态交付）。
     val autoArchive: IO[Unit] =
       if record.isEmpty then IO.unit
       else
@@ -957,10 +759,7 @@ object DelegateTerminal:
           case Left(e) => IO(logger.warn(s"standby clear failed for $delegateId: ${e.getMessage}"))
           case Right(_) => IO.unit
         }
-    verdictLine *> ledgerNote *> hostUnmount *> pluginRelease *> MergeQueue.onTerminalIO(
-      delegateId,
-      mergeOutcome
-    ) *> standbyClear *> autoArchive *> graceRemoval
+    verdictLine *> ledgerNote *> hostUnmount *> pluginRelease *> standbyClear *> autoArchive *> graceRemoval
   end onTerminalCleanup
 
   // ── 就地写盘护栏（delegate-param-decisions 批 2026-11-04 · 作者补充令第 2 条）──
@@ -1005,9 +804,15 @@ object DelegateTerminal:
               if added.isEmpty && !headMoved && !branchAhead then None
               else
                 val facts = List(
-                  Option.when(added.nonEmpty)(s"${added.size} new path(s): ${added.take(20).mkString(", ")}${if added.size > 20 then " …" else ""}"),
-                  Option.when(headMoved)(s"HEAD moved (was ${rec.seatSnapshotSha.getOrElse("?").take(9)}, now ${GitWorktrees.headSha(p).getOrElse("?").take(9)}) — commits were created"),
-                  Option.when(branchAhead)(s"branch ${rec.branch.getOrElse("?")} is ahead of ${rec.baseBranch.getOrElse("?")}")
+                  Option.when(added.nonEmpty)(s"${added.size} new path(s): ${added.take(20).mkString(", ")}${
+                      if added.size > 20 then " …" else ""
+                    }"),
+                  Option.when(headMoved)(
+                    s"HEAD moved (was ${rec.seatSnapshotSha.getOrElse("?").take(9)}, now ${GitWorktrees.headSha(p).getOrElse("?").take(9)}) — commits were created"
+                  ),
+                  Option.when(branchAhead)(
+                    s"branch ${rec.branch.getOrElse("?")} is ahead of ${rec.baseBranch.getOrElse("?")}"
+                  )
                 ).flatten
                 Some(s"$InPlaceWriteAlarmPrefix\n  - ${facts.mkString("\n  - ")}")
           }
@@ -1019,7 +824,7 @@ object DelegateTerminal:
    */
   private[delegate] def withInPlaceAlarm(outcome: Outcome, alarm: Option[String]): Outcome =
     (outcome, alarm) match
-      case (Outcome.Release(text, mergeOutcome), Some(a)) => Outcome.Release(s"$a\n\n$text", mergeOutcome)
+      case (Outcome.Release(text), Some(a)) => Outcome.Release(s"$a\n\n$text")
       case _ => outcome
 
   // ── 内部 ──────────────────────────────────────────────────────────────
@@ -1057,130 +862,48 @@ object DelegateTerminal:
     )
 
   /**
-   * ready-to-merge 停靠：任务库状态 + 入队轮转。**不通知父、不停 actor**——
-   * 预算重挂（合并窗新 3600s）由监督者在收到 HoldForMerge 后执行（DelegateBudget
-   * ∈ agent 层，core 不 import——分层纪律）。
-   *
-   * delegate-finish-report 修复批 2026-10-25（工作结果保真，根因①）：停靠点把
-   * **工作轮终稿**（resultText——本批合并轮之前的那次完成汇报全文）保真进
-   * `DelegateRegistry.workReport`（first-write-wins，幂等）——合并轮 finish 终文
-   * 不再顶掉工作结果；合并轮 Release 投父时由 [[DelegateWorkReport.appendixFor]]
-   * 随附页回传。fail-soft：保真失败只 WARN，绝不阻断入队。
+   * 待命采纳落点（standby 组）：parkStandby 落停靠时刻 → ChainStore `standby`
+   * 审计行（非终态——terminal-verdict 行只在真终态写）→ Outcome.Standby 交监督者
+   * 停靠（registry Waiting + WS「待命」帧 + caretaker 武装）。
    */
-  private def holdForMerge(
-    resources: AgentRuntimePort,
-    record: Option[DelegateRegistry.Record],
+  private def parkStandbyOutcome(
     delegateId: String,
-    parentSessionId: String,
-    childRef: ActorRef[AgentCommand],
-    supervisorRef: ActorRef[AgentEvent],
-    resultText: String,
-    ownerDeclared: Boolean = false
+    taskId: Option[String],
+    detail: String
   ): IO[Outcome] =
-    val rec = record.getOrElse(
-      DelegateRegistry.Record(
-        id = delegateId,
-        executor = "",
-        cwd = "",
-        project = None,
-        taskId = None,
-        parentSessionId = parentSessionId,
-        title = "",
-        createdAt = 0L
-      )
-    )
     val now = System.currentTimeMillis()
-    val baseWs = rec.projectWorkspace.getOrElse(rec.cwd)
-    val projectKey = Try(os.Path(baseWs)).map(GitWorktrees.projectKeyOf).getOrElse(baseWs)
-    // 引擎加固批 2026-10-09（misc②）：无记录/无基分支锚时**不猜 main**——基分支
-    // 只能来自 spawn 时的真实绑定（detached HEAD 等形态 baseBranch=None，猜 main
-    // 会把合并轮指向错误目标）。缺锚 = 判词回落 completed＋注记（#566：原 blocked
-    // 退役——「无合并目标可归」是交付注记，不是状态；报父交付，分支原样保留），
-    // 并补一条注记判词行（source=engine——既有 ready-to-merge 行由本注记行收口，
-    // 审计可分）。
-    rec.baseBranch match
-      case None =>
-        val reason =
-          s"ready-to-merge without a recorded base branch (spawn binding incomplete for '$delegateId') — refusing to guess 'main'; merge target unknown"
-        logger.warn(s"delegate $delegateId: $reason")
-        IO.blocking(
+    IO.blocking(DelegateRegistry.parkStandby(delegateId))
+      .attempt
+      .flatMap {
+        case Left(e) =>
+          IO(
+            logger.warn(
+              s"delegate $delegateId: parkStandby failed (standby proceeds without the dock timestamp): ${e.getMessage}"
+            )
+          )
+        case Right(_) => IO.unit
+      } *>
+      IO
+        .blocking(
           ChainStore.appendSync(
-            ChainStore.keyFor(rec.taskId, delegateId),
-            "terminal-verdict",
-            DelegateJudge.verdictPayload(
-              delegateId,
-              rec.taskId,
-              DelegateJudge.Verdict.CompletedNote(reason),
-              source = "engine"
+            ChainStore.keyFor(taskId, delegateId),
+            "standby",
+            Json.obj(
+              "delegateId" -> Json.fromString(delegateId),
+              "taskId" -> taskId.map(Json.fromString).getOrElse(Json.Null),
+              "detail" -> Json.fromString(detail),
+              "declared" -> Json.fromBoolean(true),
+              "at" -> Json.fromLong(now)
             )
           )
-        ).handleErrorWith(e => IO(logger.warn(s"hold-degraded verdict line failed: ${e.getMessage}"))) *>
-          IO.pure(
-            Outcome.Release(
-              s"\n\n[delegate-judge] verdict: completed.\n[delegate-judge] note: $reason"
-            )
-          )
-      case Some(resolvedBaseBranch) =>
-        // 宣告闸批 2026-11-04（缺陷批：「半成品分支被自动合进 main」）：本腿入队的成员
-        // 必须携带**属主完成宣告**才能拿到合并窗。两个来源：
-        //   ① 属主自申报 merge（`ownerDeclared`）——落一条宣告账（来源 = terminal-self-report）；
-        //   ② 属主先前已用 `delegate_report(category="merge")` 申报过（[[MergeEnqueue]] 已落账）。
-        // **判定机 / 漂移闸 / precheck / queueFlip 推断出的 ready-to-merge 不算宣告**：
-        // 那时 `decl = None`，成员照样入账（面板可见、FIFO 位次留着），但放行闸不认它。
-        val declared = if ownerDeclared then
-          MergeDeclaration.write(
-            delegateId,
-            MergeDeclaration.Source.TerminalSelfReport,
-            Some(rec.branch.getOrElse(s"delegate/$delegateId")),
-            Some(resolvedBaseBranch),
-            Try(os.Path(baseWs)).toOption.flatMap(ws =>
-              GitWorktrees.resolveRef(ws, rec.branch.getOrElse(s"delegate/$delegateId"))
-            )
-          )
-        else MergeDeclaration.find(delegateId)
-        val entry = MergeQueue.Member(
-          delegateId = delegateId,
-          branch = rec.branch.getOrElse(s"delegate/$delegateId"),
-          baseWs = baseWs,
-          baseBranch = resolvedBaseBranch,
-          worktree = rec.worktree.isDefined,
-          projectKey = projectKey,
-          taskId = rec.taskId,
-          parentSessionId = parentSessionId,
-          description = rec.title,
-          readyAt = now,
-          channelKind = "identity",
-          // P1 投递身份化：收件身份 = 本 delegate 会话（投递走落盘邮箱，重启后照样投得出去）。
-          ownerSessionId = delegateId,
-          declaredAt = declared.map(_.at),
-          declareSource = declared.map(_.source),
-          declaredTip = declared.flatMap(_.tip)
         )
-        for
-          // 工作结果保真（修复批 2026-10-25，根因①——见上注）。查无记录 = 非本次
-          // 判定形态（兜底记录），零动作语义随 Either.Left 吞掉。
-          _ <- IO
-            .blocking(DelegateRegistry.updateWorkResult(delegateId, resultText))
-            .attempt
-            .flatMap {
-              case Right(Right(())) => IO.unit
-              case other =>
-                IO(
-                  logger.warn(
-                    s"work-result preservation skipped for $delegateId: ${other.fold(_.getMessage, _.toString).take(200)}"
-                  )
-                )
-            }
-          _ <- resources.subAgentTaskStore
-            .updateStatus(parentSessionId, delegateId, ReadyToMergeStatus, completedAt = Some(now))
-            .handleErrorWith(e => IO(logger.warn(s"ready-to-merge status write failed: ${e.getMessage}")))
-          _ <- MergeQueue.enqueueVerifiedIO(entry)
-          _ = logger.info(
-            s"delegate $delegateId held for merge (project=$projectKey, branch=${entry.branch}, readyAt=$now) — parent notified after the merge round"
-          )
-        yield Outcome.HoldForMerge
-        end for
-    end match
-  end holdForMerge
+        .handleErrorWith(e => IO(logger.warn(s"standby chain line failed for $delegateId: ${e.getMessage}"))) *>
+      IO(
+        logger.info(
+          s"delegate standby: $delegateId (task=${taskId.getOrElse("-")}) parked — self-declared (matrix complete×standby): ${detail.take(200)}"
+        )
+      ).as(Outcome.Standby(detail, declared = true))
+
+  end parkStandbyOutcome
 
 end DelegateTerminal

@@ -822,8 +822,8 @@ object GatewayMain extends IOApp:
                                   //   subagentCrashSweep/mailboxBootSweep）之后、startupMount
                                   //   （任何会话 actor spawn）之前，与既有 boot sweep 同款
                                   //   「失败只 WARN 绝不阻塞启动」纪律。
-                                  actorSystem.asInstanceOf[nebflow.actor.LocalActorSystem].providerSlotRelease =
-                                    name => nebflow.llm.ProviderConcurrency.release(sharedResources.providerConcurrency, name)
+                                  actorSystem.asInstanceOf[nebflow.actor.LocalActorSystem].providerSlotRelease = name =>
+                                    nebflow.llm.ProviderConcurrency.release(sharedResources.providerConcurrency, name)
                                   val providerSlotReconcile: IO[Unit] =
                                     sharedResources.agentRegistry.get
                                       .flatMap(live =>
@@ -939,13 +939,15 @@ object GatewayMain extends IOApp:
                                     // manual = true（缺省）⇒ 在飞孤儿标 pending-recovery、零复活零收殓零
                                     // 通知；恢复入口 = /api/delegates/restore{,-all}（ManualRevivalHost）。
                                     // 恢复依赖在此安装（ActorSystem 已建成；REST 臂现读）。
-                                    IO(nebflow.gateway.ManualRevivalHost.install(
-                                      nebflow.agent.DelegateRevival.Deps(
-                                        resources = sharedResources,
-                                        system = actorSystem,
-                                        wsSend = Some(json => wsHub.broadcast(json))
+                                    IO(
+                                      nebflow.gateway.ManualRevivalHost.install(
+                                        nebflow.agent.DelegateRevival.Deps(
+                                          resources = sharedResources,
+                                          system = actorSystem,
+                                          wsSend = Some(json => wsHub.broadcast(json))
+                                        )
                                       )
-                                    )).flatMap { _ =>
+                                    ).flatMap { _ =>
                                       nebflow.agent.SubAgentStartupRecovery
                                         .sweep(
                                           sharedResources.subAgentTaskStore,
@@ -1098,13 +1100,15 @@ object GatewayMain extends IOApp:
                                   // 阻塞 boot（残余 Running 由 watchdog +30s 兜底收敛 failed）。
                                   val projectCrashSweep: IO[Unit] =
                                     if nebflow.shared.Defaults.CrashRecoveryEnabled then
-                                      nebflow.core.project.ProjectCrashRecovery.recoverAll().flatMap { projects =>
-                                        if projects > 0 then
-                                          logger.info(
-                                            s"Boot crash-recovery sweep: $projects project(s) had crashed nodes claimed (rehydrate/failed)"
-                                          )
-                                        else IO.unit
-                                      }
+                                      nebflow.core.project.ProjectCrashRecovery
+                                        .recoverAll(manual = nebflow.shared.Defaults.RestartRecoveryManual)
+                                        .flatMap { projects =>
+                                          if projects > 0 then
+                                            logger.info(
+                                              s"Boot crash-recovery sweep: $projects project(s) had crashed nodes claimed (rehydrate/failed)"
+                                            )
+                                          else IO.unit
+                                        }
                                     else IO.unit
                                   // N1 刀1（v3 §6/A2）：delegate 作用域 boot sweep——flow-maps/
                                   // 目录族扫描（已挂载项目 workspace ∪ general），有
@@ -1132,7 +1136,8 @@ object GatewayMain extends IOApp:
                                     if nebflow.shared.Defaults.CrashRecoveryEnabled then
                                       nebflow.core.project.ProjectCrashRecovery
                                         .recoverDelegateScopes(
-                                          wsSend = Some((json: io.circe.Json) => wsHub.broadcast(json))
+                                          wsSend = Some((json: io.circe.Json) => wsHub.broadcast(json)),
+                                          manual = nebflow.shared.Defaults.RestartRecoveryManual
                                         )
                                         .flatMap { scopes =>
                                           if scopes > 0 then
@@ -1174,23 +1179,11 @@ object GatewayMain extends IOApp:
                                   // 随交通引导员制退役——互踩与重复合并轮的根因）。
                                   // 排在 startupMount/projectBootWake 之后；无开放成员 =
                                   // 零动作；失败只 WARN 绝不阻塞启动。
-                                  val mergeQueueBootSweep: IO[Unit] =
-                                    nebflow.agent.MergeQueueBootSweep
-                                      .sweep(
-                                        sharedResources,
-                                        wsSend = Some((json: io.circe.Json) => wsHub.broadcast(json))
-                                      )
-                                      .attempt
-                                      .flatMap {
-                                        case Right(r) => logger.info(s"Merge-queue boot reconcile: ${r.summary}").void
-                                        case Left(e) =>
-                                          logger.warn(s"Merge-queue boot reconcile failed: ${e.getMessage}").void
-                                      }
                                   // 消息身份牌（msgtokens 批 2026-10-31）：启动对账——扫描
                                   // sessions/*/msg-tokens.jsonl 全量载入内存索引（重启后铸牌
                                   // 序号续走、派发引牌即解，无需等首次铸牌触发的惰性装载），
-                                  // 已删会话的映射文件清除（孤儿不收容）。排在 mergeQueueBootSweep
-                                  // 邻位；无映射文件 = 零动作；失败只 WARN 绝不阻塞启动。
+                                  // 已删会话的映射文件清除（孤儿不收容）。boot 对账邻位；
+                                  // 无映射文件 = 零动作；失败只 WARN 绝不阻塞启动。
                                   val msgTokensBootReconcile: IO[Unit] =
                                     nebflow.core.msgtokens.MsgTokenRegistry.global.reconcileAll().attempt.flatMap {
                                       case Right(r) => logger.info(s"Msg-token boot reconcile: ${r.summary}").void
@@ -1329,7 +1322,7 @@ object GatewayMain extends IOApp:
                                   // daemonService autoStart 块（构造序：dock 依赖
                                   // DaemonService 实例）。失败只 WARN 绝不阻塞启动的
                                   // 契约由 dock 腿逐字保持。
-                                  actorSystem.replayWatches *> hubSetup *> recorderSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> delegateTtlSweep *> subagentCrashSweep *> mailboxBootSweep *> providerSlotReconcile *> taskIndexBackfill *> seedMinimalSet *> sourcePluginHeal *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> mergeQueueBootSweep *> msgTokensBootReconcile *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> memoryRecallDaemon *> succeedPortGate(
+                                  actorSystem.replayWatches *> hubSetup *> recorderSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> delegateTtlSweep *> subagentCrashSweep *> mailboxBootSweep *> providerSlotReconcile *> taskIndexBackfill *> seedMinimalSet *> sourcePluginHeal *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> msgTokensBootReconcile *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> memoryRecallDaemon *> succeedPortGate(
                                     cfg,
                                     sharedResources.healthMonitor
                                   ) *> {
@@ -2512,18 +2505,57 @@ object GatewayMain extends IOApp:
                                                                 .getOrElse(nebflow.shared.Defaults.StuckThresholdMs)
                                                             )
                                                             .start
-                                                          // --- Background: 合并队列自驱拍（P2 QueueActor 批 2026-11-06）---
-                                                          // 队列状态机搬进 actor 之后，**队列自己的看护拍归队列自己**
-                                                          // （`ActorContext.scheduleOnce` → `QueueMsg.Tick`，零睡眠轮询）：
-                                                          // 持窗尸体判死、账实核对、补一拍放行都在 Tick 里做，
-                                                          // 不再依赖「宿主扫描拍顺带捎一脚」的搭车关系。
-                                                          // TaskStuckWatcher 那一拍保留（幂等，且它还有别的腿）；
-                                                          // 队列只是不再只能靠它。
-                                                          _ <- IO.blocking(
-                                                            nebflow.core.delegate.MergeQueue.enableSelfTick(
-                                                              nebflow.core.delegate.MergeQueue.SelfTickMs
-                                                            )
-                                                          )
+                                                          // Publish durable workspace revisions; clients fetch scoped snapshots.
+                                                          // Priority E: the same committed-ledger seam also drives the
+                                                          // workspace advisor — one fail-soft evaluation per change that
+                                                          // may deliver a workspace-suggestion mail to the responsible
+                                                          // main session. It never throws into this broadcast path and
+                                                          // never writes the ledger.
+                                                          _ <- IO {
+                                                            val advisor =
+                                                              nebflow.core.delegate.WorkspaceAdvisor.withDoorbell(sid =>
+                                                                sharedResources.agentRegistry.get.flatMap { live =>
+                                                                  live
+                                                                    .get(sid)
+                                                                    .fold(IO.unit)(r =>
+                                                                      (r.ref ! AgentCommand.MailboxArrived).attempt.void
+                                                                    )
+                                                                }
+                                                              )
+                                                            nebflow.core.delegate.WorkspaceLedger.onChanged {
+                                                              (path, revision) =>
+                                                                if path == nebflow.shared.PathUtil.dataRoot / "workspaces" / "ledger.json"
+                                                                then
+                                                                  sharedResources.dispatcher.unsafeRunAndForget(
+                                                                    wsHub.broadcast(
+                                                                      io.circe.Json.obj(
+                                                                        "type" -> "workspaceLedgerUpdated".asJson,
+                                                                        "revision" -> revision.asJson
+                                                                      )
+                                                                    )
+                                                                  )
+                                                                  sharedResources.dispatcher.unsafeRunAndForget(
+                                                                    advisor
+                                                                      .evaluate(
+                                                                        nebflow.core.delegate.WorkspaceLedger.default
+                                                                      )
+                                                                      .attempt
+                                                                      .flatMap {
+                                                                        case Right(reading) =>
+                                                                          IO.whenA(reading.errors.nonEmpty)(
+                                                                            logger.warn(
+                                                                              s"workspace advisor evaluation carried errors (fail-closed): ${reading.errors.mkString("; ")}"
+                                                                            )
+                                                                          )
+                                                                        case Left(error) =>
+                                                                          logger.warn(
+                                                                            s"workspace advisor evaluation failed (fail-soft): ${error.getMessage}"
+                                                                          )
+                                                                      }
+                                                                      .void
+                                                                  )
+                                                            }
+                                                          }
                                                           // --- Background: FreezeScheduler (freeze-schedule) ---
                                                           // 冻结恢复扫描：周期向 Frozen 态 agent 发 CheckFreezeGate，
                                                           // 出冻结段则恢复挂起的 dispatch（仿 TaskStuckWatcher 模式：
@@ -2570,7 +2602,7 @@ object GatewayMain extends IOApp:
                                                           // 绝不杀会话——「无超时」哲学不动（投递自检 ≠ 任务超时）。
                                                           // seal 批（2026-11-03）：本拍是**邮件后台腿**（held 回执催注），
                                                           // 经 ProcessSeal 引导——封存下零注册、只留一行 `[seal]` 说明；
-                                                          // 同拍搭车的 MergeQueueCare/DelegateDeliveryReceipts/…
+                                                          // 同拍搭车的 DelegateDeliveryReceipts 等邻居
                                                           // 不属邮件/心跳，不动（见 TaskStuckWatcher 注）。
                                                           _ <- ProcessSeal.launch(
                                                             ProcessSeal.Realm.Mail,

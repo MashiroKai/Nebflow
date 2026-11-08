@@ -70,6 +70,7 @@ object ChainWriteTool extends Tool:
     val TaskRequired = "CHAIN_TASK_REQUIRED"
     val NotDelegate = "CHAINWRITE_SCOPE_FORBIDDEN"
     val ScopeUnavailable = "DELEGATE_SCOPE_UNAVAILABLE"
+
     /** 双模式批（设计 §5.2 闸 1）：分发器链禁点名插件——分配上移到 node 生成时。 */
     val PluginsDispatcherAllocated = "NODE_PLUGINS_DISPATCHER_ALLOCATED"
   end Codes
@@ -170,7 +171,17 @@ object ChainWriteTool extends Tool:
             declaredWorktree = obj("worktree").isDefined
             declaredMerge = obj("merge").isDefined
             writeScope = obj("writeScope").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
-          yield ns :+ ChainNode(id, name, task, deps.map(_.trim).filter(_.nonEmpty), desc, declaredPlugins, declaredWorktree, declaredMerge, writeScope)
+          yield ns :+ ChainNode(
+            id,
+            name,
+            task,
+            deps.map(_.trim).filter(_.nonEmpty),
+            desc,
+            declaredPlugins,
+            declaredWorktree,
+            declaredMerge,
+            writeScope
+          )
         }
 
   /** id 字符集契约（与链号/作用域同族：成为载荷键与派生归档批文件名——路径安全第一）。 */
@@ -261,6 +272,16 @@ object ChainWriteTool extends Tool:
       s"(${Codes.NotDelegate})"
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
+    val admitted =
+      if nebflow.core.delegate.DelegateSessions.isDelegateSession(ctx.sessionId) then
+        IO.blocking(nebflow.core.delegate.WorkspaceLedger.default.admit(ctx.sessionId.get, allowFrozen = false))
+      else IO.pure(Right(()))
+    admitted.flatMap {
+      case Left(error) => IO.pure(Left(ToolError(error)))
+      case Right(_) => callAdmitted(input, ctx)
+    }
+
+  private def callAdmitted(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     if !nebflow.core.delegate.DelegateSessions.isDelegateSession(ctx.sessionId) then
       IO.pure(Left(ToolError(notDelegateError)))
     else if input.contains("project") then
@@ -284,14 +305,16 @@ object ChainWriteTool extends Tool:
               // 双模式批：分发器链判定（总闸开 ∧ 宿主属主 delegate 的 mode=dispatcher）
               // ——分叉：模式二专属闸 + 逐 node 插件分配（分配上移到 node 生成时）。
               val dispatcherChain =
-                nebflow.core.delegate.DelegateRegistry.modeFaceOf(ctx.sessionId)
+                nebflow.core.delegate.DelegateRegistry
+                  .modeFaceOf(ctx.sessionId)
                   .contains(nebflow.core.delegate.DualModeConfig.ModeDispatcher)
               registerChain(
                 h.projectRuntime,
                 nodes,
                 chainName,
                 dispatcherChain,
-                scopeKey = ctx.sessionId.filter(sid => nebflow.core.delegate.DelegateSessions.isDelegateSession(Some(sid)))
+                scopeKey =
+                  ctx.sessionId.filter(sid => nebflow.core.delegate.DelegateSessions.isDelegateSession(Some(sid)))
               )
           }
 
@@ -400,7 +423,9 @@ object ChainWriteTool extends Tool:
                   else if combined.contains(ref) then Right(ref)
                   else if combined.values.count(_.name.contains(ref)) > 1 then
                     val cands =
-                      combined.values.filter(_.name.contains(ref)).map(v => s"${v.id}(${v.task.getOrElse("").take(30)})")
+                      combined.values
+                        .filter(_.name.contains(ref))
+                        .map(v => s"${v.id}(${v.task.getOrElse("").take(30)})")
                     Left(
                       ToolError(
                         s"'$ref' matches ${cands.size} nodes by name — ${cands.mkString(", ")} — address by node id. " +
@@ -450,7 +475,8 @@ object ChainWriteTool extends Tool:
                           val edges = downs.map(d => OutEdge(d))
                           // 末端（批内无下游者）显式门集根边 (pass)Nebula :result = 完成通知投
                           // 创建者 delegate 本人（v3-⑨ 荐读法，非隐式 bare 形态）。
-                          if downs.isEmpty then List(OutEdge(OutEdge.RootTarget, Set(OutEdge.Pass), OutEdge.Result)) else edges
+                          if downs.isEmpty then List(OutEdge(OutEdge.RootTarget, Set(OutEdge.Pass), OutEdge.Result))
+                          else edges
                         val newNodes: Map[String, NodeDef] = nodes.map { n =>
                           val deps = depsNorm.getOrElse(n.id, Nil)
                           n.id ->
@@ -459,7 +485,8 @@ object ChainWriteTool extends Tool:
                               name = n.name.getOrElse(n.id),
                               agent = BuiltinAgents.ExecutorName,
                               task = Some(n.task),
-                              description = Some(n.description.map(_.trim).filter(_.nonEmpty).getOrElse(n.task.trim.take(60))),
+                              description =
+                                Some(n.description.map(_.trim).filter(_.nonEmpty).getOrElse(n.task.trim.take(60))),
                               in = deps,
                               deps = deps,
                               out = outEdgesOf(n.id),
@@ -485,7 +512,9 @@ object ChainWriteTool extends Tool:
                                 if added.isEmpty then acc
                                 else
                                   touched = up :: touched
-                                  acc.copy(nodes = acc.nodes.updated(up, un.copy(out = un.out ++ added.map(t => OutEdge(t)))))
+                                  acc.copy(nodes =
+                                    acc.nodes.updated(up, un.copy(out = un.out ++ added.map(t => OutEdge(t))))
+                                  )
                           }
                           (withUpstreams, touched.distinct)
                         }
@@ -540,19 +569,20 @@ object ChainWriteTool extends Tool:
                                 if allocationMap.isEmpty then ""
                                 else
                                   "\nPer-node plugin allocation: " + nodes
-                                    .map(n =>
-                                      s"${n.id}=[${allocationMap.getOrElse(n.id, Nil).mkString(",")}]"
-                                    )
+                                    .map(n => s"${n.id}=[${allocationMap.getOrElse(n.id, Nil).mkString(",")}]")
                                     .mkString(" ")
                               entries
-                                .traverse_(id => NodeTools.runDetached(rt, s"chain release -> $id")(rt.engine.startNode(id)))
+                                .traverse_(id =>
+                                  NodeTools.runDetached(rt, s"chain release -> $id")(rt.engine.startNode(id))
+                                )
                                 // 编排模式升级（G1）：tool-face-agentflow-retire 批
                                 // （2026-11-05）自 AgentFlow 工具 ACK 分支迁入的唯一写点。
                                 .flatMap(_ => upgradeOrchestrationModeOnRegister(scopeKey))
                                 .as(
                                   Right(
                                     s"Chain '$cid' registered with ${nodes.size} node(s) [${nodes.map(_.id).mkString(", ")}] — " +
-                                      (if entries.nonEmpty then s"released: entry node(s) ${entries.mkString(", ")} starting; "
+                                      (if entries.nonEmpty then
+                                         s"released: entry node(s) ${entries.mkString(", ")} starting; "
                                        else "") +
                                       "end-node results arrive here as completion notifications. Non-blocking: do NOT wait idle " +
                                       "and do NOT re-dispatch the same work." +
@@ -567,6 +597,7 @@ object ChainWriteTool extends Tool:
                 end match
               }
             }
+        end match
     end match
   end registerChain
 
@@ -592,7 +623,8 @@ object ChainWriteTool extends Tool:
         IO.blocking(
           nebflow.core.delegate.DelegateRegistry
             .upgradeOrchestrationMode(sid, nebflow.core.delegate.DelegateRegistry.ModeAgentflow)
-        ).void.handleErrorWith(_ => IO.unit)
+        ).void
+          .handleErrorWith(_ => IO.unit)
 
   /**
    * 双模式批（§5.3）：分发器链的逐 node 分配（落库前、0 spawn 阶段）。非分发器链 =
@@ -644,7 +676,6 @@ object ChainWriteTool extends Tool:
           }
         }
         .map(_.map(m => m.filter((_, names) => names.nonEmpty)))
-
 
   /** 自动链号（flow-<8hex>；与在飞声明链号/批内 id 不撞——碰撞重摇，上限防御）。 */
   private def autoChainId(taken: Set[String]): String =
@@ -701,6 +732,10 @@ object WriteScopeAdvisory:
         ordered = reach.getOrElse(a.id, Set.empty).contains(b.id) || reach.getOrElse(b.id, Set.empty).contains(a.id)
         if !ordered && intersects(a.writeScope.getOrElse(""), b.writeScope.getOrElse(""))
       yield (a.id, b.id)).toList
+
+    end if
+
+  end collisions
 
   /**
    * 相交启发：相等 ∨ 目录包含（以 `/` 为边界——`a/b` 包含 `a/b/c`，不包含

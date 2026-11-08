@@ -189,7 +189,8 @@ object DelegateFlowHosts:
                 notifyDeliveryTarget = Some(
                   DispatchNotify.DeliveryTarget(
                     DispatchNotify.delegateCreatorLabel(delegateId),
-                    text => DelegateNotify.inject(resources.agentRegistry, delegateId, text)
+                    text => DelegateNotify.inject(resources.agentRegistry, delegateId, text),
+                    deliverIdentified = Some((text, identity) => DelegateNotify.inject(resources.agentRegistry, delegateId, text, Some(identity)))
                   )
                 ),
                 // jev-plugins 批 #1226（S9 扩面）：作用域引擎 = 分配触发点（链每步

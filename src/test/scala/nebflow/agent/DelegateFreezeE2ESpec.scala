@@ -78,6 +78,7 @@ class DelegateFreezeE2ESpec extends CatsEffectSuite:
     counters: Ref[IO, Map[String, Int]],
     requests: Ref[IO, List[LlmRequest]]
   ) extends LlmHandle[IO]:
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected in this spec"))
 
@@ -94,10 +95,14 @@ class DelegateFreezeE2ESpec extends CatsEffectSuite:
           // AgentEvent.Failed ⇒ 监督者冻结腿。第 2 次起 = 唤醒后的续做轮，正常回文字。
           if req.sessionId == childSid && n == 1 then
             Stream.raiseError[IO](
-              new RuntimeException("provider anthropic/claude-x: 401 unauthorized - invalid_api_key (rejected by the provider)")
+              new RuntimeException(
+                "provider anthropic/claude-x: 401 unauthorized - invalid_api_key (rejected by the provider)"
+              )
             )
           else Stream(StreamChunk.TextDelta("RESUMED_AFTER_FREEZE"), StreamChunk.Done(None, None))
         }
+
+  end RoutingLlm
 
   private final case class Fx(
     resources: SharedResources,
@@ -153,6 +158,8 @@ class DelegateFreezeE2ESpec extends CatsEffectSuite:
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(seat)
 
+  end withFx
+
   private def mkRecordingParent(record: Ref[IO, List[AgentCommand]]): Behavior[AgentCommand] =
     def loop: Behavior[AgentCommand] = Behaviors.receiveMessage(cmd => record.update(_ :+ cmd).as(loop))
     loop
@@ -200,7 +207,7 @@ class DelegateFreezeE2ESpec extends CatsEffectSuite:
     )
 
   test(
-    "e2e: provider failure freezes the delegate (frozen receipt, never a failure verdict) → Mail `delegate:<id>` wakes it in the SAME session → the continuation turn still carries the pre-freeze history"
+    "e2e: provider failure freezes the delegate (frozen receipt, never a failure verdict) → Mail is retained without execution → explicit manual wake in the SAME session → the continuation turn still carries the pre-freeze history"
   ) {
     withFx("main") { fx =>
       val parentSid = "freeze-e2e-parent"
@@ -288,20 +295,38 @@ class DelegateFreezeE2ESpec extends CatsEffectSuite:
         frozenReg <- fx.resources.agentRegistry.get.map(_.get(childSid))
         frozenMail <- mailboxEvents(parentSid)
         frozenFrames <- fx.frames.get
-        // ② 唤醒（作者面入口：Mail delegate:<id>）——live 腿注入原 actor。
-        wakeRes <- MailTool.call(
-          JsonObject(
-            "address" -> s"delegate:$childSid".asJson,
-            "message" -> "继续把 wiring 补完（provider 已恢复）".asJson
-          ),
-          parentCtx(fx.resources, fx.system, parentSid)
+        // Mail preserves the supplement and the freeze; only the explicit user action resumes execution.
+        mailInput = JsonObject(
+          "address" -> s"delegate:$childSid".asJson,
+          "message" -> "继续把 wiring 补完（provider 已恢复）".asJson
         )
-        _ = assert(wakeRes.isRight, s"the wake mail must be accepted: $wakeRes")
-        wakeReceipt = wakeRes.toOption.getOrElse("")
-        _ = assert(
-          wakeReceipt.toLowerCase.contains("same session"),
-          s"the receipt must say it woke the SAME session (not a fresh one): $wakeReceipt"
+        mailContext = parentCtx(fx.resources, fx.system, parentSid).copy(toolCallId = "retained-supplement")
+        savedMail <- MailTool.call(mailInput, mailContext)
+        retryMail <- MailTool.call(mailInput, mailContext)
+        _ = assert(savedMail.toOption.exists(_.contains("MANUAL_RECOVERY_REQUIRED")), savedMail.toString)
+        _ = assert(retryMail.isRight)
+        _ <- childRef ! AgentCommand.MailboxArrived
+        _ <- childRef ! AgentCommand.RecoverPersistedQueues
+        _ <- IO.sleep(200.millis)
+        beforeManual <- fx.requests.get.map(_.count(_.sessionId == childSid))
+        _ = assertEquals(beforeManual, 1, "Mail alone must not invoke the model again")
+        pending <- SessionMailbox.scanPending(childSid)
+        _ = assertEquals(
+          pending.count(_.kind == "mail-supplement"),
+          1,
+          "retry and automatic mailbox scans preserve the held supplement"
         )
+        heldTaken <- SessionMailbox.scanTaken(childSid)
+        _ = assert(heldTaken.isEmpty, "automatic scans must not consume a manually held inbox")
+        _ = assert(DelegateRegistry.isFrozen(childSid))
+        manualWake <- DelegateWakeLeg.wake(
+          fx.resources,
+          Some(j => fx.frames.update(_ :+ j)),
+          childSid,
+          "Resume from the saved checkpoint",
+          "panel-wake"
+        )
+        _ = assert(manualWake.isRight, manualWake.toString)
         // ③ 续做轮：第二轮 LLM 请求必须带冻结前的 brief（上下文没丢）。
         _ <- waitUntil(30.seconds) {
           fx.requests.get.map(rs => rs.count(_.sessionId == childSid) >= 2)
@@ -328,14 +353,22 @@ class DelegateFreezeE2ESpec extends CatsEffectSuite:
           frozenRecord.frozenDetail.exists(_.contains("401")),
           s"the provider error context is kept: ${frozenRecord.frozenDetail}"
         )
-        assertEquals(frozenRow.map(_.status), Some(DelegateFreeze.TaskStatus), "the ledger row is `frozen`, not `failed`")
+        assertEquals(
+          frozenRow.map(_.status),
+          Some(DelegateFreeze.TaskStatus),
+          "the ledger row is `frozen`, not `failed`"
+        )
         assertEquals(
           frozenReg.map(_.status),
           Some(nebflow.actor.AgentStatus.Frozen),
           "the registry shows Frozen (the panel badge source)"
         )
         val terminals = frozenMail.map(_.eventType).filter(t => Set("failed", "completed", "cancelled").contains(t))
-        assertEquals(terminals, Nil, s"a frozen delegate must never produce a failure terminal, got: ${frozenMail.map(_.eventType)}")
+        assertEquals(
+          terminals,
+          Nil,
+          s"a frozen delegate must never produce a failure terminal, got: ${frozenMail.map(_.eventType)}"
+        )
         // fallback 废除批：父邮箱零条目——冻结回执不再投递（面板帧是唯一即时面）。
         assertEquals(
           frozenMail.map(_.eventType),
@@ -348,10 +381,18 @@ class DelegateFreezeE2ESpec extends CatsEffectSuite:
         )
         // ── ② 唤醒：同一 actor、同一 session id、冻结槽清空、行回 running ──
         assertEquals(DelegateRegistry.find(childSid).flatMap(_.frozenSince), None, "the frozen slot is cleared on wake")
-        assertEquals(wokeReg.map(_.status), Some(nebflow.actor.AgentStatus.Idle), "registry back to Idle after the wake")
+        assertEquals(
+          wokeReg.map(_.status),
+          Some(nebflow.actor.AgentStatus.Idle),
+          "registry back to Idle after the wake"
+        )
         assertEquals(wokeRow.map(_.status), Some("running"), "the ledger row is honestly in-flight again")
         // ── ③ 续做 = 别丢上下文（本件硬断言）────────────────────────────
-        assertEquals(resumedTurn.sessionId, childSid, "the continuation runs under the SAME session id (no fresh session)")
+        assertEquals(
+          resumedTurn.sessionId,
+          childSid,
+          "the continuation runs under the SAME session id (no fresh session)"
+        )
         val allText = resumedTurn.messages.map(_.textContent).mkString("\n---\n")
         assert(
           allText.contains("build the widget: the frame first, then the wiring"),
@@ -383,6 +424,7 @@ class DelegateFreezeE2ESpec extends CatsEffectSuite:
           Nil,
           s"no failure push on the legacy chain either, got: $childEvents"
         )
+      end for
     }
   }
 end DelegateFreezeE2ESpec

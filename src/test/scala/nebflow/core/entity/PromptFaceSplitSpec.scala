@@ -42,25 +42,39 @@ class PromptFaceSplitSpec extends FunSuite:
 
   test("restart exception is narrow on role and tool prompt surfaces"):
     val surfaces = Seq(
-      nodePrompt, delegatePrompt,
+      nodePrompt,
+      delegatePrompt,
       nebflow.prompts.PromptCatalog.Roles.DispatcherPromptTemplate,
       nebflow.core.tools.DelegateTool.description,
       nebflow.core.tools.SubTaskTool.description
     )
     for text <- surfaces do
-      for required <- Seq("explicit user authorization", "higher-priority runtime/tool", "--canary", "--hot", "--force", "--no-compile", "idle", "not a guarantee", "manually") do
-        assert(text.contains(required), s"missing restart safety requirement: $required")
+      for required <- Seq(
+          "explicit user authorization",
+          "higher-priority runtime/tool",
+          "--canary",
+          "--hot",
+          "--force",
+          "--no-compile",
+          "idle",
+          "not a guarantee",
+          "manually"
+        )
+      do assert(text.contains(required), s"missing restart safety requirement: $required")
       assert(!text.contains("NEVER send signals to or kill any sbt/java/nebflow process"))
       assert(text.contains("Never directly"), "direct process signalling remains prohibited")
 
-  test("delegate 面系统提示词 = delegate_report 纪律在位（两态值域 + 配套指令；#566 起 blocked 类别退役）"):
+    end for
+
+  test("delegate 面系统提示词 = delegate_report 纪律在位（两态值域 + 配套指令；blocked 类别退役）"):
     val text = delegatePrompt
     assert(text.contains("delegate_report"), "delegate_report 申报义务在位")
     assert(text.contains("Report your state (delegate_report)"), "申报段头在位")
-    for v <- Seq("finish", "merge") do assert(text.contains(s"`$v`"), s"delegate_report 值域态在位: $v")
+    for v <- Seq("finish", "standby") do assert(text.contains(s"`$v`"), s"delegate_report 值域态在位: $v")
     assert(!text.contains("- `blocked` —"), "blocked 类别整行退役（delegate 面无 blocked 态——作者令）")
+    assert(!text.contains("`merge` —"), "merge 申报类别退役（集成 = 项目 merger 的授权任务）")
     assert(text.contains("NO separate blocked category"), "「报不了 = finish＋阻塞写进内容」的语义在位")
-    assert(text.contains("MergeQueue"), "merge 态的 MergeQueue 语义在位")
+    assert(text.contains("Integration discipline (hard)"), "永不自并纪律在位")
     assert(text.contains("Your roles: executor, dispatcher, manager"), "三角色段在位（delegate 语义）")
 
   test("delegate 面系统提示词模型可见面零 node_report 指令（零出现，防回流）"):
@@ -101,14 +115,14 @@ class PromptFaceSplitSpec extends FunSuite:
       val viaDelegate = nebflow.core.entity.BuiltinAgents.delegateEntry(name).map(_.systemPrompt)
       assertEquals(viaDelegate, viaEntry, s"'$name' 无 delegate 面变体（回落 entry）")
 
-  test("brief 申报行（DelegateTool.BriefReportLine）= delegate_report 纪律、零 node_report（状态矩阵起三态 finish|merge|standby）"):
+  test("brief 申报行（DelegateTool.BriefReportLine）= delegate_report 纪律、零 node_report（两态 finish|standby；merge 类别退役）"):
     val line = nebflow.core.tools.DelegateTool.BriefReportLine
-    assert(line.contains("delegate_report(category=\"finish\"|\"merge\"|\"standby\", detail=…)"), "brief 申报行的三态调用形态在位")
-    assert(line.contains("\"standby\" = you are waiting for orders/events and NOT done"), "standby 语义钉：待命≠完工、不终判不投父")
-    assert(line.contains("an undeclared turn end is not judged complete"), "矩阵钉：未申报回合绝不静默判完成（提醒补报）")
+    assert(line.contains("delegate_report(category=\"finish\"|\"standby\", detail=…)"), "brief 申报行的两态调用形态在位")
+    assert(!line.contains("\"merge\""), "merge 申报类别退役（集成 = 项目 merger 的授权任务）")
+    assert(line.contains("standby means waiting for instructions or downstream work, without a completion delivery"), "standby 语义钉：待命≠完工、不终判不投父")
     assert(!line.contains("|\"blocked\""), "brief 申报行零 blocked 类别（delegate 面无 blocked 态——作者令）")
     assert(!line.contains("node_report"), "brief 申报行零 node_report（delegate brief 面同判据）")
-    assert(line.contains("your final text remains the deliverable"), "末条输出 = 交付物语义在位")
+    assert(line.contains("Do not merge, push, publish or remove the worktree on your own"), "永不自并纪律在位")
 
   // prompt-panel 面板批（2026-10-09）：面板展示面的双面投影钉——面板列表/详情
   // （GET /api/agents/:name 的 `promptFaces`）按 panelPromptFaces 下发两面，

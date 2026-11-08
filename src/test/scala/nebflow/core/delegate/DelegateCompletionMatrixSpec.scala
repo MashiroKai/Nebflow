@@ -11,12 +11,10 @@ import nebflow.shared.Defaults
  * 所以这里的四个状态 idle complete 通知，stand by/merge complete 不通知 finish
  * complete 回报给主 agent。」）。
  *
- * 四行矩阵（[[DelegateCompletionMatrix.decide]]）+ **接线效果**：
+ * 三行矩阵（[[DelegateCompletionMatrix.decide]]）+ **接线效果**：
  *   - idle   ⇒ InjectReminder（DelegateStandbyCare IdleNudge 退避提醒——唯一在提醒的腿）；
  *   - stand by ⇒ QueueSilently（BackoffSupervisor Standby 腿**零 caretaker**——
  *     DelegateStandbyCare.arm(kind=Declared) 零动作；完成事件静默入队）；
- *   - merge  ⇒ QueueSilently（merge 停靠腿零提醒注入；MergeQueue.notifyTurn 是引擎
- *     授命的合并轮执行指令，不是完成提醒，保留）；
  *   - finish ⇒ ReportToParent（既有终态投递主路径，零额外 reminder）。
  */
 class DelegateCompletionMatrixSpec extends CatsEffectSuite:
@@ -31,20 +29,19 @@ class DelegateCompletionMatrixSpec extends CatsEffectSuite:
       "作者 18:14：只有 idle×complete 才有 system reminder"
     )
     assertEquals(decide(SessionState.Standby), NotifyDecision.QueueSilently, "🔴 已经报了 stand by，还通知什么——零注入零唤醒")
-    assertEquals(decide(SessionState.Merge), NotifyDecision.QueueSilently, "等合并停靠：零注入零唤醒")
     assertEquals(decide(SessionState.Finish), NotifyDecision.ReportToParent, "finish 结果照常回报主 agent，不额外 reminder")
   }
 
   test(
-    "matrix totality: all four states map (idle/standby/merge/finish), standby==merge==QueueSilently, finish is the only ReportToParent"
+    "matrix totality: all three states map (idle/standby/finish), finish is the only ReportToParent"
   ) {
     import DelegateCompletionMatrix.*
-    val all: List[SessionState] = List(SessionState.Idle, SessionState.Standby, SessionState.Merge, SessionState.Finish)
-    assertEquals(all.map(decide).size, 4, "四行齐全（无缺行）")
+    val all: List[SessionState] = List(SessionState.Idle, SessionState.Standby, SessionState.Finish)
+    assertEquals(all.map(decide).size, 3, "三行齐全（无缺行）")
     assertEquals(
       all.map(decide).distinct.toSet,
       Set[NotifyDecision](NotifyDecision.InjectReminder, NotifyDecision.QueueSilently, NotifyDecision.ReportToParent),
-      "决策面恰三值（standby 与 merge 同为静默）"
+      "决策面恰三值"
     )
     assertEquals(
       all.count(decide(_) == NotifyDecision.InjectReminder),

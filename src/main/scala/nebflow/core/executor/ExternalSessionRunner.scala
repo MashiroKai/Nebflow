@@ -12,14 +12,9 @@ import nebflow.core.AgentRuntimePort
 import nebflow.core.GitWorktrees
 import nebflow.core.delegate.ChainStore
 import nebflow.core.delegate.DelegateRegistry
-import nebflow.core.delegate.DelegateWorkReport
 import nebflow.core.delegate.DelegateWorkspace
 import nebflow.core.delegate.ExternalJudgeHook
-import nebflow.core.delegate.MergeAcceptance
-import nebflow.core.delegate.MergeQueue
-import nebflow.core.delegate.MergeDeclaration
 import nebflow.core.delegate.DelegateTerminal
-import nebflow.core.delegate.PostMergeCleanup
 import nebflow.shared.Message
 import nebflow.shared.MessageRole
 import nebflow.shared.NebflowLogger
@@ -52,15 +47,13 @@ import scala.util.Try
  *   - **座位纪律（P1-2，2026-10-09）**：spawn 前与内部腿走同一
  *     [[nebflow.core.delegate.DelegateWorkspace.prepare]]（git 工作区 = 分支
  *     `delegate/<id>` ＋ worktree 座位，进程 cwd = 座位；非 git = 旧形态逐字）；
- *     判定机判 ready-to-merge ⇒ 并入 [[nebflow.core.delegate.MergeQueue]]（外部
- *     通道条目，合并轮经续聊通道注入）；合并轮 completed ⇒ 同一机械验收闸
- *     （[[nebflow.core.delegate.MergeAcceptance]]）＋同闸现场回收（P2-4）。
+ *     座位纪律与内部腿同源（[[nebflow.core.delegate.DelegateWorkspace]]）；
  *     漂移闸对外部腿 = 注记级（[[nebflow.core.delegate.DelegateTerminal]]
- *     .externalDriftNote 并入判定输入——零罚则面，保护等级注记级）。
+ *     .externalDriftNote 并入判定输入——零罚则面，保护等级注记级）。集成走
+ *     项目 merger 的授权请求——外部腿不并入任何合并队列。
  *   - 续聊（S15 通道，增补条款 3.5：地址面零新面——同一 `delegate:<id>`）：
  *     live ⇒ mailbox 排队（本 run 终态后一条 resume 消化）；终态 ⇒ CLI resume
- *     续起。**合并轮也走这同一条注入通道**（MergeQueue → 注入一条
- *     `merge --no-ff` brief 消息——S15 钉死「无第二机制」）。
+ *     续起。
  *
  * == fail-closed（增补条款 3.4，R2/R11）==
  * 适配器建立 / resume / 进程失败一律显式终态（failed ＋原因——#566：无独立
@@ -84,17 +77,6 @@ object ExternalSessionRunner:
 
   /** 续聊启动互斥窗（防「同时 resume 双进程」竞态——输家入队 mailbox）。 */
   private val resuming: Ref[IO, Set[String]] = Ref.unsafe(Set.empty)
-
-  /**
-   * 合并轮在途标记（引擎加固批 2026-10-09，P1-2/P2-5）：合并指令经通道注入
-   * （MergeQueue 外部腿条目 / boot sweep 恢复腿）的会话——下一次 settle 按合并轮
-   * 组装判定素材（mergeRound 旗进判定缝）并跑机械验收闸。settle 读时即清
-   * （一旗一轮）。
-   */
-  private val mergeRounds: Ref[IO, Set[String]] = Ref.unsafe(Set.empty)
-
-  /** 合并轮标记（MergeQueue 通道闭包 / boot sweep 恢复腿调用——下一次 settle 消费）。 */
-  def noteMergeRound(sessionId: String): IO[Unit] = mergeRounds.update(_ + sessionId)
 
   /** spawn/续聊共用参数（Delegate 外部腿与 Mail 续聊腿一条通路）。 */
   final case class SpawnSpec(
@@ -545,8 +527,7 @@ You will be notified when it completes via a system message. Do NOT duplicate th
           processFailed = exitCode.exists(_ != 0) || finalFrame.exists(_.failed)
           text = finalFrame.map(_.text).map(_.trim).filter(_.nonEmpty).getOrElse("")
           // 引擎加固批 2026-10-09（P1-2）：判定缝素材补全——git 摘要（工作座位）
-          // ＋漂移注记（[[DelegateTerminal.externalDriftNote]]，注记级覆盖）＋合并
-          // 轮旗（合并指令经通道注入过的下一拍 settle）。
+          // ＋漂移注记（[[DelegateTerminal.externalDriftNote]]，注记级覆盖）。
           rec = DelegateRegistry.find(sessionId)
           gitDigest <- IO
             .blocking {
@@ -558,7 +539,6 @@ You will be notified when it completes via a system message. Do NOT duplicate th
             .handleError(_ => "")
           driftNote <- DelegateTerminal.externalDriftNote(rec)
           digest = driftNote.map(n => if gitDigest.isEmpty then n else s"$gitDigest\n$n").getOrElse(gitDigest)
-          mergeRoundNow <- mergeRounds.modify(s => (s - sessionId, s.contains(sessionId))) // 读时即清：一旗一轮
           verdict <- ExternalJudgeHook.decide(
             ExternalJudgeHook.Input(
               id = sessionId,
@@ -570,20 +550,13 @@ You will be notified when it completes via a system message. Do NOT duplicate th
               finalText = text,
               exitCode = exitCode,
               processFailed = processFailed && !cancelledNow,
-              gitDigest = digest,
-              mergeRound = mergeRoundNow
+              gitDigest = digest
             )
           )
-          outcome0 <- cancelledNow match
+          outcome <- cancelledNow match
             case true => IO.pure(Outcome.Cancelled)
             case false =>
               (verdict, processFailed) match
-                // 合并轮**无 ready-to-merge 态**（merge brief 明言）——判定机若在
-                // 合并轮回 ready-to-merge = 越权判词，交给机械验收闸定夺（真并了 =
-                // completed 放行；没并 = failed）。绝不回灌队列（防判定机缺陷驱动的
-                // 无限重入循环）。
-                case (Some(ExternalJudgeHook.Verdict.ReadyToMerge), _) =>
-                  if mergeRoundNow then IO.pure(Outcome.Completed) else IO.pure(Outcome.ReadyToMerge)
                 case (Some(ExternalJudgeHook.Verdict.Failed(r)), _) => IO.pure(Outcome.Failed(r))
                 case (Some(ExternalJudgeHook.Verdict.Completed), _) => IO.pure(Outcome.Completed)
                 case (None, true) =>
@@ -598,182 +571,49 @@ You will be notified when it completes via a system message. Do NOT duplicate th
                     )
                   )
                 case (None, false) => IO.pure(Outcome.Completed)
-          // P1-1① 外部合并轮同一机械验收闸（绝不凭自申报放行）：合并轮 completed
-          // ⇒ 确定性 git 校验；通过 = Release ＋现场回收（P2-4 同闸同守卫）；不
-          // 满足 = 判词回落 failed（报父，零 LLM——#566：真失败归 failed）。
-          outcome <-
-            (outcome0, mergeRoundNow) match
-              case (Outcome.Completed, true) =>
-                IO.blocking(MergeAcceptance.verifyRecord(rec))
-                  .flatMap { r =>
-                    if r.ok then PostMergeCleanup.run(rec, allowLiveOwner = true).as(Outcome.Completed)
-                    else
-                      IO.pure(
-                        Outcome.Failed(
-                          s"mechanical merge acceptance refused the release (the CLI claimed a completed merge): ${r.evidence}"
-                        )
-                      )
-                  }
-                  .handleErrorWith(e =>
-                    IO.pure(Outcome.Failed(s"mechanical merge acceptance unreadable: ${e.getMessage}"))
-                  )
-              case (other, _) => IO.pure(other)
-          // 台账 #896（交通引导员制 2026-10-26）：引擎侧自动合并执行已整体退役
-          // （DelegateAutoMerge 删除——引擎永不自己跑 git merge）。外部腿 completed
-          // 终态 × 非合并轮 × 分支锚齐 × 确有领先提交 ⇒ **翻转 ready-to-merge 入队**
-          // （放行 = 通知属主自己合并；交付绝不静默丢失）。锚缺失（非 git 腿 / 旧盘
-          // 记录）/ git 读数不可得 = 原判词直投（诚实兜底）。
-          flipped <-
-            (outcome, mergeRoundNow) match
-              case (Outcome.Completed, false) =>
-                rec.filter(r => r.branch.isDefined && r.baseBranch.isDefined) match
-                  case Some(r) =>
-                    IO.blocking {
-                      Try(os.Path(r.projectWorkspace.getOrElse(r.cwd))).toOption
-                        .filter(GitWorktrees.isGitRepo)
-                        .map(ws => GitWorktrees.commitsAhead(ws, r.baseBranch.get, r.branch.get))
-                        .getOrElse(0)
-                    }
-                      .handleError(_ => 0)
-                      .map { ahead =>
-                        if ahead > 0 then
-                          logger.info(
-                            s"external delegate $sessionId completed with $ahead commit(s) ahead — flipping to ready-to-merge (traffic-controller queue)"
-                          )
-                          Some(Outcome.ReadyToMerge)
-                        else None
-                      }
-                  case None => IO.pure(None)
-              case _ => IO.pure(None)
-          outcome2 = flipped.getOrElse(outcome)
-          reasonOpt = outcome2 match
+          reasonOpt = outcome match
             case Outcome.Failed(r) => Some(r)
             case Outcome.Cancelled => Some("cancelled")
             case _ => None
-          // 进度面终态（#566 词表：failed——无独立 blocked；ready-to-merge 在缓冲面记
-          // completed——进程本身成功了，合并轮语义归 #1224 队列）。
+          // 进度面终态（#566 词表：failed——无独立 blocked）。
           _ <- ExternalOutputStore.finalizeTask(
             sessionId,
-            status = outcome2 match
+            status = outcome match
               case Outcome.Failed(_) => "failed"
-              case Outcome.ReadyToMerge | Outcome.Completed => "completed"
+              case Outcome.Completed => "completed"
               case Outcome.Cancelled => "cancelled",
             exitCode = exitCode,
             errorHint = reasonOpt
           )
           // 会话持久化：assistant 终稿（空输出也给占位，历史面完整）。
           _ <- persistAssistantTurn(spec.resources, sessionId, if text.nonEmpty then text else "(no text output)")
-          // 任务行终态（ready-to-merge 保持 running——父回报权在合并轮）。
-          _ <- outcome2 match
+          // 任务行终态。
+          _ <- outcome match
             case Outcome.Completed =>
               updateTaskTolerant(spec.resources, spec.parentSessionId, sessionId, "completed", lastError = None)
-            case Outcome.ReadyToMerge => IO.unit
             case Outcome.Cancelled =>
               updateTaskTolerant(spec.resources, spec.parentSessionId, sessionId, "cancelled", lastError = reasonOpt)
             case Outcome.Failed(_) =>
               updateTaskTolerant(spec.resources, spec.parentSessionId, sessionId, "failed", lastError = reasonOpt)
           _ <- appendLedgerNote(
             spec.taskId,
-            outcome2 match
+            outcome match
               case Outcome.Completed =>
                 s"External delegate finished (executor=${ex.id}, exit=${exitCode.map(_.toString).getOrElse("-")})"
-              case Outcome.ReadyToMerge =>
-                s"External delegate ready-to-merge (judge; executor=${ex.id}) — enqueued to the merge queue"
               case Outcome.Cancelled => s"External delegate cancelled (executor=${ex.id})"
               case Outcome.Failed(r) => s"External delegate failed (executor=${ex.id}): $r"
           )
-          // P1-2：ready-to-merge 并入 MergeQueue（外部通道条目——合并轮经续聊通道
-          // 注入、settle 终态再判）。锚缺失（非 git 腿误判 ready-to-merge / 记录
-          // 缺键）= 诚实降级：WARN ＋ completed 报父（绝不静默挂起）。
-          // delegate-finish-report 修复批 2026-10-25：停靠即保真工作轮终稿
-          // （DelegateRegistry.updateWorkResult，first-write-wins——内部腿
-          // holdForMerge 同机制），合并轮 finish 终文不再顶掉工作结果。
-          _ <- outcome2 match
-            case Outcome.ReadyToMerge =>
-              IO(DelegateRegistry.updateWorkResult(sessionId, text)).attempt.void
-            case _ => IO.unit
-          _ <- outcome2 match
-            case Outcome.ReadyToMerge =>
-              rec.filter(r => r.branch.isDefined && r.baseBranch.isDefined) match
-                case Some(r) =>
-                  val baseWs = r.projectWorkspace.getOrElse(r.cwd)
-                  MergeQueue.enqueueVerifiedIO(
-                    MergeQueue.Member(
-                      delegateId = sessionId,
-                      branch = r.branch.get,
-                      baseWs = baseWs,
-                      baseBranch = r.baseBranch.get,
-                      worktree = r.worktree.isDefined,
-                      projectKey = Try(os.Path(baseWs)).map(GitWorktrees.projectKeyOf).getOrElse(baseWs),
-                      taskId = r.taskId,
-                      parentSessionId = r.parentSessionId,
-                      description = r.title,
-                      readyAt = System.currentTimeMillis(),
-                      // P1 投递身份化：外部 leg 的注入闭包（continueExternal + CLI resume）
-                      // 已删除——投递统一走「收件身份 + 落盘邮箱」。⚠ 未核项：外部（CLI
-                      // 续聊）会话被邮箱门铃唤醒的链路需要实测（见本批报告「未核项」）。
-                      channelKind = "identity",
-                      ownerSessionId = sessionId,
-                      // 宣告闸批 2026-11-04：外部腿的 ready-to-merge 是**判定/判词**
-                      // 产出，不是属主宣告——只有属主自己用 `delegate_report(category="merge")`
-                      // 申报过（宣告账在案）的成员才带宣告入队；否则入账但不授窗。
-                      declaredAt = MergeDeclaration.find(sessionId).map(_.at),
-                      declareSource = MergeDeclaration.find(sessionId).map(_.source),
-                      declaredTip = MergeDeclaration.find(sessionId).flatMap(_.tip)
-                    )
-                  )
-                case None =>
-                  logger.warn(
-                    s"external delegate $sessionId judged ready-to-merge but the record lacks branch anchors — " +
-                      s"falling back to a completed parent report (nothing enqueued)"
-                  ) *> notifyParent(
-                    spec,
-                    sessionId,
-                    Outcome.Completed,
-                    s"$text\n\n[delegate-judge] ready-to-merge could not be scheduled (no branch anchors on record) — reported completed",
-                    None
-                  )
-            case _ => IO.unit
-          // P1-2/P2-4（引擎加固批 2026-10-09；台账 #896 改关账语义）：外部腿**终态
-          // 关账**（内部腿同语义 = DelegateTerminal.onTerminalCleanup 的关账臂）。
-          // 合并轮终态（机械验收拒绝 failed / 放行 completed）后成员必须关账＋单
-          // 飞行窗释放——否则窗泄漏（同项目后继全楔死）。ReadyToMerge = 刚入队，
-          // 关账权归合并轮。未入账过（completed/cancelled 首轮终态）= 幂等 no-op。
-          // 回合外终态（None）→ 队列账实核对后落 owner-gone（无重试无 park）。
-          _ <- outcome2 match
-            case Outcome.ReadyToMerge => IO.unit
-            case Outcome.Completed =>
-              val roundOutcome = if mergeRoundNow then Some(MergeQueue.RoundOutcome.Merged) else None
-              MergeQueue.onTerminalIO(sessionId, roundOutcome)
-            case Outcome.Failed(r) =>
-              val roundOutcome = if mergeRoundNow then Some(MergeQueue.RoundOutcome.Refused(r)) else None
-              MergeQueue.onTerminalIO(sessionId, roundOutcome)
-            case other => MergeQueue.onTerminalIO(sessionId)
-          // 父投递（ready-to-merge 不发——MergeQueue 持有父回报权）。
-          // delegate-finish-report 修复批 2026-10-25：合并轮投父附工作结果附页
-          // （DelegateWorkReport.appendixFor——内部腿 Release 尾注同构造器，两腿
-          // 同一附页契约；fail-soft 内包，任何故障 = 原文直投）。
-          _ <- outcome2 match
-            case Outcome.ReadyToMerge => IO.unit
-            case other =>
-              val withWork =
-                if mergeRoundNow then
-                  IO(DelegateWorkReport.appendixFor(rec))
-                    .handleErrorWith(_ => IO(""))
-                    .map(apx => text + apx)
-                else IO.pure(text)
-              withWork.flatMap(delivered => notifyParent(spec, sessionId, other, delivered, reasonOpt))
+          // 父投递（终态直投——集成走项目 merger 的授权请求，无队列持有父回报权）。
+          _ <- notifyParent(spec, sessionId, outcome, text, reasonOpt)
           // 面板终态帧（与内部 delegate 的 agentDone 同契约）。
           _ <- emitFrame(spec.wsSend, spec.rootSessionId, spec.parentSessionId, sessionId)(
             Json.obj("type" -> "agentDone".asJson, "agentId" -> sessionId.asJson)
           )
           _ = logger.info(
-            s"External delegate settled: $sessionId outcome=$outcome2 exit=${exitCode.map(_.toString).getOrElse("-")}${
-                if mergeRoundNow then " (merge round)" else ""
-              }"
+            s"External delegate settled: $sessionId outcome=$outcome exit=${exitCode.map(_.toString).getOrElse("-")}"
           )
           // mailbox 消化：live 期间的来信 = 一条 resume 续聊（S15 同通道）。
-          _ <- outcome2 match
+          _ <- outcome match
             case Outcome.Cancelled => IO.unit // 取消即终止——来信留队列由下轮续聊取
             case _ =>
               ExternalOutputStore.drainMailbox(sessionId).flatMap {
@@ -797,7 +637,6 @@ You will be notified when it completes via a system message. Do NOT duplicate th
   private enum Outcome:
     case Completed
     case Failed(reason: String)
-    case ReadyToMerge
     case Cancelled
 
   /**
@@ -850,7 +689,6 @@ You will be notified when it completes via a system message. Do NOT duplicate th
                 "reason" -> reasonOpt.getOrElse("").asJson
               )
             )
-          case Outcome.ReadyToMerge => ("completed", s""""${spec.title}" (merge pending)""", io.circe.JsonObject.empty)
         (parent ! AgentCommand.ExternalEvent(
           source = "delegate",
           eventType = eventType,

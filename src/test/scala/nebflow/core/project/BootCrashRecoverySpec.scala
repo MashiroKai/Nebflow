@@ -283,6 +283,64 @@ class BootCrashRecoverySpec extends CatsEffectSuite:
 
   // ── C1 主路径 + C4（无 reaped）+ C5（幂等）+ C9（恰一条通知）──────────
 
+  test("manual recovery persists a hold and preserves checkpoint until an explicit resume") {
+    val ws = tempRoot / "ws-manual-hold"
+    os.makeDir.all(ws)
+    val system = ActorSystem("bcr-manual-hold")
+    val sid = "node-manual-001"
+    val llm = ScriptLlm(_ => "MANUALLY-RECOVERED")
+    val program = for
+      res <- mkResources(system, llm.handle)
+      rt <- mountProject("bcr-manual-hold", ws, system, res)
+      _ = seedTranscript(sid, List(msg(MessageRole.User, "original task"), msg(MessageRole.Assistant, "SAVED-CHECKPOINT")))
+      _ <- seedRunning(rt, "n-manual", "manual-worker", "continue task", sessionRef = Some(sid))
+      (notices, trigger) <- triggerRecorder
+      held <- ProjectCrashRecovery.recoverProject(rt, trigger = trigger, manual = true)
+      node <- rt.store.getNode("n-manual")
+      reopened <- FlowMapStore.open("bcr-manual-hold", ws.toString)
+      disk <- reopened.snapshot
+      _ <- rt.engine.settleRunnableSweep()
+      _ <- rt.engine.startNode("n-manual")
+      before <- llm.fullReqs.get
+      notifications <- notices.get
+      restored <- rt.engine.resumeSavedNodes(Set("n-manual"))
+      _ <- waitUntil(20.seconds)(byName(rt, "manual-worker").map(_.status == NodeLifecycle.Completed))
+      after <- llm.fullReqs.get
+    yield
+      assertEquals(held, 1)
+      assertEquals(node.map(_.status), Some(NodeLifecycle.Interrupted))
+      assertEquals(node.flatMap(_.sessionRef), Some(sid))
+      assert(disk.manualRecoveryNodes.contains("n-manual"))
+      assertEquals(before, Nil)
+      assertEquals(notifications, Nil)
+      assertEquals(restored, 1)
+      assert(after.exists(_.contains("SAVED-CHECKPOINT")))
+    program.guarantee(system.stopAll.handleErrorWith(_ => IO.unit))
+  }
+
+  test("manual recovery holds pending nodes too, including isolated nodes without a declared chain") {
+    val ws = tempRoot / "ws-manual-pending"
+    os.makeDir.all(ws)
+    val system = ActorSystem("bcr-manual-pending")
+    val llm = ScriptLlm(_ => "MUST-NOT-RUN")
+    val program = for
+      res <- mkResources(system, llm.handle)
+      rt <- mountProject("bcr-manual-pending", ws, system, res)
+      _ <- seedRunning(rt, "n-pending-hold", "held-pending", "pending work", sessionRef = None)
+      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes.updated("n-pending-hold", s.nodes("n-pending-hold").copy(status = NodeLifecycle.Pending))))
+      _ <- ProjectCrashRecovery.recoverProject(rt, manual = true)
+      _ <- rt.engine.startNode("n-pending-hold")
+      _ <- rt.engine.settleRunnableSweep()
+      requests <- llm.fullReqs.get
+      saved <- rt.store.getNode("n-pending-hold")
+      disk <- FlowMapStore.open("bcr-manual-pending", ws.toString).flatMap(_.snapshot)
+    yield
+      assertEquals(requests, Nil)
+      assertEquals(saved.map(_.status), Some(NodeLifecycle.Pending))
+      assert(disk.manualRecoveryNodes.contains("n-pending-hold"))
+    program.guarantee(system.stopAll.handleErrorWith(_ => IO.unit))
+  }
+
   test("C1: crashed running node with transcript rehydrates from checkpoint, completes, delivers exactly once") {
     val ws = tempRoot / "ws-c1"
     os.makeDir.all(ws)

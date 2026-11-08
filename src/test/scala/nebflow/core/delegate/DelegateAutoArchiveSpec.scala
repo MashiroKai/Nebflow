@@ -47,12 +47,9 @@ class DelegateAutoArchiveSpec extends CatsEffectSuite:
   override def afterAll(): Unit = PathUtil.setDataRoot(originalRoot)
 
   override def beforeEach(context: munit.BeforeEach): Unit =
-    MergeQueue.reset()
     os.remove.all(tempRoot / "chains")
     os.remove.all(tempRoot / "delegates")
     os.remove.all(tempRoot / "subagent-tasks")
-
-  override def afterEach(context: munit.AfterEach): Unit = MergeQueue.reset()
 
   private class SilentLlm extends LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))

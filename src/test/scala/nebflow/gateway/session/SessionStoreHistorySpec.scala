@@ -326,7 +326,7 @@ class SessionStoreHistorySpec extends CatsEffectSuite:
   test("appendUiMessages trims to retention cap, keeping the newest messages") {
     withStore { store =>
       val sid = "trim-cap"
-      // Append 3x the cap in small batches so the trim runs repeatedly.
+      // Append beyond the cap in small batches so the trim runs repeatedly.
       // MaxStoredUiMessages is private; verify behavior by observing that the
       // total reported by getHistoryPage never exceeds the cap, and the newest
       // messages are the ones retained.
@@ -336,13 +336,22 @@ class SessionStoreHistorySpec extends CatsEffectSuite:
         _ <- store.flushPendingUiWrites
         (page, total, offset, _) <- store.getHistoryPage(sid, limit = 50, beforeIndex = None)
       yield
-        // Cap is 800; after appending 2400 the retained count must be exactly 800.
-        assertEquals(total, 800, "Retained message count must equal the cap")
+        // Cap is 1600 (SessionStore.MaxStoredUiMessages): the search-coverage
+        // batch (commit 30ce1e108, author complaint "search does not cover all
+        // content") raised the default from 800 to 1600 and added the
+        // -Dnebflow.session.maxStoredUiMessages escape hatch, because the FTS
+        // index and the history replay read only from .ui.json — the trim was
+        // the second "search doesn't find old messages" mechanism. The strict
+        // equality is the regression guard for the duplication bug class: a
+        // dirty-drain double-write (cached + persisted copies both surviving)
+        // would land at exactly 2x the cap, never at the cap.
+        assertEquals(total, 1600, "Retained message count must equal the cap exactly (not 2x — no double-write)")
         assertEquals(page.length, 50)
-        // offset = total - limit = 750, and the newest message is #2400.
-        assertEquals(offset, 750)
+        // offset = total - limit = 1550, and the newest message is #2400.
+        assertEquals(offset, 1550)
         assertEquals(userText(page.last), "User message 2400", "Newest message must be retained")
-        assertEquals(userText(page.head), "User message 2351", "Page starts at offset 750")
+        assertEquals(userText(page.head), "User message 2351", "Page shows the newest 50 of the retained window")
+      end for
     }
   }
 

@@ -186,6 +186,26 @@ object ToolRegistry:
       // 双保险）。值域 finish|blocked＋detail；仅更新 DelegateRegistry 状态槽，
       // 不携汇报（汇报仍走终态消息直传）。信号消费点 = 终态判定机。
       "delegate_report" -> DelegateReportTool,
+      MergerReportTool.Name -> MergerReportTool,
+      MergerRequestTool.Name -> MergerRequestTool,
+      // worktree_context (worktree-merger delivery, Priority D): read-only
+      // full-context assembly for one managed workspace (summary-first sections
+      // + paginated mail, explicit missing ranges per section). Authorization =
+      // the merger tool mount face (buildAllowedToolSet tail, same slot as
+      // merger_report) + RootOrchestrationTools (main-agent face) + the in-tool
+      // identity refusal (anything that is neither merger-mode nor root is
+      // fail-closed, MergerRequestTool precedent); a recorded merger is scoped
+      // to its own repository inside the tool.
+      WorktreeContextTool.Name -> WorktreeContextTool,
+      // workspace_summary (worktree-merger delivery, Priority E): the main
+      // agent's per-project coordination picture (workspace facts, pending
+      // merge requests with origins, advisor suggestions with states, merger
+      // initialization) plus the dismiss-suggestion action. Authorization =
+      // RootOrchestrationTools (mount face) + RootExclusiveTools (declaration-
+      // escape prevention) + the in-tool root identity refusal (MergerRequestTool
+      // precedent). The advisor itself never merges; this is a read face with
+      // one dismissal write into the advisor's own store.
+      WorkspaceSummaryTool.Name -> WorkspaceSummaryTool,
       // TaskSearch（task-rag 批 #1227 / §Batch 7）：任务语义检索（Nebula 面，
       // 只读）——embedding 余弦 top-k + 词法降级 + 可选 Jev 重排。授权面 =
       // RootOrchestrationTools 单点 + RootExclusiveTools 防声明逃逸；插件白名单

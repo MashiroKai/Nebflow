@@ -1,3 +1,4 @@
+import { renderProviderFailureStatus } from './providerFailureStatus.js';
 // bgAgentPopup.js — Live message viewer for background sub-agents.
 //
 // When an agent uses the Delegate/SubTask tool, sub-agent events arrive with
@@ -433,6 +434,7 @@ function ensureStepView(sessionId) {
   const view = new ChatView('bgagent-' + sessionId, fakeDom);
   view.mounted = true;
   view.sessionId = sessionId;
+  renderProviderFailureStatus(view, state.freezeDigest, id => openStepPopup(id));
   // （c）面（作者 2026-10-08 裁定 · 定向重开）：subagent 弹窗的**在飞过程行**走
   // 9.19 裸行形态——turn-line 剧场（workline 单行呈现 + 过程卡预 tucked，10-03
   // stream-ux）只属主窗。弹窗在飞 = thinking 气泡裸流（§③ 5 行窗上限照钉）+
@@ -770,6 +772,9 @@ onMessage('usageUpdate', () => { if (popupOverlay) renderModelBadge(); });
 onMessage('done', () => { if (popupOverlay) renderModelBadge(); });
 // main.js 保存 modelOptions；等同一帧的所有监听器执行后再读取，避免打开时选项迟到而不刷新。
 onMessage('modelOptions', () => { queueMicrotask(() => { if (popupOverlay) renderModelBadge(); }); });
+onMessage('sessionModelSet', (msg) => {
+  if (popupOverlay && msg.sessionId === currentStepId) queueMicrotask(() => renderModelBadge());
+});
 
 // ── WS event interception ────────────────────────────────
 
@@ -1222,7 +1227,8 @@ function renderModelSwitch() {
   if (!el) return;
   const live = currentStepId ? state.sessionModelInfo[currentStepId]?.model : null;
   const cfg = popupModelCfg || {};
-  const current = live || cfg.current || cfg.preferred || '';
+  const selected = state.sessionModelSelections?.[currentStepId];
+  const current = selected !== undefined ? selected : (live || cfg.current || cfg.preferred || '');
   const refs = (state.allModelRefs || []).slice();
   if (current && !refs.includes(current)) refs.unshift(current);
   const sig = current + '|' + refs.join(',');
@@ -1249,12 +1255,8 @@ function renderModelSwitch() {
     const v = el.value || '';
     if (!currentStepId) return;
     sendWs({ type: 'setSessionModel', sessionId: currentStepId, modelRef: v || null });
-    // 乐观反馈（权威 live 值随下一 turn 的 modelChanged 帧覆盖）：
-    if (v) {
-      const prev = state.sessionModelInfo[currentStepId] || {};
-      state.sessionModelInfo[currentStepId] = { ...prev, model: v };
-    }
-    renderModelBadge();
+    // Wait for the server acknowledgement; selecting is not a retry.
+    el.value = current;
   };
 }
 

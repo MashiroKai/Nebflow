@@ -417,6 +417,19 @@ class SessionStore(
   private val pendingMsgs: Ref[IO, Map[String, List[Message]]] =
     Ref.unsafe[IO, Map[String, List[Message]]](Map.empty)
   private val msgFlushDelayMs: Long = 2000L
+  private val messageWriteGateRef: Ref[IO, Option[Semaphore[IO]]] = Ref.unsafe(None)
+  private def messageWriteGate: IO[Semaphore[IO]] =
+    messageWriteGateRef.get.flatMap {
+      case Some(gate) => IO.pure(gate)
+      case None => Semaphore[IO](1).flatMap(fresh =>
+        messageWriteGateRef.modify {
+          case Some(existing) => (Some(existing), existing)
+          case None => (Some(fresh), fresh)
+        })
+    }
+
+  // Test-only scheduling seam, invoked while the message-write gate is held.
+  private[core] var beforeDirtyMessageWrite: String => IO[Unit] = _ => IO.unit
 
   private val msgFlushFiber: Ref[IO, Option[cats.effect.kernel.Fiber[IO, Throwable, Unit]]] =
     Ref.unsafe[IO, Option[cats.effect.kernel.Fiber[IO, Throwable, Unit]]](None)
@@ -786,9 +799,12 @@ class SessionStore(
     }
 
   private def saveSessionMessages(id: String, msgs: List[Message]): IO[Unit] =
+    messageWriteGate.flatMap(_.permit.use(_ => saveSessionMessagesLocked(id, msgs)))
+
+  private def saveSessionMessagesLocked(id: String, msgs: List[Message]): IO[Unit] =
     // Invalidate pending debounce entry so loadSessionMessages reads the fresh disk state.
-    dirtyMsgSessions.update(_ - id) *> pendingMsgs.update(_ - id) *>
-      IO.delay(msgs.asJson.noSpaces).flatMap(jsonStr => AtomicJson.write(sessionFile(id), jsonStr))
+    IO.delay(msgs.asJson.noSpaces).flatMap(jsonStr => AtomicJson.write(sessionFile(id), jsonStr)) *>
+      dirtyMsgSessions.update(_ - id) *> pendingMsgs.update(_ - id)
 
   private def saveIndex: IO[Unit] =
     indexRef.get.flatMap { case (activeId, sessions, folders) =>
@@ -833,19 +849,19 @@ class SessionStore(
    */
   def saveMessagesForSession(targetId: String, msgs: List[Message]): IO[Unit] =
     val now = System.currentTimeMillis()
-    indexRef
-      .modify { case (activeId, sessions, folders) =>
-        val updated = sessions.map(s => if s.id == targetId then s.copy(updatedAt = now) else s)
-        ((activeId, updated, folders), activeId)
-      }
-      .flatMap { activeId =>
-        val updateRef = if targetId == activeId then activeMessagesRef.set(msgs) else IO.unit
-        updateRef *>
-          pendingMsgs.update(_.updated(targetId, msgs)) *>
-          dirtyMsgSessions.update(_ + targetId) *>
-          notifySessionChanged(targetId) *>
-          scheduleMsgFlush
-      }
+    messageWriteGate.flatMap(_.permit.use { _ =>
+      indexRef
+        .modify { case (activeId, sessions, folders) =>
+          val updated = sessions.map(s => if s.id == targetId then s.copy(updatedAt = now) else s)
+          ((activeId, updated, folders), activeId)
+        }
+        .flatMap { activeId =>
+          val updateRef = if targetId == activeId then activeMessagesRef.set(msgs) else IO.unit
+          updateRef *>
+            pendingMsgs.update(_.updated(targetId, msgs)) *>
+            dirtyMsgSessions.update(_ + targetId)
+        }
+    }) *> notifySessionChanged(targetId) *> scheduleMsgFlush
   end saveMessagesForSession
 
   /**
@@ -865,20 +881,26 @@ class SessionStore(
    * 零调用（行为零漂移）。崩溃语义见 spec §D3 崩溃窗口分析：读者见旧或见新。
    */
   def durableSwapMessages(targetId: String, msgs: List[Message]): IO[Unit] =
+    messageWriteGate.flatMap(_.permit.use { _ =>
     val now = System.currentTimeMillis()
     indexRef.get.flatMap { case (activeId, sessions, folders) =>
       val updated = sessions.map(s => if s.id == targetId then s.copy(updatedAt = now) else s)
       val updateRef = if targetId == activeId then activeMessagesRef.set(msgs) else IO.unit
       IO.delay(msgs.asJson.noSpaces).flatMap { jsonStr =>
-        updateRef *>
-          // 取消在队 debounce 项：换入写取代之（在队旧列表迟到 flush 会回写覆盖）
+        // Do not discard the last queued snapshot until the durable replacement
+        // succeeds; a failed write must not erase the recovery source in memory.
+        IO.blocking {
+          AtomicJson.writeSyncDurable(sessionFile(targetId), jsonStr)
+          AtomicJson.forceParentDir(sessionFile(targetId))
+        } *>
+          updateRef *>
           dirtyMsgSessions.update(_ - targetId) *>
           pendingMsgs.update(_ - targetId) *>
-          IO.blocking(AtomicJson.writeSyncDurable(sessionFile(targetId), jsonStr)) *>
           indexRef.set((activeId, updated, folders)) *>
           notifySessionChanged(targetId)
       }
     }
+    })
   end durableSwapMessages
 
   def flushIndex: IO[Unit] = saveIndex
@@ -1999,6 +2021,7 @@ class SessionStore(
     (IO.sleep(msgFlushDelayMs.millis) *> runMsgFlush()).start.flatMap(fiber => msgFlushFiber.set(Some(fiber)))
 
   private def flushOneDirtyMsg: IO[Option[String]] =
+    messageWriteGate.flatMap(_.permit.use { _ =>
     dirtyMsgSessions
       .modify { set =>
         set.headOption match
@@ -2008,10 +2031,13 @@ class SessionStore(
       .flatMap {
         case Some(sid) =>
           pendingMsgs.get.flatMap { msgs =>
-            pendingMsgs.update(_ - sid) *> saveSessionMessages(sid, msgs.getOrElse(sid, Nil)).as(Some(sid))
+            (beforeDirtyMessageWrite(sid) *>
+              saveSessionMessagesLocked(sid, msgs.getOrElse(sid, Nil)).as(Some(sid)))
+              .handleErrorWith(e => dirtyMsgSessions.update(_ + sid) *> IO.raiseError(e))
           }
         case None => IO.pure(None)
       }
+    })
 
   private def drainDirtyMsgs: IO[Unit] =
     flushOneDirtyMsg
@@ -2019,10 +2045,11 @@ class SessionStore(
         case Some(_) => drainDirtyMsgs
         case None => IO.unit
       }
-      .handleErrorWith(e => logger.warn(s"Message flush failed: ${e.getMessage}"))
 
   private def runMsgFlush(): IO[Unit] =
-    msgFlushFiber.set(None) *> drainDirtyMsgs *> dirtyMsgSessions.get.flatMap { remaining =>
+    msgFlushFiber.set(None) *>
+      drainDirtyMsgs.handleErrorWith(e => logger.warn(s"Message flush failed: ${e.getMessage}")) *>
+      dirtyMsgSessions.get.flatMap { remaining =>
       if remaining.nonEmpty then scheduleMsgFlush else IO.unit
     }
 

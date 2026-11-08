@@ -128,8 +128,7 @@ class DelegateJudgeObserveSpec extends CatsEffectSuite:
       taskBrief = "brief",
       resultText = "result",
       gitDigest = "",
-      selfReport = None,
-      mergeRound = false
+      selfReport = None
     )
 
   test("smallJudgeVerdict with no candidates anywhere ⇒ None (empty candidate chain WARN path), zero HTTP") {

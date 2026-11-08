@@ -54,7 +54,11 @@ class DualModeBriefInjectionSpec extends FunSuite:
       injectedBlock = "<injected-plugins>x</injected-plugins>",
       dispatcherDiscipline = None
     )
-    assertEquals(viaNone, viaDefault, "None must be byte-identical to the default assembly (kernel = current behaviour, byte-stable)")
+    assertEquals(
+      viaNone,
+      viaDefault,
+      "None must be byte-identical to the default assembly (kernel = current behaviour, byte-stable)"
+    )
   }
 
   test("I3 零交叉泄漏：kernel 形态 brief 不含任何 dispatcher 模式文本") {
@@ -66,5 +70,14 @@ class DualModeBriefInjectionSpec extends FunSuite:
     )
     assert(!brief.contains("Dispatcher mode"), "no dispatcher seat text may leak into a kernel/未判定 brief")
     assert(!brief.contains("pure orchestration"), "the doctrine header must not appear in a kernel brief")
+  }
+
+  test("merger brief replaces development reporting with the persistent integration role") {
+    val role = nebflow.prompts.PromptCatalog.MergerRole
+    val brief =
+      DelegateTool.assembleBrief("[workspace] /tmp/ws", None, "Inspect authorized requests", "", reportLine = role)
+    assert(brief.contains(role))
+    assert(!brief.contains(DelegateTool.BriefReportLine))
+    assert(brief.indexOf(role) < brief.indexOf("Inspect authorized requests"))
   }
 end DualModeBriefInjectionSpec

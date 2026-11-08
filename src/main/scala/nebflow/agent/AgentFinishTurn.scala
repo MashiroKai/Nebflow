@@ -39,8 +39,10 @@ private[agent] object AgentFinishTurn:
     //     事件序随主链真实序（决策先于批，pilogic 循环序批先于决策——映射差异 D-A 记录）。──
     val piBranch = PiLoopWiring.classifyLlmComplete(state, result)
     if piBranch != "tool-batch" then
-      PiLoopWiring.bridge(state, state.pilogicLedger)((ev, d) =>
-        logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, ev, d))
+      PiLoopWiring
+        .bridge(state, state.pilogicLedger)((ev, d) =>
+          logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, ev, d)
+        )
         .branchTurnEnd(state.execution.currentTurnId, piBranch)
     // Single-stage compaction (2026-08-31 redesign): the former Save stage is
     // gone — compaction only compresses. Every pending compaction is a
@@ -105,6 +107,8 @@ private[agent] object AgentFinishTurn:
           result.model
         )
     else handleEmptyResponse(agentDef, resources, depth, parentRef, state, replyTo, result)
+    end if
+  end handleLlmCompleteBranch
 
   // ============================================================
   // Finish turn
@@ -522,12 +526,13 @@ private[agent] object AgentFinishTurn:
                     //     （RunEnded 审计行 + run-ended KernelEvent + 账本关 run）。──
                     val piLedgerDone =
                       if updatedState.pilogicLedger.runId.nonEmpty then
-                        PiLoopWiring.bridge(updatedState, updatedState.pilogicLedger)((ev, d) =>
-                          logAgentEvent(agentDef, depth, updatedState.sessionId, updatedState.sessionName, ev, d))
+                        PiLoopWiring
+                          .bridge(updatedState, updatedState.pilogicLedger)((ev, d) =>
+                            logAgentEvent(agentDef, depth, updatedState.sessionId, updatedState.sessionName, ev, d)
+                          )
                           .runEnd("completed", updatedState.pilogicLedger)
                       else updatedState.pilogicLedger
-                    idle(agentDef, resources, depth, parentRef,
-                      updatedState.copy(pilogicLedger = piLedgerDone))
+                    idle(agentDef, resources, depth, parentRef, updatedState.copy(pilogicLedger = piLedgerDone))
                 }
             )
       yield result
@@ -687,9 +692,7 @@ private[agent] object AgentFinishTurn:
             )
           )
         else IO.unit
-      val immMessages = immInputs.map(imm =>
-        immInputToMessage(imm)
-      )
+      val immMessages = immInputs.map(imm => immInputToMessage(imm))
       val messagesWithImmediate = newMessages ++ immMessages
       val updatedState = state
         .copy(execution =
@@ -709,6 +712,12 @@ private[agent] object AgentFinishTurn:
         )
         .withNextLoopTurn // Block 3：turn 末注入 = 新 turn（整批共享同一 turn）
       for
+        _ <- InputLanding.checkpointProducerInputs(
+          resources,
+          state.sessionId,
+          messagesWithImmediate,
+          immInputs.flatMap(_.clientMessageId).toSet
+        )
         _ <- roundCompleteIO
         // F2: keep the disk snapshot in sync after the drain (injected input gone).
         _ <- persistQueues(state.sessionId, updatedState.execution)

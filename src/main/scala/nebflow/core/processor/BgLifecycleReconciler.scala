@@ -119,6 +119,7 @@ object BgLifecycleReconciler:
   )
 
   object Params:
+
     def fromDefaults: Params =
       Params(
         baselineWindowMs = Defaults.BgLifecycleBaselineWindowMs,
@@ -221,8 +222,10 @@ object BgLifecycleReconciler:
             if preFrozen.baselineMs > 0 then preFrozen.baselineMs * p.escalateBaselineFactor
             else Long.MaxValue
           if idleMs > escalateIdleMs then
-            (preFrozen.copy(suspectSinceMs = 0L, nudges = 0, lastNudgeAtMs = 0L),
-              List(Escalate(t.jobId, t.sessionId, t.description, idleMs, now)))
+            (
+              preFrozen.copy(suspectSinceMs = 0L, nudges = 0, lastNudgeAtMs = 0L),
+              List(Escalate(t.jobId, t.sessionId, t.description, idleMs, now))
+            )
           else if idleMs > suspectIdleMs then
             if preFrozen.suspectSinceMs == 0L then
               (preFrozen.copy(suspectSinceMs = now), List(MarkSuspect(t.jobId, now)))
@@ -235,11 +238,15 @@ object BgLifecycleReconciler:
                 preFrozen.nudges >= p.maxNudges &&
                   now >= preFrozen.lastNudgeAtMs + nudgeDelayMs(p.maxNudges, p)
               if escalateByNudges then
-                (preFrozen.copy(suspectSinceMs = 0L, nudges = 0, lastNudgeAtMs = 0L),
-                  List(Escalate(t.jobId, t.sessionId, t.description, idleMs, now)))
+                (
+                  preFrozen.copy(suspectSinceMs = 0L, nudges = 0, lastNudgeAtMs = 0L),
+                  List(Escalate(t.jobId, t.sessionId, t.description, idleMs, now))
+                )
               else if nudgeDue && !stormActive then
-                (preFrozen.copy(nudges = attempt, lastNudgeAtMs = now),
-                  List(Nudge(t.jobId, t.sessionId, t.description, attempt, now)))
+                (
+                  preFrozen.copy(nudges = attempt, lastNudgeAtMs = now),
+                  List(Nudge(t.jobId, t.sessionId, t.description, attempt, now))
+                )
               else
                 // 未到期，或 429 风暴抑制（徽标照刷：BadgeSync 每拍恒发）。
                 (preFrozen, Nil)
@@ -248,6 +255,7 @@ object BgLifecycleReconciler:
               if t.rowHealth == BgHealth.Suspect then List(ProgressReset(t.jobId, now))
               else Nil
             (preFrozen.copy(suspectSinceMs = 0L, nudges = 0, lastNudgeAtMs = 0L), acts)
+          end if
 
       acts.foreach(actions += _)
       nextObs += (t.jobId -> oNext)
@@ -317,17 +325,19 @@ object BgLifecycleReconciler:
         p = Params.fromDefaults
         // 等待型任务才入健康轨：persistent=true（服务型 server）与 waitingFor 同
         // 过滤——它的完成本就不通知任何等待方，健康轨的「等它的人可见」语义不适用。
-        views = tasks.filterNot(_.persistent).map(t =>
-          TaskView(
-            t.jobId,
-            t.sessionId,
-            t.description,
-            t.startedAtMs,
-            lineCounts.getOrElse(t.jobId, 0L),
-            t.lastActivityMs,
-            BgHealth.of(t)
+        views = tasks
+          .filterNot(_.persistent)
+          .map(t =>
+            TaskView(
+              t.jobId,
+              t.sessionId,
+              t.description,
+              t.startedAtMs,
+              lineCounts.getOrElse(t.jobId, 0L),
+              t.lastActivityMs,
+              BgHealth.of(t)
+            )
           )
-        )
         snap <- observations.get
         (actions, next) = scanCore(views, snap, now, p, storm)
         _ <- observations.set(next)
@@ -345,19 +355,21 @@ object BgLifecycleReconciler:
       if done then IO.unit
       else
         bootstrapped.set(true) *>
-          BgTaskLedger.allEscalations.flatMap { rows =>
-            rows.traverse_ { case (sessionId, e) =>
-              BgTaskRegistry.updateHealth(e.jobId, BgHealth.Escalated, e.recordedAtMs).flatMap {
-                case true =>
-                  BgTaskRegistry.markEscalationsUnread(Set(e.jobId)) *>
-                    logger.warn(
-                      s"[bg-lifecycle-escalated] rebuilt after restart: job=${e.jobId} " +
-                        s"session=$sessionId (escalatedAt=${e.recordedAtMs})"
-                    )
-                case false => IO.unit
+          BgTaskLedger.allEscalations
+            .flatMap { rows =>
+              rows.traverse_ { case (sessionId, e) =>
+                BgTaskRegistry.updateHealth(e.jobId, BgHealth.Escalated, e.recordedAtMs).flatMap {
+                  case true =>
+                    BgTaskRegistry.markEscalationsUnread(Set(e.jobId)) *>
+                      logger.warn(
+                        s"[bg-lifecycle-escalated] rebuilt after restart: job=${e.jobId} " +
+                          s"session=$sessionId (escalatedAt=${e.recordedAtMs})"
+                      )
+                  case false => IO.unit
+                }
               }
             }
-          }.handleErrorWith(e => logger.warn(s"BgLifecycleReconciler escalation rebuild failed: ${e.getMessage}"))
+            .handleErrorWith(e => logger.warn(s"BgLifecycleReconciler escalation rebuild failed: ${e.getMessage}"))
     }
 
   /** 决策执行：行写缝 / 催注直投 / 升级三腿 / 徽标对账。全部 best-effort（失败只 WARN）。 */
@@ -375,7 +387,9 @@ object BgLifecycleReconciler:
         BgTaskRegistry.recordActivity(jobId, atMs).void
 
       case MarkSuspect(jobId, atMs) =>
-        logger.info(s"[bg-lifecycle] job=$jobId: idle past suspect threshold (max(baseline×N, floor)) — yellow badge") *>
+        logger.info(
+          s"[bg-lifecycle] job=$jobId: idle past suspect threshold (max(baseline×N, floor)) — yellow badge"
+        ) *>
           BgTaskRegistry.updateHealth(jobId, BgHealth.Suspect, atMs).void
 
       case ProgressReset(jobId, atMs) =>
@@ -395,7 +409,9 @@ object BgLifecycleReconciler:
                 eventType = "nudge",
                 payload = nudgePayload(jobId, description, attempt),
                 correlationId = Some(s"bg-lifecycle-nudge-$jobId-$attempt")
-              )).handleErrorWith(e => logger.warn(s"BgLifecycleReconciler: nudge to $sessionId failed: ${e.getMessage}"))
+              )).handleErrorWith(e =>
+                logger.warn(s"BgLifecycleReconciler: nudge to $sessionId failed: ${e.getMessage}")
+              )
           case None =>
             // 属主会话已不在册（收殓/重启窗）：提醒无从投递——徽标仍可见，WARN 留痕。
             logger.warn(
@@ -408,8 +424,8 @@ object BgLifecycleReconciler:
 
   /**
    * 升级三腿（执行面）：① 红徽幂等戳（updateHealth(escalated)，保留首次
-   * escalatedAtMs——重复升级零漂移）② 编排者通知（root 活投 / 持久收件箱补投，
-   * MergeQueue owner-gone 同款路由；投递路由决定 unread 记账）③ 审计落盘
+   * escalatedAtMs——重复升级零漂移）② 编排者通知（root 活投 / 持久收件箱补投
+   * 路由；投递路由决定 unread 记账）③ 审计落盘
    * （BgTaskLedger kind="escalation"，§8-R2）+ 响亮 WARN。仍不杀。
    */
   private def escalate(
@@ -432,7 +448,9 @@ object BgLifecycleReconciler:
         .flatMap { rootId =>
           if rootId.trim.isEmpty then
             BgTaskRegistry.markEscalationsUnread(Set(jobId)) *>
-              logger.warn(s"[bg-lifecycle-escalated] no responsible session for job=$jobId — notice dropped with this line")
+              logger.warn(
+                s"[bg-lifecycle-escalated] no responsible session for job=$jobId — notice dropped with this line"
+              )
           else
             val event = AgentCommand.ExternalEvent(
               source = "bg-lifecycle",

@@ -7,11 +7,8 @@
 //     （任务＋描述＋状态＋执行器），卡渲染走 **fmNodeCard 单源拆出件**（与主图同一
 //     渲染件，禁复制双权威）。数据走 delegateChainStub.getChainByTask 读取口——
 //     N1 per-task 读面未落 ⇒ 查无链时 fail-soft 态亮 §16 键 7（行保留可重试）。
-//   - S11：结构总视图 = worktree 座（spawn 行 branch/worktree/cwd 投影）＋ FIFO
-//     合并泳道（mergeQueueFifo readyAt↑ 单点已钉）＋各 delegate 链卡。头 = §16 键 3、
-//     泳道头 = 键 4、座标 = 键 5。前端**零派生第二权威**：排序单点 = stub
-//     mergeQueueFifo（视图投影；真源排序在引擎 MergeQueue，REST 到位后 projection
-//     改透传）。
+//   - S11：结构总视图 = worktree 座（spawn 行 branch/worktree/cwd 投影）＋各
+//     delegate 链卡。头 = §16 键 3、座标 = 键 5。
 //   - 顶栏返回钮 = §16 键 2「返回任务列表」（关 projects 页签 = 回任务列表面板）。
 //
 // 纪律：文案只消费 §16 七键＋§3.3 复用清单；其余显示面全部数据原文（taskId/branch/
@@ -25,7 +22,7 @@ import { t } from './i18n.js';
 import { createIconsIn } from './utils.js';
 import { NODE_STATUS_CLS } from './nodeData.js';
 import {
-  listDelegateRows, getChainByTask, listDelegateChildren, mergeQueueFifo, verdictToStatus,
+  listDelegateRows, getChainByTask, listDelegateChildren, verdictToStatus,
 } from './delegateChainStub.js';
 import { nodeHtml } from './fmNodeCard.js';
 import { executorIcon } from './executorIcons.js';
@@ -101,15 +98,6 @@ function executorHeadHtml(executor) {
   const id = String(executor || '');
   if (!id || id === 'nebflow') return '';
   return `<span class="delegate-card-executor" title="${esc(id)}">${executorIcon(id, 12)}</span>`;
-}
-
-/** 待合并排队名次 chip（九点②④⑧：合并态只显名次）：head 行内「待合并」旁的
- *  `#N`。位次 = 引擎 G5 mergeQueuePos.position 原样（透传臂）；回落臂（行无该键、
- *  链行投影 FIFO 序）由调用方给 rankOf 回落值。缺位次 = ''（🔴 禁派生数字）。 */
-function queueRankHtml(rank) {
-  const pos = Number(rank || 0);
-  if (!Number.isInteger(pos) || pos < 1) return '';
-  return `<span class="delegate-card-rank" title="#${pos}">#${pos}</span>`;
 }
 
 /** ChainNode/行 → fm-node 卡载荷（fmNodeCard.nodeHtml 消费形）。执行器图标进
@@ -292,7 +280,7 @@ function renderTaskBody(pane, key, opts = {}) {
 // ── S11 结构总视图 ───────────────────────────────────────────────────────
 
 /**
- * 打开 delegate 结构总视图（S11 改义面）：worktree 座 ＋ FIFO 合并泳道 ＋ 各
+ * 打开 delegate 结构总视图（S11 改义面）：worktree 座 ＋ 各
  * delegate 链卡。数据 = listDelegateRows × getChainByTask 投影（stub 读取口）。
  * 视图重设计实施批（2026-10-21）：S11 平铺面由**全景视图**（delegatePanoramaView）
  * 承接——本函数保留为兼容别名（既有入口零断链），渲染体 = 全景组件（入口统一：
@@ -386,32 +374,6 @@ function renderStructureBody(pane) {
     body.appendChild(section);
   }
 
-  // ── 合并态（用户九点②④⑧ · 2026-10-09）：**FIFO 泳道撤销、不连线**——合并
-  //  结构不再整段陈列（无泳道/无连线/无 branch·readyAt 明细），唯一可见面 =
-  //  待合并链卡旁的排队名次 chip（#N）。位次取值两臂（与旧泳道同源，零新判据）：
-  //    G5 透传臂：行内 mergeQueuePos.position（引擎闸单点判据，🔴 前端零派生）；
-  //    回落臂：行无该键（旧引擎/夹具）→ 既有链行投影 mergeQueueFifo（readyAt ↑）
-  //    的序位（旧泳道回落臂同款 `i+1`，语义不变）。
-  const rankByDelegate = new Map(); // delegateId → position
-  const queuedRows = rows.filter((r) => r && r.mergeQueuePos);
-  for (const r of queuedRows) {
-    const id = String(r.delegateId || '');
-    const pos = typeof r.mergeQueuePos.position === 'number' ? r.mergeQueuePos.position : 0;
-    if (id && pos > 0) rankByDelegate.set(id, pos);
-  }
-  if (rankByDelegate.size === 0) {
-    // 回落臂 = 既有链行投影全量合并后 mergeQueueFifo 单点（readyAt ↑，与旧泳道同
-    // 序——跨链全局序位，非逐链局部序）。
-    const merged = [];
-    for (const p of projections) {
-      if (p.chain && Array.isArray(p.chain.mergeQueue)) merged.push(...p.chain.mergeQueue);
-    }
-    mergeQueueFifo(merged).forEach((q, i) => {
-      const id = String(q.delegateId || '');
-      if (id && !rankByDelegate.has(id)) rankByDelegate.set(id, i + 1);
-    });
-  }
-
   // ── 各 delegate 链卡（fmNodeCard 单源；点击 → L1 该 delegate 流程视图）──
   // 两层架构批（§D WF-05）：**三段分组**取代过渡期 project 参数分组——组序 = 生命
   // 周期（在跑 pending/running/blocked → 待合并 ready-to-merge → 已完成·未归档暂驻
@@ -447,12 +409,9 @@ function renderStructureBody(pane) {
       holder.className = 'delegate-chain-card';
       holder.innerHTML = nodeHtml(payload, { x: 0, y: 0, h: 0 }, 0, null, {
         plain: true,
-        // head 行首 = 执行器徽标（内部执行器去重留空，九点②）＋ 待合并名次 chip
-        // （九点②④⑧：合并态只显名次，位次 = rankByDelegate 两臂）＋ 子代理/flow
+        // head 行首 = 执行器徽标（内部执行器去重留空，九点②）＋ 子代理/flow
         // 徽标（§D：与 §B 行内徽标同件同语义）。
-        headPrefix: executorHeadHtml(r.executor) +
-          (r.status === 'ready-to-merge' ? queueRankHtml(rankByDelegate.get(String(r.delegateId || ''))) : '') +
-          cardBadgesHtml(r),
+        headPrefix: executorHeadHtml(r.executor) + cardBadgesHtml(r),
         subText: String(r.project || ''),
       });
       const card = holder.firstElementChild;
@@ -467,7 +426,7 @@ function renderStructureBody(pane) {
             });
           });
         } else {
-          // G7：外部行无子结构下钻——本体＋合并结构已在上文座/泳道，链卡零入口。
+          // G7：外部行无子结构下钻——本体＋座位已在上文，链卡零入口。
           card.setAttribute('data-external-card', '1');
         }
         list.appendChild(card);

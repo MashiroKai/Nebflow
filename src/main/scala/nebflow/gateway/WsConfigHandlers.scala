@@ -460,16 +460,15 @@ private[gateway] object WsConfigHandlers:
         case Some(ref) =>
           sharedResources.providerRegistry.getCandidateForRef(ref).flatMap {
             case Some(candidate) =>
-              sharedResources.sessionModelOverrides.update(_ + (sessionId -> candidate)) *>
-                sessionStore
-                  .updateSessionModel(sessionId, Some(ref))
-                  .as(Right(s"${candidate.providerId}/${candidate.model}"))
+              sessionStore.updateSessionModel(sessionId, Some(ref)) *>
+                sharedResources.sessionModelOverrides.update(_ + (sessionId -> candidate)) *>
+                IO.pure(Right(s"${candidate.providerId}/${candidate.model}"))
             case None =>
               IO.pure(Left(s"Unknown model: $ref"))
           }
         case None =>
-          sharedResources.sessionModelOverrides.update(_ - sessionId) *>
-            sessionStore.updateSessionModel(sessionId, None).as(Right("default"))
+          sessionStore.updateSessionModel(sessionId, None) *>
+            sharedResources.sessionModelOverrides.update(_ - sessionId).as(Right("default"))
       ).flatMap {
         case Right(ref) =>
           // Notify agent actor of context window change for compaction threshold
@@ -479,7 +478,10 @@ private[gateway] object WsConfigHandlers:
                 ensureAgent(sessionId)(ref => ref ! AgentCommand.UpdateContextWindow(candidate.contextWindow))
               case None => IO.unit
           }
-          notifyAgent *> wsSend(io.circe.Json.obj("type" -> "sessionModelSet".asJson, "modelRef" -> ref.asJson))
+          notifyAgent *> wsSend(
+            io.circe.Json
+              .obj("type" -> "sessionModelSet".asJson, "sessionId" -> sessionId.asJson, "modelRef" -> ref.asJson)
+          )
         case Left(err) =>
           // 未走 ApiJson 信封助手:{type:error,message} 是通用错误帧族(type 值不同,不与 configUpdateFailed 收敛集混并),保持手写(2026-09-25)
           wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> err.asJson))

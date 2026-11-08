@@ -198,6 +198,8 @@ let pendingAltCallback = null;
  *   逐字不变）。与 confirmLabel 同款纪律：每个打开路径都重设（显隐 + 文案 +
  *   回调），定制态绝不残留到下一次弹窗。
  */
+export function canShowConfirm() { return !!state.dom?.deleteBox; }
+
 export function showConfirm(title, message, onConfirm, opts = {}) {
   const { modalBox, deleteBox, deleteTitle, deleteMsg, deleteConfirmBtn, modalOverlay } = state.dom;
   if (!deleteBox) { onConfirm?.(); return; }

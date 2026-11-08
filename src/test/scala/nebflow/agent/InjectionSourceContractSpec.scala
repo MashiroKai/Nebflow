@@ -57,12 +57,14 @@ class InjectionSourceContractSpec extends FunSuite:
     assert(open >= 0 && close > open, "INJECTED_SOURCE_LABELS 表体解析失败（不是对象字面量？）")
     injectedRowsJs.substring(open + 1, close)
 
-  /** 表内显式登记的 source key（`name: 'Label'`）。
+  /**
+   * 表内显式登记的 source key（`name: 'Label'`）。
    *
    *  外部注入统一通道批（2026-11-05）：解析面**扩展为同时认引号键**
-   *  （`'merge-queue': 'MergeQueue'`）——带连字符的 source 名不是合法 JS 标识符，
+   *  （如 `'frozen-waiting': 'FrozenWaiting'`）——带连字符的 source 名不是合法 JS 标识符，
    *  只能用引号键登记；旧解析器只认裸标识符键 ⇒ 这类登记对门禁**不可见**，
-   *  等于「登记了但门禁以为没登记」。判据（表项 ∪ 显式分支）不变，只放宽词的形态。 */
+   *  等于「登记了但门禁以为没登记」。判据（表项 ∪ 显式分支）不变，只放宽词的形态。
+   */
   private lazy val registeredSourceKeys: Set[String] =
     val keyRe: Regex =
       """(?m)(?:'([A-Za-z_][A-Za-z0-9_-]*)'|"([A-Za-z_][A-Za-z0-9_-]*)"|([A-Za-z_][A-Za-z0-9_]*))\s*:\s*'[^']*'""".r
@@ -124,12 +126,10 @@ class InjectionSourceContractSpec extends FunSuite:
         // 途径和蓝色气泡通知」）：可见性门 `visibleExternalEventSource` 从白名单翻成
         // 总函数后，这一族外部事件**首次**真的产生注入行 ⇒ 后端显式定名 + 前端
         // `INJECTED_SOURCE_LABELS` 同批显式登记（禁首字母大写兜底）。
-        //   merge-queue       SharedResources / MergeQueue 的放行·阻塞·属主失联通知
         //   bg-lifecycle      BgLifecycleReconciler 的后台任务生命周期催办
         //   waiting-dock-care TaskStuckWatcher 的等待坞超时升级
         //   chain-orphan      ProjectCrashRecovery 的孤儿链回收通报
         //   team              AgentActor.notifyEscalation 的团队错误升级链
-        "merge-queue",
         "bg-lifecycle",
         "waiting-dock-care",
         "chain-orphan",
@@ -160,9 +160,7 @@ class InjectionSourceContractSpec extends FunSuite:
       """(?m)(?:'([A-Za-z_][A-Za-z0-9_-]*)'|"([A-Za-z_][A-Za-z0-9_-]*)"|([A-Za-z_][A-Za-z0-9_]*))\s*:\s*'([^']*)'""".r
     val labels = labelRe
       .findAllMatchIn(sourceLabelTableBody)
-      .map(m =>
-        Option(m.group(1)).orElse(Option(m.group(2))).getOrElse(m.group(3)) -> m.group(4)
-      )
+      .map(m => Option(m.group(1)).orElse(Option(m.group(2))).getOrElse(m.group(3)) -> m.group(4))
       .toList
       .toMap
     assert(registeredSourceKeys.nonEmpty, "INJECTED_SOURCE_LABELS 为空表 —— 登记面被清空？")

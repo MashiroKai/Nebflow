@@ -370,6 +370,16 @@ object NodeEditTool extends Tool:
     if result.length > 200 then result.take(197) + "..." else result
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
+    val admitted =
+      if nebflow.core.delegate.DelegateSessions.isDelegateSession(ctx.sessionId) then
+        IO.blocking(nebflow.core.delegate.WorkspaceLedger.default.admit(ctx.sessionId.get, allowFrozen = false))
+      else IO.pure(Right(()))
+    admitted.flatMap {
+      case Left(error) => IO.pure(Left(ToolError(error)))
+      case Right(_) => callAdmitted(input, ctx)
+    }
+
+  private def callAdmitted(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val project = input("project").flatMap(_.asString)
     val nodename = input("nodename").flatMap(_.asString).getOrElse("")
     val task = input("task").flatMap(_.asString)
@@ -693,7 +703,8 @@ object NodeEditTool extends Tool:
             // 双模式批：分发器作用域判据（总闸开 ∧ 属主 delegate mode=dispatcher）——
             // 新建节点的 plugins 键改拒、引擎代行分配（§5.3）。
             val dispatcherScopeCreate =
-              nebflow.core.delegate.DelegateRegistry.modeFaceOf(ctx.sessionId)
+              nebflow.core.delegate.DelegateRegistry
+                .modeFaceOf(ctx.sessionId)
                 .contains(nebflow.core.delegate.DualModeConfig.ModeDispatcher)
             NodeTools.resolveRuntime(project, ctx).flatMap {
               case Left(err) => IO.pure(Left(ToolError(err)))
@@ -847,7 +858,8 @@ object NodeEditTool extends Tool:
                                         else
                                           nebflow.core.delegate.ChainStore
                                             .append(
-                                              nebflow.core.delegate.ChainStore.keyFor(None, ctx.sessionId.getOrElse("")),
+                                              nebflow.core.delegate.ChainStore
+                                                .keyFor(None, ctx.sessionId.getOrElse("")),
                                               "step-plugins",
                                               io.circe.Json.obj(
                                                 "nodeId" -> nodename.asJson,
@@ -861,7 +873,9 @@ object NodeEditTool extends Tool:
                                               IO(
                                                 nebflow.shared.NebflowLogger
                                                   .forName("nebflow.core.tools.node-edit")
-                                                  .warnSync(s"step-plugins chain line failed ($nodename): ${e.getMessage}")
+                                                  .warnSync(
+                                                    s"step-plugins chain line failed ($nodename): ${e.getMessage}"
+                                                  )
                                               )
                                       row *> dispatchFaceCheck(set.names).flatMap {
                                         case Left(err) => IO.pure(Left(ToolError(err)))
@@ -910,7 +924,7 @@ object NodeEditTool extends Tool:
 
     end if
 
-  end call
+  end callAdmitted
 
   /**
    * **闸 A** = 派发许可的**唯一**判定点（插件开关语义）。
@@ -1495,9 +1509,9 @@ object NodeEditTool extends Tool:
                       // 直接调用会阻塞 NodeEdit 工具 fiber（见 runDetached 注释）。
                       // merge 分流：合并节点创建时 in 引用已 failed 的
                       // 上游（创建顺序翻转后的合法形态）——failed 错误文本≠产物，不作输入
-                      // 投递，走 MergeNodePolicy 转 blocked 可见终态不悬挂（与 deliverFailed
-                      // 运行期路径同语义单点 mergeBlockedByUpstreamFailure）；非 merge 下游
-                      // 的 failed 错误投递语义保持不变。
+                      // 投递；节点保持 pending（barrier 被终态上游闸死的可见面由
+                      // barrier-blocked / mount-stalled 承担）。非 merge 下游的 failed
+                      // 错误投递语义保持不变。
                       NodeTools.runDetached(rt, s"deliver retained upstream results -> $nodeId")(
                         ins.traverse_ { upId =>
                           rt.store.findNode(upId).flatMap {
@@ -1506,8 +1520,7 @@ object NodeEditTool extends Tool:
                             case Some(up)
                                 if up.result.isDefined && up.status != NodeLifecycle.Blocked && NodeLifecycle.Terminal
                                   .contains(up.status) =>
-                              if s.nodes(nodeId).merge && up.status == NodeLifecycle.Failed then
-                                rt.engine.mergeBlockedByUpstreamFailure(s.nodes(nodeId), up, up.result.get)
+                              if s.nodes(nodeId).merge && up.status == NodeLifecycle.Failed then IO.unit
                               else rt.engine.deliverOutTo(up, nodeId, up.result.get)
                             case _ => IO.unit
                           }
@@ -2639,8 +2652,9 @@ object NodeEditTool extends Tool:
                                                             if appliedTask.exists(_.trim.nonEmpty) && fresh.in.isEmpty
                                                             then NodeLifecycle.Pending
                                                             else NodeLifecycle.Wiring
-                                                          s.copy(nodes =
-                                                            s.nodes.updated(
+                                                          s.copy(
+                                                            manualRecoveryNodes = s.manualRecoveryNodes - node.id,
+                                                            nodes = s.nodes.updated(
                                                               node.id,
                                                               fresh.copy(
                                                                 status = nextStatus,

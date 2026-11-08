@@ -907,9 +907,9 @@ object NodeTools:
   /**
    * P1 校验层①（spec §2.2，wf3 §3.7 护栏）：指向 merge 节点的 on-failed 边 → 硬拒
    * （NODE_MERGE_PASS_ONLY）。merge 触发语义 = 全部上游 completed（in-barrier）；
-   * 上游 failed 由 D5+MergeNodePolicy 转 blocked 可见终态——failed 门控入边与该语义
-   * 矛盾，创建/改接期 0 spawn 拒绝。运行期兜底（deliverFailed merge 分支与门控无关）
-   * 原样保留为纵深（覆盖校验生效前落盘的旧拓扑）。返回首个违规的错误文本。
+   * failed 门控入边与该语义矛盾，创建/改接期 0 spawn 拒绝（判据读存量节点的
+   * `merge` 标记——新建合并节点已被 NODE_MERGE_UNSUPPORTED 拒，本门守存量图）。
+   * 返回首个违规的错误文本。
    */
   def ensureMergePassOnly(rt: ProjectRuntime, edges: List[OutEdge]): IO[Option[String]] =
     edges
@@ -921,9 +921,9 @@ object NodeTools:
           case None => IO.pure(None)
           case Some(tid) =>
             rt.store.getNode(tid).map {
-              case Some(t) if MergeNodePolicy.isMerge(t) =>
+              case Some(t) if t.merge =>
                 Some(
-                  s"out edge '(failed)${e.to}' targets a merge node — on-failed edges into a merge node are rejected: a merge fires only when ALL upstreams complete, and upstream failure already converts it to a visible blocked state (D5). Use a pass-only edge, or signal a non-merge fallback node instead. (NODE_MERGE_PASS_ONLY)"
+                  s"out edge '(failed)${e.to}' targets a merge node — on-failed edges into a merge node are rejected: a merge fires only when ALL upstreams complete. Use a pass-only edge, or signal a non-merge fallback node instead. (NODE_MERGE_PASS_ONLY)"
                 )
               case _ => None
             }
@@ -1659,14 +1659,9 @@ object NodeTools:
     for
       s <- rt.store.snapshot
       arch <- rt.store.archiveSnapshot
-      // 🔴 Two-zone combined map, evaluated up here on purpose: the three merge-window
-      // derived batches below (`mergeQueueSlots` / `mergeQueuePositions` /
-      // `mergeVerdictGate`) MUST share one source with the mutex gate
-      // (`NodeEngine.mergeMutexHoldersOf`, which reads `store.combinedNodes`). Gate and
-      // payload holding different zones means the same node reports one rank through the
-      // gate and another through the payload. This value used to be evaluated inside the
-      // `yield` block, i.e. after the three call sites. Zero new IO: `s` and `arch` are
-      // already in hand above.
+      // 🔴 Two-zone combined map: the chain derivation below (`payloadChains`) reads the
+      // combined map so archived members keep counting toward chain membership (same source
+      // as `depsSatisfied`). Zero new IO: `s` and `arch` are already in hand above.
       combined = s.nodes ++ arch.nodes
       // 清场 c-①（清场误杀复盘）：running 节点携带 liveness
       // 字段——true = 有在飞执行 fiber（活会话，取消信号可达）；false = 无在飞
@@ -1682,35 +1677,12 @@ object NodeTools:
         .filter(_.status == NodeLifecycle.Running)
         .traverse(n => rt.engine.isRunning(n.id).map(alive => n.id -> alive))
         .map(_.toMap)
-      // 排队位次派生：纯函数、零副作用，与闸同一单点；
-      // 同键多项目（O-1）读数为显示面降级信号（键求值走进程内缓存，稳态零 git 调用）。
-      // 排队位次**显示槽**：与闸**同一判据**
-      // （mergeQueueHolders → MergeMutexPolicy.holders + verdict 准入过滤），只把持有者
-      // 富化成 {rank 依据(readyAt/createdAt), 是否真在临界区, 为何未点火}。
-      mergeQueueSlots = rt.engine.mergeQueueSlotsBatch(combined)
-      // 排队**位次**派生：纯函数、零副作用，真源 = SEM-2 次序键
-      // `rank=(readyAt,createdAt,id)`（[[MergeMutexPolicy.queuePosOf]] 单点）。与
-      // `mergeQueueSlots` 分工：后者 = 闸判据「谁挡着我」，本项 = 队列序「我排第几」。
-      mergeQueuePositions = rt.engine.mergeQueuePositionsBatch(combined)
-      // Verdict-gate visibility slot: a merge position
-      // held by the verdict gate produces NO `mergeQueue` slot at all, so the payload used
-      // to show `mergeQueuePos.position=1` with nobody listed anywhere — reading as "first
-      // in line and nobody blocks me" while an upstream verifier with a non-pass verdict is
-      // the real cause. This key lifts that state onto the payload face. Judging authority =
-      // the engine single point (`mergeVerdictGateBatch` -> `staleVerdictUps`, the very list
-      // the gate acts on) — 🔴 no frontend/dispatcher re-derivation, 🔴 no reading of the
-      // file ticket layer, 🔴 no replay from the event stream. Non-empty entries only ⇒
-      // unheld nodes are simply absent.
-      mergeVerdictGates <- rt.engine.mergeVerdictGateBatch(combined)
-      sameKeyForeignProjects <- rt.engine.sameKeyForeignProjectsNow
       // 链控三态读数（chains[] 的 status/pausedAt/cancelledAt 三键
       // 数据源）。**一次读**供整表消费（禁逐链读台账）；纯只读，不写台账、不登记任何号。
       ledgerState <- rt.store.chainLedgerStore.snapshot
     yield
       val now = System.currentTimeMillis()
       // 链派生（合并集分量）+ chainId 条件键注入 + chains 旁挂组装（同源单点）
-      // `combined` is evaluated in the for-comprehension above (two-zone map, shared by the
-      // three merge-derived batches).
       // chainmodel 批一 ①（判据同源收口）：旁挂判据由写死的「分量成员数 ≥2」改为判据单点
       // [[FlowMapStore.chainVisible]]（**声明链不论成员数都可见**、派生分量仍需 ≥2 成员
       // ——payload 零膨胀口径逐字保留），并保持既有「旁挂仅收含活动成员的链」约束。
@@ -1719,52 +1691,17 @@ object NodeTools:
       // 在工具面与事件面报出不同链号（① 的直接反例）。零新键、零形状变化。
       val chains = FlowMapStore.payloadChains(combined, s.nodes.keySet)
       val chainIdByNode = chains.flatMap(c => c.memberIds.map(_ -> c.id)).toMap
-      // 多链归属：仅 merge 节点、可达成员链数 ≥2 才有值（值 = 主链 id
-      // 首项 + 全量成员链；普通节点恒缺席 = 单值 chainId 语义不变）；派生与 chainId
-      // 同源（同一份 chains 分量表，禁双端二次派生）。
-      // chainmodel 批三 ②：同一单点（FlowMapStore.mergeChainAttrs）一次给出两值——
-      // 旧键 chainIds（所属链首项 + 全量成员链，语义逐字保留）与新键 mergeUpstreamChains
-      // （本次汇聚的上游链）；不再分别调用两个投影（禁同一节点算两遍入口可达分解）。
-      val mergeAttrsByNode = combined.values
-        .filter(_.merge)
-        .flatMap { n =>
-          FlowMapStore.mergeChainAttrs(combined, chains, n.id).map(n.id -> _)
-        }
-        .toMap
-      val chainIdsByNode = mergeAttrsByNode.map { case (id, a) => id -> a.chainIds }
-      val mergeUpstreamByNode = mergeAttrsByNode.map { case (id, a) => id -> a.upstreamChains }
       val nodes = selected.map { n =>
         val base = NodePayload.buildNodeJson(
           n,
           now,
           chainIdByNode.get(n.id),
-          chainIdsByNode.get(n.id),
-          // 排队位次条件键：判据**单点** = 引擎闸
-          // 同一函数（[[NodeEngine.mergeQueueHoldersBatch]] → [[NodeEngine.mergeQueueHolders]]
-          // → [[MergeMutexPolicy.holders]] + verdict 准入过滤）——🔴 禁前端/分发器复刻，
-          // 🔴 禁读文件票层，🔴 禁从事件流回放。只收非空项 ⇒ 未排队节点缺键。
-          mergeQueue = mergeQueueSlots.get(n.id),
-          // 排队位次条件键：判据**单点** = 引擎
-          // [[NodeEngine.mergeQueuePositionsBatch]] → [[MergeMutexPolicy.queuePosOf]]
-          // → [[MergeMutexPolicy.rankOf]]（SEM-2 次序真源）——🔴 禁前端/分发器复刻，
-          // 🔴 禁读文件票层，🔴 禁从事件流回放。只收非空项 ⇒ 未成队节点缺键。
-          mergeQueuePos = mergeQueuePositions.get(n.id),
-          // 同键多项目（O-1）当下读数：非空 ⇒ 前端按降级红线只渲染裸「排队中」不渲染
-          // 数字（🔴 禁编造数字）；空 ⇒ 位次可信。与既有两个 merge-queue 告警同源单点。
-          sameKeyProjects = sameKeyForeignProjects,
-          // chainmodel 批三 ② 新增键（本次汇聚的上游链；门控与 chainIds 同源，同缺席）
-          mergeUpstreamChains = mergeUpstreamByNode.get(n.id),
           // verifierRoute 条件键：判据**单点** =
           // NodePayload.verifierRouteInvalid（纯函数；「合法 fail 选通边」算面与运行期
           // NodeEngine.loopRouteTargetId 同源，🔴 禁前端/分发器复刻、禁第二处派生）。
           // 注入活动区快照 ⇒ 仅**拒绝态**的 verifier 带键（值 "lost"）；合法节点与
           // 全部 WS 事件写点（不注入）字段集字节级零漂移。
-          nodes = Some(s.nodes),
-          // Verdict-gate visibility slot: single point =
-          // NodeEngine.mergeVerdictGateBatch (pure read of the gate's own holder list) — 🔴
-          // no re-derivation, 🔴 no file ticket layer, 🔴 no event-stream replay. Only held
-          // positions carry the key; a normally queued position never does.
-          mergeVerdictGate = mergeVerdictGates.get(n.id)
+          nodes = Some(s.nodes)
         )
         liveness.get(n.id) match
           case Some(alive) => base.deepMerge(Json.obj("liveness" -> Json.fromBoolean(alive)))

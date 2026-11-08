@@ -67,7 +67,7 @@ class DispatchNotifyDeliveryTargetSpec extends CatsEffectSuite:
         failedWindowThreshold = 1000,
         windowMs = 0L,
         deliveryTarget = target.map(t =>
-          DispatchNotify.DeliveryTarget(t.label, text => delivered.update(_ :+ text).as(live))
+          DispatchNotify.DeliveryTarget(t.label, text => delivered.update(_ :+ text) *> t.deliver(text).map(_ && live))
         )
       )
       _ <- store.mutate(s => s.copy(nodes = s.nodes + ("n-fail" -> failureNode("n-fail", "FAIL")))).void
@@ -163,6 +163,70 @@ class DispatchNotifyDeliveryTargetSpec extends CatsEffectSuite:
         delivered.size >= 1 && deliveredAfter.size > delivered.size,
         s"R3: the delivery probe must re-run on the redelivery scan — first=${delivered.size} after=${deliveredAfter.size}"
       )
+  }
+
+  test("delivery exception stays unmarked and is retried after recovery") {
+    for
+      available <- Ref.of[IO, Boolean](false)
+      target = DispatchNotify.DeliveryTarget("creator", _ => available.get.flatMap {
+        case true => IO.pure(true)
+        case false => IO.raiseError(new RuntimeException("receiver write failed"))
+      })
+      rig <- mkRig("exception", Some(target), live = true)
+      _ <- rig.dn.notifyTerminal(failureNode("n-fail", "FAIL"), NotifyReason.Failed)
+      before <- rig.store.getNode("n-fail")
+      _ <- available.set(true)
+      count <- rig.dn.redeliver()
+      after <- rig.store.getNode("n-fail")
+      calls <- rig.delivered.get
+    yield
+      assertEquals(before.flatMap(_.notifySentAt), None)
+      assertEquals(count, 1)
+      assert(after.flatMap(_.notifySentAt).isDefined)
+      assertEquals(calls.size, 2)
+  }
+
+  test("empty recorded results are redelivered; absent results are not") {
+    for
+      rig <- mkRig("empty", Some(DispatchNotify.DeliveryTarget("creator", _ => IO.pure(true))), live = true)
+      _ <- rig.store.mutate(s => s.copy(nodes = Map(
+        "empty" -> failureNode("empty", "EMPTY").copy(result = Some("")),
+        "blank" -> failureNode("blank", "BLANK").copy(result = Some("  \n")),
+        "absent" -> failureNode("absent", "ABSENT").copy(result = None)
+      )))
+      count <- rig.dn.redeliver()
+      snapshot <- rig.store.snapshot
+    yield
+      assertEquals(count, 2)
+      assert(snapshot.nodes("empty").notifySentAt.isDefined)
+      assert(snapshot.nodes("blank").notifySentAt.isDefined)
+      assertEquals(snapshot.nodes("absent").notifySentAt, None)
+  }
+
+  test("legacy trigger exception does not acknowledge the result") {
+    val ws = os.temp.dir(prefix = "dn-trigger-error")
+    for
+      store <- FlowMapStore.open("trigger-error", ws.toString)
+      available <- Ref.of[IO, Boolean](false)
+      dn = new DispatchNotify(
+        store, ws.toString, "trigger-error",
+        escalate = (_, _) => IO.unit,
+        emitUpdated = _ => IO.unit,
+        trigger = _ => available.get.flatMap {
+          case true => IO.unit
+          case false => IO.raiseError(new RuntimeException("trigger failed"))
+        },
+        failedBudgetMax = 1000, failedWindowThreshold = 1000, windowMs = 0L
+      )
+      _ <- store.mutate(s => s.copy(nodes = Map("n-fail" -> failureNode("n-fail", "FAIL"))))
+      _ <- dn.notifyTerminal(failureNode("n-fail", "FAIL"), NotifyReason.Failed)
+      before <- store.getNode("n-fail")
+      _ <- available.set(true)
+      _ <- dn.redeliver()
+      after <- store.getNode("n-fail")
+    yield
+      assertEquals(before.flatMap(_.notifySentAt), None)
+      assert(after.flatMap(_.notifySentAt).isDefined)
   }
 
 end DispatchNotifyDeliveryTargetSpec

@@ -299,7 +299,7 @@ const GLOBAL_MSG_TYPES = new Set([
   // unmount 单点 / remount 单点 / 描述写穿 REST 腿，经同一 wsHub.broadcast 面）。🔴 必须入 GLOBAL
   // ——否则 :485-494 会把无 sessionId 的非 GLOBAL 帧当会话内事件 ⇒ setActiveView(primary)，
   // 把用户正在看的会话/面板视图抢走。
-  'projectCreated', 'projectArchived', 'projectUnmounted', 'projectRemounted', 'projectDescriptionUpdated',
+  'projectCreated', 'projectArchived', 'projectUnmounted', 'projectRemounted', 'projectDescriptionUpdated', 'workspaceLedgerUpdated', 'delegateFreezeDigest', 'delegateWakeResult',
   // 应用内工作区浏览器（workspace-picker Route C 兜底）响应帧：无 sessionId 的
   // 弹窗私有请求-响应。必须 GLOBAL——无 sessionId 时 GLOBAL 保视图不换（:457 语义），
   // TERMINAL 会把 activeView 换成 primary。

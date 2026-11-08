@@ -214,7 +214,7 @@ class DualModeToolFaceSpec extends FunSuite:
       modeJ.flatMap(_.asObject).flatMap(_("enum")).flatMap(_.asArray).map(_.toList.flatMap(_.asString)).getOrElse(Nil)
     assertEquals(
       enumVals,
-      List("kernel", "dispatcher"),
+      List("kernel", "dispatcher", "merger"),
       s"mode enum must be kernel|dispatcher (the allocator is gone, so auto is no longer a legal word); mode=$modeJ"
     )
     // delegate-param-decisions 批（2026-11-04）：判定机已删除 ⇒ schema 里不许再出现
@@ -335,5 +335,29 @@ class DualModeToolFaceSpec extends FunSuite:
       |"mode":"dispatcher"}""".stripMargin
     val decoded2 = io.circe.parser.decode[SubAgentTask](withMode)
     assertEquals(decoded2.map(_.mode), Right(Some("dispatcher")))
+  }
+
+  test("merger has its report tool but cannot create a development node chain") {
+    val definition = AgentDef(name = "nebflow", description = "merger face")
+    val merger = CoreProbe.allowedWithDelegateMode(definition, true, Some("merger"))
+    assert(merger.contains("merger_report"))
+    assert(merger.contains(nebflow.core.tools.WorktreeContextTool.Name), "the merger face carries worktree_context")
+    assert(!merger.contains("ChainWrite"))
+    val kernel = CoreProbe.allowedWithDelegateMode(definition, true, Some("kernel"))
+    assert(!kernel.contains("merger_report"))
+    assert(!kernel.contains(nebflow.core.tools.WorktreeContextTool.Name), "kernel delegates never see worktree_context")
+    val executor = CoreProbe.allowedWithDelegateMode(definition, false, None)
+    assert(!executor.contains("merger_report"))
+    assert(
+      !executor.contains(nebflow.core.tools.WorktreeContextTool.Name),
+      "the executor base face never sees worktree_context"
+    )
+    // The main-agent (Nebula root) face carries worktree_context via RootOrchestrationTools.
+    val root = CoreProbe.allowedWithDelegateMode(
+      AgentDef(name = nebflow.actor.RootAgentIdentity.Name, description = "root face"),
+      delegateSession = false,
+      delegateMode = None
+    )
+    assert(root.contains(nebflow.core.tools.WorktreeContextTool.Name), "the main-agent face carries worktree_context")
   }
 end DualModeToolFaceSpec

@@ -19,22 +19,23 @@ import nebflow.core.delegate.DelegateJudge.{TerminalInput, Verdict}
  */
 class DelegateJudgeMachineSpec extends FunSuite:
 
-  private def input(mergeRound: Boolean = false): TerminalInput =
+  private def input(): TerminalInput =
     TerminalInput(
       delegateId = "delegate-nebflow-x",
       taskBrief = "brief",
       resultText = "result",
       gitDigest = "branch: delegate/delegate-nebflow-x",
-      selfReport = None,
-      mergeRound = mergeRound
+      selfReport = None
     )
 
   // ── SmallJudge JSON 解析 ─────────────────────────────────────────────
 
   test("parseVerdict: bare, fenced and prose-wrapped JSON all parse; verdict+reason land") {
     assertEquals(
-      DelegateJudgeMachine.parseVerdict("""{"verdict":"ready-to-merge","reason":"commits on branch"}"""),
-      Some(Verdict.ReadyToMerge)
+      DelegateJudgeMachine.parseVerdict(
+        """{"verdict":"completed","reason":"work on branch, integration is a merger request"}"""
+      ),
+      Some(Verdict.Completed)
     )
     assertEquals(
       DelegateJudgeMachine.parseVerdict("```json\n{\"verdict\": \"completed\", \"reason\": \"\"}\n```"),
@@ -90,18 +91,14 @@ class DelegateJudgeMachineSpec extends FunSuite:
     )
 
   test(
-    "verdictFromChoice: legal labels map to the verdict domain; blocked = completed+note with the mergeRound marker"
+    "verdictFromChoice: legal labels map to the verdict domain; blocked = completed+note"
   ) {
     assertEquals(DelegateJudgeMachine.verdictFromChoice(choiceResponse("completed"), input()), Some(Verdict.Completed))
-    assertEquals(
-      DelegateJudgeMachine.verdictFromChoice(choiceResponse("ready-to-merge"), input()),
-      Some(Verdict.ReadyToMerge)
-    )
-    // #566：blocked 选中词 = 注记形 completed（合并轮标记进注记）。
-    val blocked = DelegateJudgeMachine.verdictFromChoice(choiceResponse("blocked"), input(mergeRound = true))
+    // 退役 blocked 选中词 = 注记形 completed。
+    val blocked = DelegateJudgeMachine.verdictFromChoice(choiceResponse("blocked"), input())
     assertEquals(
       blocked,
-      Some(Verdict.CompletedNote("judge: could not complete (merge round) — substance in the terminal text"))
+      Some(Verdict.CompletedNote("judge: could not complete — substance in the terminal text"))
     )
     assertEquals(
       DelegateJudgeMachine.verdictFromChoice(choiceResponse("failed"), input()),

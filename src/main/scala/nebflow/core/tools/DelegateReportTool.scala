@@ -50,21 +50,22 @@ object DelegateReportTool extends Tool:
 
   /** 退役类别（旧 brief/旧在飞会话仍可能上报——拒绝并引导 finish，不静默改写）。 */
   val RetiredBlockedValue: String = "blocked"
-  val StatusValues: Set[String] = Set(FinishValue, MergeValue, StandbyValue)
+  val StatusValues: Set[String] = Set(FinishValue, StandbyValue)
 
   override def name: String = Name
 
   /** 🔴 模型可见文案——§16 待过目标注：本批最小成稿，终稿归 N3 提示词批。 */
   override def description: String =
-    """Report your state-machine position as a structured signal — delegate sessions only. `category` = "merge" (your work on the branch is complete and needs to land: you enter the waiting-merge state — the engine queues you in the MergeQueue FIFO and sends you a merge reminder when it is your turn; do NOT merge on your own initiative. This call IS the owner declaration that the batch is finished and mergeable — the merge queue hands out a merge turn ONLY for branches declared this way; a branch that merely has commits is never queued or merged) or "finish" (the TASK is definitely complete — NOT merely "this reporting turn is over": pure read / no file changes with nothing to merge, your merge round has landed, OR the task genuinely cannot be completed — state the blocker plainly in your final text; there is no separate blocked state. finish is REFUSED (error code DELEGATE_REPORT_INFLIGHT, and no status slot is written) while your own scope map still holds any non-terminal node — running / pending / wiring; the refusal comes back as a system reminder listing those nodes and the two ways out: CANCEL them with the tools you already hold — `NodeCancel(chain="<chainId>")` for a whole chain, `NodeCancel(node-id="<id or name>")` for one node, `NodeEdit(nodename="<name>", abandon=true)` to drop a wiring/pending/terminal node — or STANDBY until they finish, then report finish. Nodes in completed / failed / cancelled / blocked count as terminal and never block finish) or "standby" (you are waiting for orders/events — waiting for the author, for upstream results, for a merge window — and are NOT done: the turn ends with NO terminal verdict and NO delivery to the dispatcher; the task row stays running, your session parks in the explicit standby state (UI shows 待命), and the next Mail wakes you into a normal working turn; while deliverable commits sit unmerged on your branch standby is NOT honored — merge obligations come first, so report "merge" instead; the ONLY combination the engine judges as complete is finish — an undeclared turn end is reminded, never completed), plus a `detail` saying what exactly is the case (actionable). The report updates your session's status record only — your final assistant text remains the deliverable that is handed back; write your own completion report there (what you did, artifacts, open items), self-contained. Unreported does not hang: an undeclared turn end gets a system reminder asking you to declare (standby or finish) — it is never silently judged complete — the report just makes your own semantics explicit."""
+    "Declare a development round: finish after committing and verifying the work, or standby while waiting. The workspace and owner remain open for Mail. " +
+      "Unmerged commits do not create a merge obligation. Integration and cleanup require a separately authorized project merger request."
 
   override def inputSchema: JsonObject = JsonObject(
     "type" -> "object".asJson,
     "properties" -> Json.obj(
       "category" -> Json.obj(
         "type" -> "string".asJson,
-        "enum" -> Json.arr(FinishValue.asJson, MergeValue.asJson, StandbyValue.asJson),
-        "description" -> "State-machine position: merge = branch work complete, needs to land (enters the waiting-merge FIFO; a merge reminder follows); finish = the TASK is definitely complete (taken literally: refused with DELEGATE_REPORT_INFLIGHT while your own scope map still holds any non-terminal node — cancel them or go standby first); standby = waiting for orders/events, NOT done (no terminal verdict, no delivery to the dispatcher — parks until the next Mail wakes you; refused while unmerged deliverable commits sit on the branch).".asJson
+        "enum" -> Json.arr(FinishValue.asJson, StandbyValue.asJson),
+        "description" -> "finish = work complete, committed and verified; nonterminal nodes must finish or be cancelled first. standby = waiting for instructions or downstream work without a completion delivery. Both retain the owner and workspace; merging is a separate authorized merger task.".asJson
       ),
       "detail" -> Json.obj(
         "type" -> "string".asJson,
@@ -106,7 +107,9 @@ object DelegateReportTool extends Tool:
       IO.pure(
         Left(
           ToolError(
-            (if category == RetiredBlockedValue then
+            (if category == MergeValue then
+               "delegate_report: merge is retired. Commit and report finish, or standby. Only the project merger handles explicitly authorized integration requests. "
+             else if category == RetiredBlockedValue then
                s"delegate_report: category 'blocked' is retired — there is NO blocked state for delegates. Report finish instead and state the blocker plainly in your detail and final text. "
              else "") +
               s"delegate_report: invalid category '$category' — must be one of " +
@@ -137,7 +140,24 @@ object DelegateReportTool extends Tool:
         else IO.pure(None)
       inflightGate.flatMap {
         case Some(refusal) => IO.pure(Left(ToolError(refusal)))
-        case None         => writeReport(id, category, detail, suggestion)
+        case None =>
+          IO.blocking {
+            val ledger = nebflow.core.delegate.WorkspaceLedger.default
+            if ledger.owned(id).exists(_.lifecycle != "open") then
+              Some("Workspace is reserved or closed; development reports cannot change its lifecycle")
+            else if category == FinishValue then
+              DelegateRegistry.find(id).flatMap(_.worktree).flatMap { path =>
+                nebflow.core.GitWorktrees.dirtyPaths(os.Path(path)) match
+                  case Some(Nil) => None
+                  case Some(_) =>
+                    Some("Commit your workspace changes before reporting finish. Do not merge or remove the worktree.")
+                  case None => Some("Workspace status could not be verified; inspect it before reporting finish.")
+              }
+            else None
+          }.flatMap {
+            case Some(error) => IO.pure(Left(ToolError(error)))
+            case None => writeReport(id, category, detail, suggestion)
+          }
       }
     end if
   end call
@@ -153,71 +173,21 @@ object DelegateReportTool extends Tool:
     detail: String,
     suggestion: String
   ): IO[Either[ToolError, String]] =
-    // 案A 批：standby 申报的软预检——分支上已有未并交付提交时确认文案直说
-    // 「回合收尾将不被采纳」（防退化闸在 DelegateTerminal 回合收尾权威执行，
-    // git 面在申报后仍可能变化——此处只是即时反馈，不拒写）。
-    val softWarn: String =
-      if category == StandbyValue then
-        try
-          DelegateRegistry.find(id) match
-            case Some(rec) =>
-              (for
-                b <- rec.branch
-                bb <- rec.baseBranch
-                ws <- scala.util.Try(os.Path(rec.cwd)).toOption
-                  if nebflow.core.GitWorktrees.isGitRepo(ws)
-              yield nebflow.core.GitWorktrees.commitsAhead(ws, bb, b)) match
-                case Some(ahead) if ahead > 0 =>
-                  s" WARNING: $ahead deliverable commit(s) already sit unmerged on the branch — standby will NOT be honored at turn end (merge obligations come first). Report 'merge' instead, or commit/merge/drop them before the turn ends."
-                case _ => ""
-            case None => ""
-        catch case _: Throwable => ""
-      else ""
-    val write = IO
-      .blocking(DelegateRegistry.updateReport(id, category, detail, suggestion))
-      .handleErrorWith(e => IO.pure(Left(s"delegate_report: status write failed: ${e.getMessage}")))
-    // merge-fifo 批 2026-11-03（作者报障「两个会话都已经报了 merge，为什么还没收到通知」）：
-    // merge 申报落槽成功 ⇒ **立刻预记账**（MergeEnqueue.ensurePending——申报点入队强
-    // 保证：终态腿没跑成也绝不零台账行）。fail-soft：任何故障只转成确认行里的一句
-    // PENDING 注记，绝不改写本工具的 Right/Left（申报本身成功就是成功）。
-    val pendingNote: IO[String] =
-      if category == MergeValue then
-        nebflow.core.delegate.MergeEnqueue
-          .ensurePending(id, System.currentTimeMillis())
-          .attempt
-          .map {
-            case Right(true)  => " Merge queue entry CONFIRMED (pre-booked now; the merge reminder follows when it is your turn)."
-            case Right(false) =>
-              " Merge queue entry PENDING (not pre-booked: no registry record or no branch/baseBranch anchor — the merge target is unknown; the engine never guesses 'main'). State this in your final report."
-            case Left(e) =>
-              s" Merge queue entry PENDING (pre-booking failed: ${Option(e.getMessage).getOrElse(e.toString).take(160)}) — the turn-end enqueuer is still the safety net."
-          }
-          .handleErrorWith(e =>
-            IO(s" Merge queue entry PENDING (pre-booking errored: ${Option(e.getMessage).getOrElse(e.toString).take(160)}).")
-          )
-      else IO.pure("")
-    write
-      .flatTap {
-        // task-rag 批（#1227 / §Batch 7）：delegate 终态增量索引——申报写成功后
-        // fire-and-forget upkeep（reportStatus/reportDetail 变化 ⇒ 索引文本 hash
-        // 变化 ⇒ 下轮 upkeep 重嵌；检索前另有惰性 upkeep 自愈）。在飞合流 + 异常
-        // 内吞，绝不影响本工具结果。🔴 接缝纪律：DelegateRegistry 本体零触碰。
-        case Right(_) => nebflow.core.index.TaskSearchIndex.upkeepFireAndForget()
-        case Left(_)  => IO.unit
-      }
+    IO.blocking(DelegateRegistry.updateReport(id, category, detail, suggestion))
       .flatMap {
-        case Left(err) => IO.pure(Left(ToolError(err)))
+        case Left(error) => IO.pure(Left(ToolError(error)))
         case Right(_) =>
-          pendingNote.map { note =>
-            val confirm =
-              if category == MergeValue then
-                "[OK] merge recorded — you are now waiting-merge (MergeQueue FIFO). Do NOT merge on your own initiative: keep working elsewhere or go idle; the engine sends you a merge reminder when it is your turn. Your final report comes AFTER the merge round (report finish then)." + note
-              else if category == StandbyValue then
-                "[OK] standby recorded — when this turn ends the engine will NOT run the terminal verdict and will NOT deliver your text to the dispatcher: the task row stays running and your session parks in the explicit standby state (UI shows 待命). Declared standby gets NO reminder and NO wake-up (author 2026-11-03 18:14 matrix: only an undeclared idle turn is nudged) — re-declare standby to keep waiting, or report finish/merge if the end state is actually reached. The NEXT Mail to your address wakes you into a normal working turn (the standby declaration is consumed — report again after working)." + softWarn
-              else
-                "[OK] finish recorded — now write your final report as normal text output; it is the deliverable handed back to the dispatcher. It must contain your WORK RESULT (what the task produced, artifacts, REPORT.md paths) with merge info kept to one line; the engine also auto-attaches your preserved work-phase report. finish is the ONLY declaration the engine may judge as complete — never end a turn without a declaration."
-            Right(confirm)
-          }
+          nebflow.core.index.TaskSearchIndex
+            .upkeepFireAndForget()
+            .as(
+              Right(
+                if category == StandbyValue then
+                  "[OK] standby recorded. This round parks without a completion report. Your workspace and identity remain available for Mail; unmerged commits do not create a merge obligation."
+                else
+                  "[OK] finish recorded. Write the work result and verification evidence in your final text. Commit workspace changes before ending. The round is reported to the parent and the workspace owner remains available for Mail. Integration requires a separately authorized project merger request; do not merge, push or clean up the worktree yourself."
+              )
+            )
       }
+      .handleError(e => Left(ToolError(s"Report write failed: ${e.getMessage}")))
 
 end DelegateReportTool

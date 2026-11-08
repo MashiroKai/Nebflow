@@ -247,20 +247,20 @@ enum AgentStatus:
 
   /**
    * 显式等待停靠态（平台修复批「delegate 回执投递可靠性」作者令 2026-10-21，fix 4）：
-   * 「等合并轮提醒」一类会话（delegate ready-to-merge 被 MergeQueue 停靠）不再
+   * 申报待命一类会话（delegate standby 停靠）不再
    * 貌似 Idle 完成——以本状态停靠，消费面用与 WaitingForUser 同款的等待屏障语义：
    *   - TaskStuckWatcher 豁免（停靠等待不是卡死）；
-   *   - MailIdleGate 视同可投递（停靠会话的已产出报告照样走投递链，合并提醒/Mail
-   *     可达）；
+   *   - MailIdleGate 视同可投递（停靠会话的已产出报告照样走投递链，Mail 可达）；
    *   - 面板/快照面原样透出 "Waiting"（activeAgents status 字段 toString）。
-   * 写点 = BackoffSupervisor 终态判定机 HoldForMerge 腿（delegate 轨）；actor 的
-   * 下一 turn（合并提醒唤醒）经 pipeLlmCall 自然置回 Processing → Idle。
+   * 写点 = BackoffSupervisor 的 Standby 停靠腿（delegate 轨）；actor 的
+   * 下一 turn（Mail 唤醒）经 pipeLlmCall 自然置回 Processing → Idle。
    */
   case Waiting
 
   /** 冻结调度：dispatch 边界被冻结时间表拦住（#337 黑名单语义），挂起等待出冻结段/用户唤醒。 */
   case Frozen
   case Error(msg: String)
+end AgentStatus
 
 case class CompactionResult(before: Int, after: Int)
 

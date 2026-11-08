@@ -132,10 +132,11 @@ object DelegateWorkspace:
       if !GitWorktrees.isGitRepo(ws) then
         Left(s"workspace '$workspace' is not a git repository — no worktree can be created for name '$name'")
       else
-        val baseBranch = GitWorktrees.currentBranch(ws)
-        val baseSha = GitWorktrees.headSha(ws)
+        val (baseline, commit) = WorkspaceLedger.resolveBaseline(ws)
+        val baseBranch = Some(baseline)
+        val baseSha = Some(commit)
         val branch = s"delegate/$name"
-        GitWorktrees.createNamedWorktree(ws, name, branch) match
+        GitWorktrees.createNamedWorktree(ws, name, branch, commit) match
           case Right(created) =>
             logger.info(
               s"delegate $delegateId: worktree '$name' created at ${created.path} (branch=$branch, base=${baseBranch.getOrElse("?")})"
@@ -156,6 +157,8 @@ object DelegateWorkspace:
           case Left(err) =>
             logger.warn(s"delegate $delegateId: worktree creation failed for name '$name' ($branch): $err")
             Left(err)
+        end match
+      end if
     }
 
   /**
@@ -214,11 +217,14 @@ object DelegateWorkspace:
         s"This tree was INHERITED from an earlier session (${candidate.delegateId.getOrElse(candidate.dirName)}): " +
           s"it already carries ${inherited.mkString(" and ")}. Continue that work — read the existing changes before you edit, " +
           "build on them rather than redoing them, and do not discard them." +
-          (if candidate.dirtySample.nonEmpty then s" Uncommitted sample: ${candidate.dirtySample.mkString(", ")}." else "")
+          (if candidate.dirtySample.nonEmpty then s" Uncommitted sample: ${candidate.dirtySample.mkString(", ")}."
+           else "")
     s"[working branch] $branch — your worktree is a REUSED seat on this branch. $inheritedText " +
       "Commit your deliverable commits here. When the work on this branch is complete and ready to land, " +
       "call delegate_report(category=\"merge\", detail=…) — you will receive a merge reminder when it is your turn; " +
       "do NOT merge on your own initiative. NEVER commit directly to the base branch."
+
+  end reuseBriefLine
 
   /** 建败回落腿：项目内建分支（共享 HEAD 不动）；分支再建失败 → 无 brief 行降级形态。 */
   private def inPlaceBinding(
@@ -277,6 +283,8 @@ object DelegateWorkspace:
         "YOUR branch via a temporary index (GIT_INDEX_FILE=<tmp> git add -A && GIT_INDEX_FILE=<tmp> git write-tree && " +
         "git commit-tree <tree> -p <parent> && git update-ref refs/heads/" + branch + " <new-commit>). " +
         s"NEVER commit directly to $base; an in-place checkout change by a worktree-less task is flagged red in the receipt.$mergeDiscipline"
+
+  end workingBranchLine
 
   /**
    * spawn 行的 ChainStore payload（`delegate-spawn` 行）。

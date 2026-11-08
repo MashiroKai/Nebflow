@@ -237,8 +237,10 @@ object DelegateRegistry:
   def validId(id: String): Boolean =
     id.nonEmpty && id.length <= 128 && id.matches("^[a-zA-Z0-9._-]+$")
 
-  /** 批次短名上界（面板命名批 2026-10-31 · 作者令「≤12 字」）——schema maxLength
-   *  与引擎钳位共用此常量。 */
+  /**
+   * 批次短名上界（面板命名批 2026-10-31 · 作者令「≤12 字」）——schema maxLength
+   *  与引擎钳位共用此常量。
+   */
   val ShortNameMaxChars: Int = 12
 
   def put(record: Record): Unit =
@@ -370,6 +372,7 @@ object DelegateRegistry:
             val ts = System.currentTimeMillis()
             try
               put(rec.copy(standbySince = Some(ts)))
+              if !rec.mode.contains("dispatcher") then WorkspaceLedger.default.settle(id, frozen = false)
               Right(ts)
             catch case e: Throwable => Left(s"parkStandby: write failed: ${e.getMessage}")
       }
@@ -431,6 +434,7 @@ object DelegateRegistry:
                   frozenDetail = if detail.trim.nonEmpty then Some(detail) else rec.frozenDetail
                 )
               )
+              WorkspaceLedger.default.settle(id, frozen = true)
               Right(ts)
             catch case e: Throwable => Left(s"parkFrozen: write failed: ${e.getMessage}")
       }

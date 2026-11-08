@@ -336,7 +336,9 @@ class NodeEngine(
   private[project] val feedbackRouter: FeedbackRouter = new FeedbackRouter(
     projectName = projectName,
     workspace = workspace,
-    feedbackMode = feedbackMode,
+    // Scoped chains report blockers to their owning delegate via the root channel.
+    // Legacy project reentry resolves a different dispatcher and must not be used here.
+    feedbackMode = if delegateScope then FeedbackRouter.ModeEscalateOnly else feedbackMode,
     escalate = (text, nodeName) => enqueueRootNotify(text, nodeName, NodeLifecycle.Blocked),
     escalateFailed = Some((text, nodeName) => enqueueRootNotify(text, nodeName, NodeLifecycle.Failed))
   )
@@ -695,19 +697,6 @@ class NodeEngine(
   private[project] val deadChainWarned: Ref[IO, Map[String, String]] =
     Ref.unsafe[IO, Map[String, String]](Map.empty)
 
-  /**
-   * 同键多项目告警单发记账（mark = 他项目名清单；进程内、每挂载一份——只防 30 s
-   * 节拍刷屏，不承担持久幂等）。
-   */
-  private[project] val sameKeyWarned: Ref[IO, Set[String]] = Ref.unsafe[IO, Set[String]](Set.empty)
-
-  /**
-   * 互斥闸停等事件单发记账（nodeId → 上次留痕的持有者 id 序列）：同一持有者集合只
-   * 留一条 `merge-queue` 事件 + 一行 INFO（持有者变化时再留——FIFO 次序取证面）。
-   */
-  private[project] val mutexHoldLogged: Ref[IO, Map[String, List[String]]] =
-    Ref.unsafe[IO, Map[String, List[String]]](Map.empty)
-
   // ── LoopNode 执行（LoopNode 批 2026-09-06，主设计 §2.2 状态机 + §2.4 异常路径）──
   //
   // LoopNode 语义（作者 13 条红线，主设计 §2）：
@@ -883,19 +872,15 @@ class NodeEngine(
 
   /**
    * 失败投递（P1 语义门控，spec §2.2 #3；D5 零结算为底座）：
-   * ① 运行期 merge 兜底（纵深，护栏只读复用不重构 §2.6-2）：全部 out 边的节点目标
-   *    中 MergeNodePolicy.haltsOnFailure 命中 → mergeBlocked（**与门控无关**——覆盖
-   *    校验生效前落盘的旧拓扑 pass-only 边；创建期 NODE_MERGE_PASS_ONLY 已硬拒新
-   *    failed 入边）。先于 signal 结算执行（merge blocked 优先于下游触发，D5 原序）。
-   *    **`:loop` 控制边不在 nodeTargets 内**（nrloop 一期：verdict 选通面与 failed
-   *    结算面正交，见下方 nodeTargets 计算处）。
-   * ② Nebula 上报（on ∋ failed）：mode=result → 通报（旧 "Nebula" 双通报形态零漂移）；
+   * ① Nebula 上报（on ∋ failed）：mode=result → 通报（旧 "Nebula" 双通报形态零漂移）；
    *    mode=signal → 只记账。
-   * ③ on-failed signal 节点目标：settleTo 记账归零 barrier + 启动（buildInput 按边
+   * ② on-failed signal 节点目标：settleTo 记账归零 barrier + 启动（buildInput 按边
    *    mode 抑制载荷——failed 节点 result=错误文本不作输入投递）。
-   * ④ 其余（on-failed result 节点目标 = D5 零结算语义对齐，及无 failed 边覆盖的
+   * ③ 其余（on-failed result 节点目标 = D5 零结算语义对齐，及无 failed 边覆盖的
    *    pass-only 旧拓扑目标）：停等——不结算不投递，恢复零步（上游 reactivate 修复
    *    重跑完成后经 deliverOut 正常投递）。
+   * **`:loop` 控制边不在 nodeTargets 内**（nrloop 一期：verdict 选通面与 failed
+   * 结算面正交）。
    * 尾部 dispatch-notify 挂点不变（failed 版，不查 flag）。
    */
   private[project] def deliverFailed(node: NodeDef, err: String): IO[Unit] =
@@ -903,20 +888,13 @@ class NodeEngine(
     val failedEdges = edges.filter(_.on.contains(OutEdge.Failed))
     // **`:loop` 控制边排除（nrloop 一期 2026-09-12，B3 末条 / 设计 §3.5）**：`:loop`
     // 边是 verdict 选通的控制边（`on={fail}`，与 `failed` 门正交），不进任何 failed
-    // 结算面——否则 vera 的 loop 目标会被误当「失败下游」做 merge 兜底/停等留痕
+    // 结算面——否则 vera 的 loop 目标会被误当「失败下游」做停等留痕
     // （无 failed 门覆盖 ⇒ 恒落 waiting 分支，每轮刷一条误导日志）。
     val nodeTargets = edges.filterNot(OutEdge.isLoopEdge).map(_.to).filterNot(_ == OutEdge.RootTarget).distinct
     val signalTargets = failedEdges
       .filter(e => e.to != OutEdge.RootTarget && e.mode == OutEdge.Signal)
       .map(_.to)
       .distinct
-    val mergeFallback: IO[Unit] = nodeTargets.traverse_(t =>
-      store.findNode(t).flatMap {
-        case Some(target) if MergeNodePolicy.haltsOnFailure(target) =>
-          mergeBlockedByUpstreamFailure(target, node, err)
-        case _ => IO.unit
-      }
-    )
     // Pre-W1 name for the same local (the PR-side rebuild renamed the whole `Nebula*` family
     // to `root*`; `git log -SnebulaIO` lands on the synthetic PR head, so this is W1 rename
     // fallout). Both names must keep declaration sites here, and there may be only ONE
@@ -937,14 +915,13 @@ class NodeEngine(
     val rootIO = nebulaIO
     val signalIO = signalTargets.traverse_(t => settleTo(node, t))
     val waitLog: IO[Unit] =
-      val waiting = nodeTargets.diff(signalTargets) // 非 signal 覆盖的目标 = D5 停等（merge 兜底者已转 blocked）
+      val waiting = nodeTargets.diff(signalTargets) // 非 signal 覆盖的目标 = D5 停等
       if waiting.nonEmpty then
         logger.info(
           s"Node '${node.name}' failed — downstream(s) ${waiting.mkString(", ")} keep waiting (D5 zero-settlement; on-failed signal edges opt targets out; reactivate upstream to auto-resume)"
         )
       else IO.unit
     for
-      _ <- mergeFallback
       _ <- rootIO
       _ <- signalIO
       _ <- waitLog
@@ -953,8 +930,7 @@ class NodeEngine(
       // 可见性由 nodeUpdated 事件 + FlowMapEventLog "retry" 留痕承载，cap 耗尽的
       // RetryCap 升级才是人工注意力挂点）；未配置 → 既有 failed 通知原样（D5 尾部
       // 挂点零改动）；cap 耗尽 → failed 通知 + RetryCap 升级双发（分发器拓扑通知
-      // 不丢，Nebula 另获预算耗尽升级）。同函数不重写 D5 语义——merge 兜底/Nebula
-      // 门控通报/signal 结算/停等留痕全部原样先行。
+      // 不丢，Nebula 另获预算耗尽升级）。
       _ <- retryOrNotify(node, err)
     yield ()
 
@@ -1155,76 +1131,6 @@ class NodeEngine(
     }
 
   /**
-   * 合并节点因上游失败转 blocked（merge-node 批 §触发语义②；与 blockedNode 同构
-   * 但**不经 FeedbackRouter**）：① 事务内现读 fresh（R2 纪律，haltsOnFailure 只认
-   * wiring/pending）→ status=Blocked / result=渲染串 / blockedFeedback=合成反馈 /
-   * completedAt=now / ttlExpireAt=None（待办语义）。blockCount 不增（非节点自报
-   * 轮次，重入主责在失败上游侧，MergeNodePolicy.upstreamFailureFeedback）。
-   * ② emitEvent nodeUpdated + FlowMapEventLog "merge-blocked" + deliverToRoot
-   * 通报（无 nodeId=fire-and-forget，对齐 escalate 通道：状态通报不是结果投递）。
-   * 语义收益：不触发合并（占位结算被旁路）+ 不永久 pending 悬挂（blocked 可见
-   * 终态，分发器 NodeList 可巡检）+ 已完成上游的结算保留（修复上游 → 重激活合并
-   * 节点 → 既有重激活重投链自动补齐 barrier）。
-   * public（mount-enforce 批）：第二挂接点 = NodeTools 创建期 D1 保留投递——
-   * 合并节点创建时 in 引用已 failed 的上游（创建顺序翻转后合法形态），failed
-   * 错误文本不作输入投递，同语义转 blocked 不悬挂。
-   */
-  def mergeBlockedByUpstreamFailure(target: NodeDef, failed: NodeDef, err: String): IO[Unit] =
-    val feedback = MergeNodePolicy.upstreamFailureFeedback(failed, err)
-    for
-      now <- IO(System.currentTimeMillis())
-      s <- store.mutate { st =>
-        st.nodes.get(target.id) match
-          case Some(fresh) if MergeNodePolicy.haltsOnFailure(fresh) =>
-            st.copy(nodes =
-              st.nodes.updated(
-                target.id,
-                withoutReportPending(
-                  fresh.copy(
-                    status = NodeLifecycle.Blocked,
-                    result = Some(MergeNodePolicy.renderBlocked(feedback)),
-                    blockedFeedback = Some(feedback),
-                    completedAt = Some(now),
-                    ttlExpireAt = None
-                  )
-                )
-              )
-            )
-          case _ => st // 状态已变（并发终态化）→ 拒写（R2 竞态纪律）
-      }
-      _ <- s.nodes.get(target.id) match
-        case Some(bn) if bn.status == NodeLifecycle.Blocked =>
-          val summary = s"merge node blocked: upstream '${failed.name}' (${failed.id}) failed — ${err.take(140)}"
-          emitWithChain("nodeUpdated", target.id, NodePayload.buildNodeJson(bn, now)) *>
-            logger.warn(s"Node '${bn.name}' $summary") *>
-            FlowMapEventLog.append(workspace, projectName, target.id, "merge-blocked", summary) *>
-            // notifybatch 批（2026-09-18）：走 root 打包入口（blocked 通报同窗打包，
-            // 决策②「异常类一并合并、不单列」）；`nodeId=None` fire-and-forget 口径不变。
-            // 🔴 taskunify (2026-09-24 · **U3 = landing / merge-class uplink**): uplink
-            // attribution gate; the class **must** be `landing` (the core of criterion
-            // 10.4.3: `grep uplink-refused | grep -c 'landing' >= 1`). This is exactly the
-            // face implplan §10.4 marks "easiest to miss" — the sink is allowed through,
-            // actually lands, then fails, and the failure "cannot be sent out"; U1/U2's
-            // no-loss argument does not cover it. ⇒ this item is **listed separately** and
-            // must never be counted together with U1/U2 (mutation red-anchor: commenting out
-            // this gate ⇒ 10.4.3 must go red).
-            uplinkAllowed(bn, "landing").flatMap {
-              case false => IO.unit
-              case true =>
-                enqueueRootNotify(
-                  s"[Node '${bn.name}' blocked — 上游 '${failed.name}' failed，合并未执行]\n${err.take(800)}",
-                  bn.name,
-                  NodeLifecycle.Blocked
-                )
-            }
-        case _ => IO.unit
-    yield ()
-
-    end for
-
-  end mergeBlockedByUpstreamFailure
-
-  /**
    * root 打包条目（`nodeId=None` 的 escalate/notice 腿以 nodeName 作身份，
    * 与 [[dedupeNebulaDelivery]] 的 identity 口径同源）。
    */
@@ -1276,6 +1182,7 @@ class NodeEngine(
           // ——把 N 件原始载荷挂在本件上，供消费侧在同一边界（同一 turn）逐件展开
           // （N 气泡 / 1 次唤醒）。`text` / `sender`（= 首件）/ `eventType` / 去重键 /
           // 记账序**逐字不变**。
+          sourceNodeIds = many.flatMap(_.nodeId),
           windowItems = Some(
             many.map(e =>
               AgentCommand.WindowItem(
@@ -1428,7 +1335,7 @@ class NodeEngine(
                 // 语义与今天逐字相同）；legacy 节点的 completed 判据退化为同一个边的
                 // 存在性判据 ⇒ 存量补投行为字节级零漂移。
                 (n.status != NodeLifecycle.Completed || NotifyPolicy.completedRootVisible(n)) &&
-                n.result.exists(_.trim.nonEmpty) &&
+                n.result.isDefined &&
                 n.nebulaDeliveredAt.isEmpty
             )
           // 缺口3（2026-09-04 夹具信封排除）：名字命中夹具家族 ∧ 任务载荷带夹具

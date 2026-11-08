@@ -328,6 +328,7 @@ private[agent] object AgentProcessing:
               )
               .withNextLoopTurn
             for
+              _ <- InputLanding.checkpointProducerInputs(resources, state.sessionId, updatedState.messages, immInputs.flatMap(_.clientMessageId).toSet)
               // F2: disk snapshot in sync after the drain (queue emptied).
               _ <- persistQueues(state.sessionId, updatedState.execution)
               _ <- state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true))
@@ -350,13 +351,8 @@ private[agent] object AgentProcessing:
                 )
               }.sequence_
               _ <- state.sessionId.fold(IO.unit)(sid =>
-                ctx.forkTurn(
-                  (resources.sessionStore.saveMessagesForSession(sid, updatedState.execution.messages) *>
-                    resources.sessionStore.flushIndex)
-                    .handleErrorWith(e =>
-                      NebflowLogger.forName("nebflow.agent").warn(s"Save/flush session failed: ${e.getMessage}")
-                    )
-                )
+                resources.sessionStore.durableSwapMessages(sid, updatedState.execution.messages) *>
+                  resources.sessionStore.flushIndex
               )
               _ <- state.sessionId.fold(IO.unit)(sid =>
                 ctx.forkTurn(
@@ -483,13 +479,8 @@ private[agent] object AgentProcessing:
                 _ <- cleanedState.sessionId.fold(IO.unit) { sid =>
                   // Persist the conversation before failing so the parent can
                   // resume from saved history (re-dispatch / fork on this session).
-                  ctx.forkTurn(
-                    (resources.sessionStore.saveMessagesForSession(sid, cleanedState.messages) *>
-                      resources.sessionStore.flushIndex)
-                      .handleErrorWith(e =>
-                        NebflowLogger.forName("nebflow.agent").warn(s"Save failed session: ${e.getMessage}")
-                      )
-                  )
+                  resources.sessionStore.durableSwapMessages(sid, cleanedState.messages) *>
+                    resources.sessionStore.flushIndex
                 }
                 // #25: a fatal failure must discharge the completion debt with
                 // Failed — a parked requester (supervisor/bridge waiting for the
@@ -959,6 +950,7 @@ private[agent] object AgentProcessing:
             // enterFrozen(Loop) 待人工（用户唤醒 / Manager·Nebula AgentControl
             // restart / cancel 终态；resumeAt=1 年，语义「永不自动续跑」）。
             for
+              _ <- InputLanding.checkpointProducerInputs(resources, state.sessionId, updatedState.messages, immInputs.flatMap(_.clientMessageId).toSet)
               _ <- persistIfSession(resources, updatedState)
                 .handleErrorWith(e =>
                   NebflowLogger.forName("nebflow.agent").warn(s"Persist session failed: ${e.getMessage}")
@@ -1016,6 +1008,7 @@ private[agent] object AgentProcessing:
             yield result
           case None =>
             for
+              _ <- InputLanding.checkpointProducerInputs(resources, state.sessionId, updatedState.messages, immInputs.flatMap(_.clientMessageId).toSet)
               _ <- ctx.forkTurn(
                 persistIfSession(resources, updatedState)
                   .handleErrorWith(e =>

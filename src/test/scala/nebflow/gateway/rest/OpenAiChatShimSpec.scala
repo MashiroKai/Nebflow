@@ -604,10 +604,11 @@ class OpenAiChatShimSpec extends CatsEffectSuite:
   test("route: the in-tree path keeps its own semantics (no OpenAI keys added)") {
     val routes = new ChatRoutes(new ScriptedLlm(mkResponse(reply = "pong")), TokenRef).routes
     // Note the role of this body in the test: it exercises the IN-TREE decode
-    // path (`req.as[LlmRequest]`), which requires `searchAllowed` to be present
-    // on the wire (the derived decoder has no default for it — pre-existing
-    // behaviour, unchanged by this batch; the alias shim does not go through
-    // this decoder).
+    // path (`req.as[LlmRequest]`) with a minimal legacy wire body — only the
+    // three required fields (messages / sessionId / agentId) plus an explicit
+    // searchAllowed. The GatewayCodecs LlmRequest decoder treats every defaulted
+    // field as optional on the wire (pinSkips -> Nil etc.), so old clients keep
+    // decoding; the alias shim does not go through this decoder.
     val body =
       """{"messages":[{"role":"user","content":"ping"}],"sessionId":"s","agentId":"a","searchAllowed":true}"""
     val inTree = rawJsonRequest("/v1/chat", body)
@@ -615,8 +616,15 @@ class OpenAiChatShimSpec extends CatsEffectSuite:
     routes(inTree).value.flatMap {
       case None => fail("/v1/chat fell through")
       case Some(resp) =>
-        assertEquals(resp.status, Status.Ok)
         respJson(resp).map { json =>
+          // Body rides the assertion message: a decode failure surfaces as a 500
+          // whose envelope names the field that failed, so the failure is
+          // diagnosable without a rerun.
+          assertEquals(
+            resp.status,
+            Status.Ok,
+            s"the in-tree path answered ${resp.status.code} with: $json"
+          )
           val c = json.hcursor
           assertEquals(c.downField("reply").as[String], Right("pong"))
           assert(c.downField("choices").focus.isEmpty, "/v1/chat must not gain an OpenAI choices field")

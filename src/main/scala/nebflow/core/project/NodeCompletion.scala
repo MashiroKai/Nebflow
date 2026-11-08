@@ -410,7 +410,7 @@ private[project] trait NodeCompletion:
               if n.deliveredTo.contains(upId) then IO.pure(None)
               else
                 store.findNode(upId).flatMap {
-                  case Some(up) if up.status == NodeLifecycle.Completed && up.result.exists(_.trim.nonEmpty) =>
+                  case Some(up) if up.status == NodeLifecycle.Completed && up.result.isDefined =>
                     deliverOutTo(up, n.id, up.result.get)
                       .as(
                         Some(n.id -> s"orphan barrier healed: redelivered completed upstream '${up.name}' (${up.id})")
@@ -445,25 +445,11 @@ private[project] trait NodeCompletion:
             case false => IO.pure(false)
             // verdict 闸（merge-verdict-gate 批 2026-09-12，落点②/case (b)；**#238 泛化
             // 2026-09-15** 后判据对节点形态零分叉）：资格回扫不得把「in ∪ deps 上游
-            // verifier 判词非 pass」的节点（merge sink 或非 merge 收口位同样）拉起。被挡者
+            // verifier 判词非 pass」的节点（收口位同样）拉起。被挡者
             // 不进 qualified ⇒ 不 fork、不进 trigger-starved 记账（合法等待，不是启动失败）
             // ——节点保持 pending/wiring，verifier 重跑出 pass 后下一轮回扫自然放行
             // （每轮现读 lastVerdict，非一次性闩）。
-            // mergefifo-engine 批 2026-09-13（落点②/互斥腿）：同键已有更高优先 merge 在跑
-            // ⇒ 同样不进 qualified/不进 trigger-starved 记账（**合法等待 ≠ 启动失败**）；
-            // 持有者进终态后本腿当轮放行 ⇒ 释放有界（TtlTick 30 s）。
-            case true =>
-              mergeVerdictHoldersOf(n).flatMap { vh =>
-                if vh.nonEmpty then IO.pure(false)
-                // 互斥闸停等留痕（本落点 = 排队节点的**周期心跳**：被挡者不进 qualified ⇒
-                // 不 fork、不进 trigger-starved 记账，`merge-queue` 事件是它在事件流里
-                // 唯一的持续可见面；持有者集合变化时才重写，单发防刷屏）。
-                else
-                  mergeMutexHoldersOf(n).flatMap { q =>
-                    if q.nonEmpty then logMutexHold("settleSweep (qualified check)", n, q).as(false)
-                    else IO.pure(true)
-                  }
-              }
+            case true => mergeVerdictHoldersOf(n).map(_.isEmpty)
           }
         end if
       }
@@ -657,43 +643,14 @@ private[project] trait NodeCompletion:
                   " not pass — this node must not start until that verifier re-runs to pass (mechanism guarantee, not a " +
                   "stall; a non-pass verdict is never handed on as a positive result — the fail route is the " +
                   "'(fail)<target>:loop' control edge)"
-            // merge 互斥闸停等（mergefifo-engine 批 2026-09-13）：同键（本项目 git 目录）
-            // 已有更高优先 merge 在跑 ⇒ 本 merge 是**排队中的合法等待**，不是引擎故障。
-            // 文案给持有者 id/status + FIFO 次序说明，免分发器误判（零新事件类型——复用
-            // 既有 mount-stalled 单发档位；闸自身的 `merge-queue` 事件另在闸落点单发）。
-            mergeMutexHoldersOf(n).map { queued =>
-              // engine-defects 批 #2/#85（2026-09-15）：把「谁**在**临界区」与「谁只是
-              // 排在前面」分开点名——旧文案对**开态排队者**也写「hold the critical
-              // section … mechanism guarantee, not a stall」；真身 `flow-map-events.jsonl:5581`
-              // 里两个持有者**都是 `wiring`**（无一在临界区），该断言当场为假，且那个
-              // 队头正被 R4 `pendingSuccession` 永久 hold ⇒「机制的保证」不成立。
-              val inSection = queued.filter(_.status == NodeLifecycle.Running)
-              val queuedAhead = queued.filter(_.status != NodeLifecycle.Running)
-              val queueDesc =
-                if queued.isEmpty then ""
-                else
-                  val sectionPart =
-                    if inSection.nonEmpty then
-                      s"critical-section holder(s) [${inSection.map(h => s"'${h.name}'(${h.id}):${h.status}").mkString(", ")}]"
-                    else s"NO holder is inside the critical section (every listed node is still open: none is running)"
-                  val aheadPart =
-                    if queuedAhead.isEmpty then ""
-                    else
-                      s"; queued ahead (not in the section) [${queuedAhead.map(h => s"'${h.name}'(${h.id}):${h.status}").mkString(", ")}]"
-                  val guarantee =
-                    if inSection.nonEmpty then "the running holder's terminal write releases it (mechanism guarantee)"
-                    else
-                      "no running holder exists to release it — the queue advances only when an open-state " +
-                        "predecessor actually starts, which may require dispatcher intervention"
-                  s", merge-queue held: $sectionPart$aheadPart — this node starts only in FIFO order " +
-                    s"(rank = readyAt,createdAt,id); $guarantee"
+            IO.pure(
               Some(
                 s"mount stalled: ${stalledSec}s past triggerable point, still status=${n.status}, " +
-                  s"$barrierDesc$successionDesc$gateDesc$queueDesc, no running/wiring upstream (upstreams: $upDesc) — settle sweep " +
+                  s"$barrierDesc$successionDesc$gateDesc, no running/wiring upstream (upstreams: $upDesc) — settle sweep " +
                   "takeover attempted; if still stuck a terminal (failed/cancelled) upstream is blocking " +
                   "the barrier — dispatcher intervention required"
               )
-            }
+            )
           end if
         end if
     }
@@ -727,10 +684,10 @@ private[project] trait NodeCompletion:
   ): IO[Boolean] =
     for
       now <- IO(System.currentTimeMillis())
-      s <- store.mutate { st =>
+      transition <- store.mutateWithResult { st =>
         st.nodes.get(nodeId) match
           case Some(fresh) if fresh.status == NodeLifecycle.Running =>
-            st.copy(nodes =
+            val updated = st.copy(nodes =
               st.nodes.updated(
                 nodeId,
                 withoutReportPending(
@@ -745,10 +702,11 @@ private[project] trait NodeCompletion:
                 )
               )
             )
-          case _ => st // 节点已消失 / 状态已变 → 拒写（R2 竞态纪律）
+            (updated, updated.nodes.get(nodeId))
+          case _ => (st, None) // Only the transition winner may emit feedback.
       }
-      landed <- s.nodes.get(nodeId) match
-        case Some(bn) if bn.status == NodeLifecycle.Blocked =>
+      landed <- transition._2 match
+        case Some(bn) =>
           val summary = s"round ${bn.blockCount}: [${feedback.category}] ${feedback.detail.take(160)}"
           emitWithChain("nodeUpdated", nodeId, NodePayload.buildNodeJson(bn, now)) *>
             logger.warn(s"Node '${bn.name}' blocked — $summary") *>
@@ -759,13 +717,10 @@ private[project] trait NodeCompletion:
             scheduleDestroy(bn.id, destroyTargetSessions(bn), "blocked") *>
             feedbackRouter.route(bn, feedback) *>
             IO.pure(true)
-        case Some(other) =>
-          logger.info(
-            s"Node '$nodeId' state changed to '${other.status}' before blocked finalize — refused (fresh-read discipline)"
-          ) *>
-            IO.pure(false)
         case None =>
-          logger.warn(s"Node '$nodeId' vanished before blocked finalize — feedback not persisted") *>
+          logger.info(
+            s"Node '$nodeId' did not transition from running to blocked — duplicate/stale feedback refused"
+          ) *>
             IO.pure(false)
     yield landed
 

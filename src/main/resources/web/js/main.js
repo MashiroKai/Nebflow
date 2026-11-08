@@ -1,3 +1,4 @@
+import { renderProviderFailureStatus } from './providerFailureStatus.js';
 import { key } from './branding.js'; // MUST be first: storage-key migration runs at module init, before state.js/i18n.js read localStorage.
 import state from './state.js';
 import { installPanelBackSwipeWire as initBackSwipe, hasBackHandler, topBackHandler } from './gesture/backSwipe.js';
@@ -2520,7 +2521,7 @@ onMessage('delegateWaiting', (msg) => {
       if (entrySid !== bare) continue;
       // 案A 待命批 2026-10-31（状态矩阵批收编）：mode 扩 standby（待命≠候合并）；
       // detail = 申报的「在等什么」（徽标 tooltip）。mode 缺席缺省 'merge'（旧帧兼容）。
-      info.waiting = { mode: msg.mode || 'merge', detail: msg.detail || '' };
+      info.waiting = { mode: msg.mode || 'standby', detail: msg.detail || '', roundComplete: !!msg.roundComplete };
       updateBgAgentIndicator(rootSid);
     }
   }
@@ -2674,15 +2675,21 @@ onMessage('delegateFreezeDigest', (msg) => {
     needsHuman: Number(msg.needsHuman) || 0,
     windowMs: Number(msg.windowMs) || 0,
     items: Array.isArray(msg.items) ? msg.items : [],
+    providerGroups: Array.isArray(msg.providerGroups) ? msg.providerGroups : [],
   };
   // 逐项读数回灌到对应行（自动续跑次数 / 次数用尽标记）——行 tooltip 要用。
   for (const it of state.freezeDigest.items) {
     const sid = String((it && it.sessionId) || '').replace(/^team-/, '');
     if (!sid) continue;
     applyDelegateFrozen(it.parentSessionId, sid, {
+      frozenDetail: it.detail || '',
       autoResumes: Number(it.autoResumes) || 0,
       autoResumesExhausted: !!it.autoResumesExhausted,
     });
+  }
+  for (const view of Object.values(chatViews)) {
+    renderProviderFailureStatus(view, state.freezeDigest, (id) =>
+      import('./bgAgentPopup.js').then(m => m.openStepPopup(id)));
   }
   renderBgAgentDropdown && renderBgAgentDropdown();
 });
@@ -3081,6 +3088,9 @@ onMessage('modelOptions', (msg, view) => {
 });
 
 onMessage('sessionModelSet', (msg, view) => {
+  if (!msg.sessionId) return;
+  state.sessionModelSelections ||= {};
+  state.sessionModelSelections[msg.sessionId] = msg.modelRef === 'default' ? '' : msg.modelRef;
 });
 
 // --- Runtime model change (fallback kicked in) ---

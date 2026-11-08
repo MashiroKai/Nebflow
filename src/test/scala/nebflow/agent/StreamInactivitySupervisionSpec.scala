@@ -41,6 +41,10 @@ class StreamInactivitySupervisionSpec extends FunSuite:
 
   // ── AgentActor.llmFailureRetryable matrix ──────────────────
 
+  test("retryable: empty exhaustion has no evidence of a retryable failure") {
+    assert(!AgentActor.llmFailureRetryable(new FallbackExhaustedError(Nil)))
+  }
+
   test("retryable: typed StreamInactivityTimeout is retryable (clean-checkpoint re-send)") {
     assert(AgentActor.llmFailureRetryable(StreamInactivityTimeout(70_000L, "stall")))
   }

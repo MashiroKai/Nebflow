@@ -69,9 +69,16 @@ class DelegateWorkspaceWorktreeLegSpec extends FunSuite:
         .unsafeRunSync()
         .getOrElse(fail("a git workspace must still produce an in-place binding"))
       val after = wtDirs(repo)
-      assertEquals(after, before, "zero allocation: the worktree root must list EXACTLY the same entries before and after")
+      assertEquals(
+        after,
+        before,
+        "zero allocation: the worktree root must list EXACTLY the same entries before and after"
+      )
       assertEquals(after, Nil, "a fresh repo has no worktree directory at all")
-      assert(!os.exists(repo / ".nebflow" / "worktrees"), "no worktree root may even be created on the zero-allocation leg")
+      assert(
+        !os.exists(repo / ".nebflow" / "worktrees"),
+        "no worktree root may even be created on the zero-allocation leg"
+      )
       assertEquals(binding.worktree, None, "no worktree in the binding")
       assertEquals(binding.cwd, repo.toString, "the seat is the project workspace itself")
       assertEquals(binding.seatSource, DelegateWorkspace.SeatSource.InPlace)
@@ -100,7 +107,11 @@ class DelegateWorkspaceWorktreeLegSpec extends FunSuite:
         .createNamed(repo.toString, name, "nebflow-named1")
         .unsafeRunSync()
         .getOrElse(fail("creating a fresh name must succeed"))
-      assertEquals(os.exists(repo / ".nebflow" / "worktrees" / name), true, "the directory is named EXACTLY as the parameter")
+      assertEquals(
+        os.exists(repo / ".nebflow" / "worktrees" / name),
+        true,
+        "the directory is named EXACTLY as the parameter"
+      )
       assertEquals(wtDirs(repo), List(name), "and it is the only directory created")
       assertEquals(binding.branch, s"delegate/$name", "the branch follows the NAME (not the delegate id)")
       assertEquals(GitWorktrees.currentBranch(os.Path(binding.cwd)), Some(s"delegate/$name"))
@@ -117,7 +128,10 @@ class DelegateWorkspaceWorktreeLegSpec extends FunSuite:
       val repo = tempRoot / "reuse-name-repo"
       mkRepo(repo)
       val name = "shared-name"
-      val first = DelegateWorkspace.createNamed(repo.toString, name, "nebflow-reuse-a").unsafeRunSync().getOrElse(fail("first create"))
+      val first = DelegateWorkspace
+        .createNamed(repo.toString, name, "nebflow-reuse-a")
+        .unsafeRunSync()
+        .getOrElse(fail("first create"))
       // 解析面：同名 = exact-name 命中（复用），绝不落到 Create。
       val inv = WorktreeCandidates.inventory(repo.toString).unsafeRunSync()
       WorktreeCandidates.resolveNamed(inv, repo.toString, name, force = false) match
@@ -153,7 +167,8 @@ class DelegateWorkspaceWorktreeLegSpec extends FunSuite:
             WorktreeCandidates.inventory(repo.toString).unsafeRunSync() match
               case inv =>
                 WorktreeCandidates.resolveNamed(inv, repo.toString, "zm-name", force = false).toOption.collect {
-                  case WorktreeCandidates.SeatPlan.Reuse(c, s) => DelegateWorkspace.reuse(repo.toString, "nebflow-zm3", c, s).unsafeRunSync()
+                  case WorktreeCandidates.SeatPlan.Reuse(c, s) =>
+                    DelegateWorkspace.reuse(repo.toString, "nebflow-zm3", c, s).unsafeRunSync()
                 }
           }
           // 模式解析（同一条 spawn 路径）：不填 ⇒ kernel；显式 dispatcher ⇒ dispatcher；auto ⇒ 拒。
@@ -175,6 +190,37 @@ class DelegateWorkspaceWorktreeLegSpec extends FunSuite:
     val r = DelegateWorkspace.prepareInPlace(plain.toString, "nebflow-nogit").unsafeRunSync()
     assertEquals(r, None)
     assert(DelegateWorkspace.createNamed(plain.toString, "x", "nebflow-nogit2").unsafeRunSync().isLeft)
+  }
+
+  test("creation baseline is configured branch tip, never the current development checkout") {
+    val ws = os.temp.dir(prefix = "baseline-worktree-")
+    try
+      mkRepo(ws)
+      val base = os.proc("git", "rev-parse", "main").call(cwd = ws).out.text().trim
+      os.proc("git", "checkout", "-b", "development").call(cwd = ws)
+      os.write(ws / "unmerged.txt", "must not leak")
+      os.proc("git", "add", "unmerged.txt").call(cwd = ws)
+      os.proc("git", "commit", "-m", "unmerged development").call(cwd = ws)
+      val created = DelegateWorkspace
+        .createNamed(ws.toString, "independent", "owner")
+        .unsafeRunSync()
+        .fold(error => fail(error), identity)
+      assertEquals(created.baseBranch, Some("main"))
+      assertEquals(created.baseSha, Some(base))
+      assert(!os.exists(os.Path(created.cwd) / "unmerged.txt"))
+      val ledger = WorkspaceLedger.default
+      val repository = WorkspaceLedger.repositoryKey(ws)
+      assert(ledger.setBaseline(repository, "delegate/independent").isLeft)
+      os.proc("git", "branch", "release-base", "main").call(cwd = ws)
+      assert(ledger.setBaseline(repository, "release-base").isRight)
+      val next = DelegateWorkspace
+        .createNamed(ws.toString, "release-task", "owner-next")
+        .unsafeRunSync()
+        .fold(error => fail(error), identity)
+      assertEquals(next.baseBranch, Some("release-base"))
+      assertEquals(created.baseBranch, Some("main"))
+    finally os.remove.all(ws)
+    end try
   }
 
 end DelegateWorkspaceWorktreeLegSpec

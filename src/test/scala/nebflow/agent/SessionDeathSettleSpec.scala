@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
 import nebflow.core.SessionStore
-import nebflow.core.delegate.{DelegateRegistry, MergeQueue}
+import nebflow.core.delegate.DelegateRegistry
 import nebflow.shared.{PathUtil, SubAgentTask}
 
 /**
@@ -17,11 +17,9 @@ import nebflow.shared.{PathUtil, SubAgentTask}
  * 进行中/待合并 1-2d）。
  *
  * 红绿锚（spec 钉「重启后无僵尸行」）：
- *  - S1 ready-to-merge 且无合并队列成员 ⇒ sweep 落终态（failed + 重启指纹），
+ *  - S1 ready-to-merge（legacy 状态值）行 ⇒ sweep 落终态（failed + 重启指纹），
  *    registry 落重启打断旗，父 F2 队列收幂等通知；
- *  - S2 ready-to-merge 但有开放合并队列成员 ⇒ sweep 零触碰（合并轮在管——
- *    MergeQueueBootSweep 对账 owner-gone/已并，本 sweep 不越权）；
- *  - S3 全量不变量：sweep 后无「无队列成员的在飞行」残留（重启后无僵尸行）。
+ *  - S3 全量不变量：sweep 后无在飞残留（重启后无僵尸行）。
  */
 class SessionDeathSettleSpec extends FunSuite:
 
@@ -31,12 +29,8 @@ class SessionDeathSettleSpec extends FunSuite:
   override def beforeEach(context: munit.BeforeEach): Unit =
     tmp = os.temp.dir(prefix = "sds")
     PathUtil.setDataRoot(tmp / "data")
-    MergeQueue.reset()
-    // P1 投递身份化：身份投递端口（投递恒成功）——否则队列会在 grant 腿判 owner-gone。
-    nebflow.core.delegate.MergeQueueTestPorts.install()
 
   override def afterEach(context: munit.AfterEach): Unit =
-    MergeQueue.reset()
     PathUtil.setDataRoot(originalRoot)
     os.remove.all(tmp)
 
@@ -74,7 +68,7 @@ class SessionDeathSettleSpec extends FunSuite:
       )
     )
 
-  test("S1 ready-to-merge 僵尸（无队列成员）⇒ sweep 落终态 interrupted（行+旗+父通知）") {
+  test("S1 ready-to-merge（legacy 值）行 ⇒ sweep 落终态 interrupted（行+旗+父通知）") {
     val (store, sessionStore, root) = fixture()
     val id = "delegate-nebflow-s1"
     val parent = sessionStore.createSession("Nebula", agentName = Some("Nebula")).unsafeRunSync()
@@ -96,42 +90,7 @@ class SessionDeathSettleSpec extends FunSuite:
     os.remove.all(seat)
   }
 
-  test("S2 ready-to-merge 但有开放队列成员 ⇒ sweep 零触碰（合并轮在管）") {
-    val (store, sessionStore, root) = fixture()
-    val id = "delegate-nebflow-s2"
-    val parent = sessionStore.createSession("Nebula", agentName = Some("Nebula")).unsafeRunSync()
-    store.recordTask(mkTask(id, parent.id, "ready-to-merge")).unsafeRunSync()
-    // 外部腿 stub：放行通知（grant ③）投递成功 ⇒ 成员停在 turn-granted（open）
-    // ——合并轮在管的形态。不接通道时 enqueue 即 pump 即 grant，通知不可达 =
-    // owner-gone 关账，成员立即离开开放集（正是本测要排除的形态）。
-    MergeQueue.enqueue(
-      MergeQueue.Member(
-        delegateId = id,
-        branch = "delegate/x",
-        baseWs = root.toString,
-        baseBranch = "main",
-        worktree = false,
-        projectKey = "sds",
-        taskId = None,
-        parentSessionId = parent.id,
-        description = "queued member",
-        readyAt = System.currentTimeMillis(),
-        // 宣告闸批 2026-11-04：属主宣告在案（`delegate_report(category="merge")`）——授窗前提
-        declaredAt = Some(1_000L),
-        declareSource = Some(nebflow.core.delegate.MergeDeclaration.Source.ReportMerge),
-        channelKind = "external",
-      )
-    )
-    val report = SubAgentStartupRecovery.sweep(store, sessionStore, None).unsafeRunSync()
-    assert(
-      !report.terminalized.contains(id),
-      s"queue-owned member must not be settled by this sweep: ${report.summary}"
-    )
-    val row = store.loadTasks(parent.id).unsafeRunSync().find(_.taskId == id).get
-    assertEquals(row.status, "ready-to-merge", "queue-owned member stays parked for the merge-queue boot reconcile")
-  }
-
-  test("S3 不变量：sweep 后无「无队列成员的在飞行」残留（重启后无僵尸行）") {
+  test("S3 不变量：sweep 后无在飞残留（重启后无僵尸行）") {
     val (store, sessionStore, root) = fixture()
     val parent = sessionStore.createSession("Nebula", agentName = Some("Nebula")).unsafeRunSync()
     val seat = os.temp.dir(prefix = "sds-seat3")

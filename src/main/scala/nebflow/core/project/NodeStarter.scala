@@ -76,6 +76,8 @@ private[project] trait NodeStarter:
   ): IO[Unit] =
     store.getNode(nodeId).flatMap {
       case None => IO.unit
+      case Some(node) if node.merge =>
+        logger.warn(s"Legacy merge node ${node.id} is held; integration requires an authorized project merger request")
       case Some(node) =>
         node.status match
           // blocked 同样幂等跳过（§1.1：重跑同样 blocked；唯一出口 = NodeEdit 重激活）
@@ -135,8 +137,17 @@ private[project] trait NodeStarter:
                         val runIO =
                           if node.loop.exists(_.enabled) then spawnAndRunLoop(node, input, resume, chain)
                           else spawnAndRun(node, input, resume, chain)
-                        runIO.handleErrorWith { case _: NodeEngine.StartRaceLost =>
-                          IO.unit
+                        val admitted =
+                          if notifyTargetKind == NodeEngine.NotifyTargetKind.CreatorDelegate then
+                            IO.blocking(
+                              nebflow.core.delegate.WorkspaceLedger.default
+                                .admit(rootSessionId, allowFrozen = resume.isDefined)
+                            )
+                          else IO.pure(Right(()))
+                        admitted.flatMap {
+                          case Left(reason) =>
+                            logger.info(s"Node ${node.id} start held by workspace lifecycle: $reason")
+                          case Right(_) => runIO.handleErrorWith { case _: NodeEngine.StartRaceLost => IO.unit }
                         }
                       }
                     }
@@ -146,42 +157,22 @@ private[project] trait NodeStarter:
                     // 续跑 / 直接调用）都汇到本函数，闸在此处即对全部入口生效（与上方 deps/barrier
                     // 「单闸门自动保护全部启动入口」同款纪律）。命中 ⇒ 零动作返回：节点保持
                     // pending/wiring 可见、零副作用（见 mergeVerdictHoldersOf 注释）。
-                    // mergefifo-engine 批 2026-09-13：**互斥闸**逐字接在同一收口点之后（先 verdict
-                    // 后互斥，与设计件 §7.2 状态机同序；verdict 闸判据/留痕零改动）。
                     // engine-defects 批 #238（2026-09-15）：**闸面泛化**——判据不再按 merge 分叉
-                    // ⇒ 非 merge 收口位（O-1 缝：`bpm-verify`(fail) → `bpm-report`(merge=False)）
+                    // ⇒ 非 merge 收口位（O-1 缝：`bpm-verify`(fail) → `bpm-report`）
                     // 同样被本收口点挡住（「不通过」结论不得作为正向交付补投下游）。旧形态
                     // （越闸启动）此后**结构性不可能**：若仍发生，[[logVerdictGateBreach]] 会
                     // 单发一行回退告警（不变式告警，与闸共用 staleVerdictUps 单点）。
                     // chainview 批 2026-10-01：**链控闸**逐字接在同一收口点**最前**（闸序 =
-                    // 链控 → verdict → 互斥；链控是**用户显式意图**，优先级高于两个自动停等闸
-                    // ——暂停链上的节点不该被记进 verdict/mutex 的停等留痕）。命中 ⇒ 静默
+                    // 链控 → verdict；链控是**用户显式意图**，优先级高于自动停等闸
+                    // ——暂停链上的节点不该被记进 verdict 的停等留痕）。命中 ⇒ 静默
                     // `IO.unit`：零日志、零事件、零状态写（可见性由 REST/WS 三态面承担，
                     // 见 `NodeCanceller.chainGateOf` 头注）。
                     chainGateOf(node.id).flatMap {
                       case Some(_) => IO.unit
                       case None =>
-                        // verdict 闸收口（merge-verdict-gate 批 2026-09-12）——**单权威落点**：
-                        // 全部启动入口（barrier 结算 settleTo / settleDeps 反结算 / 重激活补投
-                        // redeliverInAndStart / D1 补投 / settleRunnableSweep 资格回扫 / crash-recovery
-                        // 续跑 / 直接调用）都汇到本函数，闸在此处即对全部入口生效（与上方 deps/barrier
-                        // 「单闸门自动保护全部启动入口」同款纪律）。命中 ⇒ 零动作返回：节点保持
-                        // pending/wiring 可见、零副作用（见 mergeVerdictHoldersOf 注释）。
-                        // mergefifo-engine 批 2026-09-13：**互斥闸**逐字接在同一收口点之后（先 verdict
-                        // 后互斥，与设计件 §7.2 状态机同序；verdict 闸判据/留痕零改动）。
-                        // engine-defects 批 #238（2026-09-15）：**闸面泛化**——判据不再按 merge 分叉
-                        // ⇒ 非 merge 收口位（O-1 缝：`bpm-verify`(fail) → `bpm-report`(merge=False)）
-                        // 同样被本收口点挡住（「不通过」结论不得作为正向交付补投下游）。旧形态
-                        // （越闸启动）此后**结构性不可能**：若仍发生，[[logVerdictGateBreach]] 会
-                        // 单发一行回退告警（不变式告警，与闸共用 staleVerdictUps 单点）。
                         mergeVerdictHoldersOf(node).flatMap { holders =>
                           if holders.nonEmpty then logVerdictGateHold("startNode", node, holders)
-                          else
-                            logVerdictGateBreach("startNode", node) *>
-                              mergeMutexHoldersOf(node).flatMap { queued =>
-                                if queued.nonEmpty then logMutexHold("startNode", node, queued)
-                                else pastVerdictGate
-                              }
+                          else logVerdictGateBreach("startNode", node) *> pastVerdictGate
                         }
                     }
             }
@@ -292,11 +283,13 @@ private[project] trait NodeStarter:
     // Bash/文件六件已默认经设备通道路由（sessionDevice）。设备项目才注入（本机
     // 项目零变化）；一行形态，与 delegate 的 [workspace] 行同族。
     val deviceBlock: List[String] =
-      (sessionDevice, sessionDeviceWorkspace).mapN((dev, ws) =>
-        s"[device workspace] $ws on device $dev — Bash/Read/Write/Edit/Glob/Grep run on that device " +
-          "by default (paths are device-local absolute paths; the engine host only holds the flow map, " +
-          "task board and this session). Pass device=\"local\" explicitly for a local-engine command."
-      ).toList
+      (sessionDevice, sessionDeviceWorkspace)
+        .mapN((dev, ws) =>
+          s"[device workspace] $ws on device $dev — Bash/Read/Write/Edit/Glob/Grep run on that device " +
+            "by default (paths are device-local absolute paths; the engine host only holds the flow map, " +
+            "task board and this session). Pass device=\"local\" explicitly for a local-engine command."
+        )
+        .toList
     taskBoardNodeBlock(node).flatMap { boardBlock =>
       node.in
         .traverse { upId =>

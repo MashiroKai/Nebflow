@@ -415,3 +415,55 @@ export async function saveAgentFile(name, content) {
   if (!r.ok) throw new Error(`agent.md save ${r.status}`);
   return { ok: true };
 }
+
+export async function fetchProjectWorkspaces(name) {
+  const response = await fetch(`/api/projects/${encodeURIComponent(name)}/workspaces`, { headers: authHeaders() });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || `workspaces ${response.status}`);
+  return data;
+}
+
+export async function saveProjectBaseline(name, branch) {
+  const response = await fetch(`/api/projects/${encodeURIComponent(name)}/workspaces/baseline`, {
+    method: 'PUT', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ branch }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || `baseline ${response.status}`);
+  return data;
+}
+
+export async function submitProjectMerge(name, requestId, workspaceIds) {
+  const response = await fetch(`/api/projects/${encodeURIComponent(name)}/workspaces/merge-requests`, {
+    method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requestId, workspaceIds }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || `merge request ${response.status}`);
+  return data;
+}
+
+export async function cancelProjectMerge(name, requestId) {
+  const response = await fetch(`/api/projects/${encodeURIComponent(name)}/workspaces/merge-requests/${encodeURIComponent(requestId)}/cancel`, {
+    method: 'POST', headers: authHeaders(),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || `cancel request ${response.status}`);
+  return data;
+}
+
+export async function previewProjectWorkspaceCleanup(name, id) {
+  const response = await fetch(`/api/projects/${encodeURIComponent(name)}/workspaces/${encodeURIComponent(id)}/cleanup`, { headers: authHeaders() });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || `cleanup preview ${response.status}`);
+  return data;
+}
+
+export async function cleanProjectWorkspace(name, id, confirmation) {
+  const response = await fetch(`/api/projects/${encodeURIComponent(name)}/workspaces/${encodeURIComponent(id)}/cleanup`, {
+    method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify(confirmation),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || `cleanup ${response.status}`);
+  return data;
+}

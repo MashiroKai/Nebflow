@@ -97,20 +97,12 @@ class FlowMapStore private (
     yield s.nodes ++ a.nodes
 
   /**
-   * 节点链归属判据单点（链级抽象 P0 + U1 多链归属批 + **chainmodel 批一 ① 声明优先** +
-   * **批三 ② 两值拆分**）：一次分量派生同时产出三个值（载体 = [[FlowMapStore.ChainAttrs]]）
-   * ——`chainId` = 所属（声明）链（载荷 `chainId` 条件键；**声明面优先**：`NodeDef.chainId`
+   * 节点链归属判据单点（链级抽象 P0 + **chainmodel 批一 ① 声明优先**）：
+   * `chainId` = 所属（声明）链（载荷 `chainId` 条件键；**声明面优先**：`NodeDef.chainId`
    * 非空 ⇒ 恒为该值（含单成员声明链），未声明 ⇒ 派生分量成员数 ≥2 才 Some，孤立单节点链
-   * 不带 = payload 零膨胀）、`chainIds` = 多链归属集（载荷 `chainIds` 条件键 = **主链 id
-   * 首项 + 全量成员链**，[[mergeChainIds]]；**仅 merge 节点**且可达成员链数 ≥2 才 Some
-   * ——普通节点恒 None，单值 `chainId` 语义不变；**语义逐字保留**）、
-   * `mergeUpstreamChains` = 本次汇聚的上游链（批三新增键，[[mergeUpstreamChains]]，
-   * 门控同上）。节点已不在双区（已被移除且查无归档）→ 三值皆 None。三值同出一次分量
-   * 派生 ⇒ `chainIds.head` 恒与 `chainId` 逐字同值（主链恒首项）。
+   * 不带 = payload 零膨胀）。节点已不在双区（已被移除且查无归档）→ None。
    * WS 事件经 NodeEngine.emitWithChain、快照/详情经 NodeTools.buildNodeListPayload
-   * 消费本判据，三处口径恒同源；分量只派生一次（旧 `chainIdOf` 单独派生会让
-   * 「chainId + chainIds」两值各算一次全量分量 —— 本方法即为此而合并；批三起第三条腿
-   * 同出该次派生，**禁**为取上游链再派生一次）。
+   * 消费本判据，口径恒同源。
    */
   def chainAttrsOf(nodeId: String): IO[FlowMapStore.ChainAttrs] =
     combinedNodes.map { combined =>
@@ -118,12 +110,8 @@ class FlowMapStore private (
       // 主链 id 判据（chainmodel 批一 ① 起）= [[FlowMapStore.chainIdIn]]：**声明恒带**
       // （单成员声明链也带——「声明即归属恒为 X」），未声明者派生分量 ≥2 成员才带
       // （payload 零膨胀口径逐字保留）。
-      // merge 两值（批三 ②）同出**一次**入口可达分解（禁为取上游链再算一遍）。
-      val merged = FlowMapStore.mergeChainAttrs(combined, chains, nodeId)
       FlowMapStore.ChainAttrs(
-        chainId = FlowMapStore.chainIdIn(combined, chains, nodeId),
-        chainIds = merged.map(_.chainIds),
-        mergeUpstreamChains = merged.map(_.upstreamChains)
+        chainId = FlowMapStore.chainIdIn(combined, chains, nodeId)
       )
     }
 
@@ -163,15 +151,11 @@ class FlowMapStore private (
       }
     }
 
-  /** merge 节点多链归属集（载荷 chainIds 条件键，U1 判据单点）：见 [[chainAttrsOf]]。 */
-  def chainIdsOf(nodeId: String): IO[Option[List[String]]] =
-    chainAttrsOf(nodeId).map(_.chainIds)
-
   /**
    * 本派生链**全集**（R2「一个 Mail 统一」批 2026-09-12，B2-x）：纯派生面（`topologicalChains`
    * 全分量 id，**不含**台账别名与链级依赖目标）。🔴 chainmodel 批三 ① 起 **Mail 校验不再走
    * 本方法**（改走 [[mailChainIds]] / [[resolveMailChainId]]，见该处头注）；本方法保留为
-   * 「派生链集」的公开读取单点（与 [[chainAttrsOf]] / [[chainIdsOf]] 同一 `topologicalChains`
+   * 「派生链集」的公开读取单点（与 [[chainAttrsOf]] 同一 `topologicalChains`
    * 判据，不新增第二套链推导逻辑）。
    */
   def allChainIds: IO[Set[String]] =
@@ -1187,44 +1171,15 @@ object FlowMapStore:
   case class ChainMembers(info: ChainInfo, members: List[NodeDef], title: String)
 
   /**
-   * **节点链归属三值载体（chainmodel 批三 ②；[[FlowMapStore.chainAttrsOf]] 的返回值）**
-   * ——同一次分量派生同时产出三个值（禁各算一次全量分量）：
-   *
-   *  - `chainId`：**所属（声明）链** —— 载荷 `chainId` 条件键。声明值逐字（声明恒带，
-   *    含单成员声明链）/ 未声明者走兜底分量且需成员数 ≥2（`chainIdIn` 判据，逐字不变）。
-   *  - `chainIds`：**多链归属集** —— 载荷 `chainIds` 条件键（仅 merge 节点且可达成员链数
-   *    ≥2）。**语义逐字保留**（所属链恒首项 + 全量成员链，无上限无降级）——既有消费点
-   *    （归档面板多链判据 `web/js/flowMapArchive.js:443-456` 剔除首项后计数）零降级；
-   *   本批按任务书 🔴「键名/兼容面有歧义时取保守解：保留旧键语义 + 增新键」处理。
-   *  - `mergeUpstreamChains`：**本次汇聚的上游链** —— 载荷 `mergeUpstreamChains` **新增
-   *    键**（门控与 `chainIds` 同源：仅 merge 节点 ∧ 入口可达成员链数 ≥2）。值与
-   *    [[FlowMapStore.MergeChainAttrs.upstreamChains]] 同源（入口可达分解的原样列表，
-   *    **含与所属链同号的入口项**——该项在旧键里被前移/去重，信息不可逆 ⇒ 新键不是旧键
-   *    的投影，两个值互不替代）。
+   * **节点链归属载体（[[FlowMapStore.chainAttrsOf]] 的返回值）**：
+   * `chainId` = **所属（声明）链** —— 载荷 `chainId` 条件键。声明值逐字（声明恒带，
+   * 含单成员声明链）/ 未声明者走兜底分量且需成员数 ≥2（`chainIdIn` 判据，逐字不变）。
+   * （原多链归属两值 `chainIds` / `mergeUpstreamChains` 随合并节点机制移除——它们
+   * 只对 merge 节点携带。）
    */
   final case class ChainAttrs(
-    chainId: Option[String] = None,
-    chainIds: Option[List[String]] = None,
-    mergeUpstreamChains: Option[List[String]] = None
+    chainId: Option[String] = None
   )
-
-  /**
-   * **merge 节点链归属两值（chainmodel 批三 ②；显式成员制下的语义拆分）**
-   *
-   *  - `ownChain`：**所属声明链** = 本节点所在分量 id（声明值逐字 / 未声明者
-   *    `chain-<分量内 createdAt 最早节点 id>`）——与载荷 `chainId` 主键、`chainIds.head`
-   *    逐字同值。
-   *  - `upstreamChains`：**本次汇聚的上游链** = 入口可达分解出的成员链（分量 entries 序，
-   *    每入口一条 `chain-<entry>`）——**空过滤原样**（与自身链同号的入口项保留），
-   *    不承诺「主链恒首项」契约（该契约属旧键 `chainIds`）。
-   *  - `chainIds`（方法）：旧键值（保守解，**与改造前逐字同值**）=
-   *    `ownChain :: upstreamChains.filterNot(_ == ownChain)` 去重保序。
-   */
-  case class MergeChainAttrs(ownChain: String, upstreamChains: List[String]):
-
-    /** 旧键 `chainIds` 值（保守解；等价性由 `MailChainBoundarySpec` 逐节点断言）。 */
-    def chainIds: List[String] =
-      (ownChain :: upstreamChains.filterNot(_ == ownChain)).distinct
 
   /**
    * sweep 出库明细载体（P3 归档联动批 2026-09-10；[[FlowMapStore.sweepCompletedChainsDetailed]]
@@ -1874,7 +1829,7 @@ object FlowMapStore:
    *
    * 🔴 **作用域**：本方法是**纯函数**且只依赖三类**伴生对象**判据（[[isChainRef]] /
    * [[chainRefTarget]] / [[isDeclarableChainId]]）⇒ 定义在 `object FlowMapStore`
-   * （与 [[payloadChains]] / [[mergeChainAttrs]] / [[chainVisible]] 同址），
+   * （与 [[payloadChains]] / [[chainVisible]] 同址），
    * **不**定义在 `class FlowMapStore` 体内：class 体内未限定引用伴生对象成员不成立
    * （审计定位：class/object 作用域误用，`compile` E008/E006）。调用点一律对象限定
    * （`FlowMapStore.mailChainIdSet(...)`，单测同款）。
@@ -1896,101 +1851,6 @@ object FlowMapStore:
       .filter(isDeclarableChainId)
     val registered = ledgerState.entries.keySet ++ ledgerState.aliases.keySet
     (derived ++ chainRefTargets ++ registered).toSet
-
-  /**
-   * **merge 节点链归属两值（chainmodel 批三 ② 判据单点）**：把 [[mergeChainIds]] 的
-   * 「主链 + 入口可达成员链」拆成**两个值**——`ownChain`（所属声明链 = 分量 id）与
-   * `upstreamChains`（本次汇聚的上游链 = 入口可达分解出的成员链，分量 entries 序，
-   * 空过滤原样）。载体与语义见 [[FlowMapStore.MergeChainAttrs]]。
-   *
-   * 算法与门控**逐字沿用**改造前的 `mergeChainIds`（仅 merge 节点 ∧ 入口可达成员链数 ≥2；
-   * 成员链计量口径 = `memberChains` 的长度，**不是**拼上主链项后的裸长度），只把返回
-   * 载体从 `Option[List[String]]` 换成两值 ⇒ 旧键语义零漂移（等价性逐节点断言见
-   * `MailChainBoundarySpec`）。
-   *
-   * 定向可达（§12.2.3-B 最小自洽定义，与「in 代理接线为主」的现状拓扑吻合）：
-   * 沿 **in 正向（u → 引用 u 的下游）∪ out 正向（跳过 Nebula/悬空名）∪ deps 正向**
-   * 遍历；入口 e 可达 M ⇔ M ∈ chainIds(M) 的成员链之一。分量外无边（弱分量定义），
-   * 故遍历在分量内闭包。确定性：成员链按分量 entries 序（createdAt, id 升序）。
-   */
-  def mergeChainAttrs(
-    combined: Map[String, NodeDef],
-    chains: List[ChainInfo],
-    nodeId: String
-  ): Option[FlowMapStore.MergeChainAttrs] =
-    combined.get(nodeId).filter(_.merge).flatMap { _ =>
-      chains.find(_.memberIds.contains(nodeId)).flatMap { comp =>
-        val nodeMap = comp.memberIds.flatMap(id => combined.get(id).map(id -> _)).toMap
-        // in 反向索引（u → 引用 u 的成员节点）：in 边在存储上只由下游持有，
-        // 正向遍历必须自建反向表（与 wouldCreateCycle 的 depsReverse 同法）。
-        val inRev = scala.collection.mutable.HashMap.empty[String, List[String]]
-        nodeMap.values.foreach(n => n.in.foreach(up => inRev.update(up, n.id :: inRev.getOrElse(up, Nil))))
-        def reachFrom(entry: String): Set[String] =
-          val seen = scala.collection.mutable.HashSet(entry)
-          val stack = scala.collection.mutable.Stack(entry)
-          while stack.nonEmpty do
-            val cur = stack.pop()
-            val viaOut = nodeMap
-              .get(cur)
-              .toList
-              .flatMap(_.out)
-              .filter(_.to != OutEdge.RootTarget)
-              .flatMap(e => OutEdge.resolveTargetId(nodeMap, e.to))
-            val viaDeps = nodeMap.get(cur).toList.flatMap(_.deps).filter(nodeMap.contains)
-            val viaIn = inRev.getOrElse(cur, Nil)
-            (viaOut ++ viaDeps ++ viaIn).foreach { x =>
-              if !seen.contains(x) then
-                seen += x
-                stack.push(x)
-            }
-          end while
-          seen.toSet
-        end reachFrom
-        val memberChains = comp.entries.filter(e => reachFrom(e).contains(nodeId)).map(e => s"chain-$e")
-        if memberChains.size < 2 then None
-        else Some(FlowMapStore.MergeChainAttrs(ownChain = comp.id, upstreamChains = memberChains))
-      }
-    }
-
-  /**
-   * **本次汇聚的上游链**（载荷 `mergeUpstreamChains` 新增键；见 [[mergeChainAttrs]]）。
-   */
-  def mergeUpstreamChains(
-    combined: Map[String, NodeDef],
-    chains: List[ChainInfo],
-    nodeId: String
-  ): Option[List[String]] =
-    mergeChainAttrs(combined, chains, nodeId).map(_.upstreamChains)
-
-  /**
-   * merge 节点多链归属派生（U1 批 · 2026-09-11 作者裁定①「多链归属只对合并节点做」）。
-   *
-   * **判定单位**：链归属的身份层仍是 [[topologicalChains]] 的弱连通分量（分区单值，
-   * 每节点恰属一个分量）；「多链」指的**不是**一个节点落在多个分量里（弱连通分量是
-   * 节点集划分，恒不可能），而是**合并节点被多条「成员链」共享**——成员链 = 分量内
-   * 按**入口可达分解**得到的枝线（每个入口 e，即 `in ∧ deps` 双空节点，对应一条
-   * 独立派发的支线；其链 id 与它独占分量时该有的 id 同构 = `chain-<e>`）。合并节点
-   * 的多个上游 `in` 边把各支线汇聚进同一分量，于是它同时属于这些支线：
-   * `chainIds(M) = 主链（= 分量链 id，[[topologicalChains]] id）:: 全量成员链 id
-   * （可达 M 的入口链，分量 entries 序）`，全部列出、**无上限、无降级路径**
-   * （作者裁定①；原「上限 4 + 超限降级」方案已废）。**主链恒首项**
-   * （`chainIds.head == chainId`）；主链本身同时是可达成员链时只出现一次
-   * （`.distinct`，首位保留主链）。两键分工：`chainId` = 分区归属单值
-   * （折叠/归档/落点），`chainIds` = 主链 + 多链成员归属 —— 主链值在两键中冗余
-   * 出现，属**有意的形态契约**（对应文档元数据头 §0bis.3 `chains: [主链, 支链…]`
-   * 首项恒主链；作者裁定①逐字「主链 chainId + 全量成员链」）。
-   *
-   * 🔴 **chainmodel 批三 ② 起本方法是 [[mergeChainAttrs]] 的投影**（保守解：既有键
-   * `chainIds` 语义**逐字保留**，新增键 `mergeUpstreamChains` 承载「本次汇聚的上游链」）
-   * ——算法/门控/形态契约一字未改，只是拆成两个值后旧键由 `MergeChainAttrs.chainIds`
-   * 给出（等价性逐节点断言见 `MailChainBoundarySpec`）。
-   */
-  def mergeChainIds(
-    combined: Map[String, NodeDef],
-    chains: List[ChainInfo],
-    nodeId: String
-  ): Option[List[String]] =
-    mergeChainAttrs(combined, chains, nodeId).map(_.chainIds)
 
   /**
    * 链名三级推导单点（链级抽象 P0 · spec §6.2，后端下发前端零派生）：

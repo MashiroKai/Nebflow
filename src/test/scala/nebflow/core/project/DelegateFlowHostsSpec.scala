@@ -224,6 +224,12 @@ class DelegateFlowHostsSpec extends CatsEffectSuite:
     res: SharedResources
   ): IO[os.Path] =
     for
+      // A crashed owner retains its durable registration; a missing record is an orphan chain.
+      _ <- IO(nebflow.core.delegate.DelegateRegistry.put(nebflow.core.delegate.DelegateRegistry.Record(
+        id = delegateId, executor = "builtin", cwd = ws.toString, project = None,
+        taskId = None, parentSessionId = "nebula-root", title = "scope owner",
+        createdAt = System.currentTimeMillis(), mode = Some("dispatcher")
+      )))
       mo <- mount(ws, delegateId, system, res)
       h = mo.getOrElse(fail("host must mount for seeding"))
       _ <- h.store.mutate { s =>
@@ -270,6 +276,28 @@ class DelegateFlowHostsSpec extends CatsEffectSuite:
       assert(mapThere, "scope map first-write lands in flow-maps/<scope>/")
       assert(again.isDefined && (again.get eq h), "second mount returns the same instance (idempotent)")
     end for
+  }
+
+  test("manual scope recovery mounts saved state without starting its interrupted node") {
+    val ws = os.temp.dir(prefix = "nb-dfh-manual-", deleteOnExit = false)
+    val system = ActorSystem("dfh-manual")
+    val delegateId = "delegate-general-manualhold"
+    val llm = ScriptLlm(_ => "MUST-NOT-RUN")
+    val program = for
+      res <- mkResources(system, llm.handle)
+      _ <- mountCarrier("dfh-carrier-manual", ws, system, res)
+      _ <- seedResidue(ws, delegateId, "n-manual-scope", Some("node-manual-saved"), system, res)
+      _ <- ProjectCrashRecovery.recoverDelegateScopes(reportGateHold = Some(false), rootNotifyQuietMs = Some(0), manual = true)
+      host <- DelegateFlowHosts.get(delegateId)
+      h = host.getOrElse(fail("saved scope remains mounted for inspection"))
+      _ <- h.engine.settleRunnableSweep()
+      saved <- h.store.snapshot
+      calls <- llm.fullReqs.get
+    yield
+      assertEquals(saved.nodes("n-manual-scope").status, NodeLifecycle.Interrupted)
+      assert(saved.manualRecoveryNodes.contains("n-manual-scope"))
+      assertEquals(calls, Nil)
+    program.guarantee(system.stopAll.handleErrorWith(_ => IO.unit))
   }
 
   test("H1b: invalid scope id refused fail-soft (delegate continues without a scope map)") {

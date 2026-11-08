@@ -48,13 +48,14 @@ object DelegateNotify:
    * 的行也可投——本通道不做身份窄化，规则面在调用方）。投递失败/目标不 live =
    * `false`，调用方自行走兜底（⑬A 既有升级链）。
    *
-   * @return true = 目标在注册表（消息已入该 actor 队列；`ActorRef.!` 是 fire-and-forget
-   *         的 `IO[Unit]`，入队即返回，不保证对方已处理）；false = 目标不 live（注册表无行）。
+   * @return true = the receiver intake is durable and actor notification was attempted;
+   *         this is not confirmation of business processing. False means the target is not live.
    */
   def inject(
     agentRegistry: cats.effect.Ref[IO, Map[String, AgentRecord]],
     targetSessionId: String,
-    text: String
+    text: String,
+    identity: Option[String] = None
   ): IO[Boolean] =
     agentRegistry.get.flatMap { agents =>
       agents.get(targetSessionId) match
@@ -69,12 +70,12 @@ object DelegateNotify:
           // outcome=delivered` 落了审计行，创建者 delegate 一条都没收到——
           // 「通知说发了、其实没发」的第二形态）。`*>` 串接即真实投递，返回语义
           // 不变（true = 注册表有行，与改前契约一致）。
-          (ref ! AgentCommand.ImmediateInput(
-            text = text,
-            source = Some(Source),
-            eventType = Some("flow-notify"),
-            fromUser = false
-          )).as(true)
+          val input = AgentCommand.ImmediateInput(
+            text = text, source = Some(Source), eventType = Some("flow-notify"), fromUser = false
+          )
+          val key = identity.getOrElse(nebflow.core.mail.ProducerInput.identity(targetSessionId, text))
+          nebflow.core.mail.ProducerInput.persist(targetSessionId, input, key)
+            .flatMap(prepared => (ref ! prepared).as(true))
     }
 
 end DelegateNotify

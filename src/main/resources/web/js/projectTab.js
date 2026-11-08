@@ -1,3 +1,4 @@
+import { mountProjectWorkspaces } from './projectWorkspaces.js';
 // projectTab.js — Project 标签页（#27 方向调整：项目入口以标签页呈现，参考 team 面板设计）。
 // 点击侧边栏 Project 按钮 → 打开 `projects` Canvas 标签页；一行/卡片一个 project，
 // 沿用 .team-card 视觉与交互范式。点击 project name → 同一标签页就地切换到
@@ -1241,6 +1242,7 @@ function playCardEnter(card) {
  *  title 的点击**总是**绑定，命中与否由 `data-open-flowmap` 在场判定——定点刷新下
  *  卡的「无节点」态会随后到达的摘要改变，按属性选择器择时绑定会漏/重。 */
 function bindProjectCard(card) {
+  mountProjectWorkspaces(card, card.dataset.project);
   const title = card.querySelector('.team-card-title');
   title?.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -1411,7 +1413,7 @@ function bindEmptyCta(scroll) {
  *    故空态 CTA 行为逐字不变。「+」钮弹层提交时传入带描述的模板
  *    （`project.createPrefill`）——两者共用本函数，语义单点（§7.11 统一入口）。
  *  @returns {boolean} false ⇒ 注入目标不可得（调用方须显式报错，禁静默吞）。 */
-function prefillProjectPrompt(text) {
+export function prefillProjectPrompt(text) {
   const input = /** @type {HTMLTextAreaElement | null} */ (document.getElementById('input'));
   if (!input) return false;
   input.value = text || t('project.emptyPrefill');

@@ -45,21 +45,20 @@ object DelegateTerminalTtl:
 
   case object InFlight extends Verdict:
     val anchor: Option[(Long, String)] = None
-    val isExpired: Boolean             = false
+    val isExpired: Boolean = false
 
   final case class WithinTtl(anchorMs: Long, anchorName: String) extends Verdict:
     val anchor: Option[(Long, String)] = Some((anchorMs, anchorName))
-    val isExpired: Boolean             = false
+    val isExpired: Boolean = false
 
   final case class Expired(anchorMs: Long, anchorName: String) extends Verdict:
     val anchor: Option[(Long, String)] = Some((anchorMs, anchorName))
-    val isExpired: Boolean             = true
+    val isExpired: Boolean = true
 
   /** 边界判读（唯一比较点）：age ≥ TTL ⇒ Expired；TTL=0 = 关闸永不到期。 */
   def ageVerdict(anchorMs: Long, anchorName: String, nowMs: Long): Verdict =
     val age = nowMs - anchorMs
-    if Defaults.DelegateTerminalTtlMs > 0 && age >= Defaults.DelegateTerminalTtlMs then
-      Expired(anchorMs, anchorName)
+    if Defaults.DelegateTerminalTtlMs > 0 && age >= Defaults.DelegateTerminalTtlMs then Expired(anchorMs, anchorName)
     else WithinTtl(anchorMs, anchorName)
 
   /**
@@ -79,12 +78,17 @@ object DelegateTerminalTtl:
    * ——本函数只做盘上判读。
    */
   def verdict(rec: DelegateRegistry.Record, taskOpt: Option[SubAgentTask], nowMs: Long): Verdict =
+    val managed = WorkspaceLedger.default.snapshot
+    if managed.workspaces.exists(_.owner == rec.id) || managed.mergers.exists(_.delegateId == rec.id) then
+      return InFlight
+    // Legacy worktree ownership is kept until explicitly reconciled into the ledger.
+    if rec.worktree.exists(_.nonEmpty) then return InFlight
     val savedAnchor: Option[(Long, String)] =
       (rec.standbySince, rec.frozenSince) match
         case (Some(a), Some(b)) => Some((math.max(a, b), "saved-state"))
-        case (Some(a), None)    => Some((a, "standby"))
-        case (None, Some(b))    => Some((b, "frozen"))
-        case (None, None)       => None
+        case (Some(a), None) => Some((a, "standby"))
+        case (None, Some(b)) => Some((b, "frozen"))
+        case (None, None) => None
     savedAnchor match
       case Some((ms, name)) => ageVerdict(ms, name, nowMs)
       case None =>
@@ -93,5 +97,6 @@ object DelegateTerminalTtl:
           case None =>
             rec.cancelRequestedAt.orElse(rec.restartInterruptedAt) match
               case Some(ms) => ageVerdict(ms, "registry-cancel-marker", nowMs)
-              case None     => ageVerdict(rec.createdAt, "registry-created", nowMs)
+              case None => ageVerdict(rec.createdAt, "registry-created", nowMs)
+  end verdict
 end DelegateTerminalTtl

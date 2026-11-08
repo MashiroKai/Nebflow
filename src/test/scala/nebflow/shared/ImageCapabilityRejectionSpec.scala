@@ -60,6 +60,17 @@ class ImageCapabilityRejectionSpec extends FunSuite:
   private def userMessage(e: FallbackExhaustedError): String =
     NebflowError.toUserMessage(NebflowError.llmFailure(e, hadImage = e.hadImage))
 
+  test("mixed authentication and timeout remains an authentication issue") {
+    val e = FallbackExhaustedError(List(
+      attempt("p", "m", FailoverReason.Auth),
+      attempt("q", "n", FailoverReason.Timeout)
+    ))
+    val message = userMessage(e)
+    assert(message.contains("凭据"))
+    assert(message.contains("权限"))
+    assert(!message.contains("暂时不可用"))
+  }
+
   test("V1: chain-level error entry names the image-capability family and the rejecting model") {
     val e = FallbackExhaustedError(
       List(attempt("flysin", "deepseek-v4-1-flash-261017", FailoverReason.Format, Some(wireMessage))),

@@ -10,45 +10,17 @@ import nebflow.core.executor.ExecutorRegistry
 import nebflow.core.ResumeHandoff
 import nebflow.core.node.NodeRunner
 import nebflow.core.project.DelegateFlowHosts
-import nebflow.shared.{NebflowLogger, SubAgentTask}
+import nebflow.shared.{ContentBlock, NebflowLogger, SubAgentTask}
 
 /**
- * SessionResumption —— 会话续命的**名与位**（2026-11-03 作者报障批，两处实证）：
- *
- * == A. 显示名去叠加 ==
- * 旧续命腿的派生描述恒为 `s"continuation: ${record.title}"` ⇒ 每派生一代就在名字
- * 前面再叠一条 `continuation: `：作者面板上逐代长成
- * `continuation: continuation: continuation: 大版本批（…）`，被截断后完全无法辨识
- * 是哪一批（实证：bb1a8bbb → 556fef54 → 5dcbf6c5 → 836a475e 四代会话链）。
- * 规则（本对象 [[displayTitle]] 单点）：**剥掉所有前导 `continuation:` /
- * `continuation of delegate …` / `[continuation …]` 段，显示任务账 title**；
- * 剥空则回落调用方给的 fallback（首条真实指令前 N 字 / 批次短名 / 会话 id）。
- * 名字因此**逐代稳定**：第 N 代的显示名 == 第 1 代。
- *
- * == B. 原位恢复优先（结构性必需）==
- * 派生新会话不只是「多几个 id」的体验问题：链节点的归属挂在原 sessionId 上
- * （`rootSessionId` = 作用域宿主 id，`DelegateFlowHosts` 一 delegate 一图），派生体
- * 挂载的是**一张全新的空 scope map**，既看不到旧节点（`DELEGATE_SCOPE_FOREIGN`），
- * 旧节点的事件也永远投不到活实例（作者 16:53 截图实证：Mail(→Nebula) 越界 +
- * NodeList(旧 id) 作用域外）。故 Mail 续命到「已终态但历史完好」的 delegate 一律
- * [[resumeInPlace]]：**沿用原 sessionId**，转录作为 `initialMessages` 重放、新输入
- * 追加为同一会话的下一轮，作用域图按同一 id 重挂 ⇒ 链节点归属分毫不动。
- *
- * 派生（[[deriveVerdict]] 判为不可原位时）才走新 id，且必须：
- *   ① 落 `resumedFrom=<原 id>`（DelegateRegistry 记录，供审计与显示）；
- *   ② 走 [[ScopeHandover]] 把旧作用域的图与链账本**移交**给新会话并落
- *      `ownerMigration` 审计行——绝不留下「节点挂在死会话名下、活实例收不到事件」。
- *
- * == 与既有语义的分界（不回退任何已修行为）==
- *  - cancel 墓碑（`cancelRequestedAt`）语义不动：取消过 = 不可跨重启/跨续命复活
- *    ⇒ 派生新 id（带 resumedFrom），绝不原位复活。
- *  - 重启 TERM 终态**不是**墓碑：`restartInterruptedAt` 在场照常原位恢复，恢复成功后
- *    摘旗（[[DelegateRegistry.clearRestartInterrupted]]）。
- *  - 错误冻结唤醒腿（[[nebflow.agent.DelegateRevival.wakeFrozen]]）与 boot 复活腿
- *    同样以**同 id** 重建——本对象不重复它们的判定，只承接「非冻结、非在飞」的
- *    续命入口（Mail / 面板唤醒）。
+ * Same-identity continuation for a completed or idle delegate with verified history.
+ * Mail never creates a replacement identity. Cancellation, missing history and unknown
+ * tool outcomes are explicit refusals; frozen and restart-interrupted sessions wait
+ * for manual recovery. Historical scope migrations remain readable for diagnostics.
  */
 object SessionResumption:
+
+  private final class AdmissionRejected(message: String) extends IllegalStateException(message)
 
   private val logger = NebflowLogger.forName("nebflow.session-resumption")
 
@@ -116,6 +88,8 @@ object SessionResumption:
     end while
     cur
 
+  end stripContinuationPrefix
+
   /**
    * 单点取名：任务账 title 的去叠加形态；剥空 ⇒ fallback（首条真实指令前 N 字 /
    * 批次短名 / 会话 id，由调用方给）。
@@ -136,7 +110,7 @@ object SessionResumption:
     Option(name).exists(_.toLowerCase.contains(ContinuationMark))
 
   // ══════════════════════════════════════════════════════════════════════════
-  // B. 原位 vs 派生（判定单点，纯函数）
+  // B. Same identity or explicit refusal
   // ══════════════════════════════════════════════════════════════════════════
 
   /** 续命位形判定。 */
@@ -144,24 +118,25 @@ object SessionResumption:
     /** 原位续：沿用原 sessionId（转录追加、链节点归属不变）。 */
     case InPlace(parentSessionId: String, transcriptMessages: Int)
 
-    /** 派生新 id（不可原位）；`reason` 进审计行与 Mail 回执。 */
-    case Derive(reason: String)
+    /** Preserve the identity and report why continuation cannot safely run. */
+    case Refuse(reason: String)
 
   object Verdict:
+
     def isInPlace(v: Verdict): Boolean = v match
       case InPlace(_, _) => true
-      case _             => false
+      case _ => false
 
     def reasonOf(v: Verdict): Option[String] = v match
-      case Derive(r) => Some(r)
-      case _         => None
+      case Refuse(r) => Some(r)
+      case _ => None
 
   /**
    * 判定单点（作者 16:51/16:53 裁定口径）：
-   *   - **cancel 墓碑在场 ⇒ 派生**（取消意图持久在案，绝不原位复活——与
+   *   - **cancel 墓碑在场 ⇒ 拒绝**（取消意图持久在案，绝不原位复活——与
    *     [[nebflow.agent.DelegateRevival.eligibility]] 的墓碑闸同源语义）；
-   *   - **转录读不出来 ⇒ 派生**（无现场可重放，原位续就是空壳）；
-   *   - 其余（含重启 TERM 终态、正常终态、standby 终态）⇒ **原位续**。
+   *   - **转录读不出来 ⇒ 拒绝**（无现场可重放，原位续就是空壳）；
+   *   - 历史完整时可判原位续；执行前还须核验手动恢复闸、工具结果和工作区占用。
    *
    * 外部执行器不进本判定（其续聊走 `ExternalSessionRunner.continueExternal`，
    * 自带 CLI session 续接面）。
@@ -172,12 +147,13 @@ object SessionResumption:
     transcriptMessages: Int
   ): Verdict =
     if record.cancelRequestedAt.isDefined then
-      Verdict.Derive(
+      Verdict.Refuse(
         s"cancel tombstone present (cancelled by ${record.cancelRequestedBy.getOrElse("?")} at " +
           s"${record.cancelRequestedAt.get}) — a cancelled session is never resumed in place"
       )
     else if transcriptLoadError.isDefined then
-      Verdict.Derive(s"transcript unreadable (${transcriptLoadError.get}) — nothing to replay in place")
+      Verdict.Refuse(s"transcript unreadable (${transcriptLoadError.get}) — nothing to replay in place")
+    else if transcriptMessages == 0 then Verdict.Refuse("Saved history is missing (RECOVERY_UNVERIFIED)")
     else Verdict.InPlace(record.parentSessionId, transcriptMessages)
 
   /** 续命运行期依赖面（与 boot 复活腿 [[nebflow.agent.DelegateRevival.Deps]] 同形）。 */
@@ -214,182 +190,314 @@ object SessionResumption:
    *   ⑥ 预算重挂（结构同位，机制现值 no-op）；
    *   ⑦ ChainStore `delegate-resume-in-place` 审计行 + 摘重启打断旗 + 输入注入。
    *
-   * 失败（transcript 读失败 / spawn 失败）⇒ `Left(reason)`，调用方落既有派生腿
-   * （派生腿再按 [[ScopeHandover]] 交接归属）。绝不静默悬挂。
+   * 失败返回Left，原身份、历史和作用域保留；不派生替代会话。
    */
-  def resumeInPlace(deps: Deps, record: DelegateRegistry.Record, message: String): IO[Either[String, InPlaceOutcome]] =
+  /** Shared with Mail: supplements never release a freeze or a saved restart gate. */
+  def requiresManual(
+    record: Option[DelegateRegistry.Record],
+    task: Option[nebflow.shared.SubAgentTask],
+    live: Option[nebflow.actor.AgentRecord],
+    workspace: Option[WorkspaceLedger.Workspace],
+    initializationPending: Boolean = false
+  ): Boolean =
+    record.exists(r =>
+      r.frozenSince.nonEmpty || r.frozenReason.nonEmpty || r.restartInterruptedAt.nonEmpty || r.cancelRequestedAt.nonEmpty
+    ) ||
+      task.exists(t => Set("pending-recovery", "frozen").contains(t.status)) ||
+      live.exists(r => r.status == nebflow.actor.AgentStatus.Frozen || r.frozenReason.nonEmpty) ||
+      workspace.exists(_.activity == "frozen") || initializationPending
+
+  def resumeInPlace(
+    deps: Deps,
+    record: DelegateRegistry.Record,
+    message: String,
+    blocks: Option[List[ContentBlock]] = None
+  ): IO[Either[String, InPlaceOutcome]] =
+    MergerInitialization
+      .exclusive(record.id)(resumeInPlaceLocked(deps, record, message, blocks))
+      .handleError(e => Left(s"Continuation could not safely start: ${e.getMessage}"))
+
+  /** Caller already holds the same session-start lease as initialization and manual revival. */
+  private[nebflow] def resumeInPlaceLocked(
+    deps: Deps,
+    record: DelegateRegistry.Record,
+    message: String,
+    blocks: Option[List[ContentBlock]] = None
+  ): IO[Either[String, InPlaceOutcome]] =
+    for
+      latest <- IO.blocking(DelegateRegistry.find(record.id))
+      task <- deps.resources.subAgentTaskStore.findByTaskId(record.id)
+      live <- deps.resources.agentRegistry.get.map(_.get(record.id))
+      ledger <- IO.blocking(WorkspaceLedger.default.snapshot)
+      result <- latest match
+        case None => IO.pure(Left("Delegate identity is missing; inspect the saved context"))
+        case Some(current) if current.cancelRequestedAt.nonEmpty =>
+          IO.pure(Left("Delegate was manually cancelled; create new work explicitly (DELEGATE_CANCELLED)"))
+        case Some(current)
+            if requiresManual(
+              Some(current),
+              task,
+              live,
+              ledger.workspaces.find(_.owner == current.id),
+              ledger.mergerBootstraps.get(current.id).exists(_.status != "ready")
+            ) =>
+          IO.pure(Left("Continuation is saved behind a manual recovery gate (MANUAL_RECOVERY_REQUIRED)"))
+        case Some(current) =>
+          live.fold(IO.pure(false))(entry => deps.system.isAlive(entry.ref.path)).flatMap {
+            case true => IO.pure(Left("Session is already live; deliver the supplement to its existing actor"))
+            case false => resumeAdmitted(deps, current, message, blocks)
+          }
+    yield result
+
+  private def resumeAdmitted(
+    deps: Deps,
+    record: DelegateRegistry.Record,
+    message: String,
+    blocks: Option[List[ContentBlock]]
+  ): IO[Either[String, InPlaceOutcome]] =
     val id = record.id
     val title = displayTitle(record)
-    val attempt: IO[Either[String, InPlaceOutcome]] =
-      for
-        taskOpt <- deps.resources.subAgentTaskStore.findByTaskId(id).attempt.map(_.toOption.flatten)
-        parentSid = taskOpt.map(_.parentSessionId).map(_.trim).filter(_.nonEmpty).getOrElse(record.parentSessionId.trim)
-        // ② 转录到场（读盘失败 = 不可原位——调用方派生）。
-        transcriptAttempt <- deps.resources.sessionStore.loadMessagesForSession(id).attempt
-        result <- transcriptAttempt match
-          case Left(err) =>
-            IO.pure(Left(s"transcript read failed for '$id': ${err.getMessage}"))
-          case Right(transcript) =>
-            for
-              // ① 行先翻 running（复活半途再崩 ⇒ 下一 boot 看到诚实的 running 行）。
-              _ <- IO.whenA(parentSid.nonEmpty)(
-                deps.resources.subAgentTaskStore
-                  .updateStatus(parentSid, id, "running")
-                  .handleErrorWith(e =>
-                    logger.warn(s"[session-resume] task-row flip failed for $id: ${e.getMessage}")
-                  )
-              )
-              // ③ 父活引用。
-              parentRef <-
-                if parentSid.isEmpty then IO.pure(None)
-                else deps.resources.agentRegistry.get.map(_.get(parentSid).map(_.ref))
-              baseDef <- IO.blocking(
-                nebflow.core.entity.BuiltinAgents
-                  .delegateEntry(nebflow.core.entity.BuiltinAgents.ExecutorName)
-                  .map(_.toAgentDef)
-                  .get
-              )
-              effectiveDef <- nebflow.agent.DelegateRevival.regrantPlugins(deps.resources, id, record, baseDef)
-              // ②' 续跑交接单（无感恢复批 2026-11-07）：断点停在工具调用中途 ⇒ 模型
-              //    收到那次调用的 tool_result（不是一条系统提示）；其余形态逐字回落
-              //    既有文案。单点 = [[nebflow.core.ResumeHandoff]]。
-              handoff = ResumeHandoff.plan(
-                transcript = transcript,
-                cause = ResumeHandoff.Cause.Continuation,
-                instruction = message,
-                legacyText =
-                  s"[system] A supplement arrived while no live actor was holding this session. " +
+    cats.effect.Ref.of[IO, IO[Unit]](IO.unit).flatMap { cleanup =>
+      val attempt: IO[Either[String, InPlaceOutcome]] =
+        for
+          taskOpt <- deps.resources.subAgentTaskStore.findByTaskId(id).attempt.map(_.toOption.flatten)
+          parentSid = taskOpt
+            .map(_.parentSessionId)
+            .map(_.trim)
+            .filter(_.nonEmpty)
+            .getOrElse(record.parentSessionId.trim)
+          // ② 转录到场（读盘失败 = 明确拒绝，保留原身份）。
+          transcriptAttempt <- deps.resources.sessionStore.loadMessagesForSession(id).attempt
+          result <- transcriptAttempt match
+            case Left(err) =>
+              IO.pure(Left(s"transcript read failed for '$id': ${err.getMessage}"))
+            case Right(transcript)
+                if transcript.isEmpty || nebflow.core.ResumeHandoff.hasUnresolvedToolCalls(transcript) =>
+              IO.pure(Left("Saved history or a tool outcome is unknown (RECOVERY_UNVERIFIED)"))
+            case Right(transcript) =>
+              for
+                _ <- IO
+                  .blocking(WorkspaceLedger.default.admit(id, allowFrozen = false))
+                  .flatMap(_.fold(error => IO.raiseError[Unit](new AdmissionRejected(error)), _ => IO.unit))
+                // ① 行先翻 running（复活半途再崩 ⇒ 下一 boot 看到诚实的 running 行）。
+                _ <- IO.whenA(parentSid.nonEmpty)(
+                  deps.resources.subAgentTaskStore
+                    .updateStatus(parentSid, id, "running")
+                    .handleErrorWith(e =>
+                      logger.warn(s"[session-resume] task-row flip failed for $id: ${e.getMessage}")
+                    )
+                )
+                // ③ 父活引用。
+                parentRef <-
+                  if parentSid.isEmpty then IO.pure(None)
+                  else deps.resources.agentRegistry.get.map(_.get(parentSid).map(_.ref))
+                baseDef <- IO.blocking(
+                  nebflow.core.entity.BuiltinAgents
+                    .delegateEntry(nebflow.core.entity.BuiltinAgents.ExecutorName)
+                    .map(_.toAgentDef)
+                    .get
+                )
+                effectiveDef <- nebflow.agent.DelegateRevival.regrantPlugins(deps.resources, id, record, baseDef)
+                // ②' 续跑交接单（无感恢复批 2026-11-07）：断点停在工具调用中途 ⇒ 模型
+                //    收到那次调用的 tool_result（不是一条系统提示）；其余形态逐字回落
+                //    既有文案。单点 = [[nebflow.core.ResumeHandoff]]。
+                handoff = ResumeHandoff.plan(
+                  transcript = transcript,
+                  cause = ResumeHandoff.Cause.Continuation,
+                  instruction = message,
+                  legacyText = s"[system] A supplement arrived while no live actor was holding this session. " +
                     s"Your full history (${transcript.size} transcript messages) is loaded above — this is the SAME session " +
                     s"(id unchanged, the batch's chain nodes still belong to it). Treat the following as your next input; " +
                     s"do not re-plan from scratch and do not redo finished work.\n\n$message"
-              )
-              childWsSend = nebflow.core.tools.DelegateTool.routeWsSendFor(id, Some(parentSid), deps.wsSend)
-              params = NodeRunner.SpawnParams(
-                agentDef = effectiveDef,
-                resources = deps.resources,
-                sessionId = id, // 🔴 原位：会话身份不变（转录/地址/链归属同一身份）
-                sessionName = title, // A 部分：显示名 = 剥离后的任务账 title（逐代稳定）
-                depth = 1,
-                parentRef = parentRef,
-                wsSend = childWsSend,
-                projectRoot = Some(record.cwd),
-                rootSessionId = if parentSid.nonEmpty then parentSid else id,
-                initialMessages = handoff.transcript
-              )
-              subagentRef <- deps.resources.spawnAgentActor(deps.system, params)
-              adapterRef <- deps.resources.spawnSupervisedAdapter(
-                system = deps.system,
-                params = params,
-                childRef = subagentRef,
-                childName = id,
-                description = title,
-                agentName = nebflow.core.entity.BuiltinAgents.ExecutorName,
-                subagentId = id,
-                parentSessionId = parentSid,
-                initialPrompt = message,
-                source = "delegate",
-                extraMetadata = JsonObject("resumedInPlace" -> true.asJson),
-                wsSend = Some(childWsSend)
-              )
-              _ <- NodeRunner.registerAgent(
-                deps.resources,
-                id = id,
-                ref = subagentRef,
-                kind = AgentKind.Delegate,
-                rootSessionId = if parentSid.nonEmpty then parentSid else id,
-                parentRef = parentRef,
-                startedAt = System.currentTimeMillis(),
-                lastActivityMs = System.currentTimeMillis(),
-                supervisorRef = Some(adapterRef),
-                parentSessionId = parentSid
-              )
-              // ⑤ 作用域宿主同 id 重挂（幂等；重开同一张图 ⇒ 节点归属不变）。
-              mounted <- DelegateFlowHosts
-                .mount(
-                  delegateId = id,
-                  project = record.project,
-                  baseWorkspace = record.projectWorkspace.getOrElse(record.cwd),
-                  engineCwd = record.cwd,
-                  system = deps.system,
+                )
+                childWsSend = nebflow.core.tools.DelegateTool.routeWsSendFor(id, Some(parentSid), deps.wsSend)
+                params = NodeRunner.SpawnParams(
+                  agentDef = effectiveDef,
                   resources = deps.resources,
+                  sessionId = id, // 🔴 原位：会话身份不变（转录/地址/链归属同一身份）
+                  sessionName = title, // A 部分：显示名 = 剥离后的任务账 title（逐代稳定）
+                  depth = 1,
+                  parentRef = parentRef,
+                  wsSend = childWsSend,
+                  projectRoot = Some(record.cwd),
+                  rootSessionId = if parentSid.nonEmpty then parentSid else id,
+                  initialMessages = handoff.transcript
+                )
+                subagentRef <- deps.resources.spawnAgentActor(deps.system, params)
+                _ <- cleanup.update(previous =>
+                  deps.system.stop(subagentRef).attempt.void *>
+                    deps.resources.agentRegistry.update(m =>
+                      m.get(id)
+                        .filter(_.ref.path == subagentRef.path)
+                        .fold(m)(_ => m - id)
+                    ) *> previous
+                )
+                adapterRef <- deps.resources.spawnSupervisedAdapter(
+                  system = deps.system,
+                  params = params,
+                  childRef = subagentRef,
+                  childName = id,
+                  description = title,
+                  agentName = nebflow.core.entity.BuiltinAgents.ExecutorName,
+                  subagentId = id,
+                  parentSessionId = parentSid,
+                  initialPrompt = message,
+                  source = "delegate",
+                  extraMetadata = JsonObject("resumedInPlace" -> true.asJson),
                   wsSend = Some(childWsSend)
                 )
-                .handleErrorWith(e =>
-                  logger
-                    .warn(s"[session-resume] flow-host remount failed for $id: ${e.getMessage}")
-                    .as(None)
+                _ <- cleanup.update(previous => deps.system.stop(adapterRef).attempt.void *> previous)
+                _ <- NodeRunner.registerAgent(
+                  deps.resources,
+                  id = id,
+                  ref = subagentRef,
+                  kind = AgentKind.Delegate,
+                  rootSessionId = if parentSid.nonEmpty then parentSid else id,
+                  parentRef = parentRef,
+                  startedAt = System.currentTimeMillis(),
+                  lastActivityMs = System.currentTimeMillis(),
+                  supervisorRef = Some(adapterRef),
+                  parentSessionId = parentSid
                 )
-              // ⑥ 预算重挂（respawn 同款结构同位）。
-              _ <- nebflow.agent.DelegateBudget.register(id)(adapterRef ! AgentEvent.Cancelled(id, "timeout"))
-              // ⑦a 审计行（#1228 链视图可见；payload 自带位形词）。
-              _ <- IO
-                .blocking(
-                  ChainStore.appendSync(
-                    ChainStore.keyFor(record.taskId, id),
-                    "delegate-resume-in-place",
-                    Json.obj(
-                      "action" -> "resumed-in-place".asJson,
-                      "delegateId" -> id.asJson,
-                      "sessionId" -> id.asJson,
-                      "displayTitle" -> title.asJson,
-                      "transcriptMessages" -> transcript.size.asJson,
-                      "parentSessionId" -> parentSid.asJson,
-                      "parentLive" -> parentRef.isDefined.asJson,
-                      "scopeMounted" -> mounted.isDefined.asJson,
-                      "workspace" -> record.cwd.asJson
+                // ⑤ 作用域宿主同 id 重挂（幂等；重开同一张图 ⇒ 节点归属不变）。
+                mounted <- DelegateFlowHosts
+                  .mount(
+                    delegateId = id,
+                    project = record.project,
+                    baseWorkspace = record.projectWorkspace.getOrElse(record.cwd),
+                    engineCwd = record.cwd,
+                    system = deps.system,
+                    resources = deps.resources,
+                    wsSend = Some(childWsSend)
+                  )
+                  .handleErrorWith(e =>
+                    logger
+                      .warn(s"[session-resume] flow-host remount failed for $id: ${e.getMessage}")
+                      .as(None)
+                  )
+                // ⑥ 预算重挂（respawn 同款结构同位）。
+                _ <- nebflow.agent.DelegateBudget.register(id)(adapterRef ! AgentEvent.Cancelled(id, "timeout"))
+                // ⑦a 审计行（#1228 链视图可见；payload 自带位形词）。
+                _ <- IO
+                  .blocking(
+                    ChainStore.appendSync(
+                      ChainStore.keyFor(record.taskId, id),
+                      "delegate-resume-in-place",
+                      Json.obj(
+                        "action" -> "resumed-in-place".asJson,
+                        "delegateId" -> id.asJson,
+                        "sessionId" -> id.asJson,
+                        "displayTitle" -> title.asJson,
+                        "transcriptMessages" -> transcript.size.asJson,
+                        "parentSessionId" -> parentSid.asJson,
+                        "parentLive" -> parentRef.isDefined.asJson,
+                        "scopeMounted" -> mounted.isDefined.asJson,
+                        "workspace" -> record.cwd.asJson
+                      )
                     )
                   )
-                )
-                .handleErrorWith(e =>
-                  logger.warn(s"[session-resume] ChainStore row failed for $id: ${e.getMessage}").void
-                )
-              // ⑦b 重启打断旗摘除（恢复 = 打断结束；幂等零写）。
-              _ <- IO.blocking(DelegateRegistry.clearRestartInterrupted(id)).handleErrorWith(e =>
-                logger.warn(s"[session-resume] restart-flag clear failed for $id: ${e.getMessage}").void
-              )
-              // ⑦b' 待命槽清零（案A 唤醒语义对齐）：待命停靠的记录被 Mail 续醒 =
-              // 唤醒轮——申报槽与停靠槽一并清（[[DelegateRegistry.clearStandby]]，
-              // 与 live 注入腿同款判据；唤醒轮无新申报走矩阵未申报腿提醒补报）。
-              _ <- IO.whenA(record.standbySince.isDefined)(
-                IO
-                  .blocking(DelegateRegistry.clearStandby(id))
                   .handleErrorWith(e =>
-                    logger.warn(s"[session-resume] standby clear failed for $id: ${e.getMessage}")
+                    logger.warn(s"[session-resume] ChainStore row failed for $id: ${e.getMessage}").void
                   )
-                  .void
-              )
-              // ⑦b'' 归档回流：活会话必须在在册窗可见（归档只加旗不删行——复活即摘旗，
-              // 否则面板在历史窗里显示一个正在跑的会话）。
-              _ <- IO.whenA(record.archivedAt.isDefined)(
-                IO
-                  .blocking(DelegateRegistry.unarchive(id))
+                // ⑦b 重启打断旗摘除（恢复 = 打断结束；幂等零写）。
+                _ <- IO
+                  .blocking(DelegateRegistry.clearRestartInterrupted(id))
                   .handleErrorWith(e =>
-                    logger.warn(s"[session-resume] unarchive failed for $id: ${e.getMessage}")
+                    logger.warn(s"[session-resume] restart-flag clear failed for $id: ${e.getMessage}").void
                   )
-                  .void
+                // ⑦b' 待命槽清零（案A 唤醒语义对齐）：待命停靠的记录被 Mail 续醒 =
+                // 唤醒轮——申报槽与停靠槽一并清（[[DelegateRegistry.clearStandby]]，
+                // 与 live 注入腿同款判据；唤醒轮无新申报走矩阵未申报腿提醒补报）。
+                _ <- IO.whenA(record.standbySince.isDefined)(
+                  IO
+                    .blocking(DelegateRegistry.clearStandby(id))
+                    .handleErrorWith(e =>
+                      logger.warn(s"[session-resume] standby clear failed for $id: ${e.getMessage}")
+                    )
+                    .void
+                )
+                // ⑦b'' 归档回流：活会话必须在在册窗可见（归档只加旗不删行——复活即摘旗，
+                // 否则面板在历史窗里显示一个正在跑的会话）。
+                _ <- IO.whenA(record.archivedAt.isDefined)(
+                  IO
+                    .blocking(DelegateRegistry.unarchive(id))
+                    .handleErrorWith(e => logger.warn(s"[session-resume] unarchive failed for $id: ${e.getMessage}"))
+                    .void
+                )
+                // ⑦c 输入注入：**转录在下、补充在上**——同一会话的下一轮。
+                // 无感恢复批 2026-11-07：载荷由 [[ResumeHandoff]] 出（上方 ②'），本处只投递。
+                _ <- IO(ResumeHandoff.logPlan(id, handoff, ResumeHandoff.Cause.Continuation))
+                input = ResumeHandoff.userInput(handoff, replyTo = Some(adapterRef))
+                withMedia = input.copy(blocks =
+                  blocks
+                    .map(media =>
+                      handoff.injectBlocks.getOrElse(List(ContentBlock.Text(handoff.injectText))) ++
+                        media.filterNot(_.isInstanceOf[ContentBlock.Text])
+                    )
+                    .orElse(input.blocks)
+                )
+                _ <- subagentRef ! withMedia
+                _ <- logger.info(
+                  s"[session-resume] resumed IN PLACE $id (transcript=${transcript.size} msgs, parentLive=${parentRef.isDefined}, " +
+                    s"scopeMounted=${mounted.isDefined}, title='$title') — same session id, chain ownership untouched"
+                )
+              yield Right(
+                InPlaceOutcome(
+                  delegateId = id,
+                  parentSessionId = parentSid,
+                  transcriptMessages = transcript.size,
+                  displayTitle = title,
+                  parentLive = parentRef.isDefined,
+                  scopeMounted = mounted.isDefined
+                )
               )
-              // ⑦c 输入注入：**转录在下、补充在上**——同一会话的下一轮。
-              // 无感恢复批 2026-11-07：载荷由 [[ResumeHandoff]] 出（上方 ②'），本处只投递。
-              _ <- IO(ResumeHandoff.logPlan(id, handoff, ResumeHandoff.Cause.Continuation))
-              _ <- subagentRef ! ResumeHandoff.userInput(handoff, replyTo = Some(adapterRef))
-              _ <- logger.info(
-                s"[session-resume] resumed IN PLACE $id (transcript=${transcript.size} msgs, parentLive=${parentRef.isDefined}, " +
-                  s"scopeMounted=${mounted.isDefined}, title='$title') — same session id, chain ownership untouched"
+        yield result
+
+      val failed = cleanup.get.flatten *> DelegateFlowHosts.unmount(id) *>
+        IO.blocking(
+          DelegateRegistry.parkFrozen(
+            id,
+            DelegateFreeze.wireValue(DelegateFreeze.Reason.EngineFault),
+            "Continuation startup failed; inspect saved context and recover manually"
+          )
+        ).attempt
+          .void *>
+        IO.blocking(DelegateRegistry.unarchive(id)).attempt.void *>
+        deps.resources.subAgentTaskStore
+          .findByTaskId(id)
+          .flatMap {
+            case Some(task) => deps.resources.subAgentTaskStore.updateStatus(task.parentSessionId, id, "frozen")
+            case None =>
+              deps.resources.subAgentTaskStore.recordTask(
+                SubAgentTask(
+                  taskId = id,
+                  parentSessionId = record.parentSessionId,
+                  agentName = record.executor,
+                  prompt = message,
+                  description = title,
+                  status = "frozen",
+                  retryCount = 0,
+                  spawnedAt = record.createdAt,
+                  completedAt = None,
+                  lastError = Some("Continuation startup failed; manual recovery required"),
+                  source = "delegate",
+                  mode = record.mode
+                )
               )
-            yield Right(
-              InPlaceOutcome(
-                delegateId = id,
-                parentSessionId = parentSid,
-                transcriptMessages = transcript.size,
-                displayTitle = title,
-                parentLive = parentRef.isDefined,
-                scopeMounted = mounted.isDefined
-              )
-            )
-      yield result
-    attempt.handleErrorWith(e =>
-      logger.warn(s"[session-resume] in-place resume errored for $id: ${e.getMessage}").as(Left(s"resume error: ${e.getMessage}"))
-    )
+          }
+          .attempt
+          .void *>
+        IO.blocking(WorkspaceLedger.default.settle(id, frozen = true))
+      attempt
+        .onError { case _: AdmissionRejected => IO.unit; case _ => failed }
+        .onCancel(failed)
+        .handleErrorWith(e =>
+          logger
+            .warn(s"[session-resume] in-place resume errored for $id: ${e.getMessage}")
+            .as(Left(s"resume error: ${e.getMessage}"))
+        )
+    }
+  end resumeAdmitted
 
   // ══════════════════════════════════════════════════════════════════════════
   // B''. 孤悬终点巡检（作者 16:51 ③：不得存在「节点 rootSessionId 指向终态会话
@@ -430,11 +538,13 @@ object SessionResumption:
   def hasOwnerMigration(delegateId: String, taskId: Option[String]): Boolean =
     val keys = List(ChainStore.keyFor(taskId, delegateId), delegateId).distinct
     keys.exists { k =>
-      ChainStore.readSync(k).exists(_.entries.exists { e =>
-        e.kind == "owner-migration" &&
-        (e.payload.hcursor.get[String]("to").toOption.contains(delegateId) ||
-          e.payload.hcursor.get[String]("from").toOption.contains(delegateId))
-      })
+      ChainStore
+        .readSync(k)
+        .exists(_.entries.exists { e =>
+          e.kind == "owner-migration" &&
+          (e.payload.hcursor.get[String]("to").toOption.contains(delegateId) ||
+            e.payload.hcursor.get[String]("from").toOption.contains(delegateId))
+        })
     }
 
   /**
@@ -457,8 +567,6 @@ object SessionResumption:
           List(OrphanScope(rec.id, dir.toString, open, why))
         else Nil
       }
-    }.handleErrorWith(e =>
-      logger.warn(s"[session-resume] orphan scope sweep failed: ${e.getMessage}").as(Nil)
-    )
+    }.handleErrorWith(e => logger.warn(s"[session-resume] orphan scope sweep failed: ${e.getMessage}").as(Nil))
 
 end SessionResumption

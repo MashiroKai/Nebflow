@@ -60,6 +60,10 @@ object ManualRevival:
             logger.info(s"[manual-revival] restoring $taskId (status=${t.status})").as(()) *>
               DelegateRevival
                 .revive(deps, t)
+                .flatTap {
+                  case Right(_) => resumeSavedScope(t.taskId)
+                  case Left(_) => IO.unit
+                }
                 .handleErrorWith(e =>
                   IO.pure(Left(s"task $taskId revive errored: ${Option(e.getMessage).getOrElse("error")}"))
                 )
@@ -105,8 +109,14 @@ object ManualRevival:
                         .warn(s"[manual-revival] revive failed for ${t.taskId} — row left as-is for retry")
                         .as(())
                   )
-                  .flatMap(ref => ref.get.map(rev => (rev, skipped)))
+                  .flatMap(ref => ref.get.flatTap(_.traverse_(resumeSavedScope)).map(rev => (rev, skipped)))
             }
+    }
+
+  private def resumeSavedScope(id: String): IO[Unit] =
+    nebflow.core.project.DelegateFlowHosts.get(id).flatMap {
+      case Some(host) => host.store.snapshot.flatMap(s => host.engine.resumeSavedNodes(s.manualRecoveryNodes)).void
+      case None => IO.unit
     }
 
 end ManualRevival

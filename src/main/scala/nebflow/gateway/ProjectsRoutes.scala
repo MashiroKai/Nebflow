@@ -43,57 +43,197 @@ private[gateway] object ProjectsRoutes:
       // 未挂载/不存在 → 404 {error}; 需 auth（withAuth）。
       // 注意：routes 挂载在 Router("/api" -> ...) 下，路径必须写相对段
       // （Root / "projects"），写 "api" 会双前缀 /api/api（QA P1②）。
+      case req @ GET -> Root / "projects" / name / "workspaces" / id / "cleanup" =>
+        withAuth(req) {
+          nebflow.core.delegate.ProjectWorkspaceCleanup.run(name, id, sharedResources, None).flatMap {
+            case Left(error) => Conflict(Json.obj("error" -> error.asJson))
+            case Right(preview) => Ok(preview)
+          }
+        }
+
+      case req @ POST -> Root / "projects" / name / "workspaces" / id / "cleanup" =>
+        withAuth(req) {
+          req.as[Json].flatMap { body =>
+            body.hcursor.get[String]("previewToken") match
+              case Left(_) => BadRequest(Json.obj("error" -> "Inspect the workspace before confirming cleanup".asJson))
+              case Right(token) =>
+                nebflow.core.delegate.ProjectWorkspaceCleanup
+                  .run(
+                    name,
+                    id,
+                    sharedResources,
+                    Some(
+                      (
+                        token,
+                        body.hcursor.get[Boolean]("confirmUnmerged").getOrElse(false),
+                        body.hcursor.get[Boolean]("discardUncommitted").getOrElse(false)
+                      )
+                    )
+                  )
+                  .flatMap {
+                    case Left(error) => Conflict(Json.obj("error" -> error.asJson))
+                    case Right(workspace) => Ok(Json.obj("workspace" -> workspace, "branchRetained" -> true.asJson))
+                  }
+          }
+        }
+
+      case req @ GET -> Root / "projects" / name / "workspaces" =>
+        withAuth(req) {
+          ProjectStore.load(name).flatMap {
+            case None => NotFound(Json.obj("error" -> "Project not found".asJson))
+            case Some(project) if ProjectStore.effectiveDevice(project) != "self" =>
+              Conflict(Json.obj("error" -> "Remote workspace lifecycle is not available on this device".asJson))
+            case Some(project) =>
+              IO.blocking {
+                val ws = os.Path(ProjectStore.brainWorkspace(project), PathUtil.dataRoot)
+                val ledger = nebflow.core.delegate.WorkspaceLedger.default
+                val repository = nebflow.core.delegate.WorkspaceLedger.repositoryKey(ws)
+                val snapshot = ledger.snapshot
+                // Workspace facts (ahead/dirty/HEAD, verification, reconcile) are
+                // fail-soft per workspace: one broken seat never fails the endpoint.
+                val facts = nebflow.core.delegate.WorkspaceFacts.forRepository(repository, snapshot)
+                // Priority E: advisor suggestions (durable rows with their states)
+                // ride the same snapshot; a corrupt store degrades to an empty list
+                // plus an explicit error marker instead of failing the endpoint.
+                val advisorRows = nebflow.core.delegate.WorkspaceAdvisor.default.rows()
+                Json.obj(
+                  "revision" -> snapshot.revision.asJson,
+                  "baseline" -> ledger.baseline(repository).asJson,
+                  "cleanups" -> snapshot.cleanups.filter { case (id, _) =>
+                    snapshot.workspaces.exists(w => w.id == id && w.repository == repository)
+                  }.asJson,
+                  "workspaces" -> snapshot.workspaces.filter(_.repository == repository).asJson,
+                  "facts" -> facts,
+                  "mergeRequests" -> snapshot.requests.filter(_.repository == repository).asJson,
+                  "mergeRequestOrigins" -> snapshot.requests
+                    .filter(_.repository == repository)
+                    .map(r => r.id -> nebflow.core.tools.WorkspaceSummaryTool.requestOrigin(r))
+                    .toMap
+                    .asJson,
+                  "suggestions" -> advisorRows.fold(_ => Nil, rows => rows.filter(_.repository == repository)).asJson,
+                  "advisorError" -> advisorRows.left.toOption.asJson,
+                  "merger" -> snapshot.mergers.find(_.repository == repository).asJson,
+                  "mergerInitialization" -> snapshot.mergers
+                    .find(_.repository == repository)
+                    .flatMap(m => snapshot.mergerBootstraps.get(m.delegateId))
+                    .map(seed => Json.obj("status" -> seed.status.asJson, "error" -> seed.error.asJson))
+                    .asJson
+                )
+              }.flatMap(Ok(_))
+                .handleErrorWith(e => Conflict(Json.obj("error" -> e.getMessage.asJson)))
+          }
+        }
+
+      case req @ POST -> Root / "projects" / name / "workspaces" / "merge-requests" / id / "cancel" =>
+        withAuth(req) {
+          nebflow.core.delegate.MergeRequests.cancel(name, id, sharedResources).flatMap {
+            case Left(error) => Conflict(Json.obj("error" -> error.asJson))
+            case Right(result) => Ok(io.circe.parser.parse(result).getOrElse(Json.obj()))
+          }
+        }
+
+      case req @ POST -> Root / "projects" / name / "workspaces" / "merge-requests" =>
+        withAuth(req) {
+          req.as[Json].flatMap { body =>
+            val parsed = for
+              id <- body.hcursor.get[String]("requestId")
+              ids <- body.hcursor.get[List[String]]("workspaceIds")
+            yield (id, ids)
+            parsed match
+              case Left(_) => BadRequest(Json.obj("error" -> "requestId and workspaceIds are required".asJson))
+              case Right((id, ids)) =>
+                nebflow.core.delegate.MergeRequests
+                  .submit(
+                    name,
+                    id,
+                    ids,
+                    s"authenticated project panel selection: ${ids.mkString(",")}",
+                    sharedResources
+                  )
+                  .flatMap {
+                    case Left(error) => Conflict(Json.obj("error" -> error.asJson))
+                    case Right(result) => Ok(io.circe.parser.parse(result).getOrElse(Json.obj()))
+                  }
+            end match
+          }
+        }
+
+      case req @ PUT -> Root / "projects" / name / "workspaces" / "baseline" =>
+        withAuth(req) {
+          ProjectStore.load(name).flatMap {
+            case None => NotFound(Json.obj("error" -> "Project not found".asJson))
+            case Some(project) if ProjectStore.effectiveDevice(project) != "self" =>
+              Conflict(Json.obj("error" -> "Configure the baseline on the project's device".asJson))
+            case Some(project) =>
+              req.as[Json].flatMap { body =>
+                body.hcursor.get[String]("branch") match
+                  case Left(_) => BadRequest(Json.obj("error" -> "branch is required".asJson))
+                  case Right(branch) =>
+                    IO.blocking {
+                      val ws = os.Path(ProjectStore.brainWorkspace(project), PathUtil.dataRoot)
+                      os.proc("git", "check-ref-format", "--branch", branch).call(cwd = ws)
+                      os.proc("git", "rev-parse", "--verify", s"refs/heads/$branch^{commit}").call(cwd = ws)
+                      val ledger = nebflow.core.delegate.WorkspaceLedger.default
+                      ledger.setBaseline(nebflow.core.delegate.WorkspaceLedger.repositoryKey(ws), branch)
+                    }.flatMap {
+                      case Left(error) => Conflict(Json.obj("error" -> error.asJson))
+                      case Right(_) => Ok(Json.obj("baseline" -> branch.asJson))
+                    }.handleErrorWith(e => Conflict(Json.obj("error" -> e.getMessage.asJson)))
+              }
+          }
+        }
+
       case req @ GET -> Root / "projects" =>
         withAuth(req) {
-          (ProjectStore.list(), ProjectStore.listAll()).mapN { (projects, all) =>
-            // unmount-console 面板批 2026-11-02：additive `unmounted` 数组——卸载态
-            // 项目的可见去处（「已卸载」分组数据源；行形与 mounted 行同构 +
-            // unmountedAt）。老前端忽略未知键零破坏；已归档项目仍不出列（归档保持
-            // 单程语义，remount 也不复活）。
-            val unmountedRows = all
-              .filter(pd => pd.unmounted.contains(true) && !pd.archived.contains(true))
-              .sortBy(pd => -(pd.unmountedAt.getOrElse(0L)))
-              .map(pd =>
-                Json.obj(
-                  "name" -> pd.name.asJson,
-                  "workspace" -> pd.workspace.asJson,
-                  "agentFile" -> pd.agentFile.asJson,
-                  "description" -> pd.description.asJson,
-                  "createdAt" -> pd.createdAt.asJson,
-                  "origin" -> pd.origin
-                    .fold(Json.Null)(o => Json.obj("device" -> o.device.asJson, "path" -> o.path.asJson)),
-                  "device" -> ProjectStore.effectiveDevice(pd).asJson,
-                  "unmountedAt" -> pd.unmountedAt.getOrElse(0L).asJson
-                )
-              )
-            Json.obj(
-              "projects" -> projects
-                .map(p =>
+          (ProjectStore.list(), ProjectStore.listAll())
+            .mapN { (projects, all) =>
+              // unmount-console 面板批 2026-11-02：additive `unmounted` 数组——卸载态
+              // 项目的可见去处（「已卸载」分组数据源；行形与 mounted 行同构 +
+              // unmountedAt）。老前端忽略未知键零破坏；已归档项目仍不出列（归档保持
+              // 单程语义，remount 也不复活）。
+              val unmountedRows = all
+                .filter(pd => pd.unmounted.contains(true) && !pd.archived.contains(true))
+                .sortBy(pd => -(pd.unmountedAt.getOrElse(0L)))
+                .map(pd =>
                   Json.obj(
-                    "name" -> p.name.asJson,
-                    "workspace" -> p.workspace.asJson,
-                    "agentFile" -> p.agentFile.asJson,
-                    "description" -> p.description.asJson,
-                    "createdAt" -> p.createdAt.asJson,
-                    // ui-device-faces 批（2026-10-10 · 设计稿 §6 后端②）：additive
-                    // `origin{device,path}|null`（面C 徽标数据源；键名对齐 project.json
-                    // 的 ProjectOrigin Codec）。老前端忽略未知键零破坏；存量项目（无
-                    // origin 盘面）= 显式 null。
-                    "origin" -> p.origin
-                      .fold(Json.Null)(o =>
-                        Json.obj("device" -> o.device.asJson, "path" -> o.path.asJson)
-                      ),
-                    // 台账 #913 ②（2026-10-26）：additive `device` —— workspace 所在
-                    // 设备的**存储值**（"self" = 本机 / 对端 deviceId；判定单点 =
-                    // ProjectStore.effectiveDevice）。显示名由前端按需解析（面板既有
-                    // origin 徽标同域）；老前端忽略未知键零破坏。
-                    "device" -> ProjectStore.effectiveDevice(p).asJson
+                    "name" -> pd.name.asJson,
+                    "workspace" -> pd.workspace.asJson,
+                    "agentFile" -> pd.agentFile.asJson,
+                    "description" -> pd.description.asJson,
+                    "createdAt" -> pd.createdAt.asJson,
+                    "origin" -> pd.origin
+                      .fold(Json.Null)(o => Json.obj("device" -> o.device.asJson, "path" -> o.path.asJson)),
+                    "device" -> ProjectStore.effectiveDevice(pd).asJson,
+                    "unmountedAt" -> pd.unmountedAt.getOrElse(0L).asJson
                   )
                 )
-                .asJson,
-              "unmounted" -> unmountedRows.asJson
-            )
-          }.flatMap(Ok(_))
+              Json.obj(
+                "projects" -> projects
+                  .map(p =>
+                    Json.obj(
+                      "name" -> p.name.asJson,
+                      "workspace" -> p.workspace.asJson,
+                      "agentFile" -> p.agentFile.asJson,
+                      "description" -> p.description.asJson,
+                      "createdAt" -> p.createdAt.asJson,
+                      // ui-device-faces 批（2026-10-10 · 设计稿 §6 后端②）：additive
+                      // `origin{device,path}|null`（面C 徽标数据源；键名对齐 project.json
+                      // 的 ProjectOrigin Codec）。老前端忽略未知键零破坏；存量项目（无
+                      // origin 盘面）= 显式 null。
+                      "origin" -> p.origin
+                        .fold(Json.Null)(o => Json.obj("device" -> o.device.asJson, "path" -> o.path.asJson)),
+                      // 台账 #913 ②（2026-10-26）：additive `device` —— workspace 所在
+                      // 设备的**存储值**（"self" = 本机 / 对端 deviceId；判定单点 =
+                      // ProjectStore.effectiveDevice）。显示名由前端按需解析（面板既有
+                      // origin 徽标同域）；老前端忽略未知键零破坏。
+                      "device" -> ProjectStore.effectiveDevice(p).asJson
+                    )
+                  )
+                  .asJson,
+                "unmounted" -> unmountedRows.asJson
+              )
+            }
+            .flatMap(Ok(_))
         }
 
       // POST /projects/<name>/archive — 归档（迁移方案 v2 §6.1）：显式人工动作唯一入口
@@ -488,7 +628,8 @@ private[gateway] object ProjectsRoutes:
                         exec.peerById(o.device).flatMap {
                           case None =>
                             IO(
-                              nebflow.shared.NebflowLogger.forName("nebflow.projects.routes")
+                              nebflow.shared.NebflowLogger
+                                .forName("nebflow.projects.routes")
                                 .warnSync(s"[device] agent.md push skipped: device '${o.device}' not online")
                             )
                           case Some(peer) =>
@@ -503,7 +644,8 @@ private[gateway] object ProjectsRoutes:
                                 case Right(_) => IO.unit
                                 case Left(err) =>
                                   IO(
-                                    nebflow.shared.NebflowLogger.forName("nebflow.projects.routes")
+                                    nebflow.shared.NebflowLogger
+                                      .forName("nebflow.projects.routes")
                                       .warnSync(
                                         s"[device] agent.md push to '${o.device}' failed: $err (local mirror is authoritative until next mount)"
                                       )

@@ -24,8 +24,11 @@ class InPlaceWriteGuardSpec extends FunSuite:
 
   private val originalRoot = PathUtil.dataRoot
   private var tmp: os.Path = os.root / "nonexistent"
-  /** 仓目录放项目 target 下（**不用 os.temp.dir**：macOS 的 /var → /private/var 符号
-    * 链接会让 `git worktree list` 的路径与本地拼串不等，四查误判「not registered」）。 */
+
+  /**
+   * 仓目录放项目 target 下（**不用 os.temp.dir**：macOS 的 /var → /private/var 符号
+   * 链接会让 `git worktree list` 的路径与本地拼串不等，四查误判「not registered」）。
+   */
   private val tempRoot: os.Path = os.pwd / "target" / "test-inplace-guard"
 
   private def gitAvailable: Boolean =
@@ -140,9 +143,10 @@ class InPlaceWriteGuardSpec extends FunSuite:
 
   test("D 回执位形：标红行是交付正文的第一行（不许埋尾部）") {
     val alarm = "🔴 [IN-PLACE WRITE ALARM] 本任务未分配 worktree 但改动了项目工作区，路径清单如下"
-    val released = DelegateTerminal.withInPlaceAlarm(DelegateTerminal.Outcome.Release("verdict line\nwork appendix"), Some(alarm))
+    val released =
+      DelegateTerminal.withInPlaceAlarm(DelegateTerminal.Outcome.Release("verdict line\nwork appendix"), Some(alarm))
     released match
-      case DelegateTerminal.Outcome.Release(text, _) =>
+      case DelegateTerminal.Outcome.Release(text) =>
         assert(text.startsWith(alarm), s"the alarm must lead the receipt body, got: $text")
         assert(text.contains("verdict line"), "the original body is preserved below it")
       case other => fail(s"only Release receipts are rewrapped, got $other")

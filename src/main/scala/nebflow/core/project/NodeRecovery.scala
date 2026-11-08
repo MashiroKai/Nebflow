@@ -577,6 +577,39 @@ private[project] trait NodeRecovery:
         }
       case other => IO.pure(other)
 
+  /** Save restart residue without starting actors, replaying tools or notifying a parent. */
+  def holdForManualRecovery(): IO[Int] =
+    store.mutateWithResult { st =>
+      val ids = st.nodes.values.filterNot(n => NodeLifecycle.Terminal.contains(n.status)).map(_.id).toSet
+      val nodes = st.nodes.map { (id, n) =>
+        id -> (if n.status == NodeLifecycle.Running then n.copy(status = NodeLifecycle.Interrupted) else n)
+      }
+      (st.copy(nodes = nodes, manualRecoveryNodes = st.manualRecoveryNodes ++ ids), ids.size)
+    }.flatMap { (snap, count) =>
+      snap.manualRecoveryNodes.toList.traverse_(id => snap.nodes.get(id).traverse_(n =>
+        emitWithChain("nodeUpdated", id, NodePayload.buildNodeJson(n, System.currentTimeMillis()))
+      )).as(count)
+    }
+
+  /** Explicit user recovery, preserving checkpoint-based execution for interrupted nodes. */
+  def resumeSavedNodes(ids: Set[String]): IO[Int] =
+    store.snapshot.flatMap { snap =>
+      val selected = ids.intersect(snap.manualRecoveryNodes).toList.flatMap(snap.nodes.get)
+      selected.traverse { n =>
+        val release = store.mutate(st => st.copy(manualRecoveryNodes = st.manualRecoveryNodes - n.id)).void
+        if n.status == NodeLifecycle.Interrupted || n.status == NodeLifecycle.Running then
+          bootRecoveryClaim(n).flatMap {
+            case Some(Right(ctx)) =>
+              (release *> bootRecoveryStart(n.id, ctx)).handleErrorWith { e =>
+                store.mutate(st => st.copy(manualRecoveryNodes = st.manualRecoveryNodes + n.id)).void *>
+                  logger.error(s"manual node recovery failed for ${n.id}; execution remains held: ${e.getMessage}")
+              }.start.as(1)
+            case _ => IO.pure(0)
+          }
+        else release.as(1)
+      }.map(_.sum)
+    }
+
   def bootRecoveryClaim(n: NodeDef): IO[Option[Either[String, NodeEngine.ResumeContext]]] =
     // 资格判据扩展（中断恢复语义批 2026-09-13，spec §2.4 #2）：Running ∪ Interrupted
     // ——优雅关机现场（interrupted）与崩溃现场（Running，kill -9 / 无钩子机会）同一

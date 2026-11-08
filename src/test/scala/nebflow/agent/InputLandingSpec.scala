@@ -98,3 +98,46 @@ class InputLandingSpec extends CatsEffectSuite:
       assertEquals(d, 0)
     }
   }
+
+  test("producer-persisted notification is accepted once after immediate-to-user conversion") {
+    val message = AgentCommand.ImmediateInput("node completed", source = Some("node"), fromUser = false)
+    val identity = nebflow.core.mail.ProducerInput.identity("scope", "node", "round-1")
+    for
+      prepared <- nebflow.core.mail.ProducerInput.persist(sid.get, message, identity)
+      user = AgentCommand.UserInput(prepared.text, clientMessageId = prepared.clientMessageId,
+        source = prepared.source, fromUser = false)
+      landed <- InputLanding.landUser(sid, user)
+      duplicate <- InputLanding.landUser(sid, user)
+      _ <- InputLanding.consume(sid, landed)
+      _ <- nebflow.core.mail.ProducerInput.persist(sid.get, message, identity)
+      afterConsumption <- InputLanding.landUser(sid, user)
+    yield
+      assertEquals(landed, InputLanding.LandOutcome.Landed(identity))
+      assertEquals(duplicate, InputLanding.LandOutcome.Duplicate)
+      assertEquals(afterConsumption, InputLanding.LandOutcome.Duplicate)
+  }
+
+  test("crash residue replays the same producer identity and complete batch payload") {
+    val message = AgentCommand.ImmediateInput("batch", source = Some("node"),
+      windowItems = Some(List(AgentCommand.WindowItem("result", "worker", "completed", "project/worker"))))
+    val identity = nebflow.core.mail.ProducerInput.identity("scope", "batch", "round-1")
+    for
+      prepared <- nebflow.core.mail.ProducerInput.persist(sid.get, message, identity)
+      landed <- InputLanding.landImmediate(sid, prepared)
+      replay <- InputMailbox.replayProducerInputs(sid.get)
+      resumed <- InputLanding.landImmediate(sid, prepared)
+      _ <- InputLanding.consume(sid, resumed)
+      after <- InputMailbox.replayProducerInputs(sid.get)
+    yield
+      assertEquals(landed, InputLanding.LandOutcome.Landed(identity))
+      assertEquals(replay.map(_.payload.windowItems), List(message.windowItems))
+      assertEquals(resumed, InputLanding.LandOutcome.Landed(identity))
+      assertEquals(after, Nil)
+  }
+
+  test("producer persistence fails visibly instead of accepting an unwritten notification") {
+    val blocked = tmp / "sessions" / sid.get
+    os.makeDir.all(blocked / os.up)
+    os.write(blocked, "not a directory")
+    nebflow.core.mail.ProducerInput.persist(sid.get, imm("result", None), "stable-id").attempt.map(r => assert(r.isLeft))
+  }

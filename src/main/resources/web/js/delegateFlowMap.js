@@ -11,7 +11,7 @@
 //
 // View projection (single point, zero fabrication):
 //   - root node = the delegate row itself (id = delegateId, status = row status
-//     verbatim incl. ready-to-merge, worktree/mergeQueue fields pass through);
+//     verbatim incl. ready-to-merge, worktree fields pass through);
 //   - sub-agent children (G3 listDelegateChildren) = root's direct spawn edges
 //     (root.out → child, solid result-style lines);
 //   - AgentFlow steps (chain.nodes kind 'flow-step') keep their structural
@@ -113,8 +113,6 @@ export function buildDelegateFm(key) {
     createdAt: (row && row.createdAt) || undefined,
     hasWorktree: !!(chain.worktree && (chain.worktree.worktree || chain.worktree.cwd)),
     worktree: chain.worktree ? String(chain.worktree.worktree || chain.worktree.cwd || '') : '',
-    mergeQueue: row && row.mergeQueue ? row.mergeQueue : undefined,
-    mergeQueuePos: row && row.mergeQueuePos ? row.mergeQueuePos : undefined,
     plugins: allocNames.length ? allocNames : undefined,
     allocation: allocMode || undefined,
     in: [], deps: [], out: [],

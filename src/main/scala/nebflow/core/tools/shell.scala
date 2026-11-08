@@ -273,7 +273,16 @@ final class ShellSession private (
      * B1「只提醒」腿的审计出口（见 [[startJobHealthCheck]]
      * 同名参数）：None = 无项目上下文 / spec 直调 ⇒ 只留 `logger.warn`。
      */
-    onSlowDetected: Option[String => IO[Unit]] = None
+    onSlowDetected: Option[String => IO[Unit]] = None,
+    /**
+     * Merger write exclusion: when present, the job's execution fiber releases
+     * the repository write hold at terminal state. `guarantee` runs on
+     * completion, error AND cancellation, so every terminal path (normal
+     * completion, idle/stall kill, explicit cancel, session reclaim) releases
+     * exactly once — no leaked holds. The lock is held for the whole process
+     * lifetime, never just the tool-call lifetime.
+     */
+    releaseAtTerminal: Option[IO[Unit]] = None
   ): IO[String] =
     lifecycleMutex.lock.surround {
       for
@@ -287,7 +296,9 @@ final class ShellSession private (
         jobId <- jobIdOverride.fold(IO.randomUUID.map(_.toString.take(8)))(IO.pure)
         deferred <- Deferred[IO, Either[Throwable, ProcessResult]]
         health = new JobHealth(outputSink = outputSink.getOrElse(_ => ()))
-        fiber <- backgroundExecute(command, deferred, health, on_complete).start
+        fiber <-
+          val body = backgroundExecute(command, deferred, health, on_complete)
+          releaseAtTerminal.fold(body)(release => body.guarantee(release.attempt.void)).start
         hbFiber <- on_heartbeat match
           case Some(cb) => startHeartbeat(jobId, deferred, health, cb)
           case None => IO.pure(None)
@@ -319,10 +330,10 @@ final class ShellSession private (
         // ④ 任务图注册观测腿（实例 id + 原因——#1220 行↔图发散定谳腿）。
         _ <- ShellSession.jobGraphLog.info(
           "[bg-job-graph] register",
-          "jobId"    -> jobId,
+          "jobId" -> jobId,
           "instance" -> instanceId,
-          "session"  -> sessionId,
-          "cause"    -> "executeBackground"
+          "session" -> sessionId,
+          "cause" -> "executeBackground"
         )
       yield jobId
     }
@@ -341,10 +352,10 @@ final class ShellSession private (
                 // ④ 任务图移除观测腿：正常完成消费（getBackgroundResult 取走式）。
                 ShellSession.jobGraphLog.info(
                   "[bg-job-graph] remove",
-                  "jobId"    -> jobId,
+                  "jobId" -> jobId,
                   "instance" -> instanceId,
-                  "session"  -> sessionId,
-                  "cause"    -> "getBackgroundResult"
+                  "session" -> sessionId,
+                  "cause" -> "getBackgroundResult"
                 ) *> backgroundJobs.update(_ - jobId).as(Some(result))
             }
         }
@@ -403,6 +414,8 @@ final class ShellSession private (
         // 一次 LLM 往返；顺序等待会让 N 个任务叠加成 N×预算（越界即第二个上限）。
         (graphRaces ++ registryWaits).parSequence.map(_.flatten.toMap)
       }
+    end if
+  end waitBackgroundResults
 
   /** 注册表探测拍间隔（不是等待上限——上限只有一个，见 [[waitBackgroundResults]]）。 */
   private val RegistryProbeIntervalMs: Long = 500L
@@ -437,6 +450,8 @@ final class ShellSession private (
           }
       }
     loop
+
+  end waitOneViaRegistry
 
   /** Get health info for a running background job (does not remove the job). */
   def getBackgroundJobHealth(jobId: String): IO[Option[BackgroundJobHealth]] =
@@ -530,10 +545,10 @@ final class ShellSession private (
                 val remove =
                   ShellSession.jobGraphLog.info(
                     "[bg-job-graph] remove",
-                    "jobId"    -> jobId,
+                    "jobId" -> jobId,
                     "instance" -> instanceId,
-                    "session"  -> sessionId,
-                    "cause"    -> "cancelBackgroundJob"
+                    "session" -> sessionId,
+                    "cause" -> "cancelBackgroundJob"
                   ) *> backgroundJobs.update(_ - jobId)
 
                 killProcess *> completeDeferred *> cancelFibers *> remove.as(true)
@@ -574,10 +589,10 @@ final class ShellSession private (
           val proc = job.health.processRef.get()
           ShellSession.jobGraphLog.info(
             "[bg-job-graph] remove",
-            "jobId"    -> jobId,
+            "jobId" -> jobId,
             "instance" -> instanceId,
-            "session"  -> sessionId,
-            "cause"    -> "kill"
+            "session" -> sessionId,
+            "cause" -> "kill"
           ) *>
             (if proc != null && proc.isAlive then ProcessTree.killProcessTree(proc) else IO.unit) *>
             job.deferred.complete(Left(new InterruptedException("Session killed"))).attempt.void *>
@@ -1229,10 +1244,10 @@ final class ShellSession private (
         // ④ 任务图注册观测腿（实例 id + 原因——前台转后台收编路径同登记）。
         _ <- ShellSession.jobGraphLog.info(
           "[bg-job-graph] register",
-          "jobId"    -> jobId,
+          "jobId" -> jobId,
           "instance" -> instanceId,
-          "session"  -> sessionId,
-          "cause"    -> "adoptAsBackgroundJob"
+          "session" -> sessionId,
+          "cause" -> "adoptAsBackgroundJob"
         )
       yield ()
     }
@@ -1529,6 +1544,7 @@ final class ShellSession private (
         else if isProcessExited() then go = false // 进程退了立即收尾（孤儿占管道类）
         else if now - startMs >= probeBudgetMs then go = false // 预算窗满 → UTF-8 兜底
         else Thread.sleep(pollMs)
+      end if
     end while
 
     if n <= 0 then (pushback, StandardCharsets.UTF_8)
@@ -1560,8 +1576,7 @@ final class ShellSession private (
           .decode(ByteBuffer.wrap(bytes, 0, to))
         true
       catch case _: CharacterCodingException => false
-    decode(len) ||
-    {
+    decode(len) || {
       val partial = trailingPartialLen(bytes, len)
       partial > 0 && decode(len - partial)
     }
@@ -1573,15 +1588,15 @@ final class ShellSession private (
    */
   private def trailingPartialLen(bytes: Array[Byte], len: Int): Int =
     val leadIdx =
-      (math.max(0, len - 3) until len).reverse.find(i => (bytes(i) & 0xC0) != 0x80)
+      (math.max(0, len - 3) until len).reverse.find(i => (bytes(i) & 0xc0) != 0x80)
     leadIdx match
       case None => 0
       case Some(i) =>
-        val b = bytes(i) & 0xFF
+        val b = bytes(i) & 0xff
         val seqLen =
-          if (b & 0xE0) == 0xC0 then 2
-          else if (b & 0xF0) == 0xE0 then 3
-          else if (b & 0xF8) == 0xF0 then 4
+          if (b & 0xe0) == 0xc0 then 2
+          else if (b & 0xf0) == 0xe0 then 3
+          else if (b & 0xf8) == 0xf0 then 4
           else 0 // 非法 lead（0x80-0xC1 / 0xF8+）：不是切半，是真坏字节
         if seqLen > 0 && len - i < seqLen then len - i else 0
 
@@ -1613,8 +1628,7 @@ object ShellSession:
    * `Some(true)` 即可在 Mac 上跑真探测逻辑（永不出字流 / 慢速出字流断言）。
    * 测试用完必须复位 `None`（afterEach），否则污染同 JVM 后续测试。
    */
-  private[tools] val charsetProbeGateOverride
-    : java.util.concurrent.atomic.AtomicReference[Option[Boolean]] =
+  private[tools] val charsetProbeGateOverride: java.util.concurrent.atomic.AtomicReference[Option[Boolean]] =
     new java.util.concurrent.atomic.AtomicReference(None)
 
   /**
@@ -1778,7 +1792,7 @@ object ShellSession:
       sessions.get.flatMap { m =>
         m.get(sessionId) match
           case Some(s) => s.isDead.map(dead => if dead then None else Some(s))
-          case None    => IO.pure(None)
+          case None => IO.pure(None)
       }
 
   /**
@@ -1870,10 +1884,10 @@ object ShellSession:
               completed.traverse_ { case (id, _) =>
                 ShellSession.jobGraphLog.info(
                   "[bg-job-graph] remove",
-                  "jobId"    -> id,
+                  "jobId" -> id,
                   "instance" -> "unknown(evict-leg)",
-                  "session"  -> "unknown(evict-leg)",
-                  "cause"    -> "evictCompleted"
+                  "session" -> "unknown(evict-leg)",
+                  "cause" -> "evictCompleted"
                 )
               } *> jobsRef.update(_ -- completed.map(_._1))
           }
@@ -1987,7 +2001,8 @@ private[tools] final class OutputTailWindow(
       catch
         case e: java.io.IOException =>
           spillFailed = true
-          try if writer != null then writer.close() catch case _: java.io.IOException => ()
+          try if writer != null then writer.close()
+          catch case _: java.io.IOException => ()
           writer = null
         case e: RuntimeException =>
           spillFailed = true
@@ -2027,6 +2042,10 @@ private[tools] final class OutputTailWindow(
   }
 
   override def close(): Unit = lock.synchronized {
-    try if writer != null then { writer.flush(); writer.close() } catch case _: java.io.IOException => ()
+    try
+      if writer != null then
+        writer.flush(); writer.close()
+    catch case _: java.io.IOException => ()
     writer = null
   }
+end OutputTailWindow

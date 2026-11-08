@@ -104,15 +104,18 @@ final class MsgTokenRegistry(
     val lock = new ReentrantLock()
     @volatile var loaded: Boolean = false
     @volatile var byToken: Map[String, MsgTokenMapping] = Map.empty
+
     /** 文本 → 该文本**首枚**牌（同文重复输入各有其牌；提醒反查取首枚即可——内容相同）。 */
     @volatile var byText: Map[String, MsgTokenMapping] = Map.empty
     @volatile var lastMinted: Option[MsgTokenMapping] = None
     @volatile var nextSeq: Long = 1L
+
     /** 已铸幂等键（clientMessageId）集合——入队+转发双路径防双铸；重启后从 JSONL 重建。 */
     @volatile var seenKeys: Set[String] = Set.empty
 
   /** sessionId → 会话态。 */
   private val states = TrieMap.empty[String, SessionState]
+
   /** sid8 → sessionId（牌面自携带 sid8 ⇒ 消解全局可达，无需发送方会话上下文）。 */
   private val sidIndex = TrieMap.empty[String, String]
 
@@ -158,7 +161,8 @@ final class MsgTokenRegistry(
                 st.nextSeq = seq + 1
                 val sid8 = shortCode(sid)
                 val token = s"{{msg:$sid8-${f"$seq%06d"}}}"
-                val mapping = MsgTokenMapping(token, sid, sid8, seq, text, System.currentTimeMillis(), dedupKey, authorName)
+                val mapping =
+                  MsgTokenMapping(token, sid, sid8, seq, text, System.currentTimeMillis(), dedupKey, authorName)
                 appendLineSync(fileFor(sid), mapping)
                 st.byToken = st.byToken + (token -> mapping)
                 if !st.byText.contains(text) then st.byText = st.byText + (text -> mapping)
@@ -167,11 +171,13 @@ final class MsgTokenRegistry(
                 sidIndex.put(sid8, sid)
                 logger.info(s"minted $token (session=${sid.take(8)}, textLen=${text.length})")
                 Some(mapping)
+              end if
             catch
               case e: Exception =>
                 logger.warn(s"msg-token mint failed for session ${sid.take(8)}: ${e.getMessage}")
                 None
             finally st.lock.unlock()
+            end try
         }
 
   // ── 查询（msgchip 批：GET /api/sessions/msg-token/{core} 只读端点的引擎腿）──
@@ -186,9 +192,12 @@ final class MsgTokenRegistry(
     val core = tokenOrCore.trim match
       case MsgTokenRegistry.CoreRegex(sid8, seq) => s"$sid8-$seq"
       case _ =>
-        MsgTokenRegistry.TokenRegex.findFirstMatchIn(tokenOrCore).flatMap { m =>
-          for sid8 <- Option(m.group(1)); seq <- Option(m.group(2)) yield s"$sid8-$seq"
-        }.getOrElse("")
+        MsgTokenRegistry.TokenRegex
+          .findFirstMatchIn(tokenOrCore)
+          .flatMap { m =>
+            for sid8 <- Option(m.group(1)); seq <- Option(m.group(2)) yield s"$sid8-$seq"
+          }
+          .getOrElse("")
     if core.isEmpty then IO.pure(None)
     else
       IO.blocking {
@@ -201,6 +210,7 @@ final class MsgTokenRegistry(
             finally st.lock.unlock()
           case None => None
       }
+  end lookup
 
   // ── 消解（六条 agent 投递组包点共用）──────────────────────────────────────
 
@@ -257,18 +267,19 @@ final class MsgTokenRegistry(
         val inner = Option(m.group(1)).getOrElse("")
         val written = m.matched
         if insideMarker(text, m.start) then written
-        else MsgTokenRegistry.classifyInner(inner) match
-          case MsgTokenRegistry.SpanShape.Exact(sid8, seq, shortName) =>
-            expandExact(sid8, seq, shortName, written)
-          case MsgTokenRegistry.SpanShape.Attempt(reason) =>
-            malformedCount.incrementAndGet()
-            logger.warn(
-              s"MSG-TOKEN-FORMAT malformed card $written — $reason；已替换为显式标记（不原样递送）。" +
-                s"正确写法：{{msg:<sid8 8位小写hex>-<seq 6位数字>}}，短名可选加 |短名。"
-            )
-            MsgTokenRegistry.malformedErrorLine(written, reason)
-          case MsgTokenRegistry.SpanShape.Plain =>
-            written
+        else
+          MsgTokenRegistry.classifyInner(inner) match
+            case MsgTokenRegistry.SpanShape.Exact(sid8, seq, shortName) =>
+              expandExact(sid8, seq, shortName, written)
+            case MsgTokenRegistry.SpanShape.Attempt(reason) =>
+              malformedCount.incrementAndGet()
+              logger.warn(
+                s"MSG-TOKEN-FORMAT malformed card $written — $reason；已替换为显式标记（不原样递送）。" +
+                  s"正确写法：{{msg:<sid8 8位小写hex>-<seq 6位数字>}}，短名可选加 |短名。"
+              )
+              MsgTokenRegistry.malformedErrorLine(written, reason)
+            case MsgTokenRegistry.SpanShape.Plain =>
+              written
     )
 
   /** 严格牌面：查映射（带名形态与裸形态同键）。命中 ⇒ 原文块；缺失 ⇒ 显式标记。 */
@@ -288,6 +299,8 @@ final class MsgTokenRegistry(
         missingCount.incrementAndGet()
         logger.warn(s"msg-token resolve MISS for $written — 注入显式标记（不原样递送）")
         MsgTokenRegistry.missingErrorLine(written)
+
+  end expandExact
 
   /**
    * sid8 → 会话态：索引命中直取；miss 时扫会话目录按短码定位（shortCode 是 sessionId
@@ -338,11 +351,12 @@ final class MsgTokenRegistry(
     prunedSessions: Int,
     prunedMappings: Int
   ):
+
     def summary: String =
       s"scanned=$sessionsScanned loaded=$mappingsLoaded prunedSessions=$prunedSessions prunedMappings=$prunedMappings"
 
   /**
-   * boot 单次对账（MergeQueueBootSweep 同款纪律：绝不阻塞启动、失败只 WARN——失败处理
+   * boot 单次对账（boot 对账族同款纪律：绝不阻塞启动、失败只 WARN——失败处理
    * 在调用侧 .attempt）：扫描全部 `<sid>/msg-tokens.jsonl` —— 所属会话已删 ⇒ 映射文件
    * 清除（孤儿不收容）；在册会话 ⇒ 全量载入内存索引并重建 nextSeq（重启后铸牌序号续走、
    * 派发即解，无需等首次铸牌触发的惰性装载）。
@@ -375,6 +389,8 @@ final class MsgTokenRegistry(
               loadSessionLocked(sid, st)
               loaded += st.byToken.size
           finally st.lock.unlock()
+        end if
+      end if
     }
     ReconcileReport(scanned, loaded, prunedSessions, prunedMappings)
   }
@@ -406,6 +422,8 @@ final class MsgTokenRegistry(
     st.seenKeys = keys
     st.loaded = true
     sidIndex.put(shortCode(sid), sid)
+
+  end loadSessionLocked
 
   private def readLinesSync(file: os.Path): List[String] =
     if !os.exists(file) then Nil
@@ -555,9 +573,11 @@ object MsgTokenRegistry:
   def malformedErrorLine(token: String, reason: String): String =
     s"[引用未能解析：$token] 原因：格式残缺——$reason。请让发送方按「双花括号 + msg:sid8-seq6」重写。"
 
-  /** 真用户轮的牌宣告文本（system-reminder content）。msgchip 批：补一句短名引用
-    * 形态的教学；msgcard-agent-expand 批：声明「发给 agent 一律展开全文」与
-    * 「写坏了的牌会被换成 [引用未能解析] 标记」两条硬规则。 */
+  /**
+   * 真用户轮的牌宣告文本（system-reminder content）。msgchip 批：补一句短名引用
+   * 形态的教学；msgcard-agent-expand 批：声明「发给 agent 一律展开全文」与
+   * 「写坏了的牌会被换成 [引用未能解析] 标记」两条硬规则。
+   */
   def reminderContent(token: String): String =
     s"消息身份牌：本条用户消息已铸牌 $token。向其它会话派发（Mail / Delegate brief / node 消息 / 子代理 prompt）时在文本中写入该牌，" +
       s"接收方会在投递前自动展开为**完整原文**（抬头带短名/作者/时间/字数，正文逐字不截断）；映射缺失或格式残缺时接收方看到 `[引用未能解析：…]` 标记（不会看到裸牌，也绝不静默放过）。" +

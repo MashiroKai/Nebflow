@@ -26,6 +26,75 @@ export default {
   'panel.diffRendering': 'diff 渲染中…',
   'panel.diffOpenFailed': '看板打开失败——点行重试。',
   // #27 Project 标签页 + Flow Map 标签页（方向调整：Canvas 标签页形态，参考 team 面板）
+  'project.workspaceOpen': '开放',
+  'project.workspaceReserved': '等待合并',
+  'project.workspaceRunning': '工作中',
+  'project.workspaceIdle': '空闲',
+  'project.workspaceFrozen': '待手动恢复',
+  'project.mergeRequest': '合并记录',
+  'project.requestOriginPanel': '用户手动',
+  'project.requestOriginAgent': '主 agent 提交',
+  'project.mergeSelected': '合并所选工作区',
+  'project.mergeSubmitted': '已提交合并请求',
+  'project.mergeNeedsResume': '已登记，请手动恢复工程 merger 后继续',
+  'project.mergeScope': '此操作授权合并、验证和移除所选工作区，不包含推送或发布。',
+  'project.resumeMerger': '恢复合并会话',
+  'project.mergerRecoveryAccepted': '已接受恢复，请在合并会话中查看进展。',
+  'project.openMerger': '打开合并会话',
+  'project.mergerInitializing': '正在初始化',
+  'project.mergerRecoveryRequired': '初始化中断，等待手动恢复',
+  'project.mergerRequired': '请先由主智能体创建工程 merger。',
+  'project.createMerger': '请主智能体创建 merger',
+  'project.createMergerPrefill': '请为本项目创建工程 merger：Delegate(mode="merger", project="{name}")。它只按已登记的合并请求整合已授权的工作区。',
+  'project.createMergerUnavailable': '无法写入主会话输入框，请手动创建 merger。',
+  'project.continueWork': '继续工作',
+  'project.factsAhead': '+{count} 领先',
+  'project.factsDirty': '{tracked} 处改动 · {untracked} 个未跟踪',
+  'project.factsClean': '无本地改动',
+  'project.factsError': '工作区状态不可读',
+  'project.factsVerified': '验证通过',
+  'project.factsUnverified': '无验证记录',
+  'project.factsReconcileIntegrated': '源已入目标',
+  'project.factsReconcileResumable': '可续处理',
+  'project.factsReconcileUnknown': '现场未知',
+  'project.selectionExpired': '{count} 个所选工作区已不再处于空闲开放状态，已从选择中移除。',
+  'project.mergeConfirmTitle': '确认合并请求',
+  'project.mergeConfirmEntry': '{branch} → {target}\n源提交 {commit} · {ahead} · {dirty}',
+  'project.mergeConfirmConfirm': '提交合并请求',
+  'project.mergeStop': '请求终止',
+  'project.mergeStopRequested': '已请求终止，等待 merger 核对现场；已合并成果不会撤销。',
+  'project.mergePhase.accepted': '已登记',
+  'project.mergePhase.processing': '处理中',
+  'project.mergePhase.paused': '已暂停',
+  'project.mergePhase.checking': '检查中',
+  'project.mergePhase.merging': '合并中',
+  'project.mergePhase.validating': '验证中',
+  'project.mergePhase.awaiting-user': '等待确认',
+  'project.mergePhase.merged-cleanup-pending': '已合入，清理未完成',
+  'project.mergePhase.completed': '已完成',
+  'project.mergePhase.failed': '失败',
+  'project.mergePhase.cancelled': '已终止',
+  'project.mergePhase.reserved': '等待合并',
+  'project.mergeNotificationPending': '请求已登记，但通知尚未送达；请联系工程 merger 核对。',
+  'project.workspaceCleaning': '清理中',
+  'project.workspaceClosedMerged': '已合并并关闭',
+  'project.workspaceClosedRetained': '目录已清理，分支保留',
+  'project.cleanupConfirmUnavailable': '确认窗口尚未就绪，请重新打开项目面板。',
+  'project.cleanupScope': '将移除目录：{path}。分支 {branch} 保留，不会删除提交。',
+  'project.cleanupUnmerged': '这个分支还有未合并提交。确认后仅移除工作目录，提交仍保留在分支上。',
+  'project.cleanupIntegrated': '当前提交已包含在目标分支中。',
+  'project.cleanupDirty': '确认后将丢弃 {count} 项未提交改动：',
+  'project.cleanupTitle': '确认清理工作区',
+  'project.cleanupConfirm': '确认移除目录',
+  'project.cleanupDone': '工作目录已清理，分支保留。',
+  'project.cleanupWorkspace': '清理工作区',
+  'project.cleanupNeedsAcceptance': '已合入，目录已清理；等待 merger 完成验收上报',
+  'project.workspaces': '工作区',
+  'project.workspacesLoading': '读取工作区…',
+  'project.creationBaseline': '新工作区基线',
+  'project.saveBaseline': '保存基线',
+  'project.baselineSaved': '已保存，仅影响以后创建的工作区',
+  'project.noWorkspaces': '暂无受管理工作区',
   'project.title': '项目',
   'project.loading': '加载项目…',
   'project.workspace': '工作区',
@@ -250,8 +319,6 @@ export default {
   'flowmap.detail.notify': '回流通知',
   // 排队位次行（queuepos 批 2026-09-15）：详情面板此前完全无排队字段（作者现场报）。
   // 值形态与卡面同源（`mergeQueuePos`，逐节点唯一、真源 = SEM-2 rank 升序）。
-  'flowmap.detail.queue': '排队位次',
-  'flowmap.detail.queueValue': '排队中 · 第 {n} 位 / 共 {m}（{queue}）',
   'flowmap.detail.yes': '是',
   'flowmap.chain.archivedToast': '链「{chain}」整链归档（{n} 节点一起进归档）',
   // 链级取消（R2，chaincancel 批 2026-09-17）：控制面 `.fm-chain-cancel` + 不可逆
@@ -298,15 +365,7 @@ export default {
   // 数字面 = `mergeQueuePos.position`（位次，逐节点唯一）——`mergeQueue.ahead` 是**阻塞
   // 集合的势**（同刻只有一个 running 时全体 ≡1 ⇒ 看起来一模一样），故键 `queue.ahead`
   // /`badgeTitle`/`untrustedTitle` 随之退役、不再有「前面还有 N 个」这一形态。
-  'flowmap.queue.held': '排队中',
-  'flowmap.queue.pos': '排队中 · 第 {n} 位 / 共 {m}',
-  'flowmap.queue.posHead': '合并窗排队中（{queue}）· 第 {n} 位 / 共 {m}',
-  'flowmap.queue.heldHead': '合并窗排队中',
-  'flowmap.queue.blockedBy': '被 {names} 挡着',
-  'flowmap.queue.untrustedHead': '合并窗排队中 · 位次不可信（同键多项目）',
-  'flowmap.queue.untrustedSuffix': '（位次不可信：同键多项目）',
   // 队列名（引擎给 token，前端只翻译不派生；未知 token 原样回显）
-  'flowmap.queue.name.merge-window': '合并窗',
   // LoopNode 运行态相位文案（2026-09-06）：loop 节点 running 时 desc 行显 worker/verify
   'flowmap.loopPhase.worker': '生产中',
   'flowmap.loopPhase.verify': '验证中',
@@ -879,20 +938,14 @@ export default {
   'subagents.empty': '当前无运行中的子智能体',
   'subagents.indicatorTitle': '后台子智能体',
   'subagents.status.running': '进行中',
-  // held-receipt 投递可靠性批（2026-10-21 fix 4）：显式等待停靠态（等合并轮）。
-  // panel-merge-status 批（2026-10-25 · 作者令）：候合并从通用「停靠等待」提升为
-  // 钉住的可见状态词——面板行状态位直显「候合并」。
-  'subagents.status.waiting': '候合并',
-  'subagents.status.waitingMerge': '等待合并轮',
-  // 案A 待命批 2026-10-31（状态矩阵批收编）：delegate 显式待命态（delegate_report
-  // standby）——行状态位直显「待命」，区别于候合并（tooltip = 申报的「在等什么」）。
+  // 显式等待停靠态（Waiting）：行状态位直显「停靠等待中」（legacy 快照无申报槽的
+  // Waiting 行同词；申报 standby 的行走 standby 词）。
+  'subagents.status.waiting': '停靠等待中',
+  'subagents.status.waitingMerge': '停靠等待中',
+  // delegate 显式待命态（delegate_report standby）——行状态位直显「待命」
+  // （tooltip = 申报的「在等什么」）。
   'subagents.status.standby': '待命（等作者）',
   'subagents.status.idle': '空闲',
-  // panel-merge-status 批（2026-10-25）：候合并行队列细节段（/api/merge-queue 只读
-  // 状态面；位次只渲染不派生，API 未生效 ⇒ 段全缺 = 静态「等待合并轮」降级）。
-  'subagents.mergeQueue.ahead': '前面还有 {n} 位',
-  'subagents.mergeQueue.turn': '轮到你合并（窗口持有中）',
-  'subagents.mergeQueue.reason': '未放行原因：{reason}',
   // #752 空闲 delegate 在等什么（细分注记 + 长空闲提醒徽标）。
   'subagents.waitingBg': '等后台任务 ×{count}：{desc}（{dur}）',
   'subagents.waitingReceipts': '等子代理回执 ×{count}',
@@ -903,7 +956,7 @@ export default {
   // 错误冻结批（2026-11-01 · 作者令「冻结态方便被唤醒 接着做」）：**错误冻结**
   // （delegate 因 LLM/工具/引擎故障或配额取消就地停住）的行面文案——徽标带原因
   // 短名、tooltip 说明「不是失败判词」、唤醒按钮 = 显式唤醒动作（同会话续跑）。
-  // 与 standby（待命·等作者）/ waitingMerge（候合并）显式区分：三者都是「停」，
+  // 与 standby（待命·等作者）/ waiting（停靠等待）显式区分：三者都是「停」，
   // 但只有本族是**异常停**且**必须有人唤醒才会继续**。
   'subagents.frozenBadgeWithReason': '已冻结 · {reason}',
   // 冻结通知策略批（2026-11-05 作者令两连）：provider 故障 = **基础设施故障**，不是
@@ -920,9 +973,11 @@ export default {
   'subagents.frozenInfraTip': '供应商故障（不是任务失败）：引擎自己探测恢复，恢复后自动续跑同一会话（续在检查点、已完成的不重做，有次数上限与递增间隔）；也可以现在点「唤醒」立即续跑。不向上级汇报——本面板就是它的状态面。',
   'subagents.frozenAutoResumes': '已自动续跑 {n} 次',
   'subagents.frozenAutoResumesSpent': '自动续跑次数已用尽——需要你：充值 / 换模型 / 取消',
+  'subagents.providerFailureGroup': '后台 {count} 个任务服务商不可用 · {provider}',
+  'subagents.status.roundComplete': '本轮完成，可续用',
   'subagents.freezeDigestRecoverable': '{count} 条已冻结（可唤醒）',
   'subagents.freezeDigestNeedsHuman': '{count} 条冻结待你处理',
-  'subagents.frozenTip': '已冻结：引擎/上游故障导致就地停住，这不是失败判词。会话历史、工作区与未提交改动、台账行、合并队列位全部保留；点「唤醒」或 Mail 它的地址即在原会话上下文上继续（已完成的不重做）。',
+  'subagents.frozenTip': '已冻结：引擎/上游故障导致就地停住，这不是失败判词。会话历史、工作区与未提交改动、台账行全部保留；点「唤醒」或 Mail 它的地址即在原会话上下文上继续（已完成的不重做）。',
   'subagents.frozenReason': '原因：{reason}',
   'subagents.frozenDormantTip': '已冻结 {hours} 小时仍无人唤醒（超保留期会归档记录，转录与工作区保留）。',
   'subagents.wake': '唤醒',
@@ -2017,8 +2072,8 @@ export default {
   // === Delegate 面（#1228 换源接线批 · §16 七键逐字过目已过，zh/en 成对）===
   // 🔴 值为作者 §16 裁定逐字（#1228 两裁①），禁改一字。键名按 delegate.* 族
   // （delegateChainStub / .task-delegate 命名空间同族）。
-  // ① ready-to-merge 状态词（delegate 行状态列；#1224 判词语义：
-  //    「有分支产物、入 FIFO 候合并」）
+  // ① ready-to-merge 状态词（delegate 行状态列；分支产物待落地，
+  //    集成走项目 merger 的授权请求）
   'delegate.readyToMerge': '待合并',
   // 手动恢复批（作者令 2026-11-06 20:36）：失效态两档 + 恢复动作（子代理面板）。
   'delegate.invalidWaiting': '失效 · 静默等待恢复',
@@ -2034,7 +2089,6 @@ export default {
   // ③ S11 结构总视图头
   'delegate.structure': '委托结构',
   // ④ S11 FIFO 泳道头
-  'delegate.mergeQueue': '合并队列',
   // ⑤ S11 worktree 座标
   'delegate.worktree': '工作树',
   // ⑤b 跨设备 worktree 归属修复批（2026-10-30）：设备项目无 worktree 腿（设备仓无

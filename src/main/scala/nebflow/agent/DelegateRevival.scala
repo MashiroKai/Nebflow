@@ -34,9 +34,8 @@ import nebflow.shared.{Defaults, NebflowLogger, SubAgentTask}
  * == 分工边界（防双头管理，设计 §2.5）==
  *  - 本对象只是 `SubAgentStartupRecovery` sweep 的**复活腿**：资格不满足/预算耗尽/
  *    复活失败 → 调用方落既有收殓链（逐字不改）。无第二个 sweep、无新 watchdog。
- *  - `ProjectCrashRecovery`（flow-map 节点轨 L1/L2）零触碰；`MergeQueueBootSweep`
- *    （ready-to-merge 合并轮）零交集——任务行状态不同域。
- *  - 复活重建的监督链此后归 `BackoffSupervisor` 管（respawn/终态/合并停靠全链复用）。
+ *  - `ProjectCrashRecovery`（flow-map 节点轨 L1/L2）零触碰。
+ *  - 复活重建的监督链此后归 `BackoffSupervisor` 管（respawn/终态/停靠全链复用）。
  *
  * == 复活判据（设计 §2.2，全部满足才复活）==
  * kill-switch 开 ∧ source=delegate ∧ registry 记录在（内置执行器、未归档）∧ 座位目录
@@ -88,13 +87,11 @@ object DelegateRevival:
   // 判据（全部可从盘上机械求值；任一在场即「有未完成业务」⇒ 走复活腿）：
   //   ① 作用域图仍有**非终态节点**（`SessionResumption.openNodeCount`，读
   //      `<base>/.nebflow/flow-maps/<id>/flow-map.json`）——等自家链 = 在飞；
-  //   ② **合并队列在册**（`MergeQueue.openSnapshot`，`~/.stand/merge-queue` 账本）——
-  //      等合并轮 = 在飞（`delegate_report` 文案同判据：「分支上有未合并交付提交时
-  //      standby 不予采纳」）；
-  //   ③ **worktree 脏**（`GitWorktrees.dirtyPaths`，`git status --porcelain`）——手上
-  //      有未提交/未合并的工作；
-  //   ④ **分支领先基分支**（`git rev-list --count <base>..<branch>`）——有未合并交付
-  //      提交（`record.branch` / `record.baseBranch` 均在 registry 上）。
+  //   ② **worktree 脏**（`GitWorktrees.dirtyPaths`，`git status --porcelain`）——手上
+  //      有未提交的工作；
+  //   ③ **分支领先基分支**（`git rev-list --count <base>..<branch>`）——有未合并交付
+  //      提交（`record.branch` / `record.baseBranch` 均在 registry 上；集成走项目
+  //      merger 的授权请求，未并提交 = 未完业务）。
   // 反向（纯待命等作者，语义保留）：以上全缺席 ⇒ 不复活（诚实 failed + 父通知，
   // Mail 可续）。
   //
@@ -107,19 +104,20 @@ object DelegateRevival:
   /** standby 记录的**在飞旁证**读数（分型判据的载体；全零 = 纯待命等作者）。 */
   final case class StandbyEvidence(
     openChainNodes: Int,
-    mergeQueueMember: Boolean,
     dirtyWorktreePaths: Int,
     unmergedCommits: Int
   ):
 
     /** 任一在场 = 有未完成业务（在飞）⇒ 可复活。 */
     def inFlight: Boolean =
-      openChainNodes > 0 || mergeQueueMember || dirtyWorktreePaths > 0 || unmergedCommits > 0
+      openChainNodes > 0 || dirtyWorktreePaths > 0 || unmergedCommits > 0
 
     /** 判词/日志读数（一行机械可核）。 */
     def describe: String =
-      s"openChainNodes=$openChainNodes mergeQueueMember=$mergeQueueMember " +
+      s"openChainNodes=$openChainNodes " +
         s"dirtyWorktreePaths=$dirtyWorktreePaths unmergedCommits=$unmergedCommits"
+
+  end StandbyEvidence
 
   /** 记录座位根（作用域目录基座 = 项目工作区优先，回落 cwd；`SessionResumption` 同判）。 */
   private def scopeBaseOf(rec: DelegateRegistry.Record): String =
@@ -162,12 +160,8 @@ object DelegateRevival:
    */
   private def standbyTriage(rec: DelegateRegistry.Record): IO[StandbyEvidence] =
     IO.blocking {
-      val queued =
-        try nebflow.core.delegate.MergeQueue.openSnapshot.exists(_.delegateId == rec.id)
-        catch case _: Throwable => false
       StandbyEvidence(
         openChainNodes = openNodesOf(rec),
-        mergeQueueMember = queued,
         dirtyWorktreePaths = dirtyPathsOf(rec),
         unmergedCommits = unmergedCommitsOf(rec)
       )
@@ -176,7 +170,7 @@ object DelegateRevival:
       if ev.inFlight then
         logger.info(
           s"[delegate-revival] standby triage for ${rec.id}: IN-FLIGHT (${ev.describe}) — " +
-            "waiting on its own chain/merge, revivable through the boot revival leg"
+            "waiting on its own chain or holding unfinished work, revivable through the boot revival leg"
         )
       else
         logger.info(
@@ -189,7 +183,7 @@ object DelegateRevival:
         .warn(
           s"[delegate-revival] standby triage read failed for ${rec.id} (treating as pure standby): ${e.getMessage}"
         )
-        .as(StandbyEvidence(0, false, 0, 0))
+        .as(StandbyEvidence(0, 0, 0))
     )
 
   /**
@@ -340,6 +334,42 @@ object DelegateRevival:
    *                    横幅之后成为本窗口的首条指令；空 = 纯「从冻结点继续」。
    */
   private def reviveImpl(deps: Deps, task: SubAgentTask, instruction: String = ""): IO[Either[String, Unit]] =
+    nebflow.core.delegate.MergerInitialization
+      .exclusive(task.taskId) {
+        nebflow.core.delegate.MergerInitialization.repairLocked(deps.resources, task.taskId) *>
+          deps.resources.agentRegistry.get.flatMap { live =>
+            live.get(task.taskId).fold(IO.pure(false))(record => deps.system.isAlive(record.ref.path)).flatMap {
+              case true => IO.pure(Left("Session is already live; use its explicit wake or continuation entry"))
+              case false =>
+                deps.resources.sessionStore.loadMessagesForSession(task.taskId).flatMap { transcript =>
+                  if transcript.isEmpty || nebflow.core.ResumeHandoff.hasUnresolvedToolCalls(transcript) then
+                    IO.pure(
+                      Left("Saved context or a tool outcome is unknown; review before retrying (RECOVERY_UNVERIFIED)")
+                    )
+                  else
+                    IO.blocking(nebflow.core.delegate.WorkspaceLedger.default.admit(task.taskId, allowFrozen = true))
+                      .flatMap {
+                        case Left(error) => IO.pure(Left(error))
+                        case Right(_) =>
+                          reviveAdmitted(deps, task, instruction).flatTap {
+                            case Right(_) => IO.unit
+                            case Left(error) =>
+                              nebflow.core.delegate.MergerInitialization.failed(deps.resources, task.taskId, error)
+                          }
+                      }
+                }
+            }
+          }
+      }
+      .handleErrorWith(error =>
+        nebflow.core.delegate.MergerInitialization
+          .failed(deps.resources, task.taskId, s"Recovery could not safely start: ${error.getMessage}")
+          .attempt
+          .void
+          .as(Left(s"Recovery could not safely start: ${error.getMessage}"))
+      )
+
+  private def reviveAdmitted(deps: Deps, task: SubAgentTask, instruction: String): IO[Either[String, Unit]] =
     IO.blocking(DelegateRegistry.find(task.taskId)).flatMap {
       case None => IO.pure(Left("no DelegateRegistry record — cannot rebuild the seat"))
       case Some(record) =>
@@ -353,46 +383,41 @@ object DelegateRevival:
         val frozen = record.frozenSince
         val frozenReason = record.frozenReason.getOrElse("")
         val frozenDetail = record.frozenDetail.getOrElse("")
-        for
-          // ① 任务行先行：running + 预算记账 + 旧错清空（复活 = 新执行窗口）。
-          //    先写行再 spawn——复活半途再崩，下一 boot 看到的是诚实的 running 行。
-          _ <- deps.resources.subAgentTaskStore
-            .markRevived(parentSid, task.taskId, nextCount, now)
-            .handleErrorWith(e =>
-              logger.warn(s"[delegate-revival] task-row update failed for ${task.taskId}: ${e.getMessage}")
+        Ref.of[IO, IO[Unit]](IO.unit).flatMap { cleanup =>
+          val attempt = for
+            // Re-read and verify the checkpoint before changing the task row or spawning.
+            transcript <- deps.resources.sessionStore.loadMessagesForSession(task.taskId)
+            _ <- IO.raiseWhen(transcript.isEmpty || nebflow.core.ResumeHandoff.hasUnresolvedToolCalls(transcript))(
+              new IllegalStateException("Saved context changed or a tool outcome is unknown (RECOVERY_UNVERIFIED)")
             )
-          // ② transcript checkpoint（respawn 同源：loadMessagesForSession）。
-          transcript <- deps.resources.sessionStore
-            .loadMessagesForSession(task.taskId)
-            .handleErrorWith(e =>
-              logger.warn(s"[delegate-revival] transcript load failed for ${task.taskId}: ${e.getMessage}").as(Nil)
-            )
-          // ②b 断点台账（中断恢复批 2026-11-04 · V4/审计 D6）：把「已完成到哪」写成
-          //    机器可读件（转录游标 + 已完成回合/工具回合 + 步骤摘要），随 nudge 交付
-          //    ⇒ 复活后模型能机械区分「已完成/待做」，不重做已完成步骤的副作用。
-          //    fail-soft：写失败只 WARN，复活照常（救命腿不被台账拖死）。
-          checkpoint <- RevivalCheckpoint.write(task.taskId, transcript, nextCount, now)
-          // ②c 续跑交接单（无感恢复批 2026-11-07）：断点处若停在工具调用中途，模型
-          //    拿到的**是那次调用的结果**（tool_result），而不是一条系统提示——
-          //    单点 = [[ResumeHandoff]]，本腿不自行拼注入文案。
-          //    `legacyNudge` 逐字保留改前的提示文案：仅当没有工具边界（普通中断 /
-          //    旧格式会话）时才注入它，行为与改前一字不差。
-          handoff =
-            val ckLine = checkpoint
-              .map(f =>
-                s"\n\nCompleted-work checkpoint (machine-readable ledger `sessions/${task.taskId}/${RevivalCheckpoint.FileName}`): " +
-                  s"${f.describe} — those steps must NOT be redone; resume at the first unfinished step."
+            _ <- deps.resources.subAgentTaskStore
+              .markRevived(parentSid, task.taskId, nextCount, now)
+              .handleErrorWith(e =>
+                logger.warn(s"[delegate-revival] task-row update failed for ${task.taskId}: ${e.getMessage}")
               )
-              .getOrElse("")
-            val wakeInstr = if instruction.trim.isEmpty then "" else s"\n\n$instruction"
-            ResumeHandoff.plan(
-              transcript = transcript,
-              cause =
-                if frozen.isDefined then ResumeHandoff.Cause.Freeze else ResumeHandoff.Cause.EngineRestart,
-              instruction =
-                (if instruction.trim.isEmpty then "" else instruction) + ckLine,
-              legacyText =
-                if frozen.isDefined then
+            // ②b 断点台账（中断恢复批 2026-11-04 · V4/审计 D6）：把「已完成到哪」写成
+            //    机器可读件（转录游标 + 已完成回合/工具回合 + 步骤摘要），随 nudge 交付
+            //    ⇒ 复活后模型能机械区分「已完成/待做」，不重做已完成步骤的副作用。
+            //    fail-soft：写失败只 WARN，复活照常（救命腿不被台账拖死）。
+            checkpoint <- RevivalCheckpoint.write(task.taskId, transcript, nextCount, now)
+            // ②c 续跑交接单（无感恢复批 2026-11-07）：断点处若停在工具调用中途，模型
+            //    拿到的**是那次调用的结果**（tool_result），而不是一条系统提示——
+            //    单点 = [[ResumeHandoff]]，本腿不自行拼注入文案。
+            //    `legacyNudge` 逐字保留改前的提示文案：仅当没有工具边界（普通中断 /
+            //    旧格式会话）时才注入它，行为与改前一字不差。
+            handoff =
+              val ckLine = checkpoint
+                .map(f =>
+                  s"\n\nCompleted-work checkpoint (machine-readable ledger `sessions/${task.taskId}/${RevivalCheckpoint.FileName}`): " +
+                    s"${f.describe} — those steps must NOT be redone; resume at the first unfinished step."
+                )
+                .getOrElse("")
+              val wakeInstr = if instruction.trim.isEmpty then "" else s"\n\n$instruction"
+              ResumeHandoff.plan(
+                transcript = transcript,
+                cause = if frozen.isDefined then ResumeHandoff.Cause.Freeze else ResumeHandoff.Cause.EngineRestart,
+                instruction = (if instruction.trim.isEmpty then "" else instruction) + ckLine,
+                legacyText = if frozen.isDefined then
                   val banner =
                     nebflow.core.delegate.DelegateFreeze.wakeBanner(task.taskId, frozenReason, frozenDetail)
                   if transcript.nonEmpty then
@@ -401,147 +426,164 @@ object DelegateRevival:
                 else if transcript.nonEmpty then
                   s"[system] The engine process restarted while your task was in flight. Your work so far (${transcript.size} transcript messages) is loaded below — continue the task from where you left off.$ckLine$wakeInstr"
                 else s"${task.prompt}$wakeInstr"
+              )
+            _ <- IO(
+              ResumeHandoff.logPlan(
+                task.taskId,
+                handoff,
+                if frozen.isDefined then ResumeHandoff.Cause.Freeze else ResumeHandoff.Cause.EngineRestart
+              )
             )
-          _ <- IO(ResumeHandoff.logPlan(task.taskId, handoff, if frozen.isDefined then ResumeHandoff.Cause.Freeze else ResumeHandoff.Cause.EngineRestart))
-          // ③ 父会话活引用（Mail 续聊腿 resolveContinuationParentRef 同款判读）；
-          //    不 live = None ⇒ 终态走监督者 F2 队列兜底（notifyParentAndStop 的
-          //    parentRef=None 分支，本批加持久投递腿）。
-          parentRef <- resolveParentRef(deps.resources, parentSid)
-          // ④ agentDef：全部内置 delegate 同一 entry（spawnKernel 同源，确定性重建）；
-          //    插件 best-effort 重挂（fail-open——重挂失败绝不阻塞复活）。
-          baseDef <- IO.blocking(
-            nebflow.core.entity.BuiltinAgents
-              .delegateEntry(nebflow.core.entity.BuiltinAgents.ExecutorName)
-              .map(_.toAgentDef)
-              .get
-          )
-          effectiveDef <- regrantPlugins(deps.resources, task.taskId, record, baseDef)
-          childWsSend = nebflow.core.tools.DelegateTool.routeWsSendFor(
-            task.taskId,
-            Some(parentSid),
-            deps.wsSend
-          )
-          params = NodeRunner.SpawnParams(
-            agentDef = effectiveDef,
-            resources = deps.resources,
-            sessionId = task.taskId,
-            sessionName = task.description,
-            depth = 1, // 原 depth 不在盘上；深度预算从复活窗重起算（设计 §2.6）
-            parentRef = parentRef,
-            wsSend = childWsSend,
-            projectRoot = Some(record.cwd),
-            rootSessionId = parentSid, // 根归属以 parent 估计（registry 不存根 id，设计 §2.6）
-            // **上下文到场**（错误冻结批 2026-11-01 · 作者令逐字「别丢上下文」）：
-            // spawn 的 initialMessages 必须逐字节喂入复活前的 transcript——否则新
-            // actor 以空历史起跑（日志 msgs=0），首个回合收尾的
-            // `saveMessagesForSession(sid, newMessages)` 会把盘上的历史**整段覆盖**
-            // 成「唤醒横幅 + 残留 1 条」= 唤醒即焚毁现场。冻结唤醒与 boot 复活同源。
-            // 无感恢复批 2026-11-07：历史经 [[ResumeHandoff]] 交接（已配对消息零改；
-            // 中段悬挂就地修补），断点处的工具调用结果由注入块承担。
-            initialMessages = handoff.transcript
-          )
-          // ⑤ spawn 双件套（spawnWithPlugins 同点）+ 活体回写。
-          subagentRef <- deps.resources.spawnAgentActor(deps.system, params)
-          adapterRef <- deps.resources.spawnSupervisedAdapter(
-            system = deps.system,
-            params = params,
-            childRef = subagentRef,
-            childName = task.taskId,
-            description = task.description,
-            agentName = task.agentName,
-            subagentId = task.taskId,
-            parentSessionId = parentSid,
-            initialPrompt = task.prompt,
-            source = "delegate",
-            extraMetadata = JsonObject("revivedBy" -> "startup-recovery".asJson),
-            wsSend = Some(childWsSend)
-          )
-          _ <- NodeRunner.registerAgent(
-            deps.resources,
-            id = task.taskId,
-            ref = subagentRef,
-            kind = AgentKind.Delegate,
-            rootSessionId = parentSid,
-            parentRef = parentRef,
-            startedAt = now,
-            lastActivityMs = now,
-            supervisorRef = Some(adapterRef),
-            parentSessionId = parentSid
-          )
-          // ⑥ 作用域图宿主重挂（spawn 腿同点；fail-soft——delegate 本体不等宿主）。
-          _ <- DelegateFlowHosts
-            .mount(
-              delegateId = task.taskId,
-              project = record.project,
-              baseWorkspace = record.projectWorkspace.getOrElse(record.cwd),
-              engineCwd = record.cwd,
-              system = deps.system,
+            // ③ 父会话活引用（Mail 续聊腿 resolveContinuationParentRef 同款判读）；
+            //    不 live = None ⇒ 终态走监督者 F2 队列兜底（notifyParentAndStop 的
+            //    parentRef=None 分支，本批加持久投递腿）。
+            parentRef <- resolveParentRef(deps.resources, parentSid)
+            // ④ agentDef：全部内置 delegate 同一 entry（spawnKernel 同源，确定性重建）；
+            //    插件 best-effort 重挂（fail-open——重挂失败绝不阻塞复活）。
+            baseDef <- IO.blocking(
+              nebflow.core.entity.BuiltinAgents
+                .delegateEntry(nebflow.core.entity.BuiltinAgents.ExecutorName)
+                .map(_.toAgentDef)
+                .get
+            )
+            effectiveDef <- regrantPlugins(deps.resources, task.taskId, record, baseDef)
+            childWsSend = nebflow.core.tools.DelegateTool.routeWsSendFor(
+              task.taskId,
+              Some(parentSid),
+              deps.wsSend
+            )
+            params = NodeRunner.SpawnParams(
+              agentDef = effectiveDef,
               resources = deps.resources,
+              sessionId = task.taskId,
+              sessionName = task.description,
+              depth = 1, // 原 depth 不在盘上；深度预算从复活窗重起算（设计 §2.6）
+              parentRef = parentRef,
+              wsSend = childWsSend,
+              projectRoot = Some(record.cwd),
+              rootSessionId = parentSid, // 根归属以 parent 估计（registry 不存根 id，设计 §2.6）
+              // **上下文到场**（错误冻结批 2026-11-01 · 作者令逐字「别丢上下文」）：
+              // spawn 的 initialMessages 必须逐字节喂入复活前的 transcript——否则新
+              // actor 以空历史起跑（日志 msgs=0），首个回合收尾的
+              // `saveMessagesForSession(sid, newMessages)` 会把盘上的历史**整段覆盖**
+              // 成「唤醒横幅 + 残留 1 条」= 唤醒即焚毁现场。冻结唤醒与 boot 复活同源。
+              // 无感恢复批 2026-11-07：历史经 [[ResumeHandoff]] 交接（已配对消息零改；
+              // 中段悬挂就地修补），断点处的工具调用结果由注入块承担。
+              initialMessages = handoff.transcript
+            )
+            // ⑤ spawn 双件套（spawnWithPlugins 同点）+ 活体回写。
+            subagentRef <- deps.resources.spawnAgentActor(deps.system, params)
+            _ <- cleanup.update(previous => deps.system.stop(subagentRef).attempt.void *> previous)
+            adapterRef <- deps.resources.spawnSupervisedAdapter(
+              system = deps.system,
+              params = params,
+              childRef = subagentRef,
+              childName = task.taskId,
+              description = task.description,
+              agentName = task.agentName,
+              subagentId = task.taskId,
+              parentSessionId = parentSid,
+              initialPrompt = task.prompt,
+              source = "delegate",
+              extraMetadata = JsonObject("revivedBy" -> "startup-recovery".asJson),
               wsSend = Some(childWsSend)
             )
-            .handleErrorWith(e =>
-              logger
-                .warn(
-                  s"[delegate-revival] flow-host mount failed for ${task.taskId} (delegate continues without a scope map): ${e.getMessage}"
-                )
-                .as(None)
+            _ <- cleanup.update(previous => deps.system.stop(adapterRef).attempt.void *> previous)
+            _ <- NodeRunner.registerAgent(
+              deps.resources,
+              id = task.taskId,
+              ref = subagentRef,
+              kind = AgentKind.Delegate,
+              rootSessionId = parentSid,
+              parentRef = parentRef,
+              startedAt = now,
+              lastActivityMs = now,
+              supervisorRef = Some(adapterRef),
+              parentSessionId = parentSid
             )
-          // ⑦ 预算重挂（respawn 同款——机制现值为 no-op，调用保结构同位，机制重挂时
-          //    复活腿自动正确）。
-          _ <- DelegateBudget.register(task.taskId)(adapterRef ! AgentEvent.Cancelled(task.taskId, "timeout"))
-          // ⑧ ChainStore 审计行（delegate-spawn 行族同构；#1228 链视图数据源可见）。
-          _ <- IO
-            .blocking(
-              ChainStore.appendSync(
-                ChainStore.keyFor(record.taskId, task.taskId),
-                if frozen.isDefined then "delegate-frozen-revived" else "delegate-revival",
-                Json.obj(
-                  "action" -> "revived".asJson,
-                  "delegateId" -> task.taskId.asJson,
-                  "phase" -> (if frozen.isDefined then "frozen-wake" else "boot-recovery").asJson,
-                  "revivalCount" -> nextCount.asJson,
-                  "workspace" -> record.cwd.asJson,
-                  "branch" -> record.branch.asJson,
-                  "transcriptMessages" -> transcript.size.asJson,
-                  // 断点读数随审计行落账（判词/审计可机械核对「复活到哪一步」）。
-                  "checkpointCursor" -> checkpoint.map(_.cursor).getOrElse(transcript.size).asJson,
-                  "completedTurns" -> checkpoint.map(_.completedTurns).getOrElse(0).asJson,
-                  "completedToolRounds" -> checkpoint.map(_.completedToolRounds).getOrElse(0).asJson
+            // ⑥ 作用域图宿主重挂（spawn 腿同点；fail-soft——delegate 本体不等宿主）。
+            _ <- DelegateFlowHosts
+              .mount(
+                delegateId = task.taskId,
+                project = record.project,
+                baseWorkspace = record.projectWorkspace.getOrElse(record.cwd),
+                engineCwd = record.cwd,
+                system = deps.system,
+                resources = deps.resources,
+                wsSend = Some(childWsSend)
+              )
+              .handleErrorWith(e =>
+                logger
+                  .warn(
+                    s"[delegate-revival] flow-host mount failed for ${task.taskId} (delegate continues without a scope map): ${e.getMessage}"
+                  )
+                  .as(None)
+              )
+            // ⑦ 预算重挂（respawn 同款——机制现值为 no-op，调用保结构同位，机制重挂时
+            //    复活腿自动正确）。
+            _ <- DelegateBudget.register(task.taskId)(adapterRef ! AgentEvent.Cancelled(task.taskId, "timeout"))
+            // ⑧ ChainStore 审计行（delegate-spawn 行族同构；#1228 链视图数据源可见）。
+            _ <- IO
+              .blocking(
+                ChainStore.appendSync(
+                  ChainStore.keyFor(record.taskId, task.taskId),
+                  if frozen.isDefined then "delegate-frozen-revived" else "delegate-revival",
+                  Json.obj(
+                    "action" -> "revived".asJson,
+                    "delegateId" -> task.taskId.asJson,
+                    "phase" -> (if frozen.isDefined then "frozen-wake" else "boot-recovery").asJson,
+                    "revivalCount" -> nextCount.asJson,
+                    "workspace" -> record.cwd.asJson,
+                    "branch" -> record.branch.asJson,
+                    "transcriptMessages" -> transcript.size.asJson,
+                    // 断点读数随审计行落账（判词/审计可机械核对「复活到哪一步」）。
+                    "checkpointCursor" -> checkpoint.map(_.cursor).getOrElse(transcript.size).asJson,
+                    "completedTurns" -> checkpoint.map(_.completedTurns).getOrElse(0).asJson,
+                    "completedToolRounds" -> checkpoint.map(_.completedToolRounds).getOrElse(0).asJson
+                  )
                 )
               )
-            )
-            .handleErrorWith(e =>
-              logger.warn(s"[delegate-revival] ChainStore row failed for ${task.taskId}: ${e.getMessage}").void
-            )
-          // ⑨ nudge 注入：转录非空 = checkpoint 续跑；空 = 原 prompt 重注（respawn
-          //    fresh-start fallback 同款）。冻结腿（frozen 在场）：文案换成冻结唤醒
-          //    横幅（原因在场、明确「已完成的不重做、别从头重规划」），并在注入之后
-          //    清冻结槽 + 合并队列重排（[[DelegateFreeze.onWoken]]）——唤醒 = 冻结
-          //    生命周期的唯一出口。
-          // ⑨ 注入：**单点载荷**（[[ResumeHandoff.userInput]]）。断点停在工具调用中途时，
-          //    模型收到的是那次调用的 tool_result（无感续跑）；否则逐字回落改前的提示文案。
-          //    冻结腿（frozen 在场）注完之后清冻结槽 + 合并队列重排
-          //    （[[DelegateFreeze.onWoken]]）——唤醒 = 冻结生命周期的唯一出口。
-          _ <- subagentRef ! ResumeHandoff.userInput(handoff, replyTo = Some(adapterRef))
-          _ <-
-            if frozen.isDefined then
-              nebflow.core.delegate.DelegateFreeze.onWoken(
-                deps.resources,
-                task.taskId,
-                if instruction.trim.isEmpty then "boot-revival" else "frozen-wake",
-                // 冻结状态两套真相批（2026-11-05）：复活腿同样要发状态变更帧——
-                // 会话复活了而面板还挂着「需唤醒」= 本轮报障的同一形态。
-                deps.wsSend
+              .handleErrorWith(e =>
+                logger.warn(s"[delegate-revival] ChainStore row failed for ${task.taskId}: ${e.getMessage}").void
               )
+            // ⑨ nudge 注入：转录非空 = checkpoint 续跑；空 = 原 prompt 重注（respawn
+            //    fresh-start fallback 同款）。冻结腿（frozen 在场）：文案换成冻结唤醒
+            //    横幅（原因在场、明确「已完成的不重做、别从头重规划」），并在注入之后
+            //    清冻结槽 + 合并队列重排（[[DelegateFreeze.onWoken]]）——唤醒 = 冻结
+            //    生命周期的唯一出口。
+            // ⑨ 注入：**单点载荷**（[[ResumeHandoff.userInput]]）。断点停在工具调用中途时，
+            //    模型收到的是那次调用的 tool_result（无感续跑）；否则逐字回落改前的提示文案。
+            //    冻结腿（frozen 在场）注完之后清冻结槽 + 合并队列重排
+            //    （[[DelegateFreeze.onWoken]]）——唤醒 = 冻结生命周期的唯一出口。
+            _ <- nebflow.core.delegate.MergerInitialization.ready(task.taskId)
+            _ <- subagentRef ! ResumeHandoff.userInput(handoff, replyTo = Some(adapterRef))
+            _ <-
+              if frozen.isDefined then
+                nebflow.core.delegate.DelegateFreeze.onWoken(
+                  deps.resources,
+                  task.taskId,
+                  if instruction.trim.isEmpty then "boot-revival" else "frozen-wake",
+                  // 冻结状态两套真相批（2026-11-05）：复活腿同样要发状态变更帧——
+                  // 会话复活了而面板还挂着「需唤醒」= 本轮报障的同一形态。
+                  deps.wsSend
+                )
+              else IO.unit
+            _ <- logger.info(
+              s"[delegate-revival] revived ${task.taskId} (agent=${task.agentName}, revival #$nextCount, " +
+                s"seat=${record.cwd}, transcript=${transcript.size} msgs, parentLive=${parentRef.isDefined}" +
+                (if frozen.isDefined then s", FROZEN-WAKE reason=${frozenReason}" else "") + ") — " +
+                "supervision chain rebuilt (BackoffSupervisor watching again)"
+            )
+          yield Right(())
+
+          val stopPartial =
+            if record.mode.contains("merger") then
+              cleanup.get.flatten *>
+                deps.resources.agentRegistry.update(_ - task.taskId) *> DelegateFlowHosts.unmount(task.taskId)
             else IO.unit
-          _ <- logger.info(
-            s"[delegate-revival] revived ${task.taskId} (agent=${task.agentName}, revival #$nextCount, " +
-              s"seat=${record.cwd}, transcript=${transcript.size} msgs, parentLive=${parentRef.isDefined}" +
-              (if frozen.isDefined then s", FROZEN-WAKE reason=${frozenReason}" else "") + ") — " +
-              "supervision chain rebuilt (BackoffSupervisor watching again)"
-          )
-        yield Right(())
-        end for
+          attempt.onError { case _ => stopPartial }.onCancel(stopPartial)
+        }
+
     }
 
   /**

@@ -1,3 +1,4 @@
+import { renderProviderFailureStatus } from './providerFailureStatus.js';
 // chatView.js — Session-scoped chat view instance.
 //
 // Each window that displays a chat session holds one ChatView instance.
@@ -247,6 +248,8 @@ export class ChatView {
     }
     // Restore draft for the new session
     this.restoreDraft(sessionId);
+    renderProviderFailureStatus(this, state.freezeDigest, id =>
+      import('./bgAgentPopup.js').then(module => module.openStepPopup(id)));
     // Notify queue bar to re-render for the new session
     window.dispatchEvent(new CustomEvent('queuebar-refresh', { detail: { sessionId } }));
   }

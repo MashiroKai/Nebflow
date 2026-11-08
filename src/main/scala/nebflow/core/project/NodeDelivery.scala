@@ -245,7 +245,8 @@ private[project] trait NodeDelivery:
     attribution: Option[InjectionAttribution] = None
   ): IO[Either[String, String]] =
     val trimmed = message.trim
-    if trimmed.isEmpty then IO.pure(Left(s"'message' must be non-empty (trim) — nothing to inject (NODE_MESSAGE_EMPTY)"))
+    if trimmed.isEmpty then
+      IO.pure(Left(s"'message' must be non-empty (trim) — nothing to inject (NODE_MESSAGE_EMPTY)"))
     else
       // 消息身份牌消解（msgtokens 批 2026-10-31）：注入/附注文本里的 {{msg:sid8-seq6}}
       // 在三条路由（injectRunning / appendToTaskRoute / appendUndelivered）前展开为
@@ -289,16 +290,17 @@ private[project] trait NodeDelivery:
               .attempt
               .flatMap {
                 case Left(e) =>
-                  logger.error(
-                    s"NodeMessage -> node '${n.name}' (${n.id}) REFUSED: the message could not be persisted to the ledger " +
-                      s"before delivery (${Option(e.getMessage).getOrElse(e.toString)}) — nothing was delivered (NODE_MESSAGE_NOT_PERSISTED)"
-                  )
-                  .as(
-                    Left(
-                      s"Message NOT delivered to node '${n.name}': it could not be persisted first (${Option(e.getMessage).getOrElse(e.toString)}) — " +
-                        "a node message is never delivered without a durable copy (NODE_MESSAGE_NOT_PERSISTED)"
+                  logger
+                    .error(
+                      s"NodeMessage -> node '${n.name}' (${n.id}) REFUSED: the message could not be persisted to the ledger " +
+                        s"before delivery (${Option(e.getMessage).getOrElse(e.toString)}) — nothing was delivered (NODE_MESSAGE_NOT_PERSISTED)"
                     )
-                  )
+                    .as(
+                      Left(
+                        s"Message NOT delivered to node '${n.name}': it could not be persisted first (${Option(e.getMessage).getOrElse(e.toString)}) — " +
+                          "a node message is never delivered without a durable copy (NODE_MESSAGE_NOT_PERSISTED)"
+                      )
+                    )
                 case Right(_) =>
                   val entry = NodeMessageLedger.Entry(
                     id = msgId,
@@ -401,7 +403,9 @@ private[project] trait NodeDelivery:
                         workspace,
                         e,
                         NodeMessageLedger.Injected,
-                        Some(s"session=$sid (fire-and-forget tell; consumption confirmed on the next boot by the ledger replay leg)")
+                        Some(
+                          s"session=$sid (fire-and-forget tell; consumption confirmed on the next boot by the ledger replay leg)"
+                        )
                       )
                     ) *>
                     logger
@@ -511,14 +515,15 @@ private[project] trait NodeDelivery:
                 ) *>
               // C-2：task = 持久载体（随 flow-map 落盘）⇒ 台账直接转 `appended`（终态：
               // 节点启动时 buildInput 必读到，无需回放）。
-              ledgerEntry.traverse_(e =>
-                NodeMessageLedger.transition(
-                  workspace,
-                  e,
-                  NodeMessageLedger.Appended,
-                  Some(s"task section durable (status=${fresh.status})")
+              ledgerEntry
+                .traverse_(e =>
+                  NodeMessageLedger.transition(
+                    workspace,
+                    e,
+                    NodeMessageLedger.Appended,
+                    Some(s"task section durable (status=${fresh.status})")
+                  )
                 )
-              )
                 .as(
                   Right(
                     s"Message appended to node '${fresh.name}' task (status=${fresh.status}) as「分发器补充（NodeMessage）」— " +
@@ -545,20 +550,15 @@ private[project] trait NodeDelivery:
       }
 
   /**
-   * WS 事件链富化单点（链级抽象 P0 + U1 多链归属批 + chainmodel 批三 ②）：全部节点
-   * 事件 payload 经此统一补 chainId / chainIds / mergeUpstreamChains 条件键——判据单点
-   * FlowMapStore.chainAttrsOf 一次分量派生给出三值（`chainId` = 所属（声明）链；
-   * `chainIds` = 多链归属集 = 主链 id 首项 + 全量成员链，**仅 merge 节点**且可达成员链数
-   * ≥2 才带；`mergeUpstreamChains` = 本次汇聚的上游链，同门控；普通节点恒不带 =
-   * 单值 chainId 语义不变；与快照 buildNodeListPayload 同口径）。查无链
-   * （节点已出双区/单节点链）→ payload 原样透传。WS 帧外壳（ProjectActor.emitNodeEvent）
-   * 零改动——富化只发生在载荷体。
+   * WS 事件链富化单点（链级抽象 P0）：全部节点事件 payload 经此统一补
+   * `chainId` 条件键——判据单点 FlowMapStore.chainAttrsOf（所属（声明）链；
+   * 与快照 buildNodeListPayload 同口径）。查无链（节点已出双区/单节点链）→
+   * payload 原样透传。WS 帧外壳（ProjectActor.emitNodeEvent）零改动——富化只
+   * 发生在载荷体。
    */
   private[project] def emitWithChain(eventType: String, nodeId: String, payload: Json): IO[Unit] =
     store.chainAttrsOf(nodeId).flatMap { attrs =>
-      val enriched = attrs.chainId.toList.map(c => "chainId" -> c.asJson) ++
-        attrs.chainIds.toList.map(ids => "chainIds" -> ids.asJson) ++
-        attrs.mergeUpstreamChains.toList.map(ids => "mergeUpstreamChains" -> ids.asJson)
+      val enriched = attrs.chainId.toList.map(c => "chainId" -> c.asJson)
       emitEvent(eventType, nodeId, if enriched.isEmpty then payload else payload.deepMerge(Json.obj(enriched*)))
     }
 
@@ -683,26 +683,19 @@ private[project] trait NodeDelivery:
                   // 判词非 pass 时本节点不得启动（保持 pending），直到该 verifier 当下 lastVerdict
                   // 变 pass。零副作用——barrier 记账
                   // （deliveredTo）已在上方 mutate 落库，本闸只挡「fork startNode」这一动作。
-                  // mergefifo-engine 批 2026-09-13：**互斥闸**接在同一收口（落点③/纵深）——
-                  // 同键已有更高优先 merge 在跑时，本 merge 的 barrier 照旧结算（记账已落库）、
-                  // 只是不 fork 启动；释放后由资格回扫（落点②）当轮拉起。
                   tn match
                     case Some(t) =>
                       // chainview 批 2026-10-01：**链控闸**（落点③/纵深，与 startNode 收口同一
                       // 判据单点 [[chainGateOf]]）——暂停/已取消链上的目标即使 barrier 刚好归零
-                      // 也不 fork 启动（barrier 记账**已在上方 mutate 落库**，与 verdict/mutex
-                      // 两闸口径一致：闸只挡「fork startNode」这一动作，不改记账）。命中 ⇒ 静默
+                      // 也不 fork 启动（barrier 记账**已在上方 mutate 落库**，与 verdict 闸
+                      // 口径一致：闸只挡「fork startNode」这一动作，不改记账）。命中 ⇒ 静默
                       // `IO.unit`（零日志；暂停是用户显式意图，可见性在 REST/WS 三态面）。
                       chainGateOf(tid).flatMap {
                         case Some(_) => IO.unit
                         case None =>
                           mergeVerdictHoldersOf(t).flatMap { holders =>
                             if holders.nonEmpty then logVerdictGateHold("settleTo (barrier settle)", t, holders)
-                            else
-                              mergeMutexHoldersOf(t).flatMap { queued =>
-                                if queued.nonEmpty then logMutexHold("settleTo (barrier settle)", t, queued)
-                                else forkStart(s"deliver-out -> $tid")(startNode(tid))
-                              }
+                            else forkStart(s"deliver-out -> $tid")(startNode(tid))
                           }
                       }
                     case None => IO.unit
@@ -838,8 +831,9 @@ private[project] trait NodeDelivery:
     case Parked
 
   /**
-   * root 通道 offer **单点实现**（`ref ! ImmediateInput` 一行逐字未动）；[[deliverToRoot]]
-   * 与 [[flushRootNotify]] 的合并腿共用它 ⇒ 「发没发出」只有这一个判据源。
+   * Root notification acceptance: persist the full input before telling the actor or
+   * marking source delivery. A short-window suppression is safe only after durable intake.
+   * Both single and batched notifications use this boundary.
    *
    * `windowItems`（notifypack 解 b 批 · 2026-09-23）：**默认 `None`** ⇒ 既有全部调用点
    * （`deliverToRoot` 单件腿 / 两条旁路 / `deliverStaleSummary`）逐字保持改前形态
@@ -850,7 +844,8 @@ private[project] trait NodeDelivery:
     nodeName: String,
     status: String,
     nodeId: Option[String],
-    windowItems: Option[List[AgentCommand.WindowItem]] = None
+    windowItems: Option[List[AgentCommand.WindowItem]] = None,
+    sourceNodeIds: List[String] = Nil
   ): IO[RootNotifyOffer] =
     resources.agentRegistry.get.map(_.get(rootSessionId).map(_.ref)).flatMap {
       case Some(ref) =>
@@ -858,26 +853,43 @@ private[project] trait NodeDelivery:
         // 根会话队列），仍刷新账本（账本与通知解耦：本表只压秒级抖动，V8
         // at-least-once 语义不变）。不同 status 天然独立窗口（running→completed
         // 互不挡）。
-        dedupeRootDelivery(nodeId.getOrElse(nodeName), status).flatMap {
-          case true =>
-            logger.warn(
-              s"[dedup] suppressed duplicate Nebula delivery (identity=${nodeId.getOrElse(nodeName)}, status=$status, window=${NodeEngine.RootDedupWindowMs}ms, rootSession=$rootSessionId)"
-            ) *>
-              nodeId.traverse_(id => markRootDelivered(id)) *>
-              notifyRedirectAudit(nodeId, status, "suppressed") *>
-              IO.pure(RootNotifyOffer.Suppressed)
-          case false =>
-            (ref ! AgentCommand.ImmediateInput(
-              text,
-              source = Some("node"),
-              eventType = Some(status),
-              sender = Some(s"$projectName/$nodeName"),
-              fromUser = false, // ② 服务端注入（节点状态），不是真人输入
-              windowItems = windowItems
-            )) *> nodeId.traverse_(id => markRootDelivered(id)) *>
-              notifyRedirectAudit(nodeId, status, "offered") *>
-              IO.pure(RootNotifyOffer.Offered)
-        }
+        val input = AgentCommand.ImmediateInput(
+          text,
+          source = Some("node"),
+          eventType = Some(status),
+          sender = Some(s"$projectName/$nodeName"),
+          fromUser = false,
+          windowItems = windowItems
+        )
+        (nodeId.toList ++ sourceNodeIds).distinct.sorted
+          .traverse(id =>
+            store.findNode(id).map {
+              case Some(n) => s"${n.id}:${n.gen}:${n.blockCount}:${n.completedAt}"
+              case None => id
+            }
+          )
+          .flatMap { versions =>
+            val identity =
+              nebflow.core.mail.ProducerInput.identity(rootSessionId, projectName, status, text, versions.mkString("|"))
+            nebflow.core.mail.ProducerInput.persist(rootSessionId, input, identity).flatMap { prepared =>
+              dedupeRootDelivery(nodeId.getOrElse(nodeName), status).flatMap {
+                case true =>
+                  logger.warn(
+                    s"[dedup] suppressed duplicate Nebula delivery (identity=${nodeId.getOrElse(nodeName)}, status=$status, window=${NodeEngine.RootDedupWindowMs}ms, rootSession=$rootSessionId)"
+                  ) *>
+                    nodeId.traverse_(id => markRootDelivered(id)) *>
+                    notifyRedirectAudit(nodeId, status, "suppressed") *>
+                    IO.pure(RootNotifyOffer.Suppressed)
+                case false =>
+                  (ref ! prepared) *> nodeId.traverse_(id => markRootDelivered(id)) *>
+                    notifyRedirectAudit(nodeId, status, "offered") *>
+                    IO.pure(RootNotifyOffer.Offered)
+              }
+            }
+          }
+          .handleErrorWith(e =>
+            logger.warn(s"Node notification not durably accepted: ${e.getMessage}").as(RootNotifyOffer.Parked)
+          )
       case None =>
         logger.warn(
           s"Root session '$rootSessionId' not found — node result parked for redelivery scan (nodeName=$nodeName)"
@@ -983,7 +995,7 @@ private[project] trait NodeDelivery:
 
   /**
    * **root 通知打包入口（生产者侧合并，决策①）**：节点终态投根的**唯一入口**
-   * （`rootDelivery` / `deliverFailed` / `mergeBlockedByUpstreamFailure` /
+   * （`rootDelivery` / `deliverFailed` /
    * `deliverOutTo` 手动重投腿 / 补投扫描 fresh 腿 / FeedbackRouter·DispatchNotify
    * escalate 腿**六路同入口**）——offer 单点 [[deliverToRoot]] 前插入本层。
    *

@@ -108,6 +108,8 @@ class DelegateFrozenWakeSpec extends CatsEffectSuite:
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(seat)
 
+  end withFx
+
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 100.millis)(cond: IO[Boolean]): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
@@ -148,7 +150,9 @@ class DelegateFrozenWakeSpec extends CatsEffectSuite:
 
   // ── W1 冻结会话可投递 ──────────────────────────────────────────────────
 
-  test("MailIdleGate: a Frozen session is deliverable (a frozen delegate has zero in-flight work — the Mail IS the wake carrier)") {
+  test(
+    "MailIdleGate: a Frozen session is deliverable (context may be retained, but Mail does not release the manual recovery gate)"
+  ) {
     val sid = "delegate-frozen-gate"
     val ref = null.asInstanceOf[nebflow.actor.ActorRef[AgentCommand]]
     def rec(status: nebflow.actor.AgentStatus, outstanding: Int) =
@@ -180,7 +184,9 @@ class DelegateFrozenWakeSpec extends CatsEffectSuite:
 
   // ── W2 冻结回执不算子代理结果 ──────────────────────────────────────────
 
-  test("TurnBoundaryDrains: a frozen receipt is NOT a sub-agent result (the parent's barrier slot must not be returned early)") {
+  test(
+    "TurnBoundaryDrains: a frozen receipt is NOT a sub-agent result (the parent's barrier slot must not be returned early)"
+  ) {
     val frozen = AgentCommand.ExternalEvent("delegate", "frozen", "receipt", io.circe.JsonObject.empty, Some("x"))
     val completed = AgentCommand.ExternalEvent("delegate", "completed", "done", io.circe.JsonObject.empty, Some("y"))
     val failed = AgentCommand.ExternalEvent("delegate", "failed", "boom", io.circe.JsonObject.empty, Some("z"))
@@ -190,33 +196,51 @@ class DelegateFrozenWakeSpec extends CatsEffectSuite:
     assert(TurnBoundaryDrains.isSubagentResult(failed))
   }
 
-  test("visibleExternalEventSource: a frozen receipt renders on its own `delegate-frozen` source (not as a completion report)") {
+  test(
+    "visibleExternalEventSource: a frozen receipt renders on its own `delegate-frozen` source (not as a completion report)"
+  ) {
     assertEquals(AgentActor.visibleExternalEventSource("delegate", "frozen"), Some("delegate-frozen"))
     assertEquals(AgentActor.visibleExternalEventSource("delegate", "completed"), Some("delegate"))
   }
 
   // ── W3/W4 唤醒腿 ───────────────────────────────────────────────────────
 
-  test("wakeFrozen refuses records that are not in the delegate-error frozen state (never starts a fresh session silently)") {
+  test(
+    "wakeFrozen refuses records that are not in the delegate-error frozen state (never starts a fresh session silently)"
+  ) {
     withFx("refuse") { fx =>
       for
         parent <- fx.sessionStore.createSession("Nebula", agentName = Some("Nebula"))
         id = "delegate-frozen-refuse"
         _ <- fx.store.recordTask(mkTask(id, parent.id))
         _ <- IO(DelegateRegistry.put(mkRecord(id, parent.id, fx.seat.toString)))
-        notFrozen <- DelegateRevival.wakeFrozen(DelegateRevival.Deps(fx.resources, fx.system, None), id, "please continue")
+        notFrozen <- DelegateRevival.wakeFrozen(
+          DelegateRevival.Deps(fx.resources, fx.system, None),
+          id,
+          "please continue"
+        )
         _ = assert(notFrozen.isLeft, "a non-frozen record is refused")
         _ = assert(notFrozen.left.exists(_.contains("not in the delegate-error frozen state")), s"got: $notFrozen")
         // 冻结但不 live ⇒ 走同 id 复活（本用例只判拒绝面，故用外部执行器反例）。
-        _ <- IO(DelegateRegistry.parkFrozen(id, DelegateFreeze.wireValue(DelegateFreeze.Reason.LlmFailure), "provider 500"))
-        _ <- IO(DelegateRegistry.put(mkRecord(id, parent.id, fx.seat.toString, executor = "claude-cli").copy(
-          frozenSince = Some(System.currentTimeMillis()),
-          frozenReason = Some(DelegateFreeze.wireValue(DelegateFreeze.Reason.LlmFailure)),
-          frozenDetail = Some("provider 500")
-        )))
+        _ <- IO(
+          DelegateRegistry.parkFrozen(id, DelegateFreeze.wireValue(DelegateFreeze.Reason.LlmFailure), "provider 500")
+        )
+        _ <- IO(
+          DelegateRegistry.put(
+            mkRecord(id, parent.id, fx.seat.toString, executor = "claude-cli").copy(
+              frozenSince = Some(System.currentTimeMillis()),
+              frozenReason = Some(DelegateFreeze.wireValue(DelegateFreeze.Reason.LlmFailure)),
+              frozenDetail = Some("provider 500")
+            )
+          )
+        )
         external <- DelegateRevival.wakeFrozen(DelegateRevival.Deps(fx.resources, fx.system, None), id, "go")
         _ = assert(external.isLeft, "an external-executor record is refused (its continuation leg owns the resume)")
-        missing <- DelegateRevival.wakeFrozen(DelegateRevival.Deps(fx.resources, fx.system, None), "delegate-frozen-nope", "go")
+        missing <- DelegateRevival.wakeFrozen(
+          DelegateRevival.Deps(fx.resources, fx.system, None),
+          "delegate-frozen-nope",
+          "go"
+        )
         _ = assert(missing.isLeft, "an unknown id is refused")
         live <- fx.resources.agentRegistry.get.map(_.contains(id))
         _ = assert(!live, "no actor may be spawned by a refused wake")
@@ -250,14 +274,22 @@ class DelegateFrozenWakeSpec extends CatsEffectSuite:
             )
           )
         )
-        _ <- fx.store.updateStatus(parentId, childId, DelegateFreeze.TaskStatus, lastError = Some("[frozen:llm-failure] 529"))
+        _ <- fx.store.updateStatus(
+          parentId,
+          childId,
+          DelegateFreeze.TaskStatus,
+          lastError = Some("[frozen:llm-failure] 529")
+        )
         result <- DelegateRevival.wakeFrozen(DelegateRevival.Deps(fx.resources, fx.system, None), childId, "继续把重试路径补完")
         _ = assert(result.isRight, s"the frozen record must wake: $result")
         // 同 id 活体（不新建会话 = 唤醒的同义反复）。
         _ <- waitUntil(20.seconds)(fx.resources.agentRegistry.get.map(_.contains(childId)))
         live <- fx.resources.agentRegistry.get.map(_.get(childId))
         _ = assertEquals(live.map(_.kind), Some(AgentKind.Delegate))
-        _ = assert(live.exists(_.supervisorRef.isDefined), "the supervision chain is rebuilt (wake must be watched again)")
+        _ = assert(
+          live.exists(_.supervisorRef.isDefined),
+          "the supervision chain is rebuilt (wake must be watched again)"
+        )
         // 冻结槽清空（唤醒 = 冻结生命周期的唯一出口）。
         rec <- IO(DelegateRegistry.find(childId).get)
         _ = assertEquals(rec.frozenSince, None, "frozenSince cleared after the wake")
@@ -277,10 +309,14 @@ class DelegateFrozenWakeSpec extends CatsEffectSuite:
         }
         // 审计行（链视图可见「冻结 → 唤醒」）。
         _ = assert(
-          ChainStore.listSync().flatMap(_.entries).exists(e => e.kind == "delegate-frozen-revived" || e.kind == "delegate-frozen-wake"),
+          ChainStore
+            .listSync()
+            .flatMap(_.entries)
+            .exists(e => e.kind == "delegate-frozen-revived" || e.kind == "delegate-frozen-wake"),
           s"a chain audit row records the frozen wake, got: ${ChainStore.listSync().flatMap(_.entries).map(_.kind).distinct}"
         )
       yield ()
+      end for
     }
   }
 end DelegateFrozenWakeSpec

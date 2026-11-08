@@ -200,6 +200,7 @@ object AgentCore:
   val RootExclusiveTools = Set(
     "Schedule",
     "Delegate",
+    "merger_request",
     "AgentControl",
     "MemoryNote",
     // Task（taskunify 合一批 2026-09-24 `75fddc5db`：TaskList/TaskBoard 双件合一
@@ -254,6 +255,10 @@ object AgentCore:
     "TaskSearch",
     // ConversationSearch is Nebula-root-only and read-only; block agent/plugin declaration escape.
     "ConversationSearch",
+    // workspace_summary (worktree-merger delivery, Priority E): Nebula-root-only
+    // workspace coordination picture + dismiss-suggestion; blocks declaration
+    // escape for agent/plugin declarations (MergerRequestTool same-slot precedent).
+    "workspace_summary",
     // generate_image（imagegen 双层批 2026-10-24，调试状态）：Nebula 专属生图件——
     // 同享本集【防声明逃逸】通道（真实授能 = RootOrchestrationTools 单点；编译期
     // seal 关时经 imageGenSealedStrip 从交付面剥除且本集条目随之不可达）。
@@ -399,7 +404,7 @@ object AgentCore:
     // 形态与裸挂载项目名）对**一切角色**显式拒绝（`MAIL_PROJECT_TRIGGER_UNSUPPORTED`），
     // 零建任务、零复活、零 TriggerDispatcher；派发面唯一入口 = `Delegate`。
     // Root 的 Mail 地址面 = `delegate:<id>`/`kernel:<id>` 续聊 + `node:<id|name>`
-    //（`node:<id>`/自身地址照旧显式报错或指路，硬禁静默兜底/模糊匹配）；入站不受限。
+    // （`node:<id>`/自身地址照旧显式报错或指路，硬禁静默兜底/模糊匹配）；入站不受限。
     "Mail",
     // Project（N2 project-tool 批 2026-10-06 ⑨A 硬替换：ProjectCreate → Project，
     // 同参数面 + 新增 action="unmount" 硬卸载腿；旧名入 RetiredToolGuides 指路）。
@@ -421,6 +426,20 @@ object AgentCore:
     // `RootExclusiveTools` 的 "Delegate" 条目继续承担**防声明逃逸**剥离（非
     // Nebula 身份声明 Delegate 仍被剥）。
     "Delegate",
+    "merger_request",
+    // worktree_context (worktree-merger delivery, Priority D): read-only
+    // per-workspace context assembly (task brief, node graph, verification,
+    // commits, merge history, paginated mail). The main agent reads any managed
+    // workspace; merger-mode sessions get the same tool through the merger
+    // mount face.
+    "worktree_context",
+    // workspace_summary (worktree-merger delivery, Priority E): the main
+    // agent's per-project coordination picture — workspaces with live Git
+    // facts, pending merge requests with origins, advisor suggestions with
+    // states, merger initialization — plus the dismiss-suggestion action.
+    // Root-only (RootExclusiveTools blocks declaration escape); the advisor
+    // itself never merges and never touches manual merge requests.
+    "workspace_summary",
     // 任务编排（taskunify 合一批 2026-09-24 `75fddc5db`：TaskList/TaskBoard 双件
     // 合一 ⇒ 本集成员一对一改名 `TaskList` → `Task`，件数不变）。`TaskList` 名已
     // 删净退役（registry 不注册 ⇒ 调用走 RetiredToolGuides 墓碑指引）；`Task` 是
@@ -616,8 +635,18 @@ object AgentCore:
    * 本集，本批零触碰 root 面；动的是执行 agent 机制面（NebflowFixedTools 十 → 九）、
    * 注册表（删 `"AgentFlow"` 注册项）、墓碑表（"Workflow" 指路改 ChainWrite
    * ＋"AgentFlow" 条目复活）与 orchestrationMode 的升级写点（迁入 ChainWriteTool）。
+   *
+   * **worktree-merger 交付批（Priority D）：+`worktree_context`，常量对齐实际面 22**——
+   * 工作区全景上下文只读件（主 agent 面；merger 模式会话经挂载面同享）。本增量
+   * 属「按面变更」（新增成员），非「凑数字」；ConversationSearch 批 +1 时常量
+   * 未随动，本批一并把常量钉回实测件数。
+   *
+   * **worktree-merger 交付批（Priority E）：+`workspace_summary` ⇒ 23**——主 agent
+   * 的工作区协调读面 + dismiss-suggestion（RootOrchestrationTools + RootExclusive
+   * Tools 双集，MergerRequestTool 同槽先例）。本增量属「按面变更」（新增成员），
+   * 非「凑数字」。
    */
-  val RootOrchestrationToolsExpectedSize: Int = 20
+  val RootOrchestrationToolsExpectedSize: Int = 23
 
   /**
    * 退役工具迁移指引表（R2「一个 Mail 统一」批，2026-09-12；设计件 §A.3 C-1）。
@@ -669,7 +698,7 @@ object AgentCore:
     // ChainWrite）。旧会话 / 存量提示词打这个名必须拿到「改用 ChainWrite 一次写全链」
     // 的指引——不许静默消失（B5-c 可诊断退役）。
     "AgentFlow" ->
-      """The tool is retired. `agentflow` names a MODE, not a tool: a dispatcher's node-orchestration shape (the `orchestrationMode` value written when a chain registration succeeds). To run several steps, register the WHOLE chain in ONE call: `ChainWrite(nodes=[{id, name?, task, deps?, description?}], chainName?)` — one write for the entire chain; the engine wires the deps edges so every step receives its upstream results, and the ack carries the chain id immediately (non-blocking). For one blocking read-only recon leg use `Subagent(prompt=...)`.""",
+      """The tool is retired. `agentflow` names a MODE, not a tool: a dispatcher's node-orchestration shape (the `orchestrationMode` value written when a chain registration succeeds). To run several steps, register the WHOLE chain in ONE call: `ChainWrite(nodes=[{id, name?, task, deps?, description?}], chainName?)` — one write for the entire chain; the engine wires the deps edges so every step receives its upstream results, and the ack carries the chain id immediately (non-blocking). For one blocking read-only recon leg use `Subagent(prompt=...)`."""
   )
 
   /**

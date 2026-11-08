@@ -26,6 +26,75 @@ export default {
   'panel.diffRendering': 'Rendering diff…',
   'panel.diffOpenFailed': 'Could not open in Canvas — click the row to retry.',
   // #27 Project tab + Flow Map tab (direction adjustment: Canvas tab form, team-panel paradigm)
+  'project.workspaceOpen': 'Open',
+  'project.workspaceReserved': 'Reserved for merge',
+  'project.workspaceRunning': 'Working',
+  'project.workspaceIdle': 'Idle',
+  'project.workspaceFrozen': 'Needs manual recovery',
+  'project.mergeRequest': 'Merge request',
+  'project.requestOriginPanel': 'user-manual',
+  'project.requestOriginAgent': 'agent-submitted',
+  'project.mergeSelected': 'Merge selected workspaces',
+  'project.mergeSubmitted': 'Merge request submitted',
+  'project.mergeNeedsResume': 'Queued; manually resume the project merger to continue',
+  'project.mergeScope': 'This authorizes merge, verification and removal of selected workspaces. Pushing and publishing require separate authorization.',
+  'project.resumeMerger': 'Resume merger session',
+  'project.mergerRecoveryAccepted': 'Recovery accepted; open the merger session for progress.',
+  'project.openMerger': 'Open merger session',
+  'project.mergerInitializing': 'Initializing',
+  'project.mergerRecoveryRequired': 'Initialization interrupted; manual recovery required',
+  'project.mergerRequired': 'Ask the main agent to create the project merger first.',
+  'project.createMerger': 'Ask the main agent to create the merger',
+  'project.createMergerPrefill': 'Create the project merger for this project with Delegate(mode="merger", project="{name}"). It integrates authorized workspaces through recorded merge requests only.',
+  'project.createMergerUnavailable': 'Could not fill the main chat input; create the merger manually.',
+  'project.continueWork': 'Continue work',
+  'project.factsAhead': '+{count} ahead',
+  'project.factsDirty': '{tracked} changed · {untracked} untracked',
+  'project.factsClean': 'no local changes',
+  'project.factsError': 'workspace facts unavailable',
+  'project.factsVerified': 'verification passed',
+  'project.factsUnverified': 'no verification record',
+  'project.factsReconcileIntegrated': 'source already integrated',
+  'project.factsReconcileResumable': 'resumable',
+  'project.factsReconcileUnknown': 'state unknown',
+  'project.selectionExpired': '{count} selected workspace(s) are no longer open and idle; the selection was cleared.',
+  'project.mergeConfirmTitle': 'Confirm merge request',
+  'project.mergeConfirmEntry': '{branch} → {target}\nsource {commit} · {ahead} · {dirty}',
+  'project.mergeConfirmConfirm': 'Submit merge request',
+  'project.mergeStop': 'Request stop',
+  'project.mergeStopRequested': 'Stop requested; waiting for the merger to reconcile actual progress. Existing merges remain.',
+  'project.mergePhase.accepted': 'Accepted',
+  'project.mergePhase.processing': 'Processing',
+  'project.mergePhase.paused': 'Paused',
+  'project.mergePhase.checking': 'Checking',
+  'project.mergePhase.merging': 'Merging',
+  'project.mergePhase.validating': 'Validating',
+  'project.mergePhase.awaiting-user': 'Awaiting your decision',
+  'project.mergePhase.merged-cleanup-pending': 'Integrated; cleanup pending',
+  'project.mergePhase.completed': 'Completed',
+  'project.mergePhase.failed': 'Failed',
+  'project.mergePhase.cancelled': 'Stopped',
+  'project.mergePhase.reserved': 'Reserved for merge',
+  'project.mergeNotificationPending': 'Request recorded, but notification is pending. Contact the project merger to reconcile.',
+  'project.workspaceCleaning': 'Cleaning',
+  'project.workspaceClosedMerged': 'Integrated and closed',
+  'project.workspaceClosedRetained': 'Directory removed; branch retained',
+  'project.cleanupConfirmUnavailable': 'Confirmation is not ready. Reopen the project panel.',
+  'project.cleanupScope': 'Remove directory: {path}. Branch {branch} and its commits will be retained.',
+  'project.cleanupUnmerged': 'This branch contains unmerged commits. Only the directory will be removed; its commits stay on the branch.',
+  'project.cleanupIntegrated': 'The current commit is already included in the target branch.',
+  'project.cleanupDirty': 'Confirming discards {count} uncommitted changes:',
+  'project.cleanupTitle': 'Confirm workspace cleanup',
+  'project.cleanupConfirm': 'Remove directory',
+  'project.cleanupDone': 'Directory removed; branch retained.',
+  'project.cleanupWorkspace': 'Clean up workspace',
+  'project.cleanupNeedsAcceptance': 'Integrated and directory removed; awaiting final merger verification report',
+  'project.workspaces': 'Workspaces',
+  'project.workspacesLoading': 'Loading workspaces…',
+  'project.creationBaseline': 'New workspace baseline',
+  'project.saveBaseline': 'Save baseline',
+  'project.baselineSaved': 'Saved; applies to future workspaces',
+  'project.noWorkspaces': 'No managed workspaces',
   'project.title': 'Projects',
   'project.loading': 'Loading projects…',
   'project.workspace': 'Workspace',
@@ -268,8 +337,6 @@ export default {
   // Queue-position row (queuepos batch 2026-09-15): the detail panel had no queue
   // field at all before this (author's report). Same source as the card badge
   // (`mergeQueuePos`, unique per node, truth = SEM-2 rank ascending).
-  'flowmap.detail.queue': 'Queue position',
-  'flowmap.detail.queueValue': 'Queued · {n} of {m} ({queue})',
   'flowmap.detail.yes': 'Yes',
   'flowmap.chain.archivedToast': 'Chain "{chain}" archived ({n} nodes together)',
   // Chain-level cancel (R2, chaincancel batch 2026-09-17): control label + the
@@ -322,16 +389,8 @@ export default {
   // SIZE OF THE BLOCKING SET (identical for every waiter while one merge runs), so
   // the keys queue.ahead / badgeTitle / untrustedTitle are retired and the old
   // "N ahead" wording is gone.
-  'flowmap.queue.held': 'Queued',
-  'flowmap.queue.pos': 'Queued · {n} of {m}',
-  'flowmap.queue.posHead': 'Queued on the merge window ({queue}) · {n} of {m}',
-  'flowmap.queue.heldHead': 'Queued on the merge window',
-  'flowmap.queue.blockedBy': 'Blocked by {names}',
-  'flowmap.queue.untrustedHead': 'Queued on the merge window · position unreliable (same git dir, multiple projects)',
-  'flowmap.queue.untrustedSuffix': ' (position unreliable: same git dir, multiple projects)',
   // Queue name (the engine supplies the token; the frontend only translates — an
   // unknown token is echoed verbatim, never invented)
-  'flowmap.queue.name.merge-window': 'merge window',
   // LoopNode running-phase labels (2026-09-06): loop card desc line shows worker/verify
   'flowmap.loopPhase.worker': 'Producing',
   'flowmap.loopPhase.verify': 'Verifying',
@@ -926,20 +985,15 @@ export default {
   'subagents.empty': 'No running sub-agents',
   'subagents.indicatorTitle': 'Background sub-agents',
   'subagents.status.running': 'Running',
-  // held-receipt 投递可靠性批（2026-10-21 fix 4）：显式等待停靠态（等合并轮）。
-  // panel-merge-status 批（2026-10-25 · 作者令）：候合并从通用「Waiting」提升为
-  // 钉住的可见状态词——面板行状态位直显「Merge-queued」。
-  'subagents.status.waiting': 'Merge-queued',
-  'subagents.status.waitingMerge': 'waiting-merge (FIFO)',
-  // 案A 待命批 2026-10-31（状态矩阵批收编）：delegate 显式待命态（delegate_report
-  // standby）——行状态位直显「待命」，区别于候合并（tooltip = 申报的「在等什么」）。
+  // Explicit waiting dock (Waiting): the row status word is "Docked, waiting"
+  // (legacy Waiting snapshots without a declaration slot share the word; declared
+  // standby rows use the standby word).
+  'subagents.status.waiting': 'Docked, waiting',
+  'subagents.status.waitingMerge': 'docked, waiting',
+  // Delegate explicit standby (delegate_report standby) — the row status word is
+  // "Standby" (tooltip = what it declared it is waiting for).
   'subagents.status.standby': 'Standby (awaiting orders)',
   'subagents.status.idle': 'Idle',
-  // panel-merge-status 批（2026-10-25）：候合并行队列细节段（/api/merge-queue 只读
-  // 状态面；位次只渲染不派生，API 未生效 ⇒ 段全缺 = 静态「waiting-merge」降级）。
-  'subagents.mergeQueue.ahead': '{n} ahead in merge queue',
-  'subagents.mergeQueue.turn': 'your merge turn — window held',
-  'subagents.mergeQueue.reason': 'hold reason: {reason}',
   // #752 idle-subdivision: what an idle delegate is waiting on + long-idle badge.
   'subagents.waitingBg': 'waiting on {count} bg task(s): {desc} ({dur})',
   'subagents.waitingReceipts': 'waiting on {count} sub-agent receipt(s)',
@@ -962,9 +1016,11 @@ export default {
   'subagents.frozenInfraTip': 'Provider fault (NOT a task failure): the engine probes for recovery and resumes the SAME session by itself once a provider is serving again (from the checkpoint, finished work is not redone, capped attempts with growing gaps); press Wake to resume it right now. Nothing is reported upward — this panel is its status surface.',
   'subagents.frozenAutoResumes': 'auto-resumed {n} time(s)',
   'subagents.frozenAutoResumesSpent': 'auto-resume budget spent — needs you: top up / switch model / cancel',
+  'subagents.providerFailureGroup': '{count} background tasks: provider unavailable · {provider}',
+  'subagents.status.roundComplete': 'Round complete; available',
   'subagents.freezeDigestRecoverable': '{count} frozen (wakeable)',
   'subagents.freezeDigestNeedsHuman': '{count} frozen (needs you)',
-  'subagents.frozenTip': 'Frozen: an engine/upstream fault stopped it in place — this is NOT a failure verdict. The session history, workspace with uncommitted changes, task-ledger row and merge-queue slot are all kept; press Wake (or mail its address) to continue in the SAME session (finished work is not redone).',
+  'subagents.frozenTip': 'Frozen: an engine/upstream fault stopped it in place — this is NOT a failure verdict. The session history, workspace with uncommitted changes and task-ledger row are all kept; press Wake (or mail its address) to continue in the SAME session (finished work is not redone).',
   'subagents.frozenReason': 'Reason: {reason}',
   'subagents.frozenDormantTip': 'Frozen for {hours}h with no wake (past the retention window the record is archived; transcript and workspace are kept).',
   'subagents.wake': 'Wake',
@@ -2102,7 +2158,6 @@ export default {
   // ③ S11 structure overview header
   'delegate.structure': 'Delegate structure',
   // ④ S11 FIFO lane header
-  'delegate.mergeQueue': 'Merge queue',
   // ⑤ S11 worktree seat label
   'delegate.worktree': 'Worktree',
   // ⑤b Device-worktree ownership fix (2026-10-30): device project without a worktree

@@ -888,13 +888,6 @@ jobs:
           printf '#!/bin/bash\nexec java $SBT_OPTS -XX:+UseParallelGC -XX:+ExitOnOutOfMemoryError -jar /tmp/sbt-launch.jar "$@"\n' > /tmp/sbt-bin/sbt
           chmod +x /tmp/sbt-bin/sbt
           echo "/tmp/sbt-bin" >> $GITHUB_PATH
-      - name: Generate queuepos engine payload
-        # queuepos-detail.spec.mjs 的硬契约（其文件头 🔴 禁手抄）：渲染面必须由
-        # 引擎真实推导驱动，跑前必须先生成 target/queuepos-payload.json——
-        # 生产命令就写在 spec 的报错文案里（首轮实测它模块级 throw 会炸掉
-        # 整个收集面）。fresh checkout 本机跑全量 spec 同样需要先跑这一步。
-        shell: bash
-        run: sbt "testOnly nebflow.core.project.MergeQueuePositionSpec"
       - name: Install Playwright (chromium + webkit)
         # webkit：nffile-three-tier / nffile-503-backoff / imgcard-click-safari-compat /
         # mdscroll-toc-scroll 四个 spec 显式 import webkit（Safari 行为兼容面）。

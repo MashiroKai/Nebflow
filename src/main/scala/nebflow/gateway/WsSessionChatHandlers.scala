@@ -122,8 +122,13 @@ private[gateway] object WsSessionChatHandlers:
             // 修正② fail-closed（纵深防御）：secret 卡的作答**永不**接受附件——
             // 前端对 secret 卡本就无附件入口，此闸只服务伪造/越权客户端。整帧
             // 拒收：不落盘、不进 hub（卡保留，可刷新后重新作答）。
-            rejectAttachFrame(wsSend, askSessionId, requestId, "ASKUSER_ATTACH_SECRET_CARD",
-              "secret questions never accept attachments")
+            rejectAttachFrame(
+              wsSend,
+              askSessionId,
+              requestId,
+              "ASKUSER_ATTACH_SECRET_CARD",
+              "secret questions never accept attachments"
+            )
           case Nil =>
             validateAnswerAttachments(askSessionId, requestId, attachmentsJson).flatMap {
               case Some((code, detail)) => rejectAttachFrame(wsSend, askSessionId, requestId, code, detail)
@@ -227,6 +232,7 @@ private[gateway] object WsSessionChatHandlers:
                         )
                       )
                     else Right(()) // 基础闸过；sha 比对在 blocking 块外（需查台账 IO）
+                end if
               }.flatMap {
                 case Left(reject) => IO.pure(reject)
                 case Right(_) =>
@@ -236,7 +242,10 @@ private[gateway] object WsSessionChatHandlers:
                       Some(("ASKUSER_ATTACH_SHA_MISMATCH", s"attachment sha mismatch: $path"))
                     case _ => None
                   }
-              }.handleErrorWith(e => IO.pure(Some(("ASKUSER_ATTACH_UNREADABLE", s"attachment not readable: ${e.getMessage}"))))
+              }.handleErrorWith(e =>
+                IO.pure(Some(("ASKUSER_ATTACH_UNREADABLE", s"attachment not readable: ${e.getMessage}")))
+              )
+            end if
         }
       }
 
@@ -256,7 +265,9 @@ private[gateway] object WsSessionChatHandlers:
   ): IO[Unit] =
     nebflow.shared.NebflowLogger
       .forName("nebflow.ws")
-      .warn(s"askUserAnswer with attachments REJECTED requestId=$requestId root=$askSessionId code=$code detail=$detail") *>
+      .warn(
+        s"askUserAnswer with attachments REJECTED requestId=$requestId root=$askSessionId code=$code detail=$detail"
+      ) *>
       wsSend(
         io.circe.Json.obj(
           "type" -> "interactionAnswerRejected".asJson,
@@ -268,8 +279,10 @@ private[gateway] object WsSessionChatHandlers:
         )
       )
 
-  /** 已作答卡的 `.answered` 标记（孤儿清扫的保留判据；只对带附件的作答落——
-    * 无附件作答卡即便曾传过孤儿件也照扫）。best-effort。 */
+  /**
+   * 已作答卡的 `.answered` 标记（孤儿清扫的保留判据；只对带附件的作答落——
+   * 无附件作答卡即便曾传过孤儿件也照扫）。best-effort。
+   */
   private def markAnswered(askSessionId: String, requestId: String, attachments: List[Json]): IO[Unit] =
     if attachments.isEmpty then IO.unit
     else AskUserAttachmentRoutes.markAnswered(askSessionId, requestId)
@@ -881,138 +894,111 @@ private[gateway] object WsSessionChatHandlers:
       // `frozenReason=none`，同一时刻两个答案。本批：**判定与面板读同一份派生读数**，
       // 且每一次拒收都带回 `freeze` 块（实际状态 + 为什么 + 面板该显示什么），
       // 前端据此自纠——不再有「点了才知道自己不该点」。
-      IO.blocking(nebflow.core.delegate.DelegateRegistry.find(wid)).flatMap { recordOpt =>
-        sharedResources.agentRegistry.get.flatMap { reg =>
-          val live = reg.get(wid)
-          val slotReason = recordOpt.flatMap(_.frozenReason)
-          val slotSince = recordOpt.flatMap(_.frozenSince)
-          val truth = nebflow.actor.FreezeTruth.of(live, slotReason, slotSince)
-          val parentSid = recordOpt.map(_.parentSessionId).getOrElse(live.map(_.rootSessionId).getOrElse(""))
-          // 唤醒成功后的状态变更帧（任何腿都必须发；`onWoken` 也发同一款，供 Mail /
-          // 自动恢复腿复用）。`freeze` 块 = 唤醒后的真相（非冻结）。
-          def wokenFrame(status: String, via: String): IO[Unit] =
-            wsSend(
-              Json.obj(
-                "type" -> "delegateWoken".asJson,
-                "sessionId" -> wid.asJson,
-                "rootSessionId" -> parentSid.asJson,
-                "via" -> via.asJson,
-                "status" -> status.asJson,
-                "at" -> System.currentTimeMillis().asJson,
-                "freeze" -> nebflow.actor.FreezeTruth.running(status, System.currentTimeMillis()).json
-              )
-            ).handleErrorWith(e => logger.warn(s"delegateWoken frame failed for $wid: ${e.getMessage}"))
-          // 拒收回执的统一载荷：**实际状态 + 权威冻结块 + 原话**（面板据此自纠）。
-          def detail(status: String, err: String): List[(String, Json)] =
-            List("actualStatus" -> status.asJson, "freeze" -> truth.json, "error" -> err.asJson)
-          if live.isEmpty && recordOpt.isEmpty then
-            wReply(
-              ok = false,
-              mode = "none",
-              "actualStatus" -> "unknown".asJson,
-              "error" -> s"no delegate record and no live agent for '$wid' (DELEGATE_NOT_FOUND)".asJson
-            )
-          else if !truth.frozen then
-            // 面板与后端打架的唯一收口点：把**服务端此刻的真相**原样带回去。
-            wReply(
-              ok = false,
-              mode = "not-frozen",
-              detail(truth.status, s"'$wid' cannot be woken: ${truth.notWakableWhy}")*
-            )
-          else if !truth.wakeable then
-            wReply(
-              ok = false,
-              mode = "auto-recovering",
-              detail(
-                truth.status,
-                s"'$wid' does not need a wake: ${truth.labelEn} (reason=${truth.reasonWire}) — ${truth.notWakableWhy}. " +
-                  "Cancel the task if you do not want it to continue."
-              )*
-            )
-          else if slotReason.exists(nebflow.core.delegate.DelegateFreeze.isFreezeWire) then
-            // ① delegate 错误冻结族（落盘槽在场）：live ⇒ 原 actor 注入；不 live ⇒ 同 id 复活。
-            val banner = nebflow.core.delegate.DelegateFreeze.wakeBanner(
-              wid,
-              truth.reasonWire,
-              recordOpt.flatMap(_.frozenDetail).getOrElse("")
-            )
-            val body = if instr.trim.isEmpty then banner else s"$banner\n\n$instr"
-            live match
-              case Some(l) if l.kind == nebflow.actor.AgentKind.Delegate =>
-                (l.ref ! AgentCommand.UserInput(
-                  text = body,
-                  replyTo = l.supervisorRef,
-                  // 幂等键（冻结通知策略批 2026-11-05，与引擎自愈腿 `DelegateWakeLeg`
-                  // 同键）：同一次冻结只认一次唤醒——面板连点 / 自愈与人工撞车 ⇒ 单回合。
-                  clientMessageId = Some(s"frozen-wake:$wid:${recordOpt.flatMap(_.frozenSince).getOrElse(0L)}"),
-                  source = Some("delegate-wake"),
-                  sender = Some("panel"),
-                  eventType = Some("info"),
-                  fromUser = false
-                )) *> nebflow.core.delegate.DelegateFreeze
-                  .onWoken(sharedResources, wid, "panel-wake", Some(wsSend))
-                  .handleErrorWith(e => logger.warn(s"delegateWake onWoken failed for $wid: ${e.getMessage}")) *>
-                  wReply(
-                    ok = true,
-                    mode = "live",
-                    "actualStatus" -> "waking".asJson,
-                    "freeze" -> nebflow.actor.FreezeTruth.running("waking", System.currentTimeMillis()).json,
-                    "message" -> "Woken in the SAME session — it continues from the freeze point at the next turn boundary (finished work is not redone).".asJson
-                  )
-              case _ =>
-                nebflow.agent.DelegateRevival
-                  .wakeFrozen(
-                    nebflow.agent.DelegateRevival.Deps(sharedResources, sharedResources.actorSystem, Some(wsSend)),
-                    wid,
-                    instr
-                  )
-                  .flatMap {
-                    case Right(()) =>
-                      wokenFrame("running", "panel-revive") *>
-                        wReply(
-                          ok = true,
-                          mode = "revived",
-                          "actualStatus" -> "running".asJson,
-                          "freeze" -> nebflow.actor.FreezeTruth.running("running", System.currentTimeMillis()).json,
-                          "message" -> "Frozen session resumed in the SAME session id from the persisted transcript (finished work is not redone).".asJson
-                        )
-                    case Left(reason) =>
-                      wReply(
-                        ok = false,
-                        mode = "revive-failed",
-                        detail(truth.status, s"could not wake the frozen delegate: $reason (record + transcript are kept)")*
-                      )
-                  }
-          else
-            // ② actor 级需人冻结族（循环检测 L2 / 已升级到人 / 原因未知）：无落盘槽，
-            //    恢复手段 = 从检查点重启（与 AgentControl restart 同一机制）。
-            live match
-              case Some(l) =>
-                (l.ref ! nebflow.actor.AgentCommand.RestartAgent(nebflow.actor.RestartLevel.Soft)) *>
-                  nebflow.core.tools.AgentControlTool.clearRegistryEscalation(sharedResources, wid) *>
-                  wokenFrame("restarting", "panel-restart") *>
-                  wReply(
-                    ok = true,
-                    mode = "restart",
-                    "actualStatus" -> "restarting".asJson,
-                    "freeze" -> nebflow.actor.FreezeTruth.running("restarting", System.currentTimeMillis()).json,
-                    "message" -> (
-                      "Restart sent: the frozen turn is terminated now and the session resumes from the last " +
-                        "persisted checkpoint in the SAME session (finished work is not redone)."
-                    ).asJson
-                  )
-              case None =>
-                wReply(
-                  ok = false,
-                  mode = "none",
-                  detail(
-                    "unknown",
-                    s"'$wid' is frozen in the record but has no live agent to continue (status=unknown, " +
-                      s"reason=${truth.reasonWire}) — re-delegate the work or cancel the task."
-                  )*
+      (nebflow.core.delegate.MergerInitialization.repair(sharedResources, wid) *>
+        IO.blocking(nebflow.core.delegate.DelegateRegistry.find(wid)))
+        .flatMap { recordOpt =>
+          sharedResources.agentRegistry.get.flatMap { reg =>
+            val live = reg.get(wid)
+            val slotReason = recordOpt.flatMap(_.frozenReason)
+            val slotSince = recordOpt.flatMap(_.frozenSince)
+            val truth = nebflow.actor.FreezeTruth.of(live, slotReason, slotSince)
+            val parentSid = recordOpt.map(_.parentSessionId).getOrElse(live.map(_.rootSessionId).getOrElse(""))
+            // 唤醒成功后的状态变更帧（任何腿都必须发；`onWoken` 也发同一款，供 Mail /
+            // 自动恢复腿复用）。`freeze` 块 = 唤醒后的真相（非冻结）。
+            def wokenFrame(status: String, via: String): IO[Unit] =
+              wsSend(
+                Json.obj(
+                  "type" -> "delegateWoken".asJson,
+                  "sessionId" -> wid.asJson,
+                  "rootSessionId" -> parentSid.asJson,
+                  "via" -> via.asJson,
+                  "status" -> status.asJson,
+                  "at" -> System.currentTimeMillis().asJson,
+                  "freeze" -> nebflow.actor.FreezeTruth.running(status, System.currentTimeMillis()).json
                 )
+              ).handleErrorWith(e => logger.warn(s"delegateWoken frame failed for $wid: ${e.getMessage}"))
+            // 拒收回执的统一载荷：**实际状态 + 权威冻结块 + 原话**（面板据此自纠）。
+            def detail(status: String, err: String): List[(String, Json)] =
+              List("actualStatus" -> status.asJson, "freeze" -> truth.json, "error" -> err.asJson)
+            if live.isEmpty && recordOpt.isEmpty then
+              wReply(
+                ok = false,
+                mode = "none",
+                "actualStatus" -> "unknown".asJson,
+                "error" -> s"no delegate record and no live agent for '$wid' (DELEGATE_NOT_FOUND)".asJson
+              )
+            else if !truth.frozen then
+              // 面板与后端打架的唯一收口点：把**服务端此刻的真相**原样带回去。
+              wReply(
+                ok = false,
+                mode = "not-frozen",
+                detail(truth.status, s"'$wid' cannot be woken: ${truth.notWakableWhy}")*
+              )
+            else if !truth.wakeable then
+              wReply(
+                ok = false,
+                mode = "auto-recovering",
+                detail(
+                  truth.status,
+                  s"'$wid' does not need a wake: ${truth.labelEn} (reason=${truth.reasonWire}) — ${truth.notWakableWhy}. " +
+                    "Cancel the task if you do not want it to continue."
+                )*
+              )
+            else if slotReason.exists(nebflow.core.delegate.DelegateFreeze.isFreezeWire) then
+              nebflow.agent.DelegateWakeLeg
+                .wake(sharedResources, Some(wsSend), wid, instr, via = "panel-wake")
+                .flatMap {
+                  case Right(mode) =>
+                    wokenFrame("waking", "panel-wake") *>
+                      wReply(
+                        ok = true,
+                        mode = mode,
+                        "actualStatus" -> "waking".asJson,
+                        "freeze" -> nebflow.actor.FreezeTruth.running("waking", System.currentTimeMillis()).json,
+                        "message" -> "Recovery accepted in the same session from saved context.".asJson
+                      )
+                  case Left(reason) =>
+                    wReply(ok = false, mode = "recovery-rejected", detail(truth.status, reason)*)
+                }
+            else
+              // ② actor 级需人冻结族（循环检测 L2 / 已升级到人 / 原因未知）：无落盘槽，
+              //    恢复手段 = 从检查点重启（与 AgentControl restart 同一机制）。
+              live match
+                case Some(l) =>
+                  (l.ref ! nebflow.actor.AgentCommand.RestartAgent(nebflow.actor.RestartLevel.Soft)) *>
+                    nebflow.core.tools.AgentControlTool.clearRegistryEscalation(sharedResources, wid) *>
+                    wokenFrame("restarting", "panel-restart") *>
+                    wReply(
+                      ok = true,
+                      mode = "restart",
+                      "actualStatus" -> "restarting".asJson,
+                      "freeze" -> nebflow.actor.FreezeTruth.running("restarting", System.currentTimeMillis()).json,
+                      "message" -> (
+                        "Restart sent: the frozen turn is terminated now and the session resumes from the last " +
+                          "persisted checkpoint in the SAME session (finished work is not redone)."
+                      ).asJson
+                    )
+                case None =>
+                  wReply(
+                    ok = false,
+                    mode = "none",
+                    detail(
+                      "unknown",
+                      s"'$wid' is frozen in the record but has no live agent to continue (status=unknown, " +
+                        s"reason=${truth.reasonWire}) — re-delegate the work or cancel the task."
+                    )*
+                  )
+            end if
+          }
         }
-      }
+        .handleErrorWith(error =>
+          wReply(
+            ok = false,
+            mode = "recovery-rejected",
+            "error" -> Option(error.getMessage).getOrElse("Recovery could not safely start").asJson
+          )
+        )
+    end if
   end handleDelegateWake
 
   private def handleImmediateInput(
@@ -1035,6 +1021,8 @@ private[gateway] object WsSessionChatHandlers:
         handleUserText(immSessionId, immContent, source = "immediateInput", fromUser = true, device, immCmid)
       )
     )
+
+  end handleImmediateInput
 
   private def handleUserMessage(
     ctx: WsDispatchCtx,
@@ -1308,116 +1296,134 @@ private[gateway] object WsSessionChatHandlers:
           .flatMap { titles =>
             // #752 空闲细分：会话自有等待型后台任务一次全表扫描（waitingBySession
             // 分组 Map），逐行查表取自有集——快照「在等什么」字段单源。
-            nebflow.core.tools.BgTaskRegistry.waitingBySession.flatMap { waitingBySession =>
-              active
-                .traverse { rec =>
-                  // retryCount 来自 taskStore（2026-08-22 缺口 2：快照自带三
-                  // 字段之一；Ephemeral/无任务记录 → 0）
-                  sharedResources.subAgentTaskStore.findByTaskId(rec.sessionId).flatMap { taskOpt =>
-                    // 显示名契约批（2026-10-22 · 子智能体面板行显示名修复）：快照面
-                    // 的 delegate/SubTask 行名**不再回落 sessionId**——权威主源 =
-                    // DelegateRegistry.Record.title（spawn 落盘、跨重启存活）；任务
-                    // 记录 description 为回填源（`delegateDisplayTitle` 单一解析缝，
-                    // 纯函数可单测）。不命中 = None（既有三档链逐字不动）。
-                    val delegateTitleIO: IO[Option[String]] =
-                      IO
-                        .blocking {
-                          val registryTitle =
+            nebflow.core.tools.BgTaskRegistry.waitingBySession
+              .flatMap { waitingBySession =>
+                active
+                  .traverse { rec =>
+                    // retryCount 来自 taskStore（2026-08-22 缺口 2：快照自带三
+                    // 字段之一；Ephemeral/无任务记录 → 0）
+                    sharedResources.subAgentTaskStore.findByTaskId(rec.sessionId).flatMap { taskOpt =>
+                      // 显示名契约批（2026-10-22 · 子智能体面板行显示名修复）：快照面
+                      // 的 delegate/SubTask 行名**不再回落 sessionId**——权威主源 =
+                      // DelegateRegistry.Record.title（spawn 落盘、跨重启存活）；任务
+                      // 记录 description 为回填源（`delegateDisplayTitle` 单一解析缝，
+                      // 纯函数可单测）。不命中 = None（既有三档链逐字不动）。
+                      val delegateTitleIO: IO[Option[String]] =
+                        IO
+                          .blocking {
+                            val registryTitle =
+                              if rec.kind == AgentKind.Delegate then
+                                nebflow.core.delegate.DelegateRegistry
+                                  .find(rec.sessionId)
+                                  .map(rec0 => nebflow.core.delegate.SessionResumption.displayTitle(rec0))
+                                  .filter(_.trim.nonEmpty)
+                              else None
+                            WebSocketRoutes.delegateDisplayTitle(
+                              rec.kind,
+                              registryTitle,
+                              taskOpt
+                                .map(t =>
+                                  nebflow.core.delegate.SessionResumption.stripContinuationPrefix(t.description)
+                                )
+                                .filter(_.trim.nonEmpty)
+                            )
+                          }
+                          .handleErrorWith(_ => IO.pure(None))
+                      // 面板命名批（2026-10-31 · 作者令②）：批次短名同缝解析——
+                      // DelegateRegistry.Record.name（≤12 字）⇒ 快照 delegateName 键；
+                      // 空/旧盘 = None（前端回落既有标题截断显示，零迁移）。
+                      val delegateNameIO: IO[Option[String]] =
+                        IO
+                          .blocking {
                             if rec.kind == AgentKind.Delegate then
                               nebflow.core.delegate.DelegateRegistry
                                 .find(rec.sessionId)
-                                .map(rec0 => nebflow.core.delegate.SessionResumption.displayTitle(rec0))
-                                .filter(_.trim.nonEmpty)
+                                .flatMap(_.name)
+                                .map(_.trim)
+                                .filter(_.nonEmpty)
                             else None
-                          WebSocketRoutes.delegateDisplayTitle(
-                            rec.kind,
-                            registryTitle,
-                            taskOpt
-                              .map(t => nebflow.core.delegate.SessionResumption.stripContinuationPrefix(t.description))
-                              .filter(_.trim.nonEmpty)
-                          )
-                        }
-                        .handleErrorWith(_ => IO.pure(None))
-                    // 面板命名批（2026-10-31 · 作者令②）：批次短名同缝解析——
-                    // DelegateRegistry.Record.name（≤12 字）⇒ 快照 delegateName 键；
-                    // 空/旧盘 = None（前端回落既有标题截断显示，零迁移）。
-                    val delegateNameIO: IO[Option[String]] =
-                      IO
-                        .blocking {
-                          if rec.kind == AgentKind.Delegate then
-                            nebflow.core.delegate.DelegateRegistry
-                              .find(rec.sessionId)
-                              .flatMap(_.name)
-                              .map(_.trim)
-                              .filter(_.nonEmpty)
-                          else None
-                        }
-                        .handleErrorWith(_ => IO.pure(None))
-                    // 案A 待命批（2026-10-31 · 状态矩阵批收编）：快照行待命徽标——
-                    // 与 delegateTitle 同款单次 lookup 带出（Delegate kind 才查；
-                    // fail-soft None = 非待命）。
-                    // 错误冻结批（2026-11-01）：同一次 lookup 顺带带出冻结三件
-                    // （frozenSince / frozenReason / wakeAddress）——快照复原后的
-                    // 「已冻结」徽标、原因 tooltip 与详情卡唤醒入口都靠它（缺省
-                    // None ⇒ 前端零徽标，与 standby 同契约）。
-                    val freezeSlotsIO: IO[(Option[Long], Option[Long], Option[String])] =
-                      if rec.kind == AgentKind.Delegate then
-                        IO
-                          .blocking {
-                            nebflow.core.delegate.DelegateRegistry.find(rec.sessionId) match
-                              case Some(r) =>
-                                (r.standbySince, r.frozenSince, r.frozenReason.filter(_.trim.nonEmpty))
-                              case None => (None, None, None)
                           }
-                          .handleErrorWith(_ => IO.pure((None, None, None)))
-                      else IO.pure((None, None, None))
-                    delegateTitleIO.flatMap { delegateTitle =>
-                      delegateNameIO.flatMap { delegateName =>
-                      freezeSlotsIO.flatMap { case (standbySince, frozenSince, frozenReason) =>
-                      sessionStore.getSessionMeta(rec.sessionId).map { meta =>
-                        WebSocketRoutes.activeAgentEntryJson(
-                          rec,
-                          meta,
-                          taskOpt.map(_.retryCount),
-                          taskTitle = rec.taskId.flatMap(titles.get),
-                          delegateTitle = delegateTitle,
-                          delegateName = delegateName,
-                          bgWaiting = waitingBySession
-                            .getOrElse(rec.sessionId, Nil)
-                            .map(t => (t.jobId, t.description, t.startedAtMs, nebflow.core.tools.BgHealth.of(t), t.ownerName)),
-                          standbySince = standbySince,
-                          frozenSince = frozenSince,
-                          frozenReason = frozenReason,
-                          wakeAddress = frozenSince.map(_ => s"delegate:${rec.sessionId}"),
-                          // name/address 批（2026-11-05）：Mail 续传地址随快照出帧
-                          // ——推导单点 = MailAddress（与 AgentControl list/status 同源，
-                          // 前端面板只读不算）。纯函数，零额外 IO。
-                          mailAddress = nebflow.core.delegate.MailAddress
-                            .of(rec.kind, rec.sessionId, rec.displayName),
-                          // 冻结状态两套真相批（2026-11-05）：**预算好的单一真相**随快照
-                          // 出帧——内存态（rec.status/frozenReason）与落盘槽（frozenSince/
-                          // frozenReason）在这一处合流，面板与唤醒闸此后读同一份读数。
-                          freezeTruth = Some(
-                            nebflow.actor.FreezeTruth.of(Some(rec), frozenReason, frozenSince)
-                          )
-                        )
-                      }
-                      }
+                          .handleErrorWith(_ => IO.pure(None))
+                      // 案A 待命批（2026-10-31 · 状态矩阵批收编）：快照行待命徽标——
+                      // 与 delegateTitle 同款单次 lookup 带出（Delegate kind 才查；
+                      // fail-soft None = 非待命）。
+                      // 错误冻结批（2026-11-01）：同一次 lookup 顺带带出冻结三件
+                      // （frozenSince / frozenReason / wakeAddress）——快照复原后的
+                      // 「已冻结」徽标、原因 tooltip 与详情卡唤醒入口都靠它（缺省
+                      // None ⇒ 前端零徽标，与 standby 同契约）。
+                      val freezeSlotsIO: IO[(Option[Long], Option[Long], Option[String])] =
+                        if rec.kind == AgentKind.Delegate then
+                          IO
+                            .blocking {
+                              nebflow.core.delegate.DelegateRegistry.find(rec.sessionId) match
+                                case Some(r) =>
+                                  (r.standbySince, r.frozenSince, r.frozenReason.filter(_.trim.nonEmpty))
+                                case None => (None, None, None)
+                            }
+                            .handleErrorWith(_ => IO.pure((None, None, None)))
+                        else IO.pure((None, None, None))
+                      delegateTitleIO.flatMap { delegateTitle =>
+                        delegateNameIO.flatMap { delegateName =>
+                          freezeSlotsIO.flatMap { case (standbySince, frozenSince, frozenReason) =>
+                            sessionStore.getSessionMeta(rec.sessionId).map { meta =>
+                              WebSocketRoutes.activeAgentEntryJson(
+                                rec,
+                                meta,
+                                taskOpt.map(_.retryCount),
+                                taskTitle = rec.taskId.flatMap(titles.get),
+                                delegateTitle = delegateTitle,
+                                delegateName = delegateName,
+                                bgWaiting = waitingBySession
+                                  .getOrElse(rec.sessionId, Nil)
+                                  .map(t =>
+                                    (
+                                      t.jobId,
+                                      t.description,
+                                      t.startedAtMs,
+                                      nebflow.core.tools.BgHealth.of(t),
+                                      t.ownerName
+                                    )
+                                  ),
+                                standbySince = standbySince,
+                                frozenSince = frozenSince,
+                                frozenReason = frozenReason,
+                                wakeAddress = frozenSince.map(_ => s"delegate:${rec.sessionId}"),
+                                // name/address 批（2026-11-05）：Mail 续传地址随快照出帧
+                                // ——推导单点 = MailAddress（与 AgentControl list/status 同源，
+                                // 前端面板只读不算）。纯函数，零额外 IO。
+                                mailAddress = nebflow.core.delegate.MailAddress
+                                  .of(rec.kind, rec.sessionId, rec.displayName),
+                                // 冻结状态两套真相批（2026-11-05）：**预算好的单一真相**随快照
+                                // 出帧——内存态（rec.status/frozenReason）与落盘槽（frozenSince/
+                                // frozenReason）在这一处合流，面板与唤醒闸此后读同一份读数。
+                                freezeTruth = Some(
+                                  nebflow.actor.FreezeTruth.of(Some(rec), frozenReason, frozenSince)
+                                )
+                              )
+                            }
+                          }
+                        }
                       }
                     }
                   }
-                }
-            }.flatMap { agents =>
-              wsSend(
-                io.circe.Json.obj(
-                  "type" -> "activeAgents".asJson,
-                  "agents" -> agents.asJson
-                )
-              ) *>
-                // 台账 #929（后台子智能体跨设备透明）：远端投影行搭本连接快照回复
-                // 同拍直发（刷新/重连恢复路径——前端零新请求型；投影仓空 = 零帧）。
-                nebflow.neblink.sync.AgentSessionSync.pushRemoteRowsTo(wsSend)
-            }
+              }
+              .flatMap { agents =>
+                wsSend(
+                  io.circe.Json.obj(
+                    "type" -> "activeAgents".asJson,
+                    "agents" -> agents.asJson
+                  )
+                ) *>
+                  // 台账 #929（后台子智能体跨设备透明）：远端投影行搭本连接快照回复
+                  // 同拍直发（刷新/重连恢复路径——前端零新请求型；投影仓空 = 零帧）。
+                  IO.blocking(nebflow.core.delegate.DelegateRegistry.list()).flatMap { records =>
+                    wsSend(
+                      nebflow.core.delegate.FreezeNotice
+                        .digestJson(nebflow.core.delegate.FreezeNotice.fullDigest(records, System.currentTimeMillis()))
+                    )
+                  } *>
+                  nebflow.neblink.sync.AgentSessionSync.pushRemoteRowsTo(wsSend)
+              }
           }
       }
     }
@@ -1484,25 +1490,31 @@ private[gateway] object WsSessionChatHandlers:
     val sid = parsedJson(text).hcursor.downField("sessionId").as[String].getOrElse("")
     if sid.isEmpty then IO.unit
     else
-      ctx.sharedResources.agentRegistry.get.flatMap { registry =>
-        registry.get(sid) match
-          case Some(rec) =>
-            IO.pure((rec.pendingEventCount, rec.unreadReceiptCount))
-          case None =>
-            nebflow.core.processor.HeldReceiptStore.load(sid).map(entries =>
-              (entries.size, entries.count(_.exhausted))
+      ctx.sharedResources.agentRegistry.get
+        .flatMap { registry =>
+          registry.get(sid) match
+            case Some(rec) =>
+              IO.pure((rec.pendingEventCount, rec.unreadReceiptCount))
+            case None =>
+              nebflow.core.processor.HeldReceiptStore
+                .load(sid)
+                .map(entries => (entries.size, entries.count(_.exhausted)))
+        }
+        .flatMap { (held, unread) =>
+          wsSend(
+            io.circe.Json.obj(
+              "type" -> "heldReceipts".asJson,
+              "sessionId" -> sid.asJson,
+              "held" -> held.asJson,
+              "unread" -> unread.asJson,
+              "snapshot" -> true.asJson
             )
-      }.flatMap { (held, unread) =>
-        wsSend(
-          io.circe.Json.obj(
-            "type" -> "heldReceipts".asJson,
-            "sessionId" -> sid.asJson,
-            "held" -> held.asJson,
-            "unread" -> unread.asJson,
-            "snapshot" -> true.asJson
           )
-        )
-      }
+        }
+
+    end if
+
+  end handleGetHeldReceipts
 
   private def handleGetHistory(
     ctx: WsDispatchCtx,

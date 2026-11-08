@@ -40,37 +40,41 @@ object FreezeAlertSweep:
   /** 上一次广播的统计签名（不变则不重发，避免 30s 拍刷屏）。 */
   @volatile private var lastDigestSig: String = ""
 
-  /** 冻结记录读数（blocking 读盘；失败 = 空表 + WARN）。 */
+  /** 冻结记录读数（blocking 读盘；失败保留上一摘要并上报日志）。 */
   private def records(): IO[List[DelegateRegistry.Record]] =
     IO.blocking(DelegateRegistry.list()).handleErrorWith { e =>
-      logger.warn(s"[freeze-alert-sweep] registry read failed: ${e.getMessage}").as(Nil)
+      logger.warn(s"[freeze-alert-sweep] registry read failed: ${e.getMessage}") *> IO.raiseError(e)
     }
 
   /** 统计签名（用于「只在变化时广播」）。 */
   private def signature(d: FreezeNotice.Digest): String =
     d.items
-      .map(i => s"${i.delegateId}:${i.reason}:${i.tier}:${i.frozenSince}:${i.autoResumes}")
+      .map(i =>
+        s"${i.delegateId}:${i.reason}:${i.tier}:${i.frozenSince}:${i.autoResumes}:${i.parentSessionId}:${i.title}:${i.detail}"
+      )
       .sorted
       .mkString("|")
 
   // ── ① 面板显形 ──────────────────────────────────────────────────────────
 
   /** 算一波 digest，变化则推 `delegateFreezeDigest` 帧（冻结发生点也调本方法）。 */
+  private val digestInFlight = new java.util.concurrent.atomic.AtomicBoolean(false)
+
   def digestTick(resources: AgentRuntimePort, wsSend: Option[Json => IO[Unit]]): IO[Unit] =
-    if !Defaults.DelegateFreezeEnabled then IO.unit
+    if !Defaults.DelegateFreezeEnabled || wsSend.isEmpty then IO.unit
     else
-      records().flatMap { recs =>
-        val d = FreezeNotice.digestOf(recs, System.currentTimeMillis())
-        val sig = signature(d)
-        if sig == lastDigestSig then IO.unit
+      IO(digestInFlight.compareAndSet(false, true)).bracket { acquired =>
+        if !acquired then IO.unit
         else
-          IO { lastDigestSig = sig } *>
-            wsSend.fold(IO.unit) { send =>
-              send(FreezeNotice.digestJson(d)).handleErrorWith(e =>
-                logger.warn(s"[freeze-alert-sweep] digest frame failed: ${e.getMessage}")
-              )
+          records()
+            .flatMap { recs =>
+              val d = FreezeNotice.fullDigest(recs, System.currentTimeMillis())
+              val sig = signature(d)
+              if sig == lastDigestSig then IO.unit
+              else wsSend.get(FreezeNotice.digestJson(d)).flatTap(_ => IO { lastDigestSig = sig })
             }
-      }
+            .handleErrorWith(e => logger.warn(s"[freeze-alert-sweep] digest frame failed: ${e.getMessage}"))
+      } { acquired => if acquired then IO(digestInFlight.set(false)) else IO.unit }
 
   // ── ② 引擎自愈：探测到 provider 恢复 ⇒ 自动续跑 ─────────────────────────
 
@@ -124,17 +128,19 @@ object FreezeAlertSweep:
     serving || episodeAgeMs >= Defaults.DelegateFreezeAutoResumeForceAfterMs
 
   /**
-   * 自动续跑一拍：provider 故障族 + 已过龄阈 + 间隔已到 + （provider 已服务 **或**
-   * 已过健康表容忍窗）⇒ 用既有唤醒腿续跑一次（同一会话、续在检查点）。**成功/失败
-   * 都不发通知**。
-   *
-   * 本批（provider 故障降噪 2026-11-05）三处语义修正：
-   *   ① **不再按「次数用尽」停手**：次数只作面板读数，续跑一直持续到恢复或本轮冻结
-   *      超过升级时限（30 分钟）——冻结不是终点；
-   *   ② 间隔走**指数退避 + 封顶**（[[FreezeNotice.autoResumeDue]]），并跨「冻→续→
-   *      又冻」按 [[FreezeNotice.episodeOf]] 累计，不会因为一冻一续把退避打回起点；
-   *   ③ 健康表**只延迟不否决**（[[shouldAttemptResume]]）——修 fallback 那条旧缺陷。
+   * Only known temporary failures may consume the bounded automatic budget.
+   * Unknown and configuration failures remain available for manual recovery.
    */
+  private[agent] def automaticRecoveryAllowed(detail: String, attempts: Int): Boolean =
+    import nebflow.core.delegate.ProviderFault
+    val temporary = Set(
+      ProviderFault.Family.Upstream5xx,
+      ProviderFault.Family.ConnectTimeout,
+      ProviderFault.Family.RateLimited
+    )
+    attempts < Defaults.DelegateFreezeAutoResumeMax &&
+    ProviderFault.familyOf(detail).exists(temporary.contains)
+
   def autoResumeTick(resources: AgentRuntimePort, wsSend: Option[Json => IO[Unit]]): IO[Unit] =
     if !Defaults.DelegateFreezeEnabled || !Defaults.DelegateFreezeAutoResume then IO.unit
     else
@@ -144,6 +150,7 @@ object FreezeAlertSweep:
           FreezeNotice
             .itemsOf(recs, now, windowMs = 0L)
             .filter(_.infra)
+            .filter(i => automaticRecoveryAllowed(i.detail, i.autoResumes))
             .filter(i => FreezeNotice.autoResumeDue(i.frozenSince, now, i.autoResumes))
             .filter { i =>
               val age = FreezeNotice.episodeAgeMs(i.delegateId, i.frozenSince, now)

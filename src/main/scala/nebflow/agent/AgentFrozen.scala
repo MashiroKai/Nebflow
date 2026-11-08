@@ -76,11 +76,8 @@ private[agent] object AgentFrozen:
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
     for
       _ <- state.sessionId.fold(IO.unit) { sid =>
-        ctx.forkTurn(
-          (resources.sessionStore.saveMessagesForSession(sid, state.messages) *>
-            resources.sessionStore.flushIndex)
-            .handleErrorWith(e => NebflowLogger.forName("nebflow.agent").warn(s"Save failed session: ${e.getMessage}"))
-        )
+        resources.sessionStore.durableSwapMessages(sid, state.messages) *>
+          resources.sessionStore.flushIndex
       }
       _ <- IO {
         logAgentEvent(
@@ -360,7 +357,7 @@ private[agent] object AgentFrozen:
             project,
             queuedAtMs
           ) =>
-        if clientMessageId.isDefined then
+        if fromUser || (clientMessageId.isDefined && !nebflow.core.mail.ProducerInput.isProducerIdentity(clientMessageId)) then
           // ★ 用户唤醒（B5）：注入用户消息到冻结中的上下文，立即 dispatch——
           // 冻结前组装好的工具结果 + 用户新指令同轮喂给 LLM。dedup 防止 WS
           // 重发导致同一条用户消息注入两次（v1.1）。

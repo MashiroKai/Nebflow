@@ -252,7 +252,7 @@ class MailDeliveryRetireSpec extends FunSuite:
       !msg.contains("Queue mode is only for team agents"),
       s"the old queue URL refusal must be unreachable, got: $msg"
     )
-    assert(msg.contains("every Mail is delivered immediately"), s"the replacement semantics must be stated, got: $msg")
+    assert(msg.contains("delivery follows the recipient state"), s"the replacement semantics must be stated, got: $msg")
 
   // ============================================================
   // 3. device leg (mailmodel batch 2026-09-25 re-pin): the whole leg is retired =>

@@ -741,13 +741,12 @@ object TaskStuckWatcher:
           // / AgentCore.askUserPermission), so true hangs stay reachable.
           .filter(rec => rec.status != AgentStatus.WaitingForUser)
         // 显式等待停靠态（平台修复批 fix 4，2026-10-21；steward 批 D3-④
-        // 2026-10-23 改判据）：Waiting =「等合并轮提醒」一类引擎停靠（delegate
-        // ready-to-merge 被 MergeQueue 持有）——推进者 = 引擎合并轮转，不是本
-        // 会话进程。原「整族豁免」显式守卫已删：Waiting 仍不进「无进展卡死」
-        // 候选（上方 Processing 过滤已排除——等待期没有 agent 侧活动是合法态，
-        // 时间判据禁用），但死亡停靠不再无人管：改由本拍 IO 链首环
-        // careWaitingDock 以**活性/事件判据**单列看护（registry 行在、actor
-        // 已死 = 明确死亡事件 ⇒ 释放合并队列窗 + 台账翻 failed + 升级上报）；
+        // 2026-10-23 改判据）：Waiting = 引擎停靠（standby 申报待命等事件）——
+        // 推进者 = 下一封 Mail / 作者续聊，不是本会话进程。Waiting 仍不进
+        // 「无进展卡死」候选（上方 Processing 过滤已排除——等待期没有 agent 侧
+        // 活动是合法态，时间判据禁用），但死亡停靠不再无人管：改由本拍 IO 链
+        // 首环 careWaitingDock 以**活性/事件判据**单列看护（registry 行在、
+        // actor 已死 = 明确死亡事件 ⇒ 台账翻 failed + 升级上报）；
         // alive 停靠零动作（等待屏障语义保持）。
         // 2026-09-10 换轴：判据收敛到 assess（agent 侧事件停滞 ∪ 工具相位超时，
         // 二者都不引用进程 CPU）。旧行 `now - rec.lastActivityMs > thresholdMs`
@@ -834,50 +833,45 @@ object TaskStuckWatcher:
           // 许尸体持死）+ 每个有开放成员的 project 补一拍放行（净空转洁/阻碍消除
           // 后自然推进）。搭本既有扫描拍，零新增定时器；幂等。重试合并轮与复活轮
           // 已整体退役（owner-gone / failed 关账后处置归 dispatcher，绝不静默 park）。
-          nebflow.core.delegate.MergeQueueCare
-            .tick()
-            .handleErrorWith(e => logger.warn(s"[merge-queue-care] sweep failed: ${e.getMessage}").void)
+          IO.unit *>
+          // ── 诊断修复批 2026-10-24（delegate-nebflow-52308ee4 投递丢失）──────
+          // delegate 终态交付回执的「父未确认」重投监测：超龄未 ack ⇒ 父活直投 /
+          // 父死持久收件箱；父已删 ⇒ 删回执 + 响亮 WARN。搭本既有扫描拍，零新增
+          // 定时器；幂等（ack 即跳过；重投达上限停投留痕）。
+          nebflow.core.delegate.DelegateDeliveryReceipts
+            .sweep(resources)
+            .handleErrorWith(e => logger.warn(s"[delegate-delivery] sweep failed: ${e.getMessage}").void)
             .void *>
-            // ── 诊断修复批 2026-10-24（delegate-nebflow-52308ee4 投递丢失）──────
-            // delegate 终态交付回执的「父未确认」重投监测：超龄未 ack ⇒ 父活直投 /
-            // 父死持久收件箱；父已删 ⇒ 删回执 + 响亮 WARN。搭本既有扫描拍，零新增
-            // 定时器；幂等（ack 即跳过；重投达上限停投留痕）。
-            nebflow.core.delegate.DelegateDeliveryReceipts
-              .sweep(resources)
-              .handleErrorWith(e => logger.warn(s"[delegate-delivery] sweep failed: ${e.getMessage}").void)
-              .void *>
-            // ── 引擎会话治理专项 · 缺陷七 ②（2026-11-03 作者报障「你杀掉父会话，
-            // 子会话也应该一并关闭，但是现在好像是只会清理父会话，子会话变成孤儿」）：
-            // 孤儿子会话检测。判据 = **在案事实**（父取消墓碑 / 归档旗在案）∧ 子仍在
-            // 注册表里活；处置按 `nebflow.session.orphan.action`（默认 cancel ⇒ 墓碑 +
-            // Cancelled/Stop + 任务行终态化，面板不再有「运行中」残留；report ⇒ 只留
-            // 审计 + 通知根会话）。搭本既有扫描拍，零新增定时器；幂等（子行消失后不再命中）。
-            nebflow.core.delegate.ChildOrphanWatch
-              .scan(resources)
-              .handleErrorWith(e => logger.warn(s"[child-orphan-watch] sweep failed: ${e.getMessage}").void)
-              .void *>
-            // ── 引擎会话治理专项 · 缺陷四（2026-11-03 作者令）：main 漂移无通知 ──
-            // 在飞 delegate 的基分支 tip 被别人推进 ⇒ **默认静默**（降噪重写
-            // 2026-11-05 作者报障「这个通知也太多了」：worktree 隔离下 base 前进
-            // 本身不构成任何行动要求）。只在**可行动**（移动触及我改过的文件 /
-            // base 历史被改写）时注入一条**聚合**通知（同一任务 ≥30min 最多一条）；
-            // 纯「base 动了」的事实进面板（行 `baseDrift` 键），不进消息流。
-            // 节点侧结构性零命中（节点不建分支/worktree、不写 DelegateRegistry）。
-            // 搭本既有扫描拍，零新增定时器。
-            nebflow.core.delegate.BaseDriftWatch
-              .scan(nebflow.core.delegate.BaseDriftWatch.fromResources(resources))
-              .handleErrorWith(e => logger.warn(s"[base-drift] sweep failed: ${e.getMessage}").void)
-              .void *>
-            // ── merge-fifo 批 2026-11-03（作者报障「两个会话都已经报了 merge，为什么
-            // 还没收到通知」）：合并队列**活性守卫**。入队只在回合终态腿发生，任何让
-            // 那条腿没跑成的路径（重启打断 / 判定降级 / 提前收尾）都会让有交付提交
-            // 的分支永远不进队——本拍把「Idle + 有未并交付 + 任务行 running/restarting
-            // + 账本无开放条目 + 静默够久」的漏网成员补进队并通知（幂等：账本有开放
-            // 条目即零动作）。搭本既有扫描拍，零新增定时器。
-            nebflow.core.delegate.MergeEnqueueWatch
-              .scan(resources)
-              .handleErrorWith(e => logger.warn(s"[merge-enqueue-watch] sweep failed: ${e.getMessage}").void)
-              .void
+          // ── 引擎会话治理专项 · 缺陷七 ②（2026-11-03 作者报障「你杀掉父会话，
+          // 子会话也应该一并关闭，但是现在好像是只会清理父会话，子会话变成孤儿」）：
+          // 孤儿子会话检测。判据 = **在案事实**（父取消墓碑 / 归档旗在案）∧ 子仍在
+          // 注册表里活；处置按 `nebflow.session.orphan.action`（默认 cancel ⇒ 墓碑 +
+          // Cancelled/Stop + 任务行终态化，面板不再有「运行中」残留；report ⇒ 只留
+          // 审计 + 通知根会话）。搭本既有扫描拍，零新增定时器；幂等（子行消失后不再命中）。
+          nebflow.core.delegate.ChildOrphanWatch
+            .scan(resources)
+            .handleErrorWith(e => logger.warn(s"[child-orphan-watch] sweep failed: ${e.getMessage}").void)
+            .void *>
+          // ── 引擎会话治理专项 · 缺陷四（2026-11-03 作者令）：main 漂移无通知 ──
+          // 在飞 delegate 的基分支 tip 被别人推进 ⇒ **默认静默**（降噪重写
+          // 2026-11-05 作者报障「这个通知也太多了」：worktree 隔离下 base 前进
+          // 本身不构成任何行动要求）。只在**可行动**（移动触及我改过的文件 /
+          // base 历史被改写）时注入一条**聚合**通知（同一任务 ≥30min 最多一条）；
+          // 纯「base 动了」的事实进面板（行 `baseDrift` 键），不进消息流。
+          // 节点侧结构性零命中（节点不建分支/worktree、不写 DelegateRegistry）。
+          // 搭本既有扫描拍，零新增定时器。
+          nebflow.core.delegate.BaseDriftWatch
+            .scan(nebflow.core.delegate.BaseDriftWatch.fromResources(resources))
+            .handleErrorWith(e => logger.warn(s"[base-drift] sweep failed: ${e.getMessage}").void)
+            .void *>
+          // ── merge-fifo 批 2026-11-03（作者报障「两个会话都已经报了 merge，为什么
+          // 还没收到通知」）：合并队列**活性守卫**。入队只在回合终态腿发生，任何让
+          // 那条腿没跑成的路径（重启打断 / 判定降级 / 提前收尾）都会让有交付提交
+          // 的分支永远不进队——本拍把「Idle + 有未并交付 + 任务行 running/restarting
+          // + 账本无开放条目 + 静默够久」的漏网成员补进队并通知（幂等：账本有开放
+          // 条目即零动作）。搭本既有扫描拍，零新增定时器。
+          IO.unit // Development completion never creates a merge request.
+
       }
 
   end scan
@@ -910,14 +904,8 @@ object TaskStuckWatcher:
           case true => IO.unit
           case false =>
             val detail =
-              s"waiting dock orphaned: session '${rec.sessionId}' is docked waiting-merge but its actor has exited"
+              s"waiting dock orphaned: session '${rec.sessionId}' is docked in standby but its actor has exited"
             logger.warn(s"[waiting-dock-care] $detail") *>
-              IO.blocking(
-                nebflow.core.delegate.MergeQueue.markOwnerGone(rec.sessionId, s"$detail — needs dispatcher handling")
-              )
-                .handleErrorWith(e =>
-                  logger.warn(s"[waiting-dock-care] merge queue advance failed: ${e.getMessage}")
-                ) *>
               IO
                 .whenA(rec.parentSessionId.trim.nonEmpty)(
                   resources.subAgentTaskStore
@@ -952,7 +940,7 @@ object TaskStuckWatcher:
             source = "waiting-dock-care",
             eventType = "failed",
             payload =
-              s"""[waiting-dock-care] delegate '${rec.sessionId}': $detail. The merge-ledger membership was closed as owner-gone (fact-checked first; no merge rounds are revived) and the task row was marked failed — needs dispatcher handling; escalated here because the previous responsible party is not live.""",
+              s"""[waiting-dock-care] delegate '${rec.sessionId}': $detail. The task row was marked failed — needs dispatcher handling; escalated here because the previous responsible party is not live.""",
             metadata = io.circe.JsonObject(
               "delegateId" -> rec.sessionId.asJson,
               "action" -> "waiting-dock-dead".asJson,
