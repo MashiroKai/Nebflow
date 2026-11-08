@@ -19,4 +19,12 @@ class NebulaPromptVoiceRoutingSpec extends FunSuite:
       "Routing test 句在位（Project first 行扩展）")
     assert(text.contains("## Voice"), "Voice 节头在位（模板末尾语气纪律节）")
 
+  test("rendered Nebula prompt retains project mention routing without the retired footer"):
+    val text = nebulaPrompt
+    assert(!text.contains("Tip: use @<project name> in your message to route the next task to that project."))
+    assert(!text.contains("- Mention hint:"))
+    assert(text.contains("dispatch with `Delegate(task=<task>, project=<name>)`"))
+    assert(text.contains("with no mention, route implicitly as usual"))
+    assert(text.contains("resolve by longest match against the full mounted project names"))
+
 end NebulaPromptVoiceRoutingSpec

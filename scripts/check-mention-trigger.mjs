@@ -14,11 +14,8 @@
 //           still blocked (email defense kept);
 //         - a whitespace inside the token still closes it (regression);
 //         - line-start '@' still opens (regression).
-//   (b) the mention-hint line lives VERBATIM in the prompt catalog
-//       (src/main/scala/nebflow/prompts/PromptCatalog.scala). 锚点迁址说明：
-//       内置 agent 改由 BuiltinAgents 代码定义、seed agent 树已退役
-//       （a5b716d55），原 seed system.md 路径已不存在 ⇒ 本腿改钉唯一真源
-//       PromptCatalog（判据同样是**逐字全行包含**，强度不减）。
+//   (b) the retired mention-hint instruction is absent from the prompt catalog;
+//       the project-routing instruction remains present.
 //
 // parseToken and WHITESPACE_RE are extracted from the live file by ANCHORED
 // extraction (fixed anchor lines + brace-depth scan). Extraction or shape
@@ -122,16 +119,20 @@ for (const r of results) {
   r.oldBehavior = oldGateToken(c.value, c.caret) === null ? 'null' : 'token';
 }
 
-// ── (3) Prompt-catalog text assertion (verbatim line containment) ──────────
-const SEED_HINT_LINE = '- Mention hint: after completing a dispatched task, append a brief footer to your final reply: "Tip: use @<project name> in your message to route the next task to that project." Only include this hint when the user\'s original message did NOT contain an @-mention (they already know).';
-const seedLines = readFileSync(SEED_PATH, 'utf8').split('\n');
-const seedHasLine = seedLines.some((l) => l.trimEnd() === SEED_HINT_LINE);
-if (!seedHasLine) red++;
-results.push({
-  id: 'prompt-catalog-mention-hint-line (verbatim containment)',
-  value: SEED_PATH, caret: null, expect: 'exact line present', got: seedHasLine ? 'present' : 'absent',
-  pass: seedHasLine, oldBehavior: 'n/a',
-});
+// ── (3) Prompt-catalog routing and retired footer assertions ───────────────
+const prompt = readFileSync(SEED_PATH, 'utf8');
+for (const [id, needle, shouldExist] of [
+  ['retired-mention-footer', 'Tip: use @<project name> in your message to route the next task to that project.', false],
+  ['retired-mention-instruction', '- Mention hint:', false],
+  ['project-routing', 'dispatch with `Delegate(task=<task>, project=<name>)`', true],
+]) {
+  const found = prompt.includes(needle);
+  const pass = found === shouldExist;
+  if (!pass) red++;
+  results.push({ id, value: SEED_PATH, caret: null,
+    expect: shouldExist ? 'present' : 'absent', got: found ? 'present' : 'absent',
+    pass, oldBehavior: 'n/a' });
+}
 
 // ── (4) Verdict ─────────────────────────────────────────────────────────────
 console.log('== check-mention-trigger ==  source: ' + SRC_PATH);
