@@ -438,6 +438,69 @@ Git safety:
     if lines.length <= n then stdout
     else lines.takeRight(n).mkString("\n")
 
+  // ── Merger repository write exclusion ─────────────────────────────────
+  //
+  // An executing merger's shell writes to the merge target repository must be
+  // mutually exclusive across processes (different data roots over the same git
+  // common-dir). Resolution order: the durable ledger merger row (its
+  // delegateId equals the session id) carries the repository key; a registry
+  // mode=merger record without a ledger row falls back to the record's own
+  // workspace. Sessions that are not mergers (dev delegates, root, read-only
+  // legacy) resolve None and are untouched — zero added cost beyond one small
+  // registry file check. The device leg (isRemoteExec) is exempt: the receiving
+  // session acts as a device channel for a peer-initiated command and is never
+  // a merger itself.
+  private def mergerRepositoryOf(rawSessionId: String): Option[String] =
+    if rawSessionId.trim.isEmpty then None
+    else
+      val record = nebflow.core.delegate.DelegateRegistry.find(rawSessionId)
+      if !record.exists(_.mode.contains(nebflow.core.delegate.DualModeConfig.ModeMerger)) then None
+      else
+        scala.util
+          .Try {
+            nebflow.core.delegate.WorkspaceLedger.default.snapshot.mergers
+              .find(_.delegateId == rawSessionId)
+              .map(_.repository)
+              .orElse(
+                record
+                  .flatMap(r => r.projectWorkspace.orElse(Option(r.cwd)))
+                  .flatMap(ws =>
+                    scala.util.Try(nebflow.core.delegate.WorkspaceLedger.repositoryKey(os.Path(ws))).toOption
+                  )
+              )
+          }
+          .toOption
+          .flatten
+
+      end if
+
+  /**
+   * Acquire the session-reentrant repository write hold for a merger session.
+   * `Right(None)` = not a merger (pass through); `Left` = the repository is
+   * being written by another merger writer (any process) — the command is
+   * refused without starting a process.
+   */
+  private[tools] def acquireMergerHold(
+    ctx: ToolContext
+  ): IO[Either[ToolError, Option[nebflow.core.delegate.RepositoryWriteLock.Hold]]] =
+    val rawSessionId = ctx.sessionId.getOrElse("default")
+    IO.blocking(mergerRepositoryOf(rawSessionId)).flatMap {
+      case None => IO.pure(Right(None))
+      case Some(repo) =>
+        IO.blocking(nebflow.core.delegate.RepositoryWriteLock.acquireFor(rawSessionId, repo)).map {
+          case Right(hold) => Right(Some(hold))
+          case Left(inUse) =>
+            Left(
+              ToolError(
+                s"[Repository write lock in use] $inUse — another merger writer is active on this repository; " +
+                  "wait for it to finish before running this command (cross-process merger exclusion)"
+              )
+            )
+        }
+    }
+
+  end acquireMergerHold
+
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     // provider 语义（design §4.2）：
     //
@@ -625,59 +688,72 @@ Git safety:
                   // 不建任务）。persistent=true（服务型 server）不设闸——dev server
                   // 等长驻任务是合法低频创建，闸针对的是 waiter/poller 刷屏族。
                   def startBg: IO[Either[ToolError, String]] =
-                    // Policy "backgrounded commands have no limit": waiting-type background jobs have NO time cap —
-                    // the old 30min tier (ctx.bashConfig.hardTimeoutMs) and the node
-                    // 4h tier (BgGateNodeHardTimeoutMs) are both retired from the
-                    // production face. Both the explicit run_in_background path (here)
-                    // and the auto-backgrounded path pass the NoHardTimeout sentinel,
-                    // making the B2 hard-timeout stall kill unreachable — full-class
-                    // exemption, one unified "background = no time limit" semantics.
-                    // B1 stays alert-only; persistent exemption, explicit cancel and
-                    // killSessionProcesses are unchanged. The finite-value parameters
-                    // remain on ShellSession for spec injection (mechanism testability).
-                    val hardTimeoutMs = Defaults.BashBackgroundNoHardTimeoutMs
-                    for
-                      jobId <- IO.randomUUID.map(_.toString.take(8))
-                      onComplete = makeNotifyCallback(command, desc, ctx, jobId, tailN, gateOwned)
-                      // 先建缓冲拿句柄，sink 随
-                      // executeBackground 挂上 JobHealth——运行中逐行入尾窗缓冲，
-                      // 终态后由 onComplete finalizeTask 进留存区（详情卡 REST 读）。
-                      // 输出查看补全批（作者令 2026-10-25 需求④「本地任务输出落盘 +
-                      // 记录路径」）：origin 登记 + lineSink 复合口——persistDir 由
-                      // Main.run boot 面开启后，行同步落 bg-task-logs/ + 终态 meta，
-                      // 留存淘汰 / 引擎重启后的旧任务详情卡照样可回看（read 落盘兜底）；
-                      // 未开启（spec）= 纯内存，行为与批前一致。
-                      outBuffer <- BgTaskOutputStore.open(
-                        jobId,
-                        Some(
-                          BgTaskOutputStore.Origin(
-                            "local",
-                            description = bgDescription,
-                            startedAtMs = System.currentTimeMillis()
+                    // Merger write exclusion: the hold covers the WHOLE background job
+                    // lifetime — the release rides the job's execution fiber at terminal
+                    // state (completion, idle/stall kill, explicit cancel, session
+                    // reclaim all terminalize that fiber). Acquisition failure = another
+                    // merger writer is active = the command is refused before any
+                    // process starts (correctness over convenience).
+                    acquireMergerHold(ctx).flatMap {
+                      case Left(err) => IO.pure(Left(err))
+                      case Right(mergerHold) =>
+                        // Policy "backgrounded commands have no limit": waiting-type background jobs have NO time cap —
+                        // the old 30min tier (ctx.bashConfig.hardTimeoutMs) and the node
+                        // 4h tier (BgGateNodeHardTimeoutMs) are both retired from the
+                        // production face. Both the explicit run_in_background path (here)
+                        // and the auto-backgrounded path pass the NoHardTimeout sentinel,
+                        // making the B2 hard-timeout stall kill unreachable — full-class
+                        // exemption, one unified "background = no time limit" semantics.
+                        // B1 stays alert-only; persistent exemption, explicit cancel and
+                        // killSessionProcesses are unchanged. The finite-value parameters
+                        // remain on ShellSession for spec injection (mechanism testability).
+                        val hardTimeoutMs = Defaults.BashBackgroundNoHardTimeoutMs
+                        for
+                          jobId <- IO.randomUUID.map(_.toString.take(8))
+                          onComplete = makeNotifyCallback(command, desc, ctx, jobId, tailN, gateOwned)
+                          // 先建缓冲拿句柄，sink 随
+                          // executeBackground 挂上 JobHealth——运行中逐行入尾窗缓冲，
+                          // 终态后由 onComplete finalizeTask 进留存区（详情卡 REST 读）。
+                          // 输出查看补全批（作者令 2026-10-25 需求④「本地任务输出落盘 +
+                          // 记录路径」）：origin 登记 + lineSink 复合口——persistDir 由
+                          // Main.run boot 面开启后，行同步落 bg-task-logs/ + 终态 meta，
+                          // 留存淘汰 / 引擎重启后的旧任务详情卡照样可回看（read 落盘兜底）；
+                          // 未开启（spec）= 纯内存，行为与批前一致。
+                          outBuffer <- BgTaskOutputStore.open(
+                            jobId,
+                            Some(
+                              BgTaskOutputStore.Origin(
+                                "local",
+                                description = bgDescription,
+                                startedAtMs = System.currentTimeMillis()
+                              )
+                            )
                           )
+                          _ <- shell.executeBackground(
+                            actualCommand,
+                            desc,
+                            onComplete,
+                            onHeartbeat,
+                            Some(jobId),
+                            hardTimeoutMs = hardTimeoutMs,
+                            stuckWindowSec = ctx.bashConfig.stuckWindowSec,
+                            healthCheckIntervalSec = ctx.bashConfig.healthCheckIntervalSec,
+                            persistent = persistent,
+                            outputSink = Some(BgTaskOutputStore.lineSink(jobId, outBuffer)),
+                            // B1 只提醒腿的审计出口：经 ctx 身份解析
+                            // 项目工作区写 `bg-slow` 事件。无项目上下文 ⇒ None ⇒ 只留 logger.warn。
+                            onSlowDetected = Some((summary: String) => auditBgSlow(ctx, jobId, summary)),
+                            releaseAtTerminal = mergerHold.map(hold =>
+                              IO.blocking(nebflow.core.delegate.RepositoryWriteLock.releaseFor(hold)).attempt.void
+                            )
+                          )
+                          _ <- emitBgTaskStarted(ctx, jobId, bgDescription, persistent)
+                        yield Right(
+                          s"[Background job started] Job ID: $jobId\nThe command is running in the background. You will be automatically notified when it finishes — continue with other work or finish your turn. " +
+                            s"""Wait with BgWait (jobIds: ["$jobId"]) if you are genuinely blocked, or end your turn — you will be notified on completion. Cancel with background_job_id + cancel_background_job: true."""
                         )
-                      )
-                      _ <- shell.executeBackground(
-                        actualCommand,
-                        desc,
-                        onComplete,
-                        onHeartbeat,
-                        Some(jobId),
-                        hardTimeoutMs = hardTimeoutMs,
-                        stuckWindowSec = ctx.bashConfig.stuckWindowSec,
-                        healthCheckIntervalSec = ctx.bashConfig.healthCheckIntervalSec,
-                        persistent = persistent,
-                        outputSink = Some(BgTaskOutputStore.lineSink(jobId, outBuffer)),
-                        // B1 只提醒腿的审计出口：经 ctx 身份解析
-                        // 项目工作区写 `bg-slow` 事件。无项目上下文 ⇒ None ⇒ 只留 logger.warn。
-                        onSlowDetected = Some((summary: String) => auditBgSlow(ctx, jobId, summary))
-                      )
-                      _ <- emitBgTaskStarted(ctx, jobId, bgDescription, persistent)
-                    yield Right(
-                      s"[Background job started] Job ID: $jobId\nThe command is running in the background. You will be automatically notified when it finishes — continue with other work or finish your turn. " +
-                        s"""Wait with BgWait (jobIds: ["$jobId"]) if you are genuinely blocked, or end your turn — you will be notified on completion. Cancel with background_job_id + cancel_background_job: true."""
-                    )
-                    end for
+                        end for
+                    }
                   end startBg
                   val run =
                     if persistent then startBg
@@ -754,6 +830,7 @@ Git safety:
                       IO.pure(Left(ToolError(s"Error: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}")))
                     )
                   yield result
+                  end for
                 else
                   // sleep-poll 禁令批 B 段：护栏只包前台腿（显式 run_in_background
                   // 豁免——后台是正道姿势；auto-background 收编路径也在本腿内，
@@ -764,8 +841,14 @@ Git safety:
                   //   - 首犯：放行执行，回执首部附警告+指导；
                   //   - 第 N 次（Defaults.SleepPollEscalateAfter，默认 3）：
                   //     拒绝执行 + taskStuck 面板可见帧升级。
-                  sleepPollGate(sessionId, actualCommand, ctx) {
-                    executeForeground(shell, actualCommand, explicitTimeoutMs, desc, ctx, tailN)
+                  // Merger write exclusion: the repository is resolved once per call
+                  // (cheap registry check; mergers only) and handed to the foreground
+                  // leg, which acquires the non-blocking write lock right before the
+                  // process fiber starts and releases it at process terminal state.
+                  IO.blocking(mergerRepositoryOf(ctx.sessionId.getOrElse("default"))).flatMap { mergerRepo =>
+                    sleepPollGate(sessionId, actualCommand, ctx) {
+                      executeForeground(shell, actualCommand, explicitTimeoutMs, desc, ctx, tailN, mergerRepo)
+                    }
                   }
               }
               .flatTap { result =>
@@ -819,7 +902,18 @@ Git safety:
     explicitTimeoutMs: Option[Long],
     desc: Option[String],
     ctx: ToolContext,
-    tailN: Option[Int] = None
+    tailN: Option[Int] = None,
+    /**
+     * Merger write exclusion: when present (this session is a merger), the
+     * non-blocking repository write lock is acquired immediately before the
+     * process fiber starts and the fiber releases it at terminal state. The
+     * guarantee rides the SAME fiber that runs the process, so an
+     * auto-background adoption keeps the exclusion until the process actually
+     * exits; a plain foreground completion releases at completion. Acquisition
+     * failure = another writer is active = the call is refused before any
+     * process starts.
+     */
+    mergerRepo: Option[String] = None
   ): IO[Either[ToolError, String]] =
     // Policy "no hard cap; auto-background at the foreground wait budget
     // (main-agent-nonblocking: default 120s, author-adjustable); backgrounded
@@ -861,8 +955,67 @@ Git safety:
       // Foreground run with NO command-level time kill, raced against the wait
       // budget. racePair (not race) so the losing fiber keeps running: on the
       // budget side the execution fiber must survive for the adoption.
-      execFiber <- shell.execute(command, 365.days, Some(health)).attempt.start
-      // This CE3 version's racePair carries the winner's result as an Outcome.
+      // The merger hold is acquired immediately before the fiber starts and its
+      // release is registered INSIDE that fiber (`guarantee`), so every
+      // acquisition has a guaranteed release exactly at process terminal state.
+      result <- mergerRepo match
+        case None =>
+          raceExec(
+            shell,
+            shell.execute(command, 365.days, Some(health)).attempt,
+            health,
+            command,
+            desc,
+            ctx,
+            tailN,
+            waitBudgetMs
+          )
+        case Some(repo) =>
+          IO.blocking(nebflow.core.delegate.RepositoryWriteLock.acquireFor(ctx.sessionId.getOrElse("default"), repo))
+            .flatMap {
+              case Left(inUse) =>
+                IO.pure(
+                  Left(
+                    ToolError(
+                      s"[Repository write lock in use] $inUse — another merger writer is active on this repository; " +
+                        "wait for it to finish before running this command (cross-process merger exclusion)"
+                    )
+                  )
+                )
+              case Right(hold) =>
+                val guarded = shell
+                  .execute(command, 365.days, Some(health))
+                  .attempt
+                  .guarantee(
+                    IO.blocking(nebflow.core.delegate.RepositoryWriteLock.releaseFor(hold)).attempt.void
+                  )
+                raceExec(shell, guarded, health, command, desc, ctx, tailN, waitBudgetMs)
+            }
+      _ <- bridgeFiber.cancel // 活动桥接只保命令生命周期；命令返回（含转后台）即停
+    yield result
+    end for
+
+  end executeForeground
+
+  /**
+   * The foreground race body shared by the plain and the merger-guarded exec
+   * fiber: run the (already configured) execution IO against the foreground
+   * wait budget; within the budget = plain foreground result, budget reached =
+   * adopt into the background registry (process keeps running, so a merger
+   * hold configured on the fiber keeps guarding it to terminal state).
+   */
+  private def raceExec(
+    shell: ShellSession,
+    execIo: IO[Either[Throwable, ProcessResult]],
+    health: JobHealth,
+    command: String,
+    desc: Option[String],
+    ctx: ToolContext,
+    tailN: Option[Int],
+    waitBudgetMs: Long
+  ): IO[Either[ToolError, String]] =
+    for
+      execFiber <- execIo.start
       raced <- IO.racePair(joinResult(execFiber), IO.sleep(waitBudgetMs.millis))
       result <- raced match
         case Left((winOutcome, budgetFiber)) =>
@@ -872,11 +1025,7 @@ Git safety:
           // Budget reached while still running — adopt into the background
           // registry and return the receipt immediately (process keeps running).
           autoBackground(shell, execFiber, health, command, desc, ctx, tailN, waitBudgetMs)
-      _ <- bridgeFiber.cancel // 活动桥接只保命令生命周期；命令返回（含转后台）即停
     yield result
-    end for
-
-  end executeForeground
 
   /**
    * Unwrap a started fiber's Outcome into its value (Cancelled/Error rethrown).
@@ -995,7 +1144,6 @@ Git safety:
     // 警告）在 [[sleepPollGate]] 里拼，不在此处。
     yield Right(RemoteExecutor.autoBackgroundReceipt(jobId, waitedMs))
 
-
   /**
    * T7（作者令 2026-11-04）：**设备腿的收编腿**——把仍在跑的对端请求命令收编成本
    * 实例的后台任务，回执与本地腿逐字同形。
@@ -1045,6 +1193,10 @@ Git safety:
         kind = "remote"
       )
     yield out
+
+    end for
+
+  end remoteLegAutoBackground
 
   /**
    * Activity bridge (#319): periodically checks the running process and, when
@@ -1433,7 +1585,8 @@ Git safety:
           notifyAgent *>
           logger.info(
             s"Background job $jobId callback: $eventType$exitInfo" +
-              (if alreadyTerminal then " (row already terminal — recorded + retained anyway, T2 durable-first)" else "") +
+              (if alreadyTerminal then " (row already terminal — recorded + retained anyway, T2 durable-first)"
+               else "") +
               (if awaited then " (awaited — agent push suppressed)" else ""),
             "sessionId" -> ctx.sessionId.getOrElse("")
           )
@@ -1476,7 +1629,8 @@ Git safety:
 
   end auditBgSlow
 
-  /** Emit a WS event so the frontend shows the background task indicator.
+  /**
+   * Emit a WS event so the frontend shows the background task indicator.
    *
    * T7（作者令 2026-11-04）：`kind` / `originOverride` 两个缝供设备腿收编用——
    * 设备腿（替对端实例跑的命令）登记 `kind="remote"`（命令不在本会话发起），
