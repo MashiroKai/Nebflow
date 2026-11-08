@@ -2,7 +2,7 @@
 // 前端位验收：设计 §8 可断言点 1-8 的 DOM/静态臂 ——
 //   ① 入口统一（任务列表行 / 项目面板「项目流程图」圆钮 → 同一组件根
 //      [data-view=delegate-panorama]）；② 项目带 = 去重项目数 + 带头项目名/工作区；
-//   ③ 候合并卡三重编码（st-rtm + 合并队列 #n/N + e-rtm）；④ 合并中卡（st-merge +
+//   ③ 候合并卡编码（st-rtm + e-rtm；排队位次键已移除，位次徽标分支静默）；
 //      合并窗持有 + e-merge + 汇点 live）；⑤ 子过程拓扑（星扇出边数=子卡数 /
 //      链步骤卡数=步数）；⑥ 失败卡无出边、完成卡 e-del；⑦ 零字面 hex；
 //   ⑧ prefers-reduced-motion 零运行动画。
@@ -133,16 +133,8 @@ const rowRestart = base({
 const rowRtm = base({
   taskNo: '94', delegateId: 'delegate-nebflow-pano-rtm', title: '候批装配',
   status: 'ready-to-merge', reportDetail: '样张已出 · 候批', branch: 'delegate/d-94',
-  baseBranch: 'main', mergeQueue: { projectKey: 'projA', ahead: ['delegate-nebflow-pano-mrg'], holder: 'delegate-nebflow-pano-mrg', state: 'waiting' },
-  mergeQueuePos: { position: 2, total: 3, readyAt: T0 - 20_000, branch: 'delegate/d-94', baseBranch: 'main' },
+  baseBranch: 'main',
   createdAt: T0 - 30_000,
-});
-const rowMerging = base({
-  taskNo: '95', delegateId: 'delegate-nebflow-pano-mrg', title: '登录态修复',
-  status: 'running', taskStatus: 'merging', branch: 'delegate/d-95', baseBranch: 'main',
-  mergeQueue: { projectKey: 'projA', ahead: [], holder: 'delegate-nebflow-pano-mrg', state: 'turn-granted' },
-  mergeQueuePos: { position: 1, total: 3, readyAt: T0 - 25_000, branch: 'delegate/d-95', baseBranch: 'main' },
-  createdAt: T0 - 35_000,
 });
 const rowDone = base({
   taskNo: '96', delegateId: 'delegate-nebflow-pano-done', title: '已并入腿',
@@ -168,7 +160,7 @@ const rowProjB = base({
 });
 
 const fixtureRows = [
-  rowRunStar, rowRunFlow, rowRestart, rowRtm, rowMerging,
+  rowRunStar, rowRunFlow, rowRestart, rowRtm,
   rowDone, rowFail, rowCancel, rowArchived, rowProjB,
 ];
 
@@ -209,20 +201,15 @@ test('T1 全景状态三重编码（§8.2-8.6）：带结构/候选琥珀/合并
   await expect(headA).toContainText('projA');
   await expect(headA).toContainText('/ws/projA');
 
-  // ③ 候合并卡：类 + 位次徽标（引擎 mergeQueuePos 透传）+ 出边。
+  // ③ 候合并卡：类 + 出边（合并队列位次键已移除 ⇒ 位次徽标分支对缺键天然静默）。
   const rtmCard = page.locator('[data-view="delegate-panorama"] [data-delegate-id="delegate-nebflow-pano-rtm"]');
   await expect(rtmCard).toHaveClass(/st-rtm/);
-  await expect(rtmCard.locator('.dvp-qbadge.rtm')).toHaveText(/合并队列 #2\/3/);
+  await expect(rtmCard.locator('.dvp-qbadge.rtm')).toHaveCount(0);
   await expect(page.locator('.dvp-band[data-project="projA"] path.e-rtm')).toHaveCount(1);
-  await expect(page.locator('.dvp-band[data-project="projA"] .dvp-e-chip').filter({ hasText: 'FIFO #2' })).toHaveCount(1);
 
-  // ④ 合并中卡（G1 一等态）：类 + 合并窗徽标 + 蓝晶行军蚁出边 + 汇点 live。
-  const mrgCard = page.locator('[data-view="delegate-panorama"] [data-delegate-id="delegate-nebflow-pano-mrg"]');
-  await expect(mrgCard).toHaveClass(/st-merge/);
-  await expect(mrgCard.locator('.dvp-qbadge.mrg')).toHaveText('合并窗持有');
-  await expect(page.locator('.dvp-band[data-project="projA"] path.e-merge')).toHaveCount(1);
-  await expect(page.locator('.dvp-band[data-project="projA"] .dvp-e-chip.mrgc')).toHaveText('合并窗');
-  await expect(page.locator('.dvp-band[data-project="projA"] .dvp-sink.live')).toHaveCount(1);
+  // ④ 候合并段其余徽标分支零渲染（合并窗一等态已随合并队列机制移除）。
+  await expect(page.locator('.dvp-band[data-project="projA"] path.e-merge')).toHaveCount(0);
+  await expect(page.locator('.dvp-band[data-project="projA"] .dvp-e-chip.mrgc')).toHaveCount(0);
 
   // ⑤ 子过程拓扑（镜像组合臂）：星扇 3 子卡 + 链 2 步骤卡；边计数（设计 §4 三族）：
   //    派发边仅运行中保留（run 泳道 3 行 → 3 条 e-idle）；星扇按子态（del/inflight/

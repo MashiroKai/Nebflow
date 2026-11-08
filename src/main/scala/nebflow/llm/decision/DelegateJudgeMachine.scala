@@ -102,13 +102,10 @@ object DelegateJudgeMachine:
           instructions = terminalInstructions(input),
           criteria = Map(
             DelegateJudge.VerdictWire.Completed -> Some(
-              "there is nothing left to merge: the delegate had no working branch (pure read / no file changes) and is done, or the merge round landed cleanly (the git digest shows the delegate commits merged into the base branch)"
+              "the task is done: pure read / no file changes, or the work is complete with its deliverable commits on the working branch (unmerged commits do not create a merge obligation — landing them is a separately authorized merger request)"
             ),
             DelegateJudge.VerdictWire.Blocked -> Some(
-              "the task could not be completed, or the merge round hit a refusal/conflict — the terminal text states the blocker (this answer is recorded as a completed verdict with a note; there is no separate blocked state)"
-            ),
-            DelegateJudge.VerdictWire.ReadyToMerge -> Some(
-              "the delegate has a working branch and the git digest shows deliverable commits on it, unmerged, ahead of the base branch, with the terminal text reporting success — ready for the merge queue (this outcome requires a working branch: never for pure-read delegates)"
+              "the task could not be completed — the terminal text states the blocker (this answer is recorded as a completed verdict with a note; there is no separate blocked state)"
             )
           )
         )
@@ -134,15 +131,8 @@ object DelegateJudgeMachine:
   private[decision] def verdictFromChoice(resp: DecisionResponse, input: TerminalInput): Option[Verdict] =
     resp.answers.get("verdict").collect { case c: DecisionAnswer.Choice => c.choice.trim.toLowerCase } flatMap {
       case DelegateJudge.VerdictWire.Completed => Some(Verdict.Completed)
-      case DelegateJudge.VerdictWire.ReadyToMerge => Some(Verdict.ReadyToMerge)
       case DelegateJudge.VerdictWire.Blocked =>
-        Some(
-          Verdict.CompletedNote(
-            s"judge: could not complete${
-                if input.mergeRound then " (merge round)" else ""
-              } — substance in the terminal text"
-          )
-        )
+        Some(Verdict.CompletedNote(s"judge: could not complete — substance in the terminal text"))
       case _ => None
     }
 
@@ -341,16 +331,12 @@ $capped
 ${if input.gitDigest.isEmpty then "(not a git workspace)" else input.gitDigest}
 === CONTEXT (engine-assembled) ===
 $selfReportLine
-mergeRound: ${input.mergeRound}
 inFlightChains: ${input.inFlightChains}"""
 
   end terminalState
 
   private def terminalInstructions(input: TerminalInput): String =
-    if input.mergeRound then
-      "This is the MERGE ROUND: the delegate was instructed to run `git merge --no-ff` in the base workspace. Judge from the git digest whether the merge landed cleanly (completed) or was refused/conflicted (blocked — recorded as a completed verdict with a note; there is no separate blocked state). ready-to-merge is NOT a valid outcome for a merge round."
-    else
-      "Judge the delegate's state: completed (pure read / no file changes and done — nothing to merge), blocked (could not complete — the reason is in the result/git digest; recorded as a completed verdict with a note, NOT a separate state), or ready-to-merge (the delegate has a working branch with deliverable commits unmerged on it — send it to the merge queue)."
+    "Judge the delegate's state: completed (the task is done — pure read, or the work is complete with its deliverable commits on the working branch; unmerged commits do not create a merge obligation), or blocked (could not complete — the reason is in the result/git digest; recorded as a completed verdict with a note, NOT a separate state)."
 
   private def cap(s: String): String = if s.length > 12000 then s.take(12000) else s
 
@@ -378,7 +364,6 @@ inFlightChains: ${input.inFlightChains}"""
       val reason = j.hcursor.get[String]("reason").toOption.getOrElse("")
       verdict.flatMap {
         case DelegateJudge.VerdictWire.Completed => Some(Verdict.Completed)
-        case DelegateJudge.VerdictWire.ReadyToMerge => Some(Verdict.ReadyToMerge)
         case DelegateJudge.VerdictWire.Blocked =>
           Some(
             Verdict.CompletedNote(

@@ -165,12 +165,11 @@ class DelegateReportToolSpec extends CatsEffectSuite:
     assertEquals(rec.map(_.reportStatus), Some(None))
   }
 
-  test("retired merge declaration refuses to create a queue entry") {
+  test("retired merge declaration refuses to write the status slot") {
     val id = "delegate-nebflow-retired-merge"
     seed(id)
     call(sessionId = Some(id))("category" -> "merge".asJson, "detail" -> "ready to integrate".asJson).map { result =>
       assert(result.left.exists(_.contains("merge is retired")))
-      assert(nebflow.core.delegate.MergeQueue.find(id).isEmpty)
       assertEquals(DelegateRegistry.find(id).flatMap(_.reportStatus), None)
     }
   }

@@ -8,7 +8,7 @@
 //
 //   A. delegateFrozen 帧到 ⇒ 行显「已冻结 · <原因>」徽标（与 standby 的「待命（等作者）」
 //      显式不同）+ 「唤醒」按钮；tooltip 三要素（不是失败判词的说明 / 原因 / 详情原文）。
-//   B. 冻结行优先于 waiting：同行的候合并语义被冻结覆盖（rowState = frozen）。
+//   B. 冻结行优先于 waiting：同行的停靠语义被冻结覆盖（rowState = frozen）。
 //   C. 点「唤醒」⇒ 发出 `delegateWake{sessionId}`（停冒泡，不打开详情）。
 //   D. delegateWakeResult{ok:true,mode:live} 到 ⇒ 冻结徽标与按钮消失（同会话续跑）。
 //   E. delegateWakeResult{ok:false} 到 ⇒ 徽标保留 + toast 可见（绝不静默失败）。
@@ -118,7 +118,7 @@ async function makePage(browser, colorScheme, mobile) {
   return { page, push, render };
 }
 
-/** 种场景：冻结行 + 待命对照 + 候合并对照 + 运行对照 + 非本族冻结对照。 */
+/** 种场景：冻结行 + 待命对照 + 停靠对照 + 运行对照 + 非本族冻结对照。 */
 async function seedScene(page) {
   await page.evaluate(({ sid }) => import('/js/state.js').then((m) => {
     const t0 = Date.now();
@@ -133,10 +133,10 @@ async function seedScene(page) {
         task: '待命对照行（自愿停靠，等作者给活）', parentSessionId: sid,
         standbySince: t0 - 240_000,
         waiting: { mode: 'standby', detail: '等作者下一条 Mail 再续——已申报 delegate_report(standby)' } },
-      // ③ 候合并对照行。
+      // ③ 无申报停靠对照行（legacy Waiting 快照脸）。
       'delegate-merge-3': { name: 'nebflow', kind: 'Delegate', sessionId: 'delegate-merge-3',
         status: 'Waiting', startedAt: t0 - 900_000,
-        task: '候合并对照行（工作相完成，等合并窗口）', parentSessionId: sid },
+        task: '停靠对照行（Waiting 快照无申报槽）', parentSessionId: sid },
       // ④ 活运行对照行。
       'delegate-running-4': { name: 'nebflow', kind: 'Delegate', sessionId: 'delegate-running-4',
         status: 'Processing', startedAt: t0 - 300_000, currentTool: 'Bash("sbt test")', parentSessionId: sid },
@@ -255,7 +255,7 @@ for (const colorScheme of ['light', 'dark']) {
       };
     });
     ok(`${label}: 待命行保持「待命（等作者）」且无冻结徽标`, ctrl.standby.includes('待命') && !ctrl.standbyFrozen, `got: "${ctrl.standby}"`);
-    ok(`${label}: 候合并行保持「等待合并轮」`, ctrl.merge.includes('等待合并轮'), `got: "${ctrl.merge}"`);
+    ok(`${label}: 停靠对照行保持「停靠等待中」`, ctrl.merge.includes('停靠等待中'), `got: "${ctrl.merge}"`);
     ok(`${label}: 活运行行零冻结徽标`, !ctrl.runFrozen, `got: frozen=${ctrl.runFrozen}`);
     ok(`${label}: 零 console 错误`, errors.length === 0, errors.slice(0, 3).join(' | '));
 

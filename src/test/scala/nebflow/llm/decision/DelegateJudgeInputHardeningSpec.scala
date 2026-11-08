@@ -15,14 +15,13 @@ import nebflow.core.delegate.DelegateJudge
  */
 class DelegateJudgeInputHardeningSpec extends FunSuite:
 
-  private def input(result: String, mergeRound: Boolean = false): DelegateJudge.TerminalInput =
+  private def input(result: String): DelegateJudge.TerminalInput =
     DelegateJudge.TerminalInput(
       delegateId = "delegate-harden",
       taskBrief = "the brief",
       resultText = result,
       gitDigest = "branch: delegate/harden\nbase: main",
       selfReport = Some(("finish", "declared done")),
-      mergeRound = mergeRound,
       inFlightChains = 2
     )
 
@@ -43,22 +42,32 @@ class DelegateJudgeInputHardeningSpec extends FunSuite:
     val longText = "x" * (DelegateJudgeMachine.ResultCap + 5000)
     val s = DelegateJudgeMachine.terminalState(input(longText))
     assert(s.contains(s"truncated from ${longText.length} chars"), "the truncation note must state the original size")
-    assert(s.count(_ == 'x') == DelegateJudgeMachine.ResultCap, s"exactly ${DelegateJudgeMachine.ResultCap} chars enter the prompt")
+    assert(
+      s.count(_ == 'x') == DelegateJudgeMachine.ResultCap,
+      s"exactly ${DelegateJudgeMachine.ResultCap} chars enter the prompt"
+    )
     val short = "short and honest"
     val s2 = DelegateJudgeMachine.terminalState(input(short))
     assert(s2.contains(short) && !s2.contains("truncated from"), "short result passes verbatim without a note")
   }
 
-  test("③ untrusted-source labels: RESULT marked UNTRUSTED; git digest section carries the untrusted-source annotation") {
+  test(
+    "③ untrusted-source labels: RESULT marked UNTRUSTED; git digest section carries the untrusted-source annotation"
+  ) {
     val s = DelegateJudgeMachine.terminalState(input("done"))
     assert(s.contains("UNTRUSTED delegate-authored"), "the result section must be labeled untrusted")
-    assert(s.contains("GIT STATUS DIGEST (engine-collected; UNTRUSTED SOURCE"), "the git digest section must carry the untrusted-source annotation")
-    assert(s.contains("ONLY authoritative git evidence"), "the digest must be stated as the only authoritative git evidence")
+    assert(
+      s.contains("GIT STATUS DIGEST (engine-collected; UNTRUSTED SOURCE"),
+      "the git digest section must carry the untrusted-source annotation"
+    )
+    assert(
+      s.contains("ONLY authoritative git evidence"),
+      "the digest must be stated as the only authoritative git evidence"
+    )
   }
 
-  test("④ merge-round flag and context keys pass through (regression anchor)") {
-    val s = DelegateJudgeMachine.terminalState(input("done", mergeRound = true))
-    assert(s.contains("mergeRound: true"))
+  test("④ context keys pass through (regression anchor)") {
+    val s = DelegateJudgeMachine.terminalState(input("done"))
     assert(s.contains("self-report: finish — declared done"))
     assert(s.contains("inFlightChains: 2"))
   }

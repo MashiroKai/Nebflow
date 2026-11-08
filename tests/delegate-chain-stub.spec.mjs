@@ -8,8 +8,7 @@
 //      外部行 data-external="1"（S16 粗粒度标记）
 //   T3 换源即切（#56 残项 · 晨裁②「并行一窗不保留」）：节点区块零渲染（nodeCreated
 //      帧腿照发也不渲染）；统计 = delegate 行口径（换源批统计面）
-//   T4 适配层单测（页面内纯函数）：rowFromRegistry / chainFromStoreRecord /
-//      mergeQueueFifo（S11 排序键=完成时间 readyAt ↑，非插入序）＋常量钉死
+//   T4 适配层单测（页面内纯函数）：rowFromRegistry / chainFromStoreRecord ＋常量钉死
 //   T5 读取口 null 安全：查无链 → null；行清单默认空
 //   ── 换源接线批（switch-impl）──
 //   T6 §16 七键逐字钉（zh/en 双语值提取比对）＋ fm-node 拆出件单源钉（静态）
@@ -232,7 +231,7 @@ test('T3 换源即切（#56 残项 · 晨裁②）：并行一窗摘除——nod
   expect(pageErrors).toEqual([]);
 });
 
-test('T4 适配层（页面内纯函数）：registry 行归一＋ChainStore 行投影＋FIFO 排序键=完成时间', async ({ page }) => {
+test('T4 适配层（页面内纯函数）：registry 行归一＋ChainStore 行投影＋历史行审计透传', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(e.message));
 
@@ -243,7 +242,7 @@ test('T4 适配层（页面内纯函数）：registry 行归一＋ChainStore 行
     const recA = { id: 'delegate-nebflow-x', executor: 'nebflow', cwd: '/w/p', project: 'p', taskId: '44', parentSessionId: 's', title: 'T-A', createdAt: 1, reportStatus: 'finish', reportDetail: 'ok' };
     const recB = { id: 'delegate-zcode-y', executor: 'zcode', cwd: '/w/q', project: '', taskId: '', parentSessionId: 's', title: 'T-B', createdAt: 2, reportStatus: 'blocked', reportDetail: 'conflict' };
     const recC = { id: 'delegate-nebflow-z', executor: 'nebflow', cwd: '/g', project: '', taskId: '46', parentSessionId: 's', title: 'T-C', createdAt: 3 };
-    // ChainStore.Record 形 JSON（#1224 三行族；merge-queue 故意乱序入）。
+    // ChainStore.Record 形 JSON（三行族 + 历史 merge-queue 行 = 审计透传）。
     const store = {
       taskId: '44',
       entries: [
@@ -271,21 +270,21 @@ test('T4 适配层（页面内纯函数）：registry 行归一＋ChainStore 行
   expect(out.rowB).toMatchObject({ taskNo: '', status: 'completed', external: true });
   expect(out.rowC).toMatchObject({ status: 'pending', external: false });
 
-  // 链视图投影：spawn 行 → worktree；verdict 行 → 判词；FIFO 按 readyAt（完成时间）
-  // 而非行到达序（late@9000 排 early@7000 之后）——S11 排序键改义的可执行钉。
+  // 链视图投影：spawn 行 → worktree；verdict 行 → 判词（合并队列投影已随合并队列
+  // 机制移除——历史 merge-queue 行走 frames 审计透传）。
   expect(out.view.taskId).toBe('44');
   expect(out.view.worktree).toMatchObject({ branch: 'delegate/d-x', baseBranch: 'main', baseSha: 'abc' });
   expect(out.view.verdict).toMatchObject({ verdict: 'ready-to-merge', source: 'judge', at: 4000 });
-  expect(out.view.mergeQueue.map((q) => q.delegateId)).toEqual(['early', 'late']);
-  // N1 候定帧透传不解读（frames 原样保真）。
-  expect(out.view.frames).toHaveLength(1);
-  expect(out.view.frames[0]).toMatchObject({ kind: 'chain-registered', at: 7000 });
+  // 历史行族与 N1 候定帧透传不解读（frames 原样保真）。
+  expect(out.view.frames).toHaveLength(3);
+  expect(out.view.frames.filter((f) => f.kind === 'merge-queue')).toHaveLength(2);
+  expect(out.view.frames.find((f) => f.kind === 'chain-registered')).toMatchObject({ at: 7000 });
   // 链节点（N1 定稿前单 delegate 形）：判词映射状态。
   expect(out.view.nodes).toHaveLength(1);
   expect(out.view.nodes[0]).toMatchObject({ id: 'delegate-nebflow-x', kind: 'delegate', status: 'ready-to-merge' });
 
   // 空形容忍：null 入参 → 全空投影，不抛。
-  expect(out.viewEmpty).toMatchObject({ taskId: '', nodes: [], worktree: null, verdict: null, mergeQueue: [], frames: [] });
+  expect(out.viewEmpty).toMatchObject({ taskId: '', nodes: [], worktree: null, verdict: null, frames: [] });
 
   // 常量钉死（跨批契约键禁漂移）。
   expect(out.consts).toEqual({ ready: 'ready-to-merge', spawn: 'delegate-spawn' });
@@ -506,7 +505,7 @@ async function openChainViewViaProjects(page, taskNo) {
   await page.waitForTimeout(250);
 }
 
-test('T6 §16 七键逐字钉（zh/en 双语提取比对）＋ fm-node 拆出件单源钉（静态）', async ({ page }) => {
+test('T6 §16 六键逐字钉（zh/en 双语提取比对）＋ fm-node 拆出件单源钉（静态）', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(e.message));
   await bootApp(page);
@@ -518,7 +517,6 @@ test('T6 §16 七键逐字钉（zh/en 双语提取比对）＋ fm-node 拆出件
       readyToMerge: t('delegate.readyToMerge'),
       backToTasks: t('delegate.backToTasks'),
       structure: t('delegate.structure'),
-      mergeQueue: t('delegate.mergeQueue'),
       worktree: t('delegate.worktree'),
       openNative: t('delegate.openNative'),
       chainUnavailable: t('delegate.chainUnavailable'),
@@ -528,20 +526,19 @@ test('T6 §16 七键逐字钉（zh/en 双语提取比对）＋ fm-node 拆出件
     readyToMerge: '待合并',
     backToTasks: '返回任务列表',
     structure: '委托结构',
-    mergeQueue: '合并队列',
     worktree: '工作树',
     openNative: '在原软件打开',
     chainUnavailable: '链视图暂时打不开，点击重试',
   });
 
-  // 文件级双语逐字钉：zh/en locale 源码里七个键值逐字存在（值禁改一字的落库证据）。
+  // 文件级双语逐字钉：zh/en locale 源码里六个键值逐字存在（值禁改一字的落库证据；
+  // delegate.mergeQueue 键已随合并队列机制移除）。
   const zhSrc = readFileSync(join(WEB, 'js', 'locales', 'zh-CN.js'), 'utf8');
   const enSrc = readFileSync(join(WEB, 'js', 'locales', 'en.js'), 'utf8');
   const pairs = [
     ['delegate.readyToMerge', '待合并', 'Ready to merge'],
     ['delegate.backToTasks', '返回任务列表', 'Back to tasks'],
     ['delegate.structure', '委托结构', 'Delegate structure'],
-    ['delegate.mergeQueue', '合并队列', 'Merge queue'],
     ['delegate.worktree', '工作树', 'Worktree'],
     ['delegate.openNative', '在原软件打开', 'Open in original app'],
     ['delegate.chainUnavailable', '链视图暂时打不开，点击重试', 'Chain view unavailable — click to retry'],

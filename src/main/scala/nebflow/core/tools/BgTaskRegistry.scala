@@ -79,7 +79,7 @@ object BgTaskRegistry:
     status: String = "running",
     /**
      * 健康轨行内字段（设计稿 §3.1/§3.4 · 单一事实源）：健康枚举 = [[BgHealth.of]]
-     * 从本三字段派生（禁第二状态源，与 MergeQueue.queueViewOf 同纪律）。
+     * 从本三字段派生（禁第二状态源）。
      *   - suspicionLevel = 嫌疑级数（0 = healthy，>0 = suspect）；
      *   - escalatedAtMs  = 升级时刻（>0 = escalated，优先于 suspect）；
      *   - lastActivityMs = 行内最近活动戳（P1 判据输入）。
@@ -396,13 +396,15 @@ object BgTaskRegistry:
     sessionId match
       case None => IO.pure(Nil)
       case Some(sid) =>
-        tasks.modify { m =>
-          val (removed, kept) = m.partition(_._2.sessionId == sid)
-          (kept, removed.values.toList)
-        }.flatTap { removed =>
-          val ids = removed.map(_.jobId).toSet
-          unreadEscalations.update(_ -- ids)
-        }
+        tasks
+          .modify { m =>
+            val (removed, kept) = m.partition(_._2.sessionId == sid)
+            (kept, removed.values.toList)
+          }
+          .flatTap { removed =>
+            val ids = removed.map(_.jobId).toSet
+            unreadEscalations.update(_ -- ids)
+          }
 
   // ── 健康轨数据面（P0 面板投影批 · 设计稿 20261030_background-task-lifecycle §3.4）──
   //
@@ -783,8 +785,10 @@ object BgHealth:
         case _ => acc
     }
 
-  /** bgHealth 徽标帧构造：{type, unread, suspect, escalated}（无 sessionId——
-   *  全表计数面，前端 GLOBAL 路由）。 */
+  /**
+   * bgHealth 徽标帧构造：{type, unread, suspect, escalated}（无 sessionId——
+   *  全表计数面，前端 GLOBAL 路由）。
+   */
   def frame(counts: BgTaskRegistry.BgHealthCounts): Json =
     Json.obj(
       "type" -> FrameType.asJson,

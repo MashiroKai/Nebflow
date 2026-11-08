@@ -2,7 +2,7 @@
 //
 // 验收③：任务行/详情卡显「待命」态（standbySince 透出）——
 //   ① complete×standby 行：badge =「待命（等作者）」，tooltip = 申报的「在等什么」；
-//   ② 候合并对照行：badge =「等待合并轮 · 队列段」（既有形态不回归）；
+//   ② 无申报停靠对照行：badge =「停靠等待中」（legacy Waiting 快照脸）；
 //   ③ 快照复原脸：activeAgents 行带 standbySince ⇒ 刷新后徽标复原（delegateWaiting
 //      实时帧的恢复脸）。
 //
@@ -77,7 +77,7 @@ async function makePage(browser, colorScheme, mobile) {
   return page;
 }
 
-/** 种矩阵批场景：待命行（快照 standbySince 复原脸）+ 候合并对照行 + 活运行对照行。 */
+/** 种矩阵批场景：待命行（快照 standbySince 复原脸）+ 停靠对照行 + 活运行对照行。 */
 async function seedScene(page) {
   await page.evaluate(({ sid, t0 }) => import('/js/state.js').then((m) => {
     m.default.sessionBgAgents[sid] = {
@@ -88,7 +88,7 @@ async function seedScene(page) {
         task: 'delegate 状态矩阵批（作者令 2026-11-01：完成判定改状态矩阵）', parentSessionId: sid,
         standbySince: t0 - 240_000,
         waiting: { mode: 'standby', detail: '等作者下一条 Mail 再续——已申报 delegate_report(standby)' } },
-      // ② 候合并对照：既有「等待合并轮」形态不回归。
+      // ② 无申报停靠对照（legacy Waiting 快照脸）。
       'delegate-merge-2': { name: 'nebflow', kind: 'Delegate', sessionId: 'delegate-merge-2',
         status: 'Waiting', startedAt: t0 - 900_000,
         task: '弹窗退场批（重启后新派，作者 10-31 15:13 原令三件）', parentSessionId: sid },
@@ -131,7 +131,7 @@ for (const colorScheme of ['light', 'dark']) {
     });
     ok(`${label}: complete×standby 行 badge =「待命（等作者）」`, checks.standbyBadge.includes('待命'), `got: "${checks.standbyBadge}"`);
     ok(`${label}: tooltip = 申报的「在等什么」`, checks.standbyTip.includes('等作者下一条 Mail'), `got: "${checks.standbyTip}"`);
-    ok(`${label}: 候合并对照行保持「等待合并轮」`, checks.mergeBadge.includes('等待合并轮'), `got: "${checks.mergeBadge}"`);
+    ok(`${label}: 停靠对照行保持「停靠等待中」`, checks.mergeBadge.includes('停靠等待中'), `got: "${checks.mergeBadge}"`);
     ok(`${label}: 活运行行零等待徽标`, checks.runBadge === '', `got: "${checks.runBadge}"`);
     ok(`${label}: 零 console 错误`, errors.length === 0, errors.slice(0, 3).join(' | '));
 

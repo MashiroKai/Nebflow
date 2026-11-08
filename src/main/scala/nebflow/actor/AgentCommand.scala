@@ -181,12 +181,10 @@ object InjectionAttribution:
       // `<system-reminder>` 进 LLM、前端零气泡（`visibleExternalEventSource` 的白名单
       // 外）。该门翻成「外部事件一律可见」后它们真的会到达注入行 ⇒ 逐个显式登记
       // （前端 `INJECTED_SOURCE_LABELS` 同批登记，契约门 ② 对账）。
-      //   merge-queue       放行/阻塞/属主失联通知（SharedResources / MergeQueue）
       //   bg-lifecycle      后台任务生命周期催办（BgLifecycleReconciler）
       //   waiting-dock-care 等待坞超时升级（TaskStuckWatcher）
       //   chain-orphan      孤儿链回收通报（ProjectCrashRecovery）
       //   team              团队错误升级链（AgentActor.notifyEscalation）
-      "merge-queue",
       "bg-lifecycle",
       "waiting-dock-care",
       "chain-orphan",

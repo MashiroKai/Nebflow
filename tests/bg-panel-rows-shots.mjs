@@ -64,7 +64,7 @@ function agentEntries() {
       retryCount: 1, currentTool: 'Bash(node tools/stand-plugins list)',
       task: '【UI 修复批 · 联系人 / 消息页搜索收成圆钮后，顶部内容被直接截断（应透明可透出下文）】',
     }) },
-    // ② 候合并（waiting）——第三行「等待合并轮 · …」
+    // ② 无申报停靠（waiting）——第三行「停靠等待中」
     { id: 'delegate-rows-0002', info: base({
       name: '词条体系v2', sessionId: 'delegate-rows-0002', delegateName: '词条体系v2',
       kind: 'Delegate', status: 'Waiting', waiting: { mode: 'waiting' },
@@ -319,7 +319,7 @@ for (const theme of THEMES) {
     evidence.scenes[`desktop-${theme}-agents`] = { rows };
     assertThreeLines(`[desktop/${theme}/agents]`, rows);
     ok(`[desktop/${theme}/agents] 状态位只剩图标（无中文状态词上屏）`,
-      rows.every((r) => !/进行中|候合并|自动恢复中/.test(r.line1Text)),
+      rows.every((r) => !/进行中|停靠等待中|自动恢复中/.test(r.line1Text)),
       rows.map((r) => r.line1Text).join(' | ').slice(0, 120));
     ok(`[desktop/${theme}/agents] 状态位都有 aria-label 文本兜底`,
       rows.every((r) => r.statusAria && r.statusAria.length > 0));

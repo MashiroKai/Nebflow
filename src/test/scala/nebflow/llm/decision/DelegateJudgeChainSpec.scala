@@ -67,14 +67,18 @@ class DelegateJudgeChainSpec extends CatsEffectSuite:
     answer: String,
     attempts: TrieMap[String, String]
   ) extends ProviderAdapter[IO]:
+
     def sendMessage(params: SendMessageParams): IO[AdapterResponse] =
       IO {
         attempts.update(params.model, "hit")
         if failOn.contains(params.model) then throw new RuntimeException(s"transport down for ${params.model}")
         AdapterResponse(reply = if emptyOn.contains(params.model) then "   " else answer, toolCalls = Nil)
       }
+
     def sendMessageStream(params: SendMessageParams): fs2.Stream[IO, nebflow.shared.StreamChunk] =
       fs2.Stream.raiseError[IO](new RuntimeException("stream face not expected in this spec"))
+
+  end ScriptedAdapter
 
   /** 只认显式 adapter 表的 registry（其余读面按构造参数覆写）。 */
   private class StubRegistry(
@@ -83,15 +87,20 @@ class DelegateJudgeChainSpec extends CatsEffectSuite:
     forRef: Map[String, Option[ModelCandidate]] = Map.empty,
     restriction: Map[String, Option[String]] = Map.empty
   ) extends ProviderRegistry(null, null):
+
     override def getAdapter(providerId: String): IO[ProviderAdapter[IO]] =
       adapters.get(providerId) match
         case Some(a) => IO.pure(a)
-        case None    => IO.raiseError(new RuntimeException(s"unknown provider: $providerId"))
+        case None => IO.raiseError(new RuntimeException(s"unknown provider: $providerId"))
     override def getCandidates(): IO[List[ModelCandidate]] = IO.pure(chain)
+
     override def getCandidateForRef(ref: String): IO[Option[ModelCandidate]] =
       IO.pure(forRef.getOrElse(ref, None))
+
     override def scheduleRestrictionFor(ref: String): IO[Option[String]] =
       IO.pure(restriction.getOrElse(ref, None))
+
+  end StubRegistry
 
   private val paramsFor: SendMessageParams =
     SendMessageParams(
@@ -105,20 +114,21 @@ class DelegateJudgeChainSpec extends CatsEffectSuite:
       taskBrief = "brief",
       resultText = "result",
       gitDigest = "branch: delegate/delegate-x",
-      selfReport = None,
-      mergeRound = false
+      selfReport = None
     )
 
-  private val VerdictJson = """{"verdict":"ready-to-merge","reason":"commits on branch"}"""
+  private val VerdictJson = """{"verdict":"completed","reason":"work complete on the branch; integration is a merger request"}"""
 
   // ── chainCall：整链遍历调用缝（判定机同族刀） ─────────────────────────────
 
   test("chainCall: 头候选传输错 ⇒ WARN 落真因（provider/model/异常类）并落到第二候选") {
     val attempts = TrieMap.empty[String, String]
-    val registry = StubRegistry(Map(
-      "bad" -> ScriptedAdapter(Set("m-bad"), Set.empty, "", attempts),
-      "good" -> ScriptedAdapter(Set.empty, Set.empty, VerdictJson, attempts)
-    ))
+    val registry = StubRegistry(
+      Map(
+        "bad" -> ScriptedAdapter(Set("m-bad"), Set.empty, "", attempts),
+        "good" -> ScriptedAdapter(Set.empty, Set.empty, VerdictJson, attempts)
+      )
+    )
     val call = DelegateJudgeMachine.chainCall(registry, List(cand("bad", "m-bad"), cand("good", "m-good")))
     withWarnAppender(call(paramsFor)).map { case (reply, warns) =>
       assertEquals(reply, Some(VerdictJson), "the chain answered via the second candidate")
@@ -126,16 +136,21 @@ class DelegateJudgeChainSpec extends CatsEffectSuite:
       val headWarn = warns.find(_.contains("candidate bad/m-bad errored"))
       assert(headWarn.isDefined, s"head candidate failure must WARN with provider/model: $warns")
       assert(headWarn.get.contains("RuntimeException"), s"the exception class stays attributable: ${headWarn.get}")
-      assert(headWarn.get.contains("trying next candidate"), s"the WARN states the traversal continues: ${headWarn.get}")
+      assert(
+        headWarn.get.contains("trying next candidate"),
+        s"the WARN states the traversal continues: ${headWarn.get}"
+      )
     }
   }
 
   test("chainCall: 全链败 ⇒ None（链耗尽语义），每个候选都留有可归因的尝试痕迹") {
     val attempts = TrieMap.empty[String, String]
-    val registry = StubRegistry(Map(
-      "a" -> ScriptedAdapter(Set("m-a"), Set.empty, "", attempts),
-      "b" -> ScriptedAdapter(Set("m-b"), Set.empty, "", attempts)
-    ))
+    val registry = StubRegistry(
+      Map(
+        "a" -> ScriptedAdapter(Set("m-a"), Set.empty, "", attempts),
+        "b" -> ScriptedAdapter(Set("m-b"), Set.empty, "", attempts)
+      )
+    )
     val call = DelegateJudgeMachine.chainCall(registry, List(cand("a", "m-a"), cand("b", "m-b")))
     withWarnAppender(call(paramsFor)).map { case (reply, warns) =>
       assertEquals(reply, None, "exhausted chain = None (the leg classifies it as a recoverable call failure)")
@@ -147,10 +162,12 @@ class DelegateJudgeChainSpec extends CatsEffectSuite:
 
   test("chainCall: 空回文候选不截链（provider 侧故障同侧处理，下一候选照答）") {
     val attempts = TrieMap.empty[String, String]
-    val registry = StubRegistry(Map(
-      "mute" -> ScriptedAdapter(Set.empty, Set("m-mute"), "", attempts),
-      "good" -> ScriptedAdapter(Set.empty, Set.empty, VerdictJson, attempts)
-    ))
+    val registry = StubRegistry(
+      Map(
+        "mute" -> ScriptedAdapter(Set.empty, Set("m-mute"), "", attempts),
+        "good" -> ScriptedAdapter(Set.empty, Set.empty, VerdictJson, attempts)
+      )
+    )
     val call = DelegateJudgeMachine.chainCall(registry, List(cand("mute", "m-mute"), cand("good", "m-good")))
     call(paramsFor).map { reply =>
       assertEquals(reply, Some(VerdictJson), "the empty reply did not become the final answer")
@@ -162,19 +179,20 @@ class DelegateJudgeChainSpec extends CatsEffectSuite:
 
   test("utilityCandidates: ref 可解 ⇒ 钉首位＋链内重复候选去重（后备不重复烧调用）") {
     withTempDataRoot { tmp =>
-      IO(os.write(tmp / nebflow.shared.Branding.configFileName, """{"judge":{"utilityModel":"p/util-1"}}""")).flatMap { _ =>
-        val registry = StubRegistry(
-          adapters = Map.empty,
-          chain = List(cand("p", "util-1"), cand("q", "m2"), cand("p", "util-1")),
-          forRef = Map("p/util-1" -> Some(cand("p", "util-1")))
-        )
-        DelegateJudgeMachine.utilityCandidates(registry).map { got =>
-          assertEquals(
-            got.map(c => s"${c.providerId}/${c.model}"),
-            List("p/util-1", "q/m2"),
-            "the ref candidate is pinned first; chain duplicates of it collapse (one call per candidate)"
+      IO(os.write(tmp / nebflow.shared.Branding.configFileName, """{"judge":{"utilityModel":"p/util-1"}}""")).flatMap {
+        _ =>
+          val registry = StubRegistry(
+            adapters = Map.empty,
+            chain = List(cand("p", "util-1"), cand("q", "m2"), cand("p", "util-1")),
+            forRef = Map("p/util-1" -> Some(cand("p", "util-1")))
           )
-        }
+          DelegateJudgeMachine.utilityCandidates(registry).map { got =>
+            assertEquals(
+              got.map(c => s"${c.providerId}/${c.model}"),
+              List("p/util-1", "q/m2"),
+              "the ref candidate is pinned first; chain duplicates of it collapse (one call per candidate)"
+            )
+          }
       }
     }
   }
@@ -193,7 +211,7 @@ class DelegateJudgeChainSpec extends CatsEffectSuite:
       )
       withWarnAppender(DelegateJudgeMachine.face(registry).judgeTerminal(judgeInput("delegate-chain-1")))
         .map { case (out, warns) =>
-          assertEquals(out, Some(Verdict.ReadyToMerge), "the fallback chain answered via the second candidate")
+          assertEquals(out, Some(Verdict.Completed), "the fallback chain answered via the second candidate")
           assertEquals(attempts.keySet, Set("m-bad", "m-good"), "the head was tried first, then the fallback")
           assert(warns.exists(_.contains("candidate bad/m-bad errored")), s"head failure WARN on record: $warns")
         }
